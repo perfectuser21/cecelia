@@ -1450,6 +1450,37 @@ product_features:
 
     rcis: []
 
+  - id: branch-date-warn-cleanup-fix
+    name: branch-protect 分支日期警告 + cleanup.sh step_* 非阻塞
+    status: active
+    priority: P2
+    version: "12.60.0"
+    updated: "2026-03-14"
+    description: |
+      修复两个 P2 问题：
+      1. branch-protect.sh 新增分支日期范围检查（v26）：cp-* 分支日期超过今天-2天时
+         输出 WARN 到 stderr，不 exit（长任务可能跨天）。兼容 macOS/Linux 日期命令。
+      2. cleanup.sh step 7.6 验证改为非阻塞：step_* flag 只做展示，不是流程控制依据，
+         devloop-check.sh 已改为检查实际 PR/CI 状态。验证失败时改为 WARN，不设 FAILED。
+
+    entrypoints:
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "Claude Code PreToolUse Write/Edit hook 触发（v26 日期检查）"
+      - type: script
+        file: skills/dev/scripts/cleanup.sh
+        trigger: "Step 11 Cleanup 执行时"
+
+    golden_path: |
+      cp-20260101-xxx 日期超 2 天 → WARN 输出 → 不 exit → 继续保护检查 →
+      cleanup.sh step 7.6 步骤不全 → WARN 输出 → VALIDATION_PASSED=true → cleanup 继续执行
+
+    minimal_paths:
+      - "日期计算失败（date 命令不可用）: DATE_2_DAYS_AGO 为空，跳过检查"
+      - "cleanup.sh 无 .dev-mode 文件: 跳过 step_* 验证"
+
+    rcis: []
+
   - id: worktree-max-limit
     name: worktree-manage.sh MAX_WORKTREES 数量上限检查
     status: active

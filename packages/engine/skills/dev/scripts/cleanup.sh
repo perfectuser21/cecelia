@@ -449,13 +449,13 @@ if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
         fi
     done
 
-    # v2.0 P1-6 修复：验证失败时设置标志，阻止后续 cleanup_done 写入
+    # v2.1: step_* flag 只做展示，不是流程控制依据
+    # devloop-check.sh 已改为检查实际 PR/CI 状态，step_* 验证不再阻塞 cleanup
     VALIDATION_PASSED=true
     if [[ -n "$INCOMPLETE_STEPS" ]]; then
-        echo -e "   ${RED}[FAIL] 不能删除 .dev-mode，以下步骤未完成: $INCOMPLETE_STEPS${NC}"
-        echo -e "   ${YELLOW}提示: 确保所有步骤都已标记为 done${NC}"
-        FAILED=$((FAILED + 1))
-        VALIDATION_PASSED=false
+        echo -e "   ${YELLOW}[WARN] 以下步骤未全部完成（仅供参考，不阻塞 cleanup）:$INCOMPLETE_STEPS${NC}"
+        echo -e "   ${YELLOW}提示: step_* flag 只做展示，实际流程由 devloop-check.sh 检查 PR/CI 状态${NC}"
+        # 不再设置 FAILED / VALIDATION_PASSED=false —— step_* 不是流程控制依据
     else
         echo -e "   ${GREEN}[OK] 所有 11 步已完成${NC}"
     fi
