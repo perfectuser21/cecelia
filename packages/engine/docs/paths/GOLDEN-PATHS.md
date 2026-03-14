@@ -517,6 +517,22 @@ worktree 数量 >= 8 → exit 1 + 错误提示 →
 
 ---
 
+## GP-033: Codex Runner 多账号轮换（CODEX_HOMES） (codex-runner-account-rotation)
+
+**Feature**: codex-runner-account-rotation - Codex Runner 多账号轮换（CODEX_HOMES）
+**Priority**: P1
+
+### Golden Path
+
+```
+CODEX_HOMES 解析为账号数组 →
+codex-bin exec 执行 →
+输出含 Quota exceeded → 切换账号 → 重试 →
+所有账号耗尽 → 失败
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

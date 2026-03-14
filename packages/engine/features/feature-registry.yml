@@ -1513,3 +1513,32 @@ product_features:
       - "数量 >= 8: 拒绝创建，提示 GC"
 
     rcis: []
+
+  - id: codex-runner-account-rotation
+    name: Codex Runner 多账号轮换（CODEX_HOMES）
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      runner.sh v2.3.0 新增 CODEX_HOMES 环境变量支持（冒号分隔的多账号路径）。
+      当某个 Codex 账号触发 Quota exceeded 时，自动切换到下一个账号继续执行，
+      本轮不计入重试次数。所有账号耗尽才真正失败。
+
+    entrypoints:
+      - type: script
+        file: runners/codex/runner.sh
+        trigger: "CODEX_HOMES 环境变量设置时启用多账号模式"
+
+    golden_path: |
+      CODEX_HOMES 解析为账号数组 →
+      codex-bin exec 执行 →
+      输出含 Quota exceeded → 切换账号 → 重试 →
+      所有账号耗尽 → 失败
+
+    minimal_paths:
+      - "单账号（兼容）: CODEX_HOME 正常执行"
+      - "多账号轮换: Quota exceeded → 切换 → 继续"
+      - "全部耗尽: 报错退出"
+
+    rcis: []
