@@ -354,6 +354,17 @@ codex-bin exec --model gpt-5.4 执行 →
 
 ---
 
+### task-card-branch-protect: branch-protect.sh Task Card 格式支持
+
+```
+写入 .task-cp-xxx.md（含成功标准+checkbox）→
+hook 验证通过 →
+代码文件保护阶段用 task card 作为 PRD+DoD →
+允许写代码
+```
+
+---
+
 ### task-card-format-support: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
 
 ```

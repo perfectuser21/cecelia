@@ -326,6 +326,15 @@ changelog:
 
 ---
 
+### task-card-branch-protect: branch-protect.sh Task Card 格式支持
+
+1. ✅ **task card: .task-{branch}.md 含成功标准+checkbox → 通过**
+2. ✅ **旧格式: .prd-{branch}.md + .dod-{branch}.md → 仍然有效**
+3. ✅ **缺少成功标准: exit 2 拦截**
+4. ✅ **缺少 checkbox: exit 2 拦截**
+
+---
+
 ### task-card-format-support: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
 
 1. ✅ **新格式: .task-{branch}.md 存在时优先使用**

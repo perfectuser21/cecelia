@@ -126,6 +126,63 @@ if [[ "$REAL_FILE_PATH" == "$HOME_DIR/.claude/skills/"* ]] || \
     exit 0
 fi
 
+# ===== Task Card 内容验证（Write .task-*.md 时）=====
+# v19: 支持新格式 .task-{branch}.md，同时验证 PRD + DoD 内容
+if [[ "$TOOL_NAME" == "Write" ]]; then
+    TASK_MATCH=false
+    if echo "$FILE_PATH" | grep -qE '\.task-[^/]+\.md$'; then
+        TASK_MATCH=true
+    fi
+
+    if [[ "$TASK_MATCH" == "true" ]]; then
+        TASK_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null || echo "")
+        TASK_HAS_SUCCESS=false
+        TASK_HAS_CHECKBOX=false
+
+        if echo "$TASK_CONTENT" | grep -qiE "^#{1,3}[[:space:]]+(成功标准|success criteria|验收标准|acceptance criteria)"; then
+            TASK_HAS_SUCCESS=true
+        fi
+        if echo "$TASK_CONTENT" | grep -qE '^\s*-\s*\[[ xX]\]'; then
+            TASK_HAS_CHECKBOX=true
+        fi
+
+        if [[ "$TASK_HAS_SUCCESS" == "false" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] Task Card 缺少成功标准章节" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  文件: $FILE_PATH" >&2
+            echo "" >&2
+            echo "  Task Card 必须包含以下之一的章节标题：" >&2
+            echo "    ## 成功标准" >&2
+            echo "    ## Success Criteria" >&2
+            echo "" >&2
+            echo "  没有成功标准 = 无法验收 = 不允许写入。" >&2
+            echo "" >&2
+            exit 2
+        fi
+
+        if [[ "$TASK_HAS_CHECKBOX" == "false" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] Task Card 缺少验收清单" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  文件: $FILE_PATH" >&2
+            echo "" >&2
+            echo "  Task Card 必须包含 checkbox 格式的验收项：" >&2
+            echo "    - [ ] 验收条件1" >&2
+            echo "    - [ ] 验收条件2" >&2
+            echo "" >&2
+            echo "  没有验收清单 = 无法验收 = 不允许写入。" >&2
+            echo "" >&2
+            exit 2
+        fi
+        # Task Card 内容有效，放行（后续分支/PRD 存在检查仍会运行）
+    fi
+fi
+
 # ===== PRD 内容验证（Write .prd-*.md 时）=====
 # 只在 Write 操作且文件名匹配 .prd-*.md 时验证
 # 从 tool_input.content 提取将要写入的内容，检查是否包含 ## 成功标准 章节
@@ -509,26 +566,37 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
     fi
 
     # ===== 本地文件检查（兼容非 /dev 工作流）=====
-    # v17: 分支级别 PRD/DoD 文件（优先新格式，fallback 旧格式）
+    # v19: 优先 task card 格式（.task-{branch}.md），再新格式，再旧格式
+    TASK_CARD_FILE="$PRD_DOD_DIR/.task-${CURRENT_BRANCH}.md"
     PRD_FILE_NEW="$PRD_DOD_DIR/.prd-${CURRENT_BRANCH}.md"
     PRD_FILE_OLD="$PRD_DOD_DIR/.prd.md"
     DOD_FILE_NEW="$PRD_DOD_DIR/.dod-${CURRENT_BRANCH}.md"
     DOD_FILE_OLD="$PRD_DOD_DIR/.dod.md"
 
-    # 选择 PRD 文件（优先新格式）
-    if [[ -f "$PRD_FILE_NEW" ]]; then
+    # 选择 PRD 文件（task card > 新格式 > 旧格式）
+    if [[ -f "$TASK_CARD_FILE" ]]; then
+        PRD_FILE="$TASK_CARD_FILE"
+        PRD_BASENAME=".task-${CURRENT_BRANCH}.md"
+        USING_TASK_CARD=true
+    elif [[ -f "$PRD_FILE_NEW" ]]; then
         PRD_FILE="$PRD_FILE_NEW"
         PRD_BASENAME=".prd-${CURRENT_BRANCH}.md"
+        USING_TASK_CARD=false
     elif [[ -f "$PRD_FILE_OLD" ]]; then
         PRD_FILE="$PRD_FILE_OLD"
         PRD_BASENAME=".prd.md"
+        USING_TASK_CARD=false
     else
         PRD_FILE=""
         PRD_BASENAME=".prd-${CURRENT_BRANCH}.md"  # 新分支应使用新格式
+        USING_TASK_CARD=false
     fi
 
-    # 选择 DoD 文件（优先新格式）
-    if [[ -f "$DOD_FILE_NEW" ]]; then
+    # 选择 DoD 文件（task card 同文件 > 新格式 > 旧格式）
+    if [[ "$USING_TASK_CARD" == "true" ]]; then
+        DOD_FILE="$TASK_CARD_FILE"  # task card 同时包含 PRD+DoD
+        DOD_BASENAME=".task-${CURRENT_BRANCH}.md"
+    elif [[ -f "$DOD_FILE_NEW" ]]; then
         DOD_FILE="$DOD_FILE_NEW"
         DOD_BASENAME=".dod-${CURRENT_BRANCH}.md"
     elif [[ -f "$DOD_FILE_OLD" ]]; then

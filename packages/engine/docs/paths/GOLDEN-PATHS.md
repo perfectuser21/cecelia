@@ -548,7 +548,23 @@ codex-bin exec --model gpt-5.4 执行 →
 
 ---
 
-## GP-035: DevGate 脚本支持 Task Card 格式（.task-{branch}.md） (task-card-format-support)
+## GP-035: branch-protect.sh Task Card 格式支持 (task-card-branch-protect)
+
+**Feature**: task-card-branch-protect - branch-protect.sh Task Card 格式支持
+**Priority**: P1
+
+### Golden Path
+
+```
+写入 .task-cp-xxx.md（含成功标准+checkbox）→
+hook 验证通过 →
+代码文件保护阶段用 task card 作为 PRD+DoD →
+允许写代码
+```
+
+---
+
+## GP-036: DevGate 脚本支持 Task Card 格式（.task-{branch}.md） (task-card-format-support)
 
 **Feature**: task-card-format-support - DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
 **Priority**: P1
@@ -564,7 +580,7 @@ check-dod-mapping.cjs 优先读取 .task-*.md →
 
 ---
 
-## GP-036: /dev Skill 文档重组为6步 Task Card 格式 (S12)
+## GP-037: /dev Skill 文档重组为6步 Task Card 格式 (S12)
 
 **Feature**: S12 - /dev Skill 文档重组为6步 Task Card 格式
 **Priority**: P1
