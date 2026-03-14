@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Codex Runner — Codex CLI Provider 适配器 v2.2.0
+# Codex Runner — Codex CLI Provider 适配器 v2.3.0
 # ============================================================================
 # 这是 Codex（OpenAI）Provider 的协议适配器。
 # 完成判断逻辑来自 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -12,6 +12,13 @@
 #   4. 调用 codex-bin exec 执行完整工作流
 #   5. 若 Codex 中途退出：以带上下文的恢复 prompt 重启（最多 MAX_RETRIES 次）
 #   6. 循环调用 devloop_check() 直到完成
+#   7. Quota 超限时自动切换账号（v2.3.0 新增）
+#
+# 设计原则（v2.3.0 新增账号轮换）：
+#   - CODEX_HOMES 支持冒号分隔的多个 CODEX_HOME 路径
+#   - 若某轮输出含 "Quota exceeded"，自动切换下一个账号继续（不计入重试次数）
+#   - 所有账号耗尽才真正失败
+#   - 未设置 CODEX_HOMES 时，降级使用单一 CODEX_HOME（向后兼容）
 #
 # 设计原则（v2.2.0 修复）：
 #   - PRD 内容在 US 侧预拉，嵌入 prompt（避免 Codex 在 M4 调 localhost:5221）
@@ -21,20 +28,21 @@
 #   - 重试：带当前状态+未完成原因的恢复 prompt（含 PRD 内容）
 #   - 修复兼容性：--sandbox danger-full-access（非 full-access）
 #   - 修复兼容性：不用 --cwd（改为 cd 到项目目录后执行）
-#   - 支持 CODEX_HOME 环境变量
 #
 # 使用方式:
 #   bash runner.sh --branch cp-03131205-xxx --task-id abc-123 [--dry-run]
 #
 # 环境变量:
 #   CODEX_BIN          — codex-bin 路径（默认 /opt/homebrew/bin/codex-bin）
-#   CODEX_HOME         — Codex 配置目录（默认 ~/.codex）
+#   CODEX_HOMES        — 冒号分隔的多账号路径（v2.3.0，优先于 CODEX_HOME）
+#                        例: /home/user/.codex-team1:/home/user/.codex-team2
+#   CODEX_HOME         — 单账号配置目录（CODEX_HOMES 未设置时使用，默认 ~/.codex）
 #   CODEX_API_KEY      — OpenAI API Key（自动从 ~/.credentials/openai.env 加载）
-#   CODEX_MAX_RETRIES  — 最大重试次数（默认 10）
+#   CODEX_MAX_RETRIES  — 最大重试次数（默认 10，账号切换不计入）
 #   CECELIA_HEADLESS   — 设为 true 表示无头模式（自动设置）
 #   BRAIN_API_URL      — Brain API 地址（默认 http://localhost:5221，M4 需设置远程）
 #
-# 版本: v2.2.0
+# 版本: v2.3.0
 # 创建: 2026-03-13
 # ============================================================================
 
@@ -70,7 +78,25 @@ CODEX_BIN="${CODEX_BIN:-/opt/homebrew/bin/codex-bin}"
 CODEX_MAX_RETRIES="${CODEX_MAX_RETRIES:-10}"
 BRAIN_API_URL="${BRAIN_API_URL:-http://localhost:5221}"
 export CECELIA_HEADLESS=true
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+
+# ===== 账号列表初始化（v2.3.0）=====
+# CODEX_HOMES 优先：冒号分隔的多账号路径
+# 未设置时降级到单一 CODEX_HOME（向后兼容）
+CODEX_ACCOUNT_LIST=()
+if [[ -n "${CODEX_HOMES:-}" ]]; then
+    IFS=':' read -ra CODEX_ACCOUNT_LIST <<< "$CODEX_HOMES"
+    echo "🔑 多账号模式：${#CODEX_ACCOUNT_LIST[@]} 个账号"
+    for i in "${!CODEX_ACCOUNT_LIST[@]}"; do
+        echo "   账号 $((i+1)): ${CODEX_ACCOUNT_LIST[$i]}"
+    done
+else
+    CODEX_ACCOUNT_LIST=("${CODEX_HOME:-$HOME/.codex}")
+    echo "🔑 单账号模式（向后兼容）: ${CODEX_ACCOUNT_LIST[0]}"
+fi
+
+# 当前账号索引（从 0 开始）
+CURRENT_ACCOUNT_IDX=0
+export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"
 
 # ===== 加载 API Key（v2.1.0）=====
 # codex-bin v0.114.0 使用 CODEX_API_KEY（优先于 OPENAI_API_KEY）
@@ -291,14 +317,28 @@ ${prd_section}
 PROMPT
 }
 
+# ===== 账号切换函数（v2.3.0）=====
+# 返回 0：切换成功；返回 1：所有账号已耗尽
+switch_to_next_account() {
+    CURRENT_ACCOUNT_IDX=$((CURRENT_ACCOUNT_IDX + 1))
+    if [[ $CURRENT_ACCOUNT_IDX -ge ${#CODEX_ACCOUNT_LIST[@]} ]]; then
+        echo "❌ 所有账号（${#CODEX_ACCOUNT_LIST[@]} 个）均已耗尽，任务失败" >&2
+        return 1
+    fi
+    export CODEX_HOME="${CODEX_ACCOUNT_LIST[$CURRENT_ACCOUNT_IDX]}"
+    echo "🔄 账号切换：切换到账号 $((CURRENT_ACCOUNT_IDX + 1))/${#CODEX_ACCOUNT_LIST[@]}（$CODEX_HOME）"
+    return 0
+}
+
 # ===== 主循环 =====
-echo "🚀 Codex Runner v2.2.0 启动"
+echo "🚀 Codex Runner v2.3.0 启动"
 echo "   分支: $BRANCH"
 echo "   Task: ${TASK_ID:-（无）}"
 echo "   Skill: $SKILL"
 echo "   MaxRetries: $CODEX_MAX_RETRIES"
 echo "   ProjectRoot: $PROJECT_ROOT"
-echo "   CODEX_HOME: $CODEX_HOME"
+echo "   账号数: ${#CODEX_ACCOUNT_LIST[@]}"
+echo "   当前账号: $CODEX_HOME"
 echo "   DryRun: $DRY_RUN"
 echo "   BrainAPI: $BRAIN_API_URL"
 echo "   PRD 预拉: $([ -n "$PRD_CONTENT" ] && echo "✅ 成功（${#PRD_CONTENT} 字符）" || echo "❌ 未拉取（将降级到 --task-id）")"
@@ -324,7 +364,7 @@ while true; do
     fi
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  [Codex Runner: 第 $RETRY_COUNT/$CODEX_MAX_RETRIES 轮]"
+    echo "  [Codex Runner: 第 $RETRY_COUNT/$CODEX_MAX_RETRIES 轮 | 账号 $((CURRENT_ACCOUNT_IDX+1))/${#CODEX_ACCOUNT_LIST[@]}]"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # ===== 调用 devloop_check（SSOT）=====
@@ -368,14 +408,44 @@ while true; do
         break
     fi
 
-    echo "  执行 codex-bin exec (sandbox: danger-full-access)..."
+    echo "  执行 codex-bin exec (sandbox: danger-full-access, CODEX_HOME: $CODEX_HOME)..."
     # 修复: 不用 --cwd（codex-bin 不支持此参数）
     # 修复: --sandbox danger-full-access（full-access 是无效值）
     # 修复: cd 到项目目录后执行，确保工作目录正确
-    if ! (cd "$PROJECT_ROOT" && "$CODEX_BIN" exec \
+    # v2.3.0: 捕获输出以检测 Quota exceeded 错误
+    CODEX_OUTPUT=""
+    CODEX_EXIT_CODE=0
+    CODEX_OUTPUT=$(cd "$PROJECT_ROOT" && CODEX_HOME="$CODEX_HOME" "$CODEX_BIN" exec \
         --sandbox danger-full-access \
-        "$CODEX_PROMPT" 2>&1); then
-        echo "  ⚠️  codex-bin exec 返回非零，继续检查完成条件..." >&2
+        "$CODEX_PROMPT" 2>&1) || CODEX_EXIT_CODE=$?
+
+    # 输出到 stdout（让日志可见）
+    echo "$CODEX_OUTPUT"
+
+    # ===== Quota 检测与账号切换（v2.3.0）=====
+    if echo "$CODEX_OUTPUT" | grep -qi "Quota exceeded"; then
+        echo ""
+        echo "  ⚠️  检测到 Quota exceeded（账号 $((CURRENT_ACCOUNT_IDX+1)): $CODEX_HOME）"
+        if switch_to_next_account; then
+            echo "  ↩️  本轮不计入重试次数，继续下一轮（使用新账号）"
+            RETRY_COUNT=$((RETRY_COUNT - 1))
+            sleep 2
+            continue
+        else
+            # 所有账号耗尽
+            if [[ -n "$TASK_ID" ]]; then
+                curl -s -X PATCH "${BRAIN_API_URL}/api/brain/tasks/${TASK_ID}" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"status\":\"failed\",\"error\":\"所有 ${#CODEX_ACCOUNT_LIST[@]} 个 Codex 账号均 Quota exceeded\"}" \
+                    --max-time 5 2>/dev/null || true
+            fi
+            rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
+            exit 1
+        fi
+    fi
+
+    if [[ $CODEX_EXIT_CODE -ne 0 ]]; then
+        echo "  ⚠️  codex-bin exec 返回非零 (exit=$CODEX_EXIT_CODE)，继续检查完成条件..." >&2
     fi
 
     echo ""

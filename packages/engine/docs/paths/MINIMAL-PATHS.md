@@ -311,6 +311,14 @@ changelog:
 
 ---
 
+### codex-runner-account-rotation: Codex Runner 多账号轮换（CODEX_HOMES）
+
+1. ✅ **单账号（兼容）: CODEX_HOME 正常执行**
+2. ✅ **多账号轮换: Quota exceeded → 切换 → 继续**
+3. ✅ **全部耗尽: 报错退出**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
