@@ -78,6 +78,8 @@ import {
   hasPendingInternalTasks,
   countCeceliaInProgress,
   countAutoDispatchInProgress,
+  countCodexInProgress,
+  MAX_CODEX_CONCURRENT,
   calculateSlotBudget,
   getSlotStatus,
 } from '../slot-allocator.js';
@@ -337,6 +339,28 @@ describe('countAutoDispatchInProgress', () => {
   it('should return 0 on DB error', async () => {
     pool.query.mockRejectedValue(new Error('DB error'));
     expect(await countAutoDispatchInProgress()).toBe(0);
+  });
+});
+
+describe('countCodexInProgress', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should return count of codex-native in_progress tasks', async () => {
+    pool.query.mockResolvedValue({ rows: [{ count: '2' }] });
+    expect(await countCodexInProgress()).toBe(2);
+  });
+
+  it('should return 0 on DB error', async () => {
+    pool.query.mockRejectedValue(new Error('DB error'));
+    expect(await countCodexInProgress()).toBe(0);
+  });
+});
+
+describe('MAX_CODEX_CONCURRENT', () => {
+  it('should equal 3 (matching 3 Codex accounts)', () => {
+    expect(MAX_CODEX_CONCURRENT).toBe(3);
   });
 });
 
@@ -955,5 +979,30 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     const budget = await calculateSlotBudget();
     const poolSum = budget.user.budget + budget.cecelia.budget + budget.taskPool.budget;
     expect(poolSum).toBeLessThanOrEqual(budget.total);
+  });
+
+  it('codex 字段包含 running/max/available', async () => {
+    // DB mock: countCodexInProgress returns 2
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
+    const budget = await calculateSlotBudget();
+    expect(budget.codex).toBeDefined();
+    expect(budget.codex.max).toBe(3);
+    expect(budget.codex.running).toBe(2);
+    expect(budget.codex.available).toBe(true); // 2 < 3
+  });
+
+  it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // countCodexInProgress = 3 (full)
+    const budget = await calculateSlotBudget();
+    expect(budget.codex.running).toBe(3);
+    expect(budget.codex.available).toBe(false); // 3 >= 3
   });
 });

@@ -999,6 +999,17 @@ async function dispatchNextTask(goalIds) {
     }
   }
 
+  // 3d. Codex Pool D: check concurrent limit for Codex-native task types
+  const isCodexNativeTask = nextTask.task_type === 'codex_qa' || nextTask.task_type === 'codex_dev';
+  if (isCodexNativeTask) {
+    const codexSlots = slotBudget?.codex;
+    if (codexSlots && !codexSlots.available) {
+      console.log(`[dispatch] Codex pool full (${codexSlots.running}/${codexSlots.max}), skipping codex task ${nextTask.id}`);
+      await recordDispatchResult(pool, false, 'codex_pool_full');
+      return { dispatched: false, reason: 'codex_pool_full', codex_running: codexSlots.running, codex_max: codexSlots.max, task_id: nextTask.id, actions };
+    }
+  }
+
   // 4. Update task status to in_progress
   const updateResult = await updateTask({
     task_id: nextTask.id,

@@ -26,10 +26,27 @@ interface BrainStatus {
   };
 }
 
+interface BudgetState {
+  state: 'abundant' | 'moderate' | 'tight' | 'critical';
+  avg_remaining_pct: number;
+  pool_c_scale: number;
+}
+
+interface CodexPoolInfo {
+  running: number;
+  max: number;
+  available: boolean;
+}
+
 interface TickStatus {
   actions_today: number;
   alertness: { levelName: string };
-  slot_budget: { dispatchAllowed: boolean; pressure: number };
+  slot_budget: {
+    dispatchAllowed: boolean;
+    pressure: number;
+    budgetState?: BudgetState | null;
+    codex?: CodexPoolInfo | null;
+  };
   last_dispatch: { task_title: string; dispatched_at: string; success: boolean } | null;
   max_concurrent: number;
 }
@@ -634,6 +651,46 @@ function CodexUsageRings() {
   );
 }
 
+// ── Budget State Badge ─────────────────────────────────────────────
+
+const BUDGET_STATE_CONFIG = {
+  abundant: { label: '充裕', color: '#10b981', bg: 'rgba(16,185,129,.15)' },
+  moderate: { label: '适中', color: '#f59e0b', bg: 'rgba(245,158,11,.15)' },
+  tight:    { label: '紧张', color: '#f97316', bg: 'rgba(249,115,22,.15)' },
+  critical: { label: '危急', color: '#ef4444', bg: 'rgba(239,68,68,.15)' },
+} as const;
+
+function BudgetBadge({ budgetState, codex }: { budgetState?: BudgetState | null; codex?: CodexPoolInfo | null }) {
+  if (!budgetState) return null;
+  const cfg = BUDGET_STATE_CONFIG[budgetState.state] ?? BUDGET_STATE_CONFIG.abundant;
+  const scale = Math.round(budgetState.pool_c_scale * 100);
+  const remaining = Math.round(budgetState.avg_remaining_pct);
+  return (
+    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
+      {/* State badge */}
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        padding: '2px 7px', borderRadius: 99,
+        background: cfg.bg, border: `1px solid ${cfg.color}`,
+        fontSize: 9, fontFamily: 'monospace', color: cfg.color, fontWeight: 600,
+      }}>
+        <span style={{ width: 5, height: 5, borderRadius: '50%', background: cfg.color, flexShrink: 0 }} />
+        {cfg.label}
+      </div>
+      {/* Metrics row */}
+      <div style={{ display: 'flex', gap: 6, fontSize: 8, fontFamily: 'monospace', color: '#6e7681' }}>
+        <span title="Pool C 缩放比例">C×{scale}%</span>
+        <span title="平均剩余额度">余{remaining}%</span>
+        {codex && (
+          <span title="Codex 并发" style={{ color: codex.available ? '#6e7681' : '#ef4444' }}>
+            CDX {codex.running}/{codex.max}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Projects by Area ──────────────────────────────────────────────
 
 const INACTIVE_STATUSES = new Set(['completed', 'archived', 'cancelled', 'done']);
@@ -1176,6 +1233,10 @@ export default function LiveMonitorPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-around' }}>
                   <CodexUsageRings />
                 </div>
+                <BudgetBadge
+                  budgetState={tick?.slot_budget?.budgetState}
+                  codex={tick?.slot_budget?.codex}
+                />
               </div>
 
               {/* AGENTS — 紧凑 */}
