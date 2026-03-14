@@ -15,7 +15,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -40,7 +40,7 @@ jobs:
 
   verify-dev-workflow:
     name: Verify /dev Workflow (Branch Name Check)
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: 验证分支必须通过 /dev 创建
@@ -95,7 +95,7 @@ jobs:
   cleanup-check:
     name: Cleanup Check (Step 6.5 Simplify)
     needs: verify-dev-workflow
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -210,7 +210,7 @@ jobs:
   check-prd:
     name: PRD Success Criteria Check
     needs: verify-dev-workflow
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
@@ -227,7 +227,7 @@ jobs:
   check-learning:
     name: Learning Format Gate
     needs: verify-dev-workflow
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
@@ -278,7 +278,7 @@ jobs:
   required-paths-check:
     name: Required Dev Paths Check
     needs: verify-dev-workflow
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
@@ -357,7 +357,7 @@ jobs:
 
   ci-config-audit:
     name: CI Config Audit
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
@@ -651,7 +651,7 @@ jobs:
     name: Dev Health Gate
     needs: [changes, verify-dev-workflow]
     if: needs.changes.outputs.engine == 'true'
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -673,7 +673,7 @@ jobs:
     name: L1 Process Gate Passed
     needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check]
     if: always()
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: L1 Process Gate
