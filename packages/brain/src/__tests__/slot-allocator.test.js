@@ -47,6 +47,22 @@ vi.mock('../db.js', () => ({
   },
 }));
 
+// Mock token-budget-planner.js — 防止 calculateBudgetState 调用 getAccountUsage/pool.query
+// 干扰 slot-allocator 测试的 mockResolvedValueOnce 调用顺序
+vi.mock('../token-budget-planner.js', () => ({
+  calculateBudgetState: vi.fn(() => Promise.resolve({
+    state: 'abundant',
+    avg_remaining_pct: 100,
+    pool_c_scale: 1.0,
+    autonomous_reserve_pct: 0.70,
+    user_reserve_pct: 0.30,
+    accounts: [],
+    budget_breakdown: {},
+  })),
+  shouldDowngrade: vi.fn(() => false),
+  getExecutorAffinity: vi.fn(() => ({ primary: 'claude', fallback: 'codex', no_downgrade: false })),
+}));
+
 import { execSync } from 'child_process';
 import { checkServerResources, getEffectiveMaxSeats, getBudgetCap } from '../executor.js';
 import pool from '../db.js';

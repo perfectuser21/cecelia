@@ -10,6 +10,7 @@ import { getDailyFocus } from './focus.js';
 import { updateTask, createTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
+import { shouldDowngrade } from './token-budget-planner.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
@@ -1036,7 +1037,27 @@ async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'task_not_found', task_id: nextTask.id, actions };
   }
 
-  const execResult = await triggerCeceliaRun(fullTaskResult.rows[0]);
+  // Budget-aware executor downgrade：
+  // 当 Claude 7day 配额紧张（tight/critical）时，将可降级的任务（dev/code_review）
+  // 自动路由到 Codex（设置 provider=codex），节省 Claude token。
+  let taskToDispatch = fullTaskResult.rows[0];
+  try {
+    const budgetState = slotBudget?.budgetState?.state || 'abundant';
+    const taskType = taskToDispatch.task_type || 'dev';
+    if (shouldDowngrade(taskType, budgetState)) {
+      console.log(`[dispatch] budget_state=${budgetState} → downgrade task=${taskToDispatch.id} type=${taskType} to codex`);
+      taskToDispatch = {
+        ...taskToDispatch,
+        provider: 'codex',
+        _downgraded: true,
+        _downgrade_reason: `budget_state=${budgetState}`,
+      };
+    }
+  } catch (err) {
+    console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
+  }
+
+  const execResult = await triggerCeceliaRun(taskToDispatch);
 
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success) {
