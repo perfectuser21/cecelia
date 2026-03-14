@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Codex Runner — Codex CLI Provider 适配器 v2.0.0
+# Codex Runner — Codex CLI Provider 适配器 v2.1.0
 # ============================================================================
 # 这是 Codex（OpenAI）Provider 的协议适配器。
 # 完成判断逻辑来自 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -26,10 +26,11 @@
 # 环境变量:
 #   CODEX_BIN          — codex-bin 路径（默认 /opt/homebrew/bin/codex-bin）
 #   CODEX_HOME         — Codex 配置目录（默认 ~/.codex）
+#   CODEX_API_KEY      — OpenAI API Key（自动从 ~/.credentials/openai.env 加载）
 #   CODEX_MAX_RETRIES  — 最大重试次数（默认 10）
 #   CECELIA_HEADLESS   — 设为 true 表示无头模式（自动设置）
 #
-# 版本: v2.0.0
+# 版本: v2.1.0
 # 创建: 2026-03-13
 # ============================================================================
 
@@ -65,6 +66,29 @@ CODEX_BIN="${CODEX_BIN:-/opt/homebrew/bin/codex-bin}"
 CODEX_MAX_RETRIES="${CODEX_MAX_RETRIES:-10}"
 export CECELIA_HEADLESS=true
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+
+# ===== 加载 API Key（v2.1.0）=====
+# codex-bin v0.114.0 使用 CODEX_API_KEY（优先于 OPENAI_API_KEY）
+# 若环境中已有则直接使用，否则从 credentials 文件加载
+if [[ -z "${CODEX_API_KEY:-}" ]]; then
+    CREDENTIALS_FILE="$HOME/.credentials/openai.env"
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        # 从 credentials 文件提取 OPENAI_API_KEY 的值
+        _raw_key=$(grep -E '^OPENAI_API_KEY=' "$CREDENTIALS_FILE" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')
+        if [[ -n "$_raw_key" ]]; then
+            export CODEX_API_KEY="$_raw_key"
+            echo "✅ 从 $CREDENTIALS_FILE 加载 CODEX_API_KEY"
+        else
+            echo "⚠️  $CREDENTIALS_FILE 中未找到 OPENAI_API_KEY" >&2
+        fi
+        unset _raw_key
+    else
+        echo "⚠️  未找到 credentials 文件: $CREDENTIALS_FILE" >&2
+        echo "   请设置 CODEX_API_KEY 环境变量或创建 $CREDENTIALS_FILE" >&2
+    fi
+else
+    echo "✅ 使用已有的 CODEX_API_KEY 环境变量"
+fi
 
 # ===== 查找 Engine 根目录 =====
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
