@@ -323,6 +323,16 @@ cleanup.sh step 7.6 步骤不全 → WARN 输出 → VALIDATION_PASSED=true → 
 
 ---
 
+### worktree-max-limit: worktree-manage.sh MAX_WORKTREES 数量上限检查
+
+```
+worktree 数量 < 8 → 正常创建 →
+worktree 数量 >= 8 → exit 1 + 错误提示 →
+运行 worktree-gc.sh 清理 → 重试创建
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -304,6 +304,13 @@ changelog:
 
 ---
 
+### worktree-max-limit: worktree-manage.sh MAX_WORKTREES 数量上限检查
+
+1. ✅ **数量 < 8: 正常流程**
+2. ✅ **数量 >= 8: 拒绝创建，提示 GC**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
