@@ -1,3 +1,8 @@
+> ⚠️ **v4.0 重组**：DoD 框架在 Step 1 TaskCard 中一起写，Test 字段在 Step 2 探索后填写。
+> 本文件的 Test 字段写作规范（[BEHAVIOR] 禁止 grep 等）继续有效，Step 2 时参考。
+
+---
+
 # Step 5: DoD
 
 > 定义验收标准（Definition of Done）— 基于探索结果，更准确

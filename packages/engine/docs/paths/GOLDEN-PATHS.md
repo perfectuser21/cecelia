@@ -564,6 +564,22 @@ hook 验证通过 →
 
 ---
 
+## GP-036: /dev Skill 文档重组为6步 Task Card 格式 (S12)
+
+**Feature**: S12 - /dev Skill 文档重组为6步 Task Card 格式
+**Priority**: P1
+
+### Golden Path
+
+```
+用户运行 /dev →
+读 SKILL.md 流程图（6步） →
+Step 1 创建 .task 文件（合并 PRD + DoD） →
+后续步骤引用 .task 完成开发
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

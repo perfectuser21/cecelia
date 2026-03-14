@@ -2071,20 +2071,19 @@ async function triggerCeceliaRun(task) {
 async function checkCeceliaRunAvailable() {
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
   try {
-    // Original bridge doesn't have /health, just check if it responds
-    const response = await fetch(`${EXECUTOR_BRIDGE_URL}/`, { method: 'GET', signal: AbortSignal.timeout(3000) });
-    // 404 means bridge is running (no GET handler)
-    return { available: true, path: EXECUTOR_BRIDGE_URL, bridge: true };
+    const response = await fetch(`${EXECUTOR_BRIDGE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(3000) });
+    if (response.ok) {
+      return { available: true, path: EXECUTOR_BRIDGE_URL, bridge: true };
+    }
+    return { available: false, path: EXECUTOR_BRIDGE_URL, error: `Bridge health check failed: ${response.status}` };
   } catch (err) {
     if (err.name === 'AbortError') {
       return { available: false, path: EXECUTOR_BRIDGE_URL, error: 'Timeout' };
     }
-    // Connection refused means not running
     if (err.cause?.code === 'ECONNREFUSED') {
       return { available: false, path: EXECUTOR_BRIDGE_URL, error: 'Bridge not running' };
     }
-    // Other errors might mean it's running but returned error
-    return { available: true, path: EXECUTOR_BRIDGE_URL, bridge: true };
+    return { available: false, path: EXECUTOR_BRIDGE_URL, error: err.message };
   }
 }
 
