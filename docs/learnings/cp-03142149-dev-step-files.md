@@ -15,7 +15,7 @@ changelog:
 
 同时，DoD 中用 `echo 'xxx' && exit 0` 作为测试命令会被 check-dod-mapping.cjs 识别为"echo 假测试"并拒绝，必须改用真实文件检查命令（如 `ls` 或 `grep -c`）。
 
-## 预防清单
+## 下次预防
 
 - [ ] 修改 packages/engine/skills/ 下任何文件时，立即 bump Engine 版本（6个文件：package.json、package-lock.json(engine)、根 package-lock.json 的 engine 条目、VERSION、.hook-core-version、regression-contract.yaml）
 - [ ] DoD Test 命令禁止用 `echo`，改用 `ls`、`grep -c`、`bash -c "ls ..."` 等真实命令
