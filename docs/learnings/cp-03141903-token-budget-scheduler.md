@@ -31,6 +31,12 @@ changelog:
 - 30% 保留给用户手动使用（USER_RESERVE_PCT）
 - tight/critical 时 dev/code_review 自动降级给 Codex
 
+## 下次预防
+
+- [ ] DoD Test 路径用相对路径，测试文件在 `packages/brain/src/__tests__/`，不是 `packages/brain/__tests__/`
+- [ ] Learning 文件必须包含"下次预防"章节和 `- [ ]` checklist，否则 Learning Format Gate 报错
+- [ ] 新模块 import 若调用 pool.query，必须在已有测试里添加 `vi.mock` 阻止干扰
+
 ## 关键陷阱
 
 ### slot-allocator.test.js 被 pool.query 消耗顺序干扰
