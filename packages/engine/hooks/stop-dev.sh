@@ -369,8 +369,8 @@ if [[ "$DEV_MODE" != "dev" ]]; then
     echo "  .dev-mode 首行损坏 → 安全默认阻止退出" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    save_block_reason ".dev-mode 首行损坏（期望 dev，实际 $DEV_MODE）"
-    jq -n --arg reason ".dev-mode 首行损坏（期望 'dev'，实际 '$DEV_MODE'）。.dev-lock 存在说明 /dev 在运行中，安全默认阻止退出。请重建 .dev-mode 文件：第一行必须是 'dev'，后跟 branch/session_id 等字段。" '{"decision": "block", "reason": $reason}'
+    save_block_reason ".dev-mode 首行损坏（期望 dev，实际 ${DEV_MODE}）"
+    jq -n --arg reason ".dev-mode 首行损坏（期望 'dev'，实际 '${DEV_MODE}'）。.dev-lock 存在说明 /dev 在运行中，安全默认阻止退出。请重建 .dev-mode 文件：第一行必须是 'dev'，后跟 branch/session_id 等字段。" '{"decision": "block", "reason": $reason}'
     exit 2
 fi
 
