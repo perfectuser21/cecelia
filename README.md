@@ -29,3 +29,4 @@ cd apps/dashboard && npm ci && npm run dev
 bash scripts/brain-build.sh    # 构建 Brain Docker 镜像
 bash scripts/rolling-update.sh # 零停机部署
 ```
+<!-- codex-runner v2.4.0 gpt-5.4 verified -->
