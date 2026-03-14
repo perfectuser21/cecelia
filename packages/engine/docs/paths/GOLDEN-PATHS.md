@@ -561,7 +561,23 @@ PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
 
 ---
 
-## GP-036: /dev Skill 文档重组为6步 Task Card 格式 (S12)
+## GP-036: DevGate 脚本支持 Task Card 格式（.task-{branch}.md） (task-card-format-support)
+
+**Feature**: task-card-format-support - DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
+**Priority**: P1
+
+### Golden Path
+
+```
+分支有 .task-{branch}.md →
+check-prd.sh 优先读取 .task-*.md →
+check-dod-mapping.cjs 优先读取 .task-*.md →
+检查通过
+```
+
+---
+
+## GP-037: /dev Skill 文档重组为6步 Task Card 格式 (S12)
 
 **Feature**: S12 - /dev Skill 文档重组为6步 Task Card 格式
 **Priority**: P1

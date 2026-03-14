@@ -362,6 +362,17 @@ PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
 
 ---
 
+### task-card-format-support: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
+
+```
+分支有 .task-{branch}.md →
+check-prd.sh 优先读取 .task-*.md →
+check-dod-mapping.cjs 优先读取 .task-*.md →
+检查通过
+```
+
+---
+
 ### S12: /dev Skill 文档重组为6步 Task Card 格式
 
 ```

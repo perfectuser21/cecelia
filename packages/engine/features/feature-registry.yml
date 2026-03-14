@@ -1592,6 +1592,37 @@ product_features:
       - "新格式: .task-{branch}.md 被正确识别"
       - "旧格式: .dod-{branch}.md / .prd-{branch}.md 向后兼容"
 
+  - id: task-card-format-support
+    name: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      check-prd.sh 和 check-dod-mapping.cjs 新增对 .task-{branch}.md 格式的支持。
+      .task-{branch}.md 是 PRD+DoD 合并的 Task Card 格式，优先级高于旧格式。
+      向后兼容：.prd-{branch}.md / .dod-{branch}.md 旧格式继续有效。
+
+    entrypoints:
+      - type: script
+        file: scripts/devgate/check-prd.sh
+        trigger: "CI L1 DevGate 执行 PRD 检查时"
+      - type: script
+        file: scripts/devgate/check-dod-mapping.cjs
+        trigger: "CI L2 DevGate 执行 DoD 映射检查时"
+
+    golden_path: |
+      分支有 .task-{branch}.md →
+      check-prd.sh 优先读取 .task-*.md →
+      check-dod-mapping.cjs 优先读取 .task-*.md →
+      检查通过
+
+    minimal_paths:
+      - "新格式: .task-{branch}.md 存在时优先使用"
+      - "旧格式: .task-*.md 不存在时 fallback 到 .prd-*.md / .dod-*.md"
+
+    rcis: []
+
   - id: S12
     name: /dev Skill 文档重组为6步 Task Card 格式
     status: Committed

@@ -514,7 +514,11 @@ function getDodFilePath(projectRoot, explicitFile) {
   }
 
   const branch = getCurrentBranch();
-  const branchDod = path.join(projectRoot, `.dod-${branch}.md`);
+  // 优先查找 .task-{branch}.md（Task Card 格式），再 fallback 到 .dod-{branch}.md
+  const taskCard = path.join(projectRoot, `.task-${branch}.md`);
+  const branchDod = fs.existsSync(taskCard)
+    ? taskCard
+    : path.join(projectRoot, `.dod-${branch}.md`);
   const defaultDod = path.join(projectRoot, ".dod.md");
 
   if (fs.existsSync(branchDod)) {
