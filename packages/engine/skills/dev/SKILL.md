@@ -151,9 +151,14 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ```
 dev
 branch: cp-xxx
-prd: .prd-cp-xxx.md
+task_card: .task-cp-xxx.md
 started: 2026-01-29T10:00:00+00:00
-tasks_created: true
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: pending
+step_3_prci: pending
+step_4_learning: pending
+step_5_clean: pending
 ```
 
 **生命周期**：
@@ -381,46 +386,39 @@ auto-version 自动更新 5 个文件：package.json、package-lock.json、.brai
 skills/dev/
 ├── SKILL.md        ← 你在这里（入口 + 流程总览）
 ├── steps/          ← 每步详情（按需加载）
-│   ├── 00-worktree-auto.md ← Worktree 自动检测（前置，Step 1 之前）
-│   ├── 01-prd.md       ← PRD 确认
-│   ├── 02-detect.md    ← 环境检测
-│   ├── 03-branch.md    ← 创建 .dev-mode
-│   ├── 04-explore.md   ← 探索（读代码理解架构）
-│   ├── 05-dod.md       ← DoD 定稿（基于探索结果）
-│   ├── 06-code.md      ← 写代码 + 测试
-│   ├── 07-verify.md    ← 本地验证（跑 npm test）
-│   ├── 08-pr.md
-│   ├── 09-ci.md
-│   ├── 10-learning.md  ← 记录经验
-│   └── 11-cleanup.md   ← 删除 .dev-mode
+│   ├── 00-worktree-auto.md
+│   ├── 01-taskcard.md      ← 新（替代原01+05前半）
+│   ├── 02-code.md          ← 替代原04+05后半+06+07
+│   ├── 03-prci.md          ← 替代原08+09
+│   ├── 04-learning.md      ← 原10不变
+│   └── 05-clean.md         ← 替代原11
 └── scripts/        ← 辅助脚本
     ├── cleanup.sh
     ├── check.sh
     └── ...
 ```
 
-### 流程图 (v3.3 - 步骤重构)
+### 流程图 (v4.0 - Task Card 重构)
 
 ```
-0-Worktree → 检测 .dev-mode 冲突 → 自动 worktree + cd（如需要）
-    ↓
-1-PRD ────→ 生成 PRD（branch-protect 检查文件存在）
-    ↓
-2-Detect → 3-Branch
-    ↓
-4-Explore → 读代码理解架构，输出实现方案
-    ↓
-5-DoD ────→ DoD 定稿（基于探索结果，每条有 Test 字段）
-    ↓
-6-Code ───→ 写代码 + 测试
-    ↓
-7-Verify ─→ 本地跑 npm test（省一轮 CI）
-    ↓
-8-PR → 9-CI（等通过，⚠️ 不在此处合并！）→ 10-Learning（写 LEARNINGS → push 到功能分支 → 合并 PR）→ 11-Cleanup
-
-❌ 严禁：CI 通过后立即合并 PR（会导致 Learning 产生第二个 PR）
-✅ 必须：CI 通过 → Step 10 写 Learning → push → 合并 → Cleanup
+Step 0: Worktree → 检测/创建 worktree
+Step 1: TaskCard → 生成 .task-cp-xxx.md（需求+成功标准+DoD框架）
+Step 2: Code → 探索+DoD定稿+写代码+本地验证
+Step 3: PR+CI → push+等CI+修CI
+Step 4: Learning → 写Learning+合并PR
+Step 5: Clean → 归档+清理worktree
 ```
+
+### 步骤映射（新→旧，内部逻辑一个不少）
+
+| 新步骤 | 原步骤 | 核心变化 |
+|--------|--------|----------|
+| Step 0: Worktree | Step 00 | 完全不变 |
+| Step 1: TaskCard | Step 01+02+03+05前半 | PRD+DoD 合并为单文件 |
+| Step 2: Code | Step 04+05后半+06+07 | 探索驱动 DoD 定稿 |
+| Step 3: PR+CI | Step 08+09 | 合并为单步 |
+| Step 4: Learning | Step 10 | 完全不变 |
+| Step 5: Clean | Step 11 | 单文件归档 |
 
 ### 两层职责分离
 
@@ -436,10 +434,9 @@ skills/dev/
 
 | 产物 | 位置 | 检查方式 | 检查时机 |
 |------|------|----------|----------|
-| PRD | .prd-*.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod-*.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
+| Task Card | .task-cp-xxx.md | branch-protect 检查 | 写代码前 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
-| Learning | docs/learnings/\<branch\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Step 10 完成时（合并前）|
+| Learning | docs/learnings/\<branch\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Step 4 完成时（合并前）|
 
 ---
 
