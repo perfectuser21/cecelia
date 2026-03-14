@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-14] DevGate 脚本支持 Task Card 格式（PR #cp-03142135-task-card-scripts）
+
+**背景**：新增 `.task-{branch}.md` 格式作为 PRD+DoD 合并的 Task Card，需要让 check-prd.sh 和 check-dod-mapping.cjs 能识别此格式，同时不破坏旧格式。
+
+#### 关键实现
+
+- `check-prd.sh`：在 `PRD_FILE` 赋值前添加 `if/elif` 块，优先检测 `.task-${BRANCH}.md`，向后兼容 `.prd-${BRANCH}.md`
+- `check-dod-mapping.cjs`：在 `getDodFilePath()` 函数中，用 `fs.existsSync(taskCard)` 判断后三元赋值给 `branchDod`，一行改动，不影响后续 `fs.existsSync(branchDod)` 判断逻辑
+
+#### Engine 版本 bump 三要素（必须同时满足）
+
+1. **PR title 含 `[CONFIG]` tag**（Config Audit L1 检查）
+2. **Engine 版本 bump 7 个文件**：`package.json` + `package-lock.json`(engine) + 根 `package-lock.json`(engine 条目) + `VERSION` + `ci-tools/VERSION` + `.hook-core-version` + `regression-contract.yaml`
+3. **feature-registry.yml 新增条目** + 运行 `bash packages/engine/scripts/generate-path-views.sh`
+
+#### 下次预防
+
+- [ ] 修改 `packages/engine/scripts/devgate/` 目录下任何脚本，均视为 Engine skills 改动，触发三要素流程
+- [ ] `feature-registry.yml` 追加时注意不要用 Edit 工具替换最后一个 `rcis: []`（有多处匹配），改用 `cat >>` 追加
+
+---
+
 ### [2026-03-14] Codex runner.sh PRD 预注入（PR #codex-runner-prd-inject）
 
 **背景**：Brain 只在 US VPS 运行，Codex 在西安 M4 运行。runner.sh 发送 `/dev --task-id XXX` 给 Codex 后，Codex 在 M4 侧执行 `/dev` skill 的 Step 01，skill 调用 `localhost:5221` 获取 PRD — 但 M4 没有 Brain，导致失败。

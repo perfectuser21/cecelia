@@ -326,6 +326,13 @@ changelog:
 
 ---
 
+### task-card-format-support: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
+
+1. ✅ **新格式: .task-{branch}.md 存在时优先使用**
+2. ✅ **旧格式: .task-*.md 不存在时 fallback 到 .prd-*.md / .dod-*.md**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

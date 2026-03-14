@@ -354,6 +354,17 @@ codex-bin exec --model gpt-5.4 执行 →
 
 ---
 
+### task-card-format-support: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
+
+```
+分支有 .task-{branch}.md →
+check-prd.sh 优先读取 .task-*.md →
+check-dod-mapping.cjs 优先读取 .task-*.md →
+检查通过
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
