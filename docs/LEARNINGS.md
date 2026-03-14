@@ -5646,3 +5646,13 @@ Mac mini M1（16GB / 8核）：每个 L4 run = 3 shard 并行（各 1 PostgreSQL
 ### 向后兼容设计
 
 旧的 `.prd-*.md` 和 `.dod-*.md` 验证块保持不变，只在 task card 不存在时才回退使用。两套格式完全独立，不互相干扰。
+
+### 根本原因
+
+LEARNINGS.md 条目缺少 CI Learning Format Gate 要求的标准结构：`### 根本原因` 和 `### 下次预防 - [ ]` 章节。CI gate 通过 `check-learning.sh` 脚本检测分支新增的 LEARNINGS 内容，若不含这两个三级标题和至少一条 `- [ ]` 预防措施，则 hard fail。
+
+### 下次预防
+
+- [ ] 写 LEARNINGS 时必须包含完整三段结构：`## 标题（日期）` + `### 根本原因` + `### 下次预防 - [ ] 条目`，缺一不可
+- [ ] push 前用 `grep -c "下次预防" docs/LEARNINGS.md` 验证格式，确保返回值 > 0
+- [ ] Engine 改动 PR 的 LEARNINGS 必须和代码在同一个 commit 里，不能事后补写
