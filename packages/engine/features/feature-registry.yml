@@ -1542,3 +1542,29 @@ product_features:
       - "全部耗尽: 报错退出"
 
     rcis: []
+  - id: codex-runner-model-selection
+    name: Codex Runner 模型选择（CODEX_MODEL）
+    status: active
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      runner.sh v2.4.0 新增 CODEX_MODEL 环境变量支持（默认 gpt-5.4）。
+      通过 --model 参数显式指定 Codex 模型，避免 CLI 自动选择 gpt-5.3-codex
+      导致 Quota exceeded 失败。设置 CODEX_MODEL=gpt-5.3-codex 可恢复旧行为。
+
+    entrypoints:
+      - type: script
+        file: runners/codex/runner.sh
+        trigger: "codex-bin exec 时传入 --model $CODEX_MODEL"
+
+    golden_path: |
+      CODEX_MODEL 读取（默认 gpt-5.4） →
+      codex-bin exec --model gpt-5.4 执行 →
+      成功返回（无 Quota exceeded）
+
+    minimal_paths:
+      - "默认: gpt-5.4 执行，无 quota 问题"
+      - "自定义: CODEX_MODEL=gpt-5.3-codex 恢复旧行为"
+
+    rcis: []

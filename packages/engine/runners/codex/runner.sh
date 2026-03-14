@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Codex Runner — Codex CLI Provider 适配器 v2.3.0
+# Codex Runner — Codex CLI Provider 适配器 v2.4.0
 # ============================================================================
 # 这是 Codex（OpenAI）Provider 的协议适配器。
 # 完成判断逻辑来自 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -38,11 +38,12 @@
 #                        例: /home/user/.codex-team1:/home/user/.codex-team2
 #   CODEX_HOME         — 单账号配置目录（CODEX_HOMES 未设置时使用，默认 ~/.codex）
 #   CODEX_API_KEY      — OpenAI API Key（自动从 ~/.credentials/openai.env 加载）
+#   CODEX_MODEL        — Codex 模型（默认 gpt-5.4，避免 gpt-5.3-codex quota 问题）
 #   CODEX_MAX_RETRIES  — 最大重试次数（默认 10，账号切换不计入）
 #   CECELIA_HEADLESS   — 设为 true 表示无头模式（自动设置）
 #   BRAIN_API_URL      — Brain API 地址（默认 http://localhost:5221，M4 需设置远程）
 #
-# 版本: v2.3.0
+# 版本: v2.4.0
 # 创建: 2026-03-13
 # ============================================================================
 
@@ -75,6 +76,7 @@ fi
 
 # ===== 配置 =====
 CODEX_BIN="${CODEX_BIN:-/opt/homebrew/bin/codex-bin}"
+CODEX_MODEL="${CODEX_MODEL:-gpt-5.4}"
 CODEX_MAX_RETRIES="${CODEX_MAX_RETRIES:-10}"
 BRAIN_API_URL="${BRAIN_API_URL:-http://localhost:5221}"
 export CECELIA_HEADLESS=true
@@ -408,14 +410,16 @@ while true; do
         break
     fi
 
-    echo "  执行 codex-bin exec (sandbox: danger-full-access, CODEX_HOME: $CODEX_HOME)..."
+    echo "  执行 codex-bin exec (sandbox: danger-full-access, CODEX_HOME: $CODEX_HOME, 当前模型: $CODEX_MODEL)..."
     # 修复: 不用 --cwd（codex-bin 不支持此参数）
     # 修复: --sandbox danger-full-access（full-access 是无效值）
     # 修复: cd 到项目目录后执行，确保工作目录正确
     # v2.3.0: 捕获输出以检测 Quota exceeded 错误
+    # v2.4.0: 通过 --model 指定模型，默认 gpt-5.4（避免 gpt-5.3-codex quota 问题）
     CODEX_OUTPUT=""
     CODEX_EXIT_CODE=0
     CODEX_OUTPUT=$(cd "$PROJECT_ROOT" && CODEX_HOME="$CODEX_HOME" "$CODEX_BIN" exec \
+        --model "$CODEX_MODEL" \
         --sandbox danger-full-access \
         "$CODEX_PROMPT" 2>&1) || CODEX_EXIT_CODE=$?
 

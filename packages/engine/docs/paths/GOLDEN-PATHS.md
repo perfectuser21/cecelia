@@ -533,6 +533,21 @@ codex-bin exec 执行 →
 
 ---
 
+## GP-034: Codex Runner 模型选择（CODEX_MODEL） (codex-runner-model-selection)
+
+**Feature**: codex-runner-model-selection - Codex Runner 模型选择（CODEX_MODEL）
+**Priority**: P0
+
+### Golden Path
+
+```
+CODEX_MODEL 读取（默认 gpt-5.4） →
+codex-bin exec --model gpt-5.4 执行 →
+成功返回（无 Quota exceeded）
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -319,6 +319,13 @@ changelog:
 
 ---
 
+### codex-runner-model-selection: Codex Runner 模型选择（CODEX_MODEL）
+
+1. ✅ **默认: gpt-5.4 执行，无 quota 问题**
+2. ✅ **自定义: CODEX_MODEL=gpt-5.3-codex 恢复旧行为**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
