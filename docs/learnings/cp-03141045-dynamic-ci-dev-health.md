@@ -8,7 +8,20 @@ changelog:
   - 1.0.0: 初始版本
 ---
 
-# Learning: /dev 专属健康保护 + CI Dev Health Gate
+# Learning: /dev 专属健康保护 + CI Dev Health Gate（2026-03-14）
+
+### 根本原因
+
+1. **.dev-lock context 压缩恢复缺口**：context 压缩重载后 `.dev-lock.<branch>` 不在恢复列表中，Stop Hook 找不到它 → exit 0 快速路径 → 整个循环机制无声失效
+2. **bash 单字符局部变量编码污染**：含中文注释的 bash 文件中，单字符变量名（`p`）易被相邻中文字符的 Unicode 零宽字符污染，导致 `p°: unbound variable`
+3. **/dev 无专属 CI 守护**：Stop Hook、branch-protect 逻辑改坏无任何 CI 检测，整个自主系统可静默瘫痪
+
+### 下次预防
+
+- [ ] bash 函数中避免使用单字符局部变量名，用描述性长名（`path_to_check`、`hook_file`）
+- [ ] 新增任何高风险基础设施路径时，同步更新 `required-dev-paths.yml`
+- [ ] /dev 相关文件修改（skills/dev/、hooks/）必须先跑 `bash test-dev-health.sh` 本地验证
+- [ ] DoD Test 命令禁止 `&& echo OK` 模式，改用 `grep -c`（输出数字，非零即通过）
 
 ## 背景
 
