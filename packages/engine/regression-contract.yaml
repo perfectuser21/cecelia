@@ -3105,7 +3105,7 @@ skills:
 
   - id: S3-001
     feature: S3
-    name: "/dev 健康检查脚本（test-dev-health）"
+    name: "/dev 健康检查脚本 test-dev-health.sh"
     scope: health
     priority: P1
     trigger: [PR]
@@ -3114,9 +3114,9 @@ skills:
     owner: infra
     steps:
       given: "engine 相关文件变更"
-      when: "运行 bash packages/engine/scripts/test-dev-health.sh"
+      when: "运行 bash scripts/test-dev-health.sh"
       then: "5 项检查全部通过（Hook 语法/Stop Hook exit 0/必填字段/重建逻辑/高风险路径）"
     evidence:
       type: command
-      path: "scripts/test-dev-health.sh"
+      run: "bash scripts/test-dev-health.sh"
     test: "manual:bash packages/engine/scripts/test-dev-health.sh"
