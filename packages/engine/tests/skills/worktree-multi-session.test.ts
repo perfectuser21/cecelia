@@ -124,8 +124,8 @@ fi
 
       writeFileSync(oldSessionFile, "{}");
 
-      // 修改文件时间为 2 小时前
-      execSync(`touch -t $(date -d '2 hours ago' +%Y%m%d%H%M) "${oldSessionFile}"`);
+      // 修改文件时间为 2 小时前（跨平台：macOS 用 -v-2H，Linux 用 -d）
+      execSync(`touch -t $(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M) "${oldSessionFile}"`);
 
       // 清理过期会话
       execSync(

@@ -265,7 +265,7 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
         DATE_2_DAYS_AGO=$(date -v-2d +%Y%m%d 2>/dev/null || date -d "2 days ago" +%Y%m%d 2>/dev/null || echo "")
         if [[ -n "$DATE_2_DAYS_AGO" && "$BRANCH_DATE" < "$DATE_2_DAYS_AGO" ]]; then
             echo "" >&2
-            echo "  [WARN] 分支日期 $BRANCH_DATE 已超过 2 天（今天 $TODAY，最早允许 $DATE_2_DAYS_AGO）" >&2
+            echo "  [WARN] 分支日期 ${BRANCH_DATE} 已超过 2 天（今天 ${TODAY}，最早允许 ${DATE_2_DAYS_AGO}）" >&2
             echo "  [WARN] 请确认此分支是否为过时任务的残留分支" >&2
             echo "" >&2
             # 只警告，不 exit —— 长任务可能跨天，不能强制阻塞

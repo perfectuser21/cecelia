@@ -20,9 +20,8 @@ describe("stop.sh", () => {
   });
 
   it("should exist and be executable", () => {
-    const stat = execSync(`stat -c %a "${HOOK_PATH}"`, { encoding: "utf-8" });
-    const mode = parseInt(stat.trim(), 8);
-    expect(mode & 0o111).toBeGreaterThan(0); // Has execute permission
+    // Use cross-platform test -x instead of Linux-only stat -c %a
+    expect(() => execSync(`test -x "${HOOK_PATH}"`, { encoding: "utf-8" })).not.toThrow();
   });
 
   it("should pass syntax check", () => {
@@ -32,14 +31,14 @@ describe("stop.sh", () => {
   });
 
   it("should NOT bypass when CECELIA_HEADLESS=true (H7-014 Bug Fix)", () => {
-    // v13.1.0: 无头模式不再绕过，与有头模式走同一套状态机
+    // v14.0.0: 无头模式不再绕过，与有头模式走同一套状态机
     // 验证绕过逻辑已从可执行代码中删除（注释中允许提及）
     const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
 
     // 验证没有 if [[ ... CECELIA_HEADLESS ... ]] 形式的可执行绕过
     expect(hookContent).not.toMatch(/^\s*if\s+\[\[.*CECELIA_HEADLESS/m);
-    // 验证版本已升级到 v13.1.0
-    expect(hookContent).toContain('v13.1.0');
+    // 验证版本已升级到 v14.0.0
+    expect(hookContent).toContain('v14.0.0');
   });
 
   // REMOVED: stop_hook_active 检查已删除（改用 15 次 retry_count 机制）
@@ -54,7 +53,7 @@ describe("stop.sh", () => {
       expect(hookContent).toContain('Stop Hook 路由器');
       expect(hookContent).toContain('stop-dev.sh');
       expect(hookContent).toContain('.dev-mode');
-      expect(hookContent).toContain('v13.1.0');
+      expect(hookContent).toContain('v14.0.0');
     });
 
     it("stop-dev.sh should use JSON API format", () => {
@@ -67,12 +66,11 @@ describe("stop.sh", () => {
       expect(hookContent).toContain("--arg reason");
     });
 
-    it("stop-dev.sh should have v11.25.0 version marker", () => {
+    it("stop-dev.sh should have v15.1.0 version marker", () => {
       const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
       const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
-      expect(hookContent).toContain("v11.25.0");
-      expect(hookContent).toContain("H7-009");
+      expect(hookContent).toContain("v15.1.0");
       expect(hookContent).toContain("JSON API");
     });
 

@@ -44,7 +44,7 @@ describe('runner.sh v2.0.0', () => {
         `bash ${RUNNER} --branch cp-test-dry-run-$(date +%s) --task-id test-123 --dry-run`,
         { encoding: 'utf-8', stdio: 'pipe' }
       );
-      expect(result).toContain('Codex Runner v2.0.0');
+      expect(result).toContain('Codex Runner v2.2.0');
       expect(result).toContain('DRY-RUN');
     });
 
@@ -107,9 +107,9 @@ describe('runner.sh v2.0.0', () => {
   });
 
   describe('版本号', () => {
-    it('版本号为 v2.0.0', () => {
+    it('版本号为 v2.2.0', () => {
       const content = fs.readFileSync(RUNNER, 'utf-8');
-      expect(content).toContain('v2.0.0');
+      expect(content).toContain('v2.2.0');
     });
   });
 });

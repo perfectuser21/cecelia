@@ -162,9 +162,9 @@ step_11_cleanup: pending`
 
       fs.writeFileSync(devModeFile, devModeContent)
 
-      // 运行 sed 命令（模拟 cleanup.sh 的标记逻辑）
+      // 运行 sed 命令（模拟 cleanup.sh 的标记逻辑，跨平台：macOS 需要 -i ''）
       execSync(
-        `sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "${devModeFile}"`
+        `sed -i '' 's/^step_11_cleanup: pending/step_11_cleanup: done/' "${devModeFile}" 2>/dev/null || sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "${devModeFile}"`
       )
 
       // 验证标记已更新

@@ -72,8 +72,11 @@ describe('cleanup-prd-dod.sh', () => {
     execSync('git add README.md', { cwd: testDir })
     execSync('git commit -m "initial"', { cwd: testDir })
 
-    // 创建并切换到 main 分支
-    execSync('git checkout -b main', { cwd: testDir })
+    // 切换到 main 分支（macOS git 默认已创建 main，Linux 可能是 master）
+    const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: testDir }).toString().trim()
+    if (currentBranch !== 'main') {
+      execSync('git checkout -b main', { cwd: testDir })
+    }
 
     // 创建 PRD/DoD
     fs.writeFileSync(path.join(testDir, '.prd.md'), '# Test PRD')

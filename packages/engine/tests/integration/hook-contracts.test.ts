@@ -330,7 +330,11 @@ describe("Contract 2: Worktree 检测契约", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("worktree");
 
-    execFileSync("git", ["-C", env.mainRepo, "checkout", "master"], {
+    // Restore to default branch (main or master depending on git version/config)
+    const defaultBranch = execFileSync("git", ["-C", env.mainRepo, "branch", "--list", "main", "master"], {
+      encoding: "utf-8", stdio: "pipe",
+    }).includes("main") ? "main" : "master";
+    execFileSync("git", ["-C", env.mainRepo, "checkout", defaultBranch], {
       encoding: "utf-8", stdio: "pipe",
     });
   });

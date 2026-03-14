@@ -87,11 +87,8 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
   describe("snapshot-prd-dod.sh", () => {
     it("should exist and be executable", () => {
       expect(existsSync(SNAPSHOT_SCRIPT)).toBe(true);
-      const stat = execSync(`stat -c %a "${SNAPSHOT_SCRIPT}"`, {
-        encoding: "utf-8",
-      });
-      const mode = parseInt(stat.trim(), 8);
-      expect(mode & 0o111).toBeGreaterThan(0);
+      // Use cross-platform test -x instead of Linux-only stat -c %a
+      expect(() => execSync(`test -x "${SNAPSHOT_SCRIPT}"`, { encoding: "utf-8" })).not.toThrow();
     });
 
     it("should pass syntax check", () => {
@@ -165,11 +162,8 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
   describe("list-snapshots.sh", () => {
     it("should exist and be executable", () => {
       expect(existsSync(LIST_SCRIPT)).toBe(true);
-      const stat = execSync(`stat -c %a "${LIST_SCRIPT}"`, {
-        encoding: "utf-8",
-      });
-      const mode = parseInt(stat.trim(), 8);
-      expect(mode & 0o111).toBeGreaterThan(0);
+      // Use cross-platform test -x instead of Linux-only stat -c %a
+      expect(() => execSync(`test -x "${LIST_SCRIPT}"`, { encoding: "utf-8" })).not.toThrow();
     });
 
     it("should pass syntax check", () => {
@@ -202,11 +196,8 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
   describe("view-snapshot.sh", () => {
     it("should exist and be executable", () => {
       expect(existsSync(VIEW_SCRIPT)).toBe(true);
-      const stat = execSync(`stat -c %a "${VIEW_SCRIPT}"`, {
-        encoding: "utf-8",
-      });
-      const mode = parseInt(stat.trim(), 8);
-      expect(mode & 0o111).toBeGreaterThan(0);
+      // Use cross-platform test -x instead of Linux-only stat -c %a
+      expect(() => execSync(`test -x "${VIEW_SCRIPT}"`, { encoding: "utf-8" })).not.toThrow();
     });
 
     it("should pass syntax check", () => {
