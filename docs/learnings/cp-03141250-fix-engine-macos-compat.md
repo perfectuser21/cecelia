@@ -6,63 +6,42 @@ updated: 2026-03-14
 branch: cp-03141250-fix-engine-macos-compat
 ---
 
-# Learning: Engine macOS Bash 3.2 UTF-8 变量名解析 Bug
+# Learning: Engine macOS Bash 3.2 多字节字符变量名解析 Bug（2026-03-14）
 
-## 根因
+## Engine macOS Bash 3.2 兼容性 Bug（2026-03-14）
 
-macOS 系统自带 bash 版本为 **3.2.57**（远低于 Linux 的 bash 5.x），
-对多字节 UTF-8 字符的变量名边界解析存在 bug。
+### 根本原因
 
-当 bash 3.2 处理 `"...$VAR，..."` 时（`，` = U+FF0C，UTF-8: `0xEF 0xBC 0x8C`），
-会将 `\xEF`（239）误判为变量名的合法字节，尝试展开 `$VAR\xEF` 而非 `$VAR`。
-由于 `VAR\xEF` 未定义，配合 `set -euo pipefail` 触发 **unbound variable** 错误（exit 1）。
+macOS 自带 bash 版本为 **3.2.57**，对 UTF-8 多字节字符（全角逗号 `，`、全角括号 `）`）紧跟 `$VAR` 时，
+会误将 UTF-8 首字节（如 `\xEF = 239`）纳入变量名边界，形成 `$VAR\xEF` 这样的未定义变量名，
+配合 `set -euo pipefail` 触发 **unbound variable** 错误（exit 1），而非预期的 exit 0 或 exit 2。
 
-此 bug 会导致 hook 以 exit 1 退出，而不是预期的 exit 2（GATE FAIL）或 exit 0（pass）。
+具体触发点：
+- `hooks/branch-protect.sh` 行 268：`"...今天 $TODAY，最早..."` → `TODAY\xEF` 未定义
+- `runners/codex/runner.sh` 行 111：`"...（task_id: $task_id）..."` → `task_id\xEF` 未定义
 
-## 受影响的文件
+### 下次预防
 
-1. **`hooks/branch-protect.sh`** 行 268：`$TODAY，` → `${TODAY}，`
-   - 触发条件：branch 日期比今天早 2 天以上（测试 branch `cp-03132206-xxx` 满足此条件）
-   - 3 个 monorepo subdir PRD 保护测试全部因此 exit 1 而非预期的 exit 0/2
+- [ ] bash 脚本中，变量后紧跟中文/全角字符时，**必须使用 `${VAR}` 花括号语法**（不能裸用 `$VAR`）
+- [ ] 新增 shell 脚本时，在 macOS（bash 3.2）上本地跑一遍再提交，用 `bash -x` 发现运行时 unbound variable
+- [ ] 测试 git init 时，使用 `git rev-parse --abbrev-ref HEAD` 或 `git branch --list main master` 动态检测默认分支名，不要硬编码 `master`
 
-2. **`runners/codex/runner.sh`** 行 111 和 216：`$task_id）` → `${task_id}）`
-   - 触发条件：dry-run 模式下 task_id 存在时执行到该 echo 语句
+## macOS 测试兼容性修复总结（2026-03-14）
 
-## 通用规则
+### 根本原因
 
-**在 bash 脚本中，凡是变量后紧跟中文/日文/全角字符，必须使用 `${VAR}` 花括号语法。**
+CI 运行在 Linux（bash 5.x），本地运行在 macOS（bash 3.2 + git 2.39+）。
+两者行为差异导致本地 `npm test` 有 37 个失败：
+1. bash 3.2 多字节字符变量名 bug（见上）
+2. `git init` 默认分支从 `master`（旧）变为 `main`（macOS git 2.x+）
+3. `stat -c %a`（GNU stat）在 macOS 无效，应用 `test -x` 替代
+4. `date -d '2 hours ago'`（GNU date）在 macOS 无效，应用 `date -v-2H`
+5. `sed -i 's/.../' file`（GNU sed）在 macOS 需加空字符串 `sed -i '' 's/...'`
 
-| 错误写法 | 正确写法 |
-|---------|---------|
-| `$VAR，说明` | `${VAR}，说明` |
-| `$VAR）结束` | `${VAR}）结束` |
-| `$VAR：值` | `${VAR}：值` |
-| `$VAR。` | `${VAR}。` |
+### 下次预防
 
-## 其他 macOS 测试兼容性修复
-
-1. **`git checkout master` → 动态检测 main/master**
-   - macOS 新版 git（2.x+）默认初始分支名为 `main`，`git checkout master` 会失败
-   - 修复：`git branch --list main master` 检查存在哪个分支，再 checkout
-   - 影响文件：`tests/integration/hook-contracts.test.ts`
-
-2. **`git checkout -b main` 报错 "branch already exists"**
-   - macOS git 已在 `git init` 时创建 `main`，`-b main` 再次创建会冲突
-   - 修复：先检查当前分支，若已在 main 则不重复创建
-   - 影响文件：`tests/scripts/cleanup-prd-dod.test.ts`
-
-3. **`check-dod-mapping.cjs` exit code 测试漂移**
-   - 脚本实际 exit 1（DoD missing = HARD GATE FAIL），测试期望 exit 2（旧行为残留）
-   - 修复：`toBe(2)` → `toBeGreaterThan(0)`（语义等价，平台无关）
-   - 影响文件：`tests/hooks/pr-gate-phase1.test.ts`
-
-## 调试方法
-
-发现 unbound variable 时，用 `bash -x script.sh 2>&1 | tail -40` 追踪，
-输出中 `+ echo "..."` 后紧跟 `unbound variable` 错误即可定位问题行。
-用 `od -c script.sh` 或 `cat -v script.sh` 查看多字节字符的实际字节序列。
-
-## 效果
-
-修复前：macOS 本地 `npm test` 有 **37 个失败**（从 613 passed 降为只有部分通过）
-修复后：**54 test files，613 passed，0 failed**（完全清零）
+- [ ] 写新 bash hook 或脚本时，在本地 macOS 用 `bash -x` 测试一遍
+- [ ] `git init` 后不要假设初始分支名，使用 `git rev-parse --abbrev-ref HEAD` 或 `git branch --list main master` 检查
+- [ ] 使用 `test -x` 替代 `stat -c %a` 检测可执行权限（跨平台）
+- [ ] date 命令用 `date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M` 兼容两平台
+- [ ] sed 用 `sed -i '' '...' file 2>/dev/null || sed -i '...' file` 兼容两平台
