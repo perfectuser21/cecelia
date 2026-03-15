@@ -163,6 +163,54 @@ force_cleanup_worktree() {
     return 0
 }
 
+# ===== Helper: 回写步骤状态到 Brain custom_props =====
+# 每次 Stop Hook 运行时，将当前 /dev 步骤状态写入 Brain tasks.custom_props
+# 依赖：.dev-mode 中有 brain_task_id 字段（通过 --task-id 启动时写入）
+report_step_to_brain() {
+    local mode_file="${1:-$DEV_MODE_FILE}"
+    [[ -n "$mode_file" && -f "$mode_file" ]] || return 0
+
+    # 读取 brain_task_id（优先）或兼容旧格式的 task_id
+    local task_id
+    task_id=$(grep "^brain_task_id:" "$mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+    [[ -z "$task_id" ]] && task_id=$(grep "^task_id:" "$mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+    [[ -z "$task_id" ]] && return 0  # 无 task_id，跳过
+
+    # 确定当前最新完成的步骤（按步骤倒序查找第一个 done）
+    local step_num=0
+    local step_name="init"
+    if grep -q "^step_5_clean: done" "$mode_file" 2>/dev/null; then
+        step_num=5; step_name="clean"
+    elif grep -q "^step_4_learning: done" "$mode_file" 2>/dev/null; then
+        step_num=4; step_name="learning"
+    elif grep -q "^step_3_prci: done" "$mode_file" 2>/dev/null; then
+        step_num=3; step_name="prci"
+    elif grep -q "^step_2_code: done" "$mode_file" 2>/dev/null; then
+        step_num=2; step_name="code"
+    elif grep -q "^step_1_taskcard: done" "$mode_file" 2>/dev/null; then
+        step_num=1; step_name="taskcard"
+    elif grep -q "^step_0_worktree: done" "$mode_file" 2>/dev/null; then
+        step_num=0; step_name="worktree"
+    fi
+
+    # 读取分支名
+    local branch
+    branch=$(grep "^branch:" "$mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+
+    # 构建 custom_props payload
+    local updated_at
+    updated_at=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+    local payload
+    payload=$(printf '{"dev_step":%d,"dev_step_name":"%s","branch":"%s","updated_at":"%s"}' \
+        "$step_num" "$step_name" "$branch" "$updated_at")
+
+    # 调用 Brain PATCH API（非阻塞，失败不影响主流程）
+    curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${task_id}" \
+        -H "Content-Type: application/json" \
+        -d "{\"custom_props\":${payload}}" \
+        --max-time 3 2>/dev/null || true
+}
+
 # ===== Helper: 保存阻塞原因到 .dev-mode =====
 # v2.0 P2-19 修复：过滤换行符防止注入多行到 .dev-mode
 save_block_reason() {
@@ -410,6 +458,10 @@ fi
 # 使用文件中的分支名（如果有），否则使用当前分支
 BRANCH_NAME="${BRANCH_IN_FILE:-$CURRENT_BRANCH}"
 
+# ===== 回写步骤状态到 Brain（非阻塞）=====
+# 让 Brain 实时知道每个 /dev 任务在哪一步，Dashboard 可展示进度
+report_step_to_brain "$DEV_MODE_FILE"
+
 # ===== v15.1.0: 活跃锁文件 — 标记 worktree 正在被 session 使用（防 GC 误删）=====
 # 查找 BRANCH_NAME 对应的 worktree 路径（从主仓库 git worktree list 读取）
 _WT_ACTIVE_PATH=""
@@ -518,8 +570,9 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
 
             # 通知 Brain 任务失败
             if [[ -n "$FAIL_BRANCH" ]]; then
-                # 尝试从 .dev-mode 提取 task_id
-                FAIL_TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+                # 尝试从 .dev-mode 提取 brain_task_id（优先）或 task_id（兼容旧格式）
+                FAIL_TASK_ID=$(grep "^brain_task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+                [[ -z "$FAIL_TASK_ID" ]] && FAIL_TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
                 if [[ -n "$FAIL_TASK_ID" ]]; then
                     curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${FAIL_TASK_ID}" \
                         -H "Content-Type: application/json" \

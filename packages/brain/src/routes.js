@@ -943,30 +943,41 @@ router.post('/learnings-received', async (req, res) => {
 router.patch('/tasks/:task_id', async (req, res) => {
   try {
     const { task_id } = req.params;
-    const { status } = req.body;
+    const { status, custom_props } = req.body;
 
-    // Validate status field
-    if (!status) {
+    // Require at least one of status or custom_props
+    if (!status && !custom_props) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required field: status',
+        error: 'Missing required field: status or custom_props',
         code: 'MISSING_FIELD'
       });
     }
 
-    // Validate status value (only allow specific transitions)
-    const allowedStatuses = ['in_progress', 'completed', 'failed'];
-    if (!allowedStatuses.includes(status)) {
+    // Validate status value if provided
+    if (status) {
+      const allowedStatuses = ['in_progress', 'completed', 'failed'];
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid status value',
+          code: 'INVALID_STATUS',
+          allowed: allowedStatuses
+        });
+      }
+    }
+
+    // Validate custom_props is a plain object if provided
+    if (custom_props !== undefined && (typeof custom_props !== 'object' || Array.isArray(custom_props) || custom_props === null)) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid status value',
-        code: 'INVALID_STATUS',
-        allowed: allowedStatuses
+        error: 'custom_props must be a plain object',
+        code: 'INVALID_CUSTOM_PROPS'
       });
     }
 
     // Get current task
-    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
+    const taskResult = await pool.query('SELECT id, status, custom_props FROM tasks WHERE id = $1', [task_id]);
     if (taskResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -978,68 +989,87 @@ router.patch('/tasks/:task_id', async (req, res) => {
     const task = taskResult.rows[0];
     const currentStatus = task.status;
 
-    // Define allowed transitions
-    const allowedTransitions = {
-      'pending': ['in_progress'],
-      'in_progress': ['completed', 'failed'],
-      'completed': [],  // Cannot change from completed
-      'failed': []      // Cannot change from failed
-    };
+    // Validate status transition if status is being changed
+    if (status) {
+      const allowedTransitions = {
+        'pending': ['in_progress'],
+        'queued': ['in_progress'],
+        'in_progress': ['completed', 'failed'],
+        'completed': [],
+        'failed': []
+      };
 
-    // Validate transition
-    if (!allowedTransitions[currentStatus]?.includes(status)) {
-      return res.status(409).json({
-        success: false,
-        error: 'Invalid status transition',
-        code: 'INVALID_TRANSITION',
-        current_status: currentStatus,
-        requested_status: status,
-        allowed: allowedTransitions[currentStatus] || []
-      });
+      if (!allowedTransitions[currentStatus]?.includes(status)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Invalid status transition',
+          code: 'INVALID_TRANSITION',
+          current_status: currentStatus,
+          requested_status: status,
+          allowed: allowedTransitions[currentStatus] || []
+        });
+      }
     }
 
-    // Construct status history entry
-    const changedAt = new Date().toISOString();
-    const historyEntry = {
-      from: currentStatus,
-      to: status,
-      changed_at: changedAt,
-      source: 'engine'
-    };
+    // Build dynamic UPDATE query
+    const setClauses = ['updated_at = NOW()'];
+    const params = [];
+    let paramIdx = 1;
 
-    // Update task status and record history
-    const updateResult = await pool.query(`
-      UPDATE tasks
-      SET
-        status = $1,
-        status_history = status_history || $2::jsonb,
-        updated_at = NOW()
-      WHERE id = $3
-      RETURNING status, updated_at
-    `, [status, JSON.stringify([historyEntry]), task_id]);
+    if (status) {
+      const changedAt = new Date().toISOString();
+      const historyEntry = { from: currentStatus, to: status, changed_at: changedAt, source: 'engine' };
+      setClauses.push(`status = $${paramIdx++}`);
+      params.push(status);
+      setClauses.push(`status_history = status_history || $${paramIdx++}::jsonb`);
+      params.push(JSON.stringify([historyEntry]));
+    }
+
+    if (custom_props) {
+      // JSONB merge: existing keys preserved, overlapping keys overwritten with new values
+      setClauses.push(`custom_props = COALESCE(custom_props, '{}'::jsonb) || $${paramIdx++}::jsonb`);
+      params.push(JSON.stringify(custom_props));
+    }
+
+    params.push(task_id);
+    const updateResult = await pool.query(
+      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING status, custom_props, updated_at`,
+      params
+    );
 
     const updatedTask = updateResult.rows[0];
 
-    // Emit event for status change
-    await emitEvent('task_status_changed', {
-      task_id,
-      from: currentStatus,
-      to: status,
-      source: 'engine',
-      timestamp: changedAt
-    });
+    if (status) {
+      await emitEvent('task_status_changed', {
+        task_id,
+        from: currentStatus,
+        to: status,
+        source: 'engine',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (custom_props) {
+      await emitEvent('task_props_updated', {
+        task_id,
+        custom_props: updatedTask.custom_props,
+        source: 'engine',
+        timestamp: new Date().toISOString()
+      });
+    }
 
     res.json({
       success: true,
       task_id,
       status: updatedTask.status,
+      custom_props: updatedTask.custom_props,
       updated_at: updatedTask.updated_at
     });
   } catch (err) {
-    console.error('Failed to update task status:', err);
+    console.error('Failed to update task:', err);
     res.status(500).json({
       success: false,
-      error: 'Failed to update task status',
+      error: 'Failed to update task',
       code: 'DATABASE_ERROR',
       details: err.message
     });
