@@ -142,6 +142,9 @@ jobs:
           else
             if [ ! -d "$PG_DATA" ]; then
               initdb -D "$PG_DATA" --username=$(whoami)
+              # Use mmap instead of posix shm to avoid SHMMNI exhaustion on Mac runners
+              # posix shm objects can persist across failed runs; mmap uses temp files (safer)
+              echo "dynamic_shared_memory_type = mmap" >> "$PG_DATA/postgresql.conf"
             else
               echo "$PG_DATA already exists, skipping initdb"
             fi
