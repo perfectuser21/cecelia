@@ -109,6 +109,45 @@ jobs:
           brew link postgresql@17 --force 2>/dev/null || true
           brew link pgvector --force 2>/dev/null || true
 
+      - name: Clean up stale CI PostgreSQL (from previous runs)
+        run: |
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          # 清理上次 CI 运行遗留的 PostgreSQL 进程（防止 shmget SHMMNI 耗尽）
+          # 步骤1: 停止并删除上次 run 遗留的 pgdata 目录
+          for pgdir in /tmp/pgdata-*; do
+            if [ -d "$pgdir" ] && ! echo "$pgdir" | grep -q "pgdata-${GITHUB_RUN_ID}"; then
+              echo "Stopping stale postgres: $pgdir"
+              pg_ctl stop -D "$pgdir" -m immediate 2>/dev/null || true
+              rm -rf "$pgdir" 2>/dev/null || true
+            fi
+          done
+          # 步骤2: 清理上次 run 遗留的 postgres 进程（跳过当前 run 的端口区间）
+          # 当前 run 的端口：5500 + (run_id % 100) * 3 ~ +2（防止误杀并行 shard）
+          CUR_BASE=$(( 5500 + (GITHUB_RUN_ID % 100) * 3 ))
+          CUR_P0=$CUR_BASE; CUR_P1=$((CUR_BASE+1)); CUR_P2=$((CUR_BASE+2))
+          for port in $(seq 5500 5797); do
+            # 跳过当前 run 的 3 个端口（并行 shard 会用到）
+            if [ "$port" -eq "$CUR_P0" ] || [ "$port" -eq "$CUR_P1" ] || [ "$port" -eq "$CUR_P2" ]; then
+              continue
+            fi
+            PIDS=$(lsof -ti:$port 2>/dev/null) || true
+            if [ -n "$PIDS" ]; then
+              echo "Killing stale postgres on port $port: PIDs $PIDS"
+              echo "$PIDS" | xargs kill -9 2>/dev/null || true
+            fi
+          done
+          # 步骤3: 清理所有 System V 共享内存段
+          # macOS ipcs -m 不显示 nattch 列，直接删除所有段（CI 专用机，无生产 PG）
+          # 输出格式：m <ID> <KEY> <MODE> <OWNER> <GROUP>
+          BEFORE=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
+          echo "sysv shm segments before cleanup: $BEFORE"
+          for id in $(ipcs -m 2>/dev/null | grep '^m ' | awk '{print $2}' | grep '^[0-9]'); do
+            echo "Removing sysv shm segment: $id"
+            ipcrm -m "$id" 2>/dev/null || true
+          done
+          AFTER=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
+          echo "sysv shm segments after cleanup: $AFTER"
+
       - name: Set up PostgreSQL (dynamic port)
         run: |
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
@@ -127,6 +166,9 @@ jobs:
           else
             if [ ! -d "$PG_DATA" ]; then
               initdb -D "$PG_DATA" --username=$(whoami)
+              # Use mmap instead of posix shm to avoid SHMMNI exhaustion on Mac runners
+              # posix shm objects can persist across failed runs; mmap uses temp files (safer)
+              echo "dynamic_shared_memory_type = mmap" >> "$PG_DATA/postgresql.conf"
             else
               echo "$PG_DATA already exists, skipping initdb"
             fi
@@ -147,11 +189,24 @@ jobs:
 
       - name: Set up Node.js
         run: |
-          # Use nvm (preferred) or brew node on self-hosted Mac runner
+          # Try nvm first (self-hosted Mac runner)
           export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
+          # If node still not found, search common paths
+          if ! command -v node &>/dev/null 2>&1; then
+            NVM_LATEST=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -rV | head -1)
+            for dir in /opt/homebrew/bin /usr/local/bin "$NVM_LATEST"; do
+              if [ -n "$dir" ] && [ -x "$dir/node" ]; then
+                export PATH="$dir:$PATH"
+                echo "$dir" >> $GITHUB_PATH
+                break
+              fi
+            done
+          fi
           node --version
           npm --version
+          # Persist node bin to subsequent steps
+          echo "$(dirname "$(which node)")" >> $GITHUB_PATH
 
       - name: Install dependencies
         working-directory: packages/brain
@@ -198,6 +253,17 @@ jobs:
         if: matrix.shard == '1/3'
         working-directory: packages/brain
         run: bash scripts/goldenpath-check.sh
+
+      - name: Stop PostgreSQL (always cleanup)
+        if: always()
+        run: |
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH" 2>/dev/null || true
+          if [ -n "$PG_DATA" ] && [ -d "$PG_DATA" ]; then
+            echo "Stopping PostgreSQL at $PG_DATA"
+            pg_ctl stop -D "$PG_DATA" -m immediate 2>/dev/null || true
+            rm -rf "$PG_DATA" 2>/dev/null || true
+            echo "PostgreSQL stopped and data dir removed"
+          fi
 
   # ─── Gate job (always runs) ────────────────────────────────────────────────
 
