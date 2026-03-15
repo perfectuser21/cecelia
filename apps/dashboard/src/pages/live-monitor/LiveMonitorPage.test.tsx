@@ -1,10 +1,11 @@
 /**
- * LiveMonitorPage v18 (Live Monitor v3.4) - 基础渲染测试
- * 变更：去 emoji + INFRA 合并块 + BRAIN 块 + 2列 Project + 全 Area 显示
+ * LiveMonitorPage v19 (Live Monitor v3.6) - 基础渲染测试
+ * 变更：新增 DEV STEPS 面板（DevStepPanel），展示 /dev 任务步骤进度
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { act } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import LiveMonitorPage from './LiveMonitorPage';
 
@@ -33,7 +34,7 @@ function renderWithRouter() {
   );
 }
 
-describe('LiveMonitorPage v18', () => {
+describe('LiveMonitorPage v19', () => {
   it('渲染顶部栏标识（无 CECELIA NOC）', () => {
     renderWithRouter();
     expect(screen.getByText('LIVE')).toBeInTheDocument();
@@ -81,5 +82,103 @@ describe('LiveMonitorPage v18', () => {
   it('无 global_okr 时显示"全局目标未设置"占位', () => {
     renderWithRouter();
     expect(screen.getByText('全局目标未设置')).toBeInTheDocument();
+  });
+
+  it('DevStepPanel: 渲染 DEV STEPS 区块标签', () => {
+    renderWithRouter();
+    expect(screen.getByText('DEV STEPS')).toBeInTheDocument();
+  });
+
+  it('DevStepPanel: 无 /dev 任务时显示空状态', () => {
+    // fetch 默认返回空 {} / []，activeTasks 为空
+    renderWithRouter();
+    expect(screen.getByText('无运行中的 /dev 任务')).toBeInTheDocument();
+  });
+
+  it('DevStepPanel: 有 dev 任务时显示步骤编号和标题', async () => {
+    const devTask = {
+      id: 'test-task-1',
+      title: '测试开发任务',
+      priority: 'P1',
+      status: 'in_progress',
+      project_id: null,
+      created_at: '2026-03-15T00:00:00Z',
+      task_type: 'dev',
+      custom_props: { dev_step: 2, dev_step_name: 'Code' },
+    };
+
+    // 设置 fetch 在渲染前
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('status=in_progress')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([devTask]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+
+    await act(async () => {
+      renderWithRouter();
+    });
+    // act flush promises + state updates
+    await act(async () => {});
+
+    // 步骤编号 S2 应显示
+    expect(screen.getByText('S2')).toBeInTheDocument();
+    // 步骤名 Code 应显示
+    expect(screen.getByText('Code')).toBeInTheDocument();
+  });
+
+  it('DevStepPanel: dev 任务无 custom_props 时显示"步骤未知"', async () => {
+    const devTask = {
+      id: 'test-task-2',
+      title: '无步骤信息任务',
+      priority: 'P0',
+      status: 'in_progress',
+      project_id: null,
+      created_at: '2026-03-15T00:00:00Z',
+      task_type: 'dev',
+      custom_props: {},
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('status=in_progress')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([devTask]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+
+    await act(async () => {
+      renderWithRouter();
+    });
+    await act(async () => {});
+
+    expect(screen.getByText('步骤未知')).toBeInTheDocument();
+  });
+
+  it('DevStepPanel: 非 dev 类型任务不显示在 DEV STEPS 面板', async () => {
+    const nonDevTask = {
+      id: 'test-task-3',
+      title: '非dev任务',
+      priority: 'P1',
+      status: 'in_progress',
+      project_id: null,
+      created_at: '2026-03-15T00:00:00Z',
+      task_type: 'other',
+      custom_props: { dev_step: 1 },
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('status=in_progress')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([nonDevTask]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+
+    await act(async () => {
+      renderWithRouter();
+    });
+    await act(async () => {});
+
+    // 非 dev 任务过滤后，面板显示空状态
+    expect(screen.getByText('无运行中的 /dev 任务')).toBeInTheDocument();
   });
 });
