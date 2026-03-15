@@ -67,7 +67,7 @@ fi
 
 # 检查 regression-contract.yaml
 if [[ -f "regression-contract.yaml" ]]; then
-    RC_VERSION=$(grep '^version:' regression-contract.yaml | sed 's/version: *"\?\([^"]*\)"\?/\1/')
+    RC_VERSION=$(grep '^version:' regression-contract.yaml | sed -E 's/version:[[:space:]]+"?([^"]+)"?/\1/')
     if [[ "$RC_VERSION" != "$BASE_VERSION" ]]; then
         echo "❌ regression-contract.yaml: $RC_VERSION (期望: $BASE_VERSION)"
         ERRORS=$((ERRORS + 1))
