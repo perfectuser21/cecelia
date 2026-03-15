@@ -1,1 +1,0 @@
-../../../scripts/devgate/require-rci-update-if-p0p1.sh

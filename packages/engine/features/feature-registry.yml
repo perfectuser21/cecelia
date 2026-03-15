@@ -15,9 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.53.0"
-updated: "2026-03-15"
+version: "3.54.0"
+updated: "2026-03-16"
 changelog:
+  - version: "12.83.0"
+    date: "2026-03-16"
+    summary: "refactor(engine): 删除 ci-tools/ 符号链接目录，统一引用 scripts/devgate/"
+    scope: infra
+    breaking: false
   - version: "12.82.0"
     date: "2026-03-16"
     summary: "fix(engine): git add -A 改 -u（防止意外添加未追踪敏感文件）+ Stop Hook 90分钟 CI 超时保护（CI 卡死时允许退出）"

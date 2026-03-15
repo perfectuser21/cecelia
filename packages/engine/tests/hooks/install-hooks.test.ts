@@ -4,7 +4,7 @@
  * DoD H3-001 验收测试
  *
  * Tests:
- * - ci-tools/VERSION 格式正确
+ * - packages/engine/VERSION 格式正确（ci-tools/VERSION 已删除，统一使用 packages/engine/VERSION）
  * - scripts/devgate/ 包含 DevGate 脚本
  * - scripts/install-hooks.sh 正确安装
  */
@@ -16,7 +16,7 @@ import * as path from 'path'
 import { tmpdir } from 'os'
 
 const ROOT = path.resolve(__dirname, '../..')
-const CI_TOOLS_DIR = path.join(ROOT, 'ci-tools')
+const DEVGATE_DIR = path.join(ROOT, 'scripts/devgate')
 const INSTALL_SCRIPT = path.join(ROOT, 'scripts/install-hooks.sh')
 const TEST_DIR = path.join(tmpdir(), 'test-ci-tools-install-vitest')
 
@@ -26,70 +26,64 @@ interface HookConfig {
   hooks: Array<{ type: string; command: string }>;
 }
 
-describe('ci-tools 目录结构', () => {
-  describe('VERSION 文件', () => {
+describe('engine 版本文件结构', () => {
+  // ci-tools/ 目录已删除（原为符号链接目录，冗余设计）
+  // 统一使用 packages/engine/VERSION 作为版本来源
+
+  describe('packages/engine/VERSION 文件', () => {
     it('VERSION 文件存在', () => {
-      const versionFile = path.join(CI_TOOLS_DIR, 'VERSION')
+      const versionFile = path.join(ROOT, 'VERSION')
       expect(fs.existsSync(versionFile)).toBe(true)
     })
 
     it('VERSION 格式正确 (semver)', () => {
-      const versionFile = path.join(CI_TOOLS_DIR, 'VERSION')
+      const versionFile = path.join(ROOT, 'VERSION')
       const version = fs.readFileSync(versionFile, 'utf-8').trim()
       // semver 格式: MAJOR.MINOR.PATCH
       expect(version).toMatch(/^\d+\.\d+\.\d+$/)
     })
 
     it('VERSION 不为空', () => {
-      const versionFile = path.join(CI_TOOLS_DIR, 'VERSION')
+      const versionFile = path.join(ROOT, 'VERSION')
       const version = fs.readFileSync(versionFile, 'utf-8').trim()
       expect(version.length).toBeGreaterThan(0)
     })
   })
 
-  // Note: ci-tools/hooks/ directory was removed in P3-B refactor
-  // Hooks are now directly in hooks/ directory at repo root
-
   describe('scripts/devgate 目录', () => {
     it('devgate 目录存在', () => {
-      const devgateDir = path.join(CI_TOOLS_DIR, 'scripts/devgate')
-      expect(fs.existsSync(devgateDir)).toBe(true)
-      expect(fs.statSync(devgateDir).isDirectory()).toBe(true)
+      expect(fs.existsSync(DEVGATE_DIR)).toBe(true)
+      expect(fs.statSync(DEVGATE_DIR).isDirectory()).toBe(true)
     })
 
     it('包含 check-dod-mapping.cjs', () => {
-      const scriptFile = path.join(CI_TOOLS_DIR, 'scripts/devgate/check-dod-mapping.cjs')
+      const scriptFile = path.join(DEVGATE_DIR, 'check-dod-mapping.cjs')
       expect(fs.existsSync(scriptFile)).toBe(true)
     })
 
     it('包含 detect-priority.cjs', () => {
-      const scriptFile = path.join(CI_TOOLS_DIR, 'scripts/devgate/detect-priority.cjs')
+      const scriptFile = path.join(DEVGATE_DIR, 'detect-priority.cjs')
       expect(fs.existsSync(scriptFile)).toBe(true)
     })
 
     it('包含 snapshot 相关脚本', () => {
-      const snapshotScript = path.join(CI_TOOLS_DIR, 'scripts/devgate/snapshot-prd-dod.sh')
-      const listScript = path.join(CI_TOOLS_DIR, 'scripts/devgate/list-snapshots.sh')
-      const viewScript = path.join(CI_TOOLS_DIR, 'scripts/devgate/view-snapshot.sh')
+      const snapshotScript = path.join(DEVGATE_DIR, 'snapshot-prd-dod.sh')
+      const listScript = path.join(DEVGATE_DIR, 'list-snapshots.sh')
+      const viewScript = path.join(DEVGATE_DIR, 'view-snapshot.sh')
       expect(fs.existsSync(snapshotScript)).toBe(true)
       expect(fs.existsSync(listScript)).toBe(true)
       expect(fs.existsSync(viewScript)).toBe(true)
     })
 
-    it('devgate 脚本是有效文件或符号链接', () => {
-      const devgateDir = path.join(CI_TOOLS_DIR, 'scripts/devgate')
-      const files = fs.readdirSync(devgateDir)
+    it('devgate 脚本是有效的真实文件（非符号链接）', () => {
+      const files = fs.readdirSync(DEVGATE_DIR)
       expect(files.length).toBeGreaterThan(0)
 
       for (const file of files) {
-        const filePath = path.join(devgateDir, file)
+        const filePath = path.join(DEVGATE_DIR, file)
         const stat = fs.lstatSync(filePath)
-        expect(stat.isFile() || stat.isSymbolicLink()).toBe(true)
-
-        if (stat.isSymbolicLink()) {
-          const realPath = fs.realpathSync(filePath)
-          expect(fs.existsSync(realPath)).toBe(true)
-        }
+        // ci-tools 删除后，scripts/devgate/ 应只含真实文件
+        expect(stat.isFile()).toBe(true)
       }
     })
   })
@@ -198,9 +192,9 @@ describe('install-hooks.sh 安装脚本', () => {
       expect(writeEditHook!.hooks[0].command).toContain('branch-protect.sh')
     })
 
-    it('版本标记与 VERSION 文件一致', () => {
+    it('版本标记与 packages/engine/VERSION 文件一致', () => {
       const versionMarker = fs.readFileSync(path.join(TEST_DIR, '.ci-tools-version'), 'utf-8').trim()
-      const versionFile = fs.readFileSync(path.join(CI_TOOLS_DIR, 'VERSION'), 'utf-8').trim()
+      const versionFile = fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf-8').trim()
       expect(versionMarker).toBe(versionFile)
     })
 
