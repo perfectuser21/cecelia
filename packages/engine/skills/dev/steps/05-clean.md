@@ -243,6 +243,38 @@ tasks.forEach(task => {
 
 ---
 
+## ⛔ 自检：清理前确认（继续前必须通过）
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+ERRORS=0
+echo "🔍 Step 5 自检..."
+
+# 检查1: PR 已合并
+PR_STATE=$(gh pr list --head "$BRANCH" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
+if [[ -z "$PR_STATE" ]]; then
+    echo "❌ PR 尚未合并（不能在 PR 合并前清理）"
+    ERRORS=1
+fi
+
+# 检查2: Learning 文件已存在
+LEARNING_FILE="docs/learnings/${BRANCH}.md"
+if [[ ! -f "$LEARNING_FILE" ]]; then
+    echo "❌ Learning 文件不存在: $LEARNING_FILE（必须先完成 Step 4）"
+    ERRORS=1
+fi
+
+if [[ $ERRORS -gt 0 ]]; then
+    echo ""
+    echo "⛔ Step 5 自检失败！先完成上述问题再执行清理。"
+    exit 1
+fi
+
+echo "✅ Step 5 自检通过 — 可以安全清理"
+```
+
+---
+
 ## 完成
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "5", status: "in_progress" })`

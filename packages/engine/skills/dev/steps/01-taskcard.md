@@ -82,6 +82,53 @@ step_5_clean: pending
 EOF
 ```
 
+## ⛔ 自检：Task Card 格式验证（继续前必须通过）
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+TASK_CARD=".task-${BRANCH}.md"
+ERRORS=0
+echo "🔍 Step 1 自检..."
+
+# 检查1: Task Card 文件存在
+if [[ ! -f "$TASK_CARD" ]]; then
+    echo "❌ Task Card 不存在: $TASK_CARD"
+    ERRORS=1
+fi
+
+# 检查2: 包含成功标准
+if ! grep -q "## 成功标准" "$TASK_CARD" 2>/dev/null; then
+    echo "❌ 缺少 '## 成功标准' 章节"
+    ERRORS=1
+fi
+
+# 检查3: 包含 DoD checklist
+if ! grep -qE "^- \[ \]" "$TASK_CARD" 2>/dev/null; then
+    echo "❌ 缺少 DoD checklist（- [ ] 条目）"
+    ERRORS=1
+fi
+
+# 检查4: 包含 Test 字段（不能全是 TODO）
+if ! grep -q "Test: manual:\|Test: contract:\|Test: tests/" "$TASK_CARD" 2>/dev/null; then
+    echo "❌ DoD 条目缺少 Test 字段（Test: manual:bash... 等）"
+    ERRORS=1
+fi
+
+# 检查5: .dev-mode 文件已创建
+if [[ ! -f ".dev-mode.${BRANCH}" ]]; then
+    echo "❌ .dev-mode.${BRANCH} 未创建"
+    ERRORS=1
+fi
+
+if [[ $ERRORS -gt 0 ]]; then
+    echo ""
+    echo "⛔ Step 1 自检失败！修复后才能继续 Step 2。"
+    exit 1
+fi
+
+echo "✅ Step 1 自检通过 — Task Card 格式正确"
+```
+
 ## 完成后
 
 立即执行 Step 2：`cat skills/dev/steps/02-code.md`

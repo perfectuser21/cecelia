@@ -162,15 +162,41 @@ if [[ -f "package.json" ]]; then
 fi
 ```
 
-### 6. 完成
+### 6. ⛔ 自检：Worktree 完整性验证（继续前必须通过）
 
 ```bash
-echo "✅ Step 0 完成 - Worktree 环境准备就绪"
-echo ""
-echo "📍 当前环境："
-echo "   Worktree: $WORKTREE_PATH"
-echo "   分支: $(git rev-parse --abbrev-ref HEAD)"
-echo ""
+ERRORS=0
+echo "🔍 Step 0 自检..."
+
+# 检查1: 必须在 worktree 中（不能在主仓库）
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
+if [[ "$GIT_DIR" != *"worktrees"* ]]; then
+    echo "❌ 未在 worktree 中（当前: $(pwd)）"
+    ERRORS=1
+fi
+
+# 检查2: 分支不能是 main 或 develop
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "develop" ]]; then
+    echo "❌ 当前分支是 $CURRENT_BRANCH，必须在 cp-* 功能分支上开发"
+    ERRORS=1
+fi
+
+# 检查3: 分支名符合 cp-* 格式
+if [[ ! "$CURRENT_BRANCH" =~ ^cp- ]]; then
+    echo "❌ 分支名不符合 cp-MMDDHHNN-xxx 格式（当前: $CURRENT_BRANCH）"
+    ERRORS=1
+fi
+
+if [[ $ERRORS -gt 0 ]]; then
+    echo ""
+    echo "⛔ Step 0 自检失败！修复后才能继续 Step 1。"
+    exit 1
+fi
+
+echo "✅ Step 0 自检通过"
+echo "   Worktree: $(pwd)"
+echo "   分支: $CURRENT_BRANCH"
 ```
 
 ---
