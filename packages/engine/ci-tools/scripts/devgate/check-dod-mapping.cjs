@@ -1,1 +1,0 @@
-../../../scripts/devgate/check-dod-mapping.cjs

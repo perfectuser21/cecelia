@@ -1,1 +1,0 @@
-../../../scripts/devgate/list-snapshots.sh
