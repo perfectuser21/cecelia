@@ -381,6 +381,9 @@ echo "→ 执行 Step 4 (Learning)：写 LEARNINGS → push 到功能分支 → 
 - ❌ CI 失败后停止不管
 - ❌ PR 创建后就结束
 - ❌ 等待用户手动处理
+- ❌ **`gh pr merge --admin` 绕过 CI**（GitHub enforce_admins 已开启，此命令会直接报错）
+
+> **CI pending ≠ 卡死**：Engine L3 Code Gate 在 HK VPS 自托管 runner 上运行，正常耗时 **11-16 分钟**（排队 ~5 分钟 + Unit Tests ~10 分钟）。看到 `pending` 状态应继续等待，不要以为 runner 挂了。
 
 ### 正确行为
 
