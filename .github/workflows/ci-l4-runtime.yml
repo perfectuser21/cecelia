@@ -188,6 +188,11 @@ jobs:
           [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
           node --version
           npm --version
+          # Add node to GITHUB_PATH so subsequent steps can use it
+          NODE_BIN=$(dirname "$(which node 2>/dev/null || true)")
+          if [ -n "$NODE_BIN" ] && [ "$NODE_BIN" != "." ]; then
+            echo "$NODE_BIN" >> $GITHUB_PATH
+          fi
 
       - name: Install dependencies
         working-directory: packages/brain
