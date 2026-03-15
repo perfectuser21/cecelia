@@ -109,6 +109,21 @@ jobs:
           brew link postgresql@17 --force 2>/dev/null || true
           brew link pgvector --force 2>/dev/null || true
 
+      - name: Clean up stale CI PostgreSQL (from previous runs)
+        run: |
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          # 清理上次 CI 运行遗留的 PostgreSQL 进程（防止 POSIX shm 耗尽）
+          # 只清理非当前 run 的 pgdata 目录
+          for pgdir in /tmp/pgdata-*; do
+            if [ -d "$pgdir" ] && ! echo "$pgdir" | grep -q "pgdata-${GITHUB_RUN_ID}"; then
+              echo "Stopping stale postgres: $pgdir"
+              pg_ctl stop -D "$pgdir" -m immediate 2>/dev/null || true
+              rm -rf "$pgdir" 2>/dev/null || true
+            fi
+          done
+          echo "Remaining pgdata dirs after cleanup:"
+          ls /tmp/pgdata-* 2>/dev/null || echo "(none)"
+
       - name: Set up PostgreSQL (dynamic port)
         run: |
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
@@ -198,6 +213,17 @@ jobs:
         if: matrix.shard == '1/3'
         working-directory: packages/brain
         run: bash scripts/goldenpath-check.sh
+
+      - name: Stop PostgreSQL (always cleanup)
+        if: always()
+        run: |
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH" 2>/dev/null || true
+          if [ -n "$PG_DATA" ] && [ -d "$PG_DATA" ]; then
+            echo "Stopping PostgreSQL at $PG_DATA"
+            pg_ctl stop -D "$PG_DATA" -m immediate 2>/dev/null || true
+            rm -rf "$PG_DATA" 2>/dev/null || true
+            echo "PostgreSQL stopped and data dir removed"
+          fi
 
   # ─── Gate job (always runs) ────────────────────────────────────────────────
 
