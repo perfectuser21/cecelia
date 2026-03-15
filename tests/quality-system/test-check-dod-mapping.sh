@@ -89,10 +89,12 @@ fi
 cat > "$TMPDIR_PATH/dod-manual-inline.md" << 'EOF'
 # DoD
 
-- [x] Node.js 可用
+- [x] [ARTIFACT] Node.js 可用
   Test: manual:node -e "process.exit(0)"
-- [x] 文件系统可访问
+- [x] [BEHAVIOR] 文件系统可访问（运行时验证）
   Test: manual:node -e "require('fs').readdirSync('.')"
+- [x] [GATE] 所有检查通过
+  Test: manual:node -e "process.exit(0)"
 EOF
 
 if ! run_dod_check "$TMPDIR_PATH/dod-manual-inline.md" "$TMPDIR_PATH" > /dev/null 2>&1; then
