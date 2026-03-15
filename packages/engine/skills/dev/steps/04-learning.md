@@ -83,31 +83,38 @@ docs/learnings/<branch-name>.md
 
 ## 记录模板
 
+> ⚠️ **格式严格要求**：CI `check-learning.sh` 强制检查以下三个元素，缺一不可：
+> 1. `### 根本原因` 三级标题
+> 2. `### 下次预防` 三级标题
+> 3. `- [ ]` checklist 条目（至少一条）
+
 ```markdown
-### [YYYY-MM-DD] <任务简述>
+## <任务简述>（YYYY-MM-DD）
 
-**失败统计**：CI 失败 N 次，本地测试失败 M 次
+### 根本原因
 
-**CI 失败记录**（有则填，无则省略）：
-- 失败 #1：根本原因 → 修复方式 → 下次如何预防
-- 失败 #2：...
+<具体描述问题的根本原因，不能是"代码有问题"这种废话>
+示例："existsSync mock 条件顺序错误，最具体的条件必须在最宽泛条件之前"
 
-**本地测试失败记录**（有则填，无则省略）：
-- 失败 #1：根本原因 → 修复方式 → 下次如何预防
+### 下次预防
 
-**错误判断记录**（以为对但错了）：
-- <描述判断错误的地方> → 正确答案是什么
-
-**影响程度**: Low/Medium/High
-**预防措施**（下次开发中应该注意什么）：
-- ...
+- [ ] <具体可执行的预防措施，不能是"下次要更仔细">
+- [ ] <另一条具体措施>
 ```
 
-### 影响程度说明
+**流程顺畅时（CI 0 次失败）也必须写**，示例：
 
-- **Low**: 体验小问题，不影响功能（CI 0 次失败，流程顺畅）
-- **Medium**: 功能性问题，需要尽快修复（CI 1-2 次失败，有明确根因）
-- **High**: 阻塞性问题，必须立即处理（CI 3+ 次失败，或涉及架构错误判断）
+```markdown
+## <任务简述>（YYYY-MM-DD）
+
+### 根本原因
+
+本次开发流程顺畅，无 CI 失败。<记录"为什么顺畅"——哪些预防措施真正有效>
+
+### 下次预防
+
+- [ ] 继续使用 <有效的做法>，证明该模式可靠
+```
 
 ---
 
@@ -371,9 +378,11 @@ bash skills/dev/scripts/generate-feedback-report.sh
 
 ---
 
-## 上传反馈到 Brain
+## 上传反馈到 Brain（PR 合并后执行）
 
-**如果是 Brain Task，上传反馈并更新状态**：
+**如果是 Brain Task，PR 合并后用 execution-callback 标记完成**：
+
+> ⚠️ **注意**：必须在 PR 合并后执行，且必须带 `pr_url`，否则 Brain 会将 dev task 标记为 `completed_no_pr` 而非 `completed`。
 
 ```bash
 # 检测 task_id（从 .dev-mode 文件读取）
@@ -381,33 +390,33 @@ task_id=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
 
 if [[ -n "$task_id" ]]; then
     echo ""
-    echo "📤 上传反馈到 Brain..."
+    echo "📤 回调 Brain 标记 Task 完成..."
 
-    if bash skills/dev/scripts/upload-feedback.sh "$task_id" 2>/dev/null || true; then
-        echo "✅ 反馈已上传到 Brain"
+    BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+    # 获取合并后的 PR URL（state=merged）
+    PR_URL=$(gh pr list --head "$BRANCH_NAME" --state merged --json url -q '.[0].url' 2>/dev/null || echo "")
+
+    # 使用 execution-callback（带 pr_url）正确标记 dev task 为 completed
+    RESPONSE=$(curl -s -X POST "http://localhost:5221/api/brain/execution-callback" \
+        -H "Content-Type: application/json" \
+        -d "{\"task_id\":\"$task_id\",\"status\":\"completed\",\"exit_code\":0,\"pr_url\":\"$PR_URL\",\"result\":\"PR merged\"}" \
+        2>/dev/null || echo "")
+
+    if echo "$RESPONSE" | jq -e '.success == true' > /dev/null 2>&1; then
+        echo "✅ Task $task_id 已标记为完成（Brain 已更新）"
     else
-        echo "⚠️  反馈上传失败（Brain 可能不可用，继续执行）"
+        echo "⚠️  Brain 回调失败或不可用，可手动更新："
+        echo "   psql -U cecelia -d cecelia -c \"UPDATE tasks SET status='completed' WHERE id='$task_id';\""
     fi
-
-    if bash skills/dev/scripts/update-task-status.sh "$task_id" "completed" 2>/dev/null || true; then
-        echo "✅ Task 已标记为完成"
-    else
-        echo "⚠️  Task 状态更新失败（Brain 可能不可用，继续执行）"
-    fi
-
-    echo ""
-    echo "🔄 检查 Capability stage 更新..."
-    bash skills/dev/scripts/update-capability.sh "$task_id" 2>/dev/null || true
 else
     echo ""
-    echo "ℹ️  非 Brain Task，跳过反馈上传"
+    echo "ℹ️  非 Brain Task，跳过回调"
 fi
 ```
 
 **降级策略**：
-- Brain API 不可用时不阻塞流程
-- 使用 `2>/dev/null || true` 确保失败时继续
-- 显示警告但不中断工作流
+- Brain API 不可用时不阻塞流程（`|| echo ""`）
+- 显示手动修复命令但不中断工作流
 
 ---
 

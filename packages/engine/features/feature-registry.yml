@@ -18,6 +18,11 @@
 version: "3.53.0"
 updated: "2026-03-15"
 changelog:
+  - version: "12.81.0"
+    date: "2026-03-15"
+    summary: "feat(engine): 04-learning.md 修正 Learning 模板格式 + Brain execution-callback 回调方式"
+    scope: skills
+    breaking: false
   - version: "12.80.0"
     date: "2026-03-15"
     summary: "feat(engine): 03-prci.md 禁止 gh pr merge --admin 绕过 CI + L3 耗时说明（11-16 分钟）"
