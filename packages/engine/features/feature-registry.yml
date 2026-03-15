@@ -18,6 +18,11 @@
 version: "3.51.0"
 updated: "2026-03-15"
 changelog:
+  - version: "12.77.0"
+    date: "2026-03-15"
+    changes:
+      - "feat(brain+engine): PATCH /tasks/:id 支持 custom_props JSONB merge"
+      - "feat(engine): stop-dev.sh report_step_to_brain() 步骤状态回写"
   - version: 12.76.0
     date: 2026-03-15
     summary: DoD Script Gate 深度检查——branch-protect.sh+check-dod-mapping.cjs 强制条目数≥3+[BEHAVIOR]必须项
