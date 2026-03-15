@@ -1,11 +1,1700 @@
+---
+# ============================================================================
+# Feature Registry - ZenithJoy Engine
+# ============================================================================
+# 版本: 3.29.0
+# 更新: 2026-03-14
+#
+# 核心原则:
+# - Feature Registry 回答"系统有什么能力"（What）
+# - Regression Contract 回答"哪些能力必须永远不坏"（How）
+# - 本文件是"单一事实源"，其他文档只能引用或由脚本生成
+#
+# 分层:
+# - platform_features: 平台基础设施（Hook机制、质检流程、阶段检测）
+# - product_features:  引擎核心能力（工作流、测试、报告、自动化）
+# ============================================================================
 
-  - id: S7-verifier-subagent
-    title: Verifier Subagent 状态机模式
-    description: |
-      给 /dev 每个关键步骤加独立 Verifier Subagent：
-      1. 02-code.md 加 DoD 深度挑战（探索后强制回答 3 个问题扩充 DoD）
-      2. 02-code.md 写代码改为逐条 DoD 内循环（写→Verifier→FAIL修→PASS放行）
-      3. 01-taskcard.md 加 LLM 质量 gate（3 维度评分）
-      4. 04-learning.md 加 LLM 质量 gate（防敷衍）
-    version: "12.75.0"
+version: "3.50.0"
+updated: "2026-03-15"
+changelog:
+  - version: 12.75.0
     date: 2026-03-15
+    summary: /dev Verifier Subagent 状态机——DoD深度挑战+逐条内循环+LLM质量Gate（02-code/01-taskcard/04-learning）
+    scope: skills
+    breaking: false
+  - version: 12.74.0
+    date: 2026-03-15
+    summary: /dev 架构收尾——删老步骤文件(Step1-11)保留6步，SKILL.md统一引用，Step00/01/05补自检
+    scope: skills
+    breaking: false
+  - version: 12.73.1
+    date: 2026-03-15
+    summary: Step 04/02/03 加硬性自检命令（Learning格式/假测试/版本7文件）
+    scope: skills
+    breaking: false
+  - "3.49.0: v12.69.0 - 创建 /dev 6步重组新步骤文件（dev-step-files）：新建 02-code.md（探索/写代码/验证）、03-prci.md（PR 和 CI）、04-learning.md、05-clean.md，将原12步工作流合并为6步外壳"
+  - "3.49.0: v12.68.0 - branch-protect.sh 支持 Task Card 格式：新增 .task-{branch}.md 写入验证（同时检查成功标准+checkbox），PRD/DoD 文件查找优先 task card 格式，向后兼容旧 .prd-/.dod- 格式"
+  - "3.48.0: v12.65.1 - 修复 Engine macOS 兼容性（fix-engine-macos-compat）：branch-protect.sh 行 268 $TODAY → ${TODAY} 修复 bash 3.2 多字节字符误解析 unbound variable；runner.sh $task_id → ${task_id} 同类修复；cleanup-prd-dod.test.ts git checkout -b main 兼容 macOS 默认分支；hook-contracts.test.ts git checkout master → 动态检测 main/master；pr-gate-phase1 test 期望值修正为 toBeGreaterThan(0)；branch-protect monorepo 子目录测试 3 个全部通过"
+  - "3.47.0: v12.65.0 - 修复 Engine 测试漂移（fix-engine-test-drift）：stop-dev.sh 行 372 $DEV_MODE 改为 ${DEV_MODE} 修复 macOS UTF-8 Unicode 污染 unbound variable（exit 1→2）；ci-timeout.test.ts 更新为引用新 CI 文件（ci-l1/l2/l3/l4-*.yml），移除对已删除 engine-ci.yml 的引用；stop-hook-state-integrity.test.ts 旧格式测试更新为 expect exit 0（v14.0.0 已删除旧格式支持）"
+  - "3.46.0: v12.64.0 - /dev 专属健康保护（dynamic-ci-dev-health）：Step 00 新增 .dev-lock 完整性检查（context 压缩恢复后自动重建丢失的 .dev-lock）；新增 test-dev-health.sh 健康检查脚本（Hook 语法/Stop Hook 无锁 exit 0/必填字段/重建逻辑/高风险路径 5 项检查）；ci-l1-process.yml 新增 dev-health-check job（engine 变更时触发）；required-dev-paths.yml 新增 packages/engine/skills/dev/ 高风险路径"
+  - "3.45.0: v12.63.0 - Codex runner.sh v2.2.0 PRD 预注入（codex-runner-prd-inject）：在 US 侧预拉 Brain PRD 内容并嵌入 prompt，避免 Codex 在 M4 调 localhost:5221；新增 BRAIN_API_URL 环境变量（默认 localhost:5221，支持远程配置）；失败回调从 hardcoded localhost 改为使用 BRAIN_API_URL；无 PRD 时降级到 --task-id 模式"
+  - "3.44.0: v12.62.0 - 修复 Codex runner.sh 自动加载 CODEX_API_KEY（fix-codex-api-key）：runner.sh v2.1.0 在配置区新增 API key 加载逻辑，自动从 ~/.credentials/openai.env 读取 OPENAI_API_KEY 并导出为 CODEX_API_KEY（codex-bin v0.114.0 所需），已有环境变量时直接使用，修复 401 Unauthorized"
+  - "3.43.0: v12.59.0 - Step 6.5 升级为 Cleanup Sub-Agent（真正召唤 Agent 工具）：06-code.md Step 6.5 从内联文字检查清单升级为明确的 subagent_type=general-purpose 调用指令，自动扫描改动文件中4类垃圾代码（被替代旧代码/重复逻辑/矛盾注释/无用import），sub-agent 完成后验证 diff 无误删后继续 Step 7"
+  - "3.42.0: v12.58.1 - 修复 Codex runner 为单次大调用模式：runner.sh v2.0.0 改为第一次发送完整工作流 prompt（含 task-id、分支、项目路径），重试时发送带当前状态的恢复 prompt；修复 --cwd 不支持（改为 cd）、--sandbox full-access→danger-full-access、新增 CODEX_HOME 环境变量支持"
+  - "3.42.0: v12.57.1 - fix-branch-protect monorepo subdir PRD 保护（v25）：find_prd_dod_dir() 返回根目录时，若文件在 packages/ 子目录则要求根目录必须有 per-branch PRD（.prd-{branch}.md），不接受全局 .prd.md 旧任务残留，新增测试用例覆盖场景"
+  - "3.41.0: v12.57.0 - cleanup.sh 完成后自动触发 worktree-gc：step_11_cleanup: done 标记后，从主仓库后台执行 worktree-gc.sh（cd MAIN_WT && bash worktree-gc.sh &），不再依赖外部触发；GC 脚本不存在或主仓库路径为空时静默跳过"
+  - "3.40.0: v12.56.0 - worktree 活跃锁防 GC 误删：worktree-gc.sh 在删除前检查 .dev-session-active，存在则跳过并输出 WARN；stop-dev.sh v15.1.0 在 dev 流程开始时在 worktree 内创建 .dev-session-active，cleanup_done 后删除；.gitignore 新增 .dev-session-active"
+  - "3.39.0: v12.53.0 - /dev Step 6.5 强制 Simplify 子步骤：06-code.md 在\"完成后\"章节前新增 Step 6.5（内联，不调用外部 skill）；每次写完代码必须扫描 git diff 改动文件，清理 4 类问题：被替代旧代码、重复逻辑、矛盾注释、无用 import；有完成标准检查清单，不做完不能进 Step 7"
+  - "3.38.0: v12.52.0 - Stop Hook 重试上限 15→30 + 失败通知 Brain API：stop-dev.sh RETRY_COUNT 上限从 15 改为 30；30 次失败后读取 .dev-mode 中 task_id，调用 PATCH /api/brain/tasks/{id} 标记 failed（curl --max-time 5 || true，不影响主流程）"
+  - "3.37.0: v12.51.0 - Per-Branch Learning 文件——消除并行冲突：check-learning.sh v2 检查 docs/learnings/<branch>.md（向后兼容旧 docs/LEARNINGS.md）；10-learning.md 指引写 per-branch 文件；fire-learnings-event.sh/extract-learnings.sh 支持 per-branch 路径"
+  - "3.36.0: v12.50.0 - 统一 Stop Hook 状态文件格式：删除所有旧格式（.dev-lock/.dev-mode/.dev-sentinel 无后缀）兼容代码；stop.sh v14.0.0 只检测 .dev-lock.<branch>（删除旧格式兜底）；stop-dev.sh v14.0.0 删除旧格式 fallback/泄漏检查/sentinel 孤儿处理（减少 85 行）；03-branch.md 更新 worktree 冲突检测逻辑"
+  - "3.35.0: v12.49.0 - 变更行覆盖率硬门禁：新增 check-changed-coverage.cjs（三合一确定性门禁：feat 必须有新测试 + 测试必须 import 源码 + 变更行覆盖率 ≥ 60%）；vitest.config.ts 添加 json reporter；CI L3 新增 Coverage Gate 步骤"
+  - "3.34.0: v12.48.0 - PRD 语义覆盖审计：05-dod.md 新增承诺分类（ARTIFACT/BEHAVIOR/GATE）；07-verify.md 新增 Step 7.5 独立审计员；check-dod-mapping.cjs 新增 BEHAVIOR 弱测试检测"
+  - "3.33.0: v12.47.1 - branch-protect.sh v24 统一分支命名规范（删除 feature/* 支持，cp-* 为唯一合法格式，与 CI L1 verify-dev-workflow 完全一致）"
+  - "3.32.0: v12.44.3 - stop-dev.sh Session 隔离前置（D6）：mutex 获取前新增 session 预检查，无匹配 .dev-lock 直接 exit 0，避免无关会话阻塞等待队列"
+  - "3.31.0: v12.44.2 - 分支清理增强：新增 branch-gc.sh 独立脚本（三类清理：已合并 PR/已关闭 PR/无 PR 超时孤儿分支）；cleanup.sh Section 9 委托 branch-gc.sh；支持 --dry-run 和 --stale=N 参数；保护 worktree 关联分支和有 open PR 的分支"
+  - "3.30.0: v12.44.1 - 配置更新：bash-guard.sh HK 部署拦截正则更新新 IP"
+  - "3.29.0: v12.44.0 - /dev skill subagent 并行升级：Step 4 (Explore) 加入 2-3 个 Explore subagent 并行代码探索（对齐 Anthropic feature-dev 插件 code-explorer 模式）；Step 7 (Verify) 新增 7.4 节 3 个 code-reviewer subagent 并行代码审查（simplicity/DRY、bugs/correctness、conventions 三维度）"
+  - "3.28.0: v12.43.0 - 新增 /architect skill Stop Hook 支持：stop.sh 路由器 v13.3.0 新增 .architect-lock.* 检测 → stop-architect.sh；新增 stop-architect.sh（Mode 1 scan / Mode 2 design 完成条件检查）"
+  - "3.27.0: v12.41.0 - 深度 Bug 修复（3P0+6P1）：cleanup.sh sed step_11_cleanup 静默失败修复（验证后追加）；stop-dev.sh 无头模式锁匹配分支名 fallback（防 exit 0 泄漏）；worktree-gc.sh 脏状态检查（防数据丢失）；孤儿 sentinel/.dev-lock 重试上限（防无限循环）；jq shim（防 set -e 崩溃）；lock-utils.sh 变量隔离（_LU_ 前缀防覆写）；worktree-gc --state all 改 merged+closed；rm -rf 路径安全验证"
+  - "3.26.0: v12.40.1 - Stop Hook + Cleanup 5 bug 修复：stop-dev.sh merged PR 跳过 CI 检查（防卡死）；cleanup.sh .dev-mode per-branch 格式支持（Section 10+7.6）；Section 9 用 gh pr list 替换 git branch --merged（squash merge 兼容）；Section 4.5 移除 fire-and-forget GC（竞态修复）；新增 18 个 CI 测试"
+  - "3.25.0: v12.40.0 - Worktree 外部清理者架构重构：新增 worktree-gc.sh（从主仓库运行，用 gh API 检测已合并 PR，不用 git branch --merged）；stop-dev.sh force_cleanup_worktree 不再自删 worktree；cleanup.sh 委托外部 GC；worktree-manage.sh cleanup 委托外部 GC；新增 worktree-gc.test.ts 行为测试"
+  - "3.24.0: v12.39.0 - Stop Hook 安全默认修复 + 状态完整性测试门禁：.dev-mode 首行损坏时从 exit 0 改为 exit 2（PR #549 根因修复）；03-branch.md Task Checkpoint 文件名 bug 修复；新增 stop-hook-state-integrity.test.ts（11 项行为测试）"
+  - "3.23.0: v12.38.5 - 修复 vitest worker 线程中 62 个测试失败：stdin pipe 改 HOOK_INPUT env var，heredoc 改 printf，process.chdir() 改绝对路径"
+  - "3.22.0: v12.38.4 - 修复 SKILL.md Stop Hook 第3步遗漏 Learning 路由（PR 未合并时引导执行 Step 10 Learning → push → 合并 PR，而非直接合并，防止双 PR 问题）"
+  - "3.21.0: v12.38.0 - 行为级 DoD 全链路修复：decomp 模板 E 行为级 DoD+Test 字段；decomp-check 加 Test 字段验证；fetch-task-prd.sh 读 Initiative DoD；05-dod.md 尊重已有 DoD；03-branch.md 新 session 恢复模式；.gitignore/.cleanup.sh 修复 prd/dod 文件泄漏"
+  - "3.20.0: v12.37.0 - 修复 .gitignore dev state 文件泄漏（补全 .dev-lock*/.dev-sentinel*/.dev-mode.*/.dev-runs/），移除 PR #427 意外追踪的 6 个 dev state 文件；PRD 模板新增强制异常处理 & 报警规范表"
+  - "3.19.0: v12.36.1 - stop.sh 路由器修复（Bug：检测 .dev-lock 而非 .dev-mode，防止 .dev-mode 被 cleanup 删除后 LEARNINGS 检查被绕过，LEARNINGS 落入单独 PR）"
+  - "3.18.0: v12.36.0 - 并行会话隔离：.dev-lock/.dev-mode 改为 per-branch 文件命名（.dev-lock.<branch>），stop-dev.sh 动态扫描匹配当前 TTY/session_id，多 Terminal 同仓库并行不串线"
+  - "3.17.0: v12.35.10 - cleanup.sh [2.5] 部署改为 fire-and-forget（setsid 后台运行，不阻塞有头模式会话，日志写 /tmp/cecelia-deploy-<branch>.log）"
+  - "3.16.0: v12.35.9 - 修复 CI/CD 部署集成缺口（cleanup.sh 捕获 CHANGED_FILES 并调用 deploy-local.sh；brain-deploy.sh docker compose 失败回滚；.brain-versions 去重写入）"
+  - "3.15.0: v12.35.8 - stop-dev.sh condition 3 合并前检查 step_10_learning（防止 Stop Hook 跳过 Step 10 LEARNINGS 直接合并导致双 PR，H1-013）"
+  - "3.14.0: v12.35.7 - branch-protect.sh v23 活跃 Worktree .dev-mode 强制检查（防止新 Claude 会话绕过 /dev 写代码，H1-012）"
+  - "3.13.0: v12.35.6 - branch-protect.sh v22 僵尸 Worktree 检测（已合并分支阻止写代码，git ls-remote 区分新分支/已合并）"
+  - "3.12.0: v12.35.5 - 修正 LEARNINGS 路由架构（fire-learnings-event.sh 替代 extract-learnings.sh；移除 generate-feedback-report.sh LEARNINGS 合并；10-learning.md Step 3.5 改为通过 Brain API 路由；issues→fix task/next_steps→learnings 表）"
+  - "3.11.0: v12.35.4 - 打通 /dev LEARNINGS → Brain DB 管道（新增 extract-learnings.sh 从 incident-log + LEARNINGS.md 提取结构化知识；generate-feedback-report.sh 合并 .dev-learnings-extracted.json；10-learning.md 新增 Step 3.5 调用提取脚本）"
+  - "3.10.0: v12.35.3 - 修复 /dev LEARNINGS 写入时机（09-ci.md CI 通过后不立刻合并，先执行 Step 10；10-learning.md push LEARNINGS 到功能分支后再合并 PR，确保 LEARNINGS 包含在同一 PR 中）"
+  - "3.9.0: v12.35.1 - 修复 cecelia branch protection（移除 Dashboard Build required check，只保留 ci-passed；setup-branch-protection.sh 加入 cecelia + check_branch 支持不存在分支跳过）"
+  - "3.8.0: v12.35.0 - 修复前端 DoD 视觉验证盲区（05-dod.md 新增 manual:chrome 格式 + 07-verify.md 新增截图验证分支 + check-dod-mapping.cjs 接受 manual:chrome 类型）"
+  - 3.7.0: v12.33.0 - /dev 交付质量修复（05-dod.md manual 格式升级到具体命令 + 07-verify.md 逐条执行 DoD 勾 [x] + check-dod-mapping.cjs 增加全勾检查 + devgate.yml 全 PR DoD 门控）
+  - 3.6.0: v12.32.2 - Step 10 Learning 加入 MEMORY.md SSOT 更新规则（防止版本漂移）
+  - 3.5.0: v12.32.1 - fix stop-dev.sh force_cleanup_worktree Bug（改用子 shell cd 到 main_wt 再执行 git worktree remove，绕过 git 禁止删除当前 CWD 所在 worktree 的限制，彻底解决 worktree 残留问题）
+  - 3.4.0: v12.32.0 - 清理 /okr 残留，对齐 /decomp 命名（删除 S1 OKR Skill feature entry + stop-okr.sh → stop-decomp.sh + .okr-mode → .decomp-mode + 删除 skills/okr/ 目录 + regression-contract H7-003/S1-001~S1-005 清理）
+  - 3.3.0: v12.30.10 - SKILL.md 无头模式描述修正（对齐 stop.sh v13.1.0 实际行为，删除过时的"外部 while 循环"说法）
+  - 3.2.0: v12.30.9 - stop.sh 路由器删除 CECELIA_HEADLESS 绕过（Bug 修复：无头模式与有头模式走同一套状态机，H7-014 RCI 新增）
+  - 3.1.0: v12.30.8 - bash-guard.sh Rule 3（Bash 工具写代码文件检测：redirect/sed-i/tee，main 分支拦截，cp-*/feature/* 放行）
+  - 3.0.0: v12.30.7 - /dev SKILL.md v3.4（P0:启动强制 Step 00 命令 + 触发词扩充到 18 个；P1:Step 03 worktree 兜底路径修复 + 分支表格动态化 + 手动分支格式替换为 cp-*；P2:develop 遗留引用清理 + 分支命名规则统一）
+  - 2.99.0: v12.30.6 - /dev SKILL.md v3.3（description 触发描述修复 + 删废弃 p0/p1/p2 注释 + 分支策略对齐 main 单分支 + 产物清单修正）+ Step 10 Learning 推送切回 base 分支 + worktree-manage.sh 动态检测 develop/main
+  - 2.98.0: v12.30.4 - Skills 中 --base develop 改为自动检测（有 develop 用 develop，否则用 main）
+  - 2.97.0: v12.30.1 - cleanup.sh Step [9] 自动删除已合并 cp-* 分支（git branch --merged 检测 + W6-005）
+  - 2.96.0: v12.30.0 - /dev 步骤重构（Step 4 探索/Step 5 DoD/Step 6 写代码+测试/Step 7 本地验证 + .dev-mode 字段重命名 + SKILL.md v3.2）
+  - 2.95.0: v12.29.0 - Step 0/Step 3 worktree 检测盲区修复（主仓库 cp-*/feature-* 强制 worktree + W6-004）
+  - 2.94.1: v12.28.1 - 清理误提交垃圾文件 + .gitignore 增强防护
+  - 2.94.0: v12.28.0 - Worktree 路径迁移到 .claude/worktrees/（对齐官方约定）+ Stop Hook 强制清理 worktree 兜底（H7-013）
+  - 2.93.0: v12.27.1 - 强制所有 skill 输出简体中文（CRITICAL LANGUAGE RULE + language-rule.test.ts）
+  - 2.92.0: v12.27.0 - Step 10 自动推进 Capability stage（update-capability.sh + Brain API 链路）
+  - 2.91.0: v12.26.0 - Capability-Driven Development Phase 2（validate-okr.py 7 个 capability 校验 + store-to-database.sh capability 字段传递 + /okr SKILL.md "开工前必问"规则 + initiatives[] 格式）
+  - 2.90.0: v12.25.0 - cleanup.sh 自动清理远程已删除的分支（Step 9.5 + gone 分支检测 + 批量删除 + 保持仓库干净）
+  - 2.89.0: v12.24.0 - Exploratory Skill 完整性保证（Stop Hook 检查 PRD/DOD 生成 + worktree 清理 + merge 工具合并多个 exploratory 产出 + 24 个测试）
+  - 2.88.0: v12.22.0 - OKR 三层拆解集成 PR Plans（Layer 2 工程规划层 + store-to-database.sh 支持 + validate-okr.py 验证 + SKILL.md 文档）
+  - 2.87.0: v12.18.3 - /dev SKILL.md 文档修复（删除错误的"Learning 使用 Subagent"说明，与 Step 10 定义一致）
+  - 2.86.0: v12.18.1 - Stop Hook sentinel 文件路径修复（.git/hooks/ → 根目录，避免 Bash 工具保护触发）
+  - 2.85.0: v12.18.0 - Dev 执行反馈报告 4 维度分析（record-step.sh + generate-feedback-report-v2.sh + step-expectations.json + 质量/效率/稳定性/自动化分析）
+  - 2.84.0: v12.17.0 - Dev Feedback Upload & Task Status Sync Phase 4a（upload-feedback.sh + update-task-status.sh + Brain 闭环）
+  - 2.83.0: v12.16.0 - Dev Task ID Workflow Integration Phase 3b（Step 1/3 集成 + task-<id> 分支命名 + .dev-mode task_id）
+  - 2.82.0: v12.15.0 - Dev Task ID Support Phase 3a（parse-dev-args.sh + fetch-task-prd.sh + Brain 集成）
+  - 2.81.0: v12.14.1 - Dev Feedback Report（结构化反馈 + 11 字段 JSON + generate-feedback-report.sh）
+  - 2.80.0: v12.14.0 - OKR 迭代拆解能力（策略 C：混合规划 + decompose-feature.sh + continue-feature.sh）
+  - 2.79.0: v12.13.0 - OKR Skill 数据库集成（Stage 4.5 + store-to-database.sh + Brain API 调用）
+  - 2.78.0: v12.12.0 - Validation Loop for PRD/DoD（90分制 + 10层防作弊 + 集成到 /dev）
+  - 2.77.0: v12.11.1 - Stop Hook 写死逻辑修复（headless 不旁路 + 锁失败 exit 2）
+  - 2.76.0: v12.11.0 - OKR Skill v7.0.0（Validation Loop + Anti-Cheat + 31种攻击场景100%拦截）
+  - 2.75.0: v12.10.0 - Stop Hook exit 代码修复 + Worktree 多会话检测 + 会话注册机制
+  - 2.74.0: v12.9.0 - stop-okr.sh 完整实现（5 个完成条件检查 + 测试脚本 + 文档格式修正）
+  - 2.73.0: v12.8.0 - Stop Hook 路由器架构 + Branch Protection 数据库检查 + DevGate 假测试检测
+  - 2.72.0: v12.7.1 - Stop Hook 修复：删除"11步全部done"提前退出逻辑
+  - 2.71.0: v12.6.0 - Bash Guard Hook（凭据泄露 + HK 部署防护）
+  - 2.70.0: v12.5.8 - 恢复 audit skill（保留但不强制使用）
+  - 2.67.0: v12.5.3 - 清理 Subagent hooks（mark-subagent-done.sh, require-subagent-token.sh 已删除）
+  - 2.66.0: v12.5.1 - 剩余 4 个 bug 修复（auto-merge skip + evidence branch + TOCTOU + Monorepo）
+  - 2.65.0: v12.5.0 - CI/CD + Branch Protection + Stop Hook bug 修复（21 个 bug）
+  - 2.64.0: v12.4.14 - Hook gitignored 文件检测修复 + 时间窗口测试修复
+  - 2.63.0: v12.4.13 - Hook 共享工具库
+  - 2.62.0: v12.4.12 - CI 版本同步检查
+  - 2.61.0: v12.4.11 - DEBUG 日志工具支持
+  - 2.60.0: v12.4.10 - CJS 脚本共享常量提取
+  - 2.59.0: v12.4.9 - 版本同步修复（package-lock.json 同步 + SKILL.md 版本更新流程文档）
+  - 2.58.0: v12.4.8 - 低优先级清理（session-end.sh/STOP-HOOK-SPEC.md 归档 + src/index.ts 注释更新）
+  - 2.57.0: v12.4.7 - 深度审计修复（skills 重试次数 20→15 + README.md 更新）
+  - 2.56.0: v12.4.6 - 审计问题修复（regression-contract.yaml 版本同步 + CLAUDE.md hooks 列表更新）
+  - 2.55.0: v12.4.4 - 代码库清理（SKILL.md 重复内容修复 + 07-quality.md 矛盾修复 + stop.sh 注释修正 + .gitignore 例外规则清理）
+  - 2.54.0: v12.4.3 - 强调 /dev 核心目标（成功合并 PR，不停止，自动修复一切问题）
+  - 2.53.0: v11.26.1 - 修复 7 个 CRITICAL bug（Stop Hook PR合并退出 + branch-protect 新仓库fallback + retry_count竞态 + Step 3竞态 + PR Gate硬阻塞 + 命令注入防护）
+  - 2.52.0: v11.26.0 - gate:quality - 本地 PR 前质量检查 Gate（TypeCheck + Build + Test + Shell 语法，Step 7 提前发现 95% 问题）
+  - 2.51.0: v11.24.1 - H1 Stop Hook 循环机制修复（20次重试计数器 + 删除PR合并提前退出 + 11步Checklist追踪 + 分支不匹配泄漏修复）
+  - 2.50.0: v11.24.0 - H2 硬拦截 --admin 参数（移除引号内容后检测，防止绕过 Branch Protection）
+  - 2.49.0: v11.23.0 - 修复 Release 死循环（back-merge workflow + release/* 祖先关系检查 + 禁止 --admin）
+  - 2.48.0: v11.22.0 - Gate MAX_GATE_ATTEMPTS 调整（从 3 次到 20 次，提供充足修复机会）
+  - 2.47.0: v11.21.0 - Gate 循环模式 B 优化（主 Agent 改 + 外部循环，职责分离架构，新建 qa.md/learning.md，统一循环控制模板）
+  - 2.46.0: v11.20.0 - AI 自我检测硬规则（skills/dev + CLAUDE.md 添加禁止话术和关键词自检机制）
+  - 2.45.0: v11.19.0 - G3 修复 dev 工作流 gate skill 调用方式（Task → Skill 调用，删除冗长内联 prompt）
+  - 2.44.0: v11.16.0 - W6 Worktree 自动检测与创建（Step 0 前置 + 僵尸清理 + flock 锁 + Step 3 兜底）
+  - 2.43.0: v11.14.2 - P0-3 Stop Hook 会话隔离（检查 .dev-mode 中的 branch 是否与当前分支匹配，防止多会话"串线"）
+  - 2.42.0: v11.14.1 - 统一 Subagent Gate 命名和规则挂载（gate:prd/dod/qa/audit/test/learning 规则嵌入 prompt）
+  - 2.41.0: v11.14.0 - P3 cleanup.sh v1.8 PRD/DoD 归档到 .history/ 目录
+  - 2.40.0: v11.13.1 - H1 支持 monorepo 子目录 PRD/DoD 文件检测
+  - 2.39.0: v11.12.4 - 本地版本检查（警告模式）+ P2/P3 一致性分析
+  - 2.38.0: v11.11.0 - 并发安全修复（P0-2 Stop Hook flock锁 + P0-3 超时保护 + P0-4 CI白名单 + P1-6 正则修复）
+  - 2.37.0: v11.10.0 - Gate v3 安全机制（TTL 过期 + tree_sha/repo_id 绑定 + 验证器软警告 + Stop Hook 自动清理）
+  - 2.36.0: v11.9.0 - /dev 工作流 v3（Gate/Quality/CI 三层分离 + Audit 前置 + Subagent 并行）
+  - 2.35.0: v11.8.0 - Gate v2 方案 A 改造（防误用字段 + exit code 分层 + 硬失败）
+  - 2.33.0: v11.7.0 - Gate 强制执行机制（签名防伪 + pr-gate-v2 检查）
+  - 2.32.0: v11.6.0 - Gate Skill 家族（独立质量审核：prd, dod, test, audit）
+  - 2.31.0: v11.5.0 - 放宽 skills 保护（只保护 Engine skills：dev, qa, audit, semver）
+  - 2.30.0: v11.4.1 - 修复 Stop Hook 跳过 Cleanup bug（cleanup_done 检测 + PR 合并时 exit 2）
+  - 2.29.0: v11.4.0 - Task Checkpoint 强制执行（branch-protect v18 检查 tasks_created 字段）
+  - 2.28.0: v11.3.2 - 移除 Ralph Loop（统一用 Stop Hook，.dev-mode 移到 Step 3 创建）
+  - 2.27.0: v11.3.1 - Worktree 强制检查（Step 3 阻止主仓库有活跃任务时创建分支，P5 重新激活）
+  - 2.26.0: v11.3.0 - Stop Hook 循环控制器（H7 重新激活）
+  - 2.25.0: v11.2.12 - Credential Guard Hook（凭据保护，防止代码泄露）
+  - 2.24.0: v11.2.10 - rm -rf 安全验证（safe_rm_rf 函数，路径验证防误删）
+  - 2.23.0: v11.2.9 - 关键清理（删除 contracts/、H7/W5 废弃、移除未实现脚本引用）
+  - 2.22.0: v11.2.8 - 文档矛盾清理（归档过时文档、修正 Step 编号、删除不存在引用）
+  - 2.21.0: v11.2.7 - Promise 信号统一（DONE 替代 QUALITY_GATE_PASSED/CI_PASSED）
+  - 2.20.0: v11.2.6 - 跨仓库兼容性 + Worktree 支持（-e .git、develop/main fallback）
+  - 2.19.0: v11.2.5 - 并发安全修复 Phase 1（原子写入、分支级别状态文件、trap 修复）
+  - 2.18.0: v11.2.0 - 分支级别 PRD/DoD 文件命名（H1/H2 向后兼容扩展）
+  - 2.17.0: v11.0.0 - QA/Audit 三层架构重构（Q1 RISK SCORE + Q2 Structured Audit）
+  - 2.16.0: v10.13.1 - /dev 文档修复（循环机制说明） + pr-gate 降级为提示型（exit 0）
+  - 2.15.0: v10.13.0 - /dev Skill v2.2.0（删除阶段检测，统一完成条件，强制 Task Checkpoint）
+  - 2.14.0: v10.12.0 - Ralph Loop Wrapper 修复（用户直接调用，dev-with-loop 命令，v2.1.0）
+  - 2.13.0: v10.10.0 - Ralph Loop 自动化（Step 7/9 自动启动，解决 SHA 死循环，自动更新版本号）
+  - 2.12.0: v10.9.5 - 修正 Ralph Loop 文档（删除 Stop Hook 配合描述，明确独立循环机制）
+  - 2.11.0: v10.8.7 - 自动化质检与自我进化机制（3个自动化脚本 + detect-priority优化 + CI已知失败支持 + RCI覆盖）
+  - 2.10.0: v10.8.6 - 修复 p1 阶段 AI 停顿（恢复 while 循环 + Stop Hook 强制 + Session-start 提示）
+  - 2.9.0: v10.8.5 - 彻底修复 AI 停顿点（Skill Node 强制继续 + Stop Hook 语义 + Pending 退出）
+  - 2.8.0: v10.8.4 - 修复 /dev 自动执行 + PR Gate 质检缓存（W1 + H2）
+  - 2.7.0: W1 v10.8.0 - 修复阶段检测（detect-phase.sh 脚本新增）
+  - 2.6.0: Q4 v10.6.0 - CI 分层完善（L2B + L3-fast + Preflight + AI Review）
+  - 2.5.0: W1 v10.5.1 - Ralph Loop 文档 + 运行时文件清理 + 测试修复
+  - 2.4.0: H2 v10.4.4 - 真正移除 FAST_MODE（修复 PR #273 假修复）
+  - 2.3.0: 术语更新 Checkpoint → Task（避免与官方 Checkpoint 混淆）
+  - 2.2.0: /dev Skills 清理 + 多 Feature 支持文档
+  - 2.1.0: 新增 P0 质检强制三件套 (Q1/Q2/Q3)
+
+# ============================================================================
+# Platform Core 5 - 平台基础设施（按"断了就全死"排序）
+# ============================================================================
+platform_features:
+  # --------------------------------------------------------------------------
+  # H1: Branch Protection - 分支保护
+  # --------------------------------------------------------------------------
+  - id: H1
+    name: Branch Protection
+    status: Committed
+    priority: P0
+    version: "12.38.1"
+    updated: "2026-03-02"
+    description: |
+      防止在 main/develop 分支直接写代码，强制使用 cp-*/feature/* 工作分支
+      v12.35.7: 活跃 Worktree .dev-mode 强制检查（v23）- 非僵尸 worktree 必须有 .dev-mode 才能写代码，防止新 Claude 会话绕过 /dev
+      v12.35.6: 僵尸 Worktree 检测（v22）- 已合并分支阻止写代码
+      v12.33.3: 双重修复（v21）- cp-* 分支名正则与 devgate.yml 同步（强制 8 位时间戳）+ worktree 检测加 gitdir 文件检查
+      v12.33.2: 强制 worktree 检测（v20）- cp-*/feature/* 分支必须在独立 worktree 中，防止主仓库污染
+      v12.8.0: 加强数据库检查（v20）- .dev-mode 存在时优先检查 Brain API 数据库（PRD/DoD 初稿），支持秋米→/dev 工作流
+      v12.4.14: 修复 gitignored PRD/DoD 文件检测（跳过 git 追踪检查，只验证存在性和内容）
+      v11.13.1: 支持 monorepo 子目录 PRD/DoD 文件检测（如 apps/core/.prd.md）
+      v11.11.0: P1-6 修复 - 使用 grep -Eq 替代 bash regex 进行 skills 路径匹配（修复分组失败问题）
+      v11.5.0: 放宽 skills 保护（只保护 Engine skills：dev, qa, audit, semver，其他 skills 可从任何 repo 部署）
+      v11.4.0: 添加 Task Checkpoint 检查（.dev-mode 必须包含 tasks_created: true）
+      v11.2.6: 移除硬编码路径 + develop/main 自动检测 fallback
+      v11.2.0: 支持分支级别 PRD/DoD 文件（.prd-{branch}.md，向后兼容 .prd.md）
+
+    entrypoints:
+      - type: hook
+        event: PreToolUse:Write, PreToolUse:Edit
+        file: hooks/branch-protect.sh
+
+    golden_path: |
+      检测当前分支 → main/develop → exit 2 (阻止) | cp-*/feature/* → worktree 检测 → 僵尸检测 → .dev-mode 检测 → PRD/DoD 检测 → exit 0 (放行)
+
+    minimal_paths:
+      - "在 main 分支尝试写代码 → 被阻止"
+      - "在 cp-* 分支写代码 → 放行"
+      - "在已合并 cp-* 分支（僵尸 worktree）写代码 → 被阻止"
+      - "在活跃 cp-* worktree、无 .dev-mode、新 Claude 会话 → 被阻止"
+
+    tests:
+      - type: auto
+        file: tests/hooks/branch-protect.test.ts
+        coverage: H1-001, H1-002, H1-003, H1-010, H1-011, H1-012, H1-013
+
+    rcis:
+      - H1-001  # 拦截 main/develop 写入
+      - H1-002  # cp-* 分支允许写入
+      - H1-003  # feature/* 分支允许写入
+      - H1-010  # JSON 注入防护
+      - H1-011  # 路径遍历防护
+      - H1-012  # 活跃 worktree 必须有 .dev-mode
+      - H1-013  # stop-dev.sh 合并前检查 step_10_learning
+
+  # --------------------------------------------------------------------------
+  # H7: Stop Hook Loop Controller - 循环控制器
+  # --------------------------------------------------------------------------
+  - id: H7
+    name: Stop Hook Router (v14.0.0)
+    status: Committed
+    priority: P0
+    version: "12.50.0"
+    updated: "2026-03-11"
+    description: |
+      Stop Hook 路由器架构，检测 mode 文件分发到对应 handler：
+      - 路由器：stop.sh（~63 lines）检测 .dev-lock.<branch>/.architect-lock.*/.decomp-mode，调用对应 handler
+      - stop-dev.sh：/dev 工作流完成条件检查（PR 创建 + CI 通过 + PR 合并）
+      - stop-architect.sh：/architect 架构设计完成条件检查（Mode 1 scan / Mode 2 design）
+      - stop-decomp.sh：/decomp 工作流完成条件检查（output.json + DB 写入）
+      - 职责分离：路由器只负责分发，具体逻辑在 handler 中
+      - 写死逻辑：有 .dev-mode 时，任何情况（包括 headless、锁失败）都必须 exit 2，只有真正完成才 exit 0
+      v12.43.0: 新增 .architect-lock.* 路由 → stop-architect.sh（/architect skill Stop Hook 支持）
+      v12.32.1: 修复 force_cleanup_worktree 无法删除当前 CWD 所在 worktree 的 Bug（子 shell cd 到 main_wt 再执行 git worktree remove，彻底解决 worktree 残留问题）
+      v12.32.0: 清理 /okr 残留 - stop-okr.sh → stop-decomp.sh，.okr-mode → .decomp-mode，删除 skills/okr/
+      v12.30.3: 修复泄漏路径 - .dev-lock 丢失但 .dev-mode 存在时，先调 force_cleanup_worktree() 再删 .dev-mode，防止孤立 worktree（W6-006）
+      v12.17.1: 双钥匙状态机 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险），修复 .dev-mode 创建失败/被删除导致会话退出的漏洞，Step 3 改用 Bash 原子写入，cleanup.sh 不删除状态文件
+      v12.11.1: 写死逻辑修复 - 删除 headless 模式的 exit 0 旁路 + 锁失败返回 exit 2（不是 exit 0）+ 更新注释
+      v12.8.0: 重构为路由器架构（v13.0.0）- 从单一 352 lines 文件拆分为路由器+handlers，支持多 Skill 扩展
+      v12.7.1: 修复被绕过问题 - 删除"11步全部done"提前退出逻辑（line 108-136），步骤状态只用于进度展示，流程控制只依赖实际 PR/CI/Merge 状态
+      v11.18.0: H7-008 - TTY 会话隔离，有头模式下按 terminal (/dev/pts/N) 隔离
+      v11.15.0: P0-4 修复 - session_id 验证 + 共享锁工具库(lib/lock-utils.sh) + 统一 CI 查询(lib/ci-status.sh)
+      v11.14.2: P0-3 修复 - 会话隔离，检查 .dev-mode 中的 branch 是否与当前分支匹配，防止多会话"串线"
+      v11.11.0: P0-2 修复 - 添加 flock 并发锁防止多个会话同时操作 .dev-mode 文件
+      v11.10.0: PR 合并后自动执行 cleanup（删除 .dev-mode、切换分支、删除本地分支），不再悬空
+      v11.4.1: 修复跳过 Cleanup bug（cleanup_done 检测 + PR 合并时 exit 2）
+      v11.3.0: 首次实现，替代 Ralph Loop 插件
+
+    entrypoints:
+      - type: hook
+        event: Stop
+        file: hooks/stop.sh
+
+    golden_path: |
+      会话结束 → 检测 .dev-mode → 检查完成条件 → exit 2 (继续) | exit 0 (结束)
+
+    minimal_paths:
+      - "无 .dev-mode → exit 0 (普通会话)"
+      - "有 .dev-mode + PR 未创建 → exit 2 (继续)"
+      - "有 .dev-mode + PR 已合并 → 删除 .dev-mode + exit 0 (完成)"
+
+    tests:
+      - type: manual
+        evidence: manual:stop-hook-loop-controller
+
+    rcis:
+      - H7-001  # .dev-mode 检测
+      - H7-002  # 完成条件检查
+      - H7-004  # exit 2 阻止会话结束
+      - H7-006  # session_id 验证
+      - H7-007  # 共享锁工具库原子操作
+      - H7-008  # TTY 会话隔离
+      - W6-006  # 泄漏路径 worktree 清理
+
+  # --------------------------------------------------------------------------
+  # H2: PR Gate (Dual Mode) - 提交门禁
+  # --------------------------------------------------------------------------
+  - id: H2
+    name: PR Gate (Dual Mode)
+    status: Committed
+    priority: P0
+    version: "11.24.0"
+    updated: "2026-02-01"
+    description: |
+      PR 创建前的质检门禁，支持双模式：
+      - PR 模式: L1 (测试) + L2A (审计) + L2B-min (证据)
+      - Release 模式: L1 + L2A + L2B-full (证据) + L3 (验收)
+      - v11.24.0: 硬拦截 gh pr --admin 参数（移除引号/heredoc 后检测，防止绕过 Branch Protection 和 CI）
+      - v11.11.0: P0-3 修复 - verify-gate-signature.sh 调用添加 10 秒超时保护（防止卡死）
+      - v11.10.0: P0-1 修复 - 验证器缺失时改为软警告（不再阻止），支持 v3 exit code (7/8/9)
+      - v11.8.0: Gate 验证器硬失败（脚本缺失时 exit 2）+ 分层 exit code 错误提示
+      - v11.2.6: .git 检测使用 -e 替代 -d（兼容 worktree）+ develop/main fallback
+      - v11.2.5: 并发安全修复（TEMP_FILES 数组管理、分支级别质检文件）
+      - v11.2.0: 支持分支级别 PRD/DoD 文件（.prd-{branch}.md，向后兼容 .prd.md）
+      - v10.13.1: 降级为提示型 Gate（检查失败 exit 0，不阻断），CI 是唯一门槛
+      - v10.8.4: 信任新鲜质检结果（5分钟内），避免重复测试导致不稳定
+      - v10.6.0: 新增 Part 0.5 (CI Preflight) 和 L2B-min 检查
+      - v10.4.4: 真正移除 FAST_MODE，100% 强制本地 L1+L2A 检查
+
+    entrypoints:
+      - type: hook
+        event: PreToolUse:Bash (gh pr create)
+        file: hooks/pr-gate-v2.sh
+
+    golden_path: |
+      检测命令 (gh pr create) → 判断模式 (PR/Release) → 检查产物 → 通过/阻止
+
+    minimal_paths:
+      - "PR 模式: 检查 PRD + DoD + QA-DECISION + AUDIT-REPORT (PASS) + L1"
+      - "Release 模式: 额外检查 .layer2-evidence.md + DoD 全勾"
+
+    tests:
+      - type: auto
+        file: tests/hooks/pr-gate.test.ts
+        coverage: H2-001, H2-002, H2-003, H2-004
+
+    rcis:
+      - H2-001  # 拦截 gh pr create
+      - H2-002  # L1 失败阻止
+      - H2-003  # 双模式检测
+      - H2-004  # 产物检查
+
+  # --------------------------------------------------------------------------
+  # W1: Two-Phase Dev Workflow - 两阶段工作流（v2.0.0）
+  # --------------------------------------------------------------------------
+  - id: W1
+    name: Unified Dev Workflow
+    status: Committed
+    priority: P0
+    version: "12.33.0"
+    updated: "2026-02-27"
+    description: |
+      v2.2.0 统一开发工作流（删除阶段检测 + 强制 Task Checkpoint）：
+      - 统一完成条件：PR 创建 + CI 通过 + PR 合并 = DONE
+      - Task Checkpoint：TaskCreate/TaskUpdate 追踪进度
+      - 从头到尾一直执行，不在 PR 创建后停止
+      - Ralph Loop: 用户直接在 Claude Code 会话内输入 /ralph-loop 命令
+      - v12.33.0: 交付质量修复 - Step 5 manual 格式要求具体命令 + Step 7 逐条执行 DoD 验证并勾 [x]
+      - v12.30.4: Skills 中 --base develop 改为自动检测（有 origin/develop 用 develop，否则用 main）
+      - v12.4.9: 添加版本更新流程文档（防止 package-lock.json 再次不同步）
+      - v12.4.3: 强调核心目标 - 成功合并 PR，不停止，遇到问题自动修复
+      - v12.4.2: 添加 Step 11 任务列表清理逻辑（防止任务残留）
+      - v11.21.0: 循环模式 B 优化（所有步骤文件使用统一循环控制模板，MAX_GATE_ATTEMPTS=3 硬编码上限）
+      - v11.19.0: G3 修复 gate skill 调用方式（6 个 gates 从 Task(general-purpose) 改为 Skill() 调用，删除冗长内联 prompt）
+      - v11.2.7: Promise 信号统一（DONE 替代 QUALITY_GATE_PASSED/CI_PASSED）
+      - v10.14.0: 清理 Ralph Loop 架构（删除 dev-with-loop、detect-phase.sh、RALPH_LOOP_WRAPPER.md）
+      - v10.13.1: 修复 Skill 调用返回后行为的矛盾描述（澄清 Ralph Loop 作用，删除"立即返回"误导）
+      - v10.13.0: /dev Skill v2.2.0（删除阶段检测，统一完成条件，强制 Task Checkpoint）
+      - v10.12.0: Ralph Loop Wrapper 修复（用户直接调用，dev-with-loop 命令，skills/dev v2.1.0）
+      - v10.10.0: Ralph Loop 自动化（Step 7/9 自动启动，max-iterations=20，解决 SHA 死循环）
+      - v10.9.5: 修正 Ralph Loop 文档，删除 Stop Hook 配合描述，明确循环机制
+      - v10.8.4: 添加强制连续执行规则，禁止 AI 在步骤间停顿
+
+    entrypoints:
+      - type: cli
+        command: /dev
+        file: skills/dev/SKILL.md
+
+    golden_path: |
+      /dev → PRD → Branch → DoD (QA Node) → Code → Quality (Audit Node) →
+      PR (p0 结束) → CI fail (p1 唤醒) → Fix → Push → CI pass (p2 自动 merge)
+
+    minimal_paths:
+      - "p0: PRD → DoD → Code → Audit (PASS) → Test (L1) → PR → 结束"
+      - "p1: CI fail → 修复 → push → 退出（不等 CI）"
+      - "p2: CI pass → 自动 merge → Learning → Cleanup"
+
+    optimal_path: |
+      完整的 Golden Path（11 步）：
+      1. PRD 确定
+      2. 环境检测
+      3. 分支创建 (cp-MMDDTTTT-xxx)
+      4. DoD 定稿 (含 QA Decision Node)
+      5. 写代码
+      6. 写测试
+      7. 质检循环 (Audit + L1, Stop Hook 强制)
+      8. 提交 PR (p0 结束)
+      9. CI 修复 (p1 事件驱动)
+      10. Learning
+      11. Cleanup
+
+    tests:
+      - type: manual
+        description: Golden Path 手动验证
+        coverage: W1-001, W1-002, W1-003, W1-004, W1-005
+
+    rcis:
+      - W1-001  # /dev 入口可调用
+      - W1-002  # PRD/DoD 生成
+      - W1-003  # 阶段检测正确
+      - W1-004  # p0 阶段完整流程（Step 8 不调用 Step 9）
+      - W1-005  # p1 阶段事件驱动修复
+      - W1-006  # p2 阶段自动 merge
+      - W1-008  # p1 阶段轮询循环
+
+  # --------------------------------------------------------------------------
+  # Q1: Impact Check - 能力变更强制登记（P0-1）
+  # --------------------------------------------------------------------------
+  - id: Q1
+    name: Impact Check
+    status: Committed
+    priority: P0
+    description: |
+      防止能力变更不登记：改了核心能力文件必须同时更新 feature-registry.yml
+      - 前向一致：改能力→必须登记 | 改登记→允许（不要求改能力）
+      - CI 远端强制执行
+
+    entrypoints:
+      - type: ci
+        job: impact-check
+        file: scripts/devgate/impact-check.sh
+
+    golden_path: |
+      PR 改动核心文件 → impact-check.sh 检测 → 验证 registry 同时更新 → 通过/失败
+
+    minimal_paths:
+      - "改 hooks/ 不改 registry → CI FAIL"
+      - "改 hooks/ 同时改 registry → CI PASS"
+      - "只改 registry → CI PASS（允许文档更新）"
+
+    tests:
+      - type: manual
+        description: 手动验证 impact-check 逻辑
+        coverage: manual:p0-1-trigger, manual:p0-1-pass, manual:p0-1-fail, manual:p0-1-doc-only
+
+    rcis:
+      - Q1-001  # 检测核心文件改动
+      - Q1-002  # 验证 registry 更新
+      - Q1-003  # 前向一致性验证
+
+  # --------------------------------------------------------------------------
+  # Q2: Evidence Gate - 质检证据门控（P0-2）
+  # --------------------------------------------------------------------------
+  - id: Q2
+    name: Evidence Gate
+    status: Committed
+    priority: P0
+    description: |
+      防止口头通过无证据：质检通过要有机器可验的 JSON 证据
+      - 生成: qa-with-gate.sh 自动生成 .quality-evidence.json
+      - 验证: CI 检查 SHA 匹配、字段齐全、Decision PASS
+      - SHA 验证是关键（防老文件冒用）
+
+    entrypoints:
+      - type: script
+        file: scripts/qa-with-gate.sh
+        output: .quality-evidence.json
+      - type: ci
+        job: evidence-gate
+
+    golden_path: |
+      npm run qa:gate → 生成 .quality-evidence.json → CI 验证 SHA/字段 → 通过/失败
+
+    minimal_paths:
+      - "无证据文件 → CI FAIL"
+      - "SHA 不匹配 HEAD → CI FAIL"
+      - "证据完整 → CI PASS"
+
+    tests:
+      - type: manual
+        description: 手动验证 evidence-gate 逻辑
+        coverage: manual:p0-2-generate, manual:p0-2-sha, manual:p0-2-missing
+
+    rcis:
+      - Q2-001  # 证据文件生成
+      - Q2-002  # SHA 验证
+      - Q2-003  # 字段验证
+
+  # --------------------------------------------------------------------------
+  # Q3: Anti-Bypass Contract - 远端强制兜底（P0-3）
+  # --------------------------------------------------------------------------
+  - id: Q3
+    name: Anti-Bypass Contract
+    status: Committed
+    priority: P0
+    description: |
+      承认本地可绕过，用远端 CI + Branch Protection 强制
+      - 本地 Hooks = 加速失败
+      - 远端 CI + Branch Protection = 最终强制
+      - 文档清晰说明职责边界
+
+    entrypoints:
+      - type: doc
+        file: docs/contracts/QUALITY-CONTRACT.md
+
+    golden_path: |
+      开发者理解质量契约 → 本地 Hook 提前反馈 → 远端 CI 最终强制 → Branch Protection 物理阻止
+
+    minimal_paths:
+      - "文档说明本地 vs 远端职责"
+      - "文档说明为何不用脚本验证 Branch Protection"
+
+    tests:
+      - type: manual
+        description: 文档审查
+        coverage: manual:p0-3-doc
+
+    rcis:
+      - Q3-001  # 文档完整性
+      - Q3-002  # 职责映射表清晰
+
+  # --------------------------------------------------------------------------
+  # Q4: CI Layering (L2B + L3-fast + Preflight + AI Review) - CI 分层完善
+  # --------------------------------------------------------------------------
+  - id: Q4
+    name: CI Layering (L2B + L3-fast + Preflight + AI Review)
+    status: Committed
+    priority: P1
+    version: "10.6.0"
+    updated: "2026-01-25"
+    description: |
+      完善 CI 质检分层体系，填补三个关键缺口：
+      - L2B 可复核证据：PR to develop 也需要 .layer2-evidence.md（L2B-min）
+      - L3-fast 快速检查：lint/format 检查（占位符，未来扩展）
+      - CI Preflight：本地快速预检（L1-fast + L3-fast + L2A-min，120s 内）
+      - AI Review (L2C)：语义和影响面审查（VPS API 集成）
+
+    entrypoints:
+      - type: script
+        file: scripts/devgate/l2b-check.sh
+      - type: script
+        file: scripts/devgate/l3-fast.sh
+      - type: script
+        file: scripts/devgate/ci-preflight.sh
+      - type: hook
+        event: PreToolUse:Bash (pr-gate-v2.sh Part 0.5)
+        file: hooks/pr-gate-v2.sh
+      - type: ci
+        job: l2b-check
+        file: .github/workflows/ci.yml
+      - type: ci
+        job: ai-review
+        file: .github/workflows/ci.yml
+
+    golden_path: |
+      本地 → ci:preflight (快速预检) → L2B 证据创建 → PR Gate (L2B-min) →
+      CI → l2b-check job → ai-review job → 通过/失败
+
+    minimal_paths:
+      - "L2B-min: .layer2-evidence.md 存在 + 格式有效 + 至少 1 条可复核证据"
+      - "L3-fast: npm run lint/format:check（--if-present 占位符）"
+      - "Preflight: typecheck + test + L3-fast + L2A-min（120s 内）"
+      - "AI Review: 调用 VPS Review API，L2C 专用提示词"
+
+    tests:
+      - type: manual
+        description: L2B/L3/Preflight 集成验证
+        coverage: manual:q4-l2b, manual:q4-l3, manual:q4-preflight, manual:q4-ai-review
+
+    rcis:
+      - Q4-001  # L2B-min 检查脚本
+      - Q4-002  # L2B-min CI job
+      - Q4-003  # L3-fast 脚本
+      - Q4-004  # CI Preflight 脚本
+      - Q4-005  # PR Gate Part 0.5 集成
+      - Q4-006  # AI Review CI job
+
+  # --------------------------------------------------------------------------
+  # Q5: RISK SCORE Trigger - QA Decision 自动触发机制
+  # --------------------------------------------------------------------------
+  - id: Q5
+    name: RISK SCORE Trigger
+    status: Committed
+    priority: P1
+    version: "11.0.1"
+    updated: "2026-02-25"
+    description: |
+      基于 R1-R8 规则的 RISK SCORE 自动触发机制：
+      - 每个规则 1 分，≥3 分自动触发 QA Decision Node
+      - 三层架构：Skills (SKILL.md) + Scripts (*.cjs) + Templates (*.md)
+      - 集成到 /dev 工作流 Step 3
+
+    entrypoints:
+      - type: script
+        file: scripts/qa/risk-score.cjs
+      - type: script
+        file: scripts/qa/detect-scope.cjs
+      - type: script
+        file: scripts/qa/detect-forbidden.cjs
+      - type: skill
+        file: skills/qa/SKILL.md
+
+    golden_path: |
+      /dev Step 3 → risk-score.cjs (计算分数) → ≥3 分 → 执行完整 QA Decision Node →
+      生成 docs/QA-DECISION.md
+
+    minimal_paths:
+      - "risk-score.cjs: 计算 R1-R8 规则，输出 JSON"
+      - "detect-scope.cjs: 自动建议允许的 Scope"
+      - "detect-forbidden.cjs: 列出常见禁区"
+
+    tests:
+      - type: manual
+        description: 手动验证脚本执行正确
+        coverage: Q1-001, Q1-002
+
+    rcis:
+      - Q5-001  # RISK SCORE 计算准确性
+      - Q5-002  # ≥3 分触发 QA Node
+
+  # --------------------------------------------------------------------------
+  # Q6: Structured Audit - 结构化 Audit 验证流程
+  # --------------------------------------------------------------------------
+  - id: Q6
+    name: Structured Audit
+    status: Committed
+    priority: P1
+    version: "11.0.1"
+    updated: "2026-02-25"
+    description: |
+      结构化 Audit 验证流程，四步自动化检查：
+      - Scope 验证：对比实际改动与 QA-DECISION.md
+      - Forbidden 检查：确保未触碰禁区
+      - Proof 验证：检查测试证据完成度
+      - Report 生成：自动生成 AUDIT-REPORT.md
+
+    entrypoints:
+      - type: script
+        file: scripts/audit/compare-scope.cjs
+      - type: script
+        file: scripts/audit/check-forbidden.cjs
+      - type: script
+        file: scripts/audit/check-proof.cjs
+      - type: script
+        file: scripts/audit/generate-report.cjs
+      - type: skill
+        file: skills/audit/SKILL.md
+
+    golden_path: |
+      /dev Step 6 → compare-scope.cjs (验证范围) → check-forbidden.cjs (检查禁区) →
+      check-proof.cjs (验证证据) → generate-report.cjs (生成报告) →
+      AUDIT-REPORT.md (Decision: PASS/FAIL)
+
+    minimal_paths:
+      - "compare-scope.cjs: 对比实际改动与允许范围"
+      - "check-forbidden.cjs: 检查是否触碰禁区"
+      - "check-proof.cjs: 验证 Tests 字段完成度"
+      - "generate-report.cjs: 生成结构化报告"
+
+    tests:
+      - type: manual
+        description: 手动验证脚本执行正确
+        coverage: Q2-001, Q2-002
+
+    rcis:
+      - Q6-001  # Scope/Forbidden/Proof 验证准确性
+      - Q6-002  # AUDIT-REPORT.md 生成正确
+
+# ============================================================================
+# Product Core 5 - 引擎核心能力
+# ============================================================================
+product_features:
+  # --------------------------------------------------------------------------
+  # P1: Regression Testing Framework - 回归测试框架
+  # --------------------------------------------------------------------------
+  - id: P1
+    name: Regression Testing Framework
+    status: Committed
+    priority: P0
+    description: |
+      基于 regression-contract.yaml 的回归测试框架
+      - 定义: 回归契约 (RCI) 定义必须永远不坏的能力
+      - 过滤: rc-filter.sh 按 trigger (PR/Release/Nightly) 过滤
+      - 执行: run-regression.sh 执行对应测试集合
+
+    entrypoints:
+      - type: script
+        file: scripts/run-regression.sh
+      - type: script
+        file: scripts/rc-filter.sh
+      - type: config
+        file: regression-contract.yaml
+
+    golden_path: |
+      定义 RCI (regression-contract.yaml) → rc-filter.sh 过滤 →
+      run-regression.sh 执行 → 验证契约不被破坏
+
+    minimal_paths:
+      - "PR: rc-filter.sh pr → 跑 trigger=[PR] 的 RCI"
+      - "Release: rc-filter.sh release → 跑 trigger=[Release] 的 RCI"
+      - "Nightly: run-regression.sh nightly → 跑全部 RCI"
+
+    tests:
+      - type: auto
+        file: tests/regression/*.test.ts
+        description: RCI 自动化测试集合
+
+    rcis:
+      - P1-001  # rc-filter.sh 正确过滤
+      - P1-002  # run-regression.sh 执行
+      - P1-003  # regression-contract.yaml 解析
+
+  # --------------------------------------------------------------------------
+  # P2: DevGate - 开发门禁检查
+  # --------------------------------------------------------------------------
+  - id: P2
+    name: DevGate
+    status: Committed
+    priority: P0
+    version: "12.33.0"
+    updated: "2026-02-27"
+    description: |
+      CI 中的开发门禁检查（三合一 + 全 PR DoD 门控）：
+      1. DoD 映射检查: 每个 DoD 验收项必须有对应测试
+      2. P0/P1 RCI 更新检查: P0/P1 修复必须更新 regression-contract.yaml
+      3. RCI 覆盖率检查: 新增业务入口必须有对应 RCI 条目
+      v12.33.0: [x] 全勾检查 - 所有验收项必须是 [x]，不允许 [ ] 未验证项 + devgate.yml 对所有 PR 都跑 DoD 检查
+      v12.8.0: 假测试检测 - 禁止 echo/grep|wc/test -f/TODO 占位符，强制真实执行命令（node/npm/psql/curl 等）
+
+    entrypoints:
+      - type: ci
+        job: test → DevGate checks
+        scripts:
+          - scripts/devgate/check-dod-mapping.cjs
+          - scripts/devgate/require-rci-update-if-p0p1.sh
+          - scripts/devgate/scan-rci-coverage.cjs
+
+    golden_path: |
+      CI test job → DevGate checks → 三个检查全部通过 → CI 继续
+
+    minimal_paths:
+      - "DoD 映射: .dod.md 每项 → 对应测试文件存在"
+      - "P0/P1 检查: PR title 含 P0/P1 → regression-contract.yaml 必须更新"
+      - "RCI 覆盖率: 新增入口 → 必须有对应 RCI"
+
+    tests:
+      - type: ci
+        description: GitHub Actions CI 中执行
+        coverage: C6-001, C7-001, C7-002, C7-003
+
+    rcis:
+      - C6-001  # DoD 映射检查
+      - C7-001  # P0/P1 检测
+      - C7-002  # RCI 更新检查
+      - C7-003  # RCI 覆盖率检查
+
+  # --------------------------------------------------------------------------
+  # P3: Quality Reporting - 质量报告导出
+  # --------------------------------------------------------------------------
+  - id: P3
+    name: Quality Reporting
+    status: Committed
+    priority: P1
+    version: "11.24.2"
+    updated: "2026-02-01"
+    description: |
+      导出质量审计和开发会话报告（JSON + TXT）：
+      - E1: QA Reporting - 生成 QA 审计 JSON
+      - E2: Dev Session Reporting - 生成开发任务报告
+      v11.24.2: cleanup.sh 验证机制 - 添加 3 项验证（11 步完成 + .dev-mode 删除成功 + gate 文件存在）
+      v11.14.0: cleanup.sh v1.8 - PRD/DoD 归档到 .history/ 目录（而非直接删除）
+
+    entrypoints:
+      - type: script
+        file: scripts/qa-report.sh
+        output: qa-report.json
+      - type: script
+        file: skills/dev/scripts/generate-report.sh
+        output: dev-session-report.json + .txt
+
+    golden_path: |
+      执行脚本 → 扫描 repo 结构 → 生成 JSON/TXT 报告 → 供 Dashboard 使用
+
+    minimal_paths:
+      - "QA Report: bash scripts/qa-report.sh → qa-report.json"
+      - "Dev Session: bash skills/dev/scripts/generate-report.sh → dev-session-report.*"
+
+    tests:
+      - type: auto
+        coverage: E1-001, E1-002, E1-003, E2-001, E2-002, E2-003
+
+    rcis:
+      - E1-001  # QA Report 生成
+      - E1-002  # 格式验证
+      - E1-003  # 数据完整性
+      - E2-001  # Dev Session Report 生成
+      - E2-002  # 格式验证
+      - E2-003  # 数据完整性
+
+  # --------------------------------------------------------------------------
+  # P4: CI Quality Gates - CI 质量门禁
+  # --------------------------------------------------------------------------
+  - id: P4
+    name: CI Quality Gates
+    status: Committed
+    priority: P0
+    description: |
+      GitHub Actions CI 中的质量门禁：
+      - version-check: 检查 package.json 版本号更新
+      - test job: L1 自动化测试 + DevGate 检查
+      - release-check: Release 模式额外检查 (L3 回归 + L4 Evidence)
+
+    entrypoints:
+      - type: ci
+        file: .github/workflows/ci.yml
+        jobs:
+          - version-check
+          - test
+          - release-check
+          - ci-passed
+          - notify-failure
+
+    golden_path: |
+      PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → ci-passed
+
+    minimal_paths:
+      - "version-check: PR 时检查版本号更新"
+      - "test: 跑 L1 (typecheck + test + build) + DevGate"
+      - "release-check: PR to main 时跑 L3 回归 + L4 Evidence"
+
+    tests:
+      - type: ci
+        description: GitHub Actions 自动执行
+        coverage: C1-001, C1-002, C1-003, C2-001, C3-001, C5-001
+
+    rcis:
+      - C1-001  # version-check 执行
+      - C1-002  # version-check 正确性
+      - C1-003  # version-check 错误检测
+      - C2-001  # test job L1 执行
+      - C3-001  # shell scripts 语法检查
+      - C5-001  # release-check 执行
+
+  # --------------------------------------------------------------------------
+  # P5: Worktree 并行开发
+  # --------------------------------------------------------------------------
+  - id: P5
+    name: Worktree Parallel Development
+    status: Committed
+    priority: P1
+    version: "12.28.0"
+    updated: "2026-02-22"
+    description: |
+      强制创建 worktree，支持并行开发和连续任务：
+      v12.28.0: 路径迁移到 .claude/worktrees/（对齐官方约定）+ Stop Hook 强制清理 worktree（兜底）
+      v12.24.1: 修复三个 bug（强制创建 worktree + 创建前更新 develop + /exploratory 同步修复）
+      v12.7.2: 修复僵尸检测过于激进（多条件综合判断，文件修改时间优先，防止误删活跃会话）
+      v11.16.0: Step 0 前置自动检测 + 僵尸 .dev-mode 清理 + flock 并发锁 + Step 3 兜底
+      v11.3.1: Step 3 强制检查 worktree（主仓库有活跃任务时阻止创建分支）
+
+    entrypoints:
+      - type: step
+        file: skills/dev/steps/00-worktree-auto.md
+      - type: script
+        file: skills/dev/scripts/worktree-manage.sh
+
+    golden_path: |
+      /dev 启动 → Step 0 强制创建 worktree（.claude/worktrees/ 路径）→ 继续正常流程 → 退出时 Stop Hook 强制清理 worktree
+
+    minimal_paths:
+      - "已在 worktree → 跳过创建"
+      - "主仓库 → 强制创建 worktree + cd（.claude/worktrees/ 路径）"
+      - "worktree-manage.sh 创建前自动更新 develop 分支"
+      - "Stop Hook 退出时强制清理 worktree（兜底）"
+
+    tests:
+      - type: manual
+        description: 手动验证 worktree 自动创建
+        coverage: W6-001
+
+    rcis:
+      - W6-001  # worktree 脚本可执行
+
+  # --------------------------------------------------------------------------
+  # P6: 自动化质检脚本 - Self-Evolution Automation
+  # --------------------------------------------------------------------------
+  - id: P6
+    name: Self-Evolution Automation
+    status: Committed
+    priority: P2
+    description: |
+      自动化质检与自我进化机制：
+      - squash-evidence.sh: 自动合并 evidence commit（解决 SHA 不匹配）
+      - auto-generate-views.sh: 检测 feature-registry.yml 变更时自动生成派生视图
+      - post-pr-checklist.sh: PR 合并后自动检查（PRD/DoD残留、派生视图同步、临时文件、未push的commit）
+      - detect-priority.cjs 优化：优先读取 QA-DECISION.md，避免文本误识别
+      - CI 已知失败支持：允许标记预期的测试失败不阻止 CI
+
+    entrypoints:
+      - type: script
+        file: scripts/squash-evidence.sh
+      - type: script
+        file: scripts/auto-generate-views.sh
+      - type: script
+        file: scripts/post-pr-checklist.sh
+      - type: script
+        file: scripts/devgate/detect-priority.cjs
+      - type: ci
+        file: .github/workflows/ci.yml
+        description: 支持已知失败模式
+
+    golden_path: |
+      问题发现 → 记录到 docs/SELF-EVOLUTION.md → 创建检查项 → 自动化脚本 → 集成到流程
+
+    minimal_paths:
+      - "Step 8: squash-evidence.sh 自动合并 evidence commit"
+      - "Step 7: auto-generate-views.sh 自动生成派生视图"
+      - "Step 11: post-pr-checklist.sh 自动运行 4 项检查"
+      - "detect-priority.cjs 优先读取 QA-DECISION.md（不解析文本）"
+      - "CI: 检测 .quality-evidence.json 中的 'known failures' 标记"
+
+    tests:
+      - type: auto
+        file: tests/scripts/squash-evidence.test.ts
+        coverage: S1-001
+      - type: auto
+        file: tests/scripts/auto-generate-views.test.ts
+        coverage: S2-001, S2-002
+      - type: auto
+        file: tests/scripts/post-pr-checklist.test.ts
+        coverage: S3-001, S3-002, S3-003, S3-004
+
+    rcis:
+      - S1-001  # squash-evidence.sh 自动合并
+      - S2-001  # auto-generate-views.sh 检测变更
+      - S2-002  # auto-generate-views.sh 无变更时跳过
+      - S3-001  # post-pr-checklist.sh PRD/DoD 检查
+      - S3-002  # post-pr-checklist.sh 派生视图版本检查
+      - S3-003  # post-pr-checklist.sh 临时文件检查
+      - S3-004  # post-pr-checklist.sh 未 push 的 commit 检查
+
+# ============================================================================
+# 视图生成规则
+# ============================================================================
+#
+# MINIMAL-PATHS.md  = 每个 feature 的 minimal_paths 聚合
+# OPTIMAL-PATHS.md  = 每个 feature 的 optimal_path 聚合
+# GOLDEN-PATHS.md   = 每个 feature 的 golden_path 聚合
+#
+# 生成脚本: scripts/generate-path-views.sh (TODO)
+# ============================================================================
+
+  # --------------------------------------------------------------------------
+  # H8: Credential Guard - 凭据保护 Hook
+  # --------------------------------------------------------------------------
+  - id: H8
+    name: Credential Guard
+    status: Committed
+    priority: P0
+    version: "11.2.12"
+    updated: "2026-01-28"
+    description: |
+      防止将真实凭据写入代码文件：
+      - 检测 Notion、GitHub、OpenAI、JWT、DigitalOcean、Feishu 等 token 模式
+      - 允许占位符（YOUR_XXX）和 ~/.credentials/ 目录
+      - 全局生效，保护所有开源仓库
+
+    entrypoints:
+      - type: hook
+        event: PreToolUse:Write, PreToolUse:Edit
+        file: hooks/credential-guard.sh
+
+    golden_path: |
+      写入代码 → credential-guard.sh 检测 → 真实凭据 → exit 2 (阻止) | 占位符/credentials目录 → exit 0 (放行)
+
+    minimal_paths:
+      - "代码中写真实 token → 被阻止"
+      - "代码中写占位符 YOUR_XXX → 放行"
+      - "写入 ~/.credentials/ → 放行"
+
+    tests:
+      - type: manual
+        description: 手动验证检测模式
+        coverage: H8-001, H8-002, H8-003
+
+    rcis:
+      - H8-001  # 检测真实凭据
+      - H8-002  # 放行占位符
+      - H8-003  # 放行 credentials 目录
+
+  # --------------------------------------------------------------------------
+  # H9: Bash Guard - Bash 工具安全防护
+  # --------------------------------------------------------------------------
+  - id: H9
+    name: Bash Guard (Credential Leak + File Exposure + HK Deploy Protection)
+    status: Committed
+    priority: P1
+    version: "12.6.0"
+    updated: "2026-02-13"
+    description: |
+      防止通过 Bash 工具绕过 Write/Edit 层的安全防护：
+      - 凭据泄露：检测命令行中的真实 token（复用 hook-utils.sh 共享正则）
+      - 凭据文件暴露：拦截 cp/mv/重定向 ~/.credentials/ 内容到其他位置
+      - HK 部署防护：rsync/scp 到香港 IP 时强制 git 三连检（干净 + 已 push + 分支 allowlist）
+      - 不做分支保护（交给 Write/Edit Hook + GitHub 远端）
+      - 不拦 ssh hk（无法区分读写操作）
+      - 性能：99% 命令 ~2ms 通过，仅 HK 部署命中时 ~200ms
+
+    entrypoints:
+      - type: hook
+        event: PreToolUse:Bash
+        file: hooks/bash-guard.sh
+
+    golden_path: |
+      Bash 命令 → token 扫描 (~1ms) → .credentials/ 暴露检测 (~1ms) →
+      rsync/scp + HK 检测 (~1ms) → 未命中 → 放行 | 命中 HK → git 三连检 → 通过/阻止
+
+    minimal_paths:
+      - "命令含真实 token → 被阻止"
+      - "cp/mv ~/.credentials/ → 被阻止"
+      - "cat ~/.credentials/ > file → 被阻止"
+      - "source ~/.credentials/ → 放行（安全加载）"
+      - "rsync 到 HK + git dirty → 被阻止"
+      - "rsync 到 HK + git clean + main → 放行"
+      - "日常命令 (git/npm/echo) → 放行"
+      - "ssh hk → 放行（不拦）"
+
+    tests:
+      - type: auto
+        file: tests/hooks/bash-guard.test.ts
+        coverage: H9-001, H9-002, H9-003, H9-004
+
+    rcis:
+      - H9-001  # 凭据泄露检测
+      - H9-002  # HK 部署 git 检查
+      - H9-003  # 日常命令放行
+      - H9-004  # 凭据文件暴露检测
+
+  # --------------------------------------------------------------------------
+  # G1: Gate Skill Family - 已删除 (v12.7.0)
+  # --------------------------------------------------------------------------
+  # 决策：Gate 机制干扰 Stop Hook 自动循环，质量检查完全交给 CI
+  # 删除于 2026-02-06，参见 PR #xxx
+
+  # --------------------------------------------------------------------------
+  # S2: PRD/DoD Validation Loop - /dev 文档质量保障
+  # --------------------------------------------------------------------------
+  - id: S2
+    name: PRD/DoD Validation Loop
+    status: Committed
+    priority: P1
+    version: "1.0.1"
+    updated: "2026-02-23"
+    description: |
+      PRD 和 DoD 文档质量验证循环 - 确保 /dev 工作流文档质量
+
+      核心机制:
+      - 90 分制评分系统（form_score 40 + content_score 60）
+      - Validation Loop: 低于 90 分自动循环改进
+      - Anti-Cheat: 10 层防作弊检查（SHA256 hash 验证）
+      - 集成到 /dev Step 1 (PRD) 和 Step 4 (DoD)
+
+    entrypoints:
+      - type: script
+        file: skills/dev/scripts/validate-prd.py
+        description: "PRD 验证（40+60 分制）"
+      - type: script
+        file: skills/dev/scripts/validate-dod.py
+        description: "DoD 验证（40+60 分制）"
+      - type: script
+        file: skills/dev/scripts/anti-cheat-prd.sh
+        description: "PRD 防作弊（10 层检查）"
+      - type: script
+        file: skills/dev/scripts/anti-cheat-dod.sh
+        description: "DoD 防作弊（10 层检查）"
+
+    golden_path: |
+      生成 PRD/DoD → validate-*.py 打分 → total < 90 →
+      AI 读取 validation report → 改进文档 → 重新验证 →
+      Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
+
+    minimal_paths:
+      - "PRD 验证: 生成 PRD → 验证 → 90+ 通过"
+      - "DoD 验证: 生成 DoD → 验证 → 90+ 通过"
+      - "质量循环: 85 分 → 改进 → 92 分通过"
+      - "防作弊: 手动改分 → SHA256 不匹配 → exit 2"
+
+    tests:
+      - type: auto
+        file: tests/validation-loop/test-prd-validation.sh
+        coverage: S2-001
+      - type: auto
+        file: tests/validation-loop/test-dod-validation.sh
+        coverage: S2-002
+      - type: auto
+        file: tests/validation-loop/test-anti-cheat.sh
+        coverage: S2-003
+      - type: auto
+        file: tests/validation-loop/run-all.sh
+        description: "完整测试套件"
+
+    rcis:
+      - S2-001  # PRD Validation
+      - S2-002  # DoD Validation
+      - S2-003  # Anti-Cheat 机制
+
+
+  # --------------------------------------------------------------------------
+  # S3: Decomp Skill - 全链路 PM 拆解引擎
+  # --------------------------------------------------------------------------
+  - id: S3
+    name: Decomp Skill
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-02-27"
+    description: |
+      全链路 PM 拆解引擎 - 从 OKR 拆解到 Initiative
+      供秋米（autumnrice）角色后台调用。
+      支持三维层级识别矩阵（范围/抽象度/工作量）。
+      OKR 层拆解后标记 reviewing（需人工确认）；KR 以下由 Decomp-Check 自动审查。
+
+    entrypoints:
+      - type: skill
+        file: ../workflows/skills/decomp/SKILL.md
+        trigger: "/decomp"
+
+    golden_path: |
+      秋米被调用 → 读取 /decomp → 三维矩阵识别层级 →
+      按五层模板拆解 → 战略对齐检查 → 写入数据库 →
+      OKR层: status=reviewing（等人工确认）
+      KR以下: 触发 Decomp-Check 审查
+
+    minimal_paths:
+      - "基本拆解: 秋米 → /decomp → 生成层级结构 → 写入 DB"
+
+    rcis: []
+
+  # --------------------------------------------------------------------------
+  # S4: Decomp-Check Skill - PM 拆解质检引擎
+  # --------------------------------------------------------------------------
+  - id: S4
+    name: Decomp-Check Skill
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-02-27"
+    description: |
+      PM 拆解质检引擎 - 审查 /decomp 产出质量
+      供 Vivian 角色调用，使用 Sonnet 模型。
+      覆盖所有层级：OKR→KR / KR→Project / Project→Initiative。
+      三态裁决：approved / needs_revision / rejected。
+      rejected 时自动触发秋米重拆（最多3次）。
+
+    entrypoints:
+      - type: skill
+        file: ../workflows/skills/decomp-check/SKILL.md
+        trigger: "/decomp-check"
+
+    golden_path: |
+      Vivian 被调用 → 读取 /decomp-check → 按层级选审查标准 →
+      检查因果链/覆盖度/命名/战略对齐 →
+      approved: Brain 继续流程
+      needs_revision: 秋米修正
+      rejected: Brain 打回重拆
+
+    minimal_paths:
+      - "质检通过: Vivian → /decomp-check → approved"
+      - "质检驳回: Vivian → /decomp-check → rejected → 秋米重拆"
+
+    rcis: []
+
+  - id: S5
+    name: Pipeline Hardening V1
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-10"
+    description: |
+      本地门禁升级 - 将 Step 7 升级为真正的 Pre-Push Gate
+      新增 scripts/local-precheck.sh：Brain 改动时自动运行 facts-check/version-sync/manifest-sync
+      Step 7.1b 插入本地预检步骤，移除 Step 7.4 跳过条件
+      Step 9 CI 失败后强制本地复现，禁止直接 push
+
+    entrypoints:
+      - type: script
+        file: scripts/local-precheck.sh
+        trigger: "bash scripts/local-precheck.sh"
+      - type: dev-step
+        file: skills/dev/steps/07-verify.md
+        trigger: "Step 7: 本地验证"
+
+    golden_path: |
+      代码变更 → Step 7.1 npm test → Step 7.1b local-precheck →
+      facts-check/version-sync/manifest-sync 全绿 → Step 7.2 DoD 验证 →
+      Step 7.4 代码审查 → push → CI 直通
+
+    minimal_paths:
+      - "Brain 改动: 本地预检 → facts/version/manifest 全绿 → push"
+      - "非 Brain 改动: 预检跳过 → DoD 验证 → push"
+
+    rcis: []
+
+  - id: S6
+    name: Delivery Type + PR Behavior Declaration
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-10"
+    description: |
+      tasks 表新增 delivery_type 字段（doc-only | code-only | doc+code | behavior-change）
+      createTask() 支持接收并写入 delivery_type
+      /dev Step 8 PR 模板新增 SYSTEM BEHAVIOR CHANGE + UNIMPLEMENTED 两段
+      check-delivery-type.sh：behavior-change 类型强制验证测试文件 + PR body
+
+    entrypoints:
+      - type: migration
+        file: packages/brain/migrations/140_delivery_type.sql
+        trigger: "Brain 启动时自动应用"
+      - type: dev-step
+        file: skills/dev/steps/08-pr.md
+        trigger: "Step 8: 创建 PR"
+      - type: script
+        file: scripts/devgate/check-delivery-type.sh
+        trigger: "bash scripts/devgate/check-delivery-type.sh"
+
+    golden_path: |
+      createTask({ delivery_type: 'behavior-change' }) →
+      PR body 包含 SYSTEM BEHAVIOR CHANGE →
+      check-delivery-type.sh 验证测试文件存在 →
+      CI 通过
+
+    minimal_paths:
+      - "code-only 任务: delivery_type 默认值，无额外验证"
+      - "behavior-change 任务: 必须有测试文件 + PR body 声明"
+
+    rcis: []
+
+  - id: S7
+    name: PRD Semantic Coverage Audit
+    status: Committed
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-11"
+    description: |
+      PRD 承诺分类（ARTIFACT/BEHAVIOR/GATE）+ 独立审计员 + BEHAVIOR 弱测试检测
+      解决 AI-first 开发中同一 AI 写 PRD→DoD→Test→Code 的自我验证死循环
+      05-dod.md 新增承诺分类规则；07-verify.md 新增 Step 7.5 独立审计员子代理
+      check-dod-mapping.cjs 新增 validateBehaviorTestStrength() 检测弱测试
+
+    entrypoints:
+      - type: dev-step
+        file: skills/dev/steps/05-dod.md
+        trigger: "Step 5: DoD 定稿时分类 PRD 承诺"
+      - type: dev-step
+        file: skills/dev/steps/07-verify.md
+        trigger: "Step 7.5: 独立审计员语义覆盖审计"
+      - type: script
+        file: scripts/devgate/check-dod-mapping.cjs
+        trigger: "CI L1 DoD 验证 + BEHAVIOR 弱测试检测"
+
+    golden_path: |
+      PRD 写承诺 → DoD 分类 [ARTIFACT]/[BEHAVIOR]/[GATE] →
+      BEHAVIOR 条目 Test 必须用 tests/*.test.ts 或 manual:curl →
+      check-dod-mapping.cjs 拒绝 BEHAVIOR 用 grep/ls 弱测试 →
+      Step 7.5 独立审计员验证 PRD vs 代码实现
+
+    minimal_paths:
+      - "无 [BEHAVIOR] 标签: 向后兼容，不触发弱测试检测"
+      - "有 [BEHAVIOR] 标签: 强制要求强测试（tests/ 或 curl）"
+
+    rcis: []
+
+  - id: S8
+    name: Changed-Line Coverage Gate
+    status: Committed
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-11"
+    description: |
+      三个确定性 CI 硬门禁（零 LLM 成本）替代 AI 审 AI：
+      门禁 1: feat: PR 必须有新增 .test.ts 文件
+      门禁 2: 新测试必须 import 本 PR 修改的源码
+      门禁 3: 变更行覆盖率 ≥ 60%（Istanbul JSON + git diff 比对）
+
+    entrypoints:
+      - type: script
+        file: scripts/devgate/check-changed-coverage.cjs
+        trigger: "CI L3 Coverage Gate 步骤"
+      - type: config
+        file: vitest.config.ts
+        trigger: "vitest --coverage 生成 json reporter"
+
+    golden_path: |
+      feat: PR → CI L3 Unit Tests → Coverage Gate →
+      check-changed-coverage.cjs 检查三个门禁 →
+      变更行覆盖率 ≥ 60% → 通过
+
+    minimal_paths:
+      - "fix:/docs:/chore: PR: 门禁 1 跳过（不要求新测试），门禁 3 仍检查覆盖率"
+      - "无源码变更: 全部门禁跳过"
+
+    rcis: []
+
+  - id: S9
+    name: fire-learnings-event.sh 来源追踪
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-12"
+    description: |
+      fire-learnings-event.sh 新增 --repo 参数，
+      将 repo 字段写入 LEARNINGS_RECEIVED 事件 payload，
+      Brain learnings-received 端点同步写入 source_branch/source_pr/repo 字段。
+
+    entrypoints:
+      - type: script
+        file: skills/dev/scripts/fire-learnings-event.sh
+        trigger: "/dev Step 10 结束时自动调用"
+
+    golden_path: |
+      /dev PR 合并 → Step 10 → fire-learnings-event.sh →
+      POST /api/brain/learnings-received →
+      learnings 表写入 source_branch/source_pr/repo →
+      Haiku 异步分类 learning_type
+
+    minimal_paths:
+      - "BRANCH_NAME 为空: source_branch = null"
+      - "PR_NUMBER 为空: source_pr = null"
+
+    rcis: []
+
+  - id: S10
+    name: Hook Gates 5个真锁
+    status: Committed
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      bash-guard.sh 新增 git push 前运行 local-precheck.sh 和 git commit message
+      Conventional Commits 格式验证；branch-protect.sh 新增 .prd-*.md 和 .dod-*.md
+      内容内联验证；stop-dev.sh 新增 STEP_10 flag=done 时运行 check-learning.sh 验证实际内容。
+
+    entrypoints:
+      - type: hook
+        file: hooks/bash-guard.sh
+        trigger: "Bash 工具调用 git push / git commit -m"
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "Write .prd-*.md / .dod-*.md 时"
+      - type: hook
+        file: hooks/stop-dev.sh
+        trigger: "会话结束时，STEP_10 flag=done 后"
+
+    golden_path: |
+      git push → bash-guard 拦截 → local-precheck.sh 通过 → push 成功
+      git commit -m "random" → bash-guard 拦截 → 报错 → 修改消息 → 通过
+      Write .prd-*.md (无成功标准) → branch-protect 拦截 → 添加成功标准 → 通过
+      Write .dod-*.md (无 checkbox) → branch-protect 拦截 → 添加 - [ ] → 通过
+      STEP_10 flag=done → stop-dev 运行 check-learning.sh → 内容验证 → 允许合并
+
+    minimal_paths:
+      - "local-precheck.sh 不存在: 放行（降级）"
+      - "git commit 无 -m 参数: 放行（interactive 模式）"
+      - "check-learning.sh 不存在: 降级为只检查 flag"
+
+  - id: S11
+    name: Provider-Agnostic Engine — devloop-check.sh 单一入口
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      将 /dev 工作流完成判断逻辑提取到 lib/devloop-check.sh（SSOT）。
+      stop-dev.sh 改为 Claude Code 协议适配器（source devloop-check.sh）。
+      新增 runners/codex/runner.sh（Codex 协议适配器）。
+      Brain task-router 新增 codex_dev → xian 路由。
+      换 Provider = 只换适配器，业务逻辑只改 devloop-check.sh 一处。
+
+    entrypoints:
+      - type: lib
+        file: lib/devloop-check.sh
+        trigger: "被 stop-dev.sh 和 runners/codex/runner.sh source 调用"
+      - type: runner
+        file: runners/codex/runner.sh
+        trigger: "Brain codex_dev 任务 → triggerCodexBridge(runner 模式)"
+
+    golden_path: |
+      Brain codex_dev 任务 → executor.triggerCodexBridge() →
+      codex-bridge POST /run (runner=runner.sh) →
+      runner.sh source devloop-check.sh →
+      while ! devloop_check done → codex-bin exec action →
+      完成 → cleanup
+
+    minimal_paths:
+      - "devloop-check.sh 未加载: stop-dev.sh fallback 到旧内联逻辑"
+      - "dry-run 模式: runner.sh 打印命令不执行"
+
+    rcis: []
+
+  - id: stop-hook-retry-fix
+    name: Stop Hook 重试上限统一 + 双 exit 0 终止条件合并
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      v15.1.0 修复两个 bug：
+      1. stop-dev.sh 注释"15次重试上限"与代码 RETRY_COUNT > 30 不一致，
+         统一为 MAX_RETRIES=30 常量，注释与代码对齐。
+      2. 超时检查在 devloop_check 之前，导致第 MAX_RETRIES+1 次即使 PR 已合并
+         也走超时失败分支。修复：超时检查移到 devloop_check 之后。
+      3. devloop-check.sh 有两个 exit 0 路径（cleanup_done: true 和
+         step_11_cleanup: done），统一为唯一终止路径：step_11_cleanup: done
+         时调用 _mark_cleanup_done() 写入 cleanup_done: true，下次循环通过
+         顶层检查退出。
+
+    entrypoints:
+      - type: hook
+        file: hooks/stop-dev.sh
+        trigger: "Claude Code Stop Hook 触发"
+      - type: lib
+        file: lib/devloop-check.sh
+        trigger: "被 stop-dev.sh source 调用"
+
+    golden_path: |
+      Stop Hook → devloop_check() → blocked →
+      超时检查（MAX_RETRIES=30）→ 未超时则 exit 2 继续 →
+      Step 11 完成 → _mark_cleanup_done() 写入 cleanup_done: true →
+      下次 Stop Hook → cleanup_done: true → exit 0 完成
+
+    minimal_paths:
+      - "devloop_check done: 已有 cleanup_done: true，直接 exit 0"
+      - "超时: RETRY_COUNT > MAX_RETRIES → 上报失败 → exit 0"
+
+    rcis: []
+
+  - id: bash-guard-pr-title-check
+    name: bash-guard.sh gh pr create title 格式验证
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      bash-guard.sh 新增规则 2c：拦截 gh pr create 命令，检查 --title 参数。
+      规则1：title 必须符合 Conventional Commits 格式（feat/fix/docs/chore/test/
+      refactor/build/ci/style/perf/revert 前缀）。
+      规则2：如果 git diff --name-only HEAD 包含 packages/engine/ 路径，
+      title 必须包含 [CONFIG] 标签。
+      降级原则：提取不到 title（无 --title 参数）→ 放行不拦截。
+
+    entrypoints:
+      - type: hook
+        file: hooks/bash-guard.sh
+        trigger: "Claude Code PreToolUse Bash hook 触发"
+
+    golden_path: |
+      gh pr create --title "feat: 描述" → 放行 →
+      gh pr create --title "random text" → 拦截，exit 2 →
+      Engine 改动 + 无 [CONFIG] → 拦截，exit 2 →
+      Engine 改动 + [CONFIG] feat: → 放行
+
+    minimal_paths:
+      - "无 --title 参数: 提取失败，降级放行"
+      - "非 gh pr create 命令: 跳过检查"
+
+    rcis: []
+
+  - id: branch-date-warn-cleanup-fix
+    name: branch-protect 分支日期警告 + cleanup.sh step_* 非阻塞
+    status: active
+    priority: P2
+    version: "12.60.0"
+    updated: "2026-03-14"
+    description: |
+      修复两个 P2 问题：
+      1. branch-protect.sh 新增分支日期范围检查（v26）：cp-* 分支日期超过今天-2天时
+         输出 WARN 到 stderr，不 exit（长任务可能跨天）。兼容 macOS/Linux 日期命令。
+      2. cleanup.sh step 7.6 验证改为非阻塞：step_* flag 只做展示，不是流程控制依据，
+         devloop-check.sh 已改为检查实际 PR/CI 状态。验证失败时改为 WARN，不设 FAILED。
+
+    entrypoints:
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "Claude Code PreToolUse Write/Edit hook 触发（v26 日期检查）"
+      - type: script
+        file: skills/dev/scripts/cleanup.sh
+        trigger: "Step 11 Cleanup 执行时"
+
+    golden_path: |
+      cp-20260101-xxx 日期超 2 天 → WARN 输出 → 不 exit → 继续保护检查 →
+      cleanup.sh step 7.6 步骤不全 → WARN 输出 → VALIDATION_PASSED=true → cleanup 继续执行
+
+    minimal_paths:
+      - "日期计算失败（date 命令不可用）: DATE_2_DAYS_AGO 为空，跳过检查"
+      - "cleanup.sh 无 .dev-mode 文件: 跳过 step_* 验证"
+
+    rcis: []
+
+  - id: worktree-max-limit
+    name: worktree-manage.sh MAX_WORKTREES 数量上限检查
+    status: active
+    priority: P2
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      worktree-manage.sh cmd_create() 在创建新 worktree 之前检查现有数量。
+      当 worktree 数量（不含主仓库）>= MAX_WORKTREES（8）时，
+      拒绝创建并提示运行 worktree-gc.sh 清理已合并的 worktree。
+      防止 Brain 并发派发大量任务时磁盘被撑满。
+
+    entrypoints:
+      - type: script
+        file: skills/dev/scripts/worktree-manage.sh
+        trigger: "cmd_create() 调用时（flock 获取锁之后）"
+
+    golden_path: |
+      worktree 数量 < 8 → 正常创建 →
+      worktree 数量 >= 8 → exit 1 + 错误提示 →
+      运行 worktree-gc.sh 清理 → 重试创建
+
+    minimal_paths:
+      - "数量 < 8: 正常流程"
+      - "数量 >= 8: 拒绝创建，提示 GC"
+
+    rcis: []
+
+  - id: codex-runner-account-rotation
+    name: Codex Runner 多账号轮换（CODEX_HOMES）
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      runner.sh v2.3.0 新增 CODEX_HOMES 环境变量支持（冒号分隔的多账号路径）。
+      当某个 Codex 账号触发 Quota exceeded 时，自动切换到下一个账号继续执行，
+      本轮不计入重试次数。所有账号耗尽才真正失败。
+
+    entrypoints:
+      - type: script
+        file: runners/codex/runner.sh
+        trigger: "CODEX_HOMES 环境变量设置时启用多账号模式"
+
+    golden_path: |
+      CODEX_HOMES 解析为账号数组 →
+      codex-bin exec 执行 →
+      输出含 Quota exceeded → 切换账号 → 重试 →
+      所有账号耗尽 → 失败
+
+    minimal_paths:
+      - "单账号（兼容）: CODEX_HOME 正常执行"
+      - "多账号轮换: Quota exceeded → 切换 → 继续"
+      - "全部耗尽: 报错退出"
+
+    rcis: []
+  - id: codex-runner-model-selection
+    name: Codex Runner 模型选择（CODEX_MODEL）
+    status: active
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      runner.sh v2.4.0 新增 CODEX_MODEL 环境变量支持（默认 gpt-5.4）。
+      通过 --model 参数显式指定 Codex 模型，避免 CLI 自动选择 gpt-5.3-codex
+      导致 Quota exceeded 失败。设置 CODEX_MODEL=gpt-5.3-codex 可恢复旧行为。
+
+    entrypoints:
+      - type: script
+        file: runners/codex/runner.sh
+        trigger: "codex-bin exec 时传入 --model $CODEX_MODEL"
+
+    golden_path: |
+      CODEX_MODEL 读取（默认 gpt-5.4） →
+      codex-bin exec --model gpt-5.4 执行 →
+      成功返回（无 Quota exceeded）
+
+    minimal_paths:
+      - "默认: gpt-5.4 执行，无 quota 问题"
+      - "自定义: CODEX_MODEL=gpt-5.3-codex 恢复旧行为"
+
+    rcis: []
+  - id: "S-ci-task-card-support"
+    title: "CI Task Card 格式支持"
+    status: "active"
+    version: "12.68.0"
+    changelog:
+      - version: "12.68.0"
+        date: "2026-03-14"
+        description: "ci-l1-process.yml 支持 .task-{branch}.md Task Card 格式（向后兼容）"
+    description: |
+      扩展 ci-l1-process.yml 的 cleanup-check 和 required-paths-check 任务，
+      优先查找 .task-{branch}.md，回退到 .dod-{branch}.md / .prd-{branch}.md。
+
+    entrypoints:
+      - type: ci
+        file: .github/workflows/ci-l1-process.yml
+        trigger: "PR 触发 CI 时自动执行"
+
+    golden_path: |
+      PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
+
+    minimal_paths:
+      - "新格式: .task-{branch}.md 被正确识别"
+      - "旧格式: .dod-{branch}.md / .prd-{branch}.md 向后兼容"
+  - id: task-card-branch-protect
+    name: branch-protect.sh Task Card 格式支持
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      branch-protect.sh v19 新增对 .task-{branch}.md 格式的支持。
+      写入 task card 时验证必须包含成功标准章节和 checkbox 验收项。
+      PRD/DoD 文件查找优先使用 task card（单文件），找不到再回退旧格式。
+      向后兼容 .prd-*.md + .dod-*.md 分离格式。
+
+    entrypoints:
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "Write .task-{branch}.md 时触发内容验证"
+
+    golden_path: |
+      写入 .task-cp-xxx.md（含成功标准+checkbox）→
+      hook 验证通过 →
+      代码文件保护阶段用 task card 作为 PRD+DoD →
+      允许写代码
+
+    minimal_paths:
+      - "task card: .task-{branch}.md 含成功标准+checkbox → 通过"
+      - "旧格式: .prd-{branch}.md + .dod-{branch}.md → 仍然有效"
+      - "缺少成功标准: exit 2 拦截"
+      - "缺少 checkbox: exit 2 拦截"
+
+  - id: task-card-format-support
+    name: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      check-prd.sh 和 check-dod-mapping.cjs 新增对 .task-{branch}.md 格式的支持。
+      .task-{branch}.md 是 PRD+DoD 合并的 Task Card 格式，优先级高于旧格式。
+      向后兼容：.prd-{branch}.md / .dod-{branch}.md 旧格式继续有效。
+
+    entrypoints:
+      - type: script
+        file: scripts/devgate/check-prd.sh
+        trigger: "CI L1 DevGate 执行 PRD 检查时"
+      - type: script
+        file: scripts/devgate/check-dod-mapping.cjs
+        trigger: "CI L2 DevGate 执行 DoD 映射检查时"
+
+    golden_path: |
+      分支有 .task-{branch}.md →
+      check-prd.sh 优先读取 .task-*.md →
+      check-dod-mapping.cjs 优先读取 .task-*.md →
+      检查通过
+
+    minimal_paths:
+      - "新格式: .task-{branch}.md 存在时优先使用"
+      - "旧格式: .task-*.md 不存在时 fallback 到 .prd-*.md / .dod-*.md"
+
+    rcis: []
+
+  - id: S12
+    name: /dev Skill 文档重组为6步 Task Card 格式
+    status: Committed
+    priority: P1
+    version: "12.68.1"
+    updated: "2026-03-14"
+    description: |
+      把 /dev 工作流文档从12步重组为6步外壳，引入 Task Card 格式。
+      Task Card 合并 .prd + .dod 为 .task 单文件，避免 PRD 和 DoD 漂移。
+      新建 steps/01-taskcard.md，保留所有原有步骤文件向后兼容。
+
+    entrypoints:
+      - type: doc
+        file: skills/dev/SKILL.md
+        trigger: "/dev 工作流入口文档"
+      - type: doc
+        file: skills/dev/steps/01-taskcard.md
+        trigger: "Task Card 格式定义"
+
+    golden_path: |
+      用户运行 /dev →
+      读 SKILL.md 流程图（6步） →
+      Step 1 创建 .task 文件（合并 PRD + DoD） →
+      后续步骤引用 .task 完成开发
+
+    minimal_paths:
+      - "新模式: 使用 01-taskcard.md 创建合并格式 Task Card"
+      - "兼容模式: 旧 01-prd.md + 05-dod.md 仍可用（弃用提示）"
+
+    rcis: []
