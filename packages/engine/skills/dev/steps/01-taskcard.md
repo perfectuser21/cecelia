@@ -129,7 +129,31 @@ fi
 echo "✅ Step 1 自检通过 — Task Card 格式正确"
 ```
 
-## ⛔ LLM 质量 Gate（格式自检通过后执行）
+## ⛔ CI 镜像检查（格式自检通过后、LLM Gate 前执行）
+
+> **本地跑 CI 同款 DoD 检查脚本，让格式问题在本地被拦截，不等 CI 才发现。**
+
+```bash
+echo "🔍 本地 CI 镜像：check-dod-mapping.cjs..."
+
+# 从 worktree 根目录运行（与 CI 完全相同的脚本）
+node scripts/devgate/check-dod-mapping.cjs
+EXIT_CODE=$?
+
+if [[ $EXIT_CODE -ne 0 ]]; then
+    echo ""
+    echo "⛔ DoD 格式不符合 CI 要求！修复后再进 LLM Subagent。"
+    echo "   常见问题："
+    echo "   - [BEHAVIOR] 条目不能用 grep/ls 作为 Test 命令"
+    echo "   - DoD 条目数必须 ≥ 3"
+    echo "   - 必须至少有 1 个 [BEHAVIOR] 条目"
+    exit 1
+fi
+
+echo "✅ CI 镜像检查通过 — DoD 格式符合要求"
+```
+
+## ⛔ LLM 质量 Gate（CI 镜像检查通过后执行）
 
 > **bash 只能检查格式，LLM 检查质量。召唤 Verifier Subagent 评估 Task Card 是否够深。**
 

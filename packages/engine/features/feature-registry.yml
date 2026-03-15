@@ -15,9 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.51.0"
+version: "3.52.0"
 updated: "2026-03-15"
 changelog:
+  - version: "12.78.0"
+    date: "2026-03-15"
+    summary: "/dev 步骤本地 CI 镜像检查——Step1 加 check-dod-mapping.cjs / Step2 加改动类型分支检查(workspace/brain/engine) / Step4 加 check-learning.sh，CI 检查什么本地先跑什么"
+    scope: skills
+    breaking: false
   - version: "12.77.0"
     date: "2026-03-15"
     changes:

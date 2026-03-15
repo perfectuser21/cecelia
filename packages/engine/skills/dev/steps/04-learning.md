@@ -206,7 +206,35 @@ fi
 echo "✅ Learning 格式验证通过"
 ```
 
-### 2.6 ⛔ LLM 质量 Gate（格式验证通过后执行）
+### 2.5b ⛔ CI 镜像检查（bash 自检通过后、LLM Gate 前执行）
+
+> **本地跑 CI 同款 check-learning.sh，让格式问题在本地被拦截，不等 CI 才发现。**
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+echo "🔍 本地 CI 镜像：check-learning.sh..."
+
+# 设置 CI 所需的环境变量
+export GITHUB_HEAD_REF="$BRANCH_NAME"
+export PR_TITLE=$(git log --oneline -1 2>/dev/null || echo "feat: temp")
+
+bash packages/engine/scripts/devgate/check-learning.sh
+EXIT_CODE=$?
+
+if [[ $EXIT_CODE -ne 0 ]]; then
+    echo ""
+    echo "⛔ Learning 格式不符合 CI 要求！修复后再进 LLM Subagent。"
+    echo "   常见问题："
+    echo "   - 每个陷阱章节必须有 '### 根本原因' 三级标题"
+    echo "   - 每个陷阱章节必须有 '### 下次预防' 三级标题"
+    echo "   - '下次预防' 下必须有 '- [ ]' checklist 条目"
+    exit 1
+fi
+
+echo "✅ CI 镜像检查通过 — Learning 格式符合要求"
+```
+
+### 2.6 ⛔ LLM 质量 Gate（CI 镜像检查通过后执行）
 
 > **bash 检查格式，LLM 检查实质。召唤 Verifier Subagent 判断 Learning 是否有真正的学习价值。**
 
