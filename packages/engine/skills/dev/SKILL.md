@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 3.4.1
-updated: 2026-03-08
+version: 3.5.0
+updated: 2026-03-15
 description: |
   统一开发工作流入口。任何会进 git 的代码变更都必须走 /dev，没有例外。
   不走 /dev 不允许改代码——branch-protect Hook 会强制阻止。
@@ -62,7 +62,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
     ↓
 生成 .prd-task-abc-123.md + .dod-task-abc-123.md
     ↓
-继续正常 /dev 流程 (Step 2-11)
+继续正常 /dev 流程 (Step 0-5)
 ```
 
 **依赖**：
@@ -288,17 +288,12 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 在 /dev 开始时，创建所有步骤的 Task：
 
 ```javascript
-TaskCreate({ subject: "PRD 确认", description: "确认 PRD 文件存在且有效", activeForm: "确认 PRD" })
-TaskCreate({ subject: "环境检测", description: "检测项目环境和配置", activeForm: "检测环境" })
-TaskCreate({ subject: "分支创建", description: "创建或切换到功能分支", activeForm: "创建分支" })
-TaskCreate({ subject: "探索代码", description: "读代码理解架构，输出实现方案", activeForm: "探索代码" })
-TaskCreate({ subject: "DoD 定稿", description: "基于探索结果生成 DoD", activeForm: "定稿 DoD" })
-TaskCreate({ subject: "写代码", description: "根据 PRD 实现功能 + 测试", activeForm: "写代码" })
-TaskCreate({ subject: "本地验证", description: "跑 npm test 验证", activeForm: "本地验证" })
-TaskCreate({ subject: "提交 PR", description: "版本号更新 + 创建 PR", activeForm: "提交 PR" })
-TaskCreate({ subject: "CI 监控", description: "等待 CI 通过并修复失败", activeForm: "监控 CI" })
-TaskCreate({ subject: "Learning 记录", description: "记录开发经验", activeForm: "记录经验" })
-TaskCreate({ subject: "清理", description: "清理临时文件", activeForm: "清理中" })
+TaskCreate({ subject: "Step 0: Worktree", description: "检测/创建独立 worktree", activeForm: "创建 Worktree" })
+TaskCreate({ subject: "Step 1: TaskCard", description: "生成 .task-cp-xxx.md（需求+成功标准+DoD框架）", activeForm: "生成 TaskCard" })
+TaskCreate({ subject: "Step 2: Code", description: "探索+DoD定稿+写代码+本地验证", activeForm: "写代码" })
+TaskCreate({ subject: "Step 3: PR+CI", description: "push+创建PR+等CI+修CI", activeForm: "PR+CI" })
+TaskCreate({ subject: "Step 4: Learning", description: "写Learning+合并PR", activeForm: "记录 Learning" })
+TaskCreate({ subject: "Step 5: Clean", description: "归档+清理worktree", activeForm: "清理" })
 ```
 
 ### 任务更新（执行中）
@@ -321,12 +316,12 @@ TaskUpdate({ taskId: "1", status: "completed" })
 TaskList()
 
 // 输出示例：
-// ✅ 1. PRD 确认 (completed)
-// ✅ 2. 环境检测 (completed)
-// ✅ 3. 分支创建 (completed)
-// 🚧 4. 探索代码 (in_progress)
-// ⏸️  5. DoD 定稿 (pending)
-// ...
+// ✅ 1. Step 0: Worktree (completed)
+// ✅ 2. Step 1: TaskCard (completed)
+// 🚧 3. Step 2: Code (in_progress)
+// ⏸️  4. Step 3: PR+CI (pending)
+// ⏸️  5. Step 4: Learning (pending)
+// ⏸️  6. Step 5: Clean (pending)
 ```
 
 ---
@@ -449,17 +444,12 @@ Step 5: Clean → 归档+清理worktree
 bash skills/dev/scripts/track.sh start "$(basename "$(pwd)")" "$(git rev-parse --abbrev-ref HEAD)" ".prd.md"
 
 # 每个步骤
-bash skills/dev/scripts/track.sh step 1 "PRD"
-bash skills/dev/scripts/track.sh step 2 "Detect"
-bash skills/dev/scripts/track.sh step 3 "Branch"
-bash skills/dev/scripts/track.sh step 4 "Explore"
-bash skills/dev/scripts/track.sh step 5 "DoD"
-bash skills/dev/scripts/track.sh step 6 "Code"
-bash skills/dev/scripts/track.sh step 7 "Verify"
-bash skills/dev/scripts/track.sh step 8 "PR"
-bash skills/dev/scripts/track.sh step 9 "CI"
-bash skills/dev/scripts/track.sh step 10 "Learning"
-bash skills/dev/scripts/track.sh step 11 "Cleanup"
+bash skills/dev/scripts/track.sh step 0 "Worktree"
+bash skills/dev/scripts/track.sh step 1 "TaskCard"
+bash skills/dev/scripts/track.sh step 2 "Code"
+bash skills/dev/scripts/track.sh step 3 "PR+CI"
+bash skills/dev/scripts/track.sh step 4 "Learning"
+bash skills/dev/scripts/track.sh step 5 "Clean"
 
 # 完成时
 bash skills/dev/scripts/track.sh done "$PR_URL"
