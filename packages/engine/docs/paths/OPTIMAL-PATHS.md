@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.50.0
+version: 3.51.0
 created: 2026-03-15
 updated: 2026-03-15
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.50.0: 从 feature-registry.yml 自动生成
+  - 3.51.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -407,5 +407,5 @@ Step 1 创建 .task 文件（合并 PRD + DoD） →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.50.0
+**版本**: 3.51.0
 **生成时间**: 2026-03-15
