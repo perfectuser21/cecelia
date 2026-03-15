@@ -121,12 +121,18 @@ jobs:
               rm -rf "$pgdir" 2>/dev/null || true
             fi
           done
-          # 步骤2: 清理 postgres 进程（不在生产端口 5432/5421 上的）
-          # 生产 DB 在 5432，不能杀；CI 端口在 5500-5797 范围
+          # 步骤2: 清理上次 run 遗留的 postgres 进程（跳过当前 run 的端口区间）
+          # 当前 run 的端口：5500 + (run_id % 100) * 3 ~ +2（防止误杀并行 shard）
+          CUR_BASE=$(( 5500 + (GITHUB_RUN_ID % 100) * 3 ))
+          CUR_P0=$CUR_BASE; CUR_P1=$((CUR_BASE+1)); CUR_P2=$((CUR_BASE+2))
           for port in $(seq 5500 5797); do
+            # 跳过当前 run 的 3 个端口（并行 shard 会用到）
+            if [ "$port" -eq "$CUR_P0" ] || [ "$port" -eq "$CUR_P1" ] || [ "$port" -eq "$CUR_P2" ]; then
+              continue
+            fi
             PIDS=$(lsof -ti:$port 2>/dev/null) || true
             if [ -n "$PIDS" ]; then
-              echo "Killing postgres on CI port $port: PIDs $PIDS"
+              echo "Killing stale postgres on port $port: PIDs $PIDS"
               echo "$PIDS" | xargs kill -9 2>/dev/null || true
             fi
           done
