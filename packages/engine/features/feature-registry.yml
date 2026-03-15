@@ -15,9 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.49.0"
+version: "3.50.0"
 updated: "2026-03-15"
 changelog:
+  - version: 12.75.0
+    date: 2026-03-15
+    summary: /dev Verifier Subagent 状态机——DoD深度挑战+逐条内循环+LLM质量Gate（02-code/01-taskcard/04-learning）
+    scope: skills
+    breaking: false
   - version: 12.74.0
     date: 2026-03-15
     summary: /dev 架构收尾——删老步骤文件(Step1-11)保留6步，SKILL.md统一引用，Step00/01/05补自检

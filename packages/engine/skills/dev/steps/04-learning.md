@@ -206,6 +206,41 @@ fi
 echo "✅ Learning 格式验证通过"
 ```
 
+### 2.6 ⛔ LLM 质量 Gate（格式验证通过后执行）
+
+> **bash 检查格式，LLM 检查实质。召唤 Verifier Subagent 判断 Learning 是否有真正的学习价值。**
+
+召唤 Verifier Subagent，prompt：
+
+```
+你是 Learning 质量审查员。判断以下 Learning 记录是否有真正的学习价值。
+
+Learning 内容：
+{粘贴 docs/learnings/{branch}.md 全文}
+
+评估标准：
+
+1. 根本原因是否真实：是否找到了问题的根本原因（不是表面症状）？
+   真实根因示例："existsSync mock 条件顺序错误，具体条件必须在宽泛条件之前"
+   敷衍示例："代码有问题" / "需要更仔细"
+
+2. 预防措施是否可执行：checklist 条目是否具体可执行（不是废话）？
+   可执行示例："- [ ] mock 多条件时，最具体的条件写在最前面"
+   废话示例："- [ ] 下次要更小心" / "- [ ] 注意测试"
+
+3. 是否记录了真实发生的事：失败次数和原因是否如实填写（不是零失败但实际有失败）？
+
+输出格式：
+[PASS] 或 [NEEDS_IMPROVEMENT]
+问题（仅 NEEDS_IMPROVEMENT 时）：{具体指出哪里敷衍、怎么改}
+
+注意：不要修改任何文件，不要写入 .dev-mode，只做评估并报告。
+```
+
+处理结果：
+- **[PASS]** → 继续 Step 3（提交 Learning）
+- **[NEEDS_IMPROVEMENT]** → 按反馈重写对应部分 → 重新执行 LLM 质量 Gate
+
 ---
 
 ### 3. **提交 Learning（push 到功能分支，PR 自动包含 Learning）**

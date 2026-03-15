@@ -129,6 +129,41 @@ fi
 echo "✅ Step 1 自检通过 — Task Card 格式正确"
 ```
 
+## ⛔ LLM 质量 Gate（格式自检通过后执行）
+
+> **bash 只能检查格式，LLM 检查质量。召唤 Verifier Subagent 评估 Task Card 是否够深。**
+
+召唤 Verifier Subagent，prompt：
+
+```
+你是 Task Card 质量审查员。评估以下 Task Card 是否达到"可独立执行"标准。
+
+Task Card 内容：
+{粘贴 .task-cp-{branch}.md 全文}
+
+评估 3 个维度（每项打分 1-5）：
+
+1. DoD 可验证性：每条 DoD 条目是否有明确的 pass/fail 标准？
+   5分=所有条目都有具体验证方法；1分=多数条目模糊无法验证
+
+2. DoD 完整性：是否覆盖了错误路径、边界条件、集成点？
+   5分=完整覆盖；1分=只有 happy path
+
+3. 成功标准具体性：成功标准是否够具体，不依赖主观判断？
+   5分=完全客观可测；1分=含"运行正常""功能完整"等模糊描述
+
+输出格式：
+[PASS] 或 [NEEDS_IMPROVEMENT]
+评分：可验证性 X/5，完整性 X/5，具体性 X/5
+改进建议（仅 NEEDS_IMPROVEMENT 时）：{具体指出哪条 DoD 需要改、怎么改}
+
+注意：不要修改任何文件，不要写入 .dev-mode，只做评估并报告。
+```
+
+处理结果：
+- **[PASS]**（三项均 ≥ 3）→ 继续 Step 2
+- **[NEEDS_IMPROVEMENT]** → 按建议更新 Task Card → 重新执行 LLM 质量 Gate
+
 ## 完成后
 
 立即执行 Step 2：`cat skills/dev/steps/02-code.md`
