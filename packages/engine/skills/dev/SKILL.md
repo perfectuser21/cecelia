@@ -10,7 +10,7 @@ description: |
   → 写代码 → 本地验证 → PR → CI 监控 → Learning → 合并 → 清理。
 
   ⚠️ 顺序铁律：Learning 必须在合并 PR 之前完成（先 push Learning 到功能分支，再合并）。
-  CI 通过后禁止立即合并——必须先执行 Step 10 写 LEARNINGS。
+  CI 通过后禁止立即合并——必须先执行 Step 4 写 Learning。
 
   触发词（凡用户意图涉及代码改动，必须触发）：
   开始开发、加功能、修 bug、修复 bug、实现 XXX、改代码、改配置、
@@ -135,7 +135,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ```
 /dev 启动 → Step 1 创建 .dev-mode
     ↓
-执行 Step 1-11...
+执行 Step 0-5...
     ↓
 会话尝试结束 → Stop Hook 触发
     ↓
@@ -162,8 +162,8 @@ step_5_clean: pending
 ```
 
 **生命周期**：
-- Step 3 (Branch) 分支创建后创建（此时分支名正确）
-- Step 11 (Cleanup) 删除
+- Step 1 (TaskCard) 创建后写入
+- Step 5 (Clean) 删除
 - 或 PR 合并后由 Stop Hook 自动删除
 
 ---
@@ -223,7 +223,7 @@ step_5_clean: pending
 ```
 用户 → /dev（流程编排）
          ↓
-       Step 1-11（具体步骤）
+       Step 0-5（具体步骤）
          ↓
        会话结束 → Stop Hook 检查完成条件
          ↓
@@ -247,7 +247,7 @@ step_5_clean: pending
    - SUCCESS → 继续下一步
 
 3. PR 已合并？
-   ❌ → exit 2 → 执行 Step 10 (Learning → push → 合并 PR)
+   ❌ → exit 2 → 执行 Step 4 (Learning → push → 合并 PR)
    ✅ → 删除 .dev-mode → exit 0 → 完成
 ```
 
@@ -271,11 +271,11 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 
 ### 正确行为
 
-- ✅ 完成 Step 4 (Explore) → **立即**执行 Step 5 (DoD)
-- ✅ 完成 Step 5 (DoD) → **立即**执行 Step 6 (Code)
-- ✅ 完成 Step 6 (Code) → **立即**执行 Step 7 (Verify)
-- ✅ 完成 Step 7 (Verify) → **立即**执行 Step 8 (PR)
-- ✅ 一直执行到 Step 8 创建 PR 为止
+- ✅ 完成 Step 1 (TaskCard) → **立即**执行 Step 2 (Code)
+- ✅ 完成 Step 2 (Code) → **立即**执行 Step 3 (PR+CI)
+- ✅ 完成 Step 3 (PR+CI) → **立即**执行 Step 4 (Learning)
+- ✅ 完成 Step 4 (Learning) → **立即**执行 Step 5 (Clean)
+- ✅ 一直执行到 PR 合并为止
 
 ---
 
@@ -336,7 +336,7 @@ TaskList()
 ### 1. 统一流程
 
 ```
-开始 → Step 0-11 → PR 创建 → CI 监控 → Learning → PR 合并 → 完成
+开始 → Step 0-5 → PR 创建 → CI 监控 → Learning → PR 合并 → 完成
 ```
 
 ### 2. Task Checkpoint 追踪

@@ -1,8 +1,8 @@
 ---
 id: minimal-paths
 version: 3.49.0
-created: 2026-03-14
-updated: 2026-03-14
+created: 2026-03-15
+updated: 2026-03-15
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -369,4 +369,4 @@ changelog:
 
 **来源**: features/feature-registry.yml
 **版本**: 3.49.0
-**生成时间**: 2026-03-14
+**生成时间**: 2026-03-15
