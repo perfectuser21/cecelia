@@ -112,8 +112,8 @@ jobs:
       - name: Clean up stale CI PostgreSQL (from previous runs)
         run: |
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
-          # 清理上次 CI 运行遗留的 PostgreSQL 进程（防止 POSIX shm 耗尽）
-          # 只清理非当前 run 的 pgdata 目录
+          # 清理上次 CI 运行遗留的 PostgreSQL 进程（防止 shmget SHMMNI 耗尽）
+          # 步骤1: 停止并删除上次 run 遗留的 pgdata 目录
           for pgdir in /tmp/pgdata-*; do
             if [ -d "$pgdir" ] && ! echo "$pgdir" | grep -q "pgdata-${GITHUB_RUN_ID}"; then
               echo "Stopping stale postgres: $pgdir"
@@ -121,8 +121,25 @@ jobs:
               rm -rf "$pgdir" 2>/dev/null || true
             fi
           done
-          echo "Remaining pgdata dirs after cleanup:"
-          ls /tmp/pgdata-* 2>/dev/null || echo "(none)"
+          # 步骤2: 清理 postgres 进程（不在生产端口 5432/5421 上的）
+          # 生产 DB 在 5432，不能杀；CI 端口在 5500-5797 范围
+          for port in $(seq 5500 5797); do
+            PIDS=$(lsof -ti:$port 2>/dev/null) || true
+            if [ -n "$PIDS" ]; then
+              echo "Killing postgres on CI port $port: PIDs $PIDS"
+              echo "$PIDS" | xargs kill -9 2>/dev/null || true
+            fi
+          done
+          # 步骤3: 清理孤立的 System V 共享内存段（所属进程已死）
+          # ipcs -m 输出格式：T ID KEY MODE OWNER GROUP
+          ipcs -m 2>/dev/null | awk 'NR>2 && $2 ~ /^[0-9]+$/ {print $2, $9}' | while read id nattch; do
+            if [ "${nattch:-1}" = "0" ]; then
+              echo "Removing orphaned sysv shm segment: $id"
+              ipcrm -m "$id" 2>/dev/null || true
+            fi
+          done || true
+          echo "sysv shm segments after cleanup:"
+          ipcs -m 2>/dev/null | grep -c "^m" || echo "0"
 
       - name: Set up PostgreSQL (dynamic port)
         run: |
