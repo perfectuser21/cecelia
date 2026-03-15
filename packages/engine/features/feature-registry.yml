@@ -15,9 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.52.0"
+version: "3.53.0"
 updated: "2026-03-15"
 changelog:
+  - version: "12.79.0"
+    date: "2026-03-15"
+    summary: "/dev Subagent 强制执行——删除「简单任务跳过subagent」快速路径、强制每条DoD召唤Verifier、删除「流程顺畅可跳过Learning」，消灭主agent自由裁量权漏洞"
+    scope: skills
+    breaking: false
   - version: "12.78.0"
     date: "2026-03-15"
     summary: "/dev 步骤本地 CI 镜像检查——Step1 加 check-dod-mapping.cjs / Step2 加改动类型分支检查(workspace/brain/engine) / Step4 加 check-learning.sh，CI 检查什么本地先跑什么"
