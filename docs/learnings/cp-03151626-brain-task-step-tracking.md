@@ -40,6 +40,13 @@ PostgreSQL `||` 操作符做 shallow merge：已有 key 保留，overlapping key
 - [x] `regression-contract.yaml` 版本值带引号 `"12.77.0"` → macOS sed 无法提取，去掉引号
 - [x] CI rerun 复用同一 `run_id` → `/tmp/pgdata-{run_id}` 残留导致 PostgreSQL 启动失败 → 用空 commit 生成新 run_id
 
+## 下次预防
+
+- [x] `.dev-mode` 用 `brain_task_id` 字段代替 `task_id`，避免 branch-protect DB 检查陷阱
+- [x] 新 Brain PATCH 端点支持只传 `custom_props`（`status` 可选），测试时只测 JSON schema 不测 DB 状态机
+- [x] CI rerun 避免用 GitHub UI 的 "Re-run failed"，改用空 commit push 生成新 run_id（绕过 pgdata 残留）
+- [x] macOS sed 一律用 `-E` + `[[:space:]]` 而非 BRE 的 `\?`
+
 ## 后续工作
 
 - Task B (5f0abbab): Dashboard LiveMonitor 展示 /dev 实时步骤进度（读取 `custom_props.dev_step`）
