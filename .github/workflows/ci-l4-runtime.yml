@@ -183,16 +183,24 @@ jobs:
 
       - name: Set up Node.js
         run: |
-          # Use nvm (preferred) or brew node on self-hosted Mac runner
+          # Try nvm first (self-hosted Mac runner)
           export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
+          # If node still not found, search common paths
+          if ! command -v node &>/dev/null 2>&1; then
+            NVM_LATEST=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -rV | head -1)
+            for dir in /opt/homebrew/bin /usr/local/bin "$NVM_LATEST"; do
+              if [ -n "$dir" ] && [ -x "$dir/node" ]; then
+                export PATH="$dir:$PATH"
+                echo "$dir" >> $GITHUB_PATH
+                break
+              fi
+            done
+          fi
           node --version
           npm --version
-          # Add node to GITHUB_PATH so subsequent steps can use it
-          NODE_BIN=$(dirname "$(which node 2>/dev/null || true)")
-          if [ -n "$NODE_BIN" ] && [ "$NODE_BIN" != "." ]; then
-            echo "$NODE_BIN" >> $GITHUB_PATH
-          fi
+          # Persist node bin to subsequent steps
+          echo "$(dirname "$(which node)")" >> $GITHUB_PATH
 
       - name: Install dependencies
         working-directory: packages/brain
