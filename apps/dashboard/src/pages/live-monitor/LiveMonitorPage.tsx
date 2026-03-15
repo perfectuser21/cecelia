@@ -58,6 +58,8 @@ interface BrainTask {
   status: string;
   project_id: string | null;
   created_at: string;
+  task_type?: string;
+  custom_props?: { dev_step?: number; dev_step_name?: string; [key: string]: unknown };
 }
 
 interface Project {
@@ -866,6 +868,66 @@ function RunnerSlotPanel() {
   );
 }
 
+// ── Dev Step Panel ──────────────────────────────────────────────────
+
+const DEV_STEP_LABELS: Record<number, string> = {
+  0: 'Worktree',
+  1: 'TaskCard',
+  2: 'Code',
+  3: 'PR+CI',
+  4: 'Learning',
+  5: 'Clean',
+};
+
+function DevStepPanel({ tasks }: { tasks: BrainTask[] }) {
+  const devTasks = tasks.filter(t => t.task_type === 'dev');
+
+  if (devTasks.length === 0) {
+    return (
+      <div style={{ fontSize: 10, color: '#484f58', textAlign: 'center', padding: '8px 0' }}>
+        无运行中的 /dev 任务
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {devTasks.map(task => {
+        const step = task.custom_props?.dev_step;
+        const stepName = task.custom_props?.dev_step_name ?? (step !== undefined ? DEV_STEP_LABELS[step] : undefined);
+        const hasStep = step !== undefined;
+        const totalSteps = 6;
+
+        return (
+          <div key={task.id} style={{ background: '#0d1117', borderRadius: 6, padding: '6px 8px', border: '1px solid #21262d' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+              <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#58a6ff', flexShrink: 0 }}>
+                {hasStep ? `S${step}` : '?'}
+              </span>
+              <span style={{ fontSize: 9, color: '#8b949e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {task.title.slice(0, 30)}{task.title.length > 30 ? '…' : ''}
+              </span>
+            </div>
+            {/* Progress bar */}
+            <div style={{ height: 3, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: hasStep ? `${((step + 1) / totalSteps) * 100}%` : '0%',
+                background: '#10b981',
+                borderRadius: 2,
+                transition: 'width .5s ease',
+              }} />
+            </div>
+            <div style={{ marginTop: 3, fontSize: 9, color: hasStep ? '#10b981' : '#484f58' }}>
+              {stepName ?? '步骤未知'}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Projects by Area ──────────────────────────────────────────────
 
 const INACTIVE_STATUSES = new Set(['completed', 'archived', 'cancelled', 'done']);
@@ -1465,6 +1527,19 @@ export default function LiveMonitorPage() {
               <div style={cardStyle}>
                 <SectionLabel label="RUNNER" />
                 <RunnerSlotPanel />
+              </div>
+
+              {/* DEV STEPS — /dev 任务步骤进度 */}
+              <div style={cardStyle}>
+                <SectionLabel
+                  label="DEV STEPS"
+                  right={
+                    <span style={{ fontSize: 9, fontFamily: 'monospace', color: activeTasks.filter(t => t.task_type === 'dev').length > 0 ? '#10b981' : '#484f58' }}>
+                      {activeTasks.filter(t => t.task_type === 'dev').length}
+                    </span>
+                  }
+                />
+                <DevStepPanel tasks={activeTasks} />
               </div>
 
             </div>
