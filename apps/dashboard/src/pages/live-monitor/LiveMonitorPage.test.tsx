@@ -3,6 +3,7 @@
  * 变更：新增 DEV STEPS 面板（DevStepPanel），展示 /dev 任务步骤进度
  */
 
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { act } from 'react';
@@ -15,6 +16,17 @@ import LiveMonitorPage from './LiveMonitorPage';
 vi.mock('react-router-dom', () => ({
   MemoryRouter: ({ children }: any) => children,
   useNavigate: () => vi.fn(),
+}));
+
+// Mock recharts 避免 CI 环境 happy-dom 中 SVG/ResizeObserver 兼容问题
+vi.mock('recharts', () => ({
+  LineChart: ({ children }: { children: React.ReactNode }) => React.createElement('div', { 'data-testid': 'line-chart' }, children),
+  Line: () => null,
+  XAxis: () => null,
+  YAxis: () => null,
+  CartesianGrid: () => null,
+  Tooltip: () => null,
+  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => React.createElement('div', { 'data-testid': 'responsive-container' }, children),
 }));
 
 // Mock fetch
