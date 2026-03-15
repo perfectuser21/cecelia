@@ -1698,3 +1698,14 @@ product_features:
       - "兼容模式: 旧 01-prd.md + 05-dod.md 仍可用（弃用提示）"
 
     rcis: []
+
+- version: "12.76.0"
+  date: "2026-03-15"
+  scope: "engine"
+  tag: "[CONFIG]"
+  features:
+    - id: "S-dual-gate-script"
+      title: "DoD Script Gate 深度检查"
+      description: "branch-protect.sh 和 check-dod-mapping.cjs 加深 DoD 质量检查：条目数≥3、必须含[BEHAVIOR]标签"
+      type: "enhancement"
+      impact: "gate"

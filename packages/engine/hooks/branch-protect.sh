@@ -179,6 +179,44 @@ if [[ "$TOOL_NAME" == "Write" ]]; then
             echo "" >&2
             exit 2
         fi
+        # v22: DoD 深度检查 — 条目数、[BEHAVIOR] 标签
+        DOD_ITEMS_COUNT=$(echo "$TASK_CONTENT" | grep -cE '^\s*-\s*\[[ xX]\]' 2>/dev/null || echo 0)
+        DOD_HAS_BEHAVIOR=$(echo "$TASK_CONTENT" | grep -cE '^\s*-\s*\[[ xX]\].*\[BEHAVIOR\]' 2>/dev/null || echo 0)
+
+        if [[ "$DOD_ITEMS_COUNT" -lt 3 ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] DoD 条目不足（Script Gate 拦截）" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  文件: $FILE_PATH" >&2
+            echo "  当前条目数: $DOD_ITEMS_COUNT，要求: ≥ 3" >&2
+            echo "" >&2
+            echo "  任何真实功能都需要至少：" >&2
+            echo "    - [ ] [ARTIFACT] 产出物条目（文件/接口存在）" >&2
+            echo "    - [ ] [BEHAVIOR] 行为条目（运行时验证）" >&2
+            echo "    - [ ] [GATE] 门禁条目（CI/测试通过）" >&2
+            echo "" >&2
+            exit 2
+        fi
+
+        if [[ "$DOD_HAS_BEHAVIOR" -eq 0 ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] DoD 缺少 [BEHAVIOR] 条目（Script Gate 拦截）" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  文件: $FILE_PATH" >&2
+            echo "" >&2
+            echo "  DoD 必须包含至少 1 个 [BEHAVIOR] 标签的运行时验证条目：" >&2
+            echo "    - [ ] [BEHAVIOR] 调用 API 返回正确数据" >&2
+            echo "    - [ ] [BEHAVIOR] UI 点击按钮触发正确行为" >&2
+            echo "" >&2
+            echo "  全是 ARTIFACT（静态产出物）= 没有验证功能是否真正运行。" >&2
+            echo "" >&2
+            exit 2
+        fi
+
         # Task Card 内容有效，放行（后续分支/PRD 存在检查仍会运行）
     fi
 fi

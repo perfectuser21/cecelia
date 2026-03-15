@@ -572,6 +572,41 @@ function main() {
     process.exit(0);
   }
 
+  // === Phase 0: DoD 深度检查（Script Gate — 条目数 + [BEHAVIOR] 要求）===
+  const MIN_DOD_ITEMS = 3;
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("  Phase 0: DoD 深度检查（Script Gate）");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+  if (items.length < MIN_DOD_ITEMS) {
+    console.log(`  ${RED}❌ DoD 条目不足${RESET}: 当前 ${items.length} 条，要求 ≥ ${MIN_DOD_ITEMS} 条`);
+    console.log("");
+    console.log("  任何真实功能都需要至少：");
+    console.log("    - [ ] [ARTIFACT] 产出物条目（文件/接口存在）");
+    console.log("    - [ ] [BEHAVIOR] 行为条目（运行时验证）");
+    console.log("    - [ ] [GATE] 门禁条目（CI/测试通过）");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    process.exit(1);
+  }
+
+  const behaviorItems = items.filter(item => item.claimType === "BEHAVIOR");
+  if (behaviorItems.length === 0) {
+    console.log(`  ${RED}❌ 缺少 [BEHAVIOR] 条目${RESET}`);
+    console.log("");
+    console.log("  DoD 必须包含至少 1 个 [BEHAVIOR] 标签的运行时验证条目：");
+    console.log("    - [ ] [BEHAVIOR] 调用 API 返回正确数据");
+    console.log("    - [ ] [BEHAVIOR] 功能按预期运行（端到端验证）");
+    console.log("");
+    console.log("  全是 [ARTIFACT]（静态产出物）= 没有验证功能是否真正运行。");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    process.exit(1);
+  }
+
+  console.log(`  ${GREEN}✅ 条目数检查通过${RESET}: ${items.length} 条 ≥ ${MIN_DOD_ITEMS}`);
+  console.log(`  ${GREEN}✅ [BEHAVIOR] 检查通过${RESET}: ${behaviorItems.length} 个运行时验证条目`);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("");
+
   let hasError = false;
   let passCount = 0;
   let failCount = 0;
