@@ -87,7 +87,7 @@ function getChangedFiles(baseBranch) {
  */
 function filterSourceFiles(files) {
   return files.filter((f) => {
-    if (!/\.(ts|js|mjs|cjs)$/.test(f)) return false;
+    if (!/\.(ts|js|mjs|cjs|sh)$/.test(f)) return false;
     if (/\.(test|spec)\.(ts|js|mjs|cjs)$/.test(f)) return false;
     if (/(__tests__|__mocks__)\//.test(f)) return false;
     if (/(vitest|jest)\.config\.(ts|js)$/.test(f)) return false;
@@ -129,6 +129,11 @@ function testImportsSourceFile(testFile, sourceFiles, projectRoot) {
     while ((m = cjsRegex.exec(content)) !== null) {
       importPaths.push(m[1]);
     }
+    // resolve(__dirname, '...') — shell/binary file references in tests
+    const resolveRegex = /resolve\s*\(__dirname,\s*['"]([^'"]+)['"]/g;
+    while ((m = resolveRegex.exec(content)) !== null) {
+      importPaths.push(m[1]);
+    }
 
     // 检查是否有任何 import 路径指向变更的源码文件
     const testDir = path.dirname(testFile);
@@ -137,8 +142,8 @@ function testImportsSourceFile(testFile, sourceFiles, projectRoot) {
         // 相对路径 import
         const resolved = path.normalize(path.join(testDir, imp));
         for (const src of sourceFiles) {
-          const srcNoExt = src.replace(/\.(ts|js|mjs|cjs)$/, "");
-          const resolvedNoExt = resolved.replace(/\.(ts|js|mjs|cjs)$/, "");
+          const srcNoExt = src.replace(/\.(ts|js|mjs|cjs|sh)$/, "");
+          const resolvedNoExt = resolved.replace(/\.(ts|js|mjs|cjs|sh)$/, "");
           if (
             srcNoExt === resolvedNoExt ||
             src === resolved ||
