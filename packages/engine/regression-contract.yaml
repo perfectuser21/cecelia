@@ -3121,12 +3121,9 @@ skills:
       run: "bash scripts/test-dev-health.sh"
     test: "manual:bash packages/engine/scripts/test-dev-health.sh"
 
-<<<<<<< HEAD
 # ============================================================================
 # Changelog
 # ============================================================================
+# 12.83.0 (2026-03-16): refactor(engine): 删除 ci-tools/ 符号链接目录，统一引用 scripts/devgate/
 # 12.82.0 (2026-03-16): fix(engine): git add -A 改 -u + Stop Hook 90分钟超时保护
 # 12.81.0 (2026-03-15): feat(engine): 04-learning.md 修正 Learning 模板格式 + Brain execution-callback 回调方式
-=======
-# changelog: 12.82.0 - 删除 ci-tools/ 符号链接目录，统一引用 scripts/devgate/
->>>>>>> 33aef16b5 ([CONFIG] refactor(engine): 删除 ci-tools/ 符号链接目录，统一引用 scripts/devgate/ v12.82.0)
