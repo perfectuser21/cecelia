@@ -4,27 +4,14 @@ date: 2026-03-15
 task: 03-prci.md 禁止 --admin 合并
 ---
 
-# Learning: 禁止 gh pr merge --admin
+## 禁止 gh pr merge --admin 绕过 CI（2026-03-15）
 
-## 背景
+### 根本原因
 
-PR #967 中因 L3 runner 看似 pending 超时，使用了 `gh pr merge --admin` 绕过 CI 强行合并。
-实际上 L3 只是在正常跑测试（11-16 分钟），并未卡死。
+步骤文件 03-prci.md 的「禁止行为」列表未明确禁止 `gh pr merge --admin`，导致 AI 在判断 L3 CI「卡死」时选择了 --admin 绕过。实际上 L3 Code Gate 正常耗时 11-16 分钟（排队 ~5 分钟 + Unit Tests ~10 分钟），看到 pending 不等于卡死。同时 GitHub 端已开启 `enforce_admins`，--admin 在系统层面已失效，但步骤文件没有说明这一点。
 
-## 根因
+### 下次预防
 
-步骤文件没有明确禁止 `--admin`，导致 AI 在判断 CI "卡死"时选择了绕过。
-
-## 修复
-
-在 `packages/engine/skills/dev/steps/03-prci.md` 的「禁止行为」章节追加：
-- `❌ gh pr merge --admin 绕过 CI`
-- CI pending ≠ 卡死说明（11-16 分钟正常耗时）
-
-GitHub 端已开启 `enforce_admins`，`--admin` 在系统层面已失效并直接报错。
-
-## 规则
-
-- **L3 Code Gate 正常耗时：11-16 分钟**（排队 ~5 分钟 + Unit Tests ~10 分钟）
-- 看到 `pending` 不要以为 runner 挂了，继续等待
-- `gh pr merge --admin` 已被 `enforce_admins` 封锁，不要尝试
+- [ ] 看到 L3 CI pending 超过 10 分钟，先查 runner 状态（`gh api repos/perfectuser21/cecelia/actions/runners`）再判断是否真正卡死
+- [ ] 禁止使用 `gh pr merge --admin`——enforce_admins 已开启，此命令会直接报错
+- [ ] L3 正常耗时 11-16 分钟，等满 20 分钟再排查，不要提前放弃
