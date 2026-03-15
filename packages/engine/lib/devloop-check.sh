@@ -166,6 +166,24 @@ devloop_check() {
                 fi
                 ;;
             "in_progress"|"queued"|"waiting"|"pending")
+                # ===== 全局 CI 超时保护（90 分钟）=====
+                # 若 CI 持续 pending/in_progress 超过 90 分钟，允许退出（CI 可能卡死）
+                if [[ -f "$dev_mode_file" ]]; then
+                    local started
+                    started=$(grep "^started:" "$dev_mode_file" | awk '{print $2}')
+                    if [[ -n "$started" ]]; then
+                        local start_epoch now_epoch elapsed
+                        start_epoch=$(date -d "$started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${started%+*}" +%s 2>/dev/null || echo 0)
+                        now_epoch=$(date +%s)
+                        elapsed=$(( now_epoch - start_epoch ))
+                        if [[ $elapsed -gt 5400 ]]; then  # 90 分钟 = 5400 秒
+                            echo "⏰ /dev 会话已超过 90 分钟，CI 可能卡住，允许退出" >&2
+                            echo "   请手动检查 CI 状态: gh run list --branch $branch" >&2
+                            _devloop_jq -n '{"status":"done"}'
+                            return 0
+                        fi
+                    fi
+                fi
                 _devloop_jq -n \
                     --arg status "$ci_status" \
                     '{"status":"blocked","reason":"CI 进行中（\($status)）","action":"等待 CI 完成（通常 3-10 分钟），不要做任何操作"}'

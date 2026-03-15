@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 12.81.1
-updated: 2026-03-15
+version: 12.82.0
+updated: 2026-03-16
 
 # ============================================================================
 # Hooks 回归契约
@@ -3120,3 +3120,9 @@ skills:
       type: command
       run: "bash scripts/test-dev-health.sh"
     test: "manual:bash packages/engine/scripts/test-dev-health.sh"
+
+# ============================================================================
+# Changelog
+# ============================================================================
+# 12.82.0 (2026-03-16): fix(engine): git add -A 改 -u + Stop Hook 90分钟超时保护
+# 12.81.0 (2026-03-15): feat(engine): 04-learning.md 修正 Learning 模板格式 + Brain execution-callback 回调方式
