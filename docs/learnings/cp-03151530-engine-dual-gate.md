@@ -13,38 +13,25 @@ type: learning
 - 条目数 < 3 → 拒绝（任何真实功能需要 ARTIFACT + BEHAVIOR + GATE 三类）
 - 无 `[BEHAVIOR]` 条目 → 拒绝（静态产出物 ≠ 运行时验证）
 
-## 踩的坑
+## 根本原因
 
-### 1. feature-registry.yml 不是 YAML 列表，是 map 结构
+### 坑 1：feature-registry.yml 盲追加导致 YAML 格式损坏
 
-**错误**：用 `cat >> feature-registry.yml` 追加 `- version: "12.76.0"` 条目到文件末尾
-**原因**：文件顶层结构是 `{ version, changelog, platform_features, product_features }`，不是列表
-**修复**：用 node 读取文件后修改 `changelog` 数组，再写回
+用 `cat >>` 追加 `- version:` 列表条目到文件末尾，但文件顶层是 map 结构（`changelog`、`platform_features` 等 key），不是列表。
+**根因**：没有先读文件结构，就假设它是列表。
 
-**教训**：向结构化 YAML 文件追加内容，必须先读取结构，不能 `cat >>` 盲追加。
+### 坑 2：DoD GATE 测试依赖本地临时文件
 
-### 2. `generate-path-views.sh` 可能清空文件
+Task Card 的 GATE Test 命令引用 `/tmp/test-no-behavior.md`（只在本地创建），CI 没有这个文件，导致 exit 2 而非预期 exit 1。
+**根因**：用运行时状态（临时文件）而不是静态代码验证来写 GATE 测试。
 
-`bash packages/engine/scripts/generate-path-views.sh` 运行后，`feature-registry.yml` 变为 0 字节。
-原因是脚本在 macOS 上输出重定向写入同一文件时覆盖。
-**修复**：先写入临时文件再 mv，或确认脚本不修改 feature-registry.yml 本身。
+### 坑 3：加新 Phase 0 检查后，质量元测试 fixture 未同步
 
-### 3. DoD GATE 测试命令依赖本地临时文件
+`test-check-dod-mapping.sh` 场景 3 fixture 只有 2 条无 BEHAVIOR 条目，Phase 0 新增后变为 exit 1，破坏了"期望 exit 0"的测试。
+**根因**：加新拒绝规则时，没有同步检查所有测试 fixture 是否满足新的最低要求。
 
-Task Card 中 GATE 项的 Test 命令引用 `/tmp/test-no-behavior.md`（本地测试创建的），
-CI 环境没有这个文件，导致 `node check-dod-mapping.cjs` exit 2 而非 exit 1，`[ $? -eq 1 ]` 失败。
-**修复**：改用直接 `grep -c 'MIN_DOD_ITEMS'` 验证代码存在，不依赖运行时临时文件。
+## 下次预防
 
-### 4. 质量元测试 fixture 需同步更新
-
-`tests/quality-system/test-check-dod-mapping.sh` 的场景 3（"有效 DoD 应 exit 0"）fixture 只有 2 条无 BEHAVIOR 条目，
-Phase 0 新增检查后变为 exit 1，破坏了元测试。
-**修复**：更新 fixture 为 3 条（含 [ARTIFACT]、[BEHAVIOR]、[GATE]）。
-
-**教训**：加新的拒绝条件时，必须同步检查所有测试 fixture 是否满足新的最低要求。
-
-## 预防措施
-
-1. 向结构化文件（YAML/JSON）追加内容时，用读取后修改的方式，不用 `cat >>`
-2. DoD GATE 测试命令只用静态 grep 验证代码存在性，不依赖运行时状态或临时文件
-3. 加新 gate 检查时，grep 所有 `tests/` 目录下相关 fixture，确认都满足新要求
+- [ ] 向结构化 YAML/JSON 文件追加内容时，用 node 读取后修改，不用 `cat >>`
+- [ ] DoD GATE Test 命令只用静态 `grep -c` 验证代码存在性，不依赖运行时状态或临时文件
+- [ ] 加新 gate 检查规则时，grep 所有 `tests/` 目录下相关 fixture，确认都满足新的最低要求
