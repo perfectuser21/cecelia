@@ -237,8 +237,16 @@ sleep 30
 
 # 查询 CI 状态
 RUN_INFO=$(gh run list --branch "$BRANCH_NAME" --limit 1 --json status,conclusion,databaseId)
-CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status')
-CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion')
+RUN_COUNT=$(echo "$RUN_INFO" | jq 'length')
+
+if [[ "$RUN_COUNT" -eq 0 ]]; then
+    echo "⏳ CI 尚未启动，继续等待..."
+    CI_STATUS="queued"
+    CI_CONCLUSION="null"
+else
+    CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status')
+    CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion')
+fi
 
 echo "CI 状态: $CI_STATUS"
 echo "CI 结论: $CI_CONCLUSION"
