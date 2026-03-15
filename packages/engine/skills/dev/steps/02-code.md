@@ -480,22 +480,67 @@ fi
 
 ---
 
-#### 7.1b 本地预检（Pre-Push Gate）
+#### 7.1b 本地 CI 镜像检查（Push 前必须全部通过）
+
+> **CI 检查什么，本地先跑什么。按改动类型执行对应脚本，不能等 CI 才发现问题。**
 
 ```bash
-bash scripts/local-precheck.sh
+echo "🔍 检测改动类型..."
+CHANGED=$(git diff --name-only main...HEAD 2>/dev/null || git diff --name-only origin/main...HEAD)
+
+# ── Workspace（apps/）改动 ──────────────────────────────────────────────
+if echo "$CHANGED" | grep -q "^apps/"; then
+    echo "🏗️  检测到 Workspace 改动，执行本地 build..."
+    APP_DIR=$(echo "$CHANGED" | grep "^apps/" | head -1 | cut -d'/' -f1-2)
+    if [[ -f "$APP_DIR/package.json" ]]; then
+        (cd "$APP_DIR" && npm run build 2>&1)
+        [[ $? -ne 0 ]] && { echo "⛔ Workspace build 失败！修复 TypeScript 编译错误后才能 push。"; exit 1; }
+        echo "✅ Workspace build 通过"
+    fi
+fi
+
+# ── Brain（packages/brain/）改动 ────────────────────────────────────────
+if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$"; then
+    echo "🧠 检测到 Brain 改动，执行 local-precheck..."
+    bash scripts/local-precheck.sh
+    [[ $? -ne 0 ]] && { echo "⛔ Brain 本地预检失败！修复后才能 push。"; exit 1; }
+    echo "✅ Brain 本地预检通过（facts/version/manifest）"
+fi
+
+# ── Engine（packages/engine/）改动 ──────────────────────────────────────
+if echo "$CHANGED" | grep -q "^packages/engine/"; then
+    echo "⚙️  检测到 Engine 改动，执行版本一致性检查..."
+
+    # PR title 必须包含 [CONFIG] tag
+    echo "⚠️  提醒：Engine 改动 PR title 必须包含 [CONFIG] tag"
+
+    # feature-registry.yml 必须有新增条目
+    if ! git diff main...HEAD -- packages/engine/features/feature-registry.yml | grep -q "^+  - "; then
+        echo "⚠️  feature-registry.yml 未新增 changelog 条目——Engine 改动必须更新"
+    fi
+
+    # 版本文件 7 处同步检查
+    bash packages/engine/ci/scripts/check-version-sync.sh 2>&1
+    [[ ${PIPESTATUS[0]} -ne 0 ]] && {
+        echo "⛔ Engine 版本未同步！需 bump 7 个文件后才能 push。"
+        exit 1
+    }
+    echo "✅ Engine 版本检查通过"
+fi
+
+echo "✅ 本地 CI 镜像检查全部通过，可以 push"
 ```
 
-**该脚本自动执行（仅 Brain 改动时）**：
-- `[1/3] facts-check` — DEFINITION.md 与实际代码一致性
-- `[2/3] version-sync` — package.json / DEFINITION.md / .brain-versions 三方同步
-- `[3/3] manifest-sync` — brain-manifest.generated.json 与源码一致
+| 改动类型 | 检查内容 | 失败动作 |
+|---------|---------|---------|
+| `apps/` | `npm run build`（TypeScript 编译） | 修编译错误 |
+| `packages/brain/` | `local-precheck.sh`（facts/version/manifest） | 修一致性 |
+| `packages/engine/` | version-sync + feature-registry 提醒 | bump 版本 |
 
 | 结果 | 动作 |
 |------|------|
 | 全部通过（exit 0）| 继续 7.2 |
-| 任意失败（exit 1）| **立即修复**，不允许带着预检失败继续 push |
-| Brain 无改动（自动跳过）| 继续 7.2 |
+| 任意失败（exit 1）| **立即修复**，不允许带着失败继续 push |
 
 ---
 
