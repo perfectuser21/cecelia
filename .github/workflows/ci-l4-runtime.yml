@@ -130,16 +130,17 @@ jobs:
               echo "$PIDS" | xargs kill -9 2>/dev/null || true
             fi
           done
-          # 步骤3: 清理孤立的 System V 共享内存段（所属进程已死）
-          # ipcs -m 输出格式：T ID KEY MODE OWNER GROUP
-          ipcs -m 2>/dev/null | awk 'NR>2 && $2 ~ /^[0-9]+$/ {print $2, $9}' | while read id nattch; do
-            if [ "${nattch:-1}" = "0" ]; then
-              echo "Removing orphaned sysv shm segment: $id"
-              ipcrm -m "$id" 2>/dev/null || true
-            fi
-          done || true
-          echo "sysv shm segments after cleanup:"
-          ipcs -m 2>/dev/null | grep -c "^m" || echo "0"
+          # 步骤3: 清理所有 System V 共享内存段
+          # macOS ipcs -m 不显示 nattch 列，直接删除所有段（CI 专用机，无生产 PG）
+          # 输出格式：m <ID> <KEY> <MODE> <OWNER> <GROUP>
+          BEFORE=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
+          echo "sysv shm segments before cleanup: $BEFORE"
+          for id in $(ipcs -m 2>/dev/null | grep '^m ' | awk '{print $2}' | grep '^[0-9]'); do
+            echo "Removing sysv shm segment: $id"
+            ipcrm -m "$id" 2>/dev/null || true
+          done
+          AFTER=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
+          echo "sysv shm segments after cleanup: $AFTER"
 
       - name: Set up PostgreSQL (dynamic port)
         run: |
