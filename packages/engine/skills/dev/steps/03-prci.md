@@ -138,7 +138,7 @@ fi
 ### 8.4 提交
 
 ```bash
-git add -A
+git add -u
 git commit -m "feat: <功能描述>
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -344,7 +344,7 @@ echo "✅ 本地验证通过，准备 push"
 #### ⑤ push
 
 ```bash
-git add -A
+git add -u
 git commit -m "fix: <具体修复内容>
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

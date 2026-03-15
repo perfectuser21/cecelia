@@ -18,6 +18,11 @@
 version: "3.53.0"
 updated: "2026-03-15"
 changelog:
+  - version: "12.82.0"
+    date: "2026-03-16"
+    summary: "fix(engine): git add -A 改 -u（防止意外添加未追踪敏感文件）+ Stop Hook 90分钟 CI 超时保护（CI 卡死时允许退出）"
+    scope: skills
+    breaking: false
   - version: "12.81.1"
     date: "2026-03-15"
     summary: "fix(engine): Dev Skill 文档一致性修复 — track.sh步骤/TaskCheckpoint/--task-id引用对齐 Step0-5，03-prci.md CI查询加空值保护"
