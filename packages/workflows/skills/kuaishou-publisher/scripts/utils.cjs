@@ -202,8 +202,42 @@ function extractPublishId(url, bodyText) {
   return null;
 }
 
+// ============================================================
+// 话题标签截断（快手限制 ≤4 个）
+// ============================================================
+
+const MAX_HASHTAGS = 4;
+const DEFAULT_MUSIC_QUERY = '热歌';
+
+/**
+ * 截断文案中超出限制的话题标签（最多 MAX_HASHTAGS 个）
+ */
+function truncateHashtags(text) {
+  const tags = (text.match(/#[\u4e00-\u9fa5a-zA-Z0-9_]+/g) || []);
+  if (tags.length <= MAX_HASHTAGS) return text;
+  let remaining = MAX_HASHTAGS;
+  return text.replace(/#[\u4e00-\u9fa5a-zA-Z0-9_]+/g, tag => {
+    if (remaining > 0) { remaining--; return tag; }
+    return '';
+  }).trim();
+}
+
+/**
+ * 读取内容目录中的音乐搜索词（music.txt），无则用默认值
+ */
+function readMusicQuery(contentDir) {
+  const musicFile = path.join(contentDir, 'music.txt');
+  if (fs.existsSync(musicFile)) {
+    const q = fs.readFileSync(musicFile, 'utf8').trim();
+    return q || DEFAULT_MUSIC_QUERY;
+  }
+  return DEFAULT_MUSIC_QUERY;
+}
+
 module.exports = {
   PUBLISH_URLS,
+  MAX_HASHTAGS,
+  DEFAULT_MUSIC_QUERY,
   findImages,
   readContent,
   convertToWindowsPaths,
@@ -213,4 +247,6 @@ module.exports = {
   isPublishPageReached,
   formatSessionStatus,
   extractPublishId,
+  truncateHashtags,
+  readMusicQuery,
 };

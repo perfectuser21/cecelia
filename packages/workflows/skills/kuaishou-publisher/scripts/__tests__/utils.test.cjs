@@ -17,6 +17,8 @@ const os = require('os');
 
 const {
   PUBLISH_URLS,
+  MAX_HASHTAGS,
+  DEFAULT_MUSIC_QUERY,
   findImages,
   readContent,
   convertToWindowsPaths,
@@ -26,6 +28,8 @@ const {
   isPublishPageReached,
   formatSessionStatus,
   extractPublishId,
+  truncateHashtags,
+  readMusicQuery,
 } = require('../utils.cjs');
 
 // ============================================================
@@ -330,5 +334,85 @@ describe('extractPublishId（发布 ID 提取）', () => {
 
   test('URL 和 bodyText 均为空时返回 null', () => {
     assert.equal(extractPublishId(undefined, undefined), null);
+  });
+});
+
+// ============================================================
+// Test 10: truncateHashtags — 话题标签截断（快手 ≤4 个限制）
+// ============================================================
+describe('truncateHashtags（话题标签截断）', () => {
+  test('MAX_HASHTAGS 常量为 4', () => {
+    assert.equal(MAX_HASHTAGS, 4);
+  });
+
+  test('标签数量 ≤4 时原样返回', () => {
+    const text = '今天天气好 #天气 #晴天 #快手';
+    assert.equal(truncateHashtags(text), text);
+  });
+
+  test('恰好 4 个标签时原样返回', () => {
+    const text = '文案 #标签1 #标签2 #标签3 #标签4';
+    assert.equal(truncateHashtags(text), text);
+  });
+
+  test('5 个标签时截断为 4 个', () => {
+    const text = '文案 #标签1 #标签2 #标签3 #标签4 #标签5';
+    const result = truncateHashtags(text);
+    const remaining = (result.match(/#[\u4e00-\u9fa5a-zA-Z0-9_]+/g) || []);
+    assert.equal(remaining.length, 4, '截断后应剩 4 个标签');
+    assert.ok(!result.includes('#标签5'), '第 5 个标签应被截断');
+  });
+
+  test('6 个标签截断后保留前 4 个', () => {
+    const text = '#A #B #C #D #E #F';
+    const result = truncateHashtags(text);
+    const tags = (result.match(/#[A-Z]/g) || []);
+    assert.equal(tags.length, 4);
+    assert.deepEqual(tags, ['#A', '#B', '#C', '#D']);
+  });
+
+  test('无标签时原样返回', () => {
+    const text = '今天天气不错，出去走走吧';
+    assert.equal(truncateHashtags(text), text);
+  });
+
+  test('支持中文标签', () => {
+    const text = '#一人公司 #赚钱 #副业 #AI #自媒体 #多余的标签';
+    const result = truncateHashtags(text);
+    const tags = (result.match(/#[\u4e00-\u9fa5a-zA-Z0-9_]+/g) || []);
+    assert.equal(tags.length, 4);
+    assert.ok(!result.includes('#多余的标签'));
+  });
+});
+
+// ============================================================
+// Test 11: readMusicQuery — 音乐搜索词读取
+// ============================================================
+describe('readMusicQuery（音乐搜索词读取）', () => {
+  test('DEFAULT_MUSIC_QUERY 常量为 热歌', () => {
+    assert.equal(DEFAULT_MUSIC_QUERY, '热歌');
+  });
+
+  test('有 music.txt 时读取其内容', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ks-music-'));
+    fs.writeFileSync(path.join(tmpDir, 'music.txt'), '  抖音热歌  ');
+    const result = readMusicQuery(tmpDir);
+    assert.equal(result, '抖音热歌', '应去除首尾空格');
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test('music.txt 为空时返回默认值', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ks-music-'));
+    fs.writeFileSync(path.join(tmpDir, 'music.txt'), '   ');
+    const result = readMusicQuery(tmpDir);
+    assert.equal(result, DEFAULT_MUSIC_QUERY, '空文件应返回默认搜索词');
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test('无 music.txt 时返回默认值', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ks-music-'));
+    const result = readMusicQuery(tmpDir);
+    assert.equal(result, DEFAULT_MUSIC_QUERY);
+    fs.rmSync(tmpDir, { recursive: true });
   });
 });
