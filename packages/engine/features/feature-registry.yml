@@ -15,9 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.55.0"
+version: "3.56.0"
 updated: "2026-03-16"
 changelog:
+  - version: "12.85.0"
+    date: "2026-03-16"
+    summary: "docs(engine): 删除 /dev SKILL.md 废弃的多 Feature 支持章节（remove-multi-feature），多 PR 编排移至 Initiative 层"
+    scope: dev-skill
+    breaking: false
   - version: "12.84.0"
     date: "2026-03-16"
     summary: "feat(engine): /dev 加入 TDD 两阶段探索（Step 2.0浅扫+Step 2.1 Test Designer Subagent）+ 任务评分（置信度+四维执行质量）"
