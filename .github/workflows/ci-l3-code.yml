@@ -19,8 +19,8 @@ concurrency:
 jobs:
   # ─── Commit Type Detection ─────────────────────────────────────────────
   # 根据 PR title 提取 commit type，决定 L3 是否需要运行
-  # fix: / docs: / style: / refactor: / chore: → 跳过 L3（保守策略）
-  # feat: / feat!: / BREAKING: / 未知类型 → 运行 L3
+  # docs: / style: → 跳过 L3（纯文档/样式改动）
+  # fix: / refactor: / chore: / test: / feat: / 未知类型 → 运行 L3（代码改动必须测试）
 
   detect-commit-type:
     name: Detect Commit Type
@@ -70,9 +70,10 @@ jobs:
           echo "Extracted commit_type: $COMMIT_TYPE"
           echo "commit_type=$COMMIT_TYPE" >> $GITHUB_OUTPUT
 
-          # 决策：跳过 L3 的类型（保守策略：未知类型默认运行）
+          # 决策：跳过 L3 的类型（只有纯文档/样式改动才跳过）
+          # fix:/refactor:/chore:/test:/perf: 必须跑 L3 — 代码改动不可跳过测试
           case "$COMMIT_TYPE" in
-            fix|docs|style|refactor|chore|test|perf)
+            docs|style)
               echo "should_run_l3=false" >> $GITHUB_OUTPUT
               echo "→ L3 SKIP (commit type: $COMMIT_TYPE)"
               ;;
@@ -835,6 +836,12 @@ jobs:
           DB_PASSWORD: cecelia_ci
           ENV_REGION: us
           NODE_OPTIONS: --max-old-space-size=3072
+      - name: Download Coverage Baseline
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-baseline
+          path: /tmp/coverage-baseline
       - name: Coverage Delta Report
         uses: davelosert/vitest-coverage-report-action@v2
         with:
@@ -843,6 +850,7 @@ jobs:
           name: Brain Coverage
           json-summary-path: packages/brain/coverage/coverage-summary.json
           json-final-path: packages/brain/coverage/coverage-final.json
+          json-summary-compare-path: /tmp/coverage-baseline/coverage-summary.json
 
   # ─── Coverage Baseline (push to main, 用于 PR 对比基线) ──────────────
   coverage-baseline:
