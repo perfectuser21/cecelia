@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.87.0] - 2026-03-16
+
+### Added
+- ci-l3-code.yml: 新增 `detect-commit-type` job，根据 PR title 提取 commit type
+  - fix/docs/style/refactor/chore/test/perf → L3 跳过（减少 10-16 分钟等待）
+  - feat/feat!/BREAKING/未知类型 → L3 正常运行（保守策略）
+- L3 gate 逻辑更新：`should_run_l3=false` 时直接通过，不等待 skipped jobs
+
 ## [12.86.0] - 2026-03-16
 
 ### Added
