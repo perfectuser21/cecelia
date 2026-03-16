@@ -1,444 +1,497 @@
 #!/usr/bin/env node
 /**
- * 快手图文发布脚本
+ * 快手图文发布脚本 v2
  *
- * 功能：发布图文内容（文字 + 图片）
- * 用法：node publish-kuaishou-image.cjs --content /path/to/image-{id}/
+ * 方案：CDP UI 自动化（Input.dispatchMouseEvent + Page.fileChooserOpened）
+ *   - 端口：19223（专用快手 Chrome 实例）
+ *   - SCP：通过 xian-mac 跳板复制图片到 Windows
+ *   - 音乐：点击"添加音乐" → 搜索 → 选第一个（失败降级跳过）
+ *   - 最多 4 个话题标签（快手限制）
+ *
+ * 用法：
+ *   NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+ *     node publish-kuaishou-image.cjs --content /path/to/image-1/
  *
  * 内容目录结构：
- *   content.txt   - 文案内容（可选）
- *   image.jpg     - 图片（支持 image1.jpg, image2.jpg 等）
+ *   content.txt   - 文案内容（可选，#话题# 最多 4 个）
+ *   music.txt     - 音乐搜索词（可选，默认搜索"热歌"）
+ *   image.jpg     - 图片（支持 image1.jpg...，最多 8 张）
  *
  * 环境要求：
  *   NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
+ *   xian-mac SSH 可达，且 xian-mac 上有 ~/.ssh/windows_ed 密钥
  */
 
-const WebSocket = require('ws');
+'use strict';
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
+const WebSocket = require('ws');
 
 const {
-  PUBLISH_URLS,
   findImages,
   readContent,
   convertToWindowsPaths,
-  escapeForJS,
   extractDirNames,
-  isLoginRedirect,
-  isPublishPageReached,
 } = require('./utils.cjs');
 
+// ============================================================
+// 配置
+// ============================================================
 const CDP_PORT = 19223;
 const WINDOWS_IP = '100.97.242.124';
+const XIAN_MAC_HOST = 'xian-mac';
+const XIAN_MAC_SSH_KEY = '/Users/jinnuoshengyuan/.ssh/windows_ed';
 const SCREENSHOTS_DIR = '/tmp/kuaishou-publish-screenshots';
 const WINDOWS_BASE_DIR = 'C:\\Users\\xuxia\\kuaishou-media';
+const PUBLISH_URL = 'https://cp.kuaishou.com/article/publish/video';
+const KS_DOMAIN = 'cp.kuaishou.com';
+const DEFAULT_MUSIC_QUERY = '热歌';
+const MAX_HASHTAGS = 4;
 
-// 创建截图目录
-if (!fs.existsSync(SCREENSHOTS_DIR)) {
-  fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+// ============================================================
+// 纯函数
+// ============================================================
+
+function isLoginError(url) {
+  if (!url) return false;
+  return url.includes('passport.kuaishou.com') || url.includes('/account/login');
 }
 
-// 命令行参数解析
-const args = process.argv.slice(2);
-const contentDirArg = args[args.indexOf('--content') + 1];
-
-if (!contentDirArg || !fs.existsSync(contentDirArg)) {
-  console.error('❌ 错误：必须提供有效的内容目录路径');
-  console.error('使用方式：node publish-kuaishou-image.cjs --content /path/to/image-xxx/');
-  process.exit(1);
-}
-
-const contentDir = path.resolve(contentDirArg);
-const contentText = readContent(contentDir);
-const localImages = findImages(contentDir);
-
-if (localImages.length === 0) {
-  console.error('❌ 错误：内容目录中没有图片文件');
-  process.exit(1);
-}
-
-const { dateDir, contentDirName } = extractDirNames(contentDir);
-const windowsImages = convertToWindowsPaths(localImages, WINDOWS_BASE_DIR, dateDir, contentDirName);
-
-console.log('\n========================================');
-console.log('快手图文发布');
-console.log('========================================\n');
-console.log(`📁 内容目录: ${contentDir}`);
-console.log(`📝 文案长度: ${contentText.length} 字符`);
-console.log(`🖼️  图片数量: ${localImages.length}`);
-if (windowsImages.length > 0) {
-  console.log(`📁 Windows 路径: ${windowsImages[0]}`);
-}
-console.log('');
-
-// CDP 客户端
-class CDPClient {
-  constructor(wsUrl) {
-    this.wsUrl = wsUrl;
-    this.ws = null;
-    this.msgId = 0;
-    this.callbacks = {};
+function readMusicQuery(contentDir) {
+  const musicFile = path.join(contentDir, 'music.txt');
+  if (fs.existsSync(musicFile)) {
+    const q = fs.readFileSync(musicFile, 'utf8').trim();
+    return q || DEFAULT_MUSIC_QUERY;
   }
-
-  connect() {
-    return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.wsUrl);
-      this.ws.on('open', () => resolve());
-      this.ws.on('error', reject);
-      this.ws.on('message', data => {
-        const msg = JSON.parse(data);
-        if (msg.id && this.callbacks[msg.id]) {
-          this.callbacks[msg.id](msg);
-          delete this.callbacks[msg.id];
-        }
-      });
-    });
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolve, reject) => {
-      const id = ++this.msgId;
-      this.callbacks[id] = msg => {
-        if (msg.error) reject(new Error(msg.error.message));
-        else resolve(msg.result);
-      };
-      this.ws.send(JSON.stringify({ id, method, params }));
-      setTimeout(() => {
-        if (this.callbacks[id]) {
-          delete this.callbacks[id];
-          reject(new Error(`CDP timeout: ${method}`));
-        }
-      }, 60000);
-    });
-  }
-
-  close() {
-    if (this.ws) this.ws.close();
-  }
+  return DEFAULT_MUSIC_QUERY;
 }
 
+/**
+ * 截断文案中超出限制的话题标签（最多 MAX_HASHTAGS 个）
+ */
+function truncateHashtags(text) {
+  const tags = (text.match(/#[\u4e00-\u9fa5a-zA-Z0-9_]+/g) || []);
+  if (tags.length <= MAX_HASHTAGS) return text;
+  console.warn(`[KS]    话题标签超出限制（${tags.length} > ${MAX_HASHTAGS}），自动截断`);
+  let remaining = MAX_HASHTAGS;
+  return text.replace(/#[\u4e00-\u9fa5a-zA-Z0-9_]+/g, tag => {
+    if (remaining > 0) { remaining--; return tag; }
+    return '';
+  }).trim();
+}
+
+// ============================================================
+// 工具函数
+// ============================================================
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function screenshot(cdp, name) {
-  try {
-    const result = await cdp.send('Page.captureScreenshot', { format: 'png' });
-    const filepath = path.join(SCREENSHOTS_DIR, `${name}.png`);
-    fs.writeFileSync(filepath, Buffer.from(result.data, 'base64'));
-    console.log(`   📸 ${filepath}`);
-  } catch (e) {
-    console.error(`   ❌ 截图失败: ${e.message}`);
-  }
-}
+// ============================================================
+// SCP：通过 xian-mac 跳板复制图片到 Windows
+// ============================================================
+function scpImagesToWindows(localImages, windowsDir) {
+  console.log(`[KS] SCP 图片到 Windows（通过 ${XIAN_MAC_HOST}）...`);
 
-async function navigateToPublishPage(cdp) {
-  for (const targetUrl of PUBLISH_URLS) {
-    console.log(`   尝试导航到: ${targetUrl}`);
-    await cdp.send('Page.navigate', { url: targetUrl });
-    await sleep(5000);
-
-    const urlResult = await cdp.send('Runtime.evaluate', {
-      expression: 'window.location.href',
-      returnByValue: true,
-    });
-    const currentUrl = urlResult.result.value;
-    console.log(`   当前 URL: ${currentUrl}`);
-
-    if (isLoginRedirect(currentUrl)) {
-      console.error('\n[SESSION_EXPIRED] 快手会话已过期，需要重新登录');
-      console.error(`重定向到: ${currentUrl}`);
-      throw new Error('[SESSION_EXPIRED] 快手 OAuth 会话已过期，请重新登录创作者中心');
-    }
-
-    if (isPublishPageReached(currentUrl, targetUrl)) {
-      console.log(`   ✅ 成功到达发布页面\n`);
-      return currentUrl;
-    }
-
-    console.log(`   ⚠️  URL 不匹配，尝试下一个候选 URL...`);
-  }
-
-  // 所有候选 URL 均失败，取当前 URL 做最后检查
-  const urlResult = await cdp.send('Runtime.evaluate', {
-    expression: 'window.location.href',
-    returnByValue: true,
-  });
-  const currentUrl = urlResult.result.value;
-
-  if (isLoginRedirect(currentUrl)) {
-    console.error('\n[SESSION_EXPIRED] 快手会话已过期，需要重新登录');
-    throw new Error('[SESSION_EXPIRED] 快手 OAuth 会话已过期，请重新登录创作者中心');
-  }
-
-  throw new Error(`所有候选发布 URL 均导航失败，当前页面: ${currentUrl}`);
-}
-
-async function main() {
-  let cdp;
-
-  try {
-    // 获取 CDP 连接
-    console.log('🔌 连接 CDP...\n');
-    const pagesData = await new Promise((resolve, reject) => {
-      http.get(`http://${WINDOWS_IP}:${CDP_PORT}/json`, res => {
-        let data = '';
-        res.on('data', chunk => (data += chunk));
-        res.on('end', () => resolve(JSON.parse(data)));
-      }).on('error', reject);
-    });
-
-    // 找到快手页面
-    const kuaishouPage = pagesData.find(
-      p => p.type === 'page' && p.url.includes('kuaishou.com')
+  const tmpDir = `/tmp/ks-upload-${Date.now()}`;
+  execSync(`ssh ${XIAN_MAC_HOST} "mkdir -p ${tmpDir}"`, { timeout: 10000, stdio: 'pipe' });
+  for (const imgPath of localImages) {
+    execSync(
+      `scp -o StrictHostKeyChecking=no "${imgPath}" "${XIAN_MAC_HOST}:${tmpDir}/"`,
+      { timeout: 30000, stdio: 'pipe' }
     );
-    if (!kuaishouPage) {
-      // 如果没有快手页面，使用第一个可用页面
-      const firstPage = pagesData.find(p => p.type === 'page');
-      if (!firstPage) throw new Error('未找到任何浏览器页面');
-      console.log(`   ⚠️  未找到快手页面，使用: ${firstPage.url}`);
-      cdp = new CDPClient(firstPage.webSocketDebuggerUrl);
-    } else {
-      cdp = new CDPClient(kuaishouPage.webSocketDebuggerUrl);
+  }
+  console.log(`[KS]    图片已复制到 xian-mac:${tmpDir}`);
+
+  const winDirForward = windowsDir.replace(/\\/g, '/');
+  execSync(
+    `ssh ${XIAN_MAC_HOST} "ssh -i ${XIAN_MAC_SSH_KEY} -o StrictHostKeyChecking=no xuxia@${WINDOWS_IP} 'powershell -command \\"New-Item -ItemType Directory -Force -Path ${winDirForward} | Out-Null; Write-Host ok\\""'"`,
+    { timeout: 15000, stdio: 'pipe' }
+  );
+
+  for (const imgPath of localImages) {
+    const fname = path.basename(imgPath);
+    execSync(
+      `ssh ${XIAN_MAC_HOST} "scp -i ${XIAN_MAC_SSH_KEY} -o StrictHostKeyChecking=no ${tmpDir}/${fname} xuxia@${WINDOWS_IP}:${winDirForward}/${fname}"`,
+      { timeout: 30000, stdio: 'pipe' }
+    );
+  }
+
+  execSync(`ssh ${XIAN_MAC_HOST} "rm -rf ${tmpDir}"`, { timeout: 10000, stdio: 'pipe' });
+  console.log(`[KS]    ${localImages.length} 张图片已复制到 Windows`);
+}
+
+// ============================================================
+// CDP WebSocket 封装
+// ============================================================
+async function createCDP(wsUrl) {
+  const ws = new WebSocket(wsUrl);
+  let msgId = 1;
+  const pending = {};
+  const evL = {};
+
+  ws.on('message', raw => {
+    const d = JSON.parse(raw);
+    if (d.id && pending[d.id]) { pending[d.id](d.result); delete pending[d.id]; }
+    if (d.method) { (evL[d.method] || []).forEach(cb => cb(d.params)); }
+  });
+
+  await new Promise((resolve, reject) => {
+    ws.on('open', resolve);
+    ws.on('error', reject);
+  });
+
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const id = msgId++;
+    pending[id] = resolve;
+    ws.send(JSON.stringify({ id, method, params }));
+    setTimeout(() => { delete pending[id]; reject(new Error(`CDP 超时: ${method}`)); }, 25000);
+  });
+
+  const on = (event, cb) => {
+    evL[event] = evL[event] || [];
+    evL[event].push(cb);
+  };
+
+  const eval_ = async (expr) => {
+    const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true });
+    return r?.result?.value;
+  };
+
+  const screenshot = async (name) => {
+    try {
+      const r = await send('Page.captureScreenshot', { format: 'jpeg', quality: 50 });
+      const filepath = path.join(SCREENSHOTS_DIR, `${name}.png`);
+      fs.writeFileSync(filepath, Buffer.from(r.data, 'base64'));
+      console.log(`[KS]    截图: ${filepath}`);
+    } catch (e) {
+      console.log(`[KS]    截图失败: ${e.message}`);
+    }
+  };
+
+  const close = () => ws.close();
+
+  return { send, on, eval_, screenshot, close };
+}
+
+// ============================================================
+// 音乐选择（失败降级跳过）
+// ============================================================
+async function addMusic(cdp, musicQuery) {
+  console.log(`\n[KS] 选择背景音乐（搜索：${musicQuery}）...`);
+  try {
+    const musicBtn = await cdp.eval_(`(function() {
+      const all = Array.from(document.querySelectorAll('*'));
+      for (const el of all) {
+        const t = el.textContent.trim();
+        if ((t === '添加音乐' || t === '选择音乐' || t === '背景音乐') && el.offsetParent !== null) {
+          const r = el.getBoundingClientRect();
+          return { found: true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        }
+      }
+      return { found: false };
+    })()`);
+
+    if (!musicBtn?.found) {
+      console.log('[KS]    未找到音乐按钮，跳过音乐选择');
+      return;
     }
 
-    await cdp.connect();
+    const { x, y } = musicBtn;
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    await sleep(100);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+    await sleep(2000);
+
+    const searchInput = await cdp.eval_(`(function() {
+      const inputs = Array.from(document.querySelectorAll('input[type="text"], input[placeholder*="搜索"], input[placeholder*="音乐"]'));
+      const inp = inputs.find(i => i.offsetParent !== null);
+      if (inp) {
+        inp.focus();
+        const r = inp.getBoundingClientRect();
+        return { found: true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+      }
+      return { found: false };
+    })()`);
+
+    if (!searchInput?.found) {
+      console.log('[KS]    未找到音乐搜索框，跳过');
+      return;
+    }
+
+    const { x: sx, y: sy } = searchInput;
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: sx, y: sy, button: 'left', clickCount: 1 });
+    await sleep(100);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: sx, y: sy, button: 'left', clickCount: 1 });
+    await sleep(200);
+    await cdp.send('Input.insertText', { text: musicQuery });
+    await sleep(300);
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    await sleep(2500);
+
+    const firstResult = await cdp.eval_(`(function() {
+      const items = Array.from(document.querySelectorAll('[class*="music-item"], [class*="song-item"], [class*="list-item"], [class*="music_item"]'));
+      const first = items.find(i => i.offsetParent !== null);
+      if (first) { first.click(); return { clicked: true }; }
+      const useBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '使用' && b.offsetParent !== null);
+      if (useBtn) { useBtn.click(); return { clicked: true, via: 'use-btn' }; }
+      return { clicked: false };
+    })()`);
+
+    if (firstResult?.clicked) {
+      await sleep(1000);
+      console.log('[KS]    音乐已选择');
+    } else {
+      console.log('[KS]    未找到音乐列表结果，跳过');
+    }
+  } catch (e) {
+    console.warn(`[KS]    音乐选择失败（降级跳过）: ${e.message}`);
+  }
+}
+
+// ============================================================
+// 主流程
+// ============================================================
+async function main(contentDir, contentText, windowsImages, musicQuery, isDryRun) {
+  if (!fs.existsSync(SCREENSHOTS_DIR)) {
+    fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+  }
+
+  console.log('\n[KS] ========================================');
+  console.log('[KS] 快手图文发布 v2');
+  console.log('[KS] ========================================\n');
+  console.log(`[KS] 内容目录: ${contentDir}`);
+  console.log(`[KS] 文案: ${contentText.length} 字符`);
+  console.log(`[KS] 图片: ${windowsImages.length} 张`);
+  console.log(`[KS] 音乐: ${musicQuery}`);
+
+  if (isDryRun) {
+    console.log('\n[KS] dry-run 模式，跳过 CDP');
+    return;
+  }
+
+  // Step 0: SCP 图片到 Windows
+  const { dateDir, contentDirName } = extractDirNames(contentDir);
+  const localImages = findImages(contentDir).slice(0, 8);
+  const winDir = path.join(WINDOWS_BASE_DIR, dateDir, contentDirName).replace(/\//g, '\\');
+  scpImagesToWindows(localImages, winDir);
+
+  // CDP 连接
+  console.log('\n[KS] 连接 CDP...');
+  const pagesData = await new Promise((resolve, reject) => {
+    http.get(`http://${WINDOWS_IP}:${CDP_PORT}/json`, res => {
+      let data = '';
+      res.on('data', c => (data += c));
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { reject(e); } });
+    }).on('error', err => reject(new Error(`CDP 连接失败 (${WINDOWS_IP}:${CDP_PORT}): ${err.message}`)));
+  });
+
+  const ksPage = pagesData.find(p => p.type === 'page' && p.url?.includes(KS_DOMAIN));
+  const targetPage = ksPage || pagesData.find(p => p.type === 'page');
+  if (!targetPage) throw new Error(`未找到浏览器页面，请在 Chrome (端口 ${CDP_PORT}) 中打开快手创作者中心`);
+
+  const cdp = await createCDP(targetPage.webSocketDebuggerUrl);
+  console.log('[KS] CDP 已连接\n');
+
+  try {
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
     await cdp.send('DOM.enable');
-    console.log('✅ CDP 已连接\n');
 
-    // ========== 步骤1: 导航到图文发布页（多 URL 降级 + OAuth 检测）==========
-    console.log('1️⃣  导航到快手图文发布页...\n');
-    await screenshot(cdp, '01-initial');
-    await navigateToPublishPage(cdp);
+    // Step 1: 导航到发布页
+    console.log('[KS] 1. 导航到发布页...');
+    await cdp.send('Page.navigate', { url: PUBLISH_URL });
+    await sleep(5000);
+    await cdp.screenshot('01-nav');
 
-    // ========== 步骤2: 填写文案 ==========
-    if (contentText) {
-      console.log('2️⃣  填写文案...\n');
+    const currentUrl = await cdp.eval_('location.href');
+    if (isLoginError(currentUrl)) throw new Error(`快手未登录，请在 Chrome (${CDP_PORT}) 登录创作者中心`);
+    console.log(`[KS]    URL: ${currentUrl}\n`);
 
-      const escapedContent = escapeForJS(contentText);
-
-      const fillResult = await cdp.send('Runtime.evaluate', {
-        expression: `(function() {
-          // 尝试找到文案输入区域（快手图文发布页）
-          const selectors = [
-            'textarea[placeholder*="文案"]',
-            'textarea[placeholder*="输入"]',
-            'div[contenteditable="true"]',
-            '.ql-editor',
-            'textarea'
-          ];
-          for (const sel of selectors) {
-            const el = document.querySelector(sel);
-            if (el && el.offsetWidth > 0) {
-              el.focus();
-              if (el.tagName === 'TEXTAREA') {
-                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                  window.HTMLTextAreaElement.prototype, 'value'
-                ).set;
-                nativeInputValueSetter.call(el, '${escapedContent}');
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-              } else {
-                el.innerText = '${escapedContent}';
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-              }
-              return { success: true, selector: sel };
-            }
-          }
-          return { success: false, error: '未找到文案输入区域' };
-        })()`,
-        returnByValue: true
-      });
-
-      const fillVal = fillResult.result.value;
-      console.log(`   填写结果: ${JSON.stringify(fillVal)}`);
-      await sleep(1000);
-      await screenshot(cdp, '02-content-filled');
-
-      if (fillVal && fillVal.success) {
-        console.log(`   ✅ 已填写 ${contentText.length} 字\n`);
-      } else {
-        console.log('   ⚠️  文案填写可能未成功，继续上传图片...\n');
+    // Step 2: 点击"上传图文"标签
+    console.log('[KS] 2. 点击"上传图文"...');
+    await cdp.eval_(`(function() {
+      const els = Array.from(document.querySelectorAll('*'));
+      for (const el of els) {
+        if (el.textContent.trim() === '上传图文' && el.offsetParent !== null) { el.click(); return; }
       }
-    } else {
-      console.log('2️⃣  跳过文案（无文案内容）\n');
-    }
+    })()`);
+    await sleep(2000);
 
-    // ========== 步骤3: 上传图片 ==========
-    console.log(`3️⃣  上传图片（${windowsImages.length} 张）...\n`);
+    // Step 3: 处理草稿弹窗
+    const draftResult = await cdp.eval_(`(function() {
+      const els = Array.from(document.querySelectorAll('*'));
+      for (const txt of ['放弃', '放弃草稿']) {
+        const el = els.find(e => e.textContent.trim() === txt && e.offsetParent !== null);
+        if (el) { el.click(); return txt; }
+      }
+      return null;
+    })()`);
+    if (draftResult) { console.log(`[KS]    草稿处理: ${draftResult}`); await sleep(1500); }
+    await cdp.screenshot('02-ready');
 
-    // 查找 file input
-    const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
-    const { nodeIds } = await cdp.send('DOM.querySelectorAll', {
-      nodeId: root.nodeId,
-      selector: 'input[type="file"]'
+    // Step 4: 上传图片
+    console.log('[KS] 3. 上传图片...');
+    await cdp.send('Page.setInterceptFileChooserDialog', { enabled: true });
+
+    const fcPromise = new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('文件选择器超时')), 15000);
+      cdp.on('Page.fileChooserOpened', p => { clearTimeout(t); resolve(p); });
     });
 
-    console.log(`   找到 ${nodeIds.length} 个 file input\n`);
+    const uploadBtn = await cdp.eval_(`(function() {
+      const b = Array.from(document.querySelectorAll('button')).find(b => b.offsetParent && b.textContent.includes('上传图片'));
+      if (b) {
+        const r = b.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+      }
+      return null;
+    })()`);
 
-    if (nodeIds.length === 0) {
-      // 尝试点击上传按钮触发 file input 出现
-      console.log('   尝试点击上传按钮...\n');
-      await cdp.send('Runtime.evaluate', {
-        expression: `(function() {
-          const selectors = [
-            'button[class*="upload"]',
-            'div[class*="upload"]',
-            '.upload-btn',
-            '[class*="add-image"]',
-            '[class*="add-photo"]'
-          ];
-          for (const sel of selectors) {
-            const el = document.querySelector(sel);
-            if (el && el.offsetWidth > 0) {
-              el.click();
-              return { clicked: true, selector: sel };
-            }
-          }
-          // 尝试找带"上传"文字的按钮
-          const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-          const uploadBtn = buttons.find(b =>
-            b.textContent && (b.textContent.includes('上传') || b.textContent.includes('添加')) &&
-            b.offsetWidth > 0
-          );
-          if (uploadBtn) {
-            uploadBtn.click();
-            return { clicked: true, text: uploadBtn.textContent.trim() };
-          }
-          return { clicked: false };
-        })()`
-      });
-      await sleep(2000);
+    if (!uploadBtn) throw new Error('未找到上传图片按钮');
 
-      // 再次查找 file input
-      const { root: root2 } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
-      const { nodeIds: nodeIds2 } = await cdp.send('DOM.querySelectorAll', {
-        nodeId: root2.nodeId,
-        selector: 'input[type="file"]'
-      });
-      nodeIds.push(...nodeIds2);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...uploadBtn, button: 'left', clickCount: 1 });
+    await sleep(100);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...uploadBtn, button: 'left', clickCount: 1 });
+
+    const fc = await fcPromise;
+    await cdp.send('DOM.setFileInputFiles', { backendNodeId: fc.backendNodeId, files: windowsImages });
+    await cdp.send('Page.setInterceptFileChooserDialog', { enabled: false });
+    console.log(`[KS]    已选择 ${windowsImages.length} 张图片`);
+
+    // 等待上传完成（轮询"作品描述"出现）
+    console.log('[KS]    等待上传完成...');
+    let uploaded = false;
+    for (let i = 0; i < 90; i++) {
+      await sleep(1000);
+      const has = await cdp.eval_(`document.body.innerHTML.includes('作品描述')`);
+      if (has) { console.log(`[KS]    上传完成（${i + 1}s）`); uploaded = true; break; }
+      if (i % 10 === 0) console.log(`[KS]    ... 已等待 ${i}s`);
+    }
+    if (!uploaded) throw new Error('图片上传超时（90s）');
+    await cdp.screenshot('03-uploaded');
+
+    // Step 5: 填写文案
+    if (contentText) {
+      console.log('\n[KS] 4. 填写文案...');
+      // 坐标 793, 210 是快手"作品描述" Vue 组件的中心区（已验证）
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 793, y: 210, button: 'left', clickCount: 1 });
+      await sleep(100);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 793, y: 210, button: 'left', clickCount: 1 });
+      await sleep(400);
+      await cdp.send('Input.insertText', { text: contentText });
+      await sleep(500);
+      const descLen = await cdp.eval_(`(document.activeElement?.value?.length || document.activeElement?.textContent?.length || 0)`);
+      console.log(`[KS]    文案长度: ${descLen}`);
+      await cdp.screenshot('04-desc');
     }
 
-    if (nodeIds.length > 0) {
-      console.log('   设置图片文件...\n');
-      await cdp.send('DOM.setFileInputFiles', {
-        nodeId: nodeIds[0],
-        files: windowsImages
-      });
+    // Step 6: 选择音乐
+    await addMusic(cdp, musicQuery);
+    await cdp.screenshot('05-music');
 
-      // 触发 change 事件
-      await cdp.send('Runtime.evaluate', {
-        expression: `(function() {
-          const inputs = document.querySelectorAll('input[type="file"]');
-          if (inputs[0]) {
-            inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
-          }
-        })()`
-      });
-
-      await sleep(6000);
-      await screenshot(cdp, '03-images-uploaded');
-      console.log('   ✅ 图片已上传\n');
-    } else {
-      await screenshot(cdp, '03-no-file-input');
-      throw new Error('未找到文件上传输入框，无法上传图片（页面可能未加载完成或结构已变更）');
-    }
-
-    // ========== 步骤4: 发布 ==========
-    console.log('4️⃣  点击发布...\n');
-
-    const publishResult = await cdp.send('Runtime.evaluate', {
-      expression: `(function() {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const publishBtn = buttons.find(b =>
-          b.textContent && b.textContent.includes('发布') &&
-          b.offsetWidth > 0 &&
-          !b.disabled
-        );
-        if (publishBtn) {
-          publishBtn.click();
-          return { clicked: true, text: publishBtn.textContent.trim() };
+    // Step 7: 点击发布
+    console.log('\n[KS] 5. 点击发布按钮...');
+    const pubBtn = await cdp.eval_(`(function() {
+      // TreeWalker 找最后一个可见的"发布"文本节点（跳过"发布图文"等标题）
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node, last = null;
+      while (node = walker.nextNode()) {
+        if (node.textContent.trim() === '发布') {
+          const el = node.parentElement;
+          if (el && el.offsetParent !== null) last = el;
         }
-        return { clicked: false, error: '未找到发布按钮' };
-      })()`,
-      returnByValue: true
-    });
+      }
+      if (last) {
+        last.scrollIntoView({ behavior: 'instant', block: 'center' });
+        const r = last.getBoundingClientRect();
+        return { found: true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+      }
+      // fallback: button 元素
+      const btns = Array.from(document.querySelectorAll('button')).filter(b => b.offsetParent !== null && b.textContent.trim() === '发布');
+      if (btns.length) {
+        const b = btns[btns.length - 1];
+        b.scrollIntoView({ behavior: 'instant', block: 'center' });
+        const r = b.getBoundingClientRect();
+        return { found: true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+      }
+      return { found: false };
+    })()`);
 
-    console.log(`   发布按钮: ${JSON.stringify(publishResult.result.value)}`);
-    await sleep(3000);
-    await screenshot(cdp, '04-publish-clicked');
-
-    // 处理可能的确认弹窗
-    await cdp.send('Runtime.evaluate', {
-      expression: `(function() {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const confirmBtn = buttons.find(b =>
-          b.textContent && (b.textContent.includes('确认') || b.textContent.includes('确定')) &&
-          b.offsetWidth > 0 &&
-          !b.disabled
-        );
-        if (confirmBtn) {
-          confirmBtn.click();
-          return { confirmed: true };
-        }
-        return { confirmed: false };
-      })()`
-    });
-
-    await sleep(3000);
-
-    // ========== 步骤5: 验证结果 ==========
-    console.log('5️⃣  验证发布结果...\n');
-
-    const finalUrl = await cdp.send('Runtime.evaluate', {
-      expression: 'window.location.href',
-      returnByValue: true
-    });
-    const finalUrlValue = finalUrl.result.value;
-    console.log(`   最终 URL: ${finalUrlValue}\n`);
-
-    await screenshot(cdp, '05-final');
-
-    // 检查是否有成功提示
-    const successCheck = await cdp.send('Runtime.evaluate', {
-      expression: `(function() {
-        const body = document.body.textContent || '';
-        return {
-          hasSuccess: body.includes('发布成功') || body.includes('发表成功') || body.includes('上传成功'),
-          navigated: !window.location.href.includes('publish')
-        };
-      })()`,
-      returnByValue: true
-    });
-    const successVal = successCheck.result.value;
-
-    if (successVal.hasSuccess || successVal.navigated) {
-      console.log('\n========== ✅ 发布成功 ==========\n');
-      console.log(`截图目录: ${SCREENSHOTS_DIR}\n`);
-      await cdp.close();
-      process.exit(0);
+    if (!pubBtn?.found) {
+      await cdp.screenshot('pub-notfound');
+      throw new Error('未找到发布按钮');
     }
 
-    console.log('   ⚠️  无法确认发布状态，请手动检查\n');
-    console.log(`截图目录: ${SCREENSHOTS_DIR}\n`);
-    await cdp.close();
-    process.exit(0);
+    console.log(`[KS]    发布按钮坐标: (${pubBtn.x}, ${pubBtn.y})`);
+    await sleep(500);
+    await cdp.screenshot('06-before-pub');
 
-  } catch (err) {
-    console.error('\n========== ❌ 发布失败 ==========\n');
-    console.error(err.message);
-    console.error('');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pubBtn.x, y: pubBtn.y, button: 'left', clickCount: 1 });
+    await sleep(100);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pubBtn.x, y: pubBtn.y, button: 'left', clickCount: 1 });
 
-    if (cdp) {
-      await screenshot(cdp, 'error-state').catch(() => {});
-      cdp.close();
+    console.log('[KS]    已点击发布，等待结果...');
+    await sleep(5000);
+    await cdp.screenshot('07-result');
+
+    // Step 8: 验证结果
+    const finalUrl = await cdp.eval_('location.href');
+    const toastText = await cdp.eval_(
+      `(document.querySelector('[class*="toast"], [class*="message-content"], [class*="notification"]') || {}).textContent?.substring(0, 80)`
+    );
+    const success = finalUrl?.includes('manage') || finalUrl?.includes('success');
+
+    console.log('\n[KS] ========================================');
+    console.log(`[KS] URL: ${finalUrl}`);
+    if (toastText) console.log(`[KS] 提示: ${toastText}`);
+    console.log(`[KS] ${success ? '发布成功' : '仍在发布页（可能审核中）'}`);
+    console.log('[KS] ========================================\n');
+
+    if (!success && toastText?.includes('失败')) {
+      throw new Error(`发布失败: ${toastText}`);
     }
 
-    process.exit(1);
+  } finally {
+    cdp.close();
   }
 }
 
-main();
+// ============================================================
+// 入口
+// ============================================================
+(async () => {
+  const args = process.argv.slice(2);
+  const isDryRun = args.includes('--dry-run');
+  const contentIdx = args.indexOf('--content');
+  const contentDirArg = contentIdx !== -1 ? args[contentIdx + 1] : null;
+
+  if (!contentDirArg || !fs.existsSync(contentDirArg)) {
+    console.error('[KS] 错误：必须提供有效的内容目录路径');
+    console.error('[KS] 用法: node publish-kuaishou-image.cjs --content /path/to/image-xxx/');
+    process.exit(1);
+  }
+
+  const contentDir = path.resolve(contentDirArg);
+  const rawContent = readContent(contentDir);
+  const contentText = truncateHashtags(rawContent);
+  const musicQuery = readMusicQuery(contentDir);
+
+  const localImages = findImages(contentDir).slice(0, 8);
+  if (localImages.length === 0) {
+    console.error('[KS] 错误：内容目录中未找到图片');
+    process.exit(1);
+  }
+  const { dateDir, contentDirName } = extractDirNames(contentDir);
+  const windowsImages = convertToWindowsPaths(localImages, WINDOWS_BASE_DIR, dateDir, contentDirName);
+
+  try {
+    await main(contentDir, contentText, windowsImages, musicQuery, isDryRun);
+  } catch (e) {
+    console.error(`\n[KS] 发布失败: ${e.message}`);
+    process.exit(1);
+  }
+})();
