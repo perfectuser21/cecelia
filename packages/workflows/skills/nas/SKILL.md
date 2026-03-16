@@ -1,3 +1,7 @@
+---
+description: NAS 内容管理 Skill - 封装 nas-content-manager.sh，提供友好的内容管理接口
+---
+
 # NAS 内容管理 Skill
 
 ## 触发方式

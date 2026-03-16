@@ -1,5 +1,6 @@
 ---
 id: media-scraping
+description: 自媒体平台数据采集系统，支持 6 大平台自动化数据采集
 version: 1.0.0
 created: 2026-01-28
 updated: 2026-01-28

@@ -1,3 +1,7 @@
+---
+description: Cecelia + ZenithJoy 前端 Dashboard 升级流程
+---
+
 # upgrade-dashboard - 前端 Dashboard 升级流程
 
 **用途**：Cecelia + ZenithJoy 前端页面的完整升级流程
