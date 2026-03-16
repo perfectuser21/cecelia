@@ -17,8 +17,74 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  # ─── Commit Type Detection ─────────────────────────────────────────────
+  # 根据 PR title 提取 commit type，决定 L3 是否需要运行
+  # fix: / docs: / style: / refactor: / chore: → 跳过 L3（保守策略）
+  # feat: / feat!: / BREAKING: / 未知类型 → 运行 L3
+
+  detect-commit-type:
+    name: Detect Commit Type
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit_type: ${{ steps.detect.outputs.commit_type }}
+      should_run_l3: ${{ steps.detect.outputs.should_run_l3 }}
+    steps:
+      - name: Detect commit type from PR title
+        id: detect
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # push 到 main（merge）时总是运行 L3
+          if [ "$EVENT_NAME" = "push" ]; then
+            echo "commit_type=push" >> $GITHUB_OUTPUT
+            echo "should_run_l3=true" >> $GITHUB_OUTPUT
+            echo "Event: push to main → L3 will run"
+            exit 0
+          fi
+
+          # workflow_dispatch 时总是运行 L3
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "commit_type=manual" >> $GITHUB_OUTPUT
+            echo "should_run_l3=true" >> $GITHUB_OUTPUT
+            echo "Event: workflow_dispatch → L3 will run"
+            exit 0
+          fi
+
+          # 提取 PR title 中的 commit type（忽略 [CONFIG] 等标签前缀）
+          TITLE=$(echo "$PR_TITLE" | sed 's/\[.*\] *//')
+          COMMIT_TYPE=$(echo "$TITLE" | grep -oE '^[a-zA-Z]+:' | tr -d ':' | tr '[:upper:]' '[:lower:]' || echo "unknown")
+
+          # 处理 feat! 的情况（含感叹号）
+          if echo "$TITLE" | grep -qE '^feat!:'; then
+            COMMIT_TYPE="feat_breaking"
+          fi
+
+          # 处理 BREAKING CHANGE
+          if echo "$PR_TITLE" | grep -qi "BREAKING"; then
+            COMMIT_TYPE="breaking"
+          fi
+
+          echo "PR Title: $PR_TITLE"
+          echo "Extracted commit_type: $COMMIT_TYPE"
+          echo "commit_type=$COMMIT_TYPE" >> $GITHUB_OUTPUT
+
+          # 决策：跳过 L3 的类型（保守策略：未知类型默认运行）
+          case "$COMMIT_TYPE" in
+            fix|docs|style|refactor|chore|test|perf)
+              echo "should_run_l3=false" >> $GITHUB_OUTPUT
+              echo "→ L3 SKIP (commit type: $COMMIT_TYPE)"
+              ;;
+            *)
+              echo "should_run_l3=true" >> $GITHUB_OUTPUT
+              echo "→ L3 RUN (commit type: $COMMIT_TYPE)"
+              ;;
+          esac
+
   changes:
     name: Detect Changes
+    needs: detect-commit-type
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
     permissions:
@@ -80,8 +146,8 @@ jobs:
 
   brain-unit:
     name: Brain Unit Tests
-    needs: changes
-    if: needs.changes.outputs.brain == 'true'
+    needs: [changes, detect-commit-type]
+    if: needs.changes.outputs.brain == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -166,8 +232,8 @@ jobs:
 
   engine-l3:
     name: Engine L3 Code
-    needs: changes
-    if: needs.changes.outputs.engine == 'true'
+    needs: [changes, detect-commit-type]
+    if: needs.changes.outputs.engine == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 30
     permissions:
@@ -336,8 +402,8 @@ jobs:
 
   workspace-l3:
     name: Workspace L3 Build & Test
-    needs: changes
-    if: needs.changes.outputs.workspace == 'true'
+    needs: [changes, detect-commit-type]
+    if: needs.changes.outputs.workspace == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 20
     permissions:
@@ -373,8 +439,8 @@ jobs:
 
   quality-l3:
     name: Quality L3 Checks
-    needs: changes
-    if: needs.changes.outputs.quality == 'true'
+    needs: [changes, detect-commit-type]
+    if: needs.changes.outputs.quality == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 15
     permissions:
@@ -477,8 +543,8 @@ jobs:
 
   workflows-l3:
     name: Workflows L3 Checks
-    needs: changes
-    if: needs.changes.outputs.workflows == 'true'
+    needs: [changes, detect-commit-type]
+    if: needs.changes.outputs.workflows == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 15
     permissions:
@@ -608,7 +674,7 @@ jobs:
 
   l3-passed:
     name: L3 Code Gate Passed
-    needs: [changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3]
+    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3]
     if: always()
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
@@ -618,6 +684,17 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  L3 Code Gate"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # L3 跳过检查（commit type 不需要 L3 时，所有 L3 jobs 都是 skipped，视为通过）
+          SHOULD_RUN_L3="${{ needs.detect-commit-type.outputs.should_run_l3 }}"
+          if [ "$SHOULD_RUN_L3" = "false" ]; then
+            echo "Commit type does not require L3 → L3 skipped, gate passes"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ L3 Code Gate PASSED (L3 skipped by commit type)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
 
           if [ "${{ needs.changes.result }}" = "failure" ]; then
             echo "FAIL: Detect Changes job failed"

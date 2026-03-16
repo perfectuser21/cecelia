@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.58.0"
+version: "3.59.0"
 updated: "2026-03-16"
 changelog:
+  - version: "12.88.0"
+    date: "2026-03-16"
+    summary: "feat(engine): L3 CI 按 commit type 智能跳过（fix/docs/style/refactor/chore → skip L3，feat!/BREAKING → run L3）— 基于 qa-policy.yaml 规则"
+    scope: ci-devgate
+    breaking: false
+    feature_id: l3-commit-type-skip
   - version: "12.87.0"
     date: "2026-03-16"
     summary: "feat(engine): CI L1 dod-check job 新增 RCI Execution Gate — 实际执行 cecelia-quality P0 regression-contract test_command，runtime 依赖自动 DEFERRED"
