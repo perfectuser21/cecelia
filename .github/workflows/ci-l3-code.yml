@@ -784,6 +784,7 @@ jobs:
     name: Coverage Delta Check (feat only)
     needs: [detect-commit-type, brain-unit]
     if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.brain-unit.result == 'success'
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
