@@ -721,11 +721,29 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           bash packages/engine/scripts/test-dev-health.sh
 
+  # ─── Secrets Scan ────────────────────────────────────────────────────
+
+  secrets-scan:
+    name: Secrets Scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check]
+    needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -792,6 +810,11 @@ jobs:
               echo "FAIL: Dev Health Gate (${{ needs.dev-health-check.result }})"
               FAILED=true
             fi
+          fi
+
+          if [ "${{ needs.secrets-scan.result }}" != "success" ]; then
+            echo "FAIL: Secrets Scan (${{ needs.secrets-scan.result }})"
+            FAILED=true
           fi
 
           if [ "$FAILED" = "true" ]; then
