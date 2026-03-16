@@ -89,7 +89,7 @@ describe("Phase 1: DevGate Scripts", () => {
 
 ## 验收标准
 
-- [x] Item 1
+- [x] [BEHAVIOR] Item 1
   Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
 - [x] Item 2
   Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
