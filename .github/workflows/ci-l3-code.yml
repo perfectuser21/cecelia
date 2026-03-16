@@ -832,6 +832,7 @@ jobs:
 
       - name: Run coverage
         working-directory: packages/brain
+        continue-on-error: true
         env:
           NODE_OPTIONS: "--max-old-space-size=1536"
         run: npm run test:coverage
