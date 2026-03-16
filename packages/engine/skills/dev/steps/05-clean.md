@@ -1,16 +1,141 @@
 ---
 id: dev-step-05-clean
-version: 1.0.0
+version: 2.0.0
 created: 2026-03-14
+updated: 2026-03-16
+changelog:
+  - 2.0.0: 加入执行质量自评（四维评分 + 输出格式 + Brain API 写入）
+  - 1.0.0: 初始版本
 ---
 
 # Step 5: Merge+Clean — 归档 + 清理
 
 > 原 Step 11，内容完全不变。Task Card 归档到 .history/task-cp-xxx.md。
+> v2.0 新增：清理前先输出执行质量自评。
 
 > 生成任务报告 + 清理分支和配置
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "5", status: "in_progress" })`
+
+---
+
+## Step 5.0 执行质量自评（清理前必须完成）
+
+> **在开始清理之前，AI 计算并输出本次任务的执行质量分。**
+> 用于量化改进方向，写入 Brain（有 task-id 时）。
+
+### 四维评分计算
+
+**维度 1 — CI 效率分（1-5）**
+
+```bash
+# 统计本分支触发的 CI 运行次数
+CI_RUNS=$(gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" \
+  --json conclusion --jq 'length' 2>/dev/null || echo "?")
+echo "CI 运行次数: $CI_RUNS"
+```
+
+| CI 运行次数 | 分数 |
+|------------|------|
+| 1 次通过   | 5    |
+| 2 次       | 4    |
+| 3 次       | 3    |
+| 4 次+      | 1    |
+
+**维度 2 — DoD 诚实度分（1-5）**
+
+```bash
+# 检查 Task Card 中 Test: 字段在 Step 2.1 锁定后是否被修改过
+TEST_CHANGES=$(git log --all --follow -p -- ".task-cp-*.md" \
+  2>/dev/null | grep "^[+-].*Test:" | grep -v "^---\|^+++" | wc -l | tr -d ' ')
+echo "Test: 字段修改次数: $TEST_CHANGES"
+```
+
+| Test: 修改次数（锁定后）| 分数 |
+|------------------------|------|
+| 0 次（锁定不动）       | 5    |
+| 1-2 次小改             | 4    |
+| 3-4 次                 | 3    |
+| 5 次+                  | 1    |
+
+**维度 3 — 循环效率分（1-5）**
+
+AI 自评本次任务 Stop Hook 触发（Claude 重启）的次数：
+
+| Stop Hook 循环次数 | 分数 |
+|-------------------|------|
+| 1-2 次            | 5    |
+| 3-4 次            | 4    |
+| 5-6 次            | 3    |
+| 7 次+             | 1    |
+
+**维度 4 — Learning 质量分（1-5）**
+
+```bash
+LEARNING_FILE="docs/learnings/$(git rev-parse --abbrev-ref HEAD).md"
+HAS_ROOT=$(grep -c "根本原因" "$LEARNING_FILE" 2>/dev/null || echo 0)
+HAS_PREV=$(grep -c "下次预防" "$LEARNING_FILE" 2>/dev/null || echo 0)
+HAS_CHECK=$(grep -cE "- \[ \]" "$LEARNING_FILE" 2>/dev/null || echo 0)
+echo "根本原因: $HAS_ROOT | 下次预防: $HAS_PREV | Checklist: $HAS_CHECK"
+```
+
+| 包含字段                         | 分数 |
+|----------------------------------|------|
+| 根本原因 + 下次预防 + checklist  | 5    |
+| 根本原因 + 下次预防（无checklist）| 4    |
+| 只有描述，无结构                  | 3    |
+| 几乎没有内容                      | 1    |
+
+### 输出格式
+
+AI 计算后输出（必须在清理前输出，不能跳过）：
+
+```
+执行质量：X/10
+- CI 效率：X/5（第N次通过）
+- DoD 诚实度：X/5（Test: 锁定后改了N次）
+- 循环效率：X/5（Stop Hook 循环了N次）
+- Learning 质量：X/5
+可优化：{1-2句改进建议，或"无"}
+```
+
+> 总分 = (四项之和 / 4) × 2，四舍五入到整数，换算为 10 分制
+
+### Brain API 写入（有 --task-id 时）
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+
+# 读取 task_id 和置信度（Step 1 写入）
+TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+CONFIDENCE=$(grep "^confidence_score:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "null")
+
+# 替换为实际计算的各维度分和总分
+CI_EFF=X; DOD_HON=X; LOOP_EFF=X; LEARN_QUAL=X
+EXEC_QUALITY=$(echo "scale=0; ($CI_EFF + $DOD_HON + $LOOP_EFF + $LEARN_QUAL) * 2 / 4" | bc)
+
+if [[ -n "$TASK_ID" && "$TASK_ID" != "null" ]]; then
+    curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${TASK_ID}" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"custom_props\": {
+                \"confidence_score\": ${CONFIDENCE},
+                \"execution_quality\": ${EXEC_QUALITY},
+                \"quality_details\": {
+                    \"ci_efficiency\": ${CI_EFF},
+                    \"dod_honesty\": ${DOD_HON},
+                    \"loop_efficiency\": ${LOOP_EFF},
+                    \"learning_quality\": ${LEARN_QUAL}
+                }
+            }
+        }" | jq -r '.id // "error"' \
+        && echo "✅ 评分已写入 Brain task ${TASK_ID}" \
+        || echo "⚠️ Brain 写入失败（不阻塞清理）"
+else
+    echo "ℹ️ 无 task_id，跳过 Brain 写入"
+fi
+```
 
 ---
 
