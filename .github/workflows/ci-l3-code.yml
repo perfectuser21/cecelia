@@ -784,7 +784,7 @@ jobs:
   coverage-delta:
     name: Coverage Delta Check (feat only)
     needs: [detect-commit-type, changes, brain-unit]
-    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.detect-commit-type.outputs.commit_type == 'feat' && needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -988,12 +988,13 @@ jobs:
             FAILED=true
           fi
 
-          # coverage-delta 检查（Brain 变更时，feat PR 变更行必须有覆盖率）
+          # coverage-delta 检查（feat PR + brain 变更时，覆盖率必须满足阈值）
           # 已换用 davelosert/vitest-coverage-report-action@v2，兼容 vitest json-summary 输出
-          # coverage-delta 失败时非阻塞（coverage 报告供参考，不阻止 PR 合并）
-          if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
+          # 阈值在 packages/brain/vitest.config.js 中定义（75/75/80/75）
+          if [ "${{ needs.changes.outputs.brain }}" = "true" ] && [ "${{ needs.detect-commit-type.outputs.commit_type }}" = "feat" ]; then
             if [ "${{ needs.coverage-delta.result }}" = "failure" ]; then
-              echo "⚠️  Coverage Delta Check 失败（非阻塞，覆盖率报告供参考）"
+              echo "FAIL: Coverage Delta Check failed (coverage below threshold or test error)"
+              FAILED=true
             fi
           fi
 
