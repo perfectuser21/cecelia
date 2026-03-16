@@ -7,9 +7,10 @@
  * 发布流程：
  *   1. 读取凭据 (~/.credentials/wechat.env)
  *   2. 获取 / 刷新 Access Token (缓存到 /tmp/wechat_token.json)
- *   3. 上传封面图片 → media/uploadimg → 获取 url（可选）
- *   4. 创建草稿 → draft/add → 获取 media_id
- *   5. 提交发布 → freepublish/submit → publish_id
+ *   3. 上传封面图片 → material/add_material → 获取 thumb_media_id（可选）
+ *   4. 上传正文内嵌图片 → media/uploadimg → 替换 HTML src 为微信 CDN URL
+ *   5. 创建草稿 → draft/add → 获取 media_id
+ *   6. 提交发布 → freepublish/submit → publish_id
  *
  * 用法：
  *   node publish-wechat-article.cjs \
@@ -296,16 +297,31 @@ async function getAccessToken(appId, appSecret) {
 // ============================================================
 
 /**
- * 上传封面图片到公众号素材库
+ * 构建 multipart/form-data 请求体
  *
- * @param {string} imagePath - 本地图片路径
- * @param {string} accessToken
- * @returns {Promise<string>} 图片 URL
+ * @param {Buffer} imageBuffer
+ * @param {string} filename
+ * @param {string} mimeType
+ * @param {string} boundary
+ * @returns {Buffer}
  */
-async function uploadCoverImage(imagePath, accessToken) {
-  const imageBuffer = fs.readFileSync(imagePath);
-  const filename = path.basename(imagePath);
-  const ext = path.extname(filename).toLowerCase();
+function buildMultipartBody(imageBuffer, filename, mimeType, boundary) {
+  const CRLF = '\r\n';
+  const header =
+    `--${boundary}${CRLF}` +
+    `Content-Disposition: form-data; name="media"; filename="${filename}"${CRLF}` +
+    `Content-Type: ${mimeType}${CRLF}${CRLF}`;
+  const footer = `${CRLF}--${boundary}--${CRLF}`;
+  return Buffer.concat([Buffer.from(header), imageBuffer, Buffer.from(footer)]);
+}
+
+/**
+ * 获取图片 MIME 类型
+ *
+ * @param {string} filename
+ * @returns {string}
+ */
+function getImageMime(filename) {
   const mimeMap = {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
@@ -313,28 +329,142 @@ async function uploadCoverImage(imagePath, accessToken) {
     '.gif': 'image/gif',
     '.webp': 'image/webp',
   };
-  const mimeType = mimeMap[ext] || 'image/jpeg';
-  const boundary = `----WechatFormBoundary${Date.now().toString(16)}`;
+  return mimeMap[path.extname(filename).toLowerCase()] || 'image/jpeg';
+}
 
-  const CRLF = '\r\n';
-  const header =
-    `--${boundary}${CRLF}` +
-    `Content-Disposition: form-data; name="media"; filename="${filename}"${CRLF}` +
-    `Content-Type: ${mimeType}${CRLF}${CRLF}`;
-  const footer = `${CRLF}--${boundary}--${CRLF}`;
-  const body = Buffer.concat([Buffer.from(header), imageBuffer, Buffer.from(footer)]);
+/**
+ * 上传图片到公众号内容素材（media/uploadimg）
+ * 用于正文内嵌图片，返回微信 CDN URL
+ *
+ * @param {string} imagePath - 本地图片路径
+ * @param {string} accessToken
+ * @returns {Promise<string>} 图片 URL
+ */
+async function uploadContentImage(imagePath, accessToken) {
+  const imageBuffer = fs.readFileSync(imagePath);
+  const filename = path.basename(imagePath);
+  const boundary = `----WechatFormBoundary${Date.now().toString(16)}`;
+  const body = buildMultipartBody(imageBuffer, filename, getImageMime(filename), boundary);
 
   const url = `${WECHAT_API_BASE}/cgi-bin/media/uploadimg?access_token=${encodeURIComponent(accessToken)}`;
   const response = await httpsPost(url, body, {
     'Content-Type': `multipart/form-data; boundary=${boundary}`,
   });
 
-  const result = parseWechatResponse(response, '上传封面图片');
+  const result = parseWechatResponse(response, `上传内容图片 ${filename}`);
   if (!result.url) {
-    throw new Error(`上传封面图片失败：响应中无 url: ${JSON.stringify(result)}`);
+    throw new Error(`上传内容图片失败：响应中无 url: ${JSON.stringify(result)}`);
+  }
+  return result.url;
+}
+
+/**
+ * 上传封面图片为永久素材（material/add_material）
+ * 返回 thumb_media_id，用于草稿 API 的 thumb_media_id 字段
+ *
+ * @param {string} imagePath - 本地图片路径
+ * @param {string} accessToken
+ * @returns {Promise<string>} media_id
+ */
+async function uploadCoverImage(imagePath, accessToken) {
+  const imageBuffer = fs.readFileSync(imagePath);
+  const filename = path.basename(imagePath);
+  const boundary = `----WechatFormBoundary${Date.now().toString(16)}`;
+  const body = buildMultipartBody(imageBuffer, filename, getImageMime(filename), boundary);
+
+  const url =
+    `${WECHAT_API_BASE}/cgi-bin/material/add_material` +
+    `?access_token=${encodeURIComponent(accessToken)}&type=image`;
+  const response = await httpsPost(url, body, {
+    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+  });
+
+  const result = parseWechatResponse(response, '上传封面图片');
+  if (!result.media_id) {
+    throw new Error(`上传封面图片失败：响应中无 media_id: ${JSON.stringify(result)}`);
+  }
+  return result.media_id;
+}
+
+/**
+ * 从素材库获取第一张图片的 media_id，作为默认封面
+ *
+ * @param {string} accessToken
+ * @returns {Promise<string|null>} media_id 或 null
+ */
+async function getDefaultThumbMediaId(accessToken) {
+  const url =
+    `${WECHAT_API_BASE}/cgi-bin/material/batchget_material` +
+    `?access_token=${encodeURIComponent(accessToken)}`;
+  const payload = JSON.stringify({ type: 'image', offset: 0, count: 1 });
+  try {
+    const response = await httpsPost(url, payload, { 'Content-Type': 'application/json' });
+    const result = JSON.parse(response.body);
+    if (result.item && result.item.length > 0) {
+      return result.item[0].media_id;
+    }
+  } catch {
+    // 忽略错误，调用方处理 null
+  }
+  return null;
+}
+
+/**
+ * 解析 HTML，将本地图片路径上传到微信 CDN，替换 src 为微信 URL
+ *
+ * 规则：
+ * - src 以 http:// 或 https:// 开头 → 跳过（外链不处理）
+ * - 相对路径 → 相对 contentDir 解析为绝对路径
+ * - 绝对路径 → 直接使用
+ * - 文件不存在 → 打印警告，保留原 src
+ * - 上传失败 → 打印警告，保留原 src
+ *
+ * @param {string} html - 原始 HTML
+ * @param {string} accessToken
+ * @param {string} [contentDir] - 相对路径的基准目录
+ * @returns {Promise<string>} 替换后的 HTML
+ */
+async function uploadInlineImages(html, accessToken, contentDir) {
+  if (!html || typeof html !== 'string') return html;
+
+  const imgRegex = /<img([^>]*?)src=["']([^"']+)["']([^>]*?)>/gi;
+  const replacements = [];
+  let match;
+
+  while ((match = imgRegex.exec(html)) !== null) {
+    const [fullTag, before, src, after] = match;
+    if (src.startsWith('http://') || src.startsWith('https://')) continue;
+
+    const absPath = path.isAbsolute(src)
+      ? src
+      : contentDir
+        ? path.resolve(contentDir, src)
+        : path.resolve(src);
+
+    replacements.push({ fullTag, before, src, after, absPath });
   }
 
-  return result.url;
+  if (replacements.length === 0) return html;
+
+  console.log(`   📸 检测到 ${replacements.length} 张内嵌图片，开始上传...`);
+
+  let result = html;
+  for (const { fullTag, before, src, after, absPath } of replacements) {
+    if (!fs.existsSync(absPath)) {
+      console.warn(`   ⚠️  图片不存在，跳过: ${absPath}`);
+      continue;
+    }
+    try {
+      const wechatUrl = await uploadContentImage(absPath, accessToken);
+      const newTag = `<img${before}src="${wechatUrl}"${after}>`;
+      result = result.replace(fullTag, newTag);
+      console.log(`   ✅ ${path.basename(src)} → 微信 CDN`);
+    } catch (err) {
+      console.warn(`   ⚠️  图片上传失败，保留原路径 (${path.basename(src)}): ${err.message}`);
+    }
+  }
+
+  return result;
 }
 
 // ============================================================
@@ -344,7 +474,7 @@ async function uploadCoverImage(imagePath, accessToken) {
 /**
  * 创建草稿文章
  *
- * @param {{ title: string, content: string, digest: string, author: string }} article
+ * @param {{ title: string, content: string, digest: string, author: string, thumbMediaId?: string }} article
  * @param {string} accessToken
  * @returns {Promise<string>} media_id（草稿 ID）
  */
@@ -358,6 +488,10 @@ async function createDraft(article, accessToken) {
     need_open_comment: 0,
     only_fans_can_comment: 0,
   };
+
+  if (article.thumbMediaId) {
+    articleData.thumb_media_id = article.thumbMediaId;
+  }
 
   const payload = JSON.stringify({ articles: [articleData] });
   const url = `${WECHAT_API_BASE}/cgi-bin/draft/add?access_token=${encodeURIComponent(accessToken)}`;
@@ -444,7 +578,7 @@ function parseArgs() {
       console.error(`❌ 内容目录不存在: ${contentDir}`);
       process.exit(1);
     }
-    return readContentDir(contentDir);
+    return { ...readContentDir(contentDir), contentDir };
   }
 
   const title = get('--title');
@@ -467,7 +601,7 @@ function parseArgs() {
   const author = get('--author') || '';
   const coverPath = get('--cover') || null;
 
-  return { title, content, digest, author, coverPath };
+  return { title, content, digest, author, coverPath, contentDir: null };
 }
 
 // ============================================================
@@ -490,9 +624,9 @@ async function main() {
     process.exit(1);
   }
 
-  const { title, content, digest, author, coverPath } = articleArgs;
+  const { title, content: rawContent, digest, author, coverPath, contentDir: argContentDir } = articleArgs;
   console.log(`📝 标题: ${title}`);
-  console.log(`📄 正文: ${content.length} 字符`);
+  console.log(`📄 正文: ${rawContent.length} 字符`);
   if (coverPath) console.log(`🖼️  封面: ${coverPath}`);
   console.log('');
 
@@ -501,23 +635,38 @@ async function main() {
     const accessToken = await getAccessToken(appId, appSecret);
     console.log('');
 
+    let thumbMediaId;
     if (coverPath) {
-      console.log('2️⃣  上传封面图片...\n');
+      console.log('2️⃣  上传封面图片（永久素材）...\n');
       try {
-        const coverUrl = await uploadCoverImage(coverPath, accessToken);
-        console.log(`   ✅ 封面已上传: ${coverUrl}\n`);
+        thumbMediaId = await uploadCoverImage(coverPath, accessToken);
+        console.log(`   ✅ 封面已上传，thumb_media_id: ${thumbMediaId.slice(0, 20)}...\n`);
       } catch (err) {
         console.warn(`   ⚠️  封面上传失败，继续发布（无封面）: ${err.message}\n`);
       }
     } else {
-      console.log('2️⃣  跳过封面上传（未提供封面）\n');
+      console.log('2️⃣  未提供封面，从素材库获取默认封面...\n');
+      try {
+        thumbMediaId = await getDefaultThumbMediaId(accessToken);
+        if (thumbMediaId) {
+          console.log(`   ✅ 使用默认封面 media_id: ${thumbMediaId.slice(0, 20)}...\n`);
+        } else {
+          console.warn('   ⚠️  素材库无图片，草稿将不含封面\n');
+        }
+      } catch (err) {
+        console.warn(`   ⚠️  获取默认封面失败: ${err.message}\n`);
+      }
     }
 
-    console.log('3️⃣  创建草稿...\n');
-    const mediaId = await createDraft({ title, content, digest, author }, accessToken);
+    console.log('3️⃣  处理正文内嵌图片...\n');
+    const content = await uploadInlineImages(rawContent, accessToken, argContentDir);
+    console.log('');
+
+    console.log('4️⃣  创建草稿...\n');
+    const mediaId = await createDraft({ title, content, digest, author, thumbMediaId }, accessToken);
     console.log(`   ✅ 草稿已创建，media_id: ${mediaId}\n`);
 
-    console.log('4️⃣  提交发布...\n');
+    console.log('5️⃣  提交发布...\n');
     const publishId = await publishDraft(mediaId, accessToken);
     console.log(`   ✅ 已提交发布，publish_id: ${publishId}\n`);
 
@@ -540,4 +689,5 @@ module.exports = {
   buildTokenCache,
   textToHtml,
   readContentDir,
+  uploadInlineImages,
 };
