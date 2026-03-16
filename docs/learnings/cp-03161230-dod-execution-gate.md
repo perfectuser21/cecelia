@@ -7,60 +7,23 @@ changelog:
   - 1.0.0: 初始版本
 ---
 
-# Learning: DoD Execution Gate
+### [2026-03-16] CI L1 DoD Execution Gate 实现——macOS sed \s 不兼容 + branch-protect 新格式要求
 
-**分支**: cp-03161230-dod-execution-gate
-**日期**: 2026-03-16
-**结果**: 实现完成
+**失败统计**：CI 失败 1 次（Learning 格式），本地调试 2 次
 
----
+### 根本原因
 
-## 做了什么
+1. **macOS sed `\s` 不兼容**：脚本中 `sed 's/^\s*Test:\s*//'` 在 macOS BSD sed 上不生效，`\s` 被当作字面量，导致 Test 行提取失败，所有命令被标记为 DEFERRED。macOS 需要用 `[[:space:]]` POSIX 字符类。
 
-新增 `packages/engine/scripts/devgate/dod-execution-gate.sh`，在 CI L1 `dod-check` job 中实际执行 Task Card 中 `[BEHAVIOR]` 条目的 `Test:` 命令。
+2. **branch-protect v25 不识别 `.task-*.md` 作为 per-branch PRD**：`find_prd_dod_dir` 函数只查找 `.prd-${branch}.md`，在 `packages/` 子目录开发时即使有 task card 也不满足要求，需要额外创建 `.prd-<branch>.md`。
 
-解决了 `check-dod-mapping.cjs` 只检查 Test 字段**格式**、从不**执行**的盲区。
+3. **`.dev-mode` 缺少 `tasks_created: true`**：branch-protect.sh 检查此字段，初始创建 `.dev-mode` 时未加入导致 hook 阻止写代码。
 
----
+### 下次预防
 
-## 踩的坑
+- [ ] 写 shell 脚本时，所有 sed 正则用 `[[:space:]]` 代替 `\s`（跨平台兼容）
+- [ ] 在 `packages/` 子目录下开发时，同时创建 `.prd-<branch>.md`（即使已有 task card）
+- [ ] 创建 `.dev-mode.*` 时必须包含 `tasks_created: true` 字段
+- [ ] Learning 文件必须用 `### 根本原因` 和 `### 下次预防` 三级标题（不能用粗体或其他格式）
 
-### 坑 1: macOS sed 不支持 `\s`
-
-**现象**: 脚本中 `sed 's/^\s*Test:\s*//'` 在 macOS 上不生效，`\s` 被当作字面量。
-
-**根本原因**: macOS 使用 BSD sed，不支持 Perl 风格的 `\s`（GNU sed 支持）。需要改用 POSIX 字符类 `[[:space:]]`。
-
-**下次预防**:
-- [ ] 写 shell 脚本时，所有 sed 模式改用 `[[:space:]]` 代替 `\s`
-- [ ] 在 macOS 本地先测试，不要在 CI 上发现
-
----
-
-### 坑 2: branch-protect.sh v25 要求 per-branch PRD
-
-**现象**: 创建了 `.task-cp-*.md` 但 hook 报错 `[ERROR] packages/ 子目录开发需要 per-branch PRD`。
-
-**根本原因**: hook 的 `find_prd_dod_dir` 函数只查找 `.prd-${branch}.md`，不查找 `.task-${branch}.md`（尽管 task card 也包含 PRD 信息）。v25 对 `packages/` 子目录开发额外要求有 `.prd-<branch>.md`。
-
-**下次预防**:
-- [ ] 在 `packages/` 子目录下开发时，同时创建 `.task-*.md` 和 `.prd-*.md`（或者只创建 `.prd-*.md`）
-- [ ] 记住：v25 保护不认 task card 格式
-
----
-
-### 坑 3: .dev-mode 缺少 `tasks_created: true`
-
-**现象**: 写 packages/ 文件时报错 `[ERROR] Task Checkpoint 未创建`。
-
-**根本原因**: branch-protect.sh 检查 `.dev-mode.${branch}` 文件中是否有 `tasks_created: true` 字段。
-
-**下次预防**:
-- [ ] 创建 `.dev-mode.*` 时始终加入 `tasks_created: true`
-
----
-
-## 下次更好做
-
-- CI L1 execution gate 的 `manual:bash` 命令里不要有 shell 特殊字符嵌套（双引号内的单引号），容易解析失败，用 `node -e` 更安全
-- DoD 的 `[ARTIFACT]` 条目用 `stat` 而不是 `test -f`（后者被 check-dod-mapping.cjs 禁止）
+**影响程度**: Low（所有问题本地可修复，功能实现正确）
