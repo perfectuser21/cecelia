@@ -109,6 +109,11 @@ jobs:
           npm install --cache /tmp/npm-cache-$$ --no-save js-yaml
           node scripts/devgate/check-contract-drift.mjs --base=origin/main
 
+      - name: Check new API endpoints have RCI contracts
+        run: |
+          export BASE_REF=origin/main
+          node scripts/devgate/check-new-api-endpoints.mjs
+
   # ─── Engine L2: Version / Contract Drift / Impact ─────────────────────
 
   engine-l2:
