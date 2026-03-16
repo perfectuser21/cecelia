@@ -1,3 +1,7 @@
+---
+description: /nas-backup skill - NAS 内容备份管理
+---
+
 # NAS 内容管理 Skill
 
 ## 触发方式

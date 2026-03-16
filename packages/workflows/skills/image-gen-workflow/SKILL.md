@@ -1,5 +1,6 @@
 ---
 id: image-gen-workflow
+description: 通过 Mac Mini 远程控制 ChatGPT/Gemini 生成高质量配图，自动评分筛选后发送到飞书
 version: 1.0.0
 created: 2026-01-29
 updated: 2026-01-29

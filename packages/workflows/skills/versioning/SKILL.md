@@ -1,5 +1,6 @@
 ---
 id: skill-versioning
+description: 给文件添加/更新 frontmatter 版本号，追踪文档演进
 version: 1.1.0
 created: 2026-01-19
 updated: 2026-01-19

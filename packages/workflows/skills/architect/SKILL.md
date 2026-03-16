@@ -1,5 +1,6 @@
 ---
 id: architect-skill
+description: /architect - 系统架构师，提出设计方案、产出架构文档，与 /arch-review 分工互补
 version: 1.4.0
 created: 2026-03-06
 updated: 2026-03-09
