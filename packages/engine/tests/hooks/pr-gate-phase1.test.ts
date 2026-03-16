@@ -89,7 +89,7 @@ describe("Phase 1: DevGate Scripts", () => {
 
 ## 验收标准
 
-- [x] Item 1
+- [x] [BEHAVIOR] Item 1
   Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
 - [x] Item 2
   Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
@@ -201,8 +201,12 @@ describe("Phase 1: DevGate Scripts", () => {
 
 ## 验收标准
 
-- [x] Item with valid contract ID
+- [x] [ARTIFACT] runner 文件存在
+  Test: manual:ls -la packages/engine/runners/codex/playwright-runner.sh
+- [x] [BEHAVIOR] API 返回正确状态
   Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
+- [x] [GATE] CI 测试通过
+  Test: manual:echo "CI passed"
 `;
 
       const testDod = join(TEST_DIR, "valid-contract.dod.md");

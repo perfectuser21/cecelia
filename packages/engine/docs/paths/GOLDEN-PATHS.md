@@ -642,6 +642,23 @@ davelosert action 读取 coverage-summary.json →
 
 ---
 
+## GP-041: codex-playwright task type + 03-branch.md regression stub (S15)
+
+**Feature**: S15 - codex-playwright task type + 03-branch.md regression stub
+**Priority**: P2
+
+### Golden Path
+
+```
+Brain 派发 codex_playwright 任务 →
+playwright-runner.sh 获取 Task 详情 →
+Codex 探索阶段：生成 .cjs 脚本（CDP 连接 100.97.242.124:19225）→
+脚本保存到 ~/playwright-scripts/<task_id>.cjs →
+执行阶段：直接运行 .cjs 无需 LLM
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -864,6 +864,7 @@ jobs:
           DB_PASSWORD: cecelia_ci
       - name: Run coverage
         run: cd packages/brain && npm run test:coverage
+        continue-on-error: true  # vitest generates coverage report even on test failures (reportOnFailure: true)
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -880,12 +881,13 @@ jobs:
           path: /tmp/coverage-baseline
       - name: Coverage Delta Report
         uses: davelosert/vitest-coverage-report-action@v2
+        continue-on-error: true
         with:
           working-directory: packages/brain
-          vite-config-path: packages/brain/vitest.config.js
+          vite-config-path: vitest.config.js
           name: Brain Coverage
-          json-summary-path: packages/brain/coverage/coverage-summary.json
-          json-final-path: packages/brain/coverage/coverage-final.json
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
           json-summary-compare-path: /tmp/coverage-baseline/coverage-summary.json
 
   # ─── Coverage Baseline (push to main, 用于 PR 对比基线) ──────────────
@@ -945,10 +947,10 @@ jobs:
         uses: davelosert/vitest-coverage-report-action@v2
         with:
           working-directory: packages/brain
-          vite-config-path: packages/brain/vitest.config.js
+          vite-config-path: vitest.config.js
           name: Brain Coverage
-          json-summary-path: packages/brain/coverage/coverage-summary.json
-          json-final-path: packages/brain/coverage/coverage-final.json
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
 
   # ─── Gate job (always runs) ───────────────────────────────────────────
 

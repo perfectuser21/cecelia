@@ -169,7 +169,7 @@ async function countAutoDispatchInProgress() {
 
 /**
  * Count Codex-native tasks currently in_progress.
- * Includes task_type IN ('codex_qa', 'codex_dev') — tasks always routed to Xian Codex CLI.
+ * Includes task_type IN ('codex_qa', 'codex_dev', 'codex_playwright') — tasks always routed to Xian Codex CLI.
  * Budget-downgraded tasks (provider=codex override) are not counted here since provider
  * is a runtime in-memory override, not persisted to DB.
  */
@@ -178,7 +178,7 @@ async function countCodexInProgress() {
     const result = await pool.query(`
       SELECT COUNT(*) FROM tasks
       WHERE status = 'in_progress'
-      AND task_type IN ('codex_qa', 'codex_dev')
+      AND task_type IN ('codex_qa', 'codex_dev', 'codex_playwright')
     `);
     return parseInt(result.rows[0].count, 10);
   } catch {

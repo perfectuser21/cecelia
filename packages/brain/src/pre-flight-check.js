@@ -24,7 +24,7 @@ export async function preFlightCheck(task) {
   const suggestions = [];
 
   // System-generated tasks do not need PRDs — skip description/content checks
-  const SYSTEM_TASK_TYPES = ['dept_heartbeat', 'codex_qa', 'initiative_verify', 'initiative_plan', 'code_review'];
+  const SYSTEM_TASK_TYPES = ['dept_heartbeat', 'codex_qa', 'codex_playwright', 'initiative_verify', 'initiative_plan', 'code_review'];
   const isSystemTask = SYSTEM_TASK_TYPES.includes(task.task_type);
 
   // Check 1: Title validation
