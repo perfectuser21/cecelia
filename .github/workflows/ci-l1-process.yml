@@ -271,7 +271,7 @@ jobs:
 
   quality-meta-tests:
     name: Quality System Meta Tests
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -284,13 +284,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: packages/engine/package-lock.json
-
-      - name: Install engine dependencies
-        run: |
-          cd packages/engine
-          npm ci --ignore-scripts
 
       - name: Run quality system meta tests
         run: bash tests/quality-system/run-all.sh

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.89.0] - 2026-03-16
+
+### Fixed
+- ci-l1-process.yml: `quality-meta-tests` job 迁移到 `ubuntu-latest`（原为 hk-vps）
+  - 删除不必要的 `npm ci --ignore-scripts` 步骤（meta-tests 只用 Node.js 内置模块）
+  - 预期耗时从 8 分钟降到 1-2 分钟
+
 ## [12.88.0] - 2026-03-16
 
 ### Added
