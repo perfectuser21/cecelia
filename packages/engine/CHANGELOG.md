@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [12.87.0] - 2026-03-16
+## [12.88.0] - 2026-03-16
 
 ### Added
 - ci-l3-code.yml: 新增 `detect-commit-type` job，根据 PR title 提取 commit type
