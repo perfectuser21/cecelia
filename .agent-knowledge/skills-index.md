@@ -1,9 +1,9 @@
 # Skills 能力索引
 
-> 自动生成，勿手动编辑。源文件：`~/.claude/skills/*/SKILL.md`
-> 更新方式：新增 Skill 后运行 `scripts/generate-skills-index.sh`
+> 自动生成，勿手动编辑。源文件：`packages/workflows/skills/*/SKILL.md`
+> 更新方式：新增 Skill 后运行 `node scripts/generate-skills-index.mjs`
 
-**共 44 个 Skills** | 按类型分组
+**共 63 个 Skills** | 按类型分组
 
 ---
 
@@ -90,6 +90,32 @@
 | `/canvas-project` | 功能架构图 | Feature → Module → Logic → Code 四层图 |
 | `/feature-map` | 功能地图 | 系统关键功能交互式地图 |
 | `/frontend-design` | 前端设计 | 生产级前端界面，配合 chrome-devtools |
+
+---
+
+## 新增 Skills（待分类）
+
+| Skill | 触发 | 职责 |
+|-------|------|------|
+| `/autumnrice` | — | 秋米 - PM 拆解专家（角色定义）。 |
+| `/batch-luxury-card-generator` | — | 批量处理 Notion 数据库中的页面，为每个页面生成高级玻璃效果卡片（2K 9:16），自动上传到 Notion 页面底部和飞书 |
+| `/batch-notion-analyzer` | — | 批量处理 Notion 数据库中"未使用"页面 → 双层并行分析 → 自动清理过期文档。这是默认的日常工作流，分析完成后自动清理工作区。 |
+| `/cecelia` | — | 塞西莉亚 - Cecelia 的嘴巴（对外接口）。 |
+| `/claude-work-summarizer` | — | 总结 Claude Code 会话中的工作内容并保存到 Notion，帮助记录开发历史和决策过程 |
+| `/content-analyzer` | — | /content-analyzer skill |
+| `/content-rewriter` | — | /content-rewriter skill |
+| `/dashboard-debug` | — | Dashboard 前端部署常见错误案例库 - 记录每次失败的原因和修复方法 |
+| `/headless-deploy` | — | 将项目 Skill 软链接部署到无头工作区 |
+| `/image-gen-workflow` | — | Image Generation Workflow |
+| `/luxury-card-generator` | — | 根据内容数据生成高级玻璃效果卡片图片（2K 9:16），支持 hook、paradox、insight、transformation、steps 等多种卡片类型 |
+| `/media-scraping` | — | Media Scraping Skill |
+| `/nas-backup` | — | /nas-backup skill |
+| `/nobel` | — | 诺贝 - N8N 管理 Agent。 |
+| `/session-1-summarize` | — | 总结 Claude Code 会话（1 个功能）。自动提取执行摘要（阶段、做了什么、踩的坑、下一步）并保存到 Project Notes |
+| `/talk` | — | /talk skill |
+| `/test-personal-skill` | — | 查看 NAS 统计信息 |
+| `/two-layer-parallel-analyzer` | — | 对 Notion 页面内容执行双层并行分析，Layer 1 包含话题总结、受众价值分析、IP感知影响、权威增强，Layer 2 生成 5 个 Dan Koe 风格推荐方向 |
+| `/upgrade-dashboard` | — | /upgrade-dashboard skill |
 
 ---
 
