@@ -371,6 +371,13 @@ changelog:
 
 ---
 
+### S15: codex-playwright task type + 03-branch.md regression stub
+
+1. ✅ **codex_playwright 任务 → playwright-runner.sh → Codex 探索 → .cjs 脚本**
+2. ✅ **已有 .cjs 脚本 → 直接 node 执行**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

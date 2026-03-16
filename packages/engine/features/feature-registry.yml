@@ -1852,3 +1852,36 @@ product_features:
       - "push main → coverage-baseline 跑，更新基线"
 
     rcis: []
+
+  - id: S15
+    name: codex-playwright task type + 03-branch.md regression stub
+    status: Committed
+    priority: P2
+    version: "12.93.1"
+    updated: "2026-03-16"
+    description: |
+      新增 codex_playwright 任务类型：Codex 在西安 M4 上通过 Playwright connectOverCDP
+      控制西安 Windows PC（100.97.242.124:19225）。两阶段工作流（探索/执行）。
+      同时新增 skills/dev/steps/03-branch.md 存根供回归测试引用（原文件内容已并入
+      01-taskcard.md 和 03-prci.md）；修复 pr-gate-phase1 测试夹具缺少 [BEHAVIOR] 标签。
+
+    entrypoints:
+      - type: runner
+        file: packages/engine/runners/codex/playwright-runner.sh
+        trigger: "Brain 派发 codex_playwright 任务"
+      - type: skill
+        file: packages/workflows/skills/playwright-auto/SKILL.md
+        trigger: "Codex 执行 Playwright 自动化任务"
+
+    golden_path: |
+      Brain 派发 codex_playwright 任务 →
+      playwright-runner.sh 获取 Task 详情 →
+      Codex 探索阶段：生成 .cjs 脚本（CDP 连接 100.97.242.124:19225）→
+      脚本保存到 ~/playwright-scripts/<task_id>.cjs →
+      执行阶段：直接运行 .cjs 无需 LLM
+
+    minimal_paths:
+      - "codex_playwright 任务 → playwright-runner.sh → Codex 探索 → .cjs 脚本"
+      - "已有 .cjs 脚本 → 直接 node 执行"
+
+    rcis: []
