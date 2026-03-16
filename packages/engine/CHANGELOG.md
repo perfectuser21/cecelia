@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.86.0] - 2026-03-16
+
+### Added
+- `scripts/devgate/dod-execution-gate.sh`: CI L1 执行门禁脚本，实际运行 Task Card 中 `[BEHAVIOR]` 条目的 `Test:` 命令
+  - `manual:bash/node` 类命令直接执行，失败则 exit 1
+  - `manual:curl`、`manual:chrome:` 类标记为 DEFERRED（跳过但不报错）
+  - `tests/<path>` 类检查文件存在性
+  - `contract:` 类标记为 DEFERRED
+- `.github/workflows/ci-l1-process.yml` `dod-check` job 新增 `Run DoD Execution Gate` step
+
 ## [12.40.1] - 2026-03-05
 
 ### Fixed

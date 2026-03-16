@@ -15,9 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.56.0"
+version: "3.57.0"
 updated: "2026-03-16"
 changelog:
+  - version: "12.86.0"
+    date: "2026-03-16"
+    summary: "feat(engine): CI L1 新增 DoD Execution Gate — 实际执行 Task Card [BEHAVIOR] Test 命令，而非仅检查格式"
+    scope: ci-devgate
+    breaking: false
   - version: "12.85.0"
     date: "2026-03-16"
     summary: "docs(engine): 删除 /dev SKILL.md 废弃的多 Feature 支持章节（remove-multi-feature），多 PR 编排移至 Initiative 层"
