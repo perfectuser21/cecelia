@@ -102,6 +102,16 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           bash packages/engine/scripts/devgate/dod-execution-gate.sh
 
+      - name: Run RCI Execution Gate (P0 contracts)
+        # NOTE: continue-on-error=true 因为 cecelia-quality 测试脚本可能与当前代码版本存在轻微不同步
+        # 失败时仅作为警告输出，不阻塞合并。当 quality 包测试脚本更新后再改为硬失败。
+        continue-on-error: true
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  RCI Execution Gate: 执行 P0 regression-contract test_command"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash packages/engine/scripts/devgate/rci-execution-gate.sh
+
   cleanup-check:
     name: Cleanup Check (Step 6.5 Simplify)
     needs: verify-dev-workflow

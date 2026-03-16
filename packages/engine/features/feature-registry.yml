@@ -15,9 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.57.0"
+version: "3.58.0"
 updated: "2026-03-16"
 changelog:
+  - version: "12.87.0"
+    date: "2026-03-16"
+    summary: "feat(engine): CI L1 dod-check job 新增 RCI Execution Gate — 实际执行 cecelia-quality P0 regression-contract test_command，runtime 依赖自动 DEFERRED"
+    scope: ci-devgate
+    breaking: false
   - version: "12.86.0"
     date: "2026-03-16"
     summary: "feat(engine): CI L1 新增 DoD Execution Gate — 实际执行 Task Card [BEHAVIOR] Test 命令，而非仅检查格式"
