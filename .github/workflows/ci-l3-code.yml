@@ -847,10 +847,10 @@ jobs:
         uses: davelosert/vitest-coverage-report-action@v2
         with:
           working-directory: packages/brain
-          vite-config-path: packages/brain/vitest.config.js
+          vite-config-path: vitest.config.js
           name: Brain Coverage
-          json-summary-path: packages/brain/coverage/coverage-summary.json
-          json-final-path: packages/brain/coverage/coverage-final.json
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
           json-summary-compare-path: /tmp/coverage-baseline/coverage-summary.json
 
   # ─── Coverage Baseline (push to main, 用于 PR 对比基线) ──────────────
@@ -910,10 +910,10 @@ jobs:
         uses: davelosert/vitest-coverage-report-action@v2
         with:
           working-directory: packages/brain
-          vite-config-path: packages/brain/vitest.config.js
+          vite-config-path: vitest.config.js
           name: Brain Coverage
-          json-summary-path: packages/brain/coverage/coverage-summary.json
-          json-final-path: packages/brain/coverage/coverage-final.json
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
 
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
