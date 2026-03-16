@@ -18,6 +18,12 @@
 version: "3.62.0"
 updated: "2026-03-16"
 changelog:
+  - version: "12.92.0"
+    date: "2026-03-16"
+    summary: "feat(engine): CI L3 新增 coverage-delta job — Brain feat PR 变更行覆盖率检查，delta 阈值 0.5%，依赖 anuraag016/Jest-Coverage-Diff@main"
+    scope: ci-devgate
+    breaking: false
+    feature_id: coverage-delta
   - version: "12.91.0"
     date: "2026-03-16"
     summary: "feat(engine): CI L3 新增 test-coverage-required job — feat 类型 PR 必须包含测试文件改动，[CONFIG] PR 豁免"
