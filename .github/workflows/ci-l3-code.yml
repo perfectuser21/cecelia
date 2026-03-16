@@ -670,11 +670,91 @@ jobs:
           done
           if [ "$FAILED" = "true" ]; then exit 1; fi
 
+  # ─── Test Coverage Required (feat PR 必须带测试文件改动) ──────────────
+
+  test-coverage-required:
+    name: Test Coverage Required (feat only)
+    needs: [detect-commit-type]
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for test file changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Test Coverage Required Gate"
+          echo "  (feat PR 必须包含测试文件改动)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # [CONFIG] 标签豁免：CI/引擎配置变更不需要应用测试文件
+          if echo "$PR_TITLE" | grep -q '\[CONFIG\]'; then
+            echo "ℹ️  检测到 [CONFIG] 标签 — 跳过测试覆盖检查"
+            echo "   CI/引擎配置变更无需应用测试文件"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Test Coverage Required SKIPPED (CONFIG)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # 获取变更文件列表
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          else
+            # push 到 main 或 workflow_dispatch：检查最近一次 commit
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED" | sed 's/^/  /'
+          echo ""
+
+          # 测试文件模式
+          TEST_PATTERNS="\.test\.ts$|\.spec\.ts$|\.test\.js$|\.spec\.js$|\.test\.cjs$|\.spec\.cjs$|\.test\.mjs$|\.spec\.mjs$|^tests/|/__tests__/|_test\.py$|^test_.*\.sh$"
+
+          # 查找测试文件变更
+          TEST_FILES=$(echo "$CHANGED" | grep -E "$TEST_PATTERNS" || true)
+
+          if [ -z "$TEST_FILES" ]; then
+            echo "❌ ERROR: feat PR 必须包含测试文件改动，但未找到任何测试文件"
+            echo ""
+            echo "测试文件规范（以下任一格式均可）："
+            echo "  *.test.ts / *.spec.ts         TypeScript 测试文件"
+            echo "  *.test.js / *.spec.js         JavaScript 测试文件"
+            echo "  *.test.cjs / *.spec.cjs       CommonJS 测试文件"
+            echo "  *.test.mjs / *.spec.mjs       ES Module 测试文件"
+            echo "  tests/**/*                    tests/ 目录下任意文件"
+            echo "  **/__tests__/**/*             __tests__/ 目录下任意文件"
+            echo "  *_test.py                     Python 测试文件"
+            echo "  test_*.sh                     Shell 测试脚本"
+            echo ""
+            echo "修复方法："
+            echo "  1. 为新功能添加对应的测试文件"
+            echo "  2. 或在 PR 的 commit type 中使用 fix:/docs:/chore: 前缀（非 feat: 类型不强制要求测试）"
+            echo "  3. 或在 PR title 加 [CONFIG] 标签（仅限 CI/引擎配置变更）"
+            exit 1
+          fi
+
+          echo "✅ 找到测试文件改动："
+          echo "$TEST_FILES" | sed 's/^/  ✓ /'
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Test Coverage Required PASSED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l3-passed:
     name: L3 Code Gate Passed
-    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3]
+    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required]
     if: always()
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
@@ -736,6 +816,12 @@ jobs:
               echo "FAIL: Workflows L3 Checks (${{ needs.workflows-l3.result }})"
               FAILED=true
             fi
+          fi
+
+          # test-coverage-required 检查（feat PR 必须带测试）
+          if [ "${{ needs.test-coverage-required.result }}" = "failure" ]; then
+            echo "FAIL: Test Coverage Required (${{ needs.test-coverage-required.result }})"
+            FAILED=true
           fi
 
           if [ "$FAILED" = "true" ]; then
