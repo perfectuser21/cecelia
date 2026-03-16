@@ -1823,3 +1823,32 @@ product_features:
       - "改动根目录/CI 文件 → 输出所有包（兜底）"
 
     rcis: []
+
+  - id: S14
+    name: coverage-delta 换用 vitest-coverage-report-action
+    status: Committed
+    priority: P2
+    version: "12.93.0"
+    updated: "2026-03-16"
+    description: |
+      ci-l3-code.yml 的 coverage-delta job 从 anuraag016/Jest-Coverage-Diff 迁移到
+      davelosert/vitest-coverage-report-action@v2，兼容 Brain vitest json-summary 输出格式。
+      同时新增 coverage-baseline job，在 push 到 main 时生成基线数据供 PR 对比。
+
+    entrypoints:
+      - type: ci
+        file: .github/workflows/ci-l3-code.yml
+        trigger: "coverage-delta job / coverage-baseline job"
+
+    golden_path: |
+      PR 包含 Brain 变更 →
+      brain-unit 通过 →
+      coverage-delta 运行 vitest coverage →
+      davelosert action 读取 coverage-summary.json →
+      在 PR 中展示覆盖率变化报告
+
+    minimal_paths:
+      - "PR brain 变更 → coverage-delta 跑并报告"
+      - "push main → coverage-baseline 跑，更新基线"
+
+    rcis: []

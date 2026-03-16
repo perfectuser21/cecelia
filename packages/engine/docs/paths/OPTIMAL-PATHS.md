@@ -406,6 +406,18 @@ CI 按需执行对应包的测试
 
 ---
 
+### S14: coverage-delta 换用 vitest-coverage-report-action
+
+```
+PR 包含 Brain 变更 →
+brain-unit 通过 →
+coverage-delta 运行 vitest coverage →
+davelosert action 读取 coverage-summary.json →
+在 PR 中展示覆盖率变化报告
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -364,6 +364,13 @@ changelog:
 
 ---
 
+### S14: coverage-delta 换用 vitest-coverage-report-action
+
+1. ✅ **PR brain 变更 → coverage-delta 跑并报告**
+2. ✅ **push main → coverage-baseline 跑，更新基线**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
