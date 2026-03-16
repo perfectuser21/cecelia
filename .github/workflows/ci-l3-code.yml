@@ -837,7 +837,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Coverage Delta Check
-        uses: anuraag016/Jest-Coverage-Diff@main
+        uses: anuraag016/Jest-Coverage-Diff@V1.4
         with:
           delta: 0.5
           fullCoverageDiff: false
