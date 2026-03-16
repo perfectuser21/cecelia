@@ -9283,6 +9283,51 @@ router.post('/codex-usage/refresh', async (_req, res) => {
   }
 });
 
+// ==================== Memory Search API ====================
+
+/**
+ * POST /api/brain/memory-search
+ * Claude Code 接口：语义检索 Cecelia memory_stream
+ *
+ * Request: { query: string, limit?: number (default 5) }
+ * Response: { ok: true, matches: [{ content, memory_type, importance, summary, similarity }] }
+ */
+router.post('/memory-search', async (req, res) => {
+  const { query, limit = 5 } = req.body || {};
+
+  if (!query || typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({ ok: false, error: 'Missing required parameter: query' });
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ ok: false, error: 'OPENAI_API_KEY not configured' });
+  }
+
+  try {
+    const { generateEmbedding } = await import('./openai-client.js');
+    const embedding = await generateEmbedding(query.trim().substring(0, 2000));
+    const embStr = '[' + embedding.join(',') + ']';
+
+    const safeLimit = Math.min(Math.max(1, parseInt(limit) || 5), 20);
+
+    const result = await pool.query(
+      `SELECT content, memory_type, importance, summary,
+              ROUND((1 - (embedding <=> $1::vector))::numeric, 4) AS similarity
+       FROM memory_stream
+       WHERE embedding IS NOT NULL
+         AND status = 'active'
+       ORDER BY embedding <=> $1::vector
+       LIMIT $2`,
+      [embStr, safeLimit]
+    );
+
+    res.json({ ok: true, matches: result.rows });
+  } catch (err) {
+    console.error('[memory-search] error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ==================== Runner Status API ====================
 
 /**
