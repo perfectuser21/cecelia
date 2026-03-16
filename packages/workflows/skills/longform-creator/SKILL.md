@@ -225,6 +225,50 @@ bash /Users/administrator/perfect21/infrastructure/scripts/nas-content-manager.s
 
 ---
 
+### Step 5.5 — 注册到 zenithjoy.works 数据库
+
+NAS 上传完成后，将内容元数据写入 `zenithjoy.works` 表，建立中央注册表记录。
+
+```bash
+# DB 连接信息（cecelia PostgreSQL）
+PGHOST="localhost"
+PGPORT="5432"
+PGDATABASE="cecelia"
+PGUSER="postgres"
+
+# 写入 zenithjoy.works
+PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+  -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PGDATABASE}" \
+  -c "INSERT INTO zenithjoy.works (
+        content_id,
+        title,
+        content_type,
+        nas_path,
+        status
+      ) VALUES (
+        '${CONTENT_ID}',
+        '${TITLE}',
+        'long_form_article',
+        '/volume1/workspace/vault/zenithjoy-creator/content/${CONTENT_ID}',
+        'ready'
+      )
+      ON CONFLICT (content_id) DO UPDATE SET
+        title = EXCLUDED.title,
+        status = EXCLUDED.status,
+        updated_at = NOW();" \
+  || echo "⚠️ works 表注册失败，继续流程"
+
+echo "✅ works 表已注册：content_id=${CONTENT_ID}"
+```
+
+**注意**：
+- `POSTGRES_PASSWORD` 从环境变量读取，不要硬编码
+- `ON CONFLICT DO UPDATE` 保证幂等，重跑不会报错
+- `content_type` 固定为 `long_form_article`（此 skill 专用）
+- 写库失败不阻断后续流程（用 `|| echo` 容错）
+
+---
+
 ### Step 6 — 输出摘要
 
 ```
