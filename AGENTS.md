@@ -15,7 +15,7 @@ Cecelia = Brain (Node.js, port 5221)
         + Tick Loop（每 5s 检查，每 2min 执行一次 tick）
         + 三层大脑（L0 脑干 / L1 丘脑 / L2 皮层）
         + PostgreSQL（数据存储）
-        + 44 个 Skills（外部能力库）
+        + 63 个 Skills（外部能力库）
 ```
 
 Cecelia **自己不干活**，只负责决策和调度，召唤外部 Agent 执行具体任务。
@@ -47,7 +47,7 @@ curl -X POST localhost:5221/api/brain/tick
 | Brain | `packages/brain/` | 核心调度、决策、保护 | → [brain/AGENTS.md](.agent-knowledge/brain.md) |
 | Engine | `packages/engine/` | 开发工作流（hooks/skills/CI） | → [engine/AGENTS.md](.agent-knowledge/engine.md) |
 | Apps | `apps/dashboard/` | React 前端界面 port 5211 | — |
-| Skills | `~/.claude/skills/` | 44 个外部能力 | → [skills-index.md](.agent-knowledge/skills-index.md) |
+| Skills | `~/.claude/skills/` | 63 个外部能力 | → [skills-index.md](.agent-knowledge/skills-index.md) |
 
 ---
 
@@ -97,5 +97,5 @@ knowledge/
 
 ---
 
-*最后更新：2026-03-16 | Brain v1.217.0 | 44 Skills*
+*最后更新：2026-03-16 | Brain v1.217.0 | 63 Skills*
 *自动维护：skills-index.md 由 CI 脚本从 SKILL.md 提取生成*
