@@ -1,0 +1,121 @@
+# Skills 能力索引
+
+> 自动生成，勿手动编辑。源文件：`~/.claude/skills/*/SKILL.md`
+> 更新方式：新增 Skill 后运行 `scripts/generate-skills-index.sh`
+
+**共 44 个 Skills** | 按类型分组
+
+---
+
+## 决策与规划
+
+| Skill | 触发 | 职责 |
+|-------|------|------|
+| `/plan` | 用户描述任何想做的事 | 意图识别 + 层级路由（OKR/Project/Initiative/Task） |
+| `/decomp` | 拆解 OKR/Project/Initiative | 全链路 Project Management 拆解引擎 |
+| `/decomp-check` | 审查拆解质量 | 拆解质检，Vivian 角色，三态裁决（approved/needs_revision/rejected） |
+| `/strategy-session` | 战略会议 | C-Suite 级战略推演，Opus 模型 |
+| `/explore` | 现状盘点 | 只看不改，如实报告当前是什么情况 |
+
+---
+
+## 开发工程
+
+| Skill | 触发 | 职责 |
+|-------|------|------|
+| `/dev` | 任何代码变更 | **统一开发工作流**：Worktree → PRD → 代码 → PR → CI → 合并 |
+| `/review` | 代码审查 | 审查模式（找问题不改）+ 初始化模式（qa_init） |
+| `/audit` | 代码审计 | 分层审计：L1阻塞/L2功能/L3最佳实践/L4优化 |
+| `/qa` | QA 总控 | 跨仓库测试决策、回归契约、Golden Paths |
+| `/arch-review` | 架构审查 | verify（Initiative 完成验收）+ review（日常巡检） |
+| `/architect` | 架构设计 | 新架构设计，Opus 模型 |
+| `/assurance` | 质量门禁 | 检查系统与业务系统的唯一协调者（RADNA 体系） |
+| `/code-review` | 代码变更扫描 | 扫描最近提交，发现 bug/安全/竞态 |
+| `/brain-register` | 向 Brain 注册新实体 | 新 Agent/task_type/Skill 的多文件联动注册 |
+| `/repo-lead` | 部门主管角色 | 跨 PR 协调，部门级代码决策 |
+
+---
+
+## 知识与记忆
+
+| Skill | 触发 | 职责 |
+|-------|------|------|
+| `/librarian` | 生成知识页、补充说明书 | 从源码生成 HTML 知识页，每次 3-5 个，批量生成 86 页 |
+| `/knowledge` | 记下来、存进知识库 | 知识捕获，结构化存入知识库 |
+| `/research` | 深度调研 | 后台运行，WebSearch + 结构化报告 |
+| `/notebooklm` | 创建 Notebook、生成播客 | Google NotebookLM 完整 API 操控 |
+
+---
+
+## 内容发布（社交媒体）
+
+| Skill | 平台 | 方案 |
+|-------|------|------|
+| `/douyin-publisher` | 抖音 | 图文/视频/文章，零 AI 干预 |
+| `/kuaishou-publisher` | 快手 | 图文，CDP Cookie + HTTP |
+| `/toutiao-publisher` | 今日头条 | 微头条/文章/视频，NAS 统一调度 |
+| `/weibo-publisher` | 微博 | 图文，Playwright CDP |
+| `/wechat-publisher` | 微信公众号 | 图文，官方 API |
+| `/xiaohongshu-publisher` | 小红书 | 图文，N8N → SSH → Mac mini → CDP |
+| `/zhihu-publisher` | 知乎 | 文章，Mac mini CDP |
+| `/content-creator` | 多平台 | 内容制作中心入口目录 |
+| `/share-card` | 通用 | 9:16 竖版卡片，PNG 直出 |
+| `/quote-card-generator` | 通用 | ChatGPT 生成金句卡片 |
+
+---
+
+## 系统工具
+
+| Skill | 触发 | 职责 |
+|-------|------|------|
+| `/credentials` | API Token/Secret/Key | 凭据管理，~/.credentials/ 目录 |
+| `/janitor` | 系统清扫 | 磁盘清理（daily 4am）+ 僵尸进程（每30分钟） |
+| `/nas` | NAS 操作 | NAS 内容管理 |
+| `/sync-hk` | 同步到香港 | 美国 VPS → 香港 VPS，Tailscale + rsync |
+| `/chrome` | 看页面、截图 | agent-browser（省 context）+ chrome-devtools MCP（深度调试） |
+| `/versioning` | 文件版本管理 | 自动添加/更新 frontmatter 版本号 |
+| `/cecelia-brain` | 大脑直接对话 | 三层架构直接调用（脑干/丘脑/皮层） |
+| `/skill-creator` | 创建/优化 Skill | 新建 Skill、迭代改进、eval 评测 |
+| `/platform-scraper` | 平台数据采集 | 管理所有媒体平台的采集配置 |
+| `/social-media-analysis` | 社媒数据分析 | TimescaleDB 查询和分析 |
+| `/trading-agent` | 自动交易 | 24/7 交易代理，Cecelia 调度监控 |
+
+---
+
+## 可视化
+
+| Skill | 触发 | 职责 |
+|-------|------|------|
+| `/repo-visualizer` | 仓库架构图 | 生成交互式仓库架构可视化 |
+| `/canvas-project` | 功能架构图 | Feature → Module → Logic → Code 四层图 |
+| `/feature-map` | 功能地图 | 系统关键功能交互式地图 |
+| `/frontend-design` | 前端设计 | 生产级前端界面，配合 chrome-devtools |
+
+---
+
+## 任务类型 → Skill 路由
+
+Brain 根据 `task_type` 自动路由到对应 Skill 和执行位置：
+
+| task_type | Skill | 位置 |
+|-----------|-------|------|
+| `dev` | `/dev` | US（Opus） |
+| `review` | `/review` | US（Sonnet） |
+| `qa` | `/qa` | US（Sonnet） |
+| `audit` | `/audit` | US（Sonnet） |
+| `code_review` | `/code-review` | US |
+| `arch_review` | `/arch-review` | US（Sonnet） |
+| `architecture_design` | `/architect` | US（Opus） |
+| `initiative_verify` | `/arch-review` | US（Sonnet） |
+| `strategy_session` | `/strategy-session` | US（Opus） |
+| `decomp_review` | `/decomp-check` | US（Haiku） |
+| `explore` | `/explore` | HK（快速） |
+| `research` | `/research` | HK |
+| `talk` | — | HK |
+| `data` | — | HK（N8N） |
+| `codex_dev` | `/dev` | 西安 Mac mini |
+| `codex_qa` | — | 西安 Mac mini |
+
+---
+
+*生成时间：2026-03-16 | 共 44 Skills*
