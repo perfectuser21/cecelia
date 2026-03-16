@@ -16,6 +16,7 @@ const {
   isTokenCacheValid,
   buildTokenCache,
   textToHtml,
+  uploadInlineImages,
 } = require('../publish-wechat-article.cjs');
 
 // ============================================================
@@ -177,5 +178,45 @@ describe('textToHtml', () => {
   test('& 符号被转义', () => {
     const html = textToHtml('A & B');
     assert.ok(html.includes('A &amp; B'));
+  });
+});
+
+// ============================================================
+// uploadInlineImages
+// ============================================================
+describe('uploadInlineImages', () => {
+  test('null html → 原样返回', async () => {
+    const result = await uploadInlineImages(null, 'fake-token');
+    assert.equal(result, null);
+  });
+
+  test('无 <img> 标签的 HTML → 原样返回', async () => {
+    const html = '<p>纯文字段落，无图片。</p>';
+    const result = await uploadInlineImages(html, 'fake-token');
+    assert.equal(result, html);
+  });
+
+  test('外链图片（https://）→ 不处理，原样保留', async () => {
+    const html = '<p>文字</p><img src="https://example.com/img.jpg"><p>后文</p>';
+    const result = await uploadInlineImages(html, 'fake-token');
+    assert.equal(result, html);
+  });
+
+  test('外链图片（http://）→ 不处理，原样保留', async () => {
+    const html = '<img src="http://cdn.example.com/photo.png">';
+    const result = await uploadInlineImages(html, 'fake-token');
+    assert.equal(result, html);
+  });
+
+  test('本地图片不存在 → 打印警告，保留原 src，不 throw', async () => {
+    const html = '<img src="/tmp/non-existent-image-xyz.jpg">';
+    const result = await uploadInlineImages(html, 'fake-token');
+    assert.ok(result.includes('/tmp/non-existent-image-xyz.jpg'), '应保留原 src');
+  });
+
+  test('多个外链图片全部跳过', async () => {
+    const html = '<img src="https://a.com/1.jpg"><img src="https://b.com/2.png">';
+    const result = await uploadInlineImages(html, 'fake-token');
+    assert.equal(result, html);
   });
 });
