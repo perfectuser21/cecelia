@@ -609,6 +609,22 @@ Step 1 创建 .task 文件（合并 PRD + DoD） →
 
 ---
 
+## GP-039: 基于路径映射的选择性 CI 受影响包计算脚本 (S13)
+
+**Feature**: S13 - 基于路径映射的选择性 CI 受影响包计算脚本
+**Priority**: P2
+
+### Golden Path
+
+```
+git diff 输出文件列表 →
+node affected-packages.js <files> →
+输出 JSON 数组（如 ["brain","engine"]） →
+CI 按需执行对应包的测试
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

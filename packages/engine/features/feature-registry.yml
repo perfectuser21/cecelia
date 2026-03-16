@@ -1749,3 +1749,32 @@ product_features:
       - "兼容模式: 旧 01-prd.md + 05-dod.md 仍可用（弃用提示）"
 
     rcis: []
+
+  - id: S13
+    name: 基于路径映射的选择性 CI 受影响包计算脚本
+    status: Committed
+    priority: P2
+    version: "12.85.0"
+    updated: "2026-03-16"
+    description: |
+      新增 packages/engine/scripts/affected-packages.js 脚本，
+      基于 git diff 文件列表和路径映射计算受影响的包集合。
+      输出 JSON 数组，可供 CI workflows 做选择性执行判断。
+
+    entrypoints:
+      - type: script
+        file: scripts/affected-packages.js
+        trigger: "node scripts/affected-packages.js <changed-files>"
+
+    golden_path: |
+      git diff 输出文件列表 →
+      node affected-packages.js <files> →
+      输出 JSON 数组（如 ["brain","engine"]） →
+      CI 按需执行对应包的测试
+
+    minimal_paths:
+      - "改动 packages/brain/ → 输出 brain"
+      - "改动 packages/engine/ → 输出 engine"
+      - "改动根目录/CI 文件 → 输出所有包（兜底）"
+
+    rcis: []
