@@ -77,6 +77,7 @@ const EXECUTOR_AFFINITY = {
   // 始终走 Codex（不消耗 Claude）
   'codex_dev':            { primary: 'codex',   fallback: null,     no_downgrade: true  },
   'codex_qa':             { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'codex_playwright':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
 
   // 始终走 MiniMax（不消耗 Claude）
   'explore':              { primary: 'minimax', fallback: null,     no_downgrade: true  },
