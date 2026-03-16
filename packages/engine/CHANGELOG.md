@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.90.0] - 2026-03-16
+
+### Added
+- ci-l1-process.yml: `changes` job 接入 `affected-packages.js`，输出 brain/engine/quality/workflows/frontend 五个 outputs
+  - `quality-meta-tests` job 加 `if` 条件，仅在 quality 或 engine 改动时运行
+  - `l1-passed` gate 相应调整 quality-meta-tests 结果检查逻辑（仅条件触发时验证）
+
 ## [12.89.0] - 2026-03-16
 
 ### Fixed
