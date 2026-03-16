@@ -21,19 +21,42 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      brain: ${{ steps.filter.outputs.brain }}
       engine: ${{ steps.filter.outputs.engine }}
+      quality: ${{ steps.filter.outputs.quality }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+      frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Detect engine changes
+      - name: Detect affected packages
         id: filter
         run: |
           BASE_REF="${{ github.base_ref }}"
-          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -q "^packages/engine/"; then
-            echo "engine=true" >> $GITHUB_OUTPUT
+          CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          echo ""
+
+          # 使用 affected-packages.js 计算受影响包
+          AFFECTED=$(echo "$CHANGED_FILES" | node packages/engine/scripts/affected-packages.js)
+          echo "Affected packages: $AFFECTED"
+
+          # 解析 JSON 数组，为每个包输出 true/false
+          for pkg in brain engine quality workflows; do
+            if echo "$AFFECTED" | grep -q "\"${pkg}\""; then
+              echo "${pkg}=true" >> $GITHUB_OUTPUT
+            else
+              echo "${pkg}=false" >> $GITHUB_OUTPUT
+            fi
+          done
+
+          # frontend = api 或 dashboard 受影响
+          if echo "$AFFECTED" | grep -qE '"api"|"dashboard"'; then
+            echo "frontend=true" >> $GITHUB_OUTPUT
           else
-            echo "engine=false" >> $GITHUB_OUTPUT
+            echo "frontend=false" >> $GITHUB_OUTPUT
           fi
 
   # ─── Always-on checks (all PRs) ─────────────────────────────────────
@@ -271,6 +294,8 @@ jobs:
 
   quality-meta-tests:
     name: Quality System Meta Tests
+    needs: [changes]
+    if: needs.changes.outputs.quality == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -739,9 +764,12 @@ jobs:
             FAILED=true
           fi
 
-          if [ "${{ needs.quality-meta-tests.result }}" != "success" ]; then
-            echo "FAIL: Quality System Meta Tests (${{ needs.quality-meta-tests.result }})"
-            FAILED=true
+          # Quality/Engine-conditional check (only required when quality or engine changes)
+          if [ "${{ needs.changes.outputs.quality }}" = "true" ] || [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
+            if [ "${{ needs.quality-meta-tests.result }}" != "success" ]; then
+              echo "FAIL: Quality System Meta Tests (${{ needs.quality-meta-tests.result }})"
+              FAILED=true
+            fi
           fi
 
           if [ "${{ needs.ci-config-audit.result }}" != "success" ]; then
