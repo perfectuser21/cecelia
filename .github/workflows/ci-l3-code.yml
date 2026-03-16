@@ -705,6 +705,34 @@ jobs:
             exit 0
           fi
 
+          # push/workflow_dispatch 场景：PR_TITLE 为空，从 commit message 判断
+          # （PR_TITLE 只在 pull_request 事件中有值）
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            COMMIT_MSG=$(git log HEAD -1 --format="%s" 2>/dev/null || echo "")
+            echo "Commit message: $COMMIT_MSG"
+
+            # [CONFIG] commit 豁免
+            if echo "$COMMIT_MSG" | grep -q '\[CONFIG\]'; then
+              echo "ℹ️  检测到提交消息中的 [CONFIG] 标签 — 跳过测试覆盖检查"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ✅ Test Coverage Required SKIPPED (CONFIG)"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              exit 0
+            fi
+
+            # 仅对 feat: 类型 commit 强制检查（忽略 [TAG] 前缀后提取 type）
+            COMMIT_TYPE=$(echo "$COMMIT_MSG" | sed 's/^\[.*\] *//' | grep -oE '^[a-zA-Z]+' | head -1 | tr '[:upper:]' '[:lower:]' || echo "unknown")
+            echo "Detected commit type: $COMMIT_TYPE"
+            if [ "$COMMIT_TYPE" != "feat" ]; then
+              echo "ℹ️  提交类型 '$COMMIT_TYPE' 不是 feat — 跳过测试覆盖检查"
+              echo "   只有 feat: 类型的合并需要测试文件"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ✅ Test Coverage Required SKIPPED (non-feat commit)"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              exit 0
+            fi
+          fi
+
           # 获取变更文件列表
           if [ "$EVENT_NAME" = "pull_request" ]; then
             CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
