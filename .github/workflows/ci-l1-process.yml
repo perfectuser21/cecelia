@@ -92,6 +92,16 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           node packages/engine/scripts/devgate/check-dod-mapping.cjs
 
+      - name: Run DoD Execution Gate
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate: DoD Execution Gate (Branch: $GITHUB_HEAD_REF)"
+          echo "  执行 [BEHAVIOR] Test 命令，验证功能真实工作"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash packages/engine/scripts/devgate/dod-execution-gate.sh
+
   cleanup-check:
     name: Cleanup Check (Step 6.5 Simplify)
     needs: verify-dev-workflow
