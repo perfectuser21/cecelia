@@ -687,12 +687,23 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
           EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Test Coverage Required Gate"
           echo "  (feat PR 必须包含测试文件改动)"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
+
+          # [CONFIG] 标签豁免：CI/引擎配置变更不需要应用测试文件
+          if echo "$PR_TITLE" | grep -q '\[CONFIG\]'; then
+            echo "ℹ️  检测到 [CONFIG] 标签 — 跳过测试覆盖检查"
+            echo "   CI/引擎配置变更无需应用测试文件"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Test Coverage Required SKIPPED (CONFIG)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
 
           # 获取变更文件列表
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -728,6 +739,7 @@ jobs:
             echo "修复方法："
             echo "  1. 为新功能添加对应的测试文件"
             echo "  2. 或在 PR 的 commit type 中使用 fix:/docs:/chore: 前缀（非 feat: 类型不强制要求测试）"
+            echo "  3. 或在 PR title 加 [CONFIG] 标签（仅限 CI/引擎配置变更）"
             exit 1
           fi
 
