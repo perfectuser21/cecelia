@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.93.0] - 2026-03-16
+
+### Changed
+- ci-l3-code.yml: `coverage-delta` job 替换 `anuraag016/Jest-Coverage-Diff` 为 `davelosert/vitest-coverage-report-action@v2`
+  - 兼容 Brain vitest 输出的 json-summary 格式（非 jest 格式）
+  - 读取 `packages/brain/coverage/coverage-summary.json` + `coverage-final.json`
+  - `needs` 新增 `changes`，添加 `needs.changes.outputs.brain == 'true'` 条件（避免无 Brain 变动时也跑）
+  - 迁移命令：run migrations 改用 psql 逐文件执行
+- ci-l3-code.yml: 新增 `coverage-baseline` job，在 push 到 main 时运行，为 PR 对比提供基线数据
+
 ## [12.90.0] - 2026-03-16
 
 ### Added

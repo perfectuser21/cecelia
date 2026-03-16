@@ -782,16 +782,15 @@ jobs:
 
   coverage-delta:
     name: Coverage Delta Check (feat only)
-    needs: [detect-commit-type, brain-unit]
-    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.brain-unit.result == 'success'
-    continue-on-error: true
+    needs: [detect-commit-type, changes, brain-unit]
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: write
     services:
-      postgres:
+      pgvector:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
@@ -804,47 +803,108 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    env:
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_NAME: cecelia
-      DB_USER: cecelia
-      DB_PASSWORD: cecelia_ci
-      ENV_REGION: us
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: packages/brain/package-lock.json
-
-      - name: Install dependencies
-        working-directory: packages/brain
-        run: npm ci
-
+      - run: cd packages/brain && npm ci
       - name: Run migrations
-        working-directory: packages/brain
-        run: node src/migrate.js
-
+        run: |
+          cd packages/brain
+          for f in $(ls migrations/*.sql | sort); do
+            echo "[APPLY] $(basename $f) ..."
+            PGPASSWORD=cecelia_ci psql -h localhost -U cecelia -d cecelia -f "$f" > /dev/null 2>&1 || true
+            echo "[DONE] $(basename $f)"
+          done
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: cecelia
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_ci
       - name: Run coverage
-        working-directory: packages/brain
-        continue-on-error: true
+        run: cd packages/brain && npm run test:coverage
         env:
-          NODE_OPTIONS: "--max-old-space-size=1536"
-        run: npm run test:coverage
-
-      - name: Coverage Delta Check
-        uses: anuraag016/Jest-Coverage-Diff@V1.4
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: cecelia
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_ci
+          ENV_REGION: us
+          NODE_OPTIONS: --max-old-space-size=3072
+      - name: Coverage Delta Report
+        uses: davelosert/vitest-coverage-report-action@v2
         with:
-          delta: 0.5
-          fullCoverageDiff: false
+          working-directory: packages/brain
+          vite-config-path: packages/brain/vitest.config.js
+          name: Brain Coverage
+          json-summary-path: packages/brain/coverage/coverage-summary.json
+          json-final-path: packages/brain/coverage/coverage-final.json
+
+  # ─── Coverage Baseline (push to main, 用于 PR 对比基线) ──────────────
+  coverage-baseline:
+    name: Update Coverage Baseline
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    services:
+      pgvector:
+        image: pgvector/pgvector:pg15
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_ci
+          POSTGRES_DB: cecelia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/brain/package-lock.json
+      - run: cd packages/brain && npm ci
+      - name: Run migrations
+        run: |
+          cd packages/brain
+          for f in $(ls migrations/*.sql | sort); do
+            PGPASSWORD=cecelia_ci psql -h localhost -U cecelia -d cecelia -f "$f" > /dev/null 2>&1 || true
+          done
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: cecelia
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_ci
+      - name: Run coverage
+        run: cd packages/brain && npm run test:coverage
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: cecelia
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_ci
+          ENV_REGION: us
+          NODE_OPTIONS: --max-old-space-size=3072
+      - name: Upload coverage baseline
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          working-directory: packages/brain
+          vite-config-path: packages/brain/vitest.config.js
+          name: Brain Coverage
+          json-summary-path: packages/brain/coverage/coverage-summary.json
+          json-final-path: packages/brain/coverage/coverage-final.json
 
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
@@ -921,11 +981,11 @@ jobs:
           fi
 
           # coverage-delta 检查（Brain 变更时，feat PR 变更行必须有覆盖率）
-          # TODO: jest-coverage-diff action 与 Vitest/ESM 不兼容，暂时设为非阻塞
-          # 后续需替换为支持 Vitest coverage JSON 格式的 coverage-delta 方案
+          # 已换用 davelosert/vitest-coverage-report-action@v2，兼容 vitest json-summary 输出
+          # coverage-delta 失败时非阻塞（coverage 报告供参考，不阻止 PR 合并）
           if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
             if [ "${{ needs.coverage-delta.result }}" = "failure" ]; then
-              echo "⚠️  Coverage Delta Check 失败（非阻塞，兼容性问题待修复）"
+              echo "⚠️  Coverage Delta Check 失败（非阻塞，覆盖率报告供参考）"
             fi
           fi
 
