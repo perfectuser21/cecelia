@@ -17,23 +17,21 @@ Engine 版本从 12.91.0 bump 到 12.92.0。
 2. **Engine 版本 bump 流程清晰**：5 个文件同步，`check-version-sync.sh` 在 `packages/engine/` 目录下运行可快速验证。
 3. **`[CONFIG]` 标签豁免机制**：CI 配置变更 PR 加 `[CONFIG]` 标签可绕过 `test-coverage-required` 检查，本次也适用。
 
-## 踩坑
+## branch-protect Hook 要求 tasks_created: true（2026-03-16）
 
-### branch-protect Hook 要求 tasks_created: true
+### 根本原因
 
-**现象**：第一次尝试 Edit 文件被 Hook 拦截，报 `Task Checkpoint 未创建，.dev-mode 缺少 tasks_created: true`。
-
-**根本原因**：branch-protect.sh 在写代码之前检查 .dev-mode 中是否有 `tasks_created: true`，确保 Task 已注册到系统。
+branch-protect.sh 在写代码之前检查 .dev-mode 中是否有 `tasks_created: true`，确保 Task 已注册到系统。Step 1 创建 .dev-mode 时未包含此字段，导致第一次 Edit 文件被 Hook 拦截。
 
 ### 下次预防
 
 - [ ] 在 Step 1 创建 .dev-mode 文件时，直接写入 `tasks_created: true`，不要等到 Hook 拦截才补
 
-### check-version-sync.sh 需要在正确目录运行
+## check-version-sync.sh 必须在 packages/engine/ 目录下运行（2026-03-16）
 
-**现象**：从 worktree 根目录运行 `bash packages/engine/ci/scripts/check-version-sync.sh` 报错，因为脚本依赖 `pwd` 下的 `package.json`。
+### 根本原因
 
-**根本原因**：脚本用相对路径读取文件，必须 `cd packages/engine` 后再运行。
+`packages/engine/ci/scripts/check-version-sync.sh` 用相对路径读取文件（`package.json`、`VERSION` 等），必须从 `packages/engine/` 目录运行。从 worktree 根目录运行时，pwd 下没有这些文件，导致检查逻辑异常。
 
 ### 下次预防
 
