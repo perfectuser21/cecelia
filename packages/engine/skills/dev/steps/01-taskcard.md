@@ -185,8 +185,49 @@ Task Card 内容：
 ```
 
 处理结果：
-- **[PASS]**（三项均 ≥ 3）→ 继续 Step 2
+- **[PASS]**（三项均 ≥ 3）→ 继续置信度自评
 - **[NEEDS_IMPROVEMENT]** → 按建议更新 Task Card → 重新执行 LLM 质量 Gate
+
+## Step 1 末尾：置信度自评（写入 .dev-mode）
+
+> **LLM 质量 Gate 通过后，AI 输出置信度自评并写入 .dev-mode。**
+> 这是开始前的诚实评估，供 Step 5 执行质量对比用。
+
+AI 自评后，执行以下写入：
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+
+# AI 根据以下评分指南，填写三个值：
+CONFIDENCE_SCORE=X    # 1-10 整数
+CONFIDENCE_REASON="..." # 1-2句，说明打分原因
+CONFIDENCE_RISK="..."   # 主要不确定因素（没有风险写"无"）
+
+cat >> "$DEV_MODE_FILE" << EOF
+confidence_score: ${CONFIDENCE_SCORE}
+confidence_reason: ${CONFIDENCE_REASON}
+confidence_risk: ${CONFIDENCE_RISK}
+EOF
+echo "✅ 置信度已写入 .dev-mode"
+```
+
+**评分指南**：
+
+| 分数 | 含义 |
+|------|------|
+| 9-10 | PRD 清晰，改动简单，接口熟悉，无不确定性 |
+| 7-8  | PRD 清晰，有小的不确定因素或边界条件 |
+| 5-6  | PRD 有模糊点，或涉及复杂逻辑 / 不熟悉模块 |
+| 3-4  | PRD 不够清晰，多处不确定，需要大量探索 |
+| 1-2  | 需求很模糊，改动范围不确定，高度不确定 |
+
+**输出示例**（AI 在此输出后写入）：
+```
+置信度：7/10
+原因：PRD 清晰，但涉及 Stop Hook 循环机制有不确定性
+风险：.dev-mode 格式解析的边界条件
+```
 
 ## 完成后
 
