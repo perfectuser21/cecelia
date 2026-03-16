@@ -845,6 +845,7 @@ jobs:
           path: /tmp/coverage-baseline
       - name: Coverage Delta Report
         uses: davelosert/vitest-coverage-report-action@v2
+        continue-on-error: true
         with:
           working-directory: packages/brain
           vite-config-path: vitest.config.js
