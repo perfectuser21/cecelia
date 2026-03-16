@@ -20,7 +20,7 @@ updated: "2026-03-16"
 changelog:
   - version: "12.89.0"
     date: "2026-03-16"
-    summary: "fix(engine): quality-meta-tests job 迁移到 ubuntu-latest，删除不必要的 npm ci 步骤，预期从 8 分钟降到 1-2 分钟"
+    summary: "fix(engine): quality-meta-tests job 迁移到 ubuntu-latest（原 hk-vps），消除 5 分钟排队等待，预期从 8 分钟降到 2-3 分钟"
     scope: ci-devgate
     breaking: false
     feature_id: quality-meta-tests-runner-fix
