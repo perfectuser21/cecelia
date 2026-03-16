@@ -750,11 +750,77 @@ jobs:
           echo "  ✅ Test Coverage Required PASSED"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+  # ─── Coverage Delta Check (feat PR 变更行覆盖率) ──────────────────────
+
+  coverage-delta:
+    name: Coverage Delta Check (feat only)
+    needs: [detect-commit-type, brain-unit]
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.brain-unit.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_ci
+          POSTGRES_DB: cecelia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: cecelia
+      DB_USER: cecelia
+      DB_PASSWORD: cecelia_ci
+      ENV_REGION: us
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/brain/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/brain
+        run: npm ci
+
+      - name: Run migrations
+        working-directory: packages/brain
+        run: node src/migrate.js
+
+      - name: Run coverage
+        working-directory: packages/brain
+        env:
+          NODE_OPTIONS: "--max-old-space-size=1536"
+        run: npm run test:coverage
+
+      - name: Coverage Delta Check
+        uses: anuraag016/Jest-Coverage-Diff@main
+        with:
+          delta: 0.5
+          fullCoverageDiff: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l3-passed:
     name: L3 Code Gate Passed
-    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required]
+    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required, coverage-delta]
     if: always()
     runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
@@ -822,6 +888,14 @@ jobs:
           if [ "${{ needs.test-coverage-required.result }}" = "failure" ]; then
             echo "FAIL: Test Coverage Required (${{ needs.test-coverage-required.result }})"
             FAILED=true
+          fi
+
+          # coverage-delta 检查（Brain 变更时，feat PR 变更行必须有覆盖率）
+          if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
+            if [ "${{ needs.coverage-delta.result }}" = "failure" ]; then
+              echo "FAIL: Coverage Delta Check (${{ needs.coverage-delta.result }})"
+              FAILED=true
+            fi
           fi
 
           if [ "$FAILED" = "true" ]; then
