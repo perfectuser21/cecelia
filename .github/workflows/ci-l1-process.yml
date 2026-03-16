@@ -171,8 +171,8 @@ jobs:
           fi
 
           if [ -z "$DOD_FILE" ]; then
-            echo "No DoD file found — skipping cleanup check"
-            exit 0
+            echo "❌ DoD 文件缺失，拒绝合并 — 请创建 .task-${GITHUB_HEAD_REF}.md 或 .dod.md"
+            exit 1
           fi
 
           echo "DoD file: $DOD_FILE"
@@ -347,11 +347,12 @@ jobs:
 
           CONFIG="packages/engine/config/required-dev-paths.yml"
           if [ ! -f "$CONFIG" ]; then
-            echo "No required-dev-paths.yml found — check not required"
+            echo "❌ required-dev-paths 缺失，拒绝合并 — 请创建 $CONFIG"
+            echo "   该文件定义高风险路径，必须存在以保护关键代码路径。"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ✅ Required Dev Paths Check PASSED (no config)"
+            echo "  ❌ Required Dev Paths Check FAILED (config missing)"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            exit 0
+            exit 1
           fi
 
           # 读取高风险路径列表（去掉注释和空行）
@@ -801,13 +802,16 @@ jobs:
           fi
 
           # Engine-specific checks (only required when engine changes)
+          # Fix 6: skipped 状态视为失败 — engine 有变更时 skipped/failure 均不可接受
           if [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
-            if [ "${{ needs.engine-l1.result }}" != "success" ]; then
-              echo "FAIL: Engine L1 Process (${{ needs.engine-l1.result }})"
+            ENGINE_L1_RESULT="${{ needs.engine-l1.result }}"
+            DEV_HEALTH_RESULT="${{ needs.dev-health-check.result }}"
+            if [ "$ENGINE_L1_RESULT" != "success" ]; then
+              echo "FAIL: Engine L1 Process ($ENGINE_L1_RESULT) — skipped/failure 均视为失败"
               FAILED=true
             fi
-            if [ "${{ needs.dev-health-check.result }}" != "success" ]; then
-              echo "FAIL: Dev Health Gate (${{ needs.dev-health-check.result }})"
+            if [ "$DEV_HEALTH_RESULT" != "success" ]; then
+              echo "FAIL: Dev Health Gate ($DEV_HEALTH_RESULT) — skipped/failure 均视为失败"
               FAILED=true
             fi
           fi

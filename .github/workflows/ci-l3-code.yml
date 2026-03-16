@@ -30,11 +30,16 @@ jobs:
       commit_type: ${{ steps.detect.outputs.commit_type }}
       should_run_l3: ${{ steps.detect.outputs.should_run_l3 }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Detect commit type from PR title
         id: detect
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           # push 到 main（merge）时总是运行 L3
           if [ "$EVENT_NAME" = "push" ]; then
@@ -74,8 +79,18 @@ jobs:
           # fix:/refactor:/chore:/test:/perf: 必须跑 L3 — 代码改动不可跳过测试
           case "$COMMIT_TYPE" in
             docs|style)
-              echo "should_run_l3=false" >> $GITHUB_OUTPUT
-              echo "→ L3 SKIP (commit type: $COMMIT_TYPE)"
+              # Fix 1: docs/style 标题不再无条件跳过 L3 — 检查是否有实际代码文件变更
+              CODE_CHANGES=0
+              if [ -n "$BASE_REF" ]; then
+                CODE_CHANGES=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null | grep -vE '\.(md|txt)$|^docs/|^\.github/' | wc -l | tr -d ' ')
+              fi
+              if [ "$CODE_CHANGES" -gt "0" ]; then
+                echo "should_run_l3=true" >> $GITHUB_OUTPUT
+                echo "→ L3 RUN (docs/style title but $CODE_CHANGES code files changed)"
+              else
+                echo "should_run_l3=false" >> $GITHUB_OUTPUT
+                echo "→ L3 SKIP (commit type: $COMMIT_TYPE, 0 code files changed)"
+              fi
               ;;
             *)
               echo "should_run_l3=true" >> $GITHUB_OUTPUT
@@ -206,6 +221,15 @@ jobs:
           if [ -f "ci/brain-test-baseline.txt" ]; then
             BASELINE=$(cat ci/brain-test-baseline.txt | tr -d '[:space:]')
             echo "📋 Brain unit baseline: $BASELINE pre-existing failures allowed"
+          fi
+
+          # Fix 4: 基线上限保护 — 防止技术债无限累积
+          MAX_BASELINE=5
+          if [ "$BASELINE" -gt "$MAX_BASELINE" ]; then
+            echo "❌ Brain test baseline too high: $BASELINE > MAX_BASELINE=$MAX_BASELINE"
+            echo "   Brain 测试债务必须主动偿还，不允许无限积累。"
+            echo "   请先修复测试，将 ci/brain-test-baseline.txt 降到 $MAX_BASELINE 以内。"
+            exit 1
           fi
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -696,14 +720,21 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
 
-          # [CONFIG] 标签豁免：CI/引擎配置变更不需要应用测试文件
+          # Fix 2: [CONFIG] 标签豁免加路径验证 — 必须真的改了 CI/引擎文件才允许豁免
           if echo "$PR_TITLE" | grep -q '\[CONFIG\]'; then
-            echo "ℹ️  检测到 [CONFIG] 标签 — 跳过测试覆盖检查"
-            echo "   CI/引擎配置变更无需应用测试文件"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ✅ Test Coverage Required SKIPPED (CONFIG)"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            exit 0
+            CONFIG_CHANGES=0
+            if [ -n "$BASE_REF" ]; then
+              CONFIG_CHANGES=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null | grep -cE '^\.github/workflows/|^packages/engine/|^scripts/devgate/' || true)
+            fi
+            if [ "$CONFIG_CHANGES" -gt "0" ]; then
+              echo "ℹ️  检测到 [CONFIG] 标签且确认有 CI/引擎文件变更 ($CONFIG_CHANGES 个文件) — 跳过测试覆盖检查"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ✅ Test Coverage Required SKIPPED (CONFIG, verified)"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              exit 0
+            else
+              echo "⚠️  检测到 [CONFIG] 标签但未找到 CI/引擎文件变更 — 取消豁免，继续检查"
+            fi
           fi
 
           # push/workflow_dispatch 场景：PR_TITLE 为空，从 commit message 判断
@@ -712,13 +743,18 @@ jobs:
             COMMIT_MSG=$(git log HEAD -1 --format="%s" 2>/dev/null || echo "")
             echo "Commit message: $COMMIT_MSG"
 
-            # [CONFIG] commit 豁免
+            # Fix 2: [CONFIG] commit 豁免加路径验证 — 必须真的改了 CI/引擎文件
             if echo "$COMMIT_MSG" | grep -q '\[CONFIG\]'; then
-              echo "ℹ️  检测到提交消息中的 [CONFIG] 标签 — 跳过测试覆盖检查"
-              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-              echo "  ✅ Test Coverage Required SKIPPED (CONFIG)"
-              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-              exit 0
+              CONFIG_CHANGES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -cE '^\.github/workflows/|^packages/engine/|^scripts/devgate/' || true)
+              if [ "$CONFIG_CHANGES" -gt "0" ]; then
+                echo "ℹ️  检测到提交消息中的 [CONFIG] 标签且有 CI/引擎文件变更 ($CONFIG_CHANGES 个) — 跳过测试覆盖检查"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  ✅ Test Coverage Required SKIPPED (CONFIG, verified)"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                exit 0
+              else
+                echo "⚠️  检测到 [CONFIG] 标签但未找到 CI/引擎文件变更 — 取消豁免，继续检查"
+              fi
             fi
 
             # 仅对 feat: 类型 commit 强制检查（忽略 [TAG] 前缀后提取 type）
