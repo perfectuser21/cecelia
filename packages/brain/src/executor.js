@@ -2307,13 +2307,14 @@ async function probeTaskLiveness() {
  */
 async function syncOrphanTasksOnStartup() {
   const result = await pool.query(`
-    SELECT id, title, payload, started_at
+    SELECT id, title, payload, started_at, error_message
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   let orphansFound = 0;
   let orphansFixed = 0;
+  let requeued = 0;
   let rebuilt = 0;
 
   for (const task of result.rows) {
@@ -2342,46 +2343,71 @@ async function syncOrphanTasksOnStartup() {
       // No matching process — this is an orphan
       orphansFound++;
 
-      // Enhanced diagnostics for orphaned tasks
-      const { reason, diagnostic_info } = await checkExitReason(null, task.id);
+      const QUARANTINE_AFTER_KILLS = 2; // Must match requeueTask's constant
+      const watchdogRetryCount = task.payload?.watchdog_retry_count || 0;
+      const hasExistingError = !!task.error_message;
+      const canRetry = watchdogRetryCount < QUARANTINE_AFTER_KILLS && !hasExistingError;
 
-      const errorDetails = {
-        type: 'orphan_detected',
-        reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
-        message: 'Task was in_progress but no matching process found on Brain startup',
-        detected_at: new Date().toISOString(),
-        run_id: runId || null,
-        diagnostic_info: diagnostic_info,
-      };
+      if (canRetry) {
+        // Brain restart interrupted the task — requeue for another attempt
+        const newRetryCount = watchdogRetryCount + 1;
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'queued',
+            error_message = $2,
+            payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb,
+            updated_at = NOW()
+          WHERE id = $1`,
+          [
+            task.id,
+            'requeued after brain restart',
+            JSON.stringify({ watchdog_retry_count: newRetryCount }),
+          ]
+        );
+        requeued++;
+        console.log(`[startup-sync] Orphan requeued: task=${task.id} title="${task.title}" watchdog_retry_count=${newRetryCount}`);
+      } else {
+        // Exhausted retries or pre-existing error — mark as failed
+        const { reason, diagnostic_info } = await checkExitReason(null, task.id);
 
-      await pool.query(
-        `UPDATE tasks SET
-          status = 'failed',
-          error_message = $3,
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1`,
-        [
-          task.id,
-          JSON.stringify({ error_details: errorDetails }),
-          `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
-        ]
-      );
+        const errorDetails = {
+          type: 'orphan_detected',
+          reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
+          message: 'Task was in_progress but no matching process found on Brain startup',
+          detected_at: new Date().toISOString(),
+          run_id: runId || null,
+          diagnostic_info: diagnostic_info,
+        };
 
-      // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
-      import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
-        processExecutionAutoLearning(task.id, 'failed', errorDetails, {
-          trigger_source: 'orphan_detection',
-          metadata: { run_id: runId }
-        })
-      ).catch(() => {/* non-fatal */});
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'failed',
+            error_message = $3,
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          WHERE id = $1`,
+          [
+            task.id,
+            JSON.stringify({ error_details: errorDetails }),
+            `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
+          ]
+        );
 
-      orphansFixed++;
-      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}" reason=${reason}`);
+        // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
+        import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
+          processExecutionAutoLearning(task.id, 'failed', errorDetails, {
+            trigger_source: 'orphan_detection',
+            metadata: { run_id: runId }
+          })
+        ).catch(() => {/* non-fatal */});
+
+        orphansFixed++;
+        console.log(`[startup-sync] Orphan failed: task=${task.id} title="${task.title}" reason=${reason} watchdog_retry_count=${watchdogRetryCount}`);
+      }
     }
   }
 
-  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} rebuilt=${rebuilt}`);
-  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, rebuilt };
+  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} requeued=${requeued} rebuilt=${rebuilt}`);
+  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, requeued, rebuilt };
 }
 
 /**

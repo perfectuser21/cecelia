@@ -15,7 +15,7 @@ on:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -278,7 +278,7 @@ jobs:
     name: L4 Runtime Gate Passed
     needs: [changes, brain-integration]
     if: always()
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: L4 Runtime Gate
