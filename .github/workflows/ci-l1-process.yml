@@ -106,6 +106,9 @@ jobs:
           cd packages/engine
           npm ci --ignore-scripts
 
+      - name: Ensure sqlite3 available (for RCI contract tests)
+        run: command -v sqlite3 || sudo apt-get install -y sqlite3
+
       - name: Run DoD Verification Check
         env:
           GITHUB_HEAD_REF: ${{ github.head_ref }}
