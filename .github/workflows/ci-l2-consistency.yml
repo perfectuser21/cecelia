@@ -213,6 +213,17 @@ jobs:
             "${YQ_INSTALL_DIR}/yq" --version
           fi
 
+      - name: Validate feature.yaml self-registration
+        working-directory: packages/engine
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  feature-yaml lint"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Scanning skills/*/feature.yaml files for format compliance"
+          echo ""
+          node scripts/scan-feature-yamls.mjs
+
       - name: Generate path views from registry
         working-directory: packages/engine
         run: |

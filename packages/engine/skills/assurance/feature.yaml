@@ -1,0 +1,16 @@
+id: assurance-skill
+name: 质量保证 (Assurance Skill)
+version: 1.0.0
+type: skill
+trigger: /assurance
+priority: P1
+status: committed
+updated: 2026-03-17
+capabilities:
+  - qa-infrastructure
+  - ci-setup
+  - branch-protection
+  - test-standards
+entrypoint: skills/assurance/SKILL.md
+contracts:
+  - ASSURANCE-001

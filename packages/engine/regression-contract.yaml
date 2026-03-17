@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 12.94.2
+version: 12.95.0
 updated: 2026-03-16
 
 # ============================================================================
@@ -3083,6 +3083,24 @@ skills:
       path: "tests/validation-loop/test-anti-cheat.sh"
     test: "tests/validation-loop/test-anti-cheat.sh"
 
+
+  - id: PCPV-001
+    feature: pre-commit-path-views
+    name: "pre-commit hook 自动运行 generate-path-views.sh"
+    scope: hook
+    priority: P2
+    trigger: [pre-commit]
+    method: auto
+    tags: [pre-commit, path-views, registry, feature-yaml]
+    owner: engine
+    steps:
+      given: "feature-registry.yml 被 staged"
+      when: "pre-commit hook 触发"
+      then: "自动运行 generate-path-views.sh 并 re-stage docs/paths/"
+    evidence:
+      type: command
+      run: "bash hooks/pre-commit-path-views.sh"
+    test: "manual:node -e \"const c=require('fs').readFileSync('packages/engine/hooks/pre-commit-path-views.sh','utf8');if(!c.includes('generate-path-views'))throw new Error('not found');console.log('ok')\""
 
   - id: S3-001
     feature: S3
