@@ -212,6 +212,26 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(['oom_killed', 'oom_likely']).toContain(payloadPatch.error_details.reason);
   });
 
+  // 场景0：initTickLoop 在启动时触发 syncOrphanTasksOnStartup（源码验证）
+  it('场景0：tick.js initTickLoop 源码包含 syncOrphanTasksOnStartup 调用', async () => {
+    // 使用 vi.importActual 绕开 vi.mock('fs', ...) 拿到真实 readFileSync
+    const { readFileSync } = await vi.importActual('node:fs');
+    const src = readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
+
+    // 验证 initTickLoop 函数内有 startup-sync 日志（确认调用链存在）
+    expect(src).toContain('[initTickLoop] startup-sync: orphans_found=');
+    expect(src).toContain('requeued=');
+    expect(src).toContain('rebuilt=');
+    expect(src).toContain('failed=');
+
+    // 验证 syncOrphanTasksOnStartup 在 initTickLoop 块内（日志在 ensureEventsTable 之后、enableTick/startTickLoop 之前）
+    const initTickLoopIdx = src.indexOf('async function initTickLoop()');
+    const startTickLoopIdx = src.indexOf('startTickLoop()', initTickLoopIdx);
+    const syncCallIdx = src.indexOf('syncOrphanTasksOnStartup()', initTickLoopIdx);
+    expect(syncCallIdx).toBeGreaterThan(initTickLoopIdx);
+    expect(syncCallIdx).toBeLessThan(startTickLoopIdx);
+  });
+
   // 场景3：并发重启时无重复 requeue（SELECT WHERE status=in_progress 幂等保护）
   it('场景3：第二次调用 SELECT 返回空（任务已 queued）→ 不重复 requeue', async () => {
     const { syncOrphanTasksOnStartup } = await import('../executor.js');

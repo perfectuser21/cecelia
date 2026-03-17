@@ -417,6 +417,14 @@ async function initTickLoop() {
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
 
+    // Sync orphan tasks on startup before starting tick loop
+    try {
+      const syncResult = await syncOrphanTasksOnStartup();
+      console.log(`[initTickLoop] startup-sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${syncResult.orphans_fixed}`);
+    } catch (syncErr) {
+      console.error('[initTickLoop] startup-sync failed (non-fatal):', syncErr.message);
+    }
+
     // Auto-enable tick from env var if set
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
     if (envEnabled === 'true') {
