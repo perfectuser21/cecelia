@@ -266,9 +266,20 @@ server.listen(PORT, async () => {
   await initNarrativeTimer(pool);
   console.log('[Server] Narrative timer initialized from DB');
 
-  // Startup recovery: re-queue orphaned in_progress tasks from previous Brain instance
+  // Startup recovery: environment cleanup (worktree / lock slot / dev-mode files)
   const { runStartupRecovery } = await import('./src/startup-recovery.js');
-  await runStartupRecovery(pool);
+  await runStartupRecovery();
+
+  // Sync orphan in_progress tasks with actual processes (requeue vs fail with process check)
+  const { syncOrphanTasksOnStartup } = await import('./src/executor.js');
+  try {
+    const syncResult = await syncOrphanTasksOnStartup();
+    if (syncResult.orphans_fixed > 0 || syncResult.rebuilt > 0) {
+      console.log(`[Server] Startup sync: ${syncResult.orphans_fixed} orphans fixed, ${syncResult.rebuilt} processes rebuilt`);
+    }
+  } catch (syncErr) {
+    console.error('[Server] Startup sync failed:', syncErr.message);
+  }
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();

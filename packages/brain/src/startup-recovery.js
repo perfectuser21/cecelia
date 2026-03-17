@@ -1,15 +1,10 @@
 /**
- * Startup Recovery - Brain 重启后的孤儿任务恢复 + 环境清理
+ * Startup Recovery - Brain 重启后的环境清理
  *
- * 问题：Brain 重启时，status=in_progress 的任务因进程被终止无法回调，
- * 导致任务永久卡死（直到 monitor-loop 5 分钟后才发现）。
+ * DB 孤儿任务恢复由 executor.js::syncOrphanTasksOnStartup 统一负责，
+ * 该函数执行进程检测，区分可重试 vs 真实失败，避免简单 requeue 覆盖智能逻辑。
  *
- * 解决：Brain 启动时立即扫描并重置无心跳的孤儿任务为 queued 状态，
- * 让首次 tick 就能重新派发，而不是等待 5+ 分钟。
- *
- * 安全性：只重置 updated_at 超过 5 分钟的任务，防止误杀刚派发的任务。
- *
- * v2：新增启动时环境清理
+ * 本模块职责：
  *   - cleanupStaleWorktrees: 清理孤立 worktree 目录和元数据
  *   - cleanupStaleLockSlots: 释放无主 lock slot
  *   - cleanupStaleDevModeFiles: 删除死分支的 .dev-mode* 文件
@@ -19,7 +14,6 @@ import { execSync } from 'child_process';
 import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 
-const ORPHAN_THRESHOLD_MINUTES = 5;
 const REPO_ROOT = process.env.REPO_ROOT || '/Users/administrator/perfect21/cecelia';
 const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
@@ -203,60 +197,24 @@ export async function cleanupStaleDevModeFiles({ repoRoot = REPO_ROOT } = {}) {
 }
 
 /**
- * 扫描并重置孤儿 in_progress 任务为 queued，并执行环境清理
- * @param {import('pg').Pool} pool - pg Pool 实例
- * @returns {Promise<{ requeued: Array<{id:string, title:string}>, worktrees_pruned: number, slots_freed: number, devmode_cleaned: number, error?: string }>}
+ * 执行环境清理（worktree / lock slot / dev-mode 文件）
+ * DB 孤儿任务恢复由 executor.js::syncOrphanTasksOnStartup 负责（在 initTickLoop 前显式调用）
+ * @returns {Promise<{ worktrees_pruned: number, slots_freed: number, devmode_cleaned: number }>}
  */
-export async function runStartupRecovery(pool) {
-  // Environment cleanup (non-blocking, errors don't stop DB recovery)
+export async function runStartupRecovery() {
+  // Environment cleanup (non-blocking, errors logged but don't stop startup)
   const [wtStats, slotStats, devStats] = await Promise.all([
     cleanupStaleWorktrees().catch(e => ({ pruned: 0, removed: 0, errors: [e.message] })),
     cleanupStaleLockSlots().catch(e => ({ slots_freed: 0, errors: [e.message] })),
     cleanupStaleDevModeFiles().catch(e => ({ devmode_cleaned: 0, errors: [e.message] })),
   ]);
 
-  const summary = {
+  const result = {
     worktrees_pruned: wtStats.removed,
     slots_freed: slotStats.slots_freed,
     devmode_cleaned: devStats.devmode_cleaned,
   };
 
-  console.log('[StartupRecovery] Cleanup summary:', JSON.stringify(summary));
-
-  // DB orphan task recovery
-  try {
-    // 找出孤儿任务：in_progress 且 updated_at 超过阈值（进程已死）
-    const resetResult = await pool.query(`
-      UPDATE tasks
-      SET status = 'queued', updated_at = NOW()
-      WHERE status = 'in_progress'
-        AND updated_at < NOW() - INTERVAL '${ORPHAN_THRESHOLD_MINUTES} minutes'
-      RETURNING id, title
-    `);
-
-    const requeued = resetResult.rows;
-
-    if (requeued.length === 0) {
-      console.log('[StartupRecovery] No orphaned tasks found');
-      return { requeued: [], ...summary };
-    }
-
-    const ids = requeued.map(t => t.id);
-
-    // 同步取消对应的僵尸 run_events 记录，防止 monitor-loop 重复检测
-    await pool.query(`
-      UPDATE run_events
-      SET status = 'cancelled', updated_at = NOW()
-      WHERE task_id = ANY($1::uuid[])
-        AND status = 'running'
-    `, [ids]);
-
-    console.log(`[StartupRecovery] Re-queued ${requeued.length} orphaned tasks:`, ids);
-    return { requeued, ...summary };
-
-  } catch (err) {
-    // 恢复失败不能阻塞 Brain 启动
-    console.error('[StartupRecovery] ERROR: DB query failed, skipping recovery:', err.message);
-    return { requeued: [], error: err.message, ...summary };
-  }
+  console.log('[StartupRecovery] Cleanup summary:', JSON.stringify(result));
+  return result;
 }

@@ -295,33 +295,24 @@ describe('runStartupRecovery（串联清理统计）', () => {
     readdirSync.mockReturnValue([]);
   });
 
-  it('返回值包含 worktrees_pruned, slots_freed, devmode_cleaned 字段', async () => {
-    const mockQuery = vi.fn()
-      .mockResolvedValueOnce({ rows: [] }); // no orphan tasks
-    const mockPool = { query: mockQuery };
+  it('返回值包含 worktrees_pruned, slots_freed, devmode_cleaned 字段，不含 requeued', async () => {
+    const result = await runStartupRecovery();
 
-    const result = await runStartupRecovery(mockPool);
-
-    expect(result).toHaveProperty('requeued');
+    expect(result).not.toHaveProperty('requeued');
     expect(result).toHaveProperty('worktrees_pruned');
     expect(result).toHaveProperty('slots_freed');
     expect(result).toHaveProperty('devmode_cleaned');
   });
 
-  it('清理失败不阻塞 DB 孤儿任务恢复', async () => {
+  it('清理失败不阻塞启动（环境清理异常被捕获）', async () => {
     // Force all cleanup functions to throw by making execSync throw
     execSync.mockImplementation(() => { throw new Error('git unavailable'); });
     existsSync.mockReturnValue(false);
 
-    const orphan = { id: 'task-uuid-1', title: '孤儿任务' };
-    const mockQuery = vi.fn()
-      .mockResolvedValueOnce({ rows: [orphan] })
-      .mockResolvedValueOnce({ rows: [] });
-    const mockPool = { query: mockQuery };
+    const result = await runStartupRecovery();
 
-    const result = await runStartupRecovery(mockPool);
-
-    expect(result.requeued).toHaveLength(1);
-    expect(result.requeued[0].id).toBe('task-uuid-1');
+    expect(result).toHaveProperty('worktrees_pruned');
+    expect(result).toHaveProperty('slots_freed');
+    expect(result).toHaveProperty('devmode_cleaned');
   });
 });

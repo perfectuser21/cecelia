@@ -413,16 +413,6 @@ async function initTickLoop() {
       console.error('[tick-loop] Alertness init failed:', alertErr.message);
     }
 
-    // Sync DB state with actual processes (fix orphan in_progress tasks)
-    try {
-      const syncResult = await syncOrphanTasksOnStartup();
-      if (syncResult.orphans_fixed > 0 || syncResult.rebuilt > 0) {
-        console.log(`[tick-loop] Startup sync: ${syncResult.orphans_fixed} orphans fixed, ${syncResult.rebuilt} processes rebuilt`);
-      }
-    } catch (syncErr) {
-      console.error('[tick-loop] Startup sync failed:', syncErr.message);
-    }
-
     // Ensure EventBus table exists
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
