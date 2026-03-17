@@ -421,14 +421,17 @@ main() {
     rm -f "$wt_stderr_log" 2>/dev/null || true
   else
     # 安全中止：绝不在主仓库运行，防止污染有头会话
+    # 先读取 stderr 内容再删除文件（修复 use-after-delete bug：原代码第427行删除后第431行再读，始终得到 unknown error）
+    local wt_stderr_content
+    wt_stderr_content=$(cat "$wt_stderr_log" 2>/dev/null | head -10 || echo 'unknown error')
     echo "[cecelia-run] ❌ Worktree 创建失败，中止任务（安全保护：拒绝在主仓库运行）" >&2
     echo "[cecelia-run] Worktree 错误详情:" >&2
-    cat "$wt_stderr_log" >&2 2>/dev/null || true
+    echo "$wt_stderr_content" >&2
     rm -f "$wt_stderr_log" 2>/dev/null || true
     local abort_end abort_duration
     abort_end=$(python3 -c 'import time; print(int(time.time()*1000))')
     abort_duration=$((abort_end - start_time))
-    echo "worktree_creation_failed: $(cat "$wt_stderr_log" 2>/dev/null | head -3 || echo 'unknown error')" > "$err_log"
+    echo "worktree_creation_failed: ${wt_stderr_content:-unknown error}" > "$err_log"
     send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup" "1"
     rm -f "$out_json" "$err_log" 2>/dev/null || true
     exit 1
