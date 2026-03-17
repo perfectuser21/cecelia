@@ -15,6 +15,8 @@ rcis:
     test_file: tests/test-db-init.sh
     feature_type: core
     must_never_break: true
+    ci_runnable: false
+    ci_skip_reason: "HK VPS self-hosted runner 未预装 sqlite3 且无 passwordless sudo，需在有 sqlite3 的环境手动验证"
 
   - id: C-GATEWAY-HTTP-001
     name: Gateway HTTP 服务器能接收和验证任务
