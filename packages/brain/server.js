@@ -257,6 +257,10 @@ async function startCeceliaBridge() {
 server.listen(PORT, async () => {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
 
+  // Print concurrency config for ops visibility
+  const { MAX_SEATS: _maxSeats, INTERACTIVE_RESERVE: _interactiveReserve } = await import('./src/executor.js');
+  console.log(`[Server] Capacity config: MAX_SEATS=${_maxSeats}, INTERACTIVE_RESERVE=${_interactiveReserve}`);
+
   // Initialize WebSocket server
   initWebSocketServer(server);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
@@ -274,9 +278,7 @@ server.listen(PORT, async () => {
   const { syncOrphanTasksOnStartup } = await import('./src/executor.js');
   try {
     const syncResult = await syncOrphanTasksOnStartup();
-    if (syncResult.orphans_fixed > 0 || syncResult.rebuilt > 0) {
-      console.log(`[Server] Startup sync: ${syncResult.orphans_fixed} orphans fixed, ${syncResult.rebuilt} processes rebuilt`);
-    }
+    console.log(`[Server] Startup orphan sync: found=${syncResult.orphans_found}, requeued=${syncResult.requeued}, rebuilt=${syncResult.rebuilt}, failed=${syncResult.orphans_fixed}`);
   } catch (syncErr) {
     console.error('[Server] Startup sync failed:', syncErr.message);
   }

@@ -4979,6 +4979,25 @@ router.get('/slots', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/capacity
+ * Return current concurrency configuration including max_seats
+ */
+router.get('/capacity', async (req, res) => {
+  try {
+    const { getBudgetCap, MAX_SEATS, INTERACTIVE_RESERVE } = await import('./executor.js');
+    const cap = getBudgetCap();
+    res.json({
+      max_seats: cap.effective,
+      interactive_reserve: INTERACTIVE_RESERVE,
+      physical: cap.physical,
+      budget: cap.budget,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * PUT /api/brain/budget-cap
  * Set or clear the budget cap (dual-layer capacity model)
  */
