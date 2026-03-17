@@ -8,21 +8,20 @@
  * 用法：node packages/brain/scripts/distill-learnings.js [--dry-run]
  *
  * 幂等保证：ON CONFLICT (type, sub_area) DO NOTHING
- * 因为每个文件只生成一条 learning_rule（合并所有 checklist 项），
- * (type='learning_rule', sub_area=filename) 唯一。
+ * 使用 psql CLI 写入，无需 npm install pg。
  */
 
-import { readFileSync, readdirSync } from 'fs';
-import { join, basename, dirname } from 'path';
+import { readFileSync, readdirSync, writeFileSync, unlinkSync } from 'fs';
+import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import pg from 'pg';
+import { execSync } from 'child_process';
 
-const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const LEARNINGS_DIR = join(REPO_ROOT, 'docs', 'learnings');
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const PGDATABASE = process.env.PGDATABASE || 'cecelia';
 
 /**
  * 从 markdown 内容中提取 "### 下次预防" 章节的 checklist 条目
@@ -30,7 +29,6 @@ const DRY_RUN = process.argv.includes('--dry-run');
  * @returns {string[]} checklist 条目文本列表（去除 "- [ ] " 前缀）
  */
 function extractPreventionItems(content) {
-  // 找到 ### 下次预防 章节
   const sectionMatch = content.match(/###\s*下次预防\s*\n([\s\S]*?)(?=\n###|\n##|\n#|$)/);
   if (!sectionMatch) return [];
 
@@ -38,7 +36,6 @@ function extractPreventionItems(content) {
   const items = [];
 
   for (const line of sectionContent.split('\n')) {
-    // 匹配 "- [ ] ..." 或 "- [x] ..." 格式
     const itemMatch = line.match(/^-\s*\[[ xX]\]\s*(.+)/);
     if (itemMatch) {
       const text = itemMatch[1].trim();
@@ -50,39 +47,56 @@ function extractPreventionItems(content) {
 }
 
 /**
- * 从文件名推断 tags
- * @param {string} filename
- * @returns {string[]}
+ * 从文件名和条目内容推断 tags
  */
 function inferTags(filename, items) {
   const tags = new Set();
+  const keywords = {
+    ci: ['ci', 'github action'],
+    migration: ['migration', '数据库'],
+    test: ['test', '测试'],
+    hook: ['hook', '钩子'],
+    brain: ['brain'],
+    engine: ['engine'],
+    dod: ['dod', '验收'],
+    learning: ['learning'],
+    version: ['version'],
+    fix: ['fix'],
+    git: ['commit', 'push'],
+  };
 
-  // 从文件名推断
-  if (filename.includes('ci')) tags.add('ci');
-  if (filename.includes('migration')) tags.add('migration');
-  if (filename.includes('test')) tags.add('test');
-  if (filename.includes('hook')) tags.add('hook');
-  if (filename.includes('brain')) tags.add('brain');
-  if (filename.includes('engine')) tags.add('engine');
-  if (filename.includes('dod')) tags.add('dod');
-  if (filename.includes('learning')) tags.add('learning');
-  if (filename.includes('version')) tags.add('version');
-  if (filename.includes('fix')) tags.add('fix');
-  if (filename.includes('deploy')) tags.add('deploy');
-
-  // 从 items 内容推断
-  const itemsText = items.join(' ').toLowerCase();
-  if (itemsText.includes('ci') || itemsText.includes('github action')) tags.add('ci');
-  if (itemsText.includes('migration') || itemsText.includes('数据库')) tags.add('migration');
-  if (itemsText.includes('test') || itemsText.includes('测试')) tags.add('test');
-  if (itemsText.includes('hook') || itemsText.includes('钩子')) tags.add('hook');
-  if (itemsText.includes('commit') || itemsText.includes('push')) tags.add('git');
-  if (itemsText.includes('dod') || itemsText.includes('验收')) tags.add('dod');
+  const combined = (filename + ' ' + items.join(' ')).toLowerCase();
+  for (const [tag, words] of Object.entries(keywords)) {
+    if (words.some(w => combined.includes(w))) tags.add(tag);
+  }
 
   return Array.from(tags);
 }
 
-async function main() {
+/**
+ * 转义 SQL 字符串（单引号加倍）
+ */
+function sqlEscape(str) {
+  return str.replace(/'/g, "''");
+}
+
+/**
+ * 用 psql 执行 SQL 文件
+ */
+function psqlRun(sql) {
+  const tmpFile = join(REPO_ROOT, '.distill-learnings-tmp.sql');
+  try {
+    writeFileSync(tmpFile, sql, 'utf8');
+    const result = execSync(`psql "${PGDATABASE}" -f "${tmpFile}" -t -A 2>&1`, {
+      encoding: 'utf8',
+    });
+    return result.trim();
+  } finally {
+    try { unlinkSync(tmpFile); } catch (_) { /* ignore */ }
+  }
+}
+
+function main() {
   // 读取 docs/learnings/ 目录
   let files;
   try {
@@ -109,78 +123,66 @@ async function main() {
     const items = extractPreventionItems(content);
     if (items.length === 0) continue;
 
-    // 每个文件生成一条 learning_rule，name 用第一条条目，content 存全部
     const tags = inferTags(file.toLowerCase(), items);
     rules.push({
       source: file,
-      name: items[0].slice(0, 200), // name 最多 200 字符
-      sub_area: file,               // 文件名作为 sub_area（唯一标识）
-      content: JSON.stringify({
-        source: `docs/learnings/${file}`,
-        items,
-        tags,
-      }),
-      tags,
+      name: items[0].slice(0, 200),
+      sub_area: file,
+      content: JSON.stringify({ source: `docs/learnings/${file}`, items, tags }),
     });
   }
 
   console.log(`✅ 提炼出 ${rules.length} 条 learning_rule`);
 
   if (DRY_RUN) {
-    console.log('\n[DRY RUN] 将写入以下规则（不实际插入）：');
-    for (const r of rules.slice(0, 5)) {
-      console.log(`  - ${r.source}: ${r.name.slice(0, 60)}...`);
+    console.log(`[DRY RUN] 将写入 ${rules.length} 条 learning_rule（不实际插入）`);
+    rules.slice(0, 3).forEach(r => console.log(`  - ${r.source}: ${r.name.slice(0, 60)}...`));
+    if (rules.length > 3) console.log(`  ... 还有 ${rules.length - 3} 条`);
+    if (rules.length < 25) {
+      console.error(`❌ 规则数不足 25 条（实际 ${rules.length}），请检查 docs/learnings/ 文件格式`);
+      process.exit(1);
     }
-    if (rules.length > 5) console.log(`  ... 还有 ${rules.length - 5} 条`);
+    console.log(`✅ 验证通过：${rules.length} 条 ≥ 25`);
     return;
   }
 
-  // 写入数据库
-  const pool = new Pool({
-    database: process.env.PGDATABASE || 'cecelia',
-    host: process.env.PGHOST || 'localhost',
-    port: parseInt(process.env.PGPORT || '5432', 10),
-    user: process.env.PGUSER || undefined,
-  });
+  // 构建批量 INSERT SQL（幂等：ON CONFLICT DO NOTHING）
+  const valueLines = rules.map(r =>
+    `  ('${sqlEscape(r.name)}', 'learning_rule', 'Active', '${sqlEscape(r.sub_area)}', '${sqlEscape(r.content)}')`
+  );
 
-  let inserted = 0;
-  let skipped = 0;
+  const sql = `
+INSERT INTO knowledge (name, type, status, sub_area, content)
+VALUES
+${valueLines.join(',\n')}
+ON CONFLICT (type, sub_area)
+WHERE type IS NOT NULL AND sub_area IS NOT NULL
+DO NOTHING;
 
+SELECT COUNT(*) FROM knowledge WHERE type = 'learning_rule';
+`;
+
+  let output;
   try {
-    for (const rule of rules) {
-      const result = await pool.query(
-        `INSERT INTO knowledge (name, type, status, sub_area, content)
-         VALUES ($1, 'learning_rule', 'Active', $2, $3)
-         ON CONFLICT (type, sub_area)
-         WHERE type IS NOT NULL AND sub_area IS NOT NULL
-         DO NOTHING`,
-        [rule.name, rule.sub_area, rule.content]
-      );
-
-      if (result.rowCount > 0) {
-        inserted++;
-      } else {
-        skipped++;
-      }
-    }
-  } finally {
-    await pool.end();
+    output = psqlRun(sql);
+  } catch (err) {
+    console.error(`❌ psql 执行失败: ${err.message}`);
+    process.exit(1);
   }
 
-  console.log(`\n📊 写入结果：`);
-  console.log(`   新增：${inserted} 条`);
-  console.log(`   已存在（跳过）：${skipped} 条`);
-  console.log(`   总计 learning_rule：${inserted + skipped} 条`);
+  // 解析最后一行（COUNT）
+  const lines = output.split('\n').filter(l => l.trim());
+  const total = parseInt(lines[lines.length - 1], 10);
 
-  if (inserted + skipped < 25) {
-    console.error(`❌ 规则数量不足 25 条（实际：${inserted + skipped}），请检查 docs/learnings/ 文件格式`);
+  console.log(`\n📊 写入结果：`);
+  console.log(`   knowledge 表 learning_rule 总计：${total} 条`);
+
+  if (total < 25) {
+    console.error(`❌ 规则数量不足 25 条（实际：${total}），请检查 docs/learnings/ 文件格式`);
     process.exit(1);
   }
 
   console.log(`✅ distill-learnings 完成`);
 }
 
-main().catch(err => {
-  console.error('❌ 执行失败:', err.message);
-  process.exit(1);
-});
+main();
