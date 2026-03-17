@@ -126,9 +126,8 @@ jobs:
           bash packages/engine/scripts/devgate/dod-execution-gate.sh
 
       - name: Run RCI Execution Gate (P0 contracts)
-        # NOTE: continue-on-error=true 因为 cecelia-quality 测试脚本可能与当前代码版本存在轻微不同步
-        # 失败时仅作为警告输出，不阻塞合并。当 quality 包测试脚本更新后再改为硬失败。
-        continue-on-error: true
+        # Fix: 移除 continue-on-error — 脚本已内置 DEFERRED 机制处理"无法在 CI 中运行"的情况
+        # 只有真实的 P0 合规测试失败才会 exit 1，不存在误报阻断的问题
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  RCI Execution Gate: 执行 P0 regression-contract test_command"
@@ -628,19 +627,15 @@ jobs:
           echo "  Known-Failures Protection passed"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      # DevGate 4-check: script existence + DoD mapping + P0/P1 RCI + RCI coverage
-      - name: DevGate checks
-        if: |
-          !startsWith(github.event.pull_request.title, 'chore:') &&
-          !startsWith(github.event.pull_request.title, 'docs:') &&
-          !startsWith(github.event.pull_request.title, 'test:') &&
-          !startsWith(github.event.pull_request.title, 'release:')
+      # DevGate 核心检查（不豁免任何 commit type）
+      # Script existence check — 不豁免：DevGate 脚本必须始终存在，不论 commit type
+      # DoD mapping check — 不豁免：chore/docs/test/release 改 engine 也必须有 DoD
+      - name: DevGate core checks (script existence + DoD mapping)
         working-directory: packages/engine
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  DevGate checks"
+          echo "  DevGate core checks"
+          echo "  (script existence + DoD mapping — 不豁免任何 commit type)"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           # 1. Script existence check (P1)
@@ -674,6 +669,27 @@ jobs:
             node scripts/devgate/check-dod-mapping.cjs || exit 1
           fi
 
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate core checks passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # DevGate RCI 检查（chore/docs/test/release 豁免 — 不涉及业务逻辑变更）
+      - name: DevGate RCI checks (P0/P1 update + coverage)
+        if: |
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:') &&
+          !startsWith(github.event.pull_request.title, 'release:')
+        working-directory: packages/engine
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate RCI checks"
+          echo "  (P0/P1 RCI update + RCI coverage)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
           # 3. P0/P1 RCI update check
           if [ -f "scripts/devgate/require-rci-update-if-p0p1.sh" ]; then
             echo ""
@@ -697,7 +713,7 @@ jobs:
 
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  DevGate checks passed"
+          echo "  DevGate RCI checks passed"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # ─── Dev Health Gate (engine-conditional) ────────────────────────────

@@ -235,6 +235,13 @@ jobs:
           BASELINE=0
           if [ -f "ci/brain-integration-baseline.txt" ]; then
             TOTAL_BASELINE=$(cat ci/brain-integration-baseline.txt | tr -d '[:space:]')
+            # Fix: 基线上限保护 — 集成测试技术债不允许无限累积
+            MAX_BASELINE=10
+            if [ "$TOTAL_BASELINE" -gt "$MAX_BASELINE" ]; then
+              echo "❌ Brain integration baseline too high: $TOTAL_BASELINE > MAX_BASELINE=$MAX_BASELINE"
+              echo "   集成测试债务必须主动偿还，请将 ci/brain-integration-baseline.txt 降到 $MAX_BASELINE 以内。"
+              exit 1
+            fi
             BASELINE=$(( (TOTAL_BASELINE + 2) / 3 ))
             echo "📋 Total baseline: $TOTAL_BASELINE → per-shard baseline: $BASELINE"
           fi

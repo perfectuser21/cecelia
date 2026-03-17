@@ -1021,7 +1021,8 @@ jobs:
           fi
 
           # test-coverage-required 检查（feat PR 必须带测试）
-          if [ "${{ needs.test-coverage-required.result }}" = "failure" ]; then
+          # Fix: 与其他检查统一使用 != "success"，确保 skipped 状态也被捕获
+          if [ "${{ needs.test-coverage-required.result }}" != "success" ]; then
             echo "FAIL: Test Coverage Required (${{ needs.test-coverage-required.result }})"
             FAILED=true
           fi
@@ -1029,9 +1030,10 @@ jobs:
           # coverage-delta 检查（feat PR + brain 变更时，覆盖率必须满足阈值）
           # 已换用 davelosert/vitest-coverage-report-action@v2，兼容 vitest json-summary 输出
           # 阈值在 packages/brain/vitest.config.js 中定义（75/75/80/75）
+          # Fix: 使用 != "success" 确保 skipped 状态也被捕获
           if [ "${{ needs.changes.outputs.brain }}" = "true" ] && [ "${{ needs.detect-commit-type.outputs.commit_type }}" = "feat" ]; then
-            if [ "${{ needs.coverage-delta.result }}" = "failure" ]; then
-              echo "FAIL: Coverage Delta Check failed (coverage below threshold or test error)"
+            if [ "${{ needs.coverage-delta.result }}" != "success" ]; then
+              echo "FAIL: Coverage Delta Check (${{ needs.coverage-delta.result }}) — coverage below threshold or test error"
               FAILED=true
             fi
           fi
