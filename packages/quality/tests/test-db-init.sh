@@ -21,10 +21,12 @@ trap "rm -f $TEST_DB" EXIT
 echo -n "  [1/4] Database schema creation... "
 # Use sqlite3 directly with the schema file
 mkdir -p "$(dirname "$TEST_DB")"
-if sqlite3 "$TEST_DB" < "$PROJECT_ROOT/db/schema.sql" 2>/dev/null; then
+SCHEMA_ERR=$(sqlite3 "$TEST_DB" < "$PROJECT_ROOT/db/schema.sql" 2>&1); SCHEMA_EXIT=$?
+if [ "$SCHEMA_EXIT" -eq 0 ]; then
     echo -e "${GREEN}PASS${NC}"
 else
     echo -e "${RED}FAIL${NC}"
+    echo "    sqlite3 exit=$SCHEMA_EXIT error: $SCHEMA_ERR"
     exit 1
 fi
 
