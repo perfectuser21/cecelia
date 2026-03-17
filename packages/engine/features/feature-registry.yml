@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.63.0"
+version: "3.64.0"
 updated: "2026-03-17"
 changelog:
+  - version: "12.94.0"
+    date: "2026-03-17"
+    summary: "feat(engine): 新增 check-coverage-completeness.mjs 覆盖率完整性守护 + check-rci-health.mjs 孤儿测试检测（第4项）+ rci-execution-gate.sh --engine-rci 参数 + CI L1 接入 check-rci-health.mjs"
+    scope: ci-devgate
+    breaking: false
+    feature_id: rci-coverage-guardians
   - version: "12.93.3"
     date: "2026-03-17"
     summary: "fix(engine): 清理 regression-contract.yaml 中 35 条引用不存在文件的条目 + 3 组重复 ID；新增 check-rci-health.mjs 动态健康守护脚本"
