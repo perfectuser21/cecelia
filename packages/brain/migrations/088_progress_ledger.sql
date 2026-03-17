@@ -117,19 +117,31 @@ CREATE TRIGGER tr_progress_ledger_updated_at
     BEFORE UPDATE ON progress_ledger
     FOR EACH ROW EXECUTE FUNCTION update_progress_ledger_timestamp();
 
--- 数据完整性约束
-ALTER TABLE progress_ledger
-    ADD CONSTRAINT chk_progress_ledger_status
-    CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'skipped'));
+-- 数据完整性约束（幂等：EXCEPTION WHEN duplicate_object）
+DO $$ BEGIN
+    ALTER TABLE progress_ledger
+        ADD CONSTRAINT chk_progress_ledger_status
+        CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'skipped'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-ALTER TABLE progress_ledger
-    ADD CONSTRAINT chk_progress_ledger_confidence
-    CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0);
+DO $$ BEGIN
+    ALTER TABLE progress_ledger
+        ADD CONSTRAINT chk_progress_ledger_confidence
+        CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-ALTER TABLE progress_ledger_review
-    ADD CONSTRAINT chk_progress_review_action
-    CHECK (review_action IN ('continue', 'retry', 'escalate', 'pause', 'abandon'));
+DO $$ BEGIN
+    ALTER TABLE progress_ledger_review
+        ADD CONSTRAINT chk_progress_review_action
+        CHECK (review_action IN ('continue', 'retry', 'escalate', 'pause', 'abandon'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-ALTER TABLE progress_ledger_review
-    ADD CONSTRAINT chk_progress_review_risk
-    CHECK (risk_assessment IN ('low', 'medium', 'high'));
+DO $$ BEGIN
+    ALTER TABLE progress_ledger_review
+        ADD CONSTRAINT chk_progress_review_risk
+        CHECK (risk_assessment IN ('low', 'medium', 'high'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
