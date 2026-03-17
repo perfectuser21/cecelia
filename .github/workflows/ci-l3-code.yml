@@ -725,7 +725,7 @@ jobs:
           if echo "$PR_TITLE" | grep -q '\[CONFIG\]'; then
             CONFIG_CHANGES=0
             if [ -n "$BASE_REF" ]; then
-              CONFIG_CHANGES=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null | grep -cE '^\.github/workflows/|^packages/engine/|^scripts/devgate/' || true)
+              CONFIG_CHANGES=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null | grep -cE '^\.github/workflows/|^packages/engine/(hooks|skills|scripts|config|devgate)/|^scripts/devgate/' || true)
             fi
             if [ "$CONFIG_CHANGES" -gt "0" ]; then
               echo "ℹ️  检测到 [CONFIG] 标签且确认有 CI/引擎文件变更 ($CONFIG_CHANGES 个文件) — 跳过测试覆盖检查"
@@ -746,7 +746,7 @@ jobs:
 
             # Fix 2: [CONFIG] commit 豁免加路径验证 — 必须真的改了 CI/引擎文件
             if echo "$COMMIT_MSG" | grep -q '\[CONFIG\]'; then
-              CONFIG_CHANGES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -cE '^\.github/workflows/|^packages/engine/|^scripts/devgate/' || true)
+              CONFIG_CHANGES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -cE '^\.github/workflows/|^packages/engine/(hooks|skills|scripts|config|devgate)/|^scripts/devgate/' || true)
               if [ "$CONFIG_CHANGES" -gt "0" ]; then
                 echo "ℹ️  检测到提交消息中的 [CONFIG] 标签且有 CI/引擎文件变更 ($CONFIG_CHANGES 个) — 跳过测试覆盖检查"
                 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -802,7 +802,7 @@ jobs:
           echo ""
 
           # 测试文件模式
-          TEST_PATTERNS="\.test\.ts$|\.spec\.ts$|\.test\.js$|\.spec\.js$|\.test\.cjs$|\.spec\.cjs$|\.test\.mjs$|\.spec\.mjs$|^tests/|/__tests__/|_test\.py$|^test_.*\.sh$"
+          TEST_PATTERNS="\.test\.ts$|\.spec\.ts$|\.test\.mts$|\.spec\.mts$|\.test\.js$|\.spec\.js$|\.test\.cjs$|\.spec\.cjs$|\.test\.mjs$|\.spec\.mjs$|^tests/|/__tests__/|_test\.py$|^test_.*\.sh$"
 
           # 查找测试文件变更
           TEST_FILES=$(echo "$CHANGED" | grep -E "$TEST_PATTERNS" || true)
@@ -838,8 +838,8 @@ jobs:
 
   coverage-delta:
     name: Coverage Delta Check (feat only)
-    needs: [detect-commit-type, changes, brain-unit]
-    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.detect-commit-type.outputs.commit_type == 'feat' && needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
+    needs: [detect-commit-type, changes]
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.detect-commit-type.outputs.commit_type == 'feat' && needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

@@ -779,6 +779,11 @@ jobs:
           echo "  L1 Process Gate"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed — engine/dev-health checks were skipped"
+            exit 1
+          fi
+
           FAILED=false
 
           if [ "${{ needs.verify-dev-workflow.result }}" != "success" ]; then
