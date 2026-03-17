@@ -74,3 +74,16 @@ rcis:
     test_file: tests/test-notion-sync.sh
     feature_type: integration
     must_never_break: false
+
+  - id: C-STARTUP-REQUEUE-001
+    name: Brain 重启孤儿任务 Requeue
+    scope: Brain 重启后 in_progress 普通孤儿变 queued；OOM/超重试孤儿保持 failed；第二次调用无重复 requeue
+    priority: P0
+    triggers:
+      - PR
+      - Release
+    test_command: npx vitest run packages/brain/src/__tests__/executor-startup-sync.test.js
+    test_file: packages/brain/src/__tests__/executor-startup-sync.test.js
+    feature_type: core
+    must_never_break: true
+    expires: 2026-12-31

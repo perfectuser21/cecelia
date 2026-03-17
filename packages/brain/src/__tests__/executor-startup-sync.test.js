@@ -5,6 +5,8 @@
  * - 可重试孤儿（watchdog_retry_count=0, no error_message）→ status='queued'
  * - 超重试限制（watchdog_retry_count >= QUARANTINE_AFTER_KILLS）→ status='failed'
  * - 已有 error_message 的孤儿 → status='failed'
+ * - OOM/kill 孤儿 → reason=oom_likely，status='failed'（正确区分）
+ * - 并发重启安全：第二次调用不会重复 requeue
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -54,6 +56,8 @@ vi.mock('../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn()
 }));
 
+const mockGetDmesgInfo = vi.hoisted(() => vi.fn(() => ''));
+
 vi.mock('../platform-utils.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -66,7 +70,7 @@ vi.mock('../platform-utils.js', async (importOriginal) => {
     countClaudeProcesses: vi.fn(() => 0),
     sampleCpuUsage: vi.fn(() => 0),
     getSwapUsedPct: vi.fn(() => 0),
-    getDmesgInfo: vi.fn(() => ''),
+    getDmesgInfo: mockGetDmesgInfo,
   };
 });
 
@@ -173,5 +177,69 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
       call => typeof call[0] === 'string' && call[0].includes("status = 'queued'")
     );
     expect(requeueCall).toBeUndefined();
+  });
+
+  it('OOM/kill 孤儿（无论重试次数）→ reason=oom_likely 标记为 failed', async () => {
+    // dmesg 中含 OOM 信号
+    mockGetDmesgInfo.mockReturnValueOnce('Out of memory: Kill process 9999 score 800');
+
+    // SELECT in_progress tasks — 超重试限制的孤儿
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'oom-orphan-1',
+          title: 'oom task',
+          payload: { current_run_id: null, watchdog_retry_count: 2 },
+          started_at: new Date().toISOString(),
+          error_message: null,
+        }]
+      });
+
+    // checkExitReason 内部查询 + failed UPDATE
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    const { syncOrphanTasksOnStartup } = await import('../executor.js');
+    const result = await syncOrphanTasksOnStartup();
+
+    expect(result.orphans_fixed).toBe(1);
+    expect(result.requeued).toBe(0);
+
+    // 验证 UPDATE payload 中 reason=oom_likely
+    const failedCall = mockQuery.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes("status = 'failed'")
+    );
+    expect(failedCall).toBeTruthy();
+    const payloadPatch = JSON.parse(failedCall[1][1]);
+    expect(payloadPatch.error_details.reason).toBe('oom_likely');
+    expect(payloadPatch.error_details.type).toBe('orphan_detected');
+  });
+
+  it('并发重启安全：第二次调用不会重复 requeue', async () => {
+    const { syncOrphanTasksOnStartup } = await import('../executor.js');
+
+    // 第一次调用：SELECT 返回一个可重试孤儿 → requeue
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'concurrent-orphan-1',
+          title: 'concurrent task',
+          payload: { current_run_id: null, watchdog_retry_count: 0 },
+          started_at: new Date().toISOString(),
+          error_message: null,
+        }]
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // UPDATE requeue
+
+    const result1 = await syncOrphanTasksOnStartup();
+    expect(result1.requeued).toBe(1);
+    expect(result1.orphans_found).toBe(1);
+
+    // 第二次调用：任务已不在 in_progress（DB 已更新为 queued），SELECT 返回空
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const result2 = await syncOrphanTasksOnStartup();
+    expect(result2.requeued).toBe(0);
+    expect(result2.orphans_found).toBe(0);
+    expect(result2.orphans_fixed).toBe(0);
   });
 });
