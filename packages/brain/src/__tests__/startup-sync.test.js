@@ -20,6 +20,16 @@ vi.mock('../task-router.js', () => ({
   getTaskLocation: vi.fn(() => 'us'),
 }));
 
+// Mock platform-utils to control getDmesgInfo return value
+const mockGetDmesgInfo = vi.hoisted(() => vi.fn(() => null));
+vi.mock('../platform-utils.js', () => ({
+  getDmesgInfo: mockGetDmesgInfo,
+  getSwapUsedPct: vi.fn(() => 0),
+  _resetCpuSampler: vi.fn(),
+  countClaudeProcesses: vi.fn(() => 0),
+  calculatePhysicalCapacity: vi.fn(() => 5),
+}));
+
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let syncOrphanTasksOnStartup;
 
@@ -32,6 +42,7 @@ beforeAll(async () => {
 describe('syncOrphanTasksOnStartup', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockGetDmesgInfo.mockReturnValue(null);
   });
 
   it('should do nothing when no in_progress tasks exist', async () => {
@@ -43,9 +54,10 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.rebuilt).toBe(0);
   });
 
-  it('should mark orphan task as failed when no matching process', async () => {
+  it('should requeue orphan when reason is process_disappeared (Brain restart)', async () => {
     const { execSync } = await import('child_process');
     execSync.mockReturnValue('0\n'); // No matching process
+    mockGetDmesgInfo.mockReturnValue(null); // No OOM info → defaults to process_disappeared
 
     mockPool.query
       .mockResolvedValueOnce({
@@ -62,11 +74,38 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.orphans_found).toBe(1);
     expect(result.orphans_fixed).toBe(1);
 
-    // Verify the UPDATE was called with orphan_detected error
+    // process_disappeared → queued (retryable)
+    const updateCall = mockPool.query.mock.calls[1];
+    expect(updateCall[0]).toContain("status = 'queued'");
+    expect(updateCall[1][1]).toBe('[requeued after brain restart] reason=process_disappeared');
+  });
+
+  it('should fail orphan when reason is oom_killed (system-level failure)', async () => {
+    const { execSync } = await import('child_process');
+    execSync.mockReturnValue('0\n'); // No matching process
+    mockGetDmesgInfo.mockReturnValue('Out of memory: killed process 12345'); // OOM pattern
+
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'orphan-oom',
+          title: 'OOM Task',
+          payload: { current_run_id: 'run-oom-999' },
+          started_at: '2026-02-05T10:00:00Z'
+        }]
+      })
+      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE
+
+    const result = await syncOrphanTasksOnStartup();
+    expect(result.orphans_found).toBe(1);
+    expect(result.orphans_fixed).toBe(1);
+
+    // oom_likely → failed (not retryable)
     const updateCall = mockPool.query.mock.calls[1];
     expect(updateCall[0]).toContain("status = 'failed'");
     const payload = JSON.parse(updateCall[1][1]);
     expect(payload.error_details.type).toBe('orphan_detected');
+    expect(payload.error_details.reason).toMatch(/oom/);
   });
 
   it('should rebuild activeProcess entry when process exists', async () => {
@@ -87,7 +126,7 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.rebuilt).toBe(1);
   });
 
-  it('should handle tasks without run_id as orphans', async () => {
+  it('should requeue tasks without run_id (process_disappeared by default)', async () => {
     mockPool.query
       .mockResolvedValueOnce({
         rows: [{
@@ -102,6 +141,9 @@ describe('syncOrphanTasksOnStartup', () => {
     const result = await syncOrphanTasksOnStartup();
     expect(result.orphans_found).toBe(1);
     expect(result.orphans_fixed).toBe(1);
+    // No OOM → process_disappeared → queued
+    const updateCall = mockPool.query.mock.calls[1];
+    expect(updateCall[0]).toContain("status = 'queued'");
   });
 
   it('should handle mixed alive and orphan tasks', async () => {

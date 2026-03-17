@@ -2354,29 +2354,49 @@ async function syncOrphanTasksOnStartup() {
         diagnostic_info: diagnostic_info,
       };
 
-      await pool.query(
-        `UPDATE tasks SET
-          status = 'failed',
-          error_message = $3,
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1`,
-        [
-          task.id,
-          JSON.stringify({ error_details: errorDetails }),
-          `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
-        ]
-      );
+      // process_disappeared = Brain 重启中断，可重试；其余为真实失败
+      const isRetryable = reason === 'process_disappeared';
 
-      // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
-      import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
-        processExecutionAutoLearning(task.id, 'failed', errorDetails, {
-          trigger_source: 'orphan_detection',
-          metadata: { run_id: runId }
-        })
-      ).catch(() => {/* non-fatal */});
+      if (isRetryable) {
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'queued',
+            error_message = $2,
+            payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+          WHERE id = $1`,
+          [
+            task.id,
+            `[requeued after brain restart] reason=process_disappeared`,
+            JSON.stringify({ error_details: errorDetails }),
+          ]
+        );
+        console.log(`[startup-sync] Orphan requeued: task=${task.id} title="${task.title}" reason=${reason}`);
+      } else {
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'failed',
+            error_message = $3,
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          WHERE id = $1`,
+          [
+            task.id,
+            JSON.stringify({ error_details: errorDetails }),
+            `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
+          ]
+        );
+
+        // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
+        import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
+          processExecutionAutoLearning(task.id, 'failed', errorDetails, {
+            trigger_source: 'orphan_detection',
+            metadata: { run_id: runId }
+          })
+        ).catch(() => {/* non-fatal */});
+
+        console.log(`[startup-sync] Orphan failed: task=${task.id} title="${task.title}" reason=${reason}`);
+      }
 
       orphansFixed++;
-      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}" reason=${reason}`);
     }
   }
 
