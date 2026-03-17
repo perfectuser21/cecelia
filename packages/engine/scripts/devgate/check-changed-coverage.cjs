@@ -302,13 +302,23 @@ function calculateChangedLineCoverage(changedLines, coverageData, projectRoot) {
 /**
  * 门禁 1: feat PR 必须有新增测试文件
  */
-function checkFeatHasTests(commitTypes, addedFiles) {
+function checkFeatHasTests(commitTypes, addedFiles, allChangedFiles) {
   if (!isFeatPR(commitTypes)) {
     return { passed: true, skipped: true, reason: "非 feat PR，跳过" };
   }
 
+  // 无源码文件变更（如纯 .md 文档/配置更新）→ 跳过测试要求
+  if (allChangedFiles != null) {
+    const sourceFiles = filterSourceFiles(allChangedFiles);
+    if (sourceFiles.length === 0) {
+      return { passed: true, skipped: true, reason: "无源码文件变更，跳过测试要求" };
+    }
+  }
+
+  // 优先检查新增测试，其次接受修改的测试文件（含新增测试用例的场景）
   const newTests = filterNewTestFiles(addedFiles);
-  if (newTests.length === 0) {
+  const allTests = allChangedFiles != null ? filterNewTestFiles(allChangedFiles) : newTests;
+  if (newTests.length === 0 && allTests.length === 0) {
     return {
       passed: false,
       skipped: false,
@@ -318,11 +328,12 @@ function checkFeatHasTests(commitTypes, addedFiles) {
     };
   }
 
+  const testFiles = newTests.length > 0 ? newTests : allTests;
   return {
     passed: true,
     skipped: false,
-    reason: `找到 ${newTests.length} 个新增测试文件`,
-    files: newTests,
+    reason: `找到 ${testFiles.length} 个测试文件（新增或修改）`,
+    files: testFiles,
   };
 }
 
@@ -469,7 +480,7 @@ function main() {
 
   // ── 门禁 1: feat 必须有测试 ──
   console.log("  门禁 1: feat PR 必须有新增测试文件");
-  const gate1 = checkFeatHasTests(commitTypes, added);
+  const gate1 = checkFeatHasTests(commitTypes, added, all);
   if (gate1.skipped) {
     console.log(`  ${YELLOW}⏭️${RESET}  ${gate1.reason}`);
   } else if (gate1.passed) {

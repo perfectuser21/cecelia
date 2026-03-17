@@ -256,9 +256,39 @@ describe("checkFeatHasTests", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("feat PR 只有 .md 文件无测试失败", () => {
+  it("feat PR 只有 .md 文件（无 allChangedFiles）仍失败", () => {
     const result = checkFeatHasTests(["feat"], ["README.md", "docs/guide.md"]);
     expect(result.passed).toBe(false);
+  });
+
+  it("feat PR allChangedFiles 无源码文件则跳过", () => {
+    const result = checkFeatHasTests(
+      ["feat"],
+      ["README.md", "docs/guide.md"],
+      ["README.md", "docs/guide.md"]
+    );
+    expect(result.passed).toBe(true);
+    expect(result.skipped).toBe(true);
+  });
+
+  it("feat PR allChangedFiles 有源码文件但无测试则失败", () => {
+    const result = checkFeatHasTests(
+      ["feat"],
+      ["src/index.ts"],
+      ["src/index.ts"]
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it("feat PR 有修改的测试文件（非新增）通过，allChangedFiles 有源码和测试", () => {
+    // 场景：测试文件是 modified（不在 addedFiles），但在 allChangedFiles
+    const result = checkFeatHasTests(
+      ["feat"],
+      ["src/index.ts"], // addedFiles：只有源码，无新增测试
+      ["src/index.ts", "tests/index.test.ts"] // allChangedFiles：源码 + 修改的测试
+    );
+    expect(result.passed).toBe(true);
+    expect(result.skipped).toBe(false);
   });
 });
 

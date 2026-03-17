@@ -90,11 +90,11 @@ describe("Phase 1: DevGate Scripts", () => {
 ## 验收标准
 
 - [x] [BEHAVIOR] Item 1
-  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
+  Test: manual:node -e "process.exit(0)"
 - [x] Item 2
-  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
+  Test: manual:node -e "process.exit(0)"
 - [x] Item 3
-  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
+  Test: manual:node -e "process.exit(0)"
 `;
 
       const testDod = join(TEST_DIR, "valid.dod.md");
@@ -202,9 +202,9 @@ describe("Phase 1: DevGate Scripts", () => {
 ## 验收标准
 
 - [x] [ARTIFACT] runner 文件存在
-  Test: manual:bash -c "ls packages/engine/runners/codex/playwright-runner.sh"
+  Test: manual:node -e "process.exit(0)"
 - [x] [BEHAVIOR] API 返回正确状态
-  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
+  Test: manual:node -e "process.exit(0)"
 - [x] [GATE] CI 测试通过
   Test: manual:bash -c "node packages/engine/scripts/devgate/check-dod-mapping.cjs --version 2>&1 || true"
 `;

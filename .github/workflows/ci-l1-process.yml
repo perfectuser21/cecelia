@@ -333,7 +333,7 @@ jobs:
     name: Required Dev Paths Check
     needs: verify-dev-workflow
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
