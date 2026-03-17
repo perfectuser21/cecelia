@@ -234,6 +234,14 @@ async function startCeceliaBridge() {
   const __dirname = dirname(__filename);
   const bridgeScript = join(__dirname, 'scripts', 'cecelia-bridge.js');
   const logFile = createWriteStream('/tmp/cecelia-bridge.log', { flags: 'a' });
+  // Wait for the stream to open before passing to spawn.
+  // On Linux (ubuntu-latest) a freshly created WriteStream has fd:null until
+  // the underlying file is opened; passing fd:null to spawn throws
+  // "TypeError: The argument stdio is invalid".
+  await new Promise((resolve, reject) => {
+    logFile.once('open', resolve);
+    logFile.once('error', reject);
+  });
 
   const child = spawn(process.execPath, [bridgeScript], {
     detached: false,
