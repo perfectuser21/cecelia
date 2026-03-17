@@ -18,6 +18,12 @@
 version: "3.64.0"
 updated: "2026-03-17"
 changelog:
+  - version: "12.95.0"
+    date: "2026-03-17"
+    summary: "feat(engine): 03-prci.md Step3 push前新增 8.4.5 DoD Test门禁 — 逐条执行 manual: 命令，任一失败阻止 push"
+    scope: skills-dev
+    breaking: false
+    feature_id: dod-test-gate-step3
   - version: "12.94.0"
     date: "2026-03-17"
     summary: "feat(engine): 新增 check-coverage-completeness.mjs 覆盖率完整性守护 + check-rci-health.mjs 孤儿测试检测（第4项）+ rci-execution-gate.sh --engine-rci 参数 + CI L1 接入 check-rci-health.mjs"

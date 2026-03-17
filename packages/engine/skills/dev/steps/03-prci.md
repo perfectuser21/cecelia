@@ -149,6 +149,38 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 ---
 
+### 8.4.5 ⛔ DoD Test 门禁（push 前强制执行）
+
+**提取 DoD 文件中所有 `Test: manual:` 命令并逐条执行，有任何失败则禁止 push。**
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+DOD_FILE=$(ls ".task-${BRANCH_NAME}.md" ".dod-${BRANCH_NAME}.md" ".dod.md" 2>/dev/null | head -1)
+
+if [[ -f "$DOD_FILE" ]]; then
+  echo "🧪 执行 DoD Test 验证（来自 $DOD_FILE）..."
+  FAILED=0
+  while IFS= read -r line; do
+    CMD=$(echo "$line" | grep -oP 'Test: manual:\K.+')
+    [[ -z "$CMD" ]] && continue
+    echo "  ▶ $CMD"
+    if ! eval "$CMD" > /tmp/dod-test-out 2>&1; then
+      echo "  ❌ FAILED: $CMD"
+      cat /tmp/dod-test-out
+      FAILED=1
+    else
+      echo "  ✅ PASS"
+    fi
+  done < "$DOD_FILE"
+  [[ $FAILED -eq 1 ]] && { echo "⛔ DoD Test 验证失败，禁止 push"; exit 1; }
+  echo "✅ DoD 全部通过，允许 push"
+else
+  echo "⚠️  未找到 DoD 文件（.task-${BRANCH_NAME}.md / .dod-${BRANCH_NAME}.md / .dod.md），跳过 DoD 验证"
+fi
+```
+
+---
+
 ### 8.5 推送
 
 ```bash
