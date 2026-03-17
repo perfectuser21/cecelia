@@ -114,6 +114,9 @@ jobs:
           export BASE_REF=origin/main
           node scripts/devgate/check-new-api-endpoints.mjs
 
+      - name: Check coverage completeness (source files must have tests)
+        run: node packages/engine/scripts/devgate/check-coverage-completeness.mjs
+
   # ─── Engine L2: Version / Contract Drift / Impact ─────────────────────
 
   engine-l2:
