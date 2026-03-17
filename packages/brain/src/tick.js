@@ -8,7 +8,7 @@ import pool from './db.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask, createTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { shouldDowngrade } from './token-budget-planner.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
@@ -411,16 +411,6 @@ async function initTickLoop() {
       console.log(`[tick-loop] Alertness system initialized`);
     } catch (alertErr) {
       console.error('[tick-loop] Alertness init failed:', alertErr.message);
-    }
-
-    // Sync DB state with actual processes (fix orphan in_progress tasks)
-    try {
-      const syncResult = await syncOrphanTasksOnStartup();
-      if (syncResult.orphans_fixed > 0 || syncResult.rebuilt > 0) {
-        console.log(`[tick-loop] Startup sync: ${syncResult.orphans_fixed} orphans fixed, ${syncResult.rebuilt} processes rebuilt`);
-      }
-    } catch (syncErr) {
-      console.error('[tick-loop] Startup sync failed:', syncErr.message);
     }
 
     // Ensure EventBus table exists
