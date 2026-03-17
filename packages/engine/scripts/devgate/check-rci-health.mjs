@@ -208,10 +208,12 @@ function main() {
         console.log(`${GREEN}✅ Known-failures 过期检查: PASS (${result.total} 个条目，均未过期，today=${result.today})${NC}`);
       }
       if (result.noExpiry.length > 0) {
-        console.log(`${YELLOW}⚠️  发现 ${result.noExpiry.length} 个无 expires 字段的条目（建议添加）:${NC}`);
-        for (const { key } of result.noExpiry) {
-          console.log(`   ${CYAN}  ${key}${NC}`);
+        console.log(`${RED}❌ Known-failures 缺少 expires 字段: FAIL${NC}`);
+        console.log(`   发现 ${result.noExpiry.length} 个无 expires 字段的条目（must 添加，格式 YYYY-MM-DD）:`);
+        for (const { key, description } of result.noExpiry) {
+          console.log(`   ${YELLOW}  ${key}: ${description}${NC}`);
         }
+        hasErrors = true;
       }
     }
   }
