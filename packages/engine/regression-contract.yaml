@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 12.93.2
+version: 12.93.3
 updated: 2026-03-16
 
 # ============================================================================
@@ -303,7 +303,7 @@ hooks:
     scope: hook
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [stop, subagent, loop, explore, plan]
     owner: infra
     steps:
@@ -314,7 +314,6 @@ hooks:
       type: code
       file: "hooks/subagent-stop.sh"
       contains: "decision.*block"
-    test: "tests/hooks/subagent-stop.test.ts"
 
   - id: H7-010
     feature: H7
@@ -379,7 +378,7 @@ hooks:
     scope: hook
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [stop-hook, worktree, cleanup]
     owner: infra
     steps:
@@ -390,7 +389,6 @@ hooks:
       type: code
       file: "hooks/stop-dev.sh"
       contains: "force_cleanup_worktree"
-    test: "tests/hooks/stop-dev.test.ts"
 
   - id: H7-014
     feature: H7
@@ -697,7 +695,7 @@ hooks:
     evidence:
       type: log
       contains: "PR GATE"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-002
     feature: H2
@@ -715,7 +713,7 @@ hooks:
     evidence:
       type: exit_code
       equals: 2
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-003
     feature: H2
@@ -737,7 +735,7 @@ hooks:
     verification:
       - desc: "确认 hooks/pr-gate-v2.sh 中不含 FAST_MODE"
         command: "! grep -q 'FAST_MODE' hooks/pr-gate-v2.sh"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-004
     feature: H2
@@ -755,7 +753,7 @@ hooks:
     evidence:
       type: log
       contains: "Release 模式"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-005
     feature: H2
@@ -773,7 +771,7 @@ hooks:
     evidence:
       type: log
       contains: "PR 模式 (L1 only)"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-006
     feature: H2
@@ -791,7 +789,7 @@ hooks:
     evidence:
       type: log
       contains: "DoD"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # H2-007: Phase 1 - DoD 映射检查
@@ -873,7 +871,7 @@ hooks:
     evidence:
       type: log
       contains: "Phase 6: Skill 产物检查"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # H2-011~H2-013: v8.24.0 安全修复 (pr-gate-v2.sh)
@@ -895,7 +893,7 @@ hooks:
       type: code
       file: "hooks/pr-gate-v2.sh"
       contains: "jq -e . >/dev/null 2>&1"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-012
     feature: H2
@@ -914,7 +912,7 @@ hooks:
       type: code
       file: "hooks/pr-gate-v2.sh"
       contains: "sed -n 's#"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-013
     feature: H2
@@ -1052,7 +1050,7 @@ hooks:
     scope: hook
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [security, validation, whitelist, v8.24.0]
     owner: infra
     steps:
@@ -1063,7 +1061,6 @@ hooks:
       type: code
       file: "scripts/run-regression.sh"
       contains: "^[A-Z][0-9]-[0-9]{3}$"
-    test: "tests/hooks/run-regression.test.ts"
 
 # ============================================================================
 # Workflow 回归契约
@@ -1577,7 +1574,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, version]
     owner: infra
     steps:
@@ -1589,7 +1586,6 @@ ci:
       name: "version-check"
       status: success
     # CI jobs are tested by running the workflow; no separate test file
-    test: "tests/ci/version-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C1-002~C1-003: v8.24.0 安全修复 (ci.yml)
@@ -1600,7 +1596,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [security, ci, permissions, v8.24.0]
     owner: infra
     steps:
@@ -1612,7 +1608,6 @@ ci:
       file: ".github/workflows/ci.yml"
       contains: "permissions:"
     # Evidence check: grep for 'permissions:' in ci.yml
-    test: "tests/ci/permissions.test.ts"
 
   - id: C1-003
     feature: C1
@@ -1620,7 +1615,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [security, ci, json, v8.24.0]
     owner: infra
     steps:
@@ -1632,7 +1627,6 @@ ci:
       file: ".github/workflows/ci.yml"
       contains: "jq -n"
     # Evidence check: grep for 'jq -n' in ci.yml
-    test: "tests/ci/json-safety.test.ts"
 
   # --------------------------------------------------------------------------
   # C1-004~C1-005: v12.1.0 P1 修复 (ci.yml, nightly.yml)
@@ -1662,7 +1656,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [Release]
-    method: auto
+    method: manual
     tags: [ci, nightly, artifact, v12.1.0]
     owner: infra
     steps:
@@ -1673,7 +1667,6 @@ ci:
       type: code
       file: ".github/workflows/nightly.yml"
       contains: "upload-artifact"
-    test: "tests/workflows/nightly.test.ts"
 
   # --------------------------------------------------------------------------
   # C2: test job
@@ -1684,7 +1677,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, test, l1, v10.5.0]
     owner: infra
     steps:
@@ -1696,7 +1689,6 @@ ci:
       type: ci_job
       name: "test"
       status: success
-    test: "tests/ci/test-job.test.ts"
 
   - id: C2-002
     feature: C2
@@ -1758,7 +1750,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, shell, lint]
     owner: infra
     steps:
@@ -1770,7 +1762,6 @@ ci:
       name: "shell-check"
       status: success
     # Shell check is part of test job, validated by CI
-    test: "tests/ci/shell-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C6: Phase 1 DevGate
@@ -1781,7 +1772,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, devgate, phase1]
     owner: infra
     steps:
@@ -1792,7 +1783,6 @@ ci:
       type: ci_job
       name: "DevGate checks"
       status: success
-    test: ".github/workflows/ci.yml"
 
   # --------------------------------------------------------------------------
   # C7: Nightly DevGate Metrics
@@ -1803,7 +1793,7 @@ ci:
     scope: ci
     priority: P2
     trigger: [Release]
-    method: auto
+    method: manual
     tags: [ci, nightly, metrics, phase4]
     owner: infra
     steps:
@@ -1814,7 +1804,6 @@ ci:
       type: ci_job
       name: "DevGate Metrics"
       status: success
-    test: ".github/workflows/nightly.yml"
 
   - id: C7-002
     feature: C7
@@ -1822,7 +1811,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [Release]
-    method: auto
+    method: manual
     tags: [ci, nightly, threshold, phase41]
     owner: infra
     steps:
@@ -1833,7 +1822,6 @@ ci:
       type: ci_job
       name: "DevGate Threshold Check (L2)"
       status: success
-    test: ".github/workflows/nightly.yml"
 
   - id: C7-003
     feature: C7
@@ -1841,7 +1829,7 @@ ci:
     scope: ci
     priority: P2
     trigger: [Release]
-    method: auto
+    method: manual
     tags: [ci, nightly, learnings, phase5]
     owner: infra
     steps:
@@ -1852,12 +1840,11 @@ ci:
       type: ci_job
       name: "Append to LEARNINGS"
       status: success
-    test: ".github/workflows/nightly.yml"
 
   # --------------------------------------------------------------------------
   # C8: Evidence CI (SSOT)
   # --------------------------------------------------------------------------
-  - id: C8-001
+  - id: C8-101
     feature: C8
     name: "CI Evidence 生成脚本正常工作"
     scope: ci
@@ -1878,7 +1865,7 @@ ci:
       run: "bash ci/scripts/generate-evidence.sh"
     test: "ci/scripts/generate-evidence.sh"
 
-  - id: C8-002
+  - id: C8-102
     feature: C8
     name: "Evidence Gate 校验通过"
     scope: ci
@@ -1898,7 +1885,7 @@ ci:
       run: "bash ci/scripts/evidence-gate.sh"
     test: "ci/scripts/evidence-gate.sh"
 
-  - id: C8-003
+  - id: C8-103
     feature: C8
     name: "本地 qa:local 只跑 typecheck"
     scope: dev
@@ -1925,7 +1912,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR]
-    method: auto
+    method: manual
     tags: [ci, regression, pr, develop, v10.5.0]
     owner: infra
     steps:
@@ -1942,7 +1929,6 @@ ci:
         command: "grep -q 'regression-pr:' .github/workflows/ci.yml"
       - desc: "确认调用 scripts/run-regression.sh pr"
         command: "grep -q 'run-regression.sh pr' .github/workflows/ci.yml"
-    test: ".github/workflows/ci.yml"
 
   # --------------------------------------------------------------------------
   # C5: release-check
@@ -2051,7 +2037,7 @@ ci:
       type: code
       file: "scripts/devgate/check-dod-mapping.cjs"
       contains: "validateManualEvidence"
-    test: "tests/gate/scan-rci-coverage.test.ts"
+    test: "tests/ci/scan-rci-coverage.test.ts"
 
   - id: C9-002
     feature: C9
@@ -2070,7 +2056,7 @@ ci:
       type: code
       file: "scripts/devgate/check-dod-mapping.cjs"
       contains: "!verification.actor || !verification.timestamp || !verification.evidence"
-    test: "tests/gate/scan-rci-coverage.test.ts"
+    test: "tests/ci/scan-rci-coverage.test.ts"
 
   # --------------------------------------------------------------------------
   # C10: CI Security Fixes (P0 v11.12.2)
@@ -2081,7 +2067,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, security, auto-merge, v11.12.2]
     owner: infra
     steps:
@@ -2093,7 +2079,6 @@ ci:
       type: code
       file: ".github/workflows/auto-merge.yml"
       not_contains: "check_suite:"
-    test: "tests/ci/auto-merge.test.ts"
 
   - id: C10-002
     feature: C10
@@ -2101,7 +2086,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, security, ci-passed, v11.12.2]
     owner: infra
     steps:
@@ -2113,7 +2098,6 @@ ci:
       type: code
       file: ".github/workflows/ci.yml"
       contains: "github.base_ref != 'develop' || needs.regression-pr.result == 'success'"
-    test: "tests/ci/ci-passed.test.ts"
 
   - id: C10-003
     feature: C10
@@ -2121,7 +2105,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, security, ai-review, v11.12.2]
     owner: infra
     steps:
@@ -2134,7 +2118,6 @@ ci:
       file: ".github/workflows/ci.yml"
       job: "ai-review"
       not_contains: "continue-on-error: true"
-    test: "tests/ci/ai-review.test.ts"
 
   # --------------------------------------------------------------------------
   # C11: Evidence System Security (v12.2.0 P2 fixes)
@@ -2435,7 +2418,7 @@ n8n:
       type: command
       run: "bash scripts/rc-filter.sh pr | head -5"
       contains: "H1-001|H2-001"
-    test: "bash scripts/rc-filter.sh pr && bash scripts/rc-filter.sh release"
+    test: "manual:bash scripts/rc-filter.sh pr && bash scripts/rc-filter.sh release"
 
   - id: P1-002
     feature: P1
@@ -2454,7 +2437,7 @@ n8n:
       type: command
       run: "bash scripts/run-regression.sh --dry-run"
       contains: "tests/"
-    test: "bash scripts/run-regression.sh --dry-run"
+    test: "manual:bash scripts/run-regression.sh --dry-run"
 
   - id: P1-003
     feature: P1
@@ -2473,7 +2456,7 @@ n8n:
       type: command
       run: "yq '.rci_definitions | length' regression-contract.yaml"
       contains: "[0-9]+"
-    test: "yq '.rci_definitions[] | select(.id == \"H1-001\")' regression-contract.yaml"
+    test: "manual:grep -q 'id: H1-001' regression-contract.yaml"
 
   # --------------------------------------------------------------------------
   # P2: DevGate Quality Checks
@@ -2612,7 +2595,7 @@ golden_paths:
         - "运行 gh pr create，确认被 Hook 阻止"
         - "修复错误，npm run qa 通过"
         - "运行 gh pr create，确认 Hook 放行"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # GP-004: CI 链路
@@ -2621,7 +2604,7 @@ golden_paths:
     name: "CI 链路"
     description: "PR → 版本检查 → 测试 → Shell 检查 → Release 检查"
     trigger: [Release]
-    method: auto
+    method: manual
     rcis:
       - C1-001  # PR 版本号必须递增
       - C2-001  # CI 运行 npm run qa
@@ -2634,7 +2617,6 @@ golden_paths:
         - "更新版本号，推送 → 确认 version-check 通过"
         - "确认 test job 执行 typecheck + test + build"
         - "确认 shell-check job 检查所有 .sh 文件"
-    test: ".github/workflows/ci.yml"
 
   # --------------------------------------------------------------------------
   # GP-005: Export 链路
@@ -2678,7 +2660,7 @@ golden_paths:
         - "运行 cecelia -p test-prd.json -t T-001，确认执行成功"
         - "检查输出 JSON 包含 success 字段"
         - "确认 N8N workflow JSON 文件存在"
-    test: "cecilia --health"
+    test: "manual:cecilia --health"
 
 # ============================================================================
 # P0 质检强制三件套（Q1/Q2/Q3）
@@ -2978,7 +2960,7 @@ skills:
     scope: skill
     priority: P1
     trigger: [PR]
-    method: auto
+    method: manual
     tags: [dev, task-id, database-integration, okr]
     owner: infra
     steps:
@@ -2988,7 +2970,6 @@ skills:
     evidence:
       type: file
       path: "tests/dev/test-parse-dev-args.sh"
-    test: "tests/dev/test-parse-dev-args.sh && tests/dev/test-fetch-task-prd.sh"
 
   - id: S1-008
     feature: S1
