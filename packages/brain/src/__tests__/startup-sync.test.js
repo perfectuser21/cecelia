@@ -43,7 +43,7 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.rebuilt).toBe(0);
   });
 
-  it('should mark orphan task as failed when no matching process', async () => {
+  it('should requeue orphan task when retry count is below threshold', async () => {
     const { execSync } = await import('child_process');
     execSync.mockReturnValue('0\n'); // No matching process
 
@@ -60,13 +60,14 @@ describe('syncOrphanTasksOnStartup', () => {
 
     const result = await syncOrphanTasksOnStartup();
     expect(result.orphans_found).toBe(1);
-    expect(result.orphans_fixed).toBe(1);
+    expect(result.orphans_fixed).toBe(0);
+    expect(result.requeued).toBe(1);
 
-    // Verify the UPDATE was called with orphan_detected error
+    // Verify the UPDATE was called with requeue (status='queued')
     const updateCall = mockPool.query.mock.calls[1];
-    expect(updateCall[0]).toContain("status = 'failed'");
-    const payload = JSON.parse(updateCall[1][1]);
-    expect(payload.error_details.type).toBe('orphan_detected');
+    expect(updateCall[0]).toContain("status = 'queued'");
+    const payload = JSON.parse(updateCall[1][2]);
+    expect(payload.watchdog_retry_count).toBe(1);
   });
 
   it('should rebuild activeProcess entry when process exists', async () => {
@@ -87,7 +88,7 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.rebuilt).toBe(1);
   });
 
-  it('should handle tasks without run_id as orphans', async () => {
+  it('should requeue orphan task without run_id when retry count is below threshold', async () => {
     mockPool.query
       .mockResolvedValueOnce({
         rows: [{
@@ -101,7 +102,8 @@ describe('syncOrphanTasksOnStartup', () => {
 
     const result = await syncOrphanTasksOnStartup();
     expect(result.orphans_found).toBe(1);
-    expect(result.orphans_fixed).toBe(1);
+    expect(result.orphans_fixed).toBe(0);
+    expect(result.requeued).toBe(1);
   });
 
   it('should handle mixed alive and orphan tasks', async () => {
@@ -132,7 +134,8 @@ describe('syncOrphanTasksOnStartup', () => {
 
     const result = await syncOrphanTasksOnStartup();
     expect(result.orphans_found).toBe(1);
-    expect(result.orphans_fixed).toBe(1);
+    expect(result.orphans_fixed).toBe(0);
+    expect(result.requeued).toBe(1);
     expect(result.rebuilt).toBe(1);
   });
 });

@@ -4,6 +4,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+
+// Integration test: requires running Brain service (localhost:5221) and PostgreSQL
+// Run with: INTEGRATION_TESTS=true npm test
+const isIntegration = process.env.INTEGRATION_TESTS === 'true';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../db-config.js';
 
@@ -19,7 +23,7 @@ const TEST_PARENT_ID = '99999999-9999-9999-9999-999999999999';
 const TEST_PARENT_TYPE = 'goal';
 let createdBlockId = null;
 
-describe('Blocks API', () => {
+describe.skipIf(!isIntegration)('Blocks API', () => {
   beforeAll(async () => {
     // Clean up any existing test data
     await pool.query('DELETE FROM blocks WHERE parent_id = $1', [TEST_PARENT_ID]);
