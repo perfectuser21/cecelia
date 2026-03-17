@@ -2,18 +2,22 @@
  * startup-recovery.js 单元测试
  *
  * 覆盖：
- * - 正常恢复：有孤儿任务 → 重置为 queued，取消 run_events
- * - 无孤儿任务 → 返回空列表，不报错
- * - DB 错误 → 不抛出，返回 error 字段
+ * - runStartupRecovery 不接受 pool 参数，不调用 pool.query
+ * - 返回值只含 { worktrees_pruned, slots_freed, devmode_cleaned }
+ * - 环境清理调用正常执行
  */
 
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 
-// mock pool：两次 query 调用（UPDATE tasks + UPDATE run_events）
-const mockQuery = vi.fn();
-const mockPool = { query: mockQuery };
+vi.mock('child_process', () => ({ execSync: vi.fn().mockReturnValue('') }));
+vi.mock('fs', () => ({
+  existsSync: vi.fn().mockReturnValue(false),
+  readdirSync: vi.fn().mockReturnValue([]),
+  rmSync: vi.fn(),
+  readFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
+}));
 
-// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let runStartupRecovery;
 
 beforeAll(async () => {
@@ -23,62 +27,34 @@ beforeAll(async () => {
 });
 
 describe('startup-recovery.js', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  it('runStartupRecovery 不调用 pool.query（不接受 pool 参数）', async () => {
+    const mockQuery = vi.fn();
+    const mockPool = { query: mockQuery };
+
+    // 即使传入 pool，也不应被调用（函数签名不再接受 pool）
+    await runStartupRecovery(mockPool);
+
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it('有孤儿任务时：重置为 queued，取消 run_events，返回任务列表', async () => {
-    const orphans = [
-      { id: 'task-uuid-1', title: '任务 A' },
-      { id: 'task-uuid-2', title: '任务 B' },
-    ];
+  it('返回值包含 worktrees_pruned, slots_freed, devmode_cleaned，不含 requeued', async () => {
+    const result = await runStartupRecovery();
 
-    // 第一次 query: UPDATE tasks RETURNING id, title
-    mockQuery.mockResolvedValueOnce({ rows: orphans });
-    // 第二次 query: UPDATE run_events
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-
-    const result = await runStartupRecovery(mockPool);
-
-    expect(result.requeued).toHaveLength(2);
-    expect(result.requeued[0].id).toBe('task-uuid-1');
-    expect(result.error).toBeUndefined();
-
-    // 验证第一次 SQL：包含关键词
-    const firstCall = mockQuery.mock.calls[0][0];
-    expect(firstCall).toContain("status = 'queued'");
-    expect(firstCall).toContain("status = 'in_progress'");
-    expect(firstCall).toContain('5 minutes');
-    expect(firstCall).toContain('RETURNING id, title');
-
-    // 验证第二次 SQL：取消 run_events
-    const secondCall = mockQuery.mock.calls[1][0];
-    expect(secondCall).toContain("status = 'cancelled'");
-    expect(secondCall).toContain('run_events');
-    expect(secondCall).toContain("status = 'running'");
-
-    // 验证第二次调用传入了 ids 数组
-    const secondArgs = mockQuery.mock.calls[1][1];
-    expect(secondArgs[0]).toEqual(['task-uuid-1', 'task-uuid-2']);
+    expect(result).toHaveProperty('worktrees_pruned');
+    expect(result).toHaveProperty('slots_freed');
+    expect(result).toHaveProperty('devmode_cleaned');
+    expect(result).not.toHaveProperty('requeued');
+    expect(result).not.toHaveProperty('error');
   });
 
-  it('无孤儿任务时：返回空列表，只调用一次 query', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+  it('环境清理失败时不抛出异常，返回统计字段', async () => {
+    const { execSync } = await import('child_process');
+    execSync.mockImplementationOnce(() => { throw new Error('git error'); });
 
-    const result = await runStartupRecovery(mockPool);
+    const result = await runStartupRecovery();
 
-    expect(result.requeued).toHaveLength(0);
-    expect(result.error).toBeUndefined();
-    // 无孤儿任务则不需要执行 UPDATE run_events
-    expect(mockQuery).toHaveBeenCalledTimes(1);
-  });
-
-  it('DB 错误时：不抛出异常，返回 error 字段', async () => {
-    mockQuery.mockRejectedValueOnce(new Error('connection refused'));
-
-    const result = await runStartupRecovery(mockPool);
-
-    expect(result.requeued).toHaveLength(0);
-    expect(result.error).toBe('connection refused');
+    expect(result).toHaveProperty('worktrees_pruned');
+    expect(result).toHaveProperty('slots_freed');
+    expect(result).toHaveProperty('devmode_cleaned');
   });
 });
