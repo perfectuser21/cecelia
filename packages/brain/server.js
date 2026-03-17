@@ -35,6 +35,7 @@ import alexPagesRoutes from './src/routes/alex-pages.js';
 import metricsRoutes from './src/routes/metrics.js';
 import ruminationRoutes from './src/routes/rumination.js';
 import curiosityRoutes from './src/routes/curiosity.js';
+import knowledgeRoutes from './src/routes/knowledge.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -127,6 +128,7 @@ app.use('/api/brain/alex-pages', alexPagesRoutes);
 app.use('/api/brain/metrics', metricsRoutes);
 app.use('/api/brain/rumination', ruminationRoutes);
 app.use('/api/brain/curiosity', curiosityRoutes);
+app.use('/api/brain/knowledge', knowledgeRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
