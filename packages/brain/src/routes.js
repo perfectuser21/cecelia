@@ -4979,6 +4979,25 @@ router.get('/slots', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/capacity
+ * Return current concurrency ceiling configuration
+ */
+router.get('/capacity', async (req, res) => {
+  try {
+    const { getBudgetCap, INTERACTIVE_RESERVE } = await import('./executor.js');
+    const { budget, physical, effective } = getBudgetCap();
+    res.json({
+      max_seats: effective,
+      physical_capacity: physical,
+      budget_cap: budget,
+      interactive_reserve: INTERACTIVE_RESERVE,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * PUT /api/brain/budget-cap
  * Set or clear the budget cap (dual-layer capacity model)
  */
