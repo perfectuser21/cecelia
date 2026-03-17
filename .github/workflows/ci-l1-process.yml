@@ -134,6 +134,14 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           bash packages/engine/scripts/devgate/rci-execution-gate.sh
 
+      - name: Run RCI Health Check (守护规则完整性)
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  RCI Health Check: 重复ID / 缺失文件 / known-failures过期 / 孤儿测试"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          cd packages/engine
+          node scripts/devgate/check-rci-health.mjs
+
   cleanup-check:
     name: Cleanup Check (Step 6.5 Simplify)
     needs: verify-dev-workflow
