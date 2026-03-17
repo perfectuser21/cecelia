@@ -109,7 +109,7 @@ export default defineConfig({
     })
   ],
   server: {
-    port: 5212,
+    port: 5211,
     host: '0.0.0.0',
     allowedHosts: [
       'localhost',
