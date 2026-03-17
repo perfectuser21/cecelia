@@ -20,6 +20,18 @@ vi.mock('../task-router.js', () => ({
   getTaskLocation: vi.fn(() => 'us'),
 }));
 
+// Mock platform-utils — controls getDmesgInfo return value for reason routing tests
+const mockGetDmesgInfo = vi.hoisted(() => vi.fn(() => null));
+vi.mock('../platform-utils.js', () => ({
+  sampleCpuUsage: vi.fn(() => 0),
+  _resetCpuSampler: vi.fn(),
+  getSwapUsedPct: vi.fn(() => 0),
+  getDmesgInfo: mockGetDmesgInfo,
+  countClaudeProcesses: vi.fn(() => 0),
+  calculatePhysicalCapacity: vi.fn(() => 5),
+  IS_DARWIN: false,
+}));
+
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let syncOrphanTasksOnStartup;
 
@@ -32,6 +44,7 @@ beforeAll(async () => {
 describe('syncOrphanTasksOnStartup', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockGetDmesgInfo.mockReturnValue(null); // default: no dmesg → process_disappeared
   });
 
   it('should do nothing when no in_progress tasks exist', async () => {
@@ -43,9 +56,10 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.rebuilt).toBe(0);
   });
 
-  it('should mark orphan task as failed when no matching process', async () => {
+  it('should requeue orphan task when reason is process_disappeared (Brain restart)', async () => {
     const { execSync } = await import('child_process');
     execSync.mockReturnValue('0\n'); // No matching process
+    // getDmesgInfo returns null (default) → reason = process_disappeared → requeue
 
     mockPool.query
       .mockResolvedValueOnce({
@@ -56,13 +70,41 @@ describe('syncOrphanTasksOnStartup', () => {
           started_at: '2026-02-05T10:00:00Z'
         }]
       })
-      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE
+      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE requeue
 
     const result = await syncOrphanTasksOnStartup();
     expect(result.orphans_found).toBe(1);
     expect(result.orphans_fixed).toBe(1);
 
-    // Verify the UPDATE was called with orphan_detected error
+    // Verify the UPDATE used status='queued' (requeue path)
+    const updateCall = mockPool.query.mock.calls[1];
+    expect(updateCall[0]).toContain("status = 'queued'");
+    const payload = JSON.parse(updateCall[1][1]);
+    expect(payload.requeue_reason).toBe('process_disappeared');
+    expect(payload.requeue_source).toBe('startup_orphan_recovery');
+  });
+
+  it('should mark orphan task as failed when reason is oom_killed', async () => {
+    const { execSync } = await import('child_process');
+    execSync.mockReturnValue('0\n'); // No matching process
+    mockGetDmesgInfo.mockReturnValue('Out of memory: killed process 12345 (node)\nOOM killer invoked');
+
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'orphan-oom',
+          title: 'OOM Task',
+          payload: { current_run_id: 'run-oom-456' },
+          started_at: '2026-02-05T10:00:00Z'
+        }]
+      })
+      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE failed
+
+    const result = await syncOrphanTasksOnStartup();
+    expect(result.orphans_found).toBe(1);
+    expect(result.orphans_fixed).toBe(1);
+
+    // Verify the UPDATE used status='failed' (true failure path)
     const updateCall = mockPool.query.mock.calls[1];
     expect(updateCall[0]).toContain("status = 'failed'");
     const payload = JSON.parse(updateCall[1][1]);

@@ -2347,36 +2347,61 @@ async function syncOrphanTasksOnStartup() {
 
       const errorDetails = {
         type: 'orphan_detected',
-        reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
+        reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared / unknown
         message: 'Task was in_progress but no matching process found on Brain startup',
         detected_at: new Date().toISOString(),
         run_id: runId || null,
         diagnostic_info: diagnostic_info,
       };
 
-      await pool.query(
-        `UPDATE tasks SET
-          status = 'failed',
-          error_message = $3,
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1`,
-        [
-          task.id,
-          JSON.stringify({ error_details: errorDetails }),
-          `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
-        ]
-      );
+      // Distinguish retryable (Brain restart) vs true failures (OOM / signal kill)
+      const REQUEUE_REASONS = ['process_disappeared', 'unknown'];
+      if (REQUEUE_REASONS.includes(reason)) {
+        // Brain restarted — task was interrupted, not failed. Requeue for retry.
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'queued',
+            error_message = NULL,
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          WHERE id = $1`,
+          [
+            task.id,
+            JSON.stringify({
+              requeue_reason: reason,
+              requeued_at: new Date().toISOString(),
+              requeue_source: 'startup_orphan_recovery',
+            }),
+          ]
+        );
+        console.log(`[startup-sync] Orphan requeued: task=${task.id} title="${task.title}" reason=${reason}`);
+      } else {
+        // True failure (oom_killed / oom_likely / killed_signal / timeout) — mark as failed
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'failed',
+            error_message = $3,
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          WHERE id = $1`,
+          [
+            task.id,
+            JSON.stringify({ error_details: errorDetails }),
+            `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
+          ]
+        );
 
-      // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
-      import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
-        processExecutionAutoLearning(task.id, 'failed', errorDetails, {
-          trigger_source: 'orphan_detection',
-          metadata: { run_id: runId }
-        })
-      ).catch(() => {/* non-fatal */});
+        // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
+        import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
+          processExecutionAutoLearning(task.id, 'failed', errorDetails, {
+            trigger_source: 'orphan_detection',
+            metadata: { run_id: runId }
+          })
+        ).catch(() => {/* non-fatal */});
+
+        console.log(`[startup-sync] Orphan failed: task=${task.id} title="${task.title}" reason=${reason}`);
+      }
 
       orphansFixed++;
-      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}" reason=${reason}`);
+      console.log(`[startup-sync] Orphan processed: task=${task.id} title="${task.title}" reason=${reason}`);
     }
   }
 
