@@ -65,27 +65,27 @@ COMMENT ON COLUMN run_events.heartbeat_ts IS 'Last heartbeat timestamp - used to
 COMMENT ON COLUMN run_events.artifacts IS 'Artifact IDs (use GET /api/brain/trace/artifacts/:id for access)';
 
 -- Indexes for fast queries
-CREATE INDEX idx_run_events_task_id ON run_events(task_id) WHERE task_id IS NOT NULL;
-CREATE INDEX idx_run_events_run_id ON run_events(run_id);
-CREATE INDEX idx_run_events_span_id ON run_events(span_id);
-CREATE INDEX idx_run_events_parent_span_id ON run_events(parent_span_id) WHERE parent_span_id IS NOT NULL;
-CREATE INDEX idx_run_events_layer ON run_events(layer);
-CREATE INDEX idx_run_events_status ON run_events(status);
-CREATE INDEX idx_run_events_reason_code ON run_events(reason_code) WHERE reason_code IS NOT NULL;
-CREATE INDEX idx_run_events_reason_kind ON run_events(reason_kind) WHERE reason_kind IS NOT NULL;
-CREATE INDEX idx_run_events_executor_host ON run_events(executor_host) WHERE executor_host IS NOT NULL;
-CREATE INDEX idx_run_events_heartbeat ON run_events(heartbeat_ts) WHERE status = 'running';
-CREATE INDEX idx_run_events_ts_start ON run_events(ts_start DESC);
+CREATE INDEX IF NOT EXISTS idx_run_events_task_id ON run_events(task_id) WHERE task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_run_events_span_id ON run_events(span_id);
+CREATE INDEX IF NOT EXISTS idx_run_events_parent_span_id ON run_events(parent_span_id) WHERE parent_span_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_run_events_layer ON run_events(layer);
+CREATE INDEX IF NOT EXISTS idx_run_events_status ON run_events(status);
+CREATE INDEX IF NOT EXISTS idx_run_events_reason_code ON run_events(reason_code) WHERE reason_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_run_events_reason_kind ON run_events(reason_kind) WHERE reason_kind IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_run_events_executor_host ON run_events(executor_host) WHERE executor_host IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_run_events_heartbeat ON run_events(heartbeat_ts) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_run_events_ts_start ON run_events(ts_start DESC);
 
 -- Composite index for task → runs lookup
-CREATE INDEX idx_run_events_task_run ON run_events(task_id, run_id) WHERE task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_run_events_task_run ON run_events(task_id, run_id) WHERE task_id IS NOT NULL;
 
 -- GIN indexes for JSONB fields
-CREATE INDEX idx_run_events_artifacts ON run_events USING gin(artifacts);
-CREATE INDEX idx_run_events_metadata ON run_events USING gin(metadata);
+CREATE INDEX IF NOT EXISTS idx_run_events_artifacts ON run_events USING gin(artifacts);
+CREATE INDEX IF NOT EXISTS idx_run_events_metadata ON run_events USING gin(metadata);
 
 -- Unique constraint: prevent duplicate span_id
-CREATE UNIQUE INDEX idx_run_events_span_id_unique ON run_events(span_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_run_events_span_id_unique ON run_events(span_id);
 
 -----------------------------------
 -- VIEWS
@@ -310,9 +310,9 @@ CREATE TABLE IF NOT EXISTS run_artifacts (
     metadata jsonb                                 -- Additional metadata (resolution, duration, etc.)
 );
 
-CREATE INDEX idx_run_artifacts_span_id ON run_artifacts(span_id);
-CREATE INDEX idx_run_artifacts_type ON run_artifacts(artifact_type);
-CREATE INDEX idx_run_artifacts_expires ON run_artifacts(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_run_artifacts_span_id ON run_artifacts(span_id);
+CREATE INDEX IF NOT EXISTS idx_run_artifacts_type ON run_artifacts(artifact_type);
+CREATE INDEX IF NOT EXISTS idx_run_artifacts_expires ON run_artifacts(expires_at) WHERE expires_at IS NOT NULL;
 
 COMMENT ON TABLE run_artifacts IS 'Artifact metadata for run_events - use GET /api/brain/trace/artifacts/:id for access';
 COMMENT ON COLUMN run_artifacts.storage_backend IS 'local (file path), s3 (S3 key), nas (NAS mount path)';
