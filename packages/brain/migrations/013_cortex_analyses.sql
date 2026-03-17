@@ -32,10 +32,10 @@ CREATE TABLE cortex_analyses (
 );
 
 -- Indexes for efficient querying
-CREATE INDEX idx_cortex_analyses_task_id ON cortex_analyses(task_id);
-CREATE INDEX idx_cortex_analyses_created_at ON cortex_analyses(created_at DESC);
-CREATE INDEX idx_cortex_analyses_trigger ON cortex_analyses(trigger_event_type);
-CREATE INDEX idx_cortex_analyses_failure_pattern ON cortex_analyses USING GIN (failure_pattern);
+CREATE INDEX IF NOT EXISTS idx_cortex_analyses_task_id ON cortex_analyses(task_id);
+CREATE INDEX IF NOT EXISTS idx_cortex_analyses_created_at ON cortex_analyses(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cortex_analyses_trigger ON cortex_analyses(trigger_event_type);
+CREATE INDEX IF NOT EXISTS idx_cortex_analyses_failure_pattern ON cortex_analyses USING GIN (failure_pattern);
 
 -- Update schema_version
 INSERT INTO schema_version (version, description) VALUES ('013', 'Add cortex_analyses table for persistent RCA memory');
