@@ -270,13 +270,15 @@ server.listen(PORT, async () => {
   const { runStartupRecovery } = await import('./src/startup-recovery.js');
   await runStartupRecovery();
 
+  // Log concurrency ceiling configuration for observability
+  const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup } = await import('./src/executor.js');
+  console.log(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);
+
   // Sync orphan in_progress tasks with actual processes (requeue vs fail with process check)
-  const { syncOrphanTasksOnStartup } = await import('./src/executor.js');
   try {
     const syncResult = await syncOrphanTasksOnStartup();
-    if (syncResult.orphans_fixed > 0 || syncResult.rebuilt > 0) {
-      console.log(`[Server] Startup sync: ${syncResult.orphans_fixed} orphans fixed, ${syncResult.rebuilt} processes rebuilt`);
-    }
+    const failed = (syncResult.orphans_fixed || 0) - (syncResult.requeued || 0) - (syncResult.rebuilt || 0);
+    console.log(`[Server] Startup sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${failed}`);
   } catch (syncErr) {
     console.error('[Server] Startup sync failed:', syncErr.message);
   }
