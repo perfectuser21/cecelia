@@ -14,3 +14,7 @@ UPDATE goals SET type = 'area_okr' WHERE type = 'kr';
 -- Step 3: 添加新约束（保留 global_kr/area_kr 兼容旧数据）
 ALTER TABLE goals ADD CONSTRAINT goals_type_check
   CHECK (type IN ('mission', 'vision', 'area_okr', 'global_kr', 'area_kr'));
+
+INSERT INTO schema_version (version, description)
+VALUES ('126', 'Rename goal types: global_okr→mission, area_okr→vision, kr→area_okr')
+ON CONFLICT (version) DO NOTHING;

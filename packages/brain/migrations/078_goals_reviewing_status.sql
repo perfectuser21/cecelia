@@ -5,3 +5,7 @@
 ALTER TABLE goals DROP CONSTRAINT IF EXISTS goals_status_check;
 ALTER TABLE goals ADD CONSTRAINT goals_status_check
   CHECK (status IN ('pending', 'needs_info', 'ready', 'decomposing', 'reviewing', 'in_progress', 'completed', 'cancelled'));
+
+INSERT INTO schema_version (version, description)
+VALUES ('078', 'Add reviewing status to goals table')
+ON CONFLICT (version) DO NOTHING;

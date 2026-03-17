@@ -6,4 +6,5 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
   task_type IN ('dev', 'review', 'talk', 'data', 'research', 'exploratory', 'qa', 'audit', 'decomp_review', 'codex_qa')
 );
 
-INSERT INTO schema_version (version) VALUES ('052');
+INSERT INTO schema_version (version, description) VALUES ('052', 'Expand task_type check: add decomp_review, codex_qa')
+ON CONFLICT (version) DO NOTHING;

@@ -13,3 +13,7 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
     'architecture_design'
   )
 );
+
+INSERT INTO schema_version (version, description)
+VALUES ('127', 'Add architecture_design to tasks_task_type_check constraint')
+ON CONFLICT (version) DO NOTHING;

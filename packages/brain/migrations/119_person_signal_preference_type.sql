@@ -7,3 +7,7 @@ ALTER TABLE person_signals
 ALTER TABLE person_signals
   ADD CONSTRAINT person_signals_signal_type_check
   CHECK (signal_type IN ('mood', 'availability', 'workload', 'sentiment', 'location', 'preference', 'correction', 'other'));
+
+INSERT INTO schema_version (version, description)
+VALUES ('119', 'Expand person_signals.signal_type: add preference, correction')
+ON CONFLICT (version) DO NOTHING;

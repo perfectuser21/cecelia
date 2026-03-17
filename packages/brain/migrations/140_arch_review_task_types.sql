@@ -15,6 +15,10 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
   )
 );
 
+INSERT INTO schema_version (version, description)
+VALUES ('140', 'Add arch_review, architecture_scan, strategy_session task types')
+ON CONFLICT (version) DO NOTHING;
+
 -- 新增每日架构巡检 recurring task（08:00 每天）
 INSERT INTO recurring_tasks (
   title,

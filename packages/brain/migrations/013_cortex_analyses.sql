@@ -1,7 +1,7 @@
 -- Migration 013: Cortex Analyses - Persistent Memory for RCA Results
 -- Purpose: Store structured Cortex RCA analysis results for historical reference and learning
 
-CREATE TABLE cortex_analyses (
+CREATE TABLE IF NOT EXISTS cortex_analyses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
   -- Association
@@ -38,4 +38,5 @@ CREATE INDEX IF NOT EXISTS idx_cortex_analyses_trigger ON cortex_analyses(trigge
 CREATE INDEX IF NOT EXISTS idx_cortex_analyses_failure_pattern ON cortex_analyses USING GIN (failure_pattern);
 
 -- Update schema_version
-INSERT INTO schema_version (version, description) VALUES ('013', 'Add cortex_analyses table for persistent RCA memory');
+INSERT INTO schema_version (version, description) VALUES ('013', 'Add cortex_analyses table for persistent RCA memory')
+ON CONFLICT (version) DO NOTHING;

@@ -13,5 +13,5 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
 );
 
 INSERT INTO schema_version (version, description)
-VALUES ('113', 'Add notion_synced to tasks_task_type_check constraint')
+VALUES ('114', 'Add notion_synced to tasks_task_type_check constraint')
 ON CONFLICT (version) DO NOTHING;
