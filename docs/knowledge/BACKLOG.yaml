@@ -1,0 +1,767 @@
+# 知识库生成待办清单
+# Codex 每天从这里领取 3-5 个任务，按 TEMPLATE.md 生成对应的知识页
+# status: todo → done
+# priority: P0（最重要）/ P1 / P2
+
+meta:
+  total: 86
+  done: 11
+  last_updated: 2026-03-17
+
+# ══════════════════════════════════════════════
+# BRAIN 模块（18个单元）
+# ══════════════════════════════════════════════
+brain:
+
+  - id: brain-tick-loop
+    title: 心跳系统（Tick Loop）
+    desc: 5秒循环检查、2分钟执行触发、系统生命维持
+    priority: P0
+    status: done
+    output_url: knowledge/brain/tick-loop.html
+    completed: 2026-03-15
+    source_files:
+      - packages/brain/src/tick.js
+      - packages/brain/src/monitor-loop.js
+      - packages/brain/src/nightly-tick.js
+      - packages/brain/src/okr-tick.js
+    output: knowledge/brain/tick-loop.html
+
+  - id: brain-planner
+    title: 任务规划器（Planner）
+    desc: KR轮转评分、任务优先级排序、选出下一个要做的任务
+    priority: P0
+    status: done
+    output_url: knowledge/brain/planner.html
+    completed: 2026-03-15
+    source_files:
+      - packages/brain/src/planner.js
+      - packages/brain/src/activation-scorer.js
+      - packages/brain/src/curiosity-scorer.js
+      - packages/brain/src/task-weight.js
+    output: knowledge/brain/planner.html
+
+  - id: brain-thalamus
+    title: 丘脑决策层（Thalamus L1）
+    desc: Haiku快速路由、ACTION_WHITELIST、简单事情直达
+    priority: P0
+    status: done
+    output_url: knowledge/brain/thalamus.html
+    completed: 2026-03-15
+    source_files:
+      - packages/brain/src/thalamus.js
+      - packages/brain/src/intent.js
+      - packages/brain/src/cognitive-core.js
+      - packages/brain/src/decision.js
+    output: knowledge/brain/thalamus.html
+
+  - id: brain-cortex
+    title: 皮层分析层（Cortex L2）
+    desc: Sonnet深度分析、按需启动、复杂决策和战略调整
+    priority: P0
+    status: done
+    output_url: knowledge/brain/cortex.html
+    completed: 2026-03-15
+    source_files:
+      - packages/brain/src/cortex.js
+      - packages/brain/src/cortex-quality.js
+      - packages/brain/src/rumination.js
+      - packages/brain/src/rumination-scheduler.js
+    output: knowledge/brain/cortex.html
+
+  - id: brain-executor
+    title: 任务派发器（Executor）
+    desc: task_type路由、LOCATION_MAP、调用外部Agent
+    priority: P0
+    status: done
+    output_url: knowledge/brain/executor.html
+    completed: 2026-03-15
+    source_files:
+      - packages/brain/src/executor.js
+      - packages/brain/src/task-router.js
+      - packages/brain/src/decision-executor.js
+      - packages/brain/src/dispatch-stats.js
+    output: knowledge/brain/executor.html
+
+  - id: brain-quarantine
+    title: 隔离保护（Quarantine + Circuit Breaker）
+    desc: 失败3次→隔离、防死循环、免疫系统
+    priority: P0
+    status: done
+    output_url: knowledge/brain/quarantine.html
+    completed: 2026-03-17
+    source_files:
+      - packages/brain/src/quarantine.js
+      - packages/brain/src/circuit-breaker.js
+      - packages/brain/src/immune-system.js
+    output: knowledge/brain/quarantine.html
+
+  - id: brain-watchdog
+    title: 资源监控（Watchdog + Alertness）
+    desc: macOS内存检测、CPU监控、系统压力调速
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/watchdog.js
+      - packages/brain/src/capacity.js
+      - packages/brain/src/alertness-actions.js
+      - packages/brain/src/platform-utils.js
+    output: knowledge/brain/watchdog.html
+
+  - id: brain-self-healing
+    title: 自愈系统（Auto-fix + Recovery）
+    desc: 自动修复失败任务、启动恢复、僵尸清理
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/auto-fix.js
+      - packages/brain/src/dev-failure-classifier.js
+      - packages/brain/src/startup-recovery.js
+      - packages/brain/src/zombie-cleaner.js
+      - packages/brain/src/zombie-sweep.js
+    output: knowledge/brain/self-healing.html
+
+  - id: brain-database
+    title: 数据库层（DB + Migrations）
+    desc: PostgreSQL连接、139个migration、schema版本管理
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/db.js
+      - packages/brain/src/db-config.js
+      - packages/brain/src/migrate.js
+      - packages/brain/src/selfcheck.js
+    output: knowledge/brain/database.html
+
+  - id: brain-task-actions
+    title: 任务操作层（Task Actions）
+    desc: 创建/更新/查询任务、任务状态机、操作接口
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/actions.js
+      - packages/brain/src/task-updater.js
+      - packages/brain/src/task-cleanup.js
+      - packages/brain/src/task-quality-gate.js
+    output: knowledge/brain/task-actions.html
+
+  - id: brain-llm-caller
+    title: LLM调用层（LLM Caller）
+    desc: 调用Claude、模型选择、Token预算、费用控制
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/llm-caller.js
+      - packages/brain/src/model-registry.js
+      - packages/brain/src/model-profile.js
+      - packages/brain/src/token-budget-planner.js
+    output: knowledge/brain/llm-caller.html
+
+  - id: brain-learning
+    title: 学习系统（Learning）
+    desc: 记录开发经验、自动提取、检索复用
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/learning.js
+      - packages/brain/src/learning-retriever.js
+      - packages/brain/src/auto-learning.js
+    output: knowledge/brain/learning.html
+
+  - id: brain-memory
+    title: 记忆系统（Memory）
+    desc: 向量检索、记忆路由、embedding存储
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/memory-router.js
+      - packages/brain/src/memory-retriever.js
+      - packages/brain/src/memory-utils.js
+      - packages/brain/src/embedding-service.js
+    output: knowledge/brain/memory.html
+
+  - id: brain-okr-tracking
+    title: OKR追踪（Goal + KR Progress）
+    desc: 目标进度计算、KR完成度、推动任务生成
+    priority: P1
+    status: todo
+    source_files:
+      - packages/brain/src/goal-evaluator.js
+      - packages/brain/src/kr-progress.js
+      - packages/brain/src/progress-ledger.js
+      - packages/brain/src/progress-reviewer.js
+    output: knowledge/brain/okr-tracking.html
+
+  - id: brain-briefing
+    title: 每日简报（Briefing + Focus）
+    desc: 每日焦点生成、任务摘要、给用户的状态报告
+    priority: P2
+    status: todo
+    source_files:
+      - packages/brain/src/briefing.js
+      - packages/brain/src/daily-review-scheduler.js
+      - packages/brain/src/focus.js
+    output: knowledge/brain/briefing.html
+
+  - id: brain-notion-sync
+    title: Notion同步（Notion Sync）
+    desc: 任务同步到Notion、记忆同步、定时同步
+    priority: P2
+    status: todo
+    source_files:
+      - packages/brain/src/notion-sync.js
+      - packages/brain/src/notion-full-sync.js
+      - packages/brain/src/notion-memory-sync.js
+    output: knowledge/brain/notion-sync.html
+
+  - id: brain-api-routes
+    title: API路由层（Routes）
+    desc: 29个HTTP端点、WebSocket、对外接口
+    priority: P2
+    status: todo
+    source_files:
+      - packages/brain/src/routes.js
+      - packages/brain/src/cecelia-routes.js
+      - packages/brain/src/websocket.js
+    output: knowledge/brain/api-routes.html
+
+  - id: brain-stats
+    title: 统计监控（Stats + Account Usage）
+    desc: 任务统计、账号用量、派发数据
+    priority: P2
+    status: todo
+    source_files:
+      - packages/brain/src/stats.js
+      - packages/brain/src/dispatch-stats.js
+      - packages/brain/src/account-usage.js
+    output: knowledge/brain/stats.html
+
+# ══════════════════════════════════════════════
+# ENGINE 模块（12个单元）
+# ══════════════════════════════════════════════
+engine:
+
+  - id: engine-dev-workflow
+    title: /dev 开发工作流
+    desc: 完整6步开发流程、Worktree隔离、PR合并闭环
+    priority: P0
+    status: done  # 已有 cecelia-dev-deep.html
+    output: knowledge/engine/dev-workflow.html
+
+  - id: engine-dev-step0
+    title: /dev Step 0：创建隔离空间
+    desc: Worktree强制创建、分支命名、自检验证
+    priority: P0
+    status: done
+    output_url: knowledge/engine/dev-step-0.html
+    completed: 2026-03-17
+    source_files:
+      - packages/engine/skills/dev/steps/00-worktree-auto.md
+    output: knowledge/engine/dev-step-0.html
+
+  - id: engine-dev-step1
+    title: /dev Step 1：定义目标（TaskCard）
+    desc: PRD+DoD合一、成功标准、验收条件
+    priority: P0
+    status: done
+    output_url: knowledge/engine/dev-step-1.html
+    completed: 2026-03-17
+    source_files:
+      - packages/engine/skills/dev/steps/01-taskcard.md
+    output: knowledge/engine/dev-step-1.html
+
+  - id: engine-dev-step2
+    title: /dev Step 2：探索+写代码
+    desc: 并行探索subagent、写代码、本地验证
+    priority: P0
+    status: done
+    output_url: knowledge/engine/dev-step-2.html
+    completed: 2026-03-17
+    source_files:
+      - packages/engine/skills/dev/steps/02-code.md
+    output: knowledge/engine/dev-step-2.html
+
+  - id: engine-dev-step3
+    title: /dev Step 3：提PR + 等CI
+    desc: 创建PR、4层CI监控、自动修复循环
+    priority: P0
+    status: done
+    output_url: knowledge/engine/dev-step-3.html
+    completed: 2026-03-17
+    source_files:
+      - packages/engine/skills/dev/steps/03-prci.md
+    output: knowledge/engine/dev-step-3.html
+
+  - id: engine-dev-step4
+    title: /dev Step 4：Learning + 合并
+    desc: 写经验记录、顺序铁律、合并PR
+    priority: P0
+    status: in_progress
+    source_files:
+      - packages/engine/skills/dev/steps/04-learning.md
+    output: knowledge/engine/dev-step-4.html
+
+  - id: engine-hooks
+    title: Git Hooks 系统（4个守卫）
+    desc: branch-protect、credential-guard、stop-dev、bash-guard的互动机制
+    priority: P0
+    status: in_progress
+    source_files:
+      - packages/engine/hooks/branch-protect.sh
+      - packages/engine/hooks/credential-guard.sh
+      - packages/engine/hooks/stop-dev.sh
+      - packages/engine/hooks/bash-guard.sh
+    output: knowledge/engine/hooks.html
+
+  - id: engine-devgate
+    title: DevGate 门禁脚本
+    desc: 改Brain前必跑的3项检查、facts-check、version-sync、dod-mapping
+    priority: P1
+    status: todo
+    source_files:
+      - packages/engine/scripts/devgate/
+    output: knowledge/engine/devgate.html
+
+  - id: engine-ci-l1
+    title: CI 第1道：流程检查（L1）
+    desc: PRD/DoD/Learning格式验证、文件存在性、强制开发证据
+    priority: P1
+    status: todo
+    source_files:
+      - .github/workflows/ci-l1-process.yml
+    output: knowledge/engine/ci-l1.html
+
+  - id: engine-ci-l2
+    title: CI 第2道：一致性检查（L2）
+    desc: facts-check、版本同步、DEFINITION.md与代码一致
+    priority: P1
+    status: todo
+    source_files:
+      - .github/workflows/ci-l2-consistency.yml
+    output: knowledge/engine/ci-l2.html
+
+  - id: engine-ci-l3
+    title: CI 第3道：单元测试（L3）
+    desc: Brain单元测试、baseline机制、400+测试
+    priority: P1
+    status: todo
+    source_files:
+      - .github/workflows/ci-l3-code.yml
+    output: knowledge/engine/ci-l3.html
+
+  - id: engine-ci-l4
+    title: CI 第4道：真机测试（L4）
+    desc: macOS集成测试、真实运行时验证
+    priority: P1
+    status: todo
+    source_files:
+      - .github/workflows/ci-l4-runtime.yml
+    output: knowledge/engine/ci-l4.html
+
+# ══════════════════════════════════════════════
+# WORKFLOWS / SKILLS 模块（52个单元）
+# ══════════════════════════════════════════════
+workflows:
+
+  - id: skill-autumnrice
+    title: 秋米 /okr（OKR拆解专家）
+    priority: P0
+    status: in_progress
+    source_files:
+      - packages/workflows/skills/autumnrice/SKILL.md
+    output: knowledge/workflows/autumnrice.html
+
+  - id: skill-cecelia-brain
+    title: Cecelia 大脑 /cecelia-brain
+    priority: P0
+    status: in_progress
+    source_files:
+      - packages/workflows/skills/cecelia-brain/SKILL.md
+    output: knowledge/workflows/cecelia-brain.html
+
+  - id: skill-brain-register
+    title: Brain注册向导 /brain-register
+    priority: P0
+    status: in_progress
+    source_files:
+      - packages/workflows/skills/brain-register/SKILL.md
+    output: knowledge/workflows/brain-register.html
+
+  - id: skill-decomp
+    title: 拆解引擎 /decomp
+    priority: P0
+    status: todo
+    source_files:
+      - packages/workflows/skills/decomp/SKILL.md
+    output: knowledge/workflows/decomp.html
+
+  - id: skill-review
+    title: 代码审查 /review
+    priority: P0
+    status: todo
+    source_files:
+      - packages/workflows/skills/review/SKILL.md
+    output: knowledge/workflows/review.html
+
+  - id: skill-code-review
+    title: 代码巡检 /code-review
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/code-review/SKILL.md
+    output: knowledge/workflows/code-review.html
+
+  - id: skill-qa
+    title: QA总控 /qa
+    priority: P1
+    status: todo
+    source_files:
+      - packages/engine/skills/qa/SKILL.md
+    output: knowledge/workflows/qa.html
+
+  - id: skill-audit
+    title: 代码审计 /audit
+    priority: P1
+    status: todo
+    source_files:
+      - packages/engine/skills/audit/SKILL.md
+    output: knowledge/workflows/audit.html
+
+  - id: skill-plan
+    title: 意图识别 /plan
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/plan/SKILL.md
+    output: knowledge/workflows/plan.html
+
+  - id: skill-repo-lead
+    title: 部门主管 /repo-lead
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/repo-lead/SKILL.md
+    output: knowledge/workflows/repo-lead.html
+
+  - id: skill-douyin
+    title: 抖音发布 /douyin-publisher
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/douyin-publisher/SKILL.md
+    output: knowledge/workflows/douyin-publisher.html
+
+  - id: skill-weibo
+    title: 微博发布 /weibo-publisher
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/weibo-publisher/SKILL.md
+    output: knowledge/workflows/weibo-publisher.html
+
+  - id: skill-xiaohongshu
+    title: 小红书发布 /xiaohongshu-publisher
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/xiaohongshu-publisher/SKILL.md
+    output: knowledge/workflows/xiaohongshu-publisher.html
+
+  - id: skill-zhihu
+    title: 知乎发布 /zhihu-publisher
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/zhihu-publisher/SKILL.md
+    output: knowledge/workflows/zhihu-publisher.html
+
+  - id: skill-wechat
+    title: 微信公众号 /wechat-publisher
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/wechat-publisher/SKILL.md
+    output: knowledge/workflows/wechat-publisher.html
+
+  - id: skill-kuaishou
+    title: 快手发布 /kuaishou-publisher
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/kuaishou-publisher/SKILL.md
+    output: knowledge/workflows/kuaishou-publisher.html
+
+  - id: skill-toutiao
+    title: 头条发布 /toutiao-publisher
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/toutiao-publisher/SKILL.md
+    output: knowledge/workflows/toutiao-publisher.html
+
+  - id: skill-credentials
+    title: 凭据管理 /credentials
+    priority: P1
+    status: todo
+    source_files:
+      - packages/workflows/skills/credentials/SKILL.md
+    output: knowledge/workflows/credentials.html
+
+  - id: skill-frontend-design
+    title: 前端设计 /frontend-design
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/frontend-design/SKILL.md
+    output: knowledge/workflows/frontend-design.html
+
+  - id: skill-content-creator
+    title: 内容制作中心 /content-creator
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/content-creator/SKILL.md
+    output: knowledge/workflows/content-creator.html
+
+  - id: skill-share-card
+    title: 卡片生成 /share-card
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/share-card/SKILL.md
+    output: knowledge/workflows/share-card.html
+
+  - id: skill-janitor
+    title: 系统清扫 /janitor
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/janitor/SKILL.md
+    output: knowledge/workflows/janitor.html
+
+  - id: skill-sync-hk
+    title: 同步香港 /sync-hk
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/sync-hk/SKILL.md
+    output: knowledge/workflows/sync-hk.html
+
+  - id: skill-arch-review
+    title: 架构审查 /arch-review
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/arch-review/SKILL.md
+    output: knowledge/workflows/arch-review.html
+
+  - id: skill-research
+    title: 深度调研 /research
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/research/SKILL.md
+    output: knowledge/workflows/research.html
+
+  - id: skill-social-media-analysis
+    title: 社媒数据分析 /social-media-analysis
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/social-media-analysis/SKILL.md
+    output: knowledge/workflows/social-media-analysis.html
+
+  - id: skill-platform-scraper
+    title: 平台采集 /platform-scraper
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/platform-scraper/SKILL.md
+    output: knowledge/workflows/platform-scraper.html
+
+  - id: skill-nas
+    title: NAS管理 /nas
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/nas/SKILL.md
+    output: knowledge/workflows/nas.html
+
+  - id: skill-notebooklm
+    title: NotebookLM /notebooklm
+    priority: P2
+    status: todo
+    source_files:
+      - packages/workflows/skills/notebooklm/SKILL.md
+    output: knowledge/workflows/notebooklm.html
+
+  # 剩余技能（优先级P2，陆续补充）
+  - id: skill-architect
+    title: 系统架构师 /architect
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/architect/SKILL.md]
+    output: knowledge/workflows/architect.html
+
+  - id: skill-canvas-project
+    title: 画布投影 /canvas-project
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/canvas-project/SKILL.md]
+    output: knowledge/workflows/canvas-project.html
+
+  - id: skill-cecelia
+    title: Cecelia嘴巴 /cecelia
+    priority: P1
+    status: todo
+    source_files: [packages/workflows/skills/cecelia/SKILL.md]
+    output: knowledge/workflows/cecelia.html
+
+  - id: skill-chrome
+    title: 浏览器操控 /chrome
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/chrome/SKILL.md]
+    output: knowledge/workflows/chrome.html
+
+  - id: skill-decomp-check
+    title: 拆解质检 /decomp-check
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/decomp-check/SKILL.md]
+    output: knowledge/workflows/decomp-check.html
+
+  - id: skill-feature-map
+    title: 功能地图 /feature-map
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/feature-map/SKILL.md]
+    output: knowledge/workflows/feature-map.html
+
+  - id: skill-knowledge
+    title: 知识捕获 /knowledge
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/knowledge/SKILL.md]
+    output: knowledge/workflows/knowledge.html
+
+  - id: skill-repo-visualizer
+    title: 仓库可视化 /repo-visualizer
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/repo-visualizer/SKILL.md]
+    output: knowledge/workflows/repo-visualizer.html
+
+  - id: skill-skill-creator
+    title: 技能创建 /skill-creator
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/skill-creator/SKILL.md]
+    output: knowledge/workflows/skill-creator.html
+
+  - id: skill-strategy-session
+    title: 战略会议 /strategy-session
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/strategy-session/SKILL.md]
+    output: knowledge/workflows/strategy-session.html
+
+  - id: skill-versioning
+    title: 版本管理 /versioning
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/versioning/SKILL.md]
+    output: knowledge/workflows/versioning.html
+
+  - id: skill-assurance
+    title: 质量规范 /assurance
+    priority: P2
+    status: todo
+    source_files: [packages/engine/skills/assurance/SKILL.md]
+    output: knowledge/workflows/assurance.html
+
+  - id: skill-claude-api
+    title: Claude API /claude-api
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/claude-api/SKILL.md]
+    output: knowledge/workflows/claude-api.html
+
+  - id: skill-headless-deploy
+    title: 无头部署 /headless-deploy
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/headless-deploy/SKILL.md]
+    output: knowledge/workflows/headless-deploy.html
+
+  - id: skill-image-gen-workflow
+    title: 图片生成流程
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/image-gen-workflow/SKILL.md]
+    output: knowledge/workflows/image-gen-workflow.html
+
+  - id: skill-quote-card-generator
+    title: 金句卡片 /quote-card-generator
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/quote-card-generator/SKILL.md]
+    output: knowledge/workflows/quote-card-generator.html
+
+  - id: skill-trading-agent
+    title: 交易Agent /trading-agent
+    priority: P2
+    status: todo
+    source_files: [packages/workflows/skills/trading-agent/SKILL.md]
+    output: knowledge/workflows/trading-agent.html
+
+# ══════════════════════════════════════════════
+# 系统概念（5个单元）
+# ══════════════════════════════════════════════
+system:
+
+  - id: system-task-lifecycle
+    title: 任务生命周期
+    desc: 从你说一句话到代码上线的完整旅程
+    priority: P0
+    status: todo
+    source_files:
+      - packages/brain/src/executor.js
+      - packages/brain/src/actions.js
+      - packages/brain/src/task-router.js
+    output: knowledge/system/task-lifecycle.html
+
+  - id: system-okr-hierarchy
+    title: OKR层级结构
+    desc: KR → Project → Initiative → Task的关系和流转
+    priority: P0
+    status: todo
+    source_files:
+      - packages/brain/src/goal-evaluator.js
+      - packages/brain/src/planner.js
+    output: knowledge/system/okr-hierarchy.html
+
+  - id: system-branch-protection
+    title: 分支保护体系
+    desc: 为什么不能直接改main、Hooks + GitHub Branch Protection双重防护
+    priority: P1
+    status: todo
+    source_files:
+      - packages/engine/hooks/branch-protect.sh
+    output: knowledge/system/branch-protection.html
+
+  - id: system-credentials
+    title: 凭据管理体系
+    desc: 1Password为SSOT、~/.credentials/缓存、双写规则
+    priority: P1
+    status: todo
+    output: knowledge/system/credentials.html
+
+  - id: system-auto-version
+    title: 自动版本管理
+    desc: commit前缀决定版本号、5个文件自动同步、不能手动bump
+    priority: P1
+    status: todo
+    source_files:
+      - .github/workflows/auto-version.yml
+    output: knowledge/system/auto-version.html
