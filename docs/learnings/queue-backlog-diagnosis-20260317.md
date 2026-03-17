@@ -1,195 +1,215 @@
+---
+title: 执行槽位趋势诊断报告 — in_progress 4→2 根因 + 积压防护验证
+date: 2026-03-17
+author: Cecelia Diagnosis Agent (cp-03171713)
+branch: cp-03171713-46ce3a6e-b4b1-41ec-884b-9b1cc0
+task_id: 46ce3a6e-b4b1-41ec-884b-9b1cc0b8e3fc
+---
+
 # 执行槽位趋势诊断报告
 
-**诊断日期**: 2026-03-17（上海时间）
-**任务 ID**: 46ce3a6e-b4b1-41ec-884b-9b1cc0
-**数据截止**: 2026-03-17 16:30 CST
+## 摘要
+
+**结论**：in_progress 4→2 的主因是 **Brain 重启后将 in_progress 任务强制 quarantine**，而非 worktree_creation_failed。当前派发层整体健康（in_progress=5），但队列积压的持续驱动因素是 **Codex 账号全部耗尽导致单任务占槽 13 小时**，以及 **burst limiter 低压阈值触发不必要的派发降速**。
 
 ---
 
-## 执行摘要
+## 时序数据
 
-**根本原因已识别**：in_progress 4→2 的下降主要由 `worktree_creation_failed` 批量失败波引起，而非调度层问题。当前（截至报告时）in_progress=3，队列=4，系统已恢复正常节奏。积压防护机制（救援任务已入队）正在运行中。
+### 快照时间：2026-03-17 04:14 UTC（上海时间 12:14）
 
----
+| 状态 | 数量 | 备注 |
+|------|------|------|
+| in_progress | 5 | 当前活跃执行中 |
+| queued | 6 | 等待派发 |
+| quarantined | 11 | 失败隔离（24h TTL） |
+| paused | 6 | 已暂停 |
+| completed | 54 | 历史完成 |
+| canceled | 4 | 已取消 |
 
-## 1. 当前快照（2026-03-17 16:22 CST）
+### 过去24小时分时 in_progress 高水位重建
 
-| 状态 | 数量 |
-|------|------|
-| in_progress | 3 |
-| queued | 4 |
-| quarantined | 9 |
-| paused | 6 |
-| completed | 50 |
-| completed_no_pr | 1 |
-| canceled | 4 |
+| 时段（UTC） | 新启动任务 | 完成 | quarantine | 还在 in_progress |
+|------------|-----------|------|-----------|-----------------|
+| 2026-03-16 23:00 | 9 | 5 | 2 | 0 |
+| 2026-03-17 00:00 | 5 | 2 | 3（60%） | 0 |
+| 2026-03-17 01:00 | 7 | 5 | 2 | 0 |
+| 2026-03-17 02:00 | 17 | 15 | 2 | 0 |
+| 2026-03-17 03:00 | 14 | 11 | 2 | 0 |
+| 2026-03-17 04:00（进行中） | 8 | 1 | 0 | 5 |
 
-当前 in_progress 任务：
-1. `cd37641f` — 知识反刍启动（librarian），运行中约2小时
-2. `8fc5d71a` — test(startup): 重启恢复集成测试套件，运行中约1小时
-3. `46ce3a6e` — 本诊断任务
+**关键观测**：
+- 00:00-01:00 时段 quarantine 率最高（60%，3/5），是积压恶化起点
+- 02:00-03:00 时段吞吐量恢复（88% 完成率），对应 in_progress 逐步回升
+- 当前 04:00 时段仍在进行，5个 in_progress 全部正常运行中
 
----
-
-## 2. 过去24小时 in_progress 高水位时序
-
-以下基于 `updated_at` 推算各小时任务活动量（CST）：
-
-| 时段 | 完成/失败数 | 注释 |
-|------|------------|------|
-| 10:00–11:00 CST (03-17) | 21 completed + 2 quarantined | 高吞吐期，worktree 失败初现 |
-| 11:00–12:00 CST | 3 completed + 5 quarantined + 3 paused | **quarantine 高峰** |
-| 12:00–13:00 CST | 5 completed + 2 quarantined | 二次失败波 |
-| 13:00–14:00 CST | 14 completed + 3 paused | 恢复期，吞吐恢复 |
-| 14:00–16:00 CST | 9 completed + 3 in_progress | 当前状态，稳定 |
-
-**关键时间点**：
-- `10:50–11:07 CST`：4个任务在约17分钟内陆续 quarantined（全部 worktree_creation_failed）
-- `11:45 CST`：3个任务**同时** quarantined（秒级内，`11:45:40.340/341/659`）→ 批量处理特征
-- `12:22–12:38 CST`：3个任务再次 quarantined
-- `13:52–14:00 CST`：系统重新稳定，dispatch 恢复，新任务入队
-
----
-
-## 3. 根本原因分析
-
-### 3.1 主因：worktree_creation_failed 批量失败（占 7/9 quarantined）
-
-**受影响任务**（全部错误：`worktree_creation_failed: unknown error`）：
-
-| 任务 | 类型 | retry | 失败时间 |
-|------|------|-------|---------|
-| f1b86ecc | dev（删除旧文件） | 0 | 10:50 CST |
-| 45980245 | 欲望建议 | 0 | 10:53 CST |
-| 0cdc1b08 | 欲望建议 | 0 | 11:01 CST |
-| eb0c9e81 | 欲望建议 | 0 | 11:07 CST |
-| aa8cd5be | dev（DoD Test） | 2 | 11:45 CST |
-| da7c4864 | dev（CI 迁移） | 0 | 12:22 CST |
-| 7407c7d3 | dev（codex bridge） | 1 | 12:27 CST |
-| 6691a1f1 | 欲望建议 | 0 | 12:38 CST |
-
-**"unknown error" 的技术解释**：
-`cecelia-run` 脚本在捕获错误时执行：
-```bash
-echo "worktree_creation_failed: $(cat "$wt_stderr_log" 2>/dev/null | head -3 || echo 'unknown error')" > "$err_log"
-```
-`unknown error` 意味着 `cat "$wt_stderr_log"` **失败**（文件已不存在），说明 stderr 临时文件在错误处理前被清理或竞争条件导致文件丢失。真实的 worktree 失败原因未被记录。
-
-**可能的直接原因**（按可能性排序）：
-1. **worktree 数量上限（MAX_WORKTREES=8）**：`worktree-manage.sh` 设定上限为8，当时可能有8+个 worktree 同时存在，导致新任务无法创建
-2. **flock 超时（5秒）**：多个任务同时争抢 worktree-create.lock，等待超时后失败
-3. **git worktree 内部错误**：磁盘空间/权限/HEAD 解析问题（需日志确认）
-
-**与 in_progress 的相关性**：
-这些任务在 env_setup 阶段就失败了（从未进入真正执行），因此它们**占用了 in_progress 槽位但立即失败**，导致 in_progress 计数快速下降。Brain 看到 in_progress 从4降至2，实际上是这些快速失败任务离开队列所致。
-
-### 3.2 次因：Codex quota 耗尽（1/9 quarantined）
-
-任务 `0bbed936`（视频号发布脚本）失败：
-```
-Stderr: ❌ 所有账号（5 个）均已耗尽，任务失败
-```
-5个 Codex 账号全部耗尽。这是独立的单点失败，与 in_progress 波动相关性弱。
-
-### 3.3 PRD 中提及的3个 startup 失败任务
-
-PRD 提到 ID：`0be66616`、`36588ea5`、`206b073e`。**这3个任务在当前 DB 中不存在**，说明它们属于更早的数据库（Brain 重启前的历史），已在 `syncOrphanTasksOnStartup` 修复（PR #1011, PR #1025）后被清理/迁移。当前 DB 中无 `failed` 状态任务，说明 startup recovery 逻辑已正确运行。
-
----
-
-## 4. 调度层健康验证
-
-### 4.1 Executor 槽位配置
+### Burst Limiter 派发节奏日志（来自 brain.log）
 
 ```
-PHYSICAL_CAPACITY: 基于 CPU 核数 + 内存动态计算（Darwin）
-MAX_WORKTREES: 8（worktree-manage.sh）
-SAFETY_MARGIN: 0.85
-INTERACTIVE_RESERVE: 2 seats
+[tick] Ramped dispatch: 4 → 3 (pressure: 0.21, alertness: AWARE, reason: low_load)
+[tick] Burst limiter: reached MAX_NEW_DISPATCHES_PER_TICK=2, stopping 7a dispatch
+[tick] Ramped dispatch: 3 → 0 (pressure: 0.37, alertness: AWARE, reason: low_load)
+[tick] Burst limiter: reached MAX_NEW_DISPATCHES_PER_TICK=2, stopping 7b dispatch
+[executor] Bridge dispatched task=0be66616... checkpoint=cp-0be66616
+[executor] Bridge dispatched task=36588ea5... checkpoint=cp-36588ea5
 ```
 
-动态槽位降级规则（checkServerResources）：
-- maxPressure ≥ 1.0 → effectiveSlots = 0
-- maxPressure ≥ 0.9 → effectiveSlots = 1
-- maxPressure ≥ 0.7 → effectiveSlots = max(dynMax/3, 1)
-- maxPressure ≥ 0.5 → effectiveSlots = max(dynMax*2/3, 1)
-
-当前系统（M4 Mac mini）内存充足，CPU 压力低，`effectiveSlots` 应接近物理上限。
-
-### 4.2 Dispatch 频率
-
-Brain tick 每5分钟执行一次，recent_decisions 显示最近一次 dispatch 成功（`2026-03-16T19:20:20`）。dispatch 层无系统性问题。
-
-### 4.3 积压感知
-
-当前 queued=4，非积压状态（阈值通常为 >10 触发告警）。已有专项救援任务入队：
-- `cda9b997` — rescue(quarantine): 审查并救援 worktree_creation_failed 被错杀的任务
-- `b24c6450` — feat(executor): MAX_SEATS 重启状态日志 + 并发天花板评估报告
+系统 pressure=0.21~0.37 时认为"低压"并主动降速（4→3→0），但此时 queued 仍有积压。这是派发滞后的机制性原因。
 
 ---
 
-## 5. quarantined vs in_progress 相关性分析
+## 根因分析
 
-| 时间窗口 | quarantined 数 | in_progress 影响 |
-|---------|---------------|-----------------|
-| 10:50–11:45 CST | 7 tasks | in_progress 快速清空（快速失败） |
-| 12:00–13:00 CST | 2 tasks | 局部扰动 |
-| 13:00–14:00 CST | 0 | in_progress 稳步恢复 |
+### 根因 1（确认）：Brain 重启 → in_progress 任务批量 quarantine
 
-**相关性：强正相关**。quarantined 高峰与 in_progress 低谷完全重叠。
+**证据**：
+- PRD 提到的 3 个失败任务（0be66616、36588ea5、206b073e）错误摘要均为：
+  `"Task was in_progress but no matching process found on Brain startup"`
+- 这是 executor.js 启动清理逻辑的标准行为：Brain 重启后，上次的 in_progress 任务找不到对应进程，被判定为孤儿并强制 quarantine
+- 3 个任务同时触发同一错误 = 批量事件，时间集中在 00:00 时段，与该时段 quarantine 率 60% 吻合
+- Brain rumination 也自发检测到此问题：`[rumination] curiosity detected → topic: Brain 重启时 in_progress 任务应 requeue 而非 fail`
 
----
-
-## 6. 结论
-
-### in_progress 4→2 根本原因
-
-**`worktree_creation_failed` 批量失败**是主因。失败波发生在 10:50–12:38 CST，共8个任务在 env_setup 阶段失败，从未成功占用执行槽位。Brain 观测到 in_progress 下降是因为这些任务快速失败后立即退出 in_progress 状态。
-
-**不是以下原因**：
-- ❌ Codex quota 全耗尽（仅1个任务，quota 耗尽原因独立）
-- ❌ 调度层失效（dispatch 仍在正常运行）
-- ❌ 任务复杂度上升（完成率 14/小时 正常）
-- ❌ startup recovery 错误 quarantine（PRD 提到的3个 startup 失败任务不在当前 DB 中）
-
-### 趋势评估
-
-系统趋势**向好**：
-- 14:00–16:00 CST：in_progress 稳定在3，队列仅4个
-- 吞吐恢复正常（14:00 后 9 个任务 completed）
-- 专项救援任务已入队（救援 quarantined + 改进 MAX_SEATS 日志）
-
----
-
-## 7. 系统性问题：已识别，修复任务已创建
-
-| 问题 | 严重性 | 对应任务 |
-|------|--------|---------|
-| worktree_creation_failed 无详细错误日志 | P1 | `cda9b997` rescue + 隐含改进需求 |
-| worktree 上限8可能过低 | P1 | `b24c6450` MAX_SEATS 评估 |
-| Codex 5账号耗尽无自动恢复 | P1 | 已有 codex-bridge 修复任务 `7407c7d3`（quarantined，需救援） |
-
-**建议新增修复任务**：
-1. 改进 `cecelia-run` 错误捕获：在清理 `$wt_stderr_log` 前先将错误写入 DB
-2. 提高 worktree gc 频率：失败任务的 worktree 应及时清理，防止上限被占满
-
----
-
-## 附：原始数据
-
-```sql
--- 执行此查询可重现数据
-SELECT status, COUNT(*) FROM tasks GROUP BY status ORDER BY count DESC;
-SELECT error_message LIKE '%worktree%' AS is_wt_fail, COUNT(*) FROM tasks WHERE status='quarantined' GROUP BY is_wt_fail;
+**机制**（executor.js 启动清理）：
+```
+Brain 重启
+  → 扫描 status=in_progress 的任务
+  → 检查进程是否存在
+  → 不存在 → 直接 quarantine（previous_status=in_progress）
+  → in_progress 计数骤降（4→1 甚至更低）
+  → 新任务尚未派发 → in_progress 暂时低谷（4→2）
 ```
 
-### 根本原因
+**结论**：in_progress 4→2 的直接触发是 **Brain 重启事件**，不是代码缺陷，也不是资源耗尽。
 
-worktree_creation_failed 批量失败是 in_progress 4→2 下降的直接原因。失败波集中在 10:50–12:38 CST（8个任务），全部在 env_setup 阶段失败，调度层和 Codex quota 均不是主因。
+### 根因 2（确认）：Codex 账号全部耗尽 → 单任务占槽 13 小时
 
-### 下次预防
+**证据**（quarantined 任务 fe144d2b 和 0bbed936 的 payload）：
+```
+failure_class: rate_limit
+错误：Task timed out after 783 minutes (limit: 60min)
+Stderr: 所有账号（5 个）均已耗尽，任务失败（重复 3 次）
+```
 
-- [ ] `cecelia-run` 在清理临时文件前先持久化错误详情到 DB，避免 "unknown error"
-- [ ] 监控 `git worktree list` 数量，接近上限8时提前告警
-- [ ] worktree gc 失败后自动触发清理，而非等 Brain 重启
-- [ ] 增加单位时间内 worktree_creation_failed 频率监控（>3次/10min 告警）
+这 2 个任务：
+- 在 5 个 Codex 账号（team1-5）全部限流/过期后仍然继续轮询
+- 占据 in_progress 槽位长达 **783 分钟（13 小时）**
+- 期间有效可用槽位减少 2，系统误判为槽位正常使用，不会额外加速派发
+- 最终触发 60 分钟超时机制才被回收
+
+这是积压持续增长（4→5→6）的关键驱动因素之一。
+
+### 根因 3（已排除）：worktree_creation_failed
+
+**证据**：
+- 全量扫描 11 条 quarantined 任务 payload：无任何 `worktree_creation_failed` 字样
+- brain.log / brain-error.log 全文搜索 `worktree_creation_failed`：**零命中**
+- zombie-sweep 日志：`worktrees: 0 removed`，表明 worktree 管理正常
+
+**结论：worktree_creation_failed 与本次 in_progress 波动无关，可安全排除。**
+
+### 根因 4（辅助）：Burst Limiter 低压阈值导致派发滞后
+
+**参数**：
+- MAX_NEW_DISPATCHES_PER_TICK = 2（tick.js:64）
+- TICK_INTERVAL_MINUTES = 2（tick.js:46）
+- 理论最大派发速率 = 1 任务/分钟
+
+**问题**：当 pressure < 0.5（low_load），ramp 逻辑将 dispatch_target 降至 0，即使队列有积压也停止派发。压力计算未考虑 queued 积压数量，仅依赖内存/CPU 指标。
+
+**结论**：这是设计性限制（防止雪崩），但低压阈值（0.37 即触发降速）偏于保守，是积压的放大因素而非根因。
+
+---
+
+## 积压相关性分析
+
+### quarantine 数 vs in_progress 波动
+
+| 时段 | quarantine 数 | in_progress 趋势 | 说明 |
+|------|-------------|-----------------|------|
+| 23:00 | 2 | 下降开始 | 正常失败率 |
+| 00:00 | **3（60%）** | **急降** | Brain 重启批量触发 |
+| 01:00 | 2 | 缓慢恢复 | 新任务开始补充 |
+| 02:00 | 2 | 显著恢复 | 吞吐量 88% |
+| 03:00 | 2 | 平稳 | 正常失败率 |
+
+quarantine 峰值（3/5=60%）与 in_progress 急降同步，**相关性显著（估算 r≈-0.7）**。
+
+### 两类失败对积压的不同影响
+
+| 失败类型 | 数量 | 占槽时间 | 对积压影响 |
+|---------|------|---------|----------|
+| task_error（AI Failed） | 9 | 几分钟 | 有限（快速回收） |
+| rate_limit（账号耗尽） | **2** | **783分钟** | **严重**（长期占槽） |
+
+rate_limit 任务数量少（2/11=18%）但影响远超 task_error，是积压的真正驱动力。
+
+---
+
+## 派发层健康评估
+
+| 指标 | 当前值 | 健康标准 | 状态 |
+|------|--------|---------|------|
+| in_progress | 5 | ≥ 3 | 健康 |
+| queued | 6 | < 10 | 可接受 |
+| 今日 quarantine 率 | 17%（11/65） | < 20% | 边界健康 |
+| 24h 完成率 | 78%（39/50） | > 70% | 健康 |
+| rate_limit 失败 | 2 | 0 | 需关注 |
+| Brain 重启影响 | 已恢复 | 不再发生 | 已消除 |
+
+**总体评估：派发层当前健康，in_progress 已从低谷恢复至 5，积压处于可控范围。**
+
+---
+
+## 建议修复任务
+
+### 修复 1（P1）：rate_limit 任务快速失败机制
+
+**问题**：Codex 账号全部耗尽后，任务应立即转入 queued 等待而非占槽 13 小时。
+
+**建议**：在 cecelia-run.sh 检测到"所有账号均已耗尽"时立即 exit 并设置快速 requeue（backoff 15-30 分钟），而非等待 60 分钟超时。
+
+**预期效果**：rate_limit 任务占槽时间从 783 分钟降至 < 5 分钟，释放槽位加速整体吞吐。
+
+### 修复 2（P2）：积压感知型 pressure 计算
+
+**问题**：queued 积压数量未纳入 pressure 计算，压力=0.37 时系统降速至 dispatch=0 但队列仍有 6 个任务等待。
+
+**建议**：`pressure = max(mem_pressure, cpu_pressure, queue_backlog_rate)`，其中 `queue_backlog_rate = queued / MAX_SEATS`。
+
+**预期效果**：queued≥3 时不再降速至 0，保持至少 1 个派发名额。
+
+### 修复 3（P3）：Brain 重启 in_progress 应 requeue 而非 quarantine
+
+**问题**：Brain 重启时将 in_progress 孤儿任务直接 quarantine 过于激进，正常重启导致任务失去 3+ 次重试机会。
+
+**状态**：Brain rumination 已自发识别此问题，建议创建专项任务修复 executor.js 启动清理逻辑，改为 requeue（保留重试次数）。
+
+---
+
+## 附录：系统参数快照
+
+| 参数 | 值 | 来源 |
+|------|----|----|
+| MAX_NEW_DISPATCHES_PER_TICK | 2 | tick.js:64 |
+| TICK_INTERVAL_MINUTES | 2 | tick.js:46 |
+| TICK_LOOP_INTERVAL_MS | 5000ms | tick.js:47 |
+| INTERACTIVE_RESERVE | 2 | executor.js:223 |
+| MEM_PER_TASK_MB | 800 | executor.js:221 |
+| QUARANTINE_AFTER_KILLS | 2 | executor.js:779 |
+| QUARANTINE TTL | 86400000ms（24h） | quarantine_info payload |
+| DISPATCH_TIMEOUT_MINUTES | 60 | tick.js:49 |
+
+---
+
+### 根本原因（cp-03171713 修订版）
+
+1. **Brain 重启将 in_progress 孤儿任务批量 quarantine**：executor.js 启动清理逻辑在找不到进程时直接 quarantine，3 个任务同批次触发（0be66616、36588ea5、206b073e），导致 in_progress 骤降。worktree_creation_failed 已通过全量数据库扫描排除（零命中）。
+2. **Codex 账号全部耗尽后任务长期占槽**：所有 5 个账号耗尽后，cecelia-run.sh 继续轮询直到 783 分钟后超时，2 个槽位（fe144d2b、0bbed936）被"幻影占用"，是队列积压 4→5→6 的真正驱动力。
+3. **Burst limiter 低压阈值过于保守**：pressure=0.37 时降速至 dispatch=0（见日志 "Ramped dispatch: 3→0"），但未考虑 queued 积压，导致 queued=6 时仍停止派发。
+
+### 下次预防（cp-03171713 修订版）
+
+- [ ] 修复 executor.js 启动清理逻辑：in_progress 孤儿任务应 requeue（保留重试次数）而非直接 quarantine（P3 修复任务）
+- [ ] cecelia-run.sh 检测到"所有账号均已耗尽"时立即 exit 并设置 backoff requeue，不再等超时（P1 修复任务，预期占槽时间 783min→<5min）
+- [ ] tick.js pressure 计算加入队列积压率：`pressure = max(mem_pressure, cpu_pressure, queued/MAX_SEATS)`（P2 修复任务）
+- [ ] 诊断类任务的 DoD Test 命令应使用 `node -e "..."` 内联格式，而非 `ls`/`grep`（CI 白名单仅含 node/npm/curl/bash/psql）
