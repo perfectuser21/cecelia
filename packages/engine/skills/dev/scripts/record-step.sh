@@ -102,8 +102,8 @@ main() {
                 issues=$(jq -Rs 'split("\n") | map(select(length > 0))' < "$TEMP_DIR/${step_id}.issues")
             fi
 
-            # 写入日志（JSONL 格式）
-            jq -n \
+            # 写入日志（JSONL 格式，-c 确保每条记录为单行，方便流式解析）
+            jq -cn \
                 --arg step "$step_id" \
                 --argjson start "$start_time" \
                 --argjson end_time "$end_time" \
