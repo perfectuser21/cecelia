@@ -39,6 +39,7 @@ import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
+import { checkBacklogAlert } from './backlog-alert.js';
 // [NOTION_SYNC_DISABLED] import { syncRecurringFromNotion } from './recurring-notion-sync.js';
 // [NOTION_SYNC_DISABLED] import { runFullSync } from './notion-full-sync.js';
 
@@ -1662,6 +1663,16 @@ async function executeTick() {
     } catch (healthErr) {
       console.error('[tick] Layer2 health check failed (non-fatal):', healthErr.message);
     }
+  }
+
+  // 0.7.1 队列积压阈值告警：每次 tick 检查，queue_depth>10 时发飞书告警（30 分钟限流）
+  try {
+    const backlogResult = await checkBacklogAlert(pool);
+    if (backlogResult.alerted) {
+      console.log(`[tick] 队列积压告警已发送，queue_depth=${backlogResult.queue_depth}`);
+    }
+  } catch (backlogErr) {
+    console.error('[tick] 队列积压告警检查失败 (non-fatal):', backlogErr.message);
   }
 
   // 0.8. Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
