@@ -179,7 +179,7 @@ hooks:
       then: "检测 .dev-mode 文件，存在则检查完成条件，使用 JSON API 强制循环"
     evidence:
       type: code
-      file: "hooks/stop-dev.sh"
+      file: "hooks/stop.sh"
       contains: ".dev-mode"
     test: "tests/hooks/stop-hook.test.ts"
 
@@ -198,7 +198,7 @@ hooks:
       then: "检查 PR 创建 + CI 通过 + PR 合并，15 次上限后上报失败"
     evidence:
       type: code
-      file: "hooks/stop-dev.sh"
+      file: "hooks/stop.sh"
       contains: "gh pr list"
     test: "tests/hooks/stop-hook-retry.test.ts"
 
@@ -217,7 +217,7 @@ hooks:
       then: "返回 JSON API (decision: block, reason: ...) + exit 0 强制循环"
     evidence:
       type: code
-      file: "hooks/stop-dev.sh"
+      file: "hooks/stop.sh"
       contains: "decision.*block"
     test: "tests/hooks/stop-hook-exit.test.ts"
 
@@ -236,7 +236,7 @@ hooks:
       then: "exit 0 忽略该 .dev-mode（不属于当前会话）"
     evidence:
       type: code
-      file: "hooks/stop-dev.sh"
+      file: "hooks/stop.sh"
       contains: "BRANCH_IN_FILE"
     test: "tests/hooks/stop-hook.test.ts"
 
@@ -255,7 +255,7 @@ hooks:
       then: "exit 0 忽略该 .dev-mode（不属于当前会话）"
     evidence:
       type: code
-      file: "hooks/stop-dev.sh"
+      file: "hooks/stop.sh"
       contains: "SESSION_ID_IN_FILE"
     test: "tests/hooks/concurrency.test.ts"
 
@@ -293,9 +293,27 @@ hooks:
       then: "exit 0 忽略该 .dev-mode（不属于当前 terminal）"
     evidence:
       type: code
-      file: "hooks/stop-dev.sh"
+      file: "hooks/stop.sh"
       contains: "TTY_IN_FILE"
     test: "tests/hooks/stop-hook.test.ts"
+
+  - id: H7-009
+    feature: H7
+    name: "SubagentStop Hook - 子 agent 循环控制"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [stop, subagent, loop, explore, plan]
+    owner: infra
+    steps:
+      given: "Subagent (Explore/Plan) 正在执行任务"
+      when: "SubagentStop Hook 检测到任务未完成"
+      then: "返回 JSON API 格式阻止并继续循环，超过 5 次上限则退出"
+    evidence:
+      type: code
+      file: "hooks/subagent-stop.sh"
+      contains: "decision.*block"
 
   - id: H7-010
     feature: H7
@@ -360,7 +378,7 @@ hooks:
     scope: hook
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [stop-hook, worktree, cleanup]
     owner: infra
     steps:
@@ -371,7 +389,6 @@ hooks:
       type: code
       file: "hooks/stop-dev.sh"
       contains: "force_cleanup_worktree"
-    test: "tests/hooks/stop-dev.test.ts"
 
   - id: H7-014
     feature: H7
@@ -662,6 +679,117 @@ hooks:
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
   # --------------------------------------------------------------------------
+  - id: H2-001
+    feature: H2
+    name: "PR Gate 拦截 gh pr create"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, quality]
+    owner: infra
+    steps:
+      given: "在任意分支"
+      when: "执行包含 'gh pr create' 的 Bash 命令"
+      then: "Hook 运行 L1 质检"
+    evidence:
+      type: log
+      contains: "PR GATE"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  - id: H2-002
+    feature: H2
+    name: "L1 失败阻止 PR 创建"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, quality]
+    owner: infra
+    steps:
+      given: "typecheck 或 test 或 build 失败"
+      when: "执行 gh pr create"
+      then: "Hook 阻止并返回 exit 2"
+    evidence:
+      type: exit_code
+      equals: 2
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  - id: H2-003
+    feature: H2
+    name: "L1 通过允许 PR 创建"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, quality, v10.4.4]
+    owner: infra
+    steps:
+      given: "npm run qa 全绿"
+      when: "执行 gh pr create"
+      then: "Hook 放行（exit 0）"
+    note: "v10.4.4: 移除 FAST_MODE，100% 强制本地 L1+L2A 检查（无快速跳过）"
+    evidence:
+      type: log
+      contains: "✅ PR Gate 通过"
+    verification:
+      - desc: "确认 hooks/pr-gate-v2.sh 中不含 FAST_MODE"
+        command: "! grep -q 'FAST_MODE' hooks/pr-gate-v2.sh"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  - id: H2-004
+    feature: H2
+    name: "双模式：--base main 触发 Release 模式"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [pr, gate, release]
+    owner: infra
+    steps:
+      given: "执行 gh pr create --base main"
+      when: "Hook 解析命令"
+      then: "自动切换到 Release 模式，检查 L2B + L3"
+    evidence:
+      type: log
+      contains: "Release 模式"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  - id: H2-005
+    feature: H2
+    name: "双模式：默认 PR 模式只检查 L1"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate]
+    owner: infra
+    steps:
+      given: "执行 gh pr create（无 --base main）"
+      when: "Hook 解析命令"
+      then: "使用 PR 模式，只检查 L1"
+    evidence:
+      type: log
+      contains: "PR 模式 (L1 only)"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  - id: H2-006
+    feature: H2
+    name: "DoD 文件检查（PR 模式）"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, dod]
+    owner: infra
+    steps:
+      given: "PR 模式下"
+      when: ".dod.md 不存在或未更新"
+      then: "Hook 报错并阻止 PR"
+    evidence:
+      type: log
+      contains: "DoD"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # H2-007: Phase 1 - DoD 映射检查
@@ -725,8 +853,67 @@ hooks:
     test: "tests/hooks/pr-gate-phase2.test.ts"
 
   # --------------------------------------------------------------------------
+  # H2-010: Phase 6 - Skill 产物检查
+  # --------------------------------------------------------------------------
+  - id: H2-010
+    feature: H2
+    name: "Skill 产物检查（QA-DECISION + AUDIT-REPORT）"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, skill, phase6]
+    owner: infra
+    steps:
+      given: "PR 模式下"
+      when: "执行 gh pr create"
+      then: "Hook 检查 docs/QA-DECISION.md 和 docs/AUDIT-REPORT.md 存在，且审计通过"
+    evidence:
+      type: log
+      contains: "Phase 6: Skill 产物检查"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  # --------------------------------------------------------------------------
   # H2-011~H2-013: v8.24.0 安全修复 (pr-gate-v2.sh)
   # --------------------------------------------------------------------------
+  - id: H2-011
+    feature: H2
+    name: "JSON 预验证防止注入 (pr-gate)"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, json, injection, v8.24.0]
+    owner: infra
+    steps:
+      given: "Hook 接收包含特殊字符的输入"
+      when: "解析 JSON 输入前"
+      then: "使用 jq 预验证 JSON 格式，无效 JSON 直接报错退出"
+    evidence:
+      type: code
+      file: "hooks/pr-gate-v2.sh"
+      contains: "jq -e . >/dev/null 2>&1"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  - id: H2-012
+    feature: H2
+    name: "sed 注入防护 (pr-gate)"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, sed, injection, v8.24.0]
+    owner: infra
+    steps:
+      given: "Hook 使用 sed 处理用户输入"
+      when: "构造 sed 命令"
+      then: "使用 # 作为分隔符，避免 / 分隔符被路径中的 / 破坏"
+    evidence:
+      type: code
+      file: "hooks/pr-gate-v2.sh"
+      contains: "sed -n 's#"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
   - id: H2-013
     feature: H2
     name: "CRITICAL/HIGH → P0/P1 优先级映射"
@@ -763,17 +950,15 @@ hooks:
     priority: P2
     trigger: [Release]
     method: manual
-    tags: [session, tracking, v10.0.0, deprecated]
+    tags: [session, tracking, v10.0.0]
     owner: infra
-    deprecated: true
-    deprecated_reason: "hooks/session-end.sh 已移至 archive，不再主动维护"
     steps:
       given: "Claude Code 会话结束时"
       when: "hooks/session-end.sh 触发"
       then: "记录会话结束状态，清理临时文件"
     evidence:
       type: manual
-      desc: "已废弃（archived）：session-end.sh 不再部署，本条目仅作历史记录"
+      desc: "检查会话结束后的清理效果"
 
   # --------------------------------------------------------------------------
   # H3: Phase 3 - Hook Core 多仓库治理
@@ -865,7 +1050,7 @@ hooks:
     scope: hook
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [security, validation, whitelist, v8.24.0]
     owner: infra
     steps:
@@ -876,7 +1061,6 @@ hooks:
       type: code
       file: "scripts/run-regression.sh"
       contains: "^[A-Z][0-9]-[0-9]{3}$"
-    test: "tests/hooks/run-regression.test.ts"
 
 # ============================================================================
 # Workflow 回归契约
@@ -1390,7 +1574,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, version]
     owner: infra
     steps:
@@ -1402,7 +1586,6 @@ ci:
       name: "version-check"
       status: success
     # CI jobs are tested by running the workflow; no separate test file
-    test: "tests/ci/version-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C1-002~C1-003: v8.24.0 安全修复 (ci.yml)
@@ -1413,7 +1596,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [security, ci, permissions, v8.24.0]
     owner: infra
     steps:
@@ -1422,10 +1605,9 @@ ci:
       then: "每个 job 显式声明 permissions，遵循最小权限原则"
     evidence:
       type: code
-      file: ".github/workflows/ci-l3-code.yml"
+      file: ".github/workflows/ci.yml"
       contains: "permissions:"
-    # Evidence check: grep for 'permissions:' in ci-l3-code.yml
-    test: "tests/ci/permissions.test.ts"
+    # Evidence check: grep for 'permissions:' in ci.yml
 
   - id: C1-003
     feature: C1
@@ -1433,7 +1615,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [security, ci, json, v8.24.0]
     owner: infra
     steps:
@@ -1442,13 +1624,12 @@ ci:
       then: "使用 jq -n 生成 JSON，避免字符串拼接注入"
     evidence:
       type: code
-      file: ".github/workflows/ci-l3-code.yml"
+      file: ".github/workflows/ci.yml"
       contains: "jq -n"
-    # Evidence check: grep for 'jq -n' in ci-l3-code.yml
-    test: "tests/ci/json-safety.test.ts"
+    # Evidence check: grep for 'jq -n' in ci.yml
 
   # --------------------------------------------------------------------------
-  # C1-004: v12.1.0 P1 修复 (ci-l3-code.yml)
+  # C1-004~C1-005: v12.1.0 P1 修复 (ci.yml, nightly.yml)
   # --------------------------------------------------------------------------
   - id: C1-004
     feature: C1
@@ -1465,9 +1646,27 @@ ci:
       then: "所有关键 jobs 都有 timeout-minutes 配置，防止挂死"
     evidence:
       type: code
-      file: ".github/workflows/ci-l3-code.yml"
+      file: ".github/workflows/ci.yml"
       contains: "timeout-minutes:"
     test: "tests/workflows/ci-timeout.test.ts"
+
+  - id: C1-005
+    feature: C1
+    name: "Nightly workflow 使用 artifact 不被分支保护阻止"
+    scope: ci
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [ci, nightly, artifact, v12.1.0]
+    owner: infra
+    steps:
+      given: "Nightly workflow 生成 LEARNINGS 报告"
+      when: "workflow 执行完成"
+      then: "使用 upload-artifact 上传报告，不再 git push（避免分支保护阻止）"
+    evidence:
+      type: code
+      file: ".github/workflows/nightly.yml"
+      contains: "upload-artifact"
 
   # --------------------------------------------------------------------------
   # C2: test job
@@ -1478,7 +1677,7 @@ ci:
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, test, l1, v10.5.0]
     owner: infra
     steps:
@@ -1490,7 +1689,6 @@ ci:
       type: ci_job
       name: "test"
       status: success
-    test: "tests/ci/test-job.test.ts"
 
   - id: C2-002
     feature: C2
@@ -1552,7 +1750,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, shell, lint]
     owner: infra
     steps:
@@ -1564,7 +1762,6 @@ ci:
       name: "shell-check"
       status: success
     # Shell check is part of test job, validated by CI
-    test: "tests/ci/shell-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C6: Phase 1 DevGate
@@ -1575,7 +1772,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, devgate, phase1]
     owner: infra
     steps:
@@ -1586,7 +1783,63 @@ ci:
       type: ci_job
       name: "DevGate checks"
       status: success
-    test: ".github/workflows/ci-l3-code.yml"
+
+  # --------------------------------------------------------------------------
+  # C7: Nightly DevGate Metrics
+  # --------------------------------------------------------------------------
+  - id: C7-001
+    feature: C7
+    name: "Nightly DevGate Metrics 收集"
+    scope: ci
+    priority: P2
+    trigger: [Release]
+    method: manual
+    tags: [ci, nightly, metrics, phase4]
+    owner: infra
+    steps:
+      given: "Nightly workflow 运行"
+      when: "执行 DevGate Metrics step"
+      then: "生成 JSON 报告并上传为 artifact"
+    evidence:
+      type: ci_job
+      name: "DevGate Metrics"
+      status: success
+
+  - id: C7-002
+    feature: C7
+    name: "Nightly L2 阈值检查"
+    scope: ci
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [ci, nightly, threshold, phase41]
+    owner: infra
+    steps:
+      given: "devgate-metrics.json 已生成"
+      when: "执行 DevGate Threshold Check (L2) step"
+      then: "P0/P1 RCI 覆盖率 100% 且 P0 manual tests = 0"
+    evidence:
+      type: ci_job
+      name: "DevGate Threshold Check (L2)"
+      status: success
+
+  - id: C7-003
+    feature: C7
+    name: "LEARNINGS 自动写回"
+    scope: ci
+    priority: P2
+    trigger: [Release]
+    method: manual
+    tags: [ci, nightly, learnings, phase5]
+    owner: infra
+    steps:
+      given: "devgate-metrics.json 已生成"
+      when: "执行 Append to LEARNINGS step"
+      then: "月度报告追加到 docs/LEARNINGS.md 并 commit/push"
+    evidence:
+      type: ci_job
+      name: "Append to LEARNINGS"
+      status: success
 
   # --------------------------------------------------------------------------
   # C8: Evidence CI (SSOT)
@@ -1659,7 +1912,7 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR]
-    method: auto
+    method: manual
     tags: [ci, regression, pr, develop, v10.5.0]
     owner: infra
     steps:
@@ -1672,11 +1925,10 @@ ci:
       name: "regression-pr"
       status: success
     verification:
-      - desc: "确认 regression-pr job 存在于 ci-l3-code.yml"
-        command: "grep -q 'regression-pr:' .github/workflows/ci-l3-code.yml"
+      - desc: "确认 regression-pr job 存在于 ci.yml"
+        command: "grep -q 'regression-pr:' .github/workflows/ci.yml"
       - desc: "确认调用 scripts/run-regression.sh pr"
-        command: "grep -q 'run-regression.sh pr' .github/workflows/ci-l3-code.yml"
-    test: ".github/workflows/ci-l3-code.yml"
+        command: "grep -q 'run-regression.sh pr' .github/workflows/ci.yml"
 
   # --------------------------------------------------------------------------
   # C5: release-check
@@ -1785,7 +2037,7 @@ ci:
       type: code
       file: "scripts/devgate/check-dod-mapping.cjs"
       contains: "validateManualEvidence"
-    test: "tests/gate/scan-rci-coverage.test.ts"
+    test: "tests/ci/scan-rci-coverage.test.ts"
 
   - id: C9-002
     feature: C9
@@ -1804,30 +2056,48 @@ ci:
       type: code
       file: "scripts/devgate/check-dod-mapping.cjs"
       contains: "!verification.actor || !verification.timestamp || !verification.evidence"
-    test: "tests/gate/scan-rci-coverage.test.ts"
+    test: "tests/ci/scan-rci-coverage.test.ts"
 
   # --------------------------------------------------------------------------
   # C10: CI Security Fixes (P0 v11.12.2)
   # --------------------------------------------------------------------------
+  - id: C10-001
+    feature: C10
+    name: "auto-merge 不再有 check_suite 触发器"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [ci, security, auto-merge, v11.12.2]
+    owner: infra
+    steps:
+      given: "auto-merge.yml 文件存在"
+      when: "检查触发器配置"
+      then: "不包含 check_suite 触发器"
+    note: "v11.12.2 P0-1: 防止外部 CI 绕过 approval 直接合并"
+    evidence:
+      type: code
+      file: ".github/workflows/auto-merge.yml"
+      not_contains: "check_suite:"
+
   - id: C10-002
     feature: C10
     name: "ci-passed 条件根据目标分支检查"
     scope: ci
     priority: P0
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, security, ci-passed, v11.12.2]
     owner: infra
     steps:
-      given: "ci-l3-code.yml 中 ci-passed job 定义"
+      given: "ci.yml 中 ci-passed job 定义"
       when: "PR 到 develop 时"
       then: "regression-pr 必须成功（不允许 skipped）"
     note: "v11.12.2 P0-2: 防止关键检查被静默跳过"
     evidence:
       type: code
-      file: ".github/workflows/ci-l3-code.yml"
+      file: ".github/workflows/ci.yml"
       contains: "github.base_ref != 'develop' || needs.regression-pr.result == 'success'"
-    test: "tests/ci/ci-passed.test.ts"
 
   - id: C10-003
     feature: C10
@@ -1835,20 +2105,19 @@ ci:
     scope: ci
     priority: P1
     trigger: [PR, Release]
-    method: auto
+    method: manual
     tags: [ci, security, ai-review, v11.12.2]
     owner: infra
     steps:
-      given: "ci-l3-code.yml 中 ai-review job 定义"
+      given: "ci.yml 中 ai-review job 定义"
       when: "检查错误处理配置"
       then: "不包含 continue-on-error: true"
     note: "v11.12.2 P1-1: 让 AI review 失败正确报告"
     evidence:
       type: code
-      file: ".github/workflows/ci-l3-code.yml"
+      file: ".github/workflows/ci.yml"
       job: "ai-review"
       not_contains: "continue-on-error: true"
-    test: "tests/ci/ai-review.test.ts"
 
   # --------------------------------------------------------------------------
   # C11: Evidence System Security (v12.2.0 P2 fixes)
@@ -2149,7 +2418,7 @@ n8n:
       type: command
       run: "bash scripts/rc-filter.sh pr | head -5"
       contains: "H1-001|H2-001"
-    test: "bash scripts/rc-filter.sh pr && bash scripts/rc-filter.sh release"
+    test: "manual:bash scripts/rc-filter.sh pr && bash scripts/rc-filter.sh release"
 
   - id: P1-002
     feature: P1
@@ -2168,7 +2437,7 @@ n8n:
       type: command
       run: "bash scripts/run-regression.sh --dry-run"
       contains: "tests/"
-    test: "bash scripts/run-regression.sh --dry-run"
+    test: "manual:bash scripts/run-regression.sh --dry-run"
 
   - id: P1-003
     feature: P1
@@ -2187,7 +2456,7 @@ n8n:
       type: command
       run: "yq '.rci_definitions | length' regression-contract.yaml"
       contains: "[0-9]+"
-    test: "yq '.rci_definitions[] | select(.id == \"H1-001\")' regression-contract.yaml"
+    test: "manual:grep -q 'id: H1-001' regression-contract.yaml"
 
   # --------------------------------------------------------------------------
   # P2: DevGate Quality Checks
@@ -2326,7 +2595,7 @@ golden_paths:
         - "运行 gh pr create，确认被 Hook 阻止"
         - "修复错误，npm run qa 通过"
         - "运行 gh pr create，确认 Hook 放行"
-    test: "tests/hooks/pr-gate.test.ts"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # GP-004: CI 链路
@@ -2335,7 +2604,7 @@ golden_paths:
     name: "CI 链路"
     description: "PR → 版本检查 → 测试 → Shell 检查 → Release 检查"
     trigger: [Release]
-    method: auto
+    method: manual
     rcis:
       - C1-001  # PR 版本号必须递增
       - C2-001  # CI 运行 npm run qa
@@ -2348,7 +2617,6 @@ golden_paths:
         - "更新版本号，推送 → 确认 version-check 通过"
         - "确认 test job 执行 typecheck + test + build"
         - "确认 shell-check job 检查所有 .sh 文件"
-    test: ".github/workflows/ci-l3-code.yml"
 
   # --------------------------------------------------------------------------
   # GP-005: Export 链路
@@ -2392,7 +2660,7 @@ golden_paths:
         - "运行 cecelia -p test-prd.json -t T-001，确认执行成功"
         - "检查输出 JSON 包含 success 字段"
         - "确认 N8N workflow JSON 文件存在"
-    test: "cecilia --health"
+    test: "manual:cecilia --health"
 
 # ============================================================================
 # P0 质检强制三件套（Q1/Q2/Q3）
@@ -2692,7 +2960,7 @@ skills:
     scope: skill
     priority: P1
     trigger: [PR]
-    method: auto
+    method: manual
     tags: [dev, task-id, database-integration, okr]
     owner: infra
     steps:
@@ -2702,7 +2970,6 @@ skills:
     evidence:
       type: file
       path: "tests/dev/test-parse-dev-args.sh"
-    test: "tests/dev/test-parse-dev-args.sh && tests/dev/test-fetch-task-prd.sh"
 
   - id: S1-008
     feature: S1

@@ -20,10 +20,16 @@ updated: "2026-03-17"
 changelog:
   - version: "12.94.0"
     date: "2026-03-17"
-    summary: "feat(ci): 动态 CI 守护 — engine RCI 清理（15条垃圾条目删除/修正）+ check-coverage-completeness.mjs（源文件必须有测试）+ check-rci-health.mjs（P0契约必须有测试，孤儿检测）"
+    summary: "feat(ci): L2 CI 新增 check-coverage-completeness.mjs（源文件必须有测试）+ check-rci-health.mjs（P0契约必须有测试，孤儿检测）"
     scope: ci-devgate
     breaking: false
     feature_id: dynamic-ci-rci-guardian
+  - version: "12.93.3"
+    date: "2026-03-17"
+    summary: "fix(engine): 清理 regression-contract.yaml 中 35 条引用不存在文件的条目 + 3 组重复 ID；新增 check-rci-health.mjs 动态健康守护脚本"
+    scope: ci-devgate
+    breaking: false
+    feature_id: rci-health-cleanup
   - version: "12.93.2"
     date: "2026-03-17"
     summary: "fix(engine): rci-execution-gate.sh 支持 ci_runnable: false 标记，阻止无法在 CI 中运行的合约误报失败；修复 L4 brain-integration 缺失 MAX_BASELINE 保护（=10），L3 gate 软判断改硬判断，移除 RCI Execution Gate 的 continue-on-error，DevGate 标题豁免精细化"
