@@ -35,11 +35,16 @@ QUALITY_DIR="$REPO_ROOT/packages/quality"
 
 # ─── 参数解析 ─────────────────────────────────────────────────────────────────
 CONTRACT_FILE=""
+ENGINE_RCI=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --contract)
       CONTRACT_FILE="$2"
       shift 2
+      ;;
+    --engine-rci)
+      ENGINE_RCI=true
+      shift
       ;;
     *)
       shift
@@ -213,3 +218,93 @@ fi
 echo ""
 echo "  RCI Execution Gate PASSED"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ─── Engine RCI 扫描（--engine-rci 参数启用）────────────────────────────────
+# 扫描 packages/engine/regression-contract.yaml 中的 manual:bash P0 条目并执行
+if [ "$ENGINE_RCI" = "true" ]; then
+  ENGINE_CONTRACT="$REPO_ROOT/packages/engine/regression-contract.yaml"
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  Engine RCI Execution Gate (P0 manual:bash)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  if [ ! -f "$ENGINE_CONTRACT" ]; then
+    echo "WARNING: Engine regression-contract.yaml not found, skipping"
+  else
+    ENG_PASS=0
+    ENG_FAIL=0
+    ENG_DEFERRED=0
+    ENG_FAIL_IDS=()
+
+    # 提取 P0 manual:bash 条目（format: id|test_value）
+    ENG_ENTRIES=$(python3 - "$ENGINE_CONTRACT" <<'PYEOF'
+import sys
+import re
+
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
+    content = f.read()
+
+entries = re.split(r'\n(?=  - id:)', content)
+for entry in entries:
+    id_m = re.search(r'^\s*-?\s*id:\s*(.+)$', entry, re.MULTILINE)
+    prio_m = re.search(r'^\s*priority:\s*(.+)$', entry, re.MULTILINE)
+    test_m = re.search(r'^\s*test:\s*"(.+)"', entry, re.MULTILINE)
+
+    if not id_m or not prio_m or not test_m:
+        continue
+
+    rci_id = id_m.group(1).strip()
+    priority = prio_m.group(1).strip()
+    test_val = test_m.group(1).strip()
+
+    if priority == 'P0' and test_val.startswith('manual:bash'):
+        cmd = test_val[len('manual:'):]
+        print(f"{rci_id}|{cmd}")
+PYEOF
+)
+
+    if [ -z "$ENG_ENTRIES" ]; then
+      echo "INFO: No P0 manual:bash entries found in engine RCI"
+    else
+      while IFS='|' read -r rci_id test_cmd; do
+        [ -z "$rci_id" ] && continue
+
+        if requires_runtime "$test_cmd"; then
+          echo -e "${YELLOW}DEFERRED  $rci_id: requires runtime${NC}"
+          ENG_DEFERRED=$((ENG_DEFERRED + 1))
+          continue
+        fi
+
+        echo -e "${CYAN}RUNNING   $rci_id: $test_cmd${NC}"
+        if (cd "$REPO_ROOT" && eval "$test_cmd" 2>&1 | sed 's/^/  /'); then
+          echo -e "${GREEN}PASS      $rci_id${NC}"
+          ENG_PASS=$((ENG_PASS + 1))
+        else
+          echo -e "${RED}FAIL      $rci_id${NC}"
+          ENG_FAIL=$((ENG_FAIL + 1))
+          ENG_FAIL_IDS+=("$rci_id")
+        fi
+        echo ""
+      done <<< "$ENG_ENTRIES"
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Engine RCI Summary"
+    echo "  Pass: $ENG_PASS | Fail: $ENG_FAIL | Deferred: $ENG_DEFERRED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    if [ "$ENG_FAIL" -gt 0 ]; then
+      echo ""
+      echo "  Engine RCI FAILED"
+      for id in "${ENG_FAIL_IDS[@]}"; do
+        echo "    - $id"
+      done
+      exit 1
+    fi
+
+    echo ""
+    echo "  Engine RCI PASSED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+fi

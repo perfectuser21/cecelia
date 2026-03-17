@@ -6,12 +6,14 @@
  * 1. 无重复 ID
  * 2. method: auto 条目的 test 字段引用文件必须存在
  * 3. known-failures.json 无过期条目
+ * 4. 孤儿测试检测：tests/ 下存在但 RCI 未引用的测试文件
  *
  * 用法：
  *   node scripts/devgate/check-rci-health.mjs
  *   node scripts/devgate/check-rci-health.mjs --check missing-files
  *   node scripts/devgate/check-rci-health.mjs --check duplicate-ids
  *   node scripts/devgate/check-rci-health.mjs --check known-failures
+ *   node scripts/devgate/check-rci-health.mjs --check orphan-tests
  */
 
 import fs from 'fs';
@@ -107,6 +109,43 @@ function checkKnownFailuresExpiry() {
   return { expired, noExpiry, total: Object.keys(allowed).length, today };
 }
 
+// ─── Check 4: Orphan test files ──────────────────────────────────────────────
+function checkOrphanTests(content) {
+  const TESTS_DIR = path.join(PROJECT_ROOT, 'tests');
+  if (!fs.existsSync(TESTS_DIR)) {
+    return { skipped: true, reason: 'tests/ directory not found' };
+  }
+
+  // Collect all test file references from RCI
+  const referencedTests = new Set();
+  const testRefPattern = /^\s+test:\s+"(?!manual:)(.+\.(test\.ts|test\.sh|spec\.ts))"/gm;
+  let m;
+  while ((m = testRefPattern.exec(content)) !== null) {
+    referencedTests.add(m[1]);
+  }
+
+  // Walk tests/ directory and find .test.ts / .test.sh files
+  const orphans = [];
+  function walk(dir, base) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.join(base, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath, relPath);
+      } else if (/\.(test\.ts|test\.sh|spec\.ts)$/.test(entry.name)) {
+        const rciRef = `tests/${relPath}`;
+        if (!referencedTests.has(rciRef)) {
+          orphans.push(rciRef);
+        }
+      }
+    }
+  }
+  walk(TESTS_DIR, '');
+
+  return { orphans, referencedCount: referencedTests.size };
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -174,6 +213,22 @@ function main() {
           console.log(`   ${CYAN}  ${key}${NC}`);
         }
       }
+    }
+  }
+
+  // ── Check 4: Orphan test files ──────────────────────────────────────────────
+  if (!specificCheck || specificCheck === 'orphan-tests') {
+    const result = checkOrphanTests(content);
+    if (result.skipped) {
+      console.log(`${YELLOW}⚠️  孤儿测试检查: SKIPPED (${result.reason})${NC}`);
+    } else if (result.orphans.length > 0) {
+      console.log(`${YELLOW}⚠️  孤儿测试检查: WARNING (${result.orphans.length} 个测试文件未被 RCI 引用)${NC}`);
+      for (const orphan of result.orphans) {
+        console.log(`   ${CYAN}  ${orphan}${NC}`);
+      }
+      console.log(`   ${CYAN}  提示：孤儿测试文件应在 regression-contract.yaml 中登记，或确认是临时文件${NC}`);
+    } else {
+      console.log(`${GREEN}✅ 孤儿测试检查: PASS (所有测试文件均已被 RCI 引用，引用数: ${result.referencedCount})${NC}`);
     }
   }
 

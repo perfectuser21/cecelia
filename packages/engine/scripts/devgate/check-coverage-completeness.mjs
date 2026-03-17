@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+/**
+ * check-coverage-completeness.mjs
+ *
+ * 覆盖率完整性检查：关键源文件必须有对应的测试文件
+ *
+ * 规则：
+ * - hooks/HOOK.sh → tests/hooks/HOOK.test.ts 或 HOOK.test.sh 必须存在
+ * - src/FILE.ts（非 .d.ts）→ tests 下必须有对应 FILE.test.ts
+ * - scripts/devgate/SCRIPT.mjs, .cjs → tests/devgate 下需有测试（警告级别）
+ *
+ * 用法：
+ *   node scripts/devgate/check-coverage-completeness.mjs
+ *   node scripts/devgate/check-coverage-completeness.mjs --dry-run
+ *   node scripts/devgate/check-coverage-completeness.mjs --strict  # 警告也算失败
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ENGINE_ROOT = path.resolve(__dirname, '../..');
+
+// ─── ANSI colors ─────────────────────────────────────────────────────────────
+const GREEN = '\x1b[0;32m';
+const RED = '\x1b[0;31m';
+const YELLOW = '\x1b[0;33m';
+const CYAN = '\x1b[0;36m';
+const NC = '\x1b[0m';
+
+// ─── Args ─────────────────────────────────────────────────────────────────────
+const args = process.argv.slice(2);
+const isDryRun = args.includes('--dry-run');
+const isStrict = args.includes('--strict');
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function listFiles(dir, ext) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter(f => (Array.isArray(ext) ? ext.some(e => f.endsWith(e)) : f.endsWith(ext)))
+    .map(f => path.join(dir, f));
+}
+
+function walkDir(dir, predicate) {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...walkDir(full, predicate));
+    } else if (predicate(entry.name)) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+// ─── Check 1: hooks/*.sh → tests/hooks/ ──────────────────────────────────────
+function checkHooksCoverage() {
+  const hooksDir = path.join(ENGINE_ROOT, 'hooks');
+  const testsHooksDir = path.join(ENGINE_ROOT, 'tests', 'hooks');
+
+  const hookFiles = listFiles(hooksDir, '.sh').map(f => path.basename(f, '.sh'));
+  if (hookFiles.length === 0) return { missing: [], total: 0 };
+
+  const testFiles = fs.existsSync(testsHooksDir)
+    ? fs.readdirSync(testsHooksDir).map(f => f.replace(/\.(test\.(ts|sh)|spec\.ts)$/, ''))
+    : [];
+
+  const missing = hookFiles.filter(hook => !testFiles.some(t => t.includes(hook)));
+  return { missing, total: hookFiles.length };
+}
+
+// ─── Check 2: src/*.ts → tests/**/*.test.ts ───────────────────────────────────
+function checkSrcCoverage() {
+  const srcDir = path.join(ENGINE_ROOT, 'src');
+  if (!fs.existsSync(srcDir)) return { missing: [], total: 0, skipped: true };
+
+  const srcFiles = listFiles(srcDir, '.ts')
+    .filter(f => !f.endsWith('.d.ts') && !f.endsWith('.test.ts'))
+    .map(f => path.basename(f, '.ts'));
+
+  if (srcFiles.length === 0) return { missing: [], total: 0 };
+
+  const allTests = walkDir(path.join(ENGINE_ROOT, 'tests'), n => n.endsWith('.test.ts'))
+    .map(f => path.basename(f).replace(/\.test\.ts$/, ''));
+
+  const missing = srcFiles.filter(src => !allTests.some(t => t.includes(src)));
+  return { missing, total: srcFiles.length };
+}
+
+// ─── Check 3 (warn): scripts/devgate/*.mjs → tests/devgate/ ──────────────────
+function checkDevgateCoverage() {
+  const devgateDir = path.join(ENGINE_ROOT, 'scripts', 'devgate');
+  const testsDevgateDir = path.join(ENGINE_ROOT, 'tests', 'devgate');
+
+  const devgateFiles = listFiles(devgateDir, ['.mjs', '.cjs'])
+    .map(f => path.basename(f).replace(/\.(mjs|cjs)$/, ''));
+
+  if (devgateFiles.length === 0) return { missing: [], total: 0 };
+
+  const testFiles = fs.existsSync(testsDevgateDir)
+    ? fs.readdirSync(testsDevgateDir).map(f => f.replace(/\.test\.(ts|sh)$/, ''))
+    : [];
+
+  const missing = devgateFiles.filter(s => !testFiles.some(t => t.includes(s)));
+  return { missing, total: devgateFiles.length };
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+function main() {
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('  Coverage Completeness Check');
+  if (isDryRun) console.log('  (dry-run mode)');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('');
+
+  let hasErrors = false;
+  let hasWarnings = false;
+
+  // ── Check 1: Hooks ──────────────────────────────────────────────────────────
+  const hooks = checkHooksCoverage();
+  if (hooks.total === 0) {
+    console.log(`${YELLOW}⚠️  Hooks 覆盖检查: SKIPPED (hooks/ 目录为空)${NC}`);
+  } else if (hooks.missing.length > 0) {
+    if (isStrict) {
+      console.log(`${RED}❌ Hooks 覆盖检查: FAIL (${hooks.missing.length}/${hooks.total} 无测试文件)${NC}`);
+      hasErrors = true;
+    } else {
+      console.log(`${YELLOW}⚠️  Hooks 覆盖检查: WARNING (${hooks.missing.length}/${hooks.total} 无测试文件)${NC}`);
+      hasWarnings = true;
+    }
+    for (const hook of hooks.missing) {
+      console.log(`   ${CYAN}  hooks/${hook}.sh → 建议添加 tests/hooks/${hook}.test.ts${NC}`);
+    }
+  } else {
+    console.log(`${GREEN}✅ Hooks 覆盖检查: PASS (${hooks.total} 个 hook 均有测试)${NC}`);
+  }
+
+  // ── Check 2: src/ ───────────────────────────────────────────────────────────
+  const src = checkSrcCoverage();
+  if (src.skipped || src.total === 0) {
+    console.log(`${YELLOW}⚠️  Src 覆盖检查: SKIPPED (src/ 目录为空或不存在)${NC}`);
+  } else if (src.missing.length > 0) {
+    if (isStrict) {
+      console.log(`${RED}❌ Src 覆盖检查: FAIL (${src.missing.length}/${src.total} 无测试文件)${NC}`);
+      hasErrors = true;
+    } else {
+      console.log(`${YELLOW}⚠️  Src 覆盖检查: WARNING (${src.missing.length}/${src.total} 无测试文件)${NC}`);
+      hasWarnings = true;
+    }
+    for (const s of src.missing) {
+      console.log(`   ${CYAN}  src/${s}.ts → 建议添加对应 test 文件${NC}`);
+    }
+  } else {
+    console.log(`${GREEN}✅ Src 覆盖检查: PASS (${src.total} 个源文件均有测试)${NC}`);
+  }
+
+  // ── Check 3: scripts/devgate/ ────────────────────────────────────────────────
+  const devgate = checkDevgateCoverage();
+  if (devgate.total === 0) {
+    console.log(`${YELLOW}⚠️  Devgate 脚本覆盖检查: SKIPPED (无 .mjs/.cjs 文件)${NC}`);
+  } else if (devgate.missing.length > 0) {
+    console.log(`${YELLOW}⚠️  Devgate 脚本覆盖检查: WARNING (${devgate.missing.length}/${devgate.total} 无测试)${NC}`);
+    for (const s of devgate.missing.slice(0, 5)) {
+      console.log(`   ${CYAN}  ${s} → 建议在 tests/devgate/ 添加测试${NC}`);
+    }
+    if (devgate.missing.length > 5) {
+      console.log(`   ${CYAN}  ...还有 ${devgate.missing.length - 5} 个${NC}`);
+    }
+    hasWarnings = true;
+    if (isStrict) hasErrors = true;
+  } else {
+    console.log(`${GREEN}✅ Devgate 脚本覆盖检查: PASS (${devgate.total} 个脚本均有测试)${NC}`);
+  }
+
+  console.log('');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  if (hasErrors) {
+    console.log(`${RED}  ❌ 覆盖率完整性检查: FAIL${NC}`);
+    if (!isDryRun) process.exit(1);
+  } else if (hasWarnings) {
+    console.log(`${YELLOW}  ⚠️  覆盖率完整性检查: PASS with warnings${NC}`);
+  } else {
+    console.log(`${GREEN}  ✅ 覆盖率完整性检查: PASS${NC}`);
+  }
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+}
+
+main();
