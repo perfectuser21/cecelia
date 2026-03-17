@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { spawn } from 'child_process';
-import { createWriteStream } from 'fs';
+import { openSync, closeSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import brainRoutes from './src/routes.js';
@@ -233,11 +233,11 @@ async function startCeceliaBridge() {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
   const bridgeScript = join(__dirname, 'scripts', 'cecelia-bridge.js');
-  const logFile = createWriteStream('/tmp/cecelia-bridge.log', { flags: 'a' });
+  const logFd = openSync('/tmp/cecelia-bridge.log', 'a');
 
   const child = spawn(process.execPath, [bridgeScript], {
     detached: false,
-    stdio: ['ignore', logFile, logFile],
+    stdio: ['ignore', logFd, logFd],
     env: { ...process.env, BRIDGE_PORT: String(BRIDGE_PORT) },
   });
 
@@ -246,6 +246,7 @@ async function startCeceliaBridge() {
   });
 
   child.on('exit', (code, signal) => {
+    try { closeSync(logFd); } catch (_) {}
     if (code !== null) {
       console.warn(`[Server] cecelia-bridge exited with code ${code}`);
     }
