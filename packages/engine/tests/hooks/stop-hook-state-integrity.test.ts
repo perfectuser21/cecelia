@@ -182,27 +182,27 @@ describe("Stop Hook 状态完整性 (PR #550)", () => {
     });
   });
 
-  describe("03-branch.md 修复验证", () => {
-    it("Task Checkpoint 不能追加到裸 .dev-mode（必须是 .dev-mode.${BRANCH_NAME}）", () => {
+  describe("01-taskcard.md 修复验证（原 03-branch.md 已重命名为 03-prci.md）", () => {
+    it("Task Checkpoint 不能追加到裸 .dev-mode（必须是 .dev-mode.${BRANCH}）", () => {
       const branchMd = readFileSync(
-        join(__dirname, "../../skills/dev/steps/03-branch.md"),
+        join(__dirname, "../../skills/dev/steps/01-taskcard.md"),
         "utf-8"
       );
-      // 正则：匹配 >> .dev-mode 后面不跟 .${BRANCH_NAME} 的行（代码块内）
-      // >> .dev-mode\n 是错的，>> ".dev-mode.${BRANCH_NAME}" 是对的
+      // 匹配 >> .dev-mode 后面不跟 BRANCH 的行（包括 BRANCH_NAME）
       const lines = branchMd.split("\n");
       const bareAppends = lines.filter(
-        (l) => l.includes(">> .dev-mode") && !l.includes("BRANCH_NAME") && !l.startsWith("#")
+        (l) => l.includes(">> .dev-mode") && !l.includes("BRANCH") && !l.startsWith("#")
       );
       expect(bareAppends).toHaveLength(0);
     });
 
     it(".dev-mode 文件模板首行必须是 dev", () => {
       const branchMd = readFileSync(
-        join(__dirname, "../../skills/dev/steps/03-branch.md"),
+        join(__dirname, "../../skills/dev/steps/01-taskcard.md"),
         "utf-8"
       );
-      expect(branchMd).toContain('echo "dev"');
+      // 新格式使用 heredoc（cat > ".dev-mode.${BRANCH}" << EOF\ndev\n）而不是 echo "dev"
+      expect(branchMd).toContain("\ndev\n");
     });
   });
 });
