@@ -15,3 +15,7 @@ ALTER TABLE projects ADD CONSTRAINT projects_notion_id_unique UNIQUE (notion_id)
 DROP INDEX IF EXISTS idx_tasks_notion_id;
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_notion_id_unique;
 ALTER TABLE tasks ADD CONSTRAINT tasks_notion_id_unique UNIQUE (notion_id);
+
+INSERT INTO schema_version (version, description)
+VALUES ('112', 'Add UNIQUE constraints for notion_id on goals/projects/tasks')
+ON CONFLICT (version) DO NOTHING;
