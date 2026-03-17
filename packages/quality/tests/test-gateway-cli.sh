@@ -53,7 +53,7 @@ fi
 # Test 4: gateway.sh status (non-empty queue)
 echo -n "  [4/4] gateway.sh status (2 tasks)... "
 OUTPUT=$(bash "$PROJECT_ROOT/gateway/gateway.sh" status)
-if echo "$OUTPUT" | grep -q "Total tasks: 2"; then
+if echo "$OUTPUT" | grep -qE "Total tasks:[[:space:]]*2"; then
     echo -e "${GREEN}PASS${NC}"
 else
     echo -e "${RED}FAIL${NC}"

@@ -131,8 +131,11 @@ for entry in entries:
     test_cmd = test_cmd_match.group(1).strip()
     test_file = test_file_match.group(1).strip() if test_file_match else ""
 
+    ci_runnable_match = re.search(r'^\s*ci_runnable:\s*(.+)$', entry, re.MULTILINE)
+    ci_runnable = ci_runnable_match.group(1).strip().lower() if ci_runnable_match else "true"
+
     if priority == "P0":
-        print(f"{rci_id}|{test_cmd}|{test_file}")
+        print(f"{rci_id}|{test_cmd}|{test_file}|{ci_runnable}")
 PYEOF
 )
 
@@ -145,8 +148,15 @@ if [ -z "$P0_ENTRIES" ]; then
   exit 0
 fi
 
-while IFS='|' read -r rci_id test_cmd test_file; do
+while IFS='|' read -r rci_id test_cmd test_file ci_runnable; do
   [ -z "$rci_id" ] && continue
+
+  # 0. 检查 ci_runnable 标记（false = 不在 CI 中运行）
+  if [ "${ci_runnable:-true}" = "false" ]; then
+    echo -e "${YELLOW}DEFERRED  $rci_id: ci_runnable=false (需要外部服务，不在 CI 中运行)${NC}"
+    DEFERRED=$((DEFERRED + 1))
+    continue
+  fi
 
   # 1. 检查 test_file 是否存在
   if [ -n "$test_file" ]; then

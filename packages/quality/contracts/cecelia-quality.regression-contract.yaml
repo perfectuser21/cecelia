@@ -15,6 +15,8 @@ rcis:
     test_file: tests/test-db-init.sh
     feature_type: core
     must_never_break: true
+    ci_runnable: false
+    ci_skip_reason: "HK VPS self-hosted runner 未预装 sqlite3 且无 passwordless sudo，需在有 sqlite3 的环境手动验证"
 
   - id: C-GATEWAY-HTTP-001
     name: Gateway HTTP 服务器能接收和验证任务
@@ -51,6 +53,8 @@ rcis:
     test_file: tests/test-worker-execution.sh
     feature_type: core
     must_never_break: true
+    ci_runnable: false
+    ci_skip_reason: "test-worker-execution.sh 调用 worker.sh，而 worker.sh 依赖外部 Claude API 服务，CI 环境无法访问"
 
   - id: C-HEARTBEAT-AUTO-001
     name: Heartbeat 自主监控
