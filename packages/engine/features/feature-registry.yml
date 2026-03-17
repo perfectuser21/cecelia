@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.62.0"
-updated: "2026-03-16"
+version: "3.63.0"
+updated: "2026-03-17"
 changelog:
+  - version: "12.93.2"
+    date: "2026-03-17"
+    summary: "fix(engine): rci-execution-gate.sh 支持 ci_runnable: false 标记，阻止无法在 CI 中运行的合约误报失败；修复 L4 brain-integration 缺失 MAX_BASELINE 保护（=10），L3 gate 软判断改硬判断，移除 RCI Execution Gate 的 continue-on-error，DevGate 标题豁免精细化"
+    scope: ci-devgate
+    breaking: false
+    feature_id: ci-arch-review-fixes
   - version: "12.92.0"
     date: "2026-03-16"
     summary: "feat(engine): CI L3 新增 coverage-delta job — Brain feat PR 变更行覆盖率检查，delta 阈值 0.5%，依赖 anuraag016/Jest-Coverage-Diff@main"
