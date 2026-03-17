@@ -101,7 +101,7 @@ jobs:
   changes:
     name: Detect Changes
     needs: detect-commit-type
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -259,7 +259,7 @@ jobs:
     name: Engine L3 Code
     needs: [changes, detect-commit-type]
     if: needs.changes.outputs.engine == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -429,7 +429,7 @@ jobs:
     name: Workspace L3 Build & Test
     needs: [changes, detect-commit-type]
     if: needs.changes.outputs.workspace == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
@@ -466,7 +466,7 @@ jobs:
     name: Quality L3 Checks
     needs: [changes, detect-commit-type]
     if: needs.changes.outputs.quality == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -570,7 +570,7 @@ jobs:
     name: Workflows L3 Checks
     needs: [changes, detect-commit-type]
     if: needs.changes.outputs.workflows == 'true' && needs.detect-commit-type.outputs.should_run_l3 == 'true'
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -958,7 +958,7 @@ jobs:
     name: L3 Code Gate Passed
     needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required, coverage-delta]
     if: always()
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: L3 Code Gate
