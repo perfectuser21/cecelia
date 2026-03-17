@@ -18,6 +18,12 @@
 version: "3.64.0"
 updated: "2026-03-17"
 changelog:
+  - version: "12.94.2"
+    date: "2026-03-17"
+    summary: "fix(engine): 删除根目录旧版 scripts/devgate/check-dod-mapping.cjs（3.9KB），统一使用 packages/engine 版本；更新 .agent-knowledge/engine.md 和 .claude/CLAUDE.md 的 DevGate 命令路径；修复 pr-gate-phase1.test.ts 中使用旧格式（manual:ls/echo）的测试 fixture"
+    scope: ci-devgate
+    breaking: false
+    feature_id: check-dod-mapping-cleanup
   - version: "12.94.1"
     date: "2026-03-17"
     summary: "perf(engine): vitest 分组并行优化 — 17 个无 shell 依赖的测试文件改为并行执行，39 个有 git/shell 竞争的测试保持 singleFork 串行，降低 L3 CI 耗时"

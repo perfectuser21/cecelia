@@ -45,7 +45,7 @@ cecelia/
 ```bash
 node scripts/facts-check.mjs          # 校验 DEFINITION.md 与代码一致
 bash scripts/check-version-sync.sh    # 校验版本四处同步
-node scripts/devgate/check-dod-mapping.cjs  # DoD→Test 映射
+node packages/engine/scripts/devgate/check-dod-mapping.cjs  # DoD→Test 映射
 ```
 
 ---
