@@ -27,6 +27,15 @@ engine RCI (`packages/engine/regression-contract.yaml`) 中积累了大量垃圾
 
 ---
 
+### CI 调试过程中的额外教训
+
+- [ ] **branch-protect.sh v25 per-branch PRD 要求**：在 `packages/` 子目录开发时，`find_prd_dod_dir` 只检查 `.prd-{branch}.md`（不是 `.task-{branch}.md`），必须显式创建
+- [ ] **check-dod-mapping.cjs isInlineCommand 关键字列表**：只认 `curl|grep|psql|node|npm|npx|bash|python|pytest|jest|vitest`。`ls`、`! grep`、`gh` 需包装为 `bash -c "..."`
+- [ ] **feat PR 门禁**：`check-changed-coverage.cjs` 检测到任意 `feat:` 提交时，要求 PR 包含新增测试文件。新增脚本时立即在 `tests/devgate/` 建测试
+- [ ] **并行 agent 版本冲突**：push 前先 `git fetch origin main && git log origin/main --oneline -3` 检查是否有同功能的 PR 已合并
+
+---
+
 ### 技术决策记录
 
 **为什么用 `--changed-only` 而不是全量检查**：
