@@ -1,6 +1,9 @@
 /**
  * Blocks API Tests
  * Tests for Notion-like Page Content functionality
+ *
+ * 集成测试：需要 Brain 服务器运行在 localhost:5221
+ * CI 单元测试中跳过，设置 BRAIN_INTEGRATION=1 可启用
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -19,7 +22,11 @@ const TEST_PARENT_ID = '99999999-9999-9999-9999-999999999999';
 const TEST_PARENT_TYPE = 'goal';
 let createdBlockId = null;
 
-describe('Blocks API', () => {
+// 集成测试：只在 BRAIN_INTEGRATION=1 时运行（需要真实 Brain 服务）
+const canRunBlocks = !!process.env.BRAIN_INTEGRATION;
+const describeBlocks = canRunBlocks ? describe : describe.skip;
+
+describeBlocks('Blocks API', () => {
   beforeAll(async () => {
     // Clean up any existing test data
     await pool.query('DELETE FROM blocks WHERE parent_id = $1', [TEST_PARENT_ID]);

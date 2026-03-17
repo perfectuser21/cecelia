@@ -52,7 +52,8 @@ describe('syncOrphanTasksOnStartup', () => {
         rows: [{
           id: 'orphan-1',
           title: 'Orphan Task',
-          payload: { current_run_id: 'run-orphan-123' },
+          // watchdog_retry_count: 2 → 超过重试上限 → 直接 fail（不再 requeue）
+          payload: { current_run_id: 'run-orphan-123', watchdog_retry_count: 2 },
           started_at: '2026-02-05T10:00:00Z'
         }]
       })
@@ -93,7 +94,8 @@ describe('syncOrphanTasksOnStartup', () => {
         rows: [{
           id: 'no-runid-1',
           title: 'No RunId Task',
-          payload: {},
+          // watchdog_retry_count: 2 → 超过重试上限 → 直接 fail
+          payload: { watchdog_retry_count: 2 },
           started_at: '2026-02-05T10:00:00Z'
         }]
       })
@@ -123,7 +125,8 @@ describe('syncOrphanTasksOnStartup', () => {
           {
             id: 'orphan-2',
             title: 'Orphan',
-            payload: { current_run_id: 'run-dead' },
+            // watchdog_retry_count: 2 → 超过重试上限 → 直接 fail
+            payload: { current_run_id: 'run-dead', watchdog_retry_count: 2 },
             started_at: '2026-02-05T10:00:00Z'
           }
         ]
