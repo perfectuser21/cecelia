@@ -18,6 +18,12 @@
 version: "3.64.0"
 updated: "2026-03-17"
 changelog:
+  - version: "12.95.0"
+    date: "2026-03-17"
+    summary: "feat(engine): Step3 push前强制执行DoD Test命令 — 新增 8.4.5 DoD Test 门禁章节（逐条执行 manual: 命令，失败则阻止 push）+ 9.3b 并行 PR DoD 验证章节"
+    scope: dev-workflow
+    breaking: false
+    feature_id: step3-dod-execution-gate
   - version: "12.94.0"
     date: "2026-03-17"
     summary: "feat(engine): 新增 check-coverage-completeness.mjs 覆盖率完整性守护 + check-rci-health.mjs 孤儿测试检测（第4项）+ rci-execution-gate.sh --engine-rci 参数 + CI L1 接入 check-rci-health.mjs"

@@ -149,6 +149,38 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 ---
 
+### 8.4.5 ⛔ DoD Test 门禁（push 前强制执行）
+
+**提取 DoD 文件中所有 `Test: manual:` 命令并逐条执行，有任何失败则禁止 push。**
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+DOD_FILE=$(ls ".task-${BRANCH_NAME}.md" ".dod-${BRANCH_NAME}.md" ".dod.md" 2>/dev/null | head -1)
+
+if [[ -f "$DOD_FILE" ]]; then
+  echo "🧪 执行 DoD Test 验证（来自 $DOD_FILE）..."
+  FAILED=0
+  while IFS= read -r line; do
+    CMD=$(echo "$line" | grep -oP 'Test: manual:\K.+')
+    [[ -z "$CMD" ]] && continue
+    echo "  ▶ $CMD"
+    if ! eval "$CMD" > /tmp/dod-test-out 2>&1; then
+      echo "  ❌ FAILED: $CMD"
+      cat /tmp/dod-test-out
+      FAILED=1
+    else
+      echo "  ✅ PASS"
+    fi
+  done < "$DOD_FILE"
+  [[ $FAILED -eq 1 ]] && { echo "⛔ DoD Test 验证失败，禁止 push"; exit 1; }
+  echo "✅ DoD 全部通过，允许 push"
+else
+  echo "⚠️  未找到 DoD 文件（.task-${BRANCH_NAME}.md / .dod-${BRANCH_NAME}.md / .dod.md），跳过 DoD 验证"
+fi
+```
+
+---
+
 ### 8.5 推送
 
 ```bash
@@ -367,6 +399,49 @@ echo "→ 执行 Step 4 (Learning)：写 LEARNINGS → push 到功能分支 → 
 ```
 
 **继续 → Step 4 (Learning)**
+
+---
+
+### 9.3b 发现并行 PR 已合并同功能
+
+检查是否有并行 agent 已将同功能合并到 main：
+
+```bash
+# 检查 main 最新 commit 是否已实现同功能
+git fetch origin main
+git log origin/main --oneline -10
+```
+
+如果发现同功能已合并，**关闭自己的 PR 之前必须逐条验证 DoD 已在 main 落地**，不能只看 commit message。
+
+#### ⚠️ 关闭并行 PR 前：逐条验证 DoD 已在 main 落地
+
+```bash
+# 1. 拉取最新 main
+git fetch origin main
+
+# 2. 逐条执行 DoD Test 命令，验证在 main 上已通过
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+DOD_FILE=$(ls ".task-${BRANCH_NAME}.md" ".dod-${BRANCH_NAME}.md" ".dod.md" 2>/dev/null | head -1)
+MISSING=0
+while IFS= read -r line; do
+  CMD=$(echo "$line" | grep -oP 'Test: manual:\K.+')
+  [[ -z "$CMD" ]] && continue
+  echo "  验证: $CMD"
+  # 在 origin/main 检出的临时目录中执行验证
+  if ! eval "$CMD" > /dev/null 2>&1; then
+    echo "  ❌ 此 DoD 条目验证失败：$CMD"
+    MISSING=$((MISSING+1))
+  else
+    echo "  ✅ 通过"
+  fi
+done < "$DOD_FILE"
+
+[[ $MISSING -gt 0 ]] && echo "⛔ 有 $MISSING 条 DoD 未在 main 落地，不能关闭 PR，需补充实现"
+[[ $MISSING -eq 0 ]] && echo "✅ 所有 DoD 已在 main 落地，可以安全关闭自己的 PR"
+```
+
+**只有所有 DoD 条目在 main 上验证通过，才能关闭自己的 PR。**
 
 ---
 
