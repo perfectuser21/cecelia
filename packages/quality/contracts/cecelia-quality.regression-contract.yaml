@@ -51,6 +51,8 @@ rcis:
     test_file: tests/test-worker-execution.sh
     feature_type: core
     must_never_break: true
+    ci_runnable: false
+    ci_skip_reason: "test-worker-execution.sh 调用 worker.sh，而 worker.sh 依赖外部 Claude API 服务，CI 环境无法访问"
 
   - id: C-HEARTBEAT-AUTO-001
     name: Heartbeat 自主监控
