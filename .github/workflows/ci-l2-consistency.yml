@@ -318,8 +318,7 @@ jobs:
           echo "  Impact Check passed"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      # Coverage Completeness Check
-      - name: Check coverage completeness (源文件必须有对应测试)
+      - name: Check coverage completeness (源文件必须有测试)
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Coverage Completeness Check"

@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.64.0"
+version: "3.65.0"
 updated: "2026-03-17"
 changelog:
+  - version: "12.95.0"
+    date: "2026-03-17"
+    summary: "feat(engine): 补 check-coverage-completeness.mjs CI 接入（engine-l2 job）+ 测试文件（check-coverage-completeness.test.ts，16 个测试用例）"
+    scope: ci-devgate
+    breaking: false
+    feature_id: coverage-completeness-ci-integration
   - version: "12.94.2"
     date: "2026-03-17"
     summary: "fix(engine): 删除根目录旧版 scripts/devgate/check-dod-mapping.cjs（3.9KB），统一使用 packages/engine 版本；更新 .agent-knowledge/engine.md 和 .claude/CLAUDE.md 的 DevGate 命令路径；修复 pr-gate-phase1.test.ts 中使用旧格式（manual:ls/echo）的测试 fixture"
