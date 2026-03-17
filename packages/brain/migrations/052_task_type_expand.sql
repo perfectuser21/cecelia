@@ -6,4 +6,4 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
   task_type IN ('dev', 'review', 'talk', 'data', 'research', 'exploratory', 'qa', 'audit', 'decomp_review', 'codex_qa')
 );
 
-INSERT INTO schema_version (version) VALUES ('052');
+INSERT INTO schema_version (version) VALUES ('052') ON CONFLICT (version) DO NOTHING;
