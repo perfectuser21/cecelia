@@ -114,6 +114,19 @@ jobs:
           export BASE_REF=origin/main
           node scripts/devgate/check-new-api-endpoints.mjs
 
+      - name: Check coverage completeness (source files must have tests)
+        # 只检查本 PR 改动的文件，不检查存量（存量已有技术债，分批修复）
+        run: |
+          export BASE_REF=origin/main
+          node scripts/devgate/check-coverage-completeness.mjs --changed-only
+
+      - name: Check RCI health (P0 contracts must have real tests, no orphan entries)
+        # TODO: 待存量 18 个 P0 空头契约修复完毕后去掉 continue-on-error
+        # 跟踪 issue: engine RCI P0 空头契约补测试计划
+        continue-on-error: true
+        run: |
+          node scripts/devgate/check-rci-health.mjs --contract packages/engine/regression-contract.yaml
+
   # ─── Engine L2: Version / Contract Drift / Impact ─────────────────────
 
   engine-l2:
