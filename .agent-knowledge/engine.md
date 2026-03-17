@@ -42,7 +42,7 @@
 
 ```bash
 # DoD → Test 映射检查（CI L2 强制）
-node scripts/devgate/check-dod-mapping.cjs
+node packages/engine/scripts/devgate/check-dod-mapping.cjs
 
 # RCI 覆盖率扫描
 node scripts/devgate/scan-rci-coverage.cjs
