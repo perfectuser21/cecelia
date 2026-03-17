@@ -42,7 +42,8 @@ describe('generate-feedback-report-v2.sh', () => {
       },
     ]
 
-    fs.writeFileSync(LOG_FILE, testLog.map((e) => JSON.stringify(e)).join('\n'))
+    // 末尾加 \n 确保追加写入时下一条记录不会粘在最后一行
+    fs.writeFileSync(LOG_FILE, testLog.map((e) => JSON.stringify(e)).join('\n') + '\n')
   })
 
   afterEach(() => {

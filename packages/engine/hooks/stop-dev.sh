@@ -99,6 +99,13 @@ for _pre_lock in "$PROJECT_ROOT_EARLY"/.dev-lock.*; do
         if [[ -n "$_pre_lock_branch" && "$_pre_lock_branch" == "$_PRE_BRANCH" ]]; then
             _PRE_MATCHED=true; break
         fi
+    # v15.2.0 修复：lock 无标识符（tty=not-a-tty/空 + session_id=空）→ 按分支匹配任意会话
+    # 场景：lock 创建时会话无 TTY 且无 SESSION_ID，但当前会话有 SESSION_ID（有头模式）
+    # 原 case 1/2/3 均无法命中，导致 _PRE_MATCHED=false → exit 0 → /dev 中途退出
+    elif [[ ("$_pre_lock_tty" == "not a tty" || -z "$_pre_lock_tty") && -z "$_pre_lock_session" ]]; then
+        if [[ -n "$_pre_lock_branch" && "$_pre_lock_branch" == "$_PRE_BRANCH" ]]; then
+            _PRE_MATCHED=true; break
+        fi
     fi
 done
 
@@ -264,6 +271,13 @@ for _lock_file in "$PROJECT_ROOT"/.dev-lock.*; do
     # 无头模式下 tty="" 且 CLAUDE_SESSION_ID="" 时，上面两个条件都不满足，
     # 导致扫描循环匹配不到任何 lock → DEV_LOCK_FILE="" → exit 0（Stop Hook 失效）
     elif [[ -z "$_CURRENT_TTY" || "$_CURRENT_TTY" == "not a tty" ]] && [[ -z "$_CURRENT_SESSION_ID" ]]; then
+        if [[ -n "$_branch_in_lock" && "$_branch_in_lock" == "$CURRENT_BRANCH" ]]; then
+            _matched=true
+        fi
+    # v15.2.0 修复：lock 无标识符（tty=not-a-tty/空 + session_id=空）→ 按分支匹配任意会话
+    # 场景：lock 创建时会话无 TTY 且无 SESSION_ID，但当前会话有 SESSION_ID（有头模式）
+    # 原 case 1/2/3 均无法命中，导致 DEV_LOCK_FILE="" → exit 0 → /dev 中途退出
+    elif [[ ("$_lock_tty" == "not a tty" || -z "$_lock_tty") && -z "$_lock_session" ]]; then
         if [[ -n "$_branch_in_lock" && "$_branch_in_lock" == "$CURRENT_BRANCH" ]]; then
             _matched=true
         fi

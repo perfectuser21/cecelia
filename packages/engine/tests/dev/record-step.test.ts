@@ -56,8 +56,9 @@ describe('record-step.sh', () => {
     // 检查日志文件
     expect(fs.existsSync(LOG_FILE)).toBe(true)
 
-    const logContent = fs.readFileSync(LOG_FILE, 'utf-8').trim()
-    const logEntry = JSON.parse(logContent)
+    // JSONL 格式：每行一个 JSON 对象，取最后一行（对并发写入鲁棒）
+    const lines = fs.readFileSync(LOG_FILE, 'utf-8').trim().split('\n').filter((l) => l.trim())
+    const logEntry = JSON.parse(lines[lines.length - 1])
 
     expect(logEntry.step).toBe('01-prd')
     expect(logEntry.status).toBe('success')
@@ -72,8 +73,8 @@ describe('record-step.sh', () => {
     execSync(`bash ${SCRIPT_PATH} retry code`)
     execSync(`bash ${SCRIPT_PATH} end code success`)
 
-    const logContent = fs.readFileSync(LOG_FILE, 'utf-8').trim()
-    const logEntry = JSON.parse(logContent)
+    const lines = fs.readFileSync(LOG_FILE, 'utf-8').trim().split('\n').filter((l) => l.trim())
+    const logEntry = JSON.parse(lines[lines.length - 1])
 
     expect(logEntry.step).toBe('05-code')
     expect(logEntry.retries).toBe(2)
@@ -85,8 +86,8 @@ describe('record-step.sh', () => {
     execSync(`bash ${SCRIPT_PATH} issue code "需要重构"`)
     execSync(`bash ${SCRIPT_PATH} end code success`)
 
-    const logContent = fs.readFileSync(LOG_FILE, 'utf-8').trim()
-    const logEntry = JSON.parse(logContent)
+    const lines = fs.readFileSync(LOG_FILE, 'utf-8').trim().split('\n').filter((l) => l.trim())
+    const logEntry = JSON.parse(lines[lines.length - 1])
 
     expect(logEntry.step).toBe('05-code')
     expect(logEntry.issues).toContain('架构冲突')
