@@ -1,24 +1,43 @@
 ---
 name: dev
-version: 3.4.1
-updated: 2026-03-08
+version: 3.5.0
+updated: 2026-03-15
 description: |
-  统一开发工作流入口。
+  统一开发工作流入口。任何会进 git 的代码变更都必须走 /dev，没有例外。
+  不走 /dev 不允许改代码——branch-protect Hook 会强制阻止。
 
-  v3.2.0 变更（步骤重构）：
-  - Step 4: DoD → 探索（先读代码理解架构）
-  - Step 5: 写代码 → DoD（基于探索结果定义验收标准）
-  - Step 6: 写测试 → 写代码（含测试，合并旧 05+06）
-  - Step 7: 质检 → 本地验证（跑 npm test，不生成空 JSON）
+  自动完成完整闭环：Worktree 隔离 → PRD → 探索架构 → DoD 定稿
+  → 写代码 → 本地验证 → PR → CI 监控 → Learning → 合并 → 清理。
 
-  循环控制由 Stop Hook 实现：
-  - 有头模式: Stop Hook 检测 .dev-mode 文件，exit 2 阻止会话结束
-  - 无头模式: CECELIA_HEADLESS=true 时 Stop Hook 直接 exit 0，外部循环控制
+  ⚠️ 顺序铁律：Learning 必须在合并 PR 之前完成（先 push Learning 到功能分支，再合并）。
+  CI 通过后禁止立即合并——必须先执行 Step 4 写 Learning。
+
+  触发词（凡用户意图涉及代码改动，必须触发）：
+  开始开发、加功能、修 bug、修复 bug、实现 XXX、改代码、改配置、
+  调整代码、优化代码、重构、补测试、做这个功能、/dev、
+  这里有问题、这段有 bug、帮我改一下、帮我调整、
+  补充一下、完成这个任务、写代码、改一下 XXX、
+  看看为什么不过（需要改代码时）、优化一下。
+
+  有 --task-id 参数时从 Brain PostgreSQL 自动读取 Task PRD。
 ---
 
 > **CRITICAL LANGUAGE RULE（语言规则）: 所有输出必须使用简体中文。包括步骤说明、状态更新、日志信息、错误报告。严禁使用日语、韩语或任何其他语言，即使在无头（headless）子进程中也必须遵守。**
 
-# /dev - 统一开发工作流（v3.2）
+## 🚨 启动第一步（CRITICAL — 不可跳过）
+
+**触发 /dev 后，第一件事是读取并执行 Step 00（Worktree 检测）：**
+
+```bash
+cat ~/.claude/skills/dev/steps/00-worktree-auto.md
+```
+
+**在 Step 00 完成、确认已在独立 worktree 中之前，禁止进行任何其他操作。**
+原因：worktree 隔离是整个流程的基础——没有 worktree，代码改动会污染主仓库 main 分支。
+
+---
+
+# /dev - 统一开发工作流（v3.4）
 
 ## 🎯 使用方式
 
@@ -43,7 +62,7 @@ description: |
     ↓
 生成 .prd-task-abc-123.md + .dod-task-abc-123.md
     ↓
-继续正常 /dev 流程 (Step 2-11)
+继续正常 /dev 流程 (Step 0-5)
 ```
 
 **依赖**：
@@ -57,15 +76,15 @@ description: |
 
 ## ⚡ 核心目标（CRITICAL）
 
-**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到 develop。**
+**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（动态检测：有 develop 用 develop，否则 main）。**
 
 ### 完成条件
 
 ```
-开始 → ... → PR 创建 → CI 通过 → PR 合并 ✅ 完成
+开始 → ... → PR 创建 → CI 通过 → Learning（push 到功能分支）→ PR 合并 ✅ 完成
 ```
 
-**只有一个完成标志**：PR 已合并到 develop
+**只有一个完成标志**：PR 已合并到目标分支（动态检测：`git rev-parse --verify develop` 成功则用 develop，否则 main）
 
 ### 遇到任何问题 = 自动修复
 
@@ -109,14 +128,14 @@ description: |
 | 模式 | 循环实现 | 工作方式 |
 |------|----------|----------|
 | **有头模式** | Stop Hook | 检测 `.dev-mode` 文件，未完成时 exit 2 阻止会话结束 |
-| **无头模式** | 外部 while 循环 | `CECELIA_HEADLESS=true` 时 Stop Hook exit 0，由 cecelia-run 控制 |
+| **无头模式** | Stop Hook（同有头） | v13.1.0 起与有头模式完全一致，`CECELIA_HEADLESS` 不再绕过 |
 
 ### 工作流程
 
 ```
 /dev 启动 → Step 1 创建 .dev-mode
     ↓
-执行 Step 1-11...
+执行 Step 0-5...
     ↓
 会话尝试结束 → Stop Hook 触发
     ↓
@@ -132,14 +151,19 @@ description: |
 ```
 dev
 branch: cp-xxx
-prd: .prd-cp-xxx.md
+task_card: .task-cp-xxx.md
 started: 2026-01-29T10:00:00+00:00
-tasks_created: true
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: pending
+step_3_prci: pending
+step_4_learning: pending
+step_5_clean: pending
 ```
 
 **生命周期**：
-- Step 3 (Branch) 分支创建后创建（此时分支名正确）
-- Step 11 (Cleanup) 删除
+- Step 1 (TaskCard) 创建后写入
+- Step 5 (Clean) 删除
 - 或 PR 合并后由 Stop Hook 自动删除
 
 ---
@@ -199,7 +223,7 @@ tasks_created: true
 ```
 用户 → /dev（流程编排）
          ↓
-       Step 1-11（具体步骤）
+       Step 0-5（具体步骤）
          ↓
        会话结束 → Stop Hook 检查完成条件
          ↓
@@ -223,14 +247,9 @@ tasks_created: true
    - SUCCESS → 继续下一步
 
 3. PR 已合并？
-   ❌ → exit 2 → 合并 PR
+   ❌ → exit 2 → 执行 Step 4 (Learning → push → 合并 PR)
    ✅ → 删除 .dev-mode → exit 0 → 完成
 ```
-
-**不再分阶段**：
-- ❌ 不再有 p0/p1/p2 阶段
-- ❌ 不再运行 detect-phase.sh
-- ✅ 从头到尾一直执行，直到 PR 合并
 
 ---
 
@@ -252,11 +271,11 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 
 ### 正确行为
 
-- ✅ 完成 Step 4 (Explore) → **立即**执行 Step 5 (DoD)
-- ✅ 完成 Step 5 (DoD) → **立即**执行 Step 6 (Code)
-- ✅ 完成 Step 6 (Code) → **立即**执行 Step 7 (Verify)
-- ✅ 完成 Step 7 (Verify) → **立即**执行 Step 8 (PR)
-- ✅ 一直执行到 Step 8 创建 PR 为止
+- ✅ 完成 Step 1 (TaskCard) → **立即**执行 Step 2 (Code)
+- ✅ 完成 Step 2 (Code) → **立即**执行 Step 3 (PR+CI)
+- ✅ 完成 Step 3 (PR+CI) → **立即**执行 Step 4 (Learning)
+- ✅ 完成 Step 4 (Learning) → **立即**执行 Step 5 (Clean)
+- ✅ 一直执行到 PR 合并为止
 
 ---
 
@@ -269,17 +288,12 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 在 /dev 开始时，创建所有步骤的 Task：
 
 ```javascript
-TaskCreate({ subject: "PRD 确认", description: "确认 PRD 文件存在且有效", activeForm: "确认 PRD" })
-TaskCreate({ subject: "环境检测", description: "检测项目环境和配置", activeForm: "检测环境" })
-TaskCreate({ subject: "分支创建", description: "创建或切换到功能分支", activeForm: "创建分支" })
-TaskCreate({ subject: "探索代码", description: "读代码理解架构，输出实现方案", activeForm: "探索代码" })
-TaskCreate({ subject: "DoD 定稿", description: "基于探索结果生成 DoD", activeForm: "定稿 DoD" })
-TaskCreate({ subject: "写代码", description: "根据 PRD 实现功能 + 测试", activeForm: "写代码" })
-TaskCreate({ subject: "本地验证", description: "跑 npm test 验证", activeForm: "本地验证" })
-TaskCreate({ subject: "提交 PR", description: "版本号更新 + 创建 PR", activeForm: "提交 PR" })
-TaskCreate({ subject: "CI 监控", description: "等待 CI 通过并修复失败", activeForm: "监控 CI" })
-TaskCreate({ subject: "Learning 记录", description: "记录开发经验", activeForm: "记录经验" })
-TaskCreate({ subject: "清理", description: "清理临时文件", activeForm: "清理中" })
+TaskCreate({ subject: "Step 0: Worktree", description: "检测/创建独立 worktree", activeForm: "创建 Worktree" })
+TaskCreate({ subject: "Step 1: TaskCard", description: "生成 .task-cp-xxx.md（需求+成功标准+DoD框架）", activeForm: "生成 TaskCard" })
+TaskCreate({ subject: "Step 2: Code", description: "探索+DoD定稿+写代码+本地验证", activeForm: "写代码" })
+TaskCreate({ subject: "Step 3: PR+CI", description: "push+创建PR+等CI+修CI", activeForm: "PR+CI" })
+TaskCreate({ subject: "Step 4: Learning", description: "写Learning+合并PR", activeForm: "记录 Learning" })
+TaskCreate({ subject: "Step 5: Clean", description: "归档+清理worktree", activeForm: "清理" })
 ```
 
 ### 任务更新（执行中）
@@ -302,30 +316,25 @@ TaskUpdate({ taskId: "1", status: "completed" })
 TaskList()
 
 // 输出示例：
-// ✅ 1. PRD 确认 (completed)
-// ✅ 2. 环境检测 (completed)
-// ✅ 3. 分支创建 (completed)
-// 🚧 4. 探索代码 (in_progress)
-// ⏸️  5. DoD 定稿 (pending)
-// ...
+// ✅ 1. Step 0: Worktree (completed)
+// ✅ 2. Step 1: TaskCard (completed)
+// 🚧 3. Step 2: Code (in_progress)
+// ⏸️  4. Step 3: PR+CI (pending)
+// ⏸️  5. Step 4: Learning (pending)
+// ⏸️  6. Step 5: Clean (pending)
 ```
 
 ---
 
 ## 核心规则
 
-### 1. 统一流程（不分阶段）✅
+### 1. 统一流程
 
 ```
-开始 → Step 1-11 → PR 创建 → CI 监控 → PR 合并 → 完成
+开始 → Step 0-5 → PR 创建 → CI 监控 → Learning → PR 合并 → 完成
 ```
 
-**不再有**：
-- ❌ p0/p1/p2 阶段
-- ❌ detect-phase.sh 阶段检测
-- ❌ "发 PR 后就结束" 的错误逻辑
-
-### 2. Task Checkpoint 追踪 ✅
+### 2. Task Checkpoint 追踪
 
 ```
 每个步骤：
@@ -336,9 +345,9 @@ TaskList()
 
 ### 3. 分支策略
 
-1. **只在 cp-* 或 feature/* 分支写代码** - Hook 强制
-2. **develop 是主开发线** - PR 合并回 develop
-3. **main 始终稳定** - 只在里程碑时从 develop 合并
+1. **只在 cp-* 或 feature/* 分支写代码** — Hook 强制
+2. **分支命名**：`cp-MMDDHHNN-task-name`（例：`cp-02270800-fix-login`）
+3. **目标分支**：动态检测——`git rev-parse --verify develop` 成功则 PR 合并到 develop，否则合并到 main
 
 ### 4. 质量保证
 
@@ -372,43 +381,39 @@ auto-version 自动更新 5 个文件：package.json、package-lock.json、.brai
 skills/dev/
 ├── SKILL.md        ← 你在这里（入口 + 流程总览）
 ├── steps/          ← 每步详情（按需加载）
-│   ├── 00-worktree-auto.md ← Worktree 自动检测（前置，Step 1 之前）
-│   ├── 01-prd.md       ← PRD 确认
-│   ├── 02-detect.md    ← 环境检测
-│   ├── 03-branch.md    ← 创建 .dev-mode
-│   ├── 04-explore.md   ← 探索（读代码理解架构）
-│   ├── 05-dod.md       ← DoD 定稿（基于探索结果）
-│   ├── 06-code.md      ← 写代码 + 测试
-│   ├── 07-verify.md    ← 本地验证（跑 npm test）
-│   ├── 08-pr.md
-│   ├── 09-ci.md
-│   ├── 10-learning.md  ← 记录经验
-│   └── 11-cleanup.md   ← 删除 .dev-mode
+│   ├── 00-worktree-auto.md
+│   ├── 01-taskcard.md      ← 新（替代原01+05前半）
+│   ├── 02-code.md          ← 替代原04+05后半+06+07
+│   ├── 03-prci.md          ← 替代原08+09
+│   ├── 04-learning.md      ← 原10不变
+│   └── 05-clean.md         ← 替代原11
 └── scripts/        ← 辅助脚本
     ├── cleanup.sh
     ├── check.sh
     └── ...
 ```
 
-### 流程图 (v3.3 - 步骤重构)
+### 流程图 (v4.0 - Task Card 重构)
 
 ```
-0-Worktree → 检测 .dev-mode 冲突 → 自动 worktree + cd（如需要）
-    ↓
-1-PRD ────→ 生成 PRD（branch-protect 检查文件存在）
-    ↓
-2-Detect → 3-Branch
-    ↓
-4-Explore → 读代码理解架构，输出实现方案
-    ↓
-5-DoD ────→ DoD 定稿（基于探索结果，每条有 Test 字段）
-    ↓
-6-Code ───→ 写代码 + 测试
-    ↓
-7-Verify ─→ 本地跑 npm test（省一轮 CI）
-    ↓
-8-PR → 9-CI → 10-Learning → 11-Cleanup
+Step 0: Worktree → 检测/创建 worktree
+Step 1: TaskCard → 生成 .task-cp-xxx.md（需求+成功标准+DoD框架）
+Step 2: Code → 探索+DoD定稿+写代码+本地验证
+Step 3: PR+CI → push+等CI+修CI
+Step 4: Learning → 写Learning+合并PR
+Step 5: Clean → 归档+清理worktree
 ```
+
+### 步骤映射（新→旧，内部逻辑一个不少）
+
+| 新步骤 | 原步骤 | 核心变化 |
+|--------|--------|----------|
+| Step 0: Worktree | Step 00 | 完全不变 |
+| Step 1: TaskCard | Step 01+02+03+05前半 | PRD+DoD 合并为单文件 |
+| Step 2: Code | Step 04+05后半+06+07 | 探索驱动 DoD 定稿 |
+| Step 3: PR+CI | Step 08+09 | 合并为单步 |
+| Step 4: Learning | Step 10 | 完全不变 |
+| Step 5: Clean | Step 11 | 单文件归档 |
 
 ### 两层职责分离
 
@@ -424,11 +429,9 @@ skills/dev/
 
 | 产物 | 位置 | 检查方式 | 检查时机 |
 |------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| QA 决策 | docs/QA-DECISION.md | skills/qa/SKILL.md | Step 5 |
-| 审计报告 | docs/AUDIT-REPORT.md | skills/audit/SKILL.md | Step 6 后 |
+| Task Card | .task-cp-xxx.md | branch-protect 检查 | 写代码前 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
+| Learning | docs/learnings/\<branch\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Step 4 完成时（合并前）|
 
 ---
 
@@ -441,17 +444,12 @@ skills/dev/
 bash skills/dev/scripts/track.sh start "$(basename "$(pwd)")" "$(git rev-parse --abbrev-ref HEAD)" ".prd.md"
 
 # 每个步骤
-bash skills/dev/scripts/track.sh step 1 "PRD"
-bash skills/dev/scripts/track.sh step 2 "Detect"
-bash skills/dev/scripts/track.sh step 3 "Branch"
-bash skills/dev/scripts/track.sh step 4 "Explore"
-bash skills/dev/scripts/track.sh step 5 "DoD"
-bash skills/dev/scripts/track.sh step 6 "Code"
-bash skills/dev/scripts/track.sh step 7 "Verify"
-bash skills/dev/scripts/track.sh step 8 "PR"
-bash skills/dev/scripts/track.sh step 9 "CI"
-bash skills/dev/scripts/track.sh step 10 "Learning"
-bash skills/dev/scripts/track.sh step 11 "Cleanup"
+bash skills/dev/scripts/track.sh step 0 "Worktree"
+bash skills/dev/scripts/track.sh step 1 "TaskCard"
+bash skills/dev/scripts/track.sh step 2 "Code"
+bash skills/dev/scripts/track.sh step 3 "PR+CI"
+bash skills/dev/scripts/track.sh step 4 "Learning"
+bash skills/dev/scripts/track.sh step 5 "Clean"
 
 # 完成时
 bash skills/dev/scripts/track.sh done "$PR_URL"
@@ -464,79 +462,7 @@ bash skills/dev/scripts/track.sh fail "Error message"
 
 ---
 
-## 多 Feature 支持（可选）
-
-### 使用场景
-
-- **简单任务**：当前单 PR 流程（自动判断）
-- **复杂任务**：大 PRD → 拆分 N 个 Features → N 个 PR
-
-### 状态文件
-
-`.claude/multi-feature-state.local.md` 记录进度：
-
-```yaml
----
-features:
-  - id: 1
-    title: "用户登录基础功能"
-    status: completed
-    pr: "#123"
-    branch: "cp-01240101-login-basic"
-    feedback: "登录成功，但错误提示不够友好"
-
-  - id: 2
-    title: "优化登录错误提示"
-    status: in_progress
-    branch: "cp-01240102-login-errors"
-
-  - id: 3
-    title: "添加记住我功能"
-    status: pending
----
-
-## Feature 1: 用户登录基础功能 ✅
-
-**Branch**: cp-01240101-login-basic
-**PR**: #123
-**Status**: Merged to develop
-
-**反馈**：
-- 登录成功
-- 错误提示不够友好 → Feature 2 处理
-
-## Feature 2: 优化登录错误提示 🚧
-
-**Branch**: cp-01240102-login-errors
-**Status**: In Progress
-
-**基于 Feature 1 反馈**：
-- 改进错误消息文案
-- 添加错误类型区分
-
-## Feature 3: 添加记住我功能 ⏳
-
-**Status**: Pending
-**依赖**: Feature 2 完成
-```
-
-### 继续命令
-
-Feature N 完成后，运行：
-
-```bash
-/dev continue
-```
-
-/dev 自动：
-1. 读取状态文件找到下一个 pending feature
-2. 拉取最新 develop（包含前面 features 的代码）
-3. 创建新分支开始下一个 feature
-4. 引用上一个 feature 的反馈
-
-### 向后兼容
-
-简单任务仍走单 PR 流程，/dev 自动判断是否需要拆分。
+> 多 PR 编排在 Initiative 层，参考 /architect skill。
 
 ---
 
