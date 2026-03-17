@@ -2306,15 +2306,22 @@ async function probeTaskLiveness() {
  * @returns {Object} - { orphans_found, orphans_fixed, rebuilt }
  */
 async function syncOrphanTasksOnStartup() {
+  const DEFAULT_MAX_RETRIES = 3;
+
   const result = await pool.query(`
-    SELECT id, title, payload, started_at
-    FROM tasks
-    WHERE status = 'in_progress'
-  `);
+    SELECT t.id, t.title, t.payload, t.started_at,
+           t.retry_count, t.error_message, t.task_type,
+           COALESCE(rc.max_retries, drc.max_retries, $1) AS max_retries
+    FROM tasks t
+    LEFT JOIN retry_config rc ON rc.task_type = t.task_type AND rc.enabled = true
+    LEFT JOIN retry_config drc ON drc.task_type = 'default' AND drc.enabled = true
+    WHERE t.status = 'in_progress'
+  `, [DEFAULT_MAX_RETRIES]);
 
   let orphansFound = 0;
   let orphansFixed = 0;
   let rebuilt = 0;
+  let requeued = 0;
 
   for (const task of result.rows) {
     const runId = task.payload?.current_run_id;
@@ -2342,46 +2349,80 @@ async function syncOrphanTasksOnStartup() {
       // No matching process — this is an orphan
       orphansFound++;
 
-      // Enhanced diagnostics for orphaned tasks
-      const { reason, diagnostic_info } = await checkExitReason(null, task.id);
+      const retryCount = task.retry_count || 0;
+      const maxRetries = parseInt(task.max_retries, 10) || DEFAULT_MAX_RETRIES;
+      const hasErrorMessage = task.error_message && task.error_message.trim() !== '';
 
-      const errorDetails = {
-        type: 'orphan_detected',
-        reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
-        message: 'Task was in_progress but no matching process found on Brain startup',
-        detected_at: new Date().toISOString(),
-        run_id: runId || null,
-        diagnostic_info: diagnostic_info,
-      };
+      // Distinguish retryable orphans (Brain restart interrupted) from true failures
+      const isRetryable = retryCount < maxRetries && !hasErrorMessage;
 
-      await pool.query(
-        `UPDATE tasks SET
-          status = 'failed',
-          error_message = $3,
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1`,
-        [
-          task.id,
-          JSON.stringify({ error_details: errorDetails }),
-          `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
-        ]
-      );
+      if (isRetryable) {
+        // Brain restart interrupted the task — requeue for retry
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'queued',
+            started_at = NULL,
+            retry_count = retry_count + 1,
+            error_message = $2,
+            payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+          WHERE id = $1`,
+          [
+            task.id,
+            'requeued after brain restart',
+            JSON.stringify({
+              requeue_info: {
+                requeued_at: new Date().toISOString(),
+                reason: 'brain_restart',
+                retry_count: retryCount + 1,
+                run_id: runId || null,
+              }
+            }),
+          ]
+        );
+        requeued++;
+        console.log(`[startup-sync] Orphan requeued: task=${task.id} title="${task.title}" retry_count=${retryCount + 1}/${maxRetries}`);
+      } else {
+        // True failure: exhausted retries or had an explicit error — mark as failed
+        const { reason, diagnostic_info } = await checkExitReason(null, task.id);
 
-      // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
-      import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
-        processExecutionAutoLearning(task.id, 'failed', errorDetails, {
-          trigger_source: 'orphan_detection',
-          metadata: { run_id: runId }
-        })
-      ).catch(() => {/* non-fatal */});
+        const errorDetails = {
+          type: 'orphan_detected',
+          reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
+          message: 'Task was in_progress but no matching process found on Brain startup',
+          detected_at: new Date().toISOString(),
+          run_id: runId || null,
+          diagnostic_info: diagnostic_info,
+        };
 
-      orphansFixed++;
-      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}" reason=${reason}`);
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'failed',
+            error_message = $3,
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          WHERE id = $1`,
+          [
+            task.id,
+            JSON.stringify({ error_details: errorDetails }),
+            `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
+          ]
+        );
+
+        // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
+        import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
+          processExecutionAutoLearning(task.id, 'failed', errorDetails, {
+            trigger_source: 'orphan_detection',
+            metadata: { run_id: runId }
+          })
+        ).catch(() => {/* non-fatal */});
+
+        orphansFixed++;
+        console.log(`[startup-sync] Orphan failed: task=${task.id} title="${task.title}" reason=${reason} retry_count=${retryCount}/${maxRetries}`);
+      }
     }
   }
 
-  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} rebuilt=${rebuilt}`);
-  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, rebuilt };
+  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} requeued=${requeued} orphans_fixed=${orphansFixed} rebuilt=${rebuilt}`);
+  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, requeued, rebuilt };
 }
 
 /**
