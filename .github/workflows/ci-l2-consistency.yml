@@ -12,8 +12,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: l2-consistency-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: l2-v2-${{ github.ref }}-${{ github.run_number }}
+  cancel-in-progress: true
 
 jobs:
   changes:

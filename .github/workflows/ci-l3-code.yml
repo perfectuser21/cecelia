@@ -713,6 +713,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           EVENT_NAME: ${{ github.event_name }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          DETECTED_COMMIT_TYPE: ${{ needs.detect-commit-type.outputs.commit_type }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Test Coverage Required Gate"
@@ -765,6 +766,24 @@ jobs:
               echo "   只有 feat: 类型的合并需要测试文件"
               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               echo "  ✅ Test Coverage Required SKIPPED (non-feat commit)"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              exit 0
+            fi
+          fi
+
+          # pull_request 事件路径：检查 commit type，非 feat 不强制要求测试文件
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # 从 detect-commit-type job 传入的类型，或从 PR title 提取
+            COMMIT_TYPE_PR="$DETECTED_COMMIT_TYPE"
+            if [ -z "$COMMIT_TYPE_PR" ] || [ "$COMMIT_TYPE_PR" = "push" ] || [ "$COMMIT_TYPE_PR" = "manual" ]; then
+              # fallback: 从 PR title 提取（去掉 [TAG] 前缀后取第一个字母段）
+              COMMIT_TYPE_PR=$(echo "$PR_TITLE" | sed 's/^\[.*\] *//' | grep -oE '^[a-zA-Z]+' | head -1 | tr '[:upper:]' '[:lower:]' || echo "unknown")
+            fi
+            echo "PR commit type: $COMMIT_TYPE_PR"
+            if [ "$COMMIT_TYPE_PR" != "feat" ]; then
+              echo "ℹ️  PR commit type '$COMMIT_TYPE_PR' 不是 feat — 跳过测试覆盖检查"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  ✅ Test Coverage Required SKIPPED (non-feat PR)"
               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               exit 0
             fi
