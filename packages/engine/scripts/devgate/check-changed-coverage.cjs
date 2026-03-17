@@ -302,9 +302,17 @@ function calculateChangedLineCoverage(changedLines, coverageData, projectRoot) {
 /**
  * 门禁 1: feat PR 必须有新增测试文件
  */
-function checkFeatHasTests(commitTypes, addedFiles) {
+function checkFeatHasTests(commitTypes, addedFiles, allChangedFiles) {
   if (!isFeatPR(commitTypes)) {
     return { passed: true, skipped: true, reason: "非 feat PR，跳过" };
+  }
+
+  // 无源码文件变更（如纯 .md 文档/配置更新）→ 跳过测试要求
+  if (allChangedFiles != null) {
+    const sourceFiles = filterSourceFiles(allChangedFiles);
+    if (sourceFiles.length === 0) {
+      return { passed: true, skipped: true, reason: "无源码文件变更，跳过测试要求" };
+    }
   }
 
   const newTests = filterNewTestFiles(addedFiles);
@@ -469,7 +477,7 @@ function main() {
 
   // ── 门禁 1: feat 必须有测试 ──
   console.log("  门禁 1: feat PR 必须有新增测试文件");
-  const gate1 = checkFeatHasTests(commitTypes, added);
+  const gate1 = checkFeatHasTests(commitTypes, added, all);
   if (gate1.skipped) {
     console.log(`  ${YELLOW}⏭️${RESET}  ${gate1.reason}`);
   } else if (gate1.passed) {

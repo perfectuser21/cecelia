@@ -256,8 +256,27 @@ describe("checkFeatHasTests", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("feat PR 只有 .md 文件无测试失败", () => {
+  it("feat PR 只有 .md 文件（无 allChangedFiles）仍失败", () => {
     const result = checkFeatHasTests(["feat"], ["README.md", "docs/guide.md"]);
+    expect(result.passed).toBe(false);
+  });
+
+  it("feat PR allChangedFiles 无源码文件则跳过", () => {
+    const result = checkFeatHasTests(
+      ["feat"],
+      ["README.md", "docs/guide.md"],
+      ["README.md", "docs/guide.md"]
+    );
+    expect(result.passed).toBe(true);
+    expect(result.skipped).toBe(true);
+  });
+
+  it("feat PR allChangedFiles 有源码文件但无测试则失败", () => {
+    const result = checkFeatHasTests(
+      ["feat"],
+      ["src/index.ts"],
+      ["src/index.ts"]
+    );
     expect(result.passed).toBe(false);
   });
 });
