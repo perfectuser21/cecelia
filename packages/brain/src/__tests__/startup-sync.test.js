@@ -3,7 +3,8 @@
  * Tests for Brain startup state reconciliation with actual processes
  */
 
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
+import { writeFileSync, rmSync } from 'fs';
 
 // Mock pool — hoisted so executor.js always gets this mockPool regardless of module cache order
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
@@ -34,6 +35,10 @@ describe('syncOrphanTasksOnStartup', () => {
     vi.restoreAllMocks();
   });
 
+  afterEach(() => {
+    try { rmSync('/tmp/cecelia-orphan-killed.log'); } catch (_) { /* ok */ }
+  });
+
   it('should do nothing when no in_progress tasks exist', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
@@ -43,14 +48,14 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.rebuilt).toBe(0);
   });
 
-  it('should mark orphan task as failed when no matching process', async () => {
+  it('process_disappeared → requeued as queued (Brain restart recovery)', async () => {
     const { execSync } = await import('child_process');
     execSync.mockReturnValue('0\n'); // No matching process
 
     mockPool.query
       .mockResolvedValueOnce({
         rows: [{
-          id: 'orphan-1',
+          id: 'orphan-disappeared',
           title: 'Orphan Task',
           payload: { current_run_id: 'run-orphan-123' },
           started_at: '2026-02-05T10:00:00Z'
@@ -62,11 +67,42 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.orphans_found).toBe(1);
     expect(result.orphans_fixed).toBe(1);
 
-    // Verify the UPDATE was called with orphan_detected error
+    // process_disappeared → must be requeued, not failed
+    const updateCall = mockPool.query.mock.calls[1];
+    expect(updateCall[0]).toContain("status = 'queued'");
+    expect(updateCall[1][2]).toContain('[requeued after brain restart]');
+    const payload = JSON.parse(updateCall[1][1]);
+    expect(payload.error_details.reason).toBe('process_disappeared');
+  });
+
+  it('killed_signal → remains failed (not retryable)', async () => {
+    const { execSync } = await import('child_process');
+    execSync.mockReturnValue('0\n'); // No matching process
+
+    // Write a log file with SIGKILL to trigger killed_signal reason
+    const taskId = 'orphan-killed';
+    writeFileSync(`/tmp/cecelia-${taskId}.log`, 'Process received SIGKILL signal\n');
+
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: taskId,
+          title: 'Killed Task',
+          payload: { current_run_id: 'run-killed-456' },
+          started_at: '2026-02-05T10:00:00Z'
+        }]
+      })
+      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE
+
+    const result = await syncOrphanTasksOnStartup();
+    expect(result.orphans_found).toBe(1);
+    expect(result.orphans_fixed).toBe(1);
+
+    // killed_signal → must remain failed
     const updateCall = mockPool.query.mock.calls[1];
     expect(updateCall[0]).toContain("status = 'failed'");
-    const payload = JSON.parse(updateCall[1][1]);
-    expect(payload.error_details.type).toBe('orphan_detected');
+    const errorMsg = updateCall[1][2];
+    expect(errorMsg).toContain('[orphan_detected]');
   });
 
   it('should rebuild activeProcess entry when process exists', async () => {
