@@ -85,7 +85,7 @@ jobs:
   dod-check:
     name: DoD Verification Gate
     needs: verify-dev-workflow
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -484,7 +484,7 @@ jobs:
     name: Engine L1 Process
     needs: [changes, verify-dev-workflow]
     if: needs.changes.outputs.engine == 'true'
-    runs-on: [self-hosted, Linux, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
