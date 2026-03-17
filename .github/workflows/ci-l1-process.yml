@@ -827,7 +827,11 @@ jobs:
 
           # Engine-specific checks (only required when engine changes)
           # Fix 6: skipped 状态视为失败 — engine 有变更时 skipped/failure 均不可接受
-          if [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
+          # Fix 7: changes job 自身失败时 output 为空，先验证 changes.result 再用 output
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "FAIL: Detect Changes job failed (${{ needs.changes.result }}) — cannot determine engine scope"
+            FAILED=true
+          elif [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
             ENGINE_L1_RESULT="${{ needs.engine-l1.result }}"
             DEV_HEALTH_RESULT="${{ needs.dev-health-check.result }}"
             if [ "$ENGINE_L1_RESULT" != "success" ]; then
