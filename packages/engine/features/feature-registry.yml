@@ -164,6 +164,7 @@ changelog:
     summary: Step 04/02/03 加硬性自检命令（Learning格式/假测试/版本7文件）
     scope: skills
     breaking: false
+  - "3.51.0: v12.95.2 - 同步 /dev 6步 TDD 工作流到 packages/workflows/skills（dev-tdd-redesign）：packages/workflows/skills/dev/ 从旧12步设计更新为新6步（00-worktree/01-taskcard/02-code/03-prci/04-learning/05-clean），SKILL.md 更新至 v3.5.0，旧11步文件全部删除；修复 check-changed-coverage.cjs 门禁1：feat PR 无源码文件变更时跳过测试要求（allChangedFiles 参数），防止纯 .md 变更的 feat PR 被 Coverage Gate 误拒"
   - "3.50.0: v12.95.1 - 修复 stop-dev.sh 第4匹配 case（fix-stop-dev-session-matching）：当 .dev-lock 的 tty=not-a-tty 且 session_id 为空时，原 case 1/2/3 均无法命中 → _PRE_MATCHED=false → exit 0 → /dev 中途退出。修复：pre-check 和主匹配两处各加第4个 elif case，lock 无标识符时降级为按分支名匹配；record-step.sh jq -n 改 jq -cn 确保 JSONL 单行；测试并发写入干扰修复（最后一行读取 + 尾部换行）"
   - "3.49.0: v12.69.0 - 创建 /dev 6步重组新步骤文件（dev-step-files）：新建 02-code.md（探索/写代码/验证）、03-prci.md（PR 和 CI）、04-learning.md、05-clean.md，将原12步工作流合并为6步外壳"
   - "3.49.0: v12.68.0 - branch-protect.sh 支持 Task Card 格式：新增 .task-{branch}.md 写入验证（同时检查成功标准+checkbox），PRD/DoD 文件查找优先 task card 格式，向后兼容旧 .prd-/.dod- 格式"
