@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.64.0"
+version: "3.65.0"
 updated: "2026-03-17"
 changelog:
+  - version: "12.95.0"
+    date: "2026-03-17"
+    summary: "feat(engine): 新增 feature.yaml 自注册机制 — 每个 skill 目录放 feature.yaml 声明自己的元数据，CI L2 新增 feature-yaml-lint 步骤扫描验证，新增 pre-commit-path-views.sh 自动触发 generate-path-views.sh，消除 registry/path-views 手动同步步骤"
+    scope: ci-devgate
+    breaking: false
+    feature_id: feature-yaml-self-register
   - version: "12.94.2"
     date: "2026-03-17"
     summary: "fix(engine): 删除根目录旧版 scripts/devgate/check-dod-mapping.cjs（3.9KB），统一使用 packages/engine 版本；更新 .agent-knowledge/engine.md 和 .claude/CLAUDE.md 的 DevGate 命令路径；修复 pr-gate-phase1.test.ts 中使用旧格式（manual:ls/echo）的测试 fixture"

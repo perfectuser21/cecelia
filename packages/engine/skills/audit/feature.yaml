@@ -1,0 +1,16 @@
+id: audit-skill
+name: 代码审计 (Audit Skill)
+version: 1.0.0
+type: skill
+trigger: /audit
+priority: P1
+status: committed
+updated: 2026-03-17
+capabilities:
+  - code-audit
+  - security-scan
+  - quality-grading
+  - fix-recommendation
+entrypoint: skills/audit/SKILL.md
+contracts:
+  - AUDIT-001

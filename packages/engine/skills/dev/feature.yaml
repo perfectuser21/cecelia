@@ -1,0 +1,21 @@
+id: dev-skill
+name: 统一开发工作流 (Dev Skill)
+version: 3.4.0
+type: skill
+trigger: /dev
+priority: P0
+status: committed
+updated: 2026-03-17
+capabilities:
+  - worktree-isolation
+  - task-card-generation
+  - code-implementation
+  - pr-creation
+  - ci-monitoring
+  - learning-capture
+  - merge-automation
+entrypoint: skills/dev/SKILL.md
+contracts:
+  - DEV-001
+  - DEV-002
+  - DEV-003

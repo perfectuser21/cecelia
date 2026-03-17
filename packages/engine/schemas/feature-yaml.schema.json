@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "feature.yaml",
+  "description": "Engine skill/hook/script 自注册声明文件。每个功能模块放一个 feature.yaml，CI 扫描它，自动完成注册验证。",
+  "type": "object",
+  "required": ["id", "name", "version", "type", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "全局唯一标识符（kebab-case）",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "name": {
+      "type": "string",
+      "description": "功能显示名称",
+      "minLength": 2,
+      "maxLength": 128
+    },
+    "version": {
+      "type": "string",
+      "description": "semver 版本号",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "type": {
+      "type": "string",
+      "description": "模块类型",
+      "enum": ["skill", "hook", "script", "devgate"]
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "该模块提供的能力列表（用于文档生成和检索）",
+      "items": {
+        "type": "string",
+        "minLength": 2
+      },
+      "minItems": 1
+    },
+    "trigger": {
+      "type": "string",
+      "description": "触发方式（如 /dev、PreToolUse:Write 等）"
+    },
+    "priority": {
+      "type": "string",
+      "description": "业务优先级",
+      "enum": ["P0", "P1", "P2", "P3"]
+    },
+    "status": {
+      "type": "string",
+      "description": "当前状态",
+      "enum": ["committed", "in-progress", "experimental", "deprecated"]
+    },
+    "contracts": {
+      "type": "array",
+      "description": "该模块关联的 RCI 合约 ID 列表",
+      "items": {
+        "type": "string"
+      }
+    },
+    "entrypoint": {
+      "type": "string",
+      "description": "主入口文件路径（相对于 packages/engine/）"
+    },
+    "updated": {
+      "type": "string",
+      "description": "最后更新日期（YYYY-MM-DD）",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    }
+  }
+}
