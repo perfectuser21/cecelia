@@ -3098,8 +3098,8 @@ skills:
       when: "pre-commit hook 触发"
       then: "自动运行 generate-path-views.sh 并 re-stage docs/paths/"
     evidence:
-      type: file
-      path: "hooks/pre-commit-path-views.sh"
+      type: command
+      run: "bash hooks/pre-commit-path-views.sh"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/engine/hooks/pre-commit-path-views.sh','utf8');if(!c.includes('generate-path-views'))throw new Error('not found');console.log('ok')\""
 
   - id: S3-001
