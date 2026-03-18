@@ -207,7 +207,7 @@ case "$STEP" in
     step2) verify_step2 ;;
     step4) verify_step4 ;;
     *)
-        echo "未知的步骤: $STEP（支持: step1, step2, step4）" >&2
+        echo "未知的步骤: ${STEP}（支持: step1, step2, step4）" >&2
         exit 1
         ;;
 esac
