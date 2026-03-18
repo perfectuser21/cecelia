@@ -473,6 +473,26 @@
               "skill": "/strategy-session"
             },
             {
+              "taskType": "content-pipeline",
+              "skill": "/content-creator"
+            },
+            {
+              "taskType": "content-research",
+              "skill": "/notebooklm"
+            },
+            {
+              "taskType": "content-generate",
+              "skill": "/content-creator"
+            },
+            {
+              "taskType": "content-review",
+              "skill": "/content-creator"
+            },
+            {
+              "taskType": "content-export",
+              "skill": "/content-creator"
+            },
+            {
               "taskType": "qa",
               "skill": "/code-review"
             },
@@ -838,6 +858,11 @@
     "suggestion_plan": "/plan",
     "architecture_design": "/architect",
     "strategy_session": "/strategy-session",
+    "content-pipeline": "/content-creator",
+    "content-research": "/notebooklm",
+    "content-generate": "/content-creator",
+    "content-review": "/content-creator",
+    "content-export": "/content-creator",
     "qa": "/code-review",
     "audit": "/code-review"
   },
@@ -864,9 +889,14 @@
     "architecture_design": "/architect design",
     "architecture_scan": "/architect scan",
     "arch_review": "/arch-review review",
-    "strategy_session": "/strategy-session"
+    "strategy_session": "/strategy-session",
+    "content-pipeline": "/content-creator",
+    "content-research": "/notebooklm",
+    "content-generate": "/content-creator",
+    "content-review": "/content-creator",
+    "content-export": "/content-creator"
   },
-  "generatedAt": "2026-03-18T09:53:09.488Z",
+  "generatedAt": "2026-03-18T12:01:30.162Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
