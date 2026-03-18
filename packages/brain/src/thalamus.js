@@ -26,6 +26,89 @@ import { callLLM } from './llm-caller.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 
 // ============================================================
+// Self-Awareness Context（自我感知层）
+// ============================================================
+
+const SELF_AWARENESS_TTL_MS = 5 * 60 * 1000; // 5 分钟缓存
+let _selfAwarenessCache = { context: '', refreshedAt: 0 };
+
+// Skills 能力摘要（静态，来自 AGENTS.md + skills-index）
+const SKILLS_SUMMARY = `## Cecelia 能力地图
+**任务路由（task_type → 执行位置）**
+- dev / review / qa / audit / code_review → 美国 Mac mini（Claude Code）
+- codex_dev / codex_qa / codex_playwright → 西安 M4（Codex）
+- explore / talk / research / data → 香港（MiniMax + N8N）
+
+**核心 Skills（63个）**
+- 开发类: /dev（统一开发流程）| /review | /audit | /code-review | /architect
+- 规划类: /plan | /decomp | /strategy-session | /explore | /research
+- 发布类: /douyin-publisher | /kuaishou-publisher | /wechat-publisher | /xiaohongshu-publisher | /weibo-publisher | /zhihu-publisher | /toutiao-publisher
+- 工具类: /knowledge | /brain-register | /janitor | /nas | /chrome`;
+
+/**
+ * 构建自我感知上下文（带 5 分钟缓存）
+ * 包含：当前任务队列状态 + Skills 能力地图
+ * @param {Object} dbPool - PostgreSQL pool
+ * @returns {Promise<string>} 格式化的感知上下文块
+ */
+export async function buildSelfAwarenessContext(dbPool) {
+  const now = Date.now();
+  if (now - _selfAwarenessCache.refreshedAt < SELF_AWARENESS_TTL_MS) {
+    return _selfAwarenessCache.context;
+  }
+
+  try {
+    // 查询任务队列统计
+    const queueResult = await dbPool.query(`
+      SELECT status, COUNT(*)::int AS count
+      FROM tasks
+      WHERE status IN ('queued', 'in_progress', 'failed')
+      GROUP BY status
+    `);
+
+    // 查询最近3个失败任务
+    const failedResult = await dbPool.query(`
+      SELECT title, updated_at
+      FROM tasks
+      WHERE status = 'failed'
+      ORDER BY updated_at DESC
+      LIMIT 3
+    `);
+
+    const queueMap = {};
+    for (const row of queueResult.rows) {
+      queueMap[row.status] = row.count;
+    }
+
+    const queueLine = [
+      queueMap.queued    ? `排队中: ${queueMap.queued}` : null,
+      queueMap.in_progress ? `执行中: ${queueMap.in_progress}` : null,
+      queueMap.failed    ? `失败: ${queueMap.failed}` : null,
+    ].filter(Boolean).join(' | ') || '队列为空';
+
+    const failedLines = failedResult.rows.length > 0
+      ? '\n最近失败任务:\n' + failedResult.rows.map(r => `  - ${r.title}`).join('\n')
+      : '';
+
+    const ts = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const context = `\n## 系统自我感知（${ts} 刷新）\n**任务队列**: ${queueLine}${failedLines}\n\n${SKILLS_SUMMARY}\n`;
+
+    _selfAwarenessCache = { context, refreshedAt: now };
+    return context;
+  } catch (err) {
+    console.warn('[thalamus] buildSelfAwarenessContext 失败，使用静态能力地图:', err.message);
+    const context = `\n## 系统自我感知（静态）\n${SKILLS_SUMMARY}\n`;
+    _selfAwarenessCache = { context, refreshedAt: now };
+    return context;
+  }
+}
+
+/** 仅用于测试：重置缓存 */
+export function _resetSelfAwarenessCache() {
+  _selfAwarenessCache = { context: '', refreshedAt: 0 };
+}
+
+// ============================================================
 // LLM Error Type Classification
 // ============================================================
 
@@ -611,7 +694,8 @@ async function analyzeEvent(event) {
     pool,
   });
 
-  const prompt = `${THALAMUS_PROMPT}${memoryContextBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
+  const selfAwarenessCtx = await buildSelfAwarenessContext(pool);
+  const prompt = `${THALAMUS_PROMPT}${selfAwarenessCtx}${memoryContextBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
     // 调用统一 LLM 层（丘脑）

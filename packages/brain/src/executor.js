@@ -1335,6 +1335,21 @@ function buildRetryContext(task) {
   return full;
 }
 
+/**
+ * 构建系统背景块，注入到所有 Claude Code dispatch prompt 头部。
+ * 让被召唤的 Claude Code 知道自己在 Cecelia 系统中的角色。
+ * @returns {string}
+ */
+function buildSystemContextBlock() {
+  return `## 你的角色（Cecelia 系统背景）
+你是 Cecelia 自主运行平台的执行手，由 Brain（localhost:5221）调度。
+- 任务完成后 Brain 会自动收到回调，无需你主动通知
+- 所有代码变更必须走 /dev 流程（worktree → PR → CI → 合并）
+- Brain 端口：5221 | Dashboard：5211 | 美国 Mac mini：38.23.47.81
+
+`;
+}
+
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
@@ -1604,13 +1619,14 @@ ${task.description || ''}
   }
 
   // 有明确 PRD 内容的任务
+  const sysCtx = buildSystemContextBlock();
   const retryCtx = buildRetryContext(task);
   const learningCtx = await buildLearningContext(task);
   if (task.prd_content) {
-    return `${skill}\n\n${task.prd_content}${learningCtx}${retryCtx}`;
+    return `${skill}\n\n${sysCtx}${task.prd_content}${learningCtx}${retryCtx}`;
   }
   if (task.payload?.prd_content) {
-    return `${skill}\n\n${task.payload.prd_content}${learningCtx}${retryCtx}`;
+    return `${skill}\n\n${sysCtx}${task.payload.prd_content}${learningCtx}${retryCtx}`;
   }
   if (task.payload?.prd_path) {
     return `${skill} ${task.payload.prd_path}${learningCtx}${retryCtx}`;
@@ -1636,7 +1652,7 @@ ${task.description || task.title}
 - [ ] 任务完成
 `;
 
-  return `${skill}\n\n${prd}${learningCtx}${retryCtx}`;
+  return `${skill}\n\n${sysCtx}${prd}${learningCtx}${retryCtx}`;
 }
 
 /**
