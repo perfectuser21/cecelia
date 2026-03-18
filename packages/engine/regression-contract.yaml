@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 12.99.0
+version: 13.0.0
 updated: 2026-03-18
 
 # ============================================================================
@@ -3239,6 +3239,25 @@ skills:
       type: command
       run: "bash scripts/test-dev-health.sh"
     test: "manual:bash packages/engine/scripts/test-dev-health.sh"
+
+  - id: S4-001
+    feature: cto-review
+    name: "CTO 代码审查 Skill — 五维 PASS/FAIL 判断"
+    scope: skill
+    priority: P1
+    trigger: [PR]
+    method: manual
+    tags: [cto-review, engine, skill, quality]
+    owner: engine
+    steps:
+      given: "Brain 派发 task_type=cto_review 任务到西安 Codex"
+      when: "Codex 执行 /cto-review skill"
+      then: "读取 enriched PRD + DoD + diff，从五个维度（需求符合度/架构合理性/代码质量/DoD符合度/安全性）判断 PASS/WARN/FAIL，回调 Brain execution-callback"
+    evidence:
+      type: code
+      file: "skills/cto-review/SKILL.md"
+      contains: "execution-callback"
+    test: "tests/skills/cto-review.test.ts"
 
 # ============================================================================
 # Changelog
