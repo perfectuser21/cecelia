@@ -132,6 +132,24 @@ devloop_check() {
                 else
                     sed -i "s/^intent_expand_status:.*/intent_expand_status: completed/" "$dev_mode_file" 2>/dev/null || true
                 fi
+
+                # ── 条件 1.5 补充：把 enriched PRD 写到本地文件 ──
+                local enriched_prd_file=".enriched-prd-${branch}.md"
+                if [[ ! -f "$enriched_prd_file" ]]; then
+                    local task_data enriched_prd
+                    task_data=$(curl -s --max-time 5 "$brain_url_base/tasks/$intent_task_id" 2>/dev/null || echo "{}")
+                    enriched_prd=$(echo "$task_data" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+meta = d.get('metadata') or d.get('custom_props') or {}
+print(meta.get('enriched_prd','') or d.get('result','') or '')
+" 2>/dev/null || echo "")
+                    if [[ -n "$enriched_prd" ]]; then
+                        echo "$enriched_prd" > "$enriched_prd_file"
+                    fi
+                fi
+                # ─────────────────────────────────────────────────
+
                 # 继续后续条件
             else
                 local intent_wait_status="${intent_task_status:-queued}"

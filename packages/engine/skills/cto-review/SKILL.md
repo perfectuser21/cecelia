@@ -87,9 +87,14 @@ Step 1.3  读取 DoD
           → 提取成功标准、DoD 检查项
 
 Step 1.4  读取核心 diff
-          → git diff main...HEAD --stat（概览，≤ 20 行）
-          → git diff main...HEAD（关键文件完整 diff，≤ 200 行）
+          → 获取变更文件列表（排除无关文件）：
+            git diff origin/main...HEAD --name-only | grep -vE '(package-lock\.json|^docs/learnings/|\.task-.*\.md|\.sql$)'
+          → 获取概览（≤ 20 行）：
+            git diff origin/main...HEAD --stat
+          → 获取核心文件完整 diff（限制 500 行）：
+            git diff origin/main...HEAD -- <核心文件列表> | head -500
           → 关键文件优先：业务逻辑 > 测试 > 配置
+          → 排除：package-lock.json / docs/learnings/ / .task-*.md / *.sql
 ```
 
 ### Phase 2：质量审查
