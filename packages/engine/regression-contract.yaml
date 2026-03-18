@@ -162,6 +162,66 @@ hooks:
     test: "manual:bash -c \"grep -q 'step_10_learning' packages/engine/hooks/stop-dev.sh\""
 
   # --------------------------------------------------------------------------
+  # H1-014~H1-016: v12.96.0 State Machine 强制层 (verify-step.sh)
+  # --------------------------------------------------------------------------
+  - id: H1-014
+    feature: H1
+    name: "Step 验证门禁：step_1_taskcard done 时验证 Task Card 无假 Test 命令"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [verify-step, state-machine, taskcard, step1]
+    owner: infra
+    steps:
+      given: "AI 向 .dev-mode 写入 step_1_taskcard: done"
+      when: "branch-protect.sh 检测到该行"
+      then: "调用 verify-step.sh step1 验证 Task Card DoD Test 字段无假命令"
+    evidence:
+      type: code
+      run: "bash hooks/verify-step.sh step1"
+      contains: "verify_step1"
+    test: "tests/hooks/verify-step.test.ts"
+
+  - id: H1-015
+    feature: H1
+    name: "Step 验证门禁：step_2_code done 时验证分支有实现代码改动"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [verify-step, state-machine, code, step2]
+    owner: infra
+    steps:
+      given: "AI 向 .dev-mode 写入 step_2_code: done"
+      when: "branch-protect.sh 检测到该行"
+      then: "调用 verify-step.sh step2 验证分支有实现代码改动（非纯文档）"
+    evidence:
+      type: code
+      run: "bash hooks/verify-step.sh step2"
+      contains: "verify_step2"
+    test: "tests/hooks/verify-step.test.ts"
+
+  - id: H1-016
+    feature: H1
+    name: "Step 验证门禁：step_4_learning done 时验证 Learning 文件格式完整"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [verify-step, state-machine, learning, step4]
+    owner: infra
+    steps:
+      given: "AI 向 .dev-mode 写入 step_4_learning: done"
+      when: "branch-protect.sh 检测到该行"
+      then: "调用 verify-step.sh step4 验证 Learning 文件包含 ### 根本原因 + ### 下次预防 + checklist"
+    evidence:
+      type: code
+      run: "bash hooks/verify-step.sh step4"
+      contains: "verify_step4"
+    test: "tests/hooks/verify-step.test.ts"
+
+  # --------------------------------------------------------------------------
   # H7: stop.sh - 循环控制器
   # --------------------------------------------------------------------------
   - id: H7-001
