@@ -54,6 +54,14 @@ async function fetchProjects() {
   return resp.json();
 }
 
+async function fetchTasksSafe(status) {
+  try { return await fetchTasks(status); } catch { return []; }
+}
+
+async function fetchProjectsSafe() {
+  try { return await fetchProjects(); } catch { return []; }
+}
+
 // ── 数据聚合 ────────────────────────────────────────────────────────────────
 function aggregateDailyCompleted(tasks, cutoff) {
   /** 按天统计完成任务数（用 completed_at 或 updated_at 的较新值） */
@@ -164,17 +172,16 @@ async function main() {
   console.log(`📊 Cecelia 运营摘要生成器（近 ${DAYS} 天）${DRY_RUN ? ' [DRY RUN]' : ''}`);
   const cutoff = cutoffDate(DAYS);
 
-  // 1. 拉取数据
+  // 1. 拉取数据（Brain API 不可用时优雅降级）
   console.log('🔍 查询 Brain API...');
-  const [completedTasks, failedTasks, quarantinedTasks, activeTasks, projects] = await Promise.all([
-    fetchTasks('completed'),
-    fetchTasks('failed').catch(() => []),
-    fetchTasks('quarantined').catch(() => []),
-    fetchTasks('in_progress').catch(() => []),
-    fetchProjects().catch(() => []),
+  const [completedTasks, failedTasks, quarantinedTasks, activeTasks, projects, queuedTasks] = await Promise.all([
+    fetchTasksSafe('completed'),
+    fetchTasksSafe('failed'),
+    fetchTasksSafe('quarantined'),
+    fetchTasksSafe('in_progress'),
+    fetchProjectsSafe(),
+    fetchTasksSafe('queued'),
   ]);
-
-  const queuedTasks = await fetchTasks('queued').catch(() => []);
 
   // 2. 聚合
   const daily = aggregateDailyCompleted(completedTasks, cutoff);
