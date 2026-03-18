@@ -11588,6 +11588,38 @@ router.post('/feishu/event', async (req, res) => {
         }
       }
 
+      // 丘脑路由（Gateway 统一入口）：先让丘脑决定怎么处理这条消息
+      let thalamusRouted = false;
+      try {
+        const thalamusEvent = {
+          type: EVENT_TYPES.USER_MESSAGE,
+          message: enrichedText,
+          sender_name: senderName,
+          user_id: userId,
+          relationship,
+          conversation_id: openId,
+          messages: messages.slice(-5), // 最近 5 条历史
+          chat_type: chatType,
+        };
+        const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+        const action = thalamusDecision?.actions?.[0];
+        if (action?.type === 'create_task' || action?.type === 'dispatch_task') {
+          // 丘脑决定派发任务：创建任务，回复确认
+          await executeThalamusDecision(thalamusDecision);
+          const taskTitle = action.params?.title || enrichedText.slice(0, 50);
+          const confirmReply = `好的，我去做：${taskTitle}`;
+          const receiveId = chatType === 'group' ? message.chat_id : openId;
+          const receiveIdType = chatType === 'group' ? 'chat_id' : 'open_id';
+          await sendFeishuMessage(accessToken, receiveId, receiveIdType, confirmReply);
+          console.log(`[feishu/thalamus] 派发任务：${taskTitle}`);
+          thalamusRouted = true;
+        }
+        // handle_chat / fallback_to_tick / no_action / 其他 → fallthrough 到 handleChat
+      } catch (thalamusErr) {
+        console.warn('[feishu/thalamus] 丘脑路由失败，fallback 到 handleChat:', thalamusErr.message);
+      }
+      if (thalamusRouted) return;
+
       // 调用 Cecelia（支持图片多模态）
       const result = await handleChat(enrichedText, {
         source: 'feishu',

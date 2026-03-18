@@ -295,6 +295,9 @@ const ACTION_WHITELIST = {
   'trigger_rca': { dangerous: false, description: '触发根因分析 (RCA) 流程' },
   'suggest_task_type': { dangerous: false, description: '建议 task_type 修正（只警告记录，不自动修改）' },
 
+  // 对话操作
+  'handle_chat': { dangerous: false, description: '转交 orchestrator-chat 处理普通对话（兜底默认）' },
+
   // 任务生命周期操作
   'update_task_prd': { dangerous: false, description: '更新任务 PRD 内容' },
   'archive_task': { dangerous: false, description: '归档完成/超期任务' },
@@ -546,7 +549,8 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 2. 不确定时，升级到 brain (escalate_to_brain)
 3. 危险操作必须 safety: true
 4. 简单事件尽量 level: 0，不要过度思考
-5. USER_MESSAGE/OWNER_INTENT 意图不明确时，默认 create_task(task_type: 'dev')
+5. USER_MESSAGE/OWNER_INTENT 意图不明确（普通对话、问候、闲聊、问答）时，默认 handle_chat（转交口处理对话）
+6. 仅当用户明确表达任务意图（要开发某功能、要调研某话题、要发布内容等）时才 create_task
 
 请结合上方 brain_context 分析以下事件并输出 Decision：`;
 
