@@ -234,6 +234,48 @@ echo "✅ 置信度已写入 .dev-mode"
 风险：.dev-mode 格式解析的边界条件
 ```
 
+## Step 1 末尾：触发 intent_expand（若有 brain_task_id）
+
+> **PRD 和 DoD 写完后，若 .dev-mode 中有 brain_task_id，自动触发意图扩展。**
+> intent_expand 由 Codex A 沿 task→project→KR→OKR→Vision 链路补全 PRD，生成 enriched PRD。
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+
+# 检查是否有 brain_task_id
+BRAIN_TASK_ID=$(grep "^brain_task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+
+if [[ -n "$BRAIN_TASK_ID" ]]; then
+    echo "🧠 触发 intent_expand（意图扩展）..."
+
+    # POST request-intent-expand
+    INTENT_RESULT=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        "${BRAIN_URL}/api/brain/tasks/${BRAIN_TASK_ID}/request-intent-expand" \
+        2>/dev/null || echo "{}")
+
+    # 提取 intent_expand_task_id
+    INTENT_TASK_ID=$(echo "$INTENT_RESULT" | python3 -c \
+        "import json,sys; d=json.load(sys.stdin); print(d.get('intent_expand_task_id','') or d.get('task_id',''))" \
+        2>/dev/null || echo "")
+
+    if [[ -n "$INTENT_TASK_ID" ]]; then
+        # 写入 .dev-mode
+        echo "intent_expand_task_id: ${INTENT_TASK_ID}" >> "$DEV_MODE_FILE"
+        echo "intent_expand_status: pending" >> "$DEV_MODE_FILE"
+        echo "✅ intent_expand 已触发，task_id: ${INTENT_TASK_ID}"
+        echo "   devloop-check.sh 将等待 enriched PRD 写入完成"
+    else
+        echo "⚠️  intent_expand 触发失败或 Brain API 不支持，跳过（不阻塞流程）"
+        echo "   原始响应: ${INTENT_RESULT}"
+    fi
+else
+    echo "ℹ️  无 brain_task_id，跳过 intent_expand 触发"
+fi
+```
+
 ## 完成后
 
 立即执行 Step 2：`cat skills/dev/steps/02-code.md`

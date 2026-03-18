@@ -671,6 +671,53 @@ Task Card 目标：
 
 ---
 
+### Step 2 末尾：触发 cto_review（代码完成后、push 之前）
+
+> **代码通过 Gate 2 审查后，若有 brain_task_id，触发 CTO Review。**
+> cto_review 由 Codex B 读 enriched PRD + DoD + 核心 diff，整体判断 PASS/FAIL。
+> devloop-check.sh 条件 2.5 会在 CI 运行前等待 cto_review PASS。
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+
+# 检查是否有 brain_task_id
+BRAIN_TASK_ID=$(grep "^brain_task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+
+if [[ -n "$BRAIN_TASK_ID" ]]; then
+    echo "🔍 触发 cto_review（CTO 代码审查）..."
+
+    # 获取当前 diff（核心变更）作为 review 上下文
+    CORE_DIFF=$(git diff main...HEAD --stat 2>/dev/null | head -20 || echo "")
+
+    # POST request-cto-review
+    CTO_RESULT=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"branch\": \"${BRANCH}\", \"diff_summary\": $(echo "$CORE_DIFF" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
+        "${BRAIN_URL}/api/brain/tasks/${BRAIN_TASK_ID}/request-cto-review" \
+        2>/dev/null || echo "{}")
+
+    # 提取 cto_review_task_id
+    CTO_TASK_ID=$(echo "$CTO_RESULT" | python3 -c \
+        "import json,sys; d=json.load(sys.stdin); print(d.get('cto_review_task_id','') or d.get('task_id',''))" \
+        2>/dev/null || echo "")
+
+    if [[ -n "$CTO_TASK_ID" ]]; then
+        # 写入 .dev-mode（devloop-check.sh 条件 2.5 会等待）
+        echo "cto_review_task_id: ${CTO_TASK_ID}" >> "$DEV_MODE_FILE"
+        echo "cto_review_status: pending" >> "$DEV_MODE_FILE"
+        echo "✅ cto_review 已触发，task_id: ${CTO_TASK_ID}"
+        echo "   push 后 devloop-check.sh 条件 2.5 会等待 CTO Review 完成"
+    else
+        echo "⚠️  cto_review 触发失败或 Brain API 不支持，跳过（不阻塞 CI）"
+        echo "   原始响应: ${CTO_RESULT}"
+    fi
+else
+    echo "ℹ️  无 brain_task_id，跳过 cto_review 触发"
+fi
+```
+
 ### 完成后
 
 **标记步骤完成**：
