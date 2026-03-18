@@ -107,7 +107,8 @@ if [[ -z "${CODEX_API_KEY:-}" ]]; then
     CREDENTIALS_FILE="$HOME/.credentials/openai.env"
     if [[ -f "$CREDENTIALS_FILE" ]]; then
         # 从 credentials 文件提取 OPENAI_API_KEY 的值
-        _raw_key=$(grep -E '^OPENAI_API_KEY=' "$CREDENTIALS_FILE" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')
+        # 注意：grep 找不到匹配行时返回 1，|| true 防止 set -e 触发退出
+        _raw_key=$(grep -E '^OPENAI_API_KEY=' "$CREDENTIALS_FILE" 2>/dev/null || true | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')
         if [[ -n "$_raw_key" ]]; then
             export CODEX_API_KEY="$_raw_key"
             echo "✅ 从 $CREDENTIALS_FILE 加载 CODEX_API_KEY"
