@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { readFileSync } from 'fs';
 import pool from '../db.js';
 import {
   executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
@@ -18,6 +19,7 @@ import { createProposal, approveProposal, rollbackProposal, rejectProposal, getP
 
 // Constants previously in old alertness.js
 const EVENT_BACKLOG_THRESHOLD = 50;
+const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 
 const router = Router();
 
