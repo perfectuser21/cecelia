@@ -5,8 +5,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 import BrainModelsPage from './BrainModelsPage';
+
+// Mock react-router-dom 避免 React 18/19 双实例冲突
+vi.mock('react-router-dom', () => ({
+  MemoryRouter: ({ children }: any) => children,
+  useNavigate: () => vi.fn(),
+}));
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -73,29 +78,17 @@ beforeEach(() => {
 
 describe('BrainModelsPage', () => {
   it('渲染页面标题', () => {
-    render(
-      <MemoryRouter>
-        <BrainModelsPage />
-      </MemoryRouter>
-    );
+    render(<BrainModelsPage />);
     expect(screen.getByText(/大脑模型配置/)).toBeTruthy();
   });
 
   it('渲染 Profile 切换区域标题', () => {
-    render(
-      <MemoryRouter>
-        <BrainModelsPage />
-      </MemoryRouter>
-    );
+    render(<BrainModelsPage />);
     expect(screen.getByText(/Profile 一键切换/i)).toBeTruthy();
   });
 
   it('渲染 Organ 模型展示区域标题', () => {
-    render(
-      <MemoryRouter>
-        <BrainModelsPage />
-      </MemoryRouter>
-    );
+    render(<BrainModelsPage />);
     expect(screen.getByText(/当前各 Organ 模型/i)).toBeTruthy();
   });
 });
