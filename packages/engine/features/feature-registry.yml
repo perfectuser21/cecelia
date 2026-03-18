@@ -1941,7 +1941,7 @@ product_features:
     name: 状态机三层防御 — bash-guard Rule 2d + seal + devloop-check seal 检查
     status: Committed
     priority: P0
-    version: "12.97.0"
+    version: "12.98.0"
     updated: "2026-03-18"
     description: |
       堵住 AI 通过 Bash 工具绕过 PreToolUse:Write 拦截直接写入 .dev-mode step_N: done 的旁路。
