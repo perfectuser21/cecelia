@@ -28,6 +28,8 @@ const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
 const MAX_CODEX_CONCURRENT = 3;             // Pool D: Codex 专属并发上限（对应 3 个 Codex 账号）
+const BACKPRESSURE_THRESHOLD = 5;           // 队列深度超过此值时触发降速
+const BACKPRESSURE_BURST_LIMIT = 1;         // 背压激活时 burst limit 压至 1
 
 // ============================================================
 // Process Detection
@@ -168,6 +170,19 @@ async function countAutoDispatchInProgress() {
 }
 
 /**
+ * Count all tasks currently in queued status (across all task types).
+ * Used for backpressure detection: if queue is deep, burst limit is reduced.
+ */
+async function getQueueDepth() {
+  try {
+    const r = await pool.query("SELECT COUNT(*) FROM tasks WHERE status='queued'");
+    return parseInt(r.rows[0].count, 10);
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Count Codex-native tasks currently in_progress.
  * Includes task_type IN ('codex_qa', 'codex_dev', 'codex_playwright') — tasks always routed to Xian Codex CLI.
  * Budget-downgraded tasks (provider=codex override) are not counted here since provider
@@ -293,6 +308,19 @@ async function calculateSlotBudget() {
   // Apply slot change buffer (±2 per tick)
   const poolCBudget = applySlotBuffer(poolCAfterResources);
 
+  // Backpressure: throttle burst limit when queue is deep
+  const queueDepth = await getQueueDepth();
+  const backpressureActive = queueDepth > BACKPRESSURE_THRESHOLD;
+  const backpressure = {
+    queue_depth: queueDepth,
+    threshold: BACKPRESSURE_THRESHOLD,
+    active: backpressureActive,
+    override_burst_limit: backpressureActive ? BACKPRESSURE_BURST_LIMIT : null,
+  };
+  if (backpressureActive) {
+    console.log(`[slot-allocator] Backpressure active: queue_depth=${queueDepth} > ${BACKPRESSURE_THRESHOLD}, override_burst_limit=${BACKPRESSURE_BURST_LIMIT}`);
+  }
+
   // Count actual usage
   const ceceliaUsed = await countCeceliaInProgress();
   const autoDispatchUsed = await countAutoDispatchInProgress();
@@ -342,6 +370,7 @@ async function calculateSlotBudget() {
       pool_c_scale: budgetState.pool_c_scale,
     } : null,
     dispatchAllowed: poolCBudget > autoDispatchUsed,
+    backpressure,
   };
 }
 
@@ -400,6 +429,8 @@ export {
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
   MAX_CODEX_CONCURRENT,
+  BACKPRESSURE_THRESHOLD,
+  BACKPRESSURE_BURST_LIMIT,
   SLOT_BUFFER_MAX_DELTA,
   SLOT_BUFFER_DOWN,
   SLOT_BUFFER_UP,
@@ -409,6 +440,7 @@ export {
   countCeceliaInProgress,
   countAutoDispatchInProgress,
   countCodexInProgress,
+  getQueueDepth,
   calculateSlotBudget,
   getSlotStatus,
   applySlotBuffer,
