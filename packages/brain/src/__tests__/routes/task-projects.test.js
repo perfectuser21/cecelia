@@ -78,19 +78,25 @@ describe('task-projects routes', () => {
   });
 
   describe('GET /projects/:id', () => {
-    it('returns 404 for non-existent project', async () => {
+    it('returns 404 for non-existent project with lowercase error message', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       const res = await request(app).get('/projects/non-existent');
       expect(res.status).toBe(404);
+      expect(res.body.error).toBe('project not found');
+      // 404 响应不应包含 id 字段（统一格式）
+      expect(res.body.id).toBeUndefined();
     });
 
-    it('returns project by id', async () => {
+    it('returns project by id with specified fields', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', name: 'Project 1' }],
+        rows: [{ id: 'p1', title: 'Project 1', description: 'desc', kr_id: null, goal_id: null }],
       });
       const res = await request(app).get('/projects/p1');
       expect(res.status).toBe(200);
-      expect(res.body.name).toBe('Project 1');
+      expect(res.body.id).toBe('p1');
+      // 验证 SQL 使用指定字段 SELECT
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('SELECT id, title, description, kr_id, goal_id');
     });
   });
 

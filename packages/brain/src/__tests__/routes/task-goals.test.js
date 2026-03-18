@@ -68,19 +68,25 @@ describe('task-goals routes', () => {
   });
 
   describe('GET /goals/:id', () => {
-    it('returns 404 for non-existent goal', async () => {
+    it('returns 404 for non-existent goal with lowercase error message', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       const res = await request(app).get('/goals/non-existent');
       expect(res.status).toBe(404);
+      expect(res.body.error).toBe('goal not found');
+      // 404 响应不应包含 id 字段（统一格式）
+      expect(res.body.id).toBeUndefined();
     });
 
-    it('returns goal by id', async () => {
+    it('returns goal by id with specified fields', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'g1', title: 'Goal 1' }],
+        rows: [{ id: 'g1', type: 'area_okr', title: 'Goal 1', description: 'desc', parent_id: null, project_id: null }],
       });
       const res = await request(app).get('/goals/g1');
       expect(res.status).toBe(200);
       expect(res.body.id).toBe('g1');
+      // 验证 SQL 使用指定字段 SELECT
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('SELECT id, type, title, description, parent_id, project_id');
     });
   });
 
