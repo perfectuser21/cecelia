@@ -18,6 +18,12 @@
 version: "3.70.0"
 updated: "2026-03-18"
 changelog:
+  - version: "13.1.0"
+    date: "2026-03-18"
+    summary: "feat(engine): 新增 intent-expand skill — 意图扩展，沿 Task→Project→KR→OKR→Vision 层级链查询并生成 enriched PRD"
+    scope: skills
+    breaking: false
+    feature_id: intent-expand-skill
   - version: "13.0.0"
     date: "2026-03-18"
     summary: "feat(engine): 新增 packages/engine/skills/cto-review/SKILL.md — CTO 代码审查 Skill 定义，包含五个审查维度（需求符合度/架构合理性/代码质量/DoD符合度/安全性）、PASS/WARN/FAIL 决定规则、Brain execution-callback 回调格式、devloop-check.sh 条件2.5联动机制"
