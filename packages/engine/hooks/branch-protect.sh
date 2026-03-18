@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v25
+# ZenithJoy Engine - 分支保护 Hook v26
+# v26: .dev-mode Step 完成验证（State Machine 强制层）— 拦截 step_N: done 写入，调用 verify-step.sh 验证
 # v25: monorepo 子目录保护 — packages/ 子目录开发时不允许复用根目录旧 .prd.md，必须有 per-branch PRD
 # v24: 统一分支命名规范 — 删除 feature/* 支持，cp-* 为唯一合法格式（与 CI L1 一致）
 # v23: 活跃 Worktree 必须有 .dev-mode — 防止新会话绕过 /dev（PR 未合并但无会话管理）
@@ -52,6 +53,44 @@ fi
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .file_path // ""' 2>/dev/null || echo "")
 
 if [[ -z "$FILE_PATH" ]]; then
+    exit 0
+fi
+
+# ===== .dev-mode Step 完成验证（State Machine 强制层）v26 =====
+# 当 AI 向 .dev-mode.* 写入 step_N_xxx: done 时，运行 verify-step.sh 验证
+# 目的：让状态机存在于代码层，AI 无法跳过真实验证直接自报 done
+# 覆盖：step_1_taskcard / step_2_code / step_4_learning
+if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
+    if [[ "$TOOL_NAME" == "Write" ]]; then
+        DEVMODE_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null || echo "")
+        VERIFY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-step.sh"
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+        if [[ -f "$VERIFY_SCRIPT" ]]; then
+            # step_1_taskcard: done → 验证 Task Card DoD Test 字段无假命令
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_1_taskcard:[[:space:]]+done'; then
+                if ! bash "$VERIFY_SCRIPT" "step1" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
+                    exit 2
+                fi
+            fi
+
+            # step_2_code: done → 验证有实现代码改动（TDD 基本保证）
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_2_code:[[:space:]]+done'; then
+                if ! bash "$VERIFY_SCRIPT" "step2" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
+                    exit 2
+                fi
+            fi
+
+            # step_4_learning: done → 验证 Learning 文件有必需章节
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_4_learning:[[:space:]]+done'; then
+                if ! bash "$VERIFY_SCRIPT" "step4" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
+                    exit 2
+                fi
+            fi
+        fi
+    fi
+    # .dev-mode 文件本身放行（无论验证通过还是未触发验证）
     exit 0
 fi
 

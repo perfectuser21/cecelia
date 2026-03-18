@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.65.0"
-updated: "2026-03-17"
+version: "3.66.0"
+updated: "2026-03-18"
 changelog:
+  - version: "12.96.0"
+    date: "2026-03-18"
+    summary: "feat(engine): 实现 /dev 状态机代码层强制（Step 验证门禁）v26 — 新增 verify-step.sh，branch-protect.sh 在 AI 向 .dev-mode 写 step_N: done 时运行验证脚本，覆盖 step1/step2/step4 三个关键步骤"
+    scope: hooks
+    breaking: false
+    feature_id: engine-statemachine-enforce
   - version: "12.95.0"
     date: "2026-03-17"
     summary: "feat(engine): 新增 feature.yaml 自注册机制 — 每个 skill 目录放 feature.yaml 声明自己的元数据，CI L2 新增 feature-yaml-lint 步骤扫描验证，新增 pre-commit-path-views.sh 自动触发 generate-path-views.sh，消除 registry/path-views 手动同步步骤"
