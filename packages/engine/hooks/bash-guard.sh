@@ -35,6 +35,12 @@ DEPLOY_CMDS='(^|\s|&&|\||\;)(rsync|scp)(\s)'
 # 允许部署的分支
 DEPLOY_ALLOW_BRANCH='^(main|develop)$'
 
+# ─── 白名单：.dev-agent-seal.* 文件操作直接放行（Gate 2 agent_seal 机制）────────
+# 允许 AI 向 .dev-agent-seal.${BRANCH} 追加 approved 记录
+if echo "$CMD" | grep -qE '\.dev-agent-seal\.'; then
+    exit 0
+fi
+
 # ─── 规则 1: 凭据泄露检测（纯字符串，~1ms）─────────────────
 if text_contains_token "$CMD"; then
     echo "" >&2

@@ -185,7 +185,12 @@ Task Card 内容：
 ```
 
 处理结果：
-- **[PASS]**（三项均 ≥ 3）→ 继续置信度自评
+- **[PASS]**（三项均 ≥ 3）→ **立即写入 Gate 2 agent_seal**（双签机制），然后继续置信度自评：
+  ```bash
+  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  echo "step_1_agent: approved@$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)" >> ".dev-agent-seal.${BRANCH}"
+  echo "✅ Gate 2 agent_seal 已写入：step_1_agent: approved"
+  ```
 - **[NEEDS_IMPROVEMENT]** → 按建议更新 Task Card → 重新执行 LLM 质量 Gate
 
 ## Step 1 末尾：置信度自评（写入 .dev-mode）

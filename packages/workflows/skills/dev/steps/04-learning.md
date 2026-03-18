@@ -273,7 +273,13 @@ Learning 内容：
 ```
 
 处理结果：
-- **[PASS]** → 继续 Step 3（提交 Learning）
+- **[PASS]** → **立即写入 Gate 2 agent_seal**（双签机制），然后继续 Step 3：
+  ```bash
+  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  STAMP=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)
+  echo "step_4_agent: approved@${STAMP}" >> ".dev-agent-seal.${BRANCH}"
+  echo "✅ Gate 2 agent_seal 已写入：step_4_agent: approved"
+  ```
 - **[NEEDS_IMPROVEMENT]** → 按反馈重写对应部分 → 重新执行 LLM 质量 Gate
 
 ---

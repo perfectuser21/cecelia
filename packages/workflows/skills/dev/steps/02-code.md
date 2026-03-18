@@ -633,6 +633,44 @@ Reviewer 3 — 项目规范 & 一致性
 
 ---
 
+### ⛔ Gate 2: 代码质量 Subagent 审查（write step_2 done 前必须执行）
+
+> **每条 DoD 已由 Verifier Subagent 逐条验证，Gate 2 做整体代码质量语义评估。**
+
+召唤 Code Quality Subagent，prompt：
+
+```
+你是代码质量审查员。审查本次变更的整体代码质量。
+
+已改动文件：
+{粘贴 git diff --name-only main...HEAD 的输出}
+
+Task Card 目标：
+{粘贴 .task-{branch}.md 的"功能描述"部分}
+
+审查 3 个维度：
+1. 实现是否与 Task Card 需求一致（无过度/不足实现）？
+2. 代码是否引入安全漏洞或破坏现有功能？
+3. 边界条件和错误路径是否有处理？
+
+输出格式：
+[APPROVE] 或 [REJECT]
+理由：（REJECT 时必须具体说明哪里需要修改）
+注意：只做评估，不修改任何文件。
+```
+
+处理结果：
+- **[APPROVE]** → **立即写入 Gate 2 agent_seal**（双签机制），然后标记完成：
+  ```bash
+  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  STAMP=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)
+  echo "step_2_agent: approved@${STAMP}" >> ".dev-agent-seal.${BRANCH}"
+  echo "✅ Gate 2 agent_seal 已写入：step_2_agent: approved"
+  ```
+- **[REJECT]** → 按反馈修复代码 → 重新执行 Gate 2
+
+---
+
 ### 完成后
 
 **标记步骤完成**：
