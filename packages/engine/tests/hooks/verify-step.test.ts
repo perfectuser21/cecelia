@@ -20,8 +20,7 @@ import {
 import { resolve, join } from "path";
 import { tmpdir } from "os";
 
-const ENGINE_ROOT = resolve(__dirname, "../..");
-const ORIG_HOOK_PATH = resolve(ENGINE_ROOT, "hooks/verify-step.sh");
+const ORIG_HOOK_PATH = resolve(__dirname, "../../hooks/verify-step.sh");
 
 let tempDir: string;
 
