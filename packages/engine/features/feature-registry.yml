@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.66.0"
+version: "3.67.0"
 updated: "2026-03-18"
 changelog:
+  - version: "12.97.0"
+    date: "2026-03-18"
+    summary: "feat(engine): 状态机三层防御 — bash-guard.sh 新增 Rule 2d 检测 Bash 写 .dev-mode.*；verify-step.sh 验证通过后写 step_N_seal；devloop-check.sh 新增 seal 完整性检查，step_N done 但无 seal 则 blocked 要求重新验证"
+    scope: hooks
+    breaking: false
+    feature_id: statemachine-triple-defense
   - version: "12.96.0"
     date: "2026-03-18"
     summary: "feat(engine): 实现 /dev 状态机代码层强制（Step 验证门禁）v26 — 新增 verify-step.sh，branch-protect.sh 在 AI 向 .dev-mode 写 step_N: done 时运行验证脚本，覆盖 step1/step2/step4 三个关键步骤"
