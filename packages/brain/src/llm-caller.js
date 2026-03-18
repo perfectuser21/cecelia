@@ -32,6 +32,8 @@ const CLAUDE_MODEL_FLAG = {
 let _minimaxKey = null;
 // Anthropic API key cache
 let _anthropicKey = null;
+// OpenAI API key cache
+let _openaiKey = null;
 
 function getMinimaxKey() {
   if (_minimaxKey) return _minimaxKey;
@@ -57,6 +59,25 @@ function getAnthropicKey() {
     console.error('[llm-caller] Failed to load Anthropic credentials:', err.message);
     return null;
   }
+}
+
+
+function getOpenAIKey() {
+  if (_openaiKey) return _openaiKey;
+  try {
+    const credPath = join(homedir(), '.credentials', 'openai.json');
+    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
+    _openaiKey = cred.api_key;
+    return _openaiKey;
+  } catch {
+    // fallback to env var
+  }
+  if (process.env.OPENAI_API_KEY) {
+    _openaiKey = process.env.OPENAI_API_KEY;
+    return _openaiKey;
+  }
+  console.error('[llm-caller] Failed to load OpenAI credentials');
+  return null;
 }
 
 function stripThinking(content) {
@@ -126,8 +147,10 @@ export async function callLLM(agentId, prompt, options = {}) {
       } else if (effectiveProvider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
         // bridge 不支持图片，仅传文字 prompt（降级处理）
         text = await callClaudeViaBridge(prompt, model, timeout, model);
-      } else if (provider === 'minimax') {
+      } else if (effectiveProvider === 'minimax' || provider === 'minimax') {
         text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
+      } else if (effectiveProvider === 'openai' || provider === 'openai') {
+        text = await callOpenAIAPI(prompt, model, timeout, maxTokens);
       } else {
         throw new Error(`Unsupported provider: ${provider}`);
       }
@@ -377,6 +400,46 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
   }
 }
 
+/**
+ * 直接调用 OpenAI API（gpt-5.x 系列用 max_completion_tokens）
+ */
+async function callOpenAIAPI(prompt, model, timeout, maxTokens) {
+  const apiKey = getOpenAIKey();
+  if (!apiKey) throw new Error('OpenAI API key not available');
+
+  const isGPT5 = model && model.startsWith('gpt-5');
+  const tokenParam = isGPT5
+    ? { max_completion_tokens: maxTokens }
+    : { max_tokens: maxTokens };
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model || 'gpt-4o-mini',
+      ...tokenParam,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal: AbortSignal.timeout(timeout),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => 'unknown');
+    const apiErr = new Error(`OpenAI API error: ${response.status} - ${errText.slice(0, 200)}`);
+    apiErr.status = response.status;
+    throw apiErr;
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content || '';
+  if (!text) throw new Error('OpenAI API returned empty content');
+  return text;
+}
+
 // 测试辅助：重置缓存
 export function _resetMinimaxKey() { _minimaxKey = null; }
 export function _resetAnthropicKey() { _anthropicKey = null; }
+export function _resetOpenAIKey() { _openaiKey = null; }

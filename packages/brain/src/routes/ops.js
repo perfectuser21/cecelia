@@ -10,7 +10,8 @@ import { check48hReport } from '../tick.js';
 import { getTaskWeights } from '../task-weight.js';
 import { getCleanupStats, runTaskCleanup, getCleanupAuditLog } from '../task-cleanup.js';
 import { getDispatchStats } from '../dispatch-stats.js';
-import { EVENT_TYPES } from '../thalamus.js';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES } from '../thalamus.js';
+import { executeDecision as executeThalamusDecision } from '../decision-executor.js';
 import {
   createSuggestion,
   executeTriage,
@@ -871,6 +872,11 @@ const groupMembersCache = new Map();
 // 8 秒内同一群的非@mention 消息合并为一次决策
 const groupPendingMessages = new Map();
 
+// P2P 消息防抖缓冲区（open_id → { messages: [], accessToken, timer }）
+// 3 秒内同一用户的连续消息合并为一次处理
+const p2pPendingMessages = new Map();
+const P2P_DEBOUNCE_MS = 3000;
+
 /** 获取群成员名单（内存缓存 1小时）— 调飞书 GET /im/v1/chats/{chat_id}/members
  *  副作用：将成员信息写入 feishu_users，使 getFeishuUserName 的 staleCache 生效 */
 async function getGroupMembers(chatId, accessToken) {
@@ -1175,6 +1181,62 @@ async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
     }),
     signal: AbortSignal.timeout(8000),
   });
+}
+
+/** 发送飞书交互卡片（占位符），返回 message_id */
+async function sendFeishuCard(accessToken, receiveId, receiveIdType, placeholder) {
+  try {
+    const cardContent = {
+      config: { wide_screen_mode: true },
+      elements: [{ tag: 'div', text: { content: placeholder, tag: 'lark_md' } }],
+    };
+    const resp = await fetch(
+      `https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          receive_id: receiveId,
+          msg_type: 'interactive',
+          content: JSON.stringify(cardContent),
+        }),
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    const data = await resp.json();
+    return data?.data?.message_id || null;
+  } catch (err) {
+    console.warn('[feishu/card] sendFeishuCard 失败:', err.message);
+    return null;
+  }
+}
+
+/** PATCH 更新飞书卡片内容 */
+async function patchFeishuCard(accessToken, messageId, content) {
+  try {
+    const cardContent = {
+      config: { wide_screen_mode: true },
+      elements: [{ tag: 'div', text: { content, tag: 'lark_md' } }],
+    };
+    const resp = await fetch(
+      `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+        body: JSON.stringify({ content: JSON.stringify(cardContent) }),
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    const data = await resp.json();
+    if (data.code !== 0) {
+      console.warn('[feishu/card] patchFeishuCard 失败:', data.code, data.msg);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[feishu/card] patchFeishuCard 异常:', err.message);
+    return false;
+  }
 }
 
 /** GET /api/brain/feishu/users — 查询已知飞书用户（嘴巴 call_brain_api 用） */
@@ -1485,6 +1547,92 @@ router.post('/feishu/event', async (req, res) => {
           }
         }, 8000); // 8 秒聚合窗口
 
+        return;
+      }
+
+      // P2P 消息 3 秒防抖聚合（合并连续多条消息）
+      if (chatType === 'p2p') {
+        if (!p2pPendingMessages.has(openId)) {
+          p2pPendingMessages.set(openId, { messages: [], accessToken: null, timer: null });
+        }
+        const p2pPend = p2pPendingMessages.get(openId);
+        p2pPend.accessToken = accessToken;
+        p2pPend.messages.push({ text, senderName, userId, relationship, imageContent: feishuImageContent });
+        if (p2pPend.timer) clearTimeout(p2pPend.timer);
+        p2pPend.timer = setTimeout(async () => {
+          p2pPendingMessages.delete(openId);
+          const batch = p2pPend.messages;
+          if (!batch.length) return;
+          const combinedText = batch.length > 1 ? batch.map(m => m.text).join('\n') : batch[0].text;
+          const primary = batch[batch.length - 1];
+          const batchImageContent = batch.slice().reverse().find(m => m.imageContent)?.imageContent || null;
+          try {
+            const p2pHistory = await getUnifiedHistory(openId, 10, null);
+            const thalamusEvent = {
+              type: EVENT_TYPES.USER_MESSAGE,
+              message: combinedText,
+              sender_name: primary.senderName,
+              user_id: primary.userId,
+              relationship: primary.relationship,
+              conversation_id: openId,
+              messages: p2pHistory.slice(-5),
+              chat_type: 'p2p',
+            };
+            let mouthReply = '', needCard = false, thalamusRouted = false;
+            try {
+              const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+              const action = thalamusDecision?.actions?.[0];
+              mouthReply = thalamusDecision?.mouth_reply || '';
+              needCard = !!thalamusDecision?.need_card;
+              if (action?.type === 'create_task' || action?.type === 'dispatch_task') {
+                await executeThalamusDecision(thalamusDecision);
+                const taskTitle = action.params?.title || combinedText.slice(0, 50);
+                if (!mouthReply) mouthReply = `好的，我去做：${taskTitle}`;
+                thalamusRouted = true;
+              }
+            } catch (thalamusErr) {
+              console.warn('[feishu/p2p] 丘脑路由失败:', thalamusErr.message);
+            }
+            if (mouthReply) {
+              if (needCard && !thalamusRouted) {
+                const cardMsgId = await sendFeishuCard(p2pPend.accessToken, openId, 'open_id', '正在思考...');
+                handleChat(combinedText, {
+                  source: 'feishu',
+                  sender_name: primary.senderName,
+                  user_id: primary.userId,
+                  relationship: primary.relationship,
+                }, p2pHistory, batchImageContent).then(async (chatResult) => {
+                  const finalReply = chatResult?.reply;
+                  if (finalReply) {
+                    if (cardMsgId) await patchFeishuCard(p2pPend.accessToken, cardMsgId, finalReply);
+                    saveUnifiedConversation(openId, 'feishu_p2p', null, combinedText, finalReply, null).catch(() => {});
+                  }
+                }).catch(err => console.warn('[feishu/p2p] handleChat 卡片模式失败:', err.message));
+                console.log(`[feishu/p2p] 卡片模式回复（批次 ${batch.length} 条）→ ${primary.senderName}`);
+              } else {
+                await sendFeishuMessage(p2pPend.accessToken, openId, 'open_id', mouthReply);
+                saveUnifiedConversation(openId, 'feishu_p2p', null, combinedText, mouthReply, null).catch(() => {});
+                console.log(`[feishu/p2p] 文字回复（批次 ${batch.length} 条）→ ${primary.senderName}：${mouthReply.slice(0, 60)}`);
+              }
+              return;
+            }
+            if (thalamusRouted) return;
+            // thalamus 未处理 → fallback 到 handleChat
+            const fallbackResult = await handleChat(combinedText, {
+              source: 'feishu',
+              sender_name: primary.senderName,
+              user_id: primary.userId,
+              relationship: primary.relationship,
+            }, p2pHistory, batchImageContent);
+            const fallbackReply = fallbackResult?.reply;
+            if (!fallbackReply) return;
+            saveUnifiedConversation(openId, 'feishu_p2p', null, combinedText, fallbackReply, null).catch(() => {});
+            await sendFeishuMessage(p2pPend.accessToken, openId, 'open_id', fallbackReply);
+            console.log(`[feishu/p2p] Fallback 回复 ${primary.senderName}：${fallbackReply.slice(0, 60)}`);
+          } catch (err) {
+            console.error('[feishu/p2p] P2P 防抖处理失败:', err.message);
+          }
+        }, P2P_DEBOUNCE_MS);
         return;
       }
 

@@ -541,8 +541,13 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
   ],
   "rationale": "决策原因（结合 brain_context 说明为何这样路由）",
   "confidence": 0.0-1.0,
-  "safety": false
+  "safety": false,
+  "mouth_reply": "立即回复用户的简短文字（1-2句，非正式语气，仅 USER_MESSAGE 时填写，其他事件类型留空字符串）",
+  "need_card": false
 }
+说明：
+- mouth_reply：嘴巴立即回应文字。USER_MESSAGE 时必须填写自然的中文回复，其他事件留空。
+- need_card：true = 回复内容较长或需要等待异步任务；false = 直接发文字即可。
 
 ## 规则
 1. 只能使用白名单内的 action
@@ -771,21 +776,36 @@ function _resetThalamusMinimaxKey() { /* no-op, kept for test compat */ }
 function parseDecisionFromResponse(response) {
   // 优先匹配 markdown code block 中的 JSON（```json ... ``` 或 ``` ... ```）
   const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  let parsed = null;
   if (codeBlockMatch) {
     try {
-      return JSON.parse(codeBlockMatch[1].trim());
+      parsed = JSON.parse(codeBlockMatch[1].trim());
     } catch (_e) {
       // code block 内容不是合法 JSON，继续 fallback
     }
   }
 
-  // fallback: 非贪婪匹配第一个完整 JSON 对象
-  const jsonMatch = response.match(/\{[\s\S]*?\}/);
-  if (!jsonMatch) {
-    throw new Error('No JSON found in response');
+  if (!parsed) {
+    // fallback: 从末尾往前扫描每个 { 位置，贪婪到最后的 }
+    // 这样可以正确处理含嵌套 JSON 的响应，同时避免跨越多个独立 JSON 对象
+    const lastBrace = response.lastIndexOf('}');
+    if (lastBrace === -1) throw new Error('No JSON found in response');
+    for (let i = response.length - 1; i >= 0; i--) {
+      if (response[i] !== '{') continue;
+      const candidate = response.slice(i, lastBrace + 1);
+      try {
+        const obj = JSON.parse(candidate);
+        if (typeof obj === 'object' && obj !== null) { parsed = obj; break; }
+      } catch { /* try next position */ }
+    }
+    if (!parsed) throw new Error('No JSON found in response');
   }
 
-  return JSON.parse(jsonMatch[0]);
+  // 补充新字段默认值（兼容旧模型输出）
+  if (!('mouth_reply' in parsed)) parsed.mouth_reply = '';
+  if (!('need_card' in parsed)) parsed.need_card = false;
+
+  return parsed;
 }
 
 /**
