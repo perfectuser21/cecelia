@@ -480,14 +480,14 @@ describe('rumination', () => {
     });
 
     it('force=false 时预算耗尽返回 daily_budget_exhausted', async () => {
-      _setDailyCount(DAILY_BUDGET); // 模拟预算已满
+      _setDailyCount(getDailyBudget()); // 模拟预算已满（动态预算，避免时区测试漂移）
       const result = await runManualRumination(pool, { force: false });
       expect(result.skipped).toBe('daily_budget_exhausted');
       expect(result.digested).toBe(0);
     });
 
     it('force=true 时绕过 daily_budget，消化成功', async () => {
-      _setDailyCount(DAILY_BUDGET); // 模拟预算已满
+      _setDailyCount(getDailyBudget()); // 模拟预算已满（动态预算，避免时区测试漂移）
       setupLearningsOnly(pool, [{ id: 'f1', title: 'force 测试', content: '强制消化', category: 'test' }]);
 
       const result = await runManualRumination(pool, { force: true });
@@ -515,8 +515,8 @@ describe('rumination', () => {
 
       expect(status).toEqual(expect.objectContaining({
         daily_count: 0,
-        daily_budget: DAILY_BUDGET,
-        remaining: DAILY_BUDGET,
+        daily_budget: getDailyBudget(),
+        remaining: getDailyBudget(),
         undigested_count: 15,
       }));
       expect(status.cooldown_remaining_ms).toBeGreaterThanOrEqual(0);
@@ -533,7 +533,7 @@ describe('rumination', () => {
       const status = await getRuminationStatus(pool);
 
       expect(status.daily_count).toBe(1);
-      expect(status.remaining).toBe(DAILY_BUDGET - 1);
+      expect(status.remaining).toBe(getDailyBudget() - 1);
       expect(status.last_run_at).not.toBeNull();
       expect(status.cooldown_remaining_ms).toBeGreaterThan(0);
     });
