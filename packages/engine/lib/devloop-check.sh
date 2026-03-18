@@ -219,6 +219,48 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 3.5: CI 通过 → 检查异步 PR Review 状态（若有 review_task_id）=====
+    if [[ -f "$dev_mode_file" ]]; then
+        local review_task_id review_status_local brain_url
+        review_task_id=$(grep "^review_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        review_status_local=$(grep "^review_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        brain_url="${BRAIN_URL:-http://localhost:5221}/api/brain"
+
+        if [[ -n "$review_task_id" && "$review_status_local" != "pass" ]]; then
+            local review_api_result review_task_status review_result_text
+            review_api_result=$(curl -s --max-time 5 "$brain_url/tasks/$review_task_id" 2>/dev/null || echo "{}")
+            review_task_status=$(echo "$review_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+            review_result_text=$(echo "$review_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('review_result','') or '')" 2>/dev/null || echo "")
+
+            if [[ "$review_task_status" == "completed" ]]; then
+                if echo "$review_result_text" | grep -qi "REVIEW_RESULT:[[:space:]]*PASS"; then
+                    # Review PASS：更新 .dev-mode 并继续
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        sed -i '' "s/^review_status:.*/review_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    else
+                        sed -i "s/^review_status:.*/review_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    fi
+                    # 继续条件 4
+                else
+                    local fail_reasons
+                    fail_reasons=$(echo "$review_result_text" | grep -A 10 "FAIL_REASONS:" | head -8 || echo "详见 review_result")
+                    _devloop_jq -n \
+                        --arg task_id "$review_task_id" \
+                        --arg reasons "$fail_reasons" \
+                        '{"status":"blocked","reason":"PR Review 未通过（西安 Codex 独立审查）","action":"修复 review 指出的问题后重新 push。Review Task ID: \($task_id)\nFAIL_REASONS:\n\($reasons)"}'
+                    return 2
+                fi
+            else
+                local review_wait_status="${review_task_status:-queued}"
+                _devloop_jq -n \
+                    --arg task_id "$review_task_id" \
+                    --arg status "$review_wait_status" \
+                    '{"status":"blocked","reason":"等待西安 Codex PR Review 完成（状态: \($status)）","action":"等待 review_task \($task_id) 完成，通常 10-30 秒，不要做任何操作"}'
+                return 2
+            fi
+        fi
+    fi
+
     # ===== 条件 4: CI 通过 + PR 未合并 → 检查 Step 10 LEARNINGS =====
     local step_10_status
     step_10_status=$(grep "^step_10_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
