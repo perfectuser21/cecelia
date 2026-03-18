@@ -1487,6 +1487,25 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    // 5c11. content-* pipeline 子任务完成/失败 → 推进 Pipeline 状态机
+    if (newStatus === 'completed' || newStatus === 'failed') {
+      try {
+        const { advanceContentPipeline, PIPELINE_STAGES } = await import('../content-pipeline-orchestrator.js');
+        const cpTaskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const cpTask = cpTaskRow.rows[0];
+        if (cpTask && PIPELINE_STAGES.includes(cpTask.task_type) && cpTask.payload?.parent_pipeline_id) {
+          let findingsVal = null;
+          try { findingsVal = findingsValue ? JSON.parse(findingsValue) : null; } catch (_) {}
+          const advResult = await advanceContentPipeline(task_id, newStatus, findingsVal);
+          if (advResult.advanced) {
+            console.log(`[execution-callback] content pipeline 推进: task=${task_id} type=${cpTask.task_type} action=${advResult.action}`);
+          }
+        }
+      } catch (cpErr) {
+        console.error(`[execution-callback] content pipeline advance error (non-fatal): ${cpErr.message}`);
+      }
+    }
+
     // 5c12. 串行降级: dev task 失败（有 sequence_order）→ 取消后续所有 blocked 串行 task
     // 避免后续 task 永久僵尸（blocked 状态无人解锁）
     // ⚠️ 必须在 if (newStatus === 'completed') 块外面，因为 failed/quarantined 不进 completed 分支
