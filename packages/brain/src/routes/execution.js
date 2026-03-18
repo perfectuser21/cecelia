@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import crypto from 'crypto';
 import { exec } from 'child_process';
+import { promisify } from 'util';
 import { readFileSync } from 'fs';
 import { runTickSafe, getTickStatus } from '../tick.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from '../templates.js';

@@ -8,6 +8,21 @@ import websocketService from '../websocket.js';
 
 const router = Router();
 
+const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
+
+async function checkN8nHealth() {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const resp = await fetch(`${N8N_API_URL}/healthz`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+
 // ==================== 状态读取 API ====================
 
 // Decision Pack 版本
@@ -24,12 +39,13 @@ router.get('/status', async (req, res) => {
     // 支持 ?mode=interactive|scheduled|incident
     const decisionMode = req.query.mode || 'interactive';
 
-    const [policy, workingMemory, topTasks, recentDecisions, dailyFocus] = await Promise.all([
+    const [policy, workingMemory, topTasks, recentDecisions, dailyFocus, n8nAlive] = await Promise.all([
       getActivePolicy(),
       getWorkingMemory(),
       getTopTasks(10),
       getRecentDecisions(5),
-      getFocusSummary()
+      getFocusSummary(),
+      checkN8nHealth()
     ]);
     const snapshot = null;
 
@@ -89,9 +105,9 @@ router.get('/status', async (req, res) => {
                           (snapshot.snapshot_json.task_system?.open_p1 || 0),
         stale_tasks: snapshot.snapshot_json.task_system?.stale_count || 0
       } : {
-        n8n_ok: false,
+        n8n_ok: n8nAlive,
         n8n_failures_1h: 0,
-        task_system_ok: false,
+        task_system_ok: true,
         open_tasks_total: 0,
         stale_tasks: 0
       },
