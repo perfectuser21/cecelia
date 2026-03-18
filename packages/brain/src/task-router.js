@@ -20,6 +20,8 @@ const VALID_TASK_TYPES = [
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
   'suggestion_plan', 'architecture_design', 'architecture_scan',
   'arch_review', 'strategy_session',
+  // 前置审查（Intent Expansion + CTO Review）
+  'intent_expand', 'cto_review',
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export'
 ];
@@ -49,6 +51,9 @@ const SKILL_WHITELIST = {
   'architecture_scan': '/architect scan',
   'arch_review': '/arch-review review',
   'strategy_session': '/strategy-session',
+  // 前置审查（Intent Expansion + CTO Review）
+  'intent_expand': '/intent-expand',  // 意图扩展 → US 本机，查 OKR/Vision 链路补全 PRD
+  'cto_review': '/cto-review',        // CTO 审查 → 西安 Codex，独立审查 PASS/FAIL
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline': '/content-creator',
   'content-research': '/notebooklm',
@@ -127,6 +132,8 @@ const LOCATION_MAP = {
   'architecture_scan': 'us',   // 系统扫描 → US (Opus + /architect scan)
   'arch_review': 'us',         // 架构巡检 → US (Sonnet + /arch-review review)
   'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
+  'intent_expand': 'us',      // 意图扩展 → US 本机 (查本地 Brain DB，补全 PRD)
+  'cto_review': 'xian',       // CTO 审查 → 西安 Codex (独立视角审查 enriched PRD + diff)
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
   'knowledge': 'us',  // 知识记录 → US (Claude)
   'talk': 'hk',       // 对话 → HK (MiniMax)

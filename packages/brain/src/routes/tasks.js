@@ -1120,4 +1120,237 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/brain/tasks/:id/request-intent-expand
+ * 根据父任务创建 intent_expand 子任务
+ * 沿 task.project_id → projects.kr_id → goals(KR).parent_id → goals(OKR).parent_id → goals(Vision)
+ * 链路查询战略上下文，作为 intent_expand 子任务的 prompt 一部分
+ */
+router.post('/tasks/:id/request-intent-expand', async (req, res) => {
+  try {
+    const { id: parentId } = req.params;
+
+    // 1. 查找父任务
+    const parentResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [parentId]);
+    if (parentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'parent task not found' });
+    }
+    const parentTask = parentResult.rows[0];
+
+    // 2. 沿 project_id → KR → OKR → Vision 链查询上下文
+    let context = { project: null, kr: null, okr: null, vision: null };
+
+    if (parentTask.project_id) {
+      const projectResult = await pool.query(
+        'SELECT id, name, kr_id FROM projects WHERE id = $1',
+        [parentTask.project_id]
+      );
+      if (projectResult.rows.length > 0) {
+        const project = projectResult.rows[0];
+        context.project = { id: project.id, name: project.name };
+
+        if (project.kr_id) {
+          // 查 KR（goals 表 type='area_kr' 或 'global_kr'）
+          const krResult = await pool.query(
+            'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
+            [project.kr_id]
+          );
+          if (krResult.rows.length > 0) {
+            const kr = krResult.rows[0];
+            context.kr = { id: kr.id, title: kr.title, description: kr.description };
+
+            if (kr.parent_id) {
+              // 查 OKR
+              const okrResult = await pool.query(
+                'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
+                [kr.parent_id]
+              );
+              if (okrResult.rows.length > 0) {
+                const okr = okrResult.rows[0];
+                context.okr = { id: okr.id, title: okr.title, description: okr.description };
+
+                if (okr.parent_id) {
+                  // 查 Vision/Mission
+                  const visionResult = await pool.query(
+                    'SELECT id, title, description FROM goals WHERE id = $1',
+                    [okr.parent_id]
+                  );
+                  if (visionResult.rows.length > 0) {
+                    const vision = visionResult.rows[0];
+                    context.vision = { id: vision.id, title: vision.title, description: vision.description };
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          // 尝试通过 project_kr_links 查 kr_id
+          const krLinkResult = await pool.query(
+            'SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1',
+            [parentTask.project_id]
+          );
+          if (krLinkResult.rows.length > 0) {
+            const krId = krLinkResult.rows[0].kr_id;
+            const krResult = await pool.query(
+              'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
+              [krId]
+            );
+            if (krResult.rows.length > 0) {
+              const kr = krResult.rows[0];
+              context.kr = { id: kr.id, title: kr.title, description: kr.description };
+            }
+          }
+        }
+      }
+    }
+
+    // 3. 构建子任务描述（包含战略上下文）
+    const contextSummary = [
+      context.vision ? `**Vision/Mission**: ${context.vision.title}` : null,
+      context.okr ? `**OKR**: ${context.okr.title}` : null,
+      context.kr ? `**KR**: ${context.kr.title}` : null,
+      context.project ? `**Project**: ${context.project.name}` : null,
+    ].filter(Boolean).join('\n');
+
+    const description = [
+      `## 意图扩展任务`,
+      `父任务 ID: ${parentId}`,
+      `父任务标题: ${parentTask.title}`,
+      '',
+      `## 战略上下文`,
+      contextSummary || '（未找到关联的 OKR/KR 链路，请根据任务描述判断）',
+      '',
+      `## 父任务 PRD`,
+      parentTask.prd_content || parentTask.description || '（无 PRD 内容）',
+      '',
+      `## 任务指令`,
+      '请根据以上战略上下文，补全并丰富父任务的 PRD，确保实现方向与 OKR/Vision 对齐。',
+      '补全后的 enriched PRD 通过 execution-callback 写入父任务 metadata.enriched_prd。',
+    ].join('\n');
+
+    // 4. 创建 intent_expand 子任务
+    const { createTask } = await import('../actions.js');
+    const subTaskResult = await createTask({
+      title: `[意图扩展] ${parentTask.title}`,
+      description,
+      priority: parentTask.priority || 'P1',
+      goal_id: parentTask.goal_id,
+      project_id: parentTask.project_id,
+      task_type: 'intent_expand',
+      trigger_source: 'brain_auto',
+      domain: parentTask.domain || 'agent_ops',
+      payload: {
+        parent_task_id: parentId,
+        context_chain: context,
+      },
+    });
+
+    if (!subTaskResult.success) {
+      return res.status(500).json({ success: false, error: 'failed to create intent_expand task' });
+    }
+
+    return res.json({
+      success: true,
+      task_id: subTaskResult.task.id,
+      parent_task_id: parentId,
+      context_found: {
+        has_project: !!context.project,
+        has_kr: !!context.kr,
+        has_okr: !!context.okr,
+        has_vision: !!context.vision,
+      },
+      deduplicated: subTaskResult.deduplicated || false,
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/request-intent-expand error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/request-cto-review
+ * 根据父任务创建 cto_review 子任务
+ * 接收 pr_number 参数，构建包含 enriched_prd + DoD + diff 的审查 prompt
+ */
+router.post('/tasks/:id/request-cto-review', async (req, res) => {
+  try {
+    const { id: parentId } = req.params;
+    const { pr_number } = req.body || {};
+
+    // 1. 查找父任务
+    const parentResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [parentId]);
+    if (parentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'parent task not found' });
+    }
+    const parentTask = parentResult.rows[0];
+
+    // 2. 从 metadata 读取 enriched_prd（如果存在）
+    const enrichedPrd = parentTask.metadata?.enriched_prd
+      || parentTask.prd_content
+      || parentTask.description
+      || '（无 enriched PRD，请根据任务描述判断）';
+
+    // 3. 构建 CTO 审查子任务描述
+    const prInfo = pr_number
+      ? `PR #${pr_number}（使用 gh pr diff ${pr_number} 获取 diff）`
+      : '（未指定 PR 号，请根据任务 pr_url 或已有信息判断）';
+
+    const description = [
+      `## CTO 整体审查任务`,
+      `父任务 ID: ${parentId}`,
+      `父任务标题: ${parentTask.title}`,
+      `PR 信息: ${prInfo}`,
+      '',
+      `## Enriched PRD（意图扩展后的完整需求）`,
+      enrichedPrd,
+      '',
+      `## 审查指令`,
+      '请从 CTO 视角整体审查本次 PR：',
+      '1. 实现是否与 PRD 中的战略目标对齐？',
+      '2. 代码变更是否覆盖了所有 DoD 条目？',
+      '3. 有无架构层面的问题或技术债务？',
+      '4. 整体质量是否达到 PASS 标准？',
+      '',
+      '输出格式：',
+      '- **判断**: PASS 或 FAIL',
+      '- **理由**: 简要说明判断原因（3-5 条）',
+      '- **建议**: 如果 FAIL，具体指出需要修改的地方',
+      '',
+      '审查结果通过 execution-callback 写入父任务 review_result 字段。',
+    ].join('\n');
+
+    // 4. 创建 cto_review 子任务
+    const { createTask } = await import('../actions.js');
+    const subTaskResult = await createTask({
+      title: `[CTO审查] ${parentTask.title}`,
+      description,
+      priority: parentTask.priority || 'P1',
+      goal_id: parentTask.goal_id,
+      project_id: parentTask.project_id,
+      task_type: 'cto_review',
+      trigger_source: 'brain_auto',
+      domain: parentTask.domain || 'agent_ops',
+      payload: {
+        parent_task_id: parentId,
+        pr_number: pr_number || null,
+      },
+    });
+
+    if (!subTaskResult.success) {
+      return res.status(500).json({ success: false, error: 'failed to create cto_review task' });
+    }
+
+    return res.json({
+      success: true,
+      task_id: subTaskResult.task.id,
+      parent_task_id: parentId,
+      pr_number: pr_number || null,
+      deduplicated: subTaskResult.deduplicated || false,
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/request-cto-review error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
