@@ -47,6 +47,7 @@
  */
 
 import pool from './db.js';
+import { getContentType } from './content-types/content-type-registry.js';
 
 // ───────────────────────────────────────────────────────
 // 常量
@@ -92,6 +93,22 @@ export async function orchestrateContentPipelines(dbPool = pool) {
     try {
       const pipelineId = pipeline.id;
       const keyword = pipeline.payload?.keyword || pipeline.title;
+      const content_type = pipeline.payload?.content_type || null;
+
+      // 验证 content_type 存在于注册表（若有指定）
+      let typeConfig = null;
+      if (content_type) {
+        typeConfig = await getContentType(content_type);
+        if (!typeConfig) {
+          console.error(`[content-pipeline-orchestrator] pipeline ${pipelineId} content_type "${content_type}" 不存在于注册表，标记 failed`);
+          await dbPool.query(
+            `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
+            [pipelineId]
+          );
+          skipped++;
+          continue;
+        }
+      }
 
       // 幂等检查：是否已有 content-research 子任务在飞
       const existingResult = await dbPool.query(`
@@ -130,6 +147,7 @@ export async function orchestrateContentPipelines(dbPool = pool) {
           parent_pipeline_id: pipelineId,
           pipeline_stage: 'content-research',
           pipeline_keyword: keyword,
+          ...(content_type ? { content_type } : {}),
         }),
       ]);
 
@@ -139,7 +157,7 @@ export async function orchestrateContentPipelines(dbPool = pool) {
         [pipelineId]
       );
 
-      console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} → content-research 已创建`);
+      console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} → content-research 已创建${content_type ? ` (type: ${content_type})` : ''}`);
       orchestrated++;
     } catch (err) {
       console.error(`[content-pipeline-orchestrator] pipeline ${pipeline.id} 处理失败: ${err.message}`);
@@ -209,24 +227,37 @@ export async function advanceContentPipeline(taskId, taskStatus, findings = null
   const pipeline = pipelineResult.rows[0];
   const keyword = pipeline.payload?.keyword || task.payload?.pipeline_keyword || pipeline.title;
 
+  // 读取 content_type 配置（从 pipeline payload 或子任务 payload 继承）
+  const content_type = pipeline.payload?.content_type || task.payload?.content_type || null;
+  let typeConfig = null;
+  if (content_type) {
+    typeConfig = await getContentType(content_type);
+  }
+
   // ── content-research 完成 → 创建 content-generate ──
   if (task_type === 'content-research') {
-    return await _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, {
+    const generatePayload = {
       pipeline_stage: 'content-generate',
       pipeline_keyword: keyword,
       research_task_id: taskId,
       retry_count: 0,
-    });
+      ...(content_type ? { content_type } : {}),
+      ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
+    };
+    return await _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, generatePayload, null, typeConfig);
   }
 
   // ── content-generate 完成 → 创建 content-review ──
   if (task_type === 'content-generate') {
-    return await _createNextStage(dbPool, pipeline, task, 'content-review', keyword, {
+    const reviewPayload = {
       pipeline_stage: 'content-review',
       pipeline_keyword: keyword,
       generate_task_id: taskId,
       retry_count: task.payload?.retry_count || 0,
-    });
+      ...(content_type ? { content_type } : {}),
+      ...(typeConfig ? { review_rules: typeConfig.review_rules } : {}),
+    };
+    return await _createNextStage(dbPool, pipeline, task, 'content-review', keyword, reviewPayload);
   }
 
   // ── content-review 完成 → 判断 PASS / FAIL ──
@@ -239,6 +270,7 @@ export async function advanceContentPipeline(taskId, taskStatus, findings = null
         pipeline_stage: 'content-export',
         pipeline_keyword: keyword,
         review_task_id: taskId,
+        ...(content_type ? { content_type } : {}),
       });
     } else {
       // FAIL → 重试 content-generate（最多 MAX_REVIEW_RETRY 次）
@@ -262,7 +294,9 @@ export async function advanceContentPipeline(taskId, taskStatus, findings = null
         retry_count: nextRetry,
         review_feedback: reviewFeedback,
         review_task_id: taskId,
-      }, `[内容生成-重试R${nextRetry}]`);
+        ...(content_type ? { content_type } : {}),
+        ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
+      }, `[内容生成-重试R${nextRetry}]`, typeConfig);
     }
   }
 
@@ -285,8 +319,9 @@ export async function advanceContentPipeline(taskId, taskStatus, findings = null
 
 /**
  * 创建下一个阶段的子任务（含幂等检查）。
+ * @param {object} [typeConfig] - 内容类型 YAML 配置（可选），用于生成阶段的 description
  */
-async function _createNextStage(dbPool, pipeline, prevTask, nextStage, keyword, nextPayload, titlePrefix = null) {
+async function _createNextStage(dbPool, pipeline, prevTask, nextStage, keyword, nextPayload, titlePrefix = null, typeConfig = null) {
   const pipelineId = pipeline.id;
 
   // 幂等检查：该 pipeline 下是否已有 nextStage 在飞
@@ -307,13 +342,22 @@ async function _createNextStage(dbPool, pipeline, prevTask, nextStage, keyword, 
   const prefix = titlePrefix || `[${stageLabel}]`;
   const stageNum = PIPELINE_STAGES.indexOf(nextStage) + 1;
 
+  // content-generate 使用 YAML template.generate_prompt（若有），否则用默认描述
+  let description;
+  if (nextStage === 'content-generate' && typeConfig?.template?.generate_prompt) {
+    const prompt = typeConfig.template.generate_prompt.replace(/\{keyword\}/g, keyword);
+    description = `Content Pipeline 子任务（阶段${stageNum}/4）：${stageLabel}「${keyword}」。\n父任务 ID: ${pipelineId}\n\n${prompt}`;
+  } else {
+    description = `Content Pipeline 子任务（阶段${stageNum}/4）：${stageLabel}「${keyword}」。\n父任务 ID: ${pipelineId}`;
+  }
+
   await dbPool.query(`
     INSERT INTO tasks (title, description, task_type, status, priority, project_id, goal_id,
                       trigger_source, payload, created_at)
     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, NOW())
   `, [
     `${prefix} ${keyword}`,
-    `Content Pipeline 子任务（阶段${stageNum}/4）：${stageLabel}「${keyword}」。\n父任务 ID: ${pipelineId}`,
+    description,
     nextStage,
     'P1',
     pipeline.project_id,
