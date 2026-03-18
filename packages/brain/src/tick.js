@@ -1485,6 +1485,23 @@ async function executeTick() {
     console.error('[tick] Decomposition check failed:', decompErr.message);
   }
 
+  // 0.5.5. Content Pipeline Orchestration Check — 检测 queued content-pipeline 任务，创建子任务
+  try {
+    const { orchestrateContentPipelines } = await import('./content-pipeline-orchestrator.js');
+    const pipelineResult = await orchestrateContentPipelines();
+    if (pipelineResult.total_actions > 0) {
+      console.log(`[tick] Content pipeline orchestration: ${pipelineResult.total_actions} actions (orchestrated=${pipelineResult.summary.orchestrated}, skipped=${pipelineResult.summary.skipped})`);
+      actionsTaken.push({
+        action: 'content_pipeline_orchestration',
+        total_actions: pipelineResult.total_actions,
+        orchestrated: pipelineResult.summary.orchestrated,
+        skipped: pipelineResult.summary.skipped,
+      });
+    }
+  } catch (pipelineErr) {
+    console.error('[tick] Content pipeline orchestration check failed:', pipelineErr.message);
+  }
+
   // 0.6. Recurring Tasks Check
   try {
     const { checkRecurringTasks } = await import('./recurring.js');
