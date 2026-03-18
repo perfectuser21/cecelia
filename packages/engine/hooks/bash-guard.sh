@@ -262,6 +262,31 @@ if [[ "$BASH_WRITES_CODE" == "true" ]]; then
     fi
 fi
 
+# ─── 规则 3b: Bash 通用目录写入保护（~2ms）──────────────────
+# 补充规则 3 的文件扩展名限制：拦截任何重定向写入 packages/apps/scripts/hooks/ 目录
+# 覆盖场景：git show <ref>:file > packages/xxx、heredoc > packages/xxx 等绕过方式
+# 放行条件：已在 cp-*/feature/* 分支（/dev 工作流中）或目标是 /tmp/ 路径
+if echo "$CMD" | grep -Eq ">>?[[:space:]]*['\"]?(packages|apps|scripts|hooks)/"; then
+    # 排除 /tmp/ 路径（不应命中，但双保险）
+    if ! echo "$CMD" | grep -Eq ">>?[[:space:]]*/tmp/"; then
+        CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+        if [[ -n "$CURRENT_BRANCH" ]] && [[ ! "$CURRENT_BRANCH" =~ ^(cp-|feature/) ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BASH GUARD] Bash 直接写源码目录被拦截" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "当前分支: $CURRENT_BRANCH" >&2
+            echo "禁止在 '$CURRENT_BRANCH' 分支用 Bash 重定向写入 packages/apps/scripts/hooks/ 目录。" >&2
+            echo "代码变更必须在功能分支（cp-* / feature/*）中进行。" >&2
+            echo "" >&2
+            echo "[SKILL_REQUIRED: dev]" >&2
+            echo "" >&2
+            exit 2
+        fi
+    fi
+fi
+
 # ─── 规则 4: Skill 文件写入保护（~3ms）─────────────────────
 # SKILL.md 通过 symlink 链条指向 git 仓库，修改 = 改 git tracked 代码
 # 路径链: ~/.claude-account*/skills/ → ~/.claude/skills/ → packages/*/skills/

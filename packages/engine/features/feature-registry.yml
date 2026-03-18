@@ -1954,3 +1954,31 @@ product_features:
       - "已有 .cjs 脚本 → 直接 node 执行"
 
     rcis: []
+
+  - id: bash-guard-main-write-block
+    name: bash-guard 补漏：拦截 main 分支 Bash 重定向写入源码目录
+    category: protection
+    status: Committed
+    priority: P1
+    version: "12.99.1"
+    updated: "2026-03-18"
+    description: |
+      新增规则 3b：在 main/develop 分支时，拦截 Bash 命令通过 shell 重定向
+      （> 或 >>）写入 packages/、apps/、scripts/、hooks/ 目录。
+      修复 git show <ref>:packages/x > packages/x 绕过 branch-protect.sh 的漏洞。
+
+    entrypoints:
+      - type: hook
+        file: packages/engine/hooks/bash-guard.sh
+        trigger: "PreToolUse:Bash — 规则 3b 拦截 main 分支重定向写入"
+
+    golden_path: |
+      main 分支 Bash 命令包含 > packages/ →
+      bash-guard.sh 规则 3b 检测 →
+      exit 2 + [SKILL_REQUIRED: dev]
+
+    minimal_paths:
+      - "main 分支 > packages/ 重定向 → 被拦截 exit 2"
+      - "cp-* 分支同样命令 → 放行"
+
+    rcis: []

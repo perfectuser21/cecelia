@@ -430,6 +430,16 @@ Codex 探索阶段：生成 .cjs 脚本（CDP 连接 100.97.242.124:19225）→
 
 ---
 
+### bash-guard-main-write-block: bash-guard 补漏：拦截 main 分支 Bash 重定向写入源码目录
+
+```
+main 分支 Bash 命令包含 > packages/ →
+bash-guard.sh 规则 3b 检测 →
+exit 2 + [SKILL_REQUIRED: dev]
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
