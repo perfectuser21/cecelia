@@ -48,6 +48,8 @@ services:
       # Concurrency: auto-calculated from hardware (CPU/memory) via slot-allocator.js
       # CECELIA_MAX_SEATS: hard cap on concurrent slots (overrides auto-calc, set 0 to disable)
       - CECELIA_MAX_SEATS=10
+      # CECELIA_BUDGET_SLOTS: budget-layer cap (< MAX_SEATS), reserves 3 slots for burst buffer + INTERACTIVE_RESERVE
+      - CECELIA_BUDGET_SLOTS=7
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
