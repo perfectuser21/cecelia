@@ -392,8 +392,14 @@ describe('llm-caller', () => {
   describe('callLLM - 不支持的 provider', () => {
     it('不支持的 provider 抛出错误', async () => {
       await expect(
-        callLLM('thalamus', '测试', { provider: 'openai', model: 'gpt-4' })
-      ).rejects.toThrow('Unsupported provider: openai');
+        callLLM('thalamus', '测试', { provider: 'truly-unsupported', model: 'some-model' })
+      ).rejects.toThrow('Unsupported provider: truly-unsupported');
+    });
+
+    it('openai provider 现已支持，无 API key 时抛出凭据错误', async () => {
+      await expect(
+        callLLM('thalamus', '测试', { provider: 'openai', model: 'gpt-4o-mini' })
+      ).rejects.toThrow(/OpenAI API key not available|OpenAI API error/);
     });
   });
 
