@@ -89,6 +89,30 @@ if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
                 fi
             fi
         fi
+    elif [[ "$TOOL_NAME" == "Edit" ]]; then
+        # v26b: Edit 工具补全 — 与 Write 工具对称，防止 Edit 绕过 step_N: done 检查
+        DEVMODE_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null || echo "")
+        VERIFY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-step.sh"
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+        if [[ -f "$VERIFY_SCRIPT" ]]; then
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_1_taskcard:[[:space:]]+done'; then
+                if ! bash "$VERIFY_SCRIPT" "step1" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
+                    exit 2
+                fi
+            fi
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_2_code:[[:space:]]+done'; then
+                if ! bash "$VERIFY_SCRIPT" "step2" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
+                    exit 2
+                fi
+            fi
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_4_learning:[[:space:]]+done'; then
+                if ! bash "$VERIFY_SCRIPT" "step4" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
+                    exit 2
+                fi
+            fi
+        fi
     fi
     # .dev-mode 文件本身放行（无论验证通过还是未触发验证）
     exit 0

@@ -131,6 +131,8 @@ describe("verify-step.sh", () => {
         'Test: manual:node -e "const fs=require(\'fs\');if(!fs.existsSync(\'file.sh\'))process.exit(1)"',
         "Test: tests/my.test.ts",
       ]);
+      // Gate 2: create agent_seal so verify-step.sh passes
+      writeFileSync(join(dir, `.dev-agent-seal.${BRANCH}`), `step_1_agent: approved@2026-03-18T00:00:00+0800\n`);
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
     });
@@ -198,6 +200,8 @@ describe("verify-step.sh", () => {
     it("passes with contract: test format", () => {
       const dir = mkdtempSync(join(tempDir, "s1-contract-"));
       createTaskCard(dir, BRANCH, ["Test: contract:my-behavior"]);
+      // Gate 2: create agent_seal so verify-step.sh passes
+      writeFileSync(join(dir, `.dev-agent-seal.${BRANCH}`), `step_1_agent: approved@2026-03-18T00:00:00+0800\n`);
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
     });
@@ -231,6 +235,8 @@ describe("verify-step.sh", () => {
       writeFileSync(join(dir, "my-feature.sh"), "#!/bin/bash\necho done\n");
       execSync("git add my-feature.sh", { cwd: dir, stdio: "pipe" });
       execSync('git commit -m "feat: add feature"', { cwd: dir, stdio: "pipe" });
+      // Gate 2: create agent_seal so verify-step.sh passes
+      writeFileSync(join(dir, `.dev-agent-seal.${BRANCH}`), `step_2_agent: approved@2026-03-18T00:00:00+0800\n`);
       const result = runVerifyStep("step2", BRANCH, dir, dir);
       expect(result.exitCode).toBe(0);
     });
@@ -274,6 +280,8 @@ describe("verify-step.sh", () => {
         "### 根本原因\n\n问题在于缺少验证。",
         "### 下次预防\n\n- [ ] 添加验证脚本\n- [ ] 写测试",
       ]);
+      // Gate 2: create agent_seal so verify-step.sh passes
+      writeFileSync(join(dir, `.dev-agent-seal.${BRANCH}`), `step_4_agent: approved@2026-03-18T00:00:00+0800\n`);
       const result = runVerifyStep("step4", BRANCH, dir);
       expect(result.exitCode).toBe(0);
     });
@@ -319,6 +327,8 @@ describe("verify-step.sh", () => {
         "## 根本原因\n\n这是根本原因。",
         "## 下次预防\n\n- [ ] 预防措施",
       ]);
+      // Gate 2: create agent_seal so verify-step.sh passes
+      writeFileSync(join(dir, `.dev-agent-seal.${BRANCH}`), `step_4_agent: approved@2026-03-18T00:00:00+0800\n`);
       const result = runVerifyStep("step4", BRANCH, dir);
       expect(result.exitCode).toBe(0);
     });
@@ -330,6 +340,8 @@ describe("verify-step.sh", () => {
         "### 根本原因\n\n这是根本原因。",
         "### 下次预防\n\n- [x] 已完成的措施",
       ]);
+      // Gate 2: create agent_seal so verify-step.sh passes
+      writeFileSync(join(dir, `.dev-agent-seal.${BRANCH}`), `step_4_agent: approved@2026-03-18T00:00:00+0800\n`);
       const result = runVerifyStep("step4", BRANCH, dir);
       expect(result.exitCode).toBe(0);
     });

@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.67.0"
+version: "3.68.0"
 updated: "2026-03-18"
 changelog:
+  - version: "12.98.0"
+    date: "2026-03-18"
+    summary: "feat(engine): 双重门禁 Gate1(CI镜像)+Gate2(Subagent) — verify-step.sh 加入 CI L1/L4 镜像检查和 agent_seal 双签验证，branch-protect.sh 补全 Edit 工具拦截，stop-dev.sh 加 agent_seal 完整性检查，skill step files 加 Gate 2 Subagent 审查流程"
+    scope: hooks
+    breaking: false
+    feature_id: dual-gate-ci-mirror
   - version: "12.97.0"
     date: "2026-03-18"
     summary: "feat(engine): 状态机三层防御 P0+P1 — bash-guard.sh 新增 Rule 5 检测 .dev-mode Bash 写入并调用 verify-step.sh 验证，verify-step.sh _pass() 写验签到 .dev-seal.${BRANCH}，stop-dev.sh 新增验签完整性检查防止无效 step done 标记通过"

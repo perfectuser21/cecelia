@@ -104,7 +104,33 @@ $found_fake
     Test: contract:my-behavior"
     fi
 
-    _pass "Step 1 Task Card（无假 Test 命令）"
+    # Gate 1: CI 镜像 — check-dod-mapping.cjs（与 CI L1 完全相同的检查）
+    local _dod_check="$PROJECT_ROOT/packages/engine/scripts/devgate/check-dod-mapping.cjs"
+    if [[ -f "$_dod_check" ]]; then
+        echo "  🔍 [Gate 1] 运行 CI 镜像检查（check-dod-mapping.cjs）..." >&2
+        if ! node "$_dod_check" >/dev/null 2>&1; then
+            _fail "Gate 1 失败：DoD 映射检查不通过（与 CI L1 相同检查）
+  运行以下命令查看详情：
+    node packages/engine/scripts/devgate/check-dod-mapping.cjs
+  Gate 1 过 = CI L1 必过。请修复后重新执行 Step 1。"
+        fi
+        echo "  ✅ [Gate 1] DoD 映射检查通过" >&2
+    fi
+
+    # Gate 2: Agent Seal 检查 — step_1_agent: approved
+    if [[ -n "$BRANCH" ]]; then
+        local _agent_seal="$PROJECT_ROOT/.dev-agent-seal.${BRANCH}"
+        if ! grep -q "step_1_agent: approved" "$_agent_seal" 2>/dev/null; then
+            _fail "Gate 2 未通过：缺少 step_1_agent: approved
+  文件: .dev-agent-seal.${BRANCH}
+  Gate 2 需要 Subagent 语义审查后写入 agent_seal。
+  写入命令：
+    echo \"step_1_agent: approved@\$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)\" >> .dev-agent-seal.${BRANCH}"
+        fi
+        echo "  ✅ [Gate 2] agent_seal 已验证（step_1_agent: approved）" >&2
+    fi
+
+    _pass "Step 1 Task Card（Gate 1 CI 镜像 + Gate 2 agent_seal 双通过）"
 }
 
 # ============================================================================
@@ -147,7 +173,33 @@ verify_step2() {
         echo "     功能代码任务应先补充测试" >&2
     fi
 
-    _pass "Step 2 代码改动验证（有实现文件改动）"
+    # Gate 1: CI 镜像 — packages/engine npm test（与 CI L4 完全相同）
+    local _engine_dir="$PROJECT_ROOT/packages/engine"
+    if [[ -d "$_engine_dir" ]]; then
+        echo "  🔍 [Gate 1] 运行 CI 镜像检查（packages/engine npm test）..." >&2
+        if ! (cd "$_engine_dir" && npm test 2>&1 >&2); then
+            _fail "Gate 1 失败：Engine 测试不通过（与 CI L4 相同检查）
+  运行以下命令查看详情：
+    cd packages/engine && npm test
+  Gate 1 过 = CI L4 必过。请修复测试后重新执行 Step 2。"
+        fi
+        echo "  ✅ [Gate 1] Engine 测试通过" >&2
+    fi
+
+    # Gate 2: Agent Seal 检查 — step_2_agent: approved
+    if [[ -n "$BRANCH" ]]; then
+        local _agent_seal="$PROJECT_ROOT/.dev-agent-seal.${BRANCH}"
+        if ! grep -q "step_2_agent: approved" "$_agent_seal" 2>/dev/null; then
+            _fail "Gate 2 未通过：缺少 step_2_agent: approved
+  文件: .dev-agent-seal.${BRANCH}
+  Gate 2 需要 Subagent 语义审查代码质量后写入 agent_seal。
+  写入命令：
+    echo \"step_2_agent: approved@\$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)\" >> .dev-agent-seal.${BRANCH}"
+        fi
+        echo "  ✅ [Gate 2] agent_seal 已验证（step_2_agent: approved）" >&2
+    fi
+
+    _pass "Step 2 代码改动验证（Gate 1 CI 镜像 + Gate 2 agent_seal 双通过）"
 }
 
 # ============================================================================
@@ -204,7 +256,20 @@ $errors"
   文件: $learning_file"
     fi
 
-    _pass "Step 4 Learning 文件（根本原因 + 下次预防 + checklist）"
+    # Gate 2: Agent Seal 检查 — step_4_agent: approved
+    if [[ -n "$BRANCH" ]]; then
+        local _agent_seal="$PROJECT_ROOT/.dev-agent-seal.${BRANCH}"
+        if ! grep -q "step_4_agent: approved" "$_agent_seal" 2>/dev/null; then
+            _fail "Gate 2 未通过：缺少 step_4_agent: approved
+  文件: .dev-agent-seal.${BRANCH}
+  Gate 2 需要 Subagent 语义审查 Learning 内容后写入 agent_seal。
+  写入命令：
+    echo \"step_4_agent: approved@\$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)\" >> .dev-agent-seal.${BRANCH}"
+        fi
+        echo "  ✅ [Gate 2] agent_seal 已验证（step_4_agent: approved）" >&2
+    fi
+
+    _pass "Step 4 Learning 文件（格式完整 + Gate 2 agent_seal 通过）"
 }
 
 # ============================================================================

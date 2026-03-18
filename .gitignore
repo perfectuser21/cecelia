@@ -51,6 +51,7 @@ Thumbs.db
 .dev-failure*
 .gate-*
 .quality-gate-passed
+.dev-agent-seal.*
 
 # Brain deployment
 .brain-versions
