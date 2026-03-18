@@ -248,6 +248,11 @@
               "dangerous": false
             },
             {
+              "name": "handle_chat",
+              "description": "转交 orchestrator-chat 处理普通对话（兜底默认）",
+              "dangerous": false
+            },
+            {
               "name": "update_task_prd",
               "description": "更新任务 PRD 内容",
               "dangerous": false
@@ -707,6 +712,10 @@
       "dangerous": false,
       "description": "建议 task_type 修正（只警告记录，不自动修改）"
     },
+    "handle_chat": {
+      "dangerous": false,
+      "description": "转交 orchestrator-chat 处理普通对话（兜底默认）"
+    },
     "update_task_prd": {
       "dangerous": false,
       "description": "更新任务 PRD 内容"
@@ -856,7 +865,7 @@
     "arch_review": "/arch-review review",
     "strategy_session": "/strategy-session"
   },
-  "generatedAt": "2026-03-16T13:41:08.503Z",
+  "generatedAt": "2026-03-18T04:26:22.637Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
