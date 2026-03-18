@@ -110,17 +110,15 @@ router.get('/audit', async (_req, res) => {
   }
 });
 
-// GET /goals/:id — 获取单个 goal
+// GET /goals/:id — 获取单个 goal（返回 intent-expand 所需字段）
 router.get('/:id', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM goals WHERE id = $1', [req.params.id]);
-    if (!result.rows.length) {
-      return res.status(404).json({ error: 'Goal not found', id: req.params.id });
-    }
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get goal', details: err.message });
-  }
+  const { id } = req.params;
+  const result = await pool.query(
+    'SELECT id, type, title, description, parent_id, project_id FROM goals WHERE id = $1',
+    [id]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: 'goal not found' });
+  res.json(result.rows[0]);
 });
 
 // PATCH /goals/:id — 更新 goal 字段

@@ -197,17 +197,15 @@ router.post('/compare/report/push-notion', async (req, res) => {
   }
 });
 
-// GET /projects/:id — 获取单个 project
+// GET /projects/:id — 获取单个 project（返回 intent-expand 所需字段）
 router.get('/:id', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
-    if (!result.rows.length) {
-      return res.status(404).json({ error: 'Project not found', id: req.params.id });
-    }
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get project', details: err.message });
-  }
+  const { id } = req.params;
+  const result = await pool.query(
+    'SELECT id, title, description, kr_id, goal_id FROM projects WHERE id = $1',
+    [id]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: 'project not found' });
+  res.json(result.rows[0]);
 });
 
 // PATCH /projects/:id — 更新 project 字段（status / description / name / priority / progress / area_id）
