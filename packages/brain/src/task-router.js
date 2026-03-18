@@ -19,7 +19,9 @@ const VALID_TASK_TYPES = [
   'pr_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
   'suggestion_plan', 'architecture_design', 'architecture_scan',
-  'arch_review', 'strategy_session'
+  'arch_review', 'strategy_session',
+  // 内容工厂 Pipeline（Content Factory）
+  'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export'
 ];
 
 // Skill whitelist based on task type
@@ -46,7 +48,13 @@ const SKILL_WHITELIST = {
   'architecture_design': '/architect design',
   'architecture_scan': '/architect scan',
   'arch_review': '/arch-review review',
-  'strategy_session': '/strategy-session'
+  'strategy_session': '/strategy-session',
+  // 内容工厂 Pipeline（Content Factory）
+  'content-pipeline': '/content-creator',
+  'content-research': '/notebooklm',
+  'content-generate': '/content-creator',
+  'content-review': '/content-creator',
+  'content-export': '/content-creator'
 };
 
 // Fallback strategies when primary routing fails

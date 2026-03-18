@@ -1073,6 +1073,12 @@ function getSkillForTaskType(taskType, payload) {
     'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
     // 战略会议：C-Suite 模拟讨论，输出带 domain 的 KR
     'strategy_session': '/strategy-session',
+    // 内容工厂 Pipeline（Content Factory）
+    'content-pipeline': '/content-creator',  // 编排入口：触发完整内容生成流程
+    'content-research': '/notebooklm',        // 调研阶段：NotebookLM 深度调研
+    'content-generate': '/content-creator',  // 生成阶段：图片+文案生成
+    'content-review': '/content-creator',    // 审核阶段：AI 质量评分
+    'content-export': '/content-creator',    // 导出阶段：NAS 存储 + manifest
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
