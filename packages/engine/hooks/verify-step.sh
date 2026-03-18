@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-# verify-step.sh — /dev 步骤完成验证（State Machine 强制层）v1.0.0
+# verify-step.sh — /dev 步骤完成验证（State Machine 强制层）v1.1.0
 # ============================================================================
 # 由 branch-protect.sh 在 AI 向 .dev-mode 写入 step_N: done 时调用。
 # 验证 AI 自报的步骤完成情况是否有真实证据支撑。
+# v1.1.0: 验证通过后向 .dev-mode 写入 seal（step_N_seal: verified@timestamp）
 #
 # 用法：
 #   bash verify-step.sh step1 [BRANCH] [PROJECT_ROOT]
@@ -11,10 +12,10 @@
 #   bash verify-step.sh step4 [BRANCH] [PROJECT_ROOT]
 #
 # 返回值：
-#   0 = 验证通过
+#   0 = 验证通过（seal 已写入 .dev-mode）
 #   1 = 验证失败（具体错误输出到 stderr）
 #
-# 版本: v1.0.0
+# 版本: v1.1.0
 # 创建: 2026-03-18
 # ============================================================================
 
@@ -46,6 +47,44 @@ _fail() {
 
 _pass() {
     echo "  ✅ [STATE MACHINE] $1 验证通过" >&2
+}
+
+# ============================================================================
+# _write_seal — 验证通过后向 .dev-mode 写入 seal
+# ============================================================================
+# v1.1.0: 防止 AI 在验证后回滚或绕过，seal 是不可伪造的时间戳证据
+# step_N_seal: verified@<ISO8601-timestamp>
+#
+# 参数:
+#   $1: seal_key — 例如 step_1_seal / step_2_seal / step_4_seal
+# ============================================================================
+_write_seal() {
+    local seal_key="${1:-}"
+    [[ -z "$seal_key" ]] && return 0
+
+    local dev_mode_file="$PROJECT_ROOT/.dev-mode.${BRANCH}"
+    [[ -f "$dev_mode_file" ]] || return 0
+
+    local ts
+    ts=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # 原子写入：先删旧 seal 再追加新 seal（幂等）
+    {
+        flock -x 204
+        grep -v "^${seal_key}:" "$dev_mode_file" > "$dev_mode_file.seal.tmp" 2>/dev/null || true
+        echo "${seal_key}: verified@${ts}" >> "$dev_mode_file.seal.tmp"
+        mv "$dev_mode_file.seal.tmp" "$dev_mode_file"
+    } 204>"$dev_mode_file.seal.lock" 2>/dev/null || {
+        # flock 不可用时 fallback（macOS 兼容）
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "/^${seal_key}:/d" "$dev_mode_file" 2>/dev/null || true
+        else
+            sed -i "/^${seal_key}:/d" "$dev_mode_file" 2>/dev/null || true
+        fi
+        echo "${seal_key}: verified@${ts}" >> "$dev_mode_file"
+    }
+
+    echo "  🔒 [STATE MACHINE] seal 已写入：${seal_key}" >&2
 }
 
 # ============================================================================
@@ -97,6 +136,7 @@ $found_fake
     fi
 
     _pass "Step 1 Task Card（无假 Test 命令）"
+    _write_seal "step_1_seal"
 }
 
 # ============================================================================
@@ -140,6 +180,7 @@ verify_step2() {
     fi
 
     _pass "Step 2 代码改动验证（有实现文件改动）"
+    _write_seal "step_2_seal"
 }
 
 # ============================================================================
@@ -197,6 +238,7 @@ $errors"
     fi
 
     _pass "Step 4 Learning 文件（根本原因 + 下次预防 + checklist）"
+    _write_seal "step_4_seal"
 }
 
 # ============================================================================

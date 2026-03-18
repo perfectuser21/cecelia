@@ -112,6 +112,38 @@ devloop_check() {
         return 0
     fi
 
+    # ===== Seal 完整性检查（P1 三层防御兜底）=====
+    # 若 step_N_xxx: done 存在但对应 step_N_seal 缺失，说明 AI 绕过了 verify-step.sh
+    # 直接通过 Bash 写入 done，此时强制补验：exit 2 阻止工作流继续
+    if [[ -f "$dev_mode_file" ]]; then
+        local _seal_blocked=false
+        local _seal_missing_step=""
+        for _seal_step in 1 2 4; do
+            local _step_key="" _seal_key=""
+            case "$_seal_step" in
+                1) _step_key="step_1_taskcard" ;;
+                2) _step_key="step_2_code" ;;
+                4) _step_key="step_4_learning" ;;
+            esac
+            _seal_key="step_${_seal_step}_seal"
+            # step_N_xxx: done 存在，但 step_N_seal 不存在
+            if grep -q "^${_step_key}:[[:space:]]*done" "$dev_mode_file" 2>/dev/null; then
+                if ! grep -q "^${_seal_key}:" "$dev_mode_file" 2>/dev/null; then
+                    _seal_blocked=true
+                    _seal_missing_step="$_seal_step"
+                    break
+                fi
+            fi
+        done
+
+        if [[ "$_seal_blocked" == "true" ]]; then
+            _devloop_jq -n \
+                --arg step "$_seal_missing_step" \
+                '{"status":"blocked","reason":"Step \($step) 缺少 seal（step_\($step)_seal）：疑似绕过 verify-step.sh 直接写入 done","action":"重新执行 Step \($step) 验证：bash packages/engine/hooks/verify-step.sh step\($step)"}'
+            return 2
+        fi
+    fi
+
     # ===== 条件 1: PR 是否已创建？=====
     local pr_number="" pr_state=""
 

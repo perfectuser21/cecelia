@@ -98,6 +98,8 @@ describe("bash-guard.sh", () => {
     copyDir(join(ENGINE_ROOT, "lib"), libDir);
     HOOK_PATH = join(hooksDir, "bash-guard.sh");
     copyFileSync(ORIG_HOOK_PATH, HOOK_PATH);
+    // 规则 2d 需要 verify-step.sh 在同一 hooks/ 目录
+    copyFileSync(resolve(ENGINE_ROOT, "hooks/verify-step.sh"), join(hooksDir, "verify-step.sh"));
     patchHookStdin(HOOK_PATH);
   });
 
@@ -349,6 +351,55 @@ describe("bash-guard.sh", () => {
 
     it("allows gh pr merge", () => {
       const result = runHookIsolated("gh pr merge --squash");
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ─── 规则 2d: .dev-mode Step 完成 Bash 写检测 ─────────────
+  // 使用 runHookIsolated（在 /tmp 运行，无 git 仓库 + 无 task card）
+  // 确保 verify-step.sh 验证失败 → hook 以 exit 2 拦截
+  describe("Rule 2d: .dev-mode step completion detection", () => {
+    it("blocks echo step_1_taskcard: done to .dev-mode (verify-step fails - no task card)", () => {
+      // 在 /tmp 运行：无 task card → verify-step.sh 失败 → hook 拦截
+      const result = runHookIsolated(
+        'echo "step_1_taskcard: done" >> .dev-mode.cp-test-branch',
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("BASH GUARD");
+    });
+
+    it("blocks sed -i replacing step_2_code to done in .dev-mode", () => {
+      const result = runHookIsolated(
+        "sed -i 's/step_2_code: pending/step_2_code: done/' .dev-mode.cp-test-branch",
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("BASH GUARD");
+    });
+
+    it("blocks echo step_4_learning: done piped to tee .dev-mode", () => {
+      const result = runHookIsolated(
+        'echo "step_4_learning: done" | tee .dev-mode.cp-test-branch',
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("BASH GUARD");
+    });
+
+    it("allows echo to .dev-mode without step done pattern", () => {
+      const result = runHookIsolated('echo "retry_count: 3" >> .dev-mode.cp-test-branch');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows writing step_3_prci: done (not covered by verify-step)", () => {
+      const result = runHookIsolated(
+        'echo "step_3_prci: done" >> .dev-mode.cp-test-branch',
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows step_1_taskcard: pending (not done)", () => {
+      const result = runHookIsolated(
+        'echo "step_1_taskcard: pending" >> .dev-mode.cp-test-branch',
+      );
       expect(result.exitCode).toBe(0);
     });
   });

@@ -204,6 +204,76 @@ if echo "$CMD" | grep -qE '\bgh\s+pr\s+create\b'; then
     # 提取失败（无 --title 参数或格式奇怪）→ 放行
 fi
 
+# ─── 规则 2d: .dev-mode Step 完成 Bash 写检测（State Machine 防御层）─────────
+# 与 branch-protect.sh v26 的 Write/Edit 拦截对称，覆盖 Bash 工具绕行路径。
+# 当 Bash 命令向 .dev-mode.* 写入 step_N: done 时，调用 verify-step.sh 验证。
+# 目的：杜绝 AI 通过 echo >> .dev-mode 或 sed -i 绕过 PreToolUse:Write 直接自报 done。
+# 覆盖：step_1_taskcard / step_2_code / step_4_learning
+DEVMODE_STEP_PATTERN='step_(1_taskcard|2_code|4_learning):[[:space:]]+done'
+BASH_WRITES_DEVMODE=false
+
+# 模式 1: 重定向写入 (.dev-mode.xxx)
+if echo "$CMD" | grep -Eq ">>?[[:space:]]*['\"]?[^'\"\n[:space:]>]*\.dev-mode"; then
+    if echo "$CMD" | grep -qE "$DEVMODE_STEP_PATTERN"; then
+        BASH_WRITES_DEVMODE=true
+    fi
+fi
+
+# 模式 2: sed -i 修改 .dev-mode.*
+if [[ "$BASH_WRITES_DEVMODE" == "false" ]]; then
+    if echo "$CMD" | grep -qE '\bsed\b[^|]*-[iI]' && \
+       echo "$CMD" | grep -qE '\.dev-mode' && \
+       echo "$CMD" | grep -qE "$DEVMODE_STEP_PATTERN"; then
+        BASH_WRITES_DEVMODE=true
+    fi
+fi
+
+# 模式 3: tee 写入 .dev-mode.*
+if [[ "$BASH_WRITES_DEVMODE" == "false" ]]; then
+    if echo "$CMD" | grep -Eq "\|[[:space:]]*tee[[:space:]]+['\"]?[^'\"\n[:space:]]*\.dev-mode" && \
+       echo "$CMD" | grep -qE "$DEVMODE_STEP_PATTERN"; then
+        BASH_WRITES_DEVMODE=true
+    fi
+fi
+
+if [[ "$BASH_WRITES_DEVMODE" == "true" ]]; then
+    VERIFY_SCRIPT_BG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-step.sh"
+    CURRENT_BRANCH_BG="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    PROJECT_ROOT_BG="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    VERIFY_FAILED_BG=false
+
+    if [[ -f "$VERIFY_SCRIPT_BG" ]]; then
+        if echo "$CMD" | grep -qE 'step_1_taskcard:[[:space:]]+done'; then
+            if ! bash "$VERIFY_SCRIPT_BG" "step1" "$CURRENT_BRANCH_BG" "$PROJECT_ROOT_BG" >&2; then
+                VERIFY_FAILED_BG=true
+            fi
+        fi
+        if echo "$CMD" | grep -qE 'step_2_code:[[:space:]]+done'; then
+            if ! bash "$VERIFY_SCRIPT_BG" "step2" "$CURRENT_BRANCH_BG" "$PROJECT_ROOT_BG" >&2; then
+                VERIFY_FAILED_BG=true
+            fi
+        fi
+        if echo "$CMD" | grep -qE 'step_4_learning:[[:space:]]+done'; then
+            if ! bash "$VERIFY_SCRIPT_BG" "step4" "$CURRENT_BRANCH_BG" "$PROJECT_ROOT_BG" >&2; then
+                VERIFY_FAILED_BG=true
+            fi
+        fi
+    fi
+
+    if [[ "$VERIFY_FAILED_BG" == "true" ]]; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [BASH GUARD] .dev-mode Step 验证失败" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "Bash 写 .dev-mode 中包含 step_N: done，但 verify-step.sh 验证未通过。" >&2
+        echo "请先完成该步骤的实际工作，再标记为 done。" >&2
+        echo "" >&2
+        exit 2
+    fi
+    # 验证通过（verify-step.sh 会自动写入 seal），放行 Bash 写入
+fi
+
 # ─── 规则 3: Bash 写代码文件检测（~3ms）──────────────────────
 # 拦截 Bash 工具对代码文件的直接写入（与 branch-protect.sh 的 Write/Edit 保护对称）
 # 放行条件：已在 cp-*/feature/* 分支（/dev 工作流中）或目标是 /tmp/ 路径

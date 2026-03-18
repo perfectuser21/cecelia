@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   mkdirSync,
   writeFileSync,
+  readFileSync,
   rmSync,
   chmodSync,
 } from "fs";
@@ -332,6 +333,78 @@ describe("verify-step.sh", () => {
       ]);
       const result = runVerifyStep("step4", BRANCH, dir);
       expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ─── Seal 写入测试 ─────────────────────────────────────────
+  describe("seal writing after verification", () => {
+    const BRANCH = "cp-test-seal";
+
+    /** 创建 .dev-mode.<branch> 文件 */
+    function createDevMode(projectRoot: string, branch: string): void {
+      writeFileSync(
+        join(projectRoot, `.dev-mode.${branch}`),
+        `dev\nbranch: ${branch}\nstep_1_taskcard: pending\n`,
+        "utf-8",
+      );
+    }
+
+    it("writes step_1_seal to .dev-mode after step1 passes", () => {
+      const dir = mkdtempSync(join(tempDir, "seal-s1-"));
+      createDevMode(dir, BRANCH);
+      createTaskCard(dir, BRANCH, [
+        'Test: manual:node -e "require(\'fs\').existsSync(\'ok\')"',
+        "Test: tests/my.test.ts",
+      ]);
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(0);
+      const devMode = readFileSync(join(dir, `.dev-mode.${BRANCH}`), "utf-8");
+      expect(devMode).toMatch(/step_1_seal: verified@/);
+    });
+
+    it("writes step_2_seal to .dev-mode after step2 passes", () => {
+      const dir = mkdtempSync(join(tempDir, "seal-s2-"));
+      createDevMode(dir, BRANCH);
+      // 初始化 git 仓库并添加实现文件
+      execSync("git init", { cwd: dir, stdio: "pipe" });
+      execSync("git config user.email test@test.com", { cwd: dir, stdio: "pipe" });
+      execSync("git config user.name Test", { cwd: dir, stdio: "pipe" });
+      execSync("git checkout -b main", { cwd: dir, stdio: "pipe" });
+      writeFileSync(join(dir, "README.md"), "init\n");
+      execSync("git add README.md", { cwd: dir, stdio: "pipe" });
+      execSync('git commit -m "init"', { cwd: dir, stdio: "pipe" });
+      execSync(`git checkout -b ${BRANCH}`, { cwd: dir, stdio: "pipe" });
+      writeFileSync(join(dir, "feature.sh"), "#!/bin/bash\necho done\n");
+      execSync("git add feature.sh", { cwd: dir, stdio: "pipe" });
+      execSync('git commit -m "feat: add feature"', { cwd: dir, stdio: "pipe" });
+      const result = runVerifyStep("step2", BRANCH, dir, dir);
+      expect(result.exitCode).toBe(0);
+      const devMode = readFileSync(join(dir, `.dev-mode.${BRANCH}`), "utf-8");
+      expect(devMode).toMatch(/step_2_seal: verified@/);
+    });
+
+    it("writes step_4_seal to .dev-mode after step4 passes", () => {
+      const dir = mkdtempSync(join(tempDir, "seal-s4-"));
+      createDevMode(dir, BRANCH);
+      createLearning(dir, BRANCH, [
+        "# Learning",
+        "### 根本原因\n\n根本原因在于缺少验证。",
+        "### 下次预防\n\n- [ ] 添加验证",
+      ]);
+      const result = runVerifyStep("step4", BRANCH, dir);
+      expect(result.exitCode).toBe(0);
+      const devMode = readFileSync(join(dir, `.dev-mode.${BRANCH}`), "utf-8");
+      expect(devMode).toMatch(/step_4_seal: verified@/);
+    });
+
+    it("does not write seal when verification fails", () => {
+      const dir = mkdtempSync(join(tempDir, "seal-fail-"));
+      createDevMode(dir, BRANCH);
+      // 不创建 task card → step1 失败
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(1);
+      const devMode = readFileSync(join(dir, `.dev-mode.${BRANCH}`), "utf-8");
+      expect(devMode).not.toMatch(/step_1_seal:/);
     });
   });
 });
