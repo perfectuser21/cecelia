@@ -2240,6 +2240,13 @@ async function executeTick() {
   // Apply gradual ramp-up to avoid sudden load spikes
   const rampedDispatchMax = await getRampedDispatchMax(effectiveDispatchMax);
 
+  // Backpressure: override burst limit when queue is deep
+  const burstOverride = tickSlotBudget.backpressure?.override_burst_limit;
+  const effectiveBurstLimit = burstOverride ?? MAX_NEW_DISPATCHES_PER_TICK;
+  if (burstOverride != null) {
+    console.log(`[tick] Backpressure active: queue_depth=${tickSlotBudget.backpressure.queue_depth} > ${tickSlotBudget.backpressure.threshold}, burst_limit=${effectiveBurstLimit}`);
+  }
+
   // 7a. Fill slots from focused objective's tasks
   // Predictive resource gate: pre-deduct estimated memory per dispatched agent
   const ESTIMATED_AGENT_MEM_MB = 800;
@@ -2247,8 +2254,8 @@ async function executeTick() {
   let newDispatchCount = 0; // burst limiter 计数器
   for (let i = 0; i < rampedDispatchMax; i++) {
     // Burst limiter：单次 tick 新派发上限，防止队列积压后瞬间雪崩
-    if (newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK) {
-      console.log(`[tick] Burst limiter: reached MAX_NEW_DISPATCHES_PER_TICK=${MAX_NEW_DISPATCHES_PER_TICK}, stopping 7a dispatch`);
+    if (newDispatchCount >= effectiveBurstLimit) {
+      console.log(`[tick] Burst limiter: reached effectiveBurstLimit=${effectiveBurstLimit}, stopping 7a dispatch`);
       break;
     }
 
@@ -2293,9 +2300,9 @@ async function executeTick() {
       // Only use ready/in_progress KRs, not all objectives (OKR unification)
       if (readyKrIds.length > 0) {
         for (let i = dispatched; i < rampedDispatchMax; i++) {
-          // Burst limiter：7b 同样受 MAX_NEW_DISPATCHES_PER_TICK 约束
-          if (newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK) {
-            console.log(`[tick] Burst limiter: reached MAX_NEW_DISPATCHES_PER_TICK=${MAX_NEW_DISPATCHES_PER_TICK}, stopping 7b dispatch`);
+          // Burst limiter：7b 同样受 effectiveBurstLimit 约束（含背压降速）
+          if (newDispatchCount >= effectiveBurstLimit) {
+            console.log(`[tick] Burst limiter: reached effectiveBurstLimit=${effectiveBurstLimit}, stopping 7b dispatch`);
             break;
           }
           const globalDispatch = await dispatchNextTask(readyKrIds);
@@ -2310,7 +2317,7 @@ async function executeTick() {
     }
   }
 
-  const burstLimited = newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK;
+  const burstLimited = newDispatchCount >= effectiveBurstLimit;
   if (dispatched > 0) {
     console.log(`[tick-loop] Dispatched ${dispatched} tasks this tick (burst_limited=${burstLimited})`);
   }

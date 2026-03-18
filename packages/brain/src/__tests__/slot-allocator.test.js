@@ -72,6 +72,8 @@ import {
   USER_RESERVED_BASE,
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
+  BACKPRESSURE_THRESHOLD,
+  BACKPRESSURE_BURST_LIMIT,
   _resetSlotBuffer,
   detectUserSessions,
   detectUserMode,
@@ -79,6 +81,7 @@ import {
   countCeceliaInProgress,
   countAutoDispatchInProgress,
   countCodexInProgress,
+  getQueueDepth,
   MAX_CODEX_CONCURRENT,
   calculateSlotBudget,
   getSlotStatus,
@@ -412,6 +415,7 @@ describe('calculateSlotBudget', () => {
     // absent mode: ceceliaNeeded = CECELIA_RESERVED = 2 regardless of hasInternalWork
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // hasPendingInternalTasks (not used in new logic)
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countAutoDispatchInProgress
 
@@ -465,6 +469,7 @@ describe('calculateSlotBudget', () => {
     );
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // hasPendingInternalTasks = true
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })
       .mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
@@ -539,6 +544,7 @@ describe('calculateSlotBudget', () => {
     // Make autoDispatchUsed = 9 to fill Pool C
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '9' }] }); // countAutoDispatchInProgress = 9
 
@@ -700,6 +706,7 @@ describe('边界条件', () => {
   it('autoDispatchUsed 超过 Pool C budget 时 available 不为负', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '20' }] }); // countAutoDispatchInProgress >> budget
 
@@ -712,6 +719,7 @@ describe('边界条件', () => {
   it('ceceliaUsed 正确反映到返回值', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // countCeceliaInProgress = 2
       .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // countAutoDispatchInProgress = 3
 
@@ -985,6 +993,7 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     // DB mock: countCodexInProgress returns 2
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
@@ -998,11 +1007,91 @@ describe('calculateSlotBudget 三池模型完整性', () => {
   it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
       .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // countCodexInProgress = 3 (full)
     const budget = await calculateSlotBudget();
     expect(budget.codex.running).toBe(3);
     expect(budget.codex.available).toBe(false); // 3 >= 3
+  });
+});
+
+// ============================================================
+// Backpressure
+// ============================================================
+
+describe('Backpressure', () => {
+  beforeEach(() => {
+    _resetSlotBuffer();
+  });
+
+  it('exports BACKPRESSURE_THRESHOLD=5 and BACKPRESSURE_BURST_LIMIT=1', () => {
+    expect(BACKPRESSURE_THRESHOLD).toBe(5);
+    expect(BACKPRESSURE_BURST_LIMIT).toBe(1);
+  });
+
+  it('getQueueDepth returns count from DB', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ count: '7' }] });
+    const depth = await getQueueDepth();
+    expect(depth).toBe(7);
+  });
+
+  it('getQueueDepth returns 0 on DB error', async () => {
+    pool.query.mockRejectedValueOnce(new Error('DB error'));
+    const depth = await getQueueDepth();
+    expect(depth).toBe(0);
+  });
+
+  it('queue_depth=9 > threshold=5: backpressure.active=true, override_burst_limit=1', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '9' }] }) // getQueueDepth = 9 (高积压)
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
+    const budget = await calculateSlotBudget();
+    expect(budget.backpressure).toBeDefined();
+    expect(budget.backpressure.queue_depth).toBe(9);
+    expect(budget.backpressure.threshold).toBe(5);
+    expect(budget.backpressure.active).toBe(true);
+    expect(budget.backpressure.override_burst_limit).toBe(1);
+  });
+
+  it('queue_depth=3 <= threshold=5: backpressure.active=false, override_burst_limit=null', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] }) // getQueueDepth = 3 (正常)
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
+    const budget = await calculateSlotBudget();
+    expect(budget.backpressure.queue_depth).toBe(3);
+    expect(budget.backpressure.active).toBe(false);
+    expect(budget.backpressure.override_burst_limit).toBeNull();
+  });
+
+  it('queue_depth=5 == threshold=5: backpressure.active=false (not strictly greater)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getQueueDepth = 5 (等于阈值)
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
+    const budget = await calculateSlotBudget();
+    expect(budget.backpressure.active).toBe(false);
+    expect(budget.backpressure.override_burst_limit).toBeNull();
+  });
+
+  it('queue_depth=6 > threshold=5: backpressure.active=true (边界值)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '6' }] }) // getQueueDepth = 6 (刚超过阈值)
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
+    const budget = await calculateSlotBudget();
+    expect(budget.backpressure.active).toBe(true);
+    expect(budget.backpressure.override_burst_limit).toBe(1);
   });
 });
