@@ -44,6 +44,7 @@ const manifest: FeatureManifest = {
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
     { path: '/account-usage', component: 'AccountUsagePage' },
+    { path: '/brain-models', component: 'BrainModelsPage' },
     { path: '/reports', component: 'ReportsListPage' },
     { path: '/reports/:id', component: 'ReportDetailPage' },
     { path: '/brain-status', component: 'BrainStatusDashboard' },
@@ -139,6 +140,7 @@ const manifest: FeatureManifest = {
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
     AccountUsagePage: () => import('../../../dashboard/src/pages/account-usage/AccountUsagePage'),
+    BrainModelsPage: () => import('../../../dashboard/src/pages/brain-models/BrainModelsPage'),
     ReportsListPage: () => import('../../../dashboard/src/pages/reports/ReportsListPage'),
     ReportDetailPage: () => import('../../../dashboard/src/pages/reports/ReportDetailPage'),
     BrainStatusDashboard: () => import('../execution/pages/BrainStatusDashboard'),

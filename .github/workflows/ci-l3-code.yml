@@ -802,7 +802,7 @@ jobs:
           echo ""
 
           # 测试文件模式
-          TEST_PATTERNS="\.test\.ts$|\.test\.mts$|\.spec\.ts$|\.spec\.mts$|\.test\.js$|\.spec\.js$|\.test\.cjs$|\.spec\.cjs$|\.test\.mjs$|\.spec\.mjs$|^tests/|/__tests__/|_test\.py$|^test_.*\.sh$"
+          TEST_PATTERNS="\.test\.tsx$|\.spec\.tsx$|\.test\.ts$|\.test\.mts$|\.spec\.ts$|\.spec\.mts$|\.test\.js$|\.spec\.js$|\.test\.cjs$|\.spec\.cjs$|\.test\.mjs$|\.spec\.mjs$|^tests/|/__tests__/|_test\.py$|^test_.*\.sh$"
 
           # 查找测试文件变更
           TEST_FILES=$(echo "$CHANGED" | grep -E "$TEST_PATTERNS" || true)
