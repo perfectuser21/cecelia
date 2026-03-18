@@ -378,6 +378,13 @@ changelog:
 
 ---
 
+### bash-guard-main-write-block: bash-guard 补漏：拦截 main 分支 Bash 重定向写入源码目录
+
+1. ✅ **main 分支 > packages/ 重定向 → 被拦截 exit 2**
+2. ✅ **cp-* 分支同样命令 → 放行**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
