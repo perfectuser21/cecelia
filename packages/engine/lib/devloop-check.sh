@@ -112,6 +112,38 @@ devloop_check() {
         return 0
     fi
 
+    # ===== 条件 1.5: intent_expand 是否已完成？（PR 检查之前）=====
+    # 若 .dev-mode 中有 intent_expand_task_id 且 status != completed，阻塞等待
+    if [[ -f "$dev_mode_file" ]]; then
+        local intent_task_id intent_status_local brain_url_base
+        intent_task_id=$(grep "^intent_expand_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        intent_status_local=$(grep "^intent_expand_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        brain_url_base="${BRAIN_URL:-http://localhost:5221}/api/brain"
+
+        if [[ -n "$intent_task_id" && "$intent_status_local" != "completed" ]]; then
+            local intent_api_result intent_task_status
+            intent_api_result=$(curl -s --max-time 5 "$brain_url_base/tasks/$intent_task_id" 2>/dev/null || echo "{}")
+            intent_task_status=$(echo "$intent_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+
+            if [[ "$intent_task_status" == "completed" ]]; then
+                # intent_expand 已完成：更新 .dev-mode 并继续
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    sed -i '' "s/^intent_expand_status:.*/intent_expand_status: completed/" "$dev_mode_file" 2>/dev/null || true
+                else
+                    sed -i "s/^intent_expand_status:.*/intent_expand_status: completed/" "$dev_mode_file" 2>/dev/null || true
+                fi
+                # 继续后续条件
+            else
+                local intent_wait_status="${intent_task_status:-queued}"
+                _devloop_jq -n \
+                    --arg task_id "$intent_task_id" \
+                    --arg status "$intent_wait_status" \
+                    '{"status":"blocked","reason":"等待 intent_expand 意图扩展完成（状态: \($status)）","action":"等待 intent_expand task \($task_id) 完成，enriched PRD 写入后自动继续"}'
+                return 2
+            fi
+        fi
+    fi
+
     # ===== 条件 1: PR 是否已创建？=====
     local pr_number="" pr_state=""
 
@@ -134,6 +166,49 @@ devloop_check() {
             --arg branch "$branch" \
             '{"status":"blocked","reason":"PR 未创建","action":"执行 Step 8：创建 PR（gh pr create --base main --head \($branch)）"}'
         return 2
+    fi
+
+    # ===== 条件 2.5: cto_review 是否通过？（CI 检查之前）=====
+    # 若 .dev-mode 中有 cto_review_task_id 且 cto_review_status != pass，阻塞等待
+    if [[ -f "$dev_mode_file" ]]; then
+        local cto_task_id cto_status_local brain_url_cto
+        cto_task_id=$(grep "^cto_review_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        cto_status_local=$(grep "^cto_review_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        brain_url_cto="${BRAIN_URL:-http://localhost:5221}/api/brain"
+
+        if [[ -n "$cto_task_id" && "$cto_status_local" != "pass" ]]; then
+            local cto_api_result cto_task_status cto_review_result
+            cto_api_result=$(curl -s --max-time 5 "$brain_url_cto/tasks/$cto_task_id" 2>/dev/null || echo "{}")
+            cto_task_status=$(echo "$cto_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+            cto_review_result=$(echo "$cto_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('review_result','') or '')" 2>/dev/null || echo "")
+
+            if [[ "$cto_task_status" == "completed" ]]; then
+                if echo "$cto_review_result" | grep -qi "PASS"; then
+                    # CTO Review PASS：更新 .dev-mode 并继续
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        sed -i '' "s/^cto_review_status:.*/cto_review_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    else
+                        sed -i "s/^cto_review_status:.*/cto_review_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    fi
+                    # 继续后续条件
+                else
+                    local cto_fail_reasons
+                    cto_fail_reasons=$(echo "$cto_review_result" | grep -A 5 "FAIL" | head -5 || echo "详见 review_result")
+                    _devloop_jq -n \
+                        --arg task_id "$cto_task_id" \
+                        --arg reasons "$cto_fail_reasons" \
+                        '{"status":"blocked","reason":"CTO Review 未通过，需修复后重新 push","action":"根据以下 FAIL 原因修复代码后重新 push。CTO Review Task: \($task_id)\nFAIL 原因:\n\($reasons)"}'
+                    return 2
+                fi
+            else
+                local cto_wait_status="${cto_task_status:-queued}"
+                _devloop_jq -n \
+                    --arg task_id "$cto_task_id" \
+                    --arg status "$cto_wait_status" \
+                    '{"status":"blocked","reason":"等待 CTO Review 完成（状态: \($status)）","action":"等待 cto_review task \($task_id) 完成，PASS 后自动继续进入 CI"}'
+                return 2
+            fi
+        fi
     fi
 
     # ===== 条件 2: CI 状态？=====

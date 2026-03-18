@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.68.0"
+version: "3.69.0"
 updated: "2026-03-18"
 changelog:
+  - version: "12.99.0"
+    date: "2026-03-18"
+    summary: "feat(engine): 两阶段前置审查集成 — devloop-check.sh 新增条件1.5(intent_expand等待)和条件2.5(cto_review PASS等待)，01-taskcard.md 新增 request-intent-expand 触发，02-code.md 新增 request-cto-review 触发"
+    scope: workflows
+    breaking: false
+    feature_id: intent-expand-cto-review
   - version: "12.98.0"
     date: "2026-03-18"
     summary: "feat(engine): 双重门禁 Gate1(CI镜像)+Gate2(Subagent) — verify-step.sh 加入 CI L1/L4 镜像检查和 agent_seal 双签验证，branch-protect.sh 补全 Edit 工具拦截，stop-dev.sh 加 agent_seal 完整性检查，skill step files 加 Gate 2 Subagent 审查流程"
