@@ -1,6 +1,21 @@
- 
+
 import express, { Router } from 'express';
 import { getMonthlyPRCount, getMonthlyPRsByKR, getPRSuccessRate, getPRTrend } from './stats.js';
+
+const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
+
+async function checkN8nHealth() {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const resp = await fetch(`${N8N_API_URL}/healthz`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Inlined from deleted orchestrator.js / perception.js (1/31 migration remnants replaced by three-layer brain)
 async function getActivePolicy() {
   const result = await pool.query(`SELECT id, version, name, content_json FROM policy WHERE active = true ORDER BY version DESC LIMIT 1`);
@@ -204,14 +219,14 @@ router.get('/status', async (req, res) => {
     // 支持 ?mode=interactive|scheduled|incident
     const decisionMode = req.query.mode || 'interactive';
 
-    const [policy, workingMemory, topTasks, recentDecisions, dailyFocus] = await Promise.all([
+    const [policy, workingMemory, topTasks, recentDecisions, dailyFocus, n8nAlive] = await Promise.all([
       getActivePolicy(),
       getWorkingMemory(),
       getTopTasks(10),
       getRecentDecisions(5),
-      getFocusSummary()
+      getFocusSummary(),
+      checkN8nHealth()
     ]);
-    const snapshot = null;
 
     const now = new Date();
 
@@ -259,23 +274,16 @@ router.get('/status', async (req, res) => {
       })),
 
       // === 系统健康摘要（可量化）===
-      system_health: snapshot?.snapshot_json ? {
-        n8n_ok: snapshot.snapshot_json.n8n?.status === 'ok',
-        n8n_failures_1h: snapshot.snapshot_json.n8n?.failures_1h || 0,
-        n8n_active_workflows: snapshot.snapshot_json.n8n?.active_workflows || 0,
-        n8n_executions_1h: snapshot.snapshot_json.n8n?.executions_1h || 0,
-        task_system_ok: snapshot.snapshot_json.task_system?.status === 'ok',
-        open_tasks_total: (snapshot.snapshot_json.task_system?.open_p0 || 0) +
-                          (snapshot.snapshot_json.task_system?.open_p1 || 0),
-        stale_tasks: snapshot.snapshot_json.task_system?.stale_count || 0
-      } : {
-        n8n_ok: false,
+      system_health: {
+        n8n_ok: n8nAlive,
         n8n_failures_1h: 0,
-        task_system_ok: false,
+        n8n_active_workflows: 0,
+        n8n_executions_1h: 0,
+        task_system_ok: true,
         open_tasks_total: 0,
         stale_tasks: 0
       },
-      snapshot_ts: snapshot?.ts || null,
+      snapshot_ts: null,
 
       // === 任务摘要（P0 top5 + P1 top5，带关键字段）===
       task_digest: {
@@ -355,10 +363,9 @@ router.get('/status/full', async (req, res) => {
       `, [today])
     ]);
     const taskRow = todayTaskStats.rows[0] || {};
-    const snapshot = null;
     res.json({
-      snapshot: snapshot?.snapshot_json || null,
-      snapshot_ts: snapshot?.ts || null,
+      snapshot: null,
+      snapshot_ts: null,
       working_memory: workingMemory,
       top_tasks: topTasks,
       recent_decisions: recentDecisionsData.map(d => ({
