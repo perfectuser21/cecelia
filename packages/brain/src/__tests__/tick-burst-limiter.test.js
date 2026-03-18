@@ -43,6 +43,7 @@ vi.mock('../slot-allocator.js', () => ({
     dispatchAllowed: true,
     taskPool: { budget: 10, available: 5 }, // 5 个 slot 可用
     user: { mode: 'absent', used: 0 },
+    backpressure: { queue_depth: 0, threshold: 5, active: false, override_burst_limit: null },
   })),
 }));
 
@@ -67,10 +68,10 @@ describe('burst limiter 代码路径验证', () => {
     expect(src).toContain('MAX_NEW_DISPATCHES_PER_TICK = 2');
   });
 
-  it('tick.js 中 7a 循环应有 burst limiter 检查', async () => {
+  it('tick.js 中 7a 循环应有 burst limiter 检查（使用 effectiveBurstLimit）', async () => {
     const fs = await import('node:fs');
     const src = fs.readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
-    expect(src).toContain('newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK');
+    expect(src).toContain('newDispatchCount >= effectiveBurstLimit');
   });
 
   it('tick.js 中应有 burst_limited 日志输出', async () => {
@@ -79,11 +80,11 @@ describe('burst limiter 代码路径验证', () => {
     expect(src).toContain('burst_limited');
   });
 
-  it('tick.js 中 7b 循环也应有 burst limiter 检查', async () => {
+  it('tick.js 中 7b 循环也应有 burst limiter 检查（使用 effectiveBurstLimit）', async () => {
     const fs = await import('node:fs');
     const src = fs.readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
     // 至少出现 2 次（7a + 7b）
-    const matches = src.match(/newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK/g) || [];
+    const matches = src.match(/newDispatchCount >= effectiveBurstLimit/g) || [];
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
