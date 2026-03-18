@@ -499,6 +499,14 @@
             {
               "taskType": "audit",
               "skill": "/code-review"
+            },
+            {
+              "taskType": "intent_expand",
+              "skill": "/intent-expand"
+            },
+            {
+              "taskType": "cto_review",
+              "skill": "/cto-review"
             }
           ]
         },
@@ -864,7 +872,9 @@
     "content-review": "/content-creator",
     "content-export": "/content-creator",
     "qa": "/code-review",
-    "audit": "/code-review"
+    "audit": "/code-review",
+    "intent_expand": "/intent-expand",
+    "cto_review": "/cto-review"
   },
   "skillWhitelist": {
     "dev": "/dev",
@@ -890,13 +900,15 @@
     "architecture_scan": "/architect scan",
     "arch_review": "/arch-review review",
     "strategy_session": "/strategy-session",
+    "intent_expand": "/intent-expand",
+    "cto_review": "/cto-review",
     "content-pipeline": "/content-creator",
     "content-research": "/notebooklm",
     "content-generate": "/content-creator",
     "content-review": "/content-creator",
     "content-export": "/content-creator"
   },
-  "generatedAt": "2026-03-18T12:01:30.162Z",
+  "generatedAt": "2026-03-18T12:16:43.321Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
