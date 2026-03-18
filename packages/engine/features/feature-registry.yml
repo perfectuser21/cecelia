@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.66.0"
+version: "3.67.0"
 updated: "2026-03-18"
 changelog:
+  - version: "12.97.0"
+    date: "2026-03-18"
+    summary: "feat(engine): 状态机三层防御 P0+P1 — bash-guard.sh 新增 Rule 5 检测 .dev-mode Bash 写入并调用 verify-step.sh 验证，verify-step.sh _pass() 写验签到 .dev-seal.${BRANCH}，stop-dev.sh 新增验签完整性检查防止无效 step done 标记通过"
+    scope: hooks
+    breaking: false
+    feature_id: engine-statemachine-triple-defense
   - version: "12.96.0"
     date: "2026-03-18"
     summary: "feat(engine): 实现 /dev 状态机代码层强制（Step 验证门禁）v26 — 新增 verify-step.sh，branch-protect.sh 在 AI 向 .dev-mode 写 step_N: done 时运行验证脚本，覆盖 step1/step2/step4 三个关键步骤"

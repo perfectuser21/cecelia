@@ -353,6 +353,51 @@ describe("bash-guard.sh", () => {
     });
   });
 
+  // ─── Rule 5: .dev-mode Bash 写入检测（State Machine 三层防御）────
+  describe("should detect .dev-mode Bash writes with step_N: done", () => {
+    it("allows .dev-mode write with pending status (no step: done)", () => {
+      const result = runHook(
+        'echo "step_2_code: pending" >> .dev-mode.cp-test',
+      );
+      // pending 不触发 verify-step.sh
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows .dev-mode write with step_0_worktree: done (not in verified list)", () => {
+      const result = runHook(
+        'echo "step_0_worktree: done" >> .dev-mode.cp-test',
+      );
+      // step_0_worktree 不在 Rule 5 监控列表中（step1/step2/step4）
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows .dev-mode write without step_N: done keyword", () => {
+      const result = runHook('echo "branch: cp-test" >> .dev-mode.cp-test');
+      // 不含 step_N: done → 不触发 Rule 5
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("contains Rule 5 .dev-mode detection logic in source", () => {
+      const { readFileSync } = require("fs");
+      const content = readFileSync(ORIG_HOOK_PATH, "utf8");
+      // 验证 Rule 5 代码存在
+      expect(content).toContain("dev-mode");
+      expect(content).toContain("step_1_taskcard");
+      expect(content).toContain("step_2_code");
+      expect(content).toContain("step_4_learning");
+      expect(content).toContain("verify-step.sh");
+    });
+
+    it("Rule 5 calls verify-step.sh when step_2_code: done detected", () => {
+      // 验证 bash-guard.sh 含有调用 verify-step.sh 的逻辑
+      const { readFileSync } = require("fs");
+      const content = readFileSync(ORIG_HOOK_PATH, "utf8");
+      expect(content).toContain("_VERIFY_STEP");
+      expect(content).toContain("_VS=");
+      expect(content).toContain('bash "$_VS"');
+    });
+  });
+
   // ─── 空/无效输入 ──────────────────────────────────────────
   describe("should handle edge cases", () => {
     it("allows empty command", () => {

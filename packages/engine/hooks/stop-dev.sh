@@ -503,6 +503,31 @@ if [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]]; then
     touch "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
 fi
 
+# ===== 验签完整性检查（State Machine 三层防御 P0+P1）=====
+# 检查关键步骤 seal：step_N done 但无对应验签 → exit 2 强制补验
+_SEAL_FILE="$PROJECT_ROOT/.dev-seal.${BRANCH_NAME}"
+_SEALED_STEPS=("step_1_taskcard" "step_2_code" "step_4_learning")
+_SEAL_FAIL=false
+for _step in "${_SEALED_STEPS[@]}"; do
+    if grep -q "^${_step}: done" "$DEV_MODE_FILE" 2>/dev/null; then
+        if ! grep -q "^${_step}_seal: verified" "$_SEAL_FILE" 2>/dev/null; then
+            echo "  ⚠️  [STATE MACHINE] ${_step} 标记为 done 但无验签" >&2
+            echo "     验签文件: ${_SEAL_FILE}" >&2
+            echo "     请重新执行该步骤让 verify-step.sh 生成验签" >&2
+            _SEAL_FAIL=true
+        fi
+    fi
+done
+if [[ "$_SEAL_FAIL" == "true" ]]; then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [Stop Hook: 验签缺失 — 强制重新执行未验证步骤]" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    save_block_reason "State Machine 验签缺失"
+    jq -n '{"decision": "block", "reason": "State Machine 验签缺失：step_N 标记 done 但 verify-step.sh 验签不存在。请重新执行相应步骤，让 verify-step.sh 生成 .dev-seal 验签。"}'
+    exit 2
+fi
+
 echo "" >&2
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 echo "  [Stop Hook: /dev 完成条件检查]" >&2
