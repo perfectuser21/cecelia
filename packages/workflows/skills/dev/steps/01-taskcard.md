@@ -276,6 +276,24 @@ else
 fi
 ```
 
+## Step 1 末尾：读取 enriched PRD（若存在）
+
+在写 DoD 之前，检查是否存在 enriched PRD 文件：
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+ENRICHED_PRD_FILE=".enriched-prd-${BRANCH}.md"
+
+if [[ -f "$ENRICHED_PRD_FILE" ]]; then
+    echo "✅ 发现 enriched PRD：$ENRICHED_PRD_FILE，读取作为补全后的需求上下文"
+    # 读取文件内容，作为补充需求上下文与原始 PRD 一起用于写 DoD
+fi
+```
+
+**AI 指示**：如果存在 `.enriched-prd-<branch>.md`，读取它作为补全后的需求上下文，
+与原始 PRD 一起用于写 DoD。enriched PRD 由 intent_expand 沿 OKR 链补全，
+包含更完整的背景、边界条件和优先级信息，应优先参考。
+
 ## 完成后
 
 立即执行 Step 2：`cat skills/dev/steps/02-code.md`
