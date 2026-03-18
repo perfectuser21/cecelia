@@ -3150,6 +3150,28 @@ router.post('/execution-callback', async (req, res) => {
       });
     } catch { /* ignore */ }
 
+    // P1-PR-REVIEW: pr_review 任务完成时，解析 REVIEW_RESULT 并写入 review_result 字段
+    if (newStatus === 'completed') {
+      try {
+        const reviewTypeRow = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        if (reviewTypeRow.rows[0]?.task_type === 'pr_review') {
+          const resultText = (result !== null && typeof result === 'object')
+            ? (result.result || result.output || JSON.stringify(result))
+            : (result || '');
+          const snippet = String(resultText).slice(0, 10000);
+          await pool.query(
+            `UPDATE tasks SET review_result = $1, updated_at = NOW() WHERE id = $2`,
+            [snippet, task_id]
+          );
+          const verdict = /REVIEW_RESULT:\s*PASS/i.test(snippet) ? 'PASS'
+            : /REVIEW_RESULT:\s*FAIL/i.test(snippet) ? 'FAIL' : 'UNKNOWN';
+          console.log(`[execution-callback] pr_review ${task_id} verdict=${verdict}`);
+        }
+      } catch (reviewErr) {
+        console.warn(`[execution-callback] pr_review result write failed (non-fatal): ${reviewErr.message}`);
+      }
+    }
+
     // P1-2: completed_no_pr 自动重排（retry_count < MAX_NO_PR_RETRY 时重新入队）
     const MAX_NO_PR_RETRY = 3;
     let rescheduled = false;
@@ -10185,6 +10207,105 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     });
   } catch (err) {
     console.error('[API] tasks/:id/dispatch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/request-review
+ * 为已完成 CI 的 PR 创建异步 pr_review 任务，路由到西安 Codex 执行独立审查
+ * 请求体: { pr_url, prd_content, branch, diff }
+ * 返回: { review_task_id, status: 'queued' }
+ */
+router.post('/tasks/:id/request-review', async (req, res) => {
+  try {
+    const { id: parentTaskId } = req.params;
+    const { pr_url = '', prd_content = '', branch = '', diff = '' } = req.body || {};
+
+    // 1. 查找父任务
+    const parentRow = await pool.query('SELECT id, title FROM tasks WHERE id = $1', [parentTaskId]);
+    if (!parentRow.rows.length) {
+      return res.status(404).json({ error: 'parent task not found' });
+    }
+    const parentTitle = parentRow.rows[0].title || parentTaskId;
+
+    // 2. 检查是否已存在未完成的 pr_review 任务（避免重复创建）
+    const existingReview = await pool.query(
+      `SELECT id, status FROM tasks
+       WHERE task_type = 'pr_review'
+         AND metadata->>'parent_task_id' = $1
+         AND status NOT IN ('completed', 'failed')
+       LIMIT 1`,
+      [parentTaskId]
+    );
+    if (existingReview.rows.length) {
+      return res.json({
+        review_task_id: existingReview.rows[0].id,
+        status: existingReview.rows[0].status,
+        message: 'existing review task reused'
+      });
+    }
+
+    // 3. 构建审查提示词
+    const reviewPrompt = `你是一个独立 PR 代码审查员，请对以下 PR 进行严格审查。
+
+## PR 信息
+- PR URL: ${pr_url || '(未提供)'}
+- 分支: ${branch || '(未提供)'}
+
+## PRD 需求摘要
+${prd_content ? prd_content.slice(0, 2000) : '(未提供)'}
+
+## 代码变更 (diff)
+\`\`\`
+${diff ? diff.slice(0, 6000) : '(未提供)'}
+\`\`\`
+
+## 审查清单
+
+请逐项检查：
+- CHECK-1: 代码变更是否与 PRD 需求一致？
+- CHECK-2: 是否存在明显的 bug 或逻辑错误？
+- CHECK-3: 是否有安全漏洞（注入/越权/硬编码凭据）？
+- CHECK-4: 是否有测试覆盖核心逻辑？
+- CHECK-5: 代码质量是否可接受？
+
+## 输出格式（必须严格遵守）
+
+REVIEW_RESULT: PASS
+CHECKS:
+- CHECK-1: PASS - 说明
+...
+
+或者：
+
+REVIEW_RESULT: FAIL
+CHECKS:
+- CHECK-2: FAIL - 具体问题
+FAIL_REASONS:
+- 列出每个 FAIL 项的具体原因`;
+
+    // 4. 创建 pr_review 任务
+    const metadata = JSON.stringify({
+      parent_task_id: parentTaskId,
+      pr_url,
+      branch,
+      review_type: 'async_pr_review'
+    });
+
+    const insertResult = await pool.query(
+      `INSERT INTO tasks (title, description, task_type, status, priority, metadata, trigger_source, created_at, updated_at)
+       VALUES ($1, $2, 'pr_review', 'queued', 'high', $3::jsonb, 'auto', NOW(), NOW())
+       RETURNING id`,
+      [`PR Review: ${parentTitle.slice(0, 80)}`, reviewPrompt, metadata]
+    );
+
+    const reviewTaskId = insertResult.rows[0].id;
+    console.log(`[request-review] Created pr_review task ${reviewTaskId} for parent ${parentTaskId}`);
+
+    res.json({ review_task_id: reviewTaskId, status: 'queued' });
+  } catch (err) {
+    console.error('[request-review] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

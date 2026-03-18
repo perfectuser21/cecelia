@@ -355,11 +355,45 @@ git push origin HEAD
 
 ---
 
-### 9.3 CI 通过后 → 先执行 Step 4
+### 9.3 CI 通过后 → 触发异步 PR Review（可选）+ 执行 Step 4
 
 **⚠️ 重要：CI 通过后不立刻合并 PR**
 
 原因：需要在功能分支上写 LEARNINGS.md 并 push，让 PR 自动包含 LEARNINGS 变更。
+
+#### 9.3.1 触发异步 PR Review（若有 brain_task_id）
+
+当 .dev-mode 中存在 `brain_task_id` 时，在 CI 通过后触发 Brain 异步审查：
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+BRAIN_TASK_ID=$(grep "^brain_task_id:" .dev-mode.${BRANCH} 2>/dev/null | awk '{print $2}' || echo "")
+PR_URL=$(gh pr view --head "$BRANCH" --json url -q '.url' 2>/dev/null || echo "")
+
+if [[ -n "$BRAIN_TASK_ID" && -n "$PR_URL" ]]; then
+  PRD_FILE=".prd-${BRANCH}.md"
+  PRD_CONTENT=""
+  [[ -f "$PRD_FILE" ]] && PRD_CONTENT=$(cat "$PRD_FILE")
+  DIFF=$(git diff main...HEAD --stat 2>/dev/null || echo "")
+
+  REVIEW_RESPONSE=$(curl -s -X POST \
+    "http://localhost:5221/api/brain/tasks/${BRAIN_TASK_ID}/request-review" \
+    -H "Content-Type: application/json" \
+    -d "{\"pr_url\":\"${PR_URL}\",\"branch\":\"${BRANCH}\"}" \
+    2>/dev/null || echo "{}")
+
+  REVIEW_TASK_ID=$(echo "$REVIEW_RESPONSE" | python3 -c \
+    "import json,sys;d=json.load(sys.stdin);print(d.get('review_task_id',''))" 2>/dev/null || echo "")
+
+  if [[ -n "$REVIEW_TASK_ID" ]]; then
+    echo "✅ PR Review 已触发: review_task_id=${REVIEW_TASK_ID}"
+    echo "review_task_id: ${REVIEW_TASK_ID}" >> ".dev-mode.${BRANCH}"
+    echo "review_status: pending" >> ".dev-mode.${BRANCH}"
+  fi
+fi
+```
+
+devloop-check.sh 条件 3.5 会等待 review 完成后再继续。
 
 ```bash
 echo "✅ CI 通过！"

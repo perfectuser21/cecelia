@@ -16,6 +16,7 @@ const VALID_TASK_TYPES = [
   'dev', 'review', 'talk', 'data', 'qa', 'audit',
   'research', 'explore', 'knowledge',
   'codex_qa', 'codex_dev', 'codex_playwright', 'code_review', 'decomp_review',
+  'pr_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
   'suggestion_plan', 'architecture_design', 'architecture_scan',
   'arch_review', 'strategy_session'
@@ -35,6 +36,7 @@ const SKILL_WHITELIST = {
   'codex_qa': '/codex',
   'codex_dev': '/dev',  // Codex Provider 跑 /dev — 与 dev 相同 skill，通过 runner.sh 执行
   'codex_playwright': '/playwright',  // Codex 跑 Playwright 自动化 — 西安 M4 CDP 控制 PC
+  'pr_review': '/review',  // 异步 PR 审查 → 西安 Codex 独立 LLM 审查
   'code_review': '/code-review',
   'decomp_review': '/decomp-check',
   'dept_heartbeat': '/cecelia',
@@ -106,6 +108,7 @@ const LOCATION_MAP = {
   'codex_qa': 'xian',  // Codex 免疫检查 → 西安 Mac mini (Codex CLI via codex-bridge)
   'codex_dev': 'xian', // Codex /dev → 西安 Mac mini (runner.sh + devloop-check.sh SSOT)
   'codex_playwright': 'xian', // Playwright 自动化 → 西安 M4 (playwright-runner.sh + CDP → PC)
+  'pr_review': 'xian',  // 异步 PR 审查 → 西安 Mac mini (MiniMax via Codex CLI, 独立账号)
   'code_review': 'us', // 代码审查 → US (Claude + /code-review skill)
   'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)

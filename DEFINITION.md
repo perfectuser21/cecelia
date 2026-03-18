@@ -384,7 +384,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 155 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 156 |
 | **blocks** | 通用 block 存储 |
 
 ### 4.4 任务状态
@@ -417,6 +417,7 @@ queued → in_progress → completed
 | research | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | data | HK | N8N | - | - |
 | dept_heartbeat | US | 部门主管 (repo-lead) | - / M2.5-highspeed | 固定 minimax |
+| pr_review | 西安 | 异步 PR 审查（独立 MiniMax 审查） | Codex / MiniMax | 固定 minimax |
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 | architecture_design | US | 架构设计 (/architect design) | Opus / - | 默认 anthropic |
 | architecture_scan | US | 系统扫描 (/architect scan) | Opus / - | 默认 anthropic |

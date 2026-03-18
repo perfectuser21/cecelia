@@ -854,6 +854,7 @@
     "codex_qa": "/codex",
     "codex_dev": "/dev",
     "codex_playwright": "/playwright",
+    "pr_review": "/review",
     "code_review": "/code-review",
     "decomp_review": "/decomp-check",
     "dept_heartbeat": "/cecelia",
@@ -865,7 +866,7 @@
     "arch_review": "/arch-review review",
     "strategy_session": "/strategy-session"
   },
-  "generatedAt": "2026-03-18T04:26:22.637Z",
+  "generatedAt": "2026-03-18T09:53:09.488Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
