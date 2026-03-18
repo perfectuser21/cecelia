@@ -321,10 +321,11 @@ describe('llm-caller', () => {
       await expect(callLLM('mouth', '测试')).rejects.toThrow('MiniMax returned empty content');
     });
 
-    it('MiniMax 返回仅 <think> 内容时抛出错误（stripThinking 后为空）', async () => {
+    it('MiniMax 返回仅 <think> 内容时降级提取 think 内容（不再抛出错误）', async () => {
       global.fetch.mockResolvedValueOnce(makeMinimaxResponse('<think>只有思考</think>'));
 
-      await expect(callLLM('mouth', '测试')).rejects.toThrow('MiniMax returned empty content');
+      const result = await callLLM('mouth', '测试');
+      expect(result.text).toBe('只有思考');
     });
 
     it('MiniMax HTTP 错误时抛出错误', async () => {

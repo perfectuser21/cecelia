@@ -61,7 +61,11 @@ function getAnthropicKey() {
 
 function stripThinking(content) {
   if (!content) return '';
-  return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+  const stripped = content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+  if (stripped) return stripped;
+  // Fallback: 推理模型把全部内容放在 <think> 里时，提取 think 内容
+  const thinkContent = content.match(/<think>([\s\S]*?)<\/think>/)?.[1]?.trim();
+  return thinkContent || content.trim();
 }
 
 /**
