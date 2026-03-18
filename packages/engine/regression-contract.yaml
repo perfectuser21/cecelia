@@ -222,6 +222,66 @@ hooks:
     test: "tests/hooks/verify-step.test.ts"
 
   # --------------------------------------------------------------------------
+  # H1-017~H1-019: v12.97.0 State Machine 三层防御 P0+P1
+  # --------------------------------------------------------------------------
+  - id: H1-017
+    feature: H1
+    name: "Bash GUARD：拦截 Bash 工具写 .dev-mode step_N done 并调用 verify-step.sh"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [bash-guard, state-machine, dev-mode, step-seal]
+    owner: infra
+    steps:
+      given: "AI 用 Bash 工具执行 echo 'step_2_code: done' >> .dev-mode.*"
+      when: "bash-guard.sh 检测到 .dev-mode 写入含 step_N: done"
+      then: "调用 verify-step.sh 验证，失败时 exit 2 阻止写入"
+    evidence:
+      type: code
+      run: "bash hooks/bash-guard.sh"
+      contains: "verify-step.sh"
+    test: "tests/hooks/bash-guard.test.ts"
+
+  - id: H1-018
+    feature: H1
+    name: "verify-step.sh 通过后写 .dev-seal 验签"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [verify-step, seal, state-machine]
+    owner: infra
+    steps:
+      given: "verify-step.sh stepN 验证通过"
+      when: "PROJECT_ROOT 和 BRANCH 变量已设置"
+      then: "写入 .dev-seal.${BRANCH} 文件，格式 stepN_seal: verified@timestamp"
+    evidence:
+      type: code
+      run: "bash hooks/verify-step.sh step1"
+      contains: "dev-seal"
+    test: "tests/hooks/verify-step.test.ts"
+
+  - id: H1-019
+    feature: H1
+    name: "Stop Hook 验签兜底：step_N done 无 seal → exit 2"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-dev, seal, state-machine, triple-defense]
+    owner: infra
+    steps:
+      given: ".dev-mode 中 step_N 标记为 done 但 .dev-seal 文件中无对应验签"
+      when: "Stop Hook 执行完成条件检查"
+      then: "输出验签缺失警告并 exit 2 强制补验"
+    evidence:
+      type: code
+      run: "bash hooks/stop-dev.sh"
+      contains: "dev-seal"
+    test: "tests/hooks/stop-dev-seal.test.ts"
+
+  # --------------------------------------------------------------------------
   # H7: stop.sh - 循环控制器
   # --------------------------------------------------------------------------
   - id: H7-001

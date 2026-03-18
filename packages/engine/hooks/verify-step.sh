@@ -46,6 +46,14 @@ _fail() {
 
 _pass() {
     echo "  ✅ [STATE MACHINE] $1 验证通过" >&2
+    # 写入验签到 .dev-seal.${BRANCH}（供 Stop Hook 三层兜底检查）
+    if [[ -n "${PROJECT_ROOT:-}" && -n "${BRANCH:-}" ]]; then
+        local _seal_file="$PROJECT_ROOT/.dev-seal.${BRANCH}"
+        local _ts
+        _ts=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+        echo "${STEP}_seal: verified@${_ts}" >> "$_seal_file" 2>/dev/null || true
+        echo "  🔏 验签已写入: ${STEP}_seal → .dev-seal.${BRANCH}" >&2
+    fi
 }
 
 # ============================================================================
