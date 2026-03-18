@@ -1,0 +1,73 @@
+# Content Type: Solo Company Case Study
+# 一人公司成功案例 — 内容类型配置
+# 对应 solo-company-case skill 的参数化配置
+content_type: solo-company-case
+title: 一人公司成功案例
+version: "1.0"
+description: 深度调研某个一人公司/独立创作者成功案例，生成图文内容包（图片+文案+长文）
+
+# 图片配置
+images:
+  count: 9
+  format: svg
+  size: "1080x1080"
+  style: "professional-infographic"
+  nas_path: "zenithjoy-creator/content/solo-company-case"
+
+# 内容模板配置
+template:
+  research_prompt: |
+    深度调研 {keyword} 的一人公司/个人IP成功案例。
+    重点收集：商业模式、收入规模、内容策略、受众群体、关键决策节点。
+    来源：公开采访、播客、文章、社交媒体。
+  generate_prompt: |
+    基于调研报告，生成以下内容：
+    1. 9张信息图（公司概览/收入模型/内容策略/用户画像/关键里程碑/工具栈/经验教训/可复制要素/总结）
+    2. 小红书图文（800字，口语化，含互动引导）
+    3. 深度长文（2000字，结构化分析）
+  review_prompt: |
+    审查内容是否符合以下标准：
+    1. 数据有来源，无臆造
+    2. 故事有共鸣点，不只是数字罗列
+    3. 有明确的可操作建议（至少3条）
+    4. 语气亲切，避免说教感
+
+# AI 审查规则
+review_rules:
+  - id: "data_accuracy"
+    description: "所有数字/收入数据必须有引用来源"
+    severity: "blocking"
+  - id: "actionable_advice"
+    description: "必须包含至少3条读者可立即执行的建议"
+    severity: "blocking"
+  - id: "story_arc"
+    description: "内容需有清晰的故事弧：背景→挑战→突破→现状"
+    severity: "warning"
+  - id: "no_fabrication"
+    description: "禁止编造具体数字或事实"
+    severity: "blocking"
+
+# 文案规则
+copy_rules:
+  platform_tone:
+    xiaohongshu: "口语化，亲切，多用感叹号，每段控制在50字以内，结尾引导互动"
+    wechat: "深度分析，结构清晰，适当使用数据图表描述"
+    douyin: "短句冲击感，前3秒必须有钩子，用数字引发好奇"
+  hashtags:
+    base: ["一人公司", "副业创业", "个人IP", "solopreneur"]
+    content_type_specific: ["案例分析", "创业故事", "赚钱方法"]
+  min_word_count:
+    short_copy: 300
+    long_form: 1500
+
+# 产出物定义
+outputs:
+  - type: "images"
+    count: 9
+    format: "svg"
+  - type: "short_copy"
+    platforms: ["xiaohongshu", "douyin"]
+  - type: "long_form"
+    platforms: ["wechat"]
+  - type: "manifest"
+    format: "json"

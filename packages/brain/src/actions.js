@@ -15,7 +15,7 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  */
 function isSystemTask(task_type, trigger_source) {
   // System task types that don't need goal association
-  const systemTypes = ['research'];
+  const systemTypes = ['research', 'intent_expand', 'cto_review'];
 
   // System trigger sources that don't need goal association
   const systemSources = ['manual', 'test', 'watchdog', 'circuit_breaker', 'cortex'];
