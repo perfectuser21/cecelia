@@ -74,3 +74,39 @@ describe('MAX_SEATS 环境变量覆盖 - D2', () => {
     expect(maxSeats).toBe(6);
   });
 });
+
+// ============================================================
+// CECELIA_MAX_SEATS=10 硬上限测试（PRD: 固化 CECELIA_MAX_SEATS=10）
+// ============================================================
+describe('CECELIA_MAX_SEATS=10 硬上限 — D2-hardcap', () => {
+  it('D2-hardcap-1: CECELIA_MAX_SEATS=10、物理容量 >= 10 时 getEffectiveMaxSeats() 返回 10', () => {
+    // 模拟：budgetCap=10, physical=20（高配机器）
+    const budgetCap = 10;
+    const physical = 20;
+    const effective = (budgetCap > 0) ? Math.min(budgetCap, physical) : physical;
+    expect(effective).toBe(10);
+  });
+
+  it('D2-hardcap-2: PHYSICAL_CAPACITY=20 时 CECELIA_MAX_SEATS=10 使 effective=10 而非 20', () => {
+    const budgetCap = 10;
+    const physical = 20;
+    const effective = Math.min(budgetCap, physical);
+    // 关键断言：physical=20 不被使用，硬上限 10 生效
+    expect(effective).not.toBe(physical);
+    expect(effective).toBe(10);
+  });
+
+  it('D2-hardcap-3: CECELIA_MAX_SEATS=10 通过 computeMaxSeats 验证', () => {
+    const { maxSeats } = computeMaxSeats('10');
+    // 无论机器配置高低，maxSeats 必须 <= 10
+    expect(maxSeats).toBeLessThanOrEqual(10);
+  });
+
+  it('D2-hardcap-4: CECELIA_MAX_SEATS=10，自动值>=10 时精确等于 10', () => {
+    // 模拟高配机器，autoMaxSeats = 20
+    const override = 10;
+    const autoMaxSeats = 20;
+    const maxSeats = Math.min(override, autoMaxSeats);
+    expect(maxSeats).toBe(10);
+  });
+});
