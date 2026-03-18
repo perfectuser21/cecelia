@@ -328,7 +328,7 @@ switch_to_next_account() {
         return 1
     fi
     export CODEX_HOME="${CODEX_ACCOUNT_LIST[$CURRENT_ACCOUNT_IDX]}"
-    echo "🔄 账号切换：切换到账号 $((CURRENT_ACCOUNT_IDX + 1))/${#CODEX_ACCOUNT_LIST[@]}（$CODEX_HOME）"
+    echo "🔄 账号切换：切换到账号 $((CURRENT_ACCOUNT_IDX + 1))/${#CODEX_ACCOUNT_LIST[@]}（${CODEX_HOME}）"
     return 0
 }
 
@@ -429,7 +429,7 @@ while true; do
     # ===== Quota 检测与账号切换（v2.3.0 / v2.4.1 退避优化）=====
     if echo "$CODEX_OUTPUT" | grep -qi "Quota exceeded"; then
         echo ""
-        echo "  ⚠️  检测到 Quota exceeded（账号 $((CURRENT_ACCOUNT_IDX+1)): $CODEX_HOME）"
+        echo "  ⚠️  检测到 Quota exceeded（账号 $((CURRENT_ACCOUNT_IDX+1)): ${CODEX_HOME}）"
         if switch_to_next_account; then
             echo "  ↩️  本轮不计入重试次数，等待 30s 后使用新账号（避免 rate limit）"
             RETRY_COUNT=$((RETRY_COUNT - 1))
@@ -442,7 +442,7 @@ while true; do
             CURRENT_ACCOUNT_IDX=0
             export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"
             RETRY_COUNT=$((RETRY_COUNT - 1))
-            echo "  🔄 账号已重置为 账号 1/${#CODEX_ACCOUNT_LIST[@]}（$CODEX_HOME）"
+            echo "  🔄 账号已重置为 账号 1/${#CODEX_ACCOUNT_LIST[@]}（${CODEX_HOME}）"
             continue
         fi
     fi
