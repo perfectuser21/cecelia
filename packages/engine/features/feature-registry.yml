@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.70.0"
+version: "3.71.0"
 updated: "2026-03-18"
 changelog:
+  - version: "13.1.1"
+    date: "2026-03-18"
+    summary: "fix(engine): cto-review SKILL.md Step 1.4 改用 git diff origin/main...HEAD（push前无PR时可用），devloop-check.sh 条件1.5 intent_expand completed 后写入 .enriched-prd-branch.md 本地文件（幂等），01-taskcard.md 指示 AI 读取 enriched PRD"
+    scope: skills
+    breaking: false
+    feature_id: fix-cto-review-git-diff-enriched-prd
   - version: "13.1.0"
     date: "2026-03-18"
     summary: "feat(engine): 新增 intent-expand skill — 意图扩展，沿 Task→Project→KR→OKR→Vision 层级链查询并生成 enriched PRD"
