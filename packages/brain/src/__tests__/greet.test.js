@@ -131,7 +131,7 @@ describe('greet — 主动问候', () => {
     it('路由文件包含 greet 端点和关键逻辑', async () => {
       const fs = await import('fs');
       const routesSource = fs.readFileSync(
-        new URL('../routes.js', import.meta.url), 'utf-8'
+        new URL('../routes/status.js', import.meta.url), 'utf-8'
       );
       // 端点存在
       expect(routesSource).toContain("router.post('/greet'");
