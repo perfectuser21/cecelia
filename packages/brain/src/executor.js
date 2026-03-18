@@ -1082,6 +1082,9 @@ function getSkillForTaskType(taskType, payload) {
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
+    // 前置审查两阶段
+    'intent_expand': '/intent-expand',  // 意图扩展：查 OKR/Vision 链路补全 PRD
+    'cto_review': '/cto-review',        // CTO 整体审查：enriched PRD + DoD + diff → PASS/FAIL
   };
   return skillMap[taskType] || '/dev';
 }

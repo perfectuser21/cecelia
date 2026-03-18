@@ -418,6 +418,8 @@ queued → in_progress → completed
 | data | HK | N8N | - | - |
 | dept_heartbeat | US | 部门主管 (repo-lead) | - / M2.5-highspeed | 固定 minimax |
 | pr_review | 西安 | 异步 PR 审查（独立 MiniMax 审查） | Codex / MiniMax | 固定 minimax |
+| intent_expand | US | 意图扩展 Expander（沿 project→KR→OKR→Vision 链补全 PRD） | Sonnet / - | 默认 anthropic |
+| cto_review | 西安 | CTO 整体审查（enriched PRD + DoD + diff → PASS/FAIL） | Codex | 固定 openai |
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 | architecture_design | US | 架构设计 (/architect design) | Opus / - | 默认 anthropic |
 | architecture_scan | US | 系统扫描 (/architect scan) | Opus / - | 默认 anthropic |
