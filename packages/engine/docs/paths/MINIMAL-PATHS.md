@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.66.0
+version: 3.67.0
 created: 2026-03-18
 updated: 2026-03-18
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.66.0: 从 feature-registry.yml 自动生成
+  - 3.67.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -378,6 +378,14 @@ changelog:
 
 ---
 
+### S16: 状态机三层防御 — bash-guard Rule 2d + seal + devloop-check seal 检查
+
+1. ✅ **Bash 写 .dev-mode step_N done → bash-guard Rule 2d → verify-step → exit 2**
+2. ✅ **verify-step 通过 → seal 写入 .dev-mode**
+3. ✅ **devloop-check：有 done 无 seal → blocked**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -390,5 +398,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.66.0
+**版本**: 3.67.0
 **生成时间**: 2026-03-18

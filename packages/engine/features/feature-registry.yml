@@ -1936,3 +1936,41 @@ product_features:
       - "已有 .cjs 脚本 → 直接 node 执行"
 
     rcis: []
+
+  - id: S16
+    name: 状态机三层防御 — bash-guard Rule 2d + seal + devloop-check seal 检查
+    status: Committed
+    priority: P0
+    version: "12.97.0"
+    updated: "2026-03-18"
+    description: |
+      堵住 AI 通过 Bash 工具绕过 PreToolUse:Write 拦截直接写入 .dev-mode step_N: done 的旁路。
+      三层防御：
+      1. bash-guard.sh Rule 2d：检测 Bash 向 .dev-mode.* 写入 step_N_xxx: done，调用 verify-step.sh，失败则 exit 2
+      2. verify-step.sh：验证通过后写 seal（step_N_seal: verified@timestamp），不可伪造
+      3. devloop-check.sh：seal 完整性检查，step_N done 但无 seal → status=blocked，要求重新验证
+
+    entrypoints:
+      - type: hook
+        file: packages/engine/hooks/bash-guard.sh
+        trigger: "PreToolUse:Bash hook — AI 执行 Bash 命令时"
+      - type: hook
+        file: packages/engine/hooks/verify-step.sh
+        trigger: "bash-guard.sh Rule 2d 检测到 .dev-mode 写入时"
+      - type: lib
+        file: packages/engine/lib/devloop-check.sh
+        trigger: "Stop Hook / Codex runner 检查工作流完成状态时"
+
+    golden_path: |
+      AI 尝试 echo step_1_taskcard: done >> .dev-mode.branch →
+      bash-guard.sh Rule 2d 检测到 →
+      调用 verify-step.sh step1 →
+      验证失败 → exit 2 阻止写入
+      （验证通过时：seal 写入 .dev-mode，devloop-check 验证 seal 存在后放行）
+
+    minimal_paths:
+      - "Bash 写 .dev-mode step_N done → bash-guard Rule 2d → verify-step → exit 2"
+      - "verify-step 通过 → seal 写入 .dev-mode"
+      - "devloop-check：有 done 无 seal → blocked"
+
+    rcis: []

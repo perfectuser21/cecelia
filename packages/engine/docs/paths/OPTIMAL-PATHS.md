@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.66.0
+version: 3.67.0
 created: 2026-03-18
 updated: 2026-03-18
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.66.0: 从 feature-registry.yml 自动生成
+  - 3.67.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -430,6 +430,18 @@ Codex 探索阶段：生成 .cjs 脚本（CDP 连接 100.97.242.124:19225）→
 
 ---
 
+### S16: 状态机三层防御 — bash-guard Rule 2d + seal + devloop-check seal 检查
+
+```
+AI 尝试 echo step_1_taskcard: done >> .dev-mode.branch →
+bash-guard.sh Rule 2d 检测到 →
+调用 verify-step.sh step1 →
+验证失败 → exit 2 阻止写入
+（验证通过时：seal 写入 .dev-mode，devloop-check 验证 seal 存在后放行）
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -442,5 +454,5 @@ Codex 探索阶段：生成 .cjs 脚本（CDP 连接 100.97.242.124:19225）→
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.66.0
+**版本**: 3.67.0
 **生成时间**: 2026-03-18
