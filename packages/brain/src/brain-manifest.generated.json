@@ -507,6 +507,10 @@
             {
               "taskType": "cto_review",
               "skill": "/cto-review"
+            },
+            {
+              "taskType": "content_publish",
+              "skill": "/dev"
             }
           ]
         },
@@ -874,7 +878,8 @@
     "qa": "/code-review",
     "audit": "/code-review",
     "intent_expand": "/intent-expand",
-    "cto_review": "/cto-review"
+    "cto_review": "/cto-review",
+    "content_publish": "/dev"
   },
   "skillWhitelist": {
     "dev": "/dev",
@@ -910,7 +915,7 @@
     "content-review": "/content-creator",
     "content-export": "/content-creator"
   },
-  "generatedAt": "2026-03-19T08:14:11.913Z",
+  "generatedAt": "2026-03-19T18:58:26.835Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

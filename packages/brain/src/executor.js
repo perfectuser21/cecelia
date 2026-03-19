@@ -1055,6 +1055,28 @@ function getSkillForTaskType(taskType, payload) {
     // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射
   }
 
+  // content_publish → 按 payload.platform 路由到对应 publisher skill
+  if (taskType === 'content_publish') {
+    const platform = payload?.platform;
+    const publisherSkillMap = {
+      'douyin': '/douyin-publisher',
+      'kuaishou': '/kuaishou-publisher',
+      'toutiao': '/toutiao-publisher',
+      'weibo': '/weibo-publisher',
+      'xiaohongshu': '/xiaohongshu-publisher',
+      'zhihu': '/zhihu-publisher',
+      'wechat': '/wechat-publisher',
+      'shipinhao': '/shipinhao-publisher',
+    };
+    const skill = publisherSkillMap[platform];
+    if (skill) {
+      console.log(`[executor] content_publish 路由: platform=${platform} → ${skill}`);
+      return skill;
+    }
+    console.log(`[executor] content_publish 路由: platform=${platform || '未知'} → /dev（fallback）`);
+    return '/dev';
+  }
+
   const skillMap = {
     'dev': '/dev',           // 写代码：Opus
     'review': '/code-review', // 审查：已迁移到 /code-review
@@ -1085,6 +1107,8 @@ function getSkillForTaskType(taskType, payload) {
     // 前置审查两阶段
     'intent_expand': '/intent-expand',  // 意图扩展：查 OKR/Vision 链路补全 PRD
     'cto_review': '/cto-review',        // CTO 整体审查：enriched PRD + DoD + diff → PASS/FAIL
+    // 多平台发布（payload.platform 动态路由，见上方特判逻辑）
+    'content_publish': '/dev',          // fallback：正常由上方平台路由拦截
   };
   return skillMap[taskType] || '/dev';
 }
