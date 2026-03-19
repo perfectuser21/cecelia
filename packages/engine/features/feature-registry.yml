@@ -18,6 +18,12 @@
 version: "3.72.0"
 updated: "2026-03-19"
 changelog:
+  - version: "13.3.2"
+    date: "2026-03-19"
+    summary: "feat(engine): 执行日志记录器 — verify-step/devloop-check 写 JSONL 日志，generate-report 生成真实质检报告"
+    scope: hooks
+    breaking: false
+    feature_id: execution-logger-quality-report
   - version: "13.3.1"
     date: "2026-03-19"
     summary: "fix(engine): 删除 stop.sh.before-refactor 残留备份 + 更新引用测试 + 补齐 CHANGELOG 13.x 条目 + 修正 DEFINITION.md codex_qa 位置"
