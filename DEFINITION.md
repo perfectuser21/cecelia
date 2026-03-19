@@ -627,14 +627,25 @@ MEM_PER_TASK = 500MB
 CPU_PER_TASK = 0.5 core
 INTERACTIVE_RESERVE = 2 seats  // 留给有头会话
 
-MAX_SEATS = floor(min(USABLE_MEM / 500, USABLE_CPU / 0.5))
-AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
+// Layer 1: 物理上限（MAX_PHYSICAL_CAP=10 兜底）
+PHYSICAL_CAPACITY = min(floor(min(USABLE_MEM / 500, USABLE_CPU / 0.5)), MAX_PHYSICAL_CAP=10)
 
-# 硬上限（CECELIA_MAX_SEATS env var）
-EFFECTIVE_MAX_SEATS = min(CECELIA_MAX_SEATS, PHYSICAL_CAPACITY)  // 默认 10
+// Layer 2: 硬上限（CECELIA_MAX_SEATS env var，防止物理上限失控飙升）
+EFFECTIVE_MAX_SEATS = min(CECELIA_MAX_SEATS, PHYSICAL_CAPACITY)  // 当前 10
+
+// Layer 3: 运营上限（CECELIA_BUDGET_SLOTS env var，日常派发上限）
+// 优先级：CECELIA_BUDGET_SLOTS > CECELIA_MAX_SEATS（作为 fallback）
+OPERATIONAL_CAP = CECELIA_BUDGET_SLOTS  // 当前 7，控制日常并发
+AUTO_DISPATCH_MAX = OPERATIONAL_CAP - INTERACTIVE_RESERVE  // 当前 5
 ```
 
-**8 核 16GB**：PHYSICAL_CAPACITY=12, CECELIA_MAX_SEATS=10, EFFECTIVE_MAX_SEATS=10, AUTO_DISPATCH=8
+**10 核 16GB（美国 Mac mini M4）**：PHYSICAL_CAPACITY=10, CECELIA_MAX_SEATS=10（硬上限）, CECELIA_BUDGET_SLOTS=7（运营上限）, AUTO_DISPATCH=5
+
+**环境变量配置**（`packages/brain/.env` + `docker-compose.yml` 双写）：
+```
+CECELIA_MAX_SEATS=10    # 硬天花板，防止动态值飙升
+CECELIA_BUDGET_SLOTS=7  # 运营上限，预留 2 个 interactive 席位
+```
 
 ### 7.2 动态限流
 
@@ -642,9 +653,9 @@ EFFECTIVE_MAX_SEATS = min(CECELIA_MAX_SEATS, PHYSICAL_CAPACITY)  // 默认 10
 
 | 压力 | 有效 Slots |
 |------|-----------|
-| < 0.5 | 满额（12） |
-| 0.5~0.7 | 2/3（8） |
-| 0.7~0.9 | 1/3（4） |
+| < 0.5 | 满额（10） |
+| 0.5~0.7 | 2/3（7） |
+| 0.7~0.9 | 1/3（3） |
 | ≥ 0.9 | 1 |
 | ≥ 1.0 | 0（停止派发） |
 
