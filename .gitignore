@@ -76,3 +76,4 @@ coverage/
 
 # Claude Code worktrees
 .claude/worktrees/
+# trigger
