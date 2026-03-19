@@ -3,11 +3,12 @@
  * distill-learnings.js
  *
  * 扫描 docs/learnings/*.md，提取每个文件中 "### 下次预防" 章节的 checklist 条目，
- * 每条条目写入 Brain knowledge 表（type='learning_rule'），幂等执行。
+ * 每条条目写入 Brain knowledge 表（type='learning_rule'）和 learnings 表，幂等执行。
  *
  * 用法：node packages/brain/scripts/distill-learnings.js [--dry-run]
  *
- * 幂等保证：ON CONFLICT (type, sub_area) DO NOTHING
+ * knowledge 表幂等保证：ON CONFLICT (type, sub_area) DO NOTHING
+ * learnings 表幂等保证：WHERE NOT EXISTS (SELECT 1 FROM learnings WHERE content_hash = ...)
  * 使用 psql CLI 写入，无需 npm install pg。
  */
 
@@ -15,6 +16,7 @@ import { readFileSync, readdirSync, writeFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
+import { createHash } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -143,6 +145,12 @@ function main() {
       process.exit(1);
     }
     console.log(`✅ 验证通过：${rules.length} 条 ≥ 25`);
+    console.log(`\n[DRY RUN] 将同步写入 learnings 表（learning_type='best_practice'）：`);
+    rules.slice(0, 3).forEach(r => {
+      const branch = r.source.replace(/\.md$/, '');
+      console.log(`  - learnings: title="${r.name.slice(0, 50)}..." source_branch="${branch}"`);
+    });
+    if (rules.length > 3) console.log(`  ... 还有 ${rules.length - 3} 条待写入 learnings`);
     return;
   }
 
@@ -181,6 +189,45 @@ SELECT COUNT(*) FROM knowledge WHERE type = 'learning_rule';
     console.error(`❌ 规则数量不足 25 条（实际：${total}），请检查 docs/learnings/ 文件格式`);
     process.exit(1);
   }
+
+  // 同步写入 learnings 表（learning_type='best_practice'）
+  // 字段映射：name→title, 'best_practice'→learning_type, sub_area→metadata.source_file
+  // 幂等保证：WHERE NOT EXISTS (SELECT 1 FROM learnings WHERE content_hash = ...)
+  console.log(`\n🔄 同步写入 learnings 表...`);
+
+  const learningsStatements = rules.map(r => {
+    const sourceBranch = r.source.replace(/\.md$/, '');
+    const contentText = JSON.parse(r.content).items.join('\n- ');
+    const contentHash = createHash('sha256')
+      .update(`distill:${r.source}:${r.name}`)
+      .digest('hex');
+    const metadataJson = JSON.stringify({ source_file: r.sub_area });
+
+    return `INSERT INTO learnings (title, learning_type, category, content, metadata, source_branch, is_latest, content_hash)
+SELECT '${sqlEscape(r.name)}', 'best_practice', 'best_practice', '${sqlEscape(contentText)}', '${sqlEscape(metadataJson)}', '${sqlEscape(sourceBranch)}', true, '${contentHash}'
+WHERE NOT EXISTS (
+  SELECT 1 FROM learnings WHERE content_hash = '${contentHash}' AND is_latest = true
+);`;
+  });
+
+  const learningsSql = `
+${learningsStatements.join('\n\n')}
+
+SELECT COUNT(*) FROM learnings WHERE learning_type = 'best_practice';
+`;
+
+  let learningsOutput;
+  try {
+    learningsOutput = psqlRun(learningsSql);
+  } catch (err) {
+    console.error(`❌ learnings 表写入失败: ${err.message}`);
+    process.exit(1);
+  }
+
+  const learningsLines = learningsOutput.split('\n').filter(l => l.trim());
+  const learningsTotal = parseInt(learningsLines[learningsLines.length - 1], 10);
+
+  console.log(`   learnings 表 best_practice 总计：${learningsTotal} 条`);
 
   console.log(`✅ distill-learnings 完成`);
 }
