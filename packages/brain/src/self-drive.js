@@ -20,11 +20,36 @@ import { createTask } from './actions.js';
 import { callLLM } from './llm-caller.js';
 
 // ============================================================
-// Configuration
+// Configuration (defaults, overridable via brain_config table)
 // ============================================================
 
-const SELF_DRIVE_INTERVAL_MS = 12 * 60 * 60 * 1000; // 每 12 小时
-const MAX_TASKS_PER_CYCLE = 3; // 每次最多创建 3 个任务，避免过载
+const DEFAULT_INTERVAL_MS = 30 * 60 * 1000; // 默认 30 分钟
+const DEFAULT_MAX_TASKS = 3;
+
+/**
+ * Read config from brain_config table, fallback to defaults.
+ * Keys: self_drive_interval_ms, self_drive_max_tasks
+ */
+async function getConfig() {
+  try {
+    const result = await pool.query(
+      `SELECT key, value FROM brain_config WHERE key IN ('self_drive_interval_ms', 'self_drive_max_tasks')`
+    );
+    const config = {};
+    for (const row of result.rows) {
+      config[row.key] = JSON.parse(row.value);
+    }
+    return {
+      intervalMs: config.self_drive_interval_ms || DEFAULT_INTERVAL_MS,
+      maxTasks: config.self_drive_max_tasks || DEFAULT_MAX_TASKS,
+    };
+  } catch {
+    return { intervalMs: DEFAULT_INTERVAL_MS, maxTasks: DEFAULT_MAX_TASKS };
+  }
+}
+
+let _currentIntervalMs = DEFAULT_INTERVAL_MS;
+let _currentMaxTasks = DEFAULT_MAX_TASKS;
 
 // ============================================================
 // Core
@@ -69,7 +94,7 @@ export async function runSelfDrive() {
 
     // 4. Create tasks (with dedup)
     const created = [];
-    for (const action of analysis.actions.slice(0, MAX_TASKS_PER_CYCLE)) {
+    for (const action of analysis.actions.slice(0, _currentMaxTasks)) {
       const dedupKey = (action.title || '').toLowerCase().slice(0, 60);
       if (dedupSet.has(dedupKey)) {
         console.log(`[SelfDrive] Skip dedup: "${action.title}"`);
@@ -295,25 +320,36 @@ async function recordEvent(subtype, payload) {
 
 let _driveTimer = null;
 
-export function startSelfDriveLoop() {
+export async function startSelfDriveLoop() {
   if (_driveTimer) {
     console.log('[SelfDrive] Loop already running');
     return;
   }
 
-  console.log(`[SelfDrive] Starting self-drive loop (interval: ${SELF_DRIVE_INTERVAL_MS / 1000 / 60 / 60}h)`);
+  // Read interval from DB (can be changed via dashboard without restart)
+  const config = await getConfig();
+  _currentIntervalMs = config.intervalMs;
+  _currentMaxTasks = config.maxTasks;
 
-  // First run after 5 minutes (let probe/scan populate first)
-  setTimeout(() => {
-    runSelfDrive();
-    _driveTimer = setInterval(runSelfDrive, SELF_DRIVE_INTERVAL_MS);
-  }, 5 * 60 * 1000);
+  console.log(`[SelfDrive] Starting self-drive loop (interval: ${_currentIntervalMs / 1000 / 60}min, max_tasks: ${_currentMaxTasks})`);
+
+  // First run after 2 minutes (let probe/scan populate first)
+  setTimeout(async () => {
+    await runSelfDrive();
+    _driveTimer = setInterval(async () => {
+      // Re-read config each cycle (hot-reload from DB)
+      const cfg = await getConfig();
+      _currentIntervalMs = cfg.intervalMs;
+      _currentMaxTasks = cfg.maxTasks;
+      await runSelfDrive();
+    }, _currentIntervalMs);
+  }, 2 * 60 * 1000);
 }
 
 export function getSelfDriveStatus() {
   return {
     running: _driveTimer !== null,
-    interval_ms: SELF_DRIVE_INTERVAL_MS,
-    max_tasks_per_cycle: MAX_TASKS_PER_CYCLE,
+    interval_ms: _currentIntervalMs,
+    max_tasks_per_cycle: _currentMaxTasks,
   };
 }
