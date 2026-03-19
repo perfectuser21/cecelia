@@ -26,6 +26,7 @@ import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview, triggerContractScan } from './daily-review-scheduler.js';
+import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
@@ -39,8 +40,6 @@ import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
-// [NOTION_SYNC_DISABLED] import { syncRecurringFromNotion } from './recurring-notion-sync.js';
-// [NOTION_SYNC_DISABLED] import { runFullSync } from './notion-full-sync.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -2454,18 +2453,9 @@ async function executeTick() {
   Promise.resolve().then(() => triggerContractScan(pool))
     .catch(e => console.warn('[tick] 契约扫描失败:', e.message));
 
-  // [NOTION_SYNC_DISABLED] 10.16-old 定时任务 Notion 同步 — 已停用，Brain 回归本地 DB
-  // Promise.resolve().then(async () => {
-  //   const today = now.toISOString().split('T')[0];
-  //   const key = 'recurring_notion_sync_last_date';
-  //   ...syncRecurringFromNotion(pool)...
-  // }).catch(e => console.warn('[tick] 定时任务 Notion 同步失败:', e.message));
-
-  // [NOTION_SYNC_DISABLED] 10.17 Notion 全量同步 — 已停用，Brain 回归本地 DB
-  // Promise.resolve().then(async () => {
-  //   const hourKey = now.toISOString().slice(0, 13);
-  //   ...runFullSync(pool)...
-  // }).catch(e => console.warn('[tick] Notion 全量同步失败:', e.message));
+  // 10.17 每日内容选题（UTC 01:00 = 北京时间 09:00，AI 自动生成 ≥10 个选题，fire-and-forget）
+  Promise.resolve().then(() => triggerDailyTopicSelection(pool))
+    .catch(e => console.warn('[tick] 每日内容选题失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
