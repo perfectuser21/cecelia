@@ -138,16 +138,30 @@ describe('calculateSlotBudget token 集成', () => {
     expect(budget.tokenPressure.token_pressure).toBe(0);
   });
 
-  it('token_pressure=1.0 → Pool C 不受影响（token 仅监控）', async () => {
+  it('token_pressure=1.0 + available_accounts=0 → dispatchAllowed=false（全部耗尽）', async () => {
     getTokenPressure.mockResolvedValue({
       token_pressure: 1.0, available_accounts: 0, details: 'all exhausted',
     });
 
     const budget = await calculateSlotBudget();
-    // Token pressure is monitoring only — no throttle
+    // Token exhausted safety valve: all accounts at quota → block dispatch
+    expect(budget.taskPool.budget).toBe(12);
+    expect(budget.dispatchAllowed).toBe(false);
+    expect(budget.tokenPressure.token_pressure).toBe(1.0);
+    expect(budget.tokenPressure.available_accounts).toBe(0);
+  });
+
+  it('token_pressure=1.0 + available_accounts=1 → dispatchAllowed=true（仍有账户可用）', async () => {
+    getTokenPressure.mockResolvedValue({
+      token_pressure: 1.0, available_accounts: 1, details: '1 account recovering',
+    });
+
+    const budget = await calculateSlotBudget();
+    // Still has available accounts — dispatch allowed
     expect(budget.taskPool.budget).toBe(12);
     expect(budget.dispatchAllowed).toBe(true);
     expect(budget.tokenPressure.token_pressure).toBe(1.0);
+    expect(budget.tokenPressure.available_accounts).toBe(1);
   });
 
   it('token_pressure=0.9 → Pool C 不受影响（token 仅监控）', async () => {
