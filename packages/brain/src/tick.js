@@ -1503,6 +1503,18 @@ async function executeTick() {
     console.error('[tick] Content pipeline orchestration check failed:', pipelineErr.message);
   }
 
+  // 0.5.6. Content Pipeline Executor — 执行 queued 的 content-* 子任务
+  try {
+    const { executeQueuedContentTasks } = await import('./content-pipeline-orchestrator.js');
+    const execResult = await executeQueuedContentTasks();
+    if (execResult.executed > 0) {
+      console.log(`[tick] Content pipeline executor: ${execResult.executed} tasks executed`);
+      actionsTaken.push({ action: 'content_pipeline_execution', executed: execResult.executed });
+    }
+  } catch (execErr) {
+    console.error('[tick] Content pipeline executor failed:', execErr.message);
+  }
+
   // 0.6. Recurring Tasks Check
   try {
     const { checkRecurringTasks } = await import('./recurring.js');
