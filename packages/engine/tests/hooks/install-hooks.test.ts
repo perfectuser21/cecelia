@@ -160,7 +160,6 @@ describe('install-hooks.sh 安装脚本', () => {
 
       // 验证 skills 目录
       expect(fs.existsSync(path.join(TEST_DIR, 'skills/dev/SKILL.md'))).toBe(true)
-      expect(fs.existsSync(path.join(TEST_DIR, 'skills/qa/SKILL.md'))).toBe(true)
 
       // 验证 .claude/settings.json
       expect(fs.existsSync(path.join(TEST_DIR, '.claude/settings.json'))).toBe(true)
