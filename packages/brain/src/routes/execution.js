@@ -1303,6 +1303,55 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] code_review routing failed (non-fatal): ${crErr.message}`);
       }
 
+      // 5c8b. cto_review 完成 → 将审查结论写入 cto_review 任务自身 + 父任务的 review_result
+      // devloop-check.sh 条件 2.5 读取 cto_review 子任务的 review_result 字段判断 PASS/FAIL
+      try {
+        const ctoRow = await pool.query(
+          'SELECT task_type, payload FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const ctoTask = ctoRow.rows[0];
+
+        if (ctoTask?.task_type === 'cto_review') {
+          const ctoPayload = ctoTask.payload || {};
+          const parentTaskId = ctoPayload.parent_task_id;
+
+          // 从 req.body 提取审查结论
+          const resultObj = typeof result === 'object' && result !== null ? result : {};
+          const decision = resultObj.decision || (typeof result === 'string' ? result : 'PASS');
+          const summary = resultObj.summary || (typeof result === 'string' ? result : '');
+          const l1Count = resultObj.l1_count ?? 0;
+          const l2Count = resultObj.l2_count ?? 0;
+
+          // 构建 review_result 字符串（与 devloop-check.sh grep -qi "PASS" 对齐）
+          const reviewResultText = [
+            `决定: ${decision}`,
+            summary ? `摘要: ${summary}` : '',
+            `L1问题: ${l1Count}, L2问题: ${l2Count}`,
+          ].filter(Boolean).join('\n');
+
+          // 1. 写入 cto_review 任务自身的 review_result（devloop-check.sh 读这里）
+          await pool.query(
+            'UPDATE tasks SET review_result = $1 WHERE id = $2',
+            [reviewResultText, task_id]
+          );
+          console.log(`[execution-callback] cto_review 断链修复: review_result 写入 cto_review task ${task_id}, decision=${decision}`);
+
+          // 2. 写入父任务的 review_result（供父任务查看审查结论）
+          if (parentTaskId) {
+            await pool.query(
+              'UPDATE tasks SET review_result = $1 WHERE id = $2',
+              [reviewResultText, parentTaskId]
+            );
+            console.log(`[execution-callback] cto_review 断链修复: review_result 写入 parent task ${parentTaskId}, decision=${decision}`);
+          } else {
+            console.warn(`[execution-callback] cto_review ${task_id} 无 parent_task_id，仅写入自身 review_result`);
+          }
+        }
+      } catch (ctoErr) {
+        console.error(`[execution-callback] cto_review review_result 写入失败 (non-fatal): ${ctoErr.message}`);
+      }
+
       // 5c11. 串行调度: dev task 完成（有 sequence_order）→ 解锁并注入上下文到下一个串行 task
       // 适用场景：Initiative 内有明确依赖顺序的 dev tasks
       // 触发条件：payload.sequence_order != null && payload.depends_on_prev = true（由下一个 task 携带）
