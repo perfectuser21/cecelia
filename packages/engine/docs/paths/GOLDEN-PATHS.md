@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.71.0
-created: 2026-03-18
-updated: 2026-03-18
+version: 3.72.0
+created: 2026-03-19
+updated: 2026-03-19
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.71.0: 从 feature-registry.yml 自动生成
+  - 3.72.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -686,5 +686,5 @@ exit 2 + [SKILL_REQUIRED: dev]
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.71.0
-**生成时间**: 2026-03-18
+**版本**: 3.72.0
+**生成时间**: 2026-03-19
