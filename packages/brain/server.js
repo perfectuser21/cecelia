@@ -321,6 +321,30 @@ server.listen(PORT, async () => {
   startSelfDriveLoop();
   console.log('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
 
+  // Initialize Evolution Scanner (进化追踪 — 扫描自身代码演进)
+  try {
+    const { scanEvolutionIfNeeded } = await import('./src/evolution-scanner.js');
+    // 启动后 10 分钟首次扫描，之后每 24 小时
+    setTimeout(async () => {
+      try { await scanEvolutionIfNeeded(pool); } catch (e) { console.warn('[Server] Evolution scan failed:', e.message); }
+      setInterval(async () => {
+        try { await scanEvolutionIfNeeded(pool); } catch (e) { console.warn('[Server] Evolution scan failed:', e.message); }
+      }, 24 * 60 * 60 * 1000);
+    }, 10 * 60 * 1000);
+    console.log('[Server] Evolution Scanner scheduled (24h interval, first run in 10min)');
+  } catch (e) {
+    console.warn('[Server] Evolution Scanner init failed (non-fatal):', e.message);
+  }
+
+  // Initialize Nightly Tick (每日质检 + 对齐)
+  try {
+    const { startNightlyScheduler } = await import('./src/nightly-tick.js');
+    startNightlyScheduler();
+    console.log('[Server] Nightly Scheduler started');
+  } catch (e) {
+    console.warn('[Server] Nightly Scheduler init failed (non-fatal):', e.message);
+  }
+
   // Initialize Promotion Job Loop (P1)
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();

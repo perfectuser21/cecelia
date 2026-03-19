@@ -60,6 +60,27 @@ const PROBES = [
     description: 'Monitor Loop 运行状态',
     fn: probeMonitorLoop,
   },
+  // === 高层意识循环探针 ===
+  {
+    name: 'rumination',
+    description: '反刍系统（24h 内是否有产出）',
+    fn: probeRumination,
+  },
+  {
+    name: 'evolution',
+    description: '进化追踪（是否有 evolution 记录）',
+    fn: probeEvolution,
+  },
+  {
+    name: 'consolidation',
+    description: '记忆合并（48h 内是否有合并记录）',
+    fn: probeConsolidation,
+  },
+  {
+    name: 'self_drive_health',
+    description: 'Self-Drive 自驱引擎（24h 内是否成功创建任务）',
+    fn: probeSelfDriveHealth,
+  },
 ];
 
 // ============================================================
@@ -136,6 +157,68 @@ async function probeMonitorLoop() {
   return {
     ok: status.running === true,
     detail: `running=${status.running} interval=${status.interval_ms}ms`,
+  };
+}
+
+// === 高层意识循环探针 ===
+
+async function probeRumination() {
+  // 检查 24h 内有没有反刍产出（synthesis_archive 表）
+  const result = await pool.query(
+    `SELECT count(*) AS cnt, max(created_at) AS last_run
+     FROM synthesis_archive
+     WHERE created_at > NOW() - INTERVAL '24 hours'`
+  );
+  const cnt = parseInt(result.rows[0]?.cnt || 0);
+  const lastRun = result.rows[0]?.last_run;
+  return {
+    ok: cnt > 0,
+    detail: `24h_count=${cnt} last_run=${lastRun || 'never'}`,
+  };
+}
+
+async function probeEvolution() {
+  // 检查 evolution 是否有产出记录
+  const result = await pool.query(
+    `SELECT count(*) AS cnt FROM cecelia_events
+     WHERE event_type LIKE '%evolution%'
+       AND created_at > NOW() - INTERVAL '7 days'`
+  );
+  const cnt = parseInt(result.rows[0]?.cnt || 0);
+  return {
+    ok: cnt > 0,
+    detail: `7d_evolution_events=${cnt}`,
+  };
+}
+
+async function probeConsolidation() {
+  // 检查 48h 内有没有记忆合并
+  const result = await pool.query(
+    `SELECT count(*) AS cnt, max(created_at) AS last_run
+     FROM memory_stream
+     WHERE source_type = 'daily_consolidation'
+       AND created_at > NOW() - INTERVAL '48 hours'`
+  );
+  const cnt = parseInt(result.rows[0]?.cnt || 0);
+  const lastRun = result.rows[0]?.last_run;
+  return {
+    ok: cnt > 0,
+    detail: `48h_consolidations=${cnt} last_run=${lastRun || 'never'}`,
+  };
+}
+
+async function probeSelfDriveHealth() {
+  // 检查 Self-Drive 24h 内是否成功创建过任务
+  const result = await pool.query(
+    `SELECT count(*) AS cnt FROM cecelia_events
+     WHERE event_type = 'self_drive'
+       AND (payload->>'tasks_created')::int > 0
+       AND created_at > NOW() - INTERVAL '24 hours'`
+  );
+  const cnt = parseInt(result.rows[0]?.cnt || 0);
+  return {
+    ok: cnt > 0,
+    detail: `24h_successful_drives=${cnt}`,
   };
 }
 
