@@ -162,31 +162,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 1: PR 是否已创建？=====
-    local pr_number="" pr_state=""
-
-    if command -v gh &>/dev/null; then
-        # 检查 open 状态的 PR
-        pr_number=$(gh pr list --head "$branch" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
-        if [[ -n "$pr_number" ]]; then
-            pr_state="open"
-        else
-            # 检查已合并的 PR
-            pr_number=$(gh pr list --head "$branch" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
-            if [[ -n "$pr_number" ]]; then
-                pr_state="merged"
-            fi
-        fi
-    fi
-
-    if [[ -z "$pr_number" ]]; then
-        _devloop_jq -n \
-            --arg branch "$branch" \
-            '{"status":"blocked","reason":"PR 未创建","action":"执行 Step 8：创建 PR（gh pr create --base main --head \($branch)）"}'
-        return 2
-    fi
-
-    # ===== 条件 2.5: cto_review 是否通过？（CI 检查之前）=====
+    # ===== 条件 2.5: cto_review 是否通过？（PR 创建之前，P0 本机 Codex）=====
     # 若 .dev-mode 中有 cto_review_task_id 且 cto_review_status != pass，阻塞等待
     if [[ -f "$dev_mode_file" ]]; then
         local cto_task_id cto_status_local brain_url_cto
@@ -229,7 +205,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 2.6: code_quality_review 是否通过？（CI 检查之前）=====
+    # ===== 条件 2.6: code_quality_review 是否通过？（PR 创建之前，P0 本机 Codex）=====
     # 若 .dev-mode 中有 code_quality_task_id 且 code_quality_status != pass，阻塞等待
     if [[ -f "$dev_mode_file" ]]; then
         local cq_task_id cq_status_local brain_url_cq
@@ -272,7 +248,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 2.7: prd_coverage_audit 是否通过？（CI 检查之前）=====
+    # ===== 条件 2.7: prd_coverage_audit 是否通过？（PR 创建之前，P0 本机 Codex）=====
     # 若 .dev-mode 中有 prd_audit_task_id 且 prd_audit_status != pass，阻塞等待
     if [[ -f "$dev_mode_file" ]]; then
         local pa_task_id pa_status_local brain_url_pa
@@ -313,6 +289,28 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 return 2
             fi
         fi
+    fi
+
+    # ===== 条件 1: PR 是否已创建？（审查全 PASS 后才创建 PR）=====
+    local pr_number="" pr_state=""
+
+    if command -v gh &>/dev/null; then
+        pr_number=$(gh pr list --head "$branch" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+        if [[ -n "$pr_number" ]]; then
+            pr_state="open"
+        else
+            pr_number=$(gh pr list --head "$branch" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
+            if [[ -n "$pr_number" ]]; then
+                pr_state="merged"
+            fi
+        fi
+    fi
+
+    if [[ -z "$pr_number" ]]; then
+        _devloop_jq -n \
+            --arg branch "$branch" \
+            '{"status":"blocked","reason":"审查已通过，PR 未创建","action":"创建 PR（gh pr create --base main --head \($branch)）"}'
+        return 2
     fi
 
     # ===== 条件 3: CI 状态？=====
@@ -426,7 +424,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                     _devloop_jq -n \
                         --arg task_id "$review_task_id" \
                         --arg reasons "$fail_reasons" \
-                        '{"status":"blocked","reason":"PR Review 未通过（西安 Codex 独立审查）","action":"修复 review 指出的问题后重新 push。Review Task ID: \($task_id)\nFAIL_REASONS:\n\($reasons)"}'
+                        '{"status":"blocked","reason":"PR Review 未通过（本机 Codex 独立审查）","action":"修复 review 指出的问题后重新 push。Review Task ID: \($task_id)\nFAIL_REASONS:\n\($reasons)"}'
                     return 2
                 fi
             else
@@ -434,7 +432,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 _devloop_jq -n \
                     --arg task_id "$review_task_id" \
                     --arg status "$review_wait_status" \
-                    '{"status":"blocked","reason":"等待西安 Codex PR Review 完成（状态: \($status)）","action":"等待 review_task \($task_id) 完成，通常 10-30 秒，不要做任何操作"}'
+                    '{"status":"blocked","reason":"等待本机 Codex PR Review 完成（状态: \($status)）","action":"等待 review_task \($task_id) 完成，通常 10-30 秒，不要做任何操作"}'
                 return 2
             fi
         fi
