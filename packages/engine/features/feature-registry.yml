@@ -18,6 +18,12 @@
 version: "3.71.0"
 updated: "2026-03-18"
 changelog:
+  - version: "13.2.0"
+    date: "2026-03-19"
+    summary: "feat(engine): 新增 code-quality + prd-audit Codex 门禁 — devloop-check.sh 条件2.6/2.7（CI之前），Brain task_type 注册，4维度代码质量审查 + PRD覆盖三态审计"
+    scope: skills
+    breaking: false
+    feature_id: code-quality-prd-audit-gate
   - version: "13.1.1"
     date: "2026-03-18"
     summary: "fix(engine): cto-review SKILL.md Step 1.4 改用 git diff origin/main...HEAD（push前无PR时可用），devloop-check.sh 条件1.5 intent_expand completed 后写入 .enriched-prd-branch.md 本地文件（幂等），01-taskcard.md 指示 AI 读取 enriched PRD"

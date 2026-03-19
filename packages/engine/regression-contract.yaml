@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 13.1.1
+version: 13.2.0
 updated: 2026-03-18
 
 # ============================================================================
@@ -3276,6 +3276,44 @@ skills:
       type: command
       run: "bash -c 'test -f packages/engine/skills/intent-expand/SKILL.md'"
     test: "tests/skills/intent-expand.test.ts"
+
+  - id: S4-003
+    feature: S4
+    name: "code-quality skill — 代码质量4维度审查（垃圾/重复/简洁/规范）"
+    scope: skill
+    priority: P2
+    trigger: [PR]
+    method: manual
+    tags: [code-quality, engine, skill, quality, codex]
+    owner: engine
+    steps:
+      given: "Brain 派发 task_type=code_quality_review 任务到西安 Codex"
+      when: "Codex 执行 /code-quality skill"
+      then: "读取 diff + Task Card，从4维度（垃圾代码/重复逻辑/简洁性/命名规范）审查，输出 PASS/FAIL + FAIL_REASONS，回调 Brain execution-callback"
+    evidence:
+      type: code
+      file: "skills/code-quality/SKILL.md"
+      contains: "execution-callback"
+    test: "tests/skills/code-quality.test.ts"
+
+  - id: S4-004
+    feature: S4
+    name: "prd-audit skill — PRD覆盖审计（MATCH/DOWNGRADED/MISSING三态判定）"
+    scope: skill
+    priority: P2
+    trigger: [PR]
+    method: manual
+    tags: [prd-audit, engine, skill, quality, codex]
+    owner: engine
+    steps:
+      given: "Brain 派发 task_type=prd_coverage_audit 任务到西安 Codex"
+      when: "Codex 执行 /prd-audit skill"
+      then: "对比 Task Card 承诺 vs 实际 diff，逐条判定 MATCH/DOWNGRADED/MISSING，输出 PASS/FAIL，回调 Brain execution-callback"
+    evidence:
+      type: code
+      file: "skills/prd-audit/SKILL.md"
+      contains: "execution-callback"
+    test: "tests/skills/prd-audit.test.ts"
 
 # ============================================================================
 # Changelog

@@ -902,13 +902,15 @@
     "strategy_session": "/strategy-session",
     "intent_expand": "/intent-expand",
     "cto_review": "/cto-review",
+    "code_quality_review": "/code-quality",
+    "prd_coverage_audit": "/prd-audit",
     "content-pipeline": "/content-creator",
     "content-research": "/notebooklm",
     "content-generate": "/content-creator",
     "content-review": "/content-creator",
     "content-export": "/content-creator"
   },
-  "generatedAt": "2026-03-18T13:11:16.984Z",
+  "generatedAt": "2026-03-19T06:48:22.434Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

@@ -10,7 +10,7 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v1.0.0
+# 版本: v2.0.0
 # 创建: 2026-03-13
 # PR: provider-agnostic-engine
 # ============================================================================
@@ -229,7 +229,93 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 2: CI 状态？=====
+    # ===== 条件 2.6: code_quality_review 是否通过？（CI 检查之前）=====
+    # 若 .dev-mode 中有 code_quality_task_id 且 code_quality_status != pass，阻塞等待
+    if [[ -f "$dev_mode_file" ]]; then
+        local cq_task_id cq_status_local brain_url_cq
+        cq_task_id=$(grep "^code_quality_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        cq_status_local=$(grep "^code_quality_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        brain_url_cq="${BRAIN_URL:-http://localhost:5221}/api/brain"
+
+        if [[ -n "$cq_task_id" && "$cq_status_local" != "pass" ]]; then
+            local cq_api_result cq_task_status cq_review_result
+            cq_api_result=$(curl -s --max-time 5 "$brain_url_cq/tasks/$cq_task_id" 2>/dev/null || echo "{}")
+            cq_task_status=$(echo "$cq_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+            cq_review_result=$(echo "$cq_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('review_result','') or '')" 2>/dev/null || echo "")
+
+            if [[ "$cq_task_status" == "completed" ]]; then
+                if echo "$cq_review_result" | grep -qi "PASS"; then
+                    # Code Quality PASS：更新 .dev-mode 并继续
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        sed -i '' "s/^code_quality_status:.*/code_quality_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    else
+                        sed -i "s/^code_quality_status:.*/code_quality_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    fi
+                    # 继续后续条件
+                else
+                    local cq_fail_reasons
+                    cq_fail_reasons=$(echo "$cq_review_result" | grep -A 10 "FAIL_REASONS:" | head -8 || echo "详见 review_result")
+                    _devloop_jq -n \
+                        --arg task_id "$cq_task_id" \
+                        --arg reasons "$cq_fail_reasons" \
+                        '{"status":"blocked","reason":"代码质量审查未通过，需修复后重新 push","action":"根据以下 FAIL 原因修复代码后重新 push。Code Quality Task: \($task_id)\nFAIL 原因:\n\($reasons)"}'
+                    return 2
+                fi
+            else
+                local cq_wait_status="${cq_task_status:-queued}"
+                _devloop_jq -n \
+                    --arg task_id "$cq_task_id" \
+                    --arg status "$cq_wait_status" \
+                    '{"status":"blocked","reason":"等待代码质量审查完成（状态: \($status)）","action":"等待 code_quality_review task \($task_id) 完成，PASS 后自动继续"}'
+                return 2
+            fi
+        fi
+    fi
+
+    # ===== 条件 2.7: prd_coverage_audit 是否通过？（CI 检查之前）=====
+    # 若 .dev-mode 中有 prd_audit_task_id 且 prd_audit_status != pass，阻塞等待
+    if [[ -f "$dev_mode_file" ]]; then
+        local pa_task_id pa_status_local brain_url_pa
+        pa_task_id=$(grep "^prd_audit_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        pa_status_local=$(grep "^prd_audit_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        brain_url_pa="${BRAIN_URL:-http://localhost:5221}/api/brain"
+
+        if [[ -n "$pa_task_id" && "$pa_status_local" != "pass" ]]; then
+            local pa_api_result pa_task_status pa_review_result
+            pa_api_result=$(curl -s --max-time 5 "$brain_url_pa/tasks/$pa_task_id" 2>/dev/null || echo "{}")
+            pa_task_status=$(echo "$pa_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+            pa_review_result=$(echo "$pa_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('review_result','') or '')" 2>/dev/null || echo "")
+
+            if [[ "$pa_task_status" == "completed" ]]; then
+                if echo "$pa_review_result" | grep -qi "PASS"; then
+                    # PRD Audit PASS：更新 .dev-mode 并继续
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        sed -i '' "s/^prd_audit_status:.*/prd_audit_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    else
+                        sed -i "s/^prd_audit_status:.*/prd_audit_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    fi
+                    # 继续后续条件
+                else
+                    local pa_fail_reasons
+                    pa_fail_reasons=$(echo "$pa_review_result" | grep -A 10 "MISSING\|FAIL" | head -8 || echo "详见 review_result")
+                    _devloop_jq -n \
+                        --arg task_id "$pa_task_id" \
+                        --arg reasons "$pa_fail_reasons" \
+                        '{"status":"blocked","reason":"PRD 覆盖审计未通过，有承诺未实现","action":"根据以下 MISSING 项补充实现后重新 push。PRD Audit Task: \($task_id)\n未覆盖项:\n\($reasons)"}'
+                    return 2
+                fi
+            else
+                local pa_wait_status="${pa_task_status:-queued}"
+                _devloop_jq -n \
+                    --arg task_id "$pa_task_id" \
+                    --arg status "$pa_wait_status" \
+                    '{"status":"blocked","reason":"等待 PRD 覆盖审计完成（状态: \($status)）","action":"等待 prd_coverage_audit task \($task_id) 完成，PASS 后自动继续"}'
+                return 2
+            fi
+        fi
+    fi
+
+    # ===== 条件 3: CI 状态？=====
     # PR 已合并则跳过（合并意味着 CI 必然已通过）
     local ci_status="unknown" ci_conclusion="" ci_run_id=""
 
@@ -292,7 +378,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         esac
     fi
 
-    # ===== 条件 3: PR 是否已合并？=====
+    # ===== 条件 4: PR 是否已合并？=====
     if [[ "$pr_state" == "merged" ]]; then
         # PR 已合并，检查 Step 11 Cleanup
         local step_11_status
@@ -312,7 +398,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 3.5: CI 通过 → 检查异步 PR Review 状态（若有 review_task_id）=====
+    # ===== 条件 4.5: CI 通过 → 检查异步 PR Review 状态（若有 review_task_id）=====
     if [[ -f "$dev_mode_file" ]]; then
         local review_task_id review_status_local brain_url
         review_task_id=$(grep "^review_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
@@ -354,7 +440,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 4: CI 通过 + PR 未合并 → 检查 Step 10 LEARNINGS =====
+    # ===== 条件 5: CI 通过 + PR 未合并 → 检查 Step 10 LEARNINGS =====
     local step_10_status
     step_10_status=$(grep "^step_10_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
 
