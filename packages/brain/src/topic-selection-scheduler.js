@@ -1,0 +1,172 @@
+/**
+ * topic-selection-scheduler.js
+ *
+ * 每日内容选题调度器。
+ * 每次 Tick 末尾调用 triggerDailyTopicSelection()，内部判断是否到达每日触发时间（01:00 UTC = 09:00 北京时间）。
+ * 如果是，则调用 topic-selector.js 生成选题，并为每个选题创建 content-pipeline task。
+ *
+ * 触发窗口：UTC 01:00 - 01:05（北京时间 09:00 - 09:05）
+ * 去重策略：同一天内已有 payload.trigger_source = daily_topic_selection 的 content-pipeline task → 跳过
+ * 限流：每日最多创建 MAX_DAILY_TOPICS 条 content-pipeline tasks
+ */
+
+import { generateTopics } from './topic-selector.js';
+
+// ─── 常量 ────────────────────────────────────────────────────────────────────
+
+/** 每日触发时间（UTC 小时）= 北京时间 09:00 */
+const DAILY_TOPIC_HOUR_UTC = 1;
+
+/** 触发窗口分钟数（与 daily-review-scheduler.js 保持一致） */
+const TRIGGER_WINDOW_MINUTES = 5;
+
+/** 每日最多创建的 content-pipeline tasks 数量 */
+const MAX_DAILY_TOPICS = 10;
+
+/** KR goal_id：选题+文案自动化 Initiative 所属 KR（内容生产自动化） */
+const CONTENT_KR_GOAL_ID = 'fedab43c-a8b8-428c-bcc1-6aad6e6210fc';
+
+// ─── 主入口 ──────────────────────────────────────────────────────────────────
+
+/**
+ * 每日选题触发器。由 tick.js 在每次 Tick 末尾调用。
+ *
+ * @param {import('pg').Pool} pool - PostgreSQL 连接池
+ * @param {Date} [now] - 当前时间（测试时可注入）
+ * @returns {Promise<{triggered: number, skipped: boolean, skipped_window: boolean}>}
+ */
+export async function triggerDailyTopicSelection(pool, now = new Date()) {
+  // 1. 判断是否在触发窗口内
+  if (!isInTriggerWindow(now)) {
+    return { triggered: 0, skipped: false, skipped_window: true };
+  }
+
+  // 2. 检查今天是否已经生成过
+  if (await hasTodayTopics(pool)) {
+    return { triggered: 0, skipped: true, skipped_window: false };
+  }
+
+  // 3. 生成选题
+  let topics;
+  try {
+    topics = await generateTopics(pool);
+  } catch (err) {
+    console.error('[topic-selection-scheduler] generateTopics 失败:', err.message);
+    return { triggered: 0, skipped: false, skipped_window: false, error: err.message };
+  }
+
+  if (!topics || topics.length === 0) {
+    console.warn('[topic-selection-scheduler] 未生成任何选题，跳过任务创建');
+    return { triggered: 0, skipped: false, skipped_window: false };
+  }
+
+  // 4. 限流：最多取 MAX_DAILY_TOPICS 个
+  const toCreate = topics.slice(0, MAX_DAILY_TOPICS);
+
+  // 5. 为每个选题创建 content-pipeline task
+  let created = 0;
+  const today = toDateString(now);
+
+  for (const topic of toCreate) {
+    try {
+      await createContentPipelineTask(pool, topic, today);
+      created++;
+    } catch (err) {
+      console.error(`[topic-selection-scheduler] 创建任务失败 (${topic.keyword}):`, err.message);
+    }
+  }
+
+  console.log(`[topic-selection-scheduler] 今日选题完成，创建 ${created} 个 content-pipeline tasks`);
+  return { triggered: created, skipped: false, skipped_window: false };
+}
+
+// ─── 辅助函数 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 判断当前时间是否在每日触发窗口内（UTC 01:00 - 01:05）
+ * @param {Date} now
+ * @returns {boolean}
+ */
+function isInTriggerWindow(now) {
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  return utcHour === DAILY_TOPIC_HOUR_UTC && utcMinute < TRIGGER_WINDOW_MINUTES;
+}
+
+/**
+ * 检查今天是否已经创建过 daily_topic_selection 任务
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<boolean>}
+ */
+export async function hasTodayTopics(pool) {
+  const { rows } = await pool.query(
+    `SELECT id FROM tasks
+     WHERE payload->>'trigger_source' = 'daily_topic_selection'
+       AND created_at >= CURRENT_DATE::timestamptz
+       AND created_at < (CURRENT_DATE + INTERVAL '1 day')::timestamptz
+     LIMIT 1`
+  );
+  return rows.length > 0;
+}
+
+/**
+ * 为单个选题创建 content-pipeline task
+ * @param {import('pg').Pool} pool
+ * @param {object} topic - 选题对象
+ * @param {string} today - 日期字符串 YYYY-MM-DD
+ */
+async function createContentPipelineTask(pool, topic, today) {
+  const title = `[内容流水线] ${topic.keyword} ${today}`;
+  const payload = JSON.stringify({
+    pipeline_keyword: topic.keyword,
+    content_type: topic.content_type,
+    title_candidates: topic.title_candidates,
+    hook: topic.hook,
+    why_hot: topic.why_hot,
+    priority_score: topic.priority_score,
+    trigger_source: 'daily_topic_selection',
+    selected_date: today,
+  });
+
+  await pool.query(
+    `INSERT INTO tasks (
+       title, task_type, status, priority,
+       goal_id, created_by, payload, trigger_source, location, domain
+     )
+     VALUES (
+       $1, 'content-pipeline', 'queued', 'P1',
+       $2, 'cecelia-brain', $3, 'brain_auto', 'us', 'content'
+     )`,
+    [title, CONTENT_KR_GOAL_ID, payload]
+  );
+
+  // 同步写入 topic_selection_log（可选，失败不影响主流程）
+  try {
+    await pool.query(
+      `INSERT INTO topic_selection_log
+         (selected_date, keyword, content_type, title_candidates, hook, why_hot, priority_score)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        today,
+        topic.keyword,
+        topic.content_type,
+        JSON.stringify(topic.title_candidates),
+        topic.hook,
+        topic.why_hot,
+        topic.priority_score,
+      ]
+    );
+  } catch (logErr) {
+    // topic_selection_log 写入失败不阻断主流程
+    console.warn('[topic-selection-scheduler] topic_selection_log 写入失败:', logErr.message);
+  }
+}
+
+/**
+ * 将 Date 格式化为 YYYY-MM-DD
+ * @param {Date} date
+ * @returns {string}
+ */
+function toDateString(date) {
+  return date.toISOString().split('T')[0];
+}
