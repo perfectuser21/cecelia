@@ -734,6 +734,54 @@ describe('边界条件', () => {
     // absent: totalRunning=0, userReserve=0 → available = 100
     expect(budget.taskPool.budget).toBe(100);
   });
+
+  it('双源计数: DB 计数大于 ps 检测时取 DB 值（保守）', async () => {
+    // ps 检测: 0 个进程（进程标题被覆盖等原因导致遗漏）
+    execSync.mockReturnValue('');
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 12,
+      metrics: { max_pressure: 0.1 },
+    });
+    // DB: ceceliaUsed=1, autoDispatchUsed=4 → DB 合计=5
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })  // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '4' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
+    const budget = await calculateSlotBudget();
+    // totalRunning = max(0, 1+4) = 5
+    // available = 12 - 5 - 0(absent) = 7
+    expect(budget.taskPool.available).toBe(7);
+    expect(budget.taskPool.budget).toBe(7 + 4); // available + autoDispatchUsed
+  });
+
+  it('双源计数: ps 检测大于 DB 计数时取 ps 值', async () => {
+    // ps 检测: 6 个进程（3 headed + 3 headless）
+    execSync.mockReturnValue(
+      '100 300 claude claude\n' +
+      '200 300 claude claude\n' +
+      '300 300 claude claude\n' +
+      '400 300 claude claude -p "task1"\n' +
+      '500 300 claude claude -p "task2"\n' +
+      '600 300 claude claude -p "task3"\n'
+    );
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 12,
+      metrics: { max_pressure: 0.1 },
+    });
+    // DB: ceceliaUsed=0, autoDispatchUsed=2 → DB 合计=2（低于 ps 的 6）
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '2' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
+    const budget = await calculateSlotBudget();
+    // totalRunning = max(6, 0+2) = 6
+    // userReserve = 1 (team mode, 3 headed)
+    // available = 12 - 6 - 1 = 5
+    expect(budget.taskPool.available).toBe(5);
+    expect(budget.taskPool.budget).toBe(5 + 2); // available + autoDispatchUsed
+  });
 });
 
 // ============================================================
