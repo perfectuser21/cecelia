@@ -268,6 +268,73 @@ fi
 
 ---
 
+## 写入 Evidence 文件
+
+Brain 回调完成后，必须写 `.dev-codex-evidence.{branch}.json` 并 git push：
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+EVIDENCE_FILE=".dev-codex-evidence.${BRANCH}.json"
+TASK_CARD_FILE=".task-${BRANCH}.md"
+TASK_CARD_HASH="sha256:$(sha256sum "$TASK_CARD_FILE" 2>/dev/null | cut -d' ' -f1 || echo 'unknown')"
+NOW=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+REVIEWER_TYPE="cto_review"
+REVIEWER_AGENT="${CODEX_AGENT_ID:-codex-local}"
+BRAIN_TASK_ID_VAL="${BRAIN_TASK_ID:-unknown}"
+
+# 构建本次 review 条目
+NEW_REVIEW=$(jq -n \
+  --arg rt "$REVIEWER_TYPE" \
+  --arg ra "$REVIEWER_AGENT" \
+  --arg bt "$BRAIN_TASK_ID_VAL" \
+  --arg decision "$DECISION" \
+  --arg summary "$SUMMARY" \
+  --arg ts "$NOW" \
+  '{reviewer_type: $rt, reviewer_agent: $ra, brain_task_id: $bt,
+    decision: $decision, checks: [], summary: $summary, timestamp: $ts}')
+
+# 创建或追加文件
+if [ ! -f "$EVIDENCE_FILE" ]; then
+  jq -n \
+    --arg branch "$BRANCH" \
+    --arg hash "$TASK_CARD_HASH" \
+    --arg now "$NOW" \
+    --argjson review "$NEW_REVIEW" \
+    '{version:"1.0.0", branch:$branch, task_card_hash:$hash,
+      created_at:$now, updated_at:$now,
+      overall_decision:"PENDING", reviews:[$review]}' > "$EVIDENCE_FILE"
+else
+  UPDATED=$(jq --argjson review "$NEW_REVIEW" --arg now "$NOW" \
+    '.reviews += [$review] | .updated_at = $now' "$EVIDENCE_FILE")
+  echo "$UPDATED" > "$EVIDENCE_FILE"
+fi
+
+# 更新 overall_decision
+FAIL_COUNT=$(jq '[.reviews[] | select(.decision == "FAIL")] | length' "$EVIDENCE_FILE")
+PASS_COUNT=$(jq '[.reviews[] | select(.decision == "PASS" or .decision == "WARN")] | length' "$EVIDENCE_FILE")
+TOTAL=$(jq '.reviews | length' "$EVIDENCE_FILE")
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  OVERALL="FAIL"
+elif [ "$TOTAL" -ge 3 ] && [ "$PASS_COUNT" -ge 3 ]; then
+  OVERALL="PASS"
+else
+  OVERALL="PENDING"
+fi
+jq --arg od "$OVERALL" '.overall_decision = $od' "$EVIDENCE_FILE" > "${EVIDENCE_FILE}.tmp" && mv "${EVIDENCE_FILE}.tmp" "$EVIDENCE_FILE"
+
+# Push 到功能分支
+git add -f "$EVIDENCE_FILE"
+git commit -m "chore(evidence): cto_review=${DECISION} [${BRANCH}]"
+git push origin "$BRANCH"
+echo "✅ Evidence 文件已更新并 push（overall_decision=${OVERALL}）"
+```
+
+> **DECISION** 和 **SUMMARY** 变量在 Phase 3 输出结论后设置，例：
+> - `DECISION="PASS"` / `DECISION="FAIL"` / `DECISION="WARN"`
+> - `SUMMARY="需求覆盖完整，无 L1 问题，DoD 全通过"`
+
+---
+
 ## 约束
 
 1. **只读代码，不修改文件**：审查员不是执行者，不改任何代码
@@ -275,3 +342,4 @@ fi
 3. **FAIL 必须给出具体修复项**：不能只说"有问题"，必须指出 file:行号 + 修复方向
 4. **不能因为 L3/L4 问题 FAIL**：L3 记录，L4 忽略，都不影响决定
 5. **回调必须执行**：无论 PASS/FAIL，都必须回调 Brain（否则 devloop-check.sh 永远等待）
+6. **Evidence 文件必须写入**：回调后必须写 `.dev-codex-evidence.{branch}.json` 并 git push
