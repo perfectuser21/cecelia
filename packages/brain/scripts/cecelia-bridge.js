@@ -91,8 +91,12 @@ const server = http.createServer((req, res) => {
           env.CLAUDE_CONFIG_DIR = join(homedir(), '.claude-' + accountId);
         }
 
+        // cwd 隔离：LLM 调用的 session 不污染 cecelia 项目的 /resume 列表
+        const llmWorkDir = '/tmp/cecelia-llm';
+        try { require('fs').mkdirSync(llmWorkDir, { recursive: true }); } catch {}
         const child = spawn(claudeBin, args, {
           env,
+          cwd: llmWorkDir,
           stdio: ['ignore', 'pipe', 'pipe'],
           timeout: timeoutMs,
         });
