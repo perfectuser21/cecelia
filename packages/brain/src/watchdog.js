@@ -5,7 +5,7 @@
  * Three-tier response based on system pressure:
  *   - Normal (< 0.7): warn only
  *   - Tense (0.7~1.0): kill if RSS high + CPU sustained
- *   - Crisis (>= 1.0): kill top RSS offender only
+ *   - Crisis (>= 1.0): kill top 25% RSS offenders (min 1, max 4)
  *
  * Dynamic thresholds based on total system memory.
  * 60-second startup grace period (except hard RSS limit).
@@ -35,6 +35,10 @@ const RSS_WARN_MB = Math.round(RSS_KILL_MB * 0.75);
 const CPU_SUSTAINED_PCT = 95;
 const CPU_SUSTAINED_TICKS = 6;       // 6 * 5s = 30 seconds sustained
 const STARTUP_GRACE_SEC = 60;
+
+// === Crisis mode kill budget ===
+const CRISIS_KILL_RATIO = 0.25;  // Crisis 模式杀 top 25% 进程
+const CRISIS_KILL_MAX = 4;        // Crisis 模式最多杀 4 个进程
 
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 
@@ -521,13 +525,13 @@ function checkRunaways(systemPressure) {
     });
   }
 
-  // P1 #6: Crisis mode — only kill the single highest RSS offender
+  // P0 #4: Crisis mode — kill top 25% RSS offenders (min 1, max CRISIS_KILL_MAX)
   const crisisCandidates = actions.filter(a => a.action === 'kill_if_top_offender');
   if (crisisCandidates.length > 0) {
     crisisCandidates.sort((a, b) => b.rss - a.rss);
-    crisisCandidates[0].action = 'kill';
-    for (let i = 1; i < crisisCandidates.length; i++) {
-      crisisCandidates[i].action = 'warn';
+    const killCount = Math.max(1, Math.min(CRISIS_KILL_MAX, Math.ceil(crisisCandidates.length * CRISIS_KILL_RATIO)));
+    for (let i = 0; i < crisisCandidates.length; i++) {
+      crisisCandidates[i].action = i < killCount ? 'kill' : 'warn';
     }
   }
 
@@ -764,6 +768,8 @@ export {
   PREDICTION_WINDOW_MINUTES,
   PREDICTION_ALERT_THRESHOLD,
   HEALING_COOLDOWN_MS,
+  CRISIS_KILL_RATIO,
+  CRISIS_KILL_MAX,
   _taskMetrics,
   _idleMetrics,
   _lastHealingTrigger,
