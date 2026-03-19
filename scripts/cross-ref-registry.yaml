@@ -1,0 +1,92 @@
+# cross-ref-registry.yaml
+# 跨文件引用声明注册表
+#
+# 用途：声明各 SSOT 文件与消费者文件之间的依赖关系，
+#       使跨文件引用可机器追踪，变更时可枚举受影响范围。
+#
+# 字段说明：
+#   ssot.file    — 单一事实来源文件（定义端）
+#   ssot.extract — 从 SSOT 提取值集合的命令（在仓库根目录执行）
+#   consumers    — 消费该值集合的文件列表（支持 glob）
+#   check        — 校验类型（field-presence / value-match / name-match）
+#   description  — 规则说明
+#
+# 所有 extract 命令均在仓库根目录执行，输出为换行分隔的值列表。
+#
+# 版本: 1.0.0
+# 创建: 2026-03-20
+
+version: "1.0.0"
+
+rules:
+
+  - id: devmode-fields
+    description: >
+      devloop-check.sh 读写的 .dev-mode 字段名（step_X_xxx、cleanup_done、
+      intent_expand_task_id、cto_review_task_id 等）必须与 stop-dev.sh、
+      cleanup.sh 以及 steps/*.md 中引用的字段名保持一致。
+    ssot:
+      file: packages/engine/lib/devloop-check.sh
+      extract: >
+        grep -E 'step_[0-9]+_[a-z]+:|cleanup_done:|intent_expand_task_id:|cto_review_task_id:'
+        packages/engine/lib/devloop-check.sh |
+        grep -oE 'step_[0-9]+_[a-z]+|cleanup_done|intent_expand_task_id|cto_review_task_id' |
+        sort -u
+    consumers:
+      - packages/engine/hooks/stop-dev.sh
+      - packages/engine/skills/dev/scripts/cleanup.sh
+      - packages/workflows/skills/dev/scripts/cleanup.sh
+      - packages/engine/skills/dev/steps/*.md
+      - packages/workflows/skills/dev/steps/*.md
+    check: field-presence
+
+  - id: task-types
+    description: >
+      task-router.js 中 VALID_TASK_TYPES 数组是 task_type 合法值的 SSOT。
+      executor.js 在派发时调用 getTaskLocation，tick.js 在调度时依赖此路由，
+      两者必须只使用 VALID_TASK_TYPES 中声明的类型。
+    ssot:
+      file: packages/brain/src/task-router.js
+      symbol: VALID_TASK_TYPES
+      extract: >
+        node --input-type=module -e
+        "import { VALID_TASK_TYPES } from './packages/brain/src/task-router.js';
+        console.log(VALID_TASK_TYPES.join('\n'));"
+    consumers:
+      - packages/brain/src/executor.js
+      - packages/brain/src/tick.js
+    check: value-match
+
+  - id: skill-names
+    description: >
+      task-router.js 中 SKILL_WHITELIST 对象的 values（/dev、/code-review 等
+      skill 路径）是合法的 skill 调用名 SSOT。skills/*/SKILL.md 中声明的
+      skill 入口名必须与此处注册的路径对应。
+    ssot:
+      file: packages/brain/src/task-router.js
+      symbol: SKILL_WHITELIST
+      extract: >
+        node --input-type=module -e
+        "import { SKILL_WHITELIST } from './packages/brain/src/task-router.js';
+        console.log(Object.values(SKILL_WHITELIST).join('\n'));"
+    consumers:
+      - packages/engine/skills/*/SKILL.md
+      - packages/workflows/skills/*/SKILL.md
+      - packages/workflows/agents/*/SKILL.md
+    check: name-match
+
+  - id: model-ids
+    description: >
+      model-registry.js 中 MODELS 数组的 id 字段是全局模型 ID 的 SSOT。
+      model-profile.js 在调用 updateAgentModel / isModelAllowedForAgent 时
+      传入的 modelId 必须是 MODELS 中已注册的 ID。
+    ssot:
+      file: packages/brain/src/model-registry.js
+      symbol: MODELS[].id
+      extract: >
+        node --input-type=module -e
+        "import { MODELS } from './packages/brain/src/model-registry.js';
+        console.log(MODELS.map(m => m.id).join('\n'));"
+    consumers:
+      - packages/brain/src/model-profile.js
+    check: value-match
