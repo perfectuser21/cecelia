@@ -258,7 +258,8 @@ async function calculateSlotBudget() {
   // Running processes = actual running count from DB
   const ceceliaUsed = await countCeceliaInProgress();
   const autoDispatchUsed = await countAutoDispatchInProgress();
-  const totalRunning = sessions.total;
+  // Conservative: take the higher of ps detection vs DB count to prevent over-dispatch
+  const totalRunning = Math.max(sessions.total, ceceliaUsed + autoDispatchUsed);
 
   // User reserve: 1 slot headroom when user is active
   const userReserve = userMode !== 'absent' ? USER_PRIORITY_HEADROOM : 0;
