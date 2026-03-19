@@ -71,8 +71,11 @@ const server = http.createServer((req, res) => {
         }
 
         const modelArg = model || 'haiku';
-        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, 600000);
-        const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
+        // MAX_BRIDGE_LLM_TIMEOUT_MS: 每请求超时的安全上限（默认 10 分钟），允许 Cortex Opus 等慢模型
+        // BRIDGE_TIMEOUT_MS 仍作为"未传 timeout 时"的默认值（120s）
+        const MAX_BRIDGE_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_MAX_TIMEOUT_MS || '600000', 10);
+        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, MAX_BRIDGE_LLM_TIMEOUT_MS);
+        const claudeBin = '/Users/administrator/.local/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 
         const startTime = Date.now();
@@ -158,7 +161,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
+        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = notebook_id ? ['ask', '-n', notebook_id, query] : ['ask', query];
@@ -195,7 +198,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
+        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = notebook_id ? ['source', 'add', '-n', notebook_id, url] : ['source', 'add', url];
@@ -231,7 +234,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
+        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         // notebooklm source add "text content" --title "title" [-n notebook_id] --json
@@ -274,7 +277,7 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({ ok: false, error: 'Missing source_id' }));
           return;
         }
-        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
+        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = ['source', 'delete', source_id, '-y'];
@@ -305,7 +308,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const { notebook_id } = JSON.parse(body);
-        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
+        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
         const { execFile } = require('child_process');
         const args = ['source', 'list', '--json'];
         if (notebook_id) { args.push('-n', notebook_id); }
@@ -344,5 +347,4 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`[bridge] cecelia-bridge listening on port ${PORT}`);
   console.log(`[bridge] Brain URL: ${BRAIN_URL}`);
-  console.log(`[bridge] BRIDGE_TIMEOUT_MS=${BRIDGE_TIMEOUT_MS} (default, max cap=600000ms)`);
 });
