@@ -239,7 +239,7 @@ async function startCeceliaBridge() {
 
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
-  const bridgeScript = join(__dirname, 'scripts', 'cecelia-bridge.js');
+  const bridgeScript = join(__dirname, 'scripts', 'cecelia-bridge.cjs');
   const logFile = createWriteStream('/tmp/cecelia-bridge.log', { flags: 'a' });
   // Wait for the stream to open before passing to spawn.
   // On Linux (ubuntu-latest) a freshly created WriteStream has fd:null until

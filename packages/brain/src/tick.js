@@ -2190,13 +2190,16 @@ async function executeTick() {
   }
 
   // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
+  console.log(`[tick] Phase 7 reached: queued=${queued.length} inProgress=${inProgress.length} allGoalIds=${allGoalIds.length}`);
   publishCognitiveState({ phase: 'dispatching', detail: '派发任务…' });
   //    Respect alertness level dispatch settings
   let dispatched = 0;
   let lastDispatchResult = null;
 
   // Check if dispatch is allowed (using enhanced alertness)
-  if (!canDispatch()) {
+  const _canDispatchResult = canDispatch();
+  console.log(`[tick] canDispatch=${_canDispatchResult} alertness=${alertnessResult?.level || '?'}`);
+  if (!_canDispatchResult) {
     console.log(`[tick] Dispatch disabled at alertness level ${alertnessResult?.levelName || 'UNKNOWN'}`);
     return {
       success: true,
@@ -2295,6 +2298,7 @@ async function executeTick() {
     const dispatchResult = await dispatchNextTask(allGoalIds);
     actionsTaken.push(...dispatchResult.actions);
     lastDispatchResult = dispatchResult;
+    console.log(`[tick] Dispatch attempt ${i}: dispatched=${dispatchResult.dispatched} reason=${dispatchResult.reason || 'ok'}`);
 
     if (!dispatchResult.dispatched) {
       if (dispatchResult.reason !== 'no_dispatchable_task') {
