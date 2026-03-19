@@ -30,6 +30,8 @@ describe('capability-scanner', () => {
         })
         // Mock skill stats
         .mockResolvedValueOnce({ rows: [] })
+        // Mock embedded sources query
+        .mockResolvedValueOnce({ rows: [] })
         // Mock table exists check for 'tasks'
         .mockResolvedValueOnce({ rows: [{ has_data: true }] });
 
@@ -52,13 +54,90 @@ describe('capability-scanner', () => {
           ],
         })
         .mockResolvedValueOnce({ rows: [] }) // no tasks
-        .mockResolvedValueOnce({ rows: [] }); // no skills
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
 
       const { scanCapabilities } = await import('../capability-scanner.js');
       const result = await scanCapabilities();
 
       const cap = result.capabilities.find(c => c.id === 'no-usage');
       expect(cap.status).toBe('island');
+    });
+
+    it('should mark BRAIN_ALWAYS_ACTIVE capabilities as active with brain_embedded evidence', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            // An always-active capability (in BRAIN_ALWAYS_ACTIVE set)
+            { id: 'emotion-perception', name: '情绪感知', current_stage: 2, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'cecelia' },
+            // Another always-active capability
+            { id: 'watchdog-resource-monitor', name: '看门狗资源监控', current_stage: 3, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // embedded sources (queried before per-cap check)
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const emotionCap = result.capabilities.find(c => c.id === 'emotion-perception');
+      expect(emotionCap.status).toBe('active');
+      expect(emotionCap.evidence).toContain('brain_embedded:true');
+
+      const watchdogCap = result.capabilities.find(c => c.id === 'watchdog-resource-monitor');
+      expect(watchdogCap.status).toBe('active');
+      expect(watchdogCap.evidence).toContain('brain_embedded:true');
+    });
+
+    it('should mark BRAIN_EMBEDDED_SOURCES capabilities as active when cecelia_events has records', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            // circuit-breaker-protection is in BRAIN_EMBEDDED_SOURCES
+            { id: 'circuit-breaker-protection', name: '熔断保护系统', current_stage: 3, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        // cecelia_events: circuit_breaker source has recent activity
+        .mockResolvedValueOnce({ rows: [{ source: 'circuit_breaker' }] });
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'circuit-breaker-protection');
+      expect(cap.status).toBe('active');
+      expect(cap.evidence).toContain('brain_embedded:true');
+      expect(cap.evidence).toContain('cecelia_events:source=circuit_breaker');
+    });
+
+    it('should mark BRAIN_EMBEDDED_SOURCES capabilities as dormant (not island) when no cecelia_events records', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'self-healing', name: '自愈与免疫', current_stage: 2, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'cecelia' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        // cecelia_events: no 'healing' source found
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'self-healing');
+      expect(cap.status).toBe('dormant');
+      expect(cap.evidence).toContain('brain_embedded:true');
+      expect(cap.evidence).toContain('cecelia_events:no_recent_activity');
+      expect(cap.status).not.toBe('island');
     });
   });
 

@@ -17,6 +17,37 @@ import pool from './db.js';
 const SCAN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 每 6 小时扫描一次
 const ISLAND_THRESHOLD_DAYS = 30; // 30 天未使用 → 标记为孤岛
 
+// Brain 内嵌能力 → cecelia_events source 名称映射
+// 这些能力直接运行在 Brain 进程中，不通过 run_events/skills，
+// 而是向 cecelia_events 写入特定 source 的事件。
+const BRAIN_EMBEDDED_SOURCES = {
+  'circuit-breaker-protection': ['circuit_breaker'],
+  'self-healing-immunity': ['healing', 'immune'],
+  'self-healing': ['healing'],
+  'three-layer-brain': ['thalamus', 'cortex'],
+};
+
+// Brain 进程运行即视为 active 的能力（架构性/意识性能力）
+// 这些能力是 Brain 的固有组成部分，没有独立的 skill 或 event source，
+// 只要 Brain 在运行，它们就在运行。
+const BRAIN_ALWAYS_ACTIVE = new Set([
+  'three-pool-slot-allocation',   // 槽位分配器，每次 tick 运行
+  'autonomous-task-scheduling',   // Brain 核心调度
+  'autonomous-scheduling',        // migration-094 consciousness 版本
+  'three-layer-consciousness',    // Brain 三层架构本身
+  'watchdog-resource-monitor',    // 看门狗，嵌入 tick 循环
+  'quarantine-review-system',     // 隔离区，嵌入任务处理
+  'emotion-perception',           // 情绪感知，嵌入 tick 循环
+  'curiosity-exploration',        // 好奇心探索，意识层固有
+  'desire-formation',             // 欲望涌现，意识层固有
+  'rumination',                   // 反刍，意识层固有
+  'memory-working',               // 工作记忆，Brain 上下文
+  'memory-episodic',              // 情节记忆，memory_stream 支撑
+  'memory-semantic',              // 语义记忆，learnings 支撑
+  'learning-absorption',          // 学习吸收，嵌入 tick 循环
+  'narrative-expression',         // 叙事表达，意识层固有
+]);
+
 // ============================================================
 // Core scanner
 // ============================================================
@@ -28,6 +59,8 @@ const ISLAND_THRESHOLD_DAYS = 30; // 30 天未使用 → 标记为孤岛
  * - Check if its related_skills / key_tables / task_types have been used
  * - Cross-reference with tasks table (completed vs failed)
  * - Cross-reference with run_events (recent activity)
+ * - Check BRAIN_ALWAYS_ACTIVE whitelist (Brain-embedded, always active)
+ * - Check BRAIN_EMBEDDED_SOURCES via cecelia_events (Brain-internal event sources)
  * - Assign status: active | dormant | island | failing
  *
  * @returns {Promise<Object>} { capabilities: [...], summary: {...} }
@@ -60,7 +93,7 @@ export async function scanCapabilities() {
     taskUsageMap[row.task_type] = row;
   }
 
-  // 3. Get skill usage from run_events (last 30 days)
+  // 3. Get skill usage from run_events (last 90 days)
   const skillStats = await pool.query(`
     SELECT
       step_name AS skill,
@@ -80,6 +113,24 @@ export async function scanCapabilities() {
   // 4. Get table access evidence (check if key_tables have data)
   const tableCountCache = {};
 
+  // 4.5 Get Brain-embedded event sources active in last 90 days
+  const allEmbeddedSources = Object.values(BRAIN_EMBEDDED_SOURCES).flat();
+  const embeddedSourcesActive = new Set();
+  if (allEmbeddedSources.length > 0) {
+    try {
+      const embeddedResult = await pool.query(
+        `SELECT DISTINCT source FROM cecelia_events
+         WHERE source = ANY($1) AND created_at > NOW() - INTERVAL '90 days'`,
+        [allEmbeddedSources]
+      );
+      for (const row of embeddedResult.rows) {
+        embeddedSourcesActive.add(row.source);
+      }
+    } catch {
+      // cecelia_events may not exist in all environments — treat as empty
+    }
+  }
+
   // 5. Evaluate each capability
   const healthMap = [];
 
@@ -97,7 +148,36 @@ export async function scanCapabilities() {
       success_rate: null,
     };
 
-    // Check related_skills usage
+    // 5.0 Check Brain always-active whitelist first
+    if (BRAIN_ALWAYS_ACTIVE.has(cap.id)) {
+      health.status = 'active';
+      health.evidence.push('brain_embedded:true');
+      healthMap.push(health);
+      continue;
+    }
+
+    // 5.1 Check Brain embedded sources (cecelia_events)
+    const embeddedSources = BRAIN_EMBEDDED_SOURCES[cap.id];
+    if (embeddedSources) {
+      const activeSources = embeddedSources.filter(s => embeddedSourcesActive.has(s));
+      if (activeSources.length > 0) {
+        health.status = 'active';
+        health.evidence.push('brain_embedded:true');
+        for (const src of activeSources) {
+          health.evidence.push(`cecelia_events:source=${src}`);
+        }
+        healthMap.push(health);
+        continue;
+      }
+      // Sources configured but no recent events → dormant (not island)
+      health.evidence.push('brain_embedded:true');
+      health.evidence.push('cecelia_events:no_recent_activity');
+      health.status = 'dormant';
+      healthMap.push(health);
+      continue;
+    }
+
+    // 5.2 Check related_skills usage
     const relatedSkills = cap.related_skills || [];
     let hasSkillActivity = false;
     for (const skill of relatedSkills) {
@@ -118,7 +198,7 @@ export async function scanCapabilities() {
       }
     }
 
-    // Check key_tables have data
+    // 5.3 Check key_tables have data
     const keyTables = cap.key_tables || [];
     let hasTableData = false;
     for (const table of keyTables) {
@@ -140,7 +220,7 @@ export async function scanCapabilities() {
       }
     }
 
-    // Determine status
+    // 5.4 Determine status
     if (hasSkillActivity && health.success_rate !== null && health.success_rate < 30) {
       health.status = 'failing';
     } else if (hasSkillActivity || hasTableData) {
@@ -158,7 +238,7 @@ export async function scanCapabilities() {
         health.status = 'dormant';
       }
     } else {
-      // No skill usage, no table data → island
+      // No skill usage, no table data, not brain-embedded → island
       health.status = 'island';
     }
 
