@@ -96,7 +96,7 @@ export async function runSelfDrive() {
           task_type: action.task_type || 'dev',
           priority: action.priority || 'P2',
           trigger_source: 'self_drive',
-          tags: JSON.stringify(['self-drive', 'auto-generated']),
+          tags: ['self-drive', 'auto-generated'],
         });
         console.log(`[SelfDrive] Created task: ${taskId} — "${action.title}"`);
         created.push({ taskId, title: action.title });
