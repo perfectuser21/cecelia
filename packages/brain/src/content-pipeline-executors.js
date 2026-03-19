@@ -116,18 +116,29 @@ export async function executeGenerate(task) {
   ensureDir(join(dir, 'cards'));
   ensureDir(join(dir, 'article'));
 
-  // 找 findings
+  // 找 findings — 遍历所有匹配目录，取 findings 数量最多的
   let findings = [];
   try {
-    const rDirs = readdirSync(join(OUTPUT_BASE, 'research'));
-    const match = rDirs.find(d => d.includes(slug(keyword)));
-    if (match) {
-      const fp = join(OUTPUT_BASE, 'research', match, 'findings.json');
-      if (existsSync(fp)) findings = JSON.parse(readFileSync(fp, 'utf-8')).findings || [];
+    const rDir = join(OUTPUT_BASE, 'research');
+    if (existsSync(rDir)) {
+      const s = slug(keyword);
+      const candidates = readdirSync(rDir).filter(d => d.includes(s));
+      let bestCount = 0;
+      for (const cand of candidates) {
+        const fp = join(rDir, cand, 'findings.json');
+        if (existsSync(fp)) {
+          try {
+            const data = JSON.parse(readFileSync(fp, 'utf-8'));
+            const f = data.findings || [];
+            if (f.length > bestCount) { findings = f; bestCount = f.length; }
+          } catch { /* skip malformed */ }
+        }
+      }
+      console.log(`[generate] 找到 ${bestCount} 条 findings（${candidates.length} 个候选目录）`);
     }
-  } catch { /* */ }
+  } catch (e) { console.error(`[generate] findings 搜索失败: ${e.message}`); }
 
-  const top = findings.filter(f => f.brand_relevance >= 3).slice(0, 7);
+  const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 7);
 
   // 图文文案
   const copy = [
