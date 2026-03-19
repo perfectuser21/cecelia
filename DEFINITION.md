@@ -449,6 +449,8 @@ queued → in_progress → completed
 | pr_review | 西安 | 异步 PR 审查（独立 MiniMax 审查） | Codex / MiniMax | 固定 minimax |
 | intent_expand | US | 意图扩展 Expander（沿 project→KR→OKR→Vision 链补全 PRD） | Sonnet / - | 默认 anthropic |
 | cto_review | 西安 | CTO 整体审查（enriched PRD + DoD + diff → PASS/FAIL） | Codex | 固定 openai |
+| code_quality_review | 西安 | 代码质量审查（垃圾/重复/简洁/规范 4 维度） | Codex | 固定 openai |
+| prd_coverage_audit | 西安 | PRD 覆盖审计（MATCH/DOWNGRADED/MISSING 三态判定） | Codex | 固定 openai |
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 | architecture_design | US | 架构设计 (/architect design) | Opus / - | 默认 anthropic |
 | architecture_scan | US | 系统扫描 (/architect scan) | Opus / - | 默认 anthropic |
