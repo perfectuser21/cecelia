@@ -103,6 +103,21 @@ export async function runDesireSystem(pool) {
     result.expression = { triggered: true, acted: true };
 
     try {
+      // explore_dedup：若已有 queued/in_progress 的 curiosity research 任务，跳过创建（避免重复积压）
+      const { rows: existing_explore } = await pool.query(`
+        SELECT id FROM tasks
+        WHERE trigger_source = 'curiosity'
+          AND task_type = 'research'
+          AND status IN ('queued', 'in_progress')
+        LIMIT 1
+      `);
+      if (existing_explore.length > 0) {
+        await pool.query("UPDATE desires SET status = 'acted' WHERE id = $1", [desire.id]);
+        console.log(`[desire] explore desire skipped (explore_dedup): active research task ${existing_explore[0].id} already exists`);
+        result.expression = { triggered: false, skipped: 'explore_dedup', existing_task: existing_explore[0].id };
+        return result;
+      }
+
       const { rows } = await pool.query(`
         INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
         VALUES ($1, $2, 'P2', 'research', 'queued', 'curiosity')
