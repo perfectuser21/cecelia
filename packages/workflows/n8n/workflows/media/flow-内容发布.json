@@ -41,7 +41,9 @@
       ],
       "parameters": {
         "conditions": {
-          "options": { "typeValidation": "loose" },
+          "options": {
+            "typeValidation": "loose"
+          },
           "combinator": "and",
           "conditions": [
             {
@@ -101,12 +103,17 @@
           "values": [
             {
               "conditions": {
-                "options": { "typeValidation": "loose" },
+                "options": {
+                  "typeValidation": "loose"
+                },
                 "combinator": "and",
                 "conditions": [
                   {
                     "id": "r1",
-                    "operator": { "type": "string", "operation": "equals" },
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
                     "leftValue": "={{ $json.platform }}",
                     "rightValue": "douyin"
                   }
@@ -116,22 +123,9 @@
             },
             {
               "conditions": {
-                "options": { "typeValidation": "loose" },
-                "combinator": "and",
-                "conditions": [
-                  {
-                    "id": "r3",
-                    "operator": { "type": "string", "operation": "equals" },
-                    "leftValue": "={{ $json.platform }}",
-                    "rightValue": "kuaishou"
-                  }
-                ]
-              },
-              "outputIndex": 1
-            },
-            {
-              "conditions": {
-                "options": { "typeValidation": "loose" },
+                "options": {
+                  "typeValidation": "loose"
+                },
                 "combinator": "and",
                 "conditions": [
                   {
@@ -258,7 +252,10 @@
         300
       ],
       "credentials": {
-        "sshPrivateKey": { "id": "vvJsQOZ95sqzemla", "name": "VPS SSH Key" }
+        "sshPrivateKey": {
+          "id": "vvJsQOZ95sqzemla",
+          "name": "VPS SSH Key"
+        }
       },
       "parameters": {
         "authentication": "privateKey",
@@ -289,23 +286,6 @@
         "port": 22,
         "user": "administrator",
         "command": "=CONTENT_DIR=\"{{ $json.contentDir }}\"; if [ -z \"$CONTENT_DIR\" ] || [ \"$CONTENT_DIR\" = \"undefined\" ]; then echo '{\"success\":false,\"error\":\"contentDir 未提供\"}'; else NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules node ~/perfect21/cecelia/packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-api.cjs --content \"$CONTENT_DIR\" 2>&1 && echo '{\"success\":true}' || echo '{\"success\":false,\"error\":\"发布脚本返回非零退出码\"}'; fi"
-      }
-    },
-    {
-      "id": "n13",
-      "name": "SSH-快手",
-      "type": "n8n-nodes-base.ssh",
-      "typeVersion": 1,
-      "position": [1120, 400],
-      "credentials": {
-        "sshPrivateKey": { "id": "vvJsQOZ95sqzemla", "name": "VPS SSH Key" }
-      },
-      "parameters": {
-        "authentication": "privateKey",
-        "host": "100.71.151.105",
-        "port": 22,
-        "user": "administrator",
-        "command": "=TITLE=\"{{ $json.title }}\"; VIDEO=\"{{ $json.contentDir }}\"; NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules node ~/perfect21/cecelia/packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-video.cjs --title \"$TITLE\" --video \"$VIDEO\" 2>&1"
       }
     },
     {
@@ -341,14 +321,17 @@
         780
       ],
       "credentials": {
-        "sshPrivateKey": { "id": "vvJsQOZ95sqzemla", "name": "VPS SSH Key" }
+        "sshPrivateKey": {
+          "id": "vvJsQOZ95sqzemla",
+          "name": "VPS SSH Key"
+        }
       },
       "parameters": {
         "authentication": "privateKey",
-        "host": "100.71.151.105",
+        "host": "100.108.7.63",
         "port": 22,
         "user": "administrator",
-        "command": "=CONTENT_DIR=\"{{ $json.contentDir }}\"; if [ -z \"$CONTENT_DIR\" ] || [ \"$CONTENT_DIR\" = \"undefined\" ]; then echo '{\"success\":false,\"platform\":\"xiaohongshu\",\"contentType\":\"image\",\"workId\":null,\"url\":null,\"error\":\"contentDir 未提供\"}'; else NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs --content \"$CONTENT_DIR\" 2>&1; fi"
+        "command": "=CONTENT_DIR=\"{{ $json.contentDir }}\"; if [ -z \"$CONTENT_DIR\" ] || [ \"$CONTENT_DIR\" = \"undefined\" ]; then echo '{\"success\":false,\"error\":\"contentDir 未提供，请在请求体中传入包含图片的目录路径（如 ~/.xiaohongshu-queue/2026-03-10/image-1）\"}'; else NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs --content \"$CONTENT_DIR\" 2>&1 && echo '{\"success\":true}' || echo '{\"success\":false,\"error\":\"发布脚本返回非零退出码，请查看截图目录\"}'; fi"
       }
     },
     {
@@ -407,7 +390,15 @@
   ],
   "connections": {
     "Webhook": {
-      "main": [[{ "node": "准备", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "准备",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "准备": {
       "main": [
