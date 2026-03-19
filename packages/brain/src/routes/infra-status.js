@@ -30,7 +30,7 @@ const SERVERS = [
     tailscaleIp: '100.79.41.61',
     publicIp: '134.199.234.147',
     role: '公网中转 exit node',
-    sshUser: 'root',
+    sshAlias: 'us-vps',
   },
   {
     id: 'hk-vps',
@@ -39,7 +39,7 @@ const SERVERS = [
     tailscaleIp: '100.86.118.99',
     publicIp: '124.156.138.116',
     role: 'CI runner + 公网',
-    sshUser: 'root',
+    sshAlias: 'hk-vps',
   },
   {
     id: 'xian-mac-m1',
@@ -47,7 +47,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.103.88.66',
     role: 'L4 E2E CI 测试',
-    sshUser: 'administrator',
+    sshAlias: 'xian-m1',
   },
   {
     id: 'xian-mac-m4',
@@ -55,7 +55,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.86.57.69',
     role: 'Codex 主力机',
-    sshUser: 'administrator',
+    sshAlias: 'xian-mac',
   },
   {
     id: 'xian-pc',
@@ -63,7 +63,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.97.242.124',
     role: 'Playwright 被控端',
-    sshUser: 'zenithjoy',
+    sshAlias: 'xian-pc',
     isWindows: true,
   },
   {
@@ -72,7 +72,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.110.241.76',
     role: '存储',
-    sshUser: 'root',
+    sshAlias: 'nas',
   },
 ];
 
@@ -80,7 +80,9 @@ const SERVERS = [
  * 通过 SSH 执行远程命令，超时 5 秒
  */
 async function sshExec(server, cmd) {
-  const sshCmd = `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ${server.sshUser}@${server.tailscaleIp} ${JSON.stringify(cmd)}`;
+  // 使用 SSH config 别名（~/.ssh/config），让 1Password agent 自动处理认证
+  const host = server.sshAlias || `${server.sshUser}@${server.tailscaleIp}`;
+  const sshCmd = `ssh -o ConnectTimeout=5 -o BatchMode=yes ${host} ${JSON.stringify(cmd)}`;
   const { stdout } = await execAsync(sshCmd, { timeout: 8000 });
   return stdout.trim();
 }
