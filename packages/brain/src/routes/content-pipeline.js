@@ -37,7 +37,7 @@ router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, title, status, priority, payload,
-              created_at, started_at, completed_at, failed_at
+              created_at, started_at, completed_at
        FROM tasks
        WHERE task_type = 'content-pipeline'
        ORDER BY created_at DESC
