@@ -482,17 +482,34 @@ async function main(contentDir, titleText, contentText, windowsImages, musicQuer
     const bodyRes = await cdp.send('Runtime.evaluate', { expression: 'document.body.textContent.slice(0,500)', returnByValue: true });
     const bodyText = bodyRes.result.value;
 
-    if (isPublishSuccess(finalUrl, bodyText)) {
+    const publishOk = isPublishSuccess(finalUrl, bodyText);
+    if (publishOk) {
       console.log('\n[XHS] ✅ 发布成功！');
       console.log(`[XHS]    最终 URL: ${finalUrl}`);
     } else {
       console.log('\n[XHS] ⚠️  发布状态不确定，请查看截图');
     }
     console.log(`[XHS]    截图目录: ${SCREENSHOTS_DIR}`);
+    process.stdout.write('\n' + JSON.stringify({
+      "success": publishOk,
+      "platform": "xiaohongshu",
+      "contentType": "image",
+      "workId": null,
+      "url": publishOk ? finalUrl : null,
+      "error": publishOk ? null : '发布状态不确定，请查看截图',
+    }) + '\n');
 
   } catch (err) {
     console.error(`\n[XHS] ❌ 发布失败: ${err.message}`);
     if (cdp) await screenshot(cdp, 'error').catch(() => {});
+    process.stdout.write('\n' + JSON.stringify({
+      "success": false,
+      "platform": "xiaohongshu",
+      "contentType": "image",
+      "workId": null,
+      "url": null,
+      "error": err.message,
+    }) + '\n');
     process.exit(1);
   } finally {
     if (cdp) cdp.close();

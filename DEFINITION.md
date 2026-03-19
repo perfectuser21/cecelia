@@ -413,7 +413,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 159 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 160 |
 | **blocks** | 通用 block 存储 |
 
 ### 4.4 任务状态
