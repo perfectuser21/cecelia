@@ -178,16 +178,19 @@ async function probeRumination() {
 }
 
 async function probeEvolution() {
-  // 检查 evolution 是否有产出记录
+  // 检查 7 天内是否有 PR 进化记录（写入 component_evolutions 表）
   const result = await pool.query(
-    `SELECT count(*) AS cnt FROM cecelia_events
-     WHERE event_type LIKE '%evolution%'
-       AND created_at > NOW() - INTERVAL '7 days'`
+    `SELECT count(*) AS cnt, max(date) AS last_date
+     FROM component_evolutions
+     WHERE date > (NOW() - INTERVAL '7 days')::date`
   );
   const cnt = parseInt(result.rows[0]?.cnt || 0);
+  const lastDate = result.rows[0]?.last_date
+    ? new Date(result.rows[0].last_date).toISOString().slice(0, 10)
+    : null;
   return {
     ok: cnt > 0,
-    detail: `7d_evolution_events=${cnt}`,
+    detail: `7d_pr_evolutions=${cnt} last_date=${lastDate || 'never'}`,
   };
 }
 
