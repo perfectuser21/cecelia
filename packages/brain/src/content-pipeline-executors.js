@@ -12,6 +12,7 @@ import { execSync } from 'child_process';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { assembleMedia } from './media-assembler.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -225,117 +226,6 @@ export async function executeReview(task) {
 
 // ─── 4. Export ──────────────────────────────────────────────
 
-/**
- * 直接在 Node.js 里生成 SVG → resvg 渲染 PNG（不生成外部 .mjs 脚本）
- */
-function generateCards(dir, keyword, findings) {
-  const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 6);
-  if (top.length === 0) { console.log('[export] 无 findings，跳过卡片生成'); return false; }
-
-  const topic = slug(keyword);
-  const IMAGES_DIR = join(process.env.HOME || '/Users/administrator', 'claude-output', 'images');
-  ensureDir(IMAGES_DIR);
-
-  const W = 1080, H = 1920, HC = 1464;
-  const SL = 80, SR = 260, ST = 220, SB = 260;
-  const CX = 80, CY = 300, CW = 740;
-  const THEMES = [
-    { TC:'#c084fc', TB:'rgba(168,85,247,0.22)', BG1:'#0d0520', BG2:'#170a35', G1:'#a855f7', G2:'#d946ef' },
-    { TC:'#f472b6', TB:'rgba(244,114,182,0.22)', BG1:'#15050e', BG2:'#200618', G1:'#ec4899', G2:'#fb923c' },
-    { TC:'#818cf8', TB:'rgba(129,140,248,0.22)', BG1:'#08091a', BG2:'#0e1030', G1:'#6366f1', G2:'#8b5cf6' },
-    { TC:'#2dd4bf', TB:'rgba(45,212,191,0.22)', BG1:'#021512', BG2:'#061e1a', G1:'#14b8a6', G2:'#06b6d4' },
-  ];
-  const ACCENTS = ['#f87171','#34d399','#60a5fa','#fbbf24','#a78bfa'];
-
-  const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-
-  function vertChars(x, yStart, text, fontSize, fill, opacity) {
-    const lh = Math.round(fontSize * 1.36);
-    return [...text].map((ch, i) =>
-      `<text x="${x}" y="${yStart + i * lh}" text-anchor="middle" font-size="${fontSize}" fill="${fill}" fill-opacity="${opacity}">${ch}</text>`
-    ).join('');
-  }
-
-  function bg(T, w, h) {
-    return `<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${T.BG1}"/><stop offset="100%" stop-color="${T.BG2}"/></linearGradient><linearGradient id="acc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${T.G1}"/><stop offset="100%" stop-color="${T.G2}"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#bg)"/>`;
-  }
-
-  function corners(T, tag, pageNum, w, h) {
-    const tlx = SL+60, tly = ST-22, acctX = w-SR+92, brandY = h-SB+40;
-    return `
-      <rect x="${tlx}" y="${tly-34}" width="220" height="54" rx="27" fill="${T.TB}" fill-opacity="0.30"/>
-      <text x="${tlx+110}" y="${tly+3}" text-anchor="middle" font-size="30" font-weight="700" fill="${T.TC}">${esc(tag)}</text>
-      ${vertChars(acctX, ST+28, '大湖成长日记', 34, '#ffffff', 0.55)}
-      <text x="${acctX}" y="${ST+28+7*Math.round(34*1.36)}" text-anchor="middle" font-size="26" fill="#ffffff" fill-opacity="0.50">(AI+)</text>
-      <text x="${SL+10}" y="${brandY}" font-size="38" font-weight="700" fill="#a78bfa" fill-opacity="0.80">ZenithJoy</text>
-      ${pageNum ? `<text x="${SL+240}" y="${brandY}" font-size="30" font-weight="600" fill="${T.TC}" fill-opacity="0.70">${esc(pageNum)}</text>` : ''}
-    `;
-  }
-
-  function renderPng(svg, outPath) {
-    try {
-      const resvgPath = join(process.env.HOME || '/Users/administrator', 'claude-output', 'scripts', 'node_modules', '@resvg', 'resvg-js');
-      const { Resvg } = require(resvgPath);
-      const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 2160 } });
-      writeFileSync(outPath, resvg.render().asPng());
-      console.log(`[export] 卡片 → ${outPath}`);
-      return true;
-    } catch (e) {
-      console.error(`[export] resvg 渲染失败: ${e.message}`);
-      return false;
-    }
-  }
-
-  const titles = top.map(f => esc(f.title.substring(0, 30)));
-  let count = 0;
-
-  // 封面
-  const coverSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${HC}" width="${W}" height="${HC}">
-    ${bg(THEMES[0], W, HC)}
-    ${corners(THEMES[0], '能力下放', '', W, HC)}
-    <text x="${CX+70}" y="${CY+80}" font-size="96" font-weight="800" fill="#ffffff" letter-spacing="-2">${esc('这些能力')}</text>
-    <text x="${CX+70}" y="${CY+180}" font-size="88" font-weight="800" fill="url(#acc)" letter-spacing="-2">${esc('一个人就够了')}</text>
-    <text x="${CX+70}" y="${CY+240}" font-size="30" fill="rgba(255,255,255,0.30)">${esc(keyword)} · 能力拆解</text>
-    ${titles.map((t, i) => `
-      <rect x="${CX+70}" y="${CY+300+i*62}" width="${CW-80}" height="52" rx="10" fill="${ACCENTS[i%5]}" fill-opacity="0.08"/>
-      <text x="${CX+95}" y="${CY+334+i*62}" font-size="26" fill="rgba(255,255,255,0.50)">${t}</text>
-    `).join('')}
-    <text x="${CX+70}" y="${HC-SB-40}" font-size="28" fill="rgba(255,255,255,0.25)">共 ${top.length} 张 · 一人公司案例拆解</text>
-  </svg>`;
-  if (renderPng(coverSvg, join(IMAGES_DIR, `${topic}-cover.png`))) count++;
-
-  // 内容卡
-  top.forEach((f, i) => {
-    const T = THEMES[i % 4];
-    const items = [];
-    if (f.capability) items.push([f.title.substring(0, 25), f.capability.substring(0, 50)]);
-    if (f.data) f.data.split(/[，,；;]/g).filter(Boolean).slice(0, 4).forEach(p => items.push([p.trim().substring(0, 35), '']));
-    while (items.length < 5) items.push(['能力放大', '个人也能拥有公司级能力']);
-
-    const bxH = 158, bxGap = 14;
-    const cardSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
-      ${bg(T, W, H)}
-      ${corners(T, '能力拆解', `${i+1}/${top.length}`, W, H)}
-      <text x="${CX+70}" y="${CY+100}" font-size="88" font-weight="800" fill="#ffffff">${esc(f.title.substring(0, 12))}</text>
-      <text x="${CX+70}" y="${CY+170}" font-size="30" fill="rgba(255,255,255,0.30)">${esc(keyword)} · 能力 ${i+1}</text>
-      ${items.map(([main, sub], j) => {
-        const ac = ACCENTS[j % 5];
-        const by = 570 + j * (bxH + bxGap);
-        return `
-          <rect x="${CX+70}" y="${by}" width="${CW-80}" height="${bxH}" rx="12" fill="${ac}" fill-opacity="0.09"/>
-          <rect x="${CX+70}" y="${by}" width="4" height="${bxH}" rx="2" fill="${ac}" fill-opacity="0.75"/>
-          <text x="${CX+95}" y="${by+44}" font-size="32" font-weight="700" fill="${ac}">${esc(main)}</text>
-          <text x="${CX+95}" y="${by+84}" font-size="25" fill="rgba(255,255,255,0.40)">${esc(sub)}</text>
-        `;
-      }).join('')}
-    </svg>`;
-    if (renderPng(cardSvg, join(IMAGES_DIR, `${topic}-0${i+1}.png`))) count++;
-  });
-
-  console.log(`[export] 共生成 ${count} 张卡片`);
-  return count > 0;
-}
-
 export async function executeExport(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
   const contentType = task.payload?.content_type || 'solo-company-case';
@@ -364,17 +254,10 @@ export async function executeExport(task) {
     }
   } catch { /* */ }
 
-  // 生成 /share-card 9:16 卡片
-  const cardsGenerated = generateCards(dir, keyword, findings);
-
-  // manifest.json
+  // 组装多媒体素材（封面 + 微信封面 + 内容卡）
   const topic = slug(keyword);
   const IMAGES_DIR = join(process.env.HOME || '/Users/administrator', 'claude-output', 'images');
-  const cardFiles = [];
-  try {
-    const imgs = readdirSync(IMAGES_DIR).filter(f => f.startsWith(topic) && f.endsWith('.png'));
-    imgs.forEach(f => cardFiles.push(f));
-  } catch { /* */ }
+  const mediaResult = await assembleMedia({ keyword, findings, outputDir: IMAGES_DIR, topic });
 
   const manifest = {
     version: '1.0',
@@ -385,16 +268,17 @@ export async function executeExport(task) {
     status: 'ready_for_publish',
     image_set: {
       framework: '/share-card',
-      status: cardFiles.length > 0 ? 'ready' : 'failed',
-      files: cardFiles,
+      status: mediaResult.count > 0 ? 'ready' : 'failed',
+      files: mediaResult.cards.map(f => f.split('/').pop()),
       preview_base: `http://38.23.47.81:9998/images/`,
     },
+    cover_wechat: mediaResult.coverWechat ? mediaResult.coverWechat.split('/').pop() : null,
     article: { path: 'article/article.md', status: existsSync(join(dir, 'article', 'article.md')) ? 'ready' : 'missing' },
     copy: { path: 'cards/copy.md', status: existsSync(join(dir, 'cards', 'copy.md')) ? 'ready' : 'missing' },
     platforms: { image: ['douyin', 'kuaishou', 'xiaohongshu', 'weibo'], article: ['wechat', 'zhihu', 'toutiao'] },
   };
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
 
-  console.log(`[export] 完成: ${cardFiles.length} 张卡片 + manifest → ${dir}`);
-  return { success: true, manifest_path: join(dir, 'manifest.json'), card_count: cardFiles.length, card_files: cardFiles };
+  console.log(`[export] 完成: ${mediaResult.count} 张图片 + manifest → ${dir}`);
+  return { success: true, manifest_path: join(dir, 'manifest.json'), card_count: mediaResult.cards.length, card_files: mediaResult.cards.map(f => f.split('/').pop()) };
 }
