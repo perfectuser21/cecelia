@@ -306,6 +306,11 @@ server.listen(PORT, async () => {
   startMonitorLoop();
   console.log('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
 
+  // Initialize Capability Probe (self-awareness — 每小时探测关键链路健康)
+  const { startProbeLoop } = await import('./src/capability-probe.js');
+  startProbeLoop();
+  console.log('[Server] Capability Probe started (1h interval) - self-awareness for critical pathways');
+
   // Initialize Promotion Job Loop (P1)
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();

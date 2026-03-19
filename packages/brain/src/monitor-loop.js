@@ -228,6 +228,87 @@ async function handleStuckRun(stuck) {
 }
 
 /**
+ * Gather rich failure context from run_events and tasks tables
+ * so Cortex can produce high-confidence RCA diagnoses.
+ *
+ * @param {Object} failure - row from run_events (must have task_id, run_id)
+ * @returns {Promise<Object>} enriched context object
+ */
+async function gatherFailureContext(failure) {
+  const ctx = {
+    reason_code: failure.reason_code || 'UNKNOWN',
+    reason_kind: failure.reason_kind || 'UNKNOWN',
+    layer: failure.layer || 'N/A',
+    step_name: failure.step_name || 'N/A',
+    run_id: failure.run_id || null,
+    task_id: failure.task_id || null,
+    ts_start: failure.ts_start || null,
+    ts_end: failure.ts_end || null,
+    stderr: null,
+    log_tail: null,
+    task_title: null,
+    task_type: null,
+    task_description_head: null,
+    recent_similar_failures: [],
+  };
+
+  try {
+    // 1. Get task metadata (title, type, description head)
+    if (failure.task_id) {
+      const taskResult = await pool.query(
+        `SELECT title, task_type, LEFT(description, 500) AS description_head
+         FROM tasks WHERE id = $1 LIMIT 1`,
+        [failure.task_id]
+      );
+      if (taskResult.rows.length > 0) {
+        const t = taskResult.rows[0];
+        ctx.task_title = t.title;
+        ctx.task_type = t.task_type;
+        ctx.task_description_head = t.description_head;
+      }
+    }
+
+    // 2. Get stderr / log_tail from run_events payload (if stored)
+    if (failure.run_id) {
+      const runResult = await pool.query(
+        `SELECT payload FROM run_events
+         WHERE run_id = $1 AND status = 'failed'
+         ORDER BY ts_end DESC NULLS LAST LIMIT 1`,
+        [failure.run_id]
+      );
+      if (runResult.rows.length > 0) {
+        const payload = runResult.rows[0].payload;
+        if (payload && typeof payload === 'object') {
+          ctx.stderr = (payload.stderr || payload.error || '').toString().slice(-2000);
+          ctx.log_tail = (payload.log_tail || payload.output || '').toString().slice(-1000);
+        }
+      }
+    }
+
+    // 3. Count recent similar failures (same reason_code, last 24h)
+    if (failure.reason_code) {
+      const similarResult = await pool.query(
+        `SELECT count(*) AS cnt, array_agg(DISTINCT step_name) AS steps
+         FROM run_events
+         WHERE reason_code = $1 AND status = 'failed'
+           AND ts_start > NOW() - INTERVAL '24 hours'`,
+        [failure.reason_code]
+      );
+      if (similarResult.rows.length > 0) {
+        ctx.recent_similar_failures = {
+          count: parseInt(similarResult.rows[0].cnt) || 0,
+          affected_steps: similarResult.rows[0].steps || [],
+        };
+      }
+    }
+  } catch (err) {
+    console.warn(`[Monitor] gatherFailureContext partial failure: ${err.message}`);
+  }
+
+  return ctx;
+}
+
+/**
  * Call Cortex for RCA (Root Cause Analysis)
  *
  * @param {Object} failure - Failure object from run_events
@@ -237,17 +318,35 @@ async function callCortexForRca(failure) {
   const { performRCA } = await import('./cortex.js');
 
   try {
-    // Prepare task data for performRCA
+    // Gather rich context from DB (not just 5 fields)
+    const failureContext = await gatherFailureContext(failure);
+
+    // Prepare task data with full context for performRCA
     const failedTask = {
       id: failure.task_id,
-      task_type: 'dev', // Assume dev for now
-      reason_code: failure.reason_code,
-      layer: failure.layer,
-      step_name: failure.step_name
+      task_type: failureContext.task_type || 'dev',
+      reason_code: failureContext.reason_code,
+      reason_kind: failureContext.reason_kind,
+      layer: failureContext.layer,
+      step_name: failureContext.step_name,
+      // Rich context fields (new)
+      title: failureContext.task_title,
+      stderr: failureContext.stderr,
+      log_tail: failureContext.log_tail,
+      description_head: failureContext.task_description_head,
+      recent_similar: failureContext.recent_similar_failures,
+      run_id: failureContext.run_id,
+      ts_start: failureContext.ts_start,
+      ts_end: failureContext.ts_end,
     };
 
-    // Call performRCA
-    const response = await performRCA(failedTask, []);
+    // Build failure history with classification for Cortex
+    const history = failureContext.recent_similar_failures?.count > 1
+      ? [{ failure_classification: { class: failureContext.reason_code } }]
+      : [];
+
+    // Call performRCA with enriched data
+    const response = await performRCA(failedTask, history);
 
     // Extract structured result from response
     if (response && response.analysis) {
