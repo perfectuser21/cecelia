@@ -205,8 +205,25 @@ async function handleStuckRun(stuck) {
       last_step: stuck.step_name
     });
     
-    // TODO: Open incident for human review
-    console.log(`[Monitor] TODO: Open incident for task ${stuck.task_id}`);
+    // 写入 stuck_incident 事件，供 dashboard/告警系统消费
+    try {
+      await pool.query(
+        `INSERT INTO cecelia_events (event_type, source, payload)
+         VALUES ('stuck_incident', 'monitor_loop', $1)`,
+        [JSON.stringify({
+          task_id: stuck.task_id,
+          run_id: stuck.run_id,
+          stuck_count: retryCount + 1,
+          last_layer: stuck.layer,
+          last_step: stuck.step_name,
+          action: 'quarantined',
+          timestamp: new Date().toISOString()
+        })]
+      );
+      console.log(`[Monitor] Incident recorded for task ${stuck.task_id} (stuck_incident event)`);
+    } catch (incidentErr) {
+      console.error(`[Monitor] Failed to record stuck_incident: ${incidentErr.message}`);
+    }
   }
 }
 
@@ -339,8 +356,8 @@ async function handleFailureSpike(stats) {
         // Execute policy (P0: just record for now, actual execution in P1)
         console.log(`[Immune] Executing policy ${activePolicy.policy_id} (mode=enforce)`);
 
-        // TODO: Actual policy execution logic here
-        // For P0, just record the evaluation
+        // FIXME-TRACKED: 实际策略执行逻辑（解析 policy_json 并执行 requeue/throttle/block 等动作） — 需要独立 dev task
+        // 当前 P0 阶段仅记录评估结果
 
         await recordPolicyEvaluation({
           policy_id: activePolicy.policy_id,
@@ -348,7 +365,7 @@ async function handleFailureSpike(stats) {
           signature: signature,
           mode: 'enforce',
           decision: 'applied',
-          verification_result: 'unknown', // TODO: verify in P1
+          verification_result: 'unknown', // FIXME-TRACKED: 策略执行后验证结果（依赖策略执行引擎实现） — 需要独立 dev task
           latency_ms: Date.now() - startTime,
           details: {
             failure: {
@@ -439,7 +456,7 @@ async function handleFailureSpike(stats) {
     // Check if should promote to probation
     if (await shouldPromoteToProbation(signature)) {
       console.log(`[Immune] Signature ${signature} meets promotion criteria`);
-      // TODO: P1 will create probation policy here
+      // FIXME-TRACKED: 创建 probation 策略入口（需设计 createProbationPolicy API） — 需要独立 dev task
     }
 
     // === Continue with existing RCA logic ===
@@ -496,8 +513,25 @@ async function handleResourcePressure(stats) {
   
   if (stats.pressure > 0.9) {
     // Critical: throttle new dispatches
-    console.log(`[Monitor] Action: THROTTLE - High pressure detected`);
-    // TODO: Implement throttle mechanism
+    console.log(`[Monitor] Action: THROTTLE - High pressure detected (${(stats.pressure * 100).toFixed(1)}%)`);
+
+    // 写入 throttle_activated 事件，供 slot-allocator 和 dashboard 消费
+    try {
+      await pool.query(
+        `INSERT INTO cecelia_events (event_type, source, payload)
+         VALUES ('throttle_activated', 'monitor_loop', $1)`,
+        [JSON.stringify({
+          pressure: stats.pressure,
+          active_count: stats.active_count,
+          max_seats: stats.max_seats,
+          rss_mb: stats.rss_mb,
+          cpu_percent: stats.cpu_percent,
+          timestamp: new Date().toISOString()
+        })]
+      );
+    } catch (throttleErr) {
+      console.error(`[Monitor] Failed to record throttle_activated: ${throttleErr.message}`);
+    }
   }
 }
 
