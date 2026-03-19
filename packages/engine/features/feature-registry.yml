@@ -18,6 +18,14 @@
 version: "3.72.0"
 updated: "2026-03-19"
 changelog:
+- version: "13.4.0"
+    date: "2026-03-19"
+    summary: "feat(engine): generate-report.sh 上传执行日志到 Brain dev-logs API（DEV_TASK_ID 模式）"
+    scope: skills
+    breaking: false
+    feature_id: dev-logs-upload
+>
+HEAD
   - version: "13.3.3"
     date: "2026-03-19"
     summary: "fix(engine): Stop Hook 超时时创建 Brain P0 诊断任务（stuck_diagnosis）替代静默放行"
