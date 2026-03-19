@@ -646,6 +646,25 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
                 fi
             fi
 
+            # v13.3.3: 创建 Brain P0 诊断任务 — 让 Brain 派发新会话诊断卡住原因
+            STUCK_DESC="任务 ${FAIL_BRANCH} 在 ${LAST_REASON} 阶段卡住，Stop Hook 已重试 ${MAX_RETRIES} 次。需要诊断根因并修复。"
+            STUCK_PAYLOAD=$(jq -n \
+                --arg branch "$FAIL_BRANCH" \
+                --argjson count "$RETRY_COUNT" \
+                --arg reason "$LAST_REASON" \
+                '{stuck_branch: $branch, retry_count: $count, last_status: $reason}' 2>/dev/null \
+                || echo "{\"stuck_branch\":\"${FAIL_BRANCH}\",\"retry_count\":${RETRY_COUNT},\"last_status\":\"${LAST_REASON}\"}")
+            curl -s -X POST "http://localhost:5221/api/brain/tasks" \
+                -H "Content-Type: application/json" \
+                -d "$(jq -n \
+                    --arg title "[stuck] 任务 ${FAIL_BRANCH} 卡住 — 已重试 ${MAX_RETRIES} 次" \
+                    --arg desc "$STUCK_DESC" \
+                    --argjson payload "$STUCK_PAYLOAD" \
+                    '{title: $title, description: $desc, priority: "P0", task_type: "stuck_diagnosis", status: "queued", payload: $payload, trigger_source: "stop_hook_timeout"}' 2>/dev/null \
+                    || echo "{\"title\":\"[stuck] 任务 ${FAIL_BRANCH} 卡住\",\"priority\":\"P0\",\"task_type\":\"stuck_diagnosis\",\"status\":\"queued\",\"trigger_source\":\"stop_hook_timeout\"}")" \
+                --max-time 5 2>/dev/null || true
+            echo "  [Brain] 已创建 P0 诊断任务（stuck_diagnosis）" >&2
+
             # 强制清理 worktree（兜底）
             force_cleanup_worktree "$DEV_MODE_FILE"
 
