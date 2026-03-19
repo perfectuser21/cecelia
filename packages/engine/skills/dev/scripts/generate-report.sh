@@ -205,3 +205,41 @@ cat > "$JSON_REPORT" << EOF
 EOF
 
 echo "已生成报告: $JSON_REPORT"
+
+# 上传报告到 Brain dev-logs API（非阻断，失败不影响流程）
+# DEV_TASK_ID: Brain 调度时注入的真实 task UUID（格式: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）
+# 若未设置则跳过上传（interactive 模式下无 Brain task UUID）
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+BRAIN_TASK_ID="${DEV_TASK_ID:-}"
+
+if [[ -n "$BRAIN_TASK_ID" ]]; then
+    # 读取 run_id：优先从 .cecelia-run-id-{branch} 文件，否则生成
+    RUN_ID_FILE="$PROJECT_ROOT/.cecelia-run-id-${CP_BRANCH}"
+    if [[ -f "$RUN_ID_FILE" ]]; then
+        UPLOAD_RUN_ID=$(cat "$RUN_ID_FILE")
+    else
+        UPLOAD_RUN_ID=$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || echo "")
+    fi
+
+    if [[ -n "$UPLOAD_RUN_ID" ]]; then
+        UPLOAD_STATUS="success"
+        if [[ "$OVERALL_STATUS" == "failed" || "$OVERALL_STATUS" == "unknown" ]]; then
+            UPLOAD_STATUS="failure"
+        fi
+
+        UPLOAD_PAYLOAD=$(jq -n \
+            --arg task_id "$BRAIN_TASK_ID" \
+            --arg run_id "$UPLOAD_RUN_ID" \
+            --arg phase "report" \
+            --arg status "$UPLOAD_STATUS" \
+            --argjson metadata "$(cat "$JSON_REPORT" 2>/dev/null || echo '{}')" \
+            '{task_id: $task_id, run_id: $run_id, phase: $phase, status: $status, metadata: $metadata}')
+
+        curl --silent --max-time 5 \
+            -X POST "$BRAIN_URL/api/brain/dev-logs" \
+            -H "Content-Type: application/json" \
+            -d "$UPLOAD_PAYLOAD" > /dev/null 2>&1 || true
+
+        echo "已上传执行日志到 Brain (task=$BRAIN_TASK_ID, status=$UPLOAD_STATUS)"
+    fi
+fi
