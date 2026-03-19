@@ -367,16 +367,16 @@
         620
       ],
       "parameters": {
-        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('准备').first().json;\nconst platform = prev.platform;\nconst contentType = prev.contentType;\n\nconst platformNames = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' };\nconst platformDisplay = platformNames[platform] || platform;\nconst typeDisplay = contentType === 'video' ? '视频' : '图文';\n\nlet success = false;\nlet error = '';\n\ntry {\n  const matches = stdout.match(/\\{[^{}]*\"success\"[^{}]*\\}/g);\n  if (matches && matches.length > 0) {\n    const r = JSON.parse(matches[matches.length - 1]);\n    if (typeof r.success === 'boolean') success = r.success;\n    if (r.error) error = r.error;\n  } else {\n    if (stdout.includes('✅') || stdout.includes('发布成功') || stdout.includes('笔记已发布')) {\n      success = true;\n    } else if (stdout.includes('❌') || stdout.includes('Error') || stdout.includes('error')) {\n      success = false;\n      const errLine = stdout.split('\\n').find(l => l.includes('❌') || l.toLowerCase().includes('error'));\n      error = errLine ? errLine.trim() : '未知错误';\n    } else {\n      success = stdout.trim().length > 0;\n    }\n  }\n} catch (e) {\n  error = '解析失败: ' + e.message;\n}\n\nconst emoji = success ? '✅' : '❌';\nconst status = success ? '发布成功' : '发布失败';\nlet text = `${emoji} ${status}\\n平台: ${platformDisplay}(${typeDisplay})\\n标题: ${prev.title}`;\nif (error) text += `\\n错误: ${error}`;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    success,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('准备').first().json;\nconst platform = prev.platform;\nconst contentType = prev.contentType;\n\nconst platformNames = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' };\nconst platformDisplay = platformNames[platform] || platform;\nconst typeDisplay = contentType === 'video' ? '视频' : '图文';\n\nlet success = false;\nlet error = '';\nlet workId = null;\nlet url = null;\n\ntry {\n  const matches = stdout.match(/\\{[\\s\\S]*?\\}/g);\n  if (matches && matches.length > 0) {\n    const r = JSON.parse(matches[matches.length - 1]);\n    if (typeof r.success === 'boolean') success = r.success;\n    if (r.error) error = r.error;\n    if (r.workId) workId = r.workId;\n    if (r.url) url = r.url;\n  } else {\n    if (stdout.includes('✅') || stdout.includes('发布成功') || stdout.includes('笔记已发布')) {\n      success = true;\n    } else if (stdout.includes('❌') || stdout.includes('Error') || stdout.includes('error')) {\n      success = false;\n      const errLine = stdout.split('\\n').find(l => l.includes('❌') || l.toLowerCase().includes('error'));\n      error = errLine ? errLine.trim() : '未知错误';\n    } else {\n      success = stdout.trim().length > 0;\n    }\n  }\n} catch (e) {\n  error = '解析失败: ' + e.message;\n}\n\nconst emoji = success ? '✅' : '❌';\nconst status = success ? '发布成功' : '发布失败';\nlet text = `${emoji} ${status}\\n平台: ${platformDisplay}(${typeDisplay})\\n标题: ${prev.title}`;\nif (success && workId) text += `\\n作品ID: ${workId}`;\nif (success && url) text += `\\n链接: ${url}`;\nif (error) text += `\\n错误: ${error}`;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    platform,\n    contentType,\n    success,\n    workId,\n    url,\n    error,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
       }
     },
     {
-      "id": "n13",
+      "id": "n15",
       "name": "飞书通知",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1900,
+        2140,
         620
       ],
       "parameters": {
@@ -385,6 +385,27 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json.feishuBody }}"
+      }
+    },
+    {
+      "id": "n14",
+      "name": "写入Brain",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        620
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/publish-results",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { platform: $json.platform, contentType: $json.contentType, workId: $json.workId, url: $json.url, success: $json.success, error: $json.error, taskId: $json.taskId } }}",
+        "options": {
+          "timeout": 5000,
+          "allowUnauthorizedCerts": false
+        }
       }
     }
   ],
@@ -535,6 +556,17 @@
       ]
     },
     "解析通知": {
+      "main": [
+        [
+          {
+            "node": "写入Brain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "写入Brain": {
       "main": [
         [
           {
