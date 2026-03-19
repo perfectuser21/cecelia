@@ -1,11 +1,12 @@
 ---
 name: xiaohongshu-publisher
-description: 小红书自动发布工具 - 图文发布（CDP 直连方式）
-trigger: 发布小红书、xiaohongshu、xhs、小红书发布
-version: 1.2.0
+description: 小红书自动发布工具 - 图文/视频发布（CDP 直连方式）
+trigger: 发布小红书、xiaohongshu、xhs、小红书发布、小红书视频
+version: 1.3.0
 created: 2026-03-08
-updated: 2026-03-10
+updated: 2026-03-19
 changelog:
+  - 1.3.0: 新增视频发布脚本 publish-xiaohongshu-video.cjs（CDP 端口 19225）
   - 1.2.0: 清理废弃旧脚本（publish-xhs-image.cjs + batch-publish-xhs.sh）
   - 1.1.0: N8N flow 完整接通 Node.js 脚本，生产就绪
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
@@ -34,6 +35,7 @@ Windows PC (100.97.242.124:19225)
 | 类型 | 脚本 | 状态 |
 |------|------|------|
 | 图文 | `scripts/publish-xiaohongshu-image.cjs` | ✅ 生产就绪 |
+| 视频 | `scripts/publish-xiaohongshu-video.cjs` | ✅ 生产就绪 |
 
 ## 使用方式
 
@@ -58,10 +60,17 @@ curl -X POST https://n8n.zenjoymedia.media/webhook/content-publish \
 ### 单条发布（直接运行）
 
 ```bash
-# 在 Mac mini 上执行
+# 图文发布（在 Mac mini 上执行）
 NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
   node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs \
   --content ~/.xiaohongshu-queue/2026-03-10/image-1/
+
+# 视频发布（在 Mac mini 上执行）
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-video.cjs \
+  --video /path/to/video.mp4 \
+  --title "视频标题" \
+  --tags "美食,旅行"
 ```
 
 ### 批量发布
