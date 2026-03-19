@@ -139,6 +139,12 @@ const LOCATION_MAP = {
   'talk': 'hk',       // 对话 → HK (MiniMax)
   'research': 'hk',   // 深度调研 → HK (MiniMax)
   'data': 'hk',       // 数据处理 → HK (N8N)
+  // 内容工厂 Pipeline（Content Factory）
+  'content-pipeline': 'us',  // Pipeline 编排入口 → US
+  'content-research': 'us',  // 调研阶段 → US (/notebooklm)
+  'content-generate': 'us',  // 生成阶段 → US (/content-creator)
+  'content-review': 'us',    // 审核阶段 → US (/content-creator)
+  'content-export': 'us',    // 导出阶段 → US (/content-creator)
 };
 
 // Default location
