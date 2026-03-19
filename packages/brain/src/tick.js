@@ -2307,7 +2307,20 @@ async function executeTick() {
       }
     }
 
-    const dispatchResult = await dispatchNextTask(allGoalIds);
+    // Area Fair Dispatch: 先选业务线，再在该线内选任务
+    let areaGoalIds = allGoalIds; // fallback: 全局
+    try {
+      const { selectAreaForDispatch } = await import('./area-scheduler.js');
+      const areaDecision = await selectAreaForDispatch(poolCAvailable);
+      if (areaDecision.area && areaDecision.goalIds.length > 0) {
+        areaGoalIds = areaDecision.goalIds;
+        console.log(`[tick] Area dispatch: ${areaDecision.area} (${areaDecision.reason})`);
+      }
+    } catch (areaErr) {
+      console.warn(`[tick] Area scheduler failed (fallback to global): ${areaErr.message}`);
+    }
+
+    const dispatchResult = await dispatchNextTask(areaGoalIds);
     actionsTaken.push(...dispatchResult.actions);
     lastDispatchResult = dispatchResult;
     console.log(`[tick] Dispatch attempt ${i}: dispatched=${dispatchResult.dispatched} reason=${dispatchResult.reason || 'ok'}`);
