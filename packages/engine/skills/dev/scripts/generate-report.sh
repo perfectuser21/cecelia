@@ -205,3 +205,77 @@ cat > "$JSON_REPORT" << EOF
 EOF
 
 echo "已生成报告: $JSON_REPORT"
+
+# --- 上传质检报告到 Brain dev-logs API ---
+# 非阻塞：失败只输出 warning，不影响后续 cleanup 流程
+BRAIN_API="${BRAIN_API_URL:-http://localhost:5221}/api/brain/dev-logs"
+RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "run-$(date +%s)")
+# run_id 必须小写（PostgreSQL UUID 格式要求）
+RUN_ID=$(echo "$RUN_ID" | tr '[:upper:]' '[:lower:]')
+NOW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+# 构建 Brain dev-logs 需要的 payload
+# phase: "report"（质检报告阶段）
+# status: 根据 OVERALL_STATUS 映射
+UPLOAD_STATUS="failure"
+if [[ "$OVERALL_STATUS" == "pass" || "$OVERALL_STATUS" == "success" ]]; then
+    UPLOAD_STATUS="success"
+elif [[ "$OVERALL_STATUS" == "unknown" ]]; then
+    UPLOAD_STATUS="unknown"
+fi
+
+# 用 jq 构建安全的 JSON payload（避免注入）
+UPLOAD_PAYLOAD=$(jq -n \
+    --arg task_id "$TASK_ID" \
+    --arg run_id "$RUN_ID" \
+    --arg phase "report" \
+    --arg status "$UPLOAD_STATUS" \
+    --arg started_at "$NOW_ISO" \
+    --arg completed_at "$NOW_ISO" \
+    --arg l1 "$L1_STATUS" \
+    --arg l2 "$L2_STATUS" \
+    --arg l3 "$L3_STATUS" \
+    --arg overall "$OVERALL_STATUS" \
+    --arg pr_url "$PR_URL" \
+    --argjson pr_merged "$PR_MERGED" \
+    --arg version "$CURRENT_VERSION" \
+    --arg branch "$CP_BRANCH" \
+    --arg mode "$MODE" \
+    '{
+        task_id: $task_id,
+        run_id: $run_id,
+        phase: $phase,
+        status: $status,
+        started_at: $started_at,
+        completed_at: $completed_at,
+        metadata: {
+            quality_report: {
+                L1_automated: $l1,
+                L2_verification: $l2,
+                L3_acceptance: $l3,
+                overall: $overall
+            },
+            ci_cd: {
+                pr_url: $pr_url,
+                pr_merged: $pr_merged
+            },
+            version: $version,
+            branch: $branch,
+            mode: $mode
+        }
+    }' 2>/dev/null)
+
+if [[ -n "$UPLOAD_PAYLOAD" ]]; then
+    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+        --max-time 5 \
+        -X POST "$BRAIN_API" \
+        -H "Content-Type: application/json" \
+        -d "$UPLOAD_PAYLOAD" 2>/dev/null || echo "000")
+    if [[ "$HTTP_CODE" == "201" ]]; then
+        echo "已上传质检报告到 Brain (HTTP $HTTP_CODE)"
+    else
+        echo "[WARNING] 质检报告上传失败 (HTTP $HTTP_CODE)，不影响流程继续"
+    fi
+else
+    echo "[WARNING] 构建上传 payload 失败（jq 不可用？），跳过上传"
+fi
