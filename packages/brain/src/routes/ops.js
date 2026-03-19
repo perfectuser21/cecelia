@@ -984,6 +984,7 @@ function inferRelationship(name, en_name, isOwner) {
 }
 
 // FEISHU_OWNER_OPEN_IDS: 逗号分隔的 owner open_id 列表，用于绕过 API 权限不足问题
+// 注意：open_id 与 App 绑定，换 App 后必须更新（从 feishu_users 表查询或从 webhook 事件获取）
 const _feishuOwnerOpenIds = (process.env.FEISHU_OWNER_OPEN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 
 /** 获取飞书用户信息（带 DB 缓存，TTL 24小时），返回 name/user_id/relationship */
@@ -1168,19 +1169,27 @@ async function saveUnifiedMessage(participantId, channel, groupId, role, content
 
 /** 发送飞书消息 */
 async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
-  await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      receive_id: receiveId,
-      msg_type: 'text',
-      content: JSON.stringify({ text }),
-    }),
-    signal: AbortSignal.timeout(8000),
-  });
+  try {
+    const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        receive_id: receiveId,
+        msg_type: 'text',
+        content: JSON.stringify({ text }),
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await resp.json();
+    if (data.code !== 0) {
+      console.warn(`[feishu/send] 发送失败 code=${data.code} msg=${data.msg} receiveId=${receiveId}`);
+    }
+  } catch (err) {
+    console.warn(`[feishu/send] 发送异常: ${err.message} receiveId=${receiveId}`);
+  }
 }
 
 /** 发送飞书交互卡片（占位符），返回 message_id */
