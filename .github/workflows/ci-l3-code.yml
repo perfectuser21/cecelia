@@ -210,7 +210,7 @@ jobs:
       - name: Run Brain unit tests (no coverage)
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=2048"
+          NODE_OPTIONS: "--max-old-space-size=3072"
         run: |
           set +e
           npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/brain-unit-output.txt

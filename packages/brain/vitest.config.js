@@ -37,7 +37,7 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 2   // 2 fork 并行：每 fork 2GB，ubuntu-latest 有 7GB 余量充足
+        maxForks: 3   // 3 fork 并行：每 fork 3GB = 9GB，ubuntu-latest 16GB 余量充足
       }
     }
   }
