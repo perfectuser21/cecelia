@@ -262,7 +262,7 @@ const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 2
 const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;
 const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB;
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB;
-const SWAP_USED_MAX_PCT = 50;  // 降低到 50% 让 Brain 更早踩刹车，避免深度换页导致 SSH 掉线
+const SWAP_USED_MAX_PCT = 90;  // macOS 正常 swap 60-70%，50% 太保守导致误判过载清零所有 slot
 
 // ============================================================
 // CPU Sampler — delegates to platform-utils (Darwin: loadavg proxy, Linux: /proc/stat)
