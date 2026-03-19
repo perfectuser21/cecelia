@@ -22,6 +22,8 @@ const VALID_TASK_TYPES = [
   'arch_review', 'strategy_session',
   // 前置审查（Intent Expansion + CTO Review）
   'intent_expand', 'cto_review',
+  // 质量门禁（Code Quality + PRD Coverage Audit）
+  'code_quality_review', 'prd_coverage_audit',
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export'
 ];
@@ -54,6 +56,9 @@ const SKILL_WHITELIST = {
   // 前置审查（Intent Expansion + CTO Review）
   'intent_expand': '/intent-expand',  // 意图扩展 → US 本机，查 OKR/Vision 链路补全 PRD
   'cto_review': '/cto-review',        // CTO 审查 → 西安 Codex，独立审查 PASS/FAIL
+  // 质量门禁（Code Quality + PRD Coverage Audit）
+  'code_quality_review': '/code-quality',  // 代码质量审查 → 西安 Codex，4 维度审查
+  'prd_coverage_audit': '/prd-audit',      // PRD 覆盖审计 → 西安 Codex，承诺 vs 实现
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline': '/content-creator',
   'content-research': '/notebooklm',
@@ -134,6 +139,8 @@ const LOCATION_MAP = {
   'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
   'intent_expand': 'us',      // 意图扩展 → US 本机 (查本地 Brain DB，补全 PRD)
   'cto_review': 'xian',       // CTO 审查 → 西安 Codex (独立视角审查 enriched PRD + diff)
+  'code_quality_review': 'xian',  // 代码质量审查 → 西安 Codex (垃圾/重复/过度设计/规范)
+  'prd_coverage_audit': 'xian',   // PRD 覆盖审计 → 西安 Codex (承诺 vs 实现覆盖)
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
   'knowledge': 'us',  // 知识记录 → US (Claude)
   'talk': 'hk',       // 对话 → HK (MiniMax)
