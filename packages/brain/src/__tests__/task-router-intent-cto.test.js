@@ -4,7 +4,7 @@
  * DoD 覆盖：
  * - D1: VALID_TASK_TYPES 包含 intent_expand 和 cto_review
  * - D2: SKILL_WHITELIST 映射正确（intent_expand→/intent-expand, cto_review→/cto-review）
- * - D3: LOCATION_MAP 映射正确（intent_expand→us, cto_review→xian）
+ * - D3: LOCATION_MAP 映射正确（intent_expand→us, cto_review→us）
  * - D4: isValidTaskType 接受两种新类型
  * - D5: getTaskLocation 返回正确位置
  * - D6: 已有类型不受影响
@@ -51,9 +51,9 @@ describe('task-router cto_review 注册', () => {
     expect(mod.SKILL_WHITELIST['cto_review']).toBe('/cto-review');
   });
 
-  it('D3: LOCATION_MAP cto_review → xian（西安 Codex 独立审查）', async () => {
+  it('D3: LOCATION_MAP cto_review → us（本机 Codex 独立审查, P0）', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.LOCATION_MAP['cto_review']).toBe('xian');
+    expect(mod.LOCATION_MAP['cto_review']).toBe('us');
   });
 
   it('D4: isValidTaskType 接受 cto_review', async () => {
@@ -61,9 +61,9 @@ describe('task-router cto_review 注册', () => {
     expect(mod.isValidTaskType('cto_review')).toBe(true);
   });
 
-  it('D5: getTaskLocation cto_review → xian', async () => {
+  it('D5: getTaskLocation cto_review → us', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.getTaskLocation('cto_review')).toBe('xian');
+    expect(mod.getTaskLocation('cto_review')).toBe('us');
   });
 });
 
