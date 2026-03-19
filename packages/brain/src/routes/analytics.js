@@ -1211,6 +1211,49 @@ router.post('/probes/run', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/capabilities/health - 能力健康地图
+ */
+router.get('/capabilities/health', async (req, res) => {
+  try {
+    const { getCapabilityHealth } = await import('../capability-scanner.js');
+    const results = await getCapabilityHealth(1);
+
+    res.json({
+      success: true,
+      health: results[0]?.payload || null,
+      scanned_at: results[0]?.created_at || null,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get capability health',
+      details: err.message,
+    });
+  }
+});
+
+/**
+ * POST /api/brain/capabilities/scan - 手动触发能力扫描
+ */
+router.post('/capabilities/scan', async (req, res) => {
+  try {
+    const { runScanCycle } = await import('../capability-scanner.js');
+    const result = await runScanCycle();
+
+    res.json({
+      success: true,
+      result,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to run capability scan',
+      details: err.message,
+    });
+  }
+});
+
 // ============================================================
 // Attachment Decision API
 // ============================================================
