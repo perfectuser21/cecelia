@@ -1167,6 +1167,50 @@ router.get('/monitor/status', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/probes/status - Capability probe system status
+ */
+router.get('/probes/status', async (req, res) => {
+  try {
+    const { getProbeStatus, getProbeResults } = await import('../capability-probe.js');
+    const status = getProbeStatus();
+    const recentResults = await getProbeResults(3);
+
+    res.json({
+      success: true,
+      status,
+      recent_results: recentResults,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get probe status',
+      details: err.message,
+    });
+  }
+});
+
+/**
+ * POST /api/brain/probes/run - Manually trigger probe cycle
+ */
+router.post('/probes/run', async (req, res) => {
+  try {
+    const { runProbeCycle } = await import('../capability-probe.js');
+    const results = await runProbeCycle();
+
+    res.json({
+      success: true,
+      results,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to run probes',
+      details: err.message,
+    });
+  }
+});
+
 // ============================================================
 // Attachment Decision API
 // ============================================================
