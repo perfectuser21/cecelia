@@ -140,46 +140,53 @@ export async function executeGenerate(task) {
 
   const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 7);
 
-  // 图文文案
-  const copy = [
-    `# ${keyword}：过去只有公司才有的能力，现在一个人就够了\n`,
-    `你知道吗？越来越多人正在证明：一个人 + 正确的系统 = 一家公司的能力。\n`,
-    `今天拆解 ${keyword}，看看哪些"公司级能力"已经被个人拥有了。\n`,
-    '---\n',
-    ...top.map((f, i) => {
-      const body = f.content || f.capability || '';
-      const data = f.data ? `\n\n数据：${f.data}` : '';
-      return `**${i + 1}. ${f.title}**\n\n${body}${data}\n\n---\n`;
-    }),
-    `\n**一人公司不是"小"公司，是"精"公司。**\n`,
-    `你觉得哪个能力对你最有用？评论区告诉我！\n`,
-    `\n#一人公司 #能力放大 #AI驱动 #个人创业 #能力下放\n`,
-  ].join('\n');
-  writeFileSync(join(dir, 'cards', 'copy.md'), copy, 'utf-8');
+  // NAS 标准目录
+  ensureDir(join(dir, 'exports'));
+  ensureDir(join(dir, 'images'));
 
-  // 长文
-  const article = [
-    `# ${keyword}：一个人如何拥有公司级能力\n`,
-    `> 帮助个人和小组织，用 AI 拥有过去只有公司才有的能力。\n`,
-    `\n在这个时代，"一人公司"不再是一种妥协。它是一种系统性的选择——用 AI 和自动化替代人力规模，用能力密度替代团队数量。\n`,
-    `\n${keyword} 的经历就是最好的证据。\n`,
-    `\n---\n`,
-    ...top.map((f, i) => {
-      const body = f.content || f.capability || '';
-      const data = f.data ? `\n\n**关键数据**：${f.data}` : '';
-      const src = f.source ? `\n\n*来源：${f.source}*` : '';
-      return `\n## ${i + 1}. ${f.title}\n\n${body}${data}${src}\n`;
-    }),
-    `\n---\n`,
-    `\n## 这意味着什么？\n`,
-    `\n能力正在从大公司向个人转移。过去需要一个团队才能做到的事，现在一个人配合正确的系统就能完成。\n`,
-    `\n这不是未来。这是正在发生的事。\n`,
-    `\n**你准备好拥有这些能力了吗？**\n`,
-  ].join('\n');
-  writeFileSync(join(dir, 'article', 'article.md'), article, 'utf-8');
+  // ─── 图文（~100字，8平台共用：抖音/快手/小红书/微博/公众号/知乎/头条/视频号）───
+  const imageTextTitle = `${keyword}：这些能力，过去只有公司才有`;
+  const points = top.slice(0, 5).map(f => f.title.substring(0, 20));
+  const imageTextCopy = `${points.join('、')}——${keyword}证明了，一个人+AI就能拥有这些能力。你准备好了吗？\n\n#一人公司 #能力放大 #AI驱动 #能力下放`;
+
+  writeFileSync(join(dir, 'exports', 'title.txt'), imageTextTitle, 'utf-8');
+  writeFileSync(join(dir, 'exports', 'image-text-copy.txt'), imageTextCopy, 'utf-8');
+
+  // 卡片结构化数据（/share-card 渲染用）
+  const cardData = {
+    title: imageTextTitle,
+    cards: top.map(f => ({
+      title: f.title.substring(0, 25),
+      items: [
+        [f.title.substring(0, 25), (f.capability || '').substring(0, 50)],
+        ...((f.data || '').split(/[，,；;]/g).filter(Boolean).slice(0, 3).map(d => [d.trim().substring(0, 35), ''])),
+        ['能力放大', '个人也能拥有公司级能力'],
+      ].slice(0, 5),
+    })),
+  };
+  writeFileSync(join(dir, 'exports', 'card-data.json'), JSON.stringify(cardData, null, 2), 'utf-8');
+  writeFileSync(join(dir, 'cards', 'copy.md'), `${imageTextTitle}\n\n${imageTextCopy}`, 'utf-8');
+
+  // ─── 长文（~1000字，6平台：抖音/小红书/微博/公众号/知乎/头条）───
+  const longTitle = `${keyword}：一个人如何拥有公司级能力`;
+  const parts = [];
+  parts.push(`${keyword}的经历证明了一件事：过去只有公司才有的能力，现在个人和小组织也能拥有。`);
+  top.slice(0, 5).forEach((f, i) => {
+    const body = f.content || f.capability || '';
+    const data = f.data || '';
+    parts.push(`${i + 1}. ${f.title}\n${body}${data ? '（' + data.substring(0, 80) + '）' : ''}`);
+  });
+  parts.push(`能力正在从大公司向个人转移。AI让一个人配合正确的系统就能完成过去需要团队才能做到的事。这不是未来，这是正在发生的现实。`);
+
+  let longText = parts.join('\n\n');
+  if (longText.length > 1200) longText = longText.substring(0, 1100);
+
+  writeFileSync(join(dir, 'exports', 'long-form-title.txt'), longTitle, 'utf-8');
+  writeFileSync(join(dir, 'exports', 'content.html'), `<p>${longText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`, 'utf-8');
+  writeFileSync(join(dir, 'article', 'article.md'), `# ${longTitle}\n\n${longText}`, 'utf-8');
 
   console.log(`[generate] 完成 → ${dir}`);
-  return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'] };
+  return { success: true, output_dir: dir, files: ['exports/title.txt', 'exports/image-text-copy.txt', 'exports/card-data.json', 'exports/long-form-title.txt', 'exports/content.html'] };
 }
 
 // ─── 3. Review ──────────────────────────────────────────────
@@ -200,27 +207,50 @@ export async function executeReview(task) {
   if (!allText.trim()) return { success: true, review_passed: false, issues: ['内容为空'] };
 
   const issues = [];
+  const warnings = [];
 
-  // 品牌关键词 ≥ 3
+  // 读图文和长文分别检查
+  const copyText = existsSync(cp) ? readFileSync(cp, 'utf-8') : '';
+  const artText = existsSync(ap) ? readFileSync(ap, 'utf-8') : '';
+  const copyLen = copyText.length;
+  const artLen = artText.length;
+
+  // ─── 品牌对齐（blocking）───
   const hits = BRAND_KEYWORDS.filter(kw => allText.includes(kw));
-  if (hits.length < 3) issues.push(`品牌关键词 ${hits.length}/3（需 ≥3，命中：${hits.join('、')}）`);
+  if (hits.length < 3) issues.push(`品牌关键词 ${hits.length}/3（命中：${hits.join('、')}）`);
 
-  // 禁用词 = 0
   const banned = BANNED_WORDS.filter(w => allText.toLowerCase().includes(w.toLowerCase()));
   if (banned.length > 0) issues.push(`禁用词：${banned.join('、')}`);
 
-  // 长度
-  const copyLen = existsSync(cp) ? readFileSync(cp, 'utf-8').length : 0;
-  const artLen = existsSync(ap) ? readFileSync(ap, 'utf-8').length : 0;
-  if (copyLen < 300) issues.push(`图文文案 ${copyLen} 字（需 ≥300）`);
-  if (artLen < 1000) issues.push(`长文 ${artLen} 字（需 ≥1000）`);
+  // ─── 字数检查（按新规格）───
+  if (copyLen > 200) warnings.push(`图文文案 ${copyLen} 字（建议 ≤100）`);
+  if (artLen > 0 && artLen < 500) issues.push(`长文太短 ${artLen} 字（需 ≥500）`);
+  if (artLen > 1500) warnings.push(`长文偏长 ${artLen} 字（建议 ~1000）`);
 
-  // 有数据
+  // ─── 有数据 ───
   if (!/\d+/.test(allText)) issues.push('缺少具体数字/数据');
 
+  // ─── 语气/姿态检查（blocking）───
+  const LECTURING = ['你应该', '你必须', '你需要明白', '显而易见', '毋庸置疑'];
+  const SELF_CENTERED = ['我最近', '说实话我', '我一直在想', '我不确定'];
+  const lectureHits = LECTURING.filter(w => allText.includes(w));
+  if (lectureHits.length > 0) issues.push(`说教语气：${lectureHits.join('、')}`);
+  const selfHits = SELF_CENTERED.filter(w => allText.includes(w));
+  if (selfHits.length > 0) issues.push(`创作者自嗨：${selfHits.join('、')}`);
+
+  // ─── 一人公司关联（blocking）───
+  const SOLO_KEYWORDS = ['一人公司', '个人', '小组织', '一个人', '能力'];
+  const soloHits = SOLO_KEYWORDS.filter(kw => allText.includes(kw));
+  if (soloHits.length < 2) issues.push(`一人公司关联不足（命中 ${soloHits.length}/2）`);
+
+  // ─── 分享感（warning）───
+  const hasQuestion = /？/.test(allText);
+  const hasYou = /你/.test(allText);
+  if (!hasQuestion && !hasYou) warnings.push('缺少互动感（没有"你"或问号）');
+
   const passed = issues.length === 0;
-  console.log(`[review] ${passed ? 'PASS' : 'FAIL'}: ${issues.join('; ') || '全部通过'}`);
-  return { success: true, review_passed: passed, score: { keyword_hits: hits.length, banned_hits: banned.length, copy_length: copyLen, article_length: artLen }, issues };
+  console.log(`[review] ${passed ? 'PASS' : 'FAIL'}: ${issues.join('; ') || '全部通过'}${warnings.length ? ' | warnings: ' + warnings.join('; ') : ''}`);
+  return { success: true, review_passed: passed, score: { keyword_hits: hits.length, banned_hits: banned.length, solo_hits: soloHits.length, copy_length: copyLen, article_length: artLen }, issues, warnings };
 }
 
 // ─── 4. Export ──────────────────────────────────────────────
