@@ -30,10 +30,22 @@ if [[ -z "$STEP" ]]; then
 fi
 
 # ============================================================================
+# 执行日志记录器（source）
+# ============================================================================
+_EXEC_LOGGER="$PROJECT_ROOT/packages/engine/lib/execution-logger.sh"
+if [[ -f "$_EXEC_LOGGER" ]]; then
+    source "$_EXEC_LOGGER"
+fi
+
+# ============================================================================
 # 工具函数
 # ============================================================================
 
 _fail() {
+    # 记录执行日志
+    if command -v _devlog_event &>/dev/null; then
+        _devlog_event "verify-step" "$STEP" "fail" "$1"
+    fi
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "  ❌ [STATE MACHINE] Step 验证失败" >&2
@@ -45,6 +57,10 @@ _fail() {
 }
 
 _pass() {
+    # 记录执行日志
+    if command -v _devlog_event &>/dev/null; then
+        _devlog_event "verify-step" "$STEP" "pass" "$1"
+    fi
     echo "  ✅ [STATE MACHINE] $1 验证通过" >&2
     # 写入验签到 .dev-seal.${BRANCH}（供 Stop Hook 三层兜底检查）
     if [[ -n "${PROJECT_ROOT:-}" && -n "${BRANCH:-}" ]]; then

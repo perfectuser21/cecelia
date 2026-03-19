@@ -31,18 +31,73 @@ TASK_ID="$CP_BRANCH"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
 DATE_ONLY=$(date '+%Y-%m-%d')
 
-# 读取质检报告（如果存在）
-QUALITY_REPORT="$PROJECT_ROOT/.quality-report.json"
-if [[ -f "$QUALITY_REPORT" ]]; then
-    L1_STATUS=$(jq -r '.layers.L1_automated.status // "unknown"' "$QUALITY_REPORT" 2>/dev/null || echo "unknown")
-    L2_STATUS=$(jq -r '.layers.L2_verification.status // "unknown"' "$QUALITY_REPORT" 2>/dev/null || echo "unknown")
-    L3_STATUS=$(jq -r '.layers.L3_acceptance.status // "unknown"' "$QUALITY_REPORT" 2>/dev/null || echo "unknown")
-    OVERALL_STATUS=$(jq -r '.overall // "unknown"' "$QUALITY_REPORT" 2>/dev/null || echo "unknown")
+# ============================================================================
+# 从执行日志生成质检数据（替代原来全是 unknown 的 .quality-report.json）
+# ============================================================================
+EXEC_LOG="$PROJECT_ROOT/.dev-execution-log.${CP_BRANCH}.jsonl"
+EXEC_LOGGER="$PROJECT_ROOT/packages/engine/lib/execution-logger.sh"
+
+# source execution-logger.sh 获取 _devlog_summary 函数
+if [[ -f "$EXEC_LOGGER" ]]; then
+    source "$EXEC_LOGGER"
+fi
+
+# 生成摘要
+if [[ -f "$EXEC_LOG" ]] && command -v jq &>/dev/null; then
+    SUMMARY_JSON=$(_devlog_summary "$EXEC_LOG" 2>/dev/null || echo '{}')
+    EXEC_SCORE=$(echo "$SUMMARY_JSON" | jq -r '.score // 0')
+    VERIFY_FAIL_COUNT=$(echo "$SUMMARY_JSON" | jq -r '[.verify_fails | to_entries[] | .value | length] | add // 0')
+    CI_FAIL_COUNT=$(echo "$SUMMARY_JSON" | jq -r '.ci_fail_count // 0')
+    BLOCKED_COUNT=$(echo "$SUMMARY_JSON" | jq -r '.blocked_count // 0')
+    TOTAL_EVENTS=$(echo "$SUMMARY_JSON" | jq -r '.total_events // 0')
+
+    # 从执行日志推导 L1/L2/L3 状态
+    # L1（自动化测试）：verify-step step2 是否 pass（包含 npm test）
+    if echo "$SUMMARY_JSON" | jq -e '.verify_fails.step2' &>/dev/null 2>&1; then
+        L1_STATUS="fail (step2 验证失败 $(echo "$SUMMARY_JSON" | jq -r '.verify_fails.step2 | length') 次)"
+    elif jq -e 'select(.source=="verify-step" and .step=="step2" and .event=="pass")' "$EXEC_LOG" &>/dev/null 2>&1; then
+        L1_STATUS="pass"
+    else
+        L1_STATUS="not_run"
+    fi
+
+    # L2（CI 验证）：CI 是否通过
+    if [[ "$CI_FAIL_COUNT" -gt 0 ]]; then
+        L2_STATUS="fail (CI 失败 ${CI_FAIL_COUNT} 次)"
+    elif jq -e 'select(.step=="ci" and .event=="pass")' "$EXEC_LOG" &>/dev/null 2>&1; then
+        L2_STATUS="pass"
+    else
+        L2_STATUS="not_run"
+    fi
+
+    # L3（需求验收）：step1 Task Card 验证是否通过
+    if echo "$SUMMARY_JSON" | jq -e '.verify_fails.step1' &>/dev/null 2>&1; then
+        L3_STATUS="fail (TaskCard 验证失败 $(echo "$SUMMARY_JSON" | jq -r '.verify_fails.step1 | length') 次)"
+    elif jq -e 'select(.source=="verify-step" and .step=="step1" and .event=="pass")' "$EXEC_LOG" &>/dev/null 2>&1; then
+        L3_STATUS="pass"
+    else
+        L3_STATUS="not_run"
+    fi
+
+    # 总体状态
+    if [[ "$L1_STATUS" == "pass" && "$L2_STATUS" == "pass" && "$L3_STATUS" == "pass" ]]; then
+        OVERALL_STATUS="pass (${EXEC_SCORE}/10)"
+    elif [[ "$L1_STATUS" == *"fail"* || "$L2_STATUS" == *"fail"* || "$L3_STATUS" == *"fail"* ]]; then
+        OVERALL_STATUS="issues_found (${EXEC_SCORE}/10)"
+    else
+        OVERALL_STATUS="partial (${EXEC_SCORE}/10)"
+    fi
 else
-    L1_STATUS="unknown"
-    L2_STATUS="unknown"
-    L3_STATUS="unknown"
-    OVERALL_STATUS="unknown"
+    L1_STATUS="no_log"
+    L2_STATUS="no_log"
+    L3_STATUS="no_log"
+    OVERALL_STATUS="no_log"
+    EXEC_SCORE="N/A"
+    VERIFY_FAIL_COUNT="0"
+    CI_FAIL_COUNT="0"
+    BLOCKED_COUNT="0"
+    TOTAL_EVENTS="0"
+    SUMMARY_JSON='{}'
 fi
 
 # 读取项目信息（从 package.json）
@@ -122,6 +177,17 @@ fi
 # 获取版本变更（从 package.json）
 CURRENT_VERSION=$(jq -r '.version // "unknown"' "$PROJECT_ROOT/package.json" 2>/dev/null || echo "unknown")
 
+# 生成步骤问题详情（从执行日志提取 fail 事件）
+STEP_ISSUES=""
+if [[ -f "$EXEC_LOG" ]] && command -v jq &>/dev/null; then
+    STEP_ISSUES=$(jq -r 'select(.event == "fail" or (.event == "blocked" and (.detail | test("失败|FAIL|failure"; "i")))) | "  [\(.ts | split("T")[1] | split("+")[0])] \(.source)/\(.step): \(.detail | split("\n")[0] | .[0:120])"' "$EXEC_LOG" 2>/dev/null || echo "  (无问题记录)")
+    if [[ -z "$STEP_ISSUES" ]]; then
+        STEP_ISSUES="  (无问题记录)"
+    fi
+else
+    STEP_ISSUES="  (无执行日志)"
+fi
+
 # 生成 TXT 报告
 TXT_REPORT="$PROJECT_ROOT/.dev-runs/${TASK_ID}-report.txt"
 cat > "$TXT_REPORT" << EOF
@@ -136,19 +202,30 @@ cat > "$TXT_REPORT" << EOF
 时间:       $TIMESTAMP
 
 --------------------------------------------------------------------------------
-质检详情 (重点)
+执行质量评分: ${EXEC_SCORE}/10
 --------------------------------------------------------------------------------
 
-Layer 1: 自动化测试
+Layer 1: 本地测试 (verify-step step2)
   - 状态: $L1_STATUS
 
-Layer 2: 效果验证
+Layer 2: CI 验证
   - 状态: $L2_STATUS
 
-Layer 3: 需求验收 (DoD)
+Layer 3: 需求验收 (verify-step step1)
   - 状态: $L3_STATUS
 
-质检结论: $OVERALL_STATUS
+总体结论: $OVERALL_STATUS
+
+统计:
+  - 总事件数: $TOTAL_EVENTS
+  - verify-step 失败次数: $VERIFY_FAIL_COUNT
+  - CI 失败次数: $CI_FAIL_COUNT
+  - 阻塞次数: $BLOCKED_COUNT
+
+--------------------------------------------------------------------------------
+过程中发现的问题（按时间排序）
+--------------------------------------------------------------------------------
+$STEP_ISSUES
 
 --------------------------------------------------------------------------------
 CI/CD
@@ -171,37 +248,85 @@ EOF
 
 echo "已生成报告: $TXT_REPORT"
 
-# 生成 JSON 报告（供 Cecilia 读取）
+# 生成 JSON 报告（供 Cecelia 读取）
 JSON_REPORT="$PROJECT_ROOT/.dev-runs/${TASK_ID}-report.json"
-cat > "$JSON_REPORT" << EOF
+
+# 用 jq 安全构建 JSON（避免 heredoc 中的特殊字符问题）
+if command -v jq &>/dev/null; then
+    FILES_JSON=$(
+        if [[ -n "$FILES_CHANGED" ]]; then
+            echo "$FILES_CHANGED" | jq -R -s 'split("\n") | map(select(length > 0))'
+        else
+            echo "[]"
+        fi
+    )
+
+    jq -n \
+        --arg task_id "$TASK_ID" \
+        --arg project "$PROJECT_NAME" \
+        --arg branch "$CP_BRANCH" \
+        --arg base_branch "$BASE_BRANCH" \
+        --arg mode "$MODE" \
+        --arg timestamp "$TIMESTAMP" \
+        --arg date "$DATE_ONLY" \
+        --arg l1 "$L1_STATUS" \
+        --arg l2 "$L2_STATUS" \
+        --arg l3 "$L3_STATUS" \
+        --arg overall "$OVERALL_STATUS" \
+        --arg score "$EXEC_SCORE" \
+        --argjson verify_fails "${VERIFY_FAIL_COUNT:-0}" \
+        --argjson ci_fails "${CI_FAIL_COUNT:-0}" \
+        --argjson blocked "${BLOCKED_COUNT:-0}" \
+        --argjson total_events "${TOTAL_EVENTS:-0}" \
+        --arg pr_url "$PR_URL" \
+        --argjson pr_merged "$PR_MERGED" \
+        --arg version "$CURRENT_VERSION" \
+        --argjson files "$FILES_JSON" \
+        --argjson execution_summary "$SUMMARY_JSON" \
+        '{
+            task_id: $task_id,
+            project: $project,
+            branch: $branch,
+            base_branch: $base_branch,
+            mode: $mode,
+            timestamp: $timestamp,
+            date: $date,
+            quality_report: {
+                L1_local_test: $l1,
+                L2_ci_verification: $l2,
+                L3_requirements: $l3,
+                overall: $overall,
+                score: $score,
+                verify_fail_count: $verify_fails,
+                ci_fail_count: $ci_fails,
+                blocked_count: $blocked,
+                total_events: $total_events
+            },
+            ci_cd: {
+                pr_url: $pr_url,
+                pr_merged: $pr_merged
+            },
+            version: $version,
+            files_changed: $files,
+            execution_summary: $execution_summary
+        }' > "$JSON_REPORT"
+else
+    # jq 不可用时的 fallback
+    cat > "$JSON_REPORT" << JSONEOF
 {
   "task_id": "$TASK_ID",
   "project": "$PROJECT_NAME",
   "branch": "$CP_BRANCH",
-  "base_branch": "$BASE_BRANCH",
-  "mode": "$MODE",
-  "timestamp": "$TIMESTAMP",
-  "date": "$DATE_ONLY",
   "quality_report": {
-    "L1_automated": "$L1_STATUS",
-    "L2_verification": "$L2_STATUS",
-    "L3_acceptance": "$L3_STATUS",
-    "overall": "$OVERALL_STATUS"
+    "overall": "$OVERALL_STATUS",
+    "score": "$EXEC_SCORE"
   },
   "ci_cd": {
     "pr_url": "$PR_URL",
     "pr_merged": $PR_MERGED
-  },
-  "version": "$CURRENT_VERSION",
-  "files_changed": $(
-    if [[ -n "$FILES_CHANGED" ]]; then
-      # L1 fix: 安全处理空行和特殊字符，使用 jq 构建数组
-      echo "$FILES_CHANGED" | jq -R -s 'split("\n") | map(select(length > 0))'
-    else
-      echo "[]"
-    fi
-  )
+  }
 }
-EOF
+JSONEOF
+fi
 
 echo "已生成报告: $JSON_REPORT"

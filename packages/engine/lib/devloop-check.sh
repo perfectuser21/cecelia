@@ -41,6 +41,14 @@
 #   done
 # ============================================================================
 
+# ============================================================================
+# 执行日志记录器（source）
+# ============================================================================
+_DEVLOOP_LOGGER="${BASH_SOURCE[0]%/*}/execution-logger.sh"
+if [[ -f "$_DEVLOOP_LOGGER" ]]; then
+    source "$_DEVLOOP_LOGGER"
+fi
+
 # jq 缺失时的极简 shim（防止 set -e 崩溃）
 _devloop_jq() {
     if command -v jq &>/dev/null; then
@@ -108,6 +116,9 @@ devloop_check() {
 
     # ===== 检查 cleanup_done（终止条件：最高优先级）=====
     if [[ -f "$dev_mode_file" ]] && grep -q "cleanup_done: true" "$dev_mode_file" 2>/dev/null; then
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "cleanup" "done" "cleanup_done: true"
+        fi
         _devloop_jq -n '{"status":"done"}'
         return 0
     fi
@@ -153,6 +164,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 # 继续后续条件
             else
                 local intent_wait_status="${intent_task_status:-queued}"
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "intent_expand" "blocked" "等待 intent_expand（状态: $intent_wait_status）"
+                fi
                 _devloop_jq -n \
                     --arg task_id "$intent_task_id" \
                     --arg status "$intent_wait_status" \
@@ -188,6 +202,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 else
                     local cto_fail_reasons
                     cto_fail_reasons=$(echo "$cto_review_result" | grep -A 5 "FAIL" | head -5 || echo "详见 review_result")
+                    if command -v _devlog_event &>/dev/null; then
+                        _devlog_event "devloop-check" "cto_review" "blocked" "CTO Review FAIL: $cto_fail_reasons"
+                    fi
                     _devloop_jq -n \
                         --arg task_id "$cto_task_id" \
                         --arg reasons "$cto_fail_reasons" \
@@ -196,6 +213,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 fi
             else
                 local cto_wait_status="${cto_task_status:-queued}"
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "cto_review" "blocked" "等待 CTO Review（状态: $cto_wait_status）"
+                fi
                 _devloop_jq -n \
                     --arg task_id "$cto_task_id" \
                     --arg status "$cto_wait_status" \
@@ -231,6 +251,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 else
                     local cq_fail_reasons
                     cq_fail_reasons=$(echo "$cq_review_result" | grep -A 10 "FAIL_REASONS:" | head -8 || echo "详见 review_result")
+                    if command -v _devlog_event &>/dev/null; then
+                        _devlog_event "devloop-check" "code_quality" "blocked" "Code Quality FAIL: $cq_fail_reasons"
+                    fi
                     _devloop_jq -n \
                         --arg task_id "$cq_task_id" \
                         --arg reasons "$cq_fail_reasons" \
@@ -239,6 +262,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 fi
             else
                 local cq_wait_status="${cq_task_status:-queued}"
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "code_quality" "blocked" "等待代码质量审查（状态: $cq_wait_status）"
+                fi
                 _devloop_jq -n \
                     --arg task_id "$cq_task_id" \
                     --arg status "$cq_wait_status" \
@@ -274,6 +300,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 else
                     local pa_fail_reasons
                     pa_fail_reasons=$(echo "$pa_review_result" | grep -A 10 "MISSING\|FAIL" | head -8 || echo "详见 review_result")
+                    if command -v _devlog_event &>/dev/null; then
+                        _devlog_event "devloop-check" "prd_audit" "blocked" "PRD Audit FAIL: $pa_fail_reasons"
+                    fi
                     _devloop_jq -n \
                         --arg task_id "$pa_task_id" \
                         --arg reasons "$pa_fail_reasons" \
@@ -282,6 +311,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 fi
             else
                 local pa_wait_status="${pa_task_status:-queued}"
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "prd_audit" "blocked" "等待 PRD 覆盖审计（状态: $pa_wait_status）"
+                fi
                 _devloop_jq -n \
                     --arg task_id "$pa_task_id" \
                     --arg status "$pa_wait_status" \
@@ -307,6 +339,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
     fi
 
     if [[ -z "$pr_number" ]]; then
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "pr" "blocked" "PR 未创建"
+        fi
         _devloop_jq -n \
             --arg branch "$branch" \
             '{"status":"blocked","reason":"审查已通过，PR 未创建","action":"创建 PR（gh pr create --base main --head \($branch)）"}'
@@ -333,6 +368,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                     local action_msg="CI 失败（$ci_conclusion），查看日志修复问题后重新 push"
                     if [[ -n "$ci_run_id" ]]; then
                         action_msg="CI 失败（$ci_conclusion），运行 gh run view $ci_run_id --log-failed 查看错误，修复后 git push"
+                    fi
+                    if command -v _devlog_event &>/dev/null; then
+                        _devlog_event "devloop-check" "ci" "blocked" "CI 失败（$ci_conclusion）"
                     fi
                     _devloop_jq -n \
                         --arg reason "CI 失败（$ci_conclusion）" \
@@ -361,12 +399,18 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                         fi
                     fi
                 fi
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "ci" "blocked" "CI 进行中（$ci_status）"
+                fi
                 _devloop_jq -n \
                     --arg status "$ci_status" \
                     '{"status":"blocked","reason":"CI 进行中（\($status)）","action":"等待 CI 完成（通常 3-10 分钟），不要做任何操作"}'
                 return 2
                 ;;
             *)
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "ci" "blocked" "CI 状态未知（$ci_status）"
+                fi
                 _devloop_jq -n \
                     --arg status "$ci_status" \
                     --arg branch "$branch" \
@@ -421,6 +465,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 else
                     local fail_reasons
                     fail_reasons=$(echo "$review_result_text" | grep -A 10 "FAIL_REASONS:" | head -8 || echo "详见 review_result")
+                    if command -v _devlog_event &>/dev/null; then
+                        _devlog_event "devloop-check" "pr_review" "blocked" "PR Review FAIL: $fail_reasons"
+                    fi
                     _devloop_jq -n \
                         --arg task_id "$review_task_id" \
                         --arg reasons "$fail_reasons" \
@@ -429,6 +476,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                 fi
             else
                 local review_wait_status="${review_task_status:-queued}"
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "pr_review" "blocked" "等待 PR Review（状态: $review_wait_status）"
+                fi
                 _devloop_jq -n \
                     --arg task_id "$review_task_id" \
                     --arg status "$review_wait_status" \
@@ -443,6 +493,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
     step_10_status=$(grep "^step_10_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
 
     if [[ "$step_10_status" != "done" ]]; then
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "learning" "blocked" "Learning 未完成"
+        fi
         _devloop_jq -n \
             --arg pr "$pr_number" \
             '{"status":"blocked","reason":"CI 通过，Step 10 LEARNINGS 未完成（合并前必须先写 LEARNINGS）","action":"执行 Step 10：读取 skills/dev/steps/10-learning.md，写 docs/LEARNINGS.md，git add + commit + push 到功能分支（PR #\($pr) 自动更新）"}'
@@ -450,6 +503,9 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
     fi
 
     # Step 10 已完成 → 合并 PR
+    if command -v _devlog_event &>/dev/null; then
+        _devlog_event "devloop-check" "merge" "blocked" "CI 通过 + Learning 完成，等待合并 PR #$pr_number"
+    fi
     _devloop_jq -n \
         --arg pr "$pr_number" \
         '{"status":"blocked","reason":"CI 通过且 Step 10 LEARNINGS 已完成，PR 待合并","action":"执行合并：gh pr merge \($pr) --squash --delete-branch"}'
