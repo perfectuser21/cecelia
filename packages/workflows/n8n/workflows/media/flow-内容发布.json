@@ -6,10 +6,7 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        200,
-        300
-      ],
+      "position": [200, 300],
       "webhookId": "content-publish",
       "parameters": {
         "httpMethod": "POST",
@@ -22,12 +19,9 @@
       "name": "准备",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        420,
-        300
-      ],
+      "position": [420, 300],
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst taskId = body.taskId || '';\nconst title = body.title || '(无标题)';\nconst content = body.content || '';\nconst contentDir = body.contentDir || '';\nconst platforms = body.targetPlatforms || [];\n\nconst supported = ['douyin', 'xiaohongshu'];\nconst valid = platforms.filter(p => supported.includes(p));\n\nif (valid.length === 0) {\n  return [{ json: { skip: true, taskId, title, content, contentDir, reason: '没有支持的平台' } }];\n}\n\nreturn [{ json: { skip: false, taskId, title, content, contentDir, platform: valid[0] } }];"
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst taskId = body.taskId || '';\nconst title = body.title || '(无标题)';\nconst content = body.content || '';\nconst contentDir = body.contentDir || '';\nconst platforms = body.targetPlatforms || [];\n\nconst supported = ['douyin', 'kuaishou', 'xiaohongshu'];\nconst valid = platforms.filter(p => supported.includes(p));\n\nif (valid.length === 0) {\n  return [{ json: { skip: true, taskId, title, content, contentDir, reason: '没有支持的平台' } }];\n}\n\nreturn [{ json: { skip: false, taskId, title, content, contentDir, platform: valid[0] } }];"
       }
     },
     {
@@ -35,23 +29,15 @@
       "name": "是否跳过",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [
-        640,
-        300
-      ],
+      "position": [640, 300],
       "parameters": {
         "conditions": {
-          "options": {
-            "typeValidation": "loose"
-          },
+          "options": { "typeValidation": "loose" },
           "combinator": "and",
           "conditions": [
             {
               "id": "c1",
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              },
+              "operator": { "type": "boolean", "operation": "true" },
               "leftValue": "={{ $json.skip }}"
             }
           ]
@@ -63,27 +49,19 @@
       "name": "平台路由",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [
-        880,
-        400
-      ],
+      "position": [880, 400],
       "parameters": {
         "mode": "rules",
         "rules": {
           "values": [
             {
               "conditions": {
-                "options": {
-                  "typeValidation": "loose"
-                },
+                "options": { "typeValidation": "loose" },
                 "combinator": "and",
                 "conditions": [
                   {
                     "id": "r1",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
+                    "operator": { "type": "string", "operation": "equals" },
                     "leftValue": "={{ $json.platform }}",
                     "rightValue": "douyin"
                   }
@@ -93,23 +71,33 @@
             },
             {
               "conditions": {
-                "options": {
-                  "typeValidation": "loose"
-                },
+                "options": { "typeValidation": "loose" },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r3",
+                    "operator": { "type": "string", "operation": "equals" },
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "kuaishou"
+                  }
+                ]
+              },
+              "outputIndex": 1
+            },
+            {
+              "conditions": {
+                "options": { "typeValidation": "loose" },
                 "combinator": "and",
                 "conditions": [
                   {
                     "id": "r2",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
+                    "operator": { "type": "string", "operation": "equals" },
                     "leftValue": "={{ $json.platform }}",
                     "rightValue": "xiaohongshu"
                   }
                 ]
               },
-              "outputIndex": 1
+              "outputIndex": 2
             }
           ]
         },
@@ -121,15 +109,9 @@
       "name": "SSH发布",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [
-        1120,
-        300
-      ],
+      "position": [1120, 200],
       "credentials": {
-        "sshPrivateKey": {
-          "id": "vvJsQOZ95sqzemla",
-          "name": "VPS SSH Key"
-        }
+        "sshPrivateKey": { "id": "vvJsQOZ95sqzemla", "name": "VPS SSH Key" }
       },
       "parameters": {
         "authentication": "privateKey",
@@ -140,26 +122,37 @@
       }
     },
     {
+      "id": "n13",
+      "name": "SSH-快手",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1120, 400],
+      "credentials": {
+        "sshPrivateKey": { "id": "vvJsQOZ95sqzemla", "name": "VPS SSH Key" }
+      },
+      "parameters": {
+        "authentication": "privateKey",
+        "host": "100.71.151.105",
+        "port": 22,
+        "user": "administrator",
+        "command": "=TITLE=\"{{ $json.title }}\"; VIDEO=\"{{ $json.contentDir }}\"; NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules node ~/perfect21/cecelia/packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-video.cjs --title \"$TITLE\" --video \"$VIDEO\" 2>&1"
+      }
+    },
+    {
       "id": "n9",
       "name": "SSH-小红书",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [
-        1120,
-        520
-      ],
+      "position": [1120, 600],
       "credentials": {
-        "sshPrivateKey": {
-          "id": "vvJsQOZ95sqzemla",
-          "name": "VPS SSH Key"
-        }
+        "sshPrivateKey": { "id": "vvJsQOZ95sqzemla", "name": "VPS SSH Key" }
       },
       "parameters": {
         "authentication": "privateKey",
-        "host": "100.108.7.63",
+        "host": "100.71.151.105",
         "port": 22,
         "user": "administrator",
-        "command": "=CONTENT_DIR=\"{{ $json.contentDir }}\"; if [ -z \"$CONTENT_DIR\" ] || [ \"$CONTENT_DIR\" = \"undefined\" ]; then echo '{\"success\":false,\"error\":\"contentDir 未提供，请在请求体中传入包含图片的目录路径（如 ~/.xiaohongshu-queue/2026-03-10/image-1）\"}'; else NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs --content \"$CONTENT_DIR\" 2>&1 && echo '{\"success\":true}' || echo '{\"success\":false,\"error\":\"发布脚本返回非零退出码，请查看截图目录\"}'; fi"
+        "command": "=CONTENT_DIR=\"{{ $json.contentDir }}\"; if [ -z \"$CONTENT_DIR\" ] || [ \"$CONTENT_DIR\" = \"undefined\" ]; then echo '{\"success\":false,\"platform\":\"xiaohongshu\",\"contentType\":\"image\",\"workId\":null,\"url\":null,\"error\":\"contentDir 未提供\"}'; else NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs --content \"$CONTENT_DIR\" 2>&1; fi"
       }
     },
     {
@@ -167,12 +160,19 @@
       "name": "解析并构建通知",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1360,
-        300
-      ],
+      "position": [1360, 200],
       "parameters": {
-        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('准备').first().json;\n\nconst platformNames = { douyin: '抖音', xiaohongshu: '小红书' };\nconst platformDisplay = platformNames[prev.platform] || prev.platform;\n\nlet success = false;\nlet error = '';\n\ntry {\n  const m = stdout.match(/\\{[\\s\\S]*?\\}/);\n  if (m) {\n    const r = JSON.parse(m[0]);\n    success = r.success === true;\n    error = r.error || '';\n  }\n} catch (e) {\n  error = '解析失败';\n}\n\nconst emoji = success ? '✅' : '❌';\nconst status = success ? '发布成功' : '发布失败';\nlet text = emoji + ' ' + status + '\\n';\ntext += '平台: ' + platformDisplay + '\\n';\ntext += '标题: ' + prev.title;\nif (error) text += '\\n错误: ' + error;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    success,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('准备').first().json;\n\nlet success = false;\nlet workId = null;\nlet url = null;\nlet error = '';\n\ntry {\n  const matches = stdout.match(/\\{[^{}]*\"success\"[^{}]*\\}/g);\n  if (matches && matches.length > 0) {\n    const r = JSON.parse(matches[matches.length - 1]);\n    success = r.success === true;\n    workId = r.workId || null;\n    url = r.url || null;\n    error = r.error || '';\n  }\n} catch (e) {\n  error = '解析失败';\n}\n\nconst platformNames = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' };\nconst platformDisplay = platformNames[prev.platform] || prev.platform;\n\nconst emoji = success ? '✅' : '❌';\nlet text = emoji + ' ' + (success ? '发布成功' : '发布失败') + '\\n';\ntext += '平台: ' + platformDisplay + '\\n';\ntext += '标题: ' + prev.title;\nif (workId) text += '\\n作品ID: ' + workId;\nif (url) text += '\\n链接: ' + url;\nif (!success && error) text += '\\n错误: ' + error;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    platform: prev.platform,\n    contentType: 'video',\n    title: prev.title,\n    success, workId, url, error,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
+      }
+    },
+    {
+      "id": "n14",
+      "name": "解析-快手",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 400],
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('准备').first().json;\n\nlet success = false;\nlet workId = null;\nlet url = null;\nlet error = '';\n\ntry {\n  const matches = stdout.match(/\\{[^{}]*\"success\"[^{}]*\\}/g);\n  if (matches && matches.length > 0) {\n    const r = JSON.parse(matches[matches.length - 1]);\n    success = r.success === true;\n    workId = r.workId || null;\n    url = r.url || null;\n    error = r.error || '';\n  }\n} catch (e) {\n  error = '解析失败: ' + e.message;\n}\n\nconst emoji = success ? '✅' : '❌';\nlet text = emoji + ' ' + (success ? '发布成功' : '发布失败') + '\\n';\ntext += '平台: 快手\\n';\ntext += '标题: ' + prev.title;\nif (workId) text += '\\n作品ID: ' + workId;\nif (url) text += '\\n链接: ' + url;\nif (!success && error) text += '\\n错误: ' + error;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    platform: 'kuaishou',\n    contentType: 'video',\n    title: prev.title,\n    success, workId, url, error,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
       }
     },
     {
@@ -180,12 +180,51 @@
       "name": "解析-小红书",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1360,
-        520
-      ],
+      "position": [1360, 600],
       "parameters": {
-        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('准备').first().json;\n\nlet success = false;\nlet error = '';\n\n// 优先解析 JSON（脚本输出的结构化结果）\ntry {\n  // 找最后一个 JSON 对象（脚本末尾追加的 {\"success\":...}）\n  const matches = stdout.match(/\\{[^{}]*\"success\"[^{}]*\\}/g);\n  if (matches && matches.length > 0) {\n    const r = JSON.parse(matches[matches.length - 1]);\n    if (typeof r.success === 'boolean') success = r.success;\n    if (r.error) error = r.error;\n  } else {\n    // 降级：关键词匹配\n    if (stdout.includes('[XHS] ✅') || stdout.includes('发布成功') || stdout.includes('笔记已发布')) {\n      success = true;\n    } else if (stdout.includes('[XHS] ❌') || stdout.includes('发布失败') || stdout.includes('Error')) {\n      success = false;\n      const errLine = stdout.split('\\n').find(l => l.includes('[XHS] ❌') || l.toLowerCase().includes('error'));\n      error = errLine ? errLine.replace(/\\[XHS\\]\\s*❌\\s*/, '').trim() : '未知错误';\n    } else {\n      success = stdout.trim().length > 0;\n    }\n  }\n} catch (e) {\n  error = '解析失败: ' + e.message;\n}\n\nconst emoji = success ? '✅' : '❌';\nconst status = success ? '发布成功' : '发布失败';\nlet text = emoji + ' ' + status + '\\n';\ntext += '平台: 小红书\\n';\ntext += '标题: ' + prev.title;\nif (error) text += '\\n错误: ' + error;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    success,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('准备').first().json;\n\nlet success = false;\nlet workId = null;\nlet url = null;\nlet error = '';\n\ntry {\n  const matches = stdout.match(/\\{[^{}]*\"success\"[^{}]*\\}/g);\n  if (matches && matches.length > 0) {\n    const r = JSON.parse(matches[matches.length - 1]);\n    success = r.success === true;\n    workId = r.workId || null;\n    url = r.url || null;\n    error = r.error || '';\n  } else {\n    if (stdout.includes('[XHS] ✅') || stdout.includes('发布成功')) {\n      success = true;\n    } else if (stdout.includes('[XHS] ❌') || stdout.includes('发布失败')) {\n      success = false;\n      const errLine = stdout.split('\\n').find(l => l.includes('[XHS] ❌'));\n      error = errLine ? errLine.replace(/\\[XHS\\]\\s*❌\\s*/, '').trim() : '未知错误';\n    }\n  }\n} catch (e) {\n  error = '解析失败: ' + e.message;\n}\n\nconst emoji = success ? '✅' : '❌';\nlet text = emoji + ' ' + (success ? '发布成功' : '发布失败') + '\\n';\ntext += '平台: 小红书\\n';\ntext += '标题: ' + prev.title;\nif (url) text += '\\n链接: ' + url;\nif (!success && error) text += '\\n错误: ' + error;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    platform: 'xiaohongshu',\n    contentType: 'image',\n    title: prev.title,\n    success, workId, url, error,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
+      }
+    },
+    {
+      "id": "n15",
+      "name": "写入Brain-抖音",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/publish-results",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ platform: $json.platform, contentType: $json.contentType, success: $json.success, workId: $json.workId, url: $json.url, error: $json.error, title: $json.title, taskId: $json.taskId }) }}"
+      }
+    },
+    {
+      "id": "n16",
+      "name": "写入Brain-快手",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/publish-results",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ platform: $json.platform, contentType: $json.contentType, success: $json.success, workId: $json.workId, url: $json.url, error: $json.error, title: $json.title, taskId: $json.taskId }) }}"
+      }
+    },
+    {
+      "id": "n17",
+      "name": "写入Brain-小红书",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 600],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/publish-results",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ platform: $json.platform, contentType: $json.contentType, success: $json.success, workId: $json.workId, url: $json.url, error: $json.error, title: $json.title, taskId: $json.taskId }) }}"
       }
     },
     {
@@ -193,16 +232,27 @@
       "name": "飞书通知",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1600,
-        300
-      ],
+      "position": [1840, 200],
       "parameters": {
         "method": "POST",
         "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.feishuBody }}"
+        "jsonBody": "={{ $('解析并构建通知').first().json.feishuBody }}"
+      }
+    },
+    {
+      "id": "n18",
+      "name": "飞书-快手",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('解析-快手').first().json.feishuBody }}"
       }
     },
     {
@@ -210,16 +260,13 @@
       "name": "飞书-小红书",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1600,
-        520
-      ],
+      "position": [1840, 600],
       "parameters": {
         "method": "POST",
         "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.feishuBody }}"
+        "jsonBody": "={{ $('解析-小红书').first().json.feishuBody }}"
       }
     },
     {
@@ -227,10 +274,7 @@
       "name": "跳过通知",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        880,
-        200
-      ],
+      "position": [880, 200],
       "parameters": {
         "jsCode": "const prev = $input.first().json;\nreturn [{ json: { feishuBody: { msg_type: 'text', content: { text: '⏭️ 发布跳过\\n原因: ' + prev.reason } } } }];"
       }
@@ -240,10 +284,7 @@
       "name": "飞书-跳过",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1120,
-        200
-      ],
+      "position": [1120, 100],
       "parameters": {
         "method": "POST",
         "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
@@ -255,117 +296,53 @@
   ],
   "connections": {
     "Webhook": {
-      "main": [
-        [
-          {
-            "node": "准备",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "准备", "type": "main", "index": 0 }]]
     },
     "准备": {
-      "main": [
-        [
-          {
-            "node": "是否跳过",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "是否跳过", "type": "main", "index": 0 }]]
     },
     "是否跳过": {
       "main": [
-        [
-          {
-            "node": "跳过通知",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "平台路由",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "跳过通知", "type": "main", "index": 0 }],
+        [{ "node": "平台路由", "type": "main", "index": 0 }]
       ]
     },
     "平台路由": {
       "main": [
-        [
-          {
-            "node": "SSH发布",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "SSH-小红书",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "SSH发布", "type": "main", "index": 0 }],
+        [{ "node": "SSH-快手", "type": "main", "index": 0 }],
+        [{ "node": "SSH-小红书", "type": "main", "index": 0 }]
       ]
     },
     "SSH发布": {
-      "main": [
-        [
-          {
-            "node": "解析并构建通知",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "解析并构建通知", "type": "main", "index": 0 }]]
+    },
+    "SSH-快手": {
+      "main": [[{ "node": "解析-快手", "type": "main", "index": 0 }]]
     },
     "SSH-小红书": {
-      "main": [
-        [
-          {
-            "node": "解析-小红书",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "解析-小红书", "type": "main", "index": 0 }]]
     },
     "解析并构建通知": {
-      "main": [
-        [
-          {
-            "node": "飞书通知",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "写入Brain-抖音", "type": "main", "index": 0 }]]
+    },
+    "解析-快手": {
+      "main": [[{ "node": "写入Brain-快手", "type": "main", "index": 0 }]]
     },
     "解析-小红书": {
-      "main": [
-        [
-          {
-            "node": "飞书-小红书",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "写入Brain-小红书", "type": "main", "index": 0 }]]
+    },
+    "写入Brain-抖音": {
+      "main": [[{ "node": "飞书通知", "type": "main", "index": 0 }]]
+    },
+    "写入Brain-快手": {
+      "main": [[{ "node": "飞书-快手", "type": "main", "index": 0 }]]
+    },
+    "写入Brain-小红书": {
+      "main": [[{ "node": "飞书-小红书", "type": "main", "index": 0 }]]
     },
     "跳过通知": {
-      "main": [
-        [
-          {
-            "node": "飞书-跳过",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "飞书-跳过", "type": "main", "index": 0 }]]
     }
   },
   "settings": {

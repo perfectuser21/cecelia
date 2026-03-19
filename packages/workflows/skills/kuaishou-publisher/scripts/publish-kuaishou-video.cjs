@@ -983,9 +983,25 @@ async function main() {
     console.log('\n✅ 快手视频发布成功！');
     if (workId) console.log(`   作品 ID: ${workId}`);
     if (workUrl) console.log(`   管理链接: ${workUrl}`);
+    process.stdout.write('\n' + JSON.stringify({
+      "success": true,
+      "platform": "kuaishou",
+      "contentType": "video",
+      "workId": workId || null,
+      "url": workUrl || null,
+      "error": null,
+    }) + '\n');
   } catch (err) {
     const isSessError = err.message.includes('[SESSION_EXPIRED]');
     console.error(`\n${isSessError ? '[SESSION_EXPIRED]' : '❌'} 发布失败: ${err.message}`);
+    process.stdout.write('\n' + JSON.stringify({
+      "success": false,
+      "platform": "kuaishou",
+      "contentType": "video",
+      "workId": null,
+      "url": null,
+      "error": err.message,
+    }) + '\n');
     process.exit(isSessError ? 2 : 1);
   } finally {
     if (cdp) cdp.close();
