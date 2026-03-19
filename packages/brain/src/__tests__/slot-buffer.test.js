@@ -133,37 +133,39 @@ describe('calculateSlotBudget token 集成', () => {
 
   it('token_pressure=0 → Pool C 不受 token 限制', async () => {
     const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(9); // 12 - 1(user) - 2(cecelia) = 9
+    // Dynamic model: absent, effectiveSlots=12, totalRunning=0, userReserve=0 → 12
+    expect(budget.taskPool.budget).toBe(12);
     expect(budget.tokenPressure.token_pressure).toBe(0);
   });
 
-  it('token_pressure=1.0 → Pool C = 0', async () => {
+  it('token_pressure=1.0 → Pool C 不受影响（token 仅监控）', async () => {
     getTokenPressure.mockResolvedValue({
       token_pressure: 1.0, available_accounts: 0, details: 'all exhausted',
     });
 
     const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(0);
-    expect(budget.dispatchAllowed).toBe(false);
+    // Token pressure is monitoring only — no throttle
+    expect(budget.taskPool.budget).toBe(12);
+    expect(budget.dispatchAllowed).toBe(true);
+    expect(budget.tokenPressure.token_pressure).toBe(1.0);
   });
 
-  it('token_pressure=0.9 → Pool C 最多 1', async () => {
+  it('token_pressure=0.9 → Pool C 不受影响（token 仅监控）', async () => {
     getTokenPressure.mockResolvedValue({
       token_pressure: 0.9, available_accounts: 1, details: 'barely available',
     });
 
     const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBeLessThanOrEqual(1);
+    expect(budget.taskPool.budget).toBe(12); // unaffected
   });
 
-  it('token_pressure=0.7 → Pool C 减半', async () => {
+  it('token_pressure=0.7 → Pool C 不受影响（token 仅监控）', async () => {
     getTokenPressure.mockResolvedValue({
       token_pressure: 0.7, available_accounts: 1, details: '1 account ok',
     });
 
     const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBeLessThanOrEqual(5); // 9/2 rounded = 5
-    expect(budget.taskPool.budget).toBeGreaterThan(0);
+    expect(budget.taskPool.budget).toBe(12); // unaffected
   });
 
   it('返回值应包含 tokenPressure 字段', async () => {
@@ -177,7 +179,7 @@ describe('calculateSlotBudget token 集成', () => {
     expect(budget.tokenPressure.available_accounts).toBe(2);
   });
 
-  it('combinedPressure 取 hardware 和 token 的最大值', async () => {
+  it('pressure 只取 hardware 压力（token 不再参与 combined）', async () => {
     checkServerResources.mockReturnValue({
       effectiveSlots: 12,
       metrics: { max_pressure: 0.3 },
@@ -187,7 +189,8 @@ describe('calculateSlotBudget token 集成', () => {
     });
 
     const budget = await calculateSlotBudget();
-    expect(budget.pressure).toBe(0.6);
+    // pressure now only reflects hardware pressure
+    expect(budget.pressure).toBe(0.3);
   });
 
   it('getTokenPressure 异常 → 不影响正常计算', async () => {
@@ -197,24 +200,24 @@ describe('calculateSlotBudget token 集成', () => {
     expect(budget.taskPool.budget).toBeGreaterThan(0);
   });
 
-  it('buffer 平滑：连续 token 满载，Pool C 快刹车(-3)逐步降', async () => {
-    // Tick 1: 正常 (Pool C = 9)
-    getTokenPressure.mockResolvedValue({ token_pressure: 0, available_accounts: 3, details: '' });
+  it('buffer 平滑：hardware 压力骤升，Pool C 快刹车(-3)逐步降', async () => {
+    // Tick 1: 正常 (Pool C = 12)
+    checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
     let budget = await calculateSlotBudget();
+    expect(budget.taskPool.budget).toBe(12);
+
+    // Tick 2: 极端压力 → effectiveSlots=0 → 目标 0, buffer 限制为 12-3=9
+    checkServerResources.mockReturnValue({ effectiveSlots: 0, metrics: { max_pressure: 1.0 } });
+    budget = await calculateSlotBudget();
     expect(budget.taskPool.budget).toBe(9);
 
-    // Tick 2: token 满载 → 目标 0，但 buffer 限制为 9-3=6
-    getTokenPressure.mockResolvedValue({ token_pressure: 1.0, available_accounts: 0, details: '' });
+    // Tick 3: 继续压力 → 9-3=6
     budget = await calculateSlotBudget();
     expect(budget.taskPool.budget).toBe(6);
 
-    // Tick 3: 继续满载 → 6-3=3
+    // Tick 4: 继续压力 → 6-3=3
     budget = await calculateSlotBudget();
     expect(budget.taskPool.budget).toBe(3);
-
-    // Tick 4: 继续满载 → 3-3=0
-    budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(0);
   });
 });
 

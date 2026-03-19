@@ -12,11 +12,11 @@
 import os from 'os';
 
 // 每个任务的资源消耗（基于 executor.js 观测值）
-const MEM_PER_TASK_MB = 500;    // ~500MB avg per claude process
+const MEM_PER_TASK_MB = 400;    // ~400MB avg per claude process (unified with executor + platform-utils)
 const CPU_PER_TASK = 0.5;       // ~0.5 core avg per claude process
 const TARGET_UTILIZATION = 0.8; // 80% — 留 20% 给系统
 const USER_RESERVE = 2;         // 保留 2 seat 给用户交互
-const MAX_PHYSICAL_CAP = 8;     // 硬顶：无论 CPU/MEM 多高，最多 8 并行
+const MAX_PHYSICAL_CAP = 20;    // 硬顶：与 platform-utils.js 保持一致
 
 /**
  * 基于服务器实际 CPU + Memory 计算最大并行流数。

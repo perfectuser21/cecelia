@@ -94,7 +94,7 @@ import {
 describe('Slot Allocator Constants', () => {
   it('should export correct constants', () => {
     expect(TOTAL_CAPACITY).toBe(12);
-    expect(CECELIA_RESERVED).toBe(2);
+    expect(CECELIA_RESERVED).toBe(0); // dynamic model: no static reserve
     expect(USER_RESERVED_BASE).toBe(1);
     expect(USER_PRIORITY_HEADROOM).toBe(1);
     expect(SESSION_TTL_SECONDS).toBe(4 * 60 * 60); // 4 hours
@@ -397,31 +397,25 @@ describe('calculateSlotBudget', () => {
 
   // --- Absent mode (no user sessions) ---
 
-  it('absent mode: user budget = USER_RESERVED_BASE', async () => {
+  it('absent mode: user budget = 0 (no headroom when absent)', async () => {
     const budget = await calculateSlotBudget();
     expect(budget.user.mode).toBe('absent');
-    expect(budget.user.budget).toBe(USER_RESERVED_BASE); // 2
+    expect(budget.user.budget).toBe(0); // no sessions, no headroom
     expect(budget.user.used).toBe(0);
   });
 
-  it('absent mode: Pool C = total - user_base(1) - cecelia(2) = 9', async () => {
-    // absent mode → ceceliaNeeded = CECELIA_RESERVED = 2 (always, regardless of internal tasks)
+  it('absent mode: Pool C = effectiveSlots (all available)', async () => {
+    // Dynamic model: absent → userReserve=0, totalRunning=0 → available = 12
     const budget = await calculateSlotBudget();
-    expect(budget.cecelia.budget).toBe(2);
-    expect(budget.taskPool.budget).toBe(9); // 12 - 1 - 2
+    expect(budget.cecelia.budget).toBe(0); // no static reserve
+    expect(budget.taskPool.budget).toBe(12); // 12 - 0 - 0
   });
 
-  it('absent mode with internal tasks: Pool C = total - user_base(1) - cecelia(2) = 9', async () => {
-    // absent mode: ceceliaNeeded = CECELIA_RESERVED = 2 regardless of hasInternalWork
-    pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // hasPendingInternalTasks (not used in new logic)
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countAutoDispatchInProgress
-
+  it('absent mode: same result regardless of internal tasks', async () => {
+    // Dynamic model doesn't check hasPendingInternalTasks
     const budget = await calculateSlotBudget();
-    expect(budget.cecelia.budget).toBe(2);
-    expect(budget.taskPool.budget).toBe(9); // 12 - 1 - 2
+    expect(budget.cecelia.budget).toBe(0);
+    expect(budget.taskPool.budget).toBe(12);
   });
 
   // --- Interactive mode (1-2 headed sessions) ---
@@ -436,7 +430,7 @@ describe('calculateSlotBudget', () => {
     expect(budget.user.headroom).toBe(USER_PRIORITY_HEADROOM); // 1
   });
 
-  it('interactive mode with 2 headed: Pool C = 12 - 3 - 2 = 7', async () => {
+  it('interactive mode with 2 headed: Pool C = 12 - 2 - 1 = 9', async () => {
     execSync.mockReturnValue(
       '100 300 claude claude --resume s1\n' +
       '200 300 claude claude --resume s2\n'
@@ -444,8 +438,8 @@ describe('calculateSlotBudget', () => {
 
     const budget = await calculateSlotBudget();
     expect(budget.user.mode).toBe('interactive');
-    expect(budget.user.budget).toBe(3); // 2 + 1
-    expect(budget.taskPool.budget).toBe(7); // 12 - 3 - 2(cecelia reserved)
+    expect(budget.user.budget).toBe(3); // 2 + 1 headroom
+    expect(budget.taskPool.budget).toBe(9); // 12 - 2(running) - 1(headroom) = 9
   });
 
   // --- Team mode (3+ headed sessions) ---
@@ -463,29 +457,24 @@ describe('calculateSlotBudget', () => {
     expect(budget.user.budget).toBe(3 + USER_PRIORITY_HEADROOM); // 4
   });
 
-  it('team mode: Cecelia keeps 1 slot (budget=1) even with internal work', async () => {
+  it('team mode: no static Cecelia reserve in dynamic model', async () => {
     execSync.mockReturnValue(
       '100 300 claude claude\n200 300 claude claude\n300 300 claude claude\n'
     );
-    pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // hasPendingInternalTasks = true
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
     const budget = await calculateSlotBudget();
-    expect(budget.cecelia.budget).toBe(1); // team mode keeps 1 slot for OKR decomp
+    expect(budget.cecelia.budget).toBe(0); // dynamic model: no static reserve
   });
 
-  it('team mode with 4 agents: Pool C = 12 - 6 - 1 = 5', async () => {
+  it('team mode with 4 agents: Pool C = 12 - 4 - 1 = 7', async () => {
     execSync.mockReturnValue(
       '100 300 claude claude\n200 300 claude claude\n' +
       '300 300 claude claude\n400 300 claude claude\n'
     );
 
     const budget = await calculateSlotBudget();
-    expect(budget.user.budget).toBe(5); // 4 + 1
-    expect(budget.taskPool.budget).toBe(6); // 12 - 5 - 1(cecelia team reserved)
+    expect(budget.user.budget).toBe(5); // 4 + 1 headroom
+    expect(budget.taskPool.budget).toBe(7); // 12 - 4(running) - 1(headroom) = 7
   });
 
   // --- TTL: stale sessions do not trigger team mode ---
@@ -503,7 +492,8 @@ describe('calculateSlotBudget', () => {
     expect(budget.user.mode).toBe('interactive'); // only 1 active session
     expect(budget.user.used).toBe(1);
     expect(budget.user.budget).toBe(2); // 1 + 1 headroom
-    expect(budget.taskPool.budget).toBe(8); // 12 - 2(user) - 2(cecelia always reserved in interactive) = 8
+    // total=1 (only fresh counted in sessions.total), userReserve=1
+    expect(budget.taskPool.budget).toBe(10); // 12 - 1(running) - 1(headroom) = 10
   });
 
   // --- Pool C never negative ---
@@ -527,7 +517,7 @@ describe('calculateSlotBudget', () => {
     });
 
     const budget = await calculateSlotBudget();
-    // Pool C raw = 12 - 2 = 10, but effectiveSlots = 4
+    // absent: totalRunning=0, userReserve=0, effectiveSlots=4 → available=4
     expect(budget.taskPool.budget).toBe(4);
     expect(budget.pressure).toBe(0.7);
   });
@@ -539,17 +529,13 @@ describe('calculateSlotBudget', () => {
     expect(budget.dispatchAllowed).toBe(true);
   });
 
-  it('dispatchAllowed is false when Pool C is full', async () => {
-    // absent mode: Pool C budget = 12 - 1(user) - 2(cecelia) = 9
-    // Make autoDispatchUsed = 9 to fill Pool C
-    pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
-      .mockResolvedValueOnce({ rows: [{ count: '9' }] }); // countAutoDispatchInProgress = 9
+  it('dispatchAllowed is false when effectiveSlots = 0 (extreme pressure)', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 0,
+      metrics: { max_pressure: 1.0 },
+    });
 
     const budget = await calculateSlotBudget();
-    // Pool C budget = 9, used = 9 → available = 0
     expect(budget.taskPool.available).toBe(0);
     expect(budget.dispatchAllowed).toBe(false);
   });
@@ -620,7 +606,7 @@ describe('getSlotStatus', () => {
     );
     const status = await getSlotStatus();
     expect(status.pools.user.mode).toBe('team');
-    expect(status.pools.cecelia.budget).toBe(1); // 团队模式下 Cecelia 保留 1
+    expect(status.pools.cecelia.budget).toBe(0); // dynamic model: no static reserve
   });
 
   it('多个有头会话应全部出现在 sessions 列表', async () => {
@@ -681,10 +667,10 @@ describe('边界条件', () => {
       metrics: { max_pressure: 0.3 },
     });
     const budget = await calculateSlotBudget();
-    // total=2, userBudget=1(absent base), ceceliaNeeded=2 → Pool C raw = max(0, 2-1-2) = 0
+    // absent: totalRunning=0, userReserve=0 → available = 2
     expect(budget.total).toBe(2);
-    expect(budget.taskPool.budget).toBe(0);
-    expect(budget.dispatchAllowed).toBe(false);
+    expect(budget.taskPool.budget).toBe(2);
+    expect(budget.dispatchAllowed).toBe(true);
     // 恢复
     getEffectiveMaxSeats.mockReturnValue(12);
   });
@@ -696,56 +682,57 @@ describe('边界条件', () => {
       metrics: { max_pressure: 0.0 },
     });
     const budget = await calculateSlotBudget();
-    // absent: userBudget=1, ceceliaNeeded=2 → Pool C = 97
+    // absent: totalRunning=0, userReserve=0 → available = 100
     expect(budget.total).toBe(100);
-    expect(budget.taskPool.budget).toBe(97);
+    expect(budget.taskPool.budget).toBe(100);
     // 恢复
     getEffectiveMaxSeats.mockReturnValue(12);
   });
 
   it('autoDispatchUsed 超过 Pool C budget 时 available 不为负', async () => {
-    pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
-      .mockResolvedValueOnce({ rows: [{ count: '20' }] }); // countAutoDispatchInProgress >> budget
+    // In dynamic model, available is based on process detection, not DB
+    // Force effectiveSlots=0 to get available=0
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 0,
+      metrics: { max_pressure: 1.0 },
+    });
 
     const budget = await calculateSlotBudget();
-    // Pool C budget = 9, used = 20 → available = max(0, 9-20) = 0
     expect(budget.taskPool.available).toBe(0);
     expect(budget.dispatchAllowed).toBe(false);
   });
 
   it('ceceliaUsed 正确反映到返回值', async () => {
+    // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // countCeceliaInProgress = 2
-      .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // countAutoDispatchInProgress = 3
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] }) // countAutoDispatchInProgress = 3
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // getQueueDepth
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
 
     const budget = await calculateSlotBudget();
     expect(budget.cecelia.used).toBe(2);
     expect(budget.taskPool.used).toBe(3);
   });
 
-  it('effectiveSlots 小于 Pool C raw 时取较小值', async () => {
+  it('effectiveSlots 小于 dynamicCapacity 时取 effectiveSlots', async () => {
     checkServerResources.mockReturnValue({
       effectiveSlots: 3,
       metrics: { max_pressure: 0.8 },
     });
     const budget = await calculateSlotBudget();
-    // Pool C raw = 12 - 1 - 2 = 9, effectiveSlots = 3 → min(9,3) = 3
+    // absent: totalRunning=0, userReserve=0, effectiveSlots=3 → available=3
     expect(budget.taskPool.budget).toBe(3);
   });
 
-  it('effectiveSlots 大于 Pool C raw 时取 raw 值', async () => {
+  it('effectiveSlots 大于 dynamicCapacity 时使用 effectiveSlots', async () => {
     checkServerResources.mockReturnValue({
-      effectiveSlots: 100, // 远大于 raw
+      effectiveSlots: 100, // 远大于 dynamicCapacity
       metrics: { max_pressure: 0.0 },
     });
     const budget = await calculateSlotBudget();
-    // Pool C raw = 12 - 1 - 2 = 9, effectiveSlots = 100 → min(9,100) = 9
-    expect(budget.taskPool.budget).toBe(9);
+    // absent: totalRunning=0, userReserve=0 → available = 100
+    expect(budget.taskPool.budget).toBe(100);
   });
 });
 
@@ -957,10 +944,10 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     expect(budget.user.headroom).toBe(1);
   });
 
-  it('absent 模式下 headroom = USER_RESERVED_BASE（因 used=0）', async () => {
+  it('absent 模式下 headroom = 0（无需保留）', async () => {
     const budget = await calculateSlotBudget();
-    // absent: budget=1, used=0 → headroom = max(0, 1-0) = 1
-    expect(budget.user.headroom).toBe(1);
+    // absent: userReserve=0 → headroom = 0
+    expect(budget.user.headroom).toBe(0);
   });
 
   it('resources 字段应包含 effectiveSlots 和 maxPressure', async () => {
@@ -990,12 +977,11 @@ describe('calculateSlotBudget 三池模型完整性', () => {
   });
 
   it('codex 字段包含 running/max/available', async () => {
-    // DB mock: countCodexInProgress returns 2
+    // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.codex).toBeDefined();
@@ -1005,11 +991,11 @@ describe('calculateSlotBudget 三池模型完整性', () => {
   });
 
   it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
+    // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // countCodexInProgress = 3 (full)
     const budget = await calculateSlotBudget();
     expect(budget.codex.running).toBe(3);
@@ -1023,7 +1009,14 @@ describe('calculateSlotBudget 三池模型完整性', () => {
 
 describe('Backpressure', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     _resetSlotBuffer();
+    execSync.mockReturnValue('');
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 12,
+      metrics: { max_pressure: 0.1 },
+    });
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
   });
 
   it('exports BACKPRESSURE_THRESHOLD=5 and BACKPRESSURE_BURST_LIMIT=1', () => {
@@ -1044,11 +1037,11 @@ describe('Backpressure', () => {
   });
 
   it('queue_depth=9 > threshold=5: backpressure.active=true, override_burst_limit=1', async () => {
+    // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '9' }] }) // getQueueDepth = 9 (高积压)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '9' }] }) // getQueueDepth = 9 (高积压)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure).toBeDefined();
@@ -1060,10 +1053,9 @@ describe('Backpressure', () => {
 
   it('queue_depth=3 <= threshold=5: backpressure.active=false, override_burst_limit=null', async () => {
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '3' }] }) // getQueueDepth = 3 (正常)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] }) // getQueueDepth = 3 (正常)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure.queue_depth).toBe(3);
@@ -1073,10 +1065,9 @@ describe('Backpressure', () => {
 
   it('queue_depth=5 == threshold=5: backpressure.active=false (not strictly greater)', async () => {
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getQueueDepth = 5 (等于阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getQueueDepth = 5 (等于阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure.active).toBe(false);
@@ -1085,10 +1076,9 @@ describe('Backpressure', () => {
 
   it('queue_depth=6 > threshold=5: backpressure.active=true (边界值)', async () => {
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
-      .mockResolvedValueOnce({ rows: [{ count: '6' }] }) // getQueueDepth = 6 (刚超过阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '6' }] }) // getQueueDepth = 6 (刚超过阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure.active).toBe(true);

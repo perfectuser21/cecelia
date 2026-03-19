@@ -243,16 +243,16 @@ describe('platform-utils', () => {
 
     it('should account for SYSTEM_RESERVED_MB', () => {
       expect(SYSTEM_RESERVED_MB).toBe(5000);
-      // 16GB Mac mini: (16384 - 5000) * 0.8 / 350 = ~26, capped to 10
+      // 16GB Mac mini: (16384 - 5000) * 0.8 / 350 = ~26, capped to 20
       // CPU: 10 * 0.8 / 0.5 = 16
-      // min(26, 16) = 16, capped to 10
+      // min(26, 16) = 16, capped to 20 → result = 16
       const result = calculatePhysicalCapacity(16384, 10, 350, 0.5);
-      expect(result).toBe(10);
+      expect(result).toBe(16);
     });
 
     it('should give reasonable value for Mac mini 16GB 10-core', () => {
       const result = calculatePhysicalCapacity(16384, 10, 350, 0.5);
-      expect(result).toBeLessThanOrEqual(10);
+      expect(result).toBeLessThanOrEqual(20);
       expect(result).toBeGreaterThanOrEqual(2);
     });
   });
