@@ -114,17 +114,27 @@ function accountRemainingPct(account) {
 
   // 以 sonnet 和 7day 中较高者为基准（更保守的估计）
   const usedPct = Math.max(sevenDayPct, sevenDaySonnetPct);
-  const remaining = Math.max(0, 100 - usedPct);
+  const rawRemaining = Math.max(0, 100 - usedPct);
 
-  // 如果即将 reset（< 2 小时），视为已重置（remaining = 100）
   if (account.seven_day_resets_at) {
-    const hoursToReset = (new Date(account.seven_day_resets_at) - Date.now()) / 3600000;
-    if (hoursToReset <= 2) {
+    const hours = (new Date(account.seven_day_resets_at) - Date.now()) / 3600000;
+
+    // 即将 reset（< 2 小时）→ 视为已重置
+    if (hours <= 2) {
       return 100;
+    }
+
+    // 时间加权：离 reset 越近，实际可用比例越高
+    // 例：用了 53%（剩 47%），离 reset 还剩 24h / 168h = 14%
+    // 只需撑 14% 的时间，47% 的额度绰绰有余 → effectiveRemaining 远高于 47
+    const periodFraction = hours / 168;
+    if (periodFraction > 0 && periodFraction < 1) {
+      const effectiveRemaining = Math.min(100, rawRemaining / periodFraction);
+      return effectiveRemaining;
     }
   }
 
-  return remaining;
+  return rawRemaining;
 }
 
 /**

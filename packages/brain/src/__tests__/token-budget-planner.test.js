@@ -67,22 +67,41 @@ describe('USER_RESERVE_PCT', () => {
 // ============================================================
 
 describe('accountRemainingPct()', () => {
-  it('seven_day_pct=20 → remaining=80', () => {
+  it('seven_day_pct=20, 72h to reset → time-weighted remaining', () => {
+    // rawRemaining=80, periodFraction=72/168=0.43, effective=80/0.43=100(capped)
     const a = makeAccount('a1', 20, 20);
-    expect(accountRemainingPct(a)).toBe(80);
+    expect(accountRemainingPct(a)).toBe(100);
   });
 
-  it('seven_day_sonnet_pct > seven_day_pct → 使用更高者', () => {
+  it('seven_day_sonnet_pct > seven_day_pct → 使用更高者 + 时间加权', () => {
+    // rawRemaining=40, periodFraction=72/168=0.43, effective=40/0.43=93
     const a = makeAccount('a1', 30, 60);
-    expect(accountRemainingPct(a)).toBe(40); // 100 - 60
+    expect(accountRemainingPct(a)).toBeCloseTo(93, 0);
+  });
+
+  it('no reset time → raw remaining (no time weighting)', () => {
+    const a = { account_id: 'a1', seven_day_pct: 60, seven_day_sonnet_pct: 60 };
+    expect(accountRemainingPct(a)).toBe(40);
+  });
+
+  it('full 168h remaining → raw remaining (periodFraction=1)', () => {
+    const a = makeAccount('a1', 50, 50, 168);
+    // periodFraction=168/168=1, not < 1, so returns rawRemaining=50
+    expect(accountRemainingPct(a)).toBe(50);
   });
 
   it('reset 在 2 小时内 → 视为 100%', () => {
     const now = Date.now();
     const a = {
       ...makeAccount('a1', 95, 95),
-      seven_day_resets_at: new Date(now + 1 * 3600000).toISOString(), // 1h later
+      seven_day_resets_at: new Date(now + 1 * 3600000).toISOString(),
     };
+    expect(accountRemainingPct(a)).toBe(100);
+  });
+
+  it('24h to reset, used 53% → effective remaining abundant', () => {
+    // rawRemaining=47, periodFraction=24/168=0.14, effective=47/0.14=100(capped)
+    const a = makeAccount('a1', 53, 53, 24);
     expect(accountRemainingPct(a)).toBe(100);
   });
 });
@@ -96,8 +115,8 @@ describe('calculateBudgetState()', () => {
     vi.clearAllMocks();
   });
 
-  it('state=abundant：所有账号剩余 > 60%', async () => {
-    // 各账号用了 20%，剩余 80%
+  it('state=abundant：时间加权后充裕（72h reset, 用了 20%）', async () => {
+    // rawRemaining=80, periodFraction=72/168=0.43, effective=100(capped) → abundant
     const usage = makeUsage(
       makeAccount('a1', 20),
       makeAccount('a2', 20),
@@ -106,35 +125,34 @@ describe('calculateBudgetState()', () => {
     const result = await calculateBudgetState(usage);
     expect(result.state).toBe('abundant');
     expect(result.pool_c_scale).toBe(1.0);
-    expect(result.avg_remaining_pct).toBeCloseTo(80, 0);
   });
 
-  it('state=moderate：平均剩余 30~60%', async () => {
-    // 各账号用了 55%，剩余 45%
+  it('state=moderate：满周期 168h + 用了 55%（无时间加权加成）', async () => {
+    // 168h → periodFraction=1 → 不触发时间加权 → rawRemaining=45 → moderate
     const usage = makeUsage(
-      makeAccount('a1', 55),
-      makeAccount('a2', 55),
-      makeAccount('a3', 55),
+      makeAccount('a1', 55, null, 168),
+      makeAccount('a2', 55, null, 168),
+      makeAccount('a3', 55, null, 168),
     );
     const result = await calculateBudgetState(usage);
     expect(result.state).toBe('moderate');
     expect(result.pool_c_scale).toBe(0.7);
   });
 
-  it('state=tight：平均剩余 10~30%', async () => {
-    // 各账号用了 80%，剩余 20%
+  it('state=tight：满周期 168h + 用了 80%', async () => {
+    // 168h → rawRemaining=20 → tight
     const usage = makeUsage(
-      makeAccount('a1', 80),
-      makeAccount('a2', 80),
-      makeAccount('a3', 80),
+      makeAccount('a1', 80, null, 168),
+      makeAccount('a2', 80, null, 168),
+      makeAccount('a3', 80, null, 168),
     );
     const result = await calculateBudgetState(usage);
     expect(result.state).toBe('tight');
     expect(result.pool_c_scale).toBe(0.3);
   });
 
-  it('state=critical：平均剩余 < 10%', async () => {
-    // account1/2 全部耗尽(100%)，account3 剩 5%
+  it('state=critical：几乎耗尽', async () => {
+    // rawRemaining≈2, periodFraction=0.43, effective=2/0.43=5 → critical (<10)
     const usage = makeUsage(
       makeAccount('a1', 100),
       makeAccount('a2', 100),
@@ -145,6 +163,18 @@ describe('calculateBudgetState()', () => {
     expect(result.pool_c_scale).toBe(0.0);
   });
 
+  it('离 reset 近 → 时间加权让 moderate 变 abundant', async () => {
+    // 用了 53%，离 reset 24h → rawRemaining=47, effective=47/0.14=100 → abundant
+    const usage = makeUsage(
+      makeAccount('a1', 53, null, 24),
+      makeAccount('a2', 53, null, 24),
+      makeAccount('a3', 53, null, 24),
+    );
+    const result = await calculateBudgetState(usage);
+    expect(result.state).toBe('abundant');
+    expect(result.pool_c_scale).toBe(1.0);
+  });
+
   it('无账号数据 → 保守降级 moderate', async () => {
     const result = await calculateBudgetState({});
     expect(result.state).toBe('moderate');
@@ -153,18 +183,17 @@ describe('calculateBudgetState()', () => {
 
   it('getAccountUsage 抛错 → 保守降级 moderate', async () => {
     getAccountUsage.mockRejectedValue(new Error('network error'));
-    // 不传 usageOverride，触发真实 mock
     const result = await calculateBudgetState(null);
     expect(result.state).toBe('moderate');
   });
 
-  it('混合账号：部分耗尽部分充足 → 加权平均', async () => {
-    // a1=100% 耗尽(剩0), a2=20% 用(剩80), a3=20% 用(剩80)
+  it('混合账号：部分耗尽部分充足（满周期）', async () => {
+    // 满周期 168h，无时间加权：a1=100%(剩0), a2=20%(剩80), a3=20%(剩80)
     // 平均 = (0+80+80)/3 ≈ 53.3% → moderate
     const usage = makeUsage(
-      makeAccount('a1', 100),
-      makeAccount('a2', 20),
-      makeAccount('a3', 20),
+      makeAccount('a1', 100, null, 168),
+      makeAccount('a2', 20, null, 168),
+      makeAccount('a3', 20, null, 168),
     );
     const result = await calculateBudgetState(usage);
     expect(result.state).toBe('moderate');
