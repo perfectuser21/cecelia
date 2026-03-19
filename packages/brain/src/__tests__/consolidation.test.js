@@ -39,24 +39,24 @@ function makeMockPool(overrides = {}) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('shouldRunConsolidation', () => {
-  it('时间在触发窗口内（UTC 19:00）返回 true', () => {
-    const now = new Date('2026-03-02T19:02:00.000Z');
+  it('时间在 4h 周期窗口内（UTC 00:02）返回 true', () => {
+    const now = new Date('2026-03-02T00:02:00.000Z'); // 0 % 4 = 0, min=2 < 5
     expect(shouldRunConsolidation(now)).toBe(true);
   });
 
-  it('时间在触发窗口外返回 false', () => {
-    const now = new Date('2026-03-02T10:00:00.000Z');
-    expect(shouldRunConsolidation(now)).toBe(false);
-  });
-
-  it('时间窗口边界：UTC 19:05 返回 false', () => {
-    const now = new Date('2026-03-02T19:05:00.000Z');
-    expect(shouldRunConsolidation(now)).toBe(false);
-  });
-
-  it('时间窗口内：UTC 19:04 返回 true', () => {
-    const now = new Date('2026-03-02T19:04:00.000Z');
+  it('时间在 4h 周期窗口内（UTC 08:03）返回 true', () => {
+    const now = new Date('2026-03-02T08:03:00.000Z'); // 8 % 4 = 0, min=3 < 5
     expect(shouldRunConsolidation(now)).toBe(true);
+  });
+
+  it('时间在窗口外（UTC 10:00）返回 false', () => {
+    const now = new Date('2026-03-02T10:00:00.000Z'); // 10 % 4 = 2 ≠ 0
+    expect(shouldRunConsolidation(now)).toBe(false);
+  });
+
+  it('时间窗口边界：UTC 04:05 返回 false', () => {
+    const now = new Date('2026-03-02T04:05:00.000Z'); // 4 % 4 = 0 但 min=5 >= 5
+    expect(shouldRunConsolidation(now)).toBe(false);
   });
 });
 

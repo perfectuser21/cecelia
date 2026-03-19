@@ -19,9 +19,9 @@ import { updateSelfModel } from './self-model.js';
 import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 // ── 配置 ──────────────────────────────────────────────────
-export const DAILY_BUDGET = 20; // 基础预算（向后兼容，内部逻辑请使用 getDailyBudget()）
+export const DAILY_BUDGET = 100; // 基础预算（从 20 提到 100，向后兼容，内部逻辑请使用 getDailyBudget()）
 export const MAX_PER_TICK = 5;
-export const COOLDOWN_MS = 30 * 60 * 1000; // 30 分钟
+export const COOLDOWN_MS = 10 * 60 * 1000; // 10 分钟（从 30 分钟降低）
 
 /**
  * 动态每日预算：低峰期（上海时间 00:00-05:59）自动扩容至 2x
