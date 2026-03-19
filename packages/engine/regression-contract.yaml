@@ -3294,6 +3294,7 @@ skills:
       type: code
       file: "skills/code-quality/SKILL.md"
       contains: "execution-callback"
+    test: "tests/skills/code-quality.test.ts"
 
   - id: S4-004
     feature: S4
@@ -3312,6 +3313,7 @@ skills:
       type: code
       file: "skills/prd-audit/SKILL.md"
       contains: "execution-callback"
+    test: "tests/skills/prd-audit.test.ts"
 
 # ============================================================================
 # Changelog
