@@ -4,26 +4,22 @@ date: 2026-03-19
 type: learning
 ---
 
-# Learning: 内容工厂 Pipeline Executor
+## 内容工厂 Pipeline Executor 全链路实现（2026-03-19）
 
-## 做了什么
-为内容工厂 Pipeline 实现了 4 个阶段的 executor，让 pipeline 从"骨架"变为"可自动执行"。
+### 根本原因
+内容工厂 pipeline orchestrator 只能创建子任务但没有 executor 执行。每个阶段的子任务创建后停留在 queued 状态，需要手动通过 execution-callback API 推进，缺少自动化的执行层。
 
-## 关键发现
+### 修复方案
+新建 `content-pipeline-executors.js`，实现 4 个 executor：
+- `executeResearch`：调用 NotebookLM CLI 拉取调研素材到 findings.json
+- `executeGenerate`：基于 findings 生成图文文案（cards/copy.md）+ 长文（article/article.md）
+- `executeReview`：检查品牌关键词命中率（≥3）和禁用词（=0）
+- `executeExport`：生成 manifest.json + 在线预览 HTML
 
-### 1. NotebookLM CLI 可以在 Node.js 子进程中调用
-`execSync('notebooklm ask "..." --json')` 可以正常工作，返回结构化 JSON。
-超时设为 120 秒（调研可能较慢）。
+在 orchestrator 新增 `executeQueuedContentTasks()`，tick.js 每轮自动调用。
 
-### 2. 品牌审查可以纯规则化
-关键词命中率和禁用词检查不需要 LLM，简单字符串匹配就够。
-LLM 审查应该留给更高级的判断（如"读者感受"）。
-
-### 3. Tick 执行器需要防止长任务阻塞
-Executor 是同步执行的，如果 NotebookLM 调用卡住会阻塞整个 tick。
-后续应该改为异步执行 + 超时中断。
-
-## 后续
-- 测试完整 pipeline 端到端执行
-- 处理 tick quarantine 机制对长任务的误伤
-- 接入 /share-card 生成实际卡片图片
+### 下次预防
+- [ ] 新模块应从一开始就包含 executor，不只是 orchestrator 骨架
+- [ ] NotebookLM CLI 调用需设置合理超时（120s），避免阻塞 tick
+- [ ] 品牌审查规则应集中配置（base-brand.yaml），不硬编码在 JS 里
+- [ ] tick 中长耗时操作应改为异步执行，防止阻塞其他任务
