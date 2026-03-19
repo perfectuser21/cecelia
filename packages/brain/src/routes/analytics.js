@@ -1254,6 +1254,54 @@ router.post('/capabilities/scan', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/config/area-slots - 读取 Area Slot 配置
+ */
+router.get('/config/area-slots', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT value FROM brain_config WHERE key = 'area_slots'`
+    );
+    const config = rows.length > 0 ? JSON.parse(rows[0].value) : {};
+
+    const { rows: taskRows } = await pool.query(`
+      SELECT
+        COALESCE(g.domain, 'zenithjoy') as area,
+        count(*) FILTER (WHERE t.status = 'in_progress') as running,
+        count(*) FILTER (WHERE t.status = 'queued') as queued
+      FROM tasks t
+      LEFT JOIN goals g ON t.goal_id = g.id
+      WHERE t.status IN ('in_progress', 'queued')
+      GROUP BY COALESCE(g.domain, 'zenithjoy')
+    `);
+    const status = {};
+    for (const r of taskRows) {
+      status[r.area] = { running: parseInt(r.running), queued: parseInt(r.queued) };
+    }
+
+    res.json({ success: true, config, status });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/config/area-slots - 保存 Area Slot 配置
+ */
+router.put('/config/area-slots', async (req, res) => {
+  try {
+    const config = req.body;
+    await pool.query(
+      `INSERT INTO brain_config (key, value) VALUES ('area_slots', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [JSON.stringify(config)]
+    );
+    res.json({ success: true, saved: config });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ============================================================
 // Attachment Decision API
 // ============================================================

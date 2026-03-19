@@ -981,13 +981,14 @@ product_features:
     name: Quality Reporting
     status: Committed
     priority: P1
-    version: "11.24.2"
-    updated: "2026-02-01"
+    version: "11.24.3"
+    updated: "2026-03-19"
     description: |
       导出质量审计和开发会话报告（JSON + TXT）：
       - E1: QA Reporting - 生成 QA 审计 JSON
       - E2: Dev Session Reporting - 生成开发任务报告
       v11.24.2: cleanup.sh 验证机制 - 添加 3 项验证（11 步完成 + .dev-mode 删除成功 + gate 文件存在）
+      v11.24.3: generate-report.sh POST Brain dev-logs — 报告生成后自动上传到 Brain dev_execution_logs 表
       v11.14.0: cleanup.sh v1.8 - PRD/DoD 归档到 .history/ 目录（而非直接删除）
 
     entrypoints:
