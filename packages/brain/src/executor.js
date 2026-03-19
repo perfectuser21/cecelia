@@ -313,7 +313,7 @@ const _cpuHistory = [];    // last N CPU readings
 const _memHistory = [];    // last N memory pressure readings
 const HISTORY_SIZE_CPU = 5;
 const HISTORY_SIZE_MEM = 3;
-const SAFETY_MARGIN = 0.85; // effectiveSlots safety headroom
+const SAFETY_MARGIN = 0.80; // effectiveSlots safety headroom (lowered from 0.85 to prevent OOM at memory peaks)
 
 function _pushHistory(arr, value, maxSize) {
   arr.push(value);
