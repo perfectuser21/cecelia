@@ -604,6 +604,7 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
           WHERE t2.project_id = t.project_id
             AND t2.status = 'in_progress'
             AND t2.id != t.id
+            AND t2.task_type != 'content-pipeline'
         )
       )
     ORDER BY

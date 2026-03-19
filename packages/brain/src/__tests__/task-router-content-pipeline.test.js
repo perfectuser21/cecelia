@@ -7,7 +7,9 @@ import { describe, it, expect } from 'vitest';
 import {
   VALID_TASK_TYPES,
   SKILL_WHITELIST,
-  isValidTaskType
+  LOCATION_MAP,
+  isValidTaskType,
+  getTaskLocation
 } from '../task-router.js';
 
 const CONTENT_TASK_TYPES = [
@@ -54,5 +56,25 @@ describe('content-* task_type registration', () => {
   it('isValidTaskType rejects unknown content types', () => {
     expect(isValidTaskType('content-unknown')).toBe(false);
     expect(isValidTaskType('content-')).toBe(false);
+  });
+});
+
+describe('content-* LOCATION_MAP routing', () => {
+  it('LOCATION_MAP contains all 4 sub-task types mapped to us', () => {
+    const subTypes = ['content-research', 'content-generate', 'content-review', 'content-export'];
+    for (const taskType of subTypes) {
+      expect(LOCATION_MAP[taskType]).toBe('us');
+    }
+  });
+
+  it('getTaskLocation returns us for all 4 sub-task types', () => {
+    const subTypes = ['content-research', 'content-generate', 'content-review', 'content-export'];
+    for (const taskType of subTypes) {
+      expect(getTaskLocation(taskType)).toBe('us');
+    }
+  });
+
+  it('LOCATION_MAP contains content-pipeline mapped to us', () => {
+    expect(LOCATION_MAP['content-pipeline']).toBe('us');
   });
 });
