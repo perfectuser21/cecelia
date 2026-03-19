@@ -392,10 +392,19 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                         now_epoch=$(date +%s)
                         elapsed=$(( now_epoch - start_epoch ))
                         if [[ $elapsed -gt 5400 ]]; then  # 90 分钟 = 5400 秒
-                            echo "⏰ /dev 会话已超过 90 分钟，CI 可能卡住，允许退出" >&2
-                            echo "   请手动检查 CI 状态: gh run list --branch $branch" >&2
-                            _devloop_jq -n '{"status":"done"}'
-                            return 0
+                            echo "⏰ /dev CI 超时 90 分钟，创建 P0 诊断任务..." >&2
+                            # 向 Brain 注册 P0 诊断任务（ci-timeout）
+                            local _brain_url="${BRAIN_URL:-http://localhost:5221}"
+                            curl -s -X POST "$_brain_url/api/brain/tasks" \
+                                -H "Content-Type: application/json" \
+                                -d "{\"title\":\"P0: /dev CI 超时 90 分钟 (branch: $branch)\",\"task_type\":\"dev\",\"priority\":\"P0\",\"description\":\"CI 在 branch $branch 上 pending/in_progress 超过 90 分钟，需要诊断原因。\\n\\n检查：gh run list --branch $branch --limit 5\"}" \
+                                --max-time 5 2>/dev/null || true
+                            if command -v _devlog_event &>/dev/null; then
+                                _devlog_event "devloop-check" "ci-timeout" "blocked" "CI 超时 90 分钟，已创建 P0 诊断任务"
+                            fi
+                            _devloop_jq -n --arg branch "$branch" \
+                                '{"status":"blocked","reason":"CI 已 pending 90+ 分钟，可能卡死，已创建 P0 诊断任务","action":"手动检查 CI：gh run list --branch \($branch) --limit 5，或 gh run cancel"}'
+                            return 2
                         fi
                     fi
                 fi
