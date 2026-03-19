@@ -30,28 +30,23 @@ session_id: test-session
 tty: not a tty
 prd: .prd-test.md
 started: 2026-02-07T19:00:00+00:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: done
-step_5_dod: done
-step_6_code: done
-step_7_verify: done
-step_8_pr: done
-step_9_ci: done
-step_10_learning: done
-step_11_cleanup: done
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: done
+step_3_prci: done
+step_4_learning: done
+step_5_clean: done
 retry_count: 0`
 
     writeFileSync(devModeFile, devModeContent)
 
     // 模拟执行 Stop Hook
     // 注意：由于 Stop Hook 依赖 git 环境和 gh CLI，这里只验证逻辑
-    // 实际运行会在 PR 检查时 block，因为删除了"11步全部done"的提前退出
+    // 实际运行会在 PR 检查时 block，因为删除了"6步全部done"的提前退出
 
     // 验证：.dev-mode 包含所有 done 状态
-    expect(devModeContent).toContain('step_9_ci: done')
-    expect(devModeContent).toContain('step_11_cleanup: done')
+    expect(devModeContent).toContain('step_3_prci: done')
+    expect(devModeContent).toContain('step_5_clean: done')
 
     // 修复前：Stop Hook 会在 line 124-136 检测到所有步骤 done，直接删除 .dev-mode 并 exit 0
     // 修复后：Stop Hook 跳过步骤检查，继续检查 PR/CI 状态
@@ -69,24 +64,19 @@ session_id: test-session
 tty: not a tty
 prd: .prd-test.md
 started: 2026-02-07T19:00:00+00:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: pending
-step_5_dod: pending
-step_6_code: pending
-step_7_verify: pending
-step_8_pr: pending
-step_9_ci: pending
-step_10_learning: pending
-step_11_cleanup: pending
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: pending
+step_3_prci: pending
+step_4_learning: pending
+step_5_clean: pending
 retry_count: 0`
 
     writeFileSync(devModeFile, devModeContent)
 
     // 验证字段存在
-    expect(devModeContent).toContain('step_1_prd: done')
-    expect(devModeContent).toContain('step_4_explore: pending')
+    expect(devModeContent).toContain('step_0_worktree: done')
+    expect(devModeContent).toContain('step_2_code: pending')
     expect(devModeContent).toContain('retry_count: 0')
 
     // 清理
@@ -99,7 +89,7 @@ retry_count: 0`
 
     // 验证修复注释存在
     expect(hookContent).toContain('v12.8.0')
-    expect(hookContent).toContain('删除了"11步全部done"的提前退出逻辑')
+    expect(hookContent).toContain('删除了"6步全部done"的提前退出逻辑')
     expect(hookContent).toContain('步骤状态（step_*）只用于进度展示')
     expect(hookContent).toContain('流程控制只依赖实际状态检查')
   })

@@ -618,41 +618,19 @@ echo "✅ 本地 CI 镜像检查全部通过，可以 push"
 
 ---
 
-#### 7.4 Subagent 并行代码审查（始终执行）
+#### 7.4 代码审查 & PRD 审计（由 Codex 协作完成）
 
-> DoD 全部 [x] 后，启动 3 个 code-reviewer subagent 并行审查本次变更
-
-```bash
-git diff --name-only main...HEAD    # 变更文件列表
-git diff main...HEAD                 # 完整 diff
-```
-
-启动 3 个 Reviewer（同一消息并行发出）：
-
-```
-Reviewer 1 — 简洁性 & DRY
-Reviewer 2 — 正确性 & Bug
-Reviewer 3 — 项目规范 & 一致性
-```
-
-等所有 reviewer 返回后，筛选高置信度问题（≥80 分），立即修复 Bug/安全问题，记录但不跨范围修复 DRY/规范问题。
-
----
-
-#### 7.5 PRD 语义覆盖审计（独立审计员）
-
-> DoD 全部 [x]、代码审查完成后，启动第 4 个独立 subagent 审计 Task Card 承诺 vs 实际实现
-
-判断标准：
-- **MATCH**：代码确实实现了，Test 能验证
-- **DOWNGRADED**：代码实现了，但 Test 弱于承诺
-- **MISSING**：代码中找不到对应实现
-
-| 结果 | 动作 |
-|------|------|
-| 全部 MATCH | 继续 Step 3 |
-| 有 DOWNGRADED | **升级 Test**：将弱测试替换为能验证行为的强测试，重跑 7.2 |
-| 有 MISSING | **补实现**：回到 2.3 补代码，或修改 Task Card 删除该承诺 |
+> ~~原内部 3 Reviewer subagent + PRD 审计 subagent 已废弃。~~
+> 代码审查和 PRD 覆盖审计现在由外部 Codex agent 独立执行：
+>
+> - **cto_review** — CTO 视角审查（西安 Codex）
+> - **code_quality_review** — 代码质量 4 维度审查（西安 Codex）
+> - **prd_coverage_audit** — PRD 承诺 vs 实际实现审计（西安 Codex）
+>
+> 这 3 个任务在 Step 3 push 后自动注册到 Brain，由 devloop-check.sh 条件 2.5/2.6/2.7 阻塞等待。
+> 主 agent 在 Step 2 完成后直接进入 Step 3，无需在此处做代码审查。
+>
+> **如果 Brain 不可用**（审查任务未注册），devloop-check.sh 的条件 2.5/2.6/2.7 不会被触发（.dev-mode 中无对应 task_id），流程自动降级为无审查模式。
 
 ---
 

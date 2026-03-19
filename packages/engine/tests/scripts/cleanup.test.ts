@@ -123,7 +123,7 @@ started: 2026-02-01T10:00:00+00:00
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_11_cleanup: done
+step_5_clean: done
 `;
 
     writeFileSync(devModeFile, initialContent);

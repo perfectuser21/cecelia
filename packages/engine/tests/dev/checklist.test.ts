@@ -1,8 +1,8 @@
 /**
  * tests/dev/checklist.test.ts
  *
- * 测试 11 步 Checklist 实现：
- * - .dev-mode 文件包含 step_1-11 状态字段
+ * 测试 6 步 Checklist 实现：
+ * - .dev-mode 文件包含 step_0-5 状态字段
  * - 每个 Step 完成时追加 step_N_xxx: done
  */
 
@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'fs
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-describe('11 步 Checklist', () => {
+describe('6 步 Checklist', () => {
   let tempDir: string;
   let devModeFile: string;
 
@@ -26,41 +26,31 @@ describe('11 步 Checklist', () => {
     }
   });
 
-  it('应该包含所有 11 个步骤状态字段', () => {
+  it('应该包含所有 6 个步骤状态字段', () => {
     const initialContent = `dev
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
 tasks_created: true
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: pending
-step_5_dod: pending
-step_6_code: pending
-step_7_verify: pending
-step_8_pr: pending
-step_9_ci: pending
-step_10_learning: pending
-step_11_cleanup: pending
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: pending
+step_3_prci: pending
+step_4_learning: pending
+step_5_clean: pending
 `;
 
     writeFileSync(devModeFile, initialContent);
     const content = readFileSync(devModeFile, 'utf-8');
 
-    // 检查所有 11 个步骤都存在
+    // 检查所有 6 个步骤都存在
     const expectedSteps = [
-      'step_1_prd',
-      'step_2_detect',
-      'step_3_branch',
-      'step_4_explore',
-      'step_5_dod',
-      'step_6_code',
-      'step_7_verify',
-      'step_8_pr',
-      'step_9_ci',
-      'step_10_learning',
-      'step_11_cleanup',
+      'step_0_worktree',
+      'step_1_taskcard',
+      'step_2_code',
+      'step_3_prci',
+      'step_4_learning',
+      'step_5_clean',
     ];
 
     for (const step of expectedSteps) {
@@ -73,29 +63,29 @@ step_11_cleanup: pending
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_4_explore: pending
-step_5_dod: pending
+step_2_code: pending
+step_3_prci: pending
 `;
 
     writeFileSync(devModeFile, initialContent);
 
-    // 模拟 Step 4 完成
+    // 模拟 Step 2 完成
     let content = readFileSync(devModeFile, 'utf-8');
-    content = content.replace(/^step_4_explore: pending$/m, 'step_4_explore: done');
+    content = content.replace(/^step_2_code: pending$/m, 'step_2_code: done');
     writeFileSync(devModeFile, content);
 
     const updatedContent = readFileSync(devModeFile, 'utf-8');
-    expect(updatedContent).toContain('step_4_explore: done');
-    expect(updatedContent).toContain('step_5_dod: pending');
+    expect(updatedContent).toContain('step_2_code: done');
+    expect(updatedContent).toContain('step_3_prci: pending');
 
-    // 模拟 Step 5 完成
+    // 模拟 Step 3 完成
     let nextContent = readFileSync(devModeFile, 'utf-8');
-    nextContent = nextContent.replace(/^step_5_dod: pending$/m, 'step_5_dod: done');
+    nextContent = nextContent.replace(/^step_3_prci: pending$/m, 'step_3_prci: done');
     writeFileSync(devModeFile, nextContent);
 
     const finalContent = readFileSync(devModeFile, 'utf-8');
-    expect(finalContent).toContain('step_4_explore: done');
-    expect(finalContent).toContain('step_5_dod: done');
+    expect(finalContent).toContain('step_2_code: done');
+    expect(finalContent).toContain('step_3_prci: done');
   });
 
   it('应该能检测所有步骤是否完成', () => {
@@ -103,17 +93,12 @@ step_5_dod: pending
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: done
-step_5_dod: done
-step_6_code: done
-step_7_verify: done
-step_8_pr: done
-step_9_ci: done
-step_10_learning: done
-step_11_cleanup: done
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: done
+step_3_prci: done
+step_4_learning: done
+step_5_clean: done
 `;
 
     writeFileSync(devModeFile, allDoneContent);
@@ -121,7 +106,7 @@ step_11_cleanup: done
 
     // 检查所有步骤是否为 done
     let allDone = true;
-    for (let step = 1; step <= 11; step++) {
+    for (let step = 0; step <= 5; step++) {
       const match = content.match(new RegExp(`^step_${step}_\\w+:\\s*(\\w+)$`, 'm'));
       if (!match || match[1] !== 'done') {
         allDone = false;
@@ -137,17 +122,12 @@ step_11_cleanup: done
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: done
-step_5_dod: done
-step_6_code: pending
-step_7_verify: pending
-step_8_pr: pending
-step_9_ci: pending
-step_10_learning: pending
-step_11_cleanup: pending
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: pending
+step_3_prci: pending
+step_4_learning: pending
+step_5_clean: pending
 `;
 
     writeFileSync(devModeFile, partialContent);
@@ -157,7 +137,7 @@ step_11_cleanup: pending
     let allDone = true;
     let pendingSteps: string[] = [];
 
-    for (let step = 1; step <= 11; step++) {
+    for (let step = 0; step <= 5; step++) {
       const match = content.match(new RegExp(`^step_${step}_(\\w+):\\s*(\\w+)$`, 'm'));
       if (match) {
         const [, stepName, status] = match;
@@ -170,32 +150,27 @@ step_11_cleanup: pending
 
     expect(allDone).toBe(false);
     expect(pendingSteps.length).toBeGreaterThan(0);
-    expect(pendingSteps).toContain('step_6_code');
-    expect(pendingSteps).toContain('step_11_cleanup');
+    expect(pendingSteps).toContain('step_2_code');
+    expect(pendingSteps).toContain('step_5_clean');
   });
 
-  it('应该支持 Step 3 创建时初始化所有字段', () => {
-    // 模拟 Step 3 创建 .dev-mode 时的内容
-    const step3Content = `dev
+  it('应该支持 Step 0 创建时初始化所有字段', () => {
+    // 模拟 Step 0 创建 .dev-mode 时的内容
+    const step0Content = `dev
 branch: cp-new-feature
 session_id: abc123
 tty: /dev/pts/1
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: pending
-step_5_dod: pending
-step_6_code: pending
-step_7_verify: pending
-step_8_pr: pending
-step_9_ci: pending
-step_10_learning: pending
-step_11_cleanup: pending
+step_0_worktree: done
+step_1_taskcard: pending
+step_2_code: pending
+step_3_prci: pending
+step_4_learning: pending
+step_5_clean: pending
 `;
 
-    writeFileSync(devModeFile, step3Content);
+    writeFileSync(devModeFile, step0Content);
     const content = readFileSync(devModeFile, 'utf-8');
 
     // 检查基本字段
@@ -203,13 +178,11 @@ step_11_cleanup: pending
     expect(content).toContain('branch: cp-new-feature');
     expect(content).toContain('session_id: abc123');
 
-    // 检查前 3 步已标记为 done
-    expect(content).toContain('step_1_prd: done');
-    expect(content).toContain('step_2_detect: done');
-    expect(content).toContain('step_3_branch: done');
+    // 检查 Step 0 已标记为 done
+    expect(content).toContain('step_0_worktree: done');
 
     // 检查剩余步骤为 pending
-    for (let step = 4; step <= 11; step++) {
+    for (let step = 1; step <= 5; step++) {
       expect(content).toMatch(new RegExp(`^step_${step}_\\w+:\\s*pending$`, 'm'));
     }
   });

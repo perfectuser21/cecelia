@@ -220,6 +220,26 @@ fi
 
 ---
 
+### 8.5.2 等待 Codex 审查通过（devloop-check 自动控制）
+
+> Push 后注册的 3 个审查任务由 Brain 派发到 Codex 执行。
+> **devloop-check.sh 条件 2.5/2.6/2.7 会阻塞，直到三个审查全部 PASS 才放行创建 PR。**
+> 主 agent 不需要手动等待——Stop Hook 循环会自动检测并继续。
+
+等待期间的可能结果：
+
+| 审查结果 | devloop-check 行为 | 主 agent 动作 |
+|---------|-------------------|-------------|
+| 全部 PASS | 放行，继续 8.6 创建 PR | 自动继续 |
+| 有 FAIL | blocked + 返回 FAIL 原因 | 按原因修代码 → 重新 push → 重新等待 |
+| PENDING | blocked + 等待 | 不做操作，等 Stop Hook 下次循环 |
+
+**禁止跳过审查直接创建 PR** — devloop-check.sh 是 SSOT，它检查的顺序是：审查 PASS → 创建 PR → CI → 合并。
+
+---
+
+> **前置条件：8.5.2 的 3 个 Codex 审查全部 PASS（由 devloop-check.sh 自动控制）**
+
 ### 8.6 创建 PR
 
 ```bash

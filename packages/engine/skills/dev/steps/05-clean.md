@@ -10,7 +10,7 @@ changelog:
 
 # Step 5: Merge+Clean — 归档 + 清理
 
-> 原 Step 11，内容完全不变。Task Card 归档到 .history/task-cp-xxx.md。
+> 原 Step 5，内容完全不变。Task Card 归档到 .history/task-cp-xxx.md。
 > v2.0 新增：清理前先输出执行质量自评。
 
 > 生成任务报告 + 清理分支和配置
@@ -412,6 +412,9 @@ echo "✅ Step 5 自检通过 — 可以安全清理"
 # 标记 Step 5 完成（最后一步）
 sed -i "s/^step_5_clean: pending/step_5_clean: done/" "$DEV_MODE_FILE"
 echo "✅ Step 5 完成标记已写入 .dev-mode"
+# 写入 cleanup_done: true（devloop-check.sh 的唯一终止条件）
+echo "cleanup_done: true" >> "$DEV_MODE_FILE"
+echo "✅ cleanup_done: true 已写入（终止条件）"
 ```
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "5", status: "completed" })`
