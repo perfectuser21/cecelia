@@ -316,6 +316,11 @@ server.listen(PORT, async () => {
   startScanLoop();
   console.log('[Server] Capability Scanner started (6h interval) - island detection for unused capabilities');
 
+  // Initialize Self-Drive Engine (自驱 — 看到体检报告后自主创建任务)
+  const { startSelfDriveLoop } = await import('./src/self-drive.js');
+  startSelfDriveLoop();
+  console.log('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
+
   // Initialize Promotion Job Loop (P1)
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();
