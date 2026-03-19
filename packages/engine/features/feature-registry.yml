@@ -18,6 +18,12 @@
 version: "3.72.0"
 updated: "2026-03-19"
 changelog:
+  - version: "13.3.2"
+    date: "2026-03-19"
+    summary: "feat(engine): Step 3 push 后自动注册 3 个 P0 审查任务（cto_review/code_quality/prd_audit）到 Brain"
+    scope: skills
+    breaking: false
+    feature_id: step3-review-register
   - version: "13.3.1"
     date: "2026-03-19"
     summary: "fix(engine): 删除 stop.sh.before-refactor 残留备份 + 更新引用测试 + 补齐 CHANGELOG 13.x 条目 + 修正 DEFINITION.md codex_qa 位置"
