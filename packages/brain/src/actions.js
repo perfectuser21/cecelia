@@ -18,7 +18,7 @@ function isSystemTask(task_type, trigger_source) {
   const systemTypes = ['research', 'intent_expand', 'cto_review'];
 
   // System trigger sources that don't need goal association
-  const systemSources = ['manual', 'test', 'watchdog', 'circuit_breaker', 'cortex'];
+  const systemSources = ['manual', 'test', 'watchdog', 'circuit_breaker', 'cortex', 'self_drive', 'auto_fix'];
 
   return systemTypes.includes(task_type) || systemSources.includes(trigger_source);
 }
