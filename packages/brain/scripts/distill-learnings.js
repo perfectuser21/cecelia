@@ -12,6 +12,7 @@
  */
 
 import { readFileSync, readdirSync, writeFileSync, unlinkSync } from 'fs';
+import { createHash } from 'crypto';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
@@ -180,6 +181,44 @@ SELECT COUNT(*) FROM knowledge WHERE type = 'learning_rule';
   if (total < 25) {
     console.error(`❌ 规则数量不足 25 条（实际：${total}），请检查 docs/learnings/ 文件格式`);
     process.exit(1);
+  }
+
+  // ── 同步写入 learnings 表（learning-retriever.js 从此表读取） ──
+  console.log(`\n🔄 同步写入 learnings 表...`);
+
+  // 逐条 INSERT，用 WHERE NOT EXISTS 按 content_hash 去重（learnings 表无唯一约束）
+  const learningsInserts = rules.map(r => {
+    const contentHash = createHash('sha256').update(r.name).digest('hex').slice(0, 64);
+    const contentObj = JSON.parse(r.content);
+    // 从 source 字段提取分支名（格式: docs/learnings/cp-MMDDHHNN-branch-name.md）
+    const sourceFile = contentObj.source || '';
+    const branchMatch = sourceFile.match(/cp-\d{8}-(.+)\.md$/);
+    const sourceBranch = branchMatch ? `cp-${branchMatch[1]}` : '';
+    const metadata = JSON.stringify({ source_file: r.sub_area, tags: contentObj.tags || [] });
+
+    return `INSERT INTO learnings (title, category, content, learning_type, metadata, is_latest, source_branch, content_hash)
+SELECT '${sqlEscape(r.name)}', 'process_improvement', '${sqlEscape(r.content)}', 'best_practice', '${sqlEscape(metadata)}'::jsonb, true, '${sqlEscape(sourceBranch)}', '${contentHash}'
+WHERE NOT EXISTS (SELECT 1 FROM learnings WHERE content_hash = '${contentHash}');`;
+  });
+
+  const learningsSql = `
+${learningsInserts.join('\n')}
+
+SELECT COUNT(*) FROM learnings WHERE learning_type = 'best_practice';
+`;
+
+  let learningsOutput;
+  try {
+    learningsOutput = psqlRun(learningsSql);
+  } catch (err) {
+    console.error(`⚠️  learnings 表写入失败（不影响 knowledge 表结果）: ${err.message}`);
+    learningsOutput = '';
+  }
+
+  if (learningsOutput) {
+    const lLines = learningsOutput.split('\n').filter(l => l.trim());
+    const lTotal = parseInt(lLines[lLines.length - 1], 10);
+    console.log(`   learnings 表 best_practice 总计：${lTotal} 条`);
   }
 
   console.log(`✅ distill-learnings 完成`);
