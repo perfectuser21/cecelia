@@ -9,7 +9,8 @@ import fs from 'fs'
 import path from 'path'
 
 const SCRIPT_PATH = 'skills/dev/scripts/generate-feedback-report-v2.sh'
-const LOG_FILE = '.dev-execution-log.jsonl'
+// 使用专属文件名避免与 record-step.test.ts 并发竞争 .dev-execution-log.jsonl
+const LOG_FILE = '.dev-execution-log-feedback-test.jsonl'
 const EXPECTATIONS_FILE = 'skills/dev/lib/step-expectations.json'
 const REPORT_DIR = 'docs/dev-reports'
 
@@ -57,7 +58,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该生成报告文件', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { env: { ...process.env, DEV_EXEC_LOG_FILE: LOG_FILE } })
 
     expect(fs.existsSync(REPORT_DIR)).toBe(true)
 
@@ -75,7 +76,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含效率维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { env: { ...process.env, DEV_EXEC_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -88,7 +89,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含稳定性维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { env: { ...process.env, DEV_EXEC_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -99,7 +100,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含自动化维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { env: { ...process.env, DEV_EXEC_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -110,7 +111,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含改进建议', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { env: { ...process.env, DEV_EXEC_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])

@@ -115,6 +115,7 @@ export async function runSelfDrive() {
       }
 
       try {
+        const goalId = await getGoalIdForArea(action.area);
         const taskId = await createTask({
           title: `[SelfDrive] ${action.title}`,
           description: action.description || action.title,
@@ -122,6 +123,7 @@ export async function runSelfDrive() {
           priority: action.priority || 'P2',
           trigger_source: 'self_drive',
           tags: ['self-drive', 'auto-generated'],
+          goal_id: goalId || null,
         });
         console.log(`[SelfDrive] Created task: ${taskId} — "${action.title}"`);
         created.push({ taskId, title: action.title });
@@ -195,6 +197,32 @@ async function getExistingAutoTasks() {
     return result.rows;
   } catch {
     return [];
+  }
+}
+
+// ============================================================
+// Goal ID lookup
+// ============================================================
+
+/**
+ * 根据业务线（area/domain）查询一个活跃 OKR 的 ID。
+ * 活跃状态：ready / in_progress / decomposing
+ *
+ * @param {string} area - 业务线（cecelia/zenithjoy/investment 等）
+ * @returns {Promise<string|null>} goal_id 或 null（找不到时）
+ */
+async function getGoalIdForArea(area) {
+  if (!area) return null;
+  try {
+    const result = await pool.query(
+      `SELECT id FROM goals
+       WHERE domain = $1 AND status IN ('ready', 'in_progress', 'decomposing')
+       ORDER BY created_at DESC LIMIT 1`,
+      [area]
+    );
+    return result.rows.length > 0 ? result.rows[0].id : null;
+  } catch {
+    return null;
   }
 }
 
@@ -290,7 +318,8 @@ ${tasksSummary}
       "title": "任务标题（简明扼要）",
       "description": "任务描述（包含具体要做什么、为什么做）",
       "task_type": "dev",
-      "priority": "P1 或 P2"
+      "priority": "P1 或 P2",
+      "area": "cecelia 或 zenithjoy 或 investment（任务归属的业务线：cecelia=Cecelia系统自身改进，zenithjoy=ZenithJoy业务，investment=投资相关）"
     }
   ]
 }

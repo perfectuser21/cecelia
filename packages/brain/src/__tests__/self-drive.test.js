@@ -20,6 +20,7 @@ vi.mock('../llm-caller.js', () => ({
           description: '让 Scanner 能识别不通过 tasks 表运行的能力',
           task_type: 'dev',
           priority: 'P2',
+          area: 'cecelia',
         },
       ],
     }),
@@ -61,8 +62,10 @@ describe('self-drive', () => {
         })
         // Mock: getExistingAutoTasks
         .mockResolvedValueOnce({ rows: [] })
-        // Mock: dedup check
+        // Mock: dedup check (similar title)
         .mockResolvedValueOnce({ rows: [] })
+        // Mock: getGoalIdForArea('cecelia')
+        .mockResolvedValueOnce({ rows: [{ id: 'goal-cecelia-001' }] })
         // Mock: recordEvent
         .mockResolvedValueOnce({ rows: [] });
 
@@ -71,7 +74,9 @@ describe('self-drive', () => {
 
       expect(result).toHaveProperty('actions');
       expect(result.reason).toBe('ok');
-      expect(createTask).toHaveBeenCalled();
+      expect(createTask).toHaveBeenCalledWith(
+        expect.objectContaining({ goal_id: 'goal-cecelia-001' })
+      );
     });
 
     it('should skip when no probe/scan data', async () => {

@@ -155,6 +155,70 @@ curl -s -X POST \
     "${BRAIN_URL}/api/brain/execution-callback"
 ```
 
+## Phase 5: 写入 Evidence 文件
+
+Brain 回调完成后，必须写 `.dev-codex-evidence.{branch}.json` 并 git push：
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+EVIDENCE_FILE=".dev-codex-evidence.${BRANCH}.json"
+TASK_CARD_FILE=".task-${BRANCH}.md"
+TASK_CARD_HASH="sha256:$(sha256sum "$TASK_CARD_FILE" 2>/dev/null | cut -d' ' -f1 || echo 'unknown')"
+NOW=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+REVIEWER_TYPE="prd_coverage_audit"
+REVIEWER_AGENT="${CODEX_AGENT_ID:-codex-local}"
+BRAIN_TASK_ID_VAL="${BRAIN_TASK_ID:-unknown}"
+
+# 构建本次 review 条目
+NEW_REVIEW=$(jq -n \
+  --arg rt "$REVIEWER_TYPE" \
+  --arg ra "$REVIEWER_AGENT" \
+  --arg bt "$BRAIN_TASK_ID_VAL" \
+  --arg decision "$DECISION" \
+  --arg summary "$SUMMARY" \
+  --arg ts "$NOW" \
+  '{reviewer_type: $rt, reviewer_agent: $ra, brain_task_id: $bt,
+    decision: $decision, checks: [], summary: $summary, timestamp: $ts}')
+
+# 创建或追加文件
+if [ ! -f "$EVIDENCE_FILE" ]; then
+  jq -n \
+    --arg branch "$BRANCH" \
+    --arg hash "$TASK_CARD_HASH" \
+    --arg now "$NOW" \
+    --argjson review "$NEW_REVIEW" \
+    '{version:"1.0.0", branch:$branch, task_card_hash:$hash,
+      created_at:$now, updated_at:$now,
+      overall_decision:"PENDING", reviews:[$review]}' > "$EVIDENCE_FILE"
+else
+  UPDATED=$(jq --argjson review "$NEW_REVIEW" --arg now "$NOW" \
+    '.reviews += [$review] | .updated_at = $now' "$EVIDENCE_FILE")
+  echo "$UPDATED" > "$EVIDENCE_FILE"
+fi
+
+# 更新 overall_decision
+FAIL_COUNT=$(jq '[.reviews[] | select(.decision == "FAIL")] | length' "$EVIDENCE_FILE")
+PASS_COUNT=$(jq '[.reviews[] | select(.decision == "PASS" or .decision == "WARN")] | length' "$EVIDENCE_FILE")
+TOTAL=$(jq '.reviews | length' "$EVIDENCE_FILE")
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  OVERALL="FAIL"
+elif [ "$TOTAL" -ge 3 ] && [ "$PASS_COUNT" -ge 3 ]; then
+  OVERALL="PASS"
+else
+  OVERALL="PENDING"
+fi
+jq --arg od "$OVERALL" '.overall_decision = $od' "$EVIDENCE_FILE" > "${EVIDENCE_FILE}.tmp" && mv "${EVIDENCE_FILE}.tmp" "$EVIDENCE_FILE"
+
+# Push 到功能分支
+git add -f "$EVIDENCE_FILE"
+git commit -m "chore(evidence): prd_coverage_audit=${DECISION} [${BRANCH}]"
+git push origin "$BRANCH"
+echo "✅ Evidence 文件已更新并 push（overall_decision=${OVERALL}）"
+```
+
+> **DECISION** 取值：`"PASS"` 或 `"FAIL"`（见 Phase 3 决定规则）
+> **SUMMARY** 取值：1 句审查摘要，如 `"全部 MATCH，PRD 覆盖完整"`
+
 ## 约束
 
 1. **只看 Task Card 中的承诺**——不发明新需求
@@ -163,3 +227,4 @@ curl -s -X POST \
 4. **不评价架构**——那是 cto-review 的职责
 5. **回调中 review_result 必须包含 PASS 或 FAIL 关键字**——devloop-check.sh 用 grep 检测
 6. **MISSING 是硬性阻塞**——承诺了就必须实现
+7. **Evidence 文件必须写入**：回调后必须写 `.dev-codex-evidence.{branch}.json` 并 git push
