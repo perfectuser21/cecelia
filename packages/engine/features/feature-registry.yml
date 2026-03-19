@@ -18,6 +18,12 @@
 version: "3.71.0"
 updated: "2026-03-18"
 changelog:
+  - version: "13.3.0"
+    date: "2026-03-19"
+    summary: "feat(engine): Dev 线 Phase 2 — 审查任务改本机 Codex + PR 创建移到审查 PASS 后 + /simplify 集成 + 清理死 skill（audit/qa/assurance）"
+    scope: skills
+    breaking: false
+    feature_id: devline-phase2-local-codex
   - version: "13.2.0"
     date: "2026-03-19"
     summary: "feat(engine): 新增 code-quality + prd-audit Codex 门禁 — devloop-check.sh 条件2.6/2.7（CI之前），Brain task_type 注册，4维度代码质量审查 + PRD覆盖三态审计"
