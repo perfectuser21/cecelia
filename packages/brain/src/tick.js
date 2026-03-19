@@ -26,6 +26,7 @@ import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview, triggerContractScan } from './daily-review-scheduler.js';
+import { triggerDailyReflection } from './daily-reflection-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
@@ -2388,6 +2389,14 @@ async function executeTick() {
     dailyReviewResult = await triggerDailyReview(pool);
   } catch (reviewErr) {
     console.error('[tick] daily review error:', reviewErr.message);
+  }
+
+  // 10.2 Trigger daily reflection (每天 04:00 UTC = 北京 12:00，分析执行日志 + learnings，创建 self-fix 任务)
+  let dailyReflectionResult = { triggered: false, skipped_window: true, skipped_today: false, findings: null };
+  try {
+    dailyReflectionResult = await triggerDailyReflection(pool);
+  } catch (reflectionErr) {
+    console.error('[tick] daily reflection error:', reflectionErr.message);
   }
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
