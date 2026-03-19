@@ -137,15 +137,28 @@ jobs:
             fi
           done
           # 步骤3: 清理所有 System V 共享内存段
-          # macOS ipcs -m 不显示 nattch 列，直接删除所有段（CI 专用机，无生产 PG）
-          # 输出格式：m <ID> <KEY> <MODE> <OWNER> <GROUP>
-          BEFORE=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
-          echo "sysv shm segments before cleanup: $BEFORE"
-          for id in $(ipcs -m 2>/dev/null | grep '^m ' | awk '{print $2}' | grep '^[0-9]'); do
-            echo "Removing sysv shm segment: $id"
-            ipcrm -m "$id" 2>/dev/null || true
-          done
-          AFTER=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
+          # macOS ipcs -m 格式：m <ID> <KEY> <MODE> <OWNER> <GROUP>（行首 ^m）
+          # Linux ipcs -m 格式：<key> <shmid> <owner> ...（数据行以 0x 开头）
+          # CI 专用机，无生产 PG，直接删除所有段
+          if [ "$(uname)" = "Darwin" ]; then
+            # darwin: 行首 m，第2列是 shmid
+            BEFORE=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
+            echo "sysv shm segments before cleanup: $BEFORE (darwin)"
+            for id in $(ipcs -m 2>/dev/null | grep '^m ' | awk '{print $2}' | grep '^[0-9]'); do
+              echo "Removing sysv shm segment: $id"
+              ipcrm -m "$id" 2>/dev/null || true
+            done
+            AFTER=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
+          else
+            # linux: 数据行以 0x 开头，第2列是 shmid
+            BEFORE=$(ipcs -m 2>/dev/null | grep -c "^0x" || echo "0")
+            echo "sysv shm segments before cleanup: $BEFORE (linux)"
+            for id in $(ipcs -m 2>/dev/null | grep '^0x' | awk '{print $2}' | grep '^[0-9]'); do
+              echo "Removing sysv shm segment: $id"
+              ipcrm -m "$id" 2>/dev/null || true
+            done
+            AFTER=$(ipcs -m 2>/dev/null | grep -c "^0x" || echo "0")
+          fi
           echo "sysv shm segments after cleanup: $AFTER"
 
       - name: Set up PostgreSQL (dynamic port)
@@ -212,14 +225,54 @@ jobs:
         working-directory: packages/brain
         run: npm ci
 
+      - name: Verify PostgreSQL ready before migrate
+        run: |
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          echo "DB_PORT=$DB_PORT (from GITHUB_ENV)"
+          echo "DB_HOST=$DB_HOST DB_NAME=$DB_NAME DB_USER=$DB_USER"
+          # 防御：如果 DB_PORT 为空，说明 GITHUB_ENV 传递失败
+          if [ -z "$DB_PORT" ]; then
+            echo "⚠ DB_PORT is empty — GITHUB_ENV propagation failed"
+            echo "Recalculating from GITHUB_RUN_ID=$GITHUB_RUN_ID shard=${{ matrix.shard_num }}"
+            DB_PORT=$(( 5500 + (GITHUB_RUN_ID % 100) * 3 + ${{ matrix.shard_num }} - 1 ))
+            echo "DB_PORT=${DB_PORT}" >> $GITHUB_ENV
+            echo "Recovered DB_PORT=$DB_PORT"
+          fi
+          # pg_isready 循环等待（最多 30 秒）
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p "$DB_PORT" -U "$DB_USER" 2>/dev/null; then
+              echo "PostgreSQL is ready on port $DB_PORT"
+              exit 0
+            fi
+            echo "Waiting for PostgreSQL on port $DB_PORT... ($i/30)"
+            sleep 1
+          done
+          echo "PostgreSQL not ready after 30s on port $DB_PORT"
+          # 输出日志帮助诊断
+          cat "/tmp/pg-${DB_PORT}.log" 2>/dev/null | tail -20 || true
+          exit 1
+
       - name: Run migrations
         working-directory: packages/brain
-        run: node src/migrate.js
+        env:
+          DB_PORT: ${{ env.DB_PORT }}
+          DB_HOST: ${{ env.DB_HOST }}
+          DB_NAME: ${{ env.DB_NAME }}
+          DB_USER: ${{ env.DB_USER }}
+          DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: |
+          echo "Running migrate.js with DB_PORT=$DB_PORT DB_HOST=$DB_HOST DB_NAME=$DB_NAME"
+          node src/migrate.js
 
       - name: Run Brain tests (Shard ${{ matrix.shard }})
         working-directory: packages/brain
         env:
           NODE_OPTIONS: "--max-old-space-size=6144"
+          DB_PORT: ${{ env.DB_PORT }}
+          DB_HOST: ${{ env.DB_HOST }}
+          DB_NAME: ${{ env.DB_NAME }}
+          DB_USER: ${{ env.DB_USER }}
+          DB_PASSWORD: ${{ env.DB_PASSWORD }}
         run: |
           set +e
           SHARD="${{ matrix.shard }}"
@@ -259,6 +312,12 @@ jobs:
       - name: GoldenPath E2E
         if: matrix.shard == '1/3'
         working-directory: packages/brain
+        env:
+          DB_PORT: ${{ env.DB_PORT }}
+          DB_HOST: ${{ env.DB_HOST }}
+          DB_NAME: ${{ env.DB_NAME }}
+          DB_USER: ${{ env.DB_USER }}
+          DB_PASSWORD: ${{ env.DB_PASSWORD }}
         run: bash scripts/goldenpath-check.sh
 
       - name: Stop PostgreSQL (always cleanup)
