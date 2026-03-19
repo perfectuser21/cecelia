@@ -330,3 +330,46 @@ JSONEOF
 fi
 
 echo "已生成报告: $JSON_REPORT"
+
+# ============================================================================
+# POST 报告到 Brain dev_execution_logs（/api/brain/dev-logs）
+# ============================================================================
+BRAIN_URL="http://localhost:5221/api/brain/dev-logs"
+
+# 推导 status 字段
+if [[ "$OVERALL_STATUS" == pass* ]]; then
+    POST_STATUS="success"
+elif [[ "$OVERALL_STATUS" == issues_found* ]]; then
+    POST_STATUS="failure"
+else
+    POST_STATUS="partial"
+fi
+
+# 生成唯一 run_id（优先用 uuidgen，fallback 时间戳）
+RUN_ID=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "${CP_BRANCH}-$(date +%s)")
+
+# 读取 JSON 报告内容作为 metadata
+REPORT_CONTENT=$(cat "$JSON_REPORT" 2>/dev/null || echo '{}')
+
+# POST 到 Brain（失败只警告，不中断 cleanup）
+if command -v curl &>/dev/null; then
+    POST_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BRAIN_URL" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n \
+            --arg task_id "$CP_BRANCH" \
+            --arg run_id "$RUN_ID" \
+            --arg phase "complete" \
+            --arg status "$POST_STATUS" \
+            --argjson metadata "$REPORT_CONTENT" \
+            --arg completed_at "$(TZ=Asia/Shanghai date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{task_id: $task_id, run_id: $run_id, phase: $phase, status: $status, metadata: $metadata, completed_at: $completed_at}'
+        )" 2>/dev/null || echo -e "\n000")
+    HTTP_CODE=$(echo "$POST_RESPONSE" | tail -1)
+    if [[ "$HTTP_CODE" == "201" ]]; then
+        echo "✅ 已上传报告到 Brain dev-logs（task_id: $CP_BRANCH, status: $POST_STATUS）"
+    else
+        echo "⚠️  上传 Brain dev-logs 失败（HTTP $HTTP_CODE），本地报告已保存"
+    fi
+else
+    echo "⚠️  curl 不可用，跳过 Brain dev-logs 上传"
+fi
