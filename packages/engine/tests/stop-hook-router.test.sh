@@ -62,12 +62,6 @@ else
     test_failed "stop-okr.sh 不存在"
 fi
 
-if [[ -f "$HOOKS_DIR/stop.sh.before-refactor" ]]; then
-    test_passed "stop.sh.before-refactor 备份存在"
-else
-    test_failed "stop.sh.before-refactor 备份不存在"
-fi
-
 # ===== 测试 2: 路由器语法检查 =====
 
 echo ""

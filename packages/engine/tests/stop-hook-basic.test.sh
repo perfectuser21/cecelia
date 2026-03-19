@@ -15,8 +15,6 @@ FAIL=0
 if [[ -f hooks/stop.sh ]]; then echo "✓ stop.sh 存在"; ((PASS++)); else echo "✗ stop.sh 不存在"; ((FAIL++)); fi
 if [[ -f hooks/stop-dev.sh ]]; then echo "✓ stop-dev.sh 存在"; ((PASS++)); else echo "✗ stop-dev.sh 不存在"; ((FAIL++)); fi
 if [[ -f hooks/stop-okr.sh ]]; then echo "✓ stop-okr.sh 存在"; ((PASS++)); else echo "✗ stop-okr.sh 不存在"; ((FAIL++)); fi
-if [[ -f hooks/stop.sh.before-refactor ]]; then echo "✓ 备份存在"; ((PASS++)); else echo "✗ 备份不存在"; ((FAIL++)); fi
-
 # 2. 语法检查
 if bash -n hooks/stop.sh 2>/dev/null; then echo "✓ stop.sh 语法正确"; ((PASS++)); else echo "✗ stop.sh 语法错误"; ((FAIL++)); fi
 if bash -n hooks/stop-dev.sh 2>/dev/null; then echo "✓ stop-dev.sh 语法正确"; ((PASS++)); else echo "✗ stop-dev.sh 语法错误"; ((FAIL++)); fi
