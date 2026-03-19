@@ -146,7 +146,11 @@ export async function executeGenerate(task) {
     `你知道吗？越来越多人正在证明：一个人 + 正确的系统 = 一家公司的能力。\n`,
     `今天拆解 ${keyword}，看看哪些"公司级能力"已经被个人拥有了。\n`,
     '---\n',
-    ...top.map((f, i) => `**${i + 1}. ${f.title}**\n\n${(f.content || '').substring(0, 300)}\n\n---\n`),
+    ...top.map((f, i) => {
+      const body = f.content || f.capability || '';
+      const data = f.data ? `\n\n数据：${f.data}` : '';
+      return `**${i + 1}. ${f.title}**\n\n${body}${data}\n\n---\n`;
+    }),
     `\n**一人公司不是"小"公司，是"精"公司。**\n`,
     `你觉得哪个能力对你最有用？评论区告诉我！\n`,
     `\n#一人公司 #能力放大 #AI驱动 #个人创业 #能力下放\n`,
@@ -160,7 +164,12 @@ export async function executeGenerate(task) {
     `\n在这个时代，"一人公司"不再是一种妥协。它是一种系统性的选择——用 AI 和自动化替代人力规模，用能力密度替代团队数量。\n`,
     `\n${keyword} 的经历就是最好的证据。\n`,
     `\n---\n`,
-    ...top.map((f, i) => `\n## ${i + 1}. ${f.title}\n\n${f.content || ''}\n${f.source ? `\n*来源：${f.source}*\n` : ''}`),
+    ...top.map((f, i) => {
+      const body = f.content || f.capability || '';
+      const data = f.data ? `\n\n**关键数据**：${f.data}` : '';
+      const src = f.source ? `\n\n*来源：${f.source}*` : '';
+      return `\n## ${i + 1}. ${f.title}\n\n${body}${data}${src}\n`;
+    }),
     `\n---\n`,
     `\n## 这意味着什么？\n`,
     `\n能力正在从大公司向个人转移。过去需要一个团队才能做到的事，现在一个人配合正确的系统就能完成。\n`,
