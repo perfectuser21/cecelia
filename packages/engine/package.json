@@ -1,7 +1,6 @@
 {
   "name": "zenithjoy-engine",
   "version": "13.4.0",
->>>>>>> 149dedb85 (chore(engine): bump version 13.3.2 → 13.4.0 for generate-report dev-logs upload)
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
