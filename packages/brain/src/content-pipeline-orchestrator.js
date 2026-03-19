@@ -48,6 +48,7 @@
 
 import pool from './db.js';
 import { getContentType } from './content-types/content-type-registry.js';
+import { executeResearch, executeGenerate, executeReview, executeExport } from './content-pipeline-executors.js';
 
 // ───────────────────────────────────────────────────────
 // 常量
@@ -382,6 +383,76 @@ function _isReviewPassed(taskStatus, findings) {
   if (findings?.review_passed === false) return false;
   if (findings?.verdict === 'fail' || findings?.verdict === 'reject') return false;
   return true;
+}
+
+// ───────────────────────────────────────────────────────
+// 自动执行器：检测 queued 的子任务，执行对应 executor，完成后回调推进
+// ───────────────────────────────────────────────────────
+
+const EXECUTOR_MAP = {
+  'content-research': executeResearch,
+  'content-generate': executeGenerate,
+  'content-review': executeReview,
+  'content-export': executeExport,
+};
+
+/**
+ * 由 tick 调用。检测 queued 的 content-* 子任务，自动执行。
+ * @param {import('pg').Pool} [dbPool]
+ */
+export async function executeQueuedContentTasks(dbPool = pool) {
+  let executed = 0;
+
+  for (const stage of PIPELINE_STAGES) {
+    const executor = EXECUTOR_MAP[stage];
+    if (!executor) continue;
+
+    const result = await dbPool.query(`
+      SELECT id, title, task_type, payload, project_id, goal_id
+      FROM tasks
+      WHERE task_type = $1 AND status = 'queued'
+        AND payload->>'parent_pipeline_id' IS NOT NULL
+      ORDER BY created_at ASC
+      LIMIT 3
+    `, [stage]);
+
+    for (const task of result.rows) {
+      try {
+        // 标记 in_progress
+        await dbPool.query(`UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1`, [task.id]);
+
+        console.log(`[content-executor] 执行 ${stage}: ${task.title}`);
+        const execResult = await executor(task);
+
+        // 根据结果更新任务状态
+        const newStatus = execResult.success ? 'completed' : 'failed';
+        const findings = execResult.success ? JSON.stringify(execResult) : null;
+
+        await dbPool.query(
+          `UPDATE tasks SET status = $1, completed_at = NOW() WHERE id = $2`,
+          [newStatus, task.id]
+        );
+
+        // 推进 pipeline 状态机
+        if (newStatus === 'completed' || newStatus === 'failed') {
+          const advResult = await advanceContentPipeline(task.id, newStatus, execResult, dbPool);
+          if (advResult.advanced) {
+            console.log(`[content-executor] pipeline 推进: ${task.id} → ${advResult.action}`);
+          }
+        }
+
+        executed++;
+      } catch (err) {
+        console.error(`[content-executor] ${stage} 执行失败: ${err.message}`);
+        await dbPool.query(
+          `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
+          [task.id]
+        ).catch(() => {});
+      }
+    }
+  }
+
+  return { executed };
 }
 
 /**
