@@ -1,20 +1,21 @@
 ---
 name: kuaishou-publisher
-description: 快手自动发布工具 - 图文发布（支持 API 方案和 CDP 浏览器方案）
+description: 快手自动发布工具 - 图文/视频发布（CDP Cookie + HTTP API 方案）
 trigger: 发布快手、kuaishou、快手发布
-version: 1.3.0
+version: 1.4.0
 created: 2026-03-07
-updated: 2026-03-10
+updated: 2026-03-19
 changelog:
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
   - 1.1.0: OAuth 会话检查脚本 + 批量发布前置防护
   - 1.2.0: 新增 API 方案（publish-kuaishou-api.cjs）— CDP 提取 Cookie + HTTP 直接调用
   - 1.3.0: 批量发布脚本（batch-publish-kuaishou.sh）切换为新 API 方案，旧方案保留作备用
+  - 1.4.0: 新增视频发布脚本（publish-kuaishou-video.cjs）— 支持视频上传/分块/封面/标签
 ---
 
 # Kuaishou Publisher
 
-快手自动发布工具 - 图文内容，支持两种发布方案
+快手自动发布工具 - 图文/视频内容，支持两种发布方案
 
 ## 方案对比
 
@@ -46,6 +47,7 @@ Windows PC (100.97.242.124:19223)
 |------|------|------|------|
 | 图文（新 API） | `scripts/publish-kuaishou-api.cjs` | ✅ 推荐 | Cookie + HTTP API，不依赖页面结构 |
 | 图文（CDP 旧方案） | `scripts/publish-kuaishou-image.cjs` | ✅ 备用 | 浏览器 UI 自动化 |
+| 视频 | `scripts/publish-kuaishou-video.cjs` | ✅ | Cookie + HTTP API，支持分块上传、封面、标签 |
 | 会话检查 | `scripts/check-kuaishou-session.cjs` | ✅ | 发布前检查 |
 
 ## 使用方式
@@ -69,6 +71,28 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
   node packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-api.cjs \
   --content ~/.kuaishou-queue/2026-03-07/image-1/
 ```
+
+### 视频发布
+
+```bash
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-video.cjs \
+  --video /path/to/video.mp4 \
+  --title "视频标题" \
+  --tags "标签1,标签2" \
+  --cover /path/to/cover.jpg
+```
+
+**参数说明**：
+- `--video`（必填）：视频文件路径（.mp4/.mov/.avi/.mkv/.flv/.webm）
+- `--title`（必填）：视频标题
+- `--tags`（可选）：逗号分隔的标签列表
+- `--cover`（可选）：封面图路径（.jpg/.png/.webp）
+
+**退出码**：
+- `0` — 发布成功，输出作品 ID
+- `1` — 发布失败（CDP 错误、API 错误等）
+- `2` — 会话失效（需重新登录）
 
 ### 旧 CDP 方案（备用）
 
@@ -130,6 +154,6 @@ export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
 
 ---
 
-**版本**: 1.3.0
-**状态**: ✅ 图文发布（新 API 方案 + CDP 旧方案）+ OAuth 会话检查 + 批量发布默认用新方案
+**版本**: 1.4.0
+**状态**: ✅ 图文发布 + 视频发布 + OAuth 会话检查 + 批量发布
 **架构**: Mac mini → CDP → Windows PC 浏览器 Cookie → 快手 API
