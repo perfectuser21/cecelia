@@ -157,6 +157,69 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 ---
 
+### 8.5.1 向 Brain 注册审查任务（Push 成功后）
+
+> Push 成功后，自动向 Brain API 注册 3 个审查任务（P0 优先级）。
+> 注册的 task_id 写入 .dev-mode 文件，供 devloop-check.sh 条件 2.5/2.6/2.7 检测。
+> Brain 不可用时跳过注册，打印警告，不阻塞主流程。
+
+```bash
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+
+# 检查 Brain 是否可用
+BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
+if [[ -z "$BRAIN_HEALTH" ]]; then
+  echo "⚠️  Brain 不可用（$BRAIN_URL），跳过审查任务注册（不阻塞主流程）"
+else
+  echo "🔍 向 Brain 注册 3 个审查任务..."
+
+  # 注册 cto_review
+  CTO_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\":\"CTO Review: $BRANCH\",\"task_type\":\"cto_review\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
+  CTO_TASK=$(echo "$CTO_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  if [[ -n "$CTO_TASK" ]]; then
+    echo "cto_review_task_id: $CTO_TASK" >> "$DEV_MODE_FILE"
+    echo "cto_review_status: pending" >> "$DEV_MODE_FILE"
+    echo "  ✅ cto_review 已注册: $CTO_TASK"
+  else
+    echo "  ⚠️  cto_review 注册失败，跳过"
+  fi
+
+  # 注册 code_quality_review
+  CQ_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\":\"Code Quality Review: $BRANCH\",\"task_type\":\"code_quality_review\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
+  CQ_TASK=$(echo "$CQ_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  if [[ -n "$CQ_TASK" ]]; then
+    echo "code_quality_task_id: $CQ_TASK" >> "$DEV_MODE_FILE"
+    echo "code_quality_status: pending" >> "$DEV_MODE_FILE"
+    echo "  ✅ code_quality_review 已注册: $CQ_TASK"
+  else
+    echo "  ⚠️  code_quality_review 注册失败，跳过"
+  fi
+
+  # 注册 prd_coverage_audit
+  PA_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\":\"PRD Audit: $BRANCH\",\"task_type\":\"prd_coverage_audit\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
+  PA_TASK=$(echo "$PA_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  if [[ -n "$PA_TASK" ]]; then
+    echo "prd_audit_task_id: $PA_TASK" >> "$DEV_MODE_FILE"
+    echo "prd_audit_status: pending" >> "$DEV_MODE_FILE"
+    echo "  ✅ prd_coverage_audit 已注册: $PA_TASK"
+  else
+    echo "  ⚠️  prd_coverage_audit 注册失败，跳过"
+  fi
+
+  echo "✅ 审查任务注册完成"
+fi
+```
+
+---
+
 ### 8.6 创建 PR
 
 ```bash

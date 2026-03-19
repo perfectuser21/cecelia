@@ -18,6 +18,12 @@
 version: "3.71.0"
 updated: "2026-03-18"
 changelog:
+  - version: "13.4.0"
+    date: "2026-03-19"
+    summary: "feat(engine): Step 3 push 后自动向 Brain 注册 3 个审查任务（cto_review/code_quality/prd_audit），写入 .dev-mode 供 devloop-check 条件 2.5/2.6/2.7 检测"
+    scope: skills
+    breaking: false
+    feature_id: step3-review-register
   - version: "13.3.0"
     date: "2026-03-19"
     summary: "feat(engine): Dev 线 Phase 2 — 审查任务改本机 Codex + PR 创建移到审查 PASS 后 + /simplify 集成 + 清理死 skill（audit/qa/assurance）"
