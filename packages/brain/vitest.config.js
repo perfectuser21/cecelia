@@ -37,7 +37,7 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 1   // 单 fork：NODE_OPTIONS 限制每 fork 3GB，多 fork 会 OOM
+        maxForks: 2   // 2 fork 并行：每 fork 2GB，ubuntu-latest 有 7GB 余量充足
       }
     }
   }
