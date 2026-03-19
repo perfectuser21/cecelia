@@ -6,7 +6,7 @@
  * 2. bash-guard.sh: git commit message 格式验证（规则 2b）
  * 3. branch-protect.sh: Write .prd-*.md 时验证 ## 成功标准 章节
  * 4. branch-protect.sh: Write .dod-*.md 时验证 - [ ] checkbox 格式
- * 5. stop-dev.sh: Step 10 flag=done 时额外运行 check-learning.sh
+ * 5. stop-dev.sh: Step 4 flag=done 时额外运行 check-learning.sh
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -280,23 +280,23 @@ describe("Hook Gates — 5 真锁验收 (PR #918)", () => {
       const content = readFileSync(STOP_DEV_PATH, "utf-8");
       expect(content).toContain("v14.1.0");
       expect(content).toContain("check-learning.sh");
-      expect(content).toContain("step_10_learning: pending");
+      expect(content).toContain("step_4_learning: pending");
     });
 
-    it("stop-dev.sh 包含重置 step_10 标志的逻辑", () => {
+    it("stop-dev.sh 包含重置 step_4 标志的逻辑", () => {
       const content = readFileSync(STOP_DEV_PATH, "utf-8");
-      expect(content).toContain("step_10_learning: done");
-      expect(content).toContain("step_10_learning: pending");
+      expect(content).toContain("step_4_learning: done");
+      expect(content).toContain("step_4_learning: pending");
     });
 
-    it("stop-dev.sh Learning 验证在 STEP_10_STATUS 检查之后触发", () => {
+    it("stop-dev.sh Learning 验证在 STEP_4_STATUS 检查之后触发", () => {
       const content = readFileSync(STOP_DEV_PATH, "utf-8");
-      // STEP_10_STATUS 变量赋值（第一次出现）必须在 check-learning.sh 调用之前
-      const step10StatusIdx = content.indexOf("STEP_10_STATUS=");
+      // STEP_4_STATUS 变量赋值（第一次出现）必须在 check-learning.sh 调用之前
+      const step4StatusIdx = content.indexOf("STEP_4_STATUS=");
       const checkLearningIdx = content.indexOf("check-learning.sh");
-      expect(step10StatusIdx).toBeGreaterThan(0);
+      expect(step4StatusIdx).toBeGreaterThan(0);
       expect(checkLearningIdx).toBeGreaterThan(0);
-      expect(checkLearningIdx).toBeGreaterThan(step10StatusIdx);
+      expect(checkLearningIdx).toBeGreaterThan(step4StatusIdx);
     });
   });
 });

@@ -246,7 +246,7 @@ echo "   分支: $CURRENT_BRANCH"
 ## 清理
 
 **Worktree 在以下时机自动清理**：
-- Step 11 (Cleanup) 删除 worktree
+- Step 5 (Cleanup) 删除 worktree
 - 或 PR 合并后手动运行 `bash scripts/cleanup.sh`
 
 ---

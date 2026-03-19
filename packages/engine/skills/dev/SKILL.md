@@ -81,7 +81,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ### 完成条件
 
 ```
-开始 → ... → PR 创建 → CI 通过 → Learning（push 到功能分支）→ PR 合并 ✅ 完成
+开始 → TaskCard → [intent_expand] → Code → Push → [Codex 审查×3] → PR → CI → [PR Review] → Learning → 合并 → Clean ✅
 ```
 
 **只有一个完成标志**：PR 已合并到目标分支（动态检测：`git rev-parse --verify develop` 成功则用 develop，否则 main）
@@ -233,22 +233,79 @@ step_5_clean: pending
 
 ---
 
-## 统一完成条件
+## 统一完成条件（devloop-check.sh SSOT）
 
-**Stop Hook 检查以下条件**：
+**Stop Hook 通过 devloop-check.sh 检查以下条件，必须全部通过才能结束**：
 
 ```
-1. PR 已创建？
-   ❌ → exit 2 → 继续执行到创建 PR
+0. cleanup_done: true？（最高优先级终止条件）
+   ✅ → exit 0 → 工作流结束
 
-2. CI 状态？
-   - PENDING/IN_PROGRESS → exit 2 → 等待 CI
-   - FAILURE → exit 2 → 修复代码
-   - SUCCESS → 继续下一步
+1.5 intent_expand 完成？（若有 intent_expand_task_id）
+   → Brain 派 Codex 做意图扩展 → enriched PRD 写回
+   ❌ PENDING → exit 2 → 等待
+   ✅ COMPLETED → 继续
 
-3. PR 已合并？
-   ❌ → exit 2 → 执行 Step 4 (Learning → push → 合并 PR)
-   ✅ → 删除 .dev-mode → exit 0 → 完成
+2.5 cto_review PASS？（若有 cto_review_task_id）
+   → Brain 派 Codex 做 CTO 审查
+   ❌ PENDING → exit 2 → 等待
+   ❌ FAIL → exit 2 → 按 FAIL 原因修代码
+   ✅ PASS → 继续
+
+2.6 code_quality_review PASS？（若有 code_quality_task_id）
+   → Brain 派 Codex 做代码质量审查
+   ❌ PENDING → exit 2 → 等待
+   ❌ FAIL → exit 2 → 按 FAIL 原因修代码
+   ✅ PASS → 继续
+
+2.7 prd_coverage_audit PASS？（若有 prd_audit_task_id）
+   → Brain 派 Codex 做 PRD 覆盖审计
+   ❌ PENDING → exit 2 → 等待
+   ❌ FAIL → exit 2 → 补实现
+   ✅ PASS → 继续
+
+1. PR 已创建？（审查全 PASS 后才创建 PR）
+   ❌ → exit 2 → 创建 PR
+
+3. CI 状态？
+   - PENDING/IN_PROGRESS → exit 2 → 等待
+   - FAILURE → exit 2 → 本地复现 + 修复代码
+   - SUCCESS → 继续
+
+4.5 PR Review PASS？（若有 review_task_id，CI 通过后）
+   → Brain 派 Codex 做 PR 独立审查
+   ❌ PENDING → exit 2 → 等待
+   ❌ FAIL → exit 2 → 修复
+   ✅ PASS → 继续
+
+5. Step 4 Learning 完成？
+   ❌ → exit 2 → 写 Learning + push 到功能分支
+
+→ 合并 PR（gh pr merge --squash --delete-branch）
+
+4. PR 已合并？
+   ❌ → exit 2 → 执行合并
+   ✅ → 检查 Step 5 Clean → cleanup_done: true → 完成
+```
+
+**Codex 协作流程图**：
+
+```
+Step 1 TaskCard → [intent_expand] → Step 2 Code → Push
+                                                    ↓
+                                        ┌──── Brain 注册 3 任务 ────┐
+                                        │  cto_review              │
+                                        │  code_quality_review     │
+                                        │  prd_coverage_audit      │
+                                        └──────────────────────────┘
+                                                    ↓
+                                    devloop-check 阻塞等待全部 PASS
+                                                    ↓
+                                            创建 PR → CI
+                                                    ↓
+                                        [pr_review（可选）]
+                                                    ↓
+                                    Learning → 合并 → Clean → done
 ```
 
 ---
@@ -397,11 +454,11 @@ skills/dev/
 
 ```
 Step 0: Worktree → 检测/创建 worktree
-Step 1: TaskCard → 生成 .task-cp-xxx.md（需求+成功标准+DoD框架）
+Step 1: TaskCard → 生成 .task-cp-xxx.md + [注册 intent_expand → 等待 enriched PRD]
 Step 2: Code → 探索+DoD定稿+写代码+本地验证
-Step 3: PR+CI → push+等CI+修CI
-Step 4: Learning → 写Learning+合并PR
-Step 5: Clean → 归档+清理worktree
+Step 3: PR+CI → push → [注册 3 个 Codex 审查 → 等待全 PASS] → 创建 PR → 等 CI → [PR Review]
+Step 4: Learning → 写 Learning + 合并 PR
+Step 5: Clean → 归档+清理 worktree → 写 cleanup_done: true
 ```
 
 ### 步骤映射（新→旧，内部逻辑一个不少）

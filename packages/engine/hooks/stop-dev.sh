@@ -756,8 +756,8 @@ else
 
     # --- 条件 3: PR 合并？---
     if [[ "$PR_STATE" == "merged" ]]; then
-        STEP_11_STATUS=$(grep "^step_11_cleanup:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
-        if [[ "$STEP_11_STATUS" == "done" ]]; then
+        STEP_5_STATUS=$(grep "^step_5_clean:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$STEP_5_STATUS" == "done" ]]; then
             force_cleanup_worktree "$DEV_MODE_FILE"
             rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
                   "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
@@ -772,8 +772,8 @@ else
             exit 2
         fi
     else
-        STEP_10_STATUS=$(grep "^step_10_learning:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
-        if [[ "$STEP_10_STATUS" != "done" ]]; then
+        STEP_4_STATUS=$(grep "^step_4_learning:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$STEP_4_STATUS" != "done" ]]; then
             save_block_reason "Step 10 LEARNINGS 未完成"
             jq -n --arg reason "CI 通过，但 Step 10 LEARNINGS 尚未完成。必须先完成 Step 10 再合并 PR。" '{"decision": "block", "reason": $reason}'
             exit 2
@@ -790,9 +790,9 @@ else
         if [[ -n "$CHECK_LEARNING_SCRIPT" ]]; then
             if ! bash "$CHECK_LEARNING_SCRIPT" >/dev/null 2>&1; then
                 if [[ "$(uname)" == "Darwin" ]]; then
-                    sed -i '' "s/^step_10_learning: done/step_10_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
+                    sed -i '' "s/^step_4_learning: done/step_4_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
                 else
-                    sed -i "s/^step_10_learning: done/step_10_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
+                    sed -i "s/^step_4_learning: done/step_4_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
                 fi
                 save_block_reason "Step 10 Learning 内容格式不达标（check-learning.sh 失败）"
                 jq -n --arg reason "Step 10 flag=done 但 check-learning.sh 内容格式验证失败。Learning 必须包含：根本原因分析 + 下次预防措施 + 至少 50 字。请重新写 docs/learnings/<branch>.md，然后 git commit + push。" '{"decision": "block", "reason": $reason}'

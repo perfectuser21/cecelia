@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 13.3.5
-updated: 2026-03-19
+version: 13.3.6
+updated: 2026-03-20
 
 # ============================================================================
 # Hooks 回归契约
@@ -152,14 +152,14 @@ hooks:
     tags: [stop-hook, learnings, step-order, double-pr]
     owner: infra
     steps:
-      given: "CI 通过，PR 未合并，step_10_learning=pending"
+      given: "CI 通过，PR 未合并，step_4_learning=pending"
       when: "Stop Hook condition 3 触发"
-      then: "阻止合并，reason 指示先执行 Step 10 LEARNINGS"
+      then: "阻止合并，reason 指示先执行 Step 4 LEARNINGS"
     evidence:
       type: code
       file: "hooks/stop-dev.sh"
-      contains: "Step 10 LEARNINGS 未完成"
-    test: "manual:bash -c \"grep -q 'step_10_learning' packages/engine/hooks/stop-dev.sh\""
+      contains: "Step 4 LEARNINGS 未完成"
+    test: "manual:bash -c \"grep -q 'step_4_learning' packages/engine/hooks/stop-dev.sh\""
 
   # --------------------------------------------------------------------------
   # H1-014~H1-016: v12.96.0 State Machine 强制层 (verify-step.sh)
@@ -608,7 +608,7 @@ hooks:
   # v12.41.0: Deep Bug Fixes
   - id: H7-019
     feature: H7
-    name: "cleanup.sh sed step_11_cleanup 验证后追加"
+    name: "cleanup.sh sed step_5_clean 验证后追加"
     scope: script
     priority: P0
     trigger: [PR, Release]
@@ -616,7 +616,7 @@ hooks:
     tags: [cleanup, sed, silent-failure, bug-fix]
     owner: infra
     steps:
-      given: "cleanup.sh 标记 step_11_cleanup: done"
+      given: "cleanup.sh 标记 step_5_clean: done"
       when: "sed 替换目标行不存在（首次运行或格式不同）"
       then: "验证 grep 后追加行，不静默失败"
     evidence:

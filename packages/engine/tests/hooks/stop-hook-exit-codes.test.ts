@@ -104,13 +104,13 @@ describe("hooks/stop-dev.sh exit codes", () => {
       // 实际测试在集成测试中验证
     });
 
-    it("should return exit 2 when Step 11 not completed", () => {
+    it("should return exit 2 when Step 5 not completed", () => {
       writeFileSync(
         join(tempDir, ".dev-mode"),
-        "dev\nbranch: test\nstep_11_cleanup: pending\n"
+        "dev\nbranch: test\nstep_5_clean: pending\n"
       );
 
-      // 模拟 PR 已合并但 Step 11 未完成
+      // 模拟 PR 已合并但 Step 5 未完成
       // 需要 mock gh CLI 返回 merged 状态
       // 暂时跳过，在集成测试中验证
     });

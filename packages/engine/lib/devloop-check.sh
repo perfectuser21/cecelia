@@ -64,7 +64,7 @@ _devloop_jq() {
 # 内部函数: _mark_cleanup_done
 # ============================================================================
 # 向 dev_mode_file 写入 cleanup_done: true，触发唯一的终止路径。
-# 调用方：cleanup.sh（直接写文件）和 devloop_check（step_11_cleanup: done 时调用）
+# 调用方：cleanup.sh（直接写文件）和 devloop_check（step_5_clean: done 时调用）
 #
 # 参数:
 #   $1: dev_mode_file — .dev-mode.<branch> 文件路径
@@ -422,20 +422,20 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
 
     # ===== 条件 4: PR 是否已合并？=====
     if [[ "$pr_state" == "merged" ]]; then
-        # PR 已合并，检查 Step 11 Cleanup
-        local step_11_status
-        step_11_status=$(grep "^step_11_cleanup:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+        # PR 已合并，检查 Step 5 Clean
+        local step_5_status
+        step_5_status=$(grep "^step_5_clean:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
 
-        if [[ "$step_11_status" == "done" ]]; then
+        if [[ "$step_5_status" == "done" ]]; then
             # v1.1.0: 不再直接返回 done，改为调用 _mark_cleanup_done 写入 cleanup_done: true
             # 统一通过顶层 cleanup_done: true 检查退出（唯一终止路径），消除双 exit 0 路径
             _mark_cleanup_done "$dev_mode_file"
             _devloop_jq -n \
-                '{"status":"blocked","reason":"Step 11 已完成，cleanup_done 已标记，等待下次检查退出","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
+                '{"status":"blocked","reason":"Step 5 Clean 已完成，cleanup_done 已标记，等待下次检查退出","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
             return 2
         else
             _devloop_jq -n \
-                '{"status":"blocked","reason":"PR 已合并，Step 11 Cleanup 未完成","action":"执行 Step 11 Cleanup：读取 skills/dev/steps/11-cleanup.md 并执行清理"}'
+                '{"status":"blocked","reason":"PR 已合并，Step 5 Clean 未完成","action":"执行 Step 5 Clean：读取 skills/dev/steps/05-clean.md 并执行清理"}'
             return 2
         fi
     fi
@@ -488,26 +488,26 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 5: CI 通过 + PR 未合并 → 检查 Step 10 LEARNINGS =====
-    local step_10_status
-    step_10_status=$(grep "^step_10_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+    # ===== 条件 5: CI 通过 + PR 未合并 → 检查 Step 4 LEARNINGS =====
+    local step_4_status
+    step_4_status=$(grep "^step_4_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
 
-    if [[ "$step_10_status" != "done" ]]; then
+    if [[ "$step_4_status" != "done" ]]; then
         if command -v _devlog_event &>/dev/null; then
             _devlog_event "devloop-check" "learning" "blocked" "Learning 未完成"
         fi
         _devloop_jq -n \
             --arg pr "$pr_number" \
-            '{"status":"blocked","reason":"CI 通过，Step 10 LEARNINGS 未完成（合并前必须先写 LEARNINGS）","action":"执行 Step 10：读取 skills/dev/steps/10-learning.md，写 docs/LEARNINGS.md，git add + commit + push 到功能分支（PR #\($pr) 自动更新）"}'
+            '{"status":"blocked","reason":"CI 通过，Step 4 Learning 未完成（合并前必须先写 LEARNINGS）","action":"执行 Step 4：读取 skills/dev/steps/04-learning.md，写 docs/LEARNINGS.md，git add + commit + push 到功能分支（PR #\($pr) 自动更新）"}'
         return 2
     fi
 
-    # Step 10 已完成 → 合并 PR
+    # Step 4 Learning 已完成 → 合并 PR
     if command -v _devlog_event &>/dev/null; then
         _devlog_event "devloop-check" "merge" "blocked" "CI 通过 + Learning 完成，等待合并 PR #$pr_number"
     fi
     _devloop_jq -n \
         --arg pr "$pr_number" \
-        '{"status":"blocked","reason":"CI 通过且 Step 10 LEARNINGS 已完成，PR 待合并","action":"执行合并：gh pr merge \($pr) --squash --delete-branch"}'
+        '{"status":"blocked","reason":"CI 通过且 Step 4 Learning 已完成，PR 待合并","action":"执行合并：gh pr merge \($pr) --squash --delete-branch"}'
     return 2
 }

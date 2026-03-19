@@ -4,7 +4,7 @@
  * 测试 Stop Hook 退出条件：
  * - 删除 PR 合并后的提前退出
  * - 修复分支不匹配时的 .dev-mode 泄漏
- * - 统一退出条件：只有 cleanup_done: true 或 11 步全部完成
+ * - 统一退出条件：只有 cleanup_done: true 或所有 6 步全部完成
  * - v11.25.0: 所有 exit 2 改为 jq -n 输出 JSON + exit 0
  */
 
@@ -59,31 +59,26 @@ cleanup_done: true
     // Stop Hook 应该检测到 cleanup_done: true 并删除文件
   });
 
-  it('应该检查 11 步是否全部完成', () => {
+  it('应该检查所有 6 步是否全部完成', () => {
     writeFileSync(
       devModeFile,
       `dev
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: done
-step_5_dod: done
-step_6_code: done
-step_7_verify: done
-step_8_pr: done
-step_9_ci: done
-step_10_learning: done
-step_11_cleanup: done
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: done
+step_3_prci: done
+step_4_learning: done
+step_5_clean: done
 `,
     );
 
     const content = readFileSync(devModeFile, 'utf-8');
 
     // 检查所有步骤是否为 done
-    for (let step = 1; step <= 11; step++) {
+    for (let step = 0; step <= 5; step++) {
       const match = content.match(new RegExp(`^step_${step}_\\w+:\\s*(\\w+)$`, 'm'));
       expect(match).toBeTruthy();
       expect(match![1]).toBe('done');
@@ -99,17 +94,12 @@ step_11_cleanup: done
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_explore: done
-step_5_dod: pending
-step_6_code: pending
-step_7_verify: pending
-step_8_pr: pending
-step_9_ci: pending
-step_10_learning: pending
-step_11_cleanup: pending
+step_0_worktree: done
+step_1_taskcard: done
+step_2_code: pending
+step_3_prci: pending
+step_4_learning: pending
+step_5_clean: pending
 `,
     );
 
@@ -117,7 +107,7 @@ step_11_cleanup: pending
 
     // 检查是否有 pending 的步骤
     let hasPending = false;
-    for (let step = 1; step <= 11; step++) {
+    for (let step = 0; step <= 5; step++) {
       const match = content.match(new RegExp(`^step_${step}_\\w+:\\s*(\\w+)$`, 'm'));
       if (match && match[1] !== 'done') {
         hasPending = true;
@@ -223,13 +213,13 @@ branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
 pr_merged: true
-step_11_cleanup: pending
+step_5_clean: pending
 `,
     );
 
     const content = readFileSync(devModeFile, 'utf-8');
     expect(content).toContain('pr_merged: true');
-    expect(content).toContain('step_11_cleanup: pending');
+    expect(content).toContain('step_5_clean: pending');
     expect(content).not.toContain('cleanup_done: true');
 
     // Stop Hook 应该继续循环，不允许退出

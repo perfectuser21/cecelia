@@ -11,7 +11,7 @@
  * P2-5: cleanup.sh Section 4.5 GC 不在 cleanup 中 fire-and-forget 启动
  *
  * === v12.41.0 ===
- * P0-1b: cleanup.sh sed step_11_cleanup 静默失败 → 验证后追加
+ * P0-1b: cleanup.sh sed step_5_clean 静默失败 → 验证后追加
  * P0-2b: stop-dev.sh 无头模式锁匹配 → 分支名 fallback
  * P0-3b: worktree-gc.sh rm -rf 无脏状态检查
  * P1-1b: stop-dev.sh sentinel 孤儿重试上限
@@ -72,13 +72,13 @@ describe("P0-1: stop-dev.sh PR 已合并时跳过 CI 检查", () => {
     expect(content).toContain('PR_STATE" == "merged"');
   });
 
-  it("merged 时检查 Step 11 完成状态（不查询 CI）", () => {
+  it("merged 时检查 Step 5 完成状态（不查询 CI）", () => {
     // 找到 merged 条件判断代码块
     const mergedIdx = content.indexOf('PR_STATE" == "merged"');
     expect(mergedIdx).toBeGreaterThan(-1);
-    // merged 后检查 step_11_cleanup 状态
+    // merged 后检查 step_5_clean 状态
     const afterMerged = content.slice(mergedIdx, mergedIdx + 300);
-    expect(afterMerged).toMatch(/step_11_cleanup|Step 11|cleanup/);
+    expect(afterMerged).toMatch(/step_5_clean|Step 5|cleanup/);
   });
 
   it("CI 查询逻辑在 PR_STATE != merged 分支中（非 merged 时才执行）", () => {
@@ -205,7 +205,7 @@ describe("P2-5: cleanup.sh Section 4.5 GC 不在 cleanup 中 fire-and-forget 启
 // v12.41.0 深度修复测试
 // ============================================================================
 
-describe("P0-1b: cleanup.sh sed step_11_cleanup 静默失败修复", () => {
+describe("P0-1b: cleanup.sh sed step_5_clean 静默失败修复", () => {
   const content = readFileSync(CLEANUP_SH, "utf-8");
 
   it("定义了 _mark_cleanup_done 函数", () => {
@@ -214,16 +214,16 @@ describe("P0-1b: cleanup.sh sed step_11_cleanup 静默失败修复", () => {
 
   it("sed 后用 grep 验证结果", () => {
     expect(content).toMatch(
-      /grep.*-q.*step_11_cleanup: done.*\$target_file/
+      /grep.*-q.*step_5_clean: done.*\$target_file/
     );
   });
 
   it("验证失败时追加行", () => {
-    expect(content).toContain('echo "step_11_cleanup: done" >> "$target_file"');
+    expect(content).toContain('echo "step_5_clean: done" >> "$target_file"');
   });
 
   it("追加前先删除可能存在的其他格式", () => {
-    expect(content).toMatch(/sed.*-i.*step_11_cleanup:.*\/d/);
+    expect(content).toMatch(/sed.*-i.*step_5_clean:.*\/d/);
   });
 });
 
@@ -470,9 +470,9 @@ describe("R2-cleanup-P1: cleanup.sh step 验证 grep 精确匹配", () => {
 
   it("使用 STEP_PATTERNS 数组精确匹配步骤名", () => {
     expect(content).toContain("STEP_PATTERNS");
-    expect(content).toContain("step_1_prd");
-    expect(content).toContain("step_10_learning");
-    expect(content).toContain("step_11_cleanup");
+    expect(content).toContain("step_0_worktree");
+    expect(content).toContain("step_4_learning");
+    expect(content).toContain("step_5_clean");
   });
 
   it("不使用 step_${step}_ 模糊 grep", () => {
