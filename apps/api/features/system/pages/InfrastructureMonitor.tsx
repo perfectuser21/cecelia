@@ -1,11 +1,13 @@
 import { useState, Suspense, lazy } from 'react';
-import { Server, Activity, Loader2 } from 'lucide-react';
+import { Server, Activity, Loader2, Network } from 'lucide-react';
 
 const VpsMonitor = lazy(() => import('./VpsMonitor'));
 const PerformanceMonitoring = lazy(() => import('./PerformanceMonitoring'));
+const FleetMonitor = lazy(() => import('./FleetMonitor'));
 
 const tabs = [
-  { id: 'infrastructure', label: 'Infrastructure', icon: Server },
+  { id: 'fleet', label: 'Fleet', icon: Network },
+  { id: 'infrastructure', label: 'Local', icon: Server },
   { id: 'services', label: 'Services', icon: Activity },
 ] as const;
 
@@ -19,7 +21,7 @@ const LoadingFallback = () => (
 );
 
 export default function InfrastructureMonitor() {
-  const [activeTab, setActiveTab] = useState<TabId>('infrastructure');
+  const [activeTab, setActiveTab] = useState<TabId>('fleet');
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
@@ -47,6 +49,7 @@ export default function InfrastructureMonitor() {
       </div>
 
       <Suspense fallback={<LoadingFallback />}>
+        {activeTab === 'fleet' && <FleetMonitor />}
         {activeTab === 'infrastructure' && <VpsMonitor />}
         {activeTab === 'services' && <PerformanceMonitoring />}
       </Suspense>
