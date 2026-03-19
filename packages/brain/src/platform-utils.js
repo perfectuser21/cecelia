@@ -539,11 +539,11 @@ const MAX_PHYSICAL_CAP = 20;      // Hard cap: never allocate more than 20 slots
  *
  * @param {number} totalMemMb - Total system memory in MB
  * @param {number} cpuCores - Number of CPU cores
- * @param {number} memPerTaskMb - Memory per task in MB (default 350)
+ * @param {number} memPerTaskMb - Memory per task in MB (default 500, peak-safe fallback)
  * @param {number} cpuPerTask - CPU cores per task (default 0.5)
  * @returns {number} Physical capacity (2 <= result <= MAX_PHYSICAL_CAP)
  */
-export function calculatePhysicalCapacity(totalMemMb, cpuCores, memPerTaskMb = 350, cpuPerTask = 0.5) {
+export function calculatePhysicalCapacity(totalMemMb, cpuCores, memPerTaskMb = 500, cpuPerTask = 0.5) {
   const usableMemMb = (totalMemMb - SYSTEM_RESERVED_MB) * 0.8;
   const usableCpu = cpuCores * 0.8;
   const raw = Math.floor(Math.min(usableMemMb / memPerTaskMb, usableCpu / cpuPerTask));
