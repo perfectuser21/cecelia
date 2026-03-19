@@ -1,6 +1,6 @@
 name: L4 Runtime Gate
 
-# L4: 运行时集成测试 — Brain 变动时必跑（~20min，3 shards 并行）
+# L4: 运行时集成测试 — Brain 变动时必跑（~15min，4 shards 并行）
 # 职责：PostgreSQL 真实环境 + 完整集成测试 + GoldenPath E2E
 # 运行环境：xian-mac-m1（有 Homebrew，支持 postgresql@17/pgvector）
 # 优化：动态端口（GITHUB_RUN_ID 派生）消除并发冲突，去掉全局 mutex，允许 2 个 L4 同时运行
@@ -49,7 +49,7 @@ jobs:
             echo "brain=false" >> $GITHUB_OUTPUT
           fi
 
-  # ─── Brain L4: Integration Tests (macos + PostgreSQL, 3 shards parallel) ──
+  # ─── Brain L4: Integration Tests (macos + PostgreSQL, 4 shards parallel) ──
 
   brain-integration:
     name: Brain Integration (Shard ${{ matrix.shard }})
@@ -61,17 +61,19 @@ jobs:
       contents: read
 
     strategy:
-      # 3 shards 并行，端口由 Set up PostgreSQL step 动态计算（基于 GITHUB_RUN_ID）
-      # 公式：5500 + (run_id % 100) * 3 + (shard_num - 1)，范围 5500~5797
+      # 4 shards 并行，端口由 Set up PostgreSQL step 动态计算（基于 GITHUB_RUN_ID）
+      # 公式：5500 + (run_id % 100) * 4 + (shard_num - 1)，范围 5500~5896
       # 不同 run 的端口区间不重叠，允许 2 个 L4 并发运行
       matrix:
         include:
-          - shard: "1/3"
+          - shard: "1/4"
             shard_num: 1
-          - shard: "2/3"
+          - shard: "2/4"
             shard_num: 2
-          - shard: "3/3"
+          - shard: "3/4"
             shard_num: 3
+          - shard: "4/4"
+            shard_num: 4
       fail-fast: false
 
     env:
@@ -122,12 +124,12 @@ jobs:
             fi
           done
           # 步骤2: 清理上次 run 遗留的 postgres 进程（跳过当前 run 的端口区间）
-          # 当前 run 的端口：5500 + (run_id % 100) * 3 ~ +2（防止误杀并行 shard）
-          CUR_BASE=$(( 5500 + (GITHUB_RUN_ID % 100) * 3 ))
-          CUR_P0=$CUR_BASE; CUR_P1=$((CUR_BASE+1)); CUR_P2=$((CUR_BASE+2))
-          for port in $(seq 5500 5797); do
-            # 跳过当前 run 的 3 个端口（并行 shard 会用到）
-            if [ "$port" -eq "$CUR_P0" ] || [ "$port" -eq "$CUR_P1" ] || [ "$port" -eq "$CUR_P2" ]; then
+          # 当前 run 的端口：5500 + (run_id % 100) * 4 ~ +3（防止误杀并行 shard）
+          CUR_BASE=$(( 5500 + (GITHUB_RUN_ID % 100) * 4 ))
+          CUR_P0=$CUR_BASE; CUR_P1=$((CUR_BASE+1)); CUR_P2=$((CUR_BASE+2)); CUR_P3=$((CUR_BASE+3))
+          for port in $(seq 5500 5896); do
+            # 跳过当前 run 的 4 个端口（并行 shard 会用到）
+            if [ "$port" -eq "$CUR_P0" ] || [ "$port" -eq "$CUR_P1" ] || [ "$port" -eq "$CUR_P2" ] || [ "$port" -eq "$CUR_P3" ]; then
               continue
             fi
             PIDS=$(lsof -ti:$port 2>/dev/null) || true
@@ -164,10 +166,10 @@ jobs:
       - name: Set up PostgreSQL (dynamic port)
         run: |
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
-          # 动态端口：5500 + (run_id % 100) * 3 + (shard_num - 1)
-          # 100 个 slot × 3 端口，范围 5500~5797，不与生产 DB(5432) 冲突
+          # 动态端口：5500 + (run_id % 100) * 4 + (shard_num - 1)
+          # 100 个 slot × 4 端口，范围 5500~5896，不与生产 DB(5432) 冲突
           SHARD_NUM="${{ matrix.shard_num }}"
-          BASE_PORT=$(( 5500 + (GITHUB_RUN_ID % 100) * 3 ))
+          BASE_PORT=$(( 5500 + (GITHUB_RUN_ID % 100) * 4 ))
           DB_PORT=$(( BASE_PORT + SHARD_NUM - 1 ))
           PG_DATA="/tmp/pgdata-${GITHUB_RUN_ID}-${SHARD_NUM}"
           # 导出给后续 steps
@@ -234,7 +236,7 @@ jobs:
           if [ -z "$DB_PORT" ]; then
             echo "⚠ DB_PORT is empty — GITHUB_ENV propagation failed"
             echo "Recalculating from GITHUB_RUN_ID=$GITHUB_RUN_ID shard=${{ matrix.shard_num }}"
-            DB_PORT=$(( 5500 + (GITHUB_RUN_ID % 100) * 3 + ${{ matrix.shard_num }} - 1 ))
+            DB_PORT=$(( 5500 + (GITHUB_RUN_ID % 100) * 4 + ${{ matrix.shard_num }} - 1 ))
             echo "DB_PORT=${DB_PORT}" >> $GITHUB_ENV
             echo "Recovered DB_PORT=$DB_PORT"
           fi
@@ -267,7 +269,7 @@ jobs:
       - name: Run Brain tests (Shard ${{ matrix.shard }})
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=6144"
+          NODE_OPTIONS: "--max-old-space-size=3072"
           DB_PORT: ${{ env.DB_PORT }}
           DB_HOST: ${{ env.DB_HOST }}
           DB_NAME: ${{ env.DB_NAME }}
@@ -283,8 +285,8 @@ jobs:
           SHARD_FAILED=$(grep "Test Files" "$SHARD_FILE" | grep -oE "[0-9]+ failed" | awk '{print $1}' | tail -1)
           SHARD_FAILED=${SHARD_FAILED:-0}
 
-          # Per-shard baseline: ceiling(total_baseline / 3)
-          # 每个 shard 约覆盖 1/3 的测试，预存失败也按比例分配
+          # Per-shard baseline: ceiling(total_baseline / 4)
+          # 每个 shard 约覆盖 1/4 的测试，预存失败也按比例分配
           BASELINE=0
           if [ -f "ci/brain-integration-baseline.txt" ]; then
             TOTAL_BASELINE=$(cat ci/brain-integration-baseline.txt | tr -d '[:space:]')
@@ -295,7 +297,7 @@ jobs:
               echo "   集成测试债务必须主动偿还，请将 ci/brain-integration-baseline.txt 降到 $MAX_BASELINE 以内。"
               exit 1
             fi
-            BASELINE=$(( (TOTAL_BASELINE + 2) / 3 ))
+            BASELINE=$(( (TOTAL_BASELINE + 3) / 4 ))
             echo "📋 Total baseline: $TOTAL_BASELINE → per-shard baseline: $BASELINE"
           fi
 
@@ -310,7 +312,7 @@ jobs:
           exit 1
 
       - name: GoldenPath E2E
-        if: matrix.shard == '1/3'
+        if: matrix.shard == '1/4'
         working-directory: packages/brain
         env:
           DB_PORT: ${{ env.DB_PORT }}
