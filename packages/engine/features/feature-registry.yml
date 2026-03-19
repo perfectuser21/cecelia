@@ -242,6 +242,7 @@ changelog:
     summary: Step 04/02/03 加硬性自检命令（Learning格式/假测试/版本7文件）
     scope: skills
     breaking: false
+  - "3.53.0: /dev 步骤命名统一（step_10→step_4, step_11→step_5）+ SKILL.md Codex 协作流程对齐 + cleanup_done 终止路径修复"
   - "3.52.0: v12.95.2 - 修复 Engine 测试漂移：03-branch.md 删除后 stop-hook-state-integrity.test.ts 改指向 01-taskcard.md；pr-gate-phase1 valid/valid-contract fixture 将 manual:curl localhost:5221 改为 manual:node -e process.exit(0) 消除 CI Brain 依赖；check-changed-coverage.cjs 补 allChangedFiles 参数"
   - "3.51.0: v12.95.2 - 同步 /dev 6步 TDD 工作流到 packages/workflows/skills（dev-tdd-redesign）：packages/workflows/skills/dev/ 从旧12步设计更新为新6步（00-worktree/01-taskcard/02-code/03-prci/04-learning/05-clean），SKILL.md 更新至 v3.5.0，旧11步文件全部删除；修复 check-changed-coverage.cjs 门禁1：feat PR 无源码文件变更时跳过测试要求（allChangedFiles 参数），防止纯 .md 变更的 feat PR 被 Coverage Gate 误拒"
   - "3.50.0: v12.95.1 - 修复 stop-dev.sh 第4匹配 case（fix-stop-dev-session-matching）：当 .dev-lock 的 tty=not-a-tty 且 session_id 为空时，原 case 1/2/3 均无法命中 → _PRE_MATCHED=false → exit 0 → /dev 中途退出。修复：pre-check 和主匹配两处各加第4个 elif case，lock 无标识符时降级为按分支名匹配；record-step.sh jq -n 改 jq -cn 确保 JSONL 单行；测试并发写入干扰修复（最后一行读取 + 尾部换行）"
