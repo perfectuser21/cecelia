@@ -361,6 +361,26 @@ server.listen(PORT, async () => {
 
   // Auto-start cecelia-bridge if not already running
   await startCeceliaBridge();
+
+  // Sync Learning rules into learnings table (non-blocking, best-effort)
+  // Ensures learning-retriever.js has data to inject into /dev task prompts
+  try {
+    const distillScript = join(__dirname, 'scripts', 'distill-learnings.js');
+    const distill = spawn(process.execPath, [distillScript], {
+      detached: false,
+      stdio: 'pipe',
+      env: { ...process.env },
+    });
+    distill.stdout.on('data', (d) => console.log('[distill-learnings]', d.toString().trim()));
+    distill.stderr.on('data', (d) => console.warn('[distill-learnings]', d.toString().trim()));
+    distill.on('exit', (code) => {
+      if (code !== 0) console.warn(`[distill-learnings] exited with code ${code}`);
+      else console.log('[Server] distill-learnings completed — learnings table synced');
+    });
+    console.log('[Server] distill-learnings started (pid=' + distill.pid + ')');
+  } catch (e) {
+    console.warn('[Server] distill-learnings failed to start (non-fatal):', e.message);
+  }
 });
 
 export default app;
