@@ -2,155 +2,115 @@
 name: douyin-publisher
 description: 抖音自动发布工具 - 图文/视频/文章三种类型（生产就绪）
 trigger: 发布抖音、douyin、抖音发布
-version: 1.0.0
+version: 1.1.0
 created: 2026-02-12
-updated: 2026-02-12
+updated: 2026-03-19
 changelog:
-  - 1.0.0: ✅ 2026-02-12 完成 - 三种类型全部验证通过
+  - 1.0.0: ✅ 2026-02-12 完成 - 三种类型全部验证通过（zenithjoy）
+  - 1.1.0: ✅ 2026-03-19 迁移到 cecelia - 图文/视频脚本迁移，CDP 直连架构，.cjs 格式，内容目录接口
 ---
 
 # Douyin Publisher
 
-抖音自动发布工具 - 完全自动化，零 AI 干预
+抖音自动发布工具 - 图文和视频，CDP 直连 Windows Chrome
 
-## ✅ 验证通过（2026-02-12）
-
-| 类型 | 耗时 | 最新测试 | 说明 |
-|------|------|----------|------|
-| **图文** | ~30s | item_id: 7605837846758313266 | 支持多图 |
-| **视频** | ~90s | ItemId: 7605861760767233306 | 自动上传视频 |
-| **文章** | ~60s | "完整流程测试 160245" | 必须有封面 |
-
-**统计**: 成功 3 | 失败 0
-
----
-
-## 🏗️ 架构
+## 架构
 
 ```
-NAS 存储
-    ↓ 扫描日期目录
-Mac mini 调度器 (~/scheduler.sh)
-    ↓ Base64 传输 + scp 文件
-Windows PC Playwright (100.97.242.124)
-    ↓ 自动化发布
-抖音 ✅
+Mac mini（美国，100.71.151.105）
+    ↓ SCP（经 xian-mac 跳板）
+xian-mac（西安 M4，100.86.57.69）
+    ↓ SCP
+Windows PC（西安，100.97.242.124）
+    ↓ CDP WebSocket（端口 19222）
+抖音 Chrome 浏览器 → creator.douyin.com
 ```
 
-**关键路径**：
-- 美国 VPS → ssh mac-mini → ssh 100.97.242.124 (windows)
-- Mac mini SSH 密钥：~/.ssh/windows_ed（ED25519）
-- Windows 用户：xuxia（管理员）
+**关键配置**：
+- CDP 端口：`19222`（抖音专用 Chrome 实例）
+- Windows 用户：`xuxia`，基础目录：`C:\Users\xuxia\douyin-media`
+- xian-mac SSH 密钥：`/Users/jinnuoshengyuan/.ssh/windows_ed`
 
----
+## 支持类型
 
-## 📝 Windows PC 脚本位置
+| 类型 | 脚本 | 状态 |
+|------|------|------|
+| 视频 | `scripts/publish-douyin-video.cjs` | ✅ 架构完成，待生产测试 |
+| 图文 | `scripts/publish-douyin-image.cjs` | ✅ 架构完成，待生产测试 |
+| 批量 | `scripts/batch-publish-douyin.sh` | ✅ |
 
-**所有脚本都在 Windows PC**: C:\Users\xuxia\playwright-recorder\
+## 使用方式
 
-| 脚本 | 大小 | 最后更新 | 状态 |
-|------|------|----------|------|
-| publish-douyin-image.js | 4.3 KB | 2026-02-12 12:55 | ✅ 生产可用 |
-| publish-douyin-video.js | 3.7 KB | 2026-02-12 14:23 | ✅ 生产可用 |
-| publish-douyin-article.js | 5.8 KB | 2026-02-12 16:06 | ✅ 生产可用 |
-
----
-
-## 📦 字段规范
-
-### 图文（Image/Text）
-```
-content: 文案（可选）
-images: 图片数组（至少 1 张）
-```
-
-### 视频（Video）
-```
-title: 标题
-video: 视频文件路径
-```
-
-### 文章（Article）
-```
-title: 标题
-summary: 摘要（可选）
-content: 正文
-cover: 封面路径（⚠️ 必需）
-```
-
-**完整字段说明**: 见 REQUIREMENTS.md 和 FIELDS.md
-
----
-
-## 🎯 使用方式
-
-### 方式 1：通过 Mac mini 调度器（推荐）
+### 视频发布
 
 ```bash
-# 发布指定日期的内容
-ssh mac-mini 'bash ~/scheduler.sh 2026-02-15'
-
-# 发布今天的内容
-ssh mac-mini 'bash ~/scheduler.sh'
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/douyin-publisher/scripts/publish-douyin-video.cjs \
+  --content ~/.douyin-queue/2026-03-19/video-1/
 ```
 
-### 方式 2：直接调用（开发/测试）
+**内容目录结构**：
+```
+~/.douyin-queue/{date}/video-1/
+├── title.txt     → 视频标题（必填）
+├── tags.txt      → 标签（每行一个或逗号分隔，可选）
+├── video.mp4     → 视频文件（必填，支持 mp4/mov/avi/mkv/flv/webm）
+└── cover.jpg     → 封面图（可选）
+```
 
-通过 Mac mini 中转到 Windows，创建 queue.json 并调用对应脚本。
+### 图文发布
+
+```bash
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/douyin-publisher/scripts/publish-douyin-image.cjs \
+  --content ~/.douyin-queue/2026-03-19/image-1/
+```
+
+**内容目录结构**：
+```
+~/.douyin-queue/{date}/image-1/
+├── title.txt     → 标题（必填）
+├── content.txt   → 文案内容（可选）
+├── tags.txt      → 标签（可选）
+└── image.jpg     → 图片（至少 1 张，支持 jpg/png/gif/webp）
+```
+
+### 批量发布
+
+```bash
+bash packages/workflows/skills/douyin-publisher/scripts/batch-publish-douyin.sh 2026-03-19
+```
+
+**退出码**：
+- `0` — 发布成功
+- `1` — 参数错误或文件缺失
+- `2` — 发布失败（CDP 错误、会话失效等）
+
+## 故障排查
+
+### CDP 连接失败
+
+```bash
+curl http://100.97.242.124:19222/json
+```
+
+确认 Windows Chrome 已以调试模式启动（19222 端口）。如未启动：
+```bash
+ssh xian-mac "ssh -i ~/.ssh/windows_ed xuxia@100.97.242.124 'schtasks /run /tn StartAllBrowsers'"
+```
+
+### 会话过期（登录失效）
+
+在 Windows Chrome 打开 creator.douyin.com 手动扫码重新登录。
+
+### 找不到 ws 模块
+
+```bash
+export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
+```
 
 ---
 
-## 🔧 关键技术
-
-1. **CDP 连接** - chromium.connectOverCDP 连接已打开的浏览器
-2. **API 监听** - 监听 /web/api/media/aweme/create_v2/ 判断成功
-3. **文件上传** - setInputFiles() 上传图片/视频
-4. **Filechooser** - 文章封面上传用 waitForEvent('filechooser')
-5. **URL 跳转判断** - 跳转到 /content/manage 表示成功
-
----
-
-## ⚠️ 重要教训
-
-### 文章封面是必需的
-
-虽然界面有"无文章头图"选项，但选择后会**静默失败**（返回上传页面）。
-
-**原因**：平台要求文章必须有封面，选择"无封面"会被拒绝。
-
-**解决方案**：生产环境必须提供 cover.jpg
-
----
-
-## 📊 发布 API
-
-**统一 API**（三种类型共用）:
-```
-POST /web/api/media/aweme/create_v2/
-```
-
-**成功响应**:
-```
-{
-  "status_code": 0,
-  "item_id": "7605837846758313266"
-}
-```
-
----
-
-## 📚 文档
-
-- REQUIREMENTS.md - 字段规范（NAS 目录结构）
-- FIELDS.md - 字段详细分析（代码行号引用）
-- STATUS.md - 完成状态和验证结果
-
----
-
-**版本**: 1.0.0
-**状态**: ✅ **生产就绪** - 图文/视频/文章三种类型完整验证通过
-**架构**: NAS → Mac mini 调度器 → Windows PC → 抖音
-**清理状态**: ✅ 所有临时文件已清理，只保留最终脚本
-**完整性**: ✅ 端到端自动化，零人工干预
-
-**使用**: ssh mac-mini 'bash ~/scheduler.sh YYYY-MM-DD'
+**版本**: 1.1.0
+**状态**: ✅ **cecelia 架构就绪** - 图文/视频脚本迁移完成，CDP 直连 Windows
+**架构**: Mac mini → xian-mac SCP → Windows CDP → 抖音
