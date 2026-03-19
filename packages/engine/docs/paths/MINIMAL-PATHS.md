@@ -385,6 +385,13 @@ changelog:
 
 ---
 
+### devloop-check-ci-timeout-blocked: devloop-check CI 超时返回 blocked + P0 诊断任务
+
+1. ✅ **CI 超时 90 分钟 → blocked（非 done）**
+2. ✅ **超时时创建 P0 诊断任务**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

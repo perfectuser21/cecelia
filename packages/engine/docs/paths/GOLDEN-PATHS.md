@@ -674,6 +674,22 @@ exit 2 + [SKILL_REQUIRED: dev]
 
 ---
 
+## GP-043: devloop-check CI 超时返回 blocked + P0 诊断任务 (devloop-check-ci-timeout-blocked)
+
+**Feature**: devloop-check-ci-timeout-blocked - devloop-check CI 超时返回 blocked + P0 诊断任务
+**Priority**: P1
+
+### Golden Path
+
+```
+CI 超时 90 分钟 →
+devloop-check 检测 elapsed > 5400 →
+curl POST Brain /api/brain/tasks P0 →
+返回 blocked + return 2
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -2038,3 +2038,32 @@ product_features:
       - "cp-* 分支同样命令 → 放行"
 
     rcis: []
+
+  - id: devloop-check-ci-timeout-blocked
+    name: devloop-check CI 超时返回 blocked + P0 诊断任务
+    category: protection
+    status: Committed
+    priority: P1
+    version: "13.4.1"
+    updated: "2026-03-20"
+    description: |
+      devloop-check.sh 90 分钟 CI 超时从返回 done（工作流无声结束）
+      改为返回 blocked + 向 Brain 注册 P0 诊断任务。
+      防止 CI 卡死时工作流静默退出。
+
+    entrypoints:
+      - type: lib
+        file: packages/engine/lib/devloop-check.sh
+        trigger: "CI pending/in_progress 超过 90 分钟"
+
+    golden_path: |
+      CI 超时 90 分钟 →
+      devloop-check 检测 elapsed > 5400 →
+      curl POST Brain /api/brain/tasks P0 →
+      返回 blocked + return 2
+
+    minimal_paths:
+      - "CI 超时 90 分钟 → blocked（非 done）"
+      - "超时时创建 P0 诊断任务"
+
+    rcis: []
