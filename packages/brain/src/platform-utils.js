@@ -531,7 +531,7 @@ export function getNetworkStats(interfaceName) {
 // ============================================================
 
 const SYSTEM_RESERVED_MB = 5000;  // Reserve 5GB for OS + other services
-const MAX_PHYSICAL_CAP = 10;      // Hard cap: never allocate more than 10 slots
+const MAX_PHYSICAL_CAP = 20;      // Hard cap: never allocate more than 20 slots
 
 /**
  * Calculate physical capacity (max concurrent task slots) from hardware.

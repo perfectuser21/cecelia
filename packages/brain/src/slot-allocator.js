@@ -23,7 +23,7 @@ import { calculateBudgetState } from './token-budget-planner.js';
 
 const TOTAL_CAPACITY = MAX_SEATS;           // startup snapshot (backward compat)
 function getTotalCapacity() { return getEffectiveMaxSeats(); }
-const CECELIA_RESERVED = 2;                  // Pool A: 2 slots for internal tasks (OKR decomp + cortex)
+const CECELIA_RESERVED = 0;                  // Pool A: removed static reserve — dynamic model handles this
 const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent (1 slot suffices)
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
@@ -247,66 +247,43 @@ function _resetSlotBuffer() { _previousPoolCBudget = null; }
  * @returns {Object} Budget breakdown with per-pool allocations
  */
 async function calculateSlotBudget() {
-  const dynamicCapacity = getTotalCapacity();
   const sessions = detectUserSessions();
   const userMode = detectUserMode(sessions);
   const userSlotsUsed = sessions.headed.length;
 
-  // Pool B: user slots = used + headroom (or base if absent)
-  let userBudget;
-  if (userMode === 'team') {
-    userBudget = userSlotsUsed + USER_PRIORITY_HEADROOM;
-  } else if (userMode === 'interactive') {
-    userBudget = userSlotsUsed + USER_PRIORITY_HEADROOM;
-  } else {
-    userBudget = USER_RESERVED_BASE;
-  }
-
-  // Pool A: Cecelia internal (on-demand)
-  const hasInternalWork = await hasPendingInternalTasks();
-  const ceceliaNeeded = userMode !== 'team' ? CECELIA_RESERVED : 1;  // team 模式也保留 1
-
-  // Pool C: remaining capacity after A and B (uses dynamic capacity)
-  const poolCRaw = Math.max(0, dynamicCapacity - userBudget - ceceliaNeeded);
-
-  // Further throttle by resource pressure (CPU/mem/swap)
+  // Dynamic model: resource pressure determines effective slots
   const resources = checkServerResources();
-  let poolCAfterResources = Math.min(poolCRaw, resources.effectiveSlots);
+  const effectiveSlots = resources.effectiveSlots;
 
-  // Token pressure: further throttle Pool C by account availability
-  let tokenInfo = { token_pressure: 0, available_accounts: 3, details: 'not queried' };
-  try {
-    tokenInfo = await getTokenPressure();
-    if (tokenInfo.token_pressure >= 1.0) {
-      poolCAfterResources = 0;
-    } else if (tokenInfo.token_pressure >= 0.9) {
-      poolCAfterResources = Math.min(poolCAfterResources, 1);
-    } else if (tokenInfo.token_pressure >= 0.7) {
-      poolCAfterResources = Math.min(poolCAfterResources, Math.max(Math.round(poolCAfterResources / 2), 1));
-    }
-  } catch {
-    // Token pressure fetch failed — continue without throttling
-  }
+  // Running processes = actual running count from DB
+  const ceceliaUsed = await countCeceliaInProgress();
+  const autoDispatchUsed = await countAutoDispatchInProgress();
+  const totalRunning = sessions.total;
 
-  // Budget state: 7-day token budget planning (USER_RESERVE_PCT 30% + POOL_C_SCALE)
-  // 在 5h 窗口压力之上叠加 7day 周级别预算控制
+  // User reserve: 1 slot headroom when user is active
+  const userReserve = userMode !== 'absent' ? USER_PRIORITY_HEADROOM : 0;
+
+  // Available = effective slots - actual running - user headroom
+  let availableRaw = Math.max(0, effectiveSlots - totalRunning - userReserve);
+
+  // Budget state: 7-day token budget planning (scale down if overspending)
   let budgetState = null;
   try {
     budgetState = await calculateBudgetState();
     const scale = budgetState.pool_c_scale;
     if (scale < 1.0) {
-      const scaled = Math.round(poolCAfterResources * scale);
-      if (scaled < poolCAfterResources) {
-        console.log(`[slot-allocator] budget_state=${budgetState.state} scale=${scale} pool_c: ${poolCAfterResources}→${scaled}`);
-        poolCAfterResources = scaled;
+      const scaled = Math.round(availableRaw * scale);
+      if (scaled < availableRaw) {
+        console.log(`[slot-allocator] budget_state=${budgetState.state} scale=${scale} available: ${availableRaw}→${scaled}`);
+        availableRaw = scaled;
       }
     }
   } catch (err) {
     console.warn(`[slot-allocator] calculateBudgetState failed: ${err.message}, skipping`);
   }
 
-  // Apply slot change buffer (±2 per tick)
-  const poolCBudget = applySlotBuffer(poolCAfterResources);
+  // Apply slot change buffer (asymmetric: fast brake, slow recovery)
+  const availableBuffered = applySlotBuffer(availableRaw);
 
   // Backpressure: throttle burst limit when queue is deep
   const queueDepth = await getQueueDepth();
@@ -321,46 +298,48 @@ async function calculateSlotBudget() {
     console.log(`[slot-allocator] Backpressure active: queue_depth=${queueDepth} > ${BACKPRESSURE_THRESHOLD}, override_burst_limit=${BACKPRESSURE_BURST_LIMIT}`);
   }
 
-  // Count actual usage
-  const ceceliaUsed = await countCeceliaInProgress();
-  const autoDispatchUsed = await countAutoDispatchInProgress();
-  const codexRunning = await countCodexInProgress();
-
   // Codex Pool D: concurrent limit for Codex-native tasks
+  const codexRunning = await countCodexInProgress();
   const codexAvailable = codexRunning < MAX_CODEX_CONCURRENT;
+
+  // Token pressure: monitoring only (no longer throttles dispatch)
+  let tokenInfo = { token_pressure: 0, available_accounts: 3, details: 'not queried' };
+  try {
+    tokenInfo = await getTokenPressure();
+  } catch {
+    // Token pressure fetch failed — continue without it
+  }
 
   // Capacity info from dual-layer model
   const capInfo = getBudgetCap();
-
-  // Combined pressure: max of hardware pressure and token pressure
-  const combinedPressure = Math.max(resources.metrics.max_pressure, tokenInfo.token_pressure);
+  const dynamicCapacity = getTotalCapacity();
 
   return {
     total: dynamicCapacity,
     capacity: { physical: capInfo.physical, budget: capInfo.budget, effective: capInfo.effective },
     user: {
-      budget: userBudget,
+      budget: userSlotsUsed + userReserve,
       used: userSlotsUsed,
       mode: userMode,
-      headroom: Math.max(0, userBudget - userSlotsUsed),
+      headroom: userReserve,
     },
     cecelia: {
-      budget: ceceliaNeeded,
+      budget: 0,
       used: ceceliaUsed,
     },
     taskPool: {
-      budget: poolCBudget,
+      budget: availableBuffered + autoDispatchUsed,
       used: autoDispatchUsed,
-      available: Math.max(0, poolCBudget - autoDispatchUsed),
+      available: availableBuffered,
     },
     codex: {
       running: codexRunning,
       max: MAX_CODEX_CONCURRENT,
       available: codexAvailable,
     },
-    pressure: combinedPressure,
+    pressure: resources.metrics.max_pressure,
     resources: {
-      effectiveSlots: resources.effectiveSlots,
+      effectiveSlots,
       maxPressure: resources.metrics.max_pressure,
     },
     tokenPressure: tokenInfo,
@@ -369,7 +348,7 @@ async function calculateSlotBudget() {
       avg_remaining_pct: budgetState.avg_remaining_pct,
       pool_c_scale: budgetState.pool_c_scale,
     } : null,
-    dispatchAllowed: poolCBudget > autoDispatchUsed,
+    dispatchAllowed: availableBuffered > 0,
     backpressure,
   };
 }

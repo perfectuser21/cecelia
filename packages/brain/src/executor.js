@@ -218,7 +218,7 @@ async function checkExitReason(pid, taskId) {
 // Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
 const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
-const MEM_PER_TASK_MB = 800;                      // ~800MB peak per dev task (LLM process ~500MB + vitest forks overhead)
+const MEM_PER_TASK_MB = 400;                      // ~400MB avg per claude process (observed 300-400MB in production)
 const CPU_PER_TASK = 0.5;                         // ~0.5 core avg per claude process (20-30% bursts, often idle waiting API)
 const INTERACTIVE_RESERVE = 2;                    // Reserve 2 seats for user's headed Claude sessions
 // ============================================================
