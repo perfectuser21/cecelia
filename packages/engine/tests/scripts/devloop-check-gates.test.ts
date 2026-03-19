@@ -72,6 +72,43 @@ describe('devloop-check.sh — 质量门禁条件', () => {
     });
   });
 
+  describe('90 分钟 CI 超时保护', () => {
+    it('超时逻辑存在于 CI pending/in_progress 分支内', () => {
+      expect(content).toContain('5400');
+    });
+
+    it('超时时返回 blocked 状态而非 done', () => {
+      const lines = content.split('\n');
+      const timeoutIdx = lines.findIndex(l => l.includes('5400'));
+      expect(timeoutIdx).toBeGreaterThan(-1);
+      // 取超时判断后 10 行，检查是否有 "status":"done"
+      const block = lines.slice(timeoutIdx, timeoutIdx + 10).join('\n');
+      expect(block).not.toContain('"status":"done"');
+    });
+
+    it('超时时返回 blocked 状态', () => {
+      const lines = content.split('\n');
+      const timeoutIdx = lines.findIndex(l => l.includes('5400'));
+      const block = lines.slice(timeoutIdx, timeoutIdx + 10).join('\n');
+      expect(block).toContain('"status":"blocked"');
+    });
+
+    it('超时时提供可操作的 action 字段', () => {
+      const lines = content.split('\n');
+      const timeoutIdx = lines.findIndex(l => l.includes('5400'));
+      const block = lines.slice(timeoutIdx, timeoutIdx + 10).join('\n');
+      expect(block).toContain('gh run list');
+    });
+
+    it('超时后 return 2 而非 return 0', () => {
+      const lines = content.split('\n');
+      const timeoutIdx = lines.findIndex(l => l.includes('5400'));
+      const block = lines.slice(timeoutIdx, timeoutIdx + 10).join('\n');
+      expect(block).toContain('return 2');
+      expect(block).not.toContain('return 0');
+    });
+  });
+
   describe('与现有门禁兼容', () => {
     it('保留 intent_expand 条件 1.5', () => {
       expect(content).toContain('intent_expand_task_id');

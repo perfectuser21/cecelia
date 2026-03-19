@@ -2869,4 +2869,63 @@ router.get('/work/streams', async (_req, res) => {
   }
 });
 
+/**
+ * POST /api/brain/dispatch-now
+ * 直接派发任务，不依赖 tick loop。
+ * 从 DB 加载 task → 标记 in_progress → triggerCeceliaRun(task)
+ */
+router.post('/dispatch-now', async (req, res) => {
+  const { task_id } = req.body;
+
+  if (!task_id) {
+    return res.status(400).json({ success: false, error: 'task_id is required' });
+  }
+
+  try {
+    const taskResult = await pool.query(
+      'SELECT * FROM tasks WHERE id = $1',
+      [task_id]
+    );
+
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: `Task ${task_id} not found` });
+    }
+
+    const task = taskResult.rows[0];
+
+    if (['completed', 'failed', 'in_progress'].includes(task.status)) {
+      return res.status(409).json({
+        success: false,
+        error: `Task ${task_id} is already in status: ${task.status}`,
+      });
+    }
+
+    await pool.query(
+      `UPDATE tasks SET status = 'in_progress', started_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [task_id]
+    );
+
+    task.status = 'in_progress';
+
+    const result = await triggerCeceliaRun(task);
+
+    if (!result.success) {
+      await pool.query(
+        `UPDATE tasks SET status = 'queued', updated_at = NOW() WHERE id = $1 AND status = 'in_progress'`,
+        [task_id]
+      );
+      return res.status(500).json({
+        success: false,
+        error: result.error || result.reason || 'triggerCeceliaRun failed',
+        taskId: task_id,
+      });
+    }
+
+    return res.json({ success: true, runId: result.runId, taskId: task_id });
+  } catch (err) {
+    console.error('[dispatch-now] Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

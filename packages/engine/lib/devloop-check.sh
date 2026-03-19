@@ -392,10 +392,11 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                         now_epoch=$(date +%s)
                         elapsed=$(( now_epoch - start_epoch ))
                         if [[ $elapsed -gt 5400 ]]; then  # 90 分钟 = 5400 秒
-                            echo "⏰ /dev 会话已超过 90 分钟，CI 可能卡住，允许退出" >&2
-                            echo "   请手动检查 CI 状态: gh run list --branch $branch" >&2
-                            _devloop_jq -n '{"status":"done"}'
-                            return 0
+                            echo "⏰ /dev 会话已超过 90 分钟，CI 可能卡住，需要人工介入" >&2
+                            _devloop_jq -n \
+                                --arg branch "$branch" \
+                                '{"status":"blocked","reason":"CI 持续超过 90 分钟未完成，可能卡死","action":"运行 gh run list --branch \($branch) --limit 1 检查 CI 状态，如确认卡死可取消后重新 push 触发"}'
+                            return 2
                         fi
                     fi
                 fi
