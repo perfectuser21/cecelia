@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { validateAllContentTypes } from './content-types/content-type-validator.js';
 
 /** Minimum acceptable migration version (DB must be >= this) */
-export const EXPECTED_SCHEMA_VERSION = '159';
+export const EXPECTED_SCHEMA_VERSION = '160';
 
 const CORE_TABLES = [
   'tasks',
