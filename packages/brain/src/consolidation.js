@@ -13,12 +13,17 @@
 import { callLLM } from './llm-caller.js';
 import { updateSelfModel } from './self-model.js';
 
-/** 每日触发小时（UTC），默认 19 = 北京 03:00 */
+/** 整合间隔小时数（可通过 brain_config 配置，默认 4 小时） */
+const CONSOLIDATION_INTERVAL_HOURS = parseInt(
+  process.env.CECELIA_CONSOLIDATION_INTERVAL_HOURS || '4', 10
+);
+
+/** 保留旧常量用于向后兼容 */
 const CONSOLIDATION_HOUR_UTC = parseInt(
   process.env.CECELIA_CONSOLIDATION_HOUR_UTC || '19', 10
 );
 
-/** 时间窗口宽度（分钟），在此窗口内的 tick 都可触发 */
+/** 时间窗口宽度（分钟） */
 const TRIGGER_WINDOW_MINUTES = 5;
 
 // ─── 公开 API ────────────────────────────────────────────────────────────────
@@ -43,7 +48,8 @@ export async function runDailyConsolidationIfNeeded(pool) {
 export function shouldRunConsolidation(now = new Date()) {
   const utcHour = now.getUTCHours();
   const utcMinute = now.getUTCMinutes();
-  return utcHour === CONSOLIDATION_HOUR_UTC && utcMinute < TRIGGER_WINDOW_MINUTES;
+  // 每 CONSOLIDATION_INTERVAL_HOURS 小时触发一次（在每个周期的前 5 分钟内）
+  return (utcHour % CONSOLIDATION_INTERVAL_HOURS === 0) && utcMinute < TRIGGER_WINDOW_MINUTES;
 }
 
 /**
@@ -52,6 +58,8 @@ export function shouldRunConsolidation(now = new Date()) {
  * @returns {Promise<boolean>}
  */
 export async function hasTodayConsolidation(pool) {
+  // 改为检查最近 N 小时内是否已运行（而非仅检查今天）
+  const intervalHours = CONSOLIDATION_INTERVAL_HOURS;
   const today = new Date().toISOString().split('T')[0];
   const { rows } = await pool.query(
     `SELECT id FROM daily_logs

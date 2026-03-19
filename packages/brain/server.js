@@ -326,6 +326,15 @@ server.listen(PORT, async () => {
   startPromotionJobLoop();
   console.log('[Server] Promotion Job Loop started (10min interval) - P1: Auto-promote probation→active, auto-disable failed');
 
+  // Initialize Dopamine System (多巴胺奖赏回路 — 任务完成→奖赏→习惯形成)
+  try {
+    const { initDopamineListeners } = await import('./src/dopamine.js');
+    initDopamineListeners();
+    console.log('[Server] Dopamine reward system initialized');
+  } catch (e) {
+    console.warn('[Server] Dopamine system init failed (non-fatal):', e.message);
+  }
+
   // Auto-start cecelia-bridge if not already running
   await startCeceliaBridge();
 });

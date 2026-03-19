@@ -103,40 +103,40 @@ describe('getDailyBudget', () => {
     vi.useRealTimers();
   });
 
-  it('低峰期 00:00 UTC+8 返回 40', () => {
+  it('低峰期 00:00 UTC+8 返回 1000', () => {
     // 2026-03-10 00:00:00 上海时间 = UTC 2026-03-09 16:00:00
     vi.setSystemTime(new Date('2026-03-09T16:00:00.000Z'));
-    expect(getDailyBudget()).toBe(40);
+    expect(getDailyBudget()).toBe(200);
   });
 
-  it('低峰期 03:30 UTC+8 返回 40', () => {
+  it('低峰期 03:30 UTC+8 返回 1000', () => {
     // 2026-03-10 03:30:00 上海时间 = UTC 2026-03-09 19:30:00
     vi.setSystemTime(new Date('2026-03-09T19:30:00.000Z'));
-    expect(getDailyBudget()).toBe(40);
+    expect(getDailyBudget()).toBe(200);
   });
 
-  it('低峰期 05:59 UTC+8 返回 40', () => {
+  it('低峰期 05:59 UTC+8 返回 1000', () => {
     // 2026-03-10 05:59:00 上海时间 = UTC 2026-03-09 21:59:00
     vi.setSystemTime(new Date('2026-03-09T21:59:00.000Z'));
-    expect(getDailyBudget()).toBe(40);
+    expect(getDailyBudget()).toBe(200);
   });
 
-  it('正常时段 06:00 UTC+8 返回 20', () => {
+  it('正常时段 06:00 UTC+8 返回 100', () => {
     // 2026-03-10 06:00:00 上海时间 = UTC 2026-03-09 22:00:00
     vi.setSystemTime(new Date('2026-03-09T22:00:00.000Z'));
-    expect(getDailyBudget()).toBe(20);
+    expect(getDailyBudget()).toBe(100);
   });
 
-  it('正常时段 12:00 UTC+8 返回 20', () => {
+  it('正常时段 12:00 UTC+8 返回 100', () => {
     // 2026-03-10 12:00:00 上海时间 = UTC 2026-03-10 04:00:00
     vi.setSystemTime(new Date('2026-03-10T04:00:00.000Z'));
-    expect(getDailyBudget()).toBe(20);
+    expect(getDailyBudget()).toBe(100);
   });
 
-  it('正常时段 23:59 UTC+8 返回 20', () => {
+  it('正常时段 23:59 UTC+8 返回 100', () => {
     // 2026-03-10 23:59:00 上海时间 = UTC 2026-03-10 15:59:00
     vi.setSystemTime(new Date('2026-03-10T15:59:00.000Z'));
-    expect(getDailyBudget()).toBe(20);
+    expect(getDailyBudget()).toBe(100);
   });
 });
 
@@ -541,7 +541,7 @@ describe('rumination', () => {
 
   describe('预算控制', () => {
     it('每日预算限制 MAX_PER_TICK 不超过剩余预算', async () => {
-      expect(DAILY_BUDGET).toBe(20);
+      expect(DAILY_BUDGET).toBe(100);
       expect(MAX_PER_TICK).toBe(5);
       expect(MAX_PER_TICK).toBeLessThanOrEqual(DAILY_BUDGET);
     });
@@ -596,16 +596,16 @@ describe('rumination', () => {
   });
 
   describe('配置常量', () => {
-    it('DAILY_BUDGET = 20', () => {
-      expect(DAILY_BUDGET).toBe(20);
+    it('DAILY_BUDGET = 100', () => {
+      expect(DAILY_BUDGET).toBe(100);
     });
 
     it('MAX_PER_TICK = 5', () => {
       expect(MAX_PER_TICK).toBe(5);
     });
 
-    it('COOLDOWN_MS = 30 分钟', () => {
-      expect(COOLDOWN_MS).toBe(30 * 60 * 1000);
+    it('COOLDOWN_MS = 10 分钟', () => {
+      expect(COOLDOWN_MS).toBe(10 * 60 * 1000);
     });
   });
 
