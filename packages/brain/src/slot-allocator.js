@@ -303,11 +303,18 @@ async function calculateSlotBudget() {
   const codexAvailable = codexRunning < MAX_CODEX_CONCURRENT;
 
   // Token pressure: monitoring only (no longer throttles dispatch)
+  // Exception: block dispatch when ALL accounts exhausted (safety valve)
   let tokenInfo = { token_pressure: 0, available_accounts: 3, details: 'not queried' };
   try {
     tokenInfo = await getTokenPressure();
   } catch {
     // Token pressure fetch failed — continue without it
+  }
+
+  // Token safety: block dispatch only when ALL accounts exhausted
+  const tokenExhausted = tokenInfo.token_pressure >= 1.0 && tokenInfo.available_accounts === 0;
+  if (tokenExhausted) {
+    console.log('[slot-allocator] Token exhausted: all accounts at quota limit, blocking dispatch');
   }
 
   // Capacity info from dual-layer model
@@ -348,7 +355,7 @@ async function calculateSlotBudget() {
       avg_remaining_pct: budgetState.avg_remaining_pct,
       pool_c_scale: budgetState.pool_c_scale,
     } : null,
-    dispatchAllowed: availableBuffered > 0,
+    dispatchAllowed: availableBuffered > 0 && !tokenExhausted,
     backpressure,
   };
 }
