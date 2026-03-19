@@ -311,6 +311,35 @@ executeTick() 流程：
 
 **皮层额外 4 个 action**：adjust_strategy、record_learning、create_rca_report、create_task
 
+### 3.4 内容类型注册表（content-types/）
+
+`brain/src/content-types/` 目录实现 YAML 驱动的内容类型配置层，将内容类型定义与 Pipeline 代码解耦。
+
+**核心组件**：
+
+| 文件 | 职责 |
+|------|------|
+| `content-type-registry.js` | 加载/列出/验证 YAML 配置（`getContentType()`、`listContentTypes()`、`loadAllContentTypes()`） |
+| `content-type-validator.js` | 轻量格式校验器，启动时检查所有 YAML 文件（不阻断启动，WARN 级别） |
+| `<type-name>.yaml` | 内容类型定义文件（如 `solo-company-case.yaml`） |
+
+**与 Pipeline 的关系**：
+- `content-pipeline-orchestrator.js` 通过 `getContentType(content_type)` 读取类型配置
+- 类型配置驱动 Pipeline 各阶段的 prompt、图片参数、审查规则
+- 新增内容类型只需添加 YAML 文件，无需改 Pipeline 代码
+
+**YAML Schema 结构**：
+```yaml
+content_type: <类型标识符>    # 必填，须与文件名一致
+images: { count, format, size }  # 必填，图片配置
+template: { research_prompt, generate_prompt, review_prompt }  # 必填
+review_rules: [{ id, description, severity }]  # 必填，AI 审查规则
+copy_rules: { platform_tone, hashtags, min_word_count }  # 必填，文案规则
+outputs: [{ type, count?, format?, platforms? }]  # 产出物定义
+```
+
+**添加新内容类型**：在 `content-types/` 目录下创建 `<type-name>.yaml`，填写上述必填字段即可。
+
 ---
 
 ## 4. 数据模型
@@ -863,7 +892,13 @@ brain/
 │   ├── intent.js              # 意图识别
 │   ├── templates.js           # PRD/TRD 模板
 │   ├── notifier.js            # 通知
-│   └── websocket.js           # WebSocket 推送
+│   ├── websocket.js           # WebSocket 推送
+│   │
+│   ├── content-pipeline-orchestrator.js  # 内容工厂 Pipeline 编排器
+│   └── content-types/         # 内容类型注册表（YAML 驱动）
+│       ├── content-type-registry.js   # 加载/列出/验证 YAML 配置
+│       ├── content-type-validator.js  # 轻量格式校验（启动时 WARN）
+│       └── <type-name>.yaml           # 内容类型定义文件（如 solo-company-case.yaml）
 │
 ├── migrations/                # SQL 迁移 (000-035)
 │   ├── 000_base_schema.sql
