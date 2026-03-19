@@ -105,8 +105,9 @@ export async function runExpressionDecision(pool) {
 
   if (desires.length === 0) return null;
 
-  // act/follow_up 类型跳过评分直接通过（Break 3：Cecelia 自主行动）
-  const actDesire = desires.find(d => d.type === 'act' || d.type === 'follow_up');
+  // act/follow_up/explore 类型跳过评分直接通过（自主行动不需要门槛）
+  // explore：好奇心驱动的自主学习，与 act/follow_up 同等优先权，不受 urgency 评分压制
+  const actDesire = desires.find(d => d.type === 'act' || d.type === 'follow_up' || d.type === 'explore');
   if (actDesire) {
     return { desire: actDesire, score: 1.0 };
   }
