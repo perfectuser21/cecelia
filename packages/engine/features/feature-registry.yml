@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.7.0"
+    date: "2026-03-20"
+    summary: "fix(engine): check-dod-mapping.cjs 支持 --format-only 模式，verify-step.sh Stage 1 兼容 4-Stage Pipeline"
+    scope: devgate
+    breaking: false
+    feature_id: dod-format-only-4stage
   - version: "13.6.0"
     date: "2026-03-20"
     summary: "feat(engine): /dev 4-Stage Pipeline 重构 — Spec/Code/Integrate/Ship + Codex Gate 前置"

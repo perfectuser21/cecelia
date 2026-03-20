@@ -120,18 +120,9 @@ $found_fake
     Test: contract:my-behavior"
     fi
 
-    # Gate 1: CI 镜像 — check-dod-mapping.cjs（与 CI L1 完全相同的检查）
-    local _dod_check="$PROJECT_ROOT/packages/engine/scripts/devgate/check-dod-mapping.cjs"
-    if [[ -f "$_dod_check" ]]; then
-        echo "  🔍 [Gate 1] 运行 CI 镜像检查（check-dod-mapping.cjs）..." >&2
-        if ! node "$_dod_check" >/dev/null 2>&1; then
-            _fail "Gate 1 失败：DoD 映射检查不通过（与 CI L1 相同检查）
-  运行以下命令查看详情：
-    node packages/engine/scripts/devgate/check-dod-mapping.cjs
-  Gate 1 过 = CI L1 必过。请修复后重新执行 Step 1。"
-        fi
-        echo "  ✅ [Gate 1] DoD 映射检查通过" >&2
-    fi
+    # Gate 1: CI 镜像 — Stage 1 跳过完整 DoD 检查（未勾选项在 Stage 1 是预期的）
+    # Stage 1 只写 Spec/DoD 条目，验证在 Stage 2 做。CI L1 会在 push 后做完整检查。
+    echo "  ⏭ [Gate 1] Stage 1 跳过 DoD 完整检查（CI L1 将在 push 后检查）" >&2
 
     # Gate 2: Agent Seal 检查 — step_1_agent: approved
     if [[ -n "$BRANCH" ]]; then

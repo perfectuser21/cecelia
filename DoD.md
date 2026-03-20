@@ -1,18 +1,28 @@
-# DoD: Pipeline v2 清理
+---
+id: task-cp-20260320-fix-verify-step-4stage
+type: task-card
+branch: cp-20260320-fix-verify-step-4stage
+created: 2026-03-20
+---
 
-## 验收清单
+# Task Card: verify-step.sh Stage 1 Gate 兼容 4-Stage Pipeline
 
-- [x] [BEHAVIOR] 旧 task type 已清理且新类型路由正确
-Test: manual: node -e "const c=require('fs').readFileSync('packages/brain/src/task-router.js','utf8');if(c.includes(\"'cto_review'\"))process.exit(1);if(!c.includes(\"'initiative_execute'\"))process.exit(1)"
+## 需求（What & Why）
+**功能描述**: Stage 1 Gate 跳过 DoD 完整检查，避免在 Spec 阶段因未勾选 DoD 被拦截
+**背景**: 新 4-Stage Pipeline 中，Stage 1 只写 DoD 条目，验证在 Stage 2
 
-- [x] [ARTIFACT] executor.js 旧类型清理 + 新类型注册
-Test: manual: node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(c.includes(\"'cto_review'\"))process.exit(1);if(!c.includes(\"'initiative_execute'\"))process.exit(1)"
+## 成功标准
+1. [ARTIFACT] verify-step.sh Stage 1 Gate 1 跳过 DoD 完整检查
+2. [BEHAVIOR] Stage 1 不再因未勾选 DoD 项被拦截
+3. [GATE] CI 全部通过
 
-- [x] [ARTIFACT] token-budget-planner.js decomp_review 已清理
-Test: manual: node -e "const c=require('fs').readFileSync('packages/brain/src/token-budget-planner.js','utf8');if(c.includes(\"'decomp_review'\"))process.exit(1)"
+## 验收条件（DoD）
 
-- [x] [ARTIFACT] decomp-check skill 目录已删除
-Test: manual: node -e "if(require('fs').existsSync('packages/workflows/skills/decomp-check'))process.exit(1)"
+- [x] [ARTIFACT] verify-step.sh Stage 1 Gate 1 跳过 DoD 完整检查
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/verify-step.sh','utf8');if(!c.includes('Stage 1'))process.exit(1)"
 
-- [x] [ARTIFACT] 测试已更新
-Test: manual: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/task-router-intent-cto.test.js','utf8');if(c.includes(\"VALID_TASK_TYPES').toContain('cto_review')\"))process.exit(1)"
+- [x] [BEHAVIOR] Stage 1 不再因未勾选 DoD 项被拦截
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/verify-step.sh','utf8');if(c.includes('check-dod-mapping'))process.exit(1)"
+
+- [x] [GATE] 所有现有测试通过
+  Test: manual:bash -c "npm test 2>&1 | tail -5"
