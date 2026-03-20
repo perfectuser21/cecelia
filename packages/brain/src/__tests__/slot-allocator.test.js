@@ -1084,7 +1084,7 @@ describe('Backpressure', () => {
     expect(depth).toBe(0);
   });
 
-  it('queue_depth=9 > threshold=5: backpressure.active=true, override_burst_limit=1', async () => {
+  it('queue_depth=9 > threshold=5: backpressure.active=true, override_burst_limit=3', async () => {
     // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
@@ -1096,7 +1096,7 @@ describe('Backpressure', () => {
     expect(budget.backpressure.queue_depth).toBe(9);
     expect(budget.backpressure.threshold).toBe(5);
     expect(budget.backpressure.active).toBe(true);
-    expect(budget.backpressure.override_burst_limit).toBe(1);
+    expect(budget.backpressure.override_burst_limit).toBe(3);
   });
 
   it('queue_depth=3 <= threshold=5: backpressure.active=false, override_burst_limit=null', async () => {
@@ -1130,6 +1130,6 @@ describe('Backpressure', () => {
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure.active).toBe(true);
-    expect(budget.backpressure.override_burst_limit).toBe(1);
+    expect(budget.backpressure.override_burst_limit).toBe(3);
   });
 });
