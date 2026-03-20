@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.7.1"
+    date: "2026-03-20"
+    summary: "fix(engine): worktree-manage.sh MAX_WORKTREES 支持环境变量覆盖，默认值改为 10"
+    scope: skills
+    breaking: false
+    feature_id: worktree-max-env-override
   - version: "13.7.0"
     date: "2026-03-20"
     summary: "fix(engine): check-dod-mapping.cjs 支持 --format-only 模式，verify-step.sh Stage 1 兼容 4-Stage Pipeline"
