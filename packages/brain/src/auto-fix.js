@@ -159,10 +159,11 @@ export async function dispatchToDevSkill(failure, rcaResult, signature) {
     title: `Auto-Fix: ${failure.reason_code || 'System Failure'} (RCA ${signature})`,
     description: prdContent,
     task_type: 'dev',
-    priority: 'P1', // Auto-fixes are high priority but not P0
+    priority: 'P1',
     status: 'queued',
     skill: '/dev',
     prd_content: prdContent,
+    trigger_source: 'auto_fix',
     tags: JSON.stringify(['auto-fix', 'rca', signature])
   };
 
