@@ -1,0 +1,10 @@
+{"ts":"2026-03-21T02:24:46+08:00","source":"verify-step","step":"step1","event":"pass","detail":"Step 1 Task Card 验证通过","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:28:15+08:00","source":"verify-step","step":"step1","event":"pass","detail":"Step 1 Task Card 验证通过","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:36:00+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:36:01+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:36:23+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:36:24+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:36:58+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:36:59+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:37:07+08:00","source":"verify-step","step":"step2","event":"fail","detail":"Gate 1 失败：Engine 测试不通过（与 CI L4 相同检查）\n  运行以下命令查看详情：\n    cd packages/engine && npm test\n  Gate 1 过 = CI L4 必过。请修复测试后重新执行 Step 2。","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
+{"ts":"2026-03-21T02:37:45+08:00","source":"verify-step","step":"step2","event":"fail","detail":"Gate 1 失败：Engine 测试不通过（与 CI L4 相同检查）\n  运行以下命令查看详情：\n    cd packages/engine && npm test\n  Gate 1 过 = CI L4 必过。请修复测试后重新执行 Step 2。","branch":"cp-03201121-af253f33-dcf8-4228-8dc2-c2a122"}
