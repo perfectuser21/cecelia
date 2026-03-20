@@ -1864,26 +1864,27 @@ async function triggerMiniMaxExecutor(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
-// task-router.js 的 location 决定执行位置：
-//   'us'   → 本机 cecelia-bridge（claude -p）
-//   'xian' → 西安 Codex Bridge（codex-bin）
-//   'hk'   → HK MiniMax
+// 路由规则（v2 — 全局调度改造 Phase 3）：
+//   task_type='dev' → 必须走 Claude Code（依赖 hooks/state machine）
+//   其他所有 task_type → 走 Codex Bridge（选最空闲的机器）
+//   location='hk' → 走 HK MiniMax（不变）
+const DEV_ONLY_TYPES = new Set(['dev']);
 
 async function triggerCeceliaRun(task) {
   const location = getTaskLocation(task.task_type);
 
-  // 1. HK MiniMax 路由
+  // 1. HK MiniMax 路由（不变）
   if (location === 'hk') {
     return triggerMiniMaxExecutor(task);
   }
 
-  // 2. 西安 Codex Bridge（location='xian' 或 provider=codex）
-  if (location === 'xian' || task.provider === 'codex') {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=${location})`);
+  // 2. 非 dev 任务 → 全部走 Codex Bridge
+  if (!DEV_ONLY_TYPES.has(task.task_type)) {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非 dev 任务)`);
     return triggerCodexBridge(task);
   }
 
-  // 3. 本机执行（location='us'）→ cecelia-bridge（claude -p）
+  // 3. dev 任务 → Claude Code（本机 cecelia-bridge）
   // Use original cecelia-bridge on port 3457
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
