@@ -20,6 +20,7 @@ const manifest: FeatureManifest = {
     {
       path: '/content-factory',
       component: 'ContentFactory',
+      requireAuth: false,
       navItem: { label: '内容工厂', icon: 'Factory', group: 'execution', order: 10 },
     },
     // Legacy redirects
