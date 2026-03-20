@@ -357,11 +357,31 @@ jobs:
       - name: Detect unregistered subsystems and test categories
         run: node scripts/ci-evolution-check.mjs
 
+  # ─── Cross-Reference Consistency Check ──────────────────────────────
+  cross-ref-check:
+    name: Cross-Ref Consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check cross-file reference consistency
+        run: node scripts/check-cross-ref.mjs
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l2-passed:
     name: L2 Consistency Gate Passed
-    needs: [changes, brain-l2, engine-l2, evolution-check]
+    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
