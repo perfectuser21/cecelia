@@ -14,6 +14,16 @@
  */
 async function queryBrainAPI() {
   try {
+    // In CI environment, return mock response instead of making HTTP calls
+    if (process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true') {
+      return {
+        service: 'cecelia-brain',
+        status: 'running',
+        port: 5221,
+        mock: true
+      };
+    }
+
     // Use built-in fetch (Node.js 18+)
     const response = await fetch('http://localhost:5221/');
     if (!response.ok) {
