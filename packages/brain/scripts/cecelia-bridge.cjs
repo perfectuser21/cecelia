@@ -32,7 +32,7 @@ const server = http.createServer((req, res) => {
         }
 
         const promptDir = '/tmp/cecelia-prompts';
-        execSync(`mkdir -p ${promptDir}`);
+        try { fs.mkdirSync(promptDir, { recursive: true }); } catch {}
         const promptFile = `${promptDir}/${task_id}-${checkpoint_id}.prompt`;
         fs.writeFileSync(promptFile, prompt);
 
@@ -55,7 +55,11 @@ const server = http.createServer((req, res) => {
 
         const cmd = `${envVars} ${ceceliaBin} "${task_id}" "${checkpoint_id}" "${promptFile}" > /tmp/cecelia-${task_id}.log 2>&1 &`;
         console.log(`[bridge] Dispatching task=${task_id} type=${type} mode=${mode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}`);
-        execSync(cmd, { shell: '/bin/bash' });
+        // exec (非阻塞) 代替 execSync — 防止阻塞事件循环导致其他请求超时
+        const { exec } = require('child_process');
+        exec(cmd, { shell: '/bin/bash' }, (err) => {
+          if (err) console.error(`[bridge] exec error: ${err.message}`);
+        });
 
         safeRespond(res, 200, { ok: true, task_id, checkpoint_id, pid: 'async' });
       } catch (err) {
