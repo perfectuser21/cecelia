@@ -44,19 +44,14 @@ echo "CI 运行次数: $CI_RUNS"
 
 **维度 2 — DoD 诚实度分（1-5）**
 
-```bash
-# 检查 Task Card 中 Test: 字段在 Step 2.1 锁定后是否被修改过
-TEST_CHANGES=$(git log --all --follow -p -- ".task-cp-*.md" \
-  2>/dev/null | grep "^[+-].*Test:" | grep -v "^---\|^+++" | wc -l | tr -d ' ')
-echo "Test: 字段修改次数: $TEST_CHANGES"
-```
+- DoD 诚实度：所有 DoD 条目的 Test 命令是否真的通过？（CI dod-execution-gate 会验证）
 
-| Test: 修改次数（锁定后）| 分数 |
-|------------------------|------|
-| 0 次（锁定不动）       | 5    |
-| 1-2 次小改             | 4    |
-| 3-4 次                 | 3    |
-| 5 次+                  | 1    |
+| 评估 | 分数 |
+|------|------|
+| 所有 Test 命令一次通过，未修改 | 5 |
+| 有 1-2 次小修正 | 4 |
+| 有 3-4 次修正 | 3 |
+| 大量修改或跳过 | 1 |
 
 **维度 3 — 循环效率分（1-5）**
 
@@ -195,33 +190,6 @@ PR 状态:    已合并
 
 ---
 
-## 测试任务的 Cleanup
-
-```bash
-IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
-```
-
-**测试任务需要额外检查**：
-
-| 检查项 | 说明 |
-|--------|------|
-| CHANGELOG.md | 确认没有测试相关的版本记录 |
-| package.json | 确认版本号没有因测试而增加 |
-| LEARNINGS.md | 确认只记录了流程经验（如有） |
-| 测试代码 | 确认临时测试代码已删除 |
-
-```bash
-if [ "$IS_TEST" = "true" ]; then
-    echo "🧪 测试任务 Cleanup 检查清单："
-    echo "  - [ ] CHANGELOG.md 无测试版本记录"
-    echo "  - [ ] package.json 版本号未变"
-    echo "  - [ ] 测试代码已删除"
-    echo "  - [ ] is-test 标记将被清理"
-fi
-```
-
----
-
 ## Post-PR Checklist（新增 - 自我进化机制）
 
 **在清理前，运行自动化检查**：
@@ -325,7 +293,6 @@ bash skills/dev/scripts/cleanup.sh "$BRANCH_NAME" "$BASE_BRANCH"
 # 清理 git config
 git config --unset branch.$BRANCH_NAME.base-branch 2>/dev/null || true
 git config --unset branch.$BRANCH_NAME.prd-confirmed 2>/dev/null || true
-git config --unset branch.$BRANCH_NAME.is-test 2>/dev/null || true
 
 # 切回 base 分支
 git checkout "$BASE_BRANCH"

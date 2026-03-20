@@ -123,59 +123,6 @@ devloop_check() {
         return 0
     fi
 
-    # ===== 条件 1.5: intent_expand 是否已完成？（PR 检查之前）=====
-    # 若 .dev-mode 中有 intent_expand_task_id 且 status != completed，阻塞等待
-    if [[ -f "$dev_mode_file" ]]; then
-        local intent_task_id intent_status_local brain_url_base
-        intent_task_id=$(grep "^intent_expand_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        intent_status_local=$(grep "^intent_expand_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        brain_url_base="${BRAIN_URL:-http://localhost:5221}/api/brain"
-
-        if [[ -n "$intent_task_id" && "$intent_status_local" != "completed" ]]; then
-            local intent_api_result intent_task_status
-            intent_api_result=$(curl -s --max-time 5 "$brain_url_base/tasks/$intent_task_id" 2>/dev/null || echo "{}")
-            intent_task_status=$(echo "$intent_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
-
-            if [[ "$intent_task_status" == "completed" ]]; then
-                # intent_expand 已完成：更新 .dev-mode 并继续
-                if [[ "$(uname)" == "Darwin" ]]; then
-                    sed -i '' "s/^intent_expand_status:.*/intent_expand_status: completed/" "$dev_mode_file" 2>/dev/null || true
-                else
-                    sed -i "s/^intent_expand_status:.*/intent_expand_status: completed/" "$dev_mode_file" 2>/dev/null || true
-                fi
-
-                # ── 条件 1.5 补充：把 enriched PRD 写到本地文件 ──
-                local enriched_prd_file=".enriched-prd-${branch}.md"
-                if [[ ! -f "$enriched_prd_file" ]]; then
-                    local task_data enriched_prd
-                    task_data=$(curl -s --max-time 5 "$brain_url_base/tasks/$intent_task_id" 2>/dev/null || echo "{}")
-                    enriched_prd=$(echo "$task_data" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-meta = d.get('metadata') or d.get('custom_props') or {}
-print(meta.get('enriched_prd','') or d.get('result','') or '')
-" 2>/dev/null || echo "")
-                    if [[ -n "$enriched_prd" ]]; then
-                        echo "$enriched_prd" > "$enriched_prd_file"
-                    fi
-                fi
-                # ─────────────────────────────────────────────────
-
-                # 继续后续条件
-            else
-                local intent_wait_status="${intent_task_status:-queued}"
-                if command -v _devlog_event &>/dev/null; then
-                    _devlog_event "devloop-check" "intent_expand" "blocked" "等待 intent_expand（状态: $intent_wait_status）"
-                fi
-                _devloop_jq -n \
-                    --arg task_id "$intent_task_id" \
-                    --arg status "$intent_wait_status" \
-                    '{"status":"blocked","reason":"等待 intent_expand 意图扩展完成（状态: \($status)）","action":"等待 intent_expand task \($task_id) 完成，enriched PRD 写入后自动继续"}'
-                return 2
-            fi
-        fi
-    fi
-
     # ===== 条件 2.5: cto_review 是否通过？（PR 创建之前，P0 本机 Codex）=====
     # 若 .dev-mode 中有 cto_review_task_id 且 cto_review_status != pass，阻塞等待
     if [[ -f "$dev_mode_file" ]]; then
@@ -225,56 +172,7 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
         fi
     fi
 
-    # ===== 条件 2.6: code_quality_review 是否通过？（PR 创建之前，P0 本机 Codex）=====
-    # 若 .dev-mode 中有 code_quality_task_id 且 code_quality_status != pass，阻塞等待
-    if [[ -f "$dev_mode_file" ]]; then
-        local cq_task_id cq_status_local brain_url_cq
-        cq_task_id=$(grep "^code_quality_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        cq_status_local=$(grep "^code_quality_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        brain_url_cq="${BRAIN_URL:-http://localhost:5221}/api/brain"
-
-        if [[ -n "$cq_task_id" && "$cq_status_local" != "pass" ]]; then
-            local cq_api_result cq_task_status cq_review_result
-            cq_api_result=$(curl -s --max-time 5 "$brain_url_cq/tasks/$cq_task_id" 2>/dev/null || echo "{}")
-            cq_task_status=$(echo "$cq_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
-            cq_review_result=$(echo "$cq_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('review_result','') or '')" 2>/dev/null || echo "")
-
-            if [[ "$cq_task_status" == "completed" ]]; then
-                if echo "$cq_review_result" | grep -qi "PASS"; then
-                    # Code Quality PASS：更新 .dev-mode 并继续
-                    if [[ "$(uname)" == "Darwin" ]]; then
-                        sed -i '' "s/^code_quality_status:.*/code_quality_status: pass/" "$dev_mode_file" 2>/dev/null || true
-                    else
-                        sed -i "s/^code_quality_status:.*/code_quality_status: pass/" "$dev_mode_file" 2>/dev/null || true
-                    fi
-                    # 继续后续条件
-                else
-                    local cq_fail_reasons
-                    cq_fail_reasons=$(echo "$cq_review_result" | grep -A 10 "FAIL_REASONS:" | head -8 || echo "详见 review_result")
-                    if command -v _devlog_event &>/dev/null; then
-                        _devlog_event "devloop-check" "code_quality" "blocked" "Code Quality FAIL: $cq_fail_reasons"
-                    fi
-                    _devloop_jq -n \
-                        --arg task_id "$cq_task_id" \
-                        --arg reasons "$cq_fail_reasons" \
-                        '{"status":"blocked","reason":"代码质量审查未通过，需修复后重新 push","action":"根据以下 FAIL 原因修复代码后重新 push。Code Quality Task: \($task_id)\nFAIL 原因:\n\($reasons)"}'
-                    return 2
-                fi
-            else
-                local cq_wait_status="${cq_task_status:-queued}"
-                if command -v _devlog_event &>/dev/null; then
-                    _devlog_event "devloop-check" "code_quality" "blocked" "等待代码质量审查（状态: $cq_wait_status）"
-                fi
-                _devloop_jq -n \
-                    --arg task_id "$cq_task_id" \
-                    --arg status "$cq_wait_status" \
-                    '{"status":"blocked","reason":"等待代码质量审查完成（状态: \($status)）","action":"等待 code_quality_review task \($task_id) 完成，PASS 后自动继续"}'
-                return 2
-            fi
-        fi
-    fi
-
-    # ===== 条件 2.7: prd_coverage_audit 是否通过？（PR 创建之前，P0 本机 Codex）=====
+    # ===== 条件 2.6: prd_coverage_audit 是否通过？（PR 创建之前，P0 本机 Codex）=====
     # 若 .dev-mode 中有 prd_audit_task_id 且 prd_audit_status != pass，阻塞等待
     if [[ -f "$dev_mode_file" ]]; then
         local pa_task_id pa_status_local brain_url_pa
@@ -318,6 +216,52 @@ print(meta.get('enriched_prd','') or d.get('result','') or '')
                     --arg task_id "$pa_task_id" \
                     --arg status "$pa_wait_status" \
                     '{"status":"blocked","reason":"等待 PRD 覆盖审计完成（状态: \($status)）","action":"等待 prd_coverage_audit task \($task_id) 完成，PASS 后自动继续"}'
+                return 2
+            fi
+        fi
+    fi
+
+    # ===== 条件 2.7: dod_verify 是否通过？（DoD 独立验证）=====
+    if [[ -f "$dev_mode_file" ]]; then
+        local dv_task_id dv_status_local brain_url_dv
+        dv_task_id=$(grep "^dod_verify_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        dv_status_local=$(grep "^dod_verify_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        brain_url_dv="${BRAIN_URL:-http://localhost:5221}/api/brain"
+
+        if [[ -n "$dv_task_id" && "$dv_status_local" != "pass" ]]; then
+            local dv_api_result dv_task_status dv_review_result
+            dv_api_result=$(curl -s --max-time 5 "$brain_url_dv/tasks/$dv_task_id" 2>/dev/null || echo "{}")
+            dv_task_status=$(echo "$dv_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+            dv_review_result=$(echo "$dv_api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('review_result','') or '')" 2>/dev/null || echo "")
+
+            if [[ "$dv_task_status" == "completed" ]]; then
+                if echo "$dv_review_result" | grep -qi "PASS"; then
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        sed -i '' "s/^dod_verify_status:.*/dod_verify_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    else
+                        sed -i "s/^dod_verify_status:.*/dod_verify_status: pass/" "$dev_mode_file" 2>/dev/null || true
+                    fi
+                else
+                    local dv_fail_reasons
+                    dv_fail_reasons=$(echo "$dv_review_result" | grep -A 10 "FAIL" | head -8 || echo "详见 review_result")
+                    if command -v _devlog_event &>/dev/null; then
+                        _devlog_event "devloop-check" "dod_verify" "blocked" "DoD Verify FAIL: $dv_fail_reasons"
+                    fi
+                    _devloop_jq -n \
+                        --arg task_id "$dv_task_id" \
+                        --arg reasons "$dv_fail_reasons" \
+                        '{"status":"blocked","reason":"DoD 独立验证未通过，有 Test 命令失败","action":"根据以下 FAIL 原因修复代码后重新 push。DoD Verify Task: \($task_id)\nFAIL 原因:\n\($reasons)"}'
+                    return 2
+                fi
+            else
+                local dv_wait_status="${dv_task_status:-queued}"
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "dod_verify" "blocked" "等待 DoD 独立验证（状态: $dv_wait_status）"
+                fi
+                _devloop_jq -n \
+                    --arg task_id "$dv_task_id" \
+                    --arg status "$dv_wait_status" \
+                    '{"status":"blocked","reason":"等待 DoD 独立验证完成（状态: \($status)）","action":"等待 dod_verify task \($task_id) 完成，PASS 后自动继续"}'
                 return 2
             fi
         fi
