@@ -39,6 +39,7 @@ import ruminationRoutes from './src/routes/rumination.js';
 import curiosityRoutes from './src/routes/curiosity.js';
 import knowledgeRoutes from './src/routes/knowledge.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
+import capabilityMapRoutes from './src/routes/capability-map.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -107,6 +108,7 @@ app.use('/api/brain/profile/facts', profileFactsRoutes);
 app.use('/api/brain/cluster', clusterRoutes);
 app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
 app.use('/api/brain/infra-status', infraStatusRoutes);
+app.use('/api/brain', capabilityMapRoutes);
 app.get('/api/brain/fleet', (_req, res) => {
   const fleet = getFleetStatus();
   const online = fleet.filter(s => s.online);
