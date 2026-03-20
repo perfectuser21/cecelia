@@ -60,21 +60,21 @@ describe('content-* task_type registration', () => {
 });
 
 describe('content-* LOCATION_MAP routing', () => {
-  it('LOCATION_MAP contains all 4 sub-task types mapped to us', () => {
+  it('LOCATION_MAP contains all 4 sub-task types mapped to xian', () => {
     const subTypes = ['content-research', 'content-generate', 'content-review', 'content-export'];
     for (const taskType of subTypes) {
-      expect(LOCATION_MAP[taskType]).toBe('us');
+      expect(LOCATION_MAP[taskType]).toBe('xian');
     }
   });
 
   it('getTaskLocation returns us for all 4 sub-task types', () => {
     const subTypes = ['content-research', 'content-generate', 'content-review', 'content-export'];
     for (const taskType of subTypes) {
-      expect(getTaskLocation(taskType)).toBe('us');
+      expect(getTaskLocation(taskType)).toBe('xian');
     }
   });
 
-  it('LOCATION_MAP contains content-pipeline mapped to us', () => {
-    expect(LOCATION_MAP['content-pipeline']).toBe('us');
+  it('LOCATION_MAP contains content-pipeline mapped to xian', () => {
+    expect(LOCATION_MAP['content-pipeline']).toBe('xian');
   });
 });
