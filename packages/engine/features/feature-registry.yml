@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.4.5"
+    date: "2026-03-20"
+    summary: "fix(engine): stop-dev.sh worktree 修复 + 历史垃圾文件清理"
+    scope: hooks
+    breaking: false
+    feature_id: stopdev-worktree-cleanup
   - version: "13.4.4"
     date: "2026-03-20"
     summary: "fix(engine): stop.sh 扫描 worktree 目录找 .dev-lock + Learning/DoD/版本 bump"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: Claude Code 协议适配器 v15.1.0
+# Stop Hook: Claude Code 协议适配器 v15.3.0
 # ============================================================================
 # 这是 Claude Code Stop Hook 的协议适配器。
 # 完成判断逻辑已提取到 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -13,12 +13,27 @@
 #
 # 此文件永远不需要修改业务逻辑——只改 lib/devloop-check.sh。
 #
+# v15.3.0: worktree 感知 — .dev-lock/.dev-mode 搜索扫描主仓库 + 所有 worktree
 # v15.1.0: 活跃锁文件 — 在 worktree 内维护 .dev-session-active，防止 GC 误删
 # v15.0.0: 提取完成判断逻辑到 lib/devloop-check.sh（provider-agnostic）
 # v14.0.0: 删除所有旧格式兼容代码，只保留 per-branch 格式
 # ============================================================================
 
 set -euo pipefail
+
+# ===== Worktree 感知：收集所有可能存放 .dev-lock/.dev-mode 的目录 =====
+# 主仓库 + 所有 worktree 目录（状态文件可能在 worktree 内而非主仓库）
+_collect_search_dirs() {
+    local root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+    echo "$root"
+    while IFS= read -r _wt_line; do
+        if [[ "$_wt_line" == "worktree "* ]]; then
+            local _wt_path="${_wt_line#worktree }"
+            [[ "$_wt_path" == "$root" ]] && continue
+            [[ -d "$_wt_path" ]] && echo "$_wt_path"
+        fi
+    done < <(git -C "$root" worktree list --porcelain 2>/dev/null)
+}
 
 # ===== 无头模式：不再旁路，与有头模式使用同一套状态机 =====
 # Headless 也必须检查 .dev-mode：
@@ -80,7 +95,9 @@ _PRE_SESSION_ID="${CLAUDE_SESSION_ID:-}"
 _PRE_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 _PRE_MATCHED=false
 
-for _pre_lock in "$PROJECT_ROOT_EARLY"/.dev-lock.*; do
+# v15.3.0: 扫描主仓库 + 所有 worktree 目录（状态文件可能在 worktree 内）
+while IFS= read -r _pre_search_dir; do
+for _pre_lock in "$_pre_search_dir"/.dev-lock.*; do
     [[ -f "$_pre_lock" ]] || continue
     _pre_lock_tty=$(grep "^tty:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2- | xargs 2>/dev/null || echo "")
     _pre_lock_session=$(grep "^session_id:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
@@ -89,25 +106,26 @@ for _pre_lock in "$PROJECT_ROOT_EARLY"/.dev-lock.*; do
     # TTY 匹配
     if [[ -n "$_pre_lock_tty" && "$_pre_lock_tty" != "not a tty" && -n "$_PRE_TTY" && "$_PRE_TTY" != "not a tty" ]]; then
         if [[ "$_pre_lock_tty" == "$_PRE_TTY" ]]; then
-            _PRE_MATCHED=true; break
+            _PRE_MATCHED=true; break 2
         fi
     # session_id 匹配
     elif [[ -n "$_pre_lock_session" && -n "$_PRE_SESSION_ID" && "$_pre_lock_session" == "$_PRE_SESSION_ID" ]]; then
-        _PRE_MATCHED=true; break
+        _PRE_MATCHED=true; break 2
     # 无头模式：branch 匹配
     elif [[ -z "$_PRE_TTY" || "$_PRE_TTY" == "not a tty" ]] && [[ -z "$_PRE_SESSION_ID" ]]; then
         if [[ -n "$_pre_lock_branch" && "$_pre_lock_branch" == "$_PRE_BRANCH" ]]; then
-            _PRE_MATCHED=true; break
+            _PRE_MATCHED=true; break 2
         fi
     # v15.2.0 修复：lock 无标识符（tty=not-a-tty/空 + session_id=空）→ 按分支匹配任意会话
     # 场景：lock 创建时会话无 TTY 且无 SESSION_ID，但当前会话有 SESSION_ID（有头模式）
     # 原 case 1/2/3 均无法命中，导致 _PRE_MATCHED=false → exit 0 → /dev 中途退出
     elif [[ ("$_pre_lock_tty" == "not a tty" || -z "$_pre_lock_tty") && -z "$_pre_lock_session" ]]; then
         if [[ -n "$_pre_lock_branch" && "$_pre_lock_branch" == "$_PRE_BRANCH" ]]; then
-            _PRE_MATCHED=true; break
+            _PRE_MATCHED=true; break 2
         fi
     fi
 done
+done < <(_collect_search_dirs "$PROJECT_ROOT_EARLY")
 
 if [[ "$_PRE_MATCHED" == "false" ]]; then
     # 无任何匹配的 .dev-lock → 此会话无 dev 流程，直接退出，不竞争 mutex
@@ -251,8 +269,9 @@ DEV_LOCK_FILE=""
 DEV_MODE_FILE=""
 SENTINEL_FILE=""
 
-# 扫描所有 per-branch lock 文件，找属于当前会话的
-for _lock_file in "$PROJECT_ROOT"/.dev-lock.*; do
+# v15.3.0: 扫描主仓库 + 所有 worktree 目录（状态文件可能在 worktree 内）
+while IFS= read -r _main_search_dir; do
+for _lock_file in "$_main_search_dir"/.dev-lock.*; do
     [[ -f "$_lock_file" ]] || continue
     _lock_tty=$(grep "^tty:" "$_lock_file" 2>/dev/null | cut -d' ' -f2- | xargs 2>/dev/null || echo "")
     _lock_session=$(grep "^session_id:" "$_lock_file" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
@@ -285,19 +304,25 @@ for _lock_file in "$PROJECT_ROOT"/.dev-lock.*; do
 
     if [[ "$_matched" == "true" && -n "$_branch_in_lock" ]]; then
         DEV_LOCK_FILE="$_lock_file"
-        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${_branch_in_lock}"
-        SENTINEL_FILE="$PROJECT_ROOT/.dev-sentinel.${_branch_in_lock}"
-        break
+        # v15.3.0: 状态文件在 lock 所在目录（可能是 worktree 而非 PROJECT_ROOT）
+        _lock_dir="$(dirname "$_lock_file")"
+        DEV_MODE_FILE="$_lock_dir/.dev-mode.${_branch_in_lock}"
+        SENTINEL_FILE="$_lock_dir/.dev-sentinel.${_branch_in_lock}"
+        break 2
     fi
 done
+done < <(_collect_search_dirs "$PROJECT_ROOT")
 
 # Key-1: .dev-lock.<branch>（硬钥匙）- 只要它在，就必须走 dev 检查
 if [[ -z "$DEV_LOCK_FILE" ]]; then
     # 没有匹配的 .dev-lock → 检查孤儿 .dev-mode.* 文件（泄漏清理）
-    for _orphan_mode in "$PROJECT_ROOT"/.dev-mode.*; do
+    # v15.3.0: 扫描主仓库 + 所有 worktree 目录
+    while IFS= read -r _orphan_search_dir; do
+    for _orphan_mode in "$_orphan_search_dir"/.dev-mode.*; do
         [[ -f "$_orphan_mode" ]] || continue
         _orphan_branch=$(grep "^branch:" "$_orphan_mode" 2>/dev/null | cut -d' ' -f2 || echo "")
-        _orphan_lock="$PROJECT_ROOT/.dev-lock.${_orphan_branch}"
+        _orphan_dir="$(dirname "$_orphan_mode")"
+        _orphan_lock="$_orphan_dir/.dev-lock.${_orphan_branch}"
         if [[ -n "$_orphan_branch" && ! -f "$_orphan_lock" ]]; then
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
@@ -307,12 +332,13 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
             echo "  ⚠️  .dev-lock.${_orphan_branch} 不存在但 .dev-mode 存在（泄漏）" >&2
             echo "  清理泄漏文件..." >&2
             force_cleanup_worktree "$_orphan_mode" || true
-            rm -f "$_orphan_mode" "$PROJECT_ROOT/.dev-sentinel.${_orphan_branch}"
+            rm -f "$_orphan_mode" "$_orphan_dir/.dev-sentinel.${_orphan_branch}"
             echo "  ✅ 已清理" >&2
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         fi
     done
+    done < <(_collect_search_dirs "$PROJECT_ROOT")
 
     # 没有任何 dev 状态文件 → 普通会话，允许结束
     exit 0
