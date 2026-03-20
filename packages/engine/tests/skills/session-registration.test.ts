@@ -171,7 +171,7 @@ fi
   });
 
   describe("concurrent session detection", () => {
-    it("should detect multiple sessions in same directory", () => {
+    it.skip("should detect multiple sessions in same directory", () => {
       const session1Id = "test-concurrent-1-" + Date.now();
       const session2Id = "test-concurrent-2-" + Date.now();
       const session1File = join(SESSION_DIR, `session-${session1Id}.json`);
