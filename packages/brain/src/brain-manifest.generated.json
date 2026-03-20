@@ -527,6 +527,14 @@
             {
               "taskType": "initiative_review",
               "skill": "/initiative-review"
+            },
+            {
+              "taskType": "scope_plan",
+              "skill": "/decomp"
+            },
+            {
+              "taskType": "project_plan",
+              "skill": "/decomp"
             }
           ]
         },
@@ -899,7 +907,9 @@
     "prd_review": "/prd-review",
     "spec_review": "/spec-review",
     "code_review_gate": "/code-review-gate",
-    "initiative_review": "/initiative-review"
+    "initiative_review": "/initiative-review",
+    "scope_plan": "/decomp",
+    "project_plan": "/decomp"
   },
   "skillWhitelist": {
     "dev": "/dev",
@@ -935,9 +945,11 @@
     "prd_review": "/prd-review",
     "spec_review": "/spec-review",
     "code_review_gate": "/code-review-gate",
-    "initiative_review": "/initiative-review"
+    "initiative_review": "/initiative-review",
+    "scope_plan": "/decomp",
+    "project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-20T08:44:57.343Z",
+  "generatedAt": "2026-03-20T15:23:24.599Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

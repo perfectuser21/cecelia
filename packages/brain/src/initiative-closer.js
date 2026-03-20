@@ -85,6 +85,41 @@ async function checkInitiativeCompletion(pool) {
       closed_at: new Date().toISOString(),
     })]);
 
+    // 触发 scope_plan 飞轮：Initiative 完成后，如果 parent 是 Scope，创建 scope_plan 任务
+    const parentResult = await pool.query(
+      `SELECT id, type, name FROM projects WHERE id = (SELECT parent_id FROM projects WHERE id = $1) LIMIT 1`,
+      [initiative.id]
+    );
+    const parent = parentResult.rows[0];
+    if (parent && parent.type === 'scope') {
+      // 检查该 Scope 下是否还有未完成的 Initiative（避免重复创建）
+      const remainingResult = await pool.query(
+        `SELECT COUNT(*) as cnt FROM projects WHERE parent_id = $1 AND type = 'initiative' AND status != 'completed'`,
+        [parent.id]
+      );
+      const remaining = parseInt(remainingResult.rows[0].cnt, 10);
+      if (remaining === 0) {
+        // 所有 Initiative 完成，checkScopeCompletion 会处理
+      } else {
+        // 还有未完成的 Initiative，或需要创建新的 → 触发 scope_plan
+        const existingPlan = await pool.query(
+          `SELECT id FROM tasks WHERE task_type = 'scope_plan' AND project_id = $1 AND status IN ('queued', 'in_progress') LIMIT 1`,
+          [parent.id]
+        );
+        if (existingPlan.rows.length === 0) {
+          await pool.query(`
+            INSERT INTO tasks (title, task_type, project_id, description, priority, status, trigger_source)
+            VALUES ($1, 'scope_plan', $2, $3, 'P1', 'queued', 'brain_auto')
+          `, [
+            `规划 ${parent.name} 下一个 Initiative`,
+            parent.id,
+            JSON.stringify({ scope_id: parent.id, reason: 'initiative_completed', completed_initiative_id: initiative.id })
+          ]);
+          console.log(`[initiative-closer] Created scope_plan task for scope ${parent.id} (initiative ${initiative.name} completed)`);
+        }
+      }
+    }
+
     closed.push({ id: initiative.id, name: initiative.name });
   }
 
@@ -359,6 +394,20 @@ async function checkScopeCompletion(pool) {
       parent_project_id: scope.parent_id,
       timestamp: new Date().toISOString(),
     })]);
+
+    // 触发 project_plan 飞轮：Scope 完成后创建 project_plan 任务规划下一个 Scope
+    if (scope.parent_id) {
+      await pool.query(`
+        INSERT INTO tasks (title, task_type, project_id, description, priority, status, trigger_source)
+        VALUES ($1, 'project_plan', $2, $3, 'P1', 'queued', 'brain_auto')
+        ON CONFLICT DO NOTHING
+      `, [
+        `规划下一个 Scope (${scope.name} 已完成)`,
+        scope.parent_id,
+        JSON.stringify({ project_id: scope.parent_id, reason: 'scope_completed', completed_scope_id: scope.id, completed_scope_name: scope.name })
+      ]);
+      console.log(`[initiative-closer] Created project_plan task for project ${scope.parent_id} (scope ${scope.name} completed)`);
+    }
 
     console.log(`[initiative-closer] Scope completed: ${scope.name} (${scope.id})`);
     closed.push({ id: scope.id, name: scope.name, parent_id: scope.parent_id });

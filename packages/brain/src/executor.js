@@ -1116,6 +1116,9 @@ function getSkillForTaskType(taskType, payload) {
     'spec_review': '/spec-review',            // Spec 审查
     'code_review_gate': '/code-review-gate',  // 代码质量门禁
     'initiative_review': '/initiative-review', // Initiative 整体审查
+    // Scope 层飞轮（Project→Scope→Initiative）
+    'scope_plan': '/decomp',        // Phase 3: Scope 内规划下一个 Initiative
+    'project_plan': '/decomp',      // Phase 4: Project 内规划下一个 Scope
   };
   return skillMap[taskType] || '/dev';
 }
@@ -1592,6 +1595,16 @@ PUT /api/tasks/goals/${krId}
   // initiative_plan：直接将任务描述作为 /decomp Phase 2 上下文注入
   if (taskType === 'initiative_plan') {
     return `/decomp\n\n${task.description || task.title}`;
+  }
+
+  // scope_plan：Scope 内规划下一个 Initiative（/decomp Phase 3）
+  if (taskType === 'scope_plan') {
+    return `/decomp\n\n[scope_plan] ${task.description || task.title}`;
+  }
+
+  // project_plan：Project 内规划下一个 Scope（/decomp Phase 4）
+  if (taskType === 'project_plan') {
+    return `/decomp\n\n[project_plan] ${task.description || task.title}`;
   }
 
   // initiative_verify：调用 /architect Mode 3 verify，传入 initiative_id
@@ -2340,7 +2353,7 @@ async function probeTaskLiveness() {
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
     // is NOT in the process cmdline, so isTaskProcessAlive() always returns false for them.
     const DECOMP_LIVENESS_GRACE_MINUTES = 60;
-    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify' || task.task_type === 'architecture_design';
+    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify' || task.task_type === 'architecture_design' || task.task_type === 'scope_plan' || task.task_type === 'project_plan';
     if (task.payload?.decomposition === 'true' || isInitiativeTask) {
       const triggeredAt = task.payload?.run_triggered_at || task.started_at;
       if (triggeredAt) {

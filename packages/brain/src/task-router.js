@@ -26,7 +26,9 @@ const VALID_TASK_TYPES = [
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export',
   // Codex Gate 审查任务类型
-  'prd_review', 'spec_review', 'code_review_gate', 'initiative_review'
+  'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
+  // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
+  'scope_plan', 'project_plan'
 ];
 
 // Skill whitelist based on task type
@@ -69,6 +71,9 @@ const SKILL_WHITELIST = {
   'spec_review': '/spec-review',            // Spec 审查
   'code_review_gate': '/code-review-gate',  // 代码质量门禁
   'initiative_review': '/initiative-review', // Initiative 整体审查
+  // Scope 层飞轮（Project→Scope→Initiative）
+  'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
+  'project_plan': '/decomp',      // Project 内规划下一个 Scope
 };
 
 // Fallback strategies when primary routing fails
@@ -159,6 +164,9 @@ const LOCATION_MAP = {
   'spec_review': 'us',           // Spec 审查 → US 本机 Codex
   'code_review_gate': 'us',      // 代码质量门禁 → US 本机 Codex
   'initiative_review': 'us',     // Initiative 整体审查 → US 本机 Codex
+  // Scope 层飞轮
+  'scope_plan': 'us',            // Scope 规划 → US (Opus + /decomp)
+  'project_plan': 'us',          // Project 规划 → US (Opus + /decomp)
 };
 
 // Default location
