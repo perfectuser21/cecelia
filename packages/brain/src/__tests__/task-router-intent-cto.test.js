@@ -1,14 +1,11 @@
 /**
  * task-router-intent-cto.test.js
  *
- * DoD 覆盖：
- * - D1: VALID_TASK_TYPES 包含 intent_expand 和 cto_review
- * - D2: SKILL_WHITELIST 映射正确（intent_expand→/intent-expand, cto_review→/cto-review）
- * - D3: LOCATION_MAP 映射正确（intent_expand→us, cto_review→us）
- * - D4: isValidTaskType 接受两种新类型
- * - D5: getTaskLocation 返回正确位置
- * - D6: 已有类型不受影响
- * - D7: model-registry AGENTS 包含两个新 agent
+ * Pipeline v2 改造后更新：
+ * - cto_review 已删除（被 Codex Gate 替代）
+ * - 保留 intent_expand 注册验证
+ * - 新增 initiative_execute 注册验证
+ * - 验证旧类型已被清理
  */
 
 import { describe, it, expect } from 'vitest';
@@ -40,30 +37,47 @@ describe('task-router intent_expand 注册', () => {
   });
 });
 
-describe('task-router cto_review 注册', () => {
-  it('D1: VALID_TASK_TYPES 包含 cto_review', async () => {
+describe('task-router initiative_execute 注册', () => {
+  it('VALID_TASK_TYPES 包含 initiative_execute', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.VALID_TASK_TYPES).toContain('cto_review');
+    expect(mod.VALID_TASK_TYPES).toContain('initiative_execute');
   });
 
-  it('D2: SKILL_WHITELIST cto_review → /cto-review', async () => {
+  it('SKILL_WHITELIST initiative_execute → /dev', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.SKILL_WHITELIST['cto_review']).toBe('/cto-review');
+    expect(mod.SKILL_WHITELIST['initiative_execute']).toBe('/dev');
   });
 
-  it('D3: LOCATION_MAP cto_review → us（本机 Codex 独立审查, P0）', async () => {
+  it('LOCATION_MAP initiative_execute → us', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.LOCATION_MAP['cto_review']).toBe('us');
+    expect(mod.LOCATION_MAP['initiative_execute']).toBe('us');
   });
 
-  it('D4: isValidTaskType 接受 cto_review', async () => {
+  it('isValidTaskType 接受 initiative_execute', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.isValidTaskType('cto_review')).toBe(true);
+    expect(mod.isValidTaskType('initiative_execute')).toBe(true);
   });
 
-  it('D5: getTaskLocation cto_review → us', async () => {
+  it('getTaskLocation initiative_execute → us', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.getTaskLocation('cto_review')).toBe('us');
+    expect(mod.getTaskLocation('initiative_execute')).toBe('us');
+  });
+});
+
+describe('Pipeline v2 旧类型已清理', () => {
+  it('cto_review 已从 VALID_TASK_TYPES 删除', async () => {
+    const mod = await import('../task-router.js');
+    expect(mod.VALID_TASK_TYPES).not.toContain('cto_review');
+  });
+
+  it('code_quality_review 已从 VALID_TASK_TYPES 删除', async () => {
+    const mod = await import('../task-router.js');
+    expect(mod.VALID_TASK_TYPES).not.toContain('code_quality_review');
+  });
+
+  it('prd_coverage_audit 已从 VALID_TASK_TYPES 删除', async () => {
+    const mod = await import('../task-router.js');
+    expect(mod.VALID_TASK_TYPES).not.toContain('prd_coverage_audit');
   });
 });
 
@@ -84,21 +98,12 @@ describe('task-router 已有类型不受影响', () => {
   });
 });
 
-describe('model-registry intent_expand + cto_review agent 注册', () => {
+describe('model-registry intent_expand agent 注册', () => {
   it('D7: AGENTS 包含 intent_expand agent', async () => {
     const mod = await import('../model-registry.js');
     const agent = mod.AGENTS.find(a => a.id === 'intent_expand');
     expect(agent).toBeDefined();
     expect(agent.layer).toBe('executor');
     expect(agent.allowed_models).toContain('claude-sonnet-4-6');
-  });
-
-  it('D7: AGENTS 包含 cto_review agent', async () => {
-    const mod = await import('../model-registry.js');
-    const agent = mod.AGENTS.find(a => a.id === 'cto_review');
-    expect(agent).toBeDefined();
-    expect(agent.layer).toBe('executor');
-    expect(agent.fixed_provider).toBe('openai');
-    expect(agent.allowed_models).toContain('codex-mini-latest');
   });
 });

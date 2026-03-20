@@ -448,18 +448,16 @@ queued → in_progress → completed
 | dept_heartbeat | US | 部门主管 (repo-lead) | - / M2.5-highspeed | 固定 minimax |
 | pr_review | 西安 | 异步 PR 审查（独立 MiniMax 审查） | Codex / MiniMax | 固定 minimax |
 | intent_expand | US | 意图扩展 Expander（沿 project→KR→OKR→Vision 链补全 PRD） | Sonnet / - | 默认 anthropic |
-| cto_review | US | CTO 整体审查（enriched PRD + DoD + diff → PASS/FAIL, P0） | 本机 Codex | 默认 anthropic |
-| code_quality_review | US | 代码质量审查（垃圾/重复/简洁/规范 4 维度, P0） | 本机 Codex | 默认 anthropic |
-| prd_coverage_audit | US | PRD 覆盖审计（MATCH/DOWNGRADED/MISSING 三态判定, P0） | 本机 Codex | 默认 anthropic |
+| initiative_execute | US | Initiative 执行 (/dev 全流程) | Sonnet / - | 默认 anthropic |
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 | architecture_design | US | 架构设计 (/architect design) | Opus / - | 默认 anthropic |
 | architecture_scan | US | 系统扫描 (/architect scan) | Opus / - | 默认 anthropic |
 | arch_review | US | 架构巡检 (/arch-review review) | Sonnet / - | 默认 anthropic |
 | strategy_session | US | 战略会议 (/strategy-session) | Opus / - | 默认 anthropic |
-| prd_review | US | PRD 审查 (/prd-review)，替代 decomp_review + prd_coverage_audit | 本机 Codex | 固定 openai |
-| spec_review | US | Spec 审查 (/spec-review)，替代 dod_verify + cto_review(单PR) | 本机 Codex | 固定 openai |
-| code_review_gate | US | 代码质量门禁 (/code-review-gate)，替代 code_quality_review | 本机 Codex | 固定 openai |
-| initiative_review | US | Initiative 整体审查 (/initiative-review)，替代 initiative_verify + cto_review(整体) | 本机 Codex | 固定 openai |
+| prd_review | US | PRD 审查 (/prd-review) | 本机 Codex | 固定 openai |
+| spec_review | US | Spec 审查 (/spec-review) | 本机 Codex | 固定 openai |
+| code_review_gate | US | 代码质量门禁 (/code-review-gate) | 本机 Codex | 固定 openai |
+| initiative_review | US | Initiative 整体审查 (/initiative-review) | 本机 Codex | 固定 openai |
 
 ---
 

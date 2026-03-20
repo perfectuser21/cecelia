@@ -64,13 +64,13 @@ const EXECUTOR_AFFINITY = {
   'qa_init':              { primary: 'claude', fallback: 'codex',   no_downgrade: false },
 
   // Claude 首选，不降级（高价值，宁可排队）
+  'initiative_execute':   { primary: 'claude', fallback: null,      no_downgrade: true  },
   'architecture_design':  { primary: 'claude', fallback: null,      no_downgrade: true  },
   'architecture_scan':    { primary: 'claude', fallback: null,      no_downgrade: true  },
   'strategy_session':     { primary: 'claude', fallback: null,      no_downgrade: true  },
   'initiative_plan':      { primary: 'claude', fallback: null,      no_downgrade: true  },
   'initiative_verify':    { primary: 'claude', fallback: null,      no_downgrade: true  },
   'arch_review':          { primary: 'claude', fallback: null,      no_downgrade: true  },
-  'decomp_review':        { primary: 'claude', fallback: null,      no_downgrade: true  },
   'suggestion_plan':      { primary: 'claude', fallback: null,      no_downgrade: true  },
   'knowledge':            { primary: 'claude', fallback: null,      no_downgrade: true  },
 

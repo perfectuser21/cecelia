@@ -505,8 +505,8 @@
               "skill": "/intent-expand"
             },
             {
-              "taskType": "cto_review",
-              "skill": "/cto-review"
+              "taskType": "initiative_execute",
+              "skill": "/dev"
             },
             {
               "taskType": "content_publish",
@@ -894,7 +894,7 @@
     "qa": "/code-review",
     "audit": "/code-review",
     "intent_expand": "/intent-expand",
-    "cto_review": "/cto-review",
+    "initiative_execute": "/dev",
     "content_publish": "/dev",
     "prd_review": "/prd-review",
     "spec_review": "/spec-review",
@@ -926,9 +926,7 @@
     "arch_review": "/arch-review review",
     "strategy_session": "/strategy-session",
     "intent_expand": "/intent-expand",
-    "cto_review": "/cto-review",
-    "code_quality_review": "/code-quality",
-    "prd_coverage_audit": "/prd-audit",
+    "initiative_execute": "/dev",
     "content-pipeline": "/content-creator",
     "content-research": "/notebooklm",
     "content-generate": "/content-creator",

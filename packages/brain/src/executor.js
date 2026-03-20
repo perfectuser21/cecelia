@@ -1104,16 +1104,17 @@ function getSkillForTaskType(taskType, payload) {
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
-    // 前置审查两阶段
+    // 前置审查
     'intent_expand': '/intent-expand',  // 意图扩展：查 OKR/Vision 链路补全 PRD
-    'cto_review': '/cto-review',        // CTO 整体审查：enriched PRD + DoD + diff → PASS/FAIL
+    // Initiative 执行
+    'initiative_execute': '/dev',       // Initiative 执行：/dev 全流程
     // 多平台发布（payload.platform 动态路由，见上方特判逻辑）
     'content_publish': '/dev',          // fallback：正常由上方平台路由拦截
     // Codex Gate 审查任务类型（替代旧的多步审查流程）
-    'prd_review': '/prd-review',              // PRD 审查：替代 decomp_review + prd_coverage_audit
-    'spec_review': '/spec-review',            // Spec 审查：替代 dod_verify + cto_review(单PR)
-    'code_review_gate': '/code-review-gate',  // 代码质量门禁：替代 code_quality_review
-    'initiative_review': '/initiative-review', // Initiative 整体审查：替代 initiative_verify + cto_review(整体)
+    'prd_review': '/prd-review',              // PRD 审查
+    'spec_review': '/spec-review',            // Spec 审查
+    'code_review_gate': '/code-review-gate',  // 代码质量门禁
+    'initiative_review': '/initiative-review', // Initiative 整体审查
   };
   return skillMap[taskType] || '/dev';
 }
@@ -1891,9 +1892,7 @@ async function triggerMiniMaxExecutor(task) {
 //   location='hk' → 走 HK MiniMax（不变）
 const US_ONLY_TYPES = new Set([
   'dev',                  // /dev 全流程（依赖 hooks/state machine）
-  'cto_review',           // /dev Step 2.5: CTO 审查（读 worktree diff，本机 Codex）
-  'code_quality_review',  // /dev Step 2.6: 代码质量审查（读 worktree diff）
-  'prd_coverage_audit',   // /dev Step 2.7: PRD 覆盖审计（读 worktree diff）
+  'initiative_execute',   // Initiative 执行（/dev 全流程）
   'intent_expand',        // /dev Step 1.5: 意图扩展（查 Brain DB + 补全 PRD）
   // Codex Gate 审查任务类型（需读 worktree diff + Brain DB，必须在美国跑）
   'prd_review',           // PRD 审查

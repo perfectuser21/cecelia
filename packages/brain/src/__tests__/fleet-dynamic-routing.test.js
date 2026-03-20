@@ -23,7 +23,7 @@ describe('DEV_ONLY_TYPES 路由规则', () => {
   it('非 dev 类型不在 DEV_ONLY_TYPES 中', () => {
     const DEV_ONLY_TYPES = new Set(['dev']);
     expect(DEV_ONLY_TYPES.has('code_review')).toBe(false);
-    expect(DEV_ONLY_TYPES.has('cto_review')).toBe(false);
+    expect(DEV_ONLY_TYPES.has('code_review')).toBe(false);
     expect(DEV_ONLY_TYPES.has('initiative_plan')).toBe(false);
     expect(DEV_ONLY_TYPES.has('dept_heartbeat')).toBe(false);
   });

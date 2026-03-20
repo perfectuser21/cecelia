@@ -1,7 +1,7 @@
 /**
- * CTO Review Callback Tests
- * 验证 execution-callback 收到 cto_review 完成时正确写入 review_result
- * 断链修复：5c8b — cto_review → review_result → devloop-check.sh 条件 2.5
+ * Review Callback Tests
+ * 验证 execution-callback 收到审查任务完成时正确写入 review_result
+ * 通用逻辑：适用于所有 Codex Gate 审查类型（prd_review, spec_review 等）
  *
  * 策略：直接测试 review_result 构建逻辑，不加载完整 routes.js（避免 OOM）
  */
@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * 从 execution.js 5c8b 提取的 review_result 构建逻辑
+ * 从 execution.js 提取的 review_result 构建逻辑
  * 与 execution.js 中的实现保持一致
  */
 function buildReviewResult(result) {
@@ -26,7 +26,7 @@ function buildReviewResult(result) {
   ].filter(Boolean).join('\n');
 }
 
-describe('cto_review review_result 构建逻辑', () => {
+describe('review_result 构建逻辑（通用审查回调）', () => {
   it('PASS 对象结果: review_result 包含 PASS 且格式正确', () => {
     const result = buildReviewResult({
       decision: 'PASS',
@@ -98,7 +98,7 @@ describe('cto_review review_result 构建逻辑', () => {
 
   it('devloop-check.sh 兼容: grep -qi PASS 能匹配', () => {
     const passResult = buildReviewResult({ decision: 'PASS', summary: '质量合格' });
-    // devloop-check.sh: echo "$cto_review_result" | grep -qi "PASS"
+    // devloop-check.sh: echo "$review_result" | grep -qi "PASS"
     expect(passResult.toLowerCase()).toContain('pass');
 
     const failResult = buildReviewResult({ decision: 'FAIL', summary: 'L1问题' });
@@ -119,7 +119,7 @@ describe('cto_review review_result 构建逻辑', () => {
   });
 });
 
-describe('cto_review parent_task_id 解析', () => {
+describe('review parent_task_id 解析（通用审查回调）', () => {
   it('从 payload 正确提取 parent_task_id', () => {
     const payload = { parent_task_id: 'parent-abc-123' };
     expect(payload.parent_task_id).toBe('parent-abc-123');

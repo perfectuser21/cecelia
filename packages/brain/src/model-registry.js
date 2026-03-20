@@ -224,15 +224,6 @@ export const AGENTS = [
     recommended_model: 'claude-sonnet-4-6',
     fixed_provider: null,
   },
-  {
-    id: 'cto_review',
-    name: 'CTO 审查 Reviewer',
-    description: '读 enriched PRD + DoD + 核心 diff，整体判断 PASS/FAIL，独立视角（西安 Codex 执行）',
-    layer: 'executor',
-    allowed_models: ['codex-mini-latest', 'o3-mini', 'o4-mini'],
-    recommended_model: 'codex-mini-latest',
-    fixed_provider: 'openai',
-  },
 ];
 
 // ============================================================
