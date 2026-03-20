@@ -9,6 +9,7 @@
  */
 
 import pool from './db.js';
+import { existsSync } from 'fs';
 
 // ============================================================
 // Configuration
@@ -46,6 +47,8 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'memory-semantic',              // 语义记忆，learnings 支撑
   'learning-absorption',          // 学习吸收，嵌入 tick 循环
   'narrative-expression',         // 叙事表达，意识层固有
+  'cecelia-dashboard',            // 仪表盘服务（端口5211运行）
+  'postgresql-database-service',  // PostgreSQL 数据库服务（Brain依赖）
 ]);
 
 // ============================================================
@@ -175,6 +178,67 @@ export async function scanCapabilities() {
       health.status = 'dormant';
       healthMap.push(health);
       continue;
+    }
+
+    // 5.15 端口检测 — 检查特定能力的服务端口是否运行
+    const portCheckMap = {
+      'cecelia-dashboard': 5211,
+      'zenithjoy-dashboard': 5211,
+    };
+
+    if (portCheckMap[cap.id]) {
+      const port = portCheckMap[cap.id];
+      try {
+        const response = await fetch(`http://localhost:${port}`, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(2000)
+        });
+        if (response.ok) {
+          health.status = 'active';
+          health.evidence.push(`port_check:localhost:${port}=running`);
+          healthMap.push(health);
+          continue;
+        }
+      } catch {
+        health.evidence.push(`port_check:localhost:${port}=failed`);
+      }
+    }
+
+    // 5.16 文件系统检测 — 检查特定能力的关键文件是否存在
+    const fileCheckMap = {
+      'branch-protection-hooks': [
+        'packages/engine/hooks/branch-protect.sh',
+        'packages/engine/hooks/stop.sh'
+      ],
+      'ci-devgate-quality': [
+        'packages/engine/scripts/devgate/check-dod-mapping.cjs',
+        'packages/quality/scripts/devgate'
+      ],
+      'credential-management': [
+        'scripts/sync-credentials.sh',
+        '~/.credentials'
+      ]
+    };
+
+    if (fileCheckMap[cap.id]) {
+      const filePaths = fileCheckMap[cap.id];
+      let hasFiles = false;
+      for (const filePath of filePaths) {
+        const expandedPath = filePath.startsWith('~')
+          ? filePath.replace('~', process.env.HOME || '~')
+          : filePath;
+        if (existsSync(expandedPath)) {
+          hasFiles = true;
+          health.evidence.push(`file_check:${filePath}=exists`);
+        } else {
+          health.evidence.push(`file_check:${filePath}=missing`);
+        }
+      }
+      if (hasFiles) {
+        health.status = 'active';
+        healthMap.push(health);
+        continue;
+      }
     }
 
     // 5.2 Check related_skills usage
