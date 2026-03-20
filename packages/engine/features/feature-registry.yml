@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.4.4"
+    date: "2026-03-20"
+    summary: "fix(engine): stop.sh 扫描 worktree 目录找 .dev-lock + Learning/DoD/版本 bump"
+    scope: hooks
+    breaking: false
+    feature_id: stophook-worktree-scan
   - version: "13.4.2"
     date: "2026-03-20"
     summary: "feat(engine): /dev Robust 改造 — 砍假 subagent + 主 agent 自验证 + dod-verify skill + Codex dispatch-now 审查"
