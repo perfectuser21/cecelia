@@ -47,7 +47,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.103.88.66',
     role: 'L4 E2E CI 测试',
-    sshUser: 'administrator',
+    sshUser: 'xu xiao',
   },
   {
     id: 'xian-mac-m4',
@@ -55,7 +55,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.86.57.69',
     role: 'Codex 主力机',
-    sshUser: 'administrator',
+    sshUser: 'jinnuoshengyuan',
   },
   {
     id: 'xian-pc',
@@ -63,7 +63,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.97.242.124',
     role: 'Playwright 被控端',
-    sshUser: 'zenithjoy',
+    sshUser: 'xuxia',
     isWindows: true,
   },
   {
@@ -72,7 +72,7 @@ const SERVERS = [
     location: '西安',
     tailscaleIp: '100.110.241.76',
     role: '存储',
-    sshUser: 'root',
+    sshUser: '徐啸',
   },
 ];
 
