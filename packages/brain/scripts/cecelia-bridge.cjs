@@ -152,7 +152,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = notebook_id ? ['ask', '-n', notebook_id, query] : ['ask', query];

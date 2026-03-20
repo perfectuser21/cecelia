@@ -4,7 +4,7 @@
 # 用法：bash packages/brain/scripts/setup-notebooks.sh
 #
 # 运行条件：
-#   - notebooklm CLI 已安装（/home/xx/.local/bin/notebooklm）
+#   - notebooklm CLI 已安装（/opt/homebrew/bin/notebooklm）
 #   - notebooklm 已登录（notebooklm login）
 #   - PostgreSQL cecelia 数据库可连接（psql cecelia）
 #
@@ -14,7 +14,7 @@
 
 set -e
 
-NOTEBOOK_CLI="/home/xx/.local/bin/notebooklm"
+NOTEBOOK_CLI="${NOTEBOOKLM_BIN:-/opt/homebrew/bin/notebooklm}"
 DB_NAME="${CECELIA_DB:-cecelia}"
 
 # 检查依赖
