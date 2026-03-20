@@ -1,0 +1,63 @@
+# ─── 系列：能力下放实操 ───
+# 核心命题：过去要一个团队才能干的事，现在怎么一个人搞定？
+
+content_type: capability-unlock
+title: 能力下放实操
+series_name: "能力下放实操"
+version: "1.0"
+inherits: base-brand
+
+description: |
+  聚焦一个具体能力（如内容分发、数据分析、客户管理），
+  展示：过去需要什么团队配置 → 现在一个人用什么系统搞定 → 结果对比。
+  不讲工具怎么搭，只讲能力怎么拥有。
+
+input:
+  keyword:
+    required: true
+    description: "具体能力名称"
+    examples: ["八平台同步分发", "一个人做专业级内容包", "自动化客户跟进"]
+  angle:
+    required: false
+    default: "过去需要几个人干这件事 → 现在一个人怎么拥有这个能力"
+
+template:
+  research_prompt: |
+    调研 {keyword} 这件事：
+    - 传统公司里，完成这件事需要什么团队配置？（几个人、什么角色、多少成本）
+    - 现在有哪些个人/小团队已经做到了？怎么做到的？
+    - 关键转折点是什么？（什么技术/工具/方法让这件事从"需要团队"变成"一个人也行"）
+    - 具体数据对比（效率、成本、质量）
+    不限定来源，尽量找真实案例。
+
+  generate_prompt: |
+    基于调研，生成两组内容。核心叙事结构：
+
+    过去：做 {keyword} 需要 ____（团队/成本/时间）
+    转折：因为 ____（AI/系统/工具），这件事的门槛消失了
+    现在：一个人就能 ____，而且效果 ____
+
+    【图文组】/share-card 框架，重点用数字对比（过去 vs 现在）
+    【长文组】深度拆解，让读者读完觉得"我下周就能开始做这件事"
+
+  review_prompt: |
+    在 base-brand 审查基础上，额外检查：
+    1. 有没有"过去 vs 现在"的明确对比？（blocking）
+    2. 读者看完是否知道"我下一步该做什么"？（blocking）
+    3. 有没有跑偏成工具评测/教程？（blocking — 不讲工具，讲能力）
+
+hashtags:
+  base: ["一人公司", "能力放大", "AI驱动"]
+  series_specific: ["能力下放", "效率革命", "一个人搞定", "过去需要一个团队"]
+
+outputs:
+  image_set:
+    framework: "/share-card"
+    color_scheme: "A"  # A类·能力/效率 — 冷权威色系
+    cover: { width: 1080, height: 1464 }
+    cards: { width: 1080, height: 1920, count: "5-7" }
+    copy: { word_count: 800, shared_across: ["douyin", "kuaishou", "xiaohongshu", "weibo"] }
+  article:
+    body: { word_count: 2000, format: "markdown", shared_across: ["wechat", "zhihu", "toutiao"] }
+    cover_wechat: { width: 900, height: 383, crop_from: "card_cover" }
+    inline_images: { width: 1080, height: 810, count: "3-5", crop_from: "content_cards" }
