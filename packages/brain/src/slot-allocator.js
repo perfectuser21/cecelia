@@ -29,7 +29,7 @@ const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is ac
 const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
 const MAX_CODEX_CONCURRENT = 3;             // Pool D: Codex 专属并发上限（对应 3 个 Codex 账号）
 const BACKPRESSURE_THRESHOLD = 5;           // 队列深度超过此值时触发降速
-const BACKPRESSURE_BURST_LIMIT = 1;         // 背压激活时 burst limit 压至 1
+const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动态检测已做防雪崩，不需要压到 1）
 
 // ============================================================
 // Process Detection
