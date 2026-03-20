@@ -67,7 +67,7 @@ describe('content-* LOCATION_MAP routing', () => {
     }
   });
 
-  it('getTaskLocation returns xian for all 4 sub-task types', () => {
+  it('getTaskLocation returns us for all 4 sub-task types', () => {
     const subTypes = ['content-research', 'content-generate', 'content-review', 'content-export'];
     for (const taskType of subTypes) {
       expect(getTaskLocation(taskType)).toBe('xian');

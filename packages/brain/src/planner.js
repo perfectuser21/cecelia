@@ -857,7 +857,9 @@ async function planNextTask(scopeKRIds = null, options = {}) {
   } // end skipPrPlans check
 
   // Area Stream dispatch（流调度层，在 PR Plans 之后、传统 KR dispatch 之前）
-  // 每个活跃 Area 保底 1 个 slot，Initiative Lock。
+  // 独立用途：确保每个活跃 Area 保底 1 个 slot + Initiative Lock，
+  // 与 pr_plans 路径互补 — pr_plans 处理有明确 PR Plan 的 Initiative，
+  // Area Stream 兜底处理无 PR Plan 但仍需推进的 Initiative。
   // 可通过 options.skipAreaStreams=true 跳过（用于测试兼容）
   if (!options.skipAreaStreams) {
     const topAreas = selectTopAreas(state, ACTIVE_AREA_COUNT);

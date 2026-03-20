@@ -456,6 +456,10 @@ queued → in_progress → completed
 | architecture_scan | US | 系统扫描 (/architect scan) | Opus / - | 默认 anthropic |
 | arch_review | US | 架构巡检 (/arch-review review) | Sonnet / - | 默认 anthropic |
 | strategy_session | US | 战略会议 (/strategy-session) | Opus / - | 默认 anthropic |
+| prd_review | US | PRD 审查 (/prd-review)，替代 decomp_review + prd_coverage_audit | 本机 Codex | 固定 openai |
+| spec_review | US | Spec 审查 (/spec-review)，替代 dod_verify + cto_review(单PR) | 本机 Codex | 固定 openai |
+| code_review_gate | US | 代码质量门禁 (/code-review-gate)，替代 code_quality_review | 本机 Codex | 固定 openai |
+| initiative_review | US | Initiative 整体审查 (/initiative-review)，替代 initiative_verify + cto_review(整体) | 本机 Codex | 固定 openai |
 
 ---
 

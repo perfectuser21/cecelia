@@ -79,6 +79,12 @@ const EXECUTOR_AFFINITY = {
   'codex_qa':             { primary: 'codex',   fallback: null,     no_downgrade: true  },
   'codex_playwright':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
 
+  // Codex Gate 审查任务类型（始终走 Codex，不消耗 Claude）
+  'prd_review':           { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'spec_review':          { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'code_review_gate':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'initiative_review':    { primary: 'codex',   fallback: null,     no_downgrade: true  },
+
   // 始终走 MiniMax（不消耗 Claude）
   'explore':              { primary: 'minimax', fallback: null,     no_downgrade: true  },
   'research':             { primary: 'minimax', fallback: null,     no_downgrade: true  },

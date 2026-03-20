@@ -98,9 +98,6 @@ function getAvailableMemoryMB() {
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
 
-// Brain self-callback URL — 让 MiniMax/liveness 等非标路径也走 execution-callback 全流程
-const BRAIN_CALLBACK_URL = `http://localhost:${process.env.PORT || process.env.BRAIN_PORT || 5221}/api/brain/execution-callback`;
-
 // 西安 Mac mini Codex Bridge URL (via Tailscale)
 const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
 
@@ -1112,6 +1109,11 @@ function getSkillForTaskType(taskType, payload) {
     'cto_review': '/cto-review',        // CTO 整体审查：enriched PRD + DoD + diff → PASS/FAIL
     // 多平台发布（payload.platform 动态路由，见上方特判逻辑）
     'content_publish': '/dev',          // fallback：正常由上方平台路由拦截
+    // Codex Gate 审查任务类型（替代旧的多步审查流程）
+    'prd_review': '/prd-review',              // PRD 审查：替代 decomp_review + prd_coverage_audit
+    'spec_review': '/spec-review',            // Spec 审查：替代 dod_verify + cto_review(单PR)
+    'code_review_gate': '/code-review-gate',  // 代码质量门禁：替代 code_quality_review
+    'initiative_review': '/initiative-review', // Initiative 整体审查：替代 initiative_verify + cto_review(整体)
   };
   return skillMap[taskType] || '/dev';
 }
@@ -1606,6 +1608,22 @@ PUT /api/tasks/goals/${krId}
     return `/decomp-check\n\n${task.description || task.title}`;
   }
 
+  // Codex Gate 审查任务类型
+  if (taskType === 'prd_review') {
+    return `/prd-review\n\n${task.description || task.title}`;
+  }
+  if (taskType === 'spec_review') {
+    return `/spec-review\n\n${task.description || task.title}`;
+  }
+  if (taskType === 'code_review_gate') {
+    return `/code-review-gate\n\n${task.description || task.title}`;
+  }
+  if (taskType === 'initiative_review') {
+    const initiativeId = task.project_id || task.payload?.initiative_id || '';
+    const phase = task.payload?.phase || 1;
+    return `/initiative-review --phase ${phase} --initiative-id ${initiativeId}\n\n${task.description || task.title}`;
+  }
+
   // Talk 类型：可以写文档（日报、总结等），但不能改代码
   if (taskType === 'talk') {
     return `请完成以下任务，你可以创建/编辑 markdown 文档，但不能修改任何代码文件：
@@ -1798,34 +1816,8 @@ async function triggerCodexBridge(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, taskId, result?, error? }
  */
-
-/**
- * Fire-and-forget internal execution-callback 调用。
- * 用于 MiniMax / liveness 等非标执行路径，确保走完
- * 学习吸收、失败分类、thalamus 决策、KR 汇总等后处理。
- *
- * @param {Object} payload - execution-callback 接口所需字段
- */
-async function fireInternalCallback(payload) {
-  try {
-    const resp = await fetch(BRAIN_CALLBACK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(30000), // 30s 足够后处理
-    });
-    const body = await resp.json();
-    console.log(`[executor] Internal execution-callback for task=${payload.task_id} → ${body.new_status || 'unknown'}`);
-    return body;
-  } catch (cbErr) {
-    console.error(`[executor] Internal execution-callback failed for task=${payload.task_id}: ${cbErr.message}`);
-    return null;
-  }
-}
-
 async function triggerMiniMaxExecutor(task) {
   const runId = generateRunId(task.id);
-  const startTime = Date.now();
 
   try {
     console.log(`[executor] Calling HK MiniMax for task=${task.id} type=${task.task_type}`);
@@ -1843,22 +1835,17 @@ async function triggerMiniMaxExecutor(task) {
     });
 
     const result = await response.json();
-    const durationMs = Date.now() - startTime;
 
     if (result.success) {
-      console.log(`[executor] MiniMax completed task=${task.id}, sending execution-callback`);
+      console.log(`[executor] MiniMax completed task=${task.id}`);
 
-      // 通过 execution-callback 统一处理（学习吸收、thalamus、KR 汇总等）
-      await fireInternalCallback({
-        task_id: task.id,
-        run_id: runId,
-        status: 'AI Done',
-        result: {
-          result: result.result,
+      // Update task with result (with WebSocket broadcast)
+      await updateTaskStatus(task.id, 'completed', {
+        payload: {
+          minimax_result: result.result,
           minimax_usage: result.usage || {},
-          executor: 'minimax',
-        },
-        duration_ms: durationMs,
+          run_id: runId
+        }
       });
 
       return {
@@ -1870,20 +1857,7 @@ async function triggerMiniMaxExecutor(task) {
         executor: 'minimax',
       };
     } else {
-      console.log(`[executor] MiniMax failed task=${task.id}: ${result.error}, sending execution-callback`);
-
-      // 失败也走 execution-callback（失败分类、隔离检查、thalamus 等）
-      await fireInternalCallback({
-        task_id: task.id,
-        run_id: runId,
-        status: 'AI Failed',
-        result: {
-          error: result.error,
-          executor: 'minimax',
-        },
-        duration_ms: durationMs,
-      });
-
+      console.log(`[executor] MiniMax failed task=${task.id}: ${result.error}`);
       return {
         success: false,
         taskId: task.id,
@@ -1892,22 +1866,7 @@ async function triggerMiniMaxExecutor(task) {
       };
     }
   } catch (err) {
-    const durationMs = Date.now() - startTime;
-    console.error(`[executor] MiniMax error: ${err.message}, sending execution-callback`);
-
-    // 网络/超时错误也走 execution-callback
-    await fireInternalCallback({
-      task_id: task.id,
-      run_id: runId,
-      status: 'AI Failed',
-      result: {
-        error: err.message,
-        executor: 'minimax',
-      },
-      stderr: err.message,
-      duration_ms: durationMs,
-    });
-
+    console.error(`[executor] MiniMax error: ${err.message}`);
     return {
       success: false,
       taskId: task.id,
@@ -1936,6 +1895,11 @@ const US_ONLY_TYPES = new Set([
   'code_quality_review',  // /dev Step 2.6: 代码质量审查（读 worktree diff）
   'prd_coverage_audit',   // /dev Step 2.7: PRD 覆盖审计（读 worktree diff）
   'intent_expand',        // /dev Step 1.5: 意图扩展（查 Brain DB + 补全 PRD）
+  // Codex Gate 审查任务类型（需读 worktree diff + Brain DB，必须在美国跑）
+  'prd_review',           // PRD 审查
+  'spec_review',          // Spec 审查
+  'code_review_gate',     // 代码质量门禁
+  'initiative_review',    // Initiative 整体审查
 ]);
 
 async function triggerCeceliaRun(task) {
@@ -1946,14 +1910,10 @@ async function triggerCeceliaRun(task) {
     return triggerMiniMaxExecutor(task);
   }
 
-  // 2. 非美国专属任务 → 走西安 Codex Bridge（失败则降级到本机）
+  // 2. 非美国专属任务 → 走西安 Codex Bridge
   if (!US_ONLY_TYPES.has(task.task_type)) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非美国专属任务)`);
-    const codexResult = await triggerCodexBridge(task);
-    if (codexResult.success) return codexResult;
-    // Codex Bridge 不可达，降级到本机执行
-    console.log(`[executor] Codex Bridge 不可达，降级到本机执行: task_type=${task.task_type} error=${codexResult.error}`);
-    // 继续执行下面的本机 cecelia-bridge 逻辑
+    return triggerCodexBridge(task);
   }
 
   // 3. dev 任务 → Claude Code（本机 cecelia-bridge）
@@ -2410,21 +2370,13 @@ async function probeTaskLiveness() {
     // Requeue instead of fail — liveness DEAD is typically OOM/system preemption, not a code bug
     const requeueResult = await requeueTask(task.id, 'liveness_dead', errorDetails);
 
-    // Fire-and-forget: liveness callback 补充后处理（失败分类、thalamus、依赖级联等）
-    // 注意：requeueTask 已修改 DB 状态，execution-callback 的 DB UPDATE 会空转（WHERE status='in_progress'），
-    // 但后处理逻辑（失败分类、thalamus、KR 汇总）仍会执行。
-    fireInternalCallback({
-      task_id: task.id,
-      run_id: `liveness-${task.id}-${Date.now()}`,
-      status: 'AI Failed',
-      result: {
-        error: errorDetails.message,
-        reason: errorDetails.reason,
+    // Fire-and-forget auto-learning（liveness probe 路径无 execution-callback，需在此补充）
+    import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
+      processExecutionAutoLearning(task.id, requeueResult.quarantined ? 'failed' : 'requeued', errorDetails, {
         trigger_source: 'liveness_probe',
-        executor: 'liveness',
-      },
-      stderr: errorDetails.diagnostic_info ? JSON.stringify(errorDetails.diagnostic_info) : '',
-    }).catch(() => {/* non-fatal — liveness callback 不阻塞主流程 */});
+        metadata: { suspect_since: suspect.firstSeen, pid }
+      })
+    ).catch(() => {/* non-fatal */});
 
     actions.push({
       action: requeueResult.quarantined ? 'liveness_auto_fail' : 'liveness_auto_requeue',
@@ -2650,7 +2602,4 @@ export {
   // v15: Token-aware slot allocation
   getTokenPressure,
   TOKEN_PRESSURE_THRESHOLD,
-  // v16: Internal execution-callback for non-standard paths
-  fireInternalCallback,
-  BRAIN_CALLBACK_URL,
 };
