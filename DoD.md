@@ -1,5 +1,8 @@
 # DoD: Pipeline v2 清理
 
+## [BEHAVIOR] D0: 旧 task type 已清理且新类型已注册
+Test: manual: node -e "const c=require('fs').readFileSync('packages/brain/src/task-router.js','utf8');if(c.includes(\"'cto_review'\"))process.exit(1);if(!c.includes(\"'initiative_execute'\"))process.exit(1)"
+
 ## D1: 旧 task type 从 task-router.js 删除
 Test: manual: node -e "const c=require('fs').readFileSync('packages/brain/src/task-router.js','utf8');if(c.includes(\"'cto_review'\"))process.exit(1)"
 
