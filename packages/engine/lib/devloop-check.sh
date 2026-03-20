@@ -159,7 +159,7 @@ _check_codex_review() {
             --arg task_id "$task_id" \
             --arg status "$wait_status" \
             --arg name "$review_name" \
-            '{"status":"blocked","reason":"等待 \($name) 完成（状态: \($status)）","action":"等待 \($name) task \($task_id) 完成，PASS 后自动继续"}'
+            '{"status":"blocked","reason":"等待 \($name) 完成（状态: \($status)）","action":"\($name) 正在由 Codex 执行，输出 '\''等待 \($name)...'\'' 然后停止输出。Stop Hook 会自动检查审查结果。"}'
         return 1
     fi
 }
@@ -194,7 +194,7 @@ devloop_check() {
             if command -v _devlog_event &>/dev/null; then
                 _devlog_event "devloop-check" "step_1_spec" "blocked" "Stage 1 Spec 未完成"
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"Stage 1 Spec 未完成","action":"执行 Stage 1：读取 skills/dev/steps/01-spec.md，生成 Task Card + 派发 spec_review"}'
+            _devloop_jq -n '{"status":"blocked","reason":"Stage 1 Spec 未完成","action":"立即读取 packages/engine/skills/dev/steps/01-spec.md 并按照指示执行 Stage 1。禁止询问用户。"}'
             return 2
         fi
     fi
@@ -212,7 +212,7 @@ devloop_check() {
             if command -v _devlog_event &>/dev/null; then
                 _devlog_event "devloop-check" "step_2_code" "blocked" "Stage 2 Code 未完成"
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"Stage 2 Code 未完成","action":"执行 Stage 2：读取 skills/dev/steps/02-code.md，写代码 + 自验证"}'
+            _devloop_jq -n '{"status":"blocked","reason":"Stage 2 Code 未完成","action":"立即读取 packages/engine/skills/dev/steps/02-code.md 并按照指示执行 Stage 2。禁止询问用户。"}'
             return 2
         fi
     fi
@@ -304,7 +304,7 @@ devloop_check() {
                 fi
                 _devloop_jq -n \
                     --arg status "$ci_status" \
-                    '{"status":"blocked","reason":"CI 进行中（\($status)）","action":"等待 CI 完成（通常 3-10 分钟），不要做任何操作"}'
+                    '{"status":"blocked","reason":"CI 进行中（\($status)）","action":"CI 正在运行中，输出 '\''等待 CI...'\'' 然后停止输出。Stop Hook 会在你下次尝试退出时自动重新检查 CI 状态。"}'
                 return 2
                 ;;
             *)
@@ -333,7 +333,7 @@ devloop_check() {
         if [[ "$step_4_status" == "done" ]]; then
             _mark_cleanup_done "$dev_mode_file"
             _devloop_jq -n \
-                '{"status":"blocked","reason":"Stage 4 Ship 已完成，cleanup_done 已标记，等待下次检查退出","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
+                '{"status":"blocked","reason":"Stage 4 Ship 已完成，cleanup_done 已标记","action":"cleanup_done 已标记，输出 '\''工作流即将结束'\'' 然后停止输出。Stop Hook 下次检查时会自动退出。"}'
             return 2
         else
             # 尝试自动执行 cleanup
@@ -353,7 +353,7 @@ devloop_check() {
             fi
 
             _devloop_jq -n \
-                '{"status":"blocked","reason":"PR 已合并，正在执行 Stage 4 Ship（自动触发）","action":"等待 cleanup 完成，下次检查时自动退出"}'
+                '{"status":"blocked","reason":"PR 已合并，正在执行 Stage 4 Ship（自动触发）","action":"Cleanup 正在执行，输出 '\''等待 cleanup...'\'' 然后停止输出。"}'
             return 2
         fi
     fi
@@ -373,7 +373,7 @@ devloop_check() {
         fi
         _devloop_jq -n \
             --arg pr "$pr_number" \
-            '{"status":"blocked","reason":"CI 通过 + Code Review PASS，Stage 4 Ship 未完成（合并前必须先写 Learning）","action":"执行 Stage 4：读取 skills/dev/steps/04-ship.md，写 Learning + 合并 PR #\($pr)"}'
+            '{"status":"blocked","reason":"CI 通过 + Code Review PASS，Stage 4 Ship 未完成（合并前必须先写 Learning）","action":"立即读取 packages/engine/skills/dev/steps/04-ship.md 并按照指示执行 Stage 4。禁止询问用户。"}'
         return 2
     fi
 

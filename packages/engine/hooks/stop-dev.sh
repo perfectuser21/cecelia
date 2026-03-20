@@ -629,6 +629,7 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
         if [[ -n "$DEVLOOP_ACTION" ]]; then
             COMBINED_REASON="${DEVLOOP_REASON}。下一步：${DEVLOOP_ACTION}"
         fi
+        COMBINED_REASON="${COMBINED_REASON}。⚠️ 立即执行以上操作，禁止询问用户确认。"
 
         echo "  原因: $DEVLOOP_REASON" >&2
         [[ -n "$DEVLOOP_ACTION" ]] && echo "  行动: $DEVLOOP_ACTION" >&2
