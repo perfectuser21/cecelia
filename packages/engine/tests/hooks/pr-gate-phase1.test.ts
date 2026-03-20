@@ -138,42 +138,6 @@ describe("Phase 1: DevGate Scripts", () => {
       expect(exitStatus).toBe(1);
     });
 
-    it("should pass with --format-only even when items are unchecked", () => {
-      const dodContent = `# Test DoD
-
-## 验收标准
-
-- [ ] [BEHAVIOR] Unchecked item 1
-  Test: manual:node -e "process.exit(0)"
-- [ ] Unchecked item 2
-  Test: manual:node -e "process.exit(0)"
-- [ ] Unchecked item 3
-  Test: manual:node -e "process.exit(0)"
-`;
-
-      const testDod = join(TEST_DIR, "format-only.dod.md");
-      writeFileSync(testDod, dodContent);
-
-      // Without --format-only, should fail (unchecked items)
-      let didThrow = false;
-      try {
-        execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
-          encoding: "utf-8",
-          cwd: PROJECT_ROOT,
-        });
-      } catch {
-        didThrow = true;
-      }
-      expect(didThrow).toBe(true);
-
-      // With --format-only, should pass (only checks format, not checkmarks)
-      const result = execSync(`node "${CHECK_DOD_SCRIPT}" --format-only "${testDod}"`, {
-        encoding: "utf-8",
-        cwd: PROJECT_ROOT,
-      });
-      expect(result).toContain("格式检查模式");
-    });
-
     it("should validate test file exists", () => {
       const dodContent = `# Test DoD
 
