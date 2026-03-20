@@ -15,6 +15,16 @@
 #   - manual: 无 test 字段，需人工验证
 #
 # ============================================================================
+#
+# 编号说明：
+# 历史条目使用旧编号体系（Step 7-11），对应关系：
+#   Step 7-8 (PR+Push) → Stage 3: Integrate
+#   Step 9 (CI)        → Stage 3: Integrate
+#   Step 10 (Learning) → Stage 4: Ship
+#   Step 11 (Cleanup)  → Stage 4: Ship
+#   Step 6.5 (Simplify) → 已删除，融入 code_review_gate
+# 新条目统一使用 4-Stage 编号：Spec/Code/Integrate/Ship
+# ============================================================================
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
@@ -3240,24 +3250,10 @@ skills:
       run: "bash scripts/test-dev-health.sh"
     test: "manual:bash packages/engine/scripts/test-dev-health.sh"
 
-  - id: S4-001
-    feature: cto-review
-    name: "CTO 代码审查 Skill — 五维 PASS/FAIL 判断"
-    scope: skill
-    priority: P1
-    trigger: [PR]
-    method: manual
-    tags: [cto-review, engine, skill, quality]
-    owner: engine
-    steps:
-      given: "Brain 派发 task_type=cto_review 任务到西安 Codex"
-      when: "Codex 执行 /cto-review skill"
-      then: "读取 enriched PRD + DoD + diff，从五个维度（需求符合度/架构合理性/代码质量/DoD符合度/安全性）判断 PASS/WARN/FAIL，回调 Brain execution-callback"
-    evidence:
-      type: code
-      file: "skills/cto-review/SKILL.md"
-      contains: "execution-callback"
-    test: "tests/skills/cto-review.test.ts"
+  # DEPRECATED: cto-review 已被 code_review_gate 替代（Pipeline v2），Skill 目录已删除
+  # - id: S4-001
+  #   feature: cto-review
+  #   name: "CTO 代码审查 Skill — 五维 PASS/FAIL 判断（已废弃，替代：code_review_gate）"
 
   - id: S4-002
     feature: S4
@@ -3277,62 +3273,20 @@ skills:
       run: "bash -c 'test -f packages/engine/skills/intent-expand/SKILL.md'"
     test: "tests/skills/intent-expand.test.ts"
 
-  - id: S4-003
-    feature: S4
-    name: "code-quality skill — 代码质量4维度审查（垃圾/重复/简洁/规范）"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: manual
-    tags: [code-quality, engine, skill, quality, codex]
-    owner: engine
-    steps:
-      given: "Brain 派发 task_type=code_quality_review 任务到西安 Codex"
-      when: "Codex 执行 /code-quality skill"
-      then: "读取 diff + Task Card，从4维度（垃圾代码/重复逻辑/简洁性/命名规范）审查，输出 PASS/FAIL + FAIL_REASONS，回调 Brain execution-callback"
-    evidence:
-      type: code
-      file: "skills/code-quality/SKILL.md"
-      contains: "execution-callback"
-    test: "tests/skills/code-quality.test.ts"
+  # DEPRECATED: code-quality 已被 code_review_gate 替代（Pipeline v2），Skill 目录已删除
+  # - id: S4-003
+  #   feature: S4
+  #   name: "code-quality skill — 代码质量4维度审查（已废弃，替代：code_review_gate）"
 
-  - id: S4-004
-    feature: S4
-    name: "prd-audit skill — PRD覆盖审计（MATCH/DOWNGRADED/MISSING三态判定）"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: manual
-    tags: [prd-audit, engine, skill, quality, codex]
-    owner: engine
-    steps:
-      given: "Brain 派发 task_type=prd_coverage_audit 任务到西安 Codex"
-      when: "Codex 执行 /prd-audit skill"
-      then: "对比 Task Card 承诺 vs 实际 diff，逐条判定 MATCH/DOWNGRADED/MISSING，输出 PASS/FAIL，回调 Brain execution-callback"
-    evidence:
-      type: code
-      file: "skills/prd-audit/SKILL.md"
-      contains: "execution-callback"
-    test: "tests/skills/prd-audit.test.ts"
+  # DEPRECATED: prd-audit 已被 prd-review（spec_review）替代（Pipeline v2），Skill 目录已删除
+  # - id: S4-004
+  #   feature: S4
+  #   name: "prd-audit skill — PRD覆盖审计（已废弃，替代：spec_review）"
 
-  - id: S4-005
-    feature: S4
-    name: "dod-verify skill — DoD 独立验证（逐条执行 Test 命令报告 PASS/FAIL）"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: manual
-    tags: [dod-verify, engine, skill, quality, codex]
-    owner: engine
-    steps:
-      given: "Brain 派发 task_type=dod_verify 任务到 Codex"
-      when: "Codex 执行 /dod-verify skill"
-      then: "读取 Task Card DoD 条目，逐条执行 Test 命令，汇总 PASS/FAIL 结果，回调 Brain execution-callback"
-    evidence:
-      type: code
-      file: "skills/dod-verify/SKILL.md"
-      contains: "execution-callback"
-    test: "tests/skills/dod-verify.test.ts"
+  # DEPRECATED: dod-verify 已被 spec-review（spec_review）替代（Pipeline v2），Skill 目录已删除
+  # - id: S4-005
+  #   feature: S4
+  #   name: "dod-verify skill — DoD 独立验证（已废弃，替代：spec_review）"
 
 # ============================================================================
 # Changelog

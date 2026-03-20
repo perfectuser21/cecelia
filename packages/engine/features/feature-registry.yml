@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.8.0"
+    date: "2026-03-21"
+    summary: "fix(engine): Pipeline v2 最终清理 — 删旧 Skill（cto-review/code-quality/prd-audit/dod-verify）+ 标注旧编号 + 更新文档"
+    scope: skills
+    breaking: false
+    feature_id: pipeline-v2-final-cleanup
   - version: "13.7.4"
     date: "2026-03-20"
     summary: "fix(engine): 删除 agent_seal 旧审查系统残留 — 已被 Codex Gate 替代"
