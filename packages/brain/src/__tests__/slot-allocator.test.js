@@ -82,7 +82,8 @@ import {
   countAutoDispatchInProgress,
   countCodexInProgress,
   getQueueDepth,
-  MAX_CODEX_CONCURRENT,
+  getCodexMaxConcurrent,
+  CODEX_ACCOUNT_COUNT,
   calculateSlotBudget,
   getSlotStatus,
 } from '../slot-allocator.js';
@@ -361,9 +362,13 @@ describe('countCodexInProgress', () => {
   });
 });
 
-describe('MAX_CODEX_CONCURRENT', () => {
-  it('should equal 3 (matching 3 Codex accounts)', () => {
-    expect(MAX_CODEX_CONCURRENT).toBe(3);
+describe('CODEX_ACCOUNT_COUNT', () => {
+  it('should equal 5 (matching 5 Codex accounts)', () => {
+    expect(CODEX_ACCOUNT_COUNT).toBe(5);
+  });
+
+  it('getCodexMaxConcurrent 返回函数', () => {
+    expect(typeof getCodexMaxConcurrent).toBe('function');
   });
 });
 
