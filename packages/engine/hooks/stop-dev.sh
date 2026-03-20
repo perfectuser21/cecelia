@@ -571,41 +571,8 @@ if [[ "$_SEAL_FAIL" == "true" ]]; then
     exit 2
 fi
 
-# ===== Agent Seal 完整性检查（Gate 2 双签验证）=====
-# 检查 .dev-agent-seal.${BRANCH} 中是否有对应的 step_N_agent: approved
-_AGENT_SEAL_FILE="$PROJECT_ROOT/.dev-agent-seal.${BRANCH_NAME}"
-# worktree fallback: agent-seal 同样需要在 worktree 路径查找
-if [[ ! -f "$_AGENT_SEAL_FILE" ]]; then
-    _agent_seal_dir=$(dirname "$DEV_LOCK_FILE" 2>/dev/null || echo "")
-    if [[ -n "$_agent_seal_dir" && -f "$_agent_seal_dir/.dev-agent-seal.${BRANCH_NAME}" ]]; then
-        _AGENT_SEAL_FILE="$_agent_seal_dir/.dev-agent-seal.${BRANCH_NAME}"
-    fi
-    if [[ ! -f "$_AGENT_SEAL_FILE" && -n "${_WT_ACTIVE_PATH:-}" && -f "$_WT_ACTIVE_PATH/.dev-agent-seal.${BRANCH_NAME}" ]]; then
-        _AGENT_SEAL_FILE="$_WT_ACTIVE_PATH/.dev-agent-seal.${BRANCH_NAME}"
-    fi
-fi
-_AGENT_SEAL_FAIL=false
-for _step in "${_SEALED_STEPS[@]}"; do
-    if grep -q "^${_step}: done" "$DEV_MODE_FILE" 2>/dev/null; then
-        # step_1_taskcard → step_1_agent, step_2_code → step_2_agent, step_4_learning → step_4_agent
-        _agent_key=$(echo "$_step" | sed 's/^\(step_[0-9]\+\).*/\1_agent/')
-        if ! grep -q "^${_agent_key}: approved" "$_AGENT_SEAL_FILE" 2>/dev/null; then
-            echo "  ⚠️  [Gate 2] ${_step} 标记为 done 但无 agent_seal" >&2
-            echo "     agent_seal 文件: .dev-agent-seal.${BRANCH_NAME}" >&2
-            echo "     期望 key: ${_agent_key}: approved@TIMESTAMP" >&2
-            _AGENT_SEAL_FAIL=true
-        fi
-    fi
-done
-if [[ "$_AGENT_SEAL_FAIL" == "true" ]]; then
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: Gate 2 agent_seal 缺失]" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    save_block_reason "Gate 2 agent_seal 缺失"
-    jq -n '{"decision": "block", "reason": "Gate 2 agent_seal 缺失：step_N 标记 done 但 .dev-agent-seal 中无对应 approved 记录。请确保每个步骤经过 Gate 2 Subagent 审查并写入 agent_seal。"}'
-    exit 2
-fi
+# v4.1: Agent Seal（Gate 2）已删除 — 审查由 Codex Gate（spec_review/code_review_gate）替代
+# 旧的 .dev-agent-seal 检查在 Pipeline v2 中不再需要
 
 echo "" >&2
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2

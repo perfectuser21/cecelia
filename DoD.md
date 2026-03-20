@@ -1,28 +1,16 @@
----
-id: task-cp-20260320-fix-verify-step-4stage
-type: task-card
-branch: cp-20260320-fix-verify-step-4stage
-created: 2026-03-20
----
+# DoD: 删除 agent_seal 旧审查系统残留
 
-# Task Card: verify-step.sh Stage 1 Gate 兼容 4-Stage Pipeline
+- [x] [ARTIFACT] verify-step.sh 删除所有 Gate 2 agent_seal 检查
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/verify-step.sh','utf8');if(c.includes('agent_seal'))process.exit(1)"
 
-## 需求（What & Why）
-**功能描述**: Stage 1 Gate 跳过 DoD 完整检查，避免在 Spec 阶段因未勾选 DoD 被拦截
-**背景**: 新 4-Stage Pipeline 中，Stage 1 只写 DoD 条目，验证在 Stage 2
+- [x] [ARTIFACT] stop-dev.sh 删除 agent_seal 完整性检查块
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/stop-dev.sh','utf8');if(c.includes('AGENT_SEAL'))process.exit(1)"
 
-## 成功标准
-1. [ARTIFACT] verify-step.sh Stage 1 Gate 1 跳过 DoD 完整检查
-2. [BEHAVIOR] Stage 1 不再因未勾选 DoD 项被拦截
-3. [GATE] CI 全部通过
+- [x] [ARTIFACT] bash-guard.sh 删除 agent_seal 白名单
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/bash-guard.sh','utf8');if(c.includes('agent-seal'))process.exit(1)"
 
-## 验收条件（DoD）
+- [x] [BEHAVIOR] verify-step 测试全通过
+  Test: manual:bash -c "cd packages/engine && npx vitest run tests/hooks/verify-step.test.ts 2>&1 | tail -3"
 
-- [x] [ARTIFACT] verify-step.sh Stage 1 Gate 1 跳过 DoD 完整检查
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/verify-step.sh','utf8');if(!c.includes('Stage 1'))process.exit(1)"
-
-- [x] [BEHAVIOR] Stage 1 不再因未勾选 DoD 项被拦截
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/verify-step.sh','utf8');if(c.includes('check-dod-mapping'))process.exit(1)"
-
-- [x] [GATE] 所有现有测试通过
-  Test: manual:bash -c "npm test 2>&1 | tail -5"
+- [x] [GATE] Engine 版本 bump 到 13.7.4
+  Test: manual:node -e "const p=require('./packages/engine/package.json');if(p.version!=='13.7.4')process.exit(1)"
