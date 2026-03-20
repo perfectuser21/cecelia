@@ -2869,4 +2869,69 @@ router.get('/work/streams', async (_req, res) => {
   }
 });
 
+// ============================================================
+// POST /dispatch-now — 不经过 tick loop，直接派发任务执行
+// ============================================================
+// 用途：/dev 工作流注册 Codex 审查任务后立即触发，不依赖调度器状态
+// 调用 executor.triggerCeceliaRun() 直接执行（完全独立于 tick loop）
+router.post('/dispatch-now', async (req, res) => {
+  try {
+    const { task_id } = req.body;
+    if (!task_id) {
+      return res.status(400).json({ error: 'task_id is required' });
+    }
+
+    // 从 DB 加载 task
+    const result = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found', id: task_id });
+    }
+
+    const task = result.rows[0];
+
+    // 检查 task 状态（不重复执行已完成的任务）
+    if (task.status === 'completed' || task.status === 'cancelled') {
+      return res.status(409).json({
+        error: `Task already ${task.status}`,
+        id: task_id,
+        status: task.status,
+      });
+    }
+
+    // 标记为 in_progress
+    await pool.query(
+      'UPDATE tasks SET status = $1, started_at = NOW() WHERE id = $2',
+      ['in_progress', task_id]
+    );
+
+    // 直接触发执行（不经过 tick loop）
+    const execResult = await triggerCeceliaRun(task);
+
+    if (execResult.success) {
+      console.log(`[dispatch-now] Task ${task_id} dispatched successfully (executor: ${execResult.executor || 'local'})`);
+      res.json({
+        success: true,
+        taskId: task_id,
+        runId: execResult.runId,
+        executor: execResult.executor || 'local',
+      });
+    } else {
+      // 执行失败：回退 status
+      await pool.query(
+        'UPDATE tasks SET status = $1 WHERE id = $2',
+        ['queued', task_id]
+      );
+      console.error(`[dispatch-now] Task ${task_id} dispatch failed: ${execResult.error}`);
+      res.status(500).json({
+        success: false,
+        error: execResult.error,
+        taskId: task_id,
+      });
+    }
+  } catch (err) {
+    console.error(`[dispatch-now] Error: ${err.message}`);
+    res.status(500).json({ error: 'Failed to dispatch', details: err.message });
+  }
+});
+
 export default router;
