@@ -3315,6 +3315,25 @@ skills:
       contains: "execution-callback"
     test: "tests/skills/prd-audit.test.ts"
 
+  - id: S4-005
+    feature: S4
+    name: "dod-verify skill — DoD 独立验证（逐条执行 Test 命令报告 PASS/FAIL）"
+    scope: skill
+    priority: P2
+    trigger: [PR]
+    method: manual
+    tags: [dod-verify, engine, skill, quality, codex]
+    owner: engine
+    steps:
+      given: "Brain 派发 task_type=dod_verify 任务到 Codex"
+      when: "Codex 执行 /dod-verify skill"
+      then: "读取 Task Card DoD 条目，逐条执行 Test 命令，汇总 PASS/FAIL 结果，回调 Brain execution-callback"
+    evidence:
+      type: code
+      file: "skills/dod-verify/SKILL.md"
+      contains: "execution-callback"
+    test: "tests/skills/dod-verify.test.ts"
+
 # ============================================================================
 # Changelog
 # ============================================================================

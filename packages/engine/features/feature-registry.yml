@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.4.2"
+    date: "2026-03-20"
+    summary: "feat(engine): /dev Robust 改造 — 砍假 subagent + 主 agent 自验证 + dod-verify skill + Codex dispatch-now 审查"
+    scope: skills
+    breaking: false
+    feature_id: dev-robust-cleanup
   - version: "13.4.0"
     date: "2026-03-20"
     summary: "feat(engine): Codex 审查 Evidence 文件 — 3 个 Codex Skill 完成后写 .dev-codex-evidence.{branch}.json 并 git push，格式定义在 docs/codex-evidence-spec.md"
