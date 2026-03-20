@@ -80,7 +80,7 @@ const SERVERS = [
  * 通过 SSH 执行远程命令，超时 5 秒
  */
 async function sshExec(server, cmd) {
-  const sshCmd = `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ${server.sshUser}@${server.tailscaleIp} ${JSON.stringify(cmd)}`;
+  const sshCmd = `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes "${server.sshUser}@${server.tailscaleIp}" ${JSON.stringify(cmd)}`;
   const { stdout } = await execAsync(sshCmd, { timeout: 8000 });
   return stdout.trim();
 }
