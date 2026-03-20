@@ -63,6 +63,13 @@ vi.mock('../token-budget-planner.js', () => ({
   getExecutorAffinity: vi.fn(() => ({ primary: 'claude', fallback: 'codex', no_downgrade: false })),
 }));
 
+// Mock fleet-resource-cache（防止 slot-allocator import 时触发 SSH 采集）
+vi.mock('../fleet-resource-cache.js', () => ({
+  getFleetStatus: vi.fn(() => []),
+  getRemoteCapacity: vi.fn(() => null),
+  isServerOnline: vi.fn(() => false),
+}));
+
 import { execSync } from 'child_process';
 import { checkServerResources, getEffectiveMaxSeats, getBudgetCap } from '../executor.js';
 import pool from '../db.js';
