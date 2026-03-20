@@ -89,7 +89,7 @@ retry_count: 0`
 
     // 验证修复注释存在
     expect(hookContent).toContain('v12.8.0')
-    expect(hookContent).toContain('删除了"6步全部done"的提前退出逻辑')
+    expect(hookContent).toContain('删除了"11步全部done"的提前退出逻辑')
     expect(hookContent).toContain('步骤状态（step_*）只用于进度展示')
     expect(hookContent).toContain('流程控制只依赖实际状态检查')
   })
