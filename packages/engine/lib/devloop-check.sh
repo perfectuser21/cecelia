@@ -321,7 +321,7 @@ devloop_check() {
     fi
 
     # ===== 条件 5: code_review 是否通过？（CI 通过后的 Codex Gate）=====
-    if ! _check_codex_review "code_review_gate_task_id" "code_review_gate_status" "Code Review" "$dev_mode_file"; then
+    if ! _check_codex_review "code_review_task_id" "code_review_status" "Code Review" "$dev_mode_file"; then
         return 2
     fi
 
