@@ -124,7 +124,7 @@ $found_fake
     local _dod_check="$PROJECT_ROOT/packages/engine/scripts/devgate/check-dod-mapping.cjs"
     if [[ -f "$_dod_check" ]]; then
         echo "  🔍 [Gate 1] 运行 CI 镜像检查（check-dod-mapping.cjs）..." >&2
-        if ! node "$_dod_check" >/dev/null 2>&1; then
+        if ! node "$_dod_check" --format-only >/dev/null 2>&1; then
             _fail "Gate 1 失败：DoD 映射检查不通过（与 CI L1 相同检查）
   运行以下命令查看详情：
     node packages/engine/scripts/devgate/check-dod-mapping.cjs

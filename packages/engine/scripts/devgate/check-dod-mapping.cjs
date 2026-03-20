@@ -529,7 +529,8 @@ function getDodFilePath(projectRoot, explicitFile) {
 
 function main() {
   const args = process.argv.slice(2);
-  const dodFileArg = args[0];
+  const formatOnly = args.includes('--format-only');
+  const dodFileArg = args.find(a => !a.startsWith('--'));
 
   // L3 fix: 找项目根目录（兼容 Windows）
   let projectRoot = process.cwd();
@@ -680,7 +681,7 @@ function main() {
     process.exit(1);
   }
 
-  if (hasUnchecked) {
+  if (hasUnchecked && !formatOnly) {
     console.log(
       `  ${RED}❌ 未验证项检查失败${RESET} (${uncheckedItems.length} 项未勾选)`
     );
@@ -688,6 +689,13 @@ function main() {
     console.log("  请在 Step 7 执行 DoD 验证后将所有 [ ] 改为 [x]");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     process.exit(1);
+  }
+
+  if (hasUnchecked && formatOnly) {
+    console.log(
+      `  ${GREEN}⏭ 格式检查模式：跳过未勾选检查${RESET} (${uncheckedItems.length} 项待验证)`
+    );
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   }
 
   console.log(`  ${GREEN}✅ 映射检查通过${RESET} (${passCount} 项，全部已验证)`);
