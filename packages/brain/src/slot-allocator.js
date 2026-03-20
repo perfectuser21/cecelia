@@ -16,6 +16,7 @@ import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMax
 import pool from './db.js';
 import { listProcessesWithElapsed, listProcessesWithPpid } from './platform-utils.js';
 import { calculateBudgetState } from './token-budget-planner.js';
+import { getFleetStatus, getRemoteCapacity } from './fleet-resource-cache.js';
 
 // ============================================================
 // Constants
@@ -27,7 +28,22 @@ const CECELIA_RESERVED = 0;                  // Pool A: removed static reserve �
 const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent (1 slot suffices)
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
-const MAX_CODEX_CONCURRENT = 3;             // Pool D: Codex 专属并发上限（对应 3 个 Codex 账号）
+const CODEX_ACCOUNT_COUNT = 5;              // Codex 账号总数（硬上限）
+const CODEX_FALLBACK_CONCURRENT = 3;        // Fleet cache 不可用时的降级值
+
+/**
+ * 动态计算 Codex 并发上限（基于 fleet cache 的远程机器 effectiveSlots）
+ * 上限不超过 CODEX_ACCOUNT_COUNT（5 个账号）
+ */
+function getCodexMaxConcurrent() {
+  const m4 = getRemoteCapacity('xian-mac-m4');
+  const m1 = getRemoteCapacity('xian-mac-m1');
+  const remoteSlots = (m4?.online ? m4.effectiveSlots : 0) + (m1?.online ? m1.effectiveSlots : 0);
+  if (remoteSlots === 0 && !m4?.online && !m1?.online) {
+    return CODEX_FALLBACK_CONCURRENT; // fleet cache 不可用时降级
+  }
+  return Math.min(remoteSlots, CODEX_ACCOUNT_COUNT);
+}
 const BACKPRESSURE_THRESHOLD = 5;           // 队列深度超过此值时触发降速
 const BACKPRESSURE_BURST_LIMIT = 1;         // 背压激活时 burst limit 压至 1
 
@@ -299,9 +315,10 @@ async function calculateSlotBudget() {
     console.log(`[slot-allocator] Backpressure active: queue_depth=${queueDepth} > ${BACKPRESSURE_THRESHOLD}, override_burst_limit=${BACKPRESSURE_BURST_LIMIT}`);
   }
 
-  // Codex Pool D: concurrent limit for Codex-native tasks
+  // Codex Pool D: concurrent limit for Codex tasks (dynamic based on fleet cache)
   const codexRunning = await countCodexInProgress();
-  const codexAvailable = codexRunning < MAX_CODEX_CONCURRENT;
+  const codexMax = getCodexMaxConcurrent();
+  const codexAvailable = codexRunning < codexMax;
 
   // Token pressure: monitoring only (no longer throttles dispatch)
   // Exception: block dispatch when ALL accounts exhausted (safety valve)
@@ -342,9 +359,10 @@ async function calculateSlotBudget() {
     },
     codex: {
       running: codexRunning,
-      max: MAX_CODEX_CONCURRENT,
+      max: codexMax,
       available: codexAvailable,
     },
+    fleet: getFleetStatus(),
     pressure: resources.metrics.max_pressure,
     resources: {
       effectiveSlots,
@@ -415,7 +433,8 @@ export {
   USER_RESERVED_BASE,
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
-  MAX_CODEX_CONCURRENT,
+  getCodexMaxConcurrent,
+  CODEX_ACCOUNT_COUNT,
   BACKPRESSURE_THRESHOLD,
   BACKPRESSURE_BURST_LIMIT,
   SLOT_BUFFER_MAX_DELTA,
