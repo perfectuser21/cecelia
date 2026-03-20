@@ -214,15 +214,15 @@ report_step_to_brain() {
         step_num=1; step_name="spec"
     elif grep -q "^step_0_worktree: done" "$mode_file" 2>/dev/null; then
         step_num=0; step_name="worktree"
-    # 兼容旧字段名
+    # LEGACY: 旧字段兼容（Pipeline v1 编号），新代码使用 devloop-check.sh 路径
     elif grep -q "^step_5_clean: done" "$mode_file" 2>/dev/null; then
-        step_num=4; step_name="ship"
+        step_num=4; step_name="ship"  # LEGACY: step_5_clean → step_4_ship
     elif grep -q "^step_4_learning: done" "$mode_file" 2>/dev/null; then
-        step_num=4; step_name="ship"
+        step_num=4; step_name="ship"  # LEGACY: step_4_learning → step_4_ship
     elif grep -q "^step_3_prci: done" "$mode_file" 2>/dev/null; then
-        step_num=3; step_name="integrate"
+        step_num=3; step_name="integrate"  # LEGACY: step_3_prci → step_3_integrate
     elif grep -q "^step_1_taskcard: done" "$mode_file" 2>/dev/null; then
-        step_num=1; step_name="spec"
+        step_num=1; step_name="spec"  # LEGACY: step_1_taskcard → step_1_spec
     fi
 
     # 读取分支名
@@ -776,9 +776,9 @@ else
 
     # --- 条件 3: PR 合并？---
     if [[ "$PR_STATE" == "merged" ]]; then
-        # 检查 step_4_ship 或兼容旧字段名 step_5_clean
+        # 检查 step_4_ship；LEGACY: 兼容旧字段名 step_5_clean
         STEP_4_STATUS=$(grep "^step_4_ship:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-        [[ -z "$STEP_4_STATUS" ]] && STEP_4_STATUS=$(grep "^step_5_clean:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+        [[ -z "$STEP_4_STATUS" ]] && STEP_4_STATUS=$(grep "^step_5_clean:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")  # LEGACY: step_5_clean → step_4_ship
         if [[ "$STEP_4_STATUS" == "done" ]]; then
             force_cleanup_worktree "$DEV_MODE_FILE"
             rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \

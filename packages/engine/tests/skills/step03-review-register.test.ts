@@ -16,10 +16,10 @@ const STEP03_PATH = join(
 describe("Stage 3 code_review 审查任务注册", () => {
   const content = readFileSync(STEP03_PATH, "utf8");
 
-  it("CI 通过后包含 code_review 注册逻辑", () => {
-    expect(content).toContain("code_review");
-    expect(content).toContain("code_review_task_id");
-    expect(content).toContain("code_review_status: pending");
+  it("CI 通过后包含 code_review_gate 注册逻辑", () => {
+    expect(content).toContain("code_review_gate");
+    expect(content).toContain("code_review_gate_task_id");
+    expect(content).toContain("code_review_gate_status: pending");
   });
 
   it("Brain 不可用时跳过注册（curl --max-time 5）", () => {

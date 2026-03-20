@@ -24,12 +24,12 @@ describe('devloop-check.sh — 4-Stage Pipeline 门禁条件', () => {
   });
 
   describe('条件 5: code_review 门禁（CI 通过后）', () => {
-    it('包含 code_review_task_id 检查逻辑', () => {
-      expect(content).toContain('code_review_task_id');
+    it('包含 code_review_gate_task_id 检查逻辑', () => {
+      expect(content).toContain('code_review_gate_task_id');
     });
 
-    it('包含 code_review_status 状态检查', () => {
-      expect(content).toContain('code_review_status');
+    it('包含 code_review_gate_status 状态检查', () => {
+      expect(content).toContain('code_review_gate_status');
     });
 
     it('code_review 检查在 CI 检查之后', () => {
