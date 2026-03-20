@@ -362,6 +362,6 @@ describe('P4: 已 completed 的 project 不重复处理', () => {
     const [mainSql] = pool.query.mock.calls[0];
     expect(mainSql).toContain('NOT EXISTS');
     expect(mainSql).toContain('AND EXISTS');
-    expect(mainSql).toContain("type = 'initiative'");
+    expect(mainSql).toContain("type IN ('initiative', 'scope')");
   });
 });

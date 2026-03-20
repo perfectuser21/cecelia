@@ -1699,6 +1699,22 @@ async function executeTick() {
     console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
   }
 
+  // 0.8.5. Scope 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkScopeCompletion } = await import('./initiative-closer.js');
+    const scopeResult = await checkScopeCompletion(pool);
+    if (scopeResult.closedCount > 0) {
+      console.log(`[TICK] Scope 完成检查: ${scopeResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'scope_completion_check',
+        closed_count: scopeResult.closedCount,
+        closed: scopeResult.closed,
+      });
+    }
+  } catch (scopeErr) {
+    console.error('[tick] Scope completion check failed (non-fatal):', scopeErr.message);
+  }
+
   // 0.9. Project 完成检查：每次 tick 都跑，纯 SQL，无 LLM
   try {
     const { checkProjectCompletion } = await import('./initiative-closer.js');

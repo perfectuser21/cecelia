@@ -140,8 +140,9 @@ async function checkInitiativeCompletion(pool) {
  */
 async function checkProjectCompletion(pool) {
   // 查所有满足条件的 active Project：
-  //   - 存在至少一个 initiative（避免误关空 project）
-  //   - 没有 non-completed 的 initiative
+  //   - 存在至少一个子项（scope 或 initiative，避免误关空 project）
+  //   - 没有 non-completed 的子项（scope 或 initiative）
+  // 支持两种结构：Project→Scope→Initiative（新）和 Project→Initiative（旧）
   const projectsResult = await pool.query(`
     SELECT p.id, p.name, p.kr_id
     FROM projects p
@@ -150,13 +151,13 @@ async function checkProjectCompletion(pool) {
       AND NOT EXISTS (
         SELECT 1 FROM projects child
         WHERE child.parent_id = p.id
-          AND child.type = 'initiative'
+          AND child.type IN ('initiative', 'scope')
           AND child.status != 'completed'
       )
       AND EXISTS (
         SELECT 1 FROM projects child
         WHERE child.parent_id = p.id
-          AND child.type = 'initiative'
+          AND child.type IN ('initiative', 'scope')
       )
   `);
 
@@ -306,4 +307,64 @@ async function activateNextInitiatives(pool, slotsOverride) {
   return activated;
 }
 
-export { checkInitiativeCompletion, checkProjectCompletion, activateNextInitiatives };
+/**
+ * Scope 闭环检查器
+ *
+ * 逻辑：
+ *   1. 查所有 type='scope' AND status='active' 的 projects
+ *   2. 对每个 scope，检查其下所有 initiative 是否全部 completed
+ *   3. 如果 total > 0 AND 没有 non-completed 的 initiative
+ *      → UPDATE projects SET status='completed', completed_at=NOW()
+ *      → INSERT INTO cecelia_events (event_type='scope_completed', ...)
+ *   4. 返回关闭的 scope 数量
+ */
+async function checkScopeCompletion(pool) {
+  const scopesResult = await pool.query(`
+    SELECT p.id, p.name, p.parent_id
+    FROM projects p
+    WHERE p.type = 'scope'
+      AND p.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM projects child
+        WHERE child.parent_id = p.id
+          AND child.type = 'initiative'
+          AND child.status != 'completed'
+      )
+      AND EXISTS (
+        SELECT 1 FROM projects child
+        WHERE child.parent_id = p.id
+          AND child.type = 'initiative'
+      )
+  `);
+
+  const scopes = scopesResult.rows;
+  if (scopes.length === 0) {
+    return { closedCount: 0, closed: [] };
+  }
+
+  const closed = [];
+
+  for (const scope of scopes) {
+    await pool.query(
+      `UPDATE projects SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [scope.id]
+    );
+
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ('scope_completed', 'initiative_closer', $1)
+    `, [JSON.stringify({
+      scope_id: scope.id,
+      scope_name: scope.name,
+      parent_project_id: scope.parent_id,
+      timestamp: new Date().toISOString(),
+    })]);
+
+    console.log(`[initiative-closer] Scope completed: ${scope.name} (${scope.id})`);
+    closed.push({ id: scope.id, name: scope.name, parent_id: scope.parent_id });
+  }
+
+  return { closedCount: closed.length, closed };
+}
+
+export { checkInitiativeCompletion, checkScopeCompletion, checkProjectCompletion, activateNextInitiatives };

@@ -573,6 +573,41 @@ router.post('/action/create-project', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/brain/action/create-scope
+ * Create a Scope (写入 projects 表, type='scope')
+ * Scope = 2-3 天的功能边界分组，介于 Project 和 Initiative 之间
+ */
+router.post('/action/create-scope', async (req, res) => {
+  try {
+    const { name, parent_id, description, domain, owner_role } = req.body;
+
+    if (!name || !parent_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'name and parent_id are required'
+      });
+    }
+
+    const { createScope } = await import('../actions.js');
+    const result = await createScope({
+      name,
+      parent_id,
+      description,
+      domain,
+      owner_role,
+    });
+
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create scope',
+      details: err.message
+    });
+  }
+});
+
 router.post('/action/update-task', async (req, res) => {
   const { idempotency_key, trigger, ...params } = req.body;
   const key = idempotency_key || `update-task-${params.task_id}-${params.status || params.priority}`;
