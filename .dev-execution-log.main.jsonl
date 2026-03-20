@@ -1,0 +1,4 @@
+{"ts":"2026-03-20T14:55:30+08:00","source":"verify-step","step":"step1","event":"fail","detail":"Gate 2 未通过：缺少 step_1_agent: approved\n  文件: .dev-agent-seal.main\n  Gate 2 需要 Subagent 语义审查后写入 agent_seal。\n  写入命令：\n    echo \"step_1_agent: approved@$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)\" >> .dev-agent-seal.main","branch":"main"}
+{"ts":"2026-03-21T00:16:15+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"main"}
+{"ts":"2026-03-21T00:16:15+08:00","source":"devloop-check","step":"step_1_spec","event":"blocked","detail":"Stage 1 Spec 未完成","branch":"main"}
+{"ts":"2026-03-21T01:05:45+08:00","source":"verify-step","step":"step1","event":"pass","detail":"Step 1 Task Card 验证通过","branch":"main"}
