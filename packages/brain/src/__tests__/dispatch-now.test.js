@@ -136,7 +136,7 @@ describe('POST /api/brain/dispatch-now', () => {
       id: 'test-task-id',
       title: 'Test Task',
       status: 'queued',
-      task_type: 'cto_review',
+      task_type: 'dev',
     };
 
     // SELECT query

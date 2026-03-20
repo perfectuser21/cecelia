@@ -18,12 +18,11 @@ const VALID_TASK_TYPES = [
   'codex_qa', 'codex_dev', 'codex_playwright', 'code_review', 'decomp_review',
   'pr_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
+  'initiative_execute',
   'suggestion_plan', 'architecture_design', 'architecture_scan',
   'arch_review', 'strategy_session',
-  // 前置审查（Intent Expansion + CTO Review）
-  'intent_expand', 'cto_review',
-  // 质量门禁（Code Quality + PRD Coverage Audit）
-  'code_quality_review', 'prd_coverage_audit',
+  // 前置审查（Intent Expansion）
+  'intent_expand',
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export',
   // Codex Gate 审查任务类型
@@ -55,23 +54,21 @@ const SKILL_WHITELIST = {
   'architecture_scan': '/architect scan',
   'arch_review': '/arch-review review',
   'strategy_session': '/strategy-session',
-  // 前置审查（Intent Expansion + CTO Review）
+  // 前置审查（Intent Expansion）
   'intent_expand': '/intent-expand',  // 意图扩展 → US 本机，查 OKR/Vision 链路补全 PRD
-  'cto_review': '/cto-review',        // CTO 审查 → 西安 Codex，独立审查 PASS/FAIL
-  // 质量门禁（Code Quality + PRD Coverage Audit）
-  'code_quality_review': '/code-quality',  // 代码质量审查 → 西安 Codex，4 维度审查
-  'prd_coverage_audit': '/prd-audit',      // PRD 覆盖审计 → 西安 Codex，承诺 vs 实现
+  // Initiative 执行
+  'initiative_execute': '/dev',       // Initiative 执行 → US 本机，/dev 全流程
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline': '/content-creator',
   'content-research': '/notebooklm',
   'content-generate': '/content-creator',
   'content-review': '/content-creator',
   'content-export': '/content-creator',
-  // Codex Gate 审查任务类型（替代旧的多步审查流程）
-  'prd_review': '/prd-review',              // 替代 decomp_review + prd_coverage_audit
-  'spec_review': '/spec-review',            // 替代 dod_verify + cto_review(单PR)
-  'code_review_gate': '/code-review-gate',  // 替代 code_quality_review
-  'initiative_review': '/initiative-review', // 替代 initiative_verify + cto_review(整体)
+  // Codex Gate 审查任务类型
+  'prd_review': '/prd-review',              // PRD 审查
+  'spec_review': '/spec-review',            // Spec 审查
+  'code_review_gate': '/code-review-gate',  // 代码质量门禁
+  'initiative_review': '/initiative-review', // Initiative 整体审查
 };
 
 // Fallback strategies when primary routing fails
@@ -145,9 +142,7 @@ const LOCATION_MAP = {
   'arch_review': 'us',         // 架构巡检 → US (Sonnet + /arch-review review)
   'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
   'intent_expand': 'us',      // 意图扩展 → US 本机 (查本地 Brain DB，补全 PRD)
-  'cto_review': 'us',          // CTO 审查 → 本机 Codex (独立视角审查 enriched PRD + diff, P0 优先级)
-  'code_quality_review': 'us',   // 代码质量审查 → 本机 Codex (垃圾/重复/过度设计/规范, P0 优先级)
-  'prd_coverage_audit': 'us',    // PRD 覆盖审计 → 本机 Codex (承诺 vs 实现覆盖, P0 优先级)
+  'initiative_execute': 'us',  // Initiative 执行 → US 本机 (/dev 全流程)
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
   'knowledge': 'us',  // 知识记录 → US (Claude)
   'talk': 'hk',       // 对话 → HK (MiniMax)
