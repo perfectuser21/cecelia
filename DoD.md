@@ -12,5 +12,5 @@
 - [x] [BEHAVIOR] verify-step 测试全通过
   Test: manual:bash -c "cd packages/engine && npx vitest run tests/hooks/verify-step.test.ts 2>&1 | tail -3"
 
-- [x] [GATE] Engine 版本 bump 到 13.7.3
-  Test: manual:node -e "const p=require('./packages/engine/package.json');if(p.version!=='13.7.3')process.exit(1)"
+- [x] [GATE] Engine 版本 bump 到 13.7.4
+  Test: manual:node -e "const p=require('./packages/engine/package.json');if(p.version!=='13.7.4')process.exit(1)"
