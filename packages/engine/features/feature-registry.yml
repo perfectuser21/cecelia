@@ -20,15 +20,11 @@ updated: "2026-03-20"
 changelog:
   - version: "13.7.4"
     date: "2026-03-20"
-    summary: "fix(engine): 删除 agent_seal 旧审查系统残留"
-    scope: hooks
-    breaking: false
-    feature_id: remove-agent-seal  - version: "13.7.3"
-    date: "2026-03-20"
     summary: "fix(engine): 删除 agent_seal 旧审查系统残留 — 已被 Codex Gate 替代"
     scope: hooks
     breaking: false
-    feature_id: remove-agent-seal  - version: "13.7.2"
+    feature_id: remove-agent-seal
+  - version: "13.7.2"
     date: "2026-03-20"
     summary: "fix(engine): stop-dev seal worktree fallback + devloop-check 消息强化"
     scope: hooks
