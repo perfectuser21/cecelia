@@ -12,8 +12,11 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 const router = Router();
 
+// 能跑编程任务的机器（供 fleet-resource-cache 使用）
+export const COMPUTE_SERVERS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
+
 // 设备清单（Tailscale IP）
-const SERVERS = [
+export const SERVERS = [
   {
     id: 'us-mac-m4',
     name: '美国 Mac mini M4',
@@ -79,7 +82,7 @@ const SERVERS = [
 /**
  * 通过 SSH 执行远程命令，超时 5 秒
  */
-async function sshExec(server, cmd) {
+export async function sshExec(server, cmd) {
   const sshCmd = `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes "${server.sshUser}@${server.tailscaleIp}" ${JSON.stringify(cmd)}`;
   const { stdout } = await execAsync(sshCmd, { timeout: 8000 });
   return stdout.trim();
@@ -88,7 +91,7 @@ async function sshExec(server, cmd) {
 /**
  * 采集本机状态
  */
-function collectLocalStats() {
+export function collectLocalStats() {
   const cpus = os.cpus();
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
@@ -128,7 +131,7 @@ function collectLocalStats() {
 /**
  * 通过 SSH 采集远程 Unix/macOS 状态
  */
-async function collectRemoteUnixStats(server) {
+export async function collectRemoteUnixStats(server) {
   const script = [
     'echo "---HOSTNAME---"; hostname',
     'echo "---UNAME---"; uname -sm',
