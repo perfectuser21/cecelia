@@ -1864,11 +1864,17 @@ async function triggerMiniMaxExecutor(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
-// 路由规则（v2 — 全局调度改造 Phase 3）：
-//   task_type='dev' → 必须走 Claude Code（依赖 hooks/state machine）
-//   其他所有 task_type → 走 Codex Bridge（选最空闲的机器）
+// 路由规则（v2.1 — 全局调度改造 Phase 3）：
+//   US_ONLY_TYPES → 必须在美国跑（dev 全流程 + dev 关联的 Codex 审查）
+//   其他所有 → 走西安 Codex Bridge
 //   location='hk' → 走 HK MiniMax（不变）
-const DEV_ONLY_TYPES = new Set(['dev']);
+const US_ONLY_TYPES = new Set([
+  'dev',                  // /dev 全流程（依赖 hooks/state machine）
+  'cto_review',           // /dev Step 2.5: CTO 审查（读 worktree diff，本机 Codex）
+  'code_quality_review',  // /dev Step 2.6: 代码质量审查（读 worktree diff）
+  'prd_coverage_audit',   // /dev Step 2.7: PRD 覆盖审计（读 worktree diff）
+  'intent_expand',        // /dev Step 1.5: 意图扩展（查 Brain DB + 补全 PRD）
+]);
 
 async function triggerCeceliaRun(task) {
   const location = getTaskLocation(task.task_type);
@@ -1878,9 +1884,9 @@ async function triggerCeceliaRun(task) {
     return triggerMiniMaxExecutor(task);
   }
 
-  // 2. 非 dev 任务 → 全部走 Codex Bridge
-  if (!DEV_ONLY_TYPES.has(task.task_type)) {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非 dev 任务)`);
+  // 2. 非美国专属任务 → 走西安 Codex Bridge
+  if (!US_ONLY_TYPES.has(task.task_type)) {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非美国专属任务)`);
     return triggerCodexBridge(task);
   }
 
