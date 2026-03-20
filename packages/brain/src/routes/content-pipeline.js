@@ -4,11 +4,15 @@
  * GET  /api/brain/content-types         列出所有已注册内容类型
  * GET  /api/brain/pipelines             列出 content-pipeline 任务
  * POST /api/brain/pipelines             创建新 content-pipeline 任务
+ * POST /api/brain/pipelines/:id/run     手动触发 pipeline 执行（不依赖 tick）
+ * GET  /api/brain/pipelines/:id/stages  查询 pipeline 子任务进度
+ * GET  /api/brain/pipelines/:id/output  查询 pipeline 产出物（manifest）
  */
 
 import express from 'express';
 import pool from '../db.js';
 import { listContentTypes } from '../content-types/content-type-registry.js';
+import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
 
 const router = express.Router();
 
@@ -111,6 +115,118 @@ router.post('/', async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('[routes/content-pipeline] POST / error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /:id/run
+ * 手动触发 pipeline 执行（不依赖 tick 调度器）
+ */
+router.post('/:id/run', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const pipelineResult = await pool.query(
+      `SELECT id, status, payload FROM tasks WHERE id = $1 AND task_type = 'content-pipeline'`,
+      [id]
+    );
+
+    if (pipelineResult.rows.length === 0) {
+      return res.status(404).json({ error: `Pipeline ${id} 不存在` });
+    }
+
+    const pipeline = pipelineResult.rows[0];
+    if (pipeline.status === 'completed') {
+      return res.status(400).json({ error: 'Pipeline 已完成' });
+    }
+
+    res.status(202).json({ ok: true, pipeline_id: id, status: 'running' });
+
+    // 异步执行编排 + 逐阶段执行
+    (async () => {
+      try {
+        await orchestrateContentPipelines();
+        let rounds = 8;
+        while (rounds-- > 0) {
+          const { executed } = await executeQueuedContentTasks();
+          if (executed === 0) break;
+          await orchestrateContentPipelines();
+        }
+        console.log(`[content-pipeline] run 完成: pipeline=${id}`);
+      } catch (err) {
+        console.error(`[content-pipeline] run 失败: pipeline=${id} error=${err.message}`);
+        await pool.query(
+          `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
+          [id]
+        ).catch(() => {});
+      }
+    })();
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /:id/run error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /:id/stages
+ * 查询 pipeline 子任务进度
+ */
+router.get('/:id/stages', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(`
+      SELECT task_type, status, started_at, completed_at
+      FROM tasks
+      WHERE payload->>'parent_pipeline_id' = $1
+      ORDER BY created_at ASC
+    `, [id]);
+
+    const stages = {};
+    for (const row of result.rows) {
+      stages[row.task_type] = {
+        status: row.status,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+      };
+    }
+    res.json({ pipeline_id: id, stages });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /:id/output
+ * 查询 pipeline 产出物
+ */
+router.get('/:id/output', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const pipelineResult = await pool.query(
+      `SELECT payload, status FROM tasks WHERE id = $1`, [id]
+    );
+    if (pipelineResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Pipeline 不存在' });
+    }
+
+    const pipeline = pipelineResult.rows[0];
+    const keyword = pipeline.payload?.keyword || '';
+    const slug = keyword.replace(/[^a-zA-Z0-9\u4e00-\u9fff-]/g, '-').replace(/-+/g, '-').substring(0, 40);
+    const imageBase = 'http://38.23.47.81:9998/images/';
+
+    const output = {
+      keyword,
+      status: pipeline.status,
+      images: {
+        cover: `${imageBase}${slug}-cover.png`,
+        cards: Array.from({ length: 5 }, (_, i) =>
+          `${imageBase}${slug}-${String(i + 1).padStart(2, '0')}.png`
+        ),
+      },
+    };
+    res.json({ pipeline_id: id, output });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
