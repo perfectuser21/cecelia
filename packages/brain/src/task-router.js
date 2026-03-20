@@ -25,7 +25,9 @@ const VALID_TASK_TYPES = [
   // 质量门禁（Code Quality + PRD Coverage Audit）
   'code_quality_review', 'prd_coverage_audit',
   // 内容工厂 Pipeline（Content Factory）
-  'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export'
+  'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export',
+  // Codex Gate 审查任务类型
+  'prd_review', 'spec_review', 'code_review_gate', 'initiative_review'
 ];
 
 // Skill whitelist based on task type
@@ -64,7 +66,12 @@ const SKILL_WHITELIST = {
   'content-research': '/notebooklm',
   'content-generate': '/content-creator',
   'content-review': '/content-creator',
-  'content-export': '/content-creator'
+  'content-export': '/content-creator',
+  // Codex Gate 审查任务类型（替代旧的多步审查流程）
+  'prd_review': '/prd-review',              // 替代 decomp_review + prd_coverage_audit
+  'spec_review': '/spec-review',            // 替代 dod_verify + cto_review(单PR)
+  'code_review_gate': '/code-review-gate',  // 替代 code_quality_review
+  'initiative_review': '/initiative-review', // 替代 initiative_verify + cto_review(整体)
 };
 
 // Fallback strategies when primary routing fails
@@ -152,6 +159,11 @@ const LOCATION_MAP = {
   'content-generate': 'xian',  // 生成阶段 → 西安 (/content-creator)
   'content-review': 'xian',    // 审核阶段 → 西安（纯规则检查）
   'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
+  // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
+  'prd_review': 'us',            // PRD 审查 → US 本机 Codex
+  'spec_review': 'us',           // Spec 审查 → US 本机 Codex
+  'code_review_gate': 'us',      // 代码质量门禁 → US 本机 Codex
+  'initiative_review': 'us',     // Initiative 整体审查 → US 本机 Codex
 };
 
 // Default location

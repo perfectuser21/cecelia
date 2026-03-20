@@ -18,7 +18,7 @@
 import pool from './db.js';
 import { computeCapacity, isAtCapacity } from './capacity.js';
 import { validateTaskDescription } from './task-quality-gate.js';
-import { getDomainRole, ROLES } from './role-registry.js';
+// [已清理] getDomainRole, ROLES — 不再需要（initiative_plan 路径已删除）
 
 // Dedup window: skip if decomposition task completed within this period
 const DEDUP_WINDOW_HOURS = 24;
@@ -50,78 +50,8 @@ async function hasExistingDecompositionTask(goalId) {
   return result.rows.length > 0;
 }
 
-/**
- * Check if an initiative_plan task already exists for the given initiative (project_id).
- * Prevents duplicate initiative_plan tasks for the same initiative.
- */
-async function hasExistingInitiativePlanTask(initiativeId) {
-  const result = await pool.query(`
-    SELECT id FROM tasks
-    WHERE project_id = $1
-      AND task_type IN ('initiative_plan', 'architecture_design')
-      AND status IN ('queued', 'in_progress')
-    LIMIT 1
-  `, [initiativeId]);
-  return result.rows.length > 0;
-}
-
-/**
- * Create an initiative_plan (or architecture_design) task to kick off the Initiative → PR execution loop.
- * Called by Check B when an Initiative has no active tasks.
- *
- * Domain routing:
- *   - domain = 'coding'  → task_type = 'architecture_design' (routes to /architect)
- *   - domain non-null    → task_type = 'initiative_plan', description includes target skill
- *   - domain = null      → task_type = 'initiative_plan' (default /decomp behavior)
- */
-async function createInitiativePlanTask({ initiativeId, krId, initiativeName, domain }) {
-  // Determine task type and optional target skill based on domain
-  let taskType = 'initiative_plan';
-  let targetSkill = null;
-
-  if (domain === 'coding') {
-    taskType = 'architecture_design';
-  } else if (domain) {
-    const role = getDomainRole(domain);
-    const roleSkills = ROLES[role]?.skills ?? [];
-    targetSkill = roleSkills[0] ?? null;
-  }
-
-  const title = `Initiative 规划: ${initiativeName}`;
-  const descriptionLines = [
-    `请为 Initiative「${initiativeName}」规划下一个 PR。`,
-    '',
-    ...(targetSkill ? [`目标 Skill: ${targetSkill}（domain: ${domain} → 角色路由）`, ''] : []),
-    '你的任务（initiative_plan 模式）：',
-    '1. 读取 Initiative 描述（GET /api/brain/projects/<initiative_id>）',
-    '2. 读取已完成的 PR 列表（GET /api/brain/tasks?project_id=<initiative_id>&status=completed）',
-    '3. 判断 Initiative 目标是否达成',
-    '   - 已达成 → 标记 Initiative completed，不创建新任务，结束',
-    '   - 未达成 → 规划下一个 PR，写入 tasks 表一条 dev 任务',
-    '',
-    '写 dev 任务时必须包含：',
-    '  - title: 简洁的 PR 标题',
-    '  - description: 详细的 PRD（背景、具体需求、成功标准）',
-    '  - project_id: 指向本 Initiative',
-    `  - goal_id: ${krId || 'null'}（所属 KR）`,
-    '  - task_type: dev',
-    '  - priority: P1',
-    domain ? `  - domain: ${domain}（继承自 Initiative）` : null,
-    '',
-    `Initiative ID: ${initiativeId}`,
-    `Initiative 名称: ${initiativeName}`,
-    `所属 KR ID: ${krId || '(未知)'}`,
-    domain ? `Domain: ${domain}` : null,
-  ].filter(line => line !== null);
-  const description = descriptionLines.join('\n');
-
-  const result = await pool.query(`
-    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source, domain)
-    VALUES ($1, $2, 'queued', 'P1', $3, $4, $5, 'brain_auto', $6)
-    RETURNING id, title, domain
-  `, [title, description, krId || null, initiativeId, taskType, domain || null]);
-  return result.rows[0];
-}
+// [已删除] hasExistingInitiativePlanTask — initiative_plan 路径已废弃，改用 pr_plans 路径
+// [已删除] createInitiativePlanTask — initiative_plan 路径已废弃，改用 pr_plans 路径
 
 /**
  * Check global WIP limit for decomposition tasks.
@@ -311,41 +241,8 @@ async function checkReadyKRInitiatives() {
       }
     }
 
-    // 为无活跃 Task 的 Initiative 创建 initiative_plan 任务（启动执行循环）
-    for (const init of initiatives.rows) {
-      if (parseInt(init.active_tasks) === 0) {
-        // 幂等检查：已有 queued/in_progress 的 initiative_plan 任务则跳过
-        if (await hasExistingInitiativePlanTask(init.id)) {
-          actions.push({
-            action: 'skip_initiative_plan_dedup',
-            check: 'ready_kr_initiative',
-            kr_id: kr.id,
-            initiative_id: init.id,
-            initiative_name: init.name
-          });
-          continue;
-        }
-
-        const task = await createInitiativePlanTask({
-          initiativeId: init.id,
-          krId: kr.id,
-          initiativeName: init.name,
-          domain: init.domain ?? null,
-        });
-
-        if (task) {
-          console.log(`[decomp-checker] Initiative ${init.id} → created initiative_plan task: ${task.title}`);
-          actions.push({
-            action: 'create_initiative_plan',
-            check: 'ready_kr_initiative',
-            kr_id: kr.id,
-            initiative_id: init.id,
-            initiative_name: init.name,
-            task_id: task.id,
-          });
-        }
-      }
-    }
+    // [已删除] initiative_plan 自动创建逻辑 — 改用 pr_plans 路径驱动 Initiative 执行
+    // Initiative 无活跃 Task 时，由 planner.js 的 pr_plans 路径负责创建下一个 Task
   }
 
   return actions;
@@ -605,11 +502,9 @@ export {
   checkObjectiveWithoutKR,
   // Shared helpers (exported for testing)
   hasExistingDecompositionTask,
-  hasExistingInitiativePlanTask,
   hasExistingStrategicMeetingTask,
   canCreateDecompositionTask,
   createDecompositionTask,
-  createInitiativePlanTask,
   DEDUP_WINDOW_HOURS,
   WIP_LIMITS,
 };
