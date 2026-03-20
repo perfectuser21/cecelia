@@ -63,6 +63,13 @@ vi.mock('../token-budget-planner.js', () => ({
   getExecutorAffinity: vi.fn(() => ({ primary: 'claude', fallback: 'codex', no_downgrade: false })),
 }));
 
+// Mock fleet-resource-cache（防止 slot-allocator import 时触发 SSH 采集）
+vi.mock('../fleet-resource-cache.js', () => ({
+  getFleetStatus: vi.fn(() => []),
+  getRemoteCapacity: vi.fn(() => null),
+  isServerOnline: vi.fn(() => false),
+}));
+
 import { execSync } from 'child_process';
 import { checkServerResources, getEffectiveMaxSeats, getBudgetCap } from '../executor.js';
 import pool from '../db.js';
@@ -82,7 +89,8 @@ import {
   countAutoDispatchInProgress,
   countCodexInProgress,
   getQueueDepth,
-  MAX_CODEX_CONCURRENT,
+  getCodexMaxConcurrent,
+  CODEX_ACCOUNT_COUNT,
   calculateSlotBudget,
   getSlotStatus,
 } from '../slot-allocator.js';
@@ -361,9 +369,13 @@ describe('countCodexInProgress', () => {
   });
 });
 
-describe('MAX_CODEX_CONCURRENT', () => {
-  it('should equal 3 (matching 3 Codex accounts)', () => {
-    expect(MAX_CODEX_CONCURRENT).toBe(3);
+describe('CODEX_ACCOUNT_COUNT', () => {
+  it('should equal 5 (matching 5 Codex accounts)', () => {
+    expect(CODEX_ACCOUNT_COUNT).toBe(5);
+  });
+
+  it('getCodexMaxConcurrent 返回函数', () => {
+    expect(typeof getCodexMaxConcurrent).toBe('function');
   });
 });
 

@@ -1864,16 +1864,24 @@ async function triggerMiniMaxExecutor(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
+// task_type='dev' 必须走 Claude Code（依赖 hooks/state machine），其他所有可走 Codex
+const DEV_ONLY_TYPES = new Set(['dev']);
+
 async function triggerCeceliaRun(task) {
-  // Check if task should go to 西安 Codex Bridge
   const location = getTaskLocation(task.task_type);
-  if (location === 'xian' || task.provider === 'codex') {
-    return triggerCodexBridge(task);
-  }
-  // Check if task should go to HK MiniMax
+
+  // 1. HK MiniMax 路由不变
   if (location === 'hk') {
     return triggerMiniMaxExecutor(task);
   }
+
+  // 2. 非 dev 任务 → 全部走 Codex Bridge
+  if (!DEV_ONLY_TYPES.has(task.task_type)) {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非 dev 任务)`);
+    return triggerCodexBridge(task);
+  }
+
+  // 3. dev 任务 → Claude Code（本地 cecelia-bridge）
   // Use original cecelia-bridge on port 3457
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 

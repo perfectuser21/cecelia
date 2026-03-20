@@ -42,6 +42,13 @@ vi.mock('../db.js', () => ({
   },
 }));
 
+// Mock fleet-resource-cache（防止 slot-allocator import 时触发 SSH 采集）
+vi.mock('../fleet-resource-cache.js', () => ({
+  getFleetStatus: vi.fn(() => []),
+  getRemoteCapacity: vi.fn(() => null),
+  isServerOnline: vi.fn(() => false),
+}));
+
 import { checkServerResources, getEffectiveMaxSeats, getBudgetCap, getTokenPressure } from '../executor.js';
 import pool from '../db.js';
 import {
