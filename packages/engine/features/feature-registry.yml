@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.7.2"
+    date: "2026-03-20"
+    summary: "fix(engine): stop-dev seal worktree fallback + devloop-check 消息强化"
+    scope: hooks
+    breaking: false
+    feature_id: seal-worktree-fallback
   - version: "13.7.1"
     date: "2026-03-20"
     summary: "fix(engine): worktree-manage.sh MAX_WORKTREES 支持环境变量覆盖，默认值改为 10"
