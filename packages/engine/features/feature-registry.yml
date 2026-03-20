@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.4.6"
+    date: "2026-03-20"
+    summary: "feat(engine): cross-ref-registry 检查器 + CI L2 接入 + workflows cleanup.sh 旧步骤名修复"
+    scope: ci
+    breaking: false
+    feature_id: cross-ref-ci-integration
   - version: "13.4.5"
     date: "2026-03-20"
     summary: "fix(engine): stop-dev.sh worktree 修复 + 历史垃圾文件清理"

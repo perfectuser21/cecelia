@@ -439,7 +439,8 @@ if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
         "" # 0 placeholder
         "step_1_prd" "step_2_detect" "step_3_branch" "step_4_explore"
         "step_5_dod" "step_6_code" "step_7_verify" "step_8_pr"
-        "step_9_ci" "step_10_learning" "step_11_cleanup"
+        "step_0_worktree" "step_1_taskcard" "step_2_code"
+        "step_3_prci" "step_4_learning" "step_5_clean"
     )
     for step in {1..11}; do
         STEP_KEY="${STEP_PATTERNS[$step]}"
@@ -457,7 +458,7 @@ if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
         FAILED=$((FAILED + 1))
         VALIDATION_PASSED=false
     else
-        echo -e "   ${GREEN}[OK] 所有 11 步已完成${NC}"
+        echo -e "   ${GREEN}[OK] 所有 6 步已完成${NC}"
     fi
 else
     echo -e "   ${GREEN}[OK] 无 .dev-mode 文件需要验证${NC}"
@@ -579,17 +580,17 @@ for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$PROJECT_ROOT_FO
 done
 
 if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; then
-    # W8: 统一标记方式（使用 step_11_cleanup: done）
+    # W8: 统一标记方式（使用 step_5_clean: done）
     # v12.41.0 P0-1 修复：sed 替换后验证结果，若行不存在则追加
     # （sed 's/A/B/' 在目标行不存在时静默成功，返回 exit 0，不做任何修改）
     _mark_cleanup_done() {
         local target_file="$1"
-        sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$target_file"
+        sed -i 's/^step_5_clean: pending/step_5_clean: done/' "$target_file"
         # 验证：sed 可能没有匹配到（行不存在或格式不同）
-        if ! grep -q "^step_11_cleanup: done" "$target_file" 2>/dev/null; then
-            # 先删除可能存在的其他格式（如 step_11_cleanup: in_progress）
-            sed -i '/^step_11_cleanup:/d' "$target_file"
-            echo "step_11_cleanup: done" >> "$target_file"
+        if ! grep -q "^step_5_clean: done" "$target_file" 2>/dev/null; then
+            # 先删除可能存在的其他格式（如 step_5_clean: in_progress）
+            sed -i '/^step_5_clean:/d' "$target_file"
+            echo "step_5_clean: done" >> "$target_file"
         fi
     }
 
@@ -602,23 +603,23 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
             _mark_cleanup_done "$DEV_MODE_FILE"
             # v2.0 P1-16: 移除 create_cleanup_signal（stop-dev.sh 通过 grep .dev-mode 检查，不读信号文件）
             release_dev_mode_lock
-            echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done（原子写入）${NC}"
+            echo -e "   ${GREEN}[OK] 已标记 step_5_clean: done（原子写入）${NC}"
         else
             DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
             # Fallback: 直接修改
             _mark_cleanup_done "$DEV_MODE_FILE"
-            echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
+            echo -e "   ${GREEN}[OK] 已标记 step_5_clean: done${NC}"
         fi
     else
         # Fallback: 无共享库时直接修改
         _mark_cleanup_done "$DEV_MODE_FILE"
-        echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
+        echo -e "   ${GREEN}[OK] 已标记 step_5_clean: done${NC}"
     fi
 
     # v12.9.0: 双钥匙状态机 - 状态文件由 Stop Hook 管理
     echo ""
     echo -e "   ${YELLOW}注意: .dev-mode、.dev-lock 和 sentinel 将由 Stop Hook 在工作流完成后自动删除${NC}"
-    echo -e "   ${YELLOW}      cleanup.sh 只负责标记 step_11_cleanup: done${NC}"
+    echo -e "   ${YELLOW}      cleanup.sh 只负责标记 step_5_clean: done${NC}"
 fi
 
 # ========================================
