@@ -14,7 +14,7 @@
  */
 async function queryBrainAPI() {
   try {
-    const fetch = (await import('node-fetch')).default;
+    // Use built-in fetch (Node.js 18+)
     const response = await fetch('http://localhost:5221/');
     if (!response.ok) {
       throw new Error(`Brain API error: ${response.status}`);
