@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.7.3"
+    date: "2026-03-20"
+    summary: "fix(engine): 统一 code_review_gate 任务类型和字段名"
+    scope: skills
+    breaking: false
+    feature_id: unify-code-review-gate
   - version: "13.7.2"
     date: "2026-03-20"
     summary: "fix(engine): stop-dev seal worktree fallback + devloop-check 消息强化"
