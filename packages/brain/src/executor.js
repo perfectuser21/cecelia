@@ -98,6 +98,9 @@ function getAvailableMemoryMB() {
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
 
+// Brain self-callback URL — 让 MiniMax/liveness 等非标路径也走 execution-callback 全流程
+const BRAIN_CALLBACK_URL = `http://localhost:${process.env.PORT || process.env.BRAIN_PORT || 5221}/api/brain/execution-callback`;
+
 // 西安 Mac mini Codex Bridge URL (via Tailscale)
 const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
 
@@ -1795,8 +1798,34 @@ async function triggerCodexBridge(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, taskId, result?, error? }
  */
+
+/**
+ * Fire-and-forget internal execution-callback 调用。
+ * 用于 MiniMax / liveness 等非标执行路径，确保走完
+ * 学习吸收、失败分类、thalamus 决策、KR 汇总等后处理。
+ *
+ * @param {Object} payload - execution-callback 接口所需字段
+ */
+async function fireInternalCallback(payload) {
+  try {
+    const resp = await fetch(BRAIN_CALLBACK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000), // 30s 足够后处理
+    });
+    const body = await resp.json();
+    console.log(`[executor] Internal execution-callback for task=${payload.task_id} → ${body.new_status || 'unknown'}`);
+    return body;
+  } catch (cbErr) {
+    console.error(`[executor] Internal execution-callback failed for task=${payload.task_id}: ${cbErr.message}`);
+    return null;
+  }
+}
+
 async function triggerMiniMaxExecutor(task) {
   const runId = generateRunId(task.id);
+  const startTime = Date.now();
 
   try {
     console.log(`[executor] Calling HK MiniMax for task=${task.id} type=${task.task_type}`);
@@ -1814,17 +1843,22 @@ async function triggerMiniMaxExecutor(task) {
     });
 
     const result = await response.json();
+    const durationMs = Date.now() - startTime;
 
     if (result.success) {
-      console.log(`[executor] MiniMax completed task=${task.id}`);
+      console.log(`[executor] MiniMax completed task=${task.id}, sending execution-callback`);
 
-      // Update task with result (with WebSocket broadcast)
-      await updateTaskStatus(task.id, 'completed', {
-        payload: {
-          minimax_result: result.result,
+      // 通过 execution-callback 统一处理（学习吸收、thalamus、KR 汇总等）
+      await fireInternalCallback({
+        task_id: task.id,
+        run_id: runId,
+        status: 'AI Done',
+        result: {
+          result: result.result,
           minimax_usage: result.usage || {},
-          run_id: runId
-        }
+          executor: 'minimax',
+        },
+        duration_ms: durationMs,
       });
 
       return {
@@ -1836,7 +1870,20 @@ async function triggerMiniMaxExecutor(task) {
         executor: 'minimax',
       };
     } else {
-      console.log(`[executor] MiniMax failed task=${task.id}: ${result.error}`);
+      console.log(`[executor] MiniMax failed task=${task.id}: ${result.error}, sending execution-callback`);
+
+      // 失败也走 execution-callback（失败分类、隔离检查、thalamus 等）
+      await fireInternalCallback({
+        task_id: task.id,
+        run_id: runId,
+        status: 'AI Failed',
+        result: {
+          error: result.error,
+          executor: 'minimax',
+        },
+        duration_ms: durationMs,
+      });
+
       return {
         success: false,
         taskId: task.id,
@@ -1845,7 +1892,22 @@ async function triggerMiniMaxExecutor(task) {
       };
     }
   } catch (err) {
-    console.error(`[executor] MiniMax error: ${err.message}`);
+    const durationMs = Date.now() - startTime;
+    console.error(`[executor] MiniMax error: ${err.message}, sending execution-callback`);
+
+    // 网络/超时错误也走 execution-callback
+    await fireInternalCallback({
+      task_id: task.id,
+      run_id: runId,
+      status: 'AI Failed',
+      result: {
+        error: err.message,
+        executor: 'minimax',
+      },
+      stderr: err.message,
+      duration_ms: durationMs,
+    });
+
     return {
       success: false,
       taskId: task.id,
@@ -2344,13 +2406,21 @@ async function probeTaskLiveness() {
     // Requeue instead of fail — liveness DEAD is typically OOM/system preemption, not a code bug
     const requeueResult = await requeueTask(task.id, 'liveness_dead', errorDetails);
 
-    // Fire-and-forget auto-learning（liveness probe 路径无 execution-callback，需在此补充）
-    import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
-      processExecutionAutoLearning(task.id, requeueResult.quarantined ? 'failed' : 'requeued', errorDetails, {
+    // Fire-and-forget: liveness callback 补充后处理（失败分类、thalamus、依赖级联等）
+    // 注意：requeueTask 已修改 DB 状态，execution-callback 的 DB UPDATE 会空转（WHERE status='in_progress'），
+    // 但后处理逻辑（失败分类、thalamus、KR 汇总）仍会执行。
+    fireInternalCallback({
+      task_id: task.id,
+      run_id: `liveness-${task.id}-${Date.now()}`,
+      status: 'AI Failed',
+      result: {
+        error: errorDetails.message,
+        reason: errorDetails.reason,
         trigger_source: 'liveness_probe',
-        metadata: { suspect_since: suspect.firstSeen, pid }
-      })
-    ).catch(() => {/* non-fatal */});
+        executor: 'liveness',
+      },
+      stderr: errorDetails.diagnostic_info ? JSON.stringify(errorDetails.diagnostic_info) : '',
+    }).catch(() => {/* non-fatal — liveness callback 不阻塞主流程 */});
 
     actions.push({
       action: requeueResult.quarantined ? 'liveness_auto_fail' : 'liveness_auto_requeue',
@@ -2576,4 +2646,7 @@ export {
   // v15: Token-aware slot allocation
   getTokenPressure,
   TOKEN_PRESSURE_THRESHOLD,
+  // v16: Internal execution-callback for non-standard paths
+  fireInternalCallback,
+  BRAIN_CALLBACK_URL,
 };
