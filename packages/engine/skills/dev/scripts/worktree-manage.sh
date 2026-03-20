@@ -116,7 +116,8 @@ cmd_create() {
     fi
 
     # 数量上限检查（不含主仓库）
-    local MAX_WORKTREES=8
+    # 支持环境变量覆盖，默认 10
+    local MAX_WORKTREES="${MAX_WORKTREES:-10}"
     local existing_count
     existing_count=$(git worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
     if [[ $existing_count -ge $MAX_WORKTREES ]]; then
