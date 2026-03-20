@@ -13,6 +13,7 @@ import profileFactsRoutes from './src/routes/profile-facts.js';
 import clusterRoutes from './src/routes/cluster.js';
 import vpsMonitorRoutes from './src/routes/vps-monitor.js';
 import infraStatusRoutes from './src/routes/infra-status.js';
+import { getFleetStatus, startFleetRefresh } from './src/fleet-resource-cache.js';
 import taskProjectsRoutes from './src/routes/task-projects.js';
 import taskGoalsRoutes from './src/routes/task-goals.js';
 import taskAreasRoutes from './src/routes/task-areas.js';
@@ -106,6 +107,15 @@ app.use('/api/brain/profile/facts', profileFactsRoutes);
 app.use('/api/brain/cluster', clusterRoutes);
 app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
 app.use('/api/brain/infra-status', infraStatusRoutes);
+app.get('/api/brain/fleet', (_req, res) => {
+  const fleet = getFleetStatus();
+  const online = fleet.filter(s => s.online);
+  res.json({
+    servers: fleet,
+    summary: { total: fleet.length, online: online.length, totalEffectiveSlots: online.reduce((s, e) => s + e.effectiveSlots, 0) },
+    timestamp: Date.now(),
+  });
+});
 app.use('/api/brain/tasks/projects', taskProjectsRoutes);
 app.use('/api/brain/projects', taskProjectsRoutes); // 供 /decomp SKILL.md Phase 2 引用
 app.use('/api/brain/tasks/goals', taskGoalsRoutes);
@@ -297,6 +307,10 @@ server.listen(PORT, async () => {
   } catch (syncErr) {
     console.error('[Server] Startup sync failed:', syncErr.message);
   }
+
+  // Initialize Fleet Resource Cache (全局多机器资源感知)
+  startFleetRefresh();
+  console.log('[Server] Fleet Resource Cache started (30s interval) - 全局资源感知');
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();
