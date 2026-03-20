@@ -110,6 +110,7 @@ async function checkInitiativeCompletion(pool) {
           await pool.query(`
             INSERT INTO tasks (title, task_type, project_id, description, priority, status, trigger_source)
             VALUES ($1, 'scope_plan', $2, $3, 'P1', 'queued', 'brain_auto')
+            ON CONFLICT DO NOTHING
           `, [
             `规划 ${parent.name} 下一个 Initiative`,
             parent.id,
@@ -358,7 +359,7 @@ async function checkScopeCompletion(pool) {
     SELECT p.id, p.name, p.parent_id
     FROM projects p
     WHERE p.type = 'scope'
-      AND p.status = 'active'
+      AND p.status IN ('active', 'in_progress')
       AND NOT EXISTS (
         SELECT 1 FROM projects child
         WHERE child.parent_id = p.id
