@@ -25,6 +25,8 @@ const VALID_TASK_TYPES = [
   'intent_expand',
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export',
+  // 多平台内容发布
+  'content_publish',
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
@@ -66,6 +68,8 @@ const SKILL_WHITELIST = {
   'content-generate': '/content-creator',
   'content-review': '/content-creator',
   'content-export': '/content-creator',
+  // 多平台内容发布（payload.platform 动态路由，见 executor.js 特判逻辑）
+  'content_publish': '/dev',          // fallback：正常由 executor.js 平台路由拦截
   // Codex Gate 审查任务类型
   'prd_review': '/prd-review',              // PRD 审查
   'spec_review': '/spec-review',            // Spec 审查
@@ -159,6 +163,8 @@ const LOCATION_MAP = {
   'content-generate': 'xian',  // 生成阶段 → 西安 (/content-creator)
   'content-review': 'xian',    // 审核阶段 → 西安（纯规则检查）
   'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
+  // 多平台内容发布 → US（与 Brain 协作，publisher skills 在美国执行）
+  'content_publish': 'us',     // 多平台发布 → US (/douyin-publisher 等)
   // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
   'prd_review': 'us',            // PRD 审查 → US 本机 Codex
   'spec_review': 'us',           // Spec 审查 → US 本机 Codex
