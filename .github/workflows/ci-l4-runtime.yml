@@ -333,11 +333,56 @@ jobs:
             echo "PostgreSQL stopped and data dir removed"
           fi
 
+  # ─── DevGate Quality Checks ────────────────────────────────────────────────
+
+  devgate-checks:
+    name: L4 DevGate Quality Checks
+    needs: [changes, brain-integration]
+    if: needs.changes.outputs.brain == 'true' && needs.brain-integration.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/engine/package-lock.json
+
+      - name: Install engine dependencies
+        run: |
+          cd packages/engine
+          npm ci --ignore-scripts
+
+      - name: Run L4 DoD Verification Check
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L4 DevGate: DoD Verification (Branch: $GITHUB_HEAD_REF)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          node packages/engine/scripts/devgate/check-dod-mapping.cjs
+
+      - name: Run L4 RCI Runtime Verification
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L4 DevGate: RCI Runtime Verification"
+          echo "  运行时回归契约验证（运行环境相关）"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash packages/engine/scripts/devgate/rci-execution-gate.sh
+
   # ─── Gate job (always runs) ────────────────────────────────────────────────
 
   l4-passed:
     name: L4 Runtime Gate Passed
-    needs: [changes, brain-integration]
+    needs: [changes, brain-integration, devgate-checks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -358,6 +403,10 @@ jobs:
           if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
             if [ "${{ needs.brain-integration.result }}" != "success" ]; then
               echo "FAIL: Brain Integration Tests (${{ needs.brain-integration.result }})"
+              FAILED=true
+            fi
+            if [ "${{ needs.devgate-checks.result }}" != "success" ]; then
+              echo "FAIL: DevGate Quality Checks (${{ needs.devgate-checks.result }})"
               FAILED=true
             fi
           fi
