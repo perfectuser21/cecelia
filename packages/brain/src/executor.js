@@ -1864,11 +1864,10 @@ async function triggerMiniMaxExecutor(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
-// 路由规则（v2 — 全局调度改造 Phase 3）：
-//   task_type='dev' → 必须走 Claude Code（依赖 hooks/state machine）
-//   其他所有 task_type → 走 Codex Bridge（选最空闲的机器）
-//   location='hk' → 走 HK MiniMax（不变）
-const DEV_ONLY_TYPES = new Set(['dev']);
+// ⚠️ 不要恢复旧的"仅 dev 类型白名单"逻辑 — 它会把 location='us' 的审查任务
+// （cto_review/dod_verify/prd_audit）发到西安 Codex Bridge，但西安不在线时 fetch failed。
+// 正确做法：按 task-router.js 的 LOCATION_MAP 路由（us→本机，xian→Codex Bridge）
+// 参见 PR #1195 的修复说明
 
 async function triggerCeceliaRun(task) {
   const location = getTaskLocation(task.task_type);
@@ -1878,9 +1877,9 @@ async function triggerCeceliaRun(task) {
     return triggerMiniMaxExecutor(task);
   }
 
-  // 2. 非 dev 任务 → 全部走 Codex Bridge
-  if (!DEV_ONLY_TYPES.has(task.task_type)) {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非 dev 任务)`);
+  // 2. 西安 Codex Bridge（仅 location='xian' 或显式 provider=codex）
+  if (location === 'xian' || task.provider === 'codex') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=${location})`);
     return triggerCodexBridge(task);
   }
 
