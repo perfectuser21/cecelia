@@ -511,6 +511,22 @@
             {
               "taskType": "content_publish",
               "skill": "/dev"
+            },
+            {
+              "taskType": "prd_review",
+              "skill": "/prd-review"
+            },
+            {
+              "taskType": "spec_review",
+              "skill": "/spec-review"
+            },
+            {
+              "taskType": "code_review_gate",
+              "skill": "/code-review-gate"
+            },
+            {
+              "taskType": "initiative_review",
+              "skill": "/initiative-review"
             }
           ]
         },
@@ -879,7 +895,11 @@
     "audit": "/code-review",
     "intent_expand": "/intent-expand",
     "cto_review": "/cto-review",
-    "content_publish": "/dev"
+    "content_publish": "/dev",
+    "prd_review": "/prd-review",
+    "spec_review": "/spec-review",
+    "code_review_gate": "/code-review-gate",
+    "initiative_review": "/initiative-review"
   },
   "skillWhitelist": {
     "dev": "/dev",
@@ -913,9 +933,13 @@
     "content-research": "/notebooklm",
     "content-generate": "/content-creator",
     "content-review": "/content-creator",
-    "content-export": "/content-creator"
+    "content-export": "/content-creator",
+    "prd_review": "/prd-review",
+    "spec_review": "/spec-review",
+    "code_review_gate": "/code-review-gate",
+    "initiative_review": "/initiative-review"
   },
-  "generatedAt": "2026-03-19T18:58:26.835Z",
+  "generatedAt": "2026-03-20T08:44:57.343Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
