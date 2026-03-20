@@ -23,6 +23,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
 import { buildLearningContext } from './learning-retriever.js';
+import { getDecisionsSummary } from './decisions-context.js';
 import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
@@ -1754,7 +1755,17 @@ async function triggerCodexBridge(task) {
     const isCodexDev = task.task_type === 'codex_dev';
 
     // Build prompt from task description/title
-    const promptContent = task.description || task.title || '请执行此任务';
+    let promptContent = task.description || task.title || '请执行此任务';
+
+    // 注入 decisions 摘要到 Codex 任务
+    try {
+      const decisionsSummary = await getDecisionsSummary();
+      if (decisionsSummary) {
+        promptContent = `${decisionsSummary}\n\n---\n\n${promptContent}`;
+      }
+    } catch (err) {
+      console.warn(`[executor] codex decisions 注入失败（不阻塞）: ${err.message}`);
+    }
 
     // codex_dev: 生成分支名（加 -cx suffix 区分 Claude Code 分支）
     const branchSuffix = isCodexDev ? '-cx' : '';
@@ -1991,7 +2002,17 @@ async function triggerCeceliaRun(task) {
 
     // Prepare prompt content, permission mode, extra env, and model based on task_type
     const taskType = task.task_type || 'dev';
-    const promptContent = await preparePrompt(task);
+    let promptContent = await preparePrompt(task);
+
+    // 注入 decisions 摘要（用户/系统决策的 SSOT）
+    try {
+      const decisionsSummary = await getDecisionsSummary();
+      if (decisionsSummary) {
+        promptContent = `${decisionsSummary}\n\n---\n\n${promptContent}`;
+      }
+    } catch (err) {
+      console.warn(`[executor] decisions 注入失败（不阻塞派发）: ${err.message}`);
+    }
     const permissionMode = getPermissionModeForTaskType(taskType);
     const extraEnv = getExtraEnvForTaskType(taskType);
     const model = getModelForTask(task);
