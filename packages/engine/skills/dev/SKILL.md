@@ -81,7 +81,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ### 完成条件
 
 ```
-开始 → TaskCard → [intent_expand] → Code → Push → [Codex 审查×3] → PR → CI → [PR Review] → Learning → 合并 → Clean ✅
+开始 → TaskCard → Code → Push → [dispatch-now Codex×3] → PR → CI → Learning → 合并 → Clean ✅
 ```
 
 **只有一个完成标志**：PR 已合并到目标分支（动态检测：`git rev-parse --verify develop` 成功则用 develop，否则 main）
@@ -241,25 +241,20 @@ step_5_clean: pending
 0. cleanup_done: true？（最高优先级终止条件）
    ✅ → exit 0 → 工作流结束
 
-1.5 intent_expand 完成？（若有 intent_expand_task_id）
-   → Brain 派 Codex 做意图扩展 → enriched PRD 写回
-   ❌ PENDING → exit 2 → 等待
-   ✅ COMPLETED → 继续
-
 2.5 cto_review PASS？（若有 cto_review_task_id）
-   → Brain 派 Codex 做 CTO 审查
+   → dispatch-now 立即派发 Codex 做 CTO 审查
    ❌ PENDING → exit 2 → 等待
    ❌ FAIL → exit 2 → 按 FAIL 原因修代码
    ✅ PASS → 继续
 
-2.6 code_quality_review PASS？（若有 code_quality_task_id）
-   → Brain 派 Codex 做代码质量审查
+2.6 dod_verify PASS？（若有 dod_verify_task_id）
+   → dispatch-now 立即派发 Codex 独立跑 DoD Test
    ❌ PENDING → exit 2 → 等待
    ❌ FAIL → exit 2 → 按 FAIL 原因修代码
    ✅ PASS → 继续
 
 2.7 prd_coverage_audit PASS？（若有 prd_audit_task_id）
-   → Brain 派 Codex 做 PRD 覆盖审计
+   → dispatch-now 立即派发 Codex 做 PRD 覆盖审计
    ❌ PENDING → exit 2 → 等待
    ❌ FAIL → exit 2 → 补实现
    ✅ PASS → 继续
@@ -291,21 +286,18 @@ step_5_clean: pending
 **Codex 协作流程图**：
 
 ```
-Step 1 TaskCard → [intent_expand] → Step 2 Code → Push
-                                                    ↓
-                                        ┌──── Brain 注册 3 任务 ────┐
-                                        │  cto_review              │
-                                        │  code_quality_review     │
-                                        │  prd_coverage_audit      │
-                                        └──────────────────────────┘
-                                                    ↓
-                                    devloop-check 阻塞等待全部 PASS
-                                                    ↓
-                                            创建 PR → CI
-                                                    ↓
-                                        [pr_review（可选）]
-                                                    ↓
-                                    Learning → 合并 → Clean → done
+Step 1 TaskCard → Step 2 Code（自验证）→ Push
+                                          ↓
+                              dispatch-now 并行 3 个 Codex：
+                              ├─ cto_review（架构+质量）
+                              ├─ dod_verify（DoD 独立验证）
+                              └─ prd_audit（PRD 覆盖）
+                                          ↓
+                              devloop-check 等待全 PASS
+                                          ↓
+                                  创建 PR → CI L1-L4
+                                          ↓
+                              Learning → 合并 → Clean → done
 ```
 
 ---
@@ -453,12 +445,12 @@ skills/dev/
 ### 流程图 (v4.0 - Task Card 重构)
 
 ```
-Step 0: Worktree → 检测/创建 worktree
-Step 1: TaskCard → 生成 .task-cp-xxx.md + [注册 intent_expand → 等待 enriched PRD]
-Step 2: Code → 探索+DoD定稿+写代码+本地验证
-Step 3: PR+CI → push → [注册 3 个 Codex 审查 → 等待全 PASS] → 创建 PR → 等 CI → [PR Review]
+Step 0: Worktree → 创建独立 worktree
+Step 1: TaskCard → 生成 Task Card（Hook 强制格式）
+Step 2: Code → 写代码 + 自验证（逐条跑 DoD Test）
+Step 3: PR+CI → push → dispatch-now 3 个 Codex → 创建 PR → CI
 Step 4: Learning → 写 Learning + 合并 PR
-Step 5: Clean → 归档+清理 worktree → 写 cleanup_done: true
+Step 5: Clean → 归档 + cleanup_done: true
 ```
 
 ### 步骤映射（新→旧，内部逻辑一个不少）

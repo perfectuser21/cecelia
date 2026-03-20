@@ -159,8 +159,8 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 ### 8.5.1 向 Brain 注册审查任务（Push 成功后）
 
-> Push 成功后，自动向 Brain API 注册 3 个审查任务（P0 优先级）。
-> 注册的 task_id 写入 .dev-mode 文件，供 devloop-check.sh 条件 2.5/2.6/2.7 检测。
+> Push 成功后，自动向 Brain API 注册 4 个审查任务（P0 优先级），并立即 dispatch-now 派发执行。
+> 注册的 task_id 写入 .dev-mode 文件，供 devloop-check.sh 条件 2.5/2.6/2.7/2.8 检测。
 > Brain 不可用时跳过注册，打印警告，不阻塞主流程。
 
 ```bash
@@ -171,9 +171,10 @@ DEV_MODE_FILE=".dev-mode.${BRANCH}"
 # 检查 Brain 是否可用
 BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
 if [[ -z "$BRAIN_HEALTH" ]]; then
-  echo "⚠️  Brain 不可用（$BRAIN_URL），跳过审查任务注册（不阻塞主流程）"
+  echo "⚠️  Brain 不可用（$BRAIN_URL），Codex 审查降级为 CI-only 模式"
+  echo "   提示：启动 Brain 可获得 Codex 独立审查（架构+DoD验证+PRD覆盖）"
 else
-  echo "🔍 向 Brain 注册 3 个审查任务..."
+  echo "🔍 向 Brain 注册 4 个审查任务..."
 
   # 注册 cto_review
   CTO_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
@@ -184,6 +185,12 @@ else
     echo "cto_review_task_id: $CTO_TASK" >> "$DEV_MODE_FILE"
     echo "cto_review_status: pending" >> "$DEV_MODE_FILE"
     echo "  ✅ cto_review 已注册: $CTO_TASK"
+    # 立即派发（不等调度器）
+    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
+      -H "Content-Type: application/json" \
+      -d "{\"task_id\":\"$CTO_TASK\"}" \
+      --max-time 5 2>/dev/null || true
+    echo "  🚀 cto_review 已派发执行"
   else
     echo "  ⚠️  cto_review 注册失败，跳过"
   fi
@@ -197,6 +204,12 @@ else
     echo "code_quality_task_id: $CQ_TASK" >> "$DEV_MODE_FILE"
     echo "code_quality_status: pending" >> "$DEV_MODE_FILE"
     echo "  ✅ code_quality_review 已注册: $CQ_TASK"
+    # 立即派发（不等调度器）
+    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
+      -H "Content-Type: application/json" \
+      -d "{\"task_id\":\"$CQ_TASK\"}" \
+      --max-time 5 2>/dev/null || true
+    echo "  🚀 code_quality_review 已派发执行"
   else
     echo "  ⚠️  code_quality_review 注册失败，跳过"
   fi
@@ -210,11 +223,35 @@ else
     echo "prd_audit_task_id: $PA_TASK" >> "$DEV_MODE_FILE"
     echo "prd_audit_status: pending" >> "$DEV_MODE_FILE"
     echo "  ✅ prd_coverage_audit 已注册: $PA_TASK"
+    # 立即派发（不等调度器）
+    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
+      -H "Content-Type: application/json" \
+      -d "{\"task_id\":\"$PA_TASK\"}" \
+      --max-time 5 2>/dev/null || true
+    echo "  🚀 prd_coverage_audit 已派发执行"
   else
     echo "  ⚠️  prd_coverage_audit 注册失败，跳过"
   fi
 
-  echo "✅ 审查任务注册完成"
+  # 注册 dod_verify（DoD 独立验证）
+  DV_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\":\"DoD Verify: $BRANCH\",\"task_type\":\"dod_verify\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
+  DV_TASK=$(echo "$DV_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  if [[ -n "$DV_TASK" ]]; then
+    echo "dod_verify_task_id: $DV_TASK" >> "$DEV_MODE_FILE"
+    echo "dod_verify_status: pending" >> "$DEV_MODE_FILE"
+    echo "  ✅ dod_verify 已注册: $DV_TASK"
+    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
+      -H "Content-Type: application/json" \
+      -d "{\"task_id\":\"$DV_TASK\"}" \
+      --max-time 5 2>/dev/null || true
+    echo "  🚀 dod_verify 已派发执行"
+  else
+    echo "  ⚠️  dod_verify 注册失败，跳过"
+  fi
+
+  echo "✅ 审查任务注册完成（4 个任务已派发）"
 fi
 ```
 
@@ -222,8 +259,8 @@ fi
 
 ### 8.5.2 等待 Codex 审查通过（devloop-check 自动控制）
 
-> Push 后注册的 3 个审查任务由 Brain 派发到 Codex 执行。
-> **devloop-check.sh 条件 2.5/2.6/2.7 会阻塞，直到三个审查全部 PASS 才放行创建 PR。**
+> Push 后注册的 4 个审查任务由 Brain 派发到 Codex 执行。
+> **devloop-check.sh 条件 2.5/2.6/2.7/2.8 会阻塞，直到四个审查全部 PASS 才放行创建 PR。**
 > 主 agent 不需要手动等待——Stop Hook 循环会自动检测并继续。
 
 等待期间的可能结果：
@@ -238,7 +275,7 @@ fi
 
 ---
 
-> **前置条件：8.5.2 的 3 个 Codex 审查全部 PASS（由 devloop-check.sh 自动控制）**
+> **前置条件：8.5.2 的 4 个 Codex 审查全部 PASS（由 devloop-check.sh 自动控制）**
 
 ### 8.6 创建 PR
 
@@ -472,8 +509,6 @@ echo "→ 执行 Step 4 (Learning)：写 LEARNINGS → push 到功能分支 → 
 - ❌ PR 创建后就结束
 - ❌ 等待用户手动处理
 - ❌ **`gh pr merge --admin` 绕过 CI**（GitHub enforce_admins 已开启，此命令会直接报错）
-
-> **CI pending ≠ 卡死**：Engine L3 Code Gate 在 HK VPS 自托管 runner 上运行，正常耗时 **11-16 分钟**（排队 ~5 分钟 + Unit Tests ~10 分钟）。看到 `pending` 状态应继续等待，不要以为 runner 挂了。
 
 ### 正确行为
 

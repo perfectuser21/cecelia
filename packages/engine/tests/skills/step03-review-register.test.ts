@@ -2,7 +2,7 @@
  * Step 03 审查任务注册测试
  *
  * 验证 03-prci.md 在 push 后、PR 创建前包含向 Brain API 注册
- * cto_review、code_quality_review、prd_coverage_audit 三个审查任务的逻辑
+ * cto_review、code_quality_review、prd_coverage_audit、dod_verify 四个审查任务的逻辑
  */
 
 import { describe, it, expect } from "vitest";
@@ -37,10 +37,10 @@ describe("Step 03 审查任务注册", () => {
     expect(content).toContain("cto_review_status: pending");
   });
 
-  it("注册 code_quality_review 任务并写入 .dev-mode 文件", () => {
-    expect(content).toContain("code_quality_review");
-    expect(content).toContain("code_quality_task_id");
-    expect(content).toContain("code_quality_status: pending");
+  it("注册 dod_verify 任务并写入 .dev-mode 文件", () => {
+    expect(content).toContain("dod_verify");
+    expect(content).toContain("dod_verify_task_id");
+    expect(content).toContain("dod_verify_status: pending");
   });
 
   it("注册 prd_coverage_audit 任务并写入 .dev-mode 文件", () => {
@@ -58,13 +58,13 @@ describe("Step 03 审查任务注册", () => {
     // 匹配 priority 字段在 JSON 中（bash 中用 \" 转义）
     const p0Matches = content.match(/\\"priority\\":\\"P0\\"/g);
     expect(p0Matches).not.toBeNull();
-    expect(p0Matches!.length).toBe(3);
+    expect(p0Matches!.length).toBe(4);
   });
 
   it("注册时传入分支名作为 metadata", () => {
     // 每个 curl 请求中包含 metadata.branch（bash 中用 \" 转义）
     const metadataMatches = content.match(/\\"metadata\\":\{.*?\\"branch\\"/g);
     expect(metadataMatches).not.toBeNull();
-    expect(metadataMatches!.length).toBe(3);
+    expect(metadataMatches!.length).toBe(4);
   });
 });
