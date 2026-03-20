@@ -434,12 +434,12 @@ fi
 
 if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
     INCOMPLETE_STEPS=""
-    # v3.0: 新 6 步模型步骤映射表（与 01-taskcard.md 写入的 .dev-mode 字段一致）
+    # v4.0: 4-Stage Pipeline 步骤映射表（与 01-spec.md 写入的 .dev-mode 字段一致）
     declare -a STEP_PATTERNS=(
-        "step_0_worktree" "step_1_taskcard" "step_2_code"
-        "step_3_prci" "step_4_learning" "step_5_clean"
+        "step_0_worktree" "step_1_spec" "step_2_code"
+        "step_3_integrate" "step_4_ship"
     )
-    for step in {0..5}; do
+    for step in {0..4}; do
         STEP_KEY="${STEP_PATTERNS[$step]}"
         STEP_STATUS=$(grep "^${STEP_KEY}:" "$DEV_MODE_FILE_FOR_VALIDATION" 2>/dev/null | cut -d':' -f2 | xargs || echo "")
         if [[ "$STEP_STATUS" != "done" ]]; then
@@ -455,7 +455,7 @@ if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
         echo -e "   ${YELLOW}提示: step_* flag 只做展示，实际流程由 devloop-check.sh 检查 PR/CI 状态${NC}"
         # 不再设置 FAILED / VALIDATION_PASSED=false —— step_* 不是流程控制依据
     else
-        echo -e "   ${GREEN}[OK] 所有 6 步已完成${NC}"
+        echo -e "   ${GREEN}[OK] 所有 5 步已完成${NC}"
     fi
 else
     echo -e "   ${GREEN}[OK] 无 .dev-mode 文件需要验证${NC}"
@@ -577,16 +577,18 @@ for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$PROJECT_ROOT_FO
 done
 
 if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; then
-    # W8: 统一标记方式（使用 step_5_clean: done + cleanup_done: true）
-    # v3.0: 对齐新 6 步模型
+    # W8: 统一标记方式（使用 step_4_ship: done + cleanup_done: true）
+    # v4.0: 对齐 4-Stage Pipeline 模型
     _mark_cleanup_done() {
         local target_file="$1"
-        sed -i 's/^step_5_clean: pending/step_5_clean: done/' "$target_file"
-        # 验证：sed 可能没有匹配到（行不存在或格式不同）
-        if ! grep -q "^step_5_clean: done" "$target_file" 2>/dev/null; then
-            sed -i '/^step_5_clean:/d' "$target_file"
-            echo "step_5_clean: done" >> "$target_file"
+        # 新字段：step_4_ship
+        sed -i 's/^step_4_ship: pending/step_4_ship: done/' "$target_file"
+        if ! grep -q "^step_4_ship: done" "$target_file" 2>/dev/null; then
+            sed -i '/^step_4_ship:/d' "$target_file"
+            echo "step_4_ship: done" >> "$target_file"
         fi
+        # 兼容旧字段：step_5_clean
+        sed -i 's/^step_5_clean: pending/step_5_clean: done/' "$target_file" 2>/dev/null || true
         # 写入 cleanup_done: true（devloop-check.sh 的唯一终止条件）
         if ! grep -q "^cleanup_done: true" "$target_file" 2>/dev/null; then
             echo "cleanup_done: true" >> "$target_file"
@@ -602,23 +604,23 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
             _mark_cleanup_done "$DEV_MODE_FILE"
             # v2.0 P1-16: 移除 create_cleanup_signal（stop-dev.sh 通过 grep .dev-mode 检查，不读信号文件）
             release_dev_mode_lock
-            echo -e "   ${GREEN}[OK] 已标记 step_5_clean: done + cleanup_done: true（原子写入）${NC}"
+            echo -e "   ${GREEN}[OK] 已标记 step_4_ship: done + cleanup_done: true（原子写入）${NC}"
         else
             DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
             # Fallback: 直接修改
             _mark_cleanup_done "$DEV_MODE_FILE"
-            echo -e "   ${GREEN}[OK] 已标记 step_5_clean: done + cleanup_done: true${NC}"
+            echo -e "   ${GREEN}[OK] 已标记 step_4_ship: done + cleanup_done: true${NC}"
         fi
     else
         # Fallback: 无共享库时直接修改
         _mark_cleanup_done "$DEV_MODE_FILE"
-        echo -e "   ${GREEN}[OK] 已标记 step_5_clean: done + cleanup_done: true${NC}"
+        echo -e "   ${GREEN}[OK] 已标记 step_4_ship: done + cleanup_done: true${NC}"
     fi
 
     # v12.9.0: 双钥匙状态机 - 状态文件由 Stop Hook 管理
     echo ""
     echo -e "   ${YELLOW}注意: .dev-mode、.dev-lock 和 sentinel 将由 Stop Hook 在工作流完成后自动删除${NC}"
-    echo -e "   ${YELLOW}      cleanup.sh 只负责标记 step_5_clean: done + cleanup_done: true${NC}"
+    echo -e "   ${YELLOW}      cleanup.sh 只负责标记 step_4_ship: done + cleanup_done: true${NC}"
 fi
 
 # ========================================

@@ -88,7 +88,7 @@ verify_step1() {
 
     if [[ -z "$task_card" || ! -f "$task_card" ]]; then
         _fail "找不到 Task Card 文件（.task-${BRANCH}.md）
-  请先完成 Step 1 Task Card，再标记 step_1_taskcard: done"
+  请先完成 Stage 1 Spec，再标记 step_1_spec: done"
     fi
 
     local test_lines

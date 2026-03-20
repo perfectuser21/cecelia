@@ -204,18 +204,25 @@ report_step_to_brain() {
     # 确定当前最新完成的步骤（按步骤倒序查找第一个 done）
     local step_num=0
     local step_name="init"
-    if grep -q "^step_5_clean: done" "$mode_file" 2>/dev/null; then
-        step_num=5; step_name="clean"
-    elif grep -q "^step_4_learning: done" "$mode_file" 2>/dev/null; then
-        step_num=4; step_name="learning"
-    elif grep -q "^step_3_prci: done" "$mode_file" 2>/dev/null; then
-        step_num=3; step_name="prci"
+    if grep -q "^step_4_ship: done" "$mode_file" 2>/dev/null; then
+        step_num=4; step_name="ship"
+    elif grep -q "^step_3_integrate: done" "$mode_file" 2>/dev/null; then
+        step_num=3; step_name="integrate"
     elif grep -q "^step_2_code: done" "$mode_file" 2>/dev/null; then
         step_num=2; step_name="code"
-    elif grep -q "^step_1_taskcard: done" "$mode_file" 2>/dev/null; then
-        step_num=1; step_name="taskcard"
+    elif grep -q "^step_1_spec: done" "$mode_file" 2>/dev/null; then
+        step_num=1; step_name="spec"
     elif grep -q "^step_0_worktree: done" "$mode_file" 2>/dev/null; then
         step_num=0; step_name="worktree"
+    # 兼容旧字段名
+    elif grep -q "^step_5_clean: done" "$mode_file" 2>/dev/null; then
+        step_num=4; step_name="ship"
+    elif grep -q "^step_4_learning: done" "$mode_file" 2>/dev/null; then
+        step_num=4; step_name="ship"
+    elif grep -q "^step_3_prci: done" "$mode_file" 2>/dev/null; then
+        step_num=3; step_name="integrate"
+    elif grep -q "^step_1_taskcard: done" "$mode_file" 2>/dev/null; then
+        step_num=1; step_name="spec"
     fi
 
     # 读取分支名
@@ -532,7 +539,7 @@ fi
 # ===== 验签完整性检查（State Machine 三层防御 P0+P1）=====
 # 检查关键步骤 seal：step_N done 但无对应验签 → exit 2 强制补验
 _SEAL_FILE="$PROJECT_ROOT/.dev-seal.${BRANCH_NAME}"
-_SEALED_STEPS=("step_1_taskcard" "step_2_code" "step_4_learning")
+_SEALED_STEPS=("step_1_spec" "step_2_code" "step_4_ship")
 _SEAL_FAIL=false
 for _step in "${_SEALED_STEPS[@]}"; do
     if grep -q "^${_step}: done" "$DEV_MODE_FILE" 2>/dev/null; then
@@ -609,7 +616,7 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
               "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
         # v15.1.0: session 正常结束，删除 worktree 内的活跃锁文件
         [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]] && rm -f "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
-        jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
+        jq -n '{"decision": "allow", "reason": "PR 已合并且 Stage 4 完成，工作流结束"}'
         exit 0
     else
         # blocked — 将 devloop_check 的 reason+action 转换为 Claude Code JSON 格式
@@ -733,7 +740,7 @@ else
 
     if [[ -z "$PR_NUMBER" ]]; then
         save_block_reason "PR 未创建"
-        jq -n --arg reason "PR 未创建，继续执行 Step 8 创建 PR" '{"decision": "block", "reason": $reason}'
+        jq -n --arg reason "PR 未创建，继续执行 Stage 3 创建 PR" '{"decision": "block", "reason": $reason}'
         exit 2
     fi
 
@@ -782,29 +789,32 @@ else
 
     # --- 条件 3: PR 合并？---
     if [[ "$PR_STATE" == "merged" ]]; then
-        STEP_5_STATUS=$(grep "^step_5_clean:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
-        if [[ "$STEP_5_STATUS" == "done" ]]; then
+        # 检查 step_4_ship 或兼容旧字段名 step_5_clean
+        STEP_4_STATUS=$(grep "^step_4_ship:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+        [[ -z "$STEP_4_STATUS" ]] && STEP_4_STATUS=$(grep "^step_5_clean:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$STEP_4_STATUS" == "done" ]]; then
             force_cleanup_worktree "$DEV_MODE_FILE"
             rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
                   "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
                   "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
-            # v15.1.0: session 正常结束，删除 worktree 内的活跃锁文件
             [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]] && rm -f "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
-            jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
+            jq -n '{"decision": "allow", "reason": "PR 已合并且 Stage 4 完成，工作流结束"}'
             exit 0
         else
-            save_block_reason "PR 已合并，Cleanup 未完成"
-            jq -n '{"decision": "block", "reason": "PR 已合并，执行 Step 11 Cleanup"}'
+            save_block_reason "PR 已合并，Stage 4 Ship 未完成"
+            jq -n '{"decision": "block", "reason": "PR 已合并，执行 Stage 4 Ship（cleanup）"}'
             exit 2
         fi
     else
-        STEP_4_STATUS=$(grep "^step_4_learning:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+        # 检查 step_4_ship 或兼容旧字段名 step_4_learning
+        STEP_4_STATUS=$(grep "^step_4_ship:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+        [[ -z "$STEP_4_STATUS" ]] && STEP_4_STATUS=$(grep "^step_4_learning:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
         if [[ "$STEP_4_STATUS" != "done" ]]; then
-            save_block_reason "Step 10 LEARNINGS 未完成"
-            jq -n --arg reason "CI 通过，但 Step 10 LEARNINGS 尚未完成。必须先完成 Step 10 再合并 PR。" '{"decision": "block", "reason": $reason}'
+            save_block_reason "Stage 4 Ship 未完成"
+            jq -n --arg reason "CI 通过，但 Stage 4 Ship（Learning）尚未完成。必须先完成 Learning 再合并 PR。" '{"decision": "block", "reason": $reason}'
             exit 2
         fi
-        # ── v14.1.0: Learning 内容验证（flag=done 时额外验证实际内容格式）──────
+        # v14.1.0: Learning 内容验证（flag=done 时额外验证实际内容格式）
         CHECK_LEARNING_SCRIPT=""
         for _candidate in "$PROJECT_ROOT/packages/engine/scripts/devgate/check-learning.sh" \
                           "$HOME/.claude/lib/check-learning.sh"; do
@@ -815,18 +825,21 @@ else
         done
         if [[ -n "$CHECK_LEARNING_SCRIPT" ]]; then
             if ! bash "$CHECK_LEARNING_SCRIPT" >/dev/null 2>&1; then
+                # 重置 step_4_ship 或兼容旧字段
                 if [[ "$(uname)" == "Darwin" ]]; then
+                    sed -i '' "s/^step_4_ship: done/step_4_ship: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
                     sed -i '' "s/^step_4_learning: done/step_4_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
                 else
+                    sed -i "s/^step_4_ship: done/step_4_ship: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
                     sed -i "s/^step_4_learning: done/step_4_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
                 fi
-                save_block_reason "Step 10 Learning 内容格式不达标（check-learning.sh 失败）"
-                jq -n --arg reason "Step 10 flag=done 但 check-learning.sh 内容格式验证失败。Learning 必须包含：根本原因分析 + 下次预防措施 + 至少 50 字。请重新写 docs/learnings/<branch>.md，然后 git commit + push。" '{"decision": "block", "reason": $reason}'
+                save_block_reason "Stage 4 Learning 内容格式不达标（check-learning.sh 失败）"
+                jq -n --arg reason "Stage 4 flag=done 但 check-learning.sh 内容格式验证失败。Learning 必须包含：根本原因分析 + 下次预防措施 + 至少 50 字。请重新写 docs/learnings/<branch>.md，然后 git commit + push。" '{"decision": "block", "reason": $reason}'
                 exit 2
             fi
         fi
         save_block_reason "PR 未合并 (#$PR_NUMBER)"
-        jq -n --arg reason "PR #$PR_NUMBER CI 已通过且 Step 10 已完成，执行合并：gh pr merge $PR_NUMBER --squash --delete-branch" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
+        jq -n --arg reason "PR #$PR_NUMBER CI 已通过且 Stage 4 已完成，执行合并：gh pr merge $PR_NUMBER --squash --delete-branch" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
         exit 2
     fi
 fi

@@ -27,22 +27,21 @@ describe('cleanup.sh - W8 Validation Logic', () => {
   })
 
   describe('验证所有步骤完成', () => {
-    it('所有 6 步完成 → 验证通过', () => {
+    it('所有 5 步完成 → 验证通过', () => {
       // 创建 .dev-mode 文件，所有步骤都是 done
       const devModeContent = `dev
 branch: test-branch
 step_0_worktree: done
-step_1_taskcard: done
+step_1_spec: done
 step_2_code: done
-step_3_prci: done
-step_4_learning: done
-step_5_clean: done`
+step_3_integrate: done
+step_4_ship: done`
 
       fs.writeFileSync(devModeFile, devModeContent)
 
       // 直接测试验证逻辑（不运行整个 cleanup.sh）
       const result = execSync(
-        `cd "${testDir}" && bash -c 'INCOMPLETE_STEPS=""; for step in {0..5}; do STEP_STATUS=$(grep "^step_\${step}_" ".dev-mode" 2>/dev/null | cut -d":" -f2 | xargs || echo ""); if [[ "$STEP_STATUS" != "done" ]]; then INCOMPLETE_STEPS="$INCOMPLETE_STEPS step_$step"; fi; done; if [[ -n "$INCOMPLETE_STEPS" ]]; then echo "FAIL: $INCOMPLETE_STEPS"; exit 1; else echo "PASS"; fi'`,
+        `cd "${testDir}" && bash -c 'INCOMPLETE_STEPS=""; for step in {0..4}; do STEP_STATUS=$(grep "^step_\${step}_" ".dev-mode" 2>/dev/null | cut -d":" -f2 | xargs || echo ""); if [[ "$STEP_STATUS" != "done" ]]; then INCOMPLETE_STEPS="$INCOMPLETE_STEPS step_$step"; fi; done; if [[ -n "$INCOMPLETE_STEPS" ]]; then echo "FAIL: $INCOMPLETE_STEPS"; exit 1; else echo "PASS"; fi'`,
         { encoding: 'utf8' }
       )
 
@@ -54,17 +53,16 @@ step_5_clean: done`
       const devModeContent = `dev
 branch: test-branch
 step_0_worktree: done
-step_1_taskcard: done
+step_1_spec: done
 step_2_code: pending
-step_3_prci: pending
-step_4_learning: pending
-step_5_clean: pending`
+step_3_integrate: pending
+step_4_ship: pending`
 
       fs.writeFileSync(devModeFile, devModeContent)
 
       try {
         execSync(
-          `cd "${testDir}" && bash -c 'INCOMPLETE_STEPS=""; for step in {0..5}; do STEP_STATUS=$(grep "^step_\${step}_" ".dev-mode" 2>/dev/null | cut -d":" -f2 | xargs || echo ""); if [[ "$STEP_STATUS" != "done" ]]; then INCOMPLETE_STEPS="$INCOMPLETE_STEPS step_$step"; fi; done; if [[ -n "$INCOMPLETE_STEPS" ]]; then echo "FAIL: $INCOMPLETE_STEPS"; exit 1; fi'`,
+          `cd "${testDir}" && bash -c 'INCOMPLETE_STEPS=""; for step in {0..4}; do STEP_STATUS=$(grep "^step_\${step}_" ".dev-mode" 2>/dev/null | cut -d":" -f2 | xargs || echo ""); if [[ "$STEP_STATUS" != "done" ]]; then INCOMPLETE_STEPS="$INCOMPLETE_STEPS step_$step"; fi; done; if [[ -n "$INCOMPLETE_STEPS" ]]; then echo "FAIL: $INCOMPLETE_STEPS"; exit 1; fi'`,
           { encoding: 'utf8' }
         )
         expect.fail('应该抛出错误')
@@ -144,23 +142,23 @@ step_5_clean: pending`
   })
 
   describe('标记方式统一', () => {
-    it('cleanup.sh 使用 step_5_clean: done 标记', () => {
+    it('cleanup.sh 使用 step_4_ship: done 标记', () => {
       // 创建 .dev-mode 文件
       const devModeContent = `dev
 branch: test-branch
-step_5_clean: pending`
+step_4_ship: pending`
 
       fs.writeFileSync(devModeFile, devModeContent)
 
       // 运行 sed 命令（模拟 cleanup.sh 的标记逻辑，跨平台：macOS 需要 -i ''）
       execSync(
-        `sed -i '' 's/^step_5_clean: pending/step_5_clean: done/' "${devModeFile}" 2>/dev/null || sed -i 's/^step_5_clean: pending/step_5_clean: done/' "${devModeFile}"`
+        `sed -i '' 's/^step_4_ship: pending/step_4_ship: done/' "${devModeFile}" 2>/dev/null || sed -i 's/^step_4_ship: pending/step_4_ship: done/' "${devModeFile}"`
       )
 
       // 验证标记已更新
       const updated = fs.readFileSync(devModeFile, 'utf8')
-      expect(updated).toContain('step_5_clean: done')
-      expect(updated).not.toContain('step_5_clean: pending')
+      expect(updated).toContain('step_4_ship: done')
+      expect(updated).not.toContain('step_4_ship: pending')
     })
   })
 })

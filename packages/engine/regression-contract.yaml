@@ -152,29 +152,29 @@ hooks:
     tags: [stop-hook, learnings, step-order, double-pr]
     owner: infra
     steps:
-      given: "CI 通过，PR 未合并，step_4_learning=pending"
+      given: "CI 通过，PR 未合并，step_4_ship=pending"
       when: "Stop Hook condition 3 触发"
-      then: "阻止合并，reason 指示先执行 Step 4 LEARNINGS"
+      then: "阻止合并，reason 指示先执行 Stage 4 Ship"
     evidence:
       type: code
       file: "hooks/stop-dev.sh"
-      contains: "Step 4 LEARNINGS 未完成"
-    test: "manual:bash -c \"grep -q 'step_4_learning' packages/engine/hooks/stop-dev.sh\""
+      contains: "Stage 4 Ship 未完成"
+    test: "manual:bash -c \"grep -q 'step_4_ship\\|step_4_learning' packages/engine/hooks/stop-dev.sh\""
 
   # --------------------------------------------------------------------------
   # H1-014~H1-016: v12.96.0 State Machine 强制层 (verify-step.sh)
   # --------------------------------------------------------------------------
   - id: H1-014
     feature: H1
-    name: "Step 验证门禁：step_1_taskcard done 时验证 Task Card 无假 Test 命令"
+    name: "Step 验证门禁：step_1_spec done 时验证 Task Card 无假 Test 命令"
     scope: hook
     priority: P1
     trigger: [PR, Release]
     method: auto
-    tags: [verify-step, state-machine, taskcard, step1]
+    tags: [verify-step, state-machine, spec, step1]
     owner: infra
     steps:
-      given: "AI 向 .dev-mode 写入 step_1_taskcard: done"
+      given: "AI 向 .dev-mode 写入 step_1_spec: done（兼容 step_1_taskcard: done）"
       when: "branch-protect.sh 检测到该行"
       then: "调用 verify-step.sh step1 验证 Task Card DoD Test 字段无假命令"
     evidence:
@@ -204,15 +204,15 @@ hooks:
 
   - id: H1-016
     feature: H1
-    name: "Step 验证门禁：step_4_learning done 时验证 Learning 文件格式完整"
+    name: "Step 验证门禁：step_4_ship done 时验证 Learning 文件格式完整"
     scope: hook
     priority: P1
     trigger: [PR, Release]
     method: auto
-    tags: [verify-step, state-machine, learning, step4]
+    tags: [verify-step, state-machine, ship, step4]
     owner: infra
     steps:
-      given: "AI 向 .dev-mode 写入 step_4_learning: done"
+      given: "AI 向 .dev-mode 写入 step_4_ship: done（兼容 step_4_learning: done）"
       when: "branch-protect.sh 检测到该行"
       then: "调用 verify-step.sh step4 验证 Learning 文件包含 ### 根本原因 + ### 下次预防 + checklist"
     evidence:
@@ -608,7 +608,7 @@ hooks:
   # v12.41.0: Deep Bug Fixes
   - id: H7-019
     feature: H7
-    name: "cleanup.sh sed step_5_clean 验证后追加"
+    name: "cleanup.sh sed step_4_ship 验证后追加"
     scope: script
     priority: P0
     trigger: [PR, Release]
@@ -616,7 +616,7 @@ hooks:
     tags: [cleanup, sed, silent-failure, bug-fix]
     owner: infra
     steps:
-      given: "cleanup.sh 标记 step_5_clean: done"
+      given: "cleanup.sh 标记 step_4_ship: done"
       when: "sed 替换目标行不存在（首次运行或格式不同）"
       then: "验证 grep 后追加行，不静默失败"
     evidence:
