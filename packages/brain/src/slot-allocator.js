@@ -45,7 +45,7 @@ function getCodexMaxConcurrent() {
   return Math.min(remoteSlots, CODEX_ACCOUNT_COUNT);
 }
 const BACKPRESSURE_THRESHOLD = 5;           // 队列深度超过此值时触发降速
-const BACKPRESSURE_BURST_LIMIT = 1;         // 背压激活时 burst limit 压至 1
+const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动态检测已做防雪崩，不需要压到 1）
 
 // ============================================================
 // Process Detection
