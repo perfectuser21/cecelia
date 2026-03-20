@@ -1946,10 +1946,14 @@ async function triggerCeceliaRun(task) {
     return triggerMiniMaxExecutor(task);
   }
 
-  // 2. 非美国专属任务 → 走西安 Codex Bridge
+  // 2. 非美国专属任务 → 走西安 Codex Bridge（失败则降级到本机）
   if (!US_ONLY_TYPES.has(task.task_type)) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非美国专属任务)`);
-    return triggerCodexBridge(task);
+    const codexResult = await triggerCodexBridge(task);
+    if (codexResult.success) return codexResult;
+    // Codex Bridge 不可达，降级到本机执行
+    console.log(`[executor] Codex Bridge 不可达，降级到本机执行: task_type=${task.task_type} error=${codexResult.error}`);
+    // 继续执行下面的本机 cecelia-bridge 逻辑
   }
 
   // 3. dev 任务 → Claude Code（本机 cecelia-bridge）
