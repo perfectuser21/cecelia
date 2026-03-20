@@ -1,8 +1,12 @@
 /**
  * dispatch-now 端点测试
  * POST /api/brain/dispatch-now — 不经过 tick loop 直接派发任务
+ *
+ * 被测源码: packages/brain/src/routes/execution.js (dispatch-now 路由)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// 被测模块（vitest hoists vi.mock before imports，所以静态 import 安全）
+import _router from '../routes/execution.js';
 
 // Mock pool
 const mockQuery = vi.fn();
