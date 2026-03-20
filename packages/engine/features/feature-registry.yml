@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.6.0"
+    date: "2026-03-20"
+    summary: "feat(engine): /dev 4-Stage Pipeline 重构 — Spec/Code/Integrate/Ship + Codex Gate 前置"
+    scope: skills
+    breaking: true
+    feature_id: pipeline-v2-4stage
   - version: "13.4.6"
     date: "2026-03-20"
     summary: "feat(engine): cross-ref-registry 检查器 + CI L2 接入 + workflows cleanup.sh 旧步骤名修复"
