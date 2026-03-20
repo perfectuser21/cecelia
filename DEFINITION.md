@@ -460,6 +460,7 @@ queued → in_progress → completed
 | spec_review | US | Spec 审查 (/spec-review) | 本机 Codex | 固定 openai |
 | code_review_gate | US | 代码质量门禁 (/code-review-gate) | 本机 Codex | 固定 openai |
 | initiative_review | US | Initiative 整体审查 (/initiative-review) | 本机 Codex | 固定 openai |
+| content_publish | US | 多平台内容发布 (/dev) | Sonnet / - | 默认 anthropic |
 
 ---
 
