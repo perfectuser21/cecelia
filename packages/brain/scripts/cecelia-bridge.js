@@ -75,7 +75,7 @@ const server = http.createServer((req, res) => {
         // BRIDGE_TIMEOUT_MS 仍作为"未传 timeout 时"的默认值（120s）
         const MAX_BRIDGE_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_MAX_TIMEOUT_MS || '600000', 10);
         const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, MAX_BRIDGE_LLM_TIMEOUT_MS);
-        const claudeBin = '/Users/administrator/.local/bin/claude';
+        const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 
         const startTime = Date.now();
@@ -83,8 +83,7 @@ const server = http.createServer((req, res) => {
         const { spawn } = require('child_process');
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
-        // 账号轮换：如果传入 accountId，用宿主机侧 homedir 拼出正确路径
-        // Brain 运行在容器内（homedir=/home/cecelia），必须由 bridge 在宿主机侧拼路径
+        // 账号轮换：如果传入 accountId，用 homedir 拼出正确路径
         if (accountId) {
           const { homedir } = require('os');
           const { join } = require('path');
@@ -161,7 +160,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = notebook_id ? ['ask', '-n', notebook_id, query] : ['ask', query];
@@ -198,7 +197,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = notebook_id ? ['source', 'add', '-n', notebook_id, url] : ['source', 'add', url];
@@ -234,7 +233,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         // notebooklm source add "text content" --title "title" [-n notebook_id] --json
@@ -277,7 +276,7 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({ ok: false, error: 'Missing source_id' }));
           return;
         }
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = ['source', 'delete', source_id, '-y'];
@@ -308,7 +307,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const { notebook_id } = JSON.parse(body);
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm';
         const { execFile } = require('child_process');
         const args = ['source', 'list', '--json'];
         if (notebook_id) { args.push('-n', notebook_id); }
