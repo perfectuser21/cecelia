@@ -220,6 +220,12 @@ describe('API 端点 — D3', () => {
       },
     }));
 
+    vi.doMock('../fleet-resource-cache.js', () => ({
+      getFleetStatus: vi.fn(() => []),
+      getRemoteCapacity: vi.fn(() => null),
+      isServerOnline: vi.fn(() => false),
+    }));
+
     const { getSlotStatus } = await import('../slot-allocator.js');
     const status = await getSlotStatus();
 
