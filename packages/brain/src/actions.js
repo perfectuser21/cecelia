@@ -182,6 +182,43 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
 }
 
 /**
+ * Create a new Scope (写入 projects 表, type='scope')
+ * Scope = 2-3 天的功能边界分组，挂在 Project 下面
+ * 行业术语来自 Shape Up 方法论，作为 Project→Initiative 之间的中间层
+ * @param {Object} params
+ * @param {string} params.name - Scope name
+ * @param {string} params.parent_id - Project ID (type='project' 的那个)
+ * @param {string} params.description - Scope description
+ * @param {string} params.domain - Business domain
+ * @param {string} params.owner_role - Role owning this scope
+ */
+async function createScope({ name, parent_id, description, domain: domainInput, owner_role: ownerRoleInput }) {
+  if (!name || !parent_id) {
+    return { success: false, error: 'name and parent_id are required' };
+  }
+
+  const detected = detectDomain(`${name} ${description || ''}`);
+  const domain = domainInput ?? detected.domain;
+  const owner_role = ownerRoleInput ?? detected.owner_role;
+
+  const result = await pool.query(`
+    INSERT INTO projects (name, parent_id, description, type, status, decomposition_depth, domain, owner_role)
+    VALUES ($1, $2, $3, 'scope', 'active', 1, $4, $5)
+    RETURNING *
+  `, [
+    name,
+    parent_id,
+    description || '',
+    domain,
+    owner_role,
+  ]);
+
+  const scope = result.rows[0];
+  console.log(`[Action] Created scope: ${scope.id} - ${name} (parent: ${parent_id})`);
+  return { success: true, scope };
+}
+
+/**
  * Create a new Project (写入 projects 表, type='project')
  * Project = 1-2 周的项目，可以跨多个 Repository
  * @param {Object} params
@@ -490,6 +527,7 @@ async function batchUpdateTasks({ filter, update }) {
 export {
   createTask,
   createInitiative,
+  createScope,
   createProject,
   updateTask,
   createGoal,

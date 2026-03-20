@@ -585,7 +585,7 @@ describe('checkProjectCompletion - 基础场景', () => {
     expect(mainSql).toContain("type = 'project'");
     expect(mainSql).toContain("status = 'active'");
     expect(mainSql).toContain('NOT EXISTS');
-    expect(mainSql).toContain("type = 'initiative'");
+    expect(mainSql).toContain("type IN ('initiative', 'scope')");
   });
 });
 
