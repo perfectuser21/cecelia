@@ -466,19 +466,17 @@ async function runDecompositionChecks() {
 
     // Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
-    const initiativePlansCreated = allActions.filter(a => a.action === 'create_initiative_plan').length;
     const statusChanges = allActions.filter(a => a.action === 'status_change').length;
     const strategicMeetingsCreated = allActions.filter(a => a.action === 'create_strategic_meeting').length;
 
-    if (totalCreated > 0 || initiativePlansCreated > 0 || statusChanges > 0 || strategicMeetingsCreated > 0) {
-      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${initiativePlansCreated} initiative_plan tasks, ${statusChanges} status changes, ${strategicMeetingsCreated} strategic_meeting tasks`);
+    if (totalCreated > 0 || statusChanges > 0 || strategicMeetingsCreated > 0) {
+      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${statusChanges} status changes, ${strategicMeetingsCreated} strategic_meeting tasks`);
     }
 
     return {
       actions: allActions,
       summary: {
         created: totalCreated,
-        initiative_plans_created: initiativePlansCreated,
         status_changes: statusChanges,
         strategic_meetings_created: strategicMeetingsCreated,
       },
