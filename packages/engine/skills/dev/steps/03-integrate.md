@@ -279,7 +279,7 @@ DEV_MODE_FILE=".dev-mode.${BRANCH}"
 BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
 if [[ -z "$BRAIN_HEALTH" ]]; then
   echo "⚠️  Brain 不可用（$BRAIN_URL），code_review_gate 降级为跳过"
-  echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
+  echo "code_review_status: pass" >> "$DEV_MODE_FILE"
 else
   echo "🔍 向 Brain 注册 code_review_gate 任务..."
 
@@ -288,8 +288,8 @@ else
     -d "{\"title\":\"Code Review: $BRANCH\",\"task_type\":\"code_review_gate\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
   CR_TASK=$(echo "$CR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
   if [[ -n "$CR_TASK" ]]; then
-    echo "code_review_gate_task_id: $CR_TASK" >> "$DEV_MODE_FILE"
-    echo "code_review_gate_status: pending" >> "$DEV_MODE_FILE"
+    echo "code_review_task_id: $CR_TASK" >> "$DEV_MODE_FILE"
+    echo "code_review_status: pending" >> "$DEV_MODE_FILE"
     echo "  ✅ code_review_gate 已注册: $CR_TASK"
     # 立即派发（不等调度器）
     curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
@@ -299,7 +299,7 @@ else
     echo "  🚀 code_review_gate 已派发执行"
   else
     echo "  ⚠️  code_review_gate 注册失败，降级为跳过"
-    echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
+    echo "code_review_status: pass" >> "$DEV_MODE_FILE"
   fi
 fi
 ```
