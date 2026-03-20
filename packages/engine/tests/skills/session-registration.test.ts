@@ -206,11 +206,13 @@ SESSION_DIR="${SESSION_DIR}"
 CURRENT_REPO="${testRepo}"
 COUNT=0
 
-for session_file in "$SESSION_DIR"/session-test-concurrent-*.json; do
+for session_file in "$SESSION_DIR"/session-*.json; do
     [[ ! -f "$session_file" ]] && continue
-    session_repo=$(cat "$session_file" | grep -o '"cwd":"[^"]*"' | cut -d'"' -f4)
-    if [[ "$session_repo" == "$CURRENT_REPO" ]]; then
-        COUNT=$((COUNT + 1))
+    if [[ "$(basename "$session_file")" =~ session-test-concurrent- ]]; then
+        session_repo=$(cat "$session_file" | grep -o '"cwd":"[^"]*"' | cut -d'"' -f4)
+        if [[ "$session_repo" == "$CURRENT_REPO" ]]; then
+            COUNT=$((COUNT + 1))
+        fi
     fi
 done
 
