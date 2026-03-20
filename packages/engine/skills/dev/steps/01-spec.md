@@ -1,16 +1,16 @@
 ---
-id: dev-step-01-taskcard
+id: dev-stage-01-spec
 version: 1.0.0
-created: 2026-03-14
-updated: 2026-03-14
+created: 2026-03-20
 changelog:
-  - 1.0.0: 合并原 01-prd + 05-dod 为统一 Task Card 格式
+  - 1.0.0: 从 01-taskcard.md 重构为 Stage 1 Spec，加入 spec_review Codex Gate
 ---
 
-# Step 1: TaskCard — 开发契约定稿
+# Stage 1: Spec — 读 PRD + 写 DoD + spec_review Gate
 
 > **产物**：`.task-cp-{branch}.md`（需求 + 成功标准 + DoD 条目，三合一）
 > PRD 和 DoD 不再是两个文件，物理上不可能漂移。
+> **Stage 1 完成后派发 spec_review，然后停下来等 stop hook 放行。**
 
 ## 1.1 参数检测
 
@@ -48,7 +48,7 @@ created: YYYY-MM-DD
 3. [GATE] CI 全部通过
 
 ## 验收条件（DoD）
-> Test 字段在 Step 2 探索后填写，现在写条目即可。
+> Test 字段在 Stage 2 探索后填写，现在写条目即可。
 
 - [ ] [ARTIFACT] <条件>
   Test: TODO
@@ -59,7 +59,7 @@ created: YYYY-MM-DD
 - [ ] [GATE] 所有现有测试通过
   Test: manual:bash -c "npm test 2>&1 | tail -5"
 
-## 实现方案（Step 2 探索后填写）
+## 实现方案（Stage 2 探索后填写）
 **要改的文件**: （探索后填写）
 **Scope 锚定**: （探索后填写）
 ```
@@ -74,11 +74,10 @@ branch: ${BRANCH}
 task_card: .task-${BRANCH}.md
 started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 step_0_worktree: done
-step_1_taskcard: done
+step_1_spec: done
 step_2_code: pending
-step_3_prci: pending
-step_4_learning: pending
-step_5_clean: pending
+step_3_integrate: pending
+step_4_ship: pending
 EOF
 ```
 
@@ -88,7 +87,7 @@ EOF
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 TASK_CARD=".task-${BRANCH}.md"
 ERRORS=0
-echo "🔍 Step 1 自检..."
+echo "🔍 Stage 1 自检..."
 
 # 检查1: Task Card 文件存在
 if [[ ! -f "$TASK_CARD" ]]; then
@@ -122,14 +121,14 @@ fi
 
 if [[ $ERRORS -gt 0 ]]; then
     echo ""
-    echo "⛔ Step 1 自检失败！修复后才能继续 Step 2。"
+    echo "⛔ Stage 1 自检失败！修复后才能继续。"
     exit 1
 fi
 
-echo "✅ Step 1 自检通过 — Task Card 格式正确"
+echo "✅ Stage 1 自检通过 — Task Card 格式正确"
 ```
 
-## ⛔ CI 镜像检查（格式自检通过后、LLM Gate 前执行）
+## ⛔ CI 镜像检查（格式自检通过后执行）
 
 > **本地跑 CI 同款 DoD 检查脚本，让格式问题在本地被拦截，不等 CI 才发现。**
 
@@ -142,7 +141,7 @@ EXIT_CODE=$?
 
 if [[ $EXIT_CODE -ne 0 ]]; then
     echo ""
-    echo "⛔ DoD 格式不符合 CI 要求！修复后再进 LLM Subagent。"
+    echo "⛔ DoD 格式不符合 CI 要求！修复后再继续。"
     echo "   常见问题："
     echo "   - [BEHAVIOR] 条目不能用 grep/ls 作为 Test 命令"
     echo "   - DoD 条目数必须 ≥ 3"
@@ -153,22 +152,10 @@ fi
 echo "✅ CI 镜像检查通过 — DoD 格式符合要求"
 ```
 
-## ⛔ LLM 质量 Gate（CI 镜像检查通过后执行）
+## Stage 1 末尾：置信度自评（写入 .dev-mode）
 
-> **主 agent 自检 Task Card 质量。**
-
-对照以下 3 个维度自评：
-
-1. **DoD 可验证性**：每条 DoD 条目是否有明确的 pass/fail 标准？
-2. **DoD 完整性**：是否覆盖了错误路径、边界条件？
-3. **成功标准具体性**：成功标准是否够具体，不依赖主观判断？
-
-三项均 ≥ 3 分 → 继续。否则更新 Task Card 后重新自检。
-
-## Step 1 末尾：置信度自评（写入 .dev-mode）
-
-> **LLM 质量 Gate 通过后，AI 输出置信度自评并写入 .dev-mode。**
-> 这是开始前的诚实评估，供 Step 5 执行质量对比用。
+> **CI 镜像检查通过后，AI 输出置信度自评并写入 .dev-mode。**
+> 这是开始前的诚实评估，供 Stage 4 执行质量对比用。
 
 AI 自评后，执行以下写入：
 
@@ -199,13 +186,49 @@ echo "✅ 置信度已写入 .dev-mode"
 | 3-4  | PRD 不够清晰，多处不确定，需要大量探索 |
 | 1-2  | 需求很模糊，改动范围不确定，高度不确定 |
 
-**输出示例**（AI 在此输出后写入）：
+## ⚡ 派发 spec_review Codex 任务（CRITICAL — Stage 1 最后一步）
+
+> **Stage 1 完成后，派发 spec_review Codex 任务审查 Task Card 质量，然后停下来等 stop hook 放行。**
+> spec_review 替代了原来的 LLM 质量 Gate，由独立 Codex agent 做更客观的审查。
+
+```bash
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+
+# 检查 Brain 是否可用
+BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
+if [[ -z "$BRAIN_HEALTH" ]]; then
+  echo "⚠️  Brain 不可用（$BRAIN_URL），spec_review 降级为跳过"
+  echo "spec_review_status: pass" >> "$DEV_MODE_FILE"
+else
+  echo "🔍 向 Brain 注册 spec_review 任务..."
+
+  SR_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\":\"Spec Review: $BRANCH\",\"task_type\":\"spec_review\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
+  SR_TASK=$(echo "$SR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  if [[ -n "$SR_TASK" ]]; then
+    echo "spec_review_task_id: $SR_TASK" >> "$DEV_MODE_FILE"
+    echo "spec_review_status: pending" >> "$DEV_MODE_FILE"
+    echo "  ✅ spec_review 已注册: $SR_TASK"
+    # 立即派发（不等调度器）
+    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
+      -H "Content-Type: application/json" \
+      -d "{\"task_id\":\"$SR_TASK\"}" \
+      --max-time 5 2>/dev/null || true
+    echo "  🚀 spec_review 已派发执行"
+  else
+    echo "  ⚠️  spec_review 注册失败，降级为跳过"
+    echo "spec_review_status: pass" >> "$DEV_MODE_FILE"
+  fi
+fi
 ```
-置信度：7/10
-原因：PRD 清晰，但涉及 Stop Hook 循环机制有不确定性
-风险：.dev-mode 格式解析的边界条件
-```
+
+**输出状态后停止，等 stop hook 放行。**
+
+spec_review 通过后，devloop-check.sh 会放行，stop hook exit 2 会让 Claude 继续执行 Stage 2。
 
 ## 完成后
 
-立即执行 Step 2：`cat skills/dev/steps/02-code.md`
+**等待 spec_review 通过后**，立即执行 Stage 2：`cat skills/dev/steps/02-code.md`

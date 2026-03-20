@@ -331,13 +331,13 @@ fi
 # 与 branch-protect.sh 的 Write/Edit 拦截形成对称保护
 # 防止 AI 绕过 PreToolUse:Write，用 Bash 直接跳过状态机验证
 if echo "$CMD" | grep -qE '\.dev-mode' && \
-   echo "$CMD" | grep -qE 'step_(1_taskcard|2_code|4_learning):[[:space:]]*done'; then
+   echo "$CMD" | grep -qE 'step_(1_(spec|taskcard)|2_code|4_(ship|learning)):[[:space:]]*done'; then
     _VERIFY_STEP=""
-    if echo "$CMD" | grep -qE 'step_1_taskcard:[[:space:]]*done'; then
+    if echo "$CMD" | grep -qE 'step_1_(spec|taskcard):[[:space:]]*done'; then
         _VERIFY_STEP="step1"
     elif echo "$CMD" | grep -qE 'step_2_code:[[:space:]]*done'; then
         _VERIFY_STEP="step2"
-    elif echo "$CMD" | grep -qE 'step_4_learning:[[:space:]]*done'; then
+    elif echo "$CMD" | grep -qE 'step_4_(ship|learning):[[:space:]]*done'; then
         _VERIFY_STEP="step4"
     fi
     if [[ -n "$_VERIFY_STEP" ]]; then

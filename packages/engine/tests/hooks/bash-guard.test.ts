@@ -382,9 +382,9 @@ describe("bash-guard.sh", () => {
       const content = readFileSync(ORIG_HOOK_PATH, "utf8");
       // 验证 Rule 5 代码存在
       expect(content).toContain("dev-mode");
-      expect(content).toContain("step_1_taskcard");
+      expect(content).toContain("step_1_");
       expect(content).toContain("step_2_code");
-      expect(content).toContain("step_4_learning");
+      expect(content).toContain("step_4_");
       expect(content).toContain("verify-step.sh");
     });
 

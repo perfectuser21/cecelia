@@ -69,11 +69,11 @@ describe("stop-dev.sh seal integrity check", () => {
     expect(content).toContain("BRANCH_NAME");
   });
 
-  it("stop-dev.sh checks step_1_taskcard, step_2_code, step_4_learning", () => {
+  it("stop-dev.sh checks step_1_spec, step_2_code, step_4_ship", () => {
     const content = readFileSync(STOP_DEV_PATH, "utf-8");
-    expect(content).toContain("step_1_taskcard");
+    expect(content).toContain("step_1_spec");
     expect(content).toContain("step_2_code");
-    expect(content).toContain("step_4_learning");
+    expect(content).toContain("step_4_ship");
   });
 
   it("stop-dev.sh exits 2 when _SEAL_FAIL is true", () => {

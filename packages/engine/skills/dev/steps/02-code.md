@@ -9,9 +9,9 @@ changelog:
   - 1.0.0: 初始版本
 ---
 
-# Step 2: Code — 写代码 + 自验证
+# Stage 2: Code — 写代码 + 自验证
 
-> 探索代码 → 写实现 → 逐条验证 DoD → 本地测试 → /simplify（建议）→ 计算 Task Card hash
+> 探索代码 → 写实现 → 逐条验证 DoD → 本地测试 → 计算 Task Card hash
 
 ---
 
@@ -112,18 +112,7 @@ fi
 
 **这是你 push 前的最后防线。Codex 会在 push 后独立再跑一遍，但你自己先过一遍能减少 90% 的返工。**
 
-### 2.3.4 /simplify（建议执行）
-
-执行 `/simplify` skill 让代码更简洁。这不是强制的——如果改动很小（<50 行），可以跳过。
-
-```
-/simplify 检查的维度：
-- 复用性：相似逻辑是否可以提取
-- 质量：命名是否清晰
-- 效率：是否有不必要的循环或过度抽象
-```
-
-### 2.3.5 计算 Task Card Hash（TDD 锁定）
+### 2.3.4 计算 Task Card Hash（TDD 锁定）
 
 ```bash
 TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
@@ -137,17 +126,6 @@ fi
 
 ---
 
-## 2.4 代码审查说明
-
-> **代码审查在 Step 3 由 3 个独立 Codex agent 完成，不在 Step 2 做。**
->
-> Push 后 Brain dispatch-now 并行派发：
-> - **Codex A**: CTO Review（架构 + 需求符合度 + 安全）
-> - **Codex B**: DoD 独立验证（逐条跑 Test 命令）
-> - **Codex C**: PRD 覆盖审计（承诺 vs 实际实现）
->
-> 主 agent 在 Step 2 完成后直接进入 Step 3，无需在此处做代码审查。
-
 ---
 
 ### 完成后
@@ -158,13 +136,13 @@ fi
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 sed -i "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE"
-echo "✅ Step 2 完成标记已写入 .dev-mode"
+echo "✅ Stage 2 完成标记已写入 .dev-mode"
 ```
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "2", status: "completed" })`
 
 **立即执行下一步**：
 
-1. 读取 `skills/dev/steps/03-prci.md`
+1. 读取 `skills/dev/steps/03-integrate.md`
 2. 立即 push + 创建 PR
 3. **不要**输出总结或等待确认

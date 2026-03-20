@@ -59,7 +59,7 @@ fi
 # ===== .dev-mode Step 完成验证（State Machine 强制层）v26 =====
 # 当 AI 向 .dev-mode.* 写入 step_N_xxx: done 时，运行 verify-step.sh 验证
 # 目的：让状态机存在于代码层，AI 无法跳过真实验证直接自报 done
-# 覆盖：step_1_taskcard / step_2_code / step_4_learning
+# 覆盖：step_1_spec / step_2_code / step_4_ship（兼容旧名 step_1_taskcard / step_4_learning）
 if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
     if [[ "$TOOL_NAME" == "Write" ]]; then
         DEVMODE_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null || echo "")
@@ -68,8 +68,8 @@ if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
         PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
         if [[ -f "$VERIFY_SCRIPT" ]]; then
-            # step_1_taskcard: done → 验证 Task Card DoD Test 字段无假命令
-            if echo "$DEVMODE_CONTENT" | grep -qE '^step_1_taskcard:[[:space:]]+done'; then
+            # step_1_spec: done（或兼容旧名 step_1_taskcard）→ 验证 Task Card DoD Test 字段无假命令
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_1_(spec|taskcard):[[:space:]]+done'; then
                 if ! bash "$VERIFY_SCRIPT" "step1" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
                     exit 2
                 fi
@@ -82,8 +82,8 @@ if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
                 fi
             fi
 
-            # step_4_learning: done → 验证 Learning 文件有必需章节
-            if echo "$DEVMODE_CONTENT" | grep -qE '^step_4_learning:[[:space:]]+done'; then
+            # step_4_ship: done（或兼容旧名 step_4_learning）→ 验证 Learning 文件有必需章节
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_4_(ship|learning):[[:space:]]+done'; then
                 if ! bash "$VERIFY_SCRIPT" "step4" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
                     exit 2
                 fi
@@ -97,7 +97,7 @@ if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
         PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
         if [[ -f "$VERIFY_SCRIPT" ]]; then
-            if echo "$DEVMODE_CONTENT" | grep -qE '^step_1_taskcard:[[:space:]]+done'; then
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_1_(spec|taskcard):[[:space:]]+done'; then
                 if ! bash "$VERIFY_SCRIPT" "step1" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
                     exit 2
                 fi
@@ -107,7 +107,7 @@ if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
                     exit 2
                 fi
             fi
-            if echo "$DEVMODE_CONTENT" | grep -qE '^step_4_learning:[[:space:]]+done'; then
+            if echo "$DEVMODE_CONTENT" | grep -qE '^step_4_(ship|learning):[[:space:]]+done'; then
                 if ! bash "$VERIFY_SCRIPT" "step4" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
                     exit 2
                 fi
