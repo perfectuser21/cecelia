@@ -25,6 +25,16 @@ const BRAIN_EMBEDDED_SOURCES = {
   'self-healing-immunity': ['healing', 'immune'],
   'self-healing': ['healing'],
   'three-layer-brain': ['thalamus', 'cortex'],
+  'emotion-perception': ['memory_stream', 'working_memory'],      // 情绪感知写入记忆表
+  'memory-working': ['working_memory', 'memory_context'],         // 工作记忆管理
+  'memory-episodic': ['memory_stream', 'episode_events'],         // 情节记忆管理
+  'memory-semantic': ['learnings', 'semantic_cache'],             // 语义记忆管理
+  'learning-absorption': ['learnings', 'absorption_events'],      // 学习吸收过程
+  'curiosity-exploration': ['exploration_logs', 'curiosity_events'], // 好奇心探索
+  'desire-formation': ['desire_queue', 'motivation_events'],      // 欲望形成
+  'rumination': ['rumination_logs', 'reflection_events'],         // 反刍思考
+  'narrative-expression': ['narrative_logs', 'expression_events'], // 叙事表达
+  'quarantine-review-system': ['quarantine_events', 'review_logs'], // 隔离审查
 };
 
 // Brain 进程运行即视为 active 的能力（架构性/意识性能力）
@@ -340,4 +350,4 @@ export function getScannerStatus() {
   };
 }
 
-export { runScanCycle };
+export { runScanCycle, BRAIN_ALWAYS_ACTIVE, BRAIN_EMBEDDED_SOURCES };
