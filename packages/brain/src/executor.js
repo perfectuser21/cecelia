@@ -1599,12 +1599,45 @@ PUT /api/tasks/goals/${krId}
 
   // scope_plan：Scope 内规划下一个 Initiative（/decomp Phase 3）
   if (taskType === 'scope_plan') {
-    return `/decomp\n\n[scope_plan] ${task.description || task.title}`;
+    const formatHint = [
+      '\n\n## 输出格式要求',
+      '用结构化 Markdown 输出。每个 Initiative：',
+      '### Initiative N：名称',
+      '| 维度 | 内容 |',
+      '|------|------|',
+      '| **功能边界** | 只做什么、不碰什么 |',
+      '| **交付物** | 具体产出清单 |',
+      '| **SPIDR-S** | Spike 策略 |',
+      '| **SPIDR-P** | Path 切割 |',
+      '| **SPIDR-I** | Interface 版本 |',
+      '| **SPIDR-D** | Data 范围 |',
+      '| **SPIDR-R** | Rules 渐进 |',
+    ].join('\n');
+    return `/decomp\n\n[scope_plan] ${task.description || task.title}${formatHint}`;
   }
 
   // project_plan：Project 内规划下一个 Scope（/decomp Phase 4）
   if (taskType === 'project_plan') {
-    return `/decomp\n\n[project_plan] ${task.description || task.title}`;
+    const formatHint = [
+      '\n\n## 输出格式要求',
+      '用结构化 Markdown 输出。每个 Scope：',
+      '### Scope N：名称',
+      '| 维度 | 内容 |',
+      '|------|------|',
+      '| **功能边界** | 只处理什么、不碰什么 |',
+      '| **交付物** | 具体产出清单 |',
+      '| **完成条件** | 可验证的验收标准 |',
+      '| **SPIDR-S** | Spike 策略 |',
+      '| **SPIDR-P** | Path 切割 |',
+      '| **SPIDR-I** | Interface 版本 |',
+      '| **SPIDR-D** | Data 范围 |',
+      '| **SPIDR-R** | Rules 渐进 |',
+      '',
+      '最后加总结表：',
+      '| Scope | 对应成功标准 | 预计天数 | 执行顺序 |',
+      '|-------|------------|---------|---------|',
+    ].join('\n');
+    return `/decomp\n\n[project_plan] ${task.description || task.title}${formatHint}`;
   }
 
   // initiative_verify：调用 /architect Mode 3 verify，传入 initiative_id
