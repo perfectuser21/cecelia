@@ -8,10 +8,12 @@ import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 
-const SCRIPT_PATH = 'skills/dev/scripts/generate-feedback-report-v2.sh'
-const LOG_FILE = '.dev-execution-log.jsonl'
-const EXPECTATIONS_FILE = 'skills/dev/lib/step-expectations.json'
-const REPORT_DIR = 'docs/dev-reports'
+// 使用绝对路径避免 vitest worker CWD 不一致导致的 flaky 问题
+const ENGINE_ROOT = path.resolve(__dirname, '../..')
+const SCRIPT_PATH = path.join(ENGINE_ROOT, 'skills/dev/scripts/generate-feedback-report-v2.sh')
+const LOG_FILE = path.join(ENGINE_ROOT, '.dev-execution-log.jsonl')
+const EXPECTATIONS_FILE = path.join(ENGINE_ROOT, 'skills/dev/lib/step-expectations.json')
+const REPORT_DIR = path.join(ENGINE_ROOT, 'docs/dev-reports')
 
 describe('generate-feedback-report-v2.sh', () => {
   beforeEach(() => {
@@ -57,7 +59,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该生成报告文件', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
 
     expect(fs.existsSync(REPORT_DIR)).toBe(true)
 
@@ -75,7 +77,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含效率维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -88,7 +90,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含稳定性维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -99,7 +101,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含自动化维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -110,7 +112,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含改进建议', () => {
-    execSync(`bash ${SCRIPT_PATH}`)
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
