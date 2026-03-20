@@ -8,7 +8,8 @@ updated: 2026-03-20
 # Codex 审查 Evidence 文件规范
 
 > SSOT：本文件定义 `.dev-codex-evidence.{branch}.json` 的格式。
-> 3 个 Codex 审查 Skill（cto-review / code-quality / prd-audit）在审查完成后写入此文件。
+> Pipeline v2 使用 2 个 Codex Gate（spec_review / code_review_gate）替代了旧的 3 个 Skill。
+> 旧 Skill（cto-review / code-quality / prd-audit）已于 v13.8.0 删除。
 
 ---
 
@@ -147,10 +148,16 @@ git push origin "$BRANCH"
 
 ---
 
-## 关联 Skill
+## 关联 Gate（Pipeline v2）
 
-| Skill | reviewer_type | 写入时机 |
+| Gate | reviewer_type | 写入时机 |
 |-------|---------------|---------|
-| `cto-review` | `cto_review` | Phase 3 结论输出后、Brain 回调后 |
-| `code-quality` | `code_quality_review` | Phase 3 结论输出后、Brain 回调后 |
-| `prd-audit` | `prd_coverage_audit` | Phase 3 结论输出后、Brain 回调后 |
+| `spec_review` | `spec_review` | Stage 1 Spec 完成后 |
+| `code_review_gate` | `code_review_gate` | Stage 3 CI 通过后 |
+
+### 已废弃（Pipeline v1）
+
+以下 Skill 已删除，仅保留文档记录：
+- ~~cto-review~~ → 替代：code_review_gate
+- ~~code-quality~~ → 替代：code_review_gate
+- ~~prd-audit~~ → 替代：spec_review

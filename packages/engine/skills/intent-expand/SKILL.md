@@ -320,7 +320,7 @@ Brain tick 有时候会延迟超过 10s，需要排查原因并修复。
 ## 注意事项
 
 - 此 skill 为**只读**操作：只查询 Brain API，不修改任何数据库记录
-- 生成的 `.enriched-prd-<branch>.md` 文件供后续 `/cto-review` 和 `/dev` 使用
+- 生成的 `.enriched-prd-<branch>.md` 文件供后续 `/dev` 和 `code_review_gate` 使用
 - `ENRICHED_PRD_RESULT: SUCCESS` 是 Brain executor 解析的关键标志，必须准确输出
 - 层级查询使用实际存在的 Brain API 端点：
   - `GET /api/brain/tasks/:id`

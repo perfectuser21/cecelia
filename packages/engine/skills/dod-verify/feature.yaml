@@ -1,8 +1,0 @@
-id: dod-verify
-name: DoD 独立验证
-version: 1.0.0
-type: skill
-scope: engine
-capabilities:
-  - dod-verification
-  - independent-test-execution
