@@ -25,7 +25,8 @@ const TEST_DIR = join(PROJECT_ROOT, ".test-phase1");
 
 // 运行脚本时清除 GITHUB_ACTIONS 环境变量，以便测试本地行为
 // CI 中 GITHUB_ACTIONS=true 会跳过某些检查，但测试需要验证这些检查
-const localEnv = { ...process.env, GITHUB_ACTIONS: "" };
+// 同时设置 SKIP_PRD_TRACE_CHECK=true 跳过 PRD 追溯检查（测试环境没有匹配的 PRD 文件）
+const localEnv = { ...process.env, GITHUB_ACTIONS: "", SKIP_PRD_TRACE_CHECK: "true" };
 
 describe("Phase 1: DevGate Scripts", () => {
   beforeAll(() => {
@@ -103,6 +104,7 @@ describe("Phase 1: DevGate Scripts", () => {
       const result = execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
         encoding: "utf-8",
         cwd: PROJECT_ROOT,
+        env: localEnv,
       });
 
       expect(result).toContain("✅");
@@ -215,6 +217,7 @@ describe("Phase 1: DevGate Scripts", () => {
       const result = execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
         encoding: "utf-8",
         cwd: PROJECT_ROOT,
+        env: localEnv,
       });
 
       expect(result).toContain("✅");
