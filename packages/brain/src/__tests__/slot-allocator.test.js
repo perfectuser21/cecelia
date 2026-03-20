@@ -1067,9 +1067,9 @@ describe('Backpressure', () => {
     pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
   });
 
-  it('exports BACKPRESSURE_THRESHOLD=5 and BACKPRESSURE_BURST_LIMIT=1', () => {
+  it('exports BACKPRESSURE_THRESHOLD=5 and BACKPRESSURE_BURST_LIMIT=3', () => {
     expect(BACKPRESSURE_THRESHOLD).toBe(5);
-    expect(BACKPRESSURE_BURST_LIMIT).toBe(1);
+    expect(BACKPRESSURE_BURST_LIMIT).toBe(3);
   });
 
   it('getQueueDepth returns count from DB', async () => {
