@@ -387,8 +387,26 @@ devloop_check() {
                 '{"status":"blocked","reason":"Step 5 Clean 已完成，cleanup_done 已标记，等待下次检查退出","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
             return 2
         else
+            # 尝试自动执行 cleanup（不依赖 AI 手动调用）
+            local _cleanup_script=""
+            for _cs_candidate in \
+                "$PROJECT_ROOT/packages/engine/skills/dev/scripts/cleanup.sh" \
+                "$HOME/.claude/skills/dev/scripts/cleanup.sh"; do
+                if [[ -f "$_cs_candidate" ]]; then
+                    _cleanup_script="$_cs_candidate"
+                    break
+                fi
+            done
+
+            if [[ -n "$_cleanup_script" ]]; then
+                echo "🧹 自动执行 cleanup.sh..." >&2
+                (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script" 2>/dev/null) || true
+                # cleanup.sh 会写 step_5_clean: done + cleanup_done: true
+                # 下次 devloop_check 时顶层 cleanup_done 检查会捕获
+            fi
+
             _devloop_jq -n \
-                '{"status":"blocked","reason":"PR 已合并，Step 5 Clean 未完成","action":"执行 Step 5 Clean：读取 skills/dev/steps/05-clean.md 并执行清理"}'
+                '{"status":"blocked","reason":"PR 已合并，正在执行 Step 5 Clean（自动触发）","action":"等待 cleanup 完成，下次检查时自动退出"}'
             return 2
         fi
     fi

@@ -72,6 +72,9 @@ coverage/
 
 # Archive (old PRDs, DODs, etc.)
 .archive/
+
+# 历史归档（cleanup.sh 产出）
+.history/
 # Trigger CI
 
 # Claude Code worktrees
