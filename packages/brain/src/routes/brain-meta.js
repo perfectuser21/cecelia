@@ -1373,8 +1373,7 @@ router.get('/credentials', async (_req, res) => {
   } catch(e) { /* dir may not exist in test env */ }
 
   // 2. API key credentials: ~/.credentials/*.json
-  const { homedir } = await import('os');
-  const credDir = process.env.CREDENTIALS_DIR || `${homedir()}/.credentials`;
+  const credDir = process.env.CREDENTIALS_DIR || `${process.env.HOME || '/Users/administrator'}/.credentials`;
   try {
     const files = readdirSync(credDir);
     files.filter(f => f.endsWith('.json')).sort().forEach(file => {
