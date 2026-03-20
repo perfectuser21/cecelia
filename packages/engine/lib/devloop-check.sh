@@ -159,7 +159,7 @@ _check_codex_review() {
             --arg task_id "$task_id" \
             --arg status "$wait_status" \
             --arg name "$review_name" \
-            '{"status":"blocked","reason":"等待 \($name) 完成（状态: \($status)）","action":"等待 \($name) task \($task_id) 完成，PASS 后自动继续"}'
+            '{"status":"blocked","reason":"等待 \($name) 完成（状态: \($status)）","action":"\($name) 正在执行中（task: \($task_id)）。输出状态后停止，Stop Hook 会自动检查审查结果并放行。禁止询问用户。"}'
         return 1
     fi
 }
@@ -194,7 +194,7 @@ devloop_check() {
             if command -v _devlog_event &>/dev/null; then
                 _devlog_event "devloop-check" "step_1_spec" "blocked" "Stage 1 Spec 未完成"
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"Stage 1 Spec 未完成","action":"执行 Stage 1：读取 skills/dev/steps/01-spec.md，生成 Task Card + 派发 spec_review"}'
+            _devloop_jq -n '{"status":"blocked","reason":"Stage 1 Spec 未完成","action":"立即读取 skills/dev/steps/01-spec.md 并执行 Stage 1。禁止询问用户。"}'
             return 2
         fi
     fi
@@ -212,7 +212,7 @@ devloop_check() {
             if command -v _devlog_event &>/dev/null; then
                 _devlog_event "devloop-check" "step_2_code" "blocked" "Stage 2 Code 未完成"
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"Stage 2 Code 未完成","action":"执行 Stage 2：读取 skills/dev/steps/02-code.md，写代码 + 自验证"}'
+            _devloop_jq -n '{"status":"blocked","reason":"Stage 2 Code 未完成","action":"立即读取 skills/dev/steps/02-code.md 并执行 Stage 2。禁止询问用户。"}'
             return 2
         fi
     fi
@@ -304,7 +304,7 @@ devloop_check() {
                 fi
                 _devloop_jq -n \
                     --arg status "$ci_status" \
-                    '{"status":"blocked","reason":"CI 进行中（\($status)）","action":"等待 CI 完成（通常 3-10 分钟），不要做任何操作"}'
+                    '{"status":"blocked","reason":"CI 进行中（\($status)）","action":"CI 正在运行。输出当前状态后停止，Stop Hook 会自动重新检查。禁止询问用户。"}'
                 return 2
                 ;;
             *)
@@ -373,7 +373,7 @@ devloop_check() {
         fi
         _devloop_jq -n \
             --arg pr "$pr_number" \
-            '{"status":"blocked","reason":"CI 通过 + Code Review PASS，Stage 4 Ship 未完成（合并前必须先写 Learning）","action":"执行 Stage 4：读取 skills/dev/steps/04-ship.md，写 Learning + 合并 PR #\($pr)"}'
+            '{"status":"blocked","reason":"CI 通过 + Code Review PASS，Stage 4 Ship 未完成（合并前必须先写 Learning）","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4，写 Learning + 合并 PR #\($pr)。禁止询问用户。"}'
         return 2
     fi
 

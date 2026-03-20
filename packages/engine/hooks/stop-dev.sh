@@ -539,6 +539,16 @@ fi
 # ===== 验签完整性检查（State Machine 三层防御 P0+P1）=====
 # 检查关键步骤 seal：step_N done 但无对应验签 → exit 2 强制补验
 _SEAL_FILE="$PROJECT_ROOT/.dev-seal.${BRANCH_NAME}"
+# worktree fallback: 如果主路径没找到 seal，在 DEV_LOCK_FILE 所在目录或 worktree 活跃路径找
+if [[ ! -f "$_SEAL_FILE" ]]; then
+    _seal_dir=$(dirname "$DEV_LOCK_FILE" 2>/dev/null || echo "")
+    if [[ -n "$_seal_dir" && -f "$_seal_dir/.dev-seal.${BRANCH_NAME}" ]]; then
+        _SEAL_FILE="$_seal_dir/.dev-seal.${BRANCH_NAME}"
+    fi
+    if [[ ! -f "$_SEAL_FILE" && -n "${_WT_ACTIVE_PATH:-}" && -f "$_WT_ACTIVE_PATH/.dev-seal.${BRANCH_NAME}" ]]; then
+        _SEAL_FILE="$_WT_ACTIVE_PATH/.dev-seal.${BRANCH_NAME}"
+    fi
+fi
 _SEALED_STEPS=("step_1_spec" "step_2_code" "step_4_ship")
 _SEAL_FAIL=false
 for _step in "${_SEALED_STEPS[@]}"; do
@@ -564,6 +574,16 @@ fi
 # ===== Agent Seal 完整性检查（Gate 2 双签验证）=====
 # 检查 .dev-agent-seal.${BRANCH} 中是否有对应的 step_N_agent: approved
 _AGENT_SEAL_FILE="$PROJECT_ROOT/.dev-agent-seal.${BRANCH_NAME}"
+# worktree fallback: agent-seal 同样需要在 worktree 路径查找
+if [[ ! -f "$_AGENT_SEAL_FILE" ]]; then
+    _agent_seal_dir=$(dirname "$DEV_LOCK_FILE" 2>/dev/null || echo "")
+    if [[ -n "$_agent_seal_dir" && -f "$_agent_seal_dir/.dev-agent-seal.${BRANCH_NAME}" ]]; then
+        _AGENT_SEAL_FILE="$_agent_seal_dir/.dev-agent-seal.${BRANCH_NAME}"
+    fi
+    if [[ ! -f "$_AGENT_SEAL_FILE" && -n "${_WT_ACTIVE_PATH:-}" && -f "$_WT_ACTIVE_PATH/.dev-agent-seal.${BRANCH_NAME}" ]]; then
+        _AGENT_SEAL_FILE="$_WT_ACTIVE_PATH/.dev-agent-seal.${BRANCH_NAME}"
+    fi
+fi
 _AGENT_SEAL_FAIL=false
 for _step in "${_SEALED_STEPS[@]}"; do
     if grep -q "^${_step}: done" "$DEV_MODE_FILE" 2>/dev/null; then
@@ -627,7 +647,7 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
 
         COMBINED_REASON="$DEVLOOP_REASON"
         if [[ -n "$DEVLOOP_ACTION" ]]; then
-            COMBINED_REASON="${DEVLOOP_REASON}。下一步：${DEVLOOP_ACTION}"
+            COMBINED_REASON="${DEVLOOP_REASON}。下一步：${DEVLOOP_ACTION}。⚠️ 立即执行，禁止询问用户。"
         fi
 
         echo "  原因: $DEVLOOP_REASON" >&2
