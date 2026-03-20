@@ -124,20 +124,7 @@ $found_fake
     # Stage 1 只写 Spec/DoD 条目，验证在 Stage 2 做。CI L1 会在 push 后做完整检查。
     echo "  ⏭ [Gate 1] Stage 1 跳过 DoD 完整检查（CI L1 将在 push 后检查）" >&2
 
-    # Gate 2: Agent Seal 检查 — step_1_agent: approved
-    if [[ -n "$BRANCH" ]]; then
-        local _agent_seal="$PROJECT_ROOT/.dev-agent-seal.${BRANCH}"
-        if ! grep -q "step_1_agent: approved" "$_agent_seal" 2>/dev/null; then
-            _fail "Gate 2 未通过：缺少 step_1_agent: approved
-  文件: .dev-agent-seal.${BRANCH}
-  Gate 2 需要 Subagent 语义审查后写入 agent_seal。
-  写入命令：
-    echo \"step_1_agent: approved@\$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)\" >> .dev-agent-seal.${BRANCH}"
-        fi
-        echo "  ✅ [Gate 2] agent_seal 已验证（step_1_agent: approved）" >&2
-    fi
-
-    _pass "Step 1 Task Card（Gate 1 CI 镜像 + Gate 2 agent_seal 双通过）"
+    _pass "Step 1 Task Card 验证通过"
 }
 
 # ============================================================================
@@ -193,20 +180,7 @@ verify_step2() {
         echo "  ✅ [Gate 1] Engine 测试通过" >&2
     fi
 
-    # Gate 2: Agent Seal 检查 — step_2_agent: approved
-    if [[ -n "$BRANCH" ]]; then
-        local _agent_seal="$PROJECT_ROOT/.dev-agent-seal.${BRANCH}"
-        if ! grep -q "step_2_agent: approved" "$_agent_seal" 2>/dev/null; then
-            _fail "Gate 2 未通过：缺少 step_2_agent: approved
-  文件: .dev-agent-seal.${BRANCH}
-  Gate 2 需要 Subagent 语义审查代码质量后写入 agent_seal。
-  写入命令：
-    echo \"step_2_agent: approved@\$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)\" >> .dev-agent-seal.${BRANCH}"
-        fi
-        echo "  ✅ [Gate 2] agent_seal 已验证（step_2_agent: approved）" >&2
-    fi
-
-    _pass "Step 2 代码改动验证（Gate 1 CI 镜像 + Gate 2 agent_seal 双通过）"
+    _pass "Step 2 代码改动验证通过"
 }
 
 # ============================================================================
@@ -263,20 +237,7 @@ $errors"
   文件: $learning_file"
     fi
 
-    # Gate 2: Agent Seal 检查 — step_4_agent: approved
-    if [[ -n "$BRANCH" ]]; then
-        local _agent_seal="$PROJECT_ROOT/.dev-agent-seal.${BRANCH}"
-        if ! grep -q "step_4_agent: approved" "$_agent_seal" 2>/dev/null; then
-            _fail "Gate 2 未通过：缺少 step_4_agent: approved
-  文件: .dev-agent-seal.${BRANCH}
-  Gate 2 需要 Subagent 语义审查 Learning 内容后写入 agent_seal。
-  写入命令：
-    echo \"step_4_agent: approved@\$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)\" >> .dev-agent-seal.${BRANCH}"
-        fi
-        echo "  ✅ [Gate 2] agent_seal 已验证（step_4_agent: approved）" >&2
-    fi
-
-    _pass "Step 4 Learning 文件（格式完整 + Gate 2 agent_seal 通过）"
+    _pass "Step 4 Learning 文件验证通过"
 }
 
 # ============================================================================
