@@ -85,4 +85,45 @@ router.get('/publish-results', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/publish-stats
+ * 各平台发布成功率统计
+ * Query: days (default 7, max 90)
+ */
+router.get('/publish-stats', async (req, res) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 7, 90);
+
+    const result = await pool.query(
+      `SELECT
+         platform,
+         COUNT(*) AS total,
+         SUM(CASE WHEN success THEN 1 ELSE 0 END) AS succeeded,
+         SUM(CASE WHEN NOT success THEN 1 ELSE 0 END) AS failed,
+         ROUND(
+           100.0 * SUM(CASE WHEN success THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
+           1
+         ) AS success_rate_pct
+       FROM publish_results
+       WHERE created_at >= NOW() - ($1 || ' days')::INTERVAL
+       GROUP BY platform
+       ORDER BY platform`,
+      [days]
+    );
+
+    const stats = result.rows.map(r => ({
+      platform: r.platform,
+      total: Number(r.total),
+      succeeded: Number(r.succeeded),
+      failed: Number(r.failed),
+      success_rate_pct: r.success_rate_pct !== null ? Number(r.success_rate_pct) : null,
+    }));
+
+    res.json({ success: true, days, stats });
+  } catch (err) {
+    console.error('[publish-stats] GET 失败:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

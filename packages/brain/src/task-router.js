@@ -28,7 +28,9 @@ const VALID_TASK_TYPES = [
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
-  'scope_plan', 'project_plan'
+  'scope_plan', 'project_plan',
+  // 多平台内容发布（content-export 完成后自动创建，路由到西安 Codex）
+  'content_publish'
 ];
 
 // Skill whitelist based on task type
@@ -75,6 +77,8 @@ const SKILL_WHITELIST = {
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
+  // 多平台内容发布（payload.platform 动态路由，executor.js 按平台分发 publisher skill）
+  'content_publish': '/content-creator',  // 入口 skill，executor.js 覆盖为具体 publisher
 };
 
 // Fallback strategies when primary routing fails
@@ -170,6 +174,8 @@ const LOCATION_MAP = {
   'scope_plan': 'us',            // Scope 规划 → US (Opus + /decomp)
   'project_plan': 'us',          // Project 规划 → US (Opus + /decomp)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
+  // 多平台内容发布 → 西安 Codex（浏览器自动化环境，执行各平台 publisher skill）
+  'content_publish': 'xian',
 };
 
 // Default location
