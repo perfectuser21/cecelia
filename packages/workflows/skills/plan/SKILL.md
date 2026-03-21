@@ -1,9 +1,10 @@
 ---
 name: plan
-version: 1.7.0
+version: 1.8.0
 created: 2026-02-17
-updated: 2026-03-07
+updated: 2026-03-21
 changelog:
+  - 1.8.0: PR→层级映射修复（1PR=Task 不是 Initiative）；工作量维度引用 capacity-budget API 动态校准；加入 Scope 层；默认 Task 不是 Initiative
   - 1.7.0: 加入 Stage 0.5 领域判断（domain detection）+ owner_role 匹配，输出格式增加 domain/owner_role，路由表按 domain 分流
   - 1.6.0: 层级重命名 Mission/Vision/Area OKR + /architect 加入路由
   - 1.5.0: 对齐 OKR 层级（加周期/产能）、修正 Layer 4 路由、新增产能感知和多机路由
@@ -82,9 +83,10 @@ description: |
 Mission:    — Alex 级别，唯一，永久的使命（"为什么存在"）
 Vision:     — 每个 Area 的方向性愿景（无具体度量）| 2个可并行
 Area OKR:   — 每个 Area 的季度可量化目标（有度量指标）| 3-5个/Vision
-Project:    — 目标型工作容器，周（1周）| 3-4个/Area OKR
-Initiative: — 串联任务包，min_tasks:4 | 40-70个/Project
-Task:       — 最小执行单元，1 PR | 4-8个/Initiative
+Project:    — 目标型工作容器，1周 | PR 数量动态（查 capacity-budget）
+Scope:      — 功能边界分组，2-3天 | PR 数量动态
+Initiative: — 串联任务包，0.5-1天 | PR 数量动态
+Task:       — 最小执行单元，1 PR = 1 次 /dev | ~40min
 ```
 
 ---
@@ -113,15 +115,19 @@ Task:       — 最小执行单元，1 PR | 4-8个/Initiative
 | 需要先拆解规划再执行？ | 需要 | Area OKR/Project |
 | 需要讨论澄清方向？ | 需要 | Mission/Vision |
 
-#### 维度 3：工作量
+#### 维度 3：工作量（必须查 capacity-budget API）
+
+**⚠️ PR 数量→层级映射必须参考动态校准表（`GET /api/brain/capacity-budget` → `layer_budgets`），不要凭感觉。**
 
 | 问题 | 信号 | 倾向层级 |
 |------|------|---------|
-| 多少个 PR？ | 1个PR | Initiative |
-| 多少个 PR？ | 多个PR | Project |
-| 单人能独立完成？ | 是 | Initiative/Task |
-| 需要多个 Agent 协作？ | 是 | Area OKR/Project |
-| 包含多个子功能模块？ | 是 | Project |
+| 多少个 PR？ | 1 个 PR | **Task**（最小执行单元，= 1 次 /dev） |
+| 多少个 PR？ | `layer_budgets.initiative` 范围内 | **Initiative** |
+| 多少个 PR？ | `layer_budgets.scope` 范围内 | **Scope** |
+| 多少个 PR？ | `layer_budgets.project` 范围内 | **Project** |
+| 单人能独立完成？ | 是 | Task/Initiative |
+| 需要多个 Agent 协作？ | 是 | Scope/Project |
+| 包含多个子功能模块？ | 是 | Scope/Project |
 
 #### 时间（辅助信号，不是主信号）
 
@@ -143,11 +149,13 @@ Step 1: 先问"涉及多少个 repo/Area/团队？"
     ↓
 Step 2: 如果是具体实现，问"需要几个 PR？"
     ↓
-    多 PR 或跨 repo → Project
-    单 PR 单 repo → Initiative ★
-    极小改动 → Task
+    查 capacity-budget API 获取 layer_budgets
+    1 PR → Task（= 1 次 /dev）
+    layer_budgets.initiative 范围 → Initiative
+    layer_budgets.scope 范围 → Scope
+    layer_budgets.project 范围 → Project
     ↓
-Step 3: 不确定时，默认 Initiative，问用户确认
+Step 3: 不确定时，默认 Task，问用户确认
 ```
 
 ---
