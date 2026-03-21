@@ -2,7 +2,7 @@ name: L4 Runtime Gate
 
 # L4: 运行时集成测试 — Brain 变动时必跑（~15min，4 shards 并行）
 # 职责：PostgreSQL 真实环境 + 完整集成测试 + GoldenPath E2E
-# 运行环境：xian-mac-m1（有 Homebrew，支持 postgresql@17/pgvector）
+# 运行环境：ubuntu-latest（apt PostgreSQL + pgvector 编译安装）
 # 优化：动态端口（GITHUB_RUN_ID 派生）消除并发冲突，去掉全局 mutex，允许 2 个 L4 同时运行
 
 on:
@@ -49,13 +49,13 @@ jobs:
             echo "brain=false" >> $GITHUB_OUTPUT
           fi
 
-  # ─── Brain L4: Integration Tests (macos + PostgreSQL, 4 shards parallel) ──
+  # ─── Brain L4: Integration Tests (ubuntu + PostgreSQL, 4 shards parallel) ──
 
   brain-integration:
     name: Brain Integration (Shard ${{ matrix.shard }})
     needs: changes
     if: needs.changes.outputs.brain == 'true'
-    runs-on: [self-hosted, macOS, ARM64, xian-mac-m1]
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
       contents: read
@@ -87,35 +87,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set Homebrew PATH (ARM64 macOS)
-        run: echo "/opt/homebrew/bin" >> $GITHUB_PATH
-
-      - name: Cache Homebrew packages
-        id: cache-brew
+      - name: Install PostgreSQL + pgvector (ubuntu)
         run: |
-          if brew list postgresql@17 &>/dev/null && brew list pgvector &>/dev/null; then
-            echo "cache-hit=true" >> $GITHUB_OUTPUT
-          else
-            echo "cache-hit=false" >> $GITHUB_OUTPUT
-          fi
+          sudo apt-get update
+          sudo apt-get install -y postgresql postgresql-contrib
+          # 获取已安装的 PG 主版本号（ubuntu-latest 通常是 14 或 16）
+          PG_VERSION=$(pg_config --version | grep -oE '[0-9]+' | head -1)
+          echo "PG_VERSION=${PG_VERSION}" >> $GITHUB_ENV
+          echo "Installed PostgreSQL version: $PG_VERSION"
+          # 编译安装 pgvector
+          sudo apt-get install -y postgresql-server-dev-all build-essential git
+          git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git /tmp/pgvector
+          cd /tmp/pgvector && make && sudo make install
+          echo "pgvector installed successfully"
+          # 确保 PG bin 在 PATH 中
+          echo "/usr/lib/postgresql/${PG_VERSION}/bin" >> $GITHUB_PATH
 
-      - name: Install Homebrew packages (if not cached)
-        if: steps.cache-brew.outputs.cache-hit != 'true'
+      - name: Stop system PostgreSQL + clean up stale CI PostgreSQL
         run: |
-          brew install postgresql@17
-          brew install pgvector
-
-      - name: Link Homebrew packages (if cached)
-        if: steps.cache-brew.outputs.cache-hit == 'true'
-        run: |
-          brew link postgresql@17 --force 2>/dev/null || true
-          brew link pgvector --force 2>/dev/null || true
-
-      - name: Clean up stale CI PostgreSQL (from previous runs)
-        run: |
-          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
-          # 清理上次 CI 运行遗留的 PostgreSQL 进程（防止 shmget SHMMNI 耗尽）
-          # 步骤1: 停止并删除上次 run 遗留的 pgdata 目录
+          # 先停止 ubuntu 自带的 PostgreSQL 服务（避免占用端口/资源）
+          sudo systemctl stop postgresql 2>/dev/null || true
+          # 清理上次 CI 运行遗留的 PostgreSQL 进程（防止资源泄漏）
           for pgdir in /tmp/pgdata-*; do
             if [ -d "$pgdir" ] && ! echo "$pgdir" | grep -q "pgdata-${GITHUB_RUN_ID}"; then
               echo "Stopping stale postgres: $pgdir"
@@ -123,49 +115,32 @@ jobs:
               rm -rf "$pgdir" 2>/dev/null || true
             fi
           done
-          # 步骤2: 清理上次 run 遗留的 postgres 进程（跳过当前 run 的端口区间）
-          # 当前 run 的端口：5500 + (run_id % 100) * 4 ~ +3（防止误杀并行 shard）
+          # 清理上次 run 遗留的 postgres 进程（跳过当前 run 的端口区间）
           CUR_BASE=$(( 5500 + (GITHUB_RUN_ID % 100) * 4 ))
           CUR_P0=$CUR_BASE; CUR_P1=$((CUR_BASE+1)); CUR_P2=$((CUR_BASE+2)); CUR_P3=$((CUR_BASE+3))
           for port in $(seq 5500 5896); do
-            # 跳过当前 run 的 4 个端口（并行 shard 会用到）
             if [ "$port" -eq "$CUR_P0" ] || [ "$port" -eq "$CUR_P1" ] || [ "$port" -eq "$CUR_P2" ] || [ "$port" -eq "$CUR_P3" ]; then
               continue
             fi
-            PIDS=$(lsof -ti:$port 2>/dev/null) || true
+            PIDS=$(sudo lsof -ti:$port 2>/dev/null) || true
             if [ -n "$PIDS" ]; then
               echo "Killing stale postgres on port $port: PIDs $PIDS"
-              echo "$PIDS" | xargs kill -9 2>/dev/null || true
+              echo "$PIDS" | xargs sudo kill -9 2>/dev/null || true
             fi
           done
-          # 步骤3: 清理所有 System V 共享内存段
-          # macOS ipcs -m 格式：m <ID> <KEY> <MODE> <OWNER> <GROUP>（行首 ^m）
-          # Linux ipcs -m 格式：<key> <shmid> <owner> ...（数据行以 0x 开头）
-          # CI 专用机，无生产 PG，直接删除所有段
-          if [ "$(uname)" = "Darwin" ]; then
-            # darwin: 行首 m，第2列是 shmid
-            BEFORE=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
-            echo "sysv shm segments before cleanup: $BEFORE (darwin)"
-            for id in $(ipcs -m 2>/dev/null | grep '^m ' | awk '{print $2}' | grep '^[0-9]'); do
-              echo "Removing sysv shm segment: $id"
-              ipcrm -m "$id" 2>/dev/null || true
-            done
-            AFTER=$(ipcs -m 2>/dev/null | grep -c "^m" || echo "0")
-          else
-            # linux: 数据行以 0x 开头，第2列是 shmid
-            BEFORE=$(ipcs -m 2>/dev/null | grep -c "^0x" || echo "0")
-            echo "sysv shm segments before cleanup: $BEFORE (linux)"
-            for id in $(ipcs -m 2>/dev/null | grep '^0x' | awk '{print $2}' | grep '^[0-9]'); do
-              echo "Removing sysv shm segment: $id"
-              ipcrm -m "$id" 2>/dev/null || true
-            done
-            AFTER=$(ipcs -m 2>/dev/null | grep -c "^0x" || echo "0")
-          fi
+          # 清理 System V 共享内存段（linux）
+          BEFORE=$(ipcs -m 2>/dev/null | grep -c "^0x" || echo "0")
+          echo "sysv shm segments before cleanup: $BEFORE"
+          for id in $(ipcs -m 2>/dev/null | grep '^0x' | awk '{print $2}' | grep '^[0-9]'); do
+            echo "Removing sysv shm segment: $id"
+            ipcrm -m "$id" 2>/dev/null || true
+          done
+          AFTER=$(ipcs -m 2>/dev/null | grep -c "^0x" || echo "0")
           echo "sysv shm segments after cleanup: $AFTER"
 
       - name: Set up PostgreSQL (dynamic port)
         run: |
-          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          export PATH="/usr/lib/postgresql/${PG_VERSION}/bin:$PATH"
           # 动态端口：5500 + (run_id % 100) * 4 + (shard_num - 1)
           # 100 个 slot × 4 端口，范围 5500~5896，不与生产 DB(5432) 冲突
           SHARD_NUM="${{ matrix.shard_num }}"
@@ -181,7 +156,7 @@ jobs:
           else
             if [ ! -d "$PG_DATA" ]; then
               initdb -D "$PG_DATA" --username=$(whoami)
-              # Use mmap instead of posix shm to avoid SHMMNI exhaustion on Mac runners
+              # Use mmap instead of posix shm to avoid SHMMNI exhaustion
               # posix shm objects can persist across failed runs; mmap uses temp files (safer)
               echo "dynamic_shared_memory_type = mmap" >> "$PG_DATA/postgresql.conf"
             else
@@ -203,25 +178,11 @@ jobs:
           psql -U cecelia -d cecelia -p "$DB_PORT" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
 
       - name: Set up Node.js
-        run: |
-          # Try nvm first (self-hosted Mac runner)
-          export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
-          # If node still not found, search common paths
-          if ! command -v node &>/dev/null 2>&1; then
-            NVM_LATEST=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -rV | head -1)
-            for dir in /opt/homebrew/bin /usr/local/bin "$NVM_LATEST"; do
-              if [ -n "$dir" ] && [ -x "$dir/node" ]; then
-                export PATH="$dir:$PATH"
-                echo "$dir" >> $GITHUB_PATH
-                break
-              fi
-            done
-          fi
-          node --version
-          npm --version
-          # Persist node bin to subsequent steps
-          echo "$(dirname "$(which node)")" >> $GITHUB_PATH
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/brain/package-lock.json
 
       - name: Install dependencies
         working-directory: packages/brain
@@ -229,7 +190,7 @@ jobs:
 
       - name: Verify PostgreSQL ready before migrate
         run: |
-          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          export PATH="/usr/lib/postgresql/${PG_VERSION}/bin:$PATH"
           echo "DB_PORT=$DB_PORT (from GITHUB_ENV)"
           echo "DB_HOST=$DB_HOST DB_NAME=$DB_NAME DB_USER=$DB_USER"
           # 防御：如果 DB_PORT 为空，说明 GITHUB_ENV 传递失败
@@ -325,7 +286,7 @@ jobs:
       - name: Stop PostgreSQL (always cleanup)
         if: always()
         run: |
-          export PATH="$(brew --prefix postgresql@17)/bin:$PATH" 2>/dev/null || true
+          export PATH="/usr/lib/postgresql/${PG_VERSION}/bin:$PATH" 2>/dev/null || true
           if [ -n "$PG_DATA" ] && [ -d "$PG_DATA" ]; then
             echo "Stopping PostgreSQL at $PG_DATA"
             pg_ctl stop -D "$PG_DATA" -m immediate 2>/dev/null || true
