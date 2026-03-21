@@ -24,18 +24,12 @@ changelog:
     scope: skills
     breaking: false
     feature_id: codex-test-gen-skill
-  - version: "13.13.3"
+  - version: "13.13.2"
     date: "2026-03-21"
     summary: "fix(engine): stop-dev.sh fallback 死锁修复 — PR合并失败exit2 + Codex审查15分钟超时"
     scope: hooks
     breaking: false
     feature_id: stop-dev-fallback-deadlock-fix
-  - version: "13.13.2"
-    date: "2026-03-21"
-    summary: "feat(engine): worktree-gc 保护 blocked 任务的 worktree — 删除前查询 Brain API 检查 blocked 状态"
-    scope: scripts
-    breaking: false
-    feature_id: gc-blocked-protect
   - version: "13.13.1"
     date: "2026-03-21"
     summary: "fix(engine): Pipeline 死锁修复重新应用 — 合并失败重试 + Codex 审查 15 分钟超时降级 + registered_at 时间戳"

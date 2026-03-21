@@ -100,9 +100,10 @@ describe("Phase 1: DevGate Scripts", () => {
       const testDod = join(TEST_DIR, "valid.dod.md");
       writeFileSync(testDod, dodContent);
 
+      // 使用 TEST_DIR 作为 cwd（有独立 .git，无 .prd.md），避免 PRD 追溯检查误报
       const result = execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
         encoding: "utf-8",
-        cwd: PROJECT_ROOT,
+        cwd: TEST_DIR,
       });
 
       expect(result).toContain("✅");
