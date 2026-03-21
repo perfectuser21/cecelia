@@ -78,14 +78,12 @@ describe("Worktree path migration", () => {
       expect(forceCleanup).toBeLessThan(nextRmF);
     });
 
-    it("should call force_cleanup_worktree in 15-retry exit path", () => {
+    it("should use pipeline_rescue instead of hard retry limit (v15.4.0)", () => {
       const content = readFileSync(STOP_DEV, "utf-8");
-      // 15 retry path should call force_cleanup_worktree
-      const retrySection = content.indexOf('15 次重试上限');
-      const exitSection = content.indexOf('exit 0  # 允许会话结束（失败退出）', retrySection);
-      const forceCleanup = content.indexOf('force_cleanup_worktree', retrySection);
-      expect(forceCleanup).toBeGreaterThan(retrySection);
-      expect(forceCleanup).toBeLessThan(exitSection);
+      // v15.4.0: 不再有硬限制退出路径，改为 pipeline_rescue 机制
+      expect(content).toContain('pipeline_rescue');
+      expect(content).toContain('RESCUE_CHECK_INTERVAL');
+      expect(content).not.toContain('MAX_RETRIES=30');
     });
 
     it("should call force_cleanup_worktree in PR merged exit path", () => {

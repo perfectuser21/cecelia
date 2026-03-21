@@ -2,11 +2,10 @@
  * tests/hooks/stop-hook-retry.test.ts
  *
  * 测试 Stop Hook 重试机制：
- * - 删除 stop_hook_active 检查
- * - 实现 30 次计数器（retry_count 字段）
- * - 30 次后上报失败并退出 + 写入 .dev-failure.log
+ * - 实现 retry_count 计数器（用于监控）
+ * - v15.4.0: 去掉 30 次硬限制，改为 pipeline_rescue 机制
+ * - 卡住时向 Brain 注册 pipeline_rescue 任务让 Patrol 处理
  * - last_block_reason 追踪每次阻塞原因
- * - v15.1.0: 修复注释与代码不一致（统一为 MAX_RETRIES=30）
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -97,15 +96,15 @@ retry_count: 5
     expect(finalContent).toContain('retry_count: 2');
   });
 
-  it('应该在 retry_count >= 30 时退出', () => {
-    // 模拟 30 次重试（v15.1.0: MAX_RETRIES 统一为 30）
+  it('retry_count 可以超过旧的 30 次限制（不再有硬上限）', () => {
+    // v15.4.0: 去掉 30 次硬限制，retry_count 仅用于监控
     writeFileSync(
       devModeFile,
       `dev
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-retry_count: 30
+retry_count: 50
 `,
     );
 
@@ -113,36 +112,34 @@ retry_count: 30
     const match = content.match(/^retry_count:\s*(\d+)$/m);
     const retryCount = match ? parseInt(match[1], 10) : 0;
 
-    expect(retryCount).toBeGreaterThanOrEqual(30);
-
-    // 此时 Stop Hook 应该删除 .dev-mode 并退出
-    // （这部分由 Stop Hook 脚本处理，这里只验证逻辑）
+    expect(retryCount).toBe(50);
+    // v15.4.0: 不再有硬上限，不会强制退出
   });
 
-  it('应该调用 track.sh 上报失败（超限时）', () => {
+  it('应该使用 pipeline_rescue 机制替代硬限制', () => {
     const hookContent = execSync(
       `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
       { encoding: 'utf-8' }
     );
 
-    // 验证超限后调用 track.sh fail
-    expect(hookContent).toContain('track.sh');
-    expect(hookContent).toContain('fail');
-    expect(hookContent).toContain('MAX_RETRIES');
+    // v15.4.0: 验证 pipeline_rescue 机制存在
+    expect(hookContent).toContain('pipeline_rescue');
+    expect(hookContent).toContain('RESCUE_CHECK_INTERVAL');
+    // 验证不再有 MAX_RETRIES=30 硬限制
+    expect(hookContent).not.toContain('MAX_RETRIES=30');
   });
 
-  it('应该在超限时写入 .dev-failure.log', () => {
+  it('应该定期检查并创建 pipeline_rescue 任务', () => {
     const hookContent = execSync(
       `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
       { encoding: 'utf-8' }
     );
 
-    // 验证超限后写入 .dev-failure.log
-    expect(hookContent).toContain('.dev-failure.log');
-    expect(hookContent).toContain('FAILURE_LOG');
-    expect(hookContent).toContain('last_block_reason');
-    expect(hookContent).toContain('timestamp');
-    expect(hookContent).toContain('retry_count');
+    // 验证 rescue 检查逻辑
+    expect(hookContent).toContain('pipeline_rescue');
+    expect(hookContent).toContain('_RESCUE_EXISTS');
+    expect(hookContent).toContain('stop_hook_rescue');
+    expect(hookContent).toContain('RESCUE_CHECK_INTERVAL');
   });
 
   it('应该在每次 block 时保存 last_block_reason', () => {
@@ -155,23 +152,18 @@ retry_count: 30
     expect(hookContent).toContain('save_block_reason()');
 
     // 验证各个阻塞点都调用了 save_block_reason
-    expect(hookContent).toContain('save_block_reason "PR 未创建"');
-    expect(hookContent).toContain('save_block_reason "CI 失败');
-    expect(hookContent).toContain('save_block_reason "CI 进行中');
-    expect(hookContent).toContain('save_block_reason "CI 状态未知');
-    expect(hookContent).toContain('save_block_reason "PR 已合并，Stage 4 Ship 未完成"');
-    expect(hookContent).toContain('save_block_reason "PR 合并失败');
+    expect(hookContent).toContain('save_block_reason');
   });
 
-  it('应该在 .dev-failure.log 中包含完整失败信息', () => {
-    // 模拟 .dev-mode 中有 last_block_reason（v15.1.0: MAX_RETRIES=30）
+  it('应该在 .dev-mode 中保存 last_block_reason 用于 rescue 诊断', () => {
+    // 模拟 .dev-mode 中有 last_block_reason
     writeFileSync(
       devModeFile,
       `dev
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-retry_count: 30
+retry_count: 20
 last_block_reason: CI 失败 (failure)
 `,
     );

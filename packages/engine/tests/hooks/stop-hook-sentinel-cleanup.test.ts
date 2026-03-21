@@ -100,8 +100,8 @@ describe('Stop Hook - Sentinel 文件清理（修复 .git 保护）', () => {
     expect(exitCode).toBe(0)
   })
 
-  it('重试超限场景：Stop Hook 应该成功删除 .dev-sentinel.test-branch', () => {
-    // 创建 per-branch 格式 + 重试超限
+  it('高重试次数场景：Stop Hook 不再强制退出，继续 exit 2（v15.4.0 pipeline_rescue）', () => {
+    // 创建 per-branch 格式 + 高重试次数
     writeFileSync(resolve(testDir, '.dev-lock.test-branch'),
       'branch: test-branch\nsession_id: test-session\n')
     writeFileSync(resolve(testDir, '.dev-sentinel.test-branch'), 'dev_workflow_active\n')
@@ -124,8 +124,8 @@ describe('Stop Hook - Sentinel 文件清理（修复 .git 保护）', () => {
       exitCode = error.status || 1
     }
 
-    // 重试超限 → exit 0（允许退出）
-    expect(exitCode).toBe(0)
+    // v15.4.0: 不再强制退出，exit 2 继续等待（pipeline_rescue 接管）
+    expect(exitCode).toBe(2)
   })
 
   it('正常工作流：.dev-lock 存在但 .dev-mode 不存在时阻止退出（最多 5 次）', () => {

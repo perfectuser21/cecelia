@@ -18,12 +18,18 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
-  - version: "13.7.7"
+  - version: "13.7.8"
     date: "2026-03-21"
     summary: "feat(engine): verify-step.sh Gate 2 逐条执行 DoD [BEHAVIOR] Test 命令 — Stage 2 完成前强制验证每条 DoD"
     scope: hooks
     breaking: false
     feature_id: verify-step-dod-gate2
+  - version: "13.7.7"
+    date: "2026-03-21"
+    summary: "fix(engine): Stage 4 成功回调 Brain execution-callback + 去掉 30 次重试硬限制改为 pipeline_rescue 机制"
+    scope: hooks
+    breaking: false
+    feature_id: stage4-callback-rescue
   - version: "13.7.6"
     date: "2026-03-21"
     summary: "fix(engine): stop-dev/devloop-check 实现 PR 自动合并闭环 — 条件满足时真正执行 gh pr merge，消除 exit 2 无限循环"
