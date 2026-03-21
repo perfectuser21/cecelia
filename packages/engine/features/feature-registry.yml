@@ -18,6 +18,12 @@
 version: "3.74.0"
 updated: "2026-03-21"
 changelog:
+  - version: "13.13.1"
+    date: "2026-03-21"
+    summary: "fix(engine): Pipeline 死锁修复重新应用 — 合并失败重试 + Codex 审查 15 分钟超时降级 + registered_at 时间戳"
+    scope: lib
+    breaking: false
+    feature_id: pipeline-deadlock-reapply
   - version: "13.13.0"
     date: "2026-03-21"
     summary: "feat(engine): 本地 CI 镜像检查 + Pipeline 统计汇总 + KR 进度回写 — 减少 CI 失败率 + 执行可观测性 + KR 自动更新"
