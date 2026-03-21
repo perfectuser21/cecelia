@@ -35,6 +35,7 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'autonomous-task-scheduling',   // Brain 核心调度
   'autonomous-scheduling',        // migration-094 consciousness 版本
   'three-layer-consciousness',    // Brain 三层架构本身
+  'three-layer-brain',            // 三层大脑决策架构
   'watchdog-resource-monitor',    // 看门狗，嵌入 tick 循环
   'quarantine-review-system',     // 隔离区，嵌入任务处理
   'emotion-perception',           // 情绪感知，嵌入 tick 循环
@@ -46,6 +47,18 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'memory-semantic',              // 语义记忆，learnings 支撑
   'learning-absorption',          // 学习吸收，嵌入 tick 循环
   'narrative-expression',         // 叙事表达，意识层固有
+  'circuit-breaker-protection',   // 熔断保护，嵌入 Brain 处理流程
+  'self-healing',                 // 自愈机制，Brain 核心能力
+  'self-healing-immunity',        // 自愈免疫，Brain 核心能力
+  'okr-six-layer-decomposition',  // OKR 分解，Brain 认知架构
+  'pr-plan-engineering-layer',    // PR 规划，Brain 工程决策
+]);
+
+// External 层面的核心基础设施能力
+// 这些能力运行在 Brain 进程外，但作为核心基础设施持续运行
+const EXTERNAL_CORE_INFRASTRUCTURE = new Set([
+  'branch-protection-hooks',      // 分支保护，Git hooks 持续运行
+  'ci-devgate-quality',          // CI 质量门禁，每次 PR 触发
 ]);
 
 // ============================================================
@@ -152,6 +165,14 @@ export async function scanCapabilities() {
     if (BRAIN_ALWAYS_ACTIVE.has(cap.id)) {
       health.status = 'active';
       health.evidence.push('brain_embedded:true');
+      healthMap.push(health);
+      continue;
+    }
+
+    // 5.0.5 Check external core infrastructure
+    if (EXTERNAL_CORE_INFRASTRUCTURE.has(cap.id)) {
+      health.status = 'active';
+      health.evidence.push('external_infrastructure:true');
       healthMap.push(health);
       continue;
     }
