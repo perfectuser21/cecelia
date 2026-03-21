@@ -346,20 +346,22 @@ ${insight.trim().slice(0, 800)}
       }
     }
 
-    // 8. P0-C：反刍洞察直接触发欲望形成（不等 accumulator）
+    // 8. P0-C：反刍洞察写入 suggestions 表（由 suggestion-dispatcher 统一分发）
     if (insights.length > 0 && insights[0]) {
       const mainInsight = insights[0];
-      Promise.resolve().then(async () => {
-        try {
-          const { runDesireFormation } = await import('./desire/desire-formation.js');
-          const result = await runDesireFormation(db, mainInsight);
-          if (result.created) {
-            console.log(`[rumination] desire created from insight: ${result.desire_id}`);
-          }
-        } catch (desireErr) {
-          console.warn('[rumination] desire formation from rumination failed (non-blocking):', desireErr.message);
-        }
-      }).catch(err => console.error('[rumination] silent error:', err));
+      try {
+        await db.query(`
+          INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata)
+          VALUES ($1, 'rumination', $2, 'pending', 'desire_formation', $3)
+        `, [
+          mainInsight,
+          0.7,
+          JSON.stringify({ origin: 'rumination_p0c', insight: mainInsight })
+        ]);
+        console.log('[rumination] insight written to suggestions table for dispatcher');
+      } catch (sugErr) {
+        console.warn('[rumination] failed to write suggestion (non-blocking):', sugErr.message);
+      }
     }
   } catch (err) {
     console.error(`[rumination] batch digest failed:`, err.message);

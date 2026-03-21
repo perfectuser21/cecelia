@@ -97,101 +97,111 @@ export async function runDesireSystem(pool) {
     console.error('[desire] expression decision error:', err.message);
   }
 
-  // 环2：explore desire → 自主学习（好奇心驱动的 research 任务）
+  // 环2：explore desire → 写入 suggestions 表（由 suggestion-dispatcher 统一分发）
   if (expressionCandidate && expressionCandidate.desire.type === 'explore') {
     const desire = expressionCandidate.desire;
     result.expression = { triggered: true, acted: true };
 
     try {
-      // explore_dedup：若已有 queued/in_progress 的 curiosity research 任务，跳过创建（避免重复积压）
+      // explore_dedup：若已有 pending 的 explore suggestion，跳过（避免重复积压）
       const { rows: existing_explore } = await pool.query(`
-        SELECT id FROM tasks
-        WHERE trigger_source = 'curiosity'
-          AND task_type = 'research'
-          AND status IN ('queued', 'in_progress')
+        SELECT id FROM suggestions
+        WHERE source = 'desire_explore'
+          AND status = 'pending'
         LIMIT 1
       `);
       if (existing_explore.length > 0) {
         await pool.query("UPDATE desires SET status = 'acted' WHERE id = $1", [desire.id]);
-        console.log(`[desire] explore desire skipped (explore_dedup): active research task ${existing_explore[0].id} already exists`);
-        result.expression = { triggered: false, skipped: 'explore_dedup', existing_task: existing_explore[0].id };
+        console.log(`[desire] explore desire skipped (explore_dedup): pending suggestion ${existing_explore[0].id} already exists`);
+        result.expression = { triggered: false, skipped: 'explore_dedup', existing_suggestion: existing_explore[0].id };
         return result;
       }
 
       const { rows } = await pool.query(`
-        INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
-        VALUES ($1, $2, 'P2', 'research', 'queued', 'curiosity')
+        INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata)
+        VALUES ($1, 'desire_explore', $2, 'pending', 'research', $3)
         RETURNING id
       `, [
         `[自主探索] ${desire.content.slice(0, 80)}`,
-        `${desire.proposed_action || desire.content}\n\n来源：好奇心信号 desire ${desire.id}`,
+        0.5,
+        JSON.stringify({
+          desire_id: desire.id,
+          desire_type: 'explore',
+          proposed_action: desire.proposed_action || desire.content,
+          trigger_source: 'curiosity'
+        })
       ]);
 
       await pool.query("UPDATE desires SET status = 'acted' WHERE id = $1", [desire.id]);
 
-      // 清空 curiosity_topics（已派发任务）
+      // 清空 curiosity_topics（已派发建议）
       await pool.query(`
         UPDATE working_memory SET value_json = '[]'::jsonb, updated_at = NOW()
         WHERE key = 'curiosity_topics'
       `);
 
-      result.expression.task_created = rows[0]?.id;
-      console.log(`[desire] explore → research task created: ${rows[0]?.id}`);
+      result.expression.suggestion_created = rows[0]?.id;
+      console.log(`[desire] explore → suggestion created: ${rows[0]?.id}`);
     } catch (err) {
-      console.error('[desire] explore task creation error:', err.message);
+      console.error('[desire] explore suggestion creation error:', err.message);
     }
 
     return result;
   }
 
-  // Break 3+4 修复：act/follow_up desire → 直接创建任务（桥接到执行管道）
+  // Break 3+4 修复：act/follow_up desire → 写入 suggestions 表（由 suggestion-dispatcher 统一分发）
   if (expressionCandidate && (expressionCandidate.desire.type === 'act' || expressionCandidate.desire.type === 'follow_up')) {
     const desire = expressionCandidate.desire;
     result.expression = { triggered: true, acted: true };
 
     try {
-      // act → initiative_plan（交给秋米 /decomp 拆解成可执行 dev 任务）
-      // follow_up → review（保持原有行为）
-      const taskType = desire.type === 'follow_up' ? 'review' : 'initiative_plan';
-      const priority = desire.urgency >= 8 ? 'P0' : desire.urgency >= 5 ? 'P1' : 'P2';
+      const suggestionType = desire.type === 'follow_up' ? 'review' : 'initiative_plan';
+      const priorityScore = desire.urgency >= 8 ? 0.9 : desire.urgency >= 5 ? 0.7 : 0.5;
 
-      // ★去重：act 类欲望每次只允许存在 1 个 queued/in_progress 的 desire_system initiative_plan 任务
-      // 若已有活跃任务，mark desire as acted 后直接跳过，避免垃圾任务积压
+      // ★去重：act 类欲望每次只允许存在 1 个 pending 的 desire_act suggestion
       if (desire.type === 'act') {
         const { rows: existing } = await pool.query(`
-          SELECT id FROM tasks
-          WHERE trigger_source = 'desire_system'
-            AND task_type = 'initiative_plan'
-            AND status IN ('queued', 'in_progress')
+          SELECT id FROM suggestions
+          WHERE source = 'desire_act'
+            AND status = 'pending'
           LIMIT 1
         `);
         if (existing.length > 0) {
           await pool.query("UPDATE desires SET status = 'acted' WHERE id = $1", [desire.id]);
-          console.log(`[desire] act desire skipped (dedup): active initiative_plan task ${existing[0].id} already exists`);
-          result.expression = { triggered: false, skipped: 'dedup', existing_task: existing[0].id };
+          console.log(`[desire] act desire skipped (dedup): pending suggestion ${existing[0].id} already exists`);
+          result.expression = { triggered: false, skipped: 'dedup', existing_suggestion: existing[0].id };
           return result;
         }
       }
 
-      // act 类任务：给秋米足够的上下文来拆解
-      const description = desire.type === 'act'
-        ? `## 欲望驱动任务（来源：desire_system）\n\n**欲望内容**：${desire.content}\n\n**提议行动**：${desire.proposed_action}\n\n**目标仓库**：cecelia\n\n**洞察**：${desire.insight || '无'}\n\n**来源 desire ID**：${desire.id}`
+      // act 类建议：给 dispatcher 足够的上下文来拆解
+      const content = desire.type === 'act'
+        ? `## 欲望驱动建议（来源：desire_system）\n\n**欲望内容**：${desire.content}\n\n**提议行动**：${desire.proposed_action}\n\n**目标仓库**：cecelia\n\n**洞察**：${desire.insight || '无'}\n\n**来源 desire ID**：${desire.id}`
         : `${desire.proposed_action}\n\n来源：desire ${desire.id}\n洞察：${desire.insight || '无'}`;
 
-      // ★标题规范化：act 类欲望任务加 [欲望建议] 前缀，与正经 PRD 任务区分
       const title = desire.type === 'act'
         ? `[欲望建议] ${desire.content.slice(0, 120)}`
         : desire.content.slice(0, 200);
 
+      const source = desire.type === 'act' ? 'desire_act' : 'desire_follow_up';
+
       const { rows } = await pool.query(`
-        INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
-        VALUES ($1, $2, $3, $4, 'queued', 'desire_system')
+        INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata)
+        VALUES ($1, $2, $3, 'pending', $4, $5)
         RETURNING id
       `, [
-        title,
-        description,
-        priority,
-        taskType,
+        `${title}\n\n${content}`,
+        source,
+        priorityScore,
+        suggestionType,
+        JSON.stringify({
+          desire_id: desire.id,
+          desire_type: desire.type,
+          urgency: desire.urgency,
+          proposed_action: desire.proposed_action,
+          insight: desire.insight || null,
+          trigger_source: 'desire_system'
+        })
       ]);
 
       // 更新 desire 状态为 acted
@@ -208,14 +218,14 @@ export async function runDesireSystem(pool) {
           type: desire.type,
           urgency: desire.urgency,
           content: desire.content,
-          message: `[自主行动] ${desire.content} → 已创建任务 ${rows[0]?.id}`,
+          message: `[自主行动] ${desire.content} → 已创建建议 ${rows[0]?.id}`,
         });
       } catch (_) { /* ignore ws errors */ }
 
-      result.expression.task_created = rows[0]?.id;
+      result.expression.suggestion_created = rows[0]?.id;
 
     } catch (err) {
-      console.error('[desire] act/follow_up task creation error:', err.message);
+      console.error('[desire] act/follow_up suggestion creation error:', err.message);
       result.expression.sent = false;
     }
 
