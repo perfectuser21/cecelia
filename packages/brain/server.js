@@ -39,6 +39,7 @@ import ruminationRoutes from './src/routes/rumination.js';
 import curiosityRoutes from './src/routes/curiosity.js';
 import knowledgeRoutes from './src/routes/knowledge.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
+import selfDriveRoutes from './src/routes/self-drive.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -144,6 +145,7 @@ app.use('/api/brain/curiosity', curiosityRoutes);
 app.use('/api/brain/knowledge', knowledgeRoutes);
 app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
+app.use('/api/brain/self-drive', selfDriveRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
