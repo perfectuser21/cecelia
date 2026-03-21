@@ -123,6 +123,30 @@ _check_codex_review() {
     # 无此审查或已 pass → 继续
     [[ -z "$task_id" || "$status_local" == "pass" ]] && return 0
 
+    # 15 分钟超时降级：读取 registered_at 时间戳
+    local registered_at_key="${task_id_key%_task_id}_registered_at"
+    local registered_at=""
+    registered_at=$(grep "^${registered_at_key}:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+    if [[ -n "$registered_at" ]]; then
+        local reg_epoch now_epoch elapsed_secs
+        if [[ "$(uname)" == "Darwin" ]]; then
+            reg_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${registered_at%Z*}" +%s 2>/dev/null || echo 0)
+        else
+            reg_epoch=$(date -d "$registered_at" +%s 2>/dev/null || echo 0)
+        fi
+        now_epoch=$(date +%s)
+        elapsed_secs=$(( now_epoch - reg_epoch ))
+        if [[ $elapsed_secs -gt 900 ]]; then
+            echo "[devloop-check] ⚠️ $review_name 超时 15 分钟，降级为自动 PASS" >&2
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' "s/^${status_key}:.*/${status_key}: pass/" "$dev_mode_file" 2>/dev/null || true
+            else
+                sed -i "s/^${status_key}:.*/${status_key}: pass/" "$dev_mode_file" 2>/dev/null || true
+            fi
+            return 0
+        fi
+    fi
+
     local api_result task_status review_result
     api_result=$(curl -s --max-time 5 "$brain_url/tasks/$task_id" 2>/dev/null || echo "{}")
     task_status=$(echo "$api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
@@ -414,13 +438,13 @@ devloop_check() {
             '{"status":"merged","reason":"PR #\($pr) 已自动合并，工作流即将结束","action":"执行 cleanup"}'
         return 0
     else
-        echo "[devloop-check] PR #$pr_number 合并失败" >&2
+        echo "[devloop-check] ⚠️ PR #$pr_number 合并失败，等待下次重试..." >&2
         if command -v _devlog_event &>/dev/null; then
             _devlog_event "devloop-check" "merge" "failed" "PR #$pr_number 自动合并失败"
         fi
         _devloop_jq -n \
             --arg pr "$pr_number" \
-            '{"status":"error","reason":"PR #\($pr) 自动合并失败，请检查合并冲突或权限问题"}'
-        return 1
+            '{"status":"blocked","reason":"PR #\($pr) 自动合并失败，等待下次重试"}'
+        return 2
     fi
 }

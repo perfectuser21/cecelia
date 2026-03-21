@@ -198,6 +198,7 @@ else
   CR_TASK=$(echo "$CR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
   if [[ -n "$CR_TASK" ]]; then
     echo "code_review_gate_task_id: $CR_TASK" >> "$DEV_MODE_FILE"
+    echo "code_review_gate_registered_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$DEV_MODE_FILE"
     echo "code_review_gate_status: pending" >> "$DEV_MODE_FILE"
     echo "  ✅ code_review_gate 已注册: $CR_TASK"
     # 立即派发（不等调度器）
