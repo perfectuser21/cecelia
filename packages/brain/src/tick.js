@@ -2156,6 +2156,10 @@ async function executeTick() {
           }
 
           const requeueResult = await requeueTask(action.taskId, action.reason, action.evidence);
+          // P0 FIX: fallback quarantine 日志（竞态条件下 requeueTask 仍能 quarantine）
+          if (requeueResult.reason === 'fallback_quarantine') {
+            console.log(`[tick] Watchdog fallback quarantine: task=${action.taskId} (race condition resolved)`);
+          }
           cleanupMetrics(action.taskId);
           await emit('watchdog_kill', 'watchdog', {
             task_id: action.taskId, pgid: action.pgid,
