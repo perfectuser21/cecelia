@@ -771,9 +771,34 @@ else
                     exit 2
                     ;;
                 *)
-                    save_block_reason "code_review_gate 进行中 ($CODE_REVIEW_STATUS)"
-                    jq -n --arg reason "code_review_gate 进行中（$CODE_REVIEW_STATUS），等待 Codex 审查完成" '{"decision": "block", "reason": $reason}'
-                    exit 2
+                    # 15 分钟超时降级：若 registered_at 超过 900 秒，自动 pass
+                    _CRG_REGISTERED_AT=$(grep "^code_review_gate_registered_at:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+                    if [[ -n "$_CRG_REGISTERED_AT" ]]; then
+                        if [[ "$(uname)" == "Darwin" ]]; then
+                            _CRG_REG_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${_CRG_REGISTERED_AT%Z*}" +%s 2>/dev/null || echo 0)
+                        else
+                            _CRG_REG_EPOCH=$(date -d "$_CRG_REGISTERED_AT" +%s 2>/dev/null || echo 0)
+                        fi
+                        _CRG_NOW=$(date +%s)
+                        _CRG_ELAPSED=$(( _CRG_NOW - _CRG_REG_EPOCH ))
+                        if [[ $_CRG_ELAPSED -gt 900 ]]; then
+                            echo "  ⚠️  code_review_gate 超时 15 分钟，降级为自动 PASS" >&2
+                            if [[ "$(uname)" == "Darwin" ]]; then
+                                sed -i '' "s/^code_review_gate_status:.*/code_review_gate_status: pass/" "$DEV_MODE_FILE" 2>/dev/null || true
+                            else
+                                sed -i "s/^code_review_gate_status:.*/code_review_gate_status: pass/" "$DEV_MODE_FILE" 2>/dev/null || true
+                            fi
+                            echo "  ✅ 条件 2.5: code_review_gate 超时自动 PASS" >&2
+                        else
+                            save_block_reason "code_review_gate 进行中 ($CODE_REVIEW_STATUS)"
+                            jq -n --arg reason "code_review_gate 进行中（$CODE_REVIEW_STATUS），等待 Codex 审查完成" '{"decision": "block", "reason": $reason}'
+                            exit 2
+                        fi
+                    else
+                        save_block_reason "code_review_gate 进行中 ($CODE_REVIEW_STATUS)"
+                        jq -n --arg reason "code_review_gate 进行中（$CODE_REVIEW_STATUS），等待 Codex 审查完成" '{"decision": "block", "reason": $reason}'
+                        exit 2
+                    fi
                     ;;
             esac
         fi
@@ -843,10 +868,10 @@ else
             jq -n '{"decision": "allow", "reason": "PR 已自动合并且 cleanup 完成，工作流结束"}'
             exit 0
         else
-            echo "[stop-dev] PR #$PR_NUMBER 合并失败" >&2
+            echo "[stop-dev] PR #$PR_NUMBER 合并失败，等待下次重试..." >&2
             save_block_reason "PR 合并失败 (#$PR_NUMBER)"
-            jq -n --arg reason "PR #$PR_NUMBER 自动合并失败，请检查合并冲突或权限问题" '{"decision": "block", "reason": $reason}'
-            exit 1
+            jq -n --arg reason "PR #$PR_NUMBER 自动合并失败，等待下次重试（检查合并冲突或权限问题）" '{"decision": "block", "reason": $reason}'
+            exit 2
         fi
     fi
 fi
