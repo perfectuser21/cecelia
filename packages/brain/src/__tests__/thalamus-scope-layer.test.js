@@ -12,17 +12,14 @@ describe('Scope 层级识别', () => {
   describe('thalamus.js', () => {
     const src = readFileSync(resolve(__dirname, '../thalamus.js'), 'utf-8');
 
-    it('路由表应包含 scope 关键词', () => {
-      expect(src).toContain('scope');
-      expect(src).toContain('范围');
-      expect(src).toContain('边界定义');
+    it('丘脑 prompt 应包含 domain 路由（v2.0 domain-only 模式）', () => {
+      expect(src).toContain('domain');
+      expect(src).toContain('buildDomainRouteTable');
     });
 
-    it('scope 关键词应路由到 initiative_plan', () => {
-      const lines = src.split('\n');
-      const scopeLine = lines.find(l => l.includes('scope') && l.includes('范围') && l.includes('边界定义'));
-      expect(scopeLine).toBeDefined();
-      expect(scopeLine).toContain('initiative_plan');
+    it('丘脑 prompt 应包含 planning domain 关键词（含 scope）', () => {
+      expect(src).toContain('规划');
+      expect(src).toContain('scope');
     });
   });
 

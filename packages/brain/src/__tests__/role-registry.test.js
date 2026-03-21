@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ROLES, DOMAIN_TO_ROLE, getDomainRole, getAllRoles } from '../role-registry.js';
+import { ROLES, DOMAIN_TO_ROLE, getDomainRole, getAllRoles, getDomainTaskTypes, buildDomainRouteTable } from '../role-registry.js';
 
 describe('ROLES', () => {
   it('包含 10 个角色定义', () => {
@@ -25,6 +25,25 @@ describe('ROLES', () => {
       expect(typeof role.label).toBe('string');
       expect(Array.isArray(role.skills)).toBe(true);
     });
+  });
+
+  it('5 个核心角色都有 task_types 字段', () => {
+    const coreRoles = ['cto', 'cpo', 'cmo', 'cfo', 'coo'];
+    coreRoles.forEach(id => {
+      expect(ROLES[id].task_types).toBeDefined();
+      expect(typeof ROLES[id].task_types).toBe('object');
+    });
+  });
+
+  it('CTO 拥有 dev / code_review 等 task_types', () => {
+    expect(ROLES.cto.task_types.dev).toBe('dev');
+    expect(ROLES.cto.task_types.code_review).toBe('code_review');
+    expect(ROLES.cto.task_types.pipeline_rescue).toBe('pipeline_rescue');
+  });
+
+  it('CPO 拥有 initiative_plan / decomp_review 等 task_types', () => {
+    expect(ROLES.cpo.task_types.initiative_plan).toBe('initiative_plan');
+    expect(ROLES.cpo.task_types.decomp_review).toBe('decomp_review');
   });
 });
 
@@ -73,5 +92,40 @@ describe('getAllRoles()', () => {
     getAllRoles().forEach(role => {
       expect(typeof role.id).toBe('string');
     });
+  });
+});
+
+describe('getDomainTaskTypes()', () => {
+  it('coding domain 返回 CTO 的 task_types', () => {
+    const types = getDomainTaskTypes('coding');
+    expect(types.dev).toBe('dev');
+    expect(types.code_review).toBe('code_review');
+  });
+
+  it('product domain 返回 CPO 的 task_types', () => {
+    const types = getDomainTaskTypes('product');
+    expect(types.initiative_plan).toBe('initiative_plan');
+  });
+
+  it('未知 domain 降级到 CTO task_types', () => {
+    const types = getDomainTaskTypes('unknown');
+    expect(types.dev).toBe('dev');
+  });
+});
+
+describe('buildDomainRouteTable()', () => {
+  it('返回包含 5 个核心角色的路由表字符串', () => {
+    const table = buildDomainRouteTable();
+    expect(table).toContain('CTO');
+    expect(table).toContain('CPO');
+    expect(table).toContain('CMO');
+    expect(table).toContain('CFO');
+    expect(table).toContain('COO');
+  });
+
+  it('路由表包含 domain 和 task_types 信息', () => {
+    const table = buildDomainRouteTable();
+    expect(table).toContain('coding');
+    expect(table).toContain('dev');
   });
 });

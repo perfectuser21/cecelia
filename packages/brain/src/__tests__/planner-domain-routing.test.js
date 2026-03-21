@@ -132,7 +132,7 @@ describe('growth domain → initiative_plan + skill_override=/research', () => {
     expect(task.status).toBe('queued');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
-    expect(payload.skill_override).toBe('/research');
+    expect(payload.skill_override).toBe('/content-creator');
     expect(payload.domain).toBe('growth');
     expect(payload.initiative_id).toBeDefined();
     expect(payload.kr_id).toBe(kr.id);
@@ -195,7 +195,7 @@ describe('domain inheritance chain: Initiative → Project → KR → default co
     expect(task.task_type).toBe('initiative_plan');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
-    expect(payload.skill_override).toBe('/research');
+    expect(payload.skill_override).toBe('/content-creator');
     expect(payload.domain).toBe('growth');
 
     testTaskIds.push(task.id);
@@ -212,7 +212,7 @@ describe('domain inheritance chain: Initiative → Project → KR → default co
     expect(task.task_type).toBe('initiative_plan');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
-    expect(payload.skill_override).toBe('/research');
+    expect(payload.skill_override).toBe('/content-creator');
 
     testTaskIds.push(task.id);
   });
@@ -242,7 +242,7 @@ describe('domain inheritance chain: Initiative → Project → KR → default co
     expect(task.task_type).toBe('initiative_plan');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
-    expect(payload.skill_override).toBe('/research');
+    expect(payload.skill_override).toBe('/content-creator');
 
     testTaskIds.push(task.id);
   });
