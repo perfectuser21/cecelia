@@ -46,6 +46,7 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'memory-semantic',              // 语义记忆，learnings 支撑
   'learning-absorption',          // 学习吸收，嵌入 tick 循环
   'narrative-expression',         // 叙事表达，意识层固有
+  'postgresql-database-service',  // Brain 数据层，每次 tick/API 调用都通过 pool 访问 PostgreSQL
 ]);
 
 // ============================================================

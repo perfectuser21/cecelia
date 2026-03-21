@@ -116,6 +116,29 @@ describe('capability-scanner', () => {
       expect(cap.evidence).toContain('cecelia_events:source=circuit_breaker');
     });
 
+    it('should mark postgresql-database-service as active with brain_embedded evidence', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'postgresql-database-service', name: 'PostgreSQL 数据库服务', current_stage: 3, related_skills: [], key_tables: [], scope: 'system', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'postgresql-database-service');
+      expect(cap.status).toBe('active');
+      expect(cap.evidence).toContain('brain_embedded:true');
+      // 不应被标记为 island（Brain 数据层始终运行）
+      expect(cap.status).not.toBe('island');
+    });
+
     it('should mark BRAIN_EMBEDDED_SOURCES capabilities as dormant (not island) when no cecelia_events records', async () => {
       const pool = (await import('../db.js')).default;
 
