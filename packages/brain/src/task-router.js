@@ -28,7 +28,10 @@ const VALID_TASK_TYPES = [
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
-  'scope_plan', 'project_plan'
+  'scope_plan', 'project_plan',
+  // 多平台发布器任务类型
+  'douyin_publish', 'kuaishou_publish', 'xiaohongshu_publish', 'weibo_publish',
+  'wechat_publish', 'zhihu_publish', 'toutiao_publish', 'shipinhao_publish'
 ];
 
 // Skill whitelist based on task type
@@ -74,6 +77,15 @@ const SKILL_WHITELIST = {
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
+  // 多平台发布器任务类型
+  'douyin_publish': '/douyin-publisher',
+  'kuaishou_publish': '/kuaishou-publisher',
+  'xiaohongshu_publish': '/xiaohongshu-publisher',
+  'weibo_publish': '/weibo-publisher',
+  'wechat_publish': '/wechat-publisher',
+  'zhihu_publish': '/zhihu-publisher',
+  'toutiao_publish': '/toutiao-publisher',
+  'shipinhao_publish': '/shipinhao-publisher'
 };
 
 // Fallback strategies when primary routing fails
