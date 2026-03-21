@@ -148,6 +148,7 @@ export function calcNextRunAt(retryCount) {
  * @param {string} [status='AI Failed'] - 执行状态（'AI Done' | 'AI Failed'）
  * @param {Object} [context={}] - 额外上下文
  * @param {number} [context.retryCount=0] - 已重试次数（payload.retry_count）
+ * @param {number|null} [context.exitCode=null] - 进程退出码（来自 execution-callback 的 exit_code）
  * @returns {{
  *   class: string,
  *   retryable: boolean,
@@ -158,10 +159,20 @@ export function calcNextRunAt(retryCount) {
  * }}
  */
 export function classifyDevFailure(result, status = 'AI Failed', context = {}) {
-  const { retryCount = 0 } = context;
+  const { retryCount = 0, exitCode = null } = context;
 
   // 提取错误文本
   const errorMsg = extractErrorMsg(result, status);
+
+  // 优先：result 对象携带显式 failure_class（cecelia-run 已分类）
+  // 避免对已分类的失败再次做 pattern 匹配（可能产生误判）
+  if (result !== null && typeof result === 'object' && result.failure_class) {
+    const fc = String(result.failure_class).toLowerCase();
+    if (fc === DEV_FAILURE_CLASS.CODE_ERROR || fc === DEV_FAILURE_CLASS.TRANSIENT
+        || fc === DEV_FAILURE_CLASS.AUTH || fc === DEV_FAILURE_CLASS.RESOURCE) {
+      return buildResult(fc, errorMsg, retryCount);
+    }
+  }
 
   // 按优先级匹配（auth/resource 优先，避免误判）
   const patternGroups = [
@@ -177,6 +188,13 @@ export function classifyDevFailure(result, status = 'AI Failed', context = {}) {
         return buildResult(group.class, errorMsg, retryCount);
       }
     }
+  }
+
+  // 兜底：exit_code 非零（通常为 1）且 result=null → 视为 code_error 触发重试
+  // 原因：cecelia-run 崩溃/超时时 result 为 null，但有 exit_code；
+  //       不重试会导致 retry_count=0 的 code_error 任务直接沉底（静默失败黑洞）
+  if (result === null && exitCode != null && exitCode !== 0) {
+    return buildResult(DEV_FAILURE_CLASS.CODE_ERROR, `[exit_code=${exitCode}] ${status}`, retryCount);
   }
 
   // 无法识别 → unknown，不重试

@@ -163,6 +163,16 @@ router.post('/execution-callback', async (req, res) => {
           if (stderrTail) {
             fallback += ` | stderr: ${stderrTail}`;
           }
+          // 补充进程日志（可观测性：result=null 时从磁盘读取 Claude 进程输出）
+          try {
+            const { readFileSync } = await import('fs');
+            const logPath = `/tmp/cecelia-${task_id}.log`;
+            const logContent = readFileSync(logPath, 'utf8');
+            const logTail = logContent.slice(-400).trim();
+            if (logTail) {
+              fallback += ` | process_log: ${logTail}`;
+            }
+          } catch { /* 日志文件不存在时静默跳过 */ }
           errorMessage = fallback;
         } else if (typeof result === 'object') {
           errorMessage = result.result || result.error || result.stderr || JSON.stringify(result);
@@ -661,13 +671,14 @@ router.post('/execution-callback', async (req, res) => {
           try {
             const { classifyDevFailure } = await import('../dev-failure-classifier.js');
             const retryCount = taskPayload.retry_count || 0;
-            const devClassification = classifyDevFailure(result, status, { retryCount });
+            const devClassification = classifyDevFailure(result, status, { retryCount, exitCode: exit_code ?? null });
 
-            console.log(`[execution-callback] Dev failure classified: task=${task_id} class=${devClassification.class} retryable=${devClassification.retryable} retry=${retryCount}`);
+            console.log(`[execution-callback] Dev failure classified: task=${task_id} class=${devClassification.class} retryable=${devClassification.retryable} retry=${retryCount} exit_code=${exit_code}`);
 
             if (devClassification.retryable) {
               await pool.query(
                 `UPDATE tasks SET status = 'queued', started_at = NULL,
+                 retry_count = retry_count + 1,
                  payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
                  WHERE id = $1 AND status = 'failed'`,
                 [task_id, JSON.stringify({
