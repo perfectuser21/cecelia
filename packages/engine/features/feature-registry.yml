@@ -18,6 +18,12 @@
 version: "3.73.0"
 updated: "2026-03-20"
 changelog:
+  - version: "13.7.6"
+    date: "2026-03-21"
+    summary: "fix(engine): stop-dev/devloop-check 实现 PR 自动合并闭环 — 条件满足时真正执行 gh pr merge，消除 exit 2 无限循环"
+    scope: hooks
+    breaking: false
+    feature_id: pr-auto-merge-loop-fix
   - version: "13.8.0"
     date: "2026-03-21"
     summary: "fix(engine): Pipeline v2 最终清理 — 删旧 Skill（cto-review/code-quality/prd-audit/dod-verify）+ 标注旧编号 + 更新文档"
