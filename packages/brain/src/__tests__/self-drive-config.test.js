@@ -5,6 +5,9 @@ vi.mock('../db.js', () => ({
 }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn().mockResolvedValue({ text: '{"reasoning":"test","actions":[]}' }) }));
+vi.mock('../dopamine.js', () => ({
+  getRewardScore: vi.fn().mockResolvedValue({ score: 0, count: 0, breakdown: { positive: 0, negative: 0 } }),
+}));
 
 describe('self-drive config', () => {
   it('getSelfDriveStatus returns interval and max_tasks', async () => {
@@ -12,6 +15,6 @@ describe('self-drive config', () => {
     const status = getSelfDriveStatus();
     expect(status).toHaveProperty('interval_ms');
     expect(status).toHaveProperty('max_tasks_per_cycle');
-    expect(status.interval_ms).toBe(30 * 60 * 1000); // default 30min
+    expect(status.interval_ms).toBe(4 * 60 * 60 * 1000); // default 4h
   });
 });

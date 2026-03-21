@@ -18,12 +18,13 @@
 import pool from './db.js';
 import { createTask } from './actions.js';
 import { callLLM } from './llm-caller.js';
+import { getRewardScore } from './dopamine.js';
 
 // ============================================================
 // Configuration (defaults, overridable via brain_config table)
 // ============================================================
 
-const DEFAULT_INTERVAL_MS = 30 * 60 * 1000; // 默认 30 分钟
+const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000; // 默认 4 小时 (14400000ms)
 const DEFAULT_MAX_TASKS = 3;
 
 // 安全保护：每次 SelfDrive 最多执行的调整类 action 数量
@@ -69,10 +70,16 @@ export async function runSelfDrive() {
   console.log('[SelfDrive] Starting self-drive cycle...');
 
   try {
-    // 1. Gather inputs
+    // 1. Gather inputs — 系统健康
     const probeResults = await getLatestProbeResults();
     const scanResults = await getLatestScanResults();
     const existingTasks = await getExistingAutoTasks();
+
+    // 1b. Gather inputs — 业务感知（KR 进度、任务效率、满足感、Roadmap）
+    const krProgress = await getKRProgress();
+    const taskStats = await getTaskStats24h();
+    const dopamineScore = await getDopamineScore();
+    const activeProjects = await getActiveProjects();
 
     if (!probeResults && !scanResults) {
       console.log('[SelfDrive] No probe/scan data yet, skipping');
@@ -88,7 +95,10 @@ export async function runSelfDrive() {
     }
 
     // 3. Call LLM to analyze
-    const analysis = await analyzeSituation(probeResults, scanResults, existingTasks);
+    const analysis = await analyzeSituation(
+      probeResults, scanResults, existingTasks,
+      { krProgress, taskStats, dopamineScore, activeProjects }
+    );
 
     if (!analysis || !analysis.actions || analysis.actions.length === 0) {
       console.log('[SelfDrive] LLM analysis returned no actions');
@@ -315,6 +325,76 @@ async function getExistingAutoTasks() {
   }
 }
 
+/**
+ * 获取活跃 KR/OKR 的进度数据
+ */
+async function getKRProgress() {
+  try {
+    const result = await pool.query(
+      `SELECT id, title, status, progress, type
+       FROM goals
+       WHERE type IN ('area_kr', 'area_okr')
+         AND status IN ('in_progress', 'ready', 'decomposing')
+       ORDER BY type, created_at DESC`
+    );
+    return result.rows;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 获取最近 24h 任务完成率统计
+ */
+async function getTaskStats24h() {
+  try {
+    const result = await pool.query(
+      `SELECT
+        count(*) filter (where status = 'completed') as completed,
+        count(*) filter (where status = 'failed') as failed,
+        count(*) as total
+       FROM tasks
+       WHERE updated_at > NOW() - INTERVAL '24 hours'`
+    );
+    const row = result.rows[0] || { completed: 0, failed: 0, total: 0 };
+    return {
+      completed: parseInt(row.completed) || 0,
+      failed: parseInt(row.failed) || 0,
+      total: parseInt(row.total) || 0,
+    };
+  } catch {
+    return { completed: 0, failed: 0, total: 0 };
+  }
+}
+
+/**
+ * 获取 Dopamine 满足感分数（封装 getRewardScore）
+ */
+async function getDopamineScore() {
+  try {
+    return await getRewardScore();
+  } catch {
+    return { score: 0, count: 0, breakdown: { positive: 0, negative: 0 } };
+  }
+}
+
+/**
+ * 获取当前活跃 Projects（Roadmap）
+ */
+async function getActiveProjects() {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, status, sequence_order
+       FROM projects
+       WHERE type = 'project' AND status IN ('active', 'planning')
+       ORDER BY sequence_order NULLS LAST, created_at DESC`
+    );
+    return result.rows;
+  } catch {
+    return [];
+  }
+}
+
 // ============================================================
 // Goal ID lookup
 // ============================================================
@@ -345,8 +425,8 @@ async function getGoalIdForArea(area) {
 // LLM analysis
 // ============================================================
 
-async function analyzeSituation(probeResults, scanResults, existingTasks) {
-  const prompt = buildAnalysisPrompt(probeResults, scanResults, existingTasks);
+async function analyzeSituation(probeResults, scanResults, existingTasks, perception = {}) {
+  const prompt = buildAnalysisPrompt(probeResults, scanResults, existingTasks, perception);
 
   const { text } = await callLLM('thalamus', prompt, {
     maxTokens: 1500,
@@ -367,7 +447,9 @@ async function analyzeSituation(probeResults, scanResults, existingTasks) {
   }
 }
 
-function buildAnalysisPrompt(probeResults, scanResults, existingTasks) {
+function buildAnalysisPrompt(probeResults, scanResults, existingTasks, perception = {}) {
+  const { krProgress = [], taskStats = {}, dopamineScore = {}, activeProjects = [] } = perception;
+
   // Build probe summary
   let probeSummary = '无数据';
   if (probeResults) {
@@ -396,7 +478,36 @@ function buildAnalysisPrompt(probeResults, scanResults, existingTasks) {
     ? existingTasks.map(t => `- [${t.status}] ${t.title}`).join('\n')
     : '无';
 
-  return `你是 Cecelia 的自驱引擎。你的职责是根据体检报告决定 Cecelia 下一步应该做什么。
+  // Build KR 进度 summary
+  let krSummary = '无数据';
+  if (krProgress.length > 0) {
+    krSummary = krProgress.map(kr =>
+      `- [${kr.type}] ${kr.title} — 状态: ${kr.status}, 进度: ${kr.progress}%`
+    ).join('\n');
+  }
+
+  // Build 任务执行效率 summary
+  const { completed = 0, failed = 0, total = 0 } = taskStats;
+  const successRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const taskEfficiency = total > 0
+    ? `完成: ${completed}, 失败: ${failed}, 总计: ${total}, 成功率: ${successRate}%`
+    : '最近 24h 无任务数据';
+
+  // Build Dopamine summary
+  const dScore = dopamineScore.score ?? 0;
+  const dCount = dopamineScore.count ?? 0;
+  const dMood = dScore > 3 ? '高满足' : dScore >= 0 ? '正常' : '低迷';
+  const dopamineSummary = `分数: ${dScore}（${dMood}），最近 24h 奖赏信号: ${dCount} 条`;
+
+  // Build 活跃 Projects summary
+  let projectsSummary = '无';
+  if (activeProjects.length > 0) {
+    projectsSummary = activeProjects.map((p, i) =>
+      `- #${i + 1} [${p.status}] ${p.name}`
+    ).join('\n');
+  }
+
+  return `你是 Cecelia 的自驱引擎。你的职责是根据全量感知数据决定 Cecelia 下一步应该做什么。
 
 ## 当前体检报告
 
@@ -408,6 +519,18 @@ ${scanSummary}
 
 ${islandList ? `### 孤岛能力列表\n${islandList}` : ''}
 
+### KR 进度
+${krSummary}
+
+### 任务执行效率（最近 24h）
+${taskEfficiency}
+
+### Dopamine 满足感
+${dopamineSummary}
+
+### 当前活跃 Projects
+${projectsSummary}
+
 ### 已有待办任务
 ${tasksSummary}
 
@@ -418,6 +541,9 @@ ${tasksSummary}
 2. **Scanner 误判修正** > 孤岛激活（先让 Scanner 看得准，再决定激活什么）
 3. **高价值孤岛激活** > 低价值孤岛（stage 高的 > stage 低的，cecelia scope > external）
 4. **不要重复创建已有的任务**
+5. **KR 进度落后** — 如果某个 KR 进度远低于预期，建议调整优先级或加速推进
+6. **任务成功率下降** — 分析原因（是代码质量问题还是任务拆分问题），建议修复
+7. **满足感持续低迷** — 如果 Dopamine 分数持续 < 0，可能需要换个方向或调整节奏
 
 注意：
 - 有些"孤岛"实际上是在运行的（如熔断器、看门狗、情绪感知），它们不通过 tasks 表工作，而是内嵌在 Brain 进程中。对这类能力，正确做法是"修改 Scanner 让它能识别这些内嵌能力"，而不是"激活它们"。

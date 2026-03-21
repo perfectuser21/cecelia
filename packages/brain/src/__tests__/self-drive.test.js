@@ -27,6 +27,10 @@ vi.mock('../llm-caller.js', () => ({
   }),
 }));
 
+vi.mock('../dopamine.js', () => ({
+  getRewardScore: vi.fn().mockResolvedValue({ score: 1.5, count: 3, breakdown: { positive: 2.0, negative: -0.5 } }),
+}));
+
 describe('self-drive', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -62,6 +66,12 @@ describe('self-drive', () => {
         })
         // Mock: getExistingAutoTasks
         .mockResolvedValueOnce({ rows: [] })
+        // Mock: getKRProgress
+        .mockResolvedValueOnce({ rows: [{ id: 'kr-1', title: 'KR 测试', status: 'in_progress', progress: 40, type: 'area_kr' }] })
+        // Mock: getTaskStats24h
+        .mockResolvedValueOnce({ rows: [{ completed: '5', failed: '1', total: '8' }] })
+        // Mock: getActiveProjects
+        .mockResolvedValueOnce({ rows: [{ id: 'proj-1', name: '测试项目', status: 'active', sequence_order: 1 }] })
         // Mock: dedup check (similar title)
         .mockResolvedValueOnce({ rows: [] })
         // Mock: getGoalIdForArea('cecelia')
@@ -85,7 +95,10 @@ describe('self-drive', () => {
       pool.query
         .mockResolvedValueOnce({ rows: [] }) // no probe
         .mockResolvedValueOnce({ rows: [] }) // no scan
-        .mockResolvedValueOnce({ rows: [] }); // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no KR progress
+        .mockResolvedValueOnce({ rows: [{ completed: '0', failed: '0', total: '0' }] }) // no task stats
+        .mockResolvedValueOnce({ rows: [] }); // no projects
 
       const { runSelfDrive } = await import('../self-drive.js');
       const result = await runSelfDrive();
