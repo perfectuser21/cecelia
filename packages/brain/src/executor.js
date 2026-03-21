@@ -2026,38 +2026,28 @@ async function triggerMiniMaxExecutor(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
-// 路由规则（v2.1 — 全局调度改造 Phase 3）：
-//   US_ONLY_TYPES → 必须在美国跑（dev 全流程 + dev 关联的 Codex 审查）
-//   其他所有 → 走西安 Codex Bridge
-//   location='hk' → 走 HK MiniMax（不变）
-const US_ONLY_TYPES = new Set([
-  'dev',                  // /dev 全流程（依赖 hooks/state machine）
-  'initiative_execute',   // Initiative 执行（/dev 全流程）
-  'intent_expand',        // /dev Step 1.5: 意图扩展（查 Brain DB + 补全 PRD）
-  // Codex Gate 审查任务类型（需读 worktree diff + Brain DB，必须在美国跑）
-  'prd_review',           // PRD 审查
-  'spec_review',          // Spec 审查
-  'code_review_gate',     // 代码质量门禁
-  'initiative_review',    // Initiative 整体审查
-  'dept_heartbeat',       // 部门心跳（本机执行，不走 Codex Bridge）
-  'pipeline_rescue',      // Pipeline 救援（需读本地 .dev-mode + worktree）
-]);
+// 路由规则（v2.2 — 以 task-router.js LOCATION_MAP 为唯一 SSOT）：
+//   location='hk'   → HK MiniMax
+//   location='xian' → 西安 Codex Bridge
+//   location='us'   → US cecelia-bridge（Claude Code）
+// 注意：Coding 通道（dev/codex_dev/initiative_plan 等）在 task-router.js 中标注为 'us'，
+//       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
 async function triggerCeceliaRun(task) {
   const location = getTaskLocation(task.task_type);
 
-  // 1. HK MiniMax 路由（不变）
+  // 1. HK MiniMax 路由
   if (location === 'hk') {
     return triggerMiniMaxExecutor(task);
   }
 
-  // 2. 非美国专属任务 → 走西安 Codex Bridge
-  if (!US_ONLY_TYPES.has(task.task_type)) {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (非美国专属任务)`);
+  // 2. 西安 Codex Bridge（location='xian'）
+  if (getTaskLocation(task.task_type) === 'xian') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian)`);
     return triggerCodexBridge(task);
   }
 
-  // 3. dev 任务 → Claude Code（本机 cecelia-bridge）
+  // 3. US → Claude Code（本机 cecelia-bridge）
   // Use original cecelia-bridge on port 3457
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
