@@ -51,6 +51,28 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
 
+    // ── 幂等性保护：run_id + status 组合去重 ──
+    // 网络重试或外部系统重复调用时，同一 run_id + status 不应重复处理
+    if (run_id && status) {
+      try {
+        const dupCheck = await pool.query(
+          `SELECT id FROM decision_log
+           WHERE trigger = 'execution-callback'
+             AND llm_output_json->>'run_id' = $1
+             AND llm_output_json->>'status' = $2
+           LIMIT 1`,
+          [String(run_id), String(status)]
+        );
+        if (dupCheck.rows.length > 0) {
+          console.log(`[execution-callback] 幂等保护: run_id=${run_id} status=${status} 已处理过，跳过`);
+          return res.json({ success: true, duplicate: true });
+        }
+      } catch (idempotencyErr) {
+        // 幂等检查失败不阻塞主流程，降级为无保护模式
+        console.warn(`[execution-callback] 幂等检查失败（降级继续）: ${idempotencyErr.message}`);
+      }
+    }
+
     // 1. Determine new status
     let newStatus;
     if (status === 'AI Done') {
@@ -180,16 +202,24 @@ router.post('/execution-callback', async (req, res) => {
         WHERE id = $1 AND status = 'in_progress'
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted]);
 
-      // Log the execution result
+      // Log the execution result（带 WHERE NOT EXISTS 防重复写入）
       await client.query(`
         INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
-        VALUES ($1, $2, $3, $4, $5)
+        SELECT $1, $2, $3::jsonb, $4::jsonb, $5
+        WHERE NOT EXISTS (
+          SELECT 1 FROM decision_log
+          WHERE trigger = 'execution-callback'
+            AND llm_output_json->>'run_id' = $6
+            AND llm_output_json->>'status' = $7
+        )
       `, [
         'execution-callback',
         `Task ${task_id} execution completed with status: ${status}`,
-        { task_id, run_id, status, iterations },
-        lastRunResult,
-        status === 'AI Done' ? 'success' : 'failed'
+        JSON.stringify({ task_id, run_id, status, iterations }),
+        JSON.stringify(lastRunResult),
+        status === 'AI Done' ? 'success' : 'failed',
+        String(run_id || ''),
+        String(status || '')
       ]);
 
       // Record progress step for completed execution
