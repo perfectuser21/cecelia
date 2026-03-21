@@ -276,9 +276,91 @@ describe('classifyDevFailure - result object extraction', () => {
     expect(result.class).toBe(DEV_FAILURE_CLASS.AUTH);
   });
 
-  it('handles null result with status', () => {
+  it('handles null result with status (no exitCode) → unknown', () => {
     const result = classifyDevFailure(null, 'AI Failed');
-    // null result → uses status → 'AI Failed' → unknown
+    // null result + no exitCode → unknown（无法判断原因）
+    expect(result.class).toBe(DEV_FAILURE_CLASS.UNKNOWN);
+    expect(result.retryable).toBe(false);
+  });
+});
+
+// ============================================================
+// 显式 failure_class 优先（来自 cecelia-run 已分类）
+// ============================================================
+
+describe('classifyDevFailure - explicit failure_class from result object', () => {
+  it('result.failure_class=code_error → code_error retryable', () => {
+    const result = classifyDevFailure(
+      { failure_class: 'code_error', exit_code: 1, stderr: 'build failed' },
+      'AI Failed',
+      { retryCount: 0 }
+    );
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('result.failure_class=transient → transient retryable', () => {
+    const result = classifyDevFailure(
+      { failure_class: 'transient', exit_code: 1 },
+      'AI Failed',
+      { retryCount: 0 }
+    );
+    expect(result.class).toBe(DEV_FAILURE_CLASS.TRANSIENT);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('result.failure_class=auth → auth not retryable', () => {
+    const result = classifyDevFailure(
+      { failure_class: 'auth', exit_code: 1 },
+      'AI Failed',
+      { retryCount: 0 }
+    );
+    expect(result.class).toBe(DEV_FAILURE_CLASS.AUTH);
+    expect(result.retryable).toBe(false);
+  });
+
+  it('result.failure_class=code_error + retryCount >= MAX_DEV_RETRY → not retryable', () => {
+    const result = classifyDevFailure(
+      { failure_class: 'code_error', exit_code: 1 },
+      'AI Failed',
+      { retryCount: MAX_DEV_RETRY }
+    );
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+    expect(result.retryable).toBe(false);
+  });
+});
+
+// ============================================================
+// exit_code 兜底（result=null + exitCode 非零 → code_error）
+// ============================================================
+
+describe('classifyDevFailure - exitCode fallback', () => {
+  it('result=null + exitCode=1 → code_error retryable', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exitCode: 1 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('result=null + exitCode=2 → code_error retryable', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exitCode: 2 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('result=null + exitCode=0 → unknown (正常退出，不视为 code_error)', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exitCode: 0 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.UNKNOWN);
+    expect(result.retryable).toBe(false);
+  });
+
+  it('result=null + exitCode=1 + retryCount >= MAX_DEV_RETRY → not retryable', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: MAX_DEV_RETRY, exitCode: 1 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+    expect(result.retryable).toBe(false);
+  });
+
+  it('result=null + exitCode=null → unknown（无 exitCode 信息）', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exitCode: null });
     expect(result.class).toBe(DEV_FAILURE_CLASS.UNKNOWN);
     expect(result.retryable).toBe(false);
   });
