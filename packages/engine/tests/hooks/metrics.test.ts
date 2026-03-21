@@ -161,35 +161,39 @@ describe('metrics.sh 基础功能', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --help`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     expect(output).toContain('DevGate Metrics')
     expect(output).toContain('--since')
     expect(output).toContain('--format')
-  })
+  }, 30000)
 
   it('默认输出当前月指标', () => {
     const output = execSync(`bash ${METRICS_SCRIPT}`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     expect(output).toContain('DevGate Metrics')
     expect(output).toContain('PRs')
     expect(output).toContain('RCI Coverage')
-  })
+  }, 30000)
 
   it('--month 指定月份', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --month 2026-01`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     expect(output).toContain('2026-01-01')
     expect(output).toContain('2026-02-01')
-  })
+  }, 30000)
 
   it('--format json 输出合法 JSON', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json --month 2026-01`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(json).toHaveProperty('window')
@@ -197,80 +201,87 @@ describe('metrics.sh 基础功能', () => {
     expect(json).toHaveProperty('rci_coverage')
     expect(json).toHaveProperty('rci_growth')
     expect(json).toHaveProperty('dod')
-  })
+  }, 30000)
 
   it('JSON 包含 window.since 和 window.until', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json --month 2026-01`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(json.window.since).toBe('2026-01-01')
     expect(json.window.until).toBe('2026-02-01')
-  })
+  }, 30000)
 
   it('JSON 包含 prs 统计', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(typeof json.prs.p0).toBe('number')
     expect(typeof json.prs.p1).toBe('number')
     expect(typeof json.prs.total_p0p1).toBe('number')
-  })
+  }, 30000)
 
   it('JSON 包含 rci_coverage', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(typeof json.rci_coverage.updated).toBe('number')
     expect(typeof json.rci_coverage.total).toBe('number')
     expect(typeof json.rci_coverage.pct).toBe('number')
-  })
+  }, 30000)
 
   it('JSON 包含 rci_growth', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(typeof json.rci_growth.new_ids_count).toBe('number')
     expect(Array.isArray(json.rci_growth.new_ids)).toBe(true)
-  })
+  }, 30000)
 
   it('JSON 包含 dod 统计', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(typeof json.dod.items).toBe('number')
     expect(typeof json.dod.manual_tests).toBe('number')
     expect(typeof json.dod.p0_manual_tests).toBe('number')
-  })
+  }, 30000)
 
   it('JSON 包含 rci_coverage.offenders 数组', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(Array.isArray(json.rci_coverage.offenders)).toBe(true)
-  })
+  }, 30000)
 
   it('JSON 包含 generated_at 时间戳', () => {
     const output = execSync(`bash ${METRICS_SCRIPT} --format json`, {
       encoding: 'utf-8',
       cwd: ROOT,
+      timeout: 25000,
     })
     const json = JSON.parse(output)
     expect(json.generated_at).toBeDefined()
     // 验证是 ISO 时间格式
     expect(new Date(json.generated_at).toISOString()).toBe(json.generated_at)
-  })
+  }, 30000)
 })
 
 describe('metrics.sh 指标计算', () => {

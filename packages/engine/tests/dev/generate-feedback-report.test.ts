@@ -11,7 +11,8 @@ import path from 'path'
 // 使用绝对路径避免 vitest worker CWD 不一致导致的 flaky 问题
 const ENGINE_ROOT = path.resolve(__dirname, '../..')
 const SCRIPT_PATH = path.join(ENGINE_ROOT, 'skills/dev/scripts/generate-feedback-report-v2.sh')
-const LOG_FILE = path.join(ENGINE_ROOT, '.dev-execution-log.jsonl')
+// 使用唯一路径避免与 record-step.test.ts 并行执行时的文件冲突
+const LOG_FILE = path.join(ENGINE_ROOT, '.dev-execution-log.feedback-test.jsonl')
 const EXPECTATIONS_FILE = path.join(ENGINE_ROOT, 'skills/dev/lib/step-expectations.json')
 const REPORT_DIR = path.join(ENGINE_ROOT, 'docs/dev-reports')
 
@@ -59,7 +60,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该生成报告文件', () => {
-    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT, env: { ...process.env, DEV_LOG_FILE: LOG_FILE } })
 
     expect(fs.existsSync(REPORT_DIR)).toBe(true)
 
@@ -77,7 +78,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含效率维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT, env: { ...process.env, DEV_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -90,7 +91,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含稳定性维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT, env: { ...process.env, DEV_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -101,7 +102,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含自动化维度数据', () => {
-    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT, env: { ...process.env, DEV_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
@@ -112,7 +113,7 @@ describe('generate-feedback-report-v2.sh', () => {
   })
 
   it('应该包含改进建议', () => {
-    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT })
+    execSync(`bash ${SCRIPT_PATH}`, { cwd: ENGINE_ROOT, env: { ...process.env, DEV_LOG_FILE: LOG_FILE } })
 
     const files = fs.readdirSync(REPORT_DIR)
     const reportFile = path.join(REPORT_DIR, files[0])
