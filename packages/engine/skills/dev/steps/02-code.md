@@ -133,6 +133,27 @@ if [[ -n "$TASK_CARD" ]]; then
 fi
 ```
 
+### 2.3.5 本地 CI 镜像检查
+
+> push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
+
+```bash
+# 1. 跑 npm test（如果项目有）
+if [[ -f "package.json" ]] && grep -q '"test"' package.json; then
+    echo "🧪 Running npm test..."
+    npm test 2>&1 || { echo "❌ npm test 失败，修复后再继续"; exit 1; }
+fi
+
+# 2. 检查 Learning 格式（如果已写）
+LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
+if [[ -f "$LEARNING_FILE" ]]; then
+    bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || true
+fi
+
+# 3. 检查 DoD 映射
+node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || true
+```
+
 ---
 
 ---
