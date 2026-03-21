@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.75.0"
+version: "3.76.0"
 updated: "2026-03-21"
 changelog:
+  - version: "13.14.0"
+    date: "2026-03-21"
+    summary: "feat(engine): 新增 codex-test-gen skill — Codex 自动扫描低覆盖率模块并生成测试"
+    scope: skills
+    breaking: false
+    feature_id: codex-test-gen-skill
   - version: "13.13.3"
     date: "2026-03-21"
     summary: "fix(engine): stop-dev.sh fallback 死锁修复 — PR合并失败exit2 + Codex审查15分钟超时"

@@ -37,6 +37,7 @@ export const ROLES = {
       architecture_scan: 'architecture_scan',
       arch_review: 'arch_review',
       pipeline_rescue: 'pipeline_rescue',
+      codex_test_gen: 'codex_test_gen',
     },
   },
   cpo: {
