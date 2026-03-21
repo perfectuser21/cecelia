@@ -110,10 +110,10 @@ jobs:
           echo "dynamic_shared_memory_type = mmap" >> "$PG_DATA/postgresql.conf"
           echo "unix_socket_directories = '/tmp'" >> "$PG_DATA/postgresql.conf"
           pg_ctl -w -D "$PG_DATA" -l "/tmp/pg-${DB_PORT}.log" -o "-p ${DB_PORT}" start
-          createuser --superuser cecelia -p "$DB_PORT" 2>/dev/null || true
-          psql -p "$DB_PORT" -c "ALTER USER cecelia PASSWORD 'cecelia_ci';" postgres
-          createdb -U cecelia cecelia -p "$DB_PORT" 2>/dev/null || true
-          psql -U cecelia -d cecelia -p "$DB_PORT" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+          createuser --superuser cecelia -h localhost -p "$DB_PORT" 2>/dev/null || true
+          psql -h localhost -p "$DB_PORT" -c "ALTER USER cecelia PASSWORD 'cecelia_ci';" postgres
+          createdb -U cecelia cecelia -h localhost -p "$DB_PORT" 2>/dev/null || true
+          psql -U cecelia -d cecelia -h localhost -p "$DB_PORT" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
