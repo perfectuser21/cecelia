@@ -168,7 +168,10 @@ describe('execution-callback error fields (E1-E5)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+    mockPool.query.mockImplementation((sql) => {
+      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
+      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
+    });
   });
 
   it('E1: AI Failed → $9 (error_message) is not null', async () => {

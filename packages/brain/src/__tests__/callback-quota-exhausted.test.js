@@ -99,6 +99,9 @@ function setupDefaultMocks() {
     return Promise.resolve({ rows: [], rowCount: 0 });
   });
   mockPool.query.mockImplementation((sql) => {
+    if (typeof sql === 'string' && sql.includes('decision_log')) {
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    }
     if (typeof sql === 'string' && sql.includes('payload FROM tasks')) {
       return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }], rowCount: 1 });
     }
