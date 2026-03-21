@@ -45,6 +45,7 @@ const SKILL_WHITELIST = {
   'codex_qa': '/codex',
   'codex_dev': '/dev',  // Codex Provider 跑 /dev — 与 dev 相同 skill，通过 runner.sh 执行
   'codex_playwright': '/playwright',  // Codex 跑 Playwright 自动化 — 西安 M4 CDP 控制 PC
+  'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 — 西安 M4 扫描覆盖率低模块
   'pr_review': '/review',  // 异步 PR 审查 → 西安 Codex 独立 LLM 审查
   'code_review': '/code-review',
   'decomp_review': '/decomp-check',
