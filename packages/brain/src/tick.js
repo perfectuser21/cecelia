@@ -228,11 +228,10 @@ async function runTickSafe(source = 'loop', tickFn) {
 
   // Reentry guard: check if already running
   if (_tickRunning) {
-    // Timeout protection: release lock if held too long
+    // Timeout protection: skip this round to prevent concurrent ticks
     if (_tickLockTime && (Date.now() - _tickLockTime > TICK_TIMEOUT_MS)) {
-      console.warn(`[tick-loop] Tick lock held for >${TICK_TIMEOUT_MS}ms, force-releasing (source: ${source})`);
-      _tickRunning = false;
-      _tickLockTime = null;
+      console.warn(`[tick-loop] Tick still running after ${TICK_TIMEOUT_MS}ms timeout, skipping this round (source: ${source})`);
+      return { skipped: true, reason: 'tick_timeout_still_running', source };
     } else {
       console.log(`[tick-loop] Tick already running, skipping (source: ${source})`);
       return { skipped: true, reason: 'already_running', source };

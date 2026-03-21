@@ -51,8 +51,8 @@ describe('circuit-breaker', () => {
       expect(FAILURE_THRESHOLD).toBe(3);
     });
 
-    it('OPEN_DURATION_MS 应为 30 分钟', () => {
-      expect(OPEN_DURATION_MS).toBe(30 * 60 * 1000);
+    it('OPEN_DURATION_MS 应为 5 分钟', () => {
+      expect(OPEN_DURATION_MS).toBe(5 * 60 * 1000);
     });
   });
 

@@ -3,7 +3,7 @@
  *
  * States: CLOSED (normal) → OPEN (blocked) → HALF_OPEN (testing)
  * - CLOSED: Tasks dispatch normally
- * - OPEN: After 3 consecutive failures, block dispatch for 30 minutes
+ * - OPEN: After 3 consecutive failures, block dispatch for 5 minutes
  * - HALF_OPEN: After cooldown, allow 1 probe task; success → CLOSED, failure → OPEN
  */
 
@@ -12,7 +12,7 @@ import { emit } from './event-bus.js';
 import { raise } from './alerting.js';
 
 const FAILURE_THRESHOLD = 3;
-const OPEN_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+const OPEN_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
 // In-memory state (per worker key)
 const breakers = new Map();

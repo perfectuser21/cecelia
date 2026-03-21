@@ -85,7 +85,7 @@ describe('Circuit Breaker State Machine（集成测试）', () => {
     expect(getState(KEY).state).toBe('OPEN');
     expect(isAllowed(KEY)).toBe(false);
 
-    // 推进时钟超过冷却时间（OPEN_DURATION_MS = 30分钟）
+    // 推进时钟超过冷却时间（OPEN_DURATION_MS = 5分钟）
     vi.advanceTimersByTime(OPEN_DURATION_MS + 1000);
 
     // OPEN → HALF_OPEN 自动转换
