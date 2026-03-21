@@ -1,5 +1,5 @@
--- Migration 168: projects.current_phase CHECK 约束 + 初始 roadmap 数据
--- Version: 168
+-- Migration 169: projects.current_phase CHECK 约束 + 初始 roadmap 数据
+-- Version: 169
 -- Date: 2026-03-21
 -- Description: 为 current_phase 添加 CHECK 约束（now/next/later/plan），
 --              并根据 status + sequence_order 设置现有 projects 的初始 phase
@@ -20,5 +20,5 @@ UPDATE projects SET current_phase = 'later'
 
 -- schema version
 INSERT INTO schema_version (version, description)
-VALUES ('168', 'Add CHECK constraint to projects.current_phase + seed initial roadmap phases')
+VALUES ('169', 'Add CHECK constraint to projects.current_phase + seed initial roadmap phases')
 ON CONFLICT (version) DO NOTHING;
