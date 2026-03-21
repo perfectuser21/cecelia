@@ -73,7 +73,7 @@ Source: ${suggestion.source || 'unknown'}
 内容：
 ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(suggestion.content, null, 2)}
 
-请识别此 Suggestion 的层级（Layer 3 KR / Layer 4 Project / Layer 5 Initiative / Layer 6 Task），
+请识别此 Suggestion 的层级（Layer 3 KR / Layer 4 Project / Layer 5 Scope / Layer 6 Initiative / Layer 7 Task/Pipeline），
 找到最合适的挂载点，并调用对应的 Brain API 创建结构。`;
 
       const contentStr = typeof suggestion.content === 'string'
