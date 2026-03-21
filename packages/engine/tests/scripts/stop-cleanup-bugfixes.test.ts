@@ -208,8 +208,13 @@ describe("P2-5: cleanup.sh Section 4.5 GC 不在 cleanup 中 fire-and-forget 启
 describe("P0-1b: cleanup.sh sed step_4_ship 静默失败修复", () => {
   const content = readFileSync(CLEANUP_SH, "utf-8");
 
-  it("定义了 _mark_cleanup_done 函数", () => {
-    expect(content).toContain("_mark_cleanup_done()");
+  it("source devloop-check.sh 获取 _mark_cleanup_done", () => {
+    expect(content).toContain("devloop-check.sh");
+    expect(content).toContain("_mark_cleanup_done");
+  });
+
+  it("定义了 _mark_ship_and_cleanup_done 包装函数", () => {
+    expect(content).toContain("_mark_ship_and_cleanup_done()");
   });
 
   it("sed 后用 grep 验证结果", () => {
