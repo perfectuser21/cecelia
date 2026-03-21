@@ -757,6 +757,26 @@ else
                 exit 2
                 ;;
         esac
+
+        # --- 条件 2.5: code_review_gate 检查（CI 通过后）---
+        CODE_REVIEW_STATUS=$(grep "^code_review_gate_status:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+        if [[ -n "$CODE_REVIEW_STATUS" ]]; then
+            case "$CODE_REVIEW_STATUS" in
+                "pass"|"PASS")
+                    echo "  ✅ 条件 2.5: code_review_gate 已通过" >&2
+                    ;;
+                "fail"|"FAIL")
+                    save_block_reason "code_review_gate 失败"
+                    jq -n --arg reason "code_review_gate 失败，修复代码后重新 push" '{"decision": "block", "reason": $reason}'
+                    exit 2
+                    ;;
+                *)
+                    save_block_reason "code_review_gate 进行中 ($CODE_REVIEW_STATUS)"
+                    jq -n --arg reason "code_review_gate 进行中（$CODE_REVIEW_STATUS），等待 Codex 审查完成" '{"decision": "block", "reason": $reason}'
+                    exit 2
+                    ;;
+            esac
+        fi
     fi
 
     # --- 条件 3: PR 合并？---
