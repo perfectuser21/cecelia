@@ -85,6 +85,8 @@ describe("Phase 1: DevGate Scripts", () => {
 
     it("should pass when all items have Test fields", () => {
       // P0-2: manual: 现在需要 evidence 文件，改用 contract: 和 tests/
+      // 注意: 使用 cwd: TEST_DIR（已有 git init）+ 配套 .prd.md，隔离 PRD 追溯检查
+      // 避免依赖仓库根目录的 .prd.md（随每个 PR 变化，导致测试脆弱）
       const dodContent = `# Test DoD
 
 ## 验收标准
@@ -97,8 +99,19 @@ describe("Phase 1: DevGate Scripts", () => {
   Test: manual:node -e "process.exit(0)"
 `;
 
+      const prdContent = `# Test PRD
+
+## 成功标准
+
+1. [BEHAVIOR] Item 1 行为验证
+2. Item 2 功能实现
+3. Item 3 功能实现
+`;
+
       const testDod = join(TEST_DIR, "valid.dod.md");
+      const testPrd = join(TEST_DIR, ".prd.md");
       writeFileSync(testDod, dodContent);
+      writeFileSync(testPrd, prdContent);
 
       // 使用 TEST_DIR（有独立 .git）作为 cwd，避免上层 .prd.md 干扰 PRD 追溯检查
       const result = execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
