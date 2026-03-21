@@ -18,6 +18,12 @@
 version: "3.75.0"
 updated: "2026-03-21"
 changelog:
+  - version: "13.13.4"
+    date: "2026-03-21"
+    summary: "fix(engine): devloop-check.sh 版本注释更新，标注三处 Pipeline 死锁修复（#1286/#1294）"
+    scope: lib
+    breaking: false
+    feature_id: pipeline-deadlock-verify
   - version: "13.13.3"
     date: "2026-03-21"
     summary: "fix(engine): stop-dev.sh fallback 死锁修复 — PR合并失败exit2 + Codex审查15分钟超时"
