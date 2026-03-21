@@ -1621,22 +1621,36 @@ async function executeTick() {
     console.error('[tick] Project capacity management failed (non-fatal):', projectCapErr.message);
   }
 
-  // [感知] KR 进度同步：每小时一次，纯 SQL，无 LLM
+  // [感知] KR 进度验证：每小时一次，从外部数据源采集真实指标
+  // 替代旧的 kr-progress.js（数 initiative 完成率），改为 kr-verifier.js（查实际指标）
   const krProgressElapsed = Date.now() - _lastKrProgressSyncTime;
   if (krProgressElapsed >= CLEANUP_INTERVAL_MS) {
     _lastKrProgressSyncTime = Date.now();
     try {
+      // 优先使用 kr-verifier（基于外部数据源，不可伪造）
+      const { runAllVerifiers } = await import('./kr-verifier.js');
+      const verifierResult = await runAllVerifiers();
+      if (verifierResult.updated > 0) {
+        console.log(`[TICK] KR 指标验证: ${verifierResult.updated} 个 KR 已更新（基于数据源）`);
+        actionsTaken.push({
+          action: 'kr_verifier_sync',
+          updated_count: verifierResult.updated,
+          errors: verifierResult.errors,
+        });
+      }
+
+      // 对没有 verifier 的 KR，仍用旧方式（数 initiative 完成率）作为 fallback
       const { syncAllKrProgress } = await import('./kr-progress.js');
       const krResult = await syncAllKrProgress(pool);
       if (krResult.updated > 0) {
-        console.log(`[TICK] KR 进度同步: ${krResult.updated} 个 KR 已更新`);
+        console.log(`[TICK] KR 进度同步（fallback）: ${krResult.updated} 个 KR 已更新`);
         actionsTaken.push({
           action: 'kr_progress_sync',
           updated_count: krResult.updated,
         });
       }
     } catch (krErr) {
-      console.error('[tick] KR progress sync failed (non-fatal):', krErr.message);
+      console.error('[tick] KR verifier/progress sync failed (non-fatal):', krErr.message);
     }
   }
 
