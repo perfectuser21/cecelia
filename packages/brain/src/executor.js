@@ -824,6 +824,49 @@ async function requeueTask(taskId, reason, evidence = {}) {
     [taskId, 'in_progress']
   );
   if (result.rows.length === 0) {
+    // P0 FIX: 竞态条件 — 任务不是 in_progress（可能被 liveness probe 或 execution-callback 先改了状态）
+    // 仍需递增 watchdog_retry_count 并在超限时 quarantine，否则死循环
+    const fallbackResult = await pool.query(
+      'SELECT payload, status FROM tasks WHERE id = $1 AND status NOT IN ($2, $3, $4)',
+      [taskId, 'completed', 'cancelled', 'canceled']
+    );
+    if (fallbackResult.rows.length > 0) {
+      const fbPayload = fallbackResult.rows[0].payload || {};
+      const fbStatus = fallbackResult.rows[0].status;
+      const fbRetryCount = (fbPayload.watchdog_retry_count || 0) + 1;
+      if (fbRetryCount >= QUARANTINE_AFTER_KILLS) {
+        // 超限 → fallback quarantine（不管当前状态是什么）
+        await pool.query(
+          `UPDATE tasks SET status = 'quarantined',
+           error_message = $2,
+           payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+           WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,
+          [
+            taskId,
+            `[watchdog-fallback] reason=${reason} prev_status=${fbStatus} at ${new Date().toISOString()}`,
+            JSON.stringify({
+              watchdog_retry_count: fbRetryCount,
+              quarantine_info: {
+                quarantined_at: new Date().toISOString(),
+                reason: 'resource_hog_race_condition',
+                details: { watchdog_retries: fbRetryCount, kill_reason: reason, previous_status: fbStatus },
+                previous_status: fbStatus,
+              }
+            }),
+          ]
+        );
+        console.log(`[executor] Fallback quarantine: task=${taskId} prev_status=${fbStatus} retries=${fbRetryCount}`);
+        return { requeued: false, quarantined: true, reason: 'fallback_quarantine' };
+      } else {
+        // 未超限 → 仅递增 counter（不改状态，不 requeue）
+        await pool.query(
+          `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+           WHERE id = $1`,
+          [taskId, JSON.stringify({ watchdog_retry_count: fbRetryCount })]
+        );
+        console.log(`[executor] Fallback counter increment: task=${taskId} prev_status=${fbStatus} retries=${fbRetryCount}`);
+      }
+    }
     return { requeued: false, reason: 'not_in_progress' };
   }
 
