@@ -26,6 +26,10 @@ import { callLLM } from './llm-caller.js';
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000; // 默认 30 分钟
 const DEFAULT_MAX_TASKS = 3;
 
+// 安全保护：每次 SelfDrive 最多执行的调整类 action 数量
+const MAX_ADJUSTMENT_ACTIONS = 2;
+const ADJUSTMENT_TYPES = ['adjust_priority', 'pause_kr', 'activate_kr', 'update_roadmap'];
+
 /**
  * Read config from brain_config table, fallback to defaults.
  * Keys: self_drive_interval_ms, self_drive_max_tasks
@@ -92,9 +96,33 @@ export async function runSelfDrive() {
       return { actions: [], reason: 'no_action_needed' };
     }
 
-    // 4. Create tasks (with dedup)
+    // 4. Process actions (create tasks + adjustment actions)
     const created = [];
-    for (const action of analysis.actions.slice(0, _currentMaxTasks)) {
+    const adjustments = [];
+    let adjustmentCount = 0;
+
+    for (const action of analysis.actions.slice(0, _currentMaxTasks + MAX_ADJUSTMENT_ACTIONS)) {
+      const actionType = action.type || 'create_task';
+
+      // 调整类 action 受数量限制保护
+      if (ADJUSTMENT_TYPES.includes(actionType)) {
+        if (adjustmentCount >= MAX_ADJUSTMENT_ACTIONS) {
+          console.log(`[SelfDrive] Skip adjustment (limit ${MAX_ADJUSTMENT_ACTIONS} reached): ${actionType}`);
+          continue;
+        }
+
+        try {
+          const result = await executeAdjustmentAction(action);
+          adjustmentCount++;
+          adjustments.push({ type: actionType, ...result });
+          console.log(`[SelfDrive] Executed ${actionType}: ${action.reason || ''}`);
+        } catch (err) {
+          console.warn(`[SelfDrive] Failed ${actionType}: ${err.message}`);
+        }
+        continue;
+      }
+
+      // create_task: 原有逻辑（含去重）
       const dedupKey = (action.title || '').toLowerCase().slice(0, 60);
       if (dedupSet.has(dedupKey)) {
         console.log(`[SelfDrive] Skip dedup: "${action.title}"`);
@@ -138,17 +166,104 @@ export async function runSelfDrive() {
       scan_summary: scanResults?.summary || null,
       analysis_actions: analysis.actions.length,
       tasks_created: created.length,
+      adjustments_executed: adjustments.length,
       tasks: created,
+      adjustments,
       reasoning: analysis.reasoning || '',
     });
 
-    console.log(`[SelfDrive] Cycle complete: ${created.length} tasks created`);
-    return { actions: created, reason: 'ok' };
+    console.log(`[SelfDrive] Cycle complete: ${created.length} tasks created, ${adjustments.length} adjustments executed`);
+    return { actions: created, adjustments, reason: 'ok' };
 
   } catch (err) {
     console.error(`[SelfDrive] Cycle failed: ${err.message}`);
     await recordEvent('cycle_error', { error: err.message });
     return { actions: [], reason: 'error', error: err.message };
+  }
+}
+
+// ============================================================
+// Adjustment action handlers
+// ============================================================
+
+/**
+ * 执行调整类 action 并记录到 decision_log。
+ * 支持：adjust_priority / pause_kr / activate_kr / update_roadmap
+ * 安全保护：不允许删除（只能暂停），每条都写审计日志。
+ */
+async function executeAdjustmentAction(action) {
+  const actionType = action.type;
+
+  switch (actionType) {
+    case 'adjust_priority': {
+      if (!action.project_id || action.new_sequence == null) {
+        throw new Error('adjust_priority 需要 project_id 和 new_sequence');
+      }
+      await pool.query(
+        'UPDATE projects SET sequence_order = $1, updated_at = NOW() WHERE id = $2',
+        [action.new_sequence, action.project_id]
+      );
+      await recordDecision('self_drive', action.reason || 'adjust_priority', action);
+      return { project_id: action.project_id, new_sequence: action.new_sequence };
+    }
+
+    case 'pause_kr': {
+      if (!action.kr_id) {
+        throw new Error('pause_kr 需要 kr_id');
+      }
+      await pool.query(
+        "UPDATE goals SET status = 'paused', updated_at = NOW() WHERE id = $1",
+        [action.kr_id]
+      );
+      await recordDecision('self_drive', action.reason || 'pause_kr', action);
+      return { kr_id: action.kr_id, new_status: 'paused' };
+    }
+
+    case 'activate_kr': {
+      if (!action.kr_id) {
+        throw new Error('activate_kr 需要 kr_id');
+      }
+      await pool.query(
+        "UPDATE goals SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
+        [action.kr_id]
+      );
+      await recordDecision('self_drive', action.reason || 'activate_kr', action);
+      return { kr_id: action.kr_id, new_status: 'in_progress' };
+    }
+
+    case 'update_roadmap': {
+      if (!action.project_id || !action.phase) {
+        throw new Error('update_roadmap 需要 project_id 和 phase');
+      }
+      const validPhases = ['now', 'next', 'later'];
+      if (!validPhases.includes(action.phase)) {
+        throw new Error(`update_roadmap phase 必须是 ${validPhases.join('/')}，收到: ${action.phase}`);
+      }
+      await pool.query(
+        'UPDATE projects SET current_phase = $1, updated_at = NOW() WHERE id = $2',
+        [action.phase, action.project_id]
+      );
+      await recordDecision('self_drive', action.reason || 'update_roadmap', action);
+      return { project_id: action.project_id, phase: action.phase };
+    }
+
+    default:
+      throw new Error(`未知的调整类型: ${actionType}`);
+  }
+}
+
+/**
+ * 记录调整决策到 decision_log 表（审计追踪）
+ */
+async function recordDecision(trigger, inputSummary, actionData) {
+  try {
+    await pool.query(
+      `INSERT INTO decision_log (trigger, input_summary, llm_output_json, status)
+       VALUES ($1, $2, $3, 'executed')`,
+      [trigger, inputSummary, JSON.stringify(actionData)]
+    );
+  } catch (err) {
+    console.warn(`[SelfDrive] Failed to record decision: ${err.message}`);
   }
 }
 
@@ -311,16 +426,35 @@ ${tasksSummary}
 
 ## 输出格式（严格 JSON）
 
+actions 数组支持以下类型：
+
+### 1. create_task — 创建开发任务
+{ "type": "create_task", "title": "任务标题", "description": "任务描述", "task_type": "dev", "priority": "P1 或 P2", "area": "cecelia/zenithjoy/investment" }
+
+### 2. adjust_priority — 调整 Project 优先级（sequence_order）
+{ "type": "adjust_priority", "project_id": "uuid", "new_sequence": 1, "reason": "为什么调整" }
+
+### 3. pause_kr — 暂停某个 KR（goals.status → paused）
+{ "type": "pause_kr", "kr_id": "uuid", "reason": "为什么暂停" }
+
+### 4. activate_kr — 激活某个 KR（goals.status → in_progress）
+{ "type": "activate_kr", "kr_id": "uuid", "reason": "为什么激活" }
+
+### 5. update_roadmap — 更新 Project 路线图阶段（now/next/later）
+{ "type": "update_roadmap", "project_id": "uuid", "phase": "now|next|later", "reason": "为什么调整" }
+
+注意：
+- 调整类操作（adjust_priority/pause_kr/activate_kr/update_roadmap）每次最多执行 2 个
+- 不允许删除 KR 或 Project，只能暂停
+- 所有调整操作都会记录到 decision_log
+
+示例：
 {
   "reasoning": "简短分析（2-3句）",
   "actions": [
-    {
-      "title": "任务标题（简明扼要）",
-      "description": "任务描述（包含具体要做什么、为什么做）",
-      "task_type": "dev",
-      "priority": "P1 或 P2",
-      "area": "cecelia 或 zenithjoy 或 investment（任务归属的业务线：cecelia=Cecelia系统自身改进，zenithjoy=ZenithJoy业务，investment=投资相关）"
-    }
+    { "type": "create_task", "title": "任务标题", "description": "描述", "task_type": "dev", "priority": "P1", "area": "cecelia" },
+    { "type": "adjust_priority", "project_id": "xxx", "new_sequence": 1, "reason": "该项目优先级更高" },
+    { "type": "pause_kr", "kr_id": "yyy", "reason": "资源不足暂停" }
   ]
 }
 
