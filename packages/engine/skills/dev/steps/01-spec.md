@@ -257,6 +257,7 @@ else
   SR_TASK=$(echo "$SR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
   if [[ -n "$SR_TASK" ]]; then
     echo "spec_review_task_id: $SR_TASK" >> "$DEV_MODE_FILE"
+    echo "spec_review_registered_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$DEV_MODE_FILE"
     echo "spec_review_status: pending" >> "$DEV_MODE_FILE"
     echo "  ✅ spec_review 已注册: $SR_TASK"
     # 立即派发（不等调度器）
