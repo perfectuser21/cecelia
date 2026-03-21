@@ -1200,6 +1200,7 @@ function getSkillForTaskType(taskType, payload) {
     'scope_plan': '/decomp',        // Phase 3: Scope 内规划下一个 Initiative
     'project_plan': '/decomp',      // Phase 4: Project 内规划下一个 Scope
     'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
+    'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
   };
   return skillMap[taskType] || '/dev';
 }
@@ -1228,7 +1229,7 @@ const FIXED_PROVIDER = FALLBACK_PROFILE.config.executor.fixed_provider;
 function getModelForTask(task) {
   const taskType = task.task_type || 'dev';
   const provider = getProviderForTask(task);
-  if (taskType === 'codex_qa') return null;
+  if (taskType === 'codex_qa' || taskType === 'codex_test_gen') return null;
 
   const profile = getActiveProfile();
   const profileMap = profile?.config?.executor?.model_map;
