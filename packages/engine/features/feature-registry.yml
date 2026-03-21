@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.74.0"
+version: "3.75.0"
 updated: "2026-03-21"
 changelog:
+  - version: "13.13.3"
+    date: "2026-03-21"
+    summary: "fix(engine): stop-dev.sh fallback 死锁修复 — PR合并失败exit2 + Codex审查15分钟超时"
+    scope: hooks
+    breaking: false
+    feature_id: stop-dev-fallback-deadlock-fix
   - version: "13.13.2"
     date: "2026-03-21"
     summary: "feat(engine): worktree-gc 保护 blocked 任务的 worktree — 删除前查询 Brain API 检查 blocked 状态"
