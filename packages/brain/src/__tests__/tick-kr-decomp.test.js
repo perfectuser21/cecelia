@@ -46,7 +46,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
   it('should create KR decomposition task when none exists', async () => {
     // Setup: create KR + project
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR for decomp', 'area_okr', 'P0', 'pending', 0) RETURNING id, title"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR for decomp', 'area_kr', 'P0', 'pending', 0) RETURNING id, title"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
@@ -96,7 +96,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should NOT create duplicate when decomposition task already exists (queued)', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup KR', 'area_okr', 'P0', 'pending', 0) RETURNING id, title"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup KR', 'area_kr', 'P0', 'pending', 0) RETURNING id, title"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
@@ -127,7 +127,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should NOT create duplicate when decomposition task is in_progress', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('InProgress KR', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('InProgress KR', 'area_kr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
@@ -153,7 +153,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should allow creation when old decomposition task is completed > 24h ago', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Old Completed KR', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Old Completed KR', 'area_kr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
@@ -179,7 +179,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should detect decomposition task by title pattern (拆解)', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Title Pattern KR', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Title Pattern KR', 'area_kr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
