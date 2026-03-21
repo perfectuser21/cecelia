@@ -1,14 +1,15 @@
 ---
 id: dev-stage-03-integrate
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-20
 changelog:
+  - 1.1.0: code_review_gate 前移到 Stage 2（push 前审查），Stage 3 仅负责 push + CI
   - 1.0.0: 从 03-prci.md 重构为 Stage 3 Integrate，删除 4 个 Codex 注册，改为 CI 后 1 个 code_review
 ---
 
-# Stage 3: Integrate — Push + CI + code_review Gate
+# Stage 3: Integrate — Push + CI
 
-> Push + 创建 PR + 等 CI + 派发 code_review Codex + 等 stop hook 放行
+> Push + 创建 PR + 等 CI 通过（code_review 已在 Stage 2 完成）
 
 ---
 
@@ -214,7 +215,7 @@ fi
 |---------|------|
 | queued / in_progress | 等待，继续检查 |
 | failure | **先本地复现**，修复后才 push（见 3.2.3） |
-| success | 继续 3.3 派发 code_review |
+| success | CI 通过，devloop-check 自动放行进入 Stage 4 |
 
 ### 3.2.3 CI 失败修复（本地优先规则）
 
@@ -266,47 +267,10 @@ git push origin HEAD
 
 ---
 
-## 3.3 CI 通过后 → 派发 code_review_gate Codex 任务
+## 3.3 CI 通过 → 进入 Stage 4
 
-> **CI 通过后，派发 1 个 code_review_gate Codex 任务（合并架构审查+DoD验证+PRD覆盖），然后停下来等 stop hook 放行。**
-
-```bash
-BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-DEV_MODE_FILE=".dev-mode.${BRANCH}"
-
-# 检查 Brain 是否可用
-BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
-if [[ -z "$BRAIN_HEALTH" ]]; then
-  echo "⚠️  Brain 不可用（$BRAIN_URL），code_review_gate 降级为跳过"
-  echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
-else
-  echo "🔍 向 Brain 注册 code_review_gate 任务..."
-
-  CR_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
-    -H "Content-Type: application/json" \
-    -d "{\"title\":\"Code Review: $BRANCH\",\"task_type\":\"code_review_gate\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
-  CR_TASK=$(echo "$CR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
-  if [[ -n "$CR_TASK" ]]; then
-    echo "code_review_gate_task_id: $CR_TASK" >> "$DEV_MODE_FILE"
-    echo "code_review_gate_status: pending" >> "$DEV_MODE_FILE"
-    echo "  ✅ code_review_gate 已注册: $CR_TASK"
-    # 立即派发（不等调度器）
-    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
-      -H "Content-Type: application/json" \
-      -d "{\"task_id\":\"$CR_TASK\"}" \
-      --max-time 5 2>/dev/null || true
-    echo "  🚀 code_review_gate 已派发执行"
-  else
-    echo "  ⚠️  code_review_gate 注册失败，降级为跳过"
-    echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
-  fi
-fi
-```
-
-**输出状态后停止，等 stop hook 放行。**
-
-code_review_gate 通过后，devloop-check.sh 会放行，进入 Stage 4。
+> code_review_gate 已在 Stage 2 完成（push 前审查）。
+> CI 全部通过后，devloop-check 自动放行进入 Stage 4。
 
 ---
 
@@ -317,8 +281,7 @@ code_review_gate 通过后，devloop-check.sh 会放行，进入 Stage 4。
 | PR 未创建 | ❌ | exit 2（继续创建 PR）|
 | CI 失败 | ❌ | exit 2（继续修复）|
 | CI 进行中 | ⏳ | exit 2（继续等待）|
-| code_review 未通过 | ❌ | exit 2（等待 Codex）|
-| CI 通过 + code_review PASS | ✅ | exit 2（继续 Stage 4）|
+| CI 通过 | ✅ | exit 2（继续 Stage 4）|
 
 ---
 
@@ -329,19 +292,18 @@ code_review_gate 通过后，devloop-check.sh 会放行，进入 Stage 4。
 - ❌ PR 创建后就结束
 - ❌ 等待用户处理
 - ❌ **`gh pr merge --admin` 绕过 CI**
-- ❌ 跳过 code_review 直接合并
+- ❌ 跳过 code_review 直接合并（code_review 在 Stage 2 完成，不可绕过）
 
 ### 正确行为
 
 - ✅ CI 失败 → 分析原因 → **本地复现** → 修复 → 本地全绿 → push → 继续等待
-- ✅ CI 通过 → 派发 code_review → 等待 PASS
-- ✅ code_review PASS → 继续 Stage 4
+- ✅ CI 通过 → 自动放行进入 Stage 4（code_review 已在 Stage 2 完成）
 
 ---
 
 ### 完成后
 
-**CI 通过 + code_review PASS 后，标记完成并执行 Stage 4**
+**CI 通过后，标记完成并执行 Stage 4**
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")

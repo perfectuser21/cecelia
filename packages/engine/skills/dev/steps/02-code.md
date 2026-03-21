@@ -150,7 +150,54 @@ echo "✅ Stage 2 完成标记已写入 .dev-mode"
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "2", status: "completed" })`
 
-**立即执行下一步**：
+---
+
+## 2.4 派发 code_review_gate Codex 任务（CRITICAL — Stage 2 最后一步）
+
+> **Stage 2 代码写完、自验证通过后，派发 code_review_gate Codex 任务审查代码质量，然后停下来等 stop hook 放行。**
+> code_review 在 push 前完成，确保推到远端的代码已经过审查，CI 一次过。
+
+```bash
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+
+# 检查 Brain 是否可用
+BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
+if [[ -z "$BRAIN_HEALTH" ]]; then
+  echo "⚠️  Brain 不可用（$BRAIN_URL），code_review_gate 降级为跳过"
+  echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
+else
+  echo "🔍 向 Brain 注册 code_review_gate 任务..."
+
+  CR_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
+    -H "Content-Type: application/json" \
+    -d "{\"title\":\"Code Review: $BRANCH\",\"task_type\":\"code_review_gate\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
+  CR_TASK=$(echo "$CR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  if [[ -n "$CR_TASK" ]]; then
+    echo "code_review_gate_task_id: $CR_TASK" >> "$DEV_MODE_FILE"
+    echo "code_review_gate_status: pending" >> "$DEV_MODE_FILE"
+    echo "  ✅ code_review_gate 已注册: $CR_TASK"
+    # 立即派发（不等调度器）
+    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
+      -H "Content-Type: application/json" \
+      -d "{\"task_id\":\"$CR_TASK\"}" \
+      --max-time 5 2>/dev/null || true
+    echo "  🚀 code_review_gate 已派发执行"
+  else
+    echo "  ⚠️  code_review_gate 注册失败，降级为跳过"
+    echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
+  fi
+fi
+```
+
+**输出状态后停止，等 stop hook 放行。**
+
+code_review_gate 通过后，devloop-check.sh 会放行，进入 Stage 3。
+
+---
+
+**继续执行下一步**：
 
 1. 读取 `skills/dev/steps/03-integrate.md`
 2. 立即 push + 创建 PR
