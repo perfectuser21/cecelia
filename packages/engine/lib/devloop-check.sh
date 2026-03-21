@@ -398,11 +398,15 @@ devloop_check() {
             _cb_repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
             local _cb_pr_url=""
             [[ -n "$_cb_repo" ]] && _cb_pr_url="https://github.com/${_cb_repo}/pull/${pr_number}"
+            # 从 .dev-mode 读取 goal_id
+            local _cb_goal_id=""
+            _cb_goal_id=$(grep "^goal_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
             echo "[devloop-check] 回调 Brain execution-callback（task: $_cb_task_id, status: completed）..." >&2
+            # 回调时附带 goal_id，Brain 会自动更新 KR 进度
             curl -s -X POST "$_cb_brain_url/api/brain/execution-callback" \
                 -H "Content-Type: application/json" \
-                -d "{\"task_id\":\"$_cb_task_id\",\"status\":\"completed\",\"pr_url\":\"${_cb_pr_url}\"}" \
-                --max-time 5 2>/dev/null || true
+                -d "{\"task_id\":\"$_cb_task_id\",\"status\":\"completed\",\"goal_id\":\"$_cb_goal_id\",\"pr_url\":\"${_cb_pr_url}\"}" \
+                --max-time 10 2>/dev/null || true
         fi
 
         _devloop_jq -n \

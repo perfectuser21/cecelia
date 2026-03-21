@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 3.0.0
+version: 3.1.0
 created: 2026-03-14
-updated: 2026-03-20
+updated: 2026-03-21
 changelog:
+  - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
   - 3.0.0: 砍掉所有假 subagent 模板，加入自验证 + Codex 验证双保险
   - 2.0.0: TDD 两阶段探索
   - 1.0.0: 初始版本
@@ -131,6 +132,27 @@ if [[ -n "$TASK_CARD" ]]; then
     echo "task_card_hash: $TC_HASH" >> ".dev-mode.${BRANCH}"
     echo "✅ Task Card hash 已锁定: $TC_HASH"
 fi
+```
+
+### 2.3.5 本地 CI 镜像检查
+
+> push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
+
+```bash
+# 1. 跑 npm test（如果项目有）
+if [[ -f "package.json" ]] && grep -q '"test"' package.json; then
+    echo "🧪 Running npm test..."
+    npm test 2>&1 || { echo "❌ npm test 失败，修复后再继续"; exit 1; }
+fi
+
+# 2. 检查 Learning 格式（如果已写）
+LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
+if [[ -f "$LEARNING_FILE" ]]; then
+    bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || true
+fi
+
+# 3. 检查 DoD 映射
+node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || true
 ```
 
 ---

@@ -18,6 +18,12 @@
 version: "3.74.0"
 updated: "2026-03-21"
 changelog:
+  - version: "13.10.0"
+    date: "2026-03-21"
+    summary: "feat(engine): 本地 CI 镜像检查 + Pipeline 统计汇总 + KR 进度回写 — 减少 CI 失败率 + 执行可观测性 + KR 自动更新"
+    scope: skills
+    breaking: false
+    feature_id: local-ci-pipeline-stats-kr
   - version: "13.9.0"
     date: "2026-03-21"
     summary: "feat(engine): code_review_gate 从 CI 后前移到 Stage 2（push 前审查）— 每步审完再推"
