@@ -59,9 +59,9 @@ describe('getDomainSkillOverride - non-coding domains', () => {
     expect(result).toBe('/knowledge');
   });
 
-  it('growth domain → CMO 首选 skill /research', () => {
+  it('growth domain → CMO 首选 skill /content-creator', () => {
     const result = getDomainSkillOverride('dev', 'growth');
-    expect(result).toBe('/research');
+    expect(result).toBe('/content-creator');
   });
 });
 
@@ -74,8 +74,8 @@ describe('getDomainSkillOverride - unknown/empty roles', () => {
     expect(getDomainSkillOverride('dev', 'finance')).toBeNull();
   });
 
-  it('operations domain（COO skills 为空）→ null', () => {
-    expect(getDomainSkillOverride('dev', 'operations')).toBeNull();
+  it('operations domain（COO 首选 skill /janitor）', () => {
+    expect(getDomainSkillOverride('dev', 'operations')).toBe('/janitor');
   });
 });
 
