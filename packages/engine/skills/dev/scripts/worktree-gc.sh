@@ -153,6 +153,28 @@ for i in "${!WT_PATHS[@]}"; do
         fi
     fi
 
+    # 检查 5: Brain blocked 任务保护（v1.3.0）
+    # 跨域依赖阻塞时 agent 退出释放 slot，worktree 保留等恢复
+    # GC 不能删 blocked 任务的 worktree，否则恢复时工作成果丢失
+    if [[ "$SHOULD_CLEAN" == "true" ]]; then
+        BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+        BLOCKED_COUNT=$(curl -s --max-time 3 "$BRAIN_URL/api/brain/tasks?status=blocked&limit=200" 2>/dev/null \
+            | python3 -c "
+import json,sys
+try:
+    tasks=json.load(sys.stdin)
+    count=sum(1 for t in tasks if (t.get('payload') or {}).get('branch')=='$WT_BRANCH' or (t.get('metadata') or {}).get('branch')=='$WT_BRANCH')
+    print(count)
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+        if [[ "$BLOCKED_COUNT" -gt 0 ]]; then
+            echo "SKIP: $WT_PATH ($WT_BRANCH) — Brain 有 $BLOCKED_COUNT 个 blocked 任务，保护 worktree"
+            SKIPPED=$((SKIPPED + 1))
+            continue
+        fi
+    fi
+
     # 执行清理
     if [[ "$SHOULD_CLEAN" == "true" ]]; then
         # v1.2.0: 活跃锁检查 — session 正在运行时不删除（防止误删活跃 worktree）
