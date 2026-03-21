@@ -142,7 +142,7 @@ describe("Stop Hook 状态完整性 (PR #550)", () => {
       expect(existsSync(join(tempDir, ".dev-lock.cp-test"))).toBe(false);
     });
 
-    it("retry_count 超过 30 → exit 0（安全阀，防无限循环，v15.1.0: MAX_RETRIES=30）", () => {
+    it("retry_count 超过 30 → exit 2（v15.4.0: 不再强制退出，pipeline_rescue 接管）", () => {
       initGitRepo(tempDir, "cp-test");
       createDevState(
         tempDir,
@@ -150,7 +150,7 @@ describe("Stop Hook 状态完整性 (PR #550)", () => {
         `dev\nbranch: cp-test\nsession_id: ${TEST_SESSION_ID}\ntty: not a tty\nretry_count: 30\n`
       );
       const code = runStopHook(tempDir);
-      expect(code).toBe(0);
+      expect(code).toBe(2);
     });
 
     it(".dev-lock 存在但 .dev-mode 缺失 → exit 2（状态丢失保护）", () => {
