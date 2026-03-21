@@ -315,7 +315,7 @@ export async function advanceContentPipeline(taskId, taskStatus, findings = null
 
   // ── content-export 完成 → 创建 content_publish 任务（8 平台）→ 标记 pipeline completed ──
   if (task_type === 'content-export') {
-    await _createPublishJobs(dbPool, pipeline, task);
+    await _createPublishJobs(dbPool, pipeline, task, findings);
     await dbPool.query(
       `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
       [pipelineId]
@@ -489,11 +489,17 @@ function _stageLabel(stage) {
  * @param {import('pg').Pool} dbPool
  * @param {object} pipeline - 父 pipeline 任务行
  * @param {object} exportTask - content-export 子任务行
+ * @param {object|null} findings - executeExport 的返回值（含 manifest_path, card_files 等）
  */
-async function _createPublishJobs(dbPool, pipeline, exportTask) {
+async function _createPublishJobs(dbPool, pipeline, exportTask, findings = null) {
   const pipelineId = pipeline.id;
   const keyword = pipeline.payload?.keyword || exportTask.payload?.pipeline_keyword || pipeline.title;
   const contentType = pipeline.payload?.content_type || exportTask.payload?.content_type || 'solo-company-case';
+
+  // 从 export findings 提取内容路径信息
+  const manifestPath = findings?.manifest_path || null;
+  const cardFiles = findings?.card_files || [];
+
   let created = 0;
 
   for (const platform of PUBLISH_PLATFORMS) {
@@ -513,12 +519,21 @@ async function _createPublishJobs(dbPool, pipeline, exportTask) {
       continue;
     }
 
+    const descriptionParts = [
+      `自动发布：${keyword} → ${platform}`,
+      `内容类型：${contentType}`,
+    ];
+    if (manifestPath) descriptionParts.push(`Manifest: ${manifestPath}`);
+    if (cardFiles.length > 0) descriptionParts.push(`图片文件: ${cardFiles.join(', ')}`);
+    const description = descriptionParts.join('\n');
+
     await dbPool.query(
-      `INSERT INTO tasks (title, task_type, status, priority, project_id, goal_id,
+      `INSERT INTO tasks (title, description, task_type, status, priority, project_id, goal_id,
                          trigger_source, payload, created_at)
-       VALUES ($1, 'content_publish', 'queued', $2, $3, $4, $5, $6, NOW())`,
+       VALUES ($1, $2, 'content_publish', 'queued', $3, $4, $5, $6, $7, NOW())`,
       [
         `[发布] ${keyword} → ${platform}`,
+        description,
         'P1',
         pipeline.project_id,
         pipeline.goal_id,
@@ -528,6 +543,8 @@ async function _createPublishJobs(dbPool, pipeline, exportTask) {
           platform,
           pipeline_keyword: keyword,
           content_type: contentType,
+          manifest_path: manifestPath,
+          card_files: cardFiles,
         }),
       ]
     );

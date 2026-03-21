@@ -1802,6 +1802,34 @@ ${task.description || ''}
     return `/code-review ${repoArg} ${since}`.trim();
   }
 
+  // content_publish 类型：构建含内容路径的发布 PRD
+  if (taskType === 'content_publish') {
+    const platform = task.payload?.platform || '未知';
+    const keyword = task.payload?.pipeline_keyword || task.title;
+    const contentType = task.payload?.content_type || 'image';
+    const manifestPath = task.payload?.manifest_path;
+    const cardFiles = task.payload?.card_files || [];
+
+    const contentSection = manifestPath
+      ? `\n## 内容位置\nManifest 路径: ${manifestPath}${cardFiles.length > 0 ? '\n图片文件:\n' + cardFiles.map(f => `- ~/claude-output/images/${f}`).join('\n') : ''}`
+      : '';
+
+    const prd = `# 发布任务：${keyword} → ${platform}
+
+## 发布参数
+- 平台: ${platform}
+- 内容关键词: ${keyword}
+- 内容类型: ${contentType}${contentSection}
+
+## 成功标准
+- [ ] 内容已成功发布到 ${platform}
+`;
+    const sysCtx = buildSystemContextBlock();
+    const retryCtx = buildRetryContext(task);
+    const learningCtx = await buildLearningContext(task);
+    return `${skill}\n\n${sysCtx}${prd}${learningCtx}${retryCtx}`;
+  }
+
   // 有明确 PRD 内容的任务
   const sysCtx = buildSystemContextBlock();
   const retryCtx = buildRetryContext(task);
