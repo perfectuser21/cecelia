@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.73.0
-created: 2026-03-20
-updated: 2026-03-20
+version: 3.74.0
+created: 2026-03-21
+updated: 2026-03-21
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.73.0: 从 feature-registry.yml 自动生成
+  - 3.74.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -440,6 +440,18 @@ exit 2 + [SKILL_REQUIRED: dev]
 
 ---
 
+### code-review-pre-push: code_review_gate 前移到 Stage 2（push 前审查）
+
+```
+Stage 2 完成 →
+02-code.md 派发 code_review_gate →
+devloop-check 条件 2.5 检查 →
+Codex 审查 PASS →
+Stage 3 push + CI
+```
+
+---
+
 ### devloop-check-ci-timeout-blocked: devloop-check CI 超时返回 blocked + P0 诊断任务
 
 ```
@@ -463,5 +475,5 @@ curl POST Brain /api/brain/tasks P0 →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.73.0
-**生成时间**: 2026-03-20
+**版本**: 3.74.0
+**生成时间**: 2026-03-21

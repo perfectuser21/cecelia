@@ -27,12 +27,12 @@
 #
 #   step_2_code done?
 #     → no → exit 2
+#     → yes → code_review PASS?（查 Brain API）
+#       → no → exit 2（等 Codex）
+#       → yes → 继续
 #
 #   PR 创建了?
 #   CI 过了?
-#     → code_review PASS?（查 Brain API）
-#       → no → exit 2（等 Codex）
-#       → yes → 继续
 #
 #   step_4_ship: Learning 写了? → PR 合并了? → cleanup
 #
@@ -217,6 +217,11 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 2.5: code_review 是否通过？（Stage 2 后的 Codex Gate）=====
+    if ! _check_codex_review "code_review_gate_task_id" "code_review_gate_status" "Code Review" "$dev_mode_file"; then
+        return 2
+    fi
+
     # ===== 条件 3: PR 是否已创建？ =====
     local pr_number="" pr_state=""
 
@@ -320,12 +325,7 @@ devloop_check() {
         esac
     fi
 
-    # ===== 条件 5: code_review 是否通过？（CI 通过后的 Codex Gate）=====
-    if ! _check_codex_review "code_review_gate_task_id" "code_review_gate_status" "Code Review" "$dev_mode_file"; then
-        return 2
-    fi
-
-    # ===== 条件 6: PR 是否已合并？=====
+    # ===== 条件 5: PR 是否已合并？=====
     if [[ "$pr_state" == "merged" ]]; then
         local step_4_status
         step_4_status=$(grep "^step_4_ship:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
@@ -373,7 +373,7 @@ devloop_check() {
         fi
         _devloop_jq -n \
             --arg pr "$pr_number" \
-            '{"status":"blocked","reason":"CI 通过 + Code Review PASS，Stage 4 Ship 未完成（合并前必须先写 Learning）","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4，写 Learning + 合并 PR #\($pr)。禁止询问用户。"}'
+            '{"status":"blocked","reason":"CI 通过，Stage 4 Ship 未完成（合并前必须先写 Learning）","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4，写 Learning + 合并 PR #\($pr)。禁止询问用户。"}'
         return 2
     fi
 

@@ -15,9 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.73.0"
-updated: "2026-03-20"
+version: "3.74.0"
+updated: "2026-03-21"
 changelog:
+  - version: "13.9.0"
+    date: "2026-03-21"
+    summary: "feat(engine): code_review_gate 从 CI 后前移到 Stage 2（push 前审查）— 每步审完再推"
+    scope: skills
+    breaking: false
+    feature_id: code-review-pre-push
   - version: "13.7.9"
     date: "2026-03-21"
     summary: "feat(engine): verify-step.sh Gate 2 逐条执行 DoD [BEHAVIOR] Test 命令 — Stage 2 完成前强制验证每条 DoD"
@@ -2121,6 +2127,40 @@ product_features:
     minimal_paths:
       - "main 分支 > packages/ 重定向 → 被拦截 exit 2"
       - "cp-* 分支同样命令 → 放行"
+
+    rcis: []
+
+  - id: code-review-pre-push
+    name: code_review_gate 前移到 Stage 2（push 前审查）
+    category: workflow
+    status: Committed
+    priority: P0
+    version: "13.9.0"
+    updated: "2026-03-21"
+    description: |
+      code_review_gate 从 Stage 3（CI 后）前移到 Stage 2（push 前）。
+      Stage 2 代码写完后立即派发 Codex 审查，审查通过才允许 push。
+      减少 CI 后等待时间，实现"每步审完再推"。
+
+    entrypoints:
+      - type: skill
+        file: packages/engine/skills/dev/steps/02-code.md
+        trigger: "Stage 2 代码完成 + 自验证通过"
+      - type: lib
+        file: packages/engine/lib/devloop-check.sh
+        trigger: "step_2_code done 后检查 code_review_gate"
+
+    golden_path: |
+      Stage 2 完成 →
+      02-code.md 派发 code_review_gate →
+      devloop-check 条件 2.5 检查 →
+      Codex 审查 PASS →
+      Stage 3 push + CI
+
+    minimal_paths:
+      - "Stage 2 完成后派发 code_review_gate"
+      - "devloop-check 条件 2.5 在 step_2_code done 后检查"
+      - "Stage 3 不再派发 code_review_gate"
 
     rcis: []
 

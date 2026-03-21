@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.73.0
-created: 2026-03-20
-updated: 2026-03-20
+version: 3.74.0
+created: 2026-03-21
+updated: 2026-03-21
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.73.0: 从 feature-registry.yml 自动生成
+  - 3.74.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -385,6 +385,14 @@ changelog:
 
 ---
 
+### code-review-pre-push: code_review_gate 前移到 Stage 2（push 前审查）
+
+1. ✅ **Stage 2 完成后派发 code_review_gate**
+2. ✅ **devloop-check 条件 2.5 在 step_2_code done 后检查**
+3. ✅ **Stage 3 不再派发 code_review_gate**
+
+---
+
 ### devloop-check-ci-timeout-blocked: devloop-check CI 超时返回 blocked + P0 诊断任务
 
 1. ✅ **CI 超时 90 分钟 → blocked（非 done）**
@@ -404,5 +412,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.73.0
-**生成时间**: 2026-03-20
+**版本**: 3.74.0
+**生成时间**: 2026-03-21
