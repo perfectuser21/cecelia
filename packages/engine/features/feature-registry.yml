@@ -18,6 +18,12 @@
 version: "3.74.0"
 updated: "2026-03-21"
 changelog:
+  - version: "13.10.0"
+    date: "2026-03-21"
+    summary: "feat(engine): Stage 1 新增 intent-expand 上下文补充和 Learning 检索 — 从 Brain 读取 KR/Project 上下文，搜索历史 Learning 推荐给 Agent"
+    scope: skills
+    breaking: false
+    feature_id: intent-expand-learning-search
   - version: "13.9.0"
     date: "2026-03-21"
     summary: "feat(engine): code_review_gate 从 CI 后前移到 Stage 2（push 前审查）— 每步审完再推"
