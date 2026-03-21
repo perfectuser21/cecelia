@@ -14,7 +14,7 @@ import { shouldDowngrade } from './token-budget-planner.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
-import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
+import { isAllowed, recordProbeDispatched, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
@@ -1012,6 +1012,8 @@ async function dispatchNextTask(goalIds) {
     await recordDispatchResult(pool, false, 'circuit_breaker_open');
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
+  // Consume probe slot if in HALF_OPEN (no-op in CLOSED)
+  recordProbeDispatched('cecelia-run');
 
   // 3. Select next task (with dependency check + pre-flight validation)
   //    If pre-flight fails, skip that task and try the next candidate (max 5 retries)

@@ -4,7 +4,9 @@
  * States: CLOSED (normal) → OPEN (blocked) → HALF_OPEN (testing)
  * - CLOSED: Tasks dispatch normally
  * - OPEN: After 3 consecutive failures, block dispatch for 5 minutes
- * - HALF_OPEN: After cooldown, allow 1 probe task; success → CLOSED, failure → OPEN
+ * - HALF_OPEN: After cooldown, allow up to MAX_HALF_OPEN_PROBES probe tasks;
+ *              success → CLOSED, failure → OPEN.
+ *              Call recordProbeDispatched() after each allowed dispatch to consume a probe slot.
  */
 
 import pool from './db.js';
@@ -13,18 +15,19 @@ import { raise } from './alerting.js';
 
 const FAILURE_THRESHOLD = 3;
 const OPEN_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_HALF_OPEN_PROBES = 1; // 每次 HALF_OPEN 周期最多派发 1 个探针
 
 // In-memory state (per worker key)
 const breakers = new Map();
 
 function defaultState() {
-  return { state: 'CLOSED', failures: 0, lastFailureAt: null, openedAt: null };
+  return { state: 'CLOSED', failures: 0, lastFailureAt: null, openedAt: null, probesSent: 0 };
 }
 
 /**
  * Get circuit breaker state for a worker key
  * @param {string} key - Worker identifier (e.g. 'cecelia-run', or a specific worker name)
- * @returns {{ state: string, failures: number, lastFailureAt: number|null, openedAt: number|null }}
+ * @returns {{ state: string, failures: number, lastFailureAt: number|null, openedAt: number|null, probesSent: number }}
  */
 function getState(key = 'default') {
   if (!breakers.has(key)) {
@@ -35,22 +38,39 @@ function getState(key = 'default') {
   // Auto-transition: OPEN → HALF_OPEN after cooldown
   if (b.state === 'OPEN' && b.openedAt && (Date.now() - b.openedAt >= OPEN_DURATION_MS)) {
     b.state = 'HALF_OPEN';
+    b.probesSent = 0; // reset probe counter for new half-open period
   }
 
   return { ...b };
 }
 
 /**
- * Check if dispatch is allowed for a worker key
+ * Check if dispatch is allowed for a worker key.
+ * In HALF_OPEN state, only allowed if probe slots remain (probesSent < MAX_HALF_OPEN_PROBES).
+ * Call recordProbeDispatched() immediately after a successful dispatch to consume the slot.
  * @param {string} key
  * @returns {boolean}
  */
 function isAllowed(key = 'default') {
   const s = getState(key);
-  // CLOSED: always allowed
-  // HALF_OPEN: allowed (probe)
-  // OPEN: blocked
-  return s.state !== 'OPEN';
+  if (s.state === 'OPEN') return false;
+  if (s.state === 'HALF_OPEN') return s.probesSent < MAX_HALF_OPEN_PROBES;
+  return true; // CLOSED
+}
+
+/**
+ * Consume a probe slot in HALF_OPEN state.
+ * Must be called immediately after isAllowed() returns true during HALF_OPEN.
+ * No-op in CLOSED or OPEN state.
+ * @param {string} key
+ */
+function recordProbeDispatched(key = 'default') {
+  // Call getState() to ensure OPEN→HALF_OPEN auto-transition has been applied
+  const s = getState(key);
+  if (s.state === 'HALF_OPEN') {
+    const b = breakers.get(key);
+    b.probesSent += 1;
+  }
 }
 
 /**
@@ -87,6 +107,7 @@ async function recordFailure(key = 'default') {
     // Probe failed → back to OPEN
     b.state = 'OPEN';
     b.openedAt = Date.now();
+    b.probesSent = 0;
     await emit('circuit_open', 'circuit_breaker', {
       key,
       reason: 'half_open_probe_failed',
@@ -128,10 +149,12 @@ function getAllStates() {
 export {
   getState,
   isAllowed,
+  recordProbeDispatched,
   recordSuccess,
   recordFailure,
   reset,
   getAllStates,
   FAILURE_THRESHOLD,
-  OPEN_DURATION_MS
+  OPEN_DURATION_MS,
+  MAX_HALF_OPEN_PROBES
 };
