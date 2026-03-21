@@ -64,7 +64,7 @@ export async function createDeptHeartbeatTask(pool, dept) {
     `SELECT id FROM tasks
      WHERE task_type = 'dept_heartbeat'
        AND dept = $1
-       AND status IN ('queued', 'in_progress')
+       AND status IN ('queued', 'in_progress', 'quarantined')
      LIMIT 1`,
     [dept_name]
   );
