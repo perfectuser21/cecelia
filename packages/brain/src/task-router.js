@@ -167,6 +167,7 @@ const LOCATION_MAP = {
   // Scope 层飞轮
   'scope_plan': 'us',            // Scope 规划 → US (Opus + /decomp)
   'project_plan': 'us',          // Project 规划 → US (Opus + /decomp)
+  'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
 };
 
 // Default location
