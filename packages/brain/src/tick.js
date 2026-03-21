@@ -40,6 +40,7 @@ import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
+import { runPipelinePatrol } from './pipeline-patrol.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -117,8 +118,10 @@ let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
 let _lastReportTime = 0; // track last 48h system report generation time
 let _lastZombieSweepTime = 0; // track last zombie sweep time
 let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
+let _lastPipelinePatrolTime = 0; // track last pipeline patrol time
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
+const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1671,6 +1674,19 @@ async function executeTick() {
     });
   }
 
+  // 0.6.5. Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline
+  const pipelinePatrolElapsed = Date.now() - _lastPipelinePatrolTime;
+  if (pipelinePatrolElapsed >= PIPELINE_PATROL_INTERVAL_MS) {
+    _lastPipelinePatrolTime = Date.now();
+    runPipelinePatrol(pool).then(r => {
+      if (r.stuck > 0 || r.rescued > 0) {
+        console.log(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
+      }
+    }).catch(err => {
+      console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
+    });
+  }
+
   // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
   const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
   if (healthCheckElapsed >= CLEANUP_INTERVAL_MS) {
@@ -2808,6 +2824,8 @@ function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
 function _resetLastGoalEvalTime() { _lastGoalEvalTime = 0; }
 /** Reset zombie sweep timer — for testing only */
 function _resetLastZombieSweepTime() { _lastZombieSweepTime = 0; }
+/** Reset pipeline patrol timer — for testing only */
+function _resetLastPipelinePatrolTime() { _lastPipelinePatrolTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -2881,6 +2899,7 @@ export {
   CLEANUP_INTERVAL_MS,
   ZOMBIE_SWEEP_INTERVAL_MS,
   ZOMBIE_CLEANUP_INTERVAL_MS,
+  PIPELINE_PATROL_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
@@ -2890,6 +2909,7 @@ export {
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
   _resetLastZombieSweepTime,
+  _resetLastPipelinePatrolTime,
   GOAL_EVAL_INTERVAL_MS,
   // 48h 简报
   check48hReport,
