@@ -1956,6 +1956,7 @@ const US_ONLY_TYPES = new Set([
   'spec_review',          // Spec 审查
   'code_review_gate',     // 代码质量门禁
   'initiative_review',    // Initiative 整体审查
+  'dept_heartbeat',       // 部门心跳（本机执行，不走 Codex Bridge）
 ]);
 
 async function triggerCeceliaRun(task) {
