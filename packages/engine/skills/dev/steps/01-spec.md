@@ -102,7 +102,7 @@ if ! grep -q "## 成功标准" "$TASK_CARD" 2>/dev/null; then
 fi
 
 # 检查3: 包含 DoD checklist
-if ! grep -qE "^- \[ \]" "$TASK_CARD" 2>/dev/null; then
+if ! grep -qE "^\s*-\s*\[\s*\]" "$TASK_CARD" 2>/dev/null; then
     echo "❌ 缺少 DoD checklist（- [ ] 条目）"
     ERRORS=1
 fi
@@ -221,6 +221,8 @@ else
   else
     echo "  ⚠️  spec_review 注册失败，降级为跳过"
     echo "spec_review_status: pass" >> "$DEV_MODE_FILE"
+    echo "spec_review_degraded: true" >> "$DEV_MODE_FILE"
+    echo "spec_review_degraded_reason: Brain API 注册失败（响应无 task id）" >> "$DEV_MODE_FILE"
   fi
 fi
 ```

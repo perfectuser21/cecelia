@@ -579,19 +579,50 @@ done
 if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; then
     # W8: 统一标记方式（使用 step_4_ship: done + cleanup_done: true）
     # v4.0: 对齐 4-Stage Pipeline 模型
-    _mark_cleanup_done() {
+    # _mark_cleanup_done 由 devloop-check.sh 提供（写 cleanup_done: true）
+    # 这里加载 devloop-check.sh，然后用包装函数处理 step_4_ship/step_5_clean
+    DEVLOOP_CHECK=""
+    for _devloop_candidate in "$PROJECT_ROOT_FOR_DEVMODE/packages/engine/lib/devloop-check.sh" \
+                              "$PROJECT_ROOT_FOR_DEVMODE/lib/devloop-check.sh" \
+                              "$HOME/.claude/lib/devloop-check.sh"; do
+        if [[ -f "$_devloop_candidate" ]]; then
+            # shellcheck disable=SC1090
+            source "$_devloop_candidate"
+            DEVLOOP_CHECK="$_devloop_candidate"
+            break
+        fi
+    done
+
+    _mark_ship_and_cleanup_done() {
         local target_file="$1"
         # 新字段：step_4_ship
-        sed -i 's/^step_4_ship: pending/step_4_ship: done/' "$target_file"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' 's/^step_4_ship: pending/step_4_ship: done/' "$target_file"
+        else
+            sed -i 's/^step_4_ship: pending/step_4_ship: done/' "$target_file"
+        fi
         if ! grep -q "^step_4_ship: done" "$target_file" 2>/dev/null; then
-            sed -i '/^step_4_ship:/d' "$target_file"
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' '/^step_4_ship:/d' "$target_file"
+            else
+                sed -i '/^step_4_ship:/d' "$target_file"
+            fi
             echo "step_4_ship: done" >> "$target_file"
         fi
         # 兼容旧字段：step_5_clean
-        sed -i 's/^step_5_clean: pending/step_5_clean: done/' "$target_file" 2>/dev/null || true
-        # 写入 cleanup_done: true（devloop-check.sh 的唯一终止条件）
-        if ! grep -q "^cleanup_done: true" "$target_file" 2>/dev/null; then
-            echo "cleanup_done: true" >> "$target_file"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' 's/^step_5_clean: pending/step_5_clean: done/' "$target_file" 2>/dev/null || true
+        else
+            sed -i 's/^step_5_clean: pending/step_5_clean: done/' "$target_file" 2>/dev/null || true
+        fi
+        # cleanup_done: true — 由 devloop-check.sh 的 _mark_cleanup_done 负责
+        if type _mark_cleanup_done &>/dev/null; then
+            _mark_cleanup_done "$target_file"
+        else
+            # Fallback: devloop-check.sh 未加载时直接写
+            if ! grep -q "^cleanup_done: true" "$target_file" 2>/dev/null; then
+                echo "cleanup_done: true" >> "$target_file"
+            fi
         fi
     }
 
@@ -601,19 +632,19 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
         # 使用原子操作：获取锁 → 更新 → 释放锁
         if acquire_dev_mode_lock 2; then
             DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
-            _mark_cleanup_done "$DEV_MODE_FILE"
+            _mark_ship_and_cleanup_done "$DEV_MODE_FILE"
             # v2.0 P1-16: 移除 create_cleanup_signal（stop-dev.sh 通过 grep .dev-mode 检查，不读信号文件）
             release_dev_mode_lock
             echo -e "   ${GREEN}[OK] 已标记 step_4_ship: done + cleanup_done: true（原子写入）${NC}"
         else
             DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
             # Fallback: 直接修改
-            _mark_cleanup_done "$DEV_MODE_FILE"
+            _mark_ship_and_cleanup_done "$DEV_MODE_FILE"
             echo -e "   ${GREEN}[OK] 已标记 step_4_ship: done + cleanup_done: true${NC}"
         fi
     else
         # Fallback: 无共享库时直接修改
-        _mark_cleanup_done "$DEV_MODE_FILE"
+        _mark_ship_and_cleanup_done "$DEV_MODE_FILE"
         echo -e "   ${GREEN}[OK] 已标记 step_4_ship: done + cleanup_done: true${NC}"
     fi
 
