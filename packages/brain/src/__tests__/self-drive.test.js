@@ -31,6 +31,10 @@ vi.mock('../dopamine.js', () => ({
   getRewardScore: vi.fn().mockResolvedValue({ score: 1.5, count: 3, breakdown: { positive: 2.0, negative: -0.5 } }),
 }));
 
+vi.mock('../proactive-mouth.js', () => ({
+  sendProactiveMessage: vi.fn().mockResolvedValue({ sent: true, message: '测试消息' }),
+}));
+
 describe('self-drive', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -220,6 +224,80 @@ describe('self-drive', () => {
       );
       expect(decisionLogCall).toBeTruthy();
       expect(decisionLogCall[1][0]).toBe('self_drive');
+    });
+  });
+
+    it('should send feishu notification when actions are taken', async () => {
+      const pool = (await import('../db.js')).default;
+      const { createTask } = await import('../actions.js');
+      const { sendProactiveMessage } = await import('../proactive-mouth.js');
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [{
+            payload: {
+              probes: [{ name: 'db', ok: true }],
+            },
+          }],
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            payload: {
+              summary: { total: 10, active: 5, island: 5, dormant: 0, failing: 0 },
+              capabilities: [{ id: 'test', name: 'Test', status: 'island', stage: 1 }],
+            },
+          }],
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 'kr-1', title: 'KR', status: 'in_progress', progress: 40, type: 'area_kr' }] })
+        .mockResolvedValueOnce({ rows: [{ completed: '5', failed: '1', total: '8' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'proj-1', name: 'Proj', status: 'active', sequence_order: 1 }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 'goal-1' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { runSelfDrive } = await import('../self-drive.js');
+      const result = await runSelfDrive();
+
+      expect(result.reason).toBe('ok');
+      expect(result.actions.length).toBeGreaterThan(0);
+      // 验证 sendProactiveMessage 被调用
+      expect(sendProactiveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          contextType: 'proactive',
+          importance: 0.7,
+        })
+      );
+    });
+
+    it('should not send feishu notification when no actions', async () => {
+      const pool = (await import('../db.js')).default;
+      const { callLLM } = await import('../llm-caller.js');
+      const { sendProactiveMessage } = await import('../proactive-mouth.js');
+
+      callLLM.mockResolvedValueOnce({
+        text: JSON.stringify({
+          reasoning: '当前状态良好',
+          actions: [],
+        }),
+      });
+
+      pool.query
+        .mockResolvedValueOnce({ rows: [{ payload: { probes: [{ name: 'db', ok: true }] } }] })
+        .mockResolvedValueOnce({ rows: [{ payload: { summary: { total: 5, active: 5, island: 0, dormant: 0, failing: 0 }, capabilities: [] } }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ completed: '3', failed: '0', total: '3' }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { runSelfDrive } = await import('../self-drive.js');
+      const result = await runSelfDrive();
+
+      expect(result.reason).toBe('no_action_needed');
+      expect(sendProactiveMessage).not.toHaveBeenCalled();
     });
   });
 
