@@ -21,7 +21,7 @@ export const DB_DEFAULTS = {
   user: process.env.DB_USER || 'cecelia',
   password: process.env.DB_PASSWORD || '',
   // 连接池健康配置（R3）
-  max: parseInt(process.env.DB_POOL_MAX || '20', 10),
+  max: parseInt(process.env.DB_POOL_MAX || '30', 10),
   idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || '30000', 10),
   connectionTimeoutMillis: parseInt(process.env.DB_CONN_TIMEOUT_MS || '5000', 10),
 };
