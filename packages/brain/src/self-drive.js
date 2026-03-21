@@ -182,6 +182,32 @@ export async function runSelfDrive() {
       reasoning: analysis.reasoning || '',
     });
 
+    // 6. SelfDrive 思考结果推送飞书（有 action 才推，避免骚扰）
+    if (analysis.reasoning && (created.length > 0 || adjustments.length > 0)) {
+      try {
+        const { sendProactiveMessage } = await import('./proactive-mouth.js');
+        const { callLLM: callLLMForNotify } = await import('./llm-caller.js');
+
+        // 构建汇报内容
+        const reportParts = [`定期战略思考完成\n\n${analysis.reasoning}`];
+        if (created.length > 0) {
+          reportParts.push(`\n创建了 ${created.length} 个任务：\n${created.map(t => `- ${t.title}`).join('\n')}`);
+        }
+        if (adjustments.length > 0) {
+          reportParts.push(`\n做了 ${adjustments.length} 个调整：\n${adjustments.map(a => `- ${a.type}: ${a.reason || a.title || ''}`).join('\n')}`);
+        }
+
+        await sendProactiveMessage(pool, callLLMForNotify, {
+          reason: reportParts.join(''),
+          contextType: 'proactive',
+          importance: 0.7,
+        });
+        console.log('[SelfDrive] 飞书推送已发送');
+      } catch (notifyErr) {
+        console.warn('[SelfDrive] 飞书推送失败（non-fatal）:', notifyErr.message);
+      }
+    }
+
     console.log(`[SelfDrive] Cycle complete: ${created.length} tasks created, ${adjustments.length} adjustments executed`);
     return { actions: created, adjustments, reason: 'ok' };
 
