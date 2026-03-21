@@ -1,8 +1,8 @@
 /**
- * desire/index.js → 信号源测试（架构：所有信号接 L1，不走 suggestion）
+ * desire/index.js → 信号源测试（架构：act/follow_up 走 suggestions 表）
  *
- * 覆盖：act/follow_up 仍直接创建任务；warn/propose 走 runExpression；
- *       任何 desire 类型都不再创建 suggestion
+ * 覆盖：act/follow_up 写入 suggestions 表（由 suggestion-dispatcher 统一分发）；
+ *       warn/propose 走 runExpression
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -67,17 +67,26 @@ function makeDesire(type, overrides = {}) {
 
 function makePool() {
   const queryMock = vi.fn().mockImplementation((sql) => {
-    if (typeof sql === 'string' && sql.includes('trigger_source') && sql.includes('initiative_plan')) {
-      return Promise.resolve({ rows: [] }); // 无活跃任务，允许创建
+    // act 去重查询：SELECT id FROM suggestions WHERE source = 'desire_act'
+    if (typeof sql === 'string' && sql.includes('desire_act') && sql.includes('SELECT')) {
+      return Promise.resolve({ rows: [] }); // 无已有 pending，允许创建
     }
-    return Promise.resolve({ rows: [{ id: 'task-created-001' }] });
+    // INSERT INTO suggestions → 返回新 suggestion id
+    if (typeof sql === 'string' && sql.includes('INSERT INTO suggestions')) {
+      return Promise.resolve({ rows: [{ id: 'suggestion-created-001' }] });
+    }
+    // UPDATE desires SET status = 'acted'
+    if (typeof sql === 'string' && sql.includes('UPDATE desires')) {
+      return Promise.resolve({ rows: [] });
+    }
+    return Promise.resolve({ rows: [{ id: 'default-001' }] });
   });
   return { query: queryMock };
 }
 
 // ── 测试 ──────────────────────────────────────────────────
 
-describe('desire → 直接创建任务（不走 suggestion）', () => {
+describe('desire → act/follow_up 走 suggestions 表', () => {
   let pool;
 
   beforeEach(() => {
@@ -93,8 +102,8 @@ describe('desire → 直接创建任务（不走 suggestion）', () => {
     mockPublishDesireExpressed.mockResolvedValue(undefined);
   });
 
-  describe('DOD-4: act desire → 直接创建 initiative_plan 任务', () => {
-    it('DOD-4: act desire 创建任务（不创建 suggestion）', async () => {
+  describe('DOD-4: act desire → 写入 suggestions 表（不直接创建 task）', () => {
+    it('DOD-4: act desire 创建 suggestion（INSERT INTO suggestions）', async () => {
       const desire = makeDesire('act');
       mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.85 });
 
@@ -104,19 +113,54 @@ describe('desire → 直接创建任务（不走 suggestion）', () => {
       expect(result.expression.triggered).toBe(true);
       expect(result.expression.acted).toBe(true);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO tasks'),
+        expect.stringContaining('INSERT INTO suggestions'),
         expect.any(Array)
       );
     });
 
-    it('DOD-4: act desire task 创建失败时，系统不崩溃', async () => {
+    it('DOD-4: act desire suggestion 创建返回 suggestion_created', async () => {
       const desire = makeDesire('act');
       mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.85 });
-      pool.query.mockRejectedValueOnce(new Error('DB insert failed'));
+
+      const result = await runDesireSystem(pool);
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(result.expression.suggestion_created).toBe('suggestion-created-001');
+    });
+
+    it('DOD-4: act desire suggestion 创建失败时，系统不崩溃', async () => {
+      const desire = makeDesire('act');
+      mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.85 });
+      // 让去重查询通过但 INSERT 失败
+      pool.query.mockImplementation((sql) => {
+        if (typeof sql === 'string' && sql.includes('desire_act') && sql.includes('SELECT')) {
+          return Promise.resolve({ rows: [] });
+        }
+        if (typeof sql === 'string' && sql.includes('INSERT INTO suggestions')) {
+          return Promise.reject(new Error('DB insert failed'));
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       const result = await runDesireSystem(pool);
 
       expect(result.expression.triggered).toBe(true);
+    });
+
+    it('DOD-4: act desire 去重 — pending suggestion 已存在时跳过', async () => {
+      const desire = makeDesire('act');
+      mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.85 });
+      pool.query.mockImplementation((sql) => {
+        if (typeof sql === 'string' && sql.includes('desire_act') && sql.includes('SELECT')) {
+          return Promise.resolve({ rows: [{ id: 'existing-suggestion' }] }); // 已有 pending
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      const result = await runDesireSystem(pool);
+
+      expect(result.expression.triggered).toBe(false);
+      expect(result.expression.skipped).toBe('dedup');
     });
   });
 
@@ -146,8 +190,8 @@ describe('desire → 直接创建任务（不走 suggestion）', () => {
     });
   });
 
-  describe('DOD-7: follow_up desire → 直接创建 review 任务', () => {
-    it('DOD-7: follow_up desire 创建 review 任务', async () => {
+  describe('DOD-7: follow_up desire → 写入 suggestions 表', () => {
+    it('DOD-7: follow_up desire 创建 suggestion（INSERT INTO suggestions）', async () => {
       const desire = makeDesire('follow_up');
       mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.80 });
 
@@ -155,14 +199,14 @@ describe('desire → 直接创建任务（不走 suggestion）', () => {
       await new Promise(r => setTimeout(r, 0));
 
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO tasks'),
+        expect.stringContaining('INSERT INTO suggestions'),
         expect.any(Array)
       );
     });
   });
 
   describe('DOD-8: 主流程不被 desire 类型中断', () => {
-    it('DOD-8: act desire 任务创建成功后返回正确结果', async () => {
+    it('DOD-8: act desire suggestion 创建成功后返回正确结果', async () => {
       const desire = makeDesire('act');
       mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.85 });
 
@@ -171,7 +215,7 @@ describe('desire → 直接创建任务（不走 suggestion）', () => {
 
       expect(result.expression.triggered).toBe(true);
       expect(result.expression.acted).toBe(true);
-      expect(result.expression.task_created).toBeDefined();
+      expect(result.expression.suggestion_created).toBeDefined();
     });
 
     it('DOD-8: warn desire expression 正常返回', async () => {
