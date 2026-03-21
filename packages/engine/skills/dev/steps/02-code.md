@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 3.0.0
+version: 3.1.0
 created: 2026-03-14
-updated: 2026-03-20
+updated: 2026-03-21
 changelog:
+  - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
   - 3.0.0: 砍掉所有假 subagent 模板，加入自验证 + Codex 验证双保险
   - 2.0.0: TDD 两阶段探索
   - 1.0.0: 初始版本
