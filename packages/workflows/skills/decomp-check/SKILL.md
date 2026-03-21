@@ -1,10 +1,11 @@
 ---
 name: decomp-check
-version: 2.0.0
+version: 2.1.0
 model: claude-sonnet-4-6
 created: 2026-02-27
-updated: 2026-03-20
+updated: 2026-03-21
 changelog:
+  - 2.1.0: 新增 PR 数量校验（基于 capacity-budget API 动态产能），confidence 容差规则，findings 新增 PR 数量字段
   - 2.0.0: 新增 Project→Scope 和 Scope→Initiative 审查标准；支持 SPIDR 拆分质检；更新输入格式支持 scope 类型
   - 1.2.0: 对齐产能模型 — Initiative 数量改为动态范围、新增 Initiative→Task 和 KR→Project 数量检查、修正 Initiative 内部串联依赖定义
   - 1.1.0: 加入 type 字段验证和层级跳跃检测，rejected 条件加入层级跳跃
@@ -109,6 +110,35 @@ Brain 传入：
 | **Task 数量上限** | 每个 Initiative 最多 8 个 Task | > 8 → **needs_revision** |
 | **Task 串联依赖** | Task 之间有明确的顺序依赖 | Task 之间完全独立无依赖 |
 
+### PR 数量校验（动态产能校准 — 所有层级通用）
+
+**⚠️ 审查前必须调用 Brain API 获取当前产能预算：**
+
+```bash
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+CAPACITY=$(curl -s "$BRAIN_URL/api/brain/capacity-budget" 2>/dev/null)
+# 读取 layer_budgets 和 confidence
+```
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **Initiative PR 数量** | PR 数量在 `layer_budgets.initiative.pr_count_per_slot` 的容差范围内 | PR 数量远低于预算（浪费产能）或远高于预算（超出能力） |
+| **Scope PR 总量** | Scope 内所有 Initiative 的 PR 总数接近 `layer_budgets.scope.pr_count_per_slot` | 总量偏差超出容差 |
+| **Project PR 总量** | Project 内所有 Scope 的 PR 总数接近 `layer_budgets.project.pr_count_per_slot` | 总量偏差超出容差 |
+
+**容差规则（基于 confidence）**：
+- `confidence: theoretical` → ±50%（冷启动，数据不准，宽容）
+- `confidence: low` → ±40%
+- `confidence: medium` → ±30%
+- `confidence: high` → ±20%（数据充分，严格）
+
+**Brain 不可用时**：跳过 PR 数量校验，仅做结构性检查（因果链、覆盖度、命名等）。
+
+**PR 数量检查失败的处理**：
+- PR 总量偏低超过容差 → `needs_revision`（"产能利用不足，建议增加子项数量"）
+- PR 总量偏高超过容差 → `needs_revision`（"超出当前产能预算，建议拆分或缩减"）
+- PR 数量极端偏离（>2x 或 <0.3x） → `rejected`（"粒度严重错配"）
+
 ---
 
 ## 裁决规则
@@ -125,6 +155,7 @@ Brain 传入：
 - Initiative 数量轻微不足或超出
 - 某个 Initiative DoD 缺少 test 字段但逻辑正确（1-2 个）
 - KR→Project 数量超过 6 个或不足 3 个
+- PR 数量轻微偏离 capacity-budget 预算（在容差边界附近）
 
 ### rejected ❌
 以下任一情况立即 rejected：
@@ -137,6 +168,7 @@ Brain 传入：
 - **层级跳跃**（Project children 中出现 type='initiative'，跳过了 Scope 层）
 - **Initiative Task 不足**（某个 Initiative 的 Task < 4）
 - **Scope 按技术分层**（用"前端/后端"而非功能边界分组）
+- **PR 数量极端偏离**（>2x 或 <0.3x capacity-budget 预算，粒度严重错配）
 
 ---
 
@@ -153,7 +185,8 @@ Brain 传入：
     "命名质量": "清晰 / 模糊（哪几个，为什么）",
     "数量": "合理（N个）/ 过少（N个，建议至少M个）/ 过多（N个）",
     "功能边界": "正确（按功能分）/ 错误（按技术分层）",
-    "战略对齐": "对齐 / 偏离（如何偏离）"
+    "战略对齐": "对齐 / 偏离（如何偏离）",
+    "PR 数量": "合理（预算N，实际M，偏差X%）/ 偏低 / 偏高 / 跳过（Brain 不可用）"
   },
   "issues": [
     "具体问题1（必须可操作，不能写'可以改进'）",
