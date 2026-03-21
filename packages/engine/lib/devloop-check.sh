@@ -377,12 +377,28 @@ devloop_check() {
         return 2
     fi
 
-    # Stage 4 已完成 → 合并 PR
+    # v14.2.0: Stage 4 已完成 → 真正执行合并
     if command -v _devlog_event &>/dev/null; then
-        _devlog_event "devloop-check" "merge" "blocked" "CI 通过 + Learning 完成，等待合并 PR #$pr_number"
+        _devlog_event "devloop-check" "merge" "executing" "CI 通过 + Learning 完成，执行自动合并 PR #$pr_number"
     fi
-    _devloop_jq -n \
-        --arg pr "$pr_number" \
-        '{"status":"blocked","reason":"CI 通过且 Stage 4 Ship 已完成，PR 待合并","action":"执行合并：gh pr merge \($pr) --squash --delete-branch"}'
-    return 2
+    echo "[devloop-check] 自动合并 PR #$pr_number（CI 通过 + Stage 4 完成）..." >&2
+    if gh pr merge "$pr_number" --squash --delete-branch 2>&1; then
+        echo "[devloop-check] PR #$pr_number 已合并" >&2
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "merge" "success" "PR #$pr_number 已自动合并"
+        fi
+        _devloop_jq -n \
+            --arg pr "$pr_number" \
+            '{"status":"merged","reason":"PR #\($pr) 已自动合并，工作流即将结束","action":"执行 cleanup"}'
+        return 0
+    else
+        echo "[devloop-check] PR #$pr_number 合并失败" >&2
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "merge" "failed" "PR #$pr_number 自动合并失败"
+        fi
+        _devloop_jq -n \
+            --arg pr "$pr_number" \
+            '{"status":"error","reason":"PR #\($pr) 自动合并失败，请检查合并冲突或权限问题"}'
+        return 1
+    fi
 }

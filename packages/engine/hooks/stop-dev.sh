@@ -825,8 +825,23 @@ else
                 exit 2
             fi
         fi
-        save_block_reason "PR 未合并 (#$PR_NUMBER)"
-        jq -n --arg reason "PR #$PR_NUMBER CI 已通过且 Stage 4 已完成，执行合并：gh pr merge $PR_NUMBER --squash --delete-branch" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
-        exit 2
+        # v14.2.0: CI 通过 + Stage 4 完成 + Learning 验证通过 → 真正执行合并
+        echo "[stop-dev] 自动合并 PR #$PR_NUMBER（CI 通过 + Stage 4 完成 + Learning 验证通过）..." >&2
+        if gh pr merge "$PR_NUMBER" --squash --delete-branch 2>&1; then
+            echo "[stop-dev] PR #$PR_NUMBER 已合并" >&2
+            # 合并成功 → 执行 cleanup 并正常退出
+            force_cleanup_worktree "$DEV_MODE_FILE"
+            rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
+                  "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
+                  "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
+            [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]] && rm -f "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
+            jq -n '{"decision": "allow", "reason": "PR 已自动合并且 cleanup 完成，工作流结束"}'
+            exit 0
+        else
+            echo "[stop-dev] PR #$PR_NUMBER 合并失败" >&2
+            save_block_reason "PR 合并失败 (#$PR_NUMBER)"
+            jq -n --arg reason "PR #$PR_NUMBER 自动合并失败，请检查合并冲突或权限问题" '{"decision": "block", "reason": $reason}'
+            exit 1
+        fi
     fi
 fi
