@@ -78,6 +78,7 @@ const EXECUTOR_AFFINITY = {
   'codex_dev':            { primary: 'codex',   fallback: null,     no_downgrade: true  },
   'codex_qa':             { primary: 'codex',   fallback: null,     no_downgrade: true  },
   'codex_playwright':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'codex_test_gen':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
 
   // Codex Gate 审查任务类型（始终走 Codex，不消耗 Claude）
   'prd_review':           { primary: 'codex',   fallback: null,     no_downgrade: true  },
