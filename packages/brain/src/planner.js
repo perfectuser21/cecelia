@@ -184,11 +184,19 @@ async function getGlobalState() {
     pool.query(`SELECT * FROM tasks WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 10`),
     getDailyFocus(),
     // 查询有 active Initiative 但无 queued/in_progress Task 的 KR
+    // Scope-aware: initiative.parent_id may be project OR scope (scope.parent_id = project.id)
     pool.query(`
       SELECT DISTINCT pkl.kr_id
       FROM project_kr_links pkl
       INNER JOIN projects parent_proj ON pkl.project_id = parent_proj.id AND parent_proj.status = 'active'
-      INNER JOIN projects initiative ON initiative.parent_id = parent_proj.id AND initiative.type = 'initiative' AND initiative.status = 'active'
+      INNER JOIN projects initiative ON initiative.type = 'initiative' AND initiative.status = 'active'
+        AND (
+          initiative.parent_id = parent_proj.id
+          OR initiative.parent_id IN (
+            SELECT s.id FROM projects s
+            WHERE s.type = 'scope' AND s.parent_id = parent_proj.id AND s.status = 'active'
+          )
+        )
       WHERE NOT EXISTS (
         SELECT 1 FROM tasks t
         WHERE t.goal_id = pkl.kr_id
@@ -269,6 +277,74 @@ function selectTargetKR(state, insightAdjustments = new Map()) {
 }
 
 /**
+ * Select the best Scope under a Project for scheduling.
+ * Scope = projects row with type='scope', parent_id=project.id, status='active'.
+ *
+ * If multiple scopes exist, pick the one with the most queued tasks (via its child initiatives),
+ * breaking ties by created_at ASC (oldest first).
+ *
+ * @param {Object} project - Parent Project
+ * @param {Object} state - Global planning state
+ * @returns {Object|null} - Best scope, or null if none exist (backward-compatible)
+ */
+async function selectTargetScope(project, state) {
+  try {
+    const scopeResult = await pool.query(`
+      SELECT * FROM projects
+      WHERE type = 'scope' AND parent_id = $1 AND status = 'active'
+      ORDER BY created_at ASC
+    `, [project.id]);
+
+    if (scopeResult.rows.length === 0) {
+      return null; // No scope layer — caller falls back to project directly
+    }
+
+    if (scopeResult.rows.length === 1) {
+      return scopeResult.rows[0];
+    }
+
+    // Multiple scopes: pick the one with the most queued tasks (through its child initiatives)
+    const { activeTasks, projects: allProjects } = state;
+    const scopeIds = new Set(scopeResult.rows.map(s => s.id));
+
+    // Build map: scopeId → set of initiative ids under that scope
+    const initiativesByScopeId = {};
+    for (const p of allProjects) {
+      if (p.type === 'initiative' && p.status === 'active' && p.parent_id && scopeIds.has(p.parent_id)) {
+        if (!initiativesByScopeId[p.parent_id]) initiativesByScopeId[p.parent_id] = new Set();
+        initiativesByScopeId[p.parent_id].add(p.id);
+      }
+    }
+
+    // Count queued tasks per scope (via its initiatives)
+    const queuedByScope = {};
+    for (const t of activeTasks) {
+      if (t.status !== 'queued' || !t.project_id) continue;
+      for (const [scopeId, initIds] of Object.entries(initiativesByScopeId)) {
+        if (initIds.has(t.project_id)) {
+          queuedByScope[scopeId] = (queuedByScope[scopeId] || 0) + 1;
+        }
+      }
+    }
+
+    // Sort scopes: most queued tasks first, then created_at ASC
+    const scored = scopeResult.rows.map(s => ({
+      scope: s,
+      queued: queuedByScope[s.id] || 0
+    }));
+    scored.sort((a, b) => {
+      if (b.queued !== a.queued) return b.queued - a.queued;
+      return new Date(a.scope.created_at) - new Date(b.scope.created_at);
+    });
+
+    return scored[0].scope;
+  } catch (err) {
+    console.error(`[planner] selectTargetScope failed: ${err.message}`);
+    return null; // Graceful degradation: treat as no scope
+  }
+}
+
+/**
  * Select the Project most in need of advancement for a given KR.
  */
 async function selectTargetProject(kr, state) {
@@ -299,10 +375,20 @@ async function selectTargetProject(kr, state) {
   }
 
   // 统计各 project 下有多少 active initiative
+  // initiative.parent_id 可能是 project 或 scope，需要将 scope 下的 initiative 也归到 project
   const initiativeCountByProject = {};
+  // Build scope → project mapping for rollup
+  const scopeChildIds = {};
+  for (const p of projects) {
+    if (p.type === 'scope' && p.status === 'active' && p.parent_id) {
+      scopeChildIds[p.id] = p.parent_id; // scope.id → project.id
+    }
+  }
   for (const p of projects) {
     if (p.type === 'initiative' && p.status === 'active' && p.parent_id) {
-      initiativeCountByProject[p.parent_id] = (initiativeCountByProject[p.parent_id] || 0) + 1;
+      // If initiative's parent is a scope, roll up to the scope's parent (project)
+      const rollupProjectId = scopeChildIds[p.parent_id] || p.parent_id;
+      initiativeCountByProject[rollupProjectId] = (initiativeCountByProject[rollupProjectId] || 0) + 1;
     }
   }
 
@@ -332,15 +418,29 @@ async function selectTargetProject(kr, state) {
  */
 async function generateNextTask(kr, project, state, options = {}) {
   // V4: Phase-aware task selection — dev tasks first.
+  // Scope-aware: if project is a scope, look for tasks in its child initiatives
+  let projectIds = [project.id];
+  if (project.type === 'scope') {
+    const { projects: allProjects } = state;
+    const childInitiativeIds = allProjects
+      .filter(p => p.type === 'initiative' && p.status === 'active' && p.parent_id === project.id)
+      .map(p => p.id);
+    if (childInitiativeIds.length > 0) {
+      projectIds = childInitiativeIds;
+    }
+    // Also keep scope.id for direct tasks (rare but possible)
+    projectIds.push(project.id);
+  }
+
   const result = await pool.query(`
     SELECT * FROM tasks
-    WHERE project_id = $1 AND goal_id = $2 AND status IN ('queued', 'in_progress')
+    WHERE project_id = ANY($1::uuid[]) AND goal_id = $2 AND status IN ('queued', 'in_progress')
     ORDER BY
       CASE phase WHEN 'dev' THEN 0 ELSE 1 END,
       CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
-  `, [project.id, kr.id]);
+  `, [projectIds, kr.id]);
 
   if (result.rows.length === 0) {
     // No existing task — check if project has active initiatives that need architecture design.
@@ -911,14 +1011,22 @@ async function planNextTask(scopeKRIds = null, options = {}) {
     if (!targetProject) continue;
     lastProject = targetProject;
 
-    const task = await generateNextTask(kr, targetProject, state);
+    // Scope layer: if project has scopes, narrow down to scope before finding initiative/task
+    const targetScope = await selectTargetScope(targetProject, state);
+    const effectiveParent = targetScope || targetProject;
+
+    const task = await generateNextTask(kr, effectiveParent, state);
     if (task) {
-      return {
+      const result = {
         planned: true,
         task: { id: task.id, title: task.title, priority: task.priority, project_id: task.project_id, goal_id: task.goal_id },
         kr: { id: kr.id, title: kr.title },
         project: { id: targetProject.id, title: targetProject.name, repo_path: targetProject.repo_path }
       };
+      if (targetScope) {
+        result.scope = { id: targetScope.id, title: targetScope.name };
+      }
+      return result;
     }
   }
 
@@ -1074,6 +1182,7 @@ export {
   scoreKRs,
   selectTargetKR,
   selectTargetProject,
+  selectTargetScope,
   generateNextTask,
   generateArchitectureDesignTask,
   // Learning penalty
