@@ -176,6 +176,10 @@ if [[ -n "$task_id" ]]; then
     BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
     PR_URL=$(gh pr list --head "$BRANCH_NAME" --state merged --json url -q '.[0].url' 2>/dev/null || echo "")
 
+    echo "🔄 向 Brain 发送执行完成回调..."
+    echo "   Task ID: $task_id"
+    echo "   PR URL: ${PR_URL:-'未获取到'}"
+
     RESPONSE=$(curl -s -X POST "http://localhost:5221/api/brain/execution-callback" \
         -H "Content-Type: application/json" \
         -d "{\"task_id\":\"$task_id\",\"status\":\"completed\",\"exit_code\":0,\"pr_url\":\"$PR_URL\",\"result\":\"PR merged\"}" \
@@ -185,7 +189,10 @@ if [[ -n "$task_id" ]]; then
         echo "✅ Task $task_id 已标记为完成"
     else
         echo "⚠️  Brain 回调失败（不阻塞）"
+        echo "   响应: ${RESPONSE:-'无响应'}"
     fi
+else
+    echo "ℹ️  无 task_id，跳过 Brain 回调"
 fi
 ```
 
