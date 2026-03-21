@@ -30,7 +30,7 @@ const manifest: FeatureManifest = {
     { path: '/planner', redirect: '/dashboard/command' },
     { path: '/scheduler', component: 'Scheduler' },
     { path: '/today', component: 'TodayPlan' },
-    { path: '/roadmap', component: 'RoadmapView' },
+    { path: '/roadmap', component: 'RoadmapPage' },
     // Canvas removed — use ProjectPanorama
     { path: '/canvas', redirect: '/work/project-panorama' },
     { path: '/whiteboard', component: 'Whiteboard' },
@@ -67,6 +67,7 @@ const manifest: FeatureManifest = {
     Scheduler: () => import('./pages/Scheduler'),
     TodayPlan: () => import('./components/TodayPlan'),
     RoadmapView: () => import('./pages/RoadmapView'),
+    RoadmapPage: () => import('./pages/RoadmapPage'),
     Whiteboard: () => import('./pages/Whiteboard'),
     ProjectPanorama: () => import('./pages/ProjectPanorama'),
     DevPanorama: () => import('./pages/DevPanorama'),
