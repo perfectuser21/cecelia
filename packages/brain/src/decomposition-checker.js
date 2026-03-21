@@ -115,8 +115,8 @@ async function checkPendingKRs() {
   const result = await pool.query(`
     SELECT g.id, g.title, g.description, g.priority, g.parent_id
     FROM goals g
-    WHERE g.type = 'area_okr'
-      AND g.status = 'pending'
+    WHERE g.type IN ('area_kr', 'kr')
+      AND g.status IN ('pending', 'ready')
   `);
 
   for (const kr of result.rows) {
@@ -205,7 +205,7 @@ async function checkReadyKRInitiatives() {
   const readyKRs = await pool.query(`
     SELECT g.id, g.title, g.status
     FROM goals g
-    WHERE g.type = 'area_okr'
+    WHERE g.type IN ('area_kr', 'kr')
       AND g.status IN ('ready', 'in_progress')
   `);
 
@@ -277,7 +277,7 @@ async function checkKRWithoutProject() {
   const result = await pool.query(`
     SELECT g.id, g.title, g.description, g.priority, g.parent_id
     FROM goals g
-    WHERE g.type = 'area_okr'
+    WHERE g.type IN ('area_kr', 'kr')
       AND g.status IN ('ready', 'in_progress')
       AND NOT EXISTS (
         SELECT 1 FROM project_kr_links pkl WHERE pkl.kr_id = g.id
@@ -389,7 +389,7 @@ async function checkObjectiveWithoutKR() {
       AND NOT EXISTS (
         SELECT 1 FROM goals kr
         WHERE kr.parent_id = g.id
-          AND kr.type = 'area_okr'
+          AND kr.type IN ('area_kr', 'kr')
           AND kr.status NOT IN ('completed', 'cancelled')
       )
   `);
