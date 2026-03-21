@@ -32,12 +32,12 @@ describe('devloop-check.sh — 4-Stage Pipeline 条件顺序', () => {
       expect(prPos).toBeLessThan(ciPos);
     });
 
-    it('code_review（条件 5）在 CI 之后', () => {
-      const ciPos = content.indexOf('条件 4: CI');
-      const crPos = content.indexOf('条件 5: code_review');
-      expect(ciPos).toBeGreaterThan(-1);
+    it('code_review（条件 2.5）在 step_2_code 之后', () => {
+      const s2Pos = content.indexOf('条件 2: step_2_code');
+      const crPos = content.indexOf('条件 2.5: code_review');
+      expect(s2Pos).toBeGreaterThan(-1);
       expect(crPos).toBeGreaterThan(-1);
-      expect(crPos).toBeGreaterThan(ciPos);
+      expect(crPos).toBeGreaterThan(s2Pos);
     });
   });
 

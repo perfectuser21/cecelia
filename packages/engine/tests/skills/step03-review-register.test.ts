@@ -1,20 +1,21 @@
 /**
- * Stage 3 审查任务注册测试
+ * code_review_gate 审查任务注册测试
  *
- * 验证 03-integrate.md 在 CI 通过后注册 1 个 code_review Codex 任务
+ * 验证 02-code.md 在代码写完后注册 1 个 code_review_gate Codex 任务
+ * （v13.9.0 起 code_review_gate 从 Stage 3 前移到 Stage 2）
  */
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const STEP03_PATH = join(
+const STEP02_PATH = join(
   __dirname,
-  "../../skills/dev/steps/03-integrate.md"
+  "../../skills/dev/steps/02-code.md"
 );
 
-describe("Stage 3 code_review 审查任务注册", () => {
-  const content = readFileSync(STEP03_PATH, "utf8");
+describe("Stage 2 code_review_gate 审查任务注册", () => {
+  const content = readFileSync(STEP02_PATH, "utf8");
 
   it("CI 通过后包含 code_review_gate 注册逻辑", () => {
     expect(content).toContain("code_review_gate");

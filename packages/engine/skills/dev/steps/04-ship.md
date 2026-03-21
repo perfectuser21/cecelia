@@ -190,7 +190,28 @@ echo "✅ PR #$PR_NUMBER 已合并"
 
 ---
 
-## 4.3 上传反馈到 Brain
+## 4.3 Pipeline 统计
+
+记录到 .dev-execution-log 或直接输出：
+
+```bash
+echo "=== Pipeline 统计 ==="
+echo "开始时间: $(grep '^started:' .dev-mode.* | awk '{print $2}')"
+echo "结束时间: $(date -u +%Y-%m-%dT%H:%M:%S)"
+
+# 计算各阶段耗时（从 .dev-execution-log 解析）
+# Stage 1: spec 开始到 spec_review pass
+# Stage 2: code 开始到 code_review pass
+# Stage 3: push 到 CI 通过
+# Stage 4: Learning 到合并
+
+echo "CI 失败次数: $(grep -c 'ci.*fail' .dev-execution-log.*.jsonl 2>/dev/null || echo 0)"
+echo "Stop Hook 循环次数: $(grep -c 'devloop-check' .dev-execution-log.*.jsonl 2>/dev/null || echo 0)"
+```
+
+---
+
+## 4.4 上传反馈到 Brain
 
 ```bash
 task_id=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
@@ -214,7 +235,7 @@ fi
 
 ---
 
-## 4.4 执行质量自评
+## 4.5 执行质量自评
 
 > **在清理之前，AI 计算并输出本次任务的执行质量分。**
 
@@ -251,7 +272,7 @@ CI_RUNS=$(gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" \
 
 ---
 
-## 4.5 Clean — 归档 + 清理
+## 4.6 Clean — 归档 + 清理
 
 ### Post-PR Checklist
 
