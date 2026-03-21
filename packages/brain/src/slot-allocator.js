@@ -44,7 +44,7 @@ function getCodexMaxConcurrent() {
   }
   return Math.min(remoteSlots, CODEX_ACCOUNT_COUNT);
 }
-const BACKPRESSURE_THRESHOLD = 5;           // 队列深度超过此值时触发降速
+const BACKPRESSURE_THRESHOLD = 20;          // 队列深度超过此值时触发降速（从5调到20，防止正常KR拆解任务卡死系统）
 const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动态检测已做防雪崩，不需要压到 1）
 
 // ============================================================

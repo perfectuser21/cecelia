@@ -1079,8 +1079,8 @@ describe('Backpressure', () => {
     pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
   });
 
-  it('exports BACKPRESSURE_THRESHOLD=5 and BACKPRESSURE_BURST_LIMIT=3', () => {
-    expect(BACKPRESSURE_THRESHOLD).toBe(5);
+  it('exports BACKPRESSURE_THRESHOLD=20 and BACKPRESSURE_BURST_LIMIT=3', () => {
+    expect(BACKPRESSURE_THRESHOLD).toBe(20);
     expect(BACKPRESSURE_BURST_LIMIT).toBe(3);
   });
 
@@ -1096,22 +1096,22 @@ describe('Backpressure', () => {
     expect(depth).toBe(0);
   });
 
-  it('queue_depth=9 > threshold=5: backpressure.active=true, override_burst_limit=3', async () => {
+  it('queue_depth=9 < threshold=20: backpressure.active=false（新阈值下不再触发）', async () => {
     // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
-      .mockResolvedValueOnce({ rows: [{ count: '9' }] }) // getQueueDepth = 9 (高积压)
+      .mockResolvedValueOnce({ rows: [{ count: '9' }] }) // getQueueDepth = 9 (低于新阈值 20)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure).toBeDefined();
     expect(budget.backpressure.queue_depth).toBe(9);
-    expect(budget.backpressure.threshold).toBe(5);
-    expect(budget.backpressure.active).toBe(true);
-    expect(budget.backpressure.override_burst_limit).toBe(3);
+    expect(budget.backpressure.threshold).toBe(20);
+    expect(budget.backpressure.active).toBe(false);
+    expect(budget.backpressure.override_burst_limit).toBeNull();
   });
 
-  it('queue_depth=3 <= threshold=5: backpressure.active=false, override_burst_limit=null', async () => {
+  it('queue_depth=3 <= threshold=20: backpressure.active=false, override_burst_limit=null', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
@@ -1123,22 +1123,22 @@ describe('Backpressure', () => {
     expect(budget.backpressure.override_burst_limit).toBeNull();
   });
 
-  it('queue_depth=5 == threshold=5: backpressure.active=false (not strictly greater)', async () => {
+  it('queue_depth=20 == threshold=20: backpressure.active=false (not strictly greater)', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
-      .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getQueueDepth = 5 (等于阈值)
+      .mockResolvedValueOnce({ rows: [{ count: '20' }] }) // getQueueDepth = 20 (等于阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure.active).toBe(false);
     expect(budget.backpressure.override_burst_limit).toBeNull();
   });
 
-  it('queue_depth=6 > threshold=5: backpressure.active=true (边界值)', async () => {
+  it('queue_depth=21 > threshold=20: backpressure.active=true (边界值)', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countAutoDispatchInProgress
-      .mockResolvedValueOnce({ rows: [{ count: '6' }] }) // getQueueDepth = 6 (刚超过阈值)
+      .mockResolvedValueOnce({ rows: [{ count: '21' }] }) // getQueueDepth = 21 (刚超过阈值)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.backpressure.active).toBe(true);
