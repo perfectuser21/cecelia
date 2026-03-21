@@ -450,13 +450,13 @@ describe('content-export 完成 → 创建 content_publish 任务', () => {
     expect(result.action).toBe('pipeline_completed');
 
     // 应该有 8 个 content_publish INSERT（每个平台一条）
-    // _createPublishJobs 的 INSERT params: [title, 'P1', project_id, goal_id, trigger_source, payload_json]
+    // _createPublishJobs 的 INSERT params: [title, description, 'P1', project_id, goal_id, trigger_source, payload_json]
     // title 格式为 "[发布] keyword → platform"，用此特征过滤
     const publishInserts = insertCalls.filter(p => String(p[0]).startsWith('[发布]'));
     expect(publishInserts).toHaveLength(8);
 
-    // 每个 INSERT 包含正确的 platform 字段
-    const platforms = publishInserts.map(p => JSON.parse(p[5]).platform);
+    // 每个 INSERT 包含正确的 platform 字段（payload 现在是 params[6]）
+    const platforms = publishInserts.map(p => JSON.parse(p[6]).platform);
     expect(platforms).toContain('douyin');
     expect(platforms).toContain('shipinhao');
     expect(platforms).toContain('wechat');
@@ -539,10 +539,51 @@ describe('content-export 完成 → 创建 content_publish 任务', () => {
     const publishInserts = insertCalls.filter(p => String(p[0]).startsWith('[发布]'));
     expect(publishInserts).toHaveLength(8);
     for (const ins of publishInserts) {
-      const payload = JSON.parse(ins[5]);
+      const payload = JSON.parse(ins[6]);
       expect(payload.parent_pipeline_id).toBe('pipe-3');
       expect(typeof payload.platform).toBe('string');
       expect(payload.pipeline_keyword).toBe('数字游民');
     }
+  });
+
+  it('content_publish payload 包含 manifest_path 和 card_files（来自 findings）', async () => {
+    const insertCalls = [];
+
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        const trimmed = sql.trim();
+        if (trimmed.startsWith('SELECT id, title, task_type')) {
+          return { rows: [{ id: 'exp-4', task_type: 'content-export', project_id: 'p1', goal_id: 'g1', payload: { parent_pipeline_id: 'pipe-4', pipeline_keyword: 'AI创业' } }] };
+        }
+        if (trimmed.startsWith('SELECT id, title, goal_id, project_id, payload, status')) {
+          return { rows: [{ id: 'pipe-4', title: 'AI创业', goal_id: 'g1', project_id: 'p1', payload: { keyword: 'AI创业', content_type: 'solo-company-case' }, status: 'in_progress' }] };
+        }
+        if (trimmed.startsWith('SELECT id FROM tasks')) return { rows: [] };
+        if (trimmed.startsWith('INSERT INTO tasks')) { insertCalls.push(params); return { rows: [] }; }
+        if (trimmed.startsWith('UPDATE tasks')) return { rows: [] };
+        return { rows: [] };
+      }),
+    };
+
+    const exportFindings = {
+      success: true,
+      manifest_path: '/Users/administrator/content-output/AI创业/manifest.json',
+      card_files: ['ai-chuangye-001.png', 'ai-chuangye-002.png'],
+    };
+
+    await advanceContentPipeline('exp-4', 'completed', exportFindings, pool);
+
+    const publishInserts = insertCalls.filter(p => String(p[0]).startsWith('[发布]'));
+    expect(publishInserts).toHaveLength(8);
+
+    for (const ins of publishInserts) {
+      const payload = JSON.parse(ins[6]);
+      expect(payload.manifest_path).toBe('/Users/administrator/content-output/AI创业/manifest.json');
+      expect(payload.card_files).toEqual(['ai-chuangye-001.png', 'ai-chuangye-002.png']);
+    }
+
+    // description 应包含 manifest 路径
+    const description = insertCalls.find(p => String(p[0]).startsWith('[发布]'))?.[1];
+    expect(description).toContain('manifest.json');
   });
 });

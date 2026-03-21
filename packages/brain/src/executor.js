@@ -1169,6 +1169,7 @@ function getSkillForTaskType(taskType, payload) {
     // Initiative 执行循环
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
     'initiative_verify': '/architect', // Initiative 收尾验收 → /architect Mode 3
+    'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
     // Suggestion 驱动的自主规划
     'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
     // Architecture 设计
@@ -1730,6 +1731,11 @@ PUT /api/tasks/goals/${krId}
   // architecture_design：调用 /architect Mode 2，将 Initiative 描述和 ID 作为上下文注入
   if (taskType === 'architecture_design') {
     return `/architect\n\n${task.description || task.title}`;
+  }
+
+  // decomp_review：将任务描述传给 /decomp-check 做拆解质检
+  if (taskType === 'decomp_review') {
+    return `/decomp-check\n\n${task.description || task.title}`;
   }
 
   // Codex Gate 审查任务类型
