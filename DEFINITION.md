@@ -439,6 +439,7 @@ queued → in_progress → completed
 | codex_dev | 西安 | Codex /dev（runner.sh + devloop-check.sh） | Codex | 固定 openai |
 | codex_playwright | 西安 | Playwright 自动化（playwright-runner.sh + CDP → PC） | Codex | 固定 openai |
 | codex_test_gen | 西安 | 自动生成测试（扫描覆盖率低模块 + 生成测试） | Codex | 固定 openai |
+| codex_security_scan | 西安 | OWASP Top 10 安全扫描（输出安全报告） | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
 | initiative_verify | US | Initiative 验收 (/arch-review verify) | Sonnet / - | 默认 anthropic |

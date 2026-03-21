@@ -200,7 +200,7 @@ async function getQueueDepth() {
 
 /**
  * Count Codex-native tasks currently in_progress.
- * Includes task_type IN ('codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen') — tasks always routed to Xian Codex CLI.
+ * Includes task_type IN ('codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen', 'codex_security_scan') — tasks always routed to Xian Codex CLI.
  * Budget-downgraded tasks (provider=codex override) are not counted here since provider
  * is a runtime in-memory override, not persisted to DB.
  */
@@ -209,7 +209,7 @@ async function countCodexInProgress() {
     const result = await pool.query(`
       SELECT COUNT(*) FROM tasks
       WHERE status = 'in_progress'
-      AND task_type IN ('codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen')
+      AND task_type IN ('codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen', 'codex_security_scan')
     `);
     return parseInt(result.rows[0].count, 10);
   } catch {
