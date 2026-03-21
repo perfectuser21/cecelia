@@ -1951,6 +1951,7 @@ const US_ONLY_TYPES = new Set([
   'dev',                  // /dev 全流程（依赖 hooks/state machine）
   'initiative_execute',   // Initiative 执行（/dev 全流程）
   'intent_expand',        // /dev Step 1.5: 意图扩展（查 Brain DB + 补全 PRD）
+  'dept_heartbeat',       // 部门心跳任务（依赖 repo-lead skill，需在美国执行）
   // Codex Gate 审查任务类型（需读 worktree diff + Brain DB，必须在美国跑）
   'prd_review',           // PRD 审查
   'spec_review',          // Spec 审查
