@@ -61,8 +61,8 @@ const PORT = process.env.PORT || process.env.BRAIN_PORT || 5221;
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
   console.error('Stack:', err.stack);
-  // Log to file/monitoring service here
-  // For now, keep running (don't exit)
+  // Exit so external supervisor (systemd/docker) can restart cleanly
+  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -192,18 +192,28 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ success: false, error: err.message });
 });
 
-// Run migrations and self-check before starting
-try {
-  await runMigrations(pool);
-} catch (err) {
-  console.error('[FATAL] Migration failed:', err.message);
-  process.exit(1);
+// Run migrations with retry (PG transient failures should not kill the process)
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try {
+    await runMigrations(pool);
+    break;
+  } catch (err) {
+    if (attempt === 3) {
+      console.error('[FATAL] Migration failed after 3 attempts:', err.message);
+      process.exit(1);
+    }
+    console.warn(`[Server] Migration failed (attempt ${attempt}/3), retrying in 5s...`, err.message);
+    await new Promise(r => setTimeout(r, 5000));
+  }
 }
 
-const selfCheckOk = await runSelfCheck(pool);
-if (!selfCheckOk) {
-  console.error('[FATAL] Self-check failed. Brain will NOT start.');
-  process.exit(1);
+try {
+  const selfCheckOk = await runSelfCheck(pool);
+  if (!selfCheckOk) {
+    console.warn('[Server] Self-check failed, starting in degraded mode');
+  }
+} catch (selfCheckErr) {
+  console.warn('[Server] Self-check error, starting in degraded mode:', selfCheckErr.message);
 }
 
 // Load active model profile
