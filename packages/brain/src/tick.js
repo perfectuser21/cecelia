@@ -1073,7 +1073,7 @@ async function dispatchNextTask(goalIds) {
   }
 
   // 3d. Codex Pool D: check concurrent limit for Codex-native task types
-  const isCodexNativeTask = nextTask.task_type === 'codex_qa' || nextTask.task_type === 'codex_dev' || nextTask.task_type === 'codex_test_gen';
+  const isCodexNativeTask = nextTask.task_type === 'codex_qa' || nextTask.task_type === 'codex_dev' || nextTask.task_type === 'codex_test_gen' || nextTask.task_type === 'codex_security_scan';
   if (isCodexNativeTask) {
     const codexSlots = slotBudget?.codex;
     if (codexSlots && !codexSlots.available) {

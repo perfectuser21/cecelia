@@ -15,7 +15,7 @@ import { DOMAIN_TO_ROLE, ROLES } from './role-registry.js';
 const VALID_TASK_TYPES = [
   'dev', 'review', 'talk', 'data', 'qa', 'audit',
   'research', 'explore', 'knowledge',
-  'codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen', 'code_review', 'decomp_review',
+  'codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen', 'codex_security_scan', 'code_review', 'decomp_review',
   'pr_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
   'initiative_execute',
@@ -46,6 +46,7 @@ const SKILL_WHITELIST = {
   'codex_dev': '/dev',  // Codex Provider 跑 /dev — 与 dev 相同 skill，通过 runner.sh 执行
   'codex_playwright': '/playwright',  // Codex 跑 Playwright 自动化 — 西安 M4 CDP 控制 PC
   'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 — 西安 M4 扫描覆盖率低模块
+  'codex_security_scan': '/codex-security-scan',  // Codex 安全扫描 — 西安 M4 OWASP Top 10
   'pr_review': '/review',  // 异步 PR 审查 → 西安 Codex 独立 LLM 审查
   'code_review': '/code-review',
   'decomp_review': '/decomp-check',
@@ -137,6 +138,7 @@ const LOCATION_MAP = {
   'codex_dev': 'xian', // Codex /dev → 西安 Mac mini (runner.sh + devloop-check.sh SSOT)
   'codex_playwright': 'xian', // Playwright 自动化 → 西安 M4 (playwright-runner.sh + CDP → PC)
   'codex_test_gen': 'xian',   // 自动生成测试 → 西安 M4 (Codex 扫描覆盖率低模块 + 生成测试)
+  'codex_security_scan': 'xian',  // 安全扫描 → 西安 M4 (Codex OWASP Top 10 扫描)
   'pr_review': 'xian',  // 异步 PR 审查 → 西安 Mac mini (MiniMax via Codex CLI, 独立账号)
   'code_review': 'us', // 代码审查 → US (Claude + /code-review skill)
   'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
