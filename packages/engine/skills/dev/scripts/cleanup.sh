@@ -516,6 +516,21 @@ else
     echo -e "   ${GREEN}[OK] 无运行时文件需要删除${NC}"
 fi
 
+# v3.0: 清理过程文件（execution-log / sentinel / orphan-retry）
+echo "   清理过程文件（execution-log / sentinel / orphan-retry）..."
+PROCESS_FILE_COUNT=0
+for f in .dev-execution-log.*.jsonl .dev-sentinel.* .dev-orphan-retry-*; do
+    if [[ -f "$f" ]]; then
+        if rm -f "$f" 2>/dev/null; then
+            PROCESS_FILE_COUNT=$((PROCESS_FILE_COUNT + 1))
+        fi
+    fi
+done
+if [[ "$PROCESS_FILE_COUNT" -gt 0 ]]; then
+    DELETED_COUNT=$((DELETED_COUNT + PROCESS_FILE_COUNT))
+    echo -e "   ${GREEN}[OK] 已删除 $PROCESS_FILE_COUNT 个过程文件${NC}"
+fi
+
 # ========================================
 # 9. 清理其他遗留 cp-*/worktree-* 分支（委托 branch-gc.sh）
 # ========================================
