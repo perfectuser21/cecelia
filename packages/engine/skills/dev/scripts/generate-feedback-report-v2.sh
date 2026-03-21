@@ -21,7 +21,7 @@ set -euo pipefail
 # 常量
 # ============================================================================
 
-LOG_FILE=".dev-execution-log.jsonl"
+LOG_FILE="${DEV_LOG_FILE:-.dev-execution-log.jsonl}"
 EXPECTATIONS_FILE="skills/dev/lib/step-expectations.json"
 REPORT_DIR="docs/dev-reports"
 DEV_MODE_FILE=".dev-mode"
