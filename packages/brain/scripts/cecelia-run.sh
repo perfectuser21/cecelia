@@ -244,18 +244,55 @@ send_webhook() {
     payload="{\"task_id\":\"$TASK_ID\",\"checkpoint_id\":\"$CHECKPOINT_ID\",\"run_id\":\"$CHECKPOINT_ID\",\"status\":\"$status\",\"coding_type\":\"cecelia\",\"duration_ms\":$duration,\"attempt\":$attempt,\"exit_code\":$exit_code_val}"
   fi
 
-  if [[ -n "$WEBHOOK_TOKEN" ]]; then
-    curl -sS -X POST \
-      -H "Content-Type: application/json" \
-      -H "X-Cecilia-Token: $WEBHOOK_TOKEN" \
-      -d "$payload" \
-      "$WEBHOOK_URL" >/dev/null 2>&1 || true
-  else
-    curl -sS -X POST \
-      -H "Content-Type: application/json" \
-      -d "$payload" \
-      "$WEBHOOK_URL" >/dev/null 2>&1 || true
-  fi
+  # 重试逻辑：最多 3 次，指数退避（sleep 2 / sleep 4 / sleep 8）
+  local max_retries=3
+  local retry=0
+  local curl_exit=1
+
+  while [[ $retry -lt $max_retries ]]; do
+    if [[ -n "$WEBHOOK_TOKEN" ]]; then
+      curl -sS -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Cecilia-Token: $WEBHOOK_TOKEN" \
+        -d "$payload" \
+        --max-time 10 \
+        "$WEBHOOK_URL" >/dev/null 2>&1
+      curl_exit=$?
+    else
+      curl -sS -X POST \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 \
+        "$WEBHOOK_URL" >/dev/null 2>&1
+      curl_exit=$?
+    fi
+
+    if [[ $curl_exit -eq 0 ]]; then
+      echo "[cecelia-run] webhook 回调成功 (retry=$retry)" >&2
+      return 0
+    fi
+
+    retry=$((retry + 1))
+    if [[ $retry -lt $max_retries ]]; then
+      # 指数退避：retry 1 → sleep 2, retry 2 → sleep 4, retry 3 → sleep 8
+      local delay
+      case $retry in
+        1) delay=2 ;; # sleep 2
+        2) delay=4 ;; # sleep 4
+        *) delay=8 ;; # sleep 8
+      esac
+      echo "[cecelia-run] webhook 回调失败 (curl exit=$curl_exit), ${delay}s 后重试 ($retry/$max_retries)..." >&2
+      sleep $delay
+    fi
+  done
+
+  # 全部重试失败 → 写入本地失败队列供后续恢复
+  echo "[cecelia-run] webhook 回调 $max_retries 次全部失败，写入本地失败队列" >&2
+  local queue_dir="/tmp/cecelia-callback-queue"
+  mkdir -p "$queue_dir"
+  echo "$payload" > "$queue_dir/${TASK_ID}.json"
+  echo "[cecelia-run] 已写入 $queue_dir/${TASK_ID}.json" >&2
+  return 1
 }
 
 # 递归杀进程树（解决 subagent 创建新 process group 导致 kill -PGID 杀不到的问题）
@@ -282,9 +319,19 @@ main() {
   CHILD_PID=""
 
   CHILD_PGID=""
+  WEBHOOK_SENT=""  # 标记 webhook 是否已发送（防止 cleanup 重复发送）
 
-  # 清理函数：释放锁 + 递归杀进程树 + 清理 worktree
+  # 清理函数：释放锁 + 递归杀进程树 + 清理 worktree + 异常退出回调
   cleanup() {
+    # 异常退出时发送 webhook 回调（确保 Brain 收到状态更新）
+    if [[ -z "$WEBHOOK_SENT" && -n "$WEBHOOK_URL" ]]; then
+      echo "[cecelia-run] cleanup: 检测到异常退出且 webhook 未发送，发送 AI Failed 回调..." >&2
+      local cleanup_end cleanup_duration
+      cleanup_end=$(python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo "0")
+      cleanup_duration=$((cleanup_end - start_time))
+      # cleanup 中的 send_webhook 失败不阻塞清理流程
+      send_webhook "AI Failed" "/dev/null" "/dev/null" "$cleanup_duration" "1" "resource_killed" "137" || true
+    fi
     if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
       echo "[cecelia-run] cleanup: 递归杀进程树 PID=$CHILD_PID" >&2
       kill_tree "$CHILD_PID" TERM
@@ -405,7 +452,8 @@ main() {
     abort_end=$(python3 -c 'import time; print(int(time.time()*1000))')
     abort_duration=$((abort_end - start_time))
     echo "worktree_script_missing" > "$err_log"
-    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup" "1"
+    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup" "1" || true
+    WEBHOOK_SENT="true"
     rm -f "$out_json" "$err_log" 2>/dev/null || true
     exit 1
   fi
@@ -429,7 +477,8 @@ main() {
     abort_end=$(python3 -c 'import time; print(int(time.time()*1000))')
     abort_duration=$((abort_end - start_time))
     echo "worktree_creation_failed: $(cat "$wt_stderr_log" 2>/dev/null | head -3 || echo 'unknown error')" > "$err_log"
-    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup" "1"
+    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup" "1" || true
+    WEBHOOK_SENT="true"
     rm -f "$out_json" "$err_log" 2>/dev/null || true
     exit 1
   fi
@@ -603,8 +652,9 @@ main() {
     echo "[cecelia-run] failure_class=$failure_class_val (exit_code=$exit_code)" >&2
   fi
 
-  # 发送 webhook 回调
-  send_webhook "$status" "$out_json" "$err_log" "$duration" "$attempt" "$failure_class_val" "$exit_code"
+  # 发送 webhook 回调（标记已发送，防止 cleanup trap 重复发送）
+  send_webhook "$status" "$out_json" "$err_log" "$duration" "$attempt" "$failure_class_val" "$exit_code" || true
+  WEBHOOK_SENT="true"
 
   # 写入结构化日志
   log_execution "$status" "$exit_code" "$duration" "$SLOT" "$attempt"
