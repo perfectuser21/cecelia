@@ -327,8 +327,18 @@ async function getQueueDepth() {
 
 /**
  * 记录操作结果（用于计算错误率）
+ * @param {boolean} success - 操作是否成功
+ * @param {string} operation - 操作名称
+ * @param {Object} [options] - 可选参数
+ * @param {number} [options.statusCode] - HTTP 状态码，429 不计入错误率
  */
-export function recordOperation(success, operation = 'unknown') {
+export function recordOperation(success, operation = 'unknown', options = {}) {
+  // API 429 (Too Many Requests) 是正常限流，不算 alertness 异常
+  // 跳过记录，不计入 error_rate 指标
+  if (options.statusCode === 429) {
+    return;
+  }
+
   operationHistory.push({
     success,
     operation,
