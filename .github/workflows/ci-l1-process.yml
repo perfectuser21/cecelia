@@ -3,6 +3,7 @@ name: L1 Process Gate
 # L1: 流程合规检查 — 所有 PR 必跑，快速（2-5min）
 # 职责：分支命名 / PRD-DoD 格式 / Cleanup / Learning 格式 / 元测试 / Engine 特定检查
 # 迁移自：devgate.yml + engine-ci.yml (l1-process)
+# 动态化：根据 .dev-mode 文件中的 stage 按需检查（Stage 1 只检格式，Stage 2+ 才跑 DoD）
 
 on:
   pull_request:
@@ -59,6 +60,63 @@ jobs:
             echo "frontend=false" >> $GITHUB_OUTPUT
           fi
 
+  # ─── Stage Detection (读取 .dev-mode 文件判断当前 stage) ──────────────
+
+  detect-stage:
+    name: Detect Dev Stage
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      current_stage: ${{ steps.parse.outputs.current_stage }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Parse .dev-mode file for current stage
+        id: parse
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          DEV_MODE_FILE=".dev-mode.${BRANCH}"
+          echo "Looking for: $DEV_MODE_FILE"
+
+          if [ ! -f "$DEV_MODE_FILE" ]; then
+            echo "No .dev-mode file found — defaulting to stage 4 (full checks, backward compatible)"
+            echo "current_stage=4" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Found .dev-mode file:"
+          cat "$DEV_MODE_FILE"
+          echo ""
+
+          # 解析最高的 done step → current_stage
+          # step_1_spec: done → stage 1
+          # step_2_code: done → stage 2
+          # step_3_integrate: done → stage 3
+          # step_4_ship: done → stage 4
+          STAGE=0
+          if grep -q "step_1_spec: done" "$DEV_MODE_FILE"; then STAGE=1; fi
+          if grep -q "step_2_code: done" "$DEV_MODE_FILE"; then STAGE=2; fi
+          if grep -q "step_3_integrate: done" "$DEV_MODE_FILE"; then STAGE=3; fi
+          if grep -q "step_4_ship: done" "$DEV_MODE_FILE"; then STAGE=4; fi
+
+          # 如果所有 step 都是 pending，说明刚开始，当前在 stage 1
+          if [ "$STAGE" -eq 0 ]; then
+            # 检查是否有 step_0_worktree: done（worktree 创建完但 spec 还没写完）
+            if grep -q "step_0_worktree: done" "$DEV_MODE_FILE"; then
+              STAGE=1
+            else
+              STAGE=1
+            fi
+          fi
+
+          echo "Detected current stage: $STAGE"
+          echo "current_stage=${STAGE}" >> $GITHUB_OUTPUT
+
   # ─── Always-on checks (all PRs) ─────────────────────────────────────
 
   verify-dev-workflow:
@@ -84,7 +142,8 @@ jobs:
 
   dod-check:
     name: DoD Verification Gate
-    needs: verify-dev-workflow
+    needs: [verify-dev-workflow, detect-stage]
+    if: needs.detect-stage.outputs.current_stage >= 2
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -144,7 +203,8 @@ jobs:
 
   cleanup-check:
     name: Cleanup Check (Step 6.5 Simplify)
-    needs: verify-dev-workflow
+    needs: [verify-dev-workflow, detect-stage]
+    if: needs.detect-stage.outputs.current_stage >= 2
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -261,7 +321,8 @@ jobs:
 
   check-prd:
     name: PRD Success Criteria Check
-    needs: verify-dev-workflow
+    needs: [verify-dev-workflow, detect-stage]
+    if: needs.detect-stage.outputs.current_stage >= 2
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -278,7 +339,8 @@ jobs:
 
   check-learning:
     name: Learning Format Gate
-    needs: verify-dev-workflow
+    needs: [verify-dev-workflow, detect-stage]
+    if: needs.detect-stage.outputs.current_stage >= 4
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -301,8 +363,8 @@ jobs:
 
   quality-meta-tests:
     name: Quality System Meta Tests
-    needs: [changes]
-    if: needs.changes.outputs.quality == 'true' || needs.changes.outputs.engine == 'true'
+    needs: [changes, detect-stage]
+    if: (needs.changes.outputs.quality == 'true' || needs.changes.outputs.engine == 'true') && needs.detect-stage.outputs.current_stage >= 2
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -331,7 +393,8 @@ jobs:
 
   required-paths-check:
     name: Required Dev Paths Check
-    needs: verify-dev-workflow
+    needs: [verify-dev-workflow, detect-stage]
+    if: needs.detect-stage.outputs.current_stage >= 2
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -482,8 +545,8 @@ jobs:
 
   engine-l1:
     name: Engine L1 Process
-    needs: [changes, verify-dev-workflow]
-    if: needs.changes.outputs.engine == 'true'
+    needs: [changes, verify-dev-workflow, detect-stage]
+    if: needs.changes.outputs.engine == 'true' && needs.detect-stage.outputs.current_stage >= 2
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -728,8 +791,8 @@ jobs:
 
   dev-health-check:
     name: Dev Health Gate
-    needs: [changes, verify-dev-workflow]
-    if: needs.changes.outputs.engine == 'true'
+    needs: [changes, verify-dev-workflow, detect-stage]
+    if: needs.changes.outputs.engine == 'true' && needs.detect-stage.outputs.current_stage >= 2
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -768,82 +831,101 @@ jobs:
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan]
+    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: L1 Process Gate
+        env:
+          CURRENT_STAGE: ${{ needs.detect-stage.outputs.current_stage }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  L1 Process Gate"
+          echo "  L1 Process Gate (Stage: ${CURRENT_STAGE:-unknown})"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+          STAGE="${CURRENT_STAGE:-4}"
           FAILED=false
 
+          # detect-stage 自身必须成功
+          if [ "${{ needs.detect-stage.result }}" != "success" ]; then
+            echo "FAIL: Detect Stage (${{ needs.detect-stage.result }})"
+            FAILED=true
+          fi
+
+          # Always-on: 分支命名检查（所有 stage）
           if [ "${{ needs.verify-dev-workflow.result }}" != "success" ]; then
             echo "FAIL: /dev Workflow Verification (${{ needs.verify-dev-workflow.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.dod-check.result }}" != "success" ]; then
-            echo "FAIL: DoD Verification Gate (${{ needs.dod-check.result }})"
-            FAILED=true
-          fi
-
-          # A+ 方案：任何非 success 状态（含 skipped）均视为失败，消除 skipped 漏洞
-          if [ "${{ needs.cleanup-check.result }}" != "success" ]; then
-            echo "FAIL: Cleanup Check (${{ needs.cleanup-check.result }})"
-            FAILED=true
-          fi
-
-          if [ "${{ needs.check-prd.result }}" != "success" ]; then
-            echo "FAIL: PRD Success Criteria Check (${{ needs.check-prd.result }})"
-            FAILED=true
-          fi
-
-          if [ "${{ needs.check-learning.result }}" != "success" ]; then
-            echo "FAIL: Learning Format Gate (${{ needs.check-learning.result }})"
-            FAILED=true
-          fi
-
-          # Quality/Engine-conditional check (only required when quality or engine changes)
-          if [ "${{ needs.changes.outputs.quality }}" = "true" ] || [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
-            if [ "${{ needs.quality-meta-tests.result }}" != "success" ]; then
-              echo "FAIL: Quality System Meta Tests (${{ needs.quality-meta-tests.result }})"
+          # Stage 2+: DoD 验证
+          if [ "$STAGE" -ge 2 ]; then
+            if [ "${{ needs.dod-check.result }}" != "success" ]; then
+              echo "FAIL: DoD Verification Gate (${{ needs.dod-check.result }})"
               FAILED=true
             fi
+
+            if [ "${{ needs.cleanup-check.result }}" != "success" ]; then
+              echo "FAIL: Cleanup Check (${{ needs.cleanup-check.result }})"
+              FAILED=true
+            fi
+
+            if [ "${{ needs.check-prd.result }}" != "success" ]; then
+              echo "FAIL: PRD Success Criteria Check (${{ needs.check-prd.result }})"
+              FAILED=true
+            fi
+
+            if [ "${{ needs.required-paths-check.result }}" != "success" ]; then
+              echo "FAIL: Required Dev Paths Check (${{ needs.required-paths-check.result }})"
+              FAILED=true
+            fi
+
+            # Quality/Engine-conditional check (only required when quality or engine changes AND stage >= 2)
+            if [ "${{ needs.changes.outputs.quality }}" = "true" ] || [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
+              if [ "${{ needs.quality-meta-tests.result }}" != "success" ]; then
+                echo "FAIL: Quality System Meta Tests (${{ needs.quality-meta-tests.result }})"
+                FAILED=true
+              fi
+            fi
+
+            # Engine-specific checks (only required when engine changes AND stage >= 2)
+            if [ "${{ needs.changes.result }}" != "success" ]; then
+              echo "FAIL: Detect Changes job failed (${{ needs.changes.result }}) — cannot determine engine scope"
+              FAILED=true
+            elif [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
+              ENGINE_L1_RESULT="${{ needs.engine-l1.result }}"
+              DEV_HEALTH_RESULT="${{ needs.dev-health-check.result }}"
+              if [ "$ENGINE_L1_RESULT" != "success" ]; then
+                echo "FAIL: Engine L1 Process ($ENGINE_L1_RESULT)"
+                FAILED=true
+              fi
+              if [ "$DEV_HEALTH_RESULT" != "success" ]; then
+                echo "FAIL: Dev Health Gate ($DEV_HEALTH_RESULT)"
+                FAILED=true
+              fi
+            fi
+          else
+            echo "Stage $STAGE < 2: skipping DoD/Cleanup/PRD/Engine checks (expected skipped)"
           fi
 
+          # Stage 4: Learning 格式检查
+          if [ "$STAGE" -ge 4 ]; then
+            if [ "${{ needs.check-learning.result }}" != "success" ]; then
+              echo "FAIL: Learning Format Gate (${{ needs.check-learning.result }})"
+              FAILED=true
+            fi
+          else
+            echo "Stage $STAGE < 4: skipping Learning Format Gate (expected skipped)"
+          fi
+
+          # Always-on: CI Config Audit
           if [ "${{ needs.ci-config-audit.result }}" != "success" ]; then
             echo "FAIL: CI Config Audit (${{ needs.ci-config-audit.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.required-paths-check.result }}" != "success" ]; then
-            echo "FAIL: Required Dev Paths Check (${{ needs.required-paths-check.result }})"
-            FAILED=true
-          fi
-
-          # Engine-specific checks (only required when engine changes)
-          # Fix 6: skipped 状态视为失败 — engine 有变更时 skipped/failure 均不可接受
-          # Fix 7: changes job 自身失败时 output 为空，先验证 changes.result 再用 output
-          if [ "${{ needs.changes.result }}" != "success" ]; then
-            echo "FAIL: Detect Changes job failed (${{ needs.changes.result }}) — cannot determine engine scope"
-            FAILED=true
-          elif [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
-            ENGINE_L1_RESULT="${{ needs.engine-l1.result }}"
-            DEV_HEALTH_RESULT="${{ needs.dev-health-check.result }}"
-            if [ "$ENGINE_L1_RESULT" != "success" ]; then
-              echo "FAIL: Engine L1 Process ($ENGINE_L1_RESULT) — skipped/failure 均视为失败"
-              FAILED=true
-            fi
-            if [ "$DEV_HEALTH_RESULT" != "success" ]; then
-              echo "FAIL: Dev Health Gate ($DEV_HEALTH_RESULT) — skipped/failure 均视为失败"
-              FAILED=true
-            fi
-          fi
-
+          # Always-on: Secrets Scan
           if [ "${{ needs.secrets-scan.result }}" != "success" ]; then
             echo "FAIL: Secrets Scan (${{ needs.secrets-scan.result }})"
             FAILED=true
@@ -859,5 +941,5 @@ jobs:
 
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  ✅ L1 Process Gate PASSED"
+          echo "  ✅ L1 Process Gate PASSED (Stage: $STAGE)"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
