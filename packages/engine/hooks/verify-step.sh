@@ -180,6 +180,160 @@ verify_step2() {
         echo "  ✅ [Gate 1] Engine 测试通过" >&2
     fi
 
+    # Gate 2: DoD 逐条执行 — 读 Task Card 中所有 [BEHAVIOR] 条目的 Test 命令并执行
+    local task_card=""
+    if [[ -n "$BRANCH" ]]; then
+        task_card="$PROJECT_ROOT/.task-${BRANCH}.md"
+    fi
+    if [[ -z "$task_card" || ! -f "$task_card" ]]; then
+        task_card=$(find "$PROJECT_ROOT" -maxdepth 1 -name ".task-cp-*.md" 2>/dev/null | head -1 || echo "")
+    fi
+
+    if [[ -z "$task_card" || ! -f "$task_card" ]]; then
+        echo "  ⚠️  [Gate 2] 未找到 Task Card，跳过 DoD 逐条验证" >&2
+    else
+        echo "  🔍 [Gate 2] 逐条执行 DoD [BEHAVIOR] Test 命令..." >&2
+        echo "  Task Card: $task_card" >&2
+
+        local DOD_TOTAL=0
+        local DOD_PASSED=0
+        local DOD_FAILED=0
+        local DOD_DEFERRED=0
+        local FAILED_ITEMS=()
+
+        local IN_BEHAVIOR=false
+        local BEHAVIOR_DESC=""
+
+        while IFS= read -r line; do
+            # 检测新条目行（重置状态）
+            if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\['; then
+                IN_BEHAVIOR=false
+                BEHAVIOR_DESC=""
+
+                if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[BEHAVIOR\]'; then
+                    IN_BEHAVIOR=true
+                    BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[BEHAVIOR\][[:space:]]*//')
+                fi
+                continue
+            fi
+
+            # 在 [BEHAVIOR] 条目内：检测 Test: 行
+            if [[ "$IN_BEHAVIOR" == true ]]; then
+                if echo "$line" | grep -qE '^[[:space:]]+Test:[[:space:]]+'; then
+                    local TEST_REF
+                    TEST_REF=$(echo "$line" | sed 's/^[[:space:]]*Test:[[:space:]]*//')
+                    DOD_TOTAL=$((DOD_TOTAL + 1))
+
+                    echo "  [BEHAVIOR] $BEHAVIOR_DESC" >&2
+                    echo "  Test: $TEST_REF" >&2
+
+                    # DEFERRED: contract:（合约验证，跳过执行）
+                    if echo "$TEST_REF" | grep -qE '^contract:'; then
+                        echo "  ⏭  DEFERRED (合约验证，跳过执行)" >&2
+                        DOD_DEFERRED=$((DOD_DEFERRED + 1))
+                        echo "" >&2
+                        IN_BEHAVIOR=false
+                        continue
+                    fi
+
+                    # DEFERRED: manual:curl（需要服务）
+                    if echo "$TEST_REF" | grep -qE '^manual:curl\b'; then
+                        echo "  ⏭  DEFERRED (需要运行服务: curl)" >&2
+                        DOD_DEFERRED=$((DOD_DEFERRED + 1))
+                        echo "" >&2
+                        IN_BEHAVIOR=false
+                        continue
+                    fi
+
+                    # tests/<path> → 检查文件存在性
+                    if echo "$TEST_REF" | grep -qE '^tests/'; then
+                        local TEST_PATH="$PROJECT_ROOT/$TEST_REF"
+                        if [[ -f "$TEST_PATH" ]]; then
+                            echo "  ✅ PASS (文件存在: $TEST_REF)" >&2
+                            DOD_PASSED=$((DOD_PASSED + 1))
+                        else
+                            echo "  ❌ FAIL (文件不存在: $TEST_REF)" >&2
+                            DOD_FAILED=$((DOD_FAILED + 1))
+                            FAILED_ITEMS+=("[BEHAVIOR] $BEHAVIOR_DESC → 文件不存在: $TEST_REF")
+                        fi
+                        echo "" >&2
+                        IN_BEHAVIOR=false
+                        continue
+                    fi
+
+                    # manual:<cmd> → 提取并执行命令
+                    if echo "$TEST_REF" | grep -qE '^manual:'; then
+                        local CMD
+                        CMD=$(echo "$TEST_REF" | sed 's/^manual://')
+
+                        # 服务依赖命令跳过
+                        if echo "$CMD" | grep -qE '\bcurl\b|\bchrome\b|\bselenium\b|\bpuppeteer\b'; then
+                            echo "  ⏭  DEFERRED (需要外部服务)" >&2
+                            DOD_DEFERRED=$((DOD_DEFERRED + 1))
+                            echo "" >&2
+                            IN_BEHAVIOR=false
+                            continue
+                        fi
+
+                        set +e
+                        local OUTPUT
+                        OUTPUT=$(cd "$PROJECT_ROOT" && eval "$CMD" 2>&1)
+                        local EXIT_CODE=$?
+                        set -e
+
+                        if [[ $EXIT_CODE -eq 0 ]]; then
+                            echo "  ✅ PASS (exit 0)" >&2
+                            if [[ -n "$OUTPUT" ]]; then
+                                echo "  输出: $(echo "$OUTPUT" | head -2)" >&2
+                            fi
+                            DOD_PASSED=$((DOD_PASSED + 1))
+                        else
+                            echo "  ❌ FAIL (exit $EXIT_CODE)" >&2
+                            if [[ -n "$OUTPUT" ]]; then
+                                echo "  输出: $(echo "$OUTPUT" | head -3)" >&2
+                            fi
+                            DOD_FAILED=$((DOD_FAILED + 1))
+                            FAILED_ITEMS+=("[BEHAVIOR] $BEHAVIOR_DESC → exit $EXIT_CODE: $CMD")
+                        fi
+                        echo "" >&2
+                        IN_BEHAVIOR=false
+                        continue
+                    fi
+
+                    # 未匹配格式：DEFERRED
+                    echo "  ⏭  DEFERRED (未知格式，跳过: $TEST_REF)" >&2
+                    DOD_DEFERRED=$((DOD_DEFERRED + 1))
+                    echo "" >&2
+                    IN_BEHAVIOR=false
+                fi
+            fi
+        done < "$task_card"
+
+        # 汇总
+        echo "  ─── Gate 2 DoD 执行汇总 ───" >&2
+        echo "  [BEHAVIOR] Test 总数: $DOD_TOTAL" >&2
+        echo "  ✅ 通过: $DOD_PASSED" >&2
+        echo "  ⏭  延迟: $DOD_DEFERRED" >&2
+        echo "  ❌ 失败: $DOD_FAILED" >&2
+
+        if [[ $DOD_FAILED -gt 0 ]]; then
+            local fail_detail=""
+            for item in "${FAILED_ITEMS[@]}"; do
+                fail_detail="${fail_detail}
+  ❌ $item"
+            done
+            _fail "Gate 2 失败：DoD [BEHAVIOR] Test 未通过（${DOD_FAILED}/${DOD_TOTAL} 条失败）
+  请修复代码使所有 DoD Test 通过后重新执行 Step 2。
+${fail_detail}"
+        fi
+
+        if [[ $DOD_TOTAL -gt 0 ]]; then
+            echo "  ✅ [Gate 2] DoD [BEHAVIOR] Test 全部通过" >&2
+        else
+            echo "  ⚠️  [Gate 2] Task Card 无 [BEHAVIOR] 条目，跳过" >&2
+        fi
+    fi
+
     _pass "Step 2 代码改动验证通过"
 }
 

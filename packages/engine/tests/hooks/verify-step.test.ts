@@ -31,14 +31,15 @@ function runVerifyStep(
   cwd?: string,
 ): { exitCode: number; stderr: string } {
   try {
-    execSync(`bash "${ORIG_HOOK_PATH}" "${step}" "${branch}" "${projectRoot}"`, {
+    const result = execSync(`bash "${ORIG_HOOK_PATH}" "${step}" "${branch}" "${projectRoot}" 2>&1 1>/dev/null`, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       cwd: cwd ?? projectRoot,
     });
-    return { exitCode: 0, stderr: "" };
+    // stderr is redirected to stdout via 2>&1, capture it
+    return { exitCode: 0, stderr: result || "" };
   } catch (err: any) {
-    return { exitCode: err.status ?? 1, stderr: err.stderr || "" };
+    return { exitCode: err.status ?? 1, stderr: (err.stdout || "") + (err.stderr || "") };
   }
 }
 
@@ -236,6 +237,105 @@ describe("verify-step.sh", () => {
 
       const result = runVerifyStep("step2", BRANCH, dir, dir);
       expect(result.exitCode).toBe(0);
+    });
+
+    it("contains Gate 2 DoD execution logic", () => {
+      const content = require("fs").readFileSync(ORIG_HOOK_PATH, "utf8");
+      expect(content).toContain("Gate 2");
+      expect(content).toContain("IN_BEHAVIOR");
+      expect(content).toContain("FAILED_ITEMS");
+      expect(content).toContain("DEFERRED");
+      expect(content).toContain("DOD_TOTAL");
+    });
+
+    it("Gate 2 executes manual: Test commands from Task Card", () => {
+      const dir = mkdtempSync(join(tempDir, "s2-gate2-manual-"));
+      initGitRepo(dir, BRANCH);
+      // Create a test file that the manual command will check
+      writeFileSync(join(dir, "feature.sh"), "#!/bin/bash\necho ok\n");
+      execSync("git add feature.sh", { cwd: dir, stdio: "pipe" });
+      execSync('git commit -m "feat: add feature"', { cwd: dir, stdio: "pipe" });
+
+      // Task Card with BEHAVIOR that checks for feature.sh
+      const taskContent = `---
+id: task-${BRANCH}
+type: task-card
+---
+
+# Task Card
+
+## 验收条件（DoD）
+
+- [x] [BEHAVIOR] feature.sh 存在
+  Test: manual:bash -c "test -f feature.sh"
+
+- [x] [GATE] 通过
+  Test: manual:bash -c "echo pass"
+`;
+      writeFileSync(join(dir, `.task-${BRANCH}.md`), taskContent, "utf-8");
+
+      const result = runVerifyStep("step2", BRANCH, dir, dir);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain("Gate 2");
+      expect(result.stderr).toContain("PASS");
+    });
+
+    it("Gate 2 marks contract: tests as DEFERRED", () => {
+      const dir = mkdtempSync(join(tempDir, "s2-gate2-contract-"));
+      initGitRepo(dir, BRANCH);
+      writeFileSync(join(dir, "feature.sh"), "#!/bin/bash\necho ok\n");
+      execSync("git add feature.sh", { cwd: dir, stdio: "pipe" });
+      execSync('git commit -m "feat: add feature"', { cwd: dir, stdio: "pipe" });
+
+      const taskContent = `---
+id: task-${BRANCH}
+type: task-card
+---
+
+# Task Card
+
+## 验收条件（DoD）
+
+- [x] [BEHAVIOR] 合约验证
+  Test: contract:my-behavior
+
+- [x] [GATE] 通过
+  Test: manual:bash -c "echo pass"
+`;
+      writeFileSync(join(dir, `.task-${BRANCH}.md`), taskContent, "utf-8");
+
+      const result = runVerifyStep("step2", BRANCH, dir, dir);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain("DEFERRED");
+    });
+
+    it("Gate 2 fails when manual: Test command fails", () => {
+      const dir = mkdtempSync(join(tempDir, "s2-gate2-fail-"));
+      initGitRepo(dir, BRANCH);
+      writeFileSync(join(dir, "feature.sh"), "#!/bin/bash\necho ok\n");
+      execSync("git add feature.sh", { cwd: dir, stdio: "pipe" });
+      execSync('git commit -m "feat: add feature"', { cwd: dir, stdio: "pipe" });
+
+      const taskContent = `---
+id: task-${BRANCH}
+type: task-card
+---
+
+# Task Card
+
+## 验收条件（DoD）
+
+- [x] [BEHAVIOR] 不存在的文件检查
+  Test: manual:bash -c "test -f nonexistent-file-xyz"
+
+- [x] [GATE] 通过
+  Test: manual:bash -c "echo pass"
+`;
+      writeFileSync(join(dir, `.task-${BRANCH}.md`), taskContent, "utf-8");
+
+      const result = runVerifyStep("step2", BRANCH, dir, dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Gate 2 失败");
     });
 
     it("fails when branch only has doc file changes", () => {
