@@ -1228,7 +1228,7 @@ const FIXED_PROVIDER = FALLBACK_PROFILE.config.executor.fixed_provider;
 function getModelForTask(task) {
   const taskType = task.task_type || 'dev';
   const provider = getProviderForTask(task);
-  if (taskType === 'codex_qa') return null;
+  if (taskType === 'codex_qa' || taskType === 'codex_test_gen') return null;
 
   const profile = getActiveProfile();
   const profileMap = profile?.config?.executor?.model_map;
