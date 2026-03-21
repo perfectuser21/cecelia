@@ -758,6 +758,52 @@ else
                 ;;
         esac
 
+        # --- 条件 1.5: spec_review 检查（CI 通过后，fallback 路径补齐）---
+        # 同步 #1296 对 code_review_gate 的修复：spec_review fail 时阻塞，15 分钟超时自动 pass
+        SPEC_REVIEW_STATUS=$(grep "^spec_review_status:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+        if [[ -n "$SPEC_REVIEW_STATUS" ]]; then
+            case "$SPEC_REVIEW_STATUS" in
+                "pass"|"PASS")
+                    echo "  ✅ 条件 1.5: spec_review 已通过" >&2
+                    ;;
+                "fail"|"FAIL")
+                    save_block_reason "spec_review 失败"
+                    jq -n --arg reason "spec_review 失败，修复 Task Card 后重新执行 Stage 1" '{"decision": "block", "reason": $reason}'
+                    exit 2
+                    ;;
+                *)
+                    # 15 分钟超时降级：若 registered_at 超过 900 秒，自动 pass
+                    _SRV_REGISTERED_AT=$(grep "^spec_review_registered_at:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+                    if [[ -n "$_SRV_REGISTERED_AT" ]]; then
+                        if [[ "$(uname)" == "Darwin" ]]; then
+                            _SRV_REG_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${_SRV_REGISTERED_AT%Z*}" +%s 2>/dev/null || echo 0)
+                        else
+                            _SRV_REG_EPOCH=$(date -d "$_SRV_REGISTERED_AT" +%s 2>/dev/null || echo 0)
+                        fi
+                        _SRV_NOW=$(date +%s)
+                        _SRV_ELAPSED=$(( _SRV_NOW - _SRV_REG_EPOCH ))
+                        if [[ $_SRV_ELAPSED -gt 900 ]]; then
+                            echo "  ⚠️  spec_review 超时 15 分钟，降级为自动 PASS" >&2
+                            if [[ "$(uname)" == "Darwin" ]]; then
+                                sed -i '' "s/^spec_review_status:.*/spec_review_status: pass/" "$DEV_MODE_FILE" 2>/dev/null || true
+                            else
+                                sed -i "s/^spec_review_status:.*/spec_review_status: pass/" "$DEV_MODE_FILE" 2>/dev/null || true
+                            fi
+                            echo "  ✅ 条件 1.5: spec_review 超时自动 PASS" >&2
+                        else
+                            save_block_reason "spec_review 进行中 ($SPEC_REVIEW_STATUS)"
+                            jq -n --arg reason "spec_review 进行中（$SPEC_REVIEW_STATUS），等待 Codex 审查完成" '{"decision": "block", "reason": $reason}'
+                            exit 2
+                        fi
+                    else
+                        save_block_reason "spec_review 进行中 ($SPEC_REVIEW_STATUS)"
+                        jq -n --arg reason "spec_review 进行中（$SPEC_REVIEW_STATUS），等待 Codex 审查完成" '{"decision": "block", "reason": $reason}'
+                        exit 2
+                    fi
+                    ;;
+            esac
+        fi
+
         # --- 条件 2.5: code_review_gate 检查（CI 通过后）---
         CODE_REVIEW_STATUS=$(grep "^code_review_gate_status:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
         if [[ -n "$CODE_REVIEW_STATUS" ]]; then

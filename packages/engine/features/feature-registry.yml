@@ -17,7 +17,14 @@
 
 version: "3.75.0"
 updated: "2026-03-21"
+# ci-trigger: 13.13.5
 changelog:
+  - version: "13.13.5"
+    date: "2026-03-21"
+    summary: "fix(engine): stop-dev.sh fallback spec_review 超时检查 + 测试 PRD 追溯隔离修复"
+    scope: hooks
+    breaking: false
+    feature_id: stop-dev-fallback-spec-review-timeout-v2
   - version: "13.13.4"
     date: "2026-03-21"
     summary: "fix(engine): devloop-check.sh 版本注释更新，标注三处 Pipeline 死锁修复（#1286/#1294）"
