@@ -543,6 +543,10 @@
             {
               "taskType": "codex_test_gen",
               "skill": "/codex-test-gen"
+            },
+            {
+              "taskType": "codex_security_scan",
+              "skill": "/codex-security-scan"
             }
           ]
         },
@@ -919,7 +923,8 @@
     "scope_plan": "/decomp",
     "project_plan": "/decomp",
     "pipeline_rescue": "/dev",
-    "codex_test_gen": "/codex-test-gen"
+    "codex_test_gen": "/codex-test-gen",
+    "codex_security_scan": "/codex-security-scan"
   },
   "skillWhitelist": {
     "dev": "/dev",
@@ -935,6 +940,7 @@
     "codex_dev": "/dev",
     "codex_playwright": "/playwright",
     "codex_test_gen": "/codex-test-gen",
+    "codex_security_scan": "/codex-security-scan",
     "pr_review": "/review",
     "code_review": "/code-review",
     "decomp_review": "/decomp-check",
@@ -960,7 +966,7 @@
     "scope_plan": "/decomp",
     "project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-21T12:17:30.271Z",
+  "generatedAt": "2026-03-21T13:29:18.279Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
