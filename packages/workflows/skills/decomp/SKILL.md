@@ -15,6 +15,7 @@ changelog:
   - 1.8.0: 全面重写以反映 24/7×10 slot 产能模型；Initiative 重定义为系统性子功能（≥4 PR）；新增 Phase 3 project_plan 飞轮机制；Project→Initiative 动态规划（初始10个，动态扩展到40-70个）
   - 1.9.0: 产能数据修正（PR 35-40min、~8600 PR/月）；补充 KR→Project 定义（3-4个/KR、周期1周）；OKR 并行说明（2 OKR × 3-4 KR）；Initiative 内 Task 串联定义；多机路由概念
   - 2.0.0: 新增 Scope 层级（Project→Scope→Initiative 三层结构）；引入 Shape Up 方法论 + SPIDR 拆分五刀法；Phase 3 改为 scope_plan 飞轮
+  - 2.2.0: 产能模型改为动态查询 capacity-budget API；校准表 PR 数量改为动态值；删除写死的产能数字
   - 2.1.0: 新增拆解粒度校准表（Task/Initiative/Scope/Project PR数量+周期+判断标准+反例说明）；新增 Initiative 技术调研规则（第一个 Task 必须为技术调研 + WebSearch 选型）
 ---
 
@@ -37,56 +38,80 @@ changelog:
 
 ---
 
-## 💡 产能模型（CRITICAL — 所有拆解的基础假设）
+## 💡 产能模型（CRITICAL — 动态查询，不要写死数字）
 
-**Cecelia 实际 24/7 运行能力**：
+**⚠️ 所有产能数字必须从 Brain API 动态获取，禁止使用写死的数字。**
 
-| 指标 | 数值 | 说明 |
-|------|------|------|
-| 物理槽位上限 | 12 slots | min(内存槽位 24, CPU 槽位 12) |
-| AUTO_DISPATCH | 10 slots | PHYSICAL_CAPACITY - INTERACTIVE_RESERVE(2) |
-| Claude Max 账号 | 3 个 | 多账号并发，零额外费用 |
-| MiniMax 包月 | 1 个 | 轻量任务备选 |
-| 并发 Agent 上限 | 10 个 | 同时运行 10 个 Caramel |
-| 每 PR 耗时 | 35-40 min | 含 CI 流程（代码 15-20min + CI 15-20min） |
-| 日产能 | ~287 PR/day | 10 slot × 41 PR/slot/day × 70% 效率 |
-| 月产能 | ~8,600 PR/month | 287 × 30 天 |
-| 每个 Initiative | 4-8 PRs × 35-40min | 2.5-5.5 小时完成 |
-| 每个 Project/周 | 40-70 Initiatives | 10 slot × 24h/4h × 7天 ÷ 10 project |
+### 拆解前必须执行：查询当前产能
 
-**产能原则**：
-- ~8,600 PR/月是基于实测数据的现实产能（含 CI 35-40min/PR）
+```bash
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+CAPACITY=$(curl -s "$BRAIN_URL/api/brain/capacity-budget" 2>/dev/null)
+
+# 返回值包含：
+# - total_slots: 当前可用 slots 数
+# - pr_per_slot_per_day: 每 slot 每天的 PR 产出（冷启动=25，会自校准）
+# - confidence: theoretical/low/medium/high（数据可信度）
+# - layer_budgets: 各层级的 PR 预算
+# - areas: 各 Area 的 slot 分配
+```
+
+如果 Brain 不可用，使用以下 fallback 值（仅限紧急情况）：
+- `pr_per_slot_per_day = 25`（基于 40min/PR, 24h, 70% 效率）
+- `total_slots = 8`（保守估计）
+
+### 时间框架（固定不变）
+
+| 层级 | 时间框架 | 说明 |
+|------|---------|------|
+| Task | ~40min | 单一功能点，1 PR |
+| Initiative | 0.5-1 天 | 完整功能块，多模块协同 |
+| Scope | 2-3 天 | 功能分组/边界 |
+| Project | 1 周 | 业务目标 |
+| KR | 1 个月 | 可量化结果 |
+
+### PR 数量（动态计算）
+
+**PR 数量 = 时间框架 × pr_per_slot_per_day × 分配的 slots**
+
+拆解时从 `layer_budgets` 读取各层级的 PR 预算，不要自己算。
+
+### 产能原则
+
 - Initiative 要够系统性（≥4 PR，不能是单函数改动）
-- Project 要持续有料（初始 10 个 Initiative，动态扩展到 40-70 个）
+- Project 规模由 `layer_budgets.project.pr_count_per_slot` 确定
 - 飞轮机制：每个 Initiative 完成后自动规划下一个，保持 Pipeline 永不断流
+- `confidence` 为 `theoretical` 时，拆解粒度留更大容差（±50%）
+- `confidence` 为 `high` 时，严格按数字拆（±20%）
 
-**多机路由**：
-- Claude Code 研发任务：只在美国 VPS（8核16G）执行
-- 生产任务：香港 VPS + MiniMax API
-- 其他轻量任务：Mac mini / 办公室 PC
+### 多机路由
+
+- Claude Code /dev 任务：美国 Mac mini M4
+- Codex 任务（codex_qa/codex_dev/pr_review）：西安 Mac mini M4
+- 所有任务类型见 `task-router.js` LOCATION_MAP
 
 ---
 
-## 拆解粒度校准表（CRITICAL — 层级判断标准）
+## 拆解粒度校准表（CRITICAL — 动态校准）
 
-拆解时必须对照此表校验粒度是否正确，防止层级错配：
+**⚠️ PR 数量必须从 capacity-budget API 的 `layer_budgets` 获取，不要使用写死的数字。**
 
-| 层级 | PR 数量 | 周期 | 判断标准 |
-|------|---------|------|----------|
-| Task | 1 PR | 1-2h | 单一功能点，一次 Pipeline 跑通 |
-| Initiative | 5-8 PR | 1-2 天 | 一个完整功能块，多个模块协同 |
-| Scope | 2-3 Initiative = 10-24 PR | 3-5 天 | 一个功能分组/边界 |
-| Project | 2-4 Scope = 30-80 PR | 1-2 周 | 一个业务目标 |
+| 层级 | 时间框架（固定） | PR 数量（动态） | 判断标准 |
+|------|-----------------|----------------|----------|
+| Task | ~40min | 1 PR（固定） | 单一功能点，一次 Pipeline 跑通 |
+| Initiative | 0.5-1 天 | `layer_budgets.initiative.pr_count_per_slot` | 一个完整功能块，多个模块协同 |
+| Scope | 2-3 天 | `layer_budgets.scope.pr_count_per_slot` | 一个功能分组/边界 |
+| Project | 1 周 | `layer_budgets.project.pr_count_per_slot` | 一个业务目标 |
 
 **反例说明（拆解完必须自检）**：
 
 - 如果一个"Initiative"只需要 1-2 个 PR → **降级为 Task**，直接作为单个 PR 执行
-- 如果一个"Initiative"需要 15+ PR → **升级为 Scope**，拆成 2-3 个 Initiative
+- 如果一个"Initiative"的 PR 数超过 Scope 级别的预算 → **升级为 Scope**
 - 如果一个"Task"需要改 20+ 文件 → 可能是 Initiative 级别，应拆分为多个 Task
 
 **校准检查时机**：
-- Phase 1 拆解完成后，逐条对照校准表
-- decomp-check 质检时，检查 PR 数量是否落在合理区间
+- Phase 1 拆解完成后，对照 `layer_budgets` 校验
+- decomp-check 质检时，调用 capacity-budget API 检查 PR 数量是否在合理区间
 - 飞轮规划（Phase 2/3/4）时，发现粒度偏差及时调整
 
 ---
