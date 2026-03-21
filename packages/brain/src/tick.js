@@ -1495,6 +1495,155 @@ async function executeTick() {
     console.warn('[tick] 认知评估跳过:', cogErr.message);
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // 感知层：不受 canDispatch 限制
+  // 以下模块是"感知"动作，无论 canDispatch/thalamus 结果如何都必须运行。
+  // 放在 alertness/cognition 评估之后、thalamus 路由之前，确保不被任何
+  // 中间 return（thalamus dispatch_task / allGoalIds=0 / canDispatch=false）跳过。
+  // ═══════════════════════════════════════════════════════════════════
+
+  // [感知] 僵尸巡检：每 30 分钟清理 stale worktree / orphan process / stale lock slot
+  const zombieSweepElapsed = Date.now() - _lastZombieSweepTime;
+  if (zombieSweepElapsed >= ZOMBIE_SWEEP_INTERVAL_MS) {
+    _lastZombieSweepTime = Date.now();
+    zombieSweep().then(r => {
+      const summary = `worktrees:${r.worktrees.removed} processes:${r.processes.killed} locks:${r.lock_slots.removed}`;
+      console.log(`[tick] Zombie sweep done. ${summary}`);
+    }).catch(err => {
+      console.error('[tick] Zombie sweep failed (non-fatal):', err.message);
+    });
+  }
+
+  // [感知] Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline
+  const pipelinePatrolElapsed = Date.now() - _lastPipelinePatrolTime;
+  if (pipelinePatrolElapsed >= PIPELINE_PATROL_INTERVAL_MS) {
+    _lastPipelinePatrolTime = Date.now();
+    runPipelinePatrol(pool).then(r => {
+      if (r.stuck > 0 || r.rescued > 0) {
+        console.log(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
+      }
+    }).catch(err => {
+      console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
+    });
+  }
+
+  // [感知] Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
+  const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
+  if (healthCheckElapsed >= CLEANUP_INTERVAL_MS) {
+    _lastHealthCheckTime = Date.now();
+    try {
+      const healthResult = await runLayer2HealthCheck(pool);
+      console.log(`[tick] ${healthResult.summary}`);
+    } catch (healthErr) {
+      console.error('[tick] Layer2 health check failed (non-fatal):', healthErr.message);
+    }
+  }
+
+  // [感知] Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkInitiativeCompletion } = await import('./initiative-closer.js');
+    const initiativeResult = await checkInitiativeCompletion(pool);
+    console.log(`[TICK] Initiative 完成检查: ${initiativeResult.closedCount} 个已关闭`);
+    if (initiativeResult.closedCount > 0) {
+      actionsTaken.push({
+        action: 'initiative_completion_check',
+        closed_count: initiativeResult.closedCount,
+        closed: initiativeResult.closed,
+      });
+    }
+  } catch (initiativeErr) {
+    console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
+  }
+
+  // [感知] Scope 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkScopeCompletion } = await import('./initiative-closer.js');
+    const scopeResult = await checkScopeCompletion(pool);
+    if (scopeResult.closedCount > 0) {
+      console.log(`[TICK] Scope 完成检查: ${scopeResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'scope_completion_check',
+        closed_count: scopeResult.closedCount,
+        closed: scopeResult.closed,
+      });
+    }
+  } catch (scopeErr) {
+    console.error('[tick] Scope completion check failed (non-fatal):', scopeErr.message);
+  }
+
+  // [感知] Project 完成检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkProjectCompletion } = await import('./initiative-closer.js');
+    const projectResult = await checkProjectCompletion(pool);
+    if (projectResult.closedCount > 0) {
+      console.log(`[TICK] Project 完成检查: ${projectResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'project_completion_check',
+        closed_count: projectResult.closedCount,
+        closed: projectResult.closed,
+      });
+    }
+  } catch (projectErr) {
+    console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
+  }
+
+  // [感知] Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活（capacity-aware）
+  try {
+    const { activateNextInitiatives } = await import('./initiative-closer.js');
+    const activated = await activateNextInitiatives(pool);
+    if (activated > 0) {
+      console.log(`[TICK] Initiative 激活: ${activated} 个从 pending → active`);
+      actionsTaken.push({
+        action: 'initiative_queue_activate',
+        activated_count: activated,
+      });
+    }
+  } catch (activateErr) {
+    console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
+  }
+
+  // [感知] Project 层容量管理：激活/降级确保 active 在 capacity 范围内
+  try {
+    const { manageProjectActivation } = await import('./project-activator.js');
+    const { computeCapacity } = await import('./capacity.js');
+    const DEFAULT_SLOTS = 9;
+    const cap = computeCapacity(DEFAULT_SLOTS);
+    const projectResult = await manageProjectActivation(pool, cap.project);
+    if (projectResult.activated > 0 || projectResult.deactivated > 0) {
+      console.log(`[TICK] Project 容量管理: +${projectResult.activated} 激活, -${projectResult.deactivated} 降级`);
+      actionsTaken.push({
+        action: 'project_capacity_management',
+        activated: projectResult.activated,
+        deactivated: projectResult.deactivated,
+      });
+    }
+  } catch (projectCapErr) {
+    console.error('[tick] Project capacity management failed (non-fatal):', projectCapErr.message);
+  }
+
+  // [感知] KR 进度同步：每小时一次，纯 SQL，无 LLM
+  const krProgressElapsed = Date.now() - _lastKrProgressSyncTime;
+  if (krProgressElapsed >= CLEANUP_INTERVAL_MS) {
+    _lastKrProgressSyncTime = Date.now();
+    try {
+      const { syncAllKrProgress } = await import('./kr-progress.js');
+      const krResult = await syncAllKrProgress(pool);
+      if (krResult.updated > 0) {
+        console.log(`[TICK] KR 进度同步: ${krResult.updated} 个 KR 已更新`);
+        actionsTaken.push({
+          action: 'kr_progress_sync',
+          updated_count: krResult.updated,
+        });
+      }
+    } catch (krErr) {
+      console.error('[tick] KR progress sync failed (non-fatal):', krErr.message);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 感知层结束 — 以下是行动层（受 canDispatch/thalamus 控制）
+  // ═══════════════════════════════════════════════════════════════════
+
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
   publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
   try {
@@ -1745,144 +1894,6 @@ async function executeTick() {
       }
     } catch (goalEvalErr) {
       console.error('[tick] Goal outer loop evaluation failed (non-fatal):', goalEvalErr.message);
-    }
-  }
-
-  // 0.6. 僵尸巡检：每 30 分钟清理 stale worktree / orphan process / stale lock slot
-  const zombieSweepElapsed = Date.now() - _lastZombieSweepTime;
-  if (zombieSweepElapsed >= ZOMBIE_SWEEP_INTERVAL_MS) {
-    _lastZombieSweepTime = Date.now();
-    zombieSweep().then(r => {
-      const summary = `worktrees:${r.worktrees.removed} processes:${r.processes.killed} locks:${r.lock_slots.removed}`;
-      console.log(`[tick] Zombie sweep done. ${summary}`);
-    }).catch(err => {
-      console.error('[tick] Zombie sweep failed (non-fatal):', err.message);
-    });
-  }
-
-  // 0.6.5. Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline
-  const pipelinePatrolElapsed = Date.now() - _lastPipelinePatrolTime;
-  if (pipelinePatrolElapsed >= PIPELINE_PATROL_INTERVAL_MS) {
-    _lastPipelinePatrolTime = Date.now();
-    runPipelinePatrol(pool).then(r => {
-      if (r.stuck > 0 || r.rescued > 0) {
-        console.log(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
-      }
-    }).catch(err => {
-      console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
-    });
-  }
-
-  // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
-  const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
-  if (healthCheckElapsed >= CLEANUP_INTERVAL_MS) {
-    _lastHealthCheckTime = Date.now();
-    try {
-      const healthResult = await runLayer2HealthCheck(pool);
-      console.log(`[tick] ${healthResult.summary}`);
-    } catch (healthErr) {
-      console.error('[tick] Layer2 health check failed (non-fatal):', healthErr.message);
-    }
-  }
-
-  // 0.8. Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
-  try {
-    const { checkInitiativeCompletion } = await import('./initiative-closer.js');
-    const initiativeResult = await checkInitiativeCompletion(pool);
-    console.log(`[TICK] Initiative 完成检查: ${initiativeResult.closedCount} 个已关闭`);
-    if (initiativeResult.closedCount > 0) {
-      actionsTaken.push({
-        action: 'initiative_completion_check',
-        closed_count: initiativeResult.closedCount,
-        closed: initiativeResult.closed,
-      });
-    }
-  } catch (initiativeErr) {
-    console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
-  }
-
-  // 0.8.5. Scope 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
-  try {
-    const { checkScopeCompletion } = await import('./initiative-closer.js');
-    const scopeResult = await checkScopeCompletion(pool);
-    if (scopeResult.closedCount > 0) {
-      console.log(`[TICK] Scope 完成检查: ${scopeResult.closedCount} 个已关闭`);
-      actionsTaken.push({
-        action: 'scope_completion_check',
-        closed_count: scopeResult.closedCount,
-        closed: scopeResult.closed,
-      });
-    }
-  } catch (scopeErr) {
-    console.error('[tick] Scope completion check failed (non-fatal):', scopeErr.message);
-  }
-
-  // 0.9. Project 完成检查：每次 tick 都跑，纯 SQL，无 LLM
-  try {
-    const { checkProjectCompletion } = await import('./initiative-closer.js');
-    const projectResult = await checkProjectCompletion(pool);
-    if (projectResult.closedCount > 0) {
-      console.log(`[TICK] Project 完成检查: ${projectResult.closedCount} 个已关闭`);
-      actionsTaken.push({
-        action: 'project_completion_check',
-        closed_count: projectResult.closedCount,
-        closed: projectResult.closed,
-      });
-    }
-  } catch (projectErr) {
-    console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
-  }
-
-  // 0.10. Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活（capacity-aware）
-  try {
-    const { activateNextInitiatives } = await import('./initiative-closer.js');
-    const activated = await activateNextInitiatives(pool);
-    if (activated > 0) {
-      console.log(`[TICK] Initiative 激活: ${activated} 个从 pending → active`);
-      actionsTaken.push({
-        action: 'initiative_queue_activate',
-        activated_count: activated,
-      });
-    }
-  } catch (activateErr) {
-    console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
-  }
-
-  // 0.11. Project 层容量管理：激活/降级确保 active 在 capacity 范围内
-  try {
-    const { manageProjectActivation } = await import('./project-activator.js');
-    const { computeCapacity } = await import('./capacity.js');
-    const DEFAULT_SLOTS = 9;
-    const cap = computeCapacity(DEFAULT_SLOTS);
-    const projectResult = await manageProjectActivation(pool, cap.project);
-    if (projectResult.activated > 0 || projectResult.deactivated > 0) {
-      console.log(`[TICK] Project 容量管理: +${projectResult.activated} 激活, -${projectResult.deactivated} 降级`);
-      actionsTaken.push({
-        action: 'project_capacity_management',
-        activated: projectResult.activated,
-        deactivated: projectResult.deactivated,
-      });
-    }
-  } catch (projectCapErr) {
-    console.error('[tick] Project capacity management failed (non-fatal):', projectCapErr.message);
-  }
-
-  // 0.12. KR 进度同步：每小时一次，纯 SQL，无 LLM
-  const krProgressElapsed = Date.now() - _lastKrProgressSyncTime;
-  if (krProgressElapsed >= CLEANUP_INTERVAL_MS) {
-    _lastKrProgressSyncTime = Date.now();
-    try {
-      const { syncAllKrProgress } = await import('./kr-progress.js');
-      const krResult = await syncAllKrProgress(pool);
-      if (krResult.updated > 0) {
-        console.log(`[TICK] KR 进度同步: ${krResult.updated} 个 KR 已更新`);
-        actionsTaken.push({
-          action: 'kr_progress_sync',
-          updated_count: krResult.updated,
-        });
-      }
-    } catch (krErr) {
-      console.error('[tick] KR progress sync failed (non-fatal):', krErr.message);
     }
   }
 
