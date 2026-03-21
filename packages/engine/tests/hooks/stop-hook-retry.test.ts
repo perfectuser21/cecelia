@@ -160,7 +160,7 @@ retry_count: 30
     expect(hookContent).toContain('save_block_reason "CI 进行中');
     expect(hookContent).toContain('save_block_reason "CI 状态未知');
     expect(hookContent).toContain('save_block_reason "PR 已合并，Stage 4 Ship 未完成"');
-    expect(hookContent).toContain('save_block_reason "PR 未合并');
+    expect(hookContent).toContain('save_block_reason "PR 合并失败');
   });
 
   it('应该在 .dev-failure.log 中包含完整失败信息', () => {
