@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: Claude Code 协议适配器 v15.3.0
+# Stop Hook: Claude Code 协议适配器 v15.4.0
 # ============================================================================
 # 这是 Claude Code Stop Hook 的协议适配器。
 # 完成判断逻辑已提取到 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -166,11 +166,11 @@ fi
 # v2.0 P2-18 修复：加超时防止 stdin 阻塞（1 秒超时）
 HOOK_INPUT=$(timeout 1 cat 2>/dev/null || echo "{}")
 
-# ===== 30 次重试计数器（替代旧的 stop_hook_active 检查）=====
-# 此处不再检查 stop_hook_active，改为在 .dev-mode 中维护 retry_count
-# 具体检查逻辑在后面的完成条件中处理
-# v15.1.0: 重试上限统一为常量 MAX_RETRIES（修复注释与代码不一致）
-MAX_RETRIES=30
+# ===== 重试计数器（用于 Pipeline Patrol 触发判断）=====
+# v15.4.0: 去掉 30 次硬限制，改为 pipeline_rescue 机制
+# retry_count 仍然递增（用于监控），但不再强制退出
+# 卡住时向 Brain 注册 pipeline_rescue 任务让 Patrol 处理
+RESCUE_CHECK_INTERVAL=15  # 每 15 次检查一次是否需要 rescue
 
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -412,7 +412,7 @@ fi
 #
 # 详见：.prd-cp-02071917-stop-hook-fix.md
 
-# ===== 读取并递增重试次数（${MAX_RETRIES} 次上限）=====
+# ===== 读取并递增重试次数（用于监控，无硬上限）=====
 # Bug fix: 使用 awk 替代 cut，避免多空格问题
 # v15.1.0: 超时检查移到 devloop_check 之后，先判断完成状态再判断超时
 RETRY_COUNT=$(grep "^retry_count:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "0")
@@ -621,80 +621,65 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
         [[ -n "$DEVLOOP_ACTION" ]] && echo "  行动: $DEVLOOP_ACTION" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 
-        # ===== v15.1.0: 超时检查（在 devloop_check 之后）=====
-        # 修复逻辑顺序 bug：先调用 devloop_check 确认未完成，再检查超时
-        # 旧逻辑在 devloop_check 之前检查超时，导致第 MAX_RETRIES+1 次即使完成也走超时失败分支
-        if [[ $RETRY_COUNT -gt $MAX_RETRIES ]]; then
-            echo "" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            echo "  [Stop Hook: ${MAX_RETRIES} 次重试上限]" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            echo "" >&2
-            echo "  已重试 ${MAX_RETRIES} 次，任务失败" >&2
-            echo "  原因：${MAX_RETRIES} 次重试后仍未完成 11 步流程" >&2
-            echo "" >&2
+        # ===== v15.4.0: Pipeline Rescue 机制（替代 30 次硬限制）=====
+        # 不再强制退出。卡住时检查 Brain 是否已有 pipeline_rescue 任务：
+        #   - 没有 → 创建一个（让 Pipeline Patrol 处理）
+        #   - 已有 → 继续等待（exit 2）
+        # retry_count 仍然递增用于监控，但不再作为退出条件
+        if [[ $RETRY_COUNT -gt 0 && $(( RETRY_COUNT % RESCUE_CHECK_INTERVAL )) -eq 0 ]]; then
+            RESCUE_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "unknown")
+            RESCUE_REASON=$(grep "^last_block_reason:" "$DEV_MODE_FILE" 2>/dev/null | sed 's/^last_block_reason: //' || echo "unknown")
+            RESCUE_TASK_ID=$(grep "^brain_task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+            [[ -z "$RESCUE_TASK_ID" ]] && RESCUE_TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
 
-            # 上报失败
-            TRACK_SCRIPT="$PROJECT_ROOT/skills/dev/scripts/track.sh"
-            if [[ -f "$TRACK_SCRIPT" ]]; then
-                bash "$TRACK_SCRIPT" fail "Stop Hook 重试 ${MAX_RETRIES} 次后仍未完成" 2>/dev/null || true
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [Stop Hook: Pipeline Rescue 检查（重试 #${RETRY_COUNT}）]" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+
+            # 检查 Brain 是否已有此分支的 pipeline_rescue 任务
+            _RESCUE_EXISTS=false
+            _RESCUE_QUERY=$(curl -s --max-time 5 \
+                "http://localhost:5221/api/brain/tasks?task_type=pipeline_rescue&status=queued&status=in_progress" \
+                2>/dev/null || echo "[]")
+            if echo "$_RESCUE_QUERY" | python3 -c "
+import json,sys
+tasks=json.load(sys.stdin)
+if isinstance(tasks,dict): tasks=tasks.get('tasks',tasks.get('data',[]))
+if not isinstance(tasks,list): tasks=[]
+branch='${RESCUE_BRANCH}'
+found=any(branch in str(t.get('description',''))+str(t.get('title',''))+str(t.get('metadata','')) for t in tasks)
+sys.exit(0 if found else 1)
+" 2>/dev/null; then
+                _RESCUE_EXISTS=true
             fi
 
-            # 写入失败日志（.dev-failure.log）
-            FAILURE_LOG="$PROJECT_ROOT/.dev-failure.log"
-            FAIL_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "unknown")
-            LAST_REASON=$(grep "^last_block_reason:" "$DEV_MODE_FILE" 2>/dev/null | sed 's/^last_block_reason: //' || echo "unknown")
-            {
-                echo "=== Dev Failure Log ==="
-                echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
-                echo "branch: $FAIL_BRANCH"
-                echo "retry_count: $RETRY_COUNT"
-                echo "last_block_reason: $LAST_REASON"
-                echo "========================"
-            } > "$FAILURE_LOG"
-
-            # 通知 Brain 任务失败
-            if [[ -n "$FAIL_BRANCH" ]]; then
-                # 尝试从 .dev-mode 提取 brain_task_id（优先）或 task_id（兼容旧格式）
-                FAIL_TASK_ID=$(grep "^brain_task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-                [[ -z "$FAIL_TASK_ID" ]] && FAIL_TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-                if [[ -n "$FAIL_TASK_ID" ]]; then
-                    curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${FAIL_TASK_ID}" \
-                        -H "Content-Type: application/json" \
-                        -d "{\"status\":\"failed\",\"error\":\"Stop Hook 重试 ${MAX_RETRIES} 次后仍未完成（last_block: ${LAST_REASON}）\"}" \
-                        --max-time 5 2>/dev/null || true
-                fi
+            if [[ "$_RESCUE_EXISTS" == "true" ]]; then
+                echo "  已有 pipeline_rescue 任务，继续等待 Patrol 处理..." >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            else
+                echo "  创建 pipeline_rescue 任务（让 Pipeline Patrol 接管）..." >&2
+                RESCUE_DESC="任务 ${RESCUE_BRANCH} 在 ${RESCUE_REASON} 阶段卡住，Stop Hook 已重试 ${RETRY_COUNT} 次。需要 Patrol 诊断并修复。"
+                RESCUE_PAYLOAD=$(jq -n \
+                    --arg branch "$RESCUE_BRANCH" \
+                    --argjson count "$RETRY_COUNT" \
+                    --arg reason "$RESCUE_REASON" \
+                    --arg task_id "${RESCUE_TASK_ID:-}" \
+                    '{stuck_branch: $branch, retry_count: $count, last_status: $reason, original_task_id: $task_id}' 2>/dev/null \
+                    || echo "{\"stuck_branch\":\"${RESCUE_BRANCH}\",\"retry_count\":${RETRY_COUNT},\"last_status\":\"${RESCUE_REASON}\"}")
+                curl -s -X POST "http://localhost:5221/api/brain/tasks" \
+                    -H "Content-Type: application/json" \
+                    -d "$(jq -n \
+                        --arg title "[rescue] 任务 ${RESCUE_BRANCH} 卡住 — 需要 Patrol 介入" \
+                        --arg desc "$RESCUE_DESC" \
+                        --argjson payload "$RESCUE_PAYLOAD" \
+                        '{title: $title, description: $desc, priority: "P1", task_type: "pipeline_rescue", status: "queued", payload: $payload, trigger_source: "stop_hook_rescue"}' 2>/dev/null \
+                        || echo "{\"title\":\"[rescue] 任务 ${RESCUE_BRANCH} 卡住\",\"priority\":\"P1\",\"task_type\":\"pipeline_rescue\",\"status\":\"queued\",\"trigger_source\":\"stop_hook_rescue\"}")" \
+                    --max-time 5 2>/dev/null || true
+                echo "  [Brain] 已创建 pipeline_rescue 任务" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
             fi
-
-            # v13.3.3: 创建 Brain P0 诊断任务 — 让 Brain 派发新会话诊断卡住原因
-            STUCK_DESC="任务 ${FAIL_BRANCH} 在 ${LAST_REASON} 阶段卡住，Stop Hook 已重试 ${MAX_RETRIES} 次。需要诊断根因并修复。"
-            STUCK_PAYLOAD=$(jq -n \
-                --arg branch "$FAIL_BRANCH" \
-                --argjson count "$RETRY_COUNT" \
-                --arg reason "$LAST_REASON" \
-                '{stuck_branch: $branch, retry_count: $count, last_status: $reason}' 2>/dev/null \
-                || echo "{\"stuck_branch\":\"${FAIL_BRANCH}\",\"retry_count\":${RETRY_COUNT},\"last_status\":\"${LAST_REASON}\"}")
-            curl -s -X POST "http://localhost:5221/api/brain/tasks" \
-                -H "Content-Type: application/json" \
-                -d "$(jq -n \
-                    --arg title "[stuck] 任务 ${FAIL_BRANCH} 卡住 — 已重试 ${MAX_RETRIES} 次" \
-                    --arg desc "$STUCK_DESC" \
-                    --argjson payload "$STUCK_PAYLOAD" \
-                    '{title: $title, description: $desc, priority: "P0", task_type: "stuck_diagnosis", status: "queued", payload: $payload, trigger_source: "stop_hook_timeout"}' 2>/dev/null \
-                    || echo "{\"title\":\"[stuck] 任务 ${FAIL_BRANCH} 卡住\",\"priority\":\"P0\",\"task_type\":\"stuck_diagnosis\",\"status\":\"queued\",\"trigger_source\":\"stop_hook_timeout\"}")" \
-                --max-time 5 2>/dev/null || true
-            echo "  [Brain] 已创建 P0 诊断任务（stuck_diagnosis）" >&2
-
-            # 强制清理 worktree（兜底）
-            force_cleanup_worktree "$DEV_MODE_FILE"
-
-            # 删除 .dev-mode, .dev-lock, sentinel 文件 + orphan retry 计数器
-            rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
-                  "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
-                  "$PROJECT_ROOT/.dev-orphan-retry"
-
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            exit 0  # 允许会话结束（失败退出）
+            # 不退出，继续 exit 2 等待
         fi
 
         save_block_reason "$DEVLOOP_REASON"

@@ -387,6 +387,24 @@ devloop_check() {
         if command -v _devlog_event &>/dev/null; then
             _devlog_event "devloop-check" "merge" "success" "PR #$pr_number 已自动合并"
         fi
+
+        # v15.4.0: PR 合并成功后回调 Brain execution-callback（通知任务完成）
+        local _cb_task_id=""
+        _cb_task_id=$(grep "^brain_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        [[ -z "$_cb_task_id" ]] && _cb_task_id=$(grep "^task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        if [[ -n "$_cb_task_id" ]]; then
+            local _cb_brain_url="${BRAIN_URL:-http://localhost:5221}"
+            local _cb_repo=""
+            _cb_repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
+            local _cb_pr_url=""
+            [[ -n "$_cb_repo" ]] && _cb_pr_url="https://github.com/${_cb_repo}/pull/${pr_number}"
+            echo "[devloop-check] 回调 Brain execution-callback（task: $_cb_task_id, status: completed）..." >&2
+            curl -s -X POST "$_cb_brain_url/api/brain/execution-callback" \
+                -H "Content-Type: application/json" \
+                -d "{\"task_id\":\"$_cb_task_id\",\"status\":\"completed\",\"pr_url\":\"${_cb_pr_url}\"}" \
+                --max-time 5 2>/dev/null || true
+        fi
+
         _devloop_jq -n \
             --arg pr "$pr_number" \
             '{"status":"merged","reason":"PR #\($pr) 已自动合并，工作流即将结束","action":"执行 cleanup"}'
