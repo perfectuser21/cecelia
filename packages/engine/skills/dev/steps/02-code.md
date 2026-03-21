@@ -104,13 +104,22 @@ fi
 
 ### 2.3.3 逐条重跑 DoD Test（最终确认）
 
+> **由 verify-step.sh Gate 2 自动强制执行**，不依赖 AI 自觉。
+> 当 AI 标记 `step_2_code: done` 时，`verify-step.sh step2` 会自动：
+> 1. 读取 Task Card（`.task-{BRANCH}.md`）
+> 2. 提取所有 `[BEHAVIOR]` 条目的 Test 字段
+> 3. 对 `manual:` 开头的 Test，执行该命令（在项目根目录）
+> 4. 对 `contract:` 开头的 Test，标记 DEFERRED 跳过
+> 5. 对 `tests/` 开头的 Test，检查文件是否存在
+> 6. 任一 Test 失败 → verify-step 返回 exit 1 → 不允许标记完成
+
 ```bash
-# 读 Task Card，逐条执行 Test: 命令
-# 所有 PASS → 继续
-# 任何 FAIL → 修复 → 重跑
+# verify-step.sh 会在 step_2_code: done 写入时被 branch-protect 自动调用
+# 也可以手动运行确认：
+bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)"
 ```
 
-**这是你 push 前的最后防线。Codex 会在 push 后独立再跑一遍，但你自己先过一遍能减少 90% 的返工。**
+**这是你 push 前的最后防线。Gate 2 确保每条 DoD [BEHAVIOR] Test 都被真实执行过，不能只靠 npm test。**
 
 ### 2.3.4 计算 Task Card Hash（TDD 锁定）
 
