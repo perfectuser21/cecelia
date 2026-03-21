@@ -46,6 +46,7 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'memory-semantic',              // 语义记忆，learnings 支撑
   'learning-absorption',          // 学习吸收，嵌入 tick 循环
   'narrative-expression',         // 叙事表达，意识层固有
+  'branch-protection-hooks',      // 分支保护 hooks，嵌入开发工作流
 ]);
 
 // ============================================================
