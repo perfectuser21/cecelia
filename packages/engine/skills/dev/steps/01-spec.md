@@ -21,6 +21,32 @@ bash skills/dev/scripts/fetch-task-prd.sh --task-id "$TASK_ID" --format task-car
 
 无 task-id → 手动模式，继续 1.2。
 
+## 1.1.5 上下文补充（intent-expand）
+
+> 从 Brain 读取当前任务关联的 KR/Initiative/Project 信息，补充到 PRD。
+> 确保 Agent 知道"这个任务是为了什么更大的目标"。
+
+如果有 --task-id，从 Brain API 读取上下文：
+
+```bash
+BRAIN_URL="${BRAIN_API_URL:-http://localhost:5221}"
+TASK_INFO=$(curl -s "$BRAIN_URL/api/brain/tasks/$TASK_ID" 2>/dev/null)
+GOAL_ID=$(echo "$TASK_INFO" | jq -r '.goal_id // empty')
+PROJECT_ID=$(echo "$TASK_INFO" | jq -r '.project_id // empty')
+
+if [[ -n "$GOAL_ID" ]]; then
+    GOAL_INFO=$(curl -s "$BRAIN_URL/api/brain/goals/$GOAL_ID" 2>/dev/null)
+    KR_TITLE=$(echo "$GOAL_INFO" | jq -r '.title // "unknown"')
+    echo "📍 此任务关联 KR: $KR_TITLE"
+    echo "goal_id: $GOAL_ID" >> "$DEV_MODE_FILE"
+fi
+if [[ -n "$PROJECT_ID" ]]; then
+    echo "project_id: $PROJECT_ID" >> "$DEV_MODE_FILE"
+fi
+```
+
+将 KR 标题和描述注入到 Task Card 的"背景"部分。
+
 ## 1.2 生成 Task Card
 
 创建 `.task-cp-{branch}.md`：
@@ -62,6 +88,27 @@ created: YYYY-MM-DD
 ## 实现方案（Stage 2 探索后填写）
 **要改的文件**: （探索后填写）
 **Scope 锚定**: （探索后填写）
+```
+
+## 1.3.5 相关 Learning 检索
+
+> 查找跟当前任务相关的历史 Learning，推荐给 Agent 避免重复踩坑。
+
+```bash
+# 从 task title/description 提取关键词，搜索 docs/learnings/
+KEYWORDS=$(echo "$TASK_TITLE" | tr ' ' '\n' | grep -v '^$' | head -5)
+RELATED_LEARNINGS=""
+for kw in $KEYWORDS; do
+    FOUND=$(grep -rl "$kw" docs/learnings/ 2>/dev/null | head -3)
+    [[ -n "$FOUND" ]] && RELATED_LEARNINGS="$RELATED_LEARNINGS $FOUND"
+done
+
+if [[ -n "$RELATED_LEARNINGS" ]]; then
+    echo "📚 相关 Learning（建议阅读）："
+    for f in $(echo "$RELATED_LEARNINGS" | tr ' ' '\n' | sort -u | head -5); do
+        echo "  - $f"
+    done
+fi
 ```
 
 ## 1.3 写入 .dev-mode
