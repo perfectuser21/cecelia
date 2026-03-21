@@ -535,6 +535,10 @@
             {
               "taskType": "project_plan",
               "skill": "/decomp"
+            },
+            {
+              "taskType": "pipeline_rescue",
+              "skill": "/dev"
             }
           ]
         },
@@ -909,7 +913,8 @@
     "code_review_gate": "/code-review-gate",
     "initiative_review": "/initiative-review",
     "scope_plan": "/decomp",
-    "project_plan": "/decomp"
+    "project_plan": "/decomp",
+    "pipeline_rescue": "/dev"
   },
   "skillWhitelist": {
     "dev": "/dev",
@@ -949,7 +954,7 @@
     "scope_plan": "/decomp",
     "project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-20T15:23:24.599Z",
+  "generatedAt": "2026-03-21T01:35:38.403Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

@@ -1119,6 +1119,7 @@ function getSkillForTaskType(taskType, payload) {
     // Scope 层飞轮（Project→Scope→Initiative）
     'scope_plan': '/decomp',        // Phase 3: Scope 内规划下一个 Initiative
     'project_plan': '/decomp',      // Phase 4: Project 内规划下一个 Scope
+    'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
   };
   return skillMap[taskType] || '/dev';
 }
@@ -1957,6 +1958,7 @@ const US_ONLY_TYPES = new Set([
   'code_review_gate',     // 代码质量门禁
   'initiative_review',    // Initiative 整体审查
   'dept_heartbeat',       // 部门心跳（本机执行，不走 Codex Bridge）
+  'pipeline_rescue',      // Pipeline 救援（需读本地 .dev-mode + worktree）
 ]);
 
 async function triggerCeceliaRun(task) {
