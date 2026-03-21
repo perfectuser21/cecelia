@@ -87,21 +87,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install PostgreSQL + pgvector (ubuntu)
+      - name: Install PostgreSQL 17 + pgvector (PGDG apt)
         run: |
+          # PGDG 仓库提供 PG17 + pgvector 预编译包，避免编译依赖冲突
           sudo apt-get update
-          sudo apt-get install -y postgresql postgresql-contrib
-          # 获取已安装的 PG 主版本号（ubuntu-latest 通常是 14 或 16）
-          PG_VERSION=$(pg_config --version | grep -oE '[0-9]+' | head -1)
+          sudo apt-get install -y curl ca-certificates gnupg lsb-release
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17 postgresql-17-pgvector
+          PG_VERSION=17
           echo "PG_VERSION=${PG_VERSION}" >> $GITHUB_ENV
-          echo "Installed PostgreSQL version: $PG_VERSION"
-          # 编译安装 pgvector
-          sudo apt-get install -y postgresql-server-dev-all build-essential git
-          git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git /tmp/pgvector
-          cd /tmp/pgvector && make && sudo make install
-          echo "pgvector installed successfully"
-          # 确保 PG bin 在 PATH 中
           echo "/usr/lib/postgresql/${PG_VERSION}/bin" >> $GITHUB_PATH
+          sudo systemctl stop postgresql || true
 
       - name: Stop system PostgreSQL + clean up stale CI PostgreSQL
         run: |
