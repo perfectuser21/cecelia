@@ -12,7 +12,7 @@ export function getTickStatus(): Promise<{
   dispatch_timeout_minutes: number;
 }>;
 export function enableTick(): Promise<{ success: boolean; enabled: boolean; loop_running: boolean }>;
-export function disableTick(): Promise<{ success: boolean; enabled: boolean; loop_running: boolean }>;
+export function disableTick(source?: string): Promise<{ success: boolean; enabled: boolean; loop_running: boolean; source: string }>;
 export function executeTick(): Promise<Record<string, unknown>>;
 export function runTickSafe(source?: string, tickFn?: () => Promise<unknown>): Promise<Record<string, unknown>>;
 export function startTickLoop(): boolean;
@@ -39,3 +39,6 @@ export const TICK_TIMEOUT_MS: number;
 export const DISPATCH_TIMEOUT_MINUTES: number;
 export const MAX_CONCURRENT_TASKS: number;
 export const AUTO_DISPATCH_MAX: number;
+export function startTickWatchdog(): void;
+export function stopTickWatchdog(): void;
+export const TICK_WATCHDOG_INTERVAL_MS: number;

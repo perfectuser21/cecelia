@@ -64,7 +64,7 @@ const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50
 const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter：单次 tick 最多新派发 N 个，防队列积压后雪崩
 
 // Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
-const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '30', 10);
+const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '5', 10);
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -132,6 +132,12 @@ let _recoveryTimer = null;
 // Drain state (in-memory)
 let _draining = false;
 let _drainStartedAt = null;
+let _postDrainCooldown = false;
+let _postDrainCooldownTimer = null;
+
+// Tick watchdog timer (in-memory)
+let _tickWatchdogTimer = null;
+const TICK_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_WATCHDOG_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
 
 /**
  * Get tick status
@@ -187,6 +193,8 @@ async function getTickStatus() {
     loop_running: _loopTimer !== null,
     draining: _draining,
     drain_started_at: _drainStartedAt,
+    post_drain_cooldown: _postDrainCooldown,
+    tick_watchdog_active: _tickWatchdogTimer !== null,
     interval_minutes: TICK_INTERVAL_MINUTES,
     loop_interval_ms: TICK_LOOP_INTERVAL_MS,
     last_tick: lastTick,
@@ -463,6 +471,10 @@ async function initTickLoop() {
         console.log(`[tick-loop] Tick is disabled in DB (${Math.round(minutesDisabled)}min, threshold ${TICK_AUTO_RECOVER_MINUTES}min), not starting loop`);
       }
     }
+
+    // Start tick watchdog — independent timer that checks every 5 minutes
+    // If tick is disabled by non-manual source (drain/alertness), auto-recover
+    startTickWatchdog();
   } catch (err) {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
 
@@ -475,6 +487,74 @@ async function initTickLoop() {
         _recoveryTimer.unref();
       }
     }
+  }
+}
+
+/**
+ * Start tick watchdog — independent timer that periodically checks tick health.
+ * If tick is disabled by a non-manual source (drain/alertness), auto-recovers.
+ * Only manual disables are respected; all other disables are transient.
+ */
+function startTickWatchdog() {
+  if (_tickWatchdogTimer) {
+    console.log('[tick-watchdog] Already running, skipping start');
+    return;
+  }
+
+  _tickWatchdogTimer = setInterval(async () => {
+    try {
+      const tickMem = await pool.query(
+        `SELECT value_json FROM working_memory WHERE key = $1`,
+        [TICK_ENABLED_KEY]
+      );
+      const tickData = tickMem.rows[0]?.value_json || {};
+
+      if (tickData.enabled === false) {
+        const source = tickData.source || 'unknown';
+
+        // Only auto-recover non-manual disables
+        if (source === 'manual') {
+          // Manual disable — respect it, do not auto-recover
+          return;
+        }
+
+        console.warn(`[tick-watchdog] Tick is disabled (source: ${source}), auto-recovering...`);
+        await enableTick();
+
+        // Log recovery event
+        try {
+          await pool.query(
+            `INSERT INTO cecelia_events (event_type, source, payload)
+             VALUES ('tick_watchdog_recover', 'tick_watchdog', $1)`,
+            [JSON.stringify({
+              reason: 'tick_disabled_by_non_manual_source',
+              original_source: source,
+              disabled_at: tickData.disabled_at || null,
+              recovered_at: new Date().toISOString(),
+            })]
+          );
+        } catch { /* event logging is best-effort */ }
+      }
+    } catch (err) {
+      console.error('[tick-watchdog] Error checking tick status:', err.message);
+    }
+  }, TICK_WATCHDOG_INTERVAL_MS);
+
+  if (_tickWatchdogTimer.unref) {
+    _tickWatchdogTimer.unref();
+  }
+
+  console.log(`[tick-watchdog] Started (interval: ${TICK_WATCHDOG_INTERVAL_MS}ms)`);
+}
+
+/**
+ * Stop tick watchdog timer
+ */
+function stopTickWatchdog() {
+  if (_tickWatchdogTimer) {
+    clearInterval(_tickWatchdogTimer);
+    _tickWatchdogTimer = null;
+    console.log('[tick-watchdog] Stopped');
   }
 }
 
@@ -495,17 +575,18 @@ async function enableTick() {
 
 /**
  * Disable automatic tick
+ * @param {string} source - 'manual' | 'drain' | 'alertness' — watchdog 只恢复非 manual 的
  */
-async function disableTick() {
+async function disableTick(source = 'manual') {
   await pool.query(`
     INSERT INTO working_memory (key, value_json, updated_at)
     VALUES ($1, $2, NOW())
     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [TICK_ENABLED_KEY, { enabled: false, disabled_at: new Date().toISOString() }]);
+  `, [TICK_ENABLED_KEY, { enabled: false, disabled_at: new Date().toISOString(), source }]);
 
   stopTickLoop();
 
-  return { success: true, enabled: false, loop_running: false };
+  return { success: true, enabled: false, loop_running: false, source };
 }
 
 /**
@@ -1295,6 +1376,12 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
 
   // Cap at effectiveDispatchMax
   newRate = Math.min(newRate, effectiveDispatchMax);
+
+  // Post-drain cooldown: limit dispatch rate to 1 for 5 minutes after drain completes
+  if (_postDrainCooldown && newRate > 1) {
+    newRate = 1;
+    reason = 'post_drain_cooldown';
+  }
 
   // Save new state
   await pool.query(`
@@ -2734,17 +2821,29 @@ async function getDrainStatus() {
 
   const tasks = inProgressResult.rows;
 
-  // Auto-complete drain: if no in_progress tasks remain, disable tick
+  // Auto-complete drain: if no in_progress tasks remain, enter post-drain cooldown
+  // (NOT disableTick — that would kill the entire tick loop, causing system-wide stop)
   if (tasks.length === 0) {
-    console.log('[tick] Drain complete — no in_progress tasks remain, disabling tick');
+    console.log('[tick] Drain complete — no in_progress tasks remain, entering post-drain cooldown (dispatch rate → 1)');
     const drainEnd = new Date().toISOString();
     const startedAt = _drainStartedAt;
     _draining = false;
     _drainStartedAt = null;
-    await disableTick();
+
+    // Set post-drain cooldown: dispatch rate limited to 1 for 5 minutes
+    _postDrainCooldown = true;
+    if (_postDrainCooldownTimer) clearTimeout(_postDrainCooldownTimer);
+    _postDrainCooldownTimer = setTimeout(() => {
+      _postDrainCooldown = false;
+      _postDrainCooldownTimer = null;
+      console.log('[tick] Post-drain cooldown expired — dispatch rate restored to normal');
+    }, 5 * 60 * 1000); // 5 minutes
+    if (_postDrainCooldownTimer.unref) _postDrainCooldownTimer.unref();
+
     return {
       draining: false,
       drain_completed: true,
+      post_drain_cooldown: true,
       drain_started_at: startedAt,
       drain_ended_at: drainEnd,
       in_progress_tasks: [],
@@ -2780,11 +2879,16 @@ function cancelDrain() {
 
 // Expose drain state for testing
 function _getDrainState() {
-  return { draining: _draining, drainStartedAt: _drainStartedAt };
+  return { draining: _draining, drainStartedAt: _drainStartedAt, postDrainCooldown: _postDrainCooldown };
 }
 function _resetDrainState() {
   _draining = false;
   _drainStartedAt = null;
+  _postDrainCooldown = false;
+  if (_postDrainCooldownTimer) {
+    clearTimeout(_postDrainCooldownTimer);
+    _postDrainCooldownTimer = null;
+  }
 }
 
 /**
@@ -2885,6 +2989,10 @@ export {
   cancelDrain,
   _getDrainState,
   _resetDrainState,
+  // Tick watchdog
+  startTickWatchdog,
+  stopTickWatchdog,
+  TICK_WATCHDOG_INTERVAL_MS,
   getRampedDispatchMax,
   TASK_TYPE_AGENT_MAP,
   TICK_INTERVAL_MINUTES,

@@ -22,14 +22,14 @@ describe('tick-health-monitor: disableTick stores disabled_at', () => {
     expect(src).toContain('new Date().toISOString()');
   });
 
-  it('TICK_AUTO_RECOVER_MINUTES constant is defined (default 30)', async () => {
+  it('TICK_AUTO_RECOVER_MINUTES constant is defined (default 5)', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
       new URL('../tick.js', import.meta.url).pathname,
       'utf8'
     );
     expect(src).toContain('TICK_AUTO_RECOVER_MINUTES');
-    expect(src).toContain("'30'");
+    expect(src).toContain("'5'");
   });
 
   it('initTickLoop checks disabled_at and auto-recovers when expired', async () => {
