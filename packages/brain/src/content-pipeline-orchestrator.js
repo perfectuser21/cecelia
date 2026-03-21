@@ -65,6 +65,18 @@ export const PIPELINE_STAGES = [
 /** content-review 最大重试次数（超过则 pipeline 标 failed）*/
 export const MAX_REVIEW_RETRY = 3;
 
+/** 内容发布目标平台（8 个），content-export 完成后逐一创建 content_publish 任务 */
+export const PUBLISH_PLATFORMS = [
+  'douyin',
+  'kuaishou',
+  'xiaohongshu',
+  'weibo',
+  'shipinhao',
+  'wechat',
+  'zhihu',
+  'toutiao',
+];
+
 // ───────────────────────────────────────────────────────
 // Tick 侧：检测并启动 queued content-pipeline 任务
 // ───────────────────────────────────────────────────────
@@ -301,8 +313,9 @@ export async function advanceContentPipeline(taskId, taskStatus, findings = null
     }
   }
 
-  // ── content-export 完成 → 标记 pipeline completed ──
+  // ── content-export 完成 → 创建 content_publish 任务（8 平台）→ 标记 pipeline completed ──
   if (task_type === 'content-export') {
+    await _createPublishJobs(dbPool, pipeline, task);
     await dbPool.query(
       `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
       [pipelineId]
@@ -466,4 +479,62 @@ function _stageLabel(stage) {
     'content-export': '内容导出',
   };
   return labels[stage] || stage;
+}
+
+/**
+ * content-export 完成后，为 PUBLISH_PLATFORMS 中的每个平台创建 content_publish 任务。
+ * fire-and-forget：不等待发布完成，pipeline 直接标 completed。
+ * 含幂等保护：同一 pipeline 同一 platform 不重复创建。
+ *
+ * @param {import('pg').Pool} dbPool
+ * @param {object} pipeline - 父 pipeline 任务行
+ * @param {object} exportTask - content-export 子任务行
+ */
+async function _createPublishJobs(dbPool, pipeline, exportTask) {
+  const pipelineId = pipeline.id;
+  const keyword = pipeline.payload?.keyword || exportTask.payload?.pipeline_keyword || pipeline.title;
+  const contentType = pipeline.payload?.content_type || exportTask.payload?.content_type || 'solo-company-case';
+  let created = 0;
+
+  for (const platform of PUBLISH_PLATFORMS) {
+    // 幂等检查：同一 pipeline + platform 不重复创建
+    const existing = await dbPool.query(
+      `SELECT id FROM tasks
+       WHERE payload->>'parent_pipeline_id' = $1
+         AND task_type = 'content_publish'
+         AND payload->>'platform' = $2
+         AND status IN ('queued', 'in_progress', 'completed')
+       LIMIT 1`,
+      [pipelineId, platform]
+    );
+
+    if (existing.rows.length > 0) {
+      console.log(`[content-pipeline-orchestrator] content_publish(${platform}) 已存在，跳过`);
+      continue;
+    }
+
+    await dbPool.query(
+      `INSERT INTO tasks (title, task_type, status, priority, project_id, goal_id,
+                         trigger_source, payload, created_at)
+       VALUES ($1, 'content_publish', 'queued', $2, $3, $4, $5, $6, NOW())`,
+      [
+        `[发布] ${keyword} → ${platform}`,
+        'P1',
+        pipeline.project_id,
+        pipeline.goal_id,
+        'content_pipeline_orchestrator',
+        JSON.stringify({
+          parent_pipeline_id: pipelineId,
+          platform,
+          pipeline_keyword: keyword,
+          content_type: contentType,
+        }),
+      ]
+    );
+
+    console.log(`[content-pipeline-orchestrator] content_publish(${platform}) 已创建`);
+    created++;
+  }
+
+  console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} → ${created} 个 content_publish 任务已创建`);
 }
