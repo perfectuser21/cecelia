@@ -1,8 +1,8 @@
 ---
 id: decomp-skill
-version: 2.0.0
+version: 2.1.0
 created: 2026-01-01
-updated: 2026-03-20
+updated: 2026-03-21
 changelog:
   - 1.0.0: 初始版本
   - 1.1.0: 添加 initiative_plan 模式
@@ -15,6 +15,7 @@ changelog:
   - 1.8.0: 全面重写以反映 24/7×10 slot 产能模型；Initiative 重定义为系统性子功能（≥4 PR）；新增 Phase 3 project_plan 飞轮机制；Project→Initiative 动态规划（初始10个，动态扩展到40-70个）
   - 1.9.0: 产能数据修正（PR 35-40min、~8600 PR/月）；补充 KR→Project 定义（3-4个/KR、周期1周）；OKR 并行说明（2 OKR × 3-4 KR）；Initiative 内 Task 串联定义；多机路由概念
   - 2.0.0: 新增 Scope 层级（Project→Scope→Initiative 三层结构）；引入 Shape Up 方法论 + SPIDR 拆分五刀法；Phase 3 改为 scope_plan 飞轮
+  - 2.1.0: 新增拆解粒度校准表（Task/Initiative/Scope/Project PR数量+周期+判断标准+反例说明）；新增 Initiative 技术调研规则（第一个 Task 必须为技术调研 + WebSearch 选型）
 ---
 
 # /decomp — 全链路 Project Management 拆解引擎
@@ -63,6 +64,90 @@ changelog:
 - Claude Code 研发任务：只在美国 VPS（8核16G）执行
 - 生产任务：香港 VPS + MiniMax API
 - 其他轻量任务：Mac mini / 办公室 PC
+
+---
+
+## 拆解粒度校准表（CRITICAL — 层级判断标准）
+
+拆解时必须对照此表校验粒度是否正确，防止层级错配：
+
+| 层级 | PR 数量 | 周期 | 判断标准 |
+|------|---------|------|----------|
+| Task | 1 PR | 1-2h | 单一功能点，一次 Pipeline 跑通 |
+| Initiative | 5-8 PR | 1-2 天 | 一个完整功能块，多个模块协同 |
+| Scope | 2-3 Initiative = 10-24 PR | 3-5 天 | 一个功能分组/边界 |
+| Project | 2-4 Scope = 30-80 PR | 1-2 周 | 一个业务目标 |
+
+**反例说明（拆解完必须自检）**：
+
+- 如果一个"Initiative"只需要 1-2 个 PR → **降级为 Task**，直接作为单个 PR 执行
+- 如果一个"Initiative"需要 15+ PR → **升级为 Scope**，拆成 2-3 个 Initiative
+- 如果一个"Task"需要改 20+ 文件 → 可能是 Initiative 级别，应拆分为多个 Task
+
+**校准检查时机**：
+- Phase 1 拆解完成后，逐条对照校准表
+- decomp-check 质检时，检查 PR 数量是否落在合理区间
+- 飞轮规划（Phase 2/3/4）时，发现粒度偏差及时调整
+
+---
+
+## Initiative 技术调研规则（CRITICAL — 执行前置步骤）
+
+**每个 Initiative 的第一个 Task 必须是"技术调研"**。
+
+### 规则
+
+1. Initiative 拆解出的 Task 列表中，**第一个 Task 固定为技术调研**
+2. 技术调研 Task 使用 WebSearch 搜索 GitHub 上该领域最新的开源方案、最佳实践、最新 release
+3. 输出技术选型报告，后续 PR 基于此选型开发
+
+### 技术调研 Task 模板
+
+```yaml
+title: "[Initiative名称] 技术调研"
+task_type: dev
+description: |
+  ## 目标
+  调研 [领域] 的最新技术方案和最佳实践
+
+  ## 调研内容
+  1. 使用 WebSearch 搜索 GitHub 上相关领域的开源项目
+  2. 对比主流方案的优劣（star 数、最近更新、社区活跃度）
+  3. 查看最新 release 的 changelog，确认 API 稳定性
+  4. 搜索最佳实践文章和官方文档
+
+  ## 产出物
+  在 PR 描述中输出技术选型报告：
+  - 候选方案对比表
+  - 推荐方案及理由
+  - 已知风险和 fallback 方案
+  - 关键 API/接口文档链接
+
+  ## 验收标准
+  - [ ] 至少对比 3 个候选方案
+  - [ ] 推荐方案有明确理由
+  - [ ] 后续 Task 的 PRD 引用此选型结论
+```
+
+### 例外情况
+
+以下情况可跳过技术调研：
+- 纯配置/文档类 Initiative（无代码逻辑）
+- 技术栈已在项目中使用且成熟（如内部模块重构）
+- Initiative 的 PR 计划中第一个本身就是 Spike 研究
+
+### F 模板更新
+
+Initiative 拆解时，PR 计划的第一项应为技术调研：
+
+```
+## PR 计划（预估 5-8 个 PR）
+1. [PR1：技术调研 — WebSearch 调研方案 + 技术选型报告]
+2. [PR2：基础数据结构/Schema]
+3. [PR3：核心业务逻辑]
+4. [PR4：API 层]
+5. [PR5：集成测试/端到端验证]
+```
 
 ---
 
@@ -181,11 +266,12 @@ description: |
   - [ ] [可验证的结果2]
   - [ ] [可验证的结果3]
 
-  ## PR 计划（预估 4-8 个 PR）
-  1. [PR1：基础数据结构/Schema]
-  2. [PR2：核心业务逻辑]
-  3. [PR3：API 层]
-  4. [PR4：集成测试/端到端验证]
+  ## PR 计划（预估 5-8 个 PR）
+  1. [PR1：技术调研 — WebSearch 调研方案 + 技术选型报告]
+  2. [PR2：基础数据结构/Schema]
+  3. [PR3：核心业务逻辑]
+  4. [PR4：API 层]
+  5. [PR5：集成测试/端到端验证]
 
 # 产能约束
 min_tasks: 4       # 最少 4 个 PR 才算 Initiative
