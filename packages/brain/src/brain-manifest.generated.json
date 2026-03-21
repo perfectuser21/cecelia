@@ -958,9 +958,10 @@
     "code_review_gate": "/code-review-gate",
     "initiative_review": "/initiative-review",
     "scope_plan": "/decomp",
-    "project_plan": "/decomp"
+    "project_plan": "/decomp",
+    "content_publish": "/content-creator"
   },
-  "generatedAt": "2026-03-21T12:17:30.271Z",
+  "generatedAt": "2026-03-21T23:40:21.027Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
