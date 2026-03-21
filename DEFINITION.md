@@ -443,6 +443,7 @@ queued → in_progress → completed
 | initiative_verify | US | Initiative 验收 (/arch-review verify) | Sonnet / - | 默认 anthropic |
 | scope_plan | US | Scope 内规划下一个 Initiative (/decomp Phase 3) | Opus / - | 默认 anthropic |
 | project_plan | US | Project 内规划下一个 Scope (/decomp Phase 4) | Opus / - | 默认 anthropic |
+| pipeline_rescue | US | Pipeline 救援 — 卡住的 pipeline 接管修复 (/dev) | Opus / - | 默认 anthropic |
 | suggestion_plan | US | Suggestion 层级识别 | Sonnet / - | 默认 anthropic |
 | talk | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | research | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
