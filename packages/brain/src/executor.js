@@ -102,6 +102,43 @@ const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226'
 // 西安 Mac mini Codex Bridge URL (via Tailscale)
 const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
 
+// 多机 Codex Bridge 列表（负载均衡）
+const CODEX_BRIDGES = (process.env.CODEX_BRIDGES || 'http://100.86.57.69:3458,http://100.103.88.66:3458')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
+/**
+ * 从多个 Codex Bridge 中选择最空闲的
+ */
+async function selectBestBridge() {
+  const results = await Promise.allSettled(
+    CODEX_BRIDGES.map(async (url) => {
+      const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.ok || data.status !== 'healthy') throw new Error('unhealthy');
+      const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+      const available = accounts.filter(a => !a.tokenExpired);
+      if (available.length === 0) throw new Error('no available accounts');
+      const avgPct = available.reduce((sum, a) => sum + (a.primaryUsedPct || 0), 0) / available.length;
+      return { url, avgPct, accountCount: available.length };
+    })
+  );
+
+  const healthy = results
+    .map((r) => r.status === 'fulfilled' ? r.value : null)
+    .filter(Boolean)
+    .sort((a, b) => a.avgPct - b.avgPct);
+
+  if (healthy.length === 0) {
+    console.warn('[executor] 所有 Codex Bridge 不可用，降级到 XIAN_CODEX_BRIDGE_URL');
+    return XIAN_CODEX_BRIDGE_URL;
+  }
+
+  const selected = healthy[0];
+  console.log(`[executor] Bridge 选择: ${selected.url} (avgPct=${selected.avgPct.toFixed(1)}%, accounts=${selected.accountCount})`);
+  return selected.url;
+}
+
 // ==================== Input Validation ====================
 
 const SAFE_ID_RE = /^[0-9a-zA-Z_-]+$/;
@@ -1821,7 +1858,8 @@ async function triggerCodexBridge(task) {
         ? `cp-${new Date().toISOString().replace(/[-T:]/g, '').slice(2, 12)}-${task.id.slice(0, 8)}${branchSuffix}`
         : undefined);
 
-    const response = await fetch(`${XIAN_CODEX_BRIDGE_URL}/run`, {
+    const bridgeUrl = await selectBestBridge();
+    const response = await fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

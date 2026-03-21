@@ -18,12 +18,24 @@
 version: "3.74.0"
 updated: "2026-03-21"
 changelog:
-  - version: "13.11.0"
+  - version: "13.13.0"
     date: "2026-03-21"
     summary: "feat(engine): 本地 CI 镜像检查 + Pipeline 统计汇总 + KR 进度回写 — 减少 CI 失败率 + 执行可观测性 + KR 自动更新"
     scope: skills
     breaking: false
     feature_id: local-ci-pipeline-stats-kr
+  - version: "13.12.0"
+    date: "2026-03-21"
+    summary: "feat(engine): Stage 4 集成 /simplify 代码简化审查 + cleanup.sh 补全过程文件清理"
+    scope: skills
+    breaking: false
+    feature_id: simplify-stage4-integration
+  - version: "13.11.0"
+    date: "2026-03-21"
+    summary: "fix(engine): Pipeline 死锁修复 — PR合并失败 return 2 重试 + Codex审查 15 分钟超时自动 PASS"
+    scope: lib
+    breaking: false
+    feature_id: pipeline-deadlock-fix
   - version: "13.10.0"
     date: "2026-03-21"
     summary: "feat(engine): Stage 1 新增 intent-expand 上下文补充和 Learning 检索 — 从 Brain 读取 KR/Project 上下文，搜索历史 Learning 推荐给 Agent"
