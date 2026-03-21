@@ -164,14 +164,16 @@ const actionHandlers = {
   },
 
   /**
-   * 更新 OKR 进度
+   * 更新 OKR 进度 — 已改为触发 verifier 重新采集，禁止直接写 progress
+   * 原因：防止丘脑/agent 自评 100%（行业最佳实践：Metric-driven，不是 Activity-driven）
+   * progress 只由 kr-verifier.js 根据外部数据源计算
    */
   async update_okr_progress(params, context) {
-    await pool.query(`
-      UPDATE goals SET progress = $1, updated_at = NOW()
-      WHERE id = $2
-    `, [params.progress, params.goal_id]);
-    return { success: true };
+    // 不再直接写 progress，而是触发 verifier 重新检查
+    const { runAllVerifiers } = await import('./kr-verifier.js');
+    const result = await runAllVerifiers();
+    console.log(`[decision-executor] update_okr_progress 已改为触发 verifier 重新采集 (checked=${result.checked})`);
+    return { success: true, note: 'progress 由 kr-verifier 从数据源计算，不接受直接写入', verifier_result: result };
   },
 
   /**
