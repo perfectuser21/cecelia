@@ -223,9 +223,11 @@ export async function applyMitigation(signals) {
 export async function activateShutdownSafety(signals) {
   console.log(`${COLORS.RED}[ALERTNESS] Brain entering COMA mode - system protection activated${COLORS.RESET}`);
 
-  // 1. Request drain mode (tick will see this and stop dispatch)
-  _mitigationState.drain_mode_requested = true;
-  console.log(`  - Drain mode requested (no new task dispatch)`);
+  // 1. COMA 不再自动请求 drain mode
+  // 原因：自动 drain 会叠加自杀导致系统停摆
+  // 改为只通过 getDispatchRate() 降低派发速率到 0，不触发 drain
+  _mitigationState.drain_mode_requested = false;
+  console.log(`  - COMA mode: dispatch rate reduced (drain mode NOT requested)`);
 
   // 2. Save state checkpoint to database
   try {
@@ -247,7 +249,7 @@ export async function activateShutdownSafety(signals) {
   // 3. Future: Notify external systems (Slack, PagerDuty)
   // (Not implemented in this PR)
 
-  return { drain_mode: true, checkpoint_saved: true };
+  return { drain_mode: false, checkpoint_saved: true };
 }
 
 /**

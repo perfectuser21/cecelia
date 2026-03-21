@@ -57,6 +57,11 @@ let _manualOverride = null;
 let stateHistory = [];
 const MAX_HISTORY_SIZE = 100;
 
+// PANIC 抖动稳定期：连续 critical 计数器
+// 只有连续 N 次评估都返回 PANIC 才真正升级，单次异常最多升到 ALERT
+let _consecutiveCriticalCount = 0;
+const PANIC_CONSECUTIVE_THRESHOLD = 3;
+
 // ============================================================
 // 核心评估逻辑
 // ============================================================
@@ -86,7 +91,22 @@ export async function evaluateAlertness() {
     const diagnosis = await diagnoseProblem(metrics, stateHistory);
 
     // 3. 确定目标等级
-    const targetLevel = determineTargetLevel(healthScore, diagnosis);
+    let targetLevel = determineTargetLevel(healthScore, diagnosis);
+
+    // 3.5 PANIC 抖动稳定期：连续 N 次 critical 才真正升级到 PANIC
+    if (targetLevel === ALERTNESS_LEVELS.PANIC) {
+      _consecutiveCriticalCount++;
+      if (_consecutiveCriticalCount < PANIC_CONSECUTIVE_THRESHOLD) {
+        // 未达到连续阈值，降级到 ALERT
+        console.log(`[Alertness] PANIC 抖动稳定: ${_consecutiveCriticalCount}/${PANIC_CONSECUTIVE_THRESHOLD}，暂时降级为 ALERT`);
+        targetLevel = ALERTNESS_LEVELS.ALERT;
+      } else {
+        console.log(`[Alertness] PANIC 抖动稳定: 连续 ${_consecutiveCriticalCount} 次 critical，允许升级到 PANIC`);
+      }
+    } else {
+      // 非 critical 评估，重置计数器
+      _consecutiveCriticalCount = 0;
+    }
 
     // 4. 检查状态转换规则
     const canTransition = checkTransitionRules(currentState.level, targetLevel);

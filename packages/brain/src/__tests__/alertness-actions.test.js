@@ -81,9 +81,9 @@ describe('alertness-actions', () => {
 
       expect(result.actions).toContain('shutdown_safety');
 
-      // Check drain mode requested
+      // COMA 不再自动请求 drain mode（防止叠加 drain 自杀）
       const state = getMitigationState();
-      expect(state.drain_mode_requested).toBe(true);
+      expect(state.drain_mode_requested).toBe(false);
 
       // Check checkpoint was saved
       const events = await pool.query(
@@ -178,13 +178,14 @@ describe('alertness-actions', () => {
   });
 
   describe('activateShutdownSafety', () => {
-    it('should request drain mode', async () => {
+    it('should NOT request drain mode (COMA no longer auto-drains)', async () => {
       const result = await activateShutdownSafety({ resource_pressure: 0.95 });
 
-      expect(result.drain_mode).toBe(true);
+      // COMA 不再自动请求 drain mode
+      expect(result.drain_mode).toBe(false);
 
       const state = getMitigationState();
-      expect(state.drain_mode_requested).toBe(true);
+      expect(state.drain_mode_requested).toBe(false);
     });
 
     it('should save checkpoint to database', async () => {
@@ -200,10 +201,10 @@ describe('alertness-actions', () => {
   });
 
   describe('recoverFromLevel', () => {
-    it('should disable drain mode on PANIC -> ALERT', async () => {
-      // Setup: enter PANIC
+    it('should keep drain mode false on PANIC -> ALERT (COMA no longer auto-drains)', async () => {
+      // Setup: enter PANIC (no longer sets drain_mode_requested)
       await activateShutdownSafety({});
-      expect(getMitigationState().drain_mode_requested).toBe(true);
+      expect(getMitigationState().drain_mode_requested).toBe(false);
 
       // Recover
       await recoverFromLevel(PANIC, ALERT);
