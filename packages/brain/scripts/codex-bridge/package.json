@@ -1,0 +1,12 @@
+{
+  "name": "codex-bridge",
+  "version": "1.0.0",
+  "description": "Codex 任务执行桥接服务 — 运行在西安 Mac mini，接受 Brain 调度",
+  "main": "codex-bridge.cjs",
+  "scripts": {
+    "start": "node codex-bridge.cjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
