@@ -353,6 +353,7 @@ changelog:
   - "3.38.0: v12.52.0 - Stop Hook 重试上限 15→30 + 失败通知 Brain API：stop-dev.sh RETRY_COUNT 上限从 15 改为 30；30 次失败后读取 .dev-mode 中 task_id，调用 PATCH /api/brain/tasks/{id} 标记 failed（curl --max-time 5 || true，不影响主流程）"
   - "3.37.0: v12.51.0 - Per-Branch Learning 文件——消除并行冲突：check-learning.sh v2 检查 docs/learnings/<branch>.md（向后兼容旧 docs/LEARNINGS.md）；10-learning.md 指引写 per-branch 文件；fire-learnings-event.sh/extract-learnings.sh 支持 per-branch 路径"
   - "3.36.0: v12.50.0 - 统一 Stop Hook 状态文件格式：删除所有旧格式（.dev-lock/.dev-mode/.dev-sentinel 无后缀）兼容代码；stop.sh v14.0.0 只检测 .dev-lock.<branch>（删除旧格式兜底）；stop-dev.sh v14.0.0 删除旧格式 fallback/泄漏检查/sentinel 孤儿处理（减少 85 行）；03-branch.md 更新 worktree 冲突检测逻辑"
+  - "3.36.0: v13.8.0 - /decomp skill 增强：新增拆解粒度校准表（Task/Initiative/Scope/Project PR数量+周期+判断标准+反例说明）；新增 Initiative 技术调研规则（第一个 Task 必须为 WebSearch 技术调研+选型报告）"
   - "3.35.0: v12.49.0 - 变更行覆盖率硬门禁：新增 check-changed-coverage.cjs（三合一确定性门禁：feat 必须有新测试 + 测试必须 import 源码 + 变更行覆盖率 ≥ 60%）；vitest.config.ts 添加 json reporter；CI L3 新增 Coverage Gate 步骤"
   - "3.34.0: v12.48.0 - PRD 语义覆盖审计：05-dod.md 新增承诺分类（ARTIFACT/BEHAVIOR/GATE）；07-verify.md 新增 Step 7.5 独立审计员；check-dod-mapping.cjs 新增 BEHAVIOR 弱测试检测"
   - "3.33.0: v12.47.1 - branch-protect.sh v24 统一分支命名规范（删除 feature/* 支持，cp-* 为唯一合法格式，与 CI L1 verify-dev-workflow 完全一致）"
