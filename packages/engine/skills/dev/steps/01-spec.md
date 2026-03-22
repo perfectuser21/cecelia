@@ -1,8 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 1.0.0
+version: 2.0.0
 created: 2026-03-20
+updated: 2026-03-22
 changelog:
+  - 2.0.0: spec_review 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 1.0.0: 从 01-taskcard.md 重构为 Stage 1 Spec，加入 spec_review Codex Gate
 ---
 
@@ -233,52 +235,47 @@ echo "✅ 置信度已写入 .dev-mode"
 | 3-4  | PRD 不够清晰，多处不确定，需要大量探索 |
 | 1-2  | 需求很模糊，改动范围不确定，高度不确定 |
 
-## ⚡ 派发 spec_review Codex 任务（CRITICAL — Stage 1 最后一步）
+## ⚡ 执行 spec_review Agent subagent（CRITICAL — Stage 1 最后一步）
 
-> **Stage 1 完成后，派发 spec_review Codex 任务审查 Task Card 质量，然后停下来等 stop hook 放行。**
-> spec_review 替代了原来的 LLM 质量 Gate，由独立 Codex agent 做更客观的审查。
+> **Stage 1 完成后，调用 Agent subagent 同步审查 Task Card 质量。**
+> subagent 在 Anthropic 服务器运行，不占本地内存，~10 秒同步完成。
+> **不需要等 stop hook 放行**——subagent 是同步调用，结果立即可用。
 
-```bash
-BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-DEV_MODE_FILE=".dev-mode.${BRANCH}"
+### 重试逻辑（MUST 遵守）
 
-# 检查 Brain 是否可用
-BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
-if [[ -z "$BRAIN_HEALTH" ]]; then
-  echo "⚠️  Brain 不可用（$BRAIN_URL），spec_review 降级为跳过"
-  echo "spec_review_status: pass" >> "$DEV_MODE_FILE"
-else
-  echo "🔍 向 Brain 注册 spec_review 任务..."
+- PASS → 写入 `spec_review_status: pass`，立即继续 Stage 2
+- FAIL → 读取 issues，修复 Task Card，**retry_count++**，最多重审 **3** 次
+- 超过 3 次 FAIL → 降级为 pass（写 `spec_review_degraded: true`）
 
-  SR_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
-    -H "Content-Type: application/json" \
-    -d "{\"title\":\"Spec Review: $BRANCH\",\"task_type\":\"spec_review\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
-  SR_TASK=$(echo "$SR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
-  if [[ -n "$SR_TASK" ]]; then
-    echo "spec_review_task_id: $SR_TASK" >> "$DEV_MODE_FILE"
-    echo "spec_review_registered_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$DEV_MODE_FILE"
-    echo "spec_review_status: pending" >> "$DEV_MODE_FILE"
-    echo "  ✅ spec_review 已注册: $SR_TASK"
-    # 立即派发（不等调度器）
-    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
-      -H "Content-Type: application/json" \
-      -d "{\"task_id\":\"$SR_TASK\"}" \
-      --max-time 5 2>/dev/null || true
-    echo "  🚀 spec_review 已派发执行"
-  else
-    echo "  ⚠️  spec_review 注册失败，降级为跳过"
-    echo "spec_review_status: pass" >> "$DEV_MODE_FILE"
-    echo "spec_review_degraded: true" >> "$DEV_MODE_FILE"
-    echo "spec_review_degraded_reason: Brain API 注册失败（响应无 task id）" >> "$DEV_MODE_FILE"
-  fi
-fi
+```
+retry_count = 0
+
+loop:
+  1. 调用 Agent subagent（subagent_type=general-purpose）
+     - prompt = spec-review SKILL.md 全文 + Task Card 全文
+     - SKILL.md 路径：packages/workflows/skills/spec-review/SKILL.md
+  2. 解析 JSON 结果中的 "verdict" 字段
+  3. verdict == "PASS"
+       → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
+       → break（继续 Stage 2）
+  4. verdict == "FAIL"
+       → 读取 issues[].description + suggestion
+       → 修复 Task Card（.task-${BRANCH}.md）中对应的 DoD 条目
+       → retry_count++
+  5. retry_count >= 3
+       → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
+       → echo "spec_review_degraded: true" >> .dev-mode.${BRANCH}
+       → break（降级通过，继续 Stage 2）
 ```
 
-**输出状态后停止，等 stop hook 放行。**
-
-spec_review 通过后，devloop-check.sh 会放行，stop hook exit 2 会让 Claude 继续执行 Stage 2。
+**执行时注意**：
+- subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
+- subagent prompt 必须包含 Task Card **完整内容**
+- 不要向 Brain 注册任务，不要走 Codex 异步派发路径
+- FAIL 修复后必须重新调用 subagent，不能跳过重审
 
 ## 完成后
 
-**等待 spec_review 通过后**，立即执行 Stage 2：`cat skills/dev/steps/02-code.md`
+spec_review subagent 返回 PASS（或 retry 降级）后，**立即**执行 Stage 2：
+
+`cat skills/dev/steps/02-code.md`
