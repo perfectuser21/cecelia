@@ -31,7 +31,7 @@ fi
 
 # 配置
 # 并发槽位数：只看 CECELIA_MAX_CONCURRENT（旧 bridge 可能传 MAX_CONCURRENT=3，忽略）
-MAX_CONCURRENT="${CECELIA_MAX_CONCURRENT:-12}"
+MAX_CONCURRENT="${CECELIA_MAX_CONCURRENT:-10}"
 LOCK_DIR="${LOCK_DIR:-/tmp/cecelia-locks}"
 # Callback 强制指向 Brain（旧 bridge 传错误的 n8n URL，忽略）
 WEBHOOK_URL="http://localhost:5221/api/brain/execution-callback"

@@ -51,13 +51,14 @@ description: |
 
 ## 输入
 
-从 PR diff 获取变更文件列表，逐文件审查。
+从当前分支改动获取变更文件列表，逐文件审查。
+在 /dev Stage 2（push 前）触发，此时无 PR，用 git diff。
 
 ```bash
-# 获取 PR 变更文件
-gh pr diff <pr_number> --name-only
-# 获取 PR 完整 diff
-gh pr diff <pr_number>
+# 获取变更文件列表
+git diff origin/main..HEAD --name-only
+# 获取完整 diff
+git diff origin/main..HEAD
 ```
 
 ---
