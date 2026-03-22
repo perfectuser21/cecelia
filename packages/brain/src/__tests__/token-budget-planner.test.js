@@ -86,8 +86,8 @@ describe('accountRemainingPct()', () => {
 
   it('full 168h remaining → raw remaining (periodFraction=1)', () => {
     const a = makeAccount('a1', 50, 50, 168);
-    // periodFraction=168/168=1, not < 1, so returns rawRemaining=50
-    expect(accountRemainingPct(a)).toBe(50);
+    // periodFraction=168/168≈1, 浮点精度原因可能微小偏差，用 toBeCloseTo
+    expect(accountRemainingPct(a)).toBeCloseTo(50, 5);
   });
 
   it('reset 在 2 小时内 → 视为 100%', () => {
