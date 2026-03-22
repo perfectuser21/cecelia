@@ -204,7 +204,118 @@ export async function detectAndExecuteAction(message, llmIntent = null) {
   return executeViaIntentPipeline(message);
 }
 
-// ── LLM 意图执行 ─────────────────────────────────────────
+// ── LLM 意图执行（子函数） ────────────────────────────────
+
+async function handleLlmCreateTask(title, entities, llmIntent, message) {
+  const linked = await linkEntities(llmIntent, message);
+  const result = await createTask({
+    title,
+    description: entities.description || message,
+    priority: entities.priority || 'P2',
+    task_type: 'research',
+    trigger_source: 'chat_llm',
+    ...(linked.goal_id && { goal_id: linked.goal_id }),
+    ...(linked.project_id && { project_id: linked.project_id }),
+  });
+  const dedupNote = result.deduplicated ? '（已存在，跳过重复创建）' : '';
+  const linkNote = linked.goal_id || linked.project_id ? '（已关联到 OKR/项目）' : '';
+  return `\n\n✅ 已创建任务：${title}${dedupNote}${linkNote}`;
+}
+
+async function handleLlmCreateGoal(title, entities, llmIntent, message) {
+  const linked = await linkEntities(llmIntent, message);
+  await pool.query(
+    `INSERT INTO goals (title, priority, status, progress, project_id) VALUES ($1, $2, 'pending', 0, $3) RETURNING id, title`,
+    [title, entities.priority || 'P1', linked.project_id || null]
+  );
+  return `\n\n✅ 已创建目标：${title}`;
+}
+
+async function triggerUrlResearch(url, title) {
+  try {
+    await addSource(url);
+    const { queryNotebook } = await import('./notebook-adapter.js');
+    const nbResult = await queryNotebook(`总结这个资源的核心内容和关键要点：${title}`);
+    if (nbResult.ok && nbResult.text) {
+      await pool.query(
+        `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+         VALUES ($1, 7, 'long', NOW() + INTERVAL '30 days')`,
+        [`[研究完成] ${title}\n${nbResult.text.slice(0, 500)}`]
+      );
+    }
+  } catch (researchErr) {
+    console.warn('[chat-action-dispatcher] async research failed:', researchErr.message);
+  }
+}
+
+async function handleLlmLearn(title, entities, message) {
+  const learnContent = entities.description || message;
+  const learnHash = crypto.createHash('sha256').update(`${title}\n${learnContent}`).digest('hex').slice(0, 16);
+  const existingLearn = await pool.query(
+    'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+    [learnHash]
+  );
+
+  if (existingLearn.rows.length > 0) {
+    const eid = existingLearn.rows[0].id;
+    const nv = (existingLearn.rows[0].version || 1) + 1;
+    await pool.query('UPDATE learnings SET version = $1 WHERE id = $2', [nv, eid]);
+    return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
+  }
+
+  await pool.query(
+    `INSERT INTO learnings (title, category, content, trigger_event, digested, content_hash, version, is_latest)
+     VALUES ($1, $2, $3, $4, false, $5, 1, true)`,
+    [title, 'user_shared', learnContent, 'chat_llm', learnHash]
+  );
+  await pool.query(
+    `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+     VALUES ($1, 5, 'long', NOW() + INTERVAL '30 days')`,
+    [`[学习记录] ${title}`]
+  );
+
+  const urlMatch = message.match(/https?:\/\/[^\s]+/);
+  if (urlMatch) {
+    // 异步研究流：前台秒回，后台 NotebookLM 研究
+    (async () => { await triggerUrlResearch(urlMatch[0], title); })();
+  }
+  return `\n\n✅ 已记录学习：${title}${urlMatch ? '\n📚 已启动后台研究，结果稍后自动整理。' : ''}`;
+}
+
+async function handleLlmResearch(title, entities, llmIntent, message) {
+  const linked = await linkEntities(llmIntent, message);
+  const result = await createTask({
+    title: `[研究] ${title}`,
+    description: `用户请求研究：${message}`,
+    priority: entities.priority || 'P2',
+    task_type: 'research',
+    trigger_source: 'chat_llm',
+    ...(linked.goal_id && { goal_id: linked.goal_id }),
+    ...(linked.project_id && { project_id: linked.project_id }),
+  });
+  const dedupNote = result.deduplicated ? '（已存在）' : '';
+  return `\n\n✅ 已创建研究任务：${title}${dedupNote}\n将在下个调度周期派发给合适的 agent。`;
+}
+
+async function handleLlmQueryStatus() {
+  const result = await pool.query(
+    `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
+  );
+  if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
+  const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
+  return `\n\n📊 当前任务统计：\n${lines}`;
+}
+
+// ── LLM 意图分发器 ────────────────────────────────────────
+
+const LLM_INTENT_HANDLERS = {
+  CREATE_TASK:    (title, entities, llmIntent, message) => handleLlmCreateTask(title, entities, llmIntent, message),
+  CREATE_GOAL:    (title, entities, llmIntent, message) => handleLlmCreateGoal(title, entities, llmIntent, message),
+  CREATE_PROJECT: (_title, _entities, _llmIntent, message) => parseAndCreate(message).then(formatIntentResult),
+  LEARN:          (title, entities, _llmIntent, message) => handleLlmLearn(title, entities, message),
+  RESEARCH:       (title, entities, llmIntent, message) => handleLlmResearch(title, entities, llmIntent, message),
+  QUERY_STATUS:   () => handleLlmQueryStatus(),
+};
 
 /**
  * 通过 LLM 解析的意图执行动作
@@ -216,122 +327,9 @@ async function executeViaLlmIntent(message, llmIntent) {
   try {
     const { intent, entities = {}, summary } = llmIntent;
     const title = summary || entities.title || message.slice(0, 80);
-
-    switch (intent) {
-      case 'CREATE_TASK': {
-        const linked = await linkEntities(llmIntent, message);
-        const result = await createTask({
-          title,
-          description: entities.description || message,
-          priority: entities.priority || 'P2',
-          task_type: 'research',
-          trigger_source: 'chat_llm',
-          ...(linked.goal_id && { goal_id: linked.goal_id }),
-          ...(linked.project_id && { project_id: linked.project_id }),
-        });
-        const dedupNote = result.deduplicated ? '（已存在，跳过重复创建）' : '';
-        const linkNote = linked.goal_id || linked.project_id ? '（已关联到 OKR/项目）' : '';
-        return `\n\n✅ 已创建任务：${title}${dedupNote}${linkNote}`;
-      }
-
-      case 'CREATE_GOAL': {
-        const linked = await linkEntities(llmIntent, message);
-        await pool.query(
-          `INSERT INTO goals (title, priority, status, progress, project_id) VALUES ($1, $2, 'pending', 0, $3) RETURNING id, title`,
-          [title, entities.priority || 'P1', linked.project_id || null]
-        );
-        return `\n\n✅ 已创建目标：${title}`;
-      }
-
-      case 'CREATE_PROJECT': {
-        const result = await parseAndCreate(message);
-        return formatIntentResult(result);
-      }
-
-      case 'LEARN': {
-        // 去重检查：content_hash
-        const learnContent = entities.description || message;
-        const learnHash = crypto.createHash('sha256').update(`${title}\n${learnContent}`).digest('hex').slice(0, 16);
-        const existingLearn = await pool.query(
-          'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
-          [learnHash]
-        );
-
-        if (existingLearn.rows.length > 0) {
-          // 已存在，更新版本
-          const eid = existingLearn.rows[0].id;
-          const nv = (existingLearn.rows[0].version || 1) + 1;
-          await pool.query(
-            'UPDATE learnings SET version = $1 WHERE id = $2',
-            [nv, eid]
-          );
-          return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
-        }
-
-        await pool.query(
-          `INSERT INTO learnings (title, category, content, trigger_event, digested, content_hash, version, is_latest)
-           VALUES ($1, $2, $3, $4, false, $5, 1, true)`,
-          [title, 'user_shared', learnContent, 'chat_llm', learnHash]
-        );
-        await pool.query(
-          `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-           VALUES ($1, 5, 'long', NOW() + INTERVAL '30 days')`,
-          [`[学习记录] ${title}`]
-        );
-
-        // URL 检测：有链接时异步投递 NotebookLM + 后台研究
-        const urlMatch = message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) {
-          // 异步研究流：前台秒回，后台 NotebookLM 研究
-          (async () => {
-            try {
-              await addSource(urlMatch[0]);
-              // 研究完成后查询 NotebookLM 获取摘要
-              const { queryNotebook } = await import('./notebook-adapter.js');
-              const nbResult = await queryNotebook(`总结这个资源的核心内容和关键要点：${title}`);
-              if (nbResult.ok && nbResult.text) {
-                // 研究结果写入 memory_stream（高重要性，让 desire system 感知）
-                await pool.query(
-                  `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-                   VALUES ($1, 7, 'long', NOW() + INTERVAL '30 days')`,
-                  [`[研究完成] ${title}\n${nbResult.text.slice(0, 500)}`]
-                );
-              }
-            } catch (researchErr) {
-              console.warn('[chat-action-dispatcher] async research failed:', researchErr.message);
-            }
-          })();
-        }
-        return `\n\n✅ 已记录学习：${title}${urlMatch ? '\n📚 已启动后台研究，结果稍后自动整理。' : ''}`;
-      }
-
-      case 'RESEARCH': {
-        const linked = await linkEntities(llmIntent, message);
-        const result = await createTask({
-          title: `[研究] ${title}`,
-          description: `用户请求研究：${message}`,
-          priority: entities.priority || 'P2',
-          task_type: 'research',
-          trigger_source: 'chat_llm',
-          ...(linked.goal_id && { goal_id: linked.goal_id }),
-          ...(linked.project_id && { project_id: linked.project_id }),
-        });
-        const dedupNote = result.deduplicated ? '（已存在）' : '';
-        return `\n\n✅ 已创建研究任务：${title}${dedupNote}\n将在下个调度周期派发给合适的 agent。`;
-      }
-
-      case 'QUERY_STATUS': {
-        const result = await pool.query(
-          `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
-        );
-        if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
-        const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
-        return `\n\n📊 当前任务统计：\n${lines}`;
-      }
-
-      default:
-        return null;
-    }
+    const handler = LLM_INTENT_HANDLERS[intent];
+    if (!handler) return null;
+    return await handler(title, entities, llmIntent, message);
   } catch (err) {
     console.warn('[chat-action-dispatcher] LLM intent execution failed:', err.message);
     return null;
