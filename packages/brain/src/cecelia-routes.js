@@ -8,6 +8,7 @@ import { Router } from 'express';
 import pool from './db.js';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
+import { updateConfig, refreshCache, getDynamicTaskTypes, getCachedConfig } from './task-type-config-cache.js';
 
 const router = Router();
 
@@ -317,6 +318,49 @@ router.get('/runs/:runId/logs', async (req, res) => {
   } catch (err) {
     console.error(`Error fetching logs for run ${req.params.runId}:`, err.message);
     res.json({ success: false, error: err.message });
+  }
+});
+
+// ==================== 动态任务类型路由配置 API ====================
+
+/**
+ * GET /task-type-configs
+ * 返回所有动态任务类型的路由配置（从 DB 读取）
+ */
+router.get('/task-type-configs', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT task_type, location, executor, skill, description, is_dynamic, updated_at FROM task_type_configs ORDER BY task_type'
+    );
+    res.json({ success: true, configs: rows });
+  } catch (err) {
+    console.error('[cecelia-routes] GET /task-type-configs error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /task-type-configs/:task_type
+ * 更新某个动态任务类型的路由配置，立即刷新内存缓存
+ */
+router.put('/task-type-configs/:task_type', async (req, res) => {
+  const { task_type } = req.params;
+  const { location, executor, skill } = req.body || {};
+
+  const allowed = ['us', 'hk', 'xian'];
+  if (location && !allowed.includes(location)) {
+    return res.status(400).json({ success: false, error: `location 必须是 us/hk/xian，收到: ${location}` });
+  }
+
+  try {
+    const updated = await updateConfig(pool, task_type, { location, executor, skill });
+    if (!updated) {
+      return res.status(404).json({ success: false, error: `task_type '${task_type}' 不存在或无字段更新` });
+    }
+    res.json({ success: true, config: updated });
+  } catch (err) {
+    console.error(`[cecelia-routes] PUT /task-type-configs/${task_type} error:`, err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
