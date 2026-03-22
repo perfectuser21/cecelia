@@ -13,7 +13,7 @@ vi.mock('../db.js', () => {
 });
 
 import pool from '../db.js';
-import ceceliaRoutes from '../cecelia-routes.js';
+import ceceliaRoutes, { mapStatus } from '../cecelia-routes.js';
 
 // Helper: create mock req/res
 function mockReqRes(params = {}, query = {}) {
@@ -243,6 +243,17 @@ describe('cecelia-routes', () => {
       expect(res._data.run.status).toBe('pending');
       expect(res._data.checkpoints.every(cp => cp.status === 'pending')).toBe(true);
     });
+  });
+
+  describe('直接测试 mapStatus', () => {
+    it('queued → pending', () => expect(mapStatus('queued')).toBe('pending'));
+    it('in_progress → running', () => expect(mapStatus('in_progress')).toBe('running'));
+    it('running → running', () => expect(mapStatus('running')).toBe('running'));
+    it('completed → completed', () => expect(mapStatus('completed')).toBe('completed'));
+    it('failed → failed', () => expect(mapStatus('failed')).toBe('failed'));
+    it('cancelled → failed', () => expect(mapStatus('cancelled')).toBe('failed'));
+    it('未知状态 → pending', () => expect(mapStatus('unknown_xyz')).toBe('pending'));
+    it('undefined → pending', () => expect(mapStatus(undefined)).toBe('pending'));
   });
 
   describe('status mapping', () => {
