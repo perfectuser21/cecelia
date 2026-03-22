@@ -176,7 +176,15 @@ const CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks';
 const CODEX_REVIEW_MAX = 2;
 
 // 审查任务类型列表（由 triggerCodexReview 以本机 codex CLI 执行，走独立 codex-review-locks 池）
-const REVIEW_TASK_TYPES = ['spec_review', 'code_review_gate', 'prd_review', 'initiative_review'];
+// 编码类 B類任务（需读代码上下文）也走本机 Codex，不走 cecelia-run（Claude Code）
+const REVIEW_TASK_TYPES = [
+  // Gate 审查（原有）
+  'spec_review', 'code_review_gate', 'prd_review', 'initiative_review',
+  // 编码类 B類（新增：需读代码，US 本机 Codex CLI 执行）
+  'code_review', 'decomp_review',
+  'initiative_plan', 'initiative_verify',
+  'arch_review', 'architecture_design', 'architecture_scan',
+];
 
 // ==================== Diagnostic Functions ====================
 
