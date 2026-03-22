@@ -1,8 +1,10 @@
 ---
 id: dev-stage-03-integrate
-version: 1.1.0
+version: 1.2.0
 created: 2026-03-20
+updated: 2026-03-22
 changelog:
+  - 1.2.0: 澄清 check-version-sync 禁用范围（PR 中不改版本号，但验证脚本可以跑）；commit 示例补充 Task-ID 字段
   - 1.1.0: code_review_gate 前移到 Stage 2（push 前审查），Stage 3 仅负责 push + CI
   - 1.0.0: 从 03-prci.md 重构为 Stage 3 Integrate，删除 4 个 Codex 注册，改为 CI 后 1 个 code_review
 ---
@@ -66,7 +68,12 @@ auto-version.yml 自动处理的文件（5 个）：
 - ❌ `npm version patch/minor/major`
 - ❌ 手动改 package.json 版本号
 - ❌ 手动改 .brain-versions / VERSION / DEFINITION.md 版本
-- ❌ 运行 `check-version-sync.sh`
+- ❌ 在 PR commit 中修改版本号文件
+
+> **关于 check-version-sync.sh 的澄清**：
+> 验证脚本 `bash packages/engine/ci/scripts/check-version-sync.sh` 可以在本地**跑来验证**当前状态是否一致，
+> 但禁止的是**在 PR 中运行 `npm version` 或手动修改版本号文件**。
+> 验证脚本用于**检查**，不用于**修改**。
 
 ---
 
@@ -126,9 +133,26 @@ fi
 
 ```bash
 git add -u
-git commit -m "feat: <功能描述>
+
+# Task-ID 字段：填写 Brain 任务 ID（从 .dev-mode.<branch> 的 task_id 字段读取）
+TASK_ID=$(grep "^task_id:" ".dev-mode.$(git rev-parse --abbrev-ref HEAD)" 2>/dev/null | cut -d' ' -f2 || echo "")
+TASK_ID_LINE=""
+if [[ -n "$TASK_ID" ]]; then
+    TASK_ID_LINE="
+Task-ID: ${TASK_ID}"
+fi
+
+git commit -m "feat: <功能描述>${TASK_ID_LINE}
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+```
+
+**commit 示例**：
+```
+feat: 修复 /dev pipeline Stage 步骤文件 P0/P1/P2 问题
+Task-ID: 27581a85-d52b-4493-ad01-37b9d38bc498
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ```
 
 ---

@@ -1,9 +1,10 @@
 ---
 id: dev-step-00-worktree-auto
-version: 2.3.0
+version: 2.4.0
 created: 2026-01-31
 updated: 2026-03-22
 changelog:
+  - 2.4.0: worktree-manage.sh 路径改为优先 repo 内路径（packages/engine/skills/dev/scripts/），再 fallback ~/.claude/skills/dev/scripts/
   - 2.3.0: 新任务进入 worktree 后主动创建 .dev-lock（含 tty + session_id），修复有头模式 stop hook 不工作的 bug
   - 2.2.0: 新增 .dev-lock 完整性检查（context 压缩恢复场景）
   - 2.1.0: 修复主仓库 cp-*/feature-* 分支检测盲区（强制 worktree）
@@ -146,7 +147,31 @@ echo "🔀 创建独立 worktree..."
 
 # 调用 worktree-manage.sh 创建
 # 注意：worktree-manage.sh 会自动更新 develop（Bug 2 修复）
-WORKTREE_PATH=$(bash ~/.claude/skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
+#
+# 路径搜索顺序（优先 repo 内路径，再 fallback ~/.claude/）：
+# 1. packages/engine/skills/dev/scripts/worktree-manage.sh（repo 内，版本受 git 管控）
+# 2. ~/.claude/skills/dev/scripts/worktree-manage.sh（symlink 指向 repo，等价）
+# 3. ~/.claude-account*/skills/dev/scripts/worktree-manage.sh（多账号环境 fallback）
+
+SCRIPT_PATH=""
+REPO_SCRIPT="packages/engine/skills/dev/scripts/worktree-manage.sh"
+CLAUDE_SCRIPT="${HOME}/.claude/skills/dev/scripts/worktree-manage.sh"
+
+if [[ -f "$REPO_SCRIPT" ]]; then
+    SCRIPT_PATH="$REPO_SCRIPT"
+elif [[ -f "$CLAUDE_SCRIPT" ]]; then
+    SCRIPT_PATH="$CLAUDE_SCRIPT"
+else
+    # 尝试 ~/.claude-account*/ 路径（多账号环境）
+    SCRIPT_PATH=$(ls "${HOME}"/.claude-account*/skills/dev/scripts/worktree-manage.sh 2>/dev/null | head -1 || echo "")
+fi
+
+if [[ -z "$SCRIPT_PATH" ]]; then
+    echo "❌ 找不到 worktree-manage.sh（搜索路径：$REPO_SCRIPT, $CLAUDE_SCRIPT, ~/.claude-account*/...）"
+    exit 1
+fi
+
+WORKTREE_PATH=$(bash "$SCRIPT_PATH" create "$TASK_NAME" 2>/dev/null | tail -1)
 
 if [[ -z "$WORKTREE_PATH" || ! -d "$WORKTREE_PATH" ]]; then
     echo "❌ Worktree 创建失败"
