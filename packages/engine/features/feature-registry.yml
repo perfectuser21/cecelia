@@ -17,8 +17,14 @@
 
 version: "3.88.0"
 updated: "2026-03-22"
-# ci-trigger: 13.27.0
+# ci-trigger: 13.28.0
 changelog:
+  - version: "13.28.0"
+    date: "2026-03-22"
+    summary: "feat(engine): 自动清理 prd/task 残留文件 — 新增 cleanup-merged-artifacts.yml + Stage 4 清理 dev-seal/dev-mode"
+    scope: .github/workflows/cleanup-merged-artifacts.yml,packages/engine/skills/dev/steps/04-ship.md
+    breaking: false
+    feature_id: cleanup-prd-task-artifacts
   - version: "13.27.0"
     date: "2026-03-22"
     summary: "feat(engine): Gate 状态防伪 — seal 文件机制，spec_review/code_review_gate 结论不可自写"
