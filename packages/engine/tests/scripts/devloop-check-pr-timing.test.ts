@@ -7,21 +7,21 @@ const DEVLOOP_CHECK = path.resolve(__dirname, '../../lib/devloop-check.sh');
 describe('devloop-check.sh — 4-Stage Pipeline 条件顺序', () => {
   const content = fs.readFileSync(DEVLOOP_CHECK, 'utf8');
 
-  describe('条件顺序验证', () => {
-    it('step_1_spec 检查在 spec_review 之前', () => {
+  describe('条件顺序验证（subagent 架构，无 1.5/2.5）', () => {
+    it('step_1_spec（条件 1）在 step_2_code（条件 2）之前', () => {
       const s1Pos = content.indexOf('条件 1: step_1_spec');
-      const srPos = content.indexOf('条件 1.5: spec_review');
+      const s2Pos = content.indexOf('条件 2: step_2_code');
       expect(s1Pos).toBeGreaterThan(-1);
-      expect(srPos).toBeGreaterThan(-1);
-      expect(s1Pos).toBeLessThan(srPos);
+      expect(s2Pos).toBeGreaterThan(-1);
+      expect(s1Pos).toBeLessThan(s2Pos);
     });
 
-    it('spec_review（条件 1.5）在 step_2_code（条件 2）之前', () => {
-      const srPos = content.indexOf('条件 1.5: spec_review');
+    it('step_2_code（条件 2）在 PR（条件 3）之前', () => {
       const s2Pos = content.indexOf('条件 2: step_2_code');
-      expect(srPos).toBeGreaterThan(-1);
+      const prPos = content.indexOf('条件 3: PR');
       expect(s2Pos).toBeGreaterThan(-1);
-      expect(srPos).toBeLessThan(s2Pos);
+      expect(prPos).toBeGreaterThan(-1);
+      expect(s2Pos).toBeLessThan(prPos);
     });
 
     it('PR 创建（条件 3）在 CI（条件 4）之前', () => {
@@ -32,12 +32,12 @@ describe('devloop-check.sh — 4-Stage Pipeline 条件顺序', () => {
       expect(prPos).toBeLessThan(ciPos);
     });
 
-    it('code_review（条件 2.5）在 step_2_code 之后', () => {
-      const s2Pos = content.indexOf('条件 2: step_2_code');
-      const crPos = content.indexOf('条件 2.5: code_review');
-      expect(s2Pos).toBeGreaterThan(-1);
-      expect(crPos).toBeGreaterThan(-1);
-      expect(crPos).toBeGreaterThan(s2Pos);
+    it('不再有条件 1.5（spec_review Codex Gate 已删除）', () => {
+      expect(content).not.toContain('条件 1.5');
+    });
+
+    it('不再有条件 2.5（code_review Codex Gate 已删除）', () => {
+      expect(content).not.toContain('条件 2.5');
     });
   });
 
