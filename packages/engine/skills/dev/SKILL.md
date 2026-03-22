@@ -245,16 +245,14 @@ step_4_ship: pending
 
 1. step_1_spec done？
    ❌ → exit 2 → 执行 Stage 1
-   ✅ → spec_review PASS？（查 Brain API）
-     ❌ PENDING → exit 2 → 等 Codex
-     ❌ FAIL → exit 2 → 修 Task Card
+   ✅ → spec_review PASS？（读 .dev-mode）
+     ❌ FAIL → exit 2 → 修 Task Card，无限重试 subagent
      ✅ PASS → 继续
 
 2. step_2_code done？
    ❌ → exit 2 → 执行 Stage 2
-   ✅ → code_review_gate PASS？（查 Brain API）
-     ❌ PENDING → exit 2 → 等 Codex
-     ❌ FAIL → exit 2 → 修代码
+   ✅ → code_review_gate PASS？（读 .dev-mode）
+     ❌ FAIL → exit 2 → 修代码，无限重试 subagent
      ✅ PASS → 继续
 
 3. PR 已创建？
@@ -275,7 +273,7 @@ step_4_ship: pending
    ✅ → Stage 4 Ship → cleanup_done: true → 完成
 ```
 
-**Codex 协作流程图（4-Stage Pipeline）**：
+**4-Stage Pipeline 流程图**：
 
 ```
 Stage 1 Spec → 派发 spec_review → 等 PASS
@@ -303,7 +301,7 @@ Stage 1 Spec → 派发 spec_review → 等 PASS
 
 ```
 Stage N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下一步
-（例外：Stage 1 和 Stage 2 完成后需等 Codex Gate 放行）
+（例外：Stage 1 和 Stage 2 完成后 subagent 同步审查，审查 PASS 后立即继续）
 ```
 
 ### 禁止行为
@@ -448,7 +446,7 @@ Stage 4: Ship      → 写 Learning + 合并 PR + 归档 + cleanup_done: true
 | 新 Stage | 原步骤 | 核心变化 |
 |----------|--------|----------|
 | Step 0: Worktree | Step 00 | 完全不变 |
-| Stage 1: Spec | Step 1 TaskCard | 加 spec_review Codex Gate |
+| Stage 1: Spec | Step 1 TaskCard | 加 spec_review subagent Gate |
 | Stage 2: Code | Step 2 Code | 删除 /simplify，加 code_review_gate（push 前审查） |
 | Stage 3: Integrate | Step 3 PR+CI | 仅 push + CI，code_review 已在 Stage 2 完成 |
 | Stage 4: Ship | Step 4 Learning + Step 5 Clean | 合并为一个 Stage |

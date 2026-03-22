@@ -7,8 +7,9 @@ updated: 2026-03-22
 changelog:
   - 1.0.0: 合并 code_quality + /simplify 为统一代码审查 Gate
   - 1.1.0: A1 C/E维度升级blocker；A2 新增维度G PRD/DoD对齐验证；A3 修复时机描述为Stage 2
+  - 1.2.0: 清理过时描述，修正触发时机（push前 Stage 2），删除旧 Gate 编号引用
 description: |
-  代码审查 Gate（Codex Gate 3/4）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。
+  代码审查 Gate（/dev Stage 2 最后一步）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。
   在 /dev Stage 2 代码写完后、push 之前触发。此时无 PR，通过 git diff 获取变更内容。
   覆盖安全、正确性、复用性、命名、效率、可维护性、PRD/DoD对齐七个维度。
   给出 PASS / FAIL 裁决。
@@ -19,7 +20,7 @@ description: |
 
 # Code-Review-Gate — 代码审查 Gate
 
-**唯一职责**：在 CI 通过后、PR 合并之前，审查代码质量。
+**唯一职责**：在 Stage 2 代码写完后、push 之前，审查代码质量。
 
 合并了以下两个旧 Skill 的职责：
 - `code_quality`：安全性、正确性审查

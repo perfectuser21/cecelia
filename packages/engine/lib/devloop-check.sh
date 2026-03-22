@@ -4,7 +4,7 @@
 # ============================================================================
 # 这是 /dev 工作流完成判断逻辑的 **唯一真实来源（SSOT）**。
 #
-# 所有 Provider 适配器（stop-dev.sh / runners/codex/runner.sh / 未来 Provider）
+# 所有 Provider 适配器（stop-dev.sh / stop.sh / 未来 Provider）
 # 都必须 source 此文件，通过 devloop_check() 获取当前状态，
 # 然后各自输出符合自己 Provider 协议的响应。
 #
@@ -14,8 +14,9 @@
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
 # 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
-# 更新: 2026-03-22 — 删除 spec_review/code_review_gate Codex Gate（改为 Agent subagent 同步审查）
+# 更新: 2026-03-22 — spec_review/code_review_gate 改为 Agent subagent 同步审查（删除 Codex 异步 Gate）
 # 更新: 2026-03-22 — 加回条件 1.5/2.5：读 .dev-mode 中 subagent 写入的 status 字段（不查 Brain API）
+# 更新: 2026-03-22 — 清理误导性注释，blocked 状态为 subagent FAIL 写入，需分析 root cause 修复
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -29,7 +30,7 @@
 #   条件 1.5: spec_review_status?
 #     → 不存在 → pass-through（subagent 尚未运行，不阻塞）
 #     → "pass" → 继续
-#     → "blocked" → exit 2（3次重审耗尽，需人工修复 Task Card）
+#     → "blocked" → exit 2（subagent 审查失败，需分析 root cause 修复 Task Card）
 #
 #   step_2_code done?
 #     → no → exit 2
@@ -38,7 +39,7 @@
 #   条件 2.5: code_review_gate_status?
 #     → 不存在 → pass-through（subagent 尚未运行，不阻塞）
 #     → "pass" → 继续
-#     → "blocked" → exit 2（3次重审耗尽，需人工修复代码）
+#     → "blocked" → exit 2（subagent 审查失败，需分析 root cause 修复代码）
 #
 #   PR 创建了?
 #   CI 过了?
@@ -143,15 +144,15 @@ devloop_check() {
     # ===== 条件 1.5: spec_review_status（Agent subagent 写入）=====
     # 字段不存在 → pass-through（subagent 尚未运行，正常流程已同步完成）
     # "pass" → 继续
-    # "blocked" → 3次重审耗尽，需人工修复 Task Card
+    # "blocked" → subagent 审查失败，需分析 root cause 修复 Task Card
     if [[ -f "$dev_mode_file" ]]; then
         local spec_review_status
         spec_review_status=$(grep "^spec_review_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
         if [[ "$spec_review_status" == "blocked" ]]; then
             if command -v _devlog_event &>/dev/null; then
-                _devlog_event "devloop-check" "spec_review" "blocked" "spec_review 3次重审未通过"
+                _devlog_event "devloop-check" "spec_review" "blocked" "spec_review 审查失败，需分析 root cause"
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"spec_review 3次重审仍 FAIL，需人工修复 Task Card 后写入 spec_review_status: pass","action":"检查 .dev-mode 中 spec_review 的问题，修复 Task Card，然后将 spec_review_status 改为 pass"}'
+            _devloop_jq -n '{"status":"blocked","reason":"spec_review FAIL，需深入分析 root cause 修复 Task Card 后写入 spec_review_status: pass","action":"读取 spec_review blocker issues，分析根本原因，修复 Task Card，然后将 spec_review_status 改为 pass"}'
             return 2
         fi
         # 不存在或 pass → pass-through，继续
@@ -173,15 +174,15 @@ devloop_check() {
     # ===== 条件 2.5: code_review_gate_status（Agent subagent 写入）=====
     # 字段不存在 → pass-through（subagent 尚未运行，正常流程已同步完成）
     # "pass" → 继续
-    # "blocked" → 3次重审耗尽，需人工修复代码
+    # "blocked" → subagent 审查失败，需分析 root cause 修复代码
     if [[ -f "$dev_mode_file" ]]; then
         local code_review_gate_status
         code_review_gate_status=$(grep "^code_review_gate_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
         if [[ "$code_review_gate_status" == "blocked" ]]; then
             if command -v _devlog_event &>/dev/null; then
-                _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate 3次重审未通过"
+                _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate 审查失败，需分析 root cause"
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"code_review_gate 3次重审仍 FAIL，需人工修复代码后写入 code_review_gate_status: pass","action":"检查 code_review_gate blocker issues，修复代码，然后将 code_review_gate_status 改为 pass"}'
+            _devloop_jq -n '{"status":"blocked","reason":"code_review_gate FAIL，需深入分析 root cause 修复代码后写入 code_review_gate_status: pass","action":"读取 code_review_gate blocker issues，分析根本原因，修复代码，然后将 code_review_gate_status 改为 pass"}'
             return 2
         fi
         # 不存在或 pass → pass-through，继续
