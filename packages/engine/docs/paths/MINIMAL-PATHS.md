@@ -407,14 +407,6 @@ changelog:
 
 ---
 
-### dev-subagent-skill-prompt-inline: /dev subagent gates 补全 SKILL.md prompt 内联传入
-
-1. ✅ **SPEC_REVIEW_SKILL 变量内联传入 prompt**
-2. ✅ **CODE_REVIEW_SKILL 变量内联传入 prompt**
-3. ✅ **不再有 SKILL.md 路径误导性说明**
-
----
-
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

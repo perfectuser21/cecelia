@@ -474,17 +474,6 @@ prd_content 存在则放行
 
 ---
 
-### dev-subagent-skill-prompt-inline: /dev subagent gates 补全 SKILL.md prompt 内联传入
-
-```
-Stage 1 完成 →
-读取 SPEC_REVIEW_SKILL 变量（cat SKILL.md）→
-构建完整 prompt（SKILL 全文 + Task Card 全文）→
-派发 spec_review subagent
-```
-
----
-
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

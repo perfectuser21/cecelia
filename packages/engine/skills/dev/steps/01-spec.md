@@ -1,6 +1,6 @@
 ---
 id: dev-stage-01-spec
-version: 2.0.0
+version: 2.2.0
 created: 2026-03-20
 updated: 2026-03-22
 changelog:
@@ -251,14 +251,10 @@ echo "✅ 置信度已写入 .dev-mode"
 ```
 retry_count = 0
 
-# 准备 SKILL.md 内容（必须读取文件，不能只传路径）
-SPEC_REVIEW_SKILL=$(cat packages/workflows/skills/spec-review/SKILL.md)
-TASK_CARD_CONTENT=$(cat ".task-${BRANCH}.md")
-
 loop:
   1. 调用 Agent subagent（subagent_type=general-purpose）
-     - prompt = SPEC_REVIEW_SKILL 变量内容（完整 SKILL.md 文本）+ "\n\n# 待审查 Task Card\n\n" + TASK_CARD_CONTENT 变量内容
-     - 注意：必须将 SKILL.md 和 Task Card 的实际文本内联传入 prompt，不能只传路径字符串
+     - prompt = spec-review SKILL.md 全文 + Task Card 全文
+     - SKILL.md 路径：packages/workflows/skills/spec-review/SKILL.md
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
        → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
