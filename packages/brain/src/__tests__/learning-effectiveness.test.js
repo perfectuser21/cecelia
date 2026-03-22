@@ -24,23 +24,23 @@ describe('evaluateStrategyEffectiveness', () => {
   let testStrategyKey;
 
   beforeEach(async () => {
-    // Clean up all test data from previous tests (respect foreign key constraints)
-    // Delete child tables first (all FK references to tasks)
-    await pool.query('DELETE FROM run_events');
-    await pool.query('DELETE FROM cortex_analyses');
-    await pool.query('DELETE FROM scan_results');
-    await pool.query('DELETE FROM task_runs');
-    await pool.query('DELETE FROM task_run_metrics');
-    await pool.query('DELETE FROM dev_execution_logs');
-    await pool.query('DELETE FROM dispatch_events');
-    await pool.query('DELETE FROM failure_events');
-    await pool.query('DELETE FROM progress_ledger');
-    await pool.query('DELETE FROM progress_ledger_review');
-    await pool.query('DELETE FROM reflections');
-    await pool.query('DELETE FROM rule_violation_logs');
-    await pool.query('DELETE FROM task_quality_checks');
-    await pool.query('DELETE FROM trd_decomposition_tasks');
-    await pool.query('DELETE FROM bottleneck_scans');
+    // Clean up test data — use task-scoped deletes to avoid interfering with
+    // concurrent test files (vitest maxForks=3 runs multiple files in parallel)
+    await pool.query('DELETE FROM run_events WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM cortex_analyses WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM scan_results WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM task_runs WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM task_run_metrics WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM dev_execution_logs WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM dispatch_events WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM failure_events WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM progress_ledger WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM progress_ledger_review WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM reflections WHERE source_task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM rule_violation_logs WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM task_quality_checks WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM trd_decomposition_tasks WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM bottleneck_scans WHERE mitigation_task_id IN (SELECT id FROM tasks)');
     await pool.query('DELETE FROM strategy_effectiveness');
     await pool.query('DELETE FROM strategy_adoptions');
     await pool.query('DELETE FROM tasks');
@@ -173,10 +173,10 @@ describe('evaluateStrategyEffectiveness', () => {
   });
 
   it('should detect ineffective strategies (no improvement)', async () => {
-    // Clean up tasks first to avoid contamination (delete FK children first)
-    await pool.query('DELETE FROM cortex_analyses');
-    await pool.query('DELETE FROM scan_results');
-    await pool.query('DELETE FROM run_events');
+    // Clean up tasks (scoped to avoid interfering with concurrent test files)
+    await pool.query('DELETE FROM cortex_analyses WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM scan_results WHERE task_id IN (SELECT id FROM tasks)');
+    await pool.query('DELETE FROM run_events WHERE task_id IN (SELECT id FROM tasks)');
     await pool.query('DELETE FROM tasks');
 
     // Create strategy with no improvement (use different time to avoid overlap)
