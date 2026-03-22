@@ -28,3 +28,4 @@
 
 - `.prd.md` 被 PR #1310 意外提交，导致 `check-dod-mapping.cjs` 追溯检查用旧 PRD 验证新 DoD → engine 测试失败。已在本 PR 删除。
 - `branch-protect.sh` 检查 `prd_id` 字段但 Brain API 返回 `prd_content`（字段名 mismatch），需后续修复 hook。
+- CI 时序陷阱：若 learning 文件在 PR 创建后才提交，旧 merge commit 不含该文件，CI 会报"未找到 Learning 文件"。解决：创建新 PR 触发新 merge commit。
