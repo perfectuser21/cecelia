@@ -66,12 +66,19 @@ describe('generateTaskEmbeddingAsync', () => {
     expect(generateEmbedding).toHaveBeenCalledWith(`${title}\n\n`);
   });
 
-  it('fails silently on OpenAI error', async () => {
+  it('fails silently on OpenAI error and writes retry queue', async () => {
     process.env.OPENAI_API_KEY = 'sk-test-key';
     generateEmbedding.mockRejectedValue(new Error('OpenAI quota exceeded'));
+    pool.query
+      .mockResolvedValueOnce({ rows: [] }) // SELECT working_memory
+      .mockResolvedValue({ rows: [] });    // INSERT working_memory
     // Should not throw
     await expect(generateTaskEmbeddingAsync(taskId, title, description)).resolves.toBeUndefined();
-    expect(pool.query).not.toHaveBeenCalled();
+    // Failure writes to embedding_retry_queue
+    const retryCall = pool.query.mock.calls.find(c =>
+      typeof c[0] === 'string' && c[0].includes('embedding_retry_queue')
+    );
+    expect(retryCall).toBeDefined();
   });
 
   it('fails silently on DB error', async () => {
