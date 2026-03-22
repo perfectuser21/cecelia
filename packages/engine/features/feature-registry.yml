@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.79.0"
+version: "3.80.0"
 updated: "2026-03-22"
 # ci-trigger: 13.18.0
 changelog:
+  - version: "13.18.1"
+    date: "2026-03-22"
+    summary: "fix(engine): branch-protect.sh 增加 .dod.md 归属校验 — 旧格式 .dod.md 含 branch 字段时校验是否属于当前任务，不匹配输出 [WARN] 不阻断"
+    scope: hooks/branch-protect.sh
+    breaking: false
+    feature_id: dod-ownership-check-v1
   - version: "13.18.0"
     date: "2026-03-22"
     summary: "fix(engine): 修复 01-spec.md/02-code.md frontmatter version 字段与 changelog 不一致（2.0.0→2.2.0, 4.0.0→4.2.0）"
