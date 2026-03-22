@@ -400,6 +400,13 @@ changelog:
 
 ---
 
+### branch-protect-prd-content-fallback: branch-protect hook 修复 prd_id→prd_content 双重检测
+
+1. ✅ **prd_id 不存在时检查 prd_content**
+2. ✅ **dods API 404 时降级放行**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
