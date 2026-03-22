@@ -17,8 +17,14 @@
 
 version: "3.78.0"
 updated: "2026-03-22"
-# ci-trigger: 13.16.0
+# ci-trigger: 13.17.0
 changelog:
+  - version: "13.17.0"
+    date: "2026-03-22"
+    summary: "fix(engine): 清理 pipeline 过时 Codex 引用 — 删除 devloop-check.sh \"3次重审\" + codex runner 引用，修正 /dev SKILL.md \"等Codex\"→subagent，修正 code-review-gate 触发时机描述"
+    scope: lib/devloop-check.sh,skills/dev/SKILL.md,workflows/skills/code-review-gate/SKILL.md
+    breaking: false
+    feature_id: cleanup-codex-refs-v1
   - version: "13.16.0"
     date: "2026-03-22"
     summary: "fix(engine): 删除 pipeline blocked 降级路径（100%自动原则）；04-ship.md 删除重复 Simplify；02-code.md push前强制垃圾清理+codex-test-gen自动触发"
