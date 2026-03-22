@@ -2665,6 +2665,7 @@ export const deployState = {
   finished_at: null,
   elapsed_ms: null,
   error: null,
+  output_tail: [],      // 最近 20 行 stdout/stderr，供调试用
 };
 
 // GET /api/brain/deploy/status — 查询最近一次部署状态
@@ -2686,48 +2687,89 @@ router.post('/deploy', async (req, res) => {
 
   const { changed_paths } = req.body || {};
 
-  // 更新状态为 running，立即返回 202
+  // 并发保护：running 时拒绝第二次请求
+  if (deployState.status === 'running') {
+    return res.status(409).json({ error: 'Deploy already in progress', started_at: deployState.started_at });
+  }
+
+  // 更新状态为 running，立即返回 202（不阻塞事件循环）
   deployState.status = 'running';
   deployState.started_at = new Date().toISOString();
   deployState.finished_at = null;
   deployState.elapsed_ms = null;
   deployState.error = null;
+  deployState.output_tail = [];
 
   res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
 
-  const { execSync } = await import('child_process');
+  // 异步执行 deploy 脚本（spawn 不阻塞事件循环）
+  const { spawn } = await import('child_process');
   const startTime = Date.now();
+  const scriptDir = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
+  const cwd = new URL('../../../..', import.meta.url).pathname;
 
-  try {
-    // 构建 deploy-local.sh 参数
-    const scriptDir = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
-    let cmd = `bash "${scriptDir}" main`;
+  const args = ['bash', [scriptDir, 'main']];
+  if (changed_paths && changed_paths.length > 0) {
+    args[1] = [scriptDir, `--changed=${changed_paths.join(' ')}`, 'main'];
+  }
 
-    if (changed_paths && changed_paths.length > 0) {
-      const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
-      cmd = `bash "${scriptDir}" --changed="${escaped}" main`;
-    }
+  console.log(`[deploy-webhook] 开始部署: bash ${args[1].join(' ')}`);
+  const child = spawn(args[0], args[1], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 
-    console.log(`[deploy-webhook] 开始部署: ${cmd}`);
-    execSync(cmd, {
-      cwd: new URL('../../../..', import.meta.url).pathname,
-      timeout: 600_000, // 10 分钟超时
-      stdio: 'inherit',
+  const addOutputLine = (line) => {
+    deployState.output_tail.push(line);
+    if (deployState.output_tail.length > 20) deployState.output_tail.shift();
+  };
+
+  child.stdout.on('data', (data) => {
+    data.toString().split('\n').filter(Boolean).forEach((l) => {
+      console.log(`[deploy] ${l}`);
+      addOutputLine(l);
     });
+  });
+  child.stderr.on('data', (data) => {
+    data.toString().split('\n').filter(Boolean).forEach((l) => {
+      console.error(`[deploy] ${l}`);
+      addOutputLine(`[err] ${l}`);
+    });
+  });
 
+  const deployTimeout = setTimeout(() => {
+    child.kill('SIGTERM');
     const elapsed = Date.now() - startTime;
-    deployState.status = 'success';
+    deployState.status = 'failed';
     deployState.finished_at = new Date().toISOString();
     deployState.elapsed_ms = elapsed;
-    console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
-  } catch (err) {
+    deployState.error = 'Deploy timed out after 10 minutes';
+    console.error('[deploy-webhook] ❌ 部署超时');
+  }, 600_000);
+
+  child.on('close', (code) => {
+    clearTimeout(deployTimeout);
+    const elapsed = Date.now() - startTime;
+    if (code === 0) {
+      deployState.status = 'success';
+      deployState.finished_at = new Date().toISOString();
+      deployState.elapsed_ms = elapsed;
+      console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
+    } else {
+      deployState.status = 'failed';
+      deployState.finished_at = new Date().toISOString();
+      deployState.elapsed_ms = elapsed;
+      deployState.error = `Deploy script exited with code ${code}`;
+      console.error(`[deploy-webhook] ❌ 部署失败 code=${code} (${(elapsed / 1000).toFixed(1)}s)`);
+    }
+  });
+
+  child.on('error', (err) => {
+    clearTimeout(deployTimeout);
     const elapsed = Date.now() - startTime;
     deployState.status = 'failed';
     deployState.finished_at = new Date().toISOString();
     deployState.elapsed_ms = elapsed;
     deployState.error = err.message;
-    console.error(`[deploy-webhook] ❌ 部署失败 (${(elapsed / 1000).toFixed(1)}s):`, err.message);
-  }
+    console.error(`[deploy-webhook] ❌ 部署错误 (${(elapsed / 1000).toFixed(1)}s):`, err.message);
+  });
 });
 
 

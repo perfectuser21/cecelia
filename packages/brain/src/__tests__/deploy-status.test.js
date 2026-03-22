@@ -47,7 +47,7 @@ vi.mock('./shared.js', () => ({
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
 }));
-vi.mock('child_process', () => ({ exec: vi.fn(), execSync: vi.fn() }));
+vi.mock('child_process', () => ({ exec: vi.fn(), execSync: vi.fn(), spawn: vi.fn() }));
 
 describe('deploy-status', () => {
   let app;
@@ -55,6 +55,7 @@ describe('deploy-status', () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    process.env.DEPLOY_TOKEN = 'test-token';
     const mod = await import('../routes/ops.js');
     deployState = mod.deployState;
     app = express();
@@ -122,5 +123,31 @@ describe('deploy-status', () => {
     expect(res.body.status).toBe('failed');
     expect(res.body.error).toBe('docker build failed');
     expect(res.body.elapsed_ms).toBe(3000);
+  });
+
+  it('deployState 初始包含 output_tail 空数组', () => {
+    expect(Array.isArray(deployState.output_tail)).toBe(true);
+    expect(deployState.output_tail.length).toBe(0);
+  });
+
+  it('GET /api/brain/deploy/status 返回 output_tail 字段', async () => {
+    deployState.output_tail = ['line1', 'line2'];
+    const res = await request(app).get('/api/brain/deploy/status');
+    expect(res.status).toBe(200);
+    expect(res.body.output_tail).toEqual(['line1', 'line2']);
+  });
+
+  it('POST /api/brain/deploy 在 running 时返回 409', async () => {
+    deployState.status = 'running';
+    deployState.started_at = new Date().toISOString();
+
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer test-token')
+      .send({ changed_paths: [] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/in progress/);
+    expect(res.body.started_at).toBeDefined();
   });
 });
