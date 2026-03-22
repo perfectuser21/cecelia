@@ -27,7 +27,8 @@ interface TaskDef {
   location: string;
   skill: string;
   desc: string;
-  editable?: boolean; // C类动态任务
+  editable?: boolean;        // C类动态任务（切换机器）
+  editableExecutor?: boolean; // B类任务（切换 executor：Claude Code / Codex）
 }
 
 // ─── 静态数据 ─────────────────────────────────────────────────────────────────
@@ -71,21 +72,21 @@ const TASKS_BY_CATEGORY: Record<Category, TaskDef[]> = {
     { task_type: 'dev', location: 'us', skill: '/dev', desc: '主力开发，Opus + /dev 全流程' },
   ],
   B: [
-    { task_type: 'initiative_execute',  location: 'us', skill: '/dev',                desc: 'Initiative 执行，/dev 全流程' },
-    { task_type: 'initiative_plan',     location: 'us', skill: '/decomp',             desc: 'Initiative 规划，读现有代码' },
-    { task_type: 'initiative_verify',   location: 'us', skill: '/arch-review verify', desc: 'Initiative 验收，核查代码实现' },
-    { task_type: 'intent_expand',       location: 'us', skill: '/intent-expand',      desc: '意图扩展，读 Brain DB 补全 PRD' },
-    { task_type: 'pipeline_rescue',     location: 'us', skill: '/dev',                desc: 'Pipeline 救援，读 .dev-mode + worktree' },
-    { task_type: 'code_review',         location: 'us', skill: '/code-review',        desc: '代码审查，读代码上下文' },
-    { task_type: 'code_review_gate',    location: 'us', skill: '/code-review-gate',   desc: '代码质量门禁（push 前审查）' },
-    { task_type: 'prd_review',          location: 'us', skill: '/prd-review',         desc: 'PRD 审查' },
-    { task_type: 'spec_review',         location: 'us', skill: '/spec-review',        desc: 'Spec 审查' },
-    { task_type: 'initiative_review',   location: 'us', skill: '/initiative-review',  desc: 'Initiative 整体审查' },
-    { task_type: 'decomp_review',       location: 'us', skill: '/decomp-check',       desc: '拆解审查（Vivian 角色）' },
-    { task_type: 'architecture_design', location: 'us', skill: '/architect design',   desc: '架构设计，读代码' },
-    { task_type: 'architecture_scan',   location: 'us', skill: '/architect scan',     desc: '系统扫描，读代码' },
-    { task_type: 'arch_review',         location: 'us', skill: '/arch-review review', desc: '架构巡检，读代码' },
-    { task_type: 'dept_heartbeat',      location: 'us', skill: '/cecelia',            desc: '部门心跳' },
+    { task_type: 'initiative_execute',  location: 'us', skill: '/dev',                desc: 'Initiative 执行，/dev 全流程',          editableExecutor: true },
+    { task_type: 'initiative_plan',     location: 'us', skill: '/decomp',             desc: 'Initiative 规划，读现有代码',            editableExecutor: true },
+    { task_type: 'initiative_verify',   location: 'us', skill: '/arch-review verify', desc: 'Initiative 验收，核查代码实现',          editableExecutor: true },
+    { task_type: 'intent_expand',       location: 'us', skill: '/intent-expand',      desc: '意图扩展，读 Brain DB 补全 PRD',        editableExecutor: true },
+    { task_type: 'pipeline_rescue',     location: 'us', skill: '/dev',                desc: 'Pipeline 救援，读 .dev-mode + worktree', editableExecutor: true },
+    { task_type: 'code_review',         location: 'us', skill: '/code-review',        desc: '代码审查，读代码上下文',                editableExecutor: true },
+    { task_type: 'code_review_gate',    location: 'us', skill: '/code-review-gate',   desc: '代码质量门禁（push 前审查）',           editableExecutor: true },
+    { task_type: 'prd_review',          location: 'us', skill: '/prd-review',         desc: 'PRD 审查',                              editableExecutor: true },
+    { task_type: 'spec_review',         location: 'us', skill: '/spec-review',        desc: 'Spec 审查',                             editableExecutor: true },
+    { task_type: 'initiative_review',   location: 'us', skill: '/initiative-review',  desc: 'Initiative 整体审查',                   editableExecutor: true },
+    { task_type: 'decomp_review',       location: 'us', skill: '/decomp-check',       desc: '拆解审查（Vivian 角色）',               editableExecutor: true },
+    { task_type: 'architecture_design', location: 'us', skill: '/architect design',   desc: '架构设计，读代码',                      editableExecutor: true },
+    { task_type: 'architecture_scan',   location: 'us', skill: '/architect scan',     desc: '系统扫描，读代码',                      editableExecutor: true },
+    { task_type: 'arch_review',         location: 'us', skill: '/arch-review review', desc: '架构巡检，读代码',                      editableExecutor: true },
+    { task_type: 'dept_heartbeat',      location: 'us', skill: '/cecelia',            desc: '部门心跳',                              editableExecutor: true },
   ],
   C: [
     // 所有 C类任务均可编辑（editable: true），UPSERT 写 DB
@@ -189,6 +190,7 @@ function TaskRow({ task, isSelected, onClick }: {
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs font-medium text-gray-800">{task.task_type}</span>
           {task.editable && <span className="text-amber-500 text-xs">● 可配置</span>}
+          {task.editableExecutor && <span className="text-indigo-500 text-xs">● 执行器可选</span>}
         </div>
         <div className="text-xs text-gray-400 mt-0.5 truncate">{task.desc}</div>
       </div>
@@ -204,7 +206,7 @@ function TaskRow({ task, isSelected, onClick }: {
 function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
   task: TaskDef;
   dynamicConfig: DynamicConfig | null;
-  onSave: (taskType: string, location: string) => void;
+  onSave: (taskType: string, updates: { location?: string; executor?: string }) => void;
   saving: boolean;
   saved: boolean;
   error: string | null;
@@ -212,14 +214,20 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
   const [editLocation, setEditLocation] = useState<string>(
     dynamicConfig?.location ?? task.location
   );
+  const [editExecutor, setEditExecutor] = useState<string>(
+    dynamicConfig?.executor ?? 'claude_code'
+  );
 
   useEffect(() => {
     setEditLocation(dynamicConfig?.location ?? task.location);
+    setEditExecutor(dynamicConfig?.executor ?? 'claude_code');
   }, [task.task_type, dynamicConfig]);
 
-  // C类任务均可编辑，不依赖 dynamicConfig 是否存在（UPSERT 后端支持）
+  // C类任务均可编辑（切换机器），B类任务可切换 executor
   const isEditable = !!task.editable;
+  const isExecutorEditable = !!task.editableExecutor;
   const currentLocation = dynamicConfig?.location ?? task.location;
+  const currentExecutor = dynamicConfig?.executor ?? 'claude_code';
 
   return (
     <div className="h-full flex flex-col">
@@ -257,18 +265,82 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
             <div className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2 border border-amber-200">
               C类任务，不锁机器。可在美国M4 / 西安M4 / 西安M1 之间切换，保存后 Brain 立即生效。
             </div>
+          ) : isExecutorEditable ? (
+            <div className="text-xs text-indigo-700 bg-indigo-50 rounded px-3 py-2 border border-indigo-200">
+              B类任务，锁定美国M4，不可切换机器。可选择执行器：Claude Code（默认）或 Codex CLI。
+            </div>
           ) : (
             <div className="text-xs text-gray-500 bg-gray-50 rounded px-3 py-2 border border-gray-200">
-              {task.location === 'us'
-                ? 'B类任务，锁定美国M4。需要本机代码/worktree/Brain DB 上下文，不可切换。'
-                : task.location === 'hk'
+              {task.location === 'hk'
                 ? 'D类任务，固定香港VPS。纯脚本执行，不涉及大模型路由。'
-                : 'C类固定任务，当前配置在西安M4。如需切换请在 DB 中添加动态配置。'}
+                : 'A类任务，锁定美国M4 + Claude Code，不可更改。'}
             </div>
           )}
         </section>
 
-        {/* 编辑表单（仅 C类动态任务） */}
+        {/* Executor 编辑表单（B类任务） */}
+        {isExecutorEditable && (
+          <section>
+            <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">执行器</div>
+            <div className="space-y-3">
+              {([
+                { value: 'claude_code', label: 'Claude Code', desc: '本机 cecelia-bridge · 10-slot 池' },
+                { value: 'codex',       label: 'Codex CLI',   desc: '本机 Codex CLI · 独立 2-slot 池' },
+              ] as const).map(opt => (
+                <label
+                  key={opt.value}
+                  className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                    editExecutor === opt.value
+                      ? 'bg-indigo-100 text-indigo-700 border-indigo-300'
+                      : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="executor"
+                    value={opt.value}
+                    checked={editExecutor === opt.value}
+                    onChange={() => setEditExecutor(opt.value)}
+                    className="sr-only"
+                  />
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    editExecutor === opt.value ? 'border-indigo-600' : 'border-gray-300'
+                  }`}>
+                    {editExecutor === opt.value && <div className="w-2 h-2 rounded-full bg-indigo-600" />}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">{opt.label}</div>
+                    <div className="text-xs text-gray-400">{opt.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {currentExecutor !== editExecutor && (
+              <div className="mt-2 text-xs text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded border border-indigo-200">
+                当前：{currentExecutor === 'codex' ? 'Codex CLI' : 'Claude Code'} → 切换为：{editExecutor === 'codex' ? 'Codex CLI' : 'Claude Code'}
+              </div>
+            )}
+
+            {error && (
+              <div className="mt-3 text-xs text-red-600 bg-red-50 px-3 py-2 rounded border border-red-200">{error}</div>
+            )}
+
+            <button
+              onClick={() => onSave(task.task_type, { executor: editExecutor })}
+              disabled={saving}
+              className="mt-4 w-full py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {saving ? '保存中…' : saved ? '✓ 已保存' : '保存执行器配置'}
+            </button>
+
+            {saved && (
+              <div className="mt-2 text-xs text-green-600 text-center">Brain 已立即生效</div>
+            )}
+          </section>
+        )}
+
+        {/* 机器切换表单（仅 C类动态任务） */}
         {isEditable && (
           <section>
             <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">切换机器</div>
@@ -312,7 +384,7 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
             )}
 
             <button
-              onClick={() => onSave(task.task_type, editLocation)}
+              onClick={() => onSave(task.task_type, { location: editLocation })}
               disabled={saving}
               className="mt-4 w-full py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
@@ -356,13 +428,13 @@ export default function TaskTypeConfigPage() {
 
   useEffect(() => { fetchConfigs(); }, [fetchConfigs]);
 
-  const handleSave = async (taskType: string, location: string) => {
+  const handleSave = async (taskType: string, updates: { location?: string; executor?: string }) => {
     setSaving(true); setSaveError(null);
     try {
       const res = await fetch(`/api/cecelia/task-type-configs/${taskType}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location }),
+        body: JSON.stringify(updates),
       });
       const data = await res.json();
       if (data.success) {

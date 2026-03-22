@@ -225,7 +225,6 @@ describe('self-drive', () => {
       expect(decisionLogCall).toBeTruthy();
       expect(decisionLogCall[1][0]).toBe('self_drive');
     });
-  });
 
     it('should send feishu notification when actions are taken', async () => {
       const pool = (await import('../db.js')).default;

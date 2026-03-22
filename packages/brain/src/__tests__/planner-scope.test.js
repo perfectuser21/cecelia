@@ -33,7 +33,7 @@ describe('selectTargetScope', () => {
   let pool;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     const plannerModule = await import('../planner.js');
     selectTargetScope = plannerModule.selectTargetScope;
     const dbModule = await import('../db.js');
