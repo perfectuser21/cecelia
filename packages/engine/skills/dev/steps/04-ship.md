@@ -264,6 +264,14 @@ mkdir -p .history
 mv ".task-${BRANCH_NAME}.md" .history/ 2>/dev/null || true
 ```
 
+### 清理 per-branch 残留文件
+
+```bash
+# 删除本分支的 dev-seal 和 dev-mode 文件（合并后无用）
+rm -f ".dev-seal.${BRANCH_NAME}" ".dev-mode.${BRANCH_NAME}"
+echo "✅ dev-seal.${BRANCH_NAME} 和 dev-mode.${BRANCH_NAME} 已清理"
+```
+
 ### 使用 cleanup 脚本
 
 ```bash
