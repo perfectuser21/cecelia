@@ -379,6 +379,21 @@ server.listen(PORT, async () => {
     console.warn('[Server] Nightly Scheduler init failed (non-fatal):', e.message);
   }
 
+  // Backfill learnings embeddings（启动时补全 embedding=null 的历史记录，每批10条）
+  try {
+    const { backfillLearningEmbeddings } = await import('./src/embedding-service.js');
+    // 启动后延迟 30s 再跑，避免影响启动速度；之后每小时跑一批
+    setTimeout(async () => {
+      try { await backfillLearningEmbeddings(); } catch (e) { console.warn('[Server] Embedding backfill failed:', e.message); }
+    }, 30 * 1000);
+    setInterval(async () => {
+      try { await backfillLearningEmbeddings(); } catch (e) { console.warn('[Server] Embedding backfill failed:', e.message); }
+    }, 60 * 60 * 1000);
+    console.log('[Server] Embedding backfill scheduled (startup+1h interval)');
+  } catch (e) {
+    console.warn('[Server] Embedding backfill init failed (non-fatal):', e.message);
+  }
+
   // Initialize Conversation Consolidator (对话空闲超时总结，每 5 分钟检查)
   try {
     const { runConversationConsolidator } = await import('./src/conversation-consolidator.js');
