@@ -4,6 +4,7 @@ version: 4.0.0
 created: 2026-03-14
 updated: 2026-03-22
 changelog:
+  - 4.1.0: 删除降级 pass 逻辑（code_review_gate_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 4.0.0: code_review_gate 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
   - 3.0.0: 砍掉所有假 subagent 模板，加入自验证 + Codex 验证双保险
@@ -199,7 +200,7 @@ echo "$GIT_CHANGED"
 
 - PASS → 写入 `code_review_gate_status: pass`，立即继续 Stage 3
 - FAIL → 读取 blockers，修复代码，**retry_count++**，最多重审 **3** 次
-- 超过 3 次 FAIL → 降级为 pass（写 `code_review_gate_degraded: true`）
+- 超过 3 次 FAIL → 写入 `code_review_gate_status: blocked`，停止执行，等待人工修复代码
 
 ```
 retry_count = 0
@@ -218,9 +219,8 @@ loop:
        → retry_count++
        → 重新获取 git diff
   5. retry_count >= 3
-       → echo "code_review_gate_status: pass" >> .dev-mode.${BRANCH}
-       → echo "code_review_gate_degraded: true" >> .dev-mode.${BRANCH}
-       → break（降级通过，继续 Stage 3）
+       → echo "code_review_gate_status: blocked" >> .dev-mode.${BRANCH}
+       → break（等待 devloop-check 提示人工介入，修复代码后手动写 code_review_gate_status: pass）
 ```
 
 **执行时注意**：
