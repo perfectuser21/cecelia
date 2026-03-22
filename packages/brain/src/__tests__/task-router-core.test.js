@@ -445,6 +445,14 @@ describe('isValidLocation', () => {
     expect(isValidLocation(null)).toBe(false);
     expect(isValidLocation(undefined)).toBe(false);
   });
+
+  it('xian_m1 是合法 location（西安M1 独立路由节点）', () => {
+    expect(isValidLocation('xian_m1')).toBe(true);
+  });
+
+  it('大写 XIAN_M1 也合法（大小写不敏感）', () => {
+    expect(isValidLocation('XIAN_M1')).toBe(true);
+  });
 });
 
 // ============================================================
