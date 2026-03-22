@@ -111,8 +111,17 @@ class ComplexityScanner extends BaseScanner {
       const braceStart = content.indexOf('{', funcStart);
       if (braceStart === -1) continue;
 
-      // 简单处理：计算该区域的分支语句
-      const funcBody = content.slice(braceStart, braceStart + 2000); // 简化：取前2000字符
+      // 用大括号配对找到函数体的实际结束位置
+      let depth = 0;
+      let braceEnd = braceStart;
+      for (let i = braceStart; i < content.length; i++) {
+        if (content[i] === '{') depth++;
+        else if (content[i] === '}') {
+          depth--;
+          if (depth === 0) { braceEnd = i + 1; break; }
+        }
+      }
+      const funcBody = content.slice(braceStart, braceEnd);
       const branchCount = this.countBranches(funcBody);
 
       functions.push({

@@ -227,6 +227,24 @@ describe('ComplexityScanner', () => {
         expect(result[0]).toHaveProperty('line');
       }
     });
+
+    it('相邻函数各自独立计算复杂度，不互相污染', () => {
+      const scanner = new ComplexityScanner();
+      const code = `
+        function simpleFunc() {
+          return x || y;
+        }
+        function complexFunc() {
+          if (a) { while (b) { for (let i = 0;;i++) { if (c && d) {} } } }
+        }
+      `;
+      const result = scanner.analyzeComplexity(code);
+      const simple = result.find(f => f.name === 'simpleFunc');
+      const complex = result.find(f => f.name === 'complexFunc');
+      expect(simple).toBeDefined();
+      expect(complex).toBeDefined();
+      expect(simple.cyclomatic).toBeLessThan(complex.cyclomatic);
+    });
   });
 
   // ============================================================
