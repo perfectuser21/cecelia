@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 图文三平台批量发布脚本测试
+ * 图文五平台批量发布脚本测试
  *
  * 测试范围：--dry-run 模式（无实际发布）
  *
@@ -31,7 +31,7 @@ describe('batch-publish-image-text.sh --dry-run', () => {
     assert.ok(result.includes('total'));
   });
 
-  test('--dry-run 输出包含三平台统计字段', () => {
+  test('--dry-run 输出包含六平台统计字段', () => {
     const result = execSync(
       `bash "${SCRIPT}" --date 9999-12-31 --dry-run`,
       { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
@@ -39,6 +39,9 @@ describe('batch-publish-image-text.sh --dry-run', () => {
     assert.ok(result.includes('zhihu'));
     assert.ok(result.includes('wechat'));
     assert.ok(result.includes('toutiao'));
+    assert.ok(result.includes('douyin'));
+    assert.ok(result.includes('kuaishou'));
+    assert.ok(result.includes('xiaohongshu'));
   });
 
   test('--dry-run 有 post-* 目录时扫描并打印内容', () => {
@@ -76,11 +79,14 @@ describe('batch-publish-image-text.sh 结构', () => {
     assert.ok(fs.existsSync(SCRIPT), `脚本存在: ${SCRIPT}`);
   });
 
-  test('包含 zhihu/wechat/toutiao 三平台调用', () => {
+  test('包含六平台发布脚本调用', () => {
     const content = fs.readFileSync(SCRIPT, 'utf8');
     assert.ok(content.includes('publish-zhihu-api.cjs'), '知乎调用');
     assert.ok(content.includes('publish-wechat-article.cjs'), '公众号调用');
     assert.ok(content.includes('publish-toutiao-article.cjs'), '头条调用');
+    assert.ok(content.includes('publish-douyin-image.cjs'), '抖音调用');
+    assert.ok(content.includes('publish-kuaishou-image.cjs'), '快手调用');
+    assert.ok(content.includes('publish-xiaohongshu-image.cjs'), '小红书调用');
   });
 
   test('包含 total/success/failed 统计字段', () => {
@@ -90,10 +96,13 @@ describe('batch-publish-image-text.sh 结构', () => {
     assert.ok(content.includes('failed'));
   });
 
-  test('包含 done-<platform>.txt 幂等保护', () => {
+  test('包含六平台 done-<platform>.txt 幂等保护', () => {
     const content = fs.readFileSync(SCRIPT, 'utf8');
     assert.ok(content.includes('done-zhihu.txt'));
     assert.ok(content.includes('done-wechat.txt'));
     assert.ok(content.includes('done-toutiao.txt'));
+    assert.ok(content.includes('done-douyin.txt'));
+    assert.ok(content.includes('done-kuaishou.txt'));
+    assert.ok(content.includes('done-xiaohongshu.txt'));
   });
 });
