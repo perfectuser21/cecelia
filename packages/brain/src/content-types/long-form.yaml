@@ -1,0 +1,72 @@
+# Content Type: Long-Form Article
+# 长文 — 深度文章内容类型配置
+content_type: long-form
+title: 长文（深度文章）
+version: "1.0"
+description: 面向思考型受众的深度文章，覆盖案例拆解/趋势分析/方法论，字数 2000-5000。
+
+# 图片配置
+images:
+  count: 3
+  format: svg
+  size: "1200x628"
+  style: "editorial-clean"
+  nas_path: "zenithjoy-creator/content/long-form"
+
+# 内容模板配置
+template:
+  research_prompt: |
+    深度调研 {keyword} 相关话题。
+    重点收集：背景数据、行业现状、典型案例、专家观点、反面声音。
+    来源：学术文章、行业报告、采访录、社交媒体讨论。
+  generate_prompt: |
+    基于调研报告，生成以下内容：
+    1. 3张配图（封面题图/内文插图/总结信息图）
+    2. 深度长文（2000-5000字，结构：引入→背景→核心论点→案例支撑→反思→结论）
+    3. 摘要段（200字，适合公众号推文前言）
+  review_prompt: |
+    审查文章是否符合以下标准：
+    1. 有清晰中心论点，段落服务于论点
+    2. 至少 2 个具体案例佐证
+    3. 无信息堆砌，每段有新信息量
+    4. 结尾有可落地的读者行动建议
+
+# AI 审查规则
+review_rules:
+  - id: "clear_thesis"
+    description: "文章必须有一句话可概括的核心论点"
+    severity: "blocking"
+  - id: "case_evidence"
+    description: "至少引用 2 个具体案例或数据支撑"
+    severity: "blocking"
+  - id: "actionable_ending"
+    description: "结尾必须给读者可执行的建议或启发"
+    severity: "warning"
+  - id: "no_padding"
+    description: "禁止用废话凑字数，每段必须有实质内容"
+    severity: "warning"
+
+# 文案规则
+copy_rules:
+  platform_tone:
+    wechat: "深度叙述，段落清晰，适当小标题拆分，适合长时阅读"
+    zhihu: "客观理性，引用数据，允许专业术语，结构化呈现"
+    toutiao: "标题数字化，前3段抓住眼球，观点鲜明有争议感"
+  hashtags:
+    base: ["深度分析", "行业洞察", "方法论"]
+    content_type_specific: ["长文", "深度好文", "思考"]
+  min_word_count:
+    short_copy: 200
+    long_form: 2000
+
+# 产出物定义
+outputs:
+  - type: "images"
+    count: 3
+    format: "svg"
+  - type: "long_form"
+    platforms: ["wechat", "zhihu", "toutiao"]
+  - type: "summary"
+    platforms: ["wechat"]
+  - type: "manifest"
+    format: "json"
