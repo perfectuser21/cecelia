@@ -50,6 +50,248 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
 ]);
 
 // ============================================================
+// Data fetching helpers
+// ============================================================
+
+/**
+ * Fetch all scan data from DB.
+ * @returns {{ capabilities, taskUsageMap, skillUsageMap, embeddedSourcesActive }}
+ */
+async function fetchScanData(dbPool) {
+  const [capResult, taskStats, skillStats] = await Promise.all([
+    dbPool.query(`
+      SELECT id, name, description, current_stage, related_skills, key_tables, scope, owner
+      FROM capabilities
+      ORDER BY id
+    `),
+    dbPool.query(`
+      SELECT
+        task_type,
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS recent_30d,
+        MAX(created_at) AS last_used
+      FROM tasks
+      GROUP BY task_type
+    `),
+    dbPool.query(`
+      SELECT
+        step_name AS skill,
+        COUNT(*) AS total_runs,
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+        MAX(ts_start) AS last_run
+      FROM run_events
+      WHERE ts_start > NOW() - INTERVAL '90 days'
+      GROUP BY step_name
+    `),
+  ]);
+
+  const taskUsageMap = Object.fromEntries(taskStats.rows.map(r => [r.task_type, r]));
+  const skillUsageMap = Object.fromEntries(skillStats.rows.map(r => [r.skill, r]));
+  const embeddedSourcesActive = await fetchEmbeddedSourcesActive(dbPool);
+
+  return { capabilities: capResult.rows, taskUsageMap, skillUsageMap, embeddedSourcesActive };
+}
+
+/**
+ * Query cecelia_events to find which Brain-embedded sources are active.
+ * @returns {Set<string>}
+ */
+async function fetchEmbeddedSourcesActive(dbPool) {
+  const allEmbeddedSources = Object.values(BRAIN_EMBEDDED_SOURCES).flat();
+  const active = new Set();
+  if (allEmbeddedSources.length === 0) return active;
+
+  try {
+    const result = await dbPool.query(
+      `SELECT DISTINCT source FROM cecelia_events
+       WHERE source = ANY($1) AND created_at > NOW() - INTERVAL '90 days'`,
+      [allEmbeddedSources]
+    );
+    for (const row of result.rows) {
+      active.add(row.source);
+    }
+  } catch {
+    // cecelia_events may not exist in all environments — treat as empty
+  }
+  return active;
+}
+
+// ============================================================
+// Per-capability evaluation helpers
+// ============================================================
+
+/**
+ * Check if a single table has data, using a shared cache to avoid duplicate queries.
+ * @returns {Promise<boolean>}
+ */
+async function checkTableHasData(table, tableCountCache, dbPool) {
+  if (tableCountCache[table] !== undefined) return tableCountCache[table];
+
+  try {
+    const result = await dbPool.query(
+      `SELECT EXISTS (SELECT 1 FROM "${table}" LIMIT 1) AS has_data`
+    );
+    tableCountCache[table] = result.rows[0]?.has_data || false;
+  } catch {
+    tableCountCache[table] = false;
+  }
+  return tableCountCache[table];
+}
+
+/**
+ * Evaluate skill usage for a capability.
+ * @returns {{ hasSkillActivity, evidence, last_activity, usage_30d, success_rate }}
+ */
+function checkSkillUsage(relatedSkills, skillUsageMap, taskUsageMap) {
+  let hasSkillActivity = false;
+  let last_activity = null;
+  let usage_30d = 0;
+  let success_rate = null;
+  const evidence = [];
+
+  for (const skill of relatedSkills) {
+    const usage = skillUsageMap[skill] || taskUsageMap[skill];
+    if (!usage) continue;
+
+    hasSkillActivity = true;
+    evidence.push(`skill:${skill} total=${usage.total || usage.total_runs} completed=${usage.completed}`);
+
+    const lastDate = usage.last_used || usage.last_run;
+    if (lastDate && (!last_activity || new Date(lastDate) > new Date(last_activity))) {
+      last_activity = lastDate;
+    }
+    usage_30d += parseInt(usage.recent_30d || 0);
+
+    const total = parseInt(usage.total || usage.total_runs || 0);
+    const completed = parseInt(usage.completed || 0);
+    if (total > 0) {
+      success_rate = Math.round((completed / total) * 100);
+    }
+  }
+
+  return { hasSkillActivity, evidence, last_activity, usage_30d, success_rate };
+}
+
+/**
+ * Evaluate table data evidence for a capability.
+ * @returns {Promise<{ hasTableData, evidence }>}
+ */
+async function checkTableEvidence(keyTables, tableCountCache, dbPool) {
+  let hasTableData = false;
+  const evidence = [];
+
+  for (const table of keyTables) {
+    const hasData = await checkTableHasData(table, tableCountCache, dbPool);
+    if (hasData) {
+      hasTableData = true;
+      evidence.push(`table:${table}=has_data`);
+    } else {
+      evidence.push(`table:${table}=empty`);
+    }
+  }
+
+  return { hasTableData, evidence };
+}
+
+/**
+ * Determine capability status from activity signals.
+ * @returns {'active'|'dormant'|'island'|'failing'}
+ */
+function determineStatus(hasSkillActivity, hasTableData, last_activity, success_rate) {
+  if (hasSkillActivity && success_rate !== null && success_rate < 30) {
+    return 'failing';
+  }
+  if (!hasSkillActivity && !hasTableData) {
+    return 'island';
+  }
+  if (last_activity) {
+    const daysSince = (Date.now() - new Date(last_activity).getTime()) / (1000 * 60 * 60 * 24);
+    return daysSince > ISLAND_THRESHOLD_DAYS ? 'dormant' : 'active';
+  }
+  return hasTableData ? 'active' : 'dormant';
+}
+
+/**
+ * Evaluate a single capability and return its health record.
+ */
+async function evaluateCapability(cap, { taskUsageMap, skillUsageMap, embeddedSourcesActive, tableCountCache, dbPool }) {
+  const health = {
+    id: cap.id,
+    name: cap.name,
+    stage: cap.current_stage,
+    scope: cap.scope,
+    owner: cap.owner,
+    status: 'unknown',
+    evidence: [],
+    last_activity: null,
+    usage_30d: 0,
+    success_rate: null,
+  };
+
+  // 5.0 Brain always-active whitelist — short-circuit immediately
+  if (BRAIN_ALWAYS_ACTIVE.has(cap.id)) {
+    health.status = 'active';
+    health.evidence.push('brain_embedded:true');
+    return health;
+  }
+
+  // 5.1 Brain embedded event sources
+  const embeddedSources = BRAIN_EMBEDDED_SOURCES[cap.id];
+  if (embeddedSources) {
+    health.evidence.push('brain_embedded:true');
+    const activeSources = embeddedSources.filter(s => embeddedSourcesActive.has(s));
+    if (activeSources.length > 0) {
+      health.status = 'active';
+      for (const src of activeSources) {
+        health.evidence.push(`cecelia_events:source=${src}`);
+      }
+    } else {
+      health.status = 'dormant';
+      health.evidence.push('cecelia_events:no_recent_activity');
+    }
+    return health;
+  }
+
+  // 5.2 Skill usage
+  const skillResult = checkSkillUsage(cap.related_skills || [], skillUsageMap, taskUsageMap);
+  health.evidence.push(...skillResult.evidence);
+  health.last_activity = skillResult.last_activity;
+  health.usage_30d = skillResult.usage_30d;
+  health.success_rate = skillResult.success_rate;
+
+  // 5.3 Table evidence
+  const tableResult = await checkTableEvidence(cap.key_tables || [], tableCountCache, dbPool);
+  health.evidence.push(...tableResult.evidence);
+
+  // 5.4 Status determination
+  health.status = determineStatus(
+    skillResult.hasSkillActivity,
+    tableResult.hasTableData,
+    health.last_activity,
+    health.success_rate
+  );
+
+  return health;
+}
+
+/**
+ * Build summary counts from health map.
+ */
+function buildSummary(healthMap) {
+  return {
+    total: healthMap.length,
+    active: healthMap.filter(h => h.status === 'active').length,
+    dormant: healthMap.filter(h => h.status === 'dormant').length,
+    island: healthMap.filter(h => h.status === 'island').length,
+    failing: healthMap.filter(h => h.status === 'failing').length,
+    scanned_at: new Date().toISOString(),
+  };
+}
+
+// ============================================================
 // Core scanner
 // ============================================================
 
@@ -69,192 +311,22 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
 export async function scanCapabilities() {
   console.log('[Scanner] Starting capability scan...');
 
-  // 1. Get all registered capabilities
-  const capResult = await pool.query(`
-    SELECT id, name, description, current_stage, related_skills, key_tables, scope, owner
-    FROM capabilities
-    ORDER BY id
-  `);
-  const capabilities = capResult.rows;
-
-  // 2. Get task usage stats (last 30 days + all time)
-  const taskStats = await pool.query(`
-    SELECT
-      task_type,
-      COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-      COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-      COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS recent_30d,
-      MAX(created_at) AS last_used
-    FROM tasks
-    GROUP BY task_type
-  `);
-  const taskUsageMap = {};
-  for (const row of taskStats.rows) {
-    taskUsageMap[row.task_type] = row;
-  }
-
-  // 3. Get skill usage from run_events (last 90 days)
-  const skillStats = await pool.query(`
-    SELECT
-      step_name AS skill,
-      COUNT(*) AS total_runs,
-      COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-      COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-      MAX(ts_start) AS last_run
-    FROM run_events
-    WHERE ts_start > NOW() - INTERVAL '90 days'
-    GROUP BY step_name
-  `);
-  const skillUsageMap = {};
-  for (const row of skillStats.rows) {
-    skillUsageMap[row.skill] = row;
-  }
-
-  // 4. Get table access evidence (check if key_tables have data)
+  const { capabilities, taskUsageMap, skillUsageMap, embeddedSourcesActive } = await fetchScanData(pool);
   const tableCountCache = {};
-
-  // 4.5 Get Brain-embedded event sources active in last 90 days
-  const allEmbeddedSources = Object.values(BRAIN_EMBEDDED_SOURCES).flat();
-  const embeddedSourcesActive = new Set();
-  if (allEmbeddedSources.length > 0) {
-    try {
-      const embeddedResult = await pool.query(
-        `SELECT DISTINCT source FROM cecelia_events
-         WHERE source = ANY($1) AND created_at > NOW() - INTERVAL '90 days'`,
-        [allEmbeddedSources]
-      );
-      for (const row of embeddedResult.rows) {
-        embeddedSourcesActive.add(row.source);
-      }
-    } catch {
-      // cecelia_events may not exist in all environments — treat as empty
-    }
-  }
-
-  // 5. Evaluate each capability
   const healthMap = [];
 
   for (const cap of capabilities) {
-    const health = {
-      id: cap.id,
-      name: cap.name,
-      stage: cap.current_stage,
-      scope: cap.scope,
-      owner: cap.owner,
-      status: 'unknown', // will be set below
-      evidence: [],
-      last_activity: null,
-      usage_30d: 0,
-      success_rate: null,
-    };
-
-    // 5.0 Check Brain always-active whitelist first
-    if (BRAIN_ALWAYS_ACTIVE.has(cap.id)) {
-      health.status = 'active';
-      health.evidence.push('brain_embedded:true');
-      healthMap.push(health);
-      continue;
-    }
-
-    // 5.1 Check Brain embedded sources (cecelia_events)
-    const embeddedSources = BRAIN_EMBEDDED_SOURCES[cap.id];
-    if (embeddedSources) {
-      const activeSources = embeddedSources.filter(s => embeddedSourcesActive.has(s));
-      if (activeSources.length > 0) {
-        health.status = 'active';
-        health.evidence.push('brain_embedded:true');
-        for (const src of activeSources) {
-          health.evidence.push(`cecelia_events:source=${src}`);
-        }
-        healthMap.push(health);
-        continue;
-      }
-      // Sources configured but no recent events → dormant (not island)
-      health.evidence.push('brain_embedded:true');
-      health.evidence.push('cecelia_events:no_recent_activity');
-      health.status = 'dormant';
-      healthMap.push(health);
-      continue;
-    }
-
-    // 5.2 Check related_skills usage
-    const relatedSkills = cap.related_skills || [];
-    let hasSkillActivity = false;
-    for (const skill of relatedSkills) {
-      const usage = skillUsageMap[skill] || taskUsageMap[skill];
-      if (usage) {
-        hasSkillActivity = true;
-        health.evidence.push(`skill:${skill} total=${usage.total || usage.total_runs} completed=${usage.completed}`);
-        const lastDate = usage.last_used || usage.last_run;
-        if (lastDate && (!health.last_activity || new Date(lastDate) > new Date(health.last_activity))) {
-          health.last_activity = lastDate;
-        }
-        health.usage_30d += parseInt(usage.recent_30d || 0);
-        const total = parseInt(usage.total || usage.total_runs || 0);
-        const completed = parseInt(usage.completed || 0);
-        if (total > 0) {
-          health.success_rate = Math.round((completed / total) * 100);
-        }
-      }
-    }
-
-    // 5.3 Check key_tables have data
-    const keyTables = cap.key_tables || [];
-    let hasTableData = false;
-    for (const table of keyTables) {
-      if (!tableCountCache[table]) {
-        try {
-          const countResult = await pool.query(
-            `SELECT EXISTS (SELECT 1 FROM "${table}" LIMIT 1) AS has_data`
-          );
-          tableCountCache[table] = countResult.rows[0]?.has_data || false;
-        } catch {
-          tableCountCache[table] = false;
-        }
-      }
-      if (tableCountCache[table]) {
-        hasTableData = true;
-        health.evidence.push(`table:${table}=has_data`);
-      } else {
-        health.evidence.push(`table:${table}=empty`);
-      }
-    }
-
-    // 5.4 Determine status
-    if (hasSkillActivity && health.success_rate !== null && health.success_rate < 30) {
-      health.status = 'failing';
-    } else if (hasSkillActivity || hasTableData) {
-      // Check if last activity is within threshold
-      if (health.last_activity) {
-        const daysSinceActivity = (Date.now() - new Date(health.last_activity).getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSinceActivity > ISLAND_THRESHOLD_DAYS) {
-          health.status = 'dormant';
-        } else {
-          health.status = 'active';
-        }
-      } else if (hasTableData) {
-        health.status = 'active';
-      } else {
-        health.status = 'dormant';
-      }
-    } else {
-      // No skill usage, no table data, not brain-embedded → island
-      health.status = 'island';
-    }
-
+    const health = await evaluateCapability(cap, {
+      taskUsageMap,
+      skillUsageMap,
+      embeddedSourcesActive,
+      tableCountCache,
+      dbPool: pool,
+    });
     healthMap.push(health);
   }
 
-  // 6. Summary
-  const summary = {
-    total: healthMap.length,
-    active: healthMap.filter(h => h.status === 'active').length,
-    dormant: healthMap.filter(h => h.status === 'dormant').length,
-    island: healthMap.filter(h => h.status === 'island').length,
-    failing: healthMap.filter(h => h.status === 'failing').length,
-    scanned_at: new Date().toISOString(),
-  };
+  const summary = buildSummary(healthMap);
 
   console.log(`[Scanner] Scan complete: ${summary.active} active, ${summary.dormant} dormant, ${summary.island} island, ${summary.failing} failing`);
 
