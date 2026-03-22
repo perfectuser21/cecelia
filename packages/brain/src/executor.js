@@ -175,7 +175,7 @@ const WORK_DIR = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21
 const CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks';
 const CODEX_REVIEW_MAX = 2;
 
-// 审查任务类型列表（路由到 triggerCodexReview）
+// 审查任务类型列表（由 triggerCodexReview 以本机 codex CLI 执行，走独立 codex-review-locks 池）
 const REVIEW_TASK_TYPES = ['spec_review', 'code_review_gate', 'prd_review', 'initiative_review'];
 
 // ==================== Diagnostic Functions ====================
