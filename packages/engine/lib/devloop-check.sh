@@ -10,11 +10,12 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v3.1.0
+# 版本: v3.2.0
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
 # 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
 # 更新: 2026-03-22 — 删除 spec_review/code_review_gate Codex Gate（改为 Agent subagent 同步审查）
+# 更新: 2026-03-22 — 加回条件 1.5/2.5：读 .dev-mode 中 subagent 写入的 status 字段（不查 Brain API）
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -23,11 +24,21 @@
 #
 #   step_1_spec done?
 #     → no → exit 2
-#     → yes → 继续（spec_review 由 Agent subagent 同步完成，无需异步等待）
+#     → yes → 继续
+#
+#   条件 1.5: spec_review_status?
+#     → 不存在 → pass-through（subagent 尚未运行，不阻塞）
+#     → "pass" → 继续
+#     → "blocked" → exit 2（3次重审耗尽，需人工修复 Task Card）
 #
 #   step_2_code done?
 #     → no → exit 2
-#     → yes → 继续（code_review_gate 由 Agent subagent 同步完成，无需异步等待）
+#     → yes → 继续
+#
+#   条件 2.5: code_review_gate_status?
+#     → 不存在 → pass-through（subagent 尚未运行，不阻塞）
+#     → "pass" → 继续
+#     → "blocked" → exit 2（3次重审耗尽，需人工修复代码）
 #
 #   PR 创建了?
 #   CI 过了?
@@ -129,6 +140,23 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 1.5: spec_review_status（Agent subagent 写入）=====
+    # 字段不存在 → pass-through（subagent 尚未运行，正常流程已同步完成）
+    # "pass" → 继续
+    # "blocked" → 3次重审耗尽，需人工修复 Task Card
+    if [[ -f "$dev_mode_file" ]]; then
+        local spec_review_status
+        spec_review_status=$(grep "^spec_review_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        if [[ "$spec_review_status" == "blocked" ]]; then
+            if command -v _devlog_event &>/dev/null; then
+                _devlog_event "devloop-check" "spec_review" "blocked" "spec_review 3次重审未通过"
+            fi
+            _devloop_jq -n '{"status":"blocked","reason":"spec_review 3次重审仍 FAIL，需人工修复 Task Card 后写入 spec_review_status: pass","action":"检查 .dev-mode 中 spec_review 的问题，修复 Task Card，然后将 spec_review_status 改为 pass"}'
+            return 2
+        fi
+        # 不存在或 pass → pass-through，继续
+    fi
+
     # ===== 条件 2: step_2_code 是否完成？ =====
     if [[ -f "$dev_mode_file" ]]; then
         local step_2_status
@@ -140,6 +168,23 @@ devloop_check() {
             _devloop_jq -n '{"status":"blocked","reason":"Stage 2 Code 未完成","action":"立即读取 skills/dev/steps/02-code.md 并执行 Stage 2。禁止询问用户。"}'
             return 2
         fi
+    fi
+
+    # ===== 条件 2.5: code_review_gate_status（Agent subagent 写入）=====
+    # 字段不存在 → pass-through（subagent 尚未运行，正常流程已同步完成）
+    # "pass" → 继续
+    # "blocked" → 3次重审耗尽，需人工修复代码
+    if [[ -f "$dev_mode_file" ]]; then
+        local code_review_gate_status
+        code_review_gate_status=$(grep "^code_review_gate_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        if [[ "$code_review_gate_status" == "blocked" ]]; then
+            if command -v _devlog_event &>/dev/null; then
+                _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate 3次重审未通过"
+            fi
+            _devloop_jq -n '{"status":"blocked","reason":"code_review_gate 3次重审仍 FAIL，需人工修复代码后写入 code_review_gate_status: pass","action":"检查 code_review_gate blocker issues，修复代码，然后将 code_review_gate_status 改为 pass"}'
+            return 2
+        fi
+        # 不存在或 pass → pass-through，继续
     fi
 
     # ===== 条件 3: PR 是否已创建？ =====

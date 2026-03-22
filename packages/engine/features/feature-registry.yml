@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.76.0"
+version: "3.77.0"
 updated: "2026-03-22"
-# ci-trigger: 13.14.0
+# ci-trigger: 13.15.0
 changelog:
+  - version: "13.15.0"
+    date: "2026-03-22"
+    summary: "fix(engine): 加回 devloop-check.sh 条件 1.5/2.5（spec_review_status/code_review_gate_status blocked 检查），删除降级 pass 逻辑，恢复代码强制门禁"
+    scope: lib/devloop-check.sh,skills/dev/steps,tests/scripts
+    breaking: false
+    feature_id: dev-subagent-gates-fullquality-v1
   - version: "13.14.0"
     date: "2026-03-22"
     summary: "feat(engine): spec_review/code_review_gate 改为 Agent subagent 同步调用，删除 Codex async dispatch，修复有头模式 stop hook 卡死"

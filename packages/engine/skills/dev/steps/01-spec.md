@@ -4,6 +4,7 @@ version: 2.0.0
 created: 2026-03-20
 updated: 2026-03-22
 changelog:
+  - 2.1.0: 删除降级 pass 逻辑（spec_review_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 2.0.0: spec_review 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 1.0.0: 从 01-taskcard.md 重构为 Stage 1 Spec，加入 spec_review Codex Gate
 ---
@@ -245,7 +246,7 @@ echo "✅ 置信度已写入 .dev-mode"
 
 - PASS → 写入 `spec_review_status: pass`，立即继续 Stage 2
 - FAIL → 读取 issues，修复 Task Card，**retry_count++**，最多重审 **3** 次
-- 超过 3 次 FAIL → 降级为 pass（写 `spec_review_degraded: true`）
+- 超过 3 次 FAIL → 写入 `spec_review_status: blocked`，停止执行，等待人工修复 Task Card
 
 ```
 retry_count = 0
@@ -263,9 +264,8 @@ loop:
        → 修复 Task Card（.task-${BRANCH}.md）中对应的 DoD 条目
        → retry_count++
   5. retry_count >= 3
-       → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
-       → echo "spec_review_degraded: true" >> .dev-mode.${BRANCH}
-       → break（降级通过，继续 Stage 2）
+       → echo "spec_review_status: blocked" >> .dev-mode.${BRANCH}
+       → break（等待 devloop-check 提示人工介入，修复 Task Card 后手动写 spec_review_status: pass）
 ```
 
 **执行时注意**：
