@@ -107,32 +107,39 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
 }
 
 /**
+ * 处理 cecelia-run 合成结果（含 exit_code/stderr_tail/failure_class 字段）
+ */
+function _extractRunResult(result, maxLength) {
+  const parts = [];
+  if (result.error) parts.push(result.error);
+  if (result.failure_class) parts.push(`failure_class=${result.failure_class}`);
+  if (result.exit_code != null) parts.push(`exit_code=${result.exit_code}`);
+  if (result.stderr_tail) parts.push(`stderr=${result.stderr_tail.slice(0, 200)}`);
+  return parts.join(' | ').slice(0, maxLength) || 'Process exited without output';
+}
+
+/**
+ * 从通用对象中提取摘要文本
+ */
+function _extractObjectSummary(result, maxLength) {
+  const raw = result.error_details || result.error || result.message ||
+    result.result || result.findings || result.summary || JSON.stringify(result);
+  const text = typeof raw === 'object' ? JSON.stringify(raw) : raw.toString();
+  return text.slice(0, maxLength);
+}
+
+/**
  * 提取任务摘要
  */
 function extractTaskSummary(result, maxLength = 500) {
   if (!result) return 'No details available';
+  if (typeof result === 'string') return result.slice(0, maxLength);
+  if (typeof result !== 'object') return 'Unknown result format';
 
-  if (typeof result === 'string') {
-    return result.slice(0, maxLength);
+  if (result.exit_code != null || result.stderr_tail || result.failure_class) {
+    return _extractRunResult(result, maxLength);
   }
-
-  if (typeof result === 'object') {
-    // 支持 cecelia-run 合成结果字段（exit_code/stderr_tail/failure_class）
-    if (result.exit_code != null || result.stderr_tail || result.failure_class) {
-      const parts = [];
-      if (result.error) parts.push(result.error);
-      if (result.failure_class) parts.push(`failure_class=${result.failure_class}`);
-      if (result.exit_code != null) parts.push(`exit_code=${result.exit_code}`);
-      if (result.stderr_tail) parts.push(`stderr=${result.stderr_tail.slice(0, 200)}`);
-      return parts.join(' | ').slice(0, maxLength) || 'Process exited without output';
-    }
-    // 优先提取错误信息，再提取正常结果
-    const summary = result.error_details || result.error || result.message ||
-      result.result || result.findings || result.summary || JSON.stringify(result);
-    return (typeof summary === 'object' ? JSON.stringify(summary) : summary.toString()).slice(0, maxLength);
-  }
-
-  return 'Unknown result format';
+  return _extractObjectSummary(result, maxLength);
 }
 
 /**
