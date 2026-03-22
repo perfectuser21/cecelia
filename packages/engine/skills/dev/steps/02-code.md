@@ -252,10 +252,13 @@ echo "$GIT_CHANGED"
 ```
 retry_count = 0
 
+# 准备 SKILL.md 内容（必须读取文件，不能只传路径）
+CODE_REVIEW_SKILL=$(cat packages/workflows/skills/code-review-gate/SKILL.md)
+
 loop:
   1. 调用 Agent subagent（subagent_type=general-purpose）
-     - prompt = code-review-gate SKILL.md 全文 + git diff 内容
-     - SKILL.md 路径：packages/workflows/skills/code-review-gate/SKILL.md
+     - prompt = CODE_REVIEW_SKILL 变量内容（完整 SKILL.md 文本）+ "\n\n# 待审查代码变更（git diff）\n\n" + GIT_DIFF 变量内容
+     - 注意：必须将 SKILL.md 和 git diff 的实际文本内联传入 prompt，不能只传路径字符串
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
        → echo "code_review_gate_status: pass" >> .dev-mode.${BRANCH}
