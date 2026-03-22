@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v26
+# ZenithJoy Engine - 分支保护 Hook v27
+# v27: .dod.md branch field check — worktree 内若存在 .dod.md 且 branch 字段与当前分支不符则输出警告（非阻断）
 # v26: .dev-mode Step 完成验证（State Machine 强制层）— 拦截 step_N: done 写入，调用 verify-step.sh 验证
 # v25: monorepo 子目录保护 — packages/ 子目录开发时不允许复用根目录旧 .prd.md，必须有 per-branch PRD
 # v24: 统一分支命名规范 — 删除 feature/* 支持，cp-* 为唯一合法格式（与 CI L1 一致）
@@ -526,6 +527,25 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
         echo "[SKILL_REQUIRED: dev]" >&2
         exit 2
     fi
+
+    # ===== v27: .dod.md branch field check — 归属校验（非阻断警告）=====
+    # 若 worktree 根目录存在 .dod.md，且其 frontmatter 含 branch: 字段，
+    # 则校验该值是否与当前分支一致，不一致时输出 WARN（不 exit）。
+    # 设计：旧任务遗留的 .dod.md 可能 branch 不符，应提醒开发者核查。
+    DOD_LEGACY_FILE="$PROJECT_ROOT/.dod.md"
+    if [[ -f "$DOD_LEGACY_FILE" ]]; then
+        DOD_BRANCH=$(grep -m1 '^branch:' "$DOD_LEGACY_FILE" 2>/dev/null | sed 's/^branch:[[:space:]]*//' | tr -d '[:space:]"' || echo "")
+        if [[ -n "$DOD_BRANCH" && "$DOD_BRANCH" != "$CURRENT_BRANCH" ]]; then
+            echo "" >&2
+            echo "  [WARN] .dod.md 归属校验：branch 字段不匹配" >&2
+            echo "  [WARN] .dod.md 中的 branch: $DOD_BRANCH" >&2
+            echo "  [WARN] 当前分支:            $CURRENT_BRANCH" >&2
+            echo "  [WARN] 该 .dod.md 可能来自其他任务，请确认是否误用旧文件" >&2
+            echo "" >&2
+            # 仅警告，不阻断（不 exit）
+        fi
+    fi
+    # ══════════════════════════════════════════════════════════════════
 
     # v19: Monorepo 支持 - 从文件所在目录向上查找 PRD/DoD 目录
     # 优先级: 子目录 PRD/DoD > 根目录 PRD/DoD
