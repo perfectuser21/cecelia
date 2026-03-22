@@ -631,7 +631,7 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
             # 检查 PRD
             if command -v curl &>/dev/null && command -v jq &>/dev/null; then
                 TASK_INFO=$(curl -s "http://localhost:5221/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo "")
-                PRD_ID=$(echo "$TASK_INFO" | jq -r '.prd_id // empty' 2>/dev/null || echo "")
+                PRD_ID=$(echo "$TASK_INFO" | jq -r '.prd_id // .prd_content // empty' 2>/dev/null || echo "")
 
                 if [[ -z "$PRD_ID" ]]; then
                     echo "" >&2
@@ -645,10 +645,11 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
                     exit 2
                 fi
 
-                # 检查 DoD 初稿
-                DOD_DRAFT=$(curl -s "http://localhost:5221/api/brain/dods?task_id=${TASK_ID}" 2>/dev/null | jq -r '.draft // empty' 2>/dev/null || echo "")
+                # 检查 DoD 初稿（降级：API 不存在时放行）
+                DOD_RESP=$(curl -s "http://localhost:5221/api/brain/dods?task_id=${TASK_ID}" 2>/dev/null || echo "")
+                DOD_DRAFT=$(echo "$DOD_RESP" | jq -r '.draft // empty' 2>/dev/null || echo "")
 
-                if [[ -z "$DOD_DRAFT" ]]; then
+                if [[ -z "$DOD_DRAFT" && "$DOD_RESP" != *"Cannot GET"* && "$DOD_RESP" != *"404"* ]]; then
                     echo "" >&2
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
                     echo "  [ERROR] 数据库中缺少 DoD 初稿" >&2

@@ -2247,3 +2247,33 @@ product_features:
       - "超时时创建 P0 诊断任务"
 
     rcis: []
+
+  - id: branch-protect-prd-content-fallback
+    name: branch-protect hook 修复 prd_id→prd_content 双重检测
+    category: protection
+    status: Committed
+    priority: P1
+    version: "13.13.6"
+    updated: "2026-03-21"
+    description: |
+      branch-protect.sh 检查 .prd_id 字段，但 Brain API 只有 .prd_content 字段，
+      导致所有带 task_id 的 /dev 任务被 Hook 拦截。
+      修复：.prd_id // .prd_content 双重检测；
+      /api/brain/dods 端点不存在时降级为放行（非阻断）。
+
+    entrypoints:
+      - type: hook
+        file: packages/engine/hooks/branch-protect.sh
+        trigger: "Write/Edit 操作时检查 task_id 对应的 PRD"
+
+    golden_path: |
+      Write 操作 →
+      branch-protect 检查 .dev-mode task_id →
+      Brain API 获取 prd_id // prd_content →
+      prd_content 存在则放行
+
+    minimal_paths:
+      - "prd_id 不存在时检查 prd_content"
+      - "dods API 404 时降级放行"
+
+    rcis: []

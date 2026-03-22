@@ -707,6 +707,22 @@ curl POST Brain /api/brain/tasks P0 →
 
 ---
 
+## GP-045: branch-protect hook 修复 prd_id→prd_content 双重检测 (branch-protect-prd-content-fallback)
+
+**Feature**: branch-protect-prd-content-fallback - branch-protect hook 修复 prd_id→prd_content 双重检测
+**Priority**: P1
+
+### Golden Path
+
+```
+Write 操作 →
+branch-protect 检查 .dev-mode task_id →
+Brain API 获取 prd_id // prd_content →
+prd_content 存在则放行
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
