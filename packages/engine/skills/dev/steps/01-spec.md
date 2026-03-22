@@ -87,7 +87,7 @@ created: YYYY-MM-DD
   Test: TODO
 
 - [ ] [GATE] 所有现有测试通过
-  Test: manual:bash -c "npm test 2>&1 | tail -5"
+  Test: manual:npm test
 
 ## 实现方案（Stage 2 探索后填写）
 **要改的文件**: （探索后填写）
@@ -264,7 +264,10 @@ loop:
        → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
        → 修复 Task Card（.task-${BRANCH}.md）中对应的 DoD 条目
        → retry_count++
-       → 重新调用 subagent（无次数上限，直到 PASS）
+       → 如果 retry_count > 20:
+           curl -s -X POST http://localhost:5221/api/brain/tasks              -H 'Content-Type: application/json'              -d '{"title":"spec_review 超限 P1 升级","description":"spec_review 重试超过 20 次仍未 PASS，需人工介入","priority":"p1","task_type":"dev"}' || true
+           break（停止重试，等待人工介入）
+       → 重新调用 subagent（继续重试，直到 PASS 或 retry_count > 20）
 ```
 
 **执行时注意**：

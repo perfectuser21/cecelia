@@ -146,7 +146,8 @@ echo "✅ Learning 已推送到功能分支"
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
-TASK_ID=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+TASK_ID=$(grep "^brain_task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
+[[ -z "$TASK_ID" ]] && TASK_ID=$(grep "^task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
 
 bash skills/dev/scripts/fire-learnings-event.sh \
   --branch "$BRANCH_NAME" \
@@ -193,7 +194,9 @@ echo "Stop Hook 循环次数: $(grep -c 'devloop-check' .dev-execution-log.*.jso
 ## 4.4 上传反馈到 Brain
 
 ```bash
-task_id=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+task_id=$(grep "^brain_task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
+[[ -z "$task_id" ]] && task_id=$(grep "^task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
 
 if [[ -n "$task_id" ]]; then
     BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
@@ -274,9 +277,12 @@ bash skills/dev/scripts/cleanup.sh "$BRANCH_NAME" "$BASE_BRANCH"
 ### 清理任务列表
 
 ```javascript
+// 只清理当前 /dev 创建的 5 个任务（不影响并行 /dev 会话）
+const DEV_TASK_SUBJECTS = ["Step 0: Worktree", "Stage 1: Spec", "Stage 2: Code", "Stage 3: Integrate", "Stage 4: Ship"]
 const tasks = await TaskList()
 tasks.forEach(task => {
-  if (task.status !== 'completed') {
+  const isDevTask = DEV_TASK_SUBJECTS.some(s => task.subject?.startsWith(s) || task.content?.startsWith(s))
+  if (task.status !== 'completed' && isDevTask) {
     TaskUpdate({ taskId: task.id, status: 'completed' })
   }
 })

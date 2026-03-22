@@ -62,11 +62,14 @@ auto-version.yml 自动处理的文件（5 个）：
 | feat!: / BREAKING: | major (+1.0.0) |
 | 其他（docs:、test:、chore:） | 不 bump |
 
-**禁止在 PR 中做以下操作**：
+**禁止在 PR 中做以下操作**（适用于 Brain/auto-version 管理的包）：
 - ❌ `npm version patch/minor/major`
 - ❌ 手动改 package.json 版本号
 - ❌ 手动改 .brain-versions / VERSION / DEFINITION.md 版本
-- ❌ 运行 `check-version-sync.sh`
+- ❌ 运行 `check-version-sync.sh`（Brain 由 auto-version 自动处理，无需手动同步）
+
+> **Engine 例外**：Engine 版本需手动 bump（5 个文件），由 3.1.4 自检替代 check-version-sync.sh，
+> CI L2 会在合并后验证一致性。
 
 ---
 
@@ -126,7 +129,12 @@ fi
 
 ```bash
 git add -u
-git commit -m "feat: <功能描述>
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+TASK_ID=$(grep "^brain_task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk "{print \$2}")
+[[ -z "$TASK_ID" ]] && TASK_ID=$(grep "^task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk "{print \$2}")
+TASK_LINE=$([ -n "$TASK_ID" ] && echo "
+Task-ID: $TASK_ID" || echo "")
+git commit -m "feat: <功能描述>${TASK_LINE}
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ```

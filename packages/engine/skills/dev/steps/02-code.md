@@ -4,7 +4,7 @@ version: 4.2.0
 created: 2026-03-14
 updated: 2026-03-22
 changelog:
-  - 4.2.0: 删除 blocked 降级路径+无限重试+深入 root cause；push 前新增强制垃圾清理步骤；code-review-gate FAIL 涉及测试覆盖时自动触发 codex-test-gen
+  - 4.2.0: 删除 blocked 降级路径+无限重试+深入 root cause；push 前新增强制垃圾清理步骤；code-review-gate FAIL 涉及测试覆盖时自动触发补充测试 subagent
   - 4.1.0: 删除降级 pass 逻辑（code_review_gate_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 4.0.0: code_review_gate 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
@@ -137,30 +137,7 @@ if [[ -n "$TASK_CARD" ]]; then
 fi
 ```
 
-### 2.3.5 本地 CI 镜像检查
-
-> push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
-
-```bash
-# 1. 跑 npm test（如果项目有）
-if [[ -f "package.json" ]] && grep -q '"test"' package.json; then
-    echo "🧪 Running npm test..."
-    npm test 2>&1 || { echo "❌ npm test 失败，修复后再继续"; exit 1; }
-fi
-
-# 2. 检查 Learning 格式（如果已写）
-LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
-if [[ -f "$LEARNING_FILE" ]]; then
-    bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || true
-fi
-
-# 3. 检查 DoD 映射
-node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || true
-```
-
----
-
-### 2.3.6 ⛔ 强制垃圾清理（push 前，不可跳过）
+### 2.3.5 ⛔ 强制垃圾清理（push 前，不可跳过）
 
 > **在标记 Stage 2 完成之前，必须扫描并清理本次改动引入的垃圾内容。**
 > 目标：代码只增有用的，不留死代码/stale 注释/过期文档。
@@ -205,6 +182,29 @@ if [[ $ISSUES_FOUND -gt 0 ]]; then
 fi
 
 echo "✅ 垃圾清理扫描通过 — 无 dead code / stale 注释"
+```
+
+---
+
+### 2.3.6 推送前完整验证
+
+> push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
+
+```bash
+# 1. 跑 npm test（如果项目有）
+if [[ -f "package.json" ]] && grep -q '"test"' package.json; then
+    echo "🧪 Running npm test..."
+    npm test 2>&1 || { echo "❌ npm test 失败，修复后再继续"; exit 1; }
+fi
+
+# 2. 检查 Learning 格式（如果已写）
+LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
+if [[ -f "$LEARNING_FILE" ]]; then
+    bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || true
+fi
+
+# 3. 检查 DoD 映射
+node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || true
 ```
 
 ---
@@ -264,9 +264,9 @@ loop:
        → 读取 issues[severity=="blocker"] 列表
        → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
        → 如果任意 blocker 的 description 含「测试覆盖」「test coverage」「缺少测试」「missing test」→
-           触发 codex-test-gen subagent：
+           调用 Agent subagent 补充测试：
            Agent({ subagent_type: "general-purpose",
-                   prompt: "为以下代码补充测试...[传入 git diff 内容]" })
+                   prompt: "请为以下代码补充缺少的测试：[传入 git diff 内容]" })
        → 修复对应代码文件（file:line 指向的位置）
        → retry_count++
        → 重新获取 git diff

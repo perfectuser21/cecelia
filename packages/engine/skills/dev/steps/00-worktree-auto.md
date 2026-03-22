@@ -144,9 +144,22 @@ echo "📝 任务名: $TASK_NAME"
 ```bash
 echo "🔀 创建独立 worktree..."
 
-# 调用 worktree-manage.sh 创建
+# 调用 worktree-manage.sh 创建（兼容多路径，不硬编码 ~/.claude/）
 # 注意：worktree-manage.sh 会自动更新 develop（Bug 2 修复）
-WORKTREE_PATH=$(bash ~/.claude/skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
+_WMANAGE=""
+for _dir in ~/.claude-account2/skills/dev/scripts ~/.claude/skills/dev/scripts; do
+    if [[ -f "$_dir/worktree-manage.sh" ]]; then
+        _WMANAGE="$_dir/worktree-manage.sh"
+        break
+    fi
+done
+if [[ -z "$_WMANAGE" ]]; then
+    _WMANAGE=$(find ~ -maxdepth 6 -name "worktree-manage.sh" -path "*/skills/dev/scripts/*" 2>/dev/null | head -1)
+fi
+if [[ -z "$_WMANAGE" ]]; then
+    echo "❌ 找不到 worktree-manage.sh"; exit 1
+fi
+WORKTREE_PATH=$(bash "$_WMANAGE" create "$TASK_NAME" 2>/dev/null | tail -1)
 
 if [[ -z "$WORKTREE_PATH" || ! -d "$WORKTREE_PATH" ]]; then
     echo "❌ Worktree 创建失败"
