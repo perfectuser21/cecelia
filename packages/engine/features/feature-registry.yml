@@ -15,11 +15,11 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.85.0"
+version: "3.86.0"
 updated: "2026-03-22"
-# ci-trigger: 13.23.3
+# ci-trigger: 13.24.0
 changelog:
-  - version: "13.23.3"
+  - version: "13.24.0"
     date: "2026-03-22"
     summary: "feat(engine): fetch-task-prd.sh 新增 intent-expand 战略上下文查询 + docs/learnings/ 相关 Learning 检索，生成更丰富的 PRD"
     scope: skills/dev/scripts/fetch-task-prd.sh
