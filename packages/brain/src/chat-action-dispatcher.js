@@ -98,6 +98,63 @@ export function detectAction(message) {
   return null;
 }
 
+// ── executeAction 子函数 ──────────────────────────────────
+
+async function execCreateTask(params) {
+  const { title } = params;
+  if (!title) return '\n\n⚠️ 创建任务失败：请提供任务标题';
+  const result = await createTask({ title, priority: 'P2', task_type: 'research', trigger_source: 'chat' });
+  const dedupNote = result.deduplicated ? '（已存在，跳过重复创建）' : '';
+  return `\n\n✅ 已创建任务：${title}${dedupNote}`;
+}
+
+async function execCreateLearning(params) {
+  const { title } = params;
+  if (!title) return '\n\n⚠️ 记录学习失败：请提供学习内容';
+  const clHash = crypto.createHash('sha256').update(`${title}\n${title}`).digest('hex').slice(0, 16);
+  const clExisting = await pool.query(
+    'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+    [clHash]
+  );
+  if (clExisting.rows.length > 0) {
+    const eid = clExisting.rows[0].id;
+    const nv = (clExisting.rows[0].version || 1) + 1;
+    await pool.query('UPDATE learnings SET version = $1 WHERE id = $2', [nv, eid]);
+    return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
+  }
+  await pool.query(
+    `INSERT INTO learnings (title, category, content, trigger_event, content_hash, version, is_latest)
+     VALUES ($1, $2, $3, $4, $5, 1, true)`,
+    [title, 'manual', title, 'chat_action', clHash]
+  );
+  return `\n\n✅ 已记录学习：${title}`;
+}
+
+async function execQueryStatus() {
+  const result = await pool.query(
+    `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
+  );
+  if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
+  const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
+  return `\n\n📊 当前任务统计：\n${lines}`;
+}
+
+async function execQueryGoals() {
+  const result = await pool.query(
+    `SELECT title, status, progress FROM goals ORDER BY created_at DESC LIMIT 5`
+  );
+  if (result.rows.length === 0) return '\n\n📊 暂无 OKR 目标';
+  const lines = result.rows.map(r => `  - ${r.title}（${r.status}, ${r.progress}%）`).join('\n');
+  return `\n\n📊 OKR 目标：\n${lines}`;
+}
+
+const ACTION_EXEC_HANDLERS = {
+  CREATE_TASK:     (params) => execCreateTask(params),
+  CREATE_LEARNING: (params) => execCreateLearning(params),
+  QUERY_STATUS:    ()       => execQueryStatus(),
+  QUERY_GOALS:     ()       => execQueryGoals(),
+};
+
 /**
  * 执行检测到的动作，返回追加到 reply 末尾的文本
  * @param {{ type: string, params: Object }} action
@@ -105,72 +162,10 @@ export function detectAction(message) {
  */
 export async function executeAction(action) {
   if (!action) return '';
-
   try {
-    switch (action.type) {
-      case 'CREATE_TASK': {
-        const { title } = action.params;
-        if (!title) return '\n\n⚠️ 创建任务失败：请提供任务标题';
-
-        const result = await createTask({
-          title,
-          priority: 'P2',
-          task_type: 'research',
-          trigger_source: 'chat',
-        });
-
-        const dedupNote = result.deduplicated ? '（已存在，跳过重复创建）' : '';
-        return `\n\n✅ 已创建任务：${title}${dedupNote}`;
-      }
-
-      case 'CREATE_LEARNING': {
-        const { title } = action.params;
-        if (!title) return '\n\n⚠️ 记录学习失败：请提供学习内容';
-
-        // 去重检查
-        const clHash = crypto.createHash('sha256').update(`${title}\n${title}`).digest('hex').slice(0, 16);
-        const clExisting = await pool.query(
-          'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
-          [clHash]
-        );
-
-        if (clExisting.rows.length > 0) {
-          const eid = clExisting.rows[0].id;
-          const nv = (clExisting.rows[0].version || 1) + 1;
-          await pool.query('UPDATE learnings SET version = $1 WHERE id = $2', [nv, eid]);
-          return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
-        }
-
-        await pool.query(
-          `INSERT INTO learnings (title, category, content, trigger_event, content_hash, version, is_latest)
-           VALUES ($1, $2, $3, $4, $5, 1, true)`,
-          [title, 'manual', title, 'chat_action', clHash]
-        );
-
-        return `\n\n✅ 已记录学习：${title}`;
-      }
-
-      case 'QUERY_STATUS': {
-        const result = await pool.query(
-          `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
-        );
-        if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
-        const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
-        return `\n\n📊 当前任务统计：\n${lines}`;
-      }
-
-      case 'QUERY_GOALS': {
-        const result = await pool.query(
-          `SELECT title, status, progress FROM goals ORDER BY created_at DESC LIMIT 5`
-        );
-        if (result.rows.length === 0) return '\n\n📊 暂无 OKR 目标';
-        const lines = result.rows.map(r => `  - ${r.title}（${r.status}, ${r.progress}%）`).join('\n');
-        return `\n\n📊 OKR 目标：\n${lines}`;
-      }
-
-      default:
-        return '';
-    }
+    const handler = ACTION_EXEC_HANDLERS[action.type];
+    if (!handler) return '';
+    return await handler(action.params || {});
   } catch (err) {
     console.warn('[chat-action-dispatcher] Action execution failed:', err.message);
     return `\n\n⚠️ 操作执行时遇到问题：${err.message}`;
@@ -338,6 +333,47 @@ async function executeViaLlmIntent(message, llmIntent) {
 
 // ── Intent 管道 ──────────────────────────────────────────
 
+async function pipelineQueryStatus() {
+  const result = await pool.query(
+    `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
+  );
+  if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
+  const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
+  return `\n\n📊 当前任务统计：\n${lines}`;
+}
+
+async function pipelineCreateGoal(parsed) {
+  const params = parsed.suggestedAction?.params || {};
+  const title = params.title || parsed.projectName;
+  const priority = params.priority || 'P1';
+  const result = await pool.query(
+    `INSERT INTO goals (title, priority, status, progress) VALUES ($1, $2, 'pending', 0) RETURNING id, title`,
+    [title, priority]
+  );
+  return `\n\n✅ 已创建目标：${result.rows[0].title}`;
+}
+
+async function pipelineTaskAction(message) {
+  const result = await parseAndCreate(message, { createProject: false });
+  return formatIntentResult(result);
+}
+
+async function pipelineProjectAction(message) {
+  const result = await parseAndCreate(message);
+  return formatIntentResult(result);
+}
+
+const PIPELINE_HANDLERS = {
+  [INTENT_TYPES.QUERY_STATUS]:    (_parsed, _msg)    => pipelineQueryStatus(),
+  [INTENT_TYPES.CREATE_GOAL]:     (parsed,  _msg)    => pipelineCreateGoal(parsed),
+  [INTENT_TYPES.CREATE_TASK]:     (_parsed, message) => pipelineTaskAction(message),
+  [INTENT_TYPES.FIX_BUG]:        (_parsed, message) => pipelineTaskAction(message),
+  [INTENT_TYPES.REFACTOR]:        (_parsed, message) => pipelineTaskAction(message),
+  [INTENT_TYPES.CREATE_PROJECT]:  (_parsed, message) => pipelineProjectAction(message),
+  [INTENT_TYPES.CREATE_FEATURE]:  (_parsed, message) => pipelineProjectAction(message),
+  [INTENT_TYPES.EXPLORE]:         (_parsed, message) => pipelineProjectAction(message),
+};
+
 /**
  * 通过 Intent 管道识别并执行动作
  * 使用 parseIntent（模式匹配 + 实体提取，无 LLM 调用）
@@ -345,58 +381,15 @@ async function executeViaLlmIntent(message, llmIntent) {
 async function executeViaIntentPipeline(message) {
   try {
     const parsed = await parseIntent(message);
-
-    // 跳过非动作性意图（纯提问、未知）
-    if (parsed.intentType === INTENT_TYPES.QUESTION ||
-        parsed.intentType === INTENT_TYPES.UNKNOWN) {
-      return '';
-    }
-
-    // 跳过低置信度（<0.4 大概率是普通聊天）
-    if (parsed.confidence < 0.4) {
-      return '';
-    }
-
+    if (parsed.intentType === INTENT_TYPES.QUESTION || parsed.intentType === INTENT_TYPES.UNKNOWN) return '';
+    if (parsed.confidence < 0.4) return '';
     console.log(`[chat-action-dispatcher] Intent detected: ${parsed.intentType} (confidence: ${parsed.confidence.toFixed(2)})`);
-
-    // QUERY_STATUS → 内联查询
-    if (parsed.intentType === INTENT_TYPES.QUERY_STATUS) {
-      const result = await pool.query(
-        `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
-      );
-      if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
-      const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
-      return `\n\n📊 当前任务统计：\n${lines}`;
-    }
-
-    // CREATE_GOAL → 直接写入 goals 表
-    if (parsed.intentType === INTENT_TYPES.CREATE_GOAL) {
-      const params = parsed.suggestedAction?.params || {};
-      const title = params.title || parsed.projectName;
-      const priority = params.priority || 'P1';
-      const result = await pool.query(
-        `INSERT INTO goals (title, priority, status, progress) VALUES ($1, $2, 'pending', 0) RETURNING id, title`,
-        [title, priority]
-      );
-      return `\n\n✅ 已创建目标：${result.rows[0].title}`;
-    }
-
-    // CREATE_TASK / FIX_BUG / REFACTOR → 只创建任务（不创建项目）
-    if ([INTENT_TYPES.CREATE_TASK, INTENT_TYPES.FIX_BUG, INTENT_TYPES.REFACTOR].includes(parsed.intentType)) {
-      const result = await parseAndCreate(message, { createProject: false });
-      return formatIntentResult(result);
-    }
-
-    // CREATE_PROJECT / CREATE_FEATURE / EXPLORE → 完整创建（项目 + 任务）
-    if ([INTENT_TYPES.CREATE_PROJECT, INTENT_TYPES.CREATE_FEATURE, INTENT_TYPES.EXPLORE].includes(parsed.intentType)) {
-      const result = await parseAndCreate(message);
-      return formatIntentResult(result);
-    }
-
-    return '';
+    const handler = PIPELINE_HANDLERS[parsed.intentType];
+    if (!handler) return '';
+    return await handler(parsed, message);
   } catch (err) {
     console.warn('[chat-action-dispatcher] Intent pipeline failed:', err.message);
-    return ''; // 静默失败，让 LLM 回复正常返回
+    return '';
   }
 }
 
