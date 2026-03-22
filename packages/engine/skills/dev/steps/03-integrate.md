@@ -68,8 +68,50 @@ auto-version.yml 自动处理的文件（5 个）：
 - ❌ 手动改 .brain-versions / VERSION / DEFINITION.md 版本
 - ❌ 运行 `check-version-sync.sh`（Brain 由 auto-version 自动处理，无需手动同步）
 
-> **Engine 例外**：Engine 版本需手动 bump（5 个文件），由 3.1.4 自检替代 check-version-sync.sh，
+> **Engine 例外**：Engine 版本需手动 bump（6 个文件），由 3.1.4 自检替代 check-version-sync.sh，
 > CI L2 会在合并后验证一致性。
+
+---
+
+### 3.1.2b ⚠️ 并行PR重叠文件检测（commit 前警告）
+
+> **检测当前改动文件是否与近期其他 open PR 存在重叠，预防 squash merge 静默覆盖。**
+> 仅输出 warning，不阻塞（因并行 PR 有时是合理的）。
+
+```bash
+echo "🔍 检测并行PR重叠文件..."
+CHANGED_FILES=$(git diff --name-only origin/main 2>/dev/null || echo "")
+OPEN_PRS=$(gh pr list --state open --json number,headRefName,files --jq '.[]' 2>/dev/null || echo "")
+
+if [[ -n "$OPEN_PRS" && -n "$CHANGED_FILES" ]]; then
+    BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+    OVERLAP_FOUND=false
+
+    while IFS= read -r pr_json; do
+        PR_NUM=$(echo "$pr_json" | jq -r '.number')
+        PR_BRANCH=$(echo "$pr_json" | jq -r '.headRefName')
+        [[ "$PR_BRANCH" == "$BRANCH_NAME" ]] && continue  # 跳过自己
+
+        PR_FILES=$(echo "$pr_json" | jq -r '.files[].path' 2>/dev/null || echo "")
+        if [[ -n "$PR_FILES" ]]; then
+            while IFS= read -r my_file; do
+                if echo "$PR_FILES" | grep -qF "$my_file"; then
+                    echo "⚠️  重叠文件检测：$my_file 也被 PR #${PR_NUM}（${PR_BRANCH}）修改"
+                    echo "   风险：squash merge 后发起的 PR 会覆盖先合并的内容"
+                    echo "   建议：push 前确认 PR #${PR_NUM} 的合并状态，或协调 review 顺序"
+                    OVERLAP_FOUND=true
+                fi
+            done <<< "$CHANGED_FILES"
+        fi
+    done <<< "$OPEN_PRS"
+
+    if [[ "$OVERLAP_FOUND" == "false" ]]; then
+        echo "✅ 无并行PR重叠文件"
+    fi
+else
+    echo "ℹ️  无 open PR 或无改动文件，跳过重叠检测"
+fi
+```
 
 ---
 
@@ -236,12 +278,37 @@ fi
 ⑤ push
 ```
 
-#### ① 分析失败原因
+#### ① 分析失败原因 + 写入 Incident Log
 
 ```bash
 RUN_ID=$(echo "$RUN_INFO" | jq -r '.[0].databaseId')
 FAIL_LOG=$(gh run view "$RUN_ID" --log-failed 2>&1 | head -80)
 echo "$FAIL_LOG"
+
+# 写入 .dev-incident-log.json（Stage 4 Learning 会读取）
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+INCIDENT_FILE=".dev-incident-log.json"
+FAIL_SUMMARY=$(echo "$FAIL_LOG" | head -5 | tr '\n' ' ' | sed 's/"/\\"/g')
+CI_WORKFLOW=$(echo "$RUN_INFO" | jq -r '.[0].name // "unknown"')
+TIMESTAMP=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)
+
+# 读取现有记录（如无则初始化为空数组）
+if [[ ! -f "$INCIDENT_FILE" ]]; then
+    echo "[]" > "$INCIDENT_FILE"
+fi
+
+# 追加新的 CI 失败记录
+NEW_ENTRY=$(jq -n \
+    --arg step "Stage 3 CI" \
+    --arg type "ci_failure" \
+    --arg workflow "$CI_WORKFLOW" \
+    --arg run_id "$RUN_ID" \
+    --arg error "$FAIL_SUMMARY" \
+    --arg ts "$TIMESTAMP" \
+    '{step: $step, type: $type, description: ("CI workflow 失败: " + $workflow), run_id: $run_id, error: $error, resolution: "pending", timestamp: $ts}')
+
+jq --argjson entry "$NEW_ENTRY" '. + [$entry]' "$INCIDENT_FILE" > "${INCIDENT_FILE}.tmp" && mv "${INCIDENT_FILE}.tmp" "$INCIDENT_FILE"
+echo "📝 CI 失败已记录到 $INCIDENT_FILE（共 $(jq length "$INCIDENT_FILE") 条）"
 ```
 
 #### ② 本地复现

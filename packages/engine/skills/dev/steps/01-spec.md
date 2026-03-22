@@ -207,6 +207,25 @@ fi
 echo "✅ CI 镜像检查通过 — DoD 格式符合要求"
 ```
 
+## ⛔ CI 镜像检查②：PRD 成功标准格式验证
+
+> **本地跑 check-prd.sh，拦截"成功标准少于2条 bullet"问题，不等 CI L1 才发现。**
+
+```bash
+echo "🔍 本地 CI 镜像：check-prd.sh..."
+bash packages/engine/scripts/devgate/check-prd.sh
+EXIT_CODE=$?
+
+if [[ $EXIT_CODE -ne 0 ]]; then
+    echo ""
+    echo "⛔ PRD 格式不符合 CI 要求！修复后再继续。"
+    echo "   要求：## 成功标准 章节下至少 2 条 bullet（- 或 * 开头）"
+    exit 1
+fi
+
+echo "✅ PRD 格式检查通过 — 成功标准 ≥ 2 条"
+```
+
 ## Stage 1 末尾：置信度自评（写入 .dev-mode）
 
 > **CI 镜像检查通过后，AI 输出置信度自评并写入 .dev-mode。**
