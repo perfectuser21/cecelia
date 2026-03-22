@@ -4,6 +4,7 @@ version: 2.0.0
 created: 2026-03-20
 updated: 2026-03-22
 changelog:
+  - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
   - 2.1.0: 删除降级 pass 逻辑（spec_review_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 2.0.0: spec_review 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 1.0.0: 从 01-taskcard.md 重构为 Stage 1 Spec，加入 spec_review Codex Gate
@@ -245,8 +246,7 @@ echo "✅ 置信度已写入 .dev-mode"
 ### 重试逻辑（MUST 遵守）
 
 - PASS → 写入 `spec_review_status: pass`，立即继续 Stage 2
-- FAIL → 读取 issues，修复 Task Card，**retry_count++**，最多重审 **3** 次
-- 超过 3 次 FAIL → 写入 `spec_review_status: blocked`，停止执行，等待人工修复 Task Card
+- FAIL → 读取 blockers，**深入分析 root cause**，修复 Task Card，**无次数上限，继续重试**
 
 ```
 retry_count = 0
@@ -260,12 +260,11 @@ loop:
        → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
        → break（继续 Stage 2）
   4. verdict == "FAIL"
-       → 读取 issues[].description + suggestion
+       → 读取 issues[severity=="blocker"] 列表
+       → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
        → 修复 Task Card（.task-${BRANCH}.md）中对应的 DoD 条目
        → retry_count++
-  5. retry_count >= 3
-       → echo "spec_review_status: blocked" >> .dev-mode.${BRANCH}
-       → break（等待 devloop-check 提示人工介入，修复 Task Card 后手动写 spec_review_status: pass）
+       → 重新调用 subagent（无次数上限，直到 PASS）
 ```
 
 **执行时注意**：
@@ -276,6 +275,6 @@ loop:
 
 ## 完成后
 
-spec_review subagent 返回 PASS（或 retry 降级）后，**立即**执行 Stage 2：
+spec_review subagent 返回 PASS 后，**立即**执行 Stage 2：
 
 `cat skills/dev/steps/02-code.md`

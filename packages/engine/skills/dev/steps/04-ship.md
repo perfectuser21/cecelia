@@ -1,9 +1,10 @@
 ---
 id: dev-stage-04-ship
-version: 1.1.0
+version: 1.2.0
 created: 2026-03-20
 changelog:
-  - 1.1.0: 新增 4.0 代码简化审查（Simplify）步骤
+  - 1.2.0: 删除 4.0 Simplify 章节（Simplify 已集成进 code-review-gate Stage 2，Stage 4 重复且位置错）
+  - 1.1.0: 新增 Simplify 步骤（已在 1.2.0 删除，功能移至 code-review-gate）
   - 1.0.0: 合并原 04-learning.md + 05-clean.md 为 Stage 4 Ship
 ---
 
@@ -13,28 +14,6 @@ changelog:
 > **⚠️ 顺序铁律：Learning 必须在合并 PR 之前完成。**
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "in_progress" })`
-
----
-
-## 4.0 代码简化审查（Simplify）
-
-> 在写 Learning 之前，先审查本次改动是否可以简化。
-> 目标：代码越做越简洁，不是越做越臃肿。
-
-### 检查清单（自动执行）
-
-1. **删除废弃注释**：TODO（已完成的）、注释掉的代码、临时调试日志
-2. **清理未用 import**：新增了但没用的 import/require
-3. **合并重复代码**：本次新增是否有跟现有代码重复的逻辑
-4. **简化条件分支**：过深的嵌套是否可以提前 return
-5. **矛盾信息清理**：旧注释跟新代码矛盾的、旧文档跟新行为矛盾的
-
-### 执行方式
-
-对本次改动的每个文件（`git diff --name-only HEAD~1`），检查上述 5 项。
-发现问题直接修复（不需要开新 PR），commit message 前缀用 `refactor:`。
-
-如果没有简化空间，跳过此步。
 
 ---
 
