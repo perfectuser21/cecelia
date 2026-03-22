@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.82.0"
+version: "3.83.0"
 updated: "2026-03-22"
-# ci-trigger: 13.22.0
+# ci-trigger: 13.23.0
 changelog:
+  - version: "13.23.0"
+    date: "2026-03-22"
+    summary: "fix(engine): /dev pipeline P0/P1 修复 — verify-step.sh Gate1动态package检测+Gate2支持[ARTIFACT]/[GATE]；stage步骤文件去重/修序/删codex-test-gen引用"
+    scope: hooks/verify-step.sh,skills/dev/steps,skills/dev/SKILL.md
+    breaking: false
+    feature_id: pipeline-fix-verify-step-gate-dynamic
   - version: "13.22.0"
     date: "2026-03-22"
     summary: "fix(engine): stop-dev.sh v15.6.0 TTY匹配改为/dev/*前缀精确判断 + devloop-check.sh v3.4.0 cleanup消息区分成功/失败"

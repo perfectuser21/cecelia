@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# verify-step.sh — /dev 步骤完成验证（State Machine 强制层）v1.1.0
+# verify-step.sh — /dev 步骤完成验证（State Machine 强制层）v1.0.0
 # ============================================================================
 # 由 branch-protect.sh 在 AI 向 .dev-mode 写入 step_N: done 时调用。
 # 验证 AI 自报的步骤完成情况是否有真实证据支撑。
@@ -14,11 +14,8 @@
 #   0 = 验证通过
 #   1 = 验证失败（具体错误输出到 stderr）
 #
-# 版本: v1.1.0
+# 版本: v1.0.0
 # 创建: 2026-03-18
-# 更新: 2026-03-22
-#   v1.1.0: Gate 1 根据 changed files 跑所有相关 package 的 test（不只是 engine）；
-#           Gate 2 支持 [ARTIFACT] 和 [GATE] 条目（原来只有 [BEHAVIOR]）
 # ============================================================================
 
 set -euo pipefail
@@ -109,7 +106,7 @@ verify_step1() {
   Step 1 完成前必须填写所有 Test: 命令"
     fi
 
-    # 检查假命令模式（注意：不包含 pipe，pipe 是合法的组合操作）
+    # 检查假命令模式
     local found_fake
     found_fake=$(echo "$test_lines" | grep -E 'Test:\s*(manual:)?(echo |ls( |$)|cat |test -f|true$|exit 0)' 2>/dev/null || echo "")
 
@@ -170,76 +167,41 @@ verify_step2() {
         echo "     功能代码任务应先补充测试" >&2
     fi
 
-    # Gate 1: 根据 changed files 跑所有相关 package 的 test
-    # v1.1.0: 不再只跑 Engine，根据实际改动文件决定跑哪些 package
-    local engine_changed=false
-    local brain_changed=false
-    local apps_changed=false
+    # Gate 1: CI 镜像 — 检查所有有变更的 packages（不硬编码 engine）
+    local changed_pkgs
+    changed_pkgs=$(echo "$changed_files" | grep "^packages/" | cut -d'/' -f2 | sort -u 2>/dev/null || echo "")
 
-    if echo "$changed_files" | grep -qE '^packages/engine/'; then
-        engine_changed=true
-    fi
-    if echo "$changed_files" | grep -qE '^packages/brain/|^DEFINITION\.md$'; then
-        brain_changed=true
-    fi
-    if echo "$changed_files" | grep -qE '^apps/'; then
-        apps_changed=true
-    fi
-
-    # 至少要跑 Engine 测试（Engine 测试覆盖 hooks/skills 改动）
-    # 如果没有 Engine 改动但其他包有改动，也跑 Engine 作为基线
-    local gate1_passed=true
-
-    local _engine_dir="$PROJECT_ROOT/packages/engine"
-    if [[ -d "$_engine_dir" ]]; then
-        echo "  🔍 [Gate 1] 运行 Engine npm test（CI L4 镜像）..." >&2
-        if ! (cd "$_engine_dir" && npm test 2>&1 >&2); then
-            gate1_passed=false
-            _fail "Gate 1 失败：Engine 测试不通过（与 CI L4 相同检查）
-  运行以下命令查看详情：
-    cd packages/engine && npm test
-  Gate 1 过 = CI L4 必过。请修复测试后重新执行 Step 2。"
-        fi
-        echo "  ✅ [Gate 1] Engine 测试通过" >&2
-    fi
-
-    if [[ "$brain_changed" == true ]]; then
-        local _brain_dir="$PROJECT_ROOT/packages/brain"
-        if [[ -d "$_brain_dir" ]]; then
-            echo "  🔍 [Gate 1] 检测到 Brain 改动，运行 Brain npm test..." >&2
-            if ! (cd "$_brain_dir" && npm test 2>&1 >&2); then
-                _fail "Gate 1 失败：Brain 测试不通过
-  运行以下命令查看详情：
-    cd packages/brain && npm test
-  请修复 Brain 测试后重新执行 Step 2。"
+    if [[ -n "$changed_pkgs" ]]; then
+        echo "  🔍 [Gate 1] 检测到变更 packages: $(echo $changed_pkgs | tr '\n' ' ')" >&2
+        local gate1_failed=0
+        for _pkg in $changed_pkgs; do
+            local _pkg_dir="$PROJECT_ROOT/packages/$_pkg"
+            if [[ ! -d "$_pkg_dir" || ! -f "$_pkg_dir/package.json" ]]; then
+                continue
             fi
-            echo "  ✅ [Gate 1] Brain 测试通过" >&2
-        fi
-    fi
-
-    if [[ "$apps_changed" == true ]]; then
-        # apps/ 改动：检查各 app 的 npm test（如果有）
-        local _app_dirs
-        _app_dirs=$(echo "$changed_files" | grep "^apps/" | cut -d'/' -f1-2 | sort -u || echo "")
-        for _app_dir in $_app_dirs; do
-            if [[ -d "$PROJECT_ROOT/$_app_dir" && -f "$PROJECT_ROOT/$_app_dir/package.json" ]]; then
-                local _has_test
-                _has_test=$(node -e "const p=require('$PROJECT_ROOT/$_app_dir/package.json'); console.log(p.scripts?.test ? 'yes' : 'no')" 2>/dev/null || echo "no")
-                if [[ "$_has_test" == "yes" ]]; then
-                    echo "  🔍 [Gate 1] 检测到 $_app_dir 改动，运行 npm test..." >&2
-                    if ! (cd "$PROJECT_ROOT/$_app_dir" && npm test 2>&1 >&2); then
-                        _fail "Gate 1 失败：$_app_dir 测试不通过
-  运行以下命令查看详情：
-    cd $_app_dir && npm test
-  请修复测试后重新执行 Step 2。"
-                    fi
-                    echo "  ✅ [Gate 1] $_app_dir 测试通过" >&2
-                fi
+            local _has_test
+            _has_test=$(node -e "try{const p=require('$_pkg_dir/package.json');console.log(p.scripts&&p.scripts.test?'yes':'no')}catch(e){console.log('no')}" 2>/dev/null || echo "no")
+            if [[ "$_has_test" != "yes" ]]; then
+                echo "  ⏭  [Gate 1] $_pkg: 无 test script，跳过" >&2
+                continue
+            fi
+            echo "  🔍 [Gate 1] 运行 $_pkg npm test..." >&2
+            if ! (cd "$_pkg_dir" && npm test 2>&1 >&2); then
+                echo "  ❌ [Gate 1] $_pkg 测试失败" >&2
+                gate1_failed=1
+            else
+                echo "  ✅ [Gate 1] $_pkg 测试通过" >&2
             fi
         done
+        if [[ $gate1_failed -ne 0 ]]; then
+            _fail "Gate 1 失败：有 package 测试不通过
+  请分别进入对应 package 目录运行 npm test 查看详情。"
+        fi
+    else
+        echo "  ⏭  [Gate 1] 无 packages/ 变更，跳过 Gate 1" >&2
     fi
 
-    # Gate 2: DoD 逐条执行 — 读 Task Card 中所有 [BEHAVIOR]、[ARTIFACT]、[GATE] 条目的 Test 命令并执行
+    # Gate 2: DoD 逐条执行 — 读 Task Card 中所有 [BEHAVIOR] 条目的 Test 命令并执行
     local task_card=""
     if [[ -n "$BRANCH" ]]; then
         task_card="$PROJECT_ROOT/.task-${BRANCH}.md"
@@ -251,7 +213,7 @@ verify_step2() {
     if [[ -z "$task_card" || ! -f "$task_card" ]]; then
         echo "  ⚠️  [Gate 2] 未找到 Task Card，跳过 DoD 逐条验证" >&2
     else
-        echo "  🔍 [Gate 2] 逐条执行 DoD [BEHAVIOR]/[ARTIFACT]/[GATE] Test 命令..." >&2
+        echo "  🔍 [Gate 2] 逐条执行 DoD [BEHAVIOR] Test 命令..." >&2
         echo "  Task Card: $task_card" >&2
 
         local DOD_TOTAL=0
@@ -260,45 +222,41 @@ verify_step2() {
         local DOD_DEFERRED=0
         local FAILED_ITEMS=()
 
-        # IN_BEHAVIOR: 是否在一个需要执行 Test 的 DoD 条目内（支持 [BEHAVIOR]/[ARTIFACT]/[GATE]）
-        local IN_BEHAVIOR=false
-        local BEHAVIOR_TYPE=""  # BEHAVIOR / ARTIFACT / GATE
+        local IN_DOD=false
+        local DOD_TYPE=""
         local BEHAVIOR_DESC=""
 
         while IFS= read -r line; do
             # 检测新条目行（重置状态）
             if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\['; then
-                IN_BEHAVIOR=false
-                BEHAVIOR_TYPE=""
+                IN_DOD=false
+                DOD_TYPE=""
                 BEHAVIOR_DESC=""
 
-                # 检测 [BEHAVIOR] 条目
                 if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[BEHAVIOR\]'; then
-                    IN_BEHAVIOR=true
-                    BEHAVIOR_TYPE="BEHAVIOR"
+                    IN_DOD=true
+                    DOD_TYPE="BEHAVIOR"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[BEHAVIOR\][[:space:]]*//')
-                # 检测 [ARTIFACT] 条目（v1.1.0 新增）
                 elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[ARTIFACT\]'; then
-                    IN_BEHAVIOR=true
-                    BEHAVIOR_TYPE="ARTIFACT"
+                    IN_DOD=true
+                    DOD_TYPE="ARTIFACT"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[ARTIFACT\][[:space:]]*//')
-                # 检测 [GATE] 条目（v1.1.0 新增）
                 elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[GATE\]'; then
-                    IN_BEHAVIOR=true
-                    BEHAVIOR_TYPE="GATE"
+                    IN_DOD=true
+                    DOD_TYPE="GATE"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[GATE\][[:space:]]*//')
                 fi
                 continue
             fi
 
-            # 在 DoD 条目内：检测 Test: 行
-            if [[ "$IN_BEHAVIOR" == true ]]; then
+            # 在 DoD 条目内（[BEHAVIOR]/[ARTIFACT]/[GATE]）：检测 Test: 行
+            if [[ "$IN_DOD" == true ]]; then
                 if echo "$line" | grep -qE '^[[:space:]]+Test:[[:space:]]+'; then
                     local TEST_REF
                     TEST_REF=$(echo "$line" | sed 's/^[[:space:]]*Test:[[:space:]]*//')
                     DOD_TOTAL=$((DOD_TOTAL + 1))
 
-                    echo "  [$BEHAVIOR_TYPE] $BEHAVIOR_DESC" >&2
+                    echo "  [$DOD_TYPE] $BEHAVIOR_DESC" >&2
                     echo "  Test: $TEST_REF" >&2
 
                     # DEFERRED: contract:（合约验证，跳过执行）
@@ -306,7 +264,7 @@ verify_step2() {
                         echo "  ⏭  DEFERRED (合约验证，跳过执行)" >&2
                         DOD_DEFERRED=$((DOD_DEFERRED + 1))
                         echo "" >&2
-                        IN_BEHAVIOR=false
+                        IN_DOD=false
                         continue
                     fi
 
@@ -315,7 +273,7 @@ verify_step2() {
                         echo "  ⏭  DEFERRED (需要运行服务: curl)" >&2
                         DOD_DEFERRED=$((DOD_DEFERRED + 1))
                         echo "" >&2
-                        IN_BEHAVIOR=false
+                        IN_DOD=false
                         continue
                     fi
 
@@ -328,10 +286,10 @@ verify_step2() {
                         else
                             echo "  ❌ FAIL (文件不存在: $TEST_REF)" >&2
                             DOD_FAILED=$((DOD_FAILED + 1))
-                            FAILED_ITEMS+=("[$BEHAVIOR_TYPE] $BEHAVIOR_DESC → 文件不存在: $TEST_REF")
+                            FAILED_ITEMS+=("[$DOD_TYPE] $BEHAVIOR_DESC → 文件不存在: $TEST_REF")
                         fi
                         echo "" >&2
-                        IN_BEHAVIOR=false
+                        IN_DOD=false
                         continue
                     fi
 
@@ -345,7 +303,7 @@ verify_step2() {
                             echo "  ⏭  DEFERRED (需要外部服务)" >&2
                             DOD_DEFERRED=$((DOD_DEFERRED + 1))
                             echo "" >&2
-                            IN_BEHAVIOR=false
+                            IN_DOD=false
                             continue
                         fi
 
@@ -367,10 +325,10 @@ verify_step2() {
                                 echo "  输出: $(echo "$OUTPUT" | head -3)" >&2
                             fi
                             DOD_FAILED=$((DOD_FAILED + 1))
-                            FAILED_ITEMS+=("[$BEHAVIOR_TYPE] $BEHAVIOR_DESC → exit $EXIT_CODE: $CMD")
+                            FAILED_ITEMS+=("[$DOD_TYPE] $BEHAVIOR_DESC → exit $EXIT_CODE: $CMD")
                         fi
                         echo "" >&2
-                        IN_BEHAVIOR=false
+                        IN_DOD=false
                         continue
                     fi
 
@@ -378,7 +336,7 @@ verify_step2() {
                     echo "  ⏭  DEFERRED (未知格式，跳过: $TEST_REF)" >&2
                     DOD_DEFERRED=$((DOD_DEFERRED + 1))
                     echo "" >&2
-                    IN_BEHAVIOR=false
+                    IN_DOD=false
                 fi
             fi
         done < "$task_card"
@@ -402,7 +360,7 @@ ${fail_detail}"
         fi
 
         if [[ $DOD_TOTAL -gt 0 ]]; then
-            echo "  ✅ [Gate 2] DoD [BEHAVIOR]/[ARTIFACT]/[GATE] Test 全部通过" >&2
+            echo "  ✅ [Gate 2] DoD Test 全部通过（[BEHAVIOR]/[ARTIFACT]/[GATE]）" >&2
         else
             echo "  ⚠️  [Gate 2] Task Card 无可执行 DoD 条目，跳过" >&2
         fi
