@@ -1522,6 +1522,28 @@ async function observeChat(signal, context = {}) {
         break;
       }
 
+      case 'save_memory': {
+        const content = signal.content || '';
+        const importance = Math.min(10, Math.max(1, Number(signal.importance) || 5));
+        const reason = signal.reason || '';
+        const fullContent = reason ? `${content}\n（原因：${reason}）` : content;
+        let expiresExpr;
+        if (importance >= 8) {
+          expiresExpr = 'NULL';
+        } else if (importance >= 5) {
+          expiresExpr = "NOW() + INTERVAL '90 days'";
+        } else {
+          expiresExpr = "NOW() + INTERVAL '30 days'";
+        }
+        await pool.query(
+          `INSERT INTO memory_stream (content, importance, memory_type, source_type, expires_at)
+           VALUES ($1, $2, 'long', 'self_initiated', ${expiresExpr})`,
+          [fullContent, importance]
+        );
+        console.log(`[thalamus] observeChat: save_memory — importance=${importance} "${content.slice(0, 60)}"`);
+        break;
+      }
+
       default:
         console.warn(`[thalamus] observeChat: unknown signal type: ${type}`);
     }

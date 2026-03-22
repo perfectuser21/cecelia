@@ -379,6 +379,17 @@ server.listen(PORT, async () => {
     console.warn('[Server] Nightly Scheduler init failed (non-fatal):', e.message);
   }
 
+  // Initialize Conversation Consolidator (对话空闲超时总结，每 5 分钟检查)
+  try {
+    const { runConversationConsolidator } = await import('./src/conversation-consolidator.js');
+    setInterval(async () => {
+      try { await runConversationConsolidator(); } catch (e) { console.warn('[Server] Conversation consolidator failed:', e.message); }
+    }, 5 * 60 * 1000);
+    console.log('[Server] Conversation Consolidator scheduled (5min interval)');
+  } catch (e) {
+    console.warn('[Server] Conversation Consolidator init failed (non-fatal):', e.message);
+  }
+
   // Initialize Promotion Job Loop (P1)
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();
