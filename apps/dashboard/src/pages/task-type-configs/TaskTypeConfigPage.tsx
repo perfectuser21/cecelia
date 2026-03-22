@@ -1,339 +1,471 @@
 /**
- * TaskTypeConfigPage — 任务类型路由（ABCD 框架）
+ * TaskTypeConfigPage — 三层下钻架构
  * 路由：/task-type-configs
  *
- * A类：锁机器（美国M4）+ 锁模型（Claude Code）→ 只有 dev
- * B类：锁机器（美国M4），模型不锁（Claude Code 或 Codex 均可）
- * C类：Codex，不锁机器（美国M4 或 西安M4 均可），动态任务可编辑
- * D类：香港VPS，纯脚本/轻量，无大模型
+ * 第一层：ABCD 类别卡片总览
+ * 第二层：某类的任务列表（点击进入）
+ * 第三层：右侧 DetailPanel — 任务详情 + 编辑（C类动态任务可保存）
  */
 
 import { useState, useEffect, useCallback } from 'react';
 
-interface TaskTypeConfig {
+// ─── 类型定义 ────────────────────────────────────────────────────────────────
+
+interface DynamicConfig {
   task_type: string;
   location: 'us' | 'hk' | 'xian';
   executor: string;
   skill: string | null;
   description: string | null;
-  is_dynamic: boolean;
   updated_at: string;
 }
 
+type Category = 'A' | 'B' | 'C' | 'D';
+
+interface TaskDef {
+  task_type: string;
+  location: string;
+  skill: string;
+  desc: string;
+  editable?: boolean; // C类动态任务
+}
+
+// ─── 静态数据 ─────────────────────────────────────────────────────────────────
+
 const DEVICE_LABELS: Record<string, string> = {
-  us:   '美国M4',
-  hk:   '香港VPS',
-  xian: '西安M4',
+  us: '美国M4', hk: '香港VPS', xian: '西安M4',
 };
 
 const DEVICE_COLORS: Record<string, string> = {
-  us:   'bg-blue-100 text-blue-700',
-  hk:   'bg-red-100 text-red-700',
+  us: 'bg-blue-100 text-blue-700',
+  hk: 'bg-red-100 text-red-700',
   xian: 'bg-amber-100 text-amber-700',
 };
 
-// B类：锁机器（美国M4），需本机代码/DB上下文
-const B_CLASS_ROWS: Array<{ task_type: string; skill: string; desc: string }> = [
-  { task_type: 'initiative_execute',  skill: '/dev',                desc: 'Initiative 执行，/dev 全流程' },
-  { task_type: 'initiative_plan',     skill: '/decomp',             desc: 'Initiative 规划，读现有代码' },
-  { task_type: 'initiative_verify',   skill: '/arch-review verify', desc: 'Initiative 验收，核查代码实现' },
-  { task_type: 'intent_expand',       skill: '/intent-expand',      desc: '意图扩展，读 Brain DB 补全 PRD' },
-  { task_type: 'pipeline_rescue',     skill: '/dev',                desc: 'Pipeline 救援，读 .dev-mode + worktree' },
-  { task_type: 'code_review',         skill: '/code-review',        desc: '代码审查，读代码上下文' },
-  { task_type: 'code_review_gate',    skill: '/code-review-gate',   desc: '代码质量门禁（push 前审查）' },
-  { task_type: 'prd_review',          skill: '/prd-review',         desc: 'PRD 审查' },
-  { task_type: 'spec_review',         skill: '/spec-review',        desc: 'Spec 审查' },
-  { task_type: 'initiative_review',   skill: '/initiative-review',  desc: 'Initiative 整体审查' },
-  { task_type: 'decomp_review',       skill: '/decomp-check',       desc: '拆解审查（Vivian 角色）' },
-  { task_type: 'architecture_design', skill: '/architect design',   desc: '架构设计，读代码' },
-  { task_type: 'architecture_scan',   skill: '/architect scan',     desc: '系统扫描，读代码' },
-  { task_type: 'arch_review',         skill: '/arch-review review', desc: '架构巡检，读代码' },
-  { task_type: 'dept_heartbeat',      skill: '/cecelia',            desc: '部门心跳' },
-];
+const CATEGORY_META: Record<Category, { label: string; tag: string; desc: string; color: string; border: string; iconBg: string }> = {
+  A: {
+    label: 'A类', tag: '锁机器 + 锁模型',
+    desc: '必须在美国M4上，必须用 Claude Code，不可替换',
+    color: 'bg-blue-50', border: 'border-blue-200', iconBg: 'bg-blue-500',
+  },
+  B: {
+    label: 'B类', tag: '锁机器（美国M4）',
+    desc: '需要本机代码/worktree/Brain DB 上下文，Claude Code 或 Codex 均可',
+    color: 'bg-indigo-50', border: 'border-indigo-200', iconBg: 'bg-indigo-500',
+  },
+  C: {
+    label: 'C类', tag: '锁模型（Codex），不锁机器',
+    desc: '美国M4 或 西安M4 均可，动态任务可实时切换机器',
+    color: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-amber-500',
+  },
+  D: {
+    label: 'D类', tag: '纯脚本，不锁机器',
+    desc: '香港VPS，MiniMax / N8N，无需大模型推理',
+    color: 'bg-red-50', border: 'border-red-200', iconBg: 'bg-red-500',
+  },
+};
 
-// C类固定 Codex 任务（只读）
-const C_FIXED_ROWS: Array<{ task_type: string; location: string; skill: string; desc: string }> = [
-  { task_type: 'codex_dev',          location: 'xian', skill: '/dev',              desc: 'Codex /dev，runner.sh 执行' },
-  { task_type: 'codex_qa',           location: 'xian', skill: '/codex',            desc: 'Codex 免疫检查' },
-  { task_type: 'codex_playwright',   location: 'xian', skill: '/playwright',       desc: 'Playwright 自动化 → CDP 控制西安PC' },
-  { task_type: 'codex_test_gen',     location: 'xian', skill: '/codex-test-gen',   desc: '自动生成测试' },
-  { task_type: 'pr_review',          location: 'xian', skill: '/review',           desc: '异步 PR 审查（独立账号）' },
-  { task_type: 'content-pipeline',   location: 'xian', skill: '/content-creator',  desc: '内容工厂 Pipeline 入口' },
-  { task_type: 'content-research',   location: 'xian', skill: '/notebooklm',       desc: '内容调研' },
-  { task_type: 'content-generate',   location: 'xian', skill: '/content-creator',  desc: '内容生成' },
-  { task_type: 'content-review',     location: 'xian', skill: '/content-creator',  desc: '内容审核' },
-  { task_type: 'content-export',     location: 'xian', skill: '/content-creator',  desc: '内容导出' },
-];
+// C类动态任务列表（suggestion_plan, strategy_session, knowledge, scope_plan, project_plan）
+const DYNAMIC_TASK_TYPES = new Set([
+  'suggestion_plan', 'strategy_session', 'knowledge', 'scope_plan', 'project_plan',
+]);
 
-// C类动态任务（从 /api/cecelia/task-type-configs 加载，可切换机器）：
-// suggestion_plan, strategy_session, knowledge, scope_plan, project_plan
+const TASKS_BY_CATEGORY: Record<Category, TaskDef[]> = {
+  A: [
+    { task_type: 'dev', location: 'us', skill: '/dev', desc: '主力开发，Opus + /dev 全流程' },
+  ],
+  B: [
+    { task_type: 'initiative_execute',  location: 'us', skill: '/dev',                desc: 'Initiative 执行，/dev 全流程' },
+    { task_type: 'initiative_plan',     location: 'us', skill: '/decomp',             desc: 'Initiative 规划，读现有代码' },
+    { task_type: 'initiative_verify',   location: 'us', skill: '/arch-review verify', desc: 'Initiative 验收，核查代码实现' },
+    { task_type: 'intent_expand',       location: 'us', skill: '/intent-expand',      desc: '意图扩展，读 Brain DB 补全 PRD' },
+    { task_type: 'pipeline_rescue',     location: 'us', skill: '/dev',                desc: 'Pipeline 救援，读 .dev-mode + worktree' },
+    { task_type: 'code_review',         location: 'us', skill: '/code-review',        desc: '代码审查，读代码上下文' },
+    { task_type: 'code_review_gate',    location: 'us', skill: '/code-review-gate',   desc: '代码质量门禁（push 前审查）' },
+    { task_type: 'prd_review',          location: 'us', skill: '/prd-review',         desc: 'PRD 审查' },
+    { task_type: 'spec_review',         location: 'us', skill: '/spec-review',        desc: 'Spec 审查' },
+    { task_type: 'initiative_review',   location: 'us', skill: '/initiative-review',  desc: 'Initiative 整体审查' },
+    { task_type: 'decomp_review',       location: 'us', skill: '/decomp-check',       desc: '拆解审查（Vivian 角色）' },
+    { task_type: 'architecture_design', location: 'us', skill: '/architect design',   desc: '架构设计，读代码' },
+    { task_type: 'architecture_scan',   location: 'us', skill: '/architect scan',     desc: '系统扫描，读代码' },
+    { task_type: 'arch_review',         location: 'us', skill: '/arch-review review', desc: '架构巡检，读代码' },
+    { task_type: 'dept_heartbeat',      location: 'us', skill: '/cecelia',            desc: '部门心跳' },
+  ],
+  C: [
+    { task_type: 'codex_dev',          location: 'xian', skill: '/dev',             desc: 'Codex /dev，runner.sh 执行' },
+    { task_type: 'codex_qa',           location: 'xian', skill: '/codex',           desc: 'Codex 免疫检查' },
+    { task_type: 'codex_playwright',   location: 'xian', skill: '/playwright',      desc: 'Playwright 自动化 → CDP 控制西安PC' },
+    { task_type: 'codex_test_gen',     location: 'xian', skill: '/codex-test-gen',  desc: '自动生成测试' },
+    { task_type: 'pr_review',          location: 'xian', skill: '/review',          desc: '异步 PR 审查（独立账号）' },
+    { task_type: 'content-pipeline',   location: 'xian', skill: '/content-creator', desc: '内容工厂 Pipeline 入口' },
+    { task_type: 'content-research',   location: 'xian', skill: '/notebooklm',      desc: '内容调研' },
+    { task_type: 'content-generate',   location: 'xian', skill: '/content-creator', desc: '内容生成' },
+    { task_type: 'content-review',     location: 'xian', skill: '/content-creator', desc: '内容审核' },
+    { task_type: 'content-export',     location: 'xian', skill: '/content-creator', desc: '内容导出' },
+    { task_type: 'suggestion_plan',    location: 'xian', skill: '/plan',            desc: '层级识别', editable: true },
+    { task_type: 'strategy_session',   location: 'xian', skill: '/strategy-session',desc: '战略会议', editable: true },
+    { task_type: 'knowledge',          location: 'xian', skill: '/knowledge',       desc: '知识记录', editable: true },
+    { task_type: 'scope_plan',         location: 'xian', skill: '/decomp',          desc: 'Scope 规划', editable: true },
+    { task_type: 'project_plan',       location: 'xian', skill: '/decomp',          desc: 'Project 规划', editable: true },
+  ],
+  D: [
+    { task_type: 'explore',  location: 'hk', skill: '/explore',  desc: '快速调研（MiniMax）' },
+    { task_type: 'talk',     location: 'hk', skill: '/cecelia',  desc: '对话（MiniMax）' },
+    { task_type: 'research', location: 'hk', skill: '/research', desc: '深度调研（MiniMax）' },
+    { task_type: 'data',     location: 'hk', skill: '/sync-hk',  desc: '数据处理（N8N）' },
+  ],
+};
 
-// D类：香港VPS，纯脚本/轻量
-const D_CLASS_ROWS: Array<{ task_type: string; skill: string; desc: string }> = [
-  { task_type: 'explore',  skill: '/explore',   desc: '快速调研（MiniMax）' },
-  { task_type: 'talk',     skill: '/cecelia',   desc: '对话（MiniMax）' },
-  { task_type: 'research', skill: '/research',  desc: '深度调研（MiniMax）' },
-  { task_type: 'data',     skill: '/sync-hk',   desc: '数据处理（N8N）' },
-];
+// ─── 子组件 ──────────────────────────────────────────────────────────────────
 
 function DeviceBadge({ location }: { location: string }) {
-  const label = DEVICE_LABELS[location] || location;
-  const color = DEVICE_COLORS[location] || 'bg-gray-100 text-gray-600';
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
-      {label}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${DEVICE_COLORS[location] ?? 'bg-gray-100 text-gray-600'}`}>
+      {DEVICE_LABELS[location] ?? location}
     </span>
   );
 }
 
-const TABLE_HEADER = (
-  <thead>
-    <tr className="bg-gray-50 border-b border-gray-200">
-      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">任务类型</th>
-      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">路由到</th>
-      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Skill</th>
-      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">说明</th>
-      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">操作</th>
-    </tr>
-  </thead>
-);
-
-function GroupBox({ title, subtitle, borderColor, headerBg, children }: {
-  title: string; subtitle: string; borderColor: string; headerBg: string; children: React.ReactNode;
+/** 面包屑 breadcrumb */
+function Breadcrumb({ category, task, onHome, onCategory }: {
+  category: Category | null;
+  task: TaskDef | null;
+  onHome: () => void;
+  onCategory: () => void;
 }) {
   return (
-    <div className={`mb-5 rounded-xl border overflow-hidden ${borderColor}`}>
-      <div className={`px-4 py-3 border-b ${borderColor} ${headerBg}`}>
-        <div className="font-semibold text-sm text-gray-800">{title}</div>
-        <div className="text-xs text-gray-500 mt-0.5">{subtitle}</div>
+    <nav className="flex items-center gap-1 text-sm text-gray-500 mb-5">
+      <button onClick={onHome} className="hover:text-gray-900 transition-colors">任务路由</button>
+      {category && (
+        <>
+          <span className="text-gray-300">/</span>
+          <button
+            onClick={task ? onCategory : undefined}
+            className={task ? 'hover:text-gray-900 transition-colors' : 'text-gray-900 font-medium'}
+          >
+            {CATEGORY_META[category].label}
+          </button>
+        </>
+      )}
+      {task && (
+        <>
+          <span className="text-gray-300">/</span>
+          <span className="text-gray-900 font-medium font-mono text-xs">{task.task_type}</span>
+        </>
+      )}
+    </nav>
+  );
+}
+
+/** 第一层：类别卡片 CategoryCard */
+function CategoryCard({ cat, count, onClick }: { cat: Category; count: number; onClick: () => void }) {
+  const m = CATEGORY_META[cat];
+  return (
+    <button
+      onClick={onClick}
+      className={`text-left w-full rounded-xl border ${m.border} ${m.color} p-5 hover:shadow-md transition-all group`}
+    >
+      <div className="flex items-start justify-between">
+        <div className={`w-10 h-10 rounded-lg ${m.iconBg} flex items-center justify-center text-white font-bold text-lg mb-3`}>
+          {cat}
+        </div>
+        <span className="text-xs text-gray-400 group-hover:text-gray-600 transition-colors mt-1">
+          {count} 个任务类型 →
+        </span>
       </div>
-      <div className="bg-white">
-        <table className="w-full text-sm">
-          {TABLE_HEADER}
-          <tbody className="divide-y divide-gray-100">
-            {children}
-          </tbody>
-        </table>
+      <div className="font-semibold text-gray-800">{m.tag}</div>
+      <div className="text-xs text-gray-500 mt-1 leading-relaxed">{m.desc}</div>
+    </button>
+  );
+}
+
+/** 第二层：任务列表行 */
+function TaskRow({ task, isSelected, onClick }: {
+  task: TaskDef; isSelected: boolean; onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-4 py-3 flex items-center gap-4 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0 ${isSelected ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}`}
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs font-medium text-gray-800">{task.task_type}</span>
+          {task.editable && <span className="text-amber-500 text-xs">● 可配置</span>}
+        </div>
+        <div className="text-xs text-gray-400 mt-0.5 truncate">{task.desc}</div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <DeviceBadge location={task.location} />
+        <span className="text-gray-300 text-sm">›</span>
+      </div>
+    </button>
+  );
+}
+
+/** 第三层：右侧详情面板 DetailPanel */
+function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
+  task: TaskDef;
+  dynamicConfig: DynamicConfig | null;
+  onSave: (taskType: string, location: string) => void;
+  saving: boolean;
+  saved: boolean;
+  error: string | null;
+}) {
+  const [editLocation, setEditLocation] = useState<string>(
+    dynamicConfig?.location ?? task.location
+  );
+
+  useEffect(() => {
+    setEditLocation(dynamicConfig?.location ?? task.location);
+  }, [task.task_type, dynamicConfig]);
+
+  const isEditable = task.editable && dynamicConfig !== null;
+  const currentLocation = dynamicConfig?.location ?? task.location;
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* 面板头 */}
+      <div className="px-5 py-4 border-b border-gray-200 bg-gray-50">
+        <div className="font-mono text-sm font-bold text-gray-900">{task.task_type}</div>
+        <div className="text-xs text-gray-500 mt-0.5">{task.desc}</div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        {/* 当前路由 */}
+        <section>
+          <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">当前路由</div>
+          <DeviceBadge location={currentLocation} />
+        </section>
+
+        {/* Skill */}
+        <section>
+          <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Skill</div>
+          <code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-700">{task.skill}</code>
+        </section>
+
+        {/* Executor（动态任务） */}
+        {dynamicConfig && (
+          <section>
+            <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Executor</div>
+            <code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-700">{dynamicConfig.executor}</code>
+          </section>
+        )}
+
+        {/* 约束说明 */}
+        <section>
+          <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">机器约束</div>
+          {isEditable ? (
+            <div className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2 border border-amber-200">
+              C类任务，不锁机器。可在美国M4 或 西安M4 之间切换，保存后 Brain 立即生效。
+            </div>
+          ) : (
+            <div className="text-xs text-gray-500 bg-gray-50 rounded px-3 py-2 border border-gray-200">
+              {task.location === 'us'
+                ? 'B类任务，锁定美国M4。需要本机代码/worktree/Brain DB 上下文，不可切换。'
+                : task.location === 'hk'
+                ? 'D类任务，固定香港VPS。纯脚本执行，不涉及大模型路由。'
+                : 'C类固定任务，当前配置在西安M4。如需切换请在 DB 中添加动态配置。'}
+            </div>
+          )}
+        </section>
+
+        {/* 编辑表单（仅 C类动态任务） */}
+        {isEditable && (
+          <section>
+            <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">切换机器</div>
+            <div className="space-y-3">
+              {(['us', 'xian'] as const).map(loc => (
+                <label
+                  key={loc}
+                  className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                    editLocation === loc
+                      ? `${DEVICE_COLORS[loc]} border-current/30`
+                      : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="location"
+                    value={loc}
+                    checked={editLocation === loc}
+                    onChange={() => setEditLocation(loc)}
+                    className="sr-only"
+                  />
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    editLocation === loc ? 'border-current' : 'border-gray-300'
+                  }`}>
+                    {editLocation === loc && <div className="w-2 h-2 rounded-full bg-current" />}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">{DEVICE_LABELS[loc]}</div>
+                    <div className="text-xs text-gray-400">
+                      {loc === 'us' ? '美国 Mac mini M4 · 38.23.47.81' : '西安 Mac mini M4 · Tailscale 100.86.57.69'}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {error && (
+              <div className="mt-3 text-xs text-red-600 bg-red-50 px-3 py-2 rounded border border-red-200">{error}</div>
+            )}
+
+            <button
+              onClick={() => onSave(task.task_type, editLocation)}
+              disabled={saving || editLocation === currentLocation}
+              className="mt-4 w-full py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {saving ? '保存中…' : saved ? '✓ 已保存' : '保存配置'}
+            </button>
+
+            {saved && (
+              <div className="mt-2 text-xs text-green-600 text-center">Brain 已立即生效</div>
+            )}
+          </section>
+        )}
+
+        {/* 更新时间 */}
+        {dynamicConfig?.updated_at && (
+          <div className="text-xs text-gray-300 pt-2 border-t border-gray-100">
+            上次修改：{new Date(dynamicConfig.updated_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function ReadOnlyRow({ task_type, location, skill, desc }: {
-  task_type: string; location: string; skill: string; desc: string;
-}) {
-  return (
-    <tr className="hover:bg-gray-50 transition-colors">
-      <td className="px-4 py-2.5 font-mono text-xs font-medium text-gray-800">{task_type}</td>
-      <td className="px-4 py-2.5"><DeviceBadge location={location} /></td>
-      <td className="px-4 py-2.5 font-mono text-xs text-gray-500">{skill}</td>
-      <td className="px-4 py-2.5 text-xs text-gray-400">{desc}</td>
-      <td className="px-4 py-2.5 text-center">
-        <span className="text-xs text-gray-300">固定</span>
-      </td>
-    </tr>
-  );
-}
-
-function DynamicRow({ config, onEdit, onSave, onCancel, editing, editValues, setEditValues, saving, saved }: {
-  config: TaskTypeConfig;
-  onEdit: () => void; onSave: () => void; onCancel: () => void;
-  editing: boolean; editValues: Partial<TaskTypeConfig>;
-  setEditValues: (v: Partial<TaskTypeConfig>) => void;
-  saving: boolean; saved: boolean;
-}) {
-  return (
-    <tr className="hover:bg-amber-50/50 transition-colors bg-amber-50/20">
-      <td className="px-4 py-2.5 font-mono text-xs font-medium text-gray-800">
-        {config.task_type}
-        <span className="ml-1.5 text-amber-400 text-xs">●</span>
-      </td>
-      <td className="px-4 py-2.5">
-        {editing ? (
-          <select
-            value={editValues.location || config.location}
-            onChange={e => setEditValues({ ...editValues, location: e.target.value as 'us' | 'hk' | 'xian' })}
-            className="border border-gray-300 rounded px-2 py-1 text-xs"
-          >
-            <option value="us">美国M4</option>
-            <option value="xian">西安M4</option>
-          </select>
-        ) : (
-          <DeviceBadge location={config.location} />
-        )}
-      </td>
-      <td className="px-4 py-2.5 font-mono text-xs text-gray-500">{config.executor}</td>
-      <td className="px-4 py-2.5 text-xs text-gray-400">{config.description || '-'}</td>
-      <td className="px-4 py-2.5 text-center">
-        {editing ? (
-          <div className="flex items-center justify-center gap-1.5">
-            <button onClick={onSave} disabled={saving}
-              className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50">
-              {saving ? '…' : '保存'}
-            </button>
-            <button onClick={onCancel}
-              className="px-2.5 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300">
-              取消
-            </button>
-          </div>
-        ) : (
-          <button onClick={onEdit}
-            className="px-2.5 py-1 bg-gray-100 text-gray-600 text-xs rounded hover:bg-gray-200">
-            {saved ? '✓' : '编辑'}
-          </button>
-        )}
-      </td>
-    </tr>
-  );
-}
+// ─── 主页面 ──────────────────────────────────────────────────────────────────
 
 export default function TaskTypeConfigPage() {
-  const [dynamicConfigs, setDynamicConfigs] = useState<TaskTypeConfig[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [editValues, setEditValues] = useState<Partial<TaskTypeConfig>>({});
+  const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const [selectedTask, setSelectedTask] = useState<TaskDef | null>(null);
+  const [dynamicConfigs, setDynamicConfigs] = useState<DynamicConfig[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const fetchConfigs = useCallback(async () => {
     try {
       const res = await fetch('/api/cecelia/task-type-configs');
       const data = await res.json();
-      if (data.success) { setDynamicConfigs(data.configs); setError(null); }
-      else setError(data.error || '加载失败');
-    } catch { setError('网络错误'); }
-    finally { setLoading(false); }
+      if (data.success) setDynamicConfigs(data.configs);
+    } catch { /* silent */ }
   }, []);
 
   useEffect(() => { fetchConfigs(); }, [fetchConfigs]);
 
-  const startEdit = (config: TaskTypeConfig) => {
-    setEditing(config.task_type);
-    setEditValues({ location: config.location, executor: config.executor });
-  };
-  const cancelEdit = () => { setEditing(null); setEditValues({}); };
-  const saveEdit = async (taskType: string) => {
-    setSaving(true);
+  const handleSave = async (taskType: string, location: string) => {
+    setSaving(true); setSaveError(null);
     try {
       const res = await fetch(`/api/cecelia/task-type-configs/${taskType}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editValues),
+        body: JSON.stringify({ location }),
       });
       const data = await res.json();
       if (data.success) {
-        setSaved(taskType); setTimeout(() => setSaved(null), 2000);
-        setEditing(null); await fetchConfigs();
-      } else setError(data.error || '保存失败');
-    } catch { setError('保存失败'); }
+        setSaved(taskType);
+        setTimeout(() => setSaved(null), 3000);
+        await fetchConfigs();
+      } else {
+        setSaveError(data.error ?? '保存失败');
+      }
+    } catch { setSaveError('网络错误'); }
     finally { setSaving(false); }
   };
 
-  return (
-    <div className="max-w-5xl mx-auto">
-      {/* 页头 */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">任务路由配置</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          按 ABCD 框架管理任务路由。<span className="text-amber-600 font-medium">● 橙色行</span>可编辑（C类动态任务）。
+  const goHome = () => { setSelectedCategory(null); setSelectedTask(null); };
+  const goCategory = () => setSelectedTask(null);
+
+  const tasks = selectedCategory ? TASKS_BY_CATEGORY[selectedCategory] : [];
+  const dynamicMap = Object.fromEntries(dynamicConfigs.map(c => [c.task_type, c]));
+
+  // ── 第一层：类别总览 ──
+  if (!selectedCategory) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-gray-900">任务路由配置</h1>
+          <p className="mt-1 text-sm text-gray-500">选择类别查看任务列表，点击任务查看详情与配置。</p>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          {(Object.keys(CATEGORY_META) as Category[]).map(cat => (
+            <CategoryCard
+              key={cat}
+              cat={cat}
+              count={TASKS_BY_CATEGORY[cat].length}
+              onClick={() => setSelectedCategory(cat)}
+            />
+          ))}
+        </div>
+        <p className="mt-6 text-xs text-gray-400 text-center">
+          西安PC（CDP被控端）和西安M1（L4 CI Runner）不参与任务路由
         </p>
       </div>
+    );
+  }
 
-      {/* 类别说明卡片 */}
-      <div className="mb-6 grid grid-cols-4 gap-3">
-        {[
-          { label: 'A类', tag: '锁机器 + 锁模型', desc: '美国M4 · Claude Code only', color: 'border-blue-300 bg-blue-50' },
-          { label: 'B类', tag: '锁机器', desc: '美国M4 · Claude Code 或 Codex', color: 'border-indigo-300 bg-indigo-50' },
-          { label: 'C类', tag: '锁模型（Codex）', desc: '美国M4 或 西安M4 均可', color: 'border-amber-300 bg-amber-50' },
-          { label: 'D类', tag: '纯脚本', desc: '香港VPS · 无大模型', color: 'border-red-300 bg-red-50' },
-        ].map(c => (
-          <div key={c.label} className={`rounded-lg border p-3 ${c.color}`}>
-            <div className="font-bold text-base text-gray-800">{c.label}</div>
-            <div className="text-xs font-medium text-gray-600 mt-0.5">{c.tag}</div>
-            <div className="text-xs text-gray-400 mt-1">{c.desc}</div>
+  const meta = CATEGORY_META[selectedCategory];
+
+  // ── 第二层 + 第三层：任务列表 + 右侧面板 ──
+  return (
+    <div className="max-w-5xl mx-auto">
+      <Breadcrumb
+        category={selectedCategory}
+        task={selectedTask}
+        onHome={goHome}
+        onCategory={goCategory}
+      />
+
+      <div className={`flex gap-0 rounded-xl border overflow-hidden ${meta.border}`}>
+        {/* 左：任务列表 */}
+        <div className={`${selectedTask ? 'w-80 shrink-0' : 'flex-1'} border-r border-gray-200 bg-white`}>
+          {/* 列表头 */}
+          <div className={`px-4 py-3 ${meta.color} border-b ${meta.border}`}>
+            <div className="flex items-center gap-2">
+              <div className={`w-6 h-6 rounded ${meta.iconBg} flex items-center justify-center text-white font-bold text-xs`}>
+                {selectedCategory}
+              </div>
+              <span className="font-semibold text-sm text-gray-800">{meta.tag}</span>
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5 ml-8">{tasks.length} 个任务类型</div>
           </div>
-        ))}
-      </div>
+          {/* 任务行 */}
+          <div>
+            {tasks.map(t => (
+              <TaskRow
+                key={t.task_type}
+                task={t}
+                isSelected={selectedTask?.task_type === t.task_type}
+                onClick={() => setSelectedTask(t)}
+              />
+            ))}
+          </div>
+        </div>
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
-      )}
-
-      {/* A类 */}
-      <GroupBox
-        title="A类 — 锁机器 + 锁模型"
-        subtitle="必须在美国M4上，必须用 Claude Code，不可替换"
-        borderColor="border-blue-200"
-        headerBg="bg-blue-50"
-      >
-        <ReadOnlyRow task_type="dev" location="us" skill="/dev" desc="主力开发（Opus + /dev 全流程）" />
-      </GroupBox>
-
-      {/* B类 */}
-      <GroupBox
-        title="B类 — 锁机器（美国M4）"
-        subtitle="需要本机代码/worktree/Brain DB 上下文，Claude Code 或 Codex 均可"
-        borderColor="border-indigo-200"
-        headerBg="bg-indigo-50"
-      >
-        {B_CLASS_ROWS.map(row => (
-          <ReadOnlyRow key={row.task_type} task_type={row.task_type} location="us" skill={row.skill} desc={row.desc} />
-        ))}
-      </GroupBox>
-
-      {/* C类 */}
-      <GroupBox
-        title="C类 — Codex，不锁机器"
-        subtitle="美国M4 或 西安M4 均可。固定行当前在西安M4；动态行（● 橙色）可切换机器"
-        borderColor="border-amber-200"
-        headerBg="bg-amber-50"
-      >
-        {C_FIXED_ROWS.map(row => (
-          <ReadOnlyRow key={row.task_type} task_type={row.task_type} location={row.location} skill={row.skill} desc={row.desc} />
-        ))}
-        {!loading && dynamicConfigs.length > 0 && (
-          <tr>
-            <td colSpan={5} className="px-4 py-2 bg-amber-50 border-t border-amber-200">
-              <span className="text-xs font-medium text-amber-700">● 动态配置（可切换机器）</span>
-            </td>
-          </tr>
-        )}
-        {loading ? (
-          <tr><td colSpan={5} className="px-4 py-4 text-center text-gray-400 text-xs">加载中...</td></tr>
-        ) : (
-          dynamicConfigs.map(config => (
-            <DynamicRow
-              key={config.task_type}
-              config={config}
-              onEdit={() => startEdit(config)}
-              onSave={() => saveEdit(config.task_type)}
-              onCancel={cancelEdit}
-              editing={editing === config.task_type}
-              editValues={editValues}
-              setEditValues={setEditValues}
+        {/* 右：详情面板 DetailPanel */}
+        {selectedTask && (
+          <div className="flex-1 min-w-0 bg-white">
+            <DetailPanel
+              task={selectedTask}
+              dynamicConfig={DYNAMIC_TASK_TYPES.has(selectedTask.task_type) ? (dynamicMap[selectedTask.task_type] ?? null) : null}
+              onSave={handleSave}
               saving={saving}
-              saved={saved === config.task_type}
+              saved={saved === selectedTask.task_type}
+              error={saveError}
             />
-          ))
+          </div>
         )}
-      </GroupBox>
 
-      {/* D类 */}
-      <GroupBox
-        title="D类 — 香港VPS（纯脚本/轻量）"
-        subtitle="MiniMax / N8N，无需大模型推理，香港 VPS 执行"
-        borderColor="border-red-200"
-        headerBg="bg-red-50"
-      >
-        {D_CLASS_ROWS.map(row => (
-          <ReadOnlyRow key={row.task_type} task_type={row.task_type} location="hk" skill={row.skill} desc={row.desc} />
-        ))}
-      </GroupBox>
-
-      <p className="mt-2 text-xs text-gray-400">
-        保存 C类动态配置后 Brain 立即生效，无需重启。西安PC（CDP被控端）和西安M1（L4 CI Runner）不参与任务路由。
-      </p>
+        {/* 右侧空态提示 */}
+        {!selectedTask && (
+          <div className="flex-1 flex items-center justify-center text-gray-300 text-sm bg-gray-50">
+            ← 点击左侧任务查看详情
+          </div>
+        )}
+      </div>
     </div>
   );
 }
