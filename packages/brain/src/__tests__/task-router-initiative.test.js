@@ -7,16 +7,16 @@
 import { describe, it, expect } from 'vitest';
 
 describe('task-router initiative types', () => {
-  it('D3: LOCATION_MAP initiative_plan → us', async () => {
+  it('D3: LOCATION_MAP initiative_plan → xian', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.LOCATION_MAP['initiative_plan']).toBe('us');
-    expect(mod.getTaskLocation('initiative_plan')).toBe('us');
+    expect(mod.LOCATION_MAP['initiative_plan']).toBe('xian');
+    expect(mod.getTaskLocation('initiative_plan')).toBe('xian');
   });
 
-  it('D3: LOCATION_MAP initiative_verify → us', async () => {
+  it('D3: LOCATION_MAP initiative_verify → xian', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.LOCATION_MAP['initiative_verify']).toBe('us');
-    expect(mod.getTaskLocation('initiative_verify')).toBe('us');
+    expect(mod.LOCATION_MAP['initiative_verify']).toBe('xian');
+    expect(mod.getTaskLocation('initiative_verify')).toBe('xian');
   });
 
   it('D3: isValidTaskType accepts initiative_plan', async () => {
@@ -39,7 +39,7 @@ describe('task-router initiative types', () => {
   it('existing types still work correctly', async () => {
     const mod = await import('../task-router.js');
     expect(mod.getTaskLocation('dev')).toBe('us');
-    expect(mod.getTaskLocation('decomp_review')).toBe('us');
+    expect(mod.getTaskLocation('decomp_review')).toBe('xian');
     expect(mod.getTaskLocation('talk')).toBe('hk');
     expect(mod.isValidTaskType('dev')).toBe(true);
     expect(mod.isValidTaskType('exploratory')).toBe(false);

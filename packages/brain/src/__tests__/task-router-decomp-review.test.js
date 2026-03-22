@@ -7,10 +7,10 @@
 import { describe, it, expect } from 'vitest';
 
 describe('task-router decomp_review', () => {
-  it('D8: LOCATION_MAP 包含 decomp_review → us', async () => {
+  it('D8: LOCATION_MAP 包含 decomp_review → xian', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.LOCATION_MAP['decomp_review']).toBe('us');
-    expect(mod.getTaskLocation('decomp_review')).toBe('us');
+    expect(mod.LOCATION_MAP['decomp_review']).toBe('xian');
+    expect(mod.getTaskLocation('decomp_review')).toBe('xian');
   });
 
   it('D8: isValidTaskType 接受 decomp_review', async () => {
