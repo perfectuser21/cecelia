@@ -99,3 +99,38 @@ jobs:
             echo "::error::Deploy webhook failed with HTTP $HTTP_CODE"
             exit 1
           fi
+
+      - name: Poll deploy status
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'https://dev-autopilot.zenjoymedia.media' }}
+        run: |
+          echo "Polling /api/brain/deploy/status (max 300s)..."
+          MAX_WAIT=300
+          INTERVAL=10
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
+              "${BRAIN_URL}/api/brain/deploy/status" 2>/dev/null || echo '{"status":"unknown"}')
+            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+
+            echo "  [${ELAPSED}s] status=${STATUS}"
+
+            if [ "$STATUS" = "success" ]; then
+              ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
+              echo "✅ Deploy confirmed success (${ELAPSED_MS}ms)"
+              exit 0
+            elif [ "$STATUS" = "failed" ]; then
+              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
+              echo "::error::Deploy failed: $ERR"
+              exit 1
+            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
+              echo "::warning::Deploy status is idle after ${ELAPSED}s — deploy may have been skipped (no relevant changes)"
+              exit 0
+            fi
+
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "::warning::Deploy status poll timed out after ${MAX_WAIT}s — webhook accepted but result unknown"

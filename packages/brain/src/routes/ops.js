@@ -2656,6 +2656,22 @@ router.get('/docs/instruction-book', async (req, res) => {
 });
 
 // ─── Deploy Webhook ──────────────────────────────────────────────────────────
+
+// In-memory deploy state tracker（进程重启后重置为 idle，属预期行为）
+export const deployState = {
+  status: 'idle',       // idle | running | success | failed
+  version: null,
+  started_at: null,
+  finished_at: null,
+  elapsed_ms: null,
+  error: null,
+};
+
+// GET /api/brain/deploy/status — 查询最近一次部署状态
+router.get('/deploy/status', (req, res) => {
+  res.json({ ...deployState });
+});
+
 // POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
 router.post('/deploy', async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
@@ -2670,7 +2686,13 @@ router.post('/deploy', async (req, res) => {
 
   const { changed_paths } = req.body || {};
 
-  // 异步执行部署，立即返回 202
+  // 更新状态为 running，立即返回 202
+  deployState.status = 'running';
+  deployState.started_at = new Date().toISOString();
+  deployState.finished_at = null;
+  deployState.elapsed_ms = null;
+  deployState.error = null;
+
   res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
 
   const { execSync } = await import('child_process');
@@ -2693,11 +2715,18 @@ router.post('/deploy', async (req, res) => {
       stdio: 'inherit',
     });
 
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[deploy-webhook] ✅ 部署成功 (${elapsed}s)`);
+    const elapsed = Date.now() - startTime;
+    deployState.status = 'success';
+    deployState.finished_at = new Date().toISOString();
+    deployState.elapsed_ms = elapsed;
+    console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
   } catch (err) {
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.error(`[deploy-webhook] ❌ 部署失败 (${elapsed}s):`, err.message);
+    const elapsed = Date.now() - startTime;
+    deployState.status = 'failed';
+    deployState.finished_at = new Date().toISOString();
+    deployState.elapsed_ms = elapsed;
+    deployState.error = err.message;
+    console.error(`[deploy-webhook] ❌ 部署失败 (${(elapsed / 1000).toFixed(1)}s):`, err.message);
   }
 });
 
