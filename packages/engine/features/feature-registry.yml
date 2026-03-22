@@ -17,8 +17,14 @@
 
 version: "3.87.0"
 updated: "2026-03-22"
-# ci-trigger: 13.24.0
+# ci-trigger: 13.25.0
 changelog:
+  - version: "13.25.0"
+    date: "2026-03-22"
+    summary: "feat(engine): /dev pipeline 5项补强 — CI失败写incident-log / PRD bullet本地验证 / 并行PR重叠检测 / code-review-gate维度H信息卫生"
+    scope: skills/dev/steps/01-spec.md,skills/dev/steps/03-integrate.md,packages/workflows/skills/code-review-gate/SKILL.md
+    breaking: false
+    feature_id: dev-pipeline-5patch
   - version: "13.24.0"
     date: "2026-03-22"
     summary: "fix(engine): /dev pipeline 7项bug修复 — Stage1 CI镜像路径/[PRESERVE]模板/2.3.2 exit1/过时注释/git add/分数/变量；还原被PR#1366覆盖的Step2.0+2.1.5+2.3.6"

@@ -8,10 +8,11 @@ changelog:
   - 1.0.0: 合并 code_quality + /simplify 为统一代码审查 Gate
   - 1.1.0: A1 C/E维度升级blocker；A2 新增维度G PRD/DoD对齐验证；A3 修复时机描述为Stage 2
   - 1.2.0: 清理过时描述，修正触发时机（push前 Stage 2），删除旧 Gate 编号引用
+  - 1.3.0: 新增维度 H 信息卫生（引用已删除功能/路径=warning，同一概念矛盾描述=warning）
 description: |
   代码审查 Gate（/dev Stage 2 最后一步）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。
   在 /dev Stage 2 代码写完后、push 之前触发。此时无 PR，通过 git diff 获取变更内容。
-  覆盖安全、正确性、复用性、命名、效率、可维护性、PRD/DoD对齐七个维度。
+  覆盖安全、正确性、复用性、命名、效率、可维护性、PRD/DoD对齐、信息卫生八个维度。
   给出 PASS / FAIL 裁决。
   触发词：代码审查、code-review-gate、合并前检查、代码门禁。
 ---
@@ -136,6 +137,19 @@ git diff origin/main..HEAD
 2. 对每条 `- [ ] [ARTIFACT]` 或 `- [ ] [BEHAVIOR]` 条目，检查 git diff 是否有对应改动
 3. 读取「不做什么」章节，检查 diff 是否越界
 
+### 维度 H：信息卫生
+
+| 检查项 | 严重度 | 说明 |
+|--------|--------|------|
+| **引用已删除功能/路径** | warning | diff 中新增的文字引用了 changelog 里标记为"已删除"或"废弃"的功能名、旧文件路径或旧 API |
+| **同一概念矛盾描述** | warning | 同一术语或流程在改动文件的不同位置有不一致的说法（如版本号两处不同、步骤顺序冲突） |
+| **过时 changelog 条目未清理** | info | 新增的 changelog 条目里提及了已删除功能的历史记录，但正文中该功能已不存在 |
+
+**验证方法**：
+1. 扫描 diff 中新增的行（`+` 开头），提取功能名称、路径引用、术语
+2. 对照同文件中的 `removed`/`deprecated`/`deleted` 标记以及 `changelog` 章节，检查是否有已删除条目被重新引用
+3. 在改动文件内搜索同一术语，检查是否存在多处矛盾描述
+
 ---
 
 ## 裁决规则
@@ -162,7 +176,7 @@ FAIL 时必须修复 blocker 后重新提交审查，不能合并 PR。
   "issues": [
     {
       "severity": "blocker | warning | info",
-      "dimension": "A | B | C | D | E | F | G",
+      "dimension": "A | B | C | D | E | F | G | H",
       "file": "path/to/file.js",
       "line": 42,
       "description": "具体问题描述",
