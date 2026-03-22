@@ -15,6 +15,10 @@
 import crypto from 'crypto';
 import { validateAllContentTypes } from './content-types/content-type-validator.js';
 
+// Minimum acceptable Watchdog thresholds for sanity check
+const WATCHDOG_MIN_TOTAL_MEM_MB = 512;
+const WATCHDOG_MIN_RSS_KILL_MB = 50;
+
 /** Minimum acceptable migration version (DB must be >= this) */
 export const EXPECTED_SCHEMA_VERSION = '171';
 
@@ -34,6 +38,8 @@ const CORE_TABLES = [
  * @param {object} pool - pg Pool instance
  * @param {object} [opts] - options
  * @param {string} [opts.envRegion] - override ENV_REGION (for testing)
+ * @param {object} [opts.watchdogThresholds] - override watchdog thresholds for testing
+ *   { total_mem_mb, rss_kill_mb }
  * @returns {Promise<boolean>} true if all checks pass
  */
 export async function runSelfCheck(pool, opts = {}) {
@@ -187,6 +193,35 @@ export async function runSelfCheck(pool, opts = {}) {
     }
   } catch (err) {
     console.warn(`  [WARN] Content type YAML 校验失败：${err.message}`);
+  }
+
+  // 8. Watchdog RSS Sanity Check (non-blocking WARN)
+  try {
+    let totalMemMb, rssKillMb;
+    if (opts.watchdogThresholds) {
+      // Test override
+      totalMemMb = opts.watchdogThresholds.total_mem_mb;
+      rssKillMb = opts.watchdogThresholds.rss_kill_mb;
+    } else {
+      const { RSS_KILL_MB, TOTAL_MEM_MB } = await import('./watchdog.js');
+      totalMemMb = TOTAL_MEM_MB;
+      rssKillMb = RSS_KILL_MB;
+    }
+
+    const totalMemOk = totalMemMb >= WATCHDOG_MIN_TOTAL_MEM_MB;
+    const rssKillOk = rssKillMb >= WATCHDOG_MIN_RSS_KILL_MB;
+
+    if (!totalMemOk) {
+      console.warn(`  [WARN] Watchdog RSS Sanity: total_mem_mb=${totalMemMb} < ${WATCHDOG_MIN_TOTAL_MEM_MB}MB — 系统内存上报异常，RSS 阈值可能过小`);
+    }
+    if (!rssKillOk) {
+      console.warn(`  [WARN] Watchdog RSS Sanity: rss_kill_mb=${rssKillMb} < ${WATCHDOG_MIN_RSS_KILL_MB}MB — 阈值过小，正常任务可能被误杀`);
+    }
+    if (totalMemOk && rssKillOk) {
+      console.log(`  [INFO] Watchdog RSS Sanity 通过: total_mem_mb=${totalMemMb}, rss_kill_mb=${rssKillMb}`);
+    }
+  } catch (err) {
+    console.warn(`  [WARN] Watchdog RSS Sanity 检查失败：${err.message}`);
   }
 
   printSummary(results, allPassed);

@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runSelfCheck, EXPECTED_SCHEMA_VERSION } from '../selfcheck.js';
 
+
 function makeMockPool(overrides = {}) {
   const defaults = {
     'SELECT 1': { rows: [{ ok: 1 }] },
@@ -156,5 +157,53 @@ describe('selfcheck', () => {
     });
     const ok = await runSelfCheck(pool, { envRegion: 'us' });
     expect(ok).toBe(true);
+  });
+
+  describe('Watchdog RSS Sanity Check', () => {
+    it('should log INFO when thresholds are normal', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const pool = makeMockPool();
+      await runSelfCheck(pool, {
+        envRegion: 'us',
+        watchdogThresholds: { total_mem_mb: 16384, rss_kill_mb: 2400 },
+      });
+      const infoLines = logSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('Watchdog RSS Sanity 通过'));
+      expect(infoLines.length).toBeGreaterThan(0);
+      logSpy.mockRestore();
+    });
+
+    it('should warn when total_mem_mb is below minimum', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const pool = makeMockPool();
+      await runSelfCheck(pool, {
+        envRegion: 'us',
+        watchdogThresholds: { total_mem_mb: 256, rss_kill_mb: 89 },
+      });
+      const warnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('total_mem_mb=256'));
+      expect(warnLines.length).toBeGreaterThan(0);
+      warnSpy.mockRestore();
+    });
+
+    it('should warn when rss_kill_mb is below minimum', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const pool = makeMockPool();
+      await runSelfCheck(pool, {
+        envRegion: 'us',
+        watchdogThresholds: { total_mem_mb: 1024, rss_kill_mb: 10 },
+      });
+      const warnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('rss_kill_mb=10'));
+      expect(warnLines.length).toBeGreaterThan(0);
+      warnSpy.mockRestore();
+    });
+
+    it('should not fail overall selfcheck when watchdog thresholds are low', async () => {
+      const pool = makeMockPool();
+      const ok = await runSelfCheck(pool, {
+        envRegion: 'us',
+        watchdogThresholds: { total_mem_mb: 128, rss_kill_mb: 5 },
+      });
+      // Watchdog RSS sanity is WARN-only, must not block overall selfcheck result
+      expect(ok).toBe(true);
+    });
   });
 });
