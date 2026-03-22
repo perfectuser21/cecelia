@@ -995,15 +995,37 @@ async function dispatchNextTask(goalIds) {
     // Re-check budget after potential eviction
     const slotBudgetAfter = await calculateSlotBudget();
     if (!slotBudgetAfter.dispatchAllowed) {
-      const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
-                         slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
-      await recordDispatchResult(pool, false, slotReason);
-      return {
-        dispatched: false,
-        reason: slotReason,
-        budget: slotBudgetAfter,
-        actions,
-      };
+      // Xian bypass: xian-type tasks use independent Codex Bridge pool, not task_pool.
+      // Allow them through when codex pool has capacity, even if task_pool is full.
+      let xianBypass = false;
+      if (slotBudgetAfter.codex?.available) {
+        try {
+          const { getTaskLocation } = await import('./task-router.js');
+          const peekXian = await pool.query(`
+            SELECT task_type FROM tasks WHERE status = 'queued'
+            ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 9 END, created_at ASC
+            LIMIT 1
+          `);
+          const nextType = peekXian.rows[0]?.task_type;
+          if (nextType && getTaskLocation(nextType) === 'xian') {
+            console.log(`[tick] Codex xian bypass: task_pool full but codex pool available for task_type=${nextType}`);
+            xianBypass = true;
+          }
+        } catch (bypassErr) {
+          console.warn(`[tick] xian bypass check failed (non-fatal): ${bypassErr.message}`);
+        }
+      }
+      if (!xianBypass) {
+        const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
+                           slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
+        await recordDispatchResult(pool, false, slotReason);
+        return {
+          dispatched: false,
+          reason: slotReason,
+          budget: slotBudgetAfter,
+          actions,
+        };
+      }
     }
   }
 
