@@ -26,3 +26,4 @@ task: /dev pipeline P0/P1 修复 — stage 步骤文件 + verify-step.sh
 - [ ] DoD 类型新增（如 [PERF]）时，同步更新 verify-step.sh Gate 2 类型列表
 - [ ] 步骤文件节标题应唯一可区分，禁止相同名称出现在不同编号的节中
 - [ ] 删除旧工具引用时，同步更新所有 changelog/注释中的提及
+<!-- ci trigger -->
