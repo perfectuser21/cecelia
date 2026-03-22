@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 5.1.0
+version: 5.2.0
 created: 2026-03-14
 updated: 2026-03-22
 changelog:
+  - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
   - 5.1.0: 修复 2.3.2 CI镜像检查无 exit 1（build/precheck/version-sync 失败现在正确拦截）；还原被 PR#1366 覆盖的 Step 2.0 行为快照+Step 2.1.5 TDD先行+2.3.6 exit 1
   - 5.0.0: 新增 Step 2.0 行为快照[PRESERVE]（探索前必须执行）；新增 Step 2.1.5 TDD先行（红灯→绿灯）；修复 2.3.6 || true 改 exit 1
   - 4.2.0: 删除 blocked 降级路径+无限重试+深入 root cause；push 前新增强制垃圾清理步骤；code-review-gate FAIL 涉及测试覆盖时自动触发补充测试 subagent
@@ -300,7 +301,59 @@ echo "✅ 垃圾清理扫描通过 — 无 dead code / stale 注释"
 
 ---
 
-### 2.3.6 推送前完整验证
+### 2.3.6 ⛔ 强制周边一致性扫描（push 前，不可跳过）
+
+> **改动文件 A 时，必须扫描 A 所在目录的同级文件，修复与本次改动矛盾的旧描述。**
+> 目标：系统越走越干净——不只改 A，同时清理周边引用了 A 旧行为的矛盾内容。
+
+```bash
+echo "🔍 周边一致性扫描（cross-file module consistency）..."
+
+CHANGED_FILES=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+CROSS_ISSUES=0
+
+for f in $CHANGED_FILES; do
+    [[ ! -f "$f" ]] && continue
+    DIR=$(dirname "$f")
+
+    # 扫描同目录其他文件
+    while IFS= read -r sibling; do
+        [[ "$sibling" == "$f" ]] && continue
+        [[ ! -f "$sibling" ]] && continue
+
+        # 检查：sibling 是否引用了 f 的旧版本号
+        OLD_VER=$(git diff origin/main..HEAD -- "$f" 2>/dev/null | grep "^-" | grep -oE "version: [0-9]+\.[0-9]+\.[0-9]+" | head -1 | awk '{print $2}')
+        NEW_VER=$(git diff origin/main..HEAD -- "$f" 2>/dev/null | grep "^+" | grep -oE "version: [0-9]+\.[0-9]+\.[0-9]+" | tail -1 | awk '{print $2}')
+        if [[ -n "$OLD_VER" && -n "$NEW_VER" ]] && grep -q "$OLD_VER" "$sibling" 2>/dev/null; then
+            echo "  ⚠️  矛盾：$sibling 引用了 $f 的旧版本 $OLD_VER（现为 $NEW_VER）"
+            CROSS_ISSUES=$((CROSS_ISSUES+1))
+        fi
+
+        # 检查：sibling 是否引用了被重编号/删除的步骤
+        OLD_SECTIONS=$(git diff origin/main..HEAD -- "$f" 2>/dev/null | grep "^-" | grep -oE "### [0-9]+\.[0-9]+(\.[0-9]+)?" | sed 's/### //')
+        for sec in $OLD_SECTIONS; do
+            if grep -q "步骤 $sec\b\|Step $sec\b\|节 $sec\b" "$sibling" 2>/dev/null; then
+                echo "  ⚠️  矛盾：$sibling 引用了 $f 中已重编号/删除的节 $sec"
+                CROSS_ISSUES=$((CROSS_ISSUES+1))
+            fi
+        done
+
+    done < <(find "$DIR" -maxdepth 1 \( -name "*.md" -o -name "*.sh" -o -name "*.ts" -o -name "*.js" -o -name "*.yaml" -o -name "*.yml" \) 2>/dev/null)
+done
+
+if [[ $CROSS_ISSUES -gt 0 ]]; then
+    echo ""
+    echo "⛔ 发现 $CROSS_ISSUES 处跨文件矛盾，必须同步修复后才能继续！"
+    echo "   直接修复同目录矛盾文件（同 PR），commit message 前缀用 fix:"
+    exit 1
+fi
+
+echo "✅ 周边一致性扫描通过 — 无跨文件矛盾"
+```
+
+---
+
+### 2.3.7 推送前完整验证
 
 > push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
 

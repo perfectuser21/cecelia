@@ -17,8 +17,14 @@
 
 version: "3.88.0"
 updated: "2026-03-22"
-# ci-trigger: 13.28.0
+# ci-trigger: 13.29.0
 changelog:
+  - version: "13.29.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): Stage 2 强制周边一致性扫描 + code-review-gate 维度H跨文件模块一致性 blocker"
+    scope: packages/engine/skills/dev/steps/02-code.md,packages/workflows/skills/code-review-gate/SKILL.md
+    breaking: false
+    feature_id: context-consistency-scan
   - version: "13.28.0"
     date: "2026-03-22"
     summary: "feat(engine): 自动清理 prd/task 残留文件 — 新增 cleanup-merged-artifacts.yml + Stage 4 清理 dev-seal/dev-mode"
