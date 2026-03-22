@@ -307,6 +307,14 @@ server.listen(PORT, async () => {
   const { runStartupRecovery } = await import('./src/startup-recovery.js');
   await runStartupRecovery();
 
+  // Load dynamic task type routing configs from DB into memory cache
+  const { loadCache: loadTaskTypeCache } = await import('./src/task-type-config-cache.js');
+  try {
+    await loadTaskTypeCache(pool);
+  } catch (cacheErr) {
+    console.warn('[Server] task-type-config-cache load failed (non-fatal):', cacheErr.message);
+  }
+
   // Log concurrency ceiling configuration for observability
   const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup } = await import('./src/executor.js');
   console.log(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);

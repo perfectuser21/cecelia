@@ -47,6 +47,7 @@ const manifest: FeatureManifest = {
     { path: '/okr-roadmap', component: 'OKRRoadmap' },
     { path: '/account-usage', component: 'AccountUsagePage' },
     { path: '/brain-models', component: 'BrainModelsPage' },
+    { path: '/task-type-configs', component: 'TaskTypeConfigPage' },
     { path: '/area-slots', component: 'AreaSlotsPage' },
     { path: '/reports', component: 'ReportsListPage' },
     { path: '/reports/:id', component: 'ReportDetailPage' },

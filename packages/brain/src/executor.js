@@ -26,6 +26,7 @@ import { buildLearningContext } from './learning-retriever.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
+import { loadCache, getCachedLocation, refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { selectBestAccount, getAccountUsage } from './account-usage.js';
@@ -2303,7 +2304,10 @@ async function triggerLocalCodexExec(task) {
 //       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
 async function triggerCeceliaRun(task) {
-  const location = getTaskLocation(task.task_type);
+  // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
+  // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
+  const dynamicLocation = getCachedLocation(task.task_type);
+  const location = dynamicLocation ?? getTaskLocation(task.task_type);
 
   // 0. Review 审查任务 → 独立 Codex Review 池（不占动态槽位）
   if (REVIEW_TASK_TYPES.includes(task.task_type)) {
@@ -2317,8 +2321,10 @@ async function triggerCeceliaRun(task) {
   }
 
   // 2. 西安 Codex Bridge（location='xian'）
-  if (getTaskLocation(task.task_type) === 'xian') {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian)`);
+  // 动态类型优先走缓存 location，静态类型走 LOCATION_MAP
+  if (location === 'xian') {
+    const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian, src=${src})`);
     return triggerCodexBridge(task);
   }
 
