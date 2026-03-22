@@ -24,6 +24,58 @@ function isSystemTask(task_type, trigger_source) {
 }
 
 /**
+ * Build the 11-element common parameter array for task INSERT.
+ * Centralises all default-value logic so createTask stays lean.
+ */
+function buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload, trigger_source }) {
+  return [
+    title,
+    description || context || '',
+    priority || 'P1',
+    project_id || null,
+    goal_id || null,
+    tags || [],
+    task_type || 'dev',
+    prd_content || null,
+    execution_profile || null,
+    payload ? JSON.stringify(payload) : null,
+    trigger_source || 'brain_auto',
+  ];
+}
+
+/**
+ * Build the INSERT SQL and bound parameters.
+ * Two variants: explicit domain (includes owner_role) vs auto-detected domain.
+ */
+function buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliveryType, title, description, context }) {
+  const deliveryTypeValue = deliveryType || 'code-only';
+  if (domainInput !== undefined) {
+    // Explicit domain: include owner_role ($13) + delivery_type ($14)
+    const owner_role = ownerRoleInput ?? getDomainRole(domainInput);
+    return {
+      sql: `
+        INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role, delivery_type)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT DO NOTHING
+        RETURNING *
+      `,
+      params: [...commonParams, domainInput, owner_role, deliveryTypeValue],
+    };
+  }
+  // Auto-detect domain from title + description; omit owner_role column
+  const detected = detectDomain(`${title} ${description || context || ''}`);
+  return {
+    sql: `
+      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, delivery_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
+      ON CONFLICT DO NOTHING
+      RETURNING *
+    `,
+    params: [...commonParams, detected.confidence > 0 ? detected.domain : null, deliveryTypeValue],
+  };
+}
+
+/**
  * Create a new task
  * @param {Object} params
  * @param {string} params.title - Task title
@@ -47,8 +99,8 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     console.error(`[Action] Validation failed: ${error}`);
     throw new Error(error);
   }
-  // Dedup: check for existing task with same title + goal_id + project_id
-  // Skip if queued/in_progress, or completed within 24h
+
+  // Dedup: skip if queued/in_progress, or completed within 24 h
   const dedupResult = await pool.query(`
     SELECT * FROM tasks
     WHERE title = $1
@@ -64,52 +116,14 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     return { success: true, task: existing, deduplicated: true };
   }
 
-  const commonParams = [
-    title,
-    description || context || '',
-    priority || 'P1',
-    project_id || null,
-    goal_id || null,
-    tags || [],
-    task_type || 'dev',
-    prd_content || null,
-    execution_profile || null,
-    payload ? JSON.stringify(payload) : null,
-    trigger_source || 'brain_auto',
-  ];
+  const commonParams = buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload, trigger_source });
+  const { sql, params } = buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliveryType: delivery_type, title, description, context });
 
-  const deliveryType = delivery_type || 'code-only';
+  const result = await pool.query(sql, params);
 
-  let insertSql, insertParams;
-  if (domainInput !== undefined) {
-    // 明确传入 domain：包含 owner_role（$12, $13）+ delivery_type（$14）
-    const domain = domainInput;
-    const owner_role = ownerRoleInput ?? getDomainRole(domain);
-    insertSql = `
-      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role, delivery_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14)
-      ON CONFLICT DO NOTHING
-      RETURNING *
-    `;
-    insertParams = [...commonParams, domain, owner_role, deliveryType];
-  } else {
-    // 未传 domain：从 title+description 自动检测，不写 owner_role，写 delivery_type（$13）
-    const detected = detectDomain(`${title} ${description || context || ''}`);
-    const domain = detected.confidence > 0 ? detected.domain : null;
-    insertSql = `
-      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, delivery_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
-      ON CONFLICT DO NOTHING
-      RETURNING *
-    `;
-    insertParams = [...commonParams, domain, deliveryType];
-  }
-
-  const result = await pool.query(insertSql, insertParams);
-
-  // ON CONFLICT DO NOTHING returns 0 rows on race condition duplicate
+  // ON CONFLICT DO NOTHING returns 0 rows on race-condition duplicate
   if (result.rows.length === 0) {
-    const existing = await pool.query(`
+    const raceResult = await pool.query(`
       SELECT * FROM tasks
       WHERE title = $1
         AND (goal_id IS NOT DISTINCT FROM $2)
@@ -117,9 +131,9 @@ async function createTask({ title, description, priority, project_id, goal_id, t
         AND status IN ('queued', 'in_progress')
       LIMIT 1
     `, [title, goal_id || null, project_id || null]);
-    if (existing.rows.length > 0) {
-      console.log(`[Action] Dedup (race): task "${title}" already exists (id: ${existing.rows[0].id})`);
-      return { success: true, task: existing.rows[0], deduplicated: true };
+    if (raceResult.rows.length > 0) {
+      console.log(`[Action] Dedup (race): task "${title}" already exists (id: ${raceResult.rows[0].id})`);
+      return { success: true, task: raceResult.rows[0], deduplicated: true };
     }
   }
 
