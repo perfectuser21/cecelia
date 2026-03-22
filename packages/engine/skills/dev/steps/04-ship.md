@@ -256,12 +256,6 @@ CI_RUNS=$(gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" \
 
 ## 4.6 Clean — 归档 + 清理
 
-### Post-PR Checklist
-
-```bash
-bash scripts/post-pr-checklist.sh
-```
-
 ### 归档 Task Card
 
 ```bash

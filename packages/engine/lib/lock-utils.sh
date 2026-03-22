@@ -4,6 +4,9 @@
 # ============================================================================
 # 提供原子操作和锁机制，防止多会话竞态条件
 #
+# v1.3.0: LOCK_UTILS_GIT_DIR 环境变量 — 支持 per-worktree mutex，
+#         stop-dev.sh 匹配到 .dev-lock 后设置此变量，使每个 worktree
+#         使用自己 git-dir（.git/worktrees/<name>）下的独立锁文件
 # v1.2.0: R2 修复 - worktree .git 文件检测、FD 可配置、atomic_append 原子性
 # v1.1.0: P1-4 修复 - _get_lock_paths 不再覆写调用者的 DEV_MODE_FILE
 # v1.0.0: 初始版本
@@ -24,6 +27,15 @@ _get_lock_paths() {
     project_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
     _LU_DEV_MODE_FILE="$project_root/.dev-mode"
+
+    # v1.3.0: LOCK_UTILS_GIT_DIR 优先 — per-worktree mutex 支持
+    # stop-dev.sh 在 pre-check 匹配到 .dev-lock 后设置此变量，
+    # 使每个 worktree 用自己的 .git/worktrees/<name>/dev-mode.lock
+    if [[ -n "${LOCK_UTILS_GIT_DIR:-}" && -d "${LOCK_UTILS_GIT_DIR}" ]]; then
+        _LU_LOCK_DIR="${LOCK_UTILS_GIT_DIR}"
+        _LU_LOCK_FILE="$_LU_LOCK_DIR/dev-mode.lock"
+        return
+    fi
 
     # worktree 中 .git 是文件（gitdir: /path/to/.git/worktrees/xxx）
     # 使用 git rev-parse --git-dir 获取真正的 git 目录
