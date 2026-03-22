@@ -26,7 +26,7 @@ import { buildLearningContext } from './learning-retriever.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
-import { loadCache, getCachedLocation, refreshCache } from './task-type-config-cache.js';
+import { loadCache, getCachedLocation, getCachedConfig, refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { selectBestAccount, getAccountUsage } from './account-usage.js';
@@ -2311,6 +2311,7 @@ async function triggerCeceliaRun(task) {
   // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
   const dynamicLocation = getCachedLocation(task.task_type);
   const location = dynamicLocation ?? getTaskLocation(task.task_type);
+  const dynamicExecutor = getCachedConfig(task.task_type)?.executor;
 
   // 0. Review 审查任务 → 独立 Codex Review 池（不占动态槽位）
   if (REVIEW_TASK_TYPES.includes(task.task_type)) {
@@ -2341,6 +2342,12 @@ async function triggerCeceliaRun(task) {
   // 2.5 US 本机 Codex CLI（spec_review / code_review_gate 独立 2-slot 池）
   if (task.task_type === 'spec_review' || task.task_type === 'code_review_gate') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Local Codex CLI (review pool)`);
+    return triggerLocalCodexExec(task);
+  }
+
+  // 2.8 US 本机 Codex CLI（B类动态任务 executor=codex，前台可配）
+  if (location === 'us' && dynamicExecutor === 'codex') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Local Codex CLI (dynamic executor=codex)`);
     return triggerLocalCodexExec(task);
   }
 
