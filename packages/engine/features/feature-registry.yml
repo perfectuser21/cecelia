@@ -17,8 +17,14 @@
 
 version: "3.80.0"
 updated: "2026-03-22"
-# ci-trigger: 13.19.0
+# ci-trigger: 13.20.0
 changelog:
+  - version: "13.20.0"
+    date: "2026-03-22"
+    summary: "fix(engine): P0/P1 修复 devloop-check.sh + stop-dev.sh — cleanup retry + _collect_search_dirs 先搜主仓库 + TTY 非空检查 + LEGACY 删除日期"
+    scope: hooks/stop-dev.sh,lib/devloop-check.sh
+    breaking: false
+    feature_id: fix-devloop-stop-hooks-v1
   - version: "13.19.0"
     date: "2026-03-22"
     summary: "feat(engine): branch-protect.sh v27 — 新增 .dod.md 归属校验（非阻断）：worktree 内若存在 .dod.md 且 frontmatter branch 字段与当前分支不符则输出 [WARN] 警告提示旧任务残留"

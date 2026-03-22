@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: Claude Code 协议适配器 v15.4.0
+# Stop Hook: Claude Code 协议适配器 v15.5.0
 # ============================================================================
 # 这是 Claude Code Stop Hook 的协议适配器。
 # 完成判断逻辑已提取到 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -13,6 +13,7 @@
 #
 # 此文件永远不需要修改业务逻辑——只改 lib/devloop-check.sh。
 #
+# v15.5.0: P0/P1 修复 — _collect_search_dirs 先搜主仓库 + 删垃圾注释 + TTY 非空检查 + LEGACY 删除日期
 # v15.3.0: worktree 感知 — .dev-lock/.dev-mode 搜索扫描主仓库 + 所有 worktree
 # v15.1.0: 活跃锁文件 — 在 worktree 内维护 .dev-session-active，防止 GC 误删
 # v15.0.0: 提取完成判断逻辑到 lib/devloop-check.sh（provider-agnostic）
@@ -22,24 +23,34 @@
 set -euo pipefail
 
 # ===== Worktree 感知：收集所有可能存放 .dev-lock/.dev-mode 的目录 =====
-# 主仓库 + 所有 worktree 目录（状态文件可能在 worktree 内而非主仓库）
+# 主仓库优先 + 所有 worktree 目录（先搜主仓库，再搜 worktree）
+# 修复：在 worktree 内调用时，git rev-parse --show-toplevel 返回 worktree 路径，
+#       需要先通过 git worktree list 找到主仓库，确保主仓库 .dev-lock 不被遗漏
 _collect_search_dirs() {
     local root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-    echo "$root"
+    # 先找主仓库（worktree list 第一行是主仓库）
+    local _main_root=""
+    while IFS= read -r _wt_line; do
+        if [[ "$_wt_line" == "worktree "* ]]; then
+            _main_root="${_wt_line#worktree }"
+            break
+        fi
+    done < <(git -C "$root" worktree list --porcelain 2>/dev/null)
+    # 主仓库优先输出（即使 root 本身是 worktree 路径）
+    if [[ -n "$_main_root" && -d "$_main_root" ]]; then
+        echo "$_main_root"
+    else
+        echo "$root"
+    fi
+    # 再输出其他 worktree（跳过已输出的主仓库）
     while IFS= read -r _wt_line; do
         if [[ "$_wt_line" == "worktree "* ]]; then
             local _wt_path="${_wt_line#worktree }"
-            [[ "$_wt_path" == "$root" ]] && continue
+            [[ "$_wt_path" == "${_main_root:-$root}" ]] && continue
             [[ -d "$_wt_path" ]] && echo "$_wt_path"
         fi
     done < <(git -C "$root" worktree list --porcelain 2>/dev/null)
 }
-
-# ===== 无头模式：不再旁路，与有头模式使用同一套状态机 =====
-# Headless 也必须检查 .dev-mode：
-#   - 有 .dev-mode → exit 2 继续循环
-#   - 无 .dev-mode → exit 0 允许结束
-# （后续会统一检查 .dev-mode，这里不做特殊处理）
 
 # ===== 加载共享库 =====
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,8 +114,8 @@ for _pre_lock in "$_pre_search_dir"/.dev-lock.*; do
     _pre_lock_session=$(grep "^session_id:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
     _pre_lock_branch=$(grep "^branch:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
 
-    # TTY 匹配
-    if [[ -n "$_pre_lock_tty" && "$_pre_lock_tty" != "not a tty" && -n "$_PRE_TTY" && "$_PRE_TTY" != "not a tty" ]]; then
+    # TTY 匹配：检查双方 TTY 非空（非空即有效，直接比较）
+    if [[ -n "$_pre_lock_tty" && -n "$_PRE_TTY" ]]; then
         if [[ "$_pre_lock_tty" == "$_PRE_TTY" ]]; then
             _PRE_MATCHED=true; break 2
         fi
@@ -214,15 +225,15 @@ report_step_to_brain() {
         step_num=1; step_name="spec"
     elif grep -q "^step_0_worktree: done" "$mode_file" 2>/dev/null; then
         step_num=0; step_name="worktree"
-    # LEGACY: 旧字段兼容（Pipeline v1 编号），新代码使用 devloop-check.sh 路径
+    # LEGACY: 旧字段兼容（Pipeline v1 编号），新代码使用 devloop-check.sh 路径，可在 2026-09-01 后删除
     elif grep -q "^step_5_clean: done" "$mode_file" 2>/dev/null; then
-        step_num=4; step_name="ship"  # LEGACY: step_5_clean → step_4_ship
+        step_num=4; step_name="ship"  # LEGACY: step_5_clean → step_4_ship，可在 2026-09-01 后删除
     elif grep -q "^step_4_learning: done" "$mode_file" 2>/dev/null; then
-        step_num=4; step_name="ship"  # LEGACY: step_4_learning → step_4_ship
+        step_num=4; step_name="ship"  # LEGACY: step_4_learning → step_4_ship，可在 2026-09-01 后删除
     elif grep -q "^step_3_prci: done" "$mode_file" 2>/dev/null; then
-        step_num=3; step_name="integrate"  # LEGACY: step_3_prci → step_3_integrate
+        step_num=3; step_name="integrate"  # LEGACY: step_3_prci → step_3_integrate，可在 2026-09-01 后删除
     elif grep -q "^step_1_taskcard: done" "$mode_file" 2>/dev/null; then
-        step_num=1; step_name="spec"  # LEGACY: step_1_taskcard → step_1_spec
+        step_num=1; step_name="spec"  # LEGACY: step_1_taskcard → step_1_spec，可在 2026-09-01 后删除
     fi
 
     # 读取分支名
@@ -285,8 +296,8 @@ for _lock_file in "$_main_search_dir"/.dev-lock.*; do
     _branch_in_lock=$(grep "^branch:" "$_lock_file" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
     _matched=false
 
-    # TTY 匹配（有头模式首选）
-    if [[ -n "$_lock_tty" && "$_lock_tty" != "not a tty" && -n "$_CURRENT_TTY" && "$_CURRENT_TTY" != "not a tty" ]]; then
+    # TTY 匹配（有头模式首选）：检查双方 TTY 非空（非空即有效，直接比较）
+    if [[ -n "$_lock_tty" && -n "$_CURRENT_TTY" ]]; then
         if [[ "$_lock_tty" == "$_CURRENT_TTY" ]]; then
             _matched=true
         fi
@@ -486,8 +497,8 @@ fi
 TTY_IN_FILE=$(grep "^tty:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2- || echo "")
 CURRENT_TTY=$(tty 2>/dev/null || echo "")
 
-# 如果 .dev-mode 有有效 tty 字段且当前 TTY 可获取，检查是否匹配
-if [[ -n "$TTY_IN_FILE" && "$TTY_IN_FILE" != "not a tty" && -n "$CURRENT_TTY" && "$CURRENT_TTY" != "not a tty" && "$TTY_IN_FILE" != "$CURRENT_TTY" ]]; then
+# 如果 .dev-mode 和当前会话都有非空 TTY，检查是否匹配
+if [[ -n "$TTY_IN_FILE" && -n "$CURRENT_TTY" && "$TTY_IN_FILE" != "$CURRENT_TTY" ]]; then
     # 不是当前 terminal 的任务，允许结束
     exit 0
 fi
