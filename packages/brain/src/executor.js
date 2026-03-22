@@ -100,8 +100,11 @@ function getAvailableMemoryMB() {
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
 
-// 西安 Mac mini Codex Bridge URL (via Tailscale)
+// 西安 Mac mini M4 Codex Bridge URL (via Tailscale)
 const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
+
+// 西安 Mac mini M1 Codex Bridge URL (via Tailscale)
+const XIAN_M1_BRIDGE_URL = process.env.XIAN_M1_BRIDGE_URL || 'http://100.88.166.55:3458';
 
 // 多机 Codex Bridge 列表（负载均衡）
 const CODEX_BRIDGES = (process.env.CODEX_BRIDGES || 'http://100.86.57.69:3458,http://100.88.166.55:3458')
@@ -2018,11 +2021,11 @@ async function triggerCodexReview(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, taskId, runId, error? }
  */
-async function triggerCodexBridge(task) {
+async function triggerCodexBridge(task, forceBridgeUrl = null) {
   const runId = generateRunId(task.id);
 
   try {
-    console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}`);
+    console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
 
     // codex_dev 使用 runner 模式（完整 /dev 循环，via runner.sh + devloop-check.sh）
     // codex_qa 和其他类型使用 prompt 模式（单次 codex exec）
@@ -2048,7 +2051,7 @@ async function triggerCodexBridge(task) {
         ? `cp-${new Date().toISOString().replace(/[-T:]/g, '').slice(2, 12)}-${task.id.slice(0, 8)}${branchSuffix}`
         : undefined);
 
-    const bridgeUrl = await selectBestBridge();
+    const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
     const response = await fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2320,12 +2323,19 @@ async function triggerCeceliaRun(task) {
     return triggerMiniMaxExecutor(task);
   }
 
-  // 2. 西安 Codex Bridge（location='xian'）
+  // 2. 西安 Codex Bridge（location='xian'，负载均衡 M4+M1）
   // 动态类型优先走缓存 location，静态类型走 LOCATION_MAP
   if (location === 'xian') {
     const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian, src=${src})`);
     return triggerCodexBridge(task);
+  }
+
+  // 2.1 西安M1 Codex Bridge（location='xian_m1'，钉到 M1 专用节点）
+  if (location === 'xian_m1') {
+    const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge M1 (location=xian_m1, src=${src})`);
+    return triggerCodexBridge(task, XIAN_M1_BRIDGE_URL);
   }
 
   // 2.5 US 本机 Codex CLI（spec_review / code_review_gate 独立 2-slot 池）
