@@ -10,11 +10,11 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v3.3.0
+# 版本: v3.4.0
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
 # 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
-# 更新: 2026-03-22 — spec_review/code_review_gate 改为 Agent subagent 同步调用（删除 Codex 异步 Gate）
+# 更新: 2026-03-22 — spec_review/code_review_gate 改为 Agent subagent 同步审查（原 Codex 异步 Gate 改为同步）
 # 更新: 2026-03-22 — 加回条件 1.5/2.5：读 .dev-mode 中 subagent 写入的 status 字段（不查 Brain API）
 # 更新: 2026-03-22 — 清理误导性注释，blocked 状态为 subagent FAIL 写入，需分析 root cause 修复
 # 更新: 2026-03-22 — P0 修复：cleanup 失败后加 return 2 触发重试，避免 PR 合并后工作流卡死
@@ -316,14 +316,18 @@ devloop_check() {
 
             if [[ -n "$_cleanup_script" ]]; then
                 echo "🧹 自动执行 cleanup.sh..." >&2
-                # cleanup 失败，exit 2 重试：失败时不退出，return 2 让 stop hook 继续循环
-                if ! (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script" 2>/dev/null); then
+                if (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script") 2>/dev/null; then
+                    _devloop_jq -n \
+                        '{"status":"blocked","reason":"PR 已合并，cleanup 执行完成，等待下次检查","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
+                else
                     echo "⚠️  cleanup.sh 执行失败，exit 2 重试..." >&2
+                    _devloop_jq -n \
+                        '{"status":"blocked","reason":"PR 已合并，cleanup.sh 执行失败","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4 Ship（写 Learning + cleanup）"}'
                 fi
+            else
+                _devloop_jq -n \
+                    '{"status":"blocked","reason":"PR 已合并，未找到 cleanup.sh","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4 Ship"}'
             fi
-
-            _devloop_jq -n \
-                '{"status":"blocked","reason":"PR 已合并，正在执行 Stage 4 Ship（自动触发）","action":"等待 cleanup 完成，下次检查时自动退出"}'
             return 2
         fi
     fi

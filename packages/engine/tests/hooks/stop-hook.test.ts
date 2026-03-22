@@ -234,14 +234,14 @@ session_id: abc123`;
     });
 
     it("should skip TTY check when tty field is 'not a tty'", () => {
-      // v15.5.0: TTY 匹配改为检查非空（-n），而非旧的双重 != "not a tty" 字符串比较
-      // 语义：双方 TTY 非空时才做比较，避免 "not a tty" 字符串参与误匹配
+      // v15.6.0: pre-check + 主检查 TTY 匹配改为 /dev/* 前缀精确判断有效 TTY 路径
+      // 语义：只有两端 TTY 均为 /dev/ 设备路径时才做比较，完全避免 "not a tty" 误判
       const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
       const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
       // H7-008 TTY 检查仍然存在
       expect(hookContent).toContain("H7-008");
-      // 改为非空检查（-n TTY_IN_FILE && -n CURRENT_TTY）
+      // pre-check 已改为 /dev/* 前缀；H7-008 section 仍使用 -n 检查（配合 != 比较）
       expect(hookContent).toMatch(/\[\[ -n "\$TTY_IN_FILE" && -n "\$CURRENT_TTY"/);
     });
 

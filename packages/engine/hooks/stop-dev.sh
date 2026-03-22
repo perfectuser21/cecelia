@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: Claude Code 协议适配器 v15.5.0
+# Stop Hook: Claude Code 协议适配器 v15.6.0
 # ============================================================================
 # 这是 Claude Code Stop Hook 的协议适配器。
 # 完成判断逻辑已提取到 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -13,6 +13,7 @@
 #
 # 此文件永远不需要修改业务逻辑——只改 lib/devloop-check.sh。
 #
+# v15.6.0: TTY 匹配改为 /dev/* 前缀精确判断（pre-check + 主检查），消除 "not a tty" 误判风险
 # v15.5.0: P0/P1 修复 — _collect_search_dirs 先搜主仓库 + 删垃圾注释 + TTY 非空检查 + LEGACY 删除日期
 # v15.3.0: worktree 感知 — .dev-lock/.dev-mode 搜索扫描主仓库 + 所有 worktree
 # v15.1.0: 活跃锁文件 — 在 worktree 内维护 .dev-session-active，防止 GC 误删
@@ -114,8 +115,8 @@ for _pre_lock in "$_pre_search_dir"/.dev-lock.*; do
     _pre_lock_session=$(grep "^session_id:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
     _pre_lock_branch=$(grep "^branch:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
 
-    # TTY 匹配：检查双方 TTY 非空（非空即有效，直接比较）
-    if [[ -n "$_pre_lock_tty" && -n "$_PRE_TTY" ]]; then
+    # TTY 匹配（使用 /dev/* 前缀精确判断有效 TTY 路径，避免 "not a tty" 字符串误判）
+    if [[ "$_pre_lock_tty" == /dev/* && "$_PRE_TTY" == /dev/* ]]; then
         if [[ "$_pre_lock_tty" == "$_PRE_TTY" ]]; then
             _PRE_MATCHED=true; break 2
         fi
@@ -296,8 +297,8 @@ for _lock_file in "$_main_search_dir"/.dev-lock.*; do
     _branch_in_lock=$(grep "^branch:" "$_lock_file" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
     _matched=false
 
-    # TTY 匹配（有头模式首选）：检查双方 TTY 非空（非空即有效，直接比较）
-    if [[ -n "$_lock_tty" && -n "$_CURRENT_TTY" ]]; then
+    # TTY 匹配（有头模式首选，使用 /dev/* 前缀精确判断有效 TTY 路径）
+    if [[ "$_lock_tty" == /dev/* && "$_CURRENT_TTY" == /dev/* ]]; then
         if [[ "$_lock_tty" == "$_CURRENT_TTY" ]]; then
             _matched=true
         fi

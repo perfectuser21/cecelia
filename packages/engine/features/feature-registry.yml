@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.81.0"
+version: "3.82.0"
 updated: "2026-03-22"
-# ci-trigger: 13.21.0
+# ci-trigger: 13.22.0
 changelog:
+  - version: "13.22.0"
+    date: "2026-03-22"
+    summary: "fix(engine): stop-dev.sh v15.6.0 TTY匹配改为/dev/*前缀精确判断 + devloop-check.sh v3.4.0 cleanup消息区分成功/失败"
+    scope: hooks/stop-dev.sh,lib/devloop-check.sh
+    breaking: false
+    feature_id: fix-tty-matching-precision-v1
   - version: "13.21.0"
     date: "2026-03-22"
     summary: "fix(engine): 修复 /dev pipeline Stage 步骤文件 P0/P1/P2 问题 — 编号重复修复+多包测试+verify-step Gate2扩展+retry告警+字段兼容+路径fallback"
