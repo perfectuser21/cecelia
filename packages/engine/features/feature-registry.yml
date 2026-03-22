@@ -21,11 +21,10 @@ updated: "2026-03-22"
 changelog:
   - version: "13.21.0"
     date: "2026-03-22"
-    summary: "fix(engine): 修复 /dev pipeline Stage 步骤文件 P0/P1/P2 问题 — 编号重复修复+多包测试+verify-step Gate2扩展+retry告警+字段兼容+路径fallback"
-    scope: skills/dev/steps,hooks/verify-step.sh,skills/dev/SKILL.md
+    summary: "fix(engine): /dev pipeline P0/P1 修复 — verify-step.sh Gate1动态package检测+Gate2支持[ARTIFACT]/[GATE]；stage步骤文件去重/修序/删codex-test-gen引用"
+    scope: hooks/verify-step.sh,skills/dev/steps,skills/dev/SKILL.md
     breaking: false
-    feature_id: fix-dev-pipeline-stage-files-v1
-changelog:
+    feature_id: fix-pipeline-stage-files-verify-step-v1
   - version: "13.20.0"
     date: "2026-03-22"
     summary: "fix(engine): P0/P1 修复 devloop-check.sh + stop-dev.sh — cleanup retry + _collect_search_dirs 先搜主仓库 + TTY 非空检查 + LEGACY 删除日期"
