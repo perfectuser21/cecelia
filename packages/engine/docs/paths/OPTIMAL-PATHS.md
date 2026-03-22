@@ -485,6 +485,16 @@ Stage 1 完成 →
 
 ---
 
+### check-skill-file-exists: DevGate CI 检查新增 task_type 对应 SKILL.md 存在性
+
+```
+PR 新增 executor.js skillMap 条目 →
+brain-l2 运行 check-skill-file-exists.mjs →
+检查对应 SKILL.md 存在 → 通过
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

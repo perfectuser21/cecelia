@@ -415,6 +415,14 @@ changelog:
 
 ---
 
+### check-skill-file-exists: DevGate CI 检查新增 task_type 对应 SKILL.md 存在性
+
+1. ✅ **check-skill-file-exists.mjs 解析 git diff 新增行**
+2. ✅ **brain-l2 job 调用脚本**
+3. ✅ **brain-register SKILL.md B 类步骤说明**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -117,6 +117,22 @@ const skillMap = {
 };
 ```
 
+**1.5. 验证对应 SKILL.md 存在**（新增 skill 路径时必须）：
+
+新增非 null 的 skill 路径时，必须同步确认 `packages/workflows/skills/<skill-name>/SKILL.md` 已存在，
+否则 Brain 派发任务后 Claude Code 找不到 skill，导致执行失败。
+
+```bash
+# 检查 SKILL.md 是否存在
+ls packages/workflows/skills/your-skill/SKILL.md
+
+# 若不存在，先创建 SKILL.md 再提交 skillMap 改动（参考 C 类流程）
+
+# CI 将自动运行 check-skill-file-exists.mjs：
+# PR 中新增的 skillMap 条目若对应 SKILL.md 缺失 → CI 失败
+node packages/engine/scripts/devgate/check-skill-file-exists.mjs
+```
+
 **2. 如需在前端 LM配置 里让用户调整这类任务的模型**（可选），
 在 `model-registry.js` 添加 executor 层条目：
 ```javascript

@@ -2341,3 +2341,35 @@ product_features:
       - "不再有 SKILL.md 路径误导性说明"
 
     rcis: []
+
+  - id: check-skill-file-exists
+    name: DevGate CI 检查新增 task_type 对应 SKILL.md 存在性
+    category: devgate
+    status: Committed
+    priority: P2
+    version: "13.17.3"
+    updated: "2026-03-22"
+    description: |
+      新增 packages/engine/scripts/devgate/check-skill-file-exists.mjs：
+      检查 executor.js skillMap 中 PR 新增的 task_type 条目，
+      验证对应的 packages/workflows/skills/<skill-name>/SKILL.md 是否存在。
+      只检查 PR 新增条目（diff-based），已有条目豁免。
+      新增条目缺少 SKILL.md → exit 1 阻断 CI。
+      同时在 brain-register SKILL.md B 类步骤中新增验证说明。
+
+    entrypoints:
+      - type: script
+        file: packages/engine/scripts/devgate/check-skill-file-exists.mjs
+        trigger: "brain-l2 CI job 自动运行"
+
+    golden_path: |
+      PR 新增 executor.js skillMap 条目 →
+      brain-l2 运行 check-skill-file-exists.mjs →
+      检查对应 SKILL.md 存在 → 通过
+
+    minimal_paths:
+      - "check-skill-file-exists.mjs 解析 git diff 新增行"
+      - "brain-l2 job 调用脚本"
+      - "brain-register SKILL.md B 类步骤说明"
+
+    rcis: []

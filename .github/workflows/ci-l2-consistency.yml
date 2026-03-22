@@ -103,6 +103,9 @@ jobs:
       - name: Check skills registry completeness
         run: node scripts/devgate/check-skills-registry.mjs
 
+      - name: Check new task_type has corresponding SKILL.md
+        run: node packages/engine/scripts/devgate/check-skill-file-exists.mjs
+
       - name: Check contract drift (module boundary protection)
         run: |
           unset NPM_CONFIG_CACHE
