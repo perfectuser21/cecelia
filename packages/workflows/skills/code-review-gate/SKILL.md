@@ -1,15 +1,16 @@
 ---
 name: code-review-gate
-version: 1.0.0
+version: 1.1.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-20
+updated: 2026-03-22
 changelog:
   - 1.0.0: 合并 code_quality + /simplify 为统一代码审查 Gate
+  - 1.1.0: A1 C/E维度升级blocker；A2 新增维度G PRD/DoD对齐验证；A3 修复时机描述为Stage 2
 description: |
   代码审查 Gate（Codex Gate 3/4）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。
-  在 /dev Stage 3 CI 通过后、合并之前触发。
-  覆盖安全、正确性、复用性、命名、效率、可维护性六个维度。
+  在 /dev Stage 2 代码写完后、push 之前触发。此时无 PR，通过 git diff 获取变更内容。
+  覆盖安全、正确性、复用性、命名、效率、可维护性、PRD/DoD对齐七个维度。
   给出 PASS / FAIL 裁决。
   触发词：代码审查、code-review-gate、合并前检查、代码门禁。
 ---
@@ -24,7 +25,7 @@ description: |
 - `code_quality`：安全性、正确性审查
 - `/simplify`：复用性、命名、效率优化
 
-**时机**：/dev Stage 3 CI 通过 -> Code-Review-Gate 审查 -> 通过后才能合并 PR。
+**时机**：/dev Stage 2 代码完成 -> Code-Review-Gate 审查（含 Simplify）-> PASS 后才能 push 进入 Stage 3。
 
 ---
 
@@ -91,7 +92,7 @@ git diff origin/main..HEAD
 
 | 检查项 | 严重度 | 说明 |
 |--------|--------|------|
-| **重复代码** | warning | 同一逻辑重复 3 次以上，应提取函数 |
+| **重复代码** | blocker | 同一逻辑重复 3 次以上，应提取函数 |
 | **大段复制** | warning | 跨文件复制粘贴 > 20 行相似代码 |
 | **工具函数缺失** | info | 多处使用的通用逻辑未抽取为工具函数 |
 
@@ -107,7 +108,7 @@ git diff origin/main..HEAD
 
 | 检查项 | 严重度 | 说明 |
 |--------|--------|------|
-| **不必要的循环** | warning | O(n^2) 可优化为 O(n)、嵌套循环可用 Map 替代 |
+| **不必要的循环** | blocker | O(n^2) 可优化为 O(n)、嵌套循环可用 Map 替代 |
 | **过度抽象** | info | 为单一用途创建了复杂的类层次结构 |
 | **不必要的依赖** | info | 引入整个库只用了一个函数 |
 
@@ -121,6 +122,19 @@ git diff origin/main..HEAD
 | **未用 import** | info | 导入了但未使用的模块 |
 | **console.log 残留** | info | 调试用的 console.log 未清理 |
 
+### 维度 G：PRD/DoD 对齐验证
+
+| 检查项 | 严重度 | 说明 |
+|--------|--------|------|
+| **DoD 漏实现** | blocker | DoD 中有 [ARTIFACT]/[BEHAVIOR] 条目但 git diff 中找不到对应改动 |
+| **超范围改动** | blocker | git diff 改了 PRD「不做什么」中明确排除的文件或功能 |
+| **孤儿实现** | warning | 代码中有新增逻辑但 DoD 中没有对应条目 |
+
+**验证方法**：
+1. 读取 `.task-cp-xxx.md` 的「成功标准」和「验收条件（DoD）」章节
+2. 对每条 `- [ ] [ARTIFACT]` 或 `- [ ] [BEHAVIOR]` 条目，检查 git diff 是否有对应改动
+3. 读取「不做什么」章节，检查 diff 是否越界
+
 ---
 
 ## 裁决规则
@@ -132,7 +146,7 @@ git diff origin/main..HEAD
 ### FAIL
 
 以下任一情况为 FAIL：
-- 任何 blocker 级别问题存在
+- 任何 blocker 级别问题存在（包含维度 C/E 的 blocker 项，必须修复后才能继续）
 - 安全维度发现任何注入或凭据暴露
 
 FAIL 时必须修复 blocker 后重新提交审查，不能合并 PR。
@@ -147,7 +161,7 @@ FAIL 时必须修复 blocker 后重新提交审查，不能合并 PR。
   "issues": [
     {
       "severity": "blocker | warning | info",
-      "dimension": "A | B | C | D | E | F",
+      "dimension": "A | B | C | D | E | F | G",
       "file": "path/to/file.js",
       "line": 42,
       "description": "具体问题描述",
@@ -192,7 +206,7 @@ curl -s -X POST http://localhost:5221/api/brain/execution-callback \
 | Skill | 职责 | 时机 |
 |-------|------|------|
 | `/code-review` | 日常巡检（时间窗口扫描、Initiative 集成审查） | 定时 / Brain 派发 |
-| `/code-review-gate` | 单 PR 合并门禁（阻塞性审查） | /dev Stage 3 后 |
+| `/code-review-gate` | 单 PR 合并门禁（阻塞性审查） | /dev Stage 2 代码完成后（push 前）|
 
 两者不冲突：`/code-review` 是主动巡逻，`/code-review-gate` 是必经关卡。
 
