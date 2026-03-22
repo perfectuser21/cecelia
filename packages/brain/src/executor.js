@@ -2154,6 +2154,129 @@ async function triggerMiniMaxExecutor(task) {
   }
 }
 
+// ============================================================
+// Local Codex CLI executor（spec_review / code_review_gate 专用）
+// ============================================================
+// 独立 /tmp/codex-review-locks 池（固定 2-slot），使用 codex-bin exec 执行。
+// 不走 cecelia-bridge，不占用 cecelia-run 的 10-slot 池。
+// prompt 携带完整 Task Card + git diff，帮助审查 agent 了解变更上下文。
+// ============================================================
+
+const REVIEW_LOCK_DIR = '/tmp/codex-review-locks';
+const MAX_REVIEW_SLOTS = 2;
+
+/**
+ * Trigger local Codex CLI for spec_review / code_review_gate.
+ * Uses separate /tmp/codex-review-locks pool (max 2 slots).
+ * Spawns codex-bin exec with full Task Card + git diff prompt.
+ * @param {Object} task
+ * @returns {Object} { success, taskId, runId, executor }
+ */
+async function triggerLocalCodexExec(task) {
+  const CODEX_BIN = process.env.CODEX_BIN || '/opt/homebrew/bin/codex-bin';
+  const CODEX_HOME = process.env.CODEX_REVIEW_HOME || process.env.CODEX_HOME || '';
+  const CODEX_MODEL = process.env.CODEX_REVIEW_MODEL || process.env.CODEX_MODEL || 'gpt-5.4';
+  const REPO_ROOT = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21/cecelia';
+  const WEBHOOK_URL = process.env.CECELIA_WEBHOOK_URL || 'http://localhost:5221/api/brain/execution-callback';
+  const runId = generateRunId(task.id);
+
+  try {
+    console.log(`[executor] Local Codex CLI for task=${task.id} type=${task.task_type}`);
+
+    // --- Acquire review slot (atomic mkdir) ---
+    await mkdir(REVIEW_LOCK_DIR, { recursive: true });
+    let slotPath = null;
+    for (let i = 1; i <= MAX_REVIEW_SLOTS; i++) {
+      const candidate = path.join(REVIEW_LOCK_DIR, `slot-${i}`);
+      try {
+        execSync(`mkdir "${candidate}"`, { stdio: 'pipe' });
+        slotPath = candidate;
+        break;
+      } catch {
+        // slot occupied, try next
+      }
+    }
+    if (!slotPath) {
+      console.log(`[executor] Review slots full (max=${MAX_REVIEW_SLOTS}), requeueing task=${task.id}`);
+      return { success: false, taskId: task.id, error: 'review_slots_full', executor: 'local-codex' };
+    }
+
+    // Write slot info
+    writeFile(path.join(slotPath, 'info.json'), JSON.stringify({
+      task_id: task.id, pid: process.pid,
+      started: new Date().toISOString(), type: task.task_type,
+    })).catch(() => {});
+
+    // --- Build rich prompt (Task Card + git diff) ---
+    const branch = task.metadata?.branch || (task.title || '').replace(/^(Spec|Code) Review:\s*/, '').trim();
+    let taskCardContent = '';
+    let gitDiff = '';
+
+    if (branch) {
+      try {
+        const worktreeList = execSync(
+          `git -C "${REPO_ROOT}" worktree list --porcelain 2>/dev/null`,
+          { encoding: 'utf8' }
+        );
+        const wtLines = worktreeList.split('\n');
+        let currentWtPath = '';
+        let foundWtPath = '';
+        for (const line of wtLines) {
+          if (line.startsWith('worktree ')) { currentWtPath = line.slice('worktree '.length).trim(); }
+          else if (line.startsWith('branch refs/heads/') && line.includes(branch)) {
+            foundWtPath = currentWtPath; break;
+          }
+        }
+        if (foundWtPath) {
+          const taskCardPath = path.join(foundWtPath, `.task-${branch}.md`);
+          try { taskCardContent = readFileSync(taskCardPath, 'utf8'); } catch { /* no task card yet */ }
+          try {
+            gitDiff = execSync(
+              `git -C "${foundWtPath}" diff origin/main..HEAD 2>/dev/null || git -C "${foundWtPath}" diff HEAD~1..HEAD 2>/dev/null || true`,
+              { encoding: 'utf8', maxBuffer: 512 * 1024 }
+            );
+          } catch { /* no diff */ }
+        }
+      } catch (err) {
+        console.warn(`[executor] Worktree lookup failed for branch ${branch}: ${err.message}`);
+      }
+    }
+
+    const skill = task.task_type === 'spec_review' ? '/spec-review' : '/code-review-gate';
+    let promptContent = `${skill}\n\n## 任务信息\n${task.description || task.title || ''}\n\n`;
+    if (taskCardContent) {
+      promptContent += `## Task Card 内容\n\`\`\`markdown\n${taskCardContent}\n\`\`\`\n\n`;
+    }
+    if (gitDiff) {
+      promptContent += `## Git Diff (main..HEAD)\n\`\`\`diff\n${gitDiff.slice(0, 30000)}\n\`\`\`\n\n`;
+    }
+
+    // --- Write prompt to temp file, spawn codex-bin via shell script ---
+    const tmpPromptFile = `/tmp/codex-review-prompt-${task.id}.txt`;
+    const tmpScriptFile = `/tmp/codex-review-runner-${task.id}.sh`;
+    await writeFile(tmpPromptFile, promptContent);
+    const scriptContent = [
+      '#!/bin/bash',
+      `CODEX_HOME="${CODEX_HOME}" "${CODEX_BIN}" exec --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
+      'EXIT=$?',
+      `rm -f "${tmpPromptFile}" 2>/dev/null; rm -rf "${slotPath}" 2>/dev/null; rm -f "${tmpScriptFile}" 2>/dev/null`,
+      `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \\`,
+      `  -d "{\\"task_id\\":\\"${task.id}\\",\\"run_id\\":\\"${runId}\\",\\"status\\":\\"AI Done\\",\\"exit_code\\":$EXIT}" \\`,
+      '  --max-time 10 2>/dev/null || true',
+    ].join('\n');
+    await writeFile(tmpScriptFile, scriptContent, { mode: 0o755 });
+
+    const proc = spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' });
+    proc.unref();
+
+    console.log(`[executor] Local Codex spawned task=${task.id} pid=${proc.pid} slot=${path.basename(slotPath)}`);
+    return { success: true, taskId: task.id, runId, executor: 'local-codex', pid: proc.pid };
+  } catch (err) {
+    console.error(`[executor] Local Codex error for task=${task.id}: ${err.message}`);
+    return { success: false, taskId: task.id, error: err.message, executor: 'local-codex' };
+  }
+}
+
 /**
  * Trigger cecelia-run for a task.
  *
@@ -2163,10 +2286,11 @@ async function triggerMiniMaxExecutor(task) {
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
-// 路由规则（v2.2 — 以 task-router.js LOCATION_MAP 为唯一 SSOT）：
+// 路由规则（v2.3 — 以 task-router.js LOCATION_MAP 为唯一 SSOT）：
 //   location='hk'   → HK MiniMax
 //   location='xian' → 西安 Codex Bridge
-//   location='us'   → US cecelia-bridge（Claude Code）
+//   us + spec_review/code_review_gate → 本机 Codex CLI（独立 2-slot 池）
+//   location='us'   → US cecelia-bridge（Claude Code，10-slot 池）
 // 注意：Coding 通道（dev/codex_dev/initiative_plan 等）在 task-router.js 中标注为 'us'，
 //       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
@@ -2190,7 +2314,13 @@ async function triggerCeceliaRun(task) {
     return triggerCodexBridge(task);
   }
 
-  // 3. US → Claude Code（本机 cecelia-bridge）
+  // 2.5 US 本机 Codex CLI（spec_review / code_review_gate 独立 2-slot 池）
+  if (task.task_type === 'spec_review' || task.task_type === 'code_review_gate') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Local Codex CLI (review pool)`);
+    return triggerLocalCodexExec(task);
+  }
+
+  // 3. US → Claude Code（本机 cecelia-bridge，10-slot 池）
   // Use original cecelia-bridge on port 3457
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 

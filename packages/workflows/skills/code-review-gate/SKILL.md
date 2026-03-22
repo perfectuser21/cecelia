@@ -57,7 +57,7 @@ description: |
 ```bash
 # 获取变更文件列表
 git diff origin/main..HEAD --name-only
-# 获取完整 diff
+# 获取完整 diff（最多 100KB）
 git diff origin/main..HEAD
 ```
 

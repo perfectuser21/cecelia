@@ -31,6 +31,7 @@ fi
 
 # 配置
 # 并发槽位数：只看 CECELIA_MAX_CONCURRENT（旧 bridge 可能传 MAX_CONCURRENT=3，忽略）
+# 10-slot 池（常规任务）+ 2-slot 独立池（/tmp/codex-review-locks，spec_review/code_review_gate）= 12 总计
 MAX_CONCURRENT="${CECELIA_MAX_CONCURRENT:-10}"
 LOCK_DIR="${LOCK_DIR:-/tmp/cecelia-locks}"
 # Callback 强制指向 Brain（旧 bridge 传错误的 n8n URL，忽略）
