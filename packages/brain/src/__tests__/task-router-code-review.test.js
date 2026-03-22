@@ -11,8 +11,8 @@ describe('code_review task type routing', () => {
     expect(isValidTaskType('code_review')).toBe(true);
   });
 
-  it('LOCATION_MAP 中 code_review → xian', () => {
-    expect(LOCATION_MAP['code_review']).toBe('xian');
+  it('LOCATION_MAP 中 code_review → us', () => {
+    expect(LOCATION_MAP['code_review']).toBe('us');
   });
 
   it('getTaskLocation 路由 code_review 到 us', () => {
