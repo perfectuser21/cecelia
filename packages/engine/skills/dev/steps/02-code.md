@@ -370,8 +370,15 @@ loop:
   1. 调用 Agent subagent（subagent_type=general-purpose）
      - prompt = code-review-gate SKILL.md 全文 + git diff 内容
      - SKILL.md 路径：packages/workflows/skills/code-review-gate/SKILL.md
+     - **CRITICAL**: prompt 必须包含以下指令（seal 文件写入）：
+         "审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-crg.<BRANCH>：
+          { \"verdict\": \"PASS\"|\"FAIL\", \"branch\": \"<BRANCH>\",
+            \"timestamp\": \"<ISO8601>\", \"reviewer\": \"code-review-gate-agent\",
+            \"issues\": [...] }
+          这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。"
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
+       → 确认 seal 文件 .dev-gate-crg.${BRANCH} 已存在（由 subagent 写入）
        → echo "code_review_gate_status: pass" >> .dev-mode.${BRANCH}
        → break（继续 Stage 3）
   4. verdict == "FAIL"
@@ -390,6 +397,7 @@ loop:
 **执行时注意**：
 - subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
 - subagent prompt 必须包含 `git diff` **完整内容**（不能只引用文件路径）
+- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-crg.<BRANCH>`）
 - 不要向 Brain 注册任务，不要走 Codex 异步派发路径
 - FAIL 修复后必须重新获取 git diff 再调用 subagent，不能跳过重审
 
