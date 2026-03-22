@@ -81,6 +81,7 @@ import {
   SESSION_TTL_SECONDS,
   BACKPRESSURE_THRESHOLD,
   BACKPRESSURE_BURST_LIMIT,
+  MEMORY_PRESSURE_THRESHOLD_MB,
   _resetSlotBuffer,
   detectUserSessions,
   detectUserMode,
@@ -91,6 +92,7 @@ import {
   getQueueDepth,
   getCodexMaxConcurrent,
   CODEX_ACCOUNT_COUNT,
+  getBackpressureState,
   calculateSlotBudget,
   getSlotStatus,
 } from '../slot-allocator.js';
@@ -1082,6 +1084,44 @@ describe('Backpressure', () => {
   it('exports BACKPRESSURE_THRESHOLD=20 and BACKPRESSURE_BURST_LIMIT=3', () => {
     expect(BACKPRESSURE_THRESHOLD).toBe(20);
     expect(BACKPRESSURE_BURST_LIMIT).toBe(3);
+  });
+
+  it('exports MEMORY_PRESSURE_THRESHOLD_MB=600', () => {
+    expect(MEMORY_PRESSURE_THRESHOLD_MB).toBe(600);
+  });
+
+  describe('getBackpressureState', () => {
+    it('low memory triggers active=true regardless of queue depth', () => {
+      const state = getBackpressureState({ queue_depth: 3, memory_available_mb: 200 });
+      expect(state.active).toBe(true);
+      expect(state.memory_pressure).toBe(true);
+      expect(state.queue_pressure).toBe(false);
+      expect(state.override_burst_limit).toBe(3);
+    });
+
+    it('high queue triggers active=true regardless of memory', () => {
+      const state = getBackpressureState({ queue_depth: 25, memory_available_mb: 2000 });
+      expect(state.active).toBe(true);
+      expect(state.queue_pressure).toBe(true);
+      expect(state.memory_pressure).toBe(false);
+    });
+
+    it('normal conditions: active=false', () => {
+      const state = getBackpressureState({ queue_depth: 5, memory_available_mb: 2000 });
+      expect(state.active).toBe(false);
+      expect(state.override_burst_limit).toBeNull();
+    });
+
+    it('memory exactly at threshold: active=false (not strictly less than)', () => {
+      const state = getBackpressureState({ queue_depth: 0, memory_available_mb: 600 });
+      expect(state.active).toBe(false);
+    });
+
+    it('memory_available_mb undefined: skips memory check', () => {
+      const state = getBackpressureState({ queue_depth: 3 });
+      expect(state.memory_pressure).toBe(false);
+      expect(state.active).toBe(false);
+    });
   });
 
   it('getQueueDepth returns count from DB', async () => {

@@ -12,6 +12,7 @@
 
 /* global console */
 
+import os from 'os';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
 import { listProcessesWithElapsed, listProcessesWithPpid } from './platform-utils.js';
@@ -46,6 +47,7 @@ function getCodexMaxConcurrent() {
 }
 const BACKPRESSURE_THRESHOLD = 20;          // 队列深度超过此值时触发降速（从5调到20，防止正常KR拆解任务卡死系统）
 const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动态检测已做防雪崩，不需要压到 1）
+const MEMORY_PRESSURE_THRESHOLD_MB = 600;   // 系统可用内存低于此值时触发背压，防止 dev 任务叠加 vitest OOM
 
 // ============================================================
 // Process Detection
@@ -199,6 +201,33 @@ async function getQueueDepth() {
 }
 
 /**
+ * Pure synchronous helper: compute backpressure state from queue depth and system memory.
+ * Separating this from calculateSlotBudget() makes it unit-testable without DB.
+ *
+ * @param {object} opts
+ * @param {number} opts.queue_depth      - current queued task count
+ * @param {number} [opts.memory_available_mb] - available system memory in MB (omit to skip memory check)
+ * @returns {{ active: boolean, queue_depth: number, threshold: number, queue_pressure: boolean,
+ *             memory_pressure: boolean, memory_available_mb: number|undefined,
+ *             memory_threshold_mb: number, override_burst_limit: number|null }}
+ */
+function getBackpressureState({ queue_depth, memory_available_mb } = {}) {
+  const queuePressure = queue_depth > BACKPRESSURE_THRESHOLD;
+  const memoryPressure = memory_available_mb !== undefined && memory_available_mb < MEMORY_PRESSURE_THRESHOLD_MB;
+  const active = queuePressure || memoryPressure;
+  return {
+    active,
+    queue_depth,
+    threshold: BACKPRESSURE_THRESHOLD,
+    queue_pressure: queuePressure,
+    memory_pressure: memoryPressure,
+    memory_available_mb,
+    memory_threshold_mb: MEMORY_PRESSURE_THRESHOLD_MB,
+    override_burst_limit: active ? BACKPRESSURE_BURST_LIMIT : null,
+  };
+}
+
+/**
  * Count Codex-native tasks currently in_progress.
  * Includes task_type IN ('codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen') — tasks always routed to Xian Codex CLI.
  * Budget-downgraded tasks (provider=codex override) are not counted here since provider
@@ -302,17 +331,15 @@ async function calculateSlotBudget() {
   // Apply slot change buffer (asymmetric: fast brake, slow recovery)
   const availableBuffered = applySlotBuffer(availableRaw);
 
-  // Backpressure: throttle burst limit when queue is deep
+  // Backpressure: throttle burst limit when queue is deep or memory is low
   const queueDepth = await getQueueDepth();
-  const backpressureActive = queueDepth > BACKPRESSURE_THRESHOLD;
-  const backpressure = {
-    queue_depth: queueDepth,
-    threshold: BACKPRESSURE_THRESHOLD,
-    active: backpressureActive,
-    override_burst_limit: backpressureActive ? BACKPRESSURE_BURST_LIMIT : null,
-  };
-  if (backpressureActive) {
-    console.log(`[slot-allocator] Backpressure active: queue_depth=${queueDepth} > ${BACKPRESSURE_THRESHOLD}, override_burst_limit=${BACKPRESSURE_BURST_LIMIT}`);
+  const memAvailableMB = Math.round(os.freemem() / 1024 / 1024);
+  const backpressure = getBackpressureState({ queue_depth: queueDepth, memory_available_mb: memAvailableMB });
+  if (backpressure.active) {
+    const reason = backpressure.queue_pressure
+      ? `queue_depth=${queueDepth} > ${BACKPRESSURE_THRESHOLD}`
+      : `memory=${memAvailableMB}MB < ${MEMORY_PRESSURE_THRESHOLD_MB}MB`;
+    console.log(`[slot-allocator] Backpressure active: ${reason}, override_burst_limit=${BACKPRESSURE_BURST_LIMIT}`);
   }
 
   // Codex Pool D: concurrent limit for Codex tasks (dynamic based on fleet cache)
@@ -437,6 +464,7 @@ export {
   CODEX_ACCOUNT_COUNT,
   BACKPRESSURE_THRESHOLD,
   BACKPRESSURE_BURST_LIMIT,
+  MEMORY_PRESSURE_THRESHOLD_MB,
   SLOT_BUFFER_MAX_DELTA,
   SLOT_BUFFER_DOWN,
   SLOT_BUFFER_UP,
@@ -447,6 +475,7 @@ export {
   countAutoDispatchInProgress,
   countCodexInProgress,
   getQueueDepth,
+  getBackpressureState,
   calculateSlotBudget,
   getSlotStatus,
   applySlotBuffer,
