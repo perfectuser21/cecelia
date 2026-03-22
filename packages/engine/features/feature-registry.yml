@@ -17,8 +17,14 @@
 
 version: "3.87.0"
 updated: "2026-03-22"
-# ci-trigger: 13.25.0
+# ci-trigger: 13.26.0
 changelog:
+  - version: "13.26.0"
+    date: "2026-03-22"
+    summary: "feat(engine): code-review-gate 维度H升级 — 替代性内容未删旧描述=blocker；02-code.md 新增先删旧再写新编辑规则"
+    scope: packages/workflows/skills/code-review-gate/SKILL.md,skills/dev/steps/02-code.md
+    breaking: false
+    feature_id: code-review-gate-dimh-replace-blocker
   - version: "13.25.0"
     date: "2026-03-22"
     summary: "feat(engine): /dev pipeline 5项补强 — CI失败写incident-log / PRD bullet本地验证 / 并行PR重叠检测 / code-review-gate维度H信息卫生"
