@@ -39,37 +39,37 @@ function mapStatus(dbStatus) {
   return STATUS_MAP[dbStatus] || 'pending';
 }
 
+function parseStepIdx(stepStr, total) {
+  if (!stepStr) return null;
+  const idx = parseInt(stepStr, 10);
+  return (!isNaN(idx) && idx >= 1 && idx <= total) ? idx : null;
+}
+
+function buildFailedProgress(stepStr, total) {
+  const idx = parseStepIdx(stepStr, total);
+  if (idx !== null) {
+    return { total, completed: idx - 1, failed: 1, current: DEV_STEPS[idx - 1].name };
+  }
+  return { total, completed: 0, failed: 1, current: null };
+}
+
+function buildRunningProgress(stepStr, total) {
+  const idx = parseStepIdx(stepStr, total);
+  if (idx !== null) {
+    return { total, completed: idx - 1, failed: 0, current: DEV_STEPS[idx - 1].name };
+  }
+  return { total, completed: 0, failed: 0, current: DEV_STEPS[0].name };
+}
+
 function inferStepProgress(task) {
   const payload = task.payload || {};
   const status = task.status || 'queued';
   const total = DEV_STEPS.length;
 
-  if (status === 'completed') {
-    return { total, completed: total, failed: 0, current: null };
-  }
-  if (status === 'failed' || status === 'cancelled') {
-    const stepStr = payload.current_step;
-    if (stepStr) {
-      const idx = parseInt(stepStr, 10);
-      if (!isNaN(idx) && idx >= 1 && idx <= total) {
-        return { total, completed: idx - 1, failed: 1, current: DEV_STEPS[idx - 1].name };
-      }
-    }
-    return { total, completed: 0, failed: 1, current: null };
-  }
-  if (status === 'queued') {
-    return { total, completed: 0, failed: 0, current: DEV_STEPS[0].name };
-  }
-
-  // in_progress / running
-  const stepStr = payload.current_step;
-  if (stepStr) {
-    const idx = parseInt(stepStr, 10);
-    if (!isNaN(idx) && idx >= 1 && idx <= total) {
-      return { total, completed: idx - 1, failed: 0, current: DEV_STEPS[idx - 1].name };
-    }
-  }
-  return { total, completed: 0, failed: 0, current: DEV_STEPS[0].name };
+  if (status === 'completed') return { total, completed: total, failed: 0, current: null };
+  if (status === 'failed' || status === 'cancelled') return buildFailedProgress(payload.current_step, total);
+  if (status === 'queued') return { total, completed: 0, failed: 0, current: DEV_STEPS[0].name };
+  return buildRunningProgress(payload.current_step, total);
 }
 
 function formatTaskRun(task) {
@@ -94,49 +94,40 @@ function formatTaskRun(task) {
   };
 }
 
+function resolveCheckpointStatus(status, stepNum, currentStepIdx) {
+  if (status === 'completed') return 'done';
+  if (status === 'queued') return 'pending';
+  if (status === 'failed' || status === 'cancelled') {
+    if (stepNum < currentStepIdx) return 'done';
+    if (stepNum === currentStepIdx) return 'failed';
+    return 'skipped';
+  }
+  // in_progress / running
+  if (stepNum < currentStepIdx) return 'done';
+  if (stepNum === currentStepIdx) return 'in_progress';
+  return 'pending';
+}
+
 function buildCheckpoints(task) {
   const payload = task.payload || {};
   const status = task.status || 'queued';
   const runId = task.id;
 
-  let currentStepIdx = 0;
   const stepStr = payload.current_step;
-  if (stepStr) {
-    const idx = parseInt(stepStr, 10);
-    if (!isNaN(idx)) currentStepIdx = idx;
-  }
+  const rawIdx = stepStr ? parseInt(stepStr, 10) : NaN;
+  const currentStepIdx = !isNaN(rawIdx) ? rawIdx : 0;
 
-  return DEV_STEPS.map((step, i) => {
-    const stepNum = i + 1;
-    let cpStatus;
-
-    if (status === 'completed') {
-      cpStatus = 'done';
-    } else if (status === 'failed' || status === 'cancelled') {
-      if (stepNum < currentStepIdx) cpStatus = 'done';
-      else if (stepNum === currentStepIdx) cpStatus = 'failed';
-      else cpStatus = 'skipped';
-    } else if (status === 'queued') {
-      cpStatus = 'pending';
-    } else {
-      // in_progress
-      if (stepNum < currentStepIdx) cpStatus = 'done';
-      else if (stepNum === currentStepIdx) cpStatus = 'in_progress';
-      else cpStatus = 'pending';
-    }
-
-    return {
-      run_id: runId,
-      checkpoint_id: step.id,
-      status: cpStatus,
-      started_at: null,
-      completed_at: null,
-      duration: null,
-      output: null,
-      error: null,
-      pr_url: null,
-    };
-  });
+  return DEV_STEPS.map((step, i) => ({
+    run_id: runId,
+    checkpoint_id: step.id,
+    status: resolveCheckpointStatus(status, i + 1, currentStepIdx),
+    started_at: null,
+    completed_at: null,
+    duration: null,
+    output: null,
+    error: null,
+    pr_url: null,
+  }));
 }
 
 // GET /overview
