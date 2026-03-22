@@ -73,26 +73,28 @@ export function getDynamicTaskTypes() {
 }
 
 /**
- * 更新单条动态任务类型配置（写 DB + 刷新缓存）。
+ * 更新（或新增）单条任务类型配置（UPSERT 写 DB + 刷新缓存）。
+ * 若 task_type 不存在则插入，已存在则更新指定字段。
  * @param {import('pg').Pool} pool
  * @param {string} taskType
  * @param {{location?: string, executor?: string, skill?: string}} updates
  * @returns {Promise<{task_type: string, location: string, executor: string, skill: string|null, updated_at: Date}|null>}
  */
 export async function updateConfig(pool, taskType, updates) {
-  const allowed = ['location', 'executor', 'skill'];
-  const fields = Object.keys(updates).filter(k => allowed.includes(k));
-  if (fields.length === 0) return null;
+  const { location, executor, skill } = updates;
+  if (!location && !executor && !skill) return null;
 
-  const setClauses = fields.map((f, i) => `${f} = $${i + 2}`).join(', ');
-  const values = [taskType, ...fields.map(f => updates[f])];
-
+  // UPSERT：不存在则插入，已存在则只更新提供的字段
   const { rows } = await pool.query(
-    `UPDATE task_type_configs
-     SET ${setClauses}, updated_at = NOW()
-     WHERE task_type = $1
+    `INSERT INTO task_type_configs (task_type, location, executor, skill, is_dynamic, updated_at)
+     VALUES ($1, $2, $3, $4, true, NOW())
+     ON CONFLICT (task_type) DO UPDATE SET
+       location   = COALESCE($2, task_type_configs.location),
+       executor   = COALESCE($3, task_type_configs.executor),
+       skill      = COALESCE($4, task_type_configs.skill),
+       updated_at = NOW()
      RETURNING task_type, location, executor, skill, updated_at`,
-    values
+    [taskType, location ?? null, executor ?? null, skill ?? null]
   );
 
   if (rows.length === 0) return null;

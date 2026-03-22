@@ -65,11 +65,6 @@ const CATEGORY_META: Record<Category, { label: string; tag: string; desc: string
   },
 };
 
-// C类动态任务列表（suggestion_plan, strategy_session, knowledge, scope_plan, project_plan）
-const DYNAMIC_TASK_TYPES = new Set([
-  'suggestion_plan', 'strategy_session', 'knowledge', 'scope_plan', 'project_plan',
-]);
-
 const TASKS_BY_CATEGORY: Record<Category, TaskDef[]> = {
   A: [
     { task_type: 'dev', location: 'us', skill: '/dev', desc: '主力开发，Opus + /dev 全流程' },
@@ -92,21 +87,22 @@ const TASKS_BY_CATEGORY: Record<Category, TaskDef[]> = {
     { task_type: 'dept_heartbeat',      location: 'us', skill: '/cecelia',            desc: '部门心跳' },
   ],
   C: [
-    { task_type: 'codex_dev',          location: 'xian', skill: '/dev',             desc: 'Codex /dev，runner.sh 执行' },
-    { task_type: 'codex_qa',           location: 'xian', skill: '/codex',           desc: 'Codex 免疫检查' },
-    { task_type: 'codex_playwright',   location: 'xian', skill: '/playwright',      desc: 'Playwright 自动化 → CDP 控制西安PC' },
-    { task_type: 'codex_test_gen',     location: 'xian', skill: '/codex-test-gen',  desc: '自动生成测试' },
-    { task_type: 'pr_review',          location: 'xian', skill: '/review',          desc: '异步 PR 审查（独立账号）' },
-    { task_type: 'content-pipeline',   location: 'xian', skill: '/content-creator', desc: '内容工厂 Pipeline 入口' },
-    { task_type: 'content-research',   location: 'xian', skill: '/notebooklm',      desc: '内容调研' },
-    { task_type: 'content-generate',   location: 'xian', skill: '/content-creator', desc: '内容生成' },
-    { task_type: 'content-review',     location: 'xian', skill: '/content-creator', desc: '内容审核' },
-    { task_type: 'content-export',     location: 'xian', skill: '/content-creator', desc: '内容导出' },
-    { task_type: 'suggestion_plan',    location: 'xian', skill: '/plan',            desc: '层级识别', editable: true },
-    { task_type: 'strategy_session',   location: 'xian', skill: '/strategy-session',desc: '战略会议', editable: true },
-    { task_type: 'knowledge',          location: 'xian', skill: '/knowledge',       desc: '知识记录', editable: true },
-    { task_type: 'scope_plan',         location: 'xian', skill: '/decomp',          desc: 'Scope 规划', editable: true },
-    { task_type: 'project_plan',       location: 'xian', skill: '/decomp',          desc: 'Project 规划', editable: true },
+    // 所有 C类任务均可编辑（editable: true），UPSERT 写 DB
+    { task_type: 'codex_dev',          location: 'xian', skill: '/dev',              desc: 'Codex /dev，runner.sh 执行',          editable: true },
+    { task_type: 'codex_qa',           location: 'xian', skill: '/codex',            desc: 'Codex 免疫检查',                      editable: true },
+    { task_type: 'codex_playwright',   location: 'xian', skill: '/playwright',       desc: 'Playwright 自动化 → CDP 控制西安PC', editable: true },
+    { task_type: 'codex_test_gen',     location: 'xian', skill: '/codex-test-gen',   desc: '自动生成测试',                        editable: true },
+    { task_type: 'pr_review',          location: 'xian', skill: '/review',           desc: '异步 PR 审查（独立账号）',            editable: true },
+    { task_type: 'content-pipeline',   location: 'xian', skill: '/content-creator',  desc: '内容工厂 Pipeline 入口',             editable: true },
+    { task_type: 'content-research',   location: 'xian', skill: '/notebooklm',       desc: '内容调研',                           editable: true },
+    { task_type: 'content-generate',   location: 'xian', skill: '/content-creator',  desc: '内容生成',                           editable: true },
+    { task_type: 'content-review',     location: 'xian', skill: '/content-creator',  desc: '内容审核',                           editable: true },
+    { task_type: 'content-export',     location: 'xian', skill: '/content-creator',  desc: '内容导出',                           editable: true },
+    { task_type: 'suggestion_plan',    location: 'xian', skill: '/plan',             desc: '层级识别',                           editable: true },
+    { task_type: 'strategy_session',   location: 'xian', skill: '/strategy-session', desc: '战略会议',                           editable: true },
+    { task_type: 'knowledge',          location: 'xian', skill: '/knowledge',        desc: '知识记录',                           editable: true },
+    { task_type: 'scope_plan',         location: 'xian', skill: '/decomp',           desc: 'Scope 规划',                         editable: true },
+    { task_type: 'project_plan',       location: 'xian', skill: '/decomp',           desc: 'Project 规划',                       editable: true },
   ],
   D: [
     { task_type: 'explore',  location: 'hk', skill: '/explore',  desc: '快速调研（MiniMax）' },
@@ -220,7 +216,8 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
     setEditLocation(dynamicConfig?.location ?? task.location);
   }, [task.task_type, dynamicConfig]);
 
-  const isEditable = task.editable && dynamicConfig !== null;
+  // C类任务均可编辑，不依赖 dynamicConfig 是否存在（UPSERT 后端支持）
+  const isEditable = !!task.editable;
   const currentLocation = dynamicConfig?.location ?? task.location;
 
   return (
@@ -313,7 +310,7 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
 
             <button
               onClick={() => onSave(task.task_type, editLocation)}
-              disabled={saving || editLocation === currentLocation}
+              disabled={saving}
               className="mt-4 w-full py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {saving ? '保存中…' : saved ? '✓ 已保存' : '保存配置'}
@@ -450,7 +447,7 @@ export default function TaskTypeConfigPage() {
           <div className="flex-1 min-w-0 bg-white">
             <DetailPanel
               task={selectedTask}
-              dynamicConfig={DYNAMIC_TASK_TYPES.has(selectedTask.task_type) ? (dynamicMap[selectedTask.task_type] ?? null) : null}
+              dynamicConfig={dynamicMap[selectedTask.task_type] ?? null}
               onSave={handleSave}
               saving={saving}
               saved={saved === selectedTask.task_type}
