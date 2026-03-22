@@ -64,3 +64,39 @@ describe('content-type-registry', () => {
     });
   });
 });
+
+describe('新增内容类型 — 5 个模板', () => {
+  const NEW_TYPES = ['long-form', 'short-form', 'video-script', 'promo-copy', 'data-analysis'];
+
+  it.each(NEW_TYPES)('%s 应存在且可加载', async (typeName) => {
+    const config = await getContentType(typeName);
+    expect(config).not.toBeNull();
+    expect(config.content_type).toBe(typeName);
+  });
+
+  it.each(NEW_TYPES)('%s 应含有效图片配置', async (typeName) => {
+    const config = await getContentType(typeName);
+    expect(config.images).toBeDefined();
+    expect(typeof config.images.count).toBe('number');
+    expect(config.images.count).toBeGreaterThan(0);
+  });
+
+  it.each(NEW_TYPES)('%s 应含 generate_prompt', async (typeName) => {
+    const config = await getContentType(typeName);
+    expect(config.template).toBeDefined();
+    expect(config.template.generate_prompt).toBeTruthy();
+  });
+
+  it.each(NEW_TYPES)('%s 应含审查规则', async (typeName) => {
+    const config = await getContentType(typeName);
+    expect(Array.isArray(config.review_rules)).toBe(true);
+    expect(config.review_rules.length).toBeGreaterThan(0);
+  });
+
+  it('listContentTypes 应包含全部 5 个新类型', async () => {
+    const types = await listContentTypes();
+    for (const typeName of NEW_TYPES) {
+      expect(types).toContain(typeName);
+    }
+  });
+});

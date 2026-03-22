@@ -1,0 +1,75 @@
+# Content Type: Video Script
+# 视频脚本 — 抖音/快手竖屏视频文案类型配置
+content_type: video-script
+title: 视频脚本（竖屏短视频）
+version: "1.0"
+description: 面向抖音/快手的竖屏短视频完整脚本，含分镜/口播/字幕，时长 60-180 秒。
+
+# 图片配置（封面图）
+images:
+  count: 1
+  format: svg
+  size: "1080x1920"
+  style: "video-thumbnail"
+  nas_path: "zenithjoy-creator/content/video-script"
+
+# 内容模板配置
+template:
+  research_prompt: |
+    调研 {keyword} 在抖音/快手上的热门内容形式。
+    重点收集：高播放量视频的开场方式、节奏节拍、热门话题、评论区高频问题。
+    来源：抖音/快手搜索结果、热榜视频评论区。
+  generate_prompt: |
+    基于调研，生成以下内容：
+    1. 封面图（1张，标题醒目，色彩抓眼球）
+    2. 完整视频脚本（含：镜头描述/口播文案/字幕/BGM建议）
+       - 开场钩子（0-3秒，必须有反问或悬念）
+       - 正文段（每段15秒左右，共3-5段）
+       - 结尾引导（点赞/关注/评论，5秒）
+    3. 视频标题（3个备选，含数字或疑问）
+    4. 发布文案（100字内，含标签）
+  review_prompt: |
+    审查脚本是否符合以下标准：
+    1. 前 3 秒有强烈钩子（悬念/痛点/反常识）
+    2. 口播节奏自然，无书面语
+    3. 每个镜头切换点清晰
+    4. 总时长控制在 60-180 秒
+
+# AI 审查规则
+review_rules:
+  - id: "strong_hook_3s"
+    description: "脚本开场前3秒必须有强钩子，读完第一句就想继续看"
+    severity: "blocking"
+  - id: "natural_spoken_language"
+    description: "口播文案必须是口语化表达，禁止书面语和长难句"
+    severity: "blocking"
+  - id: "clear_shot_transitions"
+    description: "每个分镜必须有明确的镜头描述（景别/动作/字幕）"
+    severity: "warning"
+  - id: "duration_control"
+    description: "总时长控制在 60-180 秒，过长需删减"
+    severity: "warning"
+
+# 文案规则
+copy_rules:
+  platform_tone:
+    douyin: "口语化，节奏感强，多用排比/三段式，适合年轻用户，前3秒必须炸"
+    kuaishou: "接地气，真实感，贴近下沉市场用户语言，朴实直接"
+  hashtags:
+    base: ["视频", "干货分享", "涨知识"]
+    content_type_specific: ["短视频", "教程", "技巧"]
+  min_word_count:
+    short_copy: 100
+    long_form: 0
+
+# 产出物定义
+outputs:
+  - type: "images"
+    count: 1
+    format: "svg"
+  - type: "video_script"
+    platforms: ["douyin", "kuaishou"]
+  - type: "short_copy"
+    platforms: ["douyin", "kuaishou"]
+  - type: "manifest"
+    format: "json"

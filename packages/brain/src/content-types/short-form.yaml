@@ -1,0 +1,71 @@
+# Content Type: Short-Form Content
+# 短文 — 图文/短内容类型配置
+content_type: short-form
+title: 短文（图文/短内容）
+version: "1.0"
+description: 适合小红书/朋友圈/微博的短图文内容，300-800字，强视觉、强互动。
+
+# 图片配置
+images:
+  count: 6
+  format: svg
+  size: "1080x1080"
+  style: "social-card"
+  nas_path: "zenithjoy-creator/content/short-form"
+
+# 内容模板配置
+template:
+  research_prompt: |
+    快速调研 {keyword} 相关热点与用户关心的问题。
+    重点收集：高赞评论、用户痛点、近期热议话题、可引用的短金句。
+    来源：小红书/微博/抖音评论区、知乎热榜。
+  generate_prompt: |
+    基于调研，生成以下内容：
+    1. 6张方图（每张一个核心观点，图文合一）
+    2. 小红书图文文案（400-600字，口语化，段落短，结尾引导评论）
+    3. 微博短文（140-280字，直击痛点，适合转发）
+    4. 话题标签组合（5-8个）
+  review_prompt: |
+    审查内容是否符合以下标准：
+    1. 开头 15 字内有钩子（数字/反问/痛点）
+    2. 每段不超过 50 字，适合手机阅读
+    3. 有明确的互动引导（评论/转发/收藏）
+    4. 话题标签与内容高度相关
+
+# AI 审查规则
+review_rules:
+  - id: "hook_opening"
+    description: "开头必须在 15 字以内吸引注意（数字冲击/痛点共鸣/反问句）"
+    severity: "blocking"
+  - id: "short_paragraphs"
+    description: "每个段落不超过 50 字，适合移动端碎片阅读"
+    severity: "warning"
+  - id: "engagement_cta"
+    description: "文末必须有明确互动引导（不能只是陈述）"
+    severity: "blocking"
+  - id: "relevant_hashtags"
+    description: "标签必须与内容强相关，禁止堆砌无关热搜词"
+    severity: "warning"
+
+# 文案规则
+copy_rules:
+  platform_tone:
+    xiaohongshu: "姐妹/朋友口吻，亲切日记体，多用感叹号，表情符号适量，段落空行"
+    weibo: "简短犀利，观点鲜明，适合引发讨论，可带点情绪"
+    wechat: "朋友圈风格，真实感强，带个人视角，不像广告"
+  hashtags:
+    base: ["干货", "分享", "生活方式"]
+    content_type_specific: ["图文", "种草", "好物推荐"]
+  min_word_count:
+    short_copy: 300
+    long_form: 0
+
+# 产出物定义
+outputs:
+  - type: "images"
+    count: 6
+    format: "svg"
+  - type: "short_copy"
+    platforms: ["xiaohongshu", "weibo", "wechat"]
+  - type: "manifest"
+    format: "json"
