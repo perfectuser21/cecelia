@@ -277,7 +277,7 @@ async function handleLlmLearn(title, entities, message) {
   const urlMatch = message.match(/https?:\/\/[^\s]+/);
   if (urlMatch) {
     // 异步研究流：前台秒回，后台 NotebookLM 研究
-    (async () => { await triggerUrlResearch(urlMatch[0], title); })();
+    triggerUrlResearch(urlMatch[0], title).catch(e => console.warn('[chat-action-dispatcher] triggerUrlResearch unhandled:', e.message));
   }
   return `\n\n✅ 已记录学习：${title}${urlMatch ? '\n📚 已启动后台研究，结果稍后自动整理。' : ''}`;
 }
