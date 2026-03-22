@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 图文三平台 NAS 批量发布统一调度脚本
+# 图文五平台 NAS 批量发布统一调度脚本
 #
-# 从 NAS 日期目录读取内容，一键发布到知乎 + 公众号 + 今日头条三平台。
+# 从 NAS 日期目录读取内容，一键发布到知乎 + 公众号 + 今日头条 + 抖音 + 快手 + 小红书五平台。
 #
 # 用法:
 #   bash batch-publish-image-text.sh [--date YYYY-MM-DD] [--dry-run]
@@ -9,18 +9,18 @@
 # NAS 内容目录结构:
 #   /Users/jinnuoshengyuan/nas-publish/徐啸/creator/output/YYYY-MM-DD/
 #   ├── post-1/
-#   │   ├── platforms.txt   # 目标平台（逗号分隔: zhihu,wechat,toutiao）
+#   │   ├── platforms.txt   # 目标平台（逗号分隔: zhihu,wechat,toutiao,douyin,kuaishou,xiaohongshu）
 #   │   ├── title.txt       # 标题（必需）
 #   │   ├── content.txt     # 正文（必需）
-#   │   └── image.jpg       # 封面图（可选）
+#   │   └── image.jpg       # 封面图（可选，图文平台必需）
 #   ├── post-2/
 #   │   └── ...
 #   └── post-N/
 #
 # platforms.txt 示例:
-#   zhihu,wechat,toutiao    # 三平台均发布
-#   zhihu,wechat            # 只发知乎和公众号
-#   toutiao                 # 只发头条
+#   zhihu,wechat,toutiao                              # 三文章平台
+#   douyin,kuaishou,xiaohongshu                       # 三图文平台
+#   zhihu,wechat,toutiao,douyin,kuaishou,xiaohongshu  # 全六平台
 #
 # 已发布的目录会写入 done-<platform>.txt，下次跳过。
 #
@@ -65,12 +65,15 @@ NODE_PATH_OVERRIDE="${REPO_ROOT}/node_modules"
 ZHIHU_SCRIPT="${REPO_ROOT}/packages/workflows/skills/zhihu-publisher/scripts/publish-zhihu-api.cjs"
 WECHAT_SCRIPT="${REPO_ROOT}/packages/workflows/skills/wechat-publisher/scripts/publish-wechat-article.cjs"
 TOUTIAO_SCRIPT="${REPO_ROOT}/packages/workflows/skills/toutiao-publisher/scripts/publish-toutiao-article.cjs"
+DOUYIN_SCRIPT="${REPO_ROOT}/packages/workflows/skills/douyin-publisher/scripts/publish-douyin-image.cjs"
+KUAISHOU_SCRIPT="${REPO_ROOT}/packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-image.cjs"
+XIAOHONGSHU_SCRIPT="${REPO_ROOT}/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs"
 
 # ─── 标题 ────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "========================================="
-echo " 图文三平台批量发布 - ${DATE}"
+echo " 图文五平台批量发布 - ${DATE}"
 if [[ "$DRY_RUN" == "true" ]]; then
   echo " [DRY-RUN 模式 - 不实际发布]"
 fi
@@ -88,7 +91,7 @@ if [[ ! -d "$NAS_DATE_DIR" ]]; then
     echo " 统计报告"
     echo "========================================="
     echo " total:   0"
-    echo " success: { zhihu: 0, wechat: 0, toutiao: 0 }"
+    echo " success: { zhihu: 0, wechat: 0, toutiao: 0, douyin: 0, kuaishou: 0, xiaohongshu: 0 }"
     echo " failed:  []"
     echo "========================================="
     exit 0
@@ -103,6 +106,9 @@ total=0
 success_zhihu=0
 success_wechat=0
 success_toutiao=0
+success_douyin=0
+success_kuaishou=0
+success_xiaohongshu=0
 failed=()
 
 # ─── 遍历 post-* 目录 ────────────────────────────────────────────────────────
@@ -206,6 +212,72 @@ for post_dir in "${NAS_DATE_DIR}"/post-*/; do
     fi
   fi
 
+  # ─── 抖音发布 ────────────────────────────────────────────────────────────
+
+  if echo "$platforms" | grep -q "douyin"; then
+    done_file="${post_dir}done-douyin.txt"
+    if [[ -f "$done_file" ]]; then
+      echo "[SKIP] 抖音: 已发布"
+    else
+      echo ""
+      echo "▶ 发布到抖音..."
+      if NODE_PATH="$NODE_PATH_OVERRIDE" node "$DOUYIN_SCRIPT" \
+          --content "$post_dir" 2>&1; then
+        success_douyin=$((success_douyin + 1))
+        touch "$done_file"
+        echo "✅ 抖音: 发布成功"
+      else
+        failed+=("${post_name}:douyin")
+        echo "❌ 抖音: 发布失败"
+      fi
+      sleep 5
+    fi
+  fi
+
+  # ─── 快手发布 ────────────────────────────────────────────────────────────
+
+  if echo "$platforms" | grep -q "kuaishou"; then
+    done_file="${post_dir}done-kuaishou.txt"
+    if [[ -f "$done_file" ]]; then
+      echo "[SKIP] 快手: 已发布"
+    else
+      echo ""
+      echo "▶ 发布到快手..."
+      if NODE_PATH="$NODE_PATH_OVERRIDE" node "$KUAISHOU_SCRIPT" \
+          --content "$post_dir" 2>&1; then
+        success_kuaishou=$((success_kuaishou + 1))
+        touch "$done_file"
+        echo "✅ 快手: 发布成功"
+      else
+        failed+=("${post_name}:kuaishou")
+        echo "❌ 快手: 发布失败"
+      fi
+      sleep 5
+    fi
+  fi
+
+  # ─── 小红书发布 ──────────────────────────────────────────────────────────
+
+  if echo "$platforms" | grep -q "xiaohongshu"; then
+    done_file="${post_dir}done-xiaohongshu.txt"
+    if [[ -f "$done_file" ]]; then
+      echo "[SKIP] 小红书: 已发布"
+    else
+      echo ""
+      echo "▶ 发布到小红书..."
+      if NODE_PATH="$NODE_PATH_OVERRIDE" node "$XIAOHONGSHU_SCRIPT" \
+          --content "$post_dir" 2>&1; then
+        success_xiaohongshu=$((success_xiaohongshu + 1))
+        touch "$done_file"
+        echo "✅ 小红书: 发布成功"
+      else
+        failed+=("${post_name}:xiaohongshu")
+        echo "❌ 小红书: 发布失败"
+      fi
+      sleep 5
+    fi
+  fi
+
 done
 
 # ─── 统计报告 ────────────────────────────────────────────────────────────────
@@ -215,7 +287,7 @@ echo "========================================="
 echo " 统计报告"
 echo "========================================="
 echo " total:   ${total}"
-echo " success: { zhihu: ${success_zhihu}, wechat: ${success_wechat}, toutiao: ${success_toutiao} }"
+echo " success: { zhihu: ${success_zhihu}, wechat: ${success_wechat}, toutiao: ${success_toutiao}, douyin: ${success_douyin}, kuaishou: ${success_kuaishou}, xiaohongshu: ${success_xiaohongshu} }"
 
 if [[ "${#failed[@]}" -gt 0 ]]; then
   echo " failed:  [$(IFS=','; echo "${failed[*]}")]"
