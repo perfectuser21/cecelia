@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.0.0
+version: 1.1.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-20
+updated: 2026-03-22
 changelog:
+  - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
   - 1.0.0: 合并 dod_verify + cto_review（单 PR 部分）为统一 Spec 审查 Gate
 description: |
   Spec 审查 Gate（Codex Gate 2/4）。合并了 dod_verify（DoD 验证）和 cto_review 的单 PR 审查部分。
@@ -89,7 +90,29 @@ description: |
 | **复杂度适当** | 方案复杂度与问题匹配 | 过度工程或过于简陋 |
 | **兼容性** | 不破坏现有功能 | 有明显的破坏性变更 |
 
-### 维度 D：测试命令可执行性
+### 维度 D：Test 字段可执行性验证（强制 blocker）
+
+每条 DoD 条目的 Test 字段必须是真实的行为验证命令，不允许模糊或无意义的测试。
+
+| 检查项 | 严重度 | 说明 |
+|--------|--------|------|
+| **Test 字段缺失** | blocker | DoD 条目没有 Test 字段（或值为 TODO）|
+| **泛化测试命令** | blocker | Test 字段只是 `manual:bash -c "npm test"` 或 `manual:bash -c "cd xxx && npm test"` 这类不验证具体行为的命令 |
+| **[BEHAVIOR] 无断言** | blocker | [BEHAVIOR] 条目的 Test 命令没有具体断言（没有 exit code 检查、没有 `[[ "$R" == *xxx* ]]`、没有 `process.exit(1)`）|
+| **禁止 grep/ls/echo 作测试** | blocker | Test 命令用 grep/ls/echo 只检查文件存在，不验证实际行为 |
+
+**合格的 Test 字段示例**：
+- `manual:node -e "const c=require('fs').readFileSync('path','utf8');if(!c.includes('xxx'))process.exit(1)"` ✅
+- `manual:bash -c 'R=$(node script.js 2>/dev/null);[[ "$R" == *expected* ]]'` ✅
+- `manual:curl -s localhost:5221/api/health | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));if(d.status!=='ok')process.exit(1)"` ✅
+- `tests/some.test.ts` ✅
+
+**不合格的示例**：
+- `manual:bash -c "npm test 2>&1 | tail -5"` ❌（不验证具体行为）
+- `manual:bash -c "ls -la packages/engine/lib/devloop-check.sh"` ❌（只检查文件存在）
+- `TODO` ❌（未填写）
+
+### 维度 E：测试命令可执行性
 
 | 检查项 | 通过条件 | 失败信号 |
 |--------|----------|----------|
@@ -114,6 +137,7 @@ description: |
 - 架构方向有明显问题（跨边界、破坏性变更）
 - test 命令使用了非白名单工具
 - test 命令是假测试（echo/grep|wc -l）
+- Test 字段质量不达标（维度 D 任一 blocker）
 
 FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 
