@@ -17,9 +17,9 @@
 
 version: "3.81.0"
 updated: "2026-03-22"
-# ci-trigger: 13.21.0
+# ci-trigger: 13.23.0
 changelog:
-  - version: "13.21.0"
+  - version: "13.23.0"
     date: "2026-03-22"
     summary: "fix(engine): /dev pipeline P0/P1 修复 — verify-step.sh Gate1动态package检测+Gate2支持[ARTIFACT]/[GATE]；stage步骤文件去重/修序/删codex-test-gen引用"
     scope: hooks/verify-step.sh,skills/dev/steps,skills/dev/SKILL.md
