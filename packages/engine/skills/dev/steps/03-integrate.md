@@ -120,7 +120,9 @@ fi
 
 ```bash
 git add -u
+# 显式 add 新建文件（git add -u 不会 stage 未跟踪文件）
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+git add ".task-cp-${BRANCH_NAME}.md" ".prd-cp-${BRANCH_NAME}.md" "docs/learnings/" 2>/dev/null || true
 TASK_ID=$(grep "^brain_task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk "{print \$2}")
 [[ -z "$TASK_ID" ]] && TASK_ID=$(grep "^task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk "{print \$2}")
 TASK_LINE=$([ -n "$TASK_ID" ] && echo "
@@ -182,7 +184,7 @@ echo "✅ PR 已创建，进入 CI 监控阶段"
 
 ## 3.2 CI 监控
 
-> 等待 CI 通过，CI 通过后派发 code_review
+> 等待 CI 通过（code_review 已在 Stage 2 完成）
 
 ---
 
