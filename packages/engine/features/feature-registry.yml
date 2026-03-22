@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.78.0"
+version: "3.79.0"
 updated: "2026-03-22"
-# ci-trigger: 13.17.0
+# ci-trigger: 13.17.2
 changelog:
+  - version: "13.17.2"
+    date: "2026-03-22"
+    summary: "fix(engine): 修复 /dev subagent gates — 01-spec.md/02-code.md prompt 传入完整 SKILL.md 内容（SPEC_REVIEW_SKILL/CODE_REVIEW_SKILL 变量），不再只传路径字符串"
+    scope: skills/dev/steps
+    breaking: false
+    feature_id: fix-subagent-skill-prompt-v1
   - version: "13.17.0"
     date: "2026-03-22"
     summary: "fix(engine): 清理 pipeline 过时 Codex 引用 — 删除 devloop-check.sh \"3次重审\" + codex runner 引用，修正 /dev SKILL.md \"等Codex\"→subagent，修正 code-review-gate 触发时机描述"
@@ -2299,5 +2305,39 @@ product_features:
     minimal_paths:
       - "prd_id 不存在时检查 prd_content"
       - "dods API 404 时降级放行"
+
+    rcis: []
+
+  - id: dev-subagent-skill-prompt-inline
+    name: /dev subagent gates 补全 SKILL.md prompt 内联传入
+    category: workflow
+    status: Committed
+    priority: P1
+    version: "13.17.1"
+    updated: "2026-03-22"
+    description: |
+      01-spec.md 和 02-code.md 的 subagent prompt 伪代码只列 SKILL.md 路径，
+      导致 AI 只传路径字符串给 subagent，审查形同虚设。
+      修复：loop 伪代码中加入读取文件内容的步骤（SPEC_REVIEW_SKILL / CODE_REVIEW_SKILL 变量），
+      明确说明必须内联传入 prompt，不能只传路径字符串。
+
+    entrypoints:
+      - type: skill
+        file: packages/engine/skills/dev/steps/01-spec.md
+        trigger: "Stage 1 末尾派发 spec_review subagent"
+      - type: skill
+        file: packages/engine/skills/dev/steps/02-code.md
+        trigger: "Stage 2 末尾派发 code_review_gate subagent"
+
+    golden_path: |
+      Stage 1 完成 →
+      读取 SPEC_REVIEW_SKILL 变量（cat SKILL.md）→
+      构建完整 prompt（SKILL 全文 + Task Card 全文）→
+      派发 spec_review subagent
+
+    minimal_paths:
+      - "SPEC_REVIEW_SKILL 变量内联传入 prompt"
+      - "CODE_REVIEW_SKILL 变量内联传入 prompt"
+      - "不再有 SKILL.md 路径误导性说明"
 
     rcis: []

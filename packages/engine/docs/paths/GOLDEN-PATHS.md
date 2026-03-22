@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.78.0
+version: 3.79.0
 created: 2026-03-22
 updated: 2026-03-22
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.78.0: 从 feature-registry.yml 自动生成
+  - 3.79.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -723,6 +723,22 @@ prd_content 存在则放行
 
 ---
 
+## GP-046: /dev subagent gates 补全 SKILL.md prompt 内联传入 (dev-subagent-skill-prompt-inline)
+
+**Feature**: dev-subagent-skill-prompt-inline - /dev subagent gates 补全 SKILL.md prompt 内联传入
+**Priority**: P1
+
+### Golden Path
+
+```
+Stage 1 完成 →
+读取 SPEC_REVIEW_SKILL 变量（cat SKILL.md）→
+构建完整 prompt（SKILL 全文 + Task Card 全文）→
+派发 spec_review subagent
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -735,5 +751,5 @@ prd_content 存在则放行
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.78.0
+**版本**: 3.79.0
 **生成时间**: 2026-03-22

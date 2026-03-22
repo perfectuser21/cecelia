@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.78.0
+version: 3.79.0
 created: 2026-03-22
 updated: 2026-03-22
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.78.0: 从 feature-registry.yml 自动生成
+  - 3.79.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -407,6 +407,14 @@ changelog:
 
 ---
 
+### dev-subagent-skill-prompt-inline: /dev subagent gates 补全 SKILL.md prompt 内联传入
+
+1. ✅ **SPEC_REVIEW_SKILL 变量内联传入 prompt**
+2. ✅ **CODE_REVIEW_SKILL 变量内联传入 prompt**
+3. ✅ **不再有 SKILL.md 路径误导性说明**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -419,5 +427,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.78.0
+**版本**: 3.79.0
 **生成时间**: 2026-03-22
