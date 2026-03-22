@@ -26,20 +26,21 @@ set -euo pipefail
 _collect_search_dirs() {
     local root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
     echo "$root"
+    # 显式包含主仓库（git worktree list 第一个条目始终是主仓库）
+    # 防止从 linked worktree 运行时主仓库路径被遗漏
+    local _main_root
+    _main_root=$(git -C "$root" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
+    if [[ -n "$_main_root" && "$_main_root" != "$root" && -d "$_main_root" ]]; then
+        echo "$_main_root"
+    fi
     while IFS= read -r _wt_line; do
         if [[ "$_wt_line" == "worktree "* ]]; then
             local _wt_path="${_wt_line#worktree }"
-            [[ "$_wt_path" == "$root" ]] && continue
+            [[ "$_wt_path" == "$root" || "$_wt_path" == "$_main_root" ]] && continue
             [[ -d "$_wt_path" ]] && echo "$_wt_path"
         fi
     done < <(git -C "$root" worktree list --porcelain 2>/dev/null)
 }
-
-# ===== 无头模式：不再旁路，与有头模式使用同一套状态机 =====
-# Headless 也必须检查 .dev-mode：
-#   - 有 .dev-mode → exit 2 继续循环
-#   - 无 .dev-mode → exit 0 允许结束
-# （后续会统一检查 .dev-mode，这里不做特殊处理）
 
 # ===== 加载共享库 =====
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,8 +104,8 @@ for _pre_lock in "$_pre_search_dir"/.dev-lock.*; do
     _pre_lock_session=$(grep "^session_id:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
     _pre_lock_branch=$(grep "^branch:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
 
-    # TTY 匹配
-    if [[ -n "$_pre_lock_tty" && "$_pre_lock_tty" != "not a tty" && -n "$_PRE_TTY" && "$_PRE_TTY" != "not a tty" ]]; then
+    # TTY 匹配（使用 /dev/* 前缀精确判断有效 TTY 路径，避免 "not a tty" 字符串误判）
+    if [[ "$_pre_lock_tty" == /dev/* && "$_PRE_TTY" == /dev/* ]]; then
         if [[ "$_pre_lock_tty" == "$_PRE_TTY" ]]; then
             _PRE_MATCHED=true; break 2
         fi
@@ -215,6 +216,7 @@ report_step_to_brain() {
     elif grep -q "^step_0_worktree: done" "$mode_file" 2>/dev/null; then
         step_num=0; step_name="worktree"
     # LEGACY: 旧字段兼容（Pipeline v1 编号），新代码使用 devloop-check.sh 路径
+    # DELETE AFTER: 2026-07-01（确认所有 agent 已升级到 Pipeline v2 后删除）
     elif grep -q "^step_5_clean: done" "$mode_file" 2>/dev/null; then
         step_num=4; step_name="ship"  # LEGACY: step_5_clean → step_4_ship
     elif grep -q "^step_4_learning: done" "$mode_file" 2>/dev/null; then
@@ -285,8 +287,8 @@ for _lock_file in "$_main_search_dir"/.dev-lock.*; do
     _branch_in_lock=$(grep "^branch:" "$_lock_file" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
     _matched=false
 
-    # TTY 匹配（有头模式首选）
-    if [[ -n "$_lock_tty" && "$_lock_tty" != "not a tty" && -n "$_CURRENT_TTY" && "$_CURRENT_TTY" != "not a tty" ]]; then
+    # TTY 匹配（有头模式首选，使用 /dev/* 前缀精确判断有效 TTY 路径）
+    if [[ "$_lock_tty" == /dev/* && "$_CURRENT_TTY" == /dev/* ]]; then
         if [[ "$_lock_tty" == "$_CURRENT_TTY" ]]; then
             _matched=true
         fi
@@ -486,8 +488,8 @@ fi
 TTY_IN_FILE=$(grep "^tty:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2- || echo "")
 CURRENT_TTY=$(tty 2>/dev/null || echo "")
 
-# 如果 .dev-mode 有有效 tty 字段且当前 TTY 可获取，检查是否匹配
-if [[ -n "$TTY_IN_FILE" && "$TTY_IN_FILE" != "not a tty" && -n "$CURRENT_TTY" && "$CURRENT_TTY" != "not a tty" && "$TTY_IN_FILE" != "$CURRENT_TTY" ]]; then
+# 如果 .dev-mode 有有效 tty 字段且当前 TTY 可获取，检查是否匹配（用 /dev/* 精确判断有效 TTY 路径）
+if [[ "$TTY_IN_FILE" == /dev/* && "$CURRENT_TTY" == /dev/* && "$TTY_IN_FILE" != "$CURRENT_TTY" ]]; then
     # 不是当前 terminal 的任务，允许结束
     exit 0
 fi

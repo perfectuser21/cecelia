@@ -234,15 +234,16 @@ session_id: abc123`;
     });
 
     it("should skip TTY check when tty field is 'not a tty'", () => {
-      // The condition in stop-dev.sh skips when TTY_IN_FILE == "not a tty"
-      // Verify the guard condition exists
+      // TTY 匹配改为使用 /dev/* 前缀精确判断有效 TTY 路径
+      // 当 TTY 不是 /dev/ 设备路径时（如 "not a tty"），TTY 隔离检查被跳过
       const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
       const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
+      // "not a tty" 字符串仍存在于 fallback 条件中（无头模式 branch 匹配路径）
       expect(hookContent).toContain('"not a tty"');
-      // Verify both sides are checked
-      expect(hookContent).toMatch(/TTY_IN_FILE.*!=.*"not a tty"/);
-      expect(hookContent).toMatch(/CURRENT_TTY.*!=.*"not a tty"/);
+      // 主 TTY 隔离检查改为 /dev/* 前缀匹配（更精确，替代旧的 != "not a tty"）
+      expect(hookContent).toMatch(/TTY_IN_FILE.*==.*\/dev\/\*/);
+      expect(hookContent).toMatch(/CURRENT_TTY.*==.*\/dev\/\*/);
     });
 
     it("should exit 0 on TTY mismatch (different terminal)", () => {
