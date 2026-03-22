@@ -36,7 +36,7 @@ const STATUS_MAP = {
   cancelled: 'failed',
 };
 
-function mapStatus(dbStatus) {
+export function mapStatus(dbStatus) {
   return STATUS_MAP[dbStatus] || 'pending';
 }
 
