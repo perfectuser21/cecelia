@@ -164,6 +164,7 @@ const manifest: FeatureManifest = {
     ImmunePolicyDetail: () => import('../system/pages/immune/PolicyDetail'),
     ImmuneSignatures: () => import('../system/pages/immune/Signatures'),
     ImmuneSignatureDetail: () => import('../system/pages/immune/SignatureDetail'),
+    TaskTypeConfigPage: () => import('../../../dashboard/src/pages/task-type-configs/TaskTypeConfigPage'),
   },
 };
 
