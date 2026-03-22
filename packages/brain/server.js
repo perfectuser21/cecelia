@@ -291,7 +291,7 @@ async function startCeceliaBridge() {
   console.log(`[Server] cecelia-bridge started (pid=${child.pid}), log: /tmp/cecelia-bridge.log`);
 }
 
-server.listen(PORT, async () => {
+if (!process.env.VITEST) server.listen(PORT, async () => {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
 
   // Initialize WebSocket server

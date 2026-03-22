@@ -120,6 +120,89 @@ router.post('/', async (req, res) => {
 });
 
 /**
+ * POST /batch
+ * 批量创建 content-pipeline 任务（最少 2 条，最多 20 条）
+ *
+ * Body:
+ *   items                {Array}  必填 — 每项含 { keyword, content_type? }，最少 2 项，最多 20 项
+ *   default_content_type {string} 可选 — item 无 content_type 时使用
+ *   priority             {string} 可选 — P0/P1/P2，默认 P1
+ *   project_id           {string} 可选
+ *   goal_id              {string} 可选
+ */
+router.post('/batch', async (req, res) => {
+  const {
+    items,
+    default_content_type,
+    priority = 'P1',
+    project_id = null,
+    goal_id = null,
+  } = req.body || {};
+
+  if (!Array.isArray(items) || items.length < 2) {
+    return res.status(400).json({ error: 'items 至少 2 项' });
+  }
+  if (items.length > 20) {
+    return res.status(400).json({ error: 'items 不超过 20 项' });
+  }
+
+  const validPriorities = ['P0', 'P1', 'P2'];
+  if (!validPriorities.includes(priority)) {
+    return res.status(400).json({ error: `priority 必须为 ${validPriorities.join('/')}` });
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item.keyword || typeof item.keyword !== 'string' || !item.keyword.trim()) {
+      return res.status(400).json({ error: `items[${i}].keyword 必填` });
+    }
+    const ct = item.content_type || default_content_type;
+    if (!ct || typeof ct !== 'string' || !ct.trim()) {
+      return res.status(400).json({ error: `items[${i}] 缺少 content_type，且未提供 default_content_type` });
+    }
+  }
+
+  try {
+    const types = await listContentTypes();
+    for (let i = 0; i < items.length; i++) {
+      const ct = (items[i].content_type || default_content_type).trim();
+      if (!types.includes(ct)) {
+        return res.status(400).json({
+          error: `items[${i}].content_type "${ct}" 不存在，已注册类型：${types.join(', ')}`,
+        });
+      }
+    }
+
+    const created = [];
+    for (const item of items) {
+      const keyword = item.keyword.trim();
+      const content_type = (item.content_type || default_content_type).trim();
+      const result = await pool.query(
+        `INSERT INTO tasks (title, description, task_type, status, priority,
+                            project_id, goal_id, trigger_source, payload, created_at)
+         VALUES ($1, $2, 'content-pipeline', 'queued', $3, $4, $5, $6, $7, NOW())
+         RETURNING id, title, status, priority, payload, created_at`,
+        [
+          `[内容工厂] ${keyword} (${content_type})`,
+          `内容工厂 Pipeline：关键词「${keyword}」，类型「${content_type}」。批量创建，将由 tick 自动编排四阶段。`,
+          priority,
+          project_id,
+          goal_id,
+          'content_pipeline_batch_api',
+          JSON.stringify({ keyword, content_type }),
+        ]
+      );
+      created.push(result.rows[0]);
+    }
+
+    res.status(201).json({ count: created.length, pipelines: created });
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /batch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /:id/run
  * 手动触发 pipeline 执行（不依赖 tick 调度器）
  */
