@@ -73,16 +73,7 @@ auto-version.yml 自动处理的文件（5 个）：
 
 ---
 
-### 3.1.3 Squash Evidence Commit
-
-```bash
-# 如果最后一个 commit 是 evidence commit，自动合并到代码 commit
-bash scripts/squash-evidence.sh
-```
-
----
-
-### 3.1.4 ⛔ 自检：Engine 版本文件完整性（commit 前必须通过）
+### 3.1.3 ⛔ 自检：Engine 版本文件完整性（commit 前必须通过）
 
 **如果本次改动涉及 `packages/engine/` 下的任何文件，必须检查 6 个版本文件全部同步更新。**
 
@@ -108,7 +99,7 @@ if [[ -n "$CHANGED_ENGINE" ]]; then
     check_file "packages/engine/VERSION"              || ERRORS=1
     check_file "packages/engine/.hook-core-version"   || ERRORS=1
     check_file "packages/engine/regression-contract.yaml" || ERRORS=1
-    check_file "package-lock.json"                    || ERRORS=1
+    check_file "packages/engine/features/feature-registry.yml" || ERRORS=1
 
     if [[ $ERRORS -gt 0 ]]; then
         echo ""
