@@ -76,7 +76,7 @@ changelog:
     feature_id: dev-subagent-gates-fullquality-v1
   - version: "13.14.0"
     date: "2026-03-22"
-    summary: "feat(engine): spec_review/code_review_gate 改为 Agent subagent 同步调用，删除 Codex async dispatch，修复有头模式 stop hook 卡死"
+    summary: "feat(engine): spec_review/code_review_gate 改为 Agent subagent 同步调用（改为同步），修复有头模式 stop hook 卡死"
     scope: skills/dev/steps,lib,runners/codex
     breaking: false
     feature_id: dev-subagent-review-gates-v1
