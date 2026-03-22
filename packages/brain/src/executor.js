@@ -17,7 +17,7 @@
 import crypto from 'crypto';
 import { spawn, execSync } from 'child_process';
 import { writeFile, mkdir } from 'fs/promises';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, unlinkSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -170,6 +170,13 @@ function assertSafePid(value, label = 'pid') {
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/Users/administrator/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
 const WORK_DIR = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21/cecelia';
+
+// Codex Review 独立池（不占动态派发槽位）
+const CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks';
+const CODEX_REVIEW_MAX = 2;
+
+// 审查任务类型列表（路由到 triggerCodexReview）
+const REVIEW_TASK_TYPES = ['spec_review', 'code_review_gate', 'prd_review', 'initiative_review'];
 
 // ==================== Diagnostic Functions ====================
 
@@ -1743,10 +1750,42 @@ PUT /api/tasks/goals/${krId}
     return `/prd-review\n\n${task.description || task.title}`;
   }
   if (taskType === 'spec_review') {
-    return `/spec-review\n\n${task.description || task.title}`;
+    // payload.branch 优先，兼容 metadata.branch（两种派发方式）
+    const branch = task.payload?.branch || task.metadata?.branch || '';
+    let taskCardContent = task.description || task.title || '';
+    if (branch) {
+      const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
+      const taskCardPath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug, `.task-${branch}.md`);
+      try {
+        taskCardContent = readFileSync(taskCardPath, 'utf-8');
+      } catch {
+        // 降级使用 task.description（description 中已含 Task Card 内容时也有效）
+      }
+    }
+    return `/spec-review\n\n${taskCardContent}`;
   }
   if (taskType === 'code_review_gate') {
-    return `/code-review-gate\n\n${task.description || task.title}`;
+    // payload.branch 优先，兼容 metadata.branch
+    const branch = task.payload?.branch || task.metadata?.branch || '';
+    let diffContent = '';
+    if (branch) {
+      const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
+      const worktreePath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug);
+      try {
+        // 用 origin/main..HEAD 确保拿到完整的分支改动（不含 origin/main 本身）
+        diffContent = execSync('git diff origin/main..HEAD', {
+          cwd: worktreePath,
+          encoding: 'utf-8',
+          timeout: 15000,
+        });
+      } catch {
+        // ignore diff errors
+      }
+    }
+    const basePrompt = task.description || task.title || '';
+    return diffContent
+      ? `/code-review-gate\n\n${basePrompt}\n\n## Git Diff\n\`\`\`diff\n${diffContent}\n\`\`\``
+      : `/code-review-gate\n\n${basePrompt}`;
   }
   if (taskType === 'initiative_review') {
     const initiativeId = task.project_id || task.payload?.initiative_id || '';
@@ -1859,6 +1898,104 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
   } catch (err) {
     console.error('[executor] Failed to update task run info:', err.message);
     return { success: false, error: err.message };
+  }
+}
+
+/**
+ * 触发本机 Codex CLI 执行审查任务（spec_review / code_review_gate / prd_review / initiative_review）。
+ * 使用独立锁池 /tmp/codex-review-locks/（MAX=2），不占动态派发槽位。
+ *
+ * @param {Object} task - The task object from database
+ * @returns {Object} - { success, taskId, runId, error? }
+ */
+async function triggerCodexReview(task) {
+  const runId = generateRunId(task.id);
+
+  try {
+    // 检查独立 codex review 池槽位
+    await mkdir(CODEX_REVIEW_LOCK_DIR, { recursive: true });
+    const lockFiles = readdirSync(CODEX_REVIEW_LOCK_DIR).filter(f => f.endsWith('.lock'));
+    if (lockFiles.length >= CODEX_REVIEW_MAX) {
+      console.log(`[executor] codex-review-locks pool full (${lockFiles.length}/${CODEX_REVIEW_MAX}), deferring task=${task.id}`);
+      return {
+        success: false,
+        taskId: task.id,
+        reason: 'codex_review_pool_full',
+        detail: `codex-review-locks pool full (${lockFiles.length}/${CODEX_REVIEW_MAX})`,
+      };
+    }
+
+    // 获取 prompt 内容
+    const promptContent = await preparePrompt(task);
+
+    // 写 prompt 文件
+    await mkdir(PROMPT_DIR, { recursive: true });
+    const promptFile = path.join(PROMPT_DIR, `codex-review-${task.id}.txt`);
+    await writeFile(promptFile, promptContent);
+
+    // 获取锁文件（标记槽位占用）
+    const lockFile = path.join(CODEX_REVIEW_LOCK_DIR, `${task.id}.lock`);
+    await writeFile(lockFile, JSON.stringify({ taskId: task.id, runId, startedAt: new Date().toISOString() }));
+
+    console.log(`[executor] triggerCodexReview: 使用本机 codex CLI task=${task.id} type=${task.task_type}`);
+
+    // 派发到本机 /opt/homebrew/bin/codex
+    // 使用 codex exec 非交互模式，prompt 通过 stdin 传入（避免 shell 转义问题）
+    const codexBin = process.env.CODEX_BIN || '/opt/homebrew/bin/codex';
+    const child = spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: WORK_DIR,
+      env: { ...process.env, TASK_ID: task.id, RUN_ID: runId, BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221' },
+    });
+
+    // 收集 stdout，解析审查结果后回调 Brain
+    let stdout = '';
+    child.stdout?.on('data', (d) => { stdout += d.toString(); });
+
+    child.on('exit', async (code) => {
+      try { unlinkSync(lockFile); } catch {}
+      console.log(`[executor] codex review exit code=${code} task=${task.id}`);
+
+      // 尝试从输出中提取 JSON verdict 并回调 Brain
+      try {
+        const jsonMatch = stdout.match(/\{[\s\S]*"verdict"\s*:\s*"(PASS|FAIL)"[\s\S]*\}/);
+        const verdict = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
+        const payload = {
+          task_id: task.id,
+          run_id: runId,
+          status: code === 0 ? 'AI Done' : 'AI Failed',
+          result: verdict || { verdict: code === 0 ? 'PASS' : 'FAIL', summary: stdout.slice(-500) },
+          coding_type: 'codex-review',
+        };
+        await fetch(`${brainUrl}/api/brain/execution-callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        console.log(`[executor] codex review callback sent verdict=${payload.result?.verdict} task=${task.id}`);
+      } catch (cbErr) {
+        console.error(`[executor] codex review callback error: ${cbErr.message}`);
+      }
+    });
+
+    child.unref();
+
+    return {
+      success: true,
+      taskId: task.id,
+      runId,
+      executor: 'codex-review',
+    };
+  } catch (err) {
+    console.error(`[executor] triggerCodexReview error: ${err.message}`);
+    return {
+      success: false,
+      taskId: task.id,
+      error: err.message,
+      executor: 'codex-review',
+    };
   }
 }
 
@@ -2035,6 +2172,12 @@ async function triggerMiniMaxExecutor(task) {
 
 async function triggerCeceliaRun(task) {
   const location = getTaskLocation(task.task_type);
+
+  // 0. Review 审查任务 → 独立 Codex Review 池（不占动态槽位）
+  if (REVIEW_TASK_TYPES.includes(task.task_type)) {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → triggerCodexReview`);
+    return triggerCodexReview(task);
+  }
 
   // 1. HK MiniMax 路由
   if (location === 'hk') {
@@ -2672,6 +2815,7 @@ async function recordHeartbeat(taskId, runId) {
 export {
   triggerCeceliaRun,
   triggerCodexBridge,
+  triggerCodexReview,
   triggerMiniMaxExecutor,
   checkCeceliaRunAvailable,
   getTaskExecutionStatus,
