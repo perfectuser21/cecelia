@@ -77,7 +77,7 @@ describe('executor: Codex 独立审查加固', () => {
 
 describe('executor: buildPrompt case 路由', () => {
   it("spec_review 有专属 case 分支", () => {
-    expect(executorSrc).toContain("case 'spec_review'");
+    expect(executorSrc).toContain("taskType === 'spec_review'");
   });
 
   it("code_review_gate 有专属 case 分支", () => {
