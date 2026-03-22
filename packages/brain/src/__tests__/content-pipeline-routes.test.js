@@ -118,3 +118,73 @@ describe('POST /api/brain/pipelines', () => {
     expect(res.body.error).toContain('priority');
   });
 });
+
+describe('POST /api/brain/pipelines/batch', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('批量创建 5 条 pipeline 返回 201 + 5 条记录', async () => {
+    listContentTypes.mockResolvedValue(['solo-company-case']);
+    const mockRow = { id: 'mock-id', title: '[内容工厂] test', status: 'queued', priority: 'P1', payload: {}, created_at: new Date() };
+    pool.query.mockResolvedValue({ rows: [mockRow] });
+
+    const items = [
+      { keyword: '字节跳动', content_type: 'solo-company-case' },
+      { keyword: '美团', content_type: 'solo-company-case' },
+      { keyword: '拼多多', content_type: 'solo-company-case' },
+      { keyword: '滴滴', content_type: 'solo-company-case' },
+      { keyword: '快手', content_type: 'solo-company-case' },
+    ];
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/batch')
+      .send({ items });
+
+    expect(res.status).toBe(201);
+    expect(res.body.count).toBe(5);
+    expect(res.body.pipelines).toHaveLength(5);
+  });
+
+  it('items 少于 2 返回 400', async () => {
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/batch')
+      .send({ items: [{ keyword: '字节跳动', content_type: 'solo-company-case' }] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('至少 2 项');
+  });
+
+  it('items 超过 20 返回 400', async () => {
+    const items = Array.from({ length: 21 }, (_, i) => ({ keyword: `关键词${i}`, content_type: 'solo-company-case' }));
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/batch')
+      .send({ items });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('不超过 20 项');
+  });
+
+  it('非法 content_type 返回 400', async () => {
+    listContentTypes.mockResolvedValue(['solo-company-case']);
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/batch')
+      .send({ items: [
+        { keyword: '字节跳动', content_type: 'solo-company-case' },
+        { keyword: '美团', content_type: 'unknown-type' },
+      ]});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('unknown-type');
+  });
+
+  it('使用 default_content_type 批量创建', async () => {
+    listContentTypes.mockResolvedValue(['solo-company-case']);
+    const mockRow = { id: 'mock-id', title: '[内容工厂] test', status: 'queued', priority: 'P1', payload: {}, created_at: new Date() };
+    pool.query.mockResolvedValue({ rows: [mockRow] });
+
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/batch')
+      .send({
+        items: [{ keyword: '字节跳动' }, { keyword: '美团' }],
+        default_content_type: 'solo-company-case',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.count).toBe(2);
+  });
+});
