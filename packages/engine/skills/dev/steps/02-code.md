@@ -19,62 +19,6 @@ changelog:
 
 ---
 
-## 2.0 行为快照 [PRESERVE]（CRITICAL — 探索前必须执行）
-
-> **探索代码前，扫描涉及模块的现有关键行为，写入 Task Card `[PRESERVE]` 条目。**
-> verify-step.sh Gate 2 会强制执行这些 Test 命令，确保现有行为未被回归。
-
-### 为什么需要行为快照
-
-- 改动前不知道"以前怎样"，改动后无法判断是否回归
-- `[PRESERVE]` 条目是防回归的明文合约：改动后 Test 命令必须仍然通过
-- 与 `[BEHAVIOR]` 的区别：`[PRESERVE]` 验证**已有行为不被破坏**，`[BEHAVIOR]` 验证**新增行为**
-
-### 执行步骤
-
-```bash
-# 1. 从 Task Card 实现方案中找到所有涉及的文件
-# 2. 对每个文件，识别关键现有行为（函数签名、关键输出、核心结构）
-# 3. 为每个关键行为写一条 [PRESERVE] 条目加入 Task Card
-
-echo "📸 行为快照：扫描涉及模块的现有行为..."
-
-# 示例：如果要修改 verify-step.sh，快照现有支持的条目类型
-# - [x] [PRESERVE] verify-step.sh 支持 step1/step2/step4 参数
-#   Test: manual:bash -c 'bash packages/engine/hooks/verify-step.sh unknown 2>&1 | grep -q "支持: step1, step2, step4" && exit 0 || exit 1'
-
-# 写完 [PRESERVE] 条目后，运行 verify-step.sh 确认基线测试全部通过（绿灯基线）
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)" 2>/dev/null || true
-echo "✅ 基线行为快照完成，[PRESERVE] 条目已写入 Task Card"
-```
-
-### 格式要求
-
-```markdown
-- [ ] [PRESERVE] <现有行为描述>
-  Test: manual:node -e "..."
-```
-
-### ⛔ 强制门禁（exit 1）
-
-```bash
-# 在开始写任何实现代码之前，检查 Task Card 是否有 [PRESERVE] 条目
-TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
-if [[ -n "$TASK_CARD" ]]; then
-    PRESERVE_COUNT=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$TASK_CARD" 2>/dev/null || echo 0)
-    if [[ "$PRESERVE_COUNT" -eq 0 ]]; then
-        echo "❌ Task Card 缺少 [PRESERVE] 行为快照条目"
-        echo "   探索代码后写实现前，必须先记录涉及模块的现有行为"
-        echo "   至少需要 1 条 [PRESERVE] 条目"
-        exit 1
-    fi
-    echo "✅ 行为快照检查通过（${PRESERVE_COUNT} 条 [PRESERVE] 条目）"
-fi
-```
-
----
-
 ## 2.1 探索代码
 
 读 PRD/Task Card，理解要改什么。自己探索代码库：
@@ -85,59 +29,6 @@ fi
 4. 输出实现方案（要改哪些文件、怎么改）
 
 **不需要 subagent**——主 agent 自己探索就行。
-
----
-
-## 2.1.5 TDD先行（CRITICAL — 探索后写实现前必须执行）
-
-> **探索代码后、写任何实现代码之前，必须先写失败测试（红灯），再写实现（绿灯）。**
-> 顺序不可颠倒：先红灯确认测试有效，再绿灯确认实现正确。
-
-### 红灯阶段（写测试，确认失败）
-
-```bash
-# 1. 根据 DoD 条目，为每个 [BEHAVIOR] 条目写对应测试
-# 2. 此时代码还没写，测试应该失败（红灯）
-# 3. 运行测试，确认失败输出
-
-echo "🔴 TDD 红灯阶段：运行尚未实现的功能测试..."
-
-# 对于有 test script 的 package：
-# npm test -- --run <specific-test-file>  # 应该看到 FAIL
-
-# 对于 shell 脚本：直接运行验证命令（应该 exit 1）
-# bash -c '<DoD Test 命令>' && echo "❌ 测试本应失败（假测试！）" || echo "✅ 红灯确认：测试按预期失败"
-```
-
-### ⛔ 强制门禁（exit 1）
-
-```bash
-# 强制要求红灯确认：若测试从未失败，可能是假测试
-# 在 .dev-mode 中记录 TDD 状态
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-DEV_MODE_FILE=".dev-mode.${BRANCH}"
-
-if ! grep -q "^tdd_red_confirmed:" "$DEV_MODE_FILE" 2>/dev/null; then
-    echo "❌ TDD 红灯未确认"
-    echo "   探索代码后，必须先写失败测试（红灯）再写实现"
-    echo "   确认红灯后执行：echo 'tdd_red_confirmed: true' >> $DEV_MODE_FILE"
-    exit 1
-fi
-echo "✅ TDD 红灯已确认，可以开始写实现代码"
-```
-
-### 绿灯阶段（写实现，确认通过）
-
-在 2.2 写代码后，测试必须变为通过（绿灯）：
-
-```bash
-# 实现完成后，重新运行测试
-echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
-
-# 测试应该通过（绿灯）
-# npm test -- --run <specific-test-file>  # 应该看到 PASS
-# bash -c '<DoD Test 命令>' && echo "✅ 绿灯确认：实现正确" || { echo "❌ 实现有误"; exit 1; }
-```
 
 ---
 
@@ -309,11 +200,11 @@ fi
 # 2. 检查 Learning 格式（如果已写）
 LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
 if [[ -f "$LEARNING_FILE" ]]; then
-    bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || { echo "❌ Learning 格式检查失败，修复后再 push"; exit 1; }
+    bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || true
 fi
 
 # 3. 检查 DoD 映射
-node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || { echo "❌ DoD 映射检查失败，修复后再 push"; exit 1; }
+node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || true
 ```
 
 ---

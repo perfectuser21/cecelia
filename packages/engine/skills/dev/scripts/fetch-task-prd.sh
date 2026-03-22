@@ -68,12 +68,135 @@ fetch_initiative_dod() {
     echo "$project_json" | jq -r '.metadata.dod // empty' 2>/dev/null
 }
 
-# 生成 PRD 文件
+# 查询任务关联的 KR/Initiative/OKR 战略上下文（intent-expand）
+# 沿 goal_id → goals(KR) → goals(OKR) → goals(Vision) 链查询
+# 输出格式化的上下文字符串，无上下文时返回空字符串
+fetch_intent_context() {
+    local task_json="$1"
+    local goal_id
+    local project_id
 
+    goal_id=$(echo "$task_json" | jq -r '.goal_id // empty' 2>/dev/null)
+    project_id=$(echo "$task_json" | jq -r '.project_id // empty' 2>/dev/null)
+
+    # 无关联 goal/project 时直接返回
+    [[ -z "$goal_id" && -z "$project_id" ]] && return 0
+
+    local context_lines=()
+
+    # 查询 Project/Initiative 信息
+    if [[ -n "$project_id" ]]; then
+        local project_json
+        project_json=$(curl --silent --max-time "$TIMEOUT" \
+            "$BRAIN_URL/api/brain/projects/$project_id" 2>/dev/null) || true
+        if [[ -n "$project_json" ]]; then
+            local project_name
+            project_name=$(echo "$project_json" | jq -r '.name // .title // empty' 2>/dev/null)
+            [[ -n "$project_name" ]] && context_lines+=("**Initiative/Project**: $project_name")
+
+            # 如果 goal_id 为空，尝试从 project 的 kr_id 获取
+            if [[ -z "$goal_id" ]]; then
+                goal_id=$(echo "$project_json" | jq -r '.kr_id // empty' 2>/dev/null)
+            fi
+        fi
+    fi
+
+    # 查询 KR（goal）信息并向上追溯 OKR → Vision
+    if [[ -n "$goal_id" ]]; then
+        local kr_json
+        kr_json=$(curl --silent --max-time "$TIMEOUT" \
+            "$BRAIN_URL/api/brain/goals/$goal_id" 2>/dev/null) || true
+        if [[ -n "$kr_json" ]]; then
+            local kr_title kr_desc parent_id
+            kr_title=$(echo "$kr_json" | jq -r '.title // empty' 2>/dev/null)
+            kr_desc=$(echo "$kr_json" | jq -r '.description // empty' 2>/dev/null)
+            parent_id=$(echo "$kr_json" | jq -r '.parent_id // empty' 2>/dev/null)
+
+            [[ -n "$kr_title" ]] && context_lines+=("**KR**: $kr_title")
+            [[ -n "$kr_desc" ]] && context_lines+=("**KR 描述**: $kr_desc")
+
+            # 向上查询 OKR
+            if [[ -n "$parent_id" ]]; then
+                local okr_json
+                okr_json=$(curl --silent --max-time "$TIMEOUT" \
+                    "$BRAIN_URL/api/brain/goals/$parent_id" 2>/dev/null) || true
+                if [[ -n "$okr_json" ]]; then
+                    local okr_title okr_parent_id
+                    okr_title=$(echo "$okr_json" | jq -r '.title // empty' 2>/dev/null)
+                    okr_parent_id=$(echo "$okr_json" | jq -r '.parent_id // empty' 2>/dev/null)
+
+                    [[ -n "$okr_title" ]] && context_lines+=("**OKR/Objective**: $okr_title")
+
+                    # 向上查询 Vision/Mission
+                    if [[ -n "$okr_parent_id" ]]; then
+                        local vision_json
+                        vision_json=$(curl --silent --max-time "$TIMEOUT" \
+                            "$BRAIN_URL/api/brain/goals/$okr_parent_id" 2>/dev/null) || true
+                        local vision_title
+                        vision_title=$(echo "$vision_json" | jq -r '.title // empty' 2>/dev/null)
+                        [[ -n "$vision_title" ]] && context_lines+=("**Vision/Mission**: $vision_title")
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    # 无内容时返回空
+    [[ ${#context_lines[@]} -eq 0 ]] && return 0
+
+    # 输出格式化上下文
+    printf '%s\n' "${context_lines[@]}"
+}
+
+# 搜索 docs/learnings/ 中与任务相关的历史 Learning
+# 从任务标题提取关键词，返回最多 5 个相关文件路径（每行一个）
+search_related_learnings() {
+    local task_title="$1"
+    local learnings_dir="${2:-docs/learnings}"
+
+    [[ ! -d "$learnings_dir" ]] && return 0
+
+    # 提取关键词：去除常见停用词，取前 5 个有效词
+    local keywords=()
+    while IFS= read -r word; do
+        # 过滤长度 < 2 的词和纯标点
+        [[ ${#word} -ge 2 ]] && keywords+=("$word")
+        [[ ${#keywords[@]} -ge 5 ]] && break
+    done < <(echo "$task_title" | tr ' ' '\n' | \
+        grep -vE '^(的|是|在|了|和|与|or|and|the|for|with|to|a|an|from|修复|实现|添加|更新|优化|重构|P0|P1|P2|PR)$' \
+        2>/dev/null)
+
+    [[ ${#keywords[@]} -eq 0 ]] && return 0
+
+    # 搜索每个关键词，收集匹配文件
+    local found_files=()
+    for kw in "${keywords[@]}"; do
+        while IFS= read -r f; do
+            found_files+=("$f")
+        done < <(grep -Frl "$kw" "$learnings_dir" 2>/dev/null | head -3)
+    done
+
+    # 去重并限制最多 5 个
+    local unique_files=()
+    while IFS= read -r f; do
+        unique_files+=("$f")
+        [[ ${#unique_files[@]} -ge 5 ]] && break
+    done < <(printf '%s\n' "${found_files[@]}" | sort -u)
+
+    [[ ${#unique_files[@]} -eq 0 ]] && return 0
+
+    printf '%s\n' "${unique_files[@]}"
+}
+
+# 生成 PRD 文件
+# $4: intent_context — 战略上下文字符串（可为空）
+# $5: related_learnings — 相关 Learning 文件列表（可为空，每行一个路径）
 generate_prd() {
     local task_id="$1"
     local task_json="$2"
     local prev_feedback="$3"
+    local intent_context="${4:-}"
+    local related_learnings="${5:-}"
 
     local prd_file=".prd-task-${task_id}.md"
     local title
@@ -98,6 +221,18 @@ generate_prd() {
 - **来源**: Brain 数据库
 
 EOF
+
+    # 添加战略上下文（intent-expand）
+    if [[ -n "$intent_context" ]]; then
+        cat >> "$prd_file" <<EOF
+## 战略上下文
+
+> 此任务关联的 KR/OKR/Vision 链路，确保实现方向与战略目标对齐。
+
+$intent_context
+
+EOF
+    fi
 
     # 添加上一个 Task 反馈（如果有）
     if [[ -n "$prev_feedback" && "$prev_feedback" != "null" ]]; then
@@ -145,6 +280,19 @@ $description
 - [ ] 测试验收：测试覆盖完整
 - [ ] 质量验收：CI 全部通过
 EOF
+
+    # 添加相关 Learning 推荐
+    if [[ -n "$related_learnings" ]]; then
+        cat >> "$prd_file" <<EOF
+
+## 📖 相关历史 Learning（避免重复踩坑）
+
+EOF
+        while IFS= read -r learning_file; do
+            [[ -z "$learning_file" ]] && continue
+            echo "- \`$learning_file\`" >> "$prd_file"
+        done <<< "$related_learnings"
+    fi
 
     echo "✅ 已生成 PRD: $prd_file"
 }
@@ -307,8 +455,34 @@ main() {
         echo ""
     fi
 
-    # 4. 生成 PRD 和 DoD
-    generate_prd "$TASK_ID" "$task_json" "$prev_feedback"
+    # 4. 查询战略上下文（intent-expand）
+    echo "📍 查询战略上下文（intent-expand）..."
+    local intent_context=""
+    intent_context=$(fetch_intent_context "$task_json") || true
+    if [[ -n "$intent_context" ]]; then
+        echo "✅ 找到战略上下文"
+        echo "$intent_context" | while IFS= read -r line; do echo "   $line"; done
+    else
+        echo "ℹ️  任务无关联 KR/Initiative，跳过上下文注入"
+    fi
+    echo ""
+
+    # 5. 搜索相关 Learning
+    local task_title
+    task_title=$(echo "$task_json" | jq -r '.title // ""')
+    echo "📚 搜索相关 Learning..."
+    local related_learnings=""
+    related_learnings=$(search_related_learnings "$task_title") || true
+    if [[ -n "$related_learnings" ]]; then
+        echo "✅ 找到相关 Learning："
+        echo "$related_learnings" | while IFS= read -r f; do echo "   - $f"; done
+    else
+        echo "ℹ️  未找到相关 Learning"
+    fi
+    echo ""
+
+    # 6. 生成 PRD 和 DoD
+    generate_prd "$TASK_ID" "$task_json" "$prev_feedback" "$intent_context" "$related_learnings"
     generate_dod "$TASK_ID" "$task_json" "$initiative_dod_json"
 
     echo ""
