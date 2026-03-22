@@ -141,4 +141,16 @@ describe('stop-dev.sh — 15min 超时自动 pass 降级机制', () => {
     const section = stopDevContent.substring(timeoutIdx, timeoutIdx + 500);
     expect(section).toContain('spec_review_status: pass');
   });
+
+  it('15min 超时后自动将 code_review_gate_status 改为 pass', () => {
+    // code_review_gate 与 spec_review 使用同样的 900s 超时保护
+    // 确保两个 gate 都有降级路径，防止其中一个无限阻塞
+    const allOccurrences = [...stopDevContent.matchAll(/-gt 900/g)];
+    expect(allOccurrences.length).toBeGreaterThanOrEqual(2);
+    // 找到第二个 -gt 900（code_review_gate 的超时块）
+    const secondIdx = allOccurrences[1]?.index ?? -1;
+    expect(secondIdx).toBeGreaterThan(-1);
+    const section = stopDevContent.substring(secondIdx, secondIdx + 500);
+    expect(section).toContain('code_review_gate_status: pass');
+  });
 });
