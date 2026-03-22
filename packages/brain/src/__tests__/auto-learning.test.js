@@ -17,6 +17,39 @@ vi.mock('crypto', () => ({
   }
 }));
 
+describe('extractTaskSummary', () => {
+  it('should return default message for null/undefined result', async () => {
+    const { extractTaskSummary } = await import('../auto-learning.js');
+    expect(extractTaskSummary(null)).toBe('No details available');
+    expect(extractTaskSummary(undefined)).toBe('No details available');
+  });
+
+  it('should return truncated string for string result', async () => {
+    const { extractTaskSummary } = await import('../auto-learning.js');
+    expect(extractTaskSummary('hello world')).toBe('hello world');
+    expect(extractTaskSummary('A'.repeat(600), 500)).toHaveLength(500);
+  });
+
+  it('should return unknown format message for non-object primitives', async () => {
+    const { extractTaskSummary } = await import('../auto-learning.js');
+    expect(extractTaskSummary(42)).toBe('Unknown result format');
+    expect(extractTaskSummary(true)).toBe('Unknown result format');
+  });
+
+  it('should extract run result fields when exit_code/stderr_tail/failure_class present', async () => {
+    const { extractTaskSummary } = await import('../auto-learning.js');
+    const result = extractTaskSummary({ exit_code: 1, failure_class: 'code_error', error: 'Test failed' });
+    expect(result).toContain('exit_code=1');
+    expect(result).toContain('failure_class=code_error');
+  });
+
+  it('should extract object summary fields for plain objects', async () => {
+    const { extractTaskSummary } = await import('../auto-learning.js');
+    const result = extractTaskSummary({ error_details: 'Connection refused' });
+    expect(result).toContain('Connection refused');
+  });
+});
+
 describe('Auto Learning Module', () => {
   let mockPool;
 
