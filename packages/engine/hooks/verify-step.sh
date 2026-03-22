@@ -245,11 +245,15 @@ verify_step2() {
                     IN_DOD=true
                     DOD_TYPE="GATE"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[GATE\][[:space:]]*//')
+                elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[PRESERVE\]'; then
+                    IN_DOD=true
+                    DOD_TYPE="PRESERVE"
+                    BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[PRESERVE\][[:space:]]*//')
                 fi
                 continue
             fi
 
-            # 在 DoD 条目内（[BEHAVIOR]/[ARTIFACT]/[GATE]）：检测 Test: 行
+            # 在 DoD 条目内（[BEHAVIOR]/[ARTIFACT]/[GATE]/[PRESERVE]）：检测 Test: 行
             if [[ "$IN_DOD" == true ]]; then
                 if echo "$line" | grep -qE '^[[:space:]]+Test:[[:space:]]+'; then
                     local TEST_REF
@@ -343,7 +347,7 @@ verify_step2() {
 
         # 汇总
         echo "  ─── Gate 2 DoD 执行汇总 ───" >&2
-        echo "  [BEHAVIOR]/[ARTIFACT]/[GATE] Test 总数: $DOD_TOTAL" >&2
+        echo "  [BEHAVIOR]/[ARTIFACT]/[GATE]/[PRESERVE] Test 总数: $DOD_TOTAL" >&2
         echo "  ✅ 通过: $DOD_PASSED" >&2
         echo "  ⏭  延迟: $DOD_DEFERRED" >&2
         echo "  ❌ 失败: $DOD_FAILED" >&2
@@ -360,7 +364,7 @@ ${fail_detail}"
         fi
 
         if [[ $DOD_TOTAL -gt 0 ]]; then
-            echo "  ✅ [Gate 2] DoD Test 全部通过（[BEHAVIOR]/[ARTIFACT]/[GATE]）" >&2
+            echo "  ✅ [Gate 2] DoD Test 全部通过（[BEHAVIOR]/[ARTIFACT]/[GATE]/[PRESERVE]）" >&2
         else
             echo "  ⚠️  [Gate 2] Task Card 无可执行 DoD 条目，跳过" >&2
         fi

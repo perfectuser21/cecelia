@@ -2,7 +2,7 @@
 # ============================================================================
 # Feature Registry - ZenithJoy Engine
 # ============================================================================
-# 版本: 3.84.0
+# 版本: 3.85.0
 # 更新: 2026-03-22
 #
 # 核心原则:
@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.84.0"
+version: "3.85.0"
 updated: "2026-03-22"
-# ci-trigger: 13.23.2
+# ci-trigger: 13.24.0
 changelog:
+  - version: "13.24.0"
+    date: "2026-03-22"
+    summary: "feat(engine): /dev pipeline 补三个硬锁单元 — Step 2.0 行为快照[PRESERVE] + Step 2.1.5 TDD先行（红灯→绿灯）+ CI镜像检查 exit 1 强制；verify-step.sh 新增[PRESERVE]类型支持"
+    scope: skills/dev/steps/02-code.md,hooks/verify-step.sh
+    breaking: false
+    feature_id: dev-pipeline-tdd-behavior-snapshot-ci-lock
   - version: "13.23.2"
     date: "2026-03-22"
     summary: "fix(engine): per-worktree mutex（LOCK_UTILS_GIT_DIR）+ 清理 /dev 文档死链和过时Codex引用"
