@@ -2,8 +2,8 @@
 # ============================================================================
 # Feature Registry - ZenithJoy Engine
 # ============================================================================
-# 版本: 3.29.0
-# 更新: 2026-03-14
+# 版本: 3.84.0
+# 更新: 2026-03-22
 #
 # 核心原则:
 # - Feature Registry 回答"系统有什么能力"（What）
@@ -15,16 +15,28 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.83.0"
+version: "3.85.0"
 updated: "2026-03-22"
-# ci-trigger: 13.23.0
+# ci-trigger: 13.23.3
 changelog:
-  - version: "13.23.0"
+  - version: "13.23.3"
     date: "2026-03-22"
     summary: "feat(engine): fetch-task-prd.sh 新增 intent-expand 战略上下文查询 + docs/learnings/ 相关 Learning 检索，生成更丰富的 PRD"
     scope: skills/dev/scripts/fetch-task-prd.sh
     breaking: false
     feature_id: intent-expand-learning-search-v1
+  - version: "13.23.2"
+    date: "2026-03-22"
+    summary: "fix(engine): per-worktree mutex（LOCK_UTILS_GIT_DIR）+ 清理 /dev 文档死链和过时Codex引用"
+    scope: lib/lock-utils.sh,hooks/stop-dev.sh,skills/dev/steps
+    breaking: false
+    feature_id: fix-stophook-mutex-per-worktree
+  - version: "13.23.0"
+    date: "2026-03-22"
+    summary: "fix(engine): /dev pipeline P0/P1 修复 — verify-step.sh Gate1动态package检测+Gate2支持[ARTIFACT]/[GATE]；stage步骤文件去重/修序/删codex-test-gen引用"
+    scope: hooks/verify-step.sh,skills/dev/steps,skills/dev/SKILL.md
+    breaking: false
+    feature_id: pipeline-fix-verify-step-gate-dynamic
   - version: "13.22.0"
     date: "2026-03-22"
     summary: "fix(engine): stop-dev.sh v15.6.0 TTY匹配改为/dev/*前缀精确判断 + devloop-check.sh v3.4.0 cleanup消息区分成功/失败"
@@ -76,7 +88,7 @@ changelog:
     feature_id: dev-subagent-gates-fullquality-v1
   - version: "13.14.0"
     date: "2026-03-22"
-    summary: "feat(engine): spec_review/code_review_gate 改为 Agent subagent 同步调用，删除 Codex async dispatch，修复有头模式 stop hook 卡死"
+    summary: "feat(engine): spec_review/code_review_gate 改为 Agent subagent 同步调用（改为同步），修复有头模式 stop hook 卡死"
     scope: skills/dev/steps,lib,runners/codex
     breaking: false
     feature_id: dev-subagent-review-gates-v1

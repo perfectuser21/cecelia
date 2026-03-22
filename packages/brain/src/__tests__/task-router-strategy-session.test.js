@@ -23,9 +23,9 @@ describe('task-router strategy_session 注册', () => {
     expect(mod.SKILL_WHITELIST['strategy_session']).toBe('/strategy-session');
   });
 
-  it('D3: LOCATION_MAP strategy_session → us', async () => {
+  it('D3: LOCATION_MAP strategy_session → xian', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.LOCATION_MAP['strategy_session']).toBe('us');
+    expect(mod.LOCATION_MAP['strategy_session']).toBe('xian');
   });
 
   it('D4: isValidTaskType 接受 strategy_session', async () => {
@@ -33,9 +33,9 @@ describe('task-router strategy_session 注册', () => {
     expect(mod.isValidTaskType('strategy_session')).toBe(true);
   });
 
-  it('D5: getTaskLocation strategy_session → us', async () => {
+  it('D5: getTaskLocation strategy_session → xian', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.getTaskLocation('strategy_session')).toBe('us');
+    expect(mod.getTaskLocation('strategy_session')).toBe('xian');
   });
 
   it('D6: 已有类型不受影响', async () => {

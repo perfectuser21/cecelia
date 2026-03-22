@@ -1,10 +1,9 @@
 ---
 id: dev-stage-01-spec
-version: 2.3.0
+version: 2.2.0
 created: 2026-03-20
 updated: 2026-03-22
 changelog:
-  - 2.3.0: retry>20 时输出警告并创建 P1 任务到 Brain（不降级，仍继续重试）
   - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
   - 2.1.0: 删除降级 pass 逻辑（spec_review_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 2.0.0: spec_review 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
@@ -88,7 +87,7 @@ created: YYYY-MM-DD
   Test: TODO
 
 - [ ] [GATE] 所有现有测试通过
-  Test: manual:bash -c "npm test 2>&1 | tail -5"
+  Test: manual:npm test
 
 ## 实现方案（Stage 2 探索后填写）
 **要改的文件**: （探索后填写）
@@ -248,7 +247,6 @@ echo "✅ 置信度已写入 .dev-mode"
 
 - PASS → 写入 `spec_review_status: pass`，立即继续 Stage 2
 - FAIL → 读取 blockers，**深入分析 root cause**，修复 Task Card，**无次数上限，继续重试**
-- retry > 20 → 输出警告 + 向 Brain 创建 P1 任务（但**不降级**，仍继续重试直到 PASS）
 
 ```
 retry_count = 0
@@ -266,15 +264,10 @@ loop:
        → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
        → 修复 Task Card（.task-${BRANCH}.md）中对应的 DoD 条目
        → retry_count++
-       → if retry_count > 20:
-             echo "⚠️  [spec_review] 已重试 ${retry_count} 次，spec_review 可能陷入死循环"
-             echo "   正在向 Brain 创建 P1 告警任务..."
-             curl -s -X POST http://localhost:5221/api/brain/tasks \
-               -H "Content-Type: application/json" \
-               -d "{\"title\":\"[P1 告警] spec_review 超过 20 次重试\",\"description\":\"分支 ${BRANCH} 的 spec_review 已重试 ${retry_count} 次未通过，请人工检查 Task Card 或 spec-review SKILL.md 是否存在问题\",\"priority\":\"P1\",\"task_type\":\"alert\",\"domain\":\"agent_ops\"}" \
-               2>/dev/null || true
-             echo "   ✅ P1 告警任务已创建（但重试继续，不降级）"
-       → 重新调用 subagent（无次数上限，直到 PASS）
+       → 如果 retry_count > 20:
+           curl -s -X POST http://localhost:5221/api/brain/tasks              -H 'Content-Type: application/json'              -d '{"title":"spec_review 超限 P1 升级","description":"spec_review 重试超过 20 次仍未 PASS，需人工介入","priority":"p1","task_type":"dev"}' || true
+           break（停止重试，等待人工介入）
+       → 重新调用 subagent（继续重试，直到 PASS 或 retry_count > 20）
 ```
 
 **执行时注意**：

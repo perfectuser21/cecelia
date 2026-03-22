@@ -131,7 +131,7 @@ function _extractObjectSummary(result, maxLength) {
 /**
  * 提取任务摘要
  */
-function extractTaskSummary(result, maxLength = 500) {
+export function extractTaskSummary(result, maxLength = 500) {
   if (!result) return 'No details available';
   if (typeof result === 'string') return result.slice(0, maxLength);
   if (typeof result !== 'object') return 'Unknown result format';

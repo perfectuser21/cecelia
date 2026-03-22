@@ -13,6 +13,8 @@
 #
 # 此文件永远不需要修改业务逻辑——只改 lib/devloop-check.sh。
 #
+# v15.7.0: per-worktree mutex — pre-check 匹配后保存 _PRE_MATCHED_DIR，
+#         mutex 获取前设置 LOCK_UTILS_GIT_DIR，使每个 worktree 使用独立锁文件
 # v15.6.0: TTY 匹配改为 /dev/* 前缀精确判断（pre-check + 主检查），消除 "not a tty" 误判风险
 # v15.5.0: P0/P1 修复 — _collect_search_dirs 先搜主仓库 + 删垃圾注释 + TTY 非空检查 + LEGACY 删除日期
 # v15.3.0: worktree 感知 — .dev-lock/.dev-mode 搜索扫描主仓库 + 所有 worktree
@@ -106,6 +108,8 @@ _PRE_TTY=$(tty 2>/dev/null || echo "")
 _PRE_SESSION_ID="${CLAUDE_SESSION_ID:-}"
 _PRE_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 _PRE_MATCHED=false
+_PRE_MATCHED_DIR=""
+_PRE_MATCHED_BRANCH=""
 
 # v15.3.0: 扫描主仓库 + 所有 worktree 目录（状态文件可能在 worktree 内）
 while IFS= read -r _pre_search_dir; do
@@ -118,22 +122,22 @@ for _pre_lock in "$_pre_search_dir"/.dev-lock.*; do
     # TTY 匹配（使用 /dev/* 前缀精确判断有效 TTY 路径，避免 "not a tty" 字符串误判）
     if [[ "$_pre_lock_tty" == /dev/* && "$_PRE_TTY" == /dev/* ]]; then
         if [[ "$_pre_lock_tty" == "$_PRE_TTY" ]]; then
-            _PRE_MATCHED=true; break 2
+            _PRE_MATCHED=true; _PRE_MATCHED_DIR="$_pre_search_dir"; _PRE_MATCHED_BRANCH="$_pre_lock_branch"; break 2
         fi
     # session_id 匹配
     elif [[ -n "$_pre_lock_session" && -n "$_PRE_SESSION_ID" && "$_pre_lock_session" == "$_PRE_SESSION_ID" ]]; then
-        _PRE_MATCHED=true; break 2
+        _PRE_MATCHED=true; _PRE_MATCHED_DIR="$_pre_search_dir"; _PRE_MATCHED_BRANCH="$_pre_lock_branch"; break 2
     # 无头模式：branch 匹配
     elif [[ -z "$_PRE_TTY" || "$_PRE_TTY" == "not a tty" ]] && [[ -z "$_PRE_SESSION_ID" ]]; then
         if [[ -n "$_pre_lock_branch" && "$_pre_lock_branch" == "$_PRE_BRANCH" ]]; then
-            _PRE_MATCHED=true; break 2
+            _PRE_MATCHED=true; _PRE_MATCHED_DIR="$_pre_search_dir"; _PRE_MATCHED_BRANCH="$_pre_lock_branch"; break 2
         fi
     # v15.2.0 修复：lock 无标识符（tty=not-a-tty/空 + session_id=空）→ 按分支匹配任意会话
     # 场景：lock 创建时会话无 TTY 且无 SESSION_ID，但当前会话有 SESSION_ID（有头模式）
     # 原 case 1/2/3 均无法命中，导致 _PRE_MATCHED=false → exit 0 → /dev 中途退出
     elif [[ ("$_pre_lock_tty" == "not a tty" || -z "$_pre_lock_tty") && -z "$_pre_lock_session" ]]; then
         if [[ -n "$_pre_lock_branch" && "$_pre_lock_branch" == "$_PRE_BRANCH" ]]; then
-            _PRE_MATCHED=true; break 2
+            _PRE_MATCHED=true; _PRE_MATCHED_DIR="$_pre_search_dir"; _PRE_MATCHED_BRANCH="$_pre_lock_branch"; break 2
         fi
     fi
 done
@@ -142,6 +146,15 @@ done < <(_collect_search_dirs "$PROJECT_ROOT_EARLY")
 if [[ "$_PRE_MATCHED" == "false" ]]; then
     # 无任何匹配的 .dev-lock → 此会话无 dev 流程，直接退出，不竞争 mutex
     exit 0
+fi
+
+# v15.7.0: per-worktree mutex — 用匹配到的 worktree 目录的 git-dir 作为锁目录
+# 每个 worktree 有独立的 .git/worktrees/<name>/ 目录，确保锁文件不共享
+if [[ -n "$_PRE_MATCHED_DIR" ]]; then
+    _pre_git_dir="$(git -C "$_PRE_MATCHED_DIR" rev-parse --git-dir 2>/dev/null || echo "")"
+    if [[ -n "$_pre_git_dir" && -d "$_pre_git_dir" ]]; then
+        export LOCK_UTILS_GIT_DIR="$_pre_git_dir"
+    fi
 fi
 
 # ===== P0-2 修复：获取并发锁，防止多个会话同时操作 =====
@@ -161,7 +174,9 @@ if [[ -n "$LOCK_UTILS" ]] && type acquire_dev_mode_lock &>/dev/null; then
 else
     # Fallback: 内联锁（v2.0: flock 缺失检测 + FD 201 避免与 retry_count 块的 FD 200 冲突）
     if command -v flock &>/dev/null; then
-        LOCK_DIR="$(git rev-parse --git-dir 2>/dev/null)" || LOCK_DIR="/tmp"
+        # v15.7.0: per-worktree mutex — 优先用 LOCK_UTILS_GIT_DIR（已由上方设置）
+        LOCK_DIR="${LOCK_UTILS_GIT_DIR:-$(git rev-parse --git-dir 2>/dev/null)}"
+        [[ -z "$LOCK_DIR" || ! -d "$LOCK_DIR" ]] && LOCK_DIR="/tmp"
         LOCK_FILE="$LOCK_DIR/cecelia-stop.lock"
         exec 201>"$LOCK_FILE"
         if ! flock -w 2 201; then

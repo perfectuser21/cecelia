@@ -242,7 +242,7 @@ describe("verify-step.sh", () => {
     it("contains Gate 2 DoD execution logic", () => {
       const content = require("fs").readFileSync(ORIG_HOOK_PATH, "utf8");
       expect(content).toContain("Gate 2");
-      expect(content).toContain("IN_BEHAVIOR");
+      expect(content).toContain("IN_DOD");  // 支持 [BEHAVIOR]/[ARTIFACT]/[GATE] 三种类型
       expect(content).toContain("FAILED_ITEMS");
       expect(content).toContain("DEFERRED");
       expect(content).toContain("DOD_TOTAL");
@@ -441,3 +441,5 @@ type: task-card
     });
   });
 });
+
+// ci-retrigger: added to force new CI run

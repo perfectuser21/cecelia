@@ -229,8 +229,8 @@ describe('getTaskLocation - US 路由类型', () => {
     expect(getTaskLocation('audit')).toBe('us');
   });
 
-  it('knowledge → us', () => {
-    expect(getTaskLocation('knowledge')).toBe('us');
+  it('knowledge → xian', () => {
+    expect(getTaskLocation('knowledge')).toBe('xian');
   });
 
   it('dept_heartbeat → us', () => {
@@ -335,12 +335,12 @@ describe('routeTaskCreate - task_type → skill + location 映射', () => {
     { task_type: 'audit',              location: 'us', skill: '/code-review' },
     { task_type: 'research',           location: 'hk', skill: '/research' },
     { task_type: 'explore',            location: 'hk', skill: '/explore' },
-    { task_type: 'knowledge',          location: 'us', skill: '/knowledge' },
-    { task_type: 'dept_heartbeat',     location: 'us', skill: '/cecelia' },
-    { task_type: 'architecture_design',location: 'us', skill: '/architect design' },
-    { task_type: 'architecture_scan',  location: 'us', skill: '/architect scan' },
-    { task_type: 'arch_review',        location: 'us', skill: '/arch-review review' },
-    { task_type: 'initiative_verify',  location: 'us', skill: '/arch-review verify' },
+    { task_type: 'knowledge',          location: 'xian', skill: '/knowledge' },
+    { task_type: 'dept_heartbeat',     location: 'us',   skill: '/cecelia' },
+    { task_type: 'architecture_design',location: 'us',   skill: '/architect design' },
+    { task_type: 'architecture_scan',  location: 'us',   skill: '/architect scan' },
+    { task_type: 'arch_review',        location: 'us',   skill: '/arch-review review' },
+    { task_type: 'initiative_verify',  location: 'us',   skill: '/arch-review verify' },
   ];
 
   for (const { task_type, location, skill } of cases) {

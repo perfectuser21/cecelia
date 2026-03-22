@@ -1,10 +1,8 @@
 ---
 id: dev-stage-04-ship
-version: 1.3.0
+version: 1.2.0
 created: 2026-03-20
-updated: 2026-03-22
 changelog:
-  - 1.3.0: 4.4 读 task_id 兼容 brain_task_id + task_id 两种字段名；4.6 清理 TaskList 时只清理当前 /dev 创建的 Task（加 owner/metadata 过滤）
   - 1.2.0: 删除 4.0 Simplify 章节（Simplify 已集成进 code-review-gate Stage 2，Stage 4 重复且位置错）
   - 1.1.0: 新增 Simplify 步骤（已在 1.2.0 删除，功能移至 code-review-gate）
   - 1.0.0: 合并原 04-learning.md + 05-clean.md 为 Stage 4 Ship
@@ -148,7 +146,8 @@ echo "✅ Learning 已推送到功能分支"
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
-TASK_ID=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+TASK_ID=$(grep "^brain_task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
+[[ -z "$TASK_ID" ]] && TASK_ID=$(grep "^task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
 
 bash skills/dev/scripts/fire-learnings-event.sh \
   --branch "$BRANCH_NAME" \
@@ -195,15 +194,9 @@ echo "Stop Hook 循环次数: $(grep -c 'devloop-check' .dev-execution-log.*.jso
 ## 4.4 上传反馈到 Brain
 
 ```bash
-# 兼容两种字段名：task_id（新格式）和 brain_task_id（旧格式）
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
-if [[ ! -f "$DEV_MODE_FILE" ]]; then DEV_MODE_FILE=".dev-mode"; fi
-
-task_id=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
-if [[ -z "$task_id" ]]; then
-    task_id=$(grep "^brain_task_id:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
-fi
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+task_id=$(grep "^brain_task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
+[[ -z "$task_id" ]] && task_id=$(grep "^task_id:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
 
 if [[ -n "$task_id" ]]; then
     BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
@@ -263,12 +256,6 @@ CI_RUNS=$(gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" \
 
 ## 4.6 Clean — 归档 + 清理
 
-### Post-PR Checklist
-
-```bash
-bash scripts/post-pr-checklist.sh
-```
-
 ### 归档 Task Card
 
 ```bash
@@ -283,32 +270,16 @@ bash skills/dev/scripts/cleanup.sh "$BRANCH_NAME" "$BASE_BRANCH"
 
 ### 清理任务列表
 
-> **只清理本次 /dev 工作流创建的 Task**，不影响其他并行 /dev 实例或 Brain 派发的任务。
-
 ```javascript
-// 通过 metadata.dev_branch 或 description 过滤，只清理本次任务创建的 checkpoint
-const CURRENT_BRANCH = "<当前分支名>"  // 替换为 git rev-parse --abbrev-ref HEAD
-
+// 只清理当前 /dev 创建的 5 个任务（不影响并行 /dev 会话）
+const DEV_TASK_SUBJECTS = ["Step 0: Worktree", "Stage 1: Spec", "Stage 2: Code", "Stage 3: Integrate", "Stage 4: Ship"]
 const tasks = await TaskList()
-tasks
-  .filter(task => {
-    // 只清理本次 /dev 创建的 checkpoint 任务
-    // 识别方式：description 包含 "Stage N:" 或 "Step N:" 格式（/dev 约定格式）
-    // 且非其他工作流任务（没有 owner 字段或 owner 是当前 dev session）
-    const isDevCheckpoint = /^(Stage \d+:|Step \d+:)/.test(task.subject || '')
-    const hasBranchMatch = task.description?.includes(CURRENT_BRANCH) ||
-                           task.subject?.includes('Worktree') ||
-                           task.subject?.includes('Spec') ||
-                           task.subject?.includes('Code') ||
-                           task.subject?.includes('Integrate') ||
-                           task.subject?.includes('Ship')
-    return isDevCheckpoint || hasBranchMatch
-  })
-  .forEach(task => {
-    if (task.status !== 'completed') {
-      TaskUpdate({ taskId: task.id, status: 'completed' })
-    }
-  })
+tasks.forEach(task => {
+  const isDevTask = DEV_TASK_SUBJECTS.some(s => task.subject?.startsWith(s) || task.content?.startsWith(s))
+  if (task.status !== 'completed' && isDevTask) {
+    TaskUpdate({ taskId: task.id, status: 'completed' })
+  }
+})
 ```
 
 ---
