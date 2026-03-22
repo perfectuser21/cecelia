@@ -188,6 +188,137 @@ export async function orchestrateContentPipelines(dbPool = pool) {
 // ───────────────────────────────────────────────────────
 
 /**
+ * 加载推进 Pipeline 所需的上下文（task、pipeline、keyword、typeConfig）。
+ * 包含所有前置守卫检查，返回 null 表示无需推进。
+ *
+ * @returns {Promise<object|null>}
+ */
+async function _loadPipelineContext(taskId, dbPool) {
+  const taskResult = await dbPool.query(`
+    SELECT id, title, task_type, project_id, goal_id, payload
+    FROM tasks
+    WHERE id = $1
+  `, [taskId]);
+
+  if (taskResult.rows.length === 0) {
+    console.warn(`[content-pipeline-orchestrator] advanceContentPipeline: 找不到 task ${taskId}`);
+    return null;
+  }
+
+  const task = taskResult.rows[0];
+  const pipelineId = task.payload?.parent_pipeline_id;
+  if (!pipelineId || !PIPELINE_STAGES.includes(task.task_type)) {
+    return null;
+  }
+
+  console.log(`[content-pipeline-orchestrator] 子任务 ${task.task_type}(${taskId}) 完成，推进 pipeline ${pipelineId}`);
+
+  const pipelineResult = await dbPool.query(`
+    SELECT id, title, goal_id, project_id, payload, status
+    FROM tasks WHERE id = $1
+  `, [pipelineId]);
+
+  if (pipelineResult.rows.length === 0) {
+    console.error(`[content-pipeline-orchestrator] 找不到父 pipeline ${pipelineId}`);
+    return null;
+  }
+
+  const pipeline = pipelineResult.rows[0];
+  const keyword = pipeline.payload?.keyword || task.payload?.pipeline_keyword || pipeline.title;
+  const content_type = pipeline.payload?.content_type || task.payload?.content_type || null;
+  const typeConfig = content_type ? await getContentType(content_type) : null;
+
+  return { task, pipeline, keyword, content_type, typeConfig, taskId };
+}
+
+/**
+ * content-research 完成 → 创建 content-generate
+ */
+async function _handleResearchComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, dbPool) {
+  return _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, {
+    pipeline_stage: 'content-generate',
+    pipeline_keyword: keyword,
+    research_task_id: taskId,
+    retry_count: 0,
+    ...(content_type ? { content_type } : {}),
+    ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
+  }, null, typeConfig);
+}
+
+/**
+ * content-generate 完成 → 创建 content-review
+ */
+async function _handleGenerateComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, dbPool) {
+  return _createNextStage(dbPool, pipeline, task, 'content-review', keyword, {
+    pipeline_stage: 'content-review',
+    pipeline_keyword: keyword,
+    generate_task_id: taskId,
+    retry_count: task.payload?.retry_count || 0,
+    ...(content_type ? { content_type } : {}),
+    ...(typeConfig ? { review_rules: typeConfig.review_rules } : {}),
+  });
+}
+
+/**
+ * content-review 完成 → PASS 创建 content-export，FAIL 重试或标记 pipeline failed
+ */
+async function _handleReviewComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, taskStatus, findings, dbPool) {
+  const pipelineId = pipeline.id;
+  if (_isReviewPassed(taskStatus, findings)) {
+    return _createNextStage(dbPool, pipeline, task, 'content-export', keyword, {
+      pipeline_stage: 'content-export',
+      pipeline_keyword: keyword,
+      review_task_id: taskId,
+      ...(content_type ? { content_type } : {}),
+    });
+  }
+
+  const currentRetry = task.payload?.retry_count || 0;
+  if (currentRetry >= MAX_REVIEW_RETRY) {
+    await dbPool.query(
+      `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
+      [pipelineId]
+    );
+    console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
+    return { advanced: true, action: 'pipeline_failed_max_retry' };
+  }
+
+  const nextRetry = currentRetry + 1;
+  const reviewFeedback = findings?.feedback || findings?.issues || '请改进内容质量';
+  return _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, {
+    pipeline_stage: 'content-generate',
+    pipeline_keyword: keyword,
+    retry_count: nextRetry,
+    review_feedback: reviewFeedback,
+    review_task_id: taskId,
+    ...(content_type ? { content_type } : {}),
+    ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
+  }, `[内容生成-重试R${nextRetry}]`, typeConfig);
+}
+
+/**
+ * content-export 完成 → 创建 content_publish 任务（8 平台）+ 标记 pipeline completed
+ */
+async function _handleExportComplete({ task, pipeline }, dbPool) {
+  const pipelineId = pipeline.id;
+  await _createPublishJobs(dbPool, pipeline, task);
+  await dbPool.query(
+    `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+    [pipelineId]
+  );
+  console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} 全部完成 ✅`);
+  return { advanced: true, action: 'pipeline_completed' };
+}
+
+/** 阶段 → 处理函数映射表（替代顺序 if 链，消除圈复杂度） */
+const STAGE_HANDLER_MAP = {
+  'content-research': (ctx, _s, _f, db) => _handleResearchComplete(ctx, db),
+  'content-generate': (ctx, _s, _f, db) => _handleGenerateComplete(ctx, db),
+  'content-review': (ctx, status, findings, db) => _handleReviewComplete(ctx, status, findings, db),
+  'content-export': (ctx, _s, _f, db) => _handleExportComplete(ctx, db),
+};
+
+/**
  * 子任务完成时推进 Pipeline。
  * 由 execution.js 的 callback 在 newStatus === 'completed' 或 'failed' 时调用。
  *
@@ -198,133 +329,13 @@ export async function orchestrateContentPipelines(dbPool = pool) {
  * @returns {Promise<{advanced: boolean, action: string|null}>}
  */
 export async function advanceContentPipeline(taskId, taskStatus, findings = null, dbPool = pool) {
-  // 读取子任务详情
-  const taskResult = await dbPool.query(`
-    SELECT id, title, task_type, project_id, goal_id, payload
-    FROM tasks
-    WHERE id = $1
-  `, [taskId]);
+  const ctx = await _loadPipelineContext(taskId, dbPool);
+  if (!ctx) return { advanced: false, action: null };
 
-  if (taskResult.rows.length === 0) {
-    console.warn(`[content-pipeline-orchestrator] advanceContentPipeline: 找不到 task ${taskId}`);
-    return { advanced: false, action: null };
-  }
+  const handler = STAGE_HANDLER_MAP[ctx.task.task_type];
+  if (!handler) return { advanced: false, action: null };
 
-  const task = taskResult.rows[0];
-  const { task_type, payload } = task;
-
-  // 只处理有 parent_pipeline_id 的子任务
-  const pipelineId = payload?.parent_pipeline_id;
-  if (!pipelineId) {
-    return { advanced: false, action: null };
-  }
-
-  // 确认是合法的 pipeline 子任务
-  if (!PIPELINE_STAGES.includes(task_type)) {
-    return { advanced: false, action: null };
-  }
-
-  console.log(`[content-pipeline-orchestrator] 子任务 ${task_type}(${taskId}) 完成，推进 pipeline ${pipelineId}`);
-
-  // 读取父 pipeline 任务
-  const pipelineResult = await dbPool.query(`
-    SELECT id, title, goal_id, project_id, payload, status
-    FROM tasks WHERE id = $1
-  `, [pipelineId]);
-
-  if (pipelineResult.rows.length === 0) {
-    console.error(`[content-pipeline-orchestrator] 找不到父 pipeline ${pipelineId}`);
-    return { advanced: false, action: null };
-  }
-
-  const pipeline = pipelineResult.rows[0];
-  const keyword = pipeline.payload?.keyword || task.payload?.pipeline_keyword || pipeline.title;
-
-  // 读取 content_type 配置（从 pipeline payload 或子任务 payload 继承）
-  const content_type = pipeline.payload?.content_type || task.payload?.content_type || null;
-  let typeConfig = null;
-  if (content_type) {
-    typeConfig = await getContentType(content_type);
-  }
-
-  // ── content-research 完成 → 创建 content-generate ──
-  if (task_type === 'content-research') {
-    const generatePayload = {
-      pipeline_stage: 'content-generate',
-      pipeline_keyword: keyword,
-      research_task_id: taskId,
-      retry_count: 0,
-      ...(content_type ? { content_type } : {}),
-      ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
-    };
-    return await _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, generatePayload, null, typeConfig);
-  }
-
-  // ── content-generate 完成 → 创建 content-review ──
-  if (task_type === 'content-generate') {
-    const reviewPayload = {
-      pipeline_stage: 'content-review',
-      pipeline_keyword: keyword,
-      generate_task_id: taskId,
-      retry_count: task.payload?.retry_count || 0,
-      ...(content_type ? { content_type } : {}),
-      ...(typeConfig ? { review_rules: typeConfig.review_rules } : {}),
-    };
-    return await _createNextStage(dbPool, pipeline, task, 'content-review', keyword, reviewPayload);
-  }
-
-  // ── content-review 完成 → 判断 PASS / FAIL ──
-  if (task_type === 'content-review') {
-    const reviewPassed = _isReviewPassed(taskStatus, findings);
-
-    if (reviewPassed) {
-      // PASS → 创建 content-export
-      return await _createNextStage(dbPool, pipeline, task, 'content-export', keyword, {
-        pipeline_stage: 'content-export',
-        pipeline_keyword: keyword,
-        review_task_id: taskId,
-        ...(content_type ? { content_type } : {}),
-      });
-    } else {
-      // FAIL → 重试 content-generate（最多 MAX_REVIEW_RETRY 次）
-      const currentRetry = task.payload?.retry_count || 0;
-      if (currentRetry >= MAX_REVIEW_RETRY) {
-        // 超过重试上限 → pipeline failed
-        await dbPool.query(
-          `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-          [pipelineId]
-        );
-        console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
-        return { advanced: true, action: 'pipeline_failed_max_retry' };
-      }
-
-      // 创建重试的 content-generate，携带 review_feedback
-      const nextRetry = currentRetry + 1;
-      const reviewFeedback = findings?.feedback || findings?.issues || '请改进内容质量';
-      return await _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, {
-        pipeline_stage: 'content-generate',
-        pipeline_keyword: keyword,
-        retry_count: nextRetry,
-        review_feedback: reviewFeedback,
-        review_task_id: taskId,
-        ...(content_type ? { content_type } : {}),
-        ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
-      }, `[内容生成-重试R${nextRetry}]`, typeConfig);
-    }
-  }
-
-  // ── content-export 完成 → 创建 content_publish 任务（8 平台）→ 标记 pipeline completed ──
-  if (task_type === 'content-export') {
-    await _createPublishJobs(dbPool, pipeline, task);
-    await dbPool.query(
-      `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-      [pipelineId]
-    );
-    console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} 全部完成 ✅`);
-    return { advanced: true, action: 'pipeline_completed' };
-  }
-
-  return { advanced: false, action: null };
+  return handler(ctx, taskStatus, findings, dbPool);
 }
 
 // ───────────────────────────────────────────────────────
