@@ -1,6 +1,6 @@
 ---
 id: dev-step-02-code
-version: 4.0.0
+version: 4.2.0
 created: 2026-03-14
 updated: 2026-03-22
 changelog:

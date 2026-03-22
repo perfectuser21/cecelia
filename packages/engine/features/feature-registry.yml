@@ -15,16 +15,22 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.79.0"
+version: "3.80.0"
 updated: "2026-03-22"
-# ci-trigger: 13.18.0
+# ci-trigger: 13.19.0
 changelog:
-  - version: "13.18.0"
+  - version: "13.19.0"
     date: "2026-03-22"
     summary: "feat(engine): branch-protect.sh v27 — 新增 .dod.md 归属校验（非阻断）：worktree 内若存在 .dod.md 且 frontmatter branch 字段与当前分支不符则输出 [WARN] 警告提示旧任务残留"
     scope: hooks/branch-protect.sh
     breaking: false
     feature_id: dod-branch-field-check-v27
+  - version: "13.18.0"
+    date: "2026-03-22"
+    summary: "fix(engine): 修复 01-spec.md/02-code.md frontmatter version 字段与 changelog 不一致（2.0.0→2.2.0, 4.0.0→4.2.0）"
+    scope: skills/dev/steps
+    breaking: false
+    feature_id: fix-step-version-sync-v1
   - version: "13.17.0"
     date: "2026-03-22"
     summary: "fix(engine): 清理 pipeline 过时 Codex 引用 — 删除 devloop-check.sh \"3次重审\" + codex runner 引用，修正 /dev SKILL.md \"等Codex\"→subagent，修正 code-review-gate 触发时机描述"

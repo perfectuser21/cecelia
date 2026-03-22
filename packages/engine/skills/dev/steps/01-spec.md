@@ -1,6 +1,6 @@
 ---
 id: dev-stage-01-spec
-version: 2.0.0
+version: 2.2.0
 created: 2026-03-20
 updated: 2026-03-22
 changelog:
