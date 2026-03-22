@@ -4,6 +4,7 @@ version: 4.0.0
 created: 2026-03-14
 updated: 2026-03-22
 changelog:
+  - 4.2.0: 删除 blocked 降级路径+无限重试+深入 root cause；push 前新增强制垃圾清理步骤；code-review-gate FAIL 涉及测试覆盖时自动触发 codex-test-gen
   - 4.1.0: 删除降级 pass 逻辑（code_review_gate_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 4.0.0: code_review_gate 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
@@ -159,6 +160,53 @@ node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || true
 
 ---
 
+### 2.3.6 ⛔ 强制垃圾清理（push 前，不可跳过）
+
+> **在标记 Stage 2 完成之前，必须扫描并清理本次改动引入的垃圾内容。**
+> 目标：代码只增有用的，不留死代码/stale 注释/过期文档。
+
+```bash
+echo "🧹 强制垃圾清理扫描（dead code / stale 注释 / 过期文档）..."
+
+CHANGED_FILES=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+
+ISSUES_FOUND=0
+for f in $CHANGED_FILES; do
+    [[ ! -f "$f" ]] && continue
+
+    # 检查1: 已完成的 TODO（TODO: done / TODO: 已完成）
+    if grep -n "TODO.*done\|TODO.*已完成\|FIXME.*done" "$f" 2>/dev/null | grep -v "^Binary"; then
+        echo "  ⚠️  $f: 含已完成的 TODO/FIXME，应删除"
+        ISSUES_FOUND=$((ISSUES_FOUND+1))
+    fi
+
+    # 检查2: 注释掉的代码块（连续 3 行以上的注释代码）
+    # 不检查 markdown 文件（注释是内容的一部分）
+    if [[ "$f" != *.md ]]; then
+        COMMENTED_CODE=$(grep -c "^[[:space:]]*//" "$f" 2>/dev/null || echo 0)
+        if [[ "$COMMENTED_CODE" -gt 5 ]]; then
+            echo "  ⚠️  $f: 含大量注释代码（${COMMENTED_CODE}行），检查是否为 dead code"
+            ISSUES_FOUND=$((ISSUES_FOUND+1))
+        fi
+    fi
+
+    # 检查3: 调试日志（console.log / debug print 等）
+    if grep -n "console\.log\|debugger;\|print(\"DEBUG\|logger\.debug" "$f" 2>/dev/null | grep -v "^Binary" | grep -v "\.test\.\|\.spec\."; then
+        echo "  ⚠️  $f: 含调试日志，确认是否需要保留"
+        ISSUES_FOUND=$((ISSUES_FOUND+1))
+    fi
+done
+
+if [[ $ISSUES_FOUND -gt 0 ]]; then
+    echo ""
+    echo "⛔ 发现 $ISSUES_FOUND 处垃圾内容，必须清理后才能继续！"
+    echo "   直接修复文件（不开新 PR），commit message 前缀用 refactor:"
+    exit 1
+fi
+
+echo "✅ 垃圾清理扫描通过 — 无 dead code / stale 注释"
+```
+
 ---
 
 ### 完成后
@@ -199,8 +247,7 @@ echo "$GIT_CHANGED"
 ### 重试逻辑（MUST 遵守）
 
 - PASS → 写入 `code_review_gate_status: pass`，立即继续 Stage 3
-- FAIL → 读取 blockers，修复代码，**retry_count++**，最多重审 **3** 次
-- 超过 3 次 FAIL → 写入 `code_review_gate_status: blocked`，停止执行，等待人工修复代码
+- FAIL → 读取 blockers，**深入分析 root cause**，修复代码，**无次数上限，继续重试**
 
 ```
 retry_count = 0
@@ -215,12 +262,15 @@ loop:
        → break（继续 Stage 3）
   4. verdict == "FAIL"
        → 读取 issues[severity=="blocker"] 列表
+       → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
+       → 如果任意 blocker 的 description 含「测试覆盖」「test coverage」「缺少测试」「missing test」→
+           触发 codex-test-gen subagent：
+           Agent({ subagent_type: "general-purpose",
+                   prompt: "为以下代码补充测试...[传入 git diff 内容]" })
        → 修复对应代码文件（file:line 指向的位置）
        → retry_count++
        → 重新获取 git diff
-  5. retry_count >= 3
-       → echo "code_review_gate_status: blocked" >> .dev-mode.${BRANCH}
-       → break（等待 devloop-check 提示人工介入，修复代码后手动写 code_review_gate_status: pass）
+       → 重新调用 subagent（无次数上限，直到 PASS）
 ```
 
 **执行时注意**：
