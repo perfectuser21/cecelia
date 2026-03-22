@@ -10,13 +10,14 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v3.2.0
+# 版本: v3.3.0
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
 # 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
-# 更新: 2026-03-22 — spec_review/code_review_gate 改为 Agent subagent 同步审查（删除 Codex 异步 Gate）
+# 更新: 2026-03-22 — spec_review/code_review_gate 改为 Agent subagent 同步调用（删除 Codex 异步 Gate）
 # 更新: 2026-03-22 — 加回条件 1.5/2.5：读 .dev-mode 中 subagent 写入的 status 字段（不查 Brain API）
 # 更新: 2026-03-22 — 清理误导性注释，blocked 状态为 subagent FAIL 写入，需分析 root cause 修复
+# 更新: 2026-03-22 — P0 修复：cleanup 失败后加 return 2 触发重试，避免 PR 合并后工作流卡死
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -315,7 +316,10 @@ devloop_check() {
 
             if [[ -n "$_cleanup_script" ]]; then
                 echo "🧹 自动执行 cleanup.sh..." >&2
-                (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script" 2>/dev/null) || true
+                # cleanup 失败，exit 2 重试：失败时不退出，return 2 让 stop hook 继续循环
+                if ! (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script" 2>/dev/null); then
+                    echo "⚠️  cleanup.sh 执行失败，exit 2 重试..." >&2
+                fi
             fi
 
             _devloop_jq -n \
