@@ -39,7 +39,7 @@ export default function TaskTypeConfigPage() {
 
   const fetchConfigs = useCallback(async () => {
     try {
-      const res = await fetch('/api/brain/task-type-configs');
+      const res = await fetch('/api/cecelia/task-type-configs');
       const data = await res.json();
       if (data.success) {
         setConfigs(data.configs);
@@ -69,7 +69,7 @@ export default function TaskTypeConfigPage() {
   const saveEdit = async (taskType: string) => {
     setSaving(true);
     try {
-      const res = await fetch(`/api/brain/task-type-configs/${taskType}`, {
+      const res = await fetch(`/api/cecelia/task-type-configs/${taskType}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editValues),
