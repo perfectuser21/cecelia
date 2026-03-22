@@ -46,7 +46,7 @@ export async function refreshCache(pool) {
  * 获取动态任务类型的 location。
  * 如果不在缓存中（A类或 Coding pathway），返回 null，让调用方 fallback 到 hardcoded 逻辑。
  * @param {string} taskType
- * @returns {string|null} 'us' | 'hk' | 'xian' | null
+ * @returns {string|null} 'us' | 'hk' | 'xian' | 'xian_m1' | null
  */
 export function getCachedLocation(taskType) {
   if (!_loaded) return null;

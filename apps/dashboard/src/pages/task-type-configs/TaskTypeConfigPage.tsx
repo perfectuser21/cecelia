@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 interface DynamicConfig {
   task_type: string;
-  location: 'us' | 'hk' | 'xian';
+  location: 'us' | 'hk' | 'xian' | 'xian_m1';
   executor: string;
   skill: string | null;
   description: string | null;
@@ -33,13 +33,14 @@ interface TaskDef {
 // ─── 静态数据 ─────────────────────────────────────────────────────────────────
 
 const DEVICE_LABELS: Record<string, string> = {
-  us: '美国M4', hk: '香港VPS', xian: '西安M4',
+  us: '美国M4', hk: '香港VPS', xian: '西安M4', xian_m1: '西安M1',
 };
 
 const DEVICE_COLORS: Record<string, string> = {
   us: 'bg-blue-100 text-blue-700',
   hk: 'bg-red-100 text-red-700',
   xian: 'bg-amber-100 text-amber-700',
+  xian_m1: 'bg-orange-100 text-orange-700',
 };
 
 const CATEGORY_META: Record<Category, { label: string; tag: string; desc: string; color: string; border: string; iconBg: string }> = {
@@ -254,7 +255,7 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
           <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">机器约束</div>
           {isEditable ? (
             <div className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2 border border-amber-200">
-              C类任务，不锁机器。可在美国M4 或 西安M4 之间切换，保存后 Brain 立即生效。
+              C类任务，不锁机器。可在美国M4 / 西安M4 / 西安M1 之间切换，保存后 Brain 立即生效。
             </div>
           ) : (
             <div className="text-xs text-gray-500 bg-gray-50 rounded px-3 py-2 border border-gray-200">
@@ -272,7 +273,7 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
           <section>
             <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">切换机器</div>
             <div className="space-y-3">
-              {(['us', 'xian'] as const).map(loc => (
+              {(['us', 'xian', 'xian_m1'] as const).map(loc => (
                 <label
                   key={loc}
                   className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
@@ -297,7 +298,9 @@ function DetailPanel({ task, dynamicConfig, onSave, saving, saved, error }: {
                   <div>
                     <div className="text-sm font-medium">{DEVICE_LABELS[loc]}</div>
                     <div className="text-xs text-gray-400">
-                      {loc === 'us' ? '美国 Mac mini M4 · 38.23.47.81' : '西安 Mac mini M4 · Tailscale 100.86.57.69'}
+                      {loc === 'us' ? '美国 Mac mini M4 · 38.23.47.81'
+                        : loc === 'xian' ? '西安 Mac mini M4 · Tailscale 100.86.57.69'
+                        : '西安 Mac mini M1 · Tailscale 100.88.166.55'}
                     </div>
                   </div>
                 </label>
@@ -397,9 +400,6 @@ export default function TaskTypeConfigPage() {
             />
           ))}
         </div>
-        <p className="mt-6 text-xs text-gray-400 text-center">
-          西安PC（CDP被控端）和西安M1（L4 CI Runner）不参与任务路由
-        </p>
       </div>
     );
   }

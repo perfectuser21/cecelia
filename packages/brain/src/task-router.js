@@ -353,7 +353,7 @@ function isValidTaskType(taskType) {
  * @returns {boolean} - Whether location is valid
  */
 function isValidLocation(location) {
-  return ['us', 'hk', 'xian'].includes(location?.toLowerCase());
+  return ['us', 'hk', 'xian', 'xian_m1'].includes(location?.toLowerCase());
 }
 
 /**
@@ -391,7 +391,7 @@ function detectRoutingFailure(routing) {
   }
 
   // Check if location is valid
-  if (location && !['us', 'hk', 'xian'].includes(location.toLowerCase())) {
+  if (location && !['us', 'hk', 'xian', 'xian_m1'].includes(location.toLowerCase())) {
     return { failed: true, reason: `invalid_location:${location}` };
   }
 
