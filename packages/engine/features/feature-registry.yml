@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.87.0"
+version: "3.88.0"
 updated: "2026-03-22"
-# ci-trigger: 13.26.0
+# ci-trigger: 13.27.0
 changelog:
+  - version: "13.27.0"
+    date: "2026-03-22"
+    summary: "feat(engine): Gate 状态防伪 — seal 文件机制，spec_review/code_review_gate 结论不可自写"
+    scope: packages/engine/hooks/bash-guard.sh,packages/engine/hooks/branch-protect.sh,packages/engine/lib/devloop-check.sh,packages/engine/skills/dev/steps/01-spec.md,packages/engine/skills/dev/steps/02-code.md
+    breaking: false
+    feature_id: gate-seal-anti-self-certification
   - version: "13.26.0"
     date: "2026-03-22"
     summary: "feat(engine): code-review-gate 维度H升级 — 替代性内容未删旧描述=blocker；02-code.md 新增先删旧再写新编辑规则"

@@ -278,8 +278,15 @@ loop:
   1. 调用 Agent subagent（subagent_type=general-purpose）
      - prompt = spec-review SKILL.md 全文 + Task Card 全文
      - SKILL.md 路径：packages/workflows/skills/spec-review/SKILL.md
+     - **CRITICAL**: prompt 必须包含以下指令（seal 文件写入）：
+         "审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-spec.<BRANCH>：
+          { \"verdict\": \"PASS\"|\"FAIL\", \"branch\": \"<BRANCH>\",
+            \"timestamp\": \"<ISO8601>\", \"reviewer\": \"spec-review-agent\",
+            \"issues\": [...] }
+          这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。"
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
+       → 确认 seal 文件 .dev-gate-spec.${BRANCH} 已存在（由 subagent 写入）
        → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
        → break（继续 Stage 2）
   4. verdict == "FAIL"
@@ -288,7 +295,9 @@ loop:
        → 修复 Task Card（.task-${BRANCH}.md）中对应的 DoD 条目
        → retry_count++
        → 如果 retry_count > 20:
-           curl -s -X POST http://localhost:5221/api/brain/tasks              -H 'Content-Type: application/json'              -d '{"title":"spec_review 超限 P1 升级","description":"spec_review 重试超过 20 次仍未 PASS，需人工介入","priority":"p1","task_type":"dev"}' || true
+           curl -s -X POST http://localhost:5221/api/brain/tasks \
+             -H 'Content-Type: application/json' \
+             -d '{"title":"spec_review 超限 P1 升级","description":"spec_review 重试超过 20 次仍未 PASS，需人工介入","priority":"p1","task_type":"dev"}' || true
            break（停止重试，等待人工介入）
        → 重新调用 subagent（继续重试，直到 PASS 或 retry_count > 20）
 ```
@@ -296,6 +305,7 @@ loop:
 **执行时注意**：
 - subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
 - subagent prompt 必须包含 Task Card **完整内容**
+- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-spec.<BRANCH>`）
 - 不要向 Brain 注册任务，不要走 Codex 异步派发路径
 - FAIL 修复后必须重新调用 subagent，不能跳过重审
 

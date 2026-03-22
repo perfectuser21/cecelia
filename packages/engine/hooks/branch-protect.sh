@@ -115,6 +115,47 @@ if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
             fi
         fi
     fi
+
+    # ===== Gate 状态自认证防伪（Write/Edit 工具层）=====
+    # 检查 spec_review_status: pass 和 code_review_gate_status: pass 写入
+    # 必须先有 seal 文件（由 subagent 写入），否则视为自认证，拦截
+    _BP_GATE_CONTENT=""
+    if [[ "$TOOL_NAME" == "Write" ]]; then
+        _BP_GATE_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null || echo "")
+    elif [[ "$TOOL_NAME" == "Edit" ]]; then
+        _BP_GATE_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null || echo "")
+    fi
+    if echo "$_BP_GATE_CONTENT" | grep -qE 'spec_review_status:[[:space:]]+pass'; then
+        _BP_SEAL="$PROJECT_ROOT/.dev-gate-spec.$CURRENT_BRANCH"
+        if [[ ! -f "$_BP_SEAL" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] spec_review 自认证被拦截" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  写入 spec_review_status: pass 前必须存在 seal 文件：" >&2
+            echo "  $_BP_SEAL" >&2
+            echo "  由 spec-review subagent 写入。" >&2
+            echo "" >&2
+            exit 2
+        fi
+    fi
+    if echo "$_BP_GATE_CONTENT" | grep -qE 'code_review_gate_status:[[:space:]]+pass'; then
+        _BP_SEAL="$PROJECT_ROOT/.dev-gate-crg.$CURRENT_BRANCH"
+        if [[ ! -f "$_BP_SEAL" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] code_review_gate 自认证被拦截" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  写入 code_review_gate_status: pass 前必须存在 seal 文件：" >&2
+            echo "  $_BP_SEAL" >&2
+            echo "  由 code-review-gate subagent 写入。" >&2
+            echo "" >&2
+            exit 2
+        fi
+    fi
+
     # .dev-mode 文件本身放行（无论验证通过还是未触发验证）
     exit 0
 fi

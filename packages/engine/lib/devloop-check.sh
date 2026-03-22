@@ -10,7 +10,7 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v3.4.0
+# 版本: v3.5.0
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
 # 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
@@ -18,6 +18,7 @@
 # 更新: 2026-03-22 — 加回条件 1.5/2.5：读 .dev-mode 中 subagent 写入的 status 字段（不查 Brain API）
 # 更新: 2026-03-22 — 清理误导性注释，blocked 状态为 subagent FAIL 写入，需分析 root cause 修复
 # 更新: 2026-03-22 — P0 修复：cleanup 失败后加 return 2 触发重试，避免 PR 合并后工作流卡死
+# 更新: 2026-03-22 — P0 安全：seal 文件机制（#seal-gate），条件 1.5/2.5 读 seal 文件，自认证检测
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -28,19 +29,21 @@
 #     → no → exit 2
 #     → yes → 继续
 #
-#   条件 1.5: spec_review_status?
-#     → 不存在 → pass-through（subagent 尚未运行，不阻塞）
-#     → "pass" → 继续
-#     → "blocked" → exit 2（subagent 审查失败，需分析 root cause 修复 Task Card）
+#   条件 1.5: spec_review seal 文件验证（P0 防伪机制）
+#     → seal 文件存在 且 verdict=PASS → 继续
+#     → seal 文件存在 且 verdict=FAIL → exit 2（审查失败，修复 Task Card）
+#     → seal 文件不存在 且 .dev-mode 有 pass → exit 2（自认证检测，拦截）
+#     → seal 文件不存在 且 无字段 → pass-through（subagent 尚未运行）
 #
 #   step_2_code done?
 #     → no → exit 2
 #     → yes → 继续
 #
-#   条件 2.5: code_review_gate_status?
-#     → 不存在 → pass-through（subagent 尚未运行，不阻塞）
-#     → "pass" → 继续
-#     → "blocked" → exit 2（subagent 审查失败，需分析 root cause 修复代码）
+#   条件 2.5: code_review_gate seal 文件验证（P0 防伪机制）
+#     → seal 文件存在 且 verdict=PASS → 继续
+#     → seal 文件存在 且 verdict=FAIL → exit 2（审查失败，修复代码）
+#     → seal 文件不存在 且 .dev-mode 有 pass → exit 2（自认证检测，拦截）
+#     → seal 文件不存在 且 无字段 → pass-through（subagent 尚未运行）
 #
 #   PR 创建了?
 #   CI 过了?
@@ -142,21 +145,43 @@ devloop_check() {
         fi
     fi
 
-    # ===== 条件 1.5: spec_review_status（Agent subagent 写入）=====
-    # 字段不存在 → pass-through（subagent 尚未运行，正常流程已同步完成）
-    # "pass" → 继续
-    # "blocked" → subagent 审查失败，需分析 root cause 修复 Task Card
+    # ===== 条件 1.5: spec_review_status（seal 文件验证）=====
+    # seal 文件存在且 verdict=PASS → 继续
+    # seal 文件存在且 verdict=FAIL → blocked
+    # seal 文件不存在 且 .dev-mode 有 status=pass → blocked（自认证检测）
+    # seal 文件不存在 且 .dev-mode 无该字段 → pass-through（subagent 尚未运行）
     if [[ -f "$dev_mode_file" ]]; then
-        local spec_review_status
+        local spec_review_status spec_seal_file spec_seal_verdict
         spec_review_status=$(grep "^spec_review_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        if [[ "$spec_review_status" == "blocked" ]]; then
-            if command -v _devlog_event &>/dev/null; then
-                _devlog_event "devloop-check" "spec_review" "blocked" "spec_review 审查失败，需分析 root cause"
+        spec_seal_file="$(dirname "$dev_mode_file")/.dev-gate-spec.${branch}"
+        if [[ -f "$spec_seal_file" ]]; then
+            spec_seal_verdict=$(jq -r '.verdict // ""' "$spec_seal_file" 2>/dev/null || echo "")
+            if [[ "$spec_seal_verdict" == "FAIL" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal FAIL，需修复 Task Card"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"spec_review seal 文件 verdict=FAIL，需分析 root cause 修复 Task Card","action":"读取 .dev-gate-spec.<branch> 中的 issues，修复 Task Card，重新调用 spec-review subagent"}'
+                return 2
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"spec_review FAIL，需深入分析 root cause 修复 Task Card 后写入 spec_review_status: pass","action":"读取 spec_review blocker issues，分析根本原因，修复 Task Card，然后将 spec_review_status 改为 pass"}'
-            return 2
+            # seal 存在且 verdict=PASS → 继续
+        else
+            # seal 文件不存在
+            if [[ "$spec_review_status" == "pass" ]]; then
+                # .dev-mode 中有 pass 但无 seal 文件 → 自认证检测，拦截
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review 自认证检测：无 seal 文件但 .dev-mode 有 pass"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"spec_review 自认证被检测：.dev-mode 有 spec_review_status: pass 但无 seal 文件","action":"调用 spec-review subagent，让 subagent 写入 .dev-gate-spec.<branch> seal 文件后再标记 pass"}'
+                return 2
+            elif [[ "$spec_review_status" == "blocked" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review 审查失败，需分析 root cause"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"spec_review FAIL，需深入分析 root cause 修复 Task Card","action":"读取 spec_review blocker issues，修复 Task Card，重新调用 spec-review subagent"}'
+                return 2
+            fi
+            # 不存在且无字段 → pass-through，subagent 尚未运行
         fi
-        # 不存在或 pass → pass-through，继续
     fi
 
     # ===== 条件 2: step_2_code 是否完成？ =====
@@ -172,21 +197,43 @@ devloop_check() {
         fi
     fi
 
-    # ===== 条件 2.5: code_review_gate_status（Agent subagent 写入）=====
-    # 字段不存在 → pass-through（subagent 尚未运行，正常流程已同步完成）
-    # "pass" → 继续
-    # "blocked" → subagent 审查失败，需分析 root cause 修复代码
+    # ===== 条件 2.5: code_review_gate_status（seal 文件验证）=====
+    # seal 文件存在且 verdict=PASS → 继续
+    # seal 文件存在且 verdict=FAIL → blocked
+    # seal 文件不存在 且 .dev-mode 有 status=pass → blocked（自认证检测）
+    # seal 文件不存在 且 .dev-mode 无该字段 → pass-through（subagent 尚未运行）
     if [[ -f "$dev_mode_file" ]]; then
-        local code_review_gate_status
+        local code_review_gate_status crg_seal_file crg_seal_verdict
         code_review_gate_status=$(grep "^code_review_gate_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        if [[ "$code_review_gate_status" == "blocked" ]]; then
-            if command -v _devlog_event &>/dev/null; then
-                _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate 审查失败，需分析 root cause"
+        crg_seal_file="$(dirname "$dev_mode_file")/.dev-gate-crg.${branch}"
+        if [[ -f "$crg_seal_file" ]]; then
+            crg_seal_verdict=$(jq -r '.verdict // ""' "$crg_seal_file" 2>/dev/null || echo "")
+            if [[ "$crg_seal_verdict" == "FAIL" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate seal FAIL，需修复代码"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"code_review_gate seal 文件 verdict=FAIL，需修复代码","action":"读取 .dev-gate-crg.<branch> 中的 issues，修复代码，重新调用 code-review-gate subagent"}'
+                return 2
             fi
-            _devloop_jq -n '{"status":"blocked","reason":"code_review_gate FAIL，需深入分析 root cause 修复代码后写入 code_review_gate_status: pass","action":"读取 code_review_gate blocker issues，分析根本原因，修复代码，然后将 code_review_gate_status 改为 pass"}'
-            return 2
+            # seal 存在且 verdict=PASS → 继续
+        else
+            # seal 文件不存在
+            if [[ "$code_review_gate_status" == "pass" ]]; then
+                # .dev-mode 中有 pass 但无 seal 文件 → 自认证检测，拦截
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate 自认证检测：无 seal 文件但 .dev-mode 有 pass"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"code_review_gate 自认证被检测：.dev-mode 有 code_review_gate_status: pass 但无 seal 文件","action":"调用 code-review-gate subagent，让 subagent 写入 .dev-gate-crg.<branch> seal 文件后再标记 pass"}'
+                return 2
+            elif [[ "$code_review_gate_status" == "blocked" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate 审查失败，需分析 root cause"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"code_review_gate FAIL，需深入分析 root cause 修复代码","action":"读取 code_review_gate blocker issues，修复代码，重新调用 code-review-gate subagent"}'
+                return 2
+            fi
+            # 不存在且无字段 → pass-through，subagent 尚未运行
         fi
-        # 不存在或 pass → pass-through，继续
     fi
 
     # ===== 条件 3: PR 是否已创建？ =====
