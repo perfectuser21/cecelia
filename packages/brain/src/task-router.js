@@ -138,20 +138,20 @@ const LOCATION_MAP = {
   'codex_playwright': 'xian', // Playwright 自动化 → 西安 M4 (playwright-runner.sh + CDP → PC)
   'codex_test_gen': 'xian',   // 自动生成测试 → 西安 M4 (Codex 扫描覆盖率低模块 + 生成测试)
   'pr_review': 'xian',  // 异步 PR 审查 → 西安 Mac mini (MiniMax via Codex CLI, 独立账号)
-  'code_review': 'us', // 代码审查 → US (Claude + /code-review skill)
-  'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
-  'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
-  'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
-  'initiative_verify': 'us',    // Initiative 验收 → US (Sonnet + /arch-review verify)
-  'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
-  'architecture_design': 'us', // Architecture 设计 → US (Opus + /architect design)
-  'architecture_scan': 'us',   // 系统扫描 → US (Opus + /architect scan)
-  'arch_review': 'us',         // 架构巡检 → US (Sonnet + /arch-review review)
-  'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
-  'intent_expand': 'us',      // 意图扩展 → US 本机 (查本地 Brain DB，补全 PRD)
-  'initiative_execute': 'us',  // Initiative 执行 → US 本机 (/dev 全流程)
+  'code_review': 'xian',    // 代码审查 → 西安 Codex (B類，/code-review skill)
+  'decomp_review': 'xian',  // 拆解审查 → 西安 Codex (B類，Vivian 角色)
+  'dept_heartbeat': 'us',   // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
+  'initiative_plan': 'xian',      // Initiative 规划 → 西安 Codex (B類，/decomp skill)
+  'initiative_verify': 'xian',    // Initiative 验收 → 西安 Codex (B類，/arch-review verify)
+  'suggestion_plan': 'xian',      // Suggestion 层级识别 → 西安 Codex (B類，/plan skill)
+  'architecture_design': 'xian',  // Architecture 设计 → 西安 Codex (B類，/architect design)
+  'architecture_scan': 'xian',    // 系统扫描 → 西安 Codex (B類，/architect scan)
+  'arch_review': 'xian',          // 架构巡检 → 西安 Codex (B類，/arch-review review)
+  'strategy_session': 'xian',     // 战略会议 → 西安 Codex (B類，/strategy-session)
+  'intent_expand': 'us',          // 意图扩展 → US 本机（需读本地 Brain DB，补全 PRD）
+  'initiative_execute': 'us',     // Initiative 执行 → US 本机（/dev 全流程，A類）
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
-  'knowledge': 'us',  // 知识记录 → US (Claude)
+  'knowledge': 'xian',  // 知识记录 → 西安 Codex (B類，/knowledge skill)
   'talk': 'hk',       // 对话 → HK (MiniMax)
   'research': 'hk',   // 深度调研 → HK (MiniMax)
   'data': 'hk',       // 数据处理 → HK (N8N)
@@ -167,8 +167,8 @@ const LOCATION_MAP = {
   'code_review_gate': 'us',      // 代码质量门禁 → US 本机 Codex
   'initiative_review': 'us',     // Initiative 整体审查 → US 本机 Codex
   // Scope 层飞轮
-  'scope_plan': 'us',            // Scope 规划 → US (Opus + /decomp)
-  'project_plan': 'us',          // Project 规划 → US (Opus + /decomp)
+  'scope_plan': 'xian',            // Scope 规划 → 西安 Codex (B類，/decomp skill)
+  'project_plan': 'xian',          // Project 规划 → 西安 Codex (B類，/decomp skill)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
 };
 

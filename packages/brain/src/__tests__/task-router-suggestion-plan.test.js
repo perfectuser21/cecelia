@@ -11,9 +11,9 @@ describe('task-router suggestion_plan', () => {
     expect(mod.SKILL_WHITELIST['suggestion_plan']).toBe('/plan');
   });
 
-  it('D2: LOCATION_MAP suggestion_plan → us', async () => {
+  it('D2: LOCATION_MAP suggestion_plan → xian', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.LOCATION_MAP['suggestion_plan']).toBe('us');
+    expect(mod.LOCATION_MAP['suggestion_plan']).toBe('xian');
   });
 
   it('D2: isValidTaskType 接受 suggestion_plan', async () => {
@@ -21,9 +21,9 @@ describe('task-router suggestion_plan', () => {
     expect(mod.isValidTaskType('suggestion_plan')).toBe(true);
   });
 
-  it('D2: getTaskLocation suggestion_plan → us', async () => {
+  it('D2: getTaskLocation suggestion_plan → xian', async () => {
     const mod = await import('../task-router.js');
-    expect(mod.getTaskLocation('suggestion_plan')).toBe('us');
+    expect(mod.getTaskLocation('suggestion_plan')).toBe('xian');
   });
 
   it('D2: 已有类型不受影响', async () => {

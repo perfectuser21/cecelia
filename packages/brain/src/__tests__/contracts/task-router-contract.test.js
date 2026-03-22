@@ -63,8 +63,8 @@ describe('task-router contract', () => {
       expect(getTaskLocation(undefined)).toBe('us');
     });
 
-    it('D5-3: returns "us" for initiative_verify', () => {
-      expect(getTaskLocation('initiative_verify')).toBe('us');
+    it('D5-3: returns "xian" for initiative_verify', () => {
+      expect(getTaskLocation('initiative_verify')).toBe('xian');
     });
   });
 
