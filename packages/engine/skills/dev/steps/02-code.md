@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 3.1.0
+version: 4.0.0
 created: 2026-03-14
-updated: 2026-03-21
+updated: 2026-03-22
 changelog:
+  - 4.0.0: code_review_gate 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
   - 3.0.0: 砍掉所有假 subagent 模板，加入自验证 + Codex 验证双保险
   - 2.0.0: TDD 两阶段探索
@@ -174,49 +175,59 @@ echo "✅ Stage 2 完成标记已写入 .dev-mode"
 
 ---
 
-## 2.4 派发 code_review_gate Codex 任务（CRITICAL — Stage 2 最后一步）
+## 2.4 执行 code_review_gate Agent subagent（CRITICAL — Stage 2 最后一步）
 
-> **Stage 2 代码写完、自验证通过后，派发 code_review_gate Codex 任务审查代码质量，然后停下来等 stop hook 放行。**
-> code_review 在 push 前完成，确保推到远端的代码已经过审查，CI 一次过。
+> **Stage 2 代码写完、自验证通过后，调用 Agent subagent 同步审查代码质量。**
+> subagent 在 Anthropic 服务器运行，不占本地内存，~10 秒同步完成。
+> **不需要等 stop hook 放行**——subagent 是同步调用，结果立即可用。
+
+### 准备 git diff
 
 ```bash
-BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 DEV_MODE_FILE=".dev-mode.${BRANCH}"
 
-# 检查 Brain 是否可用
-BRAIN_HEALTH=$(curl -s --max-time 5 "$BRAIN_URL/api/brain/health" 2>/dev/null || echo "")
-if [[ -z "$BRAIN_HEALTH" ]]; then
-  echo "⚠️  Brain 不可用（$BRAIN_URL），code_review_gate 降级为跳过"
-  echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
-else
-  echo "🔍 向 Brain 注册 code_review_gate 任务..."
+# 获取完整 diff（传给 subagent 审查）
+GIT_DIFF=$(git diff origin/main..HEAD 2>/dev/null || git diff main..HEAD 2>/dev/null || echo "")
+GIT_CHANGED=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
 
-  CR_RESP=$(curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/tasks" \
-    -H "Content-Type: application/json" \
-    -d "{\"title\":\"Code Review: $BRANCH\",\"task_type\":\"code_review_gate\",\"priority\":\"P0\",\"metadata\":{\"branch\":\"$BRANCH\"}}" 2>/dev/null || echo "")
-  CR_TASK=$(echo "$CR_RESP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
-  if [[ -n "$CR_TASK" ]]; then
-    echo "code_review_gate_task_id: $CR_TASK" >> "$DEV_MODE_FILE"
-    echo "code_review_gate_registered_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$DEV_MODE_FILE"
-    echo "code_review_gate_status: pending" >> "$DEV_MODE_FILE"
-    echo "  ✅ code_review_gate 已注册: $CR_TASK"
-    # 立即派发（不等调度器）
-    curl -s -X POST "$BRAIN_URL/api/brain/dispatch-now" \
-      -H "Content-Type: application/json" \
-      -d "{\"task_id\":\"$CR_TASK\"}" \
-      --max-time 5 2>/dev/null || true
-    echo "  🚀 code_review_gate 已派发执行"
-  else
-    echo "  ⚠️  code_review_gate 注册失败，降级为跳过"
-    echo "code_review_gate_status: pass" >> "$DEV_MODE_FILE"
-  fi
-fi
+echo "📋 变更文件："
+echo "$GIT_CHANGED"
 ```
 
-**输出状态后停止，等 stop hook 放行。**
+### 重试逻辑（MUST 遵守）
 
-code_review_gate 通过后，devloop-check.sh 会放行，进入 Stage 3。
+- PASS → 写入 `code_review_gate_status: pass`，立即继续 Stage 3
+- FAIL → 读取 blockers，修复代码，**retry_count++**，最多重审 **3** 次
+- 超过 3 次 FAIL → 降级为 pass（写 `code_review_gate_degraded: true`）
+
+```
+retry_count = 0
+
+loop:
+  1. 调用 Agent subagent（subagent_type=general-purpose）
+     - prompt = code-review-gate SKILL.md 全文 + git diff 内容
+     - SKILL.md 路径：packages/workflows/skills/code-review-gate/SKILL.md
+  2. 解析 JSON 结果中的 "verdict" 字段
+  3. verdict == "PASS"
+       → echo "code_review_gate_status: pass" >> .dev-mode.${BRANCH}
+       → break（继续 Stage 3）
+  4. verdict == "FAIL"
+       → 读取 issues[severity=="blocker"] 列表
+       → 修复对应代码文件（file:line 指向的位置）
+       → retry_count++
+       → 重新获取 git diff
+  5. retry_count >= 3
+       → echo "code_review_gate_status: pass" >> .dev-mode.${BRANCH}
+       → echo "code_review_gate_degraded: true" >> .dev-mode.${BRANCH}
+       → break（降级通过，继续 Stage 3）
+```
+
+**执行时注意**：
+- subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
+- subagent prompt 必须包含 `git diff` **完整内容**（不能只引用文件路径）
+- 不要向 Brain 注册任务，不要走 Codex 异步派发路径
+- FAIL 修复后必须重新获取 git diff 再调用 subagent，不能跳过重审
 
 ---
 

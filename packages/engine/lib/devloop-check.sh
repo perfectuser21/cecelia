@@ -10,13 +10,11 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v3.0.1
+# 版本: v3.1.0
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
-# 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）:
-#   1. merge 失败 return 2（blocked）而非 return 1（error）
-#   2. _check_codex_review 15 分钟超时降级（elapsed_secs > 900）
-#   3. registered_at 时间戳支持超时计算
+# 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
+# 更新: 2026-03-22 — 删除 spec_review/code_review_gate Codex Gate（改为 Agent subagent 同步审查）
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -25,15 +23,11 @@
 #
 #   step_1_spec done?
 #     → no → exit 2
-#     → yes → spec_review PASS?（查 Brain API）
-#       → no → exit 2（等 Codex）
-#       → yes → 继续
+#     → yes → 继续（spec_review 由 Agent subagent 同步完成，无需异步等待）
 #
 #   step_2_code done?
 #     → no → exit 2
-#     → yes → code_review PASS?（查 Brain API）
-#       → no → exit 2（等 Codex）
-#       → yes → 继续
+#     → yes → 继续（code_review_gate 由 Agent subagent 同步完成，无需异步等待）
 #
 #   PR 创建了?
 #   CI 过了?
@@ -101,98 +95,6 @@ _mark_cleanup_done() {
 }
 
 # ============================================================================
-# 内部函数: _check_codex_review
-# ============================================================================
-# 通用 Codex 审查状态检查
-# 参数:
-#   $1: task_id 字段名（如 spec_review_task_id）
-#   $2: status 字段名（如 spec_review_status）
-#   $3: 审查名称（如 "Spec Review"）
-#   $4: dev_mode_file
-# 返回值: 0=PASS（或无此审查）, 1=blocked（已输出 JSON）
-# ============================================================================
-_check_codex_review() {
-    local task_id_key="$1"
-    local status_key="$2"
-    local review_name="$3"
-    local dev_mode_file="$4"
-
-    [[ -f "$dev_mode_file" ]] || return 0
-
-    local task_id status_local brain_url
-    task_id=$(grep "^${task_id_key}:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-    status_local=$(grep "^${status_key}:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-    brain_url="${BRAIN_URL:-http://localhost:5221}/api/brain"
-
-    # 无此审查或已 pass → 继续
-    [[ -z "$task_id" || "$status_local" == "pass" ]] && return 0
-
-    # 15 分钟超时降级：读取 registered_at 时间戳
-    local registered_at_key="${task_id_key%_task_id}_registered_at"
-    local registered_at=""
-    registered_at=$(grep "^${registered_at_key}:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-    if [[ -n "$registered_at" ]]; then
-        local reg_epoch now_epoch elapsed_secs
-        if [[ "$(uname)" == "Darwin" ]]; then
-            reg_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${registered_at%Z*}" +%s 2>/dev/null || echo 0)
-        else
-            reg_epoch=$(date -d "$registered_at" +%s 2>/dev/null || echo 0)
-        fi
-        now_epoch=$(date +%s)
-        elapsed_secs=$(( now_epoch - reg_epoch ))
-        if [[ $elapsed_secs -gt 900 ]]; then
-            echo "[devloop-check] ⚠️ $review_name 超时 15 分钟，降级为自动 PASS" >&2
-            if [[ "$(uname)" == "Darwin" ]]; then
-                sed -i '' "s/^${status_key}:.*/${status_key}: pass/" "$dev_mode_file" 2>/dev/null || true
-            else
-                sed -i "s/^${status_key}:.*/${status_key}: pass/" "$dev_mode_file" 2>/dev/null || true
-            fi
-            return 0
-        fi
-    fi
-
-    local api_result task_status review_result
-    api_result=$(curl -s --max-time 5 "$brain_url/tasks/$task_id" 2>/dev/null || echo "{}")
-    task_status=$(echo "$api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
-    review_result=$(echo "$api_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('review_result','') or '')" 2>/dev/null || echo "")
-
-    if [[ "$task_status" == "completed" ]]; then
-        if echo "$review_result" | grep -qi "PASS"; then
-            # PASS：更新 .dev-mode 并继续
-            if [[ "$(uname)" == "Darwin" ]]; then
-                sed -i '' "s/^${status_key}:.*/${status_key}: pass/" "$dev_mode_file" 2>/dev/null || true
-            else
-                sed -i "s/^${status_key}:.*/${status_key}: pass/" "$dev_mode_file" 2>/dev/null || true
-            fi
-            return 0
-        else
-            local fail_reasons
-            fail_reasons=$(echo "$review_result" | grep -A 10 "FAIL\|MISSING" | head -8 || echo "详见 review_result")
-            if command -v _devlog_event &>/dev/null; then
-                _devlog_event "devloop-check" "${task_id_key}" "blocked" "${review_name} FAIL: $fail_reasons"
-            fi
-            _devloop_jq -n \
-                --arg task_id "$task_id" \
-                --arg reasons "$fail_reasons" \
-                --arg name "$review_name" \
-                '{"status":"blocked","reason":"\($name) 未通过，需修复后重新 push","action":"根据以下 FAIL 原因修复。\($name) Task: \($task_id)\nFAIL 原因:\n\($reasons)"}'
-            return 1
-        fi
-    else
-        local wait_status="${task_status:-queued}"
-        if command -v _devlog_event &>/dev/null; then
-            _devlog_event "devloop-check" "${task_id_key}" "blocked" "等待 ${review_name}（状态: $wait_status）"
-        fi
-        _devloop_jq -n \
-            --arg task_id "$task_id" \
-            --arg status "$wait_status" \
-            --arg name "$review_name" \
-            '{"status":"blocked","reason":"等待 \($name) 完成（状态: \($status)）","action":"\($name) 正在执行中（task: \($task_id)）。输出状态后停止，Stop Hook 会自动检查审查结果并放行。禁止询问用户。"}'
-        return 1
-    fi
-}
-
-# ============================================================================
 # 主函数: devloop_check
 # ============================================================================
 devloop_check() {
@@ -227,11 +129,6 @@ devloop_check() {
         fi
     fi
 
-    # ===== 条件 1.5: spec_review 是否通过？（Stage 1 后的 Codex Gate）=====
-    if ! _check_codex_review "spec_review_task_id" "spec_review_status" "Spec Review" "$dev_mode_file"; then
-        return 2
-    fi
-
     # ===== 条件 2: step_2_code 是否完成？ =====
     if [[ -f "$dev_mode_file" ]]; then
         local step_2_status
@@ -243,11 +140,6 @@ devloop_check() {
             _devloop_jq -n '{"status":"blocked","reason":"Stage 2 Code 未完成","action":"立即读取 skills/dev/steps/02-code.md 并执行 Stage 2。禁止询问用户。"}'
             return 2
         fi
-    fi
-
-    # ===== 条件 2.5: code_review 是否通过？（Stage 2 后的 Codex Gate）=====
-    if ! _check_codex_review "code_review_gate_task_id" "code_review_gate_status" "Code Review" "$dev_mode_file"; then
-        return 2
     fi
 
     # ===== 条件 3: PR 是否已创建？ =====

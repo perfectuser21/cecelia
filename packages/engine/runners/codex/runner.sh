@@ -204,7 +204,11 @@ DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${BRANCH}"
 DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock.${BRANCH}"
 
 if [[ ! -f "$DEV_MODE_FILE" ]]; then
-    cat > "$DEV_MODE_FILE" <<EOF
+    # flock 保护：多实例并发启动时，只有第一个实例初始化，其余等待后发现文件已存在则跳过
+    {
+        flock -x 200
+        if [[ ! -f "$DEV_MODE_FILE" ]]; then
+            cat > "$DEV_MODE_FILE" <<EOF
 dev
 branch: $BRANCH
 session_id: $CODEX_SESSION_ID
@@ -213,8 +217,13 @@ provider: codex
 started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 retry_count: 0
 EOF
-    cp "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
-    echo "✅ 初始化 .dev-mode 和 .dev-lock for branch: $BRANCH"
+            cp "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
+            echo "✅ 初始化 .dev-mode 和 .dev-lock for branch: $BRANCH"
+        else
+            echo "ℹ️  .dev-mode 已由其他实例初始化，跳过"
+        fi
+    } 200>"$DEV_MODE_FILE.init.lock"
+    rm -f "$DEV_MODE_FILE.init.lock" 2>/dev/null || true
 fi
 
 # ===== 构建完整 /dev 工作流 prompt（第一次调用）=====

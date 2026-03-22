@@ -1,9 +1,10 @@
 ---
 id: dev-step-00-worktree-auto
-version: 2.2.0
+version: 2.3.0
 created: 2026-01-31
-updated: 2026-03-14
+updated: 2026-03-22
 changelog:
+  - 2.3.0: 新任务进入 worktree 后主动创建 .dev-lock（含 tty + session_id），修复有头模式 stop hook 不工作的 bug
   - 2.2.0: 新增 .dev-lock 完整性检查（context 压缩恢复场景）
   - 2.1.0: 修复主仓库 cp-*/feature-* 分支检测盲区（强制 worktree）
   - 2.0.0: 简化为强制创建 worktree（修复 Bug 1）
@@ -82,7 +83,20 @@ if [[ "$GIT_DIR" == *"worktrees"* ]]; then
     elif [[ -f "$DEV_LOCK_FILE" ]]; then
         echo "✅ .dev-lock.${CURRENT_BRANCH} 存在，Stop Hook 约束正常"
     else
-        echo "ℹ️  无 .dev-mode 文件（新任务），Step 3 将创建"
+        # v2.3.0: 新任务（.dev-mode 和 .dev-lock 均不存在）→ 主动创建 .dev-lock
+        # 问题：有头模式下 stop hook 从未找到 .dev-lock → exit 0 → 循环不启动
+        # 修复：进入 worktree 后立刻创建，确保 stop hook 能识别当前会话
+        echo "ℹ️  新任务：主动创建 .dev-lock 激活 Stop Hook 约束..."
+        CURRENT_TTY=$(tty 2>/dev/null || echo "none")
+        SESSION_ID="headed-$(date +%s)-$$-${CURRENT_BRANCH}"
+        cat > "$DEV_LOCK_FILE" <<LOCKEOF
+dev
+branch: ${CURRENT_BRANCH}
+session_id: ${SESSION_ID}
+tty: ${CURRENT_TTY}
+created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)
+LOCKEOF
+        echo "✅ .dev-lock.${CURRENT_BRANCH} 已创建，Stop Hook 约束已激活"
     fi
     # ─────────────────────────────────────────────────────────────
 
