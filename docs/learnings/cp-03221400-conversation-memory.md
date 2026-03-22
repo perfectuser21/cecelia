@@ -3,7 +3,7 @@
 **Branch**: cp-03221400-conversation-memory
 **PR**: #1389
 
-### 核心洞察
+### 根本原因
 
 Cecelia 的记忆系统有7层（emotion/self_model/reflection/desire/episodic/semantic/person_model），但之前只对**单条消息**做 extractConversationLearning（一问一答粒度）。整段对话的核心结论、决策没有被整体压缩存入记忆。
 
