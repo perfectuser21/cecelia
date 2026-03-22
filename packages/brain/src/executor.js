@@ -17,7 +17,7 @@
 import crypto from 'crypto';
 import { spawn, execSync } from 'child_process';
 import { writeFile, mkdir } from 'fs/promises';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -170,6 +170,32 @@ function assertSafePid(value, label = 'pid') {
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/Users/administrator/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
 const WORK_DIR = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21/cecelia';
+
+// Codex Review Gate 独立池配置
+const REVIEW_LOCK_DIR = process.env.CODEX_REVIEW_LOCK_DIR || '/tmp/codex-review-locks';
+const MAX_REVIEW_SLOTS = parseInt(process.env.CODEX_REVIEW_MAX_SLOTS || '2', 10);
+const CODEX_BIN = process.env.CODEX_BIN || '/opt/homebrew/bin/codex';
+
+/**
+ * 根据 branch 名找到对应 worktree 的磁盘路径。
+ * 解析 git worktree list --porcelain 输出，返回匹配 branch 的 worktree 路径。
+ * @param {string} branch
+ * @returns {string|null}
+ */
+function findWorktreePath(branch) {
+  try {
+    const output = execSync(`git -C "${WORK_DIR}" worktree list --porcelain`, { encoding: 'utf-8' });
+    const entries = output.split('\n\n').filter(Boolean);
+    for (const entry of entries) {
+      const branchMatch = entry.match(/^branch refs\/heads\/(.+)$/m);
+      const worktreeMatch = entry.match(/^worktree (.+)$/m);
+      if (branchMatch && worktreeMatch && branchMatch[1].trim() === branch) {
+        return worktreeMatch[1].trim();
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
 
 // ==================== Diagnostic Functions ====================
 
@@ -1743,10 +1769,46 @@ PUT /api/tasks/goals/${krId}
     return `/prd-review\n\n${task.description || task.title}`;
   }
   if (taskType === 'spec_review') {
-    return `/spec-review\n\n${task.description || task.title}`;
+    const branch = task.metadata?.branch || task.payload?.branch || '';
+    let task_card_content = '';
+    if (branch) {
+      const wt = findWorktreePath(branch);
+      if (wt) {
+        const taskCardFile = path.join(wt, `.task-${branch}.md`);
+        if (existsSync(taskCardFile)) {
+          task_card_content = readFileSync(taskCardFile, 'utf-8');
+        }
+      }
+    }
+    const body = task_card_content
+      ? `## Task Card\n\n${task_card_content}`
+      : (task.description || task.title);
+    return `/spec-review\n\n${body}`;
   }
   if (taskType === 'code_review_gate') {
-    return `/code-review-gate\n\n${task.description || task.title}`;
+    const branch = task.metadata?.branch || task.payload?.branch || '';
+    let task_card_content = '';
+    let gitDiff = '';
+    if (branch) {
+      const wt = findWorktreePath(branch);
+      if (wt) {
+        const taskCardFile = path.join(wt, `.task-${branch}.md`);
+        if (existsSync(taskCardFile)) {
+          task_card_content = readFileSync(taskCardFile, 'utf-8');
+        }
+        try {
+          gitDiff = execSync(
+            `git -C "${wt}" diff HEAD~1 2>/dev/null || git -C "${wt}" diff main...HEAD`,
+            { encoding: 'utf-8', maxBuffer: 2 * 1024 * 1024 }
+          ).slice(0, 50000);
+        } catch { /* ignore */ }
+      }
+    }
+    const cardSection = task_card_content
+      ? `## Task Card\n\n${task_card_content}`
+      : (task.description || task.title);
+    const diffSection = gitDiff ? `\n\n## Git Diff\n\`\`\`diff\n${gitDiff}\n\`\`\`` : '';
+    return `/code-review-gate\n\n${cardSection}${diffSection}`;
   }
   if (taskType === 'initiative_review') {
     const initiativeId = task.project_id || task.payload?.initiative_id || '';
@@ -2033,6 +2095,90 @@ async function triggerMiniMaxExecutor(task) {
 // 注意：Coding 通道（dev/codex_dev/initiative_plan 等）在 task-router.js 中标注为 'us'，
 //       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
+/**
+ * 使用本机 Codex CLI 执行审查类任务（spec_review / code_review_gate）。
+ * 独立 /tmp/codex-review-locks/ 锁池，最多 MAX_REVIEW_SLOTS（默认2）个并发。
+ * prompt 由 preparePrompt() 生成，已包含完整 Task Card + git diff。
+ */
+async function triggerLocalCodexReview(task) {
+  const runId = generateRunId(task.id);
+
+  // 准备 prompt（Task Card + git diff 已由 preparePrompt 注入）
+  let promptContent;
+  try {
+    promptContent = await preparePrompt(task);
+  } catch (err) {
+    console.error(`[executor] triggerLocalCodexReview: preparePrompt 失败: ${err.message}`);
+    return { success: false, taskId: task.id, error: err.message };
+  }
+
+  // 获取 review lock（最多 MAX_REVIEW_SLOTS 个并发）
+  await mkdir(REVIEW_LOCK_DIR, { recursive: true });
+  let lockSlot = null;
+  for (let i = 1; i <= MAX_REVIEW_SLOTS; i++) {
+    const slotDir = path.join(REVIEW_LOCK_DIR, `slot-${i}`);
+    try {
+      // mkdir 原子性：成功则获得锁，失败说明 slot 被占用
+      await mkdir(slotDir);
+      await writeFile(
+        path.join(slotDir, 'info.json'),
+        JSON.stringify({ task_id: task.id, run_id: runId, pid: process.pid, started: new Date().toISOString() })
+      );
+      lockSlot = slotDir;
+      break;
+    } catch { /* slot 被占，尝试下一个 */ }
+  }
+
+  if (!lockSlot) {
+    console.log(`[executor] review slots 已满 (${MAX_REVIEW_SLOTS} slots)，task=${task.id} 等待队列`);
+    return { success: false, taskId: task.id, reason: 'review_slots_full' };
+  }
+
+  // 将 prompt 写入临时文件（避免命令行长度限制）
+  await mkdir(PROMPT_DIR, { recursive: true });
+  const promptFile = path.join(PROMPT_DIR, `review-${runId}.txt`);
+  await writeFile(promptFile, promptContent, 'utf-8');
+
+  // 确定工作目录（优先使用任务对应的 worktree）
+  const branch = task.metadata?.branch || task.payload?.branch || '';
+  const cwd = (branch && findWorktreePath(branch)) || WORK_DIR;
+
+  console.log(`[executor] triggerLocalCodexReview: task=${task.id} slot=${path.basename(lockSlot)} cwd=${cwd}`);
+
+  // 通过 stdin 传入 prompt，绕过命令行长度限制
+  const child = spawn('bash', ['-c', `"${CODEX_BIN}" exec --sandbox danger-full-access - < "${promptFile}"`], {
+    cwd,
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  });
+
+  // 更新 info.json 写入实际 PID
+  await writeFile(
+    path.join(lockSlot, 'info.json'),
+    JSON.stringify({ task_id: task.id, run_id: runId, pid: child.pid, started: new Date().toISOString() })
+  );
+
+  child.unref();
+
+  // 进程退出时释放锁 + 清理 prompt 文件
+  child.on('exit', () => {
+    import('fs').then(({ rm }) => {
+      rm(lockSlot, { recursive: true, force: true }).catch(() => {});
+      rm(promptFile, { force: true }).catch(() => {});
+    }).catch(() => {});
+  });
+
+  return {
+    success: true,
+    taskId: task.id,
+    runId,
+    executor: 'local-codex-review',
+    pid: child.pid,
+    slot: path.basename(lockSlot),
+  };
+}
+
 async function triggerCeceliaRun(task) {
   const location = getTaskLocation(task.task_type);
 
@@ -2047,7 +2193,13 @@ async function triggerCeceliaRun(task) {
     return triggerCodexBridge(task);
   }
 
-  // 3. US → Claude Code（本机 cecelia-bridge）
+  // 3. Review Gate → 本机 Codex CLI（独立 /tmp/codex-review-locks/ 池，固定 2 slot）
+  if (task.task_type === 'spec_review' || task.task_type === 'code_review_gate') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Local Codex CLI (review pool)`);
+    return triggerLocalCodexReview(task);
+  }
+
+  // 4. US → Claude Code（本机 cecelia-bridge）
   // Use original cecelia-bridge on port 3457
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -2671,6 +2823,7 @@ async function recordHeartbeat(taskId, runId) {
 
 export {
   triggerCeceliaRun,
+  triggerLocalCodexReview,
   triggerCodexBridge,
   triggerMiniMaxExecutor,
   checkCeceliaRunAvailable,

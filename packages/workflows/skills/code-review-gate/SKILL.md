@@ -51,13 +51,13 @@ description: |
 
 ## 输入
 
-从 PR diff 获取变更文件列表，逐文件审查。
+从 git diff 获取变更文件列表，逐文件审查。
 
 ```bash
-# 获取 PR 变更文件
-gh pr diff <pr_number> --name-only
-# 获取 PR 完整 diff
-gh pr diff <pr_number>
+# 获取变更文件列表
+git diff HEAD~1 --name-only 2>/dev/null || git diff main...HEAD --name-only
+# 获取完整 diff（已由 Brain executor 注入 prompt，可直接使用）
+git diff HEAD~1 2>/dev/null || git diff main...HEAD
 ```
 
 ---
