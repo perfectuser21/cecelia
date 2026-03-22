@@ -1,11 +1,10 @@
 ---
 id: dev-step-02-code
-version: 4.3.0
+version: 4.2.0
 created: 2026-03-14
 updated: 2026-03-22
 changelog:
-  - 4.3.0: 修复 2.3 编号重复（两个 2.3.5）→ 重新编号 2.3.1-2.3.6；调整顺序（npm test → 垃圾清理 → CI镜像 → DoD Test → Task Card hash）；删除 code-review-gate FAIL 中的特殊测试生成 subagent 悬空引用，统一为"修复代码后重新调用 subagent"
-  - 4.2.0: 删除 blocked 降级路径+无限重试+深入 root cause；push 前新增强制垃圾清理步骤
+  - 4.2.0: 删除 blocked 降级路径+无限重试+深入 root cause；push 前新增强制垃圾清理步骤；code-review-gate FAIL 涉及测试覆盖时自动触发补充测试 subagent
   - 4.1.0: 删除降级 pass 逻辑（code_review_gate_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 4.0.0: code_review_gate 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
   - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
@@ -85,7 +84,60 @@ fi
 | 通过 | 继续 2.3.2 |
 | 失败 | 修复代码 → 重跑 |
 
-### 2.3.2 ⛔ 强制垃圾清理（push 前，不可跳过）
+### 2.3.2 本地 CI 镜像检查
+
+```bash
+CHANGED=$(git diff --name-only main...HEAD 2>/dev/null || git diff --name-only origin/main...HEAD)
+
+# Workspace 改动 → npm run build
+if echo "$CHANGED" | grep -q "^apps/"; then
+    APP_DIR=$(echo "$CHANGED" | grep "^apps/" | head -1 | cut -d'/' -f1-2)
+    [[ -f "$APP_DIR/package.json" ]] && (cd "$APP_DIR" && npm run build 2>&1)
+fi
+
+# Brain 改动 → local-precheck
+if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$"; then
+    bash scripts/local-precheck.sh
+fi
+
+# Engine 改动 → version-sync
+if echo "$CHANGED" | grep -q "^packages/engine/"; then
+    bash packages/engine/ci/scripts/check-version-sync.sh 2>&1
+fi
+```
+
+### 2.3.3 逐条重跑 DoD Test（最终确认）
+
+> **由 verify-step.sh Gate 2 自动强制执行**，不依赖 AI 自觉。
+> 当 AI 标记 `step_2_code: done` 时，`verify-step.sh step2` 会自动：
+> 1. 读取 Task Card（`.task-{BRANCH}.md`）
+> 2. 提取所有 `[BEHAVIOR]` 条目的 Test 字段
+> 3. 对 `manual:` 开头的 Test，执行该命令（在项目根目录）
+> 4. 对 `contract:` 开头的 Test，标记 DEFERRED 跳过
+> 5. 对 `tests/` 开头的 Test，检查文件是否存在
+> 6. 任一 Test 失败 → verify-step 返回 exit 1 → 不允许标记完成
+
+```bash
+# verify-step.sh 会在 step_2_code: done 写入时被 branch-protect 自动调用
+# 也可以手动运行确认：
+bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)"
+```
+
+**这是你 push 前的最后防线。Gate 2 确保每条 DoD [BEHAVIOR] Test 都被真实执行过，不能只靠 npm test。**
+
+### 2.3.4 计算 Task Card Hash（TDD 锁定）
+
+```bash
+TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
+if [[ -n "$TASK_CARD" ]]; then
+    TC_HASH=$(shasum -a 256 "$TASK_CARD" | awk '{print "sha256:" $1}')
+    BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    echo "task_card_hash: $TC_HASH" >> ".dev-mode.${BRANCH}"
+    echo "✅ Task Card hash 已锁定: $TC_HASH"
+fi
+```
+
+### 2.3.5 ⛔ 强制垃圾清理（push 前，不可跳过）
 
 > **在标记 Stage 2 完成之前，必须扫描并清理本次改动引入的垃圾内容。**
 > 目标：代码只增有用的，不留死代码/stale 注释/过期文档。
@@ -132,60 +184,9 @@ fi
 echo "✅ 垃圾清理扫描通过 — 无 dead code / stale 注释"
 ```
 
-### 2.3.3 本地 CI 镜像检查
+---
 
-```bash
-CHANGED=$(git diff --name-only main...HEAD 2>/dev/null || git diff --name-only origin/main...HEAD)
-
-# Workspace 改动 → npm run build
-if echo "$CHANGED" | grep -q "^apps/"; then
-    APP_DIR=$(echo "$CHANGED" | grep "^apps/" | head -1 | cut -d'/' -f1-2)
-    [[ -f "$APP_DIR/package.json" ]] && (cd "$APP_DIR" && npm run build 2>&1)
-fi
-
-# Brain 改动 → local-precheck
-if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$"; then
-    bash scripts/local-precheck.sh
-fi
-
-# Engine 改动 → version-sync
-if echo "$CHANGED" | grep -q "^packages/engine/"; then
-    bash packages/engine/ci/scripts/check-version-sync.sh 2>&1
-fi
-```
-
-### 2.3.4 逐条重跑 DoD Test（最终确认）
-
-> **由 verify-step.sh Gate 2 自动强制执行**，不依赖 AI 自觉。
-> 当 AI 标记 `step_2_code: done` 时，`verify-step.sh step2` 会自动：
-> 1. 读取 Task Card（`.task-{BRANCH}.md`）
-> 2. 提取所有 `[BEHAVIOR]`、`[ARTIFACT]`、`[GATE]` 条目的 Test 字段
-> 3. 对 `manual:` 开头的 Test，执行该命令（在项目根目录）
-> 4. 对 `contract:` 开头的 Test，标记 DEFERRED 跳过
-> 5. 对 `tests/` 开头的 Test，检查文件是否存在
-> 6. 任一 Test 失败 → verify-step 返回 exit 1 → 不允许标记完成
-
-```bash
-# verify-step.sh 会在 step_2_code: done 写入时被 branch-protect 自动调用
-# 也可以手动运行确认：
-bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)"
-```
-
-**这是你 push 前的最后防线。Gate 2 确保每条 DoD [BEHAVIOR]/[ARTIFACT]/[GATE] Test 都被真实执行过，不能只靠 npm test。**
-
-### 2.3.5 计算 Task Card Hash（TDD 锁定）
-
-```bash
-TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
-if [[ -n "$TASK_CARD" ]]; then
-    TC_HASH=$(shasum -a 256 "$TASK_CARD" | awk '{print "sha256:" $1}')
-    BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    echo "task_card_hash: $TC_HASH" >> ".dev-mode.${BRANCH}"
-    echo "✅ Task Card hash 已锁定: $TC_HASH"
-fi
-```
-
-### 2.3.6 完整 CI 镜像检查（push 前最终确认）
+### 2.3.6 推送前完整验证
 
 > push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
 
@@ -262,6 +263,10 @@ loop:
   4. verdict == "FAIL"
        → 读取 issues[severity=="blocker"] 列表
        → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
+       → 如果任意 blocker 的 description 含「测试覆盖」「test coverage」「缺少测试」「missing test」→
+           调用 Agent subagent 补充测试：
+           Agent({ subagent_type: "general-purpose",
+                   prompt: "请为以下代码补充缺少的测试：[传入 git diff 内容]" })
        → 修复对应代码文件（file:line 指向的位置）
        → retry_count++
        → 重新获取 git diff
