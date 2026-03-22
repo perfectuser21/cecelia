@@ -82,6 +82,88 @@ export const PUBLISH_PLATFORMS = [
 // ───────────────────────────────────────────────────────
 
 /**
+ * 从 pipeline 任务行提取关键参数（隔离 optional chaining，降低调用方复杂度）。
+ */
+function _parsePipelineParams(pipeline) {
+  return {
+    keyword: pipeline.payload?.keyword || pipeline.title,
+    content_type: pipeline.payload?.content_type || null,
+    priority: pipeline.payload?.priority || 'P1',
+  };
+}
+
+/**
+ * 启动单个 content-pipeline：验证 content_type、幂等检查、创建 content-research 子任务。
+ * @returns {Promise<'orchestrated'|'skipped'>}
+ */
+async function _startOnePipeline(pipeline, dbPool) {
+  const pipelineId = pipeline.id;
+  const { keyword, content_type, priority } = _parsePipelineParams(pipeline);
+
+  // 验证 content_type 存在于注册表（若有指定）
+  if (content_type) {
+    const typeConfig = await getContentType(content_type);
+    if (!typeConfig) {
+      console.error(`[content-pipeline-orchestrator] pipeline ${pipelineId} content_type "${content_type}" 不存在于注册表，标记 failed`);
+      await dbPool.query(
+        `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
+        [pipelineId]
+      );
+      return 'skipped';
+    }
+  }
+
+  // 幂等检查：是否已有 content-research 子任务在飞
+  const existingResult = await dbPool.query(`
+    SELECT id FROM tasks
+    WHERE payload->>'parent_pipeline_id' = $1
+      AND task_type = 'content-research'
+      AND status IN ('queued', 'in_progress', 'completed')
+    LIMIT 1
+  `, [pipelineId]);
+
+  if (existingResult.rows.length > 0) {
+    console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} 已有 content-research 子任务，跳过`);
+    // Pipeline 可能还是 queued（上次启动前崩溃）→ 修正为 in_progress
+    await dbPool.query(
+      `UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1 AND status = 'queued'`,
+      [pipelineId]
+    );
+    return 'skipped';
+  }
+
+  // 创建第一个子任务：content-research
+  await dbPool.query(`
+    INSERT INTO tasks (title, description, task_type, status, priority, project_id, goal_id,
+                      trigger_source, payload, created_at)
+    VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, NOW())
+  `, [
+    `[内容调研] ${keyword}`,
+    `Content Pipeline 子任务（阶段1/4）：对「${keyword}」进行深度调研，产出 research.json。\n父任务 ID: ${pipelineId}`,
+    'content-research',
+    priority,
+    pipeline.project_id,
+    pipeline.goal_id,
+    'content_pipeline_orchestrator',
+    JSON.stringify({
+      parent_pipeline_id: pipelineId,
+      pipeline_stage: 'content-research',
+      pipeline_keyword: keyword,
+      ...(content_type ? { content_type } : {}),
+    }),
+  ]);
+
+  // 标记 pipeline 为 in_progress
+  await dbPool.query(
+    `UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1`,
+    [pipelineId]
+  );
+
+  console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} → content-research 已创建${content_type ? ` (type: ${content_type})` : ''}`);
+  return 'orchestrated';
+}
+
+/**
  * 检测所有 queued 的 content-pipeline 任务，为每个创建第一个子任务（content-research）。
  * 由 tick.js 调用（每次 tick 执行一次）。
  *
@@ -92,7 +174,6 @@ export async function orchestrateContentPipelines(dbPool = pool) {
   let orchestrated = 0;
   let skipped = 0;
 
-  // 查找所有 queued 的 content-pipeline 任务
   const pipelinesResult = await dbPool.query(`
     SELECT id, title, goal_id, project_id, payload
     FROM tasks
@@ -104,74 +185,9 @@ export async function orchestrateContentPipelines(dbPool = pool) {
 
   for (const pipeline of pipelinesResult.rows) {
     try {
-      const pipelineId = pipeline.id;
-      const keyword = pipeline.payload?.keyword || pipeline.title;
-      const content_type = pipeline.payload?.content_type || null;
-
-      // 验证 content_type 存在于注册表（若有指定）
-      let typeConfig = null;
-      if (content_type) {
-        typeConfig = await getContentType(content_type);
-        if (!typeConfig) {
-          console.error(`[content-pipeline-orchestrator] pipeline ${pipelineId} content_type "${content_type}" 不存在于注册表，标记 failed`);
-          await dbPool.query(
-            `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-            [pipelineId]
-          );
-          skipped++;
-          continue;
-        }
-      }
-
-      // 幂等检查：是否已有 content-research 子任务在飞
-      const existingResult = await dbPool.query(`
-        SELECT id FROM tasks
-        WHERE payload->>'parent_pipeline_id' = $1
-          AND task_type = 'content-research'
-          AND status IN ('queued', 'in_progress', 'completed')
-        LIMIT 1
-      `, [pipelineId]);
-
-      if (existingResult.rows.length > 0) {
-        console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} 已有 content-research 子任务，跳过`);
-        // Pipeline 可能还是 queued（上次启动前崩溃）→ 修正为 in_progress
-        await dbPool.query(
-          `UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1 AND status = 'queued'`,
-          [pipelineId]
-        );
-        skipped++;
-        continue;
-      }
-
-      // 创建第一个子任务：content-research
-      await dbPool.query(`
-        INSERT INTO tasks (title, description, task_type, status, priority, project_id, goal_id,
-                          trigger_source, payload, created_at)
-        VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, NOW())
-      `, [
-        `[内容调研] ${keyword}`,
-        `Content Pipeline 子任务（阶段1/4）：对「${keyword}」进行深度调研，产出 research.json。\n父任务 ID: ${pipelineId}`,
-        'content-research',
-        pipeline.payload?.priority || 'P1',
-        pipeline.project_id,
-        pipeline.goal_id,
-        'content_pipeline_orchestrator',
-        JSON.stringify({
-          parent_pipeline_id: pipelineId,
-          pipeline_stage: 'content-research',
-          pipeline_keyword: keyword,
-          ...(content_type ? { content_type } : {}),
-        }),
-      ]);
-
-      // 标记 pipeline 为 in_progress
-      await dbPool.query(
-        `UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1`,
-        [pipelineId]
-      );
-
-      console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} → content-research 已创建${content_type ? ` (type: ${content_type})` : ''}`);
-      orchestrated++;
+      const result = await _startOnePipeline(pipeline, dbPool);
+      if (result === 'orchestrated') orchestrated++;
+      else skipped++;
     } catch (err) {
       console.error(`[content-pipeline-orchestrator] pipeline ${pipeline.id} 处理失败: ${err.message}`);
     }
@@ -421,6 +437,26 @@ const EXECUTOR_MAP = {
 };
 
 /**
+ * 执行单个 content-* 子任务：标记 in_progress、调用 executor、更新状态、推进 pipeline。
+ */
+async function _executeStageTask(task, stage, executor, dbPool) {
+  await dbPool.query(`UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1`, [task.id]);
+  console.log(`[content-executor] 执行 ${stage}: ${task.title}`);
+  const execResult = await executor(task);
+
+  const newStatus = execResult.success ? 'completed' : 'failed';
+  await dbPool.query(
+    `UPDATE tasks SET status = $1, completed_at = NOW() WHERE id = $2`,
+    [newStatus, task.id]
+  );
+
+  const advResult = await advanceContentPipeline(task.id, newStatus, execResult, dbPool);
+  if (advResult.advanced) {
+    console.log(`[content-executor] pipeline 推进: ${task.id} → ${advResult.action}`);
+  }
+}
+
+/**
  * 由 tick 调用。检测 queued 的 content-* 子任务，自动执行。
  * @param {import('pg').Pool} [dbPool]
  */
@@ -442,29 +478,7 @@ export async function executeQueuedContentTasks(dbPool = pool) {
 
     for (const task of result.rows) {
       try {
-        // 标记 in_progress
-        await dbPool.query(`UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1`, [task.id]);
-
-        console.log(`[content-executor] 执行 ${stage}: ${task.title}`);
-        const execResult = await executor(task);
-
-        // 根据结果更新任务状态
-        const newStatus = execResult.success ? 'completed' : 'failed';
-        const findings = execResult.success ? JSON.stringify(execResult) : null;
-
-        await dbPool.query(
-          `UPDATE tasks SET status = $1, completed_at = NOW() WHERE id = $2`,
-          [newStatus, task.id]
-        );
-
-        // 推进 pipeline 状态机
-        if (newStatus === 'completed' || newStatus === 'failed') {
-          const advResult = await advanceContentPipeline(task.id, newStatus, execResult, dbPool);
-          if (advResult.advanced) {
-            console.log(`[content-executor] pipeline 推进: ${task.id} → ${advResult.action}`);
-          }
-        }
-
+        await _executeStageTask(task, stage, executor, dbPool);
         executed++;
       } catch (err) {
         console.error(`[content-executor] ${stage} 执行失败: ${err.message}`);
