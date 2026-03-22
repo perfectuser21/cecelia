@@ -244,7 +244,7 @@ CI_RUNS=$(gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" \
 ### 输出格式
 
 ```
-执行质量：X/10
+执行质量：X/20
 - CI 效率：X/5
 - DoD 诚实度：X/5
 - 循环效率：X/5
@@ -259,7 +259,9 @@ CI_RUNS=$(gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" \
 ### 归档 Task Card
 
 ```bash
-mv .task-${BRANCH}.md .history/
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+mkdir -p .history
+mv ".task-${BRANCH_NAME}.md" .history/ 2>/dev/null || true
 ```
 
 ### 使用 cleanup 脚本

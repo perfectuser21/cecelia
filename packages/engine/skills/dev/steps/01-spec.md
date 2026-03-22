@@ -79,6 +79,10 @@ created: YYYY-MM-DD
 
 ## 验收条件（DoD）
 > Test 字段在 Stage 2 探索后填写，现在写条目即可。
+> **[PRESERVE] 条目**：修改已有文件时必须填写，Step 2.0 强制门禁会检查。
+
+- [ ] [PRESERVE] <涉及模块的现有关键行为>
+  Test: TODO
 
 - [ ] [ARTIFACT] <条件>
   Test: TODO
@@ -187,7 +191,7 @@ echo "✅ Stage 1 自检通过 — Task Card 格式正确"
 echo "🔍 本地 CI 镜像：check-dod-mapping.cjs..."
 
 # 从 worktree 根目录运行（与 CI 完全相同的脚本）
-node scripts/devgate/check-dod-mapping.cjs
+node packages/engine/scripts/devgate/check-dod-mapping.cjs
 EXIT_CODE=$?
 
 if [[ $EXIT_CODE -ne 0 ]]; then
