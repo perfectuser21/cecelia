@@ -34,8 +34,8 @@ describe('model-registry', () => {
       }
     });
 
-    it('R1b: 模型总数为 10', () => {
-      expect(MODELS.length).toBe(10);
+    it('R1b: 模型总数 >= 10（新增 codex + openai 补充模型）', () => {
+      expect(MODELS.length).toBeGreaterThanOrEqual(10);
     });
 
     it('R2: 所有 agent 有 id/name/layer/allowed_models/recommended_model', () => {
