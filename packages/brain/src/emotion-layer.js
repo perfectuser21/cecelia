@@ -48,10 +48,23 @@ export async function runEmotionLayer(observations, pool) {
 
     const prompt = `${EMOTION_PROMPT}\n\n## 当前感知信号\n${observationText}\n\n请推导我现在的情绪状态：`;
 
-    const { text: emotionText } = await callLLM('thalamus', prompt, {
-      maxTokens: 120,
-      timeout: 90000,
-    });
+    // 尝试 thalamus，失败时 fallback 到 mouth（应对 provider 不可用场景）
+    let emotionText = null;
+    try {
+      const result = await callLLM('thalamus', prompt, { maxTokens: 120, timeout: 30000 });
+      emotionText = result?.text;
+    } catch (thalamusErr) {
+      console.warn('[emotion-layer] thalamus failed, fallback to mouth:', thalamusErr.message);
+    }
+
+    if (!emotionText || !emotionText.trim()) {
+      try {
+        const fallbackResult = await callLLM('mouth', prompt, { maxTokens: 120, timeout: 30000 });
+        emotionText = fallbackResult?.text;
+      } catch (mouthErr) {
+        console.warn('[emotion-layer] mouth fallback also failed:', mouthErr.message);
+      }
+    }
 
     if (!emotionText || !emotionText.trim()) return null;
 
