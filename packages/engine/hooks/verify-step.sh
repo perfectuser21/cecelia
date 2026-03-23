@@ -81,6 +81,40 @@ _pass() {
 }
 
 # ============================================================================
+# manual: 命令白名单检查（Gate 1b）
+# ============================================================================
+
+check_manual_whitelist() {
+    local card_path="$1"
+    [[ -z "$card_path" || ! -f "$card_path" ]] && return 0
+
+    # 查找 check-manual-cmd-whitelist.cjs（相对于 PROJECT_ROOT）
+    local whitelist_script="$PROJECT_ROOT/packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs"
+    if [[ ! -f "$whitelist_script" ]]; then
+        echo "  ⏭ [Gate 1b] check-manual-cmd-whitelist.cjs 未找到，跳过白名单检查" >&2
+        return 0
+    fi
+
+    echo "  🔍 [Gate 1b] manual: 命令白名单检查..." >&2
+    local output
+    local exit_code=0
+    output=$(cd "$PROJECT_ROOT" && node "$whitelist_script" "$card_path" 2>&1) || exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        _fail "Gate 1b: manual: 命令白名单检查失败
+$output
+
+  CI 白名单仅允许：node / npm / curl / bash / psql
+  修复：将非白名单命令改写为 manual:node -e \"...\" 形式
+  示例：
+    ❌ Test: manual:grep -c 'pattern' file
+    ✅ Test: manual:node -e \"const c=require('fs').readFileSync('file','utf8');if(!c.includes('pattern'))process.exit(1)\""
+    fi
+
+    echo "  ✅ [Gate 1b] manual: 命令白名单检查通过" >&2
+}
+
+# ============================================================================
 # Step 1 验证：Task Card DoD Test 字段无假命令
 # ============================================================================
 verify_step1() {
@@ -131,6 +165,9 @@ $found_fake
     # Gate 1: CI 镜像 — Stage 1 跳过完整 DoD 检查（未勾选项在 Stage 1 是预期的）
     # Stage 1 只写 Spec/DoD 条目，验证在 Stage 2 做。CI L1 会在 push 后做完整检查。
     echo "  ⏭ [Gate 1] Stage 1 跳过 DoD 完整检查（CI L1 将在 push 后检查）" >&2
+
+    # Gate 1b: manual: 命令白名单检查（本地前置拦截）
+    check_manual_whitelist "$task_card"
 
     _pass "Step 1 Task Card 验证通过"
 }

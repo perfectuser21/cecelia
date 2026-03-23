@@ -291,6 +291,26 @@ hooks:
       contains: "dev-seal"
     test: "tests/hooks/stop-dev-seal.test.ts"
 
+  # H1-020: v13.35.0 manual: 命令白名单本地前置拦截
+  - id: H1-020
+    feature: H1
+    name: "verify-step.sh Gate 1b：manual: 命令白名单前置检查"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [verify-step, manual-whitelist, ci-gate, step1]
+    owner: infra
+    steps:
+      given: "Task Card DoD 中含有 manual:grep 等非白名单命令"
+      when: "verify-step.sh step1 执行 Gate 1b 白名单检查"
+      then: "调用 check-manual-cmd-whitelist.cjs，发现违规时 exit 1 并给出修复提示"
+    evidence:
+      type: code
+      file: "hooks/verify-step.sh"
+      contains: "check_manual_whitelist"
+    test: "tests/devgate/check-manual-cmd-whitelist.test.ts"
+
   # --------------------------------------------------------------------------
   # H7: stop.sh - 循环控制器
   # --------------------------------------------------------------------------
