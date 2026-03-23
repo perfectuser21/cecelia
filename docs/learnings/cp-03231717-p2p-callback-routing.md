@@ -5,18 +5,22 @@ date: 2026-03-23
 
 ## 做了什么
 
-将 ops.js 中 hardcode 的 `task_type === 'explore'` 判断替换为从 `task-router.js` 读取的 `ASYNC_CALLBACK_TYPES` 路由表，同时把 `research` 也加入支持范围。
+将 ops.js 中 hardcode 的 `task_type === 'explore'` 判断替换为从 `task-router.js` 读取的 `ASYNC_CALLBACK_TYPES` 路由表，同时把 `research` 加入支持范围。
 
-## 核心设计
+## 根本原因
 
-```
-task-router.js 维护 ASYNC_CALLBACK_TYPES Set
-ops.js 查表: ASYNC_CALLBACK_TYPES.has(task_type)
-扩展新能力 = 路由表加一行，零代码改动
-```
+每次新增 P2P 异步回调能力都要改 ops.js 业务逻辑，导致"改代码 → 走 /dev → CI → 合并"的完整流程，成本过高。根本原因是能力配置和执行逻辑耦合在同一文件。
+
+## 解决方案
+
+在 task-router.js 新增 `ASYNC_CALLBACK_TYPES` Set，ops.js 改为查表。扩展新能力只改路由表一行，无需走 /dev。
+
+## 下次预防
+
+- [ ] 新增 P2P 异步回调能力时，只改 `task-router.js` 中的 `ASYNC_CALLBACK_TYPES`
+- [ ] 不要在 ops.js 中 hardcode 任何 task_type 判断
+- [ ] 测试中用 `not.toContain("task_type === '...'")` 验证无 hardcode 回归
 
 ## 教训
 
-1. **配置驱动优于代码驱动**：每次加能力都改业务逻辑代码是反模式，路由表把"扩展点"和"执行逻辑"分离。
-2. **已有路由表就用**：task-router.js 已有 `VALID_TASK_TYPES` 和 `SKILL_WHITELIST`，新增 `ASYNC_CALLBACK_TYPES` 符合现有模式，不引入新抽象。
-3. **测试验证 hardcode 消失**：测试里加 `not.toContain("task_type === 'explore'")` 防止将来回归。
+配置驱动优于代码驱动：task-router.js 已有 `VALID_TASK_TYPES` 和 `SKILL_WHITELIST`，`ASYNC_CALLBACK_TYPES` 符合现有模式，不引入新抽象。
