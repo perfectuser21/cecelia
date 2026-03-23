@@ -2414,3 +2414,37 @@ product_features:
       - "dods API 404 时降级放行"
 
     rcis: []
+
+  - id: manual-cmd-whitelist-check
+    name: CI Gate — manual 命令白名单本地前置拦截
+    category: devgate
+    status: Committed
+    priority: P1
+    version: "13.35.0"
+    updated: "2026-03-23"
+    description: |
+      在 verify-step.sh step1 中增加 Gate 1b，调用 check-manual-cmd-whitelist.cjs
+      检测 Task Card DoD 中 manual: 前缀命令是否使用白名单外工具（白名单：node/npm/curl/bash/psql）。
+      同时新增 CI L1 job manual-cmd-whitelist-check（stage >= 2 触发）。
+      本地提前拦截非法 manual: 命令，不必等到 CI push 后才发现报错。
+
+    entrypoints:
+      - type: hook
+        file: packages/engine/hooks/verify-step.sh
+        trigger: "verify_step1() Gate 1b"
+      - type: script
+        file: packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs
+        trigger: "verify-step.sh 和 CI L1 job 调用"
+
+    golden_path: |
+      verify_step1() →
+      check_manual_whitelist() →
+      node check-manual-cmd-whitelist.cjs <task-card> →
+      violations 非空 → exit 1 + 修复提示
+
+    minimal_paths:
+      - "manual:grep → 报告违规并提示修改为 node -e 形式"
+      - "manual:node/npm/curl/bash/psql → 放行"
+
+    rcis:
+      - H1-020

@@ -407,6 +407,15 @@ changelog:
 
 ---
 
+### manual-cmd-whitelist-check: CI Gate — manual 命令白名单本地前置拦截
+
+1. ✅ **manual:grep → 报告违规并提示修改为 node -e 形式**
+2. ✅ **manual:node/npm/curl/bash/psql → 放行**
+
+**RCI 覆盖**: H1-020
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -723,6 +723,24 @@ prd_content 存在则放行
 
 ---
 
+## GP-046: CI Gate — manual 命令白名单本地前置拦截 (manual-cmd-whitelist-check)
+
+**Feature**: manual-cmd-whitelist-check - CI Gate — manual 命令白名单本地前置拦截
+**Priority**: P1
+
+### Golden Path
+
+```
+verify_step1() →
+check_manual_whitelist() →
+node check-manual-cmd-whitelist.cjs <task-card> →
+violations 非空 → exit 1 + 修复提示
+```
+
+**RCI 覆盖**: H1-020
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
