@@ -1182,7 +1182,7 @@ function getSkillForTaskType(taskType, payload) {
     'review': '/code-review', // 审查：已迁移到 /code-review
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
     'talk': '/talk',         // 对话：写文档，不改代码
-    'research': null,        // 研究：完全只读
+    'research': '',          // 研究：完全只读，不挂 skill，由 preparePrompt 直接构建 prompt
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
     // Initiative 执行循环
