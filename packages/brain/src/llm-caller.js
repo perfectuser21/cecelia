@@ -410,15 +410,18 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
  */
 async function callCodexHeadless(prompt, model, options = {}) {
   const apiKey = getOpenAIKey();
+  if (!apiKey) throw new Error('OpenAI/Codex API key not available');
   const timeout = options.timeout || 120000;
   // model ID 格式为 "codex/gpt-5.4-mini"，提取实际模型名
   const actualModel = model.startsWith('codex/') ? model.slice(6) : model;
 
   return new Promise((resolve, reject) => {
     const child = spawn('codex', ['exec', '-m', actualModel, prompt], {
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        ...(apiKey ? { CODEX_API_KEY: apiKey, OPENAI_API_KEY: apiKey } : {}),
+        CODEX_API_KEY: apiKey,
+        OPENAI_API_KEY: apiKey,
       },
     });
 
