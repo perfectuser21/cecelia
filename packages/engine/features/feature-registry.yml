@@ -2429,3 +2429,37 @@ product_features:
       - "dods API 404 时降级放行"
 
     rcis: []
+
+  - id: learning-content-validation
+    name: Learning 内容实质性检查 + devloop-check PR 合并目标验证
+    category: devgate
+    status: Committed
+    priority: P1
+    version: "13.37.1"
+    updated: "2026-03-23"
+    description: |
+      check-learning.sh 仅检查标题存在，内容空白也能通过。
+      devloop-check.sh 不验证 PR 合并目标分支为 main。
+      修复：check-learning.sh 要求根本原因 ≥3 行、下次预防 ≥1 行；
+      devloop-check.sh PR 合并后验证 baseRefName == main。
+
+    entrypoints:
+      - type: devgate
+        file: packages/engine/scripts/devgate/check-learning.sh
+        trigger: "CI Learning Format Gate"
+      - type: devgate
+        file: packages/engine/lib/devloop-check.sh
+        trigger: "Stop Hook devloop 完成检查"
+
+    golden_path: |
+      PR CI →
+      check-learning.sh 检查 Learning 内容行数 →
+      根本原因 ≥3 行、下次预防 ≥1 行 →
+      devloop-check.sh PR 合并验证 baseRefName == main →
+      完成
+
+    minimal_paths:
+      - "根本原因章节至少3行非空内容"
+      - "PR 合并目标必须是 main 分支"
+
+    rcis: []
