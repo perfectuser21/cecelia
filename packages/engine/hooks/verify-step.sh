@@ -339,13 +339,17 @@ $(printf '  %s\n' "${consistency_issues[@]}")
         local IN_DOD=false
         local DOD_TYPE=""
         local BEHAVIOR_DESC=""
+        local CURRENT_LINE=0
+        local DOD_ITEM_LINE=0
 
         while IFS= read -r line; do
+            CURRENT_LINE=$((CURRENT_LINE + 1))
             # 检测新条目行（重置状态）
             if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\['; then
                 IN_DOD=false
                 DOD_TYPE=""
                 BEHAVIOR_DESC=""
+                DOD_ITEM_LINE=$CURRENT_LINE
 
                 if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[BEHAVIOR\]'; then
                     IN_DOD=true
@@ -359,6 +363,10 @@ $(printf '  %s\n' "${consistency_issues[@]}")
                     IN_DOD=true
                     DOD_TYPE="GATE"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[GATE\][[:space:]]*//')
+                elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[PRESERVE\]'; then
+                    IN_DOD=true
+                    DOD_TYPE="PRESERVE"
+                    BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[PRESERVE\][[:space:]]*//')
                 fi
                 continue
             fi
@@ -397,6 +405,11 @@ $(printf '  %s\n' "${consistency_issues[@]}")
                         if [[ -f "$TEST_PATH" ]]; then
                             echo "  ✅ PASS (文件存在: $TEST_REF)" >&2
                             DOD_PASSED=$((DOD_PASSED + 1))
+                            # 写回 [x]：状态机与 CI 同步（dod_complete）
+                            if [[ $DOD_ITEM_LINE -gt 0 ]]; then
+                                local _tmp; _tmp=$(mktemp)
+                                awk -v n="$DOD_ITEM_LINE" 'NR==n{sub(/- \[ \] \[/, "- [x] [")}1' "$task_card" > "$_tmp" && mv "$_tmp" "$task_card"
+                            fi
                         else
                             echo "  ❌ FAIL (文件不存在: $TEST_REF)" >&2
                             DOD_FAILED=$((DOD_FAILED + 1))
@@ -433,6 +446,11 @@ $(printf '  %s\n' "${consistency_issues[@]}")
                                 echo "  输出: $(echo "$OUTPUT" | head -2)" >&2
                             fi
                             DOD_PASSED=$((DOD_PASSED + 1))
+                            # 写回 [x]：状态机与 CI 同步（dod_complete）
+                            if [[ $DOD_ITEM_LINE -gt 0 ]]; then
+                                local _tmp; _tmp=$(mktemp)
+                                awk -v n="$DOD_ITEM_LINE" 'NR==n{sub(/- \[ \] \[/, "- [x] [")}1' "$task_card" > "$_tmp" && mv "$_tmp" "$task_card"
+                            fi
                         else
                             echo "  ❌ FAIL (exit $EXIT_CODE)" >&2
                             if [[ -n "$OUTPUT" ]]; then

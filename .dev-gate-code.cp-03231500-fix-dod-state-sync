@@ -1,0 +1,6 @@
+gate: code_review_gate
+verdict: PASS
+branch: cp-03231500-fix-dod-state-sync
+reviewed_at: 2026-03-23T14:23:27+08:00
+reviewer: code_review_gate_agent
+notes: awk 写回逻辑正确（行号精确追踪、原子写、跨平台兼容）；条件 2.6 插入在 step_2_code return 2 保护之后，无提前误触发风险；DoD 正则与 verify-step.sh 对齐；回归风险极低。
