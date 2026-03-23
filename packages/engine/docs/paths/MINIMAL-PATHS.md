@@ -407,6 +407,13 @@ changelog:
 
 ---
 
+### learning-content-validation: Learning 内容实质性检查 + devloop-check PR 合并目标验证
+
+1. ✅ **根本原因章节至少3行非空内容**
+2. ✅ **PR 合并目标必须是 main 分支**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

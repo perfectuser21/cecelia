@@ -474,6 +474,18 @@ prd_content 存在则放行
 
 ---
 
+### learning-content-validation: Learning 内容实质性检查 + devloop-check PR 合并目标验证
+
+```
+PR CI →
+check-learning.sh 检查 Learning 内容行数 →
+根本原因 ≥3 行、下次预防 ≥1 行 →
+devloop-check.sh PR 合并验证 baseRefName == main →
+完成
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
