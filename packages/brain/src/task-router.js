@@ -28,7 +28,9 @@ const VALID_TASK_TYPES = [
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
-  'scope_plan', 'project_plan'
+  'scope_plan', 'project_plan',
+  // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives 三层拆解）
+  'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan'
 ];
 
 // Skill whitelist based on task type
@@ -75,6 +77,10 @@ const SKILL_WHITELIST = {
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
+  // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives）
+  'okr_initiative_plan': '/decomp',  // OKR Scope 内规划下一个 Initiative
+  'okr_scope_plan': '/decomp',       // OKR Project 内规划下一个 Scope
+  'okr_project_plan': '/decomp',     // OKR Project 层完成后规划
 };
 
 // Fallback strategies when primary routing fails
@@ -169,6 +175,10 @@ const LOCATION_MAP = {
   // Scope 层飞轮
   'scope_plan': 'xian',            // Scope 规划 → 西安 Codex (B類，/decomp skill)
   'project_plan': 'xian',          // Project 规划 → 西安 Codex (B類，/decomp skill)
+  // OKR 新表飞轮
+  'okr_initiative_plan': 'xian',   // OKR Initiative 规划 → 西安 Codex (B類，/decomp skill)
+  'okr_scope_plan': 'xian',        // OKR Scope 规划 → 西安 Codex (B類，/decomp skill)
+  'okr_project_plan': 'xian',      // OKR Project 规划 → 西安 Codex (B類，/decomp skill)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
 };
 
@@ -210,6 +220,9 @@ const TASK_REQUIREMENTS = {
   'strategy_session':   ['general'],
   'scope_plan':         ['general'],
   'project_plan':       ['general'],
+  'okr_initiative_plan': ['general'],
+  'okr_scope_plan':     ['general'],
+  'okr_project_plan':   ['general'],
   'knowledge':          ['general'],
   'talk':               ['general'],
   'research':           ['general'],
