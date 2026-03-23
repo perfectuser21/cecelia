@@ -139,7 +139,7 @@ describe('capability-scanner', () => {
       expect(cap.status).not.toBe('island');
     });
 
-    it('should mark BRAIN_EMBEDDED_SOURCES capabilities as dormant (not island) when no cecelia_events records', async () => {
+    it('should mark self-healing as active (BRAIN_ALWAYS_ACTIVE) — immune system always present in Brain', async () => {
       const pool = (await import('../db.js')).default;
 
       pool.query
@@ -150,17 +150,17 @@ describe('capability-scanner', () => {
         })
         .mockResolvedValueOnce({ rows: [] }) // no tasks
         .mockResolvedValueOnce({ rows: [] }) // no skills
-        // cecelia_events: no 'healing' source found
-        .mockResolvedValueOnce({ rows: [] });
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
 
       const { scanCapabilities } = await import('../capability-scanner.js');
       const result = await scanCapabilities();
 
       const cap = result.capabilities.find(c => c.id === 'self-healing');
-      expect(cap.status).toBe('dormant');
+      // self-healing is Brain's immune system — always present, even when not recently triggered
+      expect(cap.status).toBe('active');
       expect(cap.evidence).toContain('brain_embedded:true');
-      expect(cap.evidence).toContain('cecelia_events:no_recent_activity');
       expect(cap.status).not.toBe('island');
+      expect(cap.status).not.toBe('dormant');
     });
 
     it('should mark capability as failing when task success rate is below 30%', async () => {
@@ -290,6 +290,56 @@ describe('capability-scanner', () => {
       const cap = result.capabilities.find(c => c.id === 'multi-platform-publishing');
       expect(cap.status).not.toBe('island');
       expect(cap.evidence).toContain('table:content_publish_jobs=has_data');
+    });
+  });
+
+  describe('BRAIN_ALWAYS_ACTIVE — embedded capabilities regression (scanner fix)', () => {
+    it('should mark dev-workflow as active with brain_embedded evidence', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'dev-workflow', name: '/dev 统一开发工作流', current_stage: 3, related_skills: ['dev'], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'dev-workflow');
+      // dev-workflow is always active: Brain can dispatch /dev tasks at any time
+      expect(cap.status).toBe('active');
+      expect(cap.evidence).toContain('brain_embedded:true');
+      expect(cap.status).not.toBe('island');
+      expect(cap.status).not.toBe('failing');
+    });
+
+    it('should mark self-healing-immunity as active with brain_embedded evidence', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'self-healing-immunity', name: '自愈免疫系统', current_stage: 2, related_skills: ['cecelia-brain'], key_tables: ['absorption_policies', 'policy_effectiveness', 'immune_events'], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'self-healing-immunity');
+      // self-healing-immunity policies always resident in Brain, not an island
+      expect(cap.status).toBe('active');
+      expect(cap.evidence).toContain('brain_embedded:true');
+      expect(cap.status).not.toBe('island');
+      expect(cap.status).not.toBe('dormant');
     });
   });
 

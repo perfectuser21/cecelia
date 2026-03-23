@@ -64,6 +64,14 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'learning-absorption',          // 学习吸收，嵌入 tick 循环
   'narrative-expression',         // 叙事表达，意识层固有
   'postgresql-database-service',  // Brain 数据层，每次 tick/API 调用都通过 pool 访问 PostgreSQL
+  // ── 误判修正（scanner fix）──────────────────────────────────────────
+  // 以下三个能力被 Scanner 误判为孤岛/休眠，根本原因：
+  //   dev-workflow: 扫描早于任务创建 → island；0% 完成率 → failing
+  //   self-healing: 免疫系统未触发（系统健康）→ dormant（实为误判）
+  //   self-healing-immunity: 同上，免疫策略始终驻留 Brain 进程
+  'dev-workflow',                 // /dev 调度能力，Brain 随时可派发开发任务
+  'self-healing',                 // 免疫系统，Brain 固有，未触发≠不存在
+  'self-healing-immunity',        // 免疫策略层，Brain 固有组成部分
 ]);
 
 // ============================================================
