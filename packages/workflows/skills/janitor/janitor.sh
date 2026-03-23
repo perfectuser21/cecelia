@@ -254,6 +254,42 @@ if [ "$MODE" = "frequent" ]; then
     fi
   }
 
+  # kill 后回报 Brain：找到对应 .dev-lock → PATCH 任务状态 → 触发重调度
+  # 设计：fire-and-forget，失败只 log 不影响主流程
+  notify_brain_orphan_killed() {
+    local pid="$1" cwd="$2"
+    [ -z "$cwd" ] && return 0
+
+    # 在该目录找 .dev-lock.* 文件
+    local lockfile branch
+    lockfile=$(ls "$cwd"/.dev-lock.* 2>/dev/null | head -1)
+    [ -z "$lockfile" ] && return 0
+
+    branch=$(grep "^branch:" "$lockfile" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+    [ -z "$branch" ] && return 0
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] 孤儿回报 Brain：pid=$pid branch=$branch"
+
+    # 优先用 .dev-lock 里记录的 task_id 直接 PATCH
+    local task_id
+    task_id=$(grep "^task_id:" "$lockfile" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+
+    if [ -n "$task_id" ]; then
+      curl -s --max-time 5 -X PATCH "${BRAIN_API}/api/brain/tasks/${task_id}" \
+        -H "Content-Type: application/json" \
+        -d "{\"status\":\"failed\",\"custom_props\":{\"fail_reason\":\"orphan_killed_by_janitor\",\"branch\":\"${branch}\",\"killed_pid\":${pid}}}" \
+        > /dev/null 2>&1 || true
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] Brain 已更新：task=${task_id} → failed (orphan_killed_by_janitor)"
+    else
+      # 无 task_id：POST 告警任务让 Brain 感知
+      curl -s --max-time 5 -X POST "${BRAIN_API}/api/brain/tasks" \
+        -H "Content-Type: application/json" \
+        -d "{\"title\":\"[janitor] 孤儿分支 ${branch} 任务需重调度\",\"task_type\":\"alert\",\"priority\":\"p2\",\"description\":\"orphan_killed_by_janitor: pid=${pid} branch=${branch}\"}" \
+        > /dev/null 2>&1 || true
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] Brain 已告警：分支=$branch 需重调度 (orphan_killed_by_janitor)"
+    fi
+  }
+
   # claude 专用 kill 函数
   kill_if_claude_orphan() {
     local pid="$1" tty="$2" ppid="$3"
@@ -267,11 +303,18 @@ if [ "$MODE" = "frequent" ]; then
     [ "$secs" -lt "$threshold" ] && return
 
     if is_claude_orphan "$pid" "$tty" "$ppid"; then
+      # kill 前先取工作目录（kill 后进程消失 lsof 无效）
+      local cwd
+      cwd=$(lsof -p "$pid" -a -d cwd -Fn 2>/dev/null | grep '^n' | head -1 | sed 's/^n//')
+
       kill "$pid" 2>/dev/null
       sleep 1
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
       KILLED=$((KILLED + 1))
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] killed claude orphan pid=$pid tty=$tty ppid=$ppid (${secs}s)"
+
+      # 回报 Brain（fire-and-forget）
+      notify_brain_orphan_killed "$pid" "$cwd"
     fi
   }
 
