@@ -343,6 +343,78 @@ describe('capability-scanner', () => {
     });
   });
 
+  describe('stage-based dormant vs island rule', () => {
+    it('should mark stage=3 capability with no activity as dormant (not island)', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            // stage=3, no related_skills, no key_tables — 完全部署但无活动记录
+            { id: 'new-stage3-cap', name: '新 stage=3 能力', current_stage: 3, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'new-stage3-cap');
+      // stage=3 已部署，无活动 = dormant（非 island）
+      expect(cap.status).toBe('dormant');
+      expect(cap.status).not.toBe('island');
+    });
+
+    it('should mark stage=1 capability with no activity as island', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            // stage=1, 规划中，无活动 → 仍是 island（保持原有行为）
+            { id: 'planned-cap', name: '规划中能力', current_stage: 1, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'planned-cap');
+      // stage=1 规划中，无活动 = island（原有行为不变）
+      expect(cap.status).toBe('island');
+    });
+
+    it('should still mark BRAIN_ALWAYS_ACTIVE stage=3 caps as active (whitelist takes priority)', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            // dev-workflow 在 BRAIN_ALWAYS_ACTIVE，应为 active（优先于 stage 规则）
+            { id: 'dev-workflow', name: '/dev 统一开发工作流', current_stage: 3, related_skills: ['dev'], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'dev-workflow');
+      // BRAIN_ALWAYS_ACTIVE 优先级高于 stage 规则 → active
+      expect(cap.status).toBe('active');
+      expect(cap.evidence).toContain('brain_embedded:true');
+      expect(cap.status).not.toBe('dormant');
+      expect(cap.status).not.toBe('island');
+    });
+  });
+
   describe('getCapabilityHealth', () => {
     it('should query cecelia_events for capability_scan events', async () => {
       const pool = (await import('../db.js')).default;
