@@ -1546,6 +1546,36 @@ async function observeChat(signal, context = {}) {
         break;
       }
 
+      case 'dispatch_query_task': {
+        // P2P 查询任务：创建 research 任务，并在 payload 中存储回调信息
+        // execution-callback 完成后读取 p2p_callback 并回复飞书对话
+        const title = signal.title || '查询任务';
+        const description = signal.description || context.user_message || '';
+        const callbackOpenId = context.conversation_id || null;
+        const callbackSenderName = context.sender_name || null;
+        const payloadJson = JSON.stringify({
+          p2p_callback: callbackOpenId ? {
+            open_id: callbackOpenId,
+            sender_name: callbackSenderName,
+            query: context.user_message ? context.user_message.slice(0, 200) : '',
+          } : null,
+        });
+        const res = await pool.query(`
+          INSERT INTO tasks (title, description, priority, task_type, status, trigger_source, payload)
+          VALUES ($1, $2, $3, 'research', 'queued', 'p2p_query', $4::jsonb)
+          RETURNING id
+        `, [
+          title,
+          description,
+          signal.priority || 'P2',
+          payloadJson,
+        ]);
+        const taskId = res.rows[0]?.id;
+        console.log(`[thalamus] observeChat: dispatch_query_task created — "${title}" (${taskId}) callback_open_id=${callbackOpenId}`);
+        if (taskId) generateTaskEmbeddingAsync(taskId, title, description);
+        break;
+      }
+
       default:
         console.warn(`[thalamus] observeChat: unknown signal type: ${type}`);
     }

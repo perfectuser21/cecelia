@@ -175,8 +175,58 @@ async function notifyDailySummary(summary) {
   return sendFeishu(lines.join('\n'));
 }
 
+/**
+ * 发飞书私信到指定 open_id（用于 P2P 对话回调）
+ * @param {string} text - 消息内容
+ * @param {string} openId - 接收者的 open_id
+ * @returns {Promise<boolean>}
+ */
+async function sendFeishuToOpenId(text, openId) {
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !openId) {
+    console.log('[notifier] sendFeishuToOpenId: 凭据或 openId 缺失，跳过');
+    return false;
+  }
+  try {
+    const authResp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const auth = await authResp.json();
+    if (auth.code !== 0) {
+      console.error('[notifier] sendFeishuToOpenId: 获取 token 失败:', auth.msg);
+      return false;
+    }
+    const sendResp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${auth.tenant_access_token}`
+      },
+      body: JSON.stringify({
+        receive_id: openId,
+        msg_type: 'text',
+        content: JSON.stringify({ text })
+      }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const sendResult = await sendResp.json();
+    if (sendResult.code !== 0) {
+      console.error('[notifier] sendFeishuToOpenId: 发送失败:', sendResult.msg, 'openId:', openId);
+      return false;
+    }
+    console.log('[notifier] sendFeishuToOpenId: 成功发送到', openId);
+    return true;
+  } catch (err) {
+    console.error('[notifier] sendFeishuToOpenId 异常:', err.message);
+    return false;
+  }
+}
+
 export {
   sendFeishu,
+  sendFeishuToOpenId,
   notifyTaskCompleted,
   notifyTaskFailed,
   notifyCircuitOpen,

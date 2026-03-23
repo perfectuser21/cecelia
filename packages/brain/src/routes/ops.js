@@ -1632,6 +1632,7 @@ router.post('/feishu/event', async (req, res) => {
               sender_name: primary.senderName,
               user_id: primary.userId,
               relationship: primary.relationship,
+              conversation_id: openId,
             }, p2pHistory, batchImageContent);
             const fallbackReply = fallbackResult?.reply;
             if (!fallbackReply) return;

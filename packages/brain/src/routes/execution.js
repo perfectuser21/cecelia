@@ -268,6 +268,39 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Task ${task_id} updated to ${newStatus} (atomic)`);
 
+    // ── P2P 回调：任务完成/失败后，若任务由 P2P 对话触发，回飞书给用户 ──
+    if (newStatus === 'completed' || newStatus === 'failed') {
+      Promise.resolve().then(async () => {
+        try {
+          const taskRow = await pool.query(
+            `SELECT title, payload FROM tasks WHERE id = $1`,
+            [task_id]
+          );
+          const taskData = taskRow.rows[0];
+          const p2pCallback = taskData?.payload?.p2p_callback;
+          if (!p2pCallback?.open_id) return;
+
+          const { sendFeishuToOpenId } = await import('../notifier.js');
+          const taskTitle = taskData.title || '探查任务';
+          if (newStatus === 'completed') {
+            const findings = findingsValue
+              ? `\n\n${findingsValue.slice(0, 800)}`
+              : '';
+            const callbackText = `🔍 查完了！关于「${taskTitle}」：${findings || '（暂无详细结果）'}`;
+            await sendFeishuToOpenId(callbackText, p2pCallback.open_id);
+          } else {
+            await sendFeishuToOpenId(
+              `😅 查「${taskTitle}」时遇到了问题，没能完成。`,
+              p2pCallback.open_id
+            );
+          }
+          console.log(`[execution-callback] P2P 回调已发送 task=${task_id} open_id=${p2pCallback.open_id}`);
+        } catch (p2pErr) {
+          console.warn(`[execution-callback] P2P 回调失败（非致命）: ${p2pErr.message}`);
+        }
+      }).catch(() => {});
+    }
+
     // quota_exhausted → 设置全局 billing pause（阻止后续派发直到配额恢复）
     if (newStatus === 'quota_exhausted') {
       try {
