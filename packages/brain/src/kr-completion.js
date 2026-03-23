@@ -17,12 +17,11 @@ const MAX_ACTIVE_KRS = 6;
  * KR 完成条件：其下所有关联 Project 均 completed，且至少有 1 个 Project。
  */
 async function checkKRCompletion(pool) {
-  // 查所有 in_progress 的 KR
+  // 查所有活跃的 Objective（旧称 KR / area_okr，IDs 与 goals 一致）
   const krsResult = await pool.query(`
     SELECT id, title
-    FROM goals
-    WHERE type = 'area_okr'
-      AND status = 'in_progress'
+    FROM objectives
+    WHERE status IN ('active', 'in_progress')
   `);
 
   const closed = [];
@@ -74,9 +73,8 @@ async function checkKRCompletion(pool) {
 async function activateNextKRs(pool) {
   const activeCountResult = await pool.query(`
     SELECT COUNT(*) AS cnt
-    FROM goals
-    WHERE type = 'area_okr'
-      AND status = 'in_progress'
+    FROM objectives
+    WHERE status IN ('active', 'in_progress')
   `);
   const currentActive = parseInt(activeCountResult.rows[0].cnt, 10);
   const availableSlots = MAX_ACTIVE_KRS - currentActive;
@@ -85,13 +83,13 @@ async function activateNextKRs(pool) {
     return 0;
   }
 
+  // UPDATE 写旧表，触发器自动同步到 objectives
   const activateResult = await pool.query(`
     UPDATE goals
     SET status = 'in_progress', updated_at = NOW()
     WHERE id IN (
-      SELECT id FROM goals
-      WHERE type = 'area_okr'
-        AND status = 'pending'
+      SELECT id FROM objectives
+      WHERE status = 'pending'
       ORDER BY created_at ASC
       LIMIT $1
     )

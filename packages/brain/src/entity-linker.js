@@ -11,7 +11,7 @@
 import pool from './db.js';
 
 /**
- * 在 goals 表中查找与文本匹配的目标
+ * 在 objectives + key_results 新表中查找与文本匹配的目标
  * @param {string} text - 搜索文本
  * @returns {Promise<{id: string, title: string}|null>}
  */
@@ -22,13 +22,19 @@ export async function findRelatedGoal(text) {
     const keywords = extractKeywords(text);
     if (keywords.length === 0) return null;
 
-    // 用关键词逐个匹配 goals 表（ILIKE），返回第一个匹配
+    // 用关键词逐个匹配 objectives + key_results（ILIKE），返回第一个匹配
     for (const kw of keywords) {
       const result = await pool.query(
-        `SELECT id, title FROM goals
-         WHERE status IN ('in_progress', 'pending', 'ready', 'reviewing', 'decomposing')
-           AND title ILIKE $1
-         ORDER BY priority ASC
+        `SELECT id, title FROM (
+           SELECT id, title, created_at FROM objectives
+           WHERE status IN ('active', 'in_progress', 'pending')
+             AND title ILIKE $1
+           UNION ALL
+           SELECT id, title, created_at FROM key_results
+           WHERE status NOT IN ('completed', 'cancelled')
+             AND title ILIKE $1
+         ) t
+         ORDER BY created_at ASC
          LIMIT 1`,
         [`%${kw}%`]
       );
@@ -43,7 +49,7 @@ export async function findRelatedGoal(text) {
 }
 
 /**
- * 在 projects 表中查找与文本匹配的项目
+ * 在 okr_projects + okr_scopes + okr_initiatives 新表中查找与文本匹配的项目
  * @param {string} text - 搜索文本
  * @returns {Promise<{id: string, name: string}|null>}
  */
@@ -56,8 +62,13 @@ export async function findRelatedProject(text) {
 
     for (const kw of keywords) {
       const result = await pool.query(
-        `SELECT id, name FROM projects
-         WHERE name ILIKE $1
+        `SELECT id, title AS name FROM (
+           SELECT id, title, created_at FROM okr_projects WHERE title ILIKE $1
+           UNION ALL
+           SELECT id, title, created_at FROM okr_scopes WHERE title ILIKE $1
+           UNION ALL
+           SELECT id, title, created_at FROM okr_initiatives WHERE title ILIKE $1
+         ) t
          ORDER BY created_at DESC
          LIMIT 1`,
         [`%${kw}%`]

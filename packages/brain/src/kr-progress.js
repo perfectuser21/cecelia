@@ -71,12 +71,11 @@ export async function updateKrProgress(pool, krId) {
  * @returns {Promise<{ updated: number, results: Array }>}
  */
 export async function syncAllKrProgress(pool) {
-  // 查所有 in_progress 的 KR
+  // 查所有活跃的 Objective 和 KR（IDs 与旧 goals 表一致，可跨表关联）
   const krsResult = await pool.query(`
-    SELECT id, title
-    FROM goals
-    WHERE type IN ('area_okr', 'area_kr', 'global_kr', 'key_result')
-      AND status NOT IN ('completed', 'cancelled')
+    SELECT id, title FROM objectives WHERE status NOT IN ('completed', 'cancelled')
+    UNION ALL
+    SELECT id, title FROM key_results WHERE status NOT IN ('completed', 'cancelled')
   `);
 
   const results = [];

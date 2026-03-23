@@ -1173,7 +1173,7 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
 /**
  * POST /api/brain/tasks/:id/request-intent-expand
  * 根据父任务创建 intent_expand 子任务
- * 沿 task.project_id → projects.kr_id → goals(KR).parent_id → goals(OKR).parent_id → goals(Vision)
+ * 沿 task.project_id → projects.kr_id → objectives(id) → objectives.vision_id → visions
  * 链路查询战略上下文，作为 intent_expand 子任务的 prompt 一部分
  */
 router.post('/tasks/:id/request-intent-expand', async (req, res) => {
@@ -1187,7 +1187,8 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
     }
     const parentTask = parentResult.rows[0];
 
-    // 2. 沿 project_id → KR → OKR → Vision 链查询上下文
+    // 2. 沿 project_id → Objective → Vision 链查询上下文
+    // objectives.id == 旧 goals.id（UUID 相同，migration 179 原地复制）
     let context = { project: null, kr: null, okr: null, vision: null };
 
     if (parentTask.project_id) {
@@ -1199,55 +1200,38 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
         const project = projectResult.rows[0];
         context.project = { id: project.id, name: project.name };
 
-        if (project.kr_id) {
-          // 查 KR（goals 表 type='area_kr' 或 'global_kr'）
-          const krResult = await pool.query(
-            'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
-            [project.kr_id]
-          );
-          if (krResult.rows.length > 0) {
-            const kr = krResult.rows[0];
-            context.kr = { id: kr.id, title: kr.title, description: kr.description };
+        let objectiveId = project.kr_id;
 
-            if (kr.parent_id) {
-              // 查 OKR
-              const okrResult = await pool.query(
-                'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
-                [kr.parent_id]
-              );
-              if (okrResult.rows.length > 0) {
-                const okr = okrResult.rows[0];
-                context.okr = { id: okr.id, title: okr.title, description: okr.description };
-
-                if (okr.parent_id) {
-                  // 查 Vision/Mission
-                  const visionResult = await pool.query(
-                    'SELECT id, title, description FROM goals WHERE id = $1',
-                    [okr.parent_id]
-                  );
-                  if (visionResult.rows.length > 0) {
-                    const vision = visionResult.rows[0];
-                    context.vision = { id: vision.id, title: vision.title, description: vision.description };
-                  }
-                }
-              }
-            }
-          }
-        } else {
-          // 尝试通过 project_kr_links 查 kr_id
+        if (!objectiveId) {
+          // 尝试通过 project_kr_links 查 objective_id（旧表 kr_id 指向 objectives）
           const krLinkResult = await pool.query(
             'SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1',
             [parentTask.project_id]
           );
           if (krLinkResult.rows.length > 0) {
-            const krId = krLinkResult.rows[0].kr_id;
-            const krResult = await pool.query(
-              'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
-              [krId]
-            );
-            if (krResult.rows.length > 0) {
-              const kr = krResult.rows[0];
-              context.kr = { id: kr.id, title: kr.title, description: kr.description };
+            objectiveId = krLinkResult.rows[0].kr_id;
+          }
+        }
+
+        if (objectiveId) {
+          // 查 Objective（旧称 KR / area_okr，直接用 FK vision_id 取 Vision）
+          const objResult = await pool.query(
+            'SELECT id, title, vision_id FROM objectives WHERE id = $1',
+            [objectiveId]
+          );
+          if (objResult.rows.length > 0) {
+            const obj = objResult.rows[0];
+            context.kr = { id: obj.id, title: obj.title };
+
+            if (obj.vision_id) {
+              const visionResult = await pool.query(
+                'SELECT id, title FROM visions WHERE id = $1',
+                [obj.vision_id]
+              );
+              if (visionResult.rows.length > 0) {
+                const vision = visionResult.rows[0];
+                context.vision = { id: vision.id, title: vision.title };
+              }
             }
           }
         }

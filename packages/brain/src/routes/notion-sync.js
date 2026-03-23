@@ -83,10 +83,14 @@ router.post('/full-sync', (_req, res) => {
 router.get('/full-status', async (_req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT 'areas'    AS tbl, COUNT(*) total, COUNT(notion_id) synced FROM areas    UNION ALL
-      SELECT 'goals',          COUNT(*),        COUNT(notion_id)        FROM goals    UNION ALL
-      SELECT 'projects',       COUNT(*),        COUNT(notion_id)        FROM projects UNION ALL
-      SELECT 'tasks',          COUNT(*),        COUNT(notion_id)        FROM tasks
+      SELECT 'areas'            AS tbl, COUNT(*) total, COUNT(notion_id) synced FROM areas          UNION ALL
+      SELECT 'visions',                 COUNT(*),        0                       FROM visions        UNION ALL
+      SELECT 'objectives',              COUNT(*),        0                       FROM objectives     UNION ALL
+      SELECT 'key_results',             COUNT(*),        0                       FROM key_results    UNION ALL
+      SELECT 'okr_projects',            COUNT(*),        0                       FROM okr_projects   UNION ALL
+      SELECT 'okr_scopes',              COUNT(*),        0                       FROM okr_scopes     UNION ALL
+      SELECT 'okr_initiatives',         COUNT(*),        0                       FROM okr_initiatives UNION ALL
+      SELECT 'tasks',                   COUNT(*),        COUNT(notion_id)        FROM tasks
     `);
     res.json({
       notion_db_ids: NOTION_DB_IDS,

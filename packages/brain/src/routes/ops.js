@@ -306,13 +306,9 @@ router.get('/decomposition/stats', async (req, res) => {
 
     // 获取项目和Initiative统计
     const projectStatsResult = await pool.query(`
-      SELECT
-        type,
-        status,
-        COUNT(*) as count
-      FROM projects
-      WHERE type IN ('project', 'initiative')
-      GROUP BY type, status
+      SELECT 'project' AS type, status, COUNT(*) as count FROM okr_projects GROUP BY status
+      UNION ALL
+      SELECT 'initiative' AS type, status, COUNT(*) as count FROM okr_initiatives GROUP BY status
     `);
 
     const projectStats = {};
@@ -2224,10 +2220,13 @@ router.get('/pr-progress/:kr_id', async (req, res) => {
     const rangeStart = new Date(Date.UTC(year, monthNum - 1, 1));
     const rangeEnd = new Date(Date.UTC(year, monthNum, 1) - 1); // 月末最后一毫秒
 
-    // 查询 KR 信息
+    // 查询 Objective 信息（旧称 KR / area_okr，objectives.id == goals.id UUID 相同）
     const goalResult = await pool.query(
-      `SELECT id, title, metadata FROM goals WHERE id = $1 LIMIT 1`,
-      [kr_id]
+      `SELECT id, title, metadata FROM objectives WHERE id = $1
+       UNION ALL
+       SELECT id, title, metadata FROM key_results WHERE id = $1
+       LIMIT 1`,
+      [kr_id, kr_id]
     );
 
     if (goalResult.rows.length === 0) {

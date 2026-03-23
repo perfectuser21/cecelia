@@ -34,8 +34,8 @@ function makeMockPool({
         return { rows: [] };
       }
 
-      // syncAllKrProgress: 查所有活跃 KR
-      if (s.includes('FROM goals') && s.includes('type IN')) {
+      // syncAllKrProgress: 查所有活跃 Objective + KR（新表 UNION ALL）
+      if (s.includes('FROM objectives') && s.includes('FROM key_results')) {
         return { rows: krs };
       }
 
