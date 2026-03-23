@@ -227,10 +227,13 @@ verify_step2() {
     echo "  ✅ [Gate 0c] 垃圾清理检查通过（无 console.log/debugger）" >&2
 
     # Gate 0d: 周边一致性扫描（同目录文件引用被改模块的旧版本号）
+    # v1.1.0 修复：只比较同样被修改的版本文件，避免将独立版本号的旁路文件（如 skills-registry.json）误判为不一致
     local consistency_issues=()
     local version_files
-    version_files=$(echo "$impl_files" | grep -E '(package\.json|VERSION|\.hook-core-version)$' 2>/dev/null || echo "")
+    version_files=$(echo "$impl_files" | grep -E '(package\.json|VERSION|\.hook-core-version|package-lock\.json)$' 2>/dev/null || echo "")
     if [[ -n "$version_files" ]]; then
+        # 收集所有已变更版本文件的版本号
+        local changed_versions=()
         while IFS= read -r vfile; do
             [[ -z "$vfile" ]] && continue
             local full_vpath="$PROJECT_ROOT/$vfile"
@@ -238,19 +241,23 @@ verify_step2() {
             local new_ver
             new_ver=$(grep -oE '"version"\s*:\s*"[^"]+"' "$full_vpath" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
             [[ -z "$new_ver" ]] && new_ver=$(cat "$full_vpath" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-            if [[ -n "$new_ver" ]]; then
-                local vdir
-                vdir=$(dirname "$full_vpath")
-                while IFS= read -r sf; do
-                    [[ "$sf" == "$full_vpath" ]] && continue
-                    local sv
-                    sv=$(grep -oE '"version"\s*:\s*"[^"]+"' "$sf" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
-                    if [[ -n "$sv" && "$sv" != "$new_ver" ]]; then
-                        consistency_issues+=("sibling $sf 版本($sv) 与 $vfile 版本($new_ver) 不一致")
-                    fi
-                done < <(find "$vdir" -maxdepth 1 -name "*.json" -o -name "*.yaml" -o -name "*.yml" 2>/dev/null)
-            fi
+            [[ -n "$new_ver" ]] && changed_versions+=("$vfile:$new_ver")
         done <<< "$version_files"
+
+        # 只在已变更版本文件之间做一致性检查（不扫描未修改的旁路文件）
+        if [[ ${#changed_versions[@]} -gt 1 ]]; then
+            local ref_ver ref_file
+            ref_file=$(echo "${changed_versions[0]}" | cut -d: -f1)
+            ref_ver=$(echo "${changed_versions[0]}" | cut -d: -f2)
+            for cv in "${changed_versions[@]:1}"; do
+                local cv_file cv_ver
+                cv_file=$(echo "$cv" | cut -d: -f1)
+                cv_ver=$(echo "$cv" | cut -d: -f2)
+                if [[ -n "$cv_ver" && "$cv_ver" != "$ref_ver" ]]; then
+                    consistency_issues+=("sibling $cv_file 版本($cv_ver) 与 $ref_file 版本($ref_ver) 不一致")
+                fi
+            done
+        fi
     fi
 
     if [[ ${#consistency_issues[@]} -gt 0 ]]; then
