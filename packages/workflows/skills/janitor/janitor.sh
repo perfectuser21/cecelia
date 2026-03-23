@@ -294,9 +294,9 @@ if [ "$MODE" = "frequent" ]; then
     [ -z "$line" ] && continue
     PID=$(echo "$line" | awk '{print $2}')
     TTY=$(echo "$line" | awk '{print $7}')
-    PPID=$(ps -o ppid= -p "$PID" 2>/dev/null | tr -d ' ')
-    [ -z "$PPID" ] && continue
-    kill_if_claude_orphan "$PID" "$TTY" "$PPID" "$ACTIVE_THRESHOLD"
+    PROC_PPID=$(ps -o ppid= -p "$PID" 2>/dev/null | tr -d ' ')
+    [ -z "$PROC_PPID" ] && continue
+    kill_if_claude_orphan "$PID" "$TTY" "$PROC_PPID" "$ACTIVE_THRESHOLD"
   done < <(ps aux | grep -E " claude$| claude " | grep -v grep)
 
   if [ "$KILLED" -gt 0 ]; then
