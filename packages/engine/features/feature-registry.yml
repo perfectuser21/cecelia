@@ -17,8 +17,13 @@
 
 version: "3.94.0"
 updated: "2026-03-23"
-# ci-trigger: 13.36.0
+# ci-trigger: 13.37.0
 changelog:
+
+  - version: "13.37.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): 02-code.md 本地测试改为精准测试（vitest run 相关文件，去全量，去重复）"
+    scope: packages/engine/skills/dev/steps/02-code.md
 
   - version: "13.36.0"
     date: "2026-03-23"
