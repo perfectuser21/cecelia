@@ -323,4 +323,8 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+} else {
+  module.exports = { extractPriority, detectFromChangedFiles, CORE_PATH_PATTERNS_P0 };
+}

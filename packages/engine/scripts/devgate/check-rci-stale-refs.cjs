@@ -121,16 +121,7 @@ function main() {
   //   2. 相对于仓库根（如 .github/workflows/*.yml, apps/dashboard/...）
   // 策略：两处都找，只要有一处存在即视为有效
   const engineDir = path.dirname(contractPath);
-
-  const staleRefs = [];
-
-  for (const ref of refs) {
-    const fromEngineDir = path.join(engineDir, ref.value);
-    const fromRepoRoot = path.join(repoRoot, ref.value);
-    if (!fs.existsSync(fromEngineDir) && !fs.existsSync(fromRepoRoot)) {
-      staleRefs.push(ref);
-    }
-  }
+  const staleRefs = findStaleRefs(refs, engineDir, repoRoot);
 
   if (staleRefs.length === 0) {
     out(`✅ 所有 ${refs.length} 条引用均有效，无悬空引用`);
@@ -159,4 +150,27 @@ function main() {
   process.exit(1);
 }
 
-main();
+/**
+ * 检查给定 refs 列表中哪些引用悬空（文件不存在）
+ * @param {{value: string, lineNum: number, type: string}[]} refs
+ * @param {string} engineDir - packages/engine 目录绝对路径
+ * @param {string} repoRoot - 仓库根目录绝对路径
+ * @returns {{value: string, lineNum: number, type: string}[]}
+ */
+function findStaleRefs(refs, engineDir, repoRoot) {
+  const staleRefs = [];
+  for (const ref of refs) {
+    const fromEngineDir = path.join(engineDir, ref.value);
+    const fromRepoRoot = path.join(repoRoot, ref.value);
+    if (!fs.existsSync(fromEngineDir) && !fs.existsSync(fromRepoRoot)) {
+      staleRefs.push(ref);
+    }
+  }
+  return staleRefs;
+}
+
+if (require.main === module) {
+  main();
+} else {
+  module.exports = { extractFileRefs, findRepoRoot, findStaleRefs };
+}
