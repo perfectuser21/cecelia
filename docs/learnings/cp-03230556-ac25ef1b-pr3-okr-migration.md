@@ -17,7 +17,11 @@
 
 ### 根本原因
 
-OKR 数据模型重构（PR1/PR2）将旧的单表多类型设计（`goals.type` 区分层级，`projects.type` 区分 scope/initiative）替换为规范化的专用表。PR3 的任务是清理遗留的 SQL 引用，确保所有业务代码使用新表。
+OKR 数据模型重构（PR1/PR2）将旧的单表多类型设计（`goals.type` 区分层级，`projects.type` 区分 scope/initiative）替换为规范化的专用表。
+
+PR3 的任务是清理遗留的 SQL 引用，确保所有业务代码使用新表（`objectives`/`key_results`/`okr_projects`/`okr_scopes`/`okr_initiatives`）。
+
+业务逻辑层（~40 个 src/*.js 文件）的迁移与 routes 层迁移并行开展，两者对相同 routes 文件的改动导致 merge conflict，需 rebase 后取 main 版本解决。
 
 ### 关键迁移模式
 
