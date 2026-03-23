@@ -357,6 +357,57 @@ async function _writeInsight(pool, insight) {
   console.log('[reflection] 洞察已成功写入，跳过计数器已重置');
 }
 
+// ── 主函数辅助 ──────────────────────────────────────────────
+
+/**
+ * 构造 prompt 并调用 LLM，失败返回 null
+ */
+async function _callLLMForReflection(memories, accumulator) {
+  const memorySummary = memories
+    .map((m, i) => `${i + 1}. [重要性${m.importance}] ${m.content}`)
+    .join('\n');
+
+  const prompt = `你是 Cecelia，Alex 的 AI 管家，24/7 管理 Perfect21 所有系统。
+
+以下是你最近的系统观察记录：
+
+${memorySummary}
+
+请深入反思这些观察：
+1. 这些信号意味着什么？有哪些值得关注的模式？
+2. 有哪些潜在风险或机会？
+3. 什么是最需要向 Alex 汇报的？
+
+要求：
+- 从管家视角，带洞察（不只是总结）
+- 简洁有力，不超过 300 字
+- 结构：发现的模式 → 风险或机会 → 建议`;
+
+  try {
+    const result = await callLLM('reflection', prompt, { timeout: 150000 });
+    return result.text || null;
+  } catch (err) {
+    console.error('[reflection] Opus call error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 写入洞察并重置 accumulator（各自独立 try/catch，互不影响）
+ */
+async function _persistInsightAndReset(pool, insight, accumulator) {
+  try {
+    await _writeInsight(pool, insight);
+  } catch (err) {
+    console.error('[reflection] insight insert error:', err.message);
+  }
+  try {
+    await _resetAccumulator(pool, accumulator);
+  } catch (err) {
+    console.error('[reflection] reset accumulator error:', err.message);
+  }
+}
+
 // ── 主函数 ───────────────────────────────────────────────────
 
 /**
@@ -398,37 +449,8 @@ export async function runReflection(pool) {
     return { triggered: false };
   }
 
-  // 4. 构造 prompt 并调用 LLM
-  const memorySummary = memories
-    .map((m, i) => `${i + 1}. [重要性${m.importance}] ${m.content}`)
-    .join('\n');
-
-  const prompt = `你是 Cecelia，Alex 的 AI 管家，24/7 管理 Perfect21 所有系统。
-
-以下是你最近的系统观察记录：
-
-${memorySummary}
-
-请深入反思这些观察：
-1. 这些信号意味着什么？有哪些值得关注的模式？
-2. 有哪些潜在风险或机会？
-3. 什么是最需要向 Alex 汇报的？
-
-要求：
-- 从管家视角，带洞察（不只是总结）
-- 简洁有力，不超过 300 字
-- 结构：发现的模式 → 风险或机会 → 建议`;
-
-  let insight = '';
-  try {
-    console.log(`[reflection] Calling LLM for deep reflection (accumulator=${accumulator})...`);
-    const result = await callLLM('reflection', prompt, { timeout: 150000 });
-    insight = result.text;
-  } catch (err) {
-    console.error('[reflection] Opus call error:', err.message);
-    return { triggered: false };
-  }
-
+  // 4. 构造 prompt 并调用 LLM（错误由子函数处理，失败返回 null）
+  const insight = await _callLLMForReflection(memories, accumulator);
   if (!insight) {
     return { triggered: false };
   }
@@ -444,19 +466,8 @@ ${memorySummary}
     console.error('[reflection] dedup check error (non-critical):', err.message);
   }
 
-  // 6. 写入 memory_stream
-  try {
-    await _writeInsight(pool, insight);
-  } catch (err) {
-    console.error('[reflection] insight insert error:', err.message);
-  }
-
-  // 7. 重置 accumulator
-  try {
-    await _resetAccumulator(pool, accumulator);
-  } catch (err) {
-    console.error('[reflection] reset accumulator error:', err.message);
-  }
+  // 6. 写入 memory_stream + 重置 accumulator
+  await _persistInsightAndReset(pool, insight, accumulator);
 
   return { triggered: true, insight, accumulator_before: accumulator };
 }
