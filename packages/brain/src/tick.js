@@ -1561,6 +1561,22 @@ async function executeTick() {
     }
   }
 
+  // [感知] KR 完成检查：Initiative → Scope → Project 全完成后关闭 KR
+  try {
+    const { checkKRCompletion } = await import('./kr-completion.js');
+    const krResult = await checkKRCompletion(pool);
+    if (krResult.closedCount > 0) {
+      console.log(`[TICK] KR 完成检查: ${krResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'kr_completion_check',
+        closed_count: krResult.closedCount,
+        closed: krResult.closed,
+      });
+    }
+  } catch (krErr) {
+    console.error('[tick] KR completion check failed (non-fatal):', krErr.message);
+  }
+
   // [感知] Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
   try {
     const { checkInitiativeCompletion } = await import('./initiative-closer.js');
@@ -1622,6 +1638,21 @@ async function executeTick() {
     }
   } catch (activateErr) {
     console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
+  }
+
+  // [感知] KR 队列激活：从 pending KR 中按优先级激活
+  try {
+    const { activateNextKRs } = await import('./kr-completion.js');
+    const krsActivated = await activateNextKRs(pool);
+    if (krsActivated > 0) {
+      console.log(`[TICK] KR 激活: ${krsActivated} 个从 pending → in_progress`);
+      actionsTaken.push({
+        action: 'kr_queue_activate',
+        activated_count: krsActivated,
+      });
+    }
+  } catch (krActivateErr) {
+    console.error('[tick] KR queue activation failed (non-fatal):', krActivateErr.message);
   }
 
   // [感知] Project 层容量管理：激活/降级确保 active 在 capacity 范围内
