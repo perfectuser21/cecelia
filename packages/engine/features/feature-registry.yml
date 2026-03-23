@@ -15,10 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.90.0"
+version: "3.91.0"
 updated: "2026-03-23"
-# ci-trigger: 13.33.2
+# ci-trigger: 13.33.3
 changelog:
+
+  - version: "13.33.3"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(engine): verify-step Gate 2 自动标 [x] + devloop 条件 2.6 DoD 完整性检查（状态机镜像 CI）"
+    scope: packages/engine/hooks/,packages/engine/lib/
 
   - version: "13.33.2"
     date: "2026-03-23"
