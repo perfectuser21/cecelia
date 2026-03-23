@@ -1,164 +1,140 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { execSync, spawnSync } from 'child_process'
-import fs from 'fs'
+import { describe, it, expect } from 'vitest'
+import { createRequire } from 'module'
 import path from 'path'
-import os from 'os'
 
-const SCRIPT = path.resolve(__dirname, '../../scripts/devgate/check-fake-dod-tests.cjs')
+const require = createRequire(import.meta.url)
+const { scanViolations, FAKE_PATTERNS } = require(
+  path.resolve(__dirname, '../../scripts/devgate/check-fake-dod-tests.cjs')
+)
 
-function runCheck(taskCardContent: string): { code: number; stdout: string; stderr: string } {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-dod-test-'))
-  const cardPath = path.join(tmpDir, '.task-test.md')
-  fs.writeFileSync(cardPath, taskCardContent)
-
-  const result = spawnSync('node', [SCRIPT, cardPath], {
-    cwd: tmpDir,
-    encoding: 'utf8',
-  })
-
-  fs.rmSync(tmpDir, { recursive: true, force: true })
-
-  return {
-    code: result.status ?? 1,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-  }
+function makeCard(testLine: string): string {
+  return `---\nid: test\n---\n## 验收条件\n\n- [ ] [BEHAVIOR] 功能正常\n  ${testLine}\n`
 }
 
 describe('check-fake-dod-tests.cjs', () => {
-  describe('通过情形（合法测试）', () => {
-    it('manual:node -e 真实断言应通过', () => {
-      const card = `
-## 验收条件
+  describe('FAKE_PATTERNS 定义', () => {
+    it('应包含 10 个模式', () => {
+      expect(FAKE_PATTERNS).toHaveLength(10)
+    })
 
-- [ ] [BEHAVIOR] 功能正常
-  Test: manual:node -e "const c=require('fs').readFileSync('file','utf8');if(!c.includes('X'))process.exit(1)"
-`
-      const { code } = runCheck(card)
-      expect(code).toBe(0)
+    it('每个模式应有 pattern 和 desc 字段', () => {
+      for (const p of FAKE_PATTERNS) {
+        expect(p.pattern).toBeInstanceOf(RegExp)
+        expect(typeof p.desc).toBe('string')
+      }
+    })
+  })
+
+  describe('scanViolations — 通过情形（合法测试）', () => {
+    it('manual:node -e 真实断言应通过', () => {
+      const card = makeCard("Test: manual:node -e \"const c=require('fs').readFileSync('f','utf8');if(!c.includes('X'))process.exit(1)\"")
+      expect(scanViolations(card)).toHaveLength(0)
     })
 
     it('tests/ 路径应通过', () => {
-      const card = `
-- [ ] [BEHAVIOR] 测试覆盖
-  Test: tests/my.test.ts
-`
-      const { code } = runCheck(card)
-      expect(code).toBe(0)
+      const card = makeCard('Test: tests/devgate/check-fake-dod-tests.test.ts')
+      expect(scanViolations(card)).toHaveLength(0)
     })
 
-    it('contract: 格式应通过', () => {
-      const card = `
-- [ ] [BEHAVIOR] 契约检查
-  Test: contract:my-behavior-id
-`
-      const { code } = runCheck(card)
-      expect(code).toBe(0)
+    it('contract: 应通过', () => {
+      const card = makeCard('Test: contract:my-behavior-id')
+      expect(scanViolations(card)).toHaveLength(0)
     })
 
-    it('manual:bash 真实命令应通过', () => {
-      const card = `
-- [ ] [BEHAVIOR] bash 检查
-  Test: manual:bash -c "npm test 2>&1 | tail -5"
-`
-      const { code } = runCheck(card)
-      expect(code).toBe(0)
+    it('bash -c 带 process.exit 应通过（不匹配任何 fake 模式）', () => {
+      const card = makeCard('Test: manual:bash -c "node -e \'process.exit(1)\'"')
+      expect(scanViolations(card)).toHaveLength(0)
+    })
+
+    it('grep -c（输出数字，无 | wc）应通过', () => {
+      const card = makeCard('Test: manual:bash -c "grep -c pattern file"')
+      expect(scanViolations(card)).toHaveLength(0)
     })
   })
 
-  describe('拦截情形（假测试）', () => {
-    it('echo 命令应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: manual:echo "passed"
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('echo')
+  describe('scanViolations — 拦截情形（假测试）', () => {
+    it('echo 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: echo hello'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('echo')
     })
 
-    it('ls 命令应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: ls packages/
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('ls')
-    })
-
-    it('cat 命令应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: manual:cat file.txt
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('cat')
-    })
-
-    it('grep | wc 组合应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: manual:grep -c pattern file | wc -l
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('wc')
-    })
-
-    it('| wc -l 应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: manual:npm run something | wc -l
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('wc')
-    })
-
-    it('true 命令应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: true
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('true')
-    })
-
-    it('exit 0 应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: exit 0
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('exit 0')
+    it('manual:echo 也应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: manual:echo hello'))
+      expect(violations).toHaveLength(1)
     })
 
     it('printf 应被拦截', () => {
-      const card = `
-- [ ] [BEHAVIOR] 假测试
-  Test: manual:printf "ok\n"
-`
-      const { code, stderr } = runCheck(card)
-      expect(code).toBe(1)
-      expect(stderr).toContain('printf')
+      const violations = scanViolations(makeCard('Test: printf "hello"'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('printf')
+    })
+
+    it('ls 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: ls packages/engine'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('ls')
+    })
+
+    it('cat 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: cat file.txt'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('cat')
+    })
+
+    it('true 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: true'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('true')
+    })
+
+    it('exit 0 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: exit 0'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('exit 0')
+    })
+
+    it('test -f 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: manual:test -f file.txt'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('test -f')
+    })
+
+    it('grep | wc 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: manual:grep pattern file | wc'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('grep | wc')
+    })
+
+    it('| wc -l 应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: manual:bash -c "find . | wc -l"'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('wc -l')
+    })
+
+    it('wc 单独使用应被拦截', () => {
+      const violations = scanViolations(makeCard('Test: wc file.txt'))
+      expect(violations).toHaveLength(1)
+      expect(violations[0].desc).toContain('wc')
     })
   })
 
-  describe('错误处理', () => {
-    it('文件不存在时应 exit 1', () => {
-      const result = spawnSync('node', [SCRIPT, '/nonexistent/path/.task.md'], {
-        encoding: 'utf8',
-      })
-      expect(result.status).toBe(1)
+  describe('scanViolations — 多违规情形', () => {
+    it('包含两个假测试的 card 应返回两条违规', () => {
+      const card = `---\nid: test\n---\n## 验收条件\n\n- [ ] [BEHAVIOR] A\n  Test: echo hello\n- [ ] [BEHAVIOR] B\n  Test: ls packages/\n`
+      const violations = scanViolations(card)
+      expect(violations).toHaveLength(2)
+    })
+  })
+
+  describe('scanViolations — 空内容', () => {
+    it('空 card 应通过（无违规）', () => {
+      expect(scanViolations('')).toHaveLength(0)
     })
 
-    it('无参数时应 exit 1', () => {
-      const result = spawnSync('node', [SCRIPT], { encoding: 'utf8' })
-      expect(result.status).toBe(1)
+    it('无 Test: 行的 card 应通过', () => {
+      const card = `---\nid: test\n---\n## 验收条件\n\n- [ ] [BEHAVIOR] 功能正常（无测试行）\n`
+      expect(scanViolations(card)).toHaveLength(0)
     })
   })
 })

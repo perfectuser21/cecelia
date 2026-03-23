@@ -56,25 +56,16 @@ const FAKE_PATTERNS = [
 ];
 
 // ============================================================================
-// 主逻辑
+// 核心逻辑（导出供测试使用）
 // ============================================================================
 
-function checkFakeDodTests(taskCardPath) {
-  if (!taskCardPath) {
-    console.error('用法: node check-fake-dod-tests.cjs <task-card-path>');
-    process.exit(1);
-  }
-
-  const absPath = path.resolve(process.cwd(), taskCardPath);
-
-  if (!fs.existsSync(absPath)) {
-    console.error(`❌ Task Card 文件不存在: ${absPath}`);
-    process.exit(1);
-  }
-
-  const content = fs.readFileSync(absPath, 'utf8');
+/**
+ * 扫描 Task Card 内容，返回违规列表。
+ * @param {string} content - Task Card 文件内容
+ * @returns {{ lineNum: number, line: string, desc: string }[]}
+ */
+function scanViolations(content) {
   const lines = content.split('\n');
-
   const violations = [];
 
   lines.forEach((line, idx) => {
@@ -87,30 +78,55 @@ function checkFakeDodTests(taskCardPath) {
     }
   });
 
+  return violations;
+}
+
+// ============================================================================
+// CLI 入口
+// ============================================================================
+
+function main(taskCardPath) {
+  if (!taskCardPath) {
+    process.stderr.write('用法: node check-fake-dod-tests.cjs <task-card-path>\n');
+    process.exit(1);
+  }
+
+  const absPath = path.resolve(process.cwd(), taskCardPath);
+
+  if (!fs.existsSync(absPath)) {
+    process.stderr.write(`❌ Task Card 文件不存在: ${absPath}\n`);
+    process.exit(1);
+  }
+
+  const content = fs.readFileSync(absPath, 'utf8');
+  const violations = scanViolations(content);
+
   if (violations.length === 0) {
     process.stdout.write(`✅ 假 DoD Test 检测通过 — 未发现假测试模式（${taskCardPath}）\n`);
     process.exit(0);
   }
 
-  console.error(`❌ 发现 ${violations.length} 条假 DoD Test（无真实断言）：`);
-  console.error('');
+  process.stderr.write(`❌ 发现 ${violations.length} 条假 DoD Test（无真实断言）：\n`);
+  process.stderr.write('\n');
   violations.forEach(({ lineNum, line, desc }) => {
-    console.error(`  第 ${lineNum} 行: ${desc}`);
-    console.error(`    ${line}`);
+    process.stderr.write(`  第 ${lineNum} 行: ${desc}\n`);
+    process.stderr.write(`    ${line}\n`);
   });
-  console.error('');
-  console.error('禁止的假测试模式：');
-  console.error('  echo / printf / ls / cat — 只输出，无断言');
-  console.error('  true / exit 0 — 永远成功');
-  console.error('  grep | wc / wc -l — 计数但不断言结果');
-  console.error('');
-  console.error('正确示例：');
-  console.error('  Test: manual:node -e "const c=require(\'fs\').readFileSync(\'file\',\'utf8\');if(!c.includes(\'X\'))process.exit(1)"');
-  console.error('  Test: tests/my.test.ts');
-  console.error('  Test: contract:my-behavior');
+  process.stderr.write('\n');
+  process.stderr.write('禁止的假测试模式：\n');
+  process.stderr.write('  echo / printf / ls / cat — 只输出，无断言\n');
+  process.stderr.write('  true / exit 0 — 永远成功\n');
+  process.stderr.write('  grep | wc / wc -l — 计数但不断言结果\n');
+  process.stderr.write('\n');
+  process.stderr.write('正确示例：\n');
+  process.stderr.write('  Test: manual:node -e "const c=require(\'fs\').readFileSync(\'file\',\'utf8\');if(!c.includes(\'X\'))process.exit(1)"\n');
+  process.stderr.write('  Test: tests/my.test.ts\n');
+  process.stderr.write('  Test: contract:my-behavior\n');
   process.exit(1);
 }
 
-// 从命令行参数读取 task card 路径
-const taskCardArg = process.argv[2];
-checkFakeDodTests(taskCardArg);
+module.exports = { FAKE_PATTERNS, scanViolations };
+
+if (require.main === module) {
+  main(process.argv[2]);
+}
