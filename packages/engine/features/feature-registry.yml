@@ -15,10 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.94.0"
+version: "3.95.0"
 updated: "2026-03-23"
-# ci-trigger: 13.37.0
+# ci-trigger: 13.38.0
 changelog:
+
+  - version: "13.38.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(engine): Stage3 drift detection + spec_review 测试层检查（维度F）"
+    scope: packages/engine/skills/dev/steps/03-integrate.md,packages/workflows/skills/spec-review/SKILL.md
 
   - version: "13.37.0"
     date: "2026-03-23"

@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.94.0
+version: 3.95.0
 created: 2026-03-23
 updated: 2026-03-23
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.94.0: 从 feature-registry.yml 自动生成
+  - 3.95.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -498,5 +498,5 @@ devloop-check.sh PR 合并验证 baseRefName == main →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.94.0
+**版本**: 3.95.0
 **生成时间**: 2026-03-23

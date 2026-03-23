@@ -1,8 +1,10 @@
 ---
 id: dev-stage-03-integrate
-version: 1.1.0
+version: 1.2.0
 created: 2026-03-20
+updated: 2026-03-23
 changelog:
+  - 1.2.0: 新增 3.1.4 Drift Detection（push 前检测改动文件是否偏离 Task Card 声明范围，warning 级）
   - 1.1.0: code_review_gate 前移到 Stage 2（push 前审查），Stage 3 仅负责 push + CI
   - 1.0.0: 从 03-prci.md 重构为 Stage 3 Integrate，删除 4 个 Codex 注册，改为 CI 后 1 个 code_review
 ---
@@ -153,6 +155,58 @@ if [[ -n "$CHANGED_ENGINE" ]]; then
     echo "✅ Engine 版本 6 文件全部已修改"
 else
     echo "ℹ️  非 Engine 改动，跳过版本文件检查"
+fi
+```
+
+---
+
+### 3.1.4 ⚠️ Drift Detection：改动文件偏离 DoD 范围检查（push 前 warning）
+
+> **检测当前 git 改动是否包含 Task Card `## 实现方案` 未声明的文件。**
+> 仅输出 warning，不阻塞 push——漂移文件可能是合理的副产物，由 AI 判断是否继续。
+
+```bash
+echo "🔍 Drift Detection：检查改动文件是否在 Task Card 范围内..."
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+TASK_CARD=".task-${BRANCH_NAME}.md"
+
+if [[ ! -f "$TASK_CARD" ]]; then
+    echo "ℹ️  Task Card 不存在，跳过 drift 检查"
+else
+    # 从 Task Card 提取 "## 实现方案" 部分声明的文件路径
+    SCOPE_SECTION=$(awk '/^## 实现方案/,/^## /' "$TASK_CARD" 2>/dev/null | grep -E '^\s*[-*`]|`[^`]+`' || true)
+    DECLARED_FILES=$(echo "$SCOPE_SECTION" | grep -oE '`[^`]+`' | tr -d '`' | grep '/' || true)
+
+    # 获取实际改动文件（相对于 origin/main），排除 task card / dev-mode / learnings
+    CHANGED_FILES=$(git diff --name-only origin/main 2>/dev/null | grep -v '^\.task-\|^\.dev-\|^docs/learnings/' || true)
+
+    DRIFT_FILES=""
+    while IFS= read -r changed_file; do
+        [[ -z "$changed_file" ]] && continue
+        MATCHED=false
+        while IFS= read -r declared; do
+            [[ -z "$declared" ]] && continue
+            # 支持前缀匹配（如声明 packages/engine/ 则覆盖该目录所有文件）
+            if [[ "$changed_file" == "$declared" || "$changed_file" == ${declared%/}/* ]]; then
+                MATCHED=true
+                break
+            fi
+        done <<< "$DECLARED_FILES"
+        if [[ "$MATCHED" == "false" ]]; then
+            DRIFT_FILES="${DRIFT_FILES}  ⚠️  ${changed_file}\n"
+        fi
+    done <<< "$CHANGED_FILES"
+
+    if [[ -n "$DRIFT_FILES" ]]; then
+        echo ""
+        echo "⚠️  Drift Detection 警告：以下文件改动未在 Task Card 实现方案中声明："
+        printf "%b" "$DRIFT_FILES"
+        echo ""
+        echo "   请确认这些文件的改动是必要的，或更新 Task Card 的实现方案范围。"
+        echo "   （不阻塞 push，继续执行）"
+    else
+        echo "✅ Drift Detection 通过：所有改动文件均在声明范围内"
+    fi
 fi
 ```
 

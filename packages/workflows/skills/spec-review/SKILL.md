@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.1.0
+version: 1.2.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-22
+updated: 2026-03-23
 changelog:
+  - 1.2.0: 新增维度F 测试层匹配性检查（unit/integration/e2e，warning级）
   - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
   - 1.0.0: 合并 dod_verify + cto_review（单 PR 部分）为统一 Spec 审查 Gate
 description: |
@@ -121,6 +122,28 @@ description: |
 | **退出码明确** | 命令有明确的 exit 0（成功）/ exit 1（失败） | 命令只有输出没有判定 |
 | **无 npx vitest** | 不使用 `npx vitest` / `npm test`（CI 无完整依赖） | 使用了 CI 无法执行的命令 |
 
+### 维度 F：测试层匹配性（unit / integration / e2e）
+
+> 验证 DoD Test 命令的测试层级与被测行为是否匹配，避免用错误层级的测试掩盖问题。
+
+| 被测行为类型 | 应匹配的测试层 | 不匹配信号 |
+|------------|--------------|-----------|
+| **纯函数 / 工具函数 / 解析逻辑** | unit（隔离调用，不依赖外部） | 用 HTTP 请求或 DB 调用来测 |
+| **API 端点 / DB 查询 / 多模块联动** | integration（真实 DB 或真实进程） | 仅用 node -e 调用单个函数，绕过 HTTP 层 |
+| **完整用户流程 / 跨服务端到端** | e2e（curl + 真实服务运行中） | 只 mock 中间层，不验证真实链路 |
+| **文件/配置内容验证** | node -e 读文件断言（任意层均可） | 无限制 |
+
+**评判规则（warning 级，不触发 FAIL）**：
+
+- [BEHAVIOR] 条目声明了 API/DB 行为，但 Test 命令只调用函数而不走 HTTP → warning（建议改为 curl 验证）
+- [BEHAVIOR] 条目声明了完整用户流程，但 Test 没有 e2e 路径 → warning（建议补充端到端用例）
+- unit 测试验证了跨模块副作用（如 DB 写入、文件生成）→ warning（单元测试边界过宽）
+
+**不触发 warning 的情况**：
+- [ARTIFACT] 条目只验证文件内容，用 node -e 读文件 ✅
+- [GATE] 条目用 npm test 跑全量 ✅
+- [PRESERVE] 条目用最小命令验证关键行为不变 ✅
+
 ---
 
 ## 裁决规则
@@ -151,7 +174,7 @@ FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
   "issues": [
     {
       "severity": "blocker | warning",
-      "dimension": "A | B | C | D",
+      "dimension": "A | B | C | D | E | F",
       "description": "具体问题描述",
       "suggestion": "修正建议"
     }
