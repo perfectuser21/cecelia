@@ -37,7 +37,7 @@ SELECT
   g.owner_role,
   g.target_date AS end_date,
   g.metadata,
-  COALESCE(g.custom_props, '{}') AS custom_props,
+  '{}' AS custom_props,
   g.created_at,
   g.updated_at
 FROM goals g
@@ -76,7 +76,7 @@ SELECT
   g.owner_role,
   g.target_date AS end_date,
   g.metadata,
-  COALESCE(g.custom_props, '{}') AS custom_props,
+  '{}' AS custom_props,
   g.created_at,
   g.updated_at
 FROM goals g
@@ -112,7 +112,7 @@ SELECT
   g.owner_role,
   g.target_date AS end_date,
   g.metadata,
-  COALESCE(g.custom_props, '{}') AS custom_props,
+  '{}' AS custom_props,
   g.created_at,
   g.updated_at
 FROM goals g
@@ -146,7 +146,7 @@ SELECT
   p.owner_role,
   p.deadline AS end_date,
   p.metadata,
-  COALESCE(p.custom_props, '{}') AS custom_props,
+  '{}' AS custom_props,
   p.created_at,
   p.updated_at
 FROM projects p
@@ -182,7 +182,7 @@ SELECT
   p.owner_role,
   p.deadline AS end_date,
   p.metadata,
-  COALESCE(p.custom_props, '{}') AS custom_props,
+  '{}' AS custom_props,
   p.created_at,
   p.updated_at
 FROM projects p
@@ -221,7 +221,7 @@ SELECT
   p.owner_role,
   p.deadline AS end_date,
   p.metadata,
-  COALESCE(p.custom_props, '{}') AS custom_props,
+  '{}' AS custom_props,
   p.created_at,
   p.updated_at
 FROM projects p
