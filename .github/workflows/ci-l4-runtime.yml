@@ -182,7 +182,7 @@ jobs:
           BRAIN_PID=$!
           echo "Brain PID: $BRAIN_PID, Port: $BRAIN_PORT"
           for i in $(seq 1 60); do
-            if curl -sf "http://localhost:${BRAIN_PORT}/health" >/dev/null 2>&1; then
+            if curl -sf "http://localhost:${BRAIN_PORT}/" >/dev/null 2>&1; then
               echo "✅ Brain 服务已就绪（第 ${i} 次检查）"
               break
             fi
@@ -194,10 +194,10 @@ jobs:
             sleep 1
           done
           echo ""
-          echo "--- 检查 1: GET /health ---"
-          curl -sf "http://localhost:${BRAIN_PORT}/health" || { echo "❌ /health 失败"; kill $BRAIN_PID; exit 1; }
+          echo "--- 检查 1: GET / (Brain Root Health) ---"
+          curl -sf "http://localhost:${BRAIN_PORT}/" || { echo "❌ / 失败"; kill $BRAIN_PID; exit 1; }
           echo ""
-          echo "✅ /health OK"
+          echo "✅ / OK"
           echo ""
           echo "--- 检查 2: GET /api/brain/tasks ---"
           curl -sf "http://localhost:${BRAIN_PORT}/api/brain/tasks" || { echo "❌ /api/brain/tasks 失败"; kill $BRAIN_PID; exit 1; }
