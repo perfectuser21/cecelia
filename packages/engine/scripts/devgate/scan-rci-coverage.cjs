@@ -185,9 +185,9 @@ function parseRCI() {
     }
 
     // 匹配 evidence.file（直接路径覆盖）
-    const fileMatch = line.match(/^\s+file:\s*["']?([^"'\s#]+)["']?\s*(?:#.*)?$/);
-    if (fileMatch && fileMatch[1]) {
-      currentContract.paths.push(fileMatch[1].trim());
+    const filePathMatch = line.match(/^\s+file:\s*["']?([^"'\s#]+)["']?\s*(?:#.*)?$/);
+    if (filePathMatch && filePathMatch[1]) {
+      currentContract.paths.push(filePathMatch[1].trim());
     }
 
     // 匹配 evidence.run
