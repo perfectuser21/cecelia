@@ -588,7 +588,7 @@ function routeTaskWithFallback(taskData) {
  * Diagnose task dispatch status for a KR
  *
  * Returns a detailed report on why tasks under a KR may not be dispatching:
- * - All initiatives under the KR (via project_kr_links → projects hierarchy)
+ * - All initiatives under the KR (via okr_projects → okr_scopes → okr_initiatives)
  * - Task counts and statuses per initiative
  * - Dispatch blockers (reasons why tasks are not being queued/dispatched)
  *
@@ -601,7 +601,7 @@ async function diagnoseKR(krId, pool) {
 
   // 1. Load KR info
   const krResult = await pool.query(
-    `SELECT id, title, status, priority, progress FROM goals WHERE id = $1`,
+    `SELECT id, title, status FROM key_results WHERE id = $1`,
     [krId]
   );
 
@@ -613,12 +613,11 @@ async function diagnoseKR(krId, pool) {
   const kr = krResult.rows[0];
   console.log(`[task-router] diagnoseKR: kr found: "${kr.title}" (status=${kr.status})`);
 
-  // 2. Load all Projects under this KR (via project_kr_links)
+  // 2. Load all Projects under this KR (via okr_projects)
   const projectsResult = await pool.query(`
-    SELECT p.id, p.name, p.status, p.type, p.created_at
-    FROM projects p
-    INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
-    WHERE pkl.kr_id = $1 AND p.type = 'project'
+    SELECT p.id, p.title AS name, p.status, p.created_at
+    FROM okr_projects p
+    WHERE p.kr_id = $1
     ORDER BY p.created_at ASC
   `, [krId]);
 
@@ -631,13 +630,14 @@ async function diagnoseKR(krId, pool) {
 
   for (const project of projects) {
     const initResult = await pool.query(`
-      SELECT i.id, i.name, i.status, i.created_at,
-             (SELECT COUNT(*) FROM tasks t WHERE t.project_id = i.id) AS task_count,
-             (SELECT COUNT(*) FROM tasks t WHERE t.project_id = i.id AND t.status IN ('queued', 'in_progress')) AS active_task_count,
-             (SELECT COUNT(*) FROM tasks t WHERE t.project_id = i.id AND t.status = 'completed') AS completed_task_count,
-             (SELECT COUNT(*) FROM tasks t WHERE t.project_id = i.id AND t.status IN ('failed', 'cancelled')) AS failed_task_count
-      FROM projects i
-      WHERE i.parent_id = $1 AND i.type = 'initiative'
+      SELECT i.id, i.title AS name, i.status, i.created_at,
+             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id) AS task_count,
+             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status IN ('queued', 'in_progress')) AS active_task_count,
+             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status = 'completed') AS completed_task_count,
+             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status IN ('failed', 'cancelled')) AS failed_task_count
+      FROM okr_initiatives i
+      INNER JOIN okr_scopes s ON s.id = i.scope_id
+      WHERE s.project_id = $1
       ORDER BY i.created_at ASC
     `, [project.id]);
 
@@ -649,7 +649,7 @@ async function diagnoseKR(krId, pool) {
       const tasksResult = await pool.query(`
         SELECT id, title, task_type, status, priority, created_at, updated_at
         FROM tasks
-        WHERE project_id = $1
+        WHERE okr_initiative_id = $1
         ORDER BY created_at DESC
         LIMIT 10
       `, [initiative.id]);
@@ -754,8 +754,8 @@ async function diagnoseKR(krId, pool) {
     kr_id: kr.id,
     kr_title: kr.title,
     kr_status: kr.status,
-    kr_priority: kr.priority,
-    kr_progress: kr.progress,
+    kr_priority: kr.priority ?? null,
+    kr_progress: kr.progress ?? null,
     summary: {
       total_projects: projects.length,
       total_initiatives: totalInitiatives,

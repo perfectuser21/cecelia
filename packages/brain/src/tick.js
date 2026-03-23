@@ -2157,7 +2157,7 @@ async function executeTick() {
   // Ready KRs = KRs that have been decomposed, reviewed, and approved by user
   // Also include 'decomposing' KRs so their decomp tasks (created by okr-tick) can be dispatched
   const readyKRsResult = await pool.query(`
-    SELECT id FROM goals WHERE type = 'area_okr' AND status IN ('ready', 'in_progress', 'decomposing')
+    SELECT id FROM key_results WHERE status IN ('active', 'in_progress', 'decomposing')
   `);
   const readyKrIds = readyKRsResult.rows.map(r => r.id);
 
@@ -2172,9 +2172,9 @@ async function executeTick() {
   } else if (readyKrIds.length > 0) {
     allGoalIds = readyKrIds;
   } else {
-    // Fallback: if no ready KRs exist yet, use all active goals (transition period)
+    // Fallback: if no active KRs exist yet, use all non-archived key_results (transition period)
     const allGoalsResult = await pool.query(`
-      SELECT id FROM goals WHERE status NOT IN ('completed', 'cancelled', 'canceled')
+      SELECT id FROM key_results WHERE status NOT IN ('completed', 'cancelled', 'archived')
     `);
     allGoalIds = allGoalsResult.rows.map(r => r.id);
   }
