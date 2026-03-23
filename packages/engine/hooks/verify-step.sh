@@ -67,8 +67,16 @@ _pass() {
         local _seal_file="$PROJECT_ROOT/.dev-seal.${BRANCH}"
         local _ts
         _ts=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-        echo "${STEP}_seal: verified@${_ts}" >> "$_seal_file" 2>/dev/null || true
-        echo "  🔏 验签已写入: ${STEP}_seal → .dev-seal.${BRANCH}" >&2
+        # seal key 映射：STEP 变量值 → stop-dev.sh _SEALED_STEPS 期望的 key 名
+        local _seal_key
+        case "$STEP" in
+            step1) _seal_key="step_1_spec_seal" ;;
+            step2) _seal_key="step_2_code_seal" ;;
+            step4) _seal_key="step_4_ship_seal" ;;
+            *)     _seal_key="${STEP}_seal" ;;
+        esac
+        echo "${_seal_key}: verified@${_ts}" >> "$_seal_file" 2>/dev/null || true
+        echo "  🔏 验签已写入: ${_seal_key} → .dev-seal.${BRANCH}" >&2
     fi
 }
 
@@ -132,9 +140,7 @@ $found_fake
 # ============================================================================
 verify_step2() {
     local base_branch="main"
-    if git rev-parse --verify develop &>/dev/null 2>&1; then
-        base_branch="develop"
-    fi
+    # 此仓库无 develop 分支，固定使用 main
 
     local changed_files=""
     changed_files=$(git diff --name-only "origin/${base_branch}...HEAD" 2>/dev/null || \
@@ -238,12 +244,16 @@ verify_step2() {
                 vdir=$(dirname "$full_vpath")
                 while IFS= read -r sf; do
                     [[ "$sf" == "$full_vpath" ]] && continue
+                    # 只检查已知版本同步文件（跳过独立版本体系如 skills-registry.json）
+                    local _sf_base
+                    _sf_base=$(basename "$sf")
+                    [[ "$_sf_base" =~ ^(package\.json|package-lock\.json|regression-contract\.yaml)$ ]] || continue
                     local sv
                     sv=$(grep -oE '"version"\s*:\s*"[^"]+"' "$sf" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
                     if [[ -n "$sv" && "$sv" != "$new_ver" ]]; then
                         consistency_issues+=("sibling $sf 版本($sv) 与 $vfile 版本($new_ver) 不一致")
                     fi
-                done < <(find "$vdir" -maxdepth 1 -name "*.json" -o -name "*.yaml" -o -name "*.yml" 2>/dev/null)
+                done < <(find "$vdir" -maxdepth 1 \( -name "*.json" -o -name "*.yaml" -o -name "*.yml" \) 2>/dev/null)
             fi
         done <<< "$version_files"
     fi
@@ -285,7 +295,7 @@ $(printf '  %s\n' "${consistency_issues[@]}")
                 continue
             fi
             echo "  🔍 [Gate 1] 运行 $_pkg npm test..." >&2
-            if ! (cd "$_pkg_dir" && npm test 2>&1 >&2); then
+            if ! (cd "$_pkg_dir" && npm test 2>&1); then
                 echo "  ❌ [Gate 1] $_pkg 测试失败" >&2
                 gate1_failed=1
             else

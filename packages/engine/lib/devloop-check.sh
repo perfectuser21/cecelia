@@ -379,7 +379,7 @@ devloop_check() {
         fi
     fi
 
-    # ===== 条件 7: CI 通过 + code_review PASS + PR 未合并 → 检查 Learning =====
+    # ===== 条件 6: CI 通过 + code_review PASS + PR 未合并 → 检查 Learning =====
     local step_4_status
     step_4_status=$(grep "^step_4_ship:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
 

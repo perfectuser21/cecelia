@@ -110,16 +110,16 @@ describe("stop-dev.sh seal integrity check", () => {
     const content = readFileSync(VERIFY_STEP_PATH, "utf-8");
     expect(content).toContain("_seal_file");
     expect(content).toContain("dev-seal");
-    expect(content).toContain("_seal: verified@");
+    expect(content).toContain("_seal_key}: verified@");
   });
 
   it("verify-step.sh seal format matches stop-dev.sh check pattern", () => {
     const stopContent = readFileSync(STOP_DEV_PATH, "utf-8");
     const verifyContent = readFileSync(VERIFY_STEP_PATH, "utf-8");
     // stop-dev.sh 检查 "${_step}_seal: verified"
-    // verify-step.sh 写入 "${STEP}_seal: verified@..."
+    // verify-step.sh 写入 "${_seal_key}: verified@..."（动态 key，通过 case 映射到 step_N_type_seal）
     expect(stopContent).toContain("_seal: verified");
-    expect(verifyContent).toContain("_seal: verified@");
+    expect(verifyContent).toContain("_seal_key}: verified@");
   });
 
   // ─── 函数式测试：验证 verify-step.sh seal 写入 ───────────
@@ -160,7 +160,7 @@ describe("stop-dev.sh seal integrity check", () => {
     const sealFile = join(dir, `.dev-seal.${branch}`);
     if (existsSync(sealFile)) {
       const sealContent = readFileSync(sealFile, "utf-8");
-      expect(sealContent).toContain("step4_seal: verified@");
+      expect(sealContent).toContain("step_4_ship_seal: verified@");
     }
     // 注：如果文件不存在（git 不可用），测试仍然通过（verify-step.sh 对 git 有依赖）
   });
@@ -170,7 +170,7 @@ describe("stop-dev.sh seal integrity check", () => {
     // 验签格式必须是: "step_N_seal: verified@timestamp"
     // 与 stop-dev.sh 的 grep -q "^${_step}_seal: verified" 兼容
     const verifyContent = readFileSync(VERIFY_STEP_PATH, "utf-8");
-    // 必须包含 "_seal: verified@" 格式的写入命令
-    expect(verifyContent).toMatch(/_seal: verified@/);
+    // 必须包含 "_seal_key}: verified@" 格式的写入命令（动态 key 通过 case 映射）
+    expect(verifyContent).toMatch(/_seal_key\}: verified@/);
   });
 });
