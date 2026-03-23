@@ -275,6 +275,11 @@ const ACTION_WHITELIST = {
   'update_okr_progress': { dangerous: false, description: '更新 OKR 进度' },
   'assign_to_autumnrice': { dangerous: false, description: '交给秋米拆解' },
 
+  // OKR 新表完成事件（okr-closer.js 飞轮触发）
+  'okr_initiative_completed': { dangerous: false, description: 'OKR Initiative 完成 → 触发 scope_plan' },
+  'okr_scope_completed': { dangerous: false, description: 'OKR Scope 完成 → 触发 project_plan' },
+  'okr_project_completed': { dangerous: false, description: 'OKR Project 完成 → 通知 KR 进度更新' },
+
   // 通知操作
   'notify_user': { dangerous: false, description: '通知用户' },
   'log_event': { dangerous: false, description: '记录事件' },

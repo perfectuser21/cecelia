@@ -1640,6 +1640,54 @@ async function executeTick() {
     console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
   }
 
+  // [感知] OKR Initiative 闭环检查（okr_initiatives 表）
+  try {
+    const { checkOkrInitiativeCompletion } = await import('./okr-closer.js');
+    const okrInitResult = await checkOkrInitiativeCompletion(pool);
+    if (okrInitResult.closedCount > 0) {
+      console.log(`[TICK] OKR Initiative 完成检查: ${okrInitResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'okr_initiative_completion_check',
+        closed_count: okrInitResult.closedCount,
+        closed: okrInitResult.closed,
+      });
+    }
+  } catch (okrInitErr) {
+    console.error('[tick] OKR Initiative completion check failed (non-fatal):', okrInitErr.message);
+  }
+
+  // [感知] OKR Scope 闭环检查（okr_scopes 表）
+  try {
+    const { checkOkrScopeCompletion } = await import('./okr-closer.js');
+    const okrScopeResult = await checkOkrScopeCompletion(pool);
+    if (okrScopeResult.closedCount > 0) {
+      console.log(`[TICK] OKR Scope 完成检查: ${okrScopeResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'okr_scope_completion_check',
+        closed_count: okrScopeResult.closedCount,
+        closed: okrScopeResult.closed,
+      });
+    }
+  } catch (okrScopeErr) {
+    console.error('[tick] OKR Scope completion check failed (non-fatal):', okrScopeErr.message);
+  }
+
+  // [感知] OKR Project 闭环检查（okr_projects 表）
+  try {
+    const { checkOkrProjectCompletion } = await import('./okr-closer.js');
+    const okrProjResult = await checkOkrProjectCompletion(pool);
+    if (okrProjResult.closedCount > 0) {
+      console.log(`[TICK] OKR Project 完成检查: ${okrProjResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'okr_project_completion_check',
+        closed_count: okrProjResult.closedCount,
+        closed: okrProjResult.closed,
+      });
+    }
+  } catch (okrProjErr) {
+    console.error('[tick] OKR Project completion check failed (non-fatal):', okrProjErr.message);
+  }
+
   // [感知] KR 队列激活：从 pending KR 中按优先级激活
   try {
     const { activateNextKRs } = await import('./kr-completion.js');
