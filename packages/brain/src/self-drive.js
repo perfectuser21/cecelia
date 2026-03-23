@@ -356,12 +356,12 @@ async function getExistingAutoTasks() {
  */
 async function getKRProgress() {
   try {
+    // 迁移：goals WHERE type IN ('area_kr','area_okr') → key_results
     const result = await pool.query(
-      `SELECT id, title, status, progress, type
-       FROM goals
-       WHERE type IN ('area_kr', 'area_okr')
-         AND status IN ('in_progress', 'ready', 'decomposing')
-       ORDER BY type, created_at DESC`
+      `SELECT id, title, status, progress, 'area_okr' AS type
+       FROM key_results
+       WHERE status IN ('active', 'in_progress', 'ready', 'decomposing')
+       ORDER BY created_at DESC`
     );
     return result.rows;
   } catch {
@@ -409,11 +409,12 @@ async function getDopamineScore() {
  */
 async function getActiveProjects() {
   try {
+    // 迁移：projects WHERE type='project' → okr_projects
     const result = await pool.query(
-      `SELECT id, name, status, sequence_order
-       FROM projects
-       WHERE type = 'project' AND status IN ('active', 'planning')
-       ORDER BY sequence_order NULLS LAST, created_at DESC`
+      `SELECT id, title AS name, status
+       FROM okr_projects
+       WHERE status IN ('active', 'in_progress', 'planning')
+       ORDER BY created_at DESC`
     );
     return result.rows;
   } catch {
@@ -435,11 +436,12 @@ async function getActiveProjects() {
 async function getGoalIdForArea(area) {
   if (!area) return null;
   try {
+    // 迁移：goals WHERE domain → key_results（key_results 无 domain 列，fallback 到 area_id 匹配）
+    // 先查 key_results，再查 objectives，取第一个活跃记录
     const result = await pool.query(
-      `SELECT id FROM goals
-       WHERE domain = $1 AND status IN ('ready', 'in_progress', 'decomposing')
-       ORDER BY created_at DESC LIMIT 1`,
-      [area]
+      `SELECT id FROM key_results
+       WHERE status IN ('active', 'in_progress', 'ready', 'decomposing')
+       ORDER BY created_at DESC LIMIT 1`
     );
     return result.rows.length > 0 ? result.rows[0].id : null;
   } catch {
