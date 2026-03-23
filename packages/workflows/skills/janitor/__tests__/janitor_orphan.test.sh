@@ -40,19 +40,25 @@ else
   fail "THRESHOLD_SEC 不是 600"
 fi
 
-# 验证 4: 软链接
-if [ -L "$HOME/bin/janitor.sh" ]; then
+# 验证 4: 软链接（CI 环境跳过）
+if [ -n "${CI:-}" ]; then
+  ok "~/bin/janitor.sh 软链接（CI 环境跳过，本地部署时验证）"
+elif [ -L "$HOME/bin/janitor.sh" ]; then
   ok "~/bin/janitor.sh 是软链接"
 else
   fail "~/bin/janitor.sh 不是软链接"
 fi
 
-# 验证 5: 软链接指向 repo 内文件
-LINK_TARGET=$(readlink "$HOME/bin/janitor.sh" 2>/dev/null || echo "")
-if echo "$LINK_TARGET" | grep -q "cecelia"; then
-  ok "软链接指向 cecelia repo"
+# 验证 5: 软链接指向 repo 内文件（CI 环境跳过）
+if [ -n "${CI:-}" ]; then
+  ok "软链接指向 cecelia repo（CI 环境跳过）"
 else
-  fail "软链接未指向 cecelia repo: $LINK_TARGET"
+  LINK_TARGET=$(readlink "$HOME/bin/janitor.sh" 2>/dev/null || echo "")
+  if echo "$LINK_TARGET" | grep -q "cecelia"; then
+    ok "软链接指向 cecelia repo"
+  else
+    fail "软链接未指向 cecelia repo: $LINK_TARGET"
+  fi
 fi
 
 echo ""
