@@ -228,6 +228,21 @@
               "dangerous": false
             },
             {
+              "name": "okr_initiative_plan",
+              "description": "规划 OKR Scope 下的下一个 Initiative",
+              "dangerous": false
+            },
+            {
+              "name": "okr_scope_plan",
+              "description": "规划 OKR Project 下的下一个 Scope",
+              "dangerous": false
+            },
+            {
+              "name": "okr_project_plan",
+              "description": "规划 OKR Project 层完成后的下一步",
+              "dangerous": false
+            },
+            {
               "name": "create_learning",
               "description": "保存经验教训到 learnings 表",
               "dangerous": false
@@ -760,6 +775,18 @@
       "dangerous": false,
       "description": "创建计划提案"
     },
+    "okr_initiative_plan": {
+      "dangerous": false,
+      "description": "规划 OKR Scope 下的下一个 Initiative"
+    },
+    "okr_scope_plan": {
+      "dangerous": false,
+      "description": "规划 OKR Project 下的下一个 Scope"
+    },
+    "okr_project_plan": {
+      "dangerous": false,
+      "description": "规划 OKR Project 层完成后的下一步"
+    },
     "create_learning": {
       "dangerous": false,
       "description": "保存经验教训到 learnings 表"
@@ -958,9 +985,12 @@
     "code_review_gate": "/code-review-gate",
     "initiative_review": "/initiative-review",
     "scope_plan": "/decomp",
-    "project_plan": "/decomp"
+    "project_plan": "/decomp",
+    "okr_initiative_plan": "/decomp",
+    "okr_scope_plan": "/decomp",
+    "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-21T12:17:30.271Z",
+  "generatedAt": "2026-03-23T09:56:55.311Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

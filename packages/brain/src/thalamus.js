@@ -290,6 +290,11 @@ const ACTION_WHITELIST = {
   // 规划操作
   'create_proposal': { dangerous: false, description: '创建计划提案' },
 
+  // OKR 新表飞轮操作（okr_initiatives / okr_scopes / okr_projects）
+  'okr_initiative_plan': { dangerous: false, description: '规划 OKR Scope 下的下一个 Initiative' },
+  'okr_scope_plan': { dangerous: false, description: '规划 OKR Project 下的下一个 Scope' },
+  'okr_project_plan': { dangerous: false, description: '规划 OKR Project 层完成后的下一步' },
+
   // 知识/学习操作
   'create_learning': { dangerous: false, description: '保存经验教训到 learnings 表' },
   'update_learning': { dangerous: false, description: '更新已有 learning 记录' },
