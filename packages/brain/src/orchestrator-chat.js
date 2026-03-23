@@ -19,7 +19,7 @@ import { callLLM } from './llm-caller.js';
 import { getSelfModel } from './self-model.js';
 import { generateL0Summary, generateMemoryStreamL1Async } from './memory-utils.js';
 import { observeChat } from './thalamus.js';
-import { extractConversationLearning } from './learning.js';
+import { extractConversationLearning, upsertLearning } from './learning.js';
 import { extractPersonSignals, detectAndStoreTaskInterest } from './person-model.js';
 import { resolveByPersonReply } from './pending-conversations.js';
 import { processMessageFacts } from './fact-extractor.js';
@@ -766,10 +766,16 @@ async function executeChatAction(action) {
     }
     case 'record_learning': {
       const p = action.params || {};
-      await pool.query(`
-        INSERT INTO learnings (title, category, content, trigger_event)
-        VALUES ($1, $2, $3, 'chat_thalamus')
-      `, [p.title || 'Chat learning', p.category || 'chat', p.content || '']);
+      try {
+        await upsertLearning({
+          title: p.title || 'Chat learning',
+          category: p.category || 'chat',
+          content: p.content || '',
+          triggerEvent: 'chat_thalamus',
+        });
+      } catch (e) {
+        console.warn('[orchestrator-chat] upsertLearning failed (non-fatal):', e.message);
+      }
       break;
     }
   }
