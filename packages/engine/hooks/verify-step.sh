@@ -363,6 +363,10 @@ $(printf '  %s\n' "${consistency_issues[@]}")
                     IN_DOD=true
                     DOD_TYPE="GATE"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[GATE\][[:space:]]*//')
+                elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[PRESERVE\]'; then
+                    IN_DOD=true
+                    DOD_TYPE="PRESERVE"
+                    BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[PRESERVE\][[:space:]]*//')
                 fi
                 continue
             fi
