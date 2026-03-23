@@ -360,8 +360,17 @@ devloop_check() {
         esac
     fi
 
-    # ===== 条件 5: PR 是否已合并？=====
+    # ===== 条件 5: PR 是否已合并？且合并到了 main？=====
     if [[ "$pr_state" == "merged" ]]; then
+        # 验证 PR 合并目标为 main（防止误合并到非 main 分支）
+        local pr_base_ref=""
+        if [[ -n "$pr_number" ]]; then
+            pr_base_ref=$(gh pr view "$pr_number" --json baseRefName -q '.baseRefName' 2>/dev/null || echo "")
+        fi
+        if [[ -n "$pr_base_ref" && "$pr_base_ref" != "main" ]]; then
+            _devloop_jq -n                 --arg base "$pr_base_ref"                 '{"status":"blocked","reason":"PR 已合并但目标分支不是 main（目标：\($base)）","action":"检查是否误合并到错误分支，如需要请重新开 PR 合并到 main"}'
+            return 2
+        fi
         local step_4_status
         step_4_status=$(grep "^step_4_ship:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
 

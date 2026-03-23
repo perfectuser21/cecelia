@@ -89,14 +89,24 @@ HAS_ROOT_CAUSE=false
 HAS_PREVENTION=false
 HAS_CHECKLIST=false
 
-# 检查"根本原因"章节
+# 检查"根本原因"章节（标题 + 至少3行非空内容）
+ROOT_CAUSE_LINES_ACTUAL=0
 if echo "$NEW_CONTENT" | grep -qE "^#{1,4}[[:space:]]*(根本原因|Root Cause)"; then
-  HAS_ROOT_CAUSE=true
+  ROOT_CAUSE_LINES_ACTUAL=$(echo "$NEW_CONTENT" | \
+    awk '/^#{1,4}[[:space:]]*(根本原因|Root Cause)/{found=1;next} found && /^#{1,4}[[:space:]]+/{exit} found && /[^[:space:]]/{count++} END{print count+0}')
+  if [ "${ROOT_CAUSE_LINES_ACTUAL:-0}" -ge 3 ]; then
+    HAS_ROOT_CAUSE=true
+  fi
 fi
 
-# 检查"下次预防"章节
+# 检查"下次预防"章节（标题 + 至少1行非空内容）
+PREVENTION_LINES_ACTUAL=0
 if echo "$NEW_CONTENT" | grep -qE "^#{1,4}[[:space:]]*(下次预防|Prevention|预防措施)"; then
-  HAS_PREVENTION=true
+  PREVENTION_LINES_ACTUAL=$(echo "$NEW_CONTENT" | \
+    awk '/^#{1,4}[[:space:]]*(下次预防|Prevention|预防措施)/{found=1;next} found && /^#{1,4}[[:space:]]+/{exit} found && /[^[:space:]]/{count++} END{print count+0}')
+  if [ "${PREVENTION_LINES_ACTUAL:-0}" -ge 1 ]; then
+    HAS_PREVENTION=true
+  fi
 fi
 
 # 检查 checklist 条目（- [ ] 或 - [x] 格式）
@@ -107,14 +117,14 @@ fi
 FAILED=false
 
 if [ "$HAS_ROOT_CAUSE" = "false" ]; then
-  echo "❌ 缺少'根本原因'章节"
+  echo "❌ 根本原因章节内容不足（当前 ${ROOT_CAUSE_LINES_ACTUAL:-0} 行，需要 ≥ 3 行非空内容）"
   FAILED=true
 else
   echo "✅ 找到'根本原因'章节"
 fi
 
 if [ "$HAS_PREVENTION" = "false" ]; then
-  echo "❌ 缺少'下次预防'章节"
+  echo "❌ 下次预防章节内容不足（当前 ${PREVENTION_LINES_ACTUAL:-0} 行，需要 ≥ 1 行非空内容）"
   FAILED=true
 else
   echo "✅ 找到'下次预防'章节"
