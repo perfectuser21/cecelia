@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 测试 janitor.sh frequent 模式的孤儿进程检测函数
-# 验证核心逻辑：has_live_claude_ancestor 和 is_orphan
+# 测试 janitor.sh v4.0 frequent 模式
+# 验证：基础函数、claude孤儿检测逻辑、资源压力变量
 
 set -euo pipefail
 
@@ -10,7 +10,6 @@ FAIL=0
 ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-# 加载 janitor.sh 中的函数（只执行 frequent 模式函数定义）
 JANITOR="$(dirname "$0")/../janitor.sh"
 if [ ! -f "$JANITOR" ]; then
   echo "ERROR: janitor.sh not found at $JANITOR"
@@ -33,14 +32,65 @@ for fn in find_shell_ancestor has_live_claude_ancestor is_orphan kill_if_orphan 
   fi
 done
 
-# 验证 3: 阈值为 600
+# 验证 3: 包含 claude 孤儿检测相关函数（v4.0）
+for fn in is_claude_orphan has_brain_inprogress_task has_active_dev_lock kill_if_claude_orphan; do
+  if grep -qE "^\s+${fn}\(\)" "$JANITOR" 2>/dev/null; then
+    ok "v4.0 函数定义存在: $fn"
+  else
+    fail "v4.0 函数定义缺失: $fn"
+  fi
+done
+
+# 验证 4: 阈值为 600（正常值）
 if grep -q "THRESHOLD_SEC=600" "$JANITOR"; then
   ok "THRESHOLD_SEC=600 (10分钟)"
 else
   fail "THRESHOLD_SEC 不是 600"
 fi
 
-# 验证 4: 软链接（CI 环境跳过）
+# 验证 5: 内存高压阈值为 300
+if grep -q "MEM_HIGH_THRESHOLD_SEC=300" "$JANITOR"; then
+  ok "MEM_HIGH_THRESHOLD_SEC=300 (内存高压5分钟)"
+else
+  fail "MEM_HIGH_THRESHOLD_SEC 不是 300"
+fi
+
+# 验证 6: CPU 告警阈值存在
+if grep -q "CPU_ALERT_THRESHOLD" "$JANITOR"; then
+  ok "CPU_ALERT_THRESHOLD 定义存在"
+else
+  fail "CPU_ALERT_THRESHOLD 未定义"
+fi
+
+# 验证 7: 有头进程保护（TTY != ?? 返回 1）
+if grep -q 'tty" != "??"' "$JANITOR" 2>/dev/null || grep -q '"$tty" != "\?\?"' "$JANITOR" 2>/dev/null; then
+  ok "有头进程保护逻辑存在（TTY != ??）"
+else
+  fail "有头进程保护逻辑缺失"
+fi
+
+# 验证 8: 白名单保护（brain/server 等）
+if grep -q "brain/server" "$JANITOR"; then
+  ok "白名单保护存在（brain/server）"
+else
+  fail "白名单保护缺失"
+fi
+
+# 验证 9: Brain API 查询（双重验证之一）
+if grep -q "brain/tasks?status=in_progress" "$JANITOR"; then
+  ok "Brain DB 查询逻辑存在"
+else
+  fail "Brain DB 查询逻辑缺失"
+fi
+
+# 验证 10: .dev-lock 查询（双重验证之二）
+if grep -q ".dev-lock." "$JANITOR"; then
+  ok ".dev-lock 检查逻辑存在"
+else
+  fail ".dev-lock 检查逻辑缺失"
+fi
+
+# 验证 11: 软链接（CI 环境跳过）
 if [ -n "${CI:-}" ]; then
   ok "~/bin/janitor.sh 软链接（CI 环境跳过，本地部署时验证）"
 elif [ -L "$HOME/bin/janitor.sh" ]; then
@@ -49,7 +99,7 @@ else
   fail "~/bin/janitor.sh 不是软链接"
 fi
 
-# 验证 5: 软链接指向 repo 内文件（CI 环境跳过）
+# 验证 12: 软链接指向 repo 内文件（CI 环境跳过）
 if [ -n "${CI:-}" ]; then
   ok "软链接指向 cecelia repo（CI 环境跳过）"
 else
