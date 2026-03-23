@@ -167,6 +167,33 @@ jobs:
           DB_PORT: ${{ env.DB_PORT }}
         run: bash scripts/goldenpath-check.sh
 
+      - name: Task Lifecycle E2E
+        if: matrix.shard == '1/4'
+        working-directory: packages/brain
+        env:
+          DB_PORT: ${{ env.DB_PORT }}
+          BRAIN_PORT: 15222
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L4 Task Lifecycle E2E — 创建→dispatch→完成全链路"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          BRAIN_PORT=15222 PORT=15222 node server.js > /tmp/brain-lifecycle.log 2>&1 &
+          LIFECYCLE_PID=$!
+          trap "kill $LIFECYCLE_PID 2>/dev/null || true" EXIT
+          for i in $(seq 1 30); do
+            if curl -sf "http://localhost:15222/" >/dev/null 2>&1; then
+              echo "Brain ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Brain did not start in 30s"
+              cat /tmp/brain-lifecycle.log
+              exit 1
+            fi
+            sleep 1
+          done
+          bash scripts/task-lifecycle-check.sh
+
       - name: API Smoke Check
         if: matrix.shard == '1/4'
         working-directory: packages/brain
