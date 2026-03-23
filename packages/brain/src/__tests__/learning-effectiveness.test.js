@@ -26,6 +26,7 @@ describe('evaluateStrategyEffectiveness', () => {
   beforeEach(async () => {
     // Clean up all test data from previous tests (respect foreign key constraints)
     await pool.query('DELETE FROM run_events');  // Delete first (references tasks)
+    await pool.query('DELETE FROM scan_results');  // FK: scan_results_task_id_fkey
     await pool.query('DELETE FROM strategy_effectiveness');
     await pool.query('DELETE FROM strategy_adoptions');
     await pool.query('DELETE FROM tasks');
