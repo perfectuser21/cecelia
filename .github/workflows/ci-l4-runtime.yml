@@ -172,7 +172,6 @@ jobs:
         working-directory: packages/brain
         env:
           DB_PORT: ${{ env.DB_PORT }}
-          NODE_ENV: test
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  API Smoke Check — Brain 基础 API 健康验证"
@@ -200,14 +199,21 @@ jobs:
           echo "✅ / OK"
           echo ""
           echo "--- 检查 2: GET /api/brain/tasks ---"
-          curl -sf "http://localhost:${BRAIN_PORT}/api/brain/tasks" || { echo "❌ /api/brain/tasks 失败"; kill $BRAIN_PID; exit 1; }
-          echo ""
+          TASKS_RESP=$(curl -s -w "\n%{http_code}" "http://localhost:${BRAIN_PORT}/api/brain/tasks?status=pending&limit=5")
+          TASKS_STATUS=$(echo "$TASKS_RESP" | tail -1)
+          TASKS_BODY=$(echo "$TASKS_RESP" | head -n -1)
+          echo "HTTP $TASKS_STATUS: $(echo "$TASKS_BODY" | head -c 200)"
+          if [ "$TASKS_STATUS" != "200" ]; then
+            echo "❌ /api/brain/tasks 失败 (HTTP $TASKS_STATUS)"
+            kill $BRAIN_PID 2>/dev/null || true
+            exit 1
+          fi
           echo "✅ /api/brain/tasks OK"
           echo ""
           echo "--- 检查 3: POST /api/brain/tasks（smoke test 任务）---"
           curl -sf -X POST "http://localhost:${BRAIN_PORT}/api/brain/tasks" \
             -H "Content-Type: application/json" \
-            -d '{"type":"smoke_test","description":"CI smoke test","trigger_source":"ci"}' \
+            -d '{"title":"CI API Smoke Test","description":"CI smoke test","trigger_source":"ci","task_type":"dev"}' \
             || { echo "❌ POST /api/brain/tasks 失败"; kill $BRAIN_PID; exit 1; }
           echo ""
           echo "✅ POST /api/brain/tasks OK"
