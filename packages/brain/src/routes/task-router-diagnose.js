@@ -24,9 +24,12 @@ router.get('/diagnose/:kr_id', async (req, res) => {
   console.log(`[task-router-diagnose] 开始诊断 KR ${kr_id}（过去 ${since_days} 天）`);
 
   try {
-    // ── 1. 读取 KR 信息 ──────────────────────────────────────────────
+    // ── 1. 读取 KR 信息（key_results 表，与 task-router.js 一致）──────
     const krResult = await pool.query(
-      `SELECT id, title, status, progress, priority FROM goals WHERE id = $1`,
+      `SELECT id, title, status,
+              CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress,
+              NULL::text AS priority
+       FROM key_results WHERE id = $1`,
       [kr_id]
     );
 
@@ -38,14 +41,14 @@ router.get('/diagnose/:kr_id', async (req, res) => {
     const kr = krResult.rows[0];
     console.log(`[task-router-diagnose] KR 找到: ${kr.title} (${kr.status}, progress=${kr.progress})`);
 
-    // ── 2. 获取 KR 下所有 Initiative（通过 project_kr_links）──────────
+    // ── 2. 获取 KR 下所有 Initiative（通过 okr_projects → okr_scopes → okr_initiatives）
     const initiativesResult = await pool.query(
-      `SELECT p.id, p.name, p.status, p.type, p.created_at, p.updated_at
-       FROM projects p
-       JOIN project_kr_links pkl ON pkl.project_id = p.id
-       WHERE pkl.kr_id = $1
-         AND p.type IN ('initiative', 'project')
-       ORDER BY p.created_at ASC`,
+      `SELECT oi.id, oi.title AS name, oi.status, 'initiative'::text AS type, oi.created_at, oi.updated_at
+       FROM okr_projects op
+       JOIN okr_scopes os ON os.project_id = op.id
+       JOIN okr_initiatives oi ON oi.scope_id = os.id
+       WHERE op.kr_id = $1
+       ORDER BY oi.created_at ASC`,
       [kr_id]
     );
 
@@ -71,38 +74,38 @@ router.get('/diagnose/:kr_id', async (req, res) => {
 
     const initiativeIds = initiatives.map(i => i.id);
 
-    // ── 3. 汇总每个 Initiative 的任务状态分布 ─────────────────────────
+    // ── 3. 汇总每个 Initiative 的任务状态分布（用 okr_initiative_id）─────
     const taskCountsResult = await pool.query(
       `SELECT
-         project_id,
+         okr_initiative_id AS initiative_id,
          status,
          COUNT(*) AS cnt
        FROM tasks
-       WHERE project_id = ANY($1::uuid[])
-       GROUP BY project_id, status`,
+       WHERE okr_initiative_id = ANY($1::uuid[])
+       GROUP BY okr_initiative_id, status`,
       [initiativeIds]
     );
 
     // 聚合为 { [initiative_id]: { queued, in_progress, completed, failed, ... } }
     const countsByInitiative = {};
     for (const row of taskCountsResult.rows) {
-      if (!countsByInitiative[row.project_id]) {
-        countsByInitiative[row.project_id] = {};
+      if (!countsByInitiative[row.initiative_id]) {
+        countsByInitiative[row.initiative_id] = {};
       }
-      countsByInitiative[row.project_id][row.status] = parseInt(row.cnt);
+      countsByInitiative[row.initiative_id][row.status] = parseInt(row.cnt);
     }
 
     // ── 4. 检查每个 Initiative 中 queued 任务的阻塞原因 ───────────────
     const queuedTasksResult = await pool.query(
       `SELECT
          t.id, t.title, t.status, t.priority,
-         t.project_id, t.goal_id,
+         t.okr_initiative_id AS project_id, t.goal_id,
          t.created_at, t.updated_at,
          t.payload
        FROM tasks t
-       WHERE t.project_id = ANY($1::uuid[])
+       WHERE t.okr_initiative_id = ANY($1::uuid[])
          AND t.status = 'queued'
-       ORDER BY t.project_id, t.created_at ASC`,
+       ORDER BY t.okr_initiative_id, t.created_at ASC`,
       [initiativeIds]
     );
 
@@ -159,10 +162,10 @@ router.get('/diagnose/:kr_id', async (req, res) => {
     // ── 6. 检查近 N 天的派发记录（查 in_progress + completed 任务）────
     const recentDispatchResult = await pool.query(
       `SELECT
-         t.id, t.title, t.status, t.project_id,
+         t.id, t.title, t.status, t.okr_initiative_id AS project_id,
          t.updated_at
        FROM tasks t
-       WHERE t.project_id = ANY($1::uuid[])
+       WHERE t.okr_initiative_id = ANY($1::uuid[])
          AND t.status IN ('in_progress', 'completed', 'failed')
          AND t.updated_at >= NOW() - INTERVAL '1 day' * $2
        ORDER BY t.updated_at DESC
@@ -183,7 +186,7 @@ router.get('/diagnose/:kr_id', async (req, res) => {
       const anyRecentResult = await pool.query(
         `SELECT MAX(updated_at) AS last_updated
          FROM tasks
-         WHERE project_id = ANY($1::uuid[])
+         WHERE okr_initiative_id = ANY($1::uuid[])
            AND status IN ('in_progress', 'completed', 'failed')`,
         [initiativeIds]
       );

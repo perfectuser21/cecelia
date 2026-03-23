@@ -116,10 +116,10 @@ describe('task-router-diagnose routes', () => {
       // 查询 3: 任务状态统计
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { project_id: INITIATIVE_ID_A, status: 'queued', cnt: '3' },
-          { project_id: INITIATIVE_ID_A, status: 'completed', cnt: '5' },
-          { project_id: INITIATIVE_ID_B, status: 'queued', cnt: '1' },
-          { project_id: INITIATIVE_ID_B, status: 'in_progress', cnt: '2' },
+          { initiative_id: INITIATIVE_ID_A, status: 'queued', cnt: '3' },
+          { initiative_id: INITIATIVE_ID_A, status: 'completed', cnt: '5' },
+          { initiative_id: INITIATIVE_ID_B, status: 'queued', cnt: '1' },
+          { initiative_id: INITIATIVE_ID_B, status: 'in_progress', cnt: '2' },
         ],
       });
       // 查询 4: queued 任务详情（4 个 queued，没有阻塞因素）
@@ -225,8 +225,8 @@ describe('task-router-diagnose routes', () => {
       // 查询 3: 任务状态统计
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { project_id: INITIATIVE_ID_A, status: 'queued', cnt: '2' },
-          { project_id: INITIATIVE_ID_A, status: 'completed', cnt: '1' },
+          { initiative_id: INITIATIVE_ID_A, status: 'queued', cnt: '2' },
+          { initiative_id: INITIATIVE_ID_A, status: 'completed', cnt: '1' },
         ],
       });
       // 查询 4: queued 任务（1 个有 depends_on，1 个缺少 goal_id）
@@ -364,7 +364,7 @@ describe('task-router-diagnose routes', () => {
       // 查询 3: 任务状态统计
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { project_id: INITIATIVE_ID_A, status: 'queued', cnt: '1' },
+          { initiative_id: INITIATIVE_ID_A, status: 'queued', cnt: '1' },
         ],
       });
       // 查询 4: queued 任务（有 next_run_at 为未来时间）
@@ -415,7 +415,7 @@ describe('task-router-diagnose routes', () => {
       // 查询 3: 任务状态统计
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { project_id: INITIATIVE_ID_A, status: 'completed', cnt: '5' },
+          { initiative_id: INITIATIVE_ID_A, status: 'completed', cnt: '5' },
         ],
       });
       // 查询 4: 无 queued 任务
@@ -463,7 +463,7 @@ describe('task-router-diagnose routes', () => {
       // 查询 3: 任务状态统计
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { project_id: INITIATIVE_ID_B, status: 'queued', cnt: '2' },
+          { initiative_id: INITIATIVE_ID_B, status: 'queued', cnt: '2' },
         ],
       });
       // 查询 4: 2 个 queued 任务（一个缺 goal_id + next_run_at 未来，一个有 depends_on）
@@ -546,8 +546,8 @@ describe('task-router-diagnose routes', () => {
       // 查询 3: 任务状态统计
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { project_id: INITIATIVE_ID_A, status: 'queued', cnt: '1' },
-          { project_id: INITIATIVE_ID_A, status: 'completed', cnt: '3' },
+          { initiative_id: INITIATIVE_ID_A, status: 'queued', cnt: '1' },
+          { initiative_id: INITIATIVE_ID_A, status: 'completed', cnt: '3' },
         ],
       });
       // 查询 4: 1 个 queued 任务（无阻塞）
