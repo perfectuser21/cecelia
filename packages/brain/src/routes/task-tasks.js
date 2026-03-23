@@ -4,7 +4,7 @@
  * POST /   — 创建新任务（供 /architect Phase 5 和外部 agent 注册任务）
  * GET /    — 列出任务（支持 status, area_id, project_id, task_type, limit 过滤）
  * GET /:id — 获取单个 task
- * PATCH /:id — 更新 status/priority/title
+ * PATCH /:id — 更新 status/priority/title/okr_initiative_id
  */
 
 import { Router } from 'express';
@@ -40,6 +40,7 @@ router.post('/', async (req, res) => {
       metadata = null,
       trigger_source = 'auto',
       domain: domainInput = null,
+      okr_initiative_id = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -53,10 +54,10 @@ router.post('/', async (req, res) => {
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
          project_id, area_id, goal_id, location,
-         payload, trigger_source, domain
+         payload, trigger_source, domain, okr_initiative_id
        )
-       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11)
-       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, created_at`,
+       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, created_at`,
       [
         title.trim(),
         description,
@@ -69,6 +70,7 @@ router.post('/', async (req, res) => {
         (payload ?? metadata) ? JSON.stringify(payload ?? metadata) : null,
         trigger_source,
         domain,
+        okr_initiative_id,
       ]
     );
 
@@ -140,7 +142,7 @@ router.get('/:id', async (req, res) => {
 // PATCH /tasks/:id — 更新 task 字段
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, priority, title } = req.body;
+    const { status, priority, title, okr_initiative_id } = req.body;
 
     const setClauses = [];
     const params = [];
@@ -157,6 +159,10 @@ router.patch('/:id', async (req, res) => {
     if (title !== undefined) {
       setClauses.push(`title = $${paramIndex++}`);
       params.push(title);
+    }
+    if (okr_initiative_id !== undefined) {
+      setClauses.push(`okr_initiative_id = $${paramIndex++}`);
+      params.push(okr_initiative_id);
     }
 
     if (setClauses.length === 0) {
