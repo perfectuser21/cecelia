@@ -15,10 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.88.0"
-updated: "2026-03-22"
-# ci-trigger: 13.29.0
+version: "3.89.0"
+updated: "2026-03-23"
+# ci-trigger: 13.31.0
 changelog:
+  - version: "13.31.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(/dev): verify-step.sh step2 新增4个硬门禁(PRESERVE/TDD/垃圾清理/周边一致性) + 修复5个bug"
+    scope: packages/engine/hooks/verify-step.sh
   - version: "13.29.0"
     date: "2026-03-23"
     summary: "[CONFIG] feat(engine): Stage 2 强制周边一致性扫描 + code-review-gate 维度H跨文件模块一致性 blocker"

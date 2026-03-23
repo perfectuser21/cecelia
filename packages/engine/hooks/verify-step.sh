@@ -157,6 +157,105 @@ verify_step2() {
   Step 2 完成前必须有实际的实现文件改动（.js/.ts/.sh/.cjs 等）"
     fi
 
+    # Gate 0a: PRESERVE 基线快照检查
+    local task_card_early=""
+    if [[ -n "$BRANCH" ]]; then
+        task_card_early="$PROJECT_ROOT/.task-${BRANCH}.md"
+    fi
+    if [[ -z "$task_card_early" || ! -f "$task_card_early" ]]; then
+        task_card_early=$(find "$PROJECT_ROOT" -maxdepth 1 -name ".task-cp-*.md" 2>/dev/null | head -1 || echo "")
+    fi
+
+    if [[ -n "$task_card_early" && -f "$task_card_early" ]]; then
+        local preserve_count
+        preserve_count=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$task_card_early" 2>/dev/null || echo 0)
+        if [[ "$preserve_count" -eq 0 ]]; then
+            _fail "Gate 0a: Task Card 缺少 [PRESERVE] 行为快照条目
+  文件: $task_card_early
+  要求：Task Card 验收条件中至少有 1 条 [PRESERVE] 条目
+  作用：记录改动前的系统行为基线，防止无意识破坏现有功能"
+        fi
+        echo "  ✅ [Gate 0a] PRESERVE 基线快照: ${preserve_count} 条" >&2
+    else
+        echo "  ⚠️  [Gate 0a] 未找到 Task Card，跳过 PRESERVE 检查" >&2
+    fi
+
+    # Gate 0b: TDD 红灯确认检查
+    local dev_mode_file="$PROJECT_ROOT/.dev-mode.${BRANCH}"
+    if [[ -f "$dev_mode_file" ]]; then
+        if ! grep -q "^tdd_red_confirmed:" "$dev_mode_file" 2>/dev/null; then
+            _fail "Gate 0b: TDD 红灯未确认
+  文件: $dev_mode_file
+  要求：.dev-mode 中必须有 tdd_red_confirmed: 行
+  作用：确保写代码前已先跑失败测试（红灯），遵循 TDD 原则
+  修复：在 .dev-mode 文件中追加 'tdd_red_confirmed: true'"
+        fi
+        echo "  ✅ [Gate 0b] TDD 红灯已确认" >&2
+    else
+        echo "  ⚠️  [Gate 0b] .dev-mode 文件不存在，跳过 TDD 确认检查" >&2
+    fi
+
+    # Gate 0c: 垃圾清理检查（console.log / debugger）
+    local garbage_found=0
+    local garbage_files=()
+    while IFS= read -r fpath; do
+        [[ -z "$fpath" ]] && continue
+        # 跳过测试文件、.md 文件、verify-step.sh 自身
+        [[ "$fpath" =~ \.(test|spec)\. ]] && continue
+        [[ "$fpath" =~ \.md$ ]] && continue
+        [[ "$fpath" =~ verify-step\.sh$ ]] && continue
+        local full_path="$PROJECT_ROOT/$fpath"
+        [[ ! -f "$full_path" ]] && continue
+        if grep -qE '^\s*console\.log\s*\(|^\s*debugger\s*;?' "$full_path" 2>/dev/null; then
+            garbage_files+=("$fpath")
+            garbage_found=1
+        fi
+    done <<< "$impl_files"
+
+    if [[ $garbage_found -ne 0 ]]; then
+        _fail "Gate 0c: 变更文件含调试垃圾代码
+  文件: ${garbage_files[*]}
+  禁止内容：console.log() 调用、debugger 语句
+  要求：提交前必须清理所有调试代码
+  修复：删除上述文件中的 console.log 和 debugger"
+    fi
+    echo "  ✅ [Gate 0c] 垃圾清理检查通过（无 console.log/debugger）" >&2
+
+    # Gate 0d: 周边一致性扫描（同目录文件引用被改模块的旧版本号）
+    local consistency_issues=()
+    local version_files
+    version_files=$(echo "$impl_files" | grep -E '(package\.json|VERSION|\.hook-core-version)$' 2>/dev/null || echo "")
+    if [[ -n "$version_files" ]]; then
+        while IFS= read -r vfile; do
+            [[ -z "$vfile" ]] && continue
+            local full_vpath="$PROJECT_ROOT/$vfile"
+            [[ ! -f "$full_vpath" ]] && continue
+            local new_ver
+            new_ver=$(grep -oE '"version"\s*:\s*"[^"]+"' "$full_vpath" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+            [[ -z "$new_ver" ]] && new_ver=$(cat "$full_vpath" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+            if [[ -n "$new_ver" ]]; then
+                local vdir
+                vdir=$(dirname "$full_vpath")
+                while IFS= read -r sf; do
+                    [[ "$sf" == "$full_vpath" ]] && continue
+                    local sv
+                    sv=$(grep -oE '"version"\s*:\s*"[^"]+"' "$sf" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+                    if [[ -n "$sv" && "$sv" != "$new_ver" ]]; then
+                        consistency_issues+=("sibling $sf 版本($sv) 与 $vfile 版本($new_ver) 不一致")
+                    fi
+                done < <(find "$vdir" -maxdepth 1 -name "*.json" -o -name "*.yaml" -o -name "*.yml" 2>/dev/null)
+            fi
+        done <<< "$version_files"
+    fi
+
+    if [[ ${#consistency_issues[@]} -gt 0 ]]; then
+        _fail "Gate 0d: 周边一致性检查失败
+  发现同目录文件引用旧版本号（sibling consistency violation）：
+$(printf '  %s\n' "${consistency_issues[@]}")
+  要求：修改模块时，同目录下引用该模块版本号的文件必须同步更新"
+    fi
+    echo "  ✅ [Gate 0d] 周边一致性扫描通过" >&2
+
     # 检查是否有测试文件（仅警告）
     local test_files
     test_files=$(echo "$changed_files" | grep -E '\.(test|spec)\.(ts|js|mjs|cjs|tsx|jsx)$|/__tests__/' 2>/dev/null || echo "")
