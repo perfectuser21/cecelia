@@ -2419,3 +2419,35 @@ product_features:
       - "dods API 404 时降级放行"
 
     rcis: []
+
+  - id: ci-gate-new-files-need-rci
+    name: CI Gate — 新增 hook/devgate 文件必须有 RCI 条目
+    category: quality
+    status: Committed
+    priority: P1
+    version: "13.36.0"
+    updated: "2026-03-23"
+    description: |
+      PR 新增 packages/engine/hooks/ 或 packages/engine/scripts/devgate/ 下的文件时，
+      CI L2 检查该文件是否在 regression-contract.yaml 中有对应 RCI 条目。
+      防止新能力无 RCI 覆盖悄悄滑入生产。
+      三重降级保护：无变更/文件已有 RCI/非目标路径 → 跳过。
+
+    entrypoints:
+      - type: devgate
+        file: packages/engine/scripts/devgate/check-new-files-need-rci.cjs
+        trigger: "CI L2 engine-l2 job PR 时运行"
+
+    golden_path: |
+      PR 新增 hooks/*.sh 或 scripts/devgate/*.cjs →
+      CI L2 engine-l2 new-files-need-rci-check →
+      scanMissingRci 检查 regression-contract.yaml →
+      有 RCI 则通过，无 RCI 则 exit 1
+
+    minimal_paths:
+      - "无新增文件 → 跳过"
+      - "非目标路径 → 跳过"
+      - "已有 RCI evidence.file → 通过"
+
+    rcis:
+      - W8-003

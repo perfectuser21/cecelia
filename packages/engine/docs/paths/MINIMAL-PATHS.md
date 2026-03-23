@@ -407,6 +407,16 @@ changelog:
 
 ---
 
+### ci-gate-new-files-need-rci: CI Gate — 新增 hook/devgate 文件必须有 RCI 条目
+
+1. ✅ **无新增文件 → 跳过**
+2. ✅ **非目标路径 → 跳过**
+3. ✅ **已有 RCI evidence.file → 通过**
+
+**RCI 覆盖**: W8-003
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

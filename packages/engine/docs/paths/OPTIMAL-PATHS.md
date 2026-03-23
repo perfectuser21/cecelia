@@ -474,6 +474,17 @@ prd_content 存在则放行
 
 ---
 
+### ci-gate-new-files-need-rci: CI Gate — 新增 hook/devgate 文件必须有 RCI 条目
+
+```
+PR 新增 hooks/*.sh 或 scripts/devgate/*.cjs →
+CI L2 engine-l2 new-files-need-rci-check →
+scanMissingRci 检查 regression-contract.yaml →
+有 RCI 则通过，无 RCI 则 exit 1
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
