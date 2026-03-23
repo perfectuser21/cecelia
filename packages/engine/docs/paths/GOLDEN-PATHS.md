@@ -740,6 +740,24 @@ devloop-check.sh PR 合并验证 baseRefName == main →
 
 ---
 
+## GP-047: Stage3 Drift Check (devloop-check-drift-detection)
+
+**Feature**: devloop-check-drift-detection - Stage3 Drift Check
+**Priority**: P2
+
+### Golden Path
+
+```
+Stage 2 完成 →
+devloop-check.sh 条件 2.7 drift check →
+实际改动文件与 Task Card Scope 对比 →
+有 drift 则 warning（继续）→
+条件 3 PR 创建 →
+完成
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
