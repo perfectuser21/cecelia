@@ -198,4 +198,64 @@ router.get('/tree', async (req, res) => {
   }
 });
 
+// ─── KR 进度重算 ──────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/okr/key-results/:id/recalculate-progress
+ * 重算指定 KR 的进度：
+ *   current_value = completed tasks / total tasks × target_value
+ *
+ * 链路：key_result → okr_projects → okr_scopes → okr_initiatives → tasks
+ */
+router.post('/key-results/:id/recalculate-progress', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 验证 KR 存在
+    const krResult = await pool.query('SELECT id, target_value FROM key_results WHERE id = $1', [id]);
+    if (!krResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'KeyResult not found' });
+    }
+    const { target_value } = krResult.rows[0];
+
+    // 统计该 KR 下所有 initiatives 关联的 tasks
+    const statsResult = await pool.query(`
+      SELECT
+        COUNT(t.id) FILTER (WHERE t.status = 'completed') AS completed_count,
+        COUNT(t.id) AS total_count
+      FROM okr_projects p
+      JOIN okr_scopes s ON s.project_id = p.id
+      JOIN okr_initiatives i ON i.scope_id = s.id
+      LEFT JOIN tasks t ON t.okr_initiative_id = i.id
+      WHERE p.kr_id = $1
+    `, [id]);
+
+    const { completed_count, total_count } = statsResult.rows[0];
+    const completedNum = parseInt(completed_count, 10) || 0;
+    const totalNum = parseInt(total_count, 10) || 0;
+
+    // 计算新进度（total=0 时进度为 0）
+    const newValue = totalNum > 0
+      ? Math.round((completedNum / totalNum) * parseFloat(target_value) * 100) / 100
+      : 0;
+
+    // 更新 current_value
+    await pool.query(
+      'UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2',
+      [newValue, id]
+    );
+
+    res.json({
+      success: true,
+      kr_id: id,
+      completed_tasks: completedNum,
+      total_tasks: totalNum,
+      target_value: parseFloat(target_value),
+      current_value: newValue
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
