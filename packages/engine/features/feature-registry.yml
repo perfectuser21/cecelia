@@ -15,10 +15,14 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.89.0"
+version: "3.90.0"
 updated: "2026-03-23"
-# ci-trigger: 13.31.0
+# ci-trigger: 13.31.1
 changelog:
+  - version: "13.31.1"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(engine): verify-step Gate 0c 改为检查 diff 新增行，避免误判生产文件已有 console.log"
+    scope: packages/engine/hooks/verify-step.sh
   - version: "13.31.0"
     date: "2026-03-23"
     summary: "[CONFIG] fix(/dev): verify-step.sh step2 新增4个硬门禁(PRESERVE/TDD/垃圾清理/周边一致性) + 修复5个bug"

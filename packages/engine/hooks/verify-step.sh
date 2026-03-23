@@ -196,6 +196,7 @@ verify_step2() {
     fi
 
     # Gate 0c: 垃圾清理检查（console.log / debugger）
+    # v1.1.0 修复：只检查 diff 新增行（+开头），避免误判文件中已有的生产日志
     local garbage_found=0
     local garbage_files=()
     while IFS= read -r fpath; do
@@ -206,7 +207,11 @@ verify_step2() {
         [[ "$fpath" =~ verify-step\.sh$ ]] && continue
         local full_path="$PROJECT_ROOT/$fpath"
         [[ ! -f "$full_path" ]] && continue
-        if grep -qE '^\s*console\.log\s*\(|^\s*debugger\s*;?' "$full_path" 2>/dev/null; then
+        # 只检查 diff 中新增的行（+ 开头），不检查整个文件
+        local diff_added
+        diff_added=$(git diff "origin/${base_branch}...HEAD" -- "$fpath" 2>/dev/null || \
+                     git diff "${base_branch}...HEAD" -- "$fpath" 2>/dev/null || echo "")
+        if echo "$diff_added" | grep -qE '^\+\s*console\.log\s*\(|^\+\s*debugger\s*;?' 2>/dev/null; then
             garbage_files+=("$fpath")
             garbage_found=1
         fi
