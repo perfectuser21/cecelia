@@ -9,7 +9,9 @@ date: 2026-03-23
 
 ### 根本原因
 
-迁移旧表代码时，忘记同步更新对应的测试文件。heartbeat-inspector.test.js 的断言仍然检查 `goals`，而实现已改为 `key_results`，导致测试失败。
+迁移旧表代码时，只关注了实现文件（heartbeat-inspector.js），忘记同步更新对应的测试文件。
+heartbeat-inspector.test.js 的断言 `expect(calls[3]).toContain('goals')` 仍然检查旧表名，
+而实现已改为 `key_results`，导致本地 vitest 测试失败（需要进入 worktree 目录单独运行才能发现）。
 
 ### 下次预防
 
