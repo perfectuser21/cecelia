@@ -670,6 +670,48 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
   }
 }
 
+/**
+ * 按 title 精确去重写入 learning。
+ * - 若已存在同 title 的行：frequency_count += 1，更新 last_reinforced_at，返回 { id, upserted: false }
+ * - 若不存在：INSERT，frequency_count = 1，返回 { id, upserted: true }
+ *
+ * 适用于 thalamus/orchestrator-chat/quarantine 等 LLM 生成场景（content 每次略有不同，
+ * 但 title 是事件标识符语义唯一）。learning.js 的 recordLearning 仍用 content_hash。
+ *
+ * @param {{ title: string, content?: string, category?: string, triggerEvent?: string }} params
+ * @param {import('pg').Pool} [dbPool] - 可选，默认用全局 pool
+ * @returns {Promise<{ id: string, upserted: boolean }>}
+ */
+export async function upsertLearning({ title, content = '', category = 'general', triggerEvent = null }, dbPool) {
+  const p = dbPool || pool;
+
+  const existing = await p.query(
+    'SELECT id, frequency_count FROM learnings WHERE title = $1 LIMIT 1',
+    [title]
+  );
+
+  if (existing.rows.length > 0) {
+    const row = existing.rows[0];
+    const newFreq = (row.frequency_count || 1) + 1;
+    await p.query(
+      `UPDATE learnings
+         SET frequency_count = $1,
+             last_reinforced_at = NOW()
+       WHERE id = $2`,
+      [newFreq, row.id]
+    );
+    return { id: row.id, upserted: false };
+  }
+
+  const result = await p.query(
+    `INSERT INTO learnings (title, category, trigger_event, content, frequency_count, last_reinforced_at)
+     VALUES ($1, $2, $3, $4, 1, NOW())
+     RETURNING id`,
+    [title, category, triggerEvent, content]
+  );
+  return { id: result.rows[0].id, upserted: true };
+}
+
 export {
   ADJUSTABLE_PARAMS,
   vectorSearchLearnings as _vectorSearchLearnings,

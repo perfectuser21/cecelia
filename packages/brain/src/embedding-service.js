@@ -12,8 +12,8 @@
 import pool from './db.js';
 import { generateEmbedding } from './openai-client.js';
 
-const BACKFILL_BATCH_SIZE = 10;
-const BACKFILL_DELAY_MS = 500; // 批次间延迟，避免 rate limit
+const BACKFILL_BATCH_SIZE = 50;
+const BACKFILL_DELAY_MS = 200; // 批次间延迟，避免 rate limit
 
 /**
  * 失败时写入重试队列（working_memory）
@@ -87,42 +87,54 @@ export async function backfillLearningEmbeddings(dbPool) {
   const p = dbPool || pool;
   let processed = 0;
   let failed = 0;
+  let hasMore = true;
 
-  try {
-    const { rows } = await p.query(
-      `SELECT id, title, content FROM learnings
-       WHERE embedding IS NULL
-       ORDER BY created_at DESC
-       LIMIT $1`,
-      [BACKFILL_BATCH_SIZE]
-    );
+  while (hasMore) {
+    try {
+      const { rows } = await p.query(
+        `SELECT id, title, content FROM learnings
+         WHERE embedding IS NULL
+         ORDER BY created_at DESC
+         LIMIT $1`,
+        [BACKFILL_BATCH_SIZE]
+      );
 
-    if (rows.length === 0) return { processed: 0, failed: 0 };
-
-    console.log(`[embedding-service] backfill: 处理 ${rows.length} 条 learnings`);
-
-    for (const row of rows) {
-      const text = `${row.title}\n\n${row.content || ''}`.substring(0, 4000);
-      try {
-        const embedding = await generateEmbedding(text);
-        const embStr = '[' + embedding.join(',') + ']';
-        await p.query(
-          `UPDATE learnings SET embedding = $1::vector WHERE id = $2`,
-          [embStr, row.id]
-        );
-        processed++;
-      } catch (err) {
-        console.warn(`[embedding-service] backfill failed id=${row.id}: ${err.message}`);
-        failed++;
+      if (rows.length === 0) {
+        hasMore = false;
+        break;
       }
-      await new Promise(r => setTimeout(r, BACKFILL_DELAY_MS));
-    }
 
-    console.log(`[embedding-service] backfill 完成: processed=${processed}, failed=${failed}`);
-  } catch (err) {
-    console.warn(`[embedding-service] backfill 查询失败: ${err.message}`);
+      console.log(`[embedding-service] backfill: 处理 ${rows.length} 条 learnings（已处理 ${processed}）`);
+
+      for (const row of rows) {
+        const text = `${row.title}\n\n${row.content || ''}`.substring(0, 4000);
+        try {
+          const embedding = await generateEmbedding(text);
+          const embStr = '[' + embedding.join(',') + ']';
+          await p.query(
+            `UPDATE learnings SET embedding = $1::vector WHERE id = $2`,
+            [embStr, row.id]
+          );
+          processed++;
+        } catch (err) {
+          console.warn(`[embedding-service] backfill failed id=${row.id}: ${err.message}`);
+          failed++;
+        }
+        await new Promise(r => setTimeout(r, BACKFILL_DELAY_MS));
+      }
+
+      // 如果本批不足 BATCH_SIZE，说明已处理完所有积压
+      if (rows.length < BACKFILL_BATCH_SIZE) {
+        hasMore = false;
+      }
+    } catch (err) {
+      console.warn(`[embedding-service] backfill 查询失败: ${err.message}`);
+      hasMore = false;
+      break;
+    }
   }
 
+  console.log(`[embedding-service] backfill 完成: processed=${processed}, failed=${failed}`);
   return { processed, failed };
 }
 

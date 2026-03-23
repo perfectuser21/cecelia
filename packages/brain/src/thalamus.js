@@ -20,7 +20,7 @@
 /* global console */
 
 import pool from './db.js';
-import { getRecentLearnings } from './learning.js';
+import { getRecentLearnings, upsertLearning } from './learning.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { callLLM } from './llm-caller.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
@@ -1499,14 +1499,16 @@ async function observeChat(signal, context = {}) {
       }
 
       case 'save_note': {
-        await pool.query(`
-          INSERT INTO learnings (title, category, content, trigger_event)
-          VALUES ($1, $2, $3, 'chat_mouth')
-        `, [
-          signal.title || '对话笔记',
-          signal.category || 'chat',
-          signal.content || '',
-        ]);
+        try {
+          await upsertLearning({
+            title: signal.title || '对话笔记',
+            category: signal.category || 'chat',
+            content: signal.content || '',
+            triggerEvent: 'chat_mouth',
+          });
+        } catch (e) {
+          console.warn('[thalamus] upsertLearning failed (non-fatal):', e.message);
+        }
         console.log(`[thalamus] observeChat: note saved — "${signal.title}"`);
         break;
       }
