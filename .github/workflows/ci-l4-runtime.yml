@@ -178,7 +178,7 @@ jobs:
           echo "  API Smoke Check — Brain 基础 API 健康验证"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           BRAIN_PORT=15221
-          BRAIN_PORT=$BRAIN_PORT PORT=$BRAIN_PORT node src/server.js &
+          BRAIN_PORT=$BRAIN_PORT PORT=$BRAIN_PORT node server.js &
           BRAIN_PID=$!
           echo "Brain PID: $BRAIN_PID, Port: $BRAIN_PORT"
           for i in $(seq 1 20); do
