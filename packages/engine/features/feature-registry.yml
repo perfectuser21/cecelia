@@ -17,8 +17,13 @@
 
 version: "3.89.0"
 updated: "2026-03-23"
-# ci-trigger: 13.31.0
+# ci-trigger: 13.33.0
 changelog:
+
+  - version: "13.33.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(dev-skill): 修复 SKILL.md/00~04-step.md 多处 P0/P1/P2 bug（macOS sed、develop分支、seal-key描述、章节编号、grep-c多文件等）"
+    scope: packages/engine/skills/dev/
 
   - version: "13.32.0"
     date: "2026-03-23"

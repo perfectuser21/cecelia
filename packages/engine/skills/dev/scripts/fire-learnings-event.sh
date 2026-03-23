@@ -87,11 +87,11 @@ extract_next_steps() {
     return
   fi
 
-  # 提取预防措施列表项（**预防措施**下面的 - 开头行）
+  # 提取下次预防列表项（### 下次预防 下面的 - [ ] 行）
   echo "$raw" | awk '
-    /\*\*预防措施\*\*|**预防措施**/ { in_section=1; next }
+    /^### 下次预防/ { in_section=1; next }
     in_section && /^- / { print substr($0, 3) }
-    in_section && /^\*\*/ && !/预防措施/ { in_section=0 }
+    in_section && /^### / && !/下次预防/ { in_section=0 }
   ' | jq -R . | jq -s . 2>/dev/null || echo "[]"
 }
 
