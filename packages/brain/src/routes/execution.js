@@ -793,7 +793,6 @@ router.post('/execution-callback', async (req, res) => {
               ? Math.round((krProgress / 100) * targetVal * 100) / 100
               : krProgress;
             await pool.query('UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2', [newValue, krId]);
-            console.log(`[execution-callback] KR ${krId} current_value → ${newValue} (progress=${krProgress}%)`);
           }
         }
       } catch (rollupErr) {
