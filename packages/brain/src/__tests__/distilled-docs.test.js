@@ -18,7 +18,7 @@ vi.mock('../db.js', () => ({
 }));
 
 import pool from '../db.js';
-import { getDoc, seedSoul, refreshWorldState, upsertDoc } from '../distilled-docs.js';
+import { getDoc, seedSoul, refreshWorldState, refreshSelfModel, refreshUserProfile, upsertDoc } from '../distilled-docs.js';
 
 const mockPool = {
   query: vi.fn(),
@@ -108,6 +108,72 @@ describe('refreshWorldState', () => {
     mockPool.query.mockRejectedValueOnce(new Error('table not found'));
 
     const result = await refreshWorldState(mockPool);
+    expect(result.refreshed).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+});
+
+// T8: refreshSelfModel
+describe('refreshSelfModel', () => {
+  it('T8: 有 learnings 数据时写入 SELF_MODEL，返回 { refreshed: true }', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          { title: 'DoD 格式要求', content: '每条 DoD 必须有 Test 字段', category: 'best_practice', frequency_count: 5 },
+          { title: 'CI 修复经验', content: '先看 log-failed 再修', category: 'cortex_insight', frequency_count: 3 },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] }); // upsertDoc
+
+    const result = await refreshSelfModel(mockPool);
+    expect(result.refreshed).toBe(true);
+    expect(result.count).toBe(2);
+  });
+
+  it('T8b: 无 learnings 数据时返回 { refreshed: false }', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const result = await refreshSelfModel(mockPool);
+    expect(result.refreshed).toBe(false);
+  });
+
+  it('T8c: 数据库异常时返回 { refreshed: false }（非致命）', async () => {
+    mockPool.query.mockRejectedValueOnce(new Error('learnings table not found'));
+
+    const result = await refreshSelfModel(mockPool);
+    expect(result.refreshed).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+});
+
+// T9: refreshUserProfile
+describe('refreshUserProfile', () => {
+  it('T9: 有 user_profile_facts 数据时写入 USER_PROFILE，返回 { refreshed: true }', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          { category: '沟通偏好', key: '语言', content: '简体中文，简洁直接' },
+          { category: '工作风格', key: '反馈', content: '不需要总结' },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] }); // upsertDoc
+
+    const result = await refreshUserProfile(mockPool);
+    expect(result.refreshed).toBe(true);
+    expect(result.count).toBe(2);
+  });
+
+  it('T9b: 无 user_profile_facts 数据时返回 { refreshed: false }', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const result = await refreshUserProfile(mockPool);
+    expect(result.refreshed).toBe(false);
+  });
+
+  it('T9c: 数据库异常时返回 { refreshed: false }（非致命）', async () => {
+    mockPool.query.mockRejectedValueOnce(new Error('user_profile_facts not found'));
+
+    const result = await refreshUserProfile(mockPool);
     expect(result.refreshed).toBe(false);
     expect(result.error).toBeTruthy();
   });
