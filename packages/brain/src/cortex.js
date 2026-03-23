@@ -718,7 +718,7 @@ async function _processSuccessfulResponse(event, response, timing) {
   const _outputHash = _computeOutputHash(decision);
   const _outputDedup = await _checkOutputDedup(_outputHash);
   if (_outputDedup.duplicate) {
-    console.log(`[cortex] 输出去重熔断：root_cause 相同诊断已出现 ${_outputDedup.count} 次，停止回声 (hash=${_outputHash})`);
+    console.info(`[cortex] 输出去重熔断：root_cause 相同诊断已出现 ${_outputDedup.count} 次，停止回声 (hash=${_outputHash})`);
     return createCortexFallback(event, `输出去重熔断：相同诊断已输出 ${_outputDedup.count} 次，皮层回声已阻断`);
   }
 
@@ -756,7 +756,7 @@ async function _handleLLMError(event, err) {
   }));
   if (err._timing) {
     const t = err._timing;
-    console.log(`[cortex] LLM 调用失败 prompt_tokens_est=${t.prompt_tokens_est} response_ms=${t.response_ms} timed_out=${t.timed_out} error_type=${t.error_type}`);
+    console.error(`[cortex] LLM 调用失败 prompt_tokens_est=${t.prompt_tokens_est} response_ms=${t.response_ms} timed_out=${t.timed_out} error_type=${t.error_type}`);
     logCortexDecision(event, null, t, err.message).catch(() => {});
   }
   await recordLLMError('cortex', err, { event_type: event.type }, {
@@ -810,11 +810,11 @@ async function analyzeDeep(event, thalamusDecision = null) {
   const _eventHash = _computeEventHash(event);
   const _breaker = await _checkReflectionBreaker(_eventHash);
   if (_breaker.open) {
-    console.log(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
+    console.info(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
     return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);
   }
 
-  console.log(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
+  console.info(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
 
   const context = _buildBaseContext(event, thalamusDecision);
   await _enrichContextWithHistory(context);
