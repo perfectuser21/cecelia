@@ -1691,6 +1691,25 @@ workflow:
       contains: "ESCAPED_TITLE.*\\$"
     test: "tests/devgate/snapshot-prd-dod.test.ts"
 
+  - id: W8-003
+    feature: W8
+    name: "新增 hook/devgate 文件必须有 RCI 条目"
+    scope: devgate
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [devgate, rci, ci-gate, v13.36.0]
+    owner: infra
+    steps:
+      given: "PR 新增 packages/engine/hooks/ 或 packages/engine/scripts/devgate/ 下的文件"
+      when: "CI L2 engine-l2 job 运行 new-files-need-rci-check step"
+      then: "检测新文件是否在 regression-contract.yaml 中有对应 RCI 条目，缺失则 exit 1"
+    evidence:
+      type: code
+      file: "scripts/devgate/check-new-files-need-rci.cjs"
+      contains: "scanMissingRci"
+    test: "tests/devgate/check-new-files-need-rci.test.ts"
+
 # ============================================================================
 # CI/Release 回归契约
 # ============================================================================

@@ -338,6 +338,16 @@ jobs:
           cd packages/engine
           node scripts/devgate/check-coverage-completeness.mjs
 
+      # New Files Need RCI Check
+      - name: new-files-need-rci-check
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  New Files Need RCI Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          export BASE_REF=origin/${{ github.base_ref }}
+          node packages/engine/scripts/devgate/check-new-files-need-rci.cjs
+
   # ─── Evolution Gate (always runs, detects unregistered subsystems) ───────
 
   evolution-check:
