@@ -3269,9 +3269,9 @@ skills:
       when: "执行 intent-expand skill（Step 1-4）"
       then: "沿 Task→Project→KR→OKR→Vision 链查询 Brain API，输出 .enriched-prd-<branch>.md，打印 ENRICHED_PRD_RESULT: SUCCESS"
     evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/skills/intent-expand/SKILL.md'"
-    test: "tests/skills/language-rule.test.ts"
+      type: code
+      file: "skills/intent-expand/SKILL.md"
+      contains: "intent-expand"
 
   # DEPRECATED: code-quality 已被 code_review_gate 替代（Pipeline v2），Skill 目录已删除
   # - id: S4-003
