@@ -56,6 +56,18 @@ _fail() {
     exit 1
 }
 
+# 将 Task Card 中第 LINE_NUM 行的 [ ] 更新为 [x]（DoD Test 通过后写回）
+_mark_dod_done() {
+    local tc="$1"
+    local line_num="$2"
+    [[ -z "$tc" || ! -f "$tc" || "$line_num" -le 0 ]] && return 0
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "${line_num}s/\[ \]/[x]/" "$tc" 2>/dev/null || true
+    else
+        sed -i "${line_num}s/\[ \]/[x]/" "$tc" 2>/dev/null || true
+    fi
+}
+
 _pass() {
     # 记录执行日志
     if command -v _devlog_event &>/dev/null; then
@@ -339,26 +351,33 @@ $(printf '  %s\n' "${consistency_issues[@]}")
         local IN_DOD=false
         local DOD_TYPE=""
         local BEHAVIOR_DESC=""
+        local LINE_NUM=0
+        local CURRENT_DOD_LINE=0
 
         while IFS= read -r line; do
+            LINE_NUM=$((LINE_NUM + 1))
             # 检测新条目行（重置状态）
             if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\['; then
                 IN_DOD=false
                 DOD_TYPE=""
                 BEHAVIOR_DESC=""
+                CURRENT_DOD_LINE=0
 
                 if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[BEHAVIOR\]'; then
                     IN_DOD=true
                     DOD_TYPE="BEHAVIOR"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[BEHAVIOR\][[:space:]]*//')
+                    CURRENT_DOD_LINE=$LINE_NUM
                 elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[ARTIFACT\]'; then
                     IN_DOD=true
                     DOD_TYPE="ARTIFACT"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[ARTIFACT\][[:space:]]*//')
+                    CURRENT_DOD_LINE=$LINE_NUM
                 elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[GATE\]'; then
                     IN_DOD=true
                     DOD_TYPE="GATE"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[GATE\][[:space:]]*//')
+                    CURRENT_DOD_LINE=$LINE_NUM
                 fi
                 continue
             fi
@@ -397,6 +416,7 @@ $(printf '  %s\n' "${consistency_issues[@]}")
                         if [[ -f "$TEST_PATH" ]]; then
                             echo "  ✅ PASS (文件存在: $TEST_REF)" >&2
                             DOD_PASSED=$((DOD_PASSED + 1))
+                            _mark_dod_done "$task_card" "$CURRENT_DOD_LINE"
                         else
                             echo "  ❌ FAIL (文件不存在: $TEST_REF)" >&2
                             DOD_FAILED=$((DOD_FAILED + 1))
@@ -433,6 +453,7 @@ $(printf '  %s\n' "${consistency_issues[@]}")
                                 echo "  输出: $(echo "$OUTPUT" | head -2)" >&2
                             fi
                             DOD_PASSED=$((DOD_PASSED + 1))
+                            _mark_dod_done "$task_card" "$CURRENT_DOD_LINE"
                         else
                             echo "  ❌ FAIL (exit $EXIT_CODE)" >&2
                             if [[ -n "$OUTPUT" ]]; then

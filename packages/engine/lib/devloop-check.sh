@@ -19,6 +19,7 @@
 # 更新: 2026-03-22 — 清理误导性注释，blocked 状态为 subagent FAIL 写入，需分析 root cause 修复
 # 更新: 2026-03-22 — P0 修复：cleanup 失败后加 return 2 触发重试，避免 PR 合并后工作流卡死
 # 更新: 2026-03-22 — P0 安全：seal 文件机制（#seal-gate），条件 1.5/2.5 读 seal 文件，自认证检测
+# 更新: 2026-03-22 — 新增条件 2.7：DoD 完整性检查（Task Card 所有 [BEHAVIOR]/[ARTIFACT]/[GATE] 须勾选 [x]）
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -233,6 +234,31 @@ devloop_check() {
                 return 2
             fi
             # 不存在且无字段 → pass-through，subagent 尚未运行
+        fi
+    fi
+
+    # ===== 条件 2.7: DoD 完整性检查（所有 [BEHAVIOR]/[ARTIFACT]/[GATE] 均已勾选 [x]）=====
+    # verify-step.sh Gate 2 通过后会自动将条目标 [x]；此处校验与 CI 保持同步
+    if [[ -f "$dev_mode_file" ]]; then
+        local dod_root
+        dod_root="$(dirname "$dev_mode_file")"
+        local task_card_dod=""
+        task_card_dod=$(find "$dod_root" -maxdepth 1 -name ".task-${branch}.md" 2>/dev/null | head -1 || echo "")
+        if [[ -z "$task_card_dod" ]]; then
+            task_card_dod=$(find "$dod_root" -maxdepth 1 -name ".task-cp-*.md" 2>/dev/null | head -1 || echo "")
+        fi
+        if [[ -n "$task_card_dod" && -f "$task_card_dod" ]]; then
+            local unchecked_count
+            unchecked_count=$(grep -cE '^\s*-\s*\[ \]\s*\[(BEHAVIOR|ARTIFACT|GATE)\]' "$task_card_dod" 2>/dev/null || echo 0)
+            if [[ "$unchecked_count" -gt 0 ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "dod_completeness" "blocked" "Task Card 有 ${unchecked_count} 条 DoD 未勾选 [x]"
+                fi
+                _devloop_jq -n \
+                    --argjson count "$unchecked_count" \
+                    '{"status":"blocked","reason":"DoD 完整性检查：Task Card 中有 \($count) 条 [BEHAVIOR]/[ARTIFACT]/[GATE] 未勾选 [x]","action":"运行 verify-step.sh step2 确保所有 DoD Test 通过并标记 [x]，再继续"}'
+                return 2
+            fi
         fi
     fi
 

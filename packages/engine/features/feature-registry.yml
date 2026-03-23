@@ -20,6 +20,11 @@ updated: "2026-03-23"
 # ci-trigger: 13.33.2
 changelog:
 
+  - version: "13.33.3"
+    date: "2026-03-22"
+    summary: "[CONFIG] fix(engine): verify-step.sh Gate 2 Test通过后写回 [x]（_mark_dod_done）+ devloop-check.sh 加 DoD 完整性检查（条件 2.7）"
+    scope: packages/engine/hooks/verify-step.sh packages/engine/lib/devloop-check.sh
+
   - version: "13.33.2"
     date: "2026-03-23"
     summary: "[CONFIG] fix(engine): Gate 0c 改为只扫 diff 新增行，避免误报预存在日志；修复 regression-contract.yaml 12 处悬空引用"
