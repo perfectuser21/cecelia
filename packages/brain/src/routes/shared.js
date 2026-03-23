@@ -25,11 +25,13 @@ async function getRecentDecisions(limit = 10) {
 const INVENTORY_CONFIG = { LOW_WATERMARK: 3, TARGET_READY_TASKS: 9, BATCH_SIZE: 3 };
 
 async function getActiveExecutionPaths() {
+  // 迁移：旧 projects + project_kr_links → okr_initiatives via okr_scopes → okr_projects (kr_id)
   const result = await pool.query(`
-    SELECT p.id, p.name, pkl.kr_id
-    FROM projects p
-    INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
-    WHERE p.type = 'initiative' AND p.status IN ('active', 'in_progress')
+    SELECT oi.id, oi.title AS name, op.kr_id
+    FROM okr_initiatives oi
+    INNER JOIN okr_scopes os ON os.id = oi.scope_id
+    INNER JOIN okr_projects op ON op.id = os.project_id
+    WHERE oi.status IN ('active', 'in_progress')
   `);
   return result.rows;
 }

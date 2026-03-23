@@ -273,26 +273,39 @@ router.post('/autumnrice/chat', async (req, res) => {
     let okrCtxBlock = '';
     if (krId) {
       try {
-        const krRes = await pool.query(
-          `SELECT id, title, status, progress, parent_id FROM goals WHERE id = $1`,
+        // 先查 key_results，再查 objectives（向后兼容）
+        let krRes = await pool.query(
+          `SELECT id, title, status,
+                  CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress,
+                  objective_id AS parent_id
+           FROM key_results WHERE id = $1`,
           [krId]
         );
+        if (krRes.rows.length === 0) {
+          krRes = await pool.query(
+            `SELECT id, title, status, NULL::numeric AS progress, NULL::uuid AS parent_id
+             FROM objectives WHERE id = $1`,
+            [krId]
+          );
+        }
         if (krRes.rows.length > 0) {
           const kr = krRes.rows[0];
           let objTitle = '';
           if (kr.parent_id) {
             const objRes = await pool.query(
-              `SELECT title, progress FROM goals WHERE id = $1`,
+              `SELECT title FROM objectives WHERE id = $1`,
               [kr.parent_id]
             );
-            if (objRes.rows[0]) objTitle = `\n**上级 Objective**：${objRes.rows[0].title}（进度 ${objRes.rows[0].progress ?? 0}%）`;
+            if (objRes.rows[0]) objTitle = `\n**上级 Objective**：${objRes.rows[0].title}`;
           }
           const words = (kr.title || '').split(/[\s，。、\-_]+/).filter(w => w.length > 1).slice(0, 4);
           let simBlock = '';
           if (words.length > 0) {
             const lc = words.map((_, i) => `title ILIKE $${i + 2}`).join(' OR ');
             const sims = (await pool.query(
-              `SELECT title, status, progress FROM goals WHERE type='area_okr' AND id!=$1 AND (${lc}) ORDER BY created_at DESC LIMIT 3`,
+              `SELECT title, status,
+                      CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress
+               FROM key_results WHERE id!=$1 AND (${lc}) ORDER BY created_at DESC LIMIT 3`,
               [krId, ...words.map(w => `%${w}%`)]
             )).rows;
             if (sims.length > 0) simBlock = `\n**历史相似 KR**：\n${sims.map(s => `  - ${s.title}（${s.status}，${s.progress ?? 0}%）`).join('\n')}`;
@@ -373,15 +386,22 @@ ${okrCtxBlock}
       // 优先用 context.kr_id，没有则用 kr_title 反查
       let resolvedKrId = ctx.kr_id || null;
       if (!resolvedKrId && ctx.kr_title) {
-        const krResult = await pool.query(
-          `SELECT id FROM goals WHERE title = $1 AND type = 'area_okr' LIMIT 1`,
+        // 先查 key_results，再查 objectives（向后兼容）
+        let krResult = await pool.query(
+          `SELECT id FROM key_results WHERE title = $1 LIMIT 1`,
           [ctx.kr_title]
         );
+        if (krResult.rows.length === 0) {
+          krResult = await pool.query(
+            `SELECT id FROM objectives WHERE title = $1 LIMIT 1`,
+            [ctx.kr_title]
+          );
+        }
         if (krResult.rows.length > 0) resolvedKrId = krResult.rows[0].id;
       }
       if (resolvedKrId) {
         await pool.query(
-          `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1 AND type='area_okr'`,
+          `UPDATE key_results SET status='ready', updated_at=NOW() WHERE id=$1`,
           [resolvedKrId]
         );
         redecompTriggered = true;

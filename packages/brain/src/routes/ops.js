@@ -304,15 +304,15 @@ router.get('/decomposition/stats', async (req, res) => {
       });
     }
 
-    // 获取项目和Initiative统计
+    // 获取项目和Initiative统计（从新 OKR 表）
     const projectStatsResult = await pool.query(`
-      SELECT
-        type,
-        status,
-        COUNT(*) as count
-      FROM projects
-      WHERE type IN ('project', 'initiative')
-      GROUP BY type, status
+      SELECT 'project'::text AS type, status, COUNT(*) AS count
+      FROM okr_projects
+      GROUP BY status
+      UNION ALL
+      SELECT 'initiative'::text AS type, status, COUNT(*) AS count
+      FROM okr_initiatives
+      GROUP BY status
     `);
 
     const projectStats = {};
@@ -2224,9 +2224,9 @@ router.get('/pr-progress/:kr_id', async (req, res) => {
     const rangeStart = new Date(Date.UTC(year, monthNum - 1, 1));
     const rangeEnd = new Date(Date.UTC(year, monthNum, 1) - 1); // 月末最后一毫秒
 
-    // 查询 KR 信息
+    // 查询 KR 信息（key_results 表，与 task-router.js 一致）
     const goalResult = await pool.query(
-      `SELECT id, title, metadata FROM goals WHERE id = $1 LIMIT 1`,
+      `SELECT id, title, metadata FROM key_results WHERE id = $1 LIMIT 1`,
       [kr_id]
     );
 

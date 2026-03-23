@@ -1,6 +1,7 @@
 /**
  * Intent Match Route - 根据用户自然语言查询匹配的 Goals/Projects
  * POST /api/brain/intent/match
+ * 迁移：goals → objectives + key_results，projects → okr_projects
  */
 import { Router } from 'express';
 import pool from '../db.js';
@@ -35,48 +36,69 @@ router.post('/match', async (req, res) => {
     const safeLimit = Math.min(Math.max(Number.isNaN(parsedLimit) ? 5 : parsedLimit, 1), 20);
     const pattern = `%${trimmed}%`;
 
-    // --- Goals 搜索 ---
-    const goalsResult = await pool.query(`
-      SELECT id, title, type, status, priority, metadata, parent_id,
+    // --- Objectives 搜索 ---
+    const objResult = await pool.query(`
+      SELECT id, title, 'area_okr'::text AS type, status, NULL::text AS priority, metadata, NULL::uuid AS parent_id,
              CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END AS title_rank
-      FROM goals
-      WHERE (title ILIKE $1 OR description ILIKE $1)
-        AND status NOT IN ('completed', 'cancelled')
+      FROM objectives
+      WHERE title ILIKE $1
+        AND status NOT IN ('completed', 'cancelled', 'archived')
       ORDER BY title_rank ASC, updated_at DESC
       LIMIT $3
     `, [pattern, `${trimmed}%`, safeLimit]);
 
-    // --- 多关键词补充搜索 ---
+    // --- Key Results 搜索 ---
+    const krResult = await pool.query(`
+      SELECT id, title, 'area_kr'::text AS type, status, NULL::text AS priority, metadata, objective_id AS parent_id,
+             CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END AS title_rank
+      FROM key_results
+      WHERE title ILIKE $1
+        AND status NOT IN ('completed', 'cancelled', 'archived')
+      ORDER BY title_rank ASC, updated_at DESC
+      LIMIT $3
+    `, [pattern, `${trimmed}%`, safeLimit]);
+
+    // --- 合并 goals 结果 ---
+    const combinedGoals = [...objResult.rows, ...krResult.rows];
+    const goalsById = new Map(combinedGoals.map(r => [r.id, r]));
+
+    // --- 多关键词补充搜索（objectives + key_results）---
     const keywords = splitKeywords(trimmed);
-    const extraGoalIds = new Set(goalsResult.rows.map(r => r.id));
     const extraGoals = [];
 
     for (const kw of keywords) {
       if (kw === trimmed) continue;
       const kwPattern = `%${kw}%`;
-      const kwResult = await pool.query(`
-        SELECT id, title, type, status, priority, metadata, parent_id, 0 AS title_rank
-        FROM goals
-        WHERE (title ILIKE $1 OR description ILIKE $1)
-          AND status NOT IN ('completed', 'cancelled')
+      const kwObjResult = await pool.query(`
+        SELECT id, title, 'area_okr'::text AS type, status, NULL::text AS priority, metadata, NULL::uuid AS parent_id, 0 AS title_rank
+        FROM objectives
+        WHERE title ILIKE $1
+          AND status NOT IN ('completed', 'cancelled', 'archived')
         LIMIT $2
       `, [kwPattern, 3]);
-      for (const row of kwResult.rows) {
-        if (!extraGoalIds.has(row.id)) {
-          extraGoalIds.add(row.id);
+      const kwKrResult = await pool.query(`
+        SELECT id, title, 'area_kr'::text AS type, status, NULL::text AS priority, metadata, objective_id AS parent_id, 0 AS title_rank
+        FROM key_results
+        WHERE title ILIKE $1
+          AND status NOT IN ('completed', 'cancelled', 'archived')
+        LIMIT $2
+      `, [kwPattern, 3]);
+      for (const row of [...kwObjResult.rows, ...kwKrResult.rows]) {
+        if (!goalsById.has(row.id)) {
+          goalsById.set(row.id, row);
           extraGoals.push(row);
         }
       }
     }
 
-    const allGoals = [...goalsResult.rows, ...extraGoals].slice(0, safeLimit);
+    const allGoals = [...combinedGoals, ...extraGoals].slice(0, safeLimit);
 
-    // --- Projects 搜索 ---
+    // --- okr_projects 搜索 ---
     const projectsResult = await pool.query(`
-      SELECT id, name, type, status, description, parent_id,
-             CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END AS name_rank
-      FROM projects
-      WHERE (name ILIKE $1 OR description ILIKE $1)
+      SELECT id, title AS name, 'project'::text AS type, status, NULL::text AS description, kr_id AS parent_id,
+             CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END AS name_rank
+      FROM okr_projects
+      WHERE title ILIKE $1
         AND status NOT IN ('completed', 'cancelled', 'archived')
       ORDER BY name_rank ASC, updated_at DESC
       LIMIT $3
@@ -86,8 +108,8 @@ router.post('/match', async (req, res) => {
     let layerGuess = layer_hint || 'unknown';
     if (!layer_hint) {
       const types = allGoals.map(g => g.type).filter(Boolean);
-      if (types.includes('area_okr')) layerGuess = 'kr';
-      else if (types.includes('okr') || types.includes('mission')) layerGuess = 'okr';
+      if (types.includes('area_okr')) layerGuess = 'objective';
+      else if (types.includes('area_kr')) layerGuess = 'kr';
       else if (projectsResult.rows.length > 0) layerGuess = 'project';
     }
 

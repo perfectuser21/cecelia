@@ -316,24 +316,34 @@ router.get('/tasks', async (req, res) => {
 
 /**
  * GET /api/brain/goals
- * 查询 goals 列表，支持按部门过滤
+ * 查询 goals 列表（从新 OKR 表：objectives + key_results UNION ALL）
  * Query params:
  *   dept: 按 metadata->>'dept' 过滤（可选）
  */
 router.get('/goals', async (req, res) => {
   try {
     const { dept } = req.query;
-    let query = `
-      SELECT id, title, type, status, priority, progress, weight, parent_id, metadata, custom_props, created_at, updated_at
-      FROM goals
-    `;
     const params = [];
+    let whereClause = '';
     if (dept) {
-      query += ` WHERE metadata->>'dept' = $1`;
       params.push(dept);
+      whereClause = ` WHERE metadata->>'dept' = $1`;
     }
-    query += ` ORDER BY priority ASC, created_at DESC`;
-    const result = await pool.query(query, params);
+    const query = `
+      SELECT id, 'area_okr'::text AS type, title, status,
+             NULL::text AS priority, NULL::numeric AS progress, NULL::numeric AS weight,
+             NULL::uuid AS parent_id, metadata, custom_props, created_at, updated_at
+      FROM objectives${whereClause}
+      UNION ALL
+      SELECT id, 'area_kr'::text AS type, title, status,
+             NULL::text AS priority,
+             CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress,
+             NULL::numeric AS weight,
+             objective_id AS parent_id, metadata, custom_props, created_at, updated_at
+      FROM key_results${whereClause}
+      ORDER BY created_at DESC
+    `;
+    const result = await pool.query(query, dept ? [...params, ...params] : params);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to get goals', details: err.message });
@@ -343,18 +353,29 @@ router.get('/goals', async (req, res) => {
 /**
  * POST /api/brain/goals/:id/approve
  * 用户放行 KR（reviewing → ready）。
- * 只有 type='area_okr' 且 status='reviewing' 的 goal 可以被放行。
+ * 先查 key_results，若不存在再查 objectives（向后兼容）。
  */
 router.post('/goals/:id/approve', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await pool.query(
-      `UPDATE goals SET status = 'ready', updated_at = NOW()
-       WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
+    // 优先更新 key_results（task-router.js 使用此表调度）
+    let result = await pool.query(
+      `UPDATE key_results SET status = 'ready', updated_at = NOW()
+       WHERE id = $1 AND status = 'reviewing'
        RETURNING id, title, status`,
       [id]
     );
+
+    // 若 key_results 未找到，尝试 objectives
+    if (result.rows.length === 0) {
+      result = await pool.query(
+        `UPDATE objectives SET status = 'ready', updated_at = NOW()
+         WHERE id = $1 AND status = 'reviewing'
+         RETURNING id, title, status`,
+        [id]
+      );
+    }
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -378,44 +399,65 @@ router.post('/goals/:id/approve', async (req, res) => {
 /**
  * GET /api/brain/goals/:id/okr-context
  * 返回 KR 的完整 OKR 上下文：父 Objective + 同级 KR + 相似历史 KR + 支撑 learnings
+ * 迁移：旧 goals 表 → key_results（KR）+ objectives（Objective）
  */
 router.get('/goals/:id/okr-context', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. 取本 KR
-    const krResult = await pool.query(
-      `SELECT id, title, type, status, priority, progress, parent_id, metadata FROM goals WHERE id = $1`,
+    // 1. 取本 KR（先查 key_results，再查 objectives）
+    let krResult = await pool.query(
+      `SELECT id, title, 'area_kr'::text AS type, status,
+              NULL::text AS priority,
+              CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress,
+              objective_id AS parent_id, metadata
+       FROM key_results WHERE id = $1`,
       [id]
     );
+    if (krResult.rows.length === 0) {
+      krResult = await pool.query(
+        `SELECT id, title, 'area_okr'::text AS type, status,
+                NULL::text AS priority, NULL::numeric AS progress,
+                NULL::uuid AS parent_id, metadata
+         FROM objectives WHERE id = $1`,
+        [id]
+      );
+    }
     if (krResult.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const kr = krResult.rows[0];
 
-    // 2. 取父 Objective
+    // 2. 取父 Objective（从 objectives 表）
     let objective = null;
     if (kr.parent_id) {
       const obj = await pool.query(
-        `SELECT id, title, type, status, progress FROM goals WHERE id = $1`,
+        `SELECT id, title, 'area_okr'::text AS type, status, NULL::numeric AS progress
+         FROM objectives WHERE id = $1`,
         [kr.parent_id]
       );
       objective = obj.rows[0] || null;
     }
 
-    // 3. 取同级 KR（同一 parent_id，type='area_okr'，排除自身）
+    // 3. 取同级 KR（同一 objective_id 下的其他 key_results）
     const siblings = kr.parent_id ? (await pool.query(
-      `SELECT id, title, type, status, priority, progress FROM goals
-       WHERE parent_id = $1 AND type = 'area_okr' AND id != $2 ORDER BY priority ASC, created_at ASC`,
+      `SELECT id, title, 'area_kr'::text AS type, status,
+              NULL::text AS priority,
+              CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress
+       FROM key_results
+       WHERE objective_id = $1 AND id != $2 ORDER BY created_at ASC`,
       [kr.parent_id, id]
     )).rows : [];
 
-    // 4. 相似历史 KR（标题关键词重叠，排除当前 KR，只取已完成/in_progress）
+    // 4. 相似历史 KR（标题关键词重叠，排除当前 KR）
     const words = (kr.title || '').split(/[\s，。、\-_]+/).filter(w => w.length > 1).slice(0, 5);
     let similarKrs = [];
     if (words.length > 0) {
       const likeClause = words.map((_, i) => `title ILIKE $${i + 2}`).join(' OR ');
       similarKrs = (await pool.query(
-        `SELECT id, title, type, status, progress, created_at FROM goals
-         WHERE type = 'area_okr' AND id != $1 AND (${likeClause})
+        `SELECT id, title, 'area_kr'::text AS type, status,
+                CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress,
+                created_at
+         FROM key_results
+         WHERE id != $1 AND (${likeClause})
          ORDER BY created_at DESC LIMIT 5`,
         [id, ...words.map(w => `%${w}%`)]
       )).rows;

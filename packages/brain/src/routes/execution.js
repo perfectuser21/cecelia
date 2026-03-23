@@ -785,26 +785,15 @@ router.post('/execution-callback', async (req, res) => {
           const { total, done } = krTasks.rows[0];
           const krProgress = total > 0 ? Math.round((parseInt(done) / parseInt(total)) * 100) : 0;
 
-          await pool.query('UPDATE goals SET progress = $1 WHERE id = $2', [krProgress, krId]);
-          console.log(`[execution-callback] KR ${krId} progress → ${krProgress}%`);
-
-          // Get parent O and rollup from all KRs
-          const krRow = await pool.query('SELECT parent_id FROM goals WHERE id = $1', [krId]);
-          const oId = krRow.rows[0]?.parent_id;
-
-          if (oId) {
-            const allKRs = await pool.query(
-              'SELECT progress, weight FROM goals WHERE parent_id = $1',
-              [oId]
-            );
-            const totalWeight = allKRs.rows.reduce((s, r) => s + parseFloat(r.weight || 1), 0);
-            const weightedProgress = allKRs.rows.reduce(
-              (s, r) => s + (r.progress || 0) * parseFloat(r.weight || 1), 0
-            );
-            const oProgress = totalWeight > 0 ? Math.round(weightedProgress / totalWeight) : 0;
-
-            await pool.query('UPDATE goals SET progress = $1 WHERE id = $2', [oProgress, oId]);
-            console.log(`[execution-callback] O ${oId} progress → ${oProgress}%`);
+          // 更新 key_results.current_value（任务完成比例 × target_value）
+          const krValResult = await pool.query('SELECT target_value FROM key_results WHERE id = $1', [krId]);
+          if (krValResult.rows.length > 0) {
+            const targetVal = parseFloat(krValResult.rows[0].target_value ?? 100);
+            const newValue = targetVal > 0
+              ? Math.round((krProgress / 100) * targetVal * 100) / 100
+              : krProgress;
+            await pool.query('UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2', [newValue, krId]);
+            console.log(`[execution-callback] KR ${krId} current_value → ${newValue} (progress=${krProgress}%)`);
           }
         }
       } catch (rollupErr) {
@@ -892,19 +881,18 @@ router.post('/execution-callback', async (req, res) => {
             && decompCheckRow?.goal_id) {
           const krId = decompCheckRow.goal_id;
 
-          // 检查 KR 是否处于 decomposing 状态
+          // 检查 KR 是否处于 decomposing 状态（key_results 表）
           const krCheckResult = await pool.query(
-            'SELECT id, title, status FROM goals WHERE id = $1 AND status = $2',
+            'SELECT id, title, status FROM key_results WHERE id = $1 AND status = $2',
             [krId, 'decomposing']
           );
 
           if (krCheckResult.rows.length > 0) {
-            // 找到秋米创建的 Project（通过 project_kr_links）
+            // 找到秋米创建的 Project（通过 okr_projects.kr_id）
             const projectCheckResult = await pool.query(`
-              SELECT p.id, p.name FROM projects p
-              INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
-              WHERE pkl.kr_id = $1 AND p.type = 'project'
-              ORDER BY p.created_at DESC LIMIT 1
+              SELECT id, title AS name FROM okr_projects
+              WHERE kr_id = $1
+              ORDER BY created_at DESC LIMIT 1
             `, [krId]);
 
             if (projectCheckResult.rows.length > 0) {
@@ -929,11 +917,13 @@ router.post('/execution-callback', async (req, res) => {
                 const krTitle = krCheckResult.rows[0].title;
                 const projectName = project.name;
 
-                // 查询拆解产出的 Initiatives
+                // 查询拆解产出的 Initiatives（通过 okr_scopes → okr_initiatives）
                 const initiativesResult = await pool.query(`
-                  SELECT p2.name FROM projects p2
-                  WHERE p2.parent_id = $1 AND p2.type = 'initiative'
-                  ORDER BY p2.created_at ASC
+                  SELECT oi.title AS name
+                  FROM okr_scopes os
+                  JOIN okr_initiatives oi ON oi.scope_id = os.id
+                  WHERE os.project_id = $1
+                  ORDER BY oi.created_at ASC
                 `, [project.id]);
                 const initiatives = initiativesResult.rows.map(r => r.name);
 
@@ -972,9 +962,9 @@ router.post('/execution-callback', async (req, res) => {
               }
             }
 
-            // 更新 KR 状态: decomposing → reviewing
+            // 更新 KR 状态: decomposing → reviewing（key_results 表）
             await pool.query(
-              `UPDATE goals SET status = 'reviewing', updated_at = NOW() WHERE id = $1`,
+              `UPDATE key_results SET status = 'reviewing', updated_at = NOW() WHERE id = $1`,
               [krId]
             );
             console.log(`[execution-callback] KR ${krId} → reviewing (秋米拆解完成)`);
@@ -1021,9 +1011,9 @@ router.post('/execution-callback', async (req, res) => {
               const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
 
               await pool.query(
-                `INSERT INTO goals (title, priority, status, progress, domain, owner_role, type)
-                 VALUES ($1, $2, 'pending', 0, $3, $4, 'area_okr')`,
-                [krTitle, krPriority, krDomain, krOwnerRole]
+                `INSERT INTO key_results (title, status, owner_role, metadata)
+                 VALUES ($1, 'pending', $2, $3)`,
+                [krTitle, krOwnerRole, JSON.stringify({ priority: krPriority, domain: krDomain })]
               );
               console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole}`);
             }
@@ -2022,13 +2012,26 @@ router.post('/generate/prd', async (req, res) => {
         });
       }
 
-      const goalResult = await pool.query('SELECT * FROM goals WHERE id = $1', [goal_id]);
+      // 先查 key_results，再查 objectives（向后兼容）
+      let goalResult = await pool.query(
+        `SELECT id, title,
+                CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress,
+                metadata->>'priority' AS priority
+         FROM key_results WHERE id = $1`,
+        [goal_id]
+      );
+      if (goalResult.rows.length === 0) {
+        goalResult = await pool.query(
+          `SELECT id, title, NULL::numeric AS progress, NULL::text AS priority FROM objectives WHERE id = $1`,
+          [goal_id]
+        );
+      }
       const goal = goalResult.rows[0];
 
       let projectData = null;
       if (goal) {
         const linkResult = await pool.query(
-          'SELECT p.* FROM projects p JOIN project_kr_links l ON p.id = l.project_id WHERE l.kr_id = $1 LIMIT 1',
+          'SELECT id, title AS name, NULL::text AS repo_path FROM okr_projects WHERE kr_id = $1 LIMIT 1',
           [goal_id]
         );
         if (linkResult.rows[0]) {
@@ -2793,31 +2796,31 @@ router.get('/planner/initiatives-without-tasks', async (_req, res) => {
       SELECT
         kr.id AS kr_id,
         kr.title AS kr_title,
-        kr.priority AS kr_priority,
-        kr.progress AS kr_progress,
+        NULL AS kr_priority,
+        CASE WHEN kr.target_value > 0 THEN ROUND(kr.current_value / kr.target_value * 100) ELSE 0 END AS kr_progress,
         kr.status AS kr_status,
-        parent_proj.id AS project_id,
-        parent_proj.name AS project_name,
+        op.id AS project_id,
+        op.title AS project_name,
         json_agg(json_build_object(
-          'id', initiative.id,
-          'name', initiative.name,
-          'status', initiative.status,
-          'created_at', initiative.created_at
-        ) ORDER BY initiative.created_at ASC) AS initiatives_needing_planning
-      FROM project_kr_links pkl
-      INNER JOIN goals kr ON kr.id = pkl.kr_id AND kr.status NOT IN ('completed', 'cancelled')
-      INNER JOIN projects parent_proj ON pkl.project_id = parent_proj.id AND parent_proj.status = 'active'
-      INNER JOIN projects initiative
-        ON initiative.parent_id = parent_proj.id
-        AND initiative.type = 'initiative'
-        AND initiative.status = 'active'
+          'id', oi.id,
+          'name', oi.title,
+          'status', oi.status,
+          'created_at', oi.created_at
+        ) ORDER BY oi.created_at ASC) AS initiatives_needing_planning
+      FROM key_results kr
+      INNER JOIN okr_projects op ON op.kr_id = kr.id AND op.status = 'active'
+      INNER JOIN okr_scopes os ON os.project_id = op.id
+      INNER JOIN okr_initiatives oi
+        ON oi.scope_id = os.id
+        AND oi.status = 'active'
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
-          WHERE t.project_id = initiative.id
+          WHERE t.okr_initiative_id = oi.id
             AND t.status IN ('queued', 'in_progress')
         )
-      GROUP BY kr.id, kr.title, kr.priority, kr.progress, kr.status, parent_proj.id, parent_proj.name
-      ORDER BY CASE kr.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, kr.id
+      WHERE kr.status NOT IN ('completed', 'cancelled')
+      GROUP BY kr.id, kr.title, kr.current_value, kr.target_value, kr.status, op.id, op.title
+      ORDER BY kr.id
     `);
 
     res.json({
