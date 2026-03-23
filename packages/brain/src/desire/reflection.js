@@ -236,6 +236,97 @@ async function _resetAccumulator(pool, accumulator) {
 }
 
 /**
+ * 安全读取 accumulator，出错返回 null
+ */
+async function _getAccumulatorSafe(pool) {
+  try {
+    return await getAccumulator(pool);
+  } catch (err) {
+    console.error('[reflection] get accumulator error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 安全取记忆列表，出错返回 null
+ */
+async function _fetchMemoriesSafe(pool) {
+  try {
+    return await _fetchAndDeduplicateMemories(pool);
+  } catch (err) {
+    console.error('[reflection] fetch memories error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 构造反思 prompt
+ */
+function _buildReflectionPrompt(memories) {
+  const memorySummary = memories
+    .map((m, i) => `${i + 1}. [重要性${m.importance}] ${m.content}`)
+    .join('\n');
+  return `你是 Cecelia，Alex 的 AI 管家，24/7 管理 Perfect21 所有系统。
+
+以下是你最近的系统观察记录：
+
+${memorySummary}
+
+请深入反思这些观察：
+1. 这些信号意味着什么？有哪些值得关注的模式？
+2. 有哪些潜在风险或机会？
+3. 什么是最需要向 Alex 汇报的？
+
+要求：
+- 从管家视角，带洞察（不只是总结）
+- 简洁有力，不超过 300 字
+- 结构：发现的模式 → 风险或机会 → 建议`;
+}
+
+/**
+ * 安全调用 LLM，出错返回 null
+ */
+async function _callLLMSafe(memories, accumulator) {
+  const prompt = _buildReflectionPrompt(memories);
+  try {
+    console.log(`[reflection] Calling LLM for deep reflection (accumulator=${accumulator})...`);
+    const result = await callLLM('reflection', prompt, { timeout: 150000 });
+    return result.text || null;
+  } catch (err) {
+    console.error('[reflection] Opus call error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 安全执行去重检查，出错返回 null（不阻塞主流程）
+ */
+async function _checkInsightDedupSafe(pool, insight, accumulator) {
+  try {
+    return await _checkInsightDedup(pool, insight, accumulator);
+  } catch (err) {
+    console.error('[reflection] dedup check error (non-critical):', err.message);
+    return null;
+  }
+}
+
+/**
+ * 写入洞察并重置 accumulator（各自独立 try/catch，互不影响）
+ */
+async function _persistInsight(pool, insight, accumulator) {
+  try {
+    await _writeInsight(pool, insight);
+  } catch (err) {
+    console.error('[reflection] insight insert error:', err.message);
+  }
+  try {
+    await _resetAccumulator(pool, accumulator);
+  } catch (err) {
+    console.error('[reflection] reset accumulator error:', err.message);
+  }
+}
+
+/**
  * 处理熔断器触发（连续重复超过阈值）
  * @returns {{skipped: true, result: object}}
  */
@@ -365,98 +456,39 @@ async function _writeInsight(pool, insight) {
  * @returns {Promise<{triggered: boolean, insight?: string, accumulator_before?: number}>}
  */
 export async function runReflection(pool) {
-  // 0. 从 DB 加载熔断器状态（首次调用时）
   await _loadBreakerState(pool);
 
-  // 1. 检查静默期
+  // 1. 静默期检查
   const silenceCheck = await _checkAndClearSilencePeriod(pool);
   if (silenceCheck.inSilence) {
     return { triggered: false, reason: 'in_silence_period', silence_until: silenceCheck.silenceUntil };
   }
 
-  // 2. 检查 accumulator 阈值
-  let accumulator = 0;
-  try {
-    accumulator = await getAccumulator(pool);
-  } catch (err) {
-    console.error('[reflection] get accumulator error:', err.message);
-    return { triggered: false };
-  }
-  if (accumulator < REFLECTION_THRESHOLD) {
-    return { triggered: false, accumulator };
+  // 2. accumulator 阈值检查
+  const accumulator = await _getAccumulatorSafe(pool);
+  if (accumulator === null || accumulator < REFLECTION_THRESHOLD) {
+    return { triggered: false, accumulator: accumulator ?? 0 };
   }
 
-  // 3. 取最近 50 条记忆并去重
-  let memories = [];
-  try {
-    memories = await _fetchAndDeduplicateMemories(pool);
-  } catch (err) {
-    console.error('[reflection] fetch memories error:', err.message);
-    return { triggered: false };
-  }
-  if (memories.length === 0) {
+  // 3. 取记忆列表
+  const memories = await _fetchMemoriesSafe(pool);
+  if (!memories || memories.length === 0) {
     return { triggered: false };
   }
 
-  // 4. 构造 prompt 并调用 LLM
-  const memorySummary = memories
-    .map((m, i) => `${i + 1}. [重要性${m.importance}] ${m.content}`)
-    .join('\n');
-
-  const prompt = `你是 Cecelia，Alex 的 AI 管家，24/7 管理 Perfect21 所有系统。
-
-以下是你最近的系统观察记录：
-
-${memorySummary}
-
-请深入反思这些观察：
-1. 这些信号意味着什么？有哪些值得关注的模式？
-2. 有哪些潜在风险或机会？
-3. 什么是最需要向 Alex 汇报的？
-
-要求：
-- 从管家视角，带洞察（不只是总结）
-- 简洁有力，不超过 300 字
-- 结构：发现的模式 → 风险或机会 → 建议`;
-
-  let insight = '';
-  try {
-    console.log(`[reflection] Calling LLM for deep reflection (accumulator=${accumulator})...`);
-    const result = await callLLM('reflection', prompt, { timeout: 150000 });
-    insight = result.text;
-  } catch (err) {
-    console.error('[reflection] Opus call error:', err.message);
-    return { triggered: false };
-  }
-
+  // 4. 调用 LLM 生成洞察
+  const insight = await _callLLMSafe(memories, accumulator);
   if (!insight) {
     return { triggered: false };
   }
 
   // 5. 去重检查（哈希熔断 + Jaccard 相似度）
-  try {
-    const dedupResult = await _checkInsightDedup(pool, insight, accumulator);
-    if (dedupResult.skipped) {
-      return dedupResult.result;
-    }
-  } catch (err) {
-    // 去重检查失败不影响主流程，继续写入
-    console.error('[reflection] dedup check error (non-critical):', err.message);
+  const dedupResult = await _checkInsightDedupSafe(pool, insight, accumulator);
+  if (dedupResult?.skipped) {
+    return dedupResult.result;
   }
 
-  // 6. 写入 memory_stream
-  try {
-    await _writeInsight(pool, insight);
-  } catch (err) {
-    console.error('[reflection] insight insert error:', err.message);
-  }
-
-  // 7. 重置 accumulator
-  try {
-    await _resetAccumulator(pool, accumulator);
-  } catch (err) {
-    console.error('[reflection] reset accumulator error:', err.message);
-  }
-
+  // 6. 写入洞察并重置 accumulator
+  await _persistInsight(pool, insight, accumulator);
   return { triggered: true, insight, accumulator_before: accumulator };
 }
