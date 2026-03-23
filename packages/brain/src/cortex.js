@@ -774,11 +774,8 @@ async function analyzeDeep(event, thalamusDecision = null) {
   const _eventHash = _computeEventHash(event);
   const _breaker = await _checkReflectionBreaker(_eventHash);
   if (_breaker.open) {
-    console.log(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
     return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);
   }
-
-  console.log(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
 
   const context = _buildBaseContext(event, thalamusDecision);
 
