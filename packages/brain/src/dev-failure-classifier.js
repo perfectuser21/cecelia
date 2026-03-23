@@ -9,7 +9,8 @@
  *   - transient: CI flaky、暂时性错误 → 可重试
  *   - code_error: 编译失败、测试失败、PR 被拒 → 可重试（带反馈）
  *   - auth: 权限不足、token 过期 → 不重试
- *   - resource: 磁盘满、内存不足 → 不重试
+ *   - resource: 磁盘满、内存不足（文本匹配）→ 不重试
+ *   - resource_killed: OOM/SIGKILL（exit_code=137）→ 降并发延迟重试
  *
  * 使用场景：
  *   执行 /dev 任务的 execution-callback，收到 AI Failed 时，
@@ -26,11 +27,12 @@
 // ============================================================
 
 export const DEV_FAILURE_CLASS = {
-  TRANSIENT: 'transient',    // 暂时性错误：CI flaky、网络波动、限流
-  CODE_ERROR: 'code_error',  // 代码错误：编译失败、测试失败
-  AUTH: 'auth',              // 权限/认证错误
-  RESOURCE: 'resource',      // 资源不足
-  UNKNOWN: 'unknown',        // 无法识别
+  TRANSIENT: 'transient',             // 暂时性错误：CI flaky、网络波动、限流
+  CODE_ERROR: 'code_error',           // 代码错误：编译失败、测试失败
+  AUTH: 'auth',                       // 权限/认证错误
+  RESOURCE: 'resource',               // 资源不足（文本匹配：ENOMEM/ENOSPC）
+  RESOURCE_KILLED: 'resource_killed', // OOM/SIGKILL（exit_code=137）→ 可降并发重试
+  UNKNOWN: 'unknown',                 // 无法识别
 };
 
 // ============================================================
@@ -111,7 +113,7 @@ const AUTH_PATTERNS = [
   /ssh.*denied|publickey.*denied/i,
 ];
 
-// resource：资源类，不重试
+// resource：资源类（文本匹配），不重试
 const RESOURCE_PATTERNS = [
   /ENOMEM|out\s+of\s+memory/i,
   /disk\s+full|no\s+space\s+left/i,
@@ -125,6 +127,7 @@ const RESOURCE_PATTERNS = [
 // ============================================================
 
 export const MAX_DEV_RETRY = 3;
+export const MAX_OOM_RETRY = MAX_DEV_RETRY; // OOM 重试上限（与 dev retry 一致）
 
 /**
  * 计算指数退避的下次运行时间
@@ -135,6 +138,17 @@ export const MAX_DEV_RETRY = 3;
 export function calcNextRunAt(retryCount) {
   const delayMs = retryCount * 5 * 60 * 1000;
   return new Date(Date.now() + delayMs).toISOString();
+}
+
+/**
+ * 计算 OOM/SIGKILL 重试的下次运行时间（更长延迟，让系统恢复）
+ * retry 1 → 15min, retry 2 → 30min, retry 3+ → 30min
+ * @param {number} retryCount - 当前是第几次重试（从 1 开始）
+ * @returns {string} ISO 8601 时间字符串
+ */
+export function calcNextRunAtOom(retryCount) {
+  const minutes = retryCount === 1 ? 15 : 30;
+  return new Date(Date.now() + minutes * 60 * 1000).toISOString();
 }
 
 // ============================================================
@@ -148,22 +162,35 @@ export function calcNextRunAt(retryCount) {
  * @param {string} [status='AI Failed'] - 执行状态（'AI Done' | 'AI Failed'）
  * @param {Object} [context={}] - 额外上下文
  * @param {number} [context.retryCount=0] - 已重试次数（payload.retry_count）
+ * @param {number} [context.exit_code] - 进程退出码（直接从 execution callback 获取）
  * @returns {{
  *   class: string,
  *   retryable: boolean,
  *   reason: string,
+ *   reduce_concurrency?: boolean,
+ *   needs_blocked?: boolean,
  *   next_run_at?: string,
  *   retry_reason?: string,
  *   previous_failure?: { class: string, error_excerpt: string }
  * }}
  */
 export function classifyDevFailure(result, status = 'AI Failed', context = {}) {
-  const { retryCount = 0 } = context;
+  const { retryCount = 0, exit_code } = context;
 
   // 提取错误文本
   const errorMsg = extractErrorMsg(result, status);
 
-  // 按优先级匹配（auth/resource 优先，避免误判）
+  // exit_code 直接分流（优先级最高，在文本匹配之前）
+  // exit_code=137: OOM/SIGKILL → resource_killed，可降并发重试
+  if (exit_code === 137) {
+    return buildResult(DEV_FAILURE_CLASS.RESOURCE_KILLED, errorMsg, retryCount);
+  }
+  // exit_code=1: 代码级错误 → code_error + needs_blocked（直接阻塞，不自动重试）
+  if (exit_code === 1) {
+    return buildResult(DEV_FAILURE_CLASS.CODE_ERROR, errorMsg, retryCount, { needs_blocked: true });
+  }
+
+  // 文本模式匹配（按优先级：auth/resource 优先，避免误判）
   const patternGroups = [
     { patterns: AUTH_PATTERNS, class: DEV_FAILURE_CLASS.AUTH },
     { patterns: RESOURCE_PATTERNS, class: DEV_FAILURE_CLASS.RESOURCE },
@@ -202,7 +229,14 @@ function extractErrorMsg(result, status) {
   return String(result || status || '');
 }
 
-function buildResult(failureClass, errorMsg, retryCount) {
+/**
+ * @param {string} failureClass
+ * @param {string} errorMsg
+ * @param {number} retryCount
+ * @param {Object} [opts]
+ * @param {boolean} [opts.needs_blocked] - true 表示应直接阻塞等待人工
+ */
+function buildResult(failureClass, errorMsg, retryCount, opts = {}) {
   const previousFailure = {
     class: failureClass,
     error_excerpt: errorMsg.slice(0, 300),
@@ -225,6 +259,27 @@ function buildResult(failureClass, errorMsg, retryCount) {
         previous_failure: previousFailure,
       };
 
+    case DEV_FAILURE_CLASS.RESOURCE_KILLED: {
+      if (retryCount >= MAX_DEV_RETRY) {
+        return {
+          class: failureClass,
+          retryable: false,
+          reason: `OOM/SIGKILL retries exhausted (${MAX_DEV_RETRY}/${MAX_DEV_RETRY})`,
+          previous_failure: previousFailure,
+        };
+      }
+      const next_run_at = calcNextRunAtOom(retryCount + 1);
+      return {
+        class: failureClass,
+        retryable: true,
+        reduce_concurrency: true,
+        reason: `OOM/SIGKILL (exit_code=137), retry #${retryCount + 1} with longer delay`,
+        next_run_at,
+        retry_reason: `上次因 OOM/SIGKILL 失败（exit_code=137），建议 Agent 降低并发操作数量后重试`,
+        previous_failure: previousFailure,
+      };
+    }
+
     case DEV_FAILURE_CLASS.TRANSIENT: {
       if (retryCount >= MAX_DEV_RETRY) {
         return {
@@ -246,6 +301,17 @@ function buildResult(failureClass, errorMsg, retryCount) {
     }
 
     case DEV_FAILURE_CLASS.CODE_ERROR: {
+      // exit_code=1 直接分流时：needs_blocked=true → 不重试，直接阻塞
+      if (opts.needs_blocked) {
+        return {
+          class: failureClass,
+          retryable: false,
+          needs_blocked: true,
+          reason: 'Code error (exit_code=1) - requires human intervention',
+          previous_failure: previousFailure,
+        };
+      }
+      // 文本匹配的 code_error：仍可重试（带反馈）
       if (retryCount >= MAX_DEV_RETRY) {
         return {
           class: failureClass,

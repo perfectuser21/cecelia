@@ -661,28 +661,56 @@ router.post('/execution-callback', async (req, res) => {
           try {
             const { classifyDevFailure } = await import('../dev-failure-classifier.js');
             const retryCount = taskPayload.retry_count || 0;
-            const devClassification = classifyDevFailure(result, status, { retryCount });
+            const devClassification = classifyDevFailure(result, status, {
+              retryCount,
+              exit_code,  // 传入 exit_code 支持精确分流（137=OOM, 1=code_error）
+            });
 
-            console.log(`[execution-callback] Dev failure classified: task=${task_id} class=${devClassification.class} retryable=${devClassification.retryable} retry=${retryCount}`);
+            console.log(`[execution-callback] Dev failure classified: task=${task_id} class=${devClassification.class} retryable=${devClassification.retryable} needs_blocked=${!!devClassification.needs_blocked} retry=${retryCount} exit_code=${exit_code}`);
 
             if (devClassification.retryable) {
+              const retryPayload = {
+                next_run_at: devClassification.next_run_at,
+                retry_count: retryCount + 1,
+                retry_reason: devClassification.retry_reason,
+                previous_failure: devClassification.previous_failure,
+                dev_retry: {
+                  class: devClassification.class,
+                  attempt: retryCount + 1,
+                  scheduled_at: devClassification.next_run_at,
+                },
+              };
+              // resource_killed：附加 reduce_concurrency 提示，调度器可据此限制并发
+              if (devClassification.reduce_concurrency) {
+                retryPayload.reduce_concurrency = true;
+                retryPayload.oom_retry_count = (taskPayload.oom_retry_count || 0) + 1;
+              }
               await pool.query(
                 `UPDATE tasks SET status = 'queued', started_at = NULL,
                  payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
                  WHERE id = $1 AND status = 'failed'`,
-                [task_id, JSON.stringify({
-                  next_run_at: devClassification.next_run_at,
-                  retry_count: retryCount + 1,
-                  retry_reason: devClassification.retry_reason,
-                  previous_failure: devClassification.previous_failure,
-                  dev_retry: {
-                    class: devClassification.class,
-                    attempt: retryCount + 1,
-                    scheduled_at: devClassification.next_run_at,
-                  },
-                })]
+                [task_id, JSON.stringify(retryPayload)]
               );
               console.log(`[execution-callback] Dev smart retry: task=${task_id} class=${devClassification.class} attempt=${retryCount + 1} next_run_at=${devClassification.next_run_at}`);
+              failureHandled = true;
+            } else if (devClassification.needs_blocked) {
+              // exit_code=1 代码错误：直接 blocked，等待人工修复（不无效重试）
+              await pool.query(
+                `UPDATE tasks SET status = 'blocked',
+                 blocked_at = NOW(),
+                 blocked_reason = $2,
+                 blocked_until = NULL,
+                 started_at = NULL,
+                 payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+                 WHERE id = $1 AND status = 'failed'`,
+                [task_id, 'code_error', JSON.stringify({
+                  failure_class: 'code_error',
+                  needs_blocked: true,
+                  exit_code,
+                  blocked_reason: 'exit_code=1: code error requires human intervention',
+                })]
+              );
+              console.log(`[execution-callback] Dev code_error blocked: task=${task_id} exit_code=${exit_code} → status=blocked, awaiting human review`);
               failureHandled = true;
             } else {
               console.log(`[execution-callback] Dev failure not retryable: task=${task_id} class=${devClassification.class} reason=${devClassification.reason}`);

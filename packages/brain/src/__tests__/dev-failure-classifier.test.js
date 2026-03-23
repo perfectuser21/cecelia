@@ -8,8 +8,10 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyDevFailure,
   calcNextRunAt,
+  calcNextRunAtOom,
   DEV_FAILURE_CLASS,
   MAX_DEV_RETRY,
+  MAX_OOM_RETRY,
 } from '../dev-failure-classifier.js';
 
 // ============================================================
@@ -300,4 +302,130 @@ describe('classifyDevFailure - priority', () => {
     const result = classifyDevFailure('ENOSPC: ECONNREFUSED');
     expect(result.class).toBe(DEV_FAILURE_CLASS.RESOURCE);
   });
+
+  it('exit_code=137 takes priority over text patterns', () => {
+    // exit_code=137 即使文本匹配了 transient 也应走 resource_killed
+    const result = classifyDevFailure('ECONNREFUSED', 'AI Failed', { exit_code: 137 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.RESOURCE_KILLED);
+  });
+
+  it('exit_code=1 takes priority over text patterns', () => {
+    // exit_code=1 即使文本匹配了 transient 也应走 code_error + needs_blocked
+    const result = classifyDevFailure('ECONNREFUSED', 'AI Failed', { exit_code: 1 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+    expect(result.needs_blocked).toBe(true);
+  });
 });
+
+// ============================================================
+// exit_code 精确分流测试
+// ============================================================
+
+describe('classifyDevFailure - exit_code 分流', () => {
+  // ── exit_code=137: resource_killed ──────────────────────────
+
+  it('exit_code=137 → class=resource_killed', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 137 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.RESOURCE_KILLED);
+  });
+
+  it('exit_code=137 → retryable=true', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 137 });
+    expect(result.retryable).toBe(true);
+  });
+
+  it('exit_code=137 → reduce_concurrency=true', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 137 });
+    expect(result.reduce_concurrency).toBe(true);
+  });
+
+  it('exit_code=137 retryCount=0 → delay ≥ 15min', () => {
+    const before = Date.now();
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 137 });
+    const delay = new Date(result.next_run_at).getTime() - before;
+    expect(delay).toBeGreaterThanOrEqual(14 * 60 * 1000);
+  });
+
+  it('exit_code=137 retryCount=1 → delay ≥ 30min', () => {
+    const before = Date.now();
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 1, exit_code: 137 });
+    const delay = new Date(result.next_run_at).getTime() - before;
+    expect(delay).toBeGreaterThanOrEqual(29 * 60 * 1000);
+  });
+
+  it('exit_code=137 exhausted when retryCount >= MAX_OOM_RETRY → retryable=false', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: MAX_OOM_RETRY, exit_code: 137 });
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('exhausted');
+  });
+
+  it('exit_code=137 includes retry_reason', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 137 });
+    expect(result.retry_reason).toBeDefined();
+    expect(result.retry_reason).toMatch(/OOM|降低并发/);
+  });
+
+  // ── exit_code=1: code_error + needs_blocked ─────────────────
+
+  it('exit_code=1 → class=code_error', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 1 });
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+  });
+
+  it('exit_code=1 → retryable=false', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 1 });
+    expect(result.retryable).toBe(false);
+  });
+
+  it('exit_code=1 → needs_blocked=true', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 1 });
+    expect(result.needs_blocked).toBe(true);
+  });
+
+  it('exit_code=1 does not set next_run_at (no retry scheduled)', () => {
+    const result = classifyDevFailure(null, 'AI Failed', { retryCount: 0, exit_code: 1 });
+    expect(result.next_run_at).toBeUndefined();
+  });
+
+  it('exit_code=1 includes previous_failure', () => {
+    const result = classifyDevFailure('TypeScript error', 'AI Failed', { retryCount: 0, exit_code: 1 });
+    expect(result.previous_failure).toBeDefined();
+    expect(result.previous_failure.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+  });
+
+  // ── text-matched code_error remains retryable ──────────────
+
+  it('text-matched code_error (no exit_code) still retryable=true', () => {
+    const result = classifyDevFailure('TypeScript error: Type string not assignable to number');
+    expect(result.class).toBe(DEV_FAILURE_CLASS.CODE_ERROR);
+    expect(result.retryable).toBe(true);
+    expect(result.needs_blocked).toBeUndefined();
+  });
+});
+
+// ============================================================
+// calcNextRunAtOom 测试
+// ============================================================
+
+describe('calcNextRunAtOom', () => {
+  it('retry 1 → 15min delay', () => {
+    const before = Date.now();
+    const result = new Date(calcNextRunAtOom(1)).getTime();
+    expect(result - before).toBeGreaterThanOrEqual(15 * 60 * 1000 - 100);
+    expect(result - before).toBeLessThan(16 * 60 * 1000);
+  });
+
+  it('retry 2 → 30min delay', () => {
+    const before = Date.now();
+    const result = new Date(calcNextRunAtOom(2)).getTime();
+    expect(result - before).toBeGreaterThanOrEqual(30 * 60 * 1000 - 100);
+    expect(result - before).toBeLessThan(31 * 60 * 1000);
+  });
+
+  it('returns ISO 8601 string', () => {
+    const result = calcNextRunAtOom(1);
+    expect(typeof result).toBe('string');
+    expect(new Date(result).getTime()).toBeGreaterThan(0);
+  });
+});
+
