@@ -15,10 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.93.0"
+version: "3.94.0"
 updated: "2026-03-23"
-# ci-trigger: 13.35.0
+# ci-trigger: 13.36.0
 changelog:
+
+  - version: "13.36.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): CI Gate — 新增 hook/devgate 文件必须有 RCI 条目（check-new-files-need-rci.cjs + CI L2 job）"
+    scope: packages/engine/scripts/devgate/,.github/workflows/
 
   - version: "13.35.0"
     date: "2026-03-23"

@@ -377,11 +377,66 @@ jobs:
       - name: Check cross-file reference consistency
         run: node scripts/check-cross-ref.mjs
 
+  # ─── New Files RCI Check ──────────────────────────────────────────────
+
+  new-files-need-rci-check:
+    name: New Files Need RCI Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check new hooks/devgate files have RCI entries
+        run: |
+          SCRIPT="packages/engine/scripts/devgate/check-new-files-need-rci.cjs"
+
+          # 降级保护：脚本不存在时跳过
+          if [ ! -f "$SCRIPT" ]; then
+            echo "⚠️  $SCRIPT 不存在，跳过 RCI 检查"
+            exit 0
+          fi
+
+          # 获取本 PR 新增的文件
+          BASE_REF="origin/${{ github.base_ref }}"
+          ADDED_FILES=$(git diff --name-only --diff-filter=A "${BASE_REF}...HEAD" 2>/dev/null || echo "")
+
+          # 降级保护：无新增文件时跳过
+          if [ -z "$ADDED_FILES" ]; then
+            echo "✅ 本 PR 无新增文件，跳过 RCI 检查"
+            exit 0
+          fi
+
+          # 过滤出目标路径文件
+          TARGET_FILES=$(echo "$ADDED_FILES" | grep -E "^packages/engine/(hooks|scripts/devgate)/" || true)
+
+          # 降级保护：无目标路径文件时跳过
+          if [ -z "$TARGET_FILES" ]; then
+            echo "✅ 本 PR 无新增 hooks/devgate 文件，跳过 RCI 检查"
+            exit 0
+          fi
+
+          echo "发现目标路径新增文件："
+          echo "$TARGET_FILES"
+          echo ""
+
+          # 将文件列表转为参数传入脚本
+          node "$SCRIPT" $TARGET_FILES
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l2-passed:
     name: L2 Consistency Gate Passed
-    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check]
+    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check, new-files-need-rci-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -421,6 +476,15 @@ jobs:
             echo "  → A new package/app/test-category was detected without CI registration."
             echo "  → Register it in ci/routing-map.yml or ci/test-taxonomy.yml."
             FAILED=true
+          fi
+
+          # New Files RCI Check (PR-only)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.new-files-need-rci-check.result }}" != "success" ] && \
+               [ "${{ needs.new-files-need-rci-check.result }}" != "skipped" ]; then
+              echo "FAIL: New Files Need RCI Check (${{ needs.new-files-need-rci-check.result }})"
+              FAILED=true
+            fi
           fi
 
           if [ "$FAILED" = "true" ]; then
