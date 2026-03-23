@@ -293,6 +293,95 @@ describe('capability-scanner', () => {
     });
   });
 
+  describe('migration-182: INFRA capabilities with DB metadata', () => {
+    // 注意：branch-protection-hooks / cecelia-dashboard 等都在 INFRA_DEPLOYED_CAPABILITIES 白名单，
+    // 会在白名单路径提前返回（infra_deployed:true），不走 DB 元数据路径。
+    // 以下测试用非白名单 ID 验证 migration-182 启用的 DB 元数据检测路径的正确性。
+
+    it('should detect capability with related_skills=[dev] as active via dev taskUsageMap (simulates branch-protection-hooks/ci-devgate-quality post-migration-182)', async () => {
+      const pool = (await import('../db.js')).default;
+
+      // 使用非白名单 ID，模拟 migration-182 给 branch-protection-hooks 添加 related_skills=['dev'] 后的检测路径
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'test-dev-skill-detection', name: '测试:dev技能检测', current_stage: 3, related_skills: ['dev'], key_tables: [], scope: 'test', owner: 'system' },
+          ],
+        })
+        // task stats: 30 dev tasks exist → taskUsageMap['dev'] has data
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', total: 30, completed: 20, failed: 10, recent_30d: 5, last_used: new Date().toISOString() }],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no skill stats from run_events
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'test-dev-skill-detection');
+      expect(cap, 'capability should be in results').toBeDefined();
+      expect(cap.status).toBe('active');
+      // taskUsageMap['dev'] 提供证据: "skill:dev total=30 completed=20"
+      expect(cap.evidence.some(e => e.includes('skill:dev'))).toBe(true);
+    });
+
+    it('should detect capability with key_tables=[tasks] as active via table data (simulates cecelia-dashboard/zenithjoy-dashboard post-migration-182)', async () => {
+      const pool = (await import('../db.js')).default;
+
+      // 使用非白名单 ID，模拟 migration-182 给 cecelia-dashboard 添加 key_tables=['tasks'] 后的检测路径
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'test-table-detection', name: '测试:表数据检测', current_stage: 3, related_skills: [], key_tables: ['tasks'], scope: 'test', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks by type
+        .mockResolvedValueOnce({ rows: [] }) // no skill stats
+        .mockResolvedValueOnce({ rows: [] }) // no embedded sources
+        .mockResolvedValueOnce({ rows: [{ has_data: true }] }); // tasks table has data
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'test-table-detection');
+      expect(cap, 'capability should be in results').toBeDefined();
+      expect(cap.status).toBe('active');
+      expect(cap.evidence).toContain('table:tasks=has_data');
+    });
+
+    it('should mark cloudflare/nas/tailscale/vpn as active via INFRA_DEPLOYED whitelist (pure infra — no DB metadata)', async () => {
+      // 这 4 个纯基础设施能力没有 DB 可查证据，由 INFRA_DEPLOYED 白名单兜底
+      const pool = (await import('../db.js')).default;
+
+      const pureInfraCaps = [
+        'cloudflare-tunnel-routing',
+        'nas-file-storage',
+        'tailscale-internal-network',
+        'vpn-service-management',
+      ];
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: pureInfraCaps.map(id => ({
+            id, name: id, current_stage: 3, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system',
+          })),
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      for (const id of pureInfraCaps) {
+        const cap = result.capabilities.find(c => c.id === id);
+        expect(cap, `${id} should be in results`).toBeDefined();
+        expect(cap.status, `${id} should be active`).toBe('active');
+        expect(cap.evidence, `${id} should have infra_deployed evidence`).toContain('infra_deployed:true');
+      }
+    });
+  });
+
   describe('getCapabilityHealth', () => {
     it('should query cecelia_events for capability_scan events', async () => {
       const pool = (await import('../db.js')).default;
