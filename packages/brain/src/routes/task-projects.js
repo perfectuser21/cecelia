@@ -1,9 +1,9 @@
 /**
- * Task Projects route (migrated from apps/api/src/task-system/projects.js)
+ * Task Projects route (migrated to new OKR table: okr_projects)
  *
- * GET /        — 列出所有项目（支持多种过滤参数）
+ * GET /        — 列出所有项目（从 okr_projects 查询，支持 area_id, status, kr_id 过滤）
  * GET /:id     — 获取单个 project（供 /decomp Phase 2 读取 Initiative/Project 信息）
- * PATCH /:id   — 更新 project 字段（status/description/name，供 /decomp 标记 Initiative 完成）
+ * PATCH /:id   — 更新 project 字段（status/title/area_id，供 /decomp 标记 Initiative 完成）
  */
 
 import { Router } from 'express';
@@ -11,19 +11,15 @@ import pool from '../db.js';
 
 const router = Router();
 
-// GET /projects — 列出项目（支持 workspace_id, area_id, status, parent_id, kr_id, type, top_level 过滤）
+// GET /projects — 列出项目（支持 area_id, status, kr_id 过滤）
 router.get('/', async (req, res) => {
   try {
-    const { workspace_id, area_id, status, parent_id, top_level, kr_id, type } = req.query;
+    const { area_id, status, kr_id } = req.query;
 
     const conditions = [];
     const params = [];
     let paramIndex = 1;
 
-    if (workspace_id) {
-      conditions.push(`workspace_id = $${paramIndex++}`);
-      params.push(workspace_id);
-    }
     if (area_id) {
       conditions.push(`area_id = $${paramIndex++}`);
       params.push(area_id);
@@ -32,23 +28,12 @@ router.get('/', async (req, res) => {
       conditions.push(`status = $${paramIndex++}`);
       params.push(status);
     }
-    if (parent_id) {
-      conditions.push(`parent_id = $${paramIndex++}`);
-      params.push(parent_id);
-    } else if (top_level === 'true') {
-      conditions.push('parent_id IS NULL');
-    }
-    if (type) {
-      conditions.push(`type = $${paramIndex++}`);
-      params.push(type);
-    }
-    // kr_id 过滤：通过 project_kr_links 关联查询
     if (kr_id) {
-      conditions.push(`id IN (SELECT project_id FROM project_kr_links WHERE kr_id = $${paramIndex++})`);
+      conditions.push(`kr_id = $${paramIndex++}`);
       params.push(kr_id);
     }
 
-    let query = 'SELECT * FROM projects';
+    let query = 'SELECT * FROM okr_projects';
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -201,17 +186,17 @@ router.post('/compare/report/push-notion', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
   const result = await pool.query(
-    'SELECT id, title, description, kr_id, goal_id FROM projects WHERE id = $1',
+    'SELECT id, title, NULL::text AS description, kr_id, NULL::uuid AS goal_id FROM okr_projects WHERE id = $1',
     [id]
   );
   if (!result.rows[0]) return res.status(404).json({ error: 'project not found' });
   res.json(result.rows[0]);
 });
 
-// PATCH /projects/:id — 更新 project 字段（status / description / name / priority / progress / area_id）
+// PATCH /projects/:id — 更新 project 字段（status / title / area_id / owner_role）
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, description, name, priority, progress, area_id } = req.body;
+    const { status, title, name, area_id, owner_role } = req.body;
 
     const setClauses = [];
     const params = [];
@@ -221,25 +206,19 @@ router.patch('/:id', async (req, res) => {
       setClauses.push(`status = $${paramIndex++}`);
       params.push(status);
     }
-    if (description !== undefined) {
-      setClauses.push(`description = $${paramIndex++}`);
-      params.push(description);
-    }
-    if (name !== undefined) {
-      setClauses.push(`name = $${paramIndex++}`);
-      params.push(name);
-    }
-    if (priority !== undefined) {
-      setClauses.push(`priority = $${paramIndex++}`);
-      params.push(priority);
-    }
-    if (progress !== undefined) {
-      setClauses.push(`progress = $${paramIndex++}`);
-      params.push(progress);
+    // name 映射到 title（向后兼容旧 projects.name 字段）
+    const titleValue = title !== undefined ? title : name;
+    if (titleValue !== undefined) {
+      setClauses.push(`title = $${paramIndex++}`);
+      params.push(titleValue);
     }
     if (area_id !== undefined) {
       setClauses.push(`area_id = $${paramIndex++}`);
       params.push(area_id);
+    }
+    if (owner_role !== undefined) {
+      setClauses.push(`owner_role = $${paramIndex++}`);
+      params.push(owner_role);
     }
 
     if (setClauses.length === 0) {
@@ -250,7 +229,7 @@ router.patch('/:id', async (req, res) => {
     params.push(req.params.id);
 
     const result = await pool.query(
-      `UPDATE projects SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      `UPDATE okr_projects SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
       params
     );
 

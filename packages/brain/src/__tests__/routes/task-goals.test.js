@@ -1,5 +1,6 @@
 /**
  * Route tests: /api/brain/goals (task-goals.js)
+ * 已迁移到新 OKR 表：objectives + key_results
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
@@ -33,7 +34,7 @@ describe('task-goals routes', () => {
   });
 
   describe('GET /goals', () => {
-    it('lists all goals without filters', async () => {
+    it('lists all goals without filters (UNION ALL objectives + key_results)', async () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: 'g1', title: 'Goal 1', type: 'area_okr' }],
       });
@@ -42,17 +43,33 @@ describe('task-goals routes', () => {
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
       const sql = mockPool.query.mock.calls[0][0];
-      expect(sql).not.toContain('WHERE');
+      // 新实现：UNION ALL objectives + key_results（wrapped in subquery）
+      expect(sql).toContain('FROM objectives');
+      expect(sql).toContain('FROM key_results');
+      expect(sql).toContain('UNION ALL');
     });
 
-    it('filters by type and status', async () => {
+    it('filters by type=area_okr (only objectives)', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
       await request(app).get('/goals?type=area_okr&status=active');
       const [sql, params] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('type = $1');
-      expect(sql).toContain('status = $2');
-      expect(params).toEqual(['area_okr', 'active']);
+      // type=area_okr 只查 objectives，不走 UNION ALL
+      expect(sql).toContain('FROM objectives');
+      expect(sql).not.toContain('UNION ALL');
+      expect(sql).toContain('status = $1');
+      expect(params).toEqual(['active']);
+    });
+
+    it('filters by type=area_kr (only key_results)', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      await request(app).get('/goals?type=area_kr&status=active');
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('FROM key_results');
+      expect(sql).not.toContain('UNION ALL');
+      expect(sql).toContain('status = $1');
+      expect(params).toEqual(['active']);
     });
 
     it('supports limit and offset', async () => {
@@ -68,25 +85,48 @@ describe('task-goals routes', () => {
   });
 
   describe('GET /goals/:id', () => {
-    it('returns 404 for non-existent goal with lowercase error message', async () => {
+    it('returns 404 for non-existent goal (checks both objectives and key_results)', async () => {
+      // 查询1: objectives 未找到
       mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // 查询2: key_results 未找到
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
       const res = await request(app).get('/goals/non-existent');
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('goal not found');
       // 404 响应不应包含 id 字段（统一格式）
       expect(res.body.id).toBeUndefined();
+      // 需要查询 2 次（objectives + key_results）
+      expect(mockPool.query).toHaveBeenCalledTimes(2);
     });
 
-    it('returns goal by id with specified fields', async () => {
+    it('returns goal by id from objectives', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'g1', type: 'area_okr', title: 'Goal 1', description: 'desc', parent_id: null, project_id: null }],
+        rows: [{ id: 'g1', type: 'area_okr', title: 'Goal 1', description: null, parent_id: null, project_id: null }],
       });
       const res = await request(app).get('/goals/g1');
       expect(res.status).toBe(200);
       expect(res.body.id).toBe('g1');
-      // 验证 SQL 使用指定字段 SELECT
+      // 第一次查询应查 objectives
       const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('SELECT id, type, title, description, parent_id, project_id');
+      expect(sql).toContain('FROM objectives');
+      // 只需一次查询（在 objectives 找到）
+      expect(mockPool.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to key_results when not found in objectives', async () => {
+      // objectives 未找到
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // key_results 找到
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr1', type: 'area_kr', title: 'KR 1', description: null, parent_id: 'obj1', project_id: null }],
+      });
+      const res = await request(app).get('/goals/kr1');
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe('kr1');
+      expect(mockPool.query).toHaveBeenCalledTimes(2);
+      const [sql2] = mockPool.query.mock.calls[1];
+      expect(sql2).toContain('FROM key_results');
     });
   });
 
@@ -96,7 +136,7 @@ describe('task-goals routes', () => {
       expect(res.status).toBe(400);
     });
 
-    it('updates title and status', async () => {
+    it('updates title and status (tries objectives first)', async () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: 'g1', title: 'Updated', status: 'completed' }],
       });
@@ -106,6 +146,7 @@ describe('task-goals routes', () => {
       const [sql] = mockPool.query.mock.calls[0];
       expect(sql).toContain('title = $1');
       expect(sql).toContain('status = $2');
+      expect(sql).toContain('UPDATE objectives');
     });
 
     it('merges custom_props as JSONB', async () => {
@@ -119,10 +160,29 @@ describe('task-goals routes', () => {
       expect(sql).toContain('::jsonb');
     });
 
-    it('returns 404 when goal not found', async () => {
+    it('returns 404 when goal not found in both tables', async () => {
+      // objectives: 0 行
       mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // key_results: 0 行
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
       const res = await request(app).patch('/goals/missing').send({ title: 'x' });
       expect(res.status).toBe(404);
+      expect(mockPool.query).toHaveBeenCalledTimes(2);
+    });
+
+    it('updates key_results when not found in objectives', async () => {
+      // objectives: 0 行
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // key_results: 找到
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr1', status: 'completed' }],
+      });
+
+      const res = await request(app).patch('/goals/kr1').send({ status: 'completed' });
+      expect(res.status).toBe(200);
+      const [sql2] = mockPool.query.mock.calls[1];
+      expect(sql2).toContain('UPDATE key_results');
     });
   });
 
@@ -133,7 +193,7 @@ describe('task-goals routes', () => {
           {
             id: 'kr-1',
             title: '免疫系统 KR',
-            type: 'area_okr',
+            type: 'area_kr',
             status: 'in_progress',
             stated_progress: 100,
             actual_progress: '50',
@@ -143,7 +203,7 @@ describe('task-goals routes', () => {
           {
             id: 'kr-2',
             title: 'self-model KR',
-            type: 'area_okr',
+            type: 'area_kr',
             status: 'in_progress',
             stated_progress: 100,
             actual_progress: '28',
@@ -178,7 +238,7 @@ describe('task-goals routes', () => {
           {
             id: 'kr-3',
             title: '组织架构 KR',
-            type: 'area_okr',
+            type: 'area_kr',
             status: 'in_progress',
             stated_progress: 100,
             actual_progress: null,
