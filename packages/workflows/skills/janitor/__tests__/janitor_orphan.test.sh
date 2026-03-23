@@ -111,6 +111,27 @@ else
   fi
 fi
 
+# 验证 13: notify_brain_orphan_killed 函数存在（v4.1 Brain 回报）
+if grep -qE "^\s+notify_brain_orphan_killed\(\)" "$JANITOR" 2>/dev/null; then
+  ok "v4.1 函数定义存在: notify_brain_orphan_killed"
+else
+  fail "v4.1 函数定义缺失: notify_brain_orphan_killed"
+fi
+
+# 验证 14: orphan_killed_by_janitor 字符串存在
+if grep -q "orphan_killed_by_janitor" "$JANITOR"; then
+  ok "orphan_killed_by_janitor 标识符存在"
+else
+  fail "orphan_killed_by_janitor 标识符缺失"
+fi
+
+# 验证 15: kill_if_claude_orphan 调用了回报函数
+if grep -A 40 "kill_if_claude_orphan()" "$JANITOR" 2>/dev/null | grep -q "notify_brain_orphan_killed"; then
+  ok "kill_if_claude_orphan 调用了 notify_brain_orphan_killed"
+else
+  fail "kill_if_claude_orphan 未调用 notify_brain_orphan_killed"
+fi
+
 echo ""
 echo "结果: $PASS 通过 / $FAIL 失败"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
