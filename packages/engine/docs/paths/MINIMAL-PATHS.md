@@ -414,6 +414,13 @@ changelog:
 
 ---
 
+### devloop-check-drift-detection: Stage3 Drift Check
+
+1. ✅ **改动文件在 Task Card Scope 内：无 warning**
+2. ✅ **改动文件超出 Scope：输出 warning 但不阻断**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 2.2.0
+version: 2.3.0
 created: 2026-03-20
-updated: 2026-03-22
+updated: 2026-03-23
 changelog:
+  - 2.3.0: spec_review 新增测试层（test layer）检查指令：每个 DoD 条目必须对应合适的测试类型
   - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
   - 2.1.0: 删除降级 pass 逻辑（spec_review_degraded），3次 FAIL 改为写入 blocked 等待人工
   - 2.0.0: spec_review 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
@@ -260,6 +261,11 @@ loop:
             \"timestamp\": \"<ISO8601>\", \"reviewer\": \"spec-review-agent\",
             \"issues\": [...] }
           这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。"
+     - **测试层检查（v2.3.0 新增）**：审查时必须验证每个 DoD 条目的测试类型（测试层 / test layer）是否合适：
+         * [ARTIFACT] 类条目 → 推荐 unit 级测试（node -e 文件内容验证）
+         * [BEHAVIOR] 类条目 → 推荐 integration 级测试（curl/API 行为验证 + 断言）
+         * [GATE] CI 类条目 → 推荐 e2e 级测试（CI 运行 / 语法检查）
+         * 若测试层与条目类型严重不匹配（如 [BEHAVIOR] 仅做静态文件检查），标记为 warning
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
        → 确认 seal 文件 .dev-gate-spec.${BRANCH} 已存在（由 subagent 写入）

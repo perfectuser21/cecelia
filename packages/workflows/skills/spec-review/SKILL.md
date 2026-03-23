@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.1.0
+version: 1.2.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-22
+updated: 2026-03-23
 changelog:
+  - 1.2.0: 新增维度F 测试层合理性检查（test layer）：每个DoD条目须对应合适的测试层（unit/integration/e2e）
   - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
   - 1.0.0: 合并 dod_verify + cto_review（单 PR 部分）为统一 Spec 审查 Gate
 description: |
@@ -120,6 +121,23 @@ description: |
 | **路径正确** | 引用的文件路径存在或将在实现中创建 | 引用了不存在且不会创建的路径 |
 | **退出码明确** | 命令有明确的 exit 0（成功）/ exit 1（失败） | 命令只有输出没有判定 |
 | **无 npx vitest** | 不使用 `npx vitest` / `npm test`（CI 无完整依赖） | 使用了 CI 无法执行的命令 |
+
+### 维度 F：测试层合理性检查（test layer）
+
+每个 DoD 条目必须对应合适的测试层（unit / integration / e2e），不同类型条目应使用匹配的测试策略。
+
+| 条目类型 | 推荐测试层 | 说明 |
+|----------|-----------|------|
+| **[ARTIFACT]** | unit | 验证文件内容/代码静态属性，`node -e readFileSync + includes 断言` |
+| **[BEHAVIOR]** | integration | 验证运行时行为，`curl/API 调用 + 响应断言` 或 `bash 脚本执行 + exit code` |
+| **[PRESERVE]** | unit / integration | 验证原有行为未被破坏，与原条目测试层对应 |
+| **[GATE]** | e2e | CI 运行验证 / bash -n 语法检查 / 服务健康检查 |
+
+| 检查项 | 严重度 | 说明 |
+|--------|--------|------|
+| **测试层与条目类型不匹配** | warning | `[BEHAVIOR]` 仅做静态文件检查（无运行时断言）|
+| **所有条目都用同一测试模式** | warning | 多个 [BEHAVIOR] 条目全用 `readFileSync` 而非运行时验证 |
+| **[GATE] 无实际验证** | blocker | `[GATE]` 条目测试命令只打印文字，无 exit code 断言 |
 
 ---
 
