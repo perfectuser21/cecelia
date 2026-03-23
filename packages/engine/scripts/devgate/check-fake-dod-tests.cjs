@@ -88,7 +88,7 @@ function checkFakeDodTests(taskCardPath) {
   });
 
   if (violations.length === 0) {
-    console.log(`✅ 假 DoD Test 检测通过 — 未发现假测试模式（${taskCardPath}）`);
+    process.stdout.write(`✅ 假 DoD Test 检测通过 — 未发现假测试模式（${taskCardPath}）\n`);
     process.exit(0);
   }
 
