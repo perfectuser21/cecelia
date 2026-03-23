@@ -11,6 +11,28 @@
 -- 旧表：保留数据，添加 DEPRECATED 注释（不删除，留给 PR5）
 -- FK 处理：nullable FK 在无法满足引用完整性时置 NULL
 
+-- ===================== 0. 防御性列补全（确保 custom_props 在 goals/projects 中存在） =====================
+-- 本地生产 DB 已有此列（通过历史 ALTER TABLE 手动添加），
+-- 但 CI 全量重建时 000_base_schema.sql 不含此列，需在此补全。
+-- ALTER TABLE ... ADD COLUMN IF NOT EXISTS 是幂等操作，可安全重跑。
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'goals' AND column_name = 'custom_props'
+  ) THEN
+    ALTER TABLE goals ADD COLUMN custom_props jsonb NOT NULL DEFAULT '{}';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'custom_props'
+  ) THEN
+    ALTER TABLE projects ADD COLUMN custom_props jsonb NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+
 -- ===================== 1. goals type='vision' → visions =====================
 
 INSERT INTO visions (
