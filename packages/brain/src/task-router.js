@@ -31,6 +31,14 @@ const VALID_TASK_TYPES = [
   'scope_plan', 'project_plan'
 ];
 
+// 支持 P2P 异步回调的任务类型
+// 当飞书 P2P 创建这些类型的任务后，自动注册 task_interest 订阅，任务完成时回调用户
+// 扩展新能力：在此 Set 中加一行，无需改 ops.js
+const ASYNC_CALLBACK_TYPES = new Set([
+  'explore',   // 信息探查（如"zenithjoy 现在有什么"）
+  'research',  // 深度调研（如"帮我调研 XXX"）
+]);
+
 // Skill whitelist based on task type
 const SKILL_WHITELIST = {
   'dev': '/dev',
@@ -775,5 +783,6 @@ export {
   DEFAULT_LOCATION,
   VALID_TASK_TYPES,
   SKILL_WHITELIST,
-  FALLBACK_STRATEGIES
+  FALLBACK_STRATEGIES,
+  ASYNC_CALLBACK_TYPES
 };

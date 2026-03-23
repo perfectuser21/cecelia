@@ -36,8 +36,8 @@ describe('P2P 查询派发能力', () => {
       expect(src).toContain('task_interest:${createdTaskId}');
     });
 
-    it('应检查 action.params.task_type 为 explore', () => {
-      expect(src).toContain("action.params?.task_type === 'explore'");
+    it('应使用 ASYNC_CALLBACK_TYPES 路由表而非 hardcode explore', () => {
+      expect(src).toContain('ASYNC_CALLBACK_TYPES.has(');
     });
 
     it('应从 execResult 提取 createdTaskId', () => {
