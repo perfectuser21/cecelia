@@ -114,14 +114,14 @@ verify_step1() {
   Step 1 完成前必须填写所有 Test: 命令"
     fi
 
-    # 检查假命令模式
+    # 检查假命令模式（本地快速检测，CI 通过 check-fake-dod-tests.cjs 全量检测）
     local found_fake
-    found_fake=$(echo "$test_lines" | grep -E 'Test:\s*(manual:)?(echo |ls( |$)|cat |test -f|true$|exit 0)' 2>/dev/null || echo "")
+    found_fake=$(echo "$test_lines" | grep -E 'Test:\s*(manual:)?(echo |ls( |$)|cat |test -f|true$|exit 0|printf |wc )|Test:.*\|[[:space:]]*wc' 2>/dev/null || echo "")
 
     if [[ -n "$found_fake" ]]; then
         _fail "Task Card 包含假 Test 命令（不验证真实行为）：
 $found_fake
-  禁止的假命令：echo / ls / cat / test -f / true / exit 0
+  禁止的假命令：echo / ls / cat / test -f / true / exit 0 / printf / wc / grep|wc
   正确示例：
     Test: manual:node -e \"const c=require('fs').readFileSync('file','utf8');if(!c.includes('X'))process.exit(1)\"
     Test: tests/my.test.ts
