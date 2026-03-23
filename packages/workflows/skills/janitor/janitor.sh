@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Janitor（小扫）- 系统清扫员（Mac mini 版 v3.0）
+# Janitor（小扫）- 系统清扫员（Mac mini 版 v4.0）
 # 两种模式：
 #   daily    - 磁盘清理（每天 4am）
-#   frequent - 僵尸进程清理（每 15 分钟）
+#   frequent - 僵尸/孤儿进程清理（每 15 分钟）
 #
-# 用法:
-#   janitor.sh                  # 默认 daily 模式
-#   janitor.sh --mode daily     # 磁盘清理
-#   janitor.sh --mode frequent  # 僵尸进程清理
-#
-# v3.0 变更：
-#   frequent 模式重写孤儿进程检测：
-#   - 追溯祖先进程链，PPID=1 且链中无 claude → 孤儿
-#   - 祖先链中有活着的 claude 进程 → 合法，绝对不动
-#   - 阈值从 7200s 改为 600s（10 分钟）
-#   - crontab 频率从 30 分钟改为 15 分钟
+# v4.0 变更：
+#   frequent 模式新增 claude 孤儿检测：
+#   - 条件：TTY=?? + ppid=1 + 运行>阈值 + Brain无in_progress任务 + 无.dev-lock
+#   - 双重验证（Brain DB + .dev-lock），任一存在则保守跳过
+#   - 内存 >=90%：阈值从 600s 降至 300s（MEM_HIGH_THRESHOLD_SEC）
+#   - CPU >=85%：向 Brain 上报告警任务（CPU_ALERT_THRESHOLD）
+#   - crontab 应指向软链接 ~/bin/janitor.sh → 此文件
 # =============================================================================
 
 MODE="daily"
@@ -33,16 +29,65 @@ for arg in "$@"; do
 done
 
 CECELIA_REPO="/Users/administrator/perfect21/cecelia"
+BRAIN_API="http://localhost:5221"
 TOTAL_STEPS=9
 
 # ─────────────────────────────────────────────
-# frequent 模式：清理孤儿测试进程
+# frequent 模式：清理孤儿/僵尸进程 + 资源压力响应
 # ─────────────────────────────────────────────
 if [ "$MODE" = "frequent" ]; then
-  THRESHOLD_SEC=600  # 10 分钟
+  THRESHOLD_SEC=600          # 正常阈值：10 分钟
+  MEM_HIGH_THRESHOLD_SEC=300 # 内存高压阈值：5 分钟
+  CPU_ALERT_THRESHOLD=85     # CPU 高压告警触发点（%）
+  MEM_HIGH_WATERMARK=90      # 内存高压水位（%）
   KILLED=0
 
-  # 将 ps etime 格式（[[DD-]HH:]MM:SS）转换为秒数
+  # ── 检测当前资源压力 ──────────────────────────────
+  _get_mem_usage_pct() {
+    local total pagesize pages_free pages_spec free_bytes
+    total=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+    pagesize=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096")
+    pages_free=$(vm_stat 2>/dev/null | awk '/Pages free/{gsub(/\./,"",$3); print $3+0}')
+    pages_spec=$(vm_stat 2>/dev/null | awk '/Pages speculative/{gsub(/\./,"",$3); print $3+0}')
+    pages_free=${pages_free:-0}
+    pages_spec=${pages_spec:-0}
+    free_bytes=$(( (pages_free + pages_spec) * pagesize ))
+    if [ "$total" -gt 0 ]; then
+      echo $(( (total - free_bytes) * 100 / total ))
+    else
+      echo 0
+    fi
+  }
+
+  _get_cpu_usage_pct() {
+    local load cores
+    load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{gsub(/[{}]/,"",$2); print $2}')
+    cores=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "1")
+    [ -z "$load" ] || [ "$cores" -eq 0 ] && echo 0 && return
+    awk "BEGIN{pct=$load/$cores*100; if(pct>100)pct=100; printf \"%d\", pct}"
+  }
+
+  MEM_PCT=$(_get_mem_usage_pct)
+  CPU_PCT=$(_get_cpu_usage_pct)
+
+  # 内存高压：降低清理阈值
+  ACTIVE_THRESHOLD=$THRESHOLD_SEC
+  if [ "$MEM_PCT" -ge "$MEM_HIGH_WATERMARK" ] 2>/dev/null; then
+    ACTIVE_THRESHOLD=$MEM_HIGH_THRESHOLD_SEC
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] 内存高压 ${MEM_PCT}%，清理阈值降至 ${MEM_HIGH_THRESHOLD_SEC}s"
+  fi
+
+  # CPU 高压：上报 Brain 告警
+  if [ "$CPU_PCT" -ge "$CPU_ALERT_THRESHOLD" ] 2>/dev/null; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] CPU 高压 ${CPU_PCT}%，上报 Brain 告警..."
+    curl -s -X POST "${BRAIN_API}/api/brain/tasks" \
+      -H "Content-Type: application/json" \
+      -d "{\"title\":\"⚠️ CPU 高压告警 ${CPU_PCT}%（Janitor 检测）\",\"priority\":\"P1\",\"task_type\":\"alert\",\"domain\":\"agent_ops\",\"description\":\"Mac mini M4 CPU ${CPU_PCT}% 超过 ${CPU_ALERT_THRESHOLD}% 阈值，请检查是否有失控进程。\"}" \
+      2>/dev/null || true
+  fi
+
+  # ── 工具函数 ──────────────────────────────────────
+  # etime 格式（[[DD-]HH:]MM:SS）转秒数
   etime_to_secs() {
     local elapsed="$1"
     local secs=0
@@ -63,7 +108,7 @@ if [ "$MODE" = "frequent" ]; then
     echo "$secs"
   }
 
-  # 向上遍历父进程链，找到最近的 shell 祖先
+  # 向上遍历父进程链，找最近 shell 祖先
   find_shell_ancestor() {
     local pid=$1
     local current=$pid
@@ -85,7 +130,6 @@ if [ "$MODE" = "frequent" ]; then
   }
 
   # 检查祖先链中是否有活着的 claude 进程
-  # 返回 0 = 有 claude 祖先（合法），返回 1 = 无（可能是孤儿）
   has_live_claude_ancestor() {
     local pid=$1
     local current=$pid
@@ -106,72 +150,157 @@ if [ "$MODE" = "frequent" ]; then
     return 1
   }
 
-  # 判断进程是否为孤儿
-  # 规则：祖先链无 claude 进程，且最终到达 launchd(PID=1) → 孤儿
-  # 保守原则：无法判断时返回 1（不杀）
+  # Brain DB 检查：是否有 in_progress 任务
+  # 返回 0 = 有记录（保守：Brain不可达也返回0），返回 1 = 确认无记录
+  has_brain_inprogress_task() {
+    local resp
+    resp=$(curl -s --max-time 3 "${BRAIN_API}/api/brain/tasks?status=in_progress&limit=50" 2>/dev/null)
+    [ -z "$resp" ] && return 0  # Brain 不可达 → 保守
+    local count
+    count=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
+    [ "$count" -gt 0 ] && return 0
+    return 1
+  }
+
+  # .dev-lock 检查：是否有活跃 dev session
+  has_active_dev_lock() {
+    local wt_dir="$CECELIA_REPO/.claude/worktrees"
+    if [ -d "$wt_dir" ]; then
+      local lock_count
+      lock_count=$(find "$wt_dir" -maxdepth 2 -name ".dev-lock.*" 2>/dev/null | wc -l | tr -d ' ')
+      [ "$lock_count" -gt 0 ] && return 0
+    fi
+    local main_lock
+    main_lock=$(find "$CECELIA_REPO" -maxdepth 1 -name ".dev-lock.*" 2>/dev/null | wc -l | tr -d ' ')
+    [ "$main_lock" -gt 0 ] && return 0
+    return 1
+  }
+
+  # 判断 vitest/node 进程是否为孤儿（原逻辑）
   is_orphan() {
     local pid=$1
-    # 有活着的 claude 祖先 → 合法，绝对不动
     if has_live_claude_ancestor "$pid"; then
       return 1
     fi
-    # 向上遍历：到达 launchd(1) 且无 claude → 孤儿
     local current=$pid
     local depth=0
     local max_depth=20
     while [ $depth -lt $max_depth ]; do
       local ppid
       ppid=$(ps -o ppid= -p "$current" 2>/dev/null | tr -d ' ')
-      [ -z "$ppid" ] || [ "$ppid" = "0" ] && return 1  # 无法判断，保守不杀
-      [ "$ppid" = "1" ] && return 0  # 父是 launchd → 孤儿
+      [ -z "$ppid" ] || [ "$ppid" = "0" ] && return 1
+      [ "$ppid" = "1" ] && return 0
       local comm
       comm=$(ps -o comm= -p "$ppid" 2>/dev/null)
       if echo "$comm" | grep -qi "claude"; then
-        return 1  # 遇到 claude → 合法
+        return 1
       fi
       current=$ppid
       depth=$((depth + 1))
     done
-    return 1  # 保守不杀
+    return 1
   }
 
+  # 判断 claude 进程是否为孤儿（双重验证）
+  is_claude_orphan() {
+    local pid=$1
+    local tty=$2
+    local ppid=$3
+
+    # 条件1: 无终端（有头进程绝对不动）
+    [ "$tty" != "??" ] && return 1
+
+    # 条件2: ppid=1（父进程已死）
+    [ "$ppid" != "1" ] && return 1
+
+    # 条件3: 白名单服务进程不动
+    local cmdline
+    cmdline=$(ps -o command= -p "$pid" 2>/dev/null || echo "")
+    if echo "$cmdline" | grep -qE "brain/server\.js|cecelia-bridge\.cjs|n8n"; then
+      return 1
+    fi
+
+    # 条件4（保守）: Brain 有 in_progress 任务 → 跳过
+    if has_brain_inprogress_task; then
+      return 1
+    fi
+
+    # 条件5（保守）: 有 .dev-lock 文件 → 跳过
+    if has_active_dev_lock; then
+      return 1
+    fi
+
+    return 0
+  }
+
+  # vitest/node 通用 kill 函数
   kill_if_orphan() {
     local pid="$1"
+    local threshold="${2:-$ACTIVE_THRESHOLD}"
     [ -z "$pid" ] && return
 
-    local elapsed
+    local elapsed secs
     elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -z "$elapsed" ] && return
-
-    local secs
     secs=$(etime_to_secs "$elapsed")
-    [ "$secs" -lt "$THRESHOLD_SEC" ] && return
+    [ "$secs" -lt "$threshold" ] && return
 
     if is_orphan "$pid"; then
       kill "$pid" 2>/dev/null
       sleep 1
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
       KILLED=$((KILLED + 1))
-      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] killed orphan pid=$pid (${secs}s)"
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] killed node/vitest orphan pid=$pid (${secs}s)"
     fi
   }
 
-  # 扫描 vitest/jest 进程
+  # claude 专用 kill 函数
+  kill_if_claude_orphan() {
+    local pid="$1" tty="$2" ppid="$3"
+    local threshold="${4:-$ACTIVE_THRESHOLD}"
+    [ -z "$pid" ] && return
+
+    local elapsed secs
+    elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ -z "$elapsed" ] && return
+    secs=$(etime_to_secs "$elapsed")
+    [ "$secs" -lt "$threshold" ] && return
+
+    if is_claude_orphan "$pid" "$tty" "$ppid"; then
+      kill "$pid" 2>/dev/null
+      sleep 1
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+      KILLED=$((KILLED + 1))
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] killed claude orphan pid=$pid tty=$tty ppid=$ppid (${secs}s)"
+    fi
+  }
+
+  # ── 扫描 vitest/jest 孤儿 ─────────────────────────
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     PID=$(echo "$line" | awk '{print $2}')
-    kill_if_orphan "$PID"
+    kill_if_orphan "$PID" "$ACTIVE_THRESHOLD"
   done < <(ps aux | grep -E "node.*vitest|node.*jest" | grep -v grep)
 
-  # 扫描 npm test 孤儿进程（排除 brain/server/n8n 服务）
+  # ── 扫描普通 node 孤儿（排除服务进程）──────────────
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     PID=$(echo "$line" | awk '{print $2}')
-    kill_if_orphan "$PID"
-  done < <(ps aux | grep "node" | grep -v grep | grep -v "brain\|server\|n8n\|vscode")
+    kill_if_orphan "$PID" "$ACTIVE_THRESHOLD"
+  done < <(ps aux | grep "node" | grep -v grep | grep -v "brain\|server\|n8n\|vscode\|bridge")
+
+  # ── 扫描 claude 孤儿（v4.0 新逻辑）─────────────────
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    PID=$(echo "$line" | awk '{print $2}')
+    TTY=$(echo "$line" | awk '{print $7}')
+    PPID=$(ps -o ppid= -p "$PID" 2>/dev/null | tr -d ' ')
+    [ -z "$PPID" ] && continue
+    kill_if_claude_orphan "$PID" "$TTY" "$PPID" "$ACTIVE_THRESHOLD"
+  done < <(ps aux | grep -E " claude$| claude " | grep -v grep)
 
   if [ "$KILLED" -gt 0 ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] cleaned $KILLED orphan process(es)"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] 清理完成：killed $KILLED 个孤儿进程（内存 ${MEM_PCT}%，CPU ${CPU_PCT}%）"
   fi
   exit 0
 fi
@@ -184,7 +313,7 @@ BEFORE=$(df / | tail -1 | awk '{print $3}')
 
 log() { echo "[$(date '+%H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 
-log "=== Janitor v3.0 开始清扫 $(date '+%Y-%m-%d') ==="
+log "=== Janitor v4.0 开始清扫 $(date '+%Y-%m-%d') ==="
 
 # 1. Brain/Bridge LaunchDaemon 日志截断（>10M 保留最后 1000 行）
 log "[1/$TOTAL_STEPS] Brain/Bridge 服务日志..."
