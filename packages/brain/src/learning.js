@@ -258,8 +258,9 @@ export async function searchRelevantLearnings(context = {}, limit = 10) {
     return results.slice(0, limit);
   } catch (err) {
     console.error(`[learning] Failed to search relevant learnings: ${err.message}`);
-    // Fallback to getRecentLearnings
-    return getRecentLearnings(null, limit);
+    // Fallback to getRecentLearnings — add relevance_score: 0 so callers can rely on the property
+    const recent = await getRecentLearnings(null, limit);
+    return recent.map(l => ({ ...l, relevance_score: 0 }));
   }
 }
 

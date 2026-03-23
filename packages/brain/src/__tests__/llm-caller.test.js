@@ -52,7 +52,7 @@ vi.mock('fs', () => ({
   }),
 }));
 
-import { callLLM, callLLMStream, _resetMinimaxKey, _resetAnthropicKey } from '../llm-caller.js';
+import { callLLM, callLLMStream, _resetMinimaxKey, _resetAnthropicKey, _resetOpenAIKey } from '../llm-caller.js';
 import { getActiveProfile } from '../model-profile.js';
 import { selectBestAccount } from '../account-usage.js';
 
@@ -397,9 +397,17 @@ describe('llm-caller', () => {
     });
 
     it('openai provider 现已支持，无 API key 时抛出凭据错误', async () => {
-      await expect(
-        callLLM('thalamus', '测试', { provider: 'openai', model: 'gpt-4o-mini' })
-      ).rejects.toThrow(/OpenAI API key not available|OpenAI API error/);
+      const savedKey = process.env.OPENAI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      _resetOpenAIKey();
+      try {
+        await expect(
+          callLLM('thalamus', '测试', { provider: 'openai', model: 'gpt-4o-mini' })
+        ).rejects.toThrow(/OpenAI API key not available|OpenAI API error/);
+      } finally {
+        if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
+        _resetOpenAIKey();
+      }
     });
   });
 
