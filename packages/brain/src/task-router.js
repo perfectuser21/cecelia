@@ -160,7 +160,7 @@ const LOCATION_MAP = {
   'suggestion_plan': 'xian',      // Suggestion 层级识别 → 西安 Codex (B類纯策略，/plan skill)
   'architecture_design': 'us',    // Architecture 设计 → US 本机 Codex (需读代码，/architect design)
   'architecture_scan': 'us',      // 系统扫描 → US 本机 Codex (需读代码，/architect scan)
-  'arch_review': 'us',            // 架构巡检 → US 本机 Codex (需读代码，/arch-review review)
+  'arch_review': 'xian',          // 架构巡检 → 西安 Codex (分析/审查类，/arch-review review)
   'strategy_session': 'xian',     // 战略会议 → 西安 Codex (B類，/strategy-session)
   'intent_expand': 'us',          // 意图扩展 → US 本机（需读本地 Brain DB，补全 PRD）
   'initiative_execute': 'us',     // Initiative 执行 → US 本机（/dev 全流程，A類）

@@ -13,6 +13,10 @@ import {
   getActiveRepoPaths,
   triggerDailyReview,
   triggerContractScan,
+  isInArchReviewWindow,
+  hasRecentArchReview,
+  hasCompletedDevTaskSinceLastArchReview,
+  triggerArchReview,
 } from '../daily-review-scheduler.js';
 
 // ============================================================
@@ -528,5 +532,278 @@ describe('triggerContractScan', () => {
     const result = await triggerContractScan(pool);
     // 根据当前时间决定是否在窗口内
     expect(typeof result.triggered).toBe('boolean');
+  });
+});
+
+// ============================================================
+// isInArchReviewWindow（每4小时触发：0/4/8/12/16/20 UTC，前5分钟）
+// ============================================================
+describe('isInArchReviewWindow', () => {
+  it('00:00 UTC 触发', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T00:00:00Z'))).toBe(true);
+  });
+
+  it('04:00 UTC 触发', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T04:00:00Z'))).toBe(true);
+  });
+
+  it('08:00 UTC 触发', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T08:00:00Z'))).toBe(true);
+  });
+
+  it('12:00 UTC 触发', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T12:00:00Z'))).toBe(true);
+  });
+
+  it('16:00 UTC 触发', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T16:00:00Z'))).toBe(true);
+  });
+
+  it('20:00 UTC 触发', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T20:00:00Z'))).toBe(true);
+  });
+
+  it('04:04 UTC 仍在窗口内', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T04:04:00Z'))).toBe(true);
+  });
+
+  it('04:05 UTC 超出窗口', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T04:05:00Z'))).toBe(false);
+  });
+
+  it('01:00 UTC 不触发（奇数小时）', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T01:00:00Z'))).toBe(false);
+  });
+
+  it('02:00 UTC 不触发（非4的倍数）', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T02:00:00Z'))).toBe(false);
+  });
+
+  it('10:30 UTC 不触发', () => {
+    expect(isInArchReviewWindow(new Date('2026-03-23T10:30:00Z'))).toBe(false);
+  });
+
+  it('不传参时使用当前时间（不抛错）', () => {
+    expect(typeof isInArchReviewWindow()).toBe('boolean');
+  });
+});
+
+// ============================================================
+// hasRecentArchReview
+// ============================================================
+describe('hasRecentArchReview', () => {
+  it('4小时内已有 arch_review，返回 true', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 'ar-1' }] }) };
+    expect(await hasRecentArchReview(pool)).toBe(true);
+  });
+
+  it('4小时内无 arch_review，返回 false', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    expect(await hasRecentArchReview(pool)).toBe(false);
+  });
+
+  it('SQL 查询包含 arch_review task_type 和4小时间隔', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await hasRecentArchReview(pool);
+    const sql = pool.query.mock.calls[0][0];
+    expect(sql).toContain("task_type = 'arch_review'");
+    expect(sql).toContain("INTERVAL '4 hours'");
+  });
+
+  it('DB 查询失败时抛出错误', async () => {
+    const pool = { query: vi.fn().mockRejectedValue(new Error('DB error')) };
+    await expect(hasRecentArchReview(pool)).rejects.toThrow('DB error');
+  });
+});
+
+// ============================================================
+// hasCompletedDevTaskSinceLastArchReview
+// ============================================================
+describe('hasCompletedDevTaskSinceLastArchReview', () => {
+  it('从未执行过 arch_review，返回 true（无历史记录）', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    expect(await hasCompletedDevTaskSinceLastArchReview(pool)).toBe(true);
+    // 只应查询一次（arch_review 历史），不需要查 dev 任务
+    expect(pool.query).toHaveBeenCalledOnce();
+  });
+
+  it('上次 review 后有 completed dev 任务，返回 true', async () => {
+    const lastReviewTime = new Date('2026-03-23T10:00:00Z');
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ created_at: lastReviewTime }] }) // arch_review 历史
+        .mockResolvedValueOnce({ rows: [{ id: 'dev-1' }] }),              // completed dev
+    };
+    expect(await hasCompletedDevTaskSinceLastArchReview(pool)).toBe(true);
+  });
+
+  it('上次 review 后无 completed dev 任务，返回 false', async () => {
+    const lastReviewTime = new Date('2026-03-23T10:00:00Z');
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ created_at: lastReviewTime }] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    expect(await hasCompletedDevTaskSinceLastArchReview(pool)).toBe(false);
+  });
+
+  it('第二次 SQL 查询包含 dev task_type、completed 状态、updated_at 参数', async () => {
+    const lastReviewTime = new Date('2026-03-23T10:00:00Z');
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ created_at: lastReviewTime }] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    await hasCompletedDevTaskSinceLastArchReview(pool);
+    const sql = pool.query.mock.calls[1][0];
+    const params = pool.query.mock.calls[1][1];
+    expect(sql).toContain("task_type = 'dev'");
+    expect(sql).toContain("status = 'completed'");
+    expect(sql).toContain('updated_at > $1');
+    expect(params).toEqual([lastReviewTime]);
+  });
+});
+
+// ============================================================
+// triggerArchReview
+// ============================================================
+describe('triggerArchReview', () => {
+  it('非触发窗口时直接跳过，不查询数据库', async () => {
+    const pool = { query: vi.fn() };
+    const notTriggerTime = new Date('2026-03-23T10:30:00Z');
+    const result = await triggerArchReview(pool, notTriggerTime);
+    expect(result.triggered).toBe(false);
+    expect(result.skipped_window).toBe(true);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('触发窗口内但4小时内已有 arch_review，跳过', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 'existing' }] }) };
+    const triggerTime = new Date('2026-03-23T04:01:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(false);
+    expect(result.skipped_recent).toBe(true);
+  });
+
+  it('触发窗口内且无重复，但 guard 未通过（无 completed dev），跳过', async () => {
+    const lastReviewTime = new Date('2026-03-23T00:00:00Z');
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })                              // hasRecentArchReview -> false
+        .mockResolvedValueOnce({ rows: [{ created_at: lastReviewTime }] }) // 上次 arch_review
+        .mockResolvedValueOnce({ rows: [] }),                             // 无 completed dev
+    };
+    const triggerTime = new Date('2026-03-23T04:01:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(false);
+    expect(result.skipped_guard).toBe(true);
+  });
+
+  it('全部条件满足，成功创建 arch_review 任务', async () => {
+    const lastReviewTime = new Date('2026-03-23T00:00:00Z');
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })                               // hasRecentArchReview -> false
+        .mockResolvedValueOnce({ rows: [{ created_at: lastReviewTime }] }) // 上次 arch_review
+        .mockResolvedValueOnce({ rows: [{ id: 'dev-completed' }] })        // guard 通过
+        .mockResolvedValueOnce({ rows: [{ id: 'arch-task-new' }] }),       // INSERT
+    };
+    const triggerTime = new Date('2026-03-23T04:02:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(true);
+    expect(result.task_id).toBe('arch-task-new');
+    expect(result.skipped_window).toBe(false);
+    expect(result.skipped_recent).toBe(false);
+    expect(result.skipped_guard).toBe(false);
+  });
+
+  it('INSERT SQL 包含正确的 task_type、location=xian、trigger_source', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })      // hasRecentArchReview -> false
+        .mockResolvedValueOnce({ rows: [] })      // 从未 arch_review → guard 通过
+        .mockResolvedValueOnce({ rows: [{ id: 'new-ar' }] }), // INSERT
+    };
+    const triggerTime = new Date('2026-03-23T08:00:00Z');
+    await triggerArchReview(pool, triggerTime);
+    const insertSQL = pool.query.mock.calls[2][0];
+    expect(insertSQL).toContain("'arch_review'");
+    expect(insertSQL).toContain("'xian'");
+    expect(insertSQL).toContain("'brain_auto'");
+    expect(insertSQL).toContain("'cecelia-brain'");
+  });
+
+  it('任务标题包含 arch-review 标识和时间戳', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 'ar-title-test' }] }),
+    };
+    const triggerTime = new Date('2026-03-23T12:03:00Z');
+    await triggerArchReview(pool, triggerTime);
+    const params = pool.query.mock.calls[2][1];
+    expect(params[0]).toContain('[arch-review]');
+    expect(params[0]).toContain('2026-03-23');
+  });
+
+  it('INSERT payload 包含 scope=scheduled 和 trigger=4h', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 'ar-payload-test' }] }),
+    };
+    const triggerTime = new Date('2026-03-23T16:00:00Z');
+    await triggerArchReview(pool, triggerTime);
+    const params = pool.query.mock.calls[2][1];
+    const payload = JSON.parse(params[1]);
+    expect(payload.scope).toBe('scheduled');
+    expect(payload.trigger).toBe('4h');
+  });
+
+  it('从未 arch_review 时（无历史记录），guard 直接通过并创建任务', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
+        .mockResolvedValueOnce({ rows: [] })  // 无历史 arch_review → guard 通过
+        .mockResolvedValueOnce({ rows: [{ id: 'first-ar' }] }),
+    };
+    const triggerTime = new Date('2026-03-23T00:01:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(true);
+    expect(result.task_id).toBe('first-ar');
+  });
+
+  it('去重检查 DB 失败时继续执行（不中断）', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockRejectedValueOnce(new Error('dedup DB error'))  // hasRecentArchReview 失败
+        .mockResolvedValueOnce({ rows: [] })                 // guard: 无历史 → 通过
+        .mockResolvedValueOnce({ rows: [{ id: 'ar-after-dedup-fail' }] }),
+    };
+    const triggerTime = new Date('2026-03-23T04:00:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(true);
+  });
+
+  it('INSERT 失败时返回 error 字段而非抛出', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockRejectedValueOnce(new Error('INSERT constraint')),
+    };
+    const triggerTime = new Date('2026-03-23T08:01:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(false);
+    expect(result.error).toContain('INSERT constraint');
+  });
+
+  it('不传 now 参数时使用当前时间（不抛错）', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const result = await triggerArchReview(pool);
+    expect(typeof result.triggered).toBe('boolean');
+    expect(typeof result.skipped_window).toBe('boolean');
   });
 });
