@@ -74,13 +74,13 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
+  console.warn('SIGTERM received, shutting down gracefully...');
   await shutdownWebSocketServer();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully...');
+  console.warn('SIGINT received, shutting down gracefully...');
   await shutdownWebSocketServer();
   process.exit(0);
 });
@@ -221,7 +221,7 @@ try {
 // Load active model profile
 try {
   await loadActiveProfile(pool);
-  console.log('[Server] Model profile loaded');
+  console.warn('[Server] Model profile loaded');
 } catch (err) {
   console.warn('[Server] Failed to load model profile, using fallback:', err.message);
 }
@@ -252,7 +252,7 @@ async function startCeceliaBridge() {
   try {
     const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(2000) });
     if (res.ok) {
-      console.log('[Server] cecelia-bridge already running on port', BRIDGE_PORT);
+      console.warn('[Server] cecelia-bridge already running on port', BRIDGE_PORT);
       return;
     }
   } catch (_) {
@@ -288,20 +288,20 @@ async function startCeceliaBridge() {
     }
   });
 
-  console.log(`[Server] cecelia-bridge started (pid=${child.pid}), log: /tmp/cecelia-bridge.log`);
+  console.warn(`[Server] cecelia-bridge started (pid=${child.pid}), log: /tmp/cecelia-bridge.log`);
 }
 
 if (!process.env.VITEST) server.listen(PORT, async () => {
-  console.log(`Cecelia Brain running on http://localhost:${PORT}`);
+  console.warn(`Cecelia Brain running on http://localhost:${PORT}`);
 
   // Initialize WebSocket server
   initWebSocketServer(server);
-  console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
-  console.log(`Realtime WebSocket ready at ws://localhost:${PORT}/api/brain/orchestrator/realtime/ws`);
+  console.warn(`WebSocket server ready at ws://localhost:${PORT}/ws`);
+  console.warn(`Realtime WebSocket ready at ws://localhost:${PORT}/api/brain/orchestrator/realtime/ws`);
 
   // Initialize narrative timer from DB (prevent duplicate diary on restart)
   await initNarrativeTimer(pool);
-  console.log('[Server] Narrative timer initialized from DB');
+  console.warn('[Server] Narrative timer initialized from DB');
 
   // Startup recovery: environment cleanup (worktree / lock slot / dev-mode files)
   const { runStartupRecovery } = await import('./src/startup-recovery.js');
@@ -317,20 +317,20 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
 
   // Log concurrency ceiling configuration for observability
   const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup } = await import('./src/executor.js');
-  console.log(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);
+  console.warn(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);
 
   // Sync orphan in_progress tasks with actual processes (requeue vs fail with process check)
   try {
     const syncResult = await syncOrphanTasksOnStartup();
     const failed = (syncResult.orphans_fixed || 0) - (syncResult.requeued || 0) - (syncResult.rebuilt || 0);
-    console.log(`[Server] Startup sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${failed}`);
+    console.warn(`[Server] Startup sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${failed}`);
   } catch (syncErr) {
     console.error('[Server] Startup sync failed:', syncErr.message);
   }
 
   // Initialize Fleet Resource Cache (全局多机器资源感知)
   startFleetRefresh();
-  console.log('[Server] Fleet Resource Cache started (30s interval) - 全局资源感知');
+  console.warn('[Server] Fleet Resource Cache started (30s interval) - 全局资源感知');
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();
@@ -338,22 +338,22 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   // Initialize Monitoring Loop (auto-healing)
   const { startMonitorLoop } = await import('./src/monitor-loop.js');
   startMonitorLoop();
-  console.log('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
+  console.warn('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
 
   // Initialize Capability Probe (self-awareness — 每小时探测关键链路健康)
   const { startProbeLoop } = await import('./src/capability-probe.js');
   startProbeLoop();
-  console.log('[Server] Capability Probe started (1h interval) - self-awareness for critical pathways');
+  console.warn('[Server] Capability Probe started (1h interval) - self-awareness for critical pathways');
 
   // Initialize Capability Scanner (孤岛发现 — 每 6 小时扫描能力健康地图)
   const { startScanLoop } = await import('./src/capability-scanner.js');
   startScanLoop();
-  console.log('[Server] Capability Scanner started (6h interval) - island detection for unused capabilities');
+  console.warn('[Server] Capability Scanner started (6h interval) - island detection for unused capabilities');
 
   // Initialize Self-Drive Engine (自驱 — 看到体检报告后自主创建任务)
   const { startSelfDriveLoop } = await import('./src/self-drive.js');
   startSelfDriveLoop();
-  console.log('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
+  console.warn('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
 
   // Initialize Evolution Scanner (进化追踪 — 扫描自身代码演进)
   try {
@@ -365,7 +365,7 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
         try { await scanEvolutionIfNeeded(pool); } catch (e) { console.warn('[Server] Evolution scan failed:', e.message); }
       }, 24 * 60 * 60 * 1000);
     }, 10 * 60 * 1000);
-    console.log('[Server] Evolution Scanner scheduled (24h interval, first run in 10min)');
+    console.warn('[Server] Evolution Scanner scheduled (24h interval, first run in 10min)');
   } catch (e) {
     console.warn('[Server] Evolution Scanner init failed (non-fatal):', e.message);
   }
@@ -374,7 +374,7 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   try {
     const { startNightlyScheduler } = await import('./src/nightly-tick.js');
     startNightlyScheduler();
-    console.log('[Server] Nightly Scheduler started');
+    console.warn('[Server] Nightly Scheduler started');
   } catch (e) {
     console.warn('[Server] Nightly Scheduler init failed (non-fatal):', e.message);
   }
@@ -408,7 +408,7 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
     setInterval(async () => {
       try { await refreshUserProfile(); } catch (e) { console.warn('[Server] USER_PROFILE cron failed:', e.message); }
     }, 6 * 60 * 60 * 1000);
-    console.log('[Server] Layer 2 蒸馏文档已初始化（SOUL seeded, WORLD_STATE 每24h, SELF_MODEL 每24h, USER_PROFILE 每6h）');
+    console.warn('[Server] Layer 2 蒸馏文档已初始化（SOUL seeded, WORLD_STATE 每24h, SELF_MODEL 每24h, USER_PROFILE 每6h）');
   } catch (e) {
     console.warn('[Server] Layer 2 distilled docs init failed (non-fatal):', e.message);
   }
@@ -423,7 +423,7 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
     setInterval(async () => {
       try { await backfillLearningEmbeddings(); } catch (e) { console.warn('[Server] Embedding backfill failed:', e.message); }
     }, 60 * 60 * 1000);
-    console.log('[Server] Embedding backfill scheduled (startup+1h interval)');
+    console.warn('[Server] Embedding backfill scheduled (startup+1h interval)');
   } catch (e) {
     console.warn('[Server] Embedding backfill init failed (non-fatal):', e.message);
   }
@@ -434,7 +434,7 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
     setInterval(async () => {
       try { await runConversationConsolidator(); } catch (e) { console.warn('[Server] Conversation consolidator failed:', e.message); }
     }, 5 * 60 * 1000);
-    console.log('[Server] Conversation Consolidator scheduled (5min interval)');
+    console.warn('[Server] Conversation Consolidator scheduled (5min interval)');
   } catch (e) {
     console.warn('[Server] Conversation Consolidator init failed (non-fatal):', e.message);
   }
@@ -442,13 +442,13 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   // Initialize Promotion Job Loop (P1)
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();
-  console.log('[Server] Promotion Job Loop started (10min interval) - P1: Auto-promote probation→active, auto-disable failed');
+  console.warn('[Server] Promotion Job Loop started (10min interval) - P1: Auto-promote probation→active, auto-disable failed');
 
   // Initialize Dopamine System (多巴胺奖赏回路 — 任务完成→奖赏→习惯形成)
   try {
     const { initDopamineListeners } = await import('./src/dopamine.js');
     initDopamineListeners();
-    console.log('[Server] Dopamine reward system initialized');
+    console.warn('[Server] Dopamine reward system initialized');
   } catch (e) {
     console.warn('[Server] Dopamine system init failed (non-fatal):', e.message);
   }
@@ -465,13 +465,13 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
       stdio: 'pipe',
       env: { ...process.env },
     });
-    distill.stdout.on('data', (d) => console.log('[distill-learnings]', d.toString().trim()));
+    distill.stdout.on('data', (d) => console.warn('[distill-learnings]', d.toString().trim()));
     distill.stderr.on('data', (d) => console.warn('[distill-learnings]', d.toString().trim()));
     distill.on('exit', (code) => {
       if (code !== 0) console.warn(`[distill-learnings] exited with code ${code}`);
-      else console.log('[Server] distill-learnings completed — learnings table synced');
+      else console.warn('[Server] distill-learnings completed — learnings table synced');
     });
-    console.log('[Server] distill-learnings started (pid=' + distill.pid + ')');
+    console.warn('[Server] distill-learnings started (pid=' + distill.pid + ')');
   } catch (e) {
     console.warn('[Server] distill-learnings failed to start (non-fatal):', e.message);
   }
