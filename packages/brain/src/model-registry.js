@@ -79,6 +79,12 @@ export const MODELS = [
     tier: 'premium',
   },
   {
+    id: 'gpt-5.4-mini',
+    name: 'GPT-5.4 Mini',
+    provider: 'openai',
+    tier: 'fast',
+  },
+  {
     id: 'gpt-5.4-pro',
     name: 'GPT-5.4 Pro',
     provider: 'openai',
@@ -164,7 +170,7 @@ export const AGENTS = [
     name: 'L3 反思层',
     description: '定期深度反思、生成洞察',
     layer: 'brain',
-    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'codex/gpt-5.4-mini', 'codex/gpt-5.4'],
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'gpt-5.4-mini', 'codex/gpt-5.4-mini', 'codex/gpt-5.4'],
     recommended_model: 'claude-opus-4-6',
     fixed_provider: null,
   },
