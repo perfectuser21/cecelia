@@ -1107,7 +1107,7 @@ hooks:
       when: "运行 bash scripts/install-hooks.sh <target_dir>"
       then: "CI tools 安装到目标项目，包含 hooks/, scripts/devgate/, .claude/settings.json"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/install-hooks.sh --version"
       contains: "CI tools version:"
     test: "tests/hooks/install-hooks.test.ts"
@@ -1147,7 +1147,7 @@ hooks:
       when: "运行 bash scripts/devgate/metrics.sh"
       then: "输出 P0/P1 PR 数、RCI 覆盖率、新增 RCI 数、DoD 条目数"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/devgate/metrics.sh --format json"
       contains: "rci_coverage"
     test: "tests/hooks/metrics.test.ts"
@@ -1232,7 +1232,7 @@ workflow:
       when: "Claude 执行分支创建"
       then: "创建 cp-MMDDHHNN-task 格式分支"
     evidence:
-      type: command
+      type: code
       run: "git branch --show-current"
       contains: "cp-"
 
@@ -1628,7 +1628,7 @@ workflow:
       when: "执行自动化检查并提交"
       then: "所有改动（代码+版本号+registry+视图+evidence）在一个 commit，evidence SHA 匹配 commit SHA"
     evidence:
-      type: command
+      type: code
       run: "git log --oneline -1"
       description: "单个 commit 包含所有改动，CI SHA 检查通过"
 
@@ -2080,7 +2080,7 @@ ci:
       when: "运行 npm run release:check"
       then: "DoD 所有必要项完成，Evidence 引用正确"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/release-check.sh"
       contains: "Release 检查通过"
     test: "scripts/release-check.sh"
@@ -2419,7 +2419,7 @@ export:
       when: "运行 bash scripts/qa-report.sh"
       then: "输出合法的 JSON 格式"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/qa-report.sh | jq . > /dev/null && echo valid"
       contains: "valid"
     test: "scripts/qa-report.sh"
@@ -2438,7 +2438,7 @@ export:
       when: "解析 JSON 输出"
       then: "包含 repo, version, timestamp, summary, features, rcis, golden_paths, gates 字段"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/qa-report.sh | jq 'keys'"
       contains: "repo"
     test: "scripts/qa-report.sh"
@@ -2457,7 +2457,7 @@ export:
       when: "解析 summary 字段"
       then: "meta, unit, e2e 百分比在 0-100 范围内"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/qa-report.sh --fast | jq '.summary.overall'"
       contains: "[0-9]+"
       description: "返回 0-100 的数字"
@@ -2498,7 +2498,7 @@ export:
       when: "解析 JSON"
       then: "包含 mode 字段（interactive 或 headless）"
     evidence:
-      type: command
+      type: code
       run: "jq '.mode' .dev-runs/*-report.json"
       contains: "interactive|headless"
       description: "返回 interactive 或 headless"
@@ -2518,7 +2518,7 @@ export:
       when: "解析 JSON"
       then: "包含 quality_report 字段（L1/L2/L3 状态）"
     evidence:
-      type: command
+      type: code
       run: "jq '.quality_report' .dev-runs/*-report.json"
       contains: "L1_automated|L2_verification|L3_acceptance"
       description: "返回 L1/L2/L3 状态对象"
@@ -2545,7 +2545,7 @@ n8n:
       when: "运行 bash scripts/rc-filter.sh pr"
       then: "只输出 trigger 包含 PR 的 RCI id"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/rc-filter.sh pr | head -5"
       contains: "H1-001|H2-001"
     test: "manual:bash scripts/rc-filter.sh pr && bash scripts/rc-filter.sh release"
@@ -2564,7 +2564,7 @@ n8n:
       when: "运行 bash scripts/run-regression.sh"
       then: "执行对应的自动化测试"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/run-regression.sh --dry-run"
       contains: "tests/"
     test: "manual:bash scripts/run-regression.sh --dry-run"
@@ -2583,7 +2583,7 @@ n8n:
       when: "使用 yq 解析 YAML 结构"
       then: "成功解析 rci_definitions 数组"
     evidence:
-      type: command
+      type: code
       run: "yq '.rci_definitions | length' regression-contract.yaml"
       contains: "[0-9]+"
     test: "manual:grep -q 'id: H1-001' regression-contract.yaml"
@@ -3228,7 +3228,7 @@ skills:
       when: "pre-commit hook 触发"
       then: "自动运行 generate-path-views.sh 并 re-stage docs/paths/"
     evidence:
-      type: command
+      type: code
       run: "bash hooks/pre-commit-path-views.sh"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/engine/hooks/pre-commit-path-views.sh','utf8');if(!c.includes('generate-path-views'))throw new Error('not found');console.log('ok')\""
 
@@ -3246,7 +3246,7 @@ skills:
       when: "运行 bash scripts/test-dev-health.sh"
       then: "5 项检查全部通过（Hook 语法/Stop Hook exit 0/必填字段/重建逻辑/高风险路径）"
     evidence:
-      type: command
+      type: code
       run: "bash scripts/test-dev-health.sh"
     test: "manual:bash packages/engine/scripts/test-dev-health.sh"
 
@@ -3269,8 +3269,9 @@ skills:
       when: "执行 intent-expand skill（Step 1-4）"
       then: "沿 Task→Project→KR→OKR→Vision 链查询 Brain API，输出 .enriched-prd-<branch>.md，打印 ENRICHED_PRD_RESULT: SUCCESS"
     evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/skills/intent-expand/SKILL.md'"
+      type: code
+      file: "skills/intent-expand/SKILL.md"
+      contains: "intent-expand"
     test: "manual:node -e \"require('fs').accessSync('packages/engine/skills/intent-expand/SKILL.md');console.log('intent-expand SKILL.md present');\""
 
   # DEPRECATED: code-quality 已被 code_review_gate 替代（Pipeline v2），Skill 目录已删除
@@ -3311,7 +3312,7 @@ skills:
       when: "vitest worker OOM 退出但所有测试已通过"
       then: "脚本检测到 OOM worker exit 且无 failed 行，exit 0 而非 exit 1"
     evidence:
-      type: command
+      type: code
       run: "node -e \"const c=require('fs').readFileSync('packages/brain/package.json','utf8');const j=JSON.parse(c);if(!j.scripts.test.includes('OOM worker exit'))process.exit(1);console.log('OOM-aware test script present')\""
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/package.json','utf8');const j=JSON.parse(c);if(!j.scripts.test.includes('OOM worker exit')){console.error('Missing OOM detection in test script');process.exit(1)}console.log('OOM-aware OK')\""
 
@@ -3347,7 +3348,7 @@ skills:
       when: "CI L1 Process Gate 的 required-paths-check job 运行"
       then: "检测到无 PRD/Task Card 时 CI 失败，有 .prd-*.md 或 .task-*.md 时通过"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/engine/config/required-dev-paths.yml && grep -q executor.js packages/engine/config/required-dev-paths.yml'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/engine/config/required-dev-paths.yml','utf8');if(!c.includes('executor.js')){console.error('executor.js not in required-dev-paths');process.exit(1)}console.log('required-dev-paths OK')\""
 
@@ -3365,7 +3366,7 @@ skills:
       when: "尝试合并 PR 前执行 check-learning.sh"
       then: "检查 docs/learnings/<branch>.md 存在且包含 ### 根本原因 + ### 下次预防 + - [ ] checklist"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/engine/scripts/devgate/check-learning.sh'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/engine/scripts/devgate/check-learning.sh','utf8');if(!c.includes('根本原因')){console.error('check-learning.sh missing 根本原因 check');process.exit(1)}console.log('check-learning.sh validates Learning format')\""
 
@@ -3387,7 +3388,7 @@ skills:
       when: "Brain Executor 的 triggerCeceliaRun 函数处理该任务"
       then: "读取 getCachedConfig().executor === 'codex'，路由到 triggerLocalCodexExec 而非 cecelia-bridge"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q \"dynamicExecutor === .codex.\" packages/brain/src/executor.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes(\\\"dynamicExecutor === 'codex'\\\")){console.error('B-class executor switch not found');process.exit(1)}console.log('B-class executor switch present')\""
 
@@ -3405,7 +3406,7 @@ skills:
       when: "下一个 5s loop 触发时"
       then: "_tickRunning 标志阻止第二个 tick 并发执行，输出 skip 日志"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q \"_tickRunning\" packages/brain/src/tick.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(!c.includes('_tickRunning')){console.error('tick reentry guard _tickRunning not found');process.exit(1)}console.log('tick reentry guard present')\""
 
@@ -3423,7 +3424,7 @@ skills:
       when: "调用 thalamus.createTask() 或通过 Brain API POST /tasks"
       then: "任务创建必须经过 thalamus.js 的 createTask 函数（或等价 API 入口），不允许绕过直接 INSERT"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q \"createTask\" packages/brain/src/thalamus.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/thalamus.js','utf8');if(!c.includes('createTask')){console.error('thalamus.createTask not found');process.exit(1)}console.log('thalamus createTask entry point present')\""
 
@@ -3445,7 +3446,7 @@ skills:
       when: "每 5 分钟触发一次 pipeline patrol"
       then: "巡检所有活跃 pipeline 状态，检测卡死/超时，上报异常"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/brain/src/__tests__/pipeline-patrol.test.js'"
     test: "manual:node --experimental-vm-modules node_modules/.bin/vitest run packages/brain/src/__tests__/pipeline-patrol.test.js"
 
@@ -3463,7 +3464,7 @@ skills:
       when: "DB 中已有 title 前缀相似的 queued/in_progress 任务"
       then: "跳过重复任务创建，避免任务堆积"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/brain/src/__tests__/self-drive.test.js'"
     test: "manual:node --experimental-vm-modules node_modules/.bin/vitest run packages/brain/src/__tests__/self-drive.test.js"
 
@@ -3481,7 +3482,7 @@ skills:
       when: "准备创建多个任务"
       then: "单次最多创建 DEFAULT_MAX_TASKS（3）个任务，超出部分跳过"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q \"DEFAULT_MAX_TASKS\" packages/brain/src/self-drive.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/self-drive.js','utf8');if(!c.includes('DEFAULT_MAX_TASKS')){console.error('DEFAULT_MAX_TASKS not found');process.exit(1)}console.log('Self-Drive max tasks limit present')\""
 
@@ -3499,7 +3500,7 @@ skills:
       when: "需要派发 Codex Bridge 任务"
       then: "并行检查所有 Bridge /health 端点，选择 avgPct 最低的节点执行"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q \"avgPct\" packages/brain/src/executor.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('avgPct')){console.error('avgPct load balancing not found in executor.js');process.exit(1)}console.log('Codex Bridge load balancing present')\""
 
@@ -3535,7 +3536,7 @@ skills:
       when: "执行降级逻辑"
       then: "按预设降级链路由到备用 skill（如 review → code_review → dev）"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/brain/src/__tests__/task-router-failover.test.js'"
     test: "manual:node --experimental-vm-modules node_modules/.bin/vitest run packages/brain/src/__tests__/task-router-failover.test.js"
 
@@ -3553,7 +3554,7 @@ skills:
       when: "分析结果产出"
       then: "将洞察写入 working_memory 表，供后续决策参考"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/brain/src/__tests__/evolution-scanner.test.js'"
     test: "manual:node --experimental-vm-modules node_modules/.bin/vitest run packages/brain/src/__tests__/evolution-scanner.test.js"
 
@@ -3575,7 +3576,7 @@ skills:
       when: "评估当前系统状态和目标差距"
       then: "生成任务推荐，优先级基于欲望强度排序"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/brain/src/__tests__/desire-system.test.js'"
     test: "manual:node --experimental-vm-modules node_modules/.bin/vitest run packages/brain/src/__tests__/desire-system.test.js"
 
@@ -3593,7 +3594,7 @@ skills:
       when: "Rumination 模块处理失败任务"
       then: "分析失败原因，生成改进建议，避免相同错误重复"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/brain/src/__tests__/rumination-quarantine.test.js'"
     test: "manual:node --experimental-vm-modules node_modules/.bin/vitest run packages/brain/src/__tests__/rumination-quarantine.test.js"
 
@@ -3611,7 +3612,7 @@ skills:
       when: "检查 DEFAULT_INTERVAL_MS 常量"
       then: "DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000（4小时）"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q \"DEFAULT_INTERVAL_MS\" packages/brain/src/self-drive.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/self-drive.js','utf8');if(!c.includes('DEFAULT_INTERVAL_MS')){console.error('DEFAULT_INTERVAL_MS not found');process.exit(1)}console.log('Self-Drive interval config present')\""
 
@@ -3629,7 +3630,7 @@ skills:
       when: "每 30 分钟触发 zombie sweep"
       then: "清理长期卡在 in_progress 状态的僵尸任务，重置或标记为 failed"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -qi \"zombie\" packages/brain/src/tick.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(!c.toLowerCase().includes('zombie')){console.error('zombie sweep not found in tick.js');process.exit(1)}console.log('Zombie Sweep present')\""
 
@@ -3647,7 +3648,7 @@ skills:
       when: "超过 DISPATCH_TIMEOUT_MINUTES（60分钟）"
       then: "任务自动标记为 failed，释放 slot"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q \"DISPATCH_TIMEOUT\" packages/brain/src/tick.js'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(!c.includes('DISPATCH_TIMEOUT')){console.error('DISPATCH_TIMEOUT not found in tick.js');process.exit(1)}console.log('Dispatch timeout protection present')\""
 
@@ -3665,7 +3666,7 @@ skills:
       when: "调用 /api/brain/tasks API"
       then: "返回当前 Brain 中真实任务状态（queued/in_progress/completed/failed），Dashboard 正确渲染"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f apps/dashboard/src/pages/tasks/TaskTypeConfigPage.tsx'"
     test: "manual:node -e \"const c=require('fs').readFileSync('apps/dashboard/src/pages/tasks/TaskTypeConfigPage.tsx','utf8');if(!c.includes('executor')){console.error('TaskTypeConfigPage missing executor field');process.exit(1)}console.log('Dashboard executor field present')\""
 
@@ -3685,7 +3686,7 @@ skills:
       when: "运行 check-rci-stale-refs.cjs"
       then: "返回非零退出码，CI 拒绝合并"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'test -f packages/engine/scripts/devgate/check-rci-stale-refs.cjs'"
     test: "manual:node -e \"require('fs').accessSync('packages/engine/scripts/devgate/check-rci-stale-refs.cjs');console.log('ok')\""
 
@@ -3703,7 +3704,7 @@ skills:
       when: "CI L1 运行"
       then: "rci-stale-refs-check job 执行 check-rci-stale-refs.cjs，有悬空引用则阻断合并"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q stale-refs .github/workflows/ci-l1-process.yml'"
     test: "manual:node -e \"const c=require('fs').readFileSync('.github/workflows/ci-l1-process.yml','utf8');if(!c.includes('stale-refs')||!c.includes('check-rci-stale-refs'))process.exit(1);console.log('ok')\""
 
@@ -3721,7 +3722,7 @@ skills:
       when: "CHANGED_FILES 环境变量包含核心路径"
       then: "detect-priority.cjs 自动返回 P0，触发 require-rci-update-if-p0p1.sh"
     evidence:
-      type: command
+      type: code
       run: "bash -c 'grep -q CHANGED_FILES packages/engine/scripts/devgate/detect-priority.cjs'"
     test: "manual:node -e \"const {execSync}=require('child_process');const r=execSync('node packages/engine/scripts/devgate/detect-priority.cjs',{env:{...process.env,CHANGED_FILES:'packages/engine/hooks/verify-step.sh',SKIP_GIT_DETECTION:'1'},stdio:'pipe'}).toString().trim();if(!r.includes('P0'))process.exit(1);console.log('ok')\""
 
