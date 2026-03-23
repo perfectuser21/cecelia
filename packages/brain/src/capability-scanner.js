@@ -225,6 +225,7 @@ export async function scanCapabilities() {
       COUNT(*) AS total_runs,
       COUNT(*) FILTER (WHERE status = 'completed') AS completed,
       COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+      COUNT(*) FILTER (WHERE ts_start > NOW() - INTERVAL '30 days') AS recent_30d,
       MAX(ts_start) AS last_run
     FROM run_events WHERE ts_start > NOW() - INTERVAL '90 days' GROUP BY step_name
   `);
