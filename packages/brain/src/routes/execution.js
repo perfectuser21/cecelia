@@ -459,14 +459,16 @@ router.post('/execution-callback', async (req, res) => {
 
         const { notifyTaskCompletion } = await import('../proactive-mouth.js');
         const { callLLM } = await import('../llm-caller.js');
-        const taskRow = await pool.query('SELECT title, task_type FROM tasks WHERE id = $1', [task_id]);
+        const taskRow = await pool.query('SELECT title, task_type, payload FROM tasks WHERE id = $1', [task_id]);
         if (taskRow.rows[0]) {
+          const taskFindings = taskRow.rows[0].payload?.findings || null;
           await notifyTaskCompletion(pool, callLLM, {
             id: task_id,
             title: taskRow.rows[0].title,
             task_type: taskRow.rows[0].task_type,
             duration_ms,
-            pr_url
+            pr_url,
+            result: taskFindings
           });
           // 通知后删除订阅记录
           await pool.query(`DELETE FROM working_memory WHERE key = $1`, [`task_interest:${task_id}`]);

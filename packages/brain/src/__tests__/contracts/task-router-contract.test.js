@@ -44,9 +44,9 @@ describe('task-router contract', () => {
   });
 
   describe('getTaskLocation', () => {
-    it('returns "us" or "hk" for known task types', () => {
+    it('returns "us" or "xian" for known task types', () => {
       const result = getTaskLocation('dev');
-      expect(['us', 'hk']).toContain(result);
+      expect(['us', 'xian', 'xian_m1']).toContain(result);
     });
 
     it('returns "us" for dev tasks', () => {
@@ -55,7 +55,7 @@ describe('task-router contract', () => {
 
     it('returns default location for unknown types', () => {
       const result = getTaskLocation('nonexistent_type');
-      expect(['us', 'hk']).toContain(result);
+      expect(['us', 'xian', 'xian_m1']).toContain(result);
     });
 
     it('returns default location for null/undefined', () => {

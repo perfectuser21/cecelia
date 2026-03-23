@@ -1,0 +1,14 @@
+gate: code_review_gate
+verdict: PASS
+branch: cp-03231442-ci-gate-fake-dod-test
+reviewed_at: 2026-03-23T14:54:06+08:00
+reviewer: code_review_gate_agent
+notes: |
+  三个文件审查通过。
+  1. check-fake-dod-tests.cjs：正则覆盖完整（echo/printf/ls/cat/true/exit 0/test -f/grep|wc/|wc -l/wc），
+     行尾锚定防误报，逐行 break 避免重复报告，exit 0/1 语义正确。
+  2. verify-step.sh：Shell 端本地快速检测与 CJS 脚本职责分层清晰，Shell 端稍窄属预期（CI 端全量补全），
+     注释明确说明两者分工，无歧义。
+  3. ci-l1-process.yml：fake-dod-test-check job 三重降级保护实现向后兼容；l1-passed 中
+     stage >= 2 的判断与 job 层 if 条件对称，skipped 不会误判为 FAIL；job 已正确加入 needs 列表。
+  无回归风险。

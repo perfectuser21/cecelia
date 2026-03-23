@@ -12,6 +12,7 @@ import { getCleanupStats, runTaskCleanup, getCleanupAuditLog } from '../task-cle
 import { getDispatchStats } from '../dispatch-stats.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from '../thalamus.js';
 import { executeDecision as executeThalamusDecision } from '../decision-executor.js';
+import { ASYNC_CALLBACK_TYPES } from '../task-router.js';
 import {
   createSuggestion,
   executeTriage,
@@ -1594,10 +1595,25 @@ router.post('/feishu/event', async (req, res) => {
               mouthReply = thalamusDecision?.mouth_reply || '';
               needCard = !!thalamusDecision?.need_card;
               if (action?.type === 'create_task' || action?.type === 'dispatch_task') {
-                await executeThalamusDecision(thalamusDecision);
+                const execResult = await executeThalamusDecision(thalamusDecision);
                 const taskTitle = action.params?.title || combinedText.slice(0, 50);
                 if (!mouthReply) mouthReply = `好的，我去做：${taskTitle}`;
                 thalamusRouted = true;
+                // 异步回调任务：注册 task_interest 订阅，任务完成时触发飞书回调
+                // 支持的类型由 task-router.js 的 ASYNC_CALLBACK_TYPES 定义，扩展新能力只改那里
+                if (ASYNC_CALLBACK_TYPES.has(action.params?.task_type)) {
+                  const createdTaskId = execResult?.actions_executed?.[0]?.result?.task_id;
+                  if (createdTaskId) {
+                    pool.query(
+                      `INSERT INTO working_memory (key, value_json, updated_at)
+                       VALUES ($1, $2, NOW())
+                       ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
+                      [`task_interest:${createdTaskId}`, JSON.stringify({ source: 'p2p_query', query: combinedText })]
+                    ).catch(err => console.warn('[feishu/p2p] task_interest 写入失败:', err.message));
+                    if (!thalamusDecision?.mouth_reply) mouthReply = '正在查，马上给你～';
+                    console.log(`[feishu/p2p] ${action.params?.task_type} 任务 ${createdTaskId} 已注册 task_interest 订阅`);
+                  }
+                }
               }
             } catch (thalamusErr) {
               console.warn('[feishu/p2p] 丘脑路由失败:', thalamusErr.message);

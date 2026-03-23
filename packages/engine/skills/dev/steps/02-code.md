@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 5.2.0
+version: 5.3.0
 created: 2026-03-14
-updated: 2026-03-22
+updated: 2026-03-23
 changelog:
+  - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
   - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
   - 5.1.0: 修复 2.3.2 CI镜像检查无 exit 1（build/precheck/version-sync 失败现在正确拦截）；还原被 PR#1366 覆盖的 Step 2.0 行为快照+Step 2.1.5 TDD先行+2.3.6 exit 1
   - 5.0.0: 新增 Step 2.0 行为快照[PRESERVE]（探索前必须执行）；新增 Step 2.1.5 TDD先行（红灯→绿灯）；修复 2.3.6 || true 改 exit 1
@@ -25,7 +26,7 @@ changelog:
 ## 2.0 行为快照 [PRESERVE]（CRITICAL — 探索前必须执行）
 
 > **探索代码前，扫描涉及模块的现有关键行为，写入 Task Card `[PRESERVE]` 条目。**
-> verify-step.sh Gate 2 会强制执行这些 Test 命令，确保现有行为未被回归。
+> verify-step.sh Gate 0a 检查 [PRESERVE] 条目存在数量（不执行 Test 命令）；Gate 2 执行 [BEHAVIOR]/[ARTIFACT]/[GATE] 的 Test 命令，确保实现符合预期。
 
 ### 为什么需要行为快照
 
@@ -65,7 +66,8 @@ echo "✅ 基线行为快照完成，[PRESERVE] 条目已写入 Task Card"
 # 在开始写任何实现代码之前，检查 Task Card 是否有 [PRESERVE] 条目
 TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
 if [[ -n "$TASK_CARD" ]]; then
-    PRESERVE_COUNT=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$TASK_CARD" 2>/dev/null || echo 0)
+    PRESERVE_COUNT=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$TASK_CARD" 2>/dev/null || true)
+    PRESERVE_COUNT=${PRESERVE_COUNT:-0}
     if [[ "$PRESERVE_COUNT" -eq 0 ]]; then
         echo "❌ Task Card 缺少 [PRESERVE] 行为快照条目"
         echo "   探索代码后写实现前，必须先记录涉及模块的现有行为"
@@ -177,25 +179,51 @@ FAIL → 读错误信息，修代码，再验证
 
 > 所有 DoD 条目 [x] 后，执行完整的自验证。
 
-### 2.3.1 跑自动化测试
+### 2.3.1 精准测试（只跑改动相关文件）
+
+> **只跑与本次改动相关的测试文件，不跑全量回归测试。全量回归交给 CI（GitHub Actions）。**
+> 原因：全量测试在本地容易 OOM；本地只需要验证「我改的这部分没有明显破坏」。
 
 ```bash
-if [[ -f "package.json" ]]; then
-    HAS_TEST=$(node -e "const p=require('./package.json'); console.log(p.scripts?.test ? 'yes' : 'no')" 2>/dev/null)
-    HAS_QA=$(node -e "const p=require('./package.json'); console.log(p.scripts?.qa ? 'yes' : 'no')" 2>/dev/null)
-fi
+echo "🎯 精准测试：查找与改动相关的测试文件..."
 
-if [[ "$HAS_QA" == "yes" ]]; then
-    npm run qa
-elif [[ "$HAS_TEST" == "yes" ]]; then
-    npm test
+CHANGED_SRC=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+
+TEST_FILES=""
+for f in $CHANGED_SRC; do
+    [[ ! -f "$f" ]] && continue
+    # 推导测试文件路径：src/foo.js → src/__tests__/foo.test.js
+    DIR=$(dirname "$f")
+    BASE=$(basename "$f" | sed 's/\.[^.]*$//')
+    EXT=$(basename "$f" | grep -oE '\.[^.]+$' || echo ".js")
+
+    # 常见测试文件命名模式
+    for candidate in \
+        "${DIR}/__tests__/${BASE}.test${EXT}" \
+        "${DIR}/__tests__/${BASE}.spec${EXT}" \
+        "${DIR}/${BASE}.test${EXT}" \
+        "${DIR}/${BASE}.spec${EXT}"; do
+        if [[ -f "$candidate" ]]; then
+            TEST_FILES="$TEST_FILES $candidate"
+            break
+        fi
+    done
+done
+
+if [[ -z "${TEST_FILES// }" ]]; then
+    echo "ℹ️  未找到对应测试文件，跳过本地精准测试（全量回归由 CI 负责）"
+else
+    echo "📋 运行精准测试：$TEST_FILES"
+    npx vitest run $TEST_FILES 2>&1 || { echo "❌ 精准测试失败，修复后再继续"; exit 1; }
+    echo "✅ 精准测试通过"
 fi
 ```
 
 | 结果 | 动作 |
 |------|------|
-| 通过 | 继续 2.3.2 |
-| 失败 | 修复代码 → 重跑 |
+| 找到测试文件且通过 | 继续 2.3.2 |
+| 找到测试文件但失败 | 修复代码 → 重跑 |
+| 未找到测试文件 | 跳过，CI 负责全量 |
 
 ### 2.3.2 本地 CI 镜像检查
 
@@ -223,17 +251,17 @@ fi
 
 ### 2.3.3 逐条重跑 DoD Test（最终确认）
 
-> **由 verify-step.sh Gate 2 自动强制执行**，不依赖 AI 自觉。
+> **由 bash-guard.sh（Claude Code PreToolUse hook）实时拦截调用 verify-step.sh，不依赖 AI 自觉。**
 > 当 AI 标记 `step_2_code: done` 时，`verify-step.sh step2` 会自动：
 > 1. 读取 Task Card（`.task-{BRANCH}.md`）
-> 2. 提取所有 `[BEHAVIOR]` 条目的 Test 字段
+> 2. 提取所有 `[BEHAVIOR]/[ARTIFACT]/[GATE]` 条目的 Test 字段（[PRESERVE] 由 Gate 0a 单独处理，仅检查数量）
 > 3. 对 `manual:` 开头的 Test，执行该命令（在项目根目录）
 > 4. 对 `contract:` 开头的 Test，标记 DEFERRED 跳过
 > 5. 对 `tests/` 开头的 Test，检查文件是否存在
 > 6. 任一 Test 失败 → verify-step 返回 exit 1 → 不允许标记完成
 
 ```bash
-# verify-step.sh 会在 step_2_code: done 写入时被 branch-protect 自动调用
+# verify-step.sh 会在 step_2_code: done 写入时被 bash-guard.sh (PreToolUse hook) 自动调用
 # 也可以手动运行确认：
 bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)"
 ```
@@ -275,7 +303,8 @@ for f in $CHANGED_FILES; do
     # 检查2: 注释掉的代码块（连续 3 行以上的注释代码）
     # 不检查 markdown 文件（注释是内容的一部分）
     if [[ "$f" != *.md ]]; then
-        COMMENTED_CODE=$(grep -c "^[[:space:]]*//" "$f" 2>/dev/null || echo 0)
+        COMMENTED_CODE=$(grep -c "^[[:space:]]*//" "$f" 2>/dev/null || true)
+        COMMENTED_CODE=${COMMENTED_CODE:-0}
         if [[ "$COMMENTED_CODE" -gt 5 ]]; then
             echo "  ⚠️  $f: 含大量注释代码（${COMMENTED_CODE}行），检查是否为 dead code"
             ISSUES_FOUND=$((ISSUES_FOUND+1))
@@ -356,22 +385,17 @@ echo "✅ 周边一致性扫描通过 — 无跨文件矛盾"
 ### 2.3.7 推送前完整验证
 
 > push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
+> 全量测试已在 2.3.1 精准测试中覆盖（有则运行，无则 CI 负责），此处不重复运行。
 
 ```bash
-# 1. 跑 npm test（如果项目有）
-if [[ -f "package.json" ]] && grep -q '"test"' package.json; then
-    echo "🧪 Running npm test..."
-    npm test 2>&1 || { echo "❌ npm test 失败，修复后再继续"; exit 1; }
-fi
-
-# 2. 检查 Learning 格式（如果已写）
+# 1. 检查 Learning 格式（如果已写）
 LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
 if [[ -f "$LEARNING_FILE" ]]; then
     bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || { echo "❌ Learning 格式检查失败，修复后再 push"; exit 1; }
 fi
 
-# 3. 检查 DoD 映射
-node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || { echo "❌ DoD 映射检查失败，修复后再 push"; exit 1; }
+# 2. 检查 DoD 映射
+node packages/engine/scripts/devgate/check-dod-mapping.cjs || { echo "❌ DoD 映射检查失败，修复后再 push"; exit 1; }
 ```
 
 ---
@@ -383,11 +407,13 @@ node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || { echo
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+sed -i '' "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE" 2>/dev/null || \\
 sed -i "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE"
 echo "✅ Stage 2 完成标记已写入 .dev-mode"
 ```
 
-**Task Checkpoint**: `TaskUpdate({ taskId: "2", status: "completed" })`
+**Task Checkpoint**: `TaskUpdate({ taskId: "STAGE_2_TASK_ID", status: "completed" })`
+<!-- 注意：taskId 在 Stage 0 创建任务时获取，这里是概念示意，实际值从 Brain API 返回 -->
 
 ---
 

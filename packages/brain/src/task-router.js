@@ -28,8 +28,18 @@ const VALID_TASK_TYPES = [
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
-  'scope_plan', 'project_plan'
+  'scope_plan', 'project_plan',
+  // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives 三层拆解）
+  'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan'
 ];
+
+// 支持 P2P 异步回调的任务类型
+// 当飞书 P2P 创建这些类型的任务后，自动注册 task_interest 订阅，任务完成时回调用户
+// 扩展新能力：在此 Set 中加一行，无需改 ops.js
+const ASYNC_CALLBACK_TYPES = new Set([
+  'explore',   // 信息探查（如"zenithjoy 现在有什么"）
+  'research',  // 深度调研（如"帮我调研 XXX"）
+]);
 
 // Skill whitelist based on task type
 const SKILL_WHITELIST = {
@@ -75,6 +85,10 @@ const SKILL_WHITELIST = {
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
+  // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives）
+  'okr_initiative_plan': '/decomp',  // OKR Scope 内规划下一个 Initiative
+  'okr_scope_plan': '/decomp',       // OKR Project 内规划下一个 Scope
+  'okr_project_plan': '/decomp',     // OKR Project 层完成后规划
 };
 
 // Fallback strategies when primary routing fails
@@ -87,8 +101,8 @@ const FALLBACK_STRATEGIES = {
   },
   // location fallback: when location not reachable, try alternative
   'location': {
-    'us': 'hk',
-    'hk': 'us'
+    'us': 'xian',
+    'xian': 'us'
   }
 };
 
@@ -150,11 +164,11 @@ const LOCATION_MAP = {
   'strategy_session': 'xian',     // 战略会议 → 西安 Codex (B類，/strategy-session)
   'intent_expand': 'us',          // 意图扩展 → US 本机（需读本地 Brain DB，补全 PRD）
   'initiative_execute': 'us',     // Initiative 执行 → US 本机（/dev 全流程，A類）
-  'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
+  'explore': 'xian',  // 快速调研 → 西安 Codex (general，任意可用机器)
   'knowledge': 'xian',  // 知识记录 → 西安 Codex (B類，/knowledge skill)
-  'talk': 'hk',       // 对话 → HK (MiniMax)
-  'research': 'hk',   // 深度调研 → HK (MiniMax)
-  'data': 'hk',       // 数据处理 → HK (N8N)
+  'talk': 'xian',     // 对话 → 西安 Codex (general，任意可用机器)
+  'research': 'xian', // 深度调研 → 西安 Codex (general，任意可用机器)
+  'data': 'xian',     // 数据处理 → 西安 Codex (general)
   // 内容工厂 Pipeline（Content Factory）→ 西安 Codex 执行
   'content-pipeline': 'xian',  // Pipeline 编排入口 → 西安 Codex
   'content-research': 'xian',  // 调研阶段 → 西安 (/notebooklm)
@@ -169,11 +183,66 @@ const LOCATION_MAP = {
   // Scope 层飞轮
   'scope_plan': 'xian',            // Scope 规划 → 西安 Codex (B類，/decomp skill)
   'project_plan': 'xian',          // Project 规划 → 西安 Codex (B類，/decomp skill)
+  // OKR 新表飞轮
+  'okr_initiative_plan': 'xian',   // OKR Initiative 规划 → 西安 Codex (B類，/decomp skill)
+  'okr_scope_plan': 'xian',        // OKR Scope 规划 → 西安 Codex (B類，/decomp skill)
+  'okr_project_plan': 'xian',      // OKR Project 规划 → 西安 Codex (B類，/decomp skill)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
 };
 
 // Default location
 const DEFAULT_LOCATION = 'us';
+
+// Capability requirements per task type (machine registry routing)
+// Tags: 'has_git' = needs code/git access (US M4 only)
+//       'general' = any available machine
+//       'has_browser' = needs browser/CDP access
+const TASK_REQUIREMENTS = {
+  // A类 - 需要 git/代码访问（US M4 独有）
+  'dev':                ['has_git'],
+  'review':             ['has_git'],
+  'qa':                 ['has_git'],
+  'audit':              ['has_git'],
+  'code_review':        ['has_git'],
+  'decomp_review':      ['has_git'],
+  'initiative_plan':    ['has_git'],
+  'initiative_verify':  ['has_git'],
+  'arch_review':        ['has_git'],
+  'architecture_design':['has_git'],
+  'architecture_scan':  ['has_git'],
+  'prd_review':         ['has_git'],
+  'spec_review':        ['has_git'],
+  'code_review_gate':   ['has_git'],
+  'initiative_review':  ['has_git'],
+  'intent_expand':      ['has_git'],
+  'initiative_execute': ['has_git'],
+  'pipeline_rescue':    ['has_git'],
+  'codex_dev':          ['has_git'],
+  // 需要浏览器
+  'codex_playwright':   ['has_browser'],
+  // B类通用 - 任意 general 机器
+  'codex_qa':           ['general'],
+  'codex_test_gen':     ['general'],
+  'pr_review':          ['general'],
+  'suggestion_plan':    ['general'],
+  'strategy_session':   ['general'],
+  'scope_plan':         ['general'],
+  'project_plan':       ['general'],
+  'okr_initiative_plan': ['general'],
+  'okr_scope_plan':     ['general'],
+  'okr_project_plan':   ['general'],
+  'knowledge':          ['general'],
+  'talk':               ['general'],
+  'research':           ['general'],
+  'explore':            ['general'],
+  'data':               ['general'],
+  'dept_heartbeat':     ['general'],
+  'content-pipeline':   ['general'],
+  'content-research':   ['general'],
+  'content-generate':   ['general'],
+  'content-review':     ['general'],
+  'content-export':     ['general'],
+};
 
 /**
  * Identify work type: single task or feature
@@ -217,6 +286,18 @@ function getTaskLocation(taskType) {
 
   const location = LOCATION_MAP[taskType.toLowerCase()];
   return location || DEFAULT_LOCATION;
+}
+
+/**
+ * Get capability requirements for a task type
+ * @param {string} taskType - Task type (dev, research, talk, etc.)
+ * @returns {string[]} - Required capability tags
+ */
+function getTaskRequirements(taskType) {
+  if (!taskType || typeof taskType !== 'string') {
+    return ['has_git']; // default to most restrictive
+  }
+  return TASK_REQUIREMENTS[taskType.toLowerCase()] || ['has_git'];
 }
 
 /**
@@ -353,7 +434,7 @@ function isValidTaskType(taskType) {
  * @returns {boolean} - Whether location is valid
  */
 function isValidLocation(location) {
-  return ['us', 'hk', 'xian', 'xian_m1'].includes(location?.toLowerCase());
+  return ['us', 'xian', 'xian_m1'].includes(location?.toLowerCase());
 }
 
 /**
@@ -696,6 +777,7 @@ async function diagnoseKR(krId, pool) {
 export {
   identifyWorkType,
   getTaskLocation,
+  getTaskRequirements,
   determineExecutionMode,
   getDomainSkillOverride,
   routeTaskCreate,
@@ -708,10 +790,12 @@ export {
   getLocationsForTaskTypes,
   diagnoseKR,
   LOCATION_MAP,
+  TASK_REQUIREMENTS,
   SINGLE_TASK_PATTERNS,
   FEATURE_PATTERNS,
   DEFAULT_LOCATION,
   VALID_TASK_TYPES,
   SKILL_WHITELIST,
-  FALLBACK_STRATEGIES
+  FALLBACK_STRATEGIES,
+  ASYNC_CALLBACK_TYPES
 };

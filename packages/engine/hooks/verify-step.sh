@@ -67,8 +67,16 @@ _pass() {
         local _seal_file="$PROJECT_ROOT/.dev-seal.${BRANCH}"
         local _ts
         _ts=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-        echo "${STEP}_seal: verified@${_ts}" >> "$_seal_file" 2>/dev/null || true
-        echo "  🔏 验签已写入: ${STEP}_seal → .dev-seal.${BRANCH}" >&2
+        # seal key 映射：STEP 变量值 → stop-dev.sh _SEALED_STEPS 期望的 key 名
+        local _seal_key
+        case "$STEP" in
+            step1) _seal_key="step_1_spec_seal" ;;
+            step2) _seal_key="step_2_code_seal" ;;
+            step4) _seal_key="step_4_ship_seal" ;;
+            *)     _seal_key="${STEP}_seal" ;;
+        esac
+        echo "${_seal_key}: verified@${_ts}" >> "$_seal_file" 2>/dev/null || true
+        echo "  🔏 验签已写入: ${_seal_key} → .dev-seal.${BRANCH}" >&2
     fi
 }
 
@@ -106,18 +114,37 @@ verify_step1() {
   Step 1 完成前必须填写所有 Test: 命令"
     fi
 
-    # 检查假命令模式
+    # 检查假命令模式（本地快速检测，CI 通过 check-fake-dod-tests.cjs 全量检测）
     local found_fake
-    found_fake=$(echo "$test_lines" | grep -E 'Test:\s*(manual:)?(echo |ls( |$)|cat |test -f|true$|exit 0)' 2>/dev/null || echo "")
+    found_fake=$(echo "$test_lines" | grep -E 'Test:\s*(manual:)?(echo |ls( |$)|cat |test -f|true$|exit 0|printf |wc )|Test:.*\|[[:space:]]*wc' 2>/dev/null || echo "")
 
     if [[ -n "$found_fake" ]]; then
         _fail "Task Card 包含假 Test 命令（不验证真实行为）：
 $found_fake
-  禁止的假命令：echo / ls / cat / test -f / true / exit 0
+  禁止的假命令：echo / ls / cat / test -f / true / exit 0 / printf / wc / grep|wc
   正确示例：
     Test: manual:node -e \"const c=require('fs').readFileSync('file','utf8');if(!c.includes('X'))process.exit(1)\"
     Test: tests/my.test.ts
     Test: contract:my-behavior"
+    fi
+
+    # 检查 manual: 命令白名单（CI 只允许 node/npm/npx/curl/bash/psql）
+    local WHITELIST_SCRIPT=""
+    for _dir in "$(dirname "${BASH_SOURCE[0]}")/../scripts/devgate" "$PROJECT_ROOT/packages/engine/scripts/devgate"; do
+        if [[ -f "$_dir/check-manual-cmd-whitelist.cjs" ]]; then
+            WHITELIST_SCRIPT="$_dir/check-manual-cmd-whitelist.cjs"
+            break
+        fi
+    done
+
+    if [[ -n "$WHITELIST_SCRIPT" ]]; then
+        local whitelist_out
+        whitelist_out=$(node "$WHITELIST_SCRIPT" "$task_card" 2>&1) || {
+            _fail "Task Card 包含非白名单 manual: 命令（CI 不允许）：
+$whitelist_out
+  CI 白名单命令：node / npm / npx / curl / bash / psql
+  请用 manual:node -e \"...\" 替代非白名单命令"
+        }
     fi
 
     # Gate 1: CI 镜像 — Stage 1 跳过完整 DoD 检查（未勾选项在 Stage 1 是预期的）
@@ -132,9 +159,7 @@ $found_fake
 # ============================================================================
 verify_step2() {
     local base_branch="main"
-    if git rev-parse --verify develop &>/dev/null 2>&1; then
-        base_branch="develop"
-    fi
+    # 此仓库无 develop 分支，固定使用 main
 
     local changed_files=""
     changed_files=$(git diff --name-only "origin/${base_branch}...HEAD" 2>/dev/null || \
@@ -156,6 +181,114 @@ verify_step2() {
   分支: $BRANCH
   Step 2 完成前必须有实际的实现文件改动（.js/.ts/.sh/.cjs 等）"
     fi
+
+    # Gate 0a: PRESERVE 基线快照检查
+    local task_card_early=""
+    if [[ -n "$BRANCH" ]]; then
+        task_card_early="$PROJECT_ROOT/.task-${BRANCH}.md"
+    fi
+    if [[ -z "$task_card_early" || ! -f "$task_card_early" ]]; then
+        task_card_early=$(find "$PROJECT_ROOT" -maxdepth 1 -name ".task-cp-*.md" 2>/dev/null | head -1 || echo "")
+    fi
+
+    if [[ -n "$task_card_early" && -f "$task_card_early" ]]; then
+        local preserve_count
+        preserve_count=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$task_card_early" 2>/dev/null || echo 0)
+        if [[ "$preserve_count" -eq 0 ]]; then
+            _fail "Gate 0a: Task Card 缺少 [PRESERVE] 行为快照条目
+  文件: $task_card_early
+  要求：Task Card 验收条件中至少有 1 条 [PRESERVE] 条目
+  作用：记录改动前的系统行为基线，防止无意识破坏现有功能"
+        fi
+        echo "  ✅ [Gate 0a] PRESERVE 基线快照: ${preserve_count} 条" >&2
+    else
+        echo "  ⚠️  [Gate 0a] 未找到 Task Card，跳过 PRESERVE 检查" >&2
+    fi
+
+    # Gate 0b: TDD 红灯确认检查
+    local dev_mode_file="$PROJECT_ROOT/.dev-mode.${BRANCH}"
+    if [[ -f "$dev_mode_file" ]]; then
+        if ! grep -q "^tdd_red_confirmed:" "$dev_mode_file" 2>/dev/null; then
+            _fail "Gate 0b: TDD 红灯未确认
+  文件: $dev_mode_file
+  要求：.dev-mode 中必须有 tdd_red_confirmed: 行
+  作用：确保写代码前已先跑失败测试（红灯），遵循 TDD 原则
+  修复：在 .dev-mode 文件中追加 'tdd_red_confirmed: true'"
+        fi
+        echo "  ✅ [Gate 0b] TDD 红灯已确认" >&2
+    else
+        echo "  ⚠️  [Gate 0b] .dev-mode 文件不存在，跳过 TDD 确认检查" >&2
+    fi
+
+    # Gate 0c: 垃圾清理检查（console.log / debugger）
+    local garbage_found=0
+    local garbage_files=()
+    while IFS= read -r fpath; do
+        [[ -z "$fpath" ]] && continue
+        # 跳过测试文件、.md 文件、verify-step.sh 自身
+        [[ "$fpath" =~ \.(test|spec)\. ]] && continue
+        [[ "$fpath" =~ \.md$ ]] && continue
+        [[ "$fpath" =~ verify-step\.sh$ ]] && continue
+        local full_path="$PROJECT_ROOT/$fpath"
+        [[ ! -f "$full_path" ]] && continue
+        # 只检查 diff 中新增的行（'+' 开头，非 '++'），不扫描整个文件
+        # 避免误报预存在的结构化日志（如 executor.js 含大量 console.log）
+        local diff_added=""
+        diff_added=$(git diff "origin/${base_branch}...HEAD" -- "$fpath" 2>/dev/null || \
+                     git diff "${base_branch}...HEAD" -- "$fpath" 2>/dev/null || echo "")
+        if echo "$diff_added" | grep -qE '^\+\s*console\.log\s*\(|^\+\s*debugger\s*;?' 2>/dev/null; then
+            garbage_files+=("$fpath")
+            garbage_found=1
+        fi
+    done <<< "$impl_files"
+
+    if [[ $garbage_found -ne 0 ]]; then
+        _fail "Gate 0c: 变更文件含调试垃圾代码
+  文件: ${garbage_files[*]}
+  禁止内容：console.log() 调用、debugger 语句
+  要求：提交前必须清理所有调试代码
+  修复：删除上述文件中的 console.log 和 debugger"
+    fi
+    echo "  ✅ [Gate 0c] 垃圾清理检查通过（无 console.log/debugger）" >&2
+
+    # Gate 0d: 周边一致性扫描（同目录文件引用被改模块的旧版本号）
+    local consistency_issues=()
+    local version_files
+    version_files=$(echo "$impl_files" | grep -E '(package\.json|VERSION|\.hook-core-version)$' 2>/dev/null || echo "")
+    if [[ -n "$version_files" ]]; then
+        while IFS= read -r vfile; do
+            [[ -z "$vfile" ]] && continue
+            local full_vpath="$PROJECT_ROOT/$vfile"
+            [[ ! -f "$full_vpath" ]] && continue
+            local new_ver
+            new_ver=$(grep -oE '"version"\s*:\s*"[^"]+"' "$full_vpath" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+            [[ -z "$new_ver" ]] && new_ver=$(cat "$full_vpath" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+            if [[ -n "$new_ver" ]]; then
+                local vdir
+                vdir=$(dirname "$full_vpath")
+                while IFS= read -r sf; do
+                    [[ "$sf" == "$full_vpath" ]] && continue
+                    # 只检查已知版本同步文件（跳过独立版本体系如 skills-registry.json）
+                    local _sf_base
+                    _sf_base=$(basename "$sf")
+                    [[ "$_sf_base" =~ ^(package\.json|package-lock\.json|regression-contract\.yaml)$ ]] || continue
+                    local sv
+                    sv=$(grep -oE '"version"\s*:\s*"[^"]+"' "$sf" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+                    if [[ -n "$sv" && "$sv" != "$new_ver" ]]; then
+                        consistency_issues+=("sibling $sf 版本($sv) 与 $vfile 版本($new_ver) 不一致")
+                    fi
+                done < <(find "$vdir" -maxdepth 1 \( -name "*.json" -o -name "*.yaml" -o -name "*.yml" \) 2>/dev/null)
+            fi
+        done <<< "$version_files"
+    fi
+
+    if [[ ${#consistency_issues[@]} -gt 0 ]]; then
+        _fail "Gate 0d: 周边一致性检查失败
+  发现同目录文件引用旧版本号（sibling consistency violation）：
+$(printf '  %s\n' "${consistency_issues[@]}")
+  要求：修改模块时，同目录下引用该模块版本号的文件必须同步更新"
+    fi
+    echo "  ✅ [Gate 0d] 周边一致性扫描通过" >&2
 
     # 检查是否有测试文件（仅警告）
     local test_files
@@ -186,7 +319,7 @@ verify_step2() {
                 continue
             fi
             echo "  🔍 [Gate 1] 运行 $_pkg npm test..." >&2
-            if ! (cd "$_pkg_dir" && npm test 2>&1 >&2); then
+            if ! (cd "$_pkg_dir" && npm test 2>&1); then
                 echo "  ❌ [Gate 1] $_pkg 测试失败" >&2
                 gate1_failed=1
             else
@@ -225,13 +358,17 @@ verify_step2() {
         local IN_DOD=false
         local DOD_TYPE=""
         local BEHAVIOR_DESC=""
+        local CURRENT_LINE=0
+        local DOD_ITEM_LINE=0
 
         while IFS= read -r line; do
+            CURRENT_LINE=$((CURRENT_LINE + 1))
             # 检测新条目行（重置状态）
             if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\['; then
                 IN_DOD=false
                 DOD_TYPE=""
                 BEHAVIOR_DESC=""
+                DOD_ITEM_LINE=$CURRENT_LINE
 
                 if echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[BEHAVIOR\]'; then
                     IN_DOD=true
@@ -245,6 +382,10 @@ verify_step2() {
                     IN_DOD=true
                     DOD_TYPE="GATE"
                     BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[GATE\][[:space:]]*//')
+                elif echo "$line" | grep -qE '^\s*-\s+\[(x| )\]\s+\[PRESERVE\]'; then
+                    IN_DOD=true
+                    DOD_TYPE="PRESERVE"
+                    BEHAVIOR_DESC=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*\[PRESERVE\][[:space:]]*//')
                 fi
                 continue
             fi
@@ -283,6 +424,11 @@ verify_step2() {
                         if [[ -f "$TEST_PATH" ]]; then
                             echo "  ✅ PASS (文件存在: $TEST_REF)" >&2
                             DOD_PASSED=$((DOD_PASSED + 1))
+                            # 写回 [x]：状态机与 CI 同步（dod_complete）
+                            if [[ $DOD_ITEM_LINE -gt 0 ]]; then
+                                local _tmp; _tmp=$(mktemp)
+                                awk -v n="$DOD_ITEM_LINE" 'NR==n{sub(/- \[ \] \[/, "- [x] [")}1' "$task_card" > "$_tmp" && mv "$_tmp" "$task_card"
+                            fi
                         else
                             echo "  ❌ FAIL (文件不存在: $TEST_REF)" >&2
                             DOD_FAILED=$((DOD_FAILED + 1))
@@ -319,6 +465,11 @@ verify_step2() {
                                 echo "  输出: $(echo "$OUTPUT" | head -2)" >&2
                             fi
                             DOD_PASSED=$((DOD_PASSED + 1))
+                            # 写回 [x]：状态机与 CI 同步（dod_complete）
+                            if [[ $DOD_ITEM_LINE -gt 0 ]]; then
+                                local _tmp; _tmp=$(mktemp)
+                                awk -v n="$DOD_ITEM_LINE" 'NR==n{sub(/- \[ \] \[/, "- [x] [")}1' "$task_card" > "$_tmp" && mv "$_tmp" "$task_card"
+                            fi
                         else
                             echo "  ❌ FAIL (exit $EXIT_CODE)" >&2
                             if [[ -n "$OUTPUT" ]]; then

@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync } from "child_process";
-import { existsSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from "fs";
 import { resolve, join } from "path";
 
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -223,15 +223,38 @@ describe("Phase 1: DevGate Scripts", () => {
   Test: manual:bash -c "node packages/engine/scripts/devgate/check-dod-mapping.cjs --version 2>&1 || true"
 `;
 
-      const testDod = join(TEST_DIR, "valid-contract.dod.md");
-      writeFileSync(testDod, dodContent);
-
-      const result = execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
+      // check-dod-mapping.cjs 从 git 根目录读 .prd.md 做追溯检查。
+      // .prd.md 内容随 PR 变化，必须临时写入匹配 DoD 关键词的成功标准。
+      const gitRoot = execSync("git rev-parse --show-toplevel", {
         encoding: "utf-8",
         cwd: PROJECT_ROOT,
-      });
+      }).trim();
+      const prdPath = join(gitRoot, ".prd.md");
+      const originalPrd = existsSync(prdPath) ? readFileSync(prdPath, "utf-8") : null;
 
-      expect(result).toContain("✅");
+      writeFileSync(
+        prdPath,
+        `# Test PRD\n\n## 成功标准\n\n1. runner 文件存在\n2. API 返回正确状态\n3. CI 测试通过\n`
+      );
+
+      try {
+        const testDod = join(TEST_DIR, "valid-contract.dod.md");
+        writeFileSync(testDod, dodContent);
+
+        const result = execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
+          encoding: "utf-8",
+          cwd: PROJECT_ROOT,
+        });
+
+        expect(result).toContain("✅");
+      } finally {
+        // 恢复原 .prd.md
+        if (originalPrd !== null) {
+          writeFileSync(prdPath, originalPrd);
+        } else {
+          unlinkSync(prdPath);
+        }
+      }
     });
   });
 
@@ -343,3 +366,4 @@ describe("Phase 1: DevGate Scripts", () => {
     });
   });
 });
+

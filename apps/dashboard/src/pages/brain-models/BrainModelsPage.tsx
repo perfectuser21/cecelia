@@ -125,7 +125,7 @@ export default function BrainModelsPage() {
       const res = await fetch('/api/brain/model-profiles/active/agent', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: organId, model: modelId, provider }),
+        body: JSON.stringify({ agent_id: organId, model_id: modelId, provider }),
       });
       const d = await res.json();
       if (d.success) {

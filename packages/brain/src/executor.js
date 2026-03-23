@@ -143,6 +143,60 @@ async function selectBestBridge() {
   return selected.url;
 }
 
+// 机器注册表（Machine Registry）
+// tags 决定机器能执行哪类任务：
+//   has_git     = 需要代码/git 访问（US M4 独有）
+//   general     = 通用任务，任意机器均可
+//   has_browser = 需要 Browser/CDP 访问（将来扩展）
+const MACHINE_REGISTRY = [
+  {
+    id: 'us-m4',
+    url: process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457',
+    type: 'claude_code',
+    tags: ['has_git', 'general'],
+  },
+  {
+    id: 'xian-m4',
+    url: XIAN_CODEX_BRIDGE_URL,
+    type: 'codex',
+    tags: ['general'],
+  },
+  {
+    id: 'xian-m1',
+    url: XIAN_M1_BRIDGE_URL,
+    type: 'codex',
+    tags: ['general'],
+  },
+];
+
+/**
+ * 从机器注册表中选择最适合的机器
+ * @param {string[]} requiredTags - 任务所需的 capability tags
+ * @returns {Promise<Object>} - 最佳机器配置（fallback 到 us-m4）
+ */
+async function selectBestMachine(requiredTags) {
+  const candidates = MACHINE_REGISTRY.filter(m =>
+    requiredTags.every(tag => m.tags.includes(tag))
+  );
+
+  if (candidates.length === 0) {
+    console.warn(`[executor] selectBestMachine: 无机器匹配 tags=${JSON.stringify(requiredTags)}，降级到 us-m4`);
+    return MACHINE_REGISTRY.find(m => m.id === 'us-m4') || MACHINE_REGISTRY[0];
+  }
+
+  if (candidates.length === 1) return candidates[0];
+
+  // 多台候选时，优先在 Codex 机器之间负载均衡
+  const codexCandidates = candidates.filter(m => m.type === 'codex');
+  if (codexCandidates.length > 0) {
+    const bestUrl = await selectBestBridge();
+    const matched = codexCandidates.find(m => m.url === bestUrl);
+    return matched || codexCandidates[0];
+  }
+
+  return candidates[0];
+}
+
 // ==================== Input Validation ====================
 
 const SAFE_ID_RE = /^[0-9a-zA-Z_-]+$/;
@@ -1182,7 +1236,7 @@ function getSkillForTaskType(taskType, payload) {
     'review': '/code-review', // 审查：已迁移到 /code-review
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
     'talk': '/talk',         // 对话：写文档，不改代码
-    'research': null,        // 研究：完全只读
+    'research': '',          // 研究：完全只读，不挂 skill，由 preparePrompt 直接构建 prompt
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
     // Initiative 执行循环
@@ -2319,11 +2373,6 @@ async function triggerCeceliaRun(task) {
     return triggerCodexReview(task);
   }
 
-  // 1. HK MiniMax 路由
-  if (location === 'hk') {
-    return triggerMiniMaxExecutor(task);
-  }
-
   // 2. 西安 Codex Bridge（location='xian'，负载均衡 M4+M1）
   // 动态类型优先走缓存 location，静态类型走 LOCATION_MAP
   if (location === 'xian') {
@@ -3048,4 +3097,7 @@ export {
   // v15: Token-aware slot allocation
   getTokenPressure,
   TOKEN_PRESSURE_THRESHOLD,
+  // v16: Machine Registry + capability tags routing
+  MACHINE_REGISTRY,
+  selectBestMachine,
 };

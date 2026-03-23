@@ -284,7 +284,7 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**46 个白名单 action**：
+**49 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
@@ -413,7 +413,8 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 174 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 178 |
+| **distilled_docs** | 蒸馏文档层 Layer 2（SOUL/SELF_MODEL/USER_PROFILE/WORLD_STATE） |
 | **kr_verifiers** | KR 指标自动验证（SQL 查询, threshold, current_value, 定时采集） |
 | **blocks** | 通用 block 存储 |
 
@@ -463,6 +464,9 @@ queued → in_progress → completed
 | spec_review | US | Spec 审查 (/spec-review) | 本机 Codex | 固定 openai |
 | code_review_gate | US | 代码质量门禁 (/code-review-gate) | 本机 Codex | 固定 openai |
 | initiative_review | US | Initiative 整体审查 (/initiative-review) | 本机 Codex | 固定 openai |
+| okr_initiative_plan | 西安 | OKR Scope 下规划下一个 Initiative (/decomp) | - | general |
+| okr_scope_plan | 西安 | OKR Project 下规划下一个 Scope (/decomp) | - | general |
+| okr_project_plan | 西安 | OKR Project 层完成后规划下一步 (/decomp) | - | general |
 
 ---
 

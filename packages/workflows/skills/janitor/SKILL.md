@@ -72,10 +72,11 @@ changelog:
 ## 脚本位置
 
 ```
-/Users/administrator/bin/janitor.sh
+packages/workflows/skills/janitor/janitor.sh   # git 管理的 SSOT
+~/bin/janitor.sh -> packages/workflows/skills/janitor/janitor.sh  # 软链接
 ```
 
-不在 git 中（系统级工具），由 cron 直接调用。
+脚本纳入 git 管理（v3.0 起），`~/bin/janitor.sh` 是指向 repo 文件的软链接，由 cron 直接调用。
 
 依赖脚本（git 中）：
 ```
@@ -88,8 +89,8 @@ packages/engine/skills/dev/scripts/branch-gc.sh   # 第 8 步调用
 # Daily: 每天凌晨 4:00 磁盘清理
 0 4 * * * /Users/administrator/bin/janitor.sh --mode daily >> /tmp/janitor-cron.log 2>&1
 
-# Frequent: 每 30 分钟清理僵尸进程
-*/30 * * * * /Users/administrator/bin/janitor.sh --mode frequent >> /tmp/janitor-cron.log 2>&1
+# Frequent: 每 15 分钟清理僵尸进程（*/15）
+*/15 * * * * /Users/administrator/bin/janitor.sh --mode frequent >> /tmp/janitor-cron.log 2>&1
 ```
 
 ## 手动触发

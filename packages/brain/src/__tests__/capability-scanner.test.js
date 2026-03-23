@@ -162,6 +162,29 @@ describe('capability-scanner', () => {
       expect(cap.evidence).toContain('cecelia_events:no_recent_activity');
       expect(cap.status).not.toBe('island');
     });
+
+    it('should mark capability as failing when task success rate is below 30%', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'flaky-cap', name: 'Flaky Cap', current_stage: 2, related_skills: ['dev'], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        // task stats: high failure rate (2/10 completed = 20%)
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', total: 10, completed: 2, failed: 8, recent_30d: 5, last_used: new Date().toISOString() }],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no skill stats
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'flaky-cap');
+      expect(cap.status).toBe('failing');
+    });
   });
 
   describe('getCapabilityHealth', () => {

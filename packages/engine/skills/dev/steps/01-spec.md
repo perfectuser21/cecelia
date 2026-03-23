@@ -14,7 +14,7 @@ changelog:
 
 > **产物**：`.task-cp-{branch}.md`（需求 + 成功标准 + DoD 条目，三合一）
 > PRD 和 DoD 不再是两个文件，物理上不可能漂移。
-> **Stage 1 完成后派发 spec_review，然后停下来等 stop hook 放行。**
+> **Stage 1 完成后，调用 Agent subagent 同步审查 Task Card 质量，审查 PASS 后继续 Stage 2。**
 
 ## 1.1 参数检测
 
@@ -126,7 +126,7 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 cat > ".dev-mode.${BRANCH}" << EOF
 dev
 branch: ${BRANCH}
-task_card: .task-${BRANCH}.md
+task_card: .task-cp-${BRANCH}.md
 started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 step_0_worktree: done
 step_1_spec: done
@@ -140,7 +140,7 @@ EOF
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-TASK_CARD=".task-${BRANCH}.md"
+TASK_CARD=".task-cp-${BRANCH}.md"
 ERRORS=0
 echo "🔍 Stage 1 自检..."
 
@@ -183,31 +183,7 @@ fi
 echo "✅ Stage 1 自检通过 — Task Card 格式正确"
 ```
 
-## ⛔ CI 镜像检查（格式自检通过后执行）
-
-> **本地跑 CI 同款 DoD 检查脚本，让格式问题在本地被拦截，不等 CI 才发现。**
-
-```bash
-echo "🔍 本地 CI 镜像：check-dod-mapping.cjs..."
-
-# 从 worktree 根目录运行（与 CI 完全相同的脚本）
-node packages/engine/scripts/devgate/check-dod-mapping.cjs
-EXIT_CODE=$?
-
-if [[ $EXIT_CODE -ne 0 ]]; then
-    echo ""
-    echo "⛔ DoD 格式不符合 CI 要求！修复后再继续。"
-    echo "   常见问题："
-    echo "   - [BEHAVIOR] 条目不能用 grep/ls 作为 Test 命令"
-    echo "   - DoD 条目数必须 ≥ 3"
-    echo "   - 必须至少有 1 个 [BEHAVIOR] 条目"
-    exit 1
-fi
-
-echo "✅ CI 镜像检查通过 — DoD 格式符合要求"
-```
-
-## ⛔ CI 镜像检查②：PRD 成功标准格式验证
+## ⛔ CI 镜像检查：PRD 成功标准格式验证
 
 > **本地跑 check-prd.sh，拦截"成功标准少于2条 bullet"问题，不等 CI L1 才发现。**
 
@@ -292,7 +268,7 @@ loop:
   4. verdict == "FAIL"
        → 读取 issues[severity=="blocker"] 列表
        → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
-       → 修复 Task Card（.task-${BRANCH}.md）中对应的 DoD 条目
+       → 修复 Task Card（.task-cp-${BRANCH}.md）中对应的 DoD 条目
        → retry_count++
        → 如果 retry_count > 20:
            curl -s -X POST http://localhost:5221/api/brain/tasks \

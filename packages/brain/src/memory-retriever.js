@@ -1,7 +1,8 @@
 /**
  * Memory Retriever - 统一记忆检索器
  *
- * 三层记忆模型：
+ * 四层记忆模型：
+ * - Layer 2 蒸馏文档 (Distilled): SOUL + SELF_MODEL 每次必注入（预算外），chat 模式追加 USER_PROFILE + WORLD_STATE
  * - 语义记忆 (Semantic): tasks + learnings + capabilities 的向量搜索
  * - 事件记忆 (Episodic): cecelia_events 时间窗口 + type 过滤
  * - 画像配置 (Profile): OKR 目标 + 能力摘要（不衰减）
@@ -17,6 +18,7 @@ import { searchRelevantLearnings } from './learning.js';
 import { routeMemory } from './memory-router.js';
 import { generateL0Summary } from './memory-utils.js';
 import { generateEmbedding } from './openai-client.js';
+import { getDoc } from './distilled-docs.js';
 
 // ============================================================
 // 常量配置
@@ -953,8 +955,13 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     ? routeMemory(query, mode)
     : { strategy: { semantic: true, episodic: false, events: true, episodicBudget: 0, semanticBudget: tokenBudget * 0.7, eventsBudget: tokenBudget * 0.3 } };
 
-  // 1. 并行检索多路数据（统一 5 路，按 strategy 决定是否禁用）
-  const [semanticResult, eventResult, profileResult, convResult, episodicResult] =
+  // 0b. Layer 2 蒸馏文档检索（与其他检索并行）
+  const distilledTypes = mode === 'chat'
+    ? ['SOUL', 'SELF_MODEL', 'USER_PROFILE', 'WORLD_STATE']
+    : ['SOUL', 'SELF_MODEL'];
+
+  // 1. 并行检索多路数据（统一 5 路 + Layer 2 蒸馏文档）
+  const [semanticResult, eventResult, profileResult, convResult, episodicResult, ...distilledDocs] =
     await Promise.all([
       strategy.semantic !== false ? searchSemanticMemory(dbPool, query, mode) : _disabledResult(),
       strategy.events  !== false ? loadRecentEvents(dbPool, query, mode)      : _disabledResult(),
@@ -963,6 +970,7 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
       mode === 'chat' && strategy.episodic
         ? searchEpisodicMemory(dbPool, query, strategy.episodicBudget || 300)
         : _disabledResult(),
+      ...distilledTypes.map(t => getDoc(t, dbPool)),
     ]);
 
   const semanticResults     = semanticResult.entries;
@@ -1019,6 +1027,15 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   let block = '';
   let tokenUsed = 0;
 
+  // 4a. Layer 2 蒸馏文档注入（预算外，优先保证身份锚点）
+  const distilledMap = {};
+  for (let i = 0; i < distilledTypes.length; i++) {
+    if (distilledDocs[i] && distilledDocs[i].content) {
+      distilledMap[distilledTypes[i]] = distilledDocs[i].content;
+      block += distilledDocs[i].content + '\n\n';
+    }
+  }
+
   if (profileSnippet) {
     block += profileSnippet + '\n';
     tokenUsed += estimateTokens(profileSnippet);
@@ -1064,6 +1081,10 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     candidateTotal: candidates.length,
     injectedTotal: injectedCount,
     embeddingMode: process.env.OPENAI_API_KEY ? 'openai' : 'jaccard',
+    distilledDocs: distilledTypes.reduce((acc, t, i) => {
+      acc[t] = distilledDocs[i] ? 'injected' : 'missing';
+      return acc;
+    }, {}),
     fetch: {
       semantic:     semanticMeta,
       events:       eventsMeta,
@@ -1076,8 +1097,9 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   };
   console.log('[memory]', JSON.stringify(logMeta));
 
-  // 如果没有注入任何记忆，返回空 block
-  if (injectedCount === 0 && !profileSnippet) {
+  // 如果没有注入任何记忆（包含蒸馏文档也算注入），返回空 block
+  const hasSoulOrDistilled = Object.keys(distilledMap).length > 0;
+  if (injectedCount === 0 && !profileSnippet && !hasSoulOrDistilled) {
     return { block: '', meta: { candidates: candidates.length, injected: 0, tokenUsed: 0, tokenBudget, intentType } };
   }
 
@@ -1089,6 +1111,7 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
       tokenUsed,
       tokenBudget,
       intentType,
+      distilledDocs: logMeta.distilledDocs,
       sources: quotaSelected.slice(0, injectedCount).map(i => i.source),
     },
   };

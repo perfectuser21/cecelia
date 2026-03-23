@@ -15,10 +15,53 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.88.0"
-updated: "2026-03-22"
-# ci-trigger: 13.29.0
+version: "3.94.0"
+updated: "2026-03-23"
+# ci-trigger: 13.37.0
 changelog:
+
+  - version: "13.37.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): 02-code.md 本地测试改为精准测试（vitest run 相关文件，去全量，去重复）"
+    scope: packages/engine/skills/dev/steps/02-code.md
+
+  - version: "13.36.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): CI Gate — 新增 hook/devgate 文件必须有 RCI 条目（check-new-files-need-rci.cjs + CI L2 job）"
+    scope: packages/engine/scripts/devgate/,.github/workflows/
+
+  - version: "13.35.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): CI Gate manual: 命令白名单检查（check-manual-cmd-whitelist.cjs + verify-step.sh + CI L1 job）"
+    scope: packages/engine/scripts/devgate/,packages/engine/hooks/,.github/workflows/
+
+  - version: "13.34.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): CI Gate 假 DoD Test 检测（check-fake-dod-tests.cjs + CI L1 fake-dod-test-check job）"
+    scope: packages/engine/scripts/devgate/,packages/engine/hooks/,.github/workflows/
+
+  - version: "13.33.3"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(engine): verify-step Gate 2 自动标 [x] + devloop 条件 2.6 DoD 完整性检查（状态机镜像 CI）"
+    scope: packages/engine/hooks/,packages/engine/lib/
+
+  - version: "13.33.2"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(engine): Gate 0c 改为只扫 diff 新增行，避免误报预存在日志；修复 regression-contract.yaml 12 处悬空引用"
+    scope: packages/engine/hooks/
+
+  - version: "13.33.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(dev-skill): 修复 SKILL.md/00~04-step.md 多处 P0/P1/P2 bug（macOS sed、develop分支、seal-key描述、章节编号、grep-c多文件等）"
+    scope: packages/engine/skills/dev/
+
+  - version: "13.32.0"
+    date: "2026-03-23"
+    summary: "fix: verify-step.sh seal key mapping + develop branch + Gate 0d find + npm test redirection; devloop-check.sh 条件编号"
+  - version: "13.31.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] fix(/dev): verify-step.sh step2 新增4个硬门禁(PRESERVE/TDD/垃圾清理/周边一致性) + 修复5个bug"
+    scope: packages/engine/hooks/verify-step.sh
   - version: "13.29.0"
     date: "2026-03-23"
     summary: "[CONFIG] feat(engine): Stage 2 强制周边一致性扫描 + code-review-gate 维度H跨文件模块一致性 blocker"

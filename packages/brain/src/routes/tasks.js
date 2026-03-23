@@ -430,6 +430,56 @@ router.patch('/tasks/:task_id', async (req, res) => {
         source: 'engine',
         timestamp: new Date().toISOString()
       });
+
+      // 任务完成时自动触发 KR 进度重算
+      if (status === 'completed') {
+        try {
+          const initiativeRow = await pool.query(
+            'SELECT okr_initiative_id FROM tasks WHERE id = $1',
+            [task_id]
+          );
+          const okr_initiative_id = initiativeRow.rows[0]?.okr_initiative_id;
+          if (okr_initiative_id) {
+            // 找到该 initiative 所属的 KR
+            const krRow = await pool.query(`
+              SELECT p.kr_id
+              FROM okr_initiatives i
+              JOIN okr_scopes s ON s.id = i.scope_id
+              JOIN okr_projects p ON p.id = s.project_id
+              WHERE i.id = $1
+            `, [okr_initiative_id]);
+            const kr_id = krRow.rows[0]?.kr_id;
+            if (kr_id) {
+              // 重算进度（复用 okr-hierarchy 路由逻辑，直接调 DB）
+              const statsResult = await pool.query(`
+                SELECT
+                  COUNT(t.id) FILTER (WHERE t.status = 'completed') AS completed_count,
+                  COUNT(t.id) AS total_count
+                FROM okr_projects p2
+                JOIN okr_scopes s2 ON s2.project_id = p2.id
+                JOIN okr_initiatives i2 ON i2.scope_id = s2.id
+                LEFT JOIN tasks t ON t.okr_initiative_id = i2.id
+                WHERE p2.kr_id = $1
+              `, [kr_id]);
+              const { completed_count, total_count } = statsResult.rows[0];
+              const completedNum = parseInt(completed_count, 10) || 0;
+              const totalNum = parseInt(total_count, 10) || 0;
+              const targetRow = await pool.query('SELECT target_value FROM key_results WHERE id = $1', [kr_id]);
+              const target_value = parseFloat(targetRow.rows[0]?.target_value || 0);
+              const newValue = totalNum > 0
+                ? Math.round((completedNum / totalNum) * target_value * 100) / 100
+                : 0;
+              await pool.query(
+                'UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2',
+                [newValue, kr_id]
+              );
+            }
+          }
+        } catch (krErr) {
+          // KR 进度回写失败不影响主流程
+          console.warn('[tasks] KR progress recalc failed:', krErr.message);
+        }
+      }
     }
 
     if (custom_props) {

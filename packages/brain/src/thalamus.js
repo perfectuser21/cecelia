@@ -290,6 +290,11 @@ const ACTION_WHITELIST = {
   // 规划操作
   'create_proposal': { dangerous: false, description: '创建计划提案' },
 
+  // OKR 新表飞轮操作（okr_initiatives / okr_scopes / okr_projects）
+  'okr_initiative_plan': { dangerous: false, description: '规划 OKR Scope 下的下一个 Initiative' },
+  'okr_scope_plan': { dangerous: false, description: '规划 OKR Project 下的下一个 Scope' },
+  'okr_project_plan': { dangerous: false, description: '规划 OKR Project 层完成后的下一步' },
+
   // 知识/学习操作
   'create_learning': { dangerous: false, description: '保存经验教训到 learnings 表' },
   'update_learning': { dangerous: false, description: '更新已有 learning 记录' },
@@ -561,6 +566,7 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 4. 简单事件尽量 level: 0，不要过度思考
 5. USER_MESSAGE/OWNER_INTENT 意图不明确（普通对话、问候、闲聊、问答）时，默认 handle_chat（转交口处理对话）
 6. 仅当用户明确表达任务意图（要开发某功能、要调研某话题、要发布内容等）时才 create_task
+7. 当用户询问我们系统/项目/产品的当前状态、内容、进展、功能等信息性问题时（如"zenithjoy dashboard 现在有什么"、"最新进展是什么"、"现在有哪些功能"、"某项目状态怎样"等），使用 create_task（task_type: 'explore', priority: 'P2'），mouth_reply 填"正在查，马上给你～"，need_card: false
 
 请结合上方 brain_context 分析以下事件并输出 Decision：`;
 

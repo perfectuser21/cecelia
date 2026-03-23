@@ -1561,6 +1561,22 @@ async function executeTick() {
     }
   }
 
+  // [感知] KR 完成检查：Initiative → Scope → Project 全完成后关闭 KR
+  try {
+    const { checkKRCompletion } = await import('./kr-completion.js');
+    const krResult = await checkKRCompletion(pool);
+    if (krResult.closedCount > 0) {
+      console.log(`[TICK] KR 完成检查: ${krResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'kr_completion_check',
+        closed_count: krResult.closedCount,
+        closed: krResult.closed,
+      });
+    }
+  } catch (krErr) {
+    console.error('[tick] KR completion check failed (non-fatal):', krErr.message);
+  }
+
   // [感知] Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
   try {
     const { checkInitiativeCompletion } = await import('./initiative-closer.js');
@@ -1609,6 +1625,51 @@ async function executeTick() {
     console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
   }
 
+  // [感知] OKR Initiative 完成检测：新 okr_initiatives 表飞轮，纯 SQL，无 LLM
+  try {
+    const { checkOkrInitiativeCompletion } = await import('./okr-closer.js');
+    const okrInitResult = await checkOkrInitiativeCompletion(pool);
+    if (okrInitResult.closedCount > 0) {
+      actionsTaken.push({
+        action: 'okr_initiative_completion_check',
+        closed_count: okrInitResult.closedCount,
+        closed: okrInitResult.closed,
+      });
+    }
+  } catch (okrInitErr) {
+    console.error('[tick] OKR Initiative completion check failed (non-fatal):', okrInitErr.message);
+  }
+
+  // [感知] OKR Scope 完成检测：新 okr_scopes 表飞轮，纯 SQL，无 LLM
+  try {
+    const { checkOkrScopeCompletion } = await import('./okr-closer.js');
+    const okrScopeResult = await checkOkrScopeCompletion(pool);
+    if (okrScopeResult.closedCount > 0) {
+      actionsTaken.push({
+        action: 'okr_scope_completion_check',
+        closed_count: okrScopeResult.closedCount,
+        closed: okrScopeResult.closed,
+      });
+    }
+  } catch (okrScopeErr) {
+    console.error('[tick] OKR Scope completion check failed (non-fatal):', okrScopeErr.message);
+  }
+
+  // [感知] OKR Project 完成检测：新 okr_projects 表飞轮，纯 SQL，无 LLM
+  try {
+    const { checkOkrProjectCompletion } = await import('./okr-closer.js');
+    const okrProjectResult = await checkOkrProjectCompletion(pool);
+    if (okrProjectResult.closedCount > 0) {
+      actionsTaken.push({
+        action: 'okr_project_completion_check',
+        closed_count: okrProjectResult.closedCount,
+        closed: okrProjectResult.closed,
+      });
+    }
+  } catch (okrProjectErr) {
+    console.error('[tick] OKR Project completion check failed (non-fatal):', okrProjectErr.message);
+  }
+
   // [感知] Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活（capacity-aware）
   try {
     const { activateNextInitiatives } = await import('./initiative-closer.js');
@@ -1622,6 +1683,21 @@ async function executeTick() {
     }
   } catch (activateErr) {
     console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
+  }
+
+  // [感知] KR 队列激活：从 pending KR 中按优先级激活
+  try {
+    const { activateNextKRs } = await import('./kr-completion.js');
+    const krsActivated = await activateNextKRs(pool);
+    if (krsActivated > 0) {
+      console.log(`[TICK] KR 激活: ${krsActivated} 个从 pending → in_progress`);
+      actionsTaken.push({
+        action: 'kr_queue_activate',
+        activated_count: krsActivated,
+      });
+    }
+  } catch (krActivateErr) {
+    console.error('[tick] KR queue activation failed (non-fatal):', krActivateErr.message);
   }
 
   // [感知] Project 层容量管理：激活/降级确保 active 在 capacity 范围内

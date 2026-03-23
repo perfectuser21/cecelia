@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 13.30.0
+version: 13.37.0
 updated: 2026-03-23
 
 # ============================================================================
@@ -442,7 +442,7 @@ hooks:
       then: "返回 JSON API 格式阻止并继续循环，超过 5 次上限则退出"
     evidence:
       type: code
-      file: "hooks/subagent-stop.sh"
+      file: "hooks/stop-dev.sh"
       contains: "decision.*block"
 
   - id: H7-010
@@ -498,7 +498,7 @@ hooks:
       then: "在 /tmp/claude-engine-sessions/ 创建 JSON 文件，包含 session_id/pid/cwd/branch，Step 11 清理，过期会话自动删除"
     evidence:
       type: code
-      file: "skills/dev/steps/03-branch.md"
+      file: "skills/dev/steps/03-integrate.md"
       contains: "session-$SESSION_ID.json"
     test: "tests/skills/session-registration.test.ts"
 
@@ -1021,7 +1021,7 @@ hooks:
       then: "使用 jq 预验证 JSON 格式，无效 JSON 直接报错退出"
     evidence:
       type: code
-      file: "hooks/pr-gate-v2.sh"
+      file: "hooks/branch-protect.sh"
       contains: "jq -e . >/dev/null 2>&1"
     test: "tests/hooks/pr-gate-phase1.test.ts"
 
@@ -1040,7 +1040,7 @@ hooks:
       then: "使用 # 作为分隔符，避免 / 分隔符被路径中的 / 破坏"
     evidence:
       type: code
-      file: "hooks/pr-gate-v2.sh"
+      file: "hooks/branch-protect.sh"
       contains: "sed -n 's#"
     test: "tests/hooks/pr-gate-phase1.test.ts"
 
@@ -1735,7 +1735,7 @@ ci:
       then: "每个 job 显式声明 permissions，遵循最小权限原则"
     evidence:
       type: code
-      file: ".github/workflows/ci.yml"
+      file: ".github/workflows/ci-l1-process.yml"
       contains: "permissions:"
     # Evidence check: grep for 'permissions:' in ci.yml
 
@@ -1754,7 +1754,7 @@ ci:
       then: "使用 jq -n 生成 JSON，避免字符串拼接注入"
     evidence:
       type: code
-      file: ".github/workflows/ci.yml"
+      file: ".github/workflows/ci-l1-process.yml"
       contains: "jq -n"
     # Evidence check: grep for 'jq -n' in ci.yml
 
@@ -1776,7 +1776,7 @@ ci:
       then: "所有关键 jobs 都有 timeout-minutes 配置，防止挂死"
     evidence:
       type: code
-      file: ".github/workflows/ci.yml"
+      file: ".github/workflows/ci-l1-process.yml"
       contains: "timeout-minutes:"
     test: "tests/workflows/ci-timeout.test.ts"
 
@@ -1795,7 +1795,7 @@ ci:
       then: "使用 upload-artifact 上传报告，不再 git push（避免分支保护阻止）"
     evidence:
       type: code
-      file: ".github/workflows/nightly.yml"
+      file: ".github/workflows/ci-l4-runtime.yml"
       contains: "upload-artifact"
 
   # --------------------------------------------------------------------------
@@ -2207,7 +2207,7 @@ ci:
     note: "v11.12.2 P0-1: 防止外部 CI 绕过 approval 直接合并"
     evidence:
       type: code
-      file: ".github/workflows/auto-merge.yml"
+      file: ".github/workflows/auto-version.yml"
       not_contains: "check_suite:"
 
   - id: C10-002
@@ -2226,7 +2226,7 @@ ci:
     note: "v11.12.2 P0-2: 防止关键检查被静默跳过"
     evidence:
       type: code
-      file: ".github/workflows/ci.yml"
+      file: ".github/workflows/ci-l1-process.yml"
       contains: "github.base_ref != 'develop' || needs.regression-pr.result == 'success'"
 
   - id: C10-003
@@ -2245,7 +2245,7 @@ ci:
     note: "v11.12.2 P1-1: 让 AI review 失败正确报告"
     evidence:
       type: code
-      file: ".github/workflows/ci.yml"
+      file: ".github/workflows/ci-l1-process.yml"
       job: "ai-review"
       not_contains: "continue-on-error: true"
 
@@ -3269,9 +3269,9 @@ skills:
       when: "执行 intent-expand skill（Step 1-4）"
       then: "沿 Task→Project→KR→OKR→Vision 链查询 Brain API，输出 .enriched-prd-<branch>.md，打印 ENRICHED_PRD_RESULT: SUCCESS"
     evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/skills/intent-expand/SKILL.md'"
-    test: "tests/skills/intent-expand.test.ts"
+      type: code
+      file: "skills/intent-expand/SKILL.md"
+      contains: "intent-expand"
 
   # DEPRECATED: code-quality 已被 code_review_gate 替代（Pipeline v2），Skill 目录已删除
   # - id: S4-003
@@ -3669,9 +3669,30 @@ skills:
       run: "bash -c 'test -f apps/dashboard/src/pages/tasks/TaskTypeConfigPage.tsx'"
     test: "manual:node -e \"const c=require('fs').readFileSync('apps/dashboard/src/pages/tasks/TaskTypeConfigPage.tsx','utf8');if(!c.includes('executor')){console.error('TaskTypeConfigPage missing executor field');process.exit(1)}console.log('Dashboard executor field present')\""
 
+  - id: DEVGATE-NEW-FILES-RCI-001
+    feature: DevGate
+    name: "新增 hooks/devgate 文件必须有 RCI 条目检查"
+    scope: devgate
+    priority: P1
+    trigger: [PR]
+    method: auto
+    file: "scripts/devgate/check-new-files-need-rci.cjs"
+    tags: [devgate, ci, rci, quality-gate]
+    owner: engine
+    steps:
+      given: "PR 向 packages/engine/hooks/ 或 packages/engine/scripts/devgate/ 新增文件"
+      when: "CI L2 运行 new-files-need-rci-check job"
+      then: "检测新增文件是否在 regression-contract.yaml 中有 RCI 条目，无则阻断"
+    evidence:
+      type: command
+      run: "bash -c 'test -f packages/engine/scripts/devgate/check-new-files-need-rci.cjs'"
+    test: "manual:node -e \"const {scanMissingRci}=require('./packages/engine/scripts/devgate/check-new-files-need-rci.cjs');const r=scanMissingRci(['packages/engine/hooks/new-hook.sh'],'hooks:\\n  - id: H99\\n    file: \\\"hooks/other.sh\\\"\\n');if(r.length!==1)process.exit(1)\""
+
 # ============================================================================
 # Changelog
 # ============================================================================
+# 13.37.0 (2026-03-23): feat(engine): 02-code.md 本地测试改为精准测试（targeted-local-test，去全量，去重复）
+# 13.36.0 (2026-03-23): feat(engine): CI Gate — 新增 hook/devgate 文件必须有 RCI 条目（L2 检查）
 # 13.29.0 (2026-03-23): feat(rci): 全量注册 /dev pipeline + Brain 核心能力（20条 RCI：P0×7 + P1×7 + P2×6）
 # 12.83.0 (2026-03-16): refactor(engine): 删除 ci-tools/ 符号链接目录，统一引用 scripts/devgate/
 # 12.82.0 (2026-03-16): fix(engine): git add -A 改 -u + Stop Hook 90分钟超时保护

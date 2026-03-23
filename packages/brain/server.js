@@ -40,6 +40,7 @@ import curiosityRoutes from './src/routes/curiosity.js';
 import knowledgeRoutes from './src/routes/knowledge.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
 import selfDriveRoutes from './src/routes/self-drive.js';
+import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -146,6 +147,7 @@ app.use('/api/brain/knowledge', knowledgeRoutes);
 app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/self-drive', selfDriveRoutes);
+app.use('/api/brain/okr', okrHierarchyRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
@@ -377,6 +379,37 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
     console.log('[Server] Nightly Scheduler started');
   } catch (e) {
     console.warn('[Server] Nightly Scheduler init failed (non-fatal):', e.message);
+  }
+
+  // Layer 2 蒸馏文档初始化（SOUL seed + WORLD_STATE/SELF_MODEL/USER_PROFILE 定时更新）
+  try {
+    const { seedSoul, refreshWorldState, refreshSelfModel, refreshUserProfile } = await import('./src/distilled-docs.js');
+    // 启动时确保 SOUL 存在
+    await seedSoul();
+    // WORLD_STATE: 启动后延迟 10s 刷新，之后每 24h
+    setTimeout(async () => {
+      try { await refreshWorldState(); } catch (e) { console.warn('[Server] WORLD_STATE refresh failed:', e.message); }
+    }, 10 * 1000);
+    setInterval(async () => {
+      try { await refreshWorldState(); } catch (e) { console.warn('[Server] WORLD_STATE cron failed:', e.message); }
+    }, 24 * 60 * 60 * 1000);
+    // SELF_MODEL: 启动后延迟 5min 首次刷新，之后每 24h
+    setTimeout(async () => {
+      try { await refreshSelfModel(); } catch (e) { console.warn('[Server] SELF_MODEL refresh failed:', e.message); }
+    }, 5 * 60 * 1000);
+    setInterval(async () => {
+      try { await refreshSelfModel(); } catch (e) { console.warn('[Server] SELF_MODEL cron failed:', e.message); }
+    }, 24 * 60 * 60 * 1000);
+    // USER_PROFILE: 启动后延迟 2min 首次刷新，之后每 6h
+    setTimeout(async () => {
+      try { await refreshUserProfile(); } catch (e) { console.warn('[Server] USER_PROFILE refresh failed:', e.message); }
+    }, 2 * 60 * 1000);
+    setInterval(async () => {
+      try { await refreshUserProfile(); } catch (e) { console.warn('[Server] USER_PROFILE cron failed:', e.message); }
+    }, 6 * 60 * 60 * 1000);
+    console.log('[Server] Layer 2 蒸馏文档已初始化（SOUL seeded, WORLD_STATE/SELF_MODEL 每24h, USER_PROFILE 每6h）');
+  } catch (e) {
+    console.warn('[Server] Layer 2 distilled docs init failed (non-fatal):', e.message);
   }
 
   // Backfill learnings embeddings（启动时补全 embedding=null 的历史记录，每批10条）
