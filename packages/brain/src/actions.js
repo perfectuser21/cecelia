@@ -172,7 +172,7 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
 
   const result = await pool.query(`
     INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, type, plan_content, status, execution_mode, current_phase, dod_content, domain, owner_role)
-    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'pending', $7, $8, $9, $10, $11)
+    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'active', $7, $8, $9, $10, $11)
     RETURNING *
   `, [
     name,
