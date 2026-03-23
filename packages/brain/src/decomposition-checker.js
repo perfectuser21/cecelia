@@ -111,12 +111,11 @@ async function createDecompositionTask({ title, description, goalId, projectId, 
 async function checkPendingKRs() {
   const actions = [];
 
-  // 找 pending 状态且没有子结构的 KR
+  // 找 pending 状态且没有子结构的 KR（新 OKR 表：key_results）
   const result = await pool.query(`
-    SELECT g.id, g.title, g.description, g.priority, g.parent_id
-    FROM goals g
-    WHERE g.type IN ('area_kr', 'kr')
-      AND g.status IN ('pending', 'ready')
+    SELECT g.id, g.title, g.description, NULL::text AS priority, g.objective_id AS parent_id
+    FROM key_results g
+    WHERE g.status IN ('pending', 'ready')
   `);
 
   for (const kr of result.rows) {
@@ -171,9 +170,9 @@ async function checkPendingKRs() {
     });
 
     if (task && !task.rejected) {
-      // 更新 KR 状态为 decomposing
+      // 更新 KR 状态为 decomposing（新 OKR 表：key_results）
       await pool.query(
-        `UPDATE goals SET status = 'decomposing', updated_at = NOW() WHERE id = $1`,
+        `UPDATE key_results SET status = 'decomposing', updated_at = NOW() WHERE id = $1`,
         [kr.id]
       );
       console.log(`[decomp-checker] KR ${kr.id} → decomposing, created task: ${task.title}`);
@@ -201,12 +200,11 @@ async function checkPendingKRs() {
 async function checkReadyKRInitiatives() {
   const actions = [];
 
-  // 找 ready 或 in_progress 状态的 KR
+  // 找 ready 或 in_progress 状态的 KR（新 OKR 表：key_results）
   const readyKRs = await pool.query(`
     SELECT g.id, g.title, g.status
-    FROM goals g
-    WHERE g.type IN ('area_kr', 'kr')
-      AND g.status IN ('ready', 'in_progress')
+    FROM key_results g
+    WHERE g.status IN ('ready', 'in_progress')
   `);
 
   for (const kr of readyKRs.rows) {
@@ -230,7 +228,7 @@ async function checkReadyKRInitiatives() {
     if (kr.status === 'ready') {
       const hasRunning = initiatives.rows.some(i => parseInt(i.running_tasks) > 0);
       if (hasRunning) {
-        await pool.query(`UPDATE goals SET status = 'in_progress', updated_at = NOW() WHERE id = $1`, [kr.id]);
+        await pool.query(`UPDATE key_results SET status = 'in_progress', updated_at = NOW() WHERE id = $1`, [kr.id]);
         console.log(`[decomp-checker] KR ${kr.id} → in_progress (tasks running)`);
         actions.push({ action: 'status_change', check: 'kr_status', goal_id: kr.id, from: 'ready', to: 'in_progress' });
       }
@@ -241,7 +239,7 @@ async function checkReadyKRInitiatives() {
       // 确认确实没有 active initiative
       const activeCount = initiatives.rows.filter(i => i.status === 'active' || i.status === 'in_progress').length;
       if (activeCount === 0) {
-        await pool.query(`UPDATE goals SET status = 'completed', updated_at = NOW() WHERE id = $1`, [kr.id]);
+        await pool.query(`UPDATE key_results SET status = 'completed', updated_at = NOW() WHERE id = $1`, [kr.id]);
         console.log(`[decomp-checker] KR ${kr.id} → completed (all initiatives done)`);
         actions.push({ action: 'status_change', check: 'kr_status', goal_id: kr.id, from: kr.status, to: 'completed' });
         continue;
@@ -274,13 +272,13 @@ async function checkReadyKRInitiatives() {
 async function checkKRWithoutProject() {
   const actions = [];
 
+  // 检测 ready/in_progress KR 无 Project（新 OKR 表：key_results + okr_projects）
   const result = await pool.query(`
-    SELECT g.id, g.title, g.description, g.priority, g.parent_id
-    FROM goals g
-    WHERE g.type IN ('area_kr', 'kr')
-      AND g.status IN ('ready', 'in_progress')
+    SELECT g.id, g.title, g.description, NULL::text AS priority, g.objective_id AS parent_id
+    FROM key_results g
+    WHERE g.status IN ('ready', 'in_progress')
       AND NOT EXISTS (
-        SELECT 1 FROM project_kr_links pkl WHERE pkl.kr_id = g.id
+        SELECT 1 FROM okr_projects op WHERE op.kr_id = g.id
       )
   `);
 
@@ -336,7 +334,7 @@ async function checkKRWithoutProject() {
 
     if (task && !task.rejected) {
       await pool.query(
-        `UPDATE goals SET status = 'decomposing', updated_at = NOW() WHERE id = $1`,
+        `UPDATE key_results SET status = 'decomposing', updated_at = NOW() WHERE id = $1`,
         [kr.id]
       );
       console.log(`[decomp-checker] Check C: KR ${kr.id} (${kr.title}) has no project, rolled back to decomposing`);
@@ -375,21 +373,20 @@ async function hasExistingStrategicMeetingTask(goalId) {
  *
  * 触发条件：
  *   - Objective status IN ('pending', 'in_progress')
- *   - 无活跃子 KR（goals 表，parent_id = objective.id，status NOT IN ('completed', 'cancelled')）
+ *   - 无活跃子 KR（key_results 表，objective_id = objective.id，status NOT IN ('completed', 'cancelled')）
  *   - 没有已存在的 strategic_meeting 任务（幂等）
  */
 async function checkObjectiveWithoutKR() {
   const actions = [];
 
+  // 检测无 KR 的 Objective（新 OKR 表：objectives + key_results）
   const result = await pool.query(`
-    SELECT g.id, g.title, g.description, g.priority, g.type
-    FROM goals g
-    WHERE g.type IN ('vision', 'mission')
-      AND g.status IN ('pending', 'in_progress')
+    SELECT g.id, g.title, g.description, NULL::text AS priority, 'objective' AS type
+    FROM objectives g
+    WHERE g.status IN ('pending', 'in_progress', 'active')
       AND NOT EXISTS (
-        SELECT 1 FROM goals kr
-        WHERE kr.parent_id = g.id
-          AND kr.type IN ('area_kr', 'kr')
+        SELECT 1 FROM key_results kr
+        WHERE kr.objective_id = g.id
           AND kr.status NOT IN ('completed', 'cancelled')
       )
   `);
