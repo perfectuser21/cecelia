@@ -143,59 +143,29 @@ function notionPageToKnowledgeRow(page, areaId) {
   };
 }
 
+// 将 Notion block.type 映射到 DB content 的查找表（替代 switch，降低圈复杂度）
+const BLOCK_HANDLERS = {
+  paragraph:           (b) => ({ type: 'paragraph', content: { text: richTextToPlain(b.paragraph?.rich_text) } }),
+  heading_1:           (b) => ({ type: 'heading',   content: { level: 1, text: richTextToPlain(b.heading_1?.rich_text) } }),
+  heading_2:           (b) => ({ type: 'heading',   content: { level: 2, text: richTextToPlain(b.heading_2?.rich_text) } }),
+  heading_3:           (b) => ({ type: 'heading',   content: { level: 3, text: richTextToPlain(b.heading_3?.rich_text) } }),
+  bulleted_list_item:  (b) => ({ type: 'list_item', content: { text: richTextToPlain(b.bulleted_list_item?.rich_text), ordered: false } }),
+  numbered_list_item:  (b) => ({ type: 'list_item', content: { text: richTextToPlain(b.numbered_list_item?.rich_text), ordered: true } }),
+  code:                (b) => ({ type: 'code',      content: { text: richTextToPlain(b.code?.rich_text), language: b.code?.language || 'plain text' } }),
+  image:               (b) => ({ type: 'image',     content: { url: b.image?.external?.url || b.image?.file?.url || '', caption: richTextToPlain(b.image?.caption) } }),
+  divider:             ()  => ({ type: 'divider',   content: {} }),
+  quote:               (b) => ({ type: 'quote',     content: { text: richTextToPlain(b.quote?.rich_text) } }),
+};
+
 /**
  * 将 Notion Block 映射到 DB blocks 行数据
- * 返回 null 表示跳过该 block 类型
+ * 返回 null 表示跳过该 block 类型（child_page, table_of_contents, callout 等）
  */
 function notionBlockToDBRow(block, knowledgeId, orderIndex) {
-  const type = block.type;
-  const notion_id = block.id;
-
-  switch (type) {
-    case 'paragraph': {
-      const text = richTextToPlain(block.paragraph?.rich_text);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'paragraph', content: { text }, order_index: orderIndex };
-    }
-    case 'heading_1': {
-      const text = richTextToPlain(block.heading_1?.rich_text);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'heading', content: { level: 1, text }, order_index: orderIndex };
-    }
-    case 'heading_2': {
-      const text = richTextToPlain(block.heading_2?.rich_text);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'heading', content: { level: 2, text }, order_index: orderIndex };
-    }
-    case 'heading_3': {
-      const text = richTextToPlain(block.heading_3?.rich_text);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'heading', content: { level: 3, text }, order_index: orderIndex };
-    }
-    case 'bulleted_list_item': {
-      const text = richTextToPlain(block.bulleted_list_item?.rich_text);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'list_item', content: { text, ordered: false }, order_index: orderIndex };
-    }
-    case 'numbered_list_item': {
-      const text = richTextToPlain(block.numbered_list_item?.rich_text);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'list_item', content: { text, ordered: true }, order_index: orderIndex };
-    }
-    case 'code': {
-      const text = richTextToPlain(block.code?.rich_text);
-      const language = block.code?.language || 'plain text';
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'code', content: { text, language }, order_index: orderIndex };
-    }
-    case 'image': {
-      const url = block.image?.external?.url || block.image?.file?.url || '';
-      const caption = richTextToPlain(block.image?.caption);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'image', content: { url, caption }, order_index: orderIndex };
-    }
-    case 'divider':
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'divider', content: {}, order_index: orderIndex };
-    case 'quote': {
-      const text = richTextToPlain(block.quote?.rich_text);
-      return { notion_id, parent_id: knowledgeId, parent_type: 'knowledge', type: 'quote', content: { text }, order_index: orderIndex };
-    }
-    default:
-      // 跳过 child_page, table_of_contents, callout 等复杂类型
-      return null;
-  }
+  const handler = BLOCK_HANDLERS[block.type];
+  if (!handler) return null;
+  const { type, content } = handler(block);
+  return { notion_id: block.id, parent_id: knowledgeId, parent_type: 'knowledge', type, content, order_index: orderIndex };
 }
 
 // ─── 同步逻辑 ────────────────────────────────────────────────
