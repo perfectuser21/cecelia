@@ -71,7 +71,7 @@ describe('fallback strategies', () => {
     const result = getFallbackStrategy('location', 'us');
     expect(result).not.toBeNull();
     expect(result.strategy).toBe('location_fallback');
-    expect(result.fallbackValue).toBe('hk');
+    expect(result.fallbackValue).toBe('xian');
   });
 
   it('getFallbackStrategy - no fallback for unknown type', () => {
@@ -101,7 +101,7 @@ describe('routeTaskWithFallback - success scenarios', () => {
     });
 
     expect(result.routing_status).toBe('success');
-    expect(result.location).toBe('hk');
+    expect(result.location).toBe('xian');
     expect(result.skill).toBe('/cecelia');
   });
 });
@@ -149,6 +149,6 @@ describe('FALLBACK_STRATEGIES', () => {
 
   it('has location fallback configured', () => {
     expect(FALLBACK_STRATEGIES.location).toBeDefined();
-    expect(FALLBACK_STRATEGIES.location.us).toBe('hk');
+    expect(FALLBACK_STRATEGIES.location.us).toBe('xian');
   });
 });

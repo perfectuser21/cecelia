@@ -87,8 +87,8 @@ const FALLBACK_STRATEGIES = {
   },
   // location fallback: when location not reachable, try alternative
   'location': {
-    'us': 'hk',
-    'hk': 'us'
+    'us': 'xian',
+    'xian': 'us'
   }
 };
 
@@ -150,11 +150,11 @@ const LOCATION_MAP = {
   'strategy_session': 'xian',     // 战略会议 → 西安 Codex (B類，/strategy-session)
   'intent_expand': 'us',          // 意图扩展 → US 本机（需读本地 Brain DB，补全 PRD）
   'initiative_execute': 'us',     // Initiative 执行 → US 本机（/dev 全流程，A類）
-  'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
+  'explore': 'xian',  // 快速调研 → 西安 Codex (general，任意可用机器)
   'knowledge': 'xian',  // 知识记录 → 西安 Codex (B類，/knowledge skill)
-  'talk': 'hk',       // 对话 → HK (MiniMax)
-  'research': 'hk',   // 深度调研 → HK (MiniMax)
-  'data': 'hk',       // 数据处理 → HK (N8N)
+  'talk': 'xian',     // 对话 → 西安 Codex (general，任意可用机器)
+  'research': 'xian', // 深度调研 → 西安 Codex (general，任意可用机器)
+  'data': 'xian',     // 数据处理 → 西安 Codex (general)
   // 内容工厂 Pipeline（Content Factory）→ 西安 Codex 执行
   'content-pipeline': 'xian',  // Pipeline 编排入口 → 西安 Codex
   'content-research': 'xian',  // 调研阶段 → 西安 (/notebooklm)
@@ -174,6 +174,54 @@ const LOCATION_MAP = {
 
 // Default location
 const DEFAULT_LOCATION = 'us';
+
+// Capability requirements per task type (machine registry routing)
+// Tags: 'has_git' = needs code/git access (US M4 only)
+//       'general' = any available machine
+//       'has_browser' = needs browser/CDP access
+const TASK_REQUIREMENTS = {
+  // A类 - 需要 git/代码访问（US M4 独有）
+  'dev':                ['has_git'],
+  'review':             ['has_git'],
+  'qa':                 ['has_git'],
+  'audit':              ['has_git'],
+  'code_review':        ['has_git'],
+  'decomp_review':      ['has_git'],
+  'initiative_plan':    ['has_git'],
+  'initiative_verify':  ['has_git'],
+  'arch_review':        ['has_git'],
+  'architecture_design':['has_git'],
+  'architecture_scan':  ['has_git'],
+  'prd_review':         ['has_git'],
+  'spec_review':        ['has_git'],
+  'code_review_gate':   ['has_git'],
+  'initiative_review':  ['has_git'],
+  'intent_expand':      ['has_git'],
+  'initiative_execute': ['has_git'],
+  'pipeline_rescue':    ['has_git'],
+  'codex_dev':          ['has_git'],
+  // 需要浏览器
+  'codex_playwright':   ['has_browser'],
+  // B类通用 - 任意 general 机器
+  'codex_qa':           ['general'],
+  'codex_test_gen':     ['general'],
+  'pr_review':          ['general'],
+  'suggestion_plan':    ['general'],
+  'strategy_session':   ['general'],
+  'scope_plan':         ['general'],
+  'project_plan':       ['general'],
+  'knowledge':          ['general'],
+  'talk':               ['general'],
+  'research':           ['general'],
+  'explore':            ['general'],
+  'data':               ['general'],
+  'dept_heartbeat':     ['general'],
+  'content-pipeline':   ['general'],
+  'content-research':   ['general'],
+  'content-generate':   ['general'],
+  'content-review':     ['general'],
+  'content-export':     ['general'],
+};
 
 /**
  * Identify work type: single task or feature
@@ -217,6 +265,18 @@ function getTaskLocation(taskType) {
 
   const location = LOCATION_MAP[taskType.toLowerCase()];
   return location || DEFAULT_LOCATION;
+}
+
+/**
+ * Get capability requirements for a task type
+ * @param {string} taskType - Task type (dev, research, talk, etc.)
+ * @returns {string[]} - Required capability tags
+ */
+function getTaskRequirements(taskType) {
+  if (!taskType || typeof taskType !== 'string') {
+    return ['has_git']; // default to most restrictive
+  }
+  return TASK_REQUIREMENTS[taskType.toLowerCase()] || ['has_git'];
 }
 
 /**
@@ -353,7 +413,7 @@ function isValidTaskType(taskType) {
  * @returns {boolean} - Whether location is valid
  */
 function isValidLocation(location) {
-  return ['us', 'hk', 'xian', 'xian_m1'].includes(location?.toLowerCase());
+  return ['us', 'xian', 'xian_m1'].includes(location?.toLowerCase());
 }
 
 /**
@@ -696,6 +756,7 @@ async function diagnoseKR(krId, pool) {
 export {
   identifyWorkType,
   getTaskLocation,
+  getTaskRequirements,
   determineExecutionMode,
   getDomainSkillOverride,
   routeTaskCreate,
@@ -708,6 +769,7 @@ export {
   getLocationsForTaskTypes,
   diagnoseKR,
   LOCATION_MAP,
+  TASK_REQUIREMENTS,
   SINGLE_TASK_PATTERNS,
   FEATURE_PATTERNS,
   DEFAULT_LOCATION,
