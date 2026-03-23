@@ -34,7 +34,7 @@ describe("Session registration mechanism", () => {
 
   describe("session file format", () => {
     it("should create valid JSON session file", () => {
-      const sessionId = "test-format-" + Date.now();
+      const sessionId = "sr-format-" + Date.now();
       const sessionFile = join(SESSION_DIR, `session-${sessionId}.json`);
       testSessionFiles.push(sessionFile);
 
@@ -60,7 +60,7 @@ describe("Session registration mechanism", () => {
     });
 
     it("should handle newlines in tty field correctly", () => {
-      const sessionId = "test-tty-" + Date.now();
+      const sessionId = "sr-tty-" + Date.now();
       const sessionFile = join(SESSION_DIR, `session-${sessionId}.json`);
       testSessionFiles.push(sessionFile);
 
@@ -87,7 +87,7 @@ describe("Session registration mechanism", () => {
 
   describe("session lifecycle", () => {
     it("should create session on Step 3", () => {
-      const sessionId = "test-lifecycle-" + Date.now();
+      const sessionId = "sr-lifecycle-" + Date.now();
       const sessionFile = join(SESSION_DIR, `session-${sessionId}.json`);
       testSessionFiles.push(sessionFile);
 
@@ -111,7 +111,7 @@ describe("Session registration mechanism", () => {
     });
 
     it("should cleanup session on Step 11", () => {
-      const sessionId = "test-cleanup-" + Date.now();
+      const sessionId = "sr-cleanup-" + Date.now();
       const sessionFile = join(SESSION_DIR, `session-${sessionId}.json`);
       testSessionFiles.push(sessionFile);
 
@@ -134,7 +134,7 @@ fi
 
   describe("expired session cleanup", () => {
     it("should remove sessions older than 1 hour", () => {
-      const expiredId = "test-expired-" + Date.now();
+      const expiredId = "sr-expired-" + Date.now();
       const expiredFile = join(SESSION_DIR, `session-${expiredId}.json`);
       testSessionFiles.push(expiredFile);
 
@@ -154,7 +154,7 @@ fi
     });
 
     it("should keep fresh sessions", () => {
-      const freshId = "test-fresh-" + Date.now();
+      const freshId = "sr-fresh-" + Date.now();
       const freshFile = join(SESSION_DIR, `session-${freshId}.json`);
       testSessionFiles.push(freshFile);
 

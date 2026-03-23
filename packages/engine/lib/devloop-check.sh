@@ -445,3 +445,5 @@ devloop_check() {
         return 2
     fi
 }
+
+# smoke-test-20260323
