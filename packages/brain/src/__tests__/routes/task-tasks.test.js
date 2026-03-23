@@ -206,6 +206,39 @@ describe('task-tasks routes', () => {
       const res = await request(app).post('/tasks').send({ title: 'Task' });
       expect(res.status).toBe(500);
     });
+
+    it('passes okr_initiative_id to INSERT when provided', async () => {
+      const initId = 'c0362394-ba7c-44c7-9386-e7947f604237';
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'new-uuid', title: 'T', status: 'queued', task_type: 'dev',
+          priority: 'P2', project_id: null, goal_id: null,
+          okr_initiative_id: initId, created_at: '' }],
+      });
+
+      const res = await request(app).post('/tasks').send({
+        title: 'T',
+        okr_initiative_id: initId,
+      });
+
+      expect(res.status).toBe(201);
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('okr_initiative_id');
+      expect(params).toContain(initId);
+    });
+
+    it('passes null okr_initiative_id when not provided', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev',
+          priority: 'P2', project_id: null, okr_initiative_id: null, created_at: '' }],
+      });
+
+      await request(app).post('/tasks').send({ title: 'T' });
+
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('okr_initiative_id');
+      // last param should be null (okr_initiative_id default)
+      expect(params[params.length - 1]).toBeNull();
+    });
   });
 
   describe('PATCH /tasks/:id', () => {
@@ -230,6 +263,31 @@ describe('task-tasks routes', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       const res = await request(app).patch('/tasks/missing').send({ title: 'x' });
       expect(res.status).toBe(404);
+    });
+
+    it('updates okr_initiative_id when provided', async () => {
+      const initId = 'c0362394-ba7c-44c7-9386-e7947f604237';
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 't1', status: 'queued', okr_initiative_id: initId }],
+      });
+
+      const res = await request(app).patch('/tasks/t1').send({ okr_initiative_id: initId });
+      expect(res.status).toBe(200);
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('okr_initiative_id = $1');
+      expect(params).toContain(initId);
+    });
+
+    it('sets okr_initiative_id to null when explicitly passed null', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 't1', status: 'queued', okr_initiative_id: null }],
+      });
+
+      const res = await request(app).patch('/tasks/t1').send({ okr_initiative_id: null });
+      expect(res.status).toBe(200);
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('okr_initiative_id');
+      expect(params).toContain(null);
     });
   });
 });
