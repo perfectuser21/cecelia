@@ -163,7 +163,7 @@ describe('Cortex 反思熔断 - D4: 熔断日志包含 "反思熔断"', () => {
 
   it('熔断触发时日志包含 "反思熔断"', async () => {
     setupMockPool();
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
 
     const event = { type: 'rca_breaker_d4_test' };
 
@@ -172,10 +172,10 @@ describe('Cortex 反思熔断 - D4: 熔断日志包含 "反思熔断"', () => {
       await analyzeDeep(event);
     }
 
-    const allLogs = logSpy.mock.calls.flat().join(' ');
+    const allLogs = infoSpy.mock.calls.flat().join(' ');
     expect(allLogs).toContain('反思熔断');
 
-    logSpy.mockRestore();
+    infoSpy.mockRestore();
   }, 30000);
 });
 
