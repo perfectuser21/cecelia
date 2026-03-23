@@ -16,6 +16,7 @@
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { spawn } from 'child_process';
 import { getActiveProfile } from './model-profile.js';
 import { selectBestAccount } from './account-usage.js';
 
@@ -151,6 +152,8 @@ export async function callLLM(agentId, prompt, options = {}) {
         text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
       } else if (effectiveProvider === 'openai' || provider === 'openai') {
         text = await callOpenAIAPI(prompt, model, timeout, maxTokens);
+      } else if (effectiveProvider === 'codex' || provider === 'codex') {
+        text = await callCodexHeadless(prompt, model, { timeout });
       } else {
         throw new Error(`Unsupported provider: ${provider}`);
       }
@@ -398,6 +401,56 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
     onChunk(text, false);
     onChunk('', true);
   }
+}
+
+/**
+ * 通过 codex exec 无头调用 Codex（走本地 CLI，无需 API key 配额限制）
+ * model ID 格式: "codex/<model-name>"，传给 -m 时去掉前缀
+ * 读取 ~/.credentials/openai.json 中的 api_key 作为 CODEX_API_KEY
+ */
+async function callCodexHeadless(prompt, model, options = {}) {
+  const apiKey = getOpenAIKey();
+  if (!apiKey) throw new Error('OpenAI/Codex API key not available');
+  const timeout = options.timeout || 120000;
+  // model ID 格式为 "codex/gpt-5.4-mini"，提取实际模型名
+  const actualModel = model.startsWith('codex/') ? model.slice(6) : model;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('codex', ['exec', '-m', actualModel, prompt], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        CODEX_API_KEY: apiKey,
+        OPENAI_API_KEY: apiKey,
+      },
+    });
+
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`callCodexHeadless timeout after ${timeout}ms`));
+    }, timeout);
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', d => { stdout += d.toString(); });
+    child.stderr.on('data', d => { stderr += d.toString(); });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`codex exec failed (exit ${code}): ${stderr.slice(0, 300)}`));
+      } else {
+        const text = stdout.trim();
+        if (!text) reject(new Error('codex exec returned empty output'));
+        else resolve(text);
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }
 
 /**
