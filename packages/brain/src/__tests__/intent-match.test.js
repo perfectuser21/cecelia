@@ -59,7 +59,7 @@ describe('POST /api/brain/intent/match', () => {
   });
 
   it('正常查询返回 200 包含必要字段', async () => {
-    // Mock goals 查询（主查询 + 关键词补充）
+    // Mock objectives 查询
     pool.query
       .mockResolvedValueOnce({
         rows: [
@@ -75,7 +75,9 @@ describe('POST /api/brain/intent/match', () => {
           },
         ],
       })
-      // projects 查询
+      // key_results 查询
+      .mockResolvedValueOnce({ rows: [] })
+      // okr_projects 查询
       .mockResolvedValueOnce({
         rows: [],
       });
@@ -108,7 +110,8 @@ describe('POST /api/brain/intent/match', () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })  // key_results
+      .mockResolvedValueOnce({ rows: [] }); // okr_projects
 
     const res = await request(app)
       .post('/api/brain/intent/match')
@@ -140,7 +143,8 @@ describe('POST /api/brain/intent/match', () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })  // key_results
+      .mockResolvedValueOnce({ rows: [] }); // okr_projects
 
     const res = await request(app)
       .post('/api/brain/intent/match')
@@ -165,7 +169,8 @@ describe('POST /api/brain/intent/match', () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })  // key_results
+      .mockResolvedValueOnce({ rows: [] }); // okr_projects
 
     const res = await request(app)
       .post('/api/brain/intent/match')
@@ -174,7 +179,7 @@ describe('POST /api/brain/intent/match', () => {
     expect(res.body.matched_goals[0].score).toBe(0.6);
   });
 
-  it('type=area_okr 时 layer_guess 为 kr', async () => {
+  it('type=area_okr 时 layer_guess 为 objective', async () => {
     // 主查询返回 kr 类型
     pool.query
       .mockResolvedValueOnce({
@@ -198,12 +203,13 @@ describe('POST /api/brain/intent/match', () => {
       .post('/api/brain/intent/match')
       .send({ query: '关键结果' });
 
-    expect(res.body.layer_guess).toBe('kr');
+    expect(res.body.layer_guess).toBe('objective');
   });
 
   it('有 projects 但无 kr/okr goals 时 layer_guess 为 project', async () => {
     pool.query
-      .mockResolvedValueOnce({ rows: [] }) // goals
+      .mockResolvedValueOnce({ rows: [] }) // objectives
+      .mockResolvedValueOnce({ rows: [] }) // key_results
       .mockResolvedValueOnce({
         rows: [
           {
@@ -228,6 +234,7 @@ describe('POST /api/brain/intent/match', () => {
   it('layer_hint 有值时直接使用 layer_hint', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
@@ -239,6 +246,7 @@ describe('POST /api/brain/intent/match', () => {
 
   it('无匹配时 layer_guess 为 unknown，total 为 0', async () => {
     pool.query
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -256,6 +264,7 @@ describe('POST /api/brain/intent/match', () => {
   it('limit 参数被限制在 1-20 范围内（超过 20 截断为 20）', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
@@ -270,6 +279,7 @@ describe('POST /api/brain/intent/match', () => {
 
   it('limit 小于 1 时截断为 1', async () => {
     pool.query
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -309,6 +319,7 @@ describe('POST /api/brain/intent/match', () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rows: [] }) // key_results
       .mockResolvedValueOnce({
         rows: [
           {
