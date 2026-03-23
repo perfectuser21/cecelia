@@ -186,6 +186,121 @@ export async function triggerContractScan(pool, now = new Date(), spawnFn = null
   return { skipped_window: false, skipped_today: false, triggered: true };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// arch_review 调度器（每 4 小时）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 判断当前 UTC 时间是否在 arch_review 触发窗口内（每4小时：0/4/8/12/16/20 UTC，前5分钟）
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @returns {boolean}
+ */
+export function isInArchReviewWindow(now = new Date()) {
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  return utcHour % 4 === 0 && utcMinute < 5;
+}
+
+/**
+ * 检查过去 4 小时内是否已创建过 arch_review 任务（去重）
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<boolean>}
+ */
+export async function hasRecentArchReview(pool) {
+  const { rows } = await pool.query(
+    `SELECT id FROM tasks
+     WHERE task_type = 'arch_review'
+       AND created_at >= NOW() - INTERVAL '4 hours'
+     LIMIT 1`
+  );
+  return rows.length > 0;
+}
+
+/**
+ * 检查上次 arch_review 之后是否有至少 1 个 dev 任务完成（guard 条件）
+ * 若从未执行过 arch_review，则视为满足条件（直接允许触发）
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<boolean>}
+ */
+export async function hasCompletedDevTaskSinceLastArchReview(pool) {
+  const { rows: reviewRows } = await pool.query(
+    `SELECT created_at FROM tasks
+     WHERE task_type = 'arch_review'
+     ORDER BY created_at DESC
+     LIMIT 1`
+  );
+
+  if (reviewRows.length === 0) {
+    return true;
+  }
+
+  const lastReviewTime = reviewRows[0].created_at;
+
+  const { rows: devRows } = await pool.query(
+    `SELECT id FROM tasks
+     WHERE task_type = 'dev'
+       AND status = 'completed'
+       AND updated_at > $1
+     LIMIT 1`,
+    [lastReviewTime]
+  );
+
+  return devRows.length > 0;
+}
+
+/**
+ * arch_review 定时调度入口（每 4 小时，Tick 末尾调用）
+ * guard: 上次 review 后至少有 1 个 dev 任务完成
+ * @param {import('pg').Pool} pool
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @returns {Promise<{ triggered: boolean, skipped_window: boolean, skipped_recent: boolean, skipped_guard: boolean }>}
+ */
+export async function triggerArchReview(pool, now = new Date()) {
+  if (!isInArchReviewWindow(now)) {
+    return { triggered: false, skipped_window: true, skipped_recent: false, skipped_guard: false };
+  }
+
+  try {
+    const alreadyRecent = await hasRecentArchReview(pool);
+    if (alreadyRecent) {
+      return { triggered: false, skipped_window: false, skipped_recent: true, skipped_guard: false };
+    }
+  } catch (err) {
+    console.warn('[arch-review] 去重检查失败（继续执行）:', err.message);
+  }
+
+  try {
+    const guardPassed = await hasCompletedDevTaskSinceLastArchReview(pool);
+    if (!guardPassed) {
+      console.log('[arch-review] Guard 未通过：上次 review 后无 dev 任务完成，跳过');
+      return { triggered: false, skipped_window: false, skipped_recent: false, skipped_guard: true };
+    }
+  } catch (err) {
+    console.warn('[arch-review] Guard 检查失败（继续执行）:', err.message);
+  }
+
+  try {
+    const timestamp = now.toISOString().slice(0, 16).replace('T', ' ');
+    const { rows } = await pool.query(
+      `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
+       VALUES ($1, 'arch_review', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'xian')
+       RETURNING id`,
+      [
+        `[arch-review] 定时架构巡检 ${timestamp} UTC`,
+        JSON.stringify({ scope: 'scheduled', trigger: '4h' }),
+      ]
+    );
+    const task_id = rows[0].id;
+    console.log(`[arch-review] Created arch_review task ${task_id}`);
+    return { triggered: true, skipped_window: false, skipped_recent: false, skipped_guard: false, task_id };
+  } catch (err) {
+    console.error('[arch-review] 创建任务失败:', err.message);
+    return { triggered: false, skipped_window: false, skipped_recent: false, skipped_guard: false, error: err.message };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /** @module daily-review-scheduler
  * 每日代码审查调度入口（Tick 末尾调用）
  * 非触发时间直接跳过，触发时间为每个活跃 repo 创建 code_review task

@@ -990,7 +990,7 @@
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-23T09:56:55.311Z",
+  "generatedAt": "2026-03-23T15:07:46.371Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
