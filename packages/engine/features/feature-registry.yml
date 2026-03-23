@@ -15,10 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.91.0"
+version: "3.92.0"
 updated: "2026-03-23"
-# ci-trigger: 13.33.3
+# ci-trigger: 13.34.0
 changelog:
+
+  - version: "13.34.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): CI Gate 假 DoD Test 检测（check-fake-dod-tests.cjs + CI L1 fake-dod-test-check job）"
+    scope: packages/engine/scripts/devgate/,packages/engine/hooks/,.github/workflows/
 
   - version: "13.33.3"
     date: "2026-03-23"
