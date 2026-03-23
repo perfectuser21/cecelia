@@ -236,6 +236,27 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 2.6: DoD 完整性检查（镜像 CI check-dod-mapping）=====
+    # 检查 task card 无残留 [ ] 条目，与 CI 对齐（dod_complete）
+    # 若有未验证条目 → blocked，要求先跑 verify-step Gate 2
+    if [[ -f "$dev_mode_file" ]]; then
+        local _task_card_rel _task_card_abs _worktree_root _dod_unchecked
+        _task_card_rel=$(grep "^task_card:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        _worktree_root=$(dirname "$dev_mode_file")
+        _task_card_abs="$_worktree_root/$_task_card_rel"
+        if [[ -n "$_task_card_rel" && -f "$_task_card_abs" ]]; then
+            _dod_unchecked=$(grep -cE '^\s*-\s+\[ \]\s+\[' "$_task_card_abs" 2>/dev/null || echo "0")
+            if [[ "$_dod_unchecked" -gt 0 ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "dod_complete" "blocked" "DoD 有 ${_dod_unchecked} 条未验证"
+                fi
+                _devloop_jq -n --argjson n "$_dod_unchecked" \
+                    '{"status":"blocked","reason":"DoD 有 \($n) 条未验证（[ ] 未改为 [x]），状态机与 CI 不同步","action":"运行 verify-step.sh step2，Gate 2 自动标记 [x]；若已跑过则检查 Test 命令是否实际通过"}'
+                return 2
+            fi
+        fi
+    fi
+
     # ===== 条件 3: PR 是否已创建？ =====
     local pr_number="" pr_state=""
 
