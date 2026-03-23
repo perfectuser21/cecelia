@@ -194,21 +194,21 @@ describe('identifyWorkType - single 优先于 feature（匹配顺序）', () => 
 // getTaskLocation - HK 类型专项
 // ============================================================
 
-describe('getTaskLocation - HK 路由类型', () => {
-  it('talk → hk', () => {
-    expect(getTaskLocation('talk')).toBe('hk');
+describe('getTaskLocation - XIAN 通用路由类型', () => {
+  it('talk → xian', () => {
+    expect(getTaskLocation('talk')).toBe('xian');
   });
 
-  it('research → hk', () => {
-    expect(getTaskLocation('research')).toBe('hk');
+  it('research → xian', () => {
+    expect(getTaskLocation('research')).toBe('xian');
   });
 
-  it('data → hk', () => {
-    expect(getTaskLocation('data')).toBe('hk');
+  it('data → xian', () => {
+    expect(getTaskLocation('data')).toBe('xian');
   });
 
-  it('explore → hk', () => {
-    expect(getTaskLocation('explore')).toBe('hk');
+  it('explore → xian', () => {
+    expect(getTaskLocation('explore')).toBe('xian');
   });
 });
 
@@ -264,12 +264,12 @@ describe('getTaskLocation - 边界情况', () => {
     expect(getTaskLocation('DEV')).toBe('us');
   });
 
-  it('大小写不敏感：TALK → hk', () => {
-    expect(getTaskLocation('TALK')).toBe('hk');
+  it('大小写不敏感：TALK → xian', () => {
+    expect(getTaskLocation('TALK')).toBe('xian');
   });
 
-  it('大小写不敏感：Research → hk', () => {
-    expect(getTaskLocation('Research')).toBe('hk');
+  it('大小写不敏感：Research → xian', () => {
+    expect(getTaskLocation('Research')).toBe('xian');
   });
 });
 
@@ -329,12 +329,12 @@ describe('routeTaskCreate - task_type → skill + location 映射', () => {
   const cases = [
     { task_type: 'dev',                location: 'us', skill: '/dev' },
     { task_type: 'review',             location: 'us', skill: '/code-review' },
-    { task_type: 'talk',               location: 'hk', skill: '/cecelia' },
-    { task_type: 'data',               location: 'hk', skill: '/sync-hk' },
+    { task_type: 'talk',               location: 'xian', skill: '/cecelia' },
+    { task_type: 'data',               location: 'xian', skill: '/sync-hk' },
     { task_type: 'qa',                 location: 'us', skill: '/code-review' },
     { task_type: 'audit',              location: 'us', skill: '/code-review' },
-    { task_type: 'research',           location: 'hk', skill: '/research' },
-    { task_type: 'explore',            location: 'hk', skill: '/explore' },
+    { task_type: 'research',           location: 'xian', skill: '/research' },
+    { task_type: 'explore',            location: 'xian', skill: '/explore' },
     { task_type: 'knowledge',          location: 'xian', skill: '/knowledge' },
     { task_type: 'dept_heartbeat',     location: 'us',   skill: '/cecelia' },
     { task_type: 'architecture_design',location: 'us',   skill: '/architect design' },
@@ -392,9 +392,9 @@ describe('getLocationsForTaskTypes', () => {
   it('批量返回多个 task_type 的 location 映射', () => {
     const result = getLocationsForTaskTypes(['dev', 'talk', 'research', 'data']);
     expect(result.dev).toBe('us');
-    expect(result.talk).toBe('hk');
-    expect(result.research).toBe('hk');
-    expect(result.data).toBe('hk');
+    expect(result.talk).toBe('xian');
+    expect(result.research).toBe('xian');
+    expect(result.data).toBe('xian');
   });
 
   it('空数组返回空对象', () => {
@@ -423,16 +423,16 @@ describe('isValidLocation', () => {
     expect(isValidLocation('us')).toBe(true);
   });
 
-  it('hk 是合法 location', () => {
-    expect(isValidLocation('hk')).toBe(true);
+  it('hk 已废弃，不再是合法 location（HK MiniMax 已移除）', () => {
+    expect(isValidLocation('hk')).toBe(false);
   });
 
   it('大写 US 也合法（大小写不敏感）', () => {
     expect(isValidLocation('US')).toBe(true);
   });
 
-  it('大写 HK 也合法', () => {
-    expect(isValidLocation('HK')).toBe(true);
+  it('大写 HK 已废弃，不再合法', () => {
+    expect(isValidLocation('HK')).toBe(false);
   });
 
   it('任意其他字符串非法', () => {
@@ -500,9 +500,9 @@ describe('getValidTaskTypes', () => {
 // ============================================================
 
 describe('LOCATION_MAP 完整性', () => {
-  it('所有 value 只能是 us、hk 或 xian', () => {
+  it('所有 value 只能是 us、xian 或 xian_m1', () => {
     for (const [type, loc] of Object.entries(LOCATION_MAP)) {
-      expect(['us', 'hk', 'xian'], `task_type=${type} location 非法`).toContain(loc);
+      expect(['us', 'xian', 'xian_m1'], `task_type=${type} location 非法`).toContain(loc);
     }
   });
 
@@ -511,14 +511,11 @@ describe('LOCATION_MAP 完整性', () => {
     expect(LOCATION_MAP.architecture_design).toBe('us');
   });
 
-  it('LOCATION_MAP 中 HK 类型集合正确', () => {
-    const hkTypes = Object.entries(LOCATION_MAP)
-      .filter(([, loc]) => loc === 'hk')
-      .map(([t]) => t);
-    expect(hkTypes).toContain('talk');
-    expect(hkTypes).toContain('research');
-    expect(hkTypes).toContain('data');
-    expect(hkTypes).toContain('explore');
+  it('LOCATION_MAP 中通用任务路由到 xian（不再路由到 hk）', () => {
+    expect(LOCATION_MAP.talk).toBe('xian');
+    expect(LOCATION_MAP.research).toBe('xian');
+    expect(LOCATION_MAP.data).toBe('xian');
+    expect(LOCATION_MAP.explore).toBe('xian');
   });
 });
 

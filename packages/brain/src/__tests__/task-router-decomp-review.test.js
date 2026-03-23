@@ -21,7 +21,7 @@ describe('task-router decomp_review', () => {
   it('已有类型仍然正常工作', async () => {
     const mod = await import('../task-router.js');
     expect(mod.getTaskLocation('dev')).toBe('us');
-    expect(mod.getTaskLocation('talk')).toBe('hk');
+    expect(mod.getTaskLocation('talk')).toBe('xian');
     expect(mod.isValidTaskType('dev')).toBe(true);
     expect(mod.isValidTaskType('research')).toBe(true);
   });
