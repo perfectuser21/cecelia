@@ -1,14 +1,12 @@
-# Brain 部署脚本支持 launchd 模式
+# 重构 reflection.runReflection（圈复杂度 39 → 10）
 
 ## 背景
 
-Brain 在 Mac mini 上通过 **launchd** 管理（`com.cecelia.brain.plist`），不用 Docker。
-现有 `brain-deploy.sh` 全程依赖 Docker，无法在无 Docker 环境下工作，导致 deploy webhook 链路断裂。
+代码复杂度扫描发现 `packages/brain/src/desire/reflection.js` 中 `runReflection` 函数圈复杂度为 39，严重超过阈值 10。函数承担了静默期检查、accumulator 阈值校验、记忆去重、LLM 调用、熔断器逻辑、Jaccard 相似度去重、洞察写入等多项职责，需通过提取子函数的方式降低复杂度。
 
 ## 成功标准
 
-1. `brain-deploy.sh` 新增 launchd 模式：Docker 不可用时自动切换，跳过镜像构建，用 `launchctl kickstart -k` 重启
-2. `brain-reload.sh` 新增 launchd 模式：Docker 不可用时用 launchctl 替代 docker compose restart
-3. `bash scripts/brain-deploy.sh --dry-run` 在当前 Mac mini 输出 launchd 模式路径
-4. 修复 `/home/xx/` 硬编码路径 → `${HOST_HOME:-$HOME}`
-5. 所有现有测试通过
+1. [ARTIFACT] runReflection 函数内条件分支数量显著减少（if/else/catch/for/while 关键字 < 15 个）
+2. [BEHAVIOR] 导出函数签名不变：`export async function runReflection(pool)` 保持不变
+3. [PRESERVE] _loadBreakerState / _saveBreakerState / _resetBreakerStateForTest 导出不变
+4. [GATE] Brain 单元测试全部通过
