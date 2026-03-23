@@ -114,7 +114,6 @@ export async function checkOkrInitiativeCompletion(pool) {
               completed_initiative_id: initiative.id,
             }),
           ]);
-          console.log(`[okr-closer] Created okr_scope_plan task for scope ${initiative.scope_id} (initiative ${initiative.title} completed)`);
         }
       }
       // remaining === 0 时由 checkOkrScopeCompletion 处理
@@ -215,7 +214,6 @@ export async function checkOkrScopeCompletion(pool) {
             completed_scope_id: scope.id,
           }),
         ]);
-        console.log(`[okr-closer] Created okr_project_plan task for project ${scope.project_id} (scope ${scope.title} completed)`);
       }
     }
 
@@ -290,7 +288,6 @@ export async function checkOkrProjectCompletion(pool) {
       // 非阻塞
     }
 
-    console.log(`[okr-closer] OKR Project ${project.title} (${project.id}) completed`);
     closed.push({ id: project.id, title: project.title });
   }
 
