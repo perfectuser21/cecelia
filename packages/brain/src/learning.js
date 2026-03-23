@@ -258,8 +258,14 @@ export async function searchRelevantLearnings(context = {}, limit = 10) {
     return results.slice(0, limit);
   } catch (err) {
     console.error(`[learning] Failed to search relevant learnings: ${err.message}`);
-    // Fallback to getRecentLearnings
-    return getRecentLearnings(null, limit);
+    // Fallback to keyword search (preserves relevance_score); only use getRecentLearnings if that also fails
+    try {
+      const fallback = await keywordSearchLearnings(context, limit);
+      fallback.sort((a, b) => b.relevance_score - a.relevance_score);
+      return fallback;
+    } catch {
+      return getRecentLearnings(null, limit);
+    }
   }
 }
 
