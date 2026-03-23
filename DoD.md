@@ -1,16 +1,10 @@
-# DoD: 删除 agent_seal 旧审查系统残留
+# DoD: 修复 capability-scanner skillStats recent_30d 缺失
 
-- [x] [ARTIFACT] verify-step.sh 删除所有 Gate 2 agent_seal 检查
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/verify-step.sh','utf8');if(c.includes('agent_seal'))process.exit(1)"
+- [x] [ARTIFACT] skillStats SQL 查询新增 recent_30d 计算列
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/capability-scanner.js','utf8');if(!c.includes('recent_30d'))process.exit(1);console.log('ok')"
 
-- [x] [ARTIFACT] stop-dev.sh 删除 agent_seal 完整性检查块
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/stop-dev.sh','utf8');if(c.includes('AGENT_SEAL'))process.exit(1)"
+- [x] [BEHAVIOR] failing 状态测试存在且通过（success_rate < 30%）
+  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=3072' npx vitest run src/__tests__/capability-scanner.test.js 2>&1 | tail -5"
 
-- [x] [ARTIFACT] bash-guard.sh 删除 agent_seal 白名单
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/bash-guard.sh','utf8');if(c.includes('agent-seal'))process.exit(1)"
-
-- [x] [BEHAVIOR] verify-step 测试全通过
-  Test: manual:bash -c "cd packages/engine && npx vitest run tests/hooks/verify-step.test.ts 2>&1 | tail -3"
-
-- [x] [GATE] Engine 版本 bump 到 13.7.4
-  Test: manual:node -e "const p=require('./packages/engine/package.json');if(p.version!=='13.7.4')process.exit(1)"
+- [x] [PRESERVE] 现有 capability-scanner 全部测试通过（9/9）
+  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=3072' npx vitest run src/__tests__/capability-scanner.test.js 2>&1 | grep 'Tests'"
