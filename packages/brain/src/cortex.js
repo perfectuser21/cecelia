@@ -566,31 +566,11 @@ function createCortexFallback(event, reason) {
   };
 }
 
-/**
- * 皮层深度分析入口
- * @param {Object} event - 事件包
- * @param {Object} thalamusDecision - 丘脑的初步判断
- * @returns {Promise<Object>} - Cortex Decision
- */
-async function analyzeDeep(event, thalamusDecision = null) {
-  // 反思熔断：相同事件模式连续触发超过阈值时，跳过 LLM 调用
-  const _eventHash = _computeEventHash(event);
-  const _breaker = await _checkReflectionBreaker(_eventHash);
-  if (_breaker.open) {
-    console.log(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
-    return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);
-  }
+// ============================================================
+// analyzeDeep 辅助函数（从主函数提取，降低圈复杂度）
+// ============================================================
 
-  console.log(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
-
-  // 构建上下文
-  const context = {
-    event,
-    thalamus_judgment: thalamusDecision,
-    timestamp: new Date().toISOString()
-  };
-
-  // 获取相关历史（最近的决策日志）
+async function _fetchDecisionHistory() {
   try {
     const historyResult = await pool.query(`
       SELECT trigger, input_summary, llm_output_json, status, created_at
@@ -599,13 +579,14 @@ async function analyzeDeep(event, thalamusDecision = null) {
       ORDER BY created_at DESC
       LIMIT 5
     `);
-    context.recent_decisions = historyResult.rows;
+    return historyResult.rows;
   } catch (err) {
     console.error('[cortex] Failed to fetch decision history:', err.message);
-    context.recent_decisions = [];
+    return [];
   }
+}
 
-  // 获取当前系统状态
+async function _fetchSystemStatus() {
   try {
     const statusResult = await pool.query(`
       SELECT
@@ -613,60 +594,14 @@ async function analyzeDeep(event, thalamusDecision = null) {
         (SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND updated_at > NOW() - INTERVAL '24 hours') as recent_failures,
         (SELECT COUNT(*) FROM goals WHERE status = 'in_progress') as active_goals
     `);
-    context.system_status = statusResult.rows[0];
+    return statusResult.rows[0];
   } catch (err) {
     console.error('[cortex] Failed to fetch system status:', err.message);
+    return null;
   }
+}
 
-  // Build #1: 注入历史经验到皮层（使用语义检索）
-  const learnings = await searchRelevantLearnings({
-    task_type: event.failed_task?.task_type || event.task?.task_type,
-    failure_class: event.failure_history?.[0]?.failure_classification?.class,
-    event_type: event.type
-  }, 5);
-
-  if (learnings.length > 0) {
-    context.historical_learnings = learnings.map((l, i) => ({
-      rank: i + 1,
-      relevance_score: l.relevance_score || 0,
-      title: l.title,
-      insight: (l.content || '').slice(0, 300)
-    }));
-  }
-
-  // Build #2: 注入历史 Cortex 分析（相似问题的深度分析结论）
-  try {
-    const historicalAnalyses = await searchRelevantAnalyses({
-      task_type: event.failed_task?.task_type || event.task?.task_type,
-      failure_class: event.failure_history?.[0]?.failure_classification?.class,
-      trigger_event: event.type
-    }, 5);
-
-    if (historicalAnalyses.length > 0) {
-      context.historical_analyses = historicalAnalyses.map((a, i) => ({
-        rank: i + 1,
-        relevance_score: a.relevance_score || 0,
-        root_cause: a.root_cause,
-        mitigations: a.mitigations ? JSON.parse(a.mitigations).slice(0, 3) : [],
-        created_at: a.created_at
-      }));
-    }
-  } catch (err) {
-    console.error('[cortex] Failed to fetch historical analyses:', err.message);
-  }
-
-  // Build #3: 注入 self-model（Cecelia 对自己的认知，让皮层决策有自我意识）
-  try {
-    context.self_model = await getSelfModel();
-  } catch (err) {
-    console.error('[cortex] Failed to fetch self-model:', err.message);
-  }
-
-  // Inject adjustable parameters for RCA requests
-  if (event.type === 'rca_request' && thalamusDecision?.adjustable_params) {
-    context.adjustable_params = thalamusDecision.adjustable_params;
-  }
-
+async function _enrichContextWithCrossTaskPatterns(context) {
   // Build #4: 注入跨任务同类失败模式（来自 learnings 表 category='failure_pattern'）
   // 让 RCA 能看到系统级别的重复失败模式，不只是当前任务历史
   try {
@@ -696,6 +631,172 @@ async function analyzeDeep(event, thalamusDecision = null) {
     console.error('[cortex] Failed to fetch cross-task failure patterns:', err.message);
     // 降级：不影响主流程，cortex_cross_task_query_failed
   }
+}
+
+async function _buildAnalysisContext(event, thalamusDecision) {
+  const context = {
+    event,
+    thalamus_judgment: thalamusDecision,
+    timestamp: new Date().toISOString()
+  };
+
+  context.recent_decisions = await _fetchDecisionHistory();
+  const systemStatus = await _fetchSystemStatus();
+  if (systemStatus) context.system_status = systemStatus;
+
+  // Build #1: 注入历史经验到皮层（使用语义检索）
+  const learnings = await searchRelevantLearnings({
+    task_type: event.failed_task?.task_type || event.task?.task_type,
+    failure_class: event.failure_history?.[0]?.failure_classification?.class,
+    event_type: event.type
+  }, 5);
+  if (learnings.length > 0) {
+    context.historical_learnings = learnings.map((l, i) => ({
+      rank: i + 1,
+      relevance_score: l.relevance_score || 0,
+      title: l.title,
+      insight: (l.content || '').slice(0, 300)
+    }));
+  }
+
+  // Build #2: 注入历史 Cortex 分析（相似问题的深度分析结论）
+  try {
+    const historicalAnalyses = await searchRelevantAnalyses({
+      task_type: event.failed_task?.task_type || event.task?.task_type,
+      failure_class: event.failure_history?.[0]?.failure_classification?.class,
+      trigger_event: event.type
+    }, 5);
+    if (historicalAnalyses.length > 0) {
+      context.historical_analyses = historicalAnalyses.map((a, i) => ({
+        rank: i + 1,
+        relevance_score: a.relevance_score || 0,
+        root_cause: a.root_cause,
+        mitigations: a.mitigations ? JSON.parse(a.mitigations).slice(0, 3) : [],
+        created_at: a.created_at
+      }));
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to fetch historical analyses:', err.message);
+  }
+
+  // Build #3: 注入 self-model（Cecelia 对自己的认知，让皮层决策有自我意识）
+  try {
+    context.self_model = await getSelfModel();
+  } catch (err) {
+    console.error('[cortex] Failed to fetch self-model:', err.message);
+  }
+
+  // Inject adjustable parameters for RCA requests
+  if (event.type === 'rca_request' && thalamusDecision?.adjustable_params) {
+    context.adjustable_params = thalamusDecision.adjustable_params;
+  }
+
+  await _enrichContextWithCrossTaskPatterns(context);
+
+  return context;
+}
+
+async function _handleLLMSuccess(event, response, timing) {
+  console.log(`[cortex] LLM 响应完成 prompt_tokens_est=${timing.prompt_tokens_est} response_ms=${timing.response_ms}`);
+  const decision = parseCortexDecision(response);
+
+  // 验证
+  const validation = validateCortexDecision(decision);
+  if (!validation.valid) {
+    console.error('[cortex] Invalid decision:', validation.errors);
+    return createCortexFallback(event, validation.errors.join('; '));
+  }
+
+  // 输出去重熔断：检查 LLM 输出的 root_cause 是否与近期诊断重复
+  const _outputHash = _computeOutputHash(decision);
+  const _outputDedup = await _checkOutputDedup(_outputHash);
+  if (_outputDedup.duplicate) {
+    console.log(`[cortex] 输出去重熔断：root_cause 相同诊断已出现 ${_outputDedup.count} 次，停止回声 (hash=${_outputHash})`);
+    return createCortexFallback(event, `输出去重熔断：相同诊断已输出 ${_outputDedup.count} 次，皮层回声已阻断`);
+  }
+
+  // 记录到决策日志（含计时 metadata）
+  await logCortexDecision(event, decision, timing);
+
+  // 记录 learnings
+  if (decision.learnings && decision.learnings.length > 0) {
+    await recordLearnings(decision.learnings, event);
+  }
+
+  // P2: Store absorption policy if generated
+  if (decision.absorption_policy) {
+    const signature = event.signature || event.failed_task?.error_signature || 'cortex-generated';
+    const policyId = await storeAbsorptionPolicy(decision.absorption_policy, {
+      event_type: event.type,
+      task_id: event.failed_task?.id || event.task?.id,
+      signature
+    });
+    if (policyId) {
+      decision.absorption_policy_id = policyId;
+    }
+  }
+
+  return decision;
+}
+
+async function _handleLLMError(err, event) {
+  const timeout_reason = classifyTimeoutReason(err);
+  console.error(JSON.stringify({
+    level: 'error',
+    source: 'cortex',
+    event: 'deep_analysis_failed',
+    timeout_reason,
+    http_status: err.status ?? null,
+    elapsed_ms: err.elapsed_ms ?? null,
+    message: err.message,
+  }));
+  // 记录失败计时（若 callCortexLLM 已附加 _timing）
+  if (err._timing) {
+    const t = err._timing;
+    console.log(`[cortex] LLM 调用失败 prompt_tokens_est=${t.prompt_tokens_est} response_ms=${t.response_ms} timed_out=${t.timed_out} error_type=${t.error_type}`);
+    logCortexDecision(event, null, t, err.message).catch(() => {});
+  }
+  await recordLLMError('cortex', err, { event_type: event.type }, {
+    http_status: err.status ?? null,
+    elapsed_ms: err.elapsed_ms ?? null,
+    model: err.llm_model ?? null,
+    provider: err.llm_provider ?? null,
+    fallback_attempt: err.fallback_attempt ?? null,
+  });
+  // 超时事件计入熔断器（防止无效重试）
+  if (err.degraded === true || /timed out/i.test(err.message)) {
+    await recordFailure('cortex-llm').catch(() => {});
+    // 写入任务 error_message（如果事件关联了具体任务）
+    if (event.task_id) {
+      try {
+        await pool.query(
+          `UPDATE tasks SET error_message = $1, updated_at = NOW() WHERE id = $2`,
+          [`Cortex error [timeout_reason=${timeout_reason}]: ${err.message}`, event.task_id]
+        );
+      } catch { /* 非关键路径，忽略错误 */ }
+    }
+  }
+  return createCortexFallback(event, err.message);
+}
+
+/**
+ * 皮层深度分析入口
+ * @param {Object} event - 事件包
+ * @param {Object} thalamusDecision - 丘脑的初步判断
+ * @returns {Promise<Object>} - Cortex Decision
+ */
+async function analyzeDeep(event, thalamusDecision = null) {
+  // 反思熔断：相同事件模式连续触发超过阈值时，跳过 LLM 调用
+  const _eventHash = _computeEventHash(event);
+  const _breaker = await _checkReflectionBreaker(_eventHash);
+  if (_breaker.open) {
+    console.log(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
+    return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);
+  }
+
+  console.log(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
+
+  const context = await _buildAnalysisContext(event, thalamusDecision);
 
   // In test environments (vitest) without a callLLM mock, skip LLM call to avoid bridge timeouts
   if (process.env.VITEST && typeof callLLM.mock === 'undefined') {
@@ -707,86 +808,9 @@ async function analyzeDeep(event, thalamusDecision = null) {
 
   try {
     const { text: response, timing } = await callCortexLLM(prompt);
-    console.log(`[cortex] LLM 响应完成 prompt_tokens_est=${timing.prompt_tokens_est} response_ms=${timing.response_ms}`);
-    const decision = parseCortexDecision(response);
-
-    // 验证
-    const validation = validateCortexDecision(decision);
-    if (!validation.valid) {
-      console.error('[cortex] Invalid decision:', validation.errors);
-      return createCortexFallback(event, validation.errors.join('; '));
-    }
-
-    // 输出去重熔断：检查 LLM 输出的 root_cause 是否与近期诊断重复
-    const _outputHash = _computeOutputHash(decision);
-    const _outputDedup = await _checkOutputDedup(_outputHash);
-    if (_outputDedup.duplicate) {
-      console.log(`[cortex] 输出去重熔断：root_cause 相同诊断已出现 ${_outputDedup.count} 次，停止回声 (hash=${_outputHash})`);
-      return createCortexFallback(event, `输出去重熔断：相同诊断已输出 ${_outputDedup.count} 次，皮层回声已阻断`);
-    }
-
-    // 记录到决策日志（含计时 metadata）
-    await logCortexDecision(event, decision, timing);
-
-    // 记录 learnings
-    if (decision.learnings && decision.learnings.length > 0) {
-      await recordLearnings(decision.learnings, event);
-    }
-
-    // P2: Store absorption policy if generated
-    if (decision.absorption_policy) {
-      const signature = event.signature || event.failed_task?.error_signature || 'cortex-generated';
-      const policyId = await storeAbsorptionPolicy(decision.absorption_policy, {
-        event_type: event.type,
-        task_id: event.failed_task?.id || event.task?.id,
-        signature
-      });
-
-      if (policyId) {
-        decision.absorption_policy_id = policyId;
-      }
-    }
-
-    return decision;
-
+    return await _handleLLMSuccess(event, response, timing);
   } catch (err) {
-    const timeout_reason = classifyTimeoutReason(err);
-    console.error(JSON.stringify({
-      level: 'error',
-      source: 'cortex',
-      event: 'deep_analysis_failed',
-      timeout_reason,
-      http_status: err.status ?? null,
-      elapsed_ms: err.elapsed_ms ?? null,
-      message: err.message,
-    }));
-    // 记录失败计时（若 callCortexLLM 已附加 _timing）
-    if (err._timing) {
-      const t = err._timing;
-      console.log(`[cortex] LLM 调用失败 prompt_tokens_est=${t.prompt_tokens_est} response_ms=${t.response_ms} timed_out=${t.timed_out} error_type=${t.error_type}`);
-      logCortexDecision(event, null, t, err.message).catch(() => {});
-    }
-    await recordLLMError('cortex', err, { event_type: event.type }, {
-      http_status: err.status ?? null,
-      elapsed_ms: err.elapsed_ms ?? null,
-      model: err.llm_model ?? null,
-      provider: err.llm_provider ?? null,
-      fallback_attempt: err.fallback_attempt ?? null,
-    });
-    // 超时事件计入熔断器（防止无效重试）
-    if (err.degraded === true || /timed out/i.test(err.message)) {
-      await recordFailure('cortex-llm').catch(() => {});
-      // 写入任务 error_message（如果事件关联了具体任务）
-      if (event.task_id) {
-        try {
-          await pool.query(
-            `UPDATE tasks SET error_message = $1, updated_at = NOW() WHERE id = $2`,
-            [`Cortex error [timeout_reason=${timeout_reason}]: ${err.message}`, event.task_id]
-          );
-        } catch { /* 非关键路径，忽略错误 */ }
-      }
-    }
-    return createCortexFallback(event, err.message);
+    return await _handleLLMError(err, event);
   }
 }
 
