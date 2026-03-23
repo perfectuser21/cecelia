@@ -15,10 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.92.0"
+version: "3.93.0"
 updated: "2026-03-23"
-# ci-trigger: 13.34.0
+# ci-trigger: 13.35.0
 changelog:
+
+  - version: "13.35.0"
+    date: "2026-03-23"
+    summary: "[CONFIG] feat(engine): CI Gate manual: 命令白名单检查（check-manual-cmd-whitelist.cjs + verify-step.sh + CI L1 job）"
+    scope: packages/engine/scripts/devgate/,packages/engine/hooks/,.github/workflows/
 
   - version: "13.34.0"
     date: "2026-03-23"

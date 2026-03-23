@@ -128,6 +128,25 @@ $found_fake
     Test: contract:my-behavior"
     fi
 
+    # 检查 manual: 命令白名单（CI 只允许 node/npm/npx/curl/bash/psql）
+    local WHITELIST_SCRIPT=""
+    for _dir in "$(dirname "${BASH_SOURCE[0]}")/../scripts/devgate" "$PROJECT_ROOT/packages/engine/scripts/devgate"; do
+        if [[ -f "$_dir/check-manual-cmd-whitelist.cjs" ]]; then
+            WHITELIST_SCRIPT="$_dir/check-manual-cmd-whitelist.cjs"
+            break
+        fi
+    done
+
+    if [[ -n "$WHITELIST_SCRIPT" ]]; then
+        local whitelist_out
+        whitelist_out=$(node "$WHITELIST_SCRIPT" "$task_card" 2>&1) || {
+            _fail "Task Card 包含非白名单 manual: 命令（CI 不允许）：
+$whitelist_out
+  CI 白名单命令：node / npm / npx / curl / bash / psql
+  请用 manual:node -e \"...\" 替代非白名单命令"
+        }
+    fi
+
     # Gate 1: CI 镜像 — Stage 1 跳过完整 DoD 检查（未勾选项在 Stage 1 是预期的）
     # Stage 1 只写 Spec/DoD 条目，验证在 Stage 2 做。CI L1 会在 push 后做完整检查。
     echo "  ⏭ [Gate 1] Stage 1 跳过 DoD 完整检查（CI L1 将在 push 后检查）" >&2

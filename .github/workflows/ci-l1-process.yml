@@ -902,11 +902,57 @@ jobs:
 
           node packages/engine/scripts/devgate/check-fake-dod-tests.cjs "$TASK_CARD_REL"
 
+  manual-cmd-whitelist-check:
+    name: Manual Command Whitelist Check
+    needs: [verify-dev-workflow, detect-stage]
+    if: needs.detect-stage.outputs.current_stage >= 2
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check manual command whitelist
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Manual Command Whitelist Check"
+          echo "  检测 Task Card 中 manual: 命令是否在 CI 白名单内"
+          echo "  白名单：node / npm / npx / curl / bash / psql"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # 从 .dev-mode 找 task card 路径
+          DEV_MODE_FILE=$(find . -maxdepth 1 -name ".dev-mode.*" 2>/dev/null | head -1 || echo "")
+          if [[ -z "$DEV_MODE_FILE" ]]; then
+            echo "⚠️  未找到 .dev-mode 文件，跳过检查（向后兼容）"
+            exit 0
+          fi
+
+          TASK_CARD_REL=$(grep "^task_card:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+          if [[ -z "$TASK_CARD_REL" ]]; then
+            echo "⚠️  .dev-mode 中无 task_card 字段，跳过检查"
+            exit 0
+          fi
+
+          if [[ ! -f "$TASK_CARD_REL" ]]; then
+            echo "⚠️  Task Card 文件不存在: $TASK_CARD_REL，跳过检查"
+            exit 0
+          fi
+
+          node packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs "$TASK_CARD_REL"
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan, rci-stale-refs-check, fake-dod-test-check]
+    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan, rci-stale-refs-check, fake-dod-test-check, manual-cmd-whitelist-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1024,6 +1070,16 @@ jobs:
             fi
           else
             echo "Stage $STAGE < 2: skipping Fake DoD Test Check (expected skipped)"
+          fi
+
+          # Stage 2+: Manual Command Whitelist Check
+          if [ "$STAGE" -ge 2 ]; then
+            if [ "${{ needs.manual-cmd-whitelist-check.result }}" != "success" ]; then
+              echo "FAIL: Manual Command Whitelist Check (${{ needs.manual-cmd-whitelist-check.result }})"
+              FAILED=true
+            fi
+          else
+            echo "Stage $STAGE < 2: skipping Manual Command Whitelist Check (expected skipped)"
           fi
 
           if [ "$FAILED" = "true" ]; then
