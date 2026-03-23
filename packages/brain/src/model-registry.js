@@ -71,6 +71,68 @@ export const MODELS = [
     provider: 'openai',
     tier: 'fast',
   },
+  // OpenAI API 补充模型
+  {
+    id: 'gpt-5.4',
+    name: 'GPT-5.4',
+    provider: 'openai',
+    tier: 'premium',
+  },
+  {
+    id: 'gpt-5.4-pro',
+    name: 'GPT-5.4 Pro',
+    provider: 'openai',
+    tier: 'premium',
+  },
+  {
+    id: 'gpt-5.4-nano',
+    name: 'GPT-5.4 Nano',
+    provider: 'openai',
+    tier: 'fast',
+  },
+  {
+    id: 'o3',
+    name: 'o3',
+    provider: 'openai',
+    tier: 'premium',
+  },
+  // Codex 无头 provider 模型（走 codex exec subprocess）
+  {
+    id: 'codex/gpt-5.4',
+    name: 'Codex GPT-5.4',
+    provider: 'codex',
+    tier: 'premium',
+  },
+  {
+    id: 'codex/gpt-5.4-mini',
+    name: 'Codex GPT-5.4 Mini',
+    provider: 'codex',
+    tier: 'fast',
+  },
+  {
+    id: 'codex/gpt-5.3-codex',
+    name: 'Codex GPT-5.3',
+    provider: 'codex',
+    tier: 'standard',
+  },
+  {
+    id: 'codex/gpt-5.2',
+    name: 'Codex GPT-5.2',
+    provider: 'codex',
+    tier: 'standard',
+  },
+  {
+    id: 'codex/gpt-5.1-codex-max',
+    name: 'Codex GPT-5.1 Max',
+    provider: 'codex',
+    tier: 'premium',
+  },
+  {
+    id: 'codex/gpt-5.1-codex-mini',
+    name: 'Codex GPT-5.1 Mini',
+    provider: 'codex',
+    tier: 'fast',
+  },
 ];
 
 // ============================================================
@@ -102,7 +164,7 @@ export const AGENTS = [
     name: 'L3 反思层',
     description: '定期深度反思、生成洞察',
     layer: 'brain',
-    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'codex/gpt-5.4-mini', 'codex/gpt-5.4'],
     recommended_model: 'claude-opus-4-6',
     fixed_provider: null,
   },
