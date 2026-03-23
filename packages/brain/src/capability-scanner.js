@@ -156,10 +156,17 @@ async function collectTableData(health, keyTables, tableCountCache) {
 
 /**
  * 根据活动证据确定能力状态。
+ *
+ * stage 参数说明：
+ *   stage ≥ 3 = 能力已部署运行（Available/Running），无活动记录时应为 dormant（休眠未触发），
+ *               而非 island（孤岛/未部署）。island 仅适用于 stage < 3 的规划中能力。
  */
-function determineStatus(hasSkillActivity, successRate, hasTableData, lastActivity) {
+function determineStatus(hasSkillActivity, successRate, hasTableData, lastActivity, stage) {
   if (hasSkillActivity && successRate !== null && successRate < 30) return 'failing';
-  if (!hasSkillActivity && !hasTableData) return 'island';
+  if (!hasSkillActivity && !hasTableData) {
+    // stage ≥ 3 表示能力已完全部署，无活动只是休眠，不是孤岛
+    return (stage >= 3) ? 'dormant' : 'island';
+  }
   if (lastActivity) {
     const daysSince = (Date.now() - new Date(lastActivity).getTime()) / (1000 * 60 * 60 * 24);
     return daysSince > ISLAND_THRESHOLD_DAYS ? 'dormant' : 'active';
@@ -213,7 +220,7 @@ async function evaluateCapability(cap, skillUsageMap, taskUsageMap, tableCountCa
     health, cap.related_skills || [], skillUsageMap, taskUsageMap
   );
   const hasTableData = await collectTableData(health, cap.key_tables || [], tableCountCache);
-  health.status = determineStatus(hasSkillActivity, health.success_rate, hasTableData, health.last_activity);
+  health.status = determineStatus(hasSkillActivity, health.success_rate, hasTableData, health.last_activity, cap.current_stage);
   return health;
 }
 
