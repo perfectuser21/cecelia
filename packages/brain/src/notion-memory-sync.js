@@ -112,63 +112,74 @@ function isUrlStr(s) {
   return /^https?:\/\//i.test(s?.trim());
 }
 
+// ─── contact 字段键集合（模块级常量）────────────────────────────
+
+const SKIP_KEYS     = new Set(['姓名', 'name', '名字']);
+const RELATION_KEYS = new Set(['实际关系', '关系', 'relation', 'relationship']);
+const CATEGORY_KEYS = new Set(['分类', 'category', '类别', '标签', 'tag', 'tags']);
+const JOB_KEYS      = new Set(['职业', '工作', 'job', 'profession', 'title', 'occupation']);
+const NICKNAME_KEYS = new Set(['称呼', '昵称', 'nickname', 'alias']);
+const BIRTHDAY_KEYS = new Set(['生日', 'birthday', '出生日期', 'dob']);
+const EMAIL_KEYS    = new Set(['邮箱', '邮件', 'email', 'mail']);
+const PHONE_KEYS    = new Set(['电话', '手机', '联系方式', 'phone', 'mobile', 'tel']);
+const URL_KEYS      = new Set(['网址', '主页', '链接', 'url', 'website', 'homepage', 'linkedin']);
+const NOTE_KEYS     = new Set(['备注', '说明', '描述', 'notes', 'remark', 'memo', 'desc']);
+
+// 已知字段处理器查找表：match 返回 true 时调用 build 写入 props
+const KNOWN_FIELD_HANDLERS = [
+  { match: (key)      => RELATION_KEYS.has(key),
+    build: (val)      => ({ '关系': { select: { name: truncate(val, 100) } } }) },
+  { match: (key)      => CATEGORY_KEYS.has(key),
+    build: (val)      => { const tags = val.split(/[,，、]/).map(t => t.trim()).filter(Boolean); return { '分类': { multi_select: tags.map(t => ({ name: truncate(t, 100) })) } }; } },
+  { match: (key)      => JOB_KEYS.has(key),
+    build: (val)      => ({ '职业': { rich_text: [{ text: { content: truncate(val, 500) } }] } }) },
+  { match: (key)      => NICKNAME_KEYS.has(key),
+    build: (val)      => ({ '称呼': { rich_text: [{ text: { content: truncate(val, 200) } }] } }) },
+  { match: (key, val) => BIRTHDAY_KEYS.has(key) && isDateStr(val),
+    build: (val)      => ({ '生日': { date: { start: val.replace(/\//g, '-') } } }) },
+  { match: (key, val) => EMAIL_KEYS.has(key) || isEmailStr(val),
+    build: (val)      => ({ '邮箱': { email: truncate(val, 200) } }) },
+  { match: (key, val) => PHONE_KEYS.has(key) && !isEmailStr(val),
+    build: (val)      => ({ '电话': { phone_number: truncate(val, 50) } }) },
+  { match: (key, val) => URL_KEYS.has(key) || isUrlStr(val),
+    build: (val)      => ({ '网址': { url: truncate(val, 2000) } }) },
+  { match: (key)      => NOTE_KEYS.has(key),
+    build: (val)      => ({ '备注': { rich_text: [{ text: { content: truncate(val, 2000) } }] } }) },
+];
+
+function applyKnownField(props, key, val) {
+  for (const handler of KNOWN_FIELD_HANDLERS) {
+    if (handler.match(key, val)) {
+      Object.assign(props, handler.build(val));
+      return true;
+    }
+  }
+  return false;
+}
+
+function applyAutoDetect(props, val) {
+  if (isEmailStr(val) && !props['邮箱'])
+    props['邮箱'] = { email: truncate(val, 200) };
+  else if (isPhoneStr(val) && !props['电话'])
+    props['电话'] = { phone_number: truncate(val, 50) };
+  else if (isUrlStr(val) && !props['网址'])
+    props['网址'] = { url: truncate(val, 2000) };
+  else if (isDateStr(val) && !props['生日'])
+    props['生日'] = { date: { start: val.replace(/\//g, '-') } };
+  // 其他未识别字段：数据已在原始 content 备注中保留
+}
+
 /**
  * 把解析出的 contact 字段映射到 Notion properties 对象
  */
 export function contactFieldsToNotionProps(fields, sourceName, updatedAt) {
   const props = {};
-
-  const RELATION_KEYS = new Set(['实际关系', '关系', 'relation', 'relationship']);
-  const CATEGORY_KEYS = new Set(['分类', 'category', '类别', '标签', 'tag', 'tags']);
-  const JOB_KEYS      = new Set(['职业', '工作', 'job', 'profession', 'title', 'occupation']);
-  const NICKNAME_KEYS = new Set(['称呼', '昵称', 'nickname', 'alias']);
-  const BIRTHDAY_KEYS = new Set(['生日', 'birthday', '出生日期', 'dob']);
-  const EMAIL_KEYS    = new Set(['邮箱', '邮件', 'email', 'mail']);
-  const PHONE_KEYS    = new Set(['电话', '手机', '联系方式', 'phone', 'mobile', 'tel']);
-  const URL_KEYS      = new Set(['网址', '主页', '链接', 'url', 'website', 'homepage', 'linkedin']);
-  const NOTE_KEYS     = new Set(['备注', '说明', '描述', 'notes', 'remark', 'memo', 'desc']);
-  const SKIP_KEYS     = new Set(['姓名', 'name', '名字']);
-
   for (const [key, val] of Object.entries(fields)) {
     if (!val || SKIP_KEYS.has(key)) continue;
-
-    if (RELATION_KEYS.has(key)) {
-      props['关系'] = { select: { name: truncate(val, 100) } };
-    } else if (CATEGORY_KEYS.has(key)) {
-      const tags = val.split(/[,，、]/).map(t => t.trim()).filter(Boolean);
-      props['分类'] = { multi_select: tags.map(t => ({ name: truncate(t, 100) })) };
-    } else if (JOB_KEYS.has(key)) {
-      props['职业'] = { rich_text: [{ text: { content: truncate(val, 500) } }] };
-    } else if (NICKNAME_KEYS.has(key)) {
-      props['称呼'] = { rich_text: [{ text: { content: truncate(val, 200) } }] };
-    } else if (BIRTHDAY_KEYS.has(key) && isDateStr(val)) {
-      props['生日'] = { date: { start: val.replace(/\//g, '-') } };
-    } else if (EMAIL_KEYS.has(key) || isEmailStr(val)) {
-      props['邮箱'] = { email: truncate(val, 200) };
-    } else if (PHONE_KEYS.has(key) && !isEmailStr(val)) {
-      props['电话'] = { phone_number: truncate(val, 50) };
-    } else if (URL_KEYS.has(key) || isUrlStr(val)) {
-      props['网址'] = { url: truncate(val, 2000) };
-    } else if (NOTE_KEYS.has(key)) {
-      props['备注'] = { rich_text: [{ text: { content: truncate(val, 2000) } }] };
-    } else {
-      // 未知 key：根据值内容自动检测类型
-      if (isEmailStr(val) && !props['邮箱']) {
-        props['邮箱'] = { email: truncate(val, 200) };
-      } else if (isPhoneStr(val) && !props['电话']) {
-        props['电话'] = { phone_number: truncate(val, 50) };
-      } else if (isUrlStr(val) && !props['网址']) {
-        props['网址'] = { url: truncate(val, 2000) };
-      } else if (isDateStr(val) && !props['生日']) {
-        props['生日'] = { date: { start: val.replace(/\//g, '-') } };
-      }
-      // 其他未识别字段：数据已在原始 content 备注中保留
-    }
+    if (!applyKnownField(props, key, val)) applyAutoDetect(props, val);
   }
-
   if (sourceName) props['来源']     = { select: { name: sourceName } };
   if (updatedAt)  props['更新时间'] = { date: { start: fmtDate(updatedAt) } };
-
   return props;
 }
 
