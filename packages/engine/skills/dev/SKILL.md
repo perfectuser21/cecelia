@@ -32,7 +32,7 @@ description: |
 **触发 /dev 后，第一件事是读取并执行 Step 00（Worktree 检测）：**
 
 ```bash
-cat ~/.claude/skills/dev/steps/00-worktree-auto.md
+cat ~/.claude-account3/skills/dev/steps/00-worktree-auto.md 2>/dev/null || cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ```
 
 **在 Step 00 完成、确认已在独立 worktree 中之前，禁止进行任何其他操作。**
@@ -79,7 +79,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 
 ## ⚡ 核心目标（CRITICAL）
 
-**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（动态检测：有 develop 用 develop，否则 main）。**
+**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（main）。**
 
 ### 完成条件
 
@@ -87,7 +87,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 开始 → Spec → [spec_review Gate] → Code → [code_review_gate Gate] → Push → PR → CI → Ship(Learning+合并+Clean) ✅
 ```
 
-**只有一个完成标志**：PR 已合并到目标分支（动态检测：`git rev-parse --verify develop` 成功则用 develop，否则 main）
+**只有一个完成标志**：PR 已合并到目标分支（main）
 
 ### 遇到任何问题 = 自动修复
 
@@ -266,8 +266,6 @@ step_4_ship: pending
 5. Stage 4 Ship（Learning）完成？
    ❌ → exit 2 → 写 Learning + push 到功能分支
 
-→ 合并 PR（gh pr merge --squash --delete-branch）
-
 6. PR 已合并？
    ❌ → exit 2 → 执行合并
    ✅ → Stage 4 Ship → cleanup_done: true → 完成
@@ -390,7 +388,7 @@ TaskList()
 
 1. **只在 cp-* 或 feature/* 分支写代码** — Hook 强制
 2. **分支命名**：`cp-MMDDHHNN-task-name`（例：`cp-02270800-fix-login`）
-3. **目标分支**：动态检测——`git rev-parse --verify develop` 成功则 PR 合并到 develop，否则合并到 main
+3. **目标分支**：main（此仓库不使用 develop）
 
 ### 4. 质量保证
 
@@ -471,11 +469,13 @@ Stage 4: Ship      → 写 Learning + 合并 PR + 归档 + cleanup_done: true
 |------|------|----------|----------|
 | Task Card | .task-cp-xxx.md | branch-protect 检查 | 写代码前 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
-| Learning | docs/learnings/\<branch\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Stage 4 完成时（合并前）|
+| Learning | docs/learnings/\<branch-name\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Stage 4 完成时（合并前）|
 
 ---
 
 ## 状态追踪（Core/Notion 同步）
+
+> ⚠️ track.sh 为可选追踪机制（Brain 回调），主要进度追踪使用 TaskCreate/TaskUpdate 工具。
 
 有头和无头模式共用同一套追踪机制，在关键点调用 `track.sh`：
 

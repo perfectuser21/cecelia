@@ -39,7 +39,7 @@ changelog:
 检测是否在 worktree 中？
   ├─ 是 → 跳过，继续 Step 1
   └─ 否（在主仓库）
-       ├─ 在 develop/main → 正常创建 worktree
+       ├─ 在 main → 正常创建 worktree
        └─ 在 cp-*/feature-* → ⚠️ 异常状态！仍然强制创建 worktree
            （主仓库的 cp-*/feature-* 分支是上次残留，不能复用）
 ```
@@ -123,6 +123,7 @@ echo "📍 当前在主仓库（分支: $CURRENT_BRANCH），需要创建 worktr
 ### 2. 提取 task-name
 
 ```bash
+# 以下为逻辑伪码，AI 按条件判断执行对应动作，不要直接 bash 运行此块
 # 从用户输入或 PRD 文件名提取 task-name
 # 示例：
 #   /dev "修复登录 bug" → task-name = "fix-login-bug"
@@ -142,12 +143,13 @@ echo "📝 任务名: $TASK_NAME"
 ### 3. 创建 worktree
 
 ```bash
+# 以下为逻辑伪码，AI 按条件判断执行对应动作，不要直接 bash 运行此块
 echo "🔀 创建独立 worktree..."
 
 # 调用 worktree-manage.sh 创建（兼容多路径，不硬编码 ~/.claude/）
 # 注意：worktree-manage.sh 会自动更新 develop（Bug 2 修复）
 _WMANAGE=""
-for _dir in ~/.claude-account2/skills/dev/scripts ~/.claude/skills/dev/scripts; do
+for _dir in ~/.claude-account3/skills/dev/scripts ~/.claude-account2/skills/dev/scripts ~/.claude/skills/dev/scripts; do
     if [[ -f "$_dir/worktree-manage.sh" ]]; then
         _WMANAGE="$_dir/worktree-manage.sh"
         break
@@ -210,8 +212,8 @@ if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "develop" ]]; then
 fi
 
 # 检查3: 分支名符合 cp-* 格式
-if [[ ! "$CURRENT_BRANCH" =~ ^cp- ]]; then
-    echo "❌ 分支名不符合 cp-MMDDHHNN-xxx 格式（当前: $CURRENT_BRANCH）"
+if [[ ! "$CURRENT_BRANCH" =~ ^(cp-|feature/) ]]; then
+    echo "❌ 分支名不符合 cp-MMDDHHNN-xxx 或 feature/xxx 格式（当前: $CURRENT_BRANCH）"
     ERRORS=1
 fi
 
@@ -273,7 +275,7 @@ echo "   分支: $CURRENT_BRANCH"
 ## 清理
 
 **Worktree 在以下时机自动清理**：
-- Step 5 (Cleanup) 删除 worktree
+- Stage 4 (Ship/Clean) 删除 worktree
 - 或 PR 合并后手动运行 `bash scripts/cleanup.sh`
 
 ---

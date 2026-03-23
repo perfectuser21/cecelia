@@ -25,7 +25,7 @@ changelog:
 ## 2.0 行为快照 [PRESERVE]（CRITICAL — 探索前必须执行）
 
 > **探索代码前，扫描涉及模块的现有关键行为，写入 Task Card `[PRESERVE]` 条目。**
-> verify-step.sh Gate 2 会强制执行这些 Test 命令，确保现有行为未被回归。
+> verify-step.sh Gate 0a 检查 [PRESERVE] 条目存在数量（不执行 Test 命令）；Gate 2 执行 [BEHAVIOR]/[ARTIFACT]/[GATE] 的 Test 命令，确保实现符合预期。
 
 ### 为什么需要行为快照
 
@@ -65,7 +65,8 @@ echo "✅ 基线行为快照完成，[PRESERVE] 条目已写入 Task Card"
 # 在开始写任何实现代码之前，检查 Task Card 是否有 [PRESERVE] 条目
 TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
 if [[ -n "$TASK_CARD" ]]; then
-    PRESERVE_COUNT=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$TASK_CARD" 2>/dev/null || echo 0)
+    PRESERVE_COUNT=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$TASK_CARD" 2>/dev/null || true)
+    PRESERVE_COUNT=${PRESERVE_COUNT:-0}
     if [[ "$PRESERVE_COUNT" -eq 0 ]]; then
         echo "❌ Task Card 缺少 [PRESERVE] 行为快照条目"
         echo "   探索代码后写实现前，必须先记录涉及模块的现有行为"
@@ -223,17 +224,17 @@ fi
 
 ### 2.3.3 逐条重跑 DoD Test（最终确认）
 
-> **由 verify-step.sh Gate 2 自动强制执行**，不依赖 AI 自觉。
+> **由 bash-guard.sh（Claude Code PreToolUse hook）实时拦截调用 verify-step.sh，不依赖 AI 自觉。**
 > 当 AI 标记 `step_2_code: done` 时，`verify-step.sh step2` 会自动：
 > 1. 读取 Task Card（`.task-{BRANCH}.md`）
-> 2. 提取所有 `[BEHAVIOR]` 条目的 Test 字段
+> 2. 提取所有 `[BEHAVIOR]/[ARTIFACT]/[GATE]` 条目的 Test 字段（[PRESERVE] 由 Gate 0a 单独处理，仅检查数量）
 > 3. 对 `manual:` 开头的 Test，执行该命令（在项目根目录）
 > 4. 对 `contract:` 开头的 Test，标记 DEFERRED 跳过
 > 5. 对 `tests/` 开头的 Test，检查文件是否存在
 > 6. 任一 Test 失败 → verify-step 返回 exit 1 → 不允许标记完成
 
 ```bash
-# verify-step.sh 会在 step_2_code: done 写入时被 branch-protect 自动调用
+# verify-step.sh 会在 step_2_code: done 写入时被 bash-guard.sh (PreToolUse hook) 自动调用
 # 也可以手动运行确认：
 bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)"
 ```
@@ -275,7 +276,8 @@ for f in $CHANGED_FILES; do
     # 检查2: 注释掉的代码块（连续 3 行以上的注释代码）
     # 不检查 markdown 文件（注释是内容的一部分）
     if [[ "$f" != *.md ]]; then
-        COMMENTED_CODE=$(grep -c "^[[:space:]]*//" "$f" 2>/dev/null || echo 0)
+        COMMENTED_CODE=$(grep -c "^[[:space:]]*//" "$f" 2>/dev/null || true)
+        COMMENTED_CODE=${COMMENTED_CODE:-0}
         if [[ "$COMMENTED_CODE" -gt 5 ]]; then
             echo "  ⚠️  $f: 含大量注释代码（${COMMENTED_CODE}行），检查是否为 dead code"
             ISSUES_FOUND=$((ISSUES_FOUND+1))
@@ -371,7 +373,7 @@ if [[ -f "$LEARNING_FILE" ]]; then
 fi
 
 # 3. 检查 DoD 映射
-node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || { echo "❌ DoD 映射检查失败，修复后再 push"; exit 1; }
+node packages/engine/scripts/devgate/check-dod-mapping.cjs || { echo "❌ DoD 映射检查失败，修复后再 push"; exit 1; }
 ```
 
 ---
@@ -383,11 +385,13 @@ node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null || { echo
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+sed -i '' "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE" 2>/dev/null || \\
 sed -i "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE"
 echo "✅ Stage 2 完成标记已写入 .dev-mode"
 ```
 
-**Task Checkpoint**: `TaskUpdate({ taskId: "2", status: "completed" })`
+**Task Checkpoint**: `TaskUpdate({ taskId: "STAGE_2_TASK_ID", status: "completed" })`
+<!-- 注意：taskId 在 Stage 0 创建任务时获取，这里是概念示意，实际值从 Brain API 返回 -->
 
 ---
 
