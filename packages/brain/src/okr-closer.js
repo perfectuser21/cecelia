@@ -113,7 +113,6 @@ async function checkOkrInitiativeCompletion(pool) {
             }),
           ]);
 
-          console.log(`[okr-closer] Created okr_scope_plan task for scope ${initiative.scope_id} (initiative "${initiative.title}" completed)`);
         }
       }
     }
@@ -203,11 +202,9 @@ async function checkOkrScopeCompletion(pool) {
           }),
         ]);
 
-        console.log(`[okr-closer] Created okr_project_plan task for project ${scope.project_id} (scope "${scope.title}" completed)`);
       }
     }
 
-    console.log(`[okr-closer] OKR Scope completed: "${scope.title}" (${scope.id})`);
     closed.push({ id: scope.id, title: scope.title, project_id: scope.project_id });
   }
 
@@ -262,7 +259,6 @@ async function checkOkrProjectCompletion(pool) {
       closed_at: new Date().toISOString(),
     })]);
 
-    console.log(`[okr-closer] OKR Project completed: "${project.title}" (${project.id})`);
     closed.push({ id: project.id, title: project.title, kr_id: project.kr_id });
   }
 

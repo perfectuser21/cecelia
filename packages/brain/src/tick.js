@@ -1630,7 +1630,6 @@ async function executeTick() {
     const { checkOkrInitiativeCompletion } = await import('./okr-closer.js');
     const okrInitResult = await checkOkrInitiativeCompletion(pool);
     if (okrInitResult.closedCount > 0) {
-      console.log(`[TICK] OKR Initiative 完成检查: ${okrInitResult.closedCount} 个已关闭`);
       actionsTaken.push({
         action: 'okr_initiative_completion_check',
         closed_count: okrInitResult.closedCount,
@@ -1646,7 +1645,6 @@ async function executeTick() {
     const { checkOkrScopeCompletion } = await import('./okr-closer.js');
     const okrScopeResult = await checkOkrScopeCompletion(pool);
     if (okrScopeResult.closedCount > 0) {
-      console.log(`[TICK] OKR Scope 完成检查: ${okrScopeResult.closedCount} 个已关闭`);
       actionsTaken.push({
         action: 'okr_scope_completion_check',
         closed_count: okrScopeResult.closedCount,
@@ -1662,7 +1660,6 @@ async function executeTick() {
     const { checkOkrProjectCompletion } = await import('./okr-closer.js');
     const okrProjectResult = await checkOkrProjectCompletion(pool);
     if (okrProjectResult.closedCount > 0) {
-      console.log(`[TICK] OKR Project 完成检查: ${okrProjectResult.closedCount} 个已关闭`);
       actionsTaken.push({
         action: 'okr_project_completion_check',
         closed_count: okrProjectResult.closedCount,
