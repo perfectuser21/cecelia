@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 5.2.0
+version: 5.3.0
 created: 2026-03-14
-updated: 2026-03-22
+updated: 2026-03-23
 changelog:
+  - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
   - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
   - 5.1.0: 修复 2.3.2 CI镜像检查无 exit 1（build/precheck/version-sync 失败现在正确拦截）；还原被 PR#1366 覆盖的 Step 2.0 行为快照+Step 2.1.5 TDD先行+2.3.6 exit 1
   - 5.0.0: 新增 Step 2.0 行为快照[PRESERVE]（探索前必须执行）；新增 Step 2.1.5 TDD先行（红灯→绿灯）；修复 2.3.6 || true 改 exit 1
@@ -178,25 +179,51 @@ FAIL → 读错误信息，修代码，再验证
 
 > 所有 DoD 条目 [x] 后，执行完整的自验证。
 
-### 2.3.1 跑自动化测试
+### 2.3.1 精准测试（只跑改动相关文件）
+
+> **只跑与本次改动相关的测试文件，不跑全量回归测试。全量回归交给 CI（GitHub Actions）。**
+> 原因：全量测试在本地容易 OOM；本地只需要验证「我改的这部分没有明显破坏」。
 
 ```bash
-if [[ -f "package.json" ]]; then
-    HAS_TEST=$(node -e "const p=require('./package.json'); console.log(p.scripts?.test ? 'yes' : 'no')" 2>/dev/null)
-    HAS_QA=$(node -e "const p=require('./package.json'); console.log(p.scripts?.qa ? 'yes' : 'no')" 2>/dev/null)
-fi
+echo "🎯 精准测试：查找与改动相关的测试文件..."
 
-if [[ "$HAS_QA" == "yes" ]]; then
-    npm run qa
-elif [[ "$HAS_TEST" == "yes" ]]; then
-    npm test
+CHANGED_SRC=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+
+TEST_FILES=""
+for f in $CHANGED_SRC; do
+    [[ ! -f "$f" ]] && continue
+    # 推导测试文件路径：src/foo.js → src/__tests__/foo.test.js
+    DIR=$(dirname "$f")
+    BASE=$(basename "$f" | sed 's/\.[^.]*$//')
+    EXT=$(basename "$f" | grep -oE '\.[^.]+$' || echo ".js")
+
+    # 常见测试文件命名模式
+    for candidate in \
+        "${DIR}/__tests__/${BASE}.test${EXT}" \
+        "${DIR}/__tests__/${BASE}.spec${EXT}" \
+        "${DIR}/${BASE}.test${EXT}" \
+        "${DIR}/${BASE}.spec${EXT}"; do
+        if [[ -f "$candidate" ]]; then
+            TEST_FILES="$TEST_FILES $candidate"
+            break
+        fi
+    done
+done
+
+if [[ -z "${TEST_FILES// }" ]]; then
+    echo "ℹ️  未找到对应测试文件，跳过本地精准测试（全量回归由 CI 负责）"
+else
+    echo "📋 运行精准测试：$TEST_FILES"
+    npx vitest run $TEST_FILES 2>&1 || { echo "❌ 精准测试失败，修复后再继续"; exit 1; }
+    echo "✅ 精准测试通过"
 fi
 ```
 
 | 结果 | 动作 |
 |------|------|
-| 通过 | 继续 2.3.2 |
-| 失败 | 修复代码 → 重跑 |
+| 找到测试文件且通过 | 继续 2.3.2 |
+| 找到测试文件但失败 | 修复代码 → 重跑 |
+| 未找到测试文件 | 跳过，CI 负责全量 |
 
 ### 2.3.2 本地 CI 镜像检查
 
@@ -358,21 +385,16 @@ echo "✅ 周边一致性扫描通过 — 无跨文件矛盾"
 ### 2.3.7 推送前完整验证
 
 > push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
+> 全量测试已在 2.3.1 精准测试中覆盖（有则运行，无则 CI 负责），此处不重复运行。
 
 ```bash
-# 1. 跑 npm test（如果项目有）
-if [[ -f "package.json" ]] && grep -q '"test"' package.json; then
-    echo "🧪 Running npm test..."
-    npm test 2>&1 || { echo "❌ npm test 失败，修复后再继续"; exit 1; }
-fi
-
-# 2. 检查 Learning 格式（如果已写）
+# 1. 检查 Learning 格式（如果已写）
 LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
 if [[ -f "$LEARNING_FILE" ]]; then
     bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || { echo "❌ Learning 格式检查失败，修复后再 push"; exit 1; }
 fi
 
-# 3. 检查 DoD 映射
+# 2. 检查 DoD 映射
 node packages/engine/scripts/devgate/check-dod-mapping.cjs || { echo "❌ DoD 映射检查失败，修复后再 push"; exit 1; }
 ```
 
