@@ -244,6 +244,10 @@ verify_step2() {
                 vdir=$(dirname "$full_vpath")
                 while IFS= read -r sf; do
                     [[ "$sf" == "$full_vpath" ]] && continue
+                    # 只检查已知版本同步文件（跳过独立版本体系如 skills-registry.json）
+                    local _sf_base
+                    _sf_base=$(basename "$sf")
+                    [[ "$_sf_base" =~ ^(package\.json|package-lock\.json|regression-contract\.yaml)$ ]] || continue
                     local sv
                     sv=$(grep -oE '"version"\s*:\s*"[^"]+"' "$sf" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
                     if [[ -n "$sv" && "$sv" != "$new_ver" ]]; then
