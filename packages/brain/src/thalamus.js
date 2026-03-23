@@ -561,6 +561,7 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 4. 简单事件尽量 level: 0，不要过度思考
 5. USER_MESSAGE/OWNER_INTENT 意图不明确（普通对话、问候、闲聊、问答）时，默认 handle_chat（转交口处理对话）
 6. 仅当用户明确表达任务意图（要开发某功能、要调研某话题、要发布内容等）时才 create_task
+7. 当用户询问我们系统/项目/产品的当前状态、内容、进展、功能等信息性问题时（如"zenithjoy dashboard 现在有什么"、"最新进展是什么"、"现在有哪些功能"、"某项目状态怎样"等），使用 create_task（task_type: 'explore', priority: 'P2'），mouth_reply 填"正在查，马上给你～"，need_card: false
 
 请结合上方 brain_context 分析以下事件并输出 Decision：`;
 
