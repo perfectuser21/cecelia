@@ -27,6 +27,23 @@ const BRAIN_EMBEDDED_SOURCES = {
   'three-layer-brain': ['thalamus', 'cortex'],
 };
 
+// 外部基础设施能力 — 已部署但不向 Brain DB 写入证据
+// 这些能力运行在 Brain 进程之外（网络层、UI 层、CI 层），
+// 无法通过 run_events / cecelia_events / key_tables 验证，
+// 但它们的存在可由系统运行状态间接推断（Brain 在运行 = 部署有效）。
+// 状态始终为 active，证据标记 infra_deployed:true 而非 island。
+const INFRA_DEPLOYED_CAPABILITIES = new Set([
+  'brain-deployment',        // Brain 进程在运行 = 部署流程有效
+  'branch-protection-hooks', // dev 任务正在执行 = branch-protect hooks 在运行
+  'cecelia-dashboard',       // Dashboard 已部署在 port 5211
+  'ci-devgate-quality',      // dev PR 流经 CI = DevGate 门禁有效
+  'cloudflare-tunnel-routing', // Cloudflare tunnel 已配置并路由域名
+  'nas-file-storage',        // NAS 通过 Tailscale 可访问
+  'tailscale-internal-network', // 跨设备 Tailscale 内网已建立
+  'vpn-service-management',  // 双节点 VPN 服务运行中
+  'zenithjoy-dashboard',     // ZenithJoy dashboard 已部署
+]);
+
 // Brain 进程运行即视为 active 的能力（架构性/意识性能力）
 // 这些能力是 Brain 的固有组成部分，没有独立的 skill 或 event source，
 // 只要 Brain 在运行，它们就在运行。
@@ -175,6 +192,11 @@ async function evaluateCapability(cap, skillUsageMap, taskUsageMap, tableCountCa
   if (BRAIN_ALWAYS_ACTIVE.has(cap.id)) {
     health.status = 'active';
     health.evidence.push('brain_embedded:true');
+    return health;
+  }
+  if (INFRA_DEPLOYED_CAPABILITIES.has(cap.id)) {
+    health.status = 'active';
+    health.evidence.push('infra_deployed:true');
     return health;
   }
   if (checkBrainEmbeddedSources(health, cap.id, embeddedSourcesActive)) return health;

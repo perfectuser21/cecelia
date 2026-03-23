@@ -187,6 +187,112 @@ describe('capability-scanner', () => {
     });
   });
 
+  describe('INFRA_DEPLOYED_CAPABILITIES', () => {
+    it('should mark infra-deployed capabilities as active with infra_deployed evidence', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            // brain-deployment is in INFRA_DEPLOYED_CAPABILITIES
+            { id: 'brain-deployment', name: 'Brain 部署流程', current_stage: 3, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'brain-deployment');
+      expect(cap.status).toBe('active');
+      expect(cap.evidence).toContain('infra_deployed:true');
+      expect(cap.status).not.toBe('island');
+    });
+
+    it('should mark all 9 infra-deployed capabilities as active, not island', async () => {
+      const pool = (await import('../db.js')).default;
+
+      const infraCaps = [
+        'brain-deployment',
+        'branch-protection-hooks',
+        'cecelia-dashboard',
+        'ci-devgate-quality',
+        'cloudflare-tunnel-routing',
+        'nas-file-storage',
+        'tailscale-internal-network',
+        'vpn-service-management',
+        'zenithjoy-dashboard',
+      ];
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: infraCaps.map(id => ({
+            id, name: id, current_stage: 3, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system',
+          })),
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }); // no embedded sources
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      for (const id of infraCaps) {
+        const cap = result.capabilities.find(c => c.id === id);
+        expect(cap, `${id} should be found`).toBeDefined();
+        expect(cap.status, `${id} should be active`).toBe('active');
+        expect(cap.evidence, `${id} should have infra_deployed evidence`).toContain('infra_deployed:true');
+      }
+      expect(result.summary.island).toBe(0);
+    });
+
+    it('should mark capability with key_tables data as active (credential-management fix)', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'credential-management', name: '凭据统一管理', current_stage: 3, related_skills: ['credentials'], key_tables: ['decisions'], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }) // no embedded sources
+        .mockResolvedValueOnce({ rows: [{ has_data: true }] }); // decisions table has data
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'credential-management');
+      expect(cap.status).not.toBe('island');
+      expect(cap.evidence).toContain('table:decisions=has_data');
+    });
+
+    it('should mark capability with key_tables data as active (multi-platform-publishing fix)', async () => {
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'multi-platform-publishing', name: '多平台内容发布', current_stage: 4, related_skills: ['toutiao-publisher'], key_tables: ['content_publish_jobs'], scope: 'cecelia', owner: 'system' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] }) // no tasks
+        .mockResolvedValueOnce({ rows: [] }) // no skills
+        .mockResolvedValueOnce({ rows: [] }) // no embedded sources
+        .mockResolvedValueOnce({ rows: [{ has_data: true }] }); // content_publish_jobs table has data
+
+      const { scanCapabilities } = await import('../capability-scanner.js');
+      const result = await scanCapabilities();
+
+      const cap = result.capabilities.find(c => c.id === 'multi-platform-publishing');
+      expect(cap.status).not.toBe('island');
+      expect(cap.evidence).toContain('table:content_publish_jobs=has_data');
+    });
+  });
+
   describe('getCapabilityHealth', () => {
     it('should query cecelia_events for capability_scan events', async () => {
       const pool = (await import('../db.js')).default;
