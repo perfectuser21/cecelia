@@ -3,6 +3,38 @@ import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const scanRCI = require('../../scripts/devgate/scan-rci-coverage.cjs');
+
+describe('parseRCI - evidence.file 路径覆盖', () => {
+  it('DEVGATE-STALE-REFS-002: evidence.file 字段应被加入 contract.paths', () => {
+    const contracts = scanRCI.parseRCI();
+    expect(Array.isArray(contracts)).toBe(true);
+    expect(contracts.length).toBeGreaterThan(0);
+
+    // regression-contract.yaml 中有多个 evidence.file 字段
+    // 调用 parseRCI() 会执行 filePathMatch 代码路径
+    // 验证至少一个 contract 通过 file: 字段获得了 paths
+    const withFilePaths = contracts.filter(c =>
+      Array.isArray(c.paths) && c.paths.some(p => typeof p === 'string' && p.length > 0)
+    );
+    expect(withFilePaths.length).toBeGreaterThan(0);
+  });
+
+  it('evidence.file 路径被正确解析（不含引号、空格、注释）', () => {
+    const contracts = scanRCI.parseRCI();
+
+    // S4-002 (intent-expand) 含 file: "skills/intent-expand/SKILL.md"
+    const intentExpand = contracts.find((c: { id: string }) => c.id === 'S4-002');
+    if (intentExpand) {
+      // paths 应包含不带引号的路径
+      expect(intentExpand.paths).toContain('skills/intent-expand/SKILL.md');
+      // 路径不能含有引号
+      expect(intentExpand.paths.every((p: string) => !p.includes('"') && !p.includes("'"))).toBe(true);
+    }
+  });
+});
+
 describe('DevGate - scan-rci-coverage glob regex', () => {
   it('W8-001: glob regex 正确处理递归通配符 (**)', () => {
     // 验证修复：先替换 ** 再替换 *

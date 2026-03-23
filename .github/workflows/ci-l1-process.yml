@@ -827,11 +827,39 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
+  # ─── RCI Stale Refs Check (闭环1: 防止悬空引用) ─────────────────────
+
+  rci-stale-refs-check:
+    name: RCI Stale Refs Check
+    needs: [verify-dev-workflow, detect-stage]
+    if: needs.detect-stage.outputs.current_stage >= 2
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run check-rci-stale-refs (stale-refs gate)
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  RCI Stale Refs Check"
+          echo "  扫描 regression-contract.yaml 所有 file: 引用"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          node packages/engine/scripts/devgate/check-rci-stale-refs.cjs
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan]
+    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan, rci-stale-refs-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -929,6 +957,16 @@ jobs:
           if [ "${{ needs.secrets-scan.result }}" != "success" ]; then
             echo "FAIL: Secrets Scan (${{ needs.secrets-scan.result }})"
             FAILED=true
+          fi
+
+          # Stage 2+: RCI Stale Refs Check
+          if [ "$STAGE" -ge 2 ]; then
+            if [ "${{ needs.rci-stale-refs-check.result }}" != "success" ]; then
+              echo "FAIL: RCI Stale Refs Check (${{ needs.rci-stale-refs-check.result }})"
+              FAILED=true
+            fi
+          else
+            echo "Stage $STAGE < 2: skipping RCI Stale Refs Check (expected skipped)"
           fi
 
           if [ "$FAILED" = "true" ]; then

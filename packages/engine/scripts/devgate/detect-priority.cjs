@@ -18,9 +18,10 @@
  *   node scripts/devgate/detect-priority.cjs [--json]
  *
  * 环境变量：
- *   PR_PRIORITY - 直接指定优先级
- *   PR_TITLE    - PR 标题（已禁用检测）
- *   PR_LABELS   - PR labels（逗号分隔）
+ *   PR_PRIORITY    - 直接指定优先级
+ *   PR_TITLE       - PR 标题（已禁用检测）
+ *   PR_LABELS      - PR labels（逗号分隔）
+ *   CHANGED_FILES  - 改动文件列表（换行或空格分隔），含核心路径时自动升 P0
  *
  * 输出：
  *   默认: P0/P1/P2/P3/unknown
@@ -196,6 +197,40 @@ function detectFromGitConfig() {
   return null;
 }
 
+/**
+ * 核心文件路径模式 → 改动时自动升 P0
+ * 这些文件是 /dev 工作流的心脏，任何改动都是 P0 级别。
+ */
+const CORE_PATH_PATTERNS_P0 = [
+  /packages\/engine\/hooks\/verify-step\.sh$/,
+  /packages\/engine\/hooks\/stop\.sh$/,
+  /packages\/engine\/hooks\/stop-dev\.sh$/,
+  /packages\/engine\/hooks\/bash-guard\.sh$/,
+  /packages\/engine\/lib\/devloop-check\.sh$/,
+  /packages\/engine\/hooks\/branch-protect\.sh$/,
+];
+
+/**
+ * 从 CHANGED_FILES 环境变量自动检测优先级
+ * CHANGED_FILES 可以是换行或空格分隔的文件路径列表
+ * @returns {string|null} P0/P1 或 null
+ */
+function detectFromChangedFiles() {
+  const changedFiles = process.env.CHANGED_FILES;
+  if (!changedFiles) return null;
+
+  const files = changedFiles.split(/[\n\s]+/).filter(Boolean);
+
+  for (const file of files) {
+    for (const pattern of CORE_PATH_PATTERNS_P0) {
+      if (pattern.test(file)) {
+        return "P0";
+      }
+    }
+  }
+  return null;
+}
+
 function main() {
   const args = process.argv.slice(2);
   const jsonOutput = args.includes("--json");
@@ -213,9 +248,9 @@ function main() {
     source = p ? "direct" : "default";
 
     if (jsonOutput) {
-      console.log(JSON.stringify({ priority, source }));
+      process.stdout.write(JSON.stringify({ priority, source }) + '\n');
     } else {
-      console.log(priority);
+      process.stdout.write(priority + '\n');
     }
     return;
   }
@@ -227,6 +262,16 @@ function main() {
     if (p) {
       priority = p;
       source = "qa-decision";
+    }
+  }
+
+  // 1.5. CHANGED_FILES 路径自动识别（核心 hook 文件 → 自动 P0）
+  // 优先级低于 QA-DECISION.md，但高于 PR_PRIORITY 环境变量
+  if (!priority) {
+    const p = detectFromChangedFiles();
+    if (p) {
+      priority = p;
+      source = "changed-files-path";
     }
   }
 
@@ -272,10 +317,14 @@ function main() {
   }
 
   if (jsonOutput) {
-    console.log(JSON.stringify({ priority, source }));
+    process.stdout.write(JSON.stringify({ priority, source }) + '\n');
   } else {
-    console.log(priority);
+    process.stdout.write(priority + '\n');
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+} else {
+  module.exports = { extractPriority, detectFromChangedFiles, CORE_PATH_PATTERNS_P0 };
+}
