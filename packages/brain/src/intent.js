@@ -957,8 +957,8 @@ async function parseAndCreate(input, options = {}) {
   if (createProject && !projectId) {
     // Check for existing project with similar name
     const existingProject = await pool.query(`
-      SELECT id, name FROM projects
-      WHERE LOWER(name) LIKE $1
+      SELECT id, title AS name FROM okr_initiatives
+      WHERE LOWER(title) LIKE $1
       LIMIT 1
     `, [`%${parsedIntent.projectName}%`]);
 

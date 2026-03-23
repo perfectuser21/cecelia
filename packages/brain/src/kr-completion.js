@@ -20,9 +20,8 @@ async function checkKRCompletion(pool) {
   // 查所有 in_progress 的 KR
   const krsResult = await pool.query(`
     SELECT id, title
-    FROM goals
-    WHERE type = 'area_okr'
-      AND status = 'in_progress'
+    FROM objectives
+    WHERE status = 'in_progress'
   `);
 
   const closed = [];
@@ -33,9 +32,8 @@ async function checkKRCompletion(pool) {
       SELECT
         COUNT(*) AS total,
         COUNT(*) FILTER (WHERE status = 'completed') AS completed_count
-      FROM projects
+      FROM okr_projects
       WHERE kr_id = $1
-        AND type = 'project'
     `, [kr.id]);
 
     const { total, completed_count: completedCount } = projectsResult.rows[0];
@@ -74,9 +72,8 @@ async function checkKRCompletion(pool) {
 async function activateNextKRs(pool) {
   const activeCountResult = await pool.query(`
     SELECT COUNT(*) AS cnt
-    FROM goals
-    WHERE type = 'area_okr'
-      AND status = 'in_progress'
+    FROM objectives
+    WHERE status = 'in_progress'
   `);
   const currentActive = parseInt(activeCountResult.rows[0].cnt, 10);
   const availableSlots = MAX_ACTIVE_KRS - currentActive;
@@ -89,9 +86,8 @@ async function activateNextKRs(pool) {
     UPDATE goals
     SET status = 'in_progress', updated_at = NOW()
     WHERE id IN (
-      SELECT id FROM goals
-      WHERE type = 'area_okr'
-        AND status = 'pending'
+      SELECT id FROM objectives
+      WHERE status = 'pending'
       ORDER BY created_at ASC
       LIMIT $1
     )

@@ -24,7 +24,12 @@ export async function checkAndCreateCodeReviewTrigger(pool, projectId) {
   try {
     // Fix 1: initiative 类型 project 有自己的 pipeline（断链#5），不走积累触发
     const projectTypeResult = await pool.query(
-      'SELECT type FROM projects WHERE id = $1',
+      `SELECT CASE
+         WHEN EXISTS(SELECT 1 FROM okr_initiatives WHERE id = $1) THEN 'initiative'
+         WHEN EXISTS(SELECT 1 FROM okr_projects WHERE id = $1) THEN 'project'
+         WHEN EXISTS(SELECT 1 FROM okr_scopes WHERE id = $1) THEN 'scope'
+         ELSE NULL
+       END AS type`,
       [projectId]
     );
     const projectType = projectTypeResult.rows[0]?.type;

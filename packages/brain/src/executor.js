@@ -407,7 +407,7 @@ async function resolveRepoPath(projectId) {
 
     // Fallback to projects.repo_path
     const result = await pool.query(
-      'SELECT repo_path, parent_id FROM projects WHERE id = $1',
+      `SELECT metadata->>'repo_path' AS repo_path, scope_id AS parent_id FROM okr_initiatives WHERE id = $1`,
       [currentId]
     );
     if (result.rows.length === 0) return null;
@@ -1401,7 +1401,7 @@ async function buildTimeContext(krId) {
   try {
     // 1. KR 的 target_date 和 time_budget_days
     const krResult = await pool.query(
-      `SELECT title, target_date, time_budget_days FROM goals WHERE id = $1`,
+      `SELECT title, end_date AS target_date, COALESCE((metadata->>'time_budget_days')::int,0) AS time_budget_days FROM key_results WHERE id = $1`,
       [krId]
     );
     const kr = krResult.rows[0];
@@ -1411,10 +1411,9 @@ async function buildTimeContext(krId) {
     const projResult = await pool.query(
       `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days,
               p.created_at, p.completed_at
-       FROM projects p
-       JOIN project_kr_links pkl ON pkl.project_id = p.id
-       WHERE pkl.kr_id = $1 AND p.type = 'project'
-       ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC`,
+       FROM okr_projects p
+       WHERE p.kr_id = $1
+       ORDER BY p.created_at ASC`,
       [krId]
     );
     const projects = projResult.rows;
@@ -1678,11 +1677,10 @@ POST /api/brain/projects
 }
 \`\`\`
 
-最后通过 project_kr_links 绑定到该 KR：
+最后通过 PATCH /api/brain/okr-projects/{id} 绑定 kr_id 到该 KR：
 \`\`\`
-POST /api/brain/project-kr-links
+PATCH /api/brain/okr-projects/<新建 Project 的 ID>
 {
-  "project_id": "<新建 Project 的 ID>",
   "kr_id": "${krId}"
 }
 \`\`\`
@@ -1738,7 +1736,7 @@ PUT /api/tasks/goals/${krId}
 ## 质量验证（创建完成后逐项检查）
 
 1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
-2. ✅ project_kr_links 已绑定新 Project → 当前 KR
+2. ✅ okr_projects.kr_id 已绑定新 Project → 当前 KR
 3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
 4. ✅ 第一个 Task 的 task_type='dev'
 5. ✅ 所有 Task 的 goal_id = ${krId}

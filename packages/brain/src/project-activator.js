@@ -30,12 +30,10 @@ async function manageProjectActivation(pool, cap) {
   const activeResult = await pool.query(`
     SELECT p.id, p.name, p.status, p.created_at, p.updated_at,
            p.metadata->>'user_pinned' AS user_pinned,
-           g.priority
-    FROM projects p
-    LEFT JOIN project_kr_links pkl ON pkl.project_id = p.id
-    LEFT JOIN goals g ON g.id = pkl.kr_id
-    WHERE p.type = 'project'
-      AND p.status = 'active'
+           COALESCE(kr.metadata->>'priority','P1') AS priority
+    FROM okr_projects p
+    LEFT JOIN key_results kr ON kr.id = p.kr_id
+    WHERE p.status = 'active'
     ORDER BY p.created_at ASC
   `);
   const activeProjects = activeResult.rows;
@@ -98,14 +96,12 @@ async function manageProjectActivation(pool, cap) {
   const candidateResult = await pool.query(`
     SELECT p.id, p.name, p.status, p.created_at, p.updated_at,
            p.metadata->>'user_pinned' AS user_pinned,
-           p.deadline,
-           g.priority
-    FROM projects p
-    LEFT JOIN project_kr_links pkl ON pkl.project_id = p.id
-    LEFT JOIN goals g ON g.id = pkl.kr_id
-    WHERE p.type = 'project'
-      AND p.status IN ('pending', 'inactive')
-    ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC
+           p.end_date AS deadline,
+           COALESCE(kr.metadata->>'priority','P1') AS priority
+    FROM okr_projects p
+    LEFT JOIN key_results kr ON kr.id = p.kr_id
+    WHERE p.status IN ('pending', 'inactive')
+    ORDER BY p.created_at ASC
   `);
 
   // 计算分数并排序

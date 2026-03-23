@@ -429,8 +429,8 @@ export async function pushToNotion(table, dbId, dbOverride = null) {
 
   const tableMap = {
     area:    { sql: 'SELECT * FROM areas    WHERE id=$1', dbKey: 'areas',    buildProps: buildAreaProperties,    parse: 'notion_id' },
-    goal:    { sql: 'SELECT * FROM goals    WHERE id=$1', dbKey: 'goals',    buildProps: buildGoalProperties,    parse: 'notion_id' },
-    project: { sql: 'SELECT * FROM projects WHERE id=$1', dbKey: 'projects', buildProps: buildProjectProperties, parse: 'notion_id' },
+    goal:    { sql: `SELECT id, title, status, metadata, created_at, COALESCE(metadata->>'notion_id',null) AS notion_id FROM (SELECT id, title, status, metadata, created_at FROM objectives WHERE id=$1 UNION ALL SELECT id, title, status, metadata, created_at FROM key_results WHERE id=$1) g LIMIT 1`, dbKey: 'goals',    buildProps: buildGoalProperties,    parse: 'notion_id' },
+    project: { sql: `SELECT id, title AS name, status, metadata, created_at, COALESCE(metadata->>'notion_id',null) AS notion_id FROM (SELECT id, title, status, metadata, created_at FROM okr_projects WHERE id=$1 UNION ALL SELECT id, title, status, metadata, created_at FROM okr_initiatives WHERE id=$1) p LIMIT 1`, dbKey: 'projects', buildProps: buildProjectProperties, parse: 'notion_id' },
     task:    { sql: 'SELECT * FROM tasks    WHERE id=$1', dbKey: 'tasks',    buildProps: buildTaskProperties,    parse: 'notion_id' },
   };
 
@@ -725,11 +725,15 @@ export async function pushAllToNotion(dbOverride = null) {
   // 2. 推送未同步的 goals（含 area 关联）
   try {
     const { rows: goals } = await db.query(`
-      SELECT g.id, g.title, g.status, g.target_date,
+      SELECT g.id, g.title, g.status, g.metadata->>'target_date' AS target_date,
              a.notion_id AS area_notion_id
-      FROM goals g
+      FROM (
+        SELECT id, title, status, metadata, area_id FROM objectives
+        UNION ALL
+        SELECT id, title, status, metadata, NULL AS area_id FROM key_results
+      ) g
       LEFT JOIN areas a ON g.area_id = a.id
-      WHERE g.notion_id IS NULL
+      WHERE g.metadata->>'notion_id' IS NULL
     `);
     for (const row of goals) {
       try {
@@ -741,10 +745,8 @@ export async function pushAllToNotion(dbOverride = null) {
           parent:     { database_id: NOTION_DB_IDS.goals },
           properties: props,
         });
-        await db.query(
-          `UPDATE goals SET notion_id=$1, notion_synced_at=NOW(), updated_at=NOW() WHERE id=$2`,
-          [page.id, row.id]
-        );
+        await db.query(`UPDATE objectives SET metadata=COALESCE(metadata,'{}')::jsonb||jsonb_build_object('notion_id',$1,'notion_synced_at',NOW()::text), updated_at=NOW() WHERE id=$2`, [page.id, row.id]);
+        await db.query(`UPDATE key_results SET metadata=COALESCE(metadata,'{}')::jsonb||jsonb_build_object('notion_id',$1,'notion_synced_at',NOW()::text), updated_at=NOW() WHERE id=$2`, [page.id, row.id]);
         stats.goals.pushed++;
       } catch (e) {
         stats.goals.errors.push(`${row.id}: ${e.message}`);
@@ -756,14 +758,16 @@ export async function pushAllToNotion(dbOverride = null) {
   const executionModeMap = { cecelia: 'Cecelia', xx: 'XX' };
   try {
     const { rows: projects } = await db.query(`
-      SELECT p.id, p.name, p.status, p.description,
-             p.deadline, p.execution_mode,
+      SELECT p.id, p.title AS name, p.status,
+             p.metadata->>'description' AS description,
+             p.end_date AS deadline,
+             p.metadata->>'execution_mode' AS execution_mode,
              a.notion_id AS area_notion_id,
-             g.notion_id AS goal_notion_id
-      FROM projects p
-      LEFT JOIN areas a ON p.area_id = a.id
-      LEFT JOIN goals g ON p.goal_id = g.id
-      WHERE p.notion_id IS NULL AND p.type = 'project'
+             kr.metadata->>'notion_id' AS goal_notion_id
+      FROM okr_projects p
+      LEFT JOIN areas a ON p.metadata->>'area_id' = a.id::text
+      LEFT JOIN key_results kr ON kr.id = p.kr_id
+      WHERE p.metadata->>'notion_id' IS NULL
     `);
     for (const row of projects) {
       try {
@@ -778,7 +782,7 @@ export async function pushAllToNotion(dbOverride = null) {
           properties: props,
         });
         await db.query(
-          `UPDATE projects SET notion_id=$1, notion_synced_at=NOW(), updated_at=NOW() WHERE id=$2`,
+          `UPDATE okr_projects SET metadata=COALESCE(metadata,'{}')::jsonb||jsonb_build_object('notion_id',$1,'notion_synced_at',NOW()::text), updated_at=NOW() WHERE id=$2`,
           [page.id, row.id]
         );
         stats.projects.pushed++;

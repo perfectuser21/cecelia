@@ -280,7 +280,7 @@ async function createProject({ name, description, repo_path, repo_paths, kr_ids,
   if (Array.isArray(kr_ids)) {
     for (const krId of kr_ids) {
       await pool.query(
-        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        'UPDATE okr_projects SET kr_id = $2 WHERE id = $1',
         [project.id, krId]
       );
     }
@@ -352,7 +352,7 @@ async function createGoal({ title, description, priority, project_id, target_dat
   // Auto-determine type based on parent if not provided
   let goalType = type;
   if (!goalType && parent_id) {
-    const parentResult = await pool.query('SELECT type FROM goals WHERE id = $1', [parent_id]);
+    const parentResult = await pool.query('SELECT \'objective\' AS type FROM objectives WHERE id = $1 UNION ALL SELECT \'key_result\' AS type FROM key_results WHERE id = $1 LIMIT 1', [parent_id]);
     if (parentResult.rows.length > 0) {
       const parentType = parentResult.rows[0].type;
       // Map parent type to child type

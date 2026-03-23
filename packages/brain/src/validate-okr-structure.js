@@ -173,11 +173,11 @@ async function fetchFullScope(pool, goalFilter, projectFilter, taskFilter) {
   const taskWhere = taskFilter ? `WHERE ${taskFilter}` : '';
 
   const [goalsRes, projectsRes, tasksRes, prPlansRes, krLinksRes] = await Promise.all([
-    pool.query(`SELECT * FROM goals ${goalWhere}`),
-    pool.query(`SELECT * FROM projects ${projectWhere}`),
+    pool.query(`SELECT id, title, status, metadata, created_at, 'objective' AS type, vision_id AS parent_id FROM objectives ${goalWhere.replace('WHERE', 'WHERE 1=1 AND')} UNION ALL SELECT id, title, status, metadata, created_at, 'key_result' AS type, objective_id AS parent_id FROM key_results ${goalWhere.replace('WHERE', 'WHERE 1=1 AND')}`),
+    pool.query(`SELECT id, title AS name, status, metadata, created_at, 'project' AS type, kr_id AS goal_id FROM okr_projects ${projectWhere.replace('WHERE', 'WHERE 1=1 AND')} UNION ALL SELECT id, title AS name, status, metadata, created_at, 'initiative' AS type, NULL AS goal_id FROM okr_initiatives ${projectWhere.replace('WHERE', 'WHERE 1=1 AND')}`),
     pool.query(`SELECT * FROM tasks ${taskWhere}`),
     pool.query(`SELECT * FROM pr_plans WHERE status NOT IN ('completed', 'cancelled')`),
-    pool.query(`SELECT * FROM project_kr_links`),
+    pool.query(`SELECT id AS project_id, kr_id FROM okr_projects WHERE kr_id IS NOT NULL`),
   ]);
 
   return {
@@ -199,29 +199,33 @@ async function fetchKrScope(pool, krId, goalFilter, projectFilter, taskFilter) {
   // 递归查 KR 下所有 goals
   const goalsRes = await pool.query(`
     WITH RECURSIVE tree AS (
-      SELECT * FROM goals WHERE id = $1
+      SELECT id, title, status, metadata, created_at, 'objective' AS type, vision_id AS parent_id FROM objectives WHERE id = $1
+      UNION ALL SELECT id, title, status, metadata, created_at, 'key_result' AS type, objective_id AS parent_id FROM key_results WHERE id = $1
       UNION ALL
-      SELECT g.* FROM goals g JOIN tree t ON g.parent_id = t.id
+      SELECT g.id, g.title, g.status, g.metadata, g.created_at, 'key_result' AS type, g.objective_id AS parent_id
+      FROM key_results g JOIN tree t ON g.objective_id = t.id
     )
     SELECT * FROM tree WHERE 1=1 ${goalFilterClause}
   `, [krId]);
 
-  // 通过 project_kr_links 找关联 projects
+  // 通过 okr_projects.kr_id 找关联 projects
   const krIds = goalsRes.rows.filter(g => g.type === 'area_kr' || g.type === 'area_okr').map(g => g.id);
   let projects = [];
   let krLinks = [];
   if (krIds.length > 0) {
     const krLinksRes = await pool.query(
-      `SELECT * FROM project_kr_links WHERE kr_id = ANY($1)`, [krIds]
+      `SELECT id AS project_id, kr_id FROM okr_projects WHERE kr_id = ANY($1)`, [krIds]
     );
     krLinks = krLinksRes.rows;
     const projectIds = krLinks.map(l => l.project_id);
     if (projectIds.length > 0) {
       const projectsRes = await pool.query(`
         WITH RECURSIVE ptree AS (
-          SELECT * FROM projects WHERE id = ANY($1)
+          SELECT id, title AS name, status, metadata, created_at, kr_id AS goal_id FROM okr_projects WHERE id = ANY($1)
           UNION ALL
-          SELECT p.* FROM projects p JOIN ptree pt ON p.parent_id = pt.id
+          SELECT i.id, i.title AS name, i.status, i.metadata, i.created_at, NULL AS goal_id
+          FROM okr_initiatives i JOIN okr_scopes s ON s.id = i.scope_id
+          JOIN ptree pt ON pt.id = s.project_id
         )
         SELECT * FROM ptree WHERE 1=1 ${projectFilterClause}
       `, [projectIds]);
@@ -282,7 +286,7 @@ function checkParentRules(issues, entity, row, parentRules, data, subtype) {
   if (!parentRules) return;
 
   for (const [field, rule] of Object.entries(parentRules)) {
-    // 特殊处理：kr_link（project 通过 project_kr_links 关联 KR）
+    // 特殊处理：kr_link（okr_project 通过 kr_id 关联 KR）
     if (field === 'kr_link') {
       const links = data.krLinks.filter(l => l.project_id === row.id);
       if (rule.min && links.length < rule.min) {

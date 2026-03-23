@@ -17,12 +17,13 @@ const FOCUS_OVERRIDE_KEY = 'daily_focus_override';
  */
 async function getReadyKRs() {
   const result = await pool.query(`
-    SELECT id, title, description, priority, progress, status, parent_id
-    FROM goals
-    WHERE type = 'area_okr'
-      AND status IN ('ready', 'in_progress')
+    SELECT id, title, COALESCE(metadata->>'description','') AS description,
+           COALESCE(metadata->>'priority','P1') AS priority, 0 AS progress, status,
+           vision_id AS parent_id
+    FROM objectives
+    WHERE status IN ('ready', 'in_progress')
     ORDER BY
-      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+      CASE COALESCE(metadata->>'priority','P1') WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
   `);
   return result.rows;
@@ -43,8 +44,8 @@ async function selectDailyFocus() {
   if (overrideResult.rows.length > 0 && overrideResult.rows[0].value_json?.objective_id) {
     const manualObjectiveId = overrideResult.rows[0].value_json.objective_id;
     const objResult = await pool.query(
-      'SELECT * FROM goals WHERE id = $1 AND type IN ($2, $3)',
-      [manualObjectiveId, 'mission', 'vision']
+      'SELECT id, title, COALESCE(metadata->>\'description\',\'\') AS description, COALESCE(metadata->>\'priority\',\'P1\') AS priority, 0 AS progress, status FROM objectives WHERE id = $1',
+      [manualObjectiveId]
     );
 
     if (objResult.rows.length > 0) {
@@ -80,7 +81,9 @@ async function selectDailyFocus() {
   }
 
   const areaResult = await pool.query(
-    'SELECT * FROM goals WHERE id = $1',
+    `SELECT id, title, COALESCE(metadata->>'description','') AS description,
+            COALESCE(metadata->>'priority','P1') AS priority, 0 AS progress, status
+     FROM objectives WHERE id = $1`,
     [bestAreaId]
   );
 
@@ -112,12 +115,13 @@ async function getDailyFocus() {
 
   // Get ready KRs under this objective
   const readyKRs = await pool.query(`
-    SELECT id, title, progress, weight, status
-    FROM goals
-    WHERE parent_id = $1
+    SELECT id, title, COALESCE((metadata->>'progress')::int,0) AS progress,
+           COALESCE((metadata->>'weight')::numeric,1) AS weight, status
+    FROM key_results
+    WHERE objective_id = $1
       AND status IN ('ready', 'in_progress')
     ORDER BY
-      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,
+      CASE COALESCE(metadata->>'priority','P1') WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,
       created_at ASC
   `, [objective.id]);
 
@@ -161,8 +165,8 @@ async function getDailyFocus() {
  */
 async function setDailyFocus(objectiveId) {
   const objResult = await pool.query(
-    'SELECT id FROM goals WHERE id = $1 AND type IN ($2, $3)',
-    [objectiveId, 'mission', 'vision']
+    'SELECT id FROM objectives WHERE id = $1',
+    [objectiveId]
   );
 
   if (objResult.rows.length === 0) {
@@ -199,11 +203,11 @@ async function getFocusSummary() {
   const { objective, reason, is_manual } = focusResult;
 
   const krsResult = await pool.query(`
-    SELECT id, title, progress
-    FROM goals
-    WHERE parent_id = $1 AND status IN ('ready', 'in_progress')
+    SELECT id, title, COALESCE((metadata->>'progress')::int,0) AS progress
+    FROM key_results
+    WHERE objective_id = $1 AND status IN ('ready', 'in_progress')
     ORDER BY
-      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END
+      CASE COALESCE(metadata->>'priority','P1') WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END
     LIMIT 3
   `, [objective.id]);
 

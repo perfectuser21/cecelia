@@ -73,9 +73,13 @@ async function collectTaskStats(pool) {
 async function collectKrProgress(pool) {
   try {
     const { rows: goals } = await pool.query(`
-      SELECT title, progress, status, priority
-      FROM goals
-      WHERE status = 'in_progress'
+      SELECT title, COALESCE((metadata->>'progress')::int,0) AS progress, status,
+             COALESCE(metadata->>'priority','P1') AS priority
+      FROM (
+        SELECT title, status, metadata, updated_at FROM objectives WHERE status = 'in_progress'
+        UNION ALL
+        SELECT title, status, metadata, updated_at FROM key_results WHERE status = 'in_progress'
+      ) g
       ORDER BY priority ASC, updated_at DESC
       LIMIT 5
     `);

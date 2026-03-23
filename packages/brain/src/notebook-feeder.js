@@ -116,15 +116,17 @@ async function feedOkr(db, today, notebookId) {
   if (!(await shouldFeedOkr(db))) return 0;
 
   const { rows: goals } = await db.query(
-    `SELECT title, status, priority FROM goals
-     WHERE status != 'archived'
-     ORDER BY priority, created_at DESC LIMIT 10`
+    `SELECT title, status, COALESCE(metadata->>'priority','P1') AS priority FROM (
+       SELECT title, status, metadata FROM objectives WHERE status != 'archived'
+       UNION ALL SELECT title, status, metadata FROM key_results WHERE status != 'archived'
+     ) g
+     ORDER BY priority, 1 DESC LIMIT 10`
   ).catch(() => ({ rows: [] }));
 
   const { rows: projects } = await db.query(
-    `SELECT name, type, status FROM projects
-     WHERE status != 'archived'
-     ORDER BY created_at DESC LIMIT 10`
+    `SELECT title AS name, 'initiative' AS type, status FROM okr_initiatives WHERE status != 'archived'
+     UNION ALL SELECT title AS name, 'project' AS type, status FROM okr_projects WHERE status != 'archived'
+     ORDER BY 1 DESC LIMIT 10`
   ).catch(() => ({ rows: [] }));
 
   if (goals.length === 0 && projects.length === 0) return 0;

@@ -485,9 +485,13 @@ async function searchSemanticMemory(pool, query, mode) {
     );
     if (queryTokens.size > 0) {
       const goalResults = await pool.query(
-        `SELECT id, title, description, type, status, created_at
-         FROM goals
-         WHERE status NOT IN ('completed', 'cancelled')
+        `SELECT id, title, COALESCE(metadata->>'description','') AS description,
+                'objective' AS type, status, created_at
+         FROM objectives WHERE status NOT IN ('completed', 'cancelled')
+         UNION ALL
+         SELECT id, title, COALESCE(metadata->>'description','') AS description,
+                'key_result' AS type, status, created_at
+         FROM key_results WHERE status NOT IN ('completed', 'cancelled')
          ORDER BY created_at DESC
          LIMIT 30`
       );
@@ -525,11 +529,13 @@ async function searchSemanticMemory(pool, query, mode) {
     );
     if (queryTokens.size > 0) {
       const projectResults = await pool.query(
-        `SELECT id, name, description, type, created_at
-         FROM projects
-         WHERE type IN ('project', 'initiative')
-         ORDER BY created_at DESC
-         LIMIT 30`
+        `SELECT id, title AS name, COALESCE(metadata->>'description','') AS description,
+                'project' AS type, created_at
+         FROM okr_projects ORDER BY created_at DESC LIMIT 15
+         UNION ALL
+         SELECT id, title AS name, COALESCE(metadata->>'description','') AS description,
+                'initiative' AS type, created_at
+         FROM okr_initiatives ORDER BY created_at DESC LIMIT 15`
       );
       for (const p of projectResults.rows) {
         const text = `${p.name || ''} ${p.description || ''}`.toLowerCase()
@@ -617,11 +623,12 @@ async function _enrichStructuredCandidates(pool, candidates) {
     // parent_kr_title for initiatives
     if (initiativeIds.length > 0) {
       const res = await pool.query(
-        `SELECT pi.id as initiative_id, g.title as kr_title
-         FROM goals g
-         JOIN projects p ON p.kr_id = g.id
-         JOIN projects pi ON pi.parent_id = p.id
-         WHERE pi.id = ANY($1)`,
+        `SELECT i.id as initiative_id, kr.title as kr_title
+         FROM okr_initiatives i
+         JOIN okr_scopes s ON s.id = i.scope_id
+         JOIN okr_projects p ON p.id = s.project_id
+         JOIN key_results kr ON kr.id = p.kr_id
+         WHERE i.id = ANY($1)`,
         [initiativeIds]
       );
       const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
@@ -908,9 +915,13 @@ async function loadActiveProfile(pool, mode) {
 
   try {
     const goals = await pool.query(`
-      SELECT title, status, progress FROM goals
-      WHERE status IN ('in_progress', 'pending')
-      ORDER BY priority ASC, progress DESC
+      SELECT title, status, COALESCE((metadata->>'progress')::int,0) AS progress
+      FROM (
+        SELECT title, status, metadata FROM objectives WHERE status IN ('in_progress', 'pending')
+        UNION ALL
+        SELECT title, status, metadata FROM key_results WHERE status IN ('in_progress', 'pending')
+      ) g
+      ORDER BY COALESCE(metadata->>'priority','P1') ASC, COALESCE((metadata->>'progress')::int,0) DESC
       LIMIT 3
     `);
 

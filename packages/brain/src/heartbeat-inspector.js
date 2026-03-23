@@ -64,9 +64,13 @@ async function collectSystemSnapshot(pool) {
         AND (expires_at IS NULL OR expires_at > NOW())
     `),
     pool.query(`
-      SELECT title, progress FROM goals
-      WHERE status = 'in_progress'
-      ORDER BY priority ASC LIMIT 3
+      SELECT title, COALESCE((metadata->>'progress')::int,0) AS progress
+      FROM (
+        SELECT title, metadata FROM objectives WHERE status = 'in_progress'
+        UNION ALL
+        SELECT title, metadata FROM key_results WHERE status = 'in_progress'
+      ) g
+      ORDER BY title ASC LIMIT 3
     `),
   ]);
 

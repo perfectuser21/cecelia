@@ -128,7 +128,7 @@ export async function handleRealtimeTool(toolName, args = {}, dbPool = pool) {
       case 'query_system_status': {
         const [tasks, goals] = await Promise.all([
           dbPool.query('SELECT status, count(*)::int as cnt FROM tasks GROUP BY status'),
-          dbPool.query('SELECT status, count(*)::int as cnt FROM goals GROUP BY status'),
+          dbPool.query('SELECT status, count(*)::int as cnt FROM (SELECT status FROM objectives UNION ALL SELECT status FROM key_results) g GROUP BY status'),
         ]);
         return {
           success: true,

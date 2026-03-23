@@ -110,11 +110,15 @@ function generateRecommendations(goal, blockedTasks) {
 export async function compareGoalProgress(goalId = null) {
   // Get goals
   let goalsQuery = `
-    SELECT g.id, g.title, g.status, g.progress, g.created_at,
+    SELECT g.id, g.title, g.status, COALESCE((g.metadata->>'progress')::int,0) AS progress, g.created_at,
            COUNT(t.id) as total_tasks,
            COUNT(CASE WHEN t.status = 'completed' THEN 1 END) as completed_tasks,
            COUNT(CASE WHEN t.status = 'in_progress' THEN 1 END) as in_progress_tasks
-    FROM goals g
+    FROM (
+      SELECT id, title, status, metadata, created_at FROM objectives
+      UNION ALL
+      SELECT id, title, status, metadata, created_at FROM key_results
+    ) g
     LEFT JOIN tasks t ON t.goal_id = g.id
     WHERE g.status != 'completed'
   `;
@@ -125,7 +129,7 @@ export async function compareGoalProgress(goalId = null) {
     params.push(goalId);
   }
 
-  goalsQuery += ' GROUP BY g.id ORDER BY g.priority, g.created_at';
+  goalsQuery += ' GROUP BY g.id, g.title, g.status, g.metadata, g.created_at ORDER BY g.created_at';
 
   const goalsResult = await pool.query(goalsQuery, params);
   const goals = [];

@@ -282,11 +282,10 @@ export async function handlePrMerged(pool, prInfo) {
       // 尝试通过 project_id 查找关联的 KR
       try {
         const krResult = await pool.query(`
-          SELECT pkl.kr_id
-          FROM project_kr_links pkl
-          JOIN projects p ON p.id = pkl.project_id
-          WHERE p.id = $1
-            OR p.parent_id = $1
+          SELECT kr_id
+          FROM okr_projects
+          WHERE id = $1
+            AND kr_id IS NOT NULL
           LIMIT 1
         `, [updatedRow.project_id]);
 

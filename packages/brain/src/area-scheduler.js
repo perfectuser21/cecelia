@@ -161,7 +161,11 @@ export async function selectAreaForDispatch(availableSlots = 1) {
  */
 async function getGoalIdsForArea(area) {
   const result = await pool.query(
-    `SELECT id FROM goals WHERE domain = $1 AND status IN ('ready', 'in_progress', 'decomposing')`,
+    `SELECT id FROM (
+       SELECT id, metadata FROM objectives WHERE status IN ('ready', 'in_progress', 'decomposing')
+       UNION ALL
+       SELECT id, metadata FROM key_results WHERE status IN ('ready', 'in_progress', 'decomposing')
+     ) g WHERE g.metadata->>'domain' = $1`,
     [area]
   );
   return result.rows.map(r => r.id);

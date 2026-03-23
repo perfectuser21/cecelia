@@ -256,10 +256,15 @@ export async function evaluateGoalOuterLoop(evalIntervalMs = 24 * 60 * 60 * 1000
   let goals;
   try {
     const res = await pool.query(`
-      SELECT id, title, status, priority, progress
-      FROM goals
-      WHERE status = 'in_progress'
-      ORDER BY priority, starvation_score DESC
+      SELECT id, title, status,
+             COALESCE(metadata->>'priority','P1') AS priority,
+             COALESCE((metadata->>'progress')::int,0) AS progress
+      FROM (
+        SELECT id, title, status, metadata FROM objectives WHERE status = 'in_progress'
+        UNION ALL
+        SELECT id, title, status, metadata FROM key_results WHERE status = 'in_progress'
+      ) g
+      ORDER BY priority
     `);
     goals = res.rows;
   } catch (err) {

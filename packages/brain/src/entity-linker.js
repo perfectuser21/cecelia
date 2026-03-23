@@ -25,10 +25,13 @@ export async function findRelatedGoal(text) {
     // 用关键词逐个匹配 goals 表（ILIKE），返回第一个匹配
     for (const kw of keywords) {
       const result = await pool.query(
-        `SELECT id, title FROM goals
+        `SELECT id, title FROM (
+           SELECT id, title, status, metadata FROM objectives
+           UNION ALL SELECT id, title, status, metadata FROM key_results
+         ) g
          WHERE status IN ('in_progress', 'pending', 'ready', 'reviewing', 'decomposing')
            AND title ILIKE $1
-         ORDER BY priority ASC
+         ORDER BY COALESCE(metadata->>'priority','P1') ASC
          LIMIT 1`,
         [`%${kw}%`]
       );
@@ -56,9 +59,12 @@ export async function findRelatedProject(text) {
 
     for (const kw of keywords) {
       const result = await pool.query(
-        `SELECT id, name FROM projects
-         WHERE name ILIKE $1
-         ORDER BY created_at DESC
+        `SELECT id, title AS name FROM (
+           SELECT id, title FROM okr_initiatives
+           UNION ALL SELECT id, title FROM okr_projects
+         ) p
+         WHERE title ILIKE $1
+         ORDER BY 1
          LIMIT 1`,
         [`%${kw}%`]
       );

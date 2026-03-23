@@ -33,10 +33,10 @@ const FALLBACK_REPOS = [
  */
 export async function getActiveRepoPaths(pool) {
   const { rows } = await pool.query(
-    `SELECT DISTINCT repo_path
-     FROM projects
-     WHERE repo_path IS NOT NULL
-       AND repo_path != ''
+    `SELECT DISTINCT metadata->>'repo_path' AS repo_path
+     FROM okr_initiatives
+     WHERE metadata->>'repo_path' IS NOT NULL
+       AND metadata->>'repo_path' != ''
      ORDER BY repo_path`
   );
   return rows.map(r => r.repo_path);

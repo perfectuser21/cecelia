@@ -21,8 +21,10 @@ import { getTaskLocation } from './task-router.js';
 async function reviewProjectCompletion(pool, projectId) {
   // 1. 获取 Project 信息
   const projResult = await pool.query(
-    `SELECT id, name, status, created_at, completed_at, time_budget_days, kr_id, parent_id
-     FROM projects WHERE id = $1`,
+    `SELECT id, title AS name, status, created_at, completed_at,
+            COALESCE((metadata->>'time_budget_days')::int,30) AS time_budget_days,
+            NULL::uuid AS kr_id, scope_id AS parent_id
+     FROM okr_initiatives WHERE id = $1`,
     [projectId]
   );
 
@@ -36,7 +38,7 @@ async function reviewProjectCompletion(pool, projectId) {
   const initResult = await pool.query(
     `SELECT COUNT(*) AS total,
             COUNT(*) FILTER (WHERE status = 'completed') AS completed
-     FROM projects WHERE parent_id = $1 AND type = 'initiative'`,
+     FROM okr_initiatives WHERE scope_id IN (SELECT id FROM okr_scopes WHERE project_id = $1)`,
     [projectId]
   );
   const { total: initiativeTotal, completed: initiativeCompleted } = initResult.rows[0];
@@ -92,11 +94,12 @@ async function shouldAdjustPlan(pool, krId, completedProjectId) {
 
   // 1. 查询 KR 下所有 Projects
   const projectsResult = await pool.query(
-    `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days, p.deadline
-     FROM projects p
-     JOIN project_kr_links pkl ON pkl.project_id = p.id
-     WHERE pkl.kr_id = $1 AND p.type = 'project'
-     ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC`,
+    `SELECT p.id, p.title AS name, p.status, NULL AS sequence_order,
+            COALESCE((p.metadata->>'time_budget_days')::int,30) AS time_budget_days,
+            p.end_date AS deadline
+     FROM okr_projects p
+     WHERE p.kr_id = $1
+     ORDER BY p.created_at ASC`,
     [krId]
   );
 

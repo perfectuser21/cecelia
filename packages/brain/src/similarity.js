@@ -126,12 +126,13 @@ class SimilarityService {
     // Query Initiatives (Sub-Projects, most recent 50)
     const initiativesResult = await this.db.query(`
       SELECT
-        p.id, p.name as title, p.description, p.status,
+        p.id, p.title AS title, p.metadata->>'description' AS description, p.status,
         kr.id as kr_id, kr.title as kr_title
-      FROM projects p
-      LEFT JOIN project_kr_links pkl ON p.id = pkl.project_id
-      LEFT JOIN goals kr ON pkl.kr_id = kr.id AND kr.type IN ('area_okr', 'global_kr', 'area_kr')
-      WHERE p.parent_id IS NOT NULL AND p.status IN ('active', 'in_progress')
+      FROM okr_initiatives p
+      LEFT JOIN okr_scopes s ON s.id = p.scope_id
+      LEFT JOIN okr_projects proj ON proj.id = s.project_id
+      LEFT JOIN key_results kr ON kr.id = proj.kr_id
+      WHERE p.status IN ('active', 'in_progress')
       ORDER BY p.updated_at DESC
       LIMIT 50
     `);

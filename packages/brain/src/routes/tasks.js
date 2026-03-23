@@ -1192,7 +1192,7 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
 
     if (parentTask.project_id) {
       const projectResult = await pool.query(
-        'SELECT id, name, kr_id FROM projects WHERE id = $1',
+        `SELECT id, title AS name, kr_id FROM okr_projects WHERE id = $1`,
         [parentTask.project_id]
       );
       if (projectResult.rows.length > 0) {
@@ -1202,7 +1202,7 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
         if (project.kr_id) {
           // 查 KR（goals 表 type='area_kr' 或 'global_kr'）
           const krResult = await pool.query(
-            'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
+            `SELECT id, title, COALESCE(metadata->>'description','') AS description, objective_id AS parent_id FROM key_results WHERE id = $1`,
             [project.kr_id]
           );
           if (krResult.rows.length > 0) {
@@ -1210,9 +1210,9 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
             context.kr = { id: kr.id, title: kr.title, description: kr.description };
 
             if (kr.parent_id) {
-              // 查 OKR
+              // 查 OKR (objective)
               const okrResult = await pool.query(
-                'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
+                `SELECT id, title, COALESCE(metadata->>'description','') AS description, vision_id AS parent_id FROM objectives WHERE id = $1`,
                 [kr.parent_id]
               );
               if (okrResult.rows.length > 0) {
@@ -1220,9 +1220,9 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
                 context.okr = { id: okr.id, title: okr.title, description: okr.description };
 
                 if (okr.parent_id) {
-                  // 查 Vision/Mission
+                  // 查 Vision
                   const visionResult = await pool.query(
-                    'SELECT id, title, description FROM goals WHERE id = $1',
+                    `SELECT id, title, COALESCE(metadata->>'description','') AS description FROM visions WHERE id = $1`,
                     [okr.parent_id]
                   );
                   if (visionResult.rows.length > 0) {
@@ -1231,23 +1231,6 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
                   }
                 }
               }
-            }
-          }
-        } else {
-          // 尝试通过 project_kr_links 查 kr_id
-          const krLinkResult = await pool.query(
-            'SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1',
-            [parentTask.project_id]
-          );
-          if (krLinkResult.rows.length > 0) {
-            const krId = krLinkResult.rows[0].kr_id;
-            const krResult = await pool.query(
-              'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
-              [krId]
-            );
-            if (krResult.rows.length > 0) {
-              const kr = krResult.rows[0];
-              context.kr = { id: kr.id, title: kr.title, description: kr.description };
             }
           }
         }

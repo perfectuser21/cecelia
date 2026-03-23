@@ -24,11 +24,9 @@ export async function updateKrProgress(pool, krId) {
 
   // 查 KR 关联的所有 projects
   const projectsResult = await pool.query(`
-    SELECT p.id
-    FROM projects p
-    JOIN project_kr_links pkl ON pkl.project_id = p.id
-    WHERE pkl.kr_id = $1
-      AND p.type = 'project'
+    SELECT id
+    FROM okr_projects
+    WHERE kr_id = $1
   `, [krId]);
 
   if (projectsResult.rows.length === 0) {
@@ -42,9 +40,8 @@ export async function updateKrProgress(pool, krId) {
     SELECT
       COUNT(*) AS total,
       COUNT(*) FILTER (WHERE status = 'completed') AS completed
-    FROM projects
-    WHERE parent_id = ANY($1)
-      AND type = 'initiative'
+    FROM okr_initiatives
+    WHERE scope_id IN (SELECT id FROM okr_scopes WHERE project_id = ANY($1))
       AND status IN ('active', 'in_progress', 'completed')
   `, [projectIds]);
 
@@ -53,10 +50,10 @@ export async function updateKrProgress(pool, krId) {
 
   const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  // 更新 goals.progress
+  // 更新 key_results progress (stored in metadata)
   await pool.query(`
-    UPDATE goals
-    SET progress = $2,
+    UPDATE key_results
+    SET metadata = COALESCE(metadata, '{}')::jsonb || jsonb_build_object('progress', $2::int),
         updated_at = NOW()
     WHERE id = $1
   `, [krId, progress]);
@@ -74,9 +71,8 @@ export async function syncAllKrProgress(pool) {
   // 查所有 in_progress 的 KR
   const krsResult = await pool.query(`
     SELECT id, title
-    FROM goals
-    WHERE type IN ('area_okr', 'area_kr', 'global_kr', 'key_result')
-      AND status NOT IN ('completed', 'cancelled')
+    FROM key_results
+    WHERE status NOT IN ('completed', 'cancelled')
   `);
 
   const results = [];

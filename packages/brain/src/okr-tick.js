@@ -32,9 +32,15 @@ let _okrTickRunning = false;
  */
 async function getGoalsByStatus(status) {
   const result = await pool.query(`
-    SELECT id, title, description, status, priority, progress, metadata, parent_id, project_id
-    FROM goals
-    WHERE status = $1
+    SELECT id, title, COALESCE(metadata->>'description','') AS description, status,
+           COALESCE(metadata->>'priority','P1') AS priority, COALESCE((metadata->>'progress')::int,0) AS progress,
+           metadata, vision_id AS parent_id, NULL::uuid AS project_id
+    FROM objectives WHERE status = $1
+    UNION ALL
+    SELECT id, title, COALESCE(metadata->>'description','') AS description, status,
+           COALESCE(metadata->>'priority','P1') AS priority, COALESCE((metadata->>'progress')::int,0) AS progress,
+           metadata, objective_id AS parent_id, NULL::uuid AS project_id
+    FROM key_results WHERE status = $1
     ORDER BY priority ASC, created_at ASC
   `, [status]);
   return result.rows;
@@ -320,7 +326,7 @@ async function addQuestionToGoal(goalId, question) {
 async function answerQuestionForGoal(goalId, questionId, answer) {
   // Get current metadata
   const result = await pool.query(
-    'SELECT metadata FROM goals WHERE id = $1',
+    'SELECT metadata FROM objectives WHERE id = $1 UNION ALL SELECT metadata FROM key_results WHERE id = $1 LIMIT 1',
     [goalId]
   );
 
@@ -357,7 +363,7 @@ async function answerQuestionForGoal(goalId, questionId, answer) {
  */
 async function getPendingQuestions(goalId) {
   const result = await pool.query(
-    'SELECT metadata FROM goals WHERE id = $1',
+    'SELECT metadata FROM objectives WHERE id = $1 UNION ALL SELECT metadata FROM key_results WHERE id = $1 LIMIT 1',
     [goalId]
   );
 

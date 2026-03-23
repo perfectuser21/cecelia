@@ -357,10 +357,10 @@ async function getExistingAutoTasks() {
 async function getKRProgress() {
   try {
     const result = await pool.query(
-      `SELECT id, title, status, progress, type
-       FROM goals
-       WHERE type IN ('area_kr', 'area_okr')
-         AND status IN ('in_progress', 'ready', 'decomposing')
+      `SELECT id, title, status, COALESCE((metadata->>'progress')::int,0) AS progress, 'objective' AS type
+       FROM objectives WHERE status IN ('in_progress', 'ready', 'decomposing')
+       UNION ALL SELECT id, title, status, COALESCE((metadata->>'progress')::int,0) AS progress, 'key_result' AS type
+       FROM key_results WHERE status IN ('in_progress', 'ready', 'decomposing')
        ORDER BY type, created_at DESC`
     );
     return result.rows;
@@ -410,10 +410,10 @@ async function getDopamineScore() {
 async function getActiveProjects() {
   try {
     const result = await pool.query(
-      `SELECT id, name, status, sequence_order
-       FROM projects
-       WHERE type = 'project' AND status IN ('active', 'planning')
-       ORDER BY sequence_order NULLS LAST, created_at DESC`
+      `SELECT id, title AS name, status, NULL AS sequence_order
+       FROM okr_projects
+       WHERE status IN ('active', 'planning')
+       ORDER BY created_at DESC`
     );
     return result.rows;
   } catch {
@@ -436,9 +436,9 @@ async function getGoalIdForArea(area) {
   if (!area) return null;
   try {
     const result = await pool.query(
-      `SELECT id FROM goals
-       WHERE domain = $1 AND status IN ('ready', 'in_progress', 'decomposing')
-       ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id FROM objectives WHERE metadata->>'domain' = $1 AND status IN ('ready', 'in_progress', 'decomposing')
+       UNION ALL SELECT id FROM key_results WHERE metadata->>'domain' = $1 AND status IN ('ready', 'in_progress', 'decomposing')
+       ORDER BY 1 DESC LIMIT 1`,
       [area]
     );
     return result.rows.length > 0 ? result.rows[0].id : null;

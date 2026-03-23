@@ -219,16 +219,20 @@ export async function refreshWorldState(dbPool) {
   try {
     const [goals, projects, initiatives] = await Promise.all([
       p.query(`
-        SELECT title, status, progress
-        FROM goals
-        WHERE status IN ('in_progress', 'pending')
+        SELECT title, status, COALESCE((metadata->>'progress')::int,0) AS progress
+        FROM (
+          SELECT title, status, metadata FROM objectives WHERE status IN ('in_progress', 'pending')
+          UNION ALL SELECT title, status, metadata FROM key_results WHERE status IN ('in_progress', 'pending')
+        ) g
         ORDER BY progress DESC
         LIMIT 5
       `).catch(() => ({ rows: [] })),
       p.query(`
-        SELECT title, status, current_phase
-        FROM projects
-        WHERE status IN ('active', 'planning')
+        SELECT title, status, metadata->>'current_phase' AS current_phase
+        FROM (
+          SELECT title, status, metadata, updated_at FROM okr_projects WHERE status IN ('active', 'planning')
+          UNION ALL SELECT title, status, metadata, updated_at FROM okr_initiatives WHERE status IN ('active', 'in_progress')
+        ) p
         ORDER BY updated_at DESC
         LIMIT 5
       `).catch(() => ({ rows: [] })),

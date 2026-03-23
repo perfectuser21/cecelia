@@ -141,7 +141,12 @@ async function execQueryStatus() {
 
 async function execQueryGoals() {
   const result = await pool.query(
-    `SELECT title, status, progress FROM goals ORDER BY created_at DESC LIMIT 5`
+    `SELECT title, status, COALESCE((metadata->>'progress')::int,0) AS progress
+     FROM (
+       SELECT title, status, metadata, created_at FROM objectives
+       UNION ALL
+       SELECT title, status, metadata, created_at FROM key_results
+     ) g ORDER BY created_at DESC LIMIT 5`
   );
   if (result.rows.length === 0) return '\n\n📊 暂无 OKR 目标';
   const lines = result.rows.map(r => `  - ${r.title}（${r.status}, ${r.progress}%）`).join('\n');

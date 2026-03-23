@@ -37,7 +37,7 @@ export async function getEnabledDepts(pool) {
 export async function lookupDeptPrimaryGoal(pool, dept_name) {
   try {
     const { rows } = await pool.query(
-      `SELECT id FROM goals
+      `SELECT id FROM objectives
        WHERE metadata->>'dept' = $1
          AND status NOT IN ('completed', 'cancelled', 'canceled')
        ORDER BY created_at ASC

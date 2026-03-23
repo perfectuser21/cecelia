@@ -105,8 +105,8 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
     pool.query(
       `SELECT p.id, p.name, p.type, p.status, p.kr_id,
               g.id AS kr_goal_id, g.title AS kr_title, g.progress AS kr_progress
-       FROM projects p
-       LEFT JOIN goals g ON p.kr_id = g.id
+       FROM okr_projects p
+       LEFT JOIN key_results g ON g.id = p.kr_id
        WHERE p.id = ANY($1::uuid[])`,
       [project_ids]
     ),
@@ -249,9 +249,9 @@ export async function generateCompareReport({ project_ids, format = 'json', incl
 
   // 查询项目基础信息
   const projectResult = await pool.query(
-    `SELECT id, name, type, status, created_at, updated_at
-     FROM projects
-     WHERE id = ANY($1::uuid[])`,
+    `SELECT id, title AS name, 'project' AS type, status, created_at, updated_at FROM okr_projects WHERE id = ANY($1::uuid[])
+     UNION ALL SELECT id, title AS name, 'scope' AS type, status, created_at, updated_at FROM okr_scopes WHERE id = ANY($1::uuid[])
+     UNION ALL SELECT id, title AS name, 'initiative' AS type, status, created_at, updated_at FROM okr_initiatives WHERE id = ANY($1::uuid[])`,
     [project_ids]
   );
 

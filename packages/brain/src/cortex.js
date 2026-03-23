@@ -609,7 +609,7 @@ async function _enrichContextWithSystemStatus(context) {
       SELECT
         (SELECT COUNT(*) FROM tasks WHERE status = 'in_progress') as tasks_in_progress,
         (SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND updated_at > NOW() - INTERVAL '24 hours') as recent_failures,
-        (SELECT COUNT(*) FROM goals WHERE status = 'in_progress') as active_goals
+        (SELECT COUNT(*) FROM objectives WHERE status = 'in_progress') + (SELECT COUNT(*) FROM key_results WHERE status = 'in_progress') as active_goals
     `);
     context.system_status = statusResult.rows[0];
   } catch (err) {
@@ -1361,7 +1361,10 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
         COUNT(t.id) FILTER (WHERE t.status = 'completed' AND t.updated_at > NOW() - ($1 || ' hours')::INTERVAL) as completed_tasks,
         COUNT(t.id) FILTER (WHERE t.status = 'failed' AND t.updated_at > NOW() - ($1 || ' hours')::INTERVAL) as failed_tasks,
         COUNT(t.id) FILTER (WHERE t.status = 'queued') as queued_tasks
-      FROM goals g
+      FROM (
+        SELECT id, title, status, COALESCE((metadata->>'progress')::int,0) AS progress, updated_at FROM objectives
+        UNION ALL SELECT id, title, status, COALESCE((metadata->>'progress')::int,0) AS progress, updated_at FROM key_results
+      ) g
       LEFT JOIN tasks t ON t.goal_id = g.id
       GROUP BY g.id, g.title, g.status, g.progress, g.updated_at
       ORDER BY g.updated_at DESC

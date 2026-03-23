@@ -21,18 +21,18 @@ async function getActiveProjectsWithStats() {
   const result = await pool.query(`
     SELECT
       p.id,
-      p.name,
-      p.repo_path,
-      p.lead_agent,
+      p.title AS name,
+      p.metadata->>'repo_path' AS repo_path,
+      p.metadata->>'lead_agent' AS lead_agent,
       COUNT(t.id) FILTER (WHERE t.status = 'completed' AND t.completed_at >= CURRENT_DATE) as completed_today,
       COUNT(t.id) FILTER (WHERE t.status = 'in_progress') as in_progress,
       COUNT(t.id) FILTER (WHERE t.status = 'queued') as queued,
       COUNT(t.id) FILTER (WHERE t.status = 'failed' AND t.updated_at >= CURRENT_DATE) as failed_today
-    FROM projects p
-    LEFT JOIN tasks t ON t.project_id = p.id
-    GROUP BY p.id, p.name, p.repo_path, p.lead_agent
-    HAVING COUNT(t.id) > 0 OR p.lead_agent IS NOT NULL
-    ORDER BY p.name
+    FROM okr_initiatives p
+    LEFT JOIN tasks t ON t.okr_initiative_id = p.id
+    GROUP BY p.id, p.title, p.metadata
+    HAVING COUNT(t.id) > 0
+    ORDER BY p.title
   `);
   return result.rows;
 }
@@ -46,13 +46,14 @@ async function getGoalsProgress() {
       g.id,
       g.title,
       g.status,
-      g.priority,
-      g.progress,
-      p.name as project_name
-    FROM goals g
-    LEFT JOIN projects p ON g.project_id = p.id
-    WHERE g.status NOT IN ('completed', 'cancelled')
-    ORDER BY g.priority ASC, g.progress DESC
+      COALESCE(g.metadata->>'priority','P1') AS priority,
+      0 AS progress,
+      NULL AS project_name
+    FROM (
+      SELECT id, title, status, metadata FROM objectives WHERE status NOT IN ('completed', 'cancelled')
+      UNION ALL SELECT id, title, status, metadata FROM key_results WHERE status NOT IN ('completed', 'cancelled')
+    ) g
+    ORDER BY COALESCE(g.metadata->>'priority','P1') ASC
     LIMIT 20
   `);
   return result.rows;
@@ -69,9 +70,9 @@ async function getTodaysReflections() {
       r.title,
       r.content,
       r.tags,
-      p.name as project_name
+      p.title as project_name
     FROM reflections r
-    LEFT JOIN projects p ON r.project_id = p.id
+    LEFT JOIN okr_initiatives p ON r.project_id = p.id
     WHERE r.created_at >= CURRENT_DATE
     ORDER BY r.created_at DESC
   `);
@@ -389,9 +390,9 @@ async function getDailyReports(date = 'today', type = 'all') {
   const targetDate = date === 'today' ? new Date().toISOString().split('T')[0] : date;
 
   let query = `
-    SELECT dl.*, p.name as project_name
+    SELECT dl.*, p.title as project_name
     FROM daily_logs dl
-    LEFT JOIN projects p ON dl.project_id = p.id
+    LEFT JOIN okr_initiatives p ON dl.project_id = p.id
     WHERE dl.date = $1
   `;
   const params = [targetDate];
@@ -401,7 +402,7 @@ async function getDailyReports(date = 'today', type = 'all') {
     params.push(type);
   }
 
-  query += ' ORDER BY dl.type DESC, p.name ASC';
+  query += ' ORDER BY dl.type DESC, p.title ASC';
 
   const result = await pool.query(query, params);
   return result.rows;

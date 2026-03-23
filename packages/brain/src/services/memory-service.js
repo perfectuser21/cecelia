@@ -79,7 +79,7 @@ export default class MemoryService {
         description,
         metadata,
         created_at
-      FROM projects WHERE id = $1`,
+      FROM okr_initiatives WHERE id = $1`,
       [id]
     );
 
@@ -97,7 +97,10 @@ export default class MemoryService {
         status,
         metadata,
         created_at
-      FROM goals WHERE id = $1`,
+      FROM (
+        SELECT id, title, NULL::text AS description, status, metadata, created_at FROM objectives
+        UNION ALL SELECT id, title, NULL::text AS description, status, metadata, created_at FROM key_results
+      ) g WHERE id = $1`,
       [id]
     );
 
