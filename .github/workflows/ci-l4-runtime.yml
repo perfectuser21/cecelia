@@ -181,13 +181,13 @@ jobs:
           BRAIN_PORT=$BRAIN_PORT PORT=$BRAIN_PORT node server.js &
           BRAIN_PID=$!
           echo "Brain PID: $BRAIN_PID, Port: $BRAIN_PORT"
-          for i in $(seq 1 20); do
+          for i in $(seq 1 60); do
             if curl -sf "http://localhost:${BRAIN_PORT}/health" >/dev/null 2>&1; then
               echo "✅ Brain 服务已就绪（第 ${i} 次检查）"
               break
             fi
-            if [ "$i" -eq 20 ]; then
-              echo "❌ Brain 服务启动超时（20s）"
+            if [ "$i" -eq 60 ]; then
+              echo "❌ Brain 服务启动超时（60s）"
               kill $BRAIN_PID 2>/dev/null || true
               exit 1
             fi
