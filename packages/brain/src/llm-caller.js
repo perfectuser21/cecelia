@@ -403,26 +403,67 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
   }
 }
 
+// Codex OAuth team 账号目录列表（round-robin 轮换）
+const CODEX_TEAM_HOMES = [
+  join(homedir(), '.codex-team1'),
+  join(homedir(), '.codex-team2'),
+];
+let _codexTeamIndex = 0;
+
 /**
- * 通过 codex exec 无头调用 Codex（走本地 CLI，无需 API key 配额限制）
+ * 获取下一个可用的 Codex team 账号 HOME 路径（round-robin）
+ * 检查 auth.json 存在且 tokens 字段有值（OAuth 登录状态）
+ * 若无可用 team 账号，返回 null（fallback 到 API key）
+ */
+function getNextCodexTeamHome() {
+  for (let i = 0; i < CODEX_TEAM_HOMES.length; i++) {
+    const idx = (_codexTeamIndex + i) % CODEX_TEAM_HOMES.length;
+    const home = CODEX_TEAM_HOMES[idx];
+    try {
+      const auth = JSON.parse(readFileSync(join(home, 'auth.json'), 'utf8'));
+      if (auth.tokens) {
+        _codexTeamIndex = (idx + 1) % CODEX_TEAM_HOMES.length;
+        return home;
+      }
+    } catch {
+      // 账号不存在或无效，跳过
+    }
+  }
+  return null;
+}
+
+/**
+ * 通过 codex exec 无头调用 Codex（走 OAuth 订阅账号，不消耗 API 额度）
  * model ID 格式: "codex/<model-name>"，传给 -m 时去掉前缀
- * 读取 ~/.credentials/openai.json 中的 api_key 作为 CODEX_API_KEY
+ * 优先使用 ~/.codex-teamX OAuth 账号（CODEX_HOME），fallback 到 API key
  */
 async function callCodexHeadless(prompt, model, options = {}) {
-  const apiKey = getOpenAIKey();
-  if (!apiKey) throw new Error('OpenAI/Codex API key not available');
   const timeout = options.timeout || 120000;
   // model ID 格式为 "codex/gpt-5.4-mini"，提取实际模型名
   const actualModel = model.startsWith('codex/') ? model.slice(6) : model;
 
+  // 优先用 OAuth team 账号（走订阅，不消耗 API 额度）
+  const teamHome = getNextCodexTeamHome();
+  const env = { ...process.env };
+  if (teamHome) {
+    env.CODEX_HOME = teamHome;
+    // 删除 API key，确保走 OAuth 而非直接计费
+    delete env.OPENAI_API_KEY;
+    delete env.CODEX_API_KEY;
+    console.log(`[llm-caller] codex 使用 OAuth team 账号: ${teamHome}`);
+  } else {
+    // fallback：无 team 账号时用 API key
+    const apiKey = getOpenAIKey();
+    if (!apiKey) throw new Error('Codex: 无可用 OAuth team 账号，且 OpenAI API key 不存在');
+    env.OPENAI_API_KEY = apiKey;
+    env.CODEX_API_KEY = apiKey;
+    console.warn('[llm-caller] codex 无可用 OAuth team 账号，fallback 到 API key');
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn('codex', ['exec', '-m', actualModel, prompt], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        CODEX_API_KEY: apiKey,
-        OPENAI_API_KEY: apiKey,
-      },
+      env,
     });
 
     const timer = setTimeout(() => {
