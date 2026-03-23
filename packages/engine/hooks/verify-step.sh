@@ -212,7 +212,12 @@ verify_step2() {
         [[ "$fpath" =~ verify-step\.sh$ ]] && continue
         local full_path="$PROJECT_ROOT/$fpath"
         [[ ! -f "$full_path" ]] && continue
-        if grep -qE '^\s*console\.log\s*\(|^\s*debugger\s*;?' "$full_path" 2>/dev/null; then
+        # 只检查 diff 中新增的行（'+' 开头，非 '++'），不扫描整个文件
+        # 避免误报预存在的结构化日志（如 executor.js 含大量 console.log）
+        local diff_added=""
+        diff_added=$(git diff "origin/${base_branch}...HEAD" -- "$fpath" 2>/dev/null || \
+                     git diff "${base_branch}...HEAD" -- "$fpath" 2>/dev/null || echo "")
+        if echo "$diff_added" | grep -qE '^\+\s*console\.log\s*\(|^\+\s*debugger\s*;?' 2>/dev/null; then
             garbage_files+=("$fpath")
             garbage_found=1
         fi
