@@ -52,7 +52,7 @@ vi.mock('fs', () => ({
   }),
 }));
 
-import { callLLM, callLLMStream, _resetMinimaxKey, _resetAnthropicKey } from '../llm-caller.js';
+import { callLLM, callLLMStream, _resetMinimaxKey, _resetAnthropicKey, _resetOpenAIKey } from '../llm-caller.js';
 import { getActiveProfile } from '../model-profile.js';
 import { selectBestAccount } from '../account-usage.js';
 

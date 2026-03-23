@@ -264,7 +264,9 @@ export async function searchRelevantLearnings(context = {}, limit = 10) {
       fallback.sort((a, b) => b.relevance_score - a.relevance_score);
       return fallback;
     } catch {
-      return getRecentLearnings(null, limit);
+      // Last resort: getRecentLearnings — add relevance_score: 0 so callers can rely on the property
+      const recent = await getRecentLearnings(null, limit);
+      return recent.map(l => ({ ...l, relevance_score: 0 }));
     }
   }
 }
