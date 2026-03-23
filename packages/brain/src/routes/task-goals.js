@@ -1,10 +1,10 @@
 /**
- * Task Goals route
+ * Task Goals route (migrated to new OKR tables: objectives + key_results)
  *
- * GET /        — 列出所有目标（支持 type, status, parent_id, area_id, limit, offset 过滤）
- * GET /audit   — KR 进度审计：比较 stated_progress vs initiative 实际完成率
- * GET /:id     — 获取单个 goal
- * PATCH /:id   — 更新 goal 字段（title, status, priority, progress, weight, area_id, custom_props）
+ * GET /        — 列出目标（从 objectives + key_results 查询，UNION ALL）
+ * GET /audit   — KR 进度审计：key_results current_value vs okr_initiatives 完成率
+ * GET /:id     — 先查 objectives，再查 key_results
+ * PATCH /:id   — 先更新 objectives，0 行受影响再更新 key_results
  */
 
 import { Router } from 'express';
@@ -12,44 +12,104 @@ import pool from '../db.js';
 
 const router = Router();
 
-// GET /goals — 列出目标（支持多种过滤）
+// 统一投影：将 objectives 行格式化为旧 goals 兼容格式
+const OBJ_SELECT = `
+  id,
+  'area_okr'::text AS type,
+  title,
+  NULL::text AS description,
+  NULL::uuid AS parent_id,
+  NULL::uuid AS project_id,
+  status,
+  area_id,
+  owner_role,
+  start_date,
+  end_date,
+  NULL::numeric AS target_value,
+  NULL::numeric AS current_value,
+  NULL::text AS unit,
+  metadata,
+  custom_props,
+  created_at,
+  updated_at
+`;
+
+// 统一投影：将 key_results 行格式化为旧 goals 兼容格式
+const KR_SELECT = `
+  id,
+  'area_kr'::text AS type,
+  title,
+  NULL::text AS description,
+  objective_id AS parent_id,
+  NULL::uuid AS project_id,
+  status,
+  area_id,
+  owner_role,
+  start_date,
+  end_date,
+  target_value,
+  current_value,
+  unit,
+  metadata,
+  custom_props,
+  created_at,
+  updated_at
+`;
+
+// GET /goals — 列出目标（UNION ALL objectives + key_results）
 router.get('/', async (req, res) => {
   try {
     const { type, status, parent_id, area_id, limit, offset } = req.query;
 
-    const conditions = [];
+    const objConds = [];
+    const krConds = [];
     const params = [];
-    let paramIndex = 1;
+    let pi = 1;
 
-    if (type) {
-      conditions.push(`type = $${paramIndex++}`);
-      params.push(type);
-    }
     if (status) {
-      conditions.push(`status = $${paramIndex++}`);
+      objConds.push(`status = $${pi}`);
+      krConds.push(`status = $${pi}`);
       params.push(status);
-    }
-    if (parent_id) {
-      conditions.push(`parent_id = $${paramIndex++}`);
-      params.push(parent_id);
+      pi++;
     }
     if (area_id) {
-      conditions.push(`area_id = $${paramIndex++}`);
+      objConds.push(`area_id = $${pi}`);
+      krConds.push(`area_id = $${pi}`);
       params.push(area_id);
+      pi++;
+    }
+    // parent_id 仅适用于 key_results（映射为 objective_id）
+    if (parent_id) {
+      krConds.push(`objective_id = $${pi}`);
+      params.push(parent_id);
+      pi++;
     }
 
-    let query = 'SELECT * FROM goals';
-    if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
+    const objWhere = objConds.length ? 'WHERE ' + objConds.join(' AND ') : '';
+    const krWhere = krConds.length ? 'WHERE ' + krConds.join(' AND ') : '';
+
+    let innerSql;
+    if (type === 'area_okr' || type === 'objective') {
+      innerSql = `SELECT ${OBJ_SELECT} FROM objectives ${objWhere}`;
+    } else if (type === 'area_kr' || type === 'global_kr' || type === 'kr') {
+      innerSql = `SELECT ${KR_SELECT} FROM key_results ${krWhere}`;
+    } else if (parent_id) {
+      // 有 parent_id 时只查 key_results（objectives 无父级）
+      innerSql = `SELECT ${KR_SELECT} FROM key_results ${krWhere}`;
+    } else {
+      innerSql = `SELECT ${OBJ_SELECT} FROM objectives ${objWhere}
+                  UNION ALL
+                  SELECT ${KR_SELECT} FROM key_results ${krWhere}`;
     }
-    query += ' ORDER BY created_at DESC';
+
+    let query = `SELECT * FROM (${innerSql}) combined ORDER BY created_at DESC`;
 
     if (limit) {
-      query += ` LIMIT $${paramIndex++}`;
+      query += ` LIMIT $${pi++}`;
       params.push(parseInt(limit, 10));
     }
     if (offset) {
-      query += ` OFFSET $${paramIndex++}`;
+      query += ` OFFSET $${pi++}`;
       params.push(parseInt(offset, 10));
     }
 
@@ -60,27 +120,32 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /goals/audit — KR 进度审计
+// GET /goals/audit — KR 进度审计（新表版）
 router.get('/audit', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        g.id,
-        g.title,
-        g.type,
-        g.status,
-        g.progress AS stated_progress,
-        COUNT(p.id) AS total_initiatives,
-        COUNT(p.id) FILTER (WHERE p.status = 'completed') AS completed_initiatives,
+        kr.id,
+        kr.title,
+        'area_kr' AS type,
+        kr.status,
         CASE
-          WHEN COUNT(p.id) = 0 THEN NULL
-          ELSE ROUND(COUNT(p.id) FILTER (WHERE p.status = 'completed') * 100.0 / COUNT(p.id))
+          WHEN kr.target_value > 0
+          THEN ROUND(kr.current_value * 100.0 / kr.target_value)::int
+          ELSE 0
+        END AS stated_progress,
+        COUNT(oi.id) AS total_initiatives,
+        COUNT(oi.id) FILTER (WHERE oi.status = 'completed') AS completed_initiatives,
+        CASE
+          WHEN COUNT(oi.id) = 0 THEN NULL
+          ELSE ROUND(COUNT(oi.id) FILTER (WHERE oi.status = 'completed') * 100.0 / COUNT(oi.id))
         END AS actual_progress
-      FROM goals g
-      LEFT JOIN projects p ON p.kr_id = g.id AND p.type = 'initiative'
-      WHERE g.type IN ('area_okr', 'kr')
-      GROUP BY g.id, g.title, g.type, g.status, g.progress
-      ORDER BY g.progress DESC, g.title
+      FROM key_results kr
+      LEFT JOIN okr_projects op ON op.kr_id = kr.id
+      LEFT JOIN okr_scopes os ON os.project_id = op.id
+      LEFT JOIN okr_initiatives oi ON oi.scope_id = os.id
+      GROUP BY kr.id, kr.title, kr.status, kr.current_value, kr.target_value
+      ORDER BY (kr.current_value / NULLIF(kr.target_value, 0)) DESC NULLS LAST, kr.title
     `);
 
     const rows = result.rows.map(r => ({
@@ -88,12 +153,12 @@ router.get('/audit', async (_req, res) => {
       title: r.title,
       type: r.type,
       status: r.status,
-      stated_progress: r.stated_progress,
+      stated_progress: r.stated_progress !== null ? Number(r.stated_progress) : 0,
       actual_progress: r.actual_progress !== null ? Number(r.actual_progress) : null,
       total_initiatives: Number(r.total_initiatives),
       completed_initiatives: Number(r.completed_initiatives),
       discrepancy: r.actual_progress !== null
-        ? r.stated_progress - Number(r.actual_progress)
+        ? (r.stated_progress !== null ? Number(r.stated_progress) : 0) - Number(r.actual_progress)
         : null,
     }));
 
@@ -110,21 +175,31 @@ router.get('/audit', async (_req, res) => {
   }
 });
 
-// GET /goals/:id — 获取单个 goal（返回 intent-expand 所需字段）
+// GET /goals/:id — 先查 objectives，再查 key_results
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
-  const result = await pool.query(
-    'SELECT id, type, title, description, parent_id, project_id FROM goals WHERE id = $1',
+
+  // 先查 objectives
+  const objResult = await pool.query(
+    `SELECT ${OBJ_SELECT} FROM objectives WHERE id = $1`,
     [id]
   );
-  if (!result.rows[0]) return res.status(404).json({ error: 'goal not found' });
-  res.json(result.rows[0]);
+  if (objResult.rows[0]) return res.json(objResult.rows[0]);
+
+  // 再查 key_results
+  const krResult = await pool.query(
+    `SELECT ${KR_SELECT} FROM key_results WHERE id = $1`,
+    [id]
+  );
+  if (krResult.rows[0]) return res.json(krResult.rows[0]);
+
+  return res.status(404).json({ error: 'goal not found' });
 });
 
-// PATCH /goals/:id — 更新 goal 字段
+// PATCH /goals/:id — 先更新 objectives，0 行受影响再更新 key_results
 router.patch('/:id', async (req, res) => {
   try {
-    const { title, status, priority, progress, weight, area_id, custom_props } = req.body;
+    const { title, status, area_id, owner_role, custom_props } = req.body;
 
     const setClauses = [];
     const params = [];
@@ -138,21 +213,13 @@ router.patch('/:id', async (req, res) => {
       setClauses.push(`status = $${paramIndex++}`);
       params.push(status);
     }
-    if (priority !== undefined) {
-      setClauses.push(`priority = $${paramIndex++}`);
-      params.push(priority);
-    }
-    if (progress !== undefined) {
-      setClauses.push(`progress = $${paramIndex++}`);
-      params.push(progress);
-    }
-    if (weight !== undefined) {
-      setClauses.push(`weight = $${paramIndex++}`);
-      params.push(weight);
-    }
     if (area_id !== undefined) {
       setClauses.push(`area_id = $${paramIndex++}`);
       params.push(area_id);
+    }
+    if (owner_role !== undefined) {
+      setClauses.push(`owner_role = $${paramIndex++}`);
+      params.push(owner_role);
     }
     if (custom_props !== undefined) {
       setClauses.push(`custom_props = custom_props || $${paramIndex++}::jsonb`);
@@ -166,10 +233,19 @@ router.patch('/:id', async (req, res) => {
     setClauses.push(`updated_at = NOW()`);
     params.push(req.params.id);
 
-    const result = await pool.query(
-      `UPDATE goals SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+    // 先尝试更新 objectives
+    let result = await pool.query(
+      `UPDATE objectives SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
       params
     );
+
+    if (!result.rows.length) {
+      // 再尝试更新 key_results
+      result = await pool.query(
+        `UPDATE key_results SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+        params
+      );
+    }
 
     if (!result.rows.length) {
       return res.status(404).json({ error: 'Goal not found', id: req.params.id });

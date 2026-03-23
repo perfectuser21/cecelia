@@ -1,5 +1,6 @@
 /**
  * Route tests: /api/brain/projects (task-projects.js)
+ * 已迁移到新 OKR 表：okr_projects
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
@@ -40,40 +41,45 @@ describe('task-projects routes', () => {
   });
 
   describe('GET /projects', () => {
-    it('lists all projects without filters', async () => {
+    it('lists all projects without filters (from okr_projects)', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', name: 'Project 1' }],
+        rows: [{ id: 'p1', title: 'Project 1' }],
       });
 
       const res = await request(app).get('/projects');
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('FROM okr_projects');
     });
 
-    it('filters by status and type', async () => {
+    it('filters by status', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get('/projects?status=active&type=initiative');
+      await request(app).get('/projects?status=active');
       const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('FROM okr_projects');
       expect(sql).toContain('status = $1');
-      expect(sql).toContain('type = $2');
-      expect(params).toEqual(['active', 'initiative']);
+      expect(params).toEqual(['active']);
     });
 
-    it('filters by kr_id using subquery', async () => {
+    it('filters by kr_id directly (no subquery)', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
       await request(app).get('/projects?kr_id=kr-1');
-      const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('project_kr_links');
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('kr_id = $1');
+      expect(sql).not.toContain('project_kr_links');
+      expect(params).toEqual(['kr-1']);
     });
 
-    it('filters top_level (parent_id IS NULL)', async () => {
+    it('filters by area_id', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get('/projects?top_level=true');
-      const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('parent_id IS NULL');
+      await request(app).get('/projects?area_id=area-1');
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('area_id = $1');
+      expect(params).toEqual(['area-1']);
     });
   });
 
@@ -87,16 +93,18 @@ describe('task-projects routes', () => {
       expect(res.body.id).toBeUndefined();
     });
 
-    it('returns project by id with specified fields', async () => {
+    it('returns project by id from okr_projects with compat fields', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', title: 'Project 1', description: 'desc', kr_id: null, goal_id: null }],
+        rows: [{ id: 'p1', title: 'Project 1', description: null, kr_id: 'kr-1', goal_id: null }],
       });
       const res = await request(app).get('/projects/p1');
       expect(res.status).toBe(200);
       expect(res.body.id).toBe('p1');
-      // 验证 SQL 使用指定字段 SELECT
+      // 验证 SQL 查询 okr_projects 并返回兼容字段
       const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('SELECT id, title, description, kr_id, goal_id');
+      expect(sql).toContain('FROM okr_projects');
+      expect(sql).toContain('kr_id');
+      expect(sql).toContain('NULL::uuid AS goal_id');
     });
   });
 
@@ -144,21 +152,33 @@ describe('task-projects routes', () => {
       expect(res.status).toBe(400);
     });
 
-    it('updates status and name', async () => {
+    it('updates status', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', status: 'completed', name: 'Updated' }],
+        rows: [{ id: 'p1', status: 'completed' }],
       });
 
-      const res = await request(app).patch('/projects/p1').send({ status: 'completed', name: 'Updated' });
+      const res = await request(app).patch('/projects/p1').send({ status: 'completed' });
       expect(res.status).toBe(200);
       const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('UPDATE okr_projects');
       expect(sql).toContain('status = $1');
-      expect(sql).toContain('name = $2');
+    });
+
+    it('updates name (mapped to title in okr_projects)', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'p1', title: 'Updated' }],
+      });
+
+      const res = await request(app).patch('/projects/p1').send({ name: 'Updated' });
+      expect(res.status).toBe(200);
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('UPDATE okr_projects');
+      expect(sql).toContain('title = $1');
     });
 
     it('returns 404 when project not found', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
-      const res = await request(app).patch('/projects/missing').send({ name: 'x' });
+      const res = await request(app).patch('/projects/missing').send({ status: 'x' });
       expect(res.status).toBe(404);
     });
   });
