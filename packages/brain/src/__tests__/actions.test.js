@@ -831,12 +831,11 @@ describe('actions.js', () => {
     });
 
     it('目标不存在返回失败', async () => {
-      // 新实现依次查 objectives → key_results → visions → goals，需要 4 个空响应
+      // 新实现依次查 objectives → key_results → visions（旧 goals 表 fallback 已移除）
       mockQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // objectives
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // key_results
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // visions
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // goals
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // visions
 
       const result = await updateGoal({
         goal_id: 'goal-404',

@@ -138,7 +138,7 @@ describe('Planner Agent', () => {
     });
 
     it('should reject task whose project has no repo_path', async () => {
-      // Create a project without repo_path
+      // repo_path 约束已随 OKR 迁移移除：旧 projects 表中的 ID 不在新 OKR 表中，应报 Project not found
       const projResult = await pool.query(
         "INSERT INTO projects (name, status) VALUES ('no-repo-project', 'active') RETURNING id"
       );
@@ -147,7 +147,7 @@ describe('Planner Agent', () => {
       const { handlePlanInput } = await import('../planner.js');
       await expect(handlePlanInput({
         task: { title: 'Test Task', project_id: projResult.rows[0].id }
-      })).rejects.toThrow('Hard constraint');
+      })).rejects.toThrow('Project not found');
     });
 
     it('should reject invalid input', async () => {
