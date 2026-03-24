@@ -2754,7 +2754,6 @@ async function executeTick() {
        DO UPDATE SET content = EXCLUDED.content, updated_at = NOW()`,
       [content, today]
     );
-    console.log(`[tick] 每日日记已写入: ${today}`);
   }).catch(e => console.warn('[tick] 每日日记写入失败:', e.message));
 
   // 10.16 每日契约扫描（UTC 03:00，检查模块边界是否有测试覆盖，fire-and-forget）
