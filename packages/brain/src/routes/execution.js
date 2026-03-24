@@ -1596,6 +1596,23 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    // 5c13. crystallize_* 子任务完成/失败 → 推进 crystallize 流水线状态机
+    if (newStatus === 'completed' || newStatus === 'failed') {
+      try {
+        const { advanceCrystallizeStage, CRYSTALLIZE_STAGES } = await import('../crystallize-orchestrator.js');
+        const crTaskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const crTask = crTaskRow.rows[0];
+        if (crTask && CRYSTALLIZE_STAGES.includes(crTask.task_type) && crTask.payload?.parent_crystallize_id) {
+          let findingsObj = null;
+          try { findingsObj = findingsValue ? JSON.parse(findingsValue) : null; } catch (_) {}
+          await advanceCrystallizeStage(task_id, newStatus, findingsObj || {});
+          console.log(`[execution-callback] crystallize 流水线推进: task=${task_id} type=${crTask.task_type} newStatus=${newStatus}`);
+        }
+      } catch (crErr) {
+        console.error(`[execution-callback] crystallize advance error (non-fatal): ${crErr.message}`);
+      }
+    }
+
     // 5c12. 串行降级: dev task 失败（有 sequence_order）→ 取消后续所有 blocked 串行 task
     // 避免后续 task 永久僵尸（blocked 状态无人解锁）
     // ⚠️ 必须在 if (newStatus === 'completed') 块外面，因为 failed/quarantined 不进 completed 分支

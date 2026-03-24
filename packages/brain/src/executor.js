@@ -2095,8 +2095,10 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
     console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
 
     // codex_dev 使用 runner 模式（完整 /dev 循环，via runner.sh + devloop-check.sh）
+    // crystallize_forge/verify 使用 playwright-runner.sh（CDP 自动化脚本探索）
     // codex_qa 和其他类型使用 prompt 模式（单次 codex exec）
     const isCodexDev = task.task_type === 'codex_dev';
+    const isCrystallize = task.task_type === 'crystallize_forge' || task.task_type === 'crystallize_verify';
 
     // Build prompt from task description/title
     let promptContent = task.description || task.title || '请执行此任务';
@@ -2129,9 +2131,17 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
         task_type: task.task_type,
         work_dir: task.payload?.repo_path,
         timeout_ms: 10 * 60 * 1000, // 10 minutes for Codex
-        // runner 模式参数（codex_dev 专用）
-        runner: isCodexDev ? 'packages/engine/runners/codex/runner.sh' : undefined,
-        runner_args: isCodexDev ? ['--branch', taskBranch, '--task-id', task.id] : undefined,
+        // runner 模式参数（codex_dev 专用 / crystallize_forge+verify 专用）
+        runner: isCodexDev
+          ? 'packages/engine/runners/codex/runner.sh'
+          : isCrystallize
+          ? 'packages/engine/runners/codex/playwright-runner.sh'
+          : undefined,
+        runner_args: isCodexDev
+          ? ['--branch', taskBranch, '--task-id', task.id]
+          : isCrystallize
+          ? ['--task-id', task.id]
+          : undefined,
         branch: taskBranch,
       }),
       signal: AbortSignal.timeout(15000), // 15s to accept the job
