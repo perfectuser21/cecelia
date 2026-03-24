@@ -65,7 +65,7 @@ async function manageProjectActivation(pool, cap) {
 
     for (const proj of toDeactivate) {
       await pool.query(`
-        UPDATE projects
+        UPDATE okr_projects
         SET status = 'inactive', updated_at = NOW()
         WHERE id = $1
       `, [proj.id]);
@@ -128,7 +128,7 @@ async function manageProjectActivation(pool, cap) {
 
   for (const proj of toActivate) {
     await pool.query(`
-      UPDATE projects
+      UPDATE okr_projects
       SET status = 'active', updated_at = NOW()
       WHERE id = $1
     `, [proj.id]);

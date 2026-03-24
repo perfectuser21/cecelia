@@ -149,17 +149,28 @@ const actionHandlers = {
    * 创建 OKR
    */
   async create_okr(params, context) {
-    const result = await pool.query(`
-      INSERT INTO goals (title, description, type, status, priority, project_id)
-      VALUES ($1, $2, $3, 'ready', $4, $5)
-      RETURNING id
-    `, [
-      params.title,
-      params.description || '',
-      params.type || 'mission',
-      params.priority || 'P1',
-      params.project_id || null
-    ]);
+    const goalType = params.type || 'mission';
+    let result;
+    if (goalType === 'vision') {
+      result = await pool.query(`
+        INSERT INTO visions (title, description, status, metadata)
+        VALUES ($1, $2, 'active', $3)
+        RETURNING id
+      `, [params.title, params.description || '', JSON.stringify({ priority: params.priority || 'P1' })]);
+    } else if (goalType === 'area_kr' || goalType === 'global_kr') {
+      result = await pool.query(`
+        INSERT INTO key_results (title, description, priority, status, progress, weight, metadata)
+        VALUES ($1, $2, $3, 'pending', 0, 1.0, $4)
+        RETURNING id
+      `, [params.title, params.description || '', params.priority || 'P1', JSON.stringify({})]);
+    } else {
+      // mission / area_okr / 其他 → objectives
+      result = await pool.query(`
+        INSERT INTO objectives (title, description, priority, status, metadata)
+        VALUES ($1, $2, $3, 'ready', $4)
+        RETURNING id
+      `, [params.title, params.description || '', params.priority || 'P1', JSON.stringify({})]);
+    }
     return { success: true, goal_id: result.rows[0]?.id };
   },
 
@@ -634,8 +645,8 @@ const actionHandlers = {
     }
 
     const result = await pool.query(
-      `UPDATE goals SET status = 'ready', updated_at = NOW()
-       WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
+      `UPDATE key_results SET status = 'ready', updated_at = NOW()
+       WHERE id = $1 AND status = 'reviewing'
        RETURNING id, title, status`,
       [kr_id]
     );

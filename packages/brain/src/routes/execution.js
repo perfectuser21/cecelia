@@ -1487,7 +1487,7 @@ ${resultStr.substring(0, 2000)}
 
           if (verdict === 'APPROVED') {
             await pool.query(
-              `UPDATE projects SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+              `UPDATE okr_initiatives SET status = 'completed', updated_at = NOW() WHERE id = $1`,
               [projectId]
             );
             console.log(`[execution-callback] 断链#6 APPROVED: initiative ${projectId} → completed`);

@@ -236,7 +236,7 @@ async function executeAdjustmentAction(action) {
         throw new Error('adjust_priority 需要 project_id 和 new_sequence');
       }
       await pool.query(
-        'UPDATE projects SET sequence_order = $1, updated_at = NOW() WHERE id = $2',
+        'UPDATE okr_projects SET sequence_order = $1, updated_at = NOW() WHERE id = $2',
         [action.new_sequence, action.project_id]
       );
       await recordDecision('self_drive', action.reason || 'adjust_priority', action);
@@ -248,7 +248,7 @@ async function executeAdjustmentAction(action) {
         throw new Error('pause_kr 需要 kr_id');
       }
       await pool.query(
-        "UPDATE goals SET status = 'paused', updated_at = NOW() WHERE id = $1",
+        "UPDATE key_results SET status = 'paused', updated_at = NOW() WHERE id = $1",
         [action.kr_id]
       );
       await recordDecision('self_drive', action.reason || 'pause_kr', action);
@@ -260,7 +260,7 @@ async function executeAdjustmentAction(action) {
         throw new Error('activate_kr 需要 kr_id');
       }
       await pool.query(
-        "UPDATE goals SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
+        "UPDATE key_results SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
         [action.kr_id]
       );
       await recordDecision('self_drive', action.reason || 'activate_kr', action);
@@ -276,7 +276,7 @@ async function executeAdjustmentAction(action) {
         throw new Error(`update_roadmap phase 必须是 ${validPhases.join('/')}，收到: ${action.phase}`);
       }
       await pool.query(
-        'UPDATE projects SET current_phase = $1, updated_at = NOW() WHERE id = $2',
+        'UPDATE okr_projects SET current_phase = $1, updated_at = NOW() WHERE id = $2',
         [action.phase, action.project_id]
       );
       await recordDecision('self_drive', action.reason || 'update_roadmap', action);

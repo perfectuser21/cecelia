@@ -171,21 +171,23 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
     : (owner_role || null);
 
   const result = await pool.query(`
-    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, type, plan_content, status, execution_mode, current_phase, dod_content, domain, owner_role)
-    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'active', $7, $8, $9, $10, $11)
-    RETURNING *
+    INSERT INTO okr_initiatives (title, scope_id, description, status, owner_role, metadata)
+    VALUES ($1, $2, $3, 'active', $4, $5)
+    RETURNING id, title AS name, scope_id AS parent_id, 'initiative' AS type, status, owner_role, created_at, updated_at
   `, [
     name,
     parent_id,
-    kr_id || null,
-    decomposition_mode || 'known',
     description || '',
-    plan_content || null,
-    execution_mode || 'cecelia',
-    isOrchestrated ? 'plan' : null,
-    dod_content ? JSON.stringify(dod_content) : null,
-    domain || null,
-    resolvedOwnerRole
+    resolvedOwnerRole,
+    JSON.stringify({
+      kr_id: kr_id || null,
+      decomposition_mode: decomposition_mode || 'known',
+      plan_content: plan_content || null,
+      execution_mode: execution_mode || 'cecelia',
+      current_phase: isOrchestrated ? 'plan' : null,
+      dod_content: dod_content || null,
+      domain: domain || null,
+    })
   ]);
 
   const initiative = result.rows[0];
@@ -216,15 +218,15 @@ async function createScope({ name, parent_id, description, domain: domainInput, 
   const owner_role = ownerRoleInput ?? detected.owner_role;
 
   const result = await pool.query(`
-    INSERT INTO projects (name, parent_id, description, type, status, decomposition_depth, domain, owner_role)
-    VALUES ($1, $2, $3, 'scope', 'active', 1, $4, $5)
-    RETURNING *
+    INSERT INTO okr_scopes (title, project_id, description, status, owner_role, metadata)
+    VALUES ($1, $2, $3, 'active', $4, $5)
+    RETURNING id, title AS name, project_id AS parent_id, 'scope' AS type, status, owner_role, created_at, updated_at
   `, [
     name,
     parent_id,
     description || '',
-    domain,
     owner_role,
+    JSON.stringify({ domain }),
   ]);
 
   const scope = result.rows[0];
@@ -252,21 +254,21 @@ async function createProject({ name, description, repo_path, repo_paths, kr_ids,
   const domain = domainInput ?? detected.domain;
   const owner_role = ownerRoleInput ?? detected.owner_role;
 
+  const primaryRepo = repo_path || (repo_paths?.[0]) || null;
   const result = await pool.query(`
-    INSERT INTO projects (name, description, repo_path, type, status, domain, owner_role)
-    VALUES ($1, $2, $3, 'project', 'active', $4, $5)
-    RETURNING *
+    INSERT INTO okr_projects (title, description, status, owner_role, metadata)
+    VALUES ($1, $2, 'active', $3, $4)
+    RETURNING id, title AS name, 'project' AS type, status, owner_role, created_at, updated_at
   `, [
     name,
     description || '',
-    repo_path || (repo_paths?.[0]) || null,
-    domain,
     owner_role,
+    JSON.stringify({ domain, repo_path: primaryRepo }),
   ]);
 
   const project = result.rows[0];
 
-  // Insert into project_repos for multi-repo support
+  // Insert into project_repos for multi-repo support（FK 已在 migration 184 DROP）
   const allPaths = repo_paths || (repo_path ? [repo_path] : []);
   for (const rp of allPaths) {
     await pool.query(`
@@ -276,7 +278,7 @@ async function createProject({ name, description, repo_path, repo_paths, kr_ids,
     `, [project.id, rp]);
   }
 
-  // Link to KRs if provided
+  // Link to KRs if provided（FK 已在 migration 184 DROP）
   if (Array.isArray(kr_ids)) {
     for (const krId of kr_ids) {
       await pool.query(
@@ -395,21 +397,27 @@ async function createGoal({ title, description, priority, project_id, target_dat
     }
   }
 
-  const result = await pool.query(`
-    INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress, domain, owner_role)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, $8, $9)
-    RETURNING *
-  `, [
-    title,
-    description || '',
-    priority || 'P1',
-    project_id || null,
-    target_date || null,
-    parent_id || null,
-    goalType,
-    domain,
-    owner_role,
-  ]);
+  let result;
+  if (goalType === 'vision') {
+    result = await pool.query(`
+      INSERT INTO visions (title, description, status, owner_role, end_date, metadata)
+      VALUES ($1, $2, 'active', $3, $4, $5)
+      RETURNING id, title, 'vision' AS type, status, owner_role, created_at, updated_at
+    `, [title, description || '', owner_role, target_date || null, JSON.stringify({ priority, domain, project_id })]);
+  } else if (goalType === 'area_kr' || goalType === 'global_kr') {
+    result = await pool.query(`
+      INSERT INTO key_results (title, description, priority, status, progress, weight, owner_role, objective_id, end_date, metadata)
+      VALUES ($1, $2, $3, 'pending', 0, 1.0, $4, $5, $6, $7)
+      RETURNING id, title, 'area_kr' AS type, status, priority, progress, owner_role, objective_id AS parent_id, created_at, updated_at
+    `, [title, description || '', priority || 'P1', owner_role, parent_id || null, target_date || null, JSON.stringify({ domain, project_id })]);
+  } else {
+    // mission / area_okr / 其他 → objectives
+    result = await pool.query(`
+      INSERT INTO objectives (title, description, priority, status, owner_role, vision_id, end_date, metadata)
+      VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)
+      RETURNING id, title, 'area_okr' AS type, status, priority, owner_role, vision_id AS parent_id, created_at, updated_at
+    `, [title, description || '', priority || 'P1', owner_role, parent_id || null, target_date || null, JSON.stringify({ domain, project_id })]);
+  }
 
   console.log(`[Action] Created goal: ${result.rows[0].id} - ${title} (type: ${goalType})`);
   return { success: true, goal: result.rows[0] };
@@ -419,6 +427,20 @@ async function createGoal({ title, description, priority, project_id, target_dat
  * Update goal status/progress
  */
 async function updateGoal({ goal_id, status, progress }) {
+  const tableCheck = await pool.query(`
+    SELECT 'key_results' AS tbl FROM key_results WHERE id = $1
+    UNION ALL
+    SELECT 'objectives' AS tbl FROM objectives WHERE id = $1
+    UNION ALL
+    SELECT 'visions' AS tbl FROM visions WHERE id = $1
+    LIMIT 1
+  `, [goal_id]);
+
+  const tbl = tableCheck.rows[0]?.tbl;
+  if (!tbl) {
+    return { success: false, error: 'Goal not found' };
+  }
+
   const updates = [];
   const values = [];
   let idx = 1;
@@ -427,7 +449,8 @@ async function updateGoal({ goal_id, status, progress }) {
     updates.push(`status = $${idx++}`);
     values.push(status);
   }
-  if (progress !== undefined) {
+  // progress 列仅 key_results 表支持
+  if (progress !== undefined && tbl === 'key_results') {
     updates.push(`progress = $${idx++}`);
     values.push(progress);
   }
@@ -438,17 +461,16 @@ async function updateGoal({ goal_id, status, progress }) {
 
   updates.push(`updated_at = NOW()`);
   values.push(goal_id);
-  const result = await pool.query(`
-    UPDATE goals SET ${updates.join(', ')}
-    WHERE id = $${idx}
-    RETURNING *
-  `, values);
+  const result = await pool.query(
+    `UPDATE ${tbl} SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, title, status`,
+    values
+  );
 
   if (result.rows.length === 0) {
-    return { success: false, error: 'Goal not found' };
+    return { success: false, error: 'Goal not found in new OKR tables' };
   }
 
-  console.log(`[Action] Updated goal: ${goal_id}`);
+  console.log(`[Action] Updated goal: ${goal_id} in ${tbl}`);
   return { success: true, goal: result.rows[0] };
 }
 

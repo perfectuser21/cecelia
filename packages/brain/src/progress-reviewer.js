@@ -250,14 +250,14 @@ async function executePlanAdjustment(pool, findings, planContext) {
       values.push(adj.time_budget_days);
     }
     if (adj.deadline !== undefined) {
-      updates.push(`deadline = $${paramIdx++}`);
+      updates.push(`end_date = $${paramIdx++}`);
       values.push(adj.deadline);
     }
 
     if (updates.length > 0) {
       updates.push('updated_at = NOW()');
       await pool.query(
-        `UPDATE projects SET ${updates.join(', ')} WHERE id = $1`,
+        `UPDATE okr_projects SET ${updates.join(', ')} WHERE id = $1`,
         values
       );
       console.log(`[progress-reviewer] Adjusted project ${adj.project_id}: ${updates.join(', ')}`);
