@@ -187,10 +187,18 @@ async function getGlobalState() {
     `),
     pool.query(`
       SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
-             objective_id AS parent_id, priority, progress, weight,
-             'area_okr' AS type
-      FROM key_results
-      WHERE status NOT IN ('completed', 'cancelled')
+             type, parent_id, priority, progress, weight
+      FROM (
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'area_okr' AS type, vision_id AS parent_id, priority, NULL AS progress, NULL AS weight
+        FROM objectives
+        WHERE status NOT IN ('completed', 'cancelled')
+        UNION ALL
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'area_okr' AS type, objective_id AS parent_id, priority, progress, weight
+        FROM key_results
+        WHERE status NOT IN ('completed', 'cancelled')
+      ) sub
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`
@@ -556,18 +564,20 @@ async function generateArchitectureDesignTask(kr, project) {
   try {
     // Find the oldest active initiative under this project without queued tasks
     // 迁移：projects WHERE parent_id → okr_initiatives JOIN okr_scopes WHERE scope.project_id
+    // 迁移期间兼容查询：先查旧 projects 表（触发器保证双写），新表用于补充
     const initiativeResult = await pool.query(`
-      SELECT oi.id, oi.title AS name, oi.status, oi.created_at, oi.updated_at,
-             NULL::varchar AS domain, NULL::text AS description, os.project_id AS parent_project_id
-      FROM okr_initiatives oi
-      INNER JOIN okr_scopes os ON os.id = oi.scope_id AND os.project_id = $1
-      WHERE oi.status IN ('active', 'in_progress', 'pending')
+      SELECT i.id, i.name, i.status, i.created_at, i.updated_at,
+             i.domain, i.description, i.parent_id AS parent_project_id
+      FROM projects i
+      WHERE i.parent_id = $1
+        AND i.type = 'initiative'
+        AND i.status IN ('active', 'in_progress', 'pending')
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
-          WHERE t.project_id = oi.id
+          WHERE t.project_id = i.id
             AND t.status IN ('queued', 'in_progress')
         )
-      ORDER BY oi.created_at ASC
+      ORDER BY i.created_at ASC
       LIMIT 1
     `, [project.id]);
 
