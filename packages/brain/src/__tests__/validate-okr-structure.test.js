@@ -31,8 +31,10 @@ function makeMockPool({
   return {
     query: vi.fn().mockImplementation(async (sql) => {
       const s = sql.trim().toLowerCase();
-      if (s.includes('from goals')) return { rows: goals };
-      if (s.includes('from projects')) return { rows: projects };
+      // 迁移后：goals → visions/objectives/key_results（UNION ALL 合并查询）
+      if (s.includes('from visions') || s.includes('from objectives') || s.includes('from key_results')) return { rows: goals };
+      // 迁移后：projects → okr_projects/okr_scopes/okr_initiatives（UNION ALL 合并查询）
+      if (s.includes('from okr_projects') || s.includes('from okr_scopes') || s.includes('from okr_initiatives')) return { rows: projects };
       if (s.includes('from tasks')) return { rows: tasks };
       if (s.includes('from pr_plans')) return { rows: prPlans };
       if (s.includes('from project_kr_links')) return { rows: krLinks };
