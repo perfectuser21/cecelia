@@ -975,7 +975,7 @@ router.post('/execution-callback', async (req, res) => {
 
       // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
       try {
-        const ssTaskResult = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        const ssTaskResult = await pool.query('SELECT task_type, title, payload FROM tasks WHERE id = $1', [task_id]);
         const ssTaskRow = ssTaskResult.rows[0];
 
         if (ssTaskRow?.task_type === 'strategy_session') {
@@ -1003,18 +1003,38 @@ router.post('/execution-callback', async (req, res) => {
               [JSON.stringify(meetingSummary), task_id]
             );
 
+            // 确定 objective_id：优先从输出 JSON 读取，其次从 task payload，最后自动创建
+            let objectiveId = parsedOutput.objective_id
+              || (ssTaskRow.payload && ssTaskRow.payload.objective_id)
+              || null;
+
+            if (!objectiveId) {
+              const objTitle = meetingSummary
+                ? meetingSummary.slice(0, 80)
+                : (ssTaskRow.title || 'Strategy Session Objective');
+              const objResult = await pool.query(
+                `INSERT INTO objectives (title, status) VALUES ($1, 'active') RETURNING id`,
+                [objTitle]
+              );
+              objectiveId = objResult.rows[0].id;
+              console.log(`[execution-callback] strategy_session created objective: "${objTitle}" id=${objectiveId}`);
+            } else {
+              console.log(`[execution-callback] strategy_session using objective_id=${objectiveId}`);
+            }
+
             for (const kr of krs) {
               const krTitle = kr.title || '(untitled KR)';
               const krDomain = kr.domain || null;
               const krOwnerRole = kr.owner_role ? kr.owner_role.toLowerCase() : null;
               const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
+              const krObjectiveId = kr.objective_id || objectiveId;
 
               await pool.query(
-                `INSERT INTO key_results (title, status, owner_role, metadata)
-                 VALUES ($1, 'pending', $2, $3)`,
-                [krTitle, krOwnerRole, JSON.stringify({ priority: krPriority, domain: krDomain })]
+                `INSERT INTO key_results (title, status, owner_role, metadata, objective_id)
+                 VALUES ($1, 'pending', $2, $3, $4)`,
+                [krTitle, krOwnerRole, JSON.stringify({ priority: krPriority, domain: krDomain }), krObjectiveId]
               );
-              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole}`);
+              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole} objective_id=${krObjectiveId}`);
             }
 
             console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
