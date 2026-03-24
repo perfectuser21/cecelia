@@ -356,7 +356,7 @@ jobs:
             fi
           fi
 
-      # Changed-line Coverage Gate (feat PR 变更行覆盖率)
+      # Changed-line Coverage Gate (feat/fix/refactor PR 变更行覆盖率)
       - name: Coverage Gate
         working-directory: packages/engine
         if: always() && steps.test.outcome == 'success'

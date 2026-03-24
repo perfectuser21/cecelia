@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * check-changed-coverage.cjs — feat PR 变更行覆盖率硬门禁
+ * check-changed-coverage.cjs — 变更行覆盖率硬门禁
  *
  * 三个确定性门禁（零 LLM 成本）：
  *   门禁 1: feat: PR 必须有新增测试文件
  *   门禁 2: 新测试必须 import 本 PR 修改的源码
- *   门禁 3: 变更行覆盖率 ≥ 60%
+ *   门禁 3: 变更行覆盖率 ≥ 60%（feat / fix / refactor PR 均适用）
  *
  * 用法：
  *   node check-changed-coverage.cjs                    # 自动检测 base branch
@@ -13,7 +13,7 @@
  *   node check-changed-coverage.cjs --coverage-dir ./coverage  # 指定覆盖率目录
  *
  * Exit codes:
- *   0 = 通过（或不适用，如 fix: PR）
+ *   0 = 通过
  *   1 = 门禁失败
  */
 
@@ -58,6 +58,25 @@ function getCommitTypes(baseBranch) {
 function isFeatPR(commitTypes) {
   return commitTypes.includes("feat");
 }
+
+/**
+ * 判断是否为 fix / refactor PR（需要覆盖率检查，但不强制新增测试文件）
+ */
+function isFixOrRefactorPR(commitTypes) {
+  return commitTypes.includes("fix") || commitTypes.includes("refactor");
+}
+
+/**
+ * 根据 commit 类型和覆盖率数据，决定 Gate 3 使用的覆盖率数据
+ * fix/refactor PR 没有覆盖率报告时，返回 "__missing__" 标记
+ * @param {boolean} isFix - 是否为 fix/refactor PR
+ * @param {object|null} coverageData - 覆盖率数据
+ * @returns {object|null|"__missing__"}
+ */
+function resolveGate3CoverageData(isFix, coverageData) {
+  return isFix && !coverageData ? "__missing__" : coverageData;
+}
+
 
 /**
  * 获取 PR 变更文件列表
@@ -515,14 +534,17 @@ function main() {
   }
   console.log("");
 
-  // ── 门禁 3: 变更行覆盖率 ──
-  console.log(`  门禁 3: 变更行覆盖率 ≥ ${COVERAGE_THRESHOLD}%`);
-  const gate3 = checkChangedLineCoverage(
-    changedLines,
-    coverageData,
-    projectRoot,
-    COVERAGE_THRESHOLD
-  );
+  // ── 门禁 3: 变更行覆盖率（feat / fix / refactor 均强制）──
+  const isFix = isFixOrRefactorPR(commitTypes);
+  if (isFix) {
+    console.log(`  门禁 3: 变更行覆盖率 ≥ ${COVERAGE_THRESHOLD}% [fix/refactor PR 强制]`);
+  } else {
+    console.log(`  门禁 3: 变更行覆盖率 ≥ ${COVERAGE_THRESHOLD}%`);
+  }
+  const gate3CoverageData = resolveGate3CoverageData(isFix, coverageData);
+  const gate3 = gate3CoverageData === "__missing__"
+    ? { passed: false, skipped: false, reason: "fix/refactor PR 必须有覆盖率报告（请确认 vitest --coverage 已运行）", coverage: { covered: 0, total: 0 } }
+    : checkChangedLineCoverage(changedLines, coverageData, projectRoot, COVERAGE_THRESHOLD);
   if (gate3.skipped) {
     console.log(`  ${YELLOW}⏭️${RESET}  ${gate3.reason}`);
   } else if (gate3.passed) {
@@ -567,6 +589,8 @@ function main() {
 module.exports = {
   getCommitTypes,
   isFeatPR,
+  isFixOrRefactorPR,
+  resolveGate3CoverageData,
   getChangedFiles,
   filterSourceFiles,
   filterNewTestFiles,

@@ -8,6 +8,8 @@ const mod = require("../../scripts/devgate/check-changed-coverage.cjs");
 
 const {
   isFeatPR,
+  isFixOrRefactorPR,
+  resolveGate3CoverageData,
   filterSourceFiles,
   filterNewTestFiles,
   testImportsSourceFile,
@@ -284,7 +286,7 @@ describe("checkFeatHasTests", () => {
   it("feat PR 有测试文件通过", () => {
     const result = checkFeatHasTests(
       ["feat"],
-      ["src/index.ts", "tests/index.test.ts"]
+      ["packages/engine/src/index.ts", "packages/engine/tests/index.test.ts"]
     );
     expect(result.passed).toBe(true);
     expect(result.skipped).toBe(false);
@@ -313,8 +315,8 @@ describe("checkFeatHasTests", () => {
   it("feat PR allChangedFiles 有源码文件但无测试则失败", () => {
     const result = checkFeatHasTests(
       ["feat"],
-      ["src/index.ts"],
-      ["src/index.ts"]
+      ["packages/engine/src/index.ts"],
+      ["packages/engine/src/index.ts"]
     );
     expect(result.passed).toBe(false);
   });
@@ -323,8 +325,8 @@ describe("checkFeatHasTests", () => {
     // 场景：测试文件是 modified（不在 addedFiles），但在 allChangedFiles
     const result = checkFeatHasTests(
       ["feat"],
-      ["src/index.ts"], // addedFiles：只有源码，无新增测试
-      ["src/index.ts", "tests/index.test.ts"] // allChangedFiles：源码 + 修改的测试
+      ["packages/engine/src/index.ts"], // addedFiles：只有源码，无新增测试
+      ["packages/engine/src/index.ts", "packages/engine/tests/index.test.ts"] // allChangedFiles：源码 + 修改的测试
     );
     expect(result.passed).toBe(true);
     expect(result.skipped).toBe(false);
@@ -351,8 +353,8 @@ describe("checkTestImportsSource", () => {
   });
 
   it("新测试 import 源码通过", () => {
-    const testDir = path.join(tmpDir, "tests");
-    const srcDir = path.join(tmpDir, "src");
+    const testDir = path.join(tmpDir, "packages/engine/tests");
+    const srcDir = path.join(tmpDir, "packages/engine/src");
     fs.mkdirSync(testDir, { recursive: true });
     fs.mkdirSync(srcDir, { recursive: true });
 
@@ -366,15 +368,15 @@ describe("checkTestImportsSource", () => {
     );
 
     const result = checkTestImportsSource(
-      ["tests/foo.test.ts", "src/foo.ts"],
-      ["tests/foo.test.ts", "src/foo.ts"],
+      ["packages/engine/tests/foo.test.ts", "packages/engine/src/foo.ts"],
+      ["packages/engine/tests/foo.test.ts", "packages/engine/src/foo.ts"],
       tmpDir
     );
     expect(result.passed).toBe(true);
   });
 
   it("新测试不 import 源码失败", () => {
-    const testDir = path.join(tmpDir, "tests");
+    const testDir = path.join(tmpDir, "packages/engine/tests");
     fs.mkdirSync(testDir, { recursive: true });
 
     fs.writeFileSync(
@@ -383,12 +385,12 @@ describe("checkTestImportsSource", () => {
     );
 
     const result = checkTestImportsSource(
-      ["tests/orphan.test.ts"],
-      ["tests/orphan.test.ts", "src/real.ts"],
+      ["packages/engine/tests/orphan.test.ts"],
+      ["packages/engine/tests/orphan.test.ts", "packages/engine/src/real.ts"],
       tmpDir
     );
     expect(result.passed).toBe(false);
-    expect(result.files).toContain("tests/orphan.test.ts");
+    expect(result.files).toContain("packages/engine/tests/orphan.test.ts");
   });
 });
 
@@ -491,5 +493,55 @@ describe("checkChangedLineCoverage", () => {
     // 只算 src/foo.ts: 1/1 = 100%
     expect(result.passed).toBe(true);
     expect(result.coverage?.percentage).toBe(100);
+  });
+});
+
+// ─── isFixOrRefactorPR ───────────────────────────────────────────
+
+describe("isFixOrRefactorPR", () => {
+  it("fix 类型返回 true", () => {
+    expect(isFixOrRefactorPR(["fix"])).toBe(true);
+  });
+
+  it("refactor 类型返回 true", () => {
+    expect(isFixOrRefactorPR(["refactor"])).toBe(true);
+  });
+
+  it("feat 类型返回 false", () => {
+    expect(isFixOrRefactorPR(["feat"])).toBe(false);
+  });
+
+  it("chore 类型返回 false", () => {
+    expect(isFixOrRefactorPR(["chore"])).toBe(false);
+  });
+
+  it("fix 与 feat 混合返回 true", () => {
+    expect(isFixOrRefactorPR(["feat", "fix"])).toBe(true);
+  });
+
+  it("空数组返回 false", () => {
+    expect(isFixOrRefactorPR([])).toBe(false);
+  });
+});
+
+// ─── resolveGate3CoverageData ────────────────────────────────────
+
+describe("resolveGate3CoverageData", () => {
+  it("非 fix PR 有覆盖率数据 → 返回原始数据", () => {
+    const data = { "file.ts": {} };
+    expect(resolveGate3CoverageData(false, data)).toBe(data);
+  });
+
+  it("非 fix PR 无覆盖率数据 → 返回 null（非 missing）", () => {
+    expect(resolveGate3CoverageData(false, null)).toBe(null);
+  });
+
+  it("fix PR 有覆盖率数据 → 返回原始数据", () => {
+    const data = { "file.ts": {} };
+    expect(resolveGate3CoverageData(true, data)).toBe(data);
+  });
+
+  it("fix PR 无覆盖率数据 → 返回 __missing__ 标记", () => {
+    expect(resolveGate3CoverageData(true, null)).toBe("__missing__");
   });
 });
