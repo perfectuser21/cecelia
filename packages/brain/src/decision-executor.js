@@ -167,10 +167,7 @@ const actionHandlers = {
         VALUES ($1, $2, $3, 'active') RETURNING id
       `, [params.title, params.description || '', params.priority || 'P1']);
     } else {
-      result = await pool.query(`
-        INSERT INTO goals (title, description, type, status, priority, project_id)
-        VALUES ($1, $2, $3, 'ready', $4, $5) RETURNING id
-      `, [params.title, params.description || '', goalType, params.priority || 'P1', params.project_id || null]);
+      throw new Error(`create_okr: unsupported goalType '${goalType}'`);
     }
     return { success: true, goal_id: result.rows[0]?.id };
   },
@@ -645,21 +642,12 @@ const actionHandlers = {
       return { success: false, error: 'kr_id is required' };
     }
 
-    // Try objectives first, fallback to goals
-    let result = await pool.query(
+    const result = await pool.query(
       `UPDATE objectives SET status = 'ready', updated_at = NOW()
        WHERE id = $1 AND status = 'reviewing'
        RETURNING id, title, status`,
       [kr_id]
     );
-    if (result.rows.length === 0) {
-      result = await pool.query(
-        `UPDATE goals SET status = 'ready', updated_at = NOW()
-         WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
-         RETURNING id, title, status`,
-        [kr_id]
-      );
-    }
 
     if (result.rows.length === 0) {
       console.warn(`[executor] okr_decomp_review: KR ${kr_id} not found or not in reviewing status`);

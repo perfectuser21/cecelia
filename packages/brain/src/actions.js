@@ -425,12 +425,7 @@ async function createGoal({ title, description, priority, project_id, target_dat
       RETURNING *, title AS name
     `, [title, description || '', priority || 'P1', owner_role, parent_id || null, endDate, metaJson]);
   } else {
-    // fallback: unknown type → goals table
-    goalResult = await pool.query(`
-      INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress, domain, owner_role)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, $8, $9)
-      RETURNING *
-    `, [title, description || '', priority || 'P1', project_id || null, endDate, parent_id || null, goalType, domain, owner_role]);
+    throw new Error(`createGoal: unsupported goalType '${goalType}'`);
   }
 
   const goal = goalResult.rows[0];

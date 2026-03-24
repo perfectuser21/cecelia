@@ -563,18 +563,16 @@ async function generateNextTask(kr, project, state, options = {}) {
 async function generateArchitectureDesignTask(kr, project) {
   try {
     // Find the oldest active initiative under this project without queued tasks
-    // 迁移：projects WHERE parent_id → okr_initiatives JOIN okr_scopes WHERE scope.project_id
-    // 迁移期间兼容查询：先查旧 projects 表（触发器保证双写），新表用于补充
     const initiativeResult = await pool.query(`
-      SELECT i.id, i.name, i.status, i.created_at, i.updated_at,
-             i.domain, i.description, i.parent_id AS parent_project_id
-      FROM projects i
-      WHERE i.parent_id = $1
-        AND i.type = 'initiative'
+      SELECT i.id, i.title AS name, i.status, i.created_at, i.updated_at,
+             i.metadata->>'domain' AS domain, i.description, os.project_id AS parent_project_id
+      FROM okr_initiatives i
+      JOIN okr_scopes os ON i.scope_id = os.id
+      WHERE os.project_id = $1
         AND i.status IN ('active', 'in_progress', 'pending')
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
-          WHERE t.project_id = i.id
+          WHERE t.okr_initiative_id = i.id
             AND t.status IN ('queued', 'in_progress')
         )
       ORDER BY i.created_at ASC

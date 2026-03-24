@@ -1498,17 +1498,10 @@ ${resultStr.substring(0, 2000)}
           const { createTask: createIvFollowTask } = await import('../actions.js');
 
           if (verdict === 'APPROVED') {
-            // Try okr_initiatives first, fallback to projects
-            const approvedResult = await pool.query(
+            await pool.query(
               `UPDATE okr_initiatives SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
               [projectId]
             );
-            if (approvedResult.rowCount === 0) {
-              await pool.query(
-                `UPDATE projects SET status = 'completed', updated_at = NOW() WHERE id = $1`,
-                [projectId]
-              );
-            }
             console.log(`[execution-callback] 断链#6 APPROVED: initiative ${projectId} → completed`);
           } else if (verdict === 'NEEDS_REVISION') {
             const nextRevisionRound = revisionRound + 1;
