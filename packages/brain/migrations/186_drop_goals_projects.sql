@@ -1,4 +1,4 @@
--- Migration 185: DROP 旧 OKR 表（goals / projects / project_kr_links）
+-- Migration 186: DROP 旧 OKR 表（goals / projects / project_kr_links）
 -- 前提：所有生产代码中的旧表引用已在 PR12 中清除
 --
 -- 执行顺序（避免 FK 冲突）：
@@ -63,5 +63,5 @@ DROP TABLE IF EXISTS projects CASCADE;
 
 -- 记录迁移
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('185', 'DROP 旧 OKR 表：project_kr_links / goals / projects（所有代码引用已清除）', now())
+VALUES ('186', 'DROP 旧 OKR 表：project_kr_links / goals / projects（所有代码引用已清除）', now())
 ON CONFLICT (version) DO NOTHING;
