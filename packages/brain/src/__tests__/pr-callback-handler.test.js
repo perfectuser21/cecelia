@@ -566,6 +566,8 @@ describe('handlePrMerged', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [mockTask], rowCount: 1 }) // matchTaskByBranch
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // task_run_metrics UPDATE pr_merged
+        .mockResolvedValueOnce({ rows: [{ prd_content: null }], rowCount: 1 }) // dev_records: SELECT prd_content
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })          // dev_records: INSERT
         .mockResolvedValueOnce({ rows: [{ kr_id: 'kr-via-project' }], rowCount: 1 }), // 通过 project_id 查 KR
       connect: vi.fn(async () => mockClient)
     };
