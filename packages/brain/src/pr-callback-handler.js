@@ -266,6 +266,30 @@ export async function handlePrMerged(pool, prInfo) {
       console.warn(`[pr-callback] task_run_metrics pr_merged 回填失败 (non-fatal): ${metricsErr.message}`);
     }
 
+    // 4a. 写入 dev_records（事务外，失败不影响任务更新）
+    try {
+      const taskDetails = await pool.query(
+        'SELECT prd_content FROM tasks WHERE id = $1',
+        [taskId]
+      );
+      await pool.query(
+        `INSERT INTO dev_records (task_id, pr_title, pr_url, branch, merged_at, prd_content)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [
+          taskId,
+          prTitle,
+          prUrl,
+          branchName,
+          mergedAt,
+          taskDetails.rows[0]?.prd_content || null
+        ]
+      );
+      console.log(`[pr-callback] dev_records 已写入: task_id=${taskId}`);
+    } catch (devRecErr) {
+      console.warn(`[pr-callback] dev_records 写入失败（非致命）: ${devRecErr.message}`);
+    }
+
     // 4. 触发 KR 进度更新（事务外，失败不影响任务更新）
     const updatedRow = updateResult.rows[0];
     const goalId = updatedRow.goal_id;
