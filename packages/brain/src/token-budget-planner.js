@@ -33,7 +33,7 @@ const THRESHOLDS = {
   ABUNDANT:  60,  // remaining > 60%  → 全速运行
   MODERATE:  30,  // remaining > 30%  → 适度节流
   TIGHT:     10,  // remaining > 10%  → 降级非必要任务给 Codex
-  // < 10% → CRITICAL → 只跑 Codex + MiniMax
+  // < 10% → CRITICAL → 只跑 Codex
 };
 
 /**
@@ -44,7 +44,7 @@ const POOL_C_SCALE = {
   abundant:  1.0,   // 全容量
   moderate:  0.7,   // 70% 容量
   tight:     0.3,   // 30% 容量（降级任务给 Codex）
-  critical:  0.0,   // Claude 槽关闭，全推 Codex/MiniMax
+  critical:  0.0,   // Claude 槽关闭，全推 Codex
 };
 
 // ============================================================
@@ -53,7 +53,7 @@ const POOL_C_SCALE = {
 
 /**
  * 每种 task_type 的执行器偏好：
- *   primary:      首选执行器 ('claude' | 'codex' | 'minimax')
+ *   primary:      首选执行器 ('claude' | 'codex')
  *   fallback:     降级执行器（null = 不降级，排队等待）
  *   no_downgrade: true = 即使 Claude 紧张也不降级（高价值任务）
  */
@@ -90,12 +90,19 @@ const EXECUTOR_AFFINITY = {
   'code_review_gate':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
   'initiative_review':    { primary: 'codex',   fallback: null,     no_downgrade: true  },
 
-  // 始终走 MiniMax（不消耗 Claude）
-  'explore':              { primary: 'minimax', fallback: null,     no_downgrade: true  },
-  'research':             { primary: 'minimax', fallback: null,     no_downgrade: true  },
-  'talk':                 { primary: 'minimax', fallback: null,     no_downgrade: true  },
-  'data':                 { primary: 'minimax', fallback: null,     no_downgrade: true  },
-  'dept_heartbeat':       { primary: 'minimax', fallback: null,     no_downgrade: true  },
+  // 始终走 Codex（不消耗 Claude）— 路由到西安
+  'explore':              { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'research':             { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'talk':                 { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'data':                 { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'dept_heartbeat':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
+
+  // 内容工厂 Pipeline（Content Factory）— 始终走 Codex
+  'content-pipeline':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'content-research':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'content-generate':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'content-review':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'content-export':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
 };
 
 /** 未定义的 task_type 默认走 Claude，允许降级到 Codex */
