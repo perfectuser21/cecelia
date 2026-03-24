@@ -4,7 +4,7 @@
  * DoD 映射：
  * - OKR 首次拆解 PRD：必须包含"新建 KR 专属 Project"指令
  * - OKR 首次拆解 PRD：禁止包含"找已有 Project 复用"指令
- * - OKR 首次拆解 PRD：必须包含 project_kr_links 绑定步骤
+ * - OKR 首次拆解 PRD：必须包含 okr_projects kr_id 绑定步骤（旧 project_kr_links 已废弃）
  * - OKR 首次拆解 PRD：Task 的 goal_id 必须等于 KR ID
  * - OKR 继续拆解（decomposition=continue）：不受影响
  */
@@ -83,11 +83,12 @@ describe('executor OKR 拆解 PRD 模板 - KR 专属 Project', () => {
       expect(prompt).toContain('禁止复用');
     });
 
-    it('PRD 必须包含 project_kr_links 绑定步骤', async () => {
+    it('PRD 必须包含 okr_projects kr_id 绑定步骤（旧 project_kr_links 已废弃）', async () => {
       const task = makeOkrTask();
       const prompt = await preparePrompt(task);
 
-      expect(prompt).toContain('project_kr_links');
+      // project_kr_links 已在 migration 185 中 DROP，新机制是 okr_projects.kr_id 直接绑定
+      expect(prompt).toContain('kr_id');
     });
 
     it('PRD 必须要求 Task goal_id = KR ID', async () => {

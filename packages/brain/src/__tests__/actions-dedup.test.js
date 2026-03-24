@@ -279,7 +279,7 @@ describe('createTask() Dedup', () => {
 
   it('should allow re-creation after canceled task expires', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup expired canceled goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup expired canceled goal', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -306,7 +306,7 @@ describe('createTask() Dedup', () => {
 
   it('should handle both canceled and cancelled spellings', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup spelling goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup spelling goal', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;

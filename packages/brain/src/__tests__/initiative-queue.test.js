@@ -246,7 +246,7 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
         }
 
         // scope queries
-        if (s.includes('FROM okr_scopes') || s.includes('project_kr_links')) {
+        if (s.includes('FROM okr_scopes')) {
           return { rows: [] };
         }
 
