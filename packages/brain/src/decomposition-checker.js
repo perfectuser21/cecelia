@@ -208,16 +208,19 @@ async function checkReadyKRInitiatives() {
   `);
 
   for (const kr of readyKRs.rows) {
-    // 找这个 KR 下的所有 active Initiative（通过 okr_initiatives → okr_scopes → okr_projects.kr_id）
+    // 找这个 KR 下的所有 active Initiative
+    // 两种链接方式：
+    //   1. Initiative → 父 Project → project_kr_links → KR（标准层级）
+    //   2. Initiative.kr_id 直接指向 KR（无父 project 的扁平结构）
     const initiatives = await pool.query(`
-      SELECT oi.id, oi.title AS name, oi.status,
-        (SELECT COUNT(*) FROM tasks t WHERE t.project_id = oi.id AND t.status IN ('queued', 'in_progress')) as active_tasks,
-        (SELECT COUNT(*) FROM tasks t WHERE t.project_id = oi.id AND t.status = 'in_progress') as running_tasks
-      FROM okr_initiatives oi
-      JOIN okr_scopes os ON oi.scope_id = os.id
+      SELECT i.id, i.title AS name, i.status, i.metadata->>'domain' AS domain,
+        (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status IN ('queued', 'in_progress')) as active_tasks,
+        (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status = 'in_progress') as running_tasks
+      FROM okr_initiatives i
+      JOIN okr_scopes os ON i.scope_id = os.id
       JOIN okr_projects op ON os.project_id = op.id
       WHERE op.kr_id = $1
-        AND oi.status IN ('active', 'in_progress')
+        AND i.status IN ('active', 'in_progress')
     `, [kr.id]);
 
     // KR 状态流转：ready → in_progress（有任务在跑时）

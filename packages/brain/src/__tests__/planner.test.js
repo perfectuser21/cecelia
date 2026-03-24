@@ -21,10 +21,10 @@ describe('Planner Agent', () => {
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 
-    // Ensure project_kr_links table exists
+    // Ensure okr_projects table exists（project_kr_links 已在 migration 185 DROP）
     const tableCheck = await pool.query(`
       SELECT EXISTS (
-        SELECT FROM information_schema.tables WHERE table_name = 'project_kr_links'
+        SELECT FROM information_schema.tables WHERE table_name = 'okr_projects'
       )
     `);
     expect(tableCheck.rows[0].exists).toBe(true);
@@ -138,16 +138,17 @@ describe('Planner Agent', () => {
     });
 
     it('should reject task whose project has no repo_path', async () => {
-      // Create a project without repo_path
-      const projResult = await pool.query(
-        "INSERT INTO projects (name, status) VALUES ('no-repo-project', 'active') RETURNING id"
+      // 插入一个没有 repo_path 的 okr_projects 记录（metadata 中不含 repo_path）
+      const noRepoProjResult = await pool.query(
+        "INSERT INTO okr_projects (title, status) VALUES ('no-repo-project', 'active') RETURNING id"
       );
-      testProjectIds.push(projResult.rows[0].id);
+      const noRepoProjectId = noRepoProjResult.rows[0].id;
+      testProjectIds.push(noRepoProjectId);
 
       const { handlePlanInput } = await import('../planner.js');
       await expect(handlePlanInput({
-        task: { title: 'Test Task', project_id: projResult.rows[0].id }
-      })).rejects.toThrow('Hard constraint');
+        task: { title: 'Test Task', project_id: noRepoProjectId }
+      })).rejects.toThrow("Task's project must have repo_path");
     });
 
     it('should reject invalid input', async () => {
@@ -211,17 +212,17 @@ describe('Planner Agent', () => {
     });
 
     it('should create task linked to project with repo_path', async () => {
-      // Create a project with repo_path
+      // 插入新 OKR projects 表，metadata 中包含 repo_path（migration 185 已移除 FK 约束）
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('test-proj', '/tmp/test', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status, metadata) VALUES ('test-proj', 'active', '{\"repo_path\":\"/tmp/test-task-proj\"}') RETURNING id"
       );
-      testProjectIds.push(projResult.rows[0].id);
-
+      const projectId = projResult.rows[0].id;
+      testProjectIds.push(projectId);
       const { handlePlanInput } = await import('../planner.js');
       const result = await handlePlanInput({
         task: {
           title: 'Test Task',
-          project_id: projResult.rows[0].id,
+          project_id: projectId,
           priority: 'P0'
         }
       });
@@ -256,44 +257,19 @@ describe('Planner Agent', () => {
     });
   });
 
-  describe('project_kr_links table', () => {
-    it('should enforce unique constraint on (project_id, kr_id)', async () => {
-      const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('link-test', '/tmp/link', 'active') RETURNING id"
-      );
-      testProjectIds.push(projResult.rows[0].id);
-
-      const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Link KR', 'area_okr', 'P1', 'pending', 0) RETURNING id"
-      );
-      testKRIds.push(krResult.rows[0].id);
-
-      // First insert should succeed
-      const link1 = await pool.query(
-        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) RETURNING project_id, kr_id',
-        [projResult.rows[0].id, krResult.rows[0].id]
-      );
-      testLinks.push({ project_id: link1.rows[0].project_id, kr_id: link1.rows[0].kr_id });
-
-      // Duplicate should fail (ON CONFLICT DO NOTHING in production code)
-      await expect(pool.query(
-        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2)',
-        [projResult.rows[0].id, krResult.rows[0].id]
-      )).rejects.toThrow();
-    });
-  });
+  // project_kr_links 表已在 migration 185 DROP，对应测试已移除
 
   describe('generateNextTask (V2: no auto-generation)', () => {
     it('should return null when no queued tasks exist for KR+Project', async () => {
       const { generateNextTask } = await import('../planner.js');
 
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('empty-test', '/tmp/empty', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status) VALUES ('empty-test', 'planning') RETURNING id"
       );
       testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Empty KR', 'area_okr', 'P0', 'pending', 0) RETURNING *"
+        "INSERT INTO key_results (title, priority, status, progress) VALUES ('Empty KR', 'P0', 'pending', 0) RETURNING *"
       );
       testKRIds.push(krResult.rows[0].id);
 
@@ -309,12 +285,12 @@ describe('Planner Agent', () => {
       const { generateNextTask } = await import('../planner.js');
 
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('queued-test', '/tmp/queued', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status) VALUES ('queued-test', 'planning') RETURNING id"
       );
       testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Queued KR', 'area_okr', 'P0', 'pending', 0) RETURNING *"
+        "INSERT INTO key_results (title, priority, status, progress) VALUES ('Queued KR', 'P0', 'pending', 0) RETURNING *"
       );
       testKRIds.push(krResult.rows[0].id);
 
@@ -356,43 +332,35 @@ describe('Planner Agent', () => {
     it('rotates to next KR when top has no queued tasks', async () => {
       const { planNextTask } = await import('../planner.js');
 
-      // Create 2 KRs under one objective
-      const objResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Rotation Test Obj', 'mission', 'P0', 'in_progress', 0) RETURNING id"
-      );
-      testObjectiveIds.push(objResult.rows[0].id);
-
-      // KR1: no queued tasks（type='area_kr' → 同步到 key_results，planner 从 key_results 查询）
+      // KR1: 直接写 key_results，planner 从 key_results 查询（goals 表已 DROP）
       const kr1Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Empty KR', 'area_kr', 'P0', 'pending', 0, $1) RETURNING id",
-        [objResult.rows[0].id]
+        "INSERT INTO key_results (title, priority, status, progress) VALUES ('Empty KR', 'P0', 'pending', 0) RETURNING id"
       );
       testKRIds.push(kr1Result.rows[0].id);
 
-      // KR2: has a queued task（type='area_kr' → 同步到 key_results）
+      // KR2: has a queued task
       const kr2Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Active KR', 'area_kr', 'P1', 'pending', 0, $1) RETURNING id",
-        [objResult.rows[0].id]
+        "INSERT INTO key_results (title, priority, status, progress) VALUES ('Active KR', 'P1', 'pending', 0) RETURNING id"
       );
       testKRIds.push(kr2Result.rows[0].id);
 
-      // Create project with repo_path + link both KRs
-      const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('rotation-test', '/tmp/rotation-test', 'active') RETURNING id"
+      // okr_projects: 每个 KR 对应一个 project（kr_id 一对一）
+      const proj1Result = await pool.query(
+        "INSERT INTO okr_projects (title, status, kr_id) VALUES ('rotation-test-1', 'active', $1) RETURNING id",
+        [kr1Result.rows[0].id]
       );
-      testProjectIds.push(projResult.rows[0].id);
+      testProjectIds.push(proj1Result.rows[0].id);
 
-      await pool.query(
-        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2), ($1, $3) ON CONFLICT DO NOTHING',
-        [projResult.rows[0].id, kr1Result.rows[0].id, kr2Result.rows[0].id]
+      const proj2Result = await pool.query(
+        "INSERT INTO okr_projects (title, status, kr_id) VALUES ('rotation-test-2', 'active', $1) RETURNING id",
+        [kr2Result.rows[0].id]
       );
-      testLinks.push({ project_id: projResult.rows[0].id, kr_id: kr1Result.rows[0].id });
-      testLinks.push({ project_id: projResult.rows[0].id, kr_id: kr2Result.rows[0].id });
+      testProjectIds.push(proj2Result.rows[0].id);
 
-      // Add a queued task only for KR2
+      // Add a queued task only for KR2's project
       const tResult = await pool.query(
         "INSERT INTO tasks (title, priority, project_id, goal_id, status) VALUES ('KR2 Task', 'P0', $1, $2, 'queued') RETURNING id",
-        [projResult.rows[0].id, kr2Result.rows[0].id]
+        [proj2Result.rows[0].id, kr2Result.rows[0].id]
       );
       testTaskIds.push(tResult.rows[0].id);
 
@@ -406,28 +374,17 @@ describe('Planner Agent', () => {
     it('returns needs_planning when no KRs have queued tasks', async () => {
       const { planNextTask } = await import('../planner.js');
 
-      const objResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('All Empty Obj', 'mission', 'P0', 'in_progress', 0) RETURNING id"
-      );
-      testObjectiveIds.push(objResult.rows[0].id);
-
-      // type='area_kr' → 同步到 key_results（旧 'area_okr' 同步到 objectives，planner 不查 objectives）
+      // 使用新 OKR 表（okr_projects.kr_id 直接关联 key_results）
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Empty KR', 'area_kr', 'P0', 'pending', 0, $1) RETURNING id",
-        [objResult.rows[0].id]
+        "INSERT INTO key_results (title, status) VALUES ('Solo Empty KR', 'pending') RETURNING id"
       );
       testKRIds.push(krResult.rows[0].id);
 
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('empty-plan-test', '/tmp/empty-plan', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status, kr_id) VALUES ('empty-plan-test', 'active', $1) RETURNING id",
+        [krResult.rows[0].id]
       );
       testProjectIds.push(projResult.rows[0].id);
-
-      await pool.query(
-        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [projResult.rows[0].id, krResult.rows[0].id]
-      );
-      testLinks.push({ project_id: projResult.rows[0].id, kr_id: krResult.rows[0].id });
 
       const result = await planNextTask([krResult.rows[0].id]);
 

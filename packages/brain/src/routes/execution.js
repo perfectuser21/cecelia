@@ -1498,17 +1498,10 @@ ${resultStr.substring(0, 2000)}
           const { createTask: createIvFollowTask } = await import('../actions.js');
 
           if (verdict === 'APPROVED') {
-            // Try okr_initiatives first, fallback to projects
-            const approvedResult = await pool.query(
+            await pool.query(
               `UPDATE okr_initiatives SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
               [projectId]
             );
-            if (approvedResult.rowCount === 0) {
-              await pool.query(
-                `UPDATE projects SET status = 'completed', updated_at = NOW() WHERE id = $1`,
-                [projectId]
-              );
-            }
             console.log(`[execution-callback] 断链#6 APPROVED: initiative ${projectId} → completed`);
           } else if (verdict === 'NEEDS_REVISION') {
             const nextRevisionRound = revisionRound + 1;
@@ -2639,11 +2632,10 @@ router.get('/dev/tasks', async (req, res) => {
         t.completed_at,
         t.payload,
         g.title as goal_title,
-        p.name as project_name,
-        p.repo_path
+        NULL::text as project_name,
+        NULL::text as repo_path
       FROM tasks t
-      LEFT JOIN goals g ON t.goal_id = g.id
-      LEFT JOIN projects p ON g.project_id = p.id
+      LEFT JOIN key_results g ON t.goal_id = g.id
       WHERE t.task_type IN ('dev', 'review')
         AND (t.status IN ('in_progress', 'queued') OR t.completed_at >= CURRENT_DATE - INTERVAL '1 day')
       ORDER BY

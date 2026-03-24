@@ -198,7 +198,7 @@ async function fetchFullScope(pool, goalFilter, projectFilter, taskFilter) {
     `),
     pool.query(`SELECT * FROM tasks ${taskWhere}`),
     pool.query(`SELECT * FROM pr_plans WHERE status NOT IN ('completed', 'cancelled')`),
-    pool.query(`SELECT * FROM project_kr_links`),
+    pool.query(`SELECT id AS project_id, kr_id FROM okr_projects WHERE kr_id IS NOT NULL`),
   ]);
 
   return {
@@ -229,13 +229,13 @@ async function fetchKrScope(pool, krId, goalFilter, projectFilter, taskFilter) {
     WHERE id IN (SELECT objective_id FROM key_results WHERE id = $1)
   `, [krId]);
 
-  // 通过 project_kr_links 找关联 okr_projects（project_kr_links 保留，IDs 相同）
+  // 通过 okr_projects.kr_id 找关联 okr_projects
   const krIds = [krId];
   let projects = [];
   let krLinks = [];
   if (krIds.length > 0) {
     const krLinksRes = await pool.query(
-      `SELECT * FROM project_kr_links WHERE kr_id = ANY($1)`, [krIds]
+      `SELECT id AS project_id, kr_id FROM okr_projects WHERE kr_id = ANY($1)`, [krIds]
     );
     krLinks = krLinksRes.rows;
     const projectIds = krLinks.map(l => l.project_id);
@@ -309,7 +309,7 @@ function checkParentRules(issues, entity, row, parentRules, data, subtype) {
   if (!parentRules) return;
 
   for (const [field, rule] of Object.entries(parentRules)) {
-    // 特殊处理：kr_link（project 通过 project_kr_links 关联 KR）
+    // 特殊处理：kr_link（project 通过 okr_projects.kr_id 关联 KR）
     if (field === 'kr_link') {
       const links = data.krLinks.filter(l => l.project_id === row.id);
       if (rule.min && links.length < rule.min) {

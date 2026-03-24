@@ -194,7 +194,7 @@ async function processReviewResult(pool, taskId, verdict, findings) {
 
   // 3. 根据 verdict 执行后续动作
   if (verdict === 'approved') {
-    // 激活实体（迁移：UPDATE projects → UPDATE okr_projects）
+    // 激活实体
     await pool.query(
       `UPDATE okr_projects SET status = 'active' WHERE id = $1 AND status = 'pending_review'`,
       [entityId]
@@ -255,7 +255,7 @@ async function processReviewResult(pool, taskId, verdict, findings) {
     let krId = null;
     if (entityRow.rows[0]?.parent_id) {
       const krResult = await pool.query(
-        `SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1`,
+        `SELECT kr_id FROM okr_projects WHERE id = $1 LIMIT 1`,
         [entityRow.rows[0].parent_id]
       );
       krId = krResult.rows[0]?.kr_id || null;
@@ -288,7 +288,7 @@ async function processReviewResult(pool, taskId, verdict, findings) {
     console.log(`[review-gate] Created revision task ${revisionTask.rows[0].id} for ${entityName}`);
 
   } else if (verdict === 'rejected') {
-    // 标记实体 blocked（迁移：UPDATE projects → UPDATE okr_projects）
+    // 标记实体 blocked
     await pool.query(
       `UPDATE okr_projects SET status = 'blocked' WHERE id = $1`,
       [entityId]

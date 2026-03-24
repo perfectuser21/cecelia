@@ -26,6 +26,7 @@ import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview, triggerContractScan, triggerArchReview } from './daily-review-scheduler.js';
+import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
@@ -2667,6 +2668,10 @@ async function executeTick() {
   // 10.1 每4小时 arch_review 巡检（guard: 上次 review 后至少1个 dev 任务完成）
   Promise.resolve().then(() => triggerArchReview(pool))
     .catch(e => console.warn('[tick] arch review scheduler 失败:', e.message));
+
+  // 10.2 每日日报生成（15:00 UTC = 23:00 上海）
+  Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
+    .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });

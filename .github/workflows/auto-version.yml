@@ -132,14 +132,22 @@ jobs:
           git commit -m "chore(brain): auto-version ${{ steps.bump.outputs.type }} bump to ${NEW_VERSION}"
           git push -u origin "$BRANCH_NAME"
 
+          BUMP_TYPE="${{ steps.bump.outputs.type }}"
+          PR_TITLE="chore(brain): auto-version ${BUMP_TYPE} bump to ${NEW_VERSION}"
+          PR_BODY="Automated version bump to ${NEW_VERSION}."
+
+          # Create PR (idempotent: if PR already exists for this branch, fetch existing URL)
           PR_URL=$(gh pr create \
             --base main \
             --head "$BRANCH_NAME" \
-            --title "chore(brain): auto-version ${{ steps.bump.outputs.type }} bump to ${NEW_VERSION}" \
-            --body "Automated version bump to ${NEW_VERSION}. Triggered by: ${{ github.event.head_commit.message }}" \
-            2>&1)
+            --title "$PR_TITLE" \
+            --body "$PR_BODY" \
+            2>&1) \
+            || PR_URL=$(gh pr view "$BRANCH_NAME" --json url -q '.url' 2>/dev/null \
+               || echo "PR creation failed and no existing PR found")
 
-          echo "PR created: $PR_URL"
+          echo "PR URL: $PR_URL"
 
-          # Enable auto-merge with squash (commit title = PR title, which contains "chore(brain): auto-version")
-          gh pr merge "$BRANCH_NAME" --squash --auto --delete-branch
+          # Request auto-merge (|| true so workflow succeeds even if auto-merge unavailable)
+          gh pr merge "$BRANCH_NAME" --squash --auto --delete-branch \
+            || echo "Note: auto-merge request failed (CI may not have started yet). PR: $PR_URL"

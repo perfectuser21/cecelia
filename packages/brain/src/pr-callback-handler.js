@@ -266,6 +266,30 @@ export async function handlePrMerged(pool, prInfo) {
       console.warn(`[pr-callback] task_run_metrics pr_merged 回填失败 (non-fatal): ${metricsErr.message}`);
     }
 
+    // 4a. 写入 dev_records（事务外，失败不影响任务更新）
+    try {
+      const taskDetails = await pool.query(
+        'SELECT prd_content FROM tasks WHERE id = $1',
+        [taskId]
+      );
+      await pool.query(
+        `INSERT INTO dev_records (task_id, pr_title, pr_url, branch, merged_at, prd_content)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [
+          taskId,
+          prTitle,
+          prUrl,
+          branchName,
+          mergedAt,
+          taskDetails.rows[0]?.prd_content || null
+        ]
+      );
+      console.log(`[pr-callback] dev_records 已写入: task_id=${taskId}`);
+    } catch (devRecErr) {
+      console.warn(`[pr-callback] dev_records 写入失败（非致命）: ${devRecErr.message}`);
+    }
+
     // 4. 触发 KR 进度更新（事务外，失败不影响任务更新）
     const updatedRow = updateResult.rows[0];
     const goalId = updatedRow.goal_id;
@@ -281,17 +305,17 @@ export async function handlePrMerged(pool, prInfo) {
     } else {
       // 尝试通过 project_id 查找关联的 KR
       try {
-        // 新 OKR 表：okr_projects/okr_initiatives UUID 与旧 projects 相同，project_kr_links 保留不变
+        // 通过 okr_projects.kr_id 或 okr_initiatives → okr_scopes → okr_projects.kr_id 查找关联 KR
         const krResult = await pool.query(`
-          SELECT pkl.kr_id
-          FROM project_kr_links pkl
-          JOIN okr_projects p ON p.id = pkl.project_id
-          WHERE p.id = $1
+          SELECT op.kr_id
+          FROM okr_projects op
+          WHERE op.id = $1 AND op.kr_id IS NOT NULL
           UNION ALL
-          SELECT pkl.kr_id
-          FROM project_kr_links pkl
-          JOIN okr_initiatives p ON p.id = pkl.project_id
-          WHERE p.id = $1
+          SELECT op.kr_id
+          FROM okr_initiatives oi
+          JOIN okr_scopes os ON oi.scope_id = os.id
+          JOIN okr_projects op ON op.id = os.project_id
+          WHERE oi.id = $1 AND op.kr_id IS NOT NULL
           LIMIT 1
         `, [updatedRow.project_id]);
 

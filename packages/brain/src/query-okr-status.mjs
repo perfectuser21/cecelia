@@ -8,20 +8,20 @@ async function main() {
   try {
     // 1. Count Objectives and KRs
     const objectivesResult = await pool.query(`
-      SELECT COUNT(*) as count FROM goals
-      WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
+      SELECT COUNT(*) as count FROM objectives
+      WHERE status NOT IN ('completed', 'cancelled')
     `);
 
     const krsResult = await pool.query(`
-      SELECT COUNT(*) as count FROM goals
-      WHERE type = 'kr' AND status NOT IN ('completed', 'cancelled')
+      SELECT COUNT(*) as count FROM key_results
+      WHERE status NOT IN ('completed', 'cancelled')
     `);
 
-    // 2. Get recent top-level goals
+    // 2. Get recent top-level OKR items
     const goalsResult = await pool.query(`
-      SELECT id, title, type, status, progress, priority
-      FROM goals
-      WHERE parent_id IS NULL
+      SELECT id, title, 'objective' AS type, status, NULL AS progress, priority
+      FROM objectives
+      WHERE status NOT IN ('completed', 'cancelled')
       ORDER BY created_at DESC
       LIMIT 5
     `);
@@ -51,20 +51,17 @@ async function main() {
 
     // 5. Check for OKR gaps (Objectives without KRs)
     const noKrObjectivesResult = await pool.query(`
-      SELECT o.id, o.title FROM goals o
-      WHERE o.type IN ('global_okr', 'area_okr')
-        AND o.parent_id IS NULL
-        AND o.status NOT IN ('completed', 'cancelled')
+      SELECT o.id, o.title FROM objectives o
+      WHERE o.status NOT IN ('completed', 'cancelled')
         AND NOT EXISTS (
-          SELECT 1 FROM goals kr WHERE kr.parent_id = o.id
+          SELECT 1 FROM key_results kr WHERE kr.objective_id = o.id
         )
     `);
 
     // 6. Check for KRs without Tasks
     const noTaskKrsResult = await pool.query(`
-      SELECT kr.id, kr.title FROM goals kr
-      WHERE kr.type = 'kr'
-        AND kr.status NOT IN ('completed', 'cancelled')
+      SELECT kr.id, kr.title FROM key_results kr
+      WHERE kr.status NOT IN ('completed', 'cancelled')
         AND NOT EXISTS (
           SELECT 1 FROM tasks t WHERE t.goal_id = kr.id
         )

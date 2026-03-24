@@ -309,12 +309,12 @@ describe('getTodaysReflections', () => {
     expect(sql).toContain('created_at >=');
   });
 
-  it('SQL 包含 reflections 表和 projects 联结', async () => {
+  it('SQL 包含 reflections 表（不含旧 projects 联结）', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     await getTodaysReflections();
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('FROM reflections r');
-    expect(sql).toContain('LEFT JOIN projects p');
+    expect(sql).not.toContain('LEFT JOIN projects p');
   });
 
   it('数据库返回空时返回空数组', async () => {
@@ -988,13 +988,13 @@ describe('getDailyReports', () => {
     expect(result).toEqual(fakeRows);
   });
 
-  it('SQL 包含 daily_logs 和 projects 联结', async () => {
+  it('SQL 包含 daily_logs（不含旧 projects 联结）', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     await getDailyReports('2026-03-06');
 
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('FROM daily_logs dl');
-    expect(sql).toContain('LEFT JOIN projects p');
+    expect(sql).not.toContain('LEFT JOIN projects p');
   });
 
   it('SQL 包含 ORDER BY 排序', async () => {

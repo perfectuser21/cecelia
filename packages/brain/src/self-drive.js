@@ -247,7 +247,6 @@ async function executeAdjustmentAction(action) {
       if (!action.kr_id) {
         throw new Error('pause_kr 需要 kr_id');
       }
-      // Try objectives → key_results
       let pauseResult = await pool.query(
         "UPDATE objectives SET status = 'paused', updated_at = NOW() WHERE id = $1",
         [action.kr_id]
@@ -266,7 +265,6 @@ async function executeAdjustmentAction(action) {
       if (!action.kr_id) {
         throw new Error('activate_kr 需要 kr_id');
       }
-      // Try objectives → key_results
       let activateResult = await pool.query(
         "UPDATE objectives SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
         [action.kr_id]

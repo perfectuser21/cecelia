@@ -425,12 +425,7 @@ async function createGoal({ title, description, priority, project_id, target_dat
       RETURNING *, title AS name
     `, [title, description || '', priority || 'P1', owner_role, parent_id || null, endDate, metaJson]);
   } else {
-    // 未知类型或父级不存在时，默认写入 key_results
-    goalResult = await pool.query(`
-      INSERT INTO key_results (title, description, priority, status, owner_role, end_date, metadata)
-      VALUES ($1, $2, $3, 'active', $4, $5, $6)
-      RETURNING *, title AS name
-    `, [title, description || '', priority || 'P1', owner_role, endDate, metaJson]);
+    throw new Error(`createGoal: unsupported goalType '${goalType}'`);
   }
 
   const goal = goalResult.rows[0];
@@ -511,6 +506,7 @@ async function updateGoal({ goal_id, status, progress }) {
     return { success: true, goal: visResult.rows[0] };
   }
 
+  // 三新表均未找到，返回失败
   return { success: false, error: 'Goal not found' };
 }
 

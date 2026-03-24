@@ -54,7 +54,7 @@ describe('Intent Recognition Module', () => {
       await pool.query('DELETE FROM tasks WHERE project_id = $1', [projectId]).catch(() => {});
       await pool.query('DELETE FROM tasks WHERE okr_initiative_id = $1', [projectId]).catch(() => {});
       await pool.query('DELETE FROM okr_initiatives WHERE id = $1', [projectId]).catch(() => {});
-      await pool.query('DELETE FROM projects WHERE id = $1', [projectId]).catch(() => {});
+      await pool.query('DELETE FROM okr_projects WHERE id = $1', [projectId]).catch(() => {});
     }
     createdTaskIds = [];
     createdProjectIds = [];
@@ -479,8 +479,8 @@ describe('Intent Recognition Module', () => {
     it('links tasks to specified goal', async () => {
       // Create a test goal first
       const goalResult = await pool.query(
-        `INSERT INTO goals (title, type, priority, status) VALUES ($1, $2, $3, $4) RETURNING id`,
-        ['Test Goal', 'mission', 'P1', 'pending']
+        `INSERT INTO key_results (title, priority, status) VALUES ($1, $2, $3) RETURNING id`,
+        ['Test Goal', 'P1', 'pending']
       );
       const goalId = goalResult.rows[0].id;
 
@@ -495,10 +495,10 @@ describe('Intent Recognition Module', () => {
           expect(task.goal_id).toBe(goalId);
         }
       } finally {
-        // Delete tasks first (FK constraint: tasks.goal_id → goals.id)
+        // Delete tasks first (FK constraint: tasks.goal_id no longer has FK after migration 185)
         await pool.query('DELETE FROM tasks WHERE goal_id = $1', [goalId]).catch(() => {});
         createdTaskIds = [];
-        await pool.query('DELETE FROM goals WHERE id = $1', [goalId]);
+        await pool.query('DELETE FROM key_results WHERE id = $1', [goalId]);
       }
     });
   });

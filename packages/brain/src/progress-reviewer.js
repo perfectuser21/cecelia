@@ -19,12 +19,11 @@ import { getTaskLocation } from './task-router.js';
  * @returns {Promise<Object>} 完成审查数据
  */
 async function reviewProjectCompletion(pool, projectId) {
-  // 1. 获取 Project 信息
-  // 迁移：projects → okr_projects（name → title，kr_id 通过 project_kr_links 获取）
+  // 1. 获取 Project 信息（okr_projects 直接含 kr_id 字段）
   const projResult = await pool.query(
     `SELECT op.id, op.title AS name, op.status, op.created_at, op.completed_at,
             NULL::int AS time_budget_days,
-            (SELECT pkl.kr_id FROM project_kr_links pkl WHERE pkl.project_id = op.id LIMIT 1) AS kr_id,
+            op.kr_id,
             NULL::uuid AS parent_id
      FROM okr_projects op WHERE op.id = $1`,
     [projectId]
@@ -103,8 +102,7 @@ async function shouldAdjustPlan(pool, krId, completedProjectId) {
     `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
             NULL::int AS time_budget_days, op.end_date AS deadline
      FROM okr_projects op
-     JOIN project_kr_links pkl ON pkl.project_id = op.id
-     WHERE pkl.kr_id = $1
+     WHERE op.kr_id = $1
      ORDER BY op.created_at ASC`,
     [krId]
   );
@@ -270,25 +268,6 @@ async function executePlanAdjustment(pool, findings, planContext) {
         newTableValues
       );
 
-      if (newResult.rowCount === 0) {
-        // Fallback to old projects table
-        const oldUpdates = [];
-        const oldValues = [adj.project_id];
-        let oldIdx = 2;
-        if (adj.time_budget_days !== undefined) {
-          oldUpdates.push(`time_budget_days = $${oldIdx++}`);
-          oldValues.push(adj.time_budget_days);
-        }
-        if (adj.deadline !== undefined) {
-          oldUpdates.push(`deadline = $${oldIdx++}`);
-          oldValues.push(adj.deadline);
-        }
-        oldUpdates.push('updated_at = NOW()');
-        await pool.query(
-          `UPDATE projects SET ${oldUpdates.join(', ')} WHERE id = $1`,
-          oldValues
-        );
-      }
       console.log(`[progress-reviewer] Adjusted project ${adj.project_id}: ${Object.keys(metaUpdates).join(', ')}${adj.deadline ? ' deadline' : ''}`);
     }
   }

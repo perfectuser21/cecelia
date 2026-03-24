@@ -705,17 +705,12 @@ describe('actions.js', () => {
       expect(JSON.parse(insertParams[6]).type).toBe('area_okr');
     });
 
-    it('有 parent_id 但父级不存在时默认写入 key_results', async () => {
-      // 父级查询返回空 → goalType undefined → fallback 到 key_results 表
+    it('有 parent_id 但父级不存在时抛出错误（parent 查询返回空）', async () => {
+      // 父级查询返回空 - goalType 仍为 undefined → 新实现直接抛出错误，不再 fallback 到 goals 表
       mockQuery.mockResolvedValueOnce({ rows: [] });
-      const fakeGoal = { id: 'goal-orphan', title: '孤儿', name: '孤儿' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
-      await createGoal({ title: '孤儿', parent_id: 'parent-gone' });
-
-      // key_results: params = [title, desc, priority, owner_role, end_date, metaJson]
-      const sql = mockQuery.mock.calls[1][0];
-      expect(sql).toContain('key_results');
+      await expect(createGoal({ title: '孤儿', parent_id: 'parent-gone' }))
+        .rejects.toThrow('unsupported goalType');
     });
 
     it('指定 type 优先于 parent 推断', async () => {
@@ -836,7 +831,7 @@ describe('actions.js', () => {
     });
 
     it('目标不存在返回失败', async () => {
-      // 新实现依次查 objectives → key_results → visions，需要 3 个空响应
+      // 新实现依次查 objectives → key_results → visions（旧 goals 表 fallback 已移除）
       mockQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // objectives
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // key_results
