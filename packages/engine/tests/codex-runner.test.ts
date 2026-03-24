@@ -107,9 +107,9 @@ describe('runner.sh v2.0.0', () => {
   });
 
   describe('版本号', () => {
-    it('版本号为 v2.2.0', () => {
+    it('版本号为 v2.5.0', () => {
       const content = fs.readFileSync(RUNNER, 'utf-8');
-      expect(content).toContain('v2.2.0');
+      expect(content).toContain('v2.5.0');
     });
   });
 });

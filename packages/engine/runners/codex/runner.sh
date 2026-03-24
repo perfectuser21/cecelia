@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Codex Runner — Codex CLI Provider 适配器 v2.4.1
+# Codex Runner — Codex CLI Provider 适配器 v2.5.0
 # ============================================================================
 # 这是 Codex（OpenAI）Provider 的协议适配器。
 # 完成判断逻辑来自 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -37,13 +37,12 @@
 #   CODEX_HOMES        — 冒号分隔的多账号路径（v2.3.0，优先于 CODEX_HOME）
 #                        例: /home/user/.codex-team1:/home/user/.codex-team2
 #   CODEX_HOME         — 单账号配置目录（CODEX_HOMES 未设置时使用，默认 ~/.codex）
-#   CODEX_API_KEY      — OpenAI API Key（自动从 ~/.credentials/openai.env 加载）
-#   CODEX_MODEL        — Codex 模型（默认 gpt-5.4，避免 gpt-5.3-codex quota 问题）
+#   CODEX_MODEL        — Codex 模型（默认 gpt-5.4）
 #   CODEX_MAX_RETRIES  — 最大重试次数（默认 10，账号切换不计入）
 #   CECELIA_HEADLESS   — 设为 true 表示无头模式（自动设置）
 #   BRAIN_API_URL      — Brain API 地址（默认 http://localhost:5221，M4 需设置远程）
 #
-# 版本: v2.4.1
+# 版本: v2.5.0
 # 创建: 2026-03-13
 # ============================================================================
 
@@ -99,30 +98,6 @@ fi
 # 当前账号索引（从 0 开始）
 CURRENT_ACCOUNT_IDX=0
 export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"
-
-# ===== 加载 API Key（v2.1.0）=====
-# codex-bin v0.114.0 使用 CODEX_API_KEY（优先于 OPENAI_API_KEY）
-# 若环境中已有则直接使用，否则从 credentials 文件加载
-if [[ -z "${CODEX_API_KEY:-}" ]]; then
-    CREDENTIALS_FILE="$HOME/.credentials/openai.env"
-    if [[ -f "$CREDENTIALS_FILE" ]]; then
-        # 从 credentials 文件提取 OPENAI_API_KEY 的值
-        # 注意：grep 找不到匹配行时返回 1，|| true 防止 set -e 触发退出
-        _raw_key=$(grep -E '^OPENAI_API_KEY=' "$CREDENTIALS_FILE" 2>/dev/null || true | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')
-        if [[ -n "$_raw_key" ]]; then
-            export CODEX_API_KEY="$_raw_key"
-            echo "✅ 从 $CREDENTIALS_FILE 加载 CODEX_API_KEY"
-        else
-            echo "⚠️  $CREDENTIALS_FILE 中未找到 OPENAI_API_KEY" >&2
-        fi
-        unset _raw_key
-    else
-        echo "⚠️  未找到 credentials 文件: $CREDENTIALS_FILE" >&2
-        echo "   请设置 CODEX_API_KEY 环境变量或创建 $CREDENTIALS_FILE" >&2
-    fi
-else
-    echo "✅ 使用已有的 CODEX_API_KEY 环境变量"
-fi
 
 # ===== 预拉 PRD 内容（v2.2.0）=====
 # 在 US 侧（有 Brain）预拉 PRD，避免 Codex 在 M4 侧尝试访问 localhost:5221
@@ -343,7 +318,7 @@ switch_to_next_account() {
 }
 
 # ===== 主循环 =====
-echo "🚀 Codex Runner v2.4.1 启动"
+echo "🚀 Codex Runner v2.5.0 启动"
 echo "   分支: $BRANCH"
 echo "   Task: ${TASK_ID:-（无）}"
 echo "   Skill: $SKILL"
@@ -436,7 +411,7 @@ while true; do
     # 输出到 stdout（让日志可见）
     echo "$CODEX_OUTPUT"
 
-    # ===== Quota 检测与账号切换（v2.3.0 / v2.4.1 退避优化）=====
+    # ===== Quota 检测与账号切换（v2.3.0 / v2.5.0 退避优化）=====
     if echo "$CODEX_OUTPUT" | grep -qi "Quota exceeded"; then
         echo ""
         echo "  ⚠️  检测到 Quota exceeded（账号 $((CURRENT_ACCOUNT_IDX+1)): ${CODEX_HOME}）"
@@ -446,7 +421,7 @@ while true; do
             sleep 30
             continue
         else
-            # 所有账号耗尽：等待 60s 后重置账号列表重试（v2.4.1）
+            # 所有账号耗尽：等待 60s 后重置账号列表重试（v2.5.0）
             echo "  🔁 所有账号耗尽，等待 60s 后重置账号列表重试（rate limit 窗口恢复）"
             sleep 60
             CURRENT_ACCOUNT_IDX=0
