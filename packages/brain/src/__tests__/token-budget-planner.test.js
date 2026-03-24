@@ -235,8 +235,48 @@ describe('getExecutorAffinity()', () => {
     expect(a.no_downgrade).toBe(true);
   });
 
-  it('explore → minimax primary', () => {
-    expect(getExecutorAffinity('explore').primary).toBe('minimax');
+  it('explore → codex primary，no_downgrade=true', () => {
+    const a = getExecutorAffinity('explore');
+    expect(a.primary).toBe('codex');
+    expect(a.no_downgrade).toBe(true);
+  });
+
+  it('research → codex primary', () => {
+    expect(getExecutorAffinity('research').primary).toBe('codex');
+  });
+
+  it('talk → codex primary', () => {
+    expect(getExecutorAffinity('talk').primary).toBe('codex');
+  });
+
+  it('data → codex primary', () => {
+    expect(getExecutorAffinity('data').primary).toBe('codex');
+  });
+
+  it('dept_heartbeat → codex primary', () => {
+    expect(getExecutorAffinity('dept_heartbeat').primary).toBe('codex');
+  });
+
+  it('content-pipeline → codex primary，no_downgrade=true', () => {
+    const a = getExecutorAffinity('content-pipeline');
+    expect(a.primary).toBe('codex');
+    expect(a.no_downgrade).toBe(true);
+  });
+
+  it('content-research → codex primary', () => {
+    expect(getExecutorAffinity('content-research').primary).toBe('codex');
+  });
+
+  it('content-generate → codex primary', () => {
+    expect(getExecutorAffinity('content-generate').primary).toBe('codex');
+  });
+
+  it('content-review → codex primary', () => {
+    expect(getExecutorAffinity('content-review').primary).toBe('codex');
+  });
+
+  it('content-export → codex primary', () => {
+    expect(getExecutorAffinity('content-export').primary).toBe('codex');
   });
 
   it('未知 task_type → 默认 claude primary，codex fallback', () => {
@@ -294,7 +334,7 @@ describe('shouldDowngrade()', () => {
     expect(shouldDowngrade('codex_dev', 'tight')).toBe(false);
   });
 
-  it('tight + explore → 不降级（MiniMax 任务）', () => {
+  it('tight + explore → 不降级（Codex 任务，no_downgrade=true）', () => {
     expect(shouldDowngrade('explore', 'tight')).toBe(false);
   });
 });
