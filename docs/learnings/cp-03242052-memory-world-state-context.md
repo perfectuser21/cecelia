@@ -13,7 +13,9 @@
 
 ## 根本原因
 
-闲聊/情感类查询（如"今天心情怎么样"）在 chat 模式下会拉入完整 WORLD_STATE（活跃 OKR/项目列表），浪费大量 token，且 system prompt 无总长度监控。
+闲聊/情感类查询（如"今天心情怎么样"）在 chat 模式下会拉入完整 WORLD_STATE（活跃 OKR/项目列表），浪费大量 token。
+原设计 distilledTypes 在 chat 模式无条件包含 WORLD_STATE，未区分查询意图。
+此外 system prompt 无总长度监控，distilled docs 各自独立截断但合计未受控。
 
 ## 下次预防
 
