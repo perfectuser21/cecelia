@@ -162,7 +162,7 @@ describe('Q3: 按 KR 优先级激活', () => {
     expect(updateCall).toContain('created_at ASC');
   });
 
-  it('SQL 查询从 goals 表关联获取 priority', async () => {
+  it('SQL 使用 okr_initiatives.priority 列排序（迁移后不再 JOIN goals）', async () => {
     const pending = [{ id: 'init-join', name: 'Join Test' }];
     const pool = makeMockPool(0, pending);
 
@@ -173,8 +173,8 @@ describe('Q3: 按 KR 优先级激活', () => {
       s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'active'")
     );
     expect(updateCall).toBeDefined();
-    // 验证通过 LEFT JOIN goals 获取优先级
-    expect(updateCall).toContain('LEFT JOIN goals');
+    // 迁移后：okr_initiatives 有自己的 priority 列，直接 CASE priority 排序
+    expect(updateCall).toContain('CASE priority');
   });
 });
 

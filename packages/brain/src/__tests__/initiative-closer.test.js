@@ -363,7 +363,7 @@ describe('checkInitiativeCompletion - 状态更新和事件记录', () => {
     await checkInitiativeCompletion(pool);
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    const hasUpdate = calls.some(s => s.includes('UPDATE projects') && s.includes("status = 'completed'"));
+    const hasUpdate = calls.some(s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'completed'"));
     const hasEvent = calls.some(s => s.includes('cecelia_events') && s.includes('initiative_completed'));
     expect(hasUpdate).toBe(true);
     expect(hasEvent).toBe(true);
@@ -378,7 +378,7 @@ describe('checkInitiativeCompletion - 状态更新和事件记录', () => {
     await checkInitiativeCompletion(pool);
 
     const updateCall = pool.query.mock.calls.find(
-      c => c[0].trim().includes('UPDATE projects') && c[0].trim().includes("status = 'completed'")
+      c => c[0].trim().includes('UPDATE okr_initiatives') && c[0].trim().includes("status = 'completed'")
     );
     expect(updateCall).toBeDefined();
     expect(updateCall[1]).toEqual(['init-id-check']);
@@ -554,7 +554,7 @@ describe('checkProjectCompletion - 基础场景', () => {
     await checkProjectCompletion(pool);
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    expect(calls.some(s => s.includes('UPDATE projects') && s.includes("status = 'completed'"))).toBe(true);
+    expect(calls.some(s => s.includes('UPDATE okr_projects') && s.includes("status = 'completed'"))).toBe(true);
     expect(calls.some(s => s.includes('cecelia_events') && s.includes('project_completed'))).toBe(true);
   });
 
