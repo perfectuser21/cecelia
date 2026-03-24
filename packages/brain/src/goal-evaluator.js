@@ -255,11 +255,12 @@ export async function evaluateGoalOuterLoop(evalIntervalMs = 24 * 60 * 60 * 1000
 
   let goals;
   try {
+    // 新 OKR 表：key_results 有 progress/priority/status 字段（UUID 与旧 goals 相同）
     const res = await pool.query(`
       SELECT id, title, status, priority, progress
-      FROM goals
-      WHERE status = 'in_progress'
-      ORDER BY priority, starvation_score DESC
+      FROM key_results
+      WHERE status IN ('active', 'in_progress')
+      ORDER BY priority, updated_at DESC
     `);
     goals = res.rows;
   } catch (err) {

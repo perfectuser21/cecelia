@@ -445,7 +445,7 @@ async function buildStatusSummary() {
   try {
     const [tasksResult, goalsResult] = await Promise.all([
       pool.query(`SELECT status, count(*)::int as cnt FROM tasks GROUP BY status`),
-      pool.query(`SELECT status, count(*)::int as cnt FROM goals GROUP BY status`),
+      pool.query(`SELECT status, count(*)::int as cnt FROM key_results GROUP BY status UNION ALL SELECT status, count(*)::int as cnt FROM objectives GROUP BY status`),
     ]);
 
     const taskStats = tasksResult.rows.reduce((acc, r) => { acc[r.status] = r.cnt; return acc; }, {});

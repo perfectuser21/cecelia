@@ -955,10 +955,16 @@ async function parseAndCreate(input, options = {}) {
   let targetProjectId = projectId;
 
   if (createProject && !projectId) {
-    // Check for existing project with similar name
+    // 新 OKR 表：title 字段（旧 projects.name → title），UNION ALL 三张 okr_* 表
     const existingProject = await pool.query(`
-      SELECT id, name FROM projects
-      WHERE LOWER(name) LIKE $1
+      SELECT id, title AS name FROM okr_projects
+      WHERE LOWER(title) LIKE $1
+      UNION ALL
+      SELECT id, title AS name FROM okr_scopes
+      WHERE LOWER(title) LIKE $1
+      UNION ALL
+      SELECT id, title AS name FROM okr_initiatives
+      WHERE LOWER(title) LIKE $1
       LIMIT 1
     `, [`%${parsedIntent.projectName}%`]);
 

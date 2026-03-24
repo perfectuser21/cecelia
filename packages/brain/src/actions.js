@@ -352,7 +352,15 @@ async function createGoal({ title, description, priority, project_id, target_dat
   // Auto-determine type based on parent if not provided
   let goalType = type;
   if (!goalType && parent_id) {
-    const parentResult = await pool.query('SELECT type FROM goals WHERE id = $1', [parent_id]);
+    // 新 OKR 表：先查 key_results，再查 objectives，再查 visions（UUID 相同）
+    const parentResult = await pool.query(`
+      SELECT 'global_kr' AS type FROM key_results WHERE id = $1
+      UNION ALL
+      SELECT 'area_okr' AS type FROM objectives WHERE id = $1
+      UNION ALL
+      SELECT 'vision' AS type FROM visions WHERE id = $1
+      LIMIT 1
+    `, [parent_id]);
     if (parentResult.rows.length > 0) {
       const parentType = parentResult.rows[0].type;
       // Map parent type to child type

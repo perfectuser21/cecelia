@@ -23,8 +23,12 @@ export async function checkAndCreateCodeReviewTrigger(pool, projectId) {
 
   try {
     // Fix 1: initiative 类型 project 有自己的 pipeline（断链#5），不走积累触发
+    // 新 OKR 表：okr_initiatives 记录 initiative 类型，UUID 与旧 projects.id 相同
     const projectTypeResult = await pool.query(
-      'SELECT type FROM projects WHERE id = $1',
+      `SELECT 'initiative' AS type FROM okr_initiatives WHERE id = $1
+       UNION ALL
+       SELECT 'project' AS type FROM okr_projects WHERE id = $1
+       LIMIT 1`,
       [projectId]
     );
     const projectType = projectTypeResult.rows[0]?.type;
