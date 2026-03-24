@@ -126,15 +126,15 @@ async function checkInitiativeCompletion(pool) {
   // KR 进度更新：initiative 关闭后自动重算关联 KR 的 progress
   if (closed.length > 0) {
     try {
-      // 获取关闭的 initiatives 关联的 KR IDs（迁移：通过 okr_scopes → okr_projects → project_kr_links）
+      // 获取关闭的 initiatives 关联的 KR IDs（通过 okr_scopes → okr_projects.kr_id）
       const closedIds = closed.map(c => c.id);
       const krResult = await pool.query(`
-        SELECT DISTINCT pkl.kr_id
+        SELECT DISTINCT op.kr_id
         FROM okr_initiatives oi
         JOIN okr_scopes os ON oi.scope_id = os.id
-        JOIN project_kr_links pkl ON pkl.project_id = os.project_id
+        JOIN okr_projects op ON op.id = os.project_id
         WHERE oi.id = ANY($1)
-          AND pkl.kr_id IS NOT NULL
+          AND op.kr_id IS NOT NULL
       `, [closedIds]);
 
       for (const row of krResult.rows) {
@@ -181,8 +181,7 @@ async function checkProjectCompletion(pool) {
   // 支持两种结构：Project→Scope→Initiative（新）和 Project→Initiative（旧）
   // 迁移：projects WHERE type='project' → okr_projects；子项通过 okr_scopes 关联
   const projectsResult = await pool.query(`
-    SELECT op.id, op.title AS name,
-           (SELECT pkl.kr_id FROM project_kr_links pkl WHERE pkl.project_id = op.id LIMIT 1) AS kr_id
+    SELECT op.id, op.title AS name, op.kr_id
     FROM okr_projects op
     WHERE op.status = 'active'
       AND NOT EXISTS (
@@ -306,7 +305,7 @@ async function activateNextInitiatives(pool, slotsOverride) {
     return 0;
   }
 
-  // 3. 从 pending 中按优先级激活（迁移：projects → okr_initiatives；goals → objectives via project_kr_links）
+  // 3. 从 pending 中按创建时间激活（okr_initiatives → okr_scopes → okr_projects.kr_id）
   const activateResult = await pool.query(`
     UPDATE okr_initiatives
     SET status = 'active',
@@ -315,12 +314,9 @@ async function activateNextInitiatives(pool, slotsOverride) {
       SELECT oi.id
       FROM okr_initiatives oi
       LEFT JOIN okr_scopes os ON oi.scope_id = os.id
-      LEFT JOIN project_kr_links pkl ON pkl.project_id = os.project_id
-      LEFT JOIN objectives obj ON obj.id = pkl.kr_id
+      LEFT JOIN okr_projects op ON op.id = os.project_id
       WHERE oi.status = 'pending'
-      ORDER BY
-        CASE obj.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-        oi.created_at ASC
+      ORDER BY oi.created_at ASC
       LIMIT $1
     )
     RETURNING id, title AS name

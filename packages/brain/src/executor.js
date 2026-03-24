@@ -1425,8 +1425,7 @@ async function buildTimeContext(krId) {
       `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
               NULL::int AS time_budget_days, op.created_at, op.completed_at
        FROM okr_projects op
-       JOIN project_kr_links pkl ON pkl.project_id = op.id
-       WHERE pkl.kr_id = $1
+       WHERE op.kr_id = $1
        ORDER BY op.created_at ASC`,
       [krId]
     );
@@ -1691,14 +1690,7 @@ POST /api/brain/projects
 }
 \`\`\`
 
-最后通过 project_kr_links 绑定到该 KR：
-\`\`\`
-POST /api/brain/project-kr-links
-{
-  "project_id": "<新建 Project 的 ID>",
-  "kr_id": "${krId}"
-}
-\`\`\`
+okr_projects.kr_id 已在创建时直接绑定到该 KR（无需额外的桥接表）。
 
 记录新建 Project 的 ID（后面 Step 2 要用）。
 
@@ -1751,7 +1743,7 @@ PUT /api/tasks/goals/${krId}
 ## 质量验证（创建完成后逐项检查）
 
 1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
-2. ✅ project_kr_links 已绑定新 Project → 当前 KR
+2. ✅ okr_projects.kr_id 已设置为当前 KR（新表直接存储，无需桥接表）
 3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
 4. ✅ 第一个 Task 的 task_type='dev'
 5. ✅ 所有 Task 的 goal_id = ${krId}

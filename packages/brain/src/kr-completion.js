@@ -32,9 +32,8 @@ async function checkKRCompletion(pool) {
       SELECT
         COUNT(*) AS total,
         COUNT(*) FILTER (WHERE op.status = 'completed') AS completed_count
-      FROM project_kr_links pkl
-      JOIN okr_projects op ON op.id = pkl.project_id
-      WHERE pkl.kr_id = $1
+      FROM okr_projects op
+      WHERE op.kr_id = $1
     `, [kr.id]);
 
     const { total, completed_count: completedCount } = projectsResult.rows[0];

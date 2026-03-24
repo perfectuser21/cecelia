@@ -178,7 +178,7 @@ describe('shouldAdjustPlan', () => {
 
     pool.query = vi.fn(async (sql) => {
       // KR 下所有 Projects
-      if (sql.includes('project_kr_links') && sql.includes('ORDER BY')) {
+      if (sql.includes('FROM okr_projects op') && sql.includes('WHERE op.kr_id') && sql.includes('ORDER BY')) {
         return {
           rows: [
             { id: 'proj-1', name: 'Project 1', status: 'completed', sequence_order: 1, time_budget_days: 14 },
@@ -214,7 +214,7 @@ describe('shouldAdjustPlan', () => {
 
   it('D4: 无后续 Project → 返回 null', async () => {
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('project_kr_links') && sql.includes('ORDER BY')) {
+      if (sql.includes('FROM okr_projects op') && sql.includes('WHERE op.kr_id') && sql.includes('ORDER BY')) {
         return {
           rows: [
             { id: 'proj-1', name: 'Project 1', status: 'completed', sequence_order: 1 },

@@ -382,7 +382,7 @@ async function selectTargetProject(kr, state) {
   const { projects, activeTasks } = state;
 
   const linksResult = await pool.query(
-    'SELECT project_id FROM project_kr_links WHERE kr_id = $1',
+    'SELECT id AS project_id FROM okr_projects WHERE kr_id = $1',
     [kr.id]
   );
   const linkedProjectIds = new Set(linksResult.rows.map(r => r.project_id));
