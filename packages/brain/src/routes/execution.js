@@ -975,7 +975,7 @@ router.post('/execution-callback', async (req, res) => {
 
       // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
       try {
-        const ssTaskResult = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        const ssTaskResult = await pool.query('SELECT task_type, goal_id FROM tasks WHERE id = $1', [task_id]);
         const ssTaskRow = ssTaskResult.rows[0];
 
         if (ssTaskRow?.task_type === 'strategy_session') {
@@ -1003,6 +1003,18 @@ router.post('/execution-callback', async (req, res) => {
               [JSON.stringify(meetingSummary), task_id]
             );
 
+            // 查找关联 objective（migration 181：goals(area_okr).id = objectives.id）
+            let krObjectiveId = null;
+            if (ssTaskRow.goal_id) {
+              const objCheck = await pool.query('SELECT id FROM objectives WHERE id = $1', [ssTaskRow.goal_id]);
+              if (objCheck.rows.length > 0) {
+                krObjectiveId = ssTaskRow.goal_id;
+              }
+            }
+            if (!krObjectiveId) {
+              console.warn(`[execution-callback] strategy_session KR 无关联 Objective（goal_id=${ssTaskRow.goal_id || 'null'}）— KR 将成为孤岛`);
+            }
+
             for (const kr of krs) {
               const krTitle = kr.title || '(untitled KR)';
               const krDomain = kr.domain || null;
@@ -1010,11 +1022,11 @@ router.post('/execution-callback', async (req, res) => {
               const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
 
               await pool.query(
-                `INSERT INTO key_results (title, status, owner_role, metadata)
-                 VALUES ($1, 'pending', $2, $3)`,
-                [krTitle, krOwnerRole, JSON.stringify({ priority: krPriority, domain: krDomain })]
+                `INSERT INTO key_results (title, status, owner_role, objective_id, metadata)
+                 VALUES ($1, 'pending', $2, $3, $4)`,
+                [krTitle, krOwnerRole, krObjectiveId, JSON.stringify({ priority: krPriority, domain: krDomain })]
               );
-              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole}`);
+              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole} objective_id=${krObjectiveId}`);
             }
 
             console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
