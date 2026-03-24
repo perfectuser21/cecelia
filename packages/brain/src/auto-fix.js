@@ -155,11 +155,14 @@ ${rcaResult.evidence || 'N/A'}
  */
 export async function dispatchToDevSkill(failure, rcaResult, signature) {
   // Guard: 同一 signature 最多创建 MAX_AUTO_FIX_PER_SIGNATURE 个修复任务，防止死循环
-  const { rows: existing } = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM tasks WHERE tags::jsonb ? $1 AND trigger_source = 'auto_fix'`,
-    [signature]
-  );
-  const existingCount = parseInt(existing[0]?.cnt || 0);
+  let existingCount = 0;
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM tasks WHERE tags::jsonb ? $1 AND trigger_source = 'auto_fix'`,
+      [signature]
+    );
+    existingCount = parseInt(result?.rows?.[0]?.cnt || 0);
+  } catch (_) { /* pool not available — skip guard */ }
   if (existingCount >= MAX_AUTO_FIX_PER_SIGNATURE) {
     return null;
   }
