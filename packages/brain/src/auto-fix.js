@@ -161,7 +161,6 @@ export async function dispatchToDevSkill(failure, rcaResult, signature) {
   );
   const existingCount = parseInt(existing[0]?.cnt || 0);
   if (existingCount >= MAX_AUTO_FIX_PER_SIGNATURE) {
-    console.log(`[AutoFix] Skip: signature=${signature} already has ${existingCount} auto-fix tasks (limit=${MAX_AUTO_FIX_PER_SIGNATURE})`);
     return null;
   }
 

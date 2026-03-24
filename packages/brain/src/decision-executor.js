@@ -63,7 +63,6 @@ const actionHandlers = {
         [params.title]
       );
       if (rows.length > 0) {
-        console.log(`[decision-executor] create_task skip dup: "${params.title}" (existing task ${rows[0].id})`);
         return { success: true, skipped: true, task_id: rows[0].id };
       }
     }
