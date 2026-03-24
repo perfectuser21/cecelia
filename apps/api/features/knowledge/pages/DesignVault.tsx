@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, FileText, Plus, ChevronRight } from 'lucide-react';
+import { FolderOpen, FileText, Plus, ChevronRight, X } from 'lucide-react';
 import { useApi } from '../../shared/hooks/useApi';
 
 interface DesignDoc {
@@ -27,6 +27,20 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿', adopted: '已采纳', rejected: '已否决', shelved: '搁置'
 };
+
+function renderMarkdown(text: string): string {
+  return text
+    .replace(/^### (.+)$/gm, '<h3 style="font-size:0.95rem;font-weight:600;margin:1rem 0 0.25rem">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 style="font-size:1.1rem;font-weight:700;margin:1.25rem 0 0.5rem">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 style="font-size:1.25rem;font-weight:700;margin:1.5rem 0 0.5rem">$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^- (.+)$/gm, '<li style="margin-left:1.25rem;list-style-type:disc">$1</li>')
+    .replace(/^(\d+)\. (.+)$/gm, '<li style="margin-left:1.25rem;list-style-type:decimal">$2</li>')
+    .replace(/`(.+?)`/g, '<code style="background:#f3f4f6;padding:0.1em 0.3em;border-radius:3px;font-size:0.85em">$1</code>')
+    .replace(/\n\n/g, '<br/><br/>')
+    .replace(/\n/g, '<br/>');
+}
 
 function AnnotationBox({ entityId }: { entityId: string }) {
   const { data, refresh } = useApi<{ success: boolean; data: Array<{ id: string; content: string }> }>(
@@ -118,10 +132,76 @@ function DetailPanel({ doc, onStatusChange, onClose }: {
           <button onClick={onClose} className="text-xs text-gray-400 hover:text-gray-600 px-2">✕</button>
         </div>
       </div>
-      <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
-        {full.content || '（无内容）'}
-      </pre>
+      <div
+        className="text-sm text-gray-700 leading-relaxed"
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(full.content || '（无内容）') }}
+      />
       <AnnotationBox entityId={doc.id} />
+    </div>
+  );
+}
+
+function NewDocModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [form, setForm] = useState({ title: '', type: 'proposal', content: '', area: 'cecelia' });
+  const [saving, setSaving] = useState(false);
+
+  async function submit() {
+    if (!form.title.trim() || !form.content.trim()) return;
+    setSaving(true);
+    await fetch('/api/brain/design-docs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...form, author: 'user' }),
+    });
+    setSaving(false);
+    onCreated();
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold">新建文档</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">标题 *</label>
+            <input className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400"
+              value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="文档标题" />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="text-xs text-gray-500 block mb-1">类型</label>
+              <select className="w-full text-sm border border-gray-200 rounded px-3 py-1.5"
+                value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+                <option value="proposal">提案</option>
+                <option value="research">调研</option>
+                <option value="architecture">架构</option>
+                <option value="analysis">分析</option>
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-xs text-gray-500 block mb-1">领域</label>
+              <input className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none"
+                value={form.area} onChange={e => setForm(f => ({ ...f, area: e.target.value }))} placeholder="cecelia" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">内容 * (支持 Markdown)</label>
+            <textarea rows={8} className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400 resize-none font-mono"
+              value={form.content} onChange={e => setForm(f => ({ ...f, content: e.target.value }))} placeholder={'# 标题\n\n正文内容...'} />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-sm px-4 py-1.5 border border-gray-200 rounded hover:border-gray-400">取消</button>
+          <button onClick={submit} disabled={saving || !form.title.trim() || !form.content.trim()}
+            className="text-sm px-4 py-1.5 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:opacity-40">
+            {saving ? '保存中...' : '创建'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -129,6 +209,7 @@ function DetailPanel({ doc, onStatusChange, onClose }: {
 export default function DesignVault() {
   const [typeFilter, setTypeFilter] = useState('');
   const [selected, setSelected] = useState<DesignDoc | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
   const url = `/api/brain/design-docs?type=research,architecture,proposal,analysis${typeFilter ? `&type=${typeFilter}` : ''}&limit=50`;
   const { data, loading, refresh } = useApi<{ success: boolean; data: DesignDoc[] }>(url, { staleTime: 30_000 });
@@ -145,11 +226,16 @@ export default function DesignVault() {
       <div className={`${selected ? 'w-80' : 'flex-1'} flex-shrink-0 p-6 overflow-y-auto`}>
         <div className="flex items-center gap-3 mb-4">
           <FolderOpen size={20} className="text-orange-500" />
-          <div>
+          <div className="flex-1">
             <h1 className="text-lg font-semibold text-gray-900">Design Vault</h1>
             <p className="text-xs text-gray-500">{docs.length} 份文档</p>
           </div>
+          <button onClick={() => setShowModal(true)}
+            className="flex items-center gap-1 text-xs px-3 py-1.5 bg-orange-500 text-white rounded hover:bg-orange-600">
+            <Plus size={12} /> 新建文档
+          </button>
         </div>
+        {showModal && <NewDocModal onClose={() => setShowModal(false)} onCreated={refresh} />}
 
         <div className="flex gap-1 mb-4 flex-wrap">
           {(['', 'research', 'architecture', 'proposal', 'analysis'] as const).map(t => (

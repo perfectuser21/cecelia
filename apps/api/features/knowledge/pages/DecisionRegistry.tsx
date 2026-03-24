@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Scale, CheckCircle, Clock, Archive, Plus } from 'lucide-react';
+import { Scale, CheckCircle, Clock, Archive, Plus, X } from 'lucide-react';
 import { useApi } from '../../shared/hooks/useApi';
 
 interface Decision {
@@ -68,7 +68,7 @@ function DecisionCard({ d, onStatusChange }: { d: Decision; onStatusChange: () =
   const Icon = cfg.icon;
 
   async function changeStatus(newStatus: string) {
-    await fetch(`/api/brain/decisions/${d.id}`, {
+    await fetch(`/api/brain/strategic-decisions/${d.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
@@ -108,10 +108,69 @@ function DecisionCard({ d, onStatusChange }: { d: Decision; onStatusChange: () =
   );
 }
 
+function NewDecisionModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [form, setForm] = useState({ topic: '', decision: '', reason: '', category: 'general' });
+  const [saving, setSaving] = useState(false);
+
+  async function submit() {
+    if (!form.topic.trim() || !form.decision.trim()) return;
+    setSaving(true);
+    await fetch('/api/brain/strategic-decisions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    });
+    setSaving(false);
+    onCreated();
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-gray-900">记录决策</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">主题 *</label>
+            <input className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400"
+              value={form.topic} onChange={e => setForm(f => ({ ...f, topic: e.target.value }))} placeholder="决策主题" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">决策内容 *</label>
+            <textarea rows={3} className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400 resize-none"
+              value={form.decision} onChange={e => setForm(f => ({ ...f, decision: e.target.value }))} placeholder="具体的决策内容" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">原因</label>
+            <textarea rows={2} className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400 resize-none"
+              value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder="决策背后的原因" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">分类</label>
+            <input className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400"
+              value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="如 technical、product、strategy" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-sm px-4 py-1.5 border border-gray-200 rounded hover:border-gray-400">取消</button>
+          <button onClick={submit} disabled={saving || !form.topic.trim() || !form.decision.trim()}
+            className="text-sm px-4 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-40">
+            {saving ? '保存中...' : '记录'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DecisionRegistry() {
   const [statusFilter, setStatusFilter] = useState('active');
+  const [showModal, setShowModal] = useState(false);
   const { data, loading, refresh } = useApi<{ decisions?: Decision[]; data?: Decision[] }>(
-    `/api/brain/decisions?status=${statusFilter}&limit=100`,
+    `/api/brain/strategic-decisions?status=${statusFilter}&limit=100`,
     { staleTime: 20_000 }
   );
 
@@ -136,6 +195,10 @@ export default function DecisionRegistry() {
           </div>
         </div>
         <div className="flex gap-2">
+          <button onClick={() => setShowModal(true)}
+            className="flex items-center gap-1 text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">
+            <Plus size={12} /> 记录决策
+          </button>
           {(['active', 'executed', 'expired'] as const).map(s => (
             <button key={s}
               onClick={() => setStatusFilter(s)}
@@ -156,6 +219,8 @@ export default function DecisionRegistry() {
           <p>暂无决策记录</p>
         </div>
       )}
+
+      {showModal && <NewDecisionModal onClose={() => setShowModal(false)} onCreated={refresh} />}
 
       {Object.entries(grouped).map(([cat, items]) => (
         <div key={cat} className="mb-6">

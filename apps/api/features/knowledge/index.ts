@@ -7,8 +7,9 @@ const manifest: FeatureManifest = {
   source: 'core',
   instances: ['core'],
 
-  // Knowledge 导航已合并到 GTD System
-  navGroups: [],
+  navGroups: [
+    { id: 'knowledge-docs', label: '知识库', icon: 'BookOpen', order: 6 },
+  ],
 
   routes: [
     { path: '/knowledge', component: 'KnowledgeHome' },
@@ -17,11 +18,31 @@ const manifest: FeatureManifest = {
     { path: '/knowledge/digestion', component: 'KnowledgeDigestion' },
     { path: '/knowledge/instruction-book', component: 'InstructionBook' },
     // Documentation System
-    { path: '/knowledge/dev-log', component: 'DevLog' },
-    { path: '/knowledge/decisions', component: 'DecisionRegistry' },
-    { path: '/knowledge/designs', component: 'DesignVault' },
-    { path: '/knowledge/diary', component: 'DailyDiary' },
-    { path: '/knowledge/map', component: 'KnowledgeMap' },
+    {
+      path: '/knowledge/map',
+      component: 'KnowledgeMap',
+      navItem: { label: '知识地图', icon: 'Map', group: 'knowledge-docs', order: 1 },
+    },
+    {
+      path: '/knowledge/dev-log',
+      component: 'DevLog',
+      navItem: { label: 'Dev Log', icon: 'GitMerge', group: 'knowledge-docs', order: 2 },
+    },
+    {
+      path: '/knowledge/decisions',
+      component: 'DecisionRegistry',
+      navItem: { label: '决策台账', icon: 'Scale', group: 'knowledge-docs', order: 3 },
+    },
+    {
+      path: '/knowledge/designs',
+      component: 'DesignVault',
+      navItem: { label: '设计文档', icon: 'FolderOpen', group: 'knowledge-docs', order: 4 },
+    },
+    {
+      path: '/knowledge/diary',
+      component: 'DailyDiary',
+      navItem: { label: '每日日报', icon: 'BookOpen', group: 'knowledge-docs', order: 5 },
+    },
     // 内容工厂
     {
       path: '/content-factory',
