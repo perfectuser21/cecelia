@@ -960,7 +960,11 @@
     "knowledge": "/knowledge",
     "codex_qa": "/codex",
     "codex_dev": "/dev",
-    "codex_playwright": "/playwright",
+    "crystallize": "/playwright",
+    "crystallize_scope": "/playwright",
+    "crystallize_forge": "/playwright",
+    "crystallize_verify": "/playwright",
+    "crystallize_register": "/playwright",
     "codex_test_gen": "/codex-test-gen",
     "pr_review": "/review",
     "code_review": "/code-review",
@@ -990,7 +994,7 @@
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-23T15:07:46.371Z",
+  "generatedAt": "2026-03-24T04:41:48.076Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

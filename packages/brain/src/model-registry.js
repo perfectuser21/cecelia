@@ -257,9 +257,9 @@ export const AGENTS = [
     fixed_provider: 'openai',
   },
   {
-    id: 'codex_playwright',
-    name: 'Codex Playwright',
-    description: 'Playwright 自动化脚本探索与执行（西安 M4 CDP 控制 PC）',
+    id: 'crystallize',
+    name: 'Crystallize',
+    description: '能力蒸馏流水线（Scope→Forge→Verify→Register），西安 M4 CDP 控制 PC',
     layer: 'executor',
     allowed_models: ['codex-mini-latest', 'o3-mini', 'o4-mini'],
     recommended_model: 'codex-mini-latest',

@@ -1835,6 +1835,23 @@ async function executeTick() {
     console.error('[tick] Decomposition check failed:', decompErr.message);
   }
 
+  // 0.5.4b. Crystallize Pipeline Orchestration Check — 检测 queued crystallize 任务，创建子任务
+  try {
+    const { advanceCrystallizePipeline } = await import('./crystallize-orchestrator.js');
+    const crystallizeResult = await advanceCrystallizePipeline();
+    if (crystallizeResult.total_actions > 0) {
+      console.log(`[tick] Crystallize orchestration: ${crystallizeResult.total_actions} actions (orchestrated=${crystallizeResult.summary.orchestrated}, skipped=${crystallizeResult.summary.skipped})`);
+      actionsTaken.push({
+        action: 'crystallize_orchestration',
+        total_actions: crystallizeResult.total_actions,
+        orchestrated: crystallizeResult.summary.orchestrated,
+        skipped: crystallizeResult.summary.skipped,
+      });
+    }
+  } catch (crystallizeErr) {
+    console.error('[tick] Crystallize orchestration check failed:', crystallizeErr.message);
+  }
+
   // 0.5.5. Content Pipeline Orchestration Check — 检测 queued content-pipeline 任务，创建子任务
   try {
     const { orchestrateContentPipelines } = await import('./content-pipeline-orchestrator.js');

@@ -77,7 +77,11 @@ const EXECUTOR_AFFINITY = {
   // 始终走 Codex（不消耗 Claude）
   'codex_dev':            { primary: 'codex',   fallback: null,     no_downgrade: true  },
   'codex_qa':             { primary: 'codex',   fallback: null,     no_downgrade: true  },
-  'codex_playwright':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'crystallize':          { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'crystallize_scope':    { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'crystallize_forge':    { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'crystallize_verify':   { primary: 'codex',   fallback: null,     no_downgrade: true  },
+  'crystallize_register': { primary: 'codex',   fallback: null,     no_downgrade: true  },
   'codex_test_gen':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
 
   // Codex Gate 审查任务类型（始终走 Codex，不消耗 Claude）

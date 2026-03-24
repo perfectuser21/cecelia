@@ -95,7 +95,11 @@ export const ROLES = {
     task_types: {
       data: 'data',
       dept_heartbeat: 'dept_heartbeat',
-      codex_playwright: 'codex_playwright',
+      crystallize: 'crystallize',
+      crystallize_scope: 'crystallize_scope',
+      crystallize_forge: 'crystallize_forge',
+      crystallize_verify: 'crystallize_verify',
+      crystallize_register: 'crystallize_register',
       talk: 'talk',
     },
   },
