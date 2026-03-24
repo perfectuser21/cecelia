@@ -6,7 +6,9 @@
  *
  * 写入：
  * - cecelia_events (event_type='reward_signal')
+ * - cecelia_events (event_type='rpe_signal')
  * - brain_config (key='habit_patterns')
+ * - brain_config (key='rpe_adjustments')
  */
 
 import pool from './db.js';
@@ -219,6 +221,126 @@ export async function getHabitPatterns() {
   }
 }
 
+// ─── RPE（奖赏预测误差）──────────────────────────────────
+
+// RPE 调整下限，防止连续失败造成无限惩罚
+const RPE_ADJUSTMENT_MIN = -3.0;
+
+// 计算期望奖赏时参考的历史窗口条数
+const RPE_HISTORY_SAMPLE = 30;
+
+/**
+ * 计算某类任务的期望奖赏（历史同类任务 actual 均值）
+ *
+ * @param {string} taskType - 任务类型（如 'dev', 'review'）
+ * @returns {Promise<number>} 期望奖赏强度，无历史数据时返回默认值 0.5
+ */
+export async function computeExpectedReward(taskType) {
+  const { rows } = await pool.query(
+    `SELECT AVG((payload->>'actual')::numeric) AS avg_actual
+     FROM (
+       SELECT payload
+       FROM cecelia_events
+       WHERE event_type = 'rpe_signal'
+         AND payload->>'task_type' = $1
+       ORDER BY created_at DESC
+       LIMIT $2
+     ) sub`,
+    [taskType, RPE_HISTORY_SAMPLE]
+  );
+
+  const avg = rows[0]?.avg_actual;
+  return avg !== null && avg !== undefined ? parseFloat(avg) : 0.5;
+}
+
+/**
+ * 记录 RPE（奖赏预测误差）事件
+ *
+ * RPE = actual - expected（基于历史同类任务均值）
+ * RPE > 0：超出预期，系统自动增强对同类任务的学习权重
+ * RPE < 0：低于预期，向 brain_config.rpe_adjustments 累加惩罚
+ *
+ * @param {string|null} taskId - 关联任务 ID
+ * @param {string} taskType - 任务类型
+ * @param {number} actualIntensity - 实际奖赏强度
+ * @returns {Promise<{id: number, rpe: number, actual: number, expected: number}>}
+ */
+export async function recordRPE(taskId, taskType, actualIntensity) {
+  const expected = await computeExpectedReward(taskType);
+  const rpe = actualIntensity - expected;
+
+  const payload = {
+    task_id: taskId,
+    task_type: taskType,
+    actual: actualIntensity,
+    expected,
+    rpe,
+  };
+
+  const result = await pool.query(
+    `INSERT INTO cecelia_events (event_type, source, payload)
+     VALUES ('rpe_signal', 'dopamine', $1::jsonb)
+     RETURNING id`,
+    [JSON.stringify(payload)]
+  );
+
+  // RPE < 0 → 向 rpe_adjustments 累加惩罚（有下限保护）
+  if (rpe < 0 && taskType) {
+    await _applyRPEPenalty(taskType, rpe);
+  }
+
+  return { id: result.rows[0].id, rpe, actual: actualIntensity, expected };
+}
+
+/**
+ * 查询最近 N 小时的 RPE 事件历史
+ *
+ * @param {number} [hours=24] - 回溯时间窗口
+ * @returns {Promise<Array<{id: number, created_at: string, payload: object}>>}
+ */
+export async function getRPEHistory(hours = 24) {
+  const { rows } = await pool.query(
+    `SELECT id, created_at, payload
+     FROM cecelia_events
+     WHERE event_type = 'rpe_signal'
+       AND created_at >= NOW() - INTERVAL '1 hour' * $1
+     ORDER BY created_at DESC`,
+    [hours]
+  );
+  return rows;
+}
+
+/**
+ * 向 brain_config.rpe_adjustments 累加某类任务的 RPE 惩罚
+ * 下限 RPE_ADJUSTMENT_MIN，防止无限累积
+ */
+async function _applyRPEPenalty(taskType, rpe) {
+  const configResult = await pool.query(
+    `SELECT value FROM brain_config WHERE key = 'rpe_adjustments'`
+  );
+
+  let adjustments = {};
+  if (configResult.rows.length > 0) {
+    try {
+      adjustments = JSON.parse(configResult.rows[0].value);
+    } catch {
+      adjustments = {};
+    }
+  }
+
+  const current = adjustments[taskType] ?? 0;
+  const updated = Math.max(RPE_ADJUSTMENT_MIN, current + rpe);
+
+  adjustments[taskType] = Math.round(updated * 1000) / 1000;
+
+  await pool.query(
+    `INSERT INTO brain_config (key, value, updated_at)
+     VALUES ('rpe_adjustments', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+    [JSON.stringify(adjustments)]
+  );
+}
+
 /**
  * 初始化多巴胺事件监听器。
  * 监听 task_completed / task_failed 事件，自动记录奖赏信号。
@@ -250,6 +372,10 @@ export function initDopamineListeners() {
             task_type: task.task_type,
             priority: task.priority,
           });
+          // 记录 RPE（奖赏预测误差）
+          if (task.task_type) {
+            await recordRPE(task.id, task.task_type, intensity);
+          }
           // 尝试强化习惯
           if (task.task_type) {
             await reinforcePattern(task.task_type, task.trigger_source || 'manual');
@@ -277,4 +403,4 @@ export function initDopamineListeners() {
   console.log('[Dopamine] Listeners initialized (5min scan interval)');
 }
 
-export { REWARD_INTENSITY };
+export { REWARD_INTENSITY, RPE_ADJUSTMENT_MIN };
