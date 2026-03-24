@@ -1205,6 +1205,7 @@ function quickRoute(event) {
               description: `反刍洞察自动创建：${(event.learnings || []).map(l => l.title).join(', ').slice(0, 400)}`,
               task_type: 'research',
               priority: 'P2',
+              trigger_source: 'rumination',
             }
           })),
           { type: 'log_event', params: { event_type: 'rumination_result', has_actions: true } },

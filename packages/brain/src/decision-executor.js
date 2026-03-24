@@ -54,8 +54,19 @@ const actionHandlers = {
 
   /**
    * 创建任务
+   * rumination 来源的任务做同名去重，避免反刍自循环重复创建
    */
   async create_task(params, context) {
+    if (params.trigger_source === 'rumination' && params.title) {
+      const { rows } = await pool.query(
+        `SELECT id FROM tasks WHERE title = $1 AND status NOT IN ('completed','failed','cancelled') LIMIT 1`,
+        [params.title]
+      );
+      if (rows.length > 0) {
+        console.log(`[decision-executor] create_task skip dup: "${params.title}" (existing task ${rows[0].id})`);
+        return { success: true, skipped: true, task_id: rows[0].id };
+      }
+    }
     const result = await createTask({
       title: params.title,
       description: params.description,
@@ -63,7 +74,8 @@ const actionHandlers = {
       priority: params.priority || 'P1',
       project_id: params.project_id,
       goal_id: params.goal_id,
-      payload: params.payload
+      payload: params.payload,
+      trigger_source: params.trigger_source,
     });
     return { success: result.success, task_id: result.task?.id };
   },
