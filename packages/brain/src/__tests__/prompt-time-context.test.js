@@ -31,7 +31,7 @@ describe('buildTimeContext', () => {
     const futureDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM goals')) {
+      if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: futureDate, time_budget_days: 30 }] };
       }
       if (sql.includes('project_kr_links')) {
@@ -52,7 +52,7 @@ describe('buildTimeContext', () => {
     const tenDaysAgo = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM goals')) {
+      if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
       if (sql.includes('project_kr_links')) {
@@ -83,7 +83,7 @@ describe('buildTimeContext', () => {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM goals')) {
+      if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
       if (sql.includes('project_kr_links')) {
@@ -105,7 +105,7 @@ describe('buildTimeContext', () => {
 
   it('D4: 返回包含 sequence_order 约束的上下文', async () => {
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM goals')) {
+      if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
       if (sql.includes('project_kr_links')) {
@@ -141,7 +141,7 @@ describe('buildTimeContext', () => {
     const threeDaysLater = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM goals')) {
+      if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: threeDaysLater, time_budget_days: null }] };
       }
       if (sql.includes('project_kr_links')) {
@@ -162,7 +162,7 @@ describe('preparePrompt with time context', () => {
 
   it('OKR 拆解 prompt 包含时间上下文 section', async () => {
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM goals')) {
+      if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: '2026-03-31', time_budget_days: 30 }] };
       }
       if (sql.includes('project_kr_links')) {

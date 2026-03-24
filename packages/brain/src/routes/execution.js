@@ -2697,10 +2697,19 @@ router.get('/dev/tasks', async (req, res) => {
 router.get('/dev/repos', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT DISTINCT p.name, p.repo_path
-      FROM projects p
-      WHERE p.repo_path IS NOT NULL
-      ORDER BY p.name
+      -- 迁移：projects → okr_projects/okr_scopes/okr_initiatives metadata.repo_path
+      SELECT DISTINCT op.title AS name, op.metadata->>'repo_path' AS repo_path
+      FROM okr_projects op
+      WHERE op.metadata->>'repo_path' IS NOT NULL
+      UNION
+      SELECT DISTINCT os.title AS name, os.metadata->>'repo_path' AS repo_path
+      FROM okr_scopes os
+      WHERE os.metadata->>'repo_path' IS NOT NULL
+      UNION
+      SELECT DISTINCT oi.title AS name, oi.metadata->>'repo_path' AS repo_path
+      FROM okr_initiatives oi
+      WHERE oi.metadata->>'repo_path' IS NOT NULL
+      ORDER BY name
     `);
 
     res.json({

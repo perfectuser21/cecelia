@@ -405,9 +405,17 @@ async function resolveRepoPath(projectId) {
       // project_repos table may not exist yet (pre-migration 029)
     }
 
-    // Fallback to projects.repo_path
+    // Fallback to okr_initiatives/okr_scopes/okr_projects metadata.repo_path（迁移：projects → new tables）
     const result = await pool.query(
-      'SELECT repo_path, parent_id FROM projects WHERE id = $1',
+      `SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
+       FROM okr_initiatives WHERE id = $1
+       UNION ALL
+       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
+       FROM okr_scopes WHERE id = $1
+       UNION ALL
+       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
+       FROM okr_projects WHERE id = $1
+       LIMIT 1`,
       [currentId]
     );
     if (result.rows.length === 0) return null;
@@ -1400,21 +1408,26 @@ async function buildTimeContext(krId) {
   if (!krId) return '';
   try {
     // 1. KR 的 target_date 和 time_budget_days
+    // 迁移：goals → objectives（area_okr type = objectives）
     const krResult = await pool.query(
-      `SELECT title, target_date, time_budget_days FROM goals WHERE id = $1`,
+      `SELECT title, end_date AS target_date, NULL::int AS time_budget_days FROM objectives WHERE id = $1
+       UNION ALL
+       SELECT title, end_date AS target_date, NULL::int AS time_budget_days FROM key_results WHERE id = $1
+       LIMIT 1`,
       [krId]
     );
     const kr = krResult.rows[0];
     if (!kr) return '';
 
     // 2. KR 下所有 Projects（按 sequence_order 排列）
+    // 迁移：projects → okr_projects（name → title）
     const projResult = await pool.query(
-      `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days,
-              p.created_at, p.completed_at
-       FROM projects p
-       JOIN project_kr_links pkl ON pkl.project_id = p.id
-       WHERE pkl.kr_id = $1 AND p.type = 'project'
-       ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC`,
+      `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
+              NULL::int AS time_budget_days, op.created_at, op.completed_at
+       FROM okr_projects op
+       JOIN project_kr_links pkl ON pkl.project_id = op.id
+       WHERE pkl.kr_id = $1
+       ORDER BY op.created_at ASC`,
       [krId]
     );
     const projects = projResult.rows;

@@ -609,7 +609,7 @@ async function _enrichContextWithSystemStatus(context) {
       SELECT
         (SELECT COUNT(*) FROM tasks WHERE status = 'in_progress') as tasks_in_progress,
         (SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND updated_at > NOW() - INTERVAL '24 hours') as recent_failures,
-        (SELECT COUNT(*) FROM goals WHERE status = 'in_progress') as active_goals
+        (SELECT COUNT(*) FROM objectives WHERE status = 'in_progress') as active_goals
     `);
     context.system_status = statusResult.rows[0];
   } catch (err) {
@@ -1351,22 +1351,21 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
 
   // 1. 收集 KR 进度数据
   try {
+    // 迁移：FROM goals → FROM objectives（tasks.goal_id 已废弃，任务通过 okr_initiative_id 关联）
     const krResult = await pool.query(`
       SELECT
         g.id,
         g.title,
         g.status,
-        g.progress,
+        0 AS progress,
         g.updated_at,
-        COUNT(t.id) FILTER (WHERE t.status = 'completed' AND t.updated_at > NOW() - ($1 || ' hours')::INTERVAL) as completed_tasks,
-        COUNT(t.id) FILTER (WHERE t.status = 'failed' AND t.updated_at > NOW() - ($1 || ' hours')::INTERVAL) as failed_tasks,
-        COUNT(t.id) FILTER (WHERE t.status = 'queued') as queued_tasks
-      FROM goals g
-      LEFT JOIN tasks t ON t.goal_id = g.id
-      GROUP BY g.id, g.title, g.status, g.progress, g.updated_at
+        0 as completed_tasks,
+        0 as failed_tasks,
+        0 as queued_tasks
+      FROM objectives g
       ORDER BY g.updated_at DESC
       LIMIT 20
-    `, [String(timeRangeHours)]);
+    `, []);
     context.kr_progress = krResult.rows;
   } catch (err) {
     console.error('[cortex] generateSystemReport: 获取 KR 进度失败:', err.message);

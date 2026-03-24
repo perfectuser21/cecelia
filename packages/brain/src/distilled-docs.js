@@ -217,24 +217,25 @@ export async function refreshUserProfile(dbPool) {
 export async function refreshWorldState(dbPool) {
   const p = dbPool || pool;
   try {
+    // 迁移：goals → objectives；projects → okr_projects；initiatives → okr_initiatives
     const [goals, projects, initiatives] = await Promise.all([
       p.query(`
-        SELECT title, status, progress
-        FROM goals
-        WHERE status IN ('in_progress', 'pending')
-        ORDER BY progress DESC
-        LIMIT 5
-      `).catch(() => ({ rows: [] })),
-      p.query(`
-        SELECT title, status, current_phase
-        FROM projects
-        WHERE status IN ('active', 'planning')
+        SELECT title, status, 0 AS progress
+        FROM objectives
+        WHERE status IN ('in_progress', 'pending', 'active')
         ORDER BY updated_at DESC
         LIMIT 5
       `).catch(() => ({ rows: [] })),
       p.query(`
         SELECT title, status
-        FROM initiatives
+        FROM okr_projects
+        WHERE status IN ('active', 'planning', 'in_progress')
+        ORDER BY updated_at DESC
+        LIMIT 5
+      `).catch(() => ({ rows: [] })),
+      p.query(`
+        SELECT title, status
+        FROM okr_initiatives
         WHERE status IN ('active', 'in_progress', 'pending')
         ORDER BY updated_at DESC
         LIMIT 8
@@ -255,8 +256,7 @@ export async function refreshWorldState(dbPool) {
     if (projects.rows.length > 0) {
       content += '### 活跃项目\n';
       for (const p2 of projects.rows) {
-        const phase = p2.current_phase ? ` [${p2.current_phase}]` : '';
-        content += `- ${p2.title} (${p2.status}${phase})\n`;
+        content += `- ${p2.title} (${p2.status})\n`;
       }
       content += '\n';
     }
@@ -275,7 +275,7 @@ export async function refreshWorldState(dbPool) {
 
     await upsertDoc('WORLD_STATE', content, 'auto', p);
     const total = goals.rows.length + projects.rows.length + initiatives.rows.length;
-    console.log(`[distilled-docs] WORLD_STATE 已更新（goals=${goals.rows.length}, projects=${projects.rows.length}, initiatives=${initiatives.rows.length}）`);
+    console.log(`[distilled-docs] WORLD_STATE 已更新（objectives=${goals.rows.length}, okr_projects=${projects.rows.length}, okr_initiatives=${initiatives.rows.length}）`);
     return { refreshed: true, total };
   } catch (err) {
     console.warn('[distilled-docs] refreshWorldState 失败（非致命）:', err.message);

@@ -800,9 +800,12 @@ router.post('/pr-plans', async (req, res) => {
       });
     }
 
-    // Validate project exists
+    // Validate project exists（迁移：projects → okr_projects UNION okr_scopes UNION okr_initiatives）
     const projectCheck = await pool.query(
-      'SELECT id FROM projects WHERE id = $1',
+      `SELECT id FROM okr_projects WHERE id = $1
+       UNION ALL SELECT id FROM okr_scopes WHERE id = $1
+       UNION ALL SELECT id FROM okr_initiatives WHERE id = $1
+       LIMIT 1`,
       [project_id]
     );
     if (projectCheck.rows.length === 0) {

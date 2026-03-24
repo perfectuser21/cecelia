@@ -484,9 +484,14 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：goals → objectives UNION key_results
       const goalResults = await pool.query(
-        `SELECT id, title, description, type, status, created_at
-         FROM goals
+        `SELECT id, title, description, 'area_okr' AS type, status, created_at
+         FROM objectives
+         WHERE status NOT IN ('completed', 'cancelled')
+         UNION ALL
+         SELECT id, title, description, 'area_kr' AS type, status, created_at
+         FROM key_results
          WHERE status NOT IN ('completed', 'cancelled')
          ORDER BY created_at DESC
          LIMIT 30`
@@ -524,10 +529,13 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：projects → okr_projects UNION okr_initiatives（name → title）
       const projectResults = await pool.query(
-        `SELECT id, name, description, type, created_at
-         FROM projects
-         WHERE type IN ('project', 'initiative')
+        `SELECT id, title AS name, description, 'project' AS type, created_at
+         FROM okr_projects
+         UNION ALL
+         SELECT id, title AS name, description, 'initiative' AS type, created_at
+         FROM okr_initiatives
          ORDER BY created_at DESC
          LIMIT 30`
       );
@@ -579,14 +587,16 @@ async function _enrichStructuredCandidates(pool, candidates) {
   const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
 
   try {
-    // task_count for goals (via projects.kr_id)
+    // task_count for goals via project_kr_links → okr_projects（迁移：projects.kr_id → project_kr_links）
     if (goalIds.length > 0) {
       const res = await pool.query(
-        `SELECT p.kr_id as goal_id, COUNT(t.id)::int as task_count
+        `SELECT pkl.kr_id as goal_id, COUNT(t.id)::int as task_count
          FROM tasks t
-         JOIN projects p ON t.project_id = p.id
-         WHERE p.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
-         GROUP BY p.kr_id`,
+         JOIN okr_initiatives oi ON oi.id = t.project_id
+         JOIN okr_scopes os ON oi.scope_id = os.id
+         JOIN project_kr_links pkl ON pkl.project_id = os.project_id
+         WHERE pkl.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY pkl.kr_id`,
         [goalIds]
       );
       const countMap = Object.fromEntries(res.rows.map(r => [r.goal_id, r.task_count]));
@@ -614,14 +624,15 @@ async function _enrichStructuredCandidates(pool, candidates) {
       }
     }
 
-    // parent_kr_title for initiatives
+    // parent_kr_title for initiatives（迁移：goals → objectives via project_kr_links）
     if (initiativeIds.length > 0) {
       const res = await pool.query(
-        `SELECT pi.id as initiative_id, g.title as kr_title
-         FROM goals g
-         JOIN projects p ON p.kr_id = g.id
-         JOIN projects pi ON pi.parent_id = p.id
-         WHERE pi.id = ANY($1)`,
+        `SELECT oi.id as initiative_id, g.title as kr_title
+         FROM objectives g
+         JOIN project_kr_links pkl ON pkl.kr_id = g.id
+         JOIN okr_scopes os ON os.project_id = pkl.project_id
+         JOIN okr_initiatives oi ON oi.scope_id = os.id
+         WHERE oi.id = ANY($1)`,
         [initiativeIds]
       );
       const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
@@ -907,10 +918,11 @@ async function loadActiveProfile(pool, mode) {
   }
 
   try {
+    // 迁移：goals → objectives（area_okr type）
     const goals = await pool.query(`
-      SELECT title, status, progress FROM goals
-      WHERE status IN ('in_progress', 'pending')
-      ORDER BY priority ASC, progress DESC
+      SELECT title, status, 0 AS progress FROM objectives
+      WHERE status IN ('in_progress', 'pending', 'active')
+      ORDER BY priority ASC, updated_at DESC
       LIMIT 3
     `);
 

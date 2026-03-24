@@ -195,7 +195,7 @@ describe('getActiveProjectsWithStats', () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     await getActiveProjectsWithStats();
     const sql = mockPool.query.mock.calls[0][0];
-    expect(sql).toContain('FROM projects p');
+    expect(sql).toContain('FROM okr_initiatives');
     expect(sql).toContain('LEFT JOIN tasks t');
     expect(sql).toContain('GROUP BY');
   });
@@ -205,7 +205,7 @@ describe('getActiveProjectsWithStats', () => {
     await getActiveProjectsWithStats();
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('HAVING');
-    expect(sql).toContain('lead_agent IS NOT NULL');
+    expect(sql).toContain("metadata->>'lead_agent' IS NOT NULL");
   });
 
   it('数据库返回空时返回空数组', async () => {
