@@ -139,10 +139,13 @@ ${learningsList}
  * 构建发给 NotebookLM 的综合 query
  * 比 buildRuminationPrompt 更宽泛：让 NotebookLM 从全量历史综合
  */
-export function buildNotebookQuery(learnings) {
-  const titles = learnings.map(l => l.title).join('、');
-  const categories = [...new Set(learnings.map(l => l.category || '未分类'))].join('、');
-  return `我最近学到了这些内容（主题：${titles}，领域：${categories}）。
+export function buildNotebookQuery(items) {
+  const titles = items.map(l => l.title || l.content?.slice(0, 40)).join('、');
+  const categories = [...new Set(items.map(l => l.category || '未分类'))].join('、');
+  const emotionTags = items.map(l => l.emotion_tag).filter(Boolean);
+  const emotionContext = emotionTags.length > 0
+    ? `\n当时的情绪状态：${[...new Set(emotionTags)].join('、')}。` : '';
+  return `我最近学到了这些内容（主题：${titles}，领域：${categories}）。${emotionContext}
 请综合你掌握的关于我（Cecelia）和 Alex 工作模式的所有历史知识，
 对这些新内容进行深度分析：
 1. 发现跨时间的模式或规律
@@ -370,6 +373,35 @@ ${insight.trim().slice(0, 800)}
   return insights;
 }
 
+// ── memory_stream 高显著性输入 ────────────────────────────
+
+/**
+ * 获取 memory_stream 中高显著性对话条目（作为反刍补充输入）
+ * 条件：salience_score ≥ 0.7，source_type = 'conversation_turn'，status = 'active'
+ * 返回条目附带 source='memory_stream' 标记，格式与 learnings 兼容
+ */
+export async function fetchMemoryStreamItems(db, limit) {
+  const { rows } = await db.query(
+    `SELECT id, content, salience_score, emotion_tag, source_type
+     FROM memory_stream
+     WHERE source_type = 'conversation_turn'
+       AND status = 'active'
+       AND salience_score >= 0.7
+     ORDER BY salience_score DESC, created_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    title: null,
+    content: r.content,
+    category: 'conversation',
+    salience_score: r.salience_score,
+    emotion_tag: r.emotion_tag,
+    source: 'memory_stream',
+  }));
+}
+
 // ── 核心流程 ──────────────────────────────────────────────
 
 /**
@@ -420,16 +452,45 @@ export async function runRumination(dbPool) {
     return { skipped: 'fetch_error', digested: 0, insights: [] };
   }
 
-  if (learnings.length === 0) {
+  // learnings 不足时，补充 memory_stream 高显著性对话条目
+  let memStreamItems = [];
+  if (learnings.length < limit) {
+    const msLimit = limit - learnings.length;
+    try {
+      memStreamItems = await fetchMemoryStreamItems(db, msLimit);
+    } catch (err) {
+      console.warn('[rumination] fetchMemoryStreamItems failed (non-blocking):', err.message);
+    }
+  }
+
+  const allItems = [
+    ...learnings.map(l => ({ ...l, source: 'learning' })),
+    ...memStreamItems,
+  ];
+
+  if (allItems.length === 0) {
     return { skipped: 'no_undigested', digested: 0, insights: [] };
   }
 
-  const insights = await digestLearnings(db, learnings);
+  const insights = await digestLearnings(db, allItems);
+
+  // 标记已处理的 memory_stream 条目
+  if (memStreamItems.length > 0) {
+    const msIds = memStreamItems.map(m => m.id);
+    try {
+      await db.query(
+        `UPDATE memory_stream SET status = 'ruminated' WHERE id = ANY($1::uuid[])`,
+        [msIds]
+      );
+    } catch (err) {
+      console.warn('[rumination] mark memory_stream ruminated failed (non-blocking):', err.message);
+    }
+  }
 
   _lastRunAt = Date.now();
 
   return {
-    digested: learnings.length,
+    digested: allItems.length,
     insights,
   };
 }
