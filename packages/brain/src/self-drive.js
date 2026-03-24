@@ -235,17 +235,10 @@ async function executeAdjustmentAction(action) {
       if (!action.project_id || action.new_sequence == null) {
         throw new Error('adjust_priority 需要 project_id 和 new_sequence');
       }
-      // Try okr_projects first, fallback to projects
-      const adjResult = await pool.query(
+      await pool.query(
         `UPDATE okr_projects SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('sequence_order', $1::int), updated_at = NOW() WHERE id = $2`,
         [action.new_sequence, action.project_id]
       );
-      if (adjResult.rowCount === 0) {
-        await pool.query(
-          'UPDATE projects SET sequence_order = $1, updated_at = NOW() WHERE id = $2',
-          [action.new_sequence, action.project_id]
-        );
-      }
       await recordDecision('self_drive', action.reason || 'adjust_priority', action);
       return { project_id: action.project_id, new_sequence: action.new_sequence };
     }
@@ -254,20 +247,14 @@ async function executeAdjustmentAction(action) {
       if (!action.kr_id) {
         throw new Error('pause_kr 需要 kr_id');
       }
-      // Try objectives → key_results → goals
+      // Try objectives → key_results
       let pauseResult = await pool.query(
         "UPDATE objectives SET status = 'paused', updated_at = NOW() WHERE id = $1",
         [action.kr_id]
       );
       if (pauseResult.rowCount === 0) {
-        pauseResult = await pool.query(
-          "UPDATE key_results SET status = 'paused', updated_at = NOW() WHERE id = $1",
-          [action.kr_id]
-        );
-      }
-      if (pauseResult.rowCount === 0) {
         await pool.query(
-          "UPDATE goals SET status = 'paused', updated_at = NOW() WHERE id = $1",
+          "UPDATE key_results SET status = 'paused', updated_at = NOW() WHERE id = $1",
           [action.kr_id]
         );
       }
@@ -279,20 +266,14 @@ async function executeAdjustmentAction(action) {
       if (!action.kr_id) {
         throw new Error('activate_kr 需要 kr_id');
       }
-      // Try objectives → key_results → goals
+      // Try objectives → key_results
       let activateResult = await pool.query(
         "UPDATE objectives SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
         [action.kr_id]
       );
       if (activateResult.rowCount === 0) {
-        activateResult = await pool.query(
-          "UPDATE key_results SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
-          [action.kr_id]
-        );
-      }
-      if (activateResult.rowCount === 0) {
         await pool.query(
-          "UPDATE goals SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
+          "UPDATE key_results SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
           [action.kr_id]
         );
       }
@@ -308,17 +289,10 @@ async function executeAdjustmentAction(action) {
       if (!validPhases.includes(action.phase)) {
         throw new Error(`update_roadmap phase 必须是 ${validPhases.join('/')}，收到: ${action.phase}`);
       }
-      // Try okr_projects first, fallback to projects
-      const roadmapResult = await pool.query(
+      await pool.query(
         `UPDATE okr_projects SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('current_phase', $1), updated_at = NOW() WHERE id = $2`,
         [action.phase, action.project_id]
       );
-      if (roadmapResult.rowCount === 0) {
-        await pool.query(
-          'UPDATE projects SET current_phase = $1, updated_at = NOW() WHERE id = $2',
-          [action.phase, action.project_id]
-        );
-      }
       await recordDecision('self_drive', action.reason || 'update_roadmap', action);
       return { project_id: action.project_id, phase: action.phase };
     }

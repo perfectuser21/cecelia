@@ -705,17 +705,17 @@ describe('actions.js', () => {
       expect(JSON.parse(insertParams[6]).type).toBe('area_okr');
     });
 
-    it('有 parent_id 但父级不存在时默认 kr（parent 查询返回空）', async () => {
-      // 父级查询返回空 - goalType 仍为 undefined → fallback to goals table
+    it('有 parent_id 但父级不存在时默认写入 key_results', async () => {
+      // 父级查询返回空 → goalType undefined → fallback 到 key_results 表
       mockQuery.mockResolvedValueOnce({ rows: [] });
-      const fakeGoal = { id: 'goal-orphan', title: '孤儿', type: null };
+      const fakeGoal = { id: 'goal-orphan', title: '孤儿', name: '孤儿' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: '孤儿', parent_id: 'parent-gone' });
 
-      // fallback goals 表: params = [title, desc, priority, project_id, end_date, parent_id, goalType, domain, owner_role]
-      const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBeUndefined(); // goalType undefined
+      // key_results: params = [title, desc, priority, owner_role, end_date, metaJson]
+      const sql = mockQuery.mock.calls[1][0];
+      expect(sql).toContain('key_results');
     });
 
     it('指定 type 优先于 parent 推断', async () => {
@@ -836,12 +836,11 @@ describe('actions.js', () => {
     });
 
     it('目标不存在返回失败', async () => {
-      // 新实现依次查 objectives → key_results → visions → goals，需要 4 个空响应
+      // 新实现依次查 objectives → key_results → visions，需要 3 个空响应
       mockQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // objectives
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // key_results
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // visions
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // goals
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // visions
 
       const result = await updateGoal({
         goal_id: 'goal-404',

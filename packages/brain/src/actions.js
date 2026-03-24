@@ -425,12 +425,12 @@ async function createGoal({ title, description, priority, project_id, target_dat
       RETURNING *, title AS name
     `, [title, description || '', priority || 'P1', owner_role, parent_id || null, endDate, metaJson]);
   } else {
-    // fallback: unknown type → goals table
+    // 未知类型或父级不存在时，默认写入 key_results
     goalResult = await pool.query(`
-      INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress, domain, owner_role)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, $8, $9)
-      RETURNING *
-    `, [title, description || '', priority || 'P1', project_id || null, endDate, parent_id || null, goalType, domain, owner_role]);
+      INSERT INTO key_results (title, description, priority, status, owner_role, end_date, metadata)
+      VALUES ($1, $2, $3, 'active', $4, $5, $6)
+      RETURNING *, title AS name
+    `, [title, description || '', priority || 'P1', owner_role, endDate, metaJson]);
   }
 
   const goal = goalResult.rows[0];
@@ -511,20 +511,7 @@ async function updateGoal({ goal_id, status, progress }) {
     return { success: true, goal: visResult.rows[0] };
   }
 
-  // 4. Fallback to old goals table
-  values.push(goal_id);
-  const result = await pool.query(`
-    UPDATE goals SET ${updates.join(', ')}
-    WHERE id = $${idx}
-    RETURNING *
-  `, values);
-
-  if (result.rows.length === 0) {
-    return { success: false, error: 'Goal not found' };
-  }
-
-  console.log(`[Action] Updated goal: ${goal_id}`);
-  return { success: true, goal: result.rows[0] };
+  return { success: false, error: 'Goal not found' };
 }
 
 /**

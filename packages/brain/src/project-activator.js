@@ -62,12 +62,9 @@ async function manageProjectActivation(pool, cap) {
     const toDeactivate = canDeactivate.slice(0, excess);
 
     for (const proj of toDeactivate) {
-      const deactResult = await pool.query(`
+      await pool.query(`
         UPDATE okr_projects SET status = 'inactive', updated_at = NOW() WHERE id = $1
       `, [proj.id]);
-      if (deactResult.rowCount === 0) {
-        await pool.query(`UPDATE projects SET status = 'inactive', updated_at = NOW() WHERE id = $1`, [proj.id]);
-      }
       deactivated++;
     }
 
@@ -125,12 +122,9 @@ async function manageProjectActivation(pool, cap) {
   const toActivate = candidates.slice(0, slotsAvailable);
 
   for (const proj of toActivate) {
-    const actResult = await pool.query(`
+    await pool.query(`
       UPDATE okr_projects SET status = 'active', updated_at = NOW() WHERE id = $1
     `, [proj.id]);
-    if (actResult.rowCount === 0) {
-      await pool.query(`UPDATE projects SET status = 'active', updated_at = NOW() WHERE id = $1`, [proj.id]);
-    }
     activated++;
   }
 
