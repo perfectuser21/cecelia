@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.95.0"
+version: "3.96.0"
 updated: "2026-03-24"
 # ci-trigger: 13.37.0
 changelog:
+
+  - version: "13.41.0"
+    date: "2026-03-24"
+    summary: "[CONFIG] feat(engine): 04-ship.md 新增 4.4 Update Memory 步骤 — 任务完成后同步更新 state.md + roadmap.md"
+    scope: packages/engine/skills/dev/steps/04-ship.md
+    breaking: false
 
   - version: "13.40.0"
     date: "2026-03-24"

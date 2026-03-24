@@ -215,7 +215,37 @@ CI_RUNS=$(gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" \
 
 ---
 
-## 4.4 Clean — 归档 + 清理
+## 4.4 Update Memory
+
+> **任务完成后，同步更新 state.md 和 roadmap.md，确保系统状态记忆与现实一致。**
+
+### 执行步骤
+
+1. **读取 state.md**，将本次任务完成的功能标记为已完成（✅）
+2. **更新 roadmap.md**：
+   - 将本次 Task 从 Now/In Progress 移除
+   - 如有后续任务，确认 Next 列表是否需要调整
+3. **验证一致性**：state.md 中的状态与实际代码/PR 状态匹配
+
+```bash
+# state.md 路径（全局记忆目录）
+STATE_FILE="$HOME/.claude-account1/projects/-Users-administrator-perfect21-cecelia/memory/state.md"
+ROADMAP_FILE="$HOME/.claude-account1/projects/-Users-administrator-perfect21-cecelia/memory/roadmap.md"
+
+# 读取并更新（AI 根据本次任务内容判断需要更新的条目）
+echo "📝 请更新 state.md 和 roadmap.md 以反映本次任务完成状态"
+echo "   state.md: $STATE_FILE"
+echo "   roadmap.md: $ROADMAP_FILE"
+```
+
+**更新原则**：
+- 只更新与本次任务直接相关的条目
+- 不要删除其他任务的状态条目
+- roadmap 中 Now → 完成后移除，不移入 Later
+
+---
+
+## 4.5 Clean — 归档 + 清理
 
 ### 归档 Task Card
 
