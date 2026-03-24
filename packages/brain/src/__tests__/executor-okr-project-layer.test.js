@@ -9,7 +9,7 @@
  * - OKR 继续拆解（decomposition=continue）：不受影响
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../db.js', () => ({
   default: { query: vi.fn() }
@@ -83,11 +83,11 @@ describe('executor OKR 拆解 PRD 模板 - KR 专属 Project', () => {
       expect(prompt).toContain('禁止复用');
     });
 
-    it('PRD 必须包含 project_kr_links 绑定步骤', async () => {
+    it('PRD 必须包含 okr_projects.kr_id 绑定说明', async () => {
       const task = makeOkrTask();
       const prompt = await preparePrompt(task);
 
-      expect(prompt).toContain('project_kr_links');
+      expect(prompt).toContain('okr_projects.kr_id');
     });
 
     it('PRD 必须要求 Task goal_id = KR ID', async () => {

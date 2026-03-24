@@ -48,16 +48,16 @@ afterEach(async () => {
   }
 });
 
-// Helper: create KR
+// Helper: create KR (key_results has no domain column; attach as JS property)
 async function createKR({ title = 'Test KR', priority = 'P1', domain = null } = {}) {
   const result = await pool.query(
-    `INSERT INTO goals (title, type, priority, status, progress, domain)
-     VALUES ($1, 'area_kr', $2, 'in_progress', 0, $3) RETURNING *`,
-    [title, priority, domain]
+    `INSERT INTO key_results (title, priority, status)
+     VALUES ($1, $2, 'in_progress') RETURNING *`,
+    [title, priority]
   );
   const kr = result.rows[0];
   testKRIds.push(kr.id);
-  return kr;
+  return { ...kr, domain }; // domain attached as JS property for planner inheritance chain
 }
 
 // Helper: create parent project (uses okr_projects for new planner query compatibility)

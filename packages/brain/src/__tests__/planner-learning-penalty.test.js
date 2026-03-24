@@ -46,9 +46,6 @@ describe('Planner Learning Penalty', () => {
       await pool.query('DELETE FROM learnings WHERE id = ANY($1)', [testLearningIds]).catch(() => {});
       testLearningIds = [];
     }
-    for (const link of testLinks) {
-      await pool.query('DELETE FROM project_kr_links WHERE project_id = $1 AND kr_id = $2', [link.project_id, link.kr_id]).catch(() => {});
-    }
     testLinks = [];
     if (testTaskIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE id = ANY($1)', [testTaskIds]).catch(() => {});
@@ -56,15 +53,15 @@ describe('Planner Learning Penalty', () => {
     }
     if (testProjectIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-      await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
+      await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
       testProjectIds = [];
     }
     if (testKRIds.length > 0) {
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testKRIds]).catch(() => {});
+      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]).catch(() => {});
       testKRIds = [];
     }
     if (testObjectiveIds.length > 0) {
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testObjectiveIds]).catch(() => {});
+      await pool.query('DELETE FROM objectives WHERE id = ANY($1)', [testObjectiveIds]).catch(() => {});
       testObjectiveIds = [];
     }
   });
@@ -72,7 +69,7 @@ describe('Planner Learning Penalty', () => {
   // Helper: create a test project
   async function createTestProject(name) {
     const result = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ($1, '/tmp/penalty-test', 'active') RETURNING id",
+      "INSERT INTO okr_projects (title, status) VALUES ($1, 'active') RETURNING id",
       [name]
     );
     testProjectIds.push(result.rows[0].id);
@@ -226,13 +223,13 @@ describe('Planner Learning Penalty', () => {
 
       // Create project and KR
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('learning-penalty-dispatch-test', '/tmp/lp-test', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status) VALUES ('learning-penalty-dispatch-test', 'active') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('LP Test KR', 'area_okr', 'P1', 'pending', 0) RETURNING *"
+        "INSERT INTO key_results (title, priority, status) VALUES ('LP Test KR', 'P1', 'pending') RETURNING *"
       );
       const kr = krResult.rows[0];
       testKRIds.push(kr.id);
@@ -266,13 +263,13 @@ describe('Planner Learning Penalty', () => {
       const { generateNextTask } = await import('../planner.js');
 
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('only-penalized-test', '/tmp/op-test', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status) VALUES ('only-penalized-test', 'active') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Only Penalized KR', 'area_okr', 'P1', 'pending', 0) RETURNING *"
+        "INSERT INTO key_results (title, priority, status) VALUES ('Only Penalized KR', 'P1', 'pending') RETURNING *"
       );
       const kr = krResult.rows[0];
       testKRIds.push(kr.id);
@@ -299,13 +296,13 @@ describe('Planner Learning Penalty', () => {
       const { generateNextTask } = await import('../planner.js');
 
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('no-penalty-order-test', '/tmp/npo-test', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status) VALUES ('no-penalty-order-test', 'active') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('No Penalty KR', 'area_okr', 'P1', 'pending', 0) RETURNING *"
+        "INSERT INTO key_results (title, priority, status) VALUES ('No Penalty KR', 'P1', 'pending') RETURNING *"
       );
       const kr = krResult.rows[0];
       testKRIds.push(kr.id);

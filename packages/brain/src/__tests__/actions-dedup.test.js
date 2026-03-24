@@ -33,12 +33,12 @@ describe('createTask() Dedup', () => {
     }
     if (testProjectIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-      await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]);
+      await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]);
       testProjectIds = [];
     }
     if (testGoalIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE goal_id = ANY($1)', [testGoalIds]).catch(() => {});
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testGoalIds]);
+      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testGoalIds]);
       testGoalIds = [];
     }
   });
@@ -46,13 +46,13 @@ describe('createTask() Dedup', () => {
   it('should dedup when queued task with same title+goal+project exists', async () => {
     // Setup: create goal + project
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup test goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup test goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
 
     const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('dedup-test-proj', '/tmp/dedup-test', 'active') RETURNING id"
+      "INSERT INTO okr_projects (title, status) VALUES ('dedup-test-proj', 'active') RETURNING id"
     );
     testProjectIds.push(projResult.rows[0].id);
     const projectId = projResult.rows[0].id;
@@ -80,7 +80,7 @@ describe('createTask() Dedup', () => {
 
   it('should dedup when in_progress task with same title+goal+project exists', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup inprog goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup inprog goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -108,7 +108,7 @@ describe('createTask() Dedup', () => {
 
   it('should allow different titles even with same goal+project', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup diff title goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup diff title goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -135,7 +135,7 @@ describe('createTask() Dedup', () => {
 
   it('should allow re-creation after 24h completed window', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup 24h goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup 24h goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -162,7 +162,7 @@ describe('createTask() Dedup', () => {
 
   it('should dedup completed task within 24h window', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup recent goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup recent goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -215,13 +215,13 @@ describe('createTask() Dedup', () => {
 
   it('should dedup when canceled task exists', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup canceled goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup canceled goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
 
     const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('dedup-canceled-proj', '/tmp/dedup-canceled', 'active') RETURNING id"
+      "INSERT INTO okr_projects (title, status) VALUES ('dedup-canceled-proj', 'active') RETURNING id"
     );
     testProjectIds.push(projResult.rows[0].id);
     const projectId = projResult.rows[0].id;
@@ -250,7 +250,7 @@ describe('createTask() Dedup', () => {
 
   it('should dedup cancelled task within time window', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup cancelled goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup cancelled goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -279,7 +279,7 @@ describe('createTask() Dedup', () => {
 
   it('should allow re-creation after canceled task expires', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup expired canceled goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup expired canceled goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -306,7 +306,7 @@ describe('createTask() Dedup', () => {
 
   it('should handle both canceled and cancelled spellings', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup spelling goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Dedup spelling goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;

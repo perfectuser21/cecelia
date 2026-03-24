@@ -18,19 +18,19 @@ describe('createTask - goal_id validation', () => {
   let testGoalId;
 
   beforeEach(async () => {
-    // Create a test goal for valid tasks
-    const goalResult = await pool.query(`
-      INSERT INTO goals (title, description, status, priority, type)
-      VALUES ('Test Goal', 'Test goal for validation tests', 'pending', 'P1', 'area_okr')
+    // Create a test KR in key_results (tasks.goal_id is a UUID column)
+    const krResult = await pool.query(`
+      INSERT INTO key_results (title, status, priority)
+      VALUES ('Test Goal', 'pending', 'P1')
       RETURNING id
     `);
-    testGoalId = goalResult.rows[0].id;
+    testGoalId = krResult.rows[0].id;
   });
 
   afterEach(async () => {
     // Clean up test data
     await pool.query(`DELETE FROM tasks WHERE title LIKE 'Test Task%'`);
-    await pool.query(`DELETE FROM goals WHERE title = 'Test Goal'`);
+    await pool.query(`DELETE FROM key_results WHERE title = 'Test Goal'`);
   });
 
   describe('goal_id required validation', () => {

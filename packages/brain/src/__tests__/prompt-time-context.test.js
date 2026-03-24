@@ -34,7 +34,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: futureDate, time_budget_days: 30 }] };
       }
-      if (sql.includes('project_kr_links')) {
+      if (sql.includes('FROM okr_projects') && sql.includes('WHERE op.kr_id')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -55,7 +55,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
-      if (sql.includes('project_kr_links')) {
+      if (sql.includes('FROM okr_projects') && sql.includes('WHERE op.kr_id')) {
         return {
           rows: [
             {
@@ -86,7 +86,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
-      if (sql.includes('project_kr_links')) {
+      if (sql.includes('FROM okr_projects') && sql.includes('WHERE op.kr_id')) {
         return {
           rows: [{
             id: 'proj-1', name: 'Project Alpha', status: 'completed', sequence_order: 1,
@@ -108,7 +108,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
-      if (sql.includes('project_kr_links')) {
+      if (sql.includes('FROM okr_projects') && sql.includes('WHERE op.kr_id')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -144,7 +144,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: threeDaysLater, time_budget_days: null }] };
       }
-      if (sql.includes('project_kr_links')) {
+      if (sql.includes('FROM okr_projects') && sql.includes('WHERE op.kr_id')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -165,7 +165,7 @@ describe('preparePrompt with time context', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: '2026-03-31', time_budget_days: 30 }] };
       }
-      if (sql.includes('project_kr_links')) {
+      if (sql.includes('FROM okr_projects') && sql.includes('WHERE op.kr_id')) {
         return { rows: [] };
       }
       return { rows: [] };

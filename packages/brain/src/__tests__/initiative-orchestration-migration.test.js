@@ -15,61 +15,31 @@ beforeAll(async () => {
 
 describe('Migration 057 - initiative_orchestration', () => {
   afterAll(async () => {
-    // Cleanup test data
-    await pool.query("DELETE FROM projects WHERE name LIKE 'mig057_test_%'");
+    // Cleanup test data (projects table dropped in migration 185)
+    await pool.query("DELETE FROM projects WHERE name LIKE 'mig057_test_%'").catch(() => {});
     await pool.query("DELETE FROM tasks WHERE title LIKE 'mig057_test_%'");
   });
 
-  // D1: projects.execution_mode 列
-  it('D1: projects.execution_mode exists with default simple', async () => {
-    const result = await pool.query(`
-      INSERT INTO projects (name, type, status, description)
-      VALUES ('mig057_test_exec_mode', 'initiative', 'active', 'test')
-      RETURNING execution_mode
-    `);
-    expect(result.rows[0].execution_mode).toBe('simple');
-  });
+  // D1: projects.execution_mode 列（projects 表已由 migration 185 DROP，跳过）
+  it.skip('D1: projects.execution_mode exists with default simple', async () => {});
 
-  // D1: projects.current_phase 列
-  it('D1: projects.current_phase exists with default NULL', async () => {
-    const result = await pool.query(`
-      INSERT INTO projects (name, type, status, description)
-      VALUES ('mig057_test_phase', 'initiative', 'active', 'test')
-      RETURNING current_phase
-    `);
-    expect(result.rows[0].current_phase).toBeNull();
-  });
+  // D1: projects.current_phase 列（projects 表已由 migration 185 DROP，跳过）
+  it.skip('D1: projects.current_phase exists with default NULL', async () => {});
 
-  // D1: projects.current_phase 可以设置值
-  it('D1: projects.current_phase accepts phase values', async () => {
-    const result = await pool.query(`
-      INSERT INTO projects (name, type, status, description, current_phase)
-      VALUES ('mig057_test_phase_set', 'initiative', 'active', 'test', 'plan')
-      RETURNING current_phase
-    `);
-    expect(result.rows[0].current_phase).toBe('plan');
-  });
+  // D1: projects.current_phase 可以设置值（projects 表已由 migration 185 DROP，跳过）
+  it.skip('D1: projects.current_phase accepts phase values', async () => {});
 
-  // D1: projects.dod_content 列
-  it('D1: projects.dod_content exists as JSONB', async () => {
-    const dodContent = [{ item: 'Test DoD', pass_criteria: 'It works' }];
-    const result = await pool.query(`
-      INSERT INTO projects (name, type, status, description, dod_content)
-      VALUES ('mig057_test_dod', 'initiative', 'active', 'test', $1)
-      RETURNING dod_content
-    `, [JSON.stringify(dodContent)]);
-    expect(result.rows[0].dod_content).toEqual(dodContent);
-  });
+  // D1: projects.dod_content 列（projects 表已由 migration 185 DROP，跳过）
+  it.skip('D1: projects.dod_content exists as JSONB', async () => {});
 
   // D1: tasks.task_type CHECK 扩展 - initiative_plan
   it('D1: tasks.task_type accepts initiative_plan', async () => {
-    // Need a goal for non-system task type
-    const goalResult = await pool.query(`
-      INSERT INTO goals (title, type, priority, status, progress)
-      VALUES ('mig057_test_goal', 'area_okr', 'P1', 'pending', 0)
+    const krResult = await pool.query(`
+      INSERT INTO key_results (title, priority, status)
+      VALUES ('mig057_test_goal', 'P1', 'pending')
       RETURNING id
     `);
-    const goalId = goalResult.rows[0].id;
+    const goalId = krResult.rows[0].id;
 
     const result = await pool.query(`
       INSERT INTO tasks (title, task_type, status, goal_id, priority)
@@ -80,17 +50,17 @@ describe('Migration 057 - initiative_orchestration', () => {
 
     // Cleanup
     await pool.query("DELETE FROM tasks WHERE title = 'mig057_test_plan_task'");
-    await pool.query("DELETE FROM goals WHERE title = 'mig057_test_goal'");
+    await pool.query("DELETE FROM key_results WHERE id = $1", [goalId]);
   });
 
   // D1: tasks.task_type CHECK 扩展 - initiative_verify
   it('D1: tasks.task_type accepts initiative_verify', async () => {
-    const goalResult = await pool.query(`
-      INSERT INTO goals (title, type, priority, status, progress)
-      VALUES ('mig057_test_goal_v', 'area_okr', 'P1', 'pending', 0)
+    const krResult = await pool.query(`
+      INSERT INTO key_results (title, priority, status)
+      VALUES ('mig057_test_goal_v', 'P1', 'pending')
       RETURNING id
     `);
-    const goalId = goalResult.rows[0].id;
+    const goalId = krResult.rows[0].id;
 
     const result = await pool.query(`
       INSERT INTO tasks (title, task_type, status, goal_id, priority)
@@ -101,27 +71,13 @@ describe('Migration 057 - initiative_orchestration', () => {
 
     // Cleanup
     await pool.query("DELETE FROM tasks WHERE title = 'mig057_test_verify_task'");
-    await pool.query("DELETE FROM goals WHERE title = 'mig057_test_goal_v'");
+    await pool.query("DELETE FROM key_results WHERE id = $1", [goalId]);
   });
 
-  // D1: 索引存在性
-  it('D1: idx_projects_execution_mode index exists', async () => {
-    const result = await pool.query(`
-      SELECT indexname FROM pg_indexes
-      WHERE tablename = 'projects'
-        AND indexname = 'idx_projects_execution_mode'
-    `);
-    expect(result.rows.length).toBe(1);
-  });
+  // D1: 索引存在性（projects 表已由 migration 185 DROP，索引随之删除，跳过）
+  it.skip('D1: idx_projects_execution_mode index exists', async () => {});
 
-  it('D1: idx_projects_current_phase index exists', async () => {
-    const result = await pool.query(`
-      SELECT indexname FROM pg_indexes
-      WHERE tablename = 'projects'
-        AND indexname = 'idx_projects_current_phase'
-    `);
-    expect(result.rows.length).toBe(1);
-  });
+  it.skip('D1: idx_projects_current_phase index exists', async () => {});
 
   // D1: schema_version 057
   it('D1: schema_version 057 exists', async () => {
@@ -133,12 +89,12 @@ describe('Migration 057 - initiative_orchestration', () => {
 
   // D1: existing task types still work
   it('D1: existing task types still accepted', async () => {
-    const goalResult = await pool.query(`
-      INSERT INTO goals (title, type, priority, status, progress)
-      VALUES ('mig057_test_goal_existing', 'area_okr', 'P1', 'pending', 0)
+    const krResult = await pool.query(`
+      INSERT INTO key_results (title, priority, status)
+      VALUES ('mig057_test_goal_existing', 'P1', 'pending')
       RETURNING id
     `);
-    const goalId = goalResult.rows[0].id;
+    const goalId = krResult.rows[0].id;
 
     const existingTypes = ['dev', 'review', 'talk', 'data', 'research', 'exploratory', 'qa', 'audit', 'decomp_review', 'codex_qa'];
     for (const taskType of existingTypes) {
@@ -152,6 +108,6 @@ describe('Migration 057 - initiative_orchestration', () => {
 
     // Cleanup
     await pool.query("DELETE FROM tasks WHERE title LIKE 'mig057_test_existing_%'");
-    await pool.query("DELETE FROM goals WHERE title = 'mig057_test_goal_existing'");
+    await pool.query("DELETE FROM key_results WHERE id = $1", [goalId]);
   });
 });

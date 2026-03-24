@@ -10,6 +10,10 @@
 ALTER TABLE goal_evaluations
   DROP CONSTRAINT IF EXISTS goal_evaluations_goal_id_fkey;
 
+-- 删除孤儿记录（goal_id 在 goals 中存在但不在 key_results 中）
+DELETE FROM goal_evaluations
+  WHERE goal_id NOT IN (SELECT id FROM key_results);
+
 ALTER TABLE goal_evaluations
   ADD CONSTRAINT goal_evaluations_goal_id_fkey
     FOREIGN KEY (goal_id)

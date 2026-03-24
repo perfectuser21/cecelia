@@ -47,12 +47,12 @@ describe('Tick Drain Mode', () => {
     }
     if (testProjectIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-      await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]);
+      await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]);
       testProjectIds = [];
     }
     if (testGoalIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE goal_id = ANY($1)', [testGoalIds]).catch(() => {});
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testGoalIds]);
+      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testGoalIds]);
       testGoalIds = [];
     }
   });
@@ -82,7 +82,7 @@ describe('Tick Drain Mode', () => {
   it('should report in_progress tasks during drain', async () => {
     // Create an in_progress task
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Drain test goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status) VALUES ('Drain test goal', 'P0', 'pending') RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
 

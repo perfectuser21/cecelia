@@ -314,7 +314,7 @@ describe('getTodaysReflections', () => {
     await getTodaysReflections();
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('FROM reflections r');
-    expect(sql).toContain('LEFT JOIN projects p');
+    expect(sql).toContain('LEFT JOIN okr_projects p');
   });
 
   it('数据库返回空时返回空数组', async () => {
@@ -994,7 +994,7 @@ describe('getDailyReports', () => {
 
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('FROM daily_logs dl');
-    expect(sql).toContain('LEFT JOIN projects p');
+    expect(sql).toContain('LEFT JOIN okr_projects p');
   });
 
   it('SQL 包含 ORDER BY 排序', async () => {

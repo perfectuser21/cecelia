@@ -477,10 +477,10 @@ describe('Intent Recognition Module', () => {
     });
 
     it('links tasks to specified goal', async () => {
-      // Create a test goal first
+      // Create a test KR in key_results (tasks.goal_id is a UUID column)
       const goalResult = await pool.query(
-        `INSERT INTO goals (title, type, priority, status) VALUES ($1, $2, $3, $4) RETURNING id`,
-        ['Test Goal', 'mission', 'P1', 'pending']
+        `INSERT INTO key_results (title, priority, status) VALUES ($1, $2, $3) RETURNING id`,
+        ['Test Goal', 'P1', 'pending']
       );
       const goalId = goalResult.rows[0].id;
 
@@ -495,10 +495,10 @@ describe('Intent Recognition Module', () => {
           expect(task.goal_id).toBe(goalId);
         }
       } finally {
-        // Delete tasks first (FK constraint: tasks.goal_id → goals.id)
+        // Delete tasks first
         await pool.query('DELETE FROM tasks WHERE goal_id = $1', [goalId]).catch(() => {});
         createdTaskIds = [];
-        await pool.query('DELETE FROM goals WHERE id = $1', [goalId]);
+        await pool.query('DELETE FROM key_results WHERE id = $1', [goalId]);
       }
     });
   });

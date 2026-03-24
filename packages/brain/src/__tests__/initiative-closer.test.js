@@ -107,8 +107,8 @@ function makeMockPool(opts = {}) {
         return { rows: [] };
       }
 
-      // KR 进度查询：SELECT DISTINCT pkl.kr_id
-      if (s.includes('DISTINCT') && s.includes('kr_id') && s.includes('project_kr_links')) {
+      // KR 进度查询：SELECT DISTINCT op.kr_id FROM okr_initiatives ... JOIN okr_projects
+      if (s.includes('DISTINCT') && s.includes('op.kr_id') && s.includes('okr_initiatives')) {
         return { rows: krRows };
       }
 
