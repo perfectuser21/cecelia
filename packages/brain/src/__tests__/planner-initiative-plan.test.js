@@ -37,14 +37,10 @@ afterEach(async () => {
     testTaskIds = [];
   }
   // Cleanup test links
-  for (const link of testLinks) {
-    await pool.query('DELETE FROM project_kr_links WHERE project_id = $1 AND kr_id = $2', [link.project_id, link.kr_id]).catch(() => {});
-  }
   testLinks = [];
   // Delete tasks linked to test projects (FK safety)
   if (testProjectIds.length > 0) {
     await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-    await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     testProjectIds = [];
   }
   // Cleanup OKR new-table test data (cascade order: initiatives → scopes → okr_projects)
@@ -67,7 +63,7 @@ afterEach(async () => {
     testKeyResultIds = [];
   }
   if (testKRIds.length > 0) {
-    await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testKRIds]).catch(() => {});
+    await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]).catch(() => {});
     testKRIds = [];
   }
 });
@@ -300,7 +296,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should generate architecture_design task for project with active initiative and no tasks', async () => {
     // Create a KR (in goals table for goal_id FK on tasks)
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for initiative plan', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('KR for initiative plan', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -354,7 +350,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should return null when no active initiative exists under project (no task generated)', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR no initiative', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('KR no initiative', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -374,7 +370,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should not create duplicate architecture_design task if one already exists', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR dedup test', 'area_okr', 'P0', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('KR dedup test', 'P0', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -411,7 +407,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should inherit KR priority for the generated task', async () => {
     // Create a P0 KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('P0 KR priority test', 'area_okr', 'P0', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('P0 KR priority test', 'P0', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
