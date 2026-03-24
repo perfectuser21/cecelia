@@ -212,9 +212,9 @@ describe('Planner Agent', () => {
     });
 
     it('should create task linked to project with repo_path', async () => {
-      // 插入新 OKR projects 表，metadata 中包含 repo_path（planner projCheck 要求）
+      // 向旧 projects 表插入（tasks.project_id FK 指向 projects 表），projCheck UNION ALL 也会查到
       const projResult = await pool.query(
-        "INSERT INTO okr_projects (title, status, metadata) VALUES ('test-proj', 'active', '{\"repo_path\":\"/tmp/test-task-proj\"}') RETURNING id"
+        "INSERT INTO projects (name, repo_path, status) VALUES ('test-proj', '/tmp/test-task-proj', 'active') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
