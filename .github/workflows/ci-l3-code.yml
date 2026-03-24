@@ -145,6 +145,8 @@ jobs:
             exit 0
           fi
           BASE_REF="${{ github.base_ref }}"
+          # workflow_dispatch 时 github.base_ref 为空，默认 main
+          BASE_REF="${BASE_REF:-main}"
           CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
 
           echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$" \
