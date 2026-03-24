@@ -342,7 +342,7 @@ describe('auto-fix.js', () => {
 
     // Guard query: 默认返回 0（未超限），让每个测试都能正常到达 createTask
     beforeEach(() => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+      mockQuery.mockResolvedValue({ rows: [{ failed_count: '0' }] });
     });
 
     it('正常派发：createTask 被调用一次', async () => {
