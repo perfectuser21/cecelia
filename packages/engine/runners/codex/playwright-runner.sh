@@ -200,6 +200,18 @@ if [[ ! -x "$CODEX_BIN" ]]; then
     exit 1
 fi
 
+# ===== execution-callback 回传 =====
+_post_execution_callback() {
+    local status="$1"
+    local findings_json="${2:-{}}"
+    local payload="{\"task_id\":\"${TASK_ID}\",\"status\":\"${status}\",\"result\":${findings_json}}"
+    echo "📡 回传 Brain execution-callback（status=${status}）..."
+    curl -s -X POST "${BRAIN_API_URL}/api/brain/execution-callback" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 2>/dev/null || echo "  ⚠️  execution-callback 回传失败（不阻断退出）" >&2
+}
+
 # ===== 执行（带账号轮换 + 重试）=====
 RETRY_COUNT=0
 
@@ -238,6 +250,7 @@ while [[ $RETRY_COUNT -lt $CODEX_MAX_RETRIES ]]; do
 
     if [[ $exit_code -eq 0 ]]; then
         echo "✅ Playwright 任务完成"
+        _post_execution_callback "AI Done" "{\"script_path\":\"${SCRIPTS_DIR}/${TASK_ID}.cjs\"}"
         exit 0
     fi
 
@@ -246,4 +259,5 @@ while [[ $RETRY_COUNT -lt $CODEX_MAX_RETRIES ]]; do
 done
 
 echo "❌ 达到最大重试次数（$CODEX_MAX_RETRIES）" >&2
+_post_execution_callback "AI Failed" "{\"error\":\"达到最大重试次数 ${CODEX_MAX_RETRIES}\"}"
 exit 1
