@@ -15,10 +15,16 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.94.0"
-updated: "2026-03-23"
+version: "3.95.0"
+updated: "2026-03-24"
 # ci-trigger: 13.37.0
 changelog:
+
+  - version: "13.40.0"
+    date: "2026-03-24"
+    summary: "[CONFIG] fix(brain/engine): crystallize task type — playwright-runner.sh 头注释更新为 crystallize Forge Runner v1.1.0"
+    scope: packages/engine/runners/codex/playwright-runner.sh
+    breaking: false
 
   - version: "13.37.0"
     date: "2026-03-23"

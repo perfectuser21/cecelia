@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Playwright Runner — Codex Playwright 自动化适配器 v1.0.0
+# Playwright Runner — crystallize Forge Runner v1.1.0
 # ============================================================================
 # 职责：
 #   1. 从 Brain API 预拉任务描述（目标操作 + 参数）
@@ -8,9 +8,11 @@
 #   3. 调用 codex-bin exec 执行探索
 #   4. Quota 超限时自动切换账号（复用 codex runner.sh 模式）
 #
+# 用途：crystallize 流水线的 Forge 阶段（第2步）：Codex 探索写 Playwright .cjs 脚本
+#
 # 工作流（两阶段）：
-#   Phase 1（探索）: Codex + 大模型写 Playwright .cjs，反复测试直到跑通
-#   Phase 2（执行）: 直接 node <saved-script>.cjs（本 runner 负责 Phase 1）
+#   Phase 1（探索/Forge）: Codex + 大模型写 Playwright .cjs，反复测试直到跑通
+#   Phase 2（执行/Verify）: 直接 node <saved-script>.cjs（本 runner 负责 Phase 1）
 #
 # 用法:
 #   bash playwright-runner.sh --task-id <id> [--dry-run]
