@@ -465,7 +465,7 @@ describe('buildMemoryContext', () => {
     mockSearchWithVectors.mockResolvedValueOnce({ matches: [] });
     // 使用 mockImplementation 区分 SQL，避免 Promise.all 并发时 mockResolvedValueOnce 顺序不确定
     mockQuery.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('goals')) {
+      if (typeof sql === 'string' && sql.includes('objectives')) {
         return Promise.resolve({ rows: [{ title: '目标A', status: 'in_progress', progress: 50 }] });
       }
       return Promise.resolve({ rows: [] });
@@ -484,7 +484,7 @@ describe('buildMemoryContext', () => {
   it('mode=chat 时 profile 包含 OKR（不再跳过）', async () => {
     mockSearchWithVectors.mockResolvedValueOnce({ matches: [] });
     mockQuery.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('goals')) {
+      if (typeof sql === 'string' && sql.includes('objectives')) {
         return Promise.resolve({ rows: [{ title: 'Cecelia 目标A', status: 'in_progress', progress: 30 }] });
       }
       return Promise.resolve({ rows: [] });

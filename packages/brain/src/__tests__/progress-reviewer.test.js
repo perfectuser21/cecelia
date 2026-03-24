@@ -42,7 +42,7 @@ describe('reviewProjectCompletion', () => {
 
     pool.query = vi.fn(async (sql) => {
       // Project 信息
-      if (sql.includes('SELECT id, name, status')) {
+      if (sql.includes('FROM okr_projects op')) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test Project', status: 'completed',
@@ -52,11 +52,11 @@ describe('reviewProjectCompletion', () => {
         };
       }
       // Initiative 统计
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
         return { rows: [{ total: '3', completed: '3' }] };
       }
       // Task 统计
-      if (sql.includes('FROM tasks t')) {
+      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
         return { rows: [{ total: '12', completed: '10' }] };
       }
       return { rows: [] };
@@ -76,7 +76,7 @@ describe('reviewProjectCompletion', () => {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('SELECT id, name, status')) {
+      if (sql.includes('FROM okr_projects op')) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test', status: 'completed',
@@ -85,10 +85,10 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
         return { rows: [{ total: '2', completed: '2' }] };
       }
-      if (sql.includes('FROM tasks t')) {
+      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
         return { rows: [{ total: '5', completed: '5' }] };
       }
       return { rows: [] };
@@ -107,7 +107,7 @@ describe('reviewProjectCompletion', () => {
     const twentyDaysAgo = new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('SELECT id, name, status')) {
+      if (sql.includes('FROM okr_projects op')) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test', status: 'completed',
@@ -116,10 +116,10 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
         return { rows: [{ total: '2', completed: '2' }] };
       }
-      if (sql.includes('FROM tasks t')) {
+      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
         return { rows: [{ total: '5', completed: '5' }] };
       }
       return { rows: [] };
@@ -141,7 +141,7 @@ describe('reviewProjectCompletion', () => {
     const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('SELECT id, name, status')) {
+      if (sql.includes('FROM okr_projects op')) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test', status: 'completed',
@@ -150,10 +150,10 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
         return { rows: [{ total: '1', completed: '1' }] };
       }
-      if (sql.includes('FROM tasks t')) {
+      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
         return { rows: [{ total: '3', completed: '3' }] };
       }
       return { rows: [] };
@@ -187,7 +187,7 @@ describe('shouldAdjustPlan', () => {
         };
       }
       // reviewProjectCompletion 内部查询
-      if (sql.includes('SELECT id, name, status')) {
+      if (sql.includes('FROM okr_projects op')) {
         return {
           rows: [{
             id: 'proj-1', name: 'Project 1', status: 'completed',
@@ -196,10 +196,10 @@ describe('shouldAdjustPlan', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
         return { rows: [{ total: '2', completed: '2' }] };
       }
-      if (sql.includes('FROM tasks t')) {
+      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
         return { rows: [{ total: '5', completed: '5' }] };
       }
       return { rows: [] };

@@ -40,7 +40,7 @@ describe('shouldTriggerReview', () => {
   it('D1: entity 有拆解产出且无 pending review → 返回 true', async () => {
     pool.query = vi.fn(async (sql) => {
       // 1. 检查子实体 - Project 有 Initiative 子实体
-      if (sql.includes('parent_id') && sql.includes('initiative')) {
+      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
         return { rows: [{ id: 'child-1' }] };
       }
       // 2. 检查 pending review
@@ -61,7 +61,7 @@ describe('shouldTriggerReview', () => {
   it('D2: 已有 pending review → 返回 false', async () => {
     pool.query = vi.fn(async (sql) => {
       // 有子实体
-      if (sql.includes('parent_id') && sql.includes('initiative')) {
+      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
         return { rows: [{ id: 'child-1' }] };
       }
       // 有 pending review
@@ -109,7 +109,7 @@ describe('shouldTriggerReview', () => {
 
   it('已有 active decomp_review task → 返回 false', async () => {
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('parent_id') && sql.includes('initiative')) {
+      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
         return { rows: [{ id: 'child-1' }] };
       }
       if (sql.includes('decomp_reviews')) {
@@ -138,7 +138,7 @@ describe('createReviewTask', () => {
     const insertCalls = [];
     pool.query = vi.fn(async (sql, params) => {
       // 收集子实体信息
-      if (sql.includes('parent_id') && sql.includes('initiative')) {
+      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
         return { rows: [{ name: 'Init 1', status: 'active' }] };
       }
       // 创建 review 记录
@@ -183,7 +183,7 @@ describe('createReviewTask', () => {
   it('D4: 插入 decomp_reviews 记录', async () => {
     let reviewInserted = false;
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('parent_id') && sql.includes('initiative')) {
+      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
         return { rows: [] };
       }
       if (sql.includes('INSERT INTO decomp_reviews')) {
@@ -230,7 +230,7 @@ describe('processReviewResult', () => {
         return { rows: [] };
       }
       // 激活实体
-      if (sql.includes('UPDATE projects') && sql.includes("'active'") && sql.includes("'pending_review'")) {
+      if (sql.includes('UPDATE okr_projects') && sql.includes("'active'") && sql.includes("'pending_review'")) {
         activatedEntity = true;
         return { rows: [] };
       }
@@ -251,8 +251,8 @@ describe('processReviewResult', () => {
         return { rows: [] };
       }
       // 查询实体名称
-      if (sql.includes('SELECT') && sql.includes('name') && sql.includes('parent_id') && !sql.includes('initiative') && !sql.includes('decomp_reviews')) {
-        return { rows: [{ name: 'Test Project', parent_id: 'parent-1' }] };
+      if (sql.includes('okr_projects') && !sql.includes('decomp_reviews') && !sql.includes('UPDATE')) {
+        return { rows: [{ name: 'Test Project', parent_id: null }] };
       }
       // 查询 KR
       if (sql.includes('project_kr_links')) {
@@ -280,7 +280,7 @@ describe('processReviewResult', () => {
         return { rows: [] };
       }
       // 标记 blocked
-      if (sql.includes('UPDATE projects') && sql.includes("'blocked'")) {
+      if (sql.includes('UPDATE okr_projects') && sql.includes("'blocked'")) {
         entityBlocked = true;
         return { rows: [] };
       }
@@ -307,11 +307,11 @@ describe('processReviewResult', () => {
       if (sql.includes('UPDATE decomp_reviews') && sql.includes('verdict')) {
         return { rows: [] };
       }
-      if (sql.includes('UPDATE projects') && sql.includes("'active'")) {
+      if (sql.includes('UPDATE okr_projects') && sql.includes("'active'")) {
         return { rows: [] };
       }
       // initiatives 查询
-      if (sql.includes('parent_id') && sql.includes("type = 'initiative'")) {
+      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
         return { rows: [{ id: 'init-1', name: 'Initiative A' }, { id: 'init-2', name: 'Initiative B' }] };
       }
       // 幂等检查：无已有 architecture_design
@@ -339,10 +339,10 @@ describe('processReviewResult', () => {
       if (sql.includes('UPDATE decomp_reviews') && sql.includes('verdict')) {
         return { rows: [] };
       }
-      if (sql.includes('UPDATE projects') && sql.includes("'active'")) {
+      if (sql.includes('UPDATE okr_projects') && sql.includes("'active'")) {
         return { rows: [] };
       }
-      if (sql.includes('parent_id') && sql.includes("type = 'initiative'")) {
+      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
         return { rows: [{ id: 'init-1', name: 'Initiative A' }] };
       }
       // 幂等：已有 architecture_design
