@@ -327,13 +327,13 @@ router.post('/learnings-received', async (req, res) => {
 router.patch('/tasks/:task_id', async (req, res) => {
   try {
     const { task_id } = req.params;
-    const { status, custom_props } = req.body;
+    const { status } = req.body;
 
-    // Require at least one of status or custom_props
-    if (!status && !custom_props) {
+    // Require status
+    if (!status) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required field: status or custom_props',
+        error: 'Missing required field: status',
         code: 'MISSING_FIELD'
       });
     }
@@ -351,17 +351,9 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
-    // Validate custom_props is a plain object if provided
-    if (custom_props !== undefined && (typeof custom_props !== 'object' || Array.isArray(custom_props) || custom_props === null)) {
-      return res.status(400).json({
-        success: false,
-        error: 'custom_props must be a plain object',
-        code: 'INVALID_CUSTOM_PROPS'
-      });
-    }
 
     // Get current task
-    const taskResult = await pool.query('SELECT id, status, custom_props FROM tasks WHERE id = $1', [task_id]);
+    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
     if (taskResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -409,15 +401,10 @@ router.patch('/tasks/:task_id', async (req, res) => {
       params.push(JSON.stringify([historyEntry]));
     }
 
-    if (custom_props) {
-      // JSONB merge: existing keys preserved, overlapping keys overwritten with new values
-      setClauses.push(`custom_props = COALESCE(custom_props, '{}'::jsonb) || $${paramIdx++}::jsonb`);
-      params.push(JSON.stringify(custom_props));
-    }
 
     params.push(task_id);
     const updateResult = await pool.query(
-      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING status, custom_props, updated_at`,
+      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING status, updated_at`,
       params
     );
 
@@ -483,20 +470,11 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
-    if (custom_props) {
-      await emitEvent('task_props_updated', {
-        task_id,
-        custom_props: updatedTask.custom_props,
-        source: 'engine',
-        timestamp: new Date().toISOString()
-      });
-    }
 
     res.json({
       success: true,
       task_id,
       status: updatedTask.status,
-      custom_props: updatedTask.custom_props,
       updated_at: updatedTask.updated_at
     });
   } catch (err) {
