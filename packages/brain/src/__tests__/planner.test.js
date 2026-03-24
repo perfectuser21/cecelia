@@ -138,16 +138,17 @@ describe('Planner Agent', () => {
     });
 
     it('should reject task whose project has no repo_path', async () => {
-      // Create a project with type='project' so trigger syncs to okr_projects, but no repo_path in metadata
-      const projResult = await pool.query(
-        "INSERT INTO projects (name, type, status) VALUES ('no-repo-project', 'project', 'active') RETURNING id"
+      // 插入一个没有 repo_path 的 okr_projects 记录（metadata 中不含 repo_path）
+      const noRepoProjResult = await pool.query(
+        "INSERT INTO okr_projects (title, status) VALUES ('no-repo-project', 'active') RETURNING id"
       );
-      testProjectIds.push(projResult.rows[0].id);
+      const noRepoProjectId = noRepoProjResult.rows[0].id;
+      testProjectIds.push(noRepoProjectId);
 
       const { handlePlanInput } = await import('../planner.js');
       await expect(handlePlanInput({
-        task: { title: 'Test Task', project_id: projResult.rows[0].id }
-      })).rejects.toThrow('Hard constraint');
+        task: { title: 'Test Task', project_id: noRepoProjectId }
+      })).rejects.toThrow("Task's project must have repo_path");
     });
 
     it('should reject invalid input', async () => {
@@ -211,9 +212,9 @@ describe('Planner Agent', () => {
     });
 
     it('should create task linked to project with repo_path', async () => {
-      // Insert with type='project' so trigger syncs to okr_projects with metadata containing repo_path
+      // 插入新 OKR projects 表，metadata 中包含 repo_path（migration 185 已移除 FK 约束）
       const projResult = await pool.query(
-        `INSERT INTO projects (name, type, repo_path, status, metadata) VALUES ('test-proj', 'project', '/tmp/test', 'active', '{"repo_path":"/tmp/test"}') RETURNING id`
+        "INSERT INTO okr_projects (title, status, metadata) VALUES ('test-proj', 'active', '{\"repo_path\":\"/tmp/test-task-proj\"}') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
