@@ -1,10 +1,16 @@
-# DoD: 修复 capability-scanner skillStats recent_30d 缺失
+# DoD: 清理重复 check-manual-cmd-whitelist.cjs
 
-- [x] [ARTIFACT] skillStats SQL 查询新增 recent_30d 计算列
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/capability-scanner.js','utf8');if(!c.includes('recent_30d'))process.exit(1);console.log('ok')"
+- [x] [PRESERVE] `scripts/devgate/` 目录下已追踪的 7 个文件（check-activation.sh 等）仍然存在
+  Test: manual:node -e "const fs=require('fs');['check-activation.sh','check-contract-drift.mjs','check-executor-agents.mjs','check-llm-agents.mjs','check-new-api-endpoints.mjs','check-okr-structure.mjs','check-skills-registry.mjs'].forEach(f=>{fs.accessSync('scripts/devgate/'+f)});console.log('OK: 已追踪文件均存在')"
 
-- [x] [BEHAVIOR] failing 状态测试存在且通过（success_rate < 30%）
-  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=3072' npx vitest run src/__tests__/capability-scanner.test.js 2>&1 | tail -5"
+- [x] [ARTIFACT] `scripts/devgate/check-manual-cmd-whitelist.cjs` 不存在（已删除）
+  Test: manual:node -e "const fs=require('fs');if(fs.existsSync('scripts/devgate/check-manual-cmd-whitelist.cjs'))process.exit(1);console.log('OK: 重复文件已不存在')"
 
-- [x] [PRESERVE] 现有 capability-scanner 全部测试通过（9/9）
-  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=3072' npx vitest run src/__tests__/capability-scanner.test.js 2>&1 | grep 'Tests'"
+- [x] [ARTIFACT] `packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs` 存在且可运行
+  Test: manual:node -e "require('fs').accessSync('packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs');console.log('OK')"
+
+- [x] [BEHAVIOR] verify-step.sh 能正确找到并执行 packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs（路径查找逻辑工作正常）
+  Test: manual:node -e "const {execSync}=require('child_process');const out=execSync('bash packages/engine/hooks/verify-step.sh step1 cp-test . 2>&1 || true',{encoding:'utf8'});if(out.includes('MODULE_NOT_FOUND'))process.exit(1);console.log('OK: 无 MODULE_NOT_FOUND 错误')"
+
+- [x] [GATE] packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs 语法正确（node --check 通过）
+  Test: manual:node --check packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs
