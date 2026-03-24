@@ -294,11 +294,11 @@ describe('executePlanAdjustment', () => {
     let updateCalled = false;
 
     pool.query = vi.fn(async (sql, params) => {
-      if (sql.includes('UPDATE projects')) {
+      if (sql.includes('UPDATE okr_projects') || sql.includes('UPDATE projects')) {
         updateCalled = true;
         // 验证传入了正确的 project_id
         expect(params[0]).toBe('proj-2');
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
       return { rows: [] };
     });

@@ -225,8 +225,8 @@ async function handleLlmCreateTask(title, entities, llmIntent, message) {
 async function handleLlmCreateGoal(title, entities, llmIntent, message) {
   const linked = await linkEntities(llmIntent, message);
   await pool.query(
-    `INSERT INTO goals (title, priority, status, progress, project_id) VALUES ($1, $2, 'pending', 0, $3) RETURNING id, title`,
-    [title, entities.priority || 'P1', linked.project_id || null]
+    `INSERT INTO objectives (title, priority, status, metadata) VALUES ($1, $2, 'active', $3) RETURNING id, title`,
+    [title, entities.priority || 'P1', JSON.stringify({ project_id: linked.project_id || null })]
   );
   return `\n\n✅ 已创建目标：${title}`;
 }
@@ -352,7 +352,7 @@ async function pipelineCreateGoal(parsed) {
   const title = params.title || parsed.projectName;
   const priority = params.priority || 'P1';
   const result = await pool.query(
-    `INSERT INTO goals (title, priority, status, progress) VALUES ($1, $2, 'pending', 0) RETURNING id, title`,
+    `INSERT INTO objectives (title, priority, status) VALUES ($1, $2, 'active') RETURNING id, title`,
     [title, priority]
   );
   return `\n\n✅ 已创建目标：${result.rows[0].title}`;

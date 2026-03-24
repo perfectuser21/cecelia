@@ -245,22 +245,51 @@ async function executePlanAdjustment(pool, findings, planContext) {
     const values = [adj.project_id];
     let paramIdx = 2;
 
+    const metaUpdates = {};
     if (adj.time_budget_days !== undefined) {
-      updates.push(`time_budget_days = $${paramIdx++}`);
-      values.push(adj.time_budget_days);
-    }
-    if (adj.deadline !== undefined) {
-      updates.push(`deadline = $${paramIdx++}`);
-      values.push(adj.deadline);
+      metaUpdates.time_budget_days = adj.time_budget_days;
     }
 
-    if (updates.length > 0) {
-      updates.push('updated_at = NOW()');
-      await pool.query(
-        `UPDATE projects SET ${updates.join(', ')} WHERE id = $1`,
-        values
+    if (Object.keys(metaUpdates).length > 0 || adj.deadline !== undefined) {
+      // Try okr_projects first with metadata for time_budget_days, end_date for deadline
+      const newTableUpdates = [];
+      const newTableValues = [adj.project_id];
+      let newIdx = 2;
+      if (Object.keys(metaUpdates).length > 0) {
+        newTableUpdates.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${newIdx++}::jsonb`);
+        newTableValues.push(JSON.stringify(metaUpdates));
+      }
+      if (adj.deadline !== undefined) {
+        newTableUpdates.push(`end_date = $${newIdx++}`);
+        newTableValues.push(adj.deadline);
+      }
+      newTableUpdates.push('updated_at = NOW()');
+
+      const newResult = await pool.query(
+        `UPDATE okr_projects SET ${newTableUpdates.join(', ')} WHERE id = $1`,
+        newTableValues
       );
-      console.log(`[progress-reviewer] Adjusted project ${adj.project_id}: ${updates.join(', ')}`);
+
+      if (newResult.rowCount === 0) {
+        // Fallback to old projects table
+        const oldUpdates = [];
+        const oldValues = [adj.project_id];
+        let oldIdx = 2;
+        if (adj.time_budget_days !== undefined) {
+          oldUpdates.push(`time_budget_days = $${oldIdx++}`);
+          oldValues.push(adj.time_budget_days);
+        }
+        if (adj.deadline !== undefined) {
+          oldUpdates.push(`deadline = $${oldIdx++}`);
+          oldValues.push(adj.deadline);
+        }
+        oldUpdates.push('updated_at = NOW()');
+        await pool.query(
+          `UPDATE projects SET ${oldUpdates.join(', ')} WHERE id = $1`,
+          oldValues
+        );
+      }
+      console.log(`[progress-reviewer] Adjusted project ${adj.project_id}: ${Object.keys(metaUpdates).join(', ')}${adj.deadline ? ' deadline' : ''}`);
     }
   }
 }
