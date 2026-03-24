@@ -19,8 +19,7 @@ import { getTaskLocation } from './task-router.js';
  * @returns {Promise<Object>} 完成审查数据
  */
 async function reviewProjectCompletion(pool, projectId) {
-  // 1. 获取 Project 信息
-  // okr_projects 直接含 kr_id 字段（迁移完成：旧 project_kr_links 已废弃）
+  // 1. 获取 Project 信息（okr_projects 直接含 kr_id 字段）
   const projResult = await pool.query(
     `SELECT op.id, op.title AS name, op.status, op.created_at, op.completed_at,
             NULL::int AS time_budget_days,
