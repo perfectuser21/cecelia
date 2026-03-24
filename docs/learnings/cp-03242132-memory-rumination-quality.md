@@ -6,7 +6,9 @@
 
 ### 根本原因
 
-Rumination 仅从 `learnings` 表 FIFO 取输入，忽略了 PR2 已写入的高显著性对话记录（`memory_stream`，salience_score ≥ 0.7）。导致"对话 → 记忆 → 反刍 → 洞察"闭环断裂：反刍时没有消化最近的重要对话内容。
+Rumination 仅从 `learnings` 表 FIFO 取输入，忽略了 PR2 已写入的高显著性对话记录（`memory_stream`，salience_score ≥ 0.7）。
+导致"对话 → 记忆 → 反刍 → 洞察"闭环断裂：反刍时没有消化最近的重要对话内容，深度思考与真实对话完全脱节。
+PR2 设计时只负责写入 memory_stream，未同步考虑 Rumination 的读取路径，导致数据写入后无人消费。
 
 ### 修复方案
 
