@@ -19,8 +19,8 @@ function makeMockPool({
     query: vi.fn().mockImplementation(async (sql, params) => {
       const s = sql.trim();
 
-      // updateKrProgress: 查 KR 关联的 projects (FROM okr_projects JOIN project_kr_links)
-      if (s.includes('FROM okr_projects') && s.includes('project_kr_links') && !s.includes('UPDATE')) {
+      // updateKrProgress: 查 KR 关联的 projects (FROM okr_projects WHERE op.kr_id = $1)
+      if (s.includes('FROM okr_projects') && s.includes('op.kr_id') && !s.includes('UPDATE')) {
         return { rows: projects };
       }
 

@@ -138,8 +138,8 @@ describe('Q2: 已达 MAX 时不激活新的', () => {
 // ────────────────────────────────────────────────────────────────────────────
 // Q3: 激活顺序：P0 KR 的 initiative 先于 P1 的
 // ────────────────────────────────────────────────────────────────────────────
-describe('Q3: 按 KR 优先级激活', () => {
-  it('SQL 中 ORDER BY 包含 P0/P1/P2 优先级排序', async () => {
+describe('Q3: 按创建时间激活（goals/objectives 表已废弃，不再按优先级排序）', () => {
+  it('SQL 中 ORDER BY 包含 created_at ASC 排序', async () => {
     const pending = [
       { id: 'init-p0', name: 'P0 Initiative' },
       { id: 'init-p1', name: 'P1 Initiative' },
@@ -153,15 +153,11 @@ describe('Q3: 按 KR 优先级激活', () => {
       s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'active'")
     );
     expect(updateCall).toBeDefined();
-    // 验证包含 P0/P1/P2 优先级排序
-    expect(updateCall).toContain("WHEN 'P0' THEN 0");
-    expect(updateCall).toContain("WHEN 'P1' THEN 1");
-    expect(updateCall).toContain("WHEN 'P2' THEN 2");
-    // 验证按创建时间二级排序
+    // 验证按创建时间排序（goals 表已 DROP，不再按 KR 优先级排序）
     expect(updateCall).toContain('created_at ASC');
   });
 
-  it('SQL 查询从 goals 表关联获取 priority', async () => {
+  it('SQL 查询通过 okr_scopes/okr_projects 关联（不再 JOIN goals/objectives）', async () => {
     const pending = [{ id: 'init-join', name: 'Join Test' }];
     const pool = makeMockPool(0, pending);
 
@@ -172,8 +168,11 @@ describe('Q3: 按 KR 优先级激活', () => {
       s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'active'")
     );
     expect(updateCall).toBeDefined();
-    // 验证通过 LEFT JOIN objectives 获取优先级
-    expect(updateCall).toContain('LEFT JOIN objectives');
+    // goals/objectives 表已在 migration 185 中 DROP，不再 JOIN
+    expect(updateCall).not.toContain('LEFT JOIN objectives');
+    expect(updateCall).not.toContain('LEFT JOIN goals');
+    // 新机制通过 okr_scopes/okr_projects 关联
+    expect(updateCall).toContain('okr_initiatives');
   });
 });
 
@@ -246,7 +245,7 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
         }
 
         // scope queries
-        if (s.includes('FROM okr_scopes') || s.includes('project_kr_links')) {
+        if (s.includes('FROM okr_scopes')) {
           return { rows: [] };
         }
 

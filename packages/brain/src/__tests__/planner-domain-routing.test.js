@@ -43,21 +43,21 @@ afterEach(async () => {
   if (testKRIds.length > 0) {
     // 显式清理新 OKR 表（不依赖触发器级联）
     await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]).catch(() => {});
-    await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testKRIds]).catch(() => {});
     testKRIds = [];
   }
 });
 
-// Helper: create KR
+// Helper: create KR (goals 表已在 migration 185 DROP，改用 key_results)
 async function createKR({ title = 'Test KR', priority = 'P1', domain = null } = {}) {
   const result = await pool.query(
-    `INSERT INTO goals (title, type, priority, status, progress, domain)
-     VALUES ($1, 'area_kr', $2, 'in_progress', 0, $3) RETURNING *`,
-    [title, priority, domain]
+    `INSERT INTO key_results (title, priority, status, progress)
+     VALUES ($1, $2, 'in_progress', 0) RETURNING *`,
+    [title, priority]
   );
   const kr = result.rows[0];
   testKRIds.push(kr.id);
-  return kr;
+  // domain 通过 JS property 传递（planner 读取的是 kr.domain，key_results 无此列，返回 null）
+  return { ...kr, domain };
 }
 
 // Helper: create parent project (uses okr_projects for new planner query compatibility)

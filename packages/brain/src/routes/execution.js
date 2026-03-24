@@ -2632,11 +2632,10 @@ router.get('/dev/tasks', async (req, res) => {
         t.completed_at,
         t.payload,
         g.title as goal_title,
-        p.name as project_name,
-        p.repo_path
+        NULL::text as project_name,
+        NULL::text as repo_path
       FROM tasks t
-      LEFT JOIN goals g ON t.goal_id = g.id
-      LEFT JOIN projects p ON g.project_id = p.id
+      LEFT JOIN key_results g ON t.goal_id = g.id
       WHERE t.task_type IN ('dev', 'review')
         AND (t.status IN ('in_progress', 'queued') OR t.completed_at >= CURRENT_DATE - INTERVAL '1 day')
       ORDER BY

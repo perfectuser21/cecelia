@@ -20,6 +20,7 @@ let testLinks = [];
 let testOkrProjectIds = [];
 let testOkrScopeIds = [];
 let testOkrInitiativeIds = [];
+let testKeyResultIds = [];
 
 beforeAll(async () => {
   await pool.query('SELECT 1');
@@ -36,14 +37,10 @@ afterEach(async () => {
     testTaskIds = [];
   }
   // Cleanup test links
-  for (const link of testLinks) {
-    await pool.query('DELETE FROM project_kr_links WHERE project_id = $1 AND kr_id = $2', [link.project_id, link.kr_id]).catch(() => {});
-  }
   testLinks = [];
   // Delete tasks linked to test projects (FK safety)
   if (testProjectIds.length > 0) {
     await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-    await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     testProjectIds = [];
   }
   // Cleanup OKR new-table test data (cascade order: initiatives → scopes → okr_projects)
@@ -60,8 +57,13 @@ afterEach(async () => {
     await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testOkrProjectIds]).catch(() => {});
     testOkrProjectIds = [];
   }
+  if (testKeyResultIds.length > 0) {
+    await pool.query('DELETE FROM okr_projects WHERE kr_id = ANY($1)', [testKeyResultIds]).catch(() => {});
+    await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKeyResultIds]).catch(() => {});
+    testKeyResultIds = [];
+  }
   if (testKRIds.length > 0) {
-    await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testKRIds]).catch(() => {});
+    await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]).catch(() => {});
     testKRIds = [];
   }
 });
@@ -214,37 +216,25 @@ describe('scoreKRs - initiative bonus', () => {
 
 describe('selectTargetProject - initiative priority', () => {
   it('should prefer project with active initiative when no queued tasks exist', async () => {
-    // Create a KR
+    // Create a KR in key_results (new table, required for okr_projects.kr_id FK)
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR for select', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, status) VALUES ('Test KR for select', 'in_progress') RETURNING *"
     );
     const kr = krResult.rows[0];
-    testKRIds.push(kr.id);
+    testKeyResultIds.push(kr.id);
 
-    // Create a parent project WITH an initiative (no tasks)
+    // Create a parent project in okr_projects with kr_id set (new schema)
     const projWithInitResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-with-initiative', '/tmp/proj-with-init', 'active') RETURNING id"
+      "INSERT INTO okr_projects (title, status, kr_id) VALUES ('proj-with-initiative', 'active', $1) RETURNING id",
+      [kr.id]
     );
-    testProjectIds.push(projWithInitResult.rows[0].id);
+    testOkrProjectIds.push(projWithInitResult.rows[0].id);
 
-    // Link project to KR
-    await pool.query(
-      'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [projWithInitResult.rows[0].id, kr.id]
-    );
-    testLinks.push({ project_id: projWithInitResult.rows[0].id, kr_id: kr.id });
-
-    // Create initiative under the project (no queued tasks)
-    const initiativeResult = await pool.query(
-      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Test Initiative', 'initiative', $1, 'active') RETURNING id",
-      [projWithInitResult.rows[0].id]
-    );
-    testProjectIds.push(initiativeResult.rows[0].id);
-
+    // Initiative exists only in state (selectTargetProject checks state.projects for initiatives)
     const state = {
       projects: [
         { id: projWithInitResult.rows[0].id, name: 'proj-with-initiative', status: 'active', type: 'project', parent_id: null },
-        { id: initiativeResult.rows[0].id, name: 'Test Initiative', status: 'active', type: 'initiative', parent_id: projWithInitResult.rows[0].id }
+        { id: 'test-initiative-' + kr.id, name: 'Test Initiative', status: 'active', type: 'initiative', parent_id: projWithInitResult.rows[0].id }
       ],
       activeTasks: [] // no queued tasks
     };
@@ -257,41 +247,33 @@ describe('selectTargetProject - initiative priority', () => {
   });
 
   it('should prefer project with queued tasks over project with only initiative', async () => {
-    // Create a KR
+    // Create a KR in key_results (new table, required for okr_projects.kr_id FK)
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for project comparison', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, status) VALUES ('KR for project comparison', 'in_progress') RETURNING *"
     );
     const kr = krResult.rows[0];
-    testKRIds.push(kr.id);
+    testKeyResultIds.push(kr.id);
 
-    // Project 1: has queued task, no initiative
+    // Project 1 in okr_projects: linked to KR (will have queued task in state)
     const proj1Result = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-with-task', '/tmp/proj1', 'active') RETURNING id"
+      "INSERT INTO okr_projects (title, status, kr_id) VALUES ('proj-with-task', 'active', $1) RETURNING id",
+      [kr.id]
     );
-    testProjectIds.push(proj1Result.rows[0].id);
-    await pool.query('INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [proj1Result.rows[0].id, kr.id]);
-    testLinks.push({ project_id: proj1Result.rows[0].id, kr_id: kr.id });
+    testOkrProjectIds.push(proj1Result.rows[0].id);
 
-    // Project 2: has initiative but no queued task
+    // Project 2 in okr_projects: linked to KR (will have initiative in state, no tasks)
     const proj2Result = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-with-initiative-only', '/tmp/proj2', 'active') RETURNING id"
+      "INSERT INTO okr_projects (title, status, kr_id) VALUES ('proj-with-initiative-only', 'active', $1) RETURNING id",
+      [kr.id]
     );
-    testProjectIds.push(proj2Result.rows[0].id);
-    await pool.query('INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [proj2Result.rows[0].id, kr.id]);
-    testLinks.push({ project_id: proj2Result.rows[0].id, kr_id: kr.id });
+    testOkrProjectIds.push(proj2Result.rows[0].id);
 
-    // Initiative under project 2 (no tasks)
-    const initResult = await pool.query(
-      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Init Under Proj2', 'initiative', $1, 'active') RETURNING id",
-      [proj2Result.rows[0].id]
-    );
-    testProjectIds.push(initResult.rows[0].id);
-
+    // Initiative exists only in state (not in DB)
     const state = {
       projects: [
         { id: proj1Result.rows[0].id, name: 'proj-with-task', status: 'active', type: 'project', parent_id: null },
         { id: proj2Result.rows[0].id, name: 'proj-with-initiative-only', status: 'active', type: 'project', parent_id: null },
-        { id: initResult.rows[0].id, name: 'Init Under Proj2', status: 'active', type: 'initiative', parent_id: proj2Result.rows[0].id }
+        { id: 'test-init-' + proj2Result.rows[0].id, name: 'Init Under Proj2', status: 'active', type: 'initiative', parent_id: proj2Result.rows[0].id }
       ],
       activeTasks: [
         { id: 'task-1', status: 'queued', project_id: proj1Result.rows[0].id, goal_id: kr.id }
@@ -314,7 +296,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should generate architecture_design task for project with active initiative and no tasks', async () => {
     // Create a KR (in goals table for goal_id FK on tasks)
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for initiative plan', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('KR for initiative plan', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -368,7 +350,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should return null when no active initiative exists under project (no task generated)', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR no initiative', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('KR no initiative', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -388,7 +370,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should not create duplicate architecture_design task if one already exists', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR dedup test', 'area_okr', 'P0', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('KR dedup test', 'P0', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -425,7 +407,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should inherit KR priority for the generated task', async () => {
     // Create a P0 KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('P0 KR priority test', 'area_okr', 'P0', 'in_progress', 0) RETURNING *"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('P0 KR priority test', 'P0', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);

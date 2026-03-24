@@ -587,16 +587,16 @@ async function _enrichStructuredCandidates(pool, candidates) {
   const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
 
   try {
-    // task_count for goals via project_kr_links → okr_projects（迁移：projects.kr_id → project_kr_links）
+    // task_count for goals via okr_projects.kr_id
     if (goalIds.length > 0) {
       const res = await pool.query(
-        `SELECT pkl.kr_id as goal_id, COUNT(t.id)::int as task_count
+        `SELECT op.kr_id as goal_id, COUNT(t.id)::int as task_count
          FROM tasks t
          JOIN okr_initiatives oi ON oi.id = t.project_id
          JOIN okr_scopes os ON oi.scope_id = os.id
-         JOIN project_kr_links pkl ON pkl.project_id = os.project_id
-         WHERE pkl.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
-         GROUP BY pkl.kr_id`,
+         JOIN okr_projects op ON op.id = os.project_id
+         WHERE op.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY op.kr_id`,
         [goalIds]
       );
       const countMap = Object.fromEntries(res.rows.map(r => [r.goal_id, r.task_count]));
@@ -624,13 +624,13 @@ async function _enrichStructuredCandidates(pool, candidates) {
       }
     }
 
-    // parent_kr_title for initiatives（迁移：goals → objectives via project_kr_links）
+    // parent_kr_title for initiatives（通过 okr_scopes → okr_projects.kr_id → key_results）
     if (initiativeIds.length > 0) {
       const res = await pool.query(
-        `SELECT oi.id as initiative_id, g.title as kr_title
-         FROM objectives g
-         JOIN project_kr_links pkl ON pkl.kr_id = g.id
-         JOIN okr_scopes os ON os.project_id = pkl.project_id
+        `SELECT oi.id as initiative_id, kr.title as kr_title
+         FROM key_results kr
+         JOIN okr_projects op ON op.kr_id = kr.id
+         JOIN okr_scopes os ON os.project_id = op.id
          JOIN okr_initiatives oi ON oi.scope_id = os.id
          WHERE oi.id = ANY($1)`,
         [initiativeIds]
