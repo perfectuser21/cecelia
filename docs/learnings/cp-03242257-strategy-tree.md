@@ -6,7 +6,9 @@
 
 ### 根本原因
 
-OKR 数据分散在 7 张表中，缺乏统一的聚合 API 和可视化入口，导致用户每次对话都需要重新解释项目背景。
+OKR 数据分散在 7 张表中（areas/objectives/key_results/okr_projects/okr_scopes/okr_initiatives/tasks），缺乏统一的聚合 API 和可视化入口。
+用户每次对话都需要重新解释项目背景，因为没有一个持久的全景视图页面可以随时查看。
+Pipeline rescue 过程中还发现：per-branch `.dev-mode.*` 文件（优先级高于 `.dev-mode`）中必须包含 `tasks_created: true`，否则 branch-protect hook 会阻止写入代码文件。
 
 ### 实现要点
 
