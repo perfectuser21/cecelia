@@ -359,16 +359,16 @@ describe('Planner Agent', () => {
       );
       testObjectiveIds.push(objResult.rows[0].id);
 
-      // KR1: no queued tasks
+      // KR1: no queued tasks（type='area_kr' → 同步到 key_results，planner 从 key_results 查询）
       const kr1Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Empty KR', 'area_okr', 'P0', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Empty KR', 'area_kr', 'P0', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(kr1Result.rows[0].id);
 
-      // KR2: has a queued task
+      // KR2: has a queued task（type='area_kr' → 同步到 key_results）
       const kr2Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Active KR', 'area_okr', 'P1', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Active KR', 'area_kr', 'P1', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(kr2Result.rows[0].id);
@@ -408,8 +408,9 @@ describe('Planner Agent', () => {
       );
       testObjectiveIds.push(objResult.rows[0].id);
 
+      // type='area_kr' → 同步到 key_results（旧 'area_okr' 同步到 objectives，planner 不查 objectives）
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Empty KR', 'area_okr', 'P0', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Empty KR', 'area_kr', 'P0', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(krResult.rows[0].id);
