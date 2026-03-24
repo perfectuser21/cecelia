@@ -36,7 +36,8 @@ const DECAY_HALF_LIFE_HOURS = 6;
  * @param {object} [meta={}] - 附加元数据（priority, taskType, skill 等）
  * @returns {Promise<{id: number, intensity: number}>}
  */
-export async function recordReward(taskId, rewardType, intensity, meta = {}) {
+export async function recordReward(taskId, rewardType, intensity, meta = {}, dbPool) {
+  const db = dbPool || pool;
   const payload = {
     task_id: taskId,
     reward_type: rewardType,
@@ -44,7 +45,7 @@ export async function recordReward(taskId, rewardType, intensity, meta = {}) {
     ...meta,
   };
 
-  const result = await pool.query(
+  const result = await db.query(
     `INSERT INTO cecelia_events (event_type, source, payload)
      VALUES ('reward_signal', 'dopamine', $1::jsonb)
      RETURNING id`,
@@ -58,6 +59,28 @@ export async function recordReward(taskId, rewardType, intensity, meta = {}) {
     meta.skill
   ) {
     await _checkAndReinforce(meta.taskType, meta.skill);
+  }
+
+  // 自动写入 rpe_signal（如果同 taskId 有期望奖赏记录）
+  if (taskId) {
+    const expResult = await db.query(
+      `SELECT payload FROM cecelia_events
+       WHERE event_type = 'expected_reward'
+         AND payload->>'task_id' = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [String(taskId)]
+    );
+    if (expResult.rows.length > 0) {
+      const expectedIntensity = expResult.rows[0].payload?.expected_intensity;
+      const rpe = computeRPE(intensity, expectedIntensity ?? null);
+      if (rpe !== null) {
+        await db.query(
+          `INSERT INTO cecelia_events (event_type, source, payload)
+           VALUES ('rpe_signal', 'dopamine', $1::jsonb)`,
+          [JSON.stringify({ task_id: taskId, rpe, actual: intensity, expected: expectedIntensity })]
+        );
+      }
+    }
   }
 
   return { id: result.rows[0].id, intensity };
@@ -222,6 +245,67 @@ export async function getHabitPatterns() {
 }
 
 // ─── RPE（奖赏预测误差）──────────────────────────────────
+
+/**
+ * 计算 RPE（奖赏预测误差）纯函数
+ *
+ * @param {number} actual - 实际奖赏强度
+ * @param {number|null} expected - 期望奖赏强度（null 表示无基线）
+ * @returns {number|null} RPE 值，或 null（无基线时）
+ */
+export function computeRPE(actual, expected) {
+  if (expected === null || expected === undefined) return null;
+  return actual - expected;
+}
+
+/**
+ * 查询同类任务历史平均奖赏强度（最近 10 条）
+ *
+ * @param {string} taskType - 任务类型
+ * @param {string} skill - 技能
+ * @param {object} [dbPool] - 可选 DB pool（测试用）
+ * @returns {Promise<number|null>} 平均强度，无历史时返回 null
+ */
+export async function getExpectedIntensity(taskType, skill, dbPool) {
+  const db = dbPool || pool;
+  const { rows } = await db.query(
+    `SELECT (payload->>'intensity')::numeric AS intensity
+     FROM cecelia_events
+     WHERE event_type = 'reward_signal'
+       AND payload->>'taskType' = $1
+       AND payload->>'skill' = $2
+     ORDER BY created_at DESC
+     LIMIT 10`,
+    [taskType, skill]
+  );
+  if (rows.length === 0) return null;
+  const avg = rows.reduce((sum, r) => sum + parseFloat(r.intensity), 0) / rows.length;
+  return avg;
+}
+
+/**
+ * 记录期望奖赏事件（任务开始时调用）
+ *
+ * @param {string} taskId - 任务 ID
+ * @param {string} taskType - 任务类型
+ * @param {string} skill - 技能
+ * @param {object} [dbPool] - 可选 DB pool（测试用）
+ * @returns {Promise<{id: number, expected_intensity: number}|null>}
+ */
+export async function recordExpectedReward(taskId, taskType, skill, dbPool) {
+  const db = dbPool || pool;
+  const expectedIntensity = await getExpectedIntensity(taskType, skill, db);
+  if (expectedIntensity === null) return null;
+
+  const payload = { task_id: taskId, expected_intensity: expectedIntensity };
+  const result = await db.query(
+    `INSERT INTO cecelia_events (event_type, source, payload)
+     VALUES ('expected_reward', 'dopamine', $1::jsonb)
+     RETURNING id`,
+    [JSON.stringify(payload)]
+  );
+  return { id: result.rows[0].id, expected_intensity: expectedIntensity };
+}
 
 // RPE 调整下限，防止连续失败造成无限惩罚
 const RPE_ADJUSTMENT_MIN = -3.0;
