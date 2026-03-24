@@ -101,14 +101,18 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
 
   // 并行执行 3 个查询
   const [projectResult, taskResult, trendResult] = await Promise.all([
-    // 查询A：项目基础信息 + KR 信息（新 OKR 表：okr_projects + key_results）
+    // 查询A：项目基础信息 + KR 信息（新 OKR 表）
     pool.query(
-      `SELECT p.id, p.title AS name, 'project' AS type, p.status, p.kr_id,
+      `SELECT p.id, p.title AS name, p.table_type AS type, p.status, p.kr_id,
               kr.id AS kr_goal_id, kr.title AS kr_title,
               CAST(CASE WHEN kr.target_value > 0
                 THEN ROUND((kr.current_value / kr.target_value) * 100)
                 ELSE 0 END AS integer) AS kr_progress
-       FROM okr_projects p
+       FROM (
+         SELECT id, title, 'project' AS table_type, status, kr_id FROM okr_projects
+         UNION ALL SELECT id, title, 'scope' AS table_type, status, NULL::uuid AS kr_id FROM okr_scopes
+         UNION ALL SELECT id, title, 'initiative' AS table_type, status, NULL::uuid AS kr_id FROM okr_initiatives
+       ) p
        LEFT JOIN key_results kr ON p.kr_id = kr.id
        WHERE p.id = ANY($1::uuid[])`,
       [project_ids]
@@ -250,16 +254,11 @@ export async function generateCompareReport({ project_ids, format = 'json', incl
     throw Object.assign(new Error('project_ids must have at least 2 items'), { status: 400 });
   }
 
-  // 查询项目基础信息（新 OKR 表：okr_projects / okr_scopes / okr_initiatives）
+  // 查询项目基础信息（新 OKR 表）
   const projectResult = await pool.query(
-    `SELECT id, title AS name, 'project' AS type, status, created_at, updated_at
-     FROM okr_projects WHERE id = ANY($1::uuid[])
-     UNION ALL
-     SELECT id, title AS name, 'scope' AS type, status, created_at, updated_at
-     FROM okr_scopes WHERE id = ANY($1::uuid[])
-     UNION ALL
-     SELECT id, title AS name, 'initiative' AS type, status, created_at, updated_at
-     FROM okr_initiatives WHERE id = ANY($1::uuid[])`,
+    `SELECT id, title AS name, 'project' AS type, status, created_at, updated_at FROM okr_projects WHERE id = ANY($1::uuid[])
+     UNION ALL SELECT id, title AS name, 'scope' AS type, status, created_at, updated_at FROM okr_scopes WHERE id = ANY($1::uuid[])
+     UNION ALL SELECT id, title AS name, 'initiative' AS type, status, created_at, updated_at FROM okr_initiatives WHERE id = ANY($1::uuid[])`,
     [project_ids]
   );
 

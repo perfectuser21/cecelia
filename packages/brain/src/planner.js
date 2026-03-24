@@ -1188,12 +1188,17 @@ async function handlePlanInput(input, dryRun = false) {
       throw new Error('Hard constraint: Task must have project_id');
     }
     if (!dryRun) {
-      // 只查新 OKR 表（旧 projects 表已废弃）
+      // 查新表（okr_projects/okr_scopes/okr_initiatives），repo_path 存于 metadata JSONB
       const projCheck = await pool.query(
-        'SELECT id FROM okr_projects WHERE id = $1 UNION ALL SELECT id FROM okr_scopes WHERE id = $1 UNION ALL SELECT id FROM okr_initiatives WHERE id = $1',
+        `SELECT id, metadata->>'repo_path' AS repo_path FROM okr_projects WHERE id = $1
+         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_scopes WHERE id = $1
+         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_initiatives WHERE id = $1`,
         [input.task.project_id]
       );
       if (projCheck.rows.length === 0) throw new Error('Project not found');
+      if (!projCheck.rows[0].repo_path) {
+        throw new Error('Hard constraint: Task\'s project must have repo_path');
+      }
 
       const tResult = await pool.query(`
         INSERT INTO tasks (title, description, priority, project_id, goal_id, status, payload, trigger_source)

@@ -506,8 +506,8 @@ async function updateGoal({ goal_id, status, progress }) {
     return { success: true, goal: visResult.rows[0] };
   }
 
-  // 4. 旧表 fallback 已移除（OKR 迁移完成）
-  return { success: false, error: `Goal not found in any OKR table (objectives/key_results/visions): ${goal_id}` };
+  // 三新表均未找到，返回失败
+  return { success: false, error: 'Goal not found' };
 }
 
 /**

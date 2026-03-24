@@ -52,7 +52,7 @@ export async function updateKrProgress(pool, krId) {
 
   const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  // 更新 objectives.progress（迁移：UPDATE goals → UPDATE objectives）
+  // 更新 objectives.progress
   await pool.query(`
     UPDATE objectives
     SET updated_at = NOW()

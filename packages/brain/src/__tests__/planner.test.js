@@ -212,13 +212,13 @@ describe('Planner Agent', () => {
       const projResult = await pool.query(
         "INSERT INTO okr_projects (title, status) VALUES ('test-proj', 'active') RETURNING id"
       );
-      testProjectIds.push(projResult.rows[0].id);
-
+      const projectId = projResult.rows[0].id;
+      testProjectIds.push(projectId);
       const { handlePlanInput } = await import('../planner.js');
       const result = await handlePlanInput({
         task: {
           title: 'Test Task',
-          project_id: projResult.rows[0].id,
+          project_id: projectId,
           priority: 'P0'
         }
       });

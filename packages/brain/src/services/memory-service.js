@@ -70,16 +70,11 @@ export default class MemoryService {
       return this._formatDetail(result.rows[0]);
     }
 
-    // 再尝试从新 OKR project 表查询（okr_projects / okr_scopes / okr_initiatives）
+    // 再尝试从新 OKR project 表查询（okr_projects/okr_scopes/okr_initiatives）
     result = await this.pool.query(
-      `SELECT id, 'project' as level, title, NULL as description, metadata, created_at
-       FROM okr_projects WHERE id = $1
-       UNION ALL
-       SELECT id, 'scope' as level, title, NULL as description, metadata, created_at
-       FROM okr_scopes WHERE id = $1
-       UNION ALL
-       SELECT id, 'initiative' as level, title, NULL as description, metadata, created_at
-       FROM okr_initiatives WHERE id = $1`,
+      `SELECT id, 'project' as level, title, NULL as description, NULL as status, metadata, created_at FROM okr_projects WHERE id = $1
+       UNION ALL SELECT id, 'scope' as level, title, NULL as description, NULL as status, metadata, created_at FROM okr_scopes WHERE id = $1
+       UNION ALL SELECT id, 'initiative' as level, title, NULL as description, NULL as status, metadata, created_at FROM okr_initiatives WHERE id = $1`,
       [id]
     );
 
@@ -87,13 +82,11 @@ export default class MemoryService {
       return this._formatDetail(result.rows[0]);
     }
 
-    // 最后尝试从新 OKR goal 表查询（objectives / key_results）
+    // 最后尝试从新 OKR goal 表查询（objectives/key_results/visions）
     result = await this.pool.query(
-      `SELECT id, 'objective' as level, title, NULL as description, status, metadata, created_at
-       FROM objectives WHERE id = $1
-       UNION ALL
-       SELECT id, 'kr' as level, title, NULL as description, status, metadata, created_at
-       FROM key_results WHERE id = $1`,
+      `SELECT id, 'objective' as level, title, description, status, metadata, created_at FROM objectives WHERE id = $1
+       UNION ALL SELECT id, 'key_result' as level, title, description, status, metadata, created_at FROM key_results WHERE id = $1
+       UNION ALL SELECT id, 'vision' as level, title, description, status, metadata, created_at FROM visions WHERE id = $1`,
       [id]
     );
 
