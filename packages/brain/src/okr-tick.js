@@ -26,28 +26,31 @@ let _okrLoopTimer = null;
 let _okrTickRunning = false;
 
 /**
- * Get goals by status
- * @param {string} status - Status to filter by
- * @returns {Array} - Array of goal objects
+ * Get key_results by status（新 OKR 表：key_results）
+ * @param {string|string[]} status - Status or array of statuses to filter by
+ * @returns {Array} - Array of key_result objects
  */
 async function getGoalsByStatus(status) {
+  const statuses = Array.isArray(status) ? status : [status];
+  const placeholders = statuses.map((_, i) => `$${i + 1}`).join(', ');
   const result = await pool.query(`
-    SELECT id, title, description, status, priority, progress, metadata, parent_id, project_id
-    FROM goals
-    WHERE status = $1
-    ORDER BY priority ASC, created_at ASC
-  `, [status]);
+    SELECT id, title, description, status, NULL::text AS priority,
+           NULL::numeric AS progress, metadata, objective_id AS parent_id, NULL::uuid AS project_id
+    FROM key_results
+    WHERE status IN (${placeholders})
+    ORDER BY created_at ASC
+  `, statuses);
   return result.rows;
 }
 
 /**
- * Update goal status
- * @param {string} goalId - Goal UUID
+ * Update key_result status（新 OKR 表：key_results）
+ * @param {string} goalId - KR UUID
  * @param {string} newStatus - New status value
  */
 async function updateGoalStatus(goalId, newStatus) {
   await pool.query(`
-    UPDATE goals
+    UPDATE key_results
     SET status = $2, updated_at = NOW()
     WHERE id = $1
   `, [goalId, newStatus]);
@@ -103,7 +106,7 @@ async function triggerPlannerForGoal(goal) {
     const budget = await calculateSlotBudget();
     if (!budget.dispatchAllowed) {
       await pool.query(
-        `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1`,
+        `UPDATE key_results SET status='ready', updated_at=NOW() WHERE id=$1`,
         [goal.id]
       );
       console.warn(`[okr-tick] goal ${goal.id} deferred (pool_c_full), will retry next tick`);
@@ -282,15 +285,15 @@ function getOkrTickStatus() {
 }
 
 /**
- * Add a question to a goal's pending_questions
- * @param {string} goalId - Goal UUID
+ * Add a question to a key_result's pending_questions（新 OKR 表：key_results）
+ * @param {string} goalId - KR UUID
  * @param {string} question - Question text
  */
 async function addQuestionToGoal(goalId, question) {
   const questionId = `q-${Date.now()}`;
 
   await pool.query(`
-    UPDATE goals
+    UPDATE key_results
     SET
       metadata = COALESCE(metadata, '{}'::jsonb) ||
         jsonb_build_object(
@@ -312,15 +315,15 @@ async function addQuestionToGoal(goalId, question) {
 }
 
 /**
- * Answer a question for a goal
- * @param {string} goalId - Goal UUID
+ * Answer a question for a key_result（新 OKR 表：key_results）
+ * @param {string} goalId - KR UUID
  * @param {string} questionId - Question ID
  * @param {string} answer - Answer text
  */
 async function answerQuestionForGoal(goalId, questionId, answer) {
   // Get current metadata
   const result = await pool.query(
-    'SELECT metadata FROM goals WHERE id = $1',
+    'SELECT metadata FROM key_results WHERE id = $1',
     [goalId]
   );
 
@@ -341,9 +344,9 @@ async function answerQuestionForGoal(goalId, questionId, answer) {
   questions[questionIndex].answer = answer;
   metadata.pending_questions = questions;
 
-  // Update goal
+  // Update key_result metadata
   await pool.query(`
-    UPDATE goals
+    UPDATE key_results
     SET metadata = $2, updated_at = NOW()
     WHERE id = $1
   `, [goalId, metadata]);
@@ -352,12 +355,12 @@ async function answerQuestionForGoal(goalId, questionId, answer) {
 }
 
 /**
- * Get pending questions for a goal
- * @param {string} goalId - Goal UUID
+ * Get pending questions for a key_result（新 OKR 表：key_results）
+ * @param {string} goalId - KR UUID
  */
 async function getPendingQuestions(goalId) {
   const result = await pool.query(
-    'SELECT metadata FROM goals WHERE id = $1',
+    'SELECT metadata FROM key_results WHERE id = $1',
     [goalId]
   );
 

@@ -26,14 +26,14 @@ async function manageProjectActivation(pool, cap) {
   let activated = 0;
   let deactivated = 0;
 
-  // 1. 查当前 active projects
+  // 1. 查当前 active projects（priority 通过 key_results 获取，新 OKR 表）
   const activeResult = await pool.query(`
     SELECT p.id, p.name, p.status, p.created_at, p.updated_at,
            p.metadata->>'user_pinned' AS user_pinned,
-           g.priority
+           kr.priority
     FROM projects p
     LEFT JOIN project_kr_links pkl ON pkl.project_id = p.id
-    LEFT JOIN goals g ON g.id = pkl.kr_id
+    LEFT JOIN key_results kr ON kr.id = pkl.kr_id
     WHERE p.type = 'project'
       AND p.status = 'active'
     ORDER BY p.created_at ASC
@@ -94,15 +94,15 @@ async function manageProjectActivation(pool, cap) {
     return { activated, deactivated };
   }
 
-  // 4. 从 pending + inactive 按分数补位
+  // 4. 从 pending + inactive 按分数补位（priority 通过 key_results 获取，新 OKR 表）
   const candidateResult = await pool.query(`
     SELECT p.id, p.name, p.status, p.created_at, p.updated_at,
            p.metadata->>'user_pinned' AS user_pinned,
            p.deadline,
-           g.priority
+           kr.priority
     FROM projects p
     LEFT JOIN project_kr_links pkl ON pkl.project_id = p.id
-    LEFT JOIN goals g ON g.id = pkl.kr_id
+    LEFT JOIN key_results kr ON kr.id = pkl.kr_id
     WHERE p.type = 'project'
       AND p.status IN ('pending', 'inactive')
     ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC

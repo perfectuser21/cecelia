@@ -101,12 +101,15 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
 
   // 并行执行 3 个查询
   const [projectResult, taskResult, trendResult] = await Promise.all([
-    // 查询A：项目基础信息 + KR 信息
+    // 查询A：项目基础信息 + KR 信息（新 OKR 表：key_results）
     pool.query(
       `SELECT p.id, p.name, p.type, p.status, p.kr_id,
-              g.id AS kr_goal_id, g.title AS kr_title, g.progress AS kr_progress
+              kr.id AS kr_goal_id, kr.title AS kr_title,
+              CAST(CASE WHEN kr.target_value > 0
+                THEN ROUND((kr.current_value / kr.target_value) * 100)
+                ELSE 0 END AS integer) AS kr_progress
        FROM projects p
-       LEFT JOIN goals g ON p.kr_id = g.id
+       LEFT JOIN key_results kr ON p.kr_id = kr.id
        WHERE p.id = ANY($1::uuid[])`,
       [project_ids]
     ),
