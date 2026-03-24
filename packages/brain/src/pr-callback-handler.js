@@ -281,12 +281,17 @@ export async function handlePrMerged(pool, prInfo) {
     } else {
       // 尝试通过 project_id 查找关联的 KR
       try {
+        // 新 OKR 表：okr_projects/okr_initiatives UUID 与旧 projects 相同，project_kr_links 保留不变
         const krResult = await pool.query(`
           SELECT pkl.kr_id
           FROM project_kr_links pkl
-          JOIN projects p ON p.id = pkl.project_id
+          JOIN okr_projects p ON p.id = pkl.project_id
           WHERE p.id = $1
-            OR p.parent_id = $1
+          UNION ALL
+          SELECT pkl.kr_id
+          FROM project_kr_links pkl
+          JOIN okr_initiatives p ON p.id = pkl.project_id
+          WHERE p.id = $1
           LIMIT 1
         `, [updatedRow.project_id]);
 

@@ -32,11 +32,21 @@ const FALLBACK_REPOS = [
  * @returns {Promise<string[]>} repo_path 列表
  */
 export async function getActiveRepoPaths(pool) {
+  // 新 OKR 表：repo_path 存于 metadata 字段，UNION ALL 三张 okr_* 表（UUID 与旧 projects 相同）
   const { rows } = await pool.query(
-    `SELECT DISTINCT repo_path
-     FROM projects
-     WHERE repo_path IS NOT NULL
-       AND repo_path != ''
+    `SELECT DISTINCT metadata->>'repo_path' AS repo_path
+     FROM (
+       SELECT metadata FROM okr_projects WHERE metadata->>'repo_path' IS NOT NULL
+         AND metadata->>'repo_path' != ''
+       UNION ALL
+       SELECT metadata FROM okr_scopes WHERE metadata->>'repo_path' IS NOT NULL
+         AND metadata->>'repo_path' != ''
+       UNION ALL
+       SELECT metadata FROM okr_initiatives WHERE metadata->>'repo_path' IS NOT NULL
+         AND metadata->>'repo_path' != ''
+     ) sub
+     WHERE metadata->>'repo_path' IS NOT NULL
+       AND metadata->>'repo_path' != ''
      ORDER BY repo_path`
   );
   return rows.map(r => r.repo_path);

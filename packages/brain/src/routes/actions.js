@@ -701,9 +701,14 @@ async function executeQueryStatus(parsedIntent) {
         ORDER BY priority ASC, updated_at DESC
         LIMIT 20
       `),
+      // 新 OKR 表：UNION ALL objectives + key_results（UUID 与旧 goals 相同）
       pool.query(`
         SELECT id, title, status, priority, progress
-        FROM goals
+        FROM key_results
+        WHERE status NOT IN ('completed', 'cancelled')
+        UNION ALL
+        SELECT id, title, status, priority, 0 AS progress
+        FROM objectives
         WHERE status NOT IN ('completed', 'cancelled')
         ORDER BY priority ASC
         LIMIT 10

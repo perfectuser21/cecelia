@@ -72,10 +72,11 @@ async function collectTaskStats(pool) {
 
 async function collectKrProgress(pool) {
   try {
+    // 新 OKR 表：key_results 有 progress/priority/status 字段（UUID 与旧 goals 相同）
     const { rows: goals } = await pool.query(`
       SELECT title, progress, status, priority
-      FROM goals
-      WHERE status = 'in_progress'
+      FROM key_results
+      WHERE status IN ('active', 'in_progress')
       ORDER BY priority ASC, updated_at DESC
       LIMIT 5
     `);
