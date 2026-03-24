@@ -3,7 +3,7 @@ import { FeatureManifest } from '../types';
 const manifest: FeatureManifest = {
   id: 'knowledge',
   name: 'Knowledge',
-  version: '2.2.0',
+  version: '2.3.0',
   source: 'core',
   instances: ['core'],
 
@@ -16,6 +16,12 @@ const manifest: FeatureManifest = {
     { path: '/knowledge/brain', component: 'SuperBrain' },
     { path: '/knowledge/digestion', component: 'KnowledgeDigestion' },
     { path: '/knowledge/instruction-book', component: 'InstructionBook' },
+    // 知识文档系统
+    { path: '/knowledge/dev-log', component: 'DevLogPage' },
+    { path: '/knowledge/decisions', component: 'DecisionRegistryPage' },
+    { path: '/knowledge/design-vault', component: 'DesignVaultPage' },
+    { path: '/knowledge/diary', component: 'DailyDiaryPage' },
+    { path: '/knowledge/map', component: 'KnowledgeMapPage' },
     // 内容工厂
     {
       path: '/content-factory',
@@ -35,6 +41,11 @@ const manifest: FeatureManifest = {
     KnowledgeDigestion: () => import('./pages/KnowledgeDigestion'),
     InstructionBook: () => import('./pages/InstructionBook'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
+    DevLogPage: () => import('./pages/DevLogPage'),
+    DecisionRegistryPage: () => import('./pages/DecisionRegistryPage'),
+    DesignVaultPage: () => import('./pages/DesignVaultPage'),
+    DailyDiaryPage: () => import('./pages/DailyDiaryPage'),
+    KnowledgeMapPage: () => import('./pages/KnowledgeMapPage'),
   },
 };
 

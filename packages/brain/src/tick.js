@@ -2715,6 +2715,48 @@ async function executeTick() {
   Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
     .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
 
+  // 10.15b 每日日记（每日一次，写入 user_annotations daily_diary，fire-and-forget）
+  Promise.resolve().then(async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM user_annotations WHERE annotation_type = 'daily_diary' AND diary_date = $1 LIMIT 1`,
+      [today]
+    );
+    if (existing.length) return; // 今日已有日记，跳过
+
+    // 汇总今日数据
+    const [taskStats, prStats] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) FILTER (WHERE status='completed') AS done,
+                COUNT(*) FILTER (WHERE status='failed') AS failed,
+                COUNT(*) FILTER (WHERE status='queued' OR status='in_progress') AS pending
+         FROM tasks WHERE updated_at >= $1::date`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS pr_count FROM dev_records
+         WHERE record_type = 'pr_merge' AND created_at >= $1::date`,
+        [today]
+      ),
+    ]);
+
+    const done = taskStats.rows[0]?.done || 0;
+    const failed = taskStats.rows[0]?.failed || 0;
+    const pending = taskStats.rows[0]?.pending || 0;
+    const prs = prStats.rows[0]?.pr_count || 0;
+
+    const content = `## ${today} 每日日记\n\n任务完成 ${done}，失败 ${failed}，待处理 ${pending}。新合并 PR ${prs} 个。`;
+
+    await pool.query(
+      `INSERT INTO user_annotations (content, annotation_type, diary_date, tags)
+       VALUES ($1, 'daily_diary', $2, ARRAY['auto'])
+       ON CONFLICT (diary_date) WHERE annotation_type = 'daily_diary'
+       DO UPDATE SET content = EXCLUDED.content, updated_at = NOW()`,
+      [content, today]
+    );
+    console.log(`[tick] 每日日记已写入: ${today}`);
+  }).catch(e => console.warn('[tick] 每日日记写入失败:', e.message));
+
   // 10.16 每日契约扫描（UTC 03:00，检查模块边界是否有测试覆盖，fire-and-forget）
   Promise.resolve().then(() => triggerContractScan(pool))
     .catch(e => console.warn('[tick] 契约扫描失败:', e.message));

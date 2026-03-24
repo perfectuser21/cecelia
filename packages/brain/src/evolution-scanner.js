@@ -159,6 +159,27 @@ export async function scanEvolutionIfNeeded(pool) {
     );
     inserted++;
     console.log(`[evolution-scanner] 写入 #${pr.number} [${comp}] ${pr.title.slice(0, 50)}`);
+
+    // 同步写入 dev_records（幂等：pr_number 唯一约束）
+    try {
+      await pool.query(
+        `INSERT INTO dev_records
+           (title, pr_number, pr_url, branch, summary, record_type, area, components_affected)
+         VALUES ($1,$2,$3,$4,$5,'pr_merge',$6,$7)
+         ON CONFLICT (pr_number) WHERE pr_number IS NOT NULL DO NOTHING`,
+        [
+          pr.title,
+          pr.number,
+          pr.html_url || `https://github.com/${OWNER}/${REPO}/pull/${pr.number}`,
+          pr.head?.ref || null,
+          pr.body ? pr.body.slice(0, 500) : '',
+          comp,
+          codeFiles.slice(0, 20)
+        ]
+      );
+    } catch (devRecordErr) {
+      console.warn(`[evolution-scanner] dev_records 写入失败 #${pr.number}:`, devRecordErr.message);
+    }
   }
 
   // 更新门控时间
