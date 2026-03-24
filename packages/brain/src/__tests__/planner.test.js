@@ -138,13 +138,17 @@ describe('Planner Agent', () => {
     });
 
     it('should reject task whose project has no repo_path', async () => {
-      // 使用一个不存在于任何 OKR 表的随机 UUID
-      const fakeProjectId = '00000000-0000-4000-8000-000000000001';
+      // 插入一个没有 repo_path 的 okr_projects 记录（metadata 中不含 repo_path）
+      const noRepoProjResult = await pool.query(
+        "INSERT INTO okr_projects (title, status) VALUES ('no-repo-project', 'active') RETURNING id"
+      );
+      const noRepoProjectId = noRepoProjResult.rows[0].id;
+      testProjectIds.push(noRepoProjectId);
 
       const { handlePlanInput } = await import('../planner.js');
       await expect(handlePlanInput({
-        task: { title: 'Test Task', project_id: fakeProjectId }
-      })).rejects.toThrow('Project not found');
+        task: { title: 'Test Task', project_id: noRepoProjectId }
+      })).rejects.toThrow("Task's project must have repo_path");
     });
 
     it('should reject invalid input', async () => {
@@ -208,9 +212,9 @@ describe('Planner Agent', () => {
     });
 
     it('should create task linked to project with repo_path', async () => {
-      // 插入新 OKR projects 表
+      // 插入新 OKR projects 表，metadata 中包含 repo_path（planner projCheck 要求）
       const projResult = await pool.query(
-        "INSERT INTO okr_projects (title, status) VALUES ('test-proj', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status, metadata) VALUES ('test-proj', 'active', '{\"repo_path\":\"/tmp/test-task-proj\"}') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
