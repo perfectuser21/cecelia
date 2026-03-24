@@ -487,30 +487,6 @@ async function handleAction(actionName, params, idempotencyKey, trigger = 'api')
   return result;
 }
 
-/**
- * POST /api/brain/action/:actionName
- * 统一 Action 入口
- */
-router.post('/action/:actionName', async (req, res) => {
-  try {
-    const { actionName } = req.params;
-    const { idempotency_key, trigger, ...params } = req.body;
-
-    // 生成幂等键（如果没提供）
-    const key = idempotency_key || `${actionName}-${crypto.randomUUID()}`;
-
-    const result = await handleAction(actionName, params, key, trigger || 'api');
-
-    if (result.success) {
-      res.json(result);
-    } else {
-      res.status(400).json(result);
-    }
-  } catch (err) {
-    res.status(500).json({ error: 'Action failed', details: err.message });
-  }
-});
-
 // 保留原有的快捷路由（内部调用统一处理器）
 router.post('/action/create-task', async (req, res) => {
   const { idempotency_key, trigger, ...params } = req.body;
@@ -668,6 +644,30 @@ router.post('/action/trigger-n8n', async (req, res) => {
   const key = idempotency_key || `trigger-n8n-${params.webhook_path}-${Date.now()}`;
   const result = await handleAction('trigger-n8n', params, key, trigger);
   res.status(result.success ? 200 : 400).json(result);
+});
+
+/**
+ * POST /api/brain/action/:actionName
+ * 统一 Action 入口（catch-all，必须在所有具体路由之后注册）
+ */
+router.post('/action/:actionName', async (req, res) => {
+  try {
+    const { actionName } = req.params;
+    const { idempotency_key, trigger, ...params } = req.body;
+
+    // 生成幂等键（如果没提供）
+    const key = idempotency_key || `${actionName}-${crypto.randomUUID()}`;
+
+    const result = await handleAction(actionName, params, key, trigger || 'api');
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Action failed', details: err.message });
+  }
 });
 
 // 注意：log-decision 不再对外暴露，由 handleAction 内部自动记录
