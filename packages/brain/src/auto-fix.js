@@ -17,8 +17,8 @@
 import pool from './db.js';
 import { createTask } from './actions.js';
 
-// Maximum number of failed auto-fix attempts allowed per error signature before giving up
-const MAX_AUTO_FIX_ATTEMPTS = 3;
+// 每个错误签名最多自动创建的修复任务数量，防止 RCA→auto-fix 死循环
+const MAX_AUTO_FIX_PER_SIGNATURE = 3;
 
 /**
  * Check if RCA result should trigger auto-fix
@@ -154,18 +154,16 @@ ${rcaResult.evidence || 'N/A'}
  * @returns {Promise<string>} Task ID
  */
 export async function dispatchToDevSkill(failure, rcaResult, signature) {
-  // Guard: check failed_count for this signature to prevent infinite retry loops
-  const countResult = await pool.query(`
-    SELECT COUNT(*) AS failed_count FROM tasks
-    WHERE trigger_source = 'auto_fix'
-      AND tags::jsonb ? $1
-      AND status = 'failed'
-      AND updated_at > NOW() - INTERVAL '7 days'
-  `, [signature]);
-  const failed_count = parseInt(countResult.rows[0]?.failed_count || '0', 10);
-
-  if (failed_count >= MAX_AUTO_FIX_ATTEMPTS) {
-    console.warn(`[AutoFix] Giving up on signature=${signature}: ${failed_count} failed attempts >= MAX_AUTO_FIX_ATTEMPTS (${MAX_AUTO_FIX_ATTEMPTS}). Manual intervention required.`);
+  // Guard: 同一 signature 最多创建 MAX_AUTO_FIX_PER_SIGNATURE 个修复任务，防止死循环
+  let existingCount = 0;
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM tasks WHERE tags::jsonb ? $1 AND trigger_source = 'auto_fix'`,
+      [signature]
+    );
+    existingCount = parseInt(result?.rows?.[0]?.cnt || 0);
+  } catch (_) { /* pool not available — skip guard */ }
+  if (existingCount >= MAX_AUTO_FIX_PER_SIGNATURE) {
     return null;
   }
 
