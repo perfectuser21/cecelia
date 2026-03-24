@@ -87,6 +87,40 @@ function AnnotationBox({ entityId }: { entityId: string }) {
   );
 }
 
+function ScoreInput({ recordId, initialScore }: { recordId: string; initialScore?: number }) {
+  const [score, setScore] = useState<number | ''>(initialScore ?? '');
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    if (!score) return;
+    await fetch(`/api/brain/dev-records/${recordId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ self_score: score }),
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <span className="text-xs text-gray-500">自评分：</span>
+      <input
+        type="number" min={1} max={10}
+        className="w-16 text-sm border border-gray-200 rounded px-2 py-0.5 text-center focus:outline-none focus:border-blue-400"
+        value={score}
+        onChange={e => setScore(e.target.value ? parseInt(e.target.value) : '')}
+        placeholder="1-10"
+      />
+      <span className="text-xs text-gray-400">/ 10</span>
+      <button onClick={save} disabled={!score}
+        className="text-xs px-2 py-0.5 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:opacity-40">
+        {saved ? '✓ 已保存' : '保存'}
+      </button>
+    </div>
+  );
+}
+
 function RecordCard({ record }: { record: DevRecord }) {
   const [expanded, setExpanded] = useState(false);
   const ci = record.ci_results || {};
@@ -149,6 +183,7 @@ function RecordCard({ record }: { record: DevRecord }) {
               <p className="text-gray-700 mt-0.5 whitespace-pre-wrap">{record.root_cause}</p>
             </div>
           )}
+          <ScoreInput recordId={record.id} initialScore={record.self_score} />
           <AnnotationBox entityId={record.id} />
         </div>
       )}
