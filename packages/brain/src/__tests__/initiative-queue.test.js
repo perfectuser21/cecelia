@@ -23,7 +23,7 @@ function makeMockPool(currentActiveCount = 0, pendingInitiatives = []) {
 
       // 查当前 active initiative 数量（包含 active + in_progress）
       if (
-        s.includes("type = 'initiative'") &&
+        s.includes('FROM okr_initiatives') &&
         (s.includes("status IN ('active', 'in_progress')") || s.includes("status = 'active'")) &&
         s.includes('COUNT(*)')
       ) {
@@ -32,9 +32,9 @@ function makeMockPool(currentActiveCount = 0, pendingInitiatives = []) {
 
       // UPDATE projects SET status='active'...RETURNING id, name
       if (
-        s.includes('UPDATE projects') &&
+        s.includes('UPDATE okr_initiatives') &&
         s.includes("status = 'active'") &&
-        s.includes('RETURNING id, name')
+        s.includes('RETURNING id, title')
       ) {
         const limit = params?.[0] ?? pendingInitiatives.length;
         const toActivate = pendingInitiatives.slice(0, limit);
@@ -123,7 +123,7 @@ describe('Q2: 已达 MAX 时不激活新的', () => {
 
     // 不应调用 UPDATE
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    const hasUpdate = calls.some(s => s.includes('UPDATE projects'));
+    const hasUpdate = calls.some(s => s.includes('UPDATE okr_initiatives'));
     expect(hasUpdate).toBe(false);
   });
 
@@ -151,7 +151,7 @@ describe('Q3: 按 KR 优先级激活', () => {
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
     const updateCall = calls.find(
-      s => s.includes('UPDATE projects') && s.includes("status = 'active'")
+      s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'active'")
     );
     expect(updateCall).toBeDefined();
     // 验证包含 P0/P1/P2 优先级排序
@@ -170,7 +170,7 @@ describe('Q3: 按 KR 优先级激活', () => {
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
     const updateCall = calls.find(
-      s => s.includes('UPDATE projects') && s.includes("status = 'active'")
+      s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'active'")
     );
     expect(updateCall).toBeDefined();
     // 验证通过 LEFT JOIN goals 获取优先级
@@ -220,7 +220,7 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
         const s = sql.trim();
 
         // 查 in_progress/active initiatives
-        if (s.includes("type = 'initiative'") && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
+        if (s.includes('FROM okr_initiatives') && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
           return { rows: [{ id: 'init-close-001', name: 'Closing Initiative' }] };
         }
 
@@ -232,7 +232,7 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
         }
 
         // UPDATE projects SET completed
-        if (s.includes('UPDATE projects') && s.includes("status = 'completed'")) {
+        if (s.includes('UPDATE okr_initiatives') && s.includes("status = 'completed'")) {
           return { rows: [] };
         }
 
@@ -248,9 +248,9 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
 
         // activateNextInitiatives - UPDATE projects active + RETURNING
         if (
-          s.includes('UPDATE projects') &&
+          s.includes('UPDATE okr_initiatives') &&
           s.includes("status = 'active'") &&
-          s.includes('RETURNING id, name')
+          s.includes('RETURNING id, title')
         ) {
           return { rows: [{ id: 'init-new', name: 'New Initiative' }], rowCount: 1 };
         }
@@ -276,7 +276,7 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
     const mockPool = {
       query: vi.fn().mockImplementation(async (sql, params) => {
         const s = sql.trim();
-        if (s.includes("type = 'initiative'") && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
+        if (s.includes('FROM okr_initiatives') && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
           return { rows: [] }; // 没有可关闭的
         }
         return { rows: [], rowCount: 0 };

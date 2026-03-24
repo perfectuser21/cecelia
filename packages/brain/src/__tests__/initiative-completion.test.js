@@ -20,8 +20,8 @@ function makeMockPool(initiatives = [], taskStats = {}) {
     query: vi.fn().mockImplementation(async (sql, params) => {
       const s = sql.trim();
 
-      // 查 in_progress 或 active 的 initiatives
-      if (s.includes("type = 'initiative'") && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
+      // 查 in_progress 或 active 的 initiatives（迁移后：FROM okr_initiatives）
+      if (s.includes('FROM okr_initiatives') && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
         return { rows: initiatives };
       }
 
@@ -38,8 +38,8 @@ function makeMockPool(initiatives = [], taskStats = {}) {
         };
       }
 
-      // UPDATE projects SET completed
-      if (s.includes('UPDATE projects') && s.includes("status = 'completed'")) {
+      // UPDATE okr_initiatives SET completed（迁移后）
+      if (s.includes('UPDATE okr_initiatives') && s.includes("status = 'completed'")) {
         return { rows: [] };
       }
 
@@ -49,15 +49,15 @@ function makeMockPool(initiatives = [], taskStats = {}) {
       }
 
       // activateNextInitiatives - 查当前 active 数量（包含 active + in_progress）
-      if (s.includes('COUNT(*)') && s.includes("status IN ('active', 'in_progress')")) {
+      if (s.includes('FROM okr_initiatives') && s.includes("status IN ('active', 'in_progress')")) {
         return { rows: [{ cnt: '5' }] };
       }
 
-      // activateNextInitiatives - UPDATE projects active + RETURNING
+      // activateNextInitiatives - UPDATE okr_initiatives active + RETURNING（迁移后）
       if (
-        s.includes('UPDATE projects') &&
+        s.includes('UPDATE okr_initiatives') &&
         s.includes("status = 'active'") &&
-        s.includes('RETURNING id, name')
+        s.includes('RETURNING')
       ) {
         return { rows: [], rowCount: 0 };
       }
@@ -101,7 +101,7 @@ describe('D1: 所有 tasks completed 时关闭 initiative', () => {
     await checkInitiativeCompletion(pool);
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    const hasUpdate = calls.some(s => s.includes('UPDATE projects') && s.includes("status = 'completed'"));
+    const hasUpdate = calls.some(s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'completed'"));
     const hasInsert = calls.some(s => s.includes('cecelia_events') && s.includes('initiative_completed'));
     expect(hasUpdate).toBe(true);
     expect(hasInsert).toBe(true);
@@ -126,7 +126,7 @@ describe('D2: 有 in_progress task 时不关闭', () => {
 
     // 不应该调用 UPDATE
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    const hasUpdate = calls.some(s => s.includes('UPDATE projects'));
+    const hasUpdate = calls.some(s => s.includes('UPDATE okr_initiatives'));
     expect(hasUpdate).toBe(false);
   });
 });
@@ -148,7 +148,7 @@ describe('D3: 有 queued task 时不关闭', () => {
     expect(result.closed).toHaveLength(0);
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    const hasUpdate = calls.some(s => s.includes('UPDATE projects'));
+    const hasUpdate = calls.some(s => s.includes('UPDATE okr_initiatives'));
     expect(hasUpdate).toBe(false);
   });
 });
@@ -222,13 +222,13 @@ function makeMockProjectPool(activeProjects = []) {
     query: vi.fn().mockImplementation(async (sql, params) => {
       const s = sql.trim();
 
-      // 查满足条件的 active projects（主查询）
-      if (s.includes("type = 'project'") && s.includes("status = 'active'")) {
+      // 查满足条件的 active projects（主查询，迁移后：FROM okr_projects）
+      if (s.includes('FROM okr_projects') && s.includes("status = 'active'")) {
         return { rows: activeProjects };
       }
 
-      // UPDATE projects SET status='completed'
-      if (s.includes('UPDATE projects') && s.includes("status = 'completed'")) {
+      // UPDATE okr_projects SET status='completed'（迁移后）
+      if (s.includes('UPDATE okr_projects') && s.includes("status = 'completed'")) {
         return { rows: [] };
       }
 
@@ -270,7 +270,7 @@ describe('P1: 所有 initiative completed 时关闭 project', () => {
     await checkProjectCompletion(pool);
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    const hasUpdate = calls.some(s => s.includes('UPDATE projects') && s.includes("status = 'completed'"));
+    const hasUpdate = calls.some(s => s.includes('UPDATE okr_projects') && s.includes("status = 'completed'"));
     const hasInsert = calls.some(s => s.includes('cecelia_events') && s.includes('project_completed'));
     expect(hasUpdate).toBe(true);
     expect(hasInsert).toBe(true);
@@ -313,7 +313,7 @@ describe('P2: 有 initiative 未完成时不关闭 project', () => {
     await checkProjectCompletion(pool);
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
-    const hasUpdate = calls.some(s => s.includes('UPDATE projects'));
+    const hasUpdate = calls.some(s => s.includes('UPDATE okr_projects'));
     const hasInsert = calls.some(s => s.includes('cecelia_events'));
     expect(hasUpdate).toBe(false);
     expect(hasInsert).toBe(false);
@@ -351,7 +351,7 @@ describe('P4: 已 completed 的 project 不重复处理', () => {
     // 验证主查询包含 status='active' 条件
     const [mainSql] = pool.query.mock.calls[0];
     expect(mainSql).toContain("status = 'active'");
-    expect(mainSql).toContain("type = 'project'");
+    expect(mainSql).toContain('FROM okr_projects');
   });
 
   it('SQL 查询包含 NOT EXISTS 和 AND EXISTS 子查询（确保逻辑正确）', async () => {
@@ -362,6 +362,6 @@ describe('P4: 已 completed 的 project 不重复处理', () => {
     const [mainSql] = pool.query.mock.calls[0];
     expect(mainSql).toContain('NOT EXISTS');
     expect(mainSql).toContain('AND EXISTS');
-    expect(mainSql).toContain("type IN ('initiative', 'scope')");
+    expect(mainSql).toContain('FROM okr_scopes');
   });
 });

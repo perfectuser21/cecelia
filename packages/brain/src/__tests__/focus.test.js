@@ -73,9 +73,8 @@ describe('focus', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
       // 确认 SQL 包含正确的查询条件
       const sql = mockQuery.mock.calls[0][0];
-      expect(sql).toContain("type = 'area_okr'");
-      expect(sql).toContain("'ready'");
-      expect(sql).toContain("'in_progress'");
+      expect(sql).toContain("FROM objectives");
+      expect(sql).toContain("NOT IN");
     });
 
     it('无 ready KR 时返回空数组', async () => {

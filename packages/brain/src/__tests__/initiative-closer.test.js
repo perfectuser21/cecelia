@@ -73,7 +73,7 @@ function makeMockPool(opts = {}) {
       const s = sql.trim();
 
       // 查 in_progress 或 active 的 initiatives
-      if (s.includes("type = 'initiative'") && s.includes("status IN ('in_progress', 'active')")) {
+      if (s.includes('FROM okr_initiatives') && s.includes("status IN ('in_progress', 'active')")) {
         return { rows: initiatives };
       }
 
@@ -92,8 +92,8 @@ function makeMockPool(opts = {}) {
         };
       }
 
-      // UPDATE projects SET status='completed'
-      if (s.includes('UPDATE projects') && s.includes("status = 'completed'")) {
+      // UPDATE okr_initiatives SET status='completed'
+      if (s.includes('UPDATE okr_initiatives') && s.includes("status = 'completed'")) {
         return { rows: [] };
       }
 
@@ -108,15 +108,15 @@ function makeMockPool(opts = {}) {
       }
 
       // activateNextInitiatives - 查当前 active 数量
-      if (s.includes('COUNT(*)') && s.includes("status IN ('active', 'in_progress')")) {
+      if (s.includes('FROM okr_initiatives') && s.includes("status IN ('active', 'in_progress')")) {
         return { rows: [{ cnt: String(activeCount) }] };
       }
 
       // activateNextInitiatives - UPDATE pending → active + RETURNING
       if (
-        s.includes('UPDATE projects') &&
+        s.includes('UPDATE okr_initiatives') &&
         s.includes("status = 'active'") &&
-        s.includes('RETURNING id, name')
+        s.includes('RETURNING id, title')
       ) {
         const limit = params?.[0] ?? pendingToActivate.length;
         const toActivate = pendingToActivate.slice(0, limit);
@@ -129,7 +129,7 @@ function makeMockPool(opts = {}) {
       }
 
       // checkProjectCompletion - 查 active projects
-      if (s.includes("type = 'project'") && s.includes("status = 'active'")) {
+      if (s.includes('FROM okr_projects') && s.includes("status = 'active'")) {
         return { rows: [] };
       }
 
@@ -153,11 +153,11 @@ function makeMockProjectPool(activeProjects = []) {
     query: vi.fn().mockImplementation(async (sql) => {
       const s = sql.trim();
 
-      if (s.includes("type = 'project'") && s.includes("status = 'active'")) {
+      if (s.includes('FROM okr_projects') && s.includes("status = 'active'")) {
         return { rows: activeProjects };
       }
 
-      if (s.includes('UPDATE projects') && s.includes("status = 'completed'")) {
+      if (s.includes('UPDATE okr_projects') && s.includes("status = 'completed'")) {
         return { rows: [] };
       }
 
@@ -582,10 +582,10 @@ describe('checkProjectCompletion - 基础场景', () => {
     await checkProjectCompletion(pool);
 
     const [mainSql] = pool.query.mock.calls[0];
-    expect(mainSql).toContain("type = 'project'");
+    expect(mainSql).toContain("FROM okr_projects");
     expect(mainSql).toContain("status = 'active'");
     expect(mainSql).toContain('NOT EXISTS');
-    expect(mainSql).toContain("type IN ('initiative', 'scope')");
+    expect(mainSql).toContain("FROM okr_scopes");
   });
 });
 
@@ -756,7 +756,7 @@ describe('activateNextInitiatives', () => {
 
     const calls = pool.query.mock.calls.map(c => c[0].trim());
     const updateCall = calls.find(
-      s => s.includes('UPDATE projects') && s.includes("status = 'active'")
+      s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'active'")
     );
     expect(updateCall).toBeDefined();
     expect(updateCall).toContain("WHEN 'P0' THEN 0");

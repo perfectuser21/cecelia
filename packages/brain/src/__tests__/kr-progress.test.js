@@ -25,7 +25,7 @@ function makeMockPool({
       }
 
       // updateKrProgress: 查 initiatives 统计
-      if (s.includes('COUNT(*)') && s.includes('parent_id = ANY')) {
+      if (s.includes('COUNT(*)') && s.includes('project_id = ANY')) {
         return { rows: [initiativeStats] };
       }
 
@@ -35,7 +35,7 @@ function makeMockPool({
       }
 
       // syncAllKrProgress: 查所有活跃 KR
-      if (s.includes('FROM goals') && s.includes('type IN')) {
+      if ((s.includes('FROM objectives') || s.includes('FROM key_results'))) {
         return { rows: krs };
       }
 

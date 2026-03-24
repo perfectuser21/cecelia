@@ -50,13 +50,13 @@ describe('checkProjectCompletion - 渐进验证触发', () => {
   it('D6: Project 全部 Initiative 完成 → 触发 shouldAdjustPlan', async () => {
     pool.query = vi.fn(async (sql) => {
       // 查询可关闭的 Projects
-      if (sql.includes("p.type = 'project'") && sql.includes("p.status = 'active'")) {
+      if (sql.includes('FROM okr_projects') && sql.includes("status = 'active'")) {
         return {
           rows: [{ id: 'proj-1', name: 'Test Project', kr_id: 'kr-1' }],
         };
       }
       // UPDATE projects (关闭)
-      if (sql.includes('UPDATE projects')) {
+      if (sql.includes('UPDATE okr_projects')) {
         return { rows: [] };
       }
       // INSERT event
@@ -97,7 +97,7 @@ describe('checkProjectCompletion - 渐进验证触发', () => {
     shouldAdjustPlan.mockResolvedValueOnce(mockAdjustment);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes("p.type = 'project'") && sql.includes("p.status = 'active'")) {
+      if (sql.includes('FROM okr_projects') && sql.includes("status = 'active'")) {
         return { rows: [{ id: 'proj-1', name: 'Test Project', kr_id: 'kr-1' }] };
       }
       return { rows: [] };
@@ -116,7 +116,7 @@ describe('checkProjectCompletion - 渐进验证触发', () => {
     shouldAdjustPlan.mockResolvedValueOnce(null);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes("p.type = 'project'") && sql.includes("p.status = 'active'")) {
+      if (sql.includes('FROM okr_projects') && sql.includes("status = 'active'")) {
         return { rows: [{ id: 'proj-1', name: 'Test', kr_id: 'kr-1' }] };
       }
       return { rows: [] };
