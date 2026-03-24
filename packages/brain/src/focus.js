@@ -18,7 +18,7 @@ const FOCUS_OVERRIDE_KEY = 'daily_focus_override';
 async function getReadyKRs() {
   // 迁移：goals WHERE type='area_okr' → objectives（status 'ready'/'in_progress' 均对应 objectives.status 非结束态）
   const result = await pool.query(`
-    SELECT id, title, description, priority, progress, status, vision_id AS parent_id
+    SELECT id, title, description, priority, 0 AS progress, status, vision_id AS parent_id
     FROM objectives
     WHERE status NOT IN ('completed', 'cancelled')
     ORDER BY
