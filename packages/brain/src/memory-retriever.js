@@ -484,9 +484,14 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：goals → key_results + objectives（UNION ALL，type 字段手动设置以兼容后续 source 判断）
       const goalResults = await pool.query(
-        `SELECT id, title, description, type, status, created_at
-         FROM goals
+        `SELECT id, title, description, 'key_result' AS type, status, created_at
+         FROM key_results
+         WHERE status NOT IN ('completed', 'cancelled')
+         UNION ALL
+         SELECT id, title, description, 'area_okr' AS type, status, created_at
+         FROM objectives
          WHERE status NOT IN ('completed', 'cancelled')
          ORDER BY created_at DESC
          LIMIT 30`
@@ -524,10 +529,13 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：projects WHERE type IN ('project','initiative') → okr_projects + okr_initiatives
       const projectResults = await pool.query(
-        `SELECT id, name, description, type, created_at
-         FROM projects
-         WHERE type IN ('project', 'initiative')
+        `SELECT id, title AS name, description, 'project' AS type, created_at
+         FROM okr_projects
+         UNION ALL
+         SELECT id, title AS name, description, 'initiative' AS type, created_at
+         FROM okr_initiatives
          ORDER BY created_at DESC
          LIMIT 30`
       );
@@ -579,12 +587,12 @@ async function _enrichStructuredCandidates(pool, candidates) {
   const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
 
   try {
-    // task_count for goals (via projects.kr_id)
+    // 迁移：tasks JOIN projects WHERE kr_id → tasks JOIN okr_projects WHERE kr_id（IDs 相同）
     if (goalIds.length > 0) {
       const res = await pool.query(
         `SELECT p.kr_id as goal_id, COUNT(t.id)::int as task_count
          FROM tasks t
-         JOIN projects p ON t.project_id = p.id
+         JOIN okr_projects p ON t.project_id = p.id
          WHERE p.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
          GROUP BY p.kr_id`,
         [goalIds]
@@ -614,14 +622,15 @@ async function _enrichStructuredCandidates(pool, candidates) {
       }
     }
 
-    // parent_kr_title for initiatives
+    // 迁移：goals JOIN projects JOIN projects → key_results JOIN okr_projects JOIN okr_scopes JOIN okr_initiatives
     if (initiativeIds.length > 0) {
       const res = await pool.query(
-        `SELECT pi.id as initiative_id, g.title as kr_title
-         FROM goals g
-         JOIN projects p ON p.kr_id = g.id
-         JOIN projects pi ON pi.parent_id = p.id
-         WHERE pi.id = ANY($1)`,
+        `SELECT oi.id as initiative_id, kr.title as kr_title
+         FROM key_results kr
+         JOIN okr_projects op ON op.kr_id = kr.id
+         JOIN okr_scopes os ON os.project_id = op.id
+         JOIN okr_initiatives oi ON oi.scope_id = os.id
+         WHERE oi.id = ANY($1)`,
         [initiativeIds]
       );
       const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
@@ -907,9 +916,10 @@ async function loadActiveProfile(pool, mode) {
   }
 
   try {
+    // 迁移：goals → key_results
     const goals = await pool.query(`
-      SELECT title, status, progress FROM goals
-      WHERE status IN ('in_progress', 'pending')
+      SELECT title, status, progress FROM key_results
+      WHERE status NOT IN ('completed', 'cancelled')
       ORDER BY priority ASC, progress DESC
       LIMIT 3
     `);

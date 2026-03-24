@@ -800,9 +800,9 @@ router.post('/pr-plans', async (req, res) => {
       });
     }
 
-    // Validate project exists
+    // 迁移：projects → okr_projects（仅 id 检查，IDs 相同）
     const projectCheck = await pool.query(
-      'SELECT id FROM projects WHERE id = $1',
+      'SELECT id FROM okr_projects WHERE id = $1',
       [project_id]
     );
     if (projectCheck.rows.length === 0) {
@@ -1265,6 +1265,7 @@ router.get('/config/area-slots', async (req, res) => {
     const config = rows.length > 0 ? JSON.parse(rows[0].value) : {};
 
     const { rows: taskRows } = await pool.query(`
+      -- 保留旧表：goals.domain 列在新表中无对应字段
       SELECT
         COALESCE(g.domain, 'zenithjoy') as area,
         count(*) FILTER (WHERE t.status = 'in_progress') as running,

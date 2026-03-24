@@ -22,13 +22,12 @@
 export async function updateKrProgress(pool, krId) {
   if (!krId) return { krId: null, progress: 0, completed: 0, total: 0 };
 
-  // 查 KR 关联的所有 projects
+  // 迁移：projects WHERE type='project' → okr_projects（IDs 相同，project_kr_links 不变）
   const projectsResult = await pool.query(`
     SELECT p.id
-    FROM projects p
+    FROM okr_projects p
     JOIN project_kr_links pkl ON pkl.project_id = p.id
     WHERE pkl.kr_id = $1
-      AND p.type = 'project'
   `, [krId]);
 
   if (projectsResult.rows.length === 0) {
@@ -37,15 +36,15 @@ export async function updateKrProgress(pool, krId) {
 
   const projectIds = projectsResult.rows.map(r => r.id);
 
-  // 查这些 projects 下所有可计数的 initiatives
+  // 迁移：projects WHERE type='initiative' AND parent_id → okr_initiatives（通过 scope_id 关联）
   const statsResult = await pool.query(`
     SELECT
       COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE status = 'completed') AS completed
-    FROM projects
-    WHERE parent_id = ANY($1)
-      AND type = 'initiative'
-      AND status IN ('active', 'in_progress', 'completed')
+      COUNT(*) FILTER (WHERE oi.status = 'completed') AS completed
+    FROM okr_initiatives oi
+    JOIN okr_scopes os ON os.id = oi.scope_id
+    WHERE os.project_id = ANY($1)
+      AND oi.status IN ('active', 'in_progress', 'completed')
   `, [projectIds]);
 
   const total = parseInt(statsResult.rows[0].total, 10);
@@ -53,7 +52,7 @@ export async function updateKrProgress(pool, krId) {
 
   const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  // 更新 goals.progress
+  // UPDATE 保留旧表（触发器同步到 key_results）
   await pool.query(`
     UPDATE goals
     SET progress = $2,
@@ -71,12 +70,11 @@ export async function updateKrProgress(pool, krId) {
  * @returns {Promise<{ updated: number, results: Array }>}
  */
 export async function syncAllKrProgress(pool) {
-  // 查所有 in_progress 的 KR
+  // 迁移：goals WHERE type IN ('area_okr','area_kr','global_kr','key_result') → objectives + key_results
   const krsResult = await pool.query(`
-    SELECT id, title
-    FROM goals
-    WHERE type IN ('area_okr', 'area_kr', 'global_kr', 'key_result')
-      AND status NOT IN ('completed', 'cancelled')
+    SELECT id, title FROM objectives WHERE status NOT IN ('completed', 'cancelled')
+    UNION ALL
+    SELECT id, title FROM key_results WHERE status NOT IN ('completed', 'cancelled')
   `);
 
   const results = [];

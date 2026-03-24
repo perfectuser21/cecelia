@@ -405,7 +405,7 @@ async function resolveRepoPath(projectId) {
       // project_repos table may not exist yet (pre-migration 029)
     }
 
-    // Fallback to projects.repo_path
+    // 保留旧表：projects.repo_path / projects.parent_id 在 okr_projects 中不存在
     const result = await pool.query(
       'SELECT repo_path, parent_id FROM projects WHERE id = $1',
       [currentId]
@@ -1400,14 +1400,15 @@ async function buildTimeContext(krId) {
   if (!krId) return '';
   try {
     // 1. KR 的 target_date 和 time_budget_days
+    // 迁移：goals → key_results（end_date AS target_date；time_budget_days 不在新表返回 NULL）
     const krResult = await pool.query(
-      `SELECT title, target_date, time_budget_days FROM goals WHERE id = $1`,
+      `SELECT title, end_date AS target_date, NULL::integer AS time_budget_days FROM key_results WHERE id = $1`,
       [krId]
     );
     const kr = krResult.rows[0];
     if (!kr) return '';
 
-    // 2. KR 下所有 Projects（按 sequence_order 排列）
+    // 保留旧表：sequence_order / time_budget_days 列在 okr_projects 中不存在
     const projResult = await pool.query(
       `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days,
               p.created_at, p.completed_at

@@ -2605,6 +2605,7 @@ router.get('/dev/tasks', async (req, res) => {
         g.title as goal_title,
         p.name as project_name,
         p.repo_path
+      -- 保留旧表：goals.project_id / projects.repo_path 在新 OKR 表中无对应列
       FROM tasks t
       LEFT JOIN goals g ON t.goal_id = g.id
       LEFT JOIN projects p ON g.project_id = p.id
@@ -2697,6 +2698,7 @@ router.get('/dev/tasks', async (req, res) => {
 router.get('/dev/repos', async (req, res) => {
   try {
     const result = await pool.query(`
+      -- 保留旧表：projects.repo_path 在 okr_projects 中不存在
       SELECT DISTINCT p.name, p.repo_path
       FROM projects p
       WHERE p.repo_path IS NOT NULL

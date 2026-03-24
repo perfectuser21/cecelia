@@ -18,6 +18,7 @@ let _nightlyRunning = false;
  * Get active projects with their task statistics
  */
 async function getActiveProjectsWithStats() {
+  // 保留旧表：projects.repo_path / projects.lead_agent 在 okr_projects 中不存在
   const result = await pool.query(`
     SELECT
       p.id,
@@ -41,6 +42,7 @@ async function getActiveProjectsWithStats() {
  * Get goals progress for today
  */
 async function getGoalsProgress() {
+  // 迁移：goals → key_results（goals.project_id 在新表无对应，省略 project_name JOIN）
   const result = await pool.query(`
     SELECT
       g.id,
@@ -48,9 +50,8 @@ async function getGoalsProgress() {
       g.status,
       g.priority,
       g.progress,
-      p.name as project_name
-    FROM goals g
-    LEFT JOIN projects p ON g.project_id = p.id
+      NULL as project_name
+    FROM key_results g
     WHERE g.status NOT IN ('completed', 'cancelled')
     ORDER BY g.priority ASC, g.progress DESC
     LIMIT 20
@@ -62,6 +63,7 @@ async function getGoalsProgress() {
  * Get today's reflections (issues, learnings, improvements)
  */
 async function getTodaysReflections() {
+  // 保留旧表：projects.name 显示用途（okr_projects 有 title 但 reflections.project_id 引用旧 projects）
   const result = await pool.query(`
     SELECT
       r.id,
@@ -388,6 +390,7 @@ function getNightlyTickStatus() {
 async function getDailyReports(date = 'today', type = 'all') {
   const targetDate = date === 'today' ? new Date().toISOString().split('T')[0] : date;
 
+  // 保留旧表：daily_logs.project_id 引用 projects，projects.name 显示用途
   let query = `
     SELECT dl.*, p.name as project_name
     FROM daily_logs dl

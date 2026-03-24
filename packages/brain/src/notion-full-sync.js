@@ -355,6 +355,7 @@ async function upsertArea(client, data) {
 }
 
 async function upsertGoal(client, data, areaDbId) {
+  // 保留旧表：notion_id 列只在 goals 表，okr 新表无 notion_id；UPDATE/INSERT 留旧表由触发器同步到 key_results
   const { rows } = await client.query(
     `INSERT INTO goals (notion_id, title, status, target_date, area_id, type, notion_props, notion_synced_at, created_at, updated_at)
      VALUES ($1,$2,$3,$4,$5,'area_okr',$6,NOW(),NOW(),NOW())
@@ -370,6 +371,7 @@ async function upsertGoal(client, data, areaDbId) {
 }
 
 async function upsertProject(client, data, areaDbId, goalDbId) {
+  // 保留旧表：notion_id/execution_mode 列只在 projects 表；UPDATE/INSERT 留旧表由触发器同步到 okr_projects
   const { rows } = await client.query(
     `INSERT INTO projects (notion_id, name, status, description, deadline, area_id, goal_id, execution_mode, notion_props, notion_synced_at, created_at, updated_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW(),NOW())
@@ -427,6 +429,7 @@ export async function pushToNotion(table, dbId, dbOverride = null) {
   const token = getToken();
   const db    = dbOverride || pool;
 
+  // 保留旧表：goals/projects 保留旧表用于 Notion 同步（notion_id 列只在旧表）
   const tableMap = {
     area:    { sql: 'SELECT * FROM areas    WHERE id=$1', dbKey: 'areas',    buildProps: buildAreaProperties,    parse: 'notion_id' },
     goal:    { sql: 'SELECT * FROM goals    WHERE id=$1', dbKey: 'goals',    buildProps: buildGoalProperties,    parse: 'notion_id' },
@@ -723,6 +726,7 @@ export async function pushAllToNotion(dbOverride = null) {
   } catch (e) { stats.areas.errors.push(`query: ${e.message}`); }
 
   // 2. 推送未同步的 goals（含 area 关联）
+  // 保留旧表：notion_id 列只在 goals 表
   try {
     const { rows: goals } = await db.query(`
       SELECT g.id, g.title, g.status, g.target_date,
@@ -753,6 +757,7 @@ export async function pushAllToNotion(dbOverride = null) {
   } catch (e) { stats.goals.errors.push(`query: ${e.message}`); }
 
   // 3. 推送未同步的 projects（仅 type='project'，含 area/goal 关联 + execution_mode）
+  // 保留旧表：notion_id/execution_mode/type 列只在 projects 表
   const executionModeMap = { cecelia: 'Cecelia', xx: 'XX' };
   try {
     const { rows: projects } = await db.query(`

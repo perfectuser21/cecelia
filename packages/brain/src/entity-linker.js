@@ -22,11 +22,11 @@ export async function findRelatedGoal(text) {
     const keywords = extractKeywords(text);
     if (keywords.length === 0) return null;
 
-    // 用关键词逐个匹配 goals 表（ILIKE），返回第一个匹配
+    // 迁移：goals → key_results（包含 objectives；IDs 唯一，先查 key_results 再查 objectives）
     for (const kw of keywords) {
       const result = await pool.query(
-        `SELECT id, title FROM goals
-         WHERE status IN ('in_progress', 'pending', 'ready', 'reviewing', 'decomposing')
+        `SELECT id, title FROM key_results
+         WHERE status NOT IN ('completed', 'cancelled')
            AND title ILIKE $1
          ORDER BY priority ASC
          LIMIT 1`,
@@ -54,10 +54,11 @@ export async function findRelatedProject(text) {
     const keywords = extractKeywords(text);
     if (keywords.length === 0) return null;
 
+    // 迁移：projects → okr_projects（name→title；IDs 相同）
     for (const kw of keywords) {
       const result = await pool.query(
-        `SELECT id, name FROM projects
-         WHERE name ILIKE $1
+        `SELECT id, title AS name FROM okr_projects
+         WHERE title ILIKE $1
          ORDER BY created_at DESC
          LIMIT 1`,
         [`%${kw}%`]

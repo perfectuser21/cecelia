@@ -20,6 +20,9 @@ import { getTaskLocation } from './task-router.js';
  */
 async function reviewProjectCompletion(pool, projectId) {
   // 1. 获取 Project 信息
+  // 迁移：projects → okr_projects（name→title；time_budget_days/parent_id 不在新表，保留 projects 做补充）
+  // okr_projects 有：id, kr_id, title, status, end_date, completed_at
+  // time_budget_days 和 sequence_order 仅在旧 projects 表，此处仍查旧表
   const projResult = await pool.query(
     `SELECT id, name, status, created_at, completed_at, time_budget_days, kr_id, parent_id
      FROM projects WHERE id = $1`,
@@ -32,22 +35,26 @@ async function reviewProjectCompletion(pool, projectId) {
 
   const project = projResult.rows[0];
 
-  // 2. 收集 Initiative 统计
+  // 迁移：projects WHERE parent_id=project AND type='initiative' → okr_scopes + okr_initiatives
+  // 新结构：project → scopes → initiatives，统计 initiatives 需遍历 scopes
   const initResult = await pool.query(
     `SELECT COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE status = 'completed') AS completed
-     FROM projects WHERE parent_id = $1 AND type = 'initiative'`,
+            COUNT(*) FILTER (WHERE oi.status = 'completed') AS completed
+     FROM okr_initiatives oi
+     JOIN okr_scopes os ON os.id = oi.scope_id
+     WHERE os.project_id = $1`,
     [projectId]
   );
   const { total: initiativeTotal, completed: initiativeCompleted } = initResult.rows[0];
 
-  // 3. 收集 Task 统计
+  // 迁移：tasks JOIN projects WHERE parent_id=project AND type='initiative' → okr_initiatives via okr_scopes
   const taskResult = await pool.query(
     `SELECT COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE status = 'completed') AS completed
+            COUNT(*) FILTER (WHERE t.status = 'completed') AS completed
      FROM tasks t
-     JOIN projects p ON p.id = t.project_id
-     WHERE p.parent_id = $1 AND p.type = 'initiative'`,
+     JOIN okr_initiatives oi ON oi.id = t.project_id
+     JOIN okr_scopes os ON os.id = oi.scope_id
+     WHERE os.project_id = $1`,
     [projectId]
   );
   const { total: taskTotal, completed: taskCompleted } = taskResult.rows[0];
@@ -91,6 +98,7 @@ async function shouldAdjustPlan(pool, krId, completedProjectId) {
   if (!krId) return null;
 
   // 1. 查询 KR 下所有 Projects
+  // 保留旧表：sequence_order/time_budget_days/deadline 列在 okr_projects 中不存在
   const projectsResult = await pool.query(
     `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days, p.deadline
      FROM projects p

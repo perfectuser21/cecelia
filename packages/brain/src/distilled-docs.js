@@ -218,16 +218,18 @@ export async function refreshWorldState(dbPool) {
   const p = dbPool || pool;
   try {
     const [goals, projects, initiatives] = await Promise.all([
+      // 迁移：goals → key_results
       p.query(`
         SELECT title, status, progress
-        FROM goals
-        WHERE status IN ('in_progress', 'pending')
+        FROM key_results
+        WHERE status NOT IN ('completed', 'cancelled')
         ORDER BY progress DESC
         LIMIT 5
       `).catch(() => ({ rows: [] })),
+      // 迁移：projects → okr_projects（current_phase 列不存在于新表，省略）
       p.query(`
-        SELECT title, status, current_phase
-        FROM projects
+        SELECT title, status
+        FROM okr_projects
         WHERE status IN ('active', 'planning')
         ORDER BY updated_at DESC
         LIMIT 5
