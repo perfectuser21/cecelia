@@ -36,8 +36,13 @@ export async function getEnabledDepts(pool) {
  */
 export async function lookupDeptPrimaryGoal(pool, dept_name) {
   try {
+    // 新 OKR 表：key_results 和 objectives 都有 metadata 字段（UUID 与旧 goals 相同）
     const { rows } = await pool.query(
-      `SELECT id FROM goals
+      `SELECT id, created_at FROM key_results
+       WHERE metadata->>'dept' = $1
+         AND status NOT IN ('completed', 'cancelled', 'canceled')
+       UNION ALL
+       SELECT id, created_at FROM objectives
        WHERE metadata->>'dept' = $1
          AND status NOT IN ('completed', 'cancelled', 'canceled')
        ORDER BY created_at ASC

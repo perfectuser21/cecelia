@@ -54,8 +54,18 @@ const actionHandlers = {
 
   /**
    * 创建任务
+   * rumination 来源的任务做同名去重，避免反刍自循环重复创建
    */
   async create_task(params, context) {
+    if (params.trigger_source === 'rumination' && params.title) {
+      const { rows } = await pool.query(
+        `SELECT id FROM tasks WHERE title = $1 AND status NOT IN ('completed','failed','cancelled') LIMIT 1`,
+        [params.title]
+      );
+      if (rows.length > 0) {
+        return { success: true, skipped: true, task_id: rows[0].id };
+      }
+    }
     const result = await createTask({
       title: params.title,
       description: params.description,
@@ -63,7 +73,8 @@ const actionHandlers = {
       priority: params.priority || 'P1',
       project_id: params.project_id,
       goal_id: params.goal_id,
-      payload: params.payload
+      payload: params.payload,
+      trigger_source: params.trigger_source,
     });
     return { success: result.success, task_id: result.task?.id };
   },
@@ -149,17 +160,26 @@ const actionHandlers = {
    * 创建 OKR
    */
   async create_okr(params, context) {
-    const result = await pool.query(`
-      INSERT INTO goals (title, description, type, status, priority, project_id)
-      VALUES ($1, $2, $3, 'ready', $4, $5)
-      RETURNING id
-    `, [
-      params.title,
-      params.description || '',
-      params.type || 'mission',
-      params.priority || 'P1',
-      params.project_id || null
-    ]);
+    const goalType = params.type || 'mission';
+    let result;
+    if (goalType === 'vision' || goalType === 'mission') {
+      result = await pool.query(`
+        INSERT INTO visions (title, description, status, metadata)
+        VALUES ($1, $2, 'active', $3) RETURNING id
+      `, [params.title, params.description || '', JSON.stringify({ priority: params.priority || 'P1', type: goalType })]);
+    } else if (goalType === 'area_okr' || goalType === 'global_kr') {
+      result = await pool.query(`
+        INSERT INTO objectives (title, description, priority, status)
+        VALUES ($1, $2, $3, 'active') RETURNING id
+      `, [params.title, params.description || '', params.priority || 'P1']);
+    } else if (goalType === 'area_kr') {
+      result = await pool.query(`
+        INSERT INTO key_results (title, description, priority, status)
+        VALUES ($1, $2, $3, 'active') RETURNING id
+      `, [params.title, params.description || '', params.priority || 'P1']);
+    } else {
+      throw new Error(`create_okr: unsupported goalType '${goalType}'`);
+    }
     return { success: true, goal_id: result.rows[0]?.id };
   },
 
@@ -634,8 +654,8 @@ const actionHandlers = {
     }
 
     const result = await pool.query(
-      `UPDATE goals SET status = 'ready', updated_at = NOW()
-       WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
+      `UPDATE objectives SET status = 'ready', updated_at = NOW()
+       WHERE id = $1 AND status = 'reviewing'
        RETURNING id, title, status`,
       [kr_id]
     );

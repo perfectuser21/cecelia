@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Playwright Runner — Codex Playwright 自动化适配器 v1.0.0
+# Playwright Runner — crystallize Forge Runner v1.1.0
 # ============================================================================
 # 职责：
 #   1. 从 Brain API 预拉任务描述（目标操作 + 参数）
@@ -8,9 +8,11 @@
 #   3. 调用 codex-bin exec 执行探索
 #   4. Quota 超限时自动切换账号（复用 codex runner.sh 模式）
 #
+# 用途：crystallize 流水线的 Forge 阶段（第2步）：Codex 探索写 Playwright .cjs 脚本
+#
 # 工作流（两阶段）：
-#   Phase 1（探索）: Codex + 大模型写 Playwright .cjs，反复测试直到跑通
-#   Phase 2（执行）: 直接 node <saved-script>.cjs（本 runner 负责 Phase 1）
+#   Phase 1（探索/Forge）: Codex + 大模型写 Playwright .cjs，反复测试直到跑通
+#   Phase 2（执行/Verify）: 直接 node <saved-script>.cjs（本 runner 负责 Phase 1）
 #
 # 用法:
 #   bash playwright-runner.sh --task-id <id> [--dry-run]
@@ -26,7 +28,7 @@
 #   PC_CDP_URL         — 西安 PC CDP 地址（默认 http://100.97.242.124:19225）
 #   SCRIPTS_DIR        — 脚本保存目录（默认 ~/playwright-scripts）
 #
-# 版本: v1.0.0
+# 版本: v1.1.0
 # ============================================================================
 
 set -euo pipefail
@@ -192,9 +194,41 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
+# ===== 回传 Brain execution-callback =====
+send_callback() {
+    local status="$1"       # "AI Done" | "AI Failed"
+    local script_path="${2:-}"
+    local error_msg="${3:-}"
+
+    local result_json
+    if [[ "$status" == "AI Done" && -n "$script_path" ]]; then
+        result_json="{\"script_path\":$(echo -n "$script_path" | jq -Rs .)}"
+    elif [[ -n "$error_msg" ]]; then
+        result_json="{\"error\":$(echo -n "$error_msg" | jq -Rs .)}"
+    else
+        result_json='null'
+    fi
+
+    local payload
+    payload=$(jq -n \
+        --arg task_id "$TASK_ID" \
+        --arg status "$status" \
+        --argjson result "$result_json" \
+        '{task_id: $task_id, status: $status, result: $result}')
+
+    curl -s -X POST "${BRAIN_API_URL}/api/brain/execution-callback" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 \
+        >/dev/null 2>&1 || true
+
+    echo "📤 execution-callback 已发送: status=${status}$([ -n "$script_path" ] && echo " script_path=${script_path}")"
+}
+
 # ===== 检查 codex-bin =====
 if [[ ! -x "$CODEX_BIN" ]]; then
     echo "❌ codex-bin 不存在或不可执行: $CODEX_BIN" >&2
+    send_callback "AI Failed" "" "codex-bin 不存在或不可执行: $CODEX_BIN"
     exit 1
 fi
 
@@ -229,6 +263,7 @@ while [[ $RETRY_COUNT -lt $CODEX_MAX_RETRIES ]]; do
         CURRENT_ACCOUNT_IDX=$(( (CURRENT_ACCOUNT_IDX + 1) % ${#CODEX_ACCOUNT_LIST[@]} ))
         if [[ $CURRENT_ACCOUNT_IDX -eq 0 ]]; then
             echo "❌ 所有账号 Quota 超限" >&2
+            send_callback "AI Failed" "" "所有账号 Quota 超限"
             exit 1
         fi
         continue
@@ -236,6 +271,12 @@ while [[ $RETRY_COUNT -lt $CODEX_MAX_RETRIES ]]; do
 
     if [[ $exit_code -eq 0 ]]; then
         echo "✅ Playwright 任务完成"
+        SAVED_SCRIPT="${SCRIPTS_DIR}/${TASK_ID}.cjs"
+        if [[ -f "$SAVED_SCRIPT" ]]; then
+            send_callback "AI Done" "$SAVED_SCRIPT"
+        else
+            send_callback "AI Done"
+        fi
         exit 0
     fi
 
@@ -244,4 +285,5 @@ while [[ $RETRY_COUNT -lt $CODEX_MAX_RETRIES ]]; do
 done
 
 echo "❌ 达到最大重试次数（$CODEX_MAX_RETRIES）" >&2
+send_callback "AI Failed" "" "达到最大重试次数（$CODEX_MAX_RETRIES）"
 exit 1

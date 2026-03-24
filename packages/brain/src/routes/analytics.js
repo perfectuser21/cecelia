@@ -800,9 +800,12 @@ router.post('/pr-plans', async (req, res) => {
       });
     }
 
-    // Validate project exists
+    // Validate project exists（迁移：projects → okr_projects UNION okr_scopes UNION okr_initiatives）
     const projectCheck = await pool.query(
-      'SELECT id FROM projects WHERE id = $1',
+      `SELECT id FROM okr_projects WHERE id = $1
+       UNION ALL SELECT id FROM okr_scopes WHERE id = $1
+       UNION ALL SELECT id FROM okr_initiatives WHERE id = $1
+       LIMIT 1`,
       [project_id]
     );
     if (projectCheck.rows.length === 0) {
@@ -1266,13 +1269,14 @@ router.get('/config/area-slots', async (req, res) => {
 
     const { rows: taskRows } = await pool.query(`
       SELECT
-        COALESCE(g.domain, 'zenithjoy') as area,
+        COALESCE(ar.domain, 'zenithjoy') as area,
         count(*) FILTER (WHERE t.status = 'in_progress') as running,
         count(*) FILTER (WHERE t.status = 'queued') as queued
       FROM tasks t
-      LEFT JOIN goals g ON t.goal_id = g.id
+      LEFT JOIN key_results g ON t.goal_id = g.id
+      LEFT JOIN areas ar ON g.area_id = ar.id
       WHERE t.status IN ('in_progress', 'queued')
-      GROUP BY COALESCE(g.domain, 'zenithjoy')
+      GROUP BY COALESCE(ar.domain, 'zenithjoy')
     `);
     const status = {};
     for (const r of taskRows) {

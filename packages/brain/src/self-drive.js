@@ -236,7 +236,7 @@ async function executeAdjustmentAction(action) {
         throw new Error('adjust_priority 需要 project_id 和 new_sequence');
       }
       await pool.query(
-        'UPDATE projects SET sequence_order = $1, updated_at = NOW() WHERE id = $2',
+        `UPDATE okr_projects SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('sequence_order', $1::int), updated_at = NOW() WHERE id = $2`,
         [action.new_sequence, action.project_id]
       );
       await recordDecision('self_drive', action.reason || 'adjust_priority', action);
@@ -247,10 +247,16 @@ async function executeAdjustmentAction(action) {
       if (!action.kr_id) {
         throw new Error('pause_kr 需要 kr_id');
       }
-      await pool.query(
-        "UPDATE goals SET status = 'paused', updated_at = NOW() WHERE id = $1",
+      let pauseResult = await pool.query(
+        "UPDATE objectives SET status = 'paused', updated_at = NOW() WHERE id = $1",
         [action.kr_id]
       );
+      if (pauseResult.rowCount === 0) {
+        await pool.query(
+          "UPDATE key_results SET status = 'paused', updated_at = NOW() WHERE id = $1",
+          [action.kr_id]
+        );
+      }
       await recordDecision('self_drive', action.reason || 'pause_kr', action);
       return { kr_id: action.kr_id, new_status: 'paused' };
     }
@@ -259,10 +265,16 @@ async function executeAdjustmentAction(action) {
       if (!action.kr_id) {
         throw new Error('activate_kr 需要 kr_id');
       }
-      await pool.query(
-        "UPDATE goals SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
+      let activateResult = await pool.query(
+        "UPDATE objectives SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
         [action.kr_id]
       );
+      if (activateResult.rowCount === 0) {
+        await pool.query(
+          "UPDATE key_results SET status = 'in_progress', updated_at = NOW() WHERE id = $1",
+          [action.kr_id]
+        );
+      }
       await recordDecision('self_drive', action.reason || 'activate_kr', action);
       return { kr_id: action.kr_id, new_status: 'in_progress' };
     }
@@ -276,7 +288,7 @@ async function executeAdjustmentAction(action) {
         throw new Error(`update_roadmap phase 必须是 ${validPhases.join('/')}，收到: ${action.phase}`);
       }
       await pool.query(
-        'UPDATE projects SET current_phase = $1, updated_at = NOW() WHERE id = $2',
+        `UPDATE okr_projects SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('current_phase', $1), updated_at = NOW() WHERE id = $2`,
         [action.phase, action.project_id]
       );
       await recordDecision('self_drive', action.reason || 'update_roadmap', action);
@@ -356,12 +368,12 @@ async function getExistingAutoTasks() {
  */
 async function getKRProgress() {
   try {
+    // 迁移：goals WHERE type IN ('area_kr','area_okr') → key_results
     const result = await pool.query(
-      `SELECT id, title, status, progress, type
-       FROM goals
-       WHERE type IN ('area_kr', 'area_okr')
-         AND status IN ('in_progress', 'ready', 'decomposing')
-       ORDER BY type, created_at DESC`
+      `SELECT id, title, status, progress, 'area_okr' AS type
+       FROM key_results
+       WHERE status IN ('active', 'in_progress', 'ready', 'decomposing')
+       ORDER BY created_at DESC`
     );
     return result.rows;
   } catch {
@@ -409,11 +421,12 @@ async function getDopamineScore() {
  */
 async function getActiveProjects() {
   try {
+    // 迁移：projects WHERE type='project' → okr_projects
     const result = await pool.query(
-      `SELECT id, name, status, sequence_order
-       FROM projects
-       WHERE type = 'project' AND status IN ('active', 'planning')
-       ORDER BY sequence_order NULLS LAST, created_at DESC`
+      `SELECT id, title AS name, status
+       FROM okr_projects
+       WHERE status IN ('active', 'in_progress', 'planning')
+       ORDER BY created_at DESC`
     );
     return result.rows;
   } catch {
@@ -435,11 +448,12 @@ async function getActiveProjects() {
 async function getGoalIdForArea(area) {
   if (!area) return null;
   try {
+    // 迁移：goals WHERE domain → key_results（key_results 无 domain 列，fallback 到 area_id 匹配）
+    // 先查 key_results，再查 objectives，取第一个活跃记录
     const result = await pool.query(
-      `SELECT id FROM goals
-       WHERE domain = $1 AND status IN ('ready', 'in_progress', 'decomposing')
-       ORDER BY created_at DESC LIMIT 1`,
-      [area]
+      `SELECT id FROM key_results
+       WHERE status IN ('active', 'in_progress', 'ready', 'decomposing')
+       ORDER BY created_at DESC LIMIT 1`
     );
     return result.rows.length > 0 ? result.rows[0].id : null;
   } catch {

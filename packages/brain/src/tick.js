@@ -26,6 +26,7 @@ import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview, triggerContractScan, triggerArchReview } from './daily-review-scheduler.js';
+import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
@@ -1835,6 +1836,23 @@ async function executeTick() {
     console.error('[tick] Decomposition check failed:', decompErr.message);
   }
 
+  // 0.5.4b. Crystallize Pipeline Orchestration Check — 检测 queued crystallize 任务，创建子任务
+  try {
+    const { advanceCrystallizePipeline } = await import('./crystallize-orchestrator.js');
+    const crystallizeResult = await advanceCrystallizePipeline();
+    if (crystallizeResult.total_actions > 0) {
+      console.log(`[tick] Crystallize orchestration: ${crystallizeResult.total_actions} actions (orchestrated=${crystallizeResult.summary.orchestrated}, skipped=${crystallizeResult.summary.skipped})`);
+      actionsTaken.push({
+        action: 'crystallize_orchestration',
+        total_actions: crystallizeResult.total_actions,
+        orchestrated: crystallizeResult.summary.orchestrated,
+        skipped: crystallizeResult.summary.skipped,
+      });
+    }
+  } catch (crystallizeErr) {
+    console.error('[tick] Crystallize orchestration check failed:', crystallizeErr.message);
+  }
+
   // 0.5.5. Content Pipeline Orchestration Check — 检测 queued content-pipeline 任务，创建子任务
   try {
     const { orchestrateContentPipelines } = await import('./content-pipeline-orchestrator.js');
@@ -2650,6 +2668,10 @@ async function executeTick() {
   // 10.1 每4小时 arch_review 巡检（guard: 上次 review 后至少1个 dev 任务完成）
   Promise.resolve().then(() => triggerArchReview(pool))
     .catch(e => console.warn('[tick] arch review scheduler 失败:', e.message));
+
+  // 10.2 每日日报生成（15:00 UTC = 23:00 上海）
+  Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
+    .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });

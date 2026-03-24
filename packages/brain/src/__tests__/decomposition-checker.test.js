@@ -60,7 +60,7 @@ describe('decomposition-checker v2.0', () => {
         rows: [{ id: 'task-1', title: 'KR 拆解: Test KR' }]
       });
 
-      // UPDATE goals status → decomposing
+      // UPDATE key_results status → decomposing
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       const actions = await checkPendingKRs();
@@ -224,7 +224,7 @@ describe('decomposition-checker v2.0', () => {
         rows: [{ id: 'task-c1', title: 'KR 拆解（修复）: Orphan KR' }]
       });
 
-      // UPDATE goals status → decomposing
+      // UPDATE key_results status → decomposing
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       const actions = await checkKRWithoutProject();

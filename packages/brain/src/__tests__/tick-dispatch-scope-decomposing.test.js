@@ -37,7 +37,7 @@ describe('Tick Dispatch Scope: decomposing KRs', () => {
     }
     if (testGoalIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE goal_id = ANY($1)', [testGoalIds]).catch(() => {});
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testGoalIds]);
+      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testGoalIds]).catch(() => {});
       testGoalIds = [];
     }
   });
@@ -45,8 +45,8 @@ describe('Tick Dispatch Scope: decomposing KRs', () => {
   it('应该包含 decomposing 状态的 KR（dispatch scope 查询）', async () => {
     // 创建一个 decomposing 状态的 KR
     const krResult = await pool.query(
-      `INSERT INTO goals (title, type, priority, status, progress)
-       VALUES ('测试 KR decomposing dispatch scope', 'area_okr', 'P0', 'decomposing', 0)
+      `INSERT INTO key_results (title, priority, status, progress)
+       VALUES ('测试 KR decomposing dispatch scope', 'P0', 'decomposing', 0)
        RETURNING id`
     );
     testGoalIds.push(krResult.rows[0].id);
@@ -54,8 +54,8 @@ describe('Tick Dispatch Scope: decomposing KRs', () => {
 
     // 模拟 tick.js 的 readyKrIds 查询（修复后包含 decomposing）
     const scopeResult = await pool.query(`
-      SELECT id FROM goals
-      WHERE type = 'area_okr' AND status IN ('ready', 'in_progress', 'decomposing')
+      SELECT id FROM key_results
+      WHERE status IN ('ready', 'in_progress', 'decomposing')
         AND id = $1
     `, [krId]);
 
@@ -66,24 +66,24 @@ describe('Tick Dispatch Scope: decomposing KRs', () => {
   it('不应该包含 pending 或 completed 状态的 KR', async () => {
     // 创建各种状态的 KR
     const pendingResult = await pool.query(
-      `INSERT INTO goals (title, type, priority, status, progress)
-       VALUES ('Pending KR scope test', 'area_okr', 'P1', 'pending', 0)
+      `INSERT INTO key_results (title, priority, status, progress)
+       VALUES ('Pending KR scope test', 'P1', 'pending', 0)
        RETURNING id`
     );
     testGoalIds.push(pendingResult.rows[0].id);
     const pendingId = pendingResult.rows[0].id;
 
     const completedResult = await pool.query(
-      `INSERT INTO goals (title, type, priority, status, progress)
-       VALUES ('Completed KR scope test', 'area_okr', 'P1', 'completed', 100)
+      `INSERT INTO key_results (title, priority, status, progress)
+       VALUES ('Completed KR scope test', 'P1', 'completed', 100)
        RETURNING id`
     );
     testGoalIds.push(completedResult.rows[0].id);
     const completedId = completedResult.rows[0].id;
 
     const scopeResult = await pool.query(`
-      SELECT id FROM goals
-      WHERE type = 'area_okr' AND status IN ('ready', 'in_progress', 'decomposing')
+      SELECT id FROM key_results
+      WHERE status IN ('ready', 'in_progress', 'decomposing')
         AND id = ANY($1)
     `, [[pendingId, completedId]]);
 
@@ -93,8 +93,8 @@ describe('Tick Dispatch Scope: decomposing KRs', () => {
   it('decomposing KR 下的 queued decomp 任务应在 scope 内', async () => {
     // 创建 decomposing KR
     const krResult = await pool.query(
-      `INSERT INTO goals (title, type, priority, status, progress)
-       VALUES ('KR with decomp task', 'area_okr', 'P0', 'decomposing', 0)
+      `INSERT INTO key_results (title, priority, status, progress)
+       VALUES ('KR with decomp task', 'P0', 'decomposing', 0)
        RETURNING id`
     );
     testGoalIds.push(krResult.rows[0].id);
@@ -112,8 +112,8 @@ describe('Tick Dispatch Scope: decomposing KRs', () => {
 
     // 获取 readyKrIds（修复后包含 decomposing）
     const scopeResult = await pool.query(`
-      SELECT id FROM goals
-      WHERE type = 'area_okr' AND status IN ('ready', 'in_progress', 'decomposing')
+      SELECT id FROM key_results
+      WHERE status IN ('ready', 'in_progress', 'decomposing')
         AND id = $1
     `, [krId]);
 

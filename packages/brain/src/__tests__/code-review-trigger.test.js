@@ -24,9 +24,12 @@ function makeMockPool({ devCount = 0, hasPendingReview = false, insertedRow = nu
     query: vi.fn(async (sql, params) => {
       calls.push({ sql, params });
 
-      // Fix 1: project type 查询
-      if (sql.includes('SELECT type FROM projects')) {
-        return { rows: [{ type: projectType }] };
+      // Fix 1: project type 查询（新 OKR 表：okr_initiatives/okr_projects）
+      if (sql.includes('okr_initiatives') || sql.includes('okr_projects')) {
+        if (projectType === 'initiative') {
+          return { rows: [{ type: 'initiative' }] };
+        }
+        return { rows: [{ type: 'project' }] };
       }
 
       // COUNT 查询
@@ -119,8 +122,8 @@ describe('code-review-trigger', () => {
 
       expect(result).toBeNull();
 
-      // 验证查了 project type
-      const typeCall = pool.calls.find(c => c.sql.includes('SELECT type FROM projects'));
+      // 验证查了 project type（新 OKR 表）
+      const typeCall = pool.calls.find(c => c.sql.includes('okr_initiatives') || c.sql.includes('okr_projects'));
       expect(typeCall).toBeDefined();
       expect(typeCall.params).toContain('init-001');
 

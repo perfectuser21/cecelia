@@ -84,11 +84,11 @@ describe('lookupDeptPrimaryGoal', () => {
     expect(result).toBe('goal-uuid-123');
   });
 
-  it('D6: 查询参数包含部门名称', async () => {
+  it('D6: 查询参数包含部门名称（新 OKR 表）', async () => {
     const pool = makePool([{ rows: [] }]);
     await lookupDeptPrimaryGoal(pool, 'zenithjoy');
     const [sql, params] = pool.query.mock.calls[0];
-    expect(sql).toContain('goals');
+    expect(sql).toContain('key_results');
     expect(sql).toContain("metadata->>'dept'");
     expect(params).toEqual(['zenithjoy']);
   });

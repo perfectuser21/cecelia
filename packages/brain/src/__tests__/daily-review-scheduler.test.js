@@ -198,12 +198,12 @@ describe('getActiveRepoPaths', () => {
     expect(paths).toEqual([]);
   });
 
-  it('SQL 查询过滤 NULL 和空字符串的 repo_path', async () => {
+  it('SQL 查询过滤 NULL 和空字符串的 repo_path（新 OKR 表 metadata）', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     await getActiveRepoPaths(pool);
     const sql = pool.query.mock.calls[0][0];
-    expect(sql).toContain('repo_path IS NOT NULL');
-    expect(sql).toContain("repo_path != ''");
+    expect(sql).toContain("repo_path' IS NOT NULL");
+    expect(sql).toContain("repo_path' != ''");
   });
 
   it('数据库查询失败时抛出错误', async () => {

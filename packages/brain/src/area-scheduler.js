@@ -58,15 +58,17 @@ async function getAreaConfig() {
  * @returns {Promise<Object>} { cecelia: {running, queued}, ... }
  */
 async function getAreaTaskCounts() {
+  // 新 OKR 表：key_results 通过 area_id 关联 areas 表，areas.name LOWER() 对应旧 domain 值
   const result = await pool.query(`
     SELECT
-      COALESCE(g.domain, '${DEFAULT_LINE}') as area,
+      COALESCE(LOWER(a.name), '${DEFAULT_LINE}') as area,
       count(*) FILTER (WHERE t.status = 'in_progress') as running,
       count(*) FILTER (WHERE t.status = 'queued') as queued
     FROM tasks t
-    LEFT JOIN goals g ON t.goal_id = g.id
+    LEFT JOIN key_results g ON t.goal_id = g.id
+    LEFT JOIN areas a ON a.id = g.area_id
     WHERE t.status IN ('in_progress', 'queued')
-    GROUP BY COALESCE(g.domain, '${DEFAULT_LINE}')
+    GROUP BY COALESCE(LOWER(a.name), '${DEFAULT_LINE}')
   `);
 
   const counts = {};
@@ -160,8 +162,12 @@ export async function selectAreaForDispatch(availableSlots = 1) {
  * @returns {Promise<string[]>}
  */
 async function getGoalIdsForArea(area) {
+  // 新 OKR 表：通过 areas.name LOWER() 匹配旧 domain 值，key_results UUID 与旧 goals 相同
   const result = await pool.query(
-    `SELECT id FROM goals WHERE domain = $1 AND status IN ('ready', 'in_progress', 'decomposing')`,
+    `SELECT kr.id FROM key_results kr
+     JOIN areas a ON a.id = kr.area_id
+     WHERE LOWER(a.name) = $1
+       AND kr.status IN ('active', 'in_progress')`,
     [area]
   );
   return result.rows.map(r => r.id);

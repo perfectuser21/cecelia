@@ -60,6 +60,7 @@ jobs:
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    continue-on-error: true
     steps:
       - name: Call Brain deploy webhook
         env:

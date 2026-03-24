@@ -484,9 +484,14 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：goals → objectives UNION key_results
       const goalResults = await pool.query(
-        `SELECT id, title, description, type, status, created_at
-         FROM goals
+        `SELECT id, title, description, 'area_okr' AS type, status, created_at
+         FROM objectives
+         WHERE status NOT IN ('completed', 'cancelled')
+         UNION ALL
+         SELECT id, title, description, 'area_kr' AS type, status, created_at
+         FROM key_results
          WHERE status NOT IN ('completed', 'cancelled')
          ORDER BY created_at DESC
          LIMIT 30`
@@ -524,10 +529,13 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：projects → okr_projects UNION okr_initiatives（name → title）
       const projectResults = await pool.query(
-        `SELECT id, name, description, type, created_at
-         FROM projects
-         WHERE type IN ('project', 'initiative')
+        `SELECT id, title AS name, description, 'project' AS type, created_at
+         FROM okr_projects
+         UNION ALL
+         SELECT id, title AS name, description, 'initiative' AS type, created_at
+         FROM okr_initiatives
          ORDER BY created_at DESC
          LIMIT 30`
       );
@@ -579,14 +587,16 @@ async function _enrichStructuredCandidates(pool, candidates) {
   const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
 
   try {
-    // task_count for goals (via projects.kr_id)
+    // task_count for goals via okr_projects.kr_id
     if (goalIds.length > 0) {
       const res = await pool.query(
-        `SELECT p.kr_id as goal_id, COUNT(t.id)::int as task_count
+        `SELECT op.kr_id as goal_id, COUNT(t.id)::int as task_count
          FROM tasks t
-         JOIN projects p ON t.project_id = p.id
-         WHERE p.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
-         GROUP BY p.kr_id`,
+         JOIN okr_initiatives oi ON oi.id = t.project_id
+         JOIN okr_scopes os ON oi.scope_id = os.id
+         JOIN okr_projects op ON op.id = os.project_id
+         WHERE op.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY op.kr_id`,
         [goalIds]
       );
       const countMap = Object.fromEntries(res.rows.map(r => [r.goal_id, r.task_count]));
@@ -614,14 +624,15 @@ async function _enrichStructuredCandidates(pool, candidates) {
       }
     }
 
-    // parent_kr_title for initiatives
+    // parent_kr_title for initiatives（通过 okr_scopes → okr_projects.kr_id → key_results）
     if (initiativeIds.length > 0) {
       const res = await pool.query(
-        `SELECT pi.id as initiative_id, g.title as kr_title
-         FROM goals g
-         JOIN projects p ON p.kr_id = g.id
-         JOIN projects pi ON pi.parent_id = p.id
-         WHERE pi.id = ANY($1)`,
+        `SELECT oi.id as initiative_id, kr.title as kr_title
+         FROM key_results kr
+         JOIN okr_projects op ON op.kr_id = kr.id
+         JOIN okr_scopes os ON os.project_id = op.id
+         JOIN okr_initiatives oi ON oi.scope_id = os.id
+         WHERE oi.id = ANY($1)`,
         [initiativeIds]
       );
       const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
@@ -835,7 +846,8 @@ async function loadRecentEvents(pool, _query, mode) {
 }
 
 /**
- * 对话历史检索：从 cecelia_events 查最近的 orchestrator_chat 事件
+ * 对话历史检索：主路径从 memory_stream 查 conversation_turn（带 embedding 语义），
+ * 空时 fallback 到 cecelia_events（向后兼容）
  * @param {Object} pool - pg pool
  * @param {number} [limit=15] - 最多返回条数
  * @returns {Promise<{entries: Array, meta: Object}>}
@@ -843,6 +855,36 @@ async function loadRecentEvents(pool, _query, mode) {
 async function loadConversationHistory(pool, limit = 15) {
   const meta = { requestedLimit: limit, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
 
+  // 主路径：从 memory_stream 查 source_type='conversation_turn'（带 embedding 可语义检索）
+  try {
+    const msResult = await pool.query(`
+      SELECT id, content, salience_score, created_at
+      FROM memory_stream
+      WHERE source_type = 'conversation_turn' AND status = 'active'
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    if (msResult.rows.length > 0) {
+      const entries = msResult.rows.map(r => ({
+        id: r.id,
+        source: 'conversation',
+        title: `[对话] ${(r.content || '').slice(0, 60)}`,
+        description: (r.content || '').slice(0, 200),
+        text: r.content || '',
+        relevance: r.salience_score || 0.5,
+        created_at: r.created_at,
+      }));
+      meta.fetchedCount = entries.length;
+      meta.fetchStatus = 'ok';
+      meta.candidateCount = entries.length;
+      return { entries, meta };
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] memory_stream conversation load failed, falling back:', err.message);
+  }
+
+  // Fallback：cecelia_events（向后兼容，无 embedding）
   try {
     const result = await pool.query(`
       SELECT id, payload, created_at
@@ -907,10 +949,11 @@ async function loadActiveProfile(pool, mode) {
   }
 
   try {
+    // 迁移：goals → objectives（area_okr type）
     const goals = await pool.query(`
-      SELECT title, status, progress FROM goals
-      WHERE status IN ('in_progress', 'pending')
-      ORDER BY priority ASC, progress DESC
+      SELECT title, status, 0 AS progress FROM objectives
+      WHERE status IN ('in_progress', 'pending', 'active')
+      ORDER BY priority ASC, updated_at DESC
       LIMIT 3
     `);
 
