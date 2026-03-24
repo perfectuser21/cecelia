@@ -19,6 +19,8 @@ version: "3.96.0"
 updated: "2026-03-24"
 # ci-trigger: 13.37.0
 changelog:
+  - version: 13.39.1
+    summary: "fix(engine): playwright-runner.sh 添加 execution-callback 回传 (crystallize 执行闭环断线修复)"
 
   - version: "13.41.0"
     date: "2026-03-24"
