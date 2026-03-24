@@ -34,10 +34,16 @@ afterEach(async () => {
   }
   if (testProjectIds.length > 0) {
     await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
+    // 显式清理新 OKR 表（不依赖触发器级联，触发器用 EXCEPTION WHEN OTHERS 静默失败）
+    await pool.query('DELETE FROM okr_initiatives WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
+    await pool.query('DELETE FROM okr_scopes WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
+    await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     testProjectIds = [];
   }
   if (testKRIds.length > 0) {
+    // 显式清理新 OKR 表（不依赖触发器级联）
+    await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]).catch(() => {});
     await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testKRIds]).catch(() => {});
     testKRIds = [];
   }
@@ -47,7 +53,7 @@ afterEach(async () => {
 async function createKR({ title = 'Test KR', priority = 'P1', domain = null } = {}) {
   const result = await pool.query(
     `INSERT INTO goals (title, type, priority, status, progress, domain)
-     VALUES ($1, 'area_okr', $2, 'in_progress', 0, $3) RETURNING *`,
+     VALUES ($1, 'area_kr', $2, 'in_progress', 0, $3) RETURNING *`,
     [title, priority, domain]
   );
   const kr = result.rows[0];
