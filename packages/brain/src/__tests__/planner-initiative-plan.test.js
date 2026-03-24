@@ -17,6 +17,9 @@ let testKRIds = [];
 let testProjectIds = [];
 let testTaskIds = [];
 let testLinks = [];
+let testOkrProjectIds = [];
+let testOkrScopeIds = [];
+let testOkrInitiativeIds = [];
 
 beforeAll(async () => {
   await pool.query('SELECT 1');
@@ -42,6 +45,20 @@ afterEach(async () => {
     await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
     await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     testProjectIds = [];
+  }
+  // Cleanup OKR new-table test data (cascade order: initiatives → scopes → okr_projects)
+  if (testOkrInitiativeIds.length > 0) {
+    await pool.query('DELETE FROM tasks WHERE okr_initiative_id = ANY($1)', [testOkrInitiativeIds]).catch(() => {});
+    await pool.query('DELETE FROM okr_initiatives WHERE id = ANY($1)', [testOkrInitiativeIds]).catch(() => {});
+    testOkrInitiativeIds = [];
+  }
+  if (testOkrScopeIds.length > 0) {
+    await pool.query('DELETE FROM okr_scopes WHERE id = ANY($1)', [testOkrScopeIds]).catch(() => {});
+    testOkrScopeIds = [];
+  }
+  if (testOkrProjectIds.length > 0) {
+    await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testOkrProjectIds]).catch(() => {});
+    testOkrProjectIds = [];
   }
   if (testKRIds.length > 0) {
     await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testKRIds]).catch(() => {});
@@ -295,26 +312,33 @@ describe('selectTargetProject - initiative priority', () => {
 
 describe('generateArchitectureDesignTask - auto task generation', () => {
   it('should generate architecture_design task for project with active initiative and no tasks', async () => {
-    // Create a KR
+    // Create a KR (in goals table for goal_id FK on tasks)
     const krResult = await pool.query(
       "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for initiative plan', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
 
-    // Create a project (parent)
-    const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('parent-project-for-init', '/tmp/parent', 'active') RETURNING *"
+    // Create an okr_project (new table) — kr_id is nullable, leave null for test isolation
+    const okrProjResult = await pool.query(
+      "INSERT INTO okr_projects (title, status) VALUES ('parent-okr-project-for-init', 'active') RETURNING *"
     );
-    const project = projResult.rows[0];
-    testProjectIds.push(project.id);
+    const project = okrProjResult.rows[0];
+    testOkrProjectIds.push(project.id);
 
-    // Create an initiative under the project (no tasks)
-    const initResult = await pool.query(
-      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Initiative To Plan', 'initiative', $1, 'active') RETURNING *",
+    // Create an okr_scope under the okr_project
+    const scopeResult = await pool.query(
+      "INSERT INTO okr_scopes (title, status, project_id) VALUES ('Scope For Init', 'active', $1) RETURNING *",
       [project.id]
     );
-    testProjectIds.push(initResult.rows[0].id);
+    testOkrScopeIds.push(scopeResult.rows[0].id);
+
+    // Create an okr_initiative under the scope (no tasks)
+    const initResult = await pool.query(
+      "INSERT INTO okr_initiatives (title, status, scope_id) VALUES ('Initiative To Plan', 'active', $1) RETURNING *",
+      [scopeResult.rows[0].id]
+    );
+    testOkrInitiativeIds.push(initResult.rows[0].id);
 
     const task = await generateArchitectureDesignTask(kr, project);
 
@@ -322,7 +346,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     expect(task.task_type).toBe('architecture_design');
     expect(task.status).toBe('queued');
     expect(task.priority).toBe(kr.priority);
-    expect(task.project_id).toBe(initResult.rows[0].id); // task belongs to initiative
+    expect(task.okr_initiative_id).toBe(initResult.rows[0].id); // task linked to initiative
     expect(task.goal_id).toBe(kr.id);
     expect(task.title).toContain('Initiative To Plan');
     expect(task.payload).toBeDefined();
@@ -337,7 +361,7 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     expect(payload.initiative_id).toBe(initResult.rows[0].id);
     expect(payload.mode).toBe('design'); // planner → architecture_design 必须携带 mode=design
 
-    // Track for cleanup
+    // Track for cleanup (task cleanup handled by testOkrInitiativeIds afterEach)
     testTaskIds.push(task.id);
   });
 
@@ -349,12 +373,12 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
 
-    // Create a project with NO initiatives
-    const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('project-no-init', '/tmp/no-init', 'active') RETURNING *"
+    // Create an okr_project with NO initiatives
+    const okrProjResult = await pool.query(
+      "INSERT INTO okr_projects (title, status) VALUES ('okr-project-no-init', 'active') RETURNING *"
     );
-    const project = projResult.rows[0];
-    testProjectIds.push(project.id);
+    const project = okrProjResult.rows[0];
+    testOkrProjectIds.push(project.id);
 
     const task = await generateArchitectureDesignTask(kr, project);
 
@@ -369,19 +393,24 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
 
-    // Create a project
-    const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-for-dedup', '/tmp/dedup', 'active') RETURNING *"
+    // Create okr_project → scope → initiative
+    const okrProjResult = await pool.query(
+      "INSERT INTO okr_projects (title, status) VALUES ('okr-proj-for-dedup', 'active') RETURNING *"
     );
-    const project = projResult.rows[0];
-    testProjectIds.push(project.id);
+    const project = okrProjResult.rows[0];
+    testOkrProjectIds.push(project.id);
 
-    // Create an initiative
-    const initResult = await pool.query(
-      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Dedup Initiative', 'initiative', $1, 'active') RETURNING *",
+    const scopeResult = await pool.query(
+      "INSERT INTO okr_scopes (title, status, project_id) VALUES ('Scope Dedup', 'active', $1) RETURNING *",
       [project.id]
     );
-    testProjectIds.push(initResult.rows[0].id);
+    testOkrScopeIds.push(scopeResult.rows[0].id);
+
+    const initResult = await pool.query(
+      "INSERT INTO okr_initiatives (title, status, scope_id) VALUES ('Dedup Initiative', 'active', $1) RETURNING *",
+      [scopeResult.rows[0].id]
+    );
+    testOkrInitiativeIds.push(initResult.rows[0].id);
 
     // First call - should create task
     const task1 = await generateArchitectureDesignTask(kr, project);
@@ -401,19 +430,24 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
 
-    // Create a project
-    const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-priority-test', '/tmp/priority', 'active') RETURNING *"
+    // Create okr_project → scope → initiative
+    const okrProjResult = await pool.query(
+      "INSERT INTO okr_projects (title, status) VALUES ('okr-proj-priority-test', 'active') RETURNING *"
     );
-    const project = projResult.rows[0];
-    testProjectIds.push(project.id);
+    const project = okrProjResult.rows[0];
+    testOkrProjectIds.push(project.id);
 
-    // Create an initiative
-    const initResult = await pool.query(
-      "INSERT INTO projects (name, type, parent_id, status) VALUES ('P0 Initiative', 'initiative', $1, 'active') RETURNING *",
+    const scopeResult = await pool.query(
+      "INSERT INTO okr_scopes (title, status, project_id) VALUES ('Scope Priority', 'active', $1) RETURNING *",
       [project.id]
     );
-    testProjectIds.push(initResult.rows[0].id);
+    testOkrScopeIds.push(scopeResult.rows[0].id);
+
+    const initResult = await pool.query(
+      "INSERT INTO okr_initiatives (title, status, scope_id) VALUES ('P0 Initiative', 'active', $1) RETURNING *",
+      [scopeResult.rows[0].id]
+    );
+    testOkrInitiativeIds.push(initResult.rows[0].id);
 
     const task = await generateArchitectureDesignTask(kr, project);
 
