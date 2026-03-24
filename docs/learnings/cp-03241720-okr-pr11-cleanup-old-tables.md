@@ -16,7 +16,9 @@ task: OKR PR11 — 清理旧表残留收尾
 
 ### 根本原因
 
-Migration 181/182 在旧 `projects` 表上设置了 `AFTER INSERT/UPDATE trigger`（`sync_project_to_okr_tables`），该 trigger 只在 `NEW.type = 'project'` 时才向 `okr_projects` 同步数据。测试用例之前没有设置 `type='project'`，导致 trigger 不执行，okr_projects 中没有数据，planner 新代码抛出 'Project not found'。
+Migration 181/182 在旧 `projects` 表上设置了 `AFTER INSERT/UPDATE trigger`（`sync_project_to_okr_tables`），该 trigger 只在 `NEW.type = 'project'` 时才向 `okr_projects` 同步数据。
+测试用例之前没有设置 `type='project'`，导致 trigger 不执行，okr_projects 中没有数据，planner 新代码查 okr_projects/okr_scopes/okr_initiatives UNION ALL 找不到记录，抛出 'Project not found'。
+此外，`project-compare.js` 的 UNION ALL 查询中，`okr_scopes` 和 `okr_initiatives` 没有 `kr_id` 字段，直接引用会导致 SQL 运行时错误，需要显式补写 `NULL::uuid AS kr_id`。
 
 ### 下次预防
 
