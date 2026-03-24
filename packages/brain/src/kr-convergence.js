@@ -73,8 +73,12 @@ export async function computeKrConvergence(pool) {
   }
 
   // 4. 归一化基准值（避免除零）
-  const maxProjectCount = Math.max(1, ...Object.values(projectCountMap));
-  const maxTaskCount = Math.max(1, ...Object.values(taskCountMap));
+  const maxProjectCount = Object.values(projectCountMap).length > 0
+    ? Math.max(...Object.values(projectCountMap))
+    : 1;
+  const maxTaskCount = Object.values(taskCountMap).length > 0
+    ? Math.max(...Object.values(taskCountMap))
+    : 1;
 
   // 5. 计算每个 KR 的综合分数
   const scored = krs.map(kr => {
