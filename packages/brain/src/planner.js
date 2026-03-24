@@ -1188,16 +1188,15 @@ async function handlePlanInput(input, dryRun = false) {
       throw new Error('Hard constraint: Task must have project_id');
     }
     if (!dryRun) {
-      // 先查旧 projects 表（保留 repo_path 约束检查），再查新表兜底
-      const projCheck = await pool.query('SELECT id, repo_path FROM projects WHERE id = $1', [input.task.project_id]);
-      if (projCheck.rows.length === 0) {
-        // 旧表不存在时回退到新表查（新建的 project 直接写新表的场景）
-        const newProjCheck = await pool.query(
-          'SELECT id FROM okr_projects WHERE id = $1 UNION ALL SELECT id FROM okr_scopes WHERE id = $1 UNION ALL SELECT id FROM okr_initiatives WHERE id = $1',
-          [input.task.project_id]
-        );
-        if (newProjCheck.rows.length === 0) throw new Error('Project not found');
-      } else if (!projCheck.rows[0].repo_path) {
+      // 查新表（okr_projects/okr_scopes/okr_initiatives），repo_path 存于 metadata JSONB
+      const projCheck = await pool.query(
+        `SELECT id, metadata->>'repo_path' AS repo_path FROM okr_projects WHERE id = $1
+         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_scopes WHERE id = $1
+         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_initiatives WHERE id = $1`,
+        [input.task.project_id]
+      );
+      if (projCheck.rows.length === 0) throw new Error('Project not found');
+      if (!projCheck.rows[0].repo_path) {
         throw new Error('Hard constraint: Task\'s project must have repo_path');
       }
 
