@@ -22,12 +22,11 @@
 export async function updateKrProgress(pool, krId) {
   if (!krId) return { krId: null, progress: 0, completed: 0, total: 0 };
 
-  // 查 KR 关联的所有 projects（迁移：projects → okr_projects）
+  // 查 KR 关联的所有 projects（通过 okr_projects.kr_id）
   const projectsResult = await pool.query(`
     SELECT op.id
     FROM okr_projects op
-    JOIN project_kr_links pkl ON pkl.project_id = op.id
-    WHERE pkl.kr_id = $1
+    WHERE op.kr_id = $1
   `, [krId]);
 
   if (projectsResult.rows.length === 0) {

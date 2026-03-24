@@ -21,10 +21,10 @@ describe('Planner Agent', () => {
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 
-    // Ensure project_kr_links table exists
+    // Ensure okr_projects table exists（project_kr_links 已在 migration 185 DROP）
     const tableCheck = await pool.query(`
       SELECT EXISTS (
-        SELECT FROM information_schema.tables WHERE table_name = 'project_kr_links'
+        SELECT FROM information_schema.tables WHERE table_name = 'okr_projects'
       )
     `);
     expect(tableCheck.rows[0].exists).toBe(true);
@@ -407,28 +407,17 @@ describe('Planner Agent', () => {
     it('returns needs_planning when no KRs have queued tasks', async () => {
       const { planNextTask } = await import('../planner.js');
 
-      const objResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('All Empty Obj', 'mission', 'P0', 'in_progress', 0) RETURNING id"
-      );
-      testObjectiveIds.push(objResult.rows[0].id);
-
-      // type='area_kr' → 同步到 key_results（旧 'area_okr' 同步到 objectives，planner 不查 objectives）
+      // 使用新 OKR 表（okr_projects.kr_id 直接关联 key_results）
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Empty KR', 'area_kr', 'P0', 'pending', 0, $1) RETURNING id",
-        [objResult.rows[0].id]
+        "INSERT INTO key_results (title, status) VALUES ('Solo Empty KR', 'pending') RETURNING id"
       );
       testKRIds.push(krResult.rows[0].id);
 
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('empty-plan-test', '/tmp/empty-plan', 'active') RETURNING id"
+        "INSERT INTO okr_projects (title, status, kr_id) VALUES ('empty-plan-test', 'active', $1) RETURNING id",
+        [krResult.rows[0].id]
       );
       testProjectIds.push(projResult.rows[0].id);
-
-      await pool.query(
-        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [projResult.rows[0].id, krResult.rows[0].id]
-      );
-      testLinks.push({ project_id: projResult.rows[0].id, kr_id: krResult.rows[0].id });
 
       const result = await planNextTask([krResult.rows[0].id]);
 

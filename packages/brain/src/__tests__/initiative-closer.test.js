@@ -107,8 +107,8 @@ function makeMockPool(opts = {}) {
         return { rows: [] };
       }
 
-      // KR 进度查询：SELECT DISTINCT pkl.kr_id
-      if (s.includes('DISTINCT') && s.includes('kr_id') && s.includes('project_kr_links')) {
+      // KR 进度查询：SELECT DISTINCT op.kr_id（通过 okr_projects.kr_id）
+      if (s.includes('DISTINCT') && s.includes('op.kr_id') && s.includes('okr_projects')) {
         return { rows: krRows };
       }
 
@@ -755,7 +755,7 @@ describe('activateNextInitiatives', () => {
     expect(activated).toBe(2);
   });
 
-  it('SQL 查询按 P0/P1/P2 优先级排序', async () => {
+  it('SQL 查询按创建时间排序（已移除旧 priority 排序）', async () => {
     const pending = [{ id: 'init-sort', name: 'Sort Test' }];
     const pool = makeMockPool({ activeCount: 0, pendingToActivate: pending });
 
@@ -766,8 +766,6 @@ describe('activateNextInitiatives', () => {
       s => s.includes('UPDATE okr_initiatives') && s.includes("status = 'active'")
     );
     expect(updateCall).toBeDefined();
-    expect(updateCall).toContain("WHEN 'P0' THEN 0");
-    expect(updateCall).toContain("WHEN 'P1' THEN 1");
     expect(updateCall).toContain('created_at ASC');
   });
 });
