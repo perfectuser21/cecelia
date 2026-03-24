@@ -1,38 +1,22 @@
-# Learning: OKR PR12 — 清除旧表最终依赖 + DROP goals/projects
+# Learning: OKR PR12 — DROP goals/projects 旧表收尾
 
-**分支**: cp-03241817-okr-pr12-drop-goals-projects
-**日期**: 2026-03-24
-**任务类型**: OKR 旧表清理
+## 根本原因
 
-## 变更摘要
+1. **Migration 编号冲突**：PR12 最初使用 `185_drop_goals_projects.sql`，但在 PR 开发期间另一个 PR 已将 `185_drop_tasks_project_id_fkey.sql` 合并进 main，导致 L2 Consistency Gate 失败（migration 编号重复）。
+   - 解决：将本 PR migration 重编为 `186_drop_goals_projects.sql`，并同步更新 `selfcheck.js`、`DEFINITION.md` 及所有版本断言测试。
 
-清除 `goals`、`projects`、`project_kr_links` 三张旧表在生产代码中的所有引用，并新建 migration 185 执行 DROP。
+2. **测试 Fixture 未同步迁移**：多个测试文件的 `beforeEach`/`afterEach` 仍在 INSERT/DELETE 已 DROP 的旧表（`goals`、`projects`、`project_kr_links`），导致 Brain Integration shards 报 `relation "goals" does not exist` / `relation "projects" does not exist`。
+   - 受影响文件：`planner.test.js`、`planner-initiative-plan.test.js`、`planner-learning-penalty.test.js`、`actions-dedup.test.js`、`tick-dispatch-scope-decomposing.test.js`、`tick-drain.test.js`、`tick-kr-decomp.test.js` 等。
+   - 解决：将所有旧表 fixture 迁移至 `key_results`、`okr_projects`，cleanup 改为对应新表。
 
-涉及 17 个生产文件 + 6 个测试文件，共修改/删除约 35 处旧表引用。
+3. **DoD Task Card 编号未同步**：migration 重编后，DoD 中的验收测试仍在检查 `186_` 前缀（最终修复：将 `.task-cp-*.md` 里所有 `185_` 引用统一改为 `186_`）。
 
-### 根本原因
+4. **救援 session worktree 目录被删**：pipeline patrol 触发的 rescue session 使用了一个独立 worktree（`cd9e67fb-...`），该目录在上下文中断后被删除，导致后续 Bash 工具因 CWD 不存在而全部失败。
+   - 解决：使用 `EnterWorktree` 创建新的 rescue-session worktree，恢复 Bash 工具可用性。
 
-**旧表（goals/projects）UUID 与新表（key_results/okr_projects）UUID 相同**，因此替换策略大多是直接替换表名，无需数据迁移。
+## 下次预防
 
-`project_kr_links` 是旧桥接表，新表 `okr_projects` 直接含 `kr_id` 字段，替换规则统一：
-- `FROM project_kr_links WHERE kr_id = $1` → `FROM okr_projects WHERE kr_id = $1`（SELECT id AS project_id）
-- `FROM project_kr_links WHERE project_id = $1` → `FROM okr_projects WHERE id = $1`（SELECT kr_id）
-- `JOIN project_kr_links pkl ON pkl.project_id = op.id` → 直接用 `op.kr_id`（okr_projects 已含）
-
-### 关键发现
-
-1. **analytics.js 的 goals.domain 字段**：`goals` 有 `domain` 字段，`key_results` 没有，需要额外 JOIN `areas` 表（`key_results → areas → domain`）
-2. **initiative-closer.js 的 objectives.priority 排序**：旧代码 `LEFT JOIN objectives obj ON obj.id = pkl.kr_id` 是错误逻辑（kr_id 指向 key_results，非 objectives），已改为直接按 `oi.created_at ASC` 排序
-3. **executor.js 的 prompt 字符串**：有两处 `project_kr_links` 在 Agent 提示词模板字符串中（非 SQL），需要同步更新
-
-### 下次预防
-
-- [ ] 替换旧表引用时，先全量扫描 `project_kr_links` 在注释和字符串中的出现，避免遗漏非 SQL 引用
-- [ ] `goals.domain` 这类只在旧表存在的字段，替换前先确认新表是否有等价字段（或通过 JOIN 获取）
-- [ ] 集成测试（planner.test.js 等）中 `beforeAll` 检查的表名，需要在 migration DROP 后同步更新
-
-## 测试结果
-
-- 改动文件相关测试：8 个文件，192 个测试全部通过
-- planner 集成测试：19 个测试通过（已更新为使用 okr_projects 新表）
-- JS 语法检查：15 个文件全部通过
+- [ ] 当 PR 里新增 migration 时，**合并前必须先确认 main 的最新 migration 编号**（`git log origin/main --oneline -- packages/brain/migrations/ | head -1`），防止编号冲突。
+- [ ] DROP 旧表的 migration 落地后，**必须全局搜索测试文件中的旧表引用**：`grep -rn "INTO goals\|INTO projects\|INTO project_kr_links\|FROM goals\|FROM projects" packages/brain/src/__tests__/`，确保所有 fixture 已迁移。
+- [ ] DoD Task Card 中的 migration 编号验收命令（`startsWith('186_')`）要与 migration 文件名**同步更新**，可在 rename migration 时一起改。
+- [ ] Pipeline patrol rescue 任务需要一个稳定的 worktree，避免在长时间跨对话任务中 CWD 失效；必要时在对话开始时立即 `EnterWorktree`。
