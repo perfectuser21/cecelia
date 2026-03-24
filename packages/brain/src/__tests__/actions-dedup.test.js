@@ -44,7 +44,7 @@ describe('createTask() Dedup', () => {
   });
 
   it('should dedup when queued task with same title+goal+project exists', async () => {
-    // Setup: create goal + project
+    // Setup: create KR + project (goals/projects tables dropped in migration 185)
     const goalResult = await pool.query(
       "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup test goal', 'P0', 'pending', 0) RETURNING id"
     );
