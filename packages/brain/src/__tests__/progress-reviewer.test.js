@@ -52,7 +52,7 @@ describe('reviewProjectCompletion', () => {
         };
       }
       // Initiative 统计
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives')) {
         return { rows: [{ total: '3', completed: '3' }] };
       }
       // Task 统计
@@ -85,7 +85,7 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives')) {
         return { rows: [{ total: '2', completed: '2' }] };
       }
       if (sql.includes('FROM tasks t')) {
@@ -116,7 +116,7 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives')) {
         return { rows: [{ total: '2', completed: '2' }] };
       }
       if (sql.includes('FROM tasks t')) {
@@ -150,7 +150,7 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives')) {
         return { rows: [{ total: '1', completed: '1' }] };
       }
       if (sql.includes('FROM tasks t')) {
@@ -196,7 +196,7 @@ describe('shouldAdjustPlan', () => {
           }],
         };
       }
-      if (sql.includes('FROM projects WHERE parent_id')) {
+      if (sql.includes('FROM okr_initiatives')) {
         return { rows: [{ total: '2', completed: '2' }] };
       }
       if (sql.includes('FROM tasks t')) {
