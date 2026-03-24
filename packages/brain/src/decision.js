@@ -111,14 +111,14 @@ export async function compareGoalProgress(goalId = null) {
   // Get goals
   // 新 OKR 表：UNION ALL key_results + objectives（UUID 与旧 goals 相同，tasks.goal_id 可直接 JOIN）
   let goalsQuery = `
-    SELECT g.id, g.title, g.status, g.progress, g.created_at,
+    SELECT g.id, g.title, g.status, g.progress, g.created_at, g.priority,
            COUNT(t.id) as total_tasks,
            COUNT(CASE WHEN t.status = 'completed' THEN 1 END) as completed_tasks,
            COUNT(CASE WHEN t.status = 'in_progress' THEN 1 END) as in_progress_tasks
     FROM (
-      SELECT id, title, status, progress, created_at FROM key_results WHERE status != 'completed'
+      SELECT id, title, status, progress, created_at, priority FROM key_results WHERE status != 'completed'
       UNION ALL
-      SELECT id, title, status, 0 AS progress, created_at FROM objectives WHERE status != 'completed'
+      SELECT id, title, status, 0 AS progress, created_at, priority FROM objectives WHERE status != 'completed'
     ) g
     LEFT JOIN tasks t ON t.goal_id = g.id
     WHERE g.status != 'completed'

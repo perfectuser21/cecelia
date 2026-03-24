@@ -101,14 +101,22 @@ async function createTask({ title, description, priority, project_id, goal_id, t
   }
 
   // Dedup: skip if queued/in_progress, or completed within 24 h
+  // For system-generated tasks (rumination/cortex/auto_fix), also skip failed within 72 h
+  // to prevent self-reinforcing loops where a failed task triggers its own re-creation
+  const SYSTEM_TRIGGER_SOURCES = ['rumination', 'cortex', 'auto_fix'];
+  const isSystemTrigger = SYSTEM_TRIGGER_SOURCES.includes(trigger_source);
   const dedupResult = await pool.query(`
     SELECT * FROM tasks
     WHERE title = $1
       AND (goal_id IS NOT DISTINCT FROM $2)
       AND (project_id IS NOT DISTINCT FROM $3)
-      AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
+      AND (
+        status IN ('queued', 'in_progress')
+        OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours')
+        OR ($4 AND status = 'failed' AND updated_at > NOW() - INTERVAL '72 hours')
+      )
     LIMIT 1
-  `, [title, goal_id || null, project_id || null]);
+  `, [title, goal_id || null, project_id || null, isSystemTrigger]);
 
   if (dedupResult.rows.length > 0) {
     const existing = dedupResult.rows[0];
