@@ -439,7 +439,11 @@ queued → in_progress → completed
 | knowledge | US | 知识记录 (/knowledge) | Sonnet / - | 默认 anthropic |
 | codex_qa | 西安 | Codex 免疫检查 | Codex | 固定 openai |
 | codex_dev | 西安 | Codex /dev（runner.sh + devloop-check.sh） | Codex | 固定 openai |
-| codex_playwright | 西安 | Playwright 自动化（playwright-runner.sh + CDP → PC） | Codex | 固定 openai |
+| crystallize | 西安 | 能力蒸馏流水线编排入口（Scope→Forge→Verify→Register） | Codex | 固定 openai |
+| crystallize_scope | 西安 | crystallize 子任务：定义 DoD + 验收标准 | Codex | 固定 openai |
+| crystallize_forge | 西安 | crystallize 子任务：Codex 探索写脚本（playwright-runner.sh + CDP → PC） | Codex | 固定 openai |
+| crystallize_verify | 西安 | crystallize 子任务：无 LLM 验证脚本（3次） | Codex | 固定 openai |
+| crystallize_register | 西安 | crystallize 子任务：注册到 SKILL.md + 部署 | Codex | 固定 openai |
 | codex_test_gen | 西安 | 自动生成测试（扫描覆盖率低模块 + 生成测试） | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |

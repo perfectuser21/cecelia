@@ -37,7 +37,7 @@ let _selfAwarenessCache = { context: '', refreshedAt: 0 };
 const SKILLS_SUMMARY = `## Cecelia 能力地图
 **任务路由（task_type → 执行位置）**
 - dev / review / qa / audit / code_review → 美国 Mac mini（Claude Code）
-- codex_dev / codex_qa / codex_playwright → 西安 M4（Codex）
+- codex_dev / codex_qa / crystallize → 西安 M4（Codex）
 - explore / talk / research / data → 香港（MiniMax + N8N）
 
 **核心 Skills（63个）**
