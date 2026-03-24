@@ -171,14 +171,18 @@ async function getGlobalState() {
   const [objectives, keyResults, projects, activeTasks, recentCompleted, focusResult, initiativeKRResult] = await Promise.all([
     pool.query(`
       SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
-             'vision' AS type, NULL::uuid AS parent_id, NULL AS priority
-      FROM visions
-      WHERE status NOT IN ('completed', 'cancelled')
-      UNION ALL
-      SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
-             'area_okr' AS type, vision_id AS parent_id, priority
-      FROM objectives
-      WHERE status NOT IN ('completed', 'cancelled')
+             type, parent_id, priority
+      FROM (
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'vision' AS type, NULL::uuid AS parent_id, NULL AS priority
+        FROM visions
+        WHERE status NOT IN ('completed', 'cancelled')
+        UNION ALL
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'area_okr' AS type, vision_id AS parent_id, priority
+        FROM objectives
+        WHERE status NOT IN ('completed', 'cancelled')
+      ) sub
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`
@@ -554,7 +558,7 @@ async function generateArchitectureDesignTask(kr, project) {
     // 迁移：projects WHERE parent_id → okr_initiatives JOIN okr_scopes WHERE scope.project_id
     const initiativeResult = await pool.query(`
       SELECT oi.id, oi.title AS name, oi.status, oi.created_at, oi.updated_at,
-             oi.domain, oi.description, os.project_id AS parent_project_id
+             NULL::varchar AS domain, NULL::text AS description, os.project_id AS parent_project_id
       FROM okr_initiatives oi
       INNER JOIN okr_scopes os ON os.id = oi.scope_id AND os.project_id = $1
       WHERE oi.status IN ('active', 'in_progress', 'pending')
@@ -1173,12 +1177,18 @@ async function handlePlanInput(input, dryRun = false) {
       throw new Error('Hard constraint: Task must have project_id');
     }
     if (!dryRun) {
-      // 迁移：projects → okr_projects（okr_projects 无 repo_path 列，跳过该约束）
-      const projCheck = await pool.query(
-        'SELECT id FROM okr_projects WHERE id = $1 UNION ALL SELECT id FROM okr_scopes WHERE id = $1 UNION ALL SELECT id FROM okr_initiatives WHERE id = $1',
-        [input.task.project_id]
-      );
-      if (projCheck.rows.length === 0) throw new Error('Project not found');
+      // 先查旧 projects 表（保留 repo_path 约束检查），再查新表兜底
+      const projCheck = await pool.query('SELECT id, repo_path FROM projects WHERE id = $1', [input.task.project_id]);
+      if (projCheck.rows.length === 0) {
+        // 旧表不存在时回退到新表查（新建的 project 直接写新表的场景）
+        const newProjCheck = await pool.query(
+          'SELECT id FROM okr_projects WHERE id = $1 UNION ALL SELECT id FROM okr_scopes WHERE id = $1 UNION ALL SELECT id FROM okr_initiatives WHERE id = $1',
+          [input.task.project_id]
+        );
+        if (newProjCheck.rows.length === 0) throw new Error('Project not found');
+      } else if (!projCheck.rows[0].repo_path) {
+        throw new Error('Hard constraint: Task\'s project must have repo_path');
+      }
 
       const tResult = await pool.query(`
         INSERT INTO tasks (title, description, priority, project_id, goal_id, status, payload, trigger_source)
