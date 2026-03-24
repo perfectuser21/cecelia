@@ -79,6 +79,7 @@ DISPATCH_RESP=$(curl -s -X PATCH "${BASE_URL}/api/brain/tasks/${TASK_ID}" \
 # 注意：PATCH 响应可能因 emitEvent 报 DATABASE_ERROR，但 DB 已更新
 # 通过 GET 验证实际状态
 DISPATCH_HTTP=$(echo "$DISPATCH_RESP" | jq -r '.code // "ok"' 2>/dev/null || echo "ok")
+echo "  DEBUG: PATCH response = $(echo "$DISPATCH_RESP" | head -c 400)"
 if [ "$DISPATCH_HTTP" = "INVALID_TRANSITION" ]; then
   fail "Invalid status transition queued→in_progress: $(echo "$DISPATCH_RESP" | head -c 200)"
   echo "=== L4 Task Lifecycle E2E FAILED ==="
