@@ -123,16 +123,18 @@ class SimilarityService {
       });
     });
 
-    // Query Initiatives (Sub-Projects, most recent 50)
+    // Query Initiatives (okr_initiatives, most recent 50)
+    // 迁移：projects JOIN goals → okr_initiatives JOIN okr_scopes → okr_projects (kr_id)
     const initiativesResult = await this.db.query(`
       SELECT
-        p.id, p.name as title, p.description, p.status,
-        kr.id as kr_id, kr.title as kr_title
-      FROM projects p
-      LEFT JOIN project_kr_links pkl ON p.id = pkl.project_id
-      LEFT JOIN goals kr ON pkl.kr_id = kr.id AND kr.type IN ('area_okr', 'global_kr', 'area_kr')
-      WHERE p.parent_id IS NOT NULL AND p.status IN ('active', 'in_progress')
-      ORDER BY p.updated_at DESC
+        oi.id, oi.title, oi.description, oi.status,
+        op.kr_id, kr.title AS kr_title
+      FROM okr_initiatives oi
+      INNER JOIN okr_scopes os ON os.id = oi.scope_id
+      INNER JOIN okr_projects op ON op.id = os.project_id
+      LEFT JOIN key_results kr ON kr.id = op.kr_id
+      WHERE oi.status IN ('active', 'in_progress', 'pending')
+      ORDER BY oi.updated_at DESC
       LIMIT 50
     `);
 

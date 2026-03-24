@@ -405,9 +405,17 @@ async function resolveRepoPath(projectId) {
       // project_repos table may not exist yet (pre-migration 029)
     }
 
-    // Fallback to projects.repo_path
+    // Fallback to okr_initiatives/okr_scopes/okr_projects metadata.repo_path（迁移：projects → new tables）
     const result = await pool.query(
-      'SELECT repo_path, parent_id FROM projects WHERE id = $1',
+      `SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
+       FROM okr_initiatives WHERE id = $1
+       UNION ALL
+       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
+       FROM okr_scopes WHERE id = $1
+       UNION ALL
+       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
+       FROM okr_projects WHERE id = $1
+       LIMIT 1`,
       [currentId]
     );
     if (result.rows.length === 0) return null;
@@ -1400,21 +1408,25 @@ async function buildTimeContext(krId) {
   if (!krId) return '';
   try {
     // 1. KR 的 target_date 和 time_budget_days
+    // 迁移：goals → objectives（area_okr type = objectives）
     const krResult = await pool.query(
-      `SELECT title, target_date, time_budget_days FROM goals WHERE id = $1`,
+      `SELECT title, end_date AS target_date, NULL::int AS time_budget_days FROM objectives WHERE id = $1
+       UNION ALL
+       SELECT title, end_date AS target_date, NULL::int AS time_budget_days FROM key_results WHERE id = $1
+       LIMIT 1`,
       [krId]
     );
     const kr = krResult.rows[0];
     if (!kr) return '';
 
     // 2. KR 下所有 Projects（按 sequence_order 排列）
+    // 迁移：projects → okr_projects（name → title）
     const projResult = await pool.query(
-      `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days,
-              p.created_at, p.completed_at
-       FROM projects p
-       JOIN project_kr_links pkl ON pkl.project_id = p.id
-       WHERE pkl.kr_id = $1 AND p.type = 'project'
-       ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC`,
+      `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
+              NULL::int AS time_budget_days, op.created_at, op.completed_at
+       FROM okr_projects op
+       WHERE op.kr_id = $1
+       ORDER BY op.created_at ASC`,
       [krId]
     );
     const projects = projResult.rows;
@@ -1678,14 +1690,7 @@ POST /api/brain/projects
 }
 \`\`\`
 
-最后通过 project_kr_links 绑定到该 KR：
-\`\`\`
-POST /api/brain/project-kr-links
-{
-  "project_id": "<新建 Project 的 ID>",
-  "kr_id": "${krId}"
-}
-\`\`\`
+okr_projects.kr_id 已在创建时直接绑定到该 KR（无需额外的桥接表）。
 
 记录新建 Project 的 ID（后面 Step 2 要用）。
 
@@ -1738,7 +1743,7 @@ PUT /api/tasks/goals/${krId}
 ## 质量验证（创建完成后逐项检查）
 
 1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
-2. ✅ project_kr_links 已绑定新 Project → 当前 KR
+2. ✅ okr_projects.kr_id 已设置为当前 KR（新表直接存储，无需桥接表）
 3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
 4. ✅ 第一个 Task 的 task_type='dev'
 5. ✅ 所有 Task 的 goal_id = ${krId}
@@ -2082,8 +2087,10 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
     console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
 
     // codex_dev 使用 runner 模式（完整 /dev 循环，via runner.sh + devloop-check.sh）
+    // crystallize_forge/verify 使用 playwright-runner.sh（CDP 自动化脚本探索）
     // codex_qa 和其他类型使用 prompt 模式（单次 codex exec）
     const isCodexDev = task.task_type === 'codex_dev';
+    const isCrystallize = task.task_type === 'crystallize_forge' || task.task_type === 'crystallize_verify';
 
     // Build prompt from task description/title
     let promptContent = task.description || task.title || '请执行此任务';
@@ -2116,9 +2123,17 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
         task_type: task.task_type,
         work_dir: task.payload?.repo_path,
         timeout_ms: 10 * 60 * 1000, // 10 minutes for Codex
-        // runner 模式参数（codex_dev 专用）
-        runner: isCodexDev ? 'packages/engine/runners/codex/runner.sh' : undefined,
-        runner_args: isCodexDev ? ['--branch', taskBranch, '--task-id', task.id] : undefined,
+        // runner 模式参数（codex_dev 专用 / crystallize_forge+verify 专用）
+        runner: isCodexDev
+          ? 'packages/engine/runners/codex/runner.sh'
+          : isCrystallize
+          ? 'packages/engine/runners/codex/playwright-runner.sh'
+          : undefined,
+        runner_args: isCodexDev
+          ? ['--branch', taskBranch, '--task-id', task.id]
+          : isCrystallize
+          ? ['--task-id', task.id]
+          : undefined,
         branch: taskBranch,
       }),
       signal: AbortSignal.timeout(15000), // 15s to accept the job

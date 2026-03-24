@@ -340,6 +340,11 @@ describe('auto-fix.js', () => {
       evidence: 'Multiple timeout logs'
     };
 
+    // Guard query: 默认返回 0（未超限），让每个测试都能正常到达 createTask
+    beforeEach(() => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+    });
+
     it('正常派发：createTask 被调用一次', async () => {
       mockCreateTask.mockResolvedValueOnce({ success: true, task: { id: 'task-new' } });
 

@@ -19,23 +19,23 @@ function makeMockPool({
     query: vi.fn().mockImplementation(async (sql, params) => {
       const s = sql.trim();
 
-      // updateKrProgress: 查 KR 关联的 projects
-      if (s.includes('project_kr_links') && s.includes('pkl.kr_id') && !s.includes('UPDATE')) {
+      // updateKrProgress: 查 KR 关联的 projects (FROM okr_projects WHERE op.kr_id = $1)
+      if (s.includes('FROM okr_projects') && s.includes('op.kr_id') && !s.includes('UPDATE')) {
         return { rows: projects };
       }
 
-      // updateKrProgress: 查 initiatives 统计
-      if (s.includes('COUNT(*)') && s.includes('parent_id = ANY')) {
+      // updateKrProgress: 查 initiatives 统计 (FROM okr_initiatives ... ANY($1))
+      if (s.includes('COUNT(*)') && s.includes('FROM okr_initiatives') && s.includes('ANY(')) {
         return { rows: [initiativeStats] };
       }
 
-      // updateKrProgress: UPDATE goals
-      if (s.includes('UPDATE goals') && s.includes('progress')) {
+      // updateKrProgress: UPDATE objectives
+      if (s.includes('UPDATE objectives')) {
         return { rows: [] };
       }
 
-      // syncAllKrProgress: 查所有活跃 KR
-      if (s.includes('FROM goals') && s.includes('type IN')) {
+      // syncAllKrProgress: 查所有活跃 KR (FROM objectives UNION ALL FROM key_results)
+      if (s.includes('FROM objectives') && s.includes('UNION ALL')) {
         return { rows: krs };
       }
 
@@ -62,12 +62,12 @@ describe('D6: updateKrProgress', () => {
     expect(result.completed).toBe(3);
     expect(result.total).toBe(10);
 
-    // 验证 UPDATE goals 被调用
+    // 验证 UPDATE objectives 被调用
     const updateCall = pool.query.mock.calls.find(c =>
-      c[0].includes('UPDATE goals')
+      c[0].includes('UPDATE objectives')
     );
     expect(updateCall).toBeTruthy();
-    expect(updateCall[1]).toEqual(['kr-001', 30]);
+    expect(updateCall[1]).toEqual(['kr-001']);
   });
 
   it('handles zero initiatives gracefully (progress = 0)', async () => {

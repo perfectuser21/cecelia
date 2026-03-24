@@ -15,15 +15,35 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.94.0"
-updated: "2026-03-23"
+version: "3.96.0"
+updated: "2026-03-24"
 # ci-trigger: 13.37.0
 changelog:
+
+
+  - version: "13.41.1"
+    date: "2026-03-24"
+    summary: "fix(engine): coverage gate 限制为 packages/engine/ 范围 — 避免 Brain 测试文件跨包误判"
+    scope: packages/engine/scripts/devgate/check-changed-coverage.cjs
+    breaking: false
+
+  - version: "13.41.0"
+    date: "2026-03-24"
+    summary: "[CONFIG] feat(engine): 04-ship.md 新增 4.4 Update Memory 步骤 — 任务完成后同步更新 state.md + roadmap.md"
+    scope: packages/engine/skills/dev/steps/04-ship.md
+    breaking: false
+
+  - version: "13.40.0"
+    date: "2026-03-24"
+    summary: "[CONFIG] fix(brain/engine): crystallize task type — playwright-runner.sh 头注释更新为 crystallize Forge Runner v1.1.0"
+    scope: packages/engine/runners/codex/playwright-runner.sh
+    breaking: false
 
   - version: "13.37.2"
     date: "2026-03-23"
     summary: "[CONFIG] fix(ci): 覆盖率门禁扩展到 fix/refactor PR（新增 isFixOrRefactorPR）+ L4 task-lifecycle E2E"
     scope: packages/engine/scripts/devgate/check-changed-coverage.cjs
+
 
   - version: "13.37.0"
     date: "2026-03-23"
@@ -2466,5 +2486,38 @@ product_features:
     minimal_paths:
       - "根本原因章节至少3行非空内容"
       - "PR 合并目标必须是 main 分支"
+
+    rcis: []
+  - id: devloop-check-drift-detection
+    name: Stage3 Drift Check
+    category: devgate
+    status: Committed
+    priority: P2
+    version: "13.38.0"
+    updated: "2026-03-23"
+    description: |
+      devloop-check.sh 条件 2.7：Stage 3 前检测实际改动文件是否超出 Task Card Scope 声明范围。
+      发现 drift 时输出 warning 到 stderr，不阻断流程（return 2）。
+      同时 spec-review SKILL.md 新增维度 F：测试层合理性检查（unit/integration/e2e）。
+
+    entrypoints:
+      - type: devloop
+        file: packages/engine/lib/devloop-check.sh
+        trigger: "Stop Hook 在条件 3（PR 创建）之前执行 drift check"
+      - type: spec-review
+        file: packages/workflows/skills/spec-review/SKILL.md
+        trigger: "Stage 1 spec_review subagent 审查"
+
+    golden_path: |
+      Stage 2 完成 →
+      devloop-check.sh 条件 2.7 drift check →
+      实际改动文件与 Task Card Scope 对比 →
+      有 drift 则 warning（继续）→
+      条件 3 PR 创建 →
+      完成
+
+    minimal_paths:
+      - "改动文件在 Task Card Scope 内：无 warning"
+      - "改动文件超出 Scope：输出 warning 但不阻断"
 
     rcis: []

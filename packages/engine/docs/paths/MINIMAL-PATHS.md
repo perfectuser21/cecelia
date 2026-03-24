@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.94.0
-created: 2026-03-23
-updated: 2026-03-23
+version: 3.96.0
+created: 2026-03-24
+updated: 2026-03-24
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.94.0: 从 feature-registry.yml 自动生成
+  - 3.96.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -414,6 +414,13 @@ changelog:
 
 ---
 
+### devloop-check-drift-detection: Stage3 Drift Check
+
+1. ✅ **改动文件在 Task Card Scope 内：无 warning**
+2. ✅ **改动文件超出 Scope：输出 warning 但不阻断**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -426,5 +433,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.94.0
-**生成时间**: 2026-03-23
+**版本**: 3.96.0
+**生成时间**: 2026-03-24

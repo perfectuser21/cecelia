@@ -19,10 +19,13 @@ import { getTaskLocation } from './task-router.js';
  * @returns {Promise<Object>} 完成审查数据
  */
 async function reviewProjectCompletion(pool, projectId) {
-  // 1. 获取 Project 信息
+  // 1. 获取 Project 信息（okr_projects 直接含 kr_id 字段）
   const projResult = await pool.query(
-    `SELECT id, name, status, created_at, completed_at, time_budget_days, kr_id, parent_id
-     FROM projects WHERE id = $1`,
+    `SELECT op.id, op.title AS name, op.status, op.created_at, op.completed_at,
+            NULL::int AS time_budget_days,
+            op.kr_id,
+            NULL::uuid AS parent_id
+     FROM okr_projects op WHERE op.id = $1`,
     [projectId]
   );
 
@@ -32,22 +35,25 @@ async function reviewProjectCompletion(pool, projectId) {
 
   const project = projResult.rows[0];
 
-  // 2. 收集 Initiative 统计
+  // 2. 收集 Initiative 统计（迁移：projects WHERE type='initiative' → okr_initiatives via scopes）
   const initResult = await pool.query(
     `SELECT COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE status = 'completed') AS completed
-     FROM projects WHERE parent_id = $1 AND type = 'initiative'`,
+            COUNT(*) FILTER (WHERE oi.status = 'completed') AS completed
+     FROM okr_initiatives oi
+     JOIN okr_scopes os ON oi.scope_id = os.id
+     WHERE os.project_id = $1`,
     [projectId]
   );
   const { total: initiativeTotal, completed: initiativeCompleted } = initResult.rows[0];
 
-  // 3. 收集 Task 统计
+  // 3. 收集 Task 统计（迁移：通过 okr_initiatives 关联）
   const taskResult = await pool.query(
     `SELECT COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE status = 'completed') AS completed
+            COUNT(*) FILTER (WHERE t.status = 'completed') AS completed
      FROM tasks t
-     JOIN projects p ON p.id = t.project_id
-     WHERE p.parent_id = $1 AND p.type = 'initiative'`,
+     JOIN okr_initiatives oi ON oi.id = t.project_id
+     JOIN okr_scopes os ON oi.scope_id = os.id
+     WHERE os.project_id = $1`,
     [projectId]
   );
   const { total: taskTotal, completed: taskCompleted } = taskResult.rows[0];
@@ -91,12 +97,13 @@ async function shouldAdjustPlan(pool, krId, completedProjectId) {
   if (!krId) return null;
 
   // 1. 查询 KR 下所有 Projects
+  // 迁移：projects → okr_projects（name → title）
   const projectsResult = await pool.query(
-    `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days, p.deadline
-     FROM projects p
-     JOIN project_kr_links pkl ON pkl.project_id = p.id
-     WHERE pkl.kr_id = $1 AND p.type = 'project'
-     ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC`,
+    `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
+            NULL::int AS time_budget_days, op.end_date AS deadline
+     FROM okr_projects op
+     WHERE op.kr_id = $1
+     ORDER BY op.created_at ASC`,
     [krId]
   );
 
@@ -236,22 +243,32 @@ async function executePlanAdjustment(pool, findings, planContext) {
     const values = [adj.project_id];
     let paramIdx = 2;
 
+    const metaUpdates = {};
     if (adj.time_budget_days !== undefined) {
-      updates.push(`time_budget_days = $${paramIdx++}`);
-      values.push(adj.time_budget_days);
-    }
-    if (adj.deadline !== undefined) {
-      updates.push(`deadline = $${paramIdx++}`);
-      values.push(adj.deadline);
+      metaUpdates.time_budget_days = adj.time_budget_days;
     }
 
-    if (updates.length > 0) {
-      updates.push('updated_at = NOW()');
-      await pool.query(
-        `UPDATE projects SET ${updates.join(', ')} WHERE id = $1`,
-        values
+    if (Object.keys(metaUpdates).length > 0 || adj.deadline !== undefined) {
+      // Try okr_projects first with metadata for time_budget_days, end_date for deadline
+      const newTableUpdates = [];
+      const newTableValues = [adj.project_id];
+      let newIdx = 2;
+      if (Object.keys(metaUpdates).length > 0) {
+        newTableUpdates.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${newIdx++}::jsonb`);
+        newTableValues.push(JSON.stringify(metaUpdates));
+      }
+      if (adj.deadline !== undefined) {
+        newTableUpdates.push(`end_date = $${newIdx++}`);
+        newTableValues.push(adj.deadline);
+      }
+      newTableUpdates.push('updated_at = NOW()');
+
+      const newResult = await pool.query(
+        `UPDATE okr_projects SET ${newTableUpdates.join(', ')} WHERE id = $1`,
+        newTableValues
       );
-      console.log(`[progress-reviewer] Adjusted project ${adj.project_id}: ${updates.join(', ')}`);
+
+      console.log(`[progress-reviewer] Adjusted project ${adj.project_id}: ${Object.keys(metaUpdates).join(', ')}${adj.deadline ? ' deadline' : ''}`);
     }
   }
 }

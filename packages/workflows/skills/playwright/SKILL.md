@@ -1,26 +1,40 @@
 ---
-id: playwright-auto
-version: 1.0.0
+id: playwright
+version: 1.1.0
 type: codex-skill
-task_type: codex_playwright
+task_type: crystallize_forge
 runner: packages/engine/runners/codex/playwright-runner.sh
 created: 2026-03-16
+updated: 2026-03-24
 ---
 
 # /playwright — Playwright 自动化探索 Skill
 
 > 给 Codex 用的 skill。Codex 在西安 M4 上通过 CDP 远程控制西安 PC 的浏览器，
 > 用大模型探索并写出能跑通的 Playwright .cjs 脚本，保存后供后续直接执行。
+>
+> 本 skill 是 crystallize 流水线的 **Forge 阶段**（第2步）执行工具。
 
 ---
 
 ## 触发方式
 
-Brain 创建 `task_type: codex_playwright` 任务后，`playwright-runner.sh` 自动调用。
+Brain 创建 `task_type: crystallize_forge` 任务后，`playwright-runner.sh` 自动调用。
 
 ```bash
 bash packages/engine/runners/codex/playwright-runner.sh --task-id <id>
 ```
+
+---
+
+## 所属流水线
+
+| 阶段 | task_type | 描述 |
+|------|-----------|------|
+| 1 Scope | crystallize_scope | 定义目标 + DoD + 验收标准 |
+| **2 Forge** | **crystallize_forge** | **Codex 探索写 Playwright 脚本** ← 本 skill |
+| 3 Verify | crystallize_verify | 无 LLM 验证脚本（3次） |
+| 4 Register | crystallize_register | 注册到 SKILL.md + 部署 |
 
 ---
 
@@ -38,7 +52,7 @@ bash packages/engine/runners/codex/playwright-runner.sh --task-id <id>
 
 ## 两阶段工作流
 
-### Phase 1：探索（Codex + 大模型）
+### Phase 1：探索（Forge）
 
 Codex 用大模型反复尝试，直到 Playwright 脚本能稳定跑通：
 
@@ -56,9 +70,9 @@ node <script>.cjs 测试
 稳定通过 → 保存到 ~/playwright-scripts/<task_id>.cjs
 ```
 
-### Phase 2：执行（无 LLM）
+### Phase 2：执行（Verify）
 
-脚本保存后，后续直接执行：
+脚本保存后，Verify 阶段直接执行3次验证：
 
 ```bash
 node ~/playwright-scripts/<task_id>.cjs
@@ -120,5 +134,6 @@ main().catch(console.error);
 ## 相关文件
 
 - Runner: `packages/engine/runners/codex/playwright-runner.sh`
-- Brain 路由: `packages/brain/src/task-router.js`（`codex_playwright → xian`）
+- Brain 路由: `packages/brain/src/task-router.js`（`crystallize → xian`）
+- 编排器: `packages/brain/src/crystallize-orchestrator.js`
 - 参考脚本: `packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs`

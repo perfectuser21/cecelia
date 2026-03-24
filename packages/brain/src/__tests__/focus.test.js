@@ -73,7 +73,7 @@ describe('focus', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
       // 确认 SQL 包含正确的查询条件
       const sql = mockQuery.mock.calls[0][0];
-      expect(sql).toContain("type = 'area_okr'");
+      expect(sql).toContain('FROM objectives');
       expect(sql).toContain("'ready'");
       expect(sql).toContain("'in_progress'");
     });
@@ -333,15 +333,14 @@ describe('focus', () => {
         .rejects.toThrow('Objective not found');
     });
 
-    it('查询 objective 时只接受 mission/vision 类型', async () => {
+    it('查询 objective 时使用 visions 表', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ id: 'okr-1' }] });
       mockQuery.mockResolvedValueOnce({ rows: [] });
 
       await setDailyFocus('okr-1');
 
-      const selectParams = mockQuery.mock.calls[0][1];
-      expect(selectParams).toContain('mission');
-      expect(selectParams).toContain('vision');
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).toContain('FROM visions');
     });
 
     it('数据库写入失败时抛出错误', async () => {

@@ -64,6 +64,14 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'learning-absorption',          // 学习吸收，嵌入 tick 循环
   'narrative-expression',         // 叙事表达，意识层固有
   'postgresql-database-service',  // Brain 数据层，每次 tick/API 调用都通过 pool 访问 PostgreSQL
+  // ── 误判修正（scanner fix）──────────────────────────────────────────
+  // 以下三个能力被 Scanner 误判为孤岛/休眠，根本原因：
+  //   dev-workflow: 扫描早于任务创建 → island；0% 完成率 → failing
+  //   self-healing: 免疫系统未触发（系统健康）→ dormant（实为误判）
+  //   self-healing-immunity: 同上，免疫策略始终驻留 Brain 进程
+  'dev-workflow',                 // /dev 调度能力，Brain 随时可派发开发任务
+  'self-healing',                 // 免疫系统，Brain 固有，未触发≠不存在
+  'self-healing-immunity',        // 免疫策略层，Brain 固有组成部分
 ]);
 
 // ============================================================
@@ -148,10 +156,17 @@ async function collectTableData(health, keyTables, tableCountCache) {
 
 /**
  * 根据活动证据确定能力状态。
+ *
+ * stage 参数说明：
+ *   stage ≥ 3 = 能力已部署运行（Available/Running），无活动记录时应为 dormant（休眠未触发），
+ *               而非 island（孤岛/未部署）。island 仅适用于 stage < 3 的规划中能力。
  */
-function determineStatus(hasSkillActivity, successRate, hasTableData, lastActivity) {
+function determineStatus(hasSkillActivity, successRate, hasTableData, lastActivity, stage) {
   if (hasSkillActivity && successRate !== null && successRate < 30) return 'failing';
-  if (!hasSkillActivity && !hasTableData) return 'island';
+  if (!hasSkillActivity && !hasTableData) {
+    // stage ≥ 3 表示能力已完全部署，无活动只是休眠，不是孤岛
+    return (stage >= 3) ? 'dormant' : 'island';
+  }
   if (lastActivity) {
     const daysSince = (Date.now() - new Date(lastActivity).getTime()) / (1000 * 60 * 60 * 24);
     return daysSince > ISLAND_THRESHOLD_DAYS ? 'dormant' : 'active';
@@ -205,7 +220,7 @@ async function evaluateCapability(cap, skillUsageMap, taskUsageMap, tableCountCa
     health, cap.related_skills || [], skillUsageMap, taskUsageMap
   );
   const hasTableData = await collectTableData(health, cap.key_tables || [], tableCountCache);
-  health.status = determineStatus(hasSkillActivity, health.success_rate, hasTableData, health.last_activity);
+  health.status = determineStatus(hasSkillActivity, health.success_rate, hasTableData, health.last_activity, cap.current_stage);
   return health;
 }
 

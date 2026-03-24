@@ -145,6 +145,8 @@ jobs:
             exit 0
           fi
           BASE_REF="${{ github.base_ref }}"
+          # workflow_dispatch 时 github.base_ref 为空，默认 main
+          BASE_REF="${BASE_REF:-main}"
           CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
 
           echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$" \
@@ -834,12 +836,13 @@ jobs:
           echo "  ✅ Test Coverage Required PASSED"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  # ─── Coverage Delta Check (feat PR 变更行覆盖率) ──────────────────────
+  # ─── Coverage Delta Check (feat/fix/refactor 变更行覆盖率) ───────────
+  # fix: 和 refactor: PR 同样需要通过覆盖率基线检查，确保变更行有测试覆盖
 
   coverage-delta:
-    name: Coverage Delta Check (feat only)
+    name: Coverage Delta Check (feat/fix/refactor)
     needs: [detect-commit-type, changes]
-    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.detect-commit-type.outputs.commit_type == 'feat' && needs.changes.outputs.brain == 'true'
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && contains(fromJson('["feat","fix","refactor"]'), needs.detect-commit-type.outputs.commit_type) && needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

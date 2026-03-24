@@ -141,7 +141,12 @@ async function execQueryStatus() {
 
 async function execQueryGoals() {
   const result = await pool.query(
-    `SELECT title, status, progress FROM goals ORDER BY created_at DESC LIMIT 5`
+    `SELECT title, status, progress FROM key_results
+     WHERE status NOT IN ('completed', 'cancelled')
+     UNION ALL
+     SELECT title, status, 0 AS progress FROM objectives
+     WHERE status NOT IN ('completed', 'cancelled')
+     ORDER BY status DESC LIMIT 5`
   );
   if (result.rows.length === 0) return '\n\n📊 暂无 OKR 目标';
   const lines = result.rows.map(r => `  - ${r.title}（${r.status}, ${r.progress}%）`).join('\n');
@@ -220,8 +225,8 @@ async function handleLlmCreateTask(title, entities, llmIntent, message) {
 async function handleLlmCreateGoal(title, entities, llmIntent, message) {
   const linked = await linkEntities(llmIntent, message);
   await pool.query(
-    `INSERT INTO goals (title, priority, status, progress, project_id) VALUES ($1, $2, 'pending', 0, $3) RETURNING id, title`,
-    [title, entities.priority || 'P1', linked.project_id || null]
+    `INSERT INTO objectives (title, priority, status, metadata) VALUES ($1, $2, 'active', $3) RETURNING id, title`,
+    [title, entities.priority || 'P1', JSON.stringify({ project_id: linked.project_id || null })]
   );
   return `\n\n✅ 已创建目标：${title}`;
 }
@@ -347,7 +352,7 @@ async function pipelineCreateGoal(parsed) {
   const title = params.title || parsed.projectName;
   const priority = params.priority || 'P1';
   const result = await pool.query(
-    `INSERT INTO goals (title, priority, status, progress) VALUES ($1, $2, 'pending', 0) RETURNING id, title`,
+    `INSERT INTO objectives (title, priority, status) VALUES ($1, $2, 'active') RETURNING id, title`,
     [title, priority]
   );
   return `\n\n✅ 已创建目标：${result.rows[0].title}`;

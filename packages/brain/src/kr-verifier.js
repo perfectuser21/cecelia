@@ -28,9 +28,9 @@ export async function runAllVerifiers() {
              g.metadata->>'metric_from' as metric_from,
              g.metadata->>'metric_to' as metric_to
       FROM kr_verifiers v
-      JOIN goals g ON g.id = v.kr_id
+      JOIN key_results g ON g.id = v.kr_id
       WHERE v.enabled = true
-        AND g.status = 'in_progress'
+        AND g.status IN ('active', 'in_progress')
         AND (v.last_checked IS NULL
              OR v.last_checked < NOW() - make_interval(mins => v.check_interval_minutes))
     `);
@@ -62,7 +62,7 @@ export async function runAllVerifiers() {
         const progress = Math.min(100, Math.round((currentValue / threshold) * 100));
 
         await pool.query(`
-          UPDATE goals
+          UPDATE key_results
           SET progress = $1,
               metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $2::text),
               updated_at = NOW()
@@ -105,7 +105,7 @@ export async function runAllVerifiers() {
 export async function resetAllKrProgress() {
   const { rows: verifiers } = await pool.query(`
     SELECT v.kr_id, v.current_value, v.threshold, g.title
-    FROM kr_verifiers v JOIN goals g ON g.id = v.kr_id WHERE v.enabled = true
+    FROM kr_verifiers v JOIN key_results g ON g.id = v.kr_id WHERE v.enabled = true
   `);
 
   let fixed = 0;
@@ -115,7 +115,7 @@ export async function resetAllKrProgress() {
     const progress = Math.min(100, Math.round((currentValue / threshold) * 100));
 
     await pool.query(`
-      UPDATE goals SET progress = $1,
+      UPDATE key_results SET progress = $1,
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $2::text),
         updated_at = NOW()
       WHERE id = $3 AND progress != $1

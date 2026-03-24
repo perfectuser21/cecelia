@@ -257,6 +257,56 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 2.7: drift check（Stage 3 前：scope 偏移检测，非阻断）=====
+    # 检查实际改动文件是否超出 Task Card 声明的 Scope（warning only，不 return 2）
+    if [[ -f "$dev_mode_file" ]]; then
+        local _task_card_scope_rel _task_card_scope_abs _wt_root
+        _task_card_scope_rel=$(grep "^task_card:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        _wt_root=$(dirname "$dev_mode_file")
+        _task_card_scope_abs="$_wt_root/$_task_card_scope_rel"
+        if [[ -n "$_task_card_scope_rel" && -f "$_task_card_scope_abs" ]]; then
+            # 从 task card 提取"要改的文件"列表
+            local _declared_files
+            _declared_files=$(grep -A 20 '## 实现方案' "$_task_card_scope_abs" 2>/dev/null \
+                | grep -E '^\s*[-*]\s+`?packages/' \
+                | sed 's/.*`\(packages\/[^`]*\)`.*/\1/;s/^\s*[-*]\s*//' \
+                | awk '{print $1}' | head -20)
+            # 获取实际改动文件（相对于仓库根）
+            local _actual_files
+            _actual_files=$(git -C "$_wt_root" diff --name-only HEAD~1 2>/dev/null \
+                || git -C "$_wt_root" diff --name-only --cached 2>/dev/null \
+                || echo "")
+            if [[ -n "$_declared_files" && -n "$_actual_files" ]]; then
+                local _drift_files=""
+                while IFS= read -r _afile; do
+                    local _matched=false
+                    while IFS= read -r _dfile; do
+                        [[ -z "$_dfile" ]] && continue
+                        if echo "$_afile" | grep -q "$(echo "$_dfile" | cut -d' ' -f1 | sed 's|—.*||')"; then
+                            _matched=true
+                            break
+                        fi
+                    done <<< "$_declared_files"
+                    if [[ "$_matched" == "false" ]]; then
+                        # 排除 .task-/ .dev-mode 等工作流文件
+                        if ! echo "$_afile" | grep -qE '^\.(task-|dev-mode|dev-lock|dev-gate|dev-seal)'; then
+                            _drift_files="$_drift_files $_afile"
+                        fi
+                    fi
+                done <<< "$_actual_files"
+                if [[ -n "$_drift_files" ]]; then
+                    echo "⚠️  [drift check] 以下文件的改动未在 Task Card Scope 中声明（仅 warning，不阻断）:" >&2
+                    for _df in $_drift_files; do
+                        echo "   - $_df" >&2
+                    done
+                    if command -v _devlog_event &>/dev/null; then
+                        _devlog_event "devloop-check" "drift" "warning" "scope drift detected: $_drift_files"
+                    fi
+                fi
+            fi
+        fi
+    fi
+
     # ===== 条件 3: PR 是否已创建？ =====
     local pr_number="" pr_state=""
 

@@ -91,9 +91,11 @@ function getChangedFiles(baseBranch) {
 
 /**
  * 过滤出源码文件（排除测试、配置、文档）
+ * 只关注 packages/engine/ 下的源码（避免跨包误判）
  */
 function filterSourceFiles(files) {
   return files.filter((f) => {
+    if (!f.startsWith("packages/engine/")) return false;
     if (!/\.(ts|js|mjs|cjs|sh)$/.test(f)) return false;
     if (/\.(test|spec)\.(ts|js|mjs|cjs)$/.test(f)) return false;
     if (/(__tests__|__mocks__)\//.test(f)) return false;
@@ -105,10 +107,12 @@ function filterSourceFiles(files) {
 
 /**
  * 过滤出新增的测试文件
+ * 只关注 packages/engine/ 下的测试（避免跨包误判）
  */
 function filterNewTestFiles(addedFiles) {
   return addedFiles.filter((f) =>
-    /\.(test|spec)\.(ts|js|mjs|cjs)$/.test(f)
+    /\.(test|spec)\.(ts|js|mjs|cjs)$/.test(f) &&
+    f.startsWith("packages/engine/")
   );
 }
 

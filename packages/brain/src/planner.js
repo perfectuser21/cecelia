@@ -170,36 +170,66 @@ export function applyContentAwareScore(tasks) {
 async function getGlobalState() {
   const [objectives, keyResults, projects, activeTasks, recentCompleted, focusResult, initiativeKRResult] = await Promise.all([
     pool.query(`
-      SELECT * FROM goals
-      WHERE type IN ('mission', 'vision') AND status NOT IN ('completed', 'cancelled')
+      SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+             type, parent_id, priority
+      FROM (
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'vision' AS type, NULL::uuid AS parent_id, NULL AS priority
+        FROM visions
+        WHERE status NOT IN ('completed', 'cancelled')
+        UNION ALL
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'area_okr' AS type, vision_id AS parent_id, priority
+        FROM objectives
+        WHERE status NOT IN ('completed', 'cancelled')
+      ) sub
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`
-      SELECT * FROM goals
-      WHERE type IN ('area_okr', 'global_kr', 'area_kr') AND status NOT IN ('completed', 'cancelled')
+      SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+             type, parent_id, priority, progress, weight
+      FROM (
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'area_okr' AS type, vision_id AS parent_id, priority, NULL AS progress, NULL AS weight
+        FROM objectives
+        WHERE status NOT IN ('completed', 'cancelled')
+        UNION ALL
+        SELECT id, title, status, area_id, owner_role, metadata, custom_props, created_at, updated_at,
+               'area_okr' AS type, objective_id AS parent_id, priority, progress, weight
+        FROM key_results
+        WHERE status NOT IN ('completed', 'cancelled')
+      ) sub
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
-    pool.query(`SELECT * FROM projects WHERE status = 'active'`),
+    pool.query(`
+      SELECT id, title AS name, status, 'project' AS type, NULL::uuid AS parent_id,
+             NULL AS repo_path, created_at, updated_at, NULL AS domain, NULL AS execution_mode
+      FROM okr_projects
+      WHERE status IN ('active', 'in_progress', 'planning')
+      UNION ALL
+      SELECT id, title AS name, status, 'scope' AS type, project_id AS parent_id,
+             NULL AS repo_path, created_at, updated_at, NULL AS domain, NULL AS execution_mode
+      FROM okr_scopes
+      WHERE status IN ('active', 'in_progress', 'planning')
+      UNION ALL
+      SELECT id, title AS name, status, 'initiative' AS type, scope_id AS parent_id,
+             NULL AS repo_path, created_at, updated_at, NULL AS domain, NULL AS execution_mode
+      FROM okr_initiatives
+      WHERE status IN ('active', 'in_progress', 'pending')
+    `),
     pool.query(`SELECT * FROM tasks WHERE status IN ('queued', 'in_progress') ORDER BY created_at ASC`),
     pool.query(`SELECT * FROM tasks WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 10`),
     getDailyFocus(),
     // 查询有 active Initiative 但无 queued/in_progress Task 的 KR
-    // Scope-aware: initiative.parent_id may be project OR scope (scope.parent_id = project.id)
+    // 迁移：旧 projects 层级 → okr_projects → okr_scopes → okr_initiatives
     pool.query(`
-      SELECT DISTINCT pkl.kr_id
-      FROM project_kr_links pkl
-      INNER JOIN projects parent_proj ON pkl.project_id = parent_proj.id AND parent_proj.status = 'active'
-      INNER JOIN projects initiative ON initiative.type = 'initiative' AND initiative.status = 'active'
-        AND (
-          initiative.parent_id = parent_proj.id
-          OR initiative.parent_id IN (
-            SELECT s.id FROM projects s
-            WHERE s.type = 'scope' AND s.parent_id = parent_proj.id AND s.status = 'active'
-          )
-        )
+      SELECT DISTINCT op.kr_id
+      FROM okr_projects op
+      INNER JOIN okr_scopes os ON os.project_id = op.id AND os.status IN ('active', 'in_progress', 'planning')
+      INNER JOIN okr_initiatives oi ON oi.scope_id = os.id AND oi.status IN ('active', 'in_progress', 'pending')
       WHERE NOT EXISTS (
         SELECT 1 FROM tasks t
-        WHERE t.goal_id = pkl.kr_id
+        WHERE t.goal_id = op.kr_id
           AND t.status IN ('queued', 'in_progress')
       )
     `)
@@ -290,8 +320,9 @@ function selectTargetKR(state, insightAdjustments = new Map()) {
 async function selectTargetScope(project, state) {
   try {
     const scopeResult = await pool.query(`
-      SELECT * FROM projects
-      WHERE type = 'scope' AND parent_id = $1 AND status = 'active'
+      SELECT id, title AS name, status, 'scope' AS type, project_id AS parent_id, created_at, updated_at
+      FROM okr_scopes
+      WHERE project_id = $1 AND status IN ('active', 'in_progress', 'planning')
       ORDER BY created_at ASC
     `, [project.id]);
 
@@ -351,7 +382,7 @@ async function selectTargetProject(kr, state) {
   const { projects, activeTasks } = state;
 
   const linksResult = await pool.query(
-    'SELECT project_id FROM project_kr_links WHERE kr_id = $1',
+    'SELECT id AS project_id FROM okr_projects WHERE kr_id = $1',
     [kr.id]
   );
   const linkedProjectIds = new Set(linksResult.rows.map(r => r.project_id));
@@ -533,14 +564,15 @@ async function generateArchitectureDesignTask(kr, project) {
   try {
     // Find the oldest active initiative under this project without queued tasks
     const initiativeResult = await pool.query(`
-      SELECT i.*
-      FROM projects i
-      WHERE i.parent_id = $1
-        AND i.type = 'initiative'
-        AND i.status = 'active'
+      SELECT i.id, i.title AS name, i.status, i.created_at, i.updated_at,
+             i.metadata->>'domain' AS domain, i.description, os.project_id AS parent_project_id
+      FROM okr_initiatives i
+      JOIN okr_scopes os ON i.scope_id = os.id
+      WHERE os.project_id = $1
+        AND i.status IN ('active', 'in_progress', 'pending')
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
-          WHERE t.project_id = i.id
+          WHERE t.okr_initiative_id = i.id
             AND t.status IN ('queued', 'in_progress')
         )
       ORDER BY i.created_at ASC
@@ -583,7 +615,7 @@ async function generateArchitectureDesignTask(kr, project) {
     // for quota recovery, not a blocker for new planning.
     const existingResult = await pool.query(`
       SELECT id FROM tasks
-      WHERE project_id = $1 AND task_type = $2
+      WHERE okr_initiative_id = $1 AND task_type = $2
         AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined', 'quota_exhausted')
       LIMIT 1
     `, [initiative.id, taskType]);
@@ -602,7 +634,7 @@ async function generateArchitectureDesignTask(kr, project) {
 
     // Create planning task with domain/owner_role propagation
     const insertResult = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload, domain, owner_role)
+      INSERT INTO tasks (title, description, task_type, priority, okr_initiative_id, goal_id, status, trigger_source, payload, domain, owner_role)
       VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7, $8, $9)
       RETURNING *
     `, [
@@ -914,14 +946,14 @@ async function planNextTask(scopeKRIds = null, options = {}) {
   // V3: Check for PR Plans first (三层拆解优先)
   // Can be skipped via options.skipPrPlans (used by KR rotation tests)
   if (!options.skipPrPlans) {
-  // Query all Initiatives (Sub-Projects with PR Plans)
-  // After migration 027: Initiative = Sub-Project (in projects table)
+  // Query all Initiatives (okr_initiatives with PR Plans)
+  // 迁移：projects WHERE type='initiative' → okr_initiatives
   const initiativesResult = await pool.query(`
-    SELECT DISTINCT p.* FROM projects p
-    INNER JOIN pr_plans pp ON p.id = pp.project_id
+    SELECT DISTINCT oi.id, oi.title AS name, oi.status, oi.created_at
+    FROM okr_initiatives oi
+    INNER JOIN pr_plans pp ON oi.id = pp.project_id
     WHERE pp.status IN ('planning', 'in_progress')
-      AND (p.execution_mode = 'cecelia' OR p.execution_mode IS NULL)
-    ORDER BY p.created_at ASC
+    ORDER BY oi.created_at ASC
   `);
 
   for (const initiative of initiativesResult.rows) {
@@ -1092,20 +1124,21 @@ async function handlePlanInput(input, dryRun = false) {
     result.level = 'mission';
     if (!dryRun) {
       const oResult = await pool.query(`
-        INSERT INTO goals (title, description, priority, type, status, progress)
-        VALUES ($1, $2, $3, 'mission', 'pending', 0) RETURNING *
-      `, [input.objective.title, input.objective.description || '', input.objective.priority || 'P1']);
+        INSERT INTO visions (title, description, status, metadata)
+        VALUES ($1, $2, 'active', $3) RETURNING *, title AS name
+      `, [input.objective.title, input.objective.description || '',
+          JSON.stringify({ priority: input.objective.priority || 'P1', type: 'mission' })]);
       result.created.goals.push(oResult.rows[0]);
 
       if (Array.isArray(input.objective.key_results)) {
         for (const krInput of input.objective.key_results) {
           const krResult = await pool.query(`
-            INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-            VALUES ($1, $2, $3, 'area_okr', $4, $5, 'pending', 0, $6) RETURNING *
+            INSERT INTO objectives (title, description, priority, vision_id, status, metadata)
+            VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *, title AS name
           `, [
             krInput.title, krInput.description || '', krInput.priority || input.objective.priority || 'P1',
-            oResult.rows[0].id, krInput.weight || 1.0,
-            JSON.stringify({ metric: krInput.metric, target: krInput.target, deadline: krInput.deadline })
+            oResult.rows[0].id,
+            JSON.stringify({ weight: krInput.weight || 1.0, metric: krInput.metric, target: krInput.target, deadline: krInput.deadline })
           ]);
           result.created.goals.push(krResult.rows[0]);
         }
@@ -1115,12 +1148,12 @@ async function handlePlanInput(input, dryRun = false) {
     result.level = 'area_okr';
     if (!dryRun) {
       const krResult = await pool.query(`
-        INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-        VALUES ($1, $2, $3, 'area_okr', $4, $5, 'pending', 0, $6) RETURNING *
+        INSERT INTO objectives (title, description, priority, vision_id, status, metadata)
+        VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *, title AS name
       `, [
         input.key_result.title, input.key_result.description || '', input.key_result.priority || 'P1',
-        input.key_result.objective_id || null, input.key_result.weight || 1.0,
-        JSON.stringify({ metric: input.key_result.metric, target: input.key_result.target, deadline: input.key_result.deadline })
+        input.key_result.objective_id || null,
+        JSON.stringify({ weight: input.key_result.weight || 1.0, metric: input.key_result.metric, target: input.key_result.target, deadline: input.key_result.deadline })
       ]);
       result.created.goals.push(krResult.rows[0]);
       result.linked_to.kr = krResult.rows[0];
@@ -1132,19 +1165,21 @@ async function handlePlanInput(input, dryRun = false) {
     }
     if (!dryRun) {
       const pResult = await pool.query(`
-        INSERT INTO projects (name, description, repo_path, status)
-        VALUES ($1, $2, $3, 'active') RETURNING *
-      `, [input.project.title, input.project.description || '', input.project.repo_path]);
-      result.created.projects.push(pResult.rows[0]);
-      result.linked_to.project = pResult.rows[0];
+        INSERT INTO okr_projects (title, description, status, metadata)
+        VALUES ($1, $2, 'active', $3) RETURNING *, title AS name
+      `, [input.project.title, input.project.description || '',
+          JSON.stringify({ repo_path: input.project.repo_path })]);
+      const pRow = pResult.rows[0];
+      const pMeta = typeof pRow.metadata === 'string' ? JSON.parse(pRow.metadata) : (pRow.metadata || {});
+      const projWithRepo = { ...pRow, repo_path: pMeta.repo_path || null };
+      result.created.projects.push(projWithRepo);
+      result.linked_to.project = projWithRepo;
 
-      if (Array.isArray(input.project.kr_ids)) {
-        for (const krId of input.project.kr_ids) {
-          await pool.query(
-            'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [pResult.rows[0].id, krId]
-          );
-        }
+      if (Array.isArray(input.project.kr_ids) && input.project.kr_ids.length > 0) {
+        await pool.query(
+          'UPDATE okr_projects SET kr_id = $1 WHERE id = $2',
+          [input.project.kr_ids[0], pRow.id]
+        );
       }
     }
   } else if (input.task) {
@@ -1153,9 +1188,17 @@ async function handlePlanInput(input, dryRun = false) {
       throw new Error('Hard constraint: Task must have project_id');
     }
     if (!dryRun) {
-      const projCheck = await pool.query('SELECT id, repo_path FROM projects WHERE id = $1', [input.task.project_id]);
+      // 查新表（okr_projects/okr_scopes/okr_initiatives），repo_path 存于 metadata JSONB
+      const projCheck = await pool.query(
+        `SELECT id, metadata->>'repo_path' AS repo_path FROM okr_projects WHERE id = $1
+         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_scopes WHERE id = $1
+         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_initiatives WHERE id = $1`,
+        [input.task.project_id]
+      );
       if (projCheck.rows.length === 0) throw new Error('Project not found');
-      if (!projCheck.rows[0].repo_path) throw new Error('Hard constraint: Task\'s project must have repo_path');
+      if (!projCheck.rows[0].repo_path) {
+        throw new Error('Hard constraint: Task\'s project must have repo_path');
+      }
 
       const tResult = await pool.query(`
         INSERT INTO tasks (title, description, priority, project_id, goal_id, status, payload, trigger_source)

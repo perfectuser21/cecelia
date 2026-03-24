@@ -1,5 +1,6 @@
 /**
- * Tests for executor.resolveRepoPath - parent chain traversal
+ * Tests for executor.resolveRepoPath - OKR tables traversal
+ * 迁移：projects.repo_path to okr_* metadata repo_path
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
@@ -10,7 +11,7 @@ const { Pool } = pg;
 
 const pool = new Pool(DB_DEFAULTS);
 
-let testProjectIds = [];
+let testIds = { initiatives: [], scopes: [], projects: [] };
 
 describe('resolveRepoPath', () => {
   beforeAll(async () => {
@@ -23,56 +24,57 @@ describe('resolveRepoPath', () => {
   });
 
   afterEach(async () => {
-    if (testProjectIds.length > 0) {
-      // Delete in reverse order (children first) to avoid FK issues
-      for (const id of testProjectIds.reverse()) {
-        await pool.query('DELETE FROM projects WHERE id = $1', [id]).catch(() => {});
-      }
-      testProjectIds = [];
+    for (const id of testIds.initiatives) {
+      await pool.query('DELETE FROM okr_initiatives WHERE id = $1', [id]).catch(() => {});
     }
+    for (const id of testIds.scopes) {
+      await pool.query('DELETE FROM okr_scopes WHERE id = $1', [id]).catch(() => {});
+    }
+    for (const id of testIds.projects) {
+      await pool.query('DELETE FROM okr_projects WHERE id = $1', [id]).catch(() => {});
+    }
+    testIds = { initiatives: [], scopes: [], projects: [] };
   });
 
-  it('resolves repo_path from parent project when Feature has none', async () => {
+  it('resolves repo_path from okr_projects metadata', async () => {
     const { resolveRepoPath } = await import('../executor.js');
 
-    // Create parent Project with repo_path
-    const parentResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('parent-proj', '/home/xx/test-repo', 'active') RETURNING id"
+    const meta = JSON.stringify({ repo_path: '/home/xx/test-repo' });
+    const result = await pool.query(
+      'INSERT INTO okr_projects (title, metadata, status) VALUES ($1, $2::jsonb, $3) RETURNING id',
+      ['test-proj', meta, 'active']
     );
-    testProjectIds.push(parentResult.rows[0].id);
+    testIds.projects.push(result.rows[0].id);
 
-    // Create Feature (sub-project) without repo_path
-    const featureResult = await pool.query(
-      "INSERT INTO projects (name, parent_id, status) VALUES ('feature-1', $1, 'active') RETURNING id",
-      [parentResult.rows[0].id]
-    );
-    testProjectIds.push(featureResult.rows[0].id);
-
-    const repoPath = await resolveRepoPath(featureResult.rows[0].id);
+    const repoPath = await resolveRepoPath(result.rows[0].id);
     expect(repoPath).toBe('/home/xx/test-repo');
   });
 
-  it('returns repo_path directly when project has it', async () => {
+  it('resolves repo_path from okr_initiatives metadata', async () => {
     const { resolveRepoPath } = await import('../executor.js');
 
-    const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('direct-proj', '/home/xx/direct', 'active') RETURNING id"
+    const meta = JSON.stringify({ repo_path: '/home/xx/init-repo' });
+    const result = await pool.query(
+      'INSERT INTO okr_initiatives (title, metadata, status) VALUES ($1, $2::jsonb, $3) RETURNING id',
+      ['test-init', meta, 'active']
     );
-    testProjectIds.push(projResult.rows[0].id);
+    testIds.initiatives.push(result.rows[0].id);
 
-    const repoPath = await resolveRepoPath(projResult.rows[0].id);
-    expect(repoPath).toBe('/home/xx/direct');
+    const repoPath = await resolveRepoPath(result.rows[0].id);
+    expect(repoPath).toBe('/home/xx/init-repo');
   });
 
-  it('returns null for orphan project without repo_path', async () => {
+  it('returns null for project without repo_path in metadata', async () => {
     const { resolveRepoPath } = await import('../executor.js');
 
-    const projResult = await pool.query(
-      "INSERT INTO projects (name, status) VALUES ('orphan-proj', 'active') RETURNING id"
+    const meta = JSON.stringify({});
+    const result = await pool.query(
+      'INSERT INTO okr_projects (title, metadata, status) VALUES ($1, $2::jsonb, $3) RETURNING id',
+      ['no-repo-proj', meta, 'active']
     );
-    testProjectIds.push(projResult.rows[0].id);
+    testIds.projects.push(result.rows[0].id);
 
-    const repoPath = await resolveRepoPath(projResult.rows[0].id);
+    const repoPath = await resolveRepoPath(result.rows[0].id);
     expect(repoPath).toBeNull();
   });
 
@@ -83,28 +85,17 @@ describe('resolveRepoPath', () => {
     expect(repoPath).toBeNull();
   });
 
-  it('traverses multiple levels to find repo_path', async () => {
+  it('resolves repo_path from okr_scopes metadata', async () => {
     const { resolveRepoPath } = await import('../executor.js');
 
-    // Create 3-level chain: grandparent (with repo_path) → parent → child
-    const grandparentResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('grandparent', '/home/xx/gp-repo', 'active') RETURNING id"
+    const meta = JSON.stringify({ repo_path: '/home/xx/scope-repo' });
+    const result = await pool.query(
+      'INSERT INTO okr_scopes (title, metadata, status) VALUES ($1, $2::jsonb, $3) RETURNING id',
+      ['test-scope', meta, 'active']
     );
-    testProjectIds.push(grandparentResult.rows[0].id);
+    testIds.scopes.push(result.rows[0].id);
 
-    const parentResult = await pool.query(
-      "INSERT INTO projects (name, parent_id, status) VALUES ('parent-no-repo', $1, 'active') RETURNING id",
-      [grandparentResult.rows[0].id]
-    );
-    testProjectIds.push(parentResult.rows[0].id);
-
-    const childResult = await pool.query(
-      "INSERT INTO projects (name, parent_id, status) VALUES ('child-no-repo', $1, 'active') RETURNING id",
-      [parentResult.rows[0].id]
-    );
-    testProjectIds.push(childResult.rows[0].id);
-
-    const repoPath = await resolveRepoPath(childResult.rows[0].id);
-    expect(repoPath).toBe('/home/xx/gp-repo');
+    const repoPath = await resolveRepoPath(result.rows[0].id);
+    expect(repoPath).toBe('/home/xx/scope-repo');
   });
 });

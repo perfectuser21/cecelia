@@ -253,8 +253,11 @@ describe('断链#6: initiative_verify verdict 处理', () => {
       .send({ task_id: taskId, run_id: 'run-5', status: 'AI Done', result: { verdict: 'APPROVED' } });
 
     expect(res.status).toBe(200);
+    // execution.js 先尝试 UPDATE okr_initiatives，成功后不再 fallback 到 projects
     const updateCall = mockPool.query.mock.calls.find(
-      c => typeof c[0] === 'string' && c[0].includes('UPDATE projects') && c[0].includes("'completed'") && c[1]?.[0] === projectId
+      c => typeof c[0] === 'string' &&
+        (c[0].includes('UPDATE okr_initiatives') || c[0].includes('UPDATE projects')) &&
+        c[0].includes("'completed'") && c[1]?.[0] === projectId
     );
     expect(updateCall).toBeDefined();
     expect(mockCreateTask).not.toHaveBeenCalled();

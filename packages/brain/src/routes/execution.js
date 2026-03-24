@@ -975,7 +975,7 @@ router.post('/execution-callback', async (req, res) => {
 
       // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
       try {
-        const ssTaskResult = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        const ssTaskResult = await pool.query('SELECT task_type, goal_id FROM tasks WHERE id = $1', [task_id]);
         const ssTaskRow = ssTaskResult.rows[0];
 
         if (ssTaskRow?.task_type === 'strategy_session') {
@@ -1003,6 +1003,18 @@ router.post('/execution-callback', async (req, res) => {
               [JSON.stringify(meetingSummary), task_id]
             );
 
+            // 查找关联 objective（migration 181：goals(area_okr).id = objectives.id）
+            let krObjectiveId = null;
+            if (ssTaskRow.goal_id) {
+              const objCheck = await pool.query('SELECT id FROM objectives WHERE id = $1', [ssTaskRow.goal_id]);
+              if (objCheck.rows.length > 0) {
+                krObjectiveId = ssTaskRow.goal_id;
+              }
+            }
+            if (!krObjectiveId) {
+              console.warn(`[execution-callback] strategy_session KR 无关联 Objective（goal_id=${ssTaskRow.goal_id || 'null'}）— KR 将成为孤岛`);
+            }
+
             for (const kr of krs) {
               const krTitle = kr.title || '(untitled KR)';
               const krDomain = kr.domain || null;
@@ -1010,11 +1022,11 @@ router.post('/execution-callback', async (req, res) => {
               const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
 
               await pool.query(
-                `INSERT INTO key_results (title, status, owner_role, metadata)
-                 VALUES ($1, 'pending', $2, $3)`,
-                [krTitle, krOwnerRole, JSON.stringify({ priority: krPriority, domain: krDomain })]
+                `INSERT INTO key_results (title, status, owner_role, objective_id, metadata)
+                 VALUES ($1, 'pending', $2, $3, $4)`,
+                [krTitle, krOwnerRole, krObjectiveId, JSON.stringify({ priority: krPriority, domain: krDomain })]
               );
-              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole}`);
+              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole} objective_id=${krObjectiveId}`);
             }
 
             console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
@@ -1487,7 +1499,7 @@ ${resultStr.substring(0, 2000)}
 
           if (verdict === 'APPROVED') {
             await pool.query(
-              `UPDATE projects SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+              `UPDATE okr_initiatives SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
               [projectId]
             );
             console.log(`[execution-callback] 断链#6 APPROVED: initiative ${projectId} → completed`);
@@ -1574,6 +1586,23 @@ ${resultStr.substring(0, 2000)}
         }
       } catch (cpErr) {
         console.error(`[execution-callback] content pipeline advance error (non-fatal): ${cpErr.message}`);
+      }
+    }
+
+    // 5c13. crystallize_* 子任务完成/失败 → 推进 crystallize 流水线状态机
+    if (newStatus === 'completed' || newStatus === 'failed') {
+      try {
+        const { advanceCrystallizeStage, CRYSTALLIZE_STAGES } = await import('../crystallize-orchestrator.js');
+        const crTaskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const crTask = crTaskRow.rows[0];
+        if (crTask && CRYSTALLIZE_STAGES.includes(crTask.task_type) && crTask.payload?.parent_crystallize_id) {
+          let findingsObj = null;
+          try { findingsObj = findingsValue ? JSON.parse(findingsValue) : null; } catch (_) {}
+          await advanceCrystallizeStage(task_id, newStatus, findingsObj || {});
+          console.log(`[execution-callback] crystallize 流水线推进: task=${task_id} type=${crTask.task_type} newStatus=${newStatus}`);
+        }
+      } catch (crErr) {
+        console.error(`[execution-callback] crystallize advance error (non-fatal): ${crErr.message}`);
       }
     }
 
@@ -2603,11 +2632,10 @@ router.get('/dev/tasks', async (req, res) => {
         t.completed_at,
         t.payload,
         g.title as goal_title,
-        p.name as project_name,
-        p.repo_path
+        NULL::text as project_name,
+        NULL::text as repo_path
       FROM tasks t
-      LEFT JOIN goals g ON t.goal_id = g.id
-      LEFT JOIN projects p ON g.project_id = p.id
+      LEFT JOIN key_results g ON t.goal_id = g.id
       WHERE t.task_type IN ('dev', 'review')
         AND (t.status IN ('in_progress', 'queued') OR t.completed_at >= CURRENT_DATE - INTERVAL '1 day')
       ORDER BY
@@ -2697,10 +2725,19 @@ router.get('/dev/tasks', async (req, res) => {
 router.get('/dev/repos', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT DISTINCT p.name, p.repo_path
-      FROM projects p
-      WHERE p.repo_path IS NOT NULL
-      ORDER BY p.name
+      -- 迁移：projects → okr_projects/okr_scopes/okr_initiatives metadata.repo_path
+      SELECT DISTINCT op.title AS name, op.metadata->>'repo_path' AS repo_path
+      FROM okr_projects op
+      WHERE op.metadata->>'repo_path' IS NOT NULL
+      UNION
+      SELECT DISTINCT os.title AS name, os.metadata->>'repo_path' AS repo_path
+      FROM okr_scopes os
+      WHERE os.metadata->>'repo_path' IS NOT NULL
+      UNION
+      SELECT DISTINCT oi.title AS name, oi.metadata->>'repo_path' AS repo_path
+      FROM okr_initiatives oi
+      WHERE oi.metadata->>'repo_path' IS NOT NULL
+      ORDER BY name
     `);
 
     res.json({

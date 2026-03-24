@@ -38,47 +38,86 @@ describe("isFeatPR", () => {
 
 describe("filterSourceFiles", () => {
   it("保留 .ts 和 .js 源码文件", () => {
-    const files = ["src/index.ts", "src/utils.js", "lib/helper.mjs"];
+    const files = [
+      "packages/engine/src/index.ts",
+      "packages/engine/src/utils.js",
+      "packages/engine/lib/helper.mjs",
+    ];
     expect(filterSourceFiles(files)).toEqual([
-      "src/index.ts",
-      "src/utils.js",
-      "lib/helper.mjs",
+      "packages/engine/src/index.ts",
+      "packages/engine/src/utils.js",
+      "packages/engine/lib/helper.mjs",
     ]);
   });
 
   it("排除测试文件", () => {
     const files = [
-      "src/index.ts",
-      "src/index.test.ts",
-      "tests/helper.spec.js",
+      "packages/engine/src/index.ts",
+      "packages/engine/src/index.test.ts",
+      "packages/engine/tests/helper.spec.js",
     ];
-    expect(filterSourceFiles(files)).toEqual(["src/index.ts"]);
+    expect(filterSourceFiles(files)).toEqual(["packages/engine/src/index.ts"]);
   });
 
   it("排除配置文件", () => {
-    const files = ["src/index.ts", "vitest.config.ts", "jest.config.js"];
-    expect(filterSourceFiles(files)).toEqual(["src/index.ts"]);
+    const files = [
+      "packages/engine/src/index.ts",
+      "packages/engine/vitest.config.ts",
+      "packages/engine/jest.config.js",
+    ];
+    expect(filterSourceFiles(files)).toEqual(["packages/engine/src/index.ts"]);
   });
 
   it("排除非代码文件", () => {
-    const files = ["README.md", "package.json", ".gitignore", "src/index.ts"];
-    expect(filterSourceFiles(files)).toEqual(["src/index.ts"]);
+    const files = [
+      "README.md",
+      "package.json",
+      ".gitignore",
+      "packages/engine/src/index.ts",
+    ];
+    expect(filterSourceFiles(files)).toEqual(["packages/engine/src/index.ts"]);
   });
 
   it("排除 __tests__ 目录下的文件", () => {
-    const files = ["src/index.ts", "src/__tests__/helper.ts"];
-    expect(filterSourceFiles(files)).toEqual(["src/index.ts"]);
+    const files = [
+      "packages/engine/src/index.ts",
+      "packages/engine/src/__tests__/helper.ts",
+    ];
+    expect(filterSourceFiles(files)).toEqual(["packages/engine/src/index.ts"]);
+  });
+
+  it("排除非 engine 包的文件（避免跨包误判）", () => {
+    const files = [
+      "packages/engine/src/runner.ts",
+      "packages/brain/src/executor.js",
+      "packages/brain/src/__tests__/callback.test.js",
+    ];
+    expect(filterSourceFiles(files)).toEqual(["packages/engine/src/runner.ts"]);
   });
 });
 
 // ─── filterNewTestFiles ───────────────────────────────────────────
 
 describe("filterNewTestFiles", () => {
-  it("识别 .test.ts 文件", () => {
-    const files = ["src/index.ts", "tests/foo.test.ts", "tests/bar.spec.js"];
+  it("识别 packages/engine 下的 .test.ts 文件", () => {
+    const files = [
+      "packages/engine/src/index.ts",
+      "packages/engine/tests/foo.test.ts",
+      "packages/engine/tests/bar.spec.js",
+    ];
     expect(filterNewTestFiles(files)).toEqual([
-      "tests/foo.test.ts",
-      "tests/bar.spec.js",
+      "packages/engine/tests/foo.test.ts",
+      "packages/engine/tests/bar.spec.js",
+    ]);
+  });
+
+  it("排除非 engine 包的测试文件（避免跨包误判）", () => {
+    const files = [
+      "packages/brain/src/__tests__/callback.test.js",
+      "packages/engine/tests/foo.test.ts",
+    ];
+    expect(filterNewTestFiles(files)).toEqual([
+      "packages/engine/tests/foo.test.ts",
     ]);
   });
 

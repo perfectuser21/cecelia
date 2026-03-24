@@ -14,13 +14,14 @@ vi.mock('../executor.js', () => ({
   getActiveProcessCount: vi.fn().mockReturnValue(0), killProcess: vi.fn(), checkServerResources: vi.fn().mockResolvedValue({}),
   probeTaskLiveness: vi.fn(), syncOrphanTasksOnStartup: vi.fn(), killProcessTwoStage: vi.fn(),
   requeueTask: vi.fn(), MAX_SEATS: 4, INTERACTIVE_RESERVE: 2, getBillingPause: vi.fn().mockReturnValue(null),
+  getActiveProcesses: vi.fn().mockReturnValue([]),
 }));
 vi.mock('../slot-allocator.js', () => ({ calculateSlotBudget: vi.fn().mockReturnValue({ budget: 2 }) }));
 vi.mock('../decision.js', () => ({
   compareGoalProgress: vi.fn().mockResolvedValue({ overall_health: 'healthy', next_actions: [], goals: [] }),
   generateDecision: vi.fn(), executeDecision: vi.fn(), splitActionsBySafety: vi.fn().mockReturnValue({ safeActions: [], unsafeActions: [] }),
 }));
-vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue(null) }));
+vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue(null), checkPrPlansCompletion: vi.fn().mockResolvedValue([]) }));
 vi.mock('../circuit-breaker.js', () => ({
   isAllowed: vi.fn().mockReturnValue(true), recordSuccess: vi.fn(), recordFailure: vi.fn(), getAllStates: vi.fn().mockReturnValue({}),
 }));
@@ -74,6 +75,9 @@ vi.mock('../task-generator-scheduler.js', () => ({
 vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn().mockResolvedValue(null) }));
 vi.mock('../actions.js', () => ({ updateTask: vi.fn() }));
 vi.mock('../shepherd.js', () => ({ shepherdOpenPRs: vi.fn().mockResolvedValue({ processed: 0, merged: 0, failed: 0, pending: 0 }) }));
+vi.mock('../zombie-sweep.js', () => ({ zombieSweep: vi.fn().mockResolvedValue({}), getZombieSweepStatus: vi.fn().mockResolvedValue(null) }));
+vi.mock('../progress-ledger.js', () => ({ evaluateProgressInTick: vi.fn().mockResolvedValue({ evaluated: 0, alertCount: 0 }), recordProgressStep: vi.fn(), getProgressSteps: vi.fn().mockResolvedValue([]), updateProgressStep: vi.fn(), getTaskProgressSummary: vi.fn().mockResolvedValue(null), getProgressAnomalies: vi.fn().mockResolvedValue([]) }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn().mockResolvedValue(''), callLLMStream: vi.fn().mockResolvedValue(''), _resetMinimaxKey: vi.fn(), _resetAnthropicKey: vi.fn(), _resetOpenAIKey: vi.fn() }));
 
 // task-updater mock — 重点测试 unblockExpiredTasks 是否被调用
 const mockUnblockExpiredTasks = vi.fn().mockResolvedValue([]);
@@ -84,11 +88,10 @@ vi.mock('../task-updater.js', () => ({
 }));
 
 // ── 导入被测函数 ──────────────────────────────────────────
-// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+// isolate:true 模式下每个文件已有独立模块注册表，无需 vi.resetModules()
 let executeTick;
 
 beforeAll(async () => {
-  vi.resetModules();
   const mod = await import('../tick.js');
   executeTick = mod.executeTick;
 });
