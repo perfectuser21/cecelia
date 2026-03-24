@@ -149,17 +149,29 @@ const actionHandlers = {
    * 创建 OKR
    */
   async create_okr(params, context) {
-    const result = await pool.query(`
-      INSERT INTO goals (title, description, type, status, priority, project_id)
-      VALUES ($1, $2, $3, 'ready', $4, $5)
-      RETURNING id
-    `, [
-      params.title,
-      params.description || '',
-      params.type || 'mission',
-      params.priority || 'P1',
-      params.project_id || null
-    ]);
+    const goalType = params.type || 'mission';
+    let result;
+    if (goalType === 'vision' || goalType === 'mission') {
+      result = await pool.query(`
+        INSERT INTO visions (title, description, status, metadata)
+        VALUES ($1, $2, 'active', $3) RETURNING id
+      `, [params.title, params.description || '', JSON.stringify({ priority: params.priority || 'P1', type: goalType })]);
+    } else if (goalType === 'area_okr' || goalType === 'global_kr') {
+      result = await pool.query(`
+        INSERT INTO objectives (title, description, priority, status)
+        VALUES ($1, $2, $3, 'active') RETURNING id
+      `, [params.title, params.description || '', params.priority || 'P1']);
+    } else if (goalType === 'area_kr') {
+      result = await pool.query(`
+        INSERT INTO key_results (title, description, priority, status)
+        VALUES ($1, $2, $3, 'active') RETURNING id
+      `, [params.title, params.description || '', params.priority || 'P1']);
+    } else {
+      result = await pool.query(`
+        INSERT INTO goals (title, description, type, status, priority, project_id)
+        VALUES ($1, $2, $3, 'ready', $4, $5) RETURNING id
+      `, [params.title, params.description || '', goalType, params.priority || 'P1', params.project_id || null]);
+    }
     return { success: true, goal_id: result.rows[0]?.id };
   },
 
@@ -633,12 +645,21 @@ const actionHandlers = {
       return { success: false, error: 'kr_id is required' };
     }
 
-    const result = await pool.query(
-      `UPDATE goals SET status = 'ready', updated_at = NOW()
-       WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
+    // Try objectives first, fallback to goals
+    let result = await pool.query(
+      `UPDATE objectives SET status = 'ready', updated_at = NOW()
+       WHERE id = $1 AND status = 'reviewing'
        RETURNING id, title, status`,
       [kr_id]
     );
+    if (result.rows.length === 0) {
+      result = await pool.query(
+        `UPDATE goals SET status = 'ready', updated_at = NOW()
+         WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
+         RETURNING id, title, status`,
+        [kr_id]
+      );
+    }
 
     if (result.rows.length === 0) {
       console.warn(`[executor] okr_decomp_review: KR ${kr_id} not found or not in reviewing status`);

@@ -953,23 +953,25 @@ async function parseAndCreate(input, options = {}) {
 
   // Check if project already exists
   let targetProjectId = projectId;
+  let isInitiativeId = false; // 是否来自 okr_initiatives（用于 tasks FK 路由）
 
   if (createProject && !projectId) {
     // 新 OKR 表：title 字段（旧 projects.name → title），UNION ALL 三张 okr_* 表
     const existingProject = await pool.query(`
-      SELECT id, title AS name FROM okr_projects
+      SELECT id, title AS name, 'okr_initiatives' AS source_table FROM okr_initiatives
       WHERE LOWER(title) LIKE $1
       UNION ALL
-      SELECT id, title AS name FROM okr_scopes
+      SELECT id, title AS name, 'okr_projects' AS source_table FROM okr_projects
       WHERE LOWER(title) LIKE $1
       UNION ALL
-      SELECT id, title AS name FROM okr_initiatives
+      SELECT id, title AS name, 'okr_scopes' AS source_table FROM okr_scopes
       WHERE LOWER(title) LIKE $1
       LIMIT 1
     `, [`%${parsedIntent.projectName}%`]);
 
     if (existingProject.rows.length > 0) {
       targetProjectId = existingProject.rows[0].id;
+      isInitiativeId = existingProject.rows[0].source_table === 'okr_initiatives';
       result.created.project = {
         ...existingProject.rows[0],
         created: false,
@@ -978,12 +980,13 @@ async function parseAndCreate(input, options = {}) {
     } else {
       // Create new project
       const newProject = await pool.query(`
-        INSERT INTO projects (name, description, status)
+        INSERT INTO okr_initiatives (title, description, status)
         VALUES ($1, $2, 'active')
-        RETURNING *
+        RETURNING *, title AS name
       `, [parsedIntent.projectName, `Auto-created from intent: ${input}`]);
 
       targetProjectId = newProject.rows[0].id;
+      isInitiativeId = true;
       result.created.project = {
         ...newProject.rows[0],
         created: true
@@ -994,18 +997,23 @@ async function parseAndCreate(input, options = {}) {
   }
 
   // Create tasks
+  // tasks.project_id FK → projects(id)；okr_initiatives.id 用 okr_initiative_id 列
+  const taskProjectId = isInitiativeId ? null : targetProjectId;
+  const taskInitiativeId = isInitiativeId ? targetProjectId : null;
+
   if (createTasks) {
     for (const task of parsedIntent.tasks) {
       const newTask = await pool.query(`
-        INSERT INTO tasks (title, description, priority, project_id, goal_id, status, trigger_source, domain, owner_role)
-        VALUES ($1, $2, $3, $4, $5, 'queued', 'user_headed', $6, $7)
+        INSERT INTO tasks (title, description, priority, project_id, okr_initiative_id, goal_id, status, trigger_source, domain, owner_role)
+        VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'user_headed', $7, $8)
         ON CONFLICT DO NOTHING
         RETURNING *
       `, [
         task.title,
         task.description,
         task.priority,
-        targetProjectId,
+        taskProjectId,
+        taskInitiativeId,
         goalId,
         parsedIntent.domain,
         parsedIntent.ownerRole

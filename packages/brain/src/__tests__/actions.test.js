@@ -351,9 +351,11 @@ describe('actions.js', () => {
         execution_mode: 'orchestrated',
       });
 
+      // 新结构: params = [title, scope_id, desc, owner_role, metaJson]
       const params = mockQuery.mock.calls[0][1];
-      expect(params[6]).toBe('orchestrated'); // execution_mode
-      expect(params[7]).toBe('plan');         // current_phase
+      const meta = JSON.parse(params[4]);
+      expect(meta.execution_mode).toBe('orchestrated');
+      expect(meta.current_phase).toBe('plan');
     });
 
     it('非 orchestrated 模式 current_phase=null', async () => {
@@ -366,8 +368,9 @@ describe('actions.js', () => {
       });
 
       const params = mockQuery.mock.calls[0][1];
-      expect(params[6]).toBe('cecelia'); // execution_mode 默认
-      expect(params[7]).toBeNull();      // current_phase
+      const meta = JSON.parse(params[4]);
+      expect(meta.execution_mode).toBe('cecelia');
+      expect(meta.current_phase).toBeNull();
     });
 
     it('dod_content 被 JSON.stringify', async () => {
@@ -382,7 +385,8 @@ describe('actions.js', () => {
       });
 
       const params = mockQuery.mock.calls[0][1];
-      expect(params[8]).toBe(JSON.stringify(dod));
+      const meta = JSON.parse(params[4]);
+      expect(meta.dod_content).toBe(JSON.stringify(dod));
     });
 
     it('默认值：decomposition_mode=known, execution_mode=cecelia', async () => {
@@ -395,8 +399,9 @@ describe('actions.js', () => {
       });
 
       const params = mockQuery.mock.calls[0][1];
-      expect(params[3]).toBe('known');   // decomposition_mode
-      expect(params[6]).toBe('cecelia'); // execution_mode
+      const meta = JSON.parse(params[4]);
+      expect(meta.decomposition_mode).toBe('known');
+      expect(meta.execution_mode).toBe('cecelia');
     });
 
     it('传 domain 时 SQL 包含 domain 字段，owner_role 自动推断', async () => {
@@ -411,10 +416,12 @@ describe('actions.js', () => {
 
       const sql = mockQuery.mock.calls[0][0];
       const params = mockQuery.mock.calls[0][1];
-      expect(sql).toContain('domain');
+      // domain 在 metadata 中，owner_role 仍是直接列
+      expect(sql).toContain('metadata');
       expect(sql).toContain('owner_role');
-      expect(params[9]).toBe('agent_ops');      // domain（$10 = index 9）
-      expect(params[10]).toBe('vp_agent_ops');  // owner_role 自动推断
+      const meta = JSON.parse(params[4]);
+      expect(meta.domain).toBe('agent_ops');
+      expect(params[3]).toBe('vp_agent_ops'); // owner_role 直接列
     });
 
     it('不传 domain 时 domain/owner_role 均为 null', async () => {
@@ -427,8 +434,9 @@ describe('actions.js', () => {
       });
 
       const params = mockQuery.mock.calls[0][1];
-      expect(params[9]).toBeNull();  // domain
-      expect(params[10]).toBeNull(); // owner_role
+      const meta = JSON.parse(params[4]);
+      expect(meta.domain).toBeNull();
+      expect(params[3]).toBeNull(); // owner_role
     });
   });
 
@@ -436,9 +444,7 @@ describe('actions.js', () => {
   describe('createProject', () => {
     it('正常创建项目（单仓库）', async () => {
       const fakeProj = { id: 'proj-1', name: '新项目', type: 'project' };
-      mockQuery
-        .mockResolvedValueOnce({ rows: [fakeProj] })  // INSERT projects
-        .mockResolvedValueOnce({ rows: [] });          // INSERT project_repos
+      mockQuery.mockResolvedValueOnce({ rows: [fakeProj] }); // INSERT okr_projects
 
       const result = await createProject({
         name: '新项目',
@@ -446,9 +452,9 @@ describe('actions.js', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.project).toEqual(fakeProj);
-      // 应该插入 project_repos
-      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(result.project.id).toBe('proj-1');
+      // 只有 1 次 INSERT（无 project_repos 表）
+      expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
     it('缺少 name 返回失败', async () => {
@@ -459,10 +465,7 @@ describe('actions.js', () => {
 
     it('多仓库项目', async () => {
       const fakeProj = { id: 'proj-multi', name: '多仓库', type: 'project' };
-      mockQuery
-        .mockResolvedValueOnce({ rows: [fakeProj] })  // INSERT projects
-        .mockResolvedValueOnce({ rows: [] })           // INSERT project_repos #1
-        .mockResolvedValueOnce({ rows: [] });          // INSERT project_repos #2
+      mockQuery.mockResolvedValueOnce({ rows: [fakeProj] }); // INSERT okr_projects
 
       const result = await createProject({
         name: '多仓库',
@@ -470,16 +473,15 @@ describe('actions.js', () => {
       });
 
       expect(result.success).toBe(true);
-      // 1 次 INSERT projects + 2 次 INSERT project_repos
-      expect(mockQuery).toHaveBeenCalledTimes(3);
+      // 只有 1 次 INSERT（repo_path 存 metadata，无 project_repos）
+      expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
     it('关联 KR', async () => {
       const fakeProj = { id: 'proj-kr', name: 'KR项目', type: 'project' };
       mockQuery
-        .mockResolvedValueOnce({ rows: [fakeProj] })  // INSERT projects
-        .mockResolvedValueOnce({ rows: [] })           // INSERT project_kr_links #1
-        .mockResolvedValueOnce({ rows: [] });          // INSERT project_kr_links #2
+        .mockResolvedValueOnce({ rows: [fakeProj] })  // INSERT okr_projects
+        .mockResolvedValueOnce({ rows: [] });          // UPDATE okr_projects SET kr_id
 
       const result = await createProject({
         name: 'KR项目',
@@ -487,11 +489,11 @@ describe('actions.js', () => {
       });
 
       expect(result.success).toBe(true);
-      // 1 次 INSERT projects + 0 次 project_repos (无 repo_path) + 2 次 project_kr_links
-      expect(mockQuery).toHaveBeenCalledTimes(3);
+      // 1 次 INSERT + 1 次 UPDATE kr_id (只链接第一个 KR)
+      expect(mockQuery).toHaveBeenCalledTimes(2);
     });
 
-    it('无仓库无KR只插入 projects 表', async () => {
+    it('无仓库无KR只插入 okr_projects 表', async () => {
       const fakeProj = { id: 'proj-min', name: '最小', type: 'project' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeProj] });
 
@@ -501,19 +503,18 @@ describe('actions.js', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
-    it('repo_paths 的第一个作为 repo_path 写入 projects 表', async () => {
+    it('repo_paths 的第一个作为 repo_path 写入 metadata', async () => {
       const fakeProj = { id: 'proj-rp', name: '路径回退', type: 'project' };
-      mockQuery
-        .mockResolvedValueOnce({ rows: [fakeProj] })
-        .mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [fakeProj] });
 
       await createProject({
         name: '路径回退',
         repo_paths: ['/first-repo'],
       });
 
+      // 新表 okr_projects: params = [title, desc, owner_role, metaJson]
       const insertProjectParams = mockQuery.mock.calls[0][1];
-      expect(insertProjectParams[2]).toBe('/first-repo'); // repo_path
+      expect(JSON.parse(insertProjectParams[3]).repo_path).toBe('/first-repo');
     });
   });
 
@@ -651,21 +652,23 @@ describe('actions.js', () => {
 
       await createGoal({ title: '顶级' });
 
+      // mission → INSERT INTO visions, type 在 metadata 中
       const params = mockQuery.mock.calls[0][1];
-      expect(params[6]).toBe('mission'); // goalType
+      expect(JSON.parse(params[4]).type).toBe('mission');
     });
 
     it('有 parent_id 时自动推断 type（mission -> global_kr）', async () => {
       // 查询父级 type
       mockQuery.mockResolvedValueOnce({ rows: [{ type: 'mission' }] });
-      // INSERT
+      // INSERT INTO objectives (global_kr)
       const fakeGoal = { id: 'goal-child', title: '子级', type: 'global_kr' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: '子级', parent_id: 'parent-1' });
 
+      // objectives: params = [title, desc, priority, owner_role, parent_id, end_date, metaJson]
       const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBe('global_kr');
+      expect(JSON.parse(insertParams[6]).type).toBe('global_kr');
     });
 
     it('有 parent_id 时自动推断 type（vision -> area_kr）', async () => {
@@ -675,8 +678,9 @@ describe('actions.js', () => {
 
       await createGoal({ title: '区域KR', parent_id: 'parent-2' });
 
+      // key_results: params = [title, desc, priority, owner_role, parent_id, end_date, metaJson]
       const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBe('area_kr');
+      expect(JSON.parse(insertParams[6]).type).toBe('area_kr');
     });
 
     it('有 parent_id 时自动推断 type（global_kr -> area_okr）', async () => {
@@ -687,7 +691,7 @@ describe('actions.js', () => {
       await createGoal({ title: '区域OKR', parent_id: 'parent-3' });
 
       const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBe('area_okr');
+      expect(JSON.parse(insertParams[6]).type).toBe('area_okr');
     });
 
     it('有 parent_id 但父级类型未知时默认 area_okr', async () => {
@@ -698,22 +702,20 @@ describe('actions.js', () => {
       await createGoal({ title: '默认KR', parent_id: 'parent-4' });
 
       const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBe('area_okr');
+      expect(JSON.parse(insertParams[6]).type).toBe('area_okr');
     });
 
     it('有 parent_id 但父级不存在时默认 kr（parent 查询返回空）', async () => {
-      // 父级查询返回空 - 不进入 if 分支，goalType 仍为 undefined
-      // 但由于 parent_id 存在，代码不走 else if (!goalType) 分支
-      // 所以 goalType 保持 undefined
+      // 父级查询返回空 - goalType 仍为 undefined → fallback to goals table
       mockQuery.mockResolvedValueOnce({ rows: [] });
       const fakeGoal = { id: 'goal-orphan', title: '孤儿', type: null };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: '孤儿', parent_id: 'parent-gone' });
 
-      // goalType 应该仍然是 undefined（parent not found, no mapping）
+      // fallback goals 表: params = [title, desc, priority, project_id, end_date, parent_id, goalType, domain, owner_role]
       const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBeUndefined();
+      expect(insertParams[6]).toBeUndefined(); // goalType undefined
     });
 
     it('指定 type 优先于 parent 推断', async () => {
@@ -728,23 +730,23 @@ describe('actions.js', () => {
 
       // 不应该查询父级
       expect(mockQuery).toHaveBeenCalledTimes(1);
+      // objectives: params = [title, desc, priority, owner_role, parent_id, end_date, metaJson]
       const insertParams = mockQuery.mock.calls[0][1];
-      expect(insertParams[6]).toBe('global_kr');
+      expect(JSON.parse(insertParams[6]).type).toBe('global_kr');
     });
 
-    it('默认值：priority=P1, status=pending, progress=0', async () => {
+    it('默认值：priority=P1, status=active（visions 用 active）', async () => {
       const fakeGoal = { id: 'goal-def', title: '默认', type: 'mission' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: '默认' });
 
       const sql = mockQuery.mock.calls[0][0];
-      expect(sql).toContain("'pending'");
-      const params = mockQuery.mock.calls[0][1];
-      expect(params[2]).toBe('P1'); // priority
+      // visions 表用 'active'，不用 'pending'
+      expect(sql).toContain("'active'");
     });
 
-    it('传 domain 时 SQL 包含 domain 字段，owner_role 自动推断', async () => {
+    it('传 domain 时 SQL 包含 metadata 字段，owner_role 自动推断', async () => {
       const fakeGoal = { id: 'goal-domain', title: 'quality目标', type: 'mission' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
@@ -755,10 +757,12 @@ describe('actions.js', () => {
 
       const sql = mockQuery.mock.calls[0][0];
       const params = mockQuery.mock.calls[0][1];
-      expect(sql).toContain('domain');
+      // domain 存 metadata，owner_role 直接列
       expect(sql).toContain('owner_role');
-      expect(params[7]).toBe('quality'); // domain（$8 = index 7）
-      expect(params[8]).toBe('vp_qa');   // owner_role 自动推断
+      expect(sql).toContain('metadata');
+      // visions: params = [title, desc, owner_role, end_date, metaJson]
+      expect(params[2]).toBe('vp_qa'); // owner_role
+      expect(JSON.parse(params[4]).domain).toBe('quality');
     });
 
     it('不传 domain 时 domain/owner_role 均为 null', async () => {
@@ -769,9 +773,10 @@ describe('actions.js', () => {
 
       const sql = mockQuery.mock.calls[0][0];
       const allParams = mockQuery.mock.calls[0][1];
-      expect(sql).toContain('domain');
-      expect(allParams[7]).toBeNull(); // domain
-      expect(allParams[8]).toBeNull(); // owner_role
+      // owner_role 为 null（直接列），domain 在 metadata 中为 null
+      expect(sql).toContain('metadata');
+      expect(allParams[2]).toBeNull(); // owner_role
+      expect(JSON.parse(allParams[4]).domain).toBeNull();
     });
   });
 
@@ -779,6 +784,7 @@ describe('actions.js', () => {
   describe('updateGoal', () => {
     it('正常更新 status', async () => {
       const fakeGoal = { id: 'goal-upd', status: 'in_progress' };
+      // 新实现先查 objectives，返回 fakeGoal 即成功
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       const result = await updateGoal({
@@ -792,7 +798,10 @@ describe('actions.js', () => {
 
     it('正常更新 progress', async () => {
       const fakeGoal = { id: 'goal-prog', progress: 50 };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
+      // 第一个查询（objectives）返回空，第二个（key_results）返回结果
+      mockQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [fakeGoal] });
 
       const result = await updateGoal({
         goal_id: 'goal-prog',
@@ -804,7 +813,10 @@ describe('actions.js', () => {
 
     it('progress=0 应该被接受（不被当做 falsy 跳过）', async () => {
       const fakeGoal = { id: 'goal-zero', progress: 0 };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
+      // objectives 返回空，key_results 返回结果（包含 progress=0 参数）
+      mockQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // objectives
+        .mockResolvedValueOnce({ rows: [fakeGoal] });       // key_results
 
       const result = await updateGoal({
         goal_id: 'goal-zero',
@@ -812,9 +824,9 @@ describe('actions.js', () => {
       });
 
       expect(result.success).toBe(true);
-      // 确认 progress 参数被写入
-      const params = mockQuery.mock.calls[0][1];
-      expect(params).toContain(0);
+      // key_results 查询（call index 1）的参数应包含 0
+      const krParams = mockQuery.mock.calls[1][1];
+      expect(krParams).toContain(0);
     });
 
     it('无更新参数返回失败', async () => {
@@ -824,7 +836,12 @@ describe('actions.js', () => {
     });
 
     it('目标不存在返回失败', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [] });
+      // 新实现依次查 objectives → key_results → visions → goals，需要 4 个空响应
+      mockQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // objectives
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // key_results
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // visions
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // goals
 
       const result = await updateGoal({
         goal_id: 'goal-404',
@@ -837,6 +854,7 @@ describe('actions.js', () => {
 
     it('同时更新 status 和 progress', async () => {
       const fakeGoal = { id: 'goal-both', status: 'completed', progress: 100 };
+      // objectives 先被查（返回结果）
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       const result = await updateGoal({

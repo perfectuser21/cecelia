@@ -1126,20 +1126,21 @@ async function handlePlanInput(input, dryRun = false) {
     result.level = 'mission';
     if (!dryRun) {
       const oResult = await pool.query(`
-        INSERT INTO goals (title, description, priority, type, status, progress)
-        VALUES ($1, $2, $3, 'mission', 'pending', 0) RETURNING *
-      `, [input.objective.title, input.objective.description || '', input.objective.priority || 'P1']);
+        INSERT INTO visions (title, description, status, metadata)
+        VALUES ($1, $2, 'active', $3) RETURNING *, title AS name
+      `, [input.objective.title, input.objective.description || '',
+          JSON.stringify({ priority: input.objective.priority || 'P1', type: 'mission' })]);
       result.created.goals.push(oResult.rows[0]);
 
       if (Array.isArray(input.objective.key_results)) {
         for (const krInput of input.objective.key_results) {
           const krResult = await pool.query(`
-            INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-            VALUES ($1, $2, $3, 'area_okr', $4, $5, 'pending', 0, $6) RETURNING *
+            INSERT INTO objectives (title, description, priority, vision_id, status, metadata)
+            VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *, title AS name
           `, [
             krInput.title, krInput.description || '', krInput.priority || input.objective.priority || 'P1',
-            oResult.rows[0].id, krInput.weight || 1.0,
-            JSON.stringify({ metric: krInput.metric, target: krInput.target, deadline: krInput.deadline })
+            oResult.rows[0].id,
+            JSON.stringify({ weight: krInput.weight || 1.0, metric: krInput.metric, target: krInput.target, deadline: krInput.deadline })
           ]);
           result.created.goals.push(krResult.rows[0]);
         }
@@ -1149,12 +1150,12 @@ async function handlePlanInput(input, dryRun = false) {
     result.level = 'area_okr';
     if (!dryRun) {
       const krResult = await pool.query(`
-        INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-        VALUES ($1, $2, $3, 'area_okr', $4, $5, 'pending', 0, $6) RETURNING *
+        INSERT INTO objectives (title, description, priority, vision_id, status, metadata)
+        VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *, title AS name
       `, [
         input.key_result.title, input.key_result.description || '', input.key_result.priority || 'P1',
-        input.key_result.objective_id || null, input.key_result.weight || 1.0,
-        JSON.stringify({ metric: input.key_result.metric, target: input.key_result.target, deadline: input.key_result.deadline })
+        input.key_result.objective_id || null,
+        JSON.stringify({ weight: input.key_result.weight || 1.0, metric: input.key_result.metric, target: input.key_result.target, deadline: input.key_result.deadline })
       ]);
       result.created.goals.push(krResult.rows[0]);
       result.linked_to.kr = krResult.rows[0];
@@ -1166,19 +1167,21 @@ async function handlePlanInput(input, dryRun = false) {
     }
     if (!dryRun) {
       const pResult = await pool.query(`
-        INSERT INTO projects (name, description, repo_path, status)
-        VALUES ($1, $2, $3, 'active') RETURNING *
-      `, [input.project.title, input.project.description || '', input.project.repo_path]);
-      result.created.projects.push(pResult.rows[0]);
-      result.linked_to.project = pResult.rows[0];
+        INSERT INTO okr_projects (title, description, status, metadata)
+        VALUES ($1, $2, 'active', $3) RETURNING *, title AS name
+      `, [input.project.title, input.project.description || '',
+          JSON.stringify({ repo_path: input.project.repo_path })]);
+      const pRow = pResult.rows[0];
+      const pMeta = typeof pRow.metadata === 'string' ? JSON.parse(pRow.metadata) : (pRow.metadata || {});
+      const projWithRepo = { ...pRow, repo_path: pMeta.repo_path || null };
+      result.created.projects.push(projWithRepo);
+      result.linked_to.project = projWithRepo;
 
-      if (Array.isArray(input.project.kr_ids)) {
-        for (const krId of input.project.kr_ids) {
-          await pool.query(
-            'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [pResult.rows[0].id, krId]
-          );
-        }
+      if (Array.isArray(input.project.kr_ids) && input.project.kr_ids.length > 0) {
+        await pool.query(
+          'UPDATE okr_projects SET kr_id = $1 WHERE id = $2',
+          [input.project.kr_ids[0], pRow.id]
+        );
       }
     }
   } else if (input.task) {

@@ -26,16 +26,14 @@ async function manageProjectActivation(pool, cap) {
   let activated = 0;
   let deactivated = 0;
 
-  // 1. 查当前 active projects（priority 通过 key_results 获取，新 OKR 表）
+  // 1. 查当前 active projects（新 OKR 表，priority 通过 key_results 获取）
   const activeResult = await pool.query(`
-    SELECT p.id, p.name, p.status, p.created_at, p.updated_at,
+    SELECT p.id, p.title AS name, p.status, p.created_at, p.updated_at,
            p.metadata->>'user_pinned' AS user_pinned,
            kr.priority
-    FROM projects p
-    LEFT JOIN project_kr_links pkl ON pkl.project_id = p.id
-    LEFT JOIN key_results kr ON kr.id = pkl.kr_id
-    WHERE p.type = 'project'
-      AND p.status = 'active'
+    FROM okr_projects p
+    LEFT JOIN key_results kr ON kr.id = p.kr_id
+    WHERE p.status = 'active'
     ORDER BY p.created_at ASC
   `);
   const activeProjects = activeResult.rows;
@@ -64,11 +62,12 @@ async function manageProjectActivation(pool, cap) {
     const toDeactivate = canDeactivate.slice(0, excess);
 
     for (const proj of toDeactivate) {
-      await pool.query(`
-        UPDATE projects
-        SET status = 'inactive', updated_at = NOW()
-        WHERE id = $1
+      const deactResult = await pool.query(`
+        UPDATE okr_projects SET status = 'inactive', updated_at = NOW() WHERE id = $1
       `, [proj.id]);
+      if (deactResult.rowCount === 0) {
+        await pool.query(`UPDATE projects SET status = 'inactive', updated_at = NOW() WHERE id = $1`, [proj.id]);
+      }
       deactivated++;
     }
 
@@ -94,18 +93,17 @@ async function manageProjectActivation(pool, cap) {
     return { activated, deactivated };
   }
 
-  // 4. 从 pending + inactive 按分数补位（priority 通过 key_results 获取，新 OKR 表）
+  // 4. 从 pending + inactive 按分数补位（新 OKR 表）
   const candidateResult = await pool.query(`
-    SELECT p.id, p.name, p.status, p.created_at, p.updated_at,
+    SELECT p.id, p.title AS name, p.status, p.created_at, p.updated_at,
            p.metadata->>'user_pinned' AS user_pinned,
-           p.deadline,
+           p.end_date AS deadline,
+           (p.metadata->>'sequence_order')::int AS sequence_order,
            kr.priority
-    FROM projects p
-    LEFT JOIN project_kr_links pkl ON pkl.project_id = p.id
-    LEFT JOIN key_results kr ON kr.id = pkl.kr_id
-    WHERE p.type = 'project'
-      AND p.status IN ('pending', 'inactive')
-    ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC
+    FROM okr_projects p
+    LEFT JOIN key_results kr ON kr.id = p.kr_id
+    WHERE p.status IN ('pending', 'inactive')
+    ORDER BY sequence_order ASC NULLS LAST, p.created_at ASC
   `);
 
   // 计算分数并排序
@@ -127,11 +125,12 @@ async function manageProjectActivation(pool, cap) {
   const toActivate = candidates.slice(0, slotsAvailable);
 
   for (const proj of toActivate) {
-    await pool.query(`
-      UPDATE projects
-      SET status = 'active', updated_at = NOW()
-      WHERE id = $1
+    const actResult = await pool.query(`
+      UPDATE okr_projects SET status = 'active', updated_at = NOW() WHERE id = $1
     `, [proj.id]);
+    if (actResult.rowCount === 0) {
+      await pool.query(`UPDATE projects SET status = 'active', updated_at = NOW() WHERE id = $1`, [proj.id]);
+    }
     activated++;
   }
 
