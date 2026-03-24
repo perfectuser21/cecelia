@@ -8,7 +8,9 @@
 
 ### 根本原因
 
-PR1-PR8 只迁移了 SELECT 读操作，所有写操作（createInitiative, createScope, createProject, createGoal, updateGoal, executePlanAdjustment 等）仍然写入旧表 goals/projects。新 OKR 表（objectives, key_results, visions, okr_projects, okr_scopes, okr_initiatives）已经存在但没有数据写入，导致双表不一致。
+PR1-PR8 只迁移了 SELECT 读操作，所有写操作（createInitiative, createScope, createProject, createGoal, updateGoal, executePlanAdjustment 等）仍然写入旧表 goals/projects。
+新 OKR 表（objectives, key_results, visions, okr_projects, okr_scopes, okr_initiatives）已经存在但没有数据写入，导致读写两套路径不一致。
+本次迁移补全写操作路由，同时保留 rowCount=0 降级模式兼容旧表历史数据。
 
 ---
 
