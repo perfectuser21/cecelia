@@ -421,11 +421,14 @@ describe('Intent Recognition Module', () => {
         createdTaskIds.push(task.id);
       }
 
-      // Verify project was created
-      const projectQuery = await pool.query(
-        'SELECT * FROM projects WHERE id = $1',
-        [result.created.project.id]
-      );
+      // Verify project exists in new OKR tables (okr_initiatives/okr_projects/okr_scopes)
+      const projectQuery = await pool.query(`
+        SELECT id FROM okr_initiatives WHERE id = $1
+        UNION ALL
+        SELECT id FROM okr_projects WHERE id = $1
+        UNION ALL
+        SELECT id FROM okr_scopes WHERE id = $1
+      `, [result.created.project.id]);
       expect(projectQuery.rows.length).toBe(1);
 
       // Verify tasks were created
