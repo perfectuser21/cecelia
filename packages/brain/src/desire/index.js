@@ -205,15 +205,52 @@ async function handleActFollowupDesire(pool, desire, result) {
   }
 }
 
-/** Layer 6: 表达通知类型欲望（inform/warn/propose 等） */
+// 欲望类型 → suggestions.suggestion_type 映射
+const DESIRE_TO_SUGGESTION_TYPE = {
+  warn: 'alert',
+  propose: 'insight_action',
+  question: 'general',
+  inform: 'general',
+  celebrate: 'general',
+};
+
+/** Layer 6: 表达通知类型欲望（inform/warn/propose 等），高分（>0.7）同时写入 suggestions 管道 */
 async function handleNotifyDesire(pool, expressionCandidate, result) {
+  const { desire, score } = expressionCandidate;
   result.expression = { triggered: true };
   try {
-    const expressionResult = await runExpression(pool, expressionCandidate.desire);
+    const expressionResult = await runExpression(pool, desire);
     result.expression.sent = expressionResult.sent;
   } catch (err) {
     console.error('[desire] expression error:', err.message);
     result.expression.sent = false;
+  }
+
+  // 高分欲望（score > 0.7）同时写入 suggestions 表，让建议管道接管
+  if (score > 0.7) {
+    try {
+      const suggestionType = DESIRE_TO_SUGGESTION_TYPE[desire.type] || 'general';
+      const { rows } = await pool.query(`
+        INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata)
+        VALUES ($1, 'desire_system', $2, 'pending', $3, $4)
+        RETURNING id
+      `, [
+        `${desire.content}\n\n提议行动：${desire.proposed_action}`,
+        score,
+        suggestionType,
+        JSON.stringify({
+          desire_id: desire.id,
+          desire_type: desire.type,
+          urgency: desire.urgency,
+          insight: desire.insight || null,
+          trigger_source: 'desire_system',
+        }),
+      ]);
+      result.expression.suggestion_created = rows[0]?.id;
+      console.log(`[desire] notify(${desire.type}) score=${score.toFixed(2)} → suggestion ${rows[0]?.id}`);
+    } catch (err) {
+      console.error('[desire] notify suggestion creation error:', err.message);
+    }
   }
 }
 

@@ -164,8 +164,8 @@ describe('desire → act/follow_up 走 suggestions 表', () => {
     });
   });
 
-  describe('DOD-5: warn desire → runExpression（不创建 suggestion）', () => {
-    it('DOD-5: warn desire 调用 runExpression 且不创建 suggestion', async () => {
+  describe('DOD-5: warn desire → runExpression + score>0.7 时写入 suggestions', () => {
+    it('DOD-5a: warn desire（score=0.75）调用 runExpression', async () => {
       const desire = makeDesire('warn');
       mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.75 });
 
@@ -175,10 +175,34 @@ describe('desire → act/follow_up 走 suggestions 表', () => {
       expect(mockRunExpression).toHaveBeenCalledWith(pool, desire);
       expect(result.expression.sent).toBe(true);
     });
+
+    it('DOD-5b: warn desire score>0.7 时同时写入 suggestions（source=desire_system, type=alert）', async () => {
+      const desire = makeDesire('warn');
+      mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.75 });
+
+      const result = await runDesireSystem(pool);
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("'desire_system'"),
+        expect.arrayContaining(['alert'])
+      );
+      expect(result.expression.suggestion_created).toBe('suggestion-created-001');
+    });
+
+    it('DOD-5c: warn desire score≤0.7 时不写入 suggestions', async () => {
+      const desire = makeDesire('warn');
+      mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.65 });
+
+      const result = await runDesireSystem(pool);
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(result.expression.suggestion_created).toBeUndefined();
+    });
   });
 
-  describe('DOD-6: propose desire → runExpression（不创建 suggestion）', () => {
-    it('DOD-6: propose desire 调用 runExpression 且不创建 suggestion', async () => {
+  describe('DOD-6: propose desire → runExpression，score=0.70 时不创建 suggestion', () => {
+    it('DOD-6: propose desire（score=0.70）调用 runExpression 且不创建 suggestion', async () => {
       const desire = makeDesire('propose');
       mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.70 });
 
@@ -187,6 +211,21 @@ describe('desire → act/follow_up 走 suggestions 表', () => {
 
       expect(mockRunExpression).toHaveBeenCalled();
       expect(result.expression.sent).toBe(true);
+      expect(result.expression.suggestion_created).toBeUndefined();
+    });
+
+    it('DOD-6b: propose desire score>0.7 時写入 suggestions（type=insight_action）', async () => {
+      const desire = makeDesire('propose');
+      mockRunExpressionDecision.mockResolvedValue({ desire, score: 0.85 });
+
+      const result = await runDesireSystem(pool);
+      await new Promise(r => setTimeout(r, 0));
+
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("'desire_system'"),
+        expect.arrayContaining(['insight_action'])
+      );
+      expect(result.expression.suggestion_created).toBeDefined();
     });
   });
 
