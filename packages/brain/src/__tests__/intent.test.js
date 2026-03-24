@@ -52,6 +52,7 @@ describe('Intent Recognition Module', () => {
     }
     for (const projectId of createdProjectIds) {
       await pool.query('DELETE FROM tasks WHERE project_id = $1', [projectId]).catch(() => {});
+      await pool.query('DELETE FROM tasks WHERE okr_initiative_id = $1', [projectId]).catch(() => {});
       await pool.query('DELETE FROM okr_initiatives WHERE id = $1', [projectId]).catch(() => {});
       await pool.query('DELETE FROM projects WHERE id = $1', [projectId]).catch(() => {});
     }
