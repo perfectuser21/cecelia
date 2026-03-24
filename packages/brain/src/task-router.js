@@ -15,7 +15,8 @@ import { DOMAIN_TO_ROLE, ROLES } from './role-registry.js';
 const VALID_TASK_TYPES = [
   'dev', 'review', 'talk', 'data', 'qa', 'audit',
   'research', 'explore', 'knowledge',
-  'codex_qa', 'codex_dev', 'codex_playwright', 'codex_test_gen', 'code_review', 'decomp_review',
+  'codex_qa', 'codex_dev', 'codex_test_gen', 'code_review', 'decomp_review',
+  'crystallize', 'crystallize_scope', 'crystallize_forge', 'crystallize_verify', 'crystallize_register',
   'pr_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
   'initiative_execute',
@@ -54,7 +55,11 @@ const SKILL_WHITELIST = {
   'knowledge': '/knowledge',
   'codex_qa': '/codex',
   'codex_dev': '/dev',  // Codex Provider 跑 /dev — 与 dev 相同 skill，通过 runner.sh 执行
-  'codex_playwright': '/playwright',  // Codex 跑 Playwright 自动化 — 西安 M4 CDP 控制 PC
+  'crystallize': '/playwright',         // crystallize 编排入口 — 西安 M4 CDP 控制 PC
+  'crystallize_scope': '/playwright',   // Scope 阶段：定义目标 + DoD
+  'crystallize_forge': '/playwright',   // Forge 阶段：Codex 探索写脚本
+  'crystallize_verify': '/playwright',  // Verify 阶段：无 LLM 验证3次
+  'crystallize_register': '/playwright', // Register 阶段：注册到 SKILL.md
   'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 — 西安 M4 扫描覆盖率低模块
   'pr_review': '/review',  // 异步 PR 审查 → 西安 Codex 独立 LLM 审查
   'code_review': '/code-review',
@@ -149,7 +154,12 @@ const LOCATION_MAP = {
   'audit': 'us',      // 审计 → US (Sonnet)
   'codex_qa': 'xian',  // Codex 免疫检查 → 西安 Mac mini (Codex CLI via codex-bridge)
   'codex_dev': 'xian', // Codex /dev → 西安 Mac mini (runner.sh + devloop-check.sh SSOT)
-  'codex_playwright': 'xian', // Playwright 自动化 → 西安 M4 (playwright-runner.sh + CDP → PC)
+  // crystallize 能力蒸馏流水线 → 西安 M4 (playwright-runner.sh + CDP → PC)
+  'crystallize': 'xian',
+  'crystallize_scope': 'xian',
+  'crystallize_forge': 'xian',
+  'crystallize_verify': 'xian',
+  'crystallize_register': 'xian',
   'codex_test_gen': 'xian',   // 自动生成测试 → 西安 M4 (Codex 扫描覆盖率低模块 + 生成测试)
   'pr_review': 'xian',  // 异步 PR 审查 → 西安 Mac mini (MiniMax via Codex CLI, 独立账号)
   'code_review': 'us',      // 代码审查 → US 本机 Codex (需读代码上下文，/code-review skill)
@@ -160,7 +170,7 @@ const LOCATION_MAP = {
   'suggestion_plan': 'xian',      // Suggestion 层级识别 → 西安 Codex (B類纯策略，/plan skill)
   'architecture_design': 'us',    // Architecture 设计 → US 本机 Codex (需读代码，/architect design)
   'architecture_scan': 'us',      // 系统扫描 → US 本机 Codex (需读代码，/architect scan)
-  'arch_review': 'us',            // 架构巡检 → US 本机 Codex (需读代码，/arch-review review)
+  'arch_review': 'xian',          // 架构巡检 → 西安 Codex (分析/审查类，/arch-review review)
   'strategy_session': 'xian',     // 战略会议 → 西安 Codex (B類，/strategy-session)
   'intent_expand': 'us',          // 意图扩展 → US 本机（需读本地 Brain DB，补全 PRD）
   'initiative_execute': 'us',     // Initiative 执行 → US 本机（/dev 全流程，A類）
@@ -218,8 +228,12 @@ const TASK_REQUIREMENTS = {
   'initiative_execute': ['has_git'],
   'pipeline_rescue':    ['has_git'],
   'codex_dev':          ['has_git'],
-  // 需要浏览器
-  'codex_playwright':   ['has_browser'],
+  // 需要浏览器（crystallize 各阶段均通过 CDP 控制西安 PC 浏览器）
+  'crystallize':          ['has_browser'],
+  'crystallize_scope':    ['has_browser'],
+  'crystallize_forge':    ['has_browser'],
+  'crystallize_verify':   ['has_browser'],
+  'crystallize_register': ['has_browser'],
   // B类通用 - 任意 general 机器
   'codex_qa':           ['general'],
   'codex_test_gen':     ['general'],

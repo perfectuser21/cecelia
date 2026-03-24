@@ -18,9 +18,9 @@ function makeMockPool({ activeProjects = [], candidates = [] } = {}) {
       const s = sql.trim();
       capturedQueries.push({ sql: s, params });
 
-      // 查 active projects
+      // 查 active projects（新 okr_projects 表）
       if (
-        s.includes("type = 'project'") &&
+        s.includes('okr_projects') &&
         s.includes("status = 'active'") &&
         s.includes('SELECT') &&
         s.includes('p.id')
@@ -28,24 +28,36 @@ function makeMockPool({ activeProjects = [], candidates = [] } = {}) {
         return { rows: activeProjects };
       }
 
-      // 降级 UPDATE（inactive）
+      // 降级 UPDATE（inactive）— 新表
+      if (s.includes('UPDATE okr_projects') && s.includes("status = 'inactive'")) {
+        deactivateCount++;
+        return { rows: [], rowCount: 1 };
+      }
+
+      // 降级 UPDATE（inactive）— 旧表 fallback
       if (s.includes('UPDATE projects') && s.includes("status = 'inactive'")) {
         deactivateCount++;
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
 
       // 查 candidates（pending + inactive）
       if (
-        s.includes("type = 'project'") &&
+        s.includes('okr_projects') &&
         s.includes("status IN ('pending', 'inactive')")
       ) {
         return { rows: candidates };
       }
 
-      // 激活 UPDATE
+      // 激活 UPDATE — 新表
+      if (s.includes('UPDATE okr_projects') && s.includes("status = 'active'")) {
+        activateCount++;
+        return { rows: [], rowCount: 1 };
+      }
+
+      // 激活 UPDATE — 旧表 fallback
       if (s.includes('UPDATE projects') && s.includes("status = 'active'")) {
         activateCount++;
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       }
 
       // cecelia_events
@@ -193,7 +205,7 @@ describe('manageProjectActivation - D8: deadline 传递给评分', () => {
     const candidateQuery = pool._getCapturedQueries().find(
       q => q.sql.includes("status IN ('pending', 'inactive')")
     );
-    expect(candidateQuery.sql).toContain('p.deadline');
+    expect(candidateQuery.sql).toContain('end_date');
   });
 
   it('补位查询包含 p.deadline 字段', async () => {
@@ -206,6 +218,6 @@ describe('manageProjectActivation - D8: deadline 传递给评分', () => {
       q => q.sql.includes("status IN ('pending', 'inactive')")
     );
     expect(candidateQuery).toBeDefined();
-    expect(candidateQuery.sql).toContain('p.deadline');
+    expect(candidateQuery.sql).toContain('end_date');
   });
 });

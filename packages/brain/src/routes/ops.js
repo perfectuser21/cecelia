@@ -727,11 +727,12 @@ router.get('/suggestions/stats', async (req, res) => {
 router.get('/goal-evaluations', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
+    // 新 OKR 表：goal_evaluations.goal_id 对应 key_results.id（UUID 相同）
     const result = await pool.query(`
       SELECT ge.id, ge.goal_id, ge.verdict, ge.metrics, ge.action_taken, ge.action_detail, ge.created_at,
              g.title AS goal_title, g.priority AS goal_priority, g.progress AS goal_progress
       FROM goal_evaluations ge
-      JOIN goals g ON g.id = ge.goal_id
+      JOIN key_results g ON g.id = ge.goal_id
       ORDER BY ge.created_at DESC
       LIMIT $1
     `, [limit]);

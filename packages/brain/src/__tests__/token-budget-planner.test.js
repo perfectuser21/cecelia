@@ -86,8 +86,9 @@ describe('accountRemainingPct()', () => {
 
   it('full 168h remaining → raw remaining (periodFraction=1)', () => {
     const a = makeAccount('a1', 50, 50, 168);
-    // periodFraction=168/168=1, not < 1, so returns rawRemaining=50
-    expect(accountRemainingPct(a)).toBe(50);
+    // periodFraction=168/168≈1, returns rawRemaining≈50
+    // Use toBeCloseTo: Date.now() drift can make periodFraction microscopically < 1
+    expect(accountRemainingPct(a)).toBeCloseTo(50, 3);
   });
 
   it('reset 在 2 小时内 → 视为 100%', () => {
@@ -234,8 +235,10 @@ describe('getExecutorAffinity()', () => {
     expect(a.no_downgrade).toBe(true);
   });
 
-  it('explore → minimax primary', () => {
-    expect(getExecutorAffinity('explore').primary).toBe('minimax');
+  it('explore → codex primary（MiniMax 已停用）', () => {
+    const a = getExecutorAffinity('explore');
+    expect(a.primary).toBe('codex');
+    expect(a.no_downgrade).toBe(true);
   });
 
   it('未知 task_type → 默认 claude primary，codex fallback', () => {
@@ -293,7 +296,7 @@ describe('shouldDowngrade()', () => {
     expect(shouldDowngrade('codex_dev', 'tight')).toBe(false);
   });
 
-  it('tight + explore → 不降级（MiniMax 任务）', () => {
+  it('tight + explore → 不降级（已是 Codex，no_downgrade=true）', () => {
     expect(shouldDowngrade('explore', 'tight')).toBe(false);
   });
 });

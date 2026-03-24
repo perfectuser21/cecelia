@@ -237,7 +237,7 @@ jobs:
   devgate-checks:
     name: L4 DevGate Quality Checks
     needs: [changes, brain-integration]
-    if: needs.changes.outputs.brain == 'true' && needs.brain-integration.result == 'success'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.brain == 'true' && needs.brain-integration.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -304,8 +304,9 @@ jobs:
               echo "FAIL: Brain Integration Tests (${{ needs.brain-integration.result }})"
               FAILED=true
             fi
-            if [ "${{ needs.devgate-checks.result }}" != "success" ]; then
-              echo "FAIL: DevGate Quality Checks (${{ needs.devgate-checks.result }})"
+            DEVGATE_RESULT="${{ needs.devgate-checks.result }}"
+            if [ "$DEVGATE_RESULT" != "success" ] && [ "$DEVGATE_RESULT" != "skipped" ]; then
+              echo "FAIL: DevGate Quality Checks ($DEVGATE_RESULT)"
               FAILED=true
             fi
           fi

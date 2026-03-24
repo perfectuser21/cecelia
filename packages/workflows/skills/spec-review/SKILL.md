@@ -144,6 +144,9 @@ description: |
 - [GATE] 条目用 npm test 跑全量 ✅
 - [PRESERVE] 条目用最小命令验证关键行为不变 ✅
 
+**blocker 规则**：
+- [GATE] 条目测试命令只打印文字，无 exit code 断言 → blocker
+
 ---
 
 ## 裁决规则

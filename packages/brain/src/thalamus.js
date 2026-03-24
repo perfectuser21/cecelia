@@ -37,7 +37,7 @@ let _selfAwarenessCache = { context: '', refreshedAt: 0 };
 const SKILLS_SUMMARY = `## Cecelia 能力地图
 **任务路由（task_type → 执行位置）**
 - dev / review / qa / audit / code_review → 美国 Mac mini（Claude Code）
-- codex_dev / codex_qa / codex_playwright → 西安 M4（Codex）
+- codex_dev / codex_qa / crystallize → 西安 M4（Codex）
 - explore / talk / research / data → 香港（MiniMax + N8N）
 
 **核心 Skills（63个）**
@@ -1205,6 +1205,7 @@ function quickRoute(event) {
               description: `反刍洞察自动创建：${(event.learnings || []).map(l => l.title).join(', ').slice(0, 400)}`,
               task_type: 'research',
               priority: 'P2',
+              trigger_source: 'rumination',
             }
           })),
           { type: 'log_event', params: { event_type: 'rumination_result', has_actions: true } },

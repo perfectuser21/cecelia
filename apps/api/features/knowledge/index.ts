@@ -16,6 +16,12 @@ const manifest: FeatureManifest = {
     { path: '/knowledge/brain', component: 'SuperBrain' },
     { path: '/knowledge/digestion', component: 'KnowledgeDigestion' },
     { path: '/knowledge/instruction-book', component: 'InstructionBook' },
+    // Documentation System
+    { path: '/knowledge/dev-log', component: 'DevLog' },
+    { path: '/knowledge/decisions', component: 'DecisionRegistry' },
+    { path: '/knowledge/designs', component: 'DesignVault' },
+    { path: '/knowledge/diary', component: 'DailyDiary' },
+    { path: '/knowledge/map', component: 'KnowledgeMap' },
     // 内容工厂
     {
       path: '/content-factory',
@@ -34,6 +40,12 @@ const manifest: FeatureManifest = {
     SuperBrain: () => import('../brain/pages/SuperBrain'),
     KnowledgeDigestion: () => import('./pages/KnowledgeDigestion'),
     InstructionBook: () => import('./pages/InstructionBook'),
+    // Documentation System
+    DevLog: () => import('./pages/DevLog'),
+    DecisionRegistry: () => import('./pages/DecisionRegistry'),
+    DesignVault: () => import('./pages/DesignVault'),
+    DailyDiary: () => import('./pages/DailyDiary'),
+    KnowledgeMap: () => import('./pages/KnowledgeMap'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
   },
 };

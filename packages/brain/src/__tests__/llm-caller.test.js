@@ -52,7 +52,7 @@ vi.mock('fs', () => ({
   }),
 }));
 
-import { callLLM, callLLMStream, _resetMinimaxKey, _resetAnthropicKey } from '../llm-caller.js';
+import { callLLM, callLLMStream, _resetMinimaxKey, _resetAnthropicKey, _resetOpenAIKey } from '../llm-caller.js';
 import { getActiveProfile } from '../model-profile.js';
 import { selectBestAccount } from '../account-usage.js';
 
@@ -397,6 +397,8 @@ describe('llm-caller', () => {
     });
 
     it('openai provider 现已支持，无 API key 时抛出凭据错误', async () => {
+      // 若环境有 OPENAI_API_KEY，fetch 会被调用；模拟 401 以触发 OpenAI API error 路径
+      global.fetch.mockResolvedValueOnce(makeErrorResponse(401, 'Unauthorized'));
       await expect(
         callLLM('thalamus', '测试', { provider: 'openai', model: 'gpt-4o-mini' })
       ).rejects.toThrow(/OpenAI API key not available|OpenAI API error/);

@@ -16,11 +16,11 @@ const FOCUS_OVERRIDE_KEY = 'daily_focus_override';
  * 这些就是系统当前的焦点。
  */
 async function getReadyKRs() {
+  // 迁移：goals.type='area_okr' → objectives（parent_id → vision_id）
   const result = await pool.query(`
-    SELECT id, title, description, priority, progress, status, parent_id
-    FROM goals
-    WHERE type = 'area_okr'
-      AND status IN ('ready', 'in_progress')
+    SELECT id, title, description, priority, 0 AS progress, status, vision_id AS parent_id
+    FROM objectives
+    WHERE status IN ('ready', 'in_progress', 'active')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
@@ -42,9 +42,10 @@ async function selectDailyFocus() {
 
   if (overrideResult.rows.length > 0 && overrideResult.rows[0].value_json?.objective_id) {
     const manualObjectiveId = overrideResult.rows[0].value_json.objective_id;
+    // 迁移：goals.type='vision' → visions
     const objResult = await pool.query(
-      'SELECT * FROM goals WHERE id = $1 AND type IN ($2, $3)',
-      [manualObjectiveId, 'mission', 'vision']
+      'SELECT * FROM visions WHERE id = $1',
+      [manualObjectiveId]
     );
 
     if (objResult.rows.length > 0) {
@@ -79,8 +80,9 @@ async function selectDailyFocus() {
     return null;
   }
 
+  // 迁移：goals → visions（bestAreaId 是 vision_id）
   const areaResult = await pool.query(
-    'SELECT * FROM goals WHERE id = $1',
+    'SELECT * FROM visions WHERE id = $1',
     [bestAreaId]
   );
 
@@ -110,12 +112,12 @@ async function getDailyFocus() {
 
   const { objective, reason, is_manual } = focusResult;
 
-  // Get ready KRs under this objective
+  // Get ready objectives under this vision（迁移：goals WHERE parent_id → objectives WHERE vision_id）
   const readyKRs = await pool.query(`
-    SELECT id, title, progress, weight, status
-    FROM goals
-    WHERE parent_id = $1
-      AND status IN ('ready', 'in_progress')
+    SELECT id, title, 0 AS progress, 1.0 AS weight, status
+    FROM objectives
+    WHERE vision_id = $1
+      AND status IN ('ready', 'in_progress', 'active')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,
       created_at ASC
@@ -160,9 +162,10 @@ async function getDailyFocus() {
  * Manually set daily focus (override)
  */
 async function setDailyFocus(objectiveId) {
+  // 迁移：goals.type='vision' → visions
   const objResult = await pool.query(
-    'SELECT id FROM goals WHERE id = $1 AND type IN ($2, $3)',
-    [objectiveId, 'mission', 'vision']
+    'SELECT id FROM visions WHERE id = $1',
+    [objectiveId]
   );
 
   if (objResult.rows.length === 0) {
@@ -198,10 +201,11 @@ async function getFocusSummary() {
 
   const { objective, reason, is_manual } = focusResult;
 
+  // 迁移：goals WHERE parent_id → objectives WHERE vision_id
   const krsResult = await pool.query(`
-    SELECT id, title, progress
-    FROM goals
-    WHERE parent_id = $1 AND status IN ('ready', 'in_progress')
+    SELECT id, title, 0 AS progress
+    FROM objectives
+    WHERE vision_id = $1 AND status IN ('ready', 'in_progress', 'active')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END
     LIMIT 3

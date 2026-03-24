@@ -54,15 +54,22 @@ describe('memory-retriever chat 模式', () => {
   });
 
   it('loadConversationHistory 格式化对话记录', async () => {
+    // memory_stream 为空时 fallback 到 cecelia_events（向后兼容路径）
     const mockPool = {
-      query: vi.fn().mockResolvedValue({
-        rows: [
-          {
-            id: '1',
-            payload: JSON.stringify({ user_message: '今天做什么', reply: '看看 OKR' }),
-            created_at: new Date().toISOString(),
-          },
-        ],
+      query: vi.fn().mockImplementation((sql) => {
+        if (typeof sql === 'string' && sql.includes("source_type = 'conversation_turn'")) {
+          return Promise.resolve({ rows: [] }); // memory_stream 暂无 conversation_turn 数据
+        }
+        // cecelia_events fallback 路径
+        return Promise.resolve({
+          rows: [
+            {
+              id: '1',
+              payload: JSON.stringify({ user_message: '今天做什么', reply: '看看 OKR' }),
+              created_at: new Date().toISOString(),
+            },
+          ],
+        });
       }),
     };
 

@@ -100,7 +100,7 @@ describe('Heartbeat Inspector', () => {
       expect(calls[1]).toContain('24 hours');
       expect(calls[2]).toContain('pending_actions');
       expect(calls[2]).toContain('pending_approval');
-      expect(calls[3]).toContain('goals');
+      expect(calls[3]).toContain('key_results');
       expect(calls[3]).toContain('in_progress');
     });
 

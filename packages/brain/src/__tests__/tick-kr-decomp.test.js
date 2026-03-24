@@ -33,12 +33,12 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
     }
     if (testProjectIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-      await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]);
+      await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
       testProjectIds = [];
     }
     if (testGoalIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE goal_id = ANY($1)', [testGoalIds]).catch(() => {});
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testGoalIds]);
+      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testGoalIds]).catch(() => {});
       testGoalIds = [];
     }
   });
@@ -46,14 +46,14 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
   it('should create KR decomposition task when none exists', async () => {
     // Setup: create KR + project
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR for decomp', 'area_okr', 'P0', 'pending', 0) RETURNING id, title"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Test KR for decomp', 'P0', 'pending', 0) RETURNING id, title"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
     const krTitle = krResult.rows[0].title;
 
     const projResult = await pool.query(
-      "INSERT INTO projects (name, repo_path, status) VALUES ('decomp-test-proj', '/tmp/decomp-test', 'active') RETURNING id"
+      "INSERT INTO okr_projects (title, status) VALUES ('decomp-test-proj', 'active') RETURNING id"
     );
     testProjectIds.push(projResult.rows[0].id);
     const projectId = projResult.rows[0].id;
@@ -96,7 +96,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should NOT create duplicate when decomposition task already exists (queued)', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup KR', 'area_okr', 'P0', 'pending', 0) RETURNING id, title"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup KR', 'P0', 'pending', 0) RETURNING id, title"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
@@ -127,7 +127,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should NOT create duplicate when decomposition task is in_progress', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('InProgress KR', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('InProgress KR', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
@@ -153,7 +153,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should allow creation when old decomposition task is completed > 24h ago', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Old Completed KR', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Old Completed KR', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;
@@ -179,7 +179,7 @@ describe('Tick KR Auto-Decomposition (Step 6c)', () => {
 
   it('should detect decomposition task by title pattern (拆解)', async () => {
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Title Pattern KR', 'area_okr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Title Pattern KR', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(krResult.rows[0].id);
     const krId = krResult.rows[0].id;

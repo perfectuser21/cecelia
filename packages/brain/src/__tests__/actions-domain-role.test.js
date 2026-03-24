@@ -102,10 +102,14 @@ describe('actions.js - domain 自动填充', () => {
       const sql = insertCall[0];
       const params = insertCall[1];
 
-      expect(sql).toContain('domain');
+      // domain 现在存入 metadata JSON，owner_role 仍是直接列
       expect(sql).toContain('owner_role');
-      expect(params).toContain('quality');
+      expect(sql).toContain('metadata');
       expect(params).toContain('vp_qa');
+      // domain 在 metadata JSON 中
+      const metaParam = params.find(p => typeof p === 'string' && p.includes('"domain"'));
+      expect(metaParam).toBeTruthy();
+      expect(JSON.parse(metaParam).domain).toBe('quality');
     });
 
     it('不传 domain 时标题无匹配关键词则 domain/owner_role 写 NULL', async () => {
@@ -115,11 +119,11 @@ describe('actions.js - domain 自动填充', () => {
       await createGoal({ title: '通用年度规划目标' });
 
       const params = mockQuery.mock.calls[0][1];
-      // createGoal 不自动检测 domain，不传则 domain/owner_role 均写 null
-      const domainParam = params[params.length - 2];
-      const ownerRoleParam = params[params.length - 1];
-      expect(domainParam).toBeNull();
-      expect(ownerRoleParam).toBeNull();
+      // visions 表: params = [title, desc, owner_role, end_date, metaJson]
+      // owner_role 为 null，domain 在 metadata 中为 null
+      expect(params[2]).toBeNull(); // owner_role
+      const metaParam = params[params.length - 1];
+      expect(JSON.parse(metaParam).domain).toBeNull();
     });
   });
 
@@ -138,10 +142,14 @@ describe('actions.js - domain 自动填充', () => {
       const sql = insertCall[0];
       const params = insertCall[1];
 
-      expect(sql).toContain('domain');
+      // domain 存入 metadata JSON，owner_role 仍是直接列
+      // okr_projects: params = [title, desc, owner_role, metaJson]
       expect(sql).toContain('owner_role');
-      expect(params).toContain('growth');
+      expect(sql).toContain('metadata');
       expect(params).toContain('cmo');
+      const metaParam = params.find(p => typeof p === 'string' && p.includes('"domain"'));
+      expect(metaParam).toBeTruthy();
+      expect(JSON.parse(metaParam).domain).toBe('growth');
     });
 
     it('不传 domain 时从 name+description 自动检测', async () => {
@@ -151,9 +159,10 @@ describe('actions.js - domain 自动填充', () => {
       await createProject({ name: 'QA quality regression coverage 项目' });
 
       const params = mockQuery.mock.calls[0][1];
-      // $4 = domain, $5 = owner_role
-      expect(params[3]).toBe('quality');
-      expect(params[4]).toBe('vp_qa');
+      // okr_projects: params = [title, desc, owner_role, metaJson]
+      // $3 = owner_role, $4 = metaJson (domain in JSON)
+      expect(params[2]).toBe('vp_qa'); // owner_role
+      expect(JSON.parse(params[3]).domain).toBe('quality');
     });
   });
 });

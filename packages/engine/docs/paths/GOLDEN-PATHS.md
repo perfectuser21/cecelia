@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.95.0
-created: 2026-03-23
-updated: 2026-03-23
+version: 3.96.0
+created: 2026-03-24
+updated: 2026-03-24
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.95.0: 从 feature-registry.yml 自动生成
+  - 3.96.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -740,6 +740,24 @@ devloop-check.sh PR 合并验证 baseRefName == main →
 
 ---
 
+## GP-047: Stage3 Drift Check (devloop-check-drift-detection)
+
+**Feature**: devloop-check-drift-detection - Stage3 Drift Check
+**Priority**: P2
+
+### Golden Path
+
+```
+Stage 2 完成 →
+devloop-check.sh 条件 2.7 drift check →
+实际改动文件与 Task Card Scope 对比 →
+有 drift 则 warning（继续）→
+条件 3 PR 创建 →
+完成
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -752,5 +770,5 @@ devloop-check.sh PR 合并验证 baseRefName == main →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.95.0
-**生成时间**: 2026-03-23
+**版本**: 3.96.0
+**生成时间**: 2026-03-24

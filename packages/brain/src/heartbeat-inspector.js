@@ -64,8 +64,8 @@ async function collectSystemSnapshot(pool) {
         AND (expires_at IS NULL OR expires_at > NOW())
     `),
     pool.query(`
-      SELECT title, progress FROM goals
-      WHERE status = 'in_progress'
+      SELECT title, progress FROM key_results
+      WHERE status IN ('active', 'in_progress')
       ORDER BY priority ASC LIMIT 3
     `),
   ]);

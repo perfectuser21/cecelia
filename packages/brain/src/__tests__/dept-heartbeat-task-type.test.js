@@ -36,8 +36,8 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
           return { rows: [] };
         }
 
-        // lookupDeptPrimaryGoal → return a goal_id
-        if (sql.includes('FROM goals') && sql.includes("metadata->>'dept'")) {
+        // lookupDeptPrimaryGoal → return a goal_id（新 OKR 表）
+        if (sql.includes('FROM key_results') && sql.includes("metadata->>'dept'")) {
           return { rows: [{ id: 'test-goal-id' }] };
         }
 
@@ -158,11 +158,11 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
   });
 
   describe('lookupDeptPrimaryGoal', () => {
-    it('should return goal_id when goals table has matching dept', async () => {
+    it('should return goal_id when key_results table has matching dept', async () => {
       const goalId = await lookupDeptPrimaryGoal(mockPool, 'zenithjoy');
       expect(goalId).toBe('test-goal-id');
 
-      const sql = capturedSQL.find(s => s.includes('FROM goals'));
+      const sql = capturedSQL.find(s => s.includes('FROM key_results') && s.includes("metadata->>'dept'"));
       expect(sql).toBeDefined();
       expect(sql).toContain("metadata->>'dept'");
       expect(sql).toContain("NOT IN");
@@ -170,7 +170,7 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
 
     it('should return null when no matching goals found', async () => {
       mockPool.query.mockImplementation(async (sql) => {
-        if (sql.includes('FROM goals')) {
+        if (sql.includes('FROM key_results') && sql.includes("metadata->>'dept'")) {
           return { rows: [] };
         }
         return { rows: [] };
@@ -182,7 +182,7 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
 
     it('should return null on DB error (graceful degradation)', async () => {
       mockPool.query.mockImplementation(async (sql) => {
-        if (sql.includes('FROM goals')) {
+        if (sql.includes('FROM key_results') && sql.includes("metadata->>'dept'")) {
           throw new Error('DB error');
         }
         return { rows: [] };

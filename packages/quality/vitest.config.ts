@@ -11,6 +11,8 @@ export default defineConfig({
     // - pr-gate-phase1.test.ts:    needs regression-contract.yaml with specific IDs and monorepo paths
     // - pr-gate-phase2.test.ts:    needs PRD/DoD files in working directory
     // - install-hooks.test.ts:     needs hook-core directory from install-hooks.sh
+    // - pr-gate.test.ts:           uses stat -c %a (Linux-only), incompatible with macOS
+    // - branch-protect.test.ts:    uses stat -c %a (Linux-only), incompatible with macOS
     exclude: [
       'tests/*.test.ts',
       'tests/api/**',
@@ -18,6 +20,8 @@ export default defineConfig({
       'tests/hooks/install-hooks.test.ts',
       'tests/hooks/pr-gate-phase1.test.ts',
       'tests/hooks/pr-gate-phase2.test.ts',
+      'tests/hooks/pr-gate.test.ts',
+      'tests/hooks/branch-protect.test.ts',
       '**/node_modules/**',
     ],
   },

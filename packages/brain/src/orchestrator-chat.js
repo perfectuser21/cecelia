@@ -445,7 +445,7 @@ async function buildStatusSummary() {
   try {
     const [tasksResult, goalsResult] = await Promise.all([
       pool.query(`SELECT status, count(*)::int as cnt FROM tasks GROUP BY status`),
-      pool.query(`SELECT status, count(*)::int as cnt FROM goals GROUP BY status`),
+      pool.query(`SELECT status, count(*)::int as cnt FROM key_results GROUP BY status UNION ALL SELECT status, count(*)::int as cnt FROM objectives GROUP BY status`),
     ]);
 
     const taskStats = tasksResult.rows.reduce((acc, r) => { acc[r.status] = r.cnt; return acc; }, {});
@@ -589,13 +589,25 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
   const senderName = context.sender_name || 'Alex';
   const relationship = context.relationship || 'owner';
   const sourceType = context.source === 'feishu' ? 'feishu_chat' : 'orchestrator_chat';
+
+  // 读取情绪标签（non-fatal）
+  let emotionTag = null;
+  try {
+    const emRes = await pool.query("SELECT value_json FROM working_memory WHERE key='emotion_state'");
+    const raw = emRes.rows[0]?.value_json;
+    emotionTag = typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : null;
+  } catch (_) { /* non-fatal */ }
+
+  const salience = computeSalience(message);
+  const importanceVal = Math.max(1, Math.min(10, Math.round(salience * 10)));
+
   try {
     const userContent = `[用户对话] ${senderName} 说：${message.slice(0, 200)}`;
     const userResult = await pool.query(`
-      INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
-      VALUES ($1, $2, 4, 'short', $3, NOW() + INTERVAL '7 days')
+      INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at, salience_score, emotion_tag)
+      VALUES ($1, $2, $3, 'short', 'conversation_turn', NOW() + INTERVAL '7 days', $4, $5)
       RETURNING id
-    `, [userContent, generateL0Summary(userContent), sourceType]);
+    `, [userContent, generateL0Summary(userContent), importanceVal, salience, emotionTag]);
     const userRecordId = userResult.rows[0]?.id;
     if (userRecordId) generateMemoryStreamL1Async(userRecordId, userContent, pool);
   } catch (err) {
@@ -661,10 +673,10 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
     try {
       const replyContent = `[对话回复] ${senderName}: ${message.slice(0, 150)}\nCecelia: ${reply.slice(0, 350)}`;
       const replyResult = await pool.query(`
-        INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
-        VALUES ($1, $2, 5, 'short', $3, NOW() + INTERVAL '30 days')
+        INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at, salience_score, emotion_tag)
+        VALUES ($1, $2, $3, 'short', 'conversation_turn', NOW() + INTERVAL '30 days', $4, $5)
         RETURNING id
-      `, [replyContent, generateL0Summary(replyContent), sourceType]);
+      `, [replyContent, generateL0Summary(replyContent), importanceVal, salience, emotionTag]);
       const replyRecordId = replyResult.rows[0]?.id;
       if (replyRecordId) generateMemoryStreamL1Async(replyRecordId, replyContent, pool);
     } catch (err) {
@@ -806,6 +818,20 @@ export async function handleChatStream(message, context = {}, messages = [], onC
     console.error('[orchestrator-chat] stream failed:', err.message);
     onChunk('（此刻有些恍神，稍后再聊）', true);
   }
+}
+
+/**
+ * 计算对话显著性评分（Salience Score）
+ * 基于 RPE（奖励预测误差）原理：纠正类对话 > 决策类 > 疑问类 > 普通
+ * @param {string} message - 用户消息
+ * @returns {number} 0.0-1.0
+ */
+export function computeSalience(message) {
+  const text = message || '';
+  if (/不对|错误|不是|纠正|改一下|重新|你搞错|说错/.test(text)) return 0.9;
+  if (/决定|确认|就这样|采纳|方案确定|好的就/.test(text)) return 0.8;
+  if (/？|\?|吗|为什么|怎么|什么/.test(text)) return 0.6;
+  return 0.3;
 }
 
 // 导出用于测试

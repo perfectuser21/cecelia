@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { execSync, spawnSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import { resolve } from "path";
 
 /**
@@ -35,8 +35,7 @@ describe("pr-gate-v2.sh", () => {
   });
 
   it("should exist and be executable", () => {
-    const stat = execSync(`stat -c %a "${HOOK_PATH}"`, { encoding: "utf-8" });
-    const mode = parseInt(stat.trim(), 8);
+    const mode = statSync(HOOK_PATH).mode;
     expect(mode & 0o111).toBeGreaterThan(0);
   });
 

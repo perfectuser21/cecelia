@@ -368,6 +368,16 @@ export function estimateTokens(text) {
 }
 
 /**
+ * 判断查询是否与 OKR/任务/项目相关，用于决定是否注入 WORLD_STATE
+ * @param {string} query
+ * @returns {boolean}
+ */
+export function isWorldStateQuery(query) {
+  if (!query) return false;
+  return /OKR|目标|KR|关键结果|项目|任务|计划|平台|进度|完成|执行|initiative|objective|key result|project|task/i.test(query);
+}
+
+/**
  * 格式化单条记忆项
  * @param {Object} item - 候选记忆
  * @param {0|1|2} [depth=0] - 对话深度：0=L0简短，1=L1详情，2=全文
@@ -484,9 +494,14 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：goals → objectives UNION key_results
       const goalResults = await pool.query(
-        `SELECT id, title, description, type, status, created_at
-         FROM goals
+        `SELECT id, title, description, 'area_okr' AS type, status, created_at
+         FROM objectives
+         WHERE status NOT IN ('completed', 'cancelled')
+         UNION ALL
+         SELECT id, title, description, 'area_kr' AS type, status, created_at
+         FROM key_results
          WHERE status NOT IN ('completed', 'cancelled')
          ORDER BY created_at DESC
          LIMIT 30`
@@ -524,10 +539,13 @@ async function searchSemanticMemory(pool, query, mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
+      // 迁移：projects → okr_projects UNION okr_initiatives（name → title）
       const projectResults = await pool.query(
-        `SELECT id, name, description, type, created_at
-         FROM projects
-         WHERE type IN ('project', 'initiative')
+        `SELECT id, title AS name, description, 'project' AS type, created_at
+         FROM okr_projects
+         UNION ALL
+         SELECT id, title AS name, description, 'initiative' AS type, created_at
+         FROM okr_initiatives
          ORDER BY created_at DESC
          LIMIT 30`
       );
@@ -579,14 +597,16 @@ async function _enrichStructuredCandidates(pool, candidates) {
   const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
 
   try {
-    // task_count for goals (via projects.kr_id)
+    // task_count for goals via okr_projects.kr_id
     if (goalIds.length > 0) {
       const res = await pool.query(
-        `SELECT p.kr_id as goal_id, COUNT(t.id)::int as task_count
+        `SELECT op.kr_id as goal_id, COUNT(t.id)::int as task_count
          FROM tasks t
-         JOIN projects p ON t.project_id = p.id
-         WHERE p.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
-         GROUP BY p.kr_id`,
+         JOIN okr_initiatives oi ON oi.id = t.project_id
+         JOIN okr_scopes os ON oi.scope_id = os.id
+         JOIN okr_projects op ON op.id = os.project_id
+         WHERE op.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY op.kr_id`,
         [goalIds]
       );
       const countMap = Object.fromEntries(res.rows.map(r => [r.goal_id, r.task_count]));
@@ -614,14 +634,15 @@ async function _enrichStructuredCandidates(pool, candidates) {
       }
     }
 
-    // parent_kr_title for initiatives
+    // parent_kr_title for initiatives（通过 okr_scopes → okr_projects.kr_id → key_results）
     if (initiativeIds.length > 0) {
       const res = await pool.query(
-        `SELECT pi.id as initiative_id, g.title as kr_title
-         FROM goals g
-         JOIN projects p ON p.kr_id = g.id
-         JOIN projects pi ON pi.parent_id = p.id
-         WHERE pi.id = ANY($1)`,
+        `SELECT oi.id as initiative_id, kr.title as kr_title
+         FROM key_results kr
+         JOIN okr_projects op ON op.kr_id = kr.id
+         JOIN okr_scopes os ON os.project_id = op.id
+         JOIN okr_initiatives oi ON oi.scope_id = os.id
+         WHERE oi.id = ANY($1)`,
         [initiativeIds]
       );
       const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
@@ -835,7 +856,8 @@ async function loadRecentEvents(pool, _query, mode) {
 }
 
 /**
- * 对话历史检索：从 cecelia_events 查最近的 orchestrator_chat 事件
+ * 对话历史检索：主路径从 memory_stream 查 conversation_turn（带 embedding 语义），
+ * 空时 fallback 到 cecelia_events（向后兼容）
  * @param {Object} pool - pg pool
  * @param {number} [limit=15] - 最多返回条数
  * @returns {Promise<{entries: Array, meta: Object}>}
@@ -843,6 +865,36 @@ async function loadRecentEvents(pool, _query, mode) {
 async function loadConversationHistory(pool, limit = 15) {
   const meta = { requestedLimit: limit, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
 
+  // 主路径：从 memory_stream 查 source_type='conversation_turn'（带 embedding 可语义检索）
+  try {
+    const msResult = await pool.query(`
+      SELECT id, content, salience_score, created_at
+      FROM memory_stream
+      WHERE source_type = 'conversation_turn' AND status = 'active'
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    if (msResult.rows.length > 0) {
+      const entries = msResult.rows.map(r => ({
+        id: r.id,
+        source: 'conversation',
+        title: `[对话] ${(r.content || '').slice(0, 60)}`,
+        description: (r.content || '').slice(0, 200),
+        text: r.content || '',
+        relevance: r.salience_score || 0.5,
+        created_at: r.created_at,
+      }));
+      meta.fetchedCount = entries.length;
+      meta.fetchStatus = 'ok';
+      meta.candidateCount = entries.length;
+      return { entries, meta };
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] memory_stream conversation load failed, falling back:', err.message);
+  }
+
+  // Fallback：cecelia_events（向后兼容，无 embedding）
   try {
     const result = await pool.query(`
       SELECT id, payload, created_at
@@ -907,10 +959,11 @@ async function loadActiveProfile(pool, mode) {
   }
 
   try {
+    // 迁移：goals → objectives（area_okr type）
     const goals = await pool.query(`
-      SELECT title, status, progress FROM goals
-      WHERE status IN ('in_progress', 'pending')
-      ORDER BY priority ASC, progress DESC
+      SELECT title, status, 0 AS progress FROM objectives
+      WHERE status IN ('in_progress', 'pending', 'active')
+      ORDER BY priority ASC, updated_at DESC
       LIMIT 3
     `);
 
@@ -956,8 +1009,11 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     : { strategy: { semantic: true, episodic: false, events: true, episodicBudget: 0, semanticBudget: tokenBudget * 0.7, eventsBudget: tokenBudget * 0.3 } };
 
   // 0b. Layer 2 蒸馏文档检索（与其他检索并行）
+  // WORLD_STATE 仅在 chat 模式且查询与 OKR/任务/项目相关时注入，避免闲聊浪费 token
   const distilledTypes = mode === 'chat'
-    ? ['SOUL', 'SELF_MODEL', 'USER_PROFILE', 'WORLD_STATE']
+    ? (isWorldStateQuery(query)
+        ? ['SOUL', 'SELF_MODEL', 'USER_PROFILE', 'WORLD_STATE']
+        : ['SOUL', 'SELF_MODEL', 'USER_PROFILE'])
     : ['SOUL', 'SELF_MODEL'];
 
   // 1. 并行检索多路数据（统一 5 路 + Layer 2 蒸馏文档）
@@ -1028,12 +1084,33 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   let tokenUsed = 0;
 
   // 4a. Layer 2 蒸馏文档注入（预算外，优先保证身份锚点）
+  // USER_PROFILE + WORLD_STATE 合计上限 1200 tokens，超出截断
+  const DISTILLED_BUDGET_TOKENS = 1200;
+  const DISTILLED_BUDGET_TYPES = new Set(['USER_PROFILE', 'WORLD_STATE']);
   const distilledMap = {};
+  let distilledBudgetUsed = 0;
   for (let i = 0; i < distilledTypes.length; i++) {
     if (distilledDocs[i] && distilledDocs[i].content) {
-      distilledMap[distilledTypes[i]] = distilledDocs[i].content;
-      block += distilledDocs[i].content + '\n\n';
+      const docType = distilledTypes[i];
+      let content = distilledDocs[i].content;
+      if (DISTILLED_BUDGET_TYPES.has(docType)) {
+        const contentTokens = estimateTokens(content);
+        const remaining = DISTILLED_BUDGET_TOKENS - distilledBudgetUsed;
+        if (remaining <= 0) continue;
+        if (contentTokens > remaining) {
+          const maxChars = Math.floor(remaining * 2.5);
+          content = content.slice(0, maxChars);
+        }
+        distilledBudgetUsed += estimateTokens(content);
+      }
+      distilledMap[docType] = content;
+      block += content + '\n\n';
     }
+  }
+
+  // block 总长度检查：超过 32000 字符（约 8000 tokens）时发出警告
+  if (block.length > 32000) {
+    console.warn('[memory] block size exceeded 32000 chars', { blockLength: block.length, mode, query: query.slice(0, 100) });
   }
 
   if (profileSnippet) {

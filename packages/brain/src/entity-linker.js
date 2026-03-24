@@ -24,13 +24,18 @@ export async function findRelatedGoal(text) {
 
     // 用关键词逐个匹配 goals 表（ILIKE），返回第一个匹配
     for (const kw of keywords) {
-      const result = await pool.query(
-        `SELECT id, title FROM goals
-         WHERE status IN ('in_progress', 'pending', 'ready', 'reviewing', 'decomposing')
+      // 迁移：goals → objectives UNION ALL key_results
+    const result = await pool.query(
+        `SELECT id, title FROM objectives
+         WHERE status IN ('in_progress', 'pending', 'active')
            AND title ILIKE $1
-         ORDER BY priority ASC
+         UNION ALL
+         SELECT id, title FROM key_results
+         WHERE status NOT IN ('completed', 'cancelled')
+           AND title ILIKE $1
+         ORDER BY title
          LIMIT 1`,
-        [`%${kw}%`]
+        [`%${kw}%`, `%${kw}%`]
       );
       if (result.rows.length > 0) return result.rows[0];
     }
@@ -55,12 +60,16 @@ export async function findRelatedProject(text) {
     if (keywords.length === 0) return null;
 
     for (const kw of keywords) {
+      // 迁移：projects → okr_projects UNION okr_scopes UNION okr_initiatives（title 替代 name）
       const result = await pool.query(
-        `SELECT id, name FROM projects
-         WHERE name ILIKE $1
-         ORDER BY created_at DESC
+        `SELECT id, title AS name FROM okr_projects WHERE title ILIKE $1
+         UNION ALL
+         SELECT id, title AS name FROM okr_scopes WHERE title ILIKE $1
+         UNION ALL
+         SELECT id, title AS name FROM okr_initiatives WHERE title ILIKE $1
+         ORDER BY name
          LIMIT 1`,
-        [`%${kw}%`]
+        [`%${kw}%`, `%${kw}%`, `%${kw}%`]
       );
       if (result.rows.length > 0) return result.rows[0];
     }
