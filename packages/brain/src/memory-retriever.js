@@ -368,6 +368,16 @@ export function estimateTokens(text) {
 }
 
 /**
+ * 判断查询是否与 OKR/任务/项目相关，用于决定是否注入 WORLD_STATE
+ * @param {string} query
+ * @returns {boolean}
+ */
+export function isWorldStateQuery(query) {
+  if (!query) return false;
+  return /OKR|目标|KR|关键结果|项目|任务|计划|平台|进度|完成|执行|initiative|objective|key result|project|task/i.test(query);
+}
+
+/**
  * 格式化单条记忆项
  * @param {Object} item - 候选记忆
  * @param {0|1|2} [depth=0] - 对话深度：0=L0简短，1=L1详情，2=全文
@@ -999,8 +1009,11 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     : { strategy: { semantic: true, episodic: false, events: true, episodicBudget: 0, semanticBudget: tokenBudget * 0.7, eventsBudget: tokenBudget * 0.3 } };
 
   // 0b. Layer 2 蒸馏文档检索（与其他检索并行）
+  // WORLD_STATE 仅在 chat 模式且查询与 OKR/任务/项目相关时注入，避免闲聊浪费 token
   const distilledTypes = mode === 'chat'
-    ? ['SOUL', 'SELF_MODEL', 'USER_PROFILE', 'WORLD_STATE']
+    ? (isWorldStateQuery(query)
+        ? ['SOUL', 'SELF_MODEL', 'USER_PROFILE', 'WORLD_STATE']
+        : ['SOUL', 'SELF_MODEL', 'USER_PROFILE'])
     : ['SOUL', 'SELF_MODEL'];
 
   // 1. 并行检索多路数据（统一 5 路 + Layer 2 蒸馏文档）
@@ -1071,12 +1084,33 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   let tokenUsed = 0;
 
   // 4a. Layer 2 蒸馏文档注入（预算外，优先保证身份锚点）
+  // USER_PROFILE + WORLD_STATE 合计上限 1200 tokens，超出截断
+  const DISTILLED_BUDGET_TOKENS = 1200;
+  const DISTILLED_BUDGET_TYPES = new Set(['USER_PROFILE', 'WORLD_STATE']);
   const distilledMap = {};
+  let distilledBudgetUsed = 0;
   for (let i = 0; i < distilledTypes.length; i++) {
     if (distilledDocs[i] && distilledDocs[i].content) {
-      distilledMap[distilledTypes[i]] = distilledDocs[i].content;
-      block += distilledDocs[i].content + '\n\n';
+      const docType = distilledTypes[i];
+      let content = distilledDocs[i].content;
+      if (DISTILLED_BUDGET_TYPES.has(docType)) {
+        const contentTokens = estimateTokens(content);
+        const remaining = DISTILLED_BUDGET_TOKENS - distilledBudgetUsed;
+        if (remaining <= 0) continue;
+        if (contentTokens > remaining) {
+          const maxChars = Math.floor(remaining * 2.5);
+          content = content.slice(0, maxChars);
+        }
+        distilledBudgetUsed += estimateTokens(content);
+      }
+      distilledMap[docType] = content;
+      block += content + '\n\n';
     }
+  }
+
+  // block 总长度检查：超过 32000 字符（约 8000 tokens）时发出警告
+  if (block.length > 32000) {
+    console.warn('[memory] block size exceeded 32000 chars', { blockLength: block.length, mode, query: query.slice(0, 100) });
   }
 
   if (profileSnippet) {
