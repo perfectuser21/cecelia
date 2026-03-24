@@ -563,18 +563,16 @@ async function generateNextTask(kr, project, state, options = {}) {
 async function generateArchitectureDesignTask(kr, project) {
   try {
     // Find the oldest active initiative under this project without queued tasks
-    // 迁移：projects WHERE parent_id → okr_initiatives JOIN okr_scopes WHERE scope.project_id
-    // 迁移期间兼容查询：先查旧 projects 表（触发器保证双写），新表用于补充
     const initiativeResult = await pool.query(`
-      SELECT i.id, i.name, i.status, i.created_at, i.updated_at,
-             i.domain, i.description, i.parent_id AS parent_project_id
-      FROM projects i
-      WHERE i.parent_id = $1
-        AND i.type = 'initiative'
+      SELECT i.id, i.title AS name, i.status, i.created_at, i.updated_at,
+             i.metadata->>'domain' AS domain, i.description, os.project_id AS parent_project_id
+      FROM okr_initiatives i
+      JOIN okr_scopes os ON i.scope_id = os.id
+      WHERE os.project_id = $1
         AND i.status IN ('active', 'in_progress', 'pending')
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
-          WHERE t.project_id = i.id
+          WHERE t.okr_initiative_id = i.id
             AND t.status IN ('queued', 'in_progress')
         )
       ORDER BY i.created_at ASC
@@ -617,7 +615,7 @@ async function generateArchitectureDesignTask(kr, project) {
     // for quota recovery, not a blocker for new planning.
     const existingResult = await pool.query(`
       SELECT id FROM tasks
-      WHERE project_id = $1 AND task_type = $2
+      WHERE okr_initiative_id = $1 AND task_type = $2
         AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined', 'quota_exhausted')
       LIMIT 1
     `, [initiative.id, taskType]);
@@ -636,7 +634,7 @@ async function generateArchitectureDesignTask(kr, project) {
 
     // Create planning task with domain/owner_role propagation
     const insertResult = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload, domain, owner_role)
+      INSERT INTO tasks (title, description, task_type, priority, okr_initiative_id, goal_id, status, trigger_source, payload, domain, owner_role)
       VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7, $8, $9)
       RETURNING *
     `, [

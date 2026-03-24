@@ -270,25 +270,6 @@ async function executePlanAdjustment(pool, findings, planContext) {
         newTableValues
       );
 
-      if (newResult.rowCount === 0) {
-        // Fallback to old projects table
-        const oldUpdates = [];
-        const oldValues = [adj.project_id];
-        let oldIdx = 2;
-        if (adj.time_budget_days !== undefined) {
-          oldUpdates.push(`time_budget_days = $${oldIdx++}`);
-          oldValues.push(adj.time_budget_days);
-        }
-        if (adj.deadline !== undefined) {
-          oldUpdates.push(`deadline = $${oldIdx++}`);
-          oldValues.push(adj.deadline);
-        }
-        oldUpdates.push('updated_at = NOW()');
-        await pool.query(
-          `UPDATE projects SET ${oldUpdates.join(', ')} WHERE id = $1`,
-          oldValues
-        );
-      }
       console.log(`[progress-reviewer] Adjusted project ${adj.project_id}: ${Object.keys(metaUpdates).join(', ')}${adj.deadline ? ' deadline' : ''}`);
     }
   }

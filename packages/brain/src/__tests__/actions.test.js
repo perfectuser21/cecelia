@@ -705,17 +705,12 @@ describe('actions.js', () => {
       expect(JSON.parse(insertParams[6]).type).toBe('area_okr');
     });
 
-    it('有 parent_id 但父级不存在时默认 kr（parent 查询返回空）', async () => {
-      // 父级查询返回空 - goalType 仍为 undefined → fallback to goals table
+    it('有 parent_id 但父级不存在时抛出错误（parent 查询返回空）', async () => {
+      // 父级查询返回空 - goalType 仍为 undefined → 新实现直接抛出错误，不再 fallback 到 goals 表
       mockQuery.mockResolvedValueOnce({ rows: [] });
-      const fakeGoal = { id: 'goal-orphan', title: '孤儿', type: null };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
-      await createGoal({ title: '孤儿', parent_id: 'parent-gone' });
-
-      // fallback goals 表: params = [title, desc, priority, project_id, end_date, parent_id, goalType, domain, owner_role]
-      const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBeUndefined(); // goalType undefined
+      await expect(createGoal({ title: '孤儿', parent_id: 'parent-gone' }))
+        .rejects.toThrow('unsupported goalType');
     });
 
     it('指定 type 优先于 parent 推断', async () => {
