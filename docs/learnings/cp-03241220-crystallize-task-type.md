@@ -8,7 +8,11 @@
 
 ## 根本原因
 
-`codex_playwright` + `playwright-auto` 是2步原型（探索+执行），缺少 Scope（目标定义）和 Register（产出注册）两个关键环节，导致每次探索结果无法沉淀为可复用的能力。
+`codex_playwright` + `playwright-auto` 是2步原型（探索+执行），缺少 Scope（目标定义）和 Register（产出注册）两个关键环节。
+
+每次探索完成后脚本既不验证（无 Verify 阶段），也不注册为可复用能力（无 Register 阶段），导致蒸馏成果无法积累复用。
+
+另一个隐患是 retry_count 未在 forge→verify 之间传递，verify 失败时始终读到 0，形成无限重试回路。
 
 ---
 
