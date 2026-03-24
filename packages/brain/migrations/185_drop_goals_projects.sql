@@ -62,6 +62,6 @@ DROP TABLE IF EXISTS goals CASCADE;
 DROP TABLE IF EXISTS projects CASCADE;
 
 -- 记录迁移
-INSERT INTO brain_migrations (version, description, applied_at)
+INSERT INTO schema_version (version, description, applied_at)
 VALUES ('185', 'DROP 旧 OKR 表：project_kr_links / goals / projects（所有代码引用已清除）', now())
 ON CONFLICT (version) DO NOTHING;
