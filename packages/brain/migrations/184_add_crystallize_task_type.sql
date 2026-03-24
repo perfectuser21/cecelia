@@ -1,11 +1,10 @@
--- Migration 184: 替换 codex_playwright → crystallize task type
+-- Migration 184: 新增 crystallize task type（能力蒸馏流水线）
 --
 -- 背景：
---   codex_playwright 是2步原型（探索+验证），缺少 Scope 和 Register 阶段。
 --   crystallize 是完整4步流水线：Scope → Forge → Verify → Register。
 --
 -- 变更：
---   - 删除 codex_playwright
+--   - 移除旧的2步原型 task type
 --   - 新增 crystallize（编排入口）+ 4个子类型（scope/forge/verify/register）
 --   - 同步补齐 content-pipeline 和 okr 相关 task_type（之前已在代码层使用但未入约束）
 
@@ -16,7 +15,7 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
     'dev', 'review', 'talk', 'data', 'research',
     'exploratory', 'explore', 'knowledge',
     'qa', 'audit', 'decomp_review',
-    -- Codex 类型（codex_playwright 已移除）
+    -- Codex 类型
     'codex_qa', 'codex_dev', 'codex_test_gen', 'pr_review',
     -- 系统类型
     'code_review', 'initiative_plan', 'initiative_verify', 'initiative_execute',
@@ -43,7 +42,7 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
 INSERT INTO schema_version (version, description, applied_at)
 VALUES (
   '184',
-  'crystallize task type: 替代 codex_playwright，新增 crystallize 及4个子类型，补齐 content-pipeline 和 okr 类型',
+  'crystallize task type: 新增 crystallize 及4个子类型，补齐 content-pipeline 和 okr 类型',
   NOW()
 )
 ON CONFLICT (version) DO NOTHING;
