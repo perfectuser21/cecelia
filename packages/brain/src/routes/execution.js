@@ -1017,9 +1017,6 @@ router.post('/execution-callback', async (req, res) => {
                 [objTitle]
               );
               objectiveId = objResult.rows[0].id;
-              console.log(`[execution-callback] strategy_session created objective: "${objTitle}" id=${objectiveId}`);
-            } else {
-              console.log(`[execution-callback] strategy_session using objective_id=${objectiveId}`);
             }
 
             for (const kr of krs) {
@@ -1034,7 +1031,7 @@ router.post('/execution-callback', async (req, res) => {
                  VALUES ($1, 'pending', $2, $3, $4)`,
                 [krTitle, krOwnerRole, JSON.stringify({ priority: krPriority, domain: krDomain }), krObjectiveId]
               );
-              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole} objective_id=${krObjectiveId}`);
+              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole}`);
             }
 
             console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
