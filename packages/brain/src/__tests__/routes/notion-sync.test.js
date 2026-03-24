@@ -111,7 +111,7 @@ describe('notion-sync routes', () => {
       const res = await request(app).get('/notion-sync/full-status');
       expect(res.status).toBe(200);
       expect(res.body.tables).toHaveLength(4);
-      expect(res.body.notion_db_ids).toHaveProperty('tasks');
+      expect(res.body.notion_db_ids).toBeDefined(); // NOTION_DB_IDS is empty after notion-full-sync.js removal
     });
   });
 });
