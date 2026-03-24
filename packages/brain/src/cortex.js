@@ -1351,7 +1351,6 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
 
   // 1. 收集 KR 进度数据
   try {
-    // 迁移：FROM goals → FROM objectives（tasks.goal_id 已废弃，任务通过 okr_initiative_id 关联）
     const krResult = await pool.query(`
       SELECT
         g.id,

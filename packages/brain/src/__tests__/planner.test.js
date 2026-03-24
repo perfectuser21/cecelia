@@ -138,9 +138,9 @@ describe('Planner Agent', () => {
     });
 
     it('should reject task whose project has no repo_path', async () => {
-      // Create a project without repo_path
+      // Create a project with type='project' so trigger syncs to okr_projects, but no repo_path in metadata
       const projResult = await pool.query(
-        "INSERT INTO projects (name, status) VALUES ('no-repo-project', 'active') RETURNING id"
+        "INSERT INTO projects (name, type, status) VALUES ('no-repo-project', 'project', 'active') RETURNING id"
       );
       testProjectIds.push(projResult.rows[0].id);
 
@@ -211,17 +211,17 @@ describe('Planner Agent', () => {
     });
 
     it('should create task linked to project with repo_path', async () => {
-      // Create a project with repo_path
+      // Insert with type='project' so trigger syncs to okr_projects with metadata containing repo_path
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('test-proj', '/tmp/test', 'active') RETURNING id"
+        `INSERT INTO projects (name, type, repo_path, status, metadata) VALUES ('test-proj', 'project', '/tmp/test', 'active', '{"repo_path":"/tmp/test"}') RETURNING id`
       );
-      testProjectIds.push(projResult.rows[0].id);
-
+      const projectId = projResult.rows[0].id;
+      testProjectIds.push(projectId);
       const { handlePlanInput } = await import('../planner.js');
       const result = await handlePlanInput({
         task: {
           title: 'Test Task',
-          project_id: projResult.rows[0].id,
+          project_id: projectId,
           priority: 'P0'
         }
       });

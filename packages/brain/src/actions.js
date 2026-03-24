@@ -506,20 +506,8 @@ async function updateGoal({ goal_id, status, progress }) {
     return { success: true, goal: visResult.rows[0] };
   }
 
-  // 4. Fallback to old goals table
-  values.push(goal_id);
-  const result = await pool.query(`
-    UPDATE goals SET ${updates.join(', ')}
-    WHERE id = $${idx}
-    RETURNING *
-  `, values);
-
-  if (result.rows.length === 0) {
-    return { success: false, error: 'Goal not found' };
-  }
-
-  console.log(`[Action] Updated goal: ${goal_id}`);
-  return { success: true, goal: result.rows[0] };
+  // 三新表均未找到，返回失败
+  return { success: false, error: 'Goal not found' };
 }
 
 /**
