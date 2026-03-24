@@ -8,6 +8,7 @@ import { classifyLearningType } from './shared.js';
 import { publishTaskCreated } from '../events/taskEvents.js';
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
+import { emit as emitEvent } from '../event-bus.js';
 
 const router = Router();
 
