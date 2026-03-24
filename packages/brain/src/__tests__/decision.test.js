@@ -13,7 +13,7 @@ vi.mock('../db.js', () => ({
 }));
 
 import pool from '../db.js';
-import { splitActionsBySafety, SAFE_ACTIONS } from '../decision.js';
+import { splitActionsBySafety, SAFE_ACTIONS, compareGoalProgress } from '../decision.js';
 
 describe('decision engine', () => {
   beforeEach(() => {
@@ -191,6 +191,28 @@ describe('decision engine', () => {
       const insertCall = insertSpy.mock.calls[2];
       // 5th param is status
       expect(insertCall[1][4]).toBe('approved');
+    });
+  });
+
+  describe('compareGoalProgress', () => {
+    it('should query priority column from UNION of key_results and objectives', async () => {
+      pool.query
+        .mockResolvedValueOnce({ rows: [] }) // goals UNION query
+        .mockResolvedValueOnce({ rows: [] }); // tasks in_progress query (if called)
+
+      await compareGoalProgress();
+
+      // Verify the SQL query includes priority column in the UNION subquery
+      const callArgs = pool.query.mock.calls[0];
+      const sql = callArgs[0];
+      expect(sql).toContain('priority FROM key_results');
+      expect(sql).toContain('priority FROM objectives');
+      expect(sql).toContain('ORDER BY g.priority');
+    });
+
+    it('should not throw "column g.priority does not exist" error', async () => {
+      pool.query.mockResolvedValue({ rows: [] });
+      await expect(compareGoalProgress()).resolves.not.toThrow();
     });
   });
 });
