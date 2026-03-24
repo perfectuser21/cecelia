@@ -24,8 +24,6 @@ export const EXPECTED_SCHEMA_VERSION = '185';
 
 const CORE_TABLES = [
   'tasks',
-  'goals',
-  'projects',
   'working_memory',
   'cecelia_events',
   'decision_log',
