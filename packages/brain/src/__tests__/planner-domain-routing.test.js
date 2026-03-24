@@ -33,12 +33,11 @@ afterEach(async () => {
     testTaskIds = [];
   }
   if (testProjectIds.length > 0) {
-    await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-    // 显式清理新 OKR 表（不依赖触发器级联，触发器用 EXCEPTION WHEN OTHERS 静默失败）
+    await pool.query('DELETE FROM tasks WHERE okr_initiative_id = ANY($1)', [testProjectIds]).catch(() => {});
+    // 显式清理新 OKR 表（不依赖触发器级联）
     await pool.query('DELETE FROM okr_initiatives WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     await pool.query('DELETE FROM okr_scopes WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
-    await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
     testProjectIds = [];
   }
   if (testKRIds.length > 0) {
@@ -61,26 +60,38 @@ async function createKR({ title = 'Test KR', priority = 'P1', domain = null } = 
   return kr;
 }
 
-// Helper: create parent project
+// Helper: create parent project (uses okr_projects for new planner query compatibility)
 async function createProject({ name = 'Test Project', domain = null } = {}) {
   const result = await pool.query(
-    `INSERT INTO projects (name, repo_path, status, domain)
-     VALUES ($1, '/tmp/test', 'active', $2) RETURNING *`,
-    [name, domain]
+    `INSERT INTO okr_projects (title, status)
+     VALUES ($1, 'active') RETURNING *`,
+    [name]
   );
   const proj = result.rows[0];
   testProjectIds.push(proj.id);
-  return proj;
+  // Attach domain as JS property for planner's JS-level domain inheritance
+  return { ...proj, domain };
 }
 
-// Helper: create initiative
+// Helper: create initiative (uses okr_scopes + okr_initiatives for new planner query)
 async function createInitiative({ name = 'Test Initiative', parentId, domain = null } = {}) {
-  const result = await pool.query(
-    `INSERT INTO projects (name, type, parent_id, status, domain)
-     VALUES ($1, 'initiative', $2, 'active', $3) RETURNING *`,
-    [name, parentId, domain]
+  // Create scope linking initiative to project
+  const scopeResult = await pool.query(
+    `INSERT INTO okr_scopes (title, project_id, status)
+     VALUES ($1, $2, 'planning') RETURNING *`,
+    [name + ' Scope', parentId]
   );
-  const init = result.rows[0];
+  const scope = scopeResult.rows[0];
+  testProjectIds.push(scope.id);
+
+  // Create initiative with domain stored in metadata (okr_initiatives has no domain column)
+  const metaJson = domain ? JSON.stringify({ domain }) : null;
+  const initResult = await pool.query(
+    `INSERT INTO okr_initiatives (title, scope_id, status, metadata)
+     VALUES ($1, $2, 'active', $3::jsonb) RETURNING *`,
+    [name, scope.id, metaJson]
+  );
+  const init = initResult.rows[0];
   testProjectIds.push(init.id);
   return init;
 }

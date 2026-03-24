@@ -615,7 +615,7 @@ async function generateArchitectureDesignTask(kr, project) {
     // for quota recovery, not a blocker for new planning.
     const existingResult = await pool.query(`
       SELECT id FROM tasks
-      WHERE project_id = $1 AND task_type = $2
+      WHERE okr_initiative_id = $1 AND task_type = $2
         AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined', 'quota_exhausted')
       LIMIT 1
     `, [initiative.id, taskType]);
@@ -634,7 +634,7 @@ async function generateArchitectureDesignTask(kr, project) {
 
     // Create planning task with domain/owner_role propagation
     const insertResult = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload, domain, owner_role)
+      INSERT INTO tasks (title, description, task_type, priority, okr_initiative_id, goal_id, status, trigger_source, payload, domain, owner_role)
       VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7, $8, $9)
       RETURNING *
     `, [
