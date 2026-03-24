@@ -115,15 +115,16 @@ async function shouldFeedOkr(db) {
 async function feedOkr(db, today, notebookId) {
   if (!(await shouldFeedOkr(db))) return 0;
 
+  // 迁移：goals → objectives UNION key_results；projects → okr_projects
   const { rows: goals } = await db.query(
-    `SELECT title, status, priority FROM goals
-     WHERE status != 'archived'
-     ORDER BY priority, created_at DESC LIMIT 10`
+    `SELECT title, status, priority FROM objectives WHERE status != 'cancelled' ORDER BY priority, created_at DESC LIMIT 5
+     UNION ALL
+     SELECT title, status, priority FROM key_results WHERE status != 'cancelled' ORDER BY priority, created_at DESC LIMIT 5`
   ).catch(() => ({ rows: [] }));
 
   const { rows: projects } = await db.query(
-    `SELECT name, type, status FROM projects
-     WHERE status != 'archived'
+    `SELECT title AS name, 'project' AS type, status FROM okr_projects
+     WHERE status != 'cancelled'
      ORDER BY created_at DESC LIMIT 10`
   ).catch(() => ({ rows: [] }));
 

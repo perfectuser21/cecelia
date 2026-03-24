@@ -723,6 +723,8 @@ export async function pushAllToNotion(dbOverride = null) {
   } catch (e) { stats.areas.errors.push(`query: ${e.message}`); }
 
   // 2. 推送未同步的 goals（含 area 关联）
+  // 注意：此处保留 goals 表查询，因为 notion_id/notion_props 列仅在旧 goals 表存在
+  // OKR 迁移注：Notion 同步路径特殊，不迁移到 objectives（无 notion_id 列）
   try {
     const { rows: goals } = await db.query(`
       SELECT g.id, g.title, g.status, g.target_date,

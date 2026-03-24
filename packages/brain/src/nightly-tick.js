@@ -19,20 +19,21 @@ let _nightlyRunning = false;
  */
 async function getActiveProjectsWithStats() {
   const result = await pool.query(`
+    -- 迁移：projects → okr_initiatives（name → title，repo_path/lead_agent from metadata）
     SELECT
-      p.id,
-      p.name,
-      p.repo_path,
-      p.lead_agent,
+      oi.id,
+      oi.title AS name,
+      oi.metadata->>'repo_path' AS repo_path,
+      oi.metadata->>'lead_agent' AS lead_agent,
       COUNT(t.id) FILTER (WHERE t.status = 'completed' AND t.completed_at >= CURRENT_DATE) as completed_today,
       COUNT(t.id) FILTER (WHERE t.status = 'in_progress') as in_progress,
       COUNT(t.id) FILTER (WHERE t.status = 'queued') as queued,
       COUNT(t.id) FILTER (WHERE t.status = 'failed' AND t.updated_at >= CURRENT_DATE) as failed_today
-    FROM projects p
-    LEFT JOIN tasks t ON t.project_id = p.id
-    GROUP BY p.id, p.name, p.repo_path, p.lead_agent
-    HAVING COUNT(t.id) > 0 OR p.lead_agent IS NOT NULL
-    ORDER BY p.name
+    FROM okr_initiatives oi
+    LEFT JOIN tasks t ON t.project_id = oi.id
+    GROUP BY oi.id, oi.title, oi.metadata
+    HAVING COUNT(t.id) > 0 OR oi.metadata->>'lead_agent' IS NOT NULL
+    ORDER BY oi.title
   `);
   return result.rows;
 }
@@ -42,17 +43,17 @@ async function getActiveProjectsWithStats() {
  */
 async function getGoalsProgress() {
   const result = await pool.query(`
+    -- 迁移：goals → objectives（无 project_id 关联）
     SELECT
       g.id,
       g.title,
       g.status,
       g.priority,
-      g.progress,
-      p.name as project_name
-    FROM goals g
-    LEFT JOIN projects p ON g.project_id = p.id
+      0 AS progress,
+      NULL AS project_name
+    FROM objectives g
     WHERE g.status NOT IN ('completed', 'cancelled')
-    ORDER BY g.priority ASC, g.progress DESC
+    ORDER BY g.priority ASC, g.updated_at DESC
     LIMIT 20
   `);
   return result.rows;

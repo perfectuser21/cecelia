@@ -1187,67 +1187,75 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
     }
     const parentTask = parentResult.rows[0];
 
-    // 2. 沿 project_id → KR → OKR → Vision 链查询上下文
+    // 2. 沿 project_id → initiative → scope → project → KR → Objective → Vision 链查询上下文
+    // 迁移：projects → okr_initiatives/okr_scopes/okr_projects；goals → key_results/objectives/visions
     let context = { project: null, kr: null, okr: null, vision: null };
 
     if (parentTask.project_id) {
-      const projectResult = await pool.query(
-        'SELECT id, name, kr_id FROM projects WHERE id = $1',
+      // Initiative lookup（task.project_id = okr_initiatives.id）
+      const initiativeResult = await pool.query(
+        'SELECT id, title, scope_id FROM okr_initiatives WHERE id = $1',
         [parentTask.project_id]
       );
-      if (projectResult.rows.length > 0) {
-        const project = projectResult.rows[0];
-        context.project = { id: project.id, name: project.name };
+      if (initiativeResult.rows.length > 0) {
+        const initiative = initiativeResult.rows[0];
+        context.project = { id: initiative.id, name: initiative.title };
 
-        if (project.kr_id) {
-          // 查 KR（goals 表 type='area_kr' 或 'global_kr'）
-          const krResult = await pool.query(
-            'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
-            [project.kr_id]
+        // Scope → Project lookup
+        if (initiative.scope_id) {
+          const scopeResult = await pool.query(
+            'SELECT id, project_id FROM okr_scopes WHERE id = $1',
+            [initiative.scope_id]
           );
-          if (krResult.rows.length > 0) {
-            const kr = krResult.rows[0];
-            context.kr = { id: kr.id, title: kr.title, description: kr.description };
-
-            if (kr.parent_id) {
-              // 查 OKR
-              const okrResult = await pool.query(
-                'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
-                [kr.parent_id]
+          if (scopeResult.rows.length > 0 && scopeResult.rows[0].project_id) {
+            const projectId = scopeResult.rows[0].project_id;
+            // KR lookup via project_kr_links → key_results
+            const krLinkResult = await pool.query(
+              'SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1',
+              [projectId]
+            );
+            if (krLinkResult.rows.length > 0) {
+              const krId = krLinkResult.rows[0].kr_id;
+              // KR = key_results
+              const krResult = await pool.query(
+                'SELECT id, title, description, objective_id FROM key_results WHERE id = $1',
+                [krId]
               );
-              if (okrResult.rows.length > 0) {
-                const okr = okrResult.rows[0];
-                context.okr = { id: okr.id, title: okr.title, description: okr.description };
-
-                if (okr.parent_id) {
-                  // 查 Vision/Mission
-                  const visionResult = await pool.query(
-                    'SELECT id, title, description FROM goals WHERE id = $1',
-                    [okr.parent_id]
+              if (krResult.rows.length > 0) {
+                const kr = krResult.rows[0];
+                context.kr = { id: kr.id, title: kr.title, description: kr.description };
+                // OKR = objectives
+                if (kr.objective_id) {
+                  const okrResult = await pool.query(
+                    'SELECT id, title, description, vision_id FROM objectives WHERE id = $1',
+                    [kr.objective_id]
                   );
-                  if (visionResult.rows.length > 0) {
-                    const vision = visionResult.rows[0];
-                    context.vision = { id: vision.id, title: vision.title, description: vision.description };
+                  if (okrResult.rows.length > 0) {
+                    const okr = okrResult.rows[0];
+                    context.okr = { id: okr.id, title: okr.title, description: okr.description };
+                    // Vision
+                    if (okr.vision_id) {
+                      const visionResult = await pool.query(
+                        'SELECT id, title, description FROM visions WHERE id = $1',
+                        [okr.vision_id]
+                      );
+                      if (visionResult.rows.length > 0) {
+                        const vision = visionResult.rows[0];
+                        context.vision = { id: vision.id, title: vision.title, description: vision.description };
+                      }
+                    }
                   }
                 }
+              } else {
+                // Fallback: objectives 直接查
+                const objResult = await pool.query(
+                  'SELECT id, title, description FROM objectives WHERE id = $1',
+                  [krId]
+                );
+                if (objResult.rows.length > 0) {
+                  context.kr = { id: objResult.rows[0].id, title: objResult.rows[0].title, description: objResult.rows[0].description };
+                }
               }
-            }
-          }
-        } else {
-          // 尝试通过 project_kr_links 查 kr_id
-          const krLinkResult = await pool.query(
-            'SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1',
-            [parentTask.project_id]
-          );
-          if (krLinkResult.rows.length > 0) {
-            const krId = krLinkResult.rows[0].kr_id;
-            const krResult = await pool.query(
-              'SELECT id, title, description, parent_id FROM goals WHERE id = $1',
-              [krId]
-            );
-            if (krResult.rows.length > 0) {
-              const kr = krResult.rows[0];
-              context.kr = { id: kr.id, title: kr.title, description: kr.description };
             }
           }
         }
