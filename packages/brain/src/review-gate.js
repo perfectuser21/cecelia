@@ -255,7 +255,7 @@ async function processReviewResult(pool, taskId, verdict, findings) {
     let krId = null;
     if (entityRow.rows[0]?.parent_id) {
       const krResult = await pool.query(
-        `SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1`,
+        `SELECT kr_id FROM okr_projects WHERE id = $1 LIMIT 1`,
         [entityRow.rows[0].parent_id]
       );
       krId = krResult.rows[0]?.kr_id || null;

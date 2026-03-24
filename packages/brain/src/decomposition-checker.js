@@ -210,7 +210,7 @@ async function checkReadyKRInitiatives() {
   for (const kr of readyKRs.rows) {
     // 找这个 KR 下的所有 active Initiative
     // 两种链接方式：
-    //   1. Initiative → 父 Project → project_kr_links → KR（标准层级）
+    //   1. Initiative → 父 Project（okr_projects.kr_id）→ KR（标准层级）
     //   2. Initiative.kr_id 直接指向 KR（无父 project 的扁平结构）
     const initiatives = await pool.query(`
       SELECT i.id, i.title AS name, i.status, i.metadata->>'domain' AS domain,
@@ -264,7 +264,7 @@ async function checkReadyKRInitiatives() {
  *
  * 触发条件：
  *   - KR status IN ('ready', 'in_progress')
- *   - project_kr_links 表中无对应 project 关联
+ *   - okr_projects 表中无对应 project 关联（kr_id 匹配）
  *   - 没有已存在的拆解任务（去重）
  *   - 未达 WIP 上限
  */

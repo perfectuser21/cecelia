@@ -70,9 +70,9 @@ async function getTodaysReflections() {
       r.title,
       r.content,
       r.tags,
-      p.name as project_name
+      p.title as project_name
     FROM reflections r
-    LEFT JOIN projects p ON r.project_id = p.id
+    LEFT JOIN okr_projects p ON r.project_id = p.id
     WHERE r.created_at >= CURRENT_DATE
     ORDER BY r.created_at DESC
   `);
@@ -390,9 +390,9 @@ async function getDailyReports(date = 'today', type = 'all') {
   const targetDate = date === 'today' ? new Date().toISOString().split('T')[0] : date;
 
   let query = `
-    SELECT dl.*, p.name as project_name
+    SELECT dl.*, p.title as project_name
     FROM daily_logs dl
-    LEFT JOIN projects p ON dl.project_id = p.id
+    LEFT JOIN okr_projects p ON dl.project_id = p.id
     WHERE dl.date = $1
   `;
   const params = [targetDate];

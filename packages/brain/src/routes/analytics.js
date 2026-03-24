@@ -1269,13 +1269,11 @@ router.get('/config/area-slots', async (req, res) => {
 
     const { rows: taskRows } = await pool.query(`
       SELECT
-        COALESCE(g.domain, 'zenithjoy') as area,
+        'zenithjoy' as area,
         count(*) FILTER (WHERE t.status = 'in_progress') as running,
         count(*) FILTER (WHERE t.status = 'queued') as queued
       FROM tasks t
-      LEFT JOIN goals g ON t.goal_id = g.id
       WHERE t.status IN ('in_progress', 'queued')
-      GROUP BY COALESCE(g.domain, 'zenithjoy')
     `);
     const status = {};
     for (const r of taskRows) {

@@ -8,7 +8,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { runSync, getNotionConfig } from '../notion-sync.js';
-import { runFullSync, handleWebhook, NOTION_DB_IDS, pushAllToNotion } from '../notion-full-sync.js';
 import { rebuildMemoryDatabases, importAllMemoryData } from '../notion-memory-sync.js';
 
 const router = Router();
@@ -92,7 +91,7 @@ router.get('/full-status', async (_req, res) => {
       SELECT 'tasks',             COUNT(*),        COUNT(notion_id)      FROM tasks
     `);
     res.json({
-      notion_db_ids: NOTION_DB_IDS,
+      notion_db_ids: {},
       tables: rows,
     });
   } catch (err) {

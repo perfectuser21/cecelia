@@ -198,7 +198,7 @@ async function fetchFullScope(pool, goalFilter, projectFilter, taskFilter) {
     `),
     pool.query(`SELECT * FROM tasks ${taskWhere}`),
     pool.query(`SELECT * FROM pr_plans WHERE status NOT IN ('completed', 'cancelled')`),
-    pool.query(`SELECT * FROM project_kr_links`),
+    pool.query(`SELECT id AS project_id, kr_id FROM okr_projects WHERE kr_id IS NOT NULL`),
   ]);
 
   return {
@@ -229,31 +229,27 @@ async function fetchKrScope(pool, krId, goalFilter, projectFilter, taskFilter) {
     WHERE id IN (SELECT objective_id FROM key_results WHERE id = $1)
   `, [krId]);
 
-  // 通过 project_kr_links 找关联 okr_projects（project_kr_links 保留，IDs 相同）
-  const krIds = [krId];
+  // 通过 okr_projects.kr_id 直接查找关联 okr_projects
   let projects = [];
   let krLinks = [];
-  if (krIds.length > 0) {
-    const krLinksRes = await pool.query(
-      `SELECT * FROM project_kr_links WHERE kr_id = ANY($1)`, [krIds]
-    );
-    krLinks = krLinksRes.rows;
-    const projectIds = krLinks.map(l => l.project_id);
-    if (projectIds.length > 0) {
-      // 迁移：projects WITH RECURSIVE → okr_projects + okr_scopes + okr_initiatives
-      const projectsRes = await pool.query(`
-        SELECT id, title AS name, status, 'project' AS type, NULL::uuid AS parent_id, created_at, updated_at
-        FROM okr_projects WHERE id = ANY($1)
-        UNION ALL
-        SELECT os.id, os.title AS name, os.status, 'scope' AS type, os.project_id AS parent_id, os.created_at, os.updated_at
-        FROM okr_scopes os WHERE os.project_id = ANY($1)
-        UNION ALL
-        SELECT oi.id, oi.title AS name, oi.status, 'initiative' AS type, oi.scope_id AS parent_id, oi.created_at, oi.updated_at
-        FROM okr_initiatives oi
-        INNER JOIN okr_scopes os ON os.id = oi.scope_id AND os.project_id = ANY($1)
-      `, [projectIds]);
-      projects = projectsRes.rows;
-    }
+  const krLinksRes = await pool.query(
+    `SELECT id AS project_id, kr_id FROM okr_projects WHERE kr_id = $1`, [krId]
+  );
+  krLinks = krLinksRes.rows;
+  const projectIds = krLinks.map(l => l.project_id);
+  if (projectIds.length > 0) {
+    const projectsRes = await pool.query(`
+      SELECT id, title AS name, status, 'project' AS type, NULL::uuid AS parent_id, created_at, updated_at
+      FROM okr_projects WHERE id = ANY($1)
+      UNION ALL
+      SELECT os.id, os.title AS name, os.status, 'scope' AS type, os.project_id AS parent_id, os.created_at, os.updated_at
+      FROM okr_scopes os WHERE os.project_id = ANY($1)
+      UNION ALL
+      SELECT oi.id, oi.title AS name, oi.status, 'initiative' AS type, oi.scope_id AS parent_id, oi.created_at, oi.updated_at
+      FROM okr_initiatives oi
+      INNER JOIN okr_scopes os ON os.id = oi.scope_id AND os.project_id = ANY($1)
+    `, [projectIds]);
+    projects = projectsRes.rows;
   }
 
   const projectAllIds = projects.map(p => p.id);
@@ -309,7 +305,7 @@ function checkParentRules(issues, entity, row, parentRules, data, subtype) {
   if (!parentRules) return;
 
   for (const [field, rule] of Object.entries(parentRules)) {
-    // 特殊处理：kr_link（project 通过 project_kr_links 关联 KR）
+    // 特殊处理：kr_link（project 通过 okr_projects.kr_id 关联 KR）
     if (field === 'kr_link') {
       const links = data.krLinks.filter(l => l.project_id === row.id);
       if (rule.min && links.length < rule.min) {

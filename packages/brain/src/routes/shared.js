@@ -25,7 +25,7 @@ async function getRecentDecisions(limit = 10) {
 const INVENTORY_CONFIG = { LOW_WATERMARK: 3, TARGET_READY_TASKS: 9, BATCH_SIZE: 3 };
 
 async function getActiveExecutionPaths() {
-  // 迁移：旧 projects + project_kr_links → okr_initiatives via okr_scopes → okr_projects (kr_id)
+  // okr_initiatives via okr_scopes → okr_projects (kr_id)
   const result = await pool.query(`
     SELECT oi.id, oi.title AS name, op.kr_id
     FROM okr_initiatives oi

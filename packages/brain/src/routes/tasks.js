@@ -825,9 +825,9 @@ router.get('/reflections', async (req, res) => {
     const { type, project_id, limit = 50 } = req.query;
 
     let query = `
-      SELECT r.*, p.name as project_name
+      SELECT r.*, p.title as project_name
       FROM reflections r
-      LEFT JOIN projects p ON r.project_id = p.id
+      LEFT JOIN okr_projects p ON r.project_id = p.id
       WHERE 1=1
     `;
     const params = [];
@@ -1209,9 +1209,9 @@ router.post('/tasks/:id/request-intent-expand', async (req, res) => {
           );
           if (scopeResult.rows.length > 0 && scopeResult.rows[0].project_id) {
             const projectId = scopeResult.rows[0].project_id;
-            // KR lookup via project_kr_links → key_results
+            // KR lookup via okr_projects.kr_id
             const krLinkResult = await pool.query(
-              'SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1',
+              'SELECT kr_id FROM okr_projects WHERE id = $1 LIMIT 1',
               [projectId]
             );
             if (krLinkResult.rows.length > 0) {
