@@ -235,8 +235,10 @@ describe('getExecutorAffinity()', () => {
     expect(a.no_downgrade).toBe(true);
   });
 
-  it('explore → minimax primary', () => {
-    expect(getExecutorAffinity('explore').primary).toBe('minimax');
+  it('explore → codex primary（MiniMax 已停用）', () => {
+    const a = getExecutorAffinity('explore');
+    expect(a.primary).toBe('codex');
+    expect(a.no_downgrade).toBe(true);
   });
 
   it('未知 task_type → 默认 claude primary，codex fallback', () => {
@@ -294,7 +296,7 @@ describe('shouldDowngrade()', () => {
     expect(shouldDowngrade('codex_dev', 'tight')).toBe(false);
   });
 
-  it('tight + explore → 不降级（MiniMax 任务）', () => {
+  it('tight + explore → 不降级（已是 Codex，no_downgrade=true）', () => {
     expect(shouldDowngrade('explore', 'tight')).toBe(false);
   });
 });
