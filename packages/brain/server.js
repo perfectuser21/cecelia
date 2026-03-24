@@ -45,6 +45,7 @@ import strategicDecisionsRoutes from './src/routes/strategic-decisions.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
 import selfDriveRoutes from './src/routes/self-drive.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
+import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
@@ -157,6 +158,7 @@ app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/self-drive', selfDriveRoutes);
 app.use('/api/brain/okr', okrHierarchyRoutes);
+app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 
 // Mount brain routes
