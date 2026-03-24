@@ -8,6 +8,8 @@ const mod = require("../../scripts/devgate/check-changed-coverage.cjs");
 
 const {
   isFeatPR,
+  isFixOrRefactorPR,
+  resolveGate3CoverageData,
   filterSourceFiles,
   filterNewTestFiles,
   testImportsSourceFile,
@@ -491,5 +493,55 @@ describe("checkChangedLineCoverage", () => {
     // 只算 src/foo.ts: 1/1 = 100%
     expect(result.passed).toBe(true);
     expect(result.coverage?.percentage).toBe(100);
+  });
+});
+
+// ─── isFixOrRefactorPR ───────────────────────────────────────────
+
+describe("isFixOrRefactorPR", () => {
+  it("fix 类型返回 true", () => {
+    expect(isFixOrRefactorPR(["fix"])).toBe(true);
+  });
+
+  it("refactor 类型返回 true", () => {
+    expect(isFixOrRefactorPR(["refactor"])).toBe(true);
+  });
+
+  it("feat 类型返回 false", () => {
+    expect(isFixOrRefactorPR(["feat"])).toBe(false);
+  });
+
+  it("chore 类型返回 false", () => {
+    expect(isFixOrRefactorPR(["chore"])).toBe(false);
+  });
+
+  it("fix 与 feat 混合返回 true", () => {
+    expect(isFixOrRefactorPR(["feat", "fix"])).toBe(true);
+  });
+
+  it("空数组返回 false", () => {
+    expect(isFixOrRefactorPR([])).toBe(false);
+  });
+});
+
+// ─── resolveGate3CoverageData ────────────────────────────────────
+
+describe("resolveGate3CoverageData", () => {
+  it("非 fix PR 有覆盖率数据 → 返回原始数据", () => {
+    const data = { "file.ts": {} };
+    expect(resolveGate3CoverageData(false, data)).toBe(data);
+  });
+
+  it("非 fix PR 无覆盖率数据 → 返回 null（非 missing）", () => {
+    expect(resolveGate3CoverageData(false, null)).toBe(null);
+  });
+
+  it("fix PR 有覆盖率数据 → 返回原始数据", () => {
+    const data = { "file.ts": {} };
+    expect(resolveGate3CoverageData(true, data)).toBe(data);
+  });
+
+  it("fix PR 无覆盖率数据 → 返回 __missing__ 标记", () => {
+    expect(resolveGate3CoverageData(true, null)).toBe("__missing__");
   });
 });

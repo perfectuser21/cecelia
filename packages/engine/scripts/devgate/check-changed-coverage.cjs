@@ -67,6 +67,18 @@ function isFixOrRefactorPR(commitTypes) {
 }
 
 /**
+ * 根据 commit 类型和覆盖率数据，决定 Gate 3 使用的覆盖率数据
+ * fix/refactor PR 没有覆盖率报告时，返回 "__missing__" 标记
+ * @param {boolean} isFix - 是否为 fix/refactor PR
+ * @param {object|null} coverageData - 覆盖率数据
+ * @returns {object|null|"__missing__"}
+ */
+function resolveGate3CoverageData(isFix, coverageData) {
+  return isFix && !coverageData ? "__missing__" : coverageData;
+}
+
+
+/**
  * 获取 PR 变更文件列表
  * @returns {{ added: string[], modified: string[], all: string[] }}
  */
@@ -529,7 +541,7 @@ function main() {
   } else {
     console.log(`  门禁 3: 变更行覆盖率 ≥ ${COVERAGE_THRESHOLD}%`);
   }
-  const gate3CoverageData = (isFix && !coverageData) ? "__missing__" : coverageData;
+  const gate3CoverageData = resolveGate3CoverageData(isFix, coverageData);
   const gate3 = gate3CoverageData === "__missing__"
     ? { passed: false, skipped: false, reason: "fix/refactor PR 必须有覆盖率报告（请确认 vitest --coverage 已运行）", coverage: { covered: 0, total: 0 } }
     : checkChangedLineCoverage(changedLines, coverageData, projectRoot, COVERAGE_THRESHOLD);
@@ -578,6 +590,7 @@ module.exports = {
   getCommitTypes,
   isFeatPR,
   isFixOrRefactorPR,
+  resolveGate3CoverageData,
   getChangedFiles,
   filterSourceFiles,
   filterNewTestFiles,
