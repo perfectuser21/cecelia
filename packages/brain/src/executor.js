@@ -24,6 +24,7 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
 import { buildLearningContext } from './learning-retriever.js';
 import { getDecisionsSummary } from './decisions-context.js';
+import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { loadCache, getCachedLocation, getCachedConfig, refreshCache } from './task-type-config-cache.js';
@@ -2508,6 +2509,11 @@ async function triggerCeceliaRun(task) {
 
     // Update task with run info before execution
     await updateTaskRunInfo(task.id, runId, 'triggered');
+
+    // RPE 基线：记录期望奖赏（fire-and-forget，失败不阻塞派发）
+    const skill = task.payload?.skill || taskType;
+    recordExpectedReward(task.id, taskType, skill)
+      .catch(e => console.warn(`[executor] recordExpectedReward 失败（非阻断）: ${e.message}`));
 
     // 记录执行尝试次数（用于成功率统计）
     try {

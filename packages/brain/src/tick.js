@@ -31,6 +31,7 @@ import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
+import { runSuggestionCycle } from './suggestion-cycle.js';
 import { feedDailyIfNeeded } from './notebook-feeder.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
@@ -2727,6 +2728,10 @@ async function executeTick() {
   // 10.17 每日内容选题（UTC 01:00 = 北京时间 09:00，AI 自动生成 ≥10 个选题，fire-and-forget）
   Promise.resolve().then(() => triggerDailyTopicSelection(pool))
     .catch(e => console.warn('[tick] 每日内容选题失败:', e.message));
+
+  // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
+  Promise.resolve().then(() => runSuggestionCycle(pool))
+    .catch(e => console.warn('[tick] suggestion cycle 失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
