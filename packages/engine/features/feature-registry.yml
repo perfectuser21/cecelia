@@ -15,9 +15,9 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.97.0"
-updated: "2026-03-24"
-# ci-trigger: 13.42.0
+version: "3.98.0"
+updated: "2026-03-25"
+# ci-trigger: 13.46.0
 changelog:
   - version: "13.44.0"
     date: "2026-03-25"
@@ -2605,5 +2605,38 @@ product_features:
       - "高风险脚本有测试：Check 3 PASS"
       - "高风险脚本缺测试：Check 3 exit 1"
       - "低风险脚本缺测试：warning 不阻断"
+
+    rcis: []
+  - id: brain-src-coverage-check
+    name: Brain src 覆盖率检查（Check 4）
+    category: devgate
+    status: Committed
+    priority: P1
+    version: "13.46.0"
+    updated: "2026-03-25"
+    description: |
+      check-coverage-completeness.mjs 新增 Check 4，扫描 packages/brain/src/*.js 测试覆盖率：
+      - HIGH_RISK_BRAIN_MODULES = ['tick','thalamus','executor','cortex','planner']
+      - 高风险模块缺测试 → exit 1（CI 阻断）
+      - 普通模块缺测试 → warning（非阻断）
+      - 前缀匹配：executor-billing.test.js 覆盖 executor.js
+
+    entrypoints:
+      - type: script
+        file: packages/engine/scripts/devgate/check-coverage-completeness.mjs
+        trigger: "CI devgate 覆盖率检查阶段（Check 4）"
+
+    golden_path: |
+      check-coverage-completeness.mjs Check 4 →
+      扫描 packages/brain/src/*.js →
+      高风险模块缺测试 → exit 1（CI 阻断）→
+      普通模块缺测试 → warning（不阻断）→
+      所有高风险模块有测试 → PASS
+
+    minimal_paths:
+      - "高风险模块全有测试：Check 4 PASS"
+      - "高风险模块缺测试：Check 4 exit 1"
+      - "普通模块缺测试：warning 不阻断"
+      - "前缀匹配：executor-billing.test.js 覆盖 executor.js"
 
     rcis: []
