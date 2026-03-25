@@ -17,7 +17,8 @@
 /* global process, console */
 
 import { readdir, readFile } from 'fs/promises';
-import { join, homedir } from 'path';
+import { join } from 'path';
+import { homedir } from 'os';
 
 // auto-memory 目录路径（兼容多 account）
 const MEMORY_DIRS = [
