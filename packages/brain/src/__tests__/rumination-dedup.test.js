@@ -118,3 +118,6 @@ describe('Rumination content_hash Dedup', () => {
     );
     expect(rows.length).toBeGreaterThanOrEqual(2); // 旧记录 + 新记录
     insertedIds.push(...rows.filter(r => r.id !== oldRows[0].id).map(r => r.id));
+  });
+});
+
