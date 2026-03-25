@@ -23,6 +23,10 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+// Output helpers — use process.stdout.write to comply with lint hooks
+const log = (...args) => process.stdout.write(args.map(String).join(' ') + '\n');
+const warn = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
@@ -257,10 +261,10 @@ function findNamedTestDirs(baseDir, knownNames) {
 
 function main() {
   const LINE = '━'.repeat(50);
-  console.log(LINE);
-  console.log('  CI Evolution Gate v1');
-  console.log(LINE);
-  console.log('');
+  log(LINE);
+  log('  CI Evolution Gate v1');
+  log(LINE);
+  log('');
 
   const routingMapPath = resolve(ROOT, 'ci/routing-map.yml');
   const testTaxonomyPath = resolve(ROOT, 'ci/test-taxonomy.yml');
@@ -268,15 +272,15 @@ function main() {
   // ── Load Registry Files ──────────────────────────────────────────────────
 
   if (!existsSync(routingMapPath)) {
-    console.error('❌ FAIL: ci/routing-map.yml not found');
-    console.error('   Create it to register subsystems.');
-    console.error('   See: https://github.com/perfectuser21/cecelia/blob/main/ci/routing-map.yml');
+    warn('❌ FAIL: ci/routing-map.yml not found');
+    warn('   Create it to register subsystems.');
+    warn('   See: https://github.com/perfectuser21/cecelia/blob/main/ci/routing-map.yml');
     process.exit(1);
   }
 
   if (!existsSync(testTaxonomyPath)) {
-    console.error('❌ FAIL: ci/test-taxonomy.yml not found');
-    console.error('   Create it to classify test types.');
+    warn('❌ FAIL: ci/test-taxonomy.yml not found');
+    warn('   Create it to classify test types.');
     process.exit(1);
   }
 
@@ -294,27 +298,27 @@ function main() {
     }
   }
 
-  console.log(`📋 Registered subsystems (${Object.keys(subsystems).length}):`);
+  log(`📋 Registered subsystems (${Object.keys(subsystems).length}):`);
   for (const [name, entry] of Object.entries(subsystems)) {
     const exempt = entry.ci_exempt ? ' [ci_exempt]' : '';
     const roots = entry.roots.join(', ');
-    console.log(`   ${name}${exempt}: ${roots}`);
+    log(`   ${name}${exempt}: ${roots}`);
   }
 
-  console.log('');
-  console.log(`📋 Registered test types (${Object.keys(testTypes).length}):`);
+  log('');
+  log(`📋 Registered test types (${Object.keys(testTypes).length}):`);
   for (const [name, entry] of Object.entries(testTypes)) {
-    console.log(`   ${name} → ${entry.layer} (${entry.patterns.length} patterns)`);
+    log(`   ${name} → ${entry.layer} (${entry.patterns.length} patterns)`);
   }
 
-  console.log('');
+  log('');
 
   const errors = [];
   const warnings = [];
 
   // ── Check 1: Unregistered packages/* directories ─────────────────────────
 
-  console.log('🔍 Check 1: packages/* subsystem registration');
+  log('🔍 Check 1: packages/* subsystem registration');
   const pkgDirs = listSubdirs(resolve(ROOT, 'packages'));
 
   for (const dir of pkgDirs) {
@@ -331,18 +335,18 @@ function main() {
         `       deploy: false`
       );
     } else {
-      console.log(`   ✅ ${relDir}`);
+      log(`   ✅ ${relDir}`);
     }
   }
 
   if (pkgDirs.length === 0) {
-    console.log('   (no packages/ directories found)');
+    log('   (no packages/ directories found)');
   }
 
   // ── Check 2: Unregistered apps/* directories ─────────────────────────────
 
-  console.log('');
-  console.log('🔍 Check 2: apps/* deployable registration');
+  log('');
+  log('🔍 Check 2: apps/* deployable registration');
   const appDirs = listSubdirs(resolve(ROOT, 'apps'));
 
   for (const dir of appDirs) {
@@ -359,18 +363,18 @@ function main() {
         `         - ${relDir}   # ← add this`
       );
     } else {
-      console.log(`   ✅ ${relDir}`);
+      log(`   ✅ ${relDir}`);
     }
   }
 
   if (appDirs.length === 0) {
-    console.log('   (no apps/ directories found)');
+    log('   (no apps/ directories found)');
   }
 
   // ── Check 3: Unclassified test directories ────────────────────────────────
 
-  console.log('');
-  console.log('🔍 Check 3: test directory taxonomy classification');
+  log('');
+  log('🔍 Check 3: test directory taxonomy classification');
 
   // Named test directories that represent a test "category" (not __tests__)
   const TEST_CATEGORY_NAMES = new Set([
@@ -391,26 +395,26 @@ function main() {
         `   → Specify which layer (l3 or l4) should run these tests.`
       );
     } else {
-      console.log(`   ✅ ${relDir}`);
+      log(`   ✅ ${relDir}`);
     }
   }
 
   if (filteredTestDirs.length === 0) {
-    console.log('   (no named test directories found)');
+    log('   (no named test directories found)');
   }
 
   // ── Check 4: Infrastructure directories must be registered ───────────────
   // 基础设施目录（scripts/、ci/）必须始终在 routing-map 中注册，防止意外删除。
   // 这些目录的变更不走 packages/* 或 apps/* 路径，需要独立注册。
 
-  console.log('');
-  console.log('🔍 Check 4: infrastructure directory registration');
+  process.stdout.write('\n');
+  process.stdout.write('🔍 Check 4: infrastructure directory registration\n');
 
   const REQUIRED_INFRASTRUCTURE_ROOTS = ['scripts', 'ci'];
 
   for (const infraRoot of REQUIRED_INFRASTRUCTURE_ROOTS) {
     if (registeredRoots.has(infraRoot)) {
-      console.log(`   ✅ ${infraRoot}/`);
+      process.stdout.write(`   ✅ ${infraRoot}/\n`);
     } else {
       errors.push(
         `Infrastructure directory not registered: ${infraRoot}/\n` +
@@ -429,42 +433,42 @@ function main() {
 
   // ── Results ───────────────────────────────────────────────────────────────
 
-  console.log('');
-  console.log(LINE);
+  log('');
+  log(LINE);
 
   if (warnings.length > 0) {
-    console.log('  ⚠️  Warnings (should classify, not blocking)');
-    console.log(LINE);
+    log('  ⚠️  Warnings (should classify, not blocking)');
+    log(LINE);
     for (const w of warnings) {
-      console.warn('');
-      console.warn('⚠️  WARNING:', w);
+      warn('');
+      warn('⚠️  WARNING:', w);
     }
-    console.log('');
+    log('');
   }
 
   if (errors.length > 0) {
-    console.log('  ❌ CI Evolution Gate FAILED');
-    console.log(LINE);
+    log('  ❌ CI Evolution Gate FAILED');
+    log(LINE);
     for (const e of errors) {
-      console.error('');
-      console.error('❌ ERROR:', e);
+      warn('');
+      warn('❌ ERROR:', e);
     }
-    console.log('');
-    console.log(`${errors.length} error(s) found. Fix them before merging.`);
-    console.log('');
-    console.log('HOW TO FIX:');
-    console.log('  1. Open ci/routing-map.yml');
-    console.log('  2. Add the missing subsystem entry');
-    console.log('  3. Run: node scripts/ci-evolution-check.mjs');
-    console.log('  4. Verify it exits with code 0');
+    log('');
+    log(`${errors.length} error(s) found. Fix them before merging.`);
+    log('');
+    log('HOW TO FIX:');
+    log('  1. Open ci/routing-map.yml');
+    log('  2. Add the missing subsystem entry');
+    log('  3. Run: node scripts/ci-evolution-check.mjs');
+    log('  4. Verify it exits with code 0');
     process.exit(1);
   }
 
-  console.log('  ✅ CI Evolution Gate PASSED');
-  console.log(LINE);
-  console.log('');
-  console.log(`All ${registeredRoots.size} roots registered. No structural gaps detected.`);
-  console.log('');
+  log('  ✅ CI Evolution Gate PASSED');
+  log(LINE);
+  log('');
+  log(`All ${registeredRoots.size} roots registered. No structural gaps detected.`);
+  log('');
 }
 
 main();
