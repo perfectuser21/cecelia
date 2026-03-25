@@ -340,7 +340,7 @@ async function runProbeCycle() {
 
       if (shouldAutoFix(rcaResult)) {
         try {
-          const signature = `probe_${f.name}_${Date.now()}`;
+          const signature = `probe_${f.name}`;
           const failure = {
             task_id: null,
             reason_code: `PROBE_FAIL_${f.name.toUpperCase()}`,

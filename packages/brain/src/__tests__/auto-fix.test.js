@@ -456,6 +456,45 @@ describe('auto-fix.js', () => {
         dispatchToDevSkill(baseFailure, baseRca, 'sig-err')
       ).rejects.toThrow('DB connection failed');
     });
+
+    // ─── P0 Guard: queued/in_progress 防重复 ───────────────────────────────
+    it('guard: queued 任务存在时（active_count=1），返回 null 不重复创建', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ failed_count: '0', active_count: '1' }] });
+
+      const result = await dispatchToDevSkill(baseFailure, baseRca, 'probe_test-probe');
+
+      expect(result).toBeNull();
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it('guard: in_progress 任务存在时（active_count=2），返回 null 不重复创建', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ failed_count: '0', active_count: '2' }] });
+
+      const result = await dispatchToDevSkill(baseFailure, baseRca, 'probe_test-probe');
+
+      expect(result).toBeNull();
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it('guard: active_count=0 且 failed_count < MAX 时，正常派发', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ failed_count: '1', active_count: '0' }] });
+      mockCreateTask.mockResolvedValueOnce('task-ok');
+
+      const result = await dispatchToDevSkill(baseFailure, baseRca, 'probe_test-probe');
+
+      expect(mockCreateTask).toHaveBeenCalledTimes(1);
+      expect(result).toBe('task-ok');
+    });
+
+    it('guard: failed_count >= MAX_AUTO_FIX_ATTEMPTS(3) 时熔断返回 null', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ failed_count: '3', active_count: '0' }] });
+
+      const result = await dispatchToDevSkill(baseFailure, baseRca, 'probe_test-probe');
+
+      expect(result).toBeNull();
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+    // ──────────────────────────────────────────────────────────────────────
   });
 
   // ========== getAutoFixStats ==========

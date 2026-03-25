@@ -154,18 +154,27 @@ ${rcaResult.evidence || 'N/A'}
  * @returns {Promise<string>} Task ID
  */
 export async function dispatchToDevSkill(failure, rcaResult, signature) {
-  // Guard: 同一 signature 最多重试 MAX_AUTO_FIX_ATTEMPTS 次，防止 RCA→auto-fix 死循环
+  // Guard: 防止 RCA→auto-fix 死循环
+  // 1. 同一 signature 失败次数 >= MAX_AUTO_FIX_ATTEMPTS → 熔断
+  // 2. 同一 signature 已有 queued/in_progress 任务 → 跳过，避免重复创建
   const countResult = await pool.query(
-    `SELECT COUNT(*) AS failed_count FROM tasks
+    `SELECT
+       COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+       COUNT(*) FILTER (WHERE status IN ('queued', 'in_progress')) AS active_count
+     FROM tasks
      WHERE trigger_source = 'auto_fix'
        AND tags::jsonb ? $1
-       AND status = 'failed'
        AND updated_at > NOW() - INTERVAL '7 days'`,
     [signature]
   );
   const failed_count = parseInt(countResult.rows[0]?.failed_count || '0', 10);
+  const active_count = parseInt(countResult.rows[0]?.active_count || '0', 10);
   if (failed_count >= MAX_AUTO_FIX_ATTEMPTS) {
     console.warn(`[AutoFix] Giving up on signature=${signature}: ${failed_count} failed attempts >= MAX_AUTO_FIX_ATTEMPTS (${MAX_AUTO_FIX_ATTEMPTS}). Manual intervention required.`);
+    return null;
+  }
+  if (active_count > 0) {
+    console.log(`[AutoFix] Skip: signature=${signature} already has ${active_count} active task(s) (queued/in_progress). Not creating duplicate.`);
     return null;
   }
 
