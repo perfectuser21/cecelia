@@ -154,7 +154,21 @@ ${rcaResult.evidence || 'N/A'}
  * @returns {Promise<string>} Task ID
  */
 export async function dispatchToDevSkill(failure, rcaResult, signature) {
-  // Guard: 同一 signature 最多重试 MAX_AUTO_FIX_ATTEMPTS 次，防止 RCA→auto-fix 死循环
+  // Guard 1: 同一 signature 是否已有 queued/in_progress 任务（正在修复中，不重复创建）
+  const activeResult = await pool.query(
+    `SELECT COUNT(*) AS active_count FROM tasks
+     WHERE trigger_source = 'auto_fix'
+       AND tags::jsonb ? $1
+       AND status IN ('queued', 'in_progress')`,
+    [signature]
+  );
+  const active_count = parseInt(activeResult.rows[0]?.active_count || '0', 10);
+  if (active_count > 0) {
+    console.warn(`[AutoFix] Skipping signature=${signature}: already has ${active_count} queued/in_progress fix task(s).`);
+    return null;
+  }
+
+  // Guard 2: 同一 signature 最多重试 MAX_AUTO_FIX_ATTEMPTS 次，防止 RCA→auto-fix 死循环
   const countResult = await pool.query(
     `SELECT COUNT(*) AS failed_count FROM tasks
      WHERE trigger_source = 'auto_fix'
