@@ -6,7 +6,13 @@ rumination.js 每次反刍后把洞察写入 suggestions 表，suggestion-dispat
 
 ### 根本原因
 
-rumination.js 写入 suggestions 表时没有任何去重机制。同一洞察文本会被无限次写入，每次写入都触发 suggestion-dispatcher → Desire → 创建新任务 → 再次反刍的循环。去重的关键点在于内容本身，而不是任务状态或时间窗口，因为即使任务完成后，同一洞察在下次反刍时仍会被重新写入，循环重启。内容哈希（SHA256）+ 时间窗口（24h）是最小侵入性的修复方案，无需引入新表，只需在现有 suggestions 表加一列。
+rumination.js 写入 suggestions 表时没有任何去重机制，同一洞察文本会被无限次写入。
+
+每次写入都触发 suggestion-dispatcher → Desire → 创建新任务 → 再次反刍的循环，形成 P0 死循环。
+
+即使任务完成后，同一洞察在下次反刍时仍会被重新写入，循环重启；去重的关键点在于内容本身，而不是任务状态或时间窗口。
+
+内容哈希（SHA256）+ 时间窗口（24h）是最小侵入性的修复方案，无需引入新表，只需在现有 suggestions 表加一列 content_hash。
 
 ### 下次预防
 
