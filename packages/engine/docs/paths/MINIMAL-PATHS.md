@@ -428,6 +428,14 @@ changelog:
 
 ---
 
+### devgate-coverage-high-risk-whitelist: Devgate 覆盖率检查高风险白名单机制
+
+1. ✅ **高风险脚本有测试：Check 3 PASS**
+2. ✅ **高风险脚本缺测试：Check 3 exit 1**
+3. ✅ **低风险脚本缺测试：warning 不阻断**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

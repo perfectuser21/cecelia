@@ -510,6 +510,17 @@ Gate 0d 检测 packages/engine/ 版本文件 →
 
 ---
 
+### devgate-coverage-high-risk-whitelist: Devgate 覆盖率检查高风险白名单机制
+
+```
+check-coverage-completeness.mjs Check 3 →
+高风险脚本缺测试 → exit 1（CI 阻断）→
+低风险脚本缺测试 → warning（不阻断）→
+所有高风险脚本有测试 → PASS
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
