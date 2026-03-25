@@ -44,6 +44,7 @@ import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
+import { memorySyncIfNeeded } from './memory-sync.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -2737,6 +2738,10 @@ async function executeTick() {
   // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，fire-and-forget）
   Promise.resolve().then(() => runConversationConsolidator())
     .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
+
+  // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
+  Promise.resolve().then(() => memorySyncIfNeeded(pool))
+    .catch(e => console.warn("[tick] memory-sync 失败:", e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
