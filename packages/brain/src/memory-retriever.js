@@ -57,6 +57,13 @@ const DEFAULT_TOKEN_BUDGET = 800;
 export const CHAT_TOKEN_BUDGET = 2500;
 
 /**
+ * salience_score 加权因子
+ * finalScore 乘以 (1 + salience_score * SALIENCE_WEIGHT)
+ * salience_score=1.0 时 finalScore 提升 30%，=0 时无影响
+ */
+export const SALIENCE_WEIGHT = 0.3;
+
+/**
  * Source 配额约束
  * - min: 至少注入 N 条（有候选时保证）
  * - max: 最多注入 N 条（防止某一类型占满）
@@ -694,7 +701,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
         const embStr = '[' + queryEmbedding.join(',') + ']';
 
         const vectorResult = await pool.query(`
-          SELECT id, content, summary, l1_content, importance, memory_type, created_at,
+          SELECT id, content, summary, l1_content, importance, salience_score, memory_type, created_at,
                  1 - (embedding <=> $1::vector) AS vector_score
           FROM memory_stream
           WHERE embedding IS NOT NULL
@@ -719,6 +726,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
               description,
               text: row.content || '',
               relevance: 0.4 + (row.vector_score || 0) * 0.6,
+              salience_score: row.salience_score || 0,
               created_at: row.created_at,
               importance: row.importance,
             });
@@ -741,7 +749,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
     // ── Jaccard 降级路径（无 API key 或向量路径失败/无数据）──
     meta.fetchStatus = 'fallback_jaccard';
     const result = await pool.query(`
-      SELECT id, content, summary, l1_content, importance, memory_type, created_at
+      SELECT id, content, summary, l1_content, importance, salience_score, memory_type, created_at
       FROM memory_stream
       WHERE (source_type IS NULL OR source_type != 'self_model')
         AND (expires_at IS NULL OR expires_at > NOW())
@@ -796,6 +804,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
         description,
         text: row.content || '',
         relevance: 0.5 + row.l0Score,
+        salience_score: row.salience_score || 0,
         created_at: row.created_at,
         importance: row.importance,
       });
@@ -883,6 +892,7 @@ async function loadConversationHistory(pool, limit = 15) {
         description: (r.content || '').slice(0, 200),
         text: r.content || '',
         relevance: r.salience_score || 0.5,
+        salience_score: r.salience_score || 0,
         created_at: r.created_at,
       }));
       meta.fetchedCount = entries.length;
@@ -1065,9 +1075,10 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     const halfLife = HALF_LIFE[source] || 30;
     const modeW = (MODE_WEIGHT[source] && MODE_WEIGHT[source][mode]) || 1.0;
     const dynW = dynamicMultipliers[source] || 1.0;
+    const salienceW = 1 + (c.salience_score || 0) * SALIENCE_WEIGHT;
     return {
       ...c,
-      finalScore: c.relevance * timeDecay(c.created_at, halfLife) * modeW * dynW,
+      finalScore: c.relevance * timeDecay(c.created_at, halfLife) * modeW * dynW * salienceW,
     };
   });
 
