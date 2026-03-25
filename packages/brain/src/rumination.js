@@ -441,7 +441,7 @@ ${insight.trim().slice(0, 800)}
           [content_hash]
         );
         if (dedupRows.length > 0) {
-          console.log(`[rumination] skipped duplicate insight (content_hash=${content_hash.slice(0, 8)}...)`);
+          console.warn(`[rumination] skipped duplicate insight (content_hash=${content_hash.slice(0, 8)}...)`);
         } else {
           await db.query(`
             INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata, content_hash)
@@ -452,7 +452,7 @@ ${insight.trim().slice(0, 800)}
             JSON.stringify({ origin: 'rumination_p0c', insight: mainInsight }),
             content_hash
           ]);
-          console.log('[rumination] insight written to suggestions table for dispatcher');
+          console.warn('[rumination] insight written to suggestions table for dispatcher');
         }
       } catch (sugErr) {
         console.warn('[rumination] failed to write suggestion (non-blocking):', sugErr.message);
