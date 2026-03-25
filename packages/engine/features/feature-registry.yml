@@ -2,8 +2,8 @@
 # ============================================================================
 # Feature Registry - ZenithJoy Engine
 # ============================================================================
-# 版本: 3.84.0
-# 更新: 2026-03-22
+# 版本: 3.85.0
+# 更新: 2026-03-25
 #
 # 核心原则:
 # - Feature Registry 回答"系统有什么能力"（What）
@@ -2574,5 +2574,36 @@ product_features:
     minimal_paths:
       - "Engine 版本文件变更时：check-version-sync.sh 被调用"
       - "jq 缺失时：用 node 降级解析，不报错"
+
+    rcis: []
+  - id: devgate-coverage-high-risk-whitelist
+    name: Devgate 覆盖率检查高风险白名单机制
+    category: devgate
+    status: Committed
+    priority: P1
+    version: "13.45.0"
+    updated: "2026-03-25"
+    description: |
+      check-coverage-completeness.mjs 新增 HIGH_RISK_DEVGATE_SCRIPTS 白名单：
+      - 高风险脚本（check-dod-mapping、scan-rci-coverage、check-coverage-completeness、
+        check-rci-stale-refs、check-changed-coverage）缺测试 → exit 1（CI 阻断）
+      - 低风险脚本缺测试 → warning（非阻断，渐进改善）
+      同时为 check-dod-mapping 和 check-coverage-completeness 补充最小测试文件。
+
+    entrypoints:
+      - type: script
+        file: packages/engine/scripts/devgate/check-coverage-completeness.mjs
+        trigger: "CI devgate 覆盖率检查阶段（Check 3）"
+
+    golden_path: |
+      check-coverage-completeness.mjs Check 3 →
+      高风险脚本缺测试 → exit 1（CI 阻断）→
+      低风险脚本缺测试 → warning（不阻断）→
+      所有高风险脚本有测试 → PASS
+
+    minimal_paths:
+      - "高风险脚本有测试：Check 3 PASS"
+      - "高风险脚本缺测试：Check 3 exit 1"
+      - "低风险脚本缺测试：warning 不阻断"
 
     rcis: []
