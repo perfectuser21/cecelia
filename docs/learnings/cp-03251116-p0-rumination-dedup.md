@@ -14,7 +14,11 @@
 
 ### 根本原因
 
-PR13 完成后反刍系统开始正常产出洞察，但每次产出都写入 `suggestions` 表，`suggestion-dispatcher` → 丘脑 → 创建任务，没有去重。如果调度器频繁运行，同一洞察会被反复消费形成 Rumination→Desire 死循环。
+PR13 完成后反刍阈值对齐，系统开始正常产出洞察并写入 `suggestions` 表。
+
+但 `suggestion-dispatcher` 会把每条 suggestion 转发给丘脑创建任务，没有任何去重保护。
+
+当调度器频繁运行时，完全相同的洞察内容会被反复产出、反复写入、反复触发任务创建，形成 Rumination → Desire → 任务 → （再次触发反刍）的正反馈死循环。
 
 ### 下次预防
 
