@@ -98,3 +98,39 @@ subsystems:
     deploy: false
     ci_exempt: true
     description: "纯数据目录（OKR validation spec），无可执行代码，无 CI 路由"
+
+  # ── CI Infrastructure ─────────────────────────────────────────────────────
+  # 以下目录承载 CI 门禁、配置、工作流等基础设施脚本。
+  # 修改这些路径时 Evolution Gate 会进行注册校验，确保变更有迹可查。
+
+  devgate-core:
+    root: scripts/devgate
+    paths:
+      - scripts/devgate/**
+    layers: [l1]
+    deploy: false
+    description: "DevGate 核心脚本（DoD 映射、RCI 覆盖率、技能注册校验等门禁检查器）"
+
+  ci-helpers:
+    root: scripts
+    paths:
+      - scripts/**
+    layers: [l1]
+    deploy: false
+    description: "CI 辅助脚本（演化检查、清单、预提交验证、部署辅助等）"
+
+  ci-configuration:
+    root: ci
+    paths:
+      - ci/**
+    layers: [l1]
+    deploy: false
+    description: "CI 注册配置（routing-map、test-taxonomy、基线文件等）"
+
+  github-workflows:
+    root: .github/workflows
+    paths:
+      - .github/workflows/**
+    layers: [l1]
+    deploy: false
+    description: "GitHub Actions Workflows（CI L1-L4 流水线 + auto-version + deploy）"

@@ -399,6 +399,43 @@ function main() {
     console.log('   (no named test directories found)');
   }
 
+  // ── Check 4: Infrastructure paths registration ────────────────────────────
+  // Verifies that key CI infrastructure directories are registered in
+  // routing-map.yml. If someone adds a new devgate script category or
+  // workflow and forgets to update the registry, this check catches it.
+
+  console.log('');
+  console.log('🔍 Check 4: infrastructure paths registration (scripts/devgate, ci, .github/workflows)');
+
+  const INFRASTRUCTURE_PATHS = [
+    { path: 'scripts/devgate', label: 'DevGate scripts' },
+    { path: 'ci',              label: 'CI configuration' },
+    { path: '.github/workflows', label: 'GitHub workflows' },
+  ];
+
+  for (const infra of INFRASTRUCTURE_PATHS) {
+    const infraDir = resolve(ROOT, infra.path);
+    if (!existsSync(infraDir)) {
+      console.log(`   ⚠️  ${infra.path} — directory not found, skipping`);
+      continue;
+    }
+    const normalizedPath = infra.path.replace(/\\/g, '/');
+    if (!registeredRoots.has(normalizedPath)) {
+      errors.push(
+        `Infrastructure path not registered: ${infra.path}/\n` +
+        `   → Add it to ci/routing-map.yml before merging.\n` +
+        `   → Specify layers, deploy flag, and a description.\n` +
+        `   Example:\n` +
+        `     ${infra.path.split('/').pop()}:\n` +
+        `       root: ${infra.path}\n` +
+        `       layers: [l1]\n` +
+        `       deploy: false`
+      );
+    } else {
+      console.log(`   ✅ ${infra.path}`);
+    }
+  }
+
   // ── Results ───────────────────────────────────────────────────────────────
 
   console.log('');
