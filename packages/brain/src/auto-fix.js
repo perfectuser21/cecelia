@@ -174,7 +174,7 @@ export async function dispatchToDevSkill(failure, rcaResult, signature) {
     return null;
   }
   if (active_count > 0) {
-    console.log(`[AutoFix] Skip: signature=${signature} already has ${active_count} active task(s) (queued/in_progress). Not creating duplicate.`);
+    console.warn(`[AutoFix] Skip: signature=${signature} already has ${active_count} active task(s) (queued/in_progress). Not creating duplicate.`);
     return null;
   }
 
