@@ -9,7 +9,11 @@
 
 ### 根本原因
 
-NotebookLM 主路负责全量历史综合（`queryNotebook`），fallback 路只有 `memoryBlock`（近期记忆），完全缺少历史洞察积累。`synthesis_archive` 表每天存储 daily 级别的反刍洞察，是现成的历史上下文来源，但 fallback 路径没有查询它。
+NotebookLM 主路负责全量历史综合（`queryNotebook`），fallback 路只有 `memoryBlock`（近期记忆），完全缺少历史洞察积累。
+
+`synthesis_archive` 表每天存储 `level='daily'` 级别的反刍洞察，是现成的历史上下文来源，但 fallback 路径没有查询它，导致 LLM 每次 fallback 时只能基于当次 learnings 输出重复/浅层洞察。
+
+两路设计的对称性未被维护：NotebookLM 主路有全量历史上下文，callLLM fallback 路没有任何历史上下文，信息量严重不对等。
 
 ## 修复
 
