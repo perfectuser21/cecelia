@@ -11,7 +11,7 @@
 
 /* global console */
 
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';
 import { buildMemoryContext } from './memory-retriever.js';
@@ -431,18 +431,29 @@ ${insight.trim().slice(0, 800)}
     }
 
     // 8. P0-C：反刍洞察写入 suggestions 表（由 suggestion-dispatcher 统一分发）
+    // content_hash 去重：24h DEDUP_WINDOW 内同一洞察不重复写入（P0 死循环修复）
     if (insights.length > 0 && insights[0]) {
       const mainInsight = insights[0];
+      const content_hash = crypto.createHash('sha256').update(mainInsight).digest('hex');
       try {
-        await db.query(`
-          INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata)
-          VALUES ($1, 'rumination', $2, 'pending', 'desire_formation', $3)
-        `, [
-          mainInsight,
-          0.7,
-          JSON.stringify({ origin: 'rumination_p0c', insight: mainInsight })
-        ]);
-        console.log('[rumination] insight written to suggestions table for dispatcher');
+        const { rows: dedupRows } = await db.query(
+          `SELECT id FROM suggestions WHERE content_hash = $1 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
+          [content_hash]
+        );
+        if (dedupRows.length > 0) {
+          console.log(`[rumination] skipped duplicate insight (content_hash=${content_hash.slice(0, 8)}...)`);
+        } else {
+          await db.query(`
+            INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata, content_hash)
+            VALUES ($1, 'rumination', $2, 'pending', 'desire_formation', $3, $4)
+          `, [
+            mainInsight,
+            0.7,
+            JSON.stringify({ origin: 'rumination_p0c', insight: mainInsight }),
+            content_hash
+          ]);
+          console.log('[rumination] insight written to suggestions table for dispatcher');
+        }
       } catch (sugErr) {
         console.warn('[rumination] failed to write suggestion (non-blocking):', sugErr.message);
       }
