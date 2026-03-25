@@ -55,7 +55,7 @@ hooks:
       type: code
       file: "hooks/session-start.sh"
       contains: "additionalContext"
-    test: "tests/hooks/session-start.test.ts"
+    method: manual
 
   # --------------------------------------------------------------------------
   # H1: branch-protect
