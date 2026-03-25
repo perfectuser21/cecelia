@@ -132,3 +132,19 @@ subsystems:
     layers: [l1, l2]
     deploy: false
     description: "GitHub Actions 工作流定义（L1-L4 所有 gate）"
+
+  scripts:
+    root: scripts
+    paths:
+      - scripts/**
+    layers: [l2]
+    deploy: false
+    description: "共享脚本（Brain 部署/滚动更新/预提交验证/运营工具等）。devgate/ 子目录由 devgate-core 单独注册。"
+
+  ci_infra:
+    root: ci
+    paths:
+      - ci/**
+    layers: [l2]
+    deploy: false
+    description: "CI 基础设施配置与测试脚本（routing-map/test-taxonomy/baseline/test.sh）。路由配置文件由 ci-configuration 单独注册。"
