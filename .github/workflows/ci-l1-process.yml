@@ -14,6 +14,10 @@ on:
         description: 'PR head branch (for manual trigger)'
         required: false
         default: ''
+      base_ref:
+        description: 'PR base branch (for manual trigger)'
+        required: false
+        default: 'main'
 
 concurrency:
   group: l1-process-${{ github.ref }}
@@ -40,7 +44,7 @@ jobs:
       - name: Detect affected packages
         id: filter
         run: |
-          BASE_REF="${{ github.base_ref }}"
+          BASE_REF="${{ github.base_ref || github.event.inputs.base_ref || 'main' }}"
           CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
           echo "Changed files:"
           echo "$CHANGED_FILES"
@@ -79,12 +83,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Parse .dev-mode file for current stage
         id: parse
         env:
-          BRANCH: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
           DEV_MODE_FILE=".dev-mode.${BRANCH}"
           echo "Looking for: $DEV_MODE_FILE"
@@ -132,7 +136,7 @@ jobs:
     steps:
       - name: 验证分支必须通过 /dev 创建
         run: |
-          BRANCH="${{ github.head_ref }}"
+          BRANCH="${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
           echo "检查分支名: $BRANCH"
           if ! echo "$BRANCH" | grep -qP '^cp-\d{8}-[a-z0-9-]+$'; then
             echo ""
@@ -157,7 +161,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -173,7 +177,7 @@ jobs:
 
       - name: Run DoD Verification Check
         env:
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate: DoD Verification (Branch: $GITHUB_HEAD_REF)"
@@ -182,7 +186,7 @@ jobs:
 
       - name: Run DoD Execution Gate
         env:
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate: DoD Execution Gate (Branch: $GITHUB_HEAD_REF)"
@@ -219,13 +223,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Check cleanup requirements against DoD
         env:
-          GITHUB_BASE_REF: ${{ github.base_ref }}
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref || 'main' }}
+          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Step 6.5 Simplify — Cleanup Check"
@@ -336,10 +340,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Check PRD has success criteria
         env:
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
           bash packages/engine/scripts/devgate/check-prd.sh
 
@@ -354,12 +358,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - name: Check Learning Format
         env:
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate: Learning Format Gate"
@@ -378,7 +382,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -412,8 +416,8 @@ jobs:
           fetch-depth: 0
       - name: Check high-risk paths require dev evidence
         env:
-          BASE_REF: ${{ github.base_ref }}
-          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref || 'main' }}
+          HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Required Dev Paths Check (P2)"
@@ -499,12 +503,12 @@ jobs:
           fetch-depth: 0
       - name: Audit CI config changes
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref || 'main' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  CI Config Audit"
-          echo "  Branch: ${{ github.head_ref }}"
+          echo "  Branch: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
 
@@ -580,7 +584,7 @@ jobs:
       # P1: Config Audit - critical config file change audit
       - name: Config Audit
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Config Audit (P1)"
@@ -604,7 +608,7 @@ jobs:
 
           MODIFIED_CONFIGS=()
           for config in "${CRITICAL_CONFIGS[@]}"; do
-            if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^${config}"; then
+            if git diff --name-only origin/${{ github.base_ref || github.event.inputs.base_ref || 'main' }}...HEAD | grep -q "^${config}"; then
               MODIFIED_CONFIGS+=("$config")
             fi
           done
@@ -629,7 +633,7 @@ jobs:
             for config in "${MODIFIED_CONFIGS[@]}"; do
               echo ""
               echo "--- $config ---"
-              git diff --stat origin/${{ github.base_ref }}...HEAD "$config"
+              git diff --stat origin/${{ github.base_ref || github.event.inputs.base_ref || 'main' }}...HEAD "$config"
             done
           else
             echo "No critical config files modified"
@@ -643,7 +647,7 @@ jobs:
       # P0: Known-Failures Protection - prevent malicious whitelist modification
       - name: Known-Failures Protection
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Known-Failures Protection (P0)"
@@ -652,7 +656,7 @@ jobs:
 
           KF_PATH="packages/engine/ci/known-failures.json"
 
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^${KF_PATH}$"; then
+          if git diff --name-only origin/${{ github.base_ref || github.event.inputs.base_ref || 'main' }}...HEAD | grep -q "^${KF_PATH}$"; then
             echo "detected: $KF_PATH was modified"
             echo ""
 
@@ -694,7 +698,7 @@ jobs:
             echo "known-failures.json content is valid"
             echo ""
             echo "Changes:"
-            git diff origin/${{ github.base_ref }}...HEAD "$KF_PATH" | head -50
+            git diff origin/${{ github.base_ref || github.event.inputs.base_ref || 'main' }}...HEAD "$KF_PATH" | head -50
           else
             echo "known-failures.json not modified"
           fi
@@ -760,7 +764,7 @@ jobs:
           !startsWith(github.event.pull_request.title, 'release:')
         working-directory: packages/engine
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate RCI checks"
@@ -771,7 +775,7 @@ jobs:
           if [ -f "scripts/devgate/require-rci-update-if-p0p1.sh" ]; then
             echo ""
             echo "  [P0/P1 RCI update check]"
-            export BASE_REF="origin/${{ github.base_ref || 'main' }}"
+            export BASE_REF="origin/${{ github.base_ref || github.event.inputs.base_ref || 'main' }}"
             bash scripts/devgate/require-rci-update-if-p0p1.sh || exit 1
           fi
 
@@ -847,7 +851,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -875,7 +879,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -920,7 +924,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
