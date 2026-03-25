@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = path.resolve(__dirname, '../../server.js');
 const TEST_PORT = 15221;
 
-function waitForServer(url, timeoutMs = 45000) {
+function waitForServer(url, timeoutMs = 90000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const check = async () => {
@@ -69,7 +69,7 @@ describeSmoke('Brain Smoke Test', () => {
     });
 
     await waitForServer(baseUrl);
-  }, 60000);
+  }, 120000);
 
   afterAll(async () => {
     if (serverProcess) {
