@@ -378,9 +378,9 @@ describe('rumination', () => {
       expect(prompt).toContain('模式发现');
       expect(prompt).toContain('关联分析');
 
-      // 包含记忆上下文和 NotebookLM
+      // 包含记忆上下文和历史反刍上下文
       expect(prompt).toContain('相关记忆');
-      expect(prompt).toContain('NotebookLM 补充知识');
+      expect(prompt).toContain('历史反刍上下文');
 
       // 包含数量标注
       expect(prompt).toContain('2 条知识');
@@ -397,7 +397,7 @@ describe('rumination', () => {
       expect(prompt).toContain('模式发现');
       expect(prompt).toContain('关联分析');
       expect(prompt).not.toContain('相关记忆上下文');
-      expect(prompt).not.toContain('NotebookLM 补充知识');
+      expect(prompt).not.toContain('历史反刍上下文');
     });
 
     it('content 超过 300 字符时截断', () => {
@@ -420,6 +420,18 @@ describe('rumination', () => {
 
       const prompt = buildRuminationPrompt(learnings, '', '');
       expect(prompt).toContain('未分类');
+    });
+
+    it('fallbackContext 非空时注入历史反刍上下文区块', () => {
+      const learnings = [
+        { title: '测试', content: '内容', category: 'tech' },
+      ];
+      const fallbackContext = '[2026-03-24] 过去的洞察内容示例';
+
+      const prompt = buildRuminationPrompt(learnings, '', fallbackContext);
+
+      expect(prompt).toContain('## 历史反刍上下文');
+      expect(prompt).toContain(fallbackContext);
     });
   });
 

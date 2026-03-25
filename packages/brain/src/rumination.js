@@ -171,7 +171,7 @@ ${learningsList}
   }
 
   if (notebookContext) {
-    prompt += `\n## NotebookLM 补充知识\n${notebookContext}\n`;
+    prompt += `\n## 历史反刍上下文\n${notebookContext}\n`;
   }
 
   // 检测是否包含隔离失败记录
@@ -271,9 +271,25 @@ async function digestLearnings(db, learnings) {
       console.warn('[rumination] notebooklm_primary failed, falling back to callLLM:', nbErr.message);
     }
 
-    // Fallback：callLLM
+    // Fallback：callLLM（注入历史反刍上下文）
     if (!insight) {
-      const prompt = buildRuminationPrompt(learnings, memoryBlock, '');
+      // 从 synthesis_archive 查最近 7 天 daily 洞察，补充历史上下文
+      let fallbackContext = '';
+      try {
+        const { rows: archiveRows } = await db.query(
+          `SELECT period_start, content FROM synthesis_archive
+           WHERE level = 'daily' AND period_start >= NOW() - INTERVAL '7 days'
+           ORDER BY period_start DESC LIMIT 7`
+        );
+        if (archiveRows.length > 0) {
+          fallbackContext = archiveRows
+            .map(r => `[${r.period_start.toISOString ? r.period_start.toISOString().slice(0, 10) : String(r.period_start).slice(0, 10)}] ${r.content.slice(0, 300)}`)
+            .join('\n\n');
+        }
+      } catch {
+        // 历史上下文获取失败不影响主流程
+      }
+      const prompt = buildRuminationPrompt(learnings, memoryBlock, fallbackContext);
       const { text: llmInsight } = await callLLM('rumination', prompt);
       insight = llmInsight || '';
     }
