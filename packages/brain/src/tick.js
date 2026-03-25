@@ -33,6 +33,7 @@ import { runRumination } from './rumination.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
 import { runSuggestionCycle } from './suggestion-cycle.js';
 import { runConversationConsolidator } from './conversation-consolidator.js';
+import { runConversationDigest } from './conversation-digest.js';
 import { feedDailyIfNeeded } from './notebook-feeder.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
@@ -2738,6 +2739,10 @@ async function executeTick() {
   // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，fire-and-forget）
   Promise.resolve().then(() => runConversationConsolidator())
     .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
+
+  // 10.19b 对话日志摘要（每 tick，扫描 .jsonl 文件，提炼 decisions/ideas，fire-and-forget）
+  Promise.resolve().then(() => runConversationDigest())
+    .catch(e => console.warn('[tick] 对话日志摘要失败:', e.message));
 
   // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
   Promise.resolve().then(() => memorySyncIfNeeded(pool))
