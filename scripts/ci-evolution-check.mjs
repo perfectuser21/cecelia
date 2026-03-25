@@ -367,6 +367,79 @@ function main() {
     console.log('   (no apps/ directories found)');
   }
 
+  // ── Check 4: scripts/devgate registration ────────────────────────────────
+  // Ensures the DevGate scripts directory is tracked in routing-map.yml.
+  // Any new script added here should remain covered by the existing entry.
+
+  console.log('');
+  console.log('🔍 Check 4: scripts/devgate registration');
+  {
+    const devgatePath = 'scripts/devgate';
+    if (!existsSync(resolve(ROOT, devgatePath))) {
+      console.log(`   (scripts/devgate not found, skipping)`);
+    } else if (!registeredRoots.has(devgatePath)) {
+      errors.push(
+        `scripts/devgate is not registered in ci/routing-map.yml\n` +
+        `   → Add a 'devgate-core' entry with root: scripts/devgate.\n` +
+        `   Example:\n` +
+        `     devgate-core:\n` +
+        `       root: scripts/devgate\n` +
+        `       layers: [l1, l2]\n` +
+        `       deploy: false`
+      );
+    } else {
+      console.log(`   ✅ scripts/devgate`);
+    }
+  }
+
+  // ── Check 5: ci/ configuration registration ──────────────────────────────
+  // Ensures ci/routing-map.yml and ci/test-taxonomy.yml are themselves tracked.
+
+  console.log('');
+  console.log('🔍 Check 5: ci/ configuration registration');
+  {
+    const ciPath = 'ci';
+    if (!existsSync(resolve(ROOT, ciPath))) {
+      console.log(`   (ci/ not found, skipping)`);
+    } else if (!registeredRoots.has(ciPath)) {
+      errors.push(
+        `ci/ directory is not registered in ci/routing-map.yml\n` +
+        `   → Add a 'ci-configuration' entry with root: ci.\n` +
+        `   Example:\n` +
+        `     ci-configuration:\n` +
+        `       root: ci\n` +
+        `       layers: [l2]\n` +
+        `       deploy: false`
+      );
+    } else {
+      console.log(`   ✅ ci`);
+    }
+  }
+
+  // ── Check 6: .github/workflows registration ──────────────────────────────
+  // Ensures GitHub Actions workflow definitions are tracked in routing-map.yml.
+
+  console.log('');
+  console.log('🔍 Check 6: .github/workflows registration');
+  {
+    const ghwPath = '.github/workflows';
+    if (!existsSync(resolve(ROOT, ghwPath))) {
+      console.log(`   (.github/workflows not found, skipping)`);
+    } else if (!registeredRoots.has(ghwPath)) {
+      errors.push(
+        `.github/workflows is not registered in ci/routing-map.yml\n` +
+        `   → Add a 'github-workflows' entry with root: .github/workflows.\n` +
+        `   Example:\n` +
+        `     github-workflows:\n` +
+        `       root: .github/workflows\n` +
+        `       layers: [l1, l2]\n` +
+        `       deploy: false`
+      );
+    } else {
+      console.log(`   ✅ .github/workflows`);
+    }
+  }
+
   // ── Check 3: Unclassified test directories ────────────────────────────────
 
   console.log('');

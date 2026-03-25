@@ -98,3 +98,42 @@ subsystems:
     deploy: false
     ci_exempt: true
     description: "纯数据目录（OKR validation spec），无可执行代码，无 CI 路由"
+
+  # ── DevGate & CI Infrastructure ───────────────────────────────────────────
+
+  devgate-core:
+    root: scripts/devgate
+    paths:
+      - scripts/devgate/**
+    layers: [l1, l2]
+    deploy: false
+    description: "DevGate 检查脚本（DoD 验证、假命令检测、白名单检查等）。被 Hook 和 CI 调用。"
+
+  ci-helpers:
+    root: scripts
+    paths:
+      - scripts/facts-check.mjs
+      - scripts/check-cross-ref.mjs
+      - scripts/ci-evolution-check.mjs
+      - scripts/check-version-sync.sh
+      - scripts/local-precheck.sh
+    layers: [l2]
+    deploy: false
+    description: "Brain 事实检查、交叉引用、Evolution Gate、版本同步等 CI 辅助脚本"
+
+  ci-configuration:
+    root: ci
+    paths:
+      - ci/routing-map.yml
+      - ci/test-taxonomy.yml
+    layers: [l2]
+    deploy: false
+    description: "CI 路由和测试分类配置"
+
+  github-workflows:
+    root: .github/workflows
+    paths:
+      - .github/workflows/**
+    layers: [l1, l2]
+    deploy: false
+    description: "GitHub Actions 工作流定义（L1-L4 所有 gate）"
