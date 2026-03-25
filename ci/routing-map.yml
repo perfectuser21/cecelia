@@ -112,20 +112,15 @@ subsystems:
   ci-helpers:
     root: scripts
     paths:
-      - scripts/facts-check.mjs
-      - scripts/check-cross-ref.mjs
-      - scripts/ci-evolution-check.mjs
-      - scripts/check-version-sync.sh
-      - scripts/local-precheck.sh
+      - scripts/**
     layers: [l2]
     deploy: false
-    description: "Brain 事实检查、交叉引用、Evolution Gate、版本同步等 CI 辅助脚本"
+    description: "Brain 事实检查、交叉引用、Evolution Gate、版本同步等 CI 辅助脚本（排除 scripts/devgate 由 devgate-core 覆盖）"
 
   ci-configuration:
     root: ci
     paths:
-      - ci/routing-map.yml
-      - ci/test-taxonomy.yml
+      - ci/**
     layers: [l2]
     deploy: false
     description: "CI 路由和测试分类配置"
