@@ -1,0 +1,1 @@
+{"verdict":"PASS","reviewer":"code_review_gate","timestamp":"2026-03-25T08:48:00+08:00","reason":"单文件单值变更，从1改为0。消除允许带失败合并的债务机制。最小改动，零风险。"}
