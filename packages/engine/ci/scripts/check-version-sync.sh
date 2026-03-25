@@ -15,7 +15,28 @@ if [[ ! -f "package.json" ]]; then
     exit 0
 fi
 
-BASE_VERSION=$(jq -r '.version' package.json)
+# jq 优雅降级：jq 不存在时用 node 解析 JSON
+_json_version() {
+    local _file="$1"
+    local _field="${2:-.version}"
+    if command -v jq &>/dev/null; then
+        jq -r "${_field}" "$_file" 2>/dev/null || echo ""
+    else
+        node -e "try{const d=JSON.parse(require('fs').readFileSync('${_file}','utf8'));const keys='${_field}'.replace(/^\./,'').split('.');let v=d;for(const k of keys)v=v&&v[k];console.log(v||'')}catch(e){}" 2>/dev/null || echo ""
+    fi
+}
+
+# 检查 jq 和 node 是否都不可用（两者均缺失则优雅跳过）
+if ! command -v jq &>/dev/null && ! command -v node &>/dev/null; then
+    echo "⚠️  jq 和 node 均未安装，跳过版本同步检查"
+    exit 0
+fi
+
+BASE_VERSION=$(_json_version "package.json" ".version")
+if [[ -z "$BASE_VERSION" || "$BASE_VERSION" == "null" ]]; then
+    echo "⚠️  无法读取 package.json 版本，跳过检查"
+    exit 0
+fi
 echo "基准版本 (package.json): $BASE_VERSION"
 echo ""
 
@@ -23,7 +44,7 @@ ERRORS=0
 
 # 检查 package-lock.json
 if [[ -f "package-lock.json" ]]; then
-    LOCK_VERSION=$(jq -r '.version' package-lock.json)
+    LOCK_VERSION=$(_json_version "package-lock.json" ".version")
     if [[ "$LOCK_VERSION" != "$BASE_VERSION" ]]; then
         echo "❌ package-lock.json: $LOCK_VERSION (期望: $BASE_VERSION)"
         ERRORS=$((ERRORS + 1))

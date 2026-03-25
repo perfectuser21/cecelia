@@ -758,6 +758,22 @@ devloop-check.sh 条件 2.7 drift check →
 
 ---
 
+## GP-048: Gate 0d Engine 版本同步检查 (hook-ci-r12-gate0d-version-sync)
+
+**Feature**: hook-ci-r12-gate0d-version-sync - Gate 0d Engine 版本同步检查
+**Priority**: P2
+
+### Golden Path
+
+```
+verify-step.sh step2 →
+Gate 0d 检测 packages/engine/ 版本文件 →
+调用 check-version-sync.sh →
+5 文件版本一致 → PASS
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

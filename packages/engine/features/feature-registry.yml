@@ -2540,3 +2540,36 @@ product_features:
       - "改动文件超出 Scope：输出 warning 但不阻断"
 
     rcis: []
+  - id: hook-ci-r12-gate0d-version-sync
+    name: Gate 0d Engine 版本同步检查
+    category: devgate
+    status: Committed
+    priority: P2
+    version: "13.43.0"
+    updated: "2026-03-25"
+    description: |
+      verify-step.sh Gate 0d 扩展：当检测到 Engine 版本文件（package.json / package-lock.json /
+      VERSION / .hook-core-version / regression-contract.yaml）变更时，自动调用
+      check-version-sync.sh 验证 5 文件版本一致。
+      check-version-sync.sh 新增 jq 优雅降级：jq 缺失时用 node 解析 JSON，
+      node 也缺失时跳过检查（不报错退出）。
+
+    entrypoints:
+      - type: hook
+        file: packages/engine/hooks/verify-step.sh
+        trigger: "Stage 2 完成时 Gate 0d 检测到 Engine 版本文件变更"
+      - type: script
+        file: packages/engine/ci/scripts/check-version-sync.sh
+        trigger: "被 Gate 0d 调用，或 CI engine-ci.yml version-check job"
+
+    golden_path: |
+      verify-step.sh step2 →
+      Gate 0d 检测 packages/engine/ 版本文件 →
+      调用 check-version-sync.sh →
+      5 文件版本一致 → PASS
+
+    minimal_paths:
+      - "Engine 版本文件变更时：check-version-sync.sh 被调用"
+      - "jq 缺失时：用 node 降级解析，不报错"
+
+    rcis: []
