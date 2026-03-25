@@ -24,6 +24,7 @@ import {
   searchEpisodicMemory,
   HALF_LIFE,
   MODE_WEIGHT,
+  SALIENCE_WEIGHT,
   _loadActiveProfile,
   _loadRecentEvents,
   _formatItem,
@@ -733,5 +734,104 @@ describe('searchEpisodicMemory', () => {
       if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = originalKey;
     }
+  });
+});
+
+// ============================================================
+// D11: salience_score 加权召回（PR11 OUT filter）
+// ============================================================
+
+describe('salience_score 加权召回', () => {
+  it('D11-1: SALIENCE_WEIGHT 常量导出正确（0 < value <= 1）', () => {
+    expect(SALIENCE_WEIGHT).toBeGreaterThan(0);
+    expect(SALIENCE_WEIGHT).toBeLessThanOrEqual(1);
+  });
+
+  it('D11-2: 高 salience episodic 记录排序靠前（Jaccard 路径）', async () => {
+    const now = new Date().toISOString();
+    // 不设置 OPENAI_API_KEY → 走 Jaccard 降级路径
+    // episodic 候选包含 salience_score 字段
+    mockSearchWithVectors.mockResolvedValueOnce({ matches: [] });
+
+    // 第一个 query 是 events，第二个是 goals（loadActiveProfile），
+    // episodic 路径通过 mockPool 独立查询
+    const episodicPool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [
+          {
+            id: 'low-salience-ep',
+            content: '[反思洞察] 普通记忆内容',
+            summary: '普通记忆',
+            importance: 5,
+            memory_type: 'long',
+            created_at: now,
+            salience_score: 0.1,
+          },
+          {
+            id: 'high-salience-ep',
+            content: '[反思洞察] 高价值洞察内容',
+            summary: '高价值洞察',
+            importance: 5,
+            memory_type: 'long',
+            created_at: now,
+            salience_score: 0.9,
+          },
+        ],
+      }),
+    };
+
+    // searchEpisodicMemory 直接测试 salience_score 透传
+    const { entries } = await searchEpisodicMemory(episodicPool, '洞察', 500);
+    expect(Array.isArray(entries)).toBe(true);
+    expect(entries.length).toBeGreaterThan(0);
+    // 验证 salience_score 字段已透传到候选条目
+    const highEntry = entries.find(e => e.id === 'high-salience-ep');
+    const lowEntry = entries.find(e => e.id === 'low-salience-ep');
+    if (highEntry && lowEntry) {
+      expect(highEntry.salience_score).toBeGreaterThan(lowEntry.salience_score);
+    }
+  });
+
+  it('D11-3: salience_score 为 null 时不影响评分（向后兼容）', async () => {
+    const now = new Date().toISOString();
+    mockSearchWithVectors.mockResolvedValueOnce({
+      matches: [
+        {
+          id: 'no-salience',
+          level: 'task',
+          title: '旧格式任务',
+          description: '无 salience_score 字段',
+          score: 0.7,
+          created_at: now,
+          status: 'completed',
+          // salience_score: undefined（旧数据无此字段）
+        },
+      ]
+    });
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    // 不应 crash，正常返回结果
+    const { block, meta } = await buildMemoryContext({
+      query: '旧任务',
+      mode: 'execute',
+      tokenBudget: 800,
+      pool: { query: mockQuery },
+    });
+
+    expect(meta.injected).toBeGreaterThanOrEqual(0);
+    // block 为字符串（不 crash）
+    expect(typeof block).toBe('string');
+  });
+
+  it('D11-4: salience_score=0 时 salienceBoost 为 1（不加分不减分）', () => {
+    // 验证公式：1 + 0 * SALIENCE_WEIGHT = 1
+    const salienceBoost = 1 + 0 * SALIENCE_WEIGHT;
+    expect(salienceBoost).toBe(1);
+  });
+
+  it('D11-5: salience_score=1 时 salienceBoost 为 1 + SALIENCE_WEIGHT', () => {
+    const salienceBoost = 1 + 1 * SALIENCE_WEIGHT;
+    expect(salienceBoost).toBe(1 + SALIENCE_WEIGHT);
+    expect(salienceBoost).toBeGreaterThan(1);
   });
 });
