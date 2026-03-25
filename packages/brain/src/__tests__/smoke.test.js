@@ -31,9 +31,10 @@ function waitForServer(url, timeoutMs = 90000) {
   });
 }
 
-// Smoke test requires a real PostgreSQL database (CI provides one).
-// Skip locally unless DB_HOST is explicitly set.
-const canRunSmoke = !!process.env.DB_HOST || !!process.env.CI;
+// Smoke test spawns a real Brain subprocess — must NOT run in the sharded integration test matrix
+// (it starts a competing Brain process which cannot co-exist with other shard tests).
+// Only runs when explicitly opted in via BRAIN_SMOKE_ENABLED=true.
+const canRunSmoke = !!process.env.BRAIN_SMOKE_ENABLED;
 const describeSmoke = canRunSmoke ? describe : describe.skip;
 
 describeSmoke('Brain Smoke Test', () => {
