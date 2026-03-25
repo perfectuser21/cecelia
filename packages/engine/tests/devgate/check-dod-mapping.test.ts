@@ -57,7 +57,7 @@ describe('check-dod-mapping.cjs — 有效 DoD（exit 0）', () => {
 - [x] [BEHAVIOR] 行为符合预期
   Test: manual:node -e "console.log('behavior')"
 - [x] [GATE] CI 全部通过
-  Test: manual:npm test
+  Test: manual:node -e "process.exit(0)"
 `.trim());
     try {
       const { code } = runScript(dodFile);
