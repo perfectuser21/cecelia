@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 import { writeFileSync, mkdtempSync, rmSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { resolve, join } from 'path';
+import { HIGH_RISK_DEVGATE_SCRIPTS } from '../../scripts/devgate/check-coverage-completeness.mjs';
 
-const SCRIPT = join(__dirname, '../../scripts/devgate/check-dod-mapping.cjs');
+const SCRIPT = resolve(__dirname, '../../scripts/devgate/check-dod-mapping.cjs');
 // ENGINE_ROOT: packages/engine/（vitest 运行目录）
 const ENGINE_ROOT = resolve(__dirname, '../..');
 
@@ -31,6 +32,12 @@ function runScript(dodFile: string): { code: number; stdout: string } {
     return { code: err.status ?? 1, stdout: (err.stdout ?? '') + (err.stderr ?? '') };
   }
 }
+
+describe('check-dod-mapping.cjs — 高风险白名单注册验证', () => {
+  it('check-dod-mapping 在 HIGH_RISK_DEVGATE_SCRIPTS 中（覆盖率白名单）', () => {
+    expect(HIGH_RISK_DEVGATE_SCRIPTS.has('check-dod-mapping')).toBe(true);
+  });
+});
 
 describe('check-dod-mapping.cjs — 脚本源码格式支持断言', () => {
   it('支持 tests/ 格式 Test 字段', () => {

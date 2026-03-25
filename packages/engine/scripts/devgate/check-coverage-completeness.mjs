@@ -19,7 +19,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE_ROOT = path.resolve(__dirname, '../..');
@@ -93,7 +93,7 @@ function checkSrcCoverage() {
 }
 
 // ─── High-risk devgate scripts (missing test → error) ────────────────────────
-const HIGH_RISK_DEVGATE_SCRIPTS = new Set([
+export const HIGH_RISK_DEVGATE_SCRIPTS = new Set([
   'check-dod-mapping',
   'scan-rci-coverage',
   'check-coverage-completeness',
@@ -102,7 +102,7 @@ const HIGH_RISK_DEVGATE_SCRIPTS = new Set([
 ]);
 
 // ─── Check 3: scripts/devgate/*.mjs/.cjs → tests/devgate/ ────────────────────
-function checkDevgateCoverage() {
+export function checkDevgateCoverage() {
   const devgateDir = path.join(ENGINE_ROOT, 'scripts', 'devgate');
   const testsDevgateDir = path.join(ENGINE_ROOT, 'tests', 'devgate');
 
@@ -214,4 +214,7 @@ function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 }
 
-main();
+// Guard: only run main() when executed directly (not when imported by tests)
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main();
+}
