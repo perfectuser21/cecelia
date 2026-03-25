@@ -4,7 +4,7 @@
  * 服务 decisions 表中的战略决策（category/topic/decision/reason/status）
  * 区别于丘脑决策日志（/api/brain/decisions → brainRoutes）
  *
- * GET  /api/brain/strategic-decisions        — 列表（?status=active&limit=100）
+ * GET  /api/brain/strategic-decisions        — 列表（?status=active&limit=100&made_by=user&author=xxx）
  * POST /api/brain/strategic-decisions        — 新建决策
  * PUT  /api/brain/strategic-decisions/:id    — 更新状态/内容
  */
@@ -23,7 +23,7 @@ const router = Router();
  */
 router.get('/', async (req, res) => {
   try {
-    const { status, category, limit = '100' } = req.query;
+    const { status, category, made_by, author, limit = '100' } = req.query;
     const params = [];
     const conditions = ['category IS NOT NULL'];
 
@@ -35,12 +35,22 @@ router.get('/', async (req, res) => {
       params.push(category);
       conditions.push(`category = $${params.length}`);
     }
+    if (made_by) {
+      params.push(made_by);
+      conditions.push(`made_by = $${params.length}`);
+    }
+    if (author) {
+      params.push(author);
+      conditions.push(`author = $${params.length}`);
+    }
 
     params.push(parseInt(limit, 10) || 100);
     const where = `WHERE ${conditions.join(' AND ')}`;
 
     const result = await pool.query(
-      `SELECT id, category, topic, decision, reason, status, confidence, executed_at, created_at, updated_at
+      `SELECT id, category, topic, decision, reason, status, confidence,
+              author, made_by, priority, area, alternatives, decided_at,
+              executed_at, created_at, updated_at
        FROM decisions
        ${where}
        ORDER BY created_at DESC
@@ -62,17 +72,23 @@ router.get('/', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const { category, topic, decision, reason, status = 'active' } = req.body;
+    const {
+      category, topic, decision, reason, status = 'active',
+      author = 'user', made_by = 'user', priority = 'P2',
+      area = null, alternatives = null, decided_at = null,
+    } = req.body;
 
     if (!topic || !decision) {
       return res.status(400).json({ success: false, error: 'topic 和 decision 为必填项' });
     }
 
     const result = await pool.query(
-      `INSERT INTO decisions (category, topic, decision, reason, status, trigger)
-       VALUES ($1, $2, $3, $4, $5, 'user')
-       RETURNING id, category, topic, decision, reason, status, created_at`,
-      [category || 'general', topic, decision, reason || null, status]
+      `INSERT INTO decisions
+         (category, topic, decision, reason, status, trigger, author, made_by, priority, area, alternatives, decided_at)
+       VALUES ($1, $2, $3, $4, $5, 'user', $6, $7, $8, $9, $10, $11)
+       RETURNING id, category, topic, decision, reason, status, author, made_by, priority, created_at`,
+      [category || 'general', topic, decision, reason || null, status,
+       author, made_by, priority, area, alternatives, decided_at]
     );
 
     res.status(201).json({ success: true, data: result.rows[0] });
