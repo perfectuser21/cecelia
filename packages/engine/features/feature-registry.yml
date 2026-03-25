@@ -17,8 +17,12 @@
 
 version: "3.98.0"
 updated: "2026-03-25"
-# ci-trigger: 13.46.0
+# ci-trigger: 13.47.0
 changelog:
+  - version: "13.47.0"
+    date: "2026-03-25"
+    change: "[CONFIG] feat(engine): session-start hook — 对话开始自动注入 Brain 活跃任务状态"
+
   - version: "13.44.0"
     date: "2026-03-25"
     change: "stop.sh 加 session summary 触发（对话结束自动调 /api/brain/conversation-summary）"

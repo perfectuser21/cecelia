@@ -28,13 +28,35 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 13.46.0
+version: 13.47.0
 updated: 2026-03-25
 
 # ============================================================================
 # Hooks 回归契约
 # ============================================================================
 hooks:
+  # --------------------------------------------------------------------------
+  # H-session-start: session-start (UserPromptSubmit hook)
+  # --------------------------------------------------------------------------
+  - id: H-session-001
+    feature: H-session-start
+    name: "session-start hook 存在且可执行"
+    scope: hook
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [session, brain-context, user-prompt]
+    owner: engine
+    steps:
+      given: "UserPromptSubmit 事件触发"
+      when: "新对话第一条消息"
+      then: "自动注入 Brain 活跃任务摘要到 Claude context"
+    evidence:
+      type: code
+      file: "hooks/session-start.sh"
+      contains: "additionalContext"
+    method: manual
+
   # --------------------------------------------------------------------------
   # H1: branch-protect
   # --------------------------------------------------------------------------
