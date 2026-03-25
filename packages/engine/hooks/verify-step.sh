@@ -288,6 +288,26 @@ verify_step2() {
 $(printf '  %s\n' "${consistency_issues[@]}")
   要求：修改模块时，同目录下引用该模块版本号的文件必须同步更新"
     fi
+
+    # Gate 0d-engine: Engine 版本文件变更时调用 CI 版本同步脚本
+    local engine_version_changed
+    engine_version_changed=$(echo "$version_files" | grep "^packages/engine/" 2>/dev/null || echo "")
+    if [[ -n "$engine_version_changed" ]]; then
+        local engine_version_sync="$PROJECT_ROOT/packages/engine/ci/scripts/check-version-sync.sh"
+        if [[ -f "$engine_version_sync" ]]; then
+            if ! command -v jq &>/dev/null; then
+                echo "  ⚠️  [Gate 0d-engine] jq 未安装，跳过 check-version-sync.sh" >&2
+            else
+                local sync_out
+                sync_out=$(cd "$PROJECT_ROOT/packages/engine" && bash "$engine_version_sync" 2>&1) || {
+                    _fail "Gate 0d-engine: Engine 版本文件不同步：
+$sync_out"
+                }
+                echo "  ✅ [Gate 0d-engine] Engine 版本文件同步检查通过" >&2
+            fi
+        fi
+    fi
+
     echo "  ✅ [Gate 0d] 周边一致性扫描通过" >&2
 
     # 检查是否有测试文件（仅警告）
