@@ -8,6 +8,12 @@ name: L1 Process Gate
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      head_ref:
+        description: 'PR head branch (for manual trigger)'
+        required: false
+        default: ''
 
 concurrency:
   group: l1-process-${{ github.ref }}
