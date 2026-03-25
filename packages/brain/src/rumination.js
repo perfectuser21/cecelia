@@ -11,6 +11,7 @@
 
 /* global console */
 
+import crypto from 'crypto';
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';
 import { buildMemoryContext } from './memory-retriever.js';
@@ -20,6 +21,7 @@ import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 100; // 基础预算（从 20 提到 100，向后兼容，内部逻辑请使用 getDailyBudget()）
+export const DEDUP_WINDOW_HOURS = 24; // 洞察去重时间窗口（P0 修复：防 Rumination→Desire 死循环）
 export const MAX_PER_TICK = 5;
 export const COOLDOWN_MS = 10 * 60 * 1000; // 10 分钟（从 30 分钟降低）
 
@@ -31,6 +33,41 @@ export const SALIENCE_THRESHOLD_MID  = 0.75;
 export const SALIENCE_THRESHOLD_LOW  = 0.55;
 
 const PRIORITY_ORDER = { HIGH: 0, MID: 1, LOW: 2, SKIP: 3 };
+
+// ── 洞察去重（P0 修复：防 Rumination→Desire 死循环）──────────
+
+/**
+ * 计算洞察内容的 SHA256 哈希（前 32 字符 hex）
+ * @param {string} insight
+ * @returns {string}
+ */
+export function computeInsightHash(insight) {
+  return crypto.createHash('sha256').update(insight || '').digest('hex').slice(0, 32);
+}
+
+/**
+ * 检查 24h 内是否已有相同洞察记录
+ * 查询失败时降级返回 false（非阻塞，允许写入）
+ * @param {object} db - 数据库连接池
+ * @param {string} contentHash - computeInsightHash 返回值
+ * @returns {Promise<boolean>}
+ */
+export async function isInsightDuplicate(db, contentHash) {
+  try {
+    const { rows } = await db.query(
+      `SELECT 1 FROM cecelia_events
+       WHERE event_type = 'rumination_output'
+         AND payload->>'content_hash' = $1
+         AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours'
+       LIMIT 1`,
+      [contentHash]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    console.warn('[rumination] dedup check failed (non-blocking, allowing write):', err.message);
+    return false;
+  }
+}
 
 /**
  * 按 salience_score 分桶，返回优先级标签（与 computeSalience 8 维度对齐）
@@ -241,14 +278,33 @@ async function digestLearnings(db, learnings) {
       insight = llmInsight || '';
     }
 
-    // 4. 写入 memory_stream + synthesis_archive（daily）
+    // 4. 去重检查 + 写入 memory_stream + synthesis_archive（daily）
     if (insight) {
+      // P0 修复：检查 24h 内是否已有相同洞察，防止 Rumination→Desire 死循环
+      const contentHash = computeInsightHash(insight.trim());
+      const isDuplicate = await isInsightDuplicate(db, contentHash);
+      if (isDuplicate) {
+        console.warn(`[rumination] dedup_skipped: insight already recorded within ${DEDUP_WINDOW_HOURS}h (hash=${contentHash})`);
+        return [];
+      }
+
       await db.query(
         `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
          VALUES ($1, 8, 'long', NOW() + INTERVAL '30 days')`,
         [`[反刍洞察] ${insight.trim()}`]
       );
       insights.push(insight.trim());
+
+      // 记录 rumination_output 事件（用于后续去重查询）
+      try {
+        await db.query(
+          `INSERT INTO cecelia_events (event_type, source, payload)
+           VALUES ('rumination_output', 'rumination', $1)`,
+          [JSON.stringify({ content_hash: contentHash })]
+        );
+      } catch (evtErr) {
+        console.warn('[rumination] cecelia_events write failed (non-blocking):', evtErr.message);
+      }
 
       // 4.0 写入 synthesis_archive（daily 层级）
       // previous_id: 指向当天最新一条（如无则 null）
