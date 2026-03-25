@@ -828,9 +828,22 @@ export async function handleChatStream(message, context = {}, messages = [], onC
  */
 export function computeSalience(message) {
   const text = message || '';
+  // 多维度评分：取最高分，避免叠加误报
+  // 纠正类（0.9）：用户在纠正 AI 的错误 → 最高优先级
   if (/不对|错误|不是|纠正|改一下|重新|你搞错|说错/.test(text)) return 0.9;
-  if (/决定|确认|就这样|采纳|方案确定|好的就/.test(text)) return 0.8;
-  if (/？|\?|吗|为什么|怎么|什么/.test(text)) return 0.6;
+  // 决定类（0.85）：用户确认了一个决策 → 高价值
+  if (/决定|确认|就这样|采纳|方案确定|好的就/.test(text)) return 0.85;
+  // 洞察类（0.80）：用户/AI 表达理解或发现规律 → 高价值
+  if (/发现|原来|明白了|理解了|关键是|关键在|洞察|规律|本质/.test(text)) return 0.80;
+  // 情绪强烈类（0.75）：情绪信号强 → 需要感知
+  if (/非常感谢|太好了|太棒了|担心|焦虑|压力|很开心|很高兴|难受|崩溃|兴奋/.test(text)) return 0.75;
+  // 计划类（0.70）：涉及未来行动 → 中高价值
+  if (/下一步|计划|安排|接下来|准备|打算|目标是|路线|策略/.test(text)) return 0.70;
+  // 疑问类（0.55）：问题通常有价值
+  if (/？|\?|吗|为什么|怎么|什么/.test(text)) return 0.55;
+  // 长消息（0.55）：长度超过 50 字通常包含更多信息
+  if (text.length >= 50) return 0.55;
+  // 基础分
   return 0.3;
 }
 
