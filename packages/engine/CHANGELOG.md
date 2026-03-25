@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [13.44.0] - 2026-03-25
+
+### Added
+- stop.sh v14.2.0：普通对话结束时主动触发 POST /api/brain/consolidate（fire-and-forget），补充 tick 30min 被动触发间隙
+
 ## [13.3.0] - 2026-03-19
 
 ### Changed
