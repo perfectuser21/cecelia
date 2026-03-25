@@ -8,7 +8,16 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import pool from './db.js';
-import { callCortexLLM } from './cortex.js';
+
+// 动态引入避免 cortex→thalamus 在 tick 测试中触发 mock 链
+let _callCortexLLM = null;
+async function getCortexLLM() {
+  if (!_callCortexLLM) {
+    const { callCortexLLM } = await import('./cortex.js');
+    _callCortexLLM = callCortexLLM;
+  }
+  return _callCortexLLM;
+}
 
 // 默认日志目录：~/.claude-account1/projects/
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR
@@ -144,6 +153,7 @@ ${transcript}
 - summary: 简洁总结，帮助未来回顾时快速理解上下文`;
 
   try {
+    const callCortexLLM = await getCortexLLM();
     const response = await callCortexLLM(prompt);
     // 尝试从响应中提取 JSON
     const jsonMatch = response.match(/\{[\s\S]*\}/);
