@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.97.0
-created: 2026-03-24
-updated: 2026-03-24
+version: 3.98.0
+created: 2026-03-25
+updated: 2026-03-25
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.97.0: 从 feature-registry.yml 自动生成
+  - 3.98.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -436,6 +436,15 @@ changelog:
 
 ---
 
+### brain-src-coverage-check: Brain src 覆盖率检查（Check 4）
+
+1. ✅ **高风险模块全有测试：Check 4 PASS**
+2. ✅ **高风险模块缺测试：Check 4 exit 1**
+3. ✅ **普通模块缺测试：warning 不阻断**
+4. ✅ **前缀匹配：executor-billing.test.js 覆盖 executor.js**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -448,5 +457,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.97.0
-**生成时间**: 2026-03-24
+**版本**: 3.98.0
+**生成时间**: 2026-03-25

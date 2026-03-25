@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.97.0
-created: 2026-03-24
-updated: 2026-03-24
+version: 3.98.0
+created: 2026-03-25
+updated: 2026-03-25
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.97.0: 从 feature-registry.yml 自动生成
+  - 3.98.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -790,6 +790,23 @@ check-coverage-completeness.mjs Check 3 →
 
 ---
 
+## GP-050: Brain src 覆盖率检查（Check 4） (brain-src-coverage-check)
+
+**Feature**: brain-src-coverage-check - Brain src 覆盖率检查（Check 4）
+**Priority**: P1
+
+### Golden Path
+
+```
+check-coverage-completeness.mjs Check 4 →
+扫描 packages/brain/src/*.js →
+高风险模块缺测试 → exit 1（CI 阻断）→
+普通模块缺测试 → warning（不阻断）→
+所有高风险模块有测试 → PASS
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -802,5 +819,5 @@ check-coverage-completeness.mjs Check 3 →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.97.0
-**生成时间**: 2026-03-24
+**版本**: 3.98.0
+**生成时间**: 2026-03-25
