@@ -18,6 +18,7 @@ import pool from './db.js';
 import { createTask } from './actions.js';
 
 // 每个错误签名最多自动创建的修复任务数量，防止 RCA→auto-fix 死循环
+// signature 必须稳定（不含时间戳），否则熔断永远无法触发
 const MAX_AUTO_FIX_ATTEMPTS = 3;
 
 /**
