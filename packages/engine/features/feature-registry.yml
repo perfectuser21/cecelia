@@ -2573,3 +2573,34 @@ product_features:
       - "jq 缺失时：用 node 降级解析，不报错"
 
     rcis: []
+
+  - id: stop-hook-consolidate-trigger
+    name: "Stop Hook v14.2.0：普通对话触发 conversation-consolidator"
+    category: hook
+    status: Committed
+    priority: P2
+    version: "13.44.0"
+    updated: "2026-03-25"
+    description: |
+      stop.sh 在普通对话（无任何 mode/lock 文件）结束时，
+      主动调用 POST /api/brain/consolidate（fire-and-forget，--max-time 3 || true），
+      触发 conversation-consolidator 写入 session summary。
+      补充 tick 30分钟被动触发的间隙，确保每次对话都留有记录。
+
+    entrypoints:
+      - type: hook
+        file: packages/engine/hooks/stop.sh
+        trigger: "Stop Hook 运行时，无任何 .dev-lock/.architect-lock/.decomp-mode 文件"
+
+    golden_path: |
+      Claude 对话结束 →
+      Stop Hook 触发 →
+      无 mode 文件 →
+      curl POST /api/brain/consolidate →
+      Brain 异步运行 runConversationConsolidator()
+
+    minimal_paths:
+      - "普通对话结束时：curl consolidate API 被调用"
+      - "Brain 不可用时：|| true 保证 stop hook 不阻塞"
+
+    rcis: []
