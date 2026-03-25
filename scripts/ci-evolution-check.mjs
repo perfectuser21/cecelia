@@ -404,8 +404,9 @@ function main() {
   // routing-map.yml. If someone adds a new devgate script category or
   // workflow and forgets to update the registry, this check catches it.
 
-  console.log('');
-  console.log('🔍 Check 4: infrastructure paths registration (scripts/devgate, ci, .github/workflows)');
+  const out = (s) => process.stdout.write(s + '\n');
+  out('');
+  out('🔍 Check 4: infrastructure paths registration (scripts/devgate, ci, .github/workflows)');
 
   const INFRASTRUCTURE_PATHS = [
     { path: 'scripts/devgate', label: 'DevGate scripts' },
@@ -416,7 +417,7 @@ function main() {
   for (const infra of INFRASTRUCTURE_PATHS) {
     const infraDir = resolve(ROOT, infra.path);
     if (!existsSync(infraDir)) {
-      console.log(`   ⚠️  ${infra.path} — directory not found, skipping`);
+      out(`   ⚠️  ${infra.path} — directory not found, skipping`);
       continue;
     }
     const normalizedPath = infra.path.replace(/\\/g, '/');
@@ -432,7 +433,7 @@ function main() {
         `       deploy: false`
       );
     } else {
-      console.log(`   ✅ ${infra.path}`);
+      out(`   ✅ ${infra.path}`);
     }
   }
 
