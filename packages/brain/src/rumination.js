@@ -23,6 +23,31 @@ export const DAILY_BUDGET = 100; // 基础预算（从 20 提到 100，向后兼
 export const MAX_PER_TICK = 5;
 export const COOLDOWN_MS = 10 * 60 * 1000; // 10 分钟（从 30 分钟降低）
 
+// ── salience 分桶阈值（与 PR9 computeSalience 8 维度对齐）──
+// 纠正/决定（0.85+）→ HIGH；洞察/情绪（0.75+）→ MID
+// 计划/长消息（0.55+）→ LOW；疑问/基础（< 0.55）→ SKIP
+export const SALIENCE_THRESHOLD_HIGH = 0.85;
+export const SALIENCE_THRESHOLD_MID  = 0.75;
+export const SALIENCE_THRESHOLD_LOW  = 0.55;
+
+const PRIORITY_ORDER = { HIGH: 0, MID: 1, LOW: 2, SKIP: 3 };
+
+/**
+ * 按 salience_score 分桶，返回优先级标签（与 computeSalience 8 维度对齐）
+ * - HIGH (0.85+)：纠正/决定 → 最高优先级反刍
+ * - MID  (0.75+)：洞察/情绪 → 中优先级反刍
+ * - LOW  (0.55+)：计划/长消息 → 低优先级反刍
+ * - SKIP (< 0.55)：疑问/基础 → 跳过
+ * @param {number|null|undefined} score
+ * @returns {'HIGH'|'MID'|'LOW'|'SKIP'}
+ */
+export function classifySaliencePriority(score) {
+  if (score == null || score < SALIENCE_THRESHOLD_LOW) return 'SKIP';
+  if (score >= SALIENCE_THRESHOLD_HIGH) return 'HIGH';
+  if (score >= SALIENCE_THRESHOLD_MID)  return 'MID';
+  return 'LOW';
+}
+
 /**
  * 动态每日预算：低峰期（上海时间 00:00-05:59）自动扩容至 2x
  * - 正常时段：20 条
@@ -377,8 +402,9 @@ ${insight.trim().slice(0, 800)}
 
 /**
  * 获取 memory_stream 中高显著性对话条目（作为反刍补充输入）
- * 条件：salience_score ≥ 0.7，source_type = 'conversation_turn'，status = 'active'
- * 返回条目附带 source='memory_stream' 标记，格式与 learnings 兼容
+ * 条件：salience_score ≥ SALIENCE_THRESHOLD_LOW(0.55)，source_type = 'conversation_turn'，status = 'active'
+ * 阈值与 PR9 computeSalience 8 维度对齐（从旧 0.7 降低到 0.55，纳入计划/长消息类）
+ * 返回条目附带 source='memory_stream' + salience_priority 标记，格式与 learnings 兼容
  */
 export async function fetchMemoryStreamItems(db, limit) {
   const { rows } = await db.query(
@@ -386,10 +412,10 @@ export async function fetchMemoryStreamItems(db, limit) {
      FROM memory_stream
      WHERE source_type = 'conversation_turn'
        AND status = 'active'
-       AND salience_score >= 0.7
+       AND salience_score >= $2
      ORDER BY salience_score DESC, created_at DESC
      LIMIT $1`,
-    [limit]
+    [limit, SALIENCE_THRESHOLD_LOW]
   );
   return rows.map(r => ({
     id: r.id,
@@ -397,6 +423,7 @@ export async function fetchMemoryStreamItems(db, limit) {
     content: r.content,
     category: 'conversation',
     salience_score: r.salience_score,
+    salience_priority: classifySaliencePriority(r.salience_score),
     emotion_tag: r.emotion_tag,
     source: 'memory_stream',
   }));
@@ -463,10 +490,17 @@ export async function runRumination(dbPool) {
     }
   }
 
+  // 合并后按 salience_priority 排序：HIGH 先处理，LOW 最后（learnings 无 score 则视为 MID）
   const allItems = [
-    ...learnings.map(l => ({ ...l, source: 'learning' })),
+    ...learnings.map(l => ({
+      ...l,
+      source: 'learning',
+      salience_priority: classifySaliencePriority(l.salience_score),
+    })),
     ...memStreamItems,
-  ];
+  ].sort((a, b) =>
+    (PRIORITY_ORDER[a.salience_priority] ?? 1) - (PRIORITY_ORDER[b.salience_priority] ?? 1)
+  );
 
   if (allItems.length === 0) {
     return { skipped: 'no_undigested', digested: 0, insights: [] };
