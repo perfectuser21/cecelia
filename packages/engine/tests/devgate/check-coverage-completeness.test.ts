@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { execSync } from 'child_process';
 import { resolve, join } from 'path';
 import { tmpdir } from 'os';
-import { HIGH_RISK_DEVGATE_SCRIPTS, checkDevgateCoverage } from '../../scripts/devgate/check-coverage-completeness.mjs';
+import { HIGH_RISK_DEVGATE_SCRIPTS, checkDevgateCoverage, main } from '../../scripts/devgate/check-coverage-completeness.mjs';
 
 const SCRIPT = resolve(__dirname, '../../scripts/devgate/check-coverage-completeness.mjs');
 
@@ -75,5 +75,35 @@ describe('check-coverage-completeness.mjs — dry-run 模式', () => {
   it('--dry-run 不会 exit 1', () => {
     const { code } = runScript();
     expect(code).toBe(0);
+  });
+});
+
+describe('check-coverage-completeness.mjs — main() 函数覆盖', () => {
+  it('main() 在真实 engine 下运行不会 exit 1（高风险脚本全覆盖）', () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      main();
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('main() 输出包含 Devgate 脚本覆盖检查结果', () => {
+    const logs: string[] = [];
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((msg: string) => {
+      logs.push(String(msg ?? ''));
+    });
+    try {
+      main();
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+    const combined = logs.join('\n');
+    expect(combined).toMatch(/Devgate/);
   });
 });

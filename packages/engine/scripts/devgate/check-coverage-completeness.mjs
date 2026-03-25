@@ -122,7 +122,7 @@ export function checkDevgateCoverage() {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-function main() {
+export function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  Coverage Completeness Check');
   if (isDryRun) console.log('  (dry-run mode)');
