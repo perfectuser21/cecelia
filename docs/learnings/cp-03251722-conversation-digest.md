@@ -28,6 +28,7 @@ Brain 作为同机服务，可以直接读取这些文件，绕过 LLM 注意力
 
 可靠的知识捕获需要依赖机械写入的 artifact，而非依赖 LLM 注意力。
 Claude Code 的 `.jsonl` 日志恰好是这样的 artifact，且 Brain 在同机可直接访问。
+提示词注入（让 AI 自己记录）在上下文变长时会失效；结构性 cursor 追踪不依赖 LLM 注意力。
 
 ### 下次预防
 
