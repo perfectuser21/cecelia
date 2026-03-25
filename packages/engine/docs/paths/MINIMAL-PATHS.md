@@ -428,6 +428,13 @@ changelog:
 
 ---
 
+### stop-hook-consolidate-trigger: Stop Hook v14.2.0：普通对话触发 conversation-consolidator
+
+1. ✅ **普通对话结束时：curl consolidate API 被调用**
+2. ✅ **Brain 不可用时：|| true 保证 stop hook 不阻塞**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

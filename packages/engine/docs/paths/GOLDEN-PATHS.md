@@ -774,6 +774,23 @@ Gate 0d 检测 packages/engine/ 版本文件 →
 
 ---
 
+## GP-049: Stop Hook v14.2.0：普通对话触发 conversation-consolidator (stop-hook-consolidate-trigger)
+
+**Feature**: stop-hook-consolidate-trigger - Stop Hook v14.2.0：普通对话触发 conversation-consolidator
+**Priority**: P2
+
+### Golden Path
+
+```
+Claude 对话结束 →
+Stop Hook 触发 →
+无 mode 文件 →
+curl POST /api/brain/consolidate →
+Brain 异步运行 runConversationConsolidator()
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
