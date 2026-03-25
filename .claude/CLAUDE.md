@@ -100,3 +100,21 @@ Brain (Node.js, port 5221)
 - 不允许跳过 DevGate（改 Brain 时）
 - 不允许在 facts-check 失败时继续编码
 - 不允许引用旧路径（cecelia/core/brain → 现在是 packages/brain）
+
+
+---
+
+## Brain API 目录（localhost:5221）
+
+> 对话开始时可直接调用以下接口快速获取系统状态，无需重新探索代码库。
+
+| 接口 | 用途 |
+|------|------|
+| `GET /api/brain/context` | **感知汇总**：OKR状态 + 活跃任务 + 近期决策（一次调用，全局感知） |
+| `GET /api/brain/okr/current` | **OKR进度**：所有活跃 objectives + key_results，含进度百分比 |
+| `GET /api/brain/status` | Brain 运行状态（内存使用、tick循环、DB连接） |
+| `GET /api/brain/tasks` | 任务列表（支持 ?status=queued&limit=20） |
+| `GET /api/brain/decisions` | 近期决策记录（?limit=10） |
+| `GET /api/brain/goals` | OKR goals 列表（objectives + key_results UNION） |
+| `POST /api/brain/tasks` | 注册新任务（Brain 调度入口） |
+| `POST /api/brain/consolidate` | 立即触发对话压缩（Stop Hook 调用，fire-and-forget） |

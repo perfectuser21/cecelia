@@ -11,12 +11,13 @@ import opsRouter from './routes/ops.js';
 import publishResultsRouter from './routes/publish-results.js';
 import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
+import contextRouter from './routes/context.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
-for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter]) {
+for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, contextRouter]) {
   router.stack.push(...subRouter.stack);
 }
 export default router;

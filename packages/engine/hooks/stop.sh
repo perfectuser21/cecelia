@@ -73,6 +73,11 @@ fi
 #     exit $?
 # fi
 
-# ===== 没有任何 mode 文件 → 普通对话，允许结束 =====
+# ===== 没有任何 mode 文件 → 普通对话 =====
+# 触发 conversation-consolidator 写入 session summary（fire-and-forget，不阻塞）
+# v14.2.0: 对话结束时主动触发，补充 tick 30min 被动触发的间隙
+curl -s --max-time 3 -X POST http://localhost:5221/api/brain/consolidate \
+    -H 'Content-Type: application/json' > /dev/null 2>&1 || true
+
 exit 0
-# v14.0.0: Unified per-branch format
+# v14.2.0: Stop Hook 主动触发 conversation-consolidator
