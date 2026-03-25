@@ -2,7 +2,11 @@
 
 ## 根本原因
 
-`check-coverage-completeness.mjs` 只扫描 Engine 自身，不感知 Brain 的 151 个 src/*.js 文件。CI 对 Brain 测试覆盖率盲区一无所知，高风险模块（tick/thalamus/executor/cortex/planner）缺测试不会阻断 CI。
+`check-coverage-completeness.mjs` 只扫描 Engine 自身（hooks/devgate/src），完全不感知 Brain 的 151 个 src/*.js 文件。
+
+CI 对 Brain 测试覆盖率盲区一无所知——高风险模块（tick/thalamus/executor/cortex/planner）缺测试也不会阻断 CI。
+
+Brain 测试结构与 Engine 不同：Engine 用 `tests/SCRIPT.test.ts`，Brain 用 `src/__tests__/MODULE*.test.js`（支持前缀匹配，如 `executor-billing.test.js` 覆盖 `executor.js`）。
 
 ## 解决方案
 
