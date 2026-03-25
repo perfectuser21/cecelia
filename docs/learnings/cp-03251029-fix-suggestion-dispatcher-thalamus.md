@@ -5,7 +5,9 @@
 
 ### 根本原因
 
-suggestion-dispatcher.js 原实现直接执行 `INSERT INTO tasks`，绕过了丘脑（Thalamus）的任务创建权统一管控机制。这违背了架构约定：任务创建权统一收归丘脑，外部模块不得直接写 tasks 表。
+suggestion-dispatcher.js 原实现直接执行 `INSERT INTO tasks` 事务，完全绕过了丘脑（Thalamus）的任务创建权统一管控机制。
+这违背了架构约定"任务创建权统一收归丘脑"——外部模块不得直接写 tasks 表，必须通过事件通知丘脑决策。
+同时，测试文件中用 `process.cwd()` 拼接静态分析路径，在 vitest 从 monorepo 根目录运行时出现路径双重嵌套（`packages/brain/packages/brain/src/...`），导致 ENOENT 失败。
 
 ### 修复方案
 
