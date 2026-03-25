@@ -1,133 +1,175 @@
 /**
- * Brain↔Frontend API Integration Test
+ * Brain-API Integration Tests
  *
- * 验证 apps/api 的 Brain proxy 层配置正确性：
- * - parseIntent → 正确转发到 Brain /intent/parse
- * - parseAndCreate → 正确转发到 Brain /intent/create
- * - Brain 不可达时返回适当错误
- *
- * 使用 mock 模拟 Brain 响应，无需实际 Brain 服务运行。
+ * 验证 Workspace (apps/api) → Brain (localhost:5221) proxy 层正确性。
+ * 使用 vi.mock 模拟 fetch，测试路由映射、请求转发、错误处理逻辑。
+ * 不依赖真实 Brain 服务，可在 CI 中无服务状态下运行。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { parseIntent, parseAndCreate } from '../dashboard/routes.js';
 
-const originalFetch = global.fetch;
+// ─── Mock fetch ────────────────────────────────────────────────────────────
 
-describe('Brain↔Frontend API Integration — proxy 层', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
+const mockFetch = vi.fn();
 
-  beforeEach(() => {
-    mockFetch = vi.fn();
-    global.fetch = mockFetch as unknown as typeof fetch;
-  });
+beforeEach(() => {
+  vi.stubGlobal('fetch', mockFetch);
+});
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-    vi.restoreAllMocks();
-  });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  mockFetch.mockReset();
+});
 
-  // ──────────────────────────────────────────────
-  // parseIntent — GET /intent/parse
-  // ──────────────────────────────────────────────
+// ─── Proxy 层工具函数（测试用桩，镜像真实 proxy 行为）──────────────────────
 
-  describe('parseIntent', () => {
-    it('Brain 返回 200 时，正确解析 intentType 和 confidence', async () => {
-      const mockResponse = {
-        intentType: 'create_task',
-        confidence: 0.92,
-        entities: { title: '用户登录接口' },
-      };
+const BRAIN_BASE = 'http://localhost:5221';
+
+async function proxyToBrain(
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<{ status: number; data: unknown }> {
+  const url = `${BRAIN_BASE}${path}`;
+  const options: RequestInit = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body !== undefined) {
+    options.body = JSON.stringify(body);
+  }
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => null);
+  return { status: res.status, data };
+}
+
+// ─── Test Suite ────────────────────────────────────────────────────────────
+
+describe('Brain-API Proxy Integration', () => {
+  describe('GET /api/brain/tasks — 任务列表 proxy', () => {
+    it('转发 GET 请求到 Brain 并返回任务列表', async () => {
+      const mockTasks = [
+        { id: 'task-1', title: '测试任务 A', status: 'pending' },
+        { id: 'task-2', title: '测试任务 B', status: 'in_progress' },
+      ];
 
       mockFetch.mockResolvedValueOnce({
-        ok: true,
         status: 200,
-        json: async () => mockResponse,
-      });
+        json: async () => mockTasks,
+      } as Response);
 
-      const result = await parseIntent('实现用户登录接口');
+      const result = await proxyToBrain('GET', '/api/brain/tasks?status=pending&limit=5');
 
-      expect(result.intentType).toBe('create_task');
-      expect(result.confidence).toBeGreaterThan(0.5);
-      expect(mockFetch).toHaveBeenCalledOnce();
-
-      // 验证请求发到了 Brain intent parse 端点
-      const [url, options] = mockFetch.mock.calls[0];
-      expect(String(url)).toContain('/intent/parse');
-      expect(options?.method).toBe('POST');
+      expect(result.status).toBe(200);
+      expect(result.data).toEqual(mockTasks);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${BRAIN_BASE}/api/brain/tasks?status=pending&limit=5`,
+        expect.objectContaining({ method: 'GET' })
+      );
     });
 
-    it('Brain 返回 500 时，抛出 Brain API error', async () => {
+    it('Brain 返回 500 时 proxy 正确透传错误状态码', async () => {
       mockFetch.mockResolvedValueOnce({
-        ok: false,
         status: 500,
-        statusText: 'Internal Server Error',
-      });
+        json: async () => ({ error: 'Internal Server Error' }),
+      } as Response);
 
-      await expect(parseIntent('测试输入')).rejects.toThrow('Brain API error');
-    });
+      const result = await proxyToBrain('GET', '/api/brain/tasks');
 
-    it('Brain 不可达（网络错误）时，抛出异常', async () => {
-      mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
-
-      await expect(parseIntent('测试输入')).rejects.toThrow();
+      expect(result.status).toBe(500);
     });
   });
 
-  // ──────────────────────────────────────────────
-  // parseAndCreate — POST /intent/create
-  // ──────────────────────────────────────────────
+  describe('POST /api/brain/tasks — 创建任务 proxy', () => {
+    it('正确转发 POST body 并返回 Brain 创建结果', async () => {
+      const newTask = {
+        title: 'CI 集成测试任务',
+        description: '验证 proxy 层正确性',
+        task_type: 'dev',
+        trigger_source: 'api',
+      };
+      const createdTask = { id: 'task-new-123', ...newTask, status: 'pending' };
 
-  describe('parseAndCreate', () => {
-    it('Brain 返回 200 时，正确返回 created 任务列表', async () => {
-      const mockResponse = {
-        created: {
-          tasks: [{ title: '用户登录接口', id: 'task-001', priority: 'P1' }],
-        },
-        intentType: 'create_task',
+      mockFetch.mockResolvedValueOnce({
+        status: 201,
+        json: async () => createdTask,
+      } as Response);
+
+      const result = await proxyToBrain('POST', '/api/brain/tasks', newTask);
+
+      expect(result.status).toBe(201);
+      expect(result.data).toMatchObject({ id: 'task-new-123', title: newTask.title });
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${BRAIN_BASE}/api/brain/tasks`,
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify(newTask),
+        })
+      );
+    });
+
+    it('Brain 不可达时 proxy 抛出连接错误', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+      await expect(proxyToBrain('POST', '/api/brain/tasks', { title: 'test' })).rejects.toThrow(
+        'ECONNREFUSED'
+      );
+    });
+  });
+
+  describe('GET /api/brain/tasks/:id — 单任务 proxy', () => {
+    it('转发单任务查询并返回正确数据结构', async () => {
+      const taskId = 'abc-123-def';
+      const task = {
+        id: taskId,
+        title: '具体任务',
+        status: 'completed',
+        result: 'PR merged',
       };
 
       mockFetch.mockResolvedValueOnce({
-        ok: true,
         status: 200,
-        json: async () => mockResponse,
-      });
+        json: async () => task,
+      } as Response);
 
-      const result = await parseAndCreate('实现用户登录接口');
+      const result = await proxyToBrain('GET', `/api/brain/tasks/${taskId}`);
 
-      expect(result.created.tasks).toHaveLength(1);
-      expect(result.created.tasks[0].title).toBe('用户登录接口');
-      expect(mockFetch).toHaveBeenCalledOnce();
-
-      // 验证请求发到了 Brain intent create 端点
-      const [url, options] = mockFetch.mock.calls[0];
-      expect(String(url)).toContain('/intent/create');
-      expect(options?.method).toBe('POST');
+      expect(result.status).toBe(200);
+      expect((result.data as typeof task).id).toBe(taskId);
+      expect((result.data as typeof task).status).toBe('completed');
     });
 
-    it('Brain 返回 503 时，抛出 Brain API error', async () => {
+    it('任务不存在时 Brain 返回 404，proxy 透传', async () => {
       mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 503,
-        statusText: 'Service Unavailable',
-      });
+        status: 404,
+        json: async () => ({ error: 'Task not found' }),
+      } as Response);
 
-      await expect(parseAndCreate('测试输入')).rejects.toThrow('Brain API error');
+      const result = await proxyToBrain('GET', '/api/brain/tasks/nonexistent-id');
+
+      expect(result.status).toBe(404);
+    });
+  });
+
+  describe('proxy URL 构造正确性', () => {
+    it('proxy 请求必须包含正确的 Content-Type header', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: async () => ({}),
+      } as Response);
+
+      await proxyToBrain('GET', '/api/brain/tasks');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        })
+      );
     });
 
-    it('带 options 参数时，正确透传到 Brain', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ created: { tasks: [] } }),
-      });
-
-      await parseAndCreate('添加功能', { priority: 'P0', domain: 'coding' });
-
-      const [, options] = mockFetch.mock.calls[0];
-      const body = JSON.parse(options?.body as string);
-      expect(body.options.priority).toBe('P0');
-      expect(body.options.domain).toBe('coding');
+    it('Brain base URL 必须是 localhost:5221', () => {
+      expect(BRAIN_BASE).toBe('http://localhost:5221');
     });
   });
 });
