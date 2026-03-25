@@ -283,6 +283,26 @@ describe('rumination', () => {
       expect(updateCalls).toHaveLength(3);
     });
 
+    it('NotebookLM 失败时 fallback 从 synthesis_archive 注入历史上下文', async () => {
+      mockQueryNotebook.mockResolvedValueOnce({ ok: false }); // 强制触发 fallback
+
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
+        .mockResolvedValueOnce({ rows: [{ id: 'l1', title: '新知识', content: '内容', category: 'tech' }] }) // learnings
+        .mockResolvedValueOnce({ rows: [] }) // memory_stream fetch (learnings < MAX_PER_TICK=5 触发)
+        .mockResolvedValueOnce({ rows: [] }) // working_memory (notebook_id)
+        .mockResolvedValueOnce({ rows: [{ period_start: '2026-03-24', content: '历史反刍：发现跨时间规律' }] }); // synthesis_archive
+
+      const result = await runRumination(pool);
+
+      expect(result.digested).toBe(1);
+
+      // callLLM prompt 应包含 synthesis_archive 注入的历史上下文
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('## 历史反刍上下文');
+      expect(prompt).toContain('历史反刍：发现跨时间规律');
+    });
+
     it('LLM 调用失败时整批消化失败（digested=0）', async () => {
       const learnings = [
         { id: 'l0', title: '知识0', content: '内容0', category: 'u' },
