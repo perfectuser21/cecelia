@@ -100,3 +100,36 @@ Brain (Node.js, port 5221)
 - 不允许跳过 DevGate（改 Brain 时）
 - 不允许在 facts-check 失败时继续编码
 - 不允许引用旧路径（cecelia/core/brain → 现在是 packages/brain）
+
+---
+
+## 7. Brain 知识查询工具（Claude 可直接调用）
+
+对话开始时，可用以下接口感知当前状态，不需要用户告诉你：
+
+```bash
+# 推荐：一次获取全景摘要（OKR + 最近PR + 活跃任务 + 有效决策）
+curl localhost:5221/api/brain/context
+
+# OKR 进度树形结构（objectives → key_results）
+curl localhost:5221/api/brain/okr/current
+
+# 进行中任务
+curl "localhost:5221/api/brain/tasks?status=in_progress&limit=10"
+
+# 最近 PR 记录
+curl "localhost:5221/api/brain/dev-records?limit=10"
+
+# 有效决策
+curl "localhost:5221/api/brain/decisions?status=active"
+
+# 设计文档 / 日报
+curl "localhost:5221/api/brain/design-docs?type=diary&limit=7"
+
+# 知识库语义搜索
+curl "localhost:5221/api/brain/memory/search" -X POST -H "Content-Type: application/json" -d '{"query":"xxx"}'
+```
+
+**使用规则**：
+- 遇到不了解当前状态的问题时，优先调 `/api/brain/context` 而不是猜测
+- 不要把 API 结果直接贴给用户，提炼成 1-3 句话回答

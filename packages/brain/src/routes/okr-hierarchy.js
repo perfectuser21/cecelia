@@ -258,4 +258,46 @@ router.post('/key-results/:id/recalculate-progress', async (req, res) => {
   }
 });
 
+
+// ─── OKR 当前进度快照 ──────────────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/okr/current
+ * 返回当前活跃 OKR 树形结构 + 每层完成度
+ */
+router.get('/current', async (req, res) => {
+  try {
+    const objectives = (await pool.query(`
+      SELECT id, title, status, description
+      FROM objectives
+      WHERE status != 'archived'
+      ORDER BY created_at DESC
+      LIMIT 5
+    `)).rows;
+
+    const result = await Promise.all(objectives.map(async (obj) => {
+      const krs = (await pool.query(`
+        SELECT id, title, current_value, target_value, unit, status,
+          CASE WHEN target_value > 0
+            THEN ROUND(current_value::numeric / target_value::numeric * 100, 0)
+            ELSE 0
+          END AS progress_pct
+        FROM key_results
+        WHERE objective_id = $1 AND status != 'archived'
+        ORDER BY created_at
+      `, [obj.id])).rows;
+
+      const avgProgress = krs.length > 0
+        ? Math.round(krs.reduce((sum, kr) => sum + parseFloat(kr.progress_pct || 0), 0) / krs.length)
+        : 0;
+
+      return { ...obj, progress_pct: avgProgress, key_results: krs };
+    }));
+
+    res.json({ success: true, objectives: result, generated_at: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
