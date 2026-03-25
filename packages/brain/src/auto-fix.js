@@ -18,7 +18,7 @@ import pool from './db.js';
 import { createTask } from './actions.js';
 
 // 每个错误签名最多自动创建的修复任务数量，防止 RCA→auto-fix 死循环
-const MAX_AUTO_FIX_ATTEMPTS = 3;
+export const MAX_AUTO_FIX_ATTEMPTS = 3;
 
 /**
  * Check if RCA result should trigger auto-fix
@@ -154,7 +154,7 @@ ${rcaResult.evidence || 'N/A'}
  * @returns {Promise<string>} Task ID
  */
 export async function dispatchToDevSkill(failure, rcaResult, signature) {
-  // Guard 1: 同一 signature 是否已有 queued/in_progress 任务（正在修复中，不重复创建）
+  // Guard 1: 同一 signature 有活跃任务（queued/in_progress）时，跳过创建，防止修复中重复派发
   const activeResult = await pool.query(
     `SELECT COUNT(*) AS active_count FROM tasks
      WHERE trigger_source = 'auto_fix'
@@ -164,7 +164,7 @@ export async function dispatchToDevSkill(failure, rcaResult, signature) {
   );
   const active_count = parseInt(activeResult.rows[0]?.active_count || '0', 10);
   if (active_count > 0) {
-    console.warn(`[AutoFix] Skipping signature=${signature}: already has ${active_count} queued/in_progress fix task(s).`);
+    console.warn(`[AutoFix] Skip: signature=${signature} already has ${active_count} active task(s) (queued/in_progress). Will not create duplicate.`);
     return null;
   }
 
