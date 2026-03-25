@@ -2545,7 +2545,7 @@ product_features:
     category: devgate
     status: Committed
     priority: P2
-    version: "13.42.0"
+    version: "13.43.0"
     updated: "2026-03-25"
     description: |
       verify-step.sh Gate 0d 扩展：当检测到 Engine 版本文件（package.json / package-lock.json /
