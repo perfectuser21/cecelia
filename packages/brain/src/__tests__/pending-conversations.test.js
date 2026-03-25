@@ -254,17 +254,19 @@ describe('pending-conversations', () => {
       expect(shouldFollowUp(conv)).toBe(true);
     });
 
-    it('概率边界：(importance + urgencyBonus) 恰好等于 random 时返回 false（不严格大于）', () => {
-      // 0.5 + urgencyBonus(2h → min(2/8,0.3)=0.25) = 0.75
+    it('概率边界：(importance + urgencyBonus) 小于 random 时返回 false', () => {
+      // 使用 1h55m 前（6900s），urgencyBonus = min(6900/28800, 0.3) ≈ 0.2396
+      // importance(0.5) + urgencyBonus(≈0.24) ≈ 0.74 < 0.75 → false
+      // 避免精确 2h 边界：Date.now() 在 makeConv 和 shouldFollowUp 之间有微小时差
       vi.spyOn(Math, 'random').mockReturnValue(0.75);
       const conv = makeConv({
         followed_up_count: 0,
         importance: 0.5,
-        sent_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+        sent_at: new Date(Date.now() - 6900 * 1000).toISOString(),
         last_followup_at: null,
       });
 
-      // 0.75 > 0.75 is false
+      // (0.5 + ~0.24) > 0.75 is false
       expect(shouldFollowUp(conv)).toBe(false);
     });
   });
