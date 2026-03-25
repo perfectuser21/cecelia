@@ -378,9 +378,9 @@ describe('rumination', () => {
       expect(prompt).toContain('模式发现');
       expect(prompt).toContain('关联分析');
 
-      // 包含记忆上下文和 NotebookLM
+      // 包含记忆上下文和历史反刍上下文
       expect(prompt).toContain('相关记忆');
-      expect(prompt).toContain('NotebookLM 补充知识');
+      expect(prompt).toContain('历史反刍上下文');
 
       // 包含数量标注
       expect(prompt).toContain('2 条知识');
@@ -397,7 +397,7 @@ describe('rumination', () => {
       expect(prompt).toContain('模式发现');
       expect(prompt).toContain('关联分析');
       expect(prompt).not.toContain('相关记忆上下文');
-      expect(prompt).not.toContain('NotebookLM 补充知识');
+      expect(prompt).not.toContain('历史反刍上下文');
     });
 
     it('content 超过 300 字符时截断', () => {
@@ -555,9 +555,9 @@ describe('rumination', () => {
 
       const result = await runRumination(pool);
       expect(result.digested).toBe(1);
-      // Prompt 中不应包含 NotebookLM 部分
+      // Prompt 中不应包含 NotebookLM 提供的上下文（fallback 无历史记录时也不含）
       const promptArg = mockCallLLM.mock.calls[0][1];
-      expect(promptArg).not.toContain('NotebookLM 补充知识');
+      expect(promptArg).not.toContain('历史反刍上下文');
     });
 
     it('NotebookLM 抛异常时静默降级', async () => {
