@@ -135,6 +135,18 @@ export async function handlePrMerged(pool, prInfo) {
   // 1. 匹配任务（in_progress 优先，其次 completed）
   const task = await matchTaskByBranchOrUrl(pool, branchName);
   if (!task) {
+    // 无任务匹配：仍写入 dev_records（task_id=null），保留 PR 历史记录
+    try {
+      await pool.query(
+        `INSERT INTO dev_records (task_id, pr_title, pr_url, branch, merged_at)
+         VALUES (NULL, $1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
+        [prTitle, prUrl, branchName, mergedAt]
+      );
+      console.log(`[pr-callback] 无任务匹配，dev_records 已写入（no-task fallback）: branch=${branchName}`);
+    } catch (devRecErr) {
+      console.warn(`[pr-callback] dev_records no-task fallback 写入失败: ${devRecErr.message}`);
+    }
     return { matched: false, taskId: null, taskTitle: null, krProgressUpdated: false };
   }
 
