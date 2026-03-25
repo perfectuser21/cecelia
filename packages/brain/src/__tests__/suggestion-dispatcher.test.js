@@ -8,46 +8,36 @@ vi.mock('../db.js', () => ({
   }
 }));
 
+// Mock thalamus.js — suggestion-dispatcher 不再直接建任务，改走 processEvent
+vi.mock('../thalamus.js', () => ({
+  processEvent: vi.fn(async () => ({
+    level: 0,
+    actions: [{ type: 'log_event', params: { event_type: 'suggestion_dispatched' } }],
+    rationale: '丘脑创建任务',
+    confidence: 0.95,
+    safety: false,
+    _suggestion_dispatched: true,
+  })),
+  EVENT_TYPES: {
+    SUGGESTION_READY: 'suggestion_ready',
+  },
+}));
+
 import { dispatchPendingSuggestions } from '../suggestion-dispatcher.js';
+import { processEvent } from '../thalamus.js';
 
 /**
- * 构造一个完整的 mock pool，支持 query + connect/transaction
+ * 构造一个完整的 mock pool，支持候选查询
  */
-function buildMockPool({
-  candidates = [],
-  inFlight = [],
-  insertedTaskId = 'task-123'
-} = {}) {
-  const client = {
-    query: vi.fn(async (sql, params) => {
-      if (sql.trim().startsWith('BEGIN') || sql.trim().startsWith('COMMIT') || sql.trim().startsWith('ROLLBACK')) {
-        return { rows: [] };
-      }
-      if (sql.includes('INSERT INTO tasks')) {
-        return { rows: [{ id: insertedTaskId }] };
-      }
-      if (sql.includes('UPDATE suggestions')) {
-        return { rows: [], rowCount: 1 };
-      }
-      return { rows: [] };
-    }),
-    release: vi.fn()
-  };
-
+function buildMockPool({ candidates = [] } = {}) {
   return {
-    query: vi.fn(async (sql, params) => {
-      // Candidates query
+    query: vi.fn(async (sql) => {
       if (sql.includes("status = 'pending'") && sql.includes('priority_score >= 0.68')) {
         return { rows: candidates };
       }
-      // In-flight dedup query
-      if (sql.includes("task_type = 'suggestion_plan'") && sql.includes('queued')) {
-        return { rows: inFlight };
-      }
       return { rows: [] };
     }),
-    connect: vi.fn(async () => client),
-    _client: client
+    connect: vi.fn(),
   };
 }
 
@@ -56,13 +46,14 @@ describe('suggestion-dispatcher', () => {
     vi.clearAllMocks();
   });
 
-  it('D1: 没有 pending suggestions 时返回 0', async () => {
+  it('D1: 没有 pending suggestions 时返回 0，不调用 processEvent', async () => {
     const pool = buildMockPool({ candidates: [] });
     const result = await dispatchPendingSuggestions(pool, 2);
     expect(result).toBe(0);
+    expect(processEvent).not.toHaveBeenCalled();
   });
 
-  it('D1: 创建 suggestion_plan 任务并返回数量', async () => {
+  it('D1: 调用 thalamus processEvent 并返回创建数量', async () => {
     const candidates = [
       { id: 'sug-1', content: '优化任务调度性能', priority_score: 0.85, source: 'agent_feedback', agent_id: null },
     ];
@@ -70,92 +61,83 @@ describe('suggestion-dispatcher', () => {
 
     const result = await dispatchPendingSuggestions(pool, 2);
     expect(result).toBe(1);
+    expect(processEvent).toHaveBeenCalledTimes(1);
 
-    // 验证 INSERT 被调用
-    const insertCall = pool._client.query.mock.calls.find(call =>
-      typeof call[0] === 'string' && call[0].includes('INSERT INTO tasks')
-    );
-    expect(insertCall).toBeTruthy();
-
-    // 验证 payload 包含 suggestion_id
-    const payload = JSON.parse(insertCall[1][2]);
-    expect(payload.suggestion_id).toBe('sug-1');
-    expect(payload.suggestion_score).toBe(0.85); // priority_score 值
+    // 验证 processEvent 接收正确的事件类型和字段
+    const callArg = processEvent.mock.calls[0][0];
+    expect(callArg.type).toBe('suggestion_ready');
+    expect(callArg.suggestion_id).toBe('sug-1');
+    expect(callArg.priority_score).toBe(0.85);
+    expect(callArg.task_title).toBeDefined();
+    expect(callArg.task_description).toBeDefined();
   });
 
-  it('D1: suggestion.status 改为 in_progress', async () => {
+  it('D1: 丘脑跳过（_suggestion_dispatched=false）时不计入 created', async () => {
+    processEvent.mockResolvedValueOnce({
+      level: 0,
+      actions: [{ type: 'no_action', params: {} }],
+      rationale: '去重：已有处理中任务',
+      confidence: 1.0,
+      safety: false,
+      _suggestion_dispatched: false,
+    });
+
     const candidates = [
-      { id: 'sug-2', content: '建议新增 KR 监控', priority_score: 0.9, source: 'reflection', agent_id: null },
+      { id: 'sug-2', content: '重复建议', priority_score: 0.95, source: 'rumination', agent_id: null },
     ];
     const pool = buildMockPool({ candidates });
 
-    await dispatchPendingSuggestions(pool, 2);
-
-    // 验证 UPDATE suggestions SET status = 'in_progress'
-    const updateCall = pool._client.query.mock.calls.find(call =>
-      typeof call[0] === 'string' && call[0].includes('UPDATE suggestions')
-    );
-    expect(updateCall).toBeTruthy();
-    // 第一个参数是 suggestion id
-    expect(updateCall[1][0]).toBe('sug-2');
-  });
-
-  it('D1: 去重——已有 in_progress 任务的 suggestion 不重复创建', async () => {
-    const candidates = [
-      { id: 'sug-3', content: '重复建议', priority_score: 0.95, source: 'agent_feedback', agent_id: null },
-    ];
-    const inFlight = [{ suggestion_id: 'sug-3' }]; // sug-3 已在处理中
-    const pool = buildMockPool({ candidates, inFlight });
-
     const result = await dispatchPendingSuggestions(pool, 2);
     expect(result).toBe(0);
+    expect(processEvent).toHaveBeenCalledTimes(1);
   });
 
   it('D1: 最多处理 limit 条', async () => {
     const candidates = [
-      { id: 'sug-4', content: '建议 4', priority_score: 0.95, source: 'agent', agent_id: null },
-      { id: 'sug-5', content: '建议 5', priority_score: 0.90, source: 'agent', agent_id: null },
-      { id: 'sug-6', content: '建议 6', priority_score: 0.85, source: 'agent', agent_id: null },
+      { id: 'sug-3', content: '建议3', priority_score: 0.95, source: 'agent', agent_id: null },
+      { id: 'sug-4', content: '建议4', priority_score: 0.90, source: 'agent', agent_id: null },
+      { id: 'sug-5', content: '建议5', priority_score: 0.85, source: 'agent', agent_id: null },
     ];
     const pool = buildMockPool({ candidates });
 
     const result = await dispatchPendingSuggestions(pool, 2); // limit=2
-    expect(result).toBe(2); // 只处理前 2 条
+    expect(result).toBe(2);
+    expect(processEvent).toHaveBeenCalledTimes(2);
   });
 
-  it('D1: 单个任务失败不影响其他任务', async () => {
+  it('D1: 单个 processEvent 失败不影响后续处理', async () => {
+    processEvent
+      .mockRejectedValueOnce(new Error('模拟 thalamus 失败'))
+      .mockResolvedValueOnce({
+        level: 0,
+        actions: [{ type: 'log_event', params: { event_type: 'suggestion_dispatched' } }],
+        rationale: '创建成功',
+        confidence: 0.95,
+        safety: false,
+        _suggestion_dispatched: true,
+      });
+
     const candidates = [
-      { id: 'sug-7', content: '会失败的建议', priority_score: 0.9, source: null, agent_id: null },
-      { id: 'sug-8', content: '正常建议', priority_score: 0.85, source: null, agent_id: null },
+      { id: 'sug-6', content: '会失败的建议', priority_score: 0.9, source: null, agent_id: null },
+      { id: 'sug-7', content: '正常建议', priority_score: 0.85, source: null, agent_id: null },
     ];
-
-    let callCount = 0;
-    const client = {
-      query: vi.fn(async (sql) => {
-        if (sql.trim().startsWith('BEGIN')) {
-          callCount++;
-          if (callCount === 1) throw new Error('模拟第一次事务失败');
-          return { rows: [] };
-        }
-        if (sql.includes('COMMIT') || sql.includes('ROLLBACK')) return { rows: [] };
-        if (sql.includes('INSERT INTO tasks')) return { rows: [{ id: 'task-new' }] };
-        if (sql.includes('UPDATE suggestions')) return { rows: [], rowCount: 1 };
-        return { rows: [] };
-      }),
-      release: vi.fn()
-    };
-
-    const pool = {
-      query: vi.fn(async (sql) => {
-        if (sql.includes("status = 'pending'")) return { rows: candidates };
-        if (sql.includes("task_type = 'suggestion_plan'")) return { rows: [] };
-        return { rows: [] };
-      }),
-      connect: vi.fn(async () => client)
-    };
+    const pool = buildMockPool({ candidates });
 
     const result = await dispatchPendingSuggestions(pool, 2);
     // 第一条失败，第二条成功 → 返回 1
     expect(result).toBe(1);
+  });
+
+  it('D1: task_description 包含 Layer 层级信息', async () => {
+    const candidates = [
+      { id: 'sug-8', content: '建议新增功能', priority_score: 0.8, source: 'test', agent_id: null },
+    ];
+    const pool = buildMockPool({ candidates });
+
+    await dispatchPendingSuggestions(pool, 1);
+
+    const callArg = processEvent.mock.calls[0][0];
+    expect(callArg.task_description).toContain('Layer 3 KR');
+    expect(callArg.task_description).toContain('Layer 7 Task/Pipeline');
   });
 });

@@ -3,17 +3,22 @@
  *
  * 将高分 Suggestion 转换为 suggestion_plan 任务，
  * 派给 /plan skill 无头模式进行层级识别。
+ *
+ * 架构规则：任务创建权统一收归丘脑（Thalamus）。
+ * 本模块负责查询候选 suggestion，通过 thalamus.processEvent
+ * 发送 SUGGESTION_READY 事件，由丘脑决策是否创建任务。
  */
 
 import pool from './db.js';
 import { detectDomain } from './domain-detector.js';
+import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 /**
  * 将高分 pending suggestions 分派为 suggestion_plan 任务
  *
  * @param {Object} dbPool - pg Pool 实例（可注入，默认使用全局 pool）
  * @param {number} limit - 每次最多处理条数（防止洪峰）
- * @returns {number} 创建的任务数量
+ * @returns {number} 创建的任务数量（由丘脑决策）
  */
 export async function dispatchPendingSuggestions(dbPool = pool, limit = 2) {
   // 1. 查询高分 pending suggestions（priority_score≥0.68，未过期）
@@ -25,40 +30,20 @@ export async function dispatchPendingSuggestions(dbPool = pool, limit = 2) {
       AND (s.expires_at IS NULL OR s.expires_at > NOW())
     ORDER BY s.priority_score DESC, s.created_at ASC
     LIMIT $1
-  `, [limit * 5]); // 多取一些，去重后再限制
+  `, [limit * 5]); // 多取一些，丘脑去重后再限制
 
   if (candidateResult.rows.length === 0) {
     return 0;
   }
 
-  // 2. 去重：排除已有 queued/in_progress suggestion_plan 任务的 suggestion
-  const inFlightResult = await dbPool.query(`
-    SELECT (payload->>'suggestion_id')::text AS suggestion_id
-    FROM tasks
-    WHERE task_type = 'suggestion_plan'
-      AND status IN ('queued', 'in_progress')
-      AND payload->>'suggestion_id' IS NOT NULL
-  `);
-
-  const inFlightIds = new Set(inFlightResult.rows.map(r => r.suggestion_id));
-
-  const candidates = candidateResult.rows.filter(s => !inFlightIds.has(String(s.id)));
-
-  if (candidates.length === 0) {
-    return 0;
-  }
-
-  // 取最多 limit 条
-  const toDispatch = candidates.slice(0, limit);
+  // 取最多 limit 条候选（丘脑负责去重/速率限制）
+  const toDispatch = candidateResult.rows.slice(0, limit);
 
   let created = 0;
 
   for (const suggestion of toDispatch) {
-    const client = await dbPool.connect();
     try {
-      await client.query('BEGIN');
-
-      // 3. 创建 suggestion_plan 任务
+      // 构建任务标题和描述（保留层级识别提示文字）
       const contentPreview = typeof suggestion.content === 'string'
         ? suggestion.content.substring(0, 200)
         : JSON.stringify(suggestion.content).substring(0, 200);
@@ -84,43 +69,28 @@ ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(s
       const inferredDomain = detected.confidence > 0 ? detected.domain : null;
       const inferredOwnerRole = detected.confidence > 0 ? detected.owner_role : null;
 
-      const insertResult = await client.query(`
-        INSERT INTO tasks (
-          title, description, task_type, status, priority,
-          payload, domain, owner_role, created_at, updated_at
-        )
-        VALUES ($1, $2, 'suggestion_plan', 'queued', 'P2', $3, $4, $5, NOW(), NOW())
-        RETURNING id
-      `, [
-        taskTitle,
-        taskDescription,
-        JSON.stringify({
-          suggestion_id: String(suggestion.id),
-          suggestion_score: suggestion.priority_score,
-          source: suggestion.source || null,
-          agent_id: suggestion.agent_id || null,
-        }),
-        inferredDomain,
-        inferredOwnerRole
-      ]);
+      // 2. 通过丘脑 processEvent 发送 SUGGESTION_READY，由丘脑决策创建任务
+      const decision = await processEvent({
+        type: EVENT_TYPES.SUGGESTION_READY,
+        suggestion_id: suggestion.id,
+        content: suggestion.content,
+        priority_score: suggestion.priority_score,
+        source: suggestion.source,
+        agent_id: suggestion.agent_id,
+        task_title: taskTitle,
+        task_description: taskDescription,
+        domain: inferredDomain,
+        owner_role: inferredOwnerRole,
+      });
 
-      const newTaskId = insertResult.rows[0].id;
-
-      // 4. 将 suggestion.status 改为 in_progress
-      await client.query(
-        `UPDATE suggestions SET status = 'in_progress', updated_at = NOW() WHERE id = $1`,
-        [suggestion.id]
-      );
-
-      await client.query('COMMIT');
-
-      console.log(`[suggestion-dispatcher] Created suggestion_plan task ${newTaskId} for suggestion ${suggestion.id} (score=${suggestion.priority_score})`);
-      created++;
+      if (decision._suggestion_dispatched) {
+        console.log(`[suggestion-dispatcher] suggestion ${suggestion.id} dispatched via thalamus (score=${suggestion.priority_score})`);
+        created++;
+      } else {
+        console.log(`[suggestion-dispatcher] suggestion ${suggestion.id} skipped by thalamus: ${decision.rationale}`);
+      }
     } catch (err) {
-      await client.query('ROLLBACK');
       console.error(`[suggestion-dispatcher] Failed to dispatch suggestion ${suggestion.id}: ${err.message}`);
-    } finally {
-      client.release();
     }
   }
 

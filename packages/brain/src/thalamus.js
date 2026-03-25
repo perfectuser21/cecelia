@@ -252,6 +252,9 @@ const EVENT_TYPES = {
 
   // 学习相关
   LEARNINGS_RECEIVED: 'learnings_received',
+
+  // 建议分发相关
+  SUGGESTION_READY: 'suggestion_ready',
 };
 
 // ============================================================
@@ -1373,6 +1376,120 @@ function quickRoute(event) {
 // 主入口
 // ============================================================
 
+// ============================================================
+// SUGGESTION_READY 处理器（丘脑统一任务创建权）
+// ============================================================
+
+/**
+ * 处理 SUGGESTION_READY 事件：丘脑统一决策是否创建 suggestion_plan 任务
+ *
+ * 职责：
+ * 1. 去重：排除已有 queued/in_progress suggestion_plan 任务的 suggestion
+ * 2. 速率限制：suggestion_plan 队列积压 >= 5 时暂缓
+ * 3. 创建任务 + 更新 suggestion 状态（事务）
+ *
+ * @param {Object} event - { suggestion_id, content, priority_score, source, agent_id, task_title, task_description, domain, owner_role }
+ * @returns {Promise<Decision>}
+ */
+async function handleSuggestionReady(event) {
+  const { suggestion_id, priority_score, source, agent_id, task_title, task_description, domain, owner_role } = event;
+
+  // 1. 去重：检查是否已有 in_progress/queued suggestion_plan 任务
+  const inFlightResult = await pool.query(`
+    SELECT id FROM tasks
+    WHERE task_type = 'suggestion_plan'
+      AND status IN ('queued', 'in_progress')
+      AND (payload->>'suggestion_id')::text = $1
+    LIMIT 1
+  `, [String(suggestion_id)]);
+
+  if (inFlightResult.rows.length > 0) {
+    console.log(`[thalamus] SUGGESTION_READY: 去重，suggestion ${suggestion_id} 已有处理中任务，跳过`);
+    return {
+      level: 0,
+      actions: [{ type: 'no_action', params: {} }],
+      rationale: `去重：suggestion ${suggestion_id} 已有 in_flight suggestion_plan 任务`,
+      confidence: 1.0,
+      safety: false,
+      _suggestion_dispatched: false,
+    };
+  }
+
+  // 2. 速率限制：suggestion_plan 队列积压检查
+  const queueResult = await pool.query(`
+    SELECT COUNT(*)::int AS count FROM tasks
+    WHERE task_type = 'suggestion_plan' AND status = 'queued'
+  `);
+  const queueCount = queueResult.rows[0]?.count ?? 0;
+
+  if (queueCount >= 5) {
+    console.log(`[thalamus] SUGGESTION_READY: 速率限制，suggestion_plan 队列已有 ${queueCount} 条，跳过`);
+    return {
+      level: 0,
+      actions: [{ type: 'no_action', params: {} }],
+      rationale: `速率限制：suggestion_plan 队列已有 ${queueCount} 条任务（阈值 5）`,
+      confidence: 0.9,
+      safety: false,
+      _suggestion_dispatched: false,
+    };
+  }
+
+  // 3. 创建 suggestion_plan 任务（事务）
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const insertResult = await client.query(`
+      INSERT INTO tasks (
+        title, description, task_type, status, priority,
+        payload, domain, owner_role, created_at, updated_at
+      )
+      VALUES ($1, $2, 'suggestion_plan', 'queued', 'P2', $3, $4, $5, NOW(), NOW())
+      RETURNING id
+    `, [
+      task_title,
+      task_description,
+      JSON.stringify({
+        suggestion_id: String(suggestion_id),
+        suggestion_score: priority_score,
+        source: source || null,
+        agent_id: agent_id || null,
+      }),
+      domain || null,
+      owner_role || null,
+    ]);
+
+    const newTaskId = insertResult.rows[0].id;
+
+    // 将 suggestion.status 改为 in_progress
+    await client.query(
+      `UPDATE suggestions SET status = 'in_progress', updated_at = NOW() WHERE id = $1`,
+      [suggestion_id]
+    );
+
+    await client.query('COMMIT');
+
+    console.log(`[thalamus] SUGGESTION_READY: 创建 suggestion_plan 任务 ${newTaskId} for suggestion ${suggestion_id} (score=${priority_score})`);
+
+    const decision = {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'suggestion_dispatched', suggestion_id, task_id: newTaskId } }],
+      rationale: `丘脑创建 suggestion_plan 任务 ${newTaskId} for suggestion ${suggestion_id}`,
+      confidence: 0.95,
+      safety: false,
+      _suggestion_dispatched: true,
+    };
+    recordRoutingDecision('quick_route', event, decision, 0);
+    return decision;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(`[thalamus] SUGGESTION_READY: 创建任务失败 for suggestion ${suggestion_id}: ${err.message}`);
+    return createFallbackDecision(event, `suggestion task creation failed: ${err.message}`);
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * 丘脑主入口：处理事件，返回 Decision
  *
@@ -1389,6 +1506,11 @@ async function processEvent(event) {
   if (event == null) {
     console.warn('[thalamus] processEvent called with null/undefined event, returning fallback');
     return createFallbackDecision({ type: 'unknown' }, 'null event received');
+  }
+
+  // SUGGESTION_READY：丘脑统一决策创建 suggestion_plan 任务
+  if (event.type === EVENT_TYPES.SUGGESTION_READY) {
+    return await handleSuggestionReady(event);
   }
 
   console.log(`[thalamus] Processing event: ${event.type}`);
