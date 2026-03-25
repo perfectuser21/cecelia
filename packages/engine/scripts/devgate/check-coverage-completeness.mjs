@@ -7,7 +7,9 @@
  * 规则：
  * - hooks/HOOK.sh → tests/hooks/HOOK.test.ts 或 HOOK.test.sh 必须存在
  * - src/FILE.ts（非 .d.ts）→ tests 下必须有对应 FILE.test.ts
- * - scripts/devgate/SCRIPT.mjs, .cjs → tests/devgate 下需有测试（警告级别）
+ * - scripts/devgate/SCRIPT.mjs, .cjs → tests/devgate 下必须有测试
+ *   高风险脚本（HIGH_RISK_DEVGATE_SCRIPTS）缺测试 → error（exit 1）
+ *   其他脚本缺测试 → warning（非阻断）
  *
  * 用法：
  *   node scripts/devgate/check-coverage-completeness.mjs
@@ -90,7 +92,16 @@ function checkSrcCoverage() {
   return { missing, total: srcFiles.length };
 }
 
-// ─── Check 3 (warn): scripts/devgate/*.mjs → tests/devgate/ ──────────────────
+// ─── High-risk devgate scripts (missing test → error) ────────────────────────
+const HIGH_RISK_DEVGATE_SCRIPTS = new Set([
+  'check-dod-mapping',
+  'scan-rci-coverage',
+  'check-coverage-completeness',
+  'check-rci-stale-refs',
+  'check-changed-coverage',
+]);
+
+// ─── Check 3: scripts/devgate/*.mjs/.cjs → tests/devgate/ ────────────────────
 function checkDevgateCoverage() {
   const devgateDir = path.join(ENGINE_ROOT, 'scripts', 'devgate');
   const testsDevgateDir = path.join(ENGINE_ROOT, 'tests', 'devgate');
@@ -98,14 +109,16 @@ function checkDevgateCoverage() {
   const devgateFiles = listFiles(devgateDir, ['.mjs', '.cjs'])
     .map(f => path.basename(f).replace(/\.(mjs|cjs)$/, ''));
 
-  if (devgateFiles.length === 0) return { missing: [], total: 0 };
+  if (devgateFiles.length === 0) return { missingRequired: [], missingOptional: [], total: 0 };
 
   const testFiles = fs.existsSync(testsDevgateDir)
     ? fs.readdirSync(testsDevgateDir).map(f => f.replace(/\.test\.(ts|sh)$/, ''))
     : [];
 
   const missing = devgateFiles.filter(s => !testFiles.some(t => t.includes(s)));
-  return { missing, total: devgateFiles.length };
+  const missingRequired = missing.filter(s => HIGH_RISK_DEVGATE_SCRIPTS.has(s));
+  const missingOptional = missing.filter(s => !HIGH_RISK_DEVGATE_SCRIPTS.has(s));
+  return { missingRequired, missingOptional, total: devgateFiles.length };
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -161,18 +174,29 @@ function main() {
   const devgate = checkDevgateCoverage();
   if (devgate.total === 0) {
     console.log(`${YELLOW}⚠️  Devgate 脚本覆盖检查: SKIPPED (无 .mjs/.cjs 文件)${NC}`);
-  } else if (devgate.missing.length > 0) {
-    console.log(`${YELLOW}⚠️  Devgate 脚本覆盖检查: WARNING (${devgate.missing.length}/${devgate.total} 无测试)${NC}`);
-    for (const s of devgate.missing.slice(0, 5)) {
-      console.log(`   ${CYAN}  ${s} → 建议在 tests/devgate/ 添加测试${NC}`);
-    }
-    if (devgate.missing.length > 5) {
-      console.log(`   ${CYAN}  ...还有 ${devgate.missing.length - 5} 个${NC}`);
-    }
-    hasWarnings = true;
-    if (isStrict) hasErrors = true;
   } else {
-    console.log(`${GREEN}✅ Devgate 脚本覆盖检查: PASS (${devgate.total} 个脚本均有测试)${NC}`);
+    const totalMissing = devgate.missingRequired.length + devgate.missingOptional.length;
+    if (devgate.missingRequired.length > 0) {
+      console.log(`${RED}❌ Devgate 高风险脚本覆盖检查: FAIL (${devgate.missingRequired.length} 个高风险脚本无测试)${NC}`);
+      for (const s of devgate.missingRequired) {
+        console.log(`   ${RED}  ${s} → 必须在 tests/devgate/ 添加测试${NC}`);
+      }
+      hasErrors = true;
+    }
+    if (devgate.missingOptional.length > 0) {
+      console.log(`${YELLOW}⚠️  Devgate 低风险脚本覆盖检查: WARNING (${devgate.missingOptional.length}/${devgate.total} 无测试)${NC}`);
+      for (const s of devgate.missingOptional.slice(0, 5)) {
+        console.log(`   ${CYAN}  ${s} → 建议在 tests/devgate/ 添加测试${NC}`);
+      }
+      if (devgate.missingOptional.length > 5) {
+        console.log(`   ${CYAN}  ...还有 ${devgate.missingOptional.length - 5} 个${NC}`);
+      }
+      hasWarnings = true;
+      if (isStrict) hasErrors = true;
+    }
+    if (totalMissing === 0) {
+      console.log(`${GREEN}✅ Devgate 脚本覆盖检查: PASS (${devgate.total} 个脚本均有测试)${NC}`);
+    }
   }
 
   console.log('');
