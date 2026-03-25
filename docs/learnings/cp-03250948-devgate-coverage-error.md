@@ -8,6 +8,10 @@
 
 `check-coverage-completeness.mjs` 的 devgate 脚本覆盖率检查使用统一 warning 级别，导致高风险脚本（如 `check-dod-mapping`）即使缺少测试也不会阻断 CI。
 
+Engine 有 13 个 devgate 脚本，其中 10 个无对应测试文件，但原检查逻辑对所有缺失测试均使用 warning（非阻断），导致关键脚本（如 DoD 映射检查）在 CI 中没有测试保障。
+
+缺少测试分层机制是根本问题：高风险脚本（直接影响 CI 门禁结果的）与低风险工具脚本（纯辅助，无 exports）应采用不同的测试要求级别。
+
 ## 解决方案
 
 采用白名单机制（`HIGH_RISK_DEVGATE_SCRIPTS`）：
