@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE_ROOT = path.resolve(__dirname, '../..');
+const BRAIN_ROOT = path.resolve(ENGINE_ROOT, '..', 'brain');
 
 // ─── ANSI colors ─────────────────────────────────────────────────────────────
 const GREEN = '\x1b[0;32m';
@@ -121,6 +122,39 @@ export function checkDevgateCoverage() {
   return { missingRequired, missingOptional, total: devgateFiles.length };
 }
 
+// ─── High-risk Brain modules (missing test → error) ──────────────────────────
+export const HIGH_RISK_BRAIN_MODULES = new Set([
+  'tick',
+  'thalamus',
+  'executor',
+  'cortex',
+  'planner',
+]);
+
+// ─── Check 4: packages/brain/src/*.js → src/__tests__/MODULE*.test.js ─────────
+export function checkBrainCoverage(brainRoot = BRAIN_ROOT) {
+  const srcDir = path.join(brainRoot, 'src');
+  const testsDir = path.join(brainRoot, 'src', '__tests__');
+
+  if (!fs.existsSync(srcDir)) return { missingRequired: [], missingOptional: [], total: 0, skipped: true };
+
+  const srcFiles = fs.readdirSync(srcDir)
+    .filter(f => f.endsWith('.js') && !f.endsWith('.d.js') && !f.endsWith('.test.js'))
+    .map(f => path.basename(f, '.js'));
+
+  if (srcFiles.length === 0) return { missingRequired: [], missingOptional: [], total: 0 };
+
+  const testFiles = fs.existsSync(testsDir)
+    ? fs.readdirSync(testsDir).filter(f => f.endsWith('.test.js')).map(f => path.basename(f, '.test.js'))
+    : [];
+
+  // Prefix match: executor.js → executor*.test.js (e.g. executor-billing-pause.test.js)
+  const missing = srcFiles.filter(src => !testFiles.some(t => t === src || t.startsWith(src + '-') || t.startsWith(src + '.')));
+  const missingRequired = missing.filter(s => HIGH_RISK_BRAIN_MODULES.has(s));
+  const missingOptional = missing.filter(s => !HIGH_RISK_BRAIN_MODULES.has(s));
+  return { missingRequired, missingOptional, total: srcFiles.length };
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -196,6 +230,34 @@ export function main() {
     }
     if (totalMissing === 0) {
       console.log(`${GREEN}✅ Devgate 脚本覆盖检查: PASS (${devgate.total} 个脚本均有测试)${NC}`);
+    }
+  }
+
+  // ── Check 4: Brain src/ ──────────────────────────────────────────────────────
+  const brain = checkBrainCoverage();
+  if (brain.skipped || brain.total === 0) {
+    console.log(`${YELLOW}⚠️  Brain src 覆盖检查: SKIPPED (packages/brain/src/ 不存在或为空)${NC}`);
+  } else {
+    if (brain.missingRequired.length > 0) {
+      console.log(`${RED}❌ Brain src 覆盖检查: FAIL (${brain.missingRequired.length} 个高风险模块无测试)${NC}`);
+      for (const s of brain.missingRequired) {
+        console.log(`   ${RED}  ${s}.js → 必须在 src/__tests__/ 添加测试${NC}`);
+      }
+      hasErrors = true;
+    }
+    if (brain.missingOptional.length > 0) {
+      console.log(`${YELLOW}⚠️  Brain src 覆盖检查: WARNING (${brain.missingOptional.length}/${brain.total} 无测试)${NC}`);
+      for (const s of brain.missingOptional.slice(0, 5)) {
+        console.log(`   ${CYAN}  ${s}.js → 建议在 src/__tests__/ 添加测试${NC}`);
+      }
+      if (brain.missingOptional.length > 5) {
+        console.log(`   ${CYAN}  ...还有 ${brain.missingOptional.length - 5} 个${NC}`);
+      }
+      hasWarnings = true;
+      if (isStrict) hasErrors = true;
+    }
+    if (brain.missingRequired.length === 0 && brain.missingOptional.length === 0) {
+      console.log(`${GREEN}✅ Brain src 覆盖检查: PASS (${brain.total} 个模块均有测试)${NC}`);
     }
   }
 
