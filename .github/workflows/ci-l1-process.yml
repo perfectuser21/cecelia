@@ -176,18 +176,16 @@ jobs:
           npm ci --ignore-scripts
 
       - name: Run DoD Verification Check
-        env:
-          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
+          export GITHUB_HEAD_REF="${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate: DoD Verification (Branch: $GITHUB_HEAD_REF)"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           node packages/engine/scripts/devgate/check-dod-mapping.cjs
 
       - name: Run DoD Execution Gate
-        env:
-          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
+          export GITHUB_HEAD_REF="${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate: DoD Execution Gate (Branch: $GITHUB_HEAD_REF)"
           echo "  执行 [BEHAVIOR] Test 命令，验证功能真实工作"
@@ -227,10 +225,9 @@ jobs:
           fetch-depth: 0
 
       - name: Check cleanup requirements against DoD
-        env:
-          GITHUB_BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref || 'main' }}
-          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
+          export GITHUB_HEAD_REF="${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
+          export GITHUB_BASE_REF="${{ github.base_ref || github.event.inputs.base_ref || 'main' }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Step 6.5 Simplify — Cleanup Check"
           echo "  Branch: $GITHUB_HEAD_REF"
@@ -342,9 +339,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Check PRD has success criteria
-        env:
-          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
         run: |
+          export GITHUB_HEAD_REF="${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
           bash packages/engine/scripts/devgate/check-prd.sh
 
   check-learning:
@@ -361,10 +357,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - name: Check Learning Format
-        env:
-          GITHUB_HEAD_REF: ${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}
-          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
+          export GITHUB_HEAD_REF="${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
+          export PR_TITLE="${{ github.event.pull_request.title || '' }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate: Learning Format Gate"
           echo "  Branch: $GITHUB_HEAD_REF"
@@ -528,6 +523,15 @@ jobs:
           echo "$CI_CHANGED" | sed 's/^/  - /'
           echo ""
 
+          if [[ -z "$PR_TITLE" ]]; then
+            echo "PR title empty (workflow_dispatch manual trigger) — skipping [CONFIG]/[INFRA] check"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ CI Config Audit PASSED (manual trigger)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
           if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  ❌ CI Config Audit FAILED"
@@ -620,7 +624,9 @@ jobs:
             done
             echo ""
 
-            if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+            if [[ -z "$PR_TITLE" ]]; then
+              echo "PR title empty (workflow_dispatch manual trigger) — skipping [CONFIG]/[INFRA] check"
+            elif [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "PR title must contain [CONFIG] or [INFRA] tag"
               echo "Suggested: [CONFIG] $PR_TITLE"
               exit 1
@@ -660,7 +666,9 @@ jobs:
             echo "detected: $KF_PATH was modified"
             echo ""
 
-            if [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+            if [[ -z "$PR_TITLE" ]]; then
+              echo "PR title empty (workflow_dispatch manual trigger) — skipping [INFRA] check"
+            elif [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "known-failures.json modified but PR title missing [INFRA] tag"
               echo ""
               echo "Modifying the test whitelist is a high-risk operation."
@@ -714,6 +722,7 @@ jobs:
       - name: DevGate core checks (script existence + DoD mapping)
         working-directory: packages/engine
         run: |
+          export GITHUB_HEAD_REF="${{ github.head_ref || github.event.inputs.head_ref || github.ref_name }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate core checks"
           echo "  (script existence + DoD mapping — 不豁免任何 commit type)"
