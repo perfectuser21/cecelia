@@ -211,17 +211,32 @@ async function probeConsolidation() {
 }
 
 async function probeSelfDriveHealth() {
-  // 检查 Self-Drive 24h 内是否成功创建过任务
+  // 检查 Self-Drive 24h 内是否有成功完成的 cycle（cycle_complete 或 no_action 均算成功）
+  // cycle_error = LLM 调用失败（探针应失败）
+  // no_action   = LLM 正常运行但判断无需行动（系统健康，不应误判为失败）
+  // cycle_complete = LLM 正常运行并做出决策（tasks_created 可以是 0）
   const result = await pool.query(
-    `SELECT count(*) AS cnt FROM cecelia_events
+    `SELECT
+       count(*) filter (where payload->>'subtype' IN ('cycle_complete', 'no_action')) AS success_cnt,
+       count(*) filter (where payload->>'subtype' = 'cycle_error') AS error_cnt,
+       max(case when payload->>'subtype' IN ('cycle_complete', 'no_action')
+           then created_at end) AS last_success,
+       coalesce(sum((payload->>'tasks_created')::int) filter (
+           where payload->>'subtype' = 'cycle_complete'
+             AND (payload->>'tasks_created')::int > 0
+       ), 0) AS total_tasks_created
+     FROM cecelia_events
      WHERE event_type = 'self_drive'
-       AND (payload->>'tasks_created')::int > 0
        AND created_at > NOW() - INTERVAL '24 hours'`
   );
-  const cnt = parseInt(result.rows[0]?.cnt || 0);
+  const row = result.rows[0] || {};
+  const successCnt = parseInt(row.success_cnt || 0);
+  const errorCnt = parseInt(row.error_cnt || 0);
+  const tasksCreated = parseInt(row.total_tasks_created || 0);
+  const lastSuccess = row.last_success;
   return {
-    ok: cnt > 0,
-    detail: `24h_successful_drives=${cnt}`,
+    ok: successCnt > 0,
+    detail: `24h: successful_cycles=${successCnt} errors=${errorCnt} tasks_created=${tasksCreated} last_success=${lastSuccess || 'never'}`,
   };
 }
 
