@@ -26,6 +26,7 @@ jobs:
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
       engine: ${{ steps.filter.outputs.engine }}
+      infra: ${{ steps.filter.outputs.infra }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,12 +41,15 @@ jobs:
             if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               echo "brain=true" >> $GITHUB_OUTPUT
               echo "engine=true" >> $GITHUB_OUTPUT
+              echo "infra=true" >> $GITHUB_OUTPUT
             else
               CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
               echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$" \
                 && echo "brain=true" >> $GITHUB_OUTPUT || echo "brain=false" >> $GITHUB_OUTPUT
               echo "$CHANGED" | grep -q "^packages/engine/" \
                 && echo "engine=true" >> $GITHUB_OUTPUT || echo "engine=false" >> $GITHUB_OUTPUT
+              echo "$CHANGED" | grep -qE "^scripts/|^ci/" \
+                && echo "infra=true" >> $GITHUB_OUTPUT || echo "infra=false" >> $GITHUB_OUTPUT
             fi
             exit 0
           fi
@@ -59,6 +63,11 @@ jobs:
             echo "engine=true" >> $GITHUB_OUTPUT
           else
             echo "engine=false" >> $GITHUB_OUTPUT
+          fi
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qE "^scripts/|^ci/"; then
+            echo "infra=true" >> $GITHUB_OUTPUT
+          else
+            echo "infra=false" >> $GITHUB_OUTPUT
           fi
 
   # ─── Brain L2: Facts / Version / Manifest / Fitness ──────────────────
@@ -357,6 +366,33 @@ jobs:
       - name: Detect unregistered subsystems and test categories
         run: node scripts/ci-evolution-check.mjs
 
+  # ─── Infra L2: scripts/ + ci/ 变更一致性检查 ─────────────────────────────
+  # 当 scripts/ 或 ci/ 目录发生变更时，运行 Evolution Gate 验证结构完整性。
+  # 确保 CI 脚本修改后，routing-map 注册和 CI 自检逻辑仍然正确。
+
+  infra-l2:
+    name: Infra L2 Consistency
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify routing-map registers infrastructure directories
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Infra L2: CI Self-Coverage Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          node scripts/ci-evolution-check.mjs
+
   # ─── Cross-Reference Consistency Check ──────────────────────────────
   cross-ref-check:
     name: Cross-Ref Consistency
@@ -436,7 +472,7 @@ jobs:
 
   l2-passed:
     name: L2 Consistency Gate Passed
-    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check, new-files-need-rci-check]
+    needs: [changes, brain-l2, engine-l2, infra-l2, evolution-check, cross-ref-check, new-files-need-rci-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -470,6 +506,14 @@ jobs:
             fi
           fi
 
+          # Infra L2 (required when scripts/ or ci/ changes detected)
+          if [ "${{ needs.changes.outputs.infra }}" = "true" ]; then
+            if [ "${{ needs.infra-l2.result }}" != "success" ]; then
+              echo "FAIL: Infra L2 Consistency (${{ needs.infra-l2.result }})"
+              FAILED=true
+            fi
+          fi
+
           # Evolution Check (always required — detects unregistered subsystems)
           if [ "${{ needs.evolution-check.result }}" != "success" ]; then
             echo "FAIL: CI Evolution Check (${{ needs.evolution-check.result }})"
@@ -495,8 +539,8 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ needs.changes.outputs.brain }}" != "true" ] && [ "${{ needs.changes.outputs.engine }}" != "true" ]; then
-            echo "No brain/engine changes detected — L2 fast-pass"
+          if [ "${{ needs.changes.outputs.brain }}" != "true" ] && [ "${{ needs.changes.outputs.engine }}" != "true" ] && [ "${{ needs.changes.outputs.infra }}" != "true" ]; then
+            echo "No brain/engine/infra changes detected — L2 fast-pass"
           fi
 
           echo ""

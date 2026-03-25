@@ -399,6 +399,34 @@ function main() {
     console.log('   (no named test directories found)');
   }
 
+  // ── Check 4: Infrastructure directories must be registered ───────────────
+  // 基础设施目录（scripts/、ci/）必须始终在 routing-map 中注册，防止意外删除。
+  // 这些目录的变更不走 packages/* 或 apps/* 路径，需要独立注册。
+
+  console.log('');
+  console.log('🔍 Check 4: infrastructure directory registration');
+
+  const REQUIRED_INFRASTRUCTURE_ROOTS = ['scripts', 'ci'];
+
+  for (const infraRoot of REQUIRED_INFRASTRUCTURE_ROOTS) {
+    if (registeredRoots.has(infraRoot)) {
+      console.log(`   ✅ ${infraRoot}/`);
+    } else {
+      errors.push(
+        `Infrastructure directory not registered: ${infraRoot}/\n` +
+        `   → CI changes to ${infraRoot}/ will not trigger any CI layer.\n` +
+        `   → Register it in ci/routing-map.yml to ensure CI self-coverage.\n` +
+        `   Example:\n` +
+        `     ${infraRoot}_infra:\n` +
+        `       root: ${infraRoot}\n` +
+        `       paths:\n` +
+        `         - ${infraRoot}/**\n` +
+        `       layers: [l2]\n` +
+        `       deploy: false`
+      );
+    }
+  }
+
   // ── Results ───────────────────────────────────────────────────────────────
 
   console.log('');

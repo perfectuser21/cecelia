@@ -51,7 +51,7 @@ subsystems:
       - apps/dashboard
     paths:
       - apps/**
-    layers: [l1, l3]
+    layers: [l1, l3, l4]
     deploy: true
     description: "Workspace 前端（API 层 + React Dashboard）"
 
@@ -87,6 +87,25 @@ subsystems:
     layers: [l3]
     deploy: false
     description: "遗留前端（含 React 组件/Hook 单元测试），无 PostgreSQL 依赖"
+
+  # ── Infrastructure Tooling ────────────────────────────────────────────────
+  # CI 脚本和配置本身也必须受 CI 检查，避免改 CI 脚本却不触发任何 CI。
+
+  scripts:
+    root: scripts
+    paths:
+      - scripts/**
+    layers: [l2]
+    deploy: false
+    description: "共享脚本（DevGate、facts-check、部署工具等）"
+
+  ci_infra:
+    root: ci
+    paths:
+      - ci/**
+    layers: [l2]
+    deploy: false
+    description: "CI 配置目录（routing-map、test-taxonomy、baseline 等）"
 
   # ── Data / Config (CI-exempt) ─────────────────────────────────────────────
 

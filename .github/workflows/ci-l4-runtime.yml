@@ -22,6 +22,7 @@ jobs:
       pull-requests: read
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
+      workspace: ${{ steps.filter.outputs.workspace }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,10 +36,13 @@ jobs:
             # R2: push 事件用实际 diff（不再全量 true）
             if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               echo "brain=true" >> $GITHUB_OUTPUT
+              echo "workspace=true" >> $GITHUB_OUTPUT
             else
               CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
               echo "$CHANGED" | grep -qE "^packages/brain/|^\.brain-versions$" \
                 && echo "brain=true" >> $GITHUB_OUTPUT || echo "brain=false" >> $GITHUB_OUTPUT
+              echo "$CHANGED" | grep -q "^apps/" \
+                && echo "workspace=true" >> $GITHUB_OUTPUT || echo "workspace=false" >> $GITHUB_OUTPUT
             fi
             exit 0
           fi
@@ -47,6 +51,11 @@ jobs:
             echo "brain=true" >> $GITHUB_OUTPUT
           else
             echo "brain=false" >> $GITHUB_OUTPUT
+          fi
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -q "^apps/"; then
+            echo "workspace=true" >> $GITHUB_OUTPUT
+          else
+            echo "workspace=false" >> $GITHUB_OUTPUT
           fi
 
 
@@ -259,6 +268,40 @@ jobs:
             rm -rf "$PG_DATA" 2>/dev/null || true
           fi
 
+  # ─── Workspace L4: Brain↔Frontend API Integration Test ────────────────────
+  # 当 apps/** 变更时，验证 apps/api 能通过 proxy 调用 Brain API 端点。
+  # 最小化集成测试：使用 mock 验证 proxy 配置正确性。
+
+  workspace-integration:
+    name: Workspace L4 Integration
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/api/package-lock.json
+
+      - name: Install apps/api dependencies
+        working-directory: apps/api
+        run: npm ci
+
+      - name: Run Brain↔Frontend API integration tests
+        working-directory: apps/api
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Workspace L4: Brain↔Frontend Integration"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          npx vitest run src/__tests__/brain-api-integration.test.ts --reporter=verbose
+
   # ─── DevGate Quality Checks ────────────────────────────────────────────────
 
   devgate-checks:
@@ -308,7 +351,7 @@ jobs:
 
   l4-passed:
     name: L4 Runtime Gate Passed
-    needs: [changes, brain-integration, devgate-checks]
+    needs: [changes, brain-integration, workspace-integration, devgate-checks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -338,6 +381,13 @@ jobs:
             fi
           fi
 
+          if [ "${{ needs.changes.outputs.workspace }}" = "true" ]; then
+            if [ "${{ needs.workspace-integration.result }}" != "success" ]; then
+              echo "FAIL: Workspace Integration Tests (${{ needs.workspace-integration.result }})"
+              FAILED=true
+            fi
+          fi
+
           if [ "$FAILED" = "true" ]; then
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -346,8 +396,8 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ needs.changes.outputs.brain }}" != "true" ]; then
-            echo "No brain changes detected — L4 fast-pass"
+          if [ "${{ needs.changes.outputs.brain }}" != "true" ] && [ "${{ needs.changes.outputs.workspace }}" != "true" ]; then
+            echo "No brain/workspace changes detected — L4 fast-pass"
           fi
 
           echo ""
