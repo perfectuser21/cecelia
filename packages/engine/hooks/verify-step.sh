@@ -251,7 +251,7 @@ verify_step2() {
     fi
     echo "  ✅ [Gate 0c] 垃圾清理检查通过（无 console.log/debugger）" >&2
 
-    # Gate 0d: 周边一致性扫描（同目录文件引用被改模块的旧版本号）
+    # Gate 0d: 周边一致性扫描 + Engine 版本同步检查
     local consistency_issues=()
     local version_files
     version_files=$(echo "$impl_files" | grep -E '(package\.json|VERSION|\.hook-core-version)$' 2>/dev/null || echo "")
@@ -289,22 +289,33 @@ $(printf '  %s\n' "${consistency_issues[@]}")
   要求：修改模块时，同目录下引用该模块版本号的文件必须同步更新"
     fi
 
-    # Gate 0d-engine: Engine 版本文件变更时调用 CI 版本同步脚本
-    local engine_version_changed
-    engine_version_changed=$(echo "$version_files" | grep "^packages/engine/" 2>/dev/null || echo "")
-    if [[ -n "$engine_version_changed" ]]; then
-        local engine_version_sync="$PROJECT_ROOT/packages/engine/ci/scripts/check-version-sync.sh"
-        if [[ -f "$engine_version_sync" ]]; then
-            if ! command -v jq &>/dev/null; then
-                echo "  ⚠️  [Gate 0d-engine] jq 未安装，跳过 check-version-sync.sh" >&2
-            else
-                local sync_out
-                sync_out=$(cd "$PROJECT_ROOT/packages/engine" && bash "$engine_version_sync" 2>&1) || {
-                    _fail "Gate 0d-engine: Engine 版本文件不同步：
-$sync_out"
-                }
-                echo "  ✅ [Gate 0d-engine] Engine 版本文件同步检查通过" >&2
+    # Gate 0d（扩展）: Engine 版本文件变更时调用 check-version-sync.sh
+    local engine_ver_files
+    engine_ver_files=$(echo "$impl_files" | grep -E '^packages/engine/(package\.json|package-lock\.json|VERSION|\.hook-core-version|regression-contract\.yaml)$' 2>/dev/null || echo "")
+    if [[ -n "$engine_ver_files" ]]; then
+        echo "  🔍 [Gate 0d] 检测到 Engine 版本文件变更，调用 check-version-sync.sh..." >&2
+        local _ver_sync_script=""
+        for _sd in "$PROJECT_ROOT/packages/engine/ci/scripts" "$PROJECT_ROOT/scripts"; do
+            if [[ -f "$_sd/check-version-sync.sh" ]]; then
+                _ver_sync_script="$_sd/check-version-sync.sh"
+                break
             fi
+        done
+        if [[ -n "$_ver_sync_script" ]]; then
+            local _ver_sync_out
+            set +e
+            _ver_sync_out=$(cd "$PROJECT_ROOT/packages/engine" && bash "$_ver_sync_script" 2>&1)
+            local _ver_sync_exit=$?
+            set -e
+            if [[ $_ver_sync_exit -ne 0 ]]; then
+                _fail "Gate 0d: Engine 版本同步检查失败
+$_ver_sync_out
+  要求：修改 Engine 版本文件时，5 个文件必须同步更新
+  运行 check-version-sync.sh 查看具体哪些文件版本不一致"
+            fi
+            echo "  ✅ [Gate 0d] Engine 版本同步检查通过" >&2
+        else
+            echo "  ⚠️  [Gate 0d] 未找到 check-version-sync.sh，跳过 Engine 版本同步检查" >&2
         fi
     fi
 

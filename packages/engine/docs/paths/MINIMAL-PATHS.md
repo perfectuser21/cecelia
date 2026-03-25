@@ -421,6 +421,13 @@ changelog:
 
 ---
 
+### hook-ci-r12-gate0d-version-sync: Gate 0d Engine 版本同步检查
+
+1. ✅ **Engine 版本文件变更时：check-version-sync.sh 被调用**
+2. ✅ **jq 缺失时：用 node 降级解析，不报错**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
