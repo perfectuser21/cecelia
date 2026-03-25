@@ -5,20 +5,18 @@
  * 触发 generateMemoryStreamEmbeddingAsync（fire-and-forget）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import path from 'path';
 
-const ORCHESTRATOR_PATH = path.resolve(
-  'packages/brain/src/orchestrator-chat.js'
-);
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const ORCHESTRATOR_PATH = path.resolve(__dirname, '../orchestrator-chat.js');
 
 describe('orchestrator-chat — memory_stream embedding wiring', () => {
   let source;
 
-  beforeEach(() => {
-    source = fs.readFileSync(ORCHESTRATOR_PATH, 'utf8');
-  });
+  source = fs.readFileSync(ORCHESTRATOR_PATH, 'utf8');
 
   it('导入了 generateMemoryStreamEmbeddingAsync', () => {
     expect(source).toContain('generateMemoryStreamEmbeddingAsync');
