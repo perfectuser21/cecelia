@@ -4,7 +4,12 @@
  * 测试 calculateTaskWeight() 和 sortTasksByWeight() 函数的所有逻辑分支
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../db.js', () => ({
+  default: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+}));
+
 import {
   calculateTaskWeight,
   sortTasksByWeight,
