@@ -18,6 +18,7 @@ import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.j
 import { callLLM } from './llm-caller.js';
 import { getSelfModel } from './self-model.js';
 import { generateL0Summary, generateMemoryStreamL1Async } from './memory-utils.js';
+import { generateMemoryStreamEmbeddingAsync } from './embedding-service.js';
 import { observeChat } from './thalamus.js';
 import { extractConversationLearning, upsertLearning } from './learning.js';
 import { extractPersonSignals, detectAndStoreTaskInterest } from './person-model.js';
@@ -609,7 +610,11 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
       RETURNING id
     `, [userContent, generateL0Summary(userContent), importanceVal, salience, emotionTag]);
     const userRecordId = userResult.rows[0]?.id;
-    if (userRecordId) generateMemoryStreamL1Async(userRecordId, userContent, pool);
+    if (userRecordId) {
+      generateMemoryStreamL1Async(userRecordId, userContent, pool);
+      Promise.resolve().then(() => generateMemoryStreamEmbeddingAsync(userRecordId, userContent, pool))
+        .catch(e => console.warn('[orchestrator-chat] user embedding failed:', e.message));
+    }
   } catch (err) {
     console.warn('[orchestrator-chat] Failed to write chat to memory_stream:', err.message);
   }
@@ -678,7 +683,11 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
         RETURNING id
       `, [replyContent, generateL0Summary(replyContent), importanceVal, salience, emotionTag]);
       const replyRecordId = replyResult.rows[0]?.id;
-      if (replyRecordId) generateMemoryStreamL1Async(replyRecordId, replyContent, pool);
+      if (replyRecordId) {
+        generateMemoryStreamL1Async(replyRecordId, replyContent, pool);
+        Promise.resolve().then(() => generateMemoryStreamEmbeddingAsync(replyRecordId, replyContent, pool))
+          .catch(e => console.warn('[orchestrator-chat] reply embedding failed:', e.message));
+      }
     } catch (err) {
       console.warn('[orchestrator-chat] Failed to write reply to memory_stream:', err.message);
     }
