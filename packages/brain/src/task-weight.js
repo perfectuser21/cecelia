@@ -6,9 +6,12 @@
  * 2. Wait time (queued_at duration) - urgency bonus
  * 3. Retry count - escalation bonus
  * 4. Task type - type-specific adjustment
+ * 5. RPE history (async only) - reward prediction error feedback
  *
  * Higher weight = dispatched first
  */
+
+import pool from './db.js';
 
 // Base scores by priority
 const PRIORITY_BASE_SCORES = {
@@ -160,14 +163,76 @@ function getTaskWeights(tasks) {
   }));
 }
 
+// RPE weight feedback constants
+const RPE_WEIGHT_SCALE = 4;  // avg_rpe * scale = weight adjustment
+const RPE_WEIGHT_CAP = 10;   // max adjustment ±10
+const RPE_SAMPLE_SIZE = 20;  // look back at last 20 rpe_signal events
+
+/**
+ * Query historical RPE for a task type and compute weight adjustment
+ *
+ * @param {string} taskType - Task type (e.g. 'dev', 'review')
+ * @param {object} [dbPool] - Optional DB pool (for testing)
+ * @returns {Promise<number>} Weight adjustment (positive = boost, negative = penalty, 0 = no data)
+ */
+async function getTaskRPEAdjustment(taskType, dbPool) {
+  if (!taskType) return 0;
+  const db = dbPool || pool;
+  try {
+    const { rows } = await db.query(
+      `SELECT AVG((payload->>'rpe')::numeric) AS avg_rpe
+       FROM (
+         SELECT payload
+         FROM cecelia_events
+         WHERE event_type = 'rpe_signal'
+           AND payload->>'task_type' = $1
+         ORDER BY created_at DESC
+         LIMIT $2
+       ) sub`,
+      [taskType, RPE_SAMPLE_SIZE]
+    );
+    const avg = rows[0]?.avg_rpe;
+    if (avg === null || avg === undefined) return 0;
+    const raw = parseFloat(avg) * RPE_WEIGHT_SCALE;
+    return Math.max(-RPE_WEIGHT_CAP, Math.min(RPE_WEIGHT_CAP, Math.round(raw * 100) / 100));
+  } catch (_e) {
+    return 0;
+  }
+}
+
+/**
+ * Async version of calculateTaskWeight — includes RPE feedback
+ *
+ * @param {Object} task - Task object from database
+ * @param {object} [dbPool] - Optional DB pool (for testing)
+ * @returns {Promise<Object>} Weight breakdown including rpe_bonus
+ */
+async function calculateTaskWeightAsync(task, dbPool) {
+  const base = calculateTaskWeight(task);
+  const taskType = (task?.task_type || '').toLowerCase() || null;
+  const rpe_bonus = await getTaskRPEAdjustment(taskType, dbPool);
+  const weight = base.weight + rpe_bonus;
+  return {
+    ...base,
+    weight,
+    rpe_bonus,
+    breakdown: `${base.breakdown.replace(/ = \d+(\.\d+)?$/, '')} + rpe(${rpe_bonus}) = ${weight}`
+  };
+}
+
 export {
   calculateTaskWeight,
+  calculateTaskWeightAsync,
   sortTasksByWeight,
   getTaskWeights,
+  getTaskRPEAdjustment,
   PRIORITY_BASE_SCORES,
   TASK_TYPE_ADJUSTMENTS,
   WAIT_BONUS_PER_HOUR,
   WAIT_BONUS_MAX,
   RETRY_BONUS_PER_COUNT,
-  RETRY_BONUS_MAX
+  RETRY_BONUS_MAX,
+  RPE_WEIGHT_SCALE,
+  RPE_WEIGHT_CAP,
+  RPE_SAMPLE_SIZE
 };
