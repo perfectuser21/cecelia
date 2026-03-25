@@ -105,7 +105,7 @@ export async function dispatchPendingSuggestions(dbPool = pool, limit = 2) {
         [suggestion.id]
       );
 
-      console.log(`[suggestion-dispatcher] Thalamus created suggestion_plan task ${newTaskId} for suggestion ${suggestion.id} (score=${suggestion.priority_score})`);
+      console.info(`[suggestion-dispatcher] Thalamus created suggestion_plan task ${newTaskId} for suggestion ${suggestion.id} (score=${suggestion.priority_score})`);
       created++;
     } catch (err) {
       console.error(`[suggestion-dispatcher] Failed to dispatch suggestion ${suggestion.id}: ${err.message}`);
