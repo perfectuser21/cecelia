@@ -42,6 +42,7 @@ import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
+import { runConversationConsolidator } from './conversation-consolidator.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -120,9 +121,11 @@ let _lastReportTime = 0; // track last 48h system report generation time
 let _lastZombieSweepTime = 0; // track last zombie sweep time
 let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
 let _lastPipelinePatrolTime = 0; // track last pipeline patrol time
+let _lastConversationConsolidatorTime = 0; // track last conversation consolidator run time
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
+const CONVERSATION_CONSOLIDATOR_INTERVAL_MS = parseInt(process.env.CECELIA_CONVERSATION_CONSOLIDATOR_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1547,6 +1550,15 @@ async function executeTick() {
       }
     }).catch(err => {
       console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
+    });
+  }
+
+  // [记忆] 对话空闲总结：每 5 分钟检查，空闲 ≥30 分钟时压缩写入 memory_stream
+  const conversationConsolidatorElapsed = Date.now() - _lastConversationConsolidatorTime;
+  if (conversationConsolidatorElapsed >= CONVERSATION_CONSOLIDATOR_INTERVAL_MS) {
+    _lastConversationConsolidatorTime = Date.now();
+    runConversationConsolidator().catch(err => {
+      console.error('[tick] Conversation consolidator failed (non-fatal):', err.message);
     });
   }
 
