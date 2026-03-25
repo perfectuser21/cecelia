@@ -36,6 +36,28 @@ updated: 2026-03-25
 # ============================================================================
 hooks:
   # --------------------------------------------------------------------------
+  # H-session-start: session-start (UserPromptSubmit hook)
+  # --------------------------------------------------------------------------
+  - id: H-session-001
+    feature: H-session-start
+    name: "session-start hook 存在且可执行"
+    scope: hook
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [session, brain-context, user-prompt]
+    owner: engine
+    steps:
+      given: "UserPromptSubmit 事件触发"
+      when: "新对话第一条消息"
+      then: "自动注入 Brain 活跃任务摘要到 Claude context"
+    evidence:
+      type: code
+      file: "hooks/session-start.sh"
+      contains: "additionalContext"
+    test: "tests/hooks/session-start.test.ts"
+
+  # --------------------------------------------------------------------------
   # H1: branch-protect
   # --------------------------------------------------------------------------
   - id: H1-001
