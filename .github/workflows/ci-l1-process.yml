@@ -8,7 +8,6 @@ name: L1 Process Gate
 on:
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
 concurrency:
   group: l1-process-${{ github.ref }}
