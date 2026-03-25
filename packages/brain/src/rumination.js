@@ -284,7 +284,7 @@ async function digestLearnings(db, learnings) {
       const contentHash = computeInsightHash(insight.trim());
       const isDuplicate = await isInsightDuplicate(db, contentHash);
       if (isDuplicate) {
-        console.log(`[rumination] dedup_skipped: insight already recorded within ${DEDUP_WINDOW_HOURS}h (hash=${contentHash})`);
+        console.warn(`[rumination] dedup_skipped: insight already recorded within ${DEDUP_WINDOW_HOURS}h (hash=${contentHash})`);
         return [];
       }
 
