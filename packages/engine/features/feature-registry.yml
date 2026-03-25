@@ -17,10 +17,16 @@
 
 version: "3.97.0"
 updated: "2026-03-24"
-# ci-trigger: 13.41.3
+# ci-trigger: 13.42.0
 changelog:
 
 
+
+  - version: "13.42.0"
+    date: "2026-03-25"
+    summary: "[CONFIG] feat(engine): Hook-CI 耦合重构 R12 — verify-step.sh Gate 0d 调用 check-version-sync.sh"
+    scope: packages/engine/hooks/verify-step.sh
+    breaking: false
 
   - version: "13.41.3"
     date: "2026-03-24"
