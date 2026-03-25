@@ -7,13 +7,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ────────────────────────────────────────────────────────────
 // 静态代码检查：确保 suggestion-dispatcher 不含直接 INSERT INTO tasks
 // ────────────────────────────────────────────────────────────
 describe('suggestion-dispatcher 静态代码约束', () => {
-  const srcPath = join(process.cwd(), 'packages/brain/src/suggestion-dispatcher.js');
+  const srcPath = resolve(__dirname, '../suggestion-dispatcher.js');
   const src = readFileSync(srcPath, 'utf8');
 
   it('不包含直接 INSERT INTO tasks', () => {
@@ -34,7 +37,7 @@ describe('suggestion-dispatcher 静态代码约束', () => {
 // ────────────────────────────────────────────────────────────
 describe('thalamus SUGGESTION_READY 事件定义', () => {
   const thalamSrc = readFileSync(
-    join(process.cwd(), 'packages/brain/src/thalamus.js'),
+    resolve(__dirname, '../thalamus.js'),
     'utf8'
   );
 

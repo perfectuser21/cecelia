@@ -23,19 +23,19 @@ describe('Scope 层级识别', () => {
     });
   });
 
-  describe('suggestion-dispatcher.js', () => {
-    const src = readFileSync(resolve(__dirname, '../suggestion-dispatcher.js'), 'utf-8');
+  describe('thalamus.js SUGGESTION_READY handler（层级描述已迁入丘脑）', () => {
+    const thalamSrc = readFileSync(resolve(__dirname, '../thalamus.js'), 'utf-8');
 
-    it('prompt 应包含 Scope 层级', () => {
-      expect(src).toContain('Layer 5 Scope');
+    it('SUGGESTION_READY handler 应包含 Scope 层级', () => {
+      expect(thalamSrc).toContain('Layer 5 Scope');
     });
 
-    it('prompt 应包含完整的 7 层层级定义', () => {
-      expect(src).toContain('Layer 3 KR');
-      expect(src).toContain('Layer 4 Project');
-      expect(src).toContain('Layer 5 Scope');
-      expect(src).toContain('Layer 6 Initiative');
-      expect(src).toContain('Layer 7 Task/Pipeline');
+    it('SUGGESTION_READY handler 应包含完整的 7 层层级定义', () => {
+      expect(thalamSrc).toContain('Layer 3 KR');
+      expect(thalamSrc).toContain('Layer 4 Project');
+      expect(thalamSrc).toContain('Layer 5 Scope');
+      expect(thalamSrc).toContain('Layer 6 Initiative');
+      expect(thalamSrc).toContain('Layer 7 Task/Pipeline');
     });
   });
 });
