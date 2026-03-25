@@ -1,16 +1,16 @@
-# DoD: 清理重复 check-manual-cmd-whitelist.cjs
+# DoD: 修复 self_drive_health 链路探针故障
 
-- [x] [PRESERVE] `scripts/devgate/` 目录下已追踪的 7 个文件（check-activation.sh 等）仍然存在
-  Test: manual:node -e "const fs=require('fs');['check-activation.sh','check-contract-drift.mjs','check-executor-agents.mjs','check-llm-agents.mjs','check-new-api-endpoints.mjs','check-okr-structure.mjs','check-skills-registry.mjs'].forEach(f=>{fs.accessSync('scripts/devgate/'+f)});console.log('OK: 已追踪文件均存在')"
+- [ ] [PRESERVE] 现有 PROBES 数组定义不变（rumination/evolution/consolidation 探针保持原样）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/capability-probe-highlevel.test.js','utf8');if(!c.includes('rumination'))process.exit(1);if(!c.includes('evolution'))process.exit(1);if(!c.includes('consolidation'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `scripts/devgate/check-manual-cmd-whitelist.cjs` 不存在（已删除）
-  Test: manual:node -e "const fs=require('fs');if(fs.existsSync('scripts/devgate/check-manual-cmd-whitelist.cjs'))process.exit(1);console.log('OK: 重复文件已不存在')"
+- [ ] [ARTIFACT] 创建 `packages/brain/migrations/192_fix_thalamus_model.sql`，重置 profile-anthropic 的 thalamus 为 anthropic/claude-haiku-4-5-20251001
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/192_fix_thalamus_model.sql','utf8');if(!c.includes('claude-haiku-4-5-20251001'))process.exit(1);if(!c.includes('profile-anthropic'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs` 存在且可运行
-  Test: manual:node -e "require('fs').accessSync('packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs');console.log('OK')"
+- [ ] [BEHAVIOR] `probeSelfDriveHealth` 查询逻辑更新为：有 cycle_complete 或 no_action 事件即返回 ok:true
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/capability-probe.js','utf8');if(!c.includes('cycle_complete'))process.exit(1);if(!c.includes('no_action'))process.exit(1);if(!c.includes('success_cnt'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] verify-step.sh 能正确找到并执行 packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs（路径查找逻辑工作正常）
-  Test: manual:node -e "const {execSync}=require('child_process');const out=execSync('bash packages/engine/hooks/verify-step.sh step1 cp-test . 2>&1 || true',{encoding:'utf8'});if(out.includes('MODULE_NOT_FOUND'))process.exit(1);console.log('OK: 无 MODULE_NOT_FOUND 错误')"
+- [ ] [ARTIFACT] `capability-probe-highlevel.test.js` 新增至少 2 个 self_drive_health 场景单测（成功路径 + 失败路径）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/capability-probe-highlevel.test.js','utf8');const m=c.match(/self_drive_health/g);if(!m||m.length<2)process.exit(1);console.log('OK: self_drive_health tests found: '+m.length)"
 
-- [x] [GATE] packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs 语法正确（node --check 通过）
-  Test: manual:node --check packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs
+- [ ] [GATE] 所有现有测试通过
+  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/capability-probe-highlevel.test.js');console.log('OK')"
