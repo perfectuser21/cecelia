@@ -14,9 +14,11 @@
 
 ### 根本原因
 
-前一轮修复（cp-03242032-p0p1-arch-fixes）给 `dispatchToDevSkill` 加了失败次数上限（MAX_AUTO_FIX_ATTEMPTS=3）守卫，但 `capability-probe.js` 每次生成 signature 时拼入了 `Date.now()`，使每次 signature 完全不同。守卫查询"同 signature 历史失败任务"时永远返回 0，熔断守卫完全失效，probe 持续失败时无限创建 auto-fix 任务。
+前一轮修复（cp-03242032-p0p1-arch-fixes）给 `dispatchToDevSkill` 加了失败次数上限（MAX_AUTO_FIX_ATTEMPTS=3）守卫，但 `capability-probe.js` 每次生成 signature 时拼入了 `Date.now()`，使每次 signature 完全不同。
 
-同时原守卫只查 `status='failed'` 的任务，未查 `queued/in_progress` 状态，导致正在修复过程中的任务也无法阻止重复创建。
+守卫查询条件是"同 signature 的历史失败任务数"，由于每次 signature 不同，查询永远返回 0，失败次数上限永远不会触发，死循环无法被熔断。
+
+另外原守卫只查 `status='failed'` 的任务，未查 `queued/in_progress` 状态，导致正在修复中仍可无限创建新任务。两个漏洞叠加，使整个熔断机制形同虚设。
 
 ### 下次预防
 
