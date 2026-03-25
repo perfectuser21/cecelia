@@ -12,7 +12,11 @@
 
 ### 根本原因
 
-OKR 层级数据在 DB 中已完整，但没有端点把它们串联成树。用户每次对话都要重新解释背景，根本原因是缺少一个「项目全景视图」。
+OKR 层级数据在 DB 中已完整（areas → objectives → key_results → okr_projects → okr_scopes → okr_initiatives → tasks），但没有端点把它们串联成树。
+
+用户每次对话都要重新解释背景，因为没有任何可视化界面能一次展示完整的战略-执行链路。
+
+现有 `/api/brain/okr/tree` 只到 KR 层，缺少 Project/Scope/Initiative/Task 四层，导致执行侧完全不可见，是根本缺口所在。
 
 ### 查询设计
 
