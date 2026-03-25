@@ -7,7 +7,7 @@ import { buildRuminationPrompt } from '../rumination.js';
 
 describe('反刍系统隔离模式检测', () => {
   const mockMemoryBlock = '相关记忆上下文';
-  const mockNotebookContext = 'NotebookLM 补充知识';
+  const mockNotebookContext = '历史反刍上下文内容';
 
   it('包含隔离失败记录时应追加分析指令', () => {
     const learnings = [
@@ -122,7 +122,7 @@ describe('反刍系统隔离模式检测', () => {
 
     // 验证不包含可选的上下文部分
     expect(prompt).not.toContain('相关记忆上下文');
-    expect(prompt).not.toContain('NotebookLM 补充知识');
+    expect(prompt).not.toContain('历史反刍上下文');
 
     // 验证基本内容存在
     expect(prompt).toContain('隔离分析：测试任务');
