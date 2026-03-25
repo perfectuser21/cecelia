@@ -12,7 +12,8 @@
 /* global process, console */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, homedir } from 'path';
+import { join } from 'path';
+import { homedir } from 'os';
 import pg from 'pg';
 
 const { Pool } = pg;
