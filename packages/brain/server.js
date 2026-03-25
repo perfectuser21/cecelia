@@ -47,6 +47,7 @@ import selfDriveRoutes from './src/routes/self-drive.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
 import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
+import contextRoutes from './src/routes/context.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -158,6 +159,7 @@ app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/self-drive', selfDriveRoutes);
 app.use('/api/brain/okr', okrHierarchyRoutes);
+app.use('/api/brain/context', contextRoutes);
 app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 
@@ -181,6 +183,19 @@ app.get('/api/brain/scan-status', (_req, res) => {
   } catch (err) {
     console.error('[scan-status]', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/conversation-summary — 对话结束 summary 触发
+// Stop Hook 调用，触发 conversation-consolidator 写入 memory_stream
+app.post('/api/brain/conversation-summary', async (req, res) => {
+  try {
+    const { runConversationConsolidator } = await import('./src/conversation-consolidator.js');
+    await runConversationConsolidator();
+    res.json({ success: true, message: 'conversation summary triggered' });
+  } catch (err) {
+    console.error('[POST /api/brain/conversation-summary]', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

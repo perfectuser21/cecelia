@@ -19,6 +19,9 @@ version: "3.97.0"
 updated: "2026-03-24"
 # ci-trigger: 13.42.0
 changelog:
+  - version: "13.44.0"
+    date: "2026-03-25"
+    change: "stop.sh 加 session summary 触发（对话结束自动调 /api/brain/conversation-summary）"
 
 
 
