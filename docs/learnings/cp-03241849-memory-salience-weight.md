@@ -7,7 +7,10 @@
 
 ### 根本原因
 
-PR9 引入了 `salience_score` 字段到 `memory_stream` 表，但 memory-retriever.js 的评分公式未消费该字段。`loadConversationHistory` 虽然 SELECT 了 `salience_score`，但只将其折叠进 `relevance` 字段（`relevance: r.salience_score || 0.5`），没有作为独立的 `salience_score` 字段传入候选对象供评分公式使用。`searchEpisodicMemory` 的向量路径已在 PR9 对应修复中添加了 `salience_score`，但 Jaccard 降级路径遗漏了。
+PR9 引入了 `salience_score` 字段到 `memory_stream` 表，但 memory-retriever.js 的评分公式未消费该字段。
+`loadConversationHistory` 虽然 SELECT 了 `salience_score`，但只将其折叠进 `relevance` 字段（`relevance: r.salience_score || 0.5`），没有作为独立的 `salience_score` 字段传入候选对象供评分公式使用。
+`searchEpisodicMemory` 的向量路径已在 PR9 对应修复中添加了 `salience_score`，但 Jaccard 降级路径遗漏了。
+评分公式 `finalScore = relevance * timeDecay * modeW * dynW` 缺少 salience 乘数，导致 IN filter 标记的高价值记忆出去时没有优先权。
 
 ### 修复方法
 
