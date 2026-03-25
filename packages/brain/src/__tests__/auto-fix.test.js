@@ -340,10 +340,46 @@ describe('auto-fix.js', () => {
       evidence: 'Multiple timeout logs'
     };
 
-    // Guard query: 默认返回 0（未超限），让每个测试都能正常到达 createTask
+    // Guard queries: 默认返回 0，让每个测试都能正常到达 createTask
+    // Guard1(active_count) + Guard2(failed_count) 都返回 0（fallback 对两次查询均生效）
     beforeEach(() => {
       mockQuery.mockResolvedValue({ rows: [{ failed_count: '0' }] });
     });
+
+    // ===== Guard1: queued/in_progress 去重 =====
+
+    it('Guard1: 有 queued 任务时跳过派发（返回 null）', async () => {
+      // 覆盖第一次 query（Guard1）返回 active_count=1
+      mockQuery.mockResolvedValueOnce({ rows: [{ active_count: '1' }] });
+
+      const result = await dispatchToDevSkill(baseFailure, baseRca, 'sig-dup');
+
+      // queued/in_progress guard 阻止重复创建
+      expect(result).toBeNull();
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it('Guard1: 有 in_progress 任务时跳过派发（返回 null）', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ active_count: '2' }] });
+
+      const result = await dispatchToDevSkill(baseFailure, baseRca, 'sig-inprog');
+
+      expect(result).toBeNull();
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it('Guard1: queued/in_progress 为 0 时通过检查，继续派发', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ active_count: '0' }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ failed_count: '0' }] });
+      mockCreateTask.mockResolvedValueOnce({ success: true, task: { id: 'task-ok' } });
+
+      const result = await dispatchToDevSkill(baseFailure, baseRca, 'sig-pass');
+
+      expect(mockCreateTask).toHaveBeenCalledTimes(1);
+      expect(result).toBeTruthy();
+    });
+
+    // ===== 正常派发 =====
 
     it('正常派发：createTask 被调用一次', async () => {
       mockCreateTask.mockResolvedValueOnce({ success: true, task: { id: 'task-new' } });
