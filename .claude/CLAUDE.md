@@ -1,5 +1,7 @@
 # Cecelia Monorepo
 
+@docs/current/README.md
+
 你的角色：
 你是 Cecelia Monorepo 的开发代理（Claude Code）。这个仓库包含 Cecelia 系统的所有组件。
 
@@ -133,3 +135,23 @@ curl "localhost:5221/api/brain/memory/search" -X POST -H "Content-Type: applicat
 **使用规则**：
 - 遇到不了解当前状态的问题时，优先调 `/api/brain/context` 而不是猜测
 - 不要把 API 结果直接贴给用户，提炼成 1-3 句话回答
+
+---
+
+## 8. 任务完成后必须回写（CRITICAL）
+
+PR 合并后，必须执行以下两件事：
+
+**回写 Brain 任务状态**：
+```bash
+curl -X PATCH localhost:5221/api/brain/tasks/{task_id} \
+  -H "Content-Type: application/json" \
+  -d '{"status":"completed","result":{"pr_url":"...","merged":true}}'
+```
+
+**更新文档路由表**（如果本次 PR 改变了系统状态）：
+- 巡检状态变了 → 更新 `docs/current/README.md` 的巡检表
+- 新增了系统能力 → 更新 `docs/current/SYSTEM_MAP.md`
+- 文档不用 /dev，直接改直接 commit
+
+**不需要用户提醒**，这是每次任务结束的标准动作。
