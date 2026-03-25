@@ -5,9 +5,10 @@
 
 ### 根本原因
 
-CI routing-map.yml 的 `ci-helpers` 和 `ci-configuration` 使用具体文件列表而非 glob 模式，导致新增 `scripts/` 或 `ci/` 文件时不受路由保护（不触发相应 CI 检查）。同时 Brain-API proxy 层（parseIntent/parseAndCreate）缺少集成测试覆盖，proxy 配置错误无法被 CI 捕获。
-
-这些缺口来自 PR #1533（落后 27 commit 后关闭），本次提取其中最有价值的两个改动重新实现。
+CI routing-map.yml 的 `ci-helpers` 和 `ci-configuration` 使用具体文件列表而非 glob 模式，新增 `scripts/` 或 `ci/` 文件时不受路由保护，CI 不会对其触发检查。
+这是一种"枚举式维护"陷阱——每次加新文件都需要手动更新路由表，容易遗漏。
+同时 Brain-API proxy 层（parseIntent/parseAndCreate）缺少集成测试，proxy 配置错误（URL 错误、错误处理缺失）无法被 CI 捕获。
+以上缺口源于 PR #1533 因落后 27 commit 被关闭，有效改动未能合入 main。
 
 ### 修复方案
 
