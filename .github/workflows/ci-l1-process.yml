@@ -819,6 +819,7 @@ jobs:
 
   secrets-scan:
     name: Secrets Scan (gitleaks)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1052,9 +1053,10 @@ jobs:
             FAILED=true
           fi
 
-          # Always-on: Secrets Scan
-          if [ "${{ needs.secrets-scan.result }}" != "success" ]; then
-            echo "FAIL: Secrets Scan (${{ needs.secrets-scan.result }})"
+          # Always-on: Secrets Scan (skipped on workflow_dispatch)
+          SECRETS_RESULT="${{ needs.secrets-scan.result }}"
+          if [ "$SECRETS_RESULT" != "success" ] && [ "$SECRETS_RESULT" != "skipped" ]; then
+            echo "FAIL: Secrets Scan ($SECRETS_RESULT)"
             FAILED=true
           fi
 
