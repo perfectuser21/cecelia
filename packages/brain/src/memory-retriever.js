@@ -53,6 +53,13 @@ export const MODE_WEIGHT = {
 /** 默认 token 预算 */
 const DEFAULT_TOKEN_BUDGET = 800;
 
+/**
+ * salience_score 加权因子
+ * finalScore × (1 + salience_score × SALIENCE_WEIGHT)
+ * salience=1.0 时最多提升 50% 评分；salience=0 时不影响评分（向后兼容）
+ */
+export const SALIENCE_WEIGHT = 0.5;
+
 /** Chat 模式 token 预算（对话场景需要更丰富的上下文） */
 export const CHAT_TOKEN_BUDGET = 2500;
 
@@ -695,6 +702,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
 
         const vectorResult = await pool.query(`
           SELECT id, content, summary, l1_content, importance, memory_type, created_at,
+                 salience_score,
                  1 - (embedding <=> $1::vector) AS vector_score
           FROM memory_stream
           WHERE embedding IS NOT NULL
@@ -721,6 +729,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
               relevance: 0.4 + (row.vector_score || 0) * 0.6,
               created_at: row.created_at,
               importance: row.importance,
+              salience_score: row.salience_score || 0,
             });
             usedTokens += lineTokens;
           }
@@ -741,7 +750,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
     // ── Jaccard 降级路径（无 API key 或向量路径失败/无数据）──
     meta.fetchStatus = 'fallback_jaccard';
     const result = await pool.query(`
-      SELECT id, content, summary, l1_content, importance, memory_type, created_at
+      SELECT id, content, summary, l1_content, importance, memory_type, created_at, salience_score
       FROM memory_stream
       WHERE (source_type IS NULL OR source_type != 'self_model')
         AND (expires_at IS NULL OR expires_at > NOW())
@@ -798,6 +807,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
         relevance: 0.5 + row.l0Score,
         created_at: row.created_at,
         importance: row.importance,
+        salience_score: row.salience_score || 0,
       });
       usedTokens += lineTokens;
     }
@@ -1065,9 +1075,12 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     const halfLife = HALF_LIFE[source] || 30;
     const modeW = (MODE_WEIGHT[source] && MODE_WEIGHT[source][mode]) || 1.0;
     const dynW = dynamicMultipliers[source] || 1.0;
+    // salience_score 加权：来自 IN filter（PR9）标记的高价值记忆获得加分
+    // salience_score 为 null/undefined 时降级为 0（向后兼容）
+    const salienceBoost = 1 + (c.salience_score || 0) * SALIENCE_WEIGHT;
     return {
       ...c,
-      finalScore: c.relevance * timeDecay(c.created_at, halfLife) * modeW * dynW,
+      finalScore: c.relevance * timeDecay(c.created_at, halfLife) * modeW * dynW * salienceBoost,
     };
   });
 
