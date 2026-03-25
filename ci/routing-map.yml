@@ -133,4 +133,4 @@ subsystems:
       - .github/workflows/**
     layers: [l1]
     deploy: false
-    description: "GitHub Actions Workflows（CI L1-L4 流水线 + auto-version + deploy）"
+    description: "GitHub Actions Workflows（CI L1-L4 流水线 + auto-version + deploy + cleanup）"
