@@ -7,6 +7,8 @@
 
 import pool from './db.js';
 import { detectDomain } from './domain-detector.js';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
+import { createTask } from './actions.js';
 
 /**
  * 将高分 pending suggestions 分派为 suggestion_plan 任务
@@ -54,28 +56,8 @@ export async function dispatchPendingSuggestions(dbPool = pool, limit = 2) {
   let created = 0;
 
   for (const suggestion of toDispatch) {
-    const client = await dbPool.connect();
     try {
-      await client.query('BEGIN');
-
-      // 3. 创建 suggestion_plan 任务
-      const contentPreview = typeof suggestion.content === 'string'
-        ? suggestion.content.substring(0, 200)
-        : JSON.stringify(suggestion.content).substring(0, 200);
-
-      const taskTitle = `[SUGGESTION_PLAN] 层级识别：${contentPreview}`;
-      const taskDescription = `[SUGGESTION_MODE]
-
-Suggestion ID: ${suggestion.id}
-Score: ${suggestion.priority_score}
-Source: ${suggestion.source || 'unknown'}
-
-内容：
-${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(suggestion.content, null, 2)}
-
-请识别此 Suggestion 的层级（Layer 3 KR / Layer 4 Project / Layer 5 Scope / Layer 6 Initiative / Layer 7 Task/Pipeline），
-找到最合适的挂载点，并调用对应的 Brain API 创建结构。`;
-
+      // 3. 推断领域信息
       const contentStr = typeof suggestion.content === 'string'
         ? suggestion.content
         : JSON.stringify(suggestion.content);
@@ -84,43 +66,49 @@ ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(s
       const inferredDomain = detected.confidence > 0 ? detected.domain : null;
       const inferredOwnerRole = detected.confidence > 0 ? detected.owner_role : null;
 
-      const insertResult = await client.query(`
-        INSERT INTO tasks (
-          title, description, task_type, status, priority,
-          payload, domain, owner_role, created_at, updated_at
-        )
-        VALUES ($1, $2, 'suggestion_plan', 'queued', 'P2', $3, $4, $5, NOW(), NOW())
-        RETURNING id
-      `, [
-        taskTitle,
-        taskDescription,
-        JSON.stringify({
-          suggestion_id: String(suggestion.id),
-          suggestion_score: suggestion.priority_score,
-          source: suggestion.source || null,
-          agent_id: suggestion.agent_id || null,
-        }),
-        inferredDomain,
-        inferredOwnerRole
-      ]);
+      // 4. 通知丘脑（Thalamus）统一创建 suggestion_plan 任务
+      // 丘脑的 SUGGESTION_READY 处理器返回 create_task 决策，保证去重/速率限制由丘脑统一管控
+      const decision = await thalamusProcessEvent({
+        type: EVENT_TYPES.SUGGESTION_READY,
+        suggestion_id: String(suggestion.id),
+        content: suggestion.content,
+        priority_score: suggestion.priority_score,
+        source: suggestion.source || null,
+        agent_id: suggestion.agent_id || null,
+        domain: inferredDomain,
+        owner_role: inferredOwnerRole,
+      });
 
-      const newTaskId = insertResult.rows[0].id;
+      if (!decision) {
+        console.warn(`[suggestion-dispatcher] Thalamus returned null decision for suggestion ${suggestion.id}, skipping`);
+        continue;
+      }
 
-      // 4. 将 suggestion.status 改为 in_progress
-      await client.query(
+      // 5. 执行丘脑决策中的 create_task 动作（经由 actions.createTask，含 dedup 逻辑）
+      const createAction = decision.actions?.find(a => a.type === 'create_task');
+      if (!createAction) {
+        console.warn(`[suggestion-dispatcher] Thalamus decision has no create_task action for suggestion ${suggestion.id}`);
+        continue;
+      }
+
+      const result = await createTask(createAction.params);
+      const newTaskId = result?.task?.id;
+
+      if (!newTaskId) {
+        console.warn(`[suggestion-dispatcher] createTask returned no task id for suggestion ${suggestion.id} (deduplicated=${result?.deduplicated})`);
+        continue;
+      }
+
+      // 6. 更新 suggestion 状态为 in_progress（suggestion 表管理，不是任务创建权）
+      await dbPool.query(
         `UPDATE suggestions SET status = 'in_progress', updated_at = NOW() WHERE id = $1`,
         [suggestion.id]
       );
 
-      await client.query('COMMIT');
-
-      console.log(`[suggestion-dispatcher] Created suggestion_plan task ${newTaskId} for suggestion ${suggestion.id} (score=${suggestion.priority_score})`);
+      console.log(`[suggestion-dispatcher] Thalamus created suggestion_plan task ${newTaskId} for suggestion ${suggestion.id} (score=${suggestion.priority_score})`);
       created++;
     } catch (err) {
-      await client.query('ROLLBACK');
       console.error(`[suggestion-dispatcher] Failed to dispatch suggestion ${suggestion.id}: ${err.message}`);
-    } finally {
-      client.release();
     }
   }
 
