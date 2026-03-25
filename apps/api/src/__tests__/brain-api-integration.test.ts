@@ -45,7 +45,7 @@ describe('Brain↔Frontend API Integration', () => {
     // 直接模拟 Brain API 调用行为（不通过实际 proxy）
     const brainUrl = 'http://localhost:5221/api/brain/tasks?status=pending&limit=5';
     const response = await fetch(brainUrl);
-    const data = await response.json();
+    const data = await response.json() as Array<Record<string, unknown>>;
 
     expect(response.ok).toBe(true);
     expect(Array.isArray(data)).toBe(true);
