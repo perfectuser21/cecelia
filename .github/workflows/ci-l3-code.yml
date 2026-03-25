@@ -255,6 +255,9 @@ jobs:
             exit $EXIT_CODE
           fi
 
+      - name: Check Brain coverage completeness
+        run: node packages/engine/scripts/devgate/check-coverage-completeness.mjs
+
   # ─── Engine L3: TypeCheck / Tests / Build / Shell / Evidence ──────────
 
   engine-l3:
