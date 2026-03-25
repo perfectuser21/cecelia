@@ -8,52 +8,76 @@ vi.mock('../db.js', () => ({
   }
 }));
 
+// Mock thalamus: suggestion-dispatcher 现在通过丘脑创建任务
+vi.mock('../thalamus.js', () => ({
+  processEvent: vi.fn(),
+  EVENT_TYPES: { SUGGESTION_READY: 'suggestion_ready' }
+}));
+
+// Mock actions.js: createTask 由丘脑决策驱动
+vi.mock('../actions.js', () => ({
+  createTask: vi.fn()
+}));
+
+// Mock domain-detector.js
+vi.mock('../domain-detector.js', () => ({
+  detectDomain: vi.fn().mockReturnValue({ domain: 'coding', owner_role: 'cto', confidence: 0.8 })
+}));
+
 import { dispatchPendingSuggestions } from '../suggestion-dispatcher.js';
+import { processEvent as thalamusProcessEvent } from '../thalamus.js';
+import { createTask } from '../actions.js';
+
+function makeThalamusDecision(suggestionId = 'sug-1', score = 0.85) {
+  return {
+    level: 0,
+    actions: [
+      {
+        type: 'create_task',
+        params: {
+          title: `[SUGGESTION_PLAN] 层级识别`,
+          task_type: 'suggestion_plan',
+          priority: 'P2',
+          trigger_source: 'suggestion_dispatcher',
+          payload: { suggestion_id: String(suggestionId), suggestion_score: score },
+        }
+      }
+    ],
+    rationale: 'test',
+    confidence: 0.9,
+  };
+}
 
 /**
- * 构造一个完整的 mock pool，支持 query + connect/transaction
+ * 构造一个简化 mock pool（新架构不使用 client.connect/transaction）
  */
-function buildMockPool({
-  candidates = [],
-  inFlight = [],
-  insertedTaskId = 'task-123'
-} = {}) {
-  const client = {
-    query: vi.fn(async (sql, params) => {
-      if (sql.trim().startsWith('BEGIN') || sql.trim().startsWith('COMMIT') || sql.trim().startsWith('ROLLBACK')) {
-        return { rows: [] };
+function buildMockPool({ candidates = [], inFlight = [] } = {}) {
+  return {
+    query: vi.fn(async (sql) => {
+      if (sql.includes("status = 'pending'") && sql.includes('priority_score >= 0.68')) {
+        return { rows: candidates };
       }
-      if (sql.includes('INSERT INTO tasks')) {
-        return { rows: [{ id: insertedTaskId }] };
+      if (sql.includes("task_type = 'suggestion_plan'") && sql.includes('queued')) {
+        return { rows: inFlight };
       }
       if (sql.includes('UPDATE suggestions')) {
         return { rows: [], rowCount: 1 };
       }
       return { rows: [] };
     }),
-    release: vi.fn()
-  };
-
-  return {
-    query: vi.fn(async (sql, params) => {
-      // Candidates query
-      if (sql.includes("status = 'pending'") && sql.includes('priority_score >= 0.68')) {
-        return { rows: candidates };
-      }
-      // In-flight dedup query
-      if (sql.includes("task_type = 'suggestion_plan'") && sql.includes('queued')) {
-        return { rows: inFlight };
-      }
-      return { rows: [] };
-    }),
-    connect: vi.fn(async () => client),
-    _client: client
   };
 }
 
 describe('suggestion-dispatcher', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 默认：丘脑返回 create_task 决策
+    thalamusProcessEvent.mockResolvedValue(makeThalamusDecision());
+    createTask.mockResolvedValue({
+      success: true,
+      task: { id: 'task-123' },
+      deduplicated: false,
+    });
   });
 
   it('D1: 没有 pending suggestions 时返回 0', async () => {
@@ -67,20 +91,19 @@ describe('suggestion-dispatcher', () => {
       { id: 'sug-1', content: '优化任务调度性能', priority_score: 0.85, source: 'agent_feedback', agent_id: null },
     ];
     const pool = buildMockPool({ candidates });
+    thalamusProcessEvent.mockResolvedValue(makeThalamusDecision('sug-1', 0.85));
 
     const result = await dispatchPendingSuggestions(pool, 2);
     expect(result).toBe(1);
 
-    // 验证 INSERT 被调用
-    const insertCall = pool._client.query.mock.calls.find(call =>
-      typeof call[0] === 'string' && call[0].includes('INSERT INTO tasks')
-    );
-    expect(insertCall).toBeTruthy();
+    // 验证丘脑被调用
+    expect(thalamusProcessEvent).toHaveBeenCalledOnce();
+    expect(createTask).toHaveBeenCalledOnce();
 
-    // 验证 payload 包含 suggestion_id
-    const payload = JSON.parse(insertCall[1][2]);
-    expect(payload.suggestion_id).toBe('sug-1');
-    expect(payload.suggestion_score).toBe(0.85); // priority_score 值
+    // 验证 payload 包含 suggestion_id 和 suggestion_score
+    const createTaskParams = createTask.mock.calls[0][0];
+    expect(createTaskParams.payload.suggestion_id).toBe('sug-1');
+    expect(createTaskParams.payload.suggestion_score).toBe(0.85);
   });
 
   it('D1: suggestion.status 改为 in_progress', async () => {
@@ -92,11 +115,10 @@ describe('suggestion-dispatcher', () => {
     await dispatchPendingSuggestions(pool, 2);
 
     // 验证 UPDATE suggestions SET status = 'in_progress'
-    const updateCall = pool._client.query.mock.calls.find(call =>
+    const updateCall = pool.query.mock.calls.find(call =>
       typeof call[0] === 'string' && call[0].includes('UPDATE suggestions')
     );
     expect(updateCall).toBeTruthy();
-    // 第一个参数是 suggestion id
     expect(updateCall[1][0]).toBe('sug-2');
   });
 
@@ -109,6 +131,7 @@ describe('suggestion-dispatcher', () => {
 
     const result = await dispatchPendingSuggestions(pool, 2);
     expect(result).toBe(0);
+    expect(thalamusProcessEvent).not.toHaveBeenCalled();
   });
 
   it('D1: 最多处理 limit 条', async () => {
@@ -121,6 +144,7 @@ describe('suggestion-dispatcher', () => {
 
     const result = await dispatchPendingSuggestions(pool, 2); // limit=2
     expect(result).toBe(2); // 只处理前 2 条
+    expect(thalamusProcessEvent).toHaveBeenCalledTimes(2);
   });
 
   it('D1: 单个任务失败不影响其他任务', async () => {
@@ -128,31 +152,14 @@ describe('suggestion-dispatcher', () => {
       { id: 'sug-7', content: '会失败的建议', priority_score: 0.9, source: null, agent_id: null },
       { id: 'sug-8', content: '正常建议', priority_score: 0.85, source: null, agent_id: null },
     ];
+    const pool = buildMockPool({ candidates });
 
     let callCount = 0;
-    const client = {
-      query: vi.fn(async (sql) => {
-        if (sql.trim().startsWith('BEGIN')) {
-          callCount++;
-          if (callCount === 1) throw new Error('模拟第一次事务失败');
-          return { rows: [] };
-        }
-        if (sql.includes('COMMIT') || sql.includes('ROLLBACK')) return { rows: [] };
-        if (sql.includes('INSERT INTO tasks')) return { rows: [{ id: 'task-new' }] };
-        if (sql.includes('UPDATE suggestions')) return { rows: [], rowCount: 1 };
-        return { rows: [] };
-      }),
-      release: vi.fn()
-    };
-
-    const pool = {
-      query: vi.fn(async (sql) => {
-        if (sql.includes("status = 'pending'")) return { rows: candidates };
-        if (sql.includes("task_type = 'suggestion_plan'")) return { rows: [] };
-        return { rows: [] };
-      }),
-      connect: vi.fn(async () => client)
-    };
+    thalamusProcessEvent.mockImplementation(async (event) => {
+      callCount++;
+      if (callCount === 1) throw new Error('模拟丘脑第一次失败');
+      return makeThalamusDecision(event.suggestion_id);
+    });
 
     const result = await dispatchPendingSuggestions(pool, 2);
     // 第一条失败，第二条成功 → 返回 1

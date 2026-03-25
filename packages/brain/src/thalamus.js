@@ -252,6 +252,9 @@ const EVENT_TYPES = {
 
   // 学习相关
   LEARNINGS_RECEIVED: 'learnings_received',
+
+  // 建议相关（suggestion-dispatcher → 丘脑统一创建任务）
+  SUGGESTION_READY: 'suggestion_ready',
 };
 
 // ============================================================
@@ -1360,6 +1363,43 @@ function quickRoute(event) {
         { type: 'dispatch_task', params: { trigger: 'dependency_met', dependent_id: event.dependent_id } }
       ],
       rationale: '依赖满足，触发下游任务',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // Suggestion 就绪：由丘脑统一创建 suggestion_plan 任务，断开直接 INSERT 路径
+  if (event.type === EVENT_TYPES.SUGGESTION_READY) {
+    const contentPreview = typeof event.content === 'string'
+      ? event.content.substring(0, 200)
+      : JSON.stringify(event.content).substring(0, 200);
+    const fullContent = typeof event.content === 'string'
+      ? event.content
+      : JSON.stringify(event.content, null, 2);
+    return {
+      level: 0,
+      actions: [
+        {
+          type: 'create_task',
+          params: {
+            title: `[SUGGESTION_PLAN] 层级识别：${contentPreview}`,
+            description: `[SUGGESTION_MODE]\n\nSuggestion ID: ${event.suggestion_id}\nScore: ${event.priority_score}\nSource: ${event.source || 'unknown'}\n\n内容：\n${fullContent}\n\n请识别此 Suggestion 的层级（Layer 3 KR / Layer 4 Project / Layer 5 Scope / Layer 6 Initiative / Layer 7 Task/Pipeline），\n找到最合适的挂载点，并调用对应的 Brain API 创建结构。`,
+            task_type: 'suggestion_plan',
+            priority: 'P2',
+            trigger_source: 'suggestion_dispatcher',
+            payload: {
+              suggestion_id: String(event.suggestion_id),
+              suggestion_score: event.priority_score,
+              source: event.source || null,
+              agent_id: event.agent_id || null,
+            },
+            domain: event.domain || null,
+            owner_role: event.owner_role || null,
+          }
+        },
+        { type: 'log_event', params: { event_type: 'suggestion_ready', suggestion_id: event.suggestion_id } },
+      ],
+      rationale: `Suggestion ${event.suggestion_id} 分数=${event.priority_score}，创建 suggestion_plan 任务`,
       confidence: 0.9,
       safety: false
     };
