@@ -64,7 +64,7 @@ jobs:
   brain-integration:
     name: Brain Integration (Shard ${{ matrix.shard }})
     needs: changes
-    if: needs.changes.outputs.brain == 'true'
+    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -273,7 +273,7 @@ jobs:
   workspace-integration:
     name: Workspace Integration Tests
     needs: changes
-    if: needs.changes.outputs.workspace == 'true'
+    if: needs.changes.outputs.workspace == 'true' || needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -307,7 +307,7 @@ jobs:
   devgate-checks:
     name: L4 DevGate Quality Checks
     needs: [changes, brain-integration]
-    if: github.event_name == 'pull_request' && needs.changes.outputs.brain == 'true' && needs.brain-integration.result == 'success'
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true') && needs.brain-integration.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -369,22 +369,24 @@ jobs:
 
           FAILED=false
 
-          if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
+          # cross-integration: brain 或 workspace 变更时，两个集成测试都必须通过
+          if [ "${{ needs.changes.outputs.brain }}" = "true" ] || [ "${{ needs.changes.outputs.workspace }}" = "true" ]; then
             if [ "${{ needs.brain-integration.result }}" != "success" ]; then
               echo "FAIL: Brain Integration Tests (${{ needs.brain-integration.result }})"
               FAILED=true
             fi
-            DEVGATE_RESULT="${{ needs.devgate-checks.result }}"
-            if [ "$DEVGATE_RESULT" != "success" ] && [ "$DEVGATE_RESULT" != "skipped" ]; then
-              echo "FAIL: DevGate Quality Checks ($DEVGATE_RESULT)"
+            WS_RESULT="${{ needs.workspace-integration.result }}"
+            if [ "$WS_RESULT" != "success" ] && [ "$WS_RESULT" != "skipped" ]; then
+              echo "FAIL: Workspace Integration Tests ($WS_RESULT)"
               FAILED=true
             fi
           fi
 
-          if [ "${{ needs.changes.outputs.workspace }}" = "true" ]; then
-            WS_RESULT="${{ needs.workspace-integration.result }}"
-            if [ "$WS_RESULT" != "success" ] && [ "$WS_RESULT" != "skipped" ]; then
-              echo "FAIL: Workspace Integration Tests ($WS_RESULT)"
+          # devgate 只在 brain 变更（含 workspace 触发的 brain 集成）时运行
+          if [ "${{ needs.changes.outputs.brain }}" = "true" ] || [ "${{ needs.changes.outputs.workspace }}" = "true" ]; then
+            DEVGATE_RESULT="${{ needs.devgate-checks.result }}"
+            if [ "$DEVGATE_RESULT" != "success" ] && [ "$DEVGATE_RESULT" != "skipped" ]; then
+              echo "FAIL: DevGate Quality Checks ($DEVGATE_RESULT)"
               FAILED=true
             fi
           fi
