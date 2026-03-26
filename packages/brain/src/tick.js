@@ -28,6 +28,7 @@ import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview, triggerContractScan, triggerArchReview } from './daily-review-scheduler.js';
 import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
 import { runConversationDigest } from './conversation-digest.js';
+import { runCaptureDigestion } from './capture-digestion.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
@@ -2680,6 +2681,10 @@ async function executeTick() {
   // 10.3 对话日志提炼（每 5 分钟扫描 ~/.claude-account1/projects/ .jsonl 文件）
   Promise.resolve().then(() => runConversationDigest())
     .catch(e => console.warn('[tick] conversation digest 失败:', e.message));
+
+  // 10.4 Capture 消化（扫描 inbox captures → LLM 拆解为 atoms）
+  Promise.resolve().then(() => runCaptureDigestion())
+    .catch(e => console.warn('[tick] capture digestion 失败:', e.message));
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });
