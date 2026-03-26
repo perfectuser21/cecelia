@@ -13,9 +13,122 @@ import pool from './db.js';
 
 const router = Router();
 
-// GET /api/tasks/full-tree
-// Query params: area_id (可选，只返回指定 area)
+// GET /api/tasks/full-tree?view=okr
+// 返回 Vision → Area → Objective → KR 四层结构（聚焦 OKR 视图）
 router.get('/', async (req, res) => {
+  if (req.query.view === 'okr') {
+    return handleOkrView(req, res);
+  }
+  return handleFullTree(req, res);
+});
+
+async function handleOkrView(_req, res) {
+  try {
+    // ── 1. Visions ──────────────────────────────────────
+    const visionsResult = await pool.query(
+      `SELECT v.id, v.title, v.status, v.description,
+              COALESCE(v.owner_role, '') AS owner_role,
+              v.start_date, v.end_date
+       FROM visions v
+       WHERE v.status != 'archived'
+       ORDER BY v.title`
+    );
+    const visions = visionsResult.rows;
+    if (visions.length === 0) return res.json([]);
+
+    // ── 2. Areas（通过 objectives 关联到 vision）──────────
+    const visionIds = visions.map(v => v.id);
+    const areasResult = await pool.query(
+      `SELECT DISTINCT a.id, a.name AS title, 'active' AS status,
+              NULL::date AS start_date, NULL::date AS end_date,
+              NULL::text AS description, NULL::text AS owner_role,
+              NULL::text AS priority,
+              o_link.vision_id
+       FROM areas a
+       INNER JOIN objectives o_link ON o_link.area_id = a.id
+            AND o_link.vision_id = ANY($1)
+            AND o_link.status != 'archived'
+       WHERE a.archived = false
+       ORDER BY a.name`,
+      [visionIds]
+    );
+    const areas = areasResult.rows;
+    const areaIds = [...new Set(areas.map(a => a.id))];
+
+    if (areaIds.length === 0) {
+      return res.json(visions.map(v => ({ ...v, type: 'vision', children: [] })));
+    }
+
+    // ── 3. Objectives ─────────────────────────────────────
+    const objectivesResult = await pool.query(
+      `SELECT o.id, o.title, o.status, o.area_id, o.vision_id,
+              COALESCE(o.owner_role, '') AS owner_role,
+              o.start_date, o.end_date, o.description, o.priority,
+              o.created_at
+       FROM objectives o
+       WHERE o.area_id = ANY($1) AND o.status != 'archived'
+       ORDER BY o.created_at DESC`,
+      [areaIds]
+    );
+    const objectives = objectivesResult.rows;
+    const objIds = objectives.map(o => o.id);
+
+    // ── 4. Key Results ─────────────────────────────────────
+    let krs = [];
+    if (objIds.length > 0) {
+      const krsResult = await pool.query(
+        `SELECT kr.id, kr.title, kr.status, kr.objective_id,
+                kr.current_value, kr.target_value, kr.unit,
+                COALESCE(ROUND((kr.current_value::numeric / NULLIF(kr.target_value::numeric,0)) * 100), 0)::int AS progress,
+                COALESCE(kr.owner_role, '') AS owner_role,
+                kr.start_date, kr.end_date, kr.description, kr.priority,
+                kr.created_at
+         FROM key_results kr
+         WHERE kr.objective_id = ANY($1)
+         ORDER BY kr.created_at DESC`,
+        [objIds]
+      );
+      krs = krsResult.rows;
+    }
+
+    // ── 5. 组装树 ──────────────────────────────────────────
+    const krsByObj = {};
+    for (const k of krs) {
+      if (!krsByObj[k.objective_id]) krsByObj[k.objective_id] = [];
+      krsByObj[k.objective_id].push({ ...k, type: 'kr', children: [] });
+    }
+
+    const objsByArea = {};
+    for (const o of objectives) {
+      if (!objsByArea[o.area_id]) objsByArea[o.area_id] = [];
+      objsByArea[o.area_id].push({ ...o, type: 'objective', children: krsByObj[o.id] || [] });
+    }
+
+    // Areas 按 vision_id 分组（一个 area 可属于多个 vision）
+    const areasByVision = {};
+    for (const a of areas) {
+      const vId = a.vision_id;
+      if (!areasByVision[vId]) areasByVision[vId] = {};
+      if (!areasByVision[vId][a.id]) {
+        areasByVision[vId][a.id] = {
+          ...a, type: 'area',
+          children: objsByArea[a.id] || [],
+        };
+      }
+    }
+
+    const tree = visions.map(v => ({
+      ...v, type: 'vision',
+      children: Object.values(areasByVision[v.id] || {}),
+    }));
+
+    return res.json(tree);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load OKR view', details: err.message });
+  }
+}
+
+async function handleFullTree(req, res) {
   try {
     const { area_id } = req.query;
 
@@ -227,12 +340,12 @@ router.get('/', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to load full tree', details: err.message });
   }
-});
+}
 
 // PATCH /api/tasks/full-tree/:nodeType/:id — inline 编辑（status/title）
 router.patch('/:nodeType/:id', async (req, res) => {
   const { nodeType, id } = req.params;
-  const { status, title } = req.body;
+  const { status, title, description } = req.body;
 
   const TABLE_MAP = {
     vision: 'visions',
@@ -251,6 +364,7 @@ router.patch('/:nodeType/:id', async (req, res) => {
   let idx = 1;
   if (title !== undefined) { updates.push(`title = $${idx++}`); params.push(title); }
   if (status !== undefined) { updates.push(`status = $${idx++}`); params.push(status); }
+  if (description !== undefined) { updates.push(`description = $${idx++}`); params.push(description); }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push('updated_at = NOW()');
   params.push(id);
