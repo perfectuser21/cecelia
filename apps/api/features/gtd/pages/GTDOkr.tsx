@@ -1,34 +1,168 @@
 /**
- * GTD OKR — Notion 风格 OKR 数据库视图（层级：Area OKR → KR）
- * 数据源: /api/tasks/goals
+ * GTD OKR — 完整 OKR 层级树（Area → Objective → KR → Project → Scope → Initiative）
+ * 数据源: /api/tasks/full-tree
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Target } from 'lucide-react';
-import DatabaseView, { StatusBadge, PriorityBadge, ProgressBar, type Column } from '../components/DatabaseView';
+import { useState, useEffect, useCallback } from 'react';
+import { Target, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
 
-interface Goal {
+const TYPE_CONFIG: Record<string, { label: string; cls: string }> = {
+  area:       { label: 'AREA', cls: 'bg-violet-500/15 text-violet-400' },
+  objective:  { label: 'OBJ',  cls: 'bg-purple-500/15 text-purple-400' },
+  kr:         { label: 'KR',   cls: 'bg-blue-500/15 text-blue-400' },
+  project:    { label: 'PRJ',  cls: 'bg-emerald-500/15 text-emerald-400' },
+  scope:      { label: 'SCP',  cls: 'bg-yellow-500/15 text-yellow-500' },
+  initiative: { label: 'INI',  cls: 'bg-cyan-500/15 text-cyan-400' },
+};
+
+const STATUS_OPTIONS = ['active', 'in_progress', 'pending', 'completed', 'paused'];
+const STATUS_LABELS: Record<string, string> = {
+  active: '活跃', in_progress: '进行中', pending: '待开始', completed: '已完成', paused: '暂停',
+};
+const STATUS_STYLES: Record<string, string> = {
+  active:      'bg-emerald-500/15 text-emerald-400',
+  in_progress: 'bg-blue-500/15 text-blue-400',
+  completed:   'bg-emerald-500/15 text-emerald-400',
+  pending:     'bg-slate-500/15 text-slate-400',
+  paused:      'bg-amber-500/15 text-amber-400',
+};
+
+interface TreeNode {
   id: string;
   title: string;
   status: string;
-  priority: string;
-  progress: number;
   type: string;
-  parent_id: string | null;
-  weight: number;
+  progress?: number;
+  children: TreeNode[];
+}
+
+function TreeRow({
+  node,
+  depth,
+  defaultExpanded,
+  onStatusChange,
+}: {
+  node: TreeNode;
+  depth: number;
+  defaultExpanded: boolean;
+  onStatusChange: (nodeType: string, id: string, status: string) => Promise<void>;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [editing, setEditing] = useState(false);
+  const [status, setStatus] = useState(node.status);
+  const [saving, setSaving] = useState(false);
+
+  const hasChildren = node.children.length > 0;
+  const typeInfo = TYPE_CONFIG[node.type] ?? { label: node.type.toUpperCase(), cls: 'bg-slate-500/15 text-slate-400' };
+
+  const handleStatusChange = async (newStatus: string) => {
+    if (newStatus === status) { setEditing(false); return; }
+    setSaving(true);
+    try {
+      await onStatusChange(node.type, node.id, newStatus);
+      setStatus(newStatus);
+    } finally {
+      setSaving(false);
+      setEditing(false);
+    }
+  };
+
+  return (
+    <>
+      <div
+        className={`group flex items-center gap-2 border-b border-slate-800/40 text-sm transition-colors hover:bg-slate-800/30 ${
+          depth > 0 ? 'bg-slate-900/20' : ''
+        }`}
+        style={{ paddingTop: '8px', paddingBottom: '8px', paddingRight: '16px', paddingLeft: `${16 + depth * 20}px` }}
+      >
+        {/* expand toggle */}
+        <button
+          className="w-5 h-5 flex items-center justify-center shrink-0 text-slate-500 hover:text-slate-300"
+          onClick={() => hasChildren && setExpanded(e => !e)}
+        >
+          {hasChildren
+            ? expanded
+              ? <ChevronDown className="w-3.5 h-3.5" />
+              : <ChevronRight className="w-3.5 h-3.5" />
+            : <span className="w-3.5 h-3.5" />}
+        </button>
+
+        {/* type badge */}
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${typeInfo.cls}`}>
+          {typeInfo.label}
+        </span>
+
+        {/* title */}
+        <span className={`flex-1 truncate ${depth === 0 ? 'text-gray-100 font-medium' : 'text-gray-300'}`}>
+          {node.title}
+        </span>
+
+        {/* progress (kr only) */}
+        {node.type === 'kr' && node.progress !== undefined && (
+          <span className="text-[11px] text-slate-500 tabular-nums w-10 text-right shrink-0">
+            {node.progress}%
+          </span>
+        )}
+
+        {/* status badge / inline edit */}
+        <div className="shrink-0 relative">
+          {editing ? (
+            <select
+              autoFocus
+              className="text-xs bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-gray-300 focus:outline-none"
+              defaultValue={status}
+              onBlur={() => setEditing(false)}
+              onChange={(e) => handleStatusChange(e.target.value)}
+            >
+              {STATUS_OPTIONS.map(s => (
+                <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+              ))}
+            </select>
+          ) : (
+            <button
+              className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full cursor-pointer hover:opacity-80 ${
+                STATUS_STYLES[status] ?? STATUS_STYLES.pending
+              } ${saving ? 'opacity-50' : ''}`}
+              onClick={() => setEditing(true)}
+              title="点击修改状态"
+            >
+              {saving ? '...' : (STATUS_LABELS[status] ?? status)}
+            </button>
+          )}
+        </div>
+
+        {/* children count */}
+        {hasChildren && (
+          <span className="text-[10px] text-slate-600 shrink-0 w-6 text-right">
+            {node.children.length}
+          </span>
+        )}
+      </div>
+
+      {expanded && hasChildren && node.children.map(child => (
+        <TreeRow
+          key={child.id}
+          node={child}
+          depth={depth + 1}
+          defaultExpanded={depth < 1}
+          onStatusChange={onStatusChange}
+        />
+      ))}
+    </>
+  );
 }
 
 export default function GTDOkr() {
-  const [goals, setGoals] = useState<Goal[]>([]);
+  const [tree, setTree] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/tasks/goals');
-      setGoals(res.ok ? await res.json() : []);
+      const res = await fetch('/api/tasks/full-tree');
+      setTree(res.ok ? await res.json() : []);
     } catch {
-      setGoals([]);
+      setTree([]);
     } finally {
       setLoading(false);
     }
@@ -36,122 +170,56 @@ export default function GTDOkr() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const areaOkrs = useMemo(() => goals.filter(g => g.type === 'area_okr' && !g.parent_id), [goals]);
-  const subOkrs = useMemo(() => goals.filter(g => g.type === 'area_okr' && g.parent_id), [goals]);
-  const krs = useMemo(() => goals.filter(g => g.type === 'kr'), [goals]);
-
-  const getChildren = useCallback((row: Goal): Goal[] => {
-    if (row.type === 'area_okr') {
-      const childOkrs = subOkrs.filter(s => s.parent_id === row.id);
-      const childKrs = krs.filter(k => k.parent_id === row.id);
-      return [...childOkrs, ...childKrs];
-    }
-    return [];
-  }, [subOkrs, krs]);
-
-  const columns: Column<Goal>[] = useMemo(() => [
-    {
-      key: 'title',
-      label: '标题',
-      sortable: true,
-      render: (row) => (
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
-            row.type === 'kr'
-              ? 'bg-blue-500/10 text-blue-400'
-              : 'bg-purple-500/10 text-purple-400'
-          }`}>
-            {row.type === 'kr' ? 'KR' : 'OKR'}
-          </span>
-          <span className={`truncate ${row.type === 'kr' ? 'text-gray-300' : 'text-gray-100 font-medium'}`}>
-            {row.title}
-          </span>
-        </div>
-      ),
-      getValue: (row) => row.title,
-    },
-    {
-      key: 'status',
-      label: '状态',
-      width: 'w-24',
-      align: 'center',
-      sortable: true,
-      render: (row) => <StatusBadge status={row.status} />,
-      getValue: (row) => row.status,
-    },
-    {
-      key: 'priority',
-      label: '优先级',
-      width: 'w-16',
-      align: 'center',
-      sortable: true,
-      render: (row) => <PriorityBadge priority={row.priority} />,
-      getValue: (row) => row.priority,
-    },
-    {
-      key: 'progress',
-      label: '进度',
-      width: 'w-32',
-      align: 'right',
-      sortable: true,
-      render: (row) => <ProgressBar value={row.progress} />,
-      getValue: (row) => row.progress,
-    },
-    {
-      key: 'children_count',
-      label: 'KR',
-      width: 'w-12',
-      align: 'right',
-      render: (row) => {
-        const count = krs.filter(k => k.parent_id === row.id).length;
-        return count > 0 ? <span className="text-[11px] text-slate-500">{count}</span> : null;
-      },
-    },
-  ], [krs]);
-
-  const statsKrs = krs.length;
-  const statsInProgress = krs.filter(k => k.status === 'in_progress').length;
+  const handleStatusChange = useCallback(async (nodeType: string, id: string, status: string) => {
+    await fetch(`/api/tasks/full-tree/${nodeType}/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+  }, []);
 
   return (
-    <DatabaseView
-      title="OKR"
-      icon={<Target className="w-4 h-4 text-slate-400" />}
-      columns={columns}
-      data={areaOkrs}
-      loading={loading}
-      getRowId={(row) => row.id}
-      getChildren={getChildren}
-      searchFilter={(row, q) => row.title.toLowerCase().includes(q.toLowerCase())}
-      searchPlaceholder="搜索 OKR..."
-      filterOptions={[
-        {
-          key: 'status',
-          label: '状态',
-          values: [
-            { value: 'in_progress', label: '进行中' },
-            { value: 'pending', label: '待开始' },
-            { value: 'completed', label: '已完成' },
-            { value: 'paused', label: '暂停' },
-          ],
-        },
-        {
-          key: 'priority',
-          label: '优先级',
-          values: [
-            { value: 'P0', label: 'P0' },
-            { value: 'P1', label: 'P1' },
-            { value: 'P2', label: 'P2' },
-          ],
-        },
-      ]}
-      emptyText="暂无 OKR 数据"
-      footer={
-        <>
-          <span>{areaOkrs.length + subOkrs.length} 个 OKR</span>
-          <span>{statsKrs} 个 KR</span>
-          <span>{statsInProgress} 个进行中</span>
-        </>
-      }
-    />
+    <div className="h-full flex flex-col overflow-hidden bg-slate-900">
+      {/* 工具栏 */}
+      <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-slate-800">
+        <Target className="w-4 h-4 text-slate-400" />
+        <span className="text-sm font-medium text-gray-200">OKR 全树</span>
+        {!loading && (
+          <span className="text-xs text-slate-500">{tree.length} 个 Area</span>
+        )}
+      </div>
+
+      {/* 数据行 */}
+      <div className="flex-1 overflow-auto">
+        {loading ? (
+          <div className="flex items-center justify-center h-32 text-slate-500 text-sm">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            加载中...
+          </div>
+        ) : tree.length === 0 ? (
+          <div className="flex items-center justify-center h-32 text-slate-500 text-sm">
+            暂无 OKR 数据
+          </div>
+        ) : (
+          tree.map(node => (
+            <TreeRow
+              key={node.id}
+              node={node}
+              depth={0}
+              defaultExpanded={true}
+              onStatusChange={handleStatusChange}
+            />
+          ))
+        )}
+      </div>
+
+      {/* 底部统计 */}
+      {!loading && tree.length > 0 && (
+        <div className="shrink-0 px-4 py-2 text-xs text-slate-600 border-t border-slate-800 flex items-center gap-4">
+          <span>{tree.length} 个 Area</span>
+          <span>点击状态可编辑</span>
+        </div>
+      )}
+    </div>
   );
 }

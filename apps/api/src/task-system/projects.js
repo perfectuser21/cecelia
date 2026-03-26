@@ -26,28 +26,42 @@ export function validateTransition(from, to) {
   return { valid: true };
 }
 
-// GET /api/projects - List projects（代理到 Brain /api/brain/projects）
+// GET /api/tasks/projects — 查询 okr_projects（type:'project'）+ okr_initiatives（type:'initiative'）
 router.get('/', async (req, res) => {
   try {
-    const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
-    const qs = new URLSearchParams(req.query).toString();
-    const url = `${BRAIN_API}/api/brain/projects${qs ? '?' + qs : ''}`;
-    const upstream = await fetch(url);
-    if (!upstream.ok) {
-      const text = await upstream.text();
-      return res.status(upstream.status).json({ error: 'Brain projects unavailable', details: text });
-    }
-    const data = await upstream.json();
-    // 映射字段：Brain initiatives → 前端期望的 project 结构
-    const projects = data.map(p => ({
-      ...p,
-      name: p.title,
-      type: 'initiative',
-      priority: p.priority ?? 'P2',
-      parent_id: p.parent_id ?? null,
-      execution_mode: p.metadata?.execution_mode ?? null,
-    }));
-    res.json(projects);
+    const { area_id, status, limit } = req.query;
+    const params = [];
+    let idx = 1;
+
+    const statusCond = status ? `AND p.status = $${idx}` : '';
+    if (status) { params.push(status); idx++; }
+    const areaCond = area_id ? `AND p.area_id = $${idx}` : '';
+    if (area_id) { params.push(area_id); idx++; }
+    const limitClause = limit ? `LIMIT $${idx}` : '';
+    if (limit) { params.push(parseInt(limit, 10)); idx++; }
+
+    const result = await pool.query(
+      `SELECT p.id, p.title AS name, 'project' AS type,
+              p.status, 'P2' AS priority, p.progress,
+              p.kr_id AS parent_id, p.area_id,
+              NULL::text AS execution_mode,
+              p.created_at, p.updated_at
+       FROM okr_projects p
+       WHERE true ${statusCond} ${areaCond}
+       UNION ALL
+       SELECT i.id, i.title AS name, 'initiative' AS type,
+              i.status, 'P2' AS priority, 0 AS progress,
+              s.project_id AS parent_id, i.area_id,
+              NULL::text AS execution_mode,
+              i.created_at, i.updated_at
+       FROM okr_initiatives i
+       LEFT JOIN okr_scopes s ON s.id = i.scope_id
+       WHERE true ${statusCond.replace('p.status', 'i.status')} ${areaCond.replace('p.area_id', 'i.area_id')}
+       ORDER BY created_at DESC
+       ${limitClause}`,
+      params
+    );
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to list projects', details: err.message });
   }
