@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import type React from 'react';
 import { RefreshCw, CheckCircle2, XCircle, Atom, Filter, Sparkles } from 'lucide-react';
 
 interface CaptureAtom {
