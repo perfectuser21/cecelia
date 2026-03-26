@@ -7,7 +7,7 @@ const router = Router();
 // GET /api/areas - List all areas
 router.get('/', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM areas ORDER BY sort_order ASC');
+    const result = await pool.query('SELECT * FROM areas ORDER BY created_at ASC');
     res.json(result.rows);
   } catch (err) {
     console.error('Failed to list areas:', err);
