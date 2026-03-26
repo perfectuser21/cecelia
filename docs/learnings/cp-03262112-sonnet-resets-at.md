@@ -19,3 +19,4 @@ Brain 的 `account_usage_cache` 表新增 `seven_day_sonnet_resets_at` 列，存
 3. `packages/brain/src/__tests__/account-usage.test.js` — 更新 fallback 测试期望值
 4. `packages/brain/src/selfcheck.js` — EXPECTED_SCHEMA_VERSION 198→199
 5. `DEFINITION.md` — schema_version 198→199
+
