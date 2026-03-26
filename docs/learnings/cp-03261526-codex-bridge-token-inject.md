@@ -13,6 +13,13 @@ changelog:
 
 Xi'an 机器的 Codex auth token 需要定期重新登录，每次都要 SSH 到 Xi'an 执行 `CODEX_HOME=~/.codex-teamX codex`，运维成本高。且 Xi'an 机器换机时需要重新同步 5 个账号的 auth.json。
 
+### 根本原因
+
+账号状态（auth.json）分散存储在执行节点（Xi'an）而非调度节点（US Brain），导致：
+1. Token 过期后需要直接在远程机器上重新登录，运维动作依赖 SSH 访问 Xi'an
+2. 换机器时需手动迁移 5 个账号的认证文件，无法实现零配置
+3. 账号健康状态（用量百分比）无法在派发前统一评估和选优
+
 ## 解法
 
 将账号管理集中到美国 M4：
