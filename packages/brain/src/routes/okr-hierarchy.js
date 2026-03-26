@@ -165,7 +165,8 @@ mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id');
 
 /**
  * GET /api/brain/okr/tree?vision_id=xxx
- * 返回指定 Vision 下的完整 OKR 树（Vision → Objectives → KRs）
+ * 返回指定 Vision 下的完整 OKR 树（7层）：
+ * Vision → Objectives → KRs → Projects → Scopes → Initiatives → Tasks
  */
 router.get('/tree', async (req, res) => {
   try {
@@ -181,15 +182,51 @@ router.get('/tree', async (req, res) => {
         [vision.id]
       )).rows;
 
-      const objectivesWithKRs = await Promise.all(objectives.map(async (obj) => {
+      const objectivesWithTree = await Promise.all(objectives.map(async (obj) => {
         const krs = (await pool.query(
           "SELECT * FROM key_results WHERE objective_id = $1 AND status != 'archived' ORDER BY created_at",
           [obj.id]
         )).rows;
-        return { ...obj, key_results: krs };
+
+        const krsWithProjects = await Promise.all(krs.map(async (kr) => {
+          const projects = (await pool.query(
+            "SELECT * FROM okr_projects WHERE kr_id = $1 AND status != 'archived' ORDER BY created_at",
+            [kr.id]
+          )).rows;
+
+          const projectsWithScopes = await Promise.all(projects.map(async (proj) => {
+            const scopes = (await pool.query(
+              "SELECT * FROM okr_scopes WHERE project_id = $1 AND status != 'archived' ORDER BY created_at",
+              [proj.id]
+            )).rows;
+
+            const scopesWithInitiatives = await Promise.all(scopes.map(async (scope) => {
+              const initiatives = (await pool.query(
+                "SELECT * FROM okr_initiatives WHERE scope_id = $1 AND status != 'archived' ORDER BY created_at",
+                [scope.id]
+              )).rows;
+
+              const initiativesWithTasks = await Promise.all(initiatives.map(async (init) => {
+                const tasks = (await pool.query(
+                  "SELECT id, title, status, priority, created_at, completed_at FROM tasks WHERE okr_initiative_id = $1 ORDER BY created_at",
+                  [init.id]
+                )).rows;
+                return { ...init, tasks };
+              }));
+
+              return { ...scope, okr_initiatives: initiativesWithTasks };
+            }));
+
+            return { ...proj, okr_scopes: scopesWithInitiatives };
+          }));
+
+          return { ...kr, okr_projects: projectsWithScopes };
+        }));
+
+        return { ...obj, key_results: krsWithProjects };
       }));
 
-      return { ...vision, objectives: objectivesWithKRs };
+      return { ...vision, objectives: objectivesWithTree };
     }));
 
     res.json({ success: true, tree: result });
