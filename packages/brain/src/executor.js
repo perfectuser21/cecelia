@@ -2072,6 +2072,47 @@ async function triggerCodexReview(task) {
 }
 
 /**
+ * 从美国 M4 本地 auth.json 选出额度最低的 Codex 账号，用于注入到 Xi'an bridge。
+ * 读取 ~/.codex-team{1-5}/auth.json，并发查询 wham/usage，按 5h 使用率升序排序。
+ *
+ * @param {number} maxAccounts - 最多返回账号数，默认 3
+ * @returns {Promise<Array<{id: string, auth: object}>>}
+ */
+export async function selectBestAccountFromLocal(maxAccounts = 3) {
+  const teams = ['team1', 'team2', 'team3', 'team4', 'team5'];
+  const results = await Promise.all(teams.map(async (id) => {
+    try {
+      const authPath = path.join(os.homedir(), `.codex-${id}`, 'auth.json');
+      const auth = JSON.parse(readFileSync(authPath, 'utf8'));
+      const token = auth.tokens?.access_token;
+      const accountId = auth.tokens?.account_id;
+      if (!token) return null;
+
+      const res = await fetch('https://chatgpt.com/backend-api/wham/usage', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'ChatGPT-Account-Id': accountId,
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const usedPct = data.rate_limit?.primary_window?.used_percent ?? 100;
+      return { id, auth, usedPct };
+    } catch {
+      return null;
+    }
+  }));
+
+  return results
+    .filter(Boolean)
+    .sort((a, b) => a.usedPct - b.usedPct)
+    .slice(0, maxAccounts)
+    .map(({ id, auth }) => ({ id, auth }));
+}
+
+/**
  * Trigger 西安 Mac mini Codex Bridge for a task.
  * Routes codex_qa / codex_dev (and any task with provider=codex) to the Xian Codex CLI.
  *
@@ -2113,6 +2154,19 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
         ? `cp-${new Date().toISOString().replace(/[-T:]/g, '').slice(2, 12)}-${task.id.slice(0, 8)}${branchSuffix}`
         : undefined);
 
+    // 从美国 M4 本地选最优账号，注入到 Xi'an bridge（降级时由 bridge 自行选本地账号）
+    let injectedAccounts = [];
+    try {
+      injectedAccounts = await selectBestAccountFromLocal(3);
+      if (injectedAccounts.length > 0) {
+        console.log(`[executor] 账号注入: ${injectedAccounts.map(a => a.id).join(', ')}`);
+      } else {
+        console.warn('[executor] 账号注入失败（全部查询失败），降级到 Xi\'an 本地选账号');
+      }
+    } catch (err) {
+      console.warn(`[executor] 账号选择异常（降级）: ${err.message}`);
+    }
+
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
     const response = await fetch(`${bridgeUrl}/run`, {
       method: 'POST',
@@ -2136,6 +2190,8 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
           ? ['--task-id', task.id]
           : undefined,
         branch: taskBranch,
+        // accounts: US Brain 注入的账号列表（Xi'an bridge 优先使用，否则降级本地选账号）
+        accounts: injectedAccounts.length > 0 ? injectedAccounts : undefined,
       }),
       signal: AbortSignal.timeout(15000), // 15s to accept the job
     });

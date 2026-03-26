@@ -8,6 +8,7 @@
  */
 
 const http = require('http');
+const fs = require('fs');
 const { spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
@@ -29,6 +30,42 @@ const RUNNER_SH = process.env.RUNNER_SH
 // 默认工作目录 — codex_dev 的 cwd
 const WORK_DIR = process.env.WORK_DIR
   || path.join(os.homedir(), 'repos/cecelia');
+
+/**
+ * 将 US Brain 注入的 accounts 写入临时目录，返回 { primaryHome, allHomes, tmpDir }。
+ * 调用方必须在 finally 块中调用 cleanupTmpDir(tmpDir) 清理。
+ *
+ * @param {string} taskId - Brain Task ID（用于临时目录命名，保证唯一性）
+ * @param {Array<{id: string, auth: object}>} accounts - US Brain 注入的账号列表
+ * @returns {{ primaryHome: string, allHomes: string, tmpDir: string }}
+ */
+function setupInjectedAccounts(taskId, accounts) {
+  const tmpDir = path.join(os.tmpdir(), `codex-inj-${taskId}-${Date.now()}`);
+  const homes = [];
+  for (const { id, auth } of accounts) {
+    const dir = path.join(tmpDir, id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.chmodSync(dir, 0o700);
+    const authFile = path.join(dir, 'auth.json');
+    fs.writeFileSync(authFile, JSON.stringify(auth), { mode: 0o600 });
+    homes.push(dir);
+  }
+  return { primaryHome: homes[0], allHomes: homes.join(':'), tmpDir };
+}
+
+/**
+ * 清理临时 CODEX_HOME 目录（注入模式使用后必须调用）
+ * @param {string|null} tmpDir
+ */
+function cleanupTmpDir(tmpDir) {
+  if (!tmpDir) return;
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    console.log(`[codex-bridge] 临时目录已清理: ${tmpDir}`);
+  } catch (err) {
+    console.warn(`[codex-bridge] 清理临时目录失败: ${err.message}`);
+  }
+}
 
 /**
  * 解析 HTTP 请求 body
@@ -292,37 +329,46 @@ const server = http.createServer(async (req, res) => {
   try {
     // POST /run — 通用执行端点（Brain executor 路由入口）
     if (req.method === 'POST' && req.url === '/run') {
-      const { task_id, checkpoint_id, prompt, work_dir, sandbox, timeout_ms, task_type } = await parseBody(req);
+      const { task_id, checkpoint_id, prompt, work_dir, sandbox, timeout_ms, task_type, accounts } = await parseBody(req);
 
       if (!task_id || !prompt) {
         sendJSON(res, 400, { ok: false, error: 'Missing task_id or prompt' });
         return;
       }
 
-      const account = await selectBestCodexAccount({ taskType: task_type || 'general' });
-      if (!account) {
-        sendJSON(res, 503, { ok: false, error: 'No available Codex accounts' });
-        return;
+      // 账号选择：优先使用 US Brain 注入的 accounts，否则降级到本地选账号
+      let primaryHome, codexHomes, tmpDir = null;
+      if (accounts && accounts.length > 0) {
+        // 注入模式：写临时目录
+        const injected = setupInjectedAccounts(task_id, accounts);
+        primaryHome = injected.primaryHome;
+        codexHomes = injected.allHomes;
+        tmpDir = injected.tmpDir;
+        console.log(`[codex-bridge] 注入账号模式: ${accounts.map(a => a.id).join(', ')} tmpDir=${tmpDir}`);
+      } else {
+        // 降级模式：本地选账号
+        const account = await selectBestCodexAccount({ taskType: task_type || 'general' });
+        if (!account) {
+          sendJSON(res, 503, { ok: false, error: 'No available Codex accounts' });
+          return;
+        }
+        primaryHome = account.codexHome;
+        codexHomes = ACCOUNTS.map(id => path.join(os.homedir(), `.codex-${id}`)).join(':');
+        console.log(`[codex-bridge] 本地账号模式: ${account.accountId}`);
       }
 
       // 立即返回 202 Accepted，异步执行
-      sendJSON(res, 202, { ok: true, task_id, account: account.accountId, status: 'dispatched' });
+      sendJSON(res, 202, { ok: true, task_id, account: path.basename(primaryHome), status: 'dispatched' });
 
       const startTime = Date.now();
 
       if (task_type === 'codex_dev') {
         // codex_dev → runner.sh 完整 /dev 工作流（含 devloop-check 循环）
-        // runner.sh 内部处理 PRD 预拉、分支创建、PR、CI 等全套流程
-        const branch = req.headers['x-branch']  // 可选：由 executor 传入
+        const branch = req.headers['x-branch']
           || `cp-${new Date().toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}).replace(/[/:\s]/g,'').slice(0,8)}-${task_id.slice(0,8)}-cx`;
 
-        // 构建 CODEX_HOMES：本机可用账号路径，冒号分隔
-        // ACCOUNTS 已通过 BRIDGE_ACCOUNTS 环境变量限定为本机账号
-        const allHomes = ACCOUNTS.map(id => path.join(os.homedir(), `.codex-${id}`));
-        const codexHomes = allHomes.join(':');
-
         try {
-          const result = await executeRunner(account.codexHome, task_id, branch, work_dir, {
+          const result = await executeRunner(primaryHome, task_id, branch, work_dir, {
             timeoutMs: timeout_ms || RUNNER_TIMEOUT_MS,
             codexHomes,
           });
@@ -333,12 +379,14 @@ const server = http.createServer(async (req, res) => {
           await callbackBrain(task_id, checkpoint_id, 'failed',
             `Error: ${err.error}\nStderr: ${err.stderr || ''}\nStdout: ${err.stdout || ''}`,
             err.elapsed || elapsed);
+        } finally {
+          cleanupTmpDir(tmpDir);
         }
       } else {
         // 其他任务类型 → 直接 codex exec（read-only 沙箱）
         const effectiveSandbox = sandbox || 'read-only';
         try {
-          const result = await executeCodex(account.codexHome, prompt, {
+          const result = await executeCodex(primaryHome, prompt, {
             workDir: work_dir,
             sandbox: effectiveSandbox,
             timeoutMs: timeout_ms || DEFAULT_TIMEOUT_MS,
@@ -350,32 +398,43 @@ const server = http.createServer(async (req, res) => {
           await callbackBrain(task_id, checkpoint_id, 'failed',
             `Error: ${err.error}\nStderr: ${err.stderr || ''}\nStdout: ${err.stdout || ''}`,
             err.elapsed || elapsed);
+        } finally {
+          cleanupTmpDir(tmpDir);
         }
       }
 
     // POST /execute — 执行 Codex 任务
     } else if (req.method === 'POST' && req.url === '/execute') {
-      const { task_id, checkpoint_id, prompt, work_dir, sandbox, timeout_ms } = await parseBody(req);
+      const { task_id, checkpoint_id, prompt, work_dir, sandbox, timeout_ms, accounts } = await parseBody(req);
 
       if (!task_id || !prompt) {
         sendJSON(res, 400, { ok: false, error: 'Missing task_id or prompt' });
         return;
       }
 
-      // 选最空闲的账号
-      const account = await selectBestCodexAccount({ taskType: 'general' });
-      if (!account) {
-        sendJSON(res, 503, { ok: false, error: 'No available Codex accounts' });
-        return;
+      // 账号选择：优先使用注入账号，否则降级本地
+      let execHome, execTmpDir = null;
+      if (accounts && accounts.length > 0) {
+        const injected = setupInjectedAccounts(task_id, accounts);
+        execHome = injected.primaryHome;
+        execTmpDir = injected.tmpDir;
+        console.log(`[codex-bridge] /execute 注入账号: ${accounts[0].id}`);
+      } else {
+        const account = await selectBestCodexAccount({ taskType: 'general' });
+        if (!account) {
+          sendJSON(res, 503, { ok: false, error: 'No available Codex accounts' });
+          return;
+        }
+        execHome = account.codexHome;
       }
 
       // 立即返回 202 Accepted，异步执行
-      sendJSON(res, 202, { ok: true, task_id, account: account.accountId, status: 'dispatched' });
+      sendJSON(res, 202, { ok: true, task_id, account: path.basename(execHome), status: 'dispatched' });
 
       // 异步执行 + 回调
       const startTime = Date.now();
       try {
-        const result = await executeCodex(account.codexHome, prompt, {
+        const result = await executeCodex(execHome, prompt, {
           workDir: work_dir,
           sandbox,
           timeoutMs: timeout_ms || DEFAULT_TIMEOUT_MS,
@@ -387,6 +446,8 @@ const server = http.createServer(async (req, res) => {
         await callbackBrain(task_id, checkpoint_id, 'failed',
           `Error: ${err.error}\nStderr: ${err.stderr || ''}\nStdout: ${err.stdout || ''}`,
           err.elapsed || elapsed);
+      } finally {
+        cleanupTmpDir(execTmpDir);
       }
 
     // POST /execute-review — 代码审查
