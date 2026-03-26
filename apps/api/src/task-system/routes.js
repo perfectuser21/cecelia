@@ -13,10 +13,12 @@ import businessesRouter from './businesses.js';
 import departmentsRouter from './departments.js';
 import dbSchemaRouter from './db-schema.js';
 import areasRouter from './areas.js';
+import fullTreeRouter from './full-tree.js';
 
 const router = Router();
 
 // Mount sub-routers
+router.use('/full-tree', fullTreeRouter);
 router.use('/projects', projectsRouter);
 router.use('/goals', goalsRouter);
 router.use('/areas', areasRouter);

@@ -40,6 +40,8 @@ export interface DatabaseViewProps<T> {
   footer?: React.ReactNode;
   // 可选：行点击
   onRowClick?: (row: T) => void;
+  // 可选：内联编辑回调（id, 字段名, 新值）
+  onEdit?: (id: string, key: string, value: string) => void;
   // 空状态
   emptyText?: string;
 }
@@ -127,6 +129,7 @@ export default function DatabaseView<T>({
   searchFilter,
   footer,
   onRowClick,
+  onEdit,
   emptyText = '暂无数据',
 }: DatabaseViewProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
