@@ -14,7 +14,11 @@ WHERE o.area_id = ANY($1) AND o.status != 'archived'
 
 ### 根本原因
 
-数据修复（将 7 条重复 sub-objective 标记为 archived）后，代码层没有对应过滤条件，导致已归档记录仍出现在树中。代码与数据状态不一致。
+数据修复（将 7 条重复 sub-objective 标记为 archived）后，代码层没有对应过滤条件，导致已归档记录仍出现在树中。
+
+问题核心：数据库层面的 status 状态修复与 API 查询层面的过滤条件是两个独立步骤，只做了数据修复而遗漏了查询过滤。
+
+结果：GTD OKR 页面每个 Area 下显示冗余的重复 objective 行，树结构不干净。
 
 ### 下次预防
 
