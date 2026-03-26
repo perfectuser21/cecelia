@@ -11,7 +11,11 @@
 
 ### 根本原因
 
-GTDInbox 页面原来使用自定义 CSS class（如 `gtd-inbox-page`、`gtd-inbox-header`），但没有对应的 CSS 文件定义这些样式。其他 GTD 页面（GTDKnowledge、GTDOkr 等）都使用 Tailwind CSS 内联 class。为保持一致性，将整个页面重构为 Tailwind CSS。
+GTDInbox 页面原来使用自定义 CSS class（如 `gtd-inbox-page`、`gtd-inbox-header`），但没有对应的 CSS 文件定义这些样式。
+其他 GTD 页面（GTDKnowledge、GTDOkr 等）都使用 Tailwind CSS 内联 class。
+这导致 GTDInbox 的样式实际上未生效，页面缺少视觉样式。
+为保持一致性并修复样式缺失问题，将整个页面重构为 Tailwind CSS。
+同时新增 Tab 切换架构，为 AtomReview 面板提供了自然的集成点。
 
 ### 下次预防
 
