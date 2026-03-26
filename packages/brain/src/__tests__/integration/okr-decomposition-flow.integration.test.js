@@ -179,6 +179,30 @@ describe('OKR 拆解端到端集成测试', () => {
       expect(Array.isArray(obj.key_results)).toBe(true);
       expect(obj.key_results.some(kr => kr.id === krId)).toBe(true);
     });
+
+    it('/okr/tree KR 层包含 projects 数组（全树扩展）', async () => {
+      if (!objId || !krId) return;
+      const { status, body } = await get(`/tree?vision_id=${visionId}`);
+
+      expect(status).toBe(200);
+      expect(body.success).toBe(true);
+
+      const vision = body.tree[0];
+      const obj = vision.objectives.find(o => o.id === objId);
+      expect(obj).toBeDefined();
+
+      const kr = obj.key_results.find(k => k.id === krId);
+      expect(kr).toBeDefined();
+      // 全树扩展：KR 必须包含 projects 数组（即使为空也应是数组）
+      expect(Array.isArray(kr.projects)).toBe(true);
+      // 已创建的 project 应出现在 KR.projects 中
+      if (projectId) {
+        expect(kr.projects.some(p => p.id === projectId)).toBe(true);
+        const proj = kr.projects.find(p => p.id === projectId);
+        // project 必须包含 scopes 数组
+        expect(Array.isArray(proj.scopes)).toBe(true);
+      }
+    });
   });
 
   // ─── 3. KR 进度重算 ─────────────────────────────────────────────────────────

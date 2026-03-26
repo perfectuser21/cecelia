@@ -18,6 +18,8 @@ const manifest: FeatureManifest = {
     },
     // OKR → 重定向到 GTD
     { path: '/okr', redirect: '/gtd/okr' },
+    // OKR 全树视图
+    { path: '/okr/tree', component: 'OKRTreePage' },
     // Tasks → 重定向到 GTD
     { path: '/tasks', redirect: '/gtd/tasks' },
     // Projects → 重定向到 GTD
@@ -58,6 +60,7 @@ const manifest: FeatureManifest = {
   components: {
     BrainDashboard: () => import('./pages/BrainDashboard'),
     OKRPage: () => import('./pages/OKRPage'),
+    OKRTreePage: () => import('./pages/OKRTreePage'),
     Tasks: () => import('./pages/Tasks'),
     CompanyTasks: () => import('./pages/Tasks'),
     ProjectsDashboard: () => import('./pages/ProjectsDashboard'),

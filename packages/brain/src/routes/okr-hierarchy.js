@@ -165,7 +165,7 @@ mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id');
 
 /**
  * GET /api/brain/okr/tree?vision_id=xxx
- * 返回指定 Vision 下的完整 OKR 树（Vision → Objectives → KRs）
+ * 返回完整 OKR 树：Vision → Objectives → KRs → Projects → Scopes → Initiatives → Tasks
  */
 router.get('/tree', async (req, res) => {
   try {
@@ -186,7 +186,84 @@ router.get('/tree', async (req, res) => {
           "SELECT * FROM key_results WHERE objective_id = $1 AND status != 'archived' ORDER BY created_at",
           [obj.id]
         )).rows;
-        return { ...obj, key_results: krs };
+
+        // 批量查询所有 KR 下的 projects
+        const krIds = krs.map(kr => kr.id);
+        const projectsByKr = {};
+        if (krIds.length > 0) {
+          const projectRows = (await pool.query(
+            `SELECT * FROM okr_projects WHERE kr_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
+            [krIds]
+          )).rows;
+
+          // 批量查询所有 project 下的 scopes
+          const projectIds = projectRows.map(p => p.id);
+          const scopesByProject = {};
+          if (projectIds.length > 0) {
+            const scopeRows = (await pool.query(
+              `SELECT * FROM okr_scopes WHERE project_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
+              [projectIds]
+            )).rows;
+
+            // 批量查询所有 scope 下的 initiatives
+            const scopeIds = scopeRows.map(s => s.id);
+            const initiativesByScope = {};
+            if (scopeIds.length > 0) {
+              const initiativeRows = (await pool.query(
+                `SELECT * FROM okr_initiatives WHERE scope_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
+                [scopeIds]
+              )).rows;
+
+              // 批量查询所有 initiative 下的 tasks
+              const initiativeIds = initiativeRows.map(i => i.id);
+              const tasksByInitiative = {};
+              if (initiativeIds.length > 0) {
+                const taskRows = (await pool.query(
+                  `SELECT id, title, status, priority, okr_initiative_id, created_at, updated_at
+                   FROM tasks WHERE okr_initiative_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
+                  [initiativeIds]
+                )).rows;
+                for (const task of taskRows) {
+                  const key = task.okr_initiative_id;
+                  if (!tasksByInitiative[key]) tasksByInitiative[key] = [];
+                  tasksByInitiative[key].push(task);
+                }
+              }
+
+              for (const initiative of initiativeRows) {
+                if (!initiativesByScope[initiative.scope_id]) initiativesByScope[initiative.scope_id] = [];
+                initiativesByScope[initiative.scope_id].push({
+                  ...initiative,
+                  tasks: tasksByInitiative[initiative.id] || [],
+                });
+              }
+            }
+
+            for (const scope of scopeRows) {
+              if (!scopesByProject[scope.project_id]) scopesByProject[scope.project_id] = [];
+              scopesByProject[scope.project_id].push({
+                ...scope,
+                initiatives: initiativesByScope[scope.id] || [],
+              });
+            }
+          }
+
+          for (const project of projectRows) {
+            if (!projectsByKr[project.kr_id]) projectsByKr[project.kr_id] = [];
+            projectsByKr[project.kr_id].push({
+              ...project,
+              scopes: scopesByProject[project.id] || [],
+            });
+          }
+        }
+
+        return {
+          ...obj,
+          key_results: krs.map(kr => ({
+            ...kr,
+            projects: projectsByKr[kr.id] || [],
+          })),
+        };
       }));
 
       return { ...vision, objectives: objectivesWithKRs };
