@@ -6,6 +6,39 @@
 - `/skill-creator <name>` - 创建新 Skill
 - 用户问"Skills 文档"、"如何创建 Skill"
 
+## ⚠️ 创建前必须先查重（Step 0）
+
+**在创建任何 skill 之前，必须先调 Brain API 查重**：
+
+```bash
+# 1. 按名称精确查重
+curl "localhost:5221/api/brain/registry/exists?type=skill&name=/skill-name"
+# → { exists: true/false, item: {...} }
+
+# 2. 按关键词搜索相似 skill
+curl "localhost:5221/api/brain/registry?type=skill&search=关键词"
+# → 返回匹配列表
+```
+
+```
+Step 0: Brain API 查重
+  ├── exists=true（完全一样）→ 停止，直接用已有 skill
+  ├── 搜索到相似的 → 停止，扩展已有 skill 加参数
+  └── 完全没有 → 继续 Step 1 创建
+```
+
+**创建完成后必须登记到 Brain registry**：
+
+```bash
+curl -X POST localhost:5221/api/brain/registry \
+  -H "Content-Type: application/json" \
+  -d '{"type":"skill","name":"/skill-name","description":"职责描述","metadata":{"category":"分类"}}'
+```
+
+> Brain API 不可用时（localhost:5221 无响应）→ 降级到读 `.agent-knowledge/skills-index.md` 静态文件查重。
+
+---
+
 ## 功能
 
 这是一个 **Meta-Skill**，帮助你理解和创建新的 Skills。
