@@ -86,7 +86,7 @@ export const PUBLISH_PLATFORMS = [
  */
 function _parsePipelineParams(pipeline) {
   return {
-    keyword: pipeline.payload?.keyword || pipeline.title,
+    keyword: pipeline.payload?.pipeline_keyword || pipeline.payload?.keyword || pipeline.title,
     content_type: pipeline.payload?.content_type || null,
     priority: pipeline.payload?.priority || 'P1',
   };
