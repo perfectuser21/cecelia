@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
     const areasResult = await pool.query(
       `SELECT DISTINCT a.id, a.name, a.domain
        FROM areas a
-       INNER JOIN objectives o ON o.area_id = a.id
+       INNER JOIN objectives o ON o.area_id = a.id AND o.status != 'archived'
        ${areaWhere}
        ORDER BY a.name`,
       areaParams
