@@ -217,6 +217,32 @@ export function buildNotebookQuery(items) {
 用 [反刍洞察] 开头，300-500 字，简体中文。`;
 }
 
+// ── NotebookLM 响应清洗 ───────────────────────────────────
+
+/**
+ * 清洗 NotebookLM 响应文本，去除切换 notebook 时产生的前缀噪音。
+ *
+ * NotebookLM CLI 切换 notebook 时会在真实答案前注入：
+ *   "Different notebook specified, starting new conversation...\nContinuing conversation xxx..\nAnswer:\n"
+ *
+ * 该前缀长度 > 50 字符，会通过旧的 length > 50 质量检查，
+ * 导致垃圾内容写入 memory_stream 并跳过 callLLM fallback。
+ *
+ * @param {string} text - NotebookLM 原始响应
+ * @returns {string} 清洗后的文本（提取 "Answer:" 后内容；如无前缀则原样返回）
+ */
+export function cleanNotebookResponse(text) {
+  if (!text) return text;
+  if (!text.includes('Different notebook specified')) return text;
+  // 提取 "Answer:" 后的内容（支持 "Answer:\n" 和 "Answer: " 两种格式）
+  const answerMatch = text.match(/Answer:\s*([\s\S]+)/i);
+  if (answerMatch) {
+    return answerMatch[1].trim();
+  }
+  // 有前缀但找不到 Answer 块 → 视为无效响应，返回空串触发 fallback
+  return '';
+}
+
 // ── 消化核心逻辑（v3 NotebookLM 主路）──────────────────────
 
 /**
@@ -260,10 +286,17 @@ async function digestLearnings(db, learnings) {
 
     try {
       const nbResult = await queryNotebook(nbQuery, workingNotebookId);
-      if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
-        insight = nbResult.text.trim();
-        usedNotebook = true;
-        console.log(`[rumination] notebooklm_primary: OK (${insight.length} chars)`);
+      if (nbResult.ok && nbResult.text) {
+        // 清洗前缀噪音（"Different notebook specified..." 前缀会污染洞察质量）
+        const cleaned = cleanNotebookResponse(nbResult.text.trim());
+        if (cleaned.length > 50) {
+          insight = cleaned;
+          usedNotebook = true;
+          const hadPrefix = nbResult.text.includes('Different notebook specified');
+          console.log(`[rumination] notebooklm_primary: OK (${insight.length} chars${hadPrefix ? ', prefix stripped' : ''})`);
+        } else {
+          console.warn('[rumination] notebooklm_primary: empty/short after cleaning, falling back to callLLM');
+        }
       } else {
         console.warn('[rumination] notebooklm_primary: empty/short response, falling back to callLLM');
       }
@@ -314,10 +347,11 @@ async function digestLearnings(db, learnings) {
       insights.push(insight.trim());
 
       // 记录 rumination_output 事件（用于后续去重查询）
+      // 注意：传对象而非 JSON.stringify 字符串，避免 jsonb 类型推断问题
       try {
         await db.query(
           `INSERT INTO cecelia_events (event_type, source, payload)
-           VALUES ('rumination_output', 'rumination', $1)`,
+           VALUES ('rumination_output', 'rumination', $1::jsonb)`,
           [JSON.stringify({ content_hash: contentHash })]
         );
       } catch (evtErr) {
