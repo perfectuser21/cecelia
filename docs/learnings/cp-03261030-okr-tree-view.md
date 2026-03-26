@@ -1,7 +1,9 @@
 ## OKR 全树视图 — 7层嵌套 API 扩展（2026-03-26）
 
 ### 根本原因
-现有 /tree 端点只查询了前3层表（visions, objectives, key_results），缺少对 okr_projects、okr_scopes、okr_initiatives、tasks 四张表的级联查询。前端也缺少展示完整层级的树形视图页面。
+现有 /tree 端点只查询了前3层表（visions, objectives, key_results），缺少对 okr_projects、okr_scopes、okr_initiatives、tasks 四张表的级联查询。
+前端也缺少展示完整层级的树形视图页面，无法可视化 OKR 全链路进度。
+根源在于初始实现时 OKR 只有三层表结构，后续扩展为七层后 /tree 端点未同步更新。
 
 ### 下次预防
 - [ ] 扩展嵌套 API 时，确保 spec review 中验证测试能区分扩展前后的行为差异（避免伪测试）
