@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
     const areasResult = await pool.query(
       `SELECT DISTINCT a.id, a.name, a.domain
        FROM areas a
-       INNER JOIN objectives o ON o.area_id = a.id
+       INNER JOIN objectives o ON o.area_id = a.id AND o.status != 'archived'
        ${areaWhere}
        ORDER BY a.name`,
       areaParams
@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
               COALESCE(o.owner_role, '') AS owner_role,
               o.created_at, o.updated_at
        FROM objectives o
-       WHERE o.area_id = ANY($1)
+       WHERE o.area_id = ANY($1) AND o.status != 'archived'
        ORDER BY o.created_at DESC`,
       [areaIds]
     );
