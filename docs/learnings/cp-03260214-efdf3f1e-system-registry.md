@@ -7,31 +7,13 @@
 
 新增 `system_registry` 表（migration 197）+ 完整 CRUD API（5 个端点），让 Claude 创建任何组件前可先查询是否已存在，解决孤岛和重复问题。
 
-## 根本原因（坑点）
+### 根本原因
 
-### 1. EXPECTED_SCHEMA_VERSION 测试需要同步更新
+每次新增 migration 并 bump `EXPECTED_SCHEMA_VERSION` 后，`selfcheck.test.js`、`desire-system.test.js`、`learnings-vectorize.test.js` 三个测试文件里的版本断言也必须同步更新，上下文压缩后容易遗漏导致 Gate 1 失败。
 
-每次新增 migration 并 bump `EXPECTED_SCHEMA_VERSION` 后，以下 3 个测试文件也需要同步更新：
-- `selfcheck.test.js` — 直接断言版本号
-- `desire-system.test.js` — D9 测试断言版本号
-- `learnings-vectorize.test.js` — 顺带断言版本号
+pg 驱动要求每个 `$N` 占位符对应 `params` 数组独立位置，双字段 ILIKE 搜索若复用同一 `$N` 两次会导致查询错误，需 push 两次值使用两个不同编号。
 
-这些测试在上下文压缩后容易被遗漏。
-
-### 2. pg 参数占位符不能复用同一 `$N` 两次
-
-错误写法：
-```js
-params.push(`%${query}%`);
-conditions.push(`(name ILIKE $${params.length} OR description ILIKE $${params.length})`);
-```
-pg 驱动要求每个 `$N` 对应 `params[N-1]` 的独立绑定，同一个 `$N` 不能在同一 SQL 中出现两次。
-
-正确写法：push 两次值，使用两个不同占位符 `$n1` 和 `$n2`。
-
-### 3. DoD GATE 测试格式必须 CI 兼容
-
-`manual:npm test` 在 CI 中失败（无 node_modules）。应使用 `tests/` 引用路径或 `node -e` 检查文件。
+DoD 成功标准里的 `- [ ]` 条目同样需要 `Test:` 字段，否则 check-dod-mapping.cjs 会报"缺少 Test 字段"；`[PRESERVE]/[BEHAVIOR]` 条目若用 localhost HTTP 检查在 CI 无服务环境下必然失败，需改为文件检查或 `tests/` 引用。
 
 ## 下次预防
 
