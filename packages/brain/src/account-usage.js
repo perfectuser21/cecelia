@@ -342,16 +342,33 @@ export async function selectBestAccount(options = {}) {
   try {
     const usage = await getAccountUsage();
 
+    const SEVEN_DAY_MS = 7 * 24 * 3600 * 1000;
+    const now = Date.now();
     const mapped = ACCOUNTS.map(id => {
       const u = usage[id];
       const pct = u?.five_hour_pct ?? 0;
       const ePct = effectivePct(pct, u?.resets_at);
+      const sevenDayPct = u?.seven_day_pct ?? 0;
+      const sevenDaySonnetPct = u?.seven_day_sonnet_pct ?? 0;
+      // 进度对齐（deficit）计算：window_start = resets_at - 7d，elapsed = now - window_start
+      let sevenDayDeficit = 0;
+      let sevenDaySonnetDeficit = 0;
+      if (u?.seven_day_resets_at) {
+        const resetsAtMs = new Date(u.seven_day_resets_at).getTime();
+        const windowStart = resetsAtMs - SEVEN_DAY_MS;
+        const elapsedMs = now - windowStart;
+        const targetPct = Math.max(0, Math.min(100, (elapsedMs / SEVEN_DAY_MS) * 100));
+        sevenDayDeficit = targetPct - sevenDayPct;
+        sevenDaySonnetDeficit = targetPct - sevenDaySonnetPct;
+      }
       return {
         id,
         pct,
         ePct,
-        sevenDayPct: u?.seven_day_pct ?? 0,
-        sevenDaySonnetPct: u?.seven_day_sonnet_pct ?? 0,
+        sevenDayPct,
+        sevenDaySonnetPct,
+        sevenDayDeficit,
+        sevenDaySonnetDeficit,
         extraUsed: u?.extra_used ?? false,
         spendingCapped: isSpendingCapped(id),
       };
@@ -365,7 +382,7 @@ export async function selectBestAccount(options = {}) {
     if (requestedModel === 'haiku') {
       const candidates = mapped
         .filter(a => isAccountEligibleForTier(a, 'haiku'))
-        .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
+        .sort((a, b) => b.sevenDayDeficit - a.sevenDayDeficit || a.ePct - b.ePct);
 
       if (candidates.length > 0) {
         const sel = candidates[0];
@@ -387,12 +404,12 @@ export async function selectBestAccount(options = {}) {
         return null;
       }
 
-      // 找出所有可用此 tier 的账号，按用量从低到高排序
+      // 找出所有可用此 tier 的账号，按进度对齐（deficit）从高到低排序（最落后的先用）
       const candidates = mapped
         .filter(a => isAccountEligibleForTier(a, tier))
         .sort((a, b) => {
-          if (tier === 'sonnet') return a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct;
-          return a.sevenDayPct - b.sevenDayPct || a.ePct - b.ePct;
+          if (tier === 'sonnet') return b.sevenDaySonnetDeficit - a.sevenDaySonnetDeficit || a.ePct - b.ePct;
+          return b.sevenDayDeficit - a.sevenDayDeficit || a.ePct - b.ePct;
         });
 
       if (candidates.length > 0) {

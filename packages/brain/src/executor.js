@@ -2098,8 +2098,18 @@ export async function selectBestAccountFromLocal(maxAccounts = 3) {
       });
       if (!res.ok) return null;
       const data = await res.json();
-      const usedPct = data.rate_limit?.primary_window?.used_percent ?? 100;
-      return { id, auth, usedPct };
+      const fiveHourPct = data.rate_limit?.primary_window?.used_percent ?? 100;
+      // 5h gate：超过 95% 直接跳过
+      if (fiveHourPct > 95) return null;
+      const sw = data.rate_limit?.secondary_window;
+      const sevenDayPct = sw?.used_percent ?? 0;
+      const resetAfterSecs = sw?.reset_after_seconds ?? 0;
+      // 进度对齐（deficit）：已过时间占比 - 实际使用率，值越大越落后于目标
+      const SEVEN_DAY_SECS = 7 * 24 * 3600;
+      const elapsedSecs = SEVEN_DAY_SECS - resetAfterSecs;
+      const targetPct = (elapsedSecs / SEVEN_DAY_SECS) * 100;
+      const deficit = targetPct - sevenDayPct;
+      return { id, auth, fiveHourPct, deficit };
     } catch {
       return null;
     }
@@ -2107,7 +2117,8 @@ export async function selectBestAccountFromLocal(maxAccounts = 3) {
 
   return results
     .filter(Boolean)
-    .sort((a, b) => a.usedPct - b.usedPct)
+    // deficit DESC（最落后先用）；同 deficit 时 5h 用量 ASC
+    .sort((a, b) => b.deficit - a.deficit || a.fiveHourPct - b.fiveHourPct)
     .slice(0, maxAccounts)
     .map(({ id, auth }) => ({ id, auth }));
 }
