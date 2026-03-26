@@ -1,0 +1,5 @@
+[allowlist]
+description = "Known false positives — mock tokens in test files"
+fingerprints = [
+  "139714bc02ce76fd0dc8bab9c59377e450ab9919:packages/brain/src/__tests__/codex-bridge-token-inject.test.js:generic-api-key:33"
+]
