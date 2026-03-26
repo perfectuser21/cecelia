@@ -1,0 +1,13 @@
+dev
+branch: cp-03262112-sonnet-resets-at
+task_card: .task-cp-03262112-sonnet-resets-at.md
+started: 2026-03-26T21:12:00+08:00
+step_0_worktree: done
+step_1_spec: done
+tasks_created: true
+tdd_red_confirmed: true
+spec_review_status: pass
+step_2_code: done
+code_review_gate_status: pass
+step_3_integrate: pending
+step_4_ship: pending

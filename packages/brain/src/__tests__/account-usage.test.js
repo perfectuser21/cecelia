@@ -370,6 +370,7 @@ describe('account-usage', () => {
         seven_day_sonnet_pct: 0,
         resets_at: null,
         seven_day_resets_at: null,
+        seven_day_sonnet_resets_at: null,
         extra_used: false,
       });
     });
