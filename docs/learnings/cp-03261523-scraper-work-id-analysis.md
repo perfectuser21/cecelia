@@ -10,6 +10,10 @@
 
 Codex 西安机器因 OpenAI 连接超时（`chatgpt.com/backend-api/codex/models` 拒绝连接）连续3次失败，任务回落到美国 Mac mini /dev 执行。
 
+本任务属于纯分析任务（review），原本适合 Codex 处理，但因网络问题无法连接到 OpenAI 模型服务。
+
+分析范围：8个平台采集脚本的 work_id 关联现状，目标是产出对比表和改造方案供后续实现任务使用。
+
 ---
 
 ### 关键发现
