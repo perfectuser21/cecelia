@@ -29,7 +29,8 @@ const STATUS_STYLES: Record<string, string> = {
 
 interface TreeNode {
   id: string;
-  title: string;
+  title?: string;
+  name?: string;
   status: string;
   type: string;
   progress?: number;
@@ -94,7 +95,7 @@ function TreeRow({
 
         {/* title */}
         <span className={`flex-1 truncate ${depth === 0 ? 'text-gray-100 font-medium' : 'text-gray-300'}`}>
-          {node.title}
+          {node.title || node.name}
         </span>
 
         {/* progress (kr only) */}
