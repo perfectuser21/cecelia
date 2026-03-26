@@ -21,6 +21,7 @@ import devgateRoutes from '../devgate/routes.js';
 import mediaRoutes from '../media/routes.js';
 import taskSystemRoutes from '../task-system/routes.js';
 import areasRoutes from '../task-system/areas.js';
+import capturesRoutes from '../task-system/captures.js';
 // Brain routes migrated to cecelia-semantic-brain (port 5221)
 import okrRoutes from '../okr/routes.js';
 import watchdogRoutes from '../watchdog/routes.js';
@@ -211,6 +212,7 @@ app.use('/api/tasks', taskSystemRoutes);
 
 // Areas API routes (PARA alignment)
 app.use('/api/areas', areasRoutes);
+app.use('/api/captures', capturesRoutes);
 
 // Intent Recognition API routes (KR1: Natural Language → OKR/Project/Task)
 app.use('/api/intent', intentRoutes);

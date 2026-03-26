@@ -19,6 +19,7 @@ const manifest: FeatureManifest = {
       navItem: {
         label: 'GTD System', icon: 'LayoutGrid', group: 'gtd',
         children: [
+          { path: '/gtd/inbox', label: 'Inbox', icon: 'Inbox', order: 0 },
           { path: '/gtd/area', label: 'Area', icon: 'Layers', order: 1 },
           { path: '/gtd/okr', label: 'OKR', icon: 'Target', order: 2 },
           { path: '/gtd/projects', label: 'Projects', icon: 'FolderKanban', order: 3 },
@@ -28,6 +29,7 @@ const manifest: FeatureManifest = {
       },
     },
     // GTD 子路由
+    { path: '/gtd/inbox', component: 'GTDInbox' },
     { path: '/gtd/area', component: 'GTDArea' },
     { path: '/gtd/okr', component: 'GTDOkr' },
     { path: '/gtd/projects', component: 'GTDProjects' },
@@ -38,6 +40,7 @@ const manifest: FeatureManifest = {
   ],
 
   components: {
+    GTDInbox: () => import('./pages/GTDInbox'),
     GTDArea: () => import('./pages/GTDArea'),
     GTDOkr: () => import('./pages/GTDOkr'),
     GTDProjects: () => import('./pages/GTDProjects'),
