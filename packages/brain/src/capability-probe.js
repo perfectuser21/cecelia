@@ -163,17 +163,42 @@ async function probeMonitorLoop() {
 // === 高层意识循环探针 ===
 
 async function probeRumination() {
-  // 检查 24h 内有没有反刍产出（synthesis_archive 表）
+  // 检查 48h 内有没有反刍产出（synthesis_archive 表）
+  // 使用 48h 而非 24h：runRumination 和 runDailySynthesis 两路写入可能产生约 40h 时间差
+  // （runRumination 早上写入后，同日调度器 hasTodaySynthesis 检测到已存在而跳过）
   const result = await pool.query(
     `SELECT count(*) AS cnt, max(created_at) AS last_run
      FROM synthesis_archive
-     WHERE created_at > NOW() - INTERVAL '24 hours'`
+     WHERE created_at > NOW() - INTERVAL '48 hours'`
   );
   const cnt = parseInt(result.rows[0]?.cnt || 0);
   const lastRun = result.rows[0]?.last_run;
+
+  if (cnt > 0) {
+    return {
+      ok: true,
+      detail: `48h_count=${cnt} last_run=${lastRun}`,
+    };
+  }
+
+  // 48h 内无产出 → 检查是否有待消化内容
+  // 若无待消化内容，系统处于合理静默状态（非故障）
+  const pendingResult = await pool.query(
+    `SELECT count(*) AS cnt FROM learnings
+     WHERE digested = false AND (archived = false OR archived IS NULL)`
+  );
+  const undigested = parseInt(pendingResult.rows[0]?.cnt || 0);
+
+  if (undigested === 0) {
+    return {
+      ok: true,
+      detail: `48h_count=0 last_run=${lastRun || 'never'} (idle: no_pending_learnings)`,
+    };
+  }
+
   return {
-    ok: cnt > 0,
-    detail: `24h_count=${cnt} last_run=${lastRun || 'never'}`,
+    ok: false,
+    detail: `48h_count=${cnt} last_run=${lastRun || 'never'} undigested=${undigested}`,
   };
 }
 
