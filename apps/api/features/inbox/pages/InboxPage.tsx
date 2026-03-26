@@ -1,16 +1,17 @@
 import React, { useState, useMemo } from 'react';
 import {
   Inbox, Filter, RefreshCw, Wifi, WifiOff,
-  ChevronDown, ChevronUp, CheckCircle2,
+  ChevronDown, ChevronUp, CheckCircle2, Layers,
 } from 'lucide-react';
 import { useProposals } from '../hooks/useProposals';
 import type { Proposal } from '../hooks/useProposals';
 import ProposalCard from '../components/ProposalCard';
 import HeartbeatEditor from '../components/HeartbeatEditor';
+import CaptureReview from '../components/CaptureReview';
 import { LoadingState, EmptyState } from '../../shared/components/LoadingState';
 
 type FilterType = 'all' | string;
-type TabType = 'inbox' | 'heartbeat';
+type TabType = 'inbox' | 'captures' | 'heartbeat';
 
 function getUniqueTypes(proposals: Proposal[]): string[] {
   const types = new Set(proposals.map(p => p.action_type));
@@ -138,6 +139,17 @@ export default function InboxPage(): React.ReactElement {
           )}
         </button>
         <button
+          onClick={() => setTab('captures')}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            tab === 'captures'
+              ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          快速记录
+        </button>
+        <button
           onClick={() => setTab('heartbeat')}
           className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
             tab === 'heartbeat'
@@ -152,6 +164,8 @@ export default function InboxPage(): React.ReactElement {
       {/* Tab content */}
       {tab === 'heartbeat' ? (
         <HeartbeatEditor />
+      ) : tab === 'captures' ? (
+        <CaptureReview />
       ) : (
         <>
           {/* Filter bar */}
