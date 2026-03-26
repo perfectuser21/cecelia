@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, ChevronDown, ChevronRight, Target, Layers, FolderKanban, Telescope, Rocket, CheckSquare } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronRight, Target, Layers, FolderKanban, Eye, Rocket, CheckSquare } from 'lucide-react';
 import StatusIcon from '../../shared/components/StatusIcon';
 
 interface TreeTask {
@@ -63,7 +63,7 @@ const NODE_CONFIG: Record<NodeType, { icon: typeof Target; color: string; bgColo
   objective: { icon: Target, color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-50 dark:bg-blue-900/20', label: 'Objective' },
   kr: { icon: Layers, color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-50 dark:bg-green-900/20', label: 'KR' },
   project: { icon: FolderKanban, color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-50 dark:bg-orange-900/20', label: 'Project' },
-  scope: { icon: Telescope, color: 'text-cyan-600 dark:text-cyan-400', bgColor: 'bg-cyan-50 dark:bg-cyan-900/20', label: 'Scope' },
+  scope: { icon: Eye, color: 'text-cyan-600 dark:text-cyan-400', bgColor: 'bg-cyan-50 dark:bg-cyan-900/20', label: 'Scope' },
   initiative: { icon: Rocket, color: 'text-pink-600 dark:text-pink-400', bgColor: 'bg-pink-50 dark:bg-pink-900/20', label: 'Initiative' },
   task: { icon: CheckSquare, color: 'text-gray-600 dark:text-gray-400', bgColor: 'bg-gray-50 dark:bg-gray-900/20', label: 'Task' },
 };
