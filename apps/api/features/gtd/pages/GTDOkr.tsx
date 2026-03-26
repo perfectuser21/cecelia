@@ -1,13 +1,14 @@
 /**
- * GTD OKR — 完整 OKR 层级树（Area → Objective → KR → Project → Scope → Initiative）
+ * GTD OKR — 完整 OKR 层级树（Area → Vision → Objective → KR → Project → Scope → Initiative）
  * 数据源: /api/tasks/full-tree
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Target, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
+import { Target, ChevronRight, ChevronDown, Loader2, Calendar, User, FileText } from 'lucide-react';
 
 const TYPE_CONFIG: Record<string, { label: string; cls: string }> = {
   area:       { label: 'AREA', cls: 'bg-violet-500/15 text-violet-400' },
+  vision:     { label: 'VIS',  cls: 'bg-orange-500/20 text-orange-300' },
   objective:  { label: 'OBJ',  cls: 'bg-purple-500/15 text-purple-400' },
   kr:         { label: 'KR',   cls: 'bg-blue-500/15 text-blue-400' },
   project:    { label: 'PRJ',  cls: 'bg-emerald-500/15 text-emerald-400' },
@@ -34,27 +35,43 @@ interface TreeNode {
   status: string;
   type: string;
   progress?: number;
+  start_date?: string | null;
+  end_date?: string | null;
+  description?: string | null;
+  owner_role?: string | null;
+  priority?: string | null;
+  current_value?: number;
+  target_value?: number;
+  unit?: string;
   children: TreeNode[];
+}
+
+function formatDate(d: string | null | undefined) {
+  if (!d) return null;
+  return d.slice(0, 10);
 }
 
 function TreeRow({
   node,
   depth,
-  defaultExpanded,
   onStatusChange,
 }: {
   node: TreeNode;
   depth: number;
-  defaultExpanded: boolean;
   onStatusChange: (nodeType: string, id: string, status: string) => Promise<void>;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [expanded, setExpanded] = useState(true);
+  const [showDesc, setShowDesc] = useState(false);
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState(node.status);
   const [saving, setSaving] = useState(false);
 
   const hasChildren = node.children.length > 0;
   const typeInfo = TYPE_CONFIG[node.type] ?? { label: node.type.toUpperCase(), cls: 'bg-slate-500/15 text-slate-400' };
+
+  const startDate = formatDate(node.start_date);
+  const endDate = formatDate(node.end_date);
+  const hasDesc = !!(node.description && node.description.trim());
 
   const handleStatusChange = async (newStatus: string) => {
     if (newStatus === status) { setEditing(false); return; }
@@ -71,72 +88,109 @@ function TreeRow({
   return (
     <>
       <div
-        className={`group flex items-center gap-2 border-b border-slate-800/40 text-sm transition-colors hover:bg-slate-800/30 ${
+        className={`group border-b border-slate-800/40 transition-colors hover:bg-slate-800/30 ${
           depth > 0 ? 'bg-slate-900/20' : ''
         }`}
-        style={{ paddingTop: '8px', paddingBottom: '8px', paddingRight: '16px', paddingLeft: `${16 + depth * 20}px` }}
+        style={{ paddingRight: '16px', paddingLeft: `${16 + depth * 20}px` }}
       >
-        {/* expand toggle */}
-        <button
-          className="w-5 h-5 flex items-center justify-center shrink-0 text-slate-500 hover:text-slate-300"
-          onClick={() => hasChildren && setExpanded(e => !e)}
-        >
-          {hasChildren
-            ? expanded
-              ? <ChevronDown className="w-3.5 h-3.5" />
-              : <ChevronRight className="w-3.5 h-3.5" />
-            : <span className="w-3.5 h-3.5" />}
-        </button>
+        {/* 主行 */}
+        <div className="flex items-center gap-2 py-2 text-sm">
+          {/* expand toggle */}
+          <button
+            className="w-5 h-5 flex items-center justify-center shrink-0 text-slate-500 hover:text-slate-300"
+            onClick={() => hasChildren && setExpanded(e => !e)}
+          >
+            {hasChildren
+              ? expanded
+                ? <ChevronDown className="w-3.5 h-3.5" />
+                : <ChevronRight className="w-3.5 h-3.5" />
+              : <span className="w-3.5 h-3.5 block" />}
+          </button>
 
-        {/* type badge */}
-        <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${typeInfo.cls}`}>
-          {typeInfo.label}
-        </span>
-
-        {/* title */}
-        <span className={`flex-1 truncate ${depth === 0 ? 'text-gray-100 font-medium' : 'text-gray-300'}`}>
-          {node.title || node.name}
-        </span>
-
-        {/* progress (kr only) */}
-        {node.type === 'kr' && node.progress !== undefined && (
-          <span className="text-[11px] text-slate-500 tabular-nums w-10 text-right shrink-0">
-            {node.progress}%
+          {/* type badge */}
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${typeInfo.cls}`}>
+            {typeInfo.label}
           </span>
-        )}
 
-        {/* status badge / inline edit */}
-        <div className="shrink-0 relative">
-          {editing ? (
-            <select
-              autoFocus
-              className="text-xs bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-gray-300 focus:outline-none"
-              defaultValue={status}
-              onBlur={() => setEditing(false)}
-              onChange={(e) => handleStatusChange(e.target.value)}
-            >
-              {STATUS_OPTIONS.map(s => (
-                <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-              ))}
-            </select>
-          ) : (
+          {/* title */}
+          <span className={`flex-1 truncate ${depth === 0 ? 'text-gray-100 font-medium' : 'text-gray-300'}`}>
+            {node.title || node.name}
+          </span>
+
+          {/* progress (kr only) */}
+          {node.type === 'kr' && node.progress !== undefined && (
+            <span className="text-[11px] text-slate-500 tabular-nums w-10 text-right shrink-0">
+              {node.progress}%
+            </span>
+          )}
+
+          {/* date range */}
+          {(startDate || endDate) && (
+            <span className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
+              <Calendar className="w-3 h-3" />
+              {startDate ?? '?'} → {endDate ?? '?'}
+            </span>
+          )}
+
+          {/* owner */}
+          {node.owner_role && (
+            <span className="flex items-center gap-1 text-[11px] text-slate-400 shrink-0 max-w-[120px] truncate">
+              <User className="w-3 h-3 shrink-0" />
+              {node.owner_role}
+            </span>
+          )}
+
+          {/* description toggle */}
+          {hasDesc && (
             <button
-              className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full cursor-pointer hover:opacity-80 ${
-                STATUS_STYLES[status] ?? STATUS_STYLES.pending
-              } ${saving ? 'opacity-50' : ''}`}
-              onClick={() => setEditing(true)}
-              title="点击修改状态"
+              className={`shrink-0 ${showDesc ? 'text-slate-300' : 'text-slate-600'} hover:text-slate-400`}
+              onClick={() => setShowDesc(s => !s)}
+              title="查看备注"
             >
-              {saving ? '...' : (STATUS_LABELS[status] ?? status)}
+              <FileText className="w-3.5 h-3.5" />
             </button>
+          )}
+
+          {/* status badge / inline edit */}
+          <div className="shrink-0 relative">
+            {editing ? (
+              <select
+                autoFocus
+                className="text-xs bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-gray-300 focus:outline-none"
+                defaultValue={status}
+                onBlur={() => setEditing(false)}
+                onChange={(e) => handleStatusChange(e.target.value)}
+              >
+                {STATUS_OPTIONS.map(s => (
+                  <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+            ) : (
+              <button
+                className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full cursor-pointer hover:opacity-80 ${
+                  STATUS_STYLES[status] ?? STATUS_STYLES.pending
+                } ${saving ? 'opacity-50' : ''}`}
+                onClick={() => setEditing(true)}
+                title="点击修改状态"
+              >
+                {saving ? '...' : (STATUS_LABELS[status] ?? status)}
+              </button>
+            )}
+          </div>
+
+          {/* children count */}
+          {hasChildren && (
+            <span className="text-[10px] text-slate-600 shrink-0 w-6 text-right">
+              {node.children.length}
+            </span>
           )}
         </div>
 
-        {/* children count */}
-        {hasChildren && (
-          <span className="text-[10px] text-slate-600 shrink-0 w-6 text-right">
-            {node.children.length}
-          </span>
+        {/* description 展开区 */}
+        {showDesc && hasDesc && (
+          <div className="pb-2 pr-2 text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">
+            {node.description}
+          </div>
         )}
       </div>
 
@@ -145,7 +199,6 @@ function TreeRow({
           key={child.id}
           node={child}
           depth={depth + 1}
-          defaultExpanded={depth < 1}
           onStatusChange={onStatusChange}
         />
       ))}
@@ -153,16 +206,29 @@ function TreeRow({
   );
 }
 
+function countNodes(nodes: TreeNode[]): number {
+  return nodes.reduce((acc, n) => acc + 1 + countNodes(n.children), 0);
+}
+
 export default function GTDOkr() {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch('/api/tasks/full-tree');
-      setTree(res.ok ? await res.json() : []);
-    } catch {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? `HTTP ${res.status}`);
+        setTree([]);
+      } else {
+        setTree(await res.json());
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '网络错误');
       setTree([]);
     } finally {
       setLoading(false);
@@ -179,15 +245,23 @@ export default function GTDOkr() {
     });
   }, []);
 
+  const totalNodes = countNodes(tree);
+
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-900">
       {/* 工具栏 */}
       <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-slate-800">
         <Target className="w-4 h-4 text-slate-400" />
         <span className="text-sm font-medium text-gray-200">OKR 全树</span>
-        {!loading && (
-          <span className="text-xs text-slate-500">{tree.length} 个 Area</span>
+        {!loading && !error && (
+          <span className="text-xs text-slate-500">{tree.length} 个 Area · {totalNodes} 个节点</span>
         )}
+        <button
+          className="ml-auto text-xs text-slate-500 hover:text-slate-300"
+          onClick={fetchData}
+        >
+          刷新
+        </button>
       </div>
 
       {/* 数据行 */}
@@ -196,6 +270,10 @@ export default function GTDOkr() {
           <div className="flex items-center justify-center h-32 text-slate-500 text-sm">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />
             加载中...
+          </div>
+        ) : error ? (
+          <div className="flex items-center justify-center h-32 text-red-400 text-sm">
+            加载失败：{error}
           </div>
         ) : tree.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-slate-500 text-sm">
@@ -207,7 +285,6 @@ export default function GTDOkr() {
               key={node.id}
               node={node}
               depth={0}
-              defaultExpanded={true}
               onStatusChange={handleStatusChange}
             />
           ))
@@ -215,10 +292,10 @@ export default function GTDOkr() {
       </div>
 
       {/* 底部统计 */}
-      {!loading && tree.length > 0 && (
+      {!loading && !error && tree.length > 0 && (
         <div className="shrink-0 px-4 py-2 text-xs text-slate-600 border-t border-slate-800 flex items-center gap-4">
-          <span>{tree.length} 个 Area</span>
-          <span>点击状态可编辑</span>
+          <span>{tree.length} 个 Area · {totalNodes} 个节点</span>
+          <span>点击状态可编辑 · 点击 <FileText className="w-3 h-3 inline" /> 查看备注</span>
         </div>
       )}
     </div>
