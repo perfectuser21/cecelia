@@ -13,7 +13,9 @@
 
 ## 根本原因
 
-GTDOkr.test.tsx 用了相对路径 `readFile('apps/api/src/...')` 但 vitest 的 CWD 是 `apps/api/`，所以实际路径变成 `apps/api/apps/api/...` — 根本就不存在。这类"文件存在性字符串匹配"测试是脆弱的，路径 context 依赖隐式假设。
+GTDOkr.test.tsx 用了相对路径 `readFile('apps/api/src/...')` 但 vitest 的 CWD 是 `apps/api/`，所以实际路径变成 `apps/api/apps/api/...` — 根本就不存在，每次都失败。
+这类"文件存在性字符串匹配"测试不是行为验证，而是代码内容验证，高度脆弱：函数改名、代码重构都会导致测试失败，但系统功能并未损坏。
+真正有价值的测试是通过 mock fetch 或 DB 连接验证 API 行为，不应该 grep 源码内容。
 
 ## 下次预防
 
