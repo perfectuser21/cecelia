@@ -213,25 +213,27 @@ async function upsertCache(accountId, data) {
   const five_hour_pct        = data.five_hour?.utilization ?? 0;
   const seven_day_pct        = data.seven_day?.utilization ?? 0;
   const seven_day_sonnet_pct = data.seven_day_sonnet?.utilization ?? 0;
-  const resets_at            = data.five_hour?.resets_at || null;
-  const seven_day_resets_at  = data.seven_day?.resets_at || null;
-  const extra_used           = (data.extra_usage?.utilization ?? 0) >= 100;
+  const resets_at                  = data.five_hour?.resets_at || null;
+  const seven_day_resets_at        = data.seven_day?.resets_at || null;
+  const seven_day_sonnet_resets_at = data.seven_day_sonnet?.resets_at || null;
+  const extra_used                 = (data.extra_usage?.utilization ?? 0) >= 100;
 
   await pool.query(
     `INSERT INTO account_usage_cache
        (account_id, five_hour_pct, seven_day_pct, seven_day_sonnet_pct,
-        resets_at, seven_day_resets_at, extra_used, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        resets_at, seven_day_resets_at, seven_day_sonnet_resets_at, extra_used, fetched_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
      ON CONFLICT (account_id) DO UPDATE SET
-       five_hour_pct        = EXCLUDED.five_hour_pct,
-       seven_day_pct        = EXCLUDED.seven_day_pct,
-       seven_day_sonnet_pct = EXCLUDED.seven_day_sonnet_pct,
-       resets_at            = EXCLUDED.resets_at,
-       seven_day_resets_at  = EXCLUDED.seven_day_resets_at,
-       extra_used           = EXCLUDED.extra_used,
-       fetched_at           = NOW()`,
+       five_hour_pct              = EXCLUDED.five_hour_pct,
+       seven_day_pct              = EXCLUDED.seven_day_pct,
+       seven_day_sonnet_pct       = EXCLUDED.seven_day_sonnet_pct,
+       resets_at                  = EXCLUDED.resets_at,
+       seven_day_resets_at        = EXCLUDED.seven_day_resets_at,
+       seven_day_sonnet_resets_at = EXCLUDED.seven_day_sonnet_resets_at,
+       extra_used                 = EXCLUDED.extra_used,
+       fetched_at                 = NOW()`,
     [accountId, five_hour_pct, seven_day_pct, seven_day_sonnet_pct,
-     resets_at, seven_day_resets_at, extra_used]
+     resets_at, seven_day_resets_at, seven_day_sonnet_resets_at, extra_used]
   );
 
   return {
@@ -241,6 +243,7 @@ async function upsertCache(accountId, data) {
     seven_day_sonnet_pct,
     resets_at,
     seven_day_resets_at,
+    seven_day_sonnet_resets_at,
     extra_used,
   };
 }
@@ -296,6 +299,7 @@ export async function getAccountUsage(forceRefresh = false) {
           seven_day_sonnet_pct: 0,
           resets_at: null,
           seven_day_resets_at: null,
+          seven_day_sonnet_resets_at: null,
           extra_used: false,
         };
       }
