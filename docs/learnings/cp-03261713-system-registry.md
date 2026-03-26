@@ -2,7 +2,10 @@
 
 ## 根本原因
 
-Cecelia 系统有 73 个 skill、多个 registry 文件、多台机器节点，但没有统一的"系统里有什么"的查询入口。导致 Claude 每次新建东西时可能产生重复（本次对话中实际发生：重复创建了 skill-index.md，因为不知道 .agent-knowledge/skills-index.md 已存在）。
+Cecelia 系统有 73 个 skill、多个 registry 文件、多台机器节点，但没有统一的"系统里有什么"的查询入口。
+Claude 每次新建东西时处于"局部上下文"，看不到全局，导致重复创建。
+本次对话中实际发生：重复创建了 skill-index.md，因为不知道 .agent-knowledge/skills-index.md 已存在。
+根本缺口是：没有一个"创建前强制查重"的机制，也没有任何东西创建后的统一登记流程。
 
 ## 解决方案
 
