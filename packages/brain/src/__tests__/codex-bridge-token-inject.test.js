@@ -30,7 +30,7 @@ function cleanupTmpDir(tmpDir) {
 const MOCK_AUTH = {
   auth_mode: 'chatgpt',
   tokens: {
-    access_token: 'eyJtb2NrX3Rva2VuIjoidGVzdCJ9',
+    access_token: 'mock_access_token_for_testing',
     id_token: 'mock_id',
     refresh_token: 'mock_refresh',
     account_id: 'org-test123',
