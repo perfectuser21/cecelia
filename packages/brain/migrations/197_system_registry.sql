@@ -50,3 +50,6 @@ INSERT INTO system_registry (type, name, location, description) VALUES
   ('api', '/api/brain/context',   'localhost:5221', 'Brain 全景摘要（OKR+PR+任务+决策）'),
   ('api', '/api/brain/registry',  'localhost:5221', '系统注册表 — 本表的查询接口')
 ON CONFLICT (type, name) DO NOTHING;
+INSERT INTO schema_version (version, description)
+VALUES ('197', 'system_registry')
+ON CONFLICT (version) DO NOTHING;
