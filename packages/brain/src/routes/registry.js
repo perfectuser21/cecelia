@@ -88,8 +88,12 @@ router.get('/', async (req, res) => {
     }
 
     if (req.query.q) {
-      params.push(`%${req.query.q}%`);
-      conditions.push(`(name ILIKE $${params.length} OR description ILIKE $${params.length})`);
+      const qVal = `%${req.query.q}%`;
+      params.push(qVal);
+      const n1 = params.length;
+      params.push(qVal);
+      const n2 = params.length;
+      conditions.push(`(name ILIKE $${n1} OR description ILIKE $${n2})`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
