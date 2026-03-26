@@ -469,9 +469,11 @@ describe('account-usage', () => {
 
         const result = await selectBestAccount();
         expect(result).not.toBeNull();
-        // 96/97/98 都 < 100，应选 Sonnet（用量最低 account1 sonnet=96）
+        // 96/97/98 都 < 100，应选 Sonnet
+        // 新算法：seven_day_resets_at=null → deficit=0，按 ePct ASC 排序
+        // account2 ePct=20 最低，被选中
         expect(result.model).toBe('sonnet');
-        expect(result.accountId).toBe('account1');
+        expect(result.accountId).toBe('account2');
       });
 
       it('sonnet 7d 全部 >= 100% 时降级到 Haiku（DEFAULT_CASCADE 无 Opus）', async () => {
@@ -521,8 +523,9 @@ describe('account-usage', () => {
     });
 
     describe('Haiku 降级阶段', () => {
-      it('Sonnet 全满时应选 Haiku（7d 最低的账号）', async () => {
-        // Haiku 排序：sevenDayPct 最低优先，account1(60) < account2(70) < account3(80)
+      it('Sonnet 全满时应选 Haiku（ePct 最低的账号）', async () => {
+        // 新算法：seven_day_resets_at=null → deficit=0，按 ePct ASC 排序
+        // account2 ePct=30 < account1 ePct=50，account2 被选中
         setupUsageData({
           account1: { five_hour_pct: 50, seven_day_pct: 60, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
           account2: { five_hour_pct: 30, seven_day_pct: 70, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
@@ -530,7 +533,8 @@ describe('account-usage', () => {
         });
 
         const result = await selectBestAccount();
-        expect(result).toEqual({ accountId: 'account1', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
+        // 新算法：deficit=0（无 resets_at），tiebreak ePct → account2(30) < account1(50)
+        expect(result).toEqual({ accountId: 'account2', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
       });
     });
 
@@ -616,10 +620,10 @@ describe('account-usage', () => {
         });
 
         const result = await selectBestAccount();
-        // account1 虽然 5h=70%，但 effectivePct=0（即将重置），sonnet7d=40 是次排序
-        // account2 的 sonnet7d=10 最低，Sonnet 首先按 sonnet7d 排序
-        // 所以 account2 应被选中（sonnet7d=10 < account1 sonnet7d=40）
-        expect(result.accountId).toBe('account2');
+        // 新算法：seven_day_resets_at=null → deficit=0，按 ePct ASC 排序
+        // account1 ePct=0（5h 即将重置），account2 ePct=40
+        // account1 ePct 最低，被优先选择（即将重置的账号确实被优先）
+        expect(result.accountId).toBe('account1');
       });
 
       it('即将重置的账号在同 sonnet7d 时应排前面', async () => {

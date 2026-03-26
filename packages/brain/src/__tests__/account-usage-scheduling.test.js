@@ -550,8 +550,9 @@ describe('H: Haiku 独立模式', () => {
     markSpendingCap('account2', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
 
     const result = await selectBestAccount({ model: 'haiku' });
-    // account2 被 cap 跳过 → account1（5h=20%）
-    expect(result?.accountId).toBe('account1');
+    // 新算法：按 sevenDayDeficit DESC 排序
+    // account2 被 cap 跳过 → account3（7d=50%，deficit≈41%）> account1（7d=90%，deficit≈2%）
+    expect(result?.accountId).toBe('account3');
     expect(result?.model).toBe('haiku');
   });
 
