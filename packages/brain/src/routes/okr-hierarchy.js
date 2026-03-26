@@ -377,4 +377,148 @@ router.get('/current', async (req, res) => {
   }
 });
 
+// ─── Area 分组树（GTDOkr 专用）────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/okr/area-tree
+ * 按 Area 分组返回完整 OKR 树：Area → Objectives → KRs → Projects → Scopes → Initiatives
+ * 用于 GTDOkr 页面的 Area 分组视图
+ */
+router.get('/area-tree', async (req, res) => {
+  try {
+    // 1. 获取所有非归档 areas（有 objectives 引用 或 独立展示）
+    const areasResult = await pool.query(
+      `SELECT DISTINCT a.id, a.name, a.domain
+       FROM areas a
+       WHERE a.archived = false
+       ORDER BY a.name`
+    );
+
+    // 2. 获取所有非归档 objectives（含 area_id）
+    const objectivesResult = await pool.query(
+      `SELECT id, title, status, priority, area_id, description
+       FROM objectives
+       WHERE status != 'archived'
+       ORDER BY created_at DESC`
+    );
+
+    // 3. 批量获取所有 KRs
+    const objIds = objectivesResult.rows.map(o => o.id);
+    let krsByObj = {};
+    if (objIds.length > 0) {
+      const krsResult = await pool.query(
+        `SELECT id, title, status, priority, objective_id, current_value, target_value, unit
+         FROM key_results
+         WHERE objective_id = ANY($1) AND status != 'archived'
+         ORDER BY created_at`,
+        [objIds]
+      );
+
+      // 4. 批量获取所有 okr_projects
+      const krIds = krsResult.rows.map(k => k.id);
+      let projectsByKr = {};
+      if (krIds.length > 0) {
+        const projectsResult = await pool.query(
+          `SELECT id, title, status, priority, kr_id, area_id
+           FROM okr_projects
+           WHERE kr_id = ANY($1) AND status != 'archived'
+           ORDER BY created_at`,
+          [krIds]
+        );
+
+        // 5. 批量获取所有 okr_scopes
+        const projectIds = projectsResult.rows.map(p => p.id);
+        let scopesByProject = {};
+        if (projectIds.length > 0) {
+          const scopesResult = await pool.query(
+            `SELECT id, title, status, priority, project_id
+             FROM okr_scopes
+             WHERE project_id = ANY($1) AND status != 'archived'
+             ORDER BY created_at`,
+            [projectIds]
+          );
+
+          // 6. 批量获取所有 okr_initiatives
+          const scopeIds = scopesResult.rows.map(s => s.id);
+          let initiativesByScope = {};
+          if (scopeIds.length > 0) {
+            const initiativesResult = await pool.query(
+              `SELECT id, title, status, priority, scope_id
+               FROM okr_initiatives
+               WHERE scope_id = ANY($1) AND status != 'archived'
+               ORDER BY created_at`,
+              [scopeIds]
+            );
+            for (const ini of initiativesResult.rows) {
+              if (!initiativesByScope[ini.scope_id]) initiativesByScope[ini.scope_id] = [];
+              initiativesByScope[ini.scope_id].push(ini);
+            }
+          }
+
+          for (const scope of scopesResult.rows) {
+            if (!scopesByProject[scope.project_id]) scopesByProject[scope.project_id] = [];
+            scopesByProject[scope.project_id].push({
+              ...scope,
+              initiatives: initiativesByScope[scope.id] || [],
+            });
+          }
+        }
+
+        for (const project of projectsResult.rows) {
+          if (!projectsByKr[project.kr_id]) projectsByKr[project.kr_id] = [];
+          projectsByKr[project.kr_id].push({
+            ...project,
+            scopes: scopesByProject[project.id] || [],
+          });
+        }
+      }
+
+      for (const kr of krsResult.rows) {
+        if (!krsByObj[kr.objective_id]) krsByObj[kr.objective_id] = [];
+        krsByObj[kr.objective_id].push({
+          ...kr,
+          projects: projectsByKr[kr.id] || [],
+        });
+      }
+    }
+
+    // 7. 按 area_id 分组 objectives
+    const objsByArea = {};
+    const unassignedObjs = [];
+    for (const obj of objectivesResult.rows) {
+      const withKRs = { ...obj, key_results: krsByObj[obj.id] || [] };
+      if (obj.area_id) {
+        if (!objsByArea[obj.area_id]) objsByArea[obj.area_id] = [];
+        objsByArea[obj.area_id].push(withKRs);
+      } else {
+        unassignedObjs.push(withKRs);
+      }
+    }
+
+    // 8. 构建 area 树（只包含有 objectives 的 area，加上未分配组）
+    const areaTree = areasResult.rows
+      .filter(a => objsByArea[a.id] && objsByArea[a.id].length > 0)
+      .map(area => ({
+        id: area.id,
+        name: area.name,
+        domain: area.domain,
+        objectives: objsByArea[area.id] || [],
+      }));
+
+    // 未分配 area 的 objectives 单独作为一组
+    if (unassignedObjs.length > 0) {
+      areaTree.push({
+        id: null,
+        name: '未分配',
+        domain: null,
+        objectives: unassignedObjs,
+      });
+    }
+
+    res.json({ success: true, areas: areaTree });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

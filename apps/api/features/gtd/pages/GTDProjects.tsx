@@ -1,45 +1,32 @@
 /**
- * GTD Projects — Notion 风格 Project/Initiative 数据库视图
- * 数据源: /api/tasks/projects + /api/tasks/areas
+ * GTD Projects — OKR 层级视图：okr_projects → okr_scopes → okr_initiatives
+ * 数据源: /api/brain/okr/projects + /api/brain/okr/initiatives
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FolderKanban } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import DatabaseView, { StatusBadge, PriorityBadge, ProgressBar, type Column } from '../components/DatabaseView';
 
-interface Area {
+interface OkrProject {
   id: string;
-  name: string;
-}
-
-interface Project {
-  id: string;
-  name: string;
-  type: string;
+  title: string;
   status: string;
   priority: string;
-  progress?: number;
-  parent_id: string | null;
+  kr_id: string | null;
   area_id: string | null;
-  execution_mode: string | null;
+  progress?: number;
 }
 
 export default function GTDProjects() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [areas, setAreas] = useState<Area[]>([]);
+  const [projects, setProjects] = useState<OkrProject[]>([]);
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [projectsRes, areasRes] = await Promise.all([
-        fetch('/api/tasks/projects?limit=2000'),
-        fetch('/api/tasks/areas'),
-      ]);
-      setProjects(projectsRes.ok ? await projectsRes.json() : []);
-      setAreas(areasRes.ok ? await areasRes.json() : []);
+      const res = await fetch('/api/brain/okr/projects?limit=500');
+      const data = res.ok ? await res.json() : { items: [] };
+      setProjects(data.items || []);
     } catch {
       setProjects([]);
     } finally {
@@ -49,54 +36,25 @@ export default function GTDProjects() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const areaMap = useMemo(() => new Map(areas.map(a => [a.id, a.name])), [areas]);
-  const parentProjects = useMemo(() => {
+  const sortedProjects = useMemo(() => {
     const po: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
-    return projects
-      .filter(p => p.type === 'project')
-      .sort((a, b) => (po[a.priority] ?? 9) - (po[b.priority] ?? 9));
+    return [...projects].sort((a, b) => (po[a.priority] ?? 9) - (po[b.priority] ?? 9));
   }, [projects]);
-  const initiatives = useMemo(() => projects.filter(p => p.type === 'initiative'), [projects]);
 
-  const getChildren = useCallback((row: Project): Project[] => {
-    if (row.type === 'project') {
-      return initiatives.filter(i => i.parent_id === row.id);
-    }
-    return [];
-  }, [initiatives]);
-
-  const columns: Column<Project>[] = useMemo(() => [
+  const columns: Column<OkrProject>[] = useMemo(() => [
     {
-      key: 'name',
+      key: 'title',
       label: '项目名称',
       sortable: true,
       render: (row) => (
         <div className="flex items-center gap-2 min-w-0">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
-            row.type === 'initiative'
-              ? 'bg-cyan-500/10 text-cyan-400'
-              : 'bg-purple-500/10 text-purple-400'
-          }`}>
-            {row.type === 'initiative' ? 'INI' : 'PRJ'}
+          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 bg-purple-500/10 text-purple-400">
+            PRJ
           </span>
-          <span className={`truncate ${row.type === 'project' ? 'text-gray-100 font-medium' : 'text-gray-300'}`}>
-            {row.name}
-          </span>
+          <span className="text-gray-100 font-medium truncate">{row.title}</span>
         </div>
       ),
-      getValue: (row) => row.name,
-    },
-    {
-      key: 'area',
-      label: 'Area',
-      width: 'w-28',
-      sortable: true,
-      render: (row) => (
-        <span className="text-xs text-slate-500 truncate">
-          {row.area_id ? (areaMap.get(row.area_id) ?? '—') : '—'}
-        </span>
-      ),
-      getValue: (row) => row.area_id ? (areaMap.get(row.area_id) ?? '') : '',
+      getValue: (row) => row.title,
     },
     {
       key: 'status',
@@ -125,36 +83,19 @@ export default function GTDProjects() {
       render: (row) => <ProgressBar value={row.progress ?? 0} color="bg-purple-500" />,
       getValue: (row) => row.progress ?? 0,
     },
-    {
-      key: 'mode',
-      label: '执行',
-      width: 'w-16',
-      align: 'center',
-      render: (row) => row.execution_mode ? (
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-          row.execution_mode === 'cecelia'
-            ? 'bg-cyan-500/10 text-cyan-400'
-            : 'bg-slate-500/10 text-slate-400'
-        }`}>
-          {row.execution_mode}
-        </span>
-      ) : null,
-    },
-  ], [areaMap]);
+  ], []);
 
-  const activeCount = initiatives.filter(i => i.status === 'in_progress' || i.status === 'active').length;
+  const activeCount = projects.filter(p => p.status === 'in_progress' || p.status === 'active').length;
 
   return (
     <DatabaseView
       title="Projects"
       icon={<FolderKanban className="w-4 h-4 text-slate-400" />}
       columns={columns}
-      data={parentProjects}
+      data={sortedProjects}
       loading={loading}
       getRowId={(row) => row.id}
-      getChildren={getChildren}
-      onRowClick={(row) => navigate(`/gtd/projects/${row.id}`)}
-      searchFilter={(row, q) => row.name.toLowerCase().includes(q.toLowerCase())}
+      searchFilter={(row, q) => row.title.toLowerCase().includes(q.toLowerCase())}
       searchPlaceholder="搜索 Project..."
       filterOptions={[
         {
@@ -163,7 +104,7 @@ export default function GTDProjects() {
           values: [
             { value: 'active', label: '活跃' },
             { value: 'in_progress', label: '进行中' },
-            { value: 'pending', label: '待开始' },
+            { value: 'inactive', label: '未激活' },
             { value: 'completed', label: '已完成' },
             { value: 'paused', label: '暂停' },
           ],
@@ -181,8 +122,7 @@ export default function GTDProjects() {
       emptyText="暂无 Project 数据"
       footer={
         <>
-          <span>{parentProjects.length} 个 Project</span>
-          <span>{initiatives.length} 个 Initiative</span>
+          <span>{sortedProjects.length} 个 Project</span>
           <span>{activeCount} 个活跃</span>
         </>
       }

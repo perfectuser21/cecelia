@@ -38,13 +38,13 @@ router.get('/', async (req, res) => {
       return res.status(upstream.status).json({ error: 'Brain projects unavailable', details: text });
     }
     const data = await upstream.json();
-    // 映射字段：Brain initiatives → 前端期望的 project 结构
+    // 映射字段：Brain okr_projects → 前端期望的 project 结构
     const projects = data.map(p => ({
       ...p,
       name: p.title,
-      type: 'initiative',
+      type: 'project',
       priority: p.priority ?? 'P2',
-      parent_id: p.parent_id ?? null,
+      parent_id: p.kr_id ?? null,
       execution_mode: p.metadata?.execution_mode ?? null,
     }));
     res.json(projects);

@@ -56,4 +56,43 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// PATCH /areas/:id — 更新 area（name, domain, archived）
+router.patch('/:id', async (req, res) => {
+  try {
+    const { name, domain, archived } = req.body;
+    const updates = [];
+    const params = [];
+    let paramIndex = 1;
+
+    if (name !== undefined) {
+      updates.push(`name = $${paramIndex++}`);
+      params.push(name);
+    }
+    if (domain !== undefined) {
+      updates.push(`domain = $${paramIndex++}`);
+      params.push(domain);
+    }
+    if (archived !== undefined) {
+      updates.push(`archived = $${paramIndex++}`);
+      params.push(archived);
+    }
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    updates.push(`updated_at = now()`);
+    params.push(req.params.id);
+
+    const result = await pool.query(
+      `UPDATE areas SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      params
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Area not found', id: req.params.id });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update area', details: err.message });
+  }
+});
+
 export default router;
