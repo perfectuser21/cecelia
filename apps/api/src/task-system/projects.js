@@ -26,43 +26,28 @@ export function validateTransition(from, to) {
   return { valid: true };
 }
 
-// GET /api/projects - List projects
+// GET /api/projects - List projects（代理到 Brain /api/brain/projects）
 router.get('/', async (req, res) => {
   try {
-    const { workspace_id, area_id, status, parent_id, top_level } = req.query;
-
-    const conditions = [];
-    const params = [];
-    let paramIndex = 1;
-
-    if (workspace_id) {
-      conditions.push(`workspace_id = $${paramIndex++}`);
-      params.push(workspace_id);
+    const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
+    const qs = new URLSearchParams(req.query).toString();
+    const url = `${BRAIN_API}/api/brain/projects${qs ? '?' + qs : ''}`;
+    const upstream = await fetch(url);
+    if (!upstream.ok) {
+      const text = await upstream.text();
+      return res.status(upstream.status).json({ error: 'Brain projects unavailable', details: text });
     }
-    if (area_id) {
-      conditions.push(`area_id = $${paramIndex++}`);
-      params.push(area_id);
-    }
-    if (status) {
-      conditions.push(`status = $${paramIndex++}`);
-      params.push(status);
-    }
-    // parent_id takes priority over top_level
-    if (parent_id) {
-      conditions.push(`parent_id = $${paramIndex++}`);
-      params.push(parent_id);
-    } else if (top_level === 'true') {
-      conditions.push('parent_id IS NULL');
-    }
-
-    let query = 'SELECT * FROM projects';
-    if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
-    }
-    query += ' ORDER BY created_at DESC';
-
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+    const data = await upstream.json();
+    // 映射字段：Brain initiatives → 前端期望的 project 结构
+    const projects = data.map(p => ({
+      ...p,
+      name: p.title,
+      type: 'initiative',
+      priority: p.priority ?? 'P2',
+      parent_id: p.parent_id ?? null,
+      execution_mode: p.metadata?.execution_mode ?? null,
+    }));
+    res.json(projects);
   } catch (err) {
     res.status(500).json({ error: 'Failed to list projects', details: err.message });
   }

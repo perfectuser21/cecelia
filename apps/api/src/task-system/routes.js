@@ -12,12 +12,14 @@ import runsRouter from './runs.js';
 import businessesRouter from './businesses.js';
 import departmentsRouter from './departments.js';
 import dbSchemaRouter from './db-schema.js';
+import areasRouter from './areas.js';
 
 const router = Router();
 
 // Mount sub-routers
 router.use('/projects', projectsRouter);
 router.use('/goals', goalsRouter);
+router.use('/areas', areasRouter);
 router.use('/tasks', tasksRouter);
 router.use('/tasks', linksRouter);  // Task links routes
 router.use('/runs', runsRouter);

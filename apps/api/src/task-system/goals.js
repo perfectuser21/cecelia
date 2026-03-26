@@ -3,53 +3,26 @@ import pool from './db.js';
 
 const router = Router();
 
-// GET /api/goals - List goals
+// GET /api/goals - List goals（代理到 Brain /api/brain/goals）
 router.get('/', async (req, res) => {
   try {
-    const { project_id, scope, business_id, department_id, area_id } = req.query;
-
-    // 直接查询 goals 表（businesses/departments 表不存在）
-    let query = `SELECT g.* FROM goals g`;
-    let params = [];
-    let conditions = [];
-    let paramIndex = 1;
-
-    if (project_id) {
-      conditions.push(`g.project_id = $${paramIndex++}`);
-      params.push(project_id);
+    const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
+    const qs = new URLSearchParams(req.query).toString();
+    const url = `${BRAIN_API}/api/brain/goals${qs ? '?' + qs : ''}`;
+    const upstream = await fetch(url);
+    if (!upstream.ok) {
+      const text = await upstream.text();
+      return res.status(upstream.status).json({ error: 'Brain goals unavailable', details: text });
     }
-    if (scope) {
-      conditions.push(`g.scope = $${paramIndex++}`);
-      params.push(scope);
-    }
-    if (business_id) {
-      conditions.push(`g.business_id = $${paramIndex++}`);
-      params.push(business_id);
-    }
-    if (department_id) {
-      conditions.push(`g.department_id = $${paramIndex++}`);
-      params.push(department_id);
-    }
-    if (area_id) {
-      conditions.push(`g.area_id = $${paramIndex++}`);
-      params.push(area_id);
-    }
-
-    if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
-    }
-
-    query += ' ORDER BY g.created_at DESC';
-
-    const result = await pool.query(query, params);
-
-    // 保留 business/department 为 null（表不存在，无法 JOIN）
-    const goals = result.rows.map(row => ({
-      ...row,
-      business: null,
-      department: null,
+    const data = await upstream.json();
+    // 映射字段：area_kr → kr（前端期望的 type 值），补齐缺失字段
+    const goals = data.map(g => ({
+      ...g,
+      type: g.type === 'area_kr' ? 'kr' : g.type,
+      priority: g.priority ?? 'P2',
+      progress: g.progress ?? 0,
+      weight: g.weight ?? 1.0,
     }));
-
     res.json(goals);
   } catch (err) {
     res.status(500).json({ error: 'Failed to list goals', details: err.message });
