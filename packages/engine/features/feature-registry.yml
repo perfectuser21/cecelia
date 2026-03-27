@@ -19,6 +19,11 @@ version: "3.98.0"
 updated: "2026-03-25"
 # ci-trigger: 13.47.0
 changelog:
+  - version: "13.48.0"
+    date: "2026-03-27"
+    change: "[CONFIG] fix(engine): verify-step.sh symlink 路径 bug — 用 pwd -P 解析物理路径，修复 Node.js 词法解析失败（MODULE_NOT_FOUND）"
+    scope: packages/engine/hooks/verify-step.sh
+
   - version: "13.47.0"
     date: "2026-03-25"
     change: "[CONFIG] feat(engine): session-start hook — 对话开始自动注入 Brain 活跃任务状态"
