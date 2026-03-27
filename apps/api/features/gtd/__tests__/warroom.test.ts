@@ -101,7 +101,7 @@ describe('GTDWarRoom data logic', () => {
 
   it('GTDWarRoom layout uses h-full flex-col multi-column structure', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('apps/api/features/gtd/pages/GTDWarRoom.tsx', 'utf8');
+    const src = fs.readFileSync('features/gtd/pages/GTDWarRoom.tsx', 'utf8');
     expect(src).toContain('h-full');
     expect(src).toContain('flex-col');
     expect(src).toContain('overflow-y-auto');
