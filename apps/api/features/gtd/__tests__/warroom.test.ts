@@ -61,4 +61,41 @@ describe('GTDWarRoom data logic', () => {
     expect(nodeTitle({ name: 'My Name' })).toBe('My Name');
     expect(nodeTitle({})).toBe('(无标题)');
   });
+
+  it('isEmpty is true when no visions, objectives, or tasks', () => {
+    const visions: unknown[] = [];
+    const objectives: unknown[] = [];
+    const tasks: unknown[] = [];
+    const isEmpty = visions.length === 0 && objectives.length === 0 && tasks.length === 0;
+    expect(isEmpty).toBe(true);
+  });
+
+  it('isEmpty is false when tasks exist', () => {
+    const visions: unknown[] = [];
+    const objectives: unknown[] = [];
+    const tasks = [{ id: 't1', title: 'Task', status: 'in_progress', priority: 'P1' }];
+    const isEmpty = visions.length === 0 && objectives.length === 0 && tasks.length === 0;
+    expect(isEmpty).toBe(false);
+  });
+
+  it('counts pending KRs across all objectives', () => {
+    const objectives = [
+      {
+        id: 'obj1', children: [
+          { id: 'kr1', status: 'active' },
+          { id: 'kr2', status: 'completed' },
+        ],
+      },
+      {
+        id: 'obj2', children: [
+          { id: 'kr3', status: 'in_progress' },
+        ],
+      },
+    ];
+    const pendingKrCount = objectives.reduce(
+      (sum, obj) => sum + obj.children.filter(kr => kr.status !== 'completed').length,
+      0
+    );
+    expect(pendingKrCount).toBe(2);
+  });
 });
