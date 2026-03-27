@@ -148,10 +148,73 @@ function DescriptionEditor({
   );
 }
 
+// ─── Title 内联编辑 ────────────────────────────────────────────────────────────
+
+function TitleEditor({
+  nodeType, nodeId, initial, className, onSaved,
+}: {
+  nodeType: string;
+  nodeId: string;
+  initial: string;
+  className?: string;
+  onSaved: (val: string) => void;
+}) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [value, setValue] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleTitleSave = async () => {
+    if (value.trim() === initial.trim()) { setEditingTitle(false); return; }
+    setSaving(true);
+    try {
+      await fetch(`/api/tasks/full-tree/${nodeType}/${nodeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: value.trim() }),
+      });
+      onSaved(value.trim());
+      setEditingTitle(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') { e.preventDefault(); handleTitleSave(); }
+    if (e.key === 'Escape') { setValue(initial); setEditingTitle(false); }
+  };
+
+  if (editingTitle) {
+    return (
+      <input
+        ref={inputRef}
+        autoFocus
+        className={`bg-slate-800 border border-blue-500/50 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-400 min-w-0 flex-1 ${className ?? ''} ${saving ? 'opacity-50' : ''}`}
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onBlur={handleTitleSave}
+        onKeyDown={handleKeyDown}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={`cursor-text hover:bg-slate-700/40 rounded px-0.5 -mx-0.5 transition-colors ${className ?? ''}`}
+      onDoubleClick={() => { setValue(initial); setEditingTitle(true); }}
+      title="双击编辑标题"
+    >
+      {initial || '(无标题)'}
+    </span>
+  );
+}
+
 // ─── KR 行 ────────────────────────────────────────────────────────────────────
 
 function KrRow({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id: string, val: string) => void }) {
   const [showDesc, setShowDesc] = useState(false);
+  const [title, setTitle] = useState(nodeTitle(node));
   const [status, setStatus] = useState(node.status);
   const [editingStatus, setEditingStatus] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -181,7 +244,7 @@ function KrRow({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id: string,
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${TYPE_CONFIG.kr.cls}`}>
           KR
         </span>
-        <span className="flex-1 text-gray-300 text-xs">{nodeTitle(node)}</span>
+        <TitleEditor nodeType="kr" nodeId={node.id} initial={title} className="flex-1 text-gray-300 text-xs" onSaved={setTitle} />
 
         {/* 进度 */}
         {node.target_value !== undefined && node.target_value !== null && (
@@ -274,6 +337,7 @@ function KrRow({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id: string,
 function ObjectiveRow({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id: string, val: string) => void }) {
   const [expanded, setExpanded] = useState(true);
   const [showDesc, setShowDesc] = useState(false);
+  const [title, setTitle] = useState(nodeTitle(node));
   const [status, setStatus] = useState(node.status);
   const [editingStatus, setEditingStatus] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -316,7 +380,7 @@ function ObjectiveRow({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id: 
             <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${TYPE_CONFIG.objective.cls}`}>
               OBJ
             </span>
-            <span className="text-sm text-gray-200 font-medium">{nodeTitle(node)}</span>
+            <TitleEditor nodeType="objective" nodeId={node.id} initial={title} className="text-sm text-gray-200 font-medium" onSaved={setTitle} />
 
             {/* 日期 */}
             {(start || end) && (
@@ -436,6 +500,7 @@ function AreaSection({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id: s
 
 function VisionSection({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id: string, val: string) => void }) {
   const [showDesc, setShowDesc] = useState(false);
+  const [title, setTitle] = useState(nodeTitle(node));
 
   return (
     <div className="mb-6">
@@ -445,7 +510,7 @@ function VisionSection({ node, onDescSaved }: { node: OkrNode; onDescSaved: (id:
           VISION
         </span>
         <div className="flex-1 min-w-0">
-          <h2 className="text-base font-semibold text-amber-100">{nodeTitle(node)}</h2>
+          <TitleEditor nodeType="vision" nodeId={node.id} initial={title} className="text-base font-semibold text-amber-100" onSaved={setTitle} />
           {node.status && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_STYLES[node.status] ?? STATUS_STYLES.active}`}>
               {STATUS_LABELS[node.status] ?? node.status}
