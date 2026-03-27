@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Clock, FileCode, ExternalLink } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Clock, FileCode, BookOpen } from 'lucide-react';
 import { useApi } from '../../shared/hooks/useApi';
 
 interface ModuleItem {
@@ -134,15 +134,13 @@ export default function KnowledgeModuleDetail() {
           <p className="text-sm text-blue-600 mb-3">
             此模块已由西安 Codex 生成完整的深度知识 HTML 页面。
           </p>
-          <a
-            href={`/${module.output_url}`}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => navigate(`/knowledge/view?url=${encodeURIComponent(module.output_url!)}`)}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 bg-white border border-blue-300 rounded-lg px-4 py-2 hover:border-blue-500 transition-colors"
           >
-            <ExternalLink size={14} />
-            查看知识页
-          </a>
+            <BookOpen size={14} />
+            在 Dashboard 中查看
+          </button>
         </div>
       )}
     </div>
