@@ -2,7 +2,11 @@
 
 ### 根本原因
 
-War Room 使用 `max-w-4xl space-y-6` 竖向单列布局，在宽屏浪费空间，且外层容器 `flex-1 min-h-0 overflow-hidden` 与内层 `p-6` 冲突，导致页面无法正常滚动（"上下刷不动"）。
+GTD 路由使用 `isFullHeightRoute`，外层容器是 `flex-1 min-h-0 overflow-hidden`，
+页面必须自己用 `h-full` 撑满高度才能正常显示。
+
+原 War Room 根元素用 `max-w-4xl space-y-6`，没有 `h-full`，导致容器高度不确定，
+外层 `overflow-hidden` 截断了内容，造成"上下刷不动"的现象。
 
 ### 解决方案
 
