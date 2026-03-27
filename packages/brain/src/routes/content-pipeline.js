@@ -89,7 +89,7 @@ const STEP_SYSTEM_PROMPTS = {
 };
 
 router.post('/content-types/test-step', async (req, res) => {
-  const { step, prompt, model, input } = req.body || {};
+  const { step, prompt, model, input, provider: reqProvider } = req.body || {};
 
   if (!step || !prompt) {
     return res.status(400).json({ error: 'step 和 prompt 必填' });
@@ -108,11 +108,21 @@ router.post('/content-types/test-step', async (req, res) => {
 
   const fullPrompt = `${systemPrompt}\n\n---\n\n${userMessage}`;
 
+  const resolvedModel = model || 'claude-sonnet-4-20250514';
+  let resolvedProvider;
+  if (reqProvider) {
+    resolvedProvider = reqProvider;
+  } else if (resolvedModel.startsWith('gpt')) {
+    resolvedProvider = 'openai';
+  } else {
+    resolvedProvider = 'anthropic';
+  }
+
   try {
     const startTime = Date.now();
     const result = await callLLM('content-test-step', fullPrompt, {
-      model: model || 'claude-sonnet-4-20250514',
-      provider: model?.startsWith('gpt') ? 'openai' : 'anthropic-api',
+      model: resolvedModel,
+      provider: resolvedProvider,
       maxTokens: 4096,
       timeout: 60000,
     });
