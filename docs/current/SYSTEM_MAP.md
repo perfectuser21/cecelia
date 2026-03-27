@@ -116,6 +116,10 @@ packages/engine/
 | `apps/api/` | Workspace Core 后端 API，28 个功能模块 | — |
 | `apps/dashboard/` | React UI，Cecelia 唯一前端入口 | 5211 |
 
+**knowledge 模块新增页面（PR #1637）**：
+- `/knowledge/doc-chat/:id` → `DocChatPage`：文档+聊天分栏（Notion AI 风格），左栏 markdown 渲染，右栏 Claude 聊天（Haiku/Sonnet/Opus 可选）
+- Brain 新增端点：`POST /api/brain/design-docs/:id/chat`，支持 `<doc-update>` 标签触发文档自动更新
+
 ---
 
 ## 5. packages/workflows — Agent 协议与 Skills
