@@ -18,7 +18,11 @@ Pipeline Patrol 检测到 `cp-03262112-sonnet-resets-at` 分支停留在 `step_3
 
 ### 根本原因
 
-两个 agent 并行处理同一功能任务（`account_usage_cache` 新增 `seven_day_sonnet_resets_at`）。速度较慢的 agent 完成 step_2_code 后进程死亡（stop hook 循环中断），worktree 被后续任务复用，代码丢失，形成孤儿 pipeline。
+两个 agent 被并行派发了相同功能任务（`account_usage_cache` 新增 `seven_day_sonnet_resets_at`），导致竞争执行。
+
+速度较慢的 agent 完成 `step_2_code` 后进程死亡（stop hook 循环中断），其 worktree 被后续 pipeline rescue 任务占用，分支和代码随之丢失。
+
+与此同时，速度较快的 agent 已通过 PR #1604 将功能合并到 main，使得孤儿 pipeline 的工作完全冗余。Pipeline Patrol 检测到孤儿状态但未先核查功能是否已交付，错误触发了 rescue 流程。
 
 ### 下次预防
 
