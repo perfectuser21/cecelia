@@ -200,6 +200,18 @@ export async function persistDigest(analysis, filePath, slug, captureId) {
       );
     }
 
+    // 将提炼摘要写入 captures 表，供 GTDInbox Kanban Board 统一展示
+    const summary = [
+      analysis.summary || '',
+      ...(analysis.decisions || []).slice(0, 2).map(d => `决策: ${d}`),
+      ...(analysis.ideas || []).slice(0, 2).map(i => `想法: ${i}`),
+    ].filter(Boolean).join('\n').slice(0, 500) || '对话提炼';
+    await client.query(
+      `INSERT INTO captures (content, source, status, owner, created_at, updated_at)
+       VALUES ($1, 'conversation', 'inbox', 'cecelia', now(), now())`,
+      [summary]
+    );
+
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
