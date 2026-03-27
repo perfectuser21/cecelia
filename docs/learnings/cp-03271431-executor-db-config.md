@@ -7,7 +7,11 @@ cp-03271431-executor-db-config
 改造 content-pipeline-executors.js，让 5 个 executor 通过 getContentType() 从 DB/YAML 读取内容类型配置，配置不存在时 fallback 到硬编码。
 
 ### 根本原因
-executor 中的 prompt、阈值、规则全部硬编码，无法按内容类型灵活配置。PR #1611 已建立 content-type-registry（DB 优先 YAML 兜底），executor 需要对接。
+executor 中的 prompt、阈值、规则全部硬编码，无法按内容类型灵活配置。
+PR #1611 已建立 content-type-registry（DB 优先 YAML 兜底），executor 需要对接。
+每个 executor 需要在函数入口处调用 getContentType() 获取配置，
+然后用可选链访问配置字段（如 typeConfig?.copy_rules?.min_word_count?.short_copy），
+配置不存在时 fallback 到原有硬编码值，确保向后兼容。
 
 ### 下次预防
 - [ ] 新增功能模块时，优先检查是否已有配置注册表可复用
