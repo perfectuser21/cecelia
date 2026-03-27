@@ -55,6 +55,7 @@ const manifest: FeatureManifest = {
       navItem: { label: '知识模块', icon: 'Layers', group: 'knowledge-docs', order: 7 },
     },
     { path: '/knowledge/modules/:groupId/:moduleId', component: 'KnowledgeModuleDetail' },
+    { path: '/knowledge/view', component: 'KnowledgePageViewer' },
     // 内容工厂
     {
       path: '/content-factory',
@@ -82,6 +83,7 @@ const manifest: FeatureManifest = {
     StrategyTree: () => import('./pages/StrategyTree'),
     KnowledgeModules: () => import('./pages/KnowledgeModules'),
     KnowledgeModuleDetail: () => import('./pages/KnowledgeModuleDetail'),
+    KnowledgePageViewer: () => import('./pages/KnowledgePageViewer'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
   },
 };
