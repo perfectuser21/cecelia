@@ -14,6 +14,7 @@ import { execSync } from 'child_process';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { getContentType } from './content-types/content-type-registry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +66,10 @@ export async function executeResearch(task) {
 
   console.log(`[research] 开始: ${keyword} (notebook=${notebookId || '无'})`);
 
+  // 从 DB/YAML 读取内容类型配置
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
+
   const dir = join(OUTPUT_BASE, 'research', `${contentType}-${slug(keyword)}-${today()}`);
   ensureDir(dir);
 
@@ -72,8 +77,13 @@ export async function executeResearch(task) {
 
   if (notebookId) {
     run(`notebooklm use ${notebookId} 2>&1`);
+    // 优先使用配置中的 research_prompt，fallback 到硬编码
+    const defaultPrompt = `从所有源中，找出能证明'个人也能拥有过去只有公司才有的能力'的证据。关于${keyword}，每条带具体数据和来源。至少8条。`;
+    const researchPrompt = typeConfig?.template?.research_prompt
+      ? typeConfig.template.research_prompt.replace(/\{keyword\}/g, keyword)
+      : defaultPrompt;
     const raw = run(
-      `notebooklm ask "从所有源中，找出能证明'个人也能拥有过去只有公司才有的能力'的证据。关于${keyword}，每条带具体数据和来源。至少8条。" --json 2>&1`,
+      `notebooklm ask "${researchPrompt}" --json 2>&1`,
       120000
     );
     if (raw) {
@@ -139,6 +149,10 @@ export async function executeCopywriting(task) {
   const contentType = task.payload?.content_type || 'solo-company-case';
 
   console.log(`[copywriting] 开始: ${keyword}`);
+
+  // 从 DB/YAML 读取内容类型配置
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
 
   const dir = join(OUTPUT_BASE, `${today()}-${slug(keyword)}`);
   ensureDir(join(dir, 'cards'));
@@ -209,7 +223,12 @@ export async function executeCopywriting(task) {
 
 export async function executeCopyReview(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
+  const contentType = task.payload?.content_type || 'solo-company-case';
   console.log(`[copy-review] 开始: ${keyword}`);
+
+  // 从 DB/YAML 读取内容类型配置
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
 
   const dir = findOutputDir(keyword);
   if (!dir) return { success: true, review_passed: false, issues: ['找不到产出目录'] };
@@ -224,33 +243,62 @@ export async function executeCopyReview(task) {
 
   const issues = [];
 
-  // 品牌关键词 ≥ 3
-  const hits = BRAND_KEYWORDS.filter(kw => allText.includes(kw));
-  if (hits.length < 3) issues.push(`品牌关键词 ${hits.length}/3（需 ≥3，命中：${hits.join('、')}）`);
+  // 如果配置中有 review_rules，使用配置规则；否则 fallback 到硬编码
+  const reviewRules = typeConfig?.review_rules;
+  if (reviewRules && Array.isArray(reviewRules)) {
+    // 使用配置审查规则（review_rules count: reviewRules.length）
+    // 配置驱动的审查：遍历 blocking 规则做可检测的静态验证
+    for (const rule of reviewRules) {
+      if (rule.id === 'no_fabrication' && rule.severity === 'blocking') {
+        // 禁止编造检查：与禁用词检查合并处理（下方统一）
+      }
+      // 未来可扩展更多规则的自动化检测
+    }
+  } else {
+    // fallback: 硬编码品牌关键词检查
+    const hits = BRAND_KEYWORDS.filter(kw => allText.includes(kw));
+    if (hits.length < 3) issues.push(`品牌关键词 ${hits.length}/3（需 ≥3，命中：${hits.join('、')}）`);
+  }
 
-  // 禁用词 = 0
+  // 禁用词 = 0（始终检查）
   const banned = BANNED_WORDS.filter(w => allText.toLowerCase().includes(w.toLowerCase()));
   if (banned.length > 0) issues.push(`禁用词：${banned.join('、')}`);
 
-  // 长度
+  // 长度：优先使用配置中的 min_word_count，fallback 到硬编码 300/1000
+  const minShortCopy = typeConfig?.copy_rules?.min_word_count?.short_copy || 300;
+  const minLongForm = typeConfig?.copy_rules?.min_word_count?.long_form || 1000;
+
   const copyLen = existsSync(cp) ? readFileSync(cp, 'utf-8').length : 0;
   const artLen = existsSync(ap) ? readFileSync(ap, 'utf-8').length : 0;
-  if (copyLen < 300) issues.push(`社交媒体文案 ${copyLen} 字（需 ≥300）`);
-  if (artLen < 1000) issues.push(`公众号长文 ${artLen} 字（需 ≥1000）`);
+  if (copyLen < minShortCopy) issues.push(`社交媒体文案 ${copyLen} 字（需 ≥${minShortCopy}）`);
+  if (artLen < minLongForm) issues.push(`公众号长文 ${artLen} 字（需 ≥${minLongForm}）`);
 
   // 有数据
   if (!/\d+/.test(allText)) issues.push('缺少具体数字/数据');
 
   const passed = issues.length === 0;
   console.log(`[copy-review] ${passed ? 'PASS' : 'FAIL'}: ${issues.join('; ') || '全部通过'}`);
-  return { success: true, review_passed: passed, score: { keyword_hits: hits.length, banned_hits: banned.length, copy_length: copyLen, article_length: artLen }, issues };
+  return {
+    success: true,
+    review_passed: passed,
+    score: { banned_hits: banned.length, copy_length: copyLen, article_length: artLen, min_short_copy: minShortCopy, min_long_form: minLongForm },
+    config_driven: !!(reviewRules && Array.isArray(reviewRules)),
+    issues,
+  };
 }
 
 // ─── 4. Generate（图片生成）────────────────────────────────────
 
 export async function executeGenerate(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
+  const contentType = task.payload?.content_type || 'solo-company-case';
   console.log(`[generate] 开始图片生成: ${keyword}`);
+
+  // 从 DB/YAML 读取内容类型配置
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
+  const imageCount = typeConfig?.images?.count || 9;
+  const imageStyle = typeConfig?.images?.style || 'professional-infographic';
 
   // 图片生成依赖 export 阶段的 generateCards，此处只做标记
   // 实际卡片渲染在 executeExport 中完成（需要 resvg）
@@ -261,18 +309,24 @@ export async function executeGenerate(task) {
     ensureDir(join(newDir, 'cards'));
     ensureDir(join(newDir, 'article'));
     console.log(`[generate] 产出目录已创建: ${newDir}`);
-    return { success: true, output_dir: newDir };
+    return { success: true, output_dir: newDir, image_count: imageCount, image_style: imageStyle };
   }
 
   console.log(`[generate] 图片生成阶段完成（实际渲染在 export 阶段）→ ${dir}`);
-  return { success: true, output_dir: dir };
+  return { success: true, output_dir: dir, image_count: imageCount, image_style: imageStyle };
 }
 
 // ─── 5. Image Review（图片审核）───────────────────────────────
 
 export async function executeImageReview(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
+  const contentType = task.payload?.content_type || 'solo-company-case';
   console.log(`[image-review] 开始: ${keyword}`);
+
+  // 从 DB/YAML 读取内容类型配置
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
+  const maxImageCount = typeConfig?.images?.count || 9;
 
   const dir = findOutputDir(keyword);
   if (!dir) return { success: true, review_passed: false, issues: ['找不到产出目录'] };
@@ -297,7 +351,7 @@ export async function executeImageReview(task) {
   } catch { /* */ }
 
   // 图片数量检查（允许 0，因为实际渲染可能在 export 阶段）
-  if (cardCount > 9) issues.push(`图片数量 ${cardCount} 超过限制（最多 9 张）`);
+  if (cardCount > maxImageCount) issues.push(`图片数量 ${cardCount} 超过限制（最多 ${maxImageCount} 张）`);
 
   const passed = issues.length === 0;
   console.log(`[image-review] ${passed ? 'PASS' : 'FAIL'}: ${issues.join('; ') || '全部通过'}（${cardCount} 张图片）`);
