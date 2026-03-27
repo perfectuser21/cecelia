@@ -19,6 +19,11 @@ version: "3.98.0"
 updated: "2026-03-25"
 # ci-trigger: 13.47.0
 changelog:
+  - version: "13.48.0"
+    date: "2026-03-27"
+    change: "[CONFIG] fix(engine): verify-step.sh symlink 路径 bug — 用 pwd -P 解析物理路径，修复 Node.js 词法解析失败（MODULE_NOT_FOUND）"
+    scope: packages/engine/hooks/verify-step.sh
+
   - version: "13.47.0"
     date: "2026-03-25"
     change: "[CONFIG] feat(engine): session-start hook — 对话开始自动注入 Brain 活跃任务状态"
@@ -2642,5 +2647,36 @@ product_features:
       - "高风险模块缺测试：Check 4 exit 1"
       - "普通模块缺测试：warning 不阻断"
       - "前缀匹配：executor-billing.test.js 覆盖 executor.js"
+
+    rcis: []
+
+  - id: verify-step-symlink-path-fix
+    name: verify-step.sh symlink 物理路径解析修复
+    category: hooks
+    status: Committed
+    priority: P1
+    version: "13.48.0"
+    updated: "2026-03-27"
+    description: |
+      verify-step.sh 通过 hooks/ symlink 调用时，$(dirname BASH_SOURCE) 返回逻辑路径
+      hooks/../scripts/devgate。Node.js 词法解析该路径导致 MODULE_NOT_FOUND。
+      修复：用 $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P) 获取物理绝对路径，
+      再拼接 ../scripts/devgate，确保 Node.js 能正确解析。
+
+    entrypoints:
+      - type: hook
+        file: packages/engine/hooks/verify-step.sh
+        trigger: "bash-guard 状态机推进 step_N 时触发"
+
+    golden_path: |
+      hooks/verify-step.sh（symlink）→
+      pwd -P 获取物理路径 →
+      拼接 ../scripts/devgate/check-manual-cmd-whitelist.cjs →
+      Node.js 词法解析成功 →
+      DoD whitelist 检查正常执行
+
+    minimal_paths:
+      - "symlink 环境下 verify-step 正常执行"
+      - "物理路径下 verify-step 行为不变"
 
     rcis: []

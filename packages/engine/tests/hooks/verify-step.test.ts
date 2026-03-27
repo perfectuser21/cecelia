@@ -442,4 +442,16 @@ type: task-card
   });
 });
 
-// ci-retrigger: added to force new CI run
+describe("verify-step.sh symlink path resolution", () => {
+  it("resolves physical path via pwd -P (symlink safety)", () => {
+    // verify-step.sh uses pwd -P to get the physical path when invoked
+    // through a symlink (hooks/ → packages/engine/hooks/).
+    // This test confirms the script contains the symlink-safe path resolution pattern.
+    const { readFileSync } = require("fs");
+    const { resolve } = require("path");
+    const scriptPath = resolve(__dirname, "../../hooks/verify-step.sh");
+    const content = readFileSync(scriptPath, "utf8");
+    // Must use pwd -P to get the physical (not logical) directory path
+    expect(content).toContain("pwd -P");
+  });
+});

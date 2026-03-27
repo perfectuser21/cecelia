@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import InlineEdit from '../../shared/components/InlineEdit';
 import {
   FolderKanban,
   RefreshCw,
@@ -253,7 +254,20 @@ export default function ProjectDetail() {
             <FolderKanban className="w-6 h-6 text-white" />
           </div>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{project.name}</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+              <InlineEdit
+                value={project.name}
+                onSave={async (title) => {
+                  await fetch(`/api/brain/projects/${project.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title }),
+                  });
+                  setProject(prev => prev ? { ...prev, name: title } : prev);
+                }}
+                className="text-2xl font-bold text-slate-900 dark:text-white"
+              />
+            </h1>
             {project.description && (
               <p className="text-sm text-slate-500 dark:text-slate-400">{project.description}</p>
             )}

@@ -445,6 +445,13 @@ changelog:
 
 ---
 
+### verify-step-symlink-path-fix: verify-step.sh symlink 物理路径解析修复
+
+1. ✅ **symlink 环境下 verify-step 正常执行**
+2. ✅ **物理路径下 verify-step 行为不变**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

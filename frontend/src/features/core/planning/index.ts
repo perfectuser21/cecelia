@@ -12,6 +12,12 @@ const manifest: FeatureManifest = {
   ],
 
   routes: [
+    // 作战室
+    {
+      path: '/warroom',
+      component: 'WarRoomPage',
+      navItem: { label: '作战室', icon: 'Swords', group: 'planning', order: 0 },
+    },
     // Brain
     {
       path: '/brain',
@@ -108,6 +114,7 @@ const manifest: FeatureManifest = {
     CompanyLiveStatus: () => import('../execution/pages/N8nLiveStatus'),
     CompanyLiveStatusDetail: () => import('../execution/pages/N8nLiveStatusDetail'),
     PortfolioOverview: () => import('./pages/PortfolioOverview'),
+    WarRoomPage: () => import('./pages/WarRoomPage'),
   },
 };
 

@@ -533,6 +533,18 @@ check-coverage-completeness.mjs Check 4 →
 
 ---
 
+### verify-step-symlink-path-fix: verify-step.sh symlink 物理路径解析修复
+
+```
+hooks/verify-step.sh（symlink）→
+pwd -P 获取物理路径 →
+拼接 ../scripts/devgate/check-manual-cmd-whitelist.cjs →
+Node.js 词法解析成功 →
+DoD whitelist 检查正常执行
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

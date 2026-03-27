@@ -129,8 +129,9 @@ $found_fake
     fi
 
     # 检查 manual: 命令白名单（CI 只允许 node/npm/npx/curl/bash/psql）
+    # 注意：使用 pwd -P 解析真实路径，避免 hooks/ 为符号链接时 Node.js 词法路径找不到文件
     local WHITELIST_SCRIPT=""
-    for _dir in "$(dirname "${BASH_SOURCE[0]}")/../scripts/devgate" "$PROJECT_ROOT/packages/engine/scripts/devgate"; do
+    for _dir in "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../scripts/devgate" "$PROJECT_ROOT/packages/engine/scripts/devgate"; do
         if [[ -f "$_dir/check-manual-cmd-whitelist.cjs" ]]; then
             WHITELIST_SCRIPT="$_dir/check-manual-cmd-whitelist.cjs"
             break
