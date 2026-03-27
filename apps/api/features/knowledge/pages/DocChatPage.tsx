@@ -1,7 +1,7 @@
 // Route: /knowledge/doc-chat/:id — 文档+聊天分栏界面（Notion AI 风格）
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Send, RefreshCw, Pencil, Check, X } from 'lucide-react';
 import { useApi } from '../../shared/hooks/useApi';
 
 interface DesignDoc {
@@ -47,6 +47,9 @@ export default function DocChatPage() {
   const [model, setModel] = useState('claude-haiku-4-5-20251001');
   const [sending, setSending] = useState(false);
   const [docContent, setDocContent] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [saving, setSaving] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { data, loading } = useApi<{ success: boolean; data: DesignDoc }>(
@@ -66,6 +69,36 @@ export default function DocChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  function startEdit() {
+    setEditText(docContent || '');
+    setEditMode(true);
+  }
+
+  function cancelEdit() {
+    setEditMode(false);
+    setEditText('');
+  }
+
+  async function saveEdit() {
+    if (!id || saving) return;
+    setSaving(true);
+    try {
+      const resp = await fetch(`/api/brain/design-docs/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editText }),
+      });
+      const result = await resp.json();
+      if (result.success) {
+        setDocContent(editText);
+        setEditMode(false);
+        setEditText('');
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function sendMessage() {
     if (!input.trim() || sending || !id) return;
@@ -147,17 +180,51 @@ export default function DocChatPage() {
               {doc.type} · 更新于 {new Date(doc.updated_at).toLocaleDateString('zh-CN')}
             </p>
           </div>
-          {docContent !== doc.content && (
+          {!editMode && docContent !== doc.content && (
             <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded flex items-center gap-1">
               <RefreshCw size={10} />
               已更新
             </span>
           )}
+          {editMode ? (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={saveEdit}
+                disabled={saving}
+                className="flex items-center gap-1 text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+              >
+                <Check size={12} />
+                {saving ? '保存中...' : '保存'}
+              </button>
+              <button
+                onClick={cancelEdit}
+                className="flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-400 text-gray-600"
+              >
+                <X size={12} />
+                取消
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={startEdit}
+              className="flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-400 text-gray-600"
+            >
+              <Pencil size={12} />
+              编辑
+            </button>
+          )}
         </div>
 
         {/* 文档正文 */}
         <div className="flex-1 overflow-y-auto px-8 py-6">
-          {docContent ? (
+          {editMode ? (
+            <textarea
+              value={editText}
+              onChange={e => setEditText(e.target.value)}
+              className="w-full h-full min-h-[400px] text-sm text-gray-800 font-mono leading-relaxed border border-blue-200 rounded-lg px-4 py-3 focus:outline-none focus:border-blue-400 resize-none bg-blue-50/30"
+              placeholder="输入 Markdown 内容..."
+            />
+          ) : docContent ? (
             <div
               className="text-sm text-gray-700 leading-relaxed max-w-2xl"
               dangerouslySetInnerHTML={{ __html: renderMarkdown(docContent) }}
