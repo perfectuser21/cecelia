@@ -13,6 +13,7 @@ const manifest: FeatureManifest = {
 
   routes: [
     { path: '/knowledge', component: 'KnowledgeHome' },
+    { path: '/knowledge/modules', component: 'KnowledgeModules' },
     { path: '/knowledge/content', component: 'ContentStudio' },
     { path: '/knowledge/brain', component: 'SuperBrain' },
     { path: '/knowledge/digestion', component: 'KnowledgeDigestion' },
@@ -62,6 +63,7 @@ const manifest: FeatureManifest = {
 
   components: {
     KnowledgeHome: () => import('./pages/KnowledgeHome'),
+    KnowledgeModules: () => import('./pages/KnowledgeModules'),
     ContentStudio: () => import('../content/pages/ContentStudio'),
     SuperBrain: () => import('../brain/pages/SuperBrain'),
     KnowledgeDigestion: () => import('./pages/KnowledgeDigestion'),
