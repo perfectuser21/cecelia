@@ -1,6 +1,6 @@
 /**
  * WarRoom — 作战室：当前系统状态一览
- * 横向多列布局：Vision 顶部横幅 + 左（Objectives+KR）/ 中（Tasks）/ 右（备用）
+ * 横向多列 dashboard 布局：Vision 顶部横幅 + 左中右三列独立滚动
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -49,7 +49,7 @@ export default function GTDWarRoom() {
     setLoading(true);
     const [treeRes, tasksRes] = await Promise.allSettled([
       fetch('/api/tasks/full-tree?view=okr'),
-      fetch('/api/brain/tasks?status=in_progress&limit=8'),
+      fetch('/api/brain/tasks?status=in_progress&limit=20'),
     ]);
     setTree(treeRes.status === 'fulfilled' && treeRes.value.ok ? await treeRes.value.json() : []);
     setTasks(tasksRes.status === 'fulfilled' && tasksRes.value.ok ? await tasksRes.value.json() : []);
@@ -67,9 +67,7 @@ export default function GTDWarRoom() {
     );
   }
 
-  // 找 Vision（第一层）
   const visions = tree.filter(n => n.type === 'vision');
-  // 所有活跃 Objective（展平）
   const objectives: OkrNode[] = [];
   tree.forEach(v => {
     v.children.forEach(area => {
@@ -84,40 +82,42 @@ export default function GTDWarRoom() {
   const isEmpty = visions.length === 0 && objectives.length === 0 && tasks.length === 0;
 
   return (
-    <div className="h-full flex flex-col px-4 pt-4 pb-2 gap-3 min-h-0">
-      {/* 页头 */}
-      <div className="flex items-center gap-3 shrink-0">
-        <Target className="w-5 h-5 text-amber-400" />
-        <h1 className="text-lg font-semibold text-gray-100">作战室</h1>
-        <span className="text-xs text-slate-500">当前我们在往哪跑</span>
-        <button
-          className="ml-auto text-xs text-slate-500 hover:text-slate-300"
-          onClick={fetchData}
-        >
-          刷新
-        </button>
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* 顶部：页头 + Vision 横幅 */}
+      <div className="shrink-0 px-4 pt-4 pb-3 space-y-3">
+        <div className="flex items-center gap-3">
+          <Target className="w-5 h-5 text-amber-400" />
+          <h1 className="text-lg font-semibold text-gray-100">作战室</h1>
+          <span className="text-xs text-slate-500">当前我们在往哪跑</span>
+          <button
+            className="ml-auto text-xs text-slate-500 hover:text-slate-300"
+            onClick={fetchData}
+          >
+            刷新
+          </button>
+        </div>
+
+        {visions.length > 0 && (
+          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                VISION
+              </span>
+              <span className="text-xs text-amber-600/60">北极星</span>
+            </div>
+            {visions.map(v => (
+              <div key={v.id}>
+                <p className="text-base font-semibold text-amber-100">{nodeTitle(v)}</p>
+                {v.description && (
+                  <p className="text-xs text-amber-700/70 mt-0.5 leading-relaxed">{v.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Vision 顶部横幅（全宽） */}
-      {visions.length > 0 && (
-        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 shrink-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30">
-              VISION
-            </span>
-            <span className="text-xs text-amber-600/60">北极星</span>
-          </div>
-          {visions.map(v => (
-            <div key={v.id}>
-              <p className="text-base font-semibold text-amber-100">{nodeTitle(v)}</p>
-              {v.description && (
-                <p className="text-xs text-amber-700/70 mt-1 leading-relaxed">{v.description}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
+      {/* 下方：三列 dashboard，各列独立滚动 */}
       {isEmpty ? (
         <div className="flex-1 flex items-center justify-center text-slate-600">
           <div className="text-center">
@@ -126,88 +126,106 @@ export default function GTDWarRoom() {
           </div>
         </div>
       ) : (
-        /* 三列主内容区 */
-        <div className="flex-1 flex gap-3 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-3 gap-3 px-4 pb-4 overflow-hidden">
           {/* 左列：Objectives + KR */}
-          <div className="flex-1 flex flex-col min-h-0">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 shrink-0">
+          <div className="overflow-y-auto space-y-2 pr-1">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider sticky top-0 bg-[#0f1117] py-1.5">
               当前目标
             </h2>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {objectives.length === 0 ? (
-                <p className="text-xs text-slate-600 py-4 text-center">暂无活跃目标</p>
-              ) : (
-                objectives.map(obj => (
-                  <div key={obj.id} className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3">
-                    <div className="flex items-start gap-2">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-purple-500/15 text-purple-400 shrink-0 mt-0.5">
-                        OBJ
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-gray-200 font-medium">{nodeTitle(obj)}</p>
-                        {obj.children.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {obj.children.filter(kr => kr.status !== 'completed').map(kr => (
-                              <div key={kr.id} className="flex items-center gap-2">
-                                <span className="text-[10px] px-1 py-0.5 rounded font-mono bg-blue-500/15 text-blue-400 shrink-0">KR</span>
-                                <span className="text-xs text-slate-400 truncate flex-1">{nodeTitle(kr)}</span>
-                                {kr.progress !== undefined && (
-                                  <span className="text-[11px] text-blue-400 tabular-nums shrink-0">{kr.progress}%</span>
-                                )}
-                                {kr.target_value !== undefined && kr.target_value !== null && (
-                                  <span className="text-[11px] text-slate-500 shrink-0">
-                                    {kr.current_value ?? 0}/{kr.target_value}{kr.unit ? ` ${kr.unit}` : ''}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+            {objectives.length === 0 ? (
+              <p className="text-xs text-slate-600 py-4 text-center">暂无活跃目标</p>
+            ) : (
+              objectives.map(obj => (
+                <div key={obj.id} className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-purple-500/15 text-purple-400 shrink-0 mt-0.5">
+                      OBJ
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-200 font-medium">{nodeTitle(obj)}</p>
+                      {obj.children.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {obj.children.filter(kr => kr.status !== 'completed').map(kr => (
+                            <div key={kr.id} className="flex items-center gap-2">
+                              <span className="text-[10px] px-1 py-0.5 rounded font-mono bg-blue-500/15 text-blue-400 shrink-0">KR</span>
+                              <span className="text-xs text-slate-400 truncate flex-1">{nodeTitle(kr)}</span>
+                              {kr.progress !== undefined && (
+                                <span className="text-[11px] text-blue-400 tabular-nums shrink-0">{kr.progress}%</span>
+                              )}
+                              {kr.target_value !== undefined && kr.target_value !== null && (
+                                <span className="text-[11px] text-slate-500 shrink-0">
+                                  {kr.current_value ?? 0}/{kr.target_value}{kr.unit ? ` ${kr.unit}` : ''}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
-                ))
-              )}
-            </div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* 中列：进行中 Tasks */}
-          <div className="flex-1 flex flex-col min-h-0">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 shrink-0">
+          <div className="overflow-y-auto space-y-1.5 pr-1">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider sticky top-0 bg-[#0f1117] py-1.5">
               进行中任务
             </h2>
-            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-              {tasks.length === 0 ? (
-                <p className="text-xs text-slate-600 py-4 text-center">暂无进行中任务</p>
-              ) : (
-                tasks.map(t => (
-                  <div key={t.id} className="flex items-center gap-2 py-1.5 px-3 bg-slate-800/30 rounded-lg border border-slate-700/30">
-                    <TaskStatusIcon status={t.status} />
-                    <span className="flex-1 text-sm text-gray-300 truncate">{t.title}</span>
-                    {t.priority && (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
-                        t.priority === 'P0' ? 'bg-red-500/15 text-red-400' :
-                        t.priority === 'P1' ? 'bg-amber-500/15 text-amber-400' :
-                        'bg-slate-500/15 text-slate-400'
-                      }`}>
-                        {t.priority}
-                      </span>
-                    )}
-                    {t.task_type && (
-                      <span className="text-[10px] text-slate-600 shrink-0">{t.task_type}</span>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
+            {tasks.length === 0 ? (
+              <p className="text-xs text-slate-600 py-4 text-center">暂无进行中任务</p>
+            ) : (
+              tasks.map(t => (
+                <div key={t.id} className="flex items-center gap-2 py-1.5 px-3 bg-slate-800/30 rounded-lg border border-slate-700/30">
+                  <TaskStatusIcon status={t.status} />
+                  <span className="flex-1 text-sm text-gray-300 truncate">{t.title}</span>
+                  {t.priority && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                      t.priority === 'P0' ? 'bg-red-500/15 text-red-400' :
+                      t.priority === 'P1' ? 'bg-amber-500/15 text-amber-400' :
+                      'bg-slate-500/15 text-slate-400'
+                    }`}>
+                      {t.priority}
+                    </span>
+                  )}
+                  {t.task_type && (
+                    <span className="text-[10px] text-slate-600 shrink-0">{t.task_type}</span>
+                  )}
+                </div>
+              ))
+            )}
           </div>
 
-          {/* 右列：备用 */}
-          <div className="flex-1 flex flex-col min-h-0">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 shrink-0">
-              &nbsp;
+          {/* 右列：系统状态摘要 */}
+          <div className="overflow-y-auto pr-1">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider sticky top-0 bg-[#0f1117] py-1.5">
+              系统状态
             </h2>
-            <div className="flex-1 overflow-y-auto" />
+            <div className="mt-2 space-y-2">
+              <div className="bg-slate-800/20 border border-slate-700/20 rounded-lg p-3">
+                <p className="text-xs text-slate-500 flex justify-between">
+                  <span className="text-slate-400 font-medium">活跃目标</span>
+                  <span className="text-purple-400 tabular-nums">{objectives.length}</span>
+                </p>
+              </div>
+              <div className="bg-slate-800/20 border border-slate-700/20 rounded-lg p-3">
+                <p className="text-xs text-slate-500 flex justify-between">
+                  <span className="text-slate-400 font-medium">进行中任务</span>
+                  <span className="text-blue-400 tabular-nums">{tasks.length}</span>
+                </p>
+              </div>
+              {objectives.length > 0 && (
+                <div className="bg-slate-800/20 border border-slate-700/20 rounded-lg p-3">
+                  <p className="text-xs text-slate-500 flex justify-between">
+                    <span className="text-slate-400 font-medium">待完成 KR</span>
+                    <span className="text-emerald-400 tabular-nums">
+                      {objectives.reduce((sum, obj) => sum + obj.children.filter(kr => kr.status !== 'completed').length, 0)}
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
