@@ -61,4 +61,14 @@ describe('GTDWarRoom data logic', () => {
     expect(nodeTitle({ name: 'My Name' })).toBe('My Name');
     expect(nodeTitle({})).toBe('(无标题)');
   });
+
+  it('GTDWarRoom layout uses h-full flex-col multi-column structure', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('apps/api/features/gtd/pages/GTDWarRoom.tsx', 'utf8');
+    expect(src).toContain('h-full');
+    expect(src).toContain('flex-col');
+    expect(src).toContain('overflow-y-auto');
+    expect(src).not.toContain('max-w-4xl');
+    expect(src).not.toContain('space-y-6');
+  });
 });
