@@ -3,10 +3,66 @@
  * 数据源: /api/tasks/projects + /api/tasks/areas
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { FolderKanban } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DatabaseView, { StatusBadge, PriorityBadge, ProgressBar, type Column } from '../components/DatabaseView';
+
+// ─── Inline 编辑 Cell ─────────────────────────────────────────────────────────
+
+function NameCell({ id, type, name, onSaved }: { id: string; type: string; name: string; onSaved: (val: string) => void }) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [value, setValue] = useState(name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const save = async () => {
+    if (value.trim() === name.trim()) { setEditingTitle(false); return; }
+    try {
+      await fetch(`/api/tasks/okr-projects/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: value.trim() }),
+      });
+      onSaved(value.trim());
+    } finally {
+      setEditingTitle(false);
+    }
+  };
+
+  if (editingTitle) {
+    return (
+      <div className="flex items-center gap-2 min-w-0" onClick={e => e.stopPropagation()}>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${type === 'initiative' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-purple-500/10 text-purple-400'}`}>
+          {type === 'initiative' ? 'INI' : 'PRJ'}
+        </span>
+        <input
+          ref={inputRef}
+          autoFocus
+          className="flex-1 min-w-0 bg-slate-800 border border-blue-500/50 rounded px-1.5 py-0.5 text-sm text-gray-200 focus:outline-none"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onBlur={save}
+          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setValue(name); setEditingTitle(false); } }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${type === 'initiative' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-purple-500/10 text-purple-400'}`}>
+        {type === 'initiative' ? 'INI' : 'PRJ'}
+      </span>
+      <span
+        className={`truncate cursor-text hover:bg-slate-700/40 rounded px-0.5 -mx-0.5 transition-colors ${type === 'project' ? 'text-gray-100 font-medium' : 'text-gray-300'}`}
+        onDoubleClick={e => { e.stopPropagation(); setValue(name); setEditingTitle(true); }}
+        title="双击编辑名称"
+      >
+        {name}
+      </span>
+    </div>
+  );
+}
 
 interface Area {
   id: string;
@@ -30,6 +86,10 @@ export default function GTDProjects() {
   const [areas, setAreas] = useState<Area[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  const handleNameSaved = useCallback((id: string, newName: string) => {
+    setProjects(prev => prev.map(p => p.id === id ? { ...p, name: newName } : p));
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -70,20 +130,7 @@ export default function GTDProjects() {
       key: 'name',
       label: '项目名称',
       sortable: true,
-      render: (row) => (
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
-            row.type === 'initiative'
-              ? 'bg-cyan-500/10 text-cyan-400'
-              : 'bg-purple-500/10 text-purple-400'
-          }`}>
-            {row.type === 'initiative' ? 'INI' : 'PRJ'}
-          </span>
-          <span className={`truncate ${row.type === 'project' ? 'text-gray-100 font-medium' : 'text-gray-300'}`}>
-            {row.name}
-          </span>
-        </div>
-      ),
+      render: (row) => <NameCell id={row.id} type={row.type} name={row.name} onSaved={(val) => handleNameSaved(row.id, val)} />,
       getValue: (row) => row.name,
     },
     {
