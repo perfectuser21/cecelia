@@ -36,17 +36,17 @@ const GROUP_ICONS: Record<string, React.ElementType> = {
   system: Server,
 };
 
-const GROUP_COLORS: Record<string, string> = {
-  brain: 'bg-blue-500',
-  engine: 'bg-purple-500',
-  workflows: 'bg-green-500',
-  system: 'bg-orange-500',
+const GROUP_ACCENT: Record<string, string> = {
+  brain: '#3467D6',
+  engine: '#a855f7',
+  workflows: '#22c55e',
+  system: '#f97316',
 };
 
-const PRIORITY_BADGE: Record<string, string> = {
-  P0: 'bg-red-100 text-red-700',
-  P1: 'bg-yellow-100 text-yellow-700',
-  P2: 'bg-gray-100 text-gray-500',
+const PRIORITY_STYLE: Record<string, React.CSSProperties> = {
+  P0: { background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' },
+  P1: { background: 'rgba(234,179,8,0.15)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.3)' },
+  P2: { background: 'rgba(107,114,128,0.15)', color: '#6b7280', border: '1px solid rgba(107,114,128,0.2)' },
 };
 
 function ModuleCard({ item, groupId }: { item: ModuleItem; groupId: string }) {
@@ -56,23 +56,49 @@ function ModuleCard({ item, groupId }: { item: ModuleItem; groupId: string }) {
   return (
     <button
       onClick={() => navigate(`/knowledge/modules/${groupId}/${item.id}`)}
-      className="w-full text-left bg-white border border-gray-200 rounded-xl p-4 hover:border-gray-400 hover:shadow-md transition-all group"
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        background: '#141414',
+        border: '1px solid #222',
+        borderRadius: '10px',
+        padding: '14px 16px',
+        cursor: 'pointer',
+        transition: 'border-color 0.15s, background 0.15s',
+      }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor = '#333';
+        (e.currentTarget as HTMLButtonElement).style.background = '#1a1a1a';
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor = '#222';
+        (e.currentTarget as HTMLButtonElement).style.background = '#141414';
+      }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <h4 className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors leading-snug">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+        <span style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0', lineHeight: '1.4' }}>
           {item.title}
-        </h4>
-        <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${PRIORITY_BADGE[item.priority] || PRIORITY_BADGE.P2}`}>
+        </span>
+        <span style={{
+          flexShrink: 0,
+          fontSize: '10px',
+          fontWeight: 700,
+          padding: '2px 6px',
+          borderRadius: '4px',
+          ...(PRIORITY_STYLE[item.priority] || PRIORITY_STYLE.P2),
+        }}>
           {item.priority}
         </span>
       </div>
-      <p className="text-xs text-gray-500 mt-1 line-clamp-2">{item.desc}</p>
-      <div className="flex items-center justify-between mt-3">
-        <div className={`flex items-center gap-1 text-xs ${isDone ? 'text-green-600' : 'text-gray-400'}`}>
-          {isDone ? <CheckCircle size={12} /> : <Clock size={12} />}
+      <p style={{ fontSize: '12px', color: '#666', margin: '0 0 10px', lineHeight: '1.5', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+        {item.desc}
+      </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: isDone ? '#4ade80' : '#555' }}>
+          {isDone ? <CheckCircle size={11} /> : <Clock size={11} />}
           <span>{isDone ? '已完成' : '待生成'}</span>
         </div>
-        <ChevronRight size={14} className="text-gray-300 group-hover:text-blue-400 transition-colors" />
+        <ChevronRight size={13} color="#444" />
       </div>
     </button>
   );
@@ -81,29 +107,49 @@ function ModuleCard({ item, groupId }: { item: ModuleItem; groupId: string }) {
 function GroupSection({ group }: { group: ModuleGroup }) {
   const [expanded, setExpanded] = useState(true);
   const Icon = GROUP_ICONS[group.id] || Server;
-  const colorClass = GROUP_COLORS[group.id] || 'bg-gray-500';
+  const accent = GROUP_ACCENT[group.id] || '#888';
   const doneCount = group.items.filter(i => i.status === 'done').length;
 
   return (
-    <div className="mb-8">
+    <div style={{ marginBottom: '32px' }}>
       <button
         onClick={() => setExpanded(e => !e)}
-        className="flex items-center gap-3 mb-4 w-full text-left group"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          marginBottom: '14px',
+          width: '100%',
+          textAlign: 'left',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          padding: 0,
+        }}
       >
-        <div className={`w-8 h-8 rounded-lg ${colorClass} flex items-center justify-center`}>
-          <Icon size={16} className="text-white" />
+        <div style={{
+          width: '32px', height: '32px',
+          borderRadius: '8px',
+          background: `${accent}22`,
+          border: `1px solid ${accent}44`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <Icon size={15} color={accent} />
         </div>
-        <div className="flex-1">
-          <h3 className="text-base font-semibold text-gray-900">{group.label}</h3>
-          <p className="text-xs text-gray-500">{doneCount}/{group.items.length} 已完成</p>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>{group.label}</div>
+          <div style={{ fontSize: '11px', color: '#555', marginTop: '1px' }}>{doneCount}/{group.items.length} 已完成</div>
         </div>
         <ChevronRight
-          size={16}
-          className={`text-gray-400 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          size={14}
+          color="#444"
+          style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}
         />
       </button>
       {expanded && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '10px' }}>
           {group.items.map(item => (
             <ModuleCard key={item.id} item={item} groupId={group.id} />
           ))}
@@ -121,16 +167,22 @@ export default function KnowledgeModules() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[200px]">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '200px' }}>
+        <div style={{
+          width: '28px', height: '28px',
+          border: '3px solid #3467D6',
+          borderTopColor: 'transparent',
+          borderRadius: '50%',
+          animation: 'spin 0.8s linear infinite',
+        }} />
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="text-center py-12 text-gray-500">
-        <p>加载失败：{error || '未知错误'}</p>
+      <div style={{ textAlign: 'center', padding: '48px', color: '#f87171', fontSize: '14px' }}>
+        加载失败：{error || '未知错误'}
       </div>
     );
   }
@@ -138,11 +190,11 @@ export default function KnowledgeModules() {
   const { meta, groups } = data;
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '0 4px', background: '#0d0d0d' }}>
       {/* 标题区 */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">知识模块</h1>
-        <p className="text-sm text-gray-500">
+      <div style={{ marginBottom: '28px' }}>
+        <h1 style={{ fontSize: '20px', fontWeight: 700, color: '#fff', margin: '0 0 6px' }}>知识模块</h1>
+        <p style={{ fontSize: '13px', color: '#555', margin: 0 }}>
           Cecelia 系统深度知识页 · 共 {meta.total ?? 0} 个模块，已完成 {meta.done ?? 0} 个
           {meta.last_updated && ` · 更新于 ${meta.last_updated}`}
         </p>
