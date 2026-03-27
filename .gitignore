@@ -80,3 +80,6 @@ coverage/
 # Claude Code worktrees
 .claude/worktrees/
 # trigger
+.dev-execution-log*
+.dev-seal*
+packages/quality/.test-phase1/
