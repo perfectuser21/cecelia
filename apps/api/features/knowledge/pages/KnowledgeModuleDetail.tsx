@@ -30,10 +30,10 @@ const PRIORITY_LABEL: Record<string, string> = {
   P2: '一般',
 };
 
-const PRIORITY_COLOR: Record<string, string> = {
-  P0: 'text-red-600 bg-red-50 border-red-200',
-  P1: 'text-yellow-600 bg-yellow-50 border-yellow-200',
-  P2: 'text-gray-500 bg-gray-50 border-gray-200',
+const PRIORITY_STYLE: Record<string, React.CSSProperties> = {
+  P0: { background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' },
+  P1: { background: 'rgba(234,179,8,0.15)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.3)' },
+  P2: { background: 'rgba(107,114,128,0.15)', color: '#6b7280', border: '1px solid rgba(107,114,128,0.2)' },
 };
 
 export default function KnowledgeModuleDetail() {
@@ -47,16 +47,22 @@ export default function KnowledgeModuleDetail() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[200px]">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '200px' }}>
+        <div style={{
+          width: '28px', height: '28px',
+          border: '3px solid #3467D6',
+          borderTopColor: 'transparent',
+          borderRadius: '50%',
+          animation: 'spin 0.8s linear infinite',
+        }} />
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="text-center py-12 text-gray-500">
-        <p>加载失败：{error || '未知错误'}</p>
+      <div style={{ textAlign: 'center', padding: '48px', color: '#f87171', fontSize: '14px' }}>
+        加载失败：{error || '未知错误'}
       </div>
     );
   }
@@ -66,11 +72,11 @@ export default function KnowledgeModuleDetail() {
 
   if (!group || !module) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-500 mb-4">模块不存在</p>
+      <div style={{ textAlign: 'center', padding: '48px' }}>
+        <p style={{ color: '#555', marginBottom: '16px', fontSize: '14px' }}>模块不存在</p>
         <button
           onClick={() => navigate('/knowledge/modules')}
-          className="text-blue-600 hover:underline text-sm"
+          style={{ color: '#3467D6', background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }}
         >
           返回模块列表
         </button>
@@ -79,47 +85,89 @@ export default function KnowledgeModuleDetail() {
   }
 
   const isDone = module.status === 'done';
+  const priorityStyle = PRIORITY_STYLE[module.priority] || PRIORITY_STYLE.P2;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div style={{ maxWidth: '720px', margin: '0 auto', padding: '0 4px' }}>
       {/* 返回按钮 */}
       <button
         onClick={() => navigate('/knowledge/modules')}
-        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 mb-6 transition-colors"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          fontSize: '13px',
+          color: '#555',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          padding: '0 0 20px',
+          transition: 'color 0.15s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = '#aaa')}
+        onMouseLeave={e => (e.currentTarget.style.color = '#555')}
       >
-        <ArrowLeft size={16} />
+        <ArrowLeft size={15} />
         <span>返回模块列表</span>
       </button>
 
       {/* 标题卡片 */}
-      <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <h1 className="text-xl font-bold text-gray-900 leading-tight">{module.title}</h1>
-          <span className={`shrink-0 text-xs font-bold px-2 py-1 rounded border ${PRIORITY_COLOR[module.priority] || PRIORITY_COLOR.P2}`}>
+      <div style={{ background: '#141414', border: '1px solid #1f1f1f', borderRadius: '12px', padding: '24px', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '12px' }}>
+          <h1 style={{ fontSize: '18px', fontWeight: 700, color: '#fff', margin: 0, lineHeight: '1.4' }}>
+            {module.title}
+          </h1>
+          <span style={{
+            flexShrink: 0,
+            fontSize: '11px',
+            fontWeight: 700,
+            padding: '3px 8px',
+            borderRadius: '5px',
+            ...priorityStyle,
+          }}>
             {module.priority} · {PRIORITY_LABEL[module.priority] || '一般'}
           </span>
         </div>
-        <p className="text-gray-600 text-sm leading-relaxed mb-4">{module.desc}</p>
-        <div className="flex items-center gap-4 text-sm">
-          <div className={`flex items-center gap-1.5 ${isDone ? 'text-green-600' : 'text-gray-400'}`}>
-            {isDone ? <CheckCircle size={15} /> : <Clock size={15} />}
+        <p style={{ fontSize: '13px', color: '#999', lineHeight: '1.7', margin: '0 0 16px' }}>
+          {module.desc}
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: isDone ? '#4ade80' : '#555' }}>
+            {isDone ? <CheckCircle size={13} /> : <Clock size={13} />}
             <span>{isDone ? `已完成 · ${module.completed || ''}` : '知识页待生成'}</span>
           </div>
-          <span className="text-gray-300">·</span>
-          <span className="text-gray-400">{group.label}</span>
+          <span style={{ color: '#333' }}>·</span>
+          <span style={{ color: '#555' }}>{group.label}</span>
         </div>
       </div>
 
       {/* 来源文件 */}
       {module.source_files.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <FileCode size={15} />
+        <div style={{ background: '#141414', border: '1px solid #1f1f1f', borderRadius: '12px', padding: '20px', marginBottom: '16px' }}>
+          <h2 style={{
+            fontSize: '12px',
+            fontWeight: 600,
+            color: '#555',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            marginBottom: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}>
+            <FileCode size={13} />
             来源文件
           </h2>
-          <ul className="space-y-1.5">
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {module.source_files.map(file => (
-              <li key={file} className="text-sm font-mono text-gray-600 bg-gray-50 rounded px-3 py-1.5">
+              <li key={file} style={{
+                fontSize: '12px',
+                fontFamily: 'monospace',
+                color: '#999',
+                background: '#0d0d0d',
+                borderRadius: '5px',
+                padding: '6px 12px',
+              }}>
                 {file}
               </li>
             ))}
@@ -129,17 +177,41 @@ export default function KnowledgeModuleDetail() {
 
       {/* 知识页链接 */}
       {isDone && module.output_url && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-blue-700 mb-3">深度知识页</h2>
-          <p className="text-sm text-blue-600 mb-3">
+        <div style={{ background: 'rgba(52,103,214,0.08)', border: '1px solid rgba(52,103,214,0.25)', borderRadius: '12px', padding: '20px' }}>
+          <h2 style={{
+            fontSize: '12px',
+            fontWeight: 600,
+            color: '#3467D6',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            marginBottom: '8px',
+          }}>
+            深度知识页
+          </h2>
+          <p style={{ fontSize: '13px', color: '#6b8fd6', marginBottom: '14px', lineHeight: '1.6' }}>
             此模块已由西安 Codex 生成完整的深度知识 HTML 页面。
           </p>
           <button
-            onClick={() => navigate(`/knowledge/view?url=${encodeURIComponent(module.output_url!)}`)}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 bg-white border border-blue-300 rounded-lg px-4 py-2 hover:border-blue-500 transition-colors"
+            onClick={() => window.open(`http://38.23.47.81:9998/${module.output_url}`, '_blank')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: '#3467D6',
+              background: '#0d0d0d',
+              border: '1px solid rgba(52,103,214,0.4)',
+              borderRadius: '7px',
+              padding: '8px 16px',
+              cursor: 'pointer',
+              transition: 'border-color 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = '#3467D6')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(52,103,214,0.4)')}
           >
-            <BookOpen size={14} />
-            在 Dashboard 中查看
+            <BookOpen size={13} />
+            在新标签中查看
           </button>
         </div>
       )}
