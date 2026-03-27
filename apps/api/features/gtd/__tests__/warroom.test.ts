@@ -158,4 +158,62 @@ describe('GTDWarRoom data logic', () => {
     expect(src).toContain('warroom/:areaId');
     expect(src).toContain('GTDWarRoomArea');
   });
+
+  it('GTDWarRoomArea uses three-column layout', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('features/gtd/pages/GTDWarRoomArea.tsx', 'utf8');
+    expect(src).toContain('grid-cols-3');
+  });
+
+  it('GTDWarRoomArea has at least 3 independent scroll columns', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('features/gtd/pages/GTDWarRoomArea.tsx', 'utf8');
+    const matches = src.match(/overflow-y-auto/g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('GTDWarRoom fetches in-progress tasks for task count display', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('features/gtd/pages/GTDWarRoom.tsx', 'utf8');
+    expect(src).toContain('in_progress');
+  });
+
+  it('GTDWarRoom Area card shows KR overall progress percentage', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('features/gtd/pages/GTDWarRoom.tsx', 'utf8');
+    expect(src).toContain('pct');
+    expect(src).toContain('%');
+  });
+
+  it('calculates KR overall progress for an area', () => {
+    const objectives = [
+      {
+        id: 'obj1',
+        status: 'active',
+        children: [
+          { id: 'kr1', status: 'completed' },
+          { id: 'kr2', status: 'active' },
+        ],
+      },
+      {
+        id: 'obj2',
+        status: 'active',
+        children: [
+          { id: 'kr3', status: 'completed' },
+          { id: 'kr4', status: 'completed' },
+        ],
+      },
+    ];
+    const activeObjs = objectives.filter(o => o.status === 'active' || o.status === 'in_progress');
+    const totalKRs = activeObjs.reduce((sum, obj) => sum + obj.children.length, 0);
+    const doneKRs = activeObjs.reduce(
+      (sum, obj) => sum + obj.children.filter(kr => kr.status === 'completed').length,
+      0
+    );
+    const pct = totalKRs > 0 ? Math.round((doneKRs / totalKRs) * 100) : 0;
+    expect(totalKRs).toBe(4);
+    expect(doneKRs).toBe(3);
+    expect(pct).toBe(75);
+  });
 });

@@ -134,37 +134,33 @@ export default function GTDWarRoomArea() {
         </button>
       </div>
 
-      {/* 内容：两列 */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 px-5 pb-5 overflow-hidden">
+      {/* 内容：三列 */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-3 gap-4 px-5 pb-5 overflow-hidden">
 
-        {/* 左列：Objectives + KR */}
+        {/* 第一列：Objectives */}
         <div className="overflow-y-auto space-y-3 pr-1">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider sticky top-0 bg-[#0f1117] py-1.5">
-            目标 & KR
+            目标
           </h2>
 
           {objectives.length === 0 ? (
             <p className="text-xs text-slate-600 py-6 text-center">暂无活跃目标</p>
           ) : (
             objectives.map(obj => {
-              const pendingKRs = obj.children.filter(kr => kr.status !== 'completed');
               const totalKRs = obj.children.length;
-              const doneKRs = totalKRs - pendingKRs.length;
+              const doneKRs = obj.children.filter(kr => kr.status === 'completed').length;
               const pct = totalKRs > 0 ? Math.round((doneKRs / totalKRs) * 100) : 0;
 
               return (
                 <div key={obj.id} className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  {/* OBJ header */}
                   <div className="flex items-start gap-2 mb-3">
                     <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-purple-500/15 text-purple-400 shrink-0 mt-0.5">
                       OBJ
                     </span>
                     <p className="text-sm text-gray-200 font-medium leading-snug">{nodeTitle(obj)}</p>
                   </div>
-
-                  {/* KR 进度条 */}
                   {totalKRs > 0 && (
-                    <div className="mb-3">
+                    <div>
                       <div className="flex justify-between text-[10px] text-slate-500 mb-1">
                         <span>KR 完成度</span>
                         <span className="tabular-nums">{doneKRs}/{totalKRs}</span>
@@ -177,35 +173,55 @@ export default function GTDWarRoomArea() {
                       </div>
                     </div>
                   )}
-
-                  {/* KR 列表 */}
-                  {pendingKRs.length > 0 && (
-                    <div className="space-y-1.5">
-                      {pendingKRs.map(kr => (
-                        <div key={kr.id} className="flex items-center gap-2">
-                          <span className="text-[10px] px-1 py-0.5 rounded font-mono bg-blue-500/15 text-blue-400 shrink-0">
-                            KR
-                          </span>
-                          <span className="text-xs text-slate-400 flex-1 truncate">{nodeTitle(kr)}</span>
-                          {kr.progress !== undefined && (
-                            <span className="text-[11px] text-blue-400 tabular-nums shrink-0">{kr.progress}%</span>
-                          )}
-                          {kr.target_value !== undefined && kr.target_value !== null && (
-                            <span className="text-[11px] text-slate-500 shrink-0 tabular-nums">
-                              {kr.current_value ?? 0}/{kr.target_value}{kr.unit ? ` ${kr.unit}` : ''}
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
               );
             })
           )}
         </div>
 
-        {/* 右列：进行中任务 */}
+        {/* 第二列：KR */}
+        <div className="overflow-y-auto space-y-1.5 pr-1">
+          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider sticky top-0 bg-[#0f1117] py-1.5">
+            关键结果
+          </h2>
+
+          {objectives.every(obj => obj.children.length === 0) ? (
+            <p className="text-xs text-slate-600 py-6 text-center">暂无 KR</p>
+          ) : (
+            objectives.flatMap(obj =>
+              obj.children.map(kr => (
+                <div key={kr.id} className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-3">
+                  <div className="flex items-start gap-2 mb-2">
+                    <span className={`text-[10px] px-1 py-0.5 rounded font-mono shrink-0 mt-0.5 ${
+                      kr.status === 'completed'
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-blue-500/15 text-blue-400'
+                    }`}>
+                      KR
+                    </span>
+                    <span className={`text-xs flex-1 leading-snug ${
+                      kr.status === 'completed' ? 'text-slate-500 line-through' : 'text-slate-300'
+                    }`}>
+                      {nodeTitle(kr)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 pl-5">
+                    {kr.progress !== undefined && (
+                      <span className="text-[11px] text-blue-400 tabular-nums">{kr.progress}%</span>
+                    )}
+                    {kr.target_value !== undefined && kr.target_value !== null && (
+                      <span className="text-[11px] text-slate-500 tabular-nums">
+                        {kr.current_value ?? 0}/{kr.target_value}{kr.unit ? ` ${kr.unit}` : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )
+          )}
+        </div>
+
+        {/* 第三列：进行中任务 */}
         <div className="overflow-y-auto space-y-1.5 pr-1">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider sticky top-0 bg-[#0f1117] py-1.5">
             进行中任务
