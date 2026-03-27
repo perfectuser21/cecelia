@@ -63,6 +63,13 @@ const manifest: FeatureManifest = {
       requireAuth: false,
       navItem: { label: '内容工厂', icon: 'Factory', group: 'execution', order: 10 },
     },
+    // Doc Editor（文档+聊天分栏）
+    {
+      path: '/docs/list',
+      component: 'DocList',
+      navItem: { label: '文档编辑器', icon: 'FileEdit', group: 'knowledge-docs', order: 8 },
+    },
+    { path: '/docs/:id', component: 'DocEditor' },
     // Legacy redirects
     { path: '/content', redirect: '/knowledge/content' },
     { path: '/super-brain', redirect: '/knowledge/brain' },
@@ -85,6 +92,9 @@ const manifest: FeatureManifest = {
     KnowledgeModuleDetail: () => import('./pages/KnowledgeModuleDetail'),
     KnowledgePageViewer: () => import('./pages/KnowledgePageViewer'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
+    // Doc Editor
+    DocList: () => import('./pages/DocList'),
+    DocEditor: () => import('./pages/DocEditor'),
   },
 };
 
