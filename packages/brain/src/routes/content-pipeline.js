@@ -16,6 +16,7 @@ import express from 'express';
 import pool from '../db.js';
 import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTypesFromYaml } from '../content-types/content-type-registry.js';
 import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
+import { callLLM } from '../llm-caller.js';
 
 const router = express.Router();
 
@@ -71,6 +72,66 @@ router.post('/content-types/seed', async (_req, res) => {
   } catch (err) {
     console.error('[routes/content-pipeline] POST /content-types/seed error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /content-types/test-step
+ * 测试单个 pipeline 节点：传入 step + prompt + model + input → 调 LLM → 返回结果
+ */
+const STEP_SYSTEM_PROMPTS = {
+  'content-research': '你是一个内容调研专家。根据用户提供的关键词，进行深度调研，产出结构化的调研结果（findings）。每条 finding 包含 title、content、source、data。',
+  'content-copywriting': '你是一个社交媒体文案专家。根据调研结果和用户要求，生成社交媒体图文文案和公众号长文。文案需要有吸引力，数据有支撑，语气符合目标平台。',
+  'content-copy-review': '你是一个内容审核专家。检查文案是否符合品牌规范和质量标准。输出 review_passed (true/false) 和 issues 列表。',
+  'content-generate': '你是一个视觉设计师。根据定稿文案，描述每张信息图卡片的设计方案（布局、色彩、文字排版、数据可视化方式）。',
+  'content-image-review': '你是一个视觉审核专家。检查图片设计方案是否符合品牌视觉规范。输出 review_passed (true/false) 和改进建议。',
+  'content-export': '你是一个内容发布专家。根据所有产出物，生成发布清单（manifest），包括每个平台的发布策略。',
+};
+
+router.post('/content-types/test-step', async (req, res) => {
+  const { step, prompt, model, input } = req.body || {};
+
+  if (!step || !prompt) {
+    return res.status(400).json({ error: 'step 和 prompt 必填' });
+  }
+
+  const systemPrompt = STEP_SYSTEM_PROMPTS[step];
+  if (!systemPrompt) {
+    return res.status(400).json({
+      error: `未知的 step "${step}"，支持：${Object.keys(STEP_SYSTEM_PROMPTS).join(', ')}`,
+    });
+  }
+
+  const userMessage = input
+    ? `${prompt}\n\n---\n输入数据：\n${JSON.stringify(input, null, 2)}`
+    : prompt;
+
+  const fullPrompt = `${systemPrompt}\n\n---\n\n${userMessage}`;
+
+  try {
+    const startTime = Date.now();
+    const result = await callLLM('content-test-step', fullPrompt, {
+      model: model || 'claude-sonnet-4-20250514',
+      provider: model?.startsWith('gpt') ? 'openai' : 'anthropic-api',
+      maxTokens: 4096,
+      timeout: 60000,
+    });
+
+    res.json({
+      ok: true,
+      step,
+      model: result.model,
+      provider: result.provider,
+      output: result.text,
+      elapsed_ms: result.elapsed_ms,
+    });
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /content-types/test-step error:', err.message);
+    res.status(500).json({
+      error: err.message,
+      step,
+      model: model || 'claude-sonnet-4-20250514',
+    });
   }
 });
 
