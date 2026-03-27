@@ -87,7 +87,7 @@ router.post('/', async (req, res) => {
     }
     prompt += `Human: ${message}\n\nAssistant:`;
 
-    const { text } = await callLLM('doc-editor', prompt, {
+    const { text } = await callLLM('mouth', prompt, {
       model: resolvedModel,
       timeout: 30000,
     });

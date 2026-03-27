@@ -37,8 +37,18 @@ const MODEL_OPTIONS = [
 
 // ── Markdown 简单渲染 ────────────────────────────────────
 
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderMarkdown(text: string): string {
-  return text
+  const escaped = escapeHtml(text);
+  return escaped
     .replace(/^### (.+)$/gm, '<h3 class="text-base font-semibold mt-4 mb-1 text-gray-800 dark:text-gray-200">$1</h3>')
     .replace(/^## (.+)$/gm, '<h2 class="text-lg font-bold mt-5 mb-2 text-gray-900 dark:text-gray-100">$1</h2>')
     .replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold mt-6 mb-3 text-gray-900 dark:text-gray-100">$1</h1>')
