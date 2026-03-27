@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Target, RefreshCw, ChevronDown, ChevronRight, CheckCircle2, Clock, AlertCircle, FolderKanban } from 'lucide-react';
 import { useCeceliaPage } from '@/contexts/CeceliaContext';
+import InlineEdit from '../../shared/components/InlineEdit';
 
 interface KeyResult {
   id: string;
@@ -177,10 +178,12 @@ function OKRCard({
   tree,
   expanded,
   onToggle,
+  onUpdateTitle,
 }: {
   tree: OKRTree;
   expanded: boolean;
   onToggle: () => void;
+  onUpdateTitle: (id: string, title: string) => Promise<void>;
 }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -200,7 +203,13 @@ function OKRCard({
           )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-slate-900 dark:text-white truncate">{tree.title}</h3>
+              <h3 className="font-semibold text-slate-900 dark:text-white truncate">
+                <InlineEdit
+                  value={tree.title}
+                  onSave={(v) => onUpdateTitle(tree.id, v)}
+                  className="font-semibold text-slate-900 dark:text-white"
+                />
+              </h3>
               <PriorityBadge priority={tree.priority} />
             </div>
             <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
@@ -228,7 +237,13 @@ function OKRCard({
               {tree.children.map((kr) => (
                 <div key={kr.id} className="flex items-center gap-3">
                   <StatusIcon status={kr.status} />
-                  <span className="flex-1 text-sm text-slate-700 dark:text-slate-300">{kr.title}</span>
+                  <span className="flex-1 text-sm text-slate-700 dark:text-slate-300">
+                    <InlineEdit
+                      value={kr.title}
+                      onSave={(v) => onUpdateTitle(kr.id, v)}
+                      className="text-sm text-slate-700 dark:text-slate-300"
+                    />
+                  </span>
                   <div className="w-20">
                     <ProgressBar progress={kr.progress} size="sm" />
                   </div>
@@ -426,6 +441,22 @@ export default function OKRPage() {
     fetchFocus();
   };
 
+  const handleUpdateTitle = useCallback(async (id: string, title: string) => {
+    await fetch(`/api/brain/goals/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    // Optimistic update: update local state
+    setTrees(prev => prev.map(t => {
+      if (t.id === id) return { ...t, title };
+      return {
+        ...t,
+        children: t.children.map(kr => kr.id === id ? { ...kr, title } : kr),
+      };
+    }));
+  }, []);
+
   // Set the refresh ref so Cecelia can trigger refresh
   refreshRef.current = handleRefresh;
 
@@ -498,6 +529,7 @@ export default function OKRPage() {
                 tree={tree}
                 expanded={expandedIds.has(tree.id)}
                 onToggle={() => toggleExpanded(tree.id)}
+                onUpdateTitle={handleUpdateTitle}
               />
             ))}
           </div>
