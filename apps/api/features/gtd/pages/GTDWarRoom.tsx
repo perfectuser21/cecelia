@@ -18,6 +18,13 @@ interface OkrNode {
   children: OkrNode[];
 }
 
+interface Task {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+}
+
 function nodeTitle(n: OkrNode) {
   return n.title || n.name || '(无标题)';
 }
@@ -28,11 +35,17 @@ function countActiveObjectives(area: OkrNode): number {
   ).length;
 }
 
-function countPendingKRs(area: OkrNode): number {
-  return area.children.reduce((sum, obj) => {
-    if (obj.status !== 'active' && obj.status !== 'in_progress') return sum;
-    return sum + obj.children.filter(kr => kr.status !== 'completed').length;
-  }, 0);
+function calcKrProgress(area: OkrNode): number {
+  const activeObjs = area.children.filter(
+    obj => obj.status === 'active' || obj.status === 'in_progress'
+  );
+  const totalKRs = activeObjs.reduce((sum, obj) => sum + obj.children.length, 0);
+  const doneKRs = activeObjs.reduce(
+    (sum, obj) => sum + obj.children.filter(kr => kr.status === 'completed').length,
+    0
+  );
+  const pct = totalKRs > 0 ? Math.round((doneKRs / totalKRs) * 100) : 0;
+  return pct;
 }
 
 const AREA_ACCENT: Record<string, { border: string; tag: string; text: string; badge: string }> = {
@@ -59,17 +72,26 @@ const DEFAULT_ACCENT = {
 
 export default function GTDWarRoom() {
   const [tree, setTree] = useState<OkrNode[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    try {
-      const res = await fetch('/api/tasks/full-tree?view=okr');
-      setTree(res.ok ? await res.json() : []);
-    } catch {
-      setTree([]);
-    }
+    const [treeRes, tasksRes] = await Promise.allSettled([
+      fetch('/api/tasks/full-tree?view=okr'),
+      fetch('/api/brain/tasks?status=in_progress&limit=50'),
+    ]);
+    setTree(
+      treeRes.status === 'fulfilled' && treeRes.value.ok
+        ? await treeRes.value.json()
+        : []
+    );
+    setTasks(
+      tasksRes.status === 'fulfilled' && tasksRes.value.ok
+        ? await tasksRes.value.json()
+        : []
+    );
     setLoading(false);
   }, []);
 
@@ -95,6 +117,7 @@ export default function GTDWarRoom() {
   });
 
   const mainVision = activeVisions[0];
+  const inProgressCount = tasks.length;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -138,7 +161,7 @@ export default function GTDWarRoom() {
               const name = nodeTitle(area);
               const accent = AREA_ACCENT[name] ?? DEFAULT_ACCENT;
               const activeObjCount = countActiveObjectives(area);
-              const pendingKRCount = countPendingKRs(area);
+              const pct = calcKrProgress(area);
 
               return (
                 <button
@@ -154,7 +177,7 @@ export default function GTDWarRoom() {
                     <ChevronRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors" />
                   </div>
 
-                  {/* 统计数字 */}
+                  {/* 三项指标 */}
                   <div className="space-y-2">
                     <div className={`rounded-lg px-3 py-2 ${accent.badge}`}>
                       <p className="text-[10px] text-slate-500 mb-0.5">活跃目标</p>
@@ -163,10 +186,22 @@ export default function GTDWarRoom() {
                       </p>
                     </div>
                     <div className="rounded-lg px-3 py-2 bg-slate-700/20">
-                      <p className="text-[10px] text-slate-500 mb-0.5">待完成 KR</p>
+                      <p className="text-[10px] text-slate-500 mb-0.5">进行中任务</p>
                       <p className="text-2xl font-bold tabular-nums text-slate-300">
-                        {pendingKRCount}
+                        {inProgressCount}
                       </p>
+                    </div>
+                    <div className="rounded-lg px-3 py-2 bg-slate-700/20">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[10px] text-slate-500">KR 整体进度</p>
+                        <p className="text-[11px] tabular-nums text-slate-400">{pct}%</p>
+                      </div>
+                      <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500/60 rounded-full transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
 
