@@ -21,8 +21,10 @@ describe('content-pipeline run API', () => {
     const { LOCATION_MAP } = await import('../task-router.js');
     expect(LOCATION_MAP['content-pipeline']).toBe('xian');
     expect(LOCATION_MAP['content-research']).toBe('xian');
+    expect(LOCATION_MAP['content-copywriting']).toBe('xian');
+    expect(LOCATION_MAP['content-copy-review']).toBe('xian');
     expect(LOCATION_MAP['content-generate']).toBe('xian');
-    expect(LOCATION_MAP['content-review']).toBe('xian');
+    expect(LOCATION_MAP['content-image-review']).toBe('xian');
     expect(LOCATION_MAP['content-export']).toBe('xian');
   });
 });

@@ -1,6 +1,6 @@
 /**
  * content-pipeline-orchestrator YAML 配置集成测试
- * 验证 Pipeline 正确读取 content-type-registry YAML 配置
+ * 验证 Pipeline 正确读取 content-type-registry YAML 配置（6 阶段）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -110,7 +110,6 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
     const result = await orchestrateContentPipelines(pool);
 
     expect(getContentType).toHaveBeenCalledWith('nonexistent-type');
-    // pipeline 应被标 failed（UPDATE 调用）
     expect(pool._updatedStatus).toBeTruthy();
     expect(result.summary.skipped).toBe(1);
     expect(result.summary.orchestrated).toBe(0);
@@ -127,7 +126,7 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
         project_id: null,
         goal_id: null,
       }],
-      existing: [], // 无已有子任务
+      existing: [],
     });
 
     await orchestrateContentPipelines(pool);
@@ -143,7 +142,7 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
       pipelines: [{
         id: 'pipe-003',
         title: '旧格式 Pipeline',
-        payload: { keyword: '某博主' }, // 无 content_type
+        payload: { keyword: '某博主' },
         project_id: null,
         goal_id: null,
       }],
@@ -152,31 +151,31 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
 
     const result = await orchestrateContentPipelines(pool);
 
-    // getContentType 不应被调用
     expect(getContentType).not.toHaveBeenCalled();
     expect(result.summary.orchestrated).toBe(1);
   });
 });
 
-// ── advanceContentPipeline — content-generate 阶段 ───
+// ── advanceContentPipeline — content-generate 阶段（YAML 配置从 copy-review PASS 传入）───
 
 describe('advanceContentPipeline — content-generate YAML 配置', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('content-generate 子任务 payload 含 images_count（来自 YAML）', async () => {
+  it('content-copy-review PASS → content-generate payload 含 images_count（来自 YAML）', async () => {
     getContentType.mockResolvedValue(MOCK_TYPE_CONFIG);
 
-    const researchTask = {
-      id: 'task-research-001',
-      task_type: 'content-research',
+    const copyReviewTask = {
+      id: 'task-cr-001',
+      task_type: 'content-copy-review',
       project_id: null,
       goal_id: null,
       payload: {
         parent_pipeline_id: 'pipe-002',
         pipeline_keyword: 'Dan Koe',
         content_type: 'solo-company-case',
+        retry_count: 0,
       },
     };
     const parentPipeline = {
@@ -194,11 +193,11 @@ describe('advanceContentPipeline — content-generate YAML 配置', () => {
         const s = sql.replace(/\s+/g, ' ').trim();
         if (s.includes('FROM tasks') && s.includes('WHERE id = $1')) {
           callCount++;
-          if (callCount === 1) return { rows: [researchTask] };
+          if (callCount === 1) return { rows: [copyReviewTask] };
           return { rows: [parentPipeline] };
         }
         if (s.includes('status IN') && !s.includes('completed')) {
-          return { rows: [] }; // 幂等检查：无已有
+          return { rows: [] };
         }
         if (s.startsWith('INSERT INTO tasks')) {
           pool._insertedPayload = params ? JSON.parse(params[7]) : null;
@@ -209,25 +208,26 @@ describe('advanceContentPipeline — content-generate YAML 配置', () => {
       }),
     };
 
-    await advanceContentPipeline('task-research-001', 'completed', null, pool);
+    await advanceContentPipeline('task-cr-001', 'completed', { review_passed: true }, pool);
 
     expect(pool._insertedPayload).toBeTruthy();
     expect(pool._insertedPayload.images_count).toBe(9);
     expect(pool._insertedPayload.content_type).toBe('solo-company-case');
   });
 
-  it('content-generate description 包含 YAML generate_prompt', async () => {
+  it('content-copy-review PASS → content-generate description 包含 YAML generate_prompt', async () => {
     getContentType.mockResolvedValue(MOCK_TYPE_CONFIG);
 
-    const researchTask = {
-      id: 'task-research-002',
-      task_type: 'content-research',
+    const copyReviewTask = {
+      id: 'task-cr-002',
+      task_type: 'content-copy-review',
       project_id: null,
       goal_id: null,
       payload: {
         parent_pipeline_id: 'pipe-003',
         pipeline_keyword: 'Dan Koe',
         content_type: 'solo-company-case',
+        retry_count: 0,
       },
     };
     const parentPipeline = {
@@ -245,7 +245,7 @@ describe('advanceContentPipeline — content-generate YAML 配置', () => {
         const s = sql.replace(/\s+/g, ' ').trim();
         if (s.includes('FROM tasks') && s.includes('WHERE id = $1')) {
           callCount++;
-          if (callCount === 1) return { rows: [researchTask] };
+          if (callCount === 1) return { rows: [copyReviewTask] };
           return { rows: [parentPipeline] };
         }
         if (s.includes('status IN') && !s.includes('completed')) {
@@ -260,14 +260,13 @@ describe('advanceContentPipeline — content-generate YAML 配置', () => {
       }),
     };
 
-    await advanceContentPipeline('task-research-002', 'completed', null, pool);
+    await advanceContentPipeline('task-cr-002', 'completed', { review_passed: true }, pool);
 
-    // description 应包含 YAML generate_prompt 内容（keyword 已替换）
     expect(pool._insertedDescription).toContain('Dan Koe');
     expect(pool._insertedDescription).toContain('9张信息图');
   });
 
-  it('content-review payload 含 review_rules（来自 YAML）', async () => {
+  it('content-image-review payload 含 review_rules（来自 YAML）', async () => {
     getContentType.mockResolvedValue(MOCK_TYPE_CONFIG);
 
     const generateTask = {

@@ -981,8 +981,10 @@
     "initiative_execute": "/dev",
     "content-pipeline": "/content-creator",
     "content-research": "/notebooklm",
+    "content-copywriting": "/content-creator",
+    "content-copy-review": "/content-creator",
     "content-generate": "/content-creator",
-    "content-review": "/content-creator",
+    "content-image-review": "/content-creator",
     "content-export": "/content-creator",
     "prd_review": "/prd-review",
     "spec_review": "/spec-review",
@@ -994,7 +996,7 @@
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-24T04:41:48.076Z",
+  "generatedAt": "2026-03-27T00:42:41.819Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
