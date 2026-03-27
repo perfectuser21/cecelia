@@ -14,7 +14,9 @@
 
 ### 根本原因
 
-branch-protect.sh 检查 Brain DB 中的 `prd_content` 字段，而 PATCH /tasks API 只允许更新 `status`，所以必须直接 psql 写入 prd_content。
+branch-protect.sh（v12.36.0+）在 /dev 工作流中会从 Brain DB 检查 `prd_content` 字段是否非空，用于确保每个任务有 PRD 支撑。
+然而 `PATCH /api/brain/tasks/:id` 端点只允许更新 `status` 字段，不支持写入 `prd_content`。
+因此创建任务时如果没有同步写入 `prd_content`，后续 Edit 操作会被 hook 拦截，必须绕过 API 直接用 psql 写库。
 
 ### 下次预防
 
