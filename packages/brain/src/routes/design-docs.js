@@ -11,6 +11,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { callLLM } from '../llm-caller.js';
 
 const router = Router();
 
@@ -148,6 +149,81 @@ router.put('/:id', async (req, res) => {
     res.json({ success: true, data: rows[0] });
   } catch (err) {
     console.error('[design-docs] PUT /:id error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** POST /:id/chat — 文档聊天，Claude 可更新文档内容 */
+router.post('/:id/chat', async (req, res) => {
+  try {
+    const { message, history = [], model = 'claude-haiku-4-5-20251001' } = req.body;
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ success: false, error: 'message 为必填项' });
+    }
+
+    // 读取文档
+    const { rows } = await pool.query(
+      'SELECT * FROM design_docs WHERE id = $1',
+      [req.params.id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Not found' });
+    }
+    const doc = rows[0];
+
+    // 构建对话历史文本（最近 10 条）
+    const recentHistory = Array.isArray(history) ? history.slice(-10) : [];
+    const historyText = recentHistory
+      .map(m => `${m.role === 'user' ? '用户' : 'Claude'}: ${m.content}`)
+      .join('\n');
+
+    const prompt = `你是一个文档助手。你正在协助用户编辑和讨论以下文档。
+
+## 当前文档标题
+${doc.title}
+
+## 当前文档内容
+${doc.content || '（文档为空）'}
+
+## 对话历史
+${historyText || '（无历史）'}
+
+## 用户新消息
+${message}
+
+## 指令
+请根据用户消息作出回应。
+- 如果用户要求修改文档内容，在回复末尾使用 <doc-update> 标签输出完整的新文档内容。
+- 如果只是讨论，则正常回复，不需要 <doc-update> 标签。
+- 回复使用中文。
+- <doc-update> 内的内容是完整的新文档 markdown，不是 diff。`;
+
+    const { text } = await callLLM('design-doc-chat', prompt, {
+      model,
+      maxTokens: 4096,
+      timeout: 120000,
+    });
+
+    // 解析 <doc-update> 标签
+    const docUpdateMatch = text.match(/<doc-update>([\s\S]*?)<\/doc-update>/);
+    let reply = text;
+    let updated_content = null;
+
+    if (docUpdateMatch) {
+      updated_content = docUpdateMatch[1].trim();
+      reply = text.replace(/<doc-update>[\s\S]*?<\/doc-update>/, '').trim();
+
+      // 保存到数据库
+      await pool.query(
+        `UPDATE design_docs SET content = $1, updated_at = $2 WHERE id = $3`,
+        [updated_content, new Date().toISOString(), req.params.id]
+      );
+    }
+
+    res.json({ success: true, reply, updated_content });
+  } catch (err) {
+    console.error('[design-docs] POST /:id/chat error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
