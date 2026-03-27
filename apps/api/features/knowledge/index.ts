@@ -56,6 +56,7 @@ const manifest: FeatureManifest = {
     },
     { path: '/knowledge/modules/:groupId/:moduleId', component: 'KnowledgeModuleDetail' },
     { path: '/knowledge/view', component: 'KnowledgePageViewer' },
+    { path: '/knowledge/doc-chat/:id', component: 'DocChatPage' },
     // 内容工厂
     {
       path: '/content-factory',
@@ -84,6 +85,7 @@ const manifest: FeatureManifest = {
     KnowledgeModules: () => import('./pages/KnowledgeModules'),
     KnowledgeModuleDetail: () => import('./pages/KnowledgeModuleDetail'),
     KnowledgePageViewer: () => import('./pages/KnowledgePageViewer'),
+    DocChatPage: () => import('./pages/DocChatPage'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
   },
 };
