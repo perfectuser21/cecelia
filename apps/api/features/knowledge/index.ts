@@ -48,6 +48,13 @@ const manifest: FeatureManifest = {
       component: 'StrategyTree',
       navItem: { label: 'Strategy Tree', icon: 'GitBranch', group: 'knowledge-docs', order: 6 },
     },
+    // Knowledge Modules
+    {
+      path: '/knowledge/modules',
+      component: 'KnowledgeModules',
+      navItem: { label: '知识模块', icon: 'Layers', group: 'knowledge-docs', order: 7 },
+    },
+    { path: '/knowledge/modules/:groupId/:moduleId', component: 'KnowledgeModuleDetail' },
     // 内容工厂
     {
       path: '/content-factory',
@@ -73,6 +80,8 @@ const manifest: FeatureManifest = {
     DailyDiary: () => import('./pages/DailyDiary'),
     KnowledgeMap: () => import('./pages/KnowledgeMap'),
     StrategyTree: () => import('./pages/StrategyTree'),
+    KnowledgeModules: () => import('./pages/KnowledgeModules'),
+    KnowledgeModuleDetail: () => import('./pages/KnowledgeModuleDetail'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
   },
 };
