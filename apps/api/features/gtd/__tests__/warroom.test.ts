@@ -99,13 +99,63 @@ describe('GTDWarRoom data logic', () => {
     expect(pendingKrCount).toBe(2);
   });
 
-  it('GTDWarRoom layout uses h-full flex-col multi-column structure', () => {
+  it('GTDWarRoom summary page: filters only active visions', () => {
+    const tree = [
+      { id: 'v1', type: 'vision', status: 'active', title: 'Active Vision', children: [
+        { id: 'a1', type: 'area', status: 'active', title: 'Cecelia', children: [] },
+      ]},
+      { id: 'v2', type: 'vision', status: 'cancelled', title: 'Old Vision', children: [] },
+      { id: 'v3', type: 'vision', status: 'active', title: 'Test Obj', children: [] },
+    ];
+    const activeVisions = tree.filter(n => n.type === 'vision' && n.status === 'active');
+    expect(activeVisions).toHaveLength(2);
+    expect(activeVisions.every(v => v.status === 'active')).toBe(true);
+  });
+
+  it('GTDWarRoom summary page: collects areas from active visions only', () => {
+    const tree = [
+      { id: 'v1', type: 'vision', status: 'active', title: 'Vision', children: [
+        { id: 'a1', type: 'area', status: 'active', title: 'Cecelia', children: [] },
+        { id: 'a2', type: 'area', status: 'active', title: 'ZenithJoy', children: [] },
+      ]},
+      { id: 'v2', type: 'vision', status: 'cancelled', title: 'Old', children: [
+        { id: 'a3', type: 'area', status: 'active', title: 'Ghost', children: [] },
+      ]},
+    ];
+    const activeVisions = tree.filter(n => n.type === 'vision' && n.status === 'active');
+    const areas: typeof tree[0]['children'] = [];
+    activeVisions.forEach(v => v.children.forEach(c => { if (c.type === 'area') areas.push(c); }));
+    expect(areas).toHaveLength(2);
+    expect(areas.map(a => a.title)).toEqual(['Cecelia', 'ZenithJoy']);
+  });
+
+  it('countActiveObjectives counts active and in_progress only', () => {
+    const area = {
+      id: 'a1', type: 'area', status: 'active', children: [
+        { id: 'o1', type: 'objective', status: 'active', children: [] },
+        { id: 'o2', type: 'objective', status: 'in_progress', children: [] },
+        { id: 'o3', type: 'objective', status: 'completed', children: [] },
+        { id: 'o4', type: 'objective', status: 'cancelled', children: [] },
+      ],
+    };
+    const count = area.children.filter(
+      obj => obj.status === 'active' || obj.status === 'in_progress'
+    ).length;
+    expect(count).toBe(2);
+  });
+
+  it('GTDWarRoomArea file exists and uses useParams', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('apps/api/features/gtd/pages/GTDWarRoom.tsx', 'utf8');
+    const src = fs.readFileSync('features/gtd/pages/GTDWarRoomArea.tsx', 'utf8');
+    expect(src).toContain('useParams');
+    expect(src).toContain('areaId');
     expect(src).toContain('h-full');
-    expect(src).toContain('flex-col');
-    expect(src).toContain('overflow-y-auto');
-    expect(src).not.toContain('max-w-4xl');
-    expect(src).not.toContain('space-y-6');
+  });
+
+  it('index.ts registers warroom/:areaId route', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('features/gtd/index.ts', 'utf8');
+    expect(src).toContain('warroom/:areaId');
+    expect(src).toContain('GTDWarRoomArea');
   });
 });

@@ -39,6 +39,7 @@ const manifest: FeatureManifest = {
     { path: '/gtd/tasks', component: 'GTDTasks' },
     { path: '/gtd/knowledge', component: 'GTDKnowledge' },
     { path: '/gtd/warroom', component: 'GTDWarRoom' },
+    { path: '/gtd/warroom/:areaId', component: 'GTDWarRoomArea' },
   ],
 
   components: {
@@ -49,6 +50,7 @@ const manifest: FeatureManifest = {
     GTDTasks: () => import('./pages/GTDTasks'),
     GTDKnowledge: () => import('./pages/GTDKnowledge'),
     GTDWarRoom: () => import('./pages/GTDWarRoom'),
+    GTDWarRoomArea: () => import('./pages/GTDWarRoomArea'),
     ProjectDetail: () => import('../planning/pages/ProjectDetail'),
     InitiativeDetail: () => import('../planning/pages/InitiativeDetail'),
   },
