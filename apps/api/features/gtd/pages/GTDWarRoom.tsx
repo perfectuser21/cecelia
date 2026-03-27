@@ -47,12 +47,12 @@ export default function GTDWarRoom() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [treeResult, tasksResult] = await Promise.allSettled([
+    const [treeRes, tasksRes] = await Promise.allSettled([
       fetch('/api/tasks/full-tree?view=okr'),
       fetch('/api/brain/tasks?status=in_progress&limit=8'),
     ]);
-    setTree(treeResult.status === 'fulfilled' && treeResult.value.ok ? await treeResult.value.json() : []);
-    setTasks(tasksResult.status === 'fulfilled' && tasksResult.value.ok ? await tasksResult.value.json() : []);
+    setTree(treeRes.status === 'fulfilled' && treeRes.value.ok ? await treeRes.value.json() : []);
+    setTasks(tasksRes.status === 'fulfilled' && tasksRes.value.ok ? await tasksRes.value.json() : []);
     setLoading(false);
   }, []);
 
