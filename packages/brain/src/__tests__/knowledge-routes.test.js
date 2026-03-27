@@ -12,8 +12,39 @@ vi.mock('../db.js', () => {
   return { default: mockPool };
 });
 
+// Mock fs to avoid reading real BACKLOG.yaml in tests
+vi.mock('fs', () => ({
+  readFileSync: vi.fn(),
+}));
+
+import { readFileSync } from 'fs';
+
 import pool from '../db.js';
 import knowledgeRoutes from '../routes/knowledge.js';
+
+const MOCK_BACKLOG_YAML = `
+meta:
+  total: 2
+  done: 1
+brain:
+  - id: brain-tick-loop
+    title: 心跳系统（Tick Loop）
+    desc: 5秒循环检查
+    priority: P0
+    status: done
+    source_files:
+      - packages/brain/src/tick.js
+engine:
+  - id: engine-devgate
+    title: DevGate 门禁
+    desc: CI 质量门禁
+    priority: P1
+    status: done
+    source_files:
+      - packages/engine/scripts/devgate/check-dod-mapping.cjs
+system: []
+workflows: []
+`;
 
 // Helper: create mock req/res
 function mockReqRes(query = {}) {
@@ -72,5 +103,61 @@ describe('GET /api/brain/knowledge', () => {
 
     const [queryText] = pool.query.mock.calls[0];
     expect(queryText).not.toContain('WHERE type');
+  });
+});
+
+describe('GET /api/brain/knowledge/modules', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    readFileSync.mockReturnValue(MOCK_BACKLOG_YAML);
+  });
+
+  function getModulesHandler() {
+    const layers = knowledgeRoutes.stack.filter(l => l.route?.path === '/modules');
+    return layers[0]?.route?.stack?.[0]?.handle;
+  }
+
+  it('returns grouped modules from BACKLOG.yaml', async () => {
+    const { req, res } = mockReqRes();
+    req.query = {};
+    const handler = getModulesHandler();
+    handler(req, res);
+
+    expect(res._data).toBeDefined();
+    expect(res._data.groups).toBeDefined();
+    expect(Array.isArray(res._data.groups.brain)).toBe(true);
+    expect(res._data.groups.brain[0].id).toBe('brain-tick-loop');
+  });
+
+  it('includes priority and desc in each module', async () => {
+    const { req, res } = mockReqRes();
+    req.query = {};
+    const handler = getModulesHandler();
+    handler(req, res);
+
+    const brainModule = res._data.groups.brain[0];
+    expect(brainModule.priority).toBe('P0');
+    expect(brainModule.desc).toBe('5秒循环检查');
+  });
+
+  it('includes source_files in each module', async () => {
+    const { req, res } = mockReqRes();
+    req.query = {};
+    const handler = getModulesHandler();
+    handler(req, res);
+
+    const brainModule = res._data.groups.brain[0];
+    expect(Array.isArray(brainModule.source_files)).toBe(true);
+    expect(brainModule.source_files[0]).toBe('packages/brain/src/tick.js');
+  });
+
+  it('returns all four groups even if empty', async () => {
+    const { req, res } = mockReqRes();
+    req.query = {};
+    const handler = getModulesHandler();
+    handler(req, res);
+
+    expect(Array.isArray(res._data.groups.system)).toBe(true);
+    expect(Array.isArray(res._data.groups.workflows)).toBe(true);
   });
 });
