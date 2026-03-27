@@ -25,7 +25,7 @@ const VALID_TASK_TYPES = [
   // 前置审查（Intent Expansion）
   'intent_expand',
   // 内容工厂 Pipeline（Content Factory）
-  'content-pipeline', 'content-research', 'content-generate', 'content-review', 'content-export',
+  'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
@@ -79,8 +79,10 @@ const SKILL_WHITELIST = {
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline': '/content-creator',
   'content-research': '/notebooklm',
+  'content-copywriting': '/content-creator',
+  'content-copy-review': '/content-creator',
   'content-generate': '/content-creator',
-  'content-review': '/content-creator',
+  'content-image-review': '/content-creator',
   'content-export': '/content-creator',
   // Codex Gate 审查任务类型
   'prd_review': '/prd-review',              // PRD 审查
@@ -182,8 +184,10 @@ const LOCATION_MAP = {
   // 内容工厂 Pipeline（Content Factory）→ 西安 Codex 执行
   'content-pipeline': 'xian',  // Pipeline 编排入口 → 西安 Codex
   'content-research': 'xian',  // 调研阶段 → 西安 (/notebooklm)
-  'content-generate': 'xian',  // 生成阶段 → 西安 (/content-creator)
-  'content-review': 'xian',    // 审核阶段 → 西安（纯规则检查）
+  'content-copywriting': 'xian', // 文案生成 → 西安 (/content-creator)
+  'content-copy-review': 'xian', // 文案审核 → 西安（纯规则检查）
+  'content-generate': 'xian',  // 图片生成 → 西安 (/content-creator)
+  'content-image-review': 'xian', // 图片审核 → 西安（规则+视觉检查）
   'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
   // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
   'prd_review': 'us',            // PRD 审查 → US 本机 Codex
@@ -253,8 +257,10 @@ const TASK_REQUIREMENTS = {
   'dept_heartbeat':     ['general'],
   'content-pipeline':   ['general'],
   'content-research':   ['general'],
+  'content-copywriting': ['general'],
+  'content-copy-review': ['general'],
   'content-generate':   ['general'],
-  'content-review':     ['general'],
+  'content-image-review': ['general'],
   'content-export':     ['general'],
 };
 

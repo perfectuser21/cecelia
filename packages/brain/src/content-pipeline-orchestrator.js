@@ -10,37 +10,30 @@
  *   2. advanceContentPipeline(taskId, status, findings) — 由 execution callback 调用
  *      子任务完成后推进 Pipeline：创建下一个阶段任务，或标记 Pipeline 完成。
  *
- * Pipeline 状态机：
+ * Pipeline 状态机（6 阶段）：
  *   content-pipeline(queued)
  *     → tick 调用 orchestrateContentPipelines()
  *     → 创建 content-research(queued) + pipeline 标 in_progress
  *
- *   content-research 完成
- *     → 创建 content-generate(queued)
- *
- *   content-generate 完成
- *     → 创建 content-review(queued)
- *
- *   content-review 完成，review_passed=true（默认）
- *     → 创建 content-export(queued)
- *
- *   content-review 完成，review_passed=false 且 retry_count < MAX_REVIEW_RETRY
- *     → 重建 content-generate(queued)，retry_count+1，携带 review_feedback
- *
- *   content-review 完成，review_passed=false 且 retry_count >= MAX_REVIEW_RETRY
- *     → 标记 content-pipeline(failed)，停止
- *
- *   content-export 完成
- *     → 标记 content-pipeline(completed)
+ *   content-research 完成 → 创建 content-copywriting(queued)
+ *   content-copywriting 完成 → 创建 content-copy-review(queued)
+ *   content-copy-review PASS → 创建 content-generate(queued)
+ *   content-copy-review FAIL (retry < MAX) → 重建 content-copywriting, retry+1
+ *   content-copy-review FAIL (retry >= MAX) → pipeline failed
+ *   content-generate 完成 → 创建 content-image-review(queued)
+ *   content-image-review PASS → 创建 content-export(queued)
+ *   content-image-review FAIL (retry < MAX) → 重建 content-generate, retry+1
+ *   content-image-review FAIL (retry >= MAX) → pipeline failed
+ *   content-export 完成 → pipeline completed
  *
  * Payload 规范（子任务）：
  *   payload.parent_pipeline_id   — 父 content-pipeline 任务 ID
  *   payload.pipeline_stage       — 当前阶段（'content-research' 等）
  *   payload.pipeline_keyword     — 内容关键词（从父任务继承）
- *   payload.retry_count          — review 重试次数（仅 content-generate）
- *   payload.review_feedback      — review 失败反馈（仅重试的 content-generate）
+ *   payload.retry_count          — review 重试次数（content-copywriting / content-generate）
+ *   payload.review_feedback      — review 失败反馈（重试时携带）
  *
- * Review 失败判断（/content-creator skill 约定）：
+ * Review 失败判断：
  *   findings.review_passed === false 时视为失败。
  *   若 findings 缺失 review_passed 字段，视为通过（宽松默认）。
  *   若 task status = 'failed'，也视为 review 失败。
@@ -48,17 +41,19 @@
 
 import pool from './db.js';
 import { getContentType } from './content-types/content-type-registry.js';
-import { executeResearch, executeGenerate, executeReview, executeExport } from './content-pipeline-executors.js';
+import { executeResearch, executeCopywriting, executeCopyReview, executeGenerate, executeImageReview, executeExport } from './content-pipeline-executors.js';
 
 // ───────────────────────────────────────────────────────
 // 常量
 // ───────────────────────────────────────────────────────
 
-/** Pipeline 四个阶段（有序）*/
+/** Pipeline 六个阶段（有序）*/
 export const PIPELINE_STAGES = [
   'content-research',
+  'content-copywriting',
+  'content-copy-review',
   'content-generate',
-  'content-review',
+  'content-image-review',
   'content-export',
 ];
 
@@ -139,7 +134,7 @@ async function _startOnePipeline(pipeline, dbPool) {
     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, NOW())
   `, [
     `[内容调研] ${keyword}`,
-    `Content Pipeline 子任务（阶段1/4）：对「${keyword}」进行深度调研，产出 research.json。\n父任务 ID: ${pipelineId}`,
+    `Content Pipeline 子任务（阶段1/6）：对「${keyword}」进行深度调研，产出 research.json。\n父任务 ID: ${pipelineId}`,
     'content-research',
     priority,
     pipeline.project_id,
@@ -248,25 +243,75 @@ async function _loadPipelineContext(taskId, dbPool) {
 }
 
 /**
- * content-research 完成 → 创建 content-generate
+ * content-research 完成 → 创建 content-copywriting
  */
 async function _handleResearchComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, dbPool) {
-  return _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, {
-    pipeline_stage: 'content-generate',
+  return _createNextStage(dbPool, pipeline, task, 'content-copywriting', keyword, {
+    pipeline_stage: 'content-copywriting',
     pipeline_keyword: keyword,
     research_task_id: taskId,
     retry_count: 0,
     ...(content_type ? { content_type } : {}),
-    ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
-  }, null, typeConfig);
+  });
 }
 
 /**
- * content-generate 完成 → 创建 content-review
+ * content-copywriting 完成 → 创建 content-copy-review
+ */
+async function _handleCopywritingComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, dbPool) {
+  return _createNextStage(dbPool, pipeline, task, 'content-copy-review', keyword, {
+    pipeline_stage: 'content-copy-review',
+    pipeline_keyword: keyword,
+    copywriting_task_id: taskId,
+    retry_count: task.payload?.retry_count || 0,
+    ...(content_type ? { content_type } : {}),
+  });
+}
+
+/**
+ * content-copy-review 完成 → PASS 创建 content-generate，FAIL 打回 content-copywriting
+ */
+async function _handleCopyReviewComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, taskStatus, findings, dbPool) {
+  const pipelineId = pipeline.id;
+  if (_isReviewPassed(taskStatus, findings)) {
+    return _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, {
+      pipeline_stage: 'content-generate',
+      pipeline_keyword: keyword,
+      copy_review_task_id: taskId,
+      retry_count: 0,
+      ...(content_type ? { content_type } : {}),
+      ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
+    }, null, typeConfig);
+  }
+
+  const currentRetry = task.payload?.retry_count || 0;
+  if (currentRetry >= MAX_REVIEW_RETRY) {
+    await dbPool.query(
+      `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
+      [pipelineId]
+    );
+    console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} copy-review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
+    return { advanced: true, action: 'pipeline_failed_max_retry' };
+  }
+
+  const nextRetry = currentRetry + 1;
+  const reviewFeedback = findings?.feedback || findings?.issues || '请改进文案质量';
+  return _createNextStage(dbPool, pipeline, task, 'content-copywriting', keyword, {
+    pipeline_stage: 'content-copywriting',
+    pipeline_keyword: keyword,
+    retry_count: nextRetry,
+    review_feedback: reviewFeedback,
+    review_task_id: taskId,
+    ...(content_type ? { content_type } : {}),
+  }, `[文案生成-重试R${nextRetry}]`);
+}
+
+/**
+ * content-generate 完成 → 创建 content-image-review
  */
 async function _handleGenerateComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, dbPool) {
-  return _createNextStage(dbPool, pipeline, task, 'content-review', keyword, {
-    pipeline_stage: 'content-review',
+  return _createNextStage(dbPool, pipeline, task, 'content-image-review', keyword, {
+    pipeline_stage: 'content-image-review',
     pipeline_keyword: keyword,
     generate_task_id: taskId,
     retry_count: task.payload?.retry_count || 0,
@@ -276,9 +321,9 @@ async function _handleGenerateComplete({ task, pipeline, keyword, content_type, 
 }
 
 /**
- * content-review 完成 → PASS 创建 content-export，FAIL 重试或标记 pipeline failed
+ * content-image-review 完成 → PASS 创建 content-export，FAIL 打回 content-generate
  */
-async function _handleReviewComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, taskStatus, findings, dbPool) {
+async function _handleImageReviewComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, taskStatus, findings, dbPool) {
   const pipelineId = pipeline.id;
   if (_isReviewPassed(taskStatus, findings)) {
     return _createNextStage(dbPool, pipeline, task, 'content-export', keyword, {
@@ -295,12 +340,12 @@ async function _handleReviewComplete({ task, pipeline, keyword, content_type, ty
       `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
       [pipelineId]
     );
-    console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
+    console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} image-review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
     return { advanced: true, action: 'pipeline_failed_max_retry' };
   }
 
   const nextRetry = currentRetry + 1;
-  const reviewFeedback = findings?.feedback || findings?.issues || '请改进内容质量';
+  const reviewFeedback = findings?.feedback || findings?.issues || '请改进图片质量';
   return _createNextStage(dbPool, pipeline, task, 'content-generate', keyword, {
     pipeline_stage: 'content-generate',
     pipeline_keyword: keyword,
@@ -309,7 +354,7 @@ async function _handleReviewComplete({ task, pipeline, keyword, content_type, ty
     review_task_id: taskId,
     ...(content_type ? { content_type } : {}),
     ...(typeConfig ? { images_count: typeConfig.images?.count } : {}),
-  }, `[内容生成-重试R${nextRetry}]`, typeConfig);
+  }, `[图片生成-重试R${nextRetry}]`, typeConfig);
 }
 
 /**
@@ -329,8 +374,10 @@ async function _handleExportComplete({ task, pipeline }, dbPool) {
 /** 阶段 → 处理函数映射表（替代顺序 if 链，消除圈复杂度） */
 const STAGE_HANDLER_MAP = {
   'content-research': (ctx, _s, _f, db) => _handleResearchComplete(ctx, db),
+  'content-copywriting': (ctx, _s, _f, db) => _handleCopywritingComplete(ctx, db),
+  'content-copy-review': (ctx, status, findings, db) => _handleCopyReviewComplete(ctx, status, findings, db),
   'content-generate': (ctx, _s, _f, db) => _handleGenerateComplete(ctx, db),
-  'content-review': (ctx, status, findings, db) => _handleReviewComplete(ctx, status, findings, db),
+  'content-image-review': (ctx, status, findings, db) => _handleImageReviewComplete(ctx, status, findings, db),
   'content-export': (ctx, _s, _f, db) => _handleExportComplete(ctx, db),
 };
 
@@ -387,9 +434,9 @@ async function _createNextStage(dbPool, pipeline, prevTask, nextStage, keyword, 
   let description;
   if (nextStage === 'content-generate' && typeConfig?.template?.generate_prompt) {
     const prompt = typeConfig.template.generate_prompt.replace(/\{keyword\}/g, keyword);
-    description = `Content Pipeline 子任务（阶段${stageNum}/4）：${stageLabel}「${keyword}」。\n父任务 ID: ${pipelineId}\n\n${prompt}`;
+    description = `Content Pipeline 子任务（阶段${stageNum}/6）：${stageLabel}「${keyword}」。\n父任务 ID: ${pipelineId}\n\n${prompt}`;
   } else {
-    description = `Content Pipeline 子任务（阶段${stageNum}/4）：${stageLabel}「${keyword}」。\n父任务 ID: ${pipelineId}`;
+    description = `Content Pipeline 子任务（阶段${stageNum}/6）：${stageLabel}「${keyword}」。\n父任务 ID: ${pipelineId}`;
   }
 
   await dbPool.query(`
@@ -431,8 +478,10 @@ function _isReviewPassed(taskStatus, findings) {
 
 const EXECUTOR_MAP = {
   'content-research': executeResearch,
+  'content-copywriting': executeCopywriting,
+  'content-copy-review': executeCopyReview,
   'content-generate': executeGenerate,
-  'content-review': executeReview,
+  'content-image-review': executeImageReview,
   'content-export': executeExport,
 };
 
@@ -499,8 +548,10 @@ export async function executeQueuedContentTasks(dbPool = pool) {
 function _stageLabel(stage) {
   const labels = {
     'content-research': '内容调研',
-    'content-generate': '内容生成',
-    'content-review': '内容审核',
+    'content-copywriting': '文案生成',
+    'content-copy-review': '文案审核',
+    'content-generate': '图片生成',
+    'content-image-review': '图片审核',
     'content-export': '内容导出',
   };
   return labels[stage] || stage;

@@ -1,6 +1,6 @@
 /**
  * task-router-content-pipeline.test.js
- * Validates content-* task_type registration in Brain routing
+ * Validates content-* task_type registration in Brain routing (6-stage pipeline)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,19 +15,21 @@ import {
 const CONTENT_TASK_TYPES = [
   'content-pipeline',
   'content-research',
+  'content-copywriting',
+  'content-copy-review',
   'content-generate',
-  'content-review',
+  'content-image-review',
   'content-export'
 ];
 
 describe('content-* task_type registration', () => {
-  it('VALID_TASK_TYPES includes all 5 content-* types', () => {
+  it('VALID_TASK_TYPES includes all 7 content-* types', () => {
     for (const taskType of CONTENT_TASK_TYPES) {
       expect(VALID_TASK_TYPES).toContain(taskType);
     }
   });
 
-  it('isValidTaskType returns true for all 5 content-* types', () => {
+  it('isValidTaskType returns true for all 7 content-* types', () => {
     for (const taskType of CONTENT_TASK_TYPES) {
       expect(isValidTaskType(taskType)).toBe(true);
     }
@@ -41,12 +43,20 @@ describe('content-* task_type registration', () => {
     expect(SKILL_WHITELIST['content-research']).toBe('/notebooklm');
   });
 
+  it('SKILL_WHITELIST maps content-copywriting to /content-creator', () => {
+    expect(SKILL_WHITELIST['content-copywriting']).toBe('/content-creator');
+  });
+
+  it('SKILL_WHITELIST maps content-copy-review to /content-creator', () => {
+    expect(SKILL_WHITELIST['content-copy-review']).toBe('/content-creator');
+  });
+
   it('SKILL_WHITELIST maps content-generate to /content-creator', () => {
     expect(SKILL_WHITELIST['content-generate']).toBe('/content-creator');
   });
 
-  it('SKILL_WHITELIST maps content-review to /content-creator', () => {
-    expect(SKILL_WHITELIST['content-review']).toBe('/content-creator');
+  it('SKILL_WHITELIST maps content-image-review to /content-creator', () => {
+    expect(SKILL_WHITELIST['content-image-review']).toBe('/content-creator');
   });
 
   it('SKILL_WHITELIST maps content-export to /content-creator', () => {
@@ -60,15 +70,15 @@ describe('content-* task_type registration', () => {
 });
 
 describe('content-* LOCATION_MAP routing', () => {
-  it('LOCATION_MAP contains all 4 sub-task types mapped to xian', () => {
-    const subTypes = ['content-research', 'content-generate', 'content-review', 'content-export'];
+  it('LOCATION_MAP contains all 6 sub-task types mapped to xian', () => {
+    const subTypes = ['content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export'];
     for (const taskType of subTypes) {
       expect(LOCATION_MAP[taskType]).toBe('xian');
     }
   });
 
-  it('getTaskLocation returns us for all 4 sub-task types', () => {
-    const subTypes = ['content-research', 'content-generate', 'content-review', 'content-export'];
+  it('getTaskLocation returns xian for all 6 sub-task types', () => {
+    const subTypes = ['content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export'];
     for (const taskType of subTypes) {
       expect(getTaskLocation(taskType)).toBe('xian');
     }
