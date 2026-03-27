@@ -1,9 +1,10 @@
-# PRD: 修复 tick_history 表缺失 started_at 列
+# PRD: Content-Type 配置从 YAML 迁移到数据库
 
 ## 背景
-Brain 启动时报错 `column "started_at" does not exist`，因为 migration 164 只添加了 `completed_at` 列，遗漏了 `started_at` 列。`metrics.js` 的 `getRecentTickTime()` 同时依赖这两列。
+当前 content-type 配置硬编码在 YAML 文件中，修改需要改代码部署。迁移到 DB 后前端可以直接编辑配置。
 
 ## 成功标准
-- migration 164 同时添加 `started_at` 和 `completed_at` 两列
-- 使用 `ADD COLUMN IF NOT EXISTS` 确保幂等性
-- Brain 启动不再报 `column "started_at" does not exist` 错误
+- content_type_configs 表通过 migration 201 创建，selfcheck EXPECTED_SCHEMA_VERSION 更新为 201
+- getContentType() 和 listContentTypes() 改为 DB 优先、YAML 兜底
+- 提供 GET/PUT content-types/:type/config 和 POST content-types/seed 三个 API 端点
+- 所有现有测试继续通过，新增测试覆盖 DB 优先逻辑和 fallback 逻辑

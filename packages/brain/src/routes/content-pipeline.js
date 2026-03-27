@@ -1,17 +1,20 @@
 /**
  * Brain API: Content Pipeline
  *
- * GET  /api/brain/content-types         列出所有已注册内容类型
- * GET  /api/brain/pipelines             列出 content-pipeline 任务
- * POST /api/brain/pipelines             创建新 content-pipeline 任务
- * POST /api/brain/pipelines/:id/run     手动触发 pipeline 执行（不依赖 tick）
- * GET  /api/brain/pipelines/:id/stages  查询 pipeline 子任务进度
- * GET  /api/brain/pipelines/:id/output  查询 pipeline 产出物（manifest）
+ * GET  /api/brain/content-types                列出所有已注册内容类型
+ * GET  /api/brain/content-types/:type/config   获取指定类型的完整配置（DB 优先，YAML 兜底）
+ * PUT  /api/brain/content-types/:type/config   更新指定类型配置到 DB
+ * POST /api/brain/content-types/seed           从 YAML 批量导入所有类型配置到 DB
+ * GET  /api/brain/pipelines                    列出 content-pipeline 任务
+ * POST /api/brain/pipelines                    创建新 content-pipeline 任务
+ * POST /api/brain/pipelines/:id/run            手动触发 pipeline 执行（不依赖 tick）
+ * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
+ * GET  /api/brain/pipelines/:id/output         查询 pipeline 产出物（manifest）
  */
 
 import express from 'express';
 import pool from '../db.js';
-import { listContentTypes } from '../content-types/content-type-registry.js';
+import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTypesFromYaml } from '../content-types/content-type-registry.js';
 import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
 
 const router = express.Router();
@@ -26,6 +29,112 @@ router.get('/content-types', async (_req, res) => {
     res.json(types);
   } catch (err) {
     console.error('[routes/content-pipeline] GET /content-types error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /content-types/seed
+ * 从 YAML 文件批量导入所有内容类型配置到 DB（初始化用）
+ * 已存在的类型会被覆盖（upsert）
+ */
+router.post('/content-types/seed', async (_req, res) => {
+  try {
+    const yamlTypes = listContentTypesFromYaml();
+    const results = { seeded: [], failed: [] };
+
+    for (const typeName of yamlTypes) {
+      try {
+        const config = getContentTypeFromYaml(typeName);
+        if (!config) continue;
+
+        await pool.query(
+          `INSERT INTO content_type_configs (content_type, title, config, updated_by)
+           VALUES ($1, $2, $3, 'seed')
+           ON CONFLICT (content_type)
+           DO UPDATE SET config = $3, updated_at = NOW(), updated_by = 'seed'`,
+          [typeName, config.content_type || typeName, JSON.stringify(config)]
+        );
+        results.seeded.push(typeName);
+      } catch (err) {
+        results.failed.push({ type: typeName, error: err.message });
+      }
+    }
+
+    res.json({
+      ok: true,
+      total: yamlTypes.length,
+      seeded: results.seeded.length,
+      failed: results.failed.length,
+      details: results,
+    });
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /content-types/seed error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /content-types/:type/config
+ * 获取指定内容类型的完整配置（DB 优先，YAML 兜底）
+ */
+router.get('/content-types/:type/config', async (req, res) => {
+  const { type } = req.params;
+  try {
+    const config = await getContentType(type);
+    if (!config) {
+      return res.status(404).json({ error: `内容类型 "${type}" 不存在` });
+    }
+
+    // 查询 DB 获取元数据（updated_at, updated_by）
+    let source = 'yaml';
+    let meta = {};
+    try {
+      const dbResult = await pool.query(
+        'SELECT updated_at, updated_by FROM content_type_configs WHERE content_type = $1',
+        [type]
+      );
+      if (dbResult.rows.length > 0) {
+        source = 'db';
+        meta = {
+          updated_at: dbResult.rows[0].updated_at,
+          updated_by: dbResult.rows[0].updated_by,
+        };
+      }
+    } catch { /* DB 不可用时不影响返回 */ }
+
+    res.json({ content_type: type, source, config, ...meta });
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /content-types/:type/config error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PUT /content-types/:type/config
+ * 更新指定内容类型配置到 DB（body 是完整 config JSON）
+ */
+router.put('/content-types/:type/config', async (req, res) => {
+  const { type } = req.params;
+  const config = req.body;
+
+  if (!config || typeof config !== 'object') {
+    return res.status(400).json({ error: 'body 必须是有效的 JSON 对象' });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO content_type_configs (content_type, title, config, updated_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (content_type)
+       DO UPDATE SET config = $3, title = $2, updated_at = NOW(), updated_by = $4
+       RETURNING content_type, title, updated_at, updated_by`,
+      [type, config.content_type || type, JSON.stringify(config), config._updated_by || 'api']
+    );
+
+    res.json({ ok: true, ...result.rows[0] });
+  } catch (err) {
+    console.error('[routes/content-pipeline] PUT /content-types/:type/config error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
