@@ -541,25 +541,36 @@ jobs:
           echo "$NEW_BRAIN_FILES"
           echo ""
 
-          # 检查 .agent-knowledge/brain.md 是否也在变更中
+          # 检查 .agent-knowledge/brain.md 或 DEFINITION.md 是否也在变更中
           ALL_CHANGED=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || echo "")
+          BRAIN_MD_UPDATED=false
+          DEFINITION_UPDATED=false
+
           if echo "$ALL_CHANGED" | grep -q "^\.agent-knowledge/brain\.md$"; then
-            echo "✅ .agent-knowledge/brain.md 已更新，Brain 新文件登记通过"
-          else
+            BRAIN_MD_UPDATED=true
+            echo "✅ .agent-knowledge/brain.md 已更新"
+          fi
+
+          if echo "$ALL_CHANGED" | grep -q "^DEFINITION\.md$"; then
+            DEFINITION_UPDATED=true
+            echo "✅ DEFINITION.md 已更新"
+          fi
+
+          if [[ "$BRAIN_MD_UPDATED" == "false" && "$DEFINITION_UPDATED" == "false" ]]; then
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  Brain New Files Check FAILED"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            echo "新增了 Brain 模块文件，但未更新 .agent-knowledge/brain.md！"
+            echo "新增了 Brain 模块文件，但知识文档未同步更新！"
             echo ""
             echo "新增文件："
             echo "$NEW_BRAIN_FILES"
             echo ""
-            echo "修复方法："
-            echo "  编辑 .agent-knowledge/brain.md，在对应章节登记新模块的功能说明"
-            echo "  git add .agent-knowledge/brain.md && git commit --amend --no-edit"
+            echo "修复方法：更新以下至少一个文档，描述新增模块的职责："
+            echo "  - .agent-knowledge/brain.md（Brain 模块详情）"
+            echo "  - DEFINITION.md（系统定义 SSOT）"
             echo ""
-            echo "说明：.agent-knowledge/brain.md 是 Brain 模块的知识 SSOT，"
+            echo "说明：brain.md 或 DEFINITION.md 是 Brain 知识 SSOT，"
             echo "新增模块必须同步文档，否则造成功能孤岛。"
             exit 1
           fi
