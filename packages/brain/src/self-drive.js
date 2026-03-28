@@ -19,6 +19,9 @@ import pool from './db.js';
 import { createTask } from './actions.js';
 import { callLLM } from './llm-caller.js';
 import { getRewardScore } from './dopamine.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // ============================================================
 // Configuration (defaults, overridable via brain_config table)
@@ -57,6 +60,36 @@ let _currentIntervalMs = DEFAULT_INTERVAL_MS;
 let _currentMaxTasks = DEFAULT_MAX_TASKS;
 
 // ============================================================
+// State Reader — 读取 .agent-knowledge/CURRENT_STATE.md
+// ============================================================
+
+/**
+ * 读取 .agent-knowledge/CURRENT_STATE.md 获取系统当前状态快照。
+ * 由 /dev 结束时（Day2 特性）写入，Brain 自驱时消费。
+ * 文件缺失时返回 null（graceful skip）。
+ */
+function readCurrentState() {
+  try {
+    // 从 packages/brain/src/ 向上三级到达仓库根目录
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const statePath = path.join(repoRoot, '.agent-knowledge', 'CURRENT_STATE.md');
+
+    if (!fs.existsSync(statePath)) {
+      return null;
+    }
+
+    const content = fs.readFileSync(statePath, 'utf-8');
+    console.log(`[SelfDrive] CURRENT_STATE.md 已读取（${content.length} 字符）`);
+    return content;
+  } catch (err) {
+    console.warn(`[SelfDrive] 读取 CURRENT_STATE.md 失败（non-fatal）: ${err.message}`);
+    return null;
+  }
+}
+
+// ============================================================
 // Core
 // ============================================================
 
@@ -81,6 +114,12 @@ export async function runSelfDrive() {
     const dopamineScore = await getDopamineScore();
     const activeProjects = await getActiveProjects();
 
+    // 1c. Gather inputs — 系统当前状态（由 /dev 结束时写入 .agent-knowledge/CURRENT_STATE.md）
+    const currentState = readCurrentState();
+    if (currentState) {
+      console.log('[SelfDrive] 系统当前状态已加载，将注入分析提示词');
+    }
+
     if (!probeResults && !scanResults) {
       console.log('[SelfDrive] No probe/scan data yet, skipping');
       return { actions: [], reason: 'no_data' };
@@ -97,7 +136,7 @@ export async function runSelfDrive() {
     // 3. Call LLM to analyze
     const analysis = await analyzeSituation(
       probeResults, scanResults, existingTasks,
-      { krProgress, taskStats, dopamineScore, activeProjects }
+      { krProgress, taskStats, dopamineScore, activeProjects, currentState }
     );
 
     if (!analysis || !analysis.actions || analysis.actions.length === 0) {
@@ -466,7 +505,8 @@ async function getGoalIdForArea(area) {
 // ============================================================
 
 async function analyzeSituation(probeResults, scanResults, existingTasks, perception = {}) {
-  const prompt = buildAnalysisPrompt(probeResults, scanResults, existingTasks, perception);
+  const { currentState, ...restPerception } = perception;
+  const prompt = buildAnalysisPrompt(probeResults, scanResults, existingTasks, { ...restPerception, currentState });
 
   const { text } = await callLLM('thalamus', prompt, {
     maxTokens: 1500,
@@ -488,7 +528,7 @@ async function analyzeSituation(probeResults, scanResults, existingTasks, percep
 }
 
 function buildAnalysisPrompt(probeResults, scanResults, existingTasks, perception = {}) {
-  const { krProgress = [], taskStats = {}, dopamineScore = {}, activeProjects = [] } = perception;
+  const { krProgress = [], taskStats = {}, dopamineScore = {}, activeProjects = [], currentState = null } = perception;
 
   // Build probe summary
   let probeSummary = '无数据';
@@ -547,9 +587,17 @@ function buildAnalysisPrompt(probeResults, scanResults, existingTasks, perceptio
     ).join('\n');
   }
 
+  // Build 系统当前状态 summary
+  const currentStateSummary = currentState
+    ? currentState.slice(0, 2000) + (currentState.length > 2000 ? '\n...(内容已截断)' : '')
+    : '无数据（CURRENT_STATE.md 尚未生成）';
+
   return `你是 Cecelia 的自驱引擎。你的职责是根据全量感知数据决定 Cecelia 下一步应该做什么。
 
 ## 当前体检报告
+
+### 系统当前状态（由 /dev 结束时写入）
+${currentStateSummary}
 
 ### 链路探针（Probe）
 ${probeSummary}

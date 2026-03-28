@@ -161,7 +161,7 @@ async function getTickStatus() {
     memory[row.key] = row.value_json;
   }
 
-  const enabled = memory[TICK_ENABLED_KEY]?.enabled ?? false;
+  const enabled = memory[TICK_ENABLED_KEY]?.enabled ?? true;
   const lastTick = memory[TICK_LAST_KEY]?.timestamp || null;
   const actionsToday = memory[TICK_ACTIONS_TODAY_KEY]?.count || 0;
 
