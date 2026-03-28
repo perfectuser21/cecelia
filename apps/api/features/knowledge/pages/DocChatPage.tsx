@@ -1,7 +1,7 @@
 // Route: /knowledge/doc-chat/:id — 文档+聊天分栏界面（Notion AI 风格）
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, RefreshCw, Pencil, Check, X } from 'lucide-react';
+import { ArrowLeft, Send, RefreshCw, Pencil, Check, X, Sparkles, ChevronDown } from 'lucide-react';
 import { useApi } from '../../shared/hooks/useApi';
 
 interface DesignDoc {
@@ -11,17 +11,25 @@ interface DesignDoc {
   type: string;
   status: string;
   updated_at: string;
+  chat_history?: ChatMessage[];
+}
+
+interface DesignDocListItem {
+  id: string;
+  title: string;
+  type: string;
 }
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  ts?: number;
 }
 
 const MODEL_OPTIONS = [
-  { value: 'claude-haiku-4-5-20251001', label: 'Haiku（快）' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet（均衡）' },
-  { value: 'claude-opus-4-6', label: 'Opus（强）' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Haiku' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet' },
+  { value: 'claude-opus-4-6', label: 'Opus' },
 ];
 
 function renderMarkdown(text: string): string {
@@ -38,6 +46,43 @@ function renderMarkdown(text: string): string {
     .replace(/\n/g, '<br/>');
 }
 
+/** 文件选择器：下拉列出所有 design_docs */
+function FileSelector({ currentId, onSelect }: { currentId: string; onSelect: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const { data } = useApi<{ success: boolean; data: DesignDocListItem[] }>(
+    '/api/brain/design-docs?limit=100',
+    { staleTime: 60_000 }
+  );
+  const docs = data?.data || [];
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-400 text-gray-600"
+      >
+        切换文件 <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+          {docs.map(d => (
+            <button
+              key={d.id}
+              onClick={() => { onSelect(d.id); setOpen(false); }}
+              className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 border-b border-gray-100 last:border-0 ${
+                d.id === currentId ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+              }`}
+            >
+              <span className="font-medium truncate block">{d.title}</span>
+              <span className="text-gray-400">{d.type}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DocChatPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -46,7 +91,10 @@ export default function DocChatPage() {
   const [input, setInput] = useState('');
   const [model, setModel] = useState('claude-haiku-4-5-20251001');
   const [sending, setSending] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeResult, setAnalyzeResult] = useState<string | null>(null);
   const [docContent, setDocContent] = useState<string | null>(null);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editText, setEditText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -56,19 +104,41 @@ export default function DocChatPage() {
     `/api/brain/design-docs/${id}`,
     { staleTime: 0 }
   );
-
   const doc = data?.data;
 
-  // 初始化文档内容
+  // 初始化：加载文档内容 + 持久化的对话历史
   useEffect(() => {
-    if (doc && docContent === null) {
-      setDocContent(doc.content || '');
+    if (!doc || historyLoaded) return;
+    setDocContent(doc.content || '');
+    if (Array.isArray(doc.chat_history) && doc.chat_history.length > 0) {
+      setMessages(doc.chat_history);
     }
-  }, [doc, docContent]);
+    setHistoryLoaded(true);
+  }, [doc, historyLoaded]);
+
+  // 切换文档时重置状态
+  useEffect(() => {
+    setDocContent(null);
+    setMessages([]);
+    setHistoryLoaded(false);
+    setEditMode(false);
+    setAnalyzeResult(null);
+  }, [id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  /** 保存对话历史到 Brain */
+  const saveHistory = useCallback(async (newMessages: ChatMessage[]) => {
+    if (!id) return;
+    const toSave = newMessages.slice(-100); // 最多 100 条
+    await fetch(`/api/brain/design-docs/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_history: toSave }),
+    }).catch(() => {});
+  }, [id]);
 
   function startEdit() {
     setEditText(docContent || '');
@@ -103,8 +173,9 @@ export default function DocChatPage() {
   async function sendMessage() {
     if (!input.trim() || sending || !id) return;
 
-    const userMsg: ChatMessage = { role: 'user', content: input.trim() };
-    setMessages(prev => [...prev, userMsg]);
+    const userMsg: ChatMessage = { role: 'user', content: input.trim(), ts: Date.now() };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setInput('');
     setSending(true);
 
@@ -112,30 +183,52 @@ export default function DocChatPage() {
       const resp = await fetch(`/api/brain/design-docs/${id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMsg.content,
-          history: messages,
-          model,
-        }),
+        body: JSON.stringify({ message: userMsg.content, history: messages, model }),
       });
-
       const result = await resp.json();
       if (!result.success) throw new Error(result.error || '请求失败');
 
-      const assistantMsg: ChatMessage = { role: 'assistant', content: result.reply };
-      setMessages(prev => [...prev, assistantMsg]);
+      const assistantMsg: ChatMessage = { role: 'assistant', content: result.reply, ts: Date.now() };
+      const finalMessages = [...newMessages, assistantMsg];
+      setMessages(finalMessages);
+      if (result.updated_content) setDocContent(result.updated_content);
 
-      if (result.updated_content) {
-        setDocContent(result.updated_content);
-      }
+      // 异步保存历史
+      await saveHistory(finalMessages);
     } catch (err: any) {
-      const errMsg: ChatMessage = {
-        role: 'assistant',
-        content: `⚠️ 错误：${err.message}`,
-      };
-      setMessages(prev => [...prev, errMsg]);
+      const errMsg: ChatMessage = { role: 'assistant', content: `⚠️ ${err.message}`, ts: Date.now() };
+      const finalMessages = [...newMessages, errMsg];
+      setMessages(finalMessages);
+      await saveHistory(finalMessages);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function runAnalyze() {
+    if (!id || analyzing) return;
+    setAnalyzing(true);
+    setAnalyzeResult(null);
+    try {
+      const resp = await fetch(`/api/brain/design-docs/${id}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6' }),
+      });
+      const result = await resp.json();
+      if (result.success) {
+        setAnalyzeResult(result.created === 0
+          ? '没有新内容可捕获'
+          : `已创建 ${result.created} 条 Capture`
+        );
+      } else {
+        setAnalyzeResult(`失败：${result.error}`);
+      }
+    } catch (err: any) {
+      setAnalyzeResult(`失败：${err.message}`);
+    } finally {
+      setAnalyzing(false);
+      setTimeout(() => setAnalyzeResult(null), 4000);
     }
   }
 
@@ -147,70 +240,45 @@ export default function DocChatPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center text-gray-400 text-sm">
-        加载中...
-      </div>
-    );
+    return <div className="flex h-full items-center justify-center text-gray-400 text-sm">加载中...</div>;
   }
-
   if (!doc) {
-    return (
-      <div className="flex h-full items-center justify-center text-gray-400 text-sm">
-        文档不存在
-      </div>
-    );
+    return <div className="flex h-full items-center justify-center text-gray-400 text-sm">文档不存在</div>;
   }
 
   return (
     <div className="flex h-full" style={{ fontFamily: 'system-ui, sans-serif' }}>
       {/* 左栏：文档内容 */}
       <div className="flex-1 flex flex-col border-r border-gray-200 min-w-0">
-        {/* 文档标题栏 */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 bg-white flex-shrink-0">
-          <button
-            onClick={() => navigate('/knowledge/designs')}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <ArrowLeft size={16} />
+        {/* 标题栏 */}
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-200 bg-white flex-shrink-0">
+          <button onClick={() => navigate('/knowledge/designs')} className="text-gray-400 hover:text-gray-600">
+            <ArrowLeft size={15} />
           </button>
           <div className="flex-1 min-w-0">
             <h1 className="text-sm font-semibold text-gray-900 truncate">{doc.title}</h1>
-            <p className="text-xs text-gray-400">
-              {doc.type} · 更新于 {new Date(doc.updated_at).toLocaleDateString('zh-CN')}
-            </p>
           </div>
           {!editMode && docContent !== doc.content && (
-            <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded flex items-center gap-1">
-              <RefreshCw size={10} />
-              已更新
+            <span className="text-xs text-green-600 flex items-center gap-1">
+              <RefreshCw size={10} />已更新
             </span>
           )}
+          <FileSelector currentId={id!} onSelect={newId => navigate(`/knowledge/doc-chat/${newId}`)} />
           {editMode ? (
             <div className="flex items-center gap-1">
-              <button
-                onClick={saveEdit}
-                disabled={saving}
-                className="flex items-center gap-1 text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
-              >
-                <Check size={12} />
-                {saving ? '保存中...' : '保存'}
+              <button onClick={saveEdit} disabled={saving}
+                className="flex items-center gap-1 text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
+                <Check size={11} />{saving ? '保存中...' : '保存'}
               </button>
-              <button
-                onClick={cancelEdit}
-                className="flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-400 text-gray-600"
-              >
-                <X size={12} />
-                取消
+              <button onClick={cancelEdit}
+                className="flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded text-gray-600 hover:border-gray-400">
+                <X size={11} />取消
               </button>
             </div>
           ) : (
-            <button
-              onClick={startEdit}
-              className="flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-400 text-gray-600"
-            >
-              <Pencil size={12} />
-              编辑
+            <button onClick={startEdit}
+              className="flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded text-gray-600 hover:border-gray-400">
+              <Pencil size={11} />编辑
             </button>
           )}
         </div>
@@ -225,10 +293,8 @@ export default function DocChatPage() {
               placeholder="输入 Markdown 内容..."
             />
           ) : docContent ? (
-            <div
-              className="text-sm text-gray-700 leading-relaxed max-w-2xl"
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(docContent) }}
-            />
+            <div className="text-sm text-gray-700 leading-relaxed max-w-2xl"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(docContent) }} />
           ) : (
             <p className="text-sm text-gray-400 italic">（文档为空）</p>
           )}
@@ -238,17 +304,30 @@ export default function DocChatPage() {
       {/* 右栏：聊天 */}
       <div className="w-96 flex flex-col bg-gray-50 flex-shrink-0">
         {/* 聊天头部 */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
-          <span className="text-sm font-medium text-gray-700">与 Claude 讨论</span>
-          <select
-            value={model}
-            onChange={e => setModel(e.target.value)}
-            className="text-xs border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
-          >
-            {MODEL_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 bg-white flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-700">Claude</span>
+            <select value={model} onChange={e => setModel(e.target.value)}
+              className="text-xs border border-gray-200 rounded px-1.5 py-0.5 bg-white focus:outline-none">
+              {MODEL_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            {analyzeResult && (
+              <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{analyzeResult}</span>
+            )}
+            <button
+              onClick={runAnalyze}
+              disabled={analyzing}
+              className="flex items-center gap-1 text-xs px-2 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50"
+              title="分析对话和文档，提取新的 Captures"
+            >
+              <Sparkles size={11} />
+              {analyzing ? '分析中...' : 'Analyze'}
+            </button>
+          </div>
         </div>
 
         {/* 消息列表 */}
@@ -256,21 +335,16 @@ export default function DocChatPage() {
           {messages.length === 0 && (
             <div className="text-center py-8 text-gray-400 text-xs">
               <p>和 Claude 讨论这份文档</p>
-              <p className="mt-1">Claude 可以帮你修改文档内容</p>
+              <p className="mt-1">点 Analyze 可将讨论内容转为 Captures</p>
             </div>
           )}
           {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                  msg.role === 'user'
-                    ? 'bg-blue-500 text-white rounded-br-sm'
-                    : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
-                }`}
-              >
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                msg.role === 'user'
+                  ? 'bg-blue-500 text-white rounded-br-sm'
+                  : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
+              }`}>
                 <p style={{ whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{msg.content}</p>
               </div>
             </div>
@@ -302,11 +376,8 @@ export default function DocChatPage() {
               className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-400 resize-none disabled:opacity-60"
               style={{ maxHeight: '120px' }}
             />
-            <button
-              onClick={sendMessage}
-              disabled={!input.trim() || sending}
-              className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center hover:bg-blue-600 disabled:opacity-40 transition-colors"
-            >
+            <button onClick={sendMessage} disabled={!input.trim() || sending}
+              className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center hover:bg-blue-600 disabled:opacity-40">
               <Send size={14} />
             </button>
           </div>
