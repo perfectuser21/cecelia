@@ -7,6 +7,7 @@
  * POST /api/brain/content-types/seed           从 YAML 批量导入所有类型配置到 DB
  * GET  /api/brain/pipelines                    列出 content-pipeline 任务
  * POST /api/brain/pipelines                    创建新 content-pipeline 任务
+ * POST /api/brain/pipelines/trigger-topics     手动触发今日选题生成（忽略时间窗口限制）
  * POST /api/brain/pipelines/:id/run            手动触发 pipeline 执行（不依赖 tick）
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
  * GET  /api/brain/pipelines/:id/output         查询 pipeline 产出物（manifest）
@@ -16,6 +17,7 @@ import express from 'express';
 import pool from '../db.js';
 import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTypesFromYaml } from '../content-types/content-type-registry.js';
 import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
+import { triggerDailyTopicSelection, hasTodayTopics } from '../topic-selection-scheduler.js';
 import { callLLM } from '../llm-caller.js';
 
 const router = express.Router();
@@ -378,6 +380,34 @@ router.post('/batch', async (req, res) => {
     res.status(201).json({ count: created.length, pipelines: created });
   } catch (err) {
     console.error('[routes/content-pipeline] POST /batch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /pipelines/trigger-topics
+ * 手动触发今日选题生成（忽略时间窗口限制，强制执行）
+ * 用于测试、调试或手动补充当日选题
+ */
+router.post('/trigger-topics', async (req, res) => {
+  try {
+    const alreadyDone = await hasTodayTopics(pool);
+    if (alreadyDone && !req.query.force) {
+      return res.status(200).json({
+        ok: false,
+        skipped: true,
+        reason: '今日选题已生成，如需强制重新生成请加 ?force=1',
+      });
+    }
+
+    // 传入触发窗口内的时间（UTC 01:02）绕过时间检查
+    const windowTime = new Date();
+    windowTime.setUTCHours(1, 2, 0, 0);
+
+    const result = await triggerDailyTopicSelection(pool, windowTime);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /trigger-topics error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
