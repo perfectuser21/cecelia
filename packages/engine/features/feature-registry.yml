@@ -15,10 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.98.0"
+version: "3.99.0"
 updated: "2026-03-28"
-# ci-trigger: 13.49.0
+# ci-trigger: 13.50.0
 changelog:
+  - version: "13.50.0"
+    date: "2026-03-28"
+    change: "[CONFIG] fix(engine): 移除 bash-guard 过时的 SKILL.md symlink 拦截规则 — skills 已改为独立真实目录，规则4(SKILL_PATH_PATTERN)已过时"
+    scope: "packages/engine/hooks/bash-guard.sh"
+
   - version: "13.49.0"
     date: "2026-03-28"
     change: "[CONFIG] feat(engine): Stage4 自动写 CURRENT_STATE.md — 汇入 capability-probe 结果，session-start.sh 每次对话注入系统健康状态"

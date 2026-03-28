@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.98.0
+version: 3.99.0
 created: 2026-03-28
 updated: 2026-03-28
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.98.0: 从 feature-registry.yml 自动生成
+  - 3.99.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -557,5 +557,5 @@ DoD whitelist 检查正常执行
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.98.0
+**版本**: 3.99.0
 **生成时间**: 2026-03-28
