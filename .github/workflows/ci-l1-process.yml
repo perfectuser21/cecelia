@@ -948,11 +948,124 @@ jobs:
 
           node packages/engine/scripts/devgate/check-manual-cmd-whitelist.cjs "$TASK_CARD_REL"
 
+  # ─── Instruction Book Required (feat PR 必须更新说明书) ──────────────
+
+  instruction-book-required:
+    name: Instruction Book Required (feat only)
+    needs: [detect-stage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for instruction-book changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          CURRENT_STAGE: ${{ needs.detect-stage.outputs.current_stage }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Instruction Book Required Gate"
+          echo "  (feat PR 必须更新 docs/instruction-book/)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          STAGE="${CURRENT_STAGE:-4}"
+
+          # Stage < 2 时跳过（Spec 阶段还没到写代码的时候）
+          if [ "$STAGE" -lt 2 ]; then
+            echo "ℹ️  Stage $STAGE < 2 — 跳过 Instruction Book 检查"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Instruction Book Required SKIPPED (stage < 2)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # [CONFIG] 标签豁免（CI/Engine 配置类 PR 不要求文档）
+          if echo "$PR_TITLE" | grep -q '\[CONFIG\]'; then
+            echo "ℹ️  检测到 [CONFIG] 标签 — 跳过 Instruction Book 检查"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Instruction Book Required SKIPPED (CONFIG)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # [SKIP-DOCS] 标签豁免（内部/基础设施功能无需用户文档）
+          if echo "$PR_TITLE" | grep -q '\[SKIP-DOCS\]'; then
+            echo "ℹ️  检测到 [SKIP-DOCS] 标签 — 跳过 Instruction Book 检查"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Instruction Book Required SKIPPED (SKIP-DOCS)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # push/workflow_dispatch 场景：从 commit message 判断 commit type
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            COMMIT_MSG=$(git log HEAD -1 --format="%s" 2>/dev/null || echo "")
+            echo "Commit message: $COMMIT_MSG"
+            if echo "$COMMIT_MSG" | grep -q '\[CONFIG\]\|\[SKIP-DOCS\]'; then
+              echo "ℹ️  Commit 含豁免标签 — 跳过检查"
+              echo "  ✅ Instruction Book Required SKIPPED"
+              exit 0
+            fi
+            COMMIT_TYPE=$(echo "$COMMIT_MSG" | sed 's/\[.*\] *//' | grep -oE '^[a-z]+[!]?' | sed 's/!//' | head -1)
+            if [ "$COMMIT_TYPE" != "feat" ]; then
+              echo "ℹ️  提交类型 '$COMMIT_TYPE' 不是 feat — 跳过检查"
+              echo "  ✅ Instruction Book Required SKIPPED (non-feat)"
+              exit 0
+            fi
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          else
+            # pull_request 事件：从 PR title 判断 commit type
+            TITLE=$(echo "$PR_TITLE" | sed 's/\[.*\] *//')
+            COMMIT_TYPE=$(echo "$TITLE" | grep -oE '^[a-z]+[!]?' | sed 's/!//' | head -1)
+            echo "PR title: $PR_TITLE"
+            echo "Commit type: $COMMIT_TYPE"
+            if [ "$COMMIT_TYPE" != "feat" ]; then
+              echo "ℹ️  PR commit type '$COMMIT_TYPE' 不是 feat — 跳过检查"
+              echo "  ✅ Instruction Book Required SKIPPED (non-feat)"
+              exit 0
+            fi
+            CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null || echo "")
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          echo ""
+
+          # 检查 docs/instruction-book/ 是否有变更
+          DOCS_CHANGES=$(echo "$CHANGED_FILES" | grep -c '^docs/instruction-book/' || true)
+          echo "Instruction book changes: $DOCS_CHANGES"
+
+          if [ "$DOCS_CHANGES" -gt 0 ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Instruction Book Required PASSED ($DOCS_CHANGES 个文件更新)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          echo ""
+          echo "❌ ERROR: feat PR 必须更新 docs/instruction-book/"
+          echo ""
+          echo "   新功能需要让使用者知道它的存在和用法。请："
+          echo "   1. 在 docs/instruction-book/features/ 创建 <feature-name>.md"
+          echo "   2. 或在 docs/instruction-book/skills/ 创建 <skill-name>.md"
+          echo "   3. 或用 [SKIP-DOCS] 标签豁免（内部功能）"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ❌ Instruction Book Required FAILED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          exit 1
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan, rci-stale-refs-check, fake-dod-test-check, manual-cmd-whitelist-check]
+    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan, rci-stale-refs-check, fake-dod-test-check, manual-cmd-whitelist-check, instruction-book-required]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1080,6 +1193,16 @@ jobs:
             fi
           else
             echo "Stage $STAGE < 2: skipping Manual Command Whitelist Check (expected skipped)"
+          fi
+
+          # Stage 2+: Instruction Book Required（feat PR 必须更新说明书）
+          if [ "$STAGE" -ge 2 ]; then
+            if [ "${{ needs.instruction-book-required.result }}" != "success" ]; then
+              echo "FAIL: Instruction Book Required (${{ needs.instruction-book-required.result }})"
+              FAILED=true
+            fi
+          else
+            echo "Stage $STAGE < 2: skipping Instruction Book Required (expected skipped)"
           fi
 
           if [ "$FAILED" = "true" ]; then
