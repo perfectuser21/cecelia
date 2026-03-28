@@ -120,7 +120,7 @@ router.post('/', async (req, res) => {
 /** PUT /:id — 更新状态或内容 */
 router.put('/:id', async (req, res) => {
   try {
-    const allowed = ['title', 'content', 'status', 'area', 'tags'];
+    const allowed = ['title', 'content', 'status', 'area', 'tags', 'chat_history', 'analyze_watermark'];
     const updates = [];
     const params = [req.params.id];
 
@@ -224,6 +224,102 @@ ${message}
     res.json({ success: true, reply, updated_content });
   } catch (err) {
     console.error('[design-docs] POST /:id/chat error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** POST /:id/analyze — 增量分析文档+对话，提取新 captures（去重） */
+router.post('/:id/analyze', async (req, res) => {
+  try {
+    const { model = 'claude-sonnet-4-6' } = req.body;
+
+    // 读取文档（含 chat_history 和 analyze_watermark）
+    const { rows } = await pool.query('SELECT * FROM design_docs WHERE id = $1', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    const doc = rows[0];
+
+    // 增量：只分析 watermark 之后的对话
+    const history = Array.isArray(doc.chat_history) ? doc.chat_history : [];
+    const watermark = doc.analyze_watermark || 0;
+    const newMessages = history.slice(watermark);
+
+    // 查已有 captures（去重基准）
+    const captureSource = `doc-chat:${req.params.id}`;
+    // captures 在 apps/api，通过 HTTP 调用本地 API
+    let existingCaptures = [];
+    try {
+      const resp = await fetch(`http://localhost:5211/api/captures?source=${encodeURIComponent(captureSource)}&limit=200`);
+      if (resp.ok) {
+        const data = await resp.json();
+        existingCaptures = Array.isArray(data) ? data : [];
+      }
+    } catch { /* 忽略，captures API 不可用时继续 */ }
+
+    const existingList = existingCaptures.map(c => `- ${c.content}`).join('\n') || '（无）';
+    const newConversation = newMessages.length > 0
+      ? newMessages.map(m => `${m.role === 'user' ? '用户' : 'Claude'}: ${m.content}`).join('\n')
+      : '（无新对话）';
+
+    const prompt = `你是一个任务提取助手。请从以下内容中提取新的可执行事项（actionable items），只提取**尚未在已有 captures 中出现的**新内容。
+
+## 文档标题
+${doc.title}
+
+## 文档内容
+${doc.content || '（空）'}
+
+## 本次新增对话（上次分析之后）
+${newConversation}
+
+## 已有 Captures（不要重复）
+${existingList}
+
+## 输出格式
+请以 JSON 数组输出，每项包含 content 字段（一句话描述），不超过 10 条。
+格式：[{"content":"..."},{"content":"..."}]
+如果没有新的可执行事项，输出空数组 []。
+只输出 JSON，不要其他文字。`;
+
+    const { text } = await callLLM('doc-analyzer', prompt, {
+      model,
+      maxTokens: 2048,
+      timeout: 60000,
+    });
+
+    // 解析 Claude 输出
+    let items = [];
+    try {
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) items = JSON.parse(jsonMatch[0]);
+    } catch { items = []; }
+
+    // 批量创建 captures
+    let created = 0;
+    for (const item of items) {
+      if (!item.content) continue;
+      try {
+        await fetch('http://localhost:5211/api/captures', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: item.content,
+            source: captureSource,
+            status: 'pending',
+          }),
+        });
+        created++;
+      } catch { /* 忽略单条失败 */ }
+    }
+
+    // 更新 watermark
+    await pool.query(
+      'UPDATE design_docs SET analyze_watermark = $1 WHERE id = $2',
+      [history.length, req.params.id]
+    );
+
+    res.json({ success: true, created, total_analyzed: newMessages.length });
+  } catch (err) {
+    console.error('[design-docs] POST /:id/analyze error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

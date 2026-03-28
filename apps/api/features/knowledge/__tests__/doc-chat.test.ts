@@ -41,3 +41,45 @@ describe('DocChatPage', () => {
     expect(content).toContain('callLLM');
   });
 });
+
+describe('DocChatPage v2 — persistent history + analyze', () => {
+  const getPage = () =>
+    readFileSync(join(ROOT, 'apps/api/features/knowledge/pages/DocChatPage.tsx'), 'utf8');
+  const getBrain = () =>
+    readFileSync(join(ROOT, 'packages/brain/src/routes/design-docs.js'), 'utf8');
+
+  it('DocChatPage has FileSelector component', () => {
+    expect(getPage()).toContain('FileSelector');
+  });
+
+  it('DocChatPage saves chat_history to Brain', () => {
+    expect(getPage()).toContain('chat_history');
+  });
+
+  it('DocChatPage has Analyze button calling /analyze', () => {
+    const content = getPage();
+    expect(content).toContain('Analyze');
+    expect(content).toContain('analyze');
+  });
+
+  it('DocChatPage chat messages rendered as plain text (no dangerouslySetInnerHTML in chat section)', () => {
+    const content = getPage();
+    const chatIdx = content.indexOf('消息列表');
+    const chatSection = content.slice(chatIdx, chatIdx + 500);
+    expect(chatSection).not.toContain('dangerouslySetInnerHTML');
+  });
+
+  it('Brain design-docs has /analyze endpoint', () => {
+    expect(getBrain()).toContain("'/:id/analyze'");
+    expect(getBrain()).toContain('analyze_watermark');
+  });
+
+  it('migration 202 adds chat_history column', () => {
+    const migration = readFileSync(
+      join(ROOT, 'packages/brain/migrations/202_design_docs_chat_history.sql'),
+      'utf8'
+    );
+    expect(migration).toContain('chat_history');
+    expect(migration).toContain('analyze_watermark');
+  });
+});
