@@ -1,8 +1,9 @@
 ---
 id: dev-stage-04-ship
-version: 1.2.0
+version: 1.3.0
 created: 2026-03-20
 changelog:
+  - 1.3.0: 在 cleanup.sh 调用后增加 write-current-state.sh 刷新系统状态快照
   - 1.2.0: 删除 4.0 Simplify 章节（Simplify 已集成进 code-review-gate Stage 2，Stage 4 重复且位置错）
   - 1.1.0: 新增 Simplify 步骤（已在 1.2.0 删除，功能移至 code-review-gate）
   - 1.0.0: 合并原 04-learning.md + 05-clean.md 为 Stage 4 Ship
@@ -268,6 +269,14 @@ echo "✅ dev-gate-spec/crg.${BRANCH_NAME} 和 dev-mode.${BRANCH_NAME} 已清理
 ```bash
 BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
 bash skills/dev/scripts/cleanup.sh "$BRANCH_NAME" "$BASE_BRANCH"
+```
+
+### 刷新系统状态快照
+
+```bash
+# 更新 .agent-knowledge/CURRENT_STATE.md（Brain 离线时静默跳过）
+bash scripts/write-current-state.sh || true
+echo "✅ 系统状态快照已刷新"
 ```
 
 ### 清理任务列表
