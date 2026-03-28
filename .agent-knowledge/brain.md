@@ -118,6 +118,16 @@ GET  /api/brain/immune/dashboard    免疫系统仪表盘
 
 ---
 
+## 集成测试模块（2026-03-28 新增）
+
+| 文件 | 职责 |
+|------|------|
+| `__tests__/integration/brain-endpoint-contracts.test.js` | Brain API 端点契约测试（mock DB，supertest），覆盖 GET/POST/PATCH /tasks，无需真实 DB 或 Brain 服务 |
+
+测试模式：`vi.mock('../../db.js')` + supertest + makeApp() 工厂函数，可在 CI ubuntu-latest 离线运行。
+
+---
+
 ## 深度说明书
 
 - 规划器：http://38.23.47.81:9998/knowledge/brain/planner.html

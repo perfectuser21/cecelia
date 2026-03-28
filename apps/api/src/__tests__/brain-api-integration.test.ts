@@ -172,4 +172,136 @@ describe('Brain-API Proxy Integration', () => {
       expect(BRAIN_BASE).toBe('http://localhost:5221');
     });
   });
+
+  // ─── Session-Start Hook 联动契约（Engine Hook → Brain API）──────────────
+
+  describe('Engine Hook session-start 联动契约', () => {
+    /**
+     * session-start.sh 调用以下 Brain API：
+     *   GET /api/brain/tasks?status=in_progress&limit=5
+     *   GET /api/brain/tasks?status=queued&task_type=dev&limit=3
+     *
+     * 契约要求：
+     * 1. 返回数组（即使为空）
+     * 2. 每个任务对象包含 id、title、status 字段
+     * 3. 支持 status + task_type + limit 三种查询参数
+     */
+    it('GET /api/brain/tasks?status=in_progress — 返回任务数组契约', async () => {
+      const inProgressTasks = [
+        {
+          id: 'task-abc-001',
+          title: 'CI L3 集成测试门禁',
+          status: 'in_progress',
+          task_type: 'dev',
+          priority: 'P2',
+        },
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: async () => inProgressTasks,
+      } as Response);
+
+      const result = await proxyToBrain('GET', '/api/brain/tasks?status=in_progress&limit=5');
+
+      expect(result.status).toBe(200);
+      expect(Array.isArray(result.data)).toBe(true);
+      const tasks = result.data as typeof inProgressTasks;
+      expect(tasks[0]).toMatchObject({
+        id: expect.any(String),
+        title: expect.any(String),
+        status: 'in_progress',
+      });
+    });
+
+    it('GET /api/brain/tasks?status=queued&task_type=dev — session-start 查队列契约', async () => {
+      const queuedDevTasks = [
+        {
+          id: 'task-dev-queued-001',
+          title: '待执行任务',
+          status: 'queued',
+          task_type: 'dev',
+          location: 'us',
+        },
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: async () => queuedDevTasks,
+      } as Response);
+
+      const result = await proxyToBrain(
+        'GET',
+        '/api/brain/tasks?status=queued&task_type=dev&limit=3'
+      );
+
+      expect(result.status).toBe(200);
+      expect(Array.isArray(result.data)).toBe(true);
+      const tasks = result.data as typeof queuedDevTasks;
+      expect(tasks[0]).toMatchObject({
+        id: expect.any(String),
+        title: expect.any(String),
+        status: 'queued',
+        task_type: 'dev',
+      });
+    });
+
+    it('Brain 离线时 session-start 应收到可捕获的错误（不静默失败）', async () => {
+      // session-start.sh 使用 `|| echo "[]"` 降级处理 Brain 离线
+      // 此测试验证 proxy 层在 Brain 不可达时应抛出可捕获的错误
+      mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+      await expect(
+        proxyToBrain('GET', '/api/brain/tasks?status=in_progress&limit=5')
+      ).rejects.toThrow('ECONNREFUSED');
+    });
+  });
+
+  // ─── Brain API 关键端点存在性契约（context / health）──────────────────────
+
+  describe('Brain API 关键端点契约 — GET /api/brain/context', () => {
+    /**
+     * /api/brain/context 是 Claude 对话开始时的全景摘要端点。
+     * 契约：返回包含 active_tasks / decisions 字段的对象。
+     */
+    it('context 端点返回全景摘要结构', async () => {
+      const mockContext = {
+        okr: { objectives: [] },
+        recent_prs: [],
+        active_tasks: [{ id: 'task-001', title: '当前任务', status: 'in_progress' }],
+        decisions: [],
+        generated_at: '2026-03-28T00:00:00Z',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: async () => mockContext,
+      } as Response);
+
+      const result = await proxyToBrain('GET', '/api/brain/context');
+
+      expect(result.status).toBe(200);
+      const ctx = result.data as typeof mockContext;
+      // 验证关键字段存在（不要求具体值，只验证结构契约）
+      expect(ctx).toHaveProperty('active_tasks');
+      expect(Array.isArray(ctx.active_tasks)).toBe(true);
+    });
+
+    it('context 端点请求格式：GET，无 body，正确 URL', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: async () => ({ active_tasks: [], decisions: [] }),
+      } as Response);
+
+      await proxyToBrain('GET', '/api/brain/context');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${BRAIN_BASE}/api/brain/context`,
+        expect.objectContaining({ method: 'GET' })
+      );
+      // GET 请求不应有 body
+      const callArgs = mockFetch.mock.calls[0][1] as RequestInit;
+      expect(callArgs.body).toBeUndefined();
+    });
+  });
 });
