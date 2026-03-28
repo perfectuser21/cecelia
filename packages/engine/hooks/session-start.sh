@@ -76,6 +76,34 @@ CONTEXT="${CONTEXT}
 
 > 查完整状态：curl 'localhost:5221/api/brain/tasks?status=in_progress&limit=10'"
 
+# ─── 追加 CURRENT_STATE.md 系统健康状态 ──────────────────────────────────────
+# 找到主仓库路径（兼容 worktree 和主仓库两种情况）
+GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
+if [[ "$GIT_COMMON" == ".git" ]]; then
+    _MAIN_REPO=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+else
+    _MAIN_REPO=$(dirname "$GIT_COMMON")
+fi
+CURRENT_STATE_FILE="${_MAIN_REPO}/.agent-knowledge/CURRENT_STATE.md"
+
+if [[ -f "$CURRENT_STATE_FILE" ]]; then
+    # 读取 probe 摘要行（第一个 > 行包含探针结果统计）
+    PROBE_SUMMARY=$(grep "^> 最后探针时间" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 || echo "")
+    HEALTH_LINE=$(grep "| Brain API |" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 | sed 's/[| ]//g' | sed 's/BrainAPI//g' || echo "")
+    ALERTNESS_LINE=$(grep "| 警觉等级 |" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 | awk -F'|' '{print $3}' | tr -d ' ' || echo "")
+    GEN_TIME=$(grep "^generated:" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 | sed 's/generated: //' || echo "")
+
+    if [[ -n "$PROBE_SUMMARY" || -n "$HEALTH_LINE" ]]; then
+        CONTEXT="${CONTEXT}
+
+## 系统健康（CURRENT_STATE.md）
+
+Brain: ${HEALTH_LINE:-?} | 警觉: ${ALERTNESS_LINE:-?}
+${PROBE_SUMMARY:+Probe: ${PROBE_SUMMARY}}
+更新于: ${GEN_TIME:-未知}"
+    fi
+fi
+
 # 输出 JSON 格式（additionalContext 注入到 Claude context）
 python3 -c "
 import json, sys
