@@ -979,11 +979,100 @@ jobs:
           json-summary-path: coverage/coverage-summary.json
           json-final-path: coverage/coverage-final.json
 
+  # ─── Integration Test Required (Brain feat PR 必须有集成测试) ──────────
+
+  integration-test-required:
+    name: Integration Test Required (Brain feat only)
+    needs: [detect-commit-type, changes]
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for integration test changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          COMMIT_TYPE: ${{ needs.detect-commit-type.outputs.commit_type }}
+          BRAIN_CHANGED: ${{ needs.changes.outputs.brain }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Integration Test Required Gate"
+          echo "  (Brain feat PR 必须包含集成测试)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 仅对 Brain 代码有变更时执行
+          if [ "$BRAIN_CHANGED" != "true" ]; then
+            echo "ℹ️  Brain 代码未变更 — 跳过集成测试检查"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Integration Test Required SKIPPED (no brain changes)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # 仅对 feat 类型执行
+          if [ "$COMMIT_TYPE" != "feat" ]; then
+            echo "ℹ️  提交类型 '$COMMIT_TYPE' 不是 feat — 跳过集成测试检查"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Integration Test Required SKIPPED (non-feat)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # [CONFIG] 标签豁免
+          if echo "$PR_TITLE" | grep -q '\[CONFIG\]'; then
+            echo "ℹ️  检测到 [CONFIG] 标签 — 跳过集成测试检查"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Integration Test Required SKIPPED (CONFIG)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # 获取变更文件列表
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          else
+            CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null || echo "")
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          echo ""
+
+          # 检查 packages/brain/src/__tests__/integration/ 是否有变更
+          INTEGRATION_CHANGES=$(echo "$CHANGED_FILES" | grep -c '^packages/brain/src/__tests__/integration/' || true)
+          echo "Integration test changes: $INTEGRATION_CHANGES"
+
+          if [ "$INTEGRATION_CHANGES" -gt 0 ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Integration Test Required PASSED ($INTEGRATION_CHANGES 个文件)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          echo ""
+          echo "❌ ERROR: Brain feat PR 必须包含集成测试"
+          echo ""
+          echo "   Brain 新功能需要集成测试验证端到端行为。请："
+          echo "   1. 在 packages/brain/src/__tests__/integration/ 创建 *.integration.test.js"
+          echo "   2. 或用 [CONFIG] 标签豁免（CI/Engine 配置类 PR）"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ❌ Integration Test Required FAILED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          exit 1
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l3-passed:
     name: L3 Code Gate Passed
-    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required, coverage-delta]
+    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required, coverage-delta, integration-test-required]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1063,6 +1152,12 @@ jobs:
               echo "FAIL: Coverage Delta Check (${{ needs.coverage-delta.result }}) — coverage below threshold or test error"
               FAILED=true
             fi
+          fi
+
+          # integration-test-required 检查（Brain feat PR 必须有集成测试）
+          if [ "${{ needs.integration-test-required.result }}" != "success" ]; then
+            echo "FAIL: Integration Test Required (${{ needs.integration-test-required.result }})"
+            FAILED=true
           fi
 
           if [ "$FAILED" = "true" ]; then
