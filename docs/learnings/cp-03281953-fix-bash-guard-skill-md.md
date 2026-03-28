@@ -9,7 +9,11 @@ Date: 2026-03-28
 
 ### 根本原因
 
-bash-guard 使用字符串模式匹配（`SKILL_PATH_PATTERN`）拦截包含 `.claude/skills/*/SKILL.md` 路径的所有 bash 命令，但未区分"路径指向 git 仓库内文件"和"路径指向独立目录文件"。当 symlink 结构改变后，该规则变为过时保护，产生大量误拦截。
+bash-guard 使用字符串模式匹配（`SKILL_PATH_PATTERN`）拦截包含 `.claude/skills/*/SKILL.md` 路径的所有 bash 命令。
+
+该规则假设 `~/.claude/skills/` 下的目录都是 symlink，指向 git 仓库内的 `packages/workflows/skills/`，因此修改等价于改 git tracked 代码。
+
+当 26 个 skills 从 symlink 改为独立真实目录后，这个假设不再成立，但规则未同步更新，导致对独立 skill 目录的所有 bash 操作（包括只读查看）被误拦截。
 
 ### 下次预防
 
