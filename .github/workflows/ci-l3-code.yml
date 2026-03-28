@@ -1068,11 +1068,92 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           exit 1
 
+  # ─── Brain Test Coverage Warning (Brain src 改动但无测试 → warning only) ───
+
+  brain-test-coverage-warning:
+    name: Brain Test Coverage Warning
+    needs: [detect-commit-type, changes]
+    if: needs.detect-commit-type.outputs.should_run_l3 == 'true' && needs.changes.outputs.brain == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Brain src changes have test coverage
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Brain Test Coverage Warning"
+          echo "  (Brain src 改动无测试 → 提醒，不阻塞)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 获取变更文件列表
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          else
+            BASE_REF_USED="${BASE_REF:-main}"
+            CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF_USED}...HEAD" 2>/dev/null || echo "")
+          fi
+
+          # 统计 Brain src 非测试文件变更数
+          BRAIN_SRC_CHANGES=$(echo "$CHANGED_FILES" | grep -cE '^packages/brain/src/[^_].*\.js$' | grep -v '__tests__' || true)
+          # 统计 Brain 测试文件变更数
+          BRAIN_TEST_CHANGES=$(echo "$CHANGED_FILES" | grep -cE '^packages/brain/src/__tests__/' || true)
+          # 统计 apps/api 非测试文件变更数
+          API_SRC_CHANGES=$(echo "$CHANGED_FILES" | grep -cE '^apps/api/src/(?!__tests__).*\.(ts|tsx)$' || true)
+          # 统计 apps/api 测试文件变更数
+          API_TEST_CHANGES=$(echo "$CHANGED_FILES" | grep -cE '^apps/api/src/__tests__/' || true)
+
+          echo "Brain src 变更: $BRAIN_SRC_CHANGES 个文件"
+          echo "Brain 测试变更: $BRAIN_TEST_CHANGES 个文件"
+          echo "apps/api src 变更: $API_SRC_CHANGES 个文件"
+          echo "apps/api 测试变更: $API_TEST_CHANGES 个文件"
+          echo ""
+
+          WARNED=false
+
+          # Brain src 有改动但无测试变动 → warning
+          if [ "$BRAIN_SRC_CHANGES" -gt "0" ] && [ "$BRAIN_TEST_CHANGES" -eq "0" ]; then
+            echo "⚠️  WARNING: packages/brain/src/ 有 $BRAIN_SRC_CHANGES 个文件变更，但无对应测试文件变动"
+            echo ""
+            echo "   建议："
+            echo "   • 在 packages/brain/src/__tests__/ 新增或更新对应测试"
+            echo "   • Brain 测试目录: packages/brain/src/__tests__/integration/"
+            echo "   • Brain 当前测试覆盖率目标: statements≥75%, functions≥80%"
+            echo ""
+            WARNED=true
+          fi
+
+          # apps/api src 有改动但无测试变动 → warning
+          if [ "$API_SRC_CHANGES" -gt "0" ] && [ "$API_TEST_CHANGES" -eq "0" ]; then
+            echo "⚠️  WARNING: apps/api/src/ 有 $API_SRC_CHANGES 个文件变更，但无对应测试文件变动"
+            echo ""
+            echo "   建议："
+            echo "   • 在 apps/api/src/__tests__/ 新增或更新对应测试"
+            echo "   • 参考: apps/api/src/__tests__/brain-api-integration.test.ts"
+            echo ""
+            WARNED=true
+          fi
+
+          if [ "$WARNED" = "false" ]; then
+            echo "✅ Brain/API 测试覆盖配套正常"
+          fi
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ℹ️  Brain Test Coverage Warning DONE (warning only, always exit 0)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          exit 0  # 始终 exit 0，不阻塞 CI
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l3-passed:
     name: L3 Code Gate Passed
-    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required, coverage-delta, integration-test-required]
+    needs: [detect-commit-type, changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, test-coverage-required, coverage-delta, integration-test-required, brain-test-coverage-warning]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1158,6 +1239,12 @@ jobs:
           if [ "${{ needs.integration-test-required.result }}" != "success" ]; then
             echo "FAIL: Integration Test Required (${{ needs.integration-test-required.result }})"
             FAILED=true
+          fi
+
+          # brain-test-coverage-warning：warning-only，不阻塞 CI，仅输出提示
+          # brain-test-coverage-warning 始终 exit 0，此处仅记录其状态供可观测性
+          if [ "${{ needs.brain-test-coverage-warning.result }}" = "failure" ]; then
+            echo "ℹ️  brain-test-coverage-warning reported failure (non-blocking, check job logs for details)"
           fi
 
           if [ "$FAILED" = "true" ]; then
