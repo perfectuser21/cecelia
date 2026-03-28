@@ -355,10 +355,13 @@ router.get('/current', async (req, res) => {
     const result = await Promise.all(objectives.map(async (obj) => {
       const krs = (await pool.query(`
         SELECT id, title, current_value, target_value, unit, status,
-          CASE WHEN target_value > 0
-            THEN ROUND(current_value::numeric / target_value::numeric * 100, 0)
-            ELSE 0
-          END AS progress_pct
+          COALESCE(
+            progress,
+            CASE WHEN target_value > 0
+              THEN ROUND(current_value::numeric / target_value::numeric * 100, 0)
+              ELSE 0
+            END
+          )::integer AS progress_pct
         FROM key_results
         WHERE objective_id = $1 AND status != 'archived'
         ORDER BY created_at

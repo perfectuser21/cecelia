@@ -130,7 +130,7 @@ export async function compareGoalProgress(goalId = null) {
     params.push(goalId);
   }
 
-  goalsQuery += ' GROUP BY g.id ORDER BY g.priority';
+  goalsQuery += ' GROUP BY g.id, g.title, g.status, g.progress, g.created_at, g.priority ORDER BY g.priority';
 
   const goalsResult = await pool.query(goalsQuery, params);
   const goals = [];
