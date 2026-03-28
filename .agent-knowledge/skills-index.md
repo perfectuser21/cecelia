@@ -3,7 +3,7 @@
 > 自动生成，勿手动编辑。源文件：`packages/workflows/skills/*/SKILL.md`
 > 更新方式：新增 Skill 后运行 `node scripts/generate-skills-index.mjs`
 
-**共 63 个 Skills** | 按类型分组
+**共 71 个 Skills** | 按类型分组
 
 ---
 
@@ -119,6 +119,21 @@
 
 ---
 
+## 新增 Skills（待分类）
+
+| Skill | 触发 | 职责 |
+|-------|------|------|
+| `/code-review-gate` | — | 代码审查 Gate（/dev Stage 2 最后一步）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。 |
+| `/codex-test-gen` | — | Codex 自动测试生成。扫描覆盖率低的模块，自动生成单元测试。 |
+| `/creator` | — | 内容制作中心 — 所有卡片、图文、视觉内容生成工具的入口目录。触发词：做内容、做图、做卡片、内容制作、content creator、有哪些卡片工具、我要做一套内容、制作素材 |
+| `/initiative-review` | — | Initiative 验收 Gate（Codex Gate 4/4）。合并了 initiative_verify（功能验收）和 cto_review 的整体审查部分。 |
+| `/longform-creator` | — | /longform-creator skill |
+| `/playwright` | — | /playwright — Playwright 自动化探索 Skill |
+| `/prd-review` | — | PRD 审查 Gate（Codex Gate 1/4）。合并了 decomp-check（拆解质检）和 prd_audit（PRD 审计）。 |
+| `/spec-review` | — | Spec 审查 Gate（Codex Gate 2/4）。合并了 dod_verify（DoD 验证）和 cto_review 的单 PR 审查部分。 |
+
+---
+
 ## 任务类型 → Skill 路由
 
 Brain 根据 `task_type` 自动路由到对应 Skill 和执行位置：
@@ -144,4 +159,4 @@ Brain 根据 `task_type` 自动路由到对应 Skill 和执行位置：
 
 ---
 
-*生成时间：2026-03-16 | 共 44 Skills*
+*生成时间：2026-03-28 | 共 44 Skills*

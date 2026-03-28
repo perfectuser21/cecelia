@@ -1,6 +1,6 @@
 # Engine 模块详情
 
-> 从 `packages/engine/` 提取的关键信息。
+> 从 `packages/engine/` 提取的关键信息（更新于 2026-03-28）。
 > 详细说明书：http://38.23.47.81:9998/knowledge/engine/
 
 ---
@@ -58,17 +58,22 @@ bash scripts/check-version-sync.sh
 
 ## Engine 版本规则
 
-Engine Skills 改动必须 bump 7 个文件：
+Engine Skills/Hooks 改动的三要素：
 
+**1. PR title 含 `[CONFIG]`**（触发 engine-ci.yml）
+
+**2. 版本 bump 5 个文件**（`packages/engine/ci/scripts/check-version-sync.sh` 强制校验）：
 ```
+packages/engine/package.json       (.version 字段)
+packages/engine/package-lock.json
 packages/engine/VERSION
-packages/engine/package.json (version)
-packages/engine/package.json (engine-version)
-packages/engine/CHANGELOG.md
-packages/engine/features/feature-registry.yml
-packages/engine/FEATURES.md
-packages/engine/docs/feature-history.md
+packages/engine/.hook-core-version
+packages/engine/regression-contract.yaml
 ```
+
+**3. 文档更新**：
+- `packages/engine/features/feature-registry.yml` — 新增 changelog 条目
+- 运行 `bash packages/engine/scripts/generate-path-views.sh` 重新生成路径视图
 
 commit 前缀 `[CONFIG]` 触发 engine-ci.yml。
 
