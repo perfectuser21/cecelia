@@ -281,44 +281,11 @@ if echo "$CMD" | grep -Eq ">>?[[:space:]]*['\"]?(packages|apps|scripts|hooks)/";
     fi
 fi
 
-# ─── 规则 4: Skill 文件写入保护（~3ms）─────────────────────
-# SKILL.md 通过 symlink 链条指向 git 仓库，修改 = 改 git tracked 代码
-# 路径链: ~/.claude-account*/skills/ → ~/.claude/skills/ → packages/*/skills/
-# 拦截所有包含 SKILL.md 路径的写入操作（python/redirect/tee/cp/mv）
-SKILL_PATH_PATTERN='(\.claude(/|-account[0-9]*/)skills/|packages/(workflows|engine)/skills/)[^[:space:]]*SKILL\.md'
-BASH_WRITES_SKILL=false
-
-if echo "$CMD" | grep -Eq "$SKILL_PATH_PATTERN"; then
-    # 放行只读操作: head/cat/grep/diff/ls/wc/file/stat 且无重定向
-    if echo "$CMD" | grep -Eq '^[[:space:]]*(head|cat|grep|diff|ls|wc|file|stat|md5sum)\b' && \
-       ! echo "$CMD" | grep -Eq '>>?\s|[|]\s*tee\s'; then
-        : # 只读，放行
-    else
-        BASH_WRITES_SKILL=true
-    fi
-fi
-
-if [[ "$BASH_WRITES_SKILL" == "true" ]]; then
-    CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
-    if [[ -z "$CURRENT_BRANCH" ]] || [[ "$CURRENT_BRANCH" =~ ^(cp-|feature/) ]]; then
-        : # 功能分支，放行
-    else
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [BASH GUARD] Skill 文件写入被拦截" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "" >&2
-        echo "当前分支: $CURRENT_BRANCH" >&2
-        echo "SKILL.md 通过 symlink 指向 git 仓库，修改必须走 /dev。" >&2
-        echo "" >&2
-        echo "路径链:" >&2
-        echo "  ~/.claude-account*/skills/ → ~/.claude/skills/ → packages/*/skills/" >&2
-        echo "" >&2
-        echo "[SKILL_REQUIRED: dev]" >&2
-        echo "" >&2
-        exit 2
-    fi
-fi
+# ─── 规则 4: 已移除（Skill 文件写入保护）─────────────────────
+# 原规则基于 ~/.claude/skills/ → packages/*/skills/ symlink 链条假设
+# 现在 skills 已全部改为独立真实目录（仅 dev skill 保留 engine symlink）
+# branch-protect.sh 负责对 dev skill（engine symlink）的写入保护
+# bash-guard 不再重复承担此职责
 
 # ─── 规则 5: .dev-mode Bash 写入检测（~3ms）──────────────────
 # 拦截 Bash 工具对 .dev-mode 文件的 step_N: done 写操作
