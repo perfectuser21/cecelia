@@ -114,6 +114,67 @@ jobs:
           export BASE_REF=origin/main
           node scripts/devgate/check-new-api-endpoints.mjs
 
+      - name: Check new brain src files are documented
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Brain New Files Impact Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+
+          if ! git rev-parse "$BASE_REF" >/dev/null 2>&1; then
+            echo "Base ref not found: $BASE_REF, skipping"
+            exit 0
+          fi
+
+          NEW_BRAIN_FILES=$(git diff --name-only --diff-filter=A "${BASE_REF}...HEAD" 2>/dev/null \
+            | grep -E '^packages/brain/src/.*\.js$' || true)
+
+          if [[ -z "$NEW_BRAIN_FILES" ]]; then
+            echo "✅ 本 PR 无新增 packages/brain/src/*.js 文件，跳过"
+            exit 0
+          fi
+
+          echo "发现新增 Brain 源文件："
+          echo "$NEW_BRAIN_FILES"
+          echo ""
+
+          CHANGED_FILES=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || echo "")
+
+          BRAIN_MD_UPDATED=false
+          DEFINITION_UPDATED=false
+
+          if echo "$CHANGED_FILES" | grep -q "^\.agent-knowledge/brain\.md$"; then
+            BRAIN_MD_UPDATED=true
+            echo "✅ .agent-knowledge/brain.md 已更新"
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q "^DEFINITION\.md$"; then
+            DEFINITION_UPDATED=true
+            echo "✅ DEFINITION.md 已更新"
+          fi
+
+          if [[ "$BRAIN_MD_UPDATED" == "false" && "$DEFINITION_UPDATED" == "false" ]]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ Brain New Files Impact Check FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "新增了 Brain 源文件，但知识文档未同步更新！"
+            echo ""
+            echo "Fix: 更新以下至少一个文档，描述新增模块的职责："
+            echo "  - .agent-knowledge/brain.md（Brain 模块详情）"
+            echo "  - DEFINITION.md（系统定义 SSOT）"
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Brain New Files Impact Check passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
       - name: Check coverage completeness (source files must have tests)
         run: node packages/engine/scripts/devgate/check-coverage-completeness.mjs
 
