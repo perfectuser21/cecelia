@@ -16,7 +16,10 @@
 
 ### 根本原因
 
-CI L3 只要求 `feat:` PR 有任意 `*.test.ts` 文件，没有跨模块约束。改 Brain 路由不会触发 API 层测试，改 Engine Hook 不会触发 Brain 端点契约验证。跨模块回归只能靠人工发现。
+CI L3 只要求 `feat:` PR 有任意 `*.test.ts` 文件，没有跨模块约束。
+改 Brain 路由不会触发 API 层测试，改 Engine Hook 不会触发 Brain 端点契约验证。
+`apps/api/` 和 `apps/dashboard/` 完全没有测试扫描门禁，跨模块回归只能靠人工发现。
+Brain 有 10/151 模块无测试，但 CI 不强制要求测试文件同步更新。
 
 ---
 
