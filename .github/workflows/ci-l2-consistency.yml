@@ -432,11 +432,87 @@ jobs:
           # 将文件列表转为参数传入脚本
           node "$SCRIPT" $TARGET_FILES
 
+  # ─── Brain New Files Check ───────────────────────────────────────────
+
+  brain-new-files-check:
+    name: Brain New Files Must Update brain.md
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check new Brain src files are documented in brain.md
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Brain New Files Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+
+          if ! git rev-parse "$BASE_REF" >/dev/null 2>&1; then
+            echo "Base ref not found: $BASE_REF"
+            exit 1
+          fi
+
+          # 获取本 PR 新增的文件（仅 A 状态，不含修改）
+          ADDED_FILES=$(git diff --name-only --diff-filter=A "${BASE_REF}...HEAD" 2>/dev/null || echo "")
+
+          if [[ -z "$ADDED_FILES" ]]; then
+            echo "✅ 本 PR 无新增文件，跳过检查"
+            exit 0
+          fi
+
+          # 过滤出 packages/brain/src/ 下新增的 .js 文件
+          NEW_BRAIN_FILES=$(echo "$ADDED_FILES" | grep -E "^packages/brain/src/.*\.js$" || true)
+
+          if [[ -z "$NEW_BRAIN_FILES" ]]; then
+            echo "✅ 本 PR 无新增 Brain src .js 文件，跳过检查"
+            exit 0
+          fi
+
+          echo "发现新增 Brain 模块文件："
+          echo "$NEW_BRAIN_FILES"
+          echo ""
+
+          # 检查 .agent-knowledge/brain.md 是否也在变更中
+          ALL_CHANGED=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || echo "")
+          if echo "$ALL_CHANGED" | grep -q "^\.agent-knowledge/brain\.md$"; then
+            echo "✅ .agent-knowledge/brain.md 已更新，Brain 新文件登记通过"
+          else
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Brain New Files Check FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "新增了 Brain 模块文件，但未更新 .agent-knowledge/brain.md！"
+            echo ""
+            echo "新增文件："
+            echo "$NEW_BRAIN_FILES"
+            echo ""
+            echo "修复方法："
+            echo "  编辑 .agent-knowledge/brain.md，在对应章节登记新模块的功能说明"
+            echo "  git add .agent-knowledge/brain.md && git commit --amend --no-edit"
+            echo ""
+            echo "说明：.agent-knowledge/brain.md 是 Brain 模块的知识 SSOT，"
+            echo "新增模块必须同步文档，否则造成功能孤岛。"
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Brain New Files Check passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l2-passed:
     name: L2 Consistency Gate Passed
-    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check, new-files-need-rci-check]
+    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check, new-files-need-rci-check, brain-new-files-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -483,6 +559,15 @@ jobs:
             if [ "${{ needs.new-files-need-rci-check.result }}" != "success" ] && \
                [ "${{ needs.new-files-need-rci-check.result }}" != "skipped" ]; then
               echo "FAIL: New Files Need RCI Check (${{ needs.new-files-need-rci-check.result }})"
+              FAILED=true
+            fi
+          fi
+
+          # Brain New Files Check (PR-only)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.brain-new-files-check.result }}" != "success" ] && \
+               [ "${{ needs.brain-new-files-check.result }}" != "skipped" ]; then
+              echo "FAIL: Brain New Files Check (${{ needs.brain-new-files-check.result }})"
               FAILED=true
             fi
           fi
