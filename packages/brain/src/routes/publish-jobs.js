@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
+import { getPublishStats } from '../publish-monitor.js';
 
 const router = Router();
 
@@ -116,6 +117,48 @@ router.post('/publish-jobs/retry/:id', async (req, res) => {
     res.json({ success: true, ...result.rows[0] });
   } catch (err) {
     console.error('[publish-jobs] retry 失败:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/publish/stats
+ * 返回今日发布统计：成功率、覆盖平台数、各平台状态
+ */
+router.get('/stats', async (_req, res) => {
+  try {
+    const cached = await getPublishStats(pool);
+
+    // 同时返回今日实时 content_publish tasks 状态
+    const { rows } = await pool.query(
+      `SELECT
+         status,
+         payload->>'platform' AS platform,
+         COUNT(*) AS cnt
+       FROM tasks
+       WHERE task_type = 'content_publish'
+         AND DATE(created_at AT TIME ZONE 'UTC') = CURRENT_DATE
+       GROUP BY status, payload->>'platform'`
+    );
+
+    const live = { queued: 0, in_progress: 0, completed: 0, failed: 0, total: 0, platforms: {} };
+    for (const row of rows) {
+      const n = parseInt(row.cnt, 10);
+      live[row.status] = (live[row.status] || 0) + n;
+      live.total += n;
+      if (row.platform) {
+        if (!live.platforms[row.platform]) live.platforms[row.platform] = {};
+        live.platforms[row.platform][row.status] = n;
+      }
+    }
+    const done = live.completed + live.failed;
+    live.success_rate = done > 0 ? Math.round((live.completed / done) * 100) : null;
+    live.coverage = Object.keys(live.platforms).filter(p => live.platforms[p].completed > 0).length;
+    live.date = new Date().toISOString().slice(0, 10);
+
+    res.json({ success: true, stats: live, cached });
+  } catch (err) {
+    console.error('[publish-jobs] stats 失败:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
