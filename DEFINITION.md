@@ -414,7 +414,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
 | **content_type_configs** | 内容类型配置（YAML→DB 迁移，JSONB config，前端可编辑） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 207 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 203 |
 | **distilled_docs** | 蒸馏文档层 Layer 2（SOUL/SELF_MODEL/USER_PROFILE/WORLD_STATE） |
 | **kr_verifiers** | KR 指标自动验证（SQL 查询, threshold, current_value, 定时采集） |
 | **blocks** | 通用 block 存储 |
