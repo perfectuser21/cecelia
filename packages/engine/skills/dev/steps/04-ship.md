@@ -1,8 +1,9 @@
 ---
 id: dev-stage-04-ship
-version: 1.2.0
+version: 1.3.0
 created: 2026-03-20
 changelog:
+  - 1.3.0: 新增 4.4.5 更新系统状态步骤（PR 合并后写 CURRENT_STATE.md）
   - 1.2.0: 删除 4.0 Simplify 章节（Simplify 已集成进 code-review-gate Stage 2，Stage 4 重复且位置错）
   - 1.1.0: 新增 Simplify 步骤（已在 1.2.0 删除，功能移至 code-review-gate）
   - 1.0.0: 合并原 04-learning.md + 05-clean.md 为 Stage 4 Ship
@@ -242,6 +243,24 @@ echo "   roadmap.md: $ROADMAP_FILE"
 - 只更新与本次任务直接相关的条目
 - 不要删除其他任务的状态条目
 - roadmap 中 Now → 完成后移除，不移入 Later
+
+---
+
+## 4.4.5 更新系统状态（CURRENT_STATE.md）
+
+> **PR 合并后**，自动刷新 `.agent-knowledge/CURRENT_STATE.md`，汇入最新 capability-probe 结果。
+> 这使 Claude 在下次对话开始时能感知系统健康状态。
+
+```bash
+# 调用写入脚本（兼容 worktree 和主仓库路径）
+bash scripts/write-current-state.sh
+echo "✅ CURRENT_STATE.md 已更新"
+```
+
+**说明**：
+- 脚本自动找到主仓库路径（不会写入 worktree）
+- 读取 `cecelia_events` 表中最新的 `capability_probe` 事件
+- Brain 离线时静默降级（不中断流程）
 
 ---
 
