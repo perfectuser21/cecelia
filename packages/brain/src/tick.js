@@ -30,6 +30,8 @@ import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
 import { runConversationDigest } from './conversation-digest.js';
 import { runCaptureDigestion } from './capture-digestion.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
+import { triggerDailyPublish } from './daily-publish-scheduler.js';
+import { monitorPublishQueue } from './publish-monitor.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
@@ -2740,6 +2742,14 @@ async function executeTick() {
   // 10.17 每日内容选题（UTC 01:00 = 北京时间 09:00，AI 自动生成 ≥10 个选题，fire-and-forget）
   Promise.resolve().then(() => triggerDailyTopicSelection(pool))
     .catch(e => console.warn('[tick] 每日内容选题失败:', e.message));
+
+  // 10.17b 每日发布调度（UTC 03:00 = 北京时间 11:00，处理 pending content_publish_jobs，fire-and-forget）
+  Promise.resolve().then(() => triggerDailyPublish(pool))
+    .catch(e => console.warn('[tick] 每日发布调度失败:', e.message));
+
+  // 10.17c 发布队列监控（每 tick，自动重试 failed 任务 + 更新今日统计，fire-and-forget）
+  Promise.resolve().then(() => monitorPublishQueue(pool))
+    .catch(e => console.warn('[tick] 发布队列监控失败:', e.message));
 
   // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
   Promise.resolve().then(() => runSuggestionCycle(pool))

@@ -49,6 +49,7 @@ import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
 import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
 import contextRoutes from './src/routes/context.js';
+import publishJobsRoutes from './src/routes/publish-jobs.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -160,6 +161,7 @@ app.use('/api/brain/conversation-captures', conversationCapturesRoutes);
 app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/self-drive', selfDriveRoutes);
+app.use('/api/brain/publish', publishJobsRoutes);
 app.use('/api/brain/okr', okrHierarchyRoutes);
 app.use('/api/brain/context', contextRoutes);
 app.use('/api/brain/strategy-tree', strategyTreeRoutes);
