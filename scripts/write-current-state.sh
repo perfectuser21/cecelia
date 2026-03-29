@@ -5,6 +5,8 @@
 # 功能：
 # - 读取最新 capability-probe 结果（来自 DB 的 cecelia_events 表）
 # - 读取 Brain 健康状态（alertness、active tasks）
+# - 读取最近 5 个 PR（dev-records）
+# - 读取 P0 阻塞任务列表
 # - 写到主仓库 .agent-knowledge/CURRENT_STATE.md
 #
 # 调用时机：/dev Stage 4 Ship 阶段（PR 合并后）
@@ -125,6 +127,58 @@ except:
     print('unknown')
 " 2>/dev/null || echo "unknown")
 
+# ─── 读取最近 5 个 PR ──────────────────────────────────────────────────────────
+RECORDS_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/dev-records?limit=5" 2>/dev/null || echo "{}")
+PR_SECTION=$(echo "$RECORDS_JSON" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    records = data.get('data', data) if isinstance(data, dict) else data
+    if not isinstance(records, list) or not records:
+        print('（无 PR 记录）')
+    else:
+        lines = []
+        for r in records[:5]:
+            title = (r.get('pr_title') or '?')[:60]
+            url = r.get('pr_url') or ''
+            merged = r.get('merged_at') or ''
+            merged_short = merged[:10] if merged else '未合并'
+            if url:
+                lines.append(f'- [{merged_short}] [{title}]({url})')
+            else:
+                lines.append(f'- [{merged_short}] {title}')
+        print('\n'.join(lines))
+except Exception as e:
+    print(f'（查询失败：{e}）')
+" 2>/dev/null || echo "（查询失败）")
+
+# ─── 读取 P0 阻塞/失败任务 ────────────────────────────────────────────────────
+P0_BLOCKED_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/tasks?priority=P0&status=blocked&limit=10" 2>/dev/null || echo "[]")
+P0_FAILED_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/tasks?priority=P0&status=failed&limit=10" 2>/dev/null || echo "[]")
+P0_SECTION=$(P0_BLOCKED="$P0_BLOCKED_JSON" P0_FAILED="$P0_FAILED_JSON" python3 -c "
+import sys, json, os
+try:
+    blocked_raw = os.environ.get('P0_BLOCKED', '[]')
+    failed_raw = os.environ.get('P0_FAILED', '[]')
+    blocked = json.loads(blocked_raw) if blocked_raw else []
+    failed = json.loads(failed_raw) if failed_raw else []
+    if not isinstance(blocked, list): blocked = []
+    if not isinstance(failed, list): failed = []
+    issues = blocked + failed
+    if not issues:
+        print('（无 P0 阻塞/失败任务）')
+    else:
+        lines = []
+        for t in issues[:10]:
+            title = (t.get('title') or '?')[:60]
+            status = t.get('status', '?')
+            reason = (t.get('blocked_reason') or t.get('error_message') or '')[:50]
+            lines.append(f'- \u274c [{status}] {title}' + (f' \u2014 {reason}' if reason else ''))
+        print('\n'.join(lines))
+except Exception as e:
+    print(f'（解析失败：{e}）')
+" 2>/dev/null || echo "（查询失败）")
+
 # ─── 写入 CURRENT_STATE.md ────────────────────────────────────────────────────
 cat > "$OUTPUT_FILE" <<STATEOF
 ---
@@ -157,6 +211,18 @@ ${PROBE_SECTION}
 ## 进行中任务
 
 ${TASKS_SECTION}
+
+---
+
+## 最近 PR
+
+${PR_SECTION}
+
+---
+
+## P0 Issues
+
+${P0_SECTION}
 
 ---
 
