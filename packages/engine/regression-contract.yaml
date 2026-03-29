@@ -3710,9 +3710,29 @@ skills:
       run: "bash -c 'test -f packages/engine/scripts/devgate/check-new-files-need-rci.cjs'"
     test: "manual:node -e \"const {scanMissingRci}=require('./packages/engine/scripts/devgate/check-new-files-need-rci.cjs');const r=scanMissingRci(['packages/engine/hooks/new-hook.sh'],'hooks:\\n  - id: H99\\n    file: \\\"hooks/other.sh\\\"\\n');if(r.length!==1)process.exit(1)\""
 
+  - id: DEVGATE-PLAYWRIGHT-EVAL-001
+    feature: DevGate
+    name: "Playwright Evaluator — Stage 3 端到端行为验证"
+    scope: devgate
+    priority: P1
+    trigger: [PR]
+    method: auto
+    file: "scripts/devgate/playwright-evaluator.sh"
+    tags: [devgate, evaluator, behavior, e2e]
+    owner: engine
+    steps:
+      given: "Stage 3 CI 通过后"
+      when: "devloop-check 条件 4.5 触发 playwright-evaluator.sh"
+      then: "从 Task Card 提取 [BEHAVIOR] 条目，逐条执行验证，写入 seal 文件"
+    evidence:
+      type: command
+      run: "bash -c 'test -f packages/engine/scripts/devgate/playwright-evaluator.sh'"
+    test: "tests/devgate/playwright-evaluator.test.ts"
+
 # ============================================================================
 # Changelog
 # ============================================================================
+# 13.54.0 (2026-03-29): feat(engine): Playwright Evaluator 层 — Stage 3 端到端行为验证
 # 13.37.0 (2026-03-23): feat(engine): 02-code.md 本地测试改为精准测试（targeted-local-test，去全量，去重复）
 # 13.36.0 (2026-03-23): feat(engine): CI Gate — 新增 hook/devgate 文件必须有 RCI 条目（L2 检查）
 # 13.29.0 (2026-03-23): feat(rci): 全量注册 /dev pipeline + Brain 核心能力（20条 RCI：P0×7 + P1×7 + P2×6）
