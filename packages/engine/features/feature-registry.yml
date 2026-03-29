@@ -17,8 +17,13 @@
 
 version: "3.99.0"
 updated: "2026-03-29"
-# ci-trigger: 13.53.0
+# ci-trigger: 13.57.0
 changelog:
+  - version: "13.57.0"
+    date: "2026-03-29"
+    change: "feat(quality): DoD Test 字段强度升级 — detectFakeTest() 新增 printf/ls/cat/true/exit 0/standalone grep 弱测试拦截模式，并修复 echo/printf/ls/cat 正则避免误判 node -e 命令内的字面量"
+    scope: "packages/engine/scripts/devgate/check-dod-mapping.cjs,packages/quality/templates/DOD-TEMPLATE.md,packages/engine/tests/devgate/check-dod-mapping.test.ts"
+
   - version: "13.53.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): Sprint Contract Gate — /dev Stage 1 末尾 spec_review 升级为双向协商硬门禁，subagent 独立生成测试方案后与主 agent 比对，严重分歧 = FAIL，不能进入 Stage 2"

@@ -153,7 +153,8 @@ function parseDodItems(content) {
  */
 function detectFakeTest(testCommand) {
   // 禁止 echo 假测试
-  if (/\becho\b/.test(testCommand)) {
+  // 仅检查以 echo 开头的命令，避免误判 node -e "...echo..." 中引号内的 echo 字面量
+  if (/^\s*echo\s/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 echo 假测试（应使用真实执行命令）" };
   }
 
@@ -168,17 +169,20 @@ function detectFakeTest(testCommand) {
   }
 
   // 禁止 printf 假测试（类似 echo，只输出）
-  if (/\bprintf\b/.test(testCommand)) {
+  // 仅检查以 printf 开头的命令，避免误判 node -e "...printf..." 中引号内的 printf 字面量
+  if (/^\s*printf\s/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 printf 假测试（应使用真实执行命令）" };
   }
 
   // 禁止 ls 假测试（只列目录，不验证内容）
-  if (/\bls\s/.test(testCommand) || /\bls$/.test(testCommand)) {
+  // 仅检查以 ls 开头的命令，避免误判字符串参数中含 ls 的 node 命令
+  if (/^\s*ls(\s|$)/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 ls 假测试（只列目录，应使用 node -e 验证文件内容）" };
   }
 
   // 禁止 cat 假测试（只读文件，无断言）
-  if (/\bcat\s/.test(testCommand)) {
+  // 仅检查以 cat 开头的命令，避免误判字符串参数中含 cat 的 node 命令
+  if (/^\s*cat\s/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 cat 假测试（只读文件，应使用 node -e 验证内容）" };
   }
 
