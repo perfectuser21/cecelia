@@ -2700,3 +2700,42 @@ product_features:
       - "物理路径下 verify-step 行为不变"
 
     rcis: []
+
+  - id: playwright-evaluator-stage3
+    name: Playwright Evaluator — /dev Stage 3 行为验证
+    category: skills
+    status: Committed
+    priority: P1
+    version: "13.54.0"
+    updated: "2026-03-29"
+    description: |
+      在 /dev Stage 3 CI 通过后增加 Playwright Evaluator 步骤：
+      1. 触发 playwright-evaluator subagent 读取 Task Card [BEHAVIOR] 条目
+      2. 逐条验证 Brain API 和 Dashboard 运行时行为
+      3. 写入 .dev-gate-pw.<branch> seal 文件（verdict: PASS/FAIL/SKIP）
+      4. devloop-check.sh 条件 3.5 读取 seal 并决定是否 blocked
+      Brain API 不可用时自动 SKIP（pass-through），不阻断流程。
+
+    entrypoints:
+      - type: skill
+        file: packages/engine/skills/dev/steps/03-integrate.md
+        trigger: "Stage 3 CI 通过后触发"
+      - type: lib
+        file: packages/engine/lib/devloop-check.sh
+        trigger: "条件 3.5: playwright_evaluator seal 验证"
+
+    golden_path: |
+      /dev Stage 3 CI 通过 →
+      Playwright Evaluator subagent 读取 [BEHAVIOR] 条目 →
+      逐条执行 API/UI 验证 →
+      写入 .dev-gate-pw.<branch>（PASS/FAIL/SKIP）→
+      devloop-check 条件 3.5 检查 seal →
+      PASS/SKIP → Stage 4 Ship
+      FAIL → blocked → 修复循环
+
+    minimal_paths:
+      - "CI 通过后自动触发 Playwright Evaluator"
+      - "Brain API 不可用时 SKIP seal pass-through"
+      - "FAIL seal 触发 devloop-check blocked"
+
+    rcis: []

@@ -439,7 +439,7 @@ skills/dev/
 Step 0: Worktree   → 创建独立 worktree
 Stage 1: Spec      → 生成 Task Card → 派发 spec_review → 等 stop hook 放行
 Stage 2: Code      → 写代码 + 自验证（逐条跑 DoD Test）→ 派发 code_review_gate → 等 stop hook 放行
-Stage 3: Integrate → push + 创建 PR + CI → CI 通过即放行
+Stage 3: Integrate → push + 创建 PR + CI → CI 通过 → Playwright Evaluator → 放行
 Stage 4: Ship      → 写 Learning + 合并 PR + 归档 + cleanup_done: true
 ```
 

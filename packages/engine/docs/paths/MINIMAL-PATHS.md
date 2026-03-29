@@ -452,6 +452,14 @@ changelog:
 
 ---
 
+### playwright-evaluator-stage3: Playwright Evaluator — /dev Stage 3 行为验证
+
+1. ✅ **CI 通过后自动触发 Playwright Evaluator**
+2. ✅ **Brain API 不可用时 SKIP seal pass-through**
+3. ✅ **FAIL seal 触发 devloop-check blocked**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

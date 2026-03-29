@@ -545,6 +545,20 @@ DoD whitelist 检查正常执行
 
 ---
 
+### playwright-evaluator-stage3: Playwright Evaluator — /dev Stage 3 行为验证
+
+```
+/dev Stage 3 CI 通过 →
+Playwright Evaluator subagent 读取 [BEHAVIOR] 条目 →
+逐条执行 API/UI 验证 →
+写入 .dev-gate-pw.<branch>（PASS/FAIL/SKIP）→
+devloop-check 条件 3.5 检查 seal →
+PASS/SKIP → Stage 4 Ship
+FAIL → blocked → 修复循环
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

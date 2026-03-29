@@ -390,14 +390,99 @@ git push origin HEAD
 
 ---
 
-## 3.3 CI 通过 → 进入 Stage 4
+## 3.3 Playwright Evaluator（CI 通过后行为验证）
 
-> code_review_gate 已在 Stage 2 完成（push 前审查）。
-> CI 全部通过后，devloop-check 自动放行进入 Stage 4。
+> CI 通过后，自动触发 Playwright Evaluator subagent，逐条验证 Task Card 中的 [BEHAVIOR] DoD 条目。
+> 验证通过（或 Brain API 不可用）→ pass-through，继续 Stage 4。
+> 验证失败 → devloop-check 条件 3.5 blocked，修复后重新运行。
+
+### 3.3.1 服务可用性检查
+
+```bash
+echo "🔍 检查 Brain API 可用性（localhost:5221）..."
+BRAIN_OK=$(curl -s --max-time 3 http://localhost:5221/api/brain/health 2>/dev/null | grep -c '"status"' || echo "0")
+
+if [[ "$BRAIN_OK" -eq 0 ]]; then
+    echo "⚠️  Brain API 不可用，Playwright Evaluator 自动跳过（写入 SKIP seal）"
+    BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+    cat > ".dev-gate-pw.${BRANCH_NAME}" << SKIP_SEAL
+{"verdict":"SKIP","branch":"${BRANCH_NAME}","reason":"Brain API 不可用（localhost:5221）","timestamp":"$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)","reviewer":"playwright-evaluator-agent"}
+SKIP_SEAL
+    echo "✅ SKIP seal 已写入，继续 Stage 4"
+    # 直接跳过 Evaluator，进入 Stage 4
+fi
+```
+
+### 3.3.2 触发 Playwright Evaluator subagent
+
+> Brain API 可用时，调用 playwright-evaluator subagent（general-purpose）执行行为验证。
+
+```bash
+# 提取 Task Card [BEHAVIOR] 条目
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+TASK_CARD=".task-${BRANCH_NAME}.md"
+BEHAVIOR_COUNT=$(grep -c '^\s*-\s*\[.\]\s*\[BEHAVIOR\]' "$TASK_CARD" 2>/dev/null || echo "0")
+
+echo "📋 发现 ${BEHAVIOR_COUNT} 条 [BEHAVIOR] DoD 条目"
+```
+
+**调用方式**：以 Agent subagent（subagent_type=general-purpose）调用，prompt 包含：
+1. `packages/workflows/skills/playwright-evaluator/SKILL.md` 全文
+2. Task Card 全文（[BEHAVIOR] 条目列表）
+3. 指令：审查完成后将裁决写入 `.dev-gate-pw.<BRANCH>` seal 文件
+
+**CRITICAL**：seal 文件必须由 subagent 直接写入（防伪机制），主 agent 不能代写。
+
+seal 文件格式：
+```json
+{
+  "verdict": "PASS | FAIL | SKIP",
+  "branch": "<branch>",
+  "timestamp": "<ISO8601>",
+  "reviewer": "playwright-evaluator-agent",
+  "results": [
+    {"behavior": "条目描述", "status": "pass | fail", "detail": "详情"}
+  ],
+  "issues": ["失败条目的详细反馈"]
+}
+```
+
+### 3.3.3 解析结果 + 修复循环
+
+| seal verdict | devloop-check 条件 3.5 行为 | 下一步 |
+|-------------|--------------------------|--------|
+| PASS | pass-through | 继续 Stage 4 |
+| SKIP | pass-through | 继续 Stage 4 |
+| 不存在 | pass-through | 继续 Stage 4 |
+| FAIL | blocked（exit 2）| 读取 issues → 修复代码 → 重新调用 evaluator |
+
+**修复循环**（FAIL 时）：
+```
+读取 .dev-gate-pw.<branch>.issues
+  ↓
+理解哪些 [BEHAVIOR] 失败及原因
+  ↓
+修复相关代码
+  ↓
+git add + commit + push
+  ↓
+等待 CI 重新通过
+  ↓
+重新调用 Playwright Evaluator subagent
+  ↓
+直到 verdict=PASS 为止
+```
 
 ---
 
-## 3.4 Stop Hook 完成条件
+## 3.4 CI 通过 + Evaluator 通过 → 进入 Stage 4
+
+> code_review_gate 已在 Stage 2 完成（push 前审查）。
+> CI 通过 + Playwright Evaluator pass-through 后，devloop-check 自动放行进入 Stage 4。
+
+---
+
+## 3.5 Stop Hook 完成条件
 
 | 条件 | 状态 | Stop Hook 行为 |
 |------|------|---------------|

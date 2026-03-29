@@ -48,6 +48,11 @@
 #   PR 创建了?
 #   CI 过了?
 #
+#   条件 3.5: playwright_evaluator seal 文件验证（CI 通过后，Stage 4 前）
+#     → seal 存在 且 verdict=FAIL → exit 2（行为验证失败，修复代码）
+#     → seal 存在 且 verdict=PASS/SKIP → 继续
+#     → seal 不存在 → pass-through（允许继续 Stage 4）
+#
 #   step_4_ship: Learning 写了? → PR 合并了? → cleanup
 #
 # ============================================================================
@@ -408,6 +413,29 @@ devloop_check() {
                 return 2
                 ;;
         esac
+    fi
+
+    # ===== 条件 3.5: playwright_evaluator seal 文件验证（CI 通过后，Stage 4 前）=====
+    # seal 文件 .dev-gate-pw.<branch> 由 Playwright Evaluator subagent 写入
+    # verdict=FAIL → blocked（行为验证失败，需修复代码）
+    # verdict=PASS 或 verdict=SKIP → 继续
+    # 不存在 → pass-through（subagent 尚未运行；Brain 不可用时跳过也走此路径）
+    if [[ -f "$dev_mode_file" && "$pr_state" != "merged" ]]; then
+        local pw_seal_file pw_seal_verdict
+        pw_seal_file="$(dirname "$dev_mode_file")/.dev-gate-pw.${branch}"
+        if [[ -f "$pw_seal_file" ]]; then
+            pw_seal_verdict=$(jq -r '.verdict // ""' "$pw_seal_file" 2>/dev/null || echo "")
+            if [[ "$pw_seal_verdict" == "FAIL" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "playwright_evaluator" "blocked" "playwright_evaluator seal FAIL，需修复代码"
+                fi
+                _devloop_jq -n \
+                    '{"status":"blocked","reason":"Playwright Evaluator 行为验证失败（seal verdict=FAIL），需修复代码后重新运行 playwright-evaluator subagent","action":"读取 .dev-gate-pw.<branch> 中的 issues，修复代码，重新调用 playwright-evaluator subagent"}'
+                return 2
+            fi
+            # verdict=PASS 或 verdict=SKIP → 继续（pass-through）
+        fi
+        # 不存在 → pass-through（subagent 尚未运行，允许继续 Stage 4）
     fi
 
     # ===== 条件 5: PR 是否已合并？且合并到了 main？=====
