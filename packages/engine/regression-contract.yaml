@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "13.58.0"
+version: "13.59.0"
 updated: 2026-03-29
 
 # ============================================================================
@@ -3732,6 +3732,7 @@ skills:
 # ============================================================================
 # Changelog
 # ============================================================================
+# 13.59.0 (2026-03-29): feat(engine): [CONFIG] Planner subagent — Stage 1 Task Card 生成从主 agent 拆出
 # 13.55.0 (2026-03-29): feat(engine): Playwright Evaluator 层 — Stage 3 端到端行为验证
 # 13.37.0 (2026-03-23): feat(engine): 02-code.md 本地测试改为精准测试（targeted-local-test，去全量，去重复）
 # 13.36.0 (2026-03-23): feat(engine): CI Gate — 新增 hook/devgate 文件必须有 RCI 条目（L2 检查）
