@@ -2,7 +2,7 @@
  * context.js — Brain 全景状态汇总接口
  *
  * GET /api/brain/context
- * 返回 Claude 需要的当前状态摘要：OKR + 最近PR + 活跃任务 + 最近决策 + 纯文本摘要
+ * 返回 Claude 需要的当前状态摘要：OKR + 最近PR + 活跃任务 + 纯文本摘要
  * 用途：Claude 对话开始时调用，获取感知基础
  */
 
@@ -15,7 +15,7 @@ const router = Router();
 
 router.get('/', async (req, res) => {
   try {
-    const [okrRows, prRows, taskRows, decisionRows] = await Promise.all([
+    const [okrRows, prRows, taskRows] = await Promise.all([
       // 当前活跃 OKR（objectives）
       pool.query(`
         SELECT o.title, o.status,
@@ -48,20 +48,11 @@ router.get('/', async (req, res) => {
           created_at DESC
         LIMIT 10
       `),
-      // 最近有效决策
-      pool.query(`
-        SELECT title, category, status, created_at
-        FROM decisions
-        WHERE status = 'active'
-        ORDER BY created_at DESC
-        LIMIT 5
-      `),
     ]);
 
     const okr = okrRows.rows;
     const recent_prs = prRows.rows;
     const active_tasks = taskRows.rows;
-    const recent_decisions = decisionRows.rows;
 
     // 构建纯文本摘要供 Claude 直接阅读
     const lines = ['=== Cecelia 当前状态（Brain 自动汇总）===', ''];
@@ -91,22 +82,13 @@ router.get('/', async (req, res) => {
       lines.push('');
     }
 
-    if (recent_decisions.length > 0) {
-      lines.push('【有效决策】');
-      for (const d of recent_decisions) {
-        lines.push(`  - [${d.category}] ${d.title}`);
-      }
-      lines.push('');
-    }
-
-    lines.push('查询更多：GET /api/brain/okr/current | /api/brain/tasks | /api/brain/dev-records | /api/brain/decisions');
+    lines.push('查询更多：GET /api/brain/okr/current | /api/brain/tasks | /api/brain/dev-records');
 
     res.json({
       success: true,
       okr,
       recent_prs,
       active_tasks,
-      recent_decisions,
       summary_text: lines.join('\n'),
       generated_at: new Date().toISOString(),
     });
