@@ -17,9 +17,9 @@
 
 version: "3.99.0"
 updated: "2026-03-29"
-# ci-trigger: 13.54.0
+# ci-trigger: 13.55.0
 changelog:
-  - version: "13.54.0"
+  - version: "13.55.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): Playwright Evaluator 层 — Stage 3 CI 通过后验证 DoD [BEHAVIOR] 条目，devloop-check 条件 4.5 seal 文件验证"
     scope: "packages/engine/scripts/devgate/playwright-evaluator.sh,packages/engine/lib/devloop-check.sh,packages/engine/skills/dev/steps/03-integrate.md"

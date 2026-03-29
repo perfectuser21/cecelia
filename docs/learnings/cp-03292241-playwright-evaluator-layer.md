@@ -16,7 +16,10 @@
 
 ### 根本原因
 
-Pipeline 缺少 CI 通过后的端到端行为验证层。CI 只检查代码质量/格式/类型，无法验证功能是否真正可用。Evaluator 填补了这个缺口。
+Pipeline 在 CI 通过后直接进入 Stage 4 Ship，缺少端到端行为验证层。
+CI L1-L4 只检查代码质量、格式、类型安全和 RCI 覆盖率，无法验证功能是否在运行时真正可用。
+这意味着通过 CI 的代码可能在 Brain API 或 Dashboard 层面存在未被发现的行为缺陷。
+Playwright Evaluator 填补了这个缺口：从 Task Card 提取 [BEHAVIOR] 条目，逐条生成 curl/node 验证脚本并执行，确保行为层面的正确性。
 
 ### 下次预防
 
