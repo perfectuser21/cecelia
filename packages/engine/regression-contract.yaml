@@ -3726,7 +3726,27 @@ skills:
       then: "从 Task Card 提取 [BEHAVIOR] 条目，逐条执行验证，写入 seal 文件"
     evidence:
       type: command
-      run: "bash -c 'test -f packages/engine/scripts/devgate/playwright-evaluator.sh'"
+      run: "bash -c 'test -f packages/engine/scripts/devgate/playwright-evaluator.cjs'"
+    test: "tests/devgate/playwright-evaluator.test.ts"
+
+  - id: PE-002
+    feature: PE
+    name: "playwright-evaluator skill — Stage 3 行为验证 Gate"
+    scope: skill
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    file: "skills/playwright-evaluator/SKILL.md"
+    tags: [skill, evaluator, e2e, behavior-verification, v13.54.0]
+    owner: engine
+    steps:
+      given: "Stage 3 CI 全部通过"
+      when: "/playwright-evaluator skill 触发"
+      then: "执行 playwright-evaluator.cjs 行为验证，返回逐条 pass/fail 报告"
+    evidence:
+      type: code
+      file: "skills/playwright-evaluator/SKILL.md"
+      contains: "playwright-evaluator"
     test: "tests/devgate/playwright-evaluator.test.ts"
 
   - id: RCI-sprint-contract-loop
