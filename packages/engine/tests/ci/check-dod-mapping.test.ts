@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { resolve } from 'path';
 
 // 通过 require 加载 CJS 模块中导出的函数
 // check-dod-mapping.cjs 将导出 detectFakeTest 以支持测试
-const scriptPath = join(__dirname, '../../scripts/devgate/check-dod-mapping.cjs');
+const scriptPath = resolve(__dirname, '../../scripts/devgate/check-dod-mapping.cjs');
 
 describe('check-dod-mapping - P2 Test Field Strength', () => {
   it('P2-001: detectFakeTest 导出可用', () => {
