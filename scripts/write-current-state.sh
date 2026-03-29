@@ -28,7 +28,8 @@ else
     MAIN_REPO=$(dirname "$GIT_COMMON")
 fi
 
-OUTPUT_FILE="${MAIN_REPO}/.agent-knowledge/CURRENT_STATE.md"
+# 支持 CURRENT_STATE_OUTPUT_FILE 环境变量覆盖（主要用于测试，避免并发竞争）
+OUTPUT_FILE="${CURRENT_STATE_OUTPUT_FILE:-${MAIN_REPO}/.agent-knowledge/CURRENT_STATE.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
 echo "[write-current-state] 主仓库: $MAIN_REPO"
