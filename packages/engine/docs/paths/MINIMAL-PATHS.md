@@ -445,6 +445,13 @@ changelog:
 
 ---
 
+### dod-ci-incompatible-command-detection: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
+
+1. ✅ **curl localhost 被拦截**
+2. ✅ **psql 被拦截**
+3. ✅ **npm test 被拦截**
+4. ✅ **node -e 命令正常通过**
+
 ### planner-subagent-stage1: Planner subagent — Stage 1 Task Card 生成独立化
 
 1. ✅ **Planner subagent 隔离：不接收 CLAUDE.md 和 Brain context**

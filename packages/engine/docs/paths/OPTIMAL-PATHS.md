@@ -533,6 +533,13 @@ check-coverage-completeness.mjs Check 4 →
 
 ---
 
+### dod-ci-incompatible-command-detection: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
+
+```
+DoD manual:curl localhost → detectCiIncompatibleCommand → exit 1 + 建议
+DoD manual:psql → exit 1 + 建议用 tests/
+DoD manual:node -e → 通过检查
+
 ### planner-subagent-stage1: Planner subagent — Stage 1 Task Card 生成独立化
 
 ```

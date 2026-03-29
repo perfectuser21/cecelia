@@ -298,6 +298,54 @@ function validateAssertionStrength(testCommand) {
 }
 
 /**
+ * 检测 CI 不兼容命令 — 在 L1 CI 中必然失败的命令模式
+ * 原因：L1 CI 无 PostgreSQL、无 Brain 服务、无 node_modules
+ * @param {string} cmd - 要检测的命令
+ * @returns {{valid: boolean, reason?: string}}
+ */
+function detectCiIncompatibleCommand(cmd) {
+  // curl 访问本地服务（localhost / 127.0.0.1 / 0.0.0.0）→ L1 CI 无服务运行
+  if (/\bcurl\b.*\b(localhost|127\.0\.0\.1|0\.0\.0\.0)\b/.test(cmd) ||
+      /\bcurl\b.*\$[A-Z_]*(?:URL|HOST|API|BRAIN)\b/.test(cmd)) {
+    return {
+      valid: false,
+      reason: [
+        "manual:curl localhost:... 在 L1 CI 无法执行（CI 无运行中的服务）",
+        "     推荐替代：manual:node -e \"require('fs').accessSync('path/to/file')\"",
+        "               manual:node -e \"const c=require('fs').readFileSync('file','utf8');if(!c.includes('X'))process.exit(1)\"",
+        "     [BEHAVIOR] 行为验证请改用 tests/*.test.ts 格式"
+      ].join("\n")
+    };
+  }
+
+  // psql → 需要 PostgreSQL 服务
+  if (/\bpsql\b/.test(cmd)) {
+    return {
+      valid: false,
+      reason: [
+        "manual:psql 在 L1 CI 无法执行（CI 无 PostgreSQL 服务）",
+        "     推荐替代：manual:node -e \"require('fs').readFileSync('packages/brain/migrations/xxx.sql')\"",
+        "     数据库行为验证请改用 tests/*.test.ts 格式（集成测试）"
+      ].join("\n")
+    };
+  }
+
+  // npm test / npm run test / npx vitest → 需要 node_modules + 可能需要外部服务
+  if (/\bnpm\s+(test|run\s+test)\b/.test(cmd) || /\bnpx\s+vitest\b/.test(cmd)) {
+    return {
+      valid: false,
+      reason: [
+        "manual:npm test 在 L1 CI 无法执行（CI 无完整 node_modules，vitest 可能需要外部服务）",
+        "     推荐替代：manual:node -e \"require('fs').accessSync('packages/.../test-file.test.ts')\"",
+        "     自动化测试覆盖请用 tests/... 格式（Test: tests/path/to/test.ts）"
+      ].join("\n")
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
  * 在 CI 环境中实际执行 manual: 内联命令，验证命令真正能通过
  * @param {string} cmd - 要执行的 shell 命令
  * @param {string} projectRoot - 项目根目录（作为 cwd）
@@ -429,6 +477,12 @@ function validateTestRef(testRef, projectRoot) {
       const strengthCheck = validateAssertionStrength(evidenceContent);
       if (!strengthCheck.valid) {
         return strengthCheck;
+      }
+
+      // 检查 CI 不兼容命令（curl localhost/psql/npm test 在 L1 CI 必然失败）
+      const ciCheck = detectCiIncompatibleCommand(evidenceContent);
+      if (!ciCheck.valid) {
+        return ciCheck;
       }
 
       // CI 环境中实际执行命令，验证命令真正能通过
@@ -849,4 +903,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { extractKeywords, checkDodTracesToPrd, detectFakeTest, validateAssertionStrength, validateBehaviorTestStrength };
+module.exports = { extractKeywords, checkDodTracesToPrd, detectFakeTest, validateAssertionStrength, validateBehaviorTestStrength, detectCiIncompatibleCommand };
