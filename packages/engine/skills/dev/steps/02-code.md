@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 5.3.0
+version: 6.0.0
 created: 2026-03-14
-updated: 2026-03-23
+updated: 2026-03-29
 changelog:
+  - 6.0.0: 2.2 写代码拆为 Generator subagent（主 agent 变纯编排者）
   - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
   - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
   - 5.1.0: 修复 2.3.2 CI镜像检查无 exit 1（build/precheck/version-sync 失败现在正确拦截）；还原被 PR#1366 覆盖的 Step 2.0 行为快照+Step 2.1.5 TDD先行+2.3.6 exit 1
@@ -17,7 +18,7 @@ changelog:
   - 1.0.0: 初始版本
 ---
 
-# Stage 2: Code — 写代码 + 自验证
+# Stage 2: Code — Generator subagent 写代码 + 自验证
 
 > 探索代码 → 写实现 → 逐条验证 DoD → 本地测试 → 计算 Task Card hash
 
@@ -146,32 +147,120 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
 
 ---
 
-## 2.2 写代码
+## 2.2 写代码（Generator subagent）
 
-### 原则
+> **主 agent 不直接写代码。** 主 agent 是编排者，代码编写由 Generator subagent 完成。
+> Generator subagent 只接收：Sprint Contract（Task Card）+ coding 规范（CLAUDE.md）+ 代码库上下文。
+> 不接收主 agent 的探索推理过程、Brain 调度上下文、或 planner 内部状态。
 
+### 架构
+
+```
+主 agent（编排者）
+  ├─ 2.0 行为快照 [PRESERVE]
+  ├─ 2.1 探索代码（主 agent 自己做）
+  ├─ 2.1.5 TDD 红灯（主 agent 自己做）
+  ├─ 2.2 写代码 → spawn Generator subagent ← 你在这里
+  ├─ 2.3 自验证（主 agent 自己做）
+  └─ 2.4 code_review_gate（subagent 审查）
+```
+
+### Generator subagent 调用
+
+```
+1. 准备 prompt 输入（仅以下三项，不含其他内容）：
+   a. Task Card 全文（.task-cp-{branch}.md）— Sprint Contract
+   b. CLAUDE.md 全文 — coding 规范
+   c. 代码库上下文 — 探索阶段发现的相关文件路径列表
+
+2. 调用 Agent subagent（subagent_type=general-purpose）
+   prompt 模板见下方
+
+3. Generator 完成后，主 agent 继续 2.3 自验证
+```
+
+### Generator subagent prompt 模板
+
+```
+你是 Generator subagent，负责根据 Sprint Contract 编写代码。
+
+## 规则
 1. **只做 Task Card 里说的** — 不过度设计
 2. **保持简单** — 能用简单方案就不用复杂方案
 3. **遵循项目规范** — 看已有代码怎么写的
 4. **测试是代码的一部分** — 写功能代码时同步写测试
-5. **先删旧再写新，禁止堆叠** — 修改任何描述性内容（步骤说明、规则、注释、文档段落）时，必须同时删除被替代的旧内容；禁止在保留旧说法的同时追加新说法（code-review-gate 维度H blocker 会检查此项）
+5. **先删旧再写新，禁止堆叠** — 修改任何描述性内容时，必须同时删除被替代的旧内容
 
-### 逐条实现 DoD
+## Sprint Contract（Task Card）
+{TASK_CARD_CONTENT}
 
+## Coding 规范（CLAUDE.md）
+{CLAUDE_MD_CONTENT}
+
+## 代码库上下文
+以下文件与本次任务相关，请先读取理解后再动手：
+{RELEVANT_FILE_PATHS}
+
+## 执行要求
 对 Task Card 中每一条 `- [ ]` 条目：
-
-```
-当前 DoD 条目
-  ↓
-写实现代码
-  ↓
-自己运行 Test 命令验证
-  ↓
-PASS → 勾 [x]，进入下一条
-FAIL → 读错误信息，修代码，再验证
-```
+1. 读取相关代码文件
+2. 写实现代码
+3. 自己运行 Test 命令验证
+4. PASS → 勾 [x]，进入下一条
+5. FAIL → 读错误信息，修代码，再验证
 
 **关键：每条 DoD 完成后必须自己运行 Test 命令确认 PASS，不能跳过。**
+
+完成所有 DoD 条目后，输出修改过的文件列表。
+```
+
+### 主 agent 调用代码（伪码）
+
+```javascript
+// 1. 读取 Task Card 和 CLAUDE.md
+const TASK_CARD = readFile(`.task-cp-${BRANCH}.md`)
+const CLAUDE_MD = readFile(`.claude/CLAUDE.md`)
+
+// 2. 从探索阶段收集相关文件路径
+const RELEVANT_FILES = exploredFiles.join('\n')
+
+// 3. 组装 prompt（只含上述三项）
+const prompt = GENERATOR_PROMPT_TEMPLATE
+  .replace('{TASK_CARD_CONTENT}', TASK_CARD)
+  .replace('{CLAUDE_MD_CONTENT}', CLAUDE_MD)
+  .replace('{RELEVANT_FILE_PATHS}', RELEVANT_FILES)
+
+// 4. 调用 Generator subagent
+Agent({
+  subagent_type: "general-purpose",
+  description: "Generator: 编写代码",
+  prompt: prompt
+})
+
+// 5. Generator 完成后，主 agent 继续 2.3 自验证
+```
+
+### ⚠️ Generator subagent 隔离规则（CRITICAL）
+
+| 允许传入 | 禁止传入 |
+|---------|---------|
+| Task Card 全文 | 主 agent 的探索推理过程 |
+| CLAUDE.md 全文 | Brain API 返回的调度上下文 |
+| 相关文件路径列表 | Planner 内部状态 |
+| | OKR/KR/Project 层级信息 |
+| | 其他 subagent 的审查结果 |
+
+**为什么隔离**：Generator 只需要知道"做什么"（Task Card）和"怎么做"（CLAUDE.md + 代码），不需要知道"为什么要做"。信息越少，context 越高效，代码质量越高。
+
+### 失败处理
+
+```
+Generator subagent 返回后：
+  ├─ DoD 全部 [x] → 继续 2.3 自验证
+  └─ 有 DoD 未完成 → 主 agent 分析原因
+       ├─ 信息不足 → 补充相关文件路径，重新 spawn Generator
+       └─ 实现困难 → 主 agent 自行修复（fallback，不推荐）
+```
 
 ---
 
