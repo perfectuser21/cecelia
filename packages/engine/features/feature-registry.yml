@@ -15,10 +15,15 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.99.0"
+version: "4.0.0"
 updated: "2026-03-29"
-# ci-trigger: 13.56.0
+# ci-trigger: 13.57.0
 changelog:
+  - version: "13.57.0"
+    date: "2026-03-29"
+    change: "[CONFIG] feat(engine): DoD Test 字段断言强度检查 — check-dod-mapping.cjs 新增 validateAssertionStrength 函数，拦截 manual: 中无断言的 node/bash 命令，强制要求 process.exit/throw/if 退出码判定"
+    scope: "packages/engine/scripts/devgate/check-dod-mapping.cjs,packages/engine/tests/devgate/check-dod-mapping-strength.test.ts,tests/quality-system/test-check-dod-mapping.sh"
+
   - version: "13.56.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): DoD Test 字段强度升级 — check-dod-mapping.cjs 新增 P2-weak-inline 弱命令检测（ls/cat/true/exit 0）和 curl-to-localhost CI 反模式检测，DOD-TEMPLATE.md 更新为可执行命令格式"

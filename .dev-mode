@@ -1,0 +1,10 @@
+dev
+branch: cp-03292241-dod-test-harness-v2
+task_card: .task-cp-03292241-dod-test-harness-v2.md
+started: 2026-03-29T14:41:00+00:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: done
+step_4_ship: pending
+tasks_created: true

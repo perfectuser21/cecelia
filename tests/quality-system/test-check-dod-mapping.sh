@@ -92,7 +92,7 @@ cat > "$TMPDIR_PATH/dod-manual-inline.md" << 'EOF'
 - [x] [ARTIFACT] Node.js 可用
   Test: manual:node -e "process.exit(0)"
 - [x] [BEHAVIOR] 文件系统可访问（运行时验证）
-  Test: manual:node -e "require('fs').readdirSync('.')"
+  Test: manual:node -e "const r=require('fs').readdirSync('.');if(!r||r.length===0)process.exit(1)"
 - [x] [GATE] 所有检查通过
   Test: manual:node -e "process.exit(0)"
 EOF
