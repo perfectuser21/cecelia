@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Cleanup 脚本
+# v2.1: 新增 2.6 更新系统状态（write-current-state.sh）
 # v2.0: R2 全面修复 - worktree 感知、grep 精确匹配、safe_rm_rf 精确前缀
 # v1.9: 使用 lib/lock-utils.sh 原子操作 + 协调信号
 # v1.8: PRD/DoD 归档到 .history/ 目录（而非直接删除）
@@ -304,6 +305,23 @@ else
     DEPLOY_PID=$!
     echo -e "   ${GREEN}[OK] 部署已在后台启动 (pid=$DEPLOY_PID)${NC}"
     echo "   日志: $DEPLOY_LOG"
+fi
+
+# ========================================
+# 2.6 更新系统状态（CURRENT_STATE.md）
+# ========================================
+echo ""
+echo "[2.6] 更新系统状态..."
+WCS_SCRIPT="$REPO_ROOT/scripts/write-current-state.sh"
+if [[ -f "$WCS_SCRIPT" ]]; then
+    if bash "$WCS_SCRIPT" 2>/dev/null; then
+        echo -e "   ${GREEN}[OK] CURRENT_STATE.md 已更新${NC}"
+    else
+        echo -e "   ${YELLOW}[WARN] write-current-state.sh 执行失败，跳过（不影响 cleanup）${NC}"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+else
+    echo -e "   ${YELLOW}[WARN] write-current-state.sh 不存在（$WCS_SCRIPT），跳过${NC}"
 fi
 
 # ========================================

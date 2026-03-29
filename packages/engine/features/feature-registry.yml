@@ -16,9 +16,14 @@
 # ============================================================================
 
 version: "3.99.0"
-updated: "2026-03-28"
-# ci-trigger: 13.50.0
+updated: "2026-03-29"
+# ci-trigger: 13.51.0
 changelog:
+  - version: "13.51.0"
+    date: "2026-03-29"
+    change: "[CONFIG] feat(engine): /dev Stage4 集成 — cleanup.sh section 2.6 自动调用 write-current-state.sh，PR 合并后更新 CURRENT_STATE.md"
+    scope: "packages/engine/skills/dev/scripts/cleanup.sh,packages/engine/tests/integration/cleanup-write-state.test.ts"
+
   - version: "13.50.0"
     date: "2026-03-28"
     change: "[CONFIG] fix(engine): 移除 bash-guard 过时的 SKILL.md symlink 拦截规则 — skills 已改为独立真实目录，规则4(SKILL_PATH_PATTERN)已过时"
