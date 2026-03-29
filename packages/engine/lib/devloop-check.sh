@@ -19,6 +19,7 @@
 # 更新: 2026-03-22 — 清理误导性注释，blocked 状态为 subagent FAIL 写入，需分析 root cause 修复
 # 更新: 2026-03-22 — P0 修复：cleanup 失败后加 return 2 触发重试，避免 PR 合并后工作流卡死
 # 更新: 2026-03-22 — P0 安全：seal 文件机制（#seal-gate），条件 1.5/2.5 读 seal 文件，自认证检测
+# 更新: 2026-03-29 — 条件 4.5：Playwright Evaluator seal 文件验证（CI 通过后、PR 合并前）
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -47,6 +48,12 @@
 #
 #   PR 创建了?
 #   CI 过了?
+#
+#   条件 4.5: playwright_evaluator seal 文件验证
+#     → seal 文件存在 且 verdict=PASS → 继续
+#     → seal 文件存在 且 verdict=FAIL → exit 2（验证失败，修复代码）
+#     → seal 文件不存在 且 .dev-mode 有 pass → exit 2（自认证检测，拦截）
+#     → seal 文件不存在 且 无字段 → pass-through（evaluator 尚未运行）
 #
 #   step_4_ship: Learning 写了? → PR 合并了? → cleanup
 #
@@ -408,6 +415,45 @@ devloop_check() {
                 return 2
                 ;;
         esac
+    fi
+
+    # ===== 条件 4.5: playwright_evaluator_status（seal 文件验证）=====
+    # seal 文件存在且 verdict=PASS → 继续
+    # seal 文件存在且 verdict=FAIL → blocked
+    # seal 文件不存在 且 .dev-mode 有 status=pass → blocked（自认证检测）
+    # seal 文件不存在 且 .dev-mode 无该字段 → pass-through（evaluator 尚未运行）
+    if [[ -f "$dev_mode_file" ]]; then
+        local playwright_evaluator_status eval_seal_file eval_seal_verdict
+        playwright_evaluator_status=$(grep "^playwright_evaluator_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+        eval_seal_file="$(dirname "$dev_mode_file")/.dev-gate-evaluator.${branch}"
+        if [[ -f "$eval_seal_file" ]]; then
+            eval_seal_verdict=$(jq -r '.verdict // ""' "$eval_seal_file" 2>/dev/null || echo "")
+            if [[ "$eval_seal_verdict" == "FAIL" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "playwright_evaluator" "blocked" "playwright_evaluator seal FAIL，需修复代码"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"playwright_evaluator seal 文件 verdict=FAIL，需修复代码","action":"读取 .dev-gate-evaluator.<branch> 中的 issues，修复代码，重新运行 playwright-evaluator.sh"}'
+                return 2
+            fi
+            # seal 存在且 verdict=PASS → 继续
+        else
+            # seal 文件不存在
+            if [[ "$playwright_evaluator_status" == "pass" ]]; then
+                # .dev-mode 中有 pass 但无 seal 文件 → 自认证检测，拦截
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "playwright_evaluator" "blocked" "playwright_evaluator 自认证检测：无 seal 文件但 .dev-mode 有 pass"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"playwright_evaluator 自认证被检测：.dev-mode 有 playwright_evaluator_status: pass 但无 seal 文件","action":"运行 playwright-evaluator.sh 生成 .dev-gate-evaluator.<branch> seal 文件后再标记 pass"}'
+                return 2
+            elif [[ "$playwright_evaluator_status" == "blocked" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "playwright_evaluator" "blocked" "playwright_evaluator 验证失败，需分析 root cause"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"playwright_evaluator FAIL，需深入分析 root cause 修复代码","action":"读取 playwright_evaluator blocker issues，修复代码，重新运行 playwright-evaluator.sh"}'
+                return 2
+            fi
+            # 不存在且无字段 → pass-through，evaluator 尚未运行
+        fi
     fi
 
     # ===== 条件 5: PR 是否已合并？且合并到了 main？=====

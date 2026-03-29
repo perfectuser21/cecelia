@@ -1,9 +1,10 @@
 ---
 id: dev-stage-03-integrate
-version: 1.2.0
+version: 1.3.0
 created: 2026-03-20
-updated: 2026-03-23
+updated: 2026-03-29
 changelog:
+  - 1.3.0: 新增 3.3 Playwright Evaluator（CI 通过后验证 DoD [BEHAVIOR] 条目），原 3.3/3.4 顺延为 3.4/3.5
   - 1.2.0: 新增 3.1.4 Drift Detection（push 前检测改动文件是否偏离 Task Card 声明范围，warning 级）
   - 1.1.0: code_review_gate 前移到 Stage 2（push 前审查），Stage 3 仅负责 push + CI
   - 1.0.0: 从 03-prci.md 重构为 Stage 3 Integrate，删除 4 个 Codex 注册，改为 CI 后 1 个 code_review
@@ -390,14 +391,61 @@ git push origin HEAD
 
 ---
 
-## 3.3 CI 通过 → 进入 Stage 4
+## 3.3 Playwright Evaluator（CI 通过后）
 
-> code_review_gate 已在 Stage 2 完成（push 前审查）。
-> CI 全部通过后，devloop-check 自动放行进入 Stage 4。
+> CI 通过后、进入 Stage 4 前，运行 Playwright Evaluator 验证 DoD [BEHAVIOR] 条目。
 
 ---
 
-## 3.4 Stop Hook 完成条件
+### 3.3.1 触发时机
+
+devloop-check **条件 4.5** 在 CI success 和 PR merged 之间检查 `playwright_evaluator_status`。
+当 CI 通过且 seal 文件（`.dev-gate-evaluator.{branch}`）不存在时，主 agent 应运行 evaluator：
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+TASK_CARD=".task-cp-${BRANCH_NAME}.md"
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+
+bash packages/engine/scripts/devgate/playwright-evaluator.sh "$TASK_CARD" "$BRANCH_NAME" "$PROJECT_ROOT"
+```
+
+### 3.3.2 执行流程
+
+1. **Brain API /health 健康检查** — curl localhost:5221/health（不可达则 SKIP，不算失败）
+2. **提取 [BEHAVIOR] 条目** — 从 Task Card 解析所有 `[BEHAVIOR]` 条目的 `Test:` 字段
+3. **逐条执行** — `manual:` 命令直接执行；`tests/` 引用检查文件存在；`contract:` 跳过
+4. **写入 seal 文件** — `.dev-gate-evaluator.{branch}`（JSON: verdict/branch/timestamp/issues）
+
+### 3.3.3 失败处理
+
+| 结果 | 动作 |
+|------|------|
+| 全部 PASS | seal 文件 verdict=PASS，devloop-check 放行 |
+| 有 FAIL | seal 文件 verdict=FAIL，devloop-check 阻断，主 agent 读 issues 修复代码 |
+| 修复后 | 删除旧 seal 文件，重新运行 evaluator |
+
+### 3.3.4 标记完成
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+# evaluator 通过后，写入 .dev-mode（devloop-check 条件 4.5 读取）
+sed -i '' "s/^playwright_evaluator_status:.*/playwright_evaluator_status: pass/" "$DEV_MODE_FILE" 2>/dev/null || \
+sed -i "s/^playwright_evaluator_status:.*/playwright_evaluator_status: pass/" "$DEV_MODE_FILE" 2>/dev/null || \
+echo "playwright_evaluator_status: pass" >> "$DEV_MODE_FILE"
+```
+
+---
+
+## 3.4 CI 通过 → 进入 Stage 4
+
+> code_review_gate 已在 Stage 2 完成（push 前审查）。
+> CI 全部通过 + Playwright Evaluator 验证后，devloop-check 自动放行进入 Stage 4。
+
+---
+
+## 3.5 Stop Hook 完成条件
 
 | 条件 | 状态 | Stop Hook 行为 |
 |------|------|---------------|
