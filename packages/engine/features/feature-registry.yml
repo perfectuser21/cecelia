@@ -17,8 +17,13 @@
 
 version: "3.99.0"
 updated: "2026-03-29"
-# ci-trigger: 13.53.0
+# ci-trigger: 13.54.0
 changelog:
+  - version: "13.54.0"
+    date: "2026-03-29"
+    change: "[CONFIG] feat(engine): DoD Test 字段强度升级 — check-dod-mapping.cjs 新增 P2-weak-inline 弱命令检测（ls/cat/true/exit 0）和 curl-to-localhost CI 反模式检测，DOD-TEMPLATE.md 更新为可执行命令格式"
+    scope: "packages/engine/scripts/devgate/check-dod-mapping.cjs,packages/engine/templates/DOD-TEMPLATE.md,packages/engine/tests/ci/check-dod-mapping.test.ts"
+
   - version: "13.53.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): Sprint Contract Gate — /dev Stage 1 末尾 spec_review 升级为双向协商硬门禁，subagent 独立生成测试方案后与主 agent 比对，严重分歧 = FAIL，不能进入 Stage 2"
