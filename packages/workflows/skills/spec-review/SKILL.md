@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.3.0
+version: 1.4.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-29
+updated: 2026-03-30
 changelog:
+  - 1.4.0: Sprint Contract CI 兼容性约束 — Evaluator 独立方案必须使用 CI 可执行形式（node/curl/tests/），禁止浏览器交互和 UI 操作描述
   - 1.3.0: 新增双向协商机制（Sprint Contract）— subagent 独立生成测试方案后与主 agent 比对，分歧时标记并要求重写
   - 1.2.0: 新增维度F 测试层匹配性检查（unit/integration/e2e，warning级）
   - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
@@ -165,6 +166,18 @@ description: |
    - 根据条目类型和描述，设计最合适的测试命令
    - 遵循测试层规则：ARTIFACT → node 文件断言，BEHAVIOR → curl/API 断言，GATE → e2e
 
+   ⚠️  CI 可执行白名单（强制约束）：
+   Evaluator 独立生成的 my_test 只允许以下形式：
+     ✅ node -e "..."（Node.js 内联脚本）
+     ✅ curl（HTTP 请求验证）
+     ✅ tests/*.test.ts（测试文件引用）
+   禁止浏览器点击行为和 UI 交互描述，例如：
+     ❌ "打开浏览器，点击xxx按钮"
+     ❌ "在页面上操作xxx"
+     ❌ playwright.click() / puppeteer 操作（除非封装在 tests/ 文件中）
+   原因：Evaluator 生成的方案必须与 CI 实际执行的检查完全一致，
+         浏览器/UI 描述无法在 CI 中自动执行，导致验证脱节。
+
 2. 比对
    - 读取主 agent 的 Test 字段
    - 判断：双方测试方案是否验证同一件事？
@@ -208,6 +221,7 @@ description: |
 - test 命令是假测试（echo/grep|wc -l）
 - Test 字段质量不达标（维度 D 任一 blocker）
 - Sprint Contract 比对发现严重分歧（主 agent 测试方案无法验证 DoD 声明的行为）
+- Evaluator 自身独立方案（my_test）使用了非 CI 可执行形式（浏览器操作、UI 交互描述）
 
 FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 
