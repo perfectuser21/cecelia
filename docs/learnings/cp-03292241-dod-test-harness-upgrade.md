@@ -4,7 +4,9 @@
 升级 check-dod-mapping.cjs 新增 validateAssertionStrength 函数，拦截 manual: 中无断言逻辑的 node/bash 命令（如 `node -e "console.log('ok')"`）。
 
 ### 根本原因
-旧版 check-dod-mapping.cjs 只检测明显的假测试（echo/grep|wc-l/test -f），但对"看似可执行但无断言"的命令（如 `node -e "console.log('ok')"`）不拦截。这类命令永远 exit 0，无法验证任何行为。
+旧版 check-dod-mapping.cjs 只检测明显的假测试（echo/grep|wc-l/test -f）。
+对于"看似可执行但无断言"的命令（如 `node -e "console.log('ok')"`）完全不拦截。
+这类命令永远 exit 0，无法验证任何行为，形成了检测盲区。
 
 ### 下次预防
 - [ ] DoD 的 manual: node 命令必须包含 process.exit/throw/if 等退出码判定逻辑
