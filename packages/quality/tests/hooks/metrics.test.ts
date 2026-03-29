@@ -408,8 +408,9 @@ describe('metrics.sh 时间窗口', () => {
 
     // 本月的 PR
     const thisMonth = new Date()
+    const formatDate = (d: Date) => `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`
     fs.writeFileSync(
-      path.join(testDir, '.history', 'PR-200-20260122-1000.dod.md'),
+      path.join(testDir, '.history', `PR-200-${formatDate(thisMonth)}-1000.dod.md`),
       `<!-- pr:200 base:develop priority:P1 head:aaa1111 merged: created:${thisMonth.toISOString()} -->
 
 # DoD
@@ -418,11 +419,12 @@ describe('metrics.sh 时间窗口', () => {
 `
     )
 
-    // 上个月的 PR
+    // 上个月的 PR（使用月份第一天避免月末溢出，如 3月31日-1月 = 3月1日 的问题）
     const lastMonth = new Date()
+    lastMonth.setDate(1)
     lastMonth.setMonth(lastMonth.getMonth() - 1)
     fs.writeFileSync(
-      path.join(testDir, '.history', 'PR-199-20251222-1000.dod.md'),
+      path.join(testDir, '.history', `PR-199-${formatDate(lastMonth)}-1000.dod.md`),
       `<!-- pr:199 base:develop priority:P0 head:bbb2222 merged: created:${lastMonth.toISOString()} -->
 
 # DoD
@@ -447,6 +449,7 @@ describe('metrics.sh 时间窗口', () => {
 
   it('--month 可以指定其他月份', () => {
     const lastMonth = new Date()
+    lastMonth.setDate(1)
     lastMonth.setMonth(lastMonth.getMonth() - 1)
     const monthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`
 
