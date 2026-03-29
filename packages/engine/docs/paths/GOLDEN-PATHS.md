@@ -1,8 +1,8 @@
 ---
 id: golden-paths
 version: 3.99.0
-created: 2026-03-28
-updated: 2026-03-28
+created: 2026-03-29
+updated: 2026-03-29
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -837,4 +837,4 @@ DoD whitelist 检查正常执行
 
 **来源**: features/feature-registry.yml
 **版本**: 3.99.0
-**生成时间**: 2026-03-28
+**生成时间**: 2026-03-29
