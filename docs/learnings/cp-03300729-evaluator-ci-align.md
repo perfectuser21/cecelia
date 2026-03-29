@@ -7,7 +7,10 @@
 为 spec-review SKILL.md 的 Sprint Contract 双向协商机制新增 CI 兼容性硬约束，限制 Evaluator 独立生成的测试方案只能使用 CI 环境可执行的命令。
 
 ### 根本原因
-Evaluator（spec_review subagent）在独立生成测试方案时，可能写出浏览器点击行为、UI 交互描述等 CI 环境无法执行的验证标准。这导致 Sprint Contract 中约定的验证标准与 CI 实际执行的检查不一致。
+Sprint Contract 双向协商机制中，Evaluator 独立生成测试方案时缺少 CI 环境约束。
+具体表现：Evaluator 可能写出"打开浏览器点击按钮确认"、"在 UI 上查看结果"等人工操作描述。
+这些验证方案在 ubuntu CI runner 上无法执行，导致 Sprint Contract 约定的标准与 CI 实际能力脱节。
+根源在于 Sprint Contract 执行流程只要求"遵循测试层规则"，但没有约束验证形式必须是 CI 可执行的命令。
 
 ### 下次预防
 - [ ] 新增 prompt 约束时，检查是否与现有维度 D/E 的规则一致（本次一致）
