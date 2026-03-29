@@ -1,9 +1,9 @@
 ---
 name: code-review-gate
-version: 1.5.0
+version: 1.6.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-22
+updated: 2026-03-29
 changelog:
   - 1.0.0: 合并 code_quality + /simplify 为统一代码审查 Gate
   - 1.1.0: A1 C/E维度升级blocker；A2 新增维度G PRD/DoD对齐验证；A3 修复时机描述为Stage 2
@@ -11,6 +11,7 @@ changelog:
   - 1.3.0: 新增维度 H 信息卫生（引用已删除功能/路径=warning，同一概念矛盾描述=warning）
   - 1.4.0: 维度 H 新增 blocker：替代性内容加入但旧描述未删除（改A→B时A仍保留=blocker）
   - 1.5.0: 维度 H 新增 blocker：跨文件模块一致性（改文件X导致同模块文件Y出现矛盾引用=blocker）
+  - 1.6.0: 新增 Evaluator Calibration（few-shot 锚定示例）；强化裁决规则为全通过制
 description: |
   代码审查 Gate（/dev Stage 2 最后一步）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。
   在 /dev Stage 2 代码写完后、push 之前触发。此时无 PR，通过 git diff 获取变更内容。
@@ -164,19 +165,113 @@ git diff origin/main..HEAD
 
 ---
 
-## 裁决规则
+## Evaluator Calibration（少样本锚定）
+
+> **目的**：防止「自我认证」偏差——Evaluator 必须能稳定区分 PASS 与 FAIL，不受主 agent 信心影响。
+> 每次审查前，先用以下 3 个锚定示例校准判断尺度，再开始真正审查。
+
+### 示例 1 — 明确 FAIL（维度 A + B blocker）
+
+```diff
+// routes/api.js
+- const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
++ const query = `SELECT * FROM users WHERE id = ${userId}`;
+  db.query(query, callback);
+```
+
+**裁决**：FAIL
+**原因**：
+- 维度 A blocker：SQL 拼接未参数化（`userId` 直接插入 SQL 字符串），SQL 注入漏洞
+- 正确做法：`db.query('SELECT * FROM users WHERE id = ?', [userId], callback)`
+- **全通过制**：此 blocker 直接导致整体 FAIL，不能降为 warning
+
+---
+
+### 示例 2 — 明确 PASS（改动干净，无 blocker）
+
+```diff
+// packages/brain/src/task-router.js
+  const LOCATION_MAP = {
+-   'code_review': 'us-mac',
++   'code_review': 'hk-vps',
++   'code_review_gate': 'us-mac',
+  };
+```
+
+```diff
+// packages/brain/src/thalamus.js
+  const ACTION_WHITELIST = [
+    'code_review',
++   'code_review_gate',
+  ];
+```
+
+**裁决**：PASS
+**原因**：
+- 维度 A：无安全问题
+- 维度 B：逻辑正确，新增路由与白名单同步更新
+- 维度 G：假设 PRD 要求新增 code_review_gate 路由，改动与 DoD 对齐
+- 维度 H：两个文件同步更新（thalamus + task-router），无模块一致性问题
+- 无任何 blocker，所有维度通过 → PASS
+
+---
+
+### 示例 3 — 边界案例（维度 H blocker，易误判为 warning）
+
+```diff
+// packages/engine/skills/dev/steps/01-spec.md
+- ## ⚡ 执行 spec_review Agent subagent（CRITICAL — Stage 1 最后一步）
++ ## ⚡ Sprint Contract Gate（CRITICAL — Stage 1 最后一步）
++
++ > spec_review subagent 独立写出测试方案，与主 agent 比对，一致才能继续。
+```
+
+```
+// 未修改：packages/engine/skills/dev/SKILL.md（同目录）
+// 其中仍有旧文字："Stage 1 完成后，调用 Agent subagent 同步审查 Task Card 质量"
+// 与新的 Sprint Contract 描述语义冲突
+```
+
+**裁决**：FAIL
+**原因**：
+- 维度 H blocker（跨文件模块一致性）：改了 `01-spec.md` 但同目录的 `SKILL.md` 仍引用旧行为描述
+- **关键判断**：旧描述"同步审查 Task Card 质量"与新描述"独立写测试方案比对"语义不同，属于矛盾引用
+- 错误倾向：把这当作 warning（"只是描述方式不同"）→ 正确应为 blocker
+- **全通过制**：同模块文件矛盾引用 = blocker，整体 FAIL，不能因为"只是文档"就降级
+
+---
+
+### 校准要点
+
+| 常见误判 | 正确判断 |
+|---------|---------|
+| 把 SQL 拼接降为 warning（"看起来值是内部变量"） | 只要是字符串拼接进 SQL，就是 blocker |
+| 把跨文件描述矛盾降为 warning（"只是表达方式"） | 同模块文件有矛盾引用 = blocker |
+| 把无断言 BEHAVIOR Test 降为 warning（"至少有测试"） | [BEHAVIOR] 无断言 = blocker（适用于 spec_review） |
+| 把重复代码降为 info（"还没到 3 次"） | 同一逻辑重复 3 次以上必须提取 = blocker（维度 C） |
+
+---
+
+## 裁决规则（全通过制）
 
 ### PASS
 
-所有维度无 blocker 级别问题。warning 和 info 记录但不阻塞。
+**所有 A-H 维度均无 blocker 级别问题**。warning 和 info 记录但不阻塞。
+
+> **全通过制**：任何一个维度有 blocker = 整体 FAIL，不能降为 warning，不能忽略。
+> 这是硬门禁，不是软建议。
 
 ### FAIL
 
-以下任一情况为 FAIL：
-- 任何 blocker 级别问题存在（包含维度 C/E 的 blocker 项，必须修复后才能继续）
-- 安全维度发现任何注入或凭据暴露
+**以下任一情况为 FAIL（无例外，不可降级）**：
+- 维度 A：任何 SQL 注入、命令注入、XSS、硬编码凭据、认证绕过
+- 维度 B：逻辑错误、边界条件未处理、未处理的 error
+- 维度 C：同一逻辑重复 3 次以上（重复代码 blocker）
+- 维度 E：O(n²) 可优化为 O(n) 的不必要循环
+- 维度 G：DoD 漏实现、超范围改动
+- 维度 H：替代性内容未删旧描述、跨文件模块一致性问题
 
-FAIL 时必须修复 blocker 后重新提交审查，不能合并 PR。
+FAIL 时必须修复所有 blocker 后重新提交审查，不能合并 PR。
 
 ---
 

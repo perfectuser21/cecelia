@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 2.3.0
+version: 2.4.0
 created: 2026-03-20
-updated: 2026-03-23
+updated: 2026-03-29
 changelog:
+  - 2.4.0: spec_review 升级为 Sprint Contract Gate — subagent 独立写测试方案后与主 agent 比对，严重分歧 = 硬 FAIL，不能继续 Stage 2
   - 2.3.0: spec_review 新增测试层（test layer）检查指令：每个 DoD 条目必须对应合适的测试类型
   - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
   - 2.1.0: 删除降级 pass 逻辑（spec_review_degraded），3次 FAIL 改为写入 blocked 等待人工
@@ -15,7 +16,7 @@ changelog:
 
 > **产物**：`.task-cp-{branch}.md`（需求 + 成功标准 + DoD 条目，三合一）
 > PRD 和 DoD 不再是两个文件，物理上不可能漂移。
-> **Stage 1 完成后，调用 Agent subagent 同步审查 Task Card 质量，审查 PASS 后继续 Stage 2。**
+> **Stage 1 完成后，调用 spec_review Agent subagent 执行 Sprint Contract Gate — subagent 独立生成测试方案后与主 agent 比对，达成共识才能继续 Stage 2。**
 
 ## 1.1 参数检测
 
@@ -237,16 +238,23 @@ echo "✅ 置信度已写入 .dev-mode"
 | 3-4  | PRD 不够清晰，多处不确定，需要大量探索 |
 | 1-2  | 需求很模糊，改动范围不确定，高度不确定 |
 
-## ⚡ 执行 spec_review Agent subagent（CRITICAL — Stage 1 最后一步）
+## ⚡ Sprint Contract Gate（CRITICAL — Stage 1 最后一步，硬门禁）
 
-> **Stage 1 完成后，调用 Agent subagent 同步审查 Task Card 质量。**
-> subagent 在 Anthropic 服务器运行，不占本地内存，~10 秒同步完成。
-> **不需要等 stop hook 放行**——subagent 是同步调用，结果立即可用。
+> **Sprint Contract 核心**：Generator（主 agent）和 Evaluator（spec_review subagent）必须对每条 DoD 的测试方案达成共识，才能开始写代码。
+>
+> **工作原理**：
+> 1. 主 agent 草拟 DoD（含 Test 字段）
+> 2. spec_review subagent 独立为每条 DoD 生成测试方案（不看主 agent 的 Test 字段）
+> 3. 比对：双方测试方案是否验证同一件事？
+>    - 一致 → 采信主 agent 的 Test 字段，继续
+>    - 严重分歧 → FAIL，打回重写，无限重试直到一致
+>
+> **不是软建议，而是硬门禁（exit 1）**：有严重分歧就不能进入 Stage 2。
 
 ### 重试逻辑（MUST 遵守）
 
 - PASS → 写入 `spec_review_status: pass`，立即继续 Stage 2
-- FAIL → 读取 blockers，**深入分析 root cause**，修复 Task Card，**无次数上限，继续重试**
+- FAIL → 读取 issues（包括 Sprint Contract 分歧），**深入分析 root cause**，修复 Task Card，**无次数上限，继续重试**
 
 ```
 retry_count = 0
@@ -259,21 +267,32 @@ loop:
          "审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-spec.<BRANCH>：
           { \"verdict\": \"PASS\"|\"FAIL\", \"branch\": \"<BRANCH>\",
             \"timestamp\": \"<ISO8601>\", \"reviewer\": \"spec-review-agent\",
+            \"independent_test_plans\": [...],
+            \"negotiation_result\": {...},
             \"issues\": [...] }
           这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。"
-     - **测试层检查（v2.3.0 新增）**：审查时必须验证每个 DoD 条目的测试类型（测试层 / test layer）是否合适：
+     - **Sprint Contract 比对（v2.4.0 新增，硬门禁）**：
+         * 对每个 DoD 条目，先独立设计测试方案（不看主 agent 的 Test 字段）
+         * 然后比对主 agent 的 Test 字段：
+           - 一致 → consistent: true
+           - 严重分歧（主 agent 测试的是另一件事，或是假测试）→ consistent: false，severity: blocker
+           - 轻微分歧（测试层不匹配但能验证核心行为）→ consistent: false，severity: warning
+         * 严重分歧 = 整体 FAIL（exit 1），不能进入 Stage 2
+     - **测试层检查（v2.3.0）**：审查时验证每个 DoD 条目的测试类型是否合适：
          * [ARTIFACT] 类条目 → 推荐 unit 级测试（node -e 文件内容验证）
          * [BEHAVIOR] 类条目 → 推荐 integration 级测试（curl/API 行为验证 + 断言）
          * [GATE] CI 类条目 → 推荐 e2e 级测试（CI 运行 / 语法检查）
-         * 若测试层与条目类型严重不匹配（如 [BEHAVIOR] 仅做静态文件检查），标记为 warning
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
        → 确认 seal 文件 .dev-gate-spec.${BRANCH} 已存在（由 subagent 写入）
        → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
        → break（继续 Stage 2）
   4. verdict == "FAIL"
-       → 读取 issues[severity=="blocker"] 列表
-       → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
+       → 读取 issues 列表（包括 severity=="blocker" 和 sprint_contract 分歧）
+       → 深入分析每个 blocker 的 root cause：
+         - 如果是 Sprint Contract 分歧：找到主 agent Test 字段未能覆盖的核心断言，重写该 Test 字段
+         - 如果是维度 D/E blocker：修复 Test 命令格式或工具
+         - 如果是维度 A/B blocker：修复架构方向或 DoD 描述
        → 修复 Task Card（.task-cp-${BRANCH}.md）中对应的 DoD 条目
        → retry_count++
        → 如果 retry_count > 20:
@@ -287,8 +306,9 @@ loop:
 **执行时注意**：
 - subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
 - subagent prompt 必须包含 Task Card **完整内容**
-- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-spec.<BRANCH>`）
+- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-spec.<BRANCH>`），seal 文件必须包含 `independent_test_plans` 字段
 - 不要向 Brain 注册任务，不要走 Codex 异步派发路径
+- Sprint Contract 分歧导致的 FAIL，修复方向是重写 **Test 字段**（不是修改 DoD 描述），直到与 subagent 独立方案一致
 - FAIL 修复后必须重新调用 subagent，不能跳过重审
 
 ## 完成后
