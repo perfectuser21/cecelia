@@ -1,6 +1,6 @@
 dev
-branch: cp-03292241-dod-test-harness-upgrade
-task_card: .task-cp-03292241-dod-test-harness-upgrade.md
+branch: cp-03292241-dod-test-harness-v2
+task_card: .task-cp-03292241-dod-test-harness-v2.md
 started: 2026-03-29T14:41:00+00:00
 step_0_worktree: done
 step_1_spec: done
