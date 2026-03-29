@@ -17,8 +17,13 @@
 
 version: "4.0.0"
 updated: "2026-03-29"
-# ci-trigger: 13.59.0
+# ci-trigger: 13.60.0
 changelog:
+  - version: "13.60.0"
+    date: "2026-03-29"
+    change: "[CONFIG] fix(engine): 移除 /dev Stage 3 Playwright Evaluator 步骤，devloop-check 移除条件 4.5，CI 通过后直接放行进入条件 5"
+    scope: "packages/engine/skills/dev/steps/03-integrate.md,packages/engine/lib/devloop-check.sh"
+
   - version: "13.59.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): Planner subagent — Stage 1 Task Card 生成从主 agent 拆出，主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP"
