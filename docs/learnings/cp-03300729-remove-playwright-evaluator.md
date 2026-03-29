@@ -9,7 +9,10 @@
 
 ### 根本原因
 
-Playwright Evaluator 作为 Stage 3 的 pre-merge gate 增加了流程复杂度，且 DoD [BEHAVIOR] 验证可以在 post-merge 阶段触发，不需要阻塞 PR 合并流程。
+Playwright Evaluator 作为 Stage 3 的 pre-merge gate 增加了流程复杂度。
+具体问题：每次 /dev 都需要等 evaluator 运行并生成 seal 文件，增加了 10-30s 延迟。
+DoD [BEHAVIOR] 条目的验证可以在 post-merge 阶段异步触发，不需要阻塞 PR 合并流程。
+涉及文件：03-integrate.md（步骤定义）、devloop-check.sh（条件 4.5 检查逻辑）。
 
 ### 下次预防
 
