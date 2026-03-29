@@ -17,8 +17,13 @@
 
 version: "3.99.0"
 updated: "2026-03-29"
-# ci-trigger: 13.53.0
+# ci-trigger: 13.54.0
 changelog:
+  - version: "13.54.0"
+    date: "2026-03-29"
+    change: "[CONFIG] feat(engine): Stage 2 写代码拆为 Generator subagent — 主 agent 变纯编排者，代码编写由 Generator subagent 完成"
+    scope: "packages/engine/skills/dev/steps/02-code.md,packages/engine/skills/dev/SKILL.md"
+
   - version: "13.53.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): Sprint Contract Gate — /dev Stage 1 末尾 spec_review 升级为双向协商硬门禁，subagent 独立生成测试方案后与主 agent 比对，严重分歧 = FAIL，不能进入 Stage 2"
