@@ -1,9 +1,9 @@
 ---
 name: code-review-gate
-version: 1.5.0
+version: 1.6.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-22
+updated: 2026-03-29
 changelog:
   - 1.0.0: 合并 code_quality + /simplify 为统一代码审查 Gate
   - 1.1.0: A1 C/E维度升级blocker；A2 新增维度G PRD/DoD对齐验证；A3 修复时机描述为Stage 2
@@ -11,6 +11,7 @@ changelog:
   - 1.3.0: 新增维度 H 信息卫生（引用已删除功能/路径=warning，同一概念矛盾描述=warning）
   - 1.4.0: 维度 H 新增 blocker：替代性内容加入但旧描述未删除（改A→B时A仍保留=blocker）
   - 1.5.0: 维度 H 新增 blocker：跨文件模块一致性（改文件X导致同模块文件Y出现矛盾引用=blocker）
+  - 1.6.0: 新增 Evaluator Calibration 章节（3 个定锚样例：FAIL/PASS/Boundary）防止判断漂移
 description: |
   代码审查 Gate（/dev Stage 2 最后一步）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。
   在 /dev Stage 2 代码写完后、push 之前触发。此时无 PR，通过 git diff 获取变更内容。
@@ -246,3 +247,113 @@ curl -s -X POST http://localhost:5221/api/brain/execution-callback \
 3. **具体到行号**：每个 issue 指出具体文件和行号
 4. **建议可执行**：suggestion 给出具体的修复代码或方案
 5. **快速审查**：一次审查不超过 5 分钟
+
+---
+
+## Evaluator Calibration
+
+> **目的**：防止 Evaluator 判断漂移（过宽或过严）。阅读以下三个定锚样例后，以它们为基准做出裁决。
+> **使用方式**：每次执行 code-review-gate 审查前，先内化这三个样例的判断标准，再审查实际 diff。
+
+### Calibration Example 1 — FAIL 样例（明确阻塞）
+
+**场景**：新增任务查询 API 端点。
+
+```diff
+// packages/brain/src/routes/tasks.js
++router.get('/tasks/:id', async (req, res) => {
++  const taskId = req.params.id;
++  const result = await db.query(
++    `SELECT * FROM tasks WHERE id = '${taskId}'`
++  );
++  res.json(result.rows[0]);
++});
+```
+
+**裁决：FAIL**
+
+命中规则：
+- 维度 A blocker：SQL 注入（string interpolation 拼接 `taskId` 进 SQL，未使用参数化查询）
+- 维度 B blocker：未处理 `result.rows` 为空的情况（空数组访问 `[0]` 返回 `undefined`，调用方会得到 null 响应而非 404）
+
+修复方案：
+```diff
+-    `SELECT * FROM tasks WHERE id = '${taskId}'`
++    'SELECT * FROM tasks WHERE id = $1', [taskId]
++  );
++  if (!result.rows[0]) return res.status(404).json({ error: 'Not found' });
+```
+
+---
+
+### Calibration Example 2 — PASS 样例（明确通过）
+
+**场景**：同一任务查询 API，正确实现版本。
+
+```diff
+// packages/brain/src/routes/tasks.js
++router.get('/tasks/:id', async (req, res) => {
++  const { id } = req.params;
++  try {
++    const result = await db.query(
++      'SELECT id, title, status, priority FROM tasks WHERE id = $1',
++      [id]
++    );
++    if (!result.rows[0]) {
++      return res.status(404).json({ error: 'Task not found' });
++    }
++    res.json(result.rows[0]);
++  } catch (err) {
++    console.error('[tasks] query failed:', err.message);
++    res.status(500).json({ error: 'Internal server error' });
++  }
++});
+```
+
+**裁决：PASS**
+
+分析：
+- 维度 A：参数化查询 `$1`，无 SQL 注入风险 ✅
+- 维度 B：处理了 `rows[0]` 为空（404）和异常（catch + 500）✅
+- 维度 C：无重复代码 ✅
+- 维度 D：命名清晰（`id`，无单字母歧义变量）✅
+- 维度 G：符合 Brain routes 模式 ✅
+
+只有一个 info 级别：SELECT 指定了列名（非 `*`），良好实践。无任何 blocker。
+
+---
+
+### Calibration Example 3 — Boundary 边界案例（有 warning/info 但 PASS）
+
+**场景**：新增 Brain 状态摘要工具函数。
+
+```diff
+// packages/brain/src/utils/status-summary.js
++const _ = require('lodash');  // only used for _.pick below
++
++function buildStatusSummary(tasks, alertness) {
++  const x = tasks.filter(t => t.status === 'in_progress');
++  const done = tasks.filter(t => t.status === 'completed');
++  // TODO: remove debug log later
++  console.log('Building summary, active tasks:', x.length);
++  return {
++    active: x.length,
++    completed: done.length,
++    alertnessLevel: alertness,
++    picked: _.pick({ a: 1, b: 2 }, ['a'])
++  };
++}
++
++module.exports = { buildStatusSummary };
+```
+
+**裁决：PASS**（含 warning/info，不阻塞）
+
+分析：
+- 维度 D info：变量 `x` 命名不清晰，建议改为 `activeTasks`
+- 维度 F info：引入 `lodash` 只用了 `_.pick` 一个函数，建议换成原生 `Object.fromEntries`
+- 维度 F info：`console.log` 调试日志残留，应在合并前清理
+
+**判断理由**：以上问题均为 info 级，无 blocker（无安全问题、无逻辑错误、无重复代码 ≥3 次）。PASS 并在 issues 中标注 info 供开发者参考。
+
+> **定锚意义**：看到只有命名+console.log+轻量依赖问题时，不要升级为 FAIL。这是 info 级，PASS。

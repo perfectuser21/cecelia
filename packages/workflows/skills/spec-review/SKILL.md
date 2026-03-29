@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.2.0
+version: 1.3.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-23
+updated: 2026-03-29
 changelog:
+  - 1.3.0: 新增 Sprint Contract 协议章节（独立测试方案写作 + 双向比对，防止自我认证）
   - 1.2.0: 新增维度F 测试层匹配性检查（unit/integration/e2e，warning级）
   - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
   - 1.0.0: 合并 dod_verify + cto_review（单 PR 部分）为统一 Spec 审查 Gate
@@ -218,3 +219,78 @@ curl -s -X POST http://localhost:5221/api/brain/execution-callback \
 2. **blocker 必须清零**：有 blocker 就不能写代码
 3. **具体可操作**：每个 issue 必须有 suggestion，不能只说"不好"
 4. **快速审查**：一次审查不超过 3 分钟
+
+---
+
+## Sprint Contract 协议
+
+> **目的**：防止主 agent 自我认证（Generator 写 DoD + Test，spec_review 只做表面检查无法识别循环依赖）。
+> Sprint Contract 要求 spec_review subagent 独立写测试方案，然后与主 agent 的 Test 字段比对——不一致就打回重写。
+
+### 什么是 Sprint Contract
+
+Sprint Contract 是 Generator（主 agent）和 Evaluator（spec_review subagent）在写代码之前达成的**共同协议**：
+
+```
+Generator 草拟 DoD 条目（What：要实现什么）
+    ↓
+Evaluator 独立写 Test（How to verify：我会怎么验证）
+    ↓
+比对：Generator 的 Test 字段 vs Evaluator 的独立测试方案
+    ↓
+一致 → 双方达成共识，PASS，可以开始写代码
+不一致 → 分歧点 = blocker，打回 Generator 重写 DoD，重新协商
+```
+
+### 执行步骤（spec_review subagent 必须遵守）
+
+**Step 1：遮蔽 Test 字段，独立阅读 DoD 条目**
+
+阅读 Task Card 时，**忽略每条 DoD 的 `Test:` 字段**，只看条目描述本身（`- [ ] [ARTIFACT/BEHAVIOR/PRESERVE] ...`）。
+
+**Step 2：为每条 DoD 独立写测试方案**
+
+针对每条 DoD 条目，独立思考：「如果我是 QA，我会怎么验证这条需求？」
+
+写出你自己的验证方案（不需要写完整命令，描述验证思路即可）：
+```
+DoD 第1条："code-review-gate/SKILL.md 含 Calibration 章节"
+→ 我的验证：读取文件，检查是否包含 "## Evaluator Calibration" 字符串
+```
+
+**Step 3：比对主 agent Test 字段 vs 你的独立方案**
+
+逐条比较：
+- **方向一致**（都在验证同一件事，即使命令形式不同）→ 不标记
+- **方向分歧**（验证的是不同层面，或主 agent Test 是弱测试绕过了真正要验证的行为）→ 标记为 `sprint_contract_divergence`
+
+**分歧判断标准**：
+
+| 情形 | 判断 |
+|------|------|
+| 主 agent 验证文件存在，我认为应验证文件内容 | 分歧（弱测试 = 假通过） |
+| 主 agent 验证 API 响应结构，我也是 | 一致 |
+| 主 agent 用 `process.exit(0)` 硬编码通过，我认为需要实际检查 | 分歧（循环认证） |
+| 主 agent 验证 `## 章节标题` 存在，我认为也应这样验证 | 一致 |
+| 主 agent Test 是真实断言（node -e with readFileSync + includes check + process.exit(1)），我的方案也会这样做 | 一致 |
+
+**Step 4：分歧 → blocker，一致 → 继续**
+
+- 发现 `sprint_contract_divergence` → 在 issues 中加入 blocker，severity="blocker", dimension="SC"（Sprint Contract）
+- 描述分歧点，给出修改建议（让主 agent 的 Test 字段与 Evaluator 视角对齐）
+- 所有条目一致 → Sprint Contract 通过，继续其他维度审查
+
+### 在 issues 数组中的格式
+
+```json
+{
+  "severity": "blocker",
+  "dimension": "SC",
+  "description": "DoD 第X条 Sprint Contract 分歧：主 agent Test 字段验证了Y，但正确验证应该是Z",
+  "suggestion": "将 Test 字段改为：manual:node -e \"...\""
+}
+```
+
+### 为什么必须遮蔽 Test 字段先阅读
+
+如果 Evaluator 先看了 Test 字段再倒推判断，就失去了独立性——会倾向于"帮主 agent 解释这个测试为何合理"，而不是"从被测需求出发独立判断怎么测"。遮蔽 → 独立写 → 再比对，是 GAN（对抗生成网络）思想的关键：两个独立模型必须就同一结果达成共识，才能说这个结果可信。

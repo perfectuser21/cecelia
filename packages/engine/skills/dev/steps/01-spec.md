@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 2.3.0
+version: 2.4.0
 created: 2026-03-20
-updated: 2026-03-23
+updated: 2026-03-29
 changelog:
+  - 2.4.0: spec_review prompt 加入 Sprint Contract 指令（subagent 独立写测试方案 + 双向比对，防止自我认证）
   - 2.3.0: spec_review 新增测试层（test layer）检查指令：每个 DoD 条目必须对应合适的测试类型
   - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
   - 2.1.0: 删除降级 pass 逻辑（spec_review_degraded），3次 FAIL 改为写入 blocked 等待人工
@@ -261,6 +262,12 @@ loop:
             \"timestamp\": \"<ISO8601>\", \"reviewer\": \"spec-review-agent\",
             \"issues\": [...] }
           这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。"
+     - **Sprint Contract 指令（v2.4.0 新增）**：执行 Sprint Contract 协议（见 spec-review SKILL.md `## Sprint Contract 协议`章节）：
+         1. 先遮蔽 Task Card 每条 DoD 的 `Test:` 字段，只读条目描述
+         2. 独立写出每条 DoD 的验证方案（你作为 QA 会怎么验证）
+         3. 再看主 agent 的 `Test:` 字段，逐条比对
+         4. 方向分歧 → issues 加入 dimension="SC" blocker（Sprint Contract 分歧）
+         5. 全部一致 → Sprint Contract 通过，继续其他维度审查
      - **测试层检查（v2.3.0 新增）**：审查时必须验证每个 DoD 条目的测试类型（测试层 / test layer）是否合适：
          * [ARTIFACT] 类条目 → 推荐 unit 级测试（node -e 文件内容验证）
          * [BEHAVIOR] 类条目 → 推荐 integration 级测试（curl/API 行为验证 + 断言）
