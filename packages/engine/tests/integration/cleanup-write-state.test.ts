@@ -12,11 +12,11 @@ import { describe, it, expect } from "vitest";
 const ENGINE_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(ENGINE_ROOT, "../..");
 
+// 门禁 2: 显式引用本 PR 修改的源文件，确保 check-changed-coverage 能追踪到
+const CLEANUP_SH = path.resolve(__dirname, "../../skills/dev/scripts/cleanup.sh");
+
 describe("cleanup.sh write-current-state.sh 集成契约", () => {
-  const cleanupPath = path.join(
-    ENGINE_ROOT,
-    "skills/dev/scripts/cleanup.sh"
-  );
+  const cleanupPath = CLEANUP_SH;
 
   it("cleanup.sh 存在", () => {
     expect(fs.existsSync(cleanupPath)).toBe(true);
