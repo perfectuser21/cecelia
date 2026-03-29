@@ -452,6 +452,8 @@ changelog:
 3. ✅ **npm test 被拦截**
 4. ✅ **node -e 命令正常通过**
 
+---
+
 ### planner-subagent-stage1: Planner subagent — Stage 1 Task Card 生成独立化
 
 1. ✅ **Planner subagent 隔离：不接收 CLAUDE.md 和 Brain context**

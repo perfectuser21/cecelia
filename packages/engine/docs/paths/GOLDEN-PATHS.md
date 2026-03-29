@@ -812,7 +812,17 @@ check-coverage-completeness.mjs Check 4 →
 **Feature**: dod-ci-incompatible-command-detection - DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
 **Priority**: P1
 
-## GP-051: Planner subagent — Stage 1 Task Card 生成独立化 (planner-subagent-stage1)
+### Golden Path
+
+```
+DoD manual:curl localhost → detectCiIncompatibleCommand → exit 1 + 建议
+DoD manual:psql → exit 1 + 建议用 tests/
+DoD manual:node -e → 通过检查
+```
+
+---
+
+## GP-052: Planner subagent — Stage 1 Task Card 生成独立化 (planner-subagent-stage1)
 
 **Feature**: planner-subagent-stage1 - Planner subagent — Stage 1 Task Card 生成独立化
 **Priority**: P2
@@ -820,10 +830,6 @@ check-coverage-completeness.mjs Check 4 →
 ### Golden Path
 
 ```
-DoD manual:curl localhost → detectCiIncompatibleCommand → exit 1 + 建议
-DoD manual:psql → exit 1 + 建议用 tests/
-DoD manual:node -e → 通过检查
-
 /dev 启动 →
 Stage 1: 主 agent spawn Planner subagent →
 Planner 接收任务描述 + SYSTEM_MAP →
@@ -833,7 +839,7 @@ Planner 输出 Task Card + DoD（只含 WHAT，无 HOW）→
 
 ---
 
-## GP-052: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
+## GP-053: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
 
 **Feature**: verify-step-symlink-path-fix - verify-step.sh symlink 物理路径解析修复
 **Priority**: P1
