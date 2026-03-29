@@ -113,3 +113,58 @@ describe('playwright-evaluator.cjs — executeTest', () => {
     expect(result.passed).toBe(false);
   });
 });
+
+describe('playwright-evaluator.cjs — findTaskCard 自动搜索', () => {
+  it('在 cwd 中找到 .task-cp-*.md 文件并返回路径', () => {
+    const cwd = process.cwd();
+    const taskCardFile = join(cwd, '.task-cp-test-coverage-temp.md');
+    writeFileSync(taskCardFile, '# Task Card Test\n## 验收条件（DoD）\n- [x] [BEHAVIOR] 测试\n  Test: manual:node -e "process.exit(0)"\n');
+    try {
+      const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+      delete require.cache[resolvedPath];
+      const { findTaskCard } = require('../../scripts/devgate/playwright-evaluator.cjs');
+      const result = findTaskCard();
+      expect(result).toContain('.task-cp-test-coverage-temp.md');
+    } finally {
+      rmSync(taskCardFile, { force: true });
+      const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+      delete require.cache[resolvedPath];
+    }
+  });
+});
+
+describe('playwright-evaluator.cjs — 命令行参数解析', () => {
+  it('--brain-url 参数被解析到 checkBrainHealth 输出', () => {
+    const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+    delete require.cache[resolvedPath];
+    const origArgv = process.argv;
+    process.argv = ['node', 'test', '--brain-url', 'http://localhost:9999'];
+    try {
+      const { checkBrainHealth } = require(resolvedPath);
+      const entry = checkBrainHealth();
+      expect(entry.test).toContain('http://localhost:9999');
+    } finally {
+      process.argv = origArgv;
+      delete require.cache[resolvedPath];
+    }
+  });
+
+  it('--task-card 参数被解析并存储', () => {
+    const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+    delete require.cache[resolvedPath];
+    const origArgv = process.argv;
+    const cwd = process.cwd();
+    const tempCard = join(cwd, '.task-cp-argv-test-temp.md');
+    writeFileSync(tempCard, '# Task Card');
+    process.argv = ['node', 'test', '--task-card', tempCard];
+    try {
+      const { findTaskCard } = require(resolvedPath);
+      const result = findTaskCard();
+      expect(result).toBe(tempCard);
+    } finally {
+      process.argv = origArgv;
+      rmSync(tempCard, { force: true });
+      delete require.cache[resolvedPath];
+    }
+  });
+});
