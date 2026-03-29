@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.2.0
+version: 1.3.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-23
+updated: 2026-03-29
 changelog:
+  - 1.3.0: 新增双向协商机制（Sprint Contract）— subagent 独立生成测试方案后与主 agent 比对，分歧时标记并要求重写
   - 1.2.0: 新增维度F 测试层匹配性检查（unit/integration/e2e，warning级）
   - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
   - 1.0.0: 合并 dod_verify + cto_review（单 PR 部分）为统一 Spec 审查 Gate
@@ -149,11 +150,53 @@ description: |
 
 ---
 
+## 双向协商机制（Sprint Contract）
+
+> **目的**：解决「自我认证」问题——主 agent 自己写 Test 字段后自己审查，存在主观偏差。
+> Sprint Contract 要求 Evaluator（spec_review）独立生成测试方案，再与主 agent 的方案比对，
+> 只有达成一致才能继续写代码。
+
+### 执行流程
+
+```
+对每个 DoD 条目（ARTIFACT/BEHAVIOR/GATE/PRESERVE）：
+
+1. 独立生成测试方案（不看主 agent 的 Test 字段）
+   - 根据条目类型和描述，设计最合适的测试命令
+   - 遵循测试层规则：ARTIFACT → node 文件断言，BEHAVIOR → curl/API 断言，GATE → e2e
+
+2. 比对
+   - 读取主 agent 的 Test 字段
+   - 判断：双方测试方案是否验证同一件事？
+     * 一致（consistent: true）→ 采信主 agent 的 Test 字段，继续
+     * 不一致（consistent: false）→ 标记分歧，写入 issues，返回 FAIL
+
+3. 分歧类型
+   - 严重分歧（blocker）：主 agent 测试的是另一件事，或是假测试
+   - 轻微分歧（warning）：测试层不匹配（如 BEHAVIOR 用了静态文件检查代替 curl）
+```
+
+### 一致性判断标准
+
+| 判定 | 条件 |
+|------|------|
+| **一致** | 两个方案都能验证同一个 DoD 条目的核心断言，即使命令形式不同 |
+| **严重分歧** | 主 agent 方案只验证文件存在，而真实行为未被测试；或主 agent 方案有假测试 |
+| **轻微分歧** | 两方案都能验证核心行为，但测试层或测试粒度不同 |
+
+### 输出中的 Sprint Contract 字段
+
+每次审查必须在输出 JSON 中包含 `independent_test_plans` 和 `negotiation_result` 字段（见下方输出格式）。
+
+---
+
 ## 裁决规则
 
 ### PASS
 
 所有维度通过，或只有 warning 级别的小问题。可以进入 Stage 2 写代码。
+
+**注意**：若 Sprint Contract 比对发现所有分歧均为 warning 级（轻微），仍可 PASS。
 
 ### FAIL
 
@@ -164,6 +207,7 @@ description: |
 - test 命令使用了非白名单工具
 - test 命令是假测试（echo/grep|wc -l）
 - Test 字段质量不达标（维度 D 任一 blocker）
+- Sprint Contract 比对发现严重分歧（主 agent 测试方案无法验证 DoD 声明的行为）
 
 FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 
@@ -174,10 +218,25 @@ FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 ```json
 {
   "verdict": "PASS | FAIL",
+  "independent_test_plans": [
+    {
+      "dod_item": "DoD 条目描述（前 50 字）",
+      "my_test": "我独立设计的测试命令",
+      "agent_test": "主 agent 的 Test 字段内容",
+      "consistent": true,
+      "note": "分歧说明（一致时留空，分歧时说明原因）"
+    }
+  ],
+  "negotiation_result": {
+    "consistent_count": 5,
+    "divergence_count": 1,
+    "blockers_from_divergence": 0,
+    "summary": "协商结果一句话总结"
+  },
   "issues": [
     {
       "severity": "blocker | warning",
-      "dimension": "A | B | C | D | E | F",
+      "dimension": "A | B | C | D | E | F | sprint_contract",
       "description": "具体问题描述",
       "suggestion": "修正建议"
     }

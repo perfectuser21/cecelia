@@ -17,8 +17,13 @@
 
 version: "3.99.0"
 updated: "2026-03-29"
-# ci-trigger: 13.51.0
+# ci-trigger: 13.53.0
 changelog:
+  - version: "13.53.0"
+    date: "2026-03-29"
+    change: "[CONFIG] feat(engine): Sprint Contract Gate — /dev Stage 1 末尾 spec_review 升级为双向协商硬门禁，subagent 独立生成测试方案后与主 agent 比对，严重分歧 = FAIL，不能进入 Stage 2"
+    scope: "packages/engine/skills/dev/steps/01-spec.md,packages/workflows/skills/spec-review/SKILL.md,packages/workflows/skills/code-review-gate/SKILL.md"
+
   - version: "13.51.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): /dev Stage4 集成 — cleanup.sh section 2.6 自动调用 write-current-state.sh，PR 合并后更新 CURRENT_STATE.md"
