@@ -859,6 +859,9 @@ DoD whitelist 检查正常执行
 ## GP-054: Sprint Contract Gate 对抗审查修复 (sprint-contract-fix-adversarial)
 
 **Feature**: sprint-contract-fix-adversarial - Sprint Contract Gate 对抗审查修复
+## GP-052: Playwright Evaluator — Stage 3 端到端行为验证 (playwright-evaluator)
+
+**Feature**: playwright-evaluator - Playwright Evaluator — Stage 3 端到端行为验证
 **Priority**: P1
 
 ### Golden Path
@@ -933,6 +936,16 @@ Generator subagent 提案 → Evaluator subagent 提案 →
 bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
 exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
 ```
+
+CI 全部通过 →
+node playwright-evaluator.cjs --run →
+解析 Task Card [BEHAVIOR] 条目 →
+执行 Brain /health 基线 + 每条 Test: 命令 →
+全部 PASS → 继续 Stage 4 →
+有 FAIL → 反馈给主 agent 修复
+```
+
+**RCI 覆盖**: PE-001
 
 ---
 

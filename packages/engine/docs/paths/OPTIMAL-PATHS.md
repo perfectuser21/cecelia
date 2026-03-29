@@ -618,6 +618,15 @@ FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator →
 Generator subagent 提案 → Evaluator subagent 提案 →
 bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
 exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
+### playwright-evaluator: Playwright Evaluator — Stage 3 端到端行为验证
+
+```
+CI 全部通过 →
+node playwright-evaluator.cjs --run →
+解析 Task Card [BEHAVIOR] 条目 →
+执行 Brain /health 基线 + 每条 Test: 命令 →
+全部 PASS → 继续 Stage 4 →
+有 FAIL → 反馈给主 agent 修复
 ```
 
 ---
