@@ -7,6 +7,7 @@
 # - 读取 Brain 健康状态（alertness、active tasks）
 # - 读取最近 5 个 PR（dev-records）
 # - 读取 P0 阻塞任务列表
+# - 读取最近 CI 状态（来自 gh run list）
 # - 写到主仓库 .agent-knowledge/CURRENT_STATE.md
 #
 # 调用时机：/dev Stage 4 Ship 阶段（PR 合并后）
@@ -179,6 +180,34 @@ except Exception as e:
     print(f'（解析失败：{e}）')
 " 2>/dev/null || echo "（查询失败）")
 
+# ─── 读取最近 CI 状态 ─────────────────────────────────────────────────────────
+CI_SECTION=""
+if command -v gh &>/dev/null; then
+    CI_RAW=$(gh run list --repo perfectuser21/cecelia --limit 5 --json status,conclusion,name,createdAt,headBranch 2>/dev/null || echo "[]")
+    CI_SECTION=$(echo "$CI_RAW" | python3 -c "
+import sys, json
+try:
+    runs = json.load(sys.stdin)
+    if not runs:
+        print('（无 CI 记录）')
+    else:
+        lines = ['| 状态 | 结论 | 工作流 | 分支 | 时间 |', '|------|------|--------|------|------|']
+        for r in runs[:5]:
+            status = r.get('status', '?')
+            conclusion = r.get('conclusion') or '-'
+            name = (r.get('name') or '?')[:30]
+            branch = (r.get('headBranch') or '?')[:25]
+            created = (r.get('createdAt') or '')[:16].replace('T', ' ')
+            icon = '✅' if conclusion == 'success' else ('❌' if conclusion == 'failure' else '🔄')
+            lines.append(f'| {icon} {status} | {conclusion} | {name} | {branch} | {created} |')
+        print('\n'.join(lines))
+except Exception as e:
+    print(f'（解析失败：{e}）')
+" 2>/dev/null || echo "（CI 数据解析失败）")
+else
+    CI_SECTION="（gh CLI 不可用，跳过 CI 状态查询）"
+fi
+
 # ─── 写入 CURRENT_STATE.md ────────────────────────────────────────────────────
 cat > "$OUTPUT_FILE" <<STATEOF
 ---
@@ -223,6 +252,12 @@ ${PR_SECTION}
 ## P0 Issues
 
 ${P0_SECTION}
+
+---
+
+## 最近 CI 状态
+
+${CI_SECTION}
 
 ---
 

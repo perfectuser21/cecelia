@@ -45,6 +45,23 @@ describe('04-ship.md 包含 CURRENT_STATE 步骤', () => {
   });
 });
 
+describe('write-current-state.sh 包含 CI 状态章节', () => {
+  it('脚本包含 gh run list 调用', () => {
+    const content = readFileSync(WRITE_STATE_SH, 'utf8');
+    expect(content).toContain('gh run list');
+  });
+
+  it('脚本包含 CI_SECTION 变量', () => {
+    const content = readFileSync(WRITE_STATE_SH, 'utf8');
+    expect(content).toContain('CI_SECTION');
+  });
+
+  it('脚本包含 CI 状态章节输出', () => {
+    const content = readFileSync(WRITE_STATE_SH, 'utf8');
+    expect(content).toContain('最近 CI 状态');
+  });
+});
+
 describe('session-start.sh 包含 CURRENT_STATE 注入', () => {
   it('保留原有 Brain 当前状态注入', () => {
     const content = readFileSync(SESSION_START, 'utf8');
