@@ -152,18 +152,19 @@ function parseDodItems(content) {
  * @returns {{valid: boolean, reason?: string}}
  */
 function detectFakeTest(testCommand) {
-  // 禁止 echo 假测试
-  if (/\becho\b/.test(testCommand)) {
+  // 禁止顶层 echo 假测试（不拦截 node/bash 程序内部的 echo）
+  const topLevelCmd = testCommand.trim().split(/\s/)[0];
+  if (topLevelCmd === 'echo') {
     return { valid: false, reason: "禁止使用 echo 假测试（应使用真实执行命令）" };
   }
 
-  // 禁止 grep | wc -l 假测试
-  if (/grep.*\|.*wc\s+-l/.test(testCommand)) {
+  // 禁止顶层 grep | wc -l 假测试（不拦截 node/bash 程序内部引用的 grep 模式）
+  if (topLevelCmd === 'grep' && /\|.*wc\s+-l/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 grep | wc -l 假测试（应使用真实执行命令）" };
   }
 
-  // 禁止 test -f 假测试
-  if (/test\s+-f\b/.test(testCommand)) {
+  // 禁止顶层 test -f 假测试
+  if (topLevelCmd === 'test' && /\s+-f\b/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 test -f 假测试（应使用真实执行命令）" };
   }
 
@@ -176,6 +177,84 @@ function detectFakeTest(testCommand) {
   const hasRealExecution = /\b(node|npm|npx|psql|curl|bash|python|pytest|jest|mocha|vitest)\b/.test(testCommand);
   if (!hasRealExecution) {
     return { valid: false, reason: "Test 命令必须包含真实执行命令（如 node, npm, psql, curl 等）" };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * 检查 manual: 命令是否包含有意义的断言逻辑
+ * 拦截"看似可执行但无断言"的弱测试（如 node -e "console.log('ok')"）
+ * @param {string} testCommand - manual: 后面的命令内容
+ * @returns {{valid: boolean, reason?: string}}
+ */
+function validateAssertionStrength(testCommand) {
+  if (!testCommand) return { valid: true };
+
+  const cmd = testCommand.trim();
+
+  // npm/npx/npm test 等包管理器命令自带退出码语义，不需要额外断言
+  if (/^\s*(npm|npx)\b/.test(cmd)) {
+    return { valid: true };
+  }
+
+  // curl 命令带 -f/--fail 或管道到 node/jq 有隐式断言
+  if (/^\s*curl\b/.test(cmd)) {
+    return { valid: true };
+  }
+
+  // psql 命令自带退出码语义
+  if (/^\s*psql\b/.test(cmd)) {
+    return { valid: true };
+  }
+
+  // node -e 命令：必须包含断言逻辑
+  if (/\bnode\s+(-e|--eval)\b/.test(cmd)) {
+    const hasAssertion =
+      /process\.exit\s*\(/.test(cmd) ||     // process.exit(1)
+      /throw\s+new\s+\w*Error/.test(cmd) ||  // throw new Error(...)
+      /\bassert[\s.(]/.test(cmd) ||           // assert(...) / assert.xxx
+      /\bexpect\s*\(/.test(cmd) ||            // expect(...)
+      /\|\|\s*exit\b/.test(cmd) ||            // || exit 1
+      /&&\s*exit\b/.test(cmd) ||              // && exit 1
+      /if\s*\(/.test(cmd) ||                  // if(...) 条件判断
+      /if\s*\[/.test(cmd) ||                  // if [ ... ] shell 条件
+      /\[\[\s/.test(cmd);                     // [[ ... ]] bash 条件
+
+    if (!hasAssertion) {
+      return {
+        valid: false,
+        reason: `manual: 命令缺少断言逻辑（node -e 必须包含 process.exit/throw/if 等退出码判定）\n` +
+          `     示例: node -e "const c=require('fs').readFileSync('file','utf8');if(!c.includes('x'))process.exit(1)"\n` +
+          `     示例: node -e "const{execSync}=require('child_process');try{execSync('cmd')}catch(e){process.exit(1)}"`
+      };
+    }
+  }
+
+  // bash -c 命令：必须包含断言逻辑
+  if (/^\s*bash\s+(-c|.*\.sh)\b/.test(cmd)) {
+    const hasAssertion =
+      /\|\|\s*exit\b/.test(cmd) ||          // || exit 1
+      /&&\s*exit\b/.test(cmd) ||            // && exit 1
+      /process\.exit\s*\(/.test(cmd) ||     // node 内部断言
+      /\bif\s/.test(cmd) ||                 // if 条件
+      /\[\[\s/.test(cmd) ||                 // [[ ... ]] 条件
+      /\btest\s/.test(cmd) ||               // test 命令（非 test -f）
+      /throw\s+new/.test(cmd);              // node 内部 throw
+
+    // bash 运行 .sh/.cjs/.js 脚本或 node/npm/curl 命令自带退出码语义
+    if (/\.(sh|cjs|js|mjs)\b/.test(cmd) || /\b(node|npm|npx|curl|psql)\s/.test(cmd)) {
+      return { valid: true };
+    }
+
+    if (!hasAssertion) {
+      return {
+        valid: false,
+        reason: `manual: 命令缺少断言逻辑（bash -c 必须包含 || exit / [[ ]] / if 等退出码判定）\n` +
+          `     示例: bash -c 'R=$(node -e "console.log(1)"); [[ "$R" == "1" ]] || exit 1'\n` +
+          `     示例: bash -c 'node -e "process.exit(0)" || exit 1'`
+      };
+    }
   }
 
   return { valid: true };
@@ -302,10 +381,16 @@ function validateTestRef(testRef, projectRoot) {
     // Step 7 实际执行命令后标记 [x]，[x] 本身是验证通过的证明，不需要 evidence 文件
     const isInlineCommand = /\b(curl|grep|psql|node|npm|npx|bash|python|pytest|jest|vitest)\b/.test(evidenceContent);
     if (isInlineCommand) {
-      // 只检查假测试（禁止 echo/test -f/TODO 等）
+      // 检查假测试（禁止 echo/test -f/TODO 等）
       const fakeCheck = detectFakeTest(evidenceContent);
       if (!fakeCheck.valid) {
         return fakeCheck;
+      }
+
+      // 检查断言强度（禁止 node -e "console.log('ok')" 等无断言命令）
+      const strengthCheck = validateAssertionStrength(evidenceContent);
+      if (!strengthCheck.valid) {
+        return strengthCheck;
       }
 
       // CI 环境中实际执行命令，验证命令真正能通过
@@ -676,6 +761,12 @@ function main() {
     console.log("    - Test: tests/...                          (自动化测试文件)");
     console.log("    - Test: contract:<RCI_ID>                  (引用回归契约)");
     console.log("    - Test: manual:curl -s http://... | jq ... (可执行命令)");
+    process.stdout.write("\n");
+    process.stdout.write("  manual: 命令必须包含断言逻辑（process.exit/throw/if 等）：\n");
+    process.stdout.write("    ✅ node -e \"const c=require('fs').readFileSync('f','utf8');if(!c.includes('x'))process.exit(1)\"\n");
+    process.stdout.write("    ✅ node -e \"const{execSync}=require('child_process');try{execSync('cmd')}catch(e){process.exit(1)}\"\n");
+    process.stdout.write("    ✅ bash -c 'R=$(node -e \"...\" ); [[ \"$R\" == \"1\" ]] || exit 1'\n");
+    process.stdout.write("    ❌ node -e \"...only console.log...\"  ← 无断言，永远 exit 0\n");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     process.exit(1);
   }
@@ -720,4 +811,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { extractKeywords, checkDodTracesToPrd };
+module.exports = { extractKeywords, checkDodTracesToPrd, detectFakeTest, validateAssertionStrength, validateBehaviorTestStrength };

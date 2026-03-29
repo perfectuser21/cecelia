@@ -60,9 +60,9 @@ describe('check-dod-mapping.cjs — 有效 DoD（exit 0）', () => {
   it('ARTIFACT+BEHAVIOR+GATE 全含 manual: Test 且已勾选 → exit 0', () => {
     const dodFile = writeDodInsideRepo(`
 - [x] [ARTIFACT] 产出物已创建
-  Test: manual:node -e "console.log('ok')"
+  Test: manual:node -e "if(!require('fs').existsSync('package.json'))process.exit(1)"
 - [x] [BEHAVIOR] 行为符合预期
-  Test: manual:node -e "console.log('behavior')"
+  Test: manual:node -e "const r=JSON.parse(require('fs').readFileSync('package.json','utf8'));if(!r.name)process.exit(1)"
 - [x] [GATE] CI 全部通过
   Test: manual:node -e "process.exit(0)"
 `.trim());
@@ -80,7 +80,7 @@ describe('check-dod-mapping.cjs — 无效 DoD（exit 1）', () => {
     const dodFile = writeDodInsideRepo(`
 - [x] [ARTIFACT] 产出物已创建
 - [x] [BEHAVIOR] 行为符合预期
-  Test: manual:node -e "console.log('ok')"
+  Test: manual:node -e "if(!true)process.exit(1)"
 - [x] [GATE] CI 全部通过
   Test: manual:npm test
 `.trim());
