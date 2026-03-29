@@ -445,6 +445,15 @@ changelog:
 
 ---
 
+### dod-ci-incompatible-command-detection: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
+
+1. ✅ **curl localhost 被拦截**
+2. ✅ **psql 被拦截**
+3. ✅ **npm test 被拦截**
+4. ✅ **node -e 命令正常通过**
+
+---
+
 ### verify-step-symlink-path-fix: verify-step.sh symlink 物理路径解析修复
 
 1. ✅ **symlink 环境下 verify-step 正常执行**

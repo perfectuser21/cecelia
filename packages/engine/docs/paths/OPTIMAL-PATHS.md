@@ -533,6 +533,16 @@ check-coverage-completeness.mjs Check 4 →
 
 ---
 
+### dod-ci-incompatible-command-detection: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
+
+```
+DoD manual:curl localhost → detectCiIncompatibleCommand → exit 1 + 建议
+DoD manual:psql → exit 1 + 建议用 tests/
+DoD manual:node -e → 通过检查
+```
+
+---
+
 ### verify-step-symlink-path-fix: verify-step.sh symlink 物理路径解析修复
 
 ```

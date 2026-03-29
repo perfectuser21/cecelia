@@ -807,7 +807,22 @@ check-coverage-completeness.mjs Check 4 →
 
 ---
 
-## GP-051: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
+## GP-051: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand) (dod-ci-incompatible-command-detection)
+
+**Feature**: dod-ci-incompatible-command-detection - DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
+**Priority**: P1
+
+### Golden Path
+
+```
+DoD manual:curl localhost → detectCiIncompatibleCommand → exit 1 + 建议
+DoD manual:psql → exit 1 + 建议用 tests/
+DoD manual:node -e → 通过检查
+```
+
+---
+
+## GP-052: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
 
 **Feature**: verify-step-symlink-path-fix - verify-step.sh symlink 物理路径解析修复
 **Priority**: P1
