@@ -77,7 +77,7 @@ describe('断言强度检查 — 强测试放行', () => {
 - [x] [BEHAVIOR] 行为
   Test: manual:node -e "const{execSync}=require('child_process');try{execSync('echo ok')}catch(e){process.exit(1)}"
 - [x] [GATE] CI
-  Test: manual:npm test
+  Test: manual:node -e "if(!require('fs').existsSync('package.json'))process.exit(1)"
 `.trim());
     try {
       const { code } = runScript(dodFile);
@@ -94,7 +94,7 @@ describe('断言强度检查 — 强测试放行', () => {
 - [x] [BEHAVIOR] 行为
   Test: manual:node -e "const r=JSON.parse(require('fs').readFileSync('package.json','utf8'));if(!r.name)process.exit(1)"
 - [x] [GATE] CI
-  Test: manual:npm test
+  Test: manual:node -e "if(!require('fs').existsSync('package.json'))process.exit(1)"
 `.trim());
     try {
       const { code } = runScript(dodFile);
@@ -111,7 +111,7 @@ describe('断言强度检查 — 强测试放行', () => {
 - [x] [BEHAVIOR] 行为
   Test: manual:bash -c 'R=$(node -e "console.log(1)"); [[ "$R" == "1" ]] || exit 1'
 - [x] [GATE] CI
-  Test: manual:npm test
+  Test: manual:node -e "if(!require('fs').existsSync('package.json'))process.exit(1)"
 `.trim());
     try {
       const { code } = runScript(dodFile);

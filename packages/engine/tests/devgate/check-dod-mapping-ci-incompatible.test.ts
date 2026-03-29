@@ -117,11 +117,11 @@ describe('check-dod-mapping.cjs — CI 不兼容命令检测', () => {
   it('manual:node -e "..." → exit 0（CI 兼容命令正常通过）', () => {
     const dodFile = writeDodInsideRepo(`
 - [x] [ARTIFACT] 产出物已创建
-  Test: manual:node -e "require('fs').accessSync('packages/engine/package.json')"
+  Test: manual:node -e "if(!require('fs').existsSync('packages/engine/package.json'))process.exit(1)"
 - [x] [BEHAVIOR] 文件包含正确内容
   Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/package.json','utf8');if(!c.includes('engine'))process.exit(1)"
 - [x] [GATE] CI 全部通过
-  Test: manual:node -e "require('fs').accessSync('packages/engine/scripts/devgate/check-dod-mapping.cjs')"
+  Test: manual:node -e "if(!require('fs').existsSync('packages/engine/scripts/devgate/check-dod-mapping.cjs'))process.exit(1)"
 `.trim());
     try {
       const { code } = runScript(dodFile);
