@@ -807,7 +807,24 @@ check-coverage-completeness.mjs Check 4 →
 
 ---
 
-## GP-051: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
+## GP-051: Planner subagent — Stage 1 Task Card 生成独立化 (planner-subagent-stage1)
+
+**Feature**: planner-subagent-stage1 - Planner subagent — Stage 1 Task Card 生成独立化
+**Priority**: P2
+
+### Golden Path
+
+```
+/dev 启动 →
+Stage 1: 主 agent spawn Planner subagent →
+Planner 接收任务描述 + SYSTEM_MAP →
+Planner 输出 Task Card + DoD（只含 WHAT，无 HOW）→
+主 agent 继续 Sprint Contract Gate
+```
+
+---
+
+## GP-052: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
 
 **Feature**: verify-step-symlink-path-fix - verify-step.sh symlink 物理路径解析修复
 **Priority**: P1

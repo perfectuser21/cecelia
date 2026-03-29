@@ -17,8 +17,13 @@
 
 version: "4.0.0"
 updated: "2026-03-29"
-# ci-trigger: 13.57.0
+# ci-trigger: 13.58.0
 changelog:
+  - version: "13.58.0"
+    date: "2026-03-29"
+    change: "[CONFIG] feat(engine): Planner subagent — Stage 1 Task Card 生成从主 agent 拆出，主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP"
+    scope: "packages/engine/skills/dev/steps/01-spec.md,packages/engine/skills/dev/lib/planner-prompt.md"
+
   - version: "13.57.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): DoD Test 字段断言强度检查 — check-dod-mapping.cjs 新增 validateAssertionStrength 函数，拦截 manual: 中无断言的 node/bash 命令，强制要求 process.exit/throw/if 退出码判定"
@@ -2682,6 +2687,37 @@ product_features:
       - "高风险模块缺测试：Check 4 exit 1"
       - "普通模块缺测试：warning 不阻断"
       - "前缀匹配：executor-billing.test.js 覆盖 executor.js"
+
+    rcis: []
+
+  - id: planner-subagent-stage1
+    name: Planner subagent — Stage 1 Task Card 生成独立化
+    category: skills
+    status: Committed
+    priority: P2
+    version: "13.58.0"
+    updated: "2026-03-29"
+    description: |
+      Stage 1 Task Card + DoD 生成从主 agent 内部拆成独立 Planner subagent。
+      Planner subagent 只接收任务描述 + SYSTEM_MAP.md，不接收 CLAUDE.md 或 Brain context。
+      主 agent 变成纯编排者，拿 Planner 输出继续 Sprint Contract Gate。
+      与 Stage 2 的 Generator subagent 模式对称。
+
+    entrypoints:
+      - type: skill
+        file: packages/engine/skills/dev/steps/01-spec.md
+        trigger: "/dev Stage 1 启动时，主 agent spawn Planner subagent"
+
+    golden_path: |
+      /dev 启动 →
+      Stage 1: 主 agent spawn Planner subagent →
+      Planner 接收任务描述 + SYSTEM_MAP →
+      Planner 输出 Task Card + DoD（只含 WHAT，无 HOW）→
+      主 agent 继续 Sprint Contract Gate
+
+    minimal_paths:
+      - "Planner subagent 隔离：不接收 CLAUDE.md 和 Brain context"
+      - "Sprint Contract Gate 正常继续工作"
 
     rcis: []
 

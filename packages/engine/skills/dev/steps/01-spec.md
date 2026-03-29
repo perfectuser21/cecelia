@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 2.4.0
+version: 3.0.0
 created: 2026-03-20
 updated: 2026-03-29
 changelog:
+  - 3.0.0: Task Card 生成拆为 Planner subagent — 主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP
   - 2.4.0: spec_review 升级为 Sprint Contract Gate — subagent 独立写测试方案后与主 agent 比对，严重分歧 = 硬 FAIL，不能继续 Stage 2
   - 2.3.0: spec_review 新增测试层（test layer）检查指令：每个 DoD 条目必须对应合适的测试类型
   - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
@@ -53,9 +54,84 @@ fi
 
 将 KR 标题和描述注入到 Task Card 的"背景"部分。
 
-## 1.2 生成 Task Card
+## 1.2 生成 Task Card（Planner subagent）
 
-创建 `.task-cp-{branch}.md`：
+> **主 agent 不直接生成 Task Card。** 主 agent 是编排者，Task Card 生成由 Planner subagent 完成。
+> Planner subagent 只接收：任务描述（PRD/task description）+ docs/current/SYSTEM_MAP.md 全文。
+> 不接收：CLAUDE.md（编码规范）、Brain context（调度上下文）、代码库细节。
+> Planner 只输出 WHAT（行为描述），不写 HOW（实现细节）。
+
+### 架构
+
+```
+主 agent（编排者）
+  ├─ 1.1 参数检测
+  ├─ 1.1.5 上下文补充（intent-expand）
+  ├─ 1.2 生成 Task Card → spawn Planner subagent ← 你在这里
+  ├─ 1.3.5 相关 Learning 检索
+  ├─ 1.3 写入 .dev-mode
+  └─ Sprint Contract Gate（spec_review subagent）
+```
+
+### Planner subagent 调用
+
+```
+1. 准备 prompt 输入（仅以下两项，禁止传入其他内容）：
+   a. 任务描述（PRD 全文，或用户提供的 task description）
+   b. docs/current/SYSTEM_MAP.md 全文 — 系统能力地图
+
+   禁止传入：
+   - CLAUDE.md（编码规范）
+   - Brain API 返回的调度上下文（OKR/KR/Project 层级信息）
+   - 代码库细节（文件路径、函数签名、实现代码）
+   - 其他 subagent 的审查结果
+
+2. 调用 Agent subagent（subagent_type=general-purpose）
+   prompt 模板见 packages/engine/skills/dev/lib/planner-prompt.md
+
+3. Planner 完成后，主 agent 接收 Task Card 内容，写入 .task-cp-{branch}.md
+4. 主 agent 继续 1.3.5 Learning 检索 → 1.3 写入 .dev-mode → Sprint Contract Gate
+```
+
+### 主 agent 调用代码（伪码）
+
+```javascript
+// 1. 读取任务描述和 SYSTEM_MAP
+const PRD = readFile('.prd-{branch}.md') || userInput
+const SYSTEM_MAP = readFile('docs/current/SYSTEM_MAP.md')
+const PLANNER_PROMPT = readFile('packages/engine/skills/dev/lib/planner-prompt.md')
+
+// 2. 组装 prompt（只含任务描述 + SYSTEM_MAP）
+const prompt = PLANNER_PROMPT
+  .replace('{PRD_CONTENT}', PRD)
+  .replace('{SYSTEM_MAP_CONTENT}', SYSTEM_MAP)
+
+// 3. 调用 Planner subagent
+Agent({
+  subagent_type: "general-purpose",
+  description: "Planner: 生成 Task Card + DoD",
+  prompt: prompt
+})
+
+// 4. Planner 将 Task Card 写入 .task-cp-{branch}.md
+// 5. 主 agent 继续 Sprint Contract Gate
+```
+
+### ⚠️ Planner subagent 隔离规则（CRITICAL）
+
+| 允许传入 | 禁止传入 |
+|---------|---------|
+| 任务描述（PRD/用户 input） | CLAUDE.md（编码规范） |
+| docs/current/SYSTEM_MAP.md | Brain 调度上下文 |
+| | OKR/KR/Project 层级信息 |
+| | 代码库文件路径 / 实现细节 |
+| | 其他 subagent 审查结果 |
+
+**为什么隔离**：Planner 只需要知道"要做什么"（任务描述）和"系统有什么"（SYSTEM_MAP），不需要知道"怎么写代码"。隔离编码上下文，确保需求描述不受实现偏见污染。
+
+### Task Card 输出格式
+
+Planner 写入 `.task-cp-{branch}.md`：
 
 ```markdown
 ---
