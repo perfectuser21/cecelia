@@ -17,8 +17,13 @@
 
 version: "4.0.0"
 updated: "2026-03-29"
-# ci-trigger: 13.57.0
+# ci-trigger: 13.58.0
 changelog:
+  - version: "13.58.0"
+    date: "2026-03-30"
+    change: "[CONFIG] feat(engine): Stage 1 Task Card 生成拆为 Planner subagent — 01-spec.md 新增 1.1.8 Planner subagent 节（prompt 模板+隔离规则），主 agent 变编排者"
+    scope: "packages/engine/skills/dev/steps/01-spec.md,packages/engine/skills/dev/SKILL.md"
+
   - version: "13.57.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): DoD Test 字段断言强度检查 — check-dod-mapping.cjs 新增 validateAssertionStrength 函数，拦截 manual: 中无断言的 node/bash 命令，强制要求 process.exit/throw/if 退出码判定"
