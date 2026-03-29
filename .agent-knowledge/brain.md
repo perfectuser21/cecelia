@@ -100,6 +100,7 @@ POST /api/brain/memory/search       语义搜索知识库
 GET  /api/brain/dev-records         最近 PR 记录
 GET  /api/brain/policies            免疫系统策略
 GET  /api/brain/immune/dashboard    免疫系统仪表盘
+GET  /api/brain/kr-project-map     KR-Project 依赖图（krs + orphaned_projects + tier 分层）
 ```
 
 ---

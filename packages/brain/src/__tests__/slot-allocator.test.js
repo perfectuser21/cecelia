@@ -63,6 +63,12 @@ vi.mock('../token-budget-planner.js', () => ({
   getExecutorAffinity: vi.fn(() => ({ primary: 'claude', fallback: 'codex', no_downgrade: false })),
 }));
 
+// Mock os — 防止 os.freemem() 在全量测试 OOM 时返回低值触发背压，干扰 Backpressure 测试
+vi.mock('os', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { default: { ...actual, freemem: vi.fn(() => 8 * 1024 * 1024 * 1024) } };
+});
+
 // Mock fleet-resource-cache（防止 slot-allocator import 时触发 SSH 采集）
 vi.mock('../fleet-resource-cache.js', () => ({
   getFleetStatus: vi.fn(() => []),

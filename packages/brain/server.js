@@ -48,6 +48,7 @@ import selfDriveRoutes from './src/routes/self-drive.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
 import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
+import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
 import publishJobsRoutes from './src/routes/publish-jobs.js';
 import { initTickLoop } from './src/tick.js';
@@ -166,6 +167,7 @@ app.use('/api/brain/okr', okrHierarchyRoutes);
 app.use('/api/brain/context', contextRoutes);
 app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
+app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
