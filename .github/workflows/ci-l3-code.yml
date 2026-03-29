@@ -209,6 +209,11 @@ jobs:
         working-directory: packages/brain
         run: node src/migrate.js
 
+      - name: Security audit (npm audit)
+        run: npm audit --audit-level=high --omit=dev
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run Brain unit tests (no coverage)
         working-directory: packages/brain
         env:
@@ -888,8 +893,17 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: cecelia_ci
       - name: Run coverage
-        run: cd packages/brain && npm run test:coverage
-        continue-on-error: true  # vitest generates coverage report even on test failures (reportOnFailure: true)
+        id: run_coverage
+        run: |
+          set +e
+          cd packages/brain && npm run test:coverage 2>&1
+          COVERAGE_EXIT=$?
+          if [ $COVERAGE_EXIT -ne 0 ] && [ ! -f "coverage/coverage-summary.json" ]; then
+            echo "coverage_skipped=true" >> $GITHUB_OUTPUT
+            echo "⚠️  Coverage collection failed (likely OOM) — skipping threshold check"
+            exit 0
+          fi
+          exit $COVERAGE_EXIT
         env:
           DB_HOST: localhost
           DB_PORT: 5432
