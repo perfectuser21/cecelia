@@ -1,16 +1,19 @@
 ---
 name: dev
-version: 3.5.0
-updated: 2026-03-15
+version: 4.0.0
+updated: 2026-03-20
 description: |
-  统一开发工作流入口。任何会进 git 的代码变更都必须走 /dev，没有例外。
+  统一开发工作流入口（4-Stage Pipeline）。任何会进 git 的代码变更都必须走 /dev，没有例外。
   不走 /dev 不允许改代码——branch-protect Hook 会强制阻止。
 
-  自动完成完整闭环：Worktree 隔离 → PRD → 探索架构 → DoD 定稿
-  → 写代码 → 本地验证 → PR → CI 监控 → Learning → 合并 → 清理。
+  4-Stage Pipeline：
+  Stage 1: Spec（读 PRD + 写 DoD）→ 派发 spec_review → 等 stop hook 放行
+  Stage 2: Code（Generator subagent 写代码 + 本地验证）→ 派发 code_review_gate → 等 stop hook 放行
+  Stage 3: Integrate（push + CI）→ CI 通过即放行
+  Stage 4: Ship（Learning + 合并 + Clean）
 
-  ⚠️ 顺序铁律：Learning 必须在合并 PR 之前完成（先 push Learning 到功能分支，再合并）。
-  CI 通过后禁止立即合并——必须先执行 Step 4 写 Learning。
+  ⚠️ 顺序铁律：Learning 必须在合并 PR 之前完成。
+  CI 通过后禁止立即合并——必须先执行 Stage 4 写 Learning。
 
   触发词（凡用户意图涉及代码改动，必须触发）：
   开始开发、加功能、修 bug、修复 bug、实现 XXX、改代码、改配置、
@@ -29,7 +32,7 @@ description: |
 **触发 /dev 后，第一件事是读取并执行 Step 00（Worktree 检测）：**
 
 ```bash
-cat ~/.claude/skills/dev/steps/00-worktree-auto.md
+cat ~/.claude-account3/skills/dev/steps/00-worktree-auto.md 2>/dev/null || cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ```
 
 **在 Step 00 完成、确认已在独立 worktree 中之前，禁止进行任何其他操作。**
@@ -37,7 +40,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 
 ---
 
-# /dev - 统一开发工作流（v3.4）
+# /dev - 统一开发工作流（v4.0 — 4-Stage Pipeline）
 
 ## 🎯 使用方式
 
@@ -62,7 +65,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
     ↓
 生成 .prd-task-abc-123.md + .dod-task-abc-123.md
     ↓
-继续正常 /dev 流程 (Step 0-5)
+继续正常 /dev 流程 (Stage 1-4)
 ```
 
 **依赖**：
@@ -76,15 +79,15 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 
 ## ⚡ 核心目标（CRITICAL）
 
-**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（动态检测：有 develop 用 develop，否则 main）。**
+**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（main）。**
 
 ### 完成条件
 
 ```
-开始 → ... → PR 创建 → CI 通过 → Learning（push 到功能分支）→ PR 合并 ✅ 完成
+开始 → Spec → [spec_review Gate] → Code → [code_review_gate Gate] → Push → PR → CI → Ship(Learning+合并+Clean) ✅
 ```
 
-**只有一个完成标志**：PR 已合并到目标分支（动态检测：`git rev-parse --verify develop` 成功则用 develop，否则 main）
+**只有一个完成标志**：PR 已合并到目标分支（main）
 
 ### 遇到任何问题 = 自动修复
 
@@ -133,9 +136,9 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ### 工作流程
 
 ```
-/dev 启动 → Step 1 创建 .dev-mode
+/dev 启动 → Stage 1 创建 .dev-mode
     ↓
-执行 Step 0-5...
+执行 Stage 1-4...
     ↓
 会话尝试结束 → Stop Hook 触发
     ↓
@@ -154,16 +157,15 @@ branch: cp-xxx
 task_card: .task-cp-xxx.md
 started: 2026-01-29T10:00:00+00:00
 step_0_worktree: done
-step_1_taskcard: done
+step_1_spec: done
 step_2_code: pending
-step_3_prci: pending
-step_4_learning: pending
-step_5_clean: pending
+step_3_integrate: pending
+step_4_ship: pending
 ```
 
 **生命周期**：
-- Step 1 (TaskCard) 创建后写入
-- Step 5 (Clean) 删除
+- Stage 1 (Spec) 创建后写入
+- Stage 4 (Ship) 删除
 - 或 PR 合并后由 Stop Hook 自动删除
 
 ---
@@ -223,7 +225,7 @@ step_5_clean: pending
 ```
 用户 → /dev（流程编排）
          ↓
-       Step 0-5（具体步骤）
+       Stage 1-4（具体阶段）
          ↓
        会话结束 → Stop Hook 检查完成条件
          ↓
@@ -233,22 +235,58 @@ step_5_clean: pending
 
 ---
 
-## 统一完成条件
+## 统一完成条件（devloop-check.sh SSOT）
 
-**Stop Hook 检查以下条件**：
+**Stop Hook 通过 devloop-check.sh 检查以下条件，必须全部通过才能结束**：
 
 ```
-1. PR 已创建？
-   ❌ → exit 2 → 继续执行到创建 PR
+0. cleanup_done: true？（最高优先级终止条件）
+   ✅ → exit 0 → 工作流结束
 
-2. CI 状态？
-   - PENDING/IN_PROGRESS → exit 2 → 等待 CI
-   - FAILURE → exit 2 → 修复代码
-   - SUCCESS → 继续下一步
+1. step_1_spec done？
+   ❌ → exit 2 → 执行 Stage 1
+   ✅ → spec_review PASS？（读 .dev-mode）
+     ❌ FAIL → exit 2 → 修 Task Card，无限重试 subagent
+     ✅ PASS → 继续
 
-3. PR 已合并？
-   ❌ → exit 2 → 执行 Step 4 (Learning → push → 合并 PR)
-   ✅ → 删除 .dev-mode → exit 0 → 完成
+2. step_2_code done？
+   ❌ → exit 2 → 执行 Stage 2
+   ✅ → code_review_gate PASS？（读 .dev-mode）
+     ❌ FAIL → exit 2 → 修代码，无限重试 subagent
+     ✅ PASS → 继续
+
+3. PR 已创建？
+   ❌ → exit 2 → 创建 PR
+
+4. CI 状态？
+   - PENDING/IN_PROGRESS → exit 2 → 等待
+   - FAILURE → exit 2 → 本地复现 + 修复代码
+   - SUCCESS → 继续
+
+5. Stage 4 Ship（Learning）完成？
+   ❌ → exit 2 → 写 Learning + push 到功能分支
+
+6. PR 已合并？
+   ❌ → exit 2 → 执行合并
+   ✅ → Stage 4 Ship → cleanup_done: true → 完成
+```
+
+**4-Stage Pipeline 流程图**：
+
+```
+Stage 1 Spec → 派发 spec_review → 等 PASS
+                                      ↓
+                              Stage 2 Code（Generator subagent + 自验证）
+                              └─ 派发 code_review_gate → 等 PASS
+                                      ↓
+                              Stage 3 Integrate
+                              ├─ Push + 创建 PR
+                              └─ CI L1-L4 → CI 通过即放行
+                                      ↓
+                              Stage 4 Ship
+                              ├─ Learning
+                              ├─ 合并 PR
+                              └─ Clean → done
 ```
 
 ---
@@ -257,10 +295,15 @@ step_5_clean: pending
 
 **每个步骤完成后，必须立即执行下一步，不要停顿、不要等待用户确认、不要输出总结。**
 
+> **"停顿"含义澄清**：停顿指停止执行（等用户说"继续"）。
+> "等 stop hook 放行"≠停顿——它是 Claude 在后台继续执行，由 stop hook 在会话结束时检查是否完成。
+> 即：整个 Stage 1-4 是连续执行的，stop hook 只在每次"尝试结束会话"时触发检查。
+
 ### 执行流程
 
 ```
-Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下一步
+Stage N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下一步
+（例外：Stage 1 和 Stage 2 完成后 subagent 同步审查，审查 PASS 后立即继续）
 ```
 
 ### 禁止行为
@@ -271,10 +314,10 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 
 ### 正确行为
 
-- ✅ 完成 Step 1 (TaskCard) → **立即**执行 Step 2 (Code)
-- ✅ 完成 Step 2 (Code) → **立即**执行 Step 3 (PR+CI)
-- ✅ 完成 Step 3 (PR+CI) → **立即**执行 Step 4 (Learning)
-- ✅ 完成 Step 4 (Learning) → **立即**执行 Step 5 (Clean)
+- ✅ 完成 Stage 1 (Spec) → 派发 spec_review → **等 stop hook 放行** → 执行 Stage 2
+- ✅ 完成 Stage 2 (Code) → 派发 code_review_gate → **等 stop hook 放行** → 执行 Stage 3
+- ✅ 完成 Stage 3 (Integrate) → CI 通过 → **自动放行** → 执行 Stage 4
+- ✅ 完成 Stage 4 (Ship) → PR 合并 → 完成
 - ✅ 一直执行到 PR 合并为止
 
 ---
@@ -289,11 +332,10 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 
 ```javascript
 TaskCreate({ subject: "Step 0: Worktree", description: "检测/创建独立 worktree", activeForm: "创建 Worktree" })
-TaskCreate({ subject: "Step 1: TaskCard", description: "生成 .task-cp-xxx.md（需求+成功标准+DoD框架）", activeForm: "生成 TaskCard" })
-TaskCreate({ subject: "Step 2: Code", description: "探索+DoD定稿+写代码+本地验证", activeForm: "写代码" })
-TaskCreate({ subject: "Step 3: PR+CI", description: "push+创建PR+等CI+修CI", activeForm: "PR+CI" })
-TaskCreate({ subject: "Step 4: Learning", description: "写Learning+合并PR", activeForm: "记录 Learning" })
-TaskCreate({ subject: "Step 5: Clean", description: "归档+清理worktree", activeForm: "清理" })
+TaskCreate({ subject: "Stage 1: Spec", description: "读 PRD + 写 DoD + spec_review Gate", activeForm: "生成 Spec" })
+TaskCreate({ subject: "Stage 2: Code", description: "探索+DoD定稿+Generator subagent写代码+本地验证", activeForm: "写代码" })
+TaskCreate({ subject: "Stage 3: Integrate", description: "push+创建PR+等CI+code_review_gate Gate", activeForm: "集成" })
+TaskCreate({ subject: "Stage 4: Ship", description: "写Learning+合并PR+归档清理", activeForm: "交付" })
 ```
 
 ### 任务更新（执行中）
@@ -317,11 +359,10 @@ TaskList()
 
 // 输出示例：
 // ✅ 1. Step 0: Worktree (completed)
-// ✅ 2. Step 1: TaskCard (completed)
-// 🚧 3. Step 2: Code (in_progress)
-// ⏸️  4. Step 3: PR+CI (pending)
-// ⏸️  5. Step 4: Learning (pending)
-// ⏸️  6. Step 5: Clean (pending)
+// ✅ 2. Stage 1: Spec (completed)
+// 🚧 3. Stage 2: Code (in_progress)
+// ⏸️  4. Stage 3: Integrate (pending)
+// ⏸️  5. Stage 4: Ship (pending)
 ```
 
 ---
@@ -331,7 +372,7 @@ TaskList()
 ### 1. 统一流程
 
 ```
-开始 → Step 0-5 → PR 创建 → CI 监控 → Learning → PR 合并 → 完成
+开始 → Worktree → Stage 1 Spec → [spec_review] → Stage 2 Code → [code_review_gate] → Stage 3 Integrate → Stage 4 Ship → 完成
 ```
 
 ### 2. Task Checkpoint 追踪
@@ -347,7 +388,7 @@ TaskList()
 
 1. **只在 cp-* 或 feature/* 分支写代码** — Hook 强制
 2. **分支命名**：`cp-MMDDHHNN-task-name`（例：`cp-02270800-fix-login`）
-3. **目标分支**：动态检测——`git rev-parse --verify develop` 成功则 PR 合并到 develop，否则合并到 main
+3. **目标分支**：main（此仓库不使用 develop）
 
 ### 4. 质量保证
 
@@ -380,40 +421,37 @@ auto-version 自动更新 5 个文件：package.json、package-lock.json、.brai
 ```
 skills/dev/
 ├── SKILL.md        ← 你在这里（入口 + 流程总览）
-├── steps/          ← 每步详情（按需加载）
+├── steps/          ← 每个 Stage 详情（按需加载）
 │   ├── 00-worktree-auto.md
-│   ├── 01-taskcard.md      ← 新（替代原01+05前半）
-│   ├── 02-code.md          ← 替代原04+05后半+06+07
-│   ├── 03-prci.md          ← 替代原08+09
-│   ├── 04-learning.md      ← 原10不变
-│   └── 05-clean.md         ← 替代原11
+│   ├── 01-spec.md          ← Stage 1: Spec + spec_review Gate
+│   ├── 02-code.md          ← Stage 2: Code（Generator subagent） + 自验证 + code_review_gate Gate
+│   ├── 03-integrate.md     ← Stage 3: Push + CI
+│   └── 04-ship.md          ← Stage 4: Learning + 合并 + Clean
 └── scripts/        ← 辅助脚本
     ├── cleanup.sh
     ├── check.sh
     └── ...
 ```
 
-### 流程图 (v4.0 - Task Card 重构)
+### 流程图 (v4.0 - 4-Stage Pipeline)
 
 ```
-Step 0: Worktree → 检测/创建 worktree
-Step 1: TaskCard → 生成 .task-cp-xxx.md（需求+成功标准+DoD框架）
-Step 2: Code → 探索+DoD定稿+写代码+本地验证
-Step 3: PR+CI → push+等CI+修CI
-Step 4: Learning → 写Learning+合并PR
-Step 5: Clean → 归档+清理worktree
+Step 0: Worktree   → 创建独立 worktree
+Stage 1: Spec      → 生成 Task Card → 派发 spec_review → 等 stop hook 放行
+Stage 2: Code      → Generator subagent 写代码 + 自验证（逐条跑 DoD Test）→ 派发 code_review_gate → 等 stop hook 放行
+Stage 3: Integrate → push + 创建 PR + CI → CI 通过即放行
+Stage 4: Ship      → 写 Learning + 合并 PR + 归档 + cleanup_done: true
 ```
 
-### 步骤映射（新→旧，内部逻辑一个不少）
+### 步骤映射（新→旧）
 
-| 新步骤 | 原步骤 | 核心变化 |
-|--------|--------|----------|
+| 新 Stage | 原步骤 | 核心变化 |
+|----------|--------|----------|
 | Step 0: Worktree | Step 00 | 完全不变 |
-| Step 1: TaskCard | Step 01+02+03+05前半 | PRD+DoD 合并为单文件 |
-| Step 2: Code | Step 04+05后半+06+07 | 探索驱动 DoD 定稿 |
-| Step 3: PR+CI | Step 08+09 | 合并为单步 |
-| Step 4: Learning | Step 10 | 完全不变 |
-| Step 5: Clean | Step 11 | 单文件归档 |
+| Stage 1: Spec | Step 1 TaskCard | 加 spec_review subagent Gate |
+| Stage 2: Code | Step 2 Code | Generator subagent 写代码 + code_review_gate（push 前审查） |
+| Stage 3: Integrate | Step 3 PR+CI | 仅 push + CI，code_review 已在 Stage 2 完成 |
+| Stage 4: Ship | Step 4 Learning + Step 5 Clean | 合并为一个 Stage |
 
 ### 两层职责分离
 
@@ -431,11 +469,13 @@ Step 5: Clean → 归档+清理worktree
 |------|------|----------|----------|
 | Task Card | .task-cp-xxx.md | branch-protect 检查 | 写代码前 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
-| Learning | docs/learnings/\<branch\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Step 4 完成时（合并前）|
+| Learning | docs/learnings/\<branch-name\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Stage 4 完成时（合并前）|
 
 ---
 
 ## 状态追踪（Core/Notion 同步）
+
+> ⚠️ track.sh 为可选追踪机制（Brain 回调），主要进度追踪使用 TaskCreate/TaskUpdate 工具。
 
 有头和无头模式共用同一套追踪机制，在关键点调用 `track.sh`：
 
@@ -445,11 +485,10 @@ bash skills/dev/scripts/track.sh start "$(basename "$(pwd)")" "$(git rev-parse -
 
 # 每个步骤
 bash skills/dev/scripts/track.sh step 0 "Worktree"
-bash skills/dev/scripts/track.sh step 1 "TaskCard"
+bash skills/dev/scripts/track.sh step 1 "Spec"
 bash skills/dev/scripts/track.sh step 2 "Code"
-bash skills/dev/scripts/track.sh step 3 "PR+CI"
-bash skills/dev/scripts/track.sh step 4 "Learning"
-bash skills/dev/scripts/track.sh step 5 "Clean"
+bash skills/dev/scripts/track.sh step 3 "Integrate"
+bash skills/dev/scripts/track.sh step 4 "Ship"
 
 # 完成时
 bash skills/dev/scripts/track.sh done "$PR_URL"
