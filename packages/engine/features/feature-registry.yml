@@ -17,7 +17,7 @@
 
 version: "3.99.0"
 updated: "2026-03-29"
-# ci-trigger: 13.53.0
+# ci-trigger: 13.54.0
 changelog:
   - version: "13.53.0"
     date: "2026-03-29"
@@ -2698,5 +2698,37 @@ product_features:
     minimal_paths:
       - "symlink 环境下 verify-step 正常执行"
       - "物理路径下 verify-step 行为不变"
+
+    rcis: []
+
+  - id: generator-subagent-stage2
+    name: Generator subagent Stage 2 写代码独立化
+    category: skills
+    status: Committed
+    priority: P1
+    version: "13.54.0"
+    updated: "2026-03-29"
+    description: |
+      把 /dev Stage 2 的代码编写从主 agent 内部拆成独立 Generator subagent。
+      Generator subagent 只接收 Sprint Contract + coding 规范 + 代码库上下文，
+      不接收 Planner 推理过程和 brain context。主 agent 变成纯编排者。
+      02-code.md 从 v5.3.0 升级到 v6.0.0。
+
+    entrypoints:
+      - type: skill
+        file: packages/engine/skills/dev/steps/02-code.md
+        trigger: "/dev Stage 2 写代码阶段"
+
+    golden_path: |
+      主 agent 探索代码 →
+      构建干净 prompt（Sprint Contract + CLAUDE.md + 代码库上下文）→
+      spawn Generator subagent →
+      Generator 实现 DoD →
+      主 agent 验收
+
+    minimal_paths:
+      - "Generator subagent 收到干净 prompt（无 Brain context）"
+      - "Generator subagent 完成所有 DoD 条目"
+      - "主 agent 验收通过"
 
     rcis: []

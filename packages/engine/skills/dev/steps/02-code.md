@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 5.3.0
+version: 6.0.0
 created: 2026-03-14
-updated: 2026-03-23
+updated: 2026-03-29
 changelog:
+  - 6.0.0: 新增 2.2 Generator subagent 派发（主 agent 变编排者），原 2.2 写代码重命名为 2.2.5 Generator 内部执行（实现参考）
   - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
   - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
   - 5.1.0: 修复 2.3.2 CI镜像检查无 exit 1（build/precheck/version-sync 失败现在正确拦截）；还原被 PR#1366 覆盖的 Step 2.0 行为快照+Step 2.1.5 TDD先行+2.3.6 exit 1
@@ -19,7 +20,7 @@ changelog:
 
 # Stage 2: Code — 写代码 + 自验证
 
-> 探索代码 → 写实现 → 逐条验证 DoD → 本地测试 → 计算 Task Card hash
+> 探索代码 → 派发 Generator subagent 写实现 → 逐条验证 DoD → 本地测试 → 计算 Task Card hash
 
 ---
 
@@ -133,7 +134,7 @@ echo "✅ TDD 红灯已确认，可以开始写实现代码"
 
 ### 绿灯阶段（写实现，确认通过）
 
-在 2.2 写代码后，测试必须变为通过（绿灯）：
+在 2.2.5 Generator 执行后，测试必须变为通过（绿灯）：
 
 ```bash
 # 实现完成后，重新运行测试
@@ -146,7 +147,97 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
 
 ---
 
-## 2.2 写代码
+## 2.2 Generator subagent 派发（CRITICAL — 主 agent 编排写代码阶段）
+
+> **主 agent 探索完代码后，构建干净 prompt，spawn Generator subagent 完成实际写代码。**
+> 主 agent 变成纯编排者：负责探索上下文 + 构建 prompt + 派发 + 验收。
+> Generator subagent 是纯执行者：只看 Sprint Contract + 编码规范 + 代码库上下文，不接触 Brain。
+
+### Generator subagent 隔离规则（严格执行）
+
+Generator subagent prompt **必须明确包含**以下约束声明：
+
+```
+你是 Generator（代码生成专家）。你的任务是根据以下 Sprint Contract 实现代码变更。
+
+🔒 隔离约束（绝对禁止）：
+- 禁止调用 localhost:5221（Brain API），不查询任何 Brain 端点
+- 禁止读取 OKR / KR / 决策历史 / Brain context
+- 禁止修改 .dev-mode 或 .dev-lock 文件（这是主 agent 的权限）
+- 禁止注册新任务到 Brain
+- 只专注：Sprint Contract → 实现代码
+```
+
+### 构建干净 prompt（主 agent 执行）
+
+主 agent 在探索代码后，按以下结构构建 Generator subagent prompt：
+
+```
+## Sprint Contract（Task Card）
+
+{粘贴 .task-cp-{branch}.md 的完整内容}
+
+---
+
+## 代码规范（来自 CLAUDE.md）
+
+{粘贴 CLAUDE.md 中代码规范相关段落}
+
+---
+
+## 代码库上下文
+
+### 文件 1：{探索发现的关键文件路径}（相关内容）
+
+{粘贴文件关键内容，只保留与本次实现相关的部分}
+
+### 文件 2：{下一个关键文件路径}
+
+{粘贴文件关键内容}
+
+（继续，最多 5-8 个文件）
+
+---
+
+## 你的任务
+
+根据以上 Sprint Contract，实现所有 DoD 条目要求的代码变更。
+执行完成后，逐条运行 DoD Test 命令验证，全部 PASS 后报告完成。
+```
+
+**干净 prompt 三要素**：
+1. Sprint Contract（Task Card 完整内容）
+2. CLAUDE.md 编码规范关键段落
+3. 探索发现的代码库上下文文件（只含相关内容，不含 Brain/OKR 信息）
+
+### 派发 Generator subagent
+
+```
+Agent({
+  subagent_type: "general-purpose",
+  prompt: <上述干净 prompt>
+})
+```
+
+**CRITICAL 检查**：派发前确认 prompt 中不包含以下内容：
+- `localhost:5221` 或任何 Brain API URL（作为调用目标）
+- `goal_id` / `OKR` / `key_result` 等 Brain 业务字段（作为注入上下文）
+- `.dev-mode` 写入指令
+
+### 接收 Generator 结果
+
+Generator subagent 完成后，主 agent 验收：
+
+1. 检查 Generator 是否成功修改了目标文件
+2. 检查 Generator 是否有越权操作（修改 .dev-mode、调用 Brain API）
+3. 若 Generator FAIL → 读取错误，修正 prompt，重新派发
+
+---
+
+## 2.2.5 Generator 内部执行（实现参考）
+
+> **以下内容是 Generator subagent 要执行的步骤。**
+> 主 agent 不直接执行本节——由 Generator subagent 内部遵守。
 
 ### 原则
 

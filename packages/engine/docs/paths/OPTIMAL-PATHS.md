@@ -545,6 +545,18 @@ DoD whitelist 检查正常执行
 
 ---
 
+### generator-subagent-stage2: Generator subagent Stage 2 写代码独立化
+
+```
+主 agent 探索代码 →
+构建干净 prompt（Sprint Contract + CLAUDE.md + 代码库上下文）→
+spawn Generator subagent →
+Generator 实现 DoD →
+主 agent 验收
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -452,6 +452,14 @@ changelog:
 
 ---
 
+### generator-subagent-stage2: Generator subagent Stage 2 写代码独立化
+
+1. ✅ **Generator subagent 收到干净 prompt（无 Brain context）**
+2. ✅ **Generator subagent 完成所有 DoD 条目**
+3. ✅ **主 agent 验收通过**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -28,8 +28,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "13.53.0"
-updated: 2026-03-28
+version: "13.54.0"
+updated: 2026-03-29
 
 # ============================================================================
 # Hooks 回归契约
@@ -3720,3 +3720,4 @@ skills:
 # 12.82.0 (2026-03-16): fix(engine): git add -A 改 -u + Stop Hook 90分钟超时保护
 # 12.81.0 (2026-03-15): feat(engine): 04-learning.md 修正 Learning 模板格式 + Brain execution-callback 回调方式
 
+# 13.54.0 (2026-03-29): feat(engine): [CONFIG] 02-code.md Generator subagent 派发 — Stage 2 写代码从主 agent 拆出（v5.3.0→v6.0.0）
