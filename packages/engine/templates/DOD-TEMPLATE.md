@@ -42,7 +42,7 @@
 
 - [ ] [ARTIFACT] 产出文件存在且包含预期内容
   Test: manual:node -e "const c=require('fs').readFileSync('path/to/file','utf8');if(!c.includes('expected'))process.exit(1)"
-- [ ] [BEHAVIOR] 功能按预期运行
+- [ ] [BEHAVIOR] 功能按预期运行（需服务 → 用自动化测试）
   Test: tests/path/to/behavior.test.ts
 - [ ] [GATE] CI 全部通过
   Test: contract:<RCI_ID>
@@ -51,7 +51,7 @@
 
 | 格式 | 说明 | 示例 |
 |------|------|------|
-| `Test: tests/...` | 自动化测试文件路径 | `Test: tests/hooks/branch-protect.test.ts` |
+| `Test: tests/...` | 自动化测试文件路径 | `Test: tests/devgate/check-dod-mapping.test.ts` |
 | `Test: contract:<ID>` | 引用 regression-contract.yaml 中的 RCI | `Test: contract:H1-001` |
 | `Test: manual:node -e "..."` | 可执行 node 内联脚本（推荐，CI 兼容） | 见下方示例 |
 | `Test: manual:curl -sf https://...` | 外部 HTTP 验证（非 localhost） | `Test: manual:curl -sf https://api.example.com/health` |
@@ -86,6 +86,16 @@ Test: manual:grep -c pattern file  # 计数无断言
 Test: manual:true                  # 恒真，无意义
 Test: manual:curl localhost:5221/  # CI 无服务器，必然失败
 ```
+
+### 禁止使用（CI 会失败）
+
+| 禁止格式 | 原因 | 替代方案 |
+|---------|------|----------|
+| `manual:curl localhost:5221/...` | L1 CI 无运行服务 | `tests/` 自动化测试 |
+| `manual:psql cecelia -c "..."` | L1 CI 无 PostgreSQL | `tests/` 集成测试 |
+| `manual:npm test` | L1 CI 无完整 node_modules | `Test: tests/path/to/test.ts` |
+| `manual:echo "..."` | 无断言，无效测试 | `manual:node -e` |
+| `manual:ls /path` | 无内容验证 | `manual:node -e "require('fs').accessSync(...)"` |
 
 ### 必须通过
 

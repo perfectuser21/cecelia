@@ -2685,6 +2685,37 @@ product_features:
 
     rcis: []
 
+  - id: dod-ci-incompatible-command-detection
+    name: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
+    category: devgate
+    status: Committed
+    priority: P1
+    version: "13.58.0"
+    updated: "2026-03-29"
+    description: |
+      check-dod-mapping.cjs 新增 detectCiIncompatibleCommand() 函数，
+      检测并拦截在 L1 CI 中必然失败的 manual: 命令：
+      curl localhost/127.0.0.1、psql、npm test/npm run test、npx vitest。
+      给出友好的替代建议（node -e 或 tests/ 自动化测试）。
+
+    entrypoints:
+      - type: script
+        file: packages/engine/scripts/devgate/check-dod-mapping.cjs
+        trigger: "CI DevGate 验证 DoD manual: 内联命令时触发"
+
+    golden_path: |
+      DoD manual:curl localhost → detectCiIncompatibleCommand → exit 1 + 建议
+      DoD manual:psql → exit 1 + 建议用 tests/
+      DoD manual:node -e → 通过检查
+
+    minimal_paths:
+      - "curl localhost 被拦截"
+      - "psql 被拦截"
+      - "npm test 被拦截"
+      - "node -e 命令正常通过"
+
+    rcis: []
+
   - id: verify-step-symlink-path-fix
     name: verify-step.sh symlink 物理路径解析修复
     category: hooks
