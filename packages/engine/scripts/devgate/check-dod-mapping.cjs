@@ -167,6 +167,36 @@ function detectFakeTest(testCommand) {
     return { valid: false, reason: "禁止使用 test -f 假测试（应使用真实执行命令）" };
   }
 
+  // 禁止 printf 假测试（类似 echo，只输出）
+  if (/\bprintf\b/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 printf 假测试（应使用真实执行命令）" };
+  }
+
+  // 禁止 ls 假测试（只列目录，不验证内容）
+  if (/\bls\s/.test(testCommand) || /\bls$/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 ls 假测试（只列目录，应使用 node -e 验证文件内容）" };
+  }
+
+  // 禁止 cat 假测试（只读文件，无断言）
+  if (/\bcat\s/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 cat 假测试（只读文件，应使用 node -e 验证内容）" };
+  }
+
+  // 禁止 true 假测试（永远成功，无意义）
+  if (/^\s*true\s*$/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 true 假测试（永远成功，无意义）" };
+  }
+
+  // 禁止 exit 0 假测试（永远成功，无意义）
+  if (/^\s*exit\s+0\s*$/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 exit 0 假测试（永远成功，无意义）" };
+  }
+
+  // 禁止 standalone grep 假测试（无断言失败路径）
+  if (/^\s*(grep|grep\s+-[a-zA-Z]+)\s/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 standalone grep 假测试（无断言，应使用 grep -c 或 node -e 验证）" };
+  }
+
   // 禁止 TODO 占位符
   if (/TODO/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 TODO 占位符（应使用真实执行命令）" };

@@ -39,12 +39,14 @@
 
 > **格式要求**: 每条验收项后必须跟 `Test:` 字段
 
-- [ ] 功能描述 1
+- [ ] 功能描述 1（自动化测试验证）
   Test: tests/path/to/test.ts
-- [ ] 功能描述 2
+- [ ] 功能描述 2（合约回归验证）
   Test: contract:<RCI_ID>
-- [ ] 功能描述 3（需人工验证）
-  Test: manual:<EVIDENCE_ID>
+- [ ] [ARTIFACT] 配置文件已生成并包含正确字段（文件内容验证）
+  Test: manual:node -e "const c=require('fs').readFileSync('path/to/file.json','utf8');const d=JSON.parse(c);if(!d.field)process.exit(1);console.log('OK')"
+- [ ] [BEHAVIOR] API 端点返回正确数据（运行时行为验证）
+  Test: manual:node -e "const http=require('http');const req=http.get('http://localhost:5221/api/health',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>{const j=JSON.parse(d);if(j.status!=='ok')process.exit(1);console.log('OK')})});req.on('error',()=>process.exit(1))"
 
 ### Test 字段格式说明
 
@@ -52,7 +54,10 @@
 |------|------|------|
 | `Test: tests/...` | 自动化测试文件路径 | `Test: tests/hooks/branch-protect.test.ts` |
 | `Test: contract:<ID>` | 引用 regression-contract.yaml 中的 RCI | `Test: contract:H1-001` |
-| `Test: manual:<ID>` | 手动验证，证据存放在 evidence/manual/ | `Test: manual:ui-review` |
+| `Test: manual:node -e "..."` | 可执行 node 命令验证文件内容或逻辑 | `Test: manual:node -e "const c=require('fs').readFileSync('file','utf8');if(!c.includes('key'))process.exit(1)"` |
+| `Test: manual:curl ...` | 可执行 curl 命令验证 API 行为 | `Test: manual:curl -sf http://localhost:5221/api/health` |
+
+> **禁止使用弱测试**: echo、printf、ls、cat、true、exit 0、standalone grep 等无断言命令均会被 CI 拒绝。
 
 ### 必须通过
 

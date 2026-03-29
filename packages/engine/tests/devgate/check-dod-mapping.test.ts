@@ -138,3 +138,141 @@ describe('check-dod-mapping.cjs — 边界条件', () => {
     }
   });
 });
+
+describe('check-dod-mapping.cjs — 新增弱测试模式拦截', () => {
+  it('printf 假测试 → exit 1', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 产出物已创建
+  Test: printf "file exists"
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:npm test
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(1);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+
+  it('ls 假测试 → exit 1', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 产出物已创建
+  Test: ls packages/engine/
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:npm test
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(1);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+
+  it('cat 假测试 → exit 1', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 产出物已创建
+  Test: cat packages/engine/package.json
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:npm test
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(1);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+
+  it('true 假测试 → exit 1', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 产出物已创建
+  Test: true
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:npm test
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(1);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+
+  it('exit 0 假测试 → exit 1', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 产出物已创建
+  Test: exit 0
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:npm test
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(1);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+
+  it('standalone grep 假测试 → exit 1', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 产出物已创建
+  Test: grep -r "somePattern" packages/
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:npm test
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(1);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+
+  it('manual: 中使用 printf 假命令 → exit 1', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 产出物已创建
+  Test: manual:printf "file exists"
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:npm test
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(1);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+
+  it('合法 node -e 命令不受影响 → exit 0', () => {
+    const dodFile = writeDodInsideRepo(`
+- [x] [ARTIFACT] 文件存在且含正确字段
+  Test: manual:node -e "const c=require('fs').readFileSync('package.json','utf8');if(!c.includes('version'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] 行为符合预期
+  Test: manual:node -e "console.log('behavior ok')"
+- [x] [GATE] CI 全部通过
+  Test: manual:node -e "process.exit(0)"
+`.trim());
+    try {
+      const { code } = runScript(dodFile);
+      expect(code).toBe(0);
+    } finally {
+      rmSync(require('path').dirname(dodFile), { recursive: true });
+    }
+  });
+});
