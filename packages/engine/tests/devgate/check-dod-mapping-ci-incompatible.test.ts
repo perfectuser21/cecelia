@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 import { writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { createRequire } from 'module';
 import { resolve, join } from 'path';
 
 const SCRIPT = resolve(__dirname, '../../scripts/devgate/check-dod-mapping.cjs');
 const ENGINE_ROOT = resolve(__dirname, '../..');
+
+// 直接 import 函数以获取 V8 覆盖率追踪
+const req = createRequire(import.meta.url);
+const { detectCiIncompatibleCommand } = req(SCRIPT);
 
 function writeDodInsideRepo(content: string): string {
   const dir = mkdtempSync(join(ENGINE_ROOT, '.tmp-dod-ci-'));
@@ -24,6 +29,47 @@ function runScript(dodFile: string): { code: number; stdout: string } {
     return { code: err.status ?? 1, stdout: (err.stdout ?? '') + (err.stderr ?? '') };
   }
 }
+
+describe('detectCiIncompatibleCommand — 单元测试', () => {
+  it('curl localhost → invalid', () => {
+    expect(detectCiIncompatibleCommand('curl localhost:5221/api').valid).toBe(false);
+  });
+  it('curl 127.0.0.1 → invalid', () => {
+    expect(detectCiIncompatibleCommand('curl 127.0.0.1:5221/health').valid).toBe(false);
+  });
+  it('curl 0.0.0.0 → invalid', () => {
+    expect(detectCiIncompatibleCommand('curl 0.0.0.0:3000/test').valid).toBe(false);
+  });
+  it('curl $BRAIN_URL → invalid', () => {
+    expect(detectCiIncompatibleCommand('curl $BRAIN_URL/api').valid).toBe(false);
+  });
+  it('psql → invalid', () => {
+    expect(detectCiIncompatibleCommand('psql cecelia -c "select 1"').valid).toBe(false);
+  });
+  it('npm test → invalid', () => {
+    expect(detectCiIncompatibleCommand('npm test').valid).toBe(false);
+  });
+  it('npm run test → invalid', () => {
+    expect(detectCiIncompatibleCommand('npm run test').valid).toBe(false);
+  });
+  it('npx vitest → invalid', () => {
+    expect(detectCiIncompatibleCommand('npx vitest run').valid).toBe(false);
+  });
+  it('node -e 命令 → valid', () => {
+    expect(detectCiIncompatibleCommand('node -e "require(\'fs\').accessSync(\'x\')"').valid).toBe(true);
+  });
+  it('curl https:// 外部 URL → valid', () => {
+    expect(detectCiIncompatibleCommand('curl -sf https://api.example.com/health').valid).toBe(true);
+  });
+  it('空命令 → valid', () => {
+    expect(detectCiIncompatibleCommand('').valid).toBe(true);
+  });
+  it('失败原因包含替代建议', () => {
+    const result = detectCiIncompatibleCommand('curl localhost:5221/api');
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/node -e|tests\//);
+  });
+});
 
 describe('check-dod-mapping.cjs — CI 不兼容命令检测', () => {
   it('manual:curl localhost:... → exit 1，提示用 node -e 替代', () => {
