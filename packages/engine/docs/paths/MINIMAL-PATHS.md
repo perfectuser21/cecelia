@@ -504,6 +504,14 @@ changelog:
 1. ✅ **sprint-contract-loop.sh 存在且可执行**
 2. ✅ **脚本读 .dev-gate-spec.{branch} 统计 consistent==false**
 3. ✅ **01-spec.md Step 4 bash sprint-contract-loop.sh**
+### playwright-evaluator: Playwright Evaluator — Stage 3 端到端行为验证
+
+1. ✅ **dry-run 模式：列出检查清单，退出码 0**
+2. ✅ **run 模式全部通过：输出 PASS 摘要，退出码 0**
+3. ✅ **run 模式有失败：输出 FAIL 详情，退出码 1**
+4. ✅ **Brain 离线：基线检查 FAIL，退出码 1**
+
+**RCI 覆盖**: PE-001
 
 ---
 
