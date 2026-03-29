@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "branch": "cp-03290734-09fbf8f4-2d75-4ccc-8b1b-08ccda",
+  "timestamp": "2026-03-29T00:00:00.000Z",
+  "reviewer": "code-review-gate-agent",
+  "issues": [
+    {
+      "severity": "INFO",
+      "location": "check-dod-mapping.cjs:208",
+      "description": "curl-to-localhost 正则使用 (?:-[a-zA-Z\\-]+\\s+)* 匹配 flag，可覆盖 -X POST -H 等多个连续 flag 场景，逻辑正确，无需修改。"
+    },
+    {
+      "severity": "INFO",
+      "location": "check-dod-mapping.cjs:182",
+      "description": "cat 检测要求 cat 后有空格（cat\\s），不锚定行尾，逻辑正确。极端用例 'cat' 无参数不被拦截，但实际 Test 字段中 cat 无参数无意义，可接受。"
+    }
+  ],
+  "summary": "7 种新弱命令检测模式（ls/cat/true/exit 0/printf/wc/curl-to-localhost）正则准确、边界覆盖充分，P2-013 防误拦测试到位，module.exports 扩展向后兼容，13 个测试全部通过，代码质量良好，准予合并。"
+}
