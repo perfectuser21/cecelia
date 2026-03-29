@@ -14,10 +14,12 @@ function writeDodInsideRepo(content: string): string {
 }
 
 function runScript(dodFile: string): { code: number; stdout: string } {
+  const env = { ...process.env, GITHUB_ACTIONS: '' };
   try {
     const stdout = execSync(`node "${SCRIPT}" "${dodFile}"`, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      env,
     });
     return { code: 0, stdout };
   } catch (err: any) {
