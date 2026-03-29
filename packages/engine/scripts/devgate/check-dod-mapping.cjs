@@ -148,6 +148,7 @@ function parseDodItems(content) {
 
 /**
  * 检查测试命令是否包含假测试模式
+ * P2-weak-inline: 增强版，覆盖更多弱命令（ls/cat/true/exit 0 等）和 CI 反模式（curl-to-localhost）
  * @param {string} testCommand - 测试命令
  * @returns {{valid: boolean, reason?: string}}
  */
@@ -171,6 +172,42 @@ function detectFakeTest(testCommand) {
   // 禁止 TODO 占位符
   if (/TODO/.test(testCommand)) {
     return { valid: false, reason: "禁止使用 TODO 占位符（应使用真实执行命令）" };
+  }
+
+  // P2-weak-inline: 禁止纯列目录命令（不验证内容）
+  if (/^\s*ls(\s|$)/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 ls 弱测试（只列目录，无断言）" };
+  }
+
+  // P2-weak-inline: 禁止纯读文件命令（不验证内容）
+  if (/^\s*cat\s/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 cat 弱测试（只读文件，无断言）" };
+  }
+
+  // P2-weak-inline: 禁止恒真命令（永远成功）
+  if (/^\s*true\s*$/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 true 命令（永远成功，无断言）" };
+  }
+
+  // P2-weak-inline: 禁止 exit 0（永远成功）
+  if (/^\s*exit\s+0\s*$/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 exit 0 命令（永远成功，无断言）" };
+  }
+
+  // P2-weak-inline: 禁止 printf 假输出
+  if (/^\s*printf\s/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 printf 假测试（只输出，无断言）" };
+  }
+
+  // P2-weak-inline: 禁止 wc 计数无断言
+  if (/^\s*wc\s/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 wc 弱测试（计数无断言）" };
+  }
+
+  // curl-to-localhost: 禁止 curl 作为顶层命令访问 localhost/127.0.0.1（CI 环境无服务器运行）
+  // 注意：仅检测 curl 作为顶层命令（命令开头），不误判 node -e 引号内的 curl 字样
+  if (/^\s*curl\s+(?:-[a-zA-Z\-]+\s+)*(?:localhost|127\.0\.0\.1)/.test(testCommand)) {
+    return { valid: false, reason: "禁止 curl localhost/127.0.0.1（CI 环境无服务器，命令必然失败）" };
   }
 
   // 强制要求真实执行命令（node, npm, psql, curl, bash等）
@@ -379,7 +416,8 @@ function validateTestRef(testRef, projectRoot) {
 
     // 新格式：manual:<可执行命令>（含 curl/grep/psql 等关键词）
     // Step 7 实际执行命令后标记 [x]，[x] 本身是验证通过的证明，不需要 evidence 文件
-    const isInlineCommand = /\b(curl|grep|psql|node|npm|npx|bash|python|pytest|jest|vitest)\b/.test(evidenceContent);
+    // P2-weak-inline: 扩展检测范围，已知弱命令（ls|cat|find|wc|true|exit）也走 detectFakeTest 路径，给出明确错误
+    const isInlineCommand = /\b(curl|grep|psql|node|npm|npx|bash|python|pytest|jest|vitest|ls|cat|find|wc|true|exit|printf)\b/.test(evidenceContent);
     if (isInlineCommand) {
       // 检查假测试（禁止 echo/test -f/TODO 等）
       const fakeCheck = detectFakeTest(evidenceContent);

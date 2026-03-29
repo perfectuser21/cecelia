@@ -38,13 +38,14 @@
 ### 功能验收
 
 > **格式要求**: 每条验收项后必须跟 `Test:` 字段
+> **Test 字段必须是可执行命令，返回明确 pass/fail（exit 0/1）**
 
-- [ ] 功能描述 1
-  Test: tests/path/to/test.ts
-- [ ] 功能描述 2
+- [ ] [ARTIFACT] 产出文件存在且包含预期内容
+  Test: manual:node -e "const c=require('fs').readFileSync('path/to/file','utf8');if(!c.includes('expected'))process.exit(1)"
+- [ ] [BEHAVIOR] 功能按预期运行
+  Test: tests/path/to/behavior.test.ts
+- [ ] [GATE] CI 全部通过
   Test: contract:<RCI_ID>
-- [ ] 功能描述 3（需人工验证）
-  Test: manual:<EVIDENCE_ID>
 
 ### Test 字段格式说明
 
@@ -52,33 +53,48 @@
 |------|------|------|
 | `Test: tests/...` | 自动化测试文件路径 | `Test: tests/hooks/branch-protect.test.ts` |
 | `Test: contract:<ID>` | 引用 regression-contract.yaml 中的 RCI | `Test: contract:H1-001` |
-| `Test: manual:<ID>` | 手动验证，证据存放在 evidence/manual/ | `Test: manual:ui-review` |
+| `Test: manual:node -e "..."` | 可执行 node 内联脚本（推荐，CI 兼容） | 见下方示例 |
+| `Test: manual:curl -sf https://...` | 外部 HTTP 验证（非 localhost） | `Test: manual:curl -sf https://api.example.com/health` |
+| `Test: manual:chrome: <断言描述>` | 视觉截图验证 | `Test: manual:chrome: verify sidebar is visible at /page` |
+
+### ✅ 可执行 Test 写法示例（CI 兼容）
+
+```
+# 验证文件存在
+Test: manual:node -e "require('fs').accessSync('path/to/file')"
+
+# 验证文件包含特定内容
+Test: manual:node -e "const c=require('fs').readFileSync('path/to/file','utf8');if(!c.includes('expectedStr'))process.exit(1)"
+
+# 负向验证（确认某字符串已删除）
+Test: manual:node -e "const c=require('fs').readFileSync('path/to/file','utf8');if(c.includes('oldStr'))process.exit(1)"
+
+# 验证 JSON 文件结构
+Test: manual:node -e "const d=JSON.parse(require('fs').readFileSync('path/to/file.json','utf8'));if(!d.key)process.exit(1)"
+
+# 调用导出函数验证行为
+Test: manual:node -e "const {fn}=require('./path/to/module.cjs');if(fn('input').result!=='expected')process.exit(1)"
+```
+
+### ❌ 禁止的 Test 写法
+
+```
+Test: manual:echo "done"           # 永远成功，无断言
+Test: manual:ls src/               # 只列目录，不验证内容
+Test: manual:cat file.txt          # 只读文件，不验证内容
+Test: manual:grep -c pattern file  # 计数无断言
+Test: manual:true                  # 恒真，无意义
+Test: manual:curl localhost:5221/  # CI 无服务器，必然失败
+```
 
 ### 必须通过
 
-- [ ] CI 全绿（所有自动化检查通过）
+- [ ] [GATE] CI 全绿（所有自动化检查通过）
   Test: contract:C2-001
-- [ ] 构建成功（无编译错误）
+- [ ] [GATE] 构建成功（无编译错误）
   Test: contract:C2-001
-- [ ] 测试通过（单元测试 + 集成测试）
+- [ ] [GATE] 测试通过（单元测试 + 集成测试）
   Test: contract:C2-001
-- [ ] 代码规范（Lint + Format）
-  Test: contract:C2-001
-- [ ] 类型检查通过（TypeScript / 类型系统）
-  Test: contract:C2-001
-
-### 验证命令
-
-```bash
-# 一键验证（推荐）
-npm run qa
-
-# 或分步验证
-npm run typecheck   # 类型检查
-npm run lint        # 代码规范
-npm run test        # 单元测试
-npm run build       # 构建验证
-```
 
 ---
 
@@ -100,40 +116,28 @@ npm run build       # 构建验证
 
 ### 代码质量要求
 
-- [ ] 无 console.log（除非是正式日志）
-  Test: manual:code-review
-- [ ] 无注释代码（已删除）
-  Test: manual:code-review
-- [ ] 无未使用的 import
+- [ ] [ARTIFACT] 无未使用的 import
   Test: contract:C2-001
-- [ ] 无临时文件（*New.tsx, *Old.tsx, *Backup.*）
-  Test: manual:code-review
-- [ ] 单文件不超过 500 行（否则拆分）
-  Test: manual:code-review
-- [ ] 重复代码已提取为函数/组件
-  Test: manual:code-review
+- [ ] [ARTIFACT] 无临时文件（*New.tsx, *Old.tsx, *Backup.*）
+  Test: manual:node -e "const {execSync}=require('child_process');const r=execSync('git diff --name-only HEAD',{encoding:'utf8'});if(/New\.|Old\.|Backup\./.test(r))process.exit(1)"
+- [ ] [GATE] 单文件不超过 500 行
+  Test: manual:node -e "const{readFileSync}=require('fs');const lines=readFileSync('path/to/file','utf8').split('\n').length;if(lines>500)process.exit(1)"
 
 ---
 
 ## 依赖检查
 
-- [ ] package.json 版本已按 semver 规则更新
-  Test: contract:C1-001
-- [ ] 无冲突的依赖版本
-  Test: contract:C2-001
-- [ ] lockfile 已提交
-  Test: manual:git-check
+- [ ] [ARTIFACT] lockfile 已提交
+  Test: manual:node -e "require('fs').accessSync('package-lock.json')"
 
 ---
 
 ## Git 规范
 
-- [ ] Commit 信息清晰
-  Test: manual:git-check
-- [ ] 分支命名符合规范（cp-任务名 或 feature/任务名）
+- [ ] [ARTIFACT] 分支命名符合规范（cp-任务名 或 feature/任务名）
   Test: contract:H1-002
-- [ ] 无敏感信息（.env, credentials 等）
-  Test: manual:security-review
+- [ ] [ARTIFACT] 无敏感信息（.env, credentials 等）
+  Test: manual:node -e "const{execSync}=require('child_process');const r=execSync('git diff --name-only HEAD',{encoding:'utf8'});if(/\.env$|\.key$|\.pem$/.test(r))process.exit(1)"
 
 ---
 
@@ -141,10 +145,10 @@ npm run build       # 构建验证
 
 > 如果本次修复是 P0 或 P1 级别，必须更新回归契约
 
-- [ ] regression-contract.yaml 已更新
+- [ ] [ARTIFACT] regression-contract.yaml 已更新
   Test: contract:H2-008
-- [ ] 新增 RCI 条目覆盖本次修复
-  Test: manual:rci-review
+- [ ] [ARTIFACT] 新增 RCI 条目覆盖本次修复
+  Test: manual:node -e "const c=require('fs').readFileSync('regression-contract.yaml','utf8');if(!c.includes('new-rci-id'))process.exit(1)"
 
 ---
 

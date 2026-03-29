@@ -17,8 +17,13 @@
 
 version: "3.99.0"
 updated: "2026-03-29"
-# ci-trigger: 13.55.0
+# ci-trigger: 13.56.0
 changelog:
+  - version: "13.56.0"
+    date: "2026-03-29"
+    change: "[CONFIG] feat(engine): DoD Test 字段强度升级 — check-dod-mapping.cjs 新增 P2-weak-inline 弱命令检测（ls/cat/true/exit 0）和 curl-to-localhost CI 反模式检测，DOD-TEMPLATE.md 更新为可执行命令格式"
+    scope: "packages/engine/scripts/devgate/check-dod-mapping.cjs,packages/engine/templates/DOD-TEMPLATE.md,packages/engine/tests/ci/check-dod-mapping.test.ts"
+
   - version: "13.55.0"
     date: "2026-03-29"
     change: "[CONFIG] feat(engine): Playwright Evaluator 层 — Stage 3 CI 通过后验证 DoD [BEHAVIOR] 条目，devloop-check 条件 4.5 seal 文件验证"
