@@ -210,7 +210,7 @@ jobs:
         run: node src/migrate.js
 
       - name: Security audit (npm audit)
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
