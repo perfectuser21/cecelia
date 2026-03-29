@@ -87,6 +87,20 @@ else
 fi
 rm -rf "$TMPDIR_OUT"
 
+# ── 测试 7：脚本包含最近 PR 章节输出逻辑 ────────────────────────────────────
+if grep -q "dev-records\|最近 PR\|PR_SECTION" "$SCRIPT" 2>/dev/null; then
+    pass "脚本包含最近 PR 章节（dev-records API）"
+else
+    fail "脚本缺少最近 PR 章节逻辑"
+fi
+
+# ── 测试 8：脚本包含 P0 Issues 章节输出逻辑 ──────────────────────────────────
+if grep -q "P0.*blocked\|P0.*failed\|P0_SECTION" "$SCRIPT" 2>/dev/null; then
+    pass "脚本包含 P0 Issues 章节（blocked/failed P0 任务）"
+else
+    fail "脚本缺少 P0 Issues 章节逻辑"
+fi
+
 # ── 结果汇总 ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== 测试结果 ==="
