@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 2.4.0
+version: 2.5.0
 created: 2026-03-20
-updated: 2026-03-29
+updated: 2026-03-30
 changelog:
+  - 2.5.0: Task Card 生成拆为 Planner subagent（主 agent 变编排者，Planner 只关注 WHAT 不说 HOW）
   - 2.4.0: spec_review 升级为 Sprint Contract Gate — subagent 独立写测试方案后与主 agent 比对，严重分歧 = 硬 FAIL，不能继续 Stage 2
   - 2.3.0: spec_review 新增测试层（test layer）检查指令：每个 DoD 条目必须对应合适的测试类型
   - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
@@ -12,10 +13,11 @@ changelog:
   - 1.0.0: 从 01-taskcard.md 重构为 Stage 1 Spec，加入 spec_review Codex Gate
 ---
 
-# Stage 1: Spec — 读 PRD + 写 DoD + spec_review Gate
+# Stage 1: Spec — Planner subagent 生成 Task Card + spec_review Gate
 
 > **产物**：`.task-cp-{branch}.md`（需求 + 成功标准 + DoD 条目，三合一）
 > PRD 和 DoD 不再是两个文件，物理上不可能漂移。
+> **主 agent 不直接写 Task Card。** Task Card 由 Planner subagent 生成，Planner 只关注需求分析（WHAT），不接触实现细节（HOW）。
 > **Stage 1 完成后，调用 spec_review Agent subagent 执行 Sprint Contract Gate — subagent 独立生成测试方案后与主 agent 比对，达成共识才能继续 Stage 2。**
 
 ## 1.1 参数检测
@@ -53,11 +55,61 @@ fi
 
 将 KR 标题和描述注入到 Task Card 的"背景"部分。
 
-## 1.2 生成 Task Card
+## 1.1.8 Task Card 生成（Planner subagent）
 
-创建 `.task-cp-{branch}.md`：
+> **主 agent 不直接写 Task Card。** 主 agent 是编排者，Task Card 由 Planner subagent 完成。
+> Planner subagent 只接收：用户任务描述 + docs/current/SYSTEM_MAP.md（系统概览）。
+> 不接收 CLAUDE.md、Brain context、代码库细节。Planner 只说 WHAT（需求、行为描述），不说 HOW（实现路径、代码细节）。
 
-```markdown
+### 架构
+
+```
+主 agent（编排者）
+  ├─ 1.1 参数检测
+  ├─ 1.1.5 上下文补充（intent-expand）
+  ├─ 1.1.8 Task Card 生成 → spawn Planner subagent ← 你在这里
+  ├─ 1.2 接收 Planner 输出（验证格式）
+  ├─ 1.3 写入 .dev-mode
+  └─ Sprint Contract Gate（spec_review subagent）
+```
+
+### Planner subagent 调用
+
+```
+1. 准备 prompt 输入（仅以下两项，不含其他内容）：
+   a. 用户任务描述 — 从 Brain API 或用户输入获取的需求描述
+   b. SYSTEM_MAP.md 全文 — docs/current/SYSTEM_MAP.md 系统概览
+
+2. 调用 Agent subagent（subagent_type=general-purpose）
+   prompt 模板见下方
+
+3. Planner 完成后，主 agent 在 1.2 接收并验证 Task Card 格式
+```
+
+### Planner subagent prompt 模板
+
+```
+你是 Planner subagent，负责将用户需求转化为结构化的 Task Card。
+
+**CRITICAL LANGUAGE RULE: 所有输出必须使用简体中文。**
+
+## 规则
+1. **只说 WHAT 不说 HOW** — 聚焦行为描述（需要什么功能/行为），不指定实现路径（用什么技术/改哪个文件）
+2. **DoD 条目必须可验证** — 每条 DoD 必须有明确的 Test 字段（manual:/contract:/tests/ 格式）
+3. **[PRESERVE] 条目** — 修改已有文件时必须有 [PRESERVE] 条目，保护现有行为不被破坏
+4. **成功标准至少 2 条** — 使用 [ARTIFACT]/[BEHAVIOR]/[GATE] 标签
+5. **不做什么必须明确** — 防止 scope 膨胀
+
+## 用户任务描述
+{TASK_DESCRIPTION}
+
+## 系统概览（SYSTEM_MAP）
+{SYSTEM_MAP_CONTENT}
+
+## 输出格式
+
+创建 `.task-cp-{branch}.md`，严格遵循以下模板：
+
 ---
 id: task-cp-MMDDHHNN-xxx
 type: task-card
@@ -98,7 +150,65 @@ created: YYYY-MM-DD
 ## 实现方案（Stage 2 探索后填写）
 **要改的文件**: （探索后填写）
 **Scope 锚定**: （探索后填写）
+
+## 执行要求
+1. 将 Task Card 写入 `.task-cp-{branch}.md` 文件
+2. 只描述需要什么行为（WHAT），不指定代码实现路径（HOW）
+3. DoD 条目用 [ARTIFACT]/[BEHAVIOR]/[PRESERVE]/[GATE] 标签分类
+4. 完成后输出 Task Card 文件路径
 ```
+
+### 主 agent 调用代码（伪码）
+
+```javascript
+// 1. 读取任务描述和 SYSTEM_MAP
+const TASK_DESC = taskDescription  // 从 Brain API 或用户输入获取
+const SYSTEM_MAP = readFile('docs/current/SYSTEM_MAP.md')
+
+// 2. 组装 prompt（只含上述两项）
+const prompt = PLANNER_PROMPT_TEMPLATE
+  .replace('{TASK_DESCRIPTION}', TASK_DESC)
+  .replace('{SYSTEM_MAP_CONTENT}', SYSTEM_MAP)
+
+// 3. 调用 Planner subagent
+Agent({
+  subagent_type: "general-purpose",
+  description: "Planner: 生成 Task Card",
+  prompt: prompt
+})
+
+// 4. Planner 完成后，主 agent 在 1.2 验证 Task Card 格式
+```
+
+### ⚠️ Planner subagent 隔离规则（CRITICAL）
+
+| 允许传入 | 禁止传入 |
+|---------|---------|
+| 用户任务描述 | CLAUDE.md（coding 规范属于 HOW） |
+| SYSTEM_MAP.md（系统概览） | Brain API 返回的调度上下文 |
+| | 代码库细节（具体文件内容/路径） |
+| | OKR/KR/Project 层级信息 |
+| | 其他 subagent 的审查结果 |
+
+**为什么隔离**：Planner 只需要知道"要做什么"（任务描述）和"系统长什么样"（SYSTEM_MAP），不需要知道"怎么做"（代码细节）。信息越少，需求越纯粹，不会被实现细节污染。
+
+### 失败处理
+
+```
+Planner subagent 返回后：
+  ├─ Task Card 格式正确 → 继续 1.2 验证
+  └─ Task Card 格式不完整 → 主 agent 分析原因
+       ├─ 缺少必要章节 → 补充任务描述，重新 spawn Planner
+       └─ 格式错误 → 主 agent 自行修复格式（fallback）
+```
+
+---
+
+## 1.2 接收 Planner 输出（验证 Task Card 格式）
+
+> Planner subagent 生成 Task Card 后，主 agent 验证格式是否完整。
+> 检查项：成功标准存在、DoD 条目存在、Test 字段非空。
+> 验证通过后继续 1.3 写入 .dev-mode。
 
 ## 1.3.5 相关 Learning 检索
 

@@ -274,7 +274,7 @@ step_4_ship: pending
 **4-Stage Pipeline 流程图**：
 
 ```
-Stage 1 Spec → 派发 spec_review → 等 PASS
+Stage 1 Spec → Planner subagent 生成 Task Card → 派发 spec_review → 等 PASS
                                       ↓
                               Stage 2 Code（Generator subagent + 自验证）
                               └─ 派发 code_review_gate → 等 PASS
@@ -423,7 +423,7 @@ skills/dev/
 ├── SKILL.md        ← 你在这里（入口 + 流程总览）
 ├── steps/          ← 每个 Stage 详情（按需加载）
 │   ├── 00-worktree-auto.md
-│   ├── 01-spec.md          ← Stage 1: Spec + spec_review Gate
+│   ├── 01-spec.md          ← Stage 1: Spec（Planner subagent） + spec_review Gate
 │   ├── 02-code.md          ← Stage 2: Code（Generator subagent） + 自验证 + code_review_gate Gate
 │   ├── 03-integrate.md     ← Stage 3: Push + CI
 │   └── 04-ship.md          ← Stage 4: Learning + 合并 + Clean
@@ -437,7 +437,7 @@ skills/dev/
 
 ```
 Step 0: Worktree   → 创建独立 worktree
-Stage 1: Spec      → 生成 Task Card → 派发 spec_review → 等 stop hook 放行
+Stage 1: Spec      → Planner subagent 生成 Task Card → 派发 spec_review → 等 stop hook 放行
 Stage 2: Code      → Generator subagent 写代码 + 自验证（逐条跑 DoD Test）→ 派发 code_review_gate → 等 stop hook 放行
 Stage 3: Integrate → push + 创建 PR + CI → CI 通过即放行
 Stage 4: Ship      → 写 Learning + 合并 PR + 归档 + cleanup_done: true
@@ -448,7 +448,7 @@ Stage 4: Ship      → 写 Learning + 合并 PR + 归档 + cleanup_done: true
 | 新 Stage | 原步骤 | 核心变化 |
 |----------|--------|----------|
 | Step 0: Worktree | Step 00 | 完全不变 |
-| Stage 1: Spec | Step 1 TaskCard | 加 spec_review subagent Gate |
+| Stage 1: Spec | Step 1 TaskCard | Planner subagent 生成 Task Card + spec_review subagent Gate |
 | Stage 2: Code | Step 2 Code | Generator subagent 写代码 + code_review_gate（push 前审查） |
 | Stage 3: Integrate | Step 3 PR+CI | 仅 push + CI，code_review 已在 Stage 2 完成 |
 | Stage 4: Ship | Step 4 Learning + Step 5 Clean | 合并为一个 Stage |

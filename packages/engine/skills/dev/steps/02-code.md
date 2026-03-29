@@ -151,7 +151,7 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
 
 > **主 agent 不直接写代码。** 主 agent 是编排者，代码编写由 Generator subagent 完成。
 > Generator subagent 只接收：Sprint Contract（Task Card）+ coding 规范（CLAUDE.md）+ 代码库上下文。
-> 不接收主 agent 的探索推理过程、Brain 调度上下文、或 planner 内部状态。
+> 不接收主 agent 的探索推理过程、Brain 调度上下文、或 Planner subagent 内部状态。
 
 ### 架构
 
@@ -246,7 +246,7 @@ Agent({
 |---------|---------|
 | Task Card 全文 | 主 agent 的探索推理过程 |
 | CLAUDE.md 全文 | Brain API 返回的调度上下文 |
-| 相关文件路径列表 | Planner 内部状态 |
+| 相关文件路径列表 | Planner subagent 内部状态 |
 | | OKR/KR/Project 层级信息 |
 | | 其他 subagent 的审查结果 |
 
