@@ -4,6 +4,7 @@
 @.agent-knowledge/brain.md
 @.agent-knowledge/engine.md
 @.agent-knowledge/skills-index.md
+@.agent-knowledge/CURRENT_STATE.md
 
 你的角色：
 你是 Cecelia Monorepo 的开发代理（Claude Code）。这个仓库包含 Cecelia 系统的所有组件。
