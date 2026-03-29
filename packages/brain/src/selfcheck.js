@@ -20,7 +20,7 @@ const WATCHDOG_MIN_TOTAL_MEM_MB = 512;
 const WATCHDOG_MIN_RSS_KILL_MB = 50;
 
 /** Minimum acceptable migration version (DB must be >= this) */
-export const EXPECTED_SCHEMA_VERSION = '204';
+export const EXPECTED_SCHEMA_VERSION = '205';
 
 const CORE_TABLES = [
   'tasks',
