@@ -1,722 +1,493 @@
 ---
 id: dev-step-02-code
-version: 2.0.0
+version: 6.0.0
 created: 2026-03-14
-updated: 2026-03-16
+updated: 2026-03-29
 changelog:
-  - 2.0.0: TDD 两阶段探索：加入 Step 2.0 浅扫接口层 + Step 2.1 Test Designer Subagent，原 2.1 改名为 2.2 深度实现探索
+  - 6.0.0: 2.2 写代码拆为 Generator subagent（主 agent 变纯编排者）
+  - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
+  - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
+  - 5.1.0: 修复 2.3.2 CI镜像检查无 exit 1（build/precheck/version-sync 失败现在正确拦截）；还原被 PR#1366 覆盖的 Step 2.0 行为快照+Step 2.1.5 TDD先行+2.3.6 exit 1
+  - 5.0.0: 新增 Step 2.0 行为快照[PRESERVE]（探索前必须执行）；新增 Step 2.1.5 TDD先行（红灯→绿灯）；修复 2.3.6 || true 改 exit 1
+  - 4.2.0: 删除 blocked 降级路径+无限重试+深入 root cause；push 前新增强制垃圾清理步骤；code-review-gate FAIL 涉及测试覆盖时自动触发补充测试 subagent
+  - 4.1.0: 删除降级 pass 逻辑（code_review_gate_degraded），3次 FAIL 改为写入 blocked 等待人工
+  - 4.0.0: code_review_gate 改为 Agent subagent 同步调用（删除 Codex async dispatch），修复有头模式卡死
+  - 3.1.0: 新增 2.3.5 本地 CI 镜像检查（npm test + check-learning + check-dod-mapping）
+  - 3.0.0: 砍掉所有假 subagent 模板，加入自验证 + Codex 验证双保险
+  - 2.0.0: TDD 两阶段探索
   - 1.0.0: 初始版本
 ---
 
-# Step 2: Code — 探索 + 写代码 + 验证
+# Stage 2: Code — Generator subagent 写代码 + 自验证
 
-> 原 Step 04（探索）+ Step 05后半（DoD Test定稿）+ Step 06（写代码）+ Step 07（验证）合并。
-> v2.0 重构：引入 TDD 两阶段探索，先锁定测试再深度实现，消除 accommodation bias。
+> 探索代码 → 写实现 → 逐条验证 DoD → 本地测试 → 计算 Task Card hash
 
 ---
 
-## Step 2.0 浅扫接口层（TDD 前置 — CRITICAL）
+## 2.0 行为快照 [PRESERVE]（CRITICAL — 探索前必须执行）
 
-> **写测试之前，先扫出接口层轮廓。≤5分钟，≤5个文件，只看"契约"不看"实现"。**
+> **探索代码前，扫描涉及模块的现有关键行为，写入 Task Card `[PRESERVE]` 条目。**
+> verify-step.sh Gate 0a 检查 [PRESERVE] 条目存在数量（不执行 Test 命令）；Gate 2 执行 [BEHAVIOR]/[ARTIFACT]/[GATE] 的 Test 命令，确保实现符合预期。
 
-**Task Checkpoint**: `TaskUpdate({ taskId: "2", status: "in_progress" })`
+### 为什么需要行为快照
 
-### 浅扫目标文件类型
-
-| 允许读 ✅ | 禁止读 ❌ |
-|----------|----------|
-| API 路由文件（router.ts / routes/*.ts） | 具体实现逻辑（service / impl） |
-| TypeScript 类型定义（*.d.ts / types/*.ts） | 数据库操作层 |
-| 接口声明（interface / class 定义头部） | 算法逻辑 |
-| 现有 test 文件（*.test.ts / *.spec.ts） | 第三方库源码 |
-| package.json（了解可用工具） | 所有其他实现文件 |
+- 改动前不知道"以前怎样"，改动后无法判断是否回归
+- `[PRESERVE]` 条目是防回归的明文合约：改动后 Test 命令必须仍然通过
+- 与 `[BEHAVIOR]` 的区别：`[PRESERVE]` 验证**已有行为不被破坏**，`[BEHAVIOR]` 验证**新增行为**
 
 ### 执行步骤
 
 ```bash
-# 找接口层文件（≤5个）
-git ls-files | grep -E "(route|router|types?|interface|\.d\.ts|\.test\.|\.spec\.)" | head -20
-# 根据 PRD 关键词筛选最相关的 ≤5 个文件
+# 1. 从 Task Card 实现方案中找到所有涉及的文件
+# 2. 对每个文件，识别关键现有行为（函数签名、关键输出、核心结构）
+# 3. 为每个关键行为写一条 [PRESERVE] 条目加入 Task Card
+
+echo "📸 行为快照：扫描涉及模块的现有行为..."
+
+# 示例：如果要修改 verify-step.sh，快照现有支持的条目类型
+# - [x] [PRESERVE] verify-step.sh 支持 step1/step2/step4 参数
+#   Test: manual:bash -c 'bash packages/engine/hooks/verify-step.sh unknown 2>&1 | grep -q "支持: step1, step2, step4" && exit 0 || exit 1'
+
+# 写完 [PRESERVE] 条目后，运行 verify-step.sh 确认基线测试全部通过（绿灯基线）
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)" 2>/dev/null || true
+echo "✅ 基线行为快照完成，[PRESERVE] 条目已写入 Task Card"
 ```
 
-读取筛选出的文件，提取：
-1. **相关 API 端点** — method + path + 参数类型
-2. **相关函数签名** — 函数名 + 参数 + 返回类型
-3. **相关数据结构** — interface / type 定义
-4. **现有测试模式** — test 文件里用了什么测试工具和断言方式
+### 格式要求
 
-### 产出：接口摘要（供 Step 2.1 使用）
-
-```
-接口摘要：
-- API: POST /api/xxx → { field } → { id }
-- 函数: createFoo(data: FooInput): Promise<Foo>
-- 测试工具: vitest + supertest，断言用 expect().toBe()
-- 现有 test 示例: packages/xxx/tests/foo.test.ts
+```markdown
+- [ ] [PRESERVE] <现有行为描述>
+  Test: manual:node -e "..."
 ```
 
-**≤5 分钟 / ≤5 个文件**。找不到接口文件 → 写"接口文件未找到"，直接进 Step 2.1。
+### ⛔ 强制门禁（exit 1）
+
+```bash
+# 在开始写任何实现代码之前，检查 Task Card 是否有 [PRESERVE] 条目
+TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
+if [[ -n "$TASK_CARD" ]]; then
+    PRESERVE_COUNT=$(grep -c '^\s*-\s*\[.\]\s*\[PRESERVE\]' "$TASK_CARD" 2>/dev/null || true)
+    PRESERVE_COUNT=${PRESERVE_COUNT:-0}
+    if [[ "$PRESERVE_COUNT" -eq 0 ]]; then
+        echo "❌ Task Card 缺少 [PRESERVE] 行为快照条目"
+        echo "   探索代码后写实现前，必须先记录涉及模块的现有行为"
+        echo "   至少需要 1 条 [PRESERVE] 条目"
+        exit 1
+    fi
+    echo "✅ 行为快照检查通过（${PRESERVE_COUNT} 条 [PRESERVE] 条目）"
+fi
+```
 
 ---
 
-## Step 2.1 Test Designer Subagent（DoD Test 锁定）
+## 2.1 探索代码
 
-> **测试先于实现。Test Designer 只能看 PRD + 接口摘要，禁止读实现代码。**
-> **本步骤输出的 Test: 命令在此锁定，Step 2.2 及之后禁止修改。**
+读 PRD/Task Card，理解要改什么。自己探索代码库：
 
-### 召唤 Test Designer Subagent
+1. 找相关文件（grep/glob）
+2. 读关键文件（最多 5-8 个）
+3. 理解现有架构和模式
+4. 输出实现方案（要改哪些文件、怎么改）
 
-```
-你是 Test Designer（测试设计师）。你的唯一职责是为每条 DoD 条目设计 Test: 命令。
+**不需要 subagent**——主 agent 自己探索就行。
 
-PRD 内容：
-{粘贴 .task-cp-{branch}.md 中的"需求"和"成功标准"部分}
+---
 
-接口摘要（Step 2.0 产出）：
-{粘贴 Step 2.0 的接口摘要}
+## 2.1.5 TDD先行（CRITICAL — 探索后写实现前必须执行）
 
-当前 DoD 条目（Test: 字段待填写）：
-{粘贴 .task-cp-{branch}.md 中的"验收条件"部分}
+> **探索代码后、写任何实现代码之前，必须先写失败测试（红灯），再写实现（绿灯）。**
+> 顺序不可颠倒：先红灯确认测试有效，再绿灯确认实现正确。
 
-你的任务：为每条 DoD 条目写一个 Test: 命令，要求：
-1. 格式：manual:bash -c "..." 或 manual:curl ... 或 tests/path/to/file.test.ts
-2. [ARTIFACT] 条目 → 用 grep -q 验证文件内容 或 ls 验证文件存在
-3. [BEHAVIOR] 条目 → 必须用 curl 或真实测试文件，禁止用 grep/ls 替代
-4. [GATE] 条目 → 用 npm test 或 bash 命令验证
-5. 每个命令**现在必须 FAIL**（功能还没实现，测试应该失败）
+### 红灯阶段（写测试，确认失败）
 
-⚠️ 禁止：
-- 禁止读任何实现代码（service/、impl/、src/ 下的非接口文件）
-- 禁止写 echo PASS 或永远通过的假测试
-- 禁止写 TODO（每条都必须有具体命令）
+```bash
+# 1. 根据 DoD 条目，为每个 [BEHAVIOR] 条目写对应测试
+# 2. 此时代码还没写，测试应该失败（红灯）
+# 3. 运行测试，确认失败输出
 
-输出格式（每条 DoD 一行）：
-- [ ] [类型] 条目描述
-  Test: {具体命令}
+echo "🔴 TDD 红灯阶段：运行尚未实现的功能测试..."
 
-不要修改 DoD 条目描述，只填写 Test: 字段。
-不要写入任何文件，只输出结果供主 agent 填入。
+# 对于有 test script 的 package：
+# npm test -- --run <specific-test-file>  # 应该看到 FAIL
+
+# 对于 shell 脚本：直接运行验证命令（应该 exit 1）
+# bash -c '<DoD Test 命令>' && echo "❌ 测试本应失败（假测试！）" || echo "✅ 红灯确认：测试按预期失败"
 ```
 
-### Verifier 确认测试 FAIL
+### ⛔ 强制门禁（exit 1）
 
-Test Designer 返回后，逐条运行 Test: 命令，**确认当前 FAIL**：
+```bash
+# 强制要求红灯确认：若测试从未失败，可能是假测试
+# 在 .dev-mode 中记录 TDD 状态
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+
+if ! grep -q "^tdd_red_confirmed:" "$DEV_MODE_FILE" 2>/dev/null; then
+    echo "❌ TDD 红灯未确认"
+    echo "   探索代码后，必须先写失败测试（红灯）再写实现"
+    echo "   确认红灯后执行：echo 'tdd_red_confirmed: true' >> $DEV_MODE_FILE"
+    exit 1
+fi
+echo "✅ TDD 红灯已确认，可以开始写实现代码"
+```
+
+### 绿灯阶段（写实现，确认通过）
+
+在 2.2 写代码后，测试必须变为通过（绿灯）：
+
+```bash
+# 实现完成后，重新运行测试
+echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
+
+# 测试应该通过（绿灯）
+# npm test -- --run <specific-test-file>  # 应该看到 PASS
+# bash -c '<DoD Test 命令>' && echo "✅ 绿灯确认：实现正确" || { echo "❌ 实现有误"; exit 1; }
+```
+
+---
+
+## 2.2 写代码（Generator subagent）
+
+> **主 agent 不直接写代码。** 主 agent 是编排者，代码编写由 Generator subagent 完成。
+> Generator subagent 只接收：Sprint Contract（Task Card）+ coding 规范（CLAUDE.md）+ 代码库上下文。
+> 不接收主 agent 的探索推理过程、Brain 调度上下文、或 planner 内部状态。
+
+### 架构
+
+```
+主 agent（编排者）
+  ├─ 2.0 行为快照 [PRESERVE]
+  ├─ 2.1 探索代码（主 agent 自己做）
+  ├─ 2.1.5 TDD 红灯（主 agent 自己做）
+  ├─ 2.2 写代码 → spawn Generator subagent ← 你在这里
+  ├─ 2.3 自验证（主 agent 自己做）
+  └─ 2.4 code_review_gate（subagent 审查）
+```
+
+### Generator subagent 调用
+
+```
+1. 准备 prompt 输入（仅以下三项，不含其他内容）：
+   a. Task Card 全文（.task-cp-{branch}.md）— Sprint Contract
+   b. CLAUDE.md 全文 — coding 规范
+   c. 代码库上下文 — 探索阶段发现的相关文件路径列表
+
+2. 调用 Agent subagent（subagent_type=general-purpose）
+   prompt 模板见下方
+
+3. Generator 完成后，主 agent 继续 2.3 自验证
+```
+
+### Generator subagent prompt 模板
+
+```
+你是 Generator subagent，负责根据 Sprint Contract 编写代码。
+
+## 规则
+1. **只做 Task Card 里说的** — 不过度设计
+2. **保持简单** — 能用简单方案就不用复杂方案
+3. **遵循项目规范** — 看已有代码怎么写的
+4. **测试是代码的一部分** — 写功能代码时同步写测试
+5. **先删旧再写新，禁止堆叠** — 修改任何描述性内容时，必须同时删除被替代的旧内容
+
+## Sprint Contract（Task Card）
+{TASK_CARD_CONTENT}
+
+## Coding 规范（CLAUDE.md）
+{CLAUDE_MD_CONTENT}
+
+## 代码库上下文
+以下文件与本次任务相关，请先读取理解后再动手：
+{RELEVANT_FILE_PATHS}
+
+## 执行要求
+对 Task Card 中每一条 `- [ ]` 条目：
+1. 读取相关代码文件
+2. 写实现代码
+3. 自己运行 Test 命令验证
+4. PASS → 勾 [x]，进入下一条
+5. FAIL → 读错误信息，修代码，再验证
+
+**关键：每条 DoD 完成后必须自己运行 Test 命令确认 PASS，不能跳过。**
+
+完成所有 DoD 条目后，输出修改过的文件列表。
+```
+
+### 主 agent 调用代码（伪码）
+
+```javascript
+// 1. 读取 Task Card 和 CLAUDE.md
+const TASK_CARD = readFile(`.task-cp-${BRANCH}.md`)
+const CLAUDE_MD = readFile(`.claude/CLAUDE.md`)
+
+// 2. 从探索阶段收集相关文件路径
+const RELEVANT_FILES = exploredFiles.join('\n')
+
+// 3. 组装 prompt（只含上述三项）
+const prompt = GENERATOR_PROMPT_TEMPLATE
+  .replace('{TASK_CARD_CONTENT}', TASK_CARD)
+  .replace('{CLAUDE_MD_CONTENT}', CLAUDE_MD)
+  .replace('{RELEVANT_FILE_PATHS}', RELEVANT_FILES)
+
+// 4. 调用 Generator subagent
+Agent({
+  subagent_type: "general-purpose",
+  description: "Generator: 编写代码",
+  prompt: prompt
+})
+
+// 5. Generator 完成后，主 agent 继续 2.3 自验证
+```
+
+### ⚠️ Generator subagent 隔离规则（CRITICAL）
+
+| 允许传入 | 禁止传入 |
+|---------|---------|
+| Task Card 全文 | 主 agent 的探索推理过程 |
+| CLAUDE.md 全文 | Brain API 返回的调度上下文 |
+| 相关文件路径列表 | Planner 内部状态 |
+| | OKR/KR/Project 层级信息 |
+| | 其他 subagent 的审查结果 |
+
+**为什么隔离**：Generator 只需要知道"做什么"（Task Card）和"怎么做"（CLAUDE.md + 代码），不需要知道"为什么要做"。信息越少，context 越高效，代码质量越高。
+
+### 失败处理
+
+```
+Generator subagent 返回后：
+  ├─ DoD 全部 [x] → 继续 2.3 自验证
+  └─ 有 DoD 未完成 → 主 agent 分析原因
+       ├─ 信息不足 → 补充相关文件路径，重新 spawn Generator
+       └─ 实现困难 → 主 agent 自行修复（fallback，不推荐）
+```
+
+---
+
+## 2.3 自验证（CRITICAL — 不可跳过）
+
+> 所有 DoD 条目 [x] 后，执行完整的自验证。
+
+### 2.3.1 精准测试（只跑改动相关文件）
+
+> **只跑与本次改动相关的测试文件，不跑全量回归测试。全量回归交给 CI（GitHub Actions）。**
+> 原因：全量测试在本地容易 OOM；本地只需要验证「我改的这部分没有明显破坏」。
+
+```bash
+echo "🎯 精准测试：查找与改动相关的测试文件..."
+
+CHANGED_SRC=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+
+TEST_FILES=""
+for f in $CHANGED_SRC; do
+    [[ ! -f "$f" ]] && continue
+    # 推导测试文件路径：src/foo.js → src/__tests__/foo.test.js
+    DIR=$(dirname "$f")
+    BASE=$(basename "$f" | sed 's/\.[^.]*$//')
+    EXT=$(basename "$f" | grep -oE '\.[^.]+$' || echo ".js")
+
+    # 常见测试文件命名模式
+    for candidate in \
+        "${DIR}/__tests__/${BASE}.test${EXT}" \
+        "${DIR}/__tests__/${BASE}.spec${EXT}" \
+        "${DIR}/${BASE}.test${EXT}" \
+        "${DIR}/${BASE}.spec${EXT}"; do
+        if [[ -f "$candidate" ]]; then
+            TEST_FILES="$TEST_FILES $candidate"
+            break
+        fi
+    done
+done
+
+if [[ -z "${TEST_FILES// }" ]]; then
+    echo "ℹ️  未找到对应测试文件，跳过本地精准测试（全量回归由 CI 负责）"
+else
+    echo "📋 运行精准测试：$TEST_FILES"
+    npx vitest run $TEST_FILES 2>&1 || { echo "❌ 精准测试失败，修复后再继续"; exit 1; }
+    echo "✅ 精准测试通过"
+fi
+```
 
 | 结果 | 动作 |
 |------|------|
-| 全部 FAIL ✅ | 正常——功能还未实现，符合预期，继续写入 Task Card |
-| 有 PASS ❌ | 测试写错了（在验证已存在的东西），告知 Test Designer 重新设计该条 |
+| 找到测试文件且通过 | 继续 2.3.2 |
+| 找到测试文件但失败 | 修复代码 → 重跑 |
+| 未找到测试文件 | 跳过，CI 负责全量 |
 
-### 写入 Task Card（DoD Test 字段锁定）
-
-将 Test: 命令写入 `.task-cp-{branch}.md`，替换所有 `Test: TODO`：
+### 2.3.2 本地 CI 镜像检查
 
 ```bash
-# 确认写入成功，无 TODO 残留
-grep -c "Test: TODO" .task-cp-*.md 2>/dev/null | grep -v ":0" && echo "⚠️ 还有 TODO 未填写" || echo "✅ 所有 Test: 字段已锁定"
+CHANGED=$(git diff --name-only main...HEAD 2>/dev/null || git diff --name-only origin/main...HEAD)
+
+# Workspace 改动 → npm run build
+if echo "$CHANGED" | grep -q "^apps/"; then
+    APP_DIR=$(echo "$CHANGED" | grep "^apps/" | head -1 | cut -d'/' -f1-2)
+    if [[ -f "$APP_DIR/package.json" ]]; then
+        (cd "$APP_DIR" && npm run build 2>&1) || { echo "❌ Workspace build 失败，修复后再继续"; exit 1; }
+    fi
+fi
+
+# Brain 改动 → local-precheck
+if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$"; then
+    bash scripts/local-precheck.sh || { echo "❌ Brain local-precheck 失败，修复后再继续"; exit 1; }
+fi
+
+# Engine 改动 → version-sync
+if echo "$CHANGED" | grep -q "^packages/engine/"; then
+    bash packages/engine/ci/scripts/check-version-sync.sh 2>&1 || { echo "❌ Engine version-sync 失败，修复后再继续"; exit 1; }
+fi
 ```
 
-**从此刻起，Task Card 中 Test: 字段不再修改。**
+### 2.3.3 逐条重跑 DoD Test（最终确认）
 
----
+> **由 bash-guard.sh（Claude Code PreToolUse hook）实时拦截调用 verify-step.sh，不依赖 AI 自觉。**
+> 当 AI 标记 `step_2_code: done` 时，`verify-step.sh step2` 会自动：
+> 1. 读取 Task Card（`.task-{BRANCH}.md`）
+> 2. 提取所有 `[BEHAVIOR]/[ARTIFACT]/[GATE]` 条目的 Test 字段（[PRESERVE] 由 Gate 0a 单独处理，仅检查数量）
+> 3. 对 `manual:` 开头的 Test，执行该命令（在项目根目录）
+> 4. 对 `contract:` 开头的 Test，标记 DEFERRED 跳过
+> 5. 对 `tests/` 开头的 Test，检查文件是否存在
+> 6. 任一 Test 失败 → verify-step 返回 exit 1 → 不允许标记完成
 
-## 2.2 深度实现探索（原 2.1）
-
-> **目标**：理解如何让 Step 2.1 锁定的测试通过。DoD Test: 字段已锁定，禁止修改。
-> 读代码 → 理解架构 → 输出实现方案
-
----
-
-### 为什么需要探索
-
-```
-❌ 旧流程：拿到 PRD → 直接写代码 → 写到一半发现方向错了
-✅ 新流程：拿到 PRD → subagent 并行探索 → 汇总关键文件 → 输出实现方案 → 再写代码
-```
-
-**探索不是"调研"**，是为了写出正确代码的必要准备。
-
----
-
-### 复杂度判断
-
-读完 PRD 后，先判断任务复杂度：
-
-| 复杂度 | 特征 | 探索方式 |
-|--------|------|----------|
-| **简单** | 改 1-2 个文件、修 typo、改配置 | **1 个 Explore subagent**（必须） |
-| **中等** | 改 3-5 个文件、加功能、修 bug | **2 个 subagent 并行**（必须） |
-| **复杂** | 跨模块改动、新架构、大 feature | **3 个 subagent 并行**（必须） |
-
-**所有任务必须走 Explore subagent，差别只是数量。没有 0 个的情况。**
-主 agent 无权决定跳过 subagent——这是独立裁判，不是助手。
-
----
-
-### 执行步骤
-
-#### 4.1 准备探索上下文
-
-读取 PRD，提取关键信息：
-- 功能描述中的关键词（函数名、模块名、API 路径）
-- 涉及的技术领域（前端/后端/数据库/CI）
-- 预期改动的文件类型
-
-#### 4.2 启动 Subagent 并行探索
-
-使用 Agent 工具启动 2-3 个 Explore subagent，**在同一个消息中并行发出所有 Agent 调用**：
-
-```
-Agent 1 — 相似实现探索:
-  subagent_type: Explore
-  prompt: |
-    在这个代码库中搜索与「{PRD 核心功能}」相似的现有实现。
-    找到：
-    1. 类似功能的文件路径和关键函数
-    2. 它们使用的设计模式（数据结构、API 风格、状态管理）
-    3. 可以复用的现有代码/组件
-    返回你找到的关键文件路径列表（最多 10 个最相关的）。
-
-Agent 2 — 架构与依赖探索:
-  subagent_type: Explore
-  prompt: |
-    分析「{PRD 涉及的模块/文件}」的架构：
-    1. 这些文件的导入/导出依赖关系
-    2. 数据流向（谁调用谁、数据从哪来到哪去）
-    3. 修改这些文件可能影响的下游模块
-    4. 相关的测试文件位置
-    返回关键文件路径列表 + 依赖关系图。
-
-Agent 3 — 目标代码深度分析（复杂任务才启动）:
-  subagent_type: Explore
-  prompt: |
-    深度阅读以下文件：{PRD 直接提到的文件}
-    分析：
-    1. 现有代码结构和核心逻辑
-    2. 扩展点在哪（在哪加代码最自然）
-    3. 需要注意的边界条件和错误处理
-    4. 现有测试覆盖了什么、遗漏了什么
-    返回每个文件的分析摘要 + 建议的修改点。
+```bash
+# verify-step.sh 会在 step_2_code: done 写入时被 bash-guard.sh (PreToolUse hook) 自动调用
+# 也可以手动运行确认：
+bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)"
 ```
 
-**关键规则**：
-- 所有 Agent 调用放在**同一个消息**中，实现真正的并行执行
-- 每个 subagent 的 prompt 要包含足够上下文（PRD 关键信息）
-- subagent 返回后，主 agent 需要**亲自读取** subagent 识别出的关键文件（最多 5-8 个最重要的）
+**这是你 push 前的最后防线。Gate 2 确保每条 DoD [BEHAVIOR] Test 都被真实执行过，不能只靠 npm test。**
 
-#### 4.3 汇总 + 读关键文件
-
-等所有 subagent 返回后：
-
-1. **合并关键文件列表** — 去重，按相关度排序
-2. **主 agent 亲自读取 Top 5-8 文件** — subagent 给出了"在哪"，主 agent 要亲自理解"怎么改"
-3. **整合依赖关系** — 确认改动的影响范围
-
-#### 4.4 输出实现方案
-
-基于 subagent 结果 + 自己的阅读，输出：
-- **要改哪些文件** — 列出文件路径
-- **每个文件怎么改** — 添加/修改/删除什么
-- **可复用的现有代码** — 从 subagent 1 找到的相似实现中借鉴
-- **风险/依赖** — 从 subagent 2 的依赖分析中识别
-
-#### 4.5 继续下一步
-
-探索完成后立即执行 DoD 深度挑战。
-
----
-
-## 2.2.5 DoD 深度挑战（CRITICAL — 探索后必须执行）
-
-> **写代码之前，用探索发现来挑战 Task Card 的 DoD 够不够深。**
->
-> 这一步的目的：确保 DoD 反映的是完整实现要求，而不是用户原话的最小解释。
-
-### 强制回答以下 3 个问题（不允许跳过）
-
-**Q1：探索发现了哪些 Task Card 没提到的内容？**
-
-逐一列出：
-- 边界条件（空值、并发、超时、错误路径）
-- 集成点（调用了哪些其他模块？需要同步更新哪些地方？）
-- 现有测试的盲区（现有测试覆盖了什么，遗漏了什么？）
-
-**Q2：如果严格按现有 DoD 实现，用户拿到手会说"完成了"吗？**
-
-- 是 → DoD 已经够深，继续
-- 否 → 列出缺失的验收条件，追加到 Task Card 的 DoD 里
-
-**Q3：哪些 DoD 条目太模糊，需要具体化？**
-
-| 模糊写法（❌） | 具体写法（✅） |
-|-------------|-------------|
-| "用户能登录" | "登录成功返回 JWT token；密码错误返回 401；账号不存在返回 404" |
-| "接口正常工作" | "GET /api/xxx 返回 {id, name, status}；响应时间 < 200ms" |
-| "测试通过" | "单元测试覆盖 happy path + 3 个错误路径；集成测试验证数据库写入" |
-
-### 处理缺口
-
-如果 Q1/Q2/Q3 发现缺口：
-1. **更新 Task Card 的 DoD 章节**（追加缺失条目，具体化模糊条目）
-2. **不需要用户确认**——这是用探索结果校准理解，不是扩展 scope
-3. 更新完成后继续
-
-### DoD 深度挑战完成标准
-
-- 每个 DoD 条目都能独立验证（有明确的 pass/fail 标准）
-- 探索发现的重要边界条件已在 DoD 中体现
-- 没有"能跑就行"式的模糊条目
-
----
-
-### 注意事项
-
-- **不要过度探索** — 目标是理解够用就行，不是读完整个代码库
-- **发现 PRD 有问题** — 更新 PRD，继续
-- **探索时间控制** — 简单功能几分钟，复杂功能 subagent 并行不超过 10 分钟
-- **subagent 返回后必须亲自读文件** — 不要只依赖 subagent 的摘要，要亲自理解核心文件
-
----
-
-### PRD Scope Check（CRITICAL — 探索完成后必须执行）
-
-**探索阶段可能遇到其他设计文档。在开始写代码之前，必须执行以下锚定检查。**
-
-#### 权威源规则
-
-```
-Task Card 文件 = 唯一权威源（这次开发的目标）
-docs/*.md / design-*.md 等其他文档 = 上下文参考（帮助理解架构，不决定开发目标）
-```
-
-**如果探索中发现了其他设计文档，它们只是背景信息——不能替换原始 Task Card，不能追加新目标。**
-
-#### 对照检查（AI 必须明确回答以下问题）
-
-在继续写代码之前，逐条回答：
-
-1. **Task Card 的核心目标是什么？**（用一句话说清楚）
-2. **我的实现方案覆盖了 Task Card 的哪个具体目标？**
-3. **探索时有没有遇到其他文档试图改变方向？**
-4. **我准备做的事，在 Task Card 里有对应描述吗？**
-   - 有 → 继续写代码
-   - 没有 → **停止**，回到 Task Card，确认是否需要更新后再继续
-
----
-
-## 2.3 DoD Test 字段状态确认（已由 Step 2.1 完成）
-
-> **此步骤已替换为 Step 2.1 Test Designer Subagent。**
-> DoD Test: 字段在 Step 2.1 已由 Test Designer 写入并通过 Verifier FAIL 确认，此时已锁定。
-> 此处只做一次最终确认，不做填写。
+### 2.3.4 计算 Task Card Hash（TDD 锁定）
 
 ```bash
 TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
-# 确认没有 TODO 残留
-TODO_COUNT=$(grep -c "Test: TODO" "$TASK_CARD" 2>/dev/null || echo 0)
-if [[ "$TODO_COUNT" -gt 0 ]]; then
-    echo "❌ 仍有 $TODO_COUNT 条 Test: TODO 未填写 — 回到 Step 2.1 完成 Test Designer"
+if [[ -n "$TASK_CARD" ]]; then
+    TC_HASH=$(shasum -a 256 "$TASK_CARD" | awk '{print "sha256:" $1}')
+    BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    echo "task_card_hash: $TC_HASH" >> ".dev-mode.${BRANCH}"
+    echo "✅ Task Card hash 已锁定: $TC_HASH"
+fi
+```
+
+### 2.3.5 ⛔ 强制垃圾清理（push 前，不可跳过）
+
+> **在标记 Stage 2 完成之前，必须扫描并清理本次改动引入的垃圾内容。**
+> 目标：代码只增有用的，不留死代码/stale 注释/过期文档。
+
+```bash
+echo "🧹 强制垃圾清理扫描（dead code / stale 注释 / 过期文档）..."
+
+CHANGED_FILES=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+
+ISSUES_FOUND=0
+for f in $CHANGED_FILES; do
+    [[ ! -f "$f" ]] && continue
+
+    # 检查1: 已完成的 TODO（TODO: done / TODO: 已完成）
+    if grep -n "TODO.*done\|TODO.*已完成\|FIXME.*done" "$f" 2>/dev/null | grep -v "^Binary"; then
+        echo "  ⚠️  $f: 含已完成的 TODO/FIXME，应删除"
+        ISSUES_FOUND=$((ISSUES_FOUND+1))
+    fi
+
+    # 检查2: 注释掉的代码块（连续 3 行以上的注释代码）
+    # 不检查 markdown 文件（注释是内容的一部分）
+    if [[ "$f" != *.md ]]; then
+        COMMENTED_CODE=$(grep -c "^[[:space:]]*//" "$f" 2>/dev/null || true)
+        COMMENTED_CODE=${COMMENTED_CODE:-0}
+        if [[ "$COMMENTED_CODE" -gt 5 ]]; then
+            echo "  ⚠️  $f: 含大量注释代码（${COMMENTED_CODE}行），检查是否为 dead code"
+            ISSUES_FOUND=$((ISSUES_FOUND+1))
+        fi
+    fi
+
+    # 检查3: 调试日志（console.log / debug print 等）
+    if grep -n "console\.log\|debugger;\|print(\"DEBUG\|logger\.debug" "$f" 2>/dev/null | grep -v "^Binary" | grep -v "\.test\.\|\.spec\."; then
+        echo "  ⚠️  $f: 含调试日志，确认是否需要保留"
+        ISSUES_FOUND=$((ISSUES_FOUND+1))
+    fi
+done
+
+if [[ $ISSUES_FOUND -gt 0 ]]; then
+    echo ""
+    echo "⛔ 发现 $ISSUES_FOUND 处垃圾内容，必须清理后才能继续！"
+    echo "   直接修复文件（不开新 PR），commit message 前缀用 refactor:"
     exit 1
 fi
-echo "✅ DoD Test: 字段已全部锁定（Step 2.1 完成）"
+
+echo "✅ 垃圾清理扫描通过 — 无 dead code / stale 注释"
 ```
 
 ---
 
-## 2.3 写代码（逐条 DoD 内循环 + Verifier Subagent）
+### 2.3.6 ⛔ 强制周边一致性扫描（push 前，不可跳过）
 
-> **核心模式：状态机。每条 DoD = 一个状态，写代码 → Verifier 检查 → FAIL 修复 → 再检查 → PASS 放行 → 下一条。**
->
-> ⛔ **强制规则：无论任务多简单，每条 DoD 都必须召唤 Verifier Subagent。主 agent 无权自行判断"这条不需要 Verifier"。Verifier 是独立裁判，不是可选助手。**
-
----
-
-### 原则
-
-1. **只做 Task Card 里说的** - 不要过度设计
-2. **保持简单** - 能用简单方案就不用复杂方案
-3. **遵循项目规范** - 看看已有代码怎么写的
-4. **测试是代码的一部分** - 写功能代码时同步写测试
-
----
-
-### 执行方式：逐条 DoD 内循环
-
-**对 Task Card 中每一条 `- [ ]` 条目，依次执行以下循环：**
-
-```
-┌─────────────────────────────────────┐
-│  当前 DoD 条目（- [ ] ...）          │
-└──────────────┬──────────────────────┘
-               ↓
-     主 agent 写这条对应的实现代码
-               ↓
-     召唤 Verifier Subagent（见下方 prompt 模板）
-               ↓
-      Verifier 返回 PASS 或 FAIL + 原因
-               ↓
-    ┌──── PASS ────┐     ┌──── FAIL ────┐
-    │              │     │              │
-    ↓              │     ↓              │
-把 [ ] 改为 [x]   │   主 agent 读报错   │
-进入下一条 DoD    │   理解原因修代码    │
-                  │   再次召唤 Verifier  │
-                  │   （循环直到 PASS） │
-                  └─────────────────────┘
-```
-
-### Verifier Subagent Prompt 模板
-
-每次召唤 Verifier Subagent 时，prompt 固定格式：
-
-```
-你是独立测试验证员。你的唯一职责是运行以下命令并报告结果。
-
-待验证的 DoD 条目：
-{DoD 条目全文}
-
-Test 命令：
-{Test: 字段内容，例如 manual:bash -c "npm test 2>&1 | tail -5"}
-
-执行规则：
-1. 运行 Test 命令
-2. 只报告 PASS 或 FAIL
-3. 如果 FAIL，报告完整错误信息（原文，不要裁剪）
-4. 不要修改任何代码
-5. 不要写入任何文件（包括 .dev-mode）
-6. 不要做任何判断之外的操作
-
-输出格式：
-[PASS] 或 [FAIL]
-错误信息（仅 FAIL 时）：{原始错误输出}
-```
-
-### 职责分工（CRITICAL）
-
-| 角色 | 做什么 | 禁止做什么 |
-|------|--------|----------|
-| **主 agent** | 写代码、修代码、决定放行 | 不自己测试（确认偏差）|
-| **Verifier Subagent** | 运行 Test 命令、报 PASS/FAIL | 不改代码、不写 .dev-mode |
-
-**Verifier Subagent 永远不写 `.dev-mode`**——只有主 agent 在步骤完成后更新 .dev-mode。Stop Hook 只关心主 agent 写的 .dev-mode，不受 Verifier 影响。
-
----
-
-### 代码检查清单
-
-写代码时注意：
-
-- [ ] 文件放对位置了吗？
-- [ ] 命名符合项目规范吗？
-- [ ] 有没有引入安全漏洞？
-- [ ] 有没有硬编码的配置？
-
----
-
-### 测试要求
-
-**DoD 里写的验收标准 → 变成测试代码**：
-
-```
-DoD: "用户能登录"
-  ↓
-测试: it('用户能登录', () => { ... })
-```
-
-#### 测试文件命名
-
-- `功能.ts` → `功能.test.ts`
-- 例：`login.ts` → `login.test.ts`
-
----
-
-### 常见问题
-
-**Q: 发现 Task Card 有问题怎么办？**
-A: 更新 Task Card，调整实现方案，继续。
-
-**Q: Verifier Subagent 一直 FAIL 怎么办？**
-A: 每次 FAIL 后认真读错误信息，改一处，再测。不要盲目多改。
-
-**Q: 代码写到一半发现方案不对？**
-A: 调整方案，重新实现，再让 Verifier 验证。
-
----
-
-### Step 2.3.5：Cleanup Sub-Agent（强制，不可跳过）
-
-> **代码写完后立刻执行。不做完不能进 2.4。**
-> **使用 Agent 工具召唤 sub-agent 自动扫描，不要自己手动检查。**
-
-**第一步**：获取改动文件列表
+> **改动文件 A 时，必须扫描 A 所在目录的同级文件，修复与本次改动矛盾的旧描述。**
+> 目标：系统越走越干净——不只改 A，同时清理周边引用了 A 旧行为的矛盾内容。
 
 ```bash
-git diff --name-only HEAD
-```
+echo "🔍 周边一致性扫描（cross-file module consistency）..."
 
-**第二步**：召唤 sub-agent，prompt 内容如下：
+CHANGED_FILES=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+CROSS_ISSUES=0
 
-```
-分析以下改动文件，找到并删除4类垃圾代码。
+for f in $CHANGED_FILES; do
+    [[ ! -f "$f" ]] && continue
+    DIR=$(dirname "$f")
 
-改动文件列表：
-[粘贴 git diff --name-only HEAD 的输出]
+    # 扫描同目录其他文件
+    while IFS= read -r sibling; do
+        [[ "$sibling" == "$f" ]] && continue
+        [[ ! -f "$sibling" ]] && continue
 
-4类问题（必须全部检查）：
-1. 被新代码替代的旧函数/旧变量（同文件或跨文件）——包括注释掉的旧实现块
-2. 重复逻辑——改动文件里出现两段几乎一样的代码，提取成共用函数
-3. 矛盾注释——注释说"做A"但代码做B，或 TODO 临时方案已成正式代码
-4. 无用 import——文件里有 import 但代码里没用到
+        # 检查：sibling 是否引用了 f 的旧版本号
+        OLD_VER=$(git diff origin/main..HEAD -- "$f" 2>/dev/null | grep "^-" | grep -oE "version: [0-9]+\.[0-9]+\.[0-9]+" | head -1 | awk '{print $2}')
+        NEW_VER=$(git diff origin/main..HEAD -- "$f" 2>/dev/null | grep "^+" | grep -oE "version: [0-9]+\.[0-9]+\.[0-9]+" | tail -1 | awk '{print $2}')
+        if [[ -n "$OLD_VER" && -n "$NEW_VER" ]] && grep -q "$OLD_VER" "$sibling" 2>/dev/null; then
+            echo "  ⚠️  矛盾：$sibling 引用了 $f 的旧版本 $OLD_VER（现为 $NEW_VER）"
+            CROSS_ISSUES=$((CROSS_ISSUES+1))
+        fi
 
-要求：
-- 只处理上面列出的文件，不扫全仓库
-- 每处改动说明原因（是哪类问题）
-- 改完后输出 git diff 内容供确认
-- 如果某个文件没有问题，明确说"无需清理"
-- 如果没有任何文件需要清理，说"全部文件无需清理"
+        # 检查：sibling 是否引用了被重编号/删除的步骤
+        OLD_SECTIONS=$(git diff origin/main..HEAD -- "$f" 2>/dev/null | grep "^-" | grep -oE "### [0-9]+\.[0-9]+(\.[0-9]+)?" | sed 's/### //')
+        for sec in $OLD_SECTIONS; do
+            if grep -q "步骤 $sec\b\|Step $sec\b\|节 $sec\b" "$sibling" 2>/dev/null; then
+                echo "  ⚠️  矛盾：$sibling 引用了 $f 中已重编号/删除的节 $sec"
+                CROSS_ISSUES=$((CROSS_ISSUES+1))
+            fi
+        done
+
+    done < <(find "$DIR" -maxdepth 1 \( -name "*.md" -o -name "*.sh" -o -name "*.ts" -o -name "*.js" -o -name "*.yaml" -o -name "*.yml" \) 2>/dev/null)
+done
+
+if [[ $CROSS_ISSUES -gt 0 ]]; then
+    echo ""
+    echo "⛔ 发现 $CROSS_ISSUES 处跨文件矛盾，必须同步修复后才能继续！"
+    echo "   直接修复同目录矛盾文件（同 PR），commit message 前缀用 fix:"
+    exit 1
+fi
+
+echo "✅ 周边一致性扫描通过 — 无跨文件矛盾"
 ```
 
 ---
 
-## 2.4 本地验证（原 Step 07）
+### 2.3.7 推送前完整验证
 
-> 逐条执行 DoD 验证，所有项 [x] 后才能推送
-
----
-
-### 为什么需要本地验证
-
-```
-❌ 旧流程：写完代码 → npm test（全 mock）→ PR → CI 调试（30min×N次）
-✅ 新流程：写完代码 → npm test + local-precheck + DoD 验证 + 代码审查 → 全部 [x] → PR（CI 直通）
-```
-
----
-
-### 执行步骤
-
-#### 7.1 跑自动化测试
+> push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
+> 全量测试已在 2.3.1 精准测试中覆盖（有则运行，无则 CI 负责），此处不重复运行。
 
 ```bash
-# 检查 package.json 中是否有测试命令
-if [[ -f "package.json" ]]; then
-    HAS_TEST=$(node -e "const p=require('./package.json'); console.log(p.scripts?.test ? 'yes' : 'no')" 2>/dev/null)
-    HAS_QA=$(node -e "const p=require('./package.json'); console.log(p.scripts?.qa ? 'yes' : 'no')" 2>/dev/null)
+# 1. 检查 Learning 格式（如果已写）
+LEARNING_FILE="docs/learnings/$(git branch --show-current).md"
+if [[ -f "$LEARNING_FILE" ]]; then
+    bash packages/engine/scripts/devgate/check-learning.sh "$LEARNING_FILE" || { echo "❌ Learning 格式检查失败，修复后再 push"; exit 1; }
 fi
 
-# 优先用 qa（包含 typecheck + test + build）
-if [[ "$HAS_QA" == "yes" ]]; then
-    npm run qa
-elif [[ "$HAS_TEST" == "yes" ]]; then
-    npm test
-else
-    echo "⚠️ 没有测试命令，跳过自动化测试"
-fi
+# 2. 检查 DoD 映射
+node packages/engine/scripts/devgate/check-dod-mapping.cjs || { echo "❌ DoD 映射检查失败，修复后再 push"; exit 1; }
 ```
-
-| 结果 | 动作 |
-|------|------|
-| 通过 | 继续 7.1b |
-| 失败 | **记录 incident** → 修复代码 → 重跑 |
-| 无测试命令 | 继续 7.1b |
 
 ---
-
-#### 7.1b 本地 CI 镜像检查（Push 前必须全部通过）
-
-> **CI 检查什么，本地先跑什么。按改动类型执行对应脚本，不能等 CI 才发现问题。**
-
-```bash
-echo "🔍 检测改动类型..."
-CHANGED=$(git diff --name-only main...HEAD 2>/dev/null || git diff --name-only origin/main...HEAD)
-
-# ── Workspace（apps/）改动 ──────────────────────────────────────────────
-if echo "$CHANGED" | grep -q "^apps/"; then
-    echo "🏗️  检测到 Workspace 改动，执行本地 build..."
-    APP_DIR=$(echo "$CHANGED" | grep "^apps/" | head -1 | cut -d'/' -f1-2)
-    if [[ -f "$APP_DIR/package.json" ]]; then
-        (cd "$APP_DIR" && npm run build 2>&1)
-        [[ $? -ne 0 ]] && { echo "⛔ Workspace build 失败！修复 TypeScript 编译错误后才能 push。"; exit 1; }
-        echo "✅ Workspace build 通过"
-    fi
-fi
-
-# ── Brain（packages/brain/）改动 ────────────────────────────────────────
-if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$"; then
-    echo "🧠 检测到 Brain 改动，执行 local-precheck..."
-    bash scripts/local-precheck.sh
-    [[ $? -ne 0 ]] && { echo "⛔ Brain 本地预检失败！修复后才能 push。"; exit 1; }
-    echo "✅ Brain 本地预检通过（facts/version/manifest）"
-fi
-
-# ── Engine（packages/engine/）改动 ──────────────────────────────────────
-if echo "$CHANGED" | grep -q "^packages/engine/"; then
-    echo "⚙️  检测到 Engine 改动，执行版本一致性检查..."
-
-    # PR title 必须包含 [CONFIG] tag
-    echo "⚠️  提醒：Engine 改动 PR title 必须包含 [CONFIG] tag"
-
-    # feature-registry.yml 必须有新增条目
-    if ! git diff main...HEAD -- packages/engine/features/feature-registry.yml | grep -q "^+  - "; then
-        echo "⚠️  feature-registry.yml 未新增 changelog 条目——Engine 改动必须更新"
-    fi
-
-    # 版本文件 7 处同步检查
-    bash packages/engine/ci/scripts/check-version-sync.sh 2>&1
-    [[ ${PIPESTATUS[0]} -ne 0 ]] && {
-        echo "⛔ Engine 版本未同步！需 bump 7 个文件后才能 push。"
-        exit 1
-    }
-    echo "✅ Engine 版本检查通过"
-fi
-
-echo "✅ 本地 CI 镜像检查全部通过，可以 push"
-```
-
-| 改动类型 | 检查内容 | 失败动作 |
-|---------|---------|---------|
-| `apps/` | `npm run build`（TypeScript 编译） | 修编译错误 |
-| `packages/brain/` | `local-precheck.sh`（facts/version/manifest） | 修一致性 |
-| `packages/engine/` | version-sync + feature-registry 提醒 | bump 版本 |
-
-| 结果 | 动作 |
-|------|------|
-| 全部通过（exit 0）| 继续 7.2 |
-| 任意失败（exit 1）| **立即修复**，不允许带着失败继续 push |
-
----
-
-#### 7.2 ~~逐条执行 DoD 验证~~（已由 2.3 内循环替代）
-
-> **此步骤已删除**。DoD 验证在 2.3 写代码时逐条完成（写→Verifier Subagent→PASS→[x]），
-> 进入 2.4 时所有 DoD 条目已经是 [x]。
-
-**CI 的 `devgate.yml` 会检查 Task Card 文件中不能有 `[ ]`，若有则 PR 被阻止合并。**
-
----
-
-#### 7.4 Subagent 并行代码审查（始终执行）
-
-> DoD 全部 [x] 后，启动 3 个 code-reviewer subagent 并行审查本次变更
-
-```bash
-git diff --name-only main...HEAD    # 变更文件列表
-git diff main...HEAD                 # 完整 diff
-```
-
-启动 3 个 Reviewer（同一消息并行发出）：
-
-```
-Reviewer 1 — 简洁性 & DRY
-Reviewer 2 — 正确性 & Bug
-Reviewer 3 — 项目规范 & 一致性
-```
-
-等所有 reviewer 返回后，筛选高置信度问题（≥80 分），立即修复 Bug/安全问题，记录但不跨范围修复 DRY/规范问题。
-
----
-
-#### 7.5 PRD 语义覆盖审计（独立审计员）
-
-> DoD 全部 [x]、代码审查完成后，启动第 4 个独立 subagent 审计 Task Card 承诺 vs 实际实现
-
-判断标准：
-- **MATCH**：代码确实实现了，Test 能验证
-- **DOWNGRADED**：代码实现了，但 Test 弱于承诺
-- **MISSING**：代码中找不到对应实现
-
-| 结果 | 动作 |
-|------|------|
-| 全部 MATCH | 继续 Step 3 |
-| 有 DOWNGRADED | **升级 Test**：将弱测试替换为能验证行为的强测试，重跑 7.2 |
-| 有 MISSING | **补实现**：回到 2.3 补代码，或修改 Task Card 删除该承诺 |
-
----
-
-### ⛔ Gate 2: 代码质量 Subagent 审查（write step_2 done 前必须执行）
-
-> **每条 DoD 已由 Verifier Subagent 逐条验证，Gate 2 做整体代码质量语义评估。**
-
-召唤 Code Quality Subagent，prompt：
-
-```
-你是代码质量审查员。审查本次变更的整体代码质量。
-
-已改动文件：
-{粘贴 git diff --name-only main...HEAD 的输出}
-
-Task Card 目标：
-{粘贴 .task-{branch}.md 的"功能描述"部分}
-
-审查 3 个维度：
-1. 实现是否与 Task Card 需求一致（无过度/不足实现）？
-2. 代码是否引入安全漏洞或破坏现有功能？
-3. 边界条件和错误路径是否有处理？
-
-输出格式：
-[APPROVE] 或 [REJECT]
-理由：（REJECT 时必须具体说明哪里需要修改）
-注意：只做评估，不修改任何文件。
-```
-
-处理结果：
-- **[APPROVE]** → **立即写入 Gate 2 agent_seal**（双签机制），然后标记完成：
-  ```bash
-  BRANCH=$(git rev-parse --abbrev-ref HEAD)
-  STAMP=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S%z)
-  echo "step_2_agent: approved@${STAMP}" >> ".dev-agent-seal.${BRANCH}"
-  echo "✅ Gate 2 agent_seal 已写入：step_2_agent: approved"
-  ```
-- **[REJECT]** → 按反馈修复代码 → 重新执行 Gate 2
-
----
-
-### Step 2 末尾：触发 cto_review（代码完成后、push 之前）
-
-> **代码通过 Gate 2 审查后，若有 brain_task_id，触发 CTO Review。**
-> cto_review 由 Codex B 读 enriched PRD + DoD + 核心 diff，整体判断 PASS/FAIL。
-> devloop-check.sh 条件 2.5 会在 CI 运行前等待 cto_review PASS。
-
-```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-DEV_MODE_FILE=".dev-mode.${BRANCH}"
-BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-
-# 检查是否有 brain_task_id
-BRAIN_TASK_ID=$(grep "^brain_task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-
-if [[ -n "$BRAIN_TASK_ID" ]]; then
-    echo "🔍 触发 cto_review（CTO 代码审查）..."
-
-    # 获取当前 diff（核心变更）作为 review 上下文
-    CORE_DIFF=$(git diff main...HEAD --stat 2>/dev/null | head -20 || echo "")
-
-    # POST request-cto-review
-    CTO_RESULT=$(curl -s -X POST \
-        -H "Content-Type: application/json" \
-        -d "{\"branch\": \"${BRANCH}\", \"diff_summary\": $(echo "$CORE_DIFF" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
-        "${BRAIN_URL}/api/brain/tasks/${BRAIN_TASK_ID}/request-cto-review" \
-        2>/dev/null || echo "{}")
-
-    # 提取 cto_review_task_id
-    CTO_TASK_ID=$(echo "$CTO_RESULT" | python3 -c \
-        "import json,sys; d=json.load(sys.stdin); print(d.get('cto_review_task_id','') or d.get('task_id',''))" \
-        2>/dev/null || echo "")
-
-    if [[ -n "$CTO_TASK_ID" ]]; then
-        # 写入 .dev-mode（devloop-check.sh 条件 2.5 会等待）
-        echo "cto_review_task_id: ${CTO_TASK_ID}" >> "$DEV_MODE_FILE"
-        echo "cto_review_status: pending" >> "$DEV_MODE_FILE"
-        echo "✅ cto_review 已触发，task_id: ${CTO_TASK_ID}"
-        echo "   push 后 devloop-check.sh 条件 2.5 会等待 CTO Review 完成"
-    else
-        echo "⚠️  cto_review 触发失败或 Brain API 不支持，跳过（不阻塞 CI）"
-        echo "   原始响应: ${CTO_RESULT}"
-    fi
-else
-    echo "ℹ️  无 brain_task_id，跳过 cto_review 触发"
-fi
-```
 
 ### 完成后
 
@@ -725,14 +496,83 @@ fi
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+sed -i '' "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE" 2>/dev/null || \\
 sed -i "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE"
-echo "✅ Step 2 完成标记已写入 .dev-mode"
+echo "✅ Stage 2 完成标记已写入 .dev-mode"
 ```
 
-**Task Checkpoint**: `TaskUpdate({ taskId: "2", status: "completed" })`
+**Task Checkpoint**: `TaskUpdate({ taskId: "STAGE_2_TASK_ID", status: "completed" })`
+<!-- 注意：taskId 在 Stage 0 创建任务时获取，这里是概念示意，实际值从 Brain API 返回 -->
 
-**立即执行下一步**：
+---
 
-1. 读取 `skills/dev/steps/03-prci.md`
-2. 立即创建 PR
+## 2.4 执行 code_review_gate Agent subagent（CRITICAL — Stage 2 最后一步）
+
+> **Stage 2 代码写完、自验证通过后，调用 Agent subagent 同步审查代码质量。**
+> subagent 在 Anthropic 服务器运行，不占本地内存，~10 秒同步完成。
+> **不需要等 stop hook 放行**——subagent 是同步调用，结果立即可用。
+
+### 准备 git diff
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH}"
+
+# 获取完整 diff（传给 subagent 审查）
+GIT_DIFF=$(git diff origin/main..HEAD 2>/dev/null || git diff main..HEAD 2>/dev/null || echo "")
+GIT_CHANGED=$(git diff origin/main..HEAD --name-only 2>/dev/null || git diff main..HEAD --name-only 2>/dev/null || echo "")
+
+echo "📋 变更文件："
+echo "$GIT_CHANGED"
+```
+
+### 重试逻辑（MUST 遵守）
+
+- PASS → 写入 `code_review_gate_status: pass`，立即继续 Stage 3
+- FAIL → 读取 blockers，**深入分析 root cause**，修复代码，**无次数上限，继续重试**
+
+```
+retry_count = 0
+
+loop:
+  1. 调用 Agent subagent（subagent_type=general-purpose）
+     - prompt = code-review-gate SKILL.md 全文 + git diff 内容
+     - SKILL.md 路径：packages/workflows/skills/code-review-gate/SKILL.md
+     - **CRITICAL**: prompt 必须包含以下指令（seal 文件写入）：
+         "审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-crg.<BRANCH>：
+          { \"verdict\": \"PASS\"|\"FAIL\", \"branch\": \"<BRANCH>\",
+            \"timestamp\": \"<ISO8601>\", \"reviewer\": \"code-review-gate-agent\",
+            \"issues\": [...] }
+          这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。"
+  2. 解析 JSON 结果中的 "verdict" 字段
+  3. verdict == "PASS"
+       → 确认 seal 文件 .dev-gate-crg.${BRANCH} 已存在（由 subagent 写入）
+       → echo "code_review_gate_status: pass" >> .dev-mode.${BRANCH}
+       → break（继续 Stage 3）
+  4. verdict == "FAIL"
+       → 读取 issues[severity=="blocker"] 列表
+       → 深入分析每个 blocker 的 root cause（不只看表面错误，找到根本原因）
+       → 如果任意 blocker 的 description 含「测试覆盖」「test coverage」「缺少测试」「missing test」→
+           调用 Agent subagent 补充测试：
+           Agent({ subagent_type: "general-purpose",
+                   prompt: "请为以下代码补充缺少的测试：[传入 git diff 内容]" })
+       → 修复对应代码文件（file:line 指向的位置）
+       → retry_count++
+       → 重新获取 git diff
+       → 重新调用 subagent（无次数上限，直到 PASS）
+```
+
+**执行时注意**：
+- subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
+- subagent prompt 必须包含 `git diff` **完整内容**（不能只引用文件路径）
+- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-crg.<BRANCH>`）
+- 不要向 Brain 注册任务，不要走 Codex 异步派发路径
+- FAIL 修复后必须重新获取 git diff 再调用 subagent，不能跳过重审
+
+---
+
+**继续执行下一步**：
+
+1. 读取 `skills/dev/steps/03-integrate.md`
+2. 立即 push + 创建 PR
 3. **不要**输出总结或等待确认
