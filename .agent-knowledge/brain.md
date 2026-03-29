@@ -123,8 +123,11 @@ GET  /api/brain/immune/dashboard    免疫系统仪表盘
 | 文件 | 职责 |
 |------|------|
 | `__tests__/integration/brain-endpoint-contracts.test.js` | Brain API 端点契约测试（mock DB，supertest），覆盖 GET/POST/PATCH /tasks，无需真实 DB 或 Brain 服务 |
+| `routes/__tests__/critical-routes.integration.test.js` | Brain 关键路由集成测试（真实 PostgreSQL，不 mock db.js），覆盖 /context /tasks /okr/current /health，SQL 列名回归防护 |
 
-测试模式：`vi.mock('../../db.js')` + supertest + makeApp() 工厂函数，可在 CI ubuntu-latest 离线运行。
+测试模式（mock DB）：`vi.mock('../../db.js')` + supertest + makeApp() 工厂函数，可在 CI ubuntu-latest 离线运行。
+
+测试模式（真实 DB）：不 mock db.js，mock tick/okr-tick/nightly-tick 避免调度器副作用，需 CI PostgreSQL 服务支持。
 
 ---
 
