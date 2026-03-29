@@ -21,3 +21,5 @@ SelfDrive 自动生成任务「激活内容生成链路 Project#17」时，Proje
 3. migration 的 UPDATE 使用 `WHERE status = 'planning'` 保护，幂等安全
 4. recurring_tasks 的 `INSERT ... WHERE NOT EXISTS` 也保护幂等，不会重复创建
 5. DoD 测试用文件内容检查（`readFileSync`）而非 curl/psql，CI 兼容
+
+<!-- ci-trigger: SKIP-DOCS -->
