@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.3.0
+version: 1.4.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-29
+updated: 2026-03-30
 changelog:
+  - 1.4.0: Sprint Contract CI 兼容性硬约束 — Evaluator 独立生成的测试方案只允许 CI 可执行命令，禁止浏览器点击/UI 交互描述
   - 1.3.0: 新增双向协商机制（Sprint Contract）— subagent 独立生成测试方案后与主 agent 比对，分歧时标记并要求重写
   - 1.2.0: 新增维度F 测试层匹配性检查（unit/integration/e2e，warning级）
   - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
@@ -156,6 +157,34 @@ description: |
 > Sprint Contract 要求 Evaluator（spec_review）独立生成测试方案，再与主 agent 的方案比对，
 > 只有达成一致才能继续写代码。
 
+### CI 兼容性硬约束（v1.4.0 — CRITICAL）
+
+> **核心规则**：Evaluator 独立生成的每条测试方案必须是 CI 环境可直接执行的命令。
+> Sprint Contract 的验证标准 = CI 实际执行的检查，二者必须完全一致。
+
+**只允许以下三种验证形式**：
+
+| 形式 | 说明 | 示例 |
+|------|------|------|
+| `node -e "..."` | Node.js 单行脚本，含 `process.exit(1)` 断言 | `node -e "const c=require('fs').readFileSync('path','utf8');if(!c.includes('x'))process.exit(1)"` |
+| `curl` | HTTP 请求 + 管道断言 | `curl -sf localhost:5221/api/health \| node -e "..."` |
+| `tests/*.test.ts` | 引用已有测试文件 | `tests/spec-review.test.ts` |
+
+**禁止以下验证形式（blocker）**：
+
+| 禁止形式 | 原因 |
+|----------|------|
+| 浏览器点击行为（如"打开页面点击按钮"） | CI 无浏览器环境 |
+| UI 交互描述（如"在界面上确认弹窗消失"） | CI 无法执行 UI 操作 |
+| 人工目视检查（如"查看日志确认无报错"） | CI 需要自动化断言 |
+| 模糊的行为描述（如"系统正常响应"） | CI 需要具体的 exit code 判定 |
+| `npx vitest` / `npm test`（CI 无完整依赖） | CI runner 不安装 node_modules |
+| `grep` / `ls` / `cat` / `echo` 作为测试工具 | 不在 CI 白名单内 |
+
+**Evaluator 生成测试方案时必须自问**：
+> "这条命令能否在一个干净的 ubuntu CI runner 上直接跑通并给出明确的 exit 0/1？"
+> 如果不能 → 不合格，必须改为上述三种允许形式之一。
+
 ### 执行流程
 
 ```
@@ -164,15 +193,18 @@ description: |
 1. 独立生成测试方案（不看主 agent 的 Test 字段）
    - 根据条目类型和描述，设计最合适的测试命令
    - 遵循测试层规则：ARTIFACT → node 文件断言，BEHAVIOR → curl/API 断言，GATE → e2e
+   - ⚠️ CI 兼容性约束：只允许 node -e "..."、curl、tests/*.test.ts
+   - ⚠️ 禁止：浏览器点击、UI 交互描述、人工目视检查、模糊行为描述
 
 2. 比对
    - 读取主 agent 的 Test 字段
    - 判断：双方测试方案是否验证同一件事？
      * 一致（consistent: true）→ 采信主 agent 的 Test 字段，继续
      * 不一致（consistent: false）→ 标记分歧，写入 issues，返回 FAIL
+   - ⚠️ 如果主 agent 的 Test 字段包含禁止形式 → 直接标记为 blocker 分歧
 
 3. 分歧类型
-   - 严重分歧（blocker）：主 agent 测试的是另一件事，或是假测试
+   - 严重分歧（blocker）：主 agent 测试的是另一件事，或是假测试，或包含 CI 不可执行的验证形式
    - 轻微分歧（warning）：测试层不匹配（如 BEHAVIOR 用了静态文件检查代替 curl）
 ```
 
@@ -180,9 +212,9 @@ description: |
 
 | 判定 | 条件 |
 |------|------|
-| **一致** | 两个方案都能验证同一个 DoD 条目的核心断言，即使命令形式不同 |
-| **严重分歧** | 主 agent 方案只验证文件存在，而真实行为未被测试；或主 agent 方案有假测试 |
-| **轻微分歧** | 两方案都能验证核心行为，但测试层或测试粒度不同 |
+| **一致** | 两个方案都能验证同一个 DoD 条目的核心断言，且均为 CI 可执行命令，即使命令形式不同 |
+| **严重分歧** | 主 agent 方案只验证文件存在，而真实行为未被测试；或主 agent 方案有假测试；或任一方案包含 CI 不可执行的验证形式（浏览器点击/UI 交互/人工检查） |
+| **轻微分歧** | 两方案都能验证核心行为，且均为 CI 可执行命令，但测试层或测试粒度不同 |
 
 ### 输出中的 Sprint Contract 字段
 
