@@ -64,6 +64,20 @@ describe('GET /api/brain/pipelines', () => {
     const res = await request(makeApp()).get('/api/brain/pipelines');
     expect(res.status).toBe(500);
   });
+
+  it('响应包含 error_message 字段（成功时为 null，失败时为字符串）', async () => {
+    const rows = [
+      { id: 'ok-1', title: '[内容工厂] 字节跳动', status: 'completed', priority: 'P1', payload: {}, created_at: new Date(), started_at: null, completed_at: new Date(), error_message: null },
+      { id: 'fail-1', title: '[内容工厂] 美团', status: 'failed', priority: 'P1', payload: {}, created_at: new Date(), started_at: null, completed_at: new Date(), error_message: 'content_type "bad-type" 不存在于注册表' },
+    ];
+    pool.query.mockResolvedValue({ rows });
+    const res = await request(makeApp()).get('/api/brain/pipelines');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(Object.prototype.hasOwnProperty.call(res.body[0], 'error_message')).toBe(true);
+    expect(res.body[0].error_message).toBeNull();
+    expect(res.body[1].error_message).toContain('不存在于注册表');
+  });
 });
 
 describe('POST /api/brain/pipelines', () => {

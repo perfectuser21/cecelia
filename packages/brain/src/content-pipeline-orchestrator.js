@@ -101,8 +101,8 @@ async function _startOnePipeline(pipeline, dbPool) {
     if (!typeConfig) {
       console.error(`[content-pipeline-orchestrator] pipeline ${pipelineId} content_type "${content_type}" 不存在于注册表，标记 failed`);
       await dbPool.query(
-        `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-        [pipelineId]
+        `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+        [pipelineId, 'failed', `content_type "${content_type}" 不存在于注册表`]
       );
       return 'skipped';
     }
@@ -185,6 +185,10 @@ export async function orchestrateContentPipelines(dbPool = pool) {
       else skipped++;
     } catch (err) {
       console.error(`[content-pipeline-orchestrator] pipeline ${pipeline.id} 处理失败: ${err.message}`);
+      await dbPool.query(
+        `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+        [pipeline.id, 'failed', err.message]
+      ).catch(() => {});
     }
   }
 
@@ -287,8 +291,8 @@ async function _handleCopyReviewComplete({ task, pipeline, keyword, content_type
   const currentRetry = task.payload?.retry_count || 0;
   if (currentRetry >= MAX_REVIEW_RETRY) {
     await dbPool.query(
-      `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-      [pipelineId]
+      `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+      [pipelineId, 'failed', `copy-review 重试达上限(${MAX_REVIEW_RETRY})，pipeline 终止`]
     );
     console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} copy-review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
     return { advanced: true, action: 'pipeline_failed_max_retry' };
@@ -337,8 +341,8 @@ async function _handleImageReviewComplete({ task, pipeline, keyword, content_typ
   const currentRetry = task.payload?.retry_count || 0;
   if (currentRetry >= MAX_REVIEW_RETRY) {
     await dbPool.query(
-      `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-      [pipelineId]
+      `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+      [pipelineId, 'failed', `image-review 重试达上限(${MAX_REVIEW_RETRY})，pipeline 终止`]
     );
     console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} image-review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
     return { advanced: true, action: 'pipeline_failed_max_retry' };
@@ -506,6 +510,11 @@ async function _executeStageTask(task, stage, executor, dbPool) {
         review_passed: execResult.review_passed ?? true,
       }), task.id]
     );
+  } else if (newStatus === 'failed' && execResult.error) {
+    await dbPool.query(
+      `UPDATE tasks SET status = $1, completed_at = NOW(), error_message = $2 WHERE id = $3`,
+      [newStatus, execResult.error, task.id]
+    );
   } else {
     await dbPool.query(
       `UPDATE tasks SET status = $1, completed_at = NOW() WHERE id = $2`,
@@ -546,8 +555,8 @@ export async function executeQueuedContentTasks(dbPool = pool) {
       } catch (err) {
         console.error(`[content-executor] ${stage} 执行失败: ${err.message}`);
         await dbPool.query(
-          `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-          [task.id]
+          `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+          [task.id, 'failed', err.message]
         ).catch(() => {});
       }
     }
