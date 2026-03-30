@@ -274,12 +274,16 @@ describe("P1-1b: stop-dev.sh sentinel 孤儿重试上限", () => {
     expect(content).toContain(".dev-orphan-retry-sentinel");
   });
 
-  it("超过 5 次后清理 sentinel 并 exit 0", () => {
-    expect(content).toMatch(/_ORPHAN_COUNT.*-gt\s+5/);
-    const limitIdx = content.indexOf("_ORPHAN_COUNT -gt 5");
-    const exitIdx = content.indexOf("exit 0", limitIdx);
-    expect(exitIdx).toBeGreaterThan(limitIdx);
-    expect(exitIdx - limitIdx).toBeLessThan(300);
+  it("孤儿 sentinel 路径永远 exit 2（fail-closed，已删除 -gt 5 上限）", () => {
+    // P0 修复：_ORPHAN_COUNT -gt 5 块已删除，孤儿路径无上限永远 exit 2
+    // 旧测试断言 _ORPHAN_COUNT -gt 5 + exit 0 — 此行为已被修复
+    const lines = content.split("\n");
+    const hasOrphanExit0 = lines.some((line: string, i: number) => {
+      if (!line.includes("exit 0")) return false;
+      const context = lines.slice(Math.max(0, i - 5), i + 6).join(" ");
+      return context.includes("_ORPHAN_COUNT");
+    });
+    expect(hasOrphanExit0).toBe(false);
   });
 });
 
@@ -295,13 +299,15 @@ describe("P1-2b: stop-dev.sh .dev-lock 无 .dev-mode 重试上限", () => {
     expect(lockSection).toContain(".dev-orphan-retry");
   });
 
-  it("超过 5 次后清理 lock 并 exit 0", () => {
+  it("孤儿 lock 路径永远 exit 2（fail-closed，已删除 -gt 5 上限）", () => {
+    // P0 修复：_ORPHAN_COUNT -gt 5 块已删除，孤儿路径无上限永远 exit 2
     const lockSection = content.slice(
       content.indexOf(".dev-lock.<branch> 存在，检查 .dev-mode.<branch>"),
       content.indexOf("检查 cleanup 是否已完成")
     );
-    expect(lockSection).toMatch(/_ORPHAN_COUNT.*-gt\s+5/);
-    expect(lockSection).toContain("exit 0");
+    expect(lockSection).not.toMatch(/_ORPHAN_COUNT.*-gt\s+5/);
+    // 孤儿路径必须以 exit 2 结束
+    expect(lockSection).toContain("exit 2");
   });
 });
 
