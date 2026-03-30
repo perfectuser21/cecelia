@@ -8,10 +8,16 @@
  * - 对不存在 branch 优雅退出（exit 0 + "未找到"）
  * - spec seal verdict 字段显示
  * - spec seal divergence_count 字段显示
+ * - spec seal reviewer 和 timestamp 字段显示
  * - crg seal verdict 字段显示
+ * - crg seal reviewer 字段显示
+ * - generator seal build_status 和 files_modified 字段显示
+ * - planner seal status 和 sealed_by 字段显示
  * - PR URL 字段显示
+ * - PR number（#NNNN）从 URL 提取显示
  * - CI 状态字段显示
  * - Learning 文件存在性
+ * - RCA 首行内容摘录
  * - 缺少参数时 exit 1 + usage 提示
  */
 
@@ -80,11 +86,39 @@ function setupFixture() {
     })
   );
 
+  // generator seal
+  writeFileSync(
+    join(FIXTURE_DIR, `.dev-gate-generator.${FIXTURE_BRANCH}`),
+    JSON.stringify({
+      sealed_by: "generator-agent",
+      branch: FIXTURE_BRANCH,
+      timestamp: "2026-03-30T03:30:00Z",
+      verdict: "PASS",
+      files_modified: [
+        "packages/engine/scripts/pipeline-trace.sh",
+        "packages/engine/tests/scripts/pipeline-trace.test.ts"
+      ],
+      build_status: "success"
+    })
+  );
+
+  // planner seal
+  writeFileSync(
+    join(FIXTURE_DIR, `.dev-gate-planner.${FIXTURE_BRANCH}`),
+    JSON.stringify({
+      sealed_by: "planner-agent",
+      branch: FIXTURE_BRANCH,
+      timestamp: "2026-03-30T02:30:00Z",
+      task_card: `.task-${FIXTURE_BRANCH}.md`,
+      status: "completed"
+    })
+  );
+
   // Learning file
   mkdirSync(LEARNING_DIR, { recursive: true });
   writeFileSync(
     LEARNING_FILE,
-    "# Learning\n\n### 根本原因\n\n测试 fixture 的 learning 文件。\n\n### 下次预防\n\n- [ ] 检查 fixture 清理\n"
+    "# Learning\n\n### 根本原因\n\n缺少统一的证据文件聚合视图，导致无法一眼确认执行是否按设计走。\n\n### 下次预防\n\n- [ ] 检查 fixture 清理\n"
   );
 }
 
@@ -248,12 +282,12 @@ describe("pipeline-trace.sh", () => {
   describe("BEHAVIOR: spec seal verdict 字段", () => {
     it("有 spec seal 时显示 PASS 或 FAIL", () => {
       const { stdout } = runTrace(FIXTURE_BRANCH);
-      expect(stdout).toMatch(/seal:\s*(PASS|FAIL)/);
+      expect(stdout).toMatch(/spec:\s*(PASS|FAIL)/);
     });
 
     it("显示 PASS（fixture seal verdict = PASS）", () => {
       const { stdout } = runTrace(FIXTURE_BRANCH);
-      expect(stdout).toMatch(/seal:\s*PASS/);
+      expect(stdout).toMatch(/spec:\s*PASS/);
     });
   });
 
@@ -290,7 +324,7 @@ describe("pipeline-trace.sh", () => {
   describe("BEHAVIOR: PR URL 字段", () => {
     it("输出包含 PR URL", () => {
       const { stdout } = runTrace(FIXTURE_BRANCH);
-      expect(stdout).toMatch(/PR:\s*https?:\/\//);
+      expect(stdout).toMatch(/https?:\/\//);
     });
 
     it("PR URL 包含 github.com", () => {
@@ -328,9 +362,94 @@ describe("pipeline-trace.sh", () => {
       expect(stdout).toMatch(/learning:\s*docs\/learnings\//);
     });
 
-    it("Learning 文件含 ### 根本原因 时显示 RCA 标记", () => {
+    it("Learning 文件含 ### 根本原因 时有 rca 相关输出", () => {
       const { stdout } = runTrace(FIXTURE_BRANCH);
-      expect(stdout).toContain("RCA");
+      expect(stdout).toMatch(/rca:/);
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 11. Spec seal 详细字段
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: spec seal reviewer 和 timestamp", () => {
+    it("显示 spec reviewer", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("reviewer: spec-review-agent");
+    });
+
+    it("显示 spec timestamp（at: 字段）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/at:\s*\d{4}-\d{2}-\d{2}T/);
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 12. Generator seal 详细字段
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: generator seal files_modified 和 build_status", () => {
+    it("显示 build_status", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/build:\s*success/);
+    });
+
+    it("显示 files_modified 数量", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/files:\s*2/);
+    });
+
+    it("显示 files_modified 文件名列表", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/pipeline-trace\.sh/);
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 13. CRG reviewer
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: crg_reviewer 字段", () => {
+    it("显示 CRG reviewer", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("crg_reviewer: code-review-gate-agent");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 14. PR number
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: PR number 提取", () => {
+    it("显示 PR #9999（从 URL 提取）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("PR #9999");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 15. Planner seal
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: planner seal 行", () => {
+    it("显示 planner status", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/planner:\s*completed/);
+    });
+
+    it("显示 planner sealed_by", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("planner-agent");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 16. RCA excerpt
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Learning RCA 首行摘录", () => {
+    it("显示 rca: 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/rca:/);
+    });
+
+    it("RCA 内容包含 fixture 文件第一行内容", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("缺少统一的证据文件聚合视图");
     });
   });
 });

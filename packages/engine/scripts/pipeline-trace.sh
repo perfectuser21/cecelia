@@ -5,7 +5,7 @@
 #   bash packages/engine/scripts/pipeline-trace.sh <branch-name>
 #
 # 示例：
-#   bash packages/engine/scripts/pipeline-trace.sh cp-03301336-pr-review-fail-closed-stophook-fix
+#   bash packages/engine/scripts/pipeline-trace.sh cp-03301519-pipeline-trace-detail
 #
 # 输出：每个 Stage（0-4）的状态、时间、seal 字段、PR URL、CI 状态、Learning 文件
 
@@ -17,7 +17,7 @@ set -euo pipefail
 if [[ $# -lt 1 || "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: pipeline-trace.sh <branch-name>"
   echo ""
-  echo "  <branch-name>  要查看的 branch，如 cp-03301336-pr-review-fail-closed-stophook-fix"
+  echo "  <branch-name>  要查看的 branch，如 cp-03301519-pipeline-trace-detail"
   echo ""
   echo "输出该 branch 的 /dev pipeline 执行全景（Stage 0-4 状态、seal 字段、PR/CI、Learning）"
   if [[ $# -lt 1 ]]; then
@@ -119,29 +119,68 @@ CLEANUP=$(_kv_field "$DEV_MODE_FILE" "cleanup_done")
 # ──────────────────────────────────────────────
 SPEC_SEAL="$EVIDENCE_DIR/.dev-gate-spec.${BRANCH}"
 CRG_SEAL="$EVIDENCE_DIR/.dev-gate-crg.${BRANCH}"
+GENERATOR_SEAL="$EVIDENCE_DIR/.dev-gate-generator.${BRANCH}"
+PLANNER_SEAL="$EVIDENCE_DIR/.dev-gate-planner.${BRANCH}"
 
 # spec seal
 SPEC_VERDICT="not found"
 SPEC_DIVERGENCE=""
+SPEC_REVIEWER=""
+SPEC_TIMESTAMP=""
+SPEC_SUMMARY=""
 if [[ -f "$SPEC_SEAL" ]]; then
   v=$(_json_field "$SPEC_SEAL" "verdict")
   SPEC_VERDICT="${v:-unknown}"
   d=$(_json_field "$SPEC_SEAL" "divergence_count")
   SPEC_DIVERGENCE="${d}"
+  r=$(_json_field "$SPEC_SEAL" "reviewer")
+  SPEC_REVIEWER="${r}"
+  t=$(_json_field "$SPEC_SEAL" "timestamp")
+  SPEC_TIMESTAMP="${t}"
+  raw=$(_json_field "$SPEC_SEAL" "summary")
+  if [[ -n "$raw" ]]; then
+    SPEC_SUMMARY=$(echo "$raw" | head -1)
+  fi
 fi
 
 # crg seal
 CRG_VERDICT="not found"
+CRG_REVIEWER=""
 if [[ -f "$CRG_SEAL" ]]; then
   v=$(_json_field "$CRG_SEAL" "verdict")
   CRG_VERDICT="${v:-unknown}"
+  r=$(_json_field "$CRG_SEAL" "reviewer")
+  CRG_REVIEWER="${r}"
 fi
 
 # generator seal
-GENERATOR_SEAL="$EVIDENCE_DIR/.dev-gate-generator.${BRANCH}"
-GENERATOR_STATUS="not found"
+GENERATOR_BUILD=""
+GENERATOR_FILES=""
 if [[ -f "$GENERATOR_SEAL" ]]; then
-  GENERATOR_STATUS="✅"
+  b=$(_json_field "$GENERATOR_SEAL" "build_status")
+  GENERATOR_BUILD="${b}"
+  GENERATOR_FILES=$(node -e "try{const o=JSON.parse(require('fs').readFileSync('$GENERATOR_SEAL','utf8'));const a=o['files_modified'];if(Array.isArray(a)){console.log(a.length+'  ['+a.map(f=>f.split('/').pop()).join(', ')+']')}else console.log('')}catch(e){}" 2>/dev/null)
+fi
+
+# planner seal
+PLANNER_STATUS=""
+PLANNER_SEALED_BY=""
+PLANNER_TIMESTAMP=""
+if [[ -f "$PLANNER_SEAL" ]]; then
+  s=$(_json_field "$PLANNER_SEAL" "status")
+  PLANNER_STATUS="${s}"
+  sb=$(_json_field "$PLANNER_SEAL" "sealed_by")
+  PLANNER_SEALED_BY="${sb}"
+  pt=$(_json_field "$PLANNER_SEAL" "timestamp")
+  PLANNER_TIMESTAMP="${pt}"
+fi
+
+# ──────────────────────────────────────────────
+# 从 PR_URL 提取 PR number
+# ──────────────────────────────────────────────
+PR_NUMBER=""
+if [[ -n "$PR_URL" ]]; then
+  PR_NUMBER=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' || echo "")
 fi
 
 # ──────────────────────────────────────────────
@@ -163,14 +202,14 @@ fi
 # Learning 文件
 # ──────────────────────────────────────────────
 LEARNING_PATH="not found"
-LEARNING_RCA=""
+RCA_EXCERPT=""
 
 # 搜索 docs/learnings/{branch}.md（在 repo root 中）
 LEARNING_CANDIDATE="$REPO_ROOT/docs/learnings/${BRANCH}.md"
 if [[ -f "$LEARNING_CANDIDATE" ]]; then
   LEARNING_PATH="docs/learnings/${BRANCH}.md"
   if grep -q "### 根本原因" "$LEARNING_CANDIDATE" 2>/dev/null; then
-    LEARNING_RCA=" (含 RCA)"
+    RCA_EXCERPT=$(grep -A 10 "### 根本原因" "$LEARNING_CANDIDATE" 2>/dev/null | grep -vE "^###|^$|^---" | head -1 | sed 's/^[[:space:]]*//')
   fi
 fi
 
@@ -190,31 +229,92 @@ _icon() {
 # 输出
 # ──────────────────────────────────────────────
 LINE="────────────────────────────────────────────────────────"
+INDENT="           "
 
 echo ""
 echo "Branch: $BRANCH"
 echo "$LINE"
 
 # Stage 0
-echo "$(_icon "$STEP_0") Stage 0  Worktree     started: ${STARTED:-unknown}"
+echo "$(_icon "$STEP_0") Stage 0  Worktree"
+echo "${INDENT}started: ${STARTED:-unknown}"
 
 # Stage 1
-SPEC_DETAIL="seal: $SPEC_VERDICT"
+SPEC_LINE="spec: $SPEC_VERDICT"
 if [[ -n "$SPEC_DIVERGENCE" ]]; then
-  SPEC_DETAIL="$SPEC_DETAIL  divergence=$SPEC_DIVERGENCE"
+  SPEC_LINE="$SPEC_LINE  divergence=$SPEC_DIVERGENCE"
 fi
-echo "$(_icon "$STEP_1") Stage 1  Spec         step_1_spec: ${STEP_1:-pending}  $SPEC_DETAIL"
+if [[ -n "$SPEC_REVIEWER" ]]; then
+  SPEC_LINE="$SPEC_LINE  reviewer: $SPEC_REVIEWER"
+fi
+if [[ -n "$SPEC_TIMESTAMP" ]]; then
+  SPEC_LINE="$SPEC_LINE  at: $SPEC_TIMESTAMP"
+fi
+
+PLANNER_LINE=""
+if [[ -n "$PLANNER_STATUS" ]]; then
+  PLANNER_LINE="planner: $PLANNER_STATUS"
+  if [[ -n "$PLANNER_SEALED_BY" ]]; then
+    PLANNER_LINE="$PLANNER_LINE  sealed_by: $PLANNER_SEALED_BY"
+  fi
+  if [[ -n "$PLANNER_TIMESTAMP" ]]; then
+    PLANNER_LINE="$PLANNER_LINE  at: $PLANNER_TIMESTAMP"
+  fi
+fi
+
+echo "$(_icon "$STEP_1") Stage 1  Spec"
+echo "${INDENT}${SPEC_LINE}"
+if [[ -n "$PLANNER_LINE" ]]; then
+  echo "${INDENT}${PLANNER_LINE}"
+fi
 
 # Stage 2
-echo "$(_icon "$STEP_2") Stage 2  Code         step_2_code: ${STEP_2:-pending}  crg: $CRG_VERDICT  generator: $GENERATOR_STATUS"
+CRG_LINE="crg: $CRG_VERDICT"
+if [[ -n "$CRG_REVIEWER" ]]; then
+  CRG_LINE="$CRG_LINE  crg_reviewer: $CRG_REVIEWER"
+fi
+
+GENERATOR_LINE=""
+if [[ -n "$GENERATOR_BUILD" ]]; then
+  GENERATOR_LINE="build: $GENERATOR_BUILD"
+fi
+if [[ -n "$GENERATOR_FILES" ]]; then
+  # GENERATOR_FILES 格式: "2  [file1.sh, file2.ts]"
+  FILES_COUNT=$(echo "$GENERATOR_FILES" | awk '{print $1}')
+  FILES_LIST=$(echo "$GENERATOR_FILES" | sed 's/^[0-9]*[[:space:]]*//')
+  if [[ -n "$GENERATOR_LINE" ]]; then
+    GENERATOR_LINE="$GENERATOR_LINE  files: $FILES_COUNT  $FILES_LIST"
+  else
+    GENERATOR_LINE="files: $FILES_COUNT  $FILES_LIST"
+  fi
+fi
+
+echo "$(_icon "$STEP_2") Stage 2  Code"
+echo "${INDENT}${CRG_LINE}"
+if [[ -n "$GENERATOR_LINE" ]]; then
+  echo "${INDENT}${GENERATOR_LINE}"
+fi
 
 # Stage 3
-PR_DISPLAY="${PR_URL:-not found}"
-echo "$(_icon "$STEP_3") Stage 3  Integrate    PR: $PR_DISPLAY  CI: $CI_STATUS"
+echo "$(_icon "$STEP_3") Stage 3  Integrate"
+PR_DISPLAY_LINE=""
+if [[ -n "$PR_NUMBER" ]]; then
+  PR_DISPLAY_LINE="PR #${PR_NUMBER}  CI: $CI_STATUS"
+else
+  PR_DISPLAY_LINE="PR: ${PR_URL:-not found}  CI: $CI_STATUS"
+fi
+echo "${INDENT}${PR_DISPLAY_LINE}"
+if [[ -n "$PR_URL" ]]; then
+  echo "${INDENT}${PR_URL}"
+fi
 
 # Stage 4
-CLEANUP_DISPLAY="${CLEANUP:-false}"
-echo "$(_icon "$STEP_4") Stage 4  Ship         learning: $LEARNING_PATH${LEARNING_RCA}  cleanup: $CLEANUP_DISPLAY"
+SHIP_LINE="learning: $LEARNING_PATH  cleanup: ${CLEANUP:-false}"
+echo "$(_icon "$STEP_4") Stage 4  Ship"
+echo "${INDENT}${SHIP_LINE}"
+if [[ -n "$RCA_EXCERPT" ]]; then
+  echo "${INDENT}rca: $RCA_EXCERPT"
+fi
 
 echo "$LINE"
 echo ""
