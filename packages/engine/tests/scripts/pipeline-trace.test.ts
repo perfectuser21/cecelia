@@ -497,7 +497,27 @@ describe("pipeline-trace.sh", () => {
   });
 
   // ──────────────────────────────────────────────
-  // 17. Stage 4 Learning RCA 首行摘录
+  // 17. Stage 3 CI check 名称
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 3 CI check 名称字段", () => {
+    it("输出包含 checks: 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/checks:/);
+    });
+
+    it("checks 包含 L1 check 名称", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/L1/);
+    });
+
+    it("checks 包含 L2 check 名称", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/L2/);
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 18. Stage 4 Learning RCA 首行摘录
   // ──────────────────────────────────────────────
   describe("BEHAVIOR: Stage 4 Learning RCA 首行摘录", () => {
     it("Learning 有 RCA 时输出 rca: 行", () => {
