@@ -182,6 +182,15 @@ devloop_check() {
         spec_seal_file="$(dirname "$dev_mode_file")/.dev-gate-spec.${branch}"
         if [[ -f "$spec_seal_file" ]]; then
             spec_seal_verdict=$(jq -r '.verdict // ""' "$spec_seal_file" 2>/dev/null || echo "")
+            # ===== 内容校验：verdict 字段必须非空（P0 安全修复）=====
+            # 仅检查文件存在性不够，seal 内容必须合法才能放行
+            if [[ -z "$spec_seal_verdict" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal 文件存在但 verdict 字段为空（无效 seal）"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"spec_review seal 文件存在但 verdict 字段为空（无效 seal），必须由 spec-review subagent 重新写入","action":"重新调用 spec-review subagent 生成包含 verdict 字段的有效 seal 文件"}'
+                return 2
+            fi
             if [[ "$spec_seal_verdict" == "FAIL" ]]; then
                 if command -v _devlog_event &>/dev/null; then
                     _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal FAIL，需修复 Task Card"
@@ -189,12 +198,29 @@ devloop_check() {
                 _devloop_jq -n '{"status":"blocked","reason":"spec_review seal 文件 verdict=FAIL，需分析 root cause 修复 Task Card","action":"读取 .dev-gate-spec.<branch> 中的 issues，修复 Task Card，重新调用 spec-review subagent"}'
                 return 2
             fi
-            # seal 存在且 verdict=PASS → 检查 divergence_count
+            # verdict 不是 PASS 也不是 FAIL → 无效值，拦截
+            if [[ "$spec_seal_verdict" != "PASS" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal verdict 值无效（非 PASS/FAIL）：$spec_seal_verdict"
+                fi
+                _devloop_jq -n --arg v "$spec_seal_verdict" '{"status":"blocked","reason":"spec_review seal verdict 值无效（\($v)），只接受 PASS 或 FAIL","action":"重新调用 spec-review subagent 生成有效 seal 文件"}'
+                return 2
+            fi
+            # seal 存在且 verdict=PASS → 检查 divergence_count（字段必须非空）
             # ===== 条件 1.5b: divergence_count 门禁（Evaluator 独立性检查）=====
             # divergence_count = Evaluator 独立发现的与 Planner 分歧的问题数
             # 0 = Evaluator 橡皮图章（无价值），必须拦截；>= 1 = 真正独立思考，放行
-            local spec_seal_divergence
-            spec_seal_divergence=$(jq -r '.divergence_count // "0"' "$spec_seal_file" 2>/dev/null || echo "0")
+            # ===== 内容校验：divergence_count 字段必须非空（P0 安全修复）=====
+            local spec_seal_divergence_raw spec_seal_divergence
+            spec_seal_divergence_raw=$(jq -r '.divergence_count // empty' "$spec_seal_file" 2>/dev/null || echo "")
+            if [[ -z "$spec_seal_divergence_raw" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal divergence_count 字段缺失或为 null（无效 seal）"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"spec_review seal divergence_count 字段为空或缺失（无效 seal），Evaluator 独立性无法验证","action":"重新调用 spec-review subagent，要求 seal 文件中包含 divergence_count 字段"}'
+                return 2
+            fi
+            spec_seal_divergence="$spec_seal_divergence_raw"
             if ! check_divergence_count "$spec_seal_divergence"; then
                 if command -v _devlog_event &>/dev/null; then
                     _devlog_event "devloop-check" "spec_review_divergence" "blocked" "spec_review divergence_count=0：Evaluator 未发现任何与 Planner 的分歧（橡皮图章检测）"
@@ -554,6 +580,38 @@ devloop_check() {
     if command -v _devlog_event &>/dev/null; then
         _devlog_event "devloop-check" "merge" "executing" "CI 通过 + Learning 完成，执行自动合并 PR #$pr_number"
     fi
+    # ===== 合并前二次确认：重新检查 PR mergeable + CI 最新状态（P1 安全修复）=====
+    echo "[devloop-check] 合并前二次确认：检查 PR #$pr_number mergeable + CI..." >&2
+    local pre_merge_check mergeable_state
+    pre_merge_check=$(gh pr view "$pr_number" --json mergeable,mergeStateStatus 2>/dev/null || echo '{}')
+    mergeable_state=$(echo "$pre_merge_check" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+    if [[ "$mergeable_state" == "CONFLICTING" ]]; then
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "pre-merge" "blocked" "PR #$pr_number 有合并冲突（mergeable=CONFLICTING）"
+        fi
+        _devloop_jq -n \
+            --arg pr "$pr_number" \
+            --arg state "$mergeable_state" \
+            '{"status":"blocked","reason":"PR #\($pr) 合并前二次确认失败：mergeable=\($state)（存在冲突）","action":"解决 PR 冲突后重试合并"}'
+        return 2
+    fi
+    # 重新检查 CI 最新状态
+    local pre_merge_ci_run pre_merge_ci_status pre_merge_ci_conclusion
+    pre_merge_ci_run=$(gh run list --branch "$branch" --limit 1 --json status,conclusion 2>/dev/null || echo "[]")
+    pre_merge_ci_status=$(echo "$pre_merge_ci_run" | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")
+    pre_merge_ci_conclusion=$(echo "$pre_merge_ci_run" | jq -r '.[0].conclusion // ""' 2>/dev/null || echo "")
+    if [[ "$pre_merge_ci_status" != "completed" || "$pre_merge_ci_conclusion" != "success" ]]; then
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "pre-merge" "blocked" "PR #$pr_number 合并前 CI 二次确认失败：$pre_merge_ci_status/$pre_merge_ci_conclusion"
+        fi
+        _devloop_jq -n \
+            --arg pr "$pr_number" \
+            --arg status "$pre_merge_ci_status" \
+            --arg conclusion "$pre_merge_ci_conclusion" \
+            '{"status":"blocked","reason":"PR #\($pr) 合并前二次确认失败：CI 最新状态 \($status)/\($conclusion)","action":"等待 CI 通过后重试合并"}'
+        return 2
+    fi
+    echo "[devloop-check] 合并前二次确认通过（mergeable=$mergeable_state, CI=$pre_merge_ci_conclusion），执行合并..." >&2
     echo "[devloop-check] 自动合并 PR #$pr_number（CI 通过 + Stage 4 完成）..." >&2
     if gh pr merge "$pr_number" --squash --delete-branch 2>&1; then
         echo "[devloop-check] PR #$pr_number 已合并" >&2

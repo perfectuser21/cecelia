@@ -712,9 +712,16 @@ sys.exit(0 if found else 1)
     fi
 
 else
-    # === Fallback: devloop-check.sh 未加载，使用旧内联逻辑 ===
-    # 保留此 fallback 确保向后兼容（devloop-check.sh 未安装时不崩溃）
-    echo "  ⚠️  devloop-check.sh 未加载，使用 fallback 逻辑" >&2
+    # === P0 安全修复：devloop-check.sh 未加载时拒绝降级，禁止使用旧内联逻辑 ===
+    # 旧 fallback 逻辑绕过了 seal 验证、divergence_count 门禁等新安全机制。
+    # devloop-check.sh 必须存在且可加载；若不存在则说明环境异常，应阻断而非降级。
+    echo "  ❌ 安全错误: devloop-check.sh 未加载，拒绝使用不安全的 fallback 逻辑" >&2
+    echo "  请检查 packages/engine/lib/devloop-check.sh 是否存在且有执行权限" >&2
+    jq -n '{"decision":"block","reason":"devloop-check.sh 未加载，无法安全判断完成条件。请确保 packages/engine/lib/devloop-check.sh 存在并可读，禁止使用旧 fallback 逻辑。"}' 2>/dev/null \
+        || echo '{"decision":"block","reason":"devloop-check.sh not loaded, refusing unsafe fallback"}'
+    exit 2
+    # === 以下为废弃的旧 fallback 逻辑（保留以备审计，不会被执行）===
+    echo "  ⚠️  devloop-check.sh 未加载，使用 fallback 逻辑（已废弃）" >&2
 
     # --- 条件 1: PR 创建？---
     PR_NUMBER=""
