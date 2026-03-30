@@ -64,6 +64,8 @@ const manifest: FeatureManifest = {
       requireAuth: false,
       navItem: { label: '内容工厂', icon: 'Factory', group: 'execution', order: 10 },
     },
+    // 内容作品详情页（四 Tab）
+    { path: '/content-factory/:id', component: 'PipelineOutputPage', requireAuth: false },
     // Legacy redirects
     { path: '/content', redirect: '/knowledge/content' },
     { path: '/super-brain', redirect: '/knowledge/brain' },
@@ -87,6 +89,7 @@ const manifest: FeatureManifest = {
     KnowledgePageViewer: () => import('./pages/KnowledgePageViewer'),
     DocChatPage: () => import('./pages/DocChatPage'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
+    PipelineOutputPage: () => import('../content/pages/PipelineOutputPage'),
   },
 };
 
