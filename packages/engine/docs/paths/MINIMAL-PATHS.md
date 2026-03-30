@@ -468,6 +468,16 @@ changelog:
 
 ---
 
+### pipeline-security-seal-validation: Pipeline 安全修复：seal 内容校验 + fallback 拒绝 + flock 硬错误 + PR 合并前二次确认
+
+1. ✅ **seal 文件 verdict 为空时阻断**
+2. ✅ **divergence_count 字段缺失时阻断**
+3. ✅ **devloop-check.sh 未加载时 stop-dev.sh exit 2**
+4. ✅ **flock 不可用时 acquire_dev_mode_lock 返回 1**
+5. ✅ **PR 合并前 mergeable/CI 二次确认失败时阻断**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

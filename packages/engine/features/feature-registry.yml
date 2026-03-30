@@ -2815,3 +2815,43 @@ product_features:
       - "物理路径下 verify-step 行为不变"
 
     rcis: []
+
+  - id: pipeline-security-seal-validation
+    name: Pipeline 安全修复：seal 内容校验 + fallback 拒绝 + flock 硬错误 + PR 合并前二次确认
+    category: security
+    status: Committed
+    priority: P0
+    version: "13.65.1"
+    updated: "2026-03-30"
+    description: |
+      修复4个 P0/P1 安全漏洞：
+      1. devloop-check.sh seal 文件仅检查存在性 → 加内容校验（verdict 非空 + divergence_count 非空）
+      2. stop-dev.sh fallback 路径降级不安全 → exit 2 拒绝降级
+      3. lock-utils.sh flock 不可用时静默返回0 → 硬错误返回1
+      4. devloop-check.sh PR 合并前无二次确认 → 合并前重新 check mergeable + CI
+
+    entrypoints:
+      - type: lib
+        file: packages/engine/lib/devloop-check.sh
+        trigger: "Stop Hook 调用，检查 4-Stage Pipeline 完成条件"
+      - type: hook
+        file: packages/engine/hooks/stop-dev.sh
+        trigger: "Claude Code 会话结束时触发"
+      - type: lib
+        file: packages/engine/lib/lock-utils.sh
+        trigger: ".dev-mode 文件并发写入时调用"
+
+    golden_path: |
+      seal 文件 verdict=PASS && divergence_count>=1 →
+      devloop-check.sh 放行 →
+      PR 合并前重新检查 mergeable + CI →
+      gh pr merge 执行合并
+
+    minimal_paths:
+      - "seal 文件 verdict 为空时阻断"
+      - "divergence_count 字段缺失时阻断"
+      - "devloop-check.sh 未加载时 stop-dev.sh exit 2"
+      - "flock 不可用时 acquire_dev_mode_lock 返回 1"
+      - "PR 合并前 mergeable/CI 二次确认失败时阻断"
+
+    rcis: []
