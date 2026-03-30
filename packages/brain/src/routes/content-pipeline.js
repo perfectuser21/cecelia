@@ -553,16 +553,15 @@ router.get('/:id/output', async (req, res) => {
 
     const image_urls = [];
     if (existsSync(IMAGES_DIR)) {
-      // 检查封面
-      const coverFile = `${topic}-cover.png`;
-      if (existsSync(join(IMAGES_DIR, coverFile))) {
-        image_urls.push({ type: 'cover', url: `${IMAGE_BASE_URL}${coverFile}` });
-      }
-      // 检查卡片图（最多 20 张）
-      for (let i = 1; i <= 20; i++) {
-        const cardFile = `${topic}-${String(i).padStart(2, '0')}.png`;
-        if (existsSync(join(IMAGES_DIR, cardFile))) {
-          image_urls.push({ type: 'card', index: i, url: `${IMAGE_BASE_URL}${cardFile}` });
+      const allFiles = readdirSync(IMAGES_DIR)
+        .filter(f => f.startsWith(`${topic}-`) && f.endsWith('.png'))
+        .sort();
+      let cardIndex = 1;
+      for (const file of allFiles) {
+        if (file.includes('-cover.')) {
+          image_urls.push({ type: 'cover', url: `${IMAGE_BASE_URL}${file}` });
+        } else {
+          image_urls.push({ type: 'card', index: cardIndex++, url: `${IMAGE_BASE_URL}${file}` });
         }
       }
     }
