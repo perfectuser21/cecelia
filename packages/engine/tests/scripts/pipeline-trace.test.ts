@@ -54,7 +54,21 @@ function setupFixture() {
       "pr_url: https://github.com/perfectuser21/cecelia/pull/9999",
       "ci_status: success",
       "cleanup_done: true",
+      "brain_task_id: fixture-brain-task-id-abc123",
+      "confidence_score: 9",
+      "confidence_reason: fixture confidence reason text",
     ].join("\n")
+  );
+
+  // planner seal
+  writeFileSync(
+    join(FIXTURE_DIR, `.dev-gate-planner.${FIXTURE_BRANCH}`),
+    JSON.stringify({
+      sealed_by: "planner-agent",
+      branch: FIXTURE_BRANCH,
+      timestamp: "2026-03-30T01:00:00Z",
+      status: "sealed",
+    })
   );
 
   // spec seal
@@ -77,6 +91,19 @@ function setupFixture() {
       branch: FIXTURE_BRANCH,
       timestamp: "2026-03-30T03:00:00Z",
       reviewer: "code-review-gate-agent",
+    })
+  );
+
+  // generator seal
+  writeFileSync(
+    join(FIXTURE_DIR, `.dev-gate-generator.${FIXTURE_BRANCH}`),
+    JSON.stringify({
+      sealed_by: "generator-agent",
+      branch: FIXTURE_BRANCH,
+      timestamp: "2026-03-30T04:00:00Z",
+      verdict: "PASS",
+      files_modified: ["packages/engine/scripts/pipeline-trace.sh", "packages/engine/tests/scripts/pipeline-trace.test.ts"],
+      build_status: "success",
     })
   );
 
@@ -331,6 +358,157 @@ describe("pipeline-trace.sh", () => {
     it("Learning 文件含 ### 根本原因 时显示 RCA 标记", () => {
       const { stdout } = runTrace(FIXTURE_BRANCH);
       expect(stdout).toContain("RCA");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 11. Stage 0 详细字段
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 0 详细字段（brain_task_id / confidence_score / confidence_reason）", () => {
+    it("输出包含 brain_task_id 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/brain_task_id:/);
+    });
+
+    it("brain_task_id 值与 fixture 一致", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("fixture-brain-task-id-abc123");
+    });
+
+    it("输出包含 confidence: 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/confidence:/);
+    });
+
+    it("confidence 值与 fixture 一致（9）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("confidence: 9");
+    });
+
+    it("输出包含 reason: 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/reason:/);
+    });
+
+    it("reason 值与 fixture 一致", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("fixture confidence reason text");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 12. Stage 1 planner seal 详细字段
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 1 planner seal 字段（sealed_by / timestamp）", () => {
+    it("输出包含 planner: sealed_by= 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/planner:.*sealed_by=/);
+    });
+
+    it("sealed_by 值与 fixture 一致（planner-agent）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("planner-agent");
+    });
+
+    it("输出包含 planner timestamp 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/planner:.*timestamp=/);
+    });
+
+    it("planner timestamp 值与 fixture 一致", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("2026-03-30T01:00:00Z");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 13. Stage 1 spec-review seal 详细字段
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 1 spec-review seal 字段（timestamp / reviewer）", () => {
+    it("输出包含 spec-review: 行", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/spec-review:/);
+    });
+
+    it("spec-review timestamp 与 fixture 一致", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("2026-03-30T02:00:00Z");
+    });
+
+    it("spec-review reviewer 与 fixture 一致（spec-review-agent）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("spec-review-agent");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 14. Stage 2 generator seal 详细字段
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 2 generator seal 字段（files_modified / build_status）", () => {
+    it("输出包含 generator: files_modified= 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/generator:.*files_modified=/);
+    });
+
+    it("files_modified 包含修改文件名", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("pipeline-trace.sh");
+    });
+
+    it("输出包含 build_status= 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/build_status=/);
+    });
+
+    it("build_status 值与 fixture 一致（success）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/build_status=success/);
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 15. Stage 2 CRG seal reviewer 字段
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 2 CRG seal reviewer 字段", () => {
+    it("输出包含 crg: reviewer= 字段", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/crg:.*reviewer=/);
+    });
+
+    it("crg reviewer 值与 fixture 一致（code-review-gate-agent）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("code-review-gate-agent");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 16. Stage 3 PR number 提取
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 3 PR number 提取（格式 #NNN）", () => {
+    it("输出包含 #NNN 格式 PR 号", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/#\d+/);
+    });
+
+    it("PR number 与 fixture URL 中的 pull 号一致（#9999）", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toContain("#9999");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // 17. Stage 4 Learning RCA 首行摘录
+  // ──────────────────────────────────────────────
+  describe("BEHAVIOR: Stage 4 Learning RCA 首行摘录", () => {
+    it("Learning 有 RCA 时输出 rca: 行", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      expect(stdout).toMatch(/rca:/);
+    });
+
+    it("rca 行包含 ### 根本原因 后第一行非空内容", () => {
+      const { stdout } = runTrace(FIXTURE_BRANCH);
+      // fixture learning 文件中 ### 根本原因 后第一行非空内容是 "测试 fixture 的 learning 文件。"
+      expect(stdout).toContain("测试 fixture 的 learning 文件");
     });
   });
 });
