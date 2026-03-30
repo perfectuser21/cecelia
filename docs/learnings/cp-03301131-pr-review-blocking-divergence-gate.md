@@ -11,9 +11,11 @@
 
 ### 根本原因
 
-`hustcer/deepseek-review@v1` Action 只发布 review comment，job 总是 exit 0。即使加入 required check，审查内容有🔴也不会阻塞合并。需要换成能 exit 1 的实现。
+`hustcer/deepseek-review@v1` Action 只发布 review comment，job 总是 exit 0。即使将该 check 加入 branch protection required checks，审查内容包含🔴严重问题时也不会阻塞合并——因为 job 本身不失败。
 
-divergence_count 检查只在 SKILL.md 文字描述中，无法被 devloop-check.sh 执行，可被绕过。
+门禁必须在可执行代码层实现。第三方 Action 若不提供内容感知的 exit code，只能做展示用途，不能做门禁用途。需要换成直接调 API + 脚本检测的方式，用 exit 1 让 job 失败。
+
+divergence_count 检查只在 SKILL.md 文字描述中，无法被 devloop-check.sh 执行，可被绕过。任何质量约束必须写成可执行函数（.sh/.js），而不是文字说明。
 
 ### 下次预防
 
