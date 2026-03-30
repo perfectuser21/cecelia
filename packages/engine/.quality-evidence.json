@@ -1,4 +1,4 @@
 {
-  "known_failure_keys": ["stop-hook-router-tests"],
-  "note": "known failures: stop-hook-router-tests (v13.0.0 router architecture, expires 2026-02-15)"
+  "known_failure_keys": ["stop-hook-router-tests", "pipeline-integrity-fallback-exit2", "pipeline-integrity-lockutils-flock"],
+  "note": "known failures: stop-hook-router-tests (v13.0.0 router architecture); pipeline-integrity-fallback-exit2/lockutils-flock (待 Agent 1 stop-dev/lock-utils bug fix PR 合并后移除)"
 }

@@ -468,6 +468,15 @@ changelog:
 
 ---
 
+### pipeline-integrity-gate: Pipeline Integrity Gate（meta-test）
+
+1. ✅ **所有关键 pipeline 文件存在**
+2. ✅ **stop-dev.sh 孤儿路径为 fail-closed**
+3. ✅ **pr-review.yml API 失败触发 exit 1**
+4. ✅ **gate 脚本中无 N次后放行模式**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

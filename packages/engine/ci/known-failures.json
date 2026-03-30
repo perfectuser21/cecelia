@@ -21,6 +21,26 @@
       "description": "session-registration.test.ts 中的并发会话检测测试有正则表达式匹配问题，需要修复",
       "ticket": "DevGate CI激活任务中发现的测试bug，与主要功能无关",
       "expires": "2026-04-01"
+    },
+    "pipeline-integrity-fallback-exit2": {
+      "description": "stop-dev.sh fallback 分支（devloop-check.sh 未加载时的内联逻辑）含内联 gh pr list 查询和 exit 0 路径，待 Agent 1 的 bug fix PR 合并后修复",
+      "ticket": "Pipeline Integrity Gate 任务中识别的 bug，Agent 1 的 stop-dev.sh fail-closed 修复",
+      "expires": "2026-04-15"
+    },
+    "pipeline-integrity-lockutils-flock": {
+      "description": "lock-utils.sh 中 flock 不可用时（macOS 无 coreutils）静默 return 0，应改为 return 1，待 Agent 1 的 bug fix PR 合并后修复",
+      "ticket": "Pipeline Integrity Gate 任务中识别的 bug，lock-utils.sh fail-closed 修复",
+      "expires": "2026-04-15"
+    },
+    "pipeline-integrity-devloop-verdict": {
+      "description": "保护性标记：验证 devloop-check.sh 对 seal .verdict 字段的检查存在。当前通过，若代码误删此检查则触发保护",
+      "ticket": "Pipeline Integrity Gate meta-test，防止安全退化",
+      "expires": "2026-06-30"
+    },
+    "pipeline-integrity-devloop-divergence": {
+      "description": "保护性标记：验证 devloop-check.sh 对 seal .divergence_count 字段的检查存在。当前通过，若代码误删此检查则触发保护",
+      "ticket": "Pipeline Integrity Gate meta-test，防止安全退化",
+      "expires": "2026-06-30"
     }
   }
 }

@@ -2810,3 +2810,39 @@ product_features:
       - "物理路径下 verify-step 行为不变"
 
     rcis: []
+
+  - id: pipeline-integrity-gate
+    name: Pipeline Integrity Gate（meta-test）
+    category: tests
+    status: Committed
+    priority: P1
+    version: "13.66.0"
+    updated: "2026-03-30"
+    description: |
+      新增 packages/engine/tests/pipeline-integrity.test.ts，作为 meta-test 验证
+      pipeline 自身的安全属性没有被削弱。测试覆盖：
+      1. Fail-closed 属性（stop-dev.sh 孤儿路径、pr-review.yml API 失败路径）
+      2. 反模式扫描（N次后放行的 counter-based bypass 模式）
+      3. 必要文件完整性（所有关键 pipeline 文件、L1-L4 workflow）
+      4. Seal 文件验证逻辑（devloop-check.sh verdict/divergence_count 字段检查）
+      2 个 known-failing 测试（fallback exit2、flock return 1）等待 bug fix 合并后移除。
+
+    entrypoints:
+      - type: test
+        file: packages/engine/tests/pipeline-integrity.test.ts
+        trigger: "CI engine-l3 job 运行 npm test 时自动执行"
+
+    golden_path: |
+      PR 修改 pipeline 文件 →
+      engine-l3 运行 vitest →
+      pipeline-integrity.test.ts 扫描安全不变量 →
+      发现违规时测试失败 →
+      CI L3 阻止合并
+
+    minimal_paths:
+      - "所有关键 pipeline 文件存在"
+      - "stop-dev.sh 孤儿路径为 fail-closed"
+      - "pr-review.yml API 失败触发 exit 1"
+      - "gate 脚本中无 N次后放行模式"
+
+    rcis: []

@@ -856,6 +856,23 @@ DoD whitelist 检查正常执行
 
 ---
 
+## GP-054: Pipeline Integrity Gate（meta-test） (pipeline-integrity-gate)
+
+**Feature**: pipeline-integrity-gate - Pipeline Integrity Gate（meta-test）
+**Priority**: P1
+
+### Golden Path
+
+```
+PR 修改 pipeline 文件 →
+engine-l3 运行 vitest →
+pipeline-integrity.test.ts 扫描安全不变量 →
+发现违规时测试失败 →
+CI L3 阻止合并
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

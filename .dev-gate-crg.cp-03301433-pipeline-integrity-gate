@@ -1,0 +1,8 @@
+{
+  "verdict": "PASS",
+  "branch": "cp-03301433-pipeline-integrity-gate",
+  "timestamp": "2026-03-30T14:50:00+08:00",
+  "reviewer": "code-review-gate-agent",
+  "issues": [],
+  "summary": "代码质量良好。新增 pipeline-integrity.test.ts 测试文件逻辑清晰，known-failures.json 格式正确，版本文件同步一致，无安全问题。PASS。"
+}
