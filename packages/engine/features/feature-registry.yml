@@ -19,6 +19,11 @@ version: "4.0.0"
 updated: "2026-03-30"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.66.0"
+    date: "2026-03-30"
+    change: "feat(engine): Pipeline Integrity Gate — 新增 pipeline-integrity.test.ts，验证 5 类安全不变量（fail-closed/orphan/gate/seal/files）"
+    scope: "packages/engine/tests/pipeline-integrity.test.ts"
+
   - version: "13.65.0"
     date: "2026-03-30"
     change: "fix(engine): Pipeline 安全加固 — Seal 内容验证（verdict 字段非空 + divergence_count 非空）、stop-dev.sh fallback fail-closed（禁止降级到旧内联逻辑）、lock-utils.sh flock 不可用硬错误、devloop-check.sh PR 合并前 mergeable 二次确认"
