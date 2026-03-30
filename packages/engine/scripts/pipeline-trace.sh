@@ -209,7 +209,7 @@ LEARNING_CANDIDATE="$REPO_ROOT/docs/learnings/${BRANCH}.md"
 if [[ -f "$LEARNING_CANDIDATE" ]]; then
   LEARNING_PATH="docs/learnings/${BRANCH}.md"
   if grep -q "### 根本原因" "$LEARNING_CANDIDATE" 2>/dev/null; then
-    RCA_EXCERPT=$(grep -A 10 "### 根本原因" "$LEARNING_CANDIDATE" 2>/dev/null | grep -vE "^###|^$|^---" | head -1 | sed 's/^[[:space:]]*//')
+    RCA_EXCERPT=$(grep -A 20 "### 根本原因" "$LEARNING_CANDIDATE" 2>/dev/null | grep -vE "^###|^\s*$|^---" | head -1 | sed 's/^[[:space:]]*//')
   fi
 fi
 
