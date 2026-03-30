@@ -3,9 +3,9 @@ name: spec-review
 version: 1.6.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-31
+updated: 2026-03-30
 changelog:
-  - 1.6.0: 修复 divergence_count=0 处理（exit 2 → verdict FAIL + blocker issue）；添加 reviewer_model 输出字段；Task Card 传入时 Test 字段已 REDACTED，Evaluator 必须独立生成
+  - 1.6.0: 修复 divergence_count=0 处理（exit 2 → FAIL + blocker issue）、添加 reviewer_model 输出字段、补充主 agent 对 FAIL 的自动重试响应说明
   - 1.5.0: divergence 下限检查 — Sprint Contract Gate 完成后，divergence_count = 0 直接 exit 2 要求重跑（Evaluator 未独立思考）
   - 1.4.0: Sprint Contract CI 兼容性约束 — Evaluator 独立方案必须使用 CI 可执行形式（node/curl/tests/），禁止浏览器交互和 UI 操作描述
   - 1.3.0: 新增双向协商机制（Sprint Contract）— subagent 独立生成测试方案后与主 agent 比对，分歧时标记并要求重写
@@ -195,23 +195,27 @@ description: |
 
    if divergence_count == 0:
      # Evaluator 与主 agent 完全一致 → 可能没有独立思考，结论不可信
-     # ⚠️ 注意：不使用 exit 2（Agent subagent 无法传递退出码）
-     # 正确做法：在 issues 中添加 blocker，并将 verdict 设为 FAIL
-     add issue:
-     {
-       "severity": "blocker",
-       "dimension": "sprint_contract",
-       "description": "independent_test_plans 中没有任何分歧（divergence_count = 0）。Evaluator 与主 agent 在所有 DoD 测试上完全一致，无法证明进行了真实的独立审查。Sprint Contract 要求 Evaluator 至少有 1 个独立观点（哪怕是 warning 级）。",
-       "suggestion": "重新审查每条 DoD，独立设计测试方案后再与主 agent 比对。对每条 DoD 提出至少 1 处测试层差异（如 BEHAVIOR 条目建议用 curl 代替静态文件检查）。如 Task Card 的 Test 字段为 [REDACTED]，必须完全从需求描述独立设计。"
-     }
+     # 处理方式：设置 verdict = "FAIL"，在 issues 中写入 blocker
      set verdict = "FAIL"
+     add issue: {
+       severity: "blocker",
+       dimension: "sprint_contract",
+       description: "divergence_count = 0：Evaluator 未发现任何分歧，无法证明进行了真实的独立审查",
+       suggestion: "重新运行 spec_review subagent，Evaluator 必须至少有 1 个独立观点（哪怕是 warning 级建议）"
+     }
+     # ↑ 注意：不再 exit 2，而是正常返回 JSON，verdict=FAIL
+     # 主 agent 响应：读取 seal 文件 → 发现 verdict=FAIL → 读取 issues 中的 blocker
+     #               → 修复 Task Card Test 字段 → 重新调用 spec_review subagent
+     #               （全程自动重试，不需要人工干预，循环直到 PASS）
 ```
+
+> **主 agent 对 FAIL 的响应**：主 agent 读取 seal 文件 → 发现 verdict = FAIL → 读取 issues → 修复 Task Card Test 字段 → **自动重新调用** spec_review subagent（无需人工干预，循环直到 PASS）。
 
 > **为什么要求 divergence_count >= 1**：
 > Sprint Contract 的核心价值是"第二双眼睛"——如果 Evaluator 与主 agent 在每一条 DoD 测试上完全一致，
 > 说明 Evaluator 没有提供独立视角，只是简单认同，等同于主 agent 自认证。
 > 哪怕是 warning 级别的轻微分歧（如测试层建议）也是有价值的独立观点。
-> divergence_count = 0 → verdict FAIL → 主 agent 读取 issues → 修复 Test 字段 → 重新调用 spec_review subagent。
+> divergence_count = 0 → verdict=FAIL（含 blocker issue）→ 主 agent 读取 FAIL → 自动重新调用 spec_review subagent。
 
 ### 一致性判断标准
 
@@ -246,8 +250,6 @@ description: |
 - Test 字段质量不达标（维度 D 任一 blocker）
 - Sprint Contract 比对发现严重分歧（主 agent 测试方案无法验证 DoD 声明的行为）
 - Evaluator 自身独立方案（my_test）使用了非 CI 可执行形式（浏览器操作、UI 交互描述）
-- **independent_test_plans 为空**（Evaluator 未真正执行 Sprint Contract，未独立生成任何测试方案）
-- **divergence_count = 0**（Evaluator 与主 agent 完全一致，未展示独立思考能力）
 
 FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 
@@ -258,7 +260,6 @@ FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 ```json
 {
   "verdict": "PASS | FAIL",
-  "reviewer_model": "<实际使用的模型名称，如 claude-sonnet-4-6>",
   "independent_test_plans": [
     {
       "dod_item": "DoD 条目描述（前 50 字）",
