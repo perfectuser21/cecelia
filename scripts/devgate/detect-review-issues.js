@@ -23,10 +23,24 @@ process.stdin.on('data', (chunk) => {
 });
 
 process.stdin.on('end', () => {
-  // 检测🔴严重问题标记（兼容 Unicode 代理对和直接字面量）
-  const hasRedFlag = input.includes('\uD83D\uDD34') || input.includes('🔴');
+  // 检测真实的🔴严重问题标记
+  // 排除误报场景：
+  //   "严重问题（🔴）" — section heading，🔴 在括号内，不代表有实际问题
+  //   "- **无**" — bullet 形式的无问题声明
+  // 触发场景（表示有真实问题）：
+  //   "🔴 **issue**" — 行内标记的实际问题
+  //   "- 🔴" — bullet 列表里的问题标记
 
-  if (hasRedFlag) {
+  // 检查正文是否声明了无严重问题
+  const noIssuesDeclared = /（🔴）[\s\S]*?[-*]\s*\*\*无\*\*/.test(input)
+    || /严重问题[（(]🔴[)）][\s\S]{0,200}无严重问题/.test(input)
+    || /严重问题[（(]🔴[)）][\s\S]{0,100}\*\*无\*\*/.test(input);
+
+  // 排除标题里的 🔴，检测正文中的实际问题标记
+  const textWithoutHeadings = input.replace(/#+\s*[^🔴\n]*（🔴）[^\n]*/g, '');
+  const hasActualRedFlag = /🔴/.test(textWithoutHeadings) && !noIssuesDeclared;
+
+  if (hasActualRedFlag) {
     process.stderr.write('[detect-review-issues] 检测到🔴严重问题，阻塞 PR 合并\n');
     process.exit(1);
   } else {

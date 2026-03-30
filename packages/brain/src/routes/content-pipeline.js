@@ -469,7 +469,9 @@ router.get('/:id/stages', async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(`
-      SELECT task_type, status, started_at, completed_at
+      SELECT task_type, status, started_at, completed_at,
+             payload->'review_issues' AS review_issues,
+             payload->>'review_passed' AS review_passed
       FROM tasks
       WHERE payload->>'parent_pipeline_id' = $1
       ORDER BY created_at ASC
@@ -477,11 +479,14 @@ router.get('/:id/stages', async (req, res) => {
 
     const stages = {};
     for (const row of result.rows) {
-      stages[row.task_type] = {
+      const entry = {
         status: row.status,
         started_at: row.started_at,
         completed_at: row.completed_at,
       };
+      if (row.review_issues !== null) entry.review_issues = row.review_issues;
+      if (row.review_passed !== null) entry.review_passed = row.review_passed === 'true';
+      stages[row.task_type] = entry;
     }
     res.json({ pipeline_id: id, stages });
   } catch (err) {

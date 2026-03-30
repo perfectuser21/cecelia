@@ -494,10 +494,24 @@ async function _executeStageTask(task, stage, executor, dbPool) {
   const execResult = await executor(task);
 
   const newStatus = execResult.success ? 'completed' : 'failed';
-  await dbPool.query(
-    `UPDATE tasks SET status = $1, completed_at = NOW() WHERE id = $2`,
-    [newStatus, task.id]
-  );
+
+  // 把 review 结果（issues、review_passed）存入 payload，供 stages API 返回给前端
+  if (execResult.issues !== undefined || execResult.review_passed !== undefined) {
+    await dbPool.query(
+      `UPDATE tasks SET status = $1, completed_at = NOW(),
+         payload = payload || $2::jsonb
+       WHERE id = $3`,
+      [newStatus, JSON.stringify({
+        review_issues: execResult.issues || [],
+        review_passed: execResult.review_passed ?? true,
+      }), task.id]
+    );
+  } else {
+    await dbPool.query(
+      `UPDATE tasks SET status = $1, completed_at = NOW() WHERE id = $2`,
+      [newStatus, task.id]
+    );
+  }
 
   const advResult = await advanceContentPipeline(task.id, newStatus, execResult, dbPool);
   if (advResult.advanced) {

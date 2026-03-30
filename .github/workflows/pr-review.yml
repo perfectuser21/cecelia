@@ -86,7 +86,7 @@ jobs:
                 --arg sys "$SYSTEM_PROMPT" \
                 --arg usr "$USER_PROMPT" \
                 '{
-                  "model": "deepseek/deepseek-chat-v3-5",
+                  "model": "deepseek/deepseek-chat",
                   "messages": [
                     {"role": "system", "content": $sys},
                     {"role": "user", "content": $usr}
