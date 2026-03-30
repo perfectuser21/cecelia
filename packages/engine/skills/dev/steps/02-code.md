@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 6.1.0
+version: 6.2.0
 created: 2026-03-14
 updated: 2026-03-30
 changelog:
+  - 6.2.0: 内容注入原则 — 主 agent 必须直接嵌入 Task Card 实际内容到 prompt，禁止传文件路径让 subagent 自己读
   - 6.1.0: Generator subagent 完成后写 .dev-gate-generator.{BRANCH} seal 文件（Stage 3 前置检查）
   - 6.0.0: 2.2 写代码拆为 Generator subagent（主 agent 变纯编排者）
   - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
@@ -193,9 +194,14 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
 5. **先删旧再写新，禁止堆叠** — 修改任何描述性内容时，必须同时删除被替代的旧内容
 
 ## Sprint Contract（Task Card）
+> ⚠️ 内容注入（CRITICAL）：以下 {TASK_CARD_CONTENT} 是占位符，主 agent 在调用本 subagent 之前，
+> 必须用 `.task-cp-{BRANCH}.md` 文件的**实际内容**替换（直接嵌入），
+> 禁止传递文件路径让 subagent 自己去读文件。
 {TASK_CARD_CONTENT}
 
 ## Coding 规范（CLAUDE.md）
+> ⚠️ 内容注入（CRITICAL）：以下 {CLAUDE_MD_CONTENT} 是占位符，主 agent 在调用本 subagent 之前，
+> 必须用 `.claude/CLAUDE.md` 文件的**实际内容**替换（直接嵌入）。
 {CLAUDE_MD_CONTENT}
 
 ## 代码库上下文
@@ -240,21 +246,26 @@ echo "✅ Generator seal 文件已写入: $SEAL_FILE"
 
 ### 主 agent 调用代码（伪码）
 
-```javascript
-// 1. 读取 Task Card 和 CLAUDE.md
-const TASK_CARD = readFile(`.task-cp-${BRANCH}.md`)
-const CLAUDE_MD = readFile(`.claude/CLAUDE.md`)
+> **内容注入原则（CRITICAL）**：主 agent 在 spawn Generator subagent 之前，必须先读取文件内容，
+> 然后将实际内容字符串直接替换到 prompt 模板的占位符位置。
+> 禁止只传递文件路径字符串（如 `".task-cp-xxx.md"`）让 subagent 自己去读文件——
+> subagent 可能因路径解析或权限问题读不到文件，导致链路断裂。
 
-// 2. 从探索阶段收集相关文件路径
+```javascript
+// 1. 读取 Task Card 和 CLAUDE.md 的实际内容（内容注入：读取文件 → 直接嵌入字符串）
+const TASK_CARD = readFile(`.task-cp-${BRANCH}.md`)   // ← 文件实际内容，非路径
+const CLAUDE_MD = readFile(`.claude/CLAUDE.md`)        // ← 文件实际内容，非路径
+
+// 2. 从探索阶段收集相关文件路径（这里传路径列表，供 Generator 自行 read）
 const RELEVANT_FILES = exploredFiles.join('\n')
 
-// 3. 组装 prompt（只含上述三项）
+// 3. 组装 prompt：用实际内容字符串替换占位符（内容注入的关键步骤）
 const prompt = GENERATOR_PROMPT_TEMPLATE
-  .replace('{TASK_CARD_CONTENT}', TASK_CARD)
-  .replace('{CLAUDE_MD_CONTENT}', CLAUDE_MD)
+  .replace('{TASK_CARD_CONTENT}', TASK_CARD)   // ← Task Card 实际内容直接嵌入
+  .replace('{CLAUDE_MD_CONTENT}', CLAUDE_MD)   // ← CLAUDE.md 实际内容直接嵌入
   .replace('{RELEVANT_FILE_PATHS}', RELEVANT_FILES)
 
-// 4. 调用 Generator subagent
+// 4. 调用 Generator subagent（prompt 已包含所有必要内容，subagent 无需再读文件）
 Agent({
   subagent_type: "general-purpose",
   description: "Generator: 编写代码",
