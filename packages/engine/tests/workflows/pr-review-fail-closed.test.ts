@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
-const ROOT = resolve(__dirname, '../../../..')
+// Use resolve(__dirname, ...) directly so check-changed-coverage.cjs can trace file references
+const STOP_DEV_SH = resolve(__dirname, '../../hooks/stop-dev.sh')
+const PR_REVIEW_YML = resolve(__dirname, '../../../../.github/workflows/pr-review.yml')
 
 describe('pr-review.yml fail-closed behavior', () => {
-  const yml = readFileSync(resolve(ROOT, '.github/workflows/pr-review.yml'), 'utf8')
+  const yml = readFileSync(PR_REVIEW_YML, 'utf8')
 
   it('contains MAX_RETRY and RETRY_COUNT for retry loop', () => {
     expect(yml).toContain('MAX_RETRY')
@@ -27,10 +29,7 @@ describe('pr-review.yml fail-closed behavior', () => {
 })
 
 describe('stop-dev.sh orphan fail-closed behavior', () => {
-  const sh = readFileSync(
-    resolve(ROOT, 'packages/engine/hooks/stop-dev.sh'),
-    'utf8'
-  )
+  const sh = readFileSync(STOP_DEV_SH, 'utf8')
 
   it('does not have exit 0 adjacent to _ORPHAN_COUNT (orphan path must always block)', () => {
     const lines = sh.split('\n')
