@@ -63,6 +63,19 @@ Planner 的核心职责是描述 **WHAT**（要做什么、行为规格），而
 
 写完后，将 Task Card 写入文件 `.task-cp-{BRANCH}.md`。
 
+完成 Task Card 写入后，立即写入 Planner seal 文件。在 worktree 根目录执行：
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+WORKTREE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+printf '{"verdict":"PASS","sealedBy":"planner","branch":"%s","created":"%s"}\n' \
+    "$BRANCH" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    > "$WORKTREE_ROOT/.dev-gate-planner.$BRANCH"
+echo "✅ Planner seal 已写入：.dev-gate-planner.$BRANCH"
+```
+
+这是 Sprint Contract Gate 的前置证明（.dev-gate-planner.{BRANCH}），必须由 Planner subagent 直接写入。
+
 ---
 
 # Task Card: <功能名>

@@ -147,6 +147,20 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 1.2: Sprint Contract 前置（Planner seal 验证）=====
+    # 检查 Planner 是否已运行并写入 seal 文件
+    if [[ -f "$dev_mode_file" ]]; then
+        local planner_seal_file
+        planner_seal_file="$(dirname "$dev_mode_file")/.dev-gate-planner.${branch}"
+        if [[ ! -f "$planner_seal_file" ]]; then
+            if command -v _devlog_event &>/dev/null; then
+                _devlog_event "devloop-check" "planner_seal" "blocked" "Planner seal 文件不存在，Sprint Contract 未经 Planner 验证"
+            fi
+            _devloop_jq -n '{"status":"blocked","reason":"Planner seal 硬门禁：.dev-gate-planner.<branch> 不存在，Sprint Contract 未经 Planner 验证","action":"重新运行 Planner subagent（01-spec.md），由 Planner 写入 .dev-gate-planner.<branch> seal 文件"}'
+            return 2
+        fi
+    fi
+
     # ===== 条件 1.5: spec_review_status（seal 文件验证）=====
     # seal 文件存在且 verdict=PASS → 继续
     # seal 文件存在且 verdict=FAIL → blocked
@@ -186,6 +200,20 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 1.8: Generator 前置（spec seal 硬门禁）=====
+    # 硬门禁：不存在即 blocked（与条件 1.5 的复杂 verdict 逻辑不同）
+    if [[ -f "$dev_mode_file" ]]; then
+        local spec_seal_file_hard
+        spec_seal_file_hard="$(dirname "$dev_mode_file")/.dev-gate-spec.${branch}"
+        if [[ ! -f "$spec_seal_file_hard" ]]; then
+            if command -v _devlog_event &>/dev/null; then
+                _devlog_event "devloop-check" "spec_seal_hard" "blocked" "spec seal 硬门禁：.dev-gate-spec 不存在，Generator 无法启动"
+            fi
+            _devloop_jq -n '{"status":"blocked","reason":"spec seal 硬门禁：.dev-gate-spec.<branch> 不存在，Generator 前置条件未满足","action":"运行 spec-review subagent，由 spec-review 写入 .dev-gate-spec.<branch> seal 文件"}'
+            return 2
+        fi
+    fi
+
     # ===== 条件 2: step_2_code 是否完成？ =====
     if [[ -f "$dev_mode_file" ]]; then
         local step_2_status
@@ -195,6 +223,20 @@ devloop_check() {
                 _devlog_event "devloop-check" "step_2_code" "blocked" "Stage 2 Code 未完成"
             fi
             _devloop_jq -n '{"status":"blocked","reason":"Stage 2 Code 未完成","action":"立即读取 skills/dev/steps/02-code.md 并执行 Stage 2。禁止询问用户。"}'
+            return 2
+        fi
+    fi
+
+    # ===== 条件 2.2: Stage 3 前置（Generator seal 验证）=====
+    # 检查 Generator 是否已运行并写入 seal 文件
+    if [[ -f "$dev_mode_file" ]]; then
+        local generator_seal_file
+        generator_seal_file="$(dirname "$dev_mode_file")/.dev-gate-generator.${branch}"
+        if [[ ! -f "$generator_seal_file" ]]; then
+            if command -v _devlog_event &>/dev/null; then
+                _devlog_event "devloop-check" "generator_seal" "blocked" "Generator seal 文件不存在，Stage 3 前置条件未满足"
+            fi
+            _devloop_jq -n '{"status":"blocked","reason":"Generator seal 硬门禁：.dev-gate-generator.<branch> 不存在，Stage 3 前置条件未满足","action":"重新运行 Generator subagent（02-code.md），由 Generator 写入 .dev-gate-generator.<branch> seal 文件"}'
             return 2
         fi
     fi

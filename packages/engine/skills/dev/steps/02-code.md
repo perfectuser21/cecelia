@@ -212,6 +212,17 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
 **关键：每条 DoD 完成后必须自己运行 Test 命令确认 PASS，不能跳过。**
 
 完成所有 DoD 条目后，输出修改过的文件列表。
+
+完成所有代码后，写入 Generator seal 文件：
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+WORKTREE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+printf '{"verdict":"PASS","sealedBy":"generator","branch":"%s","created":"%s"}\n' \
+    "$BRANCH" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    > "$WORKTREE_ROOT/.dev-gate-generator.$BRANCH"
+echo "✅ Generator seal 已写入：.dev-gate-generator.$BRANCH"
+```
+这是 Stage 3 Gate 的前置证明（.dev-gate-generator.{BRANCH}），必须由 Generator subagent 直接写入。
 ```
 
 ### 主 agent 调用代码（伪码）
