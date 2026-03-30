@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { spawnSync } from 'child_process';
 
 /**
@@ -11,8 +11,7 @@ import { spawnSync } from 'child_process';
  * - divergence_count>=1：Evaluator 真正独立，返回 0（通过）
  */
 
-const ROOT_DIR = join(__dirname, '../../../..');
-const DEVLOOP_CHECK = join(ROOT_DIR, 'packages/engine/lib/devloop-check.sh');
+const DEVLOOP_CHECK = resolve(__dirname, '../../../../packages/engine/lib/devloop-check.sh');
 
 describe('devloop-check.sh — check_divergence_count 函数', () => {
   it('A1: devloop-check.sh 文件必须存在', () => {
