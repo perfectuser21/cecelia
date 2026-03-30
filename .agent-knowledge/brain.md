@@ -125,6 +125,7 @@ GET  /api/brain/kr-project-map     KR-Project 依赖图（krs + orphaned_project
 |------|------|
 | `__tests__/integration/brain-endpoint-contracts.test.js` | Brain API 端点契约测试（mock DB，supertest），覆盖 GET/POST/PATCH /tasks，无需真实 DB 或 Brain 服务 |
 | `__tests__/integration/critical-routes.integration.test.js` | Brain 关键路由集成测试（真实 PostgreSQL），覆盖 GET /health、GET /tasks、GET /context、GET /okr/current，验证真实 SQL 行为 |
+| `__tests__/content-pipeline-error-message.test.js` | content-pipeline 错误可观测性测试：验证 orchestrator 6 个失败路径均正确写入 `tasks.error_message` 字段（mock DB pool，无需真实服务） |
 
 测试模式：
 - mock 模式：`vi.mock('../../db.js')` + supertest + makeApp() 工厂函数，可在 CI ubuntu-latest 离线运行
