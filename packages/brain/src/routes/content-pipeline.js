@@ -14,6 +14,8 @@
  */
 
 import express from 'express';
+import { existsSync, readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
 import pool from '../db.js';
 import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTypesFromYaml } from '../content-types/content-type-registry.js';
 import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
@@ -510,18 +512,72 @@ router.get('/:id/output', async (req, res) => {
 
     const pipeline = pipelineResult.rows[0];
     const keyword = pipeline.payload?.keyword || '';
-    const slug = keyword.replace(/[^a-zA-Z0-9\u4e00-\u9fff-]/g, '-').replace(/-+/g, '-').substring(0, 40);
-    const imageBase = 'http://38.23.47.81:9998/images/';
+
+    // 构建 content-output 目录路径（扫描匹配关键词的目录）
+    const HOME = process.env.HOME || '/Users/administrator';
+    const outputBase = join(HOME, 'perfect21', 'zenithjoy', 'content-output');
+
+    // 找到匹配的输出目录（按关键词模糊匹配）
+    let articleText = null;
+    let cardsText = null;
+
+    if (existsSync(outputBase)) {
+      const dirs = readdirSync(outputBase);
+      // 把关键词转为简单匹配字符串
+      const kwSlug = keyword.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '').toLowerCase();
+      const matchDir = dirs.find(d => {
+        const dSlug = d.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '').toLowerCase();
+        return dSlug.includes(kwSlug) || kwSlug.includes(dSlug.substring(0, 8));
+      }) || dirs.sort().reverse().find(d => d.includes('content') || d.length > 5);
+
+      if (matchDir) {
+        const articlePath = join(outputBase, matchDir, 'article', 'article.md');
+        const cardsPath = join(outputBase, matchDir, 'cards', 'copy.md');
+        if (existsSync(articlePath)) {
+          articleText = readFileSync(articlePath, 'utf-8');
+        }
+        if (existsSync(cardsPath)) {
+          cardsText = readFileSync(cardsPath, 'utf-8');
+        }
+      }
+    }
+
+    // 扫描实际存在的图片文件
+    const IMAGES_DIR = join(HOME, 'claude-output', 'images');
+    const IMAGE_BASE_URL = 'http://38.23.47.81:9998/images/';
+    const topic = keyword
+      .replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .toLowerCase();
+
+    const image_urls = [];
+    if (existsSync(IMAGES_DIR)) {
+      // 检查封面
+      const coverFile = `${topic}-cover.png`;
+      if (existsSync(join(IMAGES_DIR, coverFile))) {
+        image_urls.push({ type: 'cover', url: `${IMAGE_BASE_URL}${coverFile}` });
+      }
+      // 检查卡片图（最多 20 张）
+      for (let i = 1; i <= 20; i++) {
+        const cardFile = `${topic}-${String(i).padStart(2, '0')}.png`;
+        if (existsSync(join(IMAGES_DIR, cardFile))) {
+          image_urls.push({ type: 'card', index: i, url: `${IMAGE_BASE_URL}${cardFile}` });
+        }
+      }
+    }
 
     const output = {
       keyword,
       status: pipeline.status,
-      images: {
-        cover: `${imageBase}${slug}-cover.png`,
-        cards: Array.from({ length: 5 }, (_, i) =>
-          `${imageBase}${slug}-${String(i + 1).padStart(2, '0')}.png`
-        ),
-      },
+      article_text: articleText,
+      cards_text: cardsText,
+      image_urls,
+      // 向后兼容旧格式
+      images: image_urls.length > 0 ? {
+        cover: image_urls.find(u => u.type === 'cover')?.url || '',
+        cards: image_urls.filter(u => u.type === 'card').map(u => u.url),
+      } : null,
     };
     res.json({ pipeline_id: id, output });
   } catch (err) {
