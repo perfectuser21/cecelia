@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 6.1.0
+version: 6.2.0
 created: 2026-03-14
 updated: 2026-03-30
 changelog:
+  - 6.2.0: Generator subagent prompt 新增 {SPRINT_CONTRACT_CONTENT} 占位符（Sprint Contract seal 内容直接嵌入，不让 subagent 自行读文件）
   - 6.1.0: Generator subagent 完成后写 .dev-gate-generator.{BRANCH} seal 文件（Stage 3 前置检查）
   - 6.0.0: 2.2 写代码拆为 Generator subagent（主 agent 变纯编排者）
   - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
@@ -195,6 +196,9 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
 ## Sprint Contract（Task Card）
 {TASK_CARD_CONTENT}
 
+## Sprint Contract 协商结果（spec_review 已确认）
+{SPRINT_CONTRACT_CONTENT}
+
 ## Coding 规范（CLAUDE.md）
 {CLAUDE_MD_CONTENT}
 
@@ -241,16 +245,18 @@ echo "✅ Generator seal 文件已写入: $SEAL_FILE"
 ### 主 agent 调用代码（伪码）
 
 ```javascript
-// 1. 读取 Task Card 和 CLAUDE.md
+// 1. 读取 Task Card、CLAUDE.md 和 Sprint Contract seal 文件
 const TASK_CARD = readFile(`.task-cp-${BRANCH}.md`)
 const CLAUDE_MD = readFile(`.claude/CLAUDE.md`)
+const SPRINT_CONTRACT = readFile(`.dev-gate-spec.${BRANCH}`) || '{}'
 
 // 2. 从探索阶段收集相关文件路径
 const RELEVANT_FILES = exploredFiles.join('\n')
 
-// 3. 组装 prompt（只含上述三项）
+// 3. 组装 prompt（只含上述四项）
 const prompt = GENERATOR_PROMPT_TEMPLATE
   .replace('{TASK_CARD_CONTENT}', TASK_CARD)
+  .replace('{SPRINT_CONTRACT_CONTENT}', SPRINT_CONTRACT)
   .replace('{CLAUDE_MD_CONTENT}', CLAUDE_MD)
   .replace('{RELEVANT_FILE_PATHS}', RELEVANT_FILES)
 
@@ -271,7 +277,7 @@ Agent({
 | Task Card 全文 | 主 agent 的探索推理过程 |
 | CLAUDE.md 全文 | Brain API 返回的调度上下文 |
 | 相关文件路径列表 | Planner 内部状态 |
-| | OKR/KR/Project 层级信息 |
+| Sprint Contract seal 内容（`.dev-gate-spec.{branch}`）| OKR/KR/Project 层级信息 |
 | | 其他 subagent 的审查结果 |
 
 **为什么隔离**：Generator 只需要知道"做什么"（Task Card）和"怎么做"（CLAUDE.md + 代码），不需要知道"为什么要做"。信息越少，context 越高效，代码质量越高。

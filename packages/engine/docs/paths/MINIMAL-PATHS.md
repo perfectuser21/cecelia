@@ -1,8 +1,8 @@
 ---
 id: minimal-paths
 version: 4.0.0
-created: 2026-03-29
-updated: 2026-03-29
+created: 2026-03-30
+updated: 2026-03-30
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -468,6 +468,13 @@ changelog:
 
 ---
 
+### content-inject-evaluator-divergence: 内容注入 + Evaluator divergence 下限
+
+1. ✅ **Generator prompt 含 Sprint Contract 内容**
+2. ✅ **spec_review divergence_count==0 触发 exit 2**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -481,4 +488,4 @@ changelog:
 
 **来源**: features/feature-registry.yml
 **版本**: 4.0.0
-**生成时间**: 2026-03-29
+**生成时间**: 2026-03-30

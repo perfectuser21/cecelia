@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.4.0
+version: 1.5.0
 model: claude-sonnet-4-6
 created: 2026-03-20
 updated: 2026-03-30
 changelog:
+  - 1.5.0: 新增 divergence_count == 0 硬 FAIL 规则（Evaluator 零分歧强制重跑）+ 输入部分加"由调用方注入"说明
   - 1.4.0: Sprint Contract CI 兼容性约束 — Evaluator 独立方案必须使用 CI 可执行形式（node/curl/tests/），禁止浏览器交互和 UI 操作描述
   - 1.3.0: 新增双向协商机制（Sprint Contract）— subagent 独立生成测试方案后与主 agent 比对，分歧时标记并要求重写
   - 1.2.0: 新增维度F 测试层匹配性检查（unit/integration/e2e，warning级）
@@ -62,6 +63,8 @@ description: |
 | `.task-cp-xxx.md` | Task Card，包含需求 + 成功标准 + DoD |
 | `PRD.md` | 需求文档（若有独立 PRD） |
 | `.dev-mode` / `.dev-lock` | 开发状态文件，包含 stage 信息 |
+
+> **注意**：调用方（主 agent）应将 Task Card 和 Sprint Contract 内容直接注入 prompt，由调用方注入内容，subagent 不自行读文件。
 
 ---
 
@@ -222,6 +225,7 @@ description: |
 - Test 字段质量不达标（维度 D 任一 blocker）
 - Sprint Contract 比对发现严重分歧（主 agent 测试方案无法验证 DoD 声明的行为）
 - Evaluator 自身独立方案（my_test）使用了非 CI 可执行形式（浏览器操作、UI 交互描述）
+- divergence_count == 0：说明 Evaluator 未产生任何分歧，无法证明真实挑战了 Sprint Contract。exit 2 要求重跑，不接受零分歧通过。
 
 FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 

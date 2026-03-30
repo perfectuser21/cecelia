@@ -16,9 +16,14 @@
 # ============================================================================
 
 version: "4.0.0"
-updated: "2026-03-29"
-# ci-trigger: 13.60.0
+updated: "2026-03-30"
+# ci-trigger: 13.61.0
 changelog:
+  - version: "13.62.0"
+    date: "2026-03-30"
+    change: "[CONFIG] feat(engine): 内容注入 + Evaluator divergence 下限 — Generator prompt 新增 {SPRINT_CONTRACT_CONTENT} 占位符，spec-review 新增 divergence_count==0 硬 FAIL 规则"
+    scope: "packages/engine/skills/dev/steps/02-code.md,packages/workflows/skills/spec-review/SKILL.md"
+
   - version: "13.60.0"
     date: "2026-03-30"
     change: "[CONFIG] feat(engine): 三阶段 seal 对齐检查 — devloop-check.sh 新增条件 1.6（planner seal）和条件 2.8（generator seal），planner-prompt.md 和 02-code.md 加入 seal 写入强制指令"
@@ -2788,5 +2793,39 @@ product_features:
     minimal_paths:
       - "symlink 环境下 verify-step 正常执行"
       - "物理路径下 verify-step 行为不变"
+
+    rcis: []
+
+  - id: content-inject-evaluator-divergence
+    name: 内容注入 + Evaluator divergence 下限
+    category: skills
+    status: Committed
+    priority: P0
+    version: "13.62.0"
+    updated: "2026-03-30"
+    description: |
+      两个改动保证 Planner→Generator→Evaluator 链路真实有效：
+      1. Generator subagent prompt 新增 {SPRINT_CONTRACT_CONTENT} 占位符，
+         由主 agent 直接注入 spec_review seal 内容，不让 Generator 自行读文件。
+      2. spec_review SKILL.md 新增 divergence_count == 0 硬 FAIL 规则：
+         Evaluator 零分歧强制 exit 2 要求重跑。
+
+    entrypoints:
+      - type: skill-step
+        file: packages/engine/skills/dev/steps/02-code.md
+        trigger: "Stage 2 Generator subagent spawn 时"
+      - type: skill
+        file: packages/workflows/skills/spec-review/SKILL.md
+        trigger: "Stage 1 Sprint Contract Gate 审查时"
+
+    golden_path: |
+      主 agent 读取 .dev-gate-spec.{branch} →
+      注入为 {SPRINT_CONTRACT_CONTENT} →
+      Generator subagent prompt 含 Sprint Contract 全文 →
+      spec_review 若 divergence_count==0 → exit 2 重跑
+
+    minimal_paths:
+      - "Generator prompt 含 Sprint Contract 内容"
+      - "spec_review divergence_count==0 触发 exit 2"
 
     rcis: []

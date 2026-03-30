@@ -1,8 +1,8 @@
 ---
 id: optimal-paths
 version: 4.0.0
-created: 2026-03-29
-updated: 2026-03-29
+created: 2026-03-30
+updated: 2026-03-30
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -567,6 +567,17 @@ DoD whitelist 检查正常执行
 
 ---
 
+### content-inject-evaluator-divergence: 内容注入 + Evaluator divergence 下限
+
+```
+主 agent 读取 .dev-gate-spec.{branch} →
+注入为 {SPRINT_CONTRACT_CONTENT} →
+Generator subagent prompt 含 Sprint Contract 全文 →
+spec_review 若 divergence_count==0 → exit 2 重跑
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -580,4 +591,4 @@ DoD whitelist 检查正常执行
 
 **来源**: features/feature-registry.yml
 **版本**: 4.0.0
-**生成时间**: 2026-03-29
+**生成时间**: 2026-03-30
