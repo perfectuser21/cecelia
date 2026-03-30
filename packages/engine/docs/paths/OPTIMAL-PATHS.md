@@ -567,6 +567,18 @@ DoD whitelist 检查正常执行
 
 ---
 
+### planner-generator-seal-chain: Planner-Contract-Generator 三阶段 seal 对齐检查
+
+```
+Planner subagent 完成，写入 dev-gate-planner，
+spec-review subagent 完成，写入 dev-gate-spec，
+Generator subagent 完成，写入 dev-gate-generator，
+devloop-check.sh 条件 1.2/1.8/2.2 全部通过，
+Stage 3 Integrate 开始
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

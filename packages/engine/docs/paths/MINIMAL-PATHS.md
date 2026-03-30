@@ -468,6 +468,14 @@ changelog:
 
 ---
 
+### planner-generator-seal-chain: Planner-Contract-Generator 三阶段 seal 对齐检查
+
+1. ✅ **缺 planner seal，条件 1.2 拦截**
+2. ✅ **缺 spec seal，条件 1.8 拦截**
+3. ✅ **缺 generator seal，条件 2.2 拦截**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
