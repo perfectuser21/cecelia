@@ -1,9 +1,9 @@
 ---
 name: code-review-gate
-version: 1.6.0
+version: 1.7.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-29
+updated: 2026-03-31
 changelog:
   - 1.0.0: 合并 code_quality + /simplify 为统一代码审查 Gate
   - 1.1.0: A1 C/E维度升级blocker；A2 新增维度G PRD/DoD对齐验证；A3 修复时机描述为Stage 2
@@ -12,8 +12,9 @@ changelog:
   - 1.4.0: 维度 H 新增 blocker：替代性内容加入但旧描述未删除（改A→B时A仍保留=blocker）
   - 1.5.0: 维度 H 新增 blocker：跨文件模块一致性（改文件X导致同模块文件Y出现矛盾引用=blocker）
   - 1.6.0: 新增 Evaluator Calibration（few-shot 锚定示例）；强化裁决规则为全通过制
+  - 1.7.0: 新增 reviewer_model 字段；stats 全零时必须补充至少1条 info 观察（否则 exit 2）
 description: |
-  代码审查 Gate（/dev Stage 2 最后一步）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。
+  代码审查 Gate（/dev Stage 2 最后一步）。合并了 code_quality（代码质量审查）和 /simplify（代码简化）。（v1.7.0）
   在 /dev Stage 2 代码写完后、push 之前触发。此时无 PR，通过 git diff 获取变更内容。
   覆盖安全、正确性、复用性、命名、效率、可维护性、PRD/DoD对齐、信息卫生九个维度。
   给出 PASS / FAIL 裁决。
@@ -275,11 +276,33 @@ FAIL 时必须修复所有 blocker 后重新提交审查，不能合并 PR。
 
 ---
 
+## All-Zero Stats 防橡皮图章规则（CRITICAL）
+
+> **目的**：防止 Evaluator 未做任何审查就给出 PASS（stats 全零表示没有任何观察，不可信）。
+
+if stats.blocker + stats.warning + stats.info == 0:
+  # 意味着 Evaluator 没有发现任何值得记录的问题或观察
+  # 这不可信——任何代码审查都应该至少有 1 条 info 级观察
+  echo "⚠️  stats 全零：审查结果不可信" >&2
+  echo "   stats.blocker=0, stats.warning=0, stats.info=0" >&2
+  echo "   这意味着 Evaluator 没有提供任何审查观察，等同于未审查。" >&2
+  echo "   请添加至少 1 条 info 级观察（如：代码风格建议、命名改进机会等），" >&2
+  echo "   哪怕是中性的观察，也证明 Evaluator 真正阅读了代码。" >&2
+  exit 2  # 要求重跑 code_review_gate subagent
+
+**为什么要求 stats 非全零**：
+stats = {blocker:0, warning:0, info:0} 意味着 Evaluator 没有任何观察。
+真实的代码审查即使是高质量代码，也应该有至少 1 条 info 级建议（命名、风格等）。
+全零说明 Evaluator 没有认真阅读代码，结论不可信。
+
+---
+
 ## 输出格式（必须 JSON）
 
 ```json
 {
   "verdict": "PASS | FAIL",
+  "reviewer_model": "<你使用的模型名，如 claude-sonnet-4-6>",
   "issues": [
     {
       "severity": "blocker | warning | info",

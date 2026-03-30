@@ -2820,3 +2820,76 @@ product_features:
       - "物理路径下 verify-step 行为不变"
 
     rcis: []
+
+  - id: sprint-contract-fix-adversarial
+    name: Sprint Contract Gate 对抗审查修复
+    category: skills
+    status: Committed
+    priority: P1
+    version: "13.69.0"
+    updated: "2026-03-31"
+    description: |
+      修复 Sprint Contract Gate 橡皮图章问题：
+      1. CRG v1.7.0：添加 reviewer_model 字段；stats 全零时 exit 2（至少需要1条 info 观察）
+      2. spec_review v1.6.0：添加 reviewer_model 字段；plans.length == 0 时 exit 2（Evaluator 必须生成独立测试计划）
+      3. 01-spec.md v3.2.0：Sprint Contract PASS 后额外验证 plans.length > 0
+
+    entrypoints:
+      - type: skill
+        file: packages/workflows/skills/code-review-gate/SKILL.md
+        trigger: "/dev Stage 2 代码写完后（push 前）"
+      - type: skill
+        file: packages/workflows/skills/spec-review/SKILL.md
+        trigger: "/dev Stage 1 Spec 完成后"
+      - type: step
+        file: packages/engine/skills/dev/steps/01-spec.md
+        trigger: "Sprint Contract Gate PASS 后验证 plans.length"
+
+    golden_path: |
+      CRG subagent 输出 reviewer_model 字段 →
+      stats 非全零 →
+      seal 文件包含 reviewer_model →
+      spec_review plans.length > 0 →
+      Sprint Contract 验证有效
+
+    minimal_paths:
+      - "CRG seal 包含 reviewer_model 字段"
+      - "spec_review seal independent_test_plans 非空"
+
+    rcis: []
+
+  - id: sprint-contract-gate-fix
+    name: Sprint Contract Gate 防橡皮图章修复
+    category: workflows
+    status: Committed
+    priority: P0
+    version: "13.69.0"
+    updated: "2026-03-30"
+    description: |
+      修复 Sprint Contract Gate 形同虚设问题：
+      - CRG v1.7.0：新增 reviewer_model 字段；all-zero stats 时强制补充至少1条 info 观察（exit 2）
+      - spec_review v1.6.0：新增 reviewer_model 字段；plans.length == 0 时强制 exit 2
+      - 01-spec.md v3.2.0：Sprint Contract Gate PASS 后额外验证 plans.length > 0
+
+    entrypoints:
+      - type: skill
+        file: packages/workflows/skills/code-review-gate/SKILL.md
+        trigger: "/dev Stage 2 代码完成后 push 前触发"
+      - type: skill
+        file: packages/workflows/skills/spec-review/SKILL.md
+        trigger: "/dev Stage 1 Spec 完成后触发"
+      - type: step
+        file: packages/engine/skills/dev/steps/01-spec.md
+        trigger: "Stage 1 Sprint Contract Gate 调用"
+
+    golden_path: |
+      spec_review subagent 调用 → plans.length > 0（有独立测试计划）→
+      CRG subagent 调用 → stats 非全零（有实质审查）→
+      reviewer_model 字段正确写入 seal 文件
+
+    minimal_paths:
+      - "spec_review independent_test_plans.length > 0"
+      - "CRG stats 非全零"
+      - "两个 seal 文件均含 reviewer_model 字段"
+
+    rcis: []

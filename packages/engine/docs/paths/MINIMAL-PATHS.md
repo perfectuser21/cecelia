@@ -468,6 +468,21 @@ changelog:
 
 ---
 
+### sprint-contract-fix-adversarial: Sprint Contract Gate 对抗审查修复
+
+1. ✅ **CRG seal 包含 reviewer_model 字段**
+2. ✅ **spec_review seal independent_test_plans 非空**
+
+---
+
+### sprint-contract-gate-fix: Sprint Contract Gate 防橡皮图章修复
+
+1. ✅ **spec_review independent_test_plans.length > 0**
+2. ✅ **CRG stats 非全零**
+3. ✅ **两个 seal 文件均含 reviewer_model 字段**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
