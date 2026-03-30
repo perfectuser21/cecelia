@@ -122,6 +122,21 @@ _mark_cleanup_done() {
 }
 
 # ============================================================================
+# check_divergence_count: 检查 Evaluator 独立性门禁
+# ============================================================================
+# 参数: $1 = divergence_count（Evaluator 独立发现的问题数，与 Planner 的分歧数）
+# 返回: 0 = 通过（count >= 1，Evaluator 真正独立思考）
+#       1 = 拒绝（count == 0，Evaluator 是橡皮图章）
+#
+# divergence_count = Evaluator 独立发现的、Planner 未发现的问题数量
+# >= 1 证明 Evaluator 真正挑战了 Planner（不是无脑认可）
+# == 0 说明 Evaluator 没有任何独立判断，形同虚设
+check_divergence_count() {
+    local count=${1:-0}
+    [[ "$count" -ge 1 ]]
+}
+
+# ============================================================================
 # 主函数: devloop_check
 # ============================================================================
 devloop_check() {
@@ -174,7 +189,19 @@ devloop_check() {
                 _devloop_jq -n '{"status":"blocked","reason":"spec_review seal 文件 verdict=FAIL，需分析 root cause 修复 Task Card","action":"读取 .dev-gate-spec.<branch> 中的 issues，修复 Task Card，重新调用 spec-review subagent"}'
                 return 2
             fi
-            # seal 存在且 verdict=PASS → 继续
+            # seal 存在且 verdict=PASS → 检查 divergence_count
+            # ===== 条件 1.5b: divergence_count 门禁（Evaluator 独立性检查）=====
+            # divergence_count = Evaluator 独立发现的与 Planner 分歧的问题数
+            # 0 = Evaluator 橡皮图章（无价值），必须拦截；>= 1 = 真正独立思考，放行
+            local spec_seal_divergence
+            spec_seal_divergence=$(jq -r '.divergence_count // "0"' "$spec_seal_file" 2>/dev/null || echo "0")
+            if ! check_divergence_count "$spec_seal_divergence"; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review_divergence" "blocked" "spec_review divergence_count=0：Evaluator 未发现任何与 Planner 的分歧（橡皮图章检测）"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"spec_review divergence_count=0：Evaluator 未发现任何与 Planner 的分歧（橡皮图章检测）","action":"重新调用 spec-review subagent，Evaluator 必须独立思考并发现至少 1 个 Planner 遗漏的问题"}'
+                return 2
+            fi
         else
             # seal 文件不存在
             if [[ "$spec_review_status" == "pass" ]]; then
