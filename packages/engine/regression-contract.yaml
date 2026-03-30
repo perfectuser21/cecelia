@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "13.66.0"
+version: "13.67.0"
 updated: 2026-03-30
 
 # ============================================================================
@@ -3741,3 +3741,22 @@ skills:
 # 12.82.0 (2026-03-16): fix(engine): git add -A 改 -u + Stop Hook 90分钟超时保护
 # 12.81.0 (2026-03-15): feat(engine): 04-learning.md 修正 Learning 模板格式 + Brain execution-callback 回调方式
 
+
+  - id: ENGINE-PIPELINE-TRACE-001
+    feature: DevTools
+    name: "pipeline-trace.sh — 任意 branch /dev 执行全景视图"
+    scope: observability
+    priority: P2
+    trigger: [PR]
+    method: auto
+    file: "scripts/pipeline-trace.sh"
+    tags: [pipeline, trace, observability, devtools]
+    owner: engine
+    steps:
+      given: "开发者传入 branch 名称"
+      when: "运行 pipeline-trace.sh <branch>"
+      then: "读取 .dev-mode、seal 文件、Learning，输出 Stage 0-4 结构化执行摘要"
+    evidence:
+      type: command
+      run: "bash -c 'test -f packages/engine/scripts/pipeline-trace.sh && test -x packages/engine/scripts/pipeline-trace.sh'"
+    test: "tests/scripts/pipeline-trace.test.ts"
