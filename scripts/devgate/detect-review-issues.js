@@ -32,12 +32,14 @@ process.stdin.on('end', () => {
   //   "- 🔴" — bullet 列表里的问题标记
 
   // 检查正文是否声明了无严重问题
-  const noIssuesDeclared = /（🔴）[\s\S]*?[-*]\s*\*\*无\*\*/.test(input)
-    || /严重问题[（(]🔴[)）][\s\S]{0,200}无严重问题/.test(input)
-    || /严重问题[（(]🔴[)）][\s\S]{0,100}\*\*无\*\*/.test(input);
+  // 支持全角括号（🔴）和半角括号 (🔴)，及标题与括号间的空格
+  const noIssuesDeclared = /[（(]🔴[)）][\s\S]*?[-*]\s*\*\*无\*\*/.test(input)
+    || /严重问题\s*[（(]🔴[)）][\s\S]{0,200}无严重问题/.test(input)
+    || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}\*\*无\*\*/.test(input)
+    || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}-\s*\*\*无\*\*/.test(input);
 
-  // 排除标题里的 🔴，检测正文中的实际问题标记
-  const textWithoutHeadings = input.replace(/#+\s*[^🔴\n]*（🔴）[^\n]*/g, '');
+  // 排除标题里的 🔴（兼容全角/半角括号），检测正文中的实际问题标记
+  const textWithoutHeadings = input.replace(/#+\s*[^🔴\n]*[（(]🔴[)）][^\n]*/g, '');
   const hasActualRedFlag = /🔴/.test(textWithoutHeadings) && !noIssuesDeclared;
 
   if (hasActualRedFlag) {

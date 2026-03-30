@@ -8,7 +8,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Factory, Play, RefreshCw, Clock, CheckCircle, XCircle, Loader2, AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Factory, Play, RefreshCw, Clock, CheckCircle, XCircle, Loader2, AlertCircle, ChevronRight } from 'lucide-react';
 
 const BRAIN_API = '/api/brain';
 
@@ -307,8 +308,9 @@ export default function ContentFactory() {
         {pipelines.length > 0 && (
           <div className="space-y-2">
             {pipelines.map(p => (
-              <div
+              <Link
                 key={p.id}
+                to={`/content-factory/${p.id}`}
                 className="flex items-center justify-between p-3 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
               >
                 <div className="flex-1 min-w-0 mr-3">
@@ -322,8 +324,9 @@ export default function ContentFactory() {
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="text-xs text-gray-400 dark:text-gray-500">{p.priority}</span>
                   <StatusBadge status={p.status} />
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         )}
