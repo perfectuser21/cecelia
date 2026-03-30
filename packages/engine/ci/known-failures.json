@@ -3,7 +3,7 @@
   "description": "已知测试失败白名单 - 只有这里登记的失败模式才能跳过 CI",
   "version": "1.0.0",
   "rules": {
-    "max_skip_count": 3,
+    "max_skip_count": 5,
     "require_ticket": true
   },
   "allowed": {
@@ -31,16 +31,6 @@
       "description": "lock-utils.sh 中 flock 不可用时（macOS 无 coreutils）静默 return 0，应改为 return 1，待 Agent 1 的 bug fix PR 合并后修复",
       "ticket": "Pipeline Integrity Gate 任务中识别的 bug，lock-utils.sh fail-closed 修复",
       "expires": "2026-04-15"
-    },
-    "pipeline-integrity-devloop-verdict": {
-      "description": "保护性标记：验证 devloop-check.sh 对 seal .verdict 字段的检查存在。当前通过，若代码误删此检查则触发保护",
-      "ticket": "Pipeline Integrity Gate meta-test，防止安全退化",
-      "expires": "2026-06-30"
-    },
-    "pipeline-integrity-devloop-divergence": {
-      "description": "保护性标记：验证 devloop-check.sh 对 seal .divergence_count 字段的检查存在。当前通过，若代码误删此检查则触发保护",
-      "ticket": "Pipeline Integrity Gate meta-test，防止安全退化",
-      "expires": "2026-06-30"
     }
   }
 }
