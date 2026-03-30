@@ -49,6 +49,23 @@ _json_field() {
   fi
 }
 
+# 从 JSON 文件提取数组字段，输出逗号分隔字符串
+_json_array_field() {
+  local file="$1"
+  local field="$2"
+  if [[ ! -f "$file" ]]; then
+    echo ""
+    return
+  fi
+  if command -v node &>/dev/null; then
+    node -e "try{const o=JSON.parse(require('fs').readFileSync('$file','utf8'));const v=o['$field'];console.log(Array.isArray(v)?v.join(', '):(v??''))}catch(e){}" 2>/dev/null || echo ""
+  elif command -v jq &>/dev/null; then
+    jq -r "if .${field} then [.${field}[]] | join(\", \") else \"\" end" "$file" 2>/dev/null || echo ""
+  else
+    echo ""
+  fi
+}
+
 # 从 key: value 格式文件提取字段
 _kv_field() {
   local file="$1"
@@ -114,34 +131,58 @@ STEP_4=$(_kv_field "$DEV_MODE_FILE" "step_4_ship")
 PR_URL=$(_kv_field "$DEV_MODE_FILE" "pr_url")
 CLEANUP=$(_kv_field "$DEV_MODE_FILE" "cleanup_done")
 
+# Stage 0 详细字段
+BRAIN_TASK_ID=$(_kv_field "$DEV_MODE_FILE" "brain_task_id")
+CONFIDENCE_SCORE=$(_kv_field "$DEV_MODE_FILE" "confidence_score")
+CONFIDENCE_REASON=$(_kv_field "$DEV_MODE_FILE" "confidence_reason")
+
 # ──────────────────────────────────────────────
 # 读取 seal 文件
 # ──────────────────────────────────────────────
 SPEC_SEAL="$EVIDENCE_DIR/.dev-gate-spec.${BRANCH}"
 CRG_SEAL="$EVIDENCE_DIR/.dev-gate-crg.${BRANCH}"
+PLANNER_SEAL="$EVIDENCE_DIR/.dev-gate-planner.${BRANCH}"
+
+# planner seal
+PLANNER_SEALED_BY=""
+PLANNER_TIMESTAMP=""
+if [[ -f "$PLANNER_SEAL" ]]; then
+  PLANNER_SEALED_BY=$(_json_field "$PLANNER_SEAL" "sealed_by")
+  PLANNER_TIMESTAMP=$(_json_field "$PLANNER_SEAL" "timestamp")
+fi
 
 # spec seal
 SPEC_VERDICT="not found"
 SPEC_DIVERGENCE=""
+SPEC_TIMESTAMP=""
+SPEC_REVIEWER=""
 if [[ -f "$SPEC_SEAL" ]]; then
   v=$(_json_field "$SPEC_SEAL" "verdict")
   SPEC_VERDICT="${v:-unknown}"
   d=$(_json_field "$SPEC_SEAL" "divergence_count")
   SPEC_DIVERGENCE="${d}"
+  SPEC_TIMESTAMP=$(_json_field "$SPEC_SEAL" "timestamp")
+  SPEC_REVIEWER=$(_json_field "$SPEC_SEAL" "reviewer")
 fi
 
 # crg seal
 CRG_VERDICT="not found"
+CRG_REVIEWER=""
 if [[ -f "$CRG_SEAL" ]]; then
   v=$(_json_field "$CRG_SEAL" "verdict")
   CRG_VERDICT="${v:-unknown}"
+  CRG_REVIEWER=$(_json_field "$CRG_SEAL" "reviewer")
 fi
 
 # generator seal
 GENERATOR_SEAL="$EVIDENCE_DIR/.dev-gate-generator.${BRANCH}"
 GENERATOR_STATUS="not found"
+GENERATOR_FILES=""
+GENERATOR_BUILD_STATUS=""
 if [[ -f "$GENERATOR_SEAL" ]]; then
   GENERATOR_STATUS="✅"
+  GENERATOR_FILES=$(_json_array_field "$GENERATOR_SEAL" "files_modified")
+  GENERATOR_BUILD_STATUS=$(_json_field "$GENERATOR_SEAL" "build_status")
 fi
 
 # ──────────────────────────────────────────────
@@ -159,11 +200,21 @@ if [[ -n "$PR_URL" ]]; then
   fi
 fi
 
+# PR number 提取（从 URL 末尾 /pull/NNN 提取）
+PR_NUMBER=""
+if [[ -n "$PR_URL" ]]; then
+  PR_NUMBER=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' | head -1)
+  if [[ -n "$PR_NUMBER" ]]; then
+    PR_NUMBER="#${PR_NUMBER}"
+  fi
+fi
+
 # ──────────────────────────────────────────────
 # Learning 文件
 # ──────────────────────────────────────────────
 LEARNING_PATH="not found"
 LEARNING_RCA=""
+LEARNING_RCA_LINE=""
 
 # 搜索 docs/learnings/{branch}.md（在 repo root 中）
 LEARNING_CANDIDATE="$REPO_ROOT/docs/learnings/${BRANCH}.md"
@@ -171,6 +222,8 @@ if [[ -f "$LEARNING_CANDIDATE" ]]; then
   LEARNING_PATH="docs/learnings/${BRANCH}.md"
   if grep -q "### 根本原因" "$LEARNING_CANDIDATE" 2>/dev/null; then
     LEARNING_RCA=" (含 RCA)"
+    # 提取 ### 根本原因 后第一行非空内容
+    LEARNING_RCA_LINE=$(awk '/### 根本原因/{found=1;next} found && /[^ \t]/{print;exit}' "$LEARNING_CANDIDATE" 2>/dev/null || echo "")
   fi
 fi
 
@@ -190,6 +243,7 @@ _icon() {
 # 输出
 # ──────────────────────────────────────────────
 LINE="────────────────────────────────────────────────────────"
+INDENT="           "
 
 echo ""
 echo "Branch: $BRANCH"
@@ -197,6 +251,9 @@ echo "$LINE"
 
 # Stage 0
 echo "$(_icon "$STEP_0") Stage 0  Worktree     started: ${STARTED:-unknown}"
+if [[ -n "$BRAIN_TASK_ID" || -n "$CONFIDENCE_SCORE" ]]; then
+  echo "${INDENT}brain_task_id: ${BRAIN_TASK_ID:-—}  confidence: ${CONFIDENCE_SCORE:-—}  reason: ${CONFIDENCE_REASON:-—}"
+fi
 
 # Stage 1
 SPEC_DETAIL="seal: $SPEC_VERDICT"
@@ -204,17 +261,34 @@ if [[ -n "$SPEC_DIVERGENCE" ]]; then
   SPEC_DETAIL="$SPEC_DETAIL  divergence=$SPEC_DIVERGENCE"
 fi
 echo "$(_icon "$STEP_1") Stage 1  Spec         step_1_spec: ${STEP_1:-pending}  $SPEC_DETAIL"
+if [[ -n "$PLANNER_SEALED_BY" || -n "$PLANNER_TIMESTAMP" ]]; then
+  echo "${INDENT}planner: sealed_by=${PLANNER_SEALED_BY:-—}  timestamp=${PLANNER_TIMESTAMP:-—}"
+fi
+if [[ -n "$SPEC_TIMESTAMP" || -n "$SPEC_REVIEWER" ]]; then
+  echo "${INDENT}spec-review: timestamp=${SPEC_TIMESTAMP:-—}  reviewer=${SPEC_REVIEWER:-—}"
+fi
 
 # Stage 2
 echo "$(_icon "$STEP_2") Stage 2  Code         step_2_code: ${STEP_2:-pending}  crg: $CRG_VERDICT  generator: $GENERATOR_STATUS"
+if [[ -n "$GENERATOR_FILES" || -n "$GENERATOR_BUILD_STATUS" ]]; then
+  echo "${INDENT}generator: files_modified=[${GENERATOR_FILES:-—}]  build_status=${GENERATOR_BUILD_STATUS:-—}"
+fi
+if [[ -n "$CRG_REVIEWER" ]]; then
+  echo "${INDENT}crg: reviewer=${CRG_REVIEWER}"
+fi
 
 # Stage 3
 PR_DISPLAY="${PR_URL:-not found}"
-echo "$(_icon "$STEP_3") Stage 3  Integrate    PR: $PR_DISPLAY  CI: $CI_STATUS"
+PR_NUM_DISPLAY="${PR_NUMBER:+  ${PR_NUMBER}}"
+echo "$(_icon "$STEP_3") Stage 3  Integrate    PR: $PR_DISPLAY${PR_NUM_DISPLAY}  CI: $CI_STATUS"
+echo "${INDENT}checks: L1-process / L2-consistency / L3-code / L4-runtime"
 
 # Stage 4
 CLEANUP_DISPLAY="${CLEANUP:-false}"
 echo "$(_icon "$STEP_4") Stage 4  Ship         learning: $LEARNING_PATH${LEARNING_RCA}  cleanup: $CLEANUP_DISPLAY"
+if [[ -n "$LEARNING_RCA_LINE" ]]; then
+  echo "${INDENT}rca: ${LEARNING_RCA_LINE}"
+fi
 
 echo "$LINE"
 echo ""
