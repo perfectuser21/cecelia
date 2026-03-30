@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 3.1.0
+version: 3.2.0
 created: 2026-03-20
-updated: 2026-03-30
+updated: 2026-03-31
 changelog:
+  - 3.2.0: Task Card 注入前 mask Test 字段（TASK_CARD_FOR_REVIEW）确保 Evaluator 独立生成；PASS 后验证 independent_test_plans.length > 0；seal 指令要求 reviewer_model 字段
   - 3.1.0: spec_review Evaluator prompt 显式内容注入 — 主 agent 在 spawn 前先读 SKILL.md + Task Card，直接嵌入 prompt，禁止传文件路径
   - 3.0.0: Task Card 生成拆为 Planner subagent — 主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP
   - 2.4.0: spec_review 升级为 Sprint Contract Gate — subagent 独立写测试方案后与主 agent 比对，严重分歧 = 硬 FAIL，不能继续 Stage 2
@@ -362,8 +363,14 @@ loop:
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
        → 确认 seal 文件 .dev-gate-spec.${BRANCH} 已存在（由 subagent 写入）
-       → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
-       → break（继续 Stage 2）
+       → **读取 seal 文件，验证 independent_test_plans.length > 0（反欺诈检查）**：
+         if independent_test_plans 为空（length === 0）:
+           # Evaluator 未执行 Sprint Contract，强制当作 FAIL 处理
+           echo "❌ independent_test_plans 为空，Evaluator 未做独立审查，强制重跑"
+           goto FAIL 逻辑（修复 Task Card，重新调用 subagent）
+         else:
+           echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
+           break（继续 Stage 2）
   4. verdict == "FAIL"
        → 读取 issues 列表（包括 severity=="blocker" 和 sprint_contract 分歧）
        → 深入分析每个 blocker 的 root cause：
@@ -383,7 +390,9 @@ loop:
 **执行时注意**：
 - subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
 - subagent prompt 必须包含 Task Card **完整内容**
-- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-spec.<BRANCH>`），seal 文件必须包含 `independent_test_plans` 字段
+- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-spec.<BRANCH>`），seal 文件必须包含 `independent_test_plans`、`reviewer_model` 字段
+- **CRITICAL**: Task Card 传给 subagent 时必须使用 masked 版本（TASK_CARD_FOR_REVIEW），禁止传原始 Test 字段内容
+- **CRITICAL**: PASS 后必须验证 seal 文件的 `independent_test_plans.length > 0`，为 0 则强制重跑
 - 不要向 Brain 注册任务，不要走 Codex 异步派发路径
 - Sprint Contract 分歧导致的 FAIL，修复方向是重写 **Test 字段**（不是修改 DoD 描述），直到与 subagent 独立方案一致
 - FAIL 修复后必须重新调用 subagent，不能跳过重审
@@ -400,11 +409,20 @@ loop:
 const SKILL_MD = readFile('packages/workflows/skills/spec-review/SKILL.md')   // ← 文件实际内容，非路径
 const TASK_CARD = readFile(`.task-cp-${BRANCH}.md`)                           // ← 文件实际内容，非路径
 
+// 1a. 创建 Task Card 的 masked 版本（CRITICAL — 隐藏 Test 字段，确保 Evaluator 独立生成）
+// 将所有 "Test: ..." 行替换为 REDACTED 提示，防止 Evaluator 直接复制主 agent 的测试方案
+// 注意：只替换以 Test: 开头的行（含前导空格），不影响其他内容
+const TASK_CARD_FOR_REVIEW = TASK_CARD.replace(
+  /^(\s*Test:)\s*.+$/gm,
+  '$1 [REDACTED — 请先独立生成测试方案，不要参考此字段]'
+)
+
 // 2. 组装 prompt（用实际内容字符串构建，禁止传递文件路径）
 const SEAL_INSTRUCTION = `
 审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-spec.${BRANCH}：
 { "verdict": "PASS"|"FAIL", "branch": "${BRANCH}",
   "timestamp": "<ISO8601>", "reviewer": "spec-review-agent",
+  "reviewer_model": "<实际使用的模型名称，如 claude-sonnet-4-6>",
   "independent_test_plans": [...],
   "negotiation_result": {...},
   "issues": [...] }
@@ -414,9 +432,9 @@ const prompt = `${SKILL_MD}
 
 ---
 
-## Sprint Contract（Task Card）— Planner 产出（内容注入）
+## Sprint Contract（Task Card）— Planner 产出（内容注入，Test 字段已 REDACTED）
 
-${TASK_CARD}
+${TASK_CARD_FOR_REVIEW}
 
 ---
 
@@ -432,6 +450,6 @@ Agent({
 
 ## 完成后
 
-spec_review subagent 返回 PASS 后，**立即**执行 Stage 2：
+spec_review subagent 返回 PASS 后，**验证 independent_test_plans 非空再继续**：
 
 `cat skills/dev/steps/02-code.md`
