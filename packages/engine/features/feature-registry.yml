@@ -16,9 +16,14 @@
 # ============================================================================
 
 version: "4.0.0"
-updated: "2026-03-29"
-# ci-trigger: 13.60.0
+updated: "2026-03-30"
+# ci-trigger: 13.61.0
 changelog:
+  - version: "13.61.0"
+    date: "2026-03-30"
+    change: "[CONFIG] feat(engine): 内容注入 + Evaluator divergence 下限 — 02-code.md Generator subagent prompt 直接嵌入 Task Card 实际内容，spec-review SKILL.md 加 divergence_count=0 exit 2 检查"
+    scope: "packages/engine/skills/dev/steps/02-code.md,packages/workflows/skills/spec-review/SKILL.md"
+
   - version: "13.60.0"
     date: "2026-03-30"
     change: "[CONFIG] feat(engine): 三阶段 seal 对齐检查 — devloop-check.sh 新增条件 1.6（planner seal）和条件 2.8（generator seal），planner-prompt.md 和 02-code.md 加入 seal 写入强制指令"
