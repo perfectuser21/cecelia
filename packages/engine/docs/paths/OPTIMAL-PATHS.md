@@ -567,6 +567,17 @@ DoD whitelist 检查正常执行
 
 ---
 
+### pipeline-security-seal-validation: Pipeline 安全修复：seal 内容校验 + fallback 拒绝 + flock 硬错误 + PR 合并前二次确认
+
+```
+seal 文件 verdict=PASS && divergence_count>=1 →
+devloop-check.sh 放行 →
+PR 合并前重新检查 mergeable + CI →
+gh pr merge 执行合并
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
