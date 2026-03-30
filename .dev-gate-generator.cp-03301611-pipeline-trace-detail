@@ -1,0 +1,11 @@
+{
+  "sealed_by": "generator-agent",
+  "branch": "cp-03301611-pipeline-trace-detail",
+  "timestamp": "2026-03-30T16:26:54+08:00",
+  "verdict": "PASS",
+  "files_modified": [
+    "packages/engine/scripts/pipeline-trace.sh",
+    "packages/engine/tests/scripts/pipeline-trace.test.ts"
+  ],
+  "build_status": "success"
+}
