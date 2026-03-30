@@ -17,8 +17,13 @@
 
 version: "4.0.0"
 updated: "2026-03-30"
-# ci-trigger: 13.61.0
+# ci-trigger: 13.63.0
 changelog:
+  - version: "13.63.0"
+    date: "2026-03-30"
+    change: "feat(engine): PR Review 阻塞门禁 + Divergence 可执行检查 — pr-review.yml 改为直接调 OpenRouter API + detect-review-issues.js（🔴则 exit 1 阻塞合并），devloop-check.sh 新增 check_divergence_count() 门禁函数（divergence_count=0 被拦截）"
+    scope: ".github/workflows/pr-review.yml,scripts/devgate/detect-review-issues.js,packages/engine/lib/devloop-check.sh,packages/engine/tests/workflows/pr-review-blocking.test.ts,packages/engine/tests/scripts/devloop-check-divergence.test.ts"
+
   - version: "13.62.0"
     date: "2026-03-30"
     type: feat
