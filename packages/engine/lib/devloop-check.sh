@@ -10,7 +10,7 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v3.5.0
+# 版本: v3.6.0
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
 # 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
@@ -20,6 +20,7 @@
 # 更新: 2026-03-22 — P0 修复：cleanup 失败后加 return 2 触发重试，避免 PR 合并后工作流卡死
 # 更新: 2026-03-22 — P0 安全：seal 文件机制（#seal-gate），条件 1.5/2.5 读 seal 文件，自认证检测
 # 更新: 2026-03-30 — 移除条件 4.5：Playwright Evaluator（改为 post-merge 触发）
+# 更新: 2026-03-30 — 新增条件 1.6/2.8：Planner→Generator seal 三阶段对齐检查
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -36,6 +37,10 @@
 #     → seal 文件不存在 且 .dev-mode 有 pass → exit 2（自认证检测，拦截）
 #     → seal 文件不存在 且 无字段 → pass-through（subagent 尚未运行）
 #
+#   条件 1.6: planner seal 文件验证（Sprint Contract 前置检查）
+#     → .dev-gate-planner.{branch} 存在 → 继续
+#     → 不存在 → exit 2（Planner subagent 尚未完成，禁止进入 Stage 2）
+#
 #   step_2_code done?
 #     → no → exit 2
 #     → yes → 继续
@@ -45,6 +50,10 @@
 #     → seal 文件存在 且 verdict=FAIL → exit 2（审查失败，修复代码）
 #     → seal 文件不存在 且 .dev-mode 有 pass → exit 2（自认证检测，拦截）
 #     → seal 文件不存在 且 无字段 → pass-through（subagent 尚未运行）
+#
+#   条件 2.8: generator seal 文件验证（Stage 3 前置检查）
+#     → .dev-gate-generator.{branch} 存在 → 继续
+#     → 不存在 → exit 2（Generator subagent 尚未完成，禁止进入 Stage 3）
 #
 #   PR 创建了?
 #   CI 过了?
@@ -186,6 +195,23 @@ devloop_check() {
         fi
     fi
 
+    # ===== 条件 1.6: planner seal 文件验证（Sprint Contract 前置检查）=====
+    # Planner subagent 完成后必须写入 .dev-gate-planner.{branch}
+    # 无此文件 → Sprint Contract 尚未生效，禁止进入 Stage 2
+    if [[ -f "$dev_mode_file" ]]; then
+        local planner_seal_file
+        planner_seal_file="$(dirname "$dev_mode_file")/.dev-gate-planner.${branch}"
+        local step_1_done
+        step_1_done=$(grep "^step_1_spec:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$step_1_done" == "done" && ! -f "$planner_seal_file" ]]; then
+            if command -v _devlog_event &>/dev/null; then
+                _devlog_event "devloop-check" "planner_seal" "blocked" "Planner seal 文件缺失，Sprint Contract 未生效"
+            fi
+            _devloop_jq -n '{"status":"blocked","reason":"Planner seal 缺失：.dev-gate-planner.<branch> 不存在，Sprint Contract 尚未生效","action":"Stage 1 Spec 完成后必须由 Planner subagent 写入 .dev-gate-planner.<branch> seal 文件，再进入 Stage 2"}'
+            return 2
+        fi
+    fi
+
     # ===== 条件 2: step_2_code 是否完成？ =====
     if [[ -f "$dev_mode_file" ]]; then
         local step_2_status
@@ -306,6 +332,23 @@ devloop_check() {
                     fi
                 fi
             fi
+        fi
+    fi
+
+    # ===== 条件 2.8: generator seal 文件验证（Stage 3 前置检查）=====
+    # Generator subagent 完成后必须写入 .dev-gate-generator.{branch}
+    # 无此文件 → Generator 尚未完成，禁止进入 Stage 3（push/PR）
+    if [[ -f "$dev_mode_file" ]]; then
+        local generator_seal_file
+        generator_seal_file="$(dirname "$dev_mode_file")/.dev-gate-generator.${branch}"
+        local step_2_done_check
+        step_2_done_check=$(grep "^step_2_code:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$step_2_done_check" == "done" && ! -f "$generator_seal_file" ]]; then
+            if command -v _devlog_event &>/dev/null; then
+                _devlog_event "devloop-check" "generator_seal" "blocked" "Generator seal 文件缺失，Stage 2 未完全提交"
+            fi
+            _devloop_jq -n '{"status":"blocked","reason":"Generator seal 缺失：.dev-gate-generator.<branch> 不存在，Generator subagent 尚未完成","action":"Stage 2 Code 完成后必须由 Generator subagent 写入 .dev-gate-generator.<branch> seal 文件，再进入 Stage 3"}'
+            return 2
         fi
     fi
 

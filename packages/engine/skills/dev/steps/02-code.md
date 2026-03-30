@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 6.0.0
+version: 6.1.0
 created: 2026-03-14
-updated: 2026-03-29
+updated: 2026-03-30
 changelog:
+  - 6.1.0: Generator subagent 完成后写 .dev-gate-generator.{BRANCH} seal 文件（Stage 3 前置检查）
   - 6.0.0: 2.2 写代码拆为 Generator subagent（主 agent 变纯编排者）
   - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
   - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
@@ -211,7 +212,30 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
 
 **关键：每条 DoD 完成后必须自己运行 Test 命令确认 PASS，不能跳过。**
 
-完成所有 DoD 条目后，输出修改过的文件列表。
+完成所有 DoD 条目后：
+1. 输出修改过的文件列表
+2. 写入 Generator seal 文件（CRITICAL — Stage 3 前置检查必要条件）：
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+WORKTREE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+SEAL_FILE="$WORKTREE_ROOT/.dev-gate-generator.${BRANCH}"
+
+cat > "$SEAL_FILE" << EOF
+{
+  "sealed_by": "generator-agent",
+  "branch": "${BRANCH}",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)",
+  "dod_completed": true,
+  "status": "completed"
+}
+EOF
+
+echo "✅ Generator seal 文件已写入: $SEAL_FILE"
+```
+
+**这是 Stage 3 前置检查**：devloop-check.sh 条件 2.8 会检查此文件是否存在。
+缺失 → exit 2 → 无法进入 Stage 3（push/PR）。
 ```
 
 ### 主 agent 调用代码（伪码）

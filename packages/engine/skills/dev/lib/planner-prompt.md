@@ -1,7 +1,11 @@
 ---
 id: planner-prompt
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-29
+updated: 2026-03-30
+changelog:
+  - 1.1.0: 完成后写 .dev-gate-planner.{BRANCH} seal 文件（Sprint Contract 防伪机制）
+  - 1.0.0: 初始版本
 ---
 
 # Planner subagent Prompt 模板
@@ -61,7 +65,11 @@ Planner 的核心职责是描述 **WHAT**（要做什么、行为规格），而
 
 生成 Task Card，格式如下。DoD 条目只写行为描述，禁止写实现细节。
 
-写完后，将 Task Card 写入文件 `.task-cp-{BRANCH}.md`。
+写完后：
+1. 将 Task Card 写入文件 `.task-cp-{BRANCH}.md`
+2. 写入 seal 文件 `.dev-gate-planner.{BRANCH}`（JSON 格式，含 sealed_by/branch/timestamp/task_card/status 字段）
+
+这两步都完成后，你的工作才算完成。seal 文件是 Sprint Contract 防伪机制的必要条件。
 
 ---
 
@@ -115,3 +123,29 @@ Planner 的核心职责是描述 **WHAT**（要做什么、行为规格），而
 
 4. **Test 字段留 TODO，Stage 2 探索后填写**
    - 除非已知具体验证方式（如文件存在性检查）
+
+## Planner 完成后必须写 seal 文件（CRITICAL）
+
+Task Card 写入 `.task-cp-{BRANCH}.md` 后，必须立即写入 seal 文件，证明 Planner 已完成 Sprint Contract：
+
+```bash
+# 获取 BRANCH（从 .dev-mode 或环境变量）
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+WORKTREE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+SEAL_FILE="$WORKTREE_ROOT/.dev-gate-planner.${BRANCH}"
+
+cat > "$SEAL_FILE" << EOF
+{
+  "sealed_by": "planner-agent",
+  "branch": "${BRANCH}",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)",
+  "task_card": ".task-cp-${BRANCH}.md",
+  "status": "completed"
+}
+EOF
+
+echo "✅ Planner seal 文件已写入: $SEAL_FILE"
+```
+
+**这是 Sprint Contract 防伪机制**：devloop-check.sh 条件 1.6 会检查此文件是否存在。
+缺失 → exit 2 → 无法进入 Stage 2。
