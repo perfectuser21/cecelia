@@ -712,10 +712,22 @@ sys.exit(0 if found else 1)
     fi
 
 else
-    # === Fallback: devloop-check.sh 未加载，使用旧内联逻辑 ===
-    # 保留此 fallback 确保向后兼容（devloop-check.sh 未安装时不崩溃）
-    echo "  ⚠️  devloop-check.sh 未加载，使用 fallback 逻辑" >&2
+    # === v16.0.0: fail-closed — 拒绝在没有 devloop-check.sh 的情况下继续 ===
+    # devloop-check.sh 是完成判断的唯一来源，缺失则拒绝继续（不降级到旧内联逻辑）
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [Stop Hook: FATAL — devloop-check.sh 未加载]" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "  devloop-check.sh 是完成判断的唯一来源，缺失则拒绝继续" >&2
+    echo "  可能原因：库路径错误、文件被删除、安装未完成" >&2
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    jq -n '{"decision":"block","reason":"devloop-check.sh 未加载，fail-closed 拒绝降级执行"}' 2>/dev/null || echo '{"decision":"block"}'
+    exit 2
 
+    # === 以下代码已被 v16.0.0 fail-closed 取代，保留仅供参考 ===
+    # 旧版 fallback 逻辑（缺少 seal 验证，已废弃）
     # --- 条件 1: PR 创建？---
     PR_NUMBER=""
     PR_STATE=""
