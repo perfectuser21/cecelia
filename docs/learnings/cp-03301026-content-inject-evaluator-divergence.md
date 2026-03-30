@@ -9,6 +9,8 @@
 
 2. **bash-guard 和 branch-protect 的 git 上下文是主仓库**（即使在 worktree 中）：hook 运行时 `git rev-parse --abbrev-ref HEAD` 返回 `main`，而不是 worktree 的分支名。导致 seal 文件路径校验找的是 `.dev-gate-spec.main`，不是 worktree 分支的 seal 文件。
 
+3. **Engine 版本文件有两个 package-lock.json 需要同步**：根目录的 `package-lock.json`（workspaces 引用）和 `packages/engine/package-lock.json`（Engine 独立 lockfile）都需要更新，CI 版本同步检查只读后者。
+
 ## 下次预防
 
 - [ ] 在 `packages/workflows/` 子目录改文件时，必须同时在该目录创建 per-branch PRD/DoD（`.prd-{branch}.md` + `.dod-{branch}.md`）
