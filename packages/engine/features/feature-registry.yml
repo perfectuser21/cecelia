@@ -19,6 +19,11 @@ version: "4.0.0"
 updated: "2026-03-30"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.64.0"
+    date: "2026-03-30"
+    change: "feat(engine): PR Review fail-closed + Stop Hook 孤儿无上限打回 — pr-review.yml 加 MAX_RETRY=3 重试循环、API_ERROR=true 检测、exit 1 fail-closed；stop-dev.sh 删除 _ORPHAN_COUNT -gt 5 if 块（含 exit 0），孤儿状态无上限永远 exit 2"
+    scope: ".github/workflows/pr-review.yml,packages/engine/hooks/stop-dev.sh,packages/engine/tests/workflows/pr-review-fail-closed.test.ts"
+
   - version: "13.63.0"
     date: "2026-03-30"
     change: "feat(engine): PR Review 阻塞门禁 + Divergence 可执行检查 — pr-review.yml 改为直接调 OpenRouter API + detect-review-issues.js（🔴则 exit 1 阻塞合并），devloop-check.sh 新增 check_divergence_count() 门禁函数（divergence_count=0 被拦截）"
