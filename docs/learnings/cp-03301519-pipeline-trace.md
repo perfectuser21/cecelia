@@ -7,6 +7,10 @@ Date: 2026-03-30
 
 pipeline 执行过程产生多个证据文件（.dev-mode、seal files、Learning），但没有统一的聚合视图，用户无法一眼确认执行是否按设计走。
 
+证据文件分散在 worktree 和主仓库两处，需要按固定顺序搜索：先 `.claude/worktrees/*/`，再仓库根目录。
+
+每个 Stage 的关键字段（started、verdict、divergence_count、pr_url、ci_status）格式不统一，需要统一的字段提取层。
+
 ### 下次预防
 
 - [ ] 新增类似观测工具时，先用 fixture 模拟完整数据再写测试
