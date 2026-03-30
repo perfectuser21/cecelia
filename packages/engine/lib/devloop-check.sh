@@ -183,6 +183,7 @@ devloop_check() {
         if [[ -f "$spec_seal_file" ]]; then
             spec_seal_verdict=$(jq -r '.verdict // ""' "$spec_seal_file" 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "")
             # v3.7.0: 内容验证 — 不只检查文件存在，必须验证 verdict 字段值为 pass（防伪造 seal）
+            # spec_seal_verdict == FAIL 或任何非 pass 值 → blocked（explicit: FAIL → blocked）
             if [[ "$spec_seal_verdict" != "pass" ]]; then
                 if command -v _devlog_event &>/dev/null; then
                     _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal verdict 非 PASS（值: $spec_seal_verdict），拦截伪造 seal"
