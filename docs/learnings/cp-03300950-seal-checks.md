@@ -10,6 +10,10 @@
 
 devloop-check.sh 已有 spec_review seal（条件 1.5）和 code_review_gate seal（条件 2.5），但缺少对 Planner subagent 和 Generator subagent 完成的强制验证，导致这两个 subagent 步骤可被绕过。
 
+Sprint Contract（step_2_code）开始前，系统无法验证 Planner subagent 是否真实执行过，主 agent 可以在没有 Task Card 的情况下直接进入写代码阶段。同样，Stage 3（push/PR）开始前，没有机制验证 Generator subagent 是否完成了全部 DoD 验收，导致代码审查链路中存在断点。
+
+根本上是"信任但不验证"的模式——依赖 subagent 自觉写 seal，而非强制门禁拦截缺失 seal 的情况。
+
 ---
 
 ### 解决方案
