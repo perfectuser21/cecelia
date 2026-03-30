@@ -551,10 +551,11 @@ router.get('/:id/output', async (req, res) => {
       .replace(/^-|-$/g, '')
       .toLowerCase();
 
+    const topicNoDash = topic.replace(/-/g, '');
     const image_urls = [];
     if (existsSync(IMAGES_DIR)) {
       const allFiles = readdirSync(IMAGES_DIR)
-        .filter(f => f.startsWith(`${topic}-`) && f.endsWith('.png'))
+        .filter(f => (f.startsWith(`${topic}-`) || f.startsWith(`${topicNoDash}-`)) && f.endsWith('.png'))
         .sort();
       let cardIndex = 1;
       for (const file of allFiles) {
