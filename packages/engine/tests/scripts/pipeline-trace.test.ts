@@ -24,6 +24,9 @@ const ENGINE_ROOT = resolve(__dirname, "../..");
 const REPO_ROOT = resolve(ENGINE_ROOT, "../..");
 const SCRIPT = resolve(ENGINE_ROOT, "scripts/pipeline-trace.sh");
 
+// 门禁 2: 显式引用本 PR 修改的源文件，确保 check-changed-coverage 能追踪到
+const _PIPELINE_TRACE_SH = resolve(__dirname, "../../scripts/pipeline-trace.sh");
+
 // ──────────────────────────────────────────────
 // 测试 fixture（临时目录模拟 branch 证据文件）
 // ──────────────────────────────────────────────
