@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 3.0.0
+version: 3.1.0
 created: 2026-03-20
-updated: 2026-03-29
+updated: 2026-03-30
 changelog:
+  - 3.1.0: spec_review Evaluator prompt 显式内容注入 — 主 agent 在 spawn 前先读 SKILL.md + Task Card，直接嵌入 prompt，禁止传文件路径
   - 3.0.0: Task Card 生成拆为 Planner subagent — 主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP
   - 2.4.0: spec_review 升级为 Sprint Contract Gate — subagent 独立写测试方案后与主 agent 比对，严重分歧 = 硬 FAIL，不能继续 Stage 2
   - 2.3.0: spec_review 新增测试层（test layer）检查指令：每个 DoD 条目必须对应合适的测试类型
@@ -337,8 +338,8 @@ retry_count = 0
 
 loop:
   1. 调用 Agent subagent（subagent_type=general-purpose）
-     - prompt = spec-review SKILL.md 全文 + Task Card 全文
-     - SKILL.md 路径：packages/workflows/skills/spec-review/SKILL.md
+     - prompt = 按下方「主 agent 调用代码（伪码）」构建（内容注入：主 agent 先读文件，再直接嵌入）
+     - SKILL.md 主 agent 读取路径（不传给 subagent）：packages/workflows/skills/spec-review/SKILL.md
      - **CRITICAL**: prompt 必须包含以下指令（seal 文件写入）：
          "审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-spec.<BRANCH>：
           { \"verdict\": \"PASS\"|\"FAIL\", \"branch\": \"<BRANCH>\",
@@ -386,6 +387,48 @@ loop:
 - 不要向 Brain 注册任务，不要走 Codex 异步派发路径
 - Sprint Contract 分歧导致的 FAIL，修复方向是重写 **Test 字段**（不是修改 DoD 描述），直到与 subagent 独立方案一致
 - FAIL 修复后必须重新调用 subagent，不能跳过重审
+
+### 主 agent 调用代码（伪码）
+
+> **内容注入原则（CRITICAL）**：主 agent 在 spawn spec_review subagent 之前，必须先读取文件内容，
+> 然后将实际内容字符串直接嵌入 prompt。
+> 禁止传递文件路径让 subagent 自己读文件——
+> subagent 可能因路径解析或权限问题读不到文件，导致链路断裂。
+
+```javascript
+// 1. 读取 SKILL.md 和 Task Card 的实际内容（内容注入：读取文件 → 直接嵌入字符串）
+const SKILL_MD = readFile('packages/workflows/skills/spec-review/SKILL.md')   // ← 文件实际内容，非路径
+const TASK_CARD = readFile(`.task-cp-${BRANCH}.md`)                           // ← 文件实际内容，非路径
+
+// 2. 组装 prompt（用实际内容字符串构建，禁止传递文件路径）
+const SEAL_INSTRUCTION = `
+审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-spec.${BRANCH}：
+{ "verdict": "PASS"|"FAIL", "branch": "${BRANCH}",
+  "timestamp": "<ISO8601>", "reviewer": "spec-review-agent",
+  "independent_test_plans": [...],
+  "negotiation_result": {...},
+  "issues": [...] }
+这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。`
+
+const prompt = `${SKILL_MD}
+
+---
+
+## Sprint Contract（Task Card）— Planner 产出（内容注入）
+
+${TASK_CARD}
+
+---
+
+${SEAL_INSTRUCTION}`
+
+// 3. 调用 spec_review subagent（prompt 已包含所有必要内容，subagent 无需再读文件）
+Agent({
+  subagent_type: "general-purpose",
+  description: "spec_review: Sprint Contract Gate",
+  prompt: prompt
+})
+```
 
 ## 完成后
 
