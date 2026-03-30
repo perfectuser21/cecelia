@@ -25,4 +25,6 @@ const topicNoDash = topic.replace(/-/g, '');
 
 ## 下次预防
 
-图片生成工具写入文件时应统一使用 topic 格式（带连字符），或 Brain API 在创建 pipeline 时就确定并存储 `image_prefix` 字段，避免运行时推导产生歧义。
+- [ ] 图片生成工具写入文件时统一使用 topic 格式（带连字符），消除歧义
+- [ ] Brain API 在创建 pipeline 时存储 `image_prefix` 字段，避免运行时推导
+- [ ] 新增单元测试：验证各种 keyword 形式（含空格/驼峰/连字符）都能正确匹配图片
