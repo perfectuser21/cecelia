@@ -110,6 +110,58 @@ describe('devloop-check.sh — 4-Stage Pipeline 门禁条件（subagent 架构�
     });
   });
 
+  describe('三阶段 seal 对齐检查（条件 1.6 / 2.8）', () => {
+    it('包含条件 1.6: planner seal 文件验证', () => {
+      expect(content).toContain('条件 1.6: planner seal');
+    });
+
+    it('包含条件 2.8: generator seal 文件验证', () => {
+      expect(content).toContain('条件 2.8: generator seal');
+    });
+
+    it('条件 1.6 检查 .dev-gate-planner.{branch} 文件', () => {
+      expect(content).toContain('dev-gate-planner.');
+    });
+
+    it('条件 2.8 检查 .dev-gate-generator.{branch} 文件', () => {
+      expect(content).toContain('dev-gate-generator.');
+    });
+
+    it('条件 1.6 缺失时返回 blocked 含 planner', () => {
+      const idx = content.indexOf('===== 条件 1.6: planner seal');
+      expect(idx).toBeGreaterThan(-1);
+      const section = content.substring(idx, idx + 900);
+      expect(section).toContain('blocked');
+      expect(section).toContain('planner');
+    });
+
+    it('条件 2.8 缺失时返回 blocked 含 generator', () => {
+      const idx = content.indexOf('===== 条件 2.8: generator seal');
+      expect(idx).toBeGreaterThan(-1);
+      const section = content.substring(idx, idx + 900);
+      expect(section).toContain('blocked');
+      expect(section).toContain('generator');
+    });
+
+    it('条件 1.6 位于条件 1.5 之后、条件 2 之前', () => {
+      const cond15Pos = content.indexOf('===== 条件 1.5: spec_review_status');
+      const cond16Pos = content.indexOf('===== 条件 1.6: planner seal');
+      const cond2Pos  = content.indexOf('===== 条件 2: step_2_code');
+      expect(cond15Pos).toBeGreaterThan(-1);
+      expect(cond16Pos).toBeGreaterThan(cond15Pos);
+      expect(cond2Pos).toBeGreaterThan(cond16Pos);
+    });
+
+    it('条件 2.8 位于条件 2.5 之后、条件 3 之前', () => {
+      const cond25Pos = content.indexOf('===== 条件 2.5: code_review_gate_status');
+      const cond28Pos = content.indexOf('===== 条件 2.8: generator seal');
+      const cond3Pos  = content.indexOf('===== 条件 3: PR');
+      expect(cond25Pos).toBeGreaterThan(-1);
+      expect(cond28Pos).toBeGreaterThan(cond25Pos);
+      expect(cond3Pos).toBeGreaterThan(cond28Pos);
+    });
+  });
+
   describe('return 码正确性：合并失败路径使用 return 2 而非 return 1', () => {
     it('devloop-check.sh 不含 return 1（所有路径返回 0 或 2）', () => {
       // 确保合并失败时使用 return 2（blocked），不使用 return 1（error）
