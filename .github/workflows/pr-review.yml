@@ -1,0 +1,19 @@
+name: PR AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  deepseek-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hustcer/deepseek-review@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          deepseek-api-key: ${{ secrets.DEEPSEEK_API_KEY }}
+          language: zh
