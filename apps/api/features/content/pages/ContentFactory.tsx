@@ -3,13 +3,13 @@
  *
  * 功能：
  * 1. 从 Brain API 读取内容类型列表 → 下拉选择
- * 2. 输入关键词 → 提交创建 content-pipeline 任务
- * 3. 展示已有 Pipeline 列表及状态
+ * 2. 选内容类型后自动带入 notebook_id（从类型配置读取）
+ * 3. 输入关键词 → 提交创建 content-pipeline 任务
+ * 4. 展示已有 Pipeline 列表及状态，点击展开查看 stage 详情
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { Factory, Play, RefreshCw, Clock, CheckCircle, XCircle, Loader2, AlertCircle, ChevronRight } from 'lucide-react';
+import { Factory, Play, RefreshCw, Clock, CheckCircle, XCircle, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 const BRAIN_API = '/api/brain';
 
@@ -23,6 +23,13 @@ interface Pipeline {
   started_at?: string;
   completed_at?: string;
   failed_at?: string;
+}
+
+interface Stage {
+  status: string;
+  started_at?: string;
+  completed_at?: string;
+  summary?: string | null;
 }
 
 type Priority = 'P0' | 'P1' | 'P2';
@@ -76,6 +83,52 @@ function formatTime(iso?: string) {
   });
 }
 
+function calcDuration(startedAt?: string, completedAt?: string): string {
+  if (!startedAt) return '—';
+  const end = completedAt ? new Date(completedAt) : new Date();
+  const secs = Math.round((end.getTime() - new Date(startedAt).getTime()) / 1000);
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m${secs % 60}s`;
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  'content-research': '调研',
+  'content-copywriting': '文案',
+  'content-copy-review': '文案审查',
+  'content-generate': '生成',
+  'content-image-review': '图片审查',
+  'content-export': '导出',
+};
+
+function StageDetail({ stages }: { stages: Record<string, Stage> }) {
+  const entries = Object.entries(stages);
+  if (entries.length === 0) {
+    return <p className="text-xs text-gray-400 dark:text-gray-500 py-2 text-center">暂无 Stage 数据</p>;
+  }
+  return (
+    <div className="mt-2 space-y-1.5 pl-2 border-l-2 border-gray-100 dark:border-gray-700">
+      {entries.map(([type, stage]) => (
+        <div key={type} className="flex items-start gap-2">
+          <StatusBadge status={stage.status} />
+          <div className="flex-1 min-w-0">
+            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              {STAGE_LABELS[type] ?? type}
+            </span>
+            <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">
+              {calcDuration(stage.started_at, stage.completed_at)}
+            </span>
+            {stage.summary && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 truncate" title={stage.summary}>
+                {stage.summary}
+              </p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ContentFactory() {
   // 内容类型列表
   const [contentTypes, setContentTypes] = useState<string[]>([]);
@@ -85,6 +138,7 @@ export default function ContentFactory() {
   // 表单状态
   const [keyword, setKeyword] = useState('');
   const [contentType, setContentType] = useState('');
+  const [notebookId, setNotebookId] = useState('');
   const [priority, setPriority] = useState<Priority>('P1');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -94,6 +148,11 @@ export default function ContentFactory() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+
+  // 展开的 pipeline stages
+  const [expandedPipeline, setExpandedPipeline] = useState<string | null>(null);
+  const [pipelineStages, setPipelineStages] = useState<Record<string, Record<string, Stage>>>({});
+  const [stagesLoading, setStagesLoading] = useState<Record<string, boolean>>({});
 
   const loadContentTypes = useCallback(async () => {
     setTypesLoading(true);
@@ -128,10 +187,52 @@ export default function ContentFactory() {
     }
   }, []);
 
+  // 内容类型变化时，自动从配置带入 notebook_id
+  const fetchTypeNotebookId = useCallback(async (type: string) => {
+    if (!type) return;
+    try {
+      const res = await fetch(`${BRAIN_API}/content-types/${encodeURIComponent(type)}/config`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const id = data?.config?.notebook_id ?? '';
+      setNotebookId(id);
+    } catch {
+      // 拉取失败不影响表单
+    }
+  }, []);
+
   useEffect(() => {
     loadContentTypes();
     loadPipelines();
   }, [loadContentTypes, loadPipelines]);
+
+  useEffect(() => {
+    fetchTypeNotebookId(contentType);
+  }, [contentType, fetchTypeNotebookId]);
+
+  const loadStages = useCallback(async (pipelineId: string) => {
+    setStagesLoading(prev => ({ ...prev, [pipelineId]: true }));
+    try {
+      const res = await fetch(`${BRAIN_API}/pipelines/${pipelineId}/stages`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setPipelineStages(prev => ({ ...prev, [pipelineId]: data.stages ?? {} }));
+    } catch {
+      // 拉取失败 stages 保持空
+    } finally {
+      setStagesLoading(prev => ({ ...prev, [pipelineId]: false }));
+    }
+  }, []);
+
+  const toggleExpand = useCallback((pipelineId: string) => {
+    setExpandedPipeline(prev => {
+      const next = prev === pipelineId ? null : pipelineId;
+      if (next && !pipelineStages[next]) {
+        loadStages(next);
+      }
+      return next;
+    });
+  }, [pipelineStages, loadStages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,10 +243,19 @@ export default function ContentFactory() {
     setSubmitSuccess(false);
 
     try {
+      const body: Record<string, string> = {
+        keyword: keyword.trim(),
+        content_type: contentType,
+        priority,
+      };
+      if (notebookId.trim()) {
+        body.notebook_id = notebookId.trim();
+      }
+
       const res = await fetch(`${BRAIN_API}/pipelines`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: keyword.trim(), content_type: contentType, priority }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -225,6 +335,21 @@ export default function ContentFactory() {
                 <option value="P2">P2（低）</option>
               </select>
             </div>
+          </div>
+
+          {/* NotebookLM ID */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              NotebookLM ID
+              <span className="text-gray-400 dark:text-gray-500 font-normal ml-1">（从内容类型配置自动带入，可手动修改）</span>
+            </label>
+            <input
+              type="text"
+              value={notebookId}
+              onChange={e => setNotebookId(e.target.value)}
+              placeholder="留空则不使用 NotebookLM 调研"
+              className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+            />
           </div>
 
           {/* 关键词 */}
@@ -307,27 +432,54 @@ export default function ContentFactory() {
 
         {pipelines.length > 0 && (
           <div className="space-y-2">
-            {pipelines.map(p => (
-              <Link
-                key={p.id}
-                to={`/content-factory/${p.id}`}
-                className="flex items-center justify-between p-3 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
-              >
-                <div className="flex-1 min-w-0 mr-3">
-                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{p.title}</p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                    创建：{formatTime(p.created_at)}
-                    {p.completed_at && ` · 完成：${formatTime(p.completed_at)}`}
-                    {p.failed_at && ` · 失败：${formatTime(p.failed_at)}`}
-                  </p>
+            {pipelines.map(p => {
+              const isExpanded = expandedPipeline === p.id;
+              const stages = pipelineStages[p.id];
+              const loading = stagesLoading[p.id];
+              return (
+                <div
+                  key={p.id}
+                  className="rounded-lg border border-gray-100 dark:border-gray-700"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(p.id)}
+                    className="w-full flex items-center justify-between p-3 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors text-left rounded-lg"
+                  >
+                    <div className="flex-1 min-w-0 mr-3">
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{p.title}</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                        创建：{formatTime(p.created_at)}
+                        {p.completed_at && ` · 完成：${formatTime(p.completed_at)}`}
+                        {p.failed_at && ` · 失败：${formatTime(p.failed_at)}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs text-gray-400 dark:text-gray-500">{p.priority}</span>
+                      <StatusBadge status={p.status} />
+                      {isExpanded ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                      )}
+                    </div>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="px-3 pb-3">
+                      {loading ? (
+                        <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          加载 Stage 详情...
+                        </div>
+                      ) : (
+                        <StageDetail stages={stages ?? {}} />
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs text-gray-400 dark:text-gray-500">{p.priority}</span>
-                  <StatusBadge status={p.status} />
-                  <ChevronRight className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
-                </div>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

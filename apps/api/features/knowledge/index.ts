@@ -66,6 +66,11 @@ const manifest: FeatureManifest = {
     },
     // 内容作品详情页（四 Tab）
     { path: '/content-factory/:id', component: 'PipelineOutputPage', requireAuth: false },
+    {
+      path: '/content-factory/config',
+      component: 'ContentTypeConfigPage',
+      requireAuth: false,
+    },
     // Legacy redirects
     { path: '/content', redirect: '/knowledge/content' },
     { path: '/super-brain', redirect: '/knowledge/brain' },
@@ -90,6 +95,7 @@ const manifest: FeatureManifest = {
     DocChatPage: () => import('./pages/DocChatPage'),
     ContentFactory: () => import('../content/pages/ContentFactory'),
     PipelineOutputPage: () => import('../content/pages/PipelineOutputPage'),
+    ContentTypeConfigPage: () => import('../content/pages/ContentTypeConfigPage'),
   },
 };
 

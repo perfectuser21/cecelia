@@ -4,6 +4,7 @@
 content_type: solo-company-case
 title: 一人公司成功案例
 version: "1.0"
+notebook_id: ""
 description: 深度调研某个一人公司/独立创作者成功案例，生成图文内容包（图片+文案+长文）
 
 # 图片配置
