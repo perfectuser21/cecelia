@@ -92,9 +92,12 @@ acquire_dev_mode_lock() {
     local timeout="${1:-2}"
     _get_lock_paths
 
-    # flock 缺失时（macOS 无 coreutils）→ 静默跳过锁（best-effort）
+    # v1.3.0: flock 缺失时硬错误（fail-closed）— 不再静默跳过锁
+    # 静默返回 0 会导致无锁并发写入 .dev-mode，产生竞态条件
     if ! command -v flock &>/dev/null; then
-        return 0
+        echo "[lock-utils] FATAL: flock 命令不可用，无法安全获取并发锁" >&2
+        echo "[lock-utils] 请安装 util-linux (Linux) 或 brew install util-linux (macOS)" >&2
+        return 1  # 调用方应检查返回值并处理
     fi
 
     eval "exec ${_LU_FD}>\"$_LU_LOCK_FILE\""

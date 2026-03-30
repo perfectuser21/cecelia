@@ -181,20 +181,29 @@ devloop_check() {
         spec_review_status=$(grep "^spec_review_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
         spec_seal_file="$(dirname "$dev_mode_file")/.dev-gate-spec.${branch}"
         if [[ -f "$spec_seal_file" ]]; then
-            spec_seal_verdict=$(jq -r '.verdict // ""' "$spec_seal_file" 2>/dev/null || echo "")
-            if [[ "$spec_seal_verdict" == "FAIL" ]]; then
+            spec_seal_verdict=$(jq -r '.verdict // ""' "$spec_seal_file" 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "")
+            # v3.7.0: 内容验证 — 不只检查文件存在，必须验证 verdict 字段值为 pass（防伪造 seal）
+            if [[ "$spec_seal_verdict" != "pass" ]]; then
                 if command -v _devlog_event &>/dev/null; then
-                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal FAIL，需修复 Task Card"
+                    _devlog_event "devloop-check" "spec_review" "blocked" "spec_review seal verdict 非 PASS（值: $spec_seal_verdict），拦截伪造 seal"
                 fi
-                _devloop_jq -n '{"status":"blocked","reason":"spec_review seal 文件 verdict=FAIL，需分析 root cause 修复 Task Card","action":"读取 .dev-gate-spec.<branch> 中的 issues，修复 Task Card，重新调用 spec-review subagent"}'
+                _devloop_jq -n --arg v "$spec_seal_verdict" '{"status":"blocked","reason":"spec_review seal 文件 verdict 非 PASS（当前值: \($v)），可能是伪造 seal 文件","action":"确保 spec-review subagent 正常运行并写入 verdict=PASS 的 seal 文件"}'
                 return 2
             fi
-            # seal 存在且 verdict=PASS → 检查 divergence_count
+            # seal 存在且 verdict=PASS → 检查 divergence_count（存在性 + 非空验证）
             # ===== 条件 1.5b: divergence_count 门禁（Evaluator 独立性检查）=====
             # divergence_count = Evaluator 独立发现的与 Planner 分歧的问题数
             # 0 = Evaluator 橡皮图章（无价值），必须拦截；>= 1 = 真正独立思考，放行
+            # v3.7.0: 额外检查 divergence_count 字段存在且非 null/empty（防伪造 seal）
             local spec_seal_divergence
-            spec_seal_divergence=$(jq -r '.divergence_count // "0"' "$spec_seal_file" 2>/dev/null || echo "0")
+            spec_seal_divergence=$(jq -r '.divergence_count // empty' "$spec_seal_file" 2>/dev/null || echo "")
+            if [[ -z "$spec_seal_divergence" || "$spec_seal_divergence" == "null" ]]; then
+                if command -v _devlog_event &>/dev/null; then
+                    _devlog_event "devloop-check" "spec_review_divergence" "blocked" "spec_review seal divergence_count 字段缺失，可能是伪造 seal"
+                fi
+                _devloop_jq -n '{"status":"blocked","reason":"spec_review seal 文件 divergence_count 字段缺失或为 null，seal 文件无效","action":"确保 spec-review subagent 写入包含 divergence_count 字段的完整 seal 文件"}'
+                return 2
+            fi
             if ! check_divergence_count "$spec_seal_divergence"; then
                 if command -v _devlog_event &>/dev/null; then
                     _devlog_event "devloop-check" "spec_review_divergence" "blocked" "spec_review divergence_count=0：Evaluator 未发现任何与 Planner 的分歧（橡皮图章检测）"
@@ -262,12 +271,14 @@ devloop_check() {
         code_review_gate_status=$(grep "^code_review_gate_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
         crg_seal_file="$(dirname "$dev_mode_file")/.dev-gate-crg.${branch}"
         if [[ -f "$crg_seal_file" ]]; then
-            crg_seal_verdict=$(jq -r '.verdict // ""' "$crg_seal_file" 2>/dev/null || echo "")
-            if [[ "$crg_seal_verdict" == "FAIL" ]]; then
+            local _crg_seal_verdict
+            _crg_seal_verdict=$(jq -r '.verdict // ""' "$crg_seal_file" 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "")
+            # v3.7.0: 内容验证 — 不只检查文件存在，必须验证 verdict 字段值为 pass（防伪造 seal）
+            if [[ "$_crg_seal_verdict" != "pass" ]]; then
                 if command -v _devlog_event &>/dev/null; then
-                    _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate seal FAIL，需修复代码"
+                    _devlog_event "devloop-check" "code_review_gate" "blocked" "code_review_gate seal verdict 非 PASS（值: $_crg_seal_verdict），拦截伪造 seal"
                 fi
-                _devloop_jq -n '{"status":"blocked","reason":"code_review_gate seal 文件 verdict=FAIL，需修复代码","action":"读取 .dev-gate-crg.<branch> 中的 issues，修复代码，重新调用 code-review-gate subagent"}'
+                _devloop_jq -n --arg v "$_crg_seal_verdict" '{"status":"blocked","reason":"code_review_gate seal 文件 verdict 非 PASS（当前值: \($v)），可能是伪造 seal 文件","action":"确保 code-review-gate subagent 正常运行并写入 verdict=PASS 的 seal 文件"}'
                 return 2
             fi
             # seal 存在且 verdict=PASS → 继续
@@ -551,6 +562,25 @@ devloop_check() {
     fi
 
     # v14.2.0: Stage 4 已完成 → 真正执行合并
+    # v3.7.0: 合并前最终确认 — 重新检查 PR mergeable 状态（防止状态窗口期）
+    local _pre_merge_state _pre_merge_mergeable _pre_merge_pr_state
+    _pre_merge_state=$(gh pr view "$pr_number" --json mergeable,state -q '{mergeable:.mergeable, state:.state}' 2>/dev/null || echo '{}')
+    _pre_merge_mergeable=$(echo "$_pre_merge_state" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+    _pre_merge_pr_state=$(echo "$_pre_merge_state" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+    if [[ "$_pre_merge_mergeable" == "CONFLICTING" ]]; then
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "merge" "blocked" "PR 合并前检查：存在冲突（CONFLICTING），需要 rebase"
+        fi
+        _devloop_jq -n --arg pr "$pr_number" '{"status":"blocked","reason":"PR #\($pr) 合并前检查：存在冲突（CONFLICTING），需要 rebase","action":"解决冲突后重新 push"}'
+        return 2
+    fi
+    if [[ "$_pre_merge_pr_state" != "OPEN" ]]; then
+        if command -v _devlog_event &>/dev/null; then
+            _devlog_event "devloop-check" "merge" "blocked" "PR 合并前检查：PR 状态异常（$_pre_merge_pr_state），非 OPEN"
+        fi
+        _devloop_jq -n --arg pr "$pr_number" --arg s "$_pre_merge_pr_state" '{"status":"blocked","reason":"PR #\($pr) 合并前检查：PR 状态异常（\($s)，非 OPEN）","action":"检查 PR 状态"}'
+        return 2
+    fi
     if command -v _devlog_event &>/dev/null; then
         _devlog_event "devloop-check" "merge" "executing" "CI 通过 + Learning 完成，执行自动合并 PR #$pr_number"
     fi
