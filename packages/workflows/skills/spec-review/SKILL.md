@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.4.0
+version: 1.5.0
 model: claude-sonnet-4-6
 created: 2026-03-20
 updated: 2026-03-30
 changelog:
+  - 1.5.0: divergence 下限检查 — Sprint Contract Gate 完成后，divergence_count = 0 直接 exit 2 要求重跑（Evaluator 未独立思考）
   - 1.4.0: Sprint Contract CI 兼容性约束 — Evaluator 独立方案必须使用 CI 可执行形式（node/curl/tests/），禁止浏览器交互和 UI 操作描述
   - 1.3.0: 新增双向协商机制（Sprint Contract）— subagent 独立生成测试方案后与主 agent 比对，分歧时标记并要求重写
   - 1.2.0: 新增维度F 测试层匹配性检查（unit/integration/e2e，warning级）
@@ -187,7 +188,24 @@ description: |
 3. 分歧类型
    - 严重分歧（blocker）：主 agent 测试的是另一件事，或是假测试
    - 轻微分歧（warning）：测试层不匹配（如 BEHAVIOR 用了静态文件检查代替 curl）
+
+4. divergence 下限检查（CRITICAL — 所有条目比对完成后执行）
+   计算 divergence_count（所有 consistent: false 的条目总数，包含 blocker 和 warning）。
+
+   if divergence_count == 0:
+     # Evaluator 与主 agent 完全一致 → 可能没有独立思考，结论不可信
+     echo "⚠️  divergence_count = 0：Evaluator 未发现任何分歧" >&2
+     echo "   这意味着 Evaluator 独立方案与主 agent 完全一致，" >&2
+     echo "   无法证明 Evaluator 进行了真实的独立审查。" >&2
+     echo "   Sprint Contract 要求 Evaluator 必须有至少 1 个独立观点。" >&2
+     exit 2  # 要求重跑 spec_review subagent
 ```
+
+> **为什么要求 divergence_count >= 1**：
+> Sprint Contract 的核心价值是"第二双眼睛"——如果 Evaluator 与主 agent 在每一条 DoD 测试上完全一致，
+> 说明 Evaluator 没有提供独立视角，只是简单认同，等同于主 agent 自认证。
+> 哪怕是 warning 级别的轻微分歧（如测试层建议）也是有价值的独立观点。
+> divergence_count = 0 → exit 2 → 主 agent 收到退出码 2 → 重新调用 spec_review subagent。
 
 ### 一致性判断标准
 
