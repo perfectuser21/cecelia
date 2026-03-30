@@ -41,7 +41,7 @@ jobs:
           echo "$PR_DIFF" >> "$GITHUB_ENV"
           echo "DIFF_EOF" >> "$GITHUB_ENV"
 
-      - name: 调用 OpenRouter API 进行代码审查
+      - name: 调用 OpenRouter API 进行代码审查（含重试，fail-closed）
         id: ai-review
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -67,28 +67,55 @@ jobs:
           ${PR_DIFF}
           \`\`\`"
 
-          # 调用 OpenRouter API（DeepSeek V3）
-          RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
-            -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -H "X-Title: Cecelia PR Review" \
-            --max-time 120 \
-            -d "$(jq -n \
-              --arg sys "$SYSTEM_PROMPT" \
-              --arg usr "$USER_PROMPT" \
-              '{
-                "model": "deepseek/deepseek-chat-v3-5",
-                "messages": [
-                  {"role": "system", "content": $sys},
-                  {"role": "user", "content": $usr}
-                ],
-                "max_tokens": 2000,
-                "temperature": 0.1
-              }'
-            )" 2>/dev/null || echo '{"error":{"message":"API 调用失败"}}')
+          # 调用 OpenRouter API（DeepSeek V3）— 最多重试 3 次，fail-closed
+          MAX_RETRY=3
+          RETRY_COUNT=0
+          API_ERROR=false
+          REVIEW_CONTENT=""
 
-          # 提取审查内容
-          REVIEW_CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // .error.message // "审查失败：无法获取响应"' 2>/dev/null || echo "审查失败：响应解析错误")
+          while [[ $RETRY_COUNT -lt $MAX_RETRY ]]; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "API 调用尝试 ${RETRY_COUNT}/${MAX_RETRY}..."
+
+            RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -H "X-Title: Cecelia PR Review" \
+              --max-time 60 \
+              -d "$(jq -n \
+                --arg sys "$SYSTEM_PROMPT" \
+                --arg usr "$USER_PROMPT" \
+                '{
+                  "model": "deepseek/deepseek-chat-v3-5",
+                  "messages": [
+                    {"role": "system", "content": $sys},
+                    {"role": "user", "content": $usr}
+                  ],
+                  "max_tokens": 2000,
+                  "temperature": 0.1
+                }'
+              )" 2>/dev/null || echo "")
+
+            REVIEW_CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || echo "")
+
+            if [[ -n "$REVIEW_CONTENT" ]]; then
+              echo "API 调用成功（第 ${RETRY_COUNT} 次）"
+              break
+            fi
+
+            echo "API 调用失败（第 ${RETRY_COUNT} 次），响应：$(echo "$RESPONSE" | head -c 200)"
+            if [[ $RETRY_COUNT -lt $MAX_RETRY ]]; then
+              echo "等待 5 秒后重试..."
+              sleep 5
+            fi
+          done
+
+          # 所有重试耗尽，仍无有效内容 → fail-closed
+          if [[ -z "$REVIEW_CONTENT" ]]; then
+            API_ERROR=true
+            echo "❌ OpenRouter API 调用全部失败（已重试 ${MAX_RETRY} 次），阻止 PR 合并" >&2
+            exit 1
+          fi
 
           # 写入文件供后续步骤使用
           echo "$REVIEW_CONTENT" > /tmp/review-result.txt

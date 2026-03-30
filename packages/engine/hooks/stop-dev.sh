@@ -391,17 +391,10 @@ if [[ ! -f "$DEV_MODE_FILE" ]]; then
     _ORPHAN_COUNT=$((_ORPHAN_COUNT + 1))
     echo "$_ORPHAN_COUNT" > "$_ORPHAN_RETRY_FILE"
 
-    if [[ $_ORPHAN_COUNT -gt 5 ]]; then
-        # 超过 5 次 → 清理孤儿 lock，允许退出
-        echo "  ⚠️  .dev-lock 孤儿重试 $_ORPHAN_COUNT 次，强制清理" >&2
-        rm -f "$DEV_LOCK_FILE" "$SENTINEL_FILE" "$_ORPHAN_RETRY_FILE"
-        exit 0
-    fi
-
-    # .dev-lock 在但 .dev-mode 不在 → 状态丢失/创建失败/被删除
+    # .dev-lock 在但 .dev-mode 不在 → 状态丢失/创建失败/被删除，无上限永远阻止退出
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: 状态文件丢失 (${_ORPHAN_COUNT}/5)]" >&2
+    echo "  [Stop Hook: 状态文件丢失（孤儿 lock，第 ${_ORPHAN_COUNT} 次检测）]" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "" >&2
     echo "  ⚠️  .dev-lock 存在但 .dev-mode 缺失" >&2
@@ -412,8 +405,8 @@ if [[ ! -f "$DEV_MODE_FILE" ]]; then
     echo "  下一步：重建 .dev-mode 或执行最小检查" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    jq -n --arg reason ".dev-lock 存在但 .dev-mode 缺失，阻止退出（${_ORPHAN_COUNT}/5）" '{"decision": "block", "reason": $reason}'
-    exit 2  # ← 强制阻止退出（双钥匙核心机制）
+    jq -n --arg reason ".dev-lock 存在但 .dev-mode 缺失，孤儿状态无上限阻止退出（第 ${_ORPHAN_COUNT} 次）" '{"decision": "block", "reason": $reason}'
+    exit 2  # ← 永远阻止退出（fail-closed，无上限）
 fi
 
 # ===== 检查 cleanup 是否已完成 =====
