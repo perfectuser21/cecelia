@@ -8,7 +8,9 @@ task: CI 接入 DeepSeek PR 自动 Review
 
 ### 根本原因
 
-本次任务为新增功能，无 bug 修复。主要踩坑点：branch-protect.sh 要求 `.dev-mode` 文件包含 `tasks_created: true` 字段，否则拒绝写入代码文件，需要在 Stage 1 生成 .dev-mode 时就包含此字段。
+branch-protect.sh 要求 `.dev-mode` 文件包含 `tasks_created: true` 字段，否则拒绝所有代码写入操作。
+在 Stage 1 生成 .dev-mode 时未包含此字段，导致第一次 Write 被拦截，需要重新写入 .dev-mode 后才能继续。
+此外，DoD 映射检查器（check-dod-mapping.cjs）要求 `Test:` 字段不带反引号，纯文本格式，写成 `\`manual:...\`` 会导致正则不匹配而误报"缺少 Test 字段"。
 
 ### 关键决策
 
