@@ -1,9 +1,16 @@
 ---
 id: dev-stage-01-spec
-version: 2.4.0
+version: 3.5.0
 created: 2026-03-20
-updated: 2026-03-29
+updated: 2026-03-31
 changelog:
+  - 3.5.0: Sprint Contract Gate Step 4 改为调用 sprint-contract-loop.sh — 脚本机械判断 blocker_count，状态写磁盘（.sprint-contract-state.{branch}），移除 prev_divergence 死循环检测，纯 while true 只有 exit 0 才退出
+  - 3.4.0: Sprint Contract Gate 移除固定轮数上限（原值=3），改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
+  - 3.3.0: Sprint Contract Gate 重写为双独立提案架构 — Generator subagent + Evaluator subagent 各自从剥离版 Task Card 独立提案，Orchestrator 比对，收敛上限为 3 轮；Planner 输出不再含任何 Test 命令
+  - 3.2.0: Sprint Contract Gate PASS 后额外验证 plans.length > 0 — 若 seal 中 independent_test_plans 为空且 Task Card 含 DoD，视为 FAIL 重试
+  - 3.2.0: PASS 后验证 plans.length > 0（防空提案）+ seal 文件完整性检查（伪码改为含错误处理的伪码）
+  - 3.1.0: spec_review Evaluator prompt 显式内容注入 — 主 agent 在 spawn 前先读 SKILL.md + Task Card，直接嵌入 prompt，禁止传文件路径
+  - 3.0.0: Task Card 生成拆为 Planner subagent — 主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP
   - 2.4.0: spec_review 升级为 Sprint Contract Gate — subagent 独立写测试方案后与主 agent 比对，严重分歧 = 硬 FAIL，不能继续 Stage 2
   - 2.3.0: spec_review 新增测试层（test layer）检查指令：每个 DoD 条目必须对应合适的测试类型
   - 2.2.0: 删除 blocked 降级路径，改为无限重试 + 深入 root cause 分析（100% 自动原则）
@@ -53,9 +60,84 @@ fi
 
 将 KR 标题和描述注入到 Task Card 的"背景"部分。
 
-## 1.2 生成 Task Card
+## 1.2 生成 Task Card（Planner subagent）
 
-创建 `.task-cp-{branch}.md`：
+> **主 agent 不直接生成 Task Card。** 主 agent 是编排者，Task Card 生成由 Planner subagent 完成。
+> Planner subagent 只接收：任务描述（PRD/task description）+ docs/current/SYSTEM_MAP.md 全文。
+> 不接收：CLAUDE.md（编码规范）、Brain context（调度上下文）、代码库细节。
+> Planner 只输出 WHAT（行为描述），不写 HOW（实现细节）。
+
+### 架构
+
+```
+主 agent（编排者）
+  ├─ 1.1 参数检测
+  ├─ 1.1.5 上下文补充（intent-expand）
+  ├─ 1.2 生成 Task Card → spawn Planner subagent ← 你在这里
+  ├─ 1.3.5 相关 Learning 检索
+  ├─ 1.3 写入 .dev-mode
+  └─ Sprint Contract Gate（spec_review subagent）
+```
+
+### Planner subagent 调用
+
+```
+1. 准备 prompt 输入（仅以下两项，禁止传入其他内容）：
+   a. 任务描述（PRD 全文，或用户提供的 task description）
+   b. docs/current/SYSTEM_MAP.md 全文 — 系统能力地图
+
+   禁止传入：
+   - CLAUDE.md（编码规范）
+   - Brain API 返回的调度上下文（OKR/KR/Project 层级信息）
+   - 代码库细节（文件路径、函数签名、实现代码）
+   - 其他 subagent 的审查结果
+
+2. 调用 Agent subagent（subagent_type=general-purpose）
+   prompt 模板见 packages/engine/skills/dev/lib/planner-prompt.md
+
+3. Planner 完成后，主 agent 接收 Task Card 内容，写入 .task-cp-{branch}.md
+4. 主 agent 继续 1.3.5 Learning 检索 → 1.3 写入 .dev-mode → Sprint Contract Gate
+```
+
+### 主 agent 调用代码（伪码）
+
+```javascript
+// 1. 读取任务描述和 SYSTEM_MAP
+const PRD = readFile('.prd-{branch}.md') || userInput
+const SYSTEM_MAP = readFile('docs/current/SYSTEM_MAP.md')
+const PLANNER_PROMPT = readFile('packages/engine/skills/dev/lib/planner-prompt.md')
+
+// 2. 组装 prompt（只含任务描述 + SYSTEM_MAP）
+const prompt = PLANNER_PROMPT
+  .replace('{PRD_CONTENT}', PRD)
+  .replace('{SYSTEM_MAP_CONTENT}', SYSTEM_MAP)
+
+// 3. 调用 Planner subagent
+Agent({
+  subagent_type: "general-purpose",
+  description: "Planner: 生成 Task Card + DoD",
+  prompt: prompt
+})
+
+// 4. Planner 将 Task Card 写入 .task-cp-{branch}.md
+// 5. 主 agent 继续 Sprint Contract Gate
+```
+
+### ⚠️ Planner subagent 隔离规则（CRITICAL）
+
+| 允许传入 | 禁止传入 |
+|---------|---------|
+| 任务描述（PRD/用户 input） | CLAUDE.md（编码规范） |
+| docs/current/SYSTEM_MAP.md | Brain 调度上下文 |
+| | OKR/KR/Project 层级信息 |
+| | 代码库文件路径 / 实现细节 |
+| | 其他 subagent 审查结果 |
+
+**为什么隔离**：Planner 只需要知道"要做什么"（任务描述）和"系统有什么"（SYSTEM_MAP），不需要知道"怎么写代码"。隔离编码上下文，确保需求描述不受实现偏见污染。
+
+### Task Card 输出格式
+
+Planner 写入 `.task-cp-{branch}.md`：
 
 ```markdown
 ---
@@ -240,79 +322,176 @@ echo "✅ 置信度已写入 .dev-mode"
 
 ## ⚡ Sprint Contract Gate（CRITICAL — Stage 1 最后一步，硬门禁）
 
-> **Sprint Contract 核心**：Generator（主 agent）和 Evaluator（spec_review subagent）必须对每条 DoD 的测试方案达成共识，才能开始写代码。
+> **Sprint Contract 核心（v3.4 无限收敛架构）**：
+> Orchestrator 将 Task Card 所有 Test 字段剥离后，分别传给 Generator subagent 和 Evaluator subagent，
+> 两者各自从零独立提案，互相看不到对方输出，Orchestrator 比对两份提案，分歧时双方迭代修正，**无限收敛直到完全对齐**。
 >
 > **工作原理**：
-> 1. 主 agent 草拟 DoD（含 Test 字段）
-> 2. spec_review subagent 独立为每条 DoD 生成测试方案（不看主 agent 的 Test 字段）
-> 3. 比对：双方测试方案是否验证同一件事？
->    - 一致 → 采信主 agent 的 Test 字段，继续
->    - 严重分歧 → FAIL，打回重写，无限重试直到一致
+> 1. Planner 产出 Task Card（所有 Test 字段为 TODO）
+> 2. Orchestrator 剥离 Task Card Test 字段（保持为 TODO）→ 得到「剥离版 Task Card」
+> 3. Generator subagent 独立读剥离版 → 提出 Test 方案 → 写入 `.dev-gate-generator-sprint.{BRANCH}`
+> 4. Evaluator subagent（spec_review）独立读剥离版 → 提出 Test 方案 → 写入 `.dev-gate-spec.{BRANCH}`
+>    （两者 **并行** 或 **串行** 均可，关键是两者输入相同且均为剥离版）
+> 5. Orchestrator 比对两份提案：divergence_count = 各条目方案不一致的总数
+> 6. 如有分歧 → 将 Evaluator 的提案展示给 Generator，将 Generator 的提案展示给 Evaluator → 各自修正 → 再比对
+>    **无固定轮数上限**，持续迭代直到 blocker_count == 0（完全收敛）
+> 7. **脚本判断（v3.5）**：Orchestrator 调用 `sprint-contract-loop.sh`，脚本机械统计 blocker_count 并写磁盘，exit 0 = 收敛，exit 1 = 继续迭代
 >
-> **不是软建议，而是硬门禁（exit 1）**：有严重分歧就不能进入 Stage 2。
+> **不是软建议，而是硬门禁（exit 1）**：脚本未返回 exit 0 就不能进入 Stage 2。
 
-### 重试逻辑（MUST 遵守）
-
-- PASS → 写入 `spec_review_status: pass`，立即继续 Stage 2
-- FAIL → 读取 issues（包括 Sprint Contract 分歧），**深入分析 root cause**，修复 Task Card，**无次数上限，继续重试**
+### Step 1：剥离 Task Card Test 字段
 
 ```
-retry_count = 0
+# 剥离：将 Task Card 中所有 "Test: <非TODO内容>" 替换为 "Test: TODO"
+# 目的：确保 Generator 和 Evaluator 都从零独立提案，不受已有答案污染
 
-loop:
-  1. 调用 Agent subagent（subagent_type=general-purpose）
-     - prompt = spec-review SKILL.md 全文 + Task Card 全文
-     - SKILL.md 路径：packages/workflows/skills/spec-review/SKILL.md
-     - **CRITICAL**: prompt 必须包含以下指令（seal 文件写入）：
-         "审查完成后，将你的裁决以 JSON 格式写入文件 .dev-gate-spec.<BRANCH>：
-          { \"verdict\": \"PASS\"|\"FAIL\", \"branch\": \"<BRANCH>\",
-            \"timestamp\": \"<ISO8601>\", \"reviewer\": \"spec-review-agent\",
-            \"independent_test_plans\": [...],
-            \"negotiation_result\": {...},
-            \"issues\": [...] }
-          这是 Gate 防伪机制的 seal 文件，必须由你（subagent）直接写入。"
-     - **Sprint Contract 比对（v2.4.0 新增，硬门禁）**：
-         * 对每个 DoD 条目，先独立设计测试方案（不看主 agent 的 Test 字段）
-         * 然后比对主 agent 的 Test 字段：
-           - 一致 → consistent: true
-           - 严重分歧（主 agent 测试的是另一件事，或是假测试）→ consistent: false，severity: blocker
-           - 轻微分歧（测试层不匹配但能验证核心行为）→ consistent: false，severity: warning
-         * 严重分歧 = 整体 FAIL（exit 1），不能进入 Stage 2
-     - **测试层检查（v2.3.0）**：审查时验证每个 DoD 条目的测试类型是否合适：
-         * [ARTIFACT] 类条目 → 推荐 unit 级测试（node -e 文件内容验证）
-         * [BEHAVIOR] 类条目 → 推荐 integration 级测试（curl/API 行为验证 + 断言）
-         * [GATE] CI 类条目 → 推荐 e2e 级测试（CI 运行 / 语法检查）
-  2. 解析 JSON 结果中的 "verdict" 字段
-  3. verdict == "PASS"
-       → 确认 seal 文件 .dev-gate-spec.${BRANCH} 已存在（由 subagent 写入）
-       → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
-       → break（继续 Stage 2）
-  4. verdict == "FAIL"
-       → 读取 issues 列表（包括 severity=="blocker" 和 sprint_contract 分歧）
-       → 深入分析每个 blocker 的 root cause：
-         - 如果是 Sprint Contract 分歧：找到主 agent Test 字段未能覆盖的核心断言，重写该 Test 字段
-         - 如果是维度 D/E blocker：修复 Test 命令格式或工具
-         - 如果是维度 A/B blocker：修复架构方向或 DoD 描述
-       → 修复 Task Card（.task-cp-${BRANCH}.md）中对应的 DoD 条目
-       → retry_count++
-       → 如果 retry_count > 20:
-           curl -s -X POST http://localhost:5221/api/brain/tasks \
-             -H 'Content-Type: application/json' \
-             -d '{"title":"spec_review 超限 P1 升级","description":"spec_review 重试超过 20 次仍未 PASS，需人工介入","priority":"p1","task_type":"dev"}' || true
-           break（停止重试，等待人工介入）
-       → 重新调用 subagent（继续重试，直到 PASS 或 retry_count > 20）
+TASK_CARD_RAW = 读取 ".task-cp-${BRANCH}.md"
+TASK_CARD_STRIPPED = TASK_CARD_RAW 中每行匹配 /Test: (?!TODO).+/ → 替换为 "Test: TODO"
+
+# 注意：剥离版只用于传给两个 subagent，Task Card 文件本身不改动
 ```
+
+### Step 2：Generator subagent 独立提案
+
+```javascript
+// 读取必要内容（内容注入原则：主 agent 先读，直接嵌入 prompt，禁止传路径）
+const TASK_CARD_STRIPPED = strip_test_fields(readFile(`.task-cp-${BRANCH}.md`))
+const CLAUDE_MD = readFile('.claude/CLAUDE.md')  // 编码规范供 Generator 参考
+
+Agent({
+  subagent_type: "general-purpose",
+  description: "Sprint Contract Generator: 独立提案 Test 方案",
+  prompt: `
+你是 Sprint Contract Generator subagent。
+
+你的任务：根据以下 Task Card（所有 Test 字段均为 TODO），为每条 DoD 条目独立设计测试方案。
+
+## 规则
+- 只看 DoD 条目描述，从零独立设计测试命令
+- 测试命令必须 CI 可执行：只用 node -e / curl / tests/*.test.ts / bash
+- [ARTIFACT] → node -e 文件内容断言
+- [BEHAVIOR] → curl API 断言 或 node -e 行为验证
+- [GATE] → node -e 文件存在或版本检查
+
+## Task Card（剥离版）
+
+${TASK_CARD_STRIPPED}
+
+## 输出要求
+
+完成后将提案写入文件 .dev-gate-generator-sprint.${BRANCH}（JSON 格式）：
+{
+  "sealed_by": "sprint-contract-generator",
+  "branch": "${BRANCH}",
+  "timestamp": "<ISO8601>",
+  "proposals": [
+    { "dod_item": "<条目描述前50字>", "proposed_test": "<测试命令>" }
+  ]
+}
+`
+})
+```
+
+### Step 3：Evaluator subagent（spec_review）独立提案
+
+```javascript
+// 读取 SKILL.md（内容注入原则）
+const SKILL_MD = readFile('packages/workflows/skills/spec-review/SKILL.md')
+const TASK_CARD_STRIPPED = strip_test_fields(readFile(`.task-cp-${BRANCH}.md`))
+
+Agent({
+  subagent_type: "general-purpose",
+  description: "spec_review: Evaluator 独立提案",
+  prompt: `${SKILL_MD}
+
+---
+
+## Sprint Contract（Task Card）— 剥离版（所有 Test 字段为 TODO）
+
+${TASK_CARD_STRIPPED}
+
+---
+
+审查完成后将裁决写入 .dev-gate-spec.${BRANCH}（JSON 格式，含 independent_test_plans/verdict/issues）。
+这是 Gate 防伪机制的 seal 文件，必须由你直接写入。`
+})
+```
+
+### Step 4：Orchestrator 调用脚本 + 无限收敛
+
+> **设计原则（v3.5）**：收敛判断由 `sprint-contract-loop.sh` 脚本机械执行，状态写磁盘。
+> 主 agent 只负责：spawn 双方 → 调脚本 → 根据 exit code 决定继续还是重跑。
+> 唯一停止条件：脚本 exit 0（blocker_count == 0）。
+
+```bash
+# Step 4 执行流程（主 agent 按此执行，while true 无轮数上限）
+
+PROJECT_ROOT=$(pwd)
+LOOP_SCRIPT="packages/engine/scripts/devgate/sprint-contract-loop.sh"
+
+while true; do
+  # 执行 Step 2（Generator subagent）和 Step 3（Evaluator subagent）
+  # → 各自写 seal 文件到磁盘
+
+  # 调用脚本做机械判断
+  bash "$LOOP_SCRIPT" "$BRANCH" "$PROJECT_ROOT"
+  LOOP_EXIT=$?
+
+  if [[ $LOOP_EXIT -eq 0 ]]; then
+    # ✅ 收敛：blocker_count == 0
+    # 用 Evaluator seal 中 independent_test_plans 填写 Task Card Test 字段
+    # 写 spec_review_status: pass → .dev-mode
+    echo "spec_review_status: pass" >> ".dev-mode.${BRANCH}"
+    break
+
+  elif [[ $LOOP_EXIT -eq 2 ]]; then
+    # seal 文件缺失或格式错误 → 重跑 Evaluator
+    rm -f ".dev-gate-spec.${BRANCH}"
+    # 继续 while loop（重新 spawn）
+
+  else
+    # exit 1：还有 blocker，脚本已输出差异详情
+    # → 将差异展示给 Generator（看 Evaluator 方案）→ 覆盖 .dev-gate-generator-sprint.${BRANCH}
+    # → 将差异展示给 Evaluator（看 Generator 方案）→ 覆盖 .dev-gate-spec.${BRANCH}
+    # → 继续 while loop（下一轮比对）
+    rm -f ".dev-gate-generator-sprint.${BRANCH}" ".dev-gate-spec.${BRANCH}"
+    # 继续 while loop
+  fi
+done
+```
+
+**状态持久化**：
+- `.sprint-contract-state.{branch}` 由脚本写入，保存 round / blocker_count / divergence 详情
+- session 重启后主 agent 可读取此文件了解当前收敛进度
 
 **执行时注意**：
-- subagent prompt 必须包含 SKILL.md **完整内容**（不能只引用路径）
-- subagent prompt 必须包含 Task Card **完整内容**
-- **CRITICAL**: subagent prompt 必须包含 seal 文件写入指令（`.dev-gate-spec.<BRANCH>`），seal 文件必须包含 `independent_test_plans` 字段
-- 不要向 Brain 注册任务，不要走 Codex 异步派发路径
-- Sprint Contract 分歧导致的 FAIL，修复方向是重写 **Test 字段**（不是修改 DoD 描述），直到与 subagent 独立方案一致
-- FAIL 修复后必须重新调用 subagent，不能跳过重审
+- Generator 和 Evaluator subagent 的输入均为**剥离版 Task Card**（Test 字段全 TODO），机械保证独立性
+- 不要传「有 Test 字段的原版 Task Card」给任何 subagent，否则破坏独立性
+- Evaluator（spec_review）是最终裁判：收敛后用 Evaluator 的 independent_test_plans 填写 Task Card
+- blocker_count == 0（全部 warning 或全部 consistent）也视为收敛，可以进入 Stage 2
+
+## PASS 后验证
+
+Sprint Contract 收敛后，在继续 Stage 2 之前确认（伪码）：
+
+```
+# 确认 seal 文件存在
+如果 .dev-gate-spec.${BRANCH} 不存在：
+  → 视为 Evaluator 未完成，重新执行 Step 3
+
+如果 .dev-gate-generator-sprint.${BRANCH} 不存在：
+  → 视为 Generator 未完成，重新执行 Step 2
+
+# 确认 Task Card Test 字段已填写（不全是 TODO）
+如果 Task Card 所有 Test 字段均为 TODO：
+  → 视为收敛写回未完成，重新执行比对步骤
+
+# 全部通过 → 进入 Stage 2
+echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
+```
 
 ## 完成后
 
-spec_review subagent 返回 PASS 后，**立即**执行 Stage 2：
+spec_review subagent 返回 PASS 且 plans.length > 0 后，**立即**执行 Stage 2：
 
 `cat skills/dev/steps/02-code.md`
