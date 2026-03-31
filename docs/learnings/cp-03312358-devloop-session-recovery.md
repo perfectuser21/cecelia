@@ -10,6 +10,8 @@
 
 `devloop-check.sh` 设计为 library（被 stop hook source 引入），缺少直接执行入口。
 会话压缩重启后，agent 不知道自己在哪个 stage，需要手动检查多个文件才能恢复。
+`.dev-mode.*` 被 gitignore 且存在于 worktree 目录，agent 重启后不知道去哪里找。
+没有标准的会话恢复命令，恢复过程依赖人工知识而非工具化能力。
 
 ## 解决方案
 
