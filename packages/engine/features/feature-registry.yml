@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.74.0"
+    date: "2026-03-31"
+    change: "[CONFIG] feat(engine): Sprint Contract Gate — /dev 双向协商 DoD + Evaluator Calibration"
+    scope: "packages/workflows/skills/code-review-gate/SKILL.md,packages/workflows/skills/spec-review/SKILL.md,packages/engine/skills/dev/steps/01-spec.md"
   - version: "13.73.1"
     date: "2026-03-31"
     change: "[CONFIG] feat(engine): Sprint Report 自动生成 — generate-sprint-report.sh + 04-ship.md v1.4.0"
