@@ -97,7 +97,20 @@ router.get('/health', async (req, res) => {
       .filter(([, v]) => v.state === 'OPEN')
       .map(([k]) => k);
 
+    const halfOpenBreakers = Object.entries(cbStates)
+      .filter(([, v]) => v.state === 'HALF_OPEN')
+      .map(([k]) => k);
+
     const healthy = tickStatus.loop_running && openBreakers.length === 0;
+
+    let cbStatus;
+    if (openBreakers.length > 0) {
+      cbStatus = 'has_open';
+    } else if (halfOpenBreakers.length > 0) {
+      cbStatus = 'recovering';
+    } else {
+      cbStatus = 'all_closed';
+    }
 
     res.json({
       status: healthy ? 'healthy' : 'degraded',
@@ -109,8 +122,9 @@ router.get('/health', async (req, res) => {
           max_concurrent: tickStatus.max_concurrent
         },
         circuit_breaker: {
-          status: openBreakers.length === 0 ? 'all_closed' : 'has_open',
+          status: cbStatus,
           open: openBreakers,
+          half_open: halfOpenBreakers,
           states: cbStates
         },
         event_bus: { status: 'active' },

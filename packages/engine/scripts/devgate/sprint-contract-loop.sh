@@ -151,6 +151,31 @@ echo ""
 if [[ "$BLOCKER_COUNT" -eq 0 ]]; then
   echo "  ✅ 收敛！blocker_count == 0，可进入 Stage 2"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ── [seal] commit Sprint Contract seal 文件（防上下文压缩状态丢失）──────────────
+  # 原因：上下文压缩后 worktree 临时文件会丢失；commit 进分支后 git checkout 可还原
+  echo "  📦 [seal] commit Sprint Contract seal 文件到分支..."
+  _SEAL_FILES=()
+  for _f in \
+    "${PROJECT_ROOT}/.dev-gate-spec.${BRANCH}" \
+    "${PROJECT_ROOT}/.dev-gate-generator-sprint.${BRANCH}" \
+    "${PROJECT_ROOT}/.dev-gate-planner.${BRANCH}" \
+    "${PROJECT_ROOT}/.sprint-contract-state.${BRANCH}"; do
+    [[ -f "$_f" ]] && _SEAL_FILES+=("$_f")
+  done
+  if [[ ${#_SEAL_FILES[@]} -gt 0 ]]; then
+    git -C "${PROJECT_ROOT}" add "${_SEAL_FILES[@]}" 2>/dev/null || true
+    if ! git -C "${PROJECT_ROOT}" diff --cached --quiet 2>/dev/null; then
+      git -C "${PROJECT_ROOT}" commit -m "chore: [seal] commit Sprint Contract seal 文件防上下文压缩丢失
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>/dev/null || true
+      echo "  ✅ [seal] ${#_SEAL_FILES[@]} 个 seal 文件已 commit 到分支"
+    else
+      echo "  ℹ️  [seal] seal 文件无变更（已是最新状态）"
+    fi
+  fi
+  # ─────────────────────────────────────────────────────────────────────────────
+
   exit 0
 else
   echo "  ❌ 未收敛，${BLOCKER_COUNT} 条 blocker 需要解决："
