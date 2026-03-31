@@ -21,6 +21,27 @@
 
 内容工厂的 Pipeline 列表中，点击任意 Pipeline 卡片可展开查看各阶段（研究/文案/审核/生成/图片审核/导出）的实时状态、耗时和失败原因。
 
+## YAML 默认配置
+
+每个内容类型的 YAML 文件可以直接预设 `notebook_id`，Orchestrator 会在创建 research 子任务时自动将其注入 payload，无需用户在前台手动填写。
+
+```yaml
+# packages/brain/src/content-types/solo-company-case.yaml
+notebook_id: "1d928181-4462-47d4-b4c0-89d3696344ab"  # 固定工作区，每次 export 后清空 sources
+```
+
+这样，用户在内容工厂创建 Pipeline 时，选择该内容类型后 notebook_id 字段会自动填入，也可不填（由 YAML 配置兜底）。
+
+## Notebook 复用模式（清空后复用）
+
+每个内容类型固定绑定一个 NotebookLM 工作区 notebook：
+
+1. **research 阶段**：orchestrator 将 `notebook_id` 传入 research 子任务，用于查询对应 notebook
+2. **export 阶段完成后**：`executeExport` 自动调用 `listSources` + `deleteSource` 清空该 notebook 的所有 sources
+3. **下次使用**：notebook 已清空，可直接复用，无需重新创建或手动清理
+
+这样同一个 notebook 可以作为"一次性工作区"反复使用，避免 sources 堆积。
+
 ## API
 
 - `GET /api/brain/content-types/:type/config` — 读取指定内容类型的完整配置（含 notebook_id）
