@@ -4,7 +4,9 @@
 内容 pipeline research 阶段用 NotebookLM 收集素材，但之前实现只对空 notebook 直接 ask，导致返回空内容或无意义回答。
 
 ### 根本原因
-`executeResearch` 没有在 ask 前先调用 `notebooklm source add-research` 搜索并导入 web sources。空 notebook 无法提供有价值的回答。
+`executeResearch` 没有在 ask 前先调用 `notebooklm source add-research` 搜索并导入 web sources。
+空 notebook 无法提供有价值的回答，导致 research 阶段返回空内容或无意义回答。
+正确流程应先通过 `source add-research + research wait --import-all` 把 web 素材导入 notebook，再 ask 汇总。
 
 ### 修复方案
 在 ask 之前插入：
