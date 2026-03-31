@@ -19,6 +19,9 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.72.1"
+    date: 2026-03-31
+    summary: 为 sprint-contract-loop.sh 添加会话持久化说明注释
   - version: "13.72.0"
     date: "2026-03-31"
     change: "[CONFIG] feat(engine): Sprint Contract Gate 收敛循环改为 shell 脚本驱动（sprint-contract-loop.sh）— 状态写磁盘，移除伪代码 while loop"
