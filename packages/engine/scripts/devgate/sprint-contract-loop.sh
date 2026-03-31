@@ -151,6 +151,35 @@ echo ""
 if [[ "$BLOCKER_COUNT" -eq 0 ]]; then
   echo "  ✅ 收敛！blocker_count == 0，可进入 Stage 2"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ── 自动 git add seal 文件（防止上下文压缩后状态丢失）──────────────────────
+  # 背景：worktree 消失后 seal 文件（.dev-gate-*.{branch} + .sprint-contract-state.{branch}）
+  # 全部丢失，导致 devloop-check 无法继续。这些文件不在 .gitignore，应 commit 进分支。
+  # 只在收敛成功时执行（避免将中间状态 commit 进分支）
+  echo "  → 自动 git add seal 文件，防止上下文压缩后状态丢失..."
+  _SEAL_ADD_COUNT=0
+  # shellcheck disable=SC2155
+  _GIT_ROOT=$(git -C "${PROJECT_ROOT}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_ROOT}")
+
+  # add .dev-gate-*.{branch} 文件（spec/planner/crg/generator-sprint/generator/lite 等）
+  for _seal_file in "${PROJECT_ROOT}"/.dev-gate-*."${BRANCH}"; do
+    if [[ -f "$_seal_file" ]]; then
+      git -C "${_GIT_ROOT}" add "$_seal_file" 2>/dev/null && _SEAL_ADD_COUNT=$(( _SEAL_ADD_COUNT + 1 )) || true
+    fi
+  done
+
+  # add .sprint-contract-state.{branch} 文件
+  if [[ -f "${STATE_FILE}" ]]; then
+    git -C "${_GIT_ROOT}" add "${STATE_FILE}" 2>/dev/null && _SEAL_ADD_COUNT=$(( _SEAL_ADD_COUNT + 1 )) || true
+  fi
+
+  if [[ $_SEAL_ADD_COUNT -gt 0 ]]; then
+    echo "  ✅ 已 git add ${_SEAL_ADD_COUNT} 个 seal 文件（将随下次 commit 进分支）"
+  else
+    echo "  ℹ️  未找到 seal 文件（跳过 git add）"
+  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
   exit 0
 else
   echo "  ❌ 未收敛，${BLOCKER_COUNT} 条 blocker 需要解决："

@@ -1,0 +1,14 @@
+{
+  "sealed_by": "main-agent-lite-routing",
+  "branch": "cp-03312243-seal-commit-to-branch",
+  "timestamp": "2026-03-31T22:45:05+08:00",
+  "routing_decision": "lite",
+  "conditions": {
+    "L1_commit_type": true,
+    "L2_no_new_features": true,
+    "L3_files_count": true,
+    "L4_no_new_api": true,
+    "L5_no_core_files": true
+  },
+  "notes": "L1: fix: 类型（修复上下文压缩后seal文件丢失）; L3: 改动文件2个"
+}
