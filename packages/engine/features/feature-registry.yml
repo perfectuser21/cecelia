@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.74.2"
+    date: "2026-03-31"
+    change: "[CONFIG] fix(engine): verify-step.sh Gate Planner — step_1_spec:done 时强制校验 Planner seal 物理文件存在"
+    scope: "packages/engine/hooks/verify-step.sh,packages/engine/tests/verify-step-planner-seal.test.ts"
   - version: "13.74.1"
     date: "2026-03-31"
     change: "[CONFIG] fix(engine): 修复 worktree-gc .dev-mode 守卫 + Sprint Report seal 缺失误导输出"
