@@ -1,0 +1,31 @@
+{
+  "sealed_by": "sprint-contract-generator",
+  "branch": "cp-03310252-a4b11e81-7778-42bf-8f13-12b40e",
+  "timestamp": "2026-03-31T00:00:00.000Z",
+  "proposals": [
+    {
+      "dod_item": "[ARTIFACT] ContentFactory.tsx 中 pipeline 列表条目改为 Link 到 /content-factory/${p.id} 结构",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/ContentFactory.tsx','utf8');if(!c.includes('to={`/content-factory/${p.id}`}')&&!c.includes(\"to={'/content-factory/'+p.id}\")&&!c.includes('content-factory/'))process.exit(1);console.log('OK: Link to /content-factory/:id found')\""
+    },
+    {
+      "dod_item": "[BEHAVIOR] ContentFactory 测试中 pipeline 列表条目渲染为链接的测试通过",
+      "proposed_test": "tests/apps/api/features/content/pages/ContentFactory.test.tsx"
+    },
+    {
+      "dod_item": "[BEHAVIOR] ContentFactory 有 in_progress pipeline 时启动 5s 轮询（useEffect + setInterval）",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/ContentFactory.tsx','utf8');if(!c.includes('setInterval'))process.exit(1);if(!c.includes('5000')&&!c.includes('5_000'))process.exit(1);if(!c.includes('in_progress'))process.exit(1);console.log('OK: 5s polling with in_progress guard found')\""
+    },
+    {
+      "dod_item": "[BEHAVIOR] PipelineOutputPage pipeline 未完成时每 5s 轮询（useEffect + setInterval）",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/PipelineOutputPage.tsx','utf8');if(!c.includes('setInterval'))process.exit(1);if(!c.includes('5000')&&!c.includes('5_000'))process.exit(1);console.log('OK: 5s polling in PipelineOutputPage found')\""
+    },
+    {
+      "dod_item": "[ARTIFACT] ContentFactory.tsx StatusBadge 包含 'pending' 到 '待执行' 映射",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/ContentFactory.tsx','utf8');if(!c.includes('pending'))process.exit(1);if(!c.includes('\\u5f85\\u6267\\u884c'))process.exit(1);console.log('OK: pending => 待执行 mapping found')\""
+    },
+    {
+      "dod_item": "[BEHAVIOR] PipelineOutputPage GenerationTab 显示全部 6 个阶段（含 pending 占位）",
+      "proposed_test": "tests/apps/api/features/content/pages/PipelineOutputPage.test.tsx"
+    }
+  ]
+}
