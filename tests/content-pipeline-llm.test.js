@@ -131,6 +131,53 @@ describe('executeCopywriting — Claude 调用', () => {
 
     expect(result.success).toBe(true);
   });
+
+  it('findings 全部 brand_relevance < 3 时降级继续而非失败', async () => {
+    mockGetContentType.mockResolvedValue(null);
+    // 模拟 _loadFindings 找到旧版占位符数据（brand_relevance: 2）
+    readdirSync.mockImplementation((dir) => {
+      if (String(dir).includes('research')) return ['solo-company-case-亲爱的安先生-2026-03-31'];
+      return [];
+    });
+    existsSync.mockImplementation((p) => String(p).includes('findings.json'));
+    readFileSync.mockImplementation((p) => {
+      if (String(p).includes('findings.json')) {
+        return JSON.stringify({
+          findings: [
+            { id: 'f001', title: '亲爱的安先生 — 待补充', content: '占位内容', source: '系统', brand_relevance: 2, used_in: [] },
+          ],
+        });
+      }
+      return '';
+    });
+
+    const task = { payload: { pipeline_keyword: '亲爱的安先生' }, title: '[文案生成] 亲爱的安先生' };
+    const result = await executeCopywriting(task);
+
+    // 降级路径：不应硬失败
+    expect(result.success).toBe(true);
+  });
+
+  it('findings 全部 brand_relevance < 3 时降级继续而非失败', async () => {
+    mockGetContentType.mockResolvedValue(null);
+    // 模拟找到 research 目录，含低质量占位 findings（brand_relevance=2）
+    readdirSync.mockReturnValue(['solo-company-case-亲爱的安先生-2026-03-31']);
+    existsSync.mockImplementation((p) => p.includes('findings.json'));
+    readFileSync.mockImplementation((p) => {
+      if (p.includes('findings.json')) {
+        return JSON.stringify({
+          findings: [{ id: 'f001', title: '占位数据', content: '测试内容', brand_relevance: 2, used_in: [] }],
+        });
+      }
+      return '';
+    });
+
+    const task = { payload: { pipeline_keyword: '亲爱的安先生' }, title: '测试' };
+    const result = await executeCopywriting(task);
+
+    // 降级策略：不应返回失败（research findings 为空 error）
+    expect(result.success).toBe(true);
+  });
 });
 
 describe('executeCopyReview — Claude 调用', () => {

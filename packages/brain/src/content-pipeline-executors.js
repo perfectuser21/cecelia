@@ -218,13 +218,18 @@ export async function executeCopywriting(task) {
   ensureDir(join(dir, 'article'));
 
   const findings = _loadFindings(keyword);
-  const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 7);
+  let top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 7);
   console.log(`[copywriting] 找到 ${findings.length} 条 findings，筛选 ${top.length} 条`);
 
+  if (top.length === 0 && findings.length > 0) {
+    // 降级使用全部 findings（不过滤 brand_relevance），让 copy-review 做质量判断
+    console.warn(`[copywriting] 无高质量 findings（brand_relevance>=3），降级使用全部 ${findings.length} 条`);
+    top = findings.slice(0, 7);
+  }
+
   if (top.length === 0) {
-    const errMsg = `research findings 为空（无有效 brand_relevance >= 3 的内容），无法生成文案。请先确认 research 阶段已成功执行。`;
-    console.error(`[copywriting] FAIL: ${errMsg}`);
-    return { success: false, error: errMsg };
+    // 无任何 findings：降级到静态模板（无调研素材），继续 pipeline
+    console.warn(`[copywriting] 无 research findings，降级使用全部静态模板生成文案`);
   }
 
   // ─── Claude 调用：使用配置 prompt 生成文案 ─────────────────────
