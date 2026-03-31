@@ -3770,6 +3770,23 @@ skills:
       contains: "playwright-evaluator"
     test: "tests/devgate/playwright-evaluator.test.ts"
 
+  - id: RCI-sprint-report
+    name: "Sprint Report 自动生成脚本（generate-sprint-report.sh）"
+    description: "读取本地 seal 文件，生成 docs/reports/{branch}.md，包含 Planner 隔离/Sprint Contract/CI Gate/Scores 四个章节"
+    trigger: [PR]
+    method: auto
+    file: "scripts/devgate/generate-sprint-report.sh"
+    tags: [devgate, sprint-report, traceability]
+    owner: engine
+    steps:
+      given: "Stage 4 Ship 阶段，seal 文件已就位"
+      when: "主 agent 调用 bash packages/engine/scripts/devgate/generate-sprint-report.sh BRANCH"
+      then: "读取本地 seal 文件和状态文件，生成结构化报告到 docs/reports/{branch}.md，不依赖外部服务"
+    evidence:
+      type: command
+      run: "bash -c 'test -x packages/engine/scripts/devgate/generate-sprint-report.sh'"
+    test: "tests/devgate/generate-sprint-report.test.ts"
+
   - id: RCI-sprint-contract-loop
     name: "Sprint Contract 收敛循环 shell 脚本（sprint-contract-loop.sh）"
     description: "读取 Generator/Evaluator seal 文件，机械统计 blocker_count，写磁盘状态，exit 0=PASS"
@@ -3790,6 +3807,7 @@ skills:
 # ============================================================================
 # Changelog
 # ============================================================================
+# 13.73.1 (2026-03-31): feat(engine): [CONFIG] Sprint Report 自动生成 — generate-sprint-report.sh + 04-ship.md v1.4.0
 # 13.59.0 (2026-03-29): feat(engine): [CONFIG] Planner subagent — Stage 1 Task Card 生成从主 agent 拆出
 # 13.55.0 (2026-03-29): feat(engine): Playwright Evaluator 层 — Stage 3 端到端行为验证
 # 13.37.0 (2026-03-23): feat(engine): 02-code.md 本地测试改为精准测试（targeted-local-test，去全量，去重复）
