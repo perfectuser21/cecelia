@@ -1,40 +1,27 @@
-# Learning: Content Pipeline Fail-Fast 修复
-
-**Branch**: cp-03311413-pipeline-fail-fast
-**Date**: 2026-03-31
-**PR**: #1742
+# Learning: Content Pipeline Fail-Fast（2026-03-31）
 
 ## 问题描述
 
-Content pipeline 存在多处静默失败：
-1. 无 `notebook_id` 时 `executeResearch` 生成占位数据（brand_relevance=2），不报错
-2. `executeCopywriting` 在 findings 为空时使用 `fallbackCopyBlocks` 继续生成假文案
-3. `executeExport` 即使 `generateCards` 返回 false（无有效 findings）也返回 `{success: true}`
-4. 创建 pipeline 时即使 YAML 配置了 `notebook_id` 也不读取
+Content pipeline 在缺少 `notebook_id` 或无有效 findings 时静默继续，pipeline 显示成功但产出为空（0 图、假文案）。
 
-## 根因
+### 根本原因
 
-所有 executor 函数的防御性编程模式是"宁可生成空壳结果也不失败"，导致用户看到 pipeline 成功但实际产出为空（0 图、假文案）。
+防御性 fallback 在数据管道中造成了静默 bug：
+
+1. `executeResearch`：无 `notebook_id` 时生成 brand_relevance=2 的占位 findings，不报错，但该数据会被后续 `brand_relevance >= 3` 的过滤器滤掉，导致 copywriting 和 export 都收到空数据
+2. `executeCopywriting`：findings 为空时使用 `fallbackCopyBlocks` 生成无素材的模板文案，数据质量极差但流程正常运行
+3. `executeExport`：`generateCards` 返回 false（无有效 findings）时仍然返回 `{success: true, card_count: 0}`，UI 显示成功但无图片
+4. POST `/api/brain/pipelines` 路由：创建时不读取 content-type YAML 中的 `notebook_id` 字段，每次都需要手动传入，容易漏传
+
+### 下次预防
+
+- [ ] 数据管道每个阶段必须在入口验证所需的前置数据，失败立即返回 `{success: false, error: "具体原因"}`，绝对不使用 fallback/占位数据
+- [ ] 配置型必填参数（如 `notebook_id`）应在请求入口统一从配置中自动填充，不要依赖调用方记住传参
+- [ ] 测试 executor 时必须为依赖 filesystem 的函数（如 `_loadFindings`）提供符合 slug 匹配逻辑的 mock 目录名，否则 findings 默认为空导致测试与预期不符
 
 ## 修复方案
 
-**直接 FAIL**：
 - `executeResearch`：无 `notebookId` → `{success: false, error: "notebook_id 未配置..."}`
-- `executeResearch`：NotebookLM 返空 → `{success: false, error: "..."}`
-- `executeCopywriting`：top.length === 0 → `{success: false, error: "findings 为空..."}`，删除 `fallbackCopyBlocks`
+- `executeCopywriting`：`top.length === 0` → `{success: false}`，删除 `fallbackCopyBlocks` / `fallbackArticleSections`
 - `executeExport`：`!cardsGenerated` → `{success: false, error: "有效 findings 为 0..."}`
-
-**自动读取**：
-- POST `/api/brain/pipelines`：创建时从 `getContentType()` 自动读取 `notebook_id`（请求未传入时）
-
-## 测试影响
-
-- 3 个旧测试（"返回占位 findings"、"fallback 不报错"）改为验证 fail-fast 行为
-- 新增 3 个测试验证 notebook_id 从 YAML 自动读取
-- LLM 测试需要为 copywriting mock 有效 findings（readdirSync 返回包含 keyword 的目录名）
-
-## 关键教训
-
-**Silent fallback = 静默 bug**：当下游逻辑依赖上游数据质量时，fallback 会将错误传导到更难排查的位置。对于数据管道，遇到无效输入应立即 FAIL，而不是用占位数据继续。
-
-**YAML 字段要在入口读取**：`notebook_id` 在 YAML 里配置了但在创建时没读取，导致每次都需要手动传入。统一的原则：创建时就从配置读取所有必要参数。
+- POST `/api/brain/pipelines`：创建时调用 `getContentType()` 自动读取 `notebook_id`
