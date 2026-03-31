@@ -100,6 +100,14 @@ async function getContentType(typeName) {
     if (result.rows.length > 0) {
       const config = result.rows[0].config;
       // DB 中的 config 是完整 JSONB，已包含所有字段
+      // 但 notebook_id 等字段可能是后加到 YAML 的，DB 旧记录中不包含
+      // → 若 DB config 缺少 notebook_id，从 YAML 补充（YAML 作为新字段的默认值源）
+      if (!config.notebook_id) {
+        const yamlConfig = getContentTypeFromYaml(typeName);
+        if (yamlConfig?.notebook_id) {
+          config.notebook_id = yamlConfig.notebook_id;
+        }
+      }
       return config;
     }
   } catch (err) {
