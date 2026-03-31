@@ -507,6 +507,14 @@ changelog:
 
 ---
 
+### worktree-persistent-path: Worktree 持久路径（WORKTREE_BASE）
+
+1. ✅ **worktree-manage.sh generate_worktree_path 使用 WORKTREE_BASE**
+2. ✅ **worktree-gc.sh 安全路径检查支持 ~/worktrees/**
+3. ✅ **00-worktree-auto.md 记录 WORKTREE_BASE 用法**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

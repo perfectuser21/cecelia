@@ -3044,3 +3044,39 @@ product_features:
       - "01-spec.md Step 4 bash sprint-contract-loop.sh"
 
     rcis: []
+
+  - id: worktree-persistent-path
+    name: Worktree 持久路径（WORKTREE_BASE）
+    category: core-infra
+    status: Committed
+    priority: P1
+    version: "13.75.2"
+    updated: "2026-03-31"
+    description: |
+      将 worktree 默认存储路径从主仓库内的 .claude/worktrees/ 迁移到独立持久目录 ~/worktrees/。
+      引入 WORKTREE_BASE 环境变量支持自定义路径。路径格式：$WORKTREE_BASE/{project-name}/{task-name}。
+      worktree-gc.sh 安全路径检查同步更新，支持新路径格式。
+      00-worktree-auto.md 文档升至 v2.4.0，新增 WORKTREE_BASE 配置说明。
+
+    entrypoints:
+      - type: script
+        file: packages/engine/skills/dev/scripts/worktree-manage.sh
+        trigger: "Step 0 Worktree 创建"
+      - type: script
+        file: packages/engine/skills/dev/scripts/worktree-gc.sh
+        trigger: "Worktree 垃圾回收"
+      - type: step
+        file: packages/engine/skills/dev/steps/00-worktree-auto.md
+        trigger: "Step 0 开始时执行"
+
+    golden_path: |
+      /dev 启动 → Step 0 → worktree-manage.sh create →
+      检查 WORKTREE_BASE → 默认 ~/worktrees/{project}/{branch} →
+      跨会话持久化，上下文压缩后仍可找回
+
+    minimal_paths:
+      - "worktree-manage.sh generate_worktree_path 使用 WORKTREE_BASE"
+      - "worktree-gc.sh 安全路径检查支持 ~/worktrees/"
+      - "00-worktree-auto.md 记录 WORKTREE_BASE 用法"
+
+    rcis: []
