@@ -107,14 +107,9 @@ export async function schedulePostPublishCollection(pool) {
       try {
         await dispatchScraperTask(pool, task);
         scheduled++;
-        console.log(`[post-publish-collector] 已派发采集任务: ${task.platform} pipeline=${task.pipeline_id}`);
       } catch (err) {
         console.error(`[post-publish-collector] 派发任务失败 ${task.id}: ${err.message}`);
       }
-    }
-
-    if (scheduled > 0) {
-      console.log(`[post-publish-collector] 本轮共派发 ${scheduled} 个采集任务`);
     }
   } catch (err) {
     console.error(`[post-publish-collector] 扫描异常: ${err.message}`);
