@@ -4,8 +4,8 @@ version: 3.4.0
 created: 2026-03-20
 updated: 2026-03-31
 changelog:
-  - 3.4.0: Sprint Contract Gate 去掉 MAX_ROUNDS=3 固定上限，改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
-  - 3.3.0: Sprint Contract Gate 重写为双独立提案架构 — Generator subagent + Evaluator subagent 各自从剥离版 Task Card 独立提案，Orchestrator 比对，最多 3 轮收敛；Planner 输出不再含任何 Test 命令
+  - 3.4.0: Sprint Contract Gate 移除固定轮数上限（原值=3），改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
+  - 3.3.0: Sprint Contract Gate 重写为双独立提案架构 — Generator subagent + Evaluator subagent 各自从剥离版 Task Card 独立提案，Orchestrator 比对，收敛上限为 3 轮；Planner 输出不再含任何 Test 命令
   - 3.2.0: Sprint Contract Gate PASS 后额外验证 plans.length > 0 — 若 seal 中 independent_test_plans 为空且 Task Card 含 DoD，视为 FAIL 重试
   - 3.2.0: PASS 后验证 plans.length > 0（防空提案）+ seal 文件完整性检查（伪码改为含错误处理的伪码）
   - 3.1.0: spec_review Evaluator prompt 显式内容注入 — 主 agent 在 spawn 前先读 SKILL.md + Task Card，直接嵌入 prompt，禁止传文件路径
