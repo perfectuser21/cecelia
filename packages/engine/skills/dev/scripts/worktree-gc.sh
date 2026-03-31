@@ -185,6 +185,18 @@ except:
             continue
         fi
 
+        # v1.3.0: .dev-mode 守卫 — context 超限时 .dev-session-active 可能被提前删除
+        # 但 .dev-mode.{branch} 只有在 Stage 4 完成（cleanup_done: true）后才消失
+        # 因此 .dev-mode 存在且不含 cleanup_done: true → PR 仍在进行 → 禁止 GC 删除
+        _DEV_MODE_FILE=$(ls "$WT_PATH"/.dev-mode.* 2>/dev/null | head -1 || true)
+        if [[ -n "$_DEV_MODE_FILE" && -f "$_DEV_MODE_FILE" ]]; then
+            if ! grep -q "cleanup_done: true" "$_DEV_MODE_FILE" 2>/dev/null; then
+                echo "WARN: $WT_PATH ($WT_BRANCH) 有未完成 .dev-mode（无 cleanup_done: true），跳过 GC"
+                SKIPPED=$((SKIPPED + 1))
+                continue
+            fi
+        fi
+
         # v12.41.0 P0-3 修复：删除前检查未提交改动（防止数据丢失）
         if [[ -d "$WT_PATH" ]]; then
             DIRTY=$(git -C "$WT_PATH" status --porcelain 2>/dev/null | grep -v "node_modules" | head -5 || true)
