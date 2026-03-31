@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.5.0
+version: 1.6.0
 model: claude-sonnet-4-6
 created: 2026-03-20
-updated: 2026-03-30
+updated: 2026-03-31
 changelog:
+  - 1.6.0: 新增 reviewer_model 字段；plans.length == 0 且 Task Card 含 DoD 条目时强制 exit 2（Evaluator 未生成独立测试计划）
   - 1.5.0: divergence 下限检查 — Sprint Contract Gate 完成后，divergence_count = 0 直接 exit 2 要求重跑（Evaluator 未独立思考）
   - 1.4.0: Sprint Contract CI 兼容性约束 — Evaluator 独立方案必须使用 CI 可执行形式（node/curl/tests/），禁止浏览器交互和 UI 操作描述
   - 1.3.0: 新增双向协商机制（Sprint Contract）— subagent 独立生成测试方案后与主 agent 比对，分歧时标记并要求重写
@@ -12,7 +13,7 @@ changelog:
   - 1.1.0: 新增维度D DoD Test字段可执行性验证（blocker强制）
   - 1.0.0: 合并 dod_verify + cto_review（单 PR 部分）为统一 Spec 审查 Gate
 description: |
-  Spec 审查 Gate（Codex Gate 2/4）。合并了 dod_verify（DoD 验证）和 cto_review 的单 PR 审查部分。
+  Spec 审查 Gate（Codex Gate 2/4）。合并了 dod_verify（DoD 验证）和 cto_review 的单 PR 审查部分。（v1.6.0）
   在 /dev Stage 1 (Spec) 完成后、写代码之前触发。
   审查 DoD 测试设计、PRD 对齐度、架构方向、测试命令可执行性。
   给出 PASS / FAIL 裁决。
@@ -207,6 +208,24 @@ description: |
 > 哪怕是 warning 级别的轻微分歧（如测试层建议）也是有价值的独立观点。
 > divergence_count = 0 → exit 2 → 主 agent 收到退出码 2 → 重新调用 spec_review subagent。
 
+### Plans Length 检查（CRITICAL — divergence 检查之后执行）
+
+```
+# 检查 independent_test_plans 数组长度
+if len(independent_test_plans) == 0 and task_card_has_dod_items():
+  # Task Card 有 DoD 条目但 Evaluator 未生成任何独立测试计划
+  # 这说明 Evaluator 跳过了 Sprint Contract 的独立生成阶段
+  echo "⚠️  plans.length == 0：Evaluator 未生成任何独立测试计划" >&2
+  echo "   Task Card 含有 DoD 条目，但 independent_test_plans 数组为空。" >&2
+  echo "   Sprint Contract 要求 Evaluator 必须先独立生成测试方案再比对。" >&2
+  exit 2  # 要求重跑 spec_review subagent
+```
+
+**为什么要求 plans.length > 0**：
+independent_test_plans 为空意味着 Evaluator 跳过了独立生成阶段，直接给出结论。
+Sprint Contract 的核心价值是"第二双眼睛"——没有独立测试计划 = 没有独立审查。
+plans.length == 0 且 Task Card 含 DoD 条目 → exit 2 → 主 agent 收到退出码 2 → 重新调用。
+
 ### 一致性判断标准
 
 | 判定 | 条件 |
@@ -250,6 +269,7 @@ FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 ```json
 {
   "verdict": "PASS | FAIL",
+  "reviewer_model": "<你使用的模型名，如 claude-sonnet-4-6>",
   "independent_test_plans": [
     {
       "dod_item": "DoD 条目描述（前 50 字）",

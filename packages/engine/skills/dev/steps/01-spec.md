@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 3.1.0
+version: 3.2.0
 created: 2026-03-20
 updated: 2026-03-30
 changelog:
+  - 3.2.0: Sprint Contract Gate PASS 后额外验证 plans.length > 0 — 若 seal 中 independent_test_plans 为空且 Task Card 含 DoD，视为 FAIL 重试
   - 3.1.0: spec_review Evaluator prompt 显式内容注入 — 主 agent 在 spawn 前先读 SKILL.md + Task Card，直接嵌入 prompt，禁止传文件路径
   - 3.0.0: Task Card 生成拆为 Planner subagent — 主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP
   - 2.4.0: spec_review 升级为 Sprint Contract Gate — subagent 独立写测试方案后与主 agent 比对，严重分歧 = 硬 FAIL，不能继续 Stage 2
@@ -362,6 +363,12 @@ loop:
   2. 解析 JSON 结果中的 "verdict" 字段
   3. verdict == "PASS"
        → 确认 seal 文件 .dev-gate-spec.${BRANCH} 已存在（由 subagent 写入）
+       → plans.length > 0 验证（CRITICAL — Sprint Contract 防橡皮图章）：
+           读取 seal 文件中的 independent_test_plans 数组
+           if plans.length == 0 && Task Card 含 DoD 条目：
+             echo "⚠️  plans.length == 0：Evaluator 未生成任何独立测试计划，视为 FAIL" >&2
+             → 修复：在 subagent prompt 中强调 Evaluator 必须为每条 DoD 独立生成测试方案
+             → 重新调用 subagent（继续重试，不 break）
        → echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
        → break（继续 Stage 2）
   4. verdict == "FAIL"
@@ -430,8 +437,37 @@ Agent({
 })
 ```
 
+## PASS 后验证（plans.length 检查）
+
+spec_review subagent 返回 PASS 后，在继续 Stage 2 之前，验证（伪码，由主 agent 执行）：
+
+```
+# 1. 读取 seal 文件（需处理文件不存在或 JSON 解析失败的情况）
+SEAL_FILE = ".dev-gate-spec.${BRANCH}"
+如果 SEAL_FILE 不存在：
+  → 视为 spec_review 未完成，重新调用 subagent
+
+SEAL = JSON.parse(SEAL_FILE 内容)
+如果解析失败：
+  → 视为 seal 文件损坏，删除并重新调用 subagent
+
+# 2. 读取 Task Card（文件名匹配 .task-cp-${BRANCH}.md）
+TASK_CARD = 读取 ".task-cp-${BRANCH}.md"
+
+# 3. 检查是否有 DoD 条目
+HAS_DOD = TASK_CARD 包含 "[ARTIFACT]" 或 "[BEHAVIOR]" 或 "[GATE]"
+
+# 4. 验证 plans.length > 0
+如果 HAS_DOD 且 SEAL.independent_test_plans.length == 0：
+  → 打印 "⚠️  plans.length == 0 且 Task Card 含 DoD 条目，视为 spec_review FAIL"
+  → 删除 SEAL_FILE
+  → 重新调用 spec_review subagent（继续重试，不 break）
+
+# plans.length > 0 → 继续 Stage 2
+```
+
 ## 完成后
 
-spec_review subagent 返回 PASS 后，**立即**执行 Stage 2：
+spec_review subagent 返回 PASS 且 plans.length > 0 后，**立即**执行 Stage 2：
 
 `cat skills/dev/steps/02-code.md`

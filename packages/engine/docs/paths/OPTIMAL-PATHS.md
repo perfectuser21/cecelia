@@ -567,6 +567,28 @@ DoD whitelist 检查正常执行
 
 ---
 
+### sprint-contract-fix-adversarial: Sprint Contract Gate 对抗审查修复
+
+```
+CRG subagent 输出 reviewer_model 字段 →
+stats 非全零 →
+seal 文件包含 reviewer_model →
+spec_review plans.length > 0 →
+Sprint Contract 验证有效
+```
+
+---
+
+### sprint-contract-gate-fix: Sprint Contract Gate 防橡皮图章修复
+
+```
+spec_review subagent 调用 → plans.length > 0（有独立测试计划）→
+CRG subagent 调用 → stats 非全零（有实质审查）→
+reviewer_model 字段正确写入 seal 文件
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
