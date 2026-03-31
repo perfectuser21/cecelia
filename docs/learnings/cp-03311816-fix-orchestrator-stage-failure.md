@@ -6,7 +6,11 @@
 
 ### 根本原因
 
-设计 STAGE_HANDLER_MAP 时，审核阶段（copy-review/image-review）因需要判断 PASS/FAIL 而正确传入了 `taskStatus`。非审核阶段假设"executor 完成即成功"，未考虑 executor 内部校验失败（如无 notebook_id、findings 为空、图片生成失败）时返回 `{success:false}` 的场景。orchestrator 收到 callback 时只要 task status 是 `failed`，就应该停止 pipeline，但旧代码的 handler 签名 `(ctx, _s, _f, db)` 直接丢弃了这个信息。
+设计 `STAGE_HANDLER_MAP` 时存在不对称性：审核阶段（copy-review/image-review）因需要判断 PASS/FAIL 而正确接收了 `taskStatus`，非审核阶段则错误地假设"executor 完成即成功"。
+
+非审核阶段的 executor（`executeResearch`/`executeCopywriting`/`executeGenerate`/`executeExport`）有内部校验逻辑，会在无 `notebook_id`、`findings` 为空、图片生成失败等情况下返回 `{success:false}`，这会导致对应子任务 status 变为 `failed`。
+
+Orchestrator 的 `advanceContentPipeline` 在 task status 为 `failed` 时也会被调用，但 handler 签名 `(ctx, _s, _f, db)` 用 `_s` 丢弃了 `taskStatus`，导致失败被静默忽略，pipeline 继续推进到下一阶段。
 
 ### 下次预防
 
