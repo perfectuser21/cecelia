@@ -15,6 +15,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getContentType } from './content-types/content-type-registry.js';
+import { callLLM } from './llm-caller.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -151,6 +152,7 @@ function _loadFindings(keyword) {
 export async function executeCopywriting(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
   const contentType = task.payload?.content_type || 'solo-company-case';
+  const previousFeedback = task.payload?.previous_feedback;
 
   console.log(`[copywriting] 开始: ${keyword}`);
 
@@ -165,6 +167,40 @@ export async function executeCopywriting(task) {
   const findings = _loadFindings(keyword);
   const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 7);
   console.log(`[copywriting] 找到 ${findings.length} 条 findings，筛选 ${top.length} 条`);
+
+  // ─── Claude 调用：使用配置 prompt 生成文案 ─────────────────────
+  if (typeConfig?.template?.generate_prompt) {
+    try {
+      const findingsSummary = top.length > 0
+        ? top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 200)}`).join('\n')
+        : `关键词：${keyword}（暂无调研素材，请根据关键词创作）`;
+
+      let prompt = typeConfig.template.generate_prompt.replace(/\{keyword\}/g, keyword);
+      prompt += `\n\n## 调研素材（${top.length} 条）\n${findingsSummary}`;
+
+      if (previousFeedback) {
+        prompt += `\n\n## 上次审查意见（请针对以下问题改进）\n${previousFeedback}`;
+      }
+
+      prompt += `\n\n请严格按以下格式输出，不要省略分隔符：\n=== 社交媒体文案 ===\n[在此输出小红书/抖音风格文案，500-800字，口语化，含互动引导]\n=== 公众号长文 ===\n[在此输出深度分析长文，1500-2000字，结构清晰]`;
+
+      const { text } = await callLLM('thalamus', prompt, { maxTokens: 4096, timeout: 120000 });
+
+      const socialMatch = text.match(/=== 社交媒体文案 ===([\s\S]*?)(?:=== 公众号长文 ===|$)/);
+      const articleMatch = text.match(/=== 公众号长文 ===([\s\S]*?)$/);
+      const socialCopy = socialMatch?.[1]?.trim() || text;
+      const articleCopy = articleMatch?.[1]?.trim() || text;
+
+      writeFileSync(join(dir, 'cards', 'copy.md'), `# ${keyword}：社交媒体文案\n\n${socialCopy}\n`, 'utf-8');
+      writeFileSync(join(dir, 'article', 'article.md'), `# ${keyword}：深度分析\n\n${articleCopy}\n`, 'utf-8');
+
+      console.log(`[copywriting] Claude 生成成功 → ${dir}`);
+      return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'], llm_generated: true };
+    } catch (err) {
+      console.error(`[copywriting] Claude 调用失败，降级到静态模板: ${err.message}`);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────
 
   // 无 findings 时的占位内容段落
   const fallbackCopyBlocks = top.length === 0 ? [
@@ -220,7 +256,7 @@ export async function executeCopywriting(task) {
   writeFileSync(join(dir, 'article', 'article.md'), article, 'utf-8');
 
   console.log(`[copywriting] 完成 → ${dir}`);
-  return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'] };
+  return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'], llm_generated: false };
 }
 
 // ─── 3. Copy Review（文案审核）─────────────────────────────────
@@ -246,11 +282,46 @@ export async function executeCopyReview(task) {
   if (!allText.trim()) return { success: true, review_passed: false, issues: ['文案内容为空'] };
 
   const issues = [];
+  let ruleScores = null;
 
-  // 如果配置中有 review_rules，使用配置规则；否则 fallback 到硬编码
+  // ─── Claude 调用：使用配置 review_prompt 审查文案 ──────────────
   const reviewRules = typeConfig?.review_rules;
+  if (typeConfig?.template?.review_prompt && reviewRules && Array.isArray(reviewRules)) {
+    try {
+      const rulesDesc = reviewRules
+        .map(r => `- ${r.id}: ${r.description} (severity: ${r.severity})`)
+        .join('\n');
+
+      const prompt = `${typeConfig.template.review_prompt}\n\n## 待审查内容\n${allText.substring(0, 3000)}\n\n## 审查规则\n${rulesDesc}\n\n请对每条规则逐一评审，严格按 JSON 格式返回：\n{\n  "rule_scores": [\n    { "id": "rule_id", "score": 0, "pass": true, "comment": "评审意见" }\n  ],\n  "overall_pass": true,\n  "summary": "总体评审意见"\n}`;
+
+      const { text } = await callLLM('thalamus', prompt, { maxTokens: 1024, timeout: 60000 });
+
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        ruleScores = parsed.rule_scores || [];
+        const failedRules = ruleScores.filter(r => !r.pass);
+        if (failedRules.length > 0) {
+          issues.push(...failedRules.map(r => `[${r.id}] ${r.comment}`));
+        }
+        const passed = parsed.overall_pass !== false && issues.length === 0;
+        console.log(`[copy-review] Claude 审查完成: ${passed ? 'PASS' : 'FAIL'}`);
+        return {
+          success: true,
+          review_passed: passed,
+          rule_scores: ruleScores,
+          llm_reviewed: true,
+          issues,
+        };
+      }
+    } catch (err) {
+      console.error(`[copy-review] Claude 调用失败，降级到静态规则: ${err.message}`);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────
+
+  // fallback: 静态规则检查
   if (reviewRules && Array.isArray(reviewRules)) {
-    // 使用配置审查规则（review_rules count: reviewRules.length）
     // 配置驱动的审查：遍历 blocking 规则做可检测的静态验证
     for (const rule of reviewRules) {
       if (rule.id === 'no_fabrication' && rule.severity === 'blocking') {
@@ -285,6 +356,8 @@ export async function executeCopyReview(task) {
   return {
     success: true,
     review_passed: passed,
+    rule_scores: null,
+    llm_reviewed: false,
     score: { banned_hits: banned.length, copy_length: copyLen, article_length: artLen, min_short_copy: minShortCopy, min_long_form: minLongForm },
     config_driven: !!(reviewRules && Array.isArray(reviewRules)),
     issues,
@@ -306,18 +379,43 @@ export async function executeGenerate(task) {
 
   // 图片生成依赖 export 阶段的 generateCards，此处只做标记
   // 实际卡片渲染在 executeExport 中完成（需要 resvg）
-  const dir = findOutputDir(keyword);
-  if (!dir) {
-    // 创建目录以备 export 使用
+  const dir = findOutputDir(keyword) || (() => {
     const newDir = join(OUTPUT_BASE, `${today()}-${slug(keyword)}`);
     ensureDir(join(newDir, 'cards'));
     ensureDir(join(newDir, 'article'));
     console.log(`[generate] 产出目录已创建: ${newDir}`);
-    return { success: true, output_dir: newDir, image_count: imageCount, image_style: imageStyle };
+    return newDir;
+  })();
+
+  // ─── Claude 调用：生成卡片内容描述 ────────────────────────────
+  const generatePrompt = typeConfig?.template?.generate_prompt || typeConfig?.template?.image_prompt;
+  if (generatePrompt) {
+    try {
+      const findings = _loadFindings(keyword);
+      const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, imageCount);
+      const findingsSummary = top.length > 0
+        ? top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 150)}`).join('\n')
+        : `关键词：${keyword}（暂无素材）`;
+
+      const prompt = `${generatePrompt.replace(/\{keyword\}/g, keyword)}\n\n## 调研素材\n${findingsSummary}\n\n请为 ${imageCount} 张信息图生成具体内容描述，严格按 JSON 格式返回：\n{\n  "cards": [\n    { "index": 1, "title": "卡片标题", "content": "卡片主体内容（50-80字）", "highlight": "高亮数据或引言" }\n  ]\n}`;
+
+      const { text } = await callLLM('thalamus', prompt, { maxTokens: 2048, timeout: 60000 });
+
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const cardContent = JSON.parse(jsonMatch[0]);
+        writeFileSync(join(dir, 'cards', 'llm-card-content.json'), JSON.stringify(cardContent, null, 2), 'utf-8');
+        console.log(`[generate] Claude 生成卡片内容描述 → ${dir}/cards/llm-card-content.json`);
+        return { success: true, output_dir: dir, image_count: imageCount, image_style: imageStyle, llm_content: true };
+      }
+    } catch (err) {
+      console.error(`[generate] Claude 调用失败，跳过卡片内容生成: ${err.message}`);
+    }
   }
+  // ─────────────────────────────────────────────────────────────
 
   console.log(`[generate] 图片生成阶段完成（实际渲染在 export 阶段）→ ${dir}`);
-  return { success: true, output_dir: dir, image_count: imageCount, image_style: imageStyle };
+  return { success: true, output_dir: dir, image_count: imageCount, image_style: imageStyle, llm_content: false };
 }
 
 // ─── 5. Image Review（图片审核）───────────────────────────────
@@ -357,9 +455,41 @@ export async function executeImageReview(task) {
   // 图片数量检查（允许 0，因为实际渲染可能在 export 阶段）
   if (cardCount > maxImageCount) issues.push(`图片数量 ${cardCount} 超过限制（最多 ${maxImageCount} 张）`);
 
+  // ─── Claude 调用：审核内容质量 ────────────────────────────────
+  const imageReviewPrompt = typeConfig?.template?.image_review_prompt || typeConfig?.template?.review_prompt;
+  if (imageReviewPrompt && issues.length === 0) {
+    try {
+      const cardContentPath = join(dir, 'cards', 'llm-card-content.json');
+      let contentForReview = '';
+      if (existsSync(cardContentPath)) {
+        contentForReview = readFileSync(cardContentPath, 'utf-8');
+      } else if (existsSync(cp)) {
+        contentForReview = readFileSync(cp, 'utf-8').substring(0, 1000);
+      }
+
+      if (contentForReview) {
+        const prompt = `${imageReviewPrompt.replace(/\{keyword\}/g, keyword)}\n\n## 待审核内容\n${contentForReview.substring(0, 2000)}\n\n请评审内容质量，严格按 JSON 格式返回：\n{\n  "review_passed": true,\n  "issues": [],\n  "suggestions": ["建议1"],\n  "quality_score": 8\n}`;
+
+        const { text } = await callLLM('thalamus', prompt, { maxTokens: 512, timeout: 45000 });
+
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const llmReview = JSON.parse(jsonMatch[0]);
+          if (llmReview.issues?.length > 0) issues.push(...llmReview.issues);
+          const passed = llmReview.review_passed !== false && issues.length === 0;
+          console.log(`[image-review] Claude 审核: ${passed ? 'PASS' : 'FAIL'}（质量分: ${llmReview.quality_score || 'N/A'}）`);
+          return { success: true, review_passed: passed, card_count: cardCount, issues, llm_review: llmReview };
+        }
+      }
+    } catch (err) {
+      console.error(`[image-review] Claude 调用失败，降级到文件检查: ${err.message}`);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────
+
   const passed = issues.length === 0;
   console.log(`[image-review] ${passed ? 'PASS' : 'FAIL'}: ${issues.join('; ') || '全部通过'}（${cardCount} 张图片）`);
-  return { success: true, review_passed: passed, card_count: cardCount, issues };
+  return { success: true, review_passed: passed, card_count: cardCount, issues, llm_review: null };
 }
 
 // ─── 4. Export ──────────────────────────────────────────────
