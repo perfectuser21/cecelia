@@ -18,10 +18,7 @@ import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { execSync, spawnSync } from 'child_process';
 
-const VERIFY_STEP_SH = resolve(
-  __dirname,
-  '../../../packages/engine/hooks/verify-step.sh'
-);
+const VERIFY_STEP_SH = resolve(__dirname, '../hooks/verify-step.sh');
 
 describe('verify-step.sh step1 — Gate Planner 检查', () => {
   let tempDir: string;
