@@ -60,6 +60,10 @@ Brain (port 5221)
 ├── PostgreSQL
 │   ├── migrations/                 139 个 SQL 迁移文件
 │   └── src/selfcheck.js            EXPECTED_SCHEMA_VERSION = '139'
+├── 调度器
+│   ├── src/daily-publish-scheduler.js  每日发布触发（UTC 02:00）
+│   └── src/daily-report-generator.js   每日内容日报（UTC 01:00 = 北京 09:00）
+│         写入 working_memory key=daily_report_{DATE}，推送飞书
 └── 辅助
     ├── src/watchdog.js             进程监护（Darwin 适配）
     ├── src/alertness/              警觉等级系统
