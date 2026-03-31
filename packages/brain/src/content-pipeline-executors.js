@@ -703,5 +703,28 @@ export async function executeExport(task) {
   }
 
   console.log(`[export] 完成: ${cardFiles.length} 张卡片 + manifest → ${dir}`);
+
+  // 清空 notebook sources，为下次 pipeline 复用准备（fire-and-forget）
+  try {
+    const typeConfig = await getContentType(contentType).catch(() => null);
+    const notebookId = typeConfig?.notebook_id;
+    if (notebookId) {
+      const listResult = await listSources(notebookId);
+      if (listResult.ok && Array.isArray(listResult.sources) && listResult.sources.length > 0) {
+        let cleared = 0;
+        for (const src of listResult.sources) {
+          const sourceId = src.id || src.source_id;
+          if (sourceId) {
+            await deleteSource(sourceId, notebookId);
+            cleared++;
+          }
+        }
+        console.log(`[export] notebook ${notebookId.slice(0, 8)}... 已清空 ${cleared} 个 sources，下次可复用`);
+      }
+    }
+  } catch (nbErr) {
+    console.warn(`[export] notebook 清空失败（不阻断流程）: ${nbErr.message}`);
+  }
+
   return { success: true, manifest_path: join(dir, 'manifest.json'), card_count: cardFiles.length, card_files: cardFiles, export_path };
 }

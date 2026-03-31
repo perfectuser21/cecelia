@@ -4,7 +4,7 @@
 content_type: solo-company-case
 title: 一人公司成功案例
 version: "1.0"
-notebook_id: "1d928181-4462-47d4-b4c0-89d3696344ab"
+notebook_id: "1d928181-4462-47d4-b4c0-89d3696344ab"  # 2026年AI一人公司商业模式与实操全案（复用工作区，每次 export 后清空 sources）
 description: 深度调研某个一人公司/独立创作者成功案例，生成图文内容包（图片+文案+长文）
 
 # 图片配置
