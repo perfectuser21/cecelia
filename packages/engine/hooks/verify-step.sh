@@ -148,6 +148,21 @@ $whitelist_out
         }
     fi
 
+    # Gate Planner: Planner seal 物理文件存在性检查
+    # 原因：step_1_spec 标记为 done = Stage 1 完成，必须有 Planner subagent 实际运行的物理凭证
+    # 若 seal 文件不存在，说明 Planner 未运行，Sprint Contract 形同虚设
+    local planner_seal_file="$PROJECT_ROOT/.dev-gate-planner.${BRANCH}"
+    if [[ ! -f "$planner_seal_file" ]]; then
+        _fail "Gate Planner: Planner seal 文件不存在
+  期望路径: $planner_seal_file
+  step_1_spec: done 前必须先运行 Planner subagent（spec_review Gate）
+  原因：seal 文件是 Planner 实际运行的物理凭证，文件不存在 = Planner 未运行
+  修复：
+    1. 运行 Stage 1 spec_review 流程（Planner subagent）
+    2. 等待 .dev-gate-planner.${BRANCH} 文件生成后再标记 done"
+    fi
+    echo "  ✅ [Gate Planner] Planner seal 已验证: .dev-gate-planner.${BRANCH}" >&2
+
     # Gate 1: CI 镜像 — Stage 1 跳过完整 DoD 检查（未勾选项在 Stage 1 是预期的）
     # Stage 1 只写 Spec/DoD 条目，验证在 Stage 2 做。CI L1 会在 push 后做完整检查。
     echo "  ⏭ [Gate 1] Stage 1 跳过 DoD 完整检查（CI L1 将在 push 后检查）" >&2
