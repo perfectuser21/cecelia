@@ -5,7 +5,9 @@
 
 ### 根本原因
 
-Sprint Contract Gate 的收敛循环是 MD 伪代码给 Claude 读的，round/divergence 状态存在 Claude context 里。Session 重启后状态丢失，Claude 每次从头来，相当于循环从未运行。这是"把代码的事交给 LLM 脑子记"的典型反模式。
+Sprint Contract Gate 的收敛循环是 MD 伪代码给 Claude 读的，round/divergence 状态存在 Claude context 里。
+Session 重启后状态全部丢失，Claude 每次都从第 1 轮开始，收敛判断没有历史参考。
+这是"把代码的事交给 LLM 脑子记"的典型反模式——LLM context 不是可靠的状态机。
 
 ### 解决方案
 
