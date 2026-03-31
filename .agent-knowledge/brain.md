@@ -119,6 +119,18 @@ GET  /api/brain/kr-project-map     KR-Project 依赖图（krs + orphaned_project
 
 ---
 
+## 内容飞轮数据回收（2026-03-31 新增）
+
+| 文件 | 职责 |
+|------|------|
+| `post-publish-data-collector.js` | 发布后数据回收模块。每 tick 扫描完成 4h 以上的 content_publish 任务，通过 Brain 任务队列派发 platform_scraper 任务（fire-and-forget），结果写入 pipeline_publish_stats 表 |
+
+API：`GET /api/brain/pipelines/:id/stats` — 返回该 pipeline 各平台数据汇总（views/likes/comments/shares）
+
+数据表：`pipeline_publish_stats`（migration 207） — 字段：pipeline_id / publish_task_id / platform / views / likes / comments / shares / scraped_at
+
+---
+
 ## 集成测试模块（2026-03-28 新增）
 
 | 文件 | 职责 |
