@@ -512,16 +512,21 @@ async function _executeStageTask(task, stage, executor, dbPool) {
 
   const newStatus = execResult.success ? 'completed' : 'failed';
 
-  // 把 review 结果（issues、review_passed）存入 payload，供 stages API 返回给前端
+  // 把 review 结果（issues、review_passed、rule_scores、llm_reviewed）存入 payload，供 stages API 返回给前端
   if (execResult.issues !== undefined || execResult.review_passed !== undefined) {
+    const reviewPayload = {
+      review_issues: execResult.issues || [],
+      review_passed: execResult.review_passed ?? true,
+    };
+    if (execResult.rule_scores !== undefined) reviewPayload.rule_scores = execResult.rule_scores;
+    if (execResult.llm_reviewed !== undefined) reviewPayload.llm_reviewed = execResult.llm_reviewed;
+    // executeImageReview 返回 llm_review 对象，统一映射到 llm_reviewed: true
+    if (execResult.llm_review !== undefined) reviewPayload.llm_reviewed = true;
     await dbPool.query(
       `UPDATE tasks SET status = $1, completed_at = NOW(),
          payload = payload || $2::jsonb
        WHERE id = $3`,
-      [newStatus, JSON.stringify({
-        review_issues: execResult.issues || [],
-        review_passed: execResult.review_passed ?? true,
-      }), task.id]
+      [newStatus, JSON.stringify(reviewPayload), task.id]
     );
   } else if (execResult.export_path) {
     await dbPool.query(

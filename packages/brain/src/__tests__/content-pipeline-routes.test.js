@@ -202,3 +202,73 @@ describe('POST /api/brain/pipelines/batch', () => {
     expect(res.body.count).toBe(2);
   });
 });
+
+describe('GET /api/brain/pipelines/:id/stages — rule_scores & llm_reviewed', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('stages 响应包含 review_passed 字段（true）', async () => {
+    pool.query.mockResolvedValue({
+      rows: [
+        {
+          task_type: 'content-copy-review',
+          status: 'completed',
+          started_at: new Date(),
+          completed_at: new Date(),
+          result: null,
+          review_passed: 'true',
+          rule_scores: null,
+          llm_reviewed: null,
+        },
+      ],
+    });
+    const res = await request(makeApp()).get('/api/brain/pipelines/pipe-1/stages');
+    expect(res.status).toBe(200);
+    expect(res.body.stages['content-copy-review'].review_passed).toBe(true);
+  });
+
+  it('stages 响应包含 rule_scores 数组（当 DB 有值时）', async () => {
+    const scores = [{ id: 'tone', score: 8, pass: true }, { id: 'length', score: 5, pass: false }];
+    pool.query.mockResolvedValue({
+      rows: [
+        {
+          task_type: 'content-copy-review',
+          status: 'completed',
+          started_at: new Date(),
+          completed_at: new Date(),
+          result: null,
+          review_passed: 'true',
+          rule_scores: scores,
+          llm_reviewed: 'true',
+        },
+      ],
+    });
+    const res = await request(makeApp()).get('/api/brain/pipelines/pipe-1/stages');
+    expect(res.status).toBe(200);
+    const stage = res.body.stages['content-copy-review'];
+    expect(stage.rule_scores).toEqual(scores);
+    expect(stage.llm_reviewed).toBe(true);
+  });
+
+  it('stages 响应不包含 rule_scores 字段（当 DB 值为 null 时）', async () => {
+    pool.query.mockResolvedValue({
+      rows: [
+        {
+          task_type: 'content-copy-review',
+          status: 'completed',
+          started_at: new Date(),
+          completed_at: new Date(),
+          result: null,
+          review_passed: null,
+          rule_scores: null,
+          llm_reviewed: null,
+        },
+      ],
+    });
+    const res = await request(makeApp()).get('/api/brain/pipelines/pipe-1/stages');
+    expect(res.status).toBe(200);
+    const stage = res.body.stages['content-copy-review'];
+    expect(stage).not.toHaveProperty('rule_scores');
+    expect(stage).not.toHaveProperty('llm_reviewed');
+    expect(stage).not.toHaveProperty('review_passed');
+  });
+});
