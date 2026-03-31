@@ -194,7 +194,6 @@ export async function executeCopywriting(task) {
       writeFileSync(join(dir, 'cards', 'copy.md'), `# ${keyword}：社交媒体文案\n\n${socialCopy}\n`, 'utf-8');
       writeFileSync(join(dir, 'article', 'article.md'), `# ${keyword}：深度分析\n\n${articleCopy}\n`, 'utf-8');
 
-      console.log(`[copywriting] Claude 生成成功 → ${dir}`);
       return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'], llm_generated: true };
     } catch (err) {
       console.error(`[copywriting] Claude 调用失败，降级到静态模板: ${err.message}`);
@@ -305,7 +304,6 @@ export async function executeCopyReview(task) {
           issues.push(...failedRules.map(r => `[${r.id}] ${r.comment}`));
         }
         const passed = parsed.overall_pass !== false && issues.length === 0;
-        console.log(`[copy-review] Claude 审查完成: ${passed ? 'PASS' : 'FAIL'}`);
         return {
           success: true,
           review_passed: passed,
@@ -405,7 +403,6 @@ export async function executeGenerate(task) {
       if (jsonMatch) {
         const cardContent = JSON.parse(jsonMatch[0]);
         writeFileSync(join(dir, 'cards', 'llm-card-content.json'), JSON.stringify(cardContent, null, 2), 'utf-8');
-        console.log(`[generate] Claude 生成卡片内容描述 → ${dir}/cards/llm-card-content.json`);
         return { success: true, output_dir: dir, image_count: imageCount, image_style: imageStyle, llm_content: true };
       }
     } catch (err) {
@@ -477,7 +474,6 @@ export async function executeImageReview(task) {
           const llmReview = JSON.parse(jsonMatch[0]);
           if (llmReview.issues?.length > 0) issues.push(...llmReview.issues);
           const passed = llmReview.review_passed !== false && issues.length === 0;
-          console.log(`[image-review] Claude 审核: ${passed ? 'PASS' : 'FAIL'}（质量分: ${llmReview.quality_score || 'N/A'}）`);
           return { success: true, review_passed: passed, card_count: cardCount, issues, llm_review: llmReview };
         }
       }
