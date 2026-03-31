@@ -88,6 +88,29 @@ export async function executeResearch(task) {
   let findings = [];
 
   run(`notebooklm use ${notebookId} 2>&1`);
+
+  // 清空旧 sources（复用 notebook）
+  console.log(`[research] 清空旧 sources...`);
+  try {
+    const srcList = await listSources(notebookId);
+    const oldSources = srcList?.sources || [];
+    for (const src of oldSources) {
+      try { await deleteSource(src.id, notebookId); } catch { /* 忽略单条删除失败 */ }
+    }
+    console.log(`[research] 已清空 ${oldSources.length} 个旧 sources`);
+  } catch (e) {
+    console.warn(`[research] 清空 sources 失败（忽略）: ${e.message}`);
+  }
+
+  // 搜索 web 并添加 sources
+  console.log(`[research] 开始 web 搜索: ${keyword}`);
+  run(`notebooklm source add-research "${keyword}" --mode deep --no-wait 2>&1`, 30000);
+
+  // 等待研究完成并导入所有找到的 sources
+  console.log(`[research] 等待研究完成...`);
+  const waitResult = run(`notebooklm research wait --timeout 300 --import-all 2>&1`, 330000);
+  console.log(`[research] 研究完成: ${waitResult?.substring(0, 200) || '(无输出)'}`);
+
   // 优先使用配置中的 research_prompt，fallback 到硬编码
   const defaultPrompt = `从所有源中，找出能证明'个人也能拥有过去只有公司才有的能力'的证据。关于${keyword}，每条带具体数据和来源。至少8条。`;
   const researchPrompt = typeConfig?.template?.research_prompt
@@ -133,6 +156,19 @@ export async function executeResearch(task) {
   const data = { keyword, series: contentType, notebook_id: notebookId, extracted_at: today(), total_findings: findings.length, findings };
   const fp = join(dir, 'findings.json');
   writeFileSync(fp, JSON.stringify(data, null, 2), 'utf-8');
+
+  // 清空 sources，以便下次复用同一 notebook
+  console.log(`[research] 清空 sources（notebook 复用）...`);
+  try {
+    const srcList = await listSources(notebookId);
+    const sources = srcList?.sources || [];
+    for (const src of sources) {
+      try { await deleteSource(src.id, notebookId); } catch { /* 忽略单条删除失败 */ }
+    }
+    console.log(`[research] 已清空 ${sources.length} 个 sources`);
+  } catch (e) {
+    console.warn(`[research] 清空 sources 失败（忽略）: ${e.message}`);
+  }
 
   console.log(`[research] 完成: ${findings.length} findings → ${fp}`);
   return { success: true, findings_path: fp, findings_count: findings.length };
