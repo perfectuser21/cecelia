@@ -18,6 +18,7 @@
 #   格式：JSON { round, timestamp, blocker_count, divergence[] }
 #
 # 依赖：node（用于解析 JSON seal 文件）
+# State persists across sessions via disk files
 # ============================================================================
 
 set -euo pipefail
