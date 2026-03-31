@@ -23,6 +23,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_BASE = process.env.CONTENT_OUTPUT_DIR
   || join(__dirname, '../../../../zenithjoy/content-output');
 
+const NAS_USER = process.env.NAS_USER || '徐啸';
+const NAS_IP = process.env.NAS_IP || '100.110.241.76';
+const NAS_BASE = process.env.NAS_BASE || '/volume1/workspace/vault/zenithjoy-creator/content';
+
 const BRAND_KEYWORDS = ['能力', '系统', '一人公司', '小组织', 'AI', '能力下放', '能力放大'];
 const BANNED_WORDS = ['coding', '搭建', 'agent workflow', 'builder', 'Cecelia', '智能体搭建', '代码部署'];
 
@@ -530,6 +534,22 @@ export async function executeExport(task) {
   };
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
 
+  // NAS 上传（pipelineId 为目录名，无 pipelineId 时跳过）
+  let export_path = null;
+  if (pipelineId) {
+    const nasDir = `${NAS_BASE}/${pipelineId}`;
+    const nasRemotePath = `${NAS_USER}@${NAS_IP}:${nasDir}/`;
+    try {
+      execSync(`rsync -az --timeout=30 "${dir}/" "${nasRemotePath}"`, { timeout: 60000 });
+      export_path = nasDir;
+      console.log(`[export] NAS 上传成功: ${export_path}`);
+    } catch (nasErr) {
+      console.warn(`[export] NAS 上传失败（不阻断流程）: ${nasErr.message}`);
+    }
+  } else {
+    console.warn('[export] NAS 上传跳过：无 pipelineId');
+  }
+
   console.log(`[export] 完成: ${cardFiles.length} 张卡片 + manifest → ${dir}`);
-  return { success: true, manifest_path: join(dir, 'manifest.json'), card_count: cardFiles.length, card_files: cardFiles };
+  return { success: true, manifest_path: join(dir, 'manifest.json'), card_count: cardFiles.length, card_files: cardFiles, export_path };
 }
