@@ -246,6 +246,17 @@ cat > "$SEAL_FILE" << EOF
 EOF
 
 echo "✅ Generator seal 文件已写入: $SEAL_FILE"
+
+# ── [seal] commit Generator seal 文件（防上下文压缩状态丢失）────────────────────
+# 原因：上下文压缩后 worktree 临时文件会丢失；commit 进分支后 git checkout 可还原
+git -C "${WORKTREE_ROOT}" add "${SEAL_FILE}" 2>/dev/null || true
+if ! git -C "${WORKTREE_ROOT}" diff --cached --quiet 2>/dev/null; then
+  git -C "${WORKTREE_ROOT}" commit -m "chore: [seal] commit Generator seal 文件防上下文压缩丢失
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>/dev/null || true
+  echo "✅ [seal] Generator seal 文件已 commit 到分支"
+fi
+# ─────────────────────────────────────────────────────────────────────────────
 ```
 
 **这是 Stage 3 前置检查**：devloop-check.sh 条件 2.8 会检查此文件是否存在。
