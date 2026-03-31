@@ -192,7 +192,7 @@ if [[ "$PLANNER_ALL_TODO" == "true" ]]; then
 elif [[ "$PLANNER_ALL_TODO" == "false" ]]; then
   SCORE_PLANNER=0
 else
-  SCORE_PLANNER=5  # seal 文件缺失，给中间分
+  SCORE_PLANNER=0  # seal 文件缺失，无法验证，得 0 分
 fi
 
 # 评分 2：对抗深度（0-10）
@@ -254,8 +254,10 @@ TOTAL_SCORE=$(( SCORE_PLANNER + SCORE_ADVERSARIAL + SCORE_CI + SCORE_TRACE ))
   echo "| DoD 条目数量 | ${PLANNER_DOD_COUNT} |"
   if [[ "$PLANNER_ALL_TODO" == "true" ]]; then
     echo "| 所有 Test 字段为 TODO | ✅ 是（隔离有效） |"
-  else
+  elif [[ "$PLANNER_ALL_TODO" == "false" ]]; then
     echo "| 所有 Test 字段为 TODO | ❌ 否（Planner 预填了 Test） |"
+  else
+    echo "| 所有 Test 字段为 TODO | ⚠️ 无法检测（Seal 文件缺失） |"
   fi
   echo ""
   echo "**Planner 隔离评分**: ${SCORE_PLANNER}/10"
