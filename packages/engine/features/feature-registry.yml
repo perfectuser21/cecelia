@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.75.0"
+    date: "2026-03-31"
+    change: "[CONFIG] feat(engine): /dev 流程 Lite 路径分流 — 5条件路由，全满足时跳过 Planner + Sprint Contract，LITE 25分制评分"
+    scope: "packages/engine/skills/dev/steps/01-spec.md,packages/engine/hooks/verify-step.sh,packages/engine/lib/devloop-check.sh,packages/engine/scripts/devgate/generate-sprint-report.sh,packages/engine/skills/dev/SKILL.md"
   - version: "13.74.3"
     date: "2026-03-31"
     change: "[CONFIG] fix(engine): verify-step.sh step1 强制 Sprint Contract 四文件检查（Generator/Evaluator/State seal + 橡皮图章检测）"

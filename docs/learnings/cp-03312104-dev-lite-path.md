@@ -5,7 +5,11 @@
 
 ### 根本原因
 
-所有任务无论规模都走完整 Sprint Contract 路径，fix:/chore: 等小改动也需要 Planner subagent + 2轮 Sprint Contract，开销与任务价值不对等。根本原因是缺乏任务规模判断前置路由，导致流程固化、无法适应小任务。
+所有任务无论规模都走完整 Sprint Contract 路径，fix:/chore: 等小改动也需要 Planner subagent + 2轮 Sprint Contract，开销与任务价值不对等。
+
+根本原因是 `/dev` Stage 1 缺乏任务规模判断前置路由：流程设计时假设所有任务复杂度相同，导致 fix: 修复一行 bug 也要走 Planner + Sprint Contract 全流程，路径固化、无法适应小任务。
+
+这导致 Planner 和 Sprint Contract 的价值被稀释——当任务规模确实很小（commit type=fix, 文件数≤3, 无新 API/schema）时，两轮 Sprint Contract 产出的"规格"几乎等同于直接写 DoD，却消耗了额外的 subagent 调用和等待时间。
 
 ### 下次预防
 
