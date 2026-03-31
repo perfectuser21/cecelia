@@ -439,23 +439,31 @@ Agent({
 
 ## PASS 后验证（plans.length 检查）
 
-spec_review subagent 返回 PASS 后，在继续 Stage 2 之前，验证：
+spec_review subagent 返回 PASS 后，在继续 Stage 2 之前，验证（伪码，由主 agent 执行）：
 
-```javascript
-// 读取 seal 文件并检查 independent_test_plans
-const sealContent = readFile(`.dev-gate-spec.${BRANCH}`)
-const seal = JSON.parse(sealContent)
+```
+# 1. 读取 seal 文件（需处理文件不存在或 JSON 解析失败的情况）
+SEAL_FILE = ".dev-gate-spec.${BRANCH}"
+如果 SEAL_FILE 不存在：
+  → 视为 spec_review 未完成，重新调用 subagent
 
-// 如果 Task Card 含有 DoD 条目但 plans.length == 0，视为 FAIL 重试
-const taskCardContent = readFile(`.task-cp-${BRANCH}.md`)
-const hasDodItems = taskCardContent.includes('[ARTIFACT]') || taskCardContent.includes('[BEHAVIOR]') || taskCardContent.includes('[GATE]')
+SEAL = JSON.parse(SEAL_FILE 内容)
+如果解析失败：
+  → 视为 seal 文件损坏，删除并重新调用 subagent
 
-if (hasDodItems && seal.independent_test_plans.length === 0) {
-  // Evaluator 未生成测试计划，视为失败，重新调用 spec_review subagent
-  console.error('⚠️  plans.length == 0 且 Task Card 含 DoD 条目，视为 spec_review FAIL，重新调用')
-  // → 删除 seal 文件，重试 spec_review subagent
-}
-// plans.length > 0 → 继续 Stage 2
+# 2. 读取 Task Card（文件名匹配 .task-cp-${BRANCH}.md）
+TASK_CARD = 读取 ".task-cp-${BRANCH}.md"
+
+# 3. 检查是否有 DoD 条目
+HAS_DOD = TASK_CARD 包含 "[ARTIFACT]" 或 "[BEHAVIOR]" 或 "[GATE]"
+
+# 4. 验证 plans.length > 0
+如果 HAS_DOD 且 SEAL.independent_test_plans.length == 0：
+  → 打印 "⚠️  plans.length == 0 且 Task Card 含 DoD 条目，视为 spec_review FAIL"
+  → 删除 SEAL_FILE
+  → 重新调用 spec_review subagent（继续重试，不 break）
+
+# plans.length > 0 → 继续 Stage 2
 ```
 
 ## 完成后
