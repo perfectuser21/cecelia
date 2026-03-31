@@ -193,6 +193,7 @@ description: |
 4. divergence 下限检查（CRITICAL — 所有条目比对完成后执行）
    计算 divergence_count（所有 consistent: false 的条目总数，包含 blocker 和 warning）。
 
+   # 注意：independent_test_plans.length === 0 时等同于 divergence_count == 0（未生成任何独立方案）
    if divergence_count == 0:
      # Evaluator 与主 agent 完全一致 → 可能没有独立思考，结论不可信
      # 处理方式：设置 verdict = "FAIL"，在 issues 中写入 blocker
@@ -250,6 +251,7 @@ description: |
 - Test 字段质量不达标（维度 D 任一 blocker）
 - Sprint Contract 比对发现严重分歧（主 agent 测试方案无法验证 DoD 声明的行为）
 - Evaluator 自身独立方案（my_test）使用了非 CI 可执行形式（浏览器操作、UI 交互描述）
+- **independent_test_plans 为空**（即 independent_test_plans.length === 0）：Evaluator 未真正执行 Sprint Contract，未独立生成任何测试方案，无法证明进行了真实的独立审查
 
 FAIL 时必须返回 Stage 1 修正 Spec，不能进入 Stage 2。
 
