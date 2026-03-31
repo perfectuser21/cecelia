@@ -1,230 +1,170 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execSync } from 'child_process';
-import { writeFileSync, mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { describe, it, expect } from 'vitest';
+import { createRequire } from 'module';
+import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { resolve, join } from 'path';
 
-const SCRIPT = resolve(__dirname, '../../scripts/devgate/playwright-evaluator.sh');
+const require = createRequire(import.meta.url);
 const ENGINE_ROOT = resolve(__dirname, '../..');
+const {
+  parseBehaviorEntries,
+  checkBrainHealth,
+  executeTest,
+  runShellCommand,
+} = require('../../scripts/devgate/playwright-evaluator.cjs');
 
-function createTempDir(): string {
-  return mkdtempSync(join(ENGINE_ROOT, '.tmp-eval-'));
-}
-
-function runEvaluator(
-  taskCardPath: string,
-  branch: string,
-  projectRoot: string
-): { code: number; stdout: string; stderr: string } {
-  try {
-    const stdout = execSync(
-      `bash "${SCRIPT}" "${taskCardPath}" "${branch}" "${projectRoot}"`,
-      {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, BRAIN_URL: 'http://localhost:99999' },
-        timeout: 15000,
-      }
-    );
-    return { code: 0, stdout, stderr: '' };
-  } catch (err: any) {
-    return {
-      code: err.status ?? 1,
-      stdout: err.stdout ?? '',
-      stderr: err.stderr ?? '',
-    };
-  }
-}
-
-function readSealFile(dir: string, branch: string): Record<string, any> | null {
-  const sealPath = join(dir, `.dev-gate-evaluator.${branch}`);
-  if (!existsSync(sealPath)) return null;
-  const raw = readFileSync(sealPath, 'utf8');
-  if (!raw || raw.length === 0) return null;
-  return JSON.parse(raw);
-}
-
-describe('playwright-evaluator.sh — 参数校验', () => {
-  it('无参数时 exit 2', () => {
-    const result = runEvaluator('', '', '');
-    expect(result.code).toBe(2);
+describe('playwright-evaluator.cjs — parseBehaviorEntries', () => {
+  it('空内容返回空数组', () => {
+    expect(parseBehaviorEntries('')).toEqual([]);
   });
 
-  it('缺少 branch 参数时 exit 2', () => {
-    const result = runEvaluator('/tmp/nonexistent', '', '/tmp');
-    expect(result.code).toBe(2);
+  it('解析单条 [BEHAVIOR] 条目', () => {
+    const content = `
+- [ ] [BEHAVIOR] 脚本正常输出
+  Test: manual:node -e "process.exit(0)"
+`;
+    const entries = parseBehaviorEntries(content);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].description).toBe('脚本正常输出');
+    expect(entries[0].test).toBe('manual:node -e "process.exit(0)"');
   });
 
-  it('Task Card 不存在时 exit 2', () => {
-    const result = runEvaluator('/tmp/nonexistent-card.md', 'test-branch', '/tmp');
-    expect(result.code).toBe(2);
-  });
-});
+  it('解析多条 [BEHAVIOR] 条目', () => {
+    const content = `
+- [x] [BEHAVIOR] 行为1
+  Test: manual:node -e "process.exit(0)"
 
-describe('playwright-evaluator.sh — 脚本存在性与可执行', () => {
-  it('脚本文件存在', () => {
-    expect(existsSync(SCRIPT)).toBe(true);
-  });
-
-  it('脚本包含 Brain /health 健康检查', () => {
-    const content = readFileSync(SCRIPT, 'utf8');
-    expect(content).toContain('/health');
-    expect(content).toContain('BRAIN_URL');
+- [ ] [BEHAVIOR] 行为2
+  Test: manual:curl http://localhost:5221/api/health
+`;
+    const entries = parseBehaviorEntries(content);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].description).toBe('行为1');
+    expect(entries[1].description).toBe('行为2');
   });
 
-  it('脚本包含 [BEHAVIOR] 提取逻辑', () => {
-    const content = readFileSync(SCRIPT, 'utf8');
-    expect(content).toContain('[BEHAVIOR]');
-    expect(content).toContain('BEHAVIOR_TESTS');
+  it('忽略无 Test: 字段的 [BEHAVIOR] 条目', () => {
+    const content = `
+- [ ] [BEHAVIOR] 无测试条目
+  无 Test 字段
+`;
+    const entries = parseBehaviorEntries(content);
+    expect(entries).toHaveLength(0);
   });
 
-  it('脚本包含 seal 文件写入逻辑', () => {
-    const content = readFileSync(SCRIPT, 'utf8');
-    expect(content).toContain('.dev-gate-evaluator.');
-    expect(content).toContain('verdict');
-    expect(content).toContain('SEAL_FILE');
-  });
-
-  it('脚本支持 manual:/tests:/contract: 三种 Test 类型', () => {
-    const content = readFileSync(SCRIPT, 'utf8');
-    expect(content).toContain("'^manual:'");
-    expect(content).toContain("'^tests/'");
-    expect(content).toContain("'^contract:'");
-  });
-});
-
-describe('playwright-evaluator.sh — 退出码行为', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = createTempDir();
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('无 BEHAVIOR 条目时 exit 0', () => {
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
+  it('忽略非 [BEHAVIOR] 条目', () => {
+    const content = `
 - [x] [ARTIFACT] 文件存在
+  Test: manual:node -e "require('fs').accessSync('file')"
+
+- [ ] [GATE] 完整性
   Test: manual:node -e "process.exit(0)"
-`);
-
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain('找到 0 条');
-    expect(result.stdout).toContain('seal 文件已写入');
-  });
-
-  it('BEHAVIOR 全部通过时 exit 0', () => {
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
-- [x] [BEHAVIOR] 返回 true
-  Test: manual:node -e "process.exit(0)"
-- [x] [BEHAVIOR] 另一个通过
-  Test: manual:node -e "process.exit(0)"
-`);
-
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain('pass');
-  });
-
-  it('BEHAVIOR 有失败时 exit 1', () => {
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
-- [x] [BEHAVIOR] 应该失败
-  Test: manual:node -e "process.exit(1)"
-`);
-
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(1);
-    expect(result.stdout).toContain('fail');
-  });
-
-  it('tests/ 引用：文件存在时 exit 0', () => {
-    mkdirSync(join(tmpDir, 'tests'), { recursive: true });
-    writeFileSync(join(tmpDir, 'tests', 'example.test.ts'), 'test');
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
-- [x] [BEHAVIOR] 测试文件存在
-  Test: tests/example.test.ts
-`);
-
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain('PASS');
-  });
-
-  it('contract: 引用时 exit 0（被 SKIP）', () => {
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
-- [x] [BEHAVIOR] contract 引用
-  Test: contract:RCI-001
-`);
-
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain('SKIP');
-  });
-
-  it('Brain 不可达时不算失败', () => {
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
-- [x] [BEHAVIOR] 通过
-  Test: manual:node -e "process.exit(0)"
-`);
-
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(0);
-    // Brain 不可达显示 SKIP
-    expect(result.stdout).toContain('SKIP');
-    expect(result.stdout).toContain('/health');
+`;
+    const entries = parseBehaviorEntries(content);
+    expect(entries).toHaveLength(0);
   });
 });
 
-describe('playwright-evaluator.sh — seal 文件生成', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = createTempDir();
+describe('playwright-evaluator.cjs — checkBrainHealth', () => {
+  it('返回包含 /api/brain/health 的基线检查', () => {
+    const entry = checkBrainHealth();
+    expect(entry.description).toContain('Brain');
+    expect(entry.test).toContain('/api/brain/health');
+    expect(entry.isBaseline).toBe(true);
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  it('基线检查使用 curl 命令', () => {
+    const entry = checkBrainHealth();
+    expect(entry.test).toContain('curl');
+  });
+});
+
+describe('playwright-evaluator.cjs — runShellCommand', () => {
+  it('成功命令返回 passed: true', () => {
+    const result = runShellCommand('node -e "process.exit(0)"');
+    expect(result.passed).toBe(true);
   });
 
-  it('成功时生成 seal 文件（通过 stdout 确认路径）', () => {
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
-- [x] [BEHAVIOR] 通过
-  Test: manual:node -e "process.exit(0)"
-`);
+  it('失败命令返回 passed: false', () => {
+    const result = runShellCommand('node -e "process.exit(1)"');
+    expect(result.passed).toBe(false);
+  });
+});
 
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain('.dev-gate-evaluator.test-branch');
-    expect(result.stdout).toContain('seal 文件已写入');
+describe('playwright-evaluator.cjs — executeTest', () => {
+  it('manual: 前缀执行 shell 命令', () => {
+    const result = executeTest('manual:node -e "process.exit(0)"');
+    expect(result.passed).toBe(true);
   });
 
-  it('失败时也生成 seal 文件', () => {
-    const taskCard = join(tmpDir, '.task-test.md');
-    writeFileSync(taskCard, `# Task Card
-## DoD
-- [x] [BEHAVIOR] 应该失败
-  Test: manual:node -e "process.exit(1)"
-`);
+  it('tests/ 前缀跳过', () => {
+    const result = executeTest('tests/some.test.ts');
+    expect(result.passed).toBe(true);
+    expect(result.output).toContain('跳过');
+  });
 
-    const result = runEvaluator(taskCard, 'test-branch', tmpDir);
-    expect(result.code).toBe(1);
-    expect(result.stdout).toContain('.dev-gate-evaluator.test-branch');
-    expect(result.stdout).toContain('seal 文件已写入');
+  it('contract: 前缀跳过', () => {
+    const result = executeTest('contract:PE-001');
+    expect(result.passed).toBe(true);
+    expect(result.output).toContain('跳过');
+  });
+
+  it('未知格式返回 passed: false', () => {
+    const result = executeTest('unknown-format:xyz');
+    expect(result.passed).toBe(false);
+  });
+});
+
+describe('playwright-evaluator.cjs — findTaskCard 自动搜索', () => {
+  it('在 cwd 中找到 .task-cp-*.md 文件并返回路径', () => {
+    const cwd = process.cwd();
+    const taskCardFile = join(cwd, '.task-cp-test-coverage-temp.md');
+    writeFileSync(taskCardFile, '# Task Card Test\n## 验收条件（DoD）\n- [x] [BEHAVIOR] 测试\n  Test: manual:node -e "process.exit(0)"\n');
+    try {
+      const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+      delete require.cache[resolvedPath];
+      const { findTaskCard } = require('../../scripts/devgate/playwright-evaluator.cjs');
+      const result = findTaskCard();
+      expect(result).toContain('.task-cp-test-coverage-temp.md');
+    } finally {
+      rmSync(taskCardFile, { force: true });
+      const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+      delete require.cache[resolvedPath];
+    }
+  });
+});
+
+describe('playwright-evaluator.cjs — 命令行参数解析', () => {
+  it('--brain-url 参数被解析到 checkBrainHealth 输出', () => {
+    const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+    delete require.cache[resolvedPath];
+    const origArgv = process.argv;
+    process.argv = ['node', 'test', '--brain-url', 'http://localhost:9999'];
+    try {
+      const { checkBrainHealth } = require(resolvedPath);
+      const entry = checkBrainHealth();
+      expect(entry.test).toContain('http://localhost:9999');
+    } finally {
+      process.argv = origArgv;
+      delete require.cache[resolvedPath];
+    }
+  });
+
+  it('--task-card 参数被解析并存储', () => {
+    const resolvedPath = require.resolve('../../scripts/devgate/playwright-evaluator.cjs');
+    delete require.cache[resolvedPath];
+    const origArgv = process.argv;
+    const cwd = process.cwd();
+    const tempCard = join(cwd, '.task-cp-argv-test-temp.md');
+    writeFileSync(tempCard, '# Task Card');
+    process.argv = ['node', 'test', '--task-card', tempCard];
+    try {
+      const { findTaskCard } = require(resolvedPath);
+      const result = findTaskCard();
+      expect(result).toBe(tempCard);
+    } finally {
+      process.argv = origArgv;
+      rmSync(tempCard, { force: true });
+      delete require.cache[resolvedPath];
+    }
   });
 });
