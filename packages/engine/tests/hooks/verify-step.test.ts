@@ -502,3 +502,66 @@ describe("verify-step.sh symlink path resolution", () => {
     expect(content).toContain("pwd -P");
   });
 });
+
+describe("verify-step.sh LITE 路径豁免", () => {
+  const BRANCH = "cp-test-lite";
+  let liteTestDir: string;
+
+  beforeAll(() => {
+    expect(existsSync(ORIG_HOOK_PATH)).toBe(true);
+    liteTestDir = mkdtempSync(join(tmpdir(), "verify-step-lite-"));
+  });
+
+  afterAll(() => {
+    if (liteTestDir && existsSync(liteTestDir)) {
+      rmSync(liteTestDir, { recursive: true, force: true });
+    }
+  });
+
+  it("verify-step.sh 包含 LITE 路径检测逻辑", () => {
+    const content = require("fs").readFileSync(ORIG_HOOK_PATH, "utf8");
+    // Must contain LITE mode detection
+    const hasLite = content.includes("lite_routing") || content.includes("lite_seal_file") || content.includes("Gate LITE");
+    expect(hasLite).toBe(true);
+  });
+
+  it("LITE 模式：.dev-gate-lite 存在且 routing_decision=lite → 跳过 Sprint Contract seal 检查", () => {
+    const dir = mkdtempSync(join(liteTestDir, "s1-lite-"));
+    createTaskCard(dir, BRANCH, [
+      'Test: manual:node -e "const fs=require(\'fs\');if(!fs.existsSync(\'file.sh\'))process.exit(1)"',
+    ]);
+    // 只创建 LITE seal，不创建 Sprint Contract seals
+    writeFileSync(
+      join(dir, `.dev-gate-lite.${BRANCH}`),
+      JSON.stringify({
+        sealed_by: "main-agent-lite-routing",
+        branch: BRANCH,
+        timestamp: new Date().toISOString(),
+        routing_decision: "lite",
+        conditions: {
+          L1_commit_type: true,
+          L2_no_new_features: true,
+          L3_files_count: true,
+          L4_no_new_api: true,
+          L5_no_core_files: true,
+        },
+      }),
+    );
+    // 不创建 Planner/Generator/Evaluator/ContractState seal → LITE 模式应跳过这些检查
+
+    const result = runVerifyStep("step1", BRANCH, dir);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("LITE");
+  });
+
+  it("FULL 模式：无 .dev-gate-lite → 要求 Planner seal", () => {
+    const dir = mkdtempSync(join(liteTestDir, "s1-full-noplanner-"));
+    createTaskCard(dir, BRANCH, [
+      'Test: manual:node -e "process.exit(0)"',
+    ]);
+    // 无 LITE seal，无 Planner seal → 应失败
+    const result = runVerifyStep("step1", BRANCH, dir);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Planner");
+  });
+});

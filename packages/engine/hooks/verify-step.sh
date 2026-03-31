@@ -148,6 +148,24 @@ $whitelist_out
         }
     fi
 
+    # LITE path: 检测 .dev-gate-lite 物理文件，若存在且 routing_decision=lite，跳过所有 Sprint Contract seal 检查
+    # 原因：LITE 路径跳过了 Planner/Sprint Contract，不应要求其 seal 文件
+    local lite_seal_file="$PROJECT_ROOT/.dev-gate-lite.${BRANCH}"
+    if [[ -f "$lite_seal_file" ]]; then
+        local lite_routing
+        lite_routing=$(node -e "
+            try {
+                const d = JSON.parse(require('fs').readFileSync('${lite_seal_file}', 'utf8'));
+                process.stdout.write(d.routing_decision || 'unknown');
+            } catch(e) { process.stdout.write('unknown'); }
+        " 2>/dev/null || echo "unknown")
+        if [[ "$lite_routing" == "lite" ]]; then
+            echo "  ✅ [Gate LITE] Lite 路径已验证（routing_decision=lite）— 跳过 Sprint Contract seal 检查" >&2
+            _pass "Step 1 Task Card 验证通过（LITE 模式）"
+            return 0
+        fi
+    fi
+
     # Gate Planner: Planner seal 物理文件存在性检查
     # 原因：step_1_spec 标记为 done = Stage 1 完成，必须有 Planner subagent 实际运行的物理凭证
     # 若 seal 文件不存在，说明 Planner 未运行，Sprint Contract 形同虚设

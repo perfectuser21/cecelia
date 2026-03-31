@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 3.5.0
+version: 3.6.0
 created: 2026-03-20
 updated: 2026-03-31
 changelog:
+  - 3.6.0: 新增 1.1.7 Lite 路径判断 — 5条件全满足时跳过 Planner subagent 和 Sprint Contract，主 agent 直接写 Task Card，写入 .dev-gate-lite.{branch} 和 task_track: lite
   - 3.5.0: Sprint Contract Gate Step 4 改为调用 sprint-contract-loop.sh — 脚本机械判断 blocker_count，状态写磁盘（.sprint-contract-state.{branch}），移除 prev_divergence 死循环检测，纯 while true 只有 exit 0 才退出
   - 3.4.0: Sprint Contract Gate 移除固定轮数上限（原值=3），改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
   - 3.3.0: Sprint Contract Gate 重写为双独立提案架构 — Generator subagent + Evaluator subagent 各自从剥离版 Task Card 独立提案，Orchestrator 比对，收敛上限为 3 轮；Planner 输出不再含任何 Test 命令
@@ -60,9 +61,95 @@ fi
 
 将 KR 标题和描述注入到 Task Card 的"背景"部分。
 
+## 1.1.7 Lite 路径判断（5 条件路由，CRITICAL）
+
+> **在调用 Planner subagent 之前，先做路径判断。** 5 条件全部满足 → LITE 路径（跳过 Planner + Sprint Contract）。任意一条不满足 → FULL 路径。
+
+### LITE 路径触发条件（ALL 5 必须为 true）
+
+| 条件 | 说明 | 判断方式 |
+|------|------|---------|
+| L1 | commit type 为 fix:/docs:/chore: | 读 PRD 头部或用户说明的 commit 类型 |
+| L2 | PRD 无 新增/[NEW]/[BREAKING] 关键词 | 读 PRD 全文，确认无以上关键词 |
+| L3 | 预计改动文件 ≤ 3 | 主 agent 根据 PRD 评估 |
+| L4 | PRD 无新 API/新路由/新数据库字段/新 schema | 读 PRD 全文，无 API/route/schema/migration 关键词 |
+| L5 | 不涉及 packages/engine/hooks/ 等核心文件 | 评估改动范围 |
+
+### LITE 路径执行（5 条件全满足）
+
+```
+1. 主 agent 直接写 Task Card（.task-cp-{branch}.md）
+   - DoD 条目 Test 字段直接填写具体命令（不是 TODO）
+   - Task Card 格式与 FULL 路径相同，只是由主 agent 直接完成
+
+2. 写入 Lite seal 文件（物理凭证）：
+   .dev-gate-lite.{branch} = {
+     "sealed_by": "main-agent-lite-routing",
+     "branch": "{branch}",
+     "timestamp": "<ISO8601>",
+     "routing_decision": "lite",
+     "conditions": {
+       "L1_commit_type": true,
+       "L2_no_new_features": true,
+       "L3_files_count": true,
+       "L4_no_new_api": true,
+       "L5_no_core_files": true
+     }
+   }
+
+3. 写入 .dev-mode：
+   task_track: lite
+
+4. 直接跳至 Stage 2（跳过 Planner 调用和 Sprint Contract Gate）
+```
+
+### FULL 路径执行（任意条件不满足）
+
+```
+写入 .dev-mode：
+  task_track: full
+
+继续正常流程 → 1.2 Planner subagent → Sprint Contract Gate
+```
+
+### 伪码实现
+
+```javascript
+// 读取 PRD 内容
+const PRD = readFile(`.prd-${BRANCH}.md`) || userInput
+
+// 评估 5 条件
+const L1 = /^(fix|docs|chore):/.test(commitType)
+const L2 = !/(新增|\[NEW\]|\[BREAKING\])/.test(PRD)
+const L3 = estimatedFileCount <= 3
+const L4 = !/(新API|新路由|新数据库|新schema|new API|new route|migration)/.test(PRD)
+const L5 = !/(packages\/engine\/hooks\/)/.test(PRD)
+
+if (L1 && L2 && L3 && L4 && L5) {
+  // LITE 路径
+  writeFile(`.dev-gate-lite.${BRANCH}`, JSON.stringify({
+    sealed_by: "main-agent-lite-routing",
+    branch: BRANCH,
+    timestamp: new Date().toISOString(),
+    routing_decision: "lite",
+    conditions: { L1_commit_type: true, L2_no_new_features: true,
+                  L3_files_count: true, L4_no_new_api: true, L5_no_core_files: true }
+  }))
+  appendFile(`.dev-mode.${BRANCH}`, "task_track: lite\n")
+  // → 主 agent 直接写 Task Card，跳过 Planner + Sprint Contract，进入 Stage 2
+} else {
+  // FULL 路径
+  appendFile(`.dev-mode.${BRANCH}`, "task_track: full\n")
+  // → 继续 1.2 Planner subagent
+}
+```
+
+---
+
 ## 1.2 生成 Task Card（Planner subagent）
 
 > **主 agent 不直接生成 Task Card。** 主 agent 是编排者，Task Card 生成由 Planner subagent 完成。
+> **注意：1.1.7 LITE 路径判断后，若 task_track=lite，跳过此节，主 agent 直接写 Task Card。**
 > Planner subagent 只接收：任务描述（PRD/task description）+ docs/current/SYSTEM_MAP.md 全文。
 > 不接收：CLAUDE.md（编码规范）、Brain context（调度上下文）、代码库细节。
 > Planner 只输出 WHAT（行为描述），不写 HOW（实现细节）。
