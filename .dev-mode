@@ -1,10 +1,11 @@
 dev
-branch: cp-03301819-460a20e8-0f2c-4fea-8fcb-9783c0
-task_card: .task-cp-03301819-460a20e8-0f2c-4fea-8fcb-9783c0.md
-started: 2026-03-30T18:19:00+00:00
+branch: cp-03310743-43f86f3f-ecfc-439d-807d-9425b1
+task_card: .task-cp-03310743-43f86f3f-ecfc-439d-807d-9425b1.md
+started: 2026-03-31T22:49:24+08:00
 step_0_worktree: done
 step_1_spec: done
-step_2_code: pending
+step_2_code: done
 step_3_integrate: pending
 step_4_ship: pending
+task_track: lite
 tasks_created: true
