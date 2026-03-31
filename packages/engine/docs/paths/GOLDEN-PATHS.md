@@ -921,6 +921,21 @@ FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator →
 
 ---
 
+## GP-058: Sprint Contract 收敛循环 shell 脚本驱动 (sprint-contract-loop)
+
+**Feature**: sprint-contract-loop - Sprint Contract 收敛循环 shell 脚本驱动
+**Priority**: P0
+
+### Golden Path
+
+```
+Generator subagent 提案 → Evaluator subagent 提案 →
+bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
+exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
