@@ -176,24 +176,26 @@ describe('executeResearch', () => {
     expect(mockGetContentType).toHaveBeenCalledWith('solo-company-case');
   });
 
-  it('无 notebook_id 时应返回占位 findings', async () => {
+  it('无 notebook_id 时应返回 {success: false} 并包含错误信息', async () => {
     const task = {
       payload: { pipeline_keyword: '测试关键词' },
       title: '测试',
     };
     const result = await executeResearch(task);
-    expect(result.success).toBe(true);
-    expect(result.findings_count).toBe(1);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('notebook_id');
   });
 
-  it('getContentType 失败时应 fallback 且不报错', async () => {
+  it('getContentType 失败时（无 notebook_id）应 FAIL 且不报错', async () => {
     mockGetContentType.mockRejectedValue(new Error('DB 挂了'));
     const task = {
       payload: { pipeline_keyword: '测试' },
       title: '测试',
     };
     const result = await executeResearch(task);
-    expect(result.success).toBe(true);
+    // 无 notebook_id 时无论 getContentType 是否成功，都应 FAIL
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('notebook_id');
   });
 });
 
@@ -214,14 +216,16 @@ describe('executeCopywriting', () => {
     expect(mockGetContentType).toHaveBeenCalledWith('solo-company-case');
   });
 
-  it('getContentType 失败时应 fallback 且不报错', async () => {
+  it('getContentType 失败且无 findings 时应 FAIL（fail-fast）', async () => {
     mockGetContentType.mockRejectedValue(new Error('DB 超时'));
     const task = {
       payload: { pipeline_keyword: '测试' },
       title: '测试',
     };
     const result = await executeCopywriting(task);
-    expect(result.success).toBe(true);
+    // 无有效 findings 时应 FAIL
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('findings');
   });
 });
 

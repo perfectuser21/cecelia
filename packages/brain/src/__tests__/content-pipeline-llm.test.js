@@ -62,6 +62,21 @@ const FULL_TYPE_CONFIG = {
   copy_rules: { min_word_count: { short_copy: 300, long_form: 1000 } },
 };
 
+// 模拟有效的 findings 数据（brand_relevance >= 3）
+const MOCK_FINDINGS_DATA = JSON.stringify({
+  findings: [
+    { id: 'f001', title: 'Finding 1', content: 'Content 1', source: 'NotebookLM', brand_relevance: 4, used_in: [] },
+    { id: 'f002', title: 'Finding 2', content: 'Content 2', source: 'NotebookLM', brand_relevance: 3, used_in: [] },
+  ],
+});
+
+// 通过 slug 匹配 keyword 的 helper：让 readdirSync 返回包含 keyword 的目录名
+function setupFindingsMock(keyword) {
+  readdirSync.mockImplementation(() => [`solo-company-case-${keyword}-2026`]);
+  existsSync.mockReturnValue(true);
+  readFileSync.mockReturnValue(MOCK_FINDINGS_DATA);
+}
+
 describe('executeCopywriting — Claude 调用', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -70,10 +85,11 @@ describe('executeCopywriting — Claude 调用', () => {
   });
 
   it('有 generate_prompt 时应调用 callLLM', async () => {
+    setupFindingsMock('test-creator');
     mockGetContentType.mockResolvedValue(FULL_TYPE_CONFIG);
     mockCallLLM.mockResolvedValue({ text: '=== 社交媒体文案 ===\n文案内容\n=== 公众号长文 ===\n长文内容' });
 
-    const task = { payload: { pipeline_keyword: '独立创作者', content_type: 'solo-company-case' }, title: '测试' };
+    const task = { payload: { pipeline_keyword: 'test-creator', content_type: 'solo-company-case' }, title: '测试' };
     const result = await executeCopywriting(task);
 
     expect(mockCallLLM).toHaveBeenCalledOnce();
@@ -82,12 +98,13 @@ describe('executeCopywriting — Claude 调用', () => {
   });
 
   it('previous_feedback 应注入到 callLLM prompt', async () => {
+    setupFindingsMock('test-keyword');
     mockGetContentType.mockResolvedValue(FULL_TYPE_CONFIG);
     mockCallLLM.mockResolvedValue({ text: '=== 社交媒体文案 ===\n内容\n=== 公众号长文 ===\n长文' });
 
     const task = {
       payload: {
-        pipeline_keyword: '测试关键词',
+        pipeline_keyword: 'test-keyword',
         content_type: 'solo-company-case',
         previous_feedback: '上次缺少具体数据，请补充',
       },
@@ -100,10 +117,11 @@ describe('executeCopywriting — Claude 调用', () => {
     expect(promptArg).toContain('上次审查意见');
   });
 
-  it('无 generate_prompt 时不调用 callLLM，降级到静态模板', async () => {
+  it('无 generate_prompt 时不调用 callLLM，使用静态模板', async () => {
+    setupFindingsMock('test-no-prompt');
     mockGetContentType.mockResolvedValue({ ...FULL_TYPE_CONFIG, template: {} });
 
-    const task = { payload: { pipeline_keyword: '测试', content_type: 'solo-company-case' }, title: '测试' };
+    const task = { payload: { pipeline_keyword: 'test-no-prompt', content_type: 'solo-company-case' }, title: '测试' };
     const result = await executeCopywriting(task);
 
     expect(mockCallLLM).not.toHaveBeenCalled();
@@ -112,24 +130,27 @@ describe('executeCopywriting — Claude 调用', () => {
   });
 
   it('callLLM 失败时降级到静态模板，不中断 pipeline', async () => {
+    setupFindingsMock('test-llm-fail');
     mockGetContentType.mockResolvedValue(FULL_TYPE_CONFIG);
     mockCallLLM.mockRejectedValue(new Error('LLM timeout'));
 
-    const task = { payload: { pipeline_keyword: '测试', content_type: 'solo-company-case' }, title: '测试' };
+    const task = { payload: { pipeline_keyword: 'test-llm-fail', content_type: 'solo-company-case' }, title: '测试' };
     const result = await executeCopywriting(task);
 
     expect(result.success).toBe(true);
     expect(result.llm_generated).toBe(false);
   });
 
-  it('无 findings 时仍然成功（降级路径）', async () => {
+  it('无有效 findings 时 FAIL（fail-fast，不再静默降级）', async () => {
     mockGetContentType.mockResolvedValue(null);
     readdirSync.mockReturnValue([]);
+    existsSync.mockReturnValue(false);
 
-    const task = { payload: { pipeline_keyword: '无素材关键词' }, title: '测试' };
+    const task = { payload: { pipeline_keyword: 'no-findings-keyword' }, title: '测试' };
     const result = await executeCopywriting(task);
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('findings');
   });
 });
 

@@ -75,45 +75,61 @@ export async function executeResearch(task) {
   let typeConfig = null;
   try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
 
+  if (!notebookId) {
+    const errMsg = 'notebook_id 未配置，请在系列设置中配置 NotebookLM notebook_id';
+    console.error(`[research] FAIL: ${errMsg}`);
+    return { success: false, error: errMsg };
+  }
+
   const dir = join(OUTPUT_BASE, 'research', `${contentType}-${slug(keyword)}-${today()}`);
   ensureDir(dir);
 
   let findings = [];
 
-  if (notebookId) {
-    run(`notebooklm use ${notebookId} 2>&1`);
-    // 优先使用配置中的 research_prompt，fallback 到硬编码
-    const defaultPrompt = `从所有源中，找出能证明'个人也能拥有过去只有公司才有的能力'的证据。关于${keyword}，每条带具体数据和来源。至少8条。`;
-    const researchPrompt = typeConfig?.template?.research_prompt
-      ? typeConfig.template.research_prompt.replace(/\{keyword\}/g, keyword)
-      : defaultPrompt;
-    const raw = run(
-      `notebooklm ask "${researchPrompt}" --json 2>&1`,
-      120000
-    );
-    if (raw) {
-      try {
-        const { answer = '' } = JSON.parse(raw);
-        const parts = answer.split(/\n\*\*\d+\./).filter(Boolean);
-        findings = parts.map((p, i) => ({
-          id: `f${String(i + 1).padStart(3, '0')}`,
-          title: p.split('\n')[0]?.replace(/\*+/g, '').trim().substring(0, 100) || `发现${i + 1}`,
-          content: p.trim(),
-          source: 'NotebookLM',
-          brand_relevance: 4,
-          used_in: [],
-        }));
-      } catch {
-        findings = [{ id: 'f001', title: keyword, content: raw.substring(0, 3000), source: 'NotebookLM', brand_relevance: 3, used_in: [] }];
-      }
+  run(`notebooklm use ${notebookId} 2>&1`);
+  // 优先使用配置中的 research_prompt，fallback 到硬编码
+  const defaultPrompt = `从所有源中，找出能证明'个人也能拥有过去只有公司才有的能力'的证据。关于${keyword}，每条带具体数据和来源。至少8条。`;
+  const researchPrompt = typeConfig?.template?.research_prompt
+    ? typeConfig.template.research_prompt.replace(/\{keyword\}/g, keyword)
+    : defaultPrompt;
+  const raw = run(
+    `notebooklm ask "${researchPrompt}" --json 2>&1`,
+    120000
+  );
+
+  if (!raw || !raw.trim()) {
+    const errMsg = 'NotebookLM 返回空内容，请检查 notebook_id 是否有效或 NotebookLM 是否可用';
+    console.error(`[research] FAIL: ${errMsg}`);
+    return { success: false, error: errMsg };
+  }
+
+  try {
+    const { answer = '' } = JSON.parse(raw);
+    if (!answer.trim()) {
+      const errMsg = 'NotebookLM 返回 answer 为空，无法提取 findings';
+      console.error(`[research] FAIL: ${errMsg}`);
+      return { success: false, error: errMsg };
     }
+    const parts = answer.split(/\n\*\*\d+\./).filter(Boolean);
+    findings = parts.map((p, i) => ({
+      id: `f${String(i + 1).padStart(3, '0')}`,
+      title: p.split('\n')[0]?.replace(/\*+/g, '').trim().substring(0, 100) || `发现${i + 1}`,
+      content: p.trim(),
+      source: 'NotebookLM',
+      brand_relevance: 4,
+      used_in: [],
+    }));
+  } catch {
+    findings = [{ id: 'f001', title: keyword, content: raw.substring(0, 3000), source: 'NotebookLM', brand_relevance: 3, used_in: [] }];
   }
 
   if (findings.length === 0) {
-    findings = [{ id: 'f001', title: `${keyword} — 待补充`, content: `关键词：${keyword}，需要手动添加 NotebookLM notebook_id 或补充调研`, source: '系统', brand_relevance: 2, used_in: [] }];
+    const errMsg = 'NotebookLM 解析后 findings 为空，请检查返回格式';
+    console.error(`[research] FAIL: ${errMsg}`);
+    return { success: false, error: errMsg };
   }
 
-  const data = { keyword, series: contentType, notebook_id: notebookId || null, extracted_at: today(), total_findings: findings.length, findings };
+  const data = { keyword, series: contentType, notebook_id: notebookId, extracted_at: today(), total_findings: findings.length, findings };
   const fp = join(dir, 'findings.json');
   writeFileSync(fp, JSON.stringify(data, null, 2), 'utf-8');
 
@@ -168,12 +184,16 @@ export async function executeCopywriting(task) {
   const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 7);
   console.log(`[copywriting] 找到 ${findings.length} 条 findings，筛选 ${top.length} 条`);
 
+  if (top.length === 0) {
+    const errMsg = `research findings 为空（无有效 brand_relevance >= 3 的内容），无法生成文案。请先确认 research 阶段已成功执行。`;
+    console.error(`[copywriting] FAIL: ${errMsg}`);
+    return { success: false, error: errMsg };
+  }
+
   // ─── Claude 调用：使用配置 prompt 生成文案 ─────────────────────
   if (typeConfig?.template?.generate_prompt) {
     try {
-      const findingsSummary = top.length > 0
-        ? top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 200)}`).join('\n')
-        : `关键词：${keyword}（暂无调研素材，请根据关键词创作）`;
+      const findingsSummary = top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 200)}`).join('\n');
 
       let prompt = typeConfig.template.generate_prompt.replace(/\{keyword\}/g, keyword);
       prompt += `\n\n## 调研素材（${top.length} 条）\n${findingsSummary}`;
@@ -201,20 +221,7 @@ export async function executeCopywriting(task) {
   }
   // ─────────────────────────────────────────────────────────────
 
-  // 无 findings 时的占位内容段落
-  const fallbackCopyBlocks = top.length === 0 ? [
-    `**1. 系统化能力 > 单点努力**\n\n一人公司的核心不是"我很厉害"，而是"我有一套系统"。关于${keyword}，最关键的一步是把它变成可重复的流程，而不是每次都靠意志力硬撑。\n\n---\n`,
-    `**2. AI 工具重新分配生产力**\n\n过去需要3个人才能做到的事，现在1个人配合AI可以完成。${keyword}就是这种能力转移的典型场景——把原来依赖团队协作的事，变成个人可独立完成的系统工作流。\n\n---\n`,
-    `**3. 能力密度 > 人员规模**\n\n小组织的优势不是"人少成本低"，而是"每个人的能力密度高"。${keyword}的本质是提升单人作战半径，让一个人可以覆盖更多业务场景，同时保持高质量交付。\n\n---\n`,
-  ] : [];
-
-  const fallbackArticleSections = top.length === 0 ? [
-    `\n## 什么是${keyword}？\n\n${keyword}是一种系统性的个人能力建设方向。它不是单纯的技能训练，而是通过正确的工具组合和流程设计，让一个人能够完成过去需要团队才能完成的工作。\n\n在当今时代，AI的普及让这种能力转移成为可能。越来越多的个人创业者和自由职业者正在通过掌握${keyword}，实现从"人力扩张"到"能力扩张"的跨越。更重要的是，这种能力转移不只是技术上的，更是思维模式上的——从"我需要更多人手"到"我需要更好的系统"。\n\n数据显示，近3年能在单人状态下创造年营收超过50万元的个人创业者数量增长超过200%。他们的共同点不是更努力，而是更会用系统和工具。${keyword}正是这套系统能力的核心组成部分。\n`,
-    `\n## 为什么${keyword}很重要？\n\n对于企业主和副业创业者来说，${keyword}直接决定了你的业务上限。\n\n**第一，它影响你的时间效率。** 具备${keyword}能力的人，可以在同样的时间内完成更多高价值工作，而不是被低效重复的事务拖慢节奏。有系统的人，每周可以节省8-12小时在重复性任务上的消耗，这意味着每年多出400-600小时可以投入到高价值创作中。\n\n**第二，它影响你的服务质量。** 系统化的能力意味着可重复、可稳定的交付，这是客户愿意支付高价的核心原因。当你的产出质量稳定时，口碑传播率和复购率都会显著提升，客单价也可以提高30%-50%。\n\n**第三，它影响你的扩张边界。** 当你的能力被系统化后，复制和扩张变得更容易，不再依赖"再招一个人"来增加产出。这是从"自雇模式"升级为"系统模式"的关键跨越，也是实现从年入10万到年入100万的核心路径。\n\n**第四，它影响你的抗风险能力。** 系统化的个人能力比单点依赖更有韧性。当某个平台算法变化、某个客户流失，有系统的人可以在1周内完成调整，而没有系统的人可能需要3个月才能恢复。\n`,
-    `\n## 如何开始建立${keyword}？\n\n**第一步：识别你的高频低效场景。** 哪些工作每周都在重复？哪些流程最消耗你的精力？${keyword}的建设要从这里入手。建议连续记录1周的时间使用情况，找出那些"做了但没有明显产出"的时间块，这些就是系统化的首要目标。\n\n**第二步：寻找对应的工具和系统。** 市场上已经有大量专门针对个人和小团队设计的AI工具，可以在${keyword}场景中发挥关键作用。选工具的原则：不是找功能最强的，而是找上手成本最低、能立即产生价值的。\n\n**第三步：建立可重复的标准流程。** 不要每次都从零开始。把有效的方法记录下来，形成SOP（标准操作程序），让下次执行更快更稳。一个好的SOP可以把原来需要2小时的工作压缩到30分钟，而且质量更稳定。\n\n**第四步：持续迭代优化。** 系统不是一次建好就永久有效的。要定期审视哪些步骤还在消耗你，哪些可以进一步自动化。建议每月做一次系统复盘，识别新的效率瓶颈，保持系统的持续进化。\n\n**第五步：输出和分享你的实践。** 把你在${keyword}上的探索和心得分享出来，这不只是内容创作，更是一种强迫自己系统化思考的方式。分享的过程往往能让你发现自己系统中原本忽视的漏洞，从而进一步完善。\n`,
-  ] : [];
-
-  // 社交媒体文案
+  // 社交媒体文案（仅当 typeConfig 无 generate_prompt 时才会到达这里）
   const copy = [
     `# ${keyword}：过去只有公司才有的能力，现在一个人就够了\n`,
     `你知道吗？越来越多人正在证明：一个人 + 正确的系统 = 一家公司的能力。\n`,
@@ -225,7 +232,6 @@ export async function executeCopywriting(task) {
       const data = f.data ? `\n\n数据：${f.data}` : '';
       return `**${i + 1}. ${f.title}**\n\n${body}${data}\n\n---\n`;
     }),
-    ...fallbackCopyBlocks,
     `\n**一人公司不是"小"公司，是"精"公司。**\n`,
     `你觉得哪个能力对你最有用？评论区告诉我！\n`,
     `\n#一人公司 #能力放大 #AI驱动 #个人创业 #能力下放\n`,
@@ -245,7 +251,6 @@ export async function executeCopywriting(task) {
       const src = f.source ? `\n\n*来源：${f.source}*` : '';
       return `\n## ${i + 1}. ${f.title}\n\n${body}${data}${src}\n`;
     }),
-    ...fallbackArticleSections,
     `\n---\n`,
     `\n## 这意味着什么？\n`,
     `\n能力正在从大公司向个人转移。过去需要一个团队才能做到的事，现在一个人配合正确的系统就能完成。\n`,
@@ -631,6 +636,11 @@ export async function executeExport(task) {
 
   // 生成 /share-card 9:16 卡片
   const cardsGenerated = generateCards(dir, keyword, findings);
+  if (!cardsGenerated) {
+    const errMsg = '有效 findings 为 0（brand_relevance < 3），无法生成图片卡片。请检查 research 阶段是否获得有效调研数据。';
+    console.error(`[export] FAIL: ${errMsg}`);
+    return { success: false, error: errMsg };
+  }
 
   // manifest.json
   const topic = slug(keyword);
