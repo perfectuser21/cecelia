@@ -16,6 +16,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getContentType } from './content-types/content-type-registry.js';
 import { callLLM } from './llm-caller.js';
+import { listSources, deleteSource } from './notebook-adapter.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -684,6 +685,25 @@ export async function executeExport(task) {
     }
   } else {
     console.warn('[export] NAS 上传跳过：无 pipelineId');
+  }
+
+  // export 完成后清空 notebook，为下一次 pipeline 复用做准备
+  const notebook_id = task.payload?.notebook_id;
+  if (notebook_id) {
+    try {
+      const listResult = await listSources(notebook_id);
+      if (listResult.ok && Array.isArray(listResult.sources) && listResult.sources.length > 0) {
+        console.log(`[export] 清空 notebook ${notebook_id}：共 ${listResult.sources.length} 条源`);
+        for (const source of listResult.sources) {
+          await deleteSource(source.id, notebook_id);
+        }
+        console.log(`[export] notebook ${notebook_id} 已清空`);
+      } else {
+        console.log(`[export] notebook ${notebook_id} 无需清空（源数量: ${listResult.sources?.length ?? 0}）`);
+      }
+    } catch (nbErr) {
+      console.warn(`[export] notebook 清空失败（不阻断流程）: ${nbErr.message}`);
+    }
   }
 
   console.log(`[export] 完成: ${cardFiles.length} 张卡片 + manifest → ${dir}`);
