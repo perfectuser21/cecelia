@@ -6,7 +6,7 @@
  *
  * 四 Tab：
  * 1. Summary - 整体表现汇总
- * 2. 生成记录 - 文案产出 + Pipeline 执行阶段
+ * 2. 生成记录 - 文案产出 + Pipeline 阶段详情
  * 3. 发布记录 - 8 平台发布状态（mock）
  * 4. 数据记录 - 各平台数据（mock）
  */
@@ -90,7 +90,7 @@ const STAGE_LABELS: Record<string, string> = {
   'content-copywriting': '写作',
   'content-copy-review': '文案审核',
   'content-generate': '生成',
-  'content-image-review': '图片审核',
+  'content-image-review': '审图',
   'content-export': '导出',
   'content_publish': '发布',
 };
@@ -183,13 +183,26 @@ function GenerationTab({
   output,
   stages,
   loading,
+  pipelineId,
 }: {
   output: PipelineOutput | null;
   stages: PipelineStages | null;
   loading: boolean;
+  pipelineId: string;
 }) {
   const [expandArticle, setExpandArticle] = useState(false);
   const [expandCards, setExpandCards] = useState(false);
+  const [isRerunning, setIsRerunning] = useState(false);
+
+  async function handleRerun() {
+    if (isRerunning) return;
+    setIsRerunning(true);
+    try {
+      await fetch(`${BRAIN_API}/pipelines/${pipelineId}/run`, { method: 'POST' });
+    } finally {
+      setIsRerunning(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -204,34 +217,71 @@ function GenerationTab({
 
   return (
     <div className="space-y-5">
-      {/* Pipeline 阶段 */}
       {stageEntries.length > 0 && (
         <div
           className="rounded-xl p-5 border"
           style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(139,92,246,0.12)' }}
         >
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">执行阶段</h3>
-          <div className="space-y-2">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-300">执行阶段</h3>
+            <button
+              onClick={handleRerun}
+              disabled={isRerunning}
+              data-action={`${BRAIN_API}/pipelines/${pipelineId}/run`}
+              className="text-xs px-3 py-1 rounded-lg transition-colors disabled:opacity-50"
+              style={{ background: 'rgba(139,92,246,0.15)', color: '#c084fc' }}
+            >
+              {isRerunning ? '重新生成中...' : '重新生成'}
+            </button>
+          </div>
+          <div className="space-y-3">
             {stageEntries.map(([key, info]) => (
-              <div key={key} className="flex items-center gap-3">
-                {info.status === 'completed' ? (
-                  <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
-                ) : info.status === 'failed' ? (
-                  <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                ) : info.status === 'canceled' ? (
-                  <Clock className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                ) : (
-                  <Play className="w-4 h-4 text-yellow-400 flex-shrink-0" />
+              <div key={key} className="space-y-1">
+                <div className="flex items-center gap-3">
+                  {info.status === 'completed' ? (
+                    <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
+                  ) : info.status === 'failed' ? (
+                    <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                  ) : info.status === 'canceled' ? (
+                    <Clock className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                  ) : (
+                    <Play className="w-4 h-4 text-yellow-400 flex-shrink-0" />
+                  )}
+                  <span className="text-sm text-gray-300 flex-1">{STAGE_LABELS[key] || key}</span>
+                  <button
+                    onClick={handleRerun}
+                    disabled={isRerunning}
+                    className="text-xs px-2 py-0.5 rounded transition-colors disabled:opacity-50"
+                    style={{ background: 'rgba(139,92,246,0.10)', color: '#a78bfa' }}
+                  >
+                    重新生成
+                  </button>
+                </div>
+                <div className="pl-7 flex gap-4 text-xs text-gray-500">
+                  {info.started_at && (
+                    <span>开始：{formatTime(info.started_at)}</span>
+                  )}
+                  {info.completed_at && (
+                    <span>完成：{formatTime(info.completed_at)}</span>
+                  )}
+                </div>
+                {info.review_issues && info.review_issues.length > 0 && (
+                  <div className="pl-7 mt-1 space-y-1">
+                    {info.review_issues.map((issue, i) => (
+                      <p key={i} className="text-xs text-red-400 flex items-start gap-1">
+                        <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                        {issue}
+                      </p>
+                    ))}
+                  </div>
                 )}
-                <span className="text-sm text-gray-300 flex-1">{STAGE_LABELS[key] || key}</span>
-                <span className="text-xs text-gray-500">{formatTime(info.completed_at)}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* 图片 */}
+      {/* 图片产出 */}
       {imageUrls.length > 0 && (
         <div
           className="rounded-xl p-5 border"
@@ -517,7 +567,7 @@ export default function PipelineOutputPage() {
         <div>
           {activeTab === 'summary' && <SummaryTab pipeline={pipeline} />}
           {activeTab === 'generation' && (
-            <GenerationTab output={output} stages={stages} loading={contentLoading} />
+            <GenerationTab output={output} stages={stages} loading={contentLoading} pipelineId={id ?? ''} />
           )}
           {activeTab === 'publish' && <PublishTab />}
           {activeTab === 'analytics' && <AnalyticsTab />}
