@@ -1,11 +1,12 @@
 ---
 id: dev-stage-01-spec
-version: 3.2.0
+version: 3.4.0
 created: 2026-03-20
-updated: 2026-03-30
+updated: 2026-03-31
 changelog:
-  - 3.2.0: Sprint Contract Gate PASS 后额外验证 plans.length > 0 — 若 seal 中 independent_test_plans 为空且 Task Card 含 DoD，视为 FAIL 重试
+  - 3.4.0: Sprint Contract Gate 去掉 MAX_ROUNDS=3 固定上限，改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
   - 3.3.0: Sprint Contract Gate 重写为双独立提案架构 — Generator subagent + Evaluator subagent 各自从剥离版 Task Card 独立提案，Orchestrator 比对，最多 3 轮收敛；Planner 输出不再含任何 Test 命令
+  - 3.2.0: Sprint Contract Gate PASS 后额外验证 plans.length > 0 — 若 seal 中 independent_test_plans 为空且 Task Card 含 DoD，视为 FAIL 重试
   - 3.2.0: PASS 后验证 plans.length > 0（防空提案）+ seal 文件完整性检查（伪码改为含错误处理的伪码）
   - 3.1.0: spec_review Evaluator prompt 显式内容注入 — 主 agent 在 spawn 前先读 SKILL.md + Task Card，直接嵌入 prompt，禁止传文件路径
   - 3.0.0: Task Card 生成拆为 Planner subagent — 主 agent 变纯编排者，Planner 只接收任务描述 + SYSTEM_MAP
@@ -320,9 +321,9 @@ echo "✅ 置信度已写入 .dev-mode"
 
 ## ⚡ Sprint Contract Gate（CRITICAL — Stage 1 最后一步，硬门禁）
 
-> **Sprint Contract 核心（v3.0 双独立提案架构）**：
+> **Sprint Contract 核心（v3.4 无限收敛架构）**：
 > Orchestrator 将 Task Card 所有 Test 字段剥离后，分别传给 Generator subagent 和 Evaluator subagent，
-> 两者各自从零独立提案，互相看不到对方输出，Orchestrator 比对两份提案，分歧时双方迭代修正，最多 3 轮收敛。
+> 两者各自从零独立提案，互相看不到对方输出，Orchestrator 比对两份提案，分歧时双方迭代修正，**无限收敛直到完全对齐**。
 >
 > **工作原理**：
 > 1. Planner 产出 Task Card（所有 Test 字段为 TODO）
@@ -332,8 +333,8 @@ echo "✅ 置信度已写入 .dev-mode"
 >    （两者 **并行** 或 **串行** 均可，关键是两者输入相同且均为剥离版）
 > 5. Orchestrator 比对两份提案：divergence_count = 各条目方案不一致的总数
 > 6. 如有分歧 → 将 Evaluator 的提案展示给 Generator，将 Generator 的提案展示给 Evaluator → 各自修正 → 再比对
->    重复最多 3 轮，收敛后将共识 Test 字段写回 Task Card
-> 7. 如 3 轮后仍有 blocker 级分歧 → FAIL，升级 P1 任务等待人工介入
+>    **无固定轮数上限**，持续迭代直到 blocker_count == 0（完全收敛）
+> 7. **死循环检测**：若连续 2 轮 divergence 列表完全相同（双方均无变化）→ 升级 P1 任务等待人工介入
 >
 > **不是软建议，而是硬门禁（exit 1）**：有严重分歧超过 3 轮就不能进入 Stage 2。
 
@@ -415,11 +416,14 @@ ${TASK_CARD_STRIPPED}
 })
 ```
 
-### Step 4：Orchestrator 比对 + N 轮收敛（最多 3 轮）
+### Step 4：Orchestrator 比对 + 无限收敛（死循环检测）
+
+> **设计原则**：无固定轮数上限。两个 subagent 持续辩论直到真正对齐（blocker_count == 0）。
+> 唯一的停止条件是：**连续 2 轮 divergence 列表完全相同**（双方都不再改变），判定死循环，注册 P1 并 FAIL。
 
 ```
 round = 0
-MAX_ROUNDS = 3
+prev_divergence = null  # 上一轮的 divergence 列表（用于死循环检测）
 
 loop:
   round++
@@ -439,7 +443,7 @@ loop:
     gen_test = GEN_SEAL.proposals 中对应条目的 proposed_test
     eval_test = EVAL_SEAL.independent_test_plans 中对应条目的 my_test
     if 两者验证的核心行为不同（一方是文件存在检查，另一方是行为断言）:
-      divergence.append({ item, gen_test, eval_test, severity: "blocker"|"warning" })
+      divergence.append({ item, gen_test, eval_test, severity: "blocker" })
     elif 细微差异（测试层不同但均能验证核心行为）:
       divergence.append({ item, gen_test, eval_test, severity: "warning" })
 
@@ -451,16 +455,27 @@ loop:
     echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
     break（进入 Stage 2）
 
-  if round >= MAX_ROUNDS:
-    → curl 注册 P1 升级任务到 Brain
+  # 死循环检测：连续 2 轮分歧列表相同 → 双方已无法自行收敛
+  if prev_divergence != null && divergence_lists_identical(divergence, prev_divergence):
+    → echo "❌ 死循环检测：连续 2 轮 divergence 完全相同，双方无法自行收敛"
+    → curl -s -X POST http://localhost:5221/api/brain/tasks \
+         -H 'Content-Type: application/json' \
+         -d '{"title":"Sprint Contract 死循环 P1","description":"Generator/Evaluator 连续2轮分歧列表相同，需人工介入","priority":"p1","task_type":"dev"}' || true
     → FAIL（不能进入 Stage 2）
     break
 
-  # 有分歧，展示给双方修正
+  prev_divergence = divergence  # 记录本轮，供下轮死循环检测使用
+
+  # 有分歧，展示给双方修正（无限迭代直到收敛）
   → 将 Evaluator 提案（EVAL_SEAL）展示给 Generator → Generator 修正 → 覆盖 .dev-gate-generator-sprint.${BRANCH}
   → 将 Generator 提案（GEN_SEAL）展示给 Evaluator → Evaluator 修正 → 覆盖 .dev-gate-spec.${BRANCH}
   → 继续 loop（下一轮比对）
 ```
+
+**divergence_lists_identical 判断逻辑**：
+- 提取本轮和上轮每条 divergence 的 `item` + `severity` 组合
+- 两个集合完全相同（item 和 severity 都一致）→ 认定为死循环
+- 任意一条有变化（item 新增/消失/severity 变化）→ 仍在收敛，继续
 
 **执行时注意**：
 - Generator 和 Evaluator subagent 的输入均为**剥离版 Task Card**（Test 字段全 TODO），这是机械保证独立性的唯一方式

@@ -1,8 +1,8 @@
 ---
 id: optimal-paths
 version: 4.0.0
-created: 2026-03-30
-updated: 2026-03-30
+created: 2026-03-31
+updated: 2026-03-31
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -595,8 +595,19 @@ reviewer_model 字段正确写入 seal 文件
 Orchestrator 剥离 Task Card Test 字段 →
 Generator subagent 独立提案 → .dev-gate-generator-sprint.{branch} →
 Evaluator subagent 独立提案 → .dev-gate-spec.{branch} →
-Orchestrator 比对 → 有分歧 → 双方互看 → 最多 3 轮收敛 →
+Orchestrator 比对 → 有分歧 → 双方互看 → 无限收敛（死循环检测）→
 Evaluator 提案写入 Task Card Test 字段
+```
+
+---
+
+### evaluator-reconnect: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
+
+```
+Generator 写代码 → 自验证（2.3.3）→
+独立 Evaluator（playwright-evaluator.sh）执行 [BEHAVIOR] Test →
+PASS → CRG 审查 → push
+FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator → 直到 PASS
 ```
 
 ---
@@ -614,4 +625,4 @@ Evaluator 提案写入 Task Card Test 字段
 
 **来源**: features/feature-registry.yml
 **版本**: 4.0.0
-**生成时间**: 2026-03-30
+**生成时间**: 2026-03-31

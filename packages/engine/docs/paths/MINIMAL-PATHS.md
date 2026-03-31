@@ -1,8 +1,8 @@
 ---
 id: minimal-paths
 version: 4.0.0
-created: 2026-03-30
-updated: 2026-03-30
+created: 2026-03-31
+updated: 2026-03-31
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -491,6 +491,14 @@ changelog:
 
 ---
 
+### evaluator-reconnect: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
+
+1. ✅ **02-code.md 含 playwright-evaluator.sh 步骤**
+2. ✅ **01-spec.md 不含 MAX_ROUNDS**
+3. ✅ **01-spec.md 含死循环检测（prev_divergence）**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -504,4 +512,4 @@ changelog:
 
 **来源**: features/feature-registry.yml
 **版本**: 4.0.0
-**生成时间**: 2026-03-30
+**生成时间**: 2026-03-31
