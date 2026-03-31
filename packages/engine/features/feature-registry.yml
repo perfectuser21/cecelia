@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.73.0"
+    date: "2026-03-31"
+    change: "[CONFIG] feat(engine): Playwright Evaluator 层 — Stage 3 CI 后端到端行为验证，新增 playwright-evaluator.cjs + SKILL.md + PE-001 RCI"
+    scope: "packages/engine/scripts/devgate/playwright-evaluator.cjs,packages/engine/skills/playwright-evaluator/SKILL.md,packages/engine/skills/dev/steps/03-integrate.md,packages/engine/regression-contract.yaml"
   - version: "13.72.1"
     date: 2026-03-31
     summary: 为 sprint-contract-loop.sh 添加会话持久化说明注释

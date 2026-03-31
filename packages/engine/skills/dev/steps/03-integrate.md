@@ -392,21 +392,54 @@ git push origin HEAD
 
 ---
 
-## 3.3 CI 通过 → 进入 Stage 4
+## 3.3 Playwright Evaluator — 端到端行为验证
 
-> code_review_gate 已在 Stage 2 完成（push 前审查）。
-> CI 全部通过后，devloop-check 自动放行进入 Stage 4。
+> CI 通过后自动触发。对照 Task Card [BEHAVIOR] DoD 条目逐条执行 Test: 命令，
+> 始终包含 Brain API `/api/brain/health` 基线检查。
+> 评估失败 → 修复代码 → 重新 push → 等 CI → 再次 evaluator（循环）。
+
+```bash
+# 执行 Playwright Evaluator
+node packages/engine/scripts/devgate/playwright-evaluator.cjs --run
+EXIT_CODE=$?
+
+if [[ $EXIT_CODE -ne 0 ]]; then
+    echo "❌ Playwright Evaluator FAIL — 分析失败条目，修复后重新 push"
+    # 修复策略：
+    # 1. 读取失败输出，定位哪条 [BEHAVIOR] 未通过
+    # 2. 修复对应代码或确认服务是否运行
+    # 3. git add -u && git commit && git push origin HEAD
+    # 4. 等待 CI 通过后再次运行 evaluator
+    exit 1
+fi
+
+echo "✅ Playwright Evaluator PASS — 所有行为验证通过"
+```
+
+**跳过条件**：如果 Task Card 没有 [BEHAVIOR] 条目且 Brain 无需验证，evaluator 仍会运行基线检查。
+
+**调试命令**（先 dry-run 查看清单再执行）：
+```bash
+node packages/engine/scripts/devgate/playwright-evaluator.cjs --dry-run
+```
 
 ---
 
-## 3.4 Stop Hook 完成条件
+## 3.4 CI 通过 → 进入 Stage 4
+
+> code_review_gate 已在 Stage 2 完成（push 前审查）。
+> CI 全部通过 + Playwright Evaluator PASS 后，进入 Stage 4。
+
+---
+
+## 3.5 Stop Hook 完成条件
 
 | 条件 | 状态 | Stop Hook 行为 |
 |------|------|---------------|
 | PR 未创建 | ❌ | exit 2（继续创建 PR）|
 | CI 失败 | ❌ | exit 2（继续修复）|
 | CI 进行中 | ⏳ | exit 2（继续等待）|
-| CI 通过 | ✅ | exit 2（继续 Stage 4）|
+| CI 通过 + Evaluator PASS | ✅ | exit 2（继续 Stage 4）|
 
 ---
 
