@@ -4,8 +4,8 @@
  * 统一记录系统中所有组件（skill/cron/api/machine/integration）的位置和状态。
  * Claude 创建任何东西前先查这里，彻底解决孤岛和重复问题。
  *
- * GET  /api/brain/registry         — 列表查询（?type=&status=&q=&limit=&offset=）
- * GET  /api/brain/registry/exists  — 存在性检查（?name=X&type=Y）
+ * GET  /api/brain/registry         — 列表查询（?type=&status=&search=&limit=&offset=）
+ * GET  /api/brain/registry/exists  — 存在性检查（?name=X&type=Y，两者必填）
  * GET  /api/brain/registry/:id     — 详情
  * POST /api/brain/registry         — 注册/upsert（name+type 唯一键）
  * PATCH /api/brain/registry/:id    — 更新 status/location/description/metadata
@@ -23,7 +23,7 @@ const VALID_STATUSES = ['active', 'inactive', 'deprecated'];
  * GET /api/brain/registry/exists
  * 检查 name+type 组合是否已注册
  *
- * Query params: name, type
+ * Query params: name（必填）, type（必填）
  * Response: { exists: boolean, item?: { id, name, type, status, location } }
  */
 router.get('/exists', async (req, res) => {
@@ -32,21 +32,16 @@ router.get('/exists', async (req, res) => {
     if (!name) {
       return res.status(400).json({ error: 'Missing required param: name' });
     }
-
-    const conditions = ['name = $1'];
-    const params = [name];
-
-    if (type) {
-      params.push(type);
-      conditions.push(`type = $${params.length}`);
+    if (!type) {
+      return res.status(400).json({ error: 'Missing required param: type' });
     }
 
     const { rows } = await pool.query(
       `SELECT id, name, type, status, location, description
        FROM system_registry
-       WHERE ${conditions.join(' AND ')}
+       WHERE name = $1 AND type = $2
        LIMIT 1`,
-      params
+      [name, type]
     );
 
     if (rows.length > 0) {
@@ -61,12 +56,12 @@ router.get('/exists', async (req, res) => {
 
 /**
  * GET /api/brain/registry
- * 列表查询，支持过滤
+ * 列表查询，支持过滤，返回数组
  *
  * Query params:
  *   type    — skill/cron/api/machine/integration/other
- *   status  — active/inactive/deprecated（默认不过滤）
- *   q       — 关键词模糊搜索（name + description）
+ *   status  — active/inactive/deprecated
+ *   search  — 关键词模糊搜索（name + description），也支持 q= 别名
  *   limit   — 默认 50，最大 200
  *   offset  — 默认 0
  */
@@ -74,52 +69,42 @@ router.get('/', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
-    const conditions = [];
+    const parts = [];
     const params = [];
 
     if (req.query.type) {
       params.push(req.query.type);
-      conditions.push(`type = $${params.length}`);
+      parts.push(`AND type = $${params.length}`);
     }
 
     if (req.query.status) {
       params.push(req.query.status);
-      conditions.push(`status = $${params.length}`);
+      parts.push(`AND status = $${params.length}`);
     }
 
-    if (req.query.q) {
-      const qVal = `%${req.query.q}%`;
+    const searchTerm = req.query.search || req.query.q;
+    if (searchTerm) {
+      const qVal = `%${searchTerm}%`;
       params.push(qVal);
       const n1 = params.length;
       params.push(qVal);
       const n2 = params.length;
-      conditions.push(`(name ILIKE $${n1} OR description ILIKE $${n2})`);
+      parts.push(`AND (name ILIKE $${n1} OR description ILIKE $${n2})`);
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = parts.length > 0 ? 'WHERE 1=1 ' + parts.join(' ') : '';
     params.push(limit, offset);
 
-    const [dataResult, countResult] = await Promise.all([
-      pool.query(
-        `SELECT id, name, type, location, status, description, metadata, registered_at, updated_at
-         FROM system_registry
-         ${where}
-         ORDER BY type, name
-         LIMIT $${params.length - 1} OFFSET $${params.length}`,
-        params
-      ),
-      pool.query(
-        `SELECT COUNT(*) FROM system_registry ${where}`,
-        params.slice(0, -2)
-      ),
-    ]);
+    const { rows } = await pool.query(
+      `SELECT id, name, type, location, status, description, metadata, registered_at, updated_at
+       FROM system_registry
+       ${whereClause}
+       ORDER BY type, name
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
 
-    return res.json({
-      items: dataResult.rows,
-      total: parseInt(countResult.rows[0].count),
-      limit,
-      offset,
-    });
+    return res.json(rows);
   } catch (err) {
     console.error('[registry] list error:', err);
     return res.status(500).json({ error: err.message });

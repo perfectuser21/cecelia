@@ -1,8 +1,8 @@
 /**
  * system_registry 路由测试
  *
- * GET  /api/brain/registry        — 列表查询
- * GET  /api/brain/registry/exists — 存在性检查
+ * GET  /api/brain/registry        — 列表查询（返回数组）
+ * GET  /api/brain/registry/exists — 存在性检查（name+type 必填）
  * POST /api/brain/registry        — 注册（upsert）
  * PATCH /api/brain/registry/:id   — 更新
  */
@@ -32,25 +32,20 @@ beforeEach(async () => {
 // GET /api/brain/registry
 // ─────────────────────────────────────────────
 describe('GET /api/brain/registry', () => {
-  it('返回 { items, total } 结构', async () => {
+  it('返回数组结构', async () => {
     const fakeRows = [
       { id: 'uuid-1', name: 'dev', type: 'skill', location: '~/.claude/skills/dev', status: 'active', description: null, metadata: {}, registered_at: new Date().toISOString(), updated_at: new Date().toISOString() },
     ];
-    mockQuery
-      .mockResolvedValueOnce({ rows: fakeRows })
-      .mockResolvedValueOnce({ rows: [{ count: '1' }] });
+    mockQuery.mockResolvedValueOnce({ rows: fakeRows });
 
     const res = await request(app).get('/api/brain/registry');
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.items)).toBe(true);
-    expect(typeof res.body.total).toBe('number');
-    expect(res.body.items[0].name).toBe('dev');
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body[0].name).toBe('dev');
   });
 
   it('支持 ?type= 过滤', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).get('/api/brain/registry?type=skill');
     expect(res.status).toBe(200);
@@ -59,9 +54,7 @@ describe('GET /api/brain/registry', () => {
   });
 
   it('支持 ?status= 过滤', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).get('/api/brain/registry?status=active');
     expect(res.status).toBe(200);
@@ -69,10 +62,17 @@ describe('GET /api/brain/registry', () => {
     expect(callArgs[1]).toContain('active');
   });
 
-  it('支持 ?q= 关键词搜索', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] });
+  it('支持 ?search= 关键词搜索', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get('/api/brain/registry?search=deploy');
+    expect(res.status).toBe(200);
+    const callArgs = mockQuery.mock.calls[0];
+    expect(callArgs[1]).toContain('%deploy%');
+  });
+
+  it('支持 ?q= 关键词搜索（别名）', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).get('/api/brain/registry?q=deploy');
     expect(res.status).toBe(200);
@@ -106,6 +106,11 @@ describe('GET /api/brain/registry/exists', () => {
 
   it('缺少 name 时返回 400', async () => {
     const res = await request(app).get('/api/brain/registry/exists?type=skill');
+    expect(res.status).toBe(400);
+  });
+
+  it('缺少 type 时返回 400', async () => {
+    const res = await request(app).get('/api/brain/registry/exists?name=dev');
     expect(res.status).toBe(400);
   });
 });
