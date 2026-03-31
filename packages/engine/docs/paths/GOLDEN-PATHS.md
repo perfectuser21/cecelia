@@ -888,6 +888,23 @@ reviewer_model 字段正确写入 seal 文件
 
 ---
 
+## GP-056: Sprint Contract Gate 双独立提案对抗架构 (adversarial-redesign)
+
+**Feature**: adversarial-redesign - Sprint Contract Gate 双独立提案对抗架构
+**Priority**: P0
+
+### Golden Path
+
+```
+Orchestrator 剥离 Task Card Test 字段 →
+Generator subagent 独立提案 → .dev-gate-generator-sprint.{branch} →
+Evaluator subagent 独立提案 → .dev-gate-spec.{branch} →
+Orchestrator 比对 → 有分歧 → 双方互看 → 最多 3 轮收敛 →
+Evaluator 提案写入 Task Card Test 字段
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
