@@ -141,7 +141,7 @@ describe('executeCopywriting — Claude 调用', () => {
     expect(result.llm_generated).toBe(false);
   });
 
-  it('无有效 findings 时 FAIL（fail-fast，不再静默降级）', async () => {
+  it('无 findings 时降级到静态模板继续（不硬失败）', async () => {
     mockGetContentType.mockResolvedValue(null);
     readdirSync.mockReturnValue([]);
     existsSync.mockReturnValue(false);
@@ -149,8 +149,8 @@ describe('executeCopywriting — Claude 调用', () => {
     const task = { payload: { pipeline_keyword: 'no-findings-keyword' }, title: '测试' };
     const result = await executeCopywriting(task);
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('findings');
+    // 无 findings 时降级到静态模板继续 pipeline，不硬失败
+    expect(result.success).toBe(true);
   });
 });
 
