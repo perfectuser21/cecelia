@@ -1,0 +1,17 @@
+{
+  "sealed_by": "generator-agent",
+  "branch": "cp-03301819-460a20e8-0f2c-4fea-8fcb-9783c0",
+  "timestamp": "2026-03-31T09:39:15+08:00",
+  "dod_passed": [
+    "[PRESERVE] PipelineOutputPage 四 Tab 整体结构保持不变",
+    "[ARTIFACT] Hero 区封面缩略图已从页面 DOM 中移除",
+    "[BEHAVIOR] Hero 区不再显示封面缩略图",
+    "[BEHAVIOR] 生成阶段每步显示 started_at 和 completed_at 时间戳",
+    "[BEHAVIOR] 生成阶段每步在存在 review_issues 时显示错误详情内容",
+    "[BEHAVIOR] 生成阶段每步显示重新生成按钮，点击后向 POST /api/brain/pipelines/:id/run 发起请求",
+    "[BEHAVIOR] 生成阶段 header 区域显示整体重新生成按钮，点击后向 POST /api/brain/pipelines/:id/run 发起请求",
+    "[BEHAVIOR] GenerationTab 接受 pipelineId prop 并将其传入重新生成接口调用",
+    "[GATE] 所有现有测试通过"
+  ],
+  "status": "completed"
+}
