@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Worktree 管理脚本
+# v1.3.0: WORKTREE_BASE 支持 — 默认路径改为 ~/worktrees/{project}，跨会话持久化
 # v1.2.0: 路径迁移到 .claude/worktrees/（对齐官方 Claude Code 约定）
 # v1.1.0: rm -rf 安全验证
 # v1.0.0: 初始版本 - 创建、列表、清理 worktree
@@ -77,12 +78,17 @@ is_in_worktree() {
     [[ "$git_dir" == *"worktrees"* ]]
 }
 
-# 生成 worktree 路径（v1.2.0: 对齐官方 .claude/worktrees/ 约定）
+# 生成 worktree 路径（v1.3.0: 默认使用 ~/worktrees/{project}，跨会话持久化）
+# 环境变量 WORKTREE_BASE 可覆盖默认路径（默认: ~/worktrees）
 generate_worktree_path() {
     local task_name="$1"
-    local main_wt
-    main_wt=$(get_main_worktree)
-    local base_path="${main_wt}/.claude/worktrees/${task_name}"
+    local project_name
+    project_name=$(get_project_name)
+
+    # v1.3.0: 使用 WORKTREE_BASE 环境变量，默认 ~/worktrees
+    # ~/worktrees/{project}/ 独立于主仓库目录，系统重启后依然存在
+    local worktree_base="${WORKTREE_BASE:-$HOME/worktrees}"
+    local base_path="${worktree_base}/${project_name}/${task_name}"
     local final_path="$base_path"
     local counter=2
 
@@ -190,17 +196,21 @@ cmd_create() {
     fi
     echo "" >&2
 
-    # v1.2.0: 确保 .claude/worktrees/ 目录存在
+    # v1.3.0: 确保 worktree 父目录存在（~/worktrees/{project}/）
     mkdir -p "$(dirname "$worktree_path")"
 
-    # v1.2.0: 自动确保 .claude/worktrees/ 在 .gitignore 中
+    # v1.3.0: 若 worktree 路径在主仓库内（兼容自定义 WORKTREE_BASE 指向仓库内），
+    # 自动确保该路径在 .gitignore 中
     local gitignore_file="$main_wt/.gitignore"
-    if [[ -f "$gitignore_file" ]]; then
-        if ! grep -q '\.claude/worktrees/' "$gitignore_file" 2>/dev/null; then
+    if [[ -f "$gitignore_file" && "$worktree_path" == "$main_wt"* ]]; then
+        local rel_path="${worktree_path#$main_wt/}"
+        local rel_dir
+        rel_dir="$(dirname "$rel_path")/"
+        if ! grep -qF "$rel_dir" "$gitignore_file" 2>/dev/null; then
             echo "" >> "$gitignore_file"
             echo "# Claude Code worktrees" >> "$gitignore_file"
-            echo ".claude/worktrees/" >> "$gitignore_file"
-            echo -e "${GREEN}✅ 已添加 .claude/worktrees/ 到 .gitignore${NC}" >&2
+            echo "${rel_dir}" >> "$gitignore_file"
+            echo -e "${GREEN}✅ 已添加 ${rel_dir} 到 .gitignore${NC}" >&2
         fi
     fi
 
@@ -313,9 +323,14 @@ cmd_remove() {
         echo -e "${GREEN}✅ Worktree 已移除${NC}"
     else
         echo -e "${RED}❌ Worktree 移除失败，尝试强制移除...${NC}"
-        # v1.2.0: 支持新路径（.claude/worktrees/）和旧路径（仓库外）
+        # v1.3.0: 支持新路径（~/worktrees/）、旧路径（.claude/worktrees/）和仓库外路径
         local allowed_parent
-        if [[ "$worktree_path" == *"/.claude/worktrees/"* ]]; then
+        local _wt_base="${WORKTREE_BASE:-$HOME/worktrees}"
+        local _proj_name
+        _proj_name=$(get_project_name)
+        if [[ "$worktree_path" == "${_wt_base}/${_proj_name}/"* ]]; then
+            allowed_parent="${_wt_base}/${_proj_name}"
+        elif [[ "$worktree_path" == *"/.claude/worktrees/"* ]]; then
             allowed_parent="$(get_main_worktree)/.claude/worktrees"
         else
             allowed_parent=$(dirname "$(get_main_worktree)")

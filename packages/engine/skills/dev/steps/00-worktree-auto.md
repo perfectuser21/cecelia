@@ -1,9 +1,10 @@
 ---
 id: dev-step-00-worktree-auto
-version: 2.3.0
+version: 2.4.0
 created: 2026-01-31
-updated: 2026-03-22
+updated: 2026-03-31
 changelog:
+  - 2.4.0: 新增 WORKTREE_BASE 说明 — 默认路径迁移到 ~/worktrees/{project}，跨会话持久化
   - 2.3.0: 新任务进入 worktree 后主动创建 .dev-lock（含 tty + session_id），修复有头模式 stop hook 不工作的 bug
   - 2.2.0: 新增 .dev-lock 完整性检查（context 压缩恢复场景）
   - 2.1.0: 修复主仓库 cp-*/feature-* 分支检测盲区（强制 worktree）
@@ -30,6 +31,31 @@ changelog:
 - ❌ 删除：多会话检测
 - ❌ 删除：.dev-mode 僵尸检测
 - ✅ 简化：不在 worktree → 就创建 worktree
+
+---
+
+## Worktree 路径（v2.4.0: WORKTREE_BASE）
+
+**默认路径**：`~/worktrees/{project-name}/{task-name}`
+
+从 v1.3.0 起，worktree 默认存储在主目录的 `~/worktrees/` 下，而非主仓库内的 `.claude/worktrees/`。
+这样 worktree 在系统重启后依然存在，不会因主仓库目录变动而消失。
+
+**自定义路径**：通过 `WORKTREE_BASE` 环境变量覆盖：
+
+```bash
+# 例：将 worktree 存储在 ~/perfect21/cecelia-worktrees/
+export WORKTREE_BASE=~/perfect21/cecelia-worktrees
+```
+
+**路径格式**：`$WORKTREE_BASE/{project-name}/{task-name}`
+
+| 场景 | 路径示例 |
+|------|---------|
+| 默认（未设置 WORKTREE_BASE） | `~/worktrees/cecelia/fix-login` |
+| 自定义 WORKTREE_BASE | `~/perfect21/cecelia-worktrees/cecelia/fix-login` |
+
+**持久化保证**：`~/worktrees/` 目录在系统重启后依然存在，上下文压缩或会话重启不会丢失 worktree。
 
 ---
 
