@@ -33,13 +33,17 @@ process.stdin.on('end', () => {
 
   // 检查正文是否声明了无严重问题
   // 支持全角括号（🔴）和半角括号 (🔴)，及标题与括号间的空格
+  // 也支持 DeepSeek 的 "🔴 **严重问题**\n- 未发现" 格式（emoji 在 bold 标题前）
   const noIssuesDeclared = /[（(]🔴[)）][\s\S]*?[-*]\s*\*\*无\*\*/.test(input)
     || /严重问题\s*[（(]🔴[)）][\s\S]{0,200}无严重问题/.test(input)
     || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}\*\*无\*\*/.test(input)
-    || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}-\s*\*\*无\*\*/.test(input);
+    || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}-\s*\*\*无\*\*/.test(input)
+    || /🔴\s*\*\*严重问题\*\*[\s\S]{0,200}未发现/.test(input);
 
-  // 排除标题里的 🔴（兼容全角/半角括号），检测正文中的实际问题标记
-  const textWithoutHeadings = input.replace(/#+\s*[^🔴\n]*[（(]🔴[)）][^\n]*/g, '');
+  // 排除标题里的 🔴（兼容全角/半角括号及 bold 标题格式），检测正文中的实际问题标记
+  const textWithoutHeadings = input
+    .replace(/#+\s*[^🔴\n]*[（(]🔴[)）][^\n]*/g, '')       // ## 标题（🔴）格式
+    .replace(/🔴\s*\*\*[^*\n]+\*\*[^\n]*/g, '');           // 🔴 **标题** 格式
   const hasActualRedFlag = /🔴/.test(textWithoutHeadings) && !noIssuesDeclared;
 
   if (hasActualRedFlag) {
