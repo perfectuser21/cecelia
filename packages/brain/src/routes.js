@@ -12,6 +12,7 @@ import publishResultsRouter from './routes/publish-results.js';
 import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
 import registryRouter from './routes/registry.js';
+import contentPipelineRouter from './routes/content-pipeline.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -23,5 +24,8 @@ for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, e
 
 // 系统注册表 — 全局目录，解决孤岛和重复问题
 router.use('/registry', registryRouter);
+
+// 内容 pipeline — GET /pipelines/:id/stats 等路由
+router.use('/pipelines', contentPipelineRouter);
 
 export default router;
