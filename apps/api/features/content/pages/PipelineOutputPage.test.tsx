@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import PipelineOutputPage from './PipelineOutputPage';
 
@@ -42,6 +42,19 @@ const mockStages = {
   stages: {
     'content-research': { status: 'completed', started_at: '2026-03-30T10:00:00.000Z', completed_at: '2026-03-30T10:01:00.000Z' },
     'content-copywriting': { status: 'completed', started_at: '2026-03-30T10:01:00.000Z', completed_at: '2026-03-30T10:03:00.000Z' },
+  },
+};
+
+const mockStagesWithIssues = {
+  pipeline_id: 'test-id',
+  stages: {
+    'content-copy-review': {
+      status: 'failed',
+      started_at: '2026-03-30T10:01:00.000Z',
+      completed_at: '2026-03-30T10:02:00.000Z',
+      review_issues: ['文案质量不达标', '缺少关键词密度'],
+      review_passed: false,
+    },
   },
 };
 
@@ -110,5 +123,66 @@ describe('PipelineOutputPage', () => {
     expect(screen.getByText('今日头条')).toBeInTheDocument();
     expect(screen.getByText('快手')).toBeInTheDocument();
     expect(screen.getByText('B站')).toBeInTheDocument();
+  });
+
+  it('生成记录 Tab 显示执行阶段和重新生成按钮', async () => {
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+    expect(await screen.findByText('执行阶段')).toBeInTheDocument();
+    // 有整体重新生成按钮（header 区）
+    const rerunBtns = await screen.findAllByText('重新生成');
+    expect(rerunBtns.length).toBeGreaterThan(0);
+  });
+
+  it('生成记录 Tab 显示 started_at 和 completed_at 时间戳', async () => {
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+    // 时间格式：开始/完成标签
+    expect(await screen.findByText(/开始：/)).toBeInTheDocument();
+    expect(screen.getByText(/完成：/)).toBeInTheDocument();
+  });
+
+  it('生成记录 Tab 显示 review_issues 错误详情', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/output')) {
+        return Promise.resolve({ ok: true, json: async () => mockOutput });
+      }
+      if (url.includes('/stages')) {
+        return Promise.resolve({ ok: true, json: async () => mockStagesWithIssues });
+      }
+      return Promise.resolve({ ok: true, json: async () => mockPipeline });
+    });
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+    expect(await screen.findByText('文案质量不达标')).toBeInTheDocument();
+    expect(screen.getByText('缺少关键词密度')).toBeInTheDocument();
+  });
+
+  it('点击重新生成按钮发起 POST /run 请求', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/run')) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes('/output')) {
+        return Promise.resolve({ ok: true, json: async () => mockOutput });
+      }
+      if (url.includes('/stages')) {
+        return Promise.resolve({ ok: true, json: async () => mockStages });
+      }
+      return Promise.resolve({ ok: true, json: async () => mockPipeline });
+    });
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+    const rerunBtns = await screen.findAllByText('重新生成');
+    fireEvent.click(rerunBtns[0]);
+    await waitFor(() => {
+      const runCall = mockFetch.mock.calls.find((call: string[]) => call[0].includes('/run'));
+      expect(runCall).toBeTruthy();
+      expect(runCall[1]).toMatchObject({ method: 'POST' });
+    });
   });
 });
