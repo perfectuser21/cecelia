@@ -141,6 +141,27 @@ bash packages/engine/scripts/devgate/generate-sprint-report.sh "$BRANCH_NAME"
 echo "✅ Sprint Report 已生成: docs/reports/${BRANCH_NAME}.md"
 ```
 
+#### 3.6 [seal] 安全网：补提交未 commit 的 seal 文件
+
+> **在 Learning commit 之前执行**，确保所有 seal 文件已 commit 进分支（防上下文压缩丢失漏网）。
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+
+# [seal] 补提交任何尚未 commit 的 seal 文件（sprint-contract-loop.sh 已处理大部分，这里兜底）
+for _sf in .dev-gate-*.${BRANCH_NAME} .sprint-contract-state.${BRANCH_NAME}; do
+  [[ -f "$_sf" ]] && git add "$_sf" 2>/dev/null || true
+done
+if ! git diff --cached --quiet 2>/dev/null; then
+  git commit -m "chore: [seal] 补提交未 commit 的 seal 文件（Stage 4 安全网）
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+  echo "✅ [seal] 剩余 seal 文件已补提交"
+else
+  echo "ℹ️  [seal] 无未提交的 seal 文件"
+fi
+```
+
 #### 4. 提交 Learning + Sprint Report
 
 ```bash
