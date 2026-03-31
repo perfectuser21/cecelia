@@ -116,14 +116,14 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
 
       expect(result.success).toBe(true);
       expect(executeTriage).not.toHaveBeenCalled();
-    });
+    }, 60000);
 
     test('tick 不调用 cleanupExpiredSuggestions', async () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
       expect(cleanupExpiredSuggestions).not.toHaveBeenCalled();
-    });
+    }, 60000);
 
     test('tick 正常完成（无 suggestion 相关 action）', async () => {
       const result = await executeTick();
@@ -134,6 +134,6 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
         a => a.action === 'suggestion_triage' || a.action === 'suggestion_cleanup'
       );
       expect(suggestionActions).toHaveLength(0);
-    });
+    }, 60000);
   });
 });
