@@ -239,96 +239,64 @@ if command -v gh &>/dev/null; then
     echo "  ✅ Step 8: PR 已创建 (#$PR_NUMBER)" >&2
     echo "" >&2
 
-    # ===== 阶段分支：p0 和 p1 的检查不同 =====
-    if [[ "$PHASE" == "p0" ]]; then
-        # p0 阶段：PR 创建后立即结束，不检查 CI
-        echo "  📌 当前阶段: p0 (Published)" >&2
-        echo "  ✅ PR 创建完成，p0 阶段结束" >&2
+    # ===== Step 9: 检查 CI 状态（p0/p1 统一：PR 创建后必须等 CI 全绿才能退出）=====
+    # 注意：PR 创建 ≠ 完成，只有 CI 全绿才是真正完成
+    echo "  📌 当前阶段: $PHASE → 检查 CI 状态" >&2
+    echo "" >&2
+
+    CI_STATUS=$(gh pr checks "$PR_NUMBER" --json state -q '.[].state' 2>/dev/null | head -1 || echo "")
+
+    if [[ -z "$CI_STATUS" ]] || [[ "$CI_STATUS" == "PENDING" ]] || [[ "$CI_STATUS" == "QUEUED" ]]; then
+        # pending: 阻止退出，让 Claude 轮询等 CI（有头/无头统一行为）
+        echo "  ⏳ Step 9: CI 运行中，阻止退出继续等待..." >&2
         echo "" >&2
-        echo "  不检查 CI（p0 不等待 CI，直接结束）" >&2
+        echo "  CI 状态: ${CI_STATUS:-PENDING}" >&2
+        echo "  PR 未合并，保持会话活跃" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  ✅ p0 任务完成" >&2
+        echo "  ⏳ 等待 CI 完成..." >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        # exit 2: 阻止退出，CI pending 时 PR 还没合并，必须继续等
+        exit 2
+
+    elif echo "$CI_STATUS" | grep -qi "FAILURE\|ERROR"; then
+        # CI fail: 继续修复循环
+        echo "  ❌ Step 9: CI 失败" >&2
         echo "" >&2
-        echo "  完成步骤:" >&2
-        echo "    ✅ Step 7: 质检通过（Audit + 测试）" >&2
-        echo "    ✅ Step 8: PR 创建完成 (#$PR_NUMBER)" >&2
+        echo "  CI 状态: FAILURE" >&2
         echo "" >&2
-        echo "  后续: CI 自动运行，下次启动检测 CI 结果（p1/p2）" >&2
+        echo "  下一步: 分析并修复 CI 失败" >&2
+        echo "    1. 查看失败详情: gh pr checks $PR_NUMBER" >&2
+        echo "    2. 修复问题" >&2
+        echo "    3. push 代码: git push" >&2
+        echo "    4. 再次尝试结束（触发 CI 状态检查）" >&2
+        echo "" >&2
+        echo "  (事件驱动循环: CI fail → 修复 → push → 退出 → 等下次唤醒)" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 
-        # exit 0: p0 阶段结束，允许会话结束
+        # exit 2: 阻止会话结束，让 AI 继续修复 CI
+        exit 2
+
+    elif echo "$CI_STATUS" | grep -qi "SUCCESS\|PASS"; then
+        # CI pass: 完成
+        echo "  ✅ Step 9: CI 全绿" >&2
+        echo "" >&2
+        echo "  CI 状态: SUCCESS" >&2
+        echo "  GitHub Actions 将自动 merge" >&2
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  ✅ 任务完成（CI 全绿）" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        # exit 0: 允许结束
         exit 0
-
-    elif [[ "$PHASE" == "p1" ]] || [[ "$PHASE" == "unknown" ]]; then
-        # p1 阶段：检查 CI 状态
-        echo "  📌 当前阶段: p1 (CI fail 修复)" >&2
+    else
+        # 未知状态
+        echo "  ⚠️  Step 9: CI 状态未知" >&2
         echo "" >&2
-
-        # ===== Step 9: 检查 CI 状态 =====
-        CI_STATUS=$(gh pr checks "$PR_NUMBER" --json state -q '.[].state' 2>/dev/null | head -1 || echo "")
-
-        if [[ -z "$CI_STATUS" ]] || [[ "$CI_STATUS" == "PENDING" ]] || [[ "$CI_STATUS" == "QUEUED" ]]; then
-            # pending: 阻止退出，让 Claude 轮询等 CI（有头/无头统一行为）
-            echo "  ⏳ Step 9: CI 运行中，阻止退出继续等待..." >&2
-            echo "" >&2
-            echo "  CI 状态: ${CI_STATUS:-PENDING}" >&2
-            echo "  PR 未合并，保持会话活跃" >&2
-            echo "" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            echo "  ⏳ 等待 CI 完成..." >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            # exit 2: 阻止退出，CI pending 时 PR 还没合并，必须继续等
-            exit 2
-
-        elif echo "$CI_STATUS" | grep -qi "FAILURE\|ERROR"; then
-            # CI fail: 继续修复循环
-            echo "  ❌ Step 9: CI 失败" >&2
-            echo "" >&2
-            echo "  CI 状态: FAILURE" >&2
-            echo "" >&2
-            echo "  下一步: 分析并修复 CI 失败" >&2
-            echo "    1. 查看失败详情: gh pr checks $PR_NUMBER" >&2
-            echo "    2. 修复问题" >&2
-            echo "    3. push 代码: git push" >&2
-            echo "    4. 再次尝试结束（触发 CI 状态检查）" >&2
-            echo "" >&2
-            echo "  (p1 事件驱动循环: CI fail → 修复 → push → 退出 → 等下次唤醒)" >&2
-            echo "" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-
-            # exit 2: 阻止会话结束，让 AI 继续修复 CI
-            exit 2
-
-        elif echo "$CI_STATUS" | grep -qi "SUCCESS\|PASS"; then
-            # CI pass: p1 结束
-            echo "  ✅ Step 9: CI 全绿" >&2
-            echo "" >&2
-            echo "  CI 状态: SUCCESS" >&2
-            echo "  GitHub Actions 将自动 merge" >&2
-            echo "" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            echo "  ✅ p1 任务完成（CI 全绿）" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            # exit 0: 允许结束
-            exit 0
-        else
-            # 未知状态
-            echo "  ⚠️  Step 9: CI 状态未知" >&2
-            echo "" >&2
-            echo "  CI 状态: $CI_STATUS" >&2
-            echo "" >&2
-            # exit 0: 允许结束
-            exit 0
-        fi
-
-    elif [[ "$PHASE" == "p2" ]] || [[ "$PHASE" == "pending" ]]; then
-        # p2/pending: 直接允许结束
-        echo "  📌 当前阶段: $PHASE" >&2
-        echo "  ✅ 直接允许结束" >&2
+        echo "  CI 状态: $CI_STATUS" >&2
         echo "" >&2
+        # exit 0: 允许结束
         exit 0
     fi
 else

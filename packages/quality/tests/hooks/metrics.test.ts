@@ -418,8 +418,9 @@ describe('metrics.sh 时间窗口', () => {
 `
     )
 
-    // 上个月的 PR
+    // 上个月的 PR（先设置 day=1 再减月，避免月末溢出，如 3月31日-1月→2月31日→3月3日）
     const lastMonth = new Date()
+    lastMonth.setDate(1)
     lastMonth.setMonth(lastMonth.getMonth() - 1)
     fs.writeFileSync(
       path.join(testDir, '.history', 'PR-199-20251222-1000.dod.md'),
@@ -447,6 +448,7 @@ describe('metrics.sh 时间窗口', () => {
 
   it('--month 可以指定其他月份', () => {
     const lastMonth = new Date()
+    lastMonth.setDate(1)
     lastMonth.setMonth(lastMonth.getMonth() - 1)
     const monthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`
 
