@@ -10,7 +10,11 @@
 
 ## 根本原因
 
-`executeCopyReview`/`executeImageReview` 接入 callLLM 后开始返回 `rule_scores`/`llm_reviewed`/`llm_review` 字段，但 orchestrator 存储时只用了固定结构 `{ review_issues, review_passed }`，其余字段被丢弃。stages API 的 SELECT 也没有查询这些字段，前台无法获取到逐条评分数据。
+`executeCopyReview`/`executeImageReview` 接入 callLLM 后开始返回 `rule_scores`/`llm_reviewed`/`llm_review` 字段，但 orchestrator 存储时只用了固定结构 `{ review_issues, review_passed }`，其余字段被丢弃。
+
+stages API 的 SQL SELECT 语句只查询了已知字段，没有跟随 executor 的返回结构更新，导致新字段无法透传到前台。
+
+此外 `executeImageReview` 返回的是 `llm_review` 对象（详细审查数据），而 `executeCopyReview` 返回 `llm_reviewed` 布尔值，命名不一致需要在 orchestrator 层统一映射。
 
 ## 下次预防
 
