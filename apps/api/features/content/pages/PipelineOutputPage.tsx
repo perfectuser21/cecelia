@@ -95,6 +95,16 @@ const STAGE_LABELS: Record<string, string> = {
   'content_publish': '发布',
 };
 
+/** Pipeline 六阶段有序列表（用于在 GenerationTab 中展示所有阶段，含未开始的 pending 占位） */
+const PIPELINE_STAGE_ORDER = [
+  'content-research',
+  'content-copywriting',
+  'content-copy-review',
+  'content-generate',
+  'content-image-review',
+  'content-export',
+];
+
 const PLATFORMS = [
   { id: 'douyin', name: '抖音', icon: '🎵' },
   { id: 'xiaohongshu', name: '小红书', icon: '📕' },
@@ -212,7 +222,11 @@ function GenerationTab({
     );
   }
 
-  const stageEntries = stages ? Object.entries(stages.stages) : [];
+  // 基于 PIPELINE_STAGE_ORDER 展示全部 6 个阶段（未创建的阶段显示 pending 占位）
+  const stageEntries = PIPELINE_STAGE_ORDER.map(key => ({
+    key,
+    info: stages?.stages?.[key] ?? { status: 'pending' as const },
+  }));
   const imageUrls = output?.output?.image_urls ?? [];
 
   return (
@@ -235,7 +249,7 @@ function GenerationTab({
             </button>
           </div>
           <div className="space-y-3">
-            {stageEntries.map(([key, info]) => (
+            {stageEntries.map(({ key, info }) => (
               <div key={key} className="space-y-1">
                 <div className="flex items-center gap-3">
                   {info.status === 'completed' ? (
@@ -244,10 +258,12 @@ function GenerationTab({
                     <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
                   ) : info.status === 'canceled' ? (
                     <Clock className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                  ) : info.status === 'pending' ? (
+                    <Clock className="w-4 h-4 text-gray-600 flex-shrink-0" />
                   ) : (
                     <Play className="w-4 h-4 text-yellow-400 flex-shrink-0" />
                   )}
-                  <span className="text-sm text-gray-300 flex-1">{STAGE_LABELS[key] || key}</span>
+                  <span className={`text-sm flex-1 ${info.status === 'pending' ? 'text-gray-600' : 'text-gray-300'}`}>{STAGE_LABELS[key] || key}</span>
                   <button
                     onClick={handleRerun}
                     disabled={isRerunning}
@@ -497,6 +513,17 @@ export default function PipelineOutputPage() {
     loadPipeline();
     loadContent();
   }, [loadPipeline, loadContent]);
+
+  // pipeline 未完成时每 5s 自动轮询（更新状态和 stage 详情）
+  useEffect(() => {
+    if (!pipeline) return;
+    if (pipeline.status === 'completed' || pipeline.status === 'failed') return;
+    const timer = setInterval(() => {
+      loadPipeline();
+      loadContent();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [pipeline, loadPipeline, loadContent]);
 
   if (pipelineLoading) {
     return (
