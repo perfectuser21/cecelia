@@ -1,8 +1,8 @@
 ---
 id: optimal-paths
 version: 4.0.0
-created: 2026-03-31
-updated: 2026-03-31
+created: 2026-04-01
+updated: 2026-04-01
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -632,6 +632,17 @@ exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再
 
 ---
 
+### devloop-session-recovery: devloop-check 会话压缩恢复入口
+
+```
+会话压缩重启
+  → bash packages/engine/lib/devloop-check.sh
+  → 输出当前 stage + 缺失 seal 文件 + 下一步 action
+  → agent 恢复执行对应 Stage
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -645,4 +656,4 @@ exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再
 
 **来源**: features/feature-registry.yml
 **版本**: 4.0.0
-**生成时间**: 2026-03-31
+**生成时间**: 2026-04-01

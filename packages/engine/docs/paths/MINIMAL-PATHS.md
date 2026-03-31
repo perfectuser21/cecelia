@@ -1,8 +1,8 @@
 ---
 id: minimal-paths
 version: 4.0.0
-created: 2026-03-31
-updated: 2026-03-31
+created: 2026-04-01
+updated: 2026-04-01
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
@@ -515,6 +515,14 @@ changelog:
 
 ---
 
+### devloop-session-recovery: devloop-check 会话压缩恢复入口
+
+1. ✅ **devloop-check.sh 直接执行时调用 devloop_check_main**
+2. ✅ **devloop_check_main 搜索主仓库 + 所有 worktree 中的 .dev-mode.* 文件**
+3. ✅ **无 .dev-mode 时输出 NO_ACTIVE_SESSION**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -528,4 +536,4 @@ changelog:
 
 **来源**: features/feature-registry.yml
 **版本**: 4.0.0
-**生成时间**: 2026-03-31
+**生成时间**: 2026-04-01

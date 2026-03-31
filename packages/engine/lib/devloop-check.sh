@@ -645,3 +645,141 @@ devloop_check() {
 }
 
 # smoke-test-20260323
+
+# ============================================================================
+# 直接执行入口（会话压缩恢复诊断）
+# ============================================================================
+# 使用方式：bash packages/engine/lib/devloop-check.sh
+#
+# 会话压缩重启后，agent 不知道自己在哪个 stage。
+# 直接执行此脚本即可获得当前 stage 状态 + 缺失文件 + 下一步 action。
+#
+# 输出格式（人类可读）：
+#   === Cecelia Dev Session Status ===
+#   分支: cp-MMDDHHNN-xxx
+#   .dev-mode: /path/to/.dev-mode.cp-xxx
+#   Stage 状态:
+#     step_1_spec: done
+#     step_2_code: pending  ← 当前卡在这里
+#   状态: blocked
+#   原因: Stage 2 Code 未完成
+#   下一步: 立即读取 skills/dev/steps/02-code.md 并执行 Stage 2
+# ============================================================================
+devloop_check_main() {
+    local search_root
+    search_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+    # 搜索所有 worktree 中的 .dev-mode.* 文件
+    local dev_mode_files=()
+    local search_dirs=()
+
+    # 收集主仓库 + 所有 worktree 路径
+    while IFS= read -r _wt_line; do
+        if [[ "$_wt_line" == "worktree "* ]]; then
+            local _wt_path="${_wt_line#worktree }"
+            [[ -d "$_wt_path" ]] && search_dirs+=("$_wt_path")
+        fi
+    done < <(git -C "$search_root" worktree list --porcelain 2>/dev/null)
+
+    # 如果 worktree list 失败，至少搜索当前目录
+    if [[ ${#search_dirs[@]} -eq 0 ]]; then
+        search_dirs+=("$search_root")
+    fi
+
+    # 收集所有 .dev-mode.* 文件（排除 .dev-mode.lock 和临时文件）
+    for _dir in "${search_dirs[@]}"; do
+        while IFS= read -r -d '' _f; do
+            dev_mode_files+=("$_f")
+        done < <(find "$_dir" -maxdepth 1 -name '.dev-mode.*' ! -name '*.lock' ! -name '*.cleanup.*' -print0 2>/dev/null)
+    done
+
+    echo "=== Cecelia Dev Session Status ==="
+    echo ""
+
+    if [[ ${#dev_mode_files[@]} -eq 0 ]]; then
+        echo "状态: NO_ACTIVE_SESSION"
+        echo "未找到 .dev-mode.* 文件（没有活跃的 /dev 会话）"
+        echo ""
+        echo "如需启动新任务: /dev --task-id <id>"
+        echo "如需恢复已有任务: 检查 ~/worktrees/ 下是否有残留 worktree"
+        return 0
+    fi
+
+    local found_count=0
+    for _dmf in "${dev_mode_files[@]}"; do
+        found_count=$(( found_count + 1 ))
+
+        # 从文件名提取 branch
+        local _fname
+        _fname=$(basename "$_dmf")
+        local _branch="${_fname#.dev-mode.}"
+
+        echo "--- 会话 $found_count ---"
+        echo "分支: $_branch"
+        echo ".dev-mode: $_dmf"
+        echo ""
+
+        # 读取各 stage 状态
+        local _s1 _s2 _s3 _s4 _track _cleanup
+        _s1=$(grep "^step_1_spec:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "pending")
+        _s2=$(grep "^step_2_code:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "pending")
+        _s3=$(grep "^step_3_integrate:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "pending")
+        _s4=$(grep "^step_4_ship:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "pending")
+        _track=$(grep "^task_track:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "full")
+        _cleanup=$(grep "^cleanup_done:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "")
+
+        echo "Stage 状态:"
+        echo "  step_1_spec:      $_s1"
+        echo "  step_2_code:      $_s2"
+        echo "  step_3_integrate: $_s3"
+        echo "  step_4_ship:      $_s4"
+        echo "  task_track:       $_track"
+        [[ -n "$_cleanup" ]] && echo "  cleanup_done:     $_cleanup"
+        echo ""
+
+        # 调用 devloop_check 获取详细状态
+        local _result _status _reason _action
+        _result=$(devloop_check "$_branch" "$_dmf" 2>/dev/null || echo '{"status":"error"}')
+        _status=$(echo "$_result" | _devloop_jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+        _reason=$(echo "$_result" | _devloop_jq -r '.reason // ""' 2>/dev/null || echo "")
+        _action=$(echo "$_result" | _devloop_jq -r '.action // ""' 2>/dev/null || echo "")
+
+        echo "devloop 状态: $_status"
+        if [[ -n "$_reason" ]]; then
+            echo "原因: $_reason"
+        fi
+        if [[ -n "$_action" ]]; then
+            echo ""
+            echo "下一步:"
+            echo "  $_action"
+        fi
+
+        # 检查 seal 文件状态
+        local _wt_root
+        _wt_root=$(dirname "$_dmf")
+        echo ""
+        echo "Seal 文件:"
+        for _seal_name in ".dev-gate-lite" ".dev-gate-planner" ".dev-gate-spec" ".dev-gate-generator" ".dev-gate-crg"; do
+            local _sf="$_wt_root/${_seal_name}.${_branch}"
+            if [[ -f "$_sf" ]]; then
+                local _verdict
+                _verdict=$(command -v jq &>/dev/null && jq -r '.verdict // .routing_decision // "present"' "$_sf" 2>/dev/null || echo "present")
+                echo "  ✅ ${_seal_name}: $_verdict"
+            else
+                echo "  ⬜ ${_seal_name}: 不存在"
+            fi
+        done
+
+        echo ""
+    done
+
+    if [[ $found_count -gt 0 ]]; then
+        echo "提示: 会话恢复后，先确认 worktree 路径存在，再继续对应 Stage。"
+        echo "      worktree 路径通常在 ~/worktrees/cecelia/<task-name>/"
+    fi
+}
+
+# 直接执行时调用 devloop_check_main（source 引入时跳过）
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    devloop_check_main "$@"
+fi
