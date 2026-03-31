@@ -90,11 +90,9 @@ export async function executeResearch(task) {
   run(`notebooklm use ${notebookId} 2>&1`);
 
   // 1. 添加 web search sources
-  console.log(`[research] source add-research: ${keyword}`);
   run(`notebooklm source add-research "${keyword}" --mode deep --no-wait 2>&1`, 30000);
 
   // 2. 等待 research 完成并导入所有 sources
-  console.log(`[research] research wait: 最长 300s`);
   run(`notebooklm research wait --timeout 300 --import-all 2>&1`, 330000);
 
   // 3. ask 查询
@@ -116,7 +114,6 @@ export async function executeResearch(task) {
         const sourceId = source.id || source.source_id;
         if (sourceId) await deleteSource(sourceId, notebookId);
       }
-      console.log(`[research] notebook ${notebookId.slice(0, 8)}... 已清空 ${listResult.sources.length} 个 sources`);
     }
   } catch (nbErr) {
     console.warn(`[research] notebook 清空失败（不阻断流程）: ${nbErr.message}`);
