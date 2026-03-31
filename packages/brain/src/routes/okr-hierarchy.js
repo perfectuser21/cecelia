@@ -345,11 +345,12 @@ router.post('/key-results/:id/recalculate-progress', async (req, res) => {
 router.get('/current', async (req, res) => {
   try {
     const objectives = (await pool.query(`
-      SELECT id, title, status, description
-      FROM objectives
-      WHERE status != 'archived'
-      ORDER BY created_at DESC
-      LIMIT 5
+      SELECT DISTINCT o.id, o.title, o.status, o.description
+      FROM objectives o
+      JOIN key_results kr ON kr.objective_id = o.id
+      WHERE o.status != 'archived'
+        AND kr.status != 'archived'
+      ORDER BY o.created_at DESC
     `)).rows;
 
     const result = await Promise.all(objectives.map(async (obj) => {
