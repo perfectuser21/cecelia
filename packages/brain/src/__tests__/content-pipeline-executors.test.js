@@ -225,16 +225,15 @@ describe('executeCopywriting', () => {
     expect(mockGetContentType).toHaveBeenCalledWith('solo-company-case');
   });
 
-  it('getContentType 失败且无 findings 时应 FAIL（fail-fast）', async () => {
+  it('getContentType 失败且无 findings 时降级到静态模板继续（不硬失败）', async () => {
     mockGetContentType.mockRejectedValue(new Error('DB 超时'));
     const task = {
       payload: { pipeline_keyword: '测试' },
       title: '测试',
     };
     const result = await executeCopywriting(task);
-    // 无有效 findings 时应 FAIL
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('findings');
+    // typeConfig 不可用且无 findings 时降级到静态模板继续 pipeline
+    expect(result.success).toBe(true);
   });
 });
 
