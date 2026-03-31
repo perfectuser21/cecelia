@@ -3734,7 +3734,7 @@ skills:
     description: "读取 Generator/Evaluator seal 文件，机械统计 blocker_count，写磁盘状态，exit 0=PASS"
     trigger: [PR]
     method: auto
-    file: "packages/engine/scripts/devgate/sprint-contract-loop.sh"
+    file: "scripts/devgate/sprint-contract-loop.sh"
     tags: [devgate, sprint-contract, convergence]
     owner: engine
     steps:
