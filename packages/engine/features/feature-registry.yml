@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.74.3"
+    date: "2026-03-31"
+    change: "[CONFIG] fix(engine): verify-step.sh step1 强制 Sprint Contract 四文件检查（Generator/Evaluator/State seal + 橡皮图章检测）"
+    scope: "packages/engine/hooks/verify-step.sh,packages/engine/tests/verify-step-sprint-contract-seals.test.ts"
   - version: "13.74.2"
     date: "2026-03-31"
     change: "[CONFIG] fix(engine): verify-step.sh Gate Planner — step_1_spec:done 时强制校验 Planner seal 物理文件存在"
