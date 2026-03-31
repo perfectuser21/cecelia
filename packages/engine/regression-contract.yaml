@@ -3710,6 +3710,27 @@ skills:
       run: "bash -c 'test -f packages/engine/scripts/devgate/check-new-files-need-rci.cjs'"
     test: "manual:node -e \"const {scanMissingRci}=require('./packages/engine/scripts/devgate/check-new-files-need-rci.cjs');const r=scanMissingRci(['packages/engine/hooks/new-hook.sh'],'hooks:\\n  - id: H99\\n    file: \\\"hooks/other.sh\\\"\\n');if(r.length!==1)process.exit(1)\""
 
+  # PE: Playwright Evaluator (v13.54.0)
+  # --------------------------------------------------------------------------
+  - id: PE-001
+    feature: PE
+    name: "playwright-evaluator.cjs 存在且支持 --dry-run 模式"
+    scope: devgate
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    file: "scripts/devgate/playwright-evaluator.cjs"
+    tags: [devgate, evaluator, e2e, behavior-verification, v13.54.0]
+    owner: engine
+    steps:
+      given: "Stage 3 CI 通过后触发 Playwright Evaluator"
+      when: "node playwright-evaluator.cjs --dry-run"
+      then: "输出 DRY RUN 报告，列出所有 [BEHAVIOR] 条目和基线检查，退出码 0"
+    evidence:
+      type: command
+      run: "bash -c 'test -f packages/engine/scripts/devgate/playwright-evaluator.cjs'"
+    test: "tests/engine/playwright-evaluator.test.ts"
+
   - id: DEVGATE-PLAYWRIGHT-EVAL-001
     feature: DevGate
     name: "Playwright Evaluator — Stage 3 端到端行为验证"
