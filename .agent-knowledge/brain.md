@@ -133,6 +133,14 @@ GET  /api/brain/kr-project-map     KR-Project 依赖图（krs + orphaned_project
 
 ---
 
+## 内容飞轮调度模块（2026-03-30 新增）
+
+| 文件 | 职责 |
+|------|------|
+| `src/daily-report-generator.js` | 每日内容日报生成器：UTC 01:00（北京时间 09:00）触发，查询昨日 content-pipeline 完成数、各平台发布统计、数据回收、异常告警，写入 working_memory + 通过 notifier.js 推送飞书。幂等机制：working_memory key=daily_report_triggered_{DATE}。 |
+
+---
+
 ## 深度说明书
 
 - 规划器：http://38.23.47.81:9998/knowledge/brain/planner.html
