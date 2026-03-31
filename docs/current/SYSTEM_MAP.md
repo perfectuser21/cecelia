@@ -100,7 +100,7 @@ packages/engine/
 ├── skills/dev/               /dev 工作流定义（v3.4.1）
 │   ├── SKILL.md
 │   └── steps/                00~11 共 12 个步骤
-├── scripts/devgate/          DevGate 检查脚本（6 个）
+├── scripts/devgate/          DevGate 检查脚本（含 generate-sprint-report.sh）
 └── features/feature-registry.yml  Feature 注册表 SSOT
 ```
 
