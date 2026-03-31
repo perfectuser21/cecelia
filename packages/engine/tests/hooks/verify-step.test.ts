@@ -132,6 +132,8 @@ describe("verify-step.sh", () => {
         'Test: manual:node -e "const fs=require(\'fs\');if(!fs.existsSync(\'file.sh\'))process.exit(1)"',
         "Test: tests/my.test.ts",
       ]);
+      // Gate Planner 要求 Planner seal 存在
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "planner_seal: verified\n");
 
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
@@ -200,6 +202,8 @@ describe("verify-step.sh", () => {
     it("passes with contract: test format", () => {
       const dir = mkdtempSync(join(tempDir, "s1-contract-"));
       createTaskCard(dir, BRANCH, ["Test: contract:my-behavior"]);
+      // Gate Planner 要求 Planner seal 存在
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "planner_seal: verified\n");
 
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
