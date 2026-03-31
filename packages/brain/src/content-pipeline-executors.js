@@ -693,13 +693,9 @@ export async function executeExport(task) {
     try {
       const listResult = await listSources(notebook_id);
       if (listResult.ok && Array.isArray(listResult.sources) && listResult.sources.length > 0) {
-        console.log(`[export] 清空 notebook ${notebook_id}：共 ${listResult.sources.length} 条源`);
         for (const source of listResult.sources) {
           await deleteSource(source.id, notebook_id);
         }
-        console.log(`[export] notebook ${notebook_id} 已清空`);
-      } else {
-        console.log(`[export] notebook ${notebook_id} 无需清空（源数量: ${listResult.sources?.length ?? 0}）`);
       }
     } catch (nbErr) {
       console.warn(`[export] notebook 清空失败（不阻断流程）: ${nbErr.message}`);
