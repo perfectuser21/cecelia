@@ -1,8 +1,14 @@
 /**
- * /api/brain/registry — 系统注册表路由
+ * System Registry 路由
  *
- * 记录系统里所有东西（skill/cron/api/machine/integration/config）的位置和状态。
- * Claude 创建任何东西前先查这里，创建后登记进来，彻底解决孤岛和重复问题。
+ * 统一记录系统中所有组件（skill/cron/api/machine/integration）的位置和状态。
+ * Claude 创建任何东西前先查这里，彻底解决孤岛和重复问题。
+ *
+ * GET  /api/brain/registry         — 列表查询（?type=&status=&search=&limit=&offset=）
+ * GET  /api/brain/registry/exists  — 存在性检查（?name=X&type=Y，两者必填）
+ * GET  /api/brain/registry/:id     — 详情
+ * POST /api/brain/registry         — 注册/upsert（name+type 唯一键）
+ * PATCH /api/brain/registry/:id    — 更新 status/location/description/metadata
  */
 
 import { Router } from 'express';
@@ -10,160 +16,203 @@ import pool from '../db.js';
 
 const router = Router();
 
+const VALID_TYPES = ['skill', 'cron', 'api', 'machine', 'integration', 'other'];
+const VALID_STATUSES = ['active', 'inactive', 'deprecated'];
+
 /**
- * GET /api/brain/registry
- * 查询注册表，支持过滤
- * ?type=skill|cron|api|machine|integration|config|workflow
- * ?status=active|deprecated|unknown（默认排除 deprecated）
- * ?search=关键词（name/description 模糊搜索）
- * ?limit=100
+ * GET /api/brain/registry/exists
+ * 检查 name+type 组合是否已注册
+ *
+ * Query params: name（必填）, type（必填）
+ * Response: { exists: boolean, item?: { id, name, type, status, location } }
  */
-router.get('/', async (req, res) => {
+router.get('/exists', async (req, res) => {
   try {
-    const { type, status, search, limit = 100 } = req.query;
-    let query = 'SELECT * FROM system_registry WHERE 1=1';
-    const params = [];
-    let idx = 1;
-
-    if (type)   { query += ` AND type = $${idx++}`;   params.push(type); }
-    if (status) { query += ` AND status = $${idx++}`; params.push(status); }
-    else        { query += ` AND status != 'deprecated'`; }
-    if (search) {
-      query += ` AND (name ILIKE $${idx} OR description ILIKE $${idx})`;
-      params.push(`%${search}%`);
-      idx++;
+    const { name, type } = req.query;
+    if (!name) {
+      return res.status(400).json({ error: 'Missing required param: name' });
     }
-    query += ` ORDER BY type, name LIMIT $${idx}`;
-    params.push(parseInt(limit));
+    if (!type) {
+      return res.status(400).json({ error: 'Missing required param: type' });
+    }
 
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+    const { rows } = await pool.query(
+      `SELECT id, name, type, status, location, description
+       FROM system_registry
+       WHERE name = $1 AND type = $2
+       LIMIT 1`,
+      [name, type]
+    );
+
+    if (rows.length > 0) {
+      return res.json({ exists: true, item: rows[0] });
+    }
+    return res.json({ exists: false, item: null });
   } catch (err) {
-    console.error('[registry] GET error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[registry] exists error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
 /**
- * GET /api/brain/registry/exists
- * 检查条目是否已存在（创建前查重）
- * ?type=skill&name=/dev
- * Response: { exists: boolean, item?: object }
+ * GET /api/brain/registry
+ * 列表查询，支持过滤，返回数组
+ *
+ * Query params:
+ *   type    — skill/cron/api/machine/integration/other
+ *   status  — active/inactive/deprecated
+ *   search  — 关键词模糊搜索（name + description），也支持 q= 别名
+ *   limit   — 默认 50，最大 200
+ *   offset  — 默认 0
  */
-router.get('/exists', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const { type, name } = req.query;
-    if (!type || !name) {
-      return res.status(400).json({ error: 'type 和 name 均为必填参数' });
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+    const parts = [];
+    const params = [];
+
+    if (req.query.type) {
+      params.push(req.query.type);
+      parts.push(`AND type = $${params.length}`);
     }
-    const result = await pool.query(
-      'SELECT * FROM system_registry WHERE type = $1 AND name = $2',
-      [type, name]
+
+    if (req.query.status) {
+      params.push(req.query.status);
+      parts.push(`AND status = $${params.length}`);
+    }
+
+    const searchTerm = req.query.search || req.query.q;
+    if (searchTerm) {
+      const qVal = `%${searchTerm}%`;
+      params.push(qVal);
+      const n1 = params.length;
+      params.push(qVal);
+      const n2 = params.length;
+      parts.push(`AND (name ILIKE $${n1} OR description ILIKE $${n2})`);
+    }
+
+    const whereClause = parts.length > 0 ? 'WHERE 1=1 ' + parts.join(' ') : '';
+    params.push(limit, offset);
+
+    const { rows } = await pool.query(
+      `SELECT id, name, type, location, status, description, metadata, registered_at, updated_at
+       FROM system_registry
+       ${whereClause}
+       ORDER BY type, name
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
     );
-    if (result.rows.length > 0) {
-      res.json({ exists: true, item: result.rows[0] });
-    } else {
-      res.json({ exists: false });
-    }
+
+    return res.json(rows);
   } catch (err) {
-    console.error('[registry] exists error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[registry] list error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * GET /api/brain/registry/:id
- * 获取单个条目详情
+ * 单条详情
  */
 router.get('/:id', async (req, res) => {
   try {
-    const result = await pool.query(
+    const { rows } = await pool.query(
       'SELECT * FROM system_registry WHERE id = $1',
       [req.params.id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: '未找到' });
-    res.json(result.rows[0]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    return res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[registry] get error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * POST /api/brain/registry
- * 登记新条目（创建新 skill/cron/etc 后调用）
- * Body: { type, name, location?, description?, status?, depends_on?, metadata? }
+ * 注册新条目（name+type 已存在则 upsert）
+ *
+ * Body: { name, type, location?, status?, description?, metadata? }
  */
 router.post('/', async (req, res) => {
   try {
-    const { type, name, location, description, status = 'active', depends_on = [], metadata = {} } = req.body;
-    if (!type || !name) {
-      return res.status(400).json({ error: 'type 和 name 为必填字段' });
+    const { name, type, location, status = 'active', description, metadata = {} } = req.body;
+
+    if (!name || !type) {
+      return res.status(400).json({ error: 'Missing required fields: name, type' });
     }
-    const result = await pool.query(
-      `INSERT INTO system_registry (type, name, location, description, status, depends_on, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (type, name) DO UPDATE SET
-         location    = EXCLUDED.location,
+    if (!VALID_TYPES.includes(type)) {
+      return res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_TYPES.join(', ')}` });
+    }
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO system_registry (name, type, location, status, description, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (name, type) DO UPDATE SET
+         location = EXCLUDED.location,
+         status = EXCLUDED.status,
          description = EXCLUDED.description,
-         status      = EXCLUDED.status,
-         depends_on  = EXCLUDED.depends_on,
-         metadata    = EXCLUDED.metadata,
-         updated_at  = NOW()
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()
        RETURNING *`,
-      [type, name, location, description, status, depends_on, JSON.stringify(metadata)]
+      [name, type, location || null, status, description || null, JSON.stringify(metadata)]
     );
-    res.status(201).json(result.rows[0]);
+
+    return res.status(201).json(rows[0]);
   } catch (err) {
-    console.error('[registry] POST error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[registry] post error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * PATCH /api/brain/registry/:id
- * 更新条目状态或信息
+ * 更新条目（部分更新）
+ *
+ * Body: { location?, status?, description?, metadata? }
  */
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, description, location, metadata, depends_on } = req.body;
-    const fields = [], params = [];
-    let idx = 1;
+    const { id } = req.params;
+    const { location, status, description, metadata } = req.body;
 
-    if (status)      { fields.push(`status = $${idx++}`);      params.push(status); }
-    if (description) { fields.push(`description = $${idx++}`); params.push(description); }
-    if (location)    { fields.push(`location = $${idx++}`);    params.push(location); }
-    if (metadata)    { fields.push(`metadata = $${idx++}`);    params.push(JSON.stringify(metadata)); }
-    if (depends_on)  { fields.push(`depends_on = $${idx++}`);  params.push(depends_on); }
+    if (status && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+    }
 
-    if (fields.length === 0) return res.status(400).json({ error: '没有可更新的字段' });
+    const updates = [];
+    const params = [];
 
-    params.push(req.params.id);
-    const result = await pool.query(
-      `UPDATE system_registry SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+    if (location !== undefined) { params.push(location); updates.push(`location = $${params.length}`); }
+    if (status !== undefined) { params.push(status); updates.push(`status = $${params.length}`); }
+    if (description !== undefined) { params.push(description); updates.push(`description = $${params.length}`); }
+    if (metadata !== undefined) { params.push(JSON.stringify(metadata)); updates.push(`metadata = $${params.length}`); }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    updates.push(`updated_at = NOW()`);
+    params.push(id);
+
+    const { rows } = await pool.query(
+      `UPDATE system_registry SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`,
       params
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: '未找到' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('[registry] PATCH error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
-/**
- * DELETE /api/brain/registry/:id
- * 软删除（标记为 deprecated）
- */
-router.delete('/:id', async (req, res) => {
-  try {
-    const result = await pool.query(
-      `UPDATE system_registry SET status = 'deprecated', updated_at = NOW() WHERE id = $1 RETURNING *`,
-      [req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: '未找到' });
-    res.json({ message: '已标记为 deprecated', item: result.rows[0] });
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    return res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[registry] patch error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 

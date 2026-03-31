@@ -52,6 +52,7 @@ import krConvergenceRoutes from './src/routes/kr-convergence.js';
 import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
 import publishJobsRoutes from './src/routes/publish-jobs.js';
+import registryRoutes from './src/routes/registry.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -170,6 +171,7 @@ app.use('/api/brain/context', contextRoutes);
 app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
+app.use('/api/brain/registry', registryRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
