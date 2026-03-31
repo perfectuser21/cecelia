@@ -388,14 +388,27 @@ async function _handleExportComplete({ task, pipeline }, dbPool) {
   return { advanced: true, action: 'pipeline_completed' };
 }
 
+/**
+ * 将父 pipeline 标记为 failed（阶段执行失败时调用）。
+ */
+async function _markPipelineFailed(ctx, dbPool) {
+  const { task, pipeline } = ctx;
+  const pipelineId = pipeline.id;
+  await dbPool.query(
+    `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+    [pipelineId, 'failed', `阶段 ${task.task_type} 执行失败，pipeline 终止`]
+  );
+  return { advanced: true, action: 'pipeline_failed_stage_error' };
+}
+
 /** 阶段 → 处理函数映射表（替代顺序 if 链，消除圈复杂度） */
 const STAGE_HANDLER_MAP = {
-  'content-research': (ctx, _s, _f, db) => _handleResearchComplete(ctx, db),
-  'content-copywriting': (ctx, _s, _f, db) => _handleCopywritingComplete(ctx, db),
+  'content-research': (ctx, status, _f, db) => status === 'failed' ? _markPipelineFailed(ctx, db) : _handleResearchComplete(ctx, db),
+  'content-copywriting': (ctx, status, _f, db) => status === 'failed' ? _markPipelineFailed(ctx, db) : _handleCopywritingComplete(ctx, db),
   'content-copy-review': (ctx, status, findings, db) => _handleCopyReviewComplete(ctx, status, findings, db),
-  'content-generate': (ctx, _s, _f, db) => _handleGenerateComplete(ctx, db),
+  'content-generate': (ctx, status, _f, db) => status === 'failed' ? _markPipelineFailed(ctx, db) : _handleGenerateComplete(ctx, db),
   'content-image-review': (ctx, status, findings, db) => _handleImageReviewComplete(ctx, status, findings, db),
-  'content-export': (ctx, _s, _f, db) => _handleExportComplete(ctx, db),
+  'content-export': (ctx, status, _f, db) => status === 'failed' ? _markPipelineFailed(ctx, db) : _handleExportComplete(ctx, db),
 };
 
 /**
