@@ -367,10 +367,22 @@ async function _handleImageReviewComplete({ task, pipeline, keyword, content_typ
 async function _handleExportComplete({ task, pipeline }, dbPool) {
   const pipelineId = pipeline.id;
   await _createPublishJobs(dbPool, pipeline, task);
-  await dbPool.query(
-    `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-    [pipelineId]
-  );
+
+  // 将 export_path 回写到 pipeline 的 payload
+  const export_path = task.payload?.export_path || null;
+  if (export_path) {
+    await dbPool.query(
+      `UPDATE tasks SET status = 'completed', completed_at = NOW(),
+         payload = payload || $2::jsonb
+       WHERE id = $1`,
+      [pipelineId, JSON.stringify({ export_path })]
+    );
+  } else {
+    await dbPool.query(
+      `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+      [pipelineId]
+    );
+  }
   console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} 全部完成 ✅`);
   return { advanced: true, action: 'pipeline_completed' };
 }
@@ -509,6 +521,13 @@ async function _executeStageTask(task, stage, executor, dbPool) {
         review_issues: execResult.issues || [],
         review_passed: execResult.review_passed ?? true,
       }), task.id]
+    );
+  } else if (execResult.export_path) {
+    await dbPool.query(
+      `UPDATE tasks SET status = $1, completed_at = NOW(),
+         payload = payload || $2::jsonb
+       WHERE id = $3`,
+      [newStatus, JSON.stringify({ export_path: execResult.export_path }), task.id]
     );
   } else if (newStatus === 'failed' && execResult.error) {
     await dbPool.query(

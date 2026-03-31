@@ -574,6 +574,7 @@ router.get('/:id/output', async (req, res) => {
       article_text: articleText,
       cards_text: cardsText,
       image_urls,
+      export_path: pipeline.payload?.export_path || null,
       // 向后兼容旧格式
       images: image_urls.length > 0 ? {
         cover: image_urls.find(u => u.type === 'cover')?.url || '',
