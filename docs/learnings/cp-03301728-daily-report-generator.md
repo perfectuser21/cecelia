@@ -19,9 +19,19 @@
 - [ ] 禁止在 `manual:node -e` 中只用 `console.log()`，必须有 `process.exit(1)` 作为失败退出
 - [ ] GATE 类型条目不要复用 ARTIFACT 的相同 Test 命令，语义不同
 
+### 根本原因（补充 CI 失败）
+
+L3 Code Gate 失败：`feat` 类型 PR 必须包含 `*.test.js` 或 `*.test.ts` 文件，否则 test-coverage-required 检查直接失败。
+
+### 下次预防
+
+- [ ] `feat(brain):` 类型的 PR 在 Stage 2 必须同步创建 `__tests__/*.test.js` 测试文件，不能依赖 CI 失败后补写
+- [ ] DoD 中 [GATE] 条目的 Test 命令不应与 [ARTIFACT] 条目重复，语义应有差别
+
 ## 实现模式
 
 - `notifier.js` 的 `sendFeishu()` 是飞书推送的唯一入口，不要重复实现
 - `working_memory` 表通过 pool.query 直接操作（INSERT ... ON CONFLICT DO UPDATE）
 - 幂等机制：写入触发记录 key（`daily_report_triggered_YYYY-MM-DD`），同天只执行一次
 - tick.js 中新调度器用 `Promise.resolve().then(...).catch(e => console.warn(...))` 格式注册
+- 飞书推送失败不应阻断幂等锁写入，应先写锁再推送（catch 吃掉推送错误）
