@@ -279,17 +279,89 @@ if command -v gh &>/dev/null; then
         exit 2
 
     elif echo "$CI_STATUS" | grep -qi "SUCCESS\|PASS"; then
-        # CI pass: 完成
         echo "  ✅ Step 9: CI 全绿" >&2
         echo "" >&2
-        echo "  CI 状态: SUCCESS" >&2
-        echo "  GitHub Actions 将自动 merge" >&2
+
+        # ===== Step 10: cleanup_done 检查（唯一合法 exit 0 出口）=====
+        DEV_MODE_FILE_PER=""
+        if [[ -f "$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}" ]]; then
+            DEV_MODE_FILE_PER="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
+        elif [[ -f "$PROJECT_ROOT/.dev-mode" ]]; then
+            DEV_MODE_FILE_PER="$PROJECT_ROOT/.dev-mode"
+        fi
+
+        if [[ -n "$DEV_MODE_FILE_PER" ]] && grep -q "^cleanup_done: true" "$DEV_MODE_FILE_PER" 2>/dev/null; then
+            echo "  ✅ Step 10: cleanup_done: true 检测到 → 工作流完成" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  ✅ 全部完成（CI 全绿 + Learning + PR 合并 + cleanup）" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            exit 0
+        fi
+
+        # ===== Step 11: 检查 PR 是否已合并 =====
+        PR_MERGED=$(gh pr list --head "$CURRENT_BRANCH" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
+
+        if [[ -n "$PR_MERGED" ]]; then
+            # PR 已合并，检查 step_4_ship
+            STEP4_STATUS=""
+            if [[ -n "$DEV_MODE_FILE_PER" ]]; then
+                STEP4_STATUS=$(grep "^step_4_ship:" "$DEV_MODE_FILE_PER" 2>/dev/null | awk '{print $2}' || echo "")
+            fi
+
+            if [[ "$STEP4_STATUS" == "done" ]]; then
+                # Learning 已完成 + PR 已合并 → 写 cleanup_done: true
+                echo "  ✅ Step 11: PR 已合并 + step_4_ship: done → 标记 cleanup_done" >&2
+                if [[ -n "$DEV_MODE_FILE_PER" ]]; then
+                    grep -v "^cleanup_done:" "$DEV_MODE_FILE_PER" > "${DEV_MODE_FILE_PER}.tmp" 2>/dev/null || true
+                    echo "cleanup_done: true" >> "${DEV_MODE_FILE_PER}.tmp"
+                    mv "${DEV_MODE_FILE_PER}.tmp" "$DEV_MODE_FILE_PER"
+                fi
+                echo "  cleanup_done: true 已写入，下次触发 Stop Hook 将 exit 0" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                # exit 2: 让 AI 继续，下次 Stop Hook 检测到 cleanup_done 则 exit 0
+                exit 2
+            else
+                # PR 已合并但 Learning 未完成 → 提示执行 Stage 4
+                echo "  ⚠️  Step 11: PR 已合并，但 step_4_ship 未完成" >&2
+                echo "" >&2
+                echo "  下一步: 读取 skills/dev/steps/04-ship.md，执行 Stage 4 Ship" >&2
+                echo "    1. 写 docs/learnings/${CURRENT_BRANCH}.md（根本原因 + 下次预防 + checklist）" >&2
+                echo "    2. push Learning 文件到功能分支" >&2
+                echo "    3. 在 .dev-mode 中写 step_4_ship: done" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                exit 2
+            fi
+        fi
+
+        # ===== Step 12: PR 未合并 → 检查 step_4_ship（Learning 先于合并）=====
+        STEP4_STATUS=""
+        if [[ -n "$DEV_MODE_FILE_PER" ]]; then
+            STEP4_STATUS=$(grep "^step_4_ship:" "$DEV_MODE_FILE_PER" 2>/dev/null | awk '{print $2}' || echo "")
+        fi
+
+        if [[ "$STEP4_STATUS" != "done" ]]; then
+            echo "  ⚠️  Step 12: CI 全绿，但 Stage 4 Ship 未完成（合并前必须先写 Learning）" >&2
+            echo "" >&2
+            echo "  下一步: 读取 skills/dev/steps/04-ship.md，执行 Stage 4 Ship" >&2
+            echo "    1. 写 docs/learnings/${CURRENT_BRANCH}.md（根本原因 + 下次预防 + checklist）" >&2
+            echo "    2. git add + commit + push Learning 到功能分支（在合并前 push 到 PR）" >&2
+            echo "    3. 在 .dev-mode 中写 step_4_ship: done" >&2
+            echo "    4. 然后执行合并: gh pr merge ${PR_NUMBER} --squash" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            exit 2
+        fi
+
+        # step_4_ship: done，PR 未合并 → 执行合并
+        echo "  ✅ Step 12: step_4_ship: done，PR 未合并 → 执行合并" >&2
         echo "" >&2
+        if [[ -n "$PR_NUMBER" ]]; then
+            echo "  执行: gh pr merge $PR_NUMBER --squash --auto" >&2
+            gh pr merge "$PR_NUMBER" --squash --auto 2>/dev/null || true
+        fi
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  ✅ 任务完成（CI 全绿）" >&2
+        echo "  ⏳ 合并已发起，等待下次 Stop Hook 检查合并结果" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        # exit 0: 允许结束
-        exit 0
+        exit 2
     else
         # 未知状态
         echo "  ⚠️  Step 9: CI 状态未知" >&2
