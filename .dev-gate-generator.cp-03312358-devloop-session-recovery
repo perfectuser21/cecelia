@@ -1,0 +1,7 @@
+{
+  "sealed_by": "main-agent-lite-generator-seal",
+  "branch": "cp-03312358-devloop-session-recovery",
+  "timestamp": "2026-04-01T00:10:00+08:00",
+  "routing_decision": "lite",
+  "note": "LITE 路径：Generator 由主 agent 直接编写代码"
+}
