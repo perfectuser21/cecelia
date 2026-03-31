@@ -432,8 +432,12 @@ router.post('/:id/run', async (req, res) => {
     }
 
     const pipeline = pipelineResult.rows[0];
+    // 允许重新生成：completed 状态重置为 queued
     if (pipeline.status === 'completed') {
-      return res.status(400).json({ error: 'Pipeline 已完成' });
+      await pool.query(
+        `UPDATE tasks SET status = 'queued', completed_at = NULL, started_at = NULL, updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
     }
 
     res.status(202).json({ ok: true, pipeline_id: id, status: 'running' });
