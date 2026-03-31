@@ -1,35 +1,15 @@
 {
   "sealed_by": "sprint-contract-generator",
   "branch": "cp-03311401-7340eb55-a374-4e62-9497-e0995e",
-  "timestamp": "2026-03-31T00:00:00Z",
+  "timestamp": "2026-03-31T00:00:00.000Z",
+  "round": 3,
   "proposals": [
-    {
-      "dod_item": "[ARTIFACT] packages/brain/src/routes/social-trending.js 文件存在",
-      "proposed_test": "manual:node -e \"require('fs').accessSync('packages/brain/src/routes/social-trending.js')\""
-    },
-    {
-      "dod_item": "[ARTIFACT] social-trending 路由已在 packages/brain/src/routes.js 中注册",
-      "proposed_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/routes.js','utf8');if(!c.includes('social-trending'))process.exit(1)\""
-    },
-    {
-      "dod_item": "[BEHAVIOR] GET /api/brain/social/trending 返回 200 及 JSON 数组，数组元素含 platform 字段",
-      "proposed_test": "manual:curl -sf http://localhost:5221/api/brain/social/trending -o /tmp/st.json && node -e \"const d=require('/tmp/st.json');if(!Array.isArray(d))process.exit(1);if(d.length>0&&!d[0].platform)process.exit(1)\""
-    },
-    {
-      "dod_item": "[BEHAVIOR] GET /api/brain/social/trending?platform=douyin 仅返回 platform=douyin 的数据",
-      "proposed_test": "manual:curl -sf 'http://localhost:5221/api/brain/social/trending?platform=douyin' -o /tmp/st_dy.json && node -e \"const d=require('/tmp/st_dy.json');if(!Array.isArray(d))process.exit(1);if(d.some(r=>r.platform!=='douyin'))process.exit(1)\""
-    },
-    {
-      "dod_item": "[BEHAVIOR] GET /api/brain/social/trending?limit=5 返回不超过 5 条数据",
-      "proposed_test": "manual:curl -sf 'http://localhost:5221/api/brain/social/trending?limit=5' -o /tmp/st_limit.json && node -e \"const d=require('/tmp/st_limit.json');if(!Array.isArray(d))process.exit(1);if(d.length>5)process.exit(1)\""
-    },
-    {
-      "dod_item": "[BEHAVIOR] TimescaleDB 不可达时，GET /api/brain/social/trending 返回 200 及空数组 []",
-      "proposed_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/routes/social-trending.js','utf8');if(!c.includes('catch')&&!c.includes('fallback')&&!c.includes('[]'))process.exit(1)\""
-    },
-    {
-      "dod_item": "[GATE] CI 全部通过",
-      "proposed_test": "manual:node -e \"require('fs').accessSync('packages/brain/src/routes/social-trending.js');const c=require('fs').readFileSync('packages/brain/src/routes.js','utf8');if(!c.includes('social-trending'))process.exit(1)\""
-    }
+    { "dod_item": "[ARTIFACT] packages/brain/src/routes/social-trending.js 文件存在", "proposed_test": "manual:node -e \"require('fs').accessSync('packages/brain/src/routes/social-trending.js')\"" },
+    { "dod_item": "[ARTIFACT] social-trending 路由已在 packages/brain/src/routes.js 中注册", "proposed_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/routes.js','utf8');if(!c.includes('social-trending'))process.exit(1)\"" },
+    { "dod_item": "[BEHAVIOR] GET /api/brain/social/trending 返回 200 及 JSON 数组，数组元素含 platform 字段", "proposed_test": "manual:curl -sf http://localhost:5221/api/brain/social/trending -o /tmp/st.json && node -e \"const d=require('/tmp/st.json');if(!Array.isArray(d))process.exit(1);if(d.length>0&&!d[0].platform)process.exit(1)\"" },
+    { "dod_item": "[BEHAVIOR] GET /api/brain/social/trending?platform=douyin 仅返回 platform=douyin 的数据", "proposed_test": "manual:curl -sf 'http://localhost:5221/api/brain/social/trending?platform=douyin' -o /tmp/st_dy.json && node -e \"const d=require('/tmp/st_dy.json');if(!Array.isArray(d))process.exit(1);if(d.some(r=>r.platform!=='douyin'))process.exit(1)\"" },
+    { "dod_item": "[BEHAVIOR] GET /api/brain/social/trending?limit=5 返回不超过 5 条数据", "proposed_test": "manual:curl -sf 'http://localhost:5221/api/brain/social/trending?limit=5' -o /tmp/st_limit.json && node -e \"const d=require('/tmp/st_limit.json');if(!Array.isArray(d))process.exit(1);if(d.length>5)process.exit(1)\"" },
+    { "dod_item": "[BEHAVIOR] TimescaleDB 不可达时，GET /api/brain/social/trending 返回 200 及空数组 []", "proposed_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/routes/social-trending.js','utf8');if(!c.includes('catch')||!c.includes('[]'))process.exit(1)\"" },
+    { "dod_item": "[GATE] CI 全部通过", "proposed_test": "manual:node -e \"require('fs').accessSync('packages/brain/src/routes/social-trending.js');const c=require('fs').readFileSync('packages/brain/src/routes.js','utf8');if(!c.includes('social-trending'))process.exit(1)\"" }
   ]
 }
