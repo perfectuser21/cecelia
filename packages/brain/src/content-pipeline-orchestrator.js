@@ -95,9 +95,10 @@ async function _startOnePipeline(pipeline, dbPool) {
   const pipelineId = pipeline.id;
   const { keyword, content_type, priority } = _parsePipelineParams(pipeline);
 
-  // 验证 content_type 存在于注册表（若有指定）
+  // 验证 content_type 存在于注册表（若有指定），同时读取 typeConfig 用于传参
+  let typeConfig = null;
   if (content_type) {
-    const typeConfig = await getContentType(content_type);
+    typeConfig = await getContentType(content_type);
     if (!typeConfig) {
       console.error(`[content-pipeline-orchestrator] pipeline ${pipelineId} content_type "${content_type}" 不存在于注册表，标记 failed`);
       await dbPool.query(
@@ -146,6 +147,7 @@ async function _startOnePipeline(pipeline, dbPool) {
       pipeline_stage: 'content-research',
       pipeline_keyword: keyword,
       ...(content_type ? { content_type } : {}),
+      ...(typeConfig?.notebook_id ? { notebook_id: typeConfig.notebook_id } : {}),
     }),
   ]);
 
