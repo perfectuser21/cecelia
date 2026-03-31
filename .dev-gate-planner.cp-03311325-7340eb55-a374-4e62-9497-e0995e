@@ -1,0 +1,9 @@
+{
+  "sealed_by": "planner-subagent",
+  "branch": "cp-03311325-7340eb55-a374-4e62-9497-e0995e",
+  "timestamp": "2026-03-31T00:00:00.000Z",
+  "task_card": ".task-cp-cp-03311325-7340eb55-a374-4e62-9497-e0995e.md",
+  "status": "sealed",
+  "task_title": "社媒热点数据接入接口",
+  "summary": "在 Brain 中新增 GET /api/brain/social/trending 端点，跨数据库查询 TimescaleDB 采集数据，支持按 platform 过滤和 limit 控制，为内容生成系统提供社媒热点数据访问能力"
+}

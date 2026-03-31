@@ -13,6 +13,7 @@ import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
 import registryRouter from './routes/registry.js';
 import contentPipelineRouter from './routes/content-pipeline.js';
+import socialTrendingRouter from './routes/social-trending.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -27,5 +28,8 @@ router.use('/registry', registryRouter);
 
 // 内容 pipeline — GET /pipelines/:id/stats 等路由
 router.use('/pipelines', contentPipelineRouter);
+
+// 社媒热点 — GET /social/trending
+router.use('/social', socialTrendingRouter);
 
 export default router;
