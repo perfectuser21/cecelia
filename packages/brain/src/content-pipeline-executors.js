@@ -88,6 +88,16 @@ export async function executeResearch(task) {
   let findings = [];
 
   run(`notebooklm use ${notebookId} 2>&1`);
+
+  // 1. 添加 web search sources
+  console.log(`[research] source add-research: ${keyword}`);
+  run(`notebooklm source add-research "${keyword}" --mode deep --no-wait 2>&1`, 30000);
+
+  // 2. 等待 research 完成并导入所有 sources
+  console.log(`[research] research wait: 最长 300s`);
+  run(`notebooklm research wait --timeout 300 --import-all 2>&1`, 330000);
+
+  // 3. ask 查询
   // 优先使用配置中的 research_prompt，fallback 到硬编码
   const defaultPrompt = `从所有源中，找出能证明'个人也能拥有过去只有公司才有的能力'的证据。关于${keyword}，每条带具体数据和来源。至少8条。`;
   const researchPrompt = typeConfig?.template?.research_prompt
@@ -97,6 +107,20 @@ export async function executeResearch(task) {
     `notebooklm ask "${researchPrompt}" --json 2>&1`,
     120000
   );
+
+  // 4. ask 完成后清空 notebook sources，以便下次复用
+  try {
+    const listResult = await listSources(notebookId);
+    if (listResult.ok && Array.isArray(listResult.sources) && listResult.sources.length > 0) {
+      for (const source of listResult.sources) {
+        const sourceId = source.id || source.source_id;
+        if (sourceId) await deleteSource(sourceId, notebookId);
+      }
+      console.log(`[research] notebook ${notebookId.slice(0, 8)}... 已清空 ${listResult.sources.length} 个 sources`);
+    }
+  } catch (nbErr) {
+    console.warn(`[research] notebook 清空失败（不阻断流程）: ${nbErr.message}`);
+  }
 
   if (!raw || !raw.trim()) {
     const errMsg = 'NotebookLM 返回空内容，请检查 notebook_id 是否有效或 NotebookLM 是否可用';
