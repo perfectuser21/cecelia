@@ -28,12 +28,12 @@ describe("Worktree path migration", () => {
       }).not.toThrow();
     });
 
-    it("should generate .claude/worktrees/ path", () => {
+    it("should generate persistent worktree path using WORKTREE_BASE", () => {
       const content = readFileSync(WORKTREE_MANAGE, "utf-8");
-      expect(content).toContain('.claude/worktrees/');
       expect(content).toContain('generate_worktree_path()');
-      // 新路径格式
-      expect(content).toContain('${main_wt}/.claude/worktrees/${task_name}');
+      // v1.3.0: 新路径格式使用 WORKTREE_BASE，默认 ~/worktrees/{project}
+      expect(content).toContain('WORKTREE_BASE');
+      expect(content).toContain('HOME/worktrees');
     });
 
     it("should auto-add .claude/worktrees/ to .gitignore on create", () => {

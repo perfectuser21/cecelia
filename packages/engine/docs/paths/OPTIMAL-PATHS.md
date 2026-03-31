@@ -622,6 +622,16 @@ exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再
 
 ---
 
+### worktree-persistent-path: Worktree 持久路径（WORKTREE_BASE）
+
+```
+/dev 启动 → Step 0 → worktree-manage.sh create →
+检查 WORKTREE_BASE → 默认 ~/worktrees/{project}/{branch} →
+跨会话持久化，上下文压缩后仍可找回
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

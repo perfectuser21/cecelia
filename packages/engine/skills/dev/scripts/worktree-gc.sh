@@ -215,17 +215,29 @@ except:
             # 从主仓库执行删除（关键！CWD 已在 MAIN_WT）
             git worktree remove "$WT_PATH" --force 2>/dev/null || {
                 # v1.1.0 P0-2 修复：精确路径安全验证（不再用 dirname 过宽匹配）
+                # v1.3.0：新增 ~/worktrees/{project}/ 路径支持
                 real_wt=$(realpath "$WT_PATH" 2>/dev/null || echo "$WT_PATH")
                 real_main=$(realpath "$MAIN_WT" 2>/dev/null || echo "$MAIN_WT")
-                # 允许条件：worktree 路径在 .claude/worktrees/ 下，或与主仓库共享同一父目录
+                # 允许条件（满足任一）：
+                #   1. worktree 路径在 ~/worktrees/{project}/ 下（v1.3.0 新持久路径）
+                #   2. worktree 路径在 .claude/worktrees/ 下（v1.2.0 旧路径）
+                #   3. worktree 与主仓库共享同一父目录（兼容旧版）
                 wt_parent=$(dirname "$real_wt")
                 main_parent=$(dirname "$real_main")
+                main_name=$(basename "$real_main")
                 worktree_dir="${real_main}/.claude/worktrees"
-                if [[ "$real_wt" == "$worktree_dir/"* || "$wt_parent" == "$main_parent" ]] && \
+                persistent_dir="${HOME}/worktrees/${main_name}"
+                # 支持 WORKTREE_BASE 覆盖
+                _wt_base="${WORKTREE_BASE:-$HOME/worktrees}"
+                persistent_dir_custom="${_wt_base}/${main_name}"
+                if ([[ "$real_wt" == "$worktree_dir/"* ]] || \
+                    [[ "$real_wt" == "$persistent_dir/"* ]] || \
+                    [[ "$real_wt" == "$persistent_dir_custom/"* ]] || \
+                    [[ "$wt_parent" == "$main_parent" ]]) && \
                    [[ "$real_wt" != "/" && "$real_wt" != "$HOME" && "$real_wt" != "$real_main" && ${#real_wt} -gt 10 ]]; then
                     rm -rf "$WT_PATH" 2>/dev/null || true
                 else
-                    echo "WARN: 路径安全检查失败，跳过 rm -rf: $WT_PATH (parent=$wt_parent, expected=$main_parent or $worktree_dir)" >&2
+                    echo "WARN: 路径安全检查失败，跳过 rm -rf: $WT_PATH (parent=$wt_parent, expected=$main_parent or $worktree_dir or $persistent_dir)" >&2
                 fi
             }
             git branch -D "$WT_BRANCH" 2>/dev/null || true
