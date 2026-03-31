@@ -335,11 +335,13 @@ export async function generateDailyReport(dbPool = pool, now = new Date()) {
     // 5. 写入 working_memory，key=daily_report_{YYYY-MM-DD}
     await saveReportToWorkingMemory(dbPool, today, reportText);
 
-    // 6. 标记今日已完成（幂等锁）
+    // 6. 标记今日已完成（幂等锁，在推送前写入，避免推送失败导致重复生成）
     await markTodayDone(dbPool, today);
 
-    // 7. 飞书推送（通过 notifier.js，不重复实现飞书推送逻辑）
-    await sendFeishu(reportText);
+    // 7. 飞书推送（通过 notifier.js，不重复实现飞书推送逻辑；推送失败不影响幂等锁）
+    await sendFeishu(reportText).catch(err => {
+      console.error(`[daily-report-generator] 飞书推送失败（日报已存储）: ${err.message}`);
+    });
 
     console.log(`[daily-report-generator] 日报生成并推送完成 (${today})`);
     return { generated: true, date: today, skipped_window: false, skipped_dup: false };
