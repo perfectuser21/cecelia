@@ -1,8 +1,9 @@
 ---
 id: dev-stage-04-ship
-version: 1.3.0
+version: 1.4.0
 created: 2026-03-20
 changelog:
+  - 1.4.0: 新增 4.1.4 Sprint Report 自动生成步骤（在 Learning 提交后、push 前生成 docs/reports/{branch}.md）
   - 1.3.0: 新增 4.4.5 更新系统状态步骤（PR 合并后写 CURRENT_STATE.md）
   - 1.2.0: 删除 4.0 Simplify 章节（Simplify 已集成进 code-review-gate Stage 2，Stage 4 重复且位置错）
   - 1.1.0: 新增 Simplify 步骤（已在 1.2.0 删除，功能移至 code-review-gate）
@@ -127,19 +128,33 @@ export PR_TITLE=$(git log --oneline -1 2>/dev/null || echo "feat: temp")
 bash packages/engine/scripts/devgate/check-learning.sh
 ```
 
-#### 3. 提交 Learning
+#### 3. 生成 Sprint Report（push 前）
+
+> **⚠️ 顺序铁律：Sprint Report 必须先于提交步骤（步骤4）执行，确保报告被纳入 commit。**
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+
+# 生成 Sprint Report（汇总 Planner/Generator/Evaluator 对抗过程 + CI 结果 + 评分）
+bash packages/engine/scripts/devgate/generate-sprint-report.sh "$BRANCH_NAME"
+
+echo "✅ Sprint Report 已生成: docs/reports/${BRANCH_NAME}.md"
+```
+
+#### 4. 提交 Learning + Sprint Report
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 LEARNING_FILE="docs/learnings/${BRANCH_NAME}.md"
+REPORT_FILE="docs/reports/${BRANCH_NAME}.md"
 
-git add "$LEARNING_FILE"
-git commit -m "docs: 记录 <任务简述> 的开发经验
+git add "$LEARNING_FILE" "$REPORT_FILE"
+git commit -m "docs: 记录 <任务简述> 的开发经验 + Sprint Report
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 git push origin HEAD
-echo "✅ Learning 已推送到功能分支"
+echo "✅ Learning + Sprint Report 已推送到功能分支"
 ```
 
 #### 3.5 触发 LEARNINGS_RECEIVED 事件

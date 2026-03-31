@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.73.1"
+    date: "2026-03-31"
+    change: "[CONFIG] feat(engine): Sprint Report 自动生成 — generate-sprint-report.sh + 04-ship.md v1.4.0"
+    scope: "packages/engine/scripts/devgate/generate-sprint-report.sh,packages/engine/skills/dev/steps/04-ship.md,packages/engine/tests/devgate/generate-sprint-report.test.ts"
   - version: "13.73.0"
     date: "2026-03-31"
     change: "[CONFIG] feat(engine): Playwright Evaluator 层 — Stage 3 CI 后端到端行为验证，新增 playwright-evaluator.cjs + SKILL.md + PE-001 RCI"
