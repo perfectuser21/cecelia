@@ -5,7 +5,11 @@
 
 ### 根本原因
 
-`content-pipeline-executors.js` 中 4 个阶段（executeCopywriting / executeCopyReview / executeGenerate / executeImageReview）使用本地模板和静态规则，完全忽略了配置页面（ContentTypeConfigPage）设置的 `generate_prompt`、`review_prompt`、`image_prompt`、`image_review_prompt`，导致 solo-company-case 等 YAML 配置的 prompt 从未被执行。
+`content-pipeline-executors.js` 中 4 个阶段（executeCopywriting / executeCopyReview / executeGenerate / executeImageReview）一直使用本地模板和静态规则生成内容。
+
+配置页面（ContentTypeConfigPage）虽然提供了 `generate_prompt`、`review_prompt`、`image_prompt`、`image_review_prompt` 字段，但各 executor 函数从未读取这些配置，导致用户在配置页配置的 prompt 对 pipeline 执行无任何影响。
+
+最终 solo-company-case 等 YAML 配置中的品牌声音定义、审核规则、图片策划指令全部被忽略，pipeline 产出与预期 prompt 完全脱节。
 
 ### 修复方案
 
