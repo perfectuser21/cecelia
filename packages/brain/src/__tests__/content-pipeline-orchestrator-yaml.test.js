@@ -75,6 +75,7 @@ function makeMockPool(overrides = {}) {
 const MOCK_TYPE_CONFIG = {
   content_type: 'solo-company-case',
   title: '一人公司成功案例',
+  notebook_id: '1d928181-4462-47d4-b4c0-89d3696344ab',
   images: { count: 9, format: 'svg' },
   template: {
     generate_prompt: '基于调研报告，生成关于 {keyword} 的9张信息图和图文内容。',
@@ -153,6 +154,49 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
 
     expect(getContentType).not.toHaveBeenCalled();
     expect(result.summary.orchestrated).toBe(1);
+  });
+
+  it('typeConfig 有 notebook_id 时，research task payload 自动携带 notebook_id', async () => {
+    getContentType.mockResolvedValue(MOCK_TYPE_CONFIG);
+
+    const pool = makeMockPool({
+      pipelines: [{
+        id: 'pipe-010',
+        title: '含 notebook_id Pipeline',
+        payload: { keyword: 'Dan Koe', content_type: 'solo-company-case' },
+        project_id: null,
+        goal_id: null,
+      }],
+      existing: [],
+    });
+
+    await orchestrateContentPipelines(pool);
+
+    const inserted = pool._getInsertedPayload();
+    expect(inserted).toBeTruthy();
+    expect(inserted.notebook_id).toBe('1d928181-4462-47d4-b4c0-89d3696344ab');
+    expect(inserted.pipeline_stage).toBe('content-research');
+  });
+
+  it('typeConfig 无 notebook_id 时，research task payload 不含 notebook_id', async () => {
+    getContentType.mockResolvedValue({ ...MOCK_TYPE_CONFIG, notebook_id: undefined });
+
+    const pool = makeMockPool({
+      pipelines: [{
+        id: 'pipe-011',
+        title: '无 notebook_id Pipeline',
+        payload: { keyword: 'Justin Welsh', content_type: 'solo-company-case' },
+        project_id: null,
+        goal_id: null,
+      }],
+      existing: [],
+    });
+
+    await orchestrateContentPipelines(pool);
+
+    const inserted = pool._getInsertedPayload();
+    expect(inserted).toBeTruthy();
+    expect(inserted.notebook_id).toBeUndefined();
   });
 });
 

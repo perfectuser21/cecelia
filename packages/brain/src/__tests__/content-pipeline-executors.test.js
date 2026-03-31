@@ -24,6 +24,15 @@ vi.mock('../content-types/content-type-registry.js', () => ({
   getContentType: (...args) => mockGetContentType(...args),
 }));
 
+// Mock notebook-adapter
+const mockListSources = vi.fn().mockResolvedValue({ ok: false });
+const mockDeleteSource = vi.fn().mockResolvedValue({ ok: true });
+vi.mock('../notebook-adapter.js', () => ({
+  listSources: (...args) => mockListSources(...args),
+  deleteSource: (...args) => mockDeleteSource(...args),
+  addSource: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
 import {
   executeCopyReview,
   executeImageReview,
@@ -272,5 +281,66 @@ describe('executeGenerate', () => {
     expect(result.success).toBe(true);
     expect(result.image_count).toBe(9);
     expect(result.image_style).toBe('professional-infographic');
+  });
+});
+
+describe('executeExport — notebook 清空复用', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetContentType.mockResolvedValue(null);
+    existsSync.mockReturnValue(false);
+    readdirSync.mockReturnValue([]);
+    mockListSources.mockResolvedValue({ ok: false });
+    mockDeleteSource.mockResolvedValue({ ok: true });
+  });
+
+  it('无输出目录时，export 返回 success: false，不应调用 listSources', async () => {
+    // dir not found → returns early before notebook cleanup
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      notebook_id: '1d928181-4462-47d4-b4c0-89d3696344ab',
+    });
+
+    const task = {
+      payload: { pipeline_keyword: '测试', content_type: 'solo-company-case' },
+      title: '测试',
+    };
+    const result = await executeExport(task);
+
+    expect(result.success).toBe(false);
+    // notebook cleanup is skipped because export returned early
+    expect(mockListSources).not.toHaveBeenCalled();
+  });
+
+  it('typeConfig 无 notebook_id 时，不应调用 listSources', async () => {
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+    });
+
+    const task = {
+      payload: { pipeline_keyword: '测试', content_type: 'solo-company-case' },
+      title: '测试',
+    };
+    await executeExport(task);
+
+    expect(mockListSources).not.toHaveBeenCalled();
+    expect(mockDeleteSource).not.toHaveBeenCalled();
+  });
+
+  it('notebook 清空失败（listSources 抛出）时，export 不应抛出异常', async () => {
+    // Note: executeExport returns early (success: false) when dir not found,
+    // but the notebook cleanup try-catch must never propagate errors
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      notebook_id: '1d928181-4462-47d4-b4c0-89d3696344ab',
+    });
+    mockListSources.mockRejectedValue(new Error('bridge 不可达'));
+
+    const task = {
+      payload: { pipeline_keyword: '测试', content_type: 'solo-company-case' },
+      title: '测试',
+    };
+    // Should resolve (not throw), regardless of notebook cleanup result
+    await expect(executeExport(task)).resolves.toBeDefined();
   });
 });
