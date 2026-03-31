@@ -13,10 +13,13 @@ vi.mock('../db.js', () => ({
 // Mock content-type-registry
 vi.mock('../content-types/content-type-registry.js', () => ({
   listContentTypes: vi.fn(),
+  getContentType: vi.fn(),
+  getContentTypeFromYaml: vi.fn(),
+  listContentTypesFromYaml: vi.fn(),
 }));
 
 import pool from '../db.js';
-import { listContentTypes } from '../content-types/content-type-registry.js';
+import { listContentTypes, getContentType } from '../content-types/content-type-registry.js';
 import contentPipelineRouter from '../routes/content-pipeline.js';
 
 function makeApp() {
@@ -270,5 +273,81 @@ describe('GET /api/brain/pipelines/:id/stages — rule_scores & llm_reviewed', (
     expect(stage).not.toHaveProperty('rule_scores');
     expect(stage).not.toHaveProperty('llm_reviewed');
     expect(stage).not.toHaveProperty('review_passed');
+  });
+});
+
+describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记录', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('未传 notebook_id 时从 content-type 配置自动读取', async () => {
+    listContentTypes.mockResolvedValue(['solo-company-case']);
+    getContentType.mockResolvedValue({ notebook_id: 'nb-auto-123', content_type: 'solo-company-case' });
+    const newRow = {
+      id: 'nb-auto-id',
+      title: '[内容工厂] 测试关键词 (solo-company-case)',
+      status: 'queued',
+      priority: 'P1',
+      payload: { keyword: '测试关键词', content_type: 'solo-company-case', notebook_id: 'nb-auto-123' },
+      created_at: new Date(),
+    };
+    pool.query.mockResolvedValue({ rows: [newRow] });
+
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines')
+      .send({ keyword: '测试关键词', content_type: 'solo-company-case' });
+
+    expect(res.status).toBe(201);
+    // 验证 pool.query 被调用时 payload 包含自动读取的 notebook_id
+    const insertCall = pool.query.mock.calls.find(c => c[0].includes('INSERT'));
+    expect(insertCall).toBeDefined();
+    const payloadArg = JSON.parse(insertCall[1][6]);
+    expect(payloadArg.notebook_id).toBe('nb-auto-123');
+  });
+
+  it('请求中传入 notebook_id 时优先使用请求值', async () => {
+    listContentTypes.mockResolvedValue(['solo-company-case']);
+    getContentType.mockResolvedValue({ notebook_id: 'nb-from-yaml', content_type: 'solo-company-case' });
+    const newRow = {
+      id: 'nb-req-id',
+      title: '[内容工厂] 测试关键词 (solo-company-case)',
+      status: 'queued',
+      priority: 'P1',
+      payload: { keyword: '测试关键词', content_type: 'solo-company-case', notebook_id: 'nb-from-request' },
+      created_at: new Date(),
+    };
+    pool.query.mockResolvedValue({ rows: [newRow] });
+
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines')
+      .send({ keyword: '测试关键词', content_type: 'solo-company-case', notebook_id: 'nb-from-request' });
+
+    expect(res.status).toBe(201);
+    const insertCall = pool.query.mock.calls.find(c => c[0].includes('INSERT'));
+    const payloadArg = JSON.parse(insertCall[1][6]);
+    expect(payloadArg.notebook_id).toBe('nb-from-request');
+  });
+
+  it('content-type 配置无 notebook_id 时 payload 不包含 notebook_id', async () => {
+    listContentTypes.mockResolvedValue(['solo-company-case']);
+    getContentType.mockResolvedValue({ notebook_id: '', content_type: 'solo-company-case' });
+    const newRow = {
+      id: 'no-nb-id',
+      title: '[内容工厂] 无notebook (solo-company-case)',
+      status: 'queued',
+      priority: 'P1',
+      payload: { keyword: '无notebook', content_type: 'solo-company-case' },
+      created_at: new Date(),
+    };
+    pool.query.mockResolvedValue({ rows: [newRow] });
+
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines')
+      .send({ keyword: '无notebook', content_type: 'solo-company-case' });
+
+    expect(res.status).toBe(201);
+    const insertCall = pool.query.mock.calls.find(c => c[0].includes('INSERT'));
+    const payloadArg = JSON.parse(insertCall[1][6]);
+    // 没有 notebook_id 时不应包含该字段（executeResearch 会在执行时 FAIL）
+    expect(payloadArg).not.toHaveProperty('notebook_id');
   });
 });

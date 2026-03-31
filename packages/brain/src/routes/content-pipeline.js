@@ -282,8 +282,25 @@ router.post('/', async (req, res) => {
     }
 
     const payload = { keyword: keyword.trim(), content_type };
-    if (notebook_id && typeof notebook_id === 'string' && notebook_id.trim()) {
-      payload.notebook_id = notebook_id.trim();
+
+    // 优先使用请求中传入的 notebook_id，否则从 content-type 配置中自动读取
+    let resolvedNotebookId = (notebook_id && typeof notebook_id === 'string' && notebook_id.trim())
+      ? notebook_id.trim()
+      : null;
+
+    if (!resolvedNotebookId) {
+      try {
+        const typeConfig = await getContentType(content_type);
+        if (typeConfig?.notebook_id && typeof typeConfig.notebook_id === 'string' && typeConfig.notebook_id.trim()) {
+          resolvedNotebookId = typeConfig.notebook_id.trim();
+        }
+      } catch {
+        // 配置读取失败不阻断创建，执行时 executeResearch 会 FAIL
+      }
+    }
+
+    if (resolvedNotebookId) {
+      payload.notebook_id = resolvedNotebookId;
     }
 
     const result = await pool.query(
