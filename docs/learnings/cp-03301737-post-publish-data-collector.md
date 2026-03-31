@@ -7,7 +7,11 @@
 
 ### 根本原因
 
-Brain 的 publish-monitor.js 只监控发布队列状态，不收集发布后的互动数据（阅读/点赞/播放）。scraper 脚本虽已存在但与 pipeline 无关联，导致数据孤岛。
+Brain 的 publish-monitor.js 只监控发布队列状态，不收集发布后的互动数据（阅读/点赞/播放）。
+
+scraper 脚本虽已存在于 `/perfect21/zenithjoy/workflows/platform-data/workflows/scraper/scripts/`，支持 8 个平台，但与 pipeline 之间没有自动关联触发机制。
+
+发布完成后，数据留在 `zenithjoy.publish_logs.metrics`，无法自动汇总回 Brain 的 `pipeline_publish_stats`，导致数据孤岛无法通过 API 统一查询。
 
 ---
 
