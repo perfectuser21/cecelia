@@ -141,16 +141,30 @@ if [[ -f "$EVALUATOR_SEAL" ]]; then
   " 2>/dev/null || echo "")
 fi
 
-# 读取 .dev-mode Stage 完成状态
+# 读取 .dev-mode Stage 完成状态 + task_track（LITE/FULL 模式）
 STAGE1_STATUS="unknown"
 STAGE2_STATUS="unknown"
 STAGE3_STATUS="unknown"
 STAGE4_STATUS="unknown"
+TASK_TRACK="full"
 if [[ -f "$DEV_MODE" ]]; then
   STAGE1_STATUS=$(grep "^step_1_spec:" "$DEV_MODE" 2>/dev/null | awk '{print $2}' || echo "unknown")
   STAGE2_STATUS=$(grep "^step_2_code:" "$DEV_MODE" 2>/dev/null | awk '{print $2}' || echo "unknown")
   STAGE3_STATUS=$(grep "^step_3_integrate:" "$DEV_MODE" 2>/dev/null | awk '{print $2}' || echo "unknown")
   STAGE4_STATUS=$(grep "^step_4_ship:" "$DEV_MODE" 2>/dev/null | awk '{print $2}' || echo "unknown")
+  TASK_TRACK=$(grep "^task_track:" "$DEV_MODE" 2>/dev/null | awk '{print $2}' || echo "full")
+fi
+
+# LITE seal 文件
+LITE_SEAL="${PROJECT_ROOT}/.dev-gate-lite.${BRANCH}"
+
+# 模式标签和满分
+if [[ "$TASK_TRACK" == "lite" ]]; then
+  MODE_LABEL="LITE"
+  MAX_SCORE=25
+else
+  MODE_LABEL="FULL"
+  MAX_SCORE=40
 fi
 
 # 读取 CI 结果（通过 gh CLI）
@@ -185,49 +199,94 @@ fi
 
 # ─── 评分计算 ─────────────────────────────────────────────────────────────────
 
-# 评分 1：Planner 隔离度（0-10）
-SCORE_PLANNER=0
-if [[ "$PLANNER_ALL_TODO" == "true" ]]; then
-  SCORE_PLANNER=10
-elif [[ "$PLANNER_ALL_TODO" == "false" ]]; then
+if [[ "$MODE_LABEL" == "LITE" ]]; then
+  # LITE 模式评分（满分 25 分）：无 Planner/Sprint Contract 维度
   SCORE_PLANNER=0
+  SCORE_ADVERSARIAL=0
+
+  # LITE 评分 A：CI 健康度（0-10，与 FULL 相同）
+  SCORE_CI=10
+  if [[ "$CI_FAIL_COUNT" -gt 0 ]]; then
+    SCORE_CI=$(( 10 - CI_FAIL_COUNT * 2 ))
+    if [[ "$SCORE_CI" -lt 0 ]]; then SCORE_CI=0; fi
+  fi
+  if [[ "$CI_RUNS_COUNT" -eq 0 ]]; then SCORE_CI=5; fi
+
+  # LITE 评分 B：留痕完整度（0-10）— LITE seal + dev-mode + crg seal = 3 文件满分
+  SCORE_TRACE=0
+  SEAL_FILES_FOUND=0
+  [[ -f "$LITE_SEAL" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  [[ -f "$DEV_MODE" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  local _crg_seal_lite="${PROJECT_ROOT}/.dev-gate-crg.${BRANCH}"
+  [[ -f "$_crg_seal_lite" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  # 3 files = 满分 10；按比例计算
+  SCORE_TRACE=$(( SEAL_FILES_FOUND * 10 / 3 ))
+  if [[ "$SCORE_TRACE" -gt 10 ]]; then SCORE_TRACE=10; fi
+
+  # LITE 评分 C：Lite 路径规范度（0-5）
+  SCORE_LITE=0
+  if [[ -f "$LITE_SEAL" ]]; then
+    SCORE_LITE=3
+    LITE_ROUTING=$(node -e "
+      try {
+        const d=JSON.parse(require('fs').readFileSync('${LITE_SEAL}','utf8'));
+        process.stdout.write(d.routing_decision||'unknown');
+      } catch(e){process.stdout.write('unknown');}
+    " 2>/dev/null || echo "unknown")
+    [[ "$LITE_ROUTING" == "lite" ]] && SCORE_LITE=$(( SCORE_LITE + 2 ))
+  fi
+
+  TOTAL_SCORE=$(( SCORE_CI + SCORE_TRACE + SCORE_LITE ))
+  if [[ "$TOTAL_SCORE" -gt 25 ]]; then TOTAL_SCORE=25; fi
+
 else
-  SCORE_PLANNER=0  # seal 文件缺失，无法验证，得 0 分
+  # FULL 模式评分（满分 40 分）
+  # 评分 1：Planner 隔离度（0-10）
+  SCORE_PLANNER=0
+  if [[ "$PLANNER_ALL_TODO" == "true" ]]; then
+    SCORE_PLANNER=10
+  elif [[ "$PLANNER_ALL_TODO" == "false" ]]; then
+    SCORE_PLANNER=0
+  else
+    SCORE_PLANNER=0  # seal 文件缺失，无法验证，得 0 分
+  fi
+
+  # 评分 2：对抗深度（0-10）
+  # 1轮0分歧 → 4/10（最低有效），每增加1轮+2，每发现1分歧+1（上限10）
+  SCORE_ADVERSARIAL=0
+  if [[ "$CONTRACT_ROUNDS" -gt 0 ]]; then
+    SCORE_ADVERSARIAL=4
+    EXTRA_ROUNDS=$(( CONTRACT_ROUNDS - 1 ))
+    EXTRA_FROM_ROUNDS=$(( EXTRA_ROUNDS * 2 ))
+    EXTRA_FROM_DIVS=$EVALUATOR_DIVERGENCE_COUNT
+    TOTAL_EXTRA=$(( EXTRA_FROM_ROUNDS + EXTRA_FROM_DIVS ))
+    SCORE_ADVERSARIAL=$(( 4 + TOTAL_EXTRA ))
+    if [[ "$SCORE_ADVERSARIAL" -gt 10 ]]; then SCORE_ADVERSARIAL=10; fi
+  fi
+
+  # 评分 3：CI 健康度（0-10）
+  SCORE_CI=10
+  if [[ "$CI_FAIL_COUNT" -gt 0 ]]; then
+    SCORE_CI=$(( 10 - CI_FAIL_COUNT * 2 ))
+    if [[ "$SCORE_CI" -lt 0 ]]; then SCORE_CI=0; fi
+  fi
+  if [[ "$CI_RUNS_COUNT" -eq 0 ]]; then SCORE_CI=5; fi
+
+  # 评分 4：留痕完整度（0-10）
+  SCORE_TRACE=0
+  SEAL_FILES_FOUND=0
+  [[ -f "$PLANNER_SEAL" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  [[ -f "$GENERATOR_SEAL" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  [[ -f "$EVALUATOR_SEAL" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  [[ -f "$CONTRACT_STATE" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  [[ -f "$DEV_MODE" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
+  SCORE_TRACE=$(( SEAL_FILES_FOUND * 2 ))
+  if [[ "$SCORE_TRACE" -gt 10 ]]; then SCORE_TRACE=10; fi
+
+  SCORE_LITE=0
+  TOTAL_SCORE=$(( SCORE_PLANNER + SCORE_ADVERSARIAL + SCORE_CI + SCORE_TRACE ))
+
 fi
-
-# 评分 2：对抗深度（0-10）
-# 1轮0分歧 → 4/10（最低有效），每增加1轮+2，每发现1分歧+1（上限10）
-SCORE_ADVERSARIAL=0
-if [[ "$CONTRACT_ROUNDS" -gt 0 ]]; then
-  SCORE_ADVERSARIAL=4
-  EXTRA_ROUNDS=$(( CONTRACT_ROUNDS - 1 ))
-  EXTRA_FROM_ROUNDS=$(( EXTRA_ROUNDS * 2 ))
-  EXTRA_FROM_DIVS=$EVALUATOR_DIVERGENCE_COUNT
-  TOTAL_EXTRA=$(( EXTRA_FROM_ROUNDS + EXTRA_FROM_DIVS ))
-  SCORE_ADVERSARIAL=$(( 4 + TOTAL_EXTRA ))
-  if [[ "$SCORE_ADVERSARIAL" -gt 10 ]]; then SCORE_ADVERSARIAL=10; fi
-fi
-
-# 评分 3：CI 健康度（0-10）
-SCORE_CI=10
-if [[ "$CI_FAIL_COUNT" -gt 0 ]]; then
-  SCORE_CI=$(( 10 - CI_FAIL_COUNT * 2 ))
-  if [[ "$SCORE_CI" -lt 0 ]]; then SCORE_CI=0; fi
-fi
-if [[ "$CI_RUNS_COUNT" -eq 0 ]]; then SCORE_CI=5; fi
-
-# 评分 4：留痕完整度（0-10）
-SCORE_TRACE=0
-SEAL_FILES_FOUND=0
-[[ -f "$PLANNER_SEAL" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
-[[ -f "$GENERATOR_SEAL" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
-[[ -f "$EVALUATOR_SEAL" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
-[[ -f "$CONTRACT_STATE" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
-[[ -f "$DEV_MODE" ]] && SEAL_FILES_FOUND=$(( SEAL_FILES_FOUND + 1 ))
-SCORE_TRACE=$(( SEAL_FILES_FOUND * 2 ))
-if [[ "$SCORE_TRACE" -gt 10 ]]; then SCORE_TRACE=10; fi
-
-TOTAL_SCORE=$(( SCORE_PLANNER + SCORE_ADVERSARIAL + SCORE_CI + SCORE_TRACE ))
 
 # ─── 生成报告（heredoc，章节标题精确格式）────────────────────────────────────
 
@@ -236,7 +295,8 @@ TOTAL_SCORE=$(( SCORE_PLANNER + SCORE_ADVERSARIAL + SCORE_CI + SCORE_TRACE ))
   echo ""
   echo "**生成时间**: ${TIMESTAMP}"
   echo "**Branch**: \`${BRANCH}\`"
-  echo "**总分**: ${TOTAL_SCORE}/40"
+  echo "**模式**: [${MODE_LABEL}]（LITE 满分 25，FULL 满分 /40）"
+  echo "**总分**: ${TOTAL_SCORE}/${MAX_SCORE}"
   echo ""
   echo "---"
   echo ""
@@ -336,15 +396,26 @@ TOTAL_SCORE=$(( SCORE_PLANNER + SCORE_ADVERSARIAL + SCORE_CI + SCORE_TRACE ))
   echo ""
   echo "## Scores"
   echo ""
-  echo "> 四维度执行质量评分"
-  echo ""
-  echo "| 维度 | 说明 | 得分 |"
-  echo "|------|------|------|"
-  echo "| Planner 隔离 | 所有 Test=TODO → 10/10 | ${SCORE_PLANNER}/10 |"
-  echo "| 对抗深度 | 轮次×分歧综合，最低 4（1轮0分歧） | ${SCORE_ADVERSARIAL}/10 |"
-  echo "| CI 健康度 | 一次通过 → 10/10，每失败 -2 | ${SCORE_CI}/10 |"
-  echo "| 留痕完整度 | Seal 文件数量（5个=满分） | ${SCORE_TRACE}/10 |"
-  echo "| **总分** | | **${TOTAL_SCORE}/40** |"
+  if [[ "${MODE_LABEL}" == "LITE" ]]; then
+    echo "> 三维度执行质量评分（[LITE] 模式，满分 25）"
+    echo ""
+    echo "| 维度 | 说明 | 得分 |"
+    echo "|------|------|------|"
+    echo "| CI 健康度 | 一次通过 → 10/10，每失败 -2 | ${SCORE_CI}/10 |"
+    echo "| 留痕完整度 | Lite seal+dev-mode+crg seal（3个=满分） | ${SCORE_TRACE}/10 |"
+    echo "| Lite 路径规范度 | lite seal 存在=3，routing_decision=lite=+2 | ${SCORE_LITE}/5 |"
+    echo "| **总分** | [LITE] 满分 25（[FULL] 满分 /40） | **${TOTAL_SCORE}/25** |"
+  else
+    echo "> 四维度执行质量评分（[FULL] 模式，满分 /40）"
+    echo ""
+    echo "| 维度 | 说明 | 得分 |"
+    echo "|------|------|------|"
+    echo "| Planner 隔离 | 所有 Test=TODO → 10/10 | ${SCORE_PLANNER}/10 |"
+    echo "| 对抗深度 | 轮次×分歧综合，最低 4（1轮0分歧） | ${SCORE_ADVERSARIAL}/10 |"
+    echo "| CI 健康度 | 一次通过 → 10/10，每失败 -2 | ${SCORE_CI}/10 |"
+    echo "| 留痕完整度 | Seal 文件数量（5个=满分） | ${SCORE_TRACE}/10 |"
+    echo "| **总分** | [FULL] | **${TOTAL_SCORE}/40** |"
+  fi
   echo ""
   echo "---"
   echo ""
@@ -352,4 +423,4 @@ TOTAL_SCORE=$(( SCORE_PLANNER + SCORE_ADVERSARIAL + SCORE_CI + SCORE_TRACE ))
 } > "$REPORT_FILE"
 
 echo "✅ Sprint Report 已生成: ${REPORT_FILE}"
-echo "   总分: ${TOTAL_SCORE}/40（Planner:${SCORE_PLANNER} 对抗:${SCORE_ADVERSARIAL} CI:${SCORE_CI} 留痕:${SCORE_TRACE}）"
+echo "   模式: [${MODE_LABEL}]  总分: ${TOTAL_SCORE}/${MAX_SCORE}（CI:${SCORE_CI} 留痕:${SCORE_TRACE} Planner:${SCORE_PLANNER} 对抗:${SCORE_ADVERSARIAL}）"

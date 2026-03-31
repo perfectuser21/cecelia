@@ -176,7 +176,16 @@ devloop_check() {
     # seal 文件存在且 verdict=FAIL → blocked
     # seal 文件不存在 且 .dev-mode 有 status=pass → blocked（自认证检测）
     # seal 文件不存在 且 .dev-mode 无该字段 → pass-through（subagent 尚未运行）
+    # LITE 模式豁免：task_track=lite 且 .dev-gate-lite.{branch} 存在 → 跳过此条件
     if [[ -f "$dev_mode_file" ]]; then
+        local _task_track_15
+        _task_track_15=$(grep "^task_track:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "full")
+        local _lite_seal_15
+        _lite_seal_15="$(dirname "$dev_mode_file")/.dev-gate-lite.${branch}"
+        if [[ "$_task_track_15" == "lite" && -f "$_lite_seal_15" ]]; then
+            # LITE mode: 跳过 spec_review seal check（Planner/Sprint Contract 未运行）
+            :
+        else
         local spec_review_status spec_seal_file spec_seal_verdict
         spec_review_status=$(grep "^spec_review_status:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
         spec_seal_file="$(dirname "$dev_mode_file")/.dev-gate-spec.${branch}"
@@ -230,12 +239,17 @@ devloop_check() {
             fi
             # 不存在且无字段 → pass-through，subagent 尚未运行
         fi
+        fi  # end LITE mode else branch for condition 1.5
     fi
 
     # ===== 条件 1.6: planner seal 文件验证（Sprint Contract 前置检查）=====
     # Planner subagent 完成后必须写入 .dev-gate-planner.{branch}
     # 无此文件 → Sprint Contract 尚未生效，禁止进入 Stage 2
+    # LITE 模式豁免：task_track=lite → 跳过此条件（LITE 路径不运行 Planner）
     if [[ -f "$dev_mode_file" ]]; then
+        local _task_track_16
+        _task_track_16=$(grep "^task_track:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "full")
+        if [[ "$_task_track_16" != "lite" ]]; then
         local planner_seal_file
         planner_seal_file="$(dirname "$dev_mode_file")/.dev-gate-planner.${branch}"
         local step_1_done
@@ -247,6 +261,7 @@ devloop_check() {
             _devloop_jq -n '{"status":"blocked","reason":"Planner seal 缺失：.dev-gate-planner.<branch> 不存在，Sprint Contract 尚未生效","action":"Stage 1 Spec 完成后必须由 Planner subagent 写入 .dev-gate-planner.<branch> seal 文件，再进入 Stage 2"}'
             return 2
         fi
+        fi  # end FULL-only check for condition 1.6
     fi
 
     # ===== 条件 2: step_2_code 是否完成？ =====

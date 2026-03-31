@@ -274,7 +274,10 @@ step_4_ship: pending
 **4-Stage Pipeline 流程图**：
 
 ```
-Stage 1 Spec → 派发 spec_review → 等 PASS
+Stage 1 Spec:
+  ├─ [LITE] 5条件全满足 → 主agent直接写Task Card（Test字段立即填写）
+  │         写 .dev-gate-lite.{branch} + task_track: lite → 直接进入 Stage 2
+  └─ [FULL] 任意条件不满足 → 派发 Planner subagent → Sprint Contract → 等 PASS
                                       ↓
                               Stage 2 Code（Generator subagent + 自验证）
                               └─ 派发 code_review_gate → 等 PASS
@@ -284,7 +287,7 @@ Stage 1 Spec → 派发 spec_review → 等 PASS
                               └─ CI L1-L4 → CI 通过即放行
                                       ↓
                               Stage 4 Ship
-                              ├─ Learning
+                              ├─ Learning（Sprint Report: [LITE] 25分制 / [FULL] 40分制）
                               ├─ 合并 PR
                               └─ Clean → done
 ```
