@@ -139,9 +139,11 @@ describe('PipelineOutputPage', () => {
     renderWithRoute('test-id');
     await screen.findByText('Summary');
     screen.getByText('生成记录').click();
-    // 时间格式：开始/完成标签
-    expect(await screen.findByText(/开始：/)).toBeInTheDocument();
-    expect(screen.getByText(/完成：/)).toBeInTheDocument();
+    // 时间格式：开始/完成标签（多个 stage 都有时间戳，使用 findAllByText）
+    const startLabels = await screen.findAllByText(/开始：/);
+    expect(startLabels.length).toBeGreaterThan(0);
+    const endLabels = screen.getAllByText(/完成：/);
+    expect(endLabels.length).toBeGreaterThan(0);
   });
 
   it('生成记录 Tab 显示 review_issues 错误详情', async () => {

@@ -5,10 +5,12 @@
  * 1. 从 Brain API 读取内容类型列表 → 下拉选择
  * 2. 选内容类型后自动带入 notebook_id（从类型配置读取）
  * 3. 输入关键词 → 提交创建 content-pipeline 任务
- * 4. 展示已有 Pipeline 列表及状态，点击展开查看 stage 详情
+ * 4. 展示已有 Pipeline 列表及状态，点击可进入详情页或展开 stage 详情
+ * 5. 有进行中 Pipeline 时每 5s 自动刷新列表
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Factory, Play, RefreshCw, Clock, CheckCircle, XCircle, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 const BRAIN_API = '/api/brain';
@@ -36,6 +38,11 @@ type Priority = 'P0' | 'P1' | 'P2';
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { icon: React.ReactNode; label: string; cls: string }> = {
+    pending: {
+      icon: <Clock className="w-3 h-3" />,
+      label: '待执行',
+      cls: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
+    },
     queued: {
       icon: <Clock className="w-3 h-3" />,
       label: '排队中',
@@ -209,6 +216,14 @@ export default function ContentFactory() {
   useEffect(() => {
     fetchTypeNotebookId(contentType);
   }, [contentType, fetchTypeNotebookId]);
+
+  // 有进行中 / 排队中 pipeline 时每 5s 自动刷新
+  useEffect(() => {
+    const hasActive = pipelines.some(p => p.status === 'in_progress' || p.status === 'queued');
+    if (!hasActive) return;
+    const timer = setInterval(loadPipelines, 5000);
+    return () => clearInterval(timer);
+  }, [pipelines, loadPipelines]);
 
   const loadStages = useCallback(async (pipelineId: string) => {
     setStagesLoading(prev => ({ ...prev, [pipelineId]: true }));
@@ -441,29 +456,35 @@ export default function ContentFactory() {
                   key={p.id}
                   className="rounded-lg border border-gray-100 dark:border-gray-700"
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleExpand(p.id)}
-                    className="w-full flex items-center justify-between p-3 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors text-left rounded-lg"
-                  >
-                    <div className="flex-1 min-w-0 mr-3">
+                  <div className="flex items-center">
+                    <Link
+                      to={`/content-factory/${p.id}`}
+                      className="flex-1 min-w-0 p-3 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
+                    >
                       <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{p.title}</p>
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                         创建：{formatTime(p.created_at)}
                         {p.completed_at && ` · 完成：${formatTime(p.completed_at)}`}
                         {p.failed_at && ` · 失败：${formatTime(p.failed_at)}`}
                       </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    </Link>
+                    <div className="flex items-center gap-2 flex-shrink-0 pr-3">
                       <span className="text-xs text-gray-400 dark:text-gray-500">{p.priority}</span>
                       <StatusBadge status={p.status} />
-                      {isExpanded ? (
-                        <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
-                      ) : (
-                        <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(p.id)}
+                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        aria-label={isExpanded ? '收起' : '展开'}
+                      >
+                        {isExpanded ? (
+                          <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                        ) : (
+                          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                        )}
+                      </button>
                     </div>
-                  </button>
+                  </div>
 
                   {isExpanded && (
                     <div className="px-3 pb-3">

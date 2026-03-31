@@ -1,0 +1,39 @@
+{
+  "sealed_by": "spec-review-evaluator",
+  "branch": "cp-03310252-a4b11e81-7778-42bf-8f13-12b40e",
+  "timestamp": "2026-03-31T00:00:00.000Z",
+  "verdict": "PASS",
+  "independent_test_plans": [
+    {
+      "dod_item": "ContentFactory.tsx 中 pipeline 列表条目改为 Link 到 /content-factory/${p.id} 结构",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/ContentFactory.tsx','utf8');if(!c.includes('/content-factory/'))process.exit(1);if(!c.includes('Link'))process.exit(1);console.log('ok')\"",
+      "confidence": "high"
+    },
+    {
+      "dod_item": "ContentFactory 测试中 pipeline 列表条目渲染为链接的测试通过",
+      "proposed_test": "tests/apps/api/features/content/pages/ContentFactory.test.tsx",
+      "confidence": "high"
+    },
+    {
+      "dod_item": "ContentFactory 有 in_progress pipeline 时启动 5s 轮询（useEffect + setInterval）",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/ContentFactory.tsx','utf8');if(!c.includes('setInterval'))process.exit(1);if(!c.includes('5000'))process.exit(1);console.log('ok')\"",
+      "confidence": "high"
+    },
+    {
+      "dod_item": "PipelineOutputPage pipeline 未完成时每 5s 轮询（useEffect + setInterval）",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/PipelineOutputPage.tsx','utf8');if(!c.includes('setInterval'))process.exit(1);if(!c.includes('5000'))process.exit(1);console.log('ok')\"",
+      "confidence": "high"
+    },
+    {
+      "dod_item": "ContentFactory.tsx StatusBadge 包含 'pending' 到 '待执行' 映射",
+      "proposed_test": "node -e \"const c=require('fs').readFileSync('apps/api/features/content/pages/ContentFactory.tsx','utf8');if(!c.includes('pending'))process.exit(1);if(!c.includes('\\u5f85\\u6267\\u884c'))process.exit(1);console.log('ok')\"",
+      "confidence": "high"
+    },
+    {
+      "dod_item": "PipelineOutputPage GenerationTab 显示全部 6 个阶段（含 pending 占位）",
+      "proposed_test": "tests/apps/api/features/content/pages/PipelineOutputPage.test.tsx",
+      "confidence": "medium"
+    }
+  ],
+  "issues": []
+}
