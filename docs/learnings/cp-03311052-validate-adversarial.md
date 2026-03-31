@@ -14,8 +14,9 @@ type: validation
 
 ### 根本原因
 
-本次验证通过极简任务（仅添加一行注释）端对端走完了完整的 Sprint Contract Gate 流程：
-Planner subagent 输出 Task Card 时 Test 字段全为 TODO，Generator 和 Evaluator 从剥离版 Task Card 独立提案（提案内容不同：Generator 用 800 字节切片，Evaluator 用逐行位置验证），sprint-contract-loop.sh 被调用后读 Evaluator seal 文件，统计 blocker_count=0，状态写入 .sprint-contract-state.{branch} 磁盘文件，返回 exit 0。
+本次通过极简任务（添加一行注释）端对端验证了 Planner/Generator/Evaluator 对抗网络的完整工作路径。
+Planner subagent 严格遵守隔离规则，输出的 Task Card 所有 Test 字段均为 TODO，未泄露任何测试方案。
+Generator 和 Evaluator 分别从剥离版 Task Card 独立提案（内容不同：Generator 用 800 字节切片，Evaluator 用逐行位置验证），sprint-contract-loop.sh 读取 Evaluator seal 文件后统计 blocker_count=0 并写磁盘，返回 exit 0 确认收敛。
 
 ### 机制验证结论
 
