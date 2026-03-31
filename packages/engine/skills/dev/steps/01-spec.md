@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 3.4.0
+version: 3.5.0
 created: 2026-03-20
 updated: 2026-03-31
 changelog:
+  - 3.5.0: Sprint Contract Gate Step 4 改为调用 sprint-contract-loop.sh — 脚本机械判断 blocker_count，状态写磁盘（.sprint-contract-state.{branch}），移除 prev_divergence 死循环检测，纯 while true 只有 exit 0 才退出
   - 3.4.0: Sprint Contract Gate 移除固定轮数上限（原值=3），改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
   - 3.3.0: Sprint Contract Gate 重写为双独立提案架构 — Generator subagent + Evaluator subagent 各自从剥离版 Task Card 独立提案，Orchestrator 比对，收敛上限为 3 轮；Planner 输出不再含任何 Test 命令
   - 3.2.0: Sprint Contract Gate PASS 后额外验证 plans.length > 0 — 若 seal 中 independent_test_plans 为空且 Task Card 含 DoD，视为 FAIL 重试
@@ -334,9 +335,9 @@ echo "✅ 置信度已写入 .dev-mode"
 > 5. Orchestrator 比对两份提案：divergence_count = 各条目方案不一致的总数
 > 6. 如有分歧 → 将 Evaluator 的提案展示给 Generator，将 Generator 的提案展示给 Evaluator → 各自修正 → 再比对
 >    **无固定轮数上限**，持续迭代直到 blocker_count == 0（完全收敛）
-> 7. **死循环检测**：若连续 2 轮 divergence 列表完全相同（双方均无变化）→ 升级 P1 任务等待人工介入
+> 7. **脚本判断（v3.5）**：Orchestrator 调用 `sprint-contract-loop.sh`，脚本机械统计 blocker_count 并写磁盘，exit 0 = 收敛，exit 1 = 继续迭代
 >
-> **不是软建议，而是硬门禁（exit 1）**：有严重分歧超过 3 轮就不能进入 Stage 2。
+> **不是软建议，而是硬门禁（exit 1）**：脚本未返回 exit 0 就不能进入 Stage 2。
 
 ### Step 1：剥离 Task Card Test 字段
 
@@ -416,73 +417,58 @@ ${TASK_CARD_STRIPPED}
 })
 ```
 
-### Step 4：Orchestrator 比对 + 无限收敛（死循环检测）
+### Step 4：Orchestrator 调用脚本 + 无限收敛
 
-> **设计原则**：无固定轮数上限。两个 subagent 持续辩论直到真正对齐（blocker_count == 0）。
-> 唯一的停止条件是：**连续 2 轮 divergence 列表完全相同**（双方都不再改变），判定死循环，注册 P1 并 FAIL。
+> **设计原则（v3.5）**：收敛判断由 `sprint-contract-loop.sh` 脚本机械执行，状态写磁盘。
+> 主 agent 只负责：spawn 双方 → 调脚本 → 根据 exit code 决定继续还是重跑。
+> 唯一停止条件：脚本 exit 0（blocker_count == 0）。
 
-```
-round = 0
-prev_divergence = null  # 上一轮的 divergence 列表（用于死循环检测）
+```bash
+# Step 4 执行流程（主 agent 按此执行，while true 无轮数上限）
 
-loop:
-  round++
+PROJECT_ROOT=$(pwd)
+LOOP_SCRIPT="packages/engine/scripts/devgate/sprint-contract-loop.sh"
 
-  # 读取两份提案
-  GEN_SEAL = 读取 .dev-gate-generator-sprint.${BRANCH}（JSON）
-  EVAL_SEAL = 读取 .dev-gate-spec.${BRANCH}（JSON）
+while true; do
+  # 执行 Step 2（Generator subagent）和 Step 3（Evaluator subagent）
+  # → 各自写 seal 文件到磁盘
 
-  # plans.length 检查
-  如果 EVAL_SEAL.independent_test_plans.length == 0：
-    → echo "⚠️  Evaluator plans.length == 0，重新调用 Evaluator"
-    → 删除 EVAL_SEAL 文件，重新执行 Step 3
+  # 调用脚本做机械判断
+  bash "$LOOP_SCRIPT" "$BRANCH" "$PROJECT_ROOT"
+  LOOP_EXIT=$?
 
-  # 比对（逐条）
-  divergence = []
-  for each dod_item in DoD:
-    gen_test = GEN_SEAL.proposals 中对应条目的 proposed_test
-    eval_test = EVAL_SEAL.independent_test_plans 中对应条目的 my_test
-    if 两者验证的核心行为不同（一方是文件存在检查，另一方是行为断言）:
-      divergence.append({ item, gen_test, eval_test, severity: "blocker" })
-    elif 细微差异（测试层不同但均能验证核心行为）:
-      divergence.append({ item, gen_test, eval_test, severity: "warning" })
-
-  blocker_count = divergence 中 severity=="blocker" 的数量
-
-  if blocker_count == 0:
-    # 收敛：用 Evaluator 提案填写 Task Card Test 字段（Evaluator 作为最终裁判）
-    将 EVAL_SEAL.independent_test_plans 中每条 my_test 写回 Task Card 对应 DoD 条目
-    echo "spec_review_status: pass" >> .dev-mode.${BRANCH}
-    break（进入 Stage 2）
-
-  # 死循环检测：连续 2 轮分歧列表相同 → 双方已无法自行收敛
-  if prev_divergence != null && divergence_lists_identical(divergence, prev_divergence):
-    → echo "❌ 死循环检测：连续 2 轮 divergence 完全相同，双方无法自行收敛"
-    → curl -s -X POST http://localhost:5221/api/brain/tasks \
-         -H 'Content-Type: application/json' \
-         -d '{"title":"Sprint Contract 死循环 P1","description":"Generator/Evaluator 连续2轮分歧列表相同，需人工介入","priority":"p1","task_type":"dev"}' || true
-    → FAIL（不能进入 Stage 2）
+  if [[ $LOOP_EXIT -eq 0 ]]; then
+    # ✅ 收敛：blocker_count == 0
+    # 用 Evaluator seal 中 independent_test_plans 填写 Task Card Test 字段
+    # 写 spec_review_status: pass → .dev-mode
+    echo "spec_review_status: pass" >> ".dev-mode.${BRANCH}"
     break
 
-  prev_divergence = divergence  # 记录本轮，供下轮死循环检测使用
+  elif [[ $LOOP_EXIT -eq 2 ]]; then
+    # seal 文件缺失或格式错误 → 重跑 Evaluator
+    rm -f ".dev-gate-spec.${BRANCH}"
+    # 继续 while loop（重新 spawn）
 
-  # 有分歧，展示给双方修正（无限迭代直到收敛）
-  → 将 Evaluator 提案（EVAL_SEAL）展示给 Generator → Generator 修正 → 覆盖 .dev-gate-generator-sprint.${BRANCH}
-  → 将 Generator 提案（GEN_SEAL）展示给 Evaluator → Evaluator 修正 → 覆盖 .dev-gate-spec.${BRANCH}
-  → 继续 loop（下一轮比对）
+  else
+    # exit 1：还有 blocker，脚本已输出差异详情
+    # → 将差异展示给 Generator（看 Evaluator 方案）→ 覆盖 .dev-gate-generator-sprint.${BRANCH}
+    # → 将差异展示给 Evaluator（看 Generator 方案）→ 覆盖 .dev-gate-spec.${BRANCH}
+    # → 继续 while loop（下一轮比对）
+    rm -f ".dev-gate-generator-sprint.${BRANCH}" ".dev-gate-spec.${BRANCH}"
+    # 继续 while loop
+  fi
+done
 ```
 
-**divergence_lists_identical 判断逻辑**：
-- 提取本轮和上轮每条 divergence 的 `item` + `severity` 组合
-- 两个集合完全相同（item 和 severity 都一致）→ 认定为死循环
-- 任意一条有变化（item 新增/消失/severity 变化）→ 仍在收敛，继续
+**状态持久化**：
+- `.sprint-contract-state.{branch}` 由脚本写入，保存 round / blocker_count / divergence 详情
+- session 重启后主 agent 可读取此文件了解当前收敛进度
 
 **执行时注意**：
-- Generator 和 Evaluator subagent 的输入均为**剥离版 Task Card**（Test 字段全 TODO），这是机械保证独立性的唯一方式
+- Generator 和 Evaluator subagent 的输入均为**剥离版 Task Card**（Test 字段全 TODO），机械保证独立性
 - 不要传「有 Test 字段的原版 Task Card」给任何 subagent，否则破坏独立性
-- Evaluator（spec_review）是最终裁判：收敛后用 Evaluator 的提案填写 Task Card
-- divergence_count = 0（全部 warning）也视为收敛，可以进入 Stage 2
-- plans.length 检查在每轮开始时执行（见上方 loop）
+- Evaluator（spec_review）是最终裁判：收敛后用 Evaluator 的 independent_test_plans 填写 Task Card
+- blocker_count == 0（全部 warning 或全部 consistent）也视为收敛，可以进入 Stage 2
 
 ## PASS 后验证
 

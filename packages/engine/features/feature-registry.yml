@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.72.0"
+    date: "2026-03-31"
+    change: "[CONFIG] feat(engine): Sprint Contract Gate 收敛循环改为 shell 脚本驱动（sprint-contract-loop.sh）— 状态写磁盘，移除伪代码 while loop"
+    scope: "packages/engine/scripts/devgate/sprint-contract-loop.sh,packages/engine/skills/dev/steps/01-spec.md"
   - version: "13.71.0"
     date: "2026-03-31"
     change: "[CONFIG] feat(engine): 修复对抗网络两个缺陷 — Sprint Contract 无限收敛（死循环检测）+ 独立 Evaluator 接回 Stage 2（playwright-evaluator.sh）"
@@ -2969,6 +2973,39 @@ product_features:
     minimal_paths:
       - "02-code.md 含 playwright-evaluator.sh 步骤"
       - "01-spec.md 不含 MAX_ROUNDS"
-      - "01-spec.md 含死循环检测（prev_divergence）"
+      - "01-spec.md Step 4 调用 sprint-contract-loop.sh"
+
+    rcis: []
+
+  - id: sprint-contract-loop
+    name: Sprint Contract 收敛循环 shell 脚本驱动
+    category: workflows
+    status: Committed
+    priority: P0
+    version: "13.72.0"
+    updated: "2026-03-31"
+    description: |
+      把 Sprint Contract Gate 的收敛 while loop 从 MD 伪代码改为 shell 脚本管理状态。
+      sprint-contract-loop.sh 读取 Generator/Evaluator seal 文件，机械统计 blocker_count，
+      状态写入磁盘（.sprint-contract-state.{branch}），exit 0 = PASS，exit 1 = 继续迭代。
+      主 agent 只负责 spawn 双方 → 调脚本 → 根据 exit code 决定下一步，loop 状态不依赖 context。
+
+    entrypoints:
+      - type: script
+        file: packages/engine/scripts/devgate/sprint-contract-loop.sh
+        trigger: "01-spec.md Step 4 调用"
+      - type: step
+        file: packages/engine/skills/dev/steps/01-spec.md
+        trigger: "Stage 1 Sprint Contract Gate Step 4"
+
+    golden_path: |
+      Generator subagent 提案 → Evaluator subagent 提案 →
+      bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
+      exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
+
+    minimal_paths:
+      - "sprint-contract-loop.sh 存在且可执行"
+      - "脚本读 .dev-gate-spec.{branch} 统计 consistent==false"
+      - "01-spec.md Step 4 bash sprint-contract-loop.sh"
 
     rcis: []

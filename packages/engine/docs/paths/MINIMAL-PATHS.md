@@ -495,7 +495,15 @@ changelog:
 
 1. ✅ **02-code.md 含 playwright-evaluator.sh 步骤**
 2. ✅ **01-spec.md 不含 MAX_ROUNDS**
-3. ✅ **01-spec.md 含死循环检测（prev_divergence）**
+3. ✅ **01-spec.md Step 4 调用 sprint-contract-loop.sh**
+
+---
+
+### sprint-contract-loop: Sprint Contract 收敛循环 shell 脚本驱动
+
+1. ✅ **sprint-contract-loop.sh 存在且可执行**
+2. ✅ **脚本读 .dev-gate-spec.{branch} 统计 consistent==false**
+3. ✅ **01-spec.md Step 4 bash sprint-contract-loop.sh**
 
 ---
 

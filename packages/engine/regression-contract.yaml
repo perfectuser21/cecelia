@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "13.71.0"
+version: "13.72.0"
 updated: 2026-03-31
 
 # ============================================================================
@@ -3728,6 +3728,23 @@ skills:
       type: command
       run: "bash -c 'test -f packages/engine/scripts/devgate/playwright-evaluator.sh'"
     test: "tests/devgate/playwright-evaluator.test.ts"
+
+  - id: RCI-sprint-contract-loop
+    name: "Sprint Contract 收敛循环 shell 脚本（sprint-contract-loop.sh）"
+    description: "读取 Generator/Evaluator seal 文件，机械统计 blocker_count，写磁盘状态，exit 0=PASS"
+    trigger: [PR]
+    method: auto
+    file: "scripts/devgate/sprint-contract-loop.sh"
+    tags: [devgate, sprint-contract, convergence]
+    owner: engine
+    steps:
+      given: "01-spec.md Step 4 Generator + Evaluator 各自写完 seal 文件"
+      when: "主 agent 调用 bash sprint-contract-loop.sh BRANCH PROJECT_ROOT"
+      then: "统计 Evaluator seal 中 consistent==false 条目，写状态到 .sprint-contract-state.{branch}，exit 0=收敛 exit 1=继续迭代"
+    evidence:
+      type: command
+      run: "bash -c 'test -x packages/engine/scripts/devgate/sprint-contract-loop.sh'"
+    test: "tests/devgate/sprint-contract-loop.test.ts"
 
 # ============================================================================
 # Changelog
