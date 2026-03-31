@@ -132,8 +132,34 @@ describe("verify-step.sh", () => {
         'Test: manual:node -e "const fs=require(\'fs\');if(!fs.existsSync(\'file.sh\'))process.exit(1)"',
         "Test: tests/my.test.ts",
       ]);
-      // Gate Planner 要求 Planner seal 存在
+      // Gate Planner: Planner seal
       writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "planner_seal: verified\n");
+      // Gate Generator: Generator seal
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), JSON.stringify({
+        sealed_by: "sprint-contract-generator",
+        branch: BRANCH,
+        timestamp: new Date().toISOString(),
+        proposals: [{ dod_item: "test item", proposed_test: "node -e \"process.exit(0)\"" }]
+      }));
+      // Gate Evaluator: Evaluator seal（divergence_count=1，round=1）
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({
+        verdict: "PASS",
+        branch: BRANCH,
+        timestamp: new Date().toISOString(),
+        reviewer: "spec-review-agent",
+        independent_test_plans: [{ dod_item: "test item", my_test: "test", agent_test: "other", consistent: false, note: "test divergence" }],
+        negotiation_result: { consistent_count: 0, divergence_count: 1, blockers_from_divergence: 0, summary: "test" },
+        issues: [],
+        summary: "test"
+      }));
+      // Gate Sprint Contract State: round=1
+      writeFileSync(join(dir, `.sprint-contract-state.${BRANCH}`), JSON.stringify({
+        branch: BRANCH,
+        round: 1,
+        timestamp: new Date().toISOString(),
+        blocker_count: 0,
+        divergence: []
+      }));
 
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
@@ -204,6 +230,23 @@ describe("verify-step.sh", () => {
       createTaskCard(dir, BRANCH, ["Test: contract:my-behavior"]);
       // Gate Planner 要求 Planner seal 存在
       writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "planner_seal: verified\n");
+      // Gate Generator seal
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), JSON.stringify({
+        sealed_by: "sprint-contract-generator", branch: BRANCH, timestamp: new Date().toISOString(),
+        proposals: [{ dod_item: "test item", proposed_test: "node -e \"process.exit(0)\"" }]
+      }));
+      // Gate Evaluator seal (verdict=PASS, divergence_count=1)
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({
+        verdict: "PASS", branch: BRANCH, timestamp: new Date().toISOString(),
+        reviewer: "spec-review-agent",
+        independent_test_plans: [{ dod_item: "test item", my_test: "test", agent_test: "other", consistent: false, note: "divergence" }],
+        negotiation_result: { consistent_count: 0, divergence_count: 1, blockers_from_divergence: 0, summary: "test" },
+        issues: [], summary: "test"
+      }));
+      // Gate Sprint Contract State (round=1)
+      writeFileSync(join(dir, `.sprint-contract-state.${BRANCH}`), JSON.stringify({
+        branch: BRANCH, round: 1, timestamp: new Date().toISOString(), blocker_count: 0, divergence: []
+      }));
 
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
