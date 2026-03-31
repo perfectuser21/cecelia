@@ -1,0 +1,21 @@
+# Learning - content pipeline executor 接通 Claude CLI
+
+**Branch**: cp-03311107-pipeline-executor-claude
+**PR**: #1735
+
+### 根本原因
+
+`content-pipeline-executors.js` 中 4 个阶段（executeCopywriting / executeCopyReview / executeGenerate / executeImageReview）使用本地模板和静态规则，完全忽略了配置页面（ContentTypeConfigPage）设置的 `generate_prompt`、`review_prompt`、`image_prompt`、`image_review_prompt`，导致 solo-company-case 等 YAML 配置的 prompt 从未被执行。
+
+### 修复方案
+
+- 添加 `runClaude(prompt, outputFormat, timeout)` helper（使用 `spawnSync` 避免 shell 注入）
+- 各函数优先读取 `typeConfig.template.<stage>_prompt`，替换 `{keyword}` / `{findings}` / `{copy}` 等占位符
+- Claude 调用失败时有 fallback（静态规则 / 占位文件），不阻断 pipeline
+- `executeCopywriting` 注入 `task.payload.review_feedback` 支持 rerun 改进
+
+### 下次预防
+
+- [ ] 新建 executor 阶段时，必须检查 `typeConfig.template` 中是否有对应 prompt 字段，不要用本地字符串拼接
+- [ ] 使用 `spawnSync` 而非 `execSync` 拼 shell 命令，避免 prompt 中的引号/特殊字符引发 shell 注入
+- [ ] `review_feedback` rerun 机制：copyreview 失败时，记录 `issues` 到下一次 copywriting 的 payload
