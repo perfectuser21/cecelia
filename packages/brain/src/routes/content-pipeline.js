@@ -586,4 +586,43 @@ router.get('/:id/output', async (req, res) => {
   }
 });
 
+/**
+ * GET /pipelines/:id/stats
+ * 查询 pipeline 各平台发布后数据汇总（来自 pipeline_publish_stats 表）
+ */
+router.get('/:id/stats', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT platform,
+              SUM(views)    AS views,
+              SUM(likes)    AS likes,
+              SUM(comments) AS comments,
+              SUM(shares)   AS shares,
+              MAX(scraped_at) AS last_scraped_at,
+              COUNT(*) AS scrape_count
+       FROM pipeline_publish_stats
+       WHERE pipeline_id = $1
+       GROUP BY platform
+       ORDER BY platform`,
+      [id]
+    );
+
+    const stats = result.rows.map(row => ({
+      platform: row.platform,
+      views: parseInt(row.views, 10) || 0,
+      likes: parseInt(row.likes, 10) || 0,
+      comments: parseInt(row.comments, 10) || 0,
+      shares: parseInt(row.shares, 10) || 0,
+      last_scraped_at: row.last_scraped_at,
+      scrape_count: parseInt(row.scrape_count, 10) || 0,
+    }));
+
+    res.json({ pipeline_id: id, stats });
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /:id/stats error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
