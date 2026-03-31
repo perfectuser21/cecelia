@@ -2,8 +2,8 @@
 # ============================================================================
 # Feature Registry - ZenithJoy Engine
 # ============================================================================
-# 版本: 3.85.0
-# 更新: 2026-03-25
+# 版本: 3.86.0
+# 更新: 2026-03-31
 #
 # 核心原则:
 # - Feature Registry 回答"系统有什么能力"（What）
@@ -2891,5 +2891,43 @@ product_features:
       - "spec_review independent_test_plans.length > 0"
       - "CRG stats 非全零"
       - "两个 seal 文件均含 reviewer_model 字段"
+
+    rcis: []
+
+  - id: adversarial-redesign
+    name: Sprint Contract Gate 双独立提案对抗架构
+    category: workflows
+    status: Committed
+    priority: P0
+    version: "13.70.0"
+    updated: "2026-03-31"
+    description: |
+      对标 Anthropic 官方 Planner/Generator/Evaluator 三角对抗：
+      - planner-prompt.md：所有 Test 字段改为占位符，Planner 不再写任何 Test 命令
+      - 01-spec.md Sprint Contract Gate：Orchestrator 剥离 Task Card Test 字段后分别传给 Generator subagent 和 Evaluator subagent，两者互不知道对方提案，最多 3 轮收敛
+      - spec-review SKILL.md v1.7.0：说明 Evaluator 收到剥离版 Task Card
+
+    entrypoints:
+      - type: skill
+        file: packages/engine/skills/dev/lib/planner-prompt.md
+        trigger: "/dev Stage 1 Planner subagent 生成 Task Card 时调用"
+      - type: skill
+        file: packages/workflows/skills/spec-review/SKILL.md
+        trigger: "/dev Stage 1 Sprint Contract Gate Evaluator subagent 触发"
+      - type: step
+        file: packages/engine/skills/dev/steps/01-spec.md
+        trigger: "Stage 1 Sprint Contract Gate Orchestrator 编排"
+
+    golden_path: |
+      Orchestrator 剥离 Task Card Test 字段 →
+      Generator subagent 独立提案 → .dev-gate-generator-sprint.{branch} →
+      Evaluator subagent 独立提案 → .dev-gate-spec.{branch} →
+      Orchestrator 比对 → 有分歧 → 双方互看 → 最多 3 轮收敛 →
+      Evaluator 提案写入 Task Card Test 字段
+
+    minimal_paths:
+      - "Generator subagent 写入 .dev-gate-generator-sprint.{branch}"
+      - "Evaluator subagent 写入 .dev-gate-spec.{branch}"
+      - "planner-prompt.md 所有 Test 字段为占位符"
 
     rcis: []

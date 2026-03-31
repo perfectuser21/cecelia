@@ -1,9 +1,10 @@
 ---
 id: planner-prompt
-version: 1.1.0
+version: 1.2.0
 created: 2026-03-29
-updated: 2026-03-30
+updated: 2026-03-31
 changelog:
+  - 1.2.0: 所有 DoD 条目（含 [GATE]）Test 字段统一改为 TODO — Planner 不写任何 Test 命令，Test 字段由 Sprint Contract 的 Generator/Evaluator 双方独立提案后填入
   - 1.1.0: 完成后写 .dev-gate-planner.{BRANCH} seal 文件（Sprint Contract 防伪机制）
   - 1.0.0: 初始版本
 ---
@@ -101,7 +102,7 @@ Planner 的核心职责是描述 **WHAT**（要做什么、行为规格），而
   Test: TODO
 
 - [ ] [GATE] 所有现有测试通过
-  Test: manual:node -e "require('fs').accessSync('packages/engine/scripts/devgate/check-dod-mapping.cjs')"
+  Test: TODO
 
 ## 实现方案（Stage 2 探索后填写）
 **要改的文件**: （探索后填写）
@@ -121,8 +122,9 @@ Planner 的核心职责是描述 **WHAT**（要做什么、行为规格），而
 3. **[PRESERVE] 条目确保现有行为不被破坏**
    - 改动已有功能时，必须至少有 1 条 [PRESERVE]
 
-4. **Test 字段留 TODO，Stage 2 探索后填写**
-   - 除非已知具体验证方式（如文件存在性检查）
+4. **所有 Test 字段必须留 TODO，包括 [GATE] 条目**
+   - Planner 不写任何具体 Test 命令，Test 字段由 Sprint Contract 的 Generator/Evaluator 双方独立提案后填入
+   - 这是机械保证独立性的关键：Planner 输出不含答案
 
 ## Planner 完成后必须写 seal 文件（CRITICAL）
 

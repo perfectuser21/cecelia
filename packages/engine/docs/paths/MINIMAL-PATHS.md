@@ -483,6 +483,14 @@ changelog:
 
 ---
 
+### adversarial-redesign: Sprint Contract Gate 双独立提案对抗架构
+
+1. ✅ **Generator subagent 写入 .dev-gate-generator-sprint.{branch}**
+2. ✅ **Evaluator subagent 写入 .dev-gate-spec.{branch}**
+3. ✅ **planner-prompt.md 所有 Test 字段为占位符**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

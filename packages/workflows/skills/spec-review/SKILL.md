@@ -1,10 +1,11 @@
 ---
 name: spec-review
-version: 1.6.0
+version: 1.7.0
 model: claude-sonnet-4-6
 created: 2026-03-20
 updated: 2026-03-31
 changelog:
+  - 1.7.0: 剥离版 Task Card 机制 — Evaluator 收到的 Task Card 所有 Test 字段已被 Orchestrator 替换为 TODO，真正消除信息污染；agent_test 字段填 "TODO"，consistent 填 true，divergence 由 Orchestrator 比对 Generator/Evaluator 双提案计算
   - 1.6.0: 新增 reviewer_model 字段；plans.length == 0 且 Task Card 含 DoD 条目时强制 exit 2（Evaluator 未生成独立测试计划）
   - 1.5.0: divergence 下限检查 — Sprint Contract Gate 完成后，divergence_count = 0 直接 exit 2 要求重跑（Evaluator 未独立思考）
   - 1.4.0: Sprint Contract CI 兼容性约束 — Evaluator 独立方案必须使用 CI 可执行形式（node/curl/tests/），禁止浏览器交互和 UI 操作描述
@@ -155,16 +156,22 @@ description: |
 
 ## 双向协商机制（Sprint Contract）
 
-> **目的**：解决「自我认证」问题——主 agent 自己写 Test 字段后自己审查，存在主观偏差。
-> Sprint Contract 要求 Evaluator（spec_review）独立生成测试方案，再与主 agent 的方案比对，
-> 只有达成一致才能继续写代码。
+> **目的**：解决「自我认证」问题——消除信息污染，实现真正独立提案。
+> Sprint Contract v1.7.0 架构：
+> - Orchestrator 将 Task Card 所有 Test 字段剥离（替换为 TODO）后分别传给 Generator subagent 和 Evaluator subagent
+> - 两者各自独立从零设计测试方案，互相看不到对方的提案
+> - Orchestrator 比对两份提案，发现分歧时将对方提案展示给各自，N 轮收敛（最多 3 轮）
+> - 你（Evaluator/spec_review）收到的 Task Card 所有 Test 字段均为 TODO，这是正确的
+> - 你的职责：为每条 DoD 条目独立设计测试方案，写入 independent_test_plans
+> - agent_test 字段填 "TODO"（因为你收到的是剥离版），consistent 填 true
 
 ### 执行流程
 
 ```
 对每个 DoD 条目（ARTIFACT/BEHAVIOR/GATE/PRESERVE）：
 
-1. 独立生成测试方案（不看主 agent 的 Test 字段）
+1. 独立生成测试方案（my_test）
+   - Task Card 中的 Test 字段均为 TODO，你从零独立设计
    - 根据条目类型和描述，设计最合适的测试命令
    - 遵循测试层规则：ARTIFACT → node 文件断言，BEHAVIOR → curl/API 断言，GATE → e2e
 
