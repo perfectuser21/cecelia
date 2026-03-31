@@ -586,4 +586,24 @@ router.get('/:id/output', async (req, res) => {
   }
 });
 
+/**
+ * GET /:id/stats
+ * 查询 pipeline 各平台互动数据汇总
+ */
+router.get('/:id/stats', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rows } = await pool.query(
+      `SELECT platform, views, likes, comments, shares, scraped_at
+       FROM pipeline_publish_stats
+       WHERE pipeline_id = $1
+       ORDER BY scraped_at DESC`,
+      [id]
+    );
+    res.json({ pipeline_id: id, stats: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
