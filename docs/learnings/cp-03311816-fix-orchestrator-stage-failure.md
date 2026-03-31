@@ -1,32 +1,15 @@
----
-branch: cp-03311816-fix-orchestrator-stage-failure
-date: 2026-03-31
-type: bug-fix
-area: brain/content-pipeline
----
-
 # Learning: content pipeline 非审核阶段失败传播修复
 
-## 问题描述
+## 背景
 
-`STAGE_HANDLER_MAP` 中4个非审核阶段（research/copywriting/generate/export）的 handler 函数忽略了 `taskStatus` 参数（用 `_s` 占位），导致即使阶段执行失败（`{success:false}`）也会推进到下一阶段，pipeline 最终显示 `completed` 但无有效内容产出。
+`STAGE_HANDLER_MAP` 中4个非审核阶段（research/copywriting/generate/export）的 handler 函数用 `_s` 占位符忽略了 `taskStatus` 参数，导致即使阶段执行失败（`{success:false}`）仍推进到下一阶段，pipeline 最终显示 `completed` 但无有效内容产出（无图片、调研数据全是占位符）。
 
-## 根本原因
+### 根本原因
 
-审核阶段（copy-review/image-review）有自己的重试逻辑，需要读取 `taskStatus`，设计时正确传入了 `status` 参数。但非审核阶段在设计时假设"任务完成即成功"，未考虑 executor 返回 `{success:false}` 的失败场景。
+设计 STAGE_HANDLER_MAP 时，审核阶段（copy-review/image-review）因需要判断 PASS/FAIL 而正确传入了 `taskStatus`。非审核阶段假设"executor 完成即成功"，未考虑 executor 内部校验失败（如无 notebook_id、findings 为空、图片生成失败）时返回 `{success:false}` 的场景。orchestrator 收到 callback 时只要 task status 是 `failed`，就应该停止 pipeline，但旧代码的 handler 签名 `(ctx, _s, _f, db)` 直接丢弃了这个信息。
 
-## 修复方案
+### 下次预防
 
-新增 `_markPipelineFailedOnStageError()` 辅助函数，在 `STAGE_HANDLER_MAP` 中对4个非审核阶段加入 `taskStatus === 'failed'` 前置检查：
-
-```js
-'content-research': (ctx, s, _f, db) => s === 'failed' 
-  ? _markPipelineFailedOnStageError(ctx, 'content-research', db) 
-  : _handleResearchComplete(ctx, db),
-```
-
-## 经验
-
-- **设计对称性**：pipeline 的每个阶段 handler 都应该处理 `taskStatus`，即使"通常不会失败"
-- **显式优于隐式**：用 `_s` 占位符忽略参数是危险信号，非审核阶段应明确检查失败状态
-- **fail-fast**：阶段失败时应立即终止整个 pipeline，避免用空数据继续执行后续阶段
+- [ ] pipeline handler 的函数签名统一：所有阶段都必须显式接收并处理 `taskStatus` 参数，不允许用 `_s` 占位符丢弃
+- [ ] 新增阶段时，代码审查检查点：是否有 `taskStatus === 'failed'` 的处理分支
+- [ ] executor 层 `{success:false}` 必须对应 orchestrator 层的 pipeline failed 路径，两层要保持对称
