@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.75.1"
+    date: "2026-03-31"
+    change: "[CONFIG] fix(engine): sprint-contract-loop.sh 收敛后自动 git add seal 文件，防止上下文压缩后状态丢失"
+    scope: "packages/engine/scripts/devgate/sprint-contract-loop.sh"
   - version: "13.75.0"
     date: "2026-03-31"
     change: "[CONFIG] feat(engine): /dev 流程 Lite 路径分流 — 5条件路由，全满足时跳过 Planner + Sprint Contract，LITE 25分制评分"
