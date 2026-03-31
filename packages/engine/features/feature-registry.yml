@@ -16,9 +16,13 @@
 # ============================================================================
 
 version: "4.0.0"
-updated: "2026-03-30"
+updated: "2026-03-31"
 # ci-trigger: 13.63.0
 changelog:
+  - version: "13.71.0"
+    date: "2026-03-31"
+    change: "[CONFIG] feat(engine): 修复对抗网络两个缺陷 — Sprint Contract 无限收敛（死循环检测）+ 独立 Evaluator 接回 Stage 2（playwright-evaluator.sh）"
+    scope: "packages/engine/skills/dev/steps/01-spec.md,packages/engine/skills/dev/steps/02-code.md"
   - version: "13.66.0"
     date: "2026-03-30"
     change: "feat(engine): Pipeline Integrity Gate — 新增 pipeline-integrity.test.ts，验证 5 类安全不变量（fail-closed/orphan/gate/seal/files）"
@@ -2922,12 +2926,49 @@ product_features:
       Orchestrator 剥离 Task Card Test 字段 →
       Generator subagent 独立提案 → .dev-gate-generator-sprint.{branch} →
       Evaluator subagent 独立提案 → .dev-gate-spec.{branch} →
-      Orchestrator 比对 → 有分歧 → 双方互看 → 最多 3 轮收敛 →
+      Orchestrator 比对 → 有分歧 → 双方互看 → 无限收敛（死循环检测）→
       Evaluator 提案写入 Task Card Test 字段
 
     minimal_paths:
       - "Generator subagent 写入 .dev-gate-generator-sprint.{branch}"
       - "Evaluator subagent 写入 .dev-gate-spec.{branch}"
       - "planner-prompt.md 所有 Test 字段为占位符"
+
+    rcis: []
+
+  - id: evaluator-reconnect
+    name: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
+    category: workflows
+    status: Committed
+    priority: P0
+    version: "13.71.0"
+    updated: "2026-03-31"
+    description: |
+      修复对抗网络两个缺陷：
+      - 01-spec.md：去掉 MAX_ROUNDS=3 固定上限，改为死循环检测（连续2轮 divergence 相同则报 P1 FAIL）
+      - 02-code.md：在 Generator 自验证（2.3.3）之后、CRG（2.4）之前，新增 2.3.4 独立 Evaluator 步骤
+        调用 playwright-evaluator.sh 独立执行 Task Card [BEHAVIOR] Test 命令，FAIL 打回 Generator
+
+    entrypoints:
+      - type: step
+        file: packages/engine/skills/dev/steps/01-spec.md
+        trigger: "Stage 1 Sprint Contract Gate 收敛循环"
+      - type: step
+        file: packages/engine/skills/dev/steps/02-code.md
+        trigger: "Stage 2 自验证之后（步骤 2.3.4）"
+      - type: script
+        file: packages/engine/scripts/devgate/playwright-evaluator.sh
+        trigger: "02-code.md 2.3.4 调用"
+
+    golden_path: |
+      Generator 写代码 → 自验证（2.3.3）→
+      独立 Evaluator（playwright-evaluator.sh）执行 [BEHAVIOR] Test →
+      PASS → CRG 审查 → push
+      FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator → 直到 PASS
+
+    minimal_paths:
+      - "02-code.md 含 playwright-evaluator.sh 步骤"
+      - "01-spec.md 不含 MAX_ROUNDS"
+      - "01-spec.md 含死循环检测（prev_divergence）"
 
     rcis: []

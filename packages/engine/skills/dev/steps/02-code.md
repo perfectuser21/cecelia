@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 6.2.0
+version: 6.3.0
 created: 2026-03-14
-updated: 2026-03-30
+updated: 2026-03-31
 changelog:
+  - 6.3.0: 新增 2.3.4 独立 Evaluator 步骤 — Generator 自验证后，由 playwright-evaluator.sh 独立执行 Task Card [BEHAVIOR] Test 命令，FAIL 打回 Generator 修复代码，消除 Generator 自验自过问题
   - 6.2.0: 内容注入原则 — 主 agent 必须直接嵌入 Task Card 实际内容到 prompt，禁止传文件路径让 subagent 自己读
   - 6.1.0: Generator subagent 完成后写 .dev-gate-generator.{BRANCH} seal 文件（Stage 3 前置检查）
   - 6.0.0: 2.2 写代码拆为 Generator subagent（主 agent 变纯编排者）
@@ -164,6 +165,13 @@ echo "🟢 TDD 绿灯阶段：验证实现使测试通过..."
   ├─ 2.1.5 TDD 红灯（主 agent 自己做）
   ├─ 2.2 写代码 → spawn Generator subagent ← 你在这里
   ├─ 2.3 自验证（主 agent 自己做）
+  │   ├─ 2.3.1 精准测试
+  │   ├─ 2.3.2 本地 CI 镜像检查
+  │   ├─ 2.3.3 逐条重跑 DoD Test
+  │   ├─ 2.3.4 独立 Evaluator（playwright-evaluator.sh）← 新增
+  │   ├─ 2.3.5 计算 Task Card Hash
+  │   ├─ 2.3.6 强制垃圾清理
+  │   └─ 2.3.7 强制周边一致性扫描
   └─ 2.4 code_review_gate（subagent 审查）
 ```
 
@@ -392,7 +400,73 @@ bash packages/engine/hooks/verify-step.sh step2 "$BRANCH" "$(pwd)"
 
 **这是你 push 前的最后防线。Gate 2 确保每条 DoD [BEHAVIOR] Test 都被真实执行过，不能只靠 npm test。**
 
-### 2.3.4 计算 Task Card Hash（TDD 锁定）
+### 2.3.4 独立 Evaluator 验证（CRITICAL — 防 Generator 自验自过）
+
+> **为什么需要这一步**：Generator 自验证（2.3.3）是 Generator 自己跑自己写的 Test，存在"左手打右手"的问题。
+> 独立 Evaluator 从 Task Card 读取 Sprint Contract 约定的 [BEHAVIOR] Test 命令，独立执行，
+> 不依赖 Generator 的自述，只看命令退出码是 0 还是非 0。
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
+
+if [[ -z "$TASK_CARD" ]]; then
+    echo "⚠️  找不到 Task Card，跳过独立 Evaluator 验证"
+else
+    echo "🔍 独立 Evaluator 验证（playwright-evaluator.sh）..."
+
+    # 寻找脚本路径
+    EVALUATOR_SCRIPT=""
+    for _path in \
+        "packages/engine/scripts/devgate/playwright-evaluator.sh" \
+        "scripts/devgate/playwright-evaluator.sh"; do
+        if [[ -f "$_path" ]]; then
+            EVALUATOR_SCRIPT="$_path"
+            break
+        fi
+    done
+
+    if [[ -z "$EVALUATOR_SCRIPT" ]]; then
+        echo "⚠️  playwright-evaluator.sh 未找到，跳过独立验证"
+    else
+        EVAL_SEAL=".dev-gate-evaluator.${BRANCH}"
+
+        # 执行独立 Evaluator（无限重试直到 PASS）
+        eval_retry=0
+        while true; do
+            eval_retry=$((eval_retry + 1))
+            echo "  [Evaluator 第 ${eval_retry} 轮]"
+
+            rm -f "$EVAL_SEAL"
+            bash "$EVALUATOR_SCRIPT" "$TASK_CARD" "$BRANCH" "$(pwd)"
+            EVAL_EXIT=$?
+
+            if [[ $EVAL_EXIT -eq 0 ]]; then
+                echo "✅ 独立 Evaluator PASS — [BEHAVIOR] Test 全部通过"
+                break
+            else
+                echo "❌ 独立 Evaluator FAIL — 部分 [BEHAVIOR] Test 失败"
+                echo ""
+                echo "打回 Generator：请分析失败原因，修复代码，然后重新运行自验证和 Evaluator。"
+                echo "失败详情见 seal 文件: ${EVAL_SEAL}"
+                if [[ -f "$EVAL_SEAL" ]]; then
+                    cat "$EVAL_SEAL"
+                fi
+                # FAIL → 停止，等 Generator 修复代码后手动重新触发（bash-guard 会拦截标记完成）
+                exit 1
+            fi
+        done
+    fi
+fi
+```
+
+**执行时注意**：
+- Evaluator 只执行 `[BEHAVIOR]` 条目的 Test 命令（`[ARTIFACT]` 和 `[GATE]` 由 2.3.3 覆盖）
+- `manual:node -e "..."` → 直接执行；`tests/xxx.ts` → 检查文件存在；`contract:` → 跳过
+- FAIL 时 Generator 必须修复代码，重新从 2.3.1 开始，不能绕过 Evaluator 直接继续
+- seal 文件写入 `.dev-gate-evaluator.{BRANCH}`，格式与其他 gate seal 一致（verdict/passed/failed）
+
+### 2.3.5 计算 Task Card Hash（TDD 锁定）
 
 ```bash
 TASK_CARD=$(ls .task-cp-*.md 2>/dev/null | head -1)
@@ -404,7 +478,7 @@ if [[ -n "$TASK_CARD" ]]; then
 fi
 ```
 
-### 2.3.5 ⛔ 强制垃圾清理（push 前，不可跳过）
+### 2.3.6 ⛔ 强制垃圾清理（push 前，不可跳过）
 
 > **在标记 Stage 2 完成之前，必须扫描并清理本次改动引入的垃圾内容。**
 > 目标：代码只增有用的，不留死代码/stale 注释/过期文档。
@@ -454,7 +528,7 @@ echo "✅ 垃圾清理扫描通过 — 无 dead code / stale 注释"
 
 ---
 
-### 2.3.6 ⛔ 强制周边一致性扫描（push 前，不可跳过）
+### 2.3.7 ⛔ 强制周边一致性扫描（push 前，不可跳过）
 
 > **改动文件 A 时，必须扫描 A 所在目录的同级文件，修复与本次改动矛盾的旧描述。**
 > 目标：系统越走越干净——不只改 A，同时清理周边引用了 A 旧行为的矛盾内容。
@@ -506,7 +580,7 @@ echo "✅ 周边一致性扫描通过 — 无跨文件矛盾"
 
 ---
 
-### 2.3.7 推送前完整验证
+### 2.3.8 推送前完整验证
 
 > push 前跑一遍 CI 会检查的东西，减少 CI 失败率。
 > 全量测试已在 2.3.1 精准测试中覆盖（有则运行，无则 CI 负责），此处不重复运行。
