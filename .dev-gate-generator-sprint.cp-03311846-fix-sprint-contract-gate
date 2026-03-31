@@ -1,0 +1,15 @@
+{
+  "sealed_by": "generator-sprint-agent",
+  "branch": "cp-03311846-fix-sprint-contract-gate",
+  "round": 1,
+  "proposed_tests": [
+    {"item": "PRESERVE", "consistent": true},
+    {"item": "ARTIFACT", "consistent": true},
+    {"item": "BEHAVIOR-missing-generator", "consistent": true},
+    {"item": "BEHAVIOR-verdict-fail", "consistent": true},
+    {"item": "BEHAVIOR-divergence-zero", "consistent": true},
+    {"item": "BEHAVIOR-round-zero", "consistent": true},
+    {"item": "BEHAVIOR-all-pass", "consistent": true},
+    {"item": "GATE", "consistent": true}
+  ]
+}

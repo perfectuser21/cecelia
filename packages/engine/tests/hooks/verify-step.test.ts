@@ -134,6 +134,10 @@ describe("verify-step.sh", () => {
       ]);
       // Gate Planner 要求 Planner seal 存在
       writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "planner_seal: verified\n");
+      // Sprint Contract Gate 要求三个额外 seal 文件
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({ verdict: "PASS", negotiation_result: { divergence_count: 2 } }));
+      writeFileSync(join(dir, `.sprint-contract-state.${BRANCH}`), JSON.stringify({ round: 1 }));
 
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
@@ -204,6 +208,10 @@ describe("verify-step.sh", () => {
       createTaskCard(dir, BRANCH, ["Test: contract:my-behavior"]);
       // Gate Planner 要求 Planner seal 存在
       writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "planner_seal: verified\n");
+      // Sprint Contract Gate 要求三个额外 seal 文件
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({ verdict: "PASS", negotiation_result: { divergence_count: 2 } }));
+      writeFileSync(join(dir, `.sprint-contract-state.${BRANCH}`), JSON.stringify({ round: 1 }));
 
       const result = runVerifyStep("step1", BRANCH, dir);
       expect(result.exitCode).toBe(0);
@@ -457,5 +465,120 @@ describe("verify-step.sh symlink path resolution", () => {
     const content = readFileSync(scriptPath, "utf8");
     // Must use pwd -P to get the physical (not logical) directory path
     expect(content).toContain("pwd -P");
+  });
+});
+
+describe("step1 Sprint Contract Gate 检查", () => {
+  it("缺少 generator-sprint seal 时 exit 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sc-gate-test-"));
+    try {
+      const BRANCH = "cp-test-sc-gate";
+      createTaskCard(dir, BRANCH, ['Test: manual:node -e "process.exit(0)"']);
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "{}");
+      // 不创建 generator-sprint seal
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Generator seal");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("缺少 spec seal 时 exit 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sc-gate-test-"));
+    try {
+      const BRANCH = "cp-test-sc-gate";
+      createTaskCard(dir, BRANCH, ['Test: manual:node -e "process.exit(0)"']);
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      // 不创建 spec seal
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Evaluator seal");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("spec seal verdict != PASS 时 exit 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sc-gate-test-"));
+    try {
+      const BRANCH = "cp-test-sc-gate";
+      createTaskCard(dir, BRANCH, ['Test: manual:node -e "process.exit(0)"']);
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({ verdict: "FAIL", negotiation_result: { divergence_count: 2 } }));
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("verdict 非 PASS");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("spec seal divergence_count=0 时 exit 1（橡皮图章检测）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sc-gate-test-"));
+    try {
+      const BRANCH = "cp-test-sc-gate";
+      createTaskCard(dir, BRANCH, ['Test: manual:node -e "process.exit(0)"']);
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({ verdict: "PASS", negotiation_result: { divergence_count: 0 } }));
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("橡皮图章");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("sprint-contract-state 不存在时 exit 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sc-gate-test-"));
+    try {
+      const BRANCH = "cp-test-sc-gate";
+      createTaskCard(dir, BRANCH, ['Test: manual:node -e "process.exit(0)"']);
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({ verdict: "PASS", negotiation_result: { divergence_count: 2 } }));
+      // 不创建 sprint-contract-state
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("sprint-contract-state");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("sprint-contract-state round=0 时 exit 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sc-gate-test-"));
+    try {
+      const BRANCH = "cp-test-sc-gate";
+      createTaskCard(dir, BRANCH, ['Test: manual:node -e "process.exit(0)"']);
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({ verdict: "PASS", negotiation_result: { divergence_count: 2 } }));
+      writeFileSync(join(dir, `.sprint-contract-state.${BRANCH}`), JSON.stringify({ round: 0 }));
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("轮次为 0");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("四文件全部合规时 exit 0", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sc-gate-test-"));
+    try {
+      const BRANCH = "cp-test-sc-gate";
+      createTaskCard(dir, BRANCH, ['Test: manual:node -e "process.exit(0)"']);
+      writeFileSync(join(dir, `.dev-gate-planner.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-generator-sprint.${BRANCH}`), "{}");
+      writeFileSync(join(dir, `.dev-gate-spec.${BRANCH}`), JSON.stringify({ verdict: "PASS", negotiation_result: { divergence_count: 3 } }));
+      writeFileSync(join(dir, `.sprint-contract-state.${BRANCH}`), JSON.stringify({ round: 2 }));
+      const result = runVerifyStep("step1", BRANCH, dir);
+      expect(result.exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
   });
 });

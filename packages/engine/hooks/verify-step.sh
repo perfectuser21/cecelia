@@ -163,6 +163,59 @@ $whitelist_out
     fi
     echo "  ✅ [Gate Planner] Planner seal 已验证: .dev-gate-planner.${BRANCH}" >&2
 
+    # Gate Sprint Contract: Generator seal 存在性检查
+    local generator_seal_file="$PROJECT_ROOT/.dev-gate-generator-sprint.${BRANCH}"
+    if [[ ! -f "$generator_seal_file" ]]; then
+        _fail "Sprint Contract Gate: Generator seal 文件不存在
+  期望路径: $generator_seal_file
+  step_1_spec: done 前必须完成 Sprint Contract（Generator subagent 独立提案）
+  修复: 运行 Sprint Contract Step 2（Generator subagent）生成测试方案"
+    fi
+    echo "  ✅ [Sprint Contract] Generator seal 已验证: .dev-gate-generator-sprint.${BRANCH}" >&2
+
+    # Gate Sprint Contract: Evaluator seal 内容验证（verdict=PASS + divergence_count >= 1）
+    local spec_seal_file="$PROJECT_ROOT/.dev-gate-spec.${BRANCH}"
+    if [[ ! -f "$spec_seal_file" ]]; then
+        _fail "Sprint Contract Gate: Evaluator seal 文件不存在
+  期望路径: $spec_seal_file
+  修复: 运行 Sprint Contract Step 3（Evaluator subagent）独立审查"
+    fi
+    local spec_verdict spec_divergence
+    spec_verdict=$(node -e "try{const s=JSON.parse(require('fs').readFileSync('${spec_seal_file}','utf8'));process.stdout.write((s.verdict||'').toLowerCase())}catch(e){process.stdout.write('')}" 2>/dev/null || echo "")
+    spec_divergence=$(node -e "try{const s=JSON.parse(require('fs').readFileSync('${spec_seal_file}','utf8'));const d=s.negotiation_result?.divergence_count??s.divergence_count;process.stdout.write(d===undefined?'-1':String(d))}catch(e){process.stdout.write('-1')}" 2>/dev/null || echo "-1")
+    if [[ "$spec_verdict" != "pass" ]]; then
+        _fail "Sprint Contract Gate: Evaluator seal verdict 非 PASS（当前: ${spec_verdict:-缺失}）
+  文件: $spec_seal_file
+  修复: Evaluator subagent 需重新审查并更新 verdict 为 PASS"
+    fi
+    if [[ "$spec_divergence" == "-1" ]]; then
+        _fail "Sprint Contract Gate: Evaluator seal divergence_count 字段缺失
+  文件: $spec_seal_file
+  修复: Evaluator seal 必须包含 negotiation_result.divergence_count 或顶层 divergence_count"
+    fi
+    if [[ "$spec_divergence" -le 0 ]] 2>/dev/null; then
+        _fail "Sprint Contract Gate: Evaluator divergence_count=0（橡皮图章检测）
+  divergence_count: $spec_divergence
+  修复: Evaluator 需提出至少 1 条改进意见（发现真实分歧）"
+    fi
+    echo "  ✅ [Sprint Contract] Evaluator seal 已验证: verdict=PASS, divergence_count=${spec_divergence}" >&2
+
+    # Gate Sprint Contract: sprint-contract-state round >= 1
+    local sprint_state_file="$PROJECT_ROOT/.sprint-contract-state.${BRANCH}"
+    if [[ ! -f "$sprint_state_file" ]]; then
+        _fail "Sprint Contract Gate: sprint-contract-state 文件不存在
+  期望路径: $sprint_state_file
+  修复: 运行 sprint-contract-loop.sh 完成对抗循环"
+    fi
+    local sprint_round
+    sprint_round=$(node -e "try{const s=JSON.parse(require('fs').readFileSync('${sprint_state_file}','utf8'));process.stdout.write(String(s.round||0))}catch(e){process.stdout.write('0')}" 2>/dev/null || echo "0")
+    if [[ "$sprint_round" -le 0 ]] 2>/dev/null; then
+        _fail "Sprint Contract Gate: sprint-contract-loop.sh 运行轮次为 0
+  round: $sprint_round
+  修复: 运行 sprint-contract-loop.sh 确保对抗循环至少执行 1 轮"
+    fi
+    echo "  ✅ [Sprint Contract] sprint-contract-state 已验证: round=${sprint_round}" >&2
+
     # Gate 1: CI 镜像 — Stage 1 跳过完整 DoD 检查（未勾选项在 Stage 1 是预期的）
     # Stage 1 只写 Spec/DoD 条目，验证在 Stage 2 做。CI L1 会在 push 后做完整检查。
     echo "  ⏭ [Gate 1] Stage 1 跳过 DoD 完整检查（CI L1 将在 push 后检查）" >&2
