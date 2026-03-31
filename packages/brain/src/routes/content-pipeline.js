@@ -254,6 +254,7 @@ router.post('/', async (req, res) => {
   const {
     keyword,
     content_type,
+    notebook_id = null,
     priority = 'P1',
     project_id = null,
     goal_id = null,
@@ -280,6 +281,11 @@ router.post('/', async (req, res) => {
       });
     }
 
+    const payload = { keyword: keyword.trim(), content_type };
+    if (notebook_id && typeof notebook_id === 'string' && notebook_id.trim()) {
+      payload.notebook_id = notebook_id.trim();
+    }
+
     const result = await pool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority,
                           project_id, goal_id, trigger_source, payload, created_at)
@@ -292,7 +298,7 @@ router.post('/', async (req, res) => {
         project_id,
         goal_id,
         'content_pipeline_api',
-        JSON.stringify({ keyword: keyword.trim(), content_type }),
+        JSON.stringify(payload),
       ]
     );
 
@@ -475,7 +481,7 @@ router.get('/:id/stages', async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(`
-      SELECT task_type, status, started_at, completed_at,
+      SELECT task_type, status, started_at, completed_at, summary,
              payload->'review_issues' AS review_issues,
              payload->>'review_passed' AS review_passed
       FROM tasks
@@ -489,6 +495,7 @@ router.get('/:id/stages', async (req, res) => {
         status: row.status,
         started_at: row.started_at,
         completed_at: row.completed_at,
+        summary: row.summary || null,
       };
       if (row.review_issues !== null) entry.review_issues = row.review_issues;
       if (row.review_passed !== null) entry.review_passed = row.review_passed === 'true';
