@@ -257,3 +257,23 @@ tests:
     ci: L3
     status: active
     note: "social-trending API合约：路由注册、platform/limit参数、失败降级"
+
+# ─── tests/integration/ ────────────────────────────────────────────────────────
+# 真实集成测试：无 vi.mock，使用真实 PostgreSQL + 真实 HTTP
+# 需要 DB_PORT 或 RUN_INTEGRATION=true 环境变量才会执行
+
+integration_tests:
+
+  - id: integration-setup
+    path: tests/integration/setup.ts
+    type: integration
+    ci: L4
+    status: pending-ci
+    note: "共享 DB 连接初始化，被所有 integration 测试 import"
+
+  - id: task-api-integration
+    path: tests/integration/task-api.integration.test.ts
+    type: integration
+    ci: L4
+    status: pending-ci
+    note: "Task CRUD API → 真实 PostgreSQL 链路验证，4个测试用例"
