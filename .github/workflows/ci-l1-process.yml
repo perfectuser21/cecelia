@@ -35,7 +35,7 @@ jobs:
       - name: Detect affected packages
         id: filter
         run: |
-          BASE_REF="${{ github.base_ref }}"
+          BASE_REF="${{ github.base_ref || 'main' }}"
           CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
           echo "Changed files:"
           echo "$CHANGED_FILES"
@@ -79,7 +79,7 @@ jobs:
       - name: Parse .dev-mode file for current stage
         id: parse
         env:
-          BRANCH: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           DEV_MODE_FILE=".dev-mode.${BRANCH}"
           echo "Looking for: $DEV_MODE_FILE"
@@ -127,7 +127,7 @@ jobs:
     steps:
       - name: 验证分支必须通过 /dev 创建
         run: |
-          BRANCH="${{ github.head_ref }}"
+          BRANCH="${{ github.head_ref || github.ref_name }}"
           echo "检查分支名: $BRANCH"
           if ! echo "$BRANCH" | grep -qP '^cp-\d{8}-[a-z0-9-]+$'; then
             echo ""
@@ -494,8 +494,8 @@ jobs:
           fetch-depth: 0
       - name: Audit CI config changes
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title || '[CONFIG] workflow_dispatch' }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  CI Config Audit"
@@ -575,7 +575,7 @@ jobs:
       # P1: Config Audit - critical config file change audit
       - name: Config Audit
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ github.event.pull_request.title || '[CONFIG] workflow_dispatch' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Config Audit (P1)"
@@ -638,7 +638,7 @@ jobs:
       # P0: Known-Failures Protection - prevent malicious whitelist modification
       - name: Known-Failures Protection
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ github.event.pull_request.title || '[CONFIG] workflow_dispatch' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Known-Failures Protection (P0)"
