@@ -257,3 +257,10 @@ tests:
     ci: L3
     status: active
     note: "social-trending API合约：路由注册、platform/limit参数、失败降级"
+
+  - id: topic-selection-candidate-pool
+    path: tests/topic-selection-candidate-pool.test.ts
+    type: unit
+    ci: L3
+    status: active
+    note: "选题候选库合约：migration 209存在、scheduler写入content_topics、/topics和/topics/today路由注册"
