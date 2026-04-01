@@ -1077,8 +1077,9 @@ jobs:
 
       - name: Check frontend DoD contains browser verification
         env:
-          BRANCH: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
           STAGE: ${{ needs.detect-stage.outputs.current_stage }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Frontend Browser DoD Check"
@@ -1090,6 +1091,16 @@ jobs:
             echo "Stage < 2: 跳过浏览器验证检查（Stage 1 仅格式）"
             exit 0
           fi
+
+          # 检查是否有实际 apps/ 文件变动（frontend=true 可能由 CI workflow 变动触发，非真正前端改动）
+          ACTUAL_FRONTEND=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null | grep "^apps/" || true)
+          if [ -z "$ACTUAL_FRONTEND" ]; then
+            echo "No actual apps/ files changed (frontend=true triggered by CI workflow or other global change)"
+            echo "跳过浏览器验证检查（无实际前端文件改动）"
+            exit 0
+          fi
+          echo "Actual frontend files changed: $ACTUAL_FRONTEND"
+          echo ""
 
           # 定位 DoD 文件（与 dod-check job 保持一致）
           DOD_FILE=""
