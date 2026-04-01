@@ -30,7 +30,7 @@
 # 更新 package.json 时同步更新此处
 version: "13.75.4"
 updated: 2026-04-01
-# devloop-check seal fallback (v3.7.0)
+# devloop-check: seal 文件反推 (v3.7.0)
 
 # ============================================================================
 # Hooks 回归契约
