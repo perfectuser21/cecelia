@@ -967,6 +967,22 @@ exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再
 
 ---
 
+## GP-061: sprint-contract-loop.sh --resume 断点续跑 (sprint-contract-resume)
+
+**Feature**: sprint-contract-resume - sprint-contract-loop.sh --resume 断点续跑
+**Priority**: null
+
+### Golden Path
+
+```
+上下文压缩重启
+  → bash sprint-contract-loop.sh BRANCH --resume
+  → state 文件存在且 blocker_count==0 → exit 0 → 已收敛，跳过
+  → state 文件不存在或 blocker_count>0 → exit 2 → 正常执行 Sprint Contract
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

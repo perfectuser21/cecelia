@@ -523,6 +523,15 @@ changelog:
 
 ---
 
+### sprint-contract-resume: sprint-contract-loop.sh --resume 断点续跑
+
+1. ✅ **--resume 时读 .sprint-contract-state.{branch}**
+2. ✅ **blocker_count==0 时 exit 0 并打印跳过信息**
+3. ✅ **state 文件不存在时 exit 2 降级为普通模式**
+4. ✅ **原调用格式 sprint-contract-loop.sh BRANCH [PROJECT_ROOT] 完全向后兼容**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
