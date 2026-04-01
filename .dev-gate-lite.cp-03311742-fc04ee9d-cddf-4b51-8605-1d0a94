@@ -1,0 +1,13 @@
+{
+  "sealed_by": "main-agent-lite-routing",
+  "branch": "cp-03311742-fc04ee9d-cddf-4b51-8605-1d0a94",
+  "timestamp": "2026-03-31T19:35:00+08:00",
+  "routing_decision": "lite",
+  "conditions": {
+    "L1_commit_type": true,
+    "L2_no_new_features": true,
+    "L3_files_count": true,
+    "L4_no_new_api": true,
+    "L5_no_core_files": true
+  }
+}
