@@ -1,0 +1,270 @@
+import { describe, it, expect, afterEach } from 'vitest';
+import { execSync, spawnSync } from 'child_process';
+import { writeFileSync, mkdtempSync, rmSync, existsSync, readdirSync } from 'fs';
+import { resolve, join } from 'path';
+import * as os from 'os';
+
+// ============================================================================
+// E2E: /dev 全流程关键 checkpoint 验证
+//
+// 目标：确认 Engine 零件装配后能正常运行，作为 Engine 重构的安全网。
+// 覆盖：worktree 创建 / devloop-check Stage 检测 / stop hook 退出码
+// ============================================================================
+
+const ENGINE_ROOT = resolve(__dirname, '../..');
+const WORKTREE_MANAGE = resolve(ENGINE_ROOT, 'skills/dev/scripts/worktree-manage.sh');
+const DEVLOOP_CHECK = resolve(ENGINE_ROOT, 'lib/devloop-check.sh');
+const STOP_DEV = resolve(ENGINE_ROOT, 'hooks/stop-dev.sh');
+
+// 记录需要在测试后清理的临时目录
+const tmpDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tmpDirs.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // 忽略清理失败
+    }
+  }
+});
+
+// 创建临时 git repo，写入 .dev-mode 文件
+function makeTmpRepo(devModeLines: string[], branch: string): string {
+  const dir = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-'));
+  tmpDirs.push(dir);
+  execSync('git init -q', { cwd: dir });
+  execSync('git config user.email "test@example.com"', { cwd: dir });
+  execSync('git config user.name "Test"', { cwd: dir });
+  writeFileSync(join(dir, `.dev-mode.${branch}`), devModeLines.join('\n') + '\n');
+  return dir;
+}
+
+// 运行 devloop_check 函数并返回 {status, output}
+// 关键：不能用 result=$(devloop_check ...) —— bash 的 $() 赋值会吞掉 exit code
+// 改为直接调用，让 set -e 自然传播返回码
+function runDevloopCheck(branch: string, devModeFile: string, cwd: string): { status: number; output: string } {
+  const script = `source "${DEVLOOP_CHECK}"; devloop_check "${branch}" "${devModeFile}"`;
+  const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', cwd, timeout: 10000 });
+  return {
+    status: result.status ?? -1,
+    output: (result.stdout || '') + (result.stderr || ''),
+  };
+}
+
+// ============================================================================
+// worktree-manage create
+// ============================================================================
+
+describe('worktree-manage create', () => {
+  it('脚本文件存在且语法正确（bash -n）', () => {
+    expect(existsSync(WORKTREE_MANAGE)).toBe(true);
+    const result = spawnSync('bash', ['-n', WORKTREE_MANAGE], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+  });
+
+  it('不带参数时输出 usage（包含 task-name）', () => {
+    const result = spawnSync('bash', [WORKTREE_MANAGE, 'create'], {
+      encoding: 'utf8',
+      cwd: ENGINE_ROOT,
+    });
+    const combined = (result.stdout || '') + (result.stderr || '');
+    expect(combined).toContain('task-name');
+  });
+
+  it('list 命令能正常运行并输出当前 worktree', () => {
+    const result = spawnSync('bash', [WORKTREE_MANAGE, 'list'], {
+      encoding: 'utf8',
+      cwd: ENGINE_ROOT,
+    });
+    const combined = (result.stdout || '') + (result.stderr || '');
+    expect(combined.length).toBeGreaterThan(0);
+  });
+
+  it('create 实际创建 worktree，路径存在（含清理）', () => {
+    const taskName = `e2e-${Date.now()}`;
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const worktreeBase = join(os.homedir(), 'worktrees', 'cecelia');
+
+    const result = spawnSync('bash', [WORKTREE_MANAGE, 'create', taskName], {
+      encoding: 'utf8',
+      cwd: ENGINE_ROOT,
+      timeout: 30000,
+    });
+
+    const combined = (result.stdout || '') + (result.stderr || '');
+
+    if (result.status === 0) {
+      // 创建成功：输出包含 cp- 分支名
+      expect(combined).toContain('cp-');
+
+      // 清理：找到今天创建的测试 worktree
+      if (existsSync(worktreeBase)) {
+        const dirs = readdirSync(worktreeBase).filter(d => d.startsWith(`cp-${mm}${dd}`) && d.includes(taskName.substring(0, 8)));
+        for (const d of dirs) {
+          const fullPath = join(worktreeBase, d);
+          tmpDirs.push(fullPath);
+          try {
+            execSync(`git worktree remove --force "${fullPath}" 2>/dev/null || true`, { cwd: ENGINE_ROOT });
+            execSync(`git branch -D "${d}" 2>/dev/null || true`, { cwd: ENGINE_ROOT });
+          } catch {
+            // 忽略清理错误
+          }
+        }
+      }
+    } else {
+      // CI 环境无 remote 也可接受，但不应报 usage error
+      expect(combined).not.toContain('用法: worktree-manage.sh create');
+    }
+  });
+});
+
+// ============================================================================
+// devloop_check Stage 状态检测
+// ============================================================================
+
+describe('devloop_check stage detection', () => {
+  const BRANCH = 'cp-04020001-e2e-stage-detection';
+
+  it('step_1_spec=pending 时 exit 2 + 输出 blocked', () => {
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'step_0_worktree: done',
+        'step_1_spec: pending',
+        'step_2_code: pending',
+        'step_3_integrate: pending',
+        'step_4_ship: pending',
+        'task_track: lite',
+      ],
+      BRANCH
+    );
+    writeFileSync(join(dir, `.dev-gate-lite.${BRANCH}`), '{"verdict":"PASS"}\n');
+
+    const { status, output } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    expect(status).toBe(2);
+    expect(output).toContain('blocked');
+  });
+
+  it('step_1_spec=done, step_2_code=pending → exit 2（Stage 2 未完成）', () => {
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'step_0_worktree: done',
+        'step_1_spec: done',
+        'step_2_code: pending',
+        'step_3_integrate: pending',
+        'step_4_ship: pending',
+        'task_track: lite',
+      ],
+      BRANCH
+    );
+    writeFileSync(join(dir, `.dev-gate-lite.${BRANCH}`), '{"verdict":"PASS"}\n');
+    writeFileSync(join(dir, `.dev-gate-generator.${BRANCH}`), '{"verdict":"PASS"}\n');
+
+    const { status, output } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    expect(status).toBe(2);
+    expect(output).toContain('blocked');
+  });
+
+  it('cleanup_done=true → exit 0（工作流完成）', () => {
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'step_0_worktree: done',
+        'step_1_spec: done',
+        'step_2_code: done',
+        'step_3_integrate: done',
+        'step_4_ship: done',
+        'cleanup_done: true',
+      ],
+      BRANCH
+    );
+
+    const { status, output } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    expect(status).toBe(0);
+    expect(output).toContain('done');
+  });
+
+  it('step_1_spec=pending（task_track=full）→ exit 2，无需 seal 文件', () => {
+    // full mode 也应在 step_1_spec=pending 时立即 blocked（条件 1 在 1.5/1.6 之前）
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'step_0_worktree: done',
+        'step_1_spec: pending',
+        'task_track: full',
+      ],
+      BRANCH
+    );
+
+    const { status, output } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    expect(status).toBe(2);
+    expect(output).toContain('blocked');
+  });
+});
+
+// ============================================================================
+// stop hook 退出码
+// ============================================================================
+
+describe('stop hook exit codes', () => {
+  it('stop-dev.sh 文件存在且语法正确', () => {
+    expect(existsSync(STOP_DEV)).toBe(true);
+    const result = spawnSync('bash', ['-n', STOP_DEV], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+  });
+
+  it('stop-dev.sh source devloop-check.sh（职责分离，不直接实现判断逻辑）', () => {
+    const { readFileSync } = require('fs') as typeof import('fs');
+    const content = readFileSync(STOP_DEV, 'utf8');
+    expect(content).toContain('devloop-check.sh');
+  });
+
+  it('无活跃 .dev-lock 时，stop-dev.sh 允许退出（exit 0）', () => {
+    const dir = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-stop-'));
+    tmpDirs.push(dir);
+    execSync('git init -q', { cwd: dir });
+
+    const result = spawnSync('bash', [STOP_DEV], {
+      encoding: 'utf8',
+      cwd: dir,
+      env: { ...process.env, HOME: dir },
+      timeout: 10000,
+    });
+    // 无 .dev-lock → 无活跃会话 → exit 0
+    expect(result.status).toBe(0);
+  });
+
+  it('devloop_check 在 step_1_spec=pending 时 exit 2（模拟 stop hook 阻止退出）', () => {
+    const BRANCH = 'cp-04020001-stop-hook-pending';
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'step_0_worktree: done',
+        'step_1_spec: pending',
+        'task_track: lite',
+      ],
+      BRANCH
+    );
+    writeFileSync(join(dir, `.dev-gate-lite.${BRANCH}`), '{"verdict":"PASS"}\n');
+
+    const { status } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    expect(status).toBe(2);
+  });
+
+  it('devloop_check 在 cleanup_done=true 时 exit 0（模拟 stop hook 允许退出）', () => {
+    const BRANCH = 'cp-04020001-stop-hook-done';
+    const dir = makeTmpRepo(['dev', `branch: ${BRANCH}`, 'cleanup_done: true'], BRANCH);
+
+    const { status } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    expect(status).toBe(0);
+  });
+});
