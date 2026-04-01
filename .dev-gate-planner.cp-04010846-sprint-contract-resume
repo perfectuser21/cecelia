@@ -1,0 +1,14 @@
+{
+  "sealed_by": "planner-subagent",
+  "branch": "cp-04010846-sprint-contract-resume",
+  "timestamp": "2026-04-01T08:47:58+08:00",
+  "task_card": ".task-cp-04010846-sprint-contract-resume.md",
+  "dod_items": [
+    "sprint-contract-loop.sh 支持 --resume 标志",
+    "resume 模式：state 收敛时直接 exit 0",
+    "resume 模式：state 不存在时降级为普通模式",
+    "01-spec.md Step 4 增加恢复检测说明",
+    "原有非 resume 模式行为不变"
+  ],
+  "verdict": "PASS"
+}
