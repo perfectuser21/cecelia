@@ -580,11 +580,105 @@ jobs:
           echo "  Brain New Files Check passed"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+  # ─── Orphan Test Check (always runs on PR) ────────────────────────────
+
+  orphan-test-check:
+    name: Orphan Test Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check for unregistered test files
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L2 Orphan Test Check"
+          echo "  验证所有 *.test.* 文件已在 test-registry.yaml 中注册"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          node - <<'NODEEOF'
+          const fs = require('fs');
+          const path = require('path');
+          const { execSync } = require('child_process');
+
+          // 1. 读取 test-registry.yaml 中已注册的路径
+          let registryContent = '';
+          try {
+            registryContent = fs.readFileSync('test-registry.yaml', 'utf8');
+          } catch (e) {
+            console.log('⚠️  test-registry.yaml 不存在，跳过检查（首次建立时正常）');
+            process.exit(0);
+          }
+
+          // 提取 path: 字段（个别注册的文件）
+          const registeredPaths = new Set();
+          const pathMatches = registryContent.matchAll(/^\s+path:\s+(.+)$/gm);
+          for (const m of pathMatches) {
+            registeredPaths.add(m[1].trim());
+          }
+
+          // 提取 managed_by: 字段（suite 级别管理的目录）
+          const managedDirs = [];
+          const managedMatches = registryContent.matchAll(/^\s+managed_by:\s+(.+)$/gm);
+          for (const m of managedMatches) {
+            const dir = path.dirname(m[1].trim());
+            managedDirs.push(dir);
+          }
+
+          console.log('已注册路径: ' + registeredPaths.size + ' 个');
+          console.log('Suite 管理目录: ' + managedDirs.join(', '));
+
+          // 2. 扫描所有 *.test.* / *.spec.* 文件
+          const excludeDirs = ['node_modules', '.git', 'coverage', 'dist', 'build', '.claude', '.history'];
+          const excludeArgs = excludeDirs.map(d => '-not -path "./' + d + '/*"').join(' ');
+          const findCmd = 'find . -type f \\( -name "*.test.js" -o -name "*.test.ts" -o -name "*.test.tsx" -o -name "*.test.mts" -o -name "*.spec.js" -o -name "*.spec.ts" -o -name "*.spec.tsx" \\) ' + excludeArgs + ' | sort';
+          const allFiles = execSync(findCmd, { encoding: 'utf8' })
+            .trim().split('\n').filter(Boolean)
+            .map(f => f.replace(/^\.\//, ''));
+
+          console.log('\n扫描到测试文件: ' + allFiles.length + ' 个');
+
+          // 3. 过滤：排除 suite 管理的目录 + 已注册文件
+          const orphans = [];
+          for (const file of allFiles) {
+            const inSuite = managedDirs.some(dir => file.startsWith(dir + '/') || file === dir);
+            if (inSuite) continue;
+            if (registeredPaths.has(file)) continue;
+            orphans.push(file);
+          }
+
+          // 4. 输出结果
+          if (orphans.length === 0) {
+            console.log('\n✅ 所有测试文件均已注册，无孤儿文件');
+            process.exit(0);
+          }
+
+          console.error('\n❌ 发现 ' + orphans.length + ' 个未注册测试文件：');
+          for (const f of orphans) {
+            console.error('   - ' + f);
+          }
+          console.error('\n修复：在 test-registry.yaml 的 tests: 列表中添加以上文件');
+          console.error('参考格式：');
+          console.error('  - id: your-test-name');
+          console.error('    path: ' + orphans[0]);
+          console.error('    type: unit  # unit | integration | e2e');
+          console.error('    ci: L3      # L3 | L4');
+          console.error('    status: active');
+          process.exit(1);
+          NODEEOF
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l2-passed:
     name: L2 Consistency Gate Passed
-    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check, new-files-need-rci-check, brain-new-files-check]
+    needs: [changes, brain-l2, engine-l2, evolution-check, cross-ref-check, new-files-need-rci-check, brain-new-files-check, orphan-test-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -642,6 +736,14 @@ jobs:
               echo "FAIL: Brain New Files Check (${{ needs.brain-new-files-check.result }})"
               FAILED=true
             fi
+          fi
+
+          # Orphan Test Check (always required — detects unregistered test files)
+          if [ "${{ needs.orphan-test-check.result }}" != "success" ]; then
+            echo "FAIL: Orphan Test Check (${{ needs.orphan-test-check.result }})"
+            echo "  → 存在未在 test-registry.yaml 注册的测试文件"
+            echo "  → 请在 test-registry.yaml 的 tests: 列表中补充注册"
+            FAILED=true
           fi
 
           if [ "$FAILED" = "true" ]; then
