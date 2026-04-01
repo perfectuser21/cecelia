@@ -658,4 +658,80 @@ router.get('/:id/stats', async (req, res) => {
   }
 });
 
+/**
+ * GET /topics/today
+ * 今日选题决策输出（AI 自动选题的候选和采纳结果）
+ */
+router.get('/topics/today', async (req, res) => {
+  try {
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }); // YYYY-MM-DD
+
+    const { rows: adopted } = await pool.query(
+      `SELECT id, title, hook, ai_score, score_reason, adopted_at
+       FROM content_topics
+       WHERE source = 'ai_daily_selection'
+         AND DATE(created_at AT TIME ZONE 'Asia/Shanghai') = $1
+         AND status = 'adopted'
+       ORDER BY ai_score DESC NULLS LAST`,
+      [today]
+    );
+
+    const { rows: pendingCount } = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM content_topics
+       WHERE source = 'ai_daily_selection'
+         AND DATE(created_at AT TIME ZONE 'Asia/Shanghai') = $1
+         AND status = 'pending'`,
+      [today]
+    );
+
+    res.json({
+      date: today,
+      adopted,
+      pending_count: pendingCount[0]?.count ?? 0,
+    });
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /topics/today error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /topics
+ * 查询 content_topics 候选库
+ * 支持 ?status=pending|adopted|skipped&limit=20
+ */
+router.get('/topics', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const { status } = req.query;
+
+    const params = [limit];
+    let where = '';
+    if (status) {
+      params.push(status);
+      where = `WHERE status = $${params.length}`;
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, title, hook, ai_score, score_reason, source, status, adopted_at, created_at
+       FROM content_topics
+       ${where}
+       ORDER BY ai_score DESC NULLS LAST, created_at DESC
+       LIMIT $1`,
+      params
+    );
+
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM content_topics${status ? ' WHERE status = $1' : ''}`,
+      status ? [status] : []
+    );
+
+    res.json({ topics: rows, total: countRows[0]?.total ?? 0 });
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /topics error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

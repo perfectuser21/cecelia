@@ -63,9 +63,41 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
   // 4. 限流：最多取 MAX_DAILY_TOPICS 个
   const toCreate = topics.slice(0, MAX_DAILY_TOPICS);
 
+  const today = toDateString(now);
+
+  // 4a. 写入 content_topics 候选库（以便决策和审查）
+  const candidateIds = [];
+  for (const topic of toCreate) {
+    try {
+      const candidateId = await insertTopicCandidate(pool, topic, today);
+      candidateIds.push(candidateId);
+    } catch (err) {
+      console.warn(`[topic-selection-scheduler] content_topics 写入失败 (${topic.keyword}):`, err.message);
+    }
+  }
+
+  // 4b. 自动采纳 top 5（按 ai_score 降序，status 改为 adopted）
+  const TOP_N = 5;
+  if (candidateIds.length > 0) {
+    try {
+      await pool.query(
+        `UPDATE content_topics
+         SET status = 'adopted', adopted_at = NOW()
+         WHERE id IN (
+           SELECT id FROM content_topics
+           WHERE id = ANY($1)
+           ORDER BY ai_score DESC NULLS LAST
+           LIMIT $2
+         )`,
+        [candidateIds, TOP_N]
+      );
+    } catch (err) {
+      console.warn('[topic-selection-scheduler] 自动采纳 top 5 失败:', err.message);
+    }
+  }
+
   // 5. 为每个选题创建 content-pipeline task
   let created = 0;
-  const today = toDateString(now);
 
   for (const topic of toCreate) {
     try {
@@ -160,6 +192,29 @@ async function createContentPipelineTask(pool, topic, today) {
     // topic_selection_log 写入失败不阻断主流程
     console.warn('[topic-selection-scheduler] topic_selection_log 写入失败:', logErr.message);
   }
+}
+
+/**
+ * 写入单个候选选题到 content_topics
+ * @param {import('pg').Pool} pool
+ * @param {object} topic - 选题对象
+ * @param {string} today - 日期字符串 YYYY-MM-DD（未使用，保留供将来扩展）
+ * @returns {Promise<string>} 插入记录的 id
+ */
+async function insertTopicCandidate(pool, topic, today) {
+  const result = await pool.query(
+    `INSERT INTO content_topics
+       (title, hook, ai_score, score_reason, source, status, generated_at)
+     VALUES ($1, $2, $3, $4, 'ai_daily_selection', 'pending', NOW())
+     RETURNING id`,
+    [
+      topic.keyword,
+      topic.hook || null,
+      Math.round((topic.priority_score || 0) * 10 * 10) / 10,  // 0-10 分制，保留1位小数
+      topic.why_hot || null,
+    ]
+  );
+  return result.rows[0].id;
 }
 
 /**

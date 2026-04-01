@@ -4,7 +4,7 @@ task_card: .task-cp-04010037-019a2866-b93d-436d-82e1-46b51a.md
 started: 2026-04-01T15:52:59+08:00
 step_0_worktree: done
 step_1_spec: done
-step_2_code: pending
+step_2_code: done
 step_3_integrate: pending
 step_4_ship: pending
 task_track: full
@@ -12,3 +12,5 @@ spec_review_status: pass
 confidence_score: 8
 confidence_reason: 现有代码库已有 topic-selector/scheduler/content_topics 表，改动明确，仅需添加 source 列+修改调度器写入逻辑+新增2个API路由
 confidence_risk: content_topics 表已存在但从未被调度器使用，需要确认写入不影响 capture-atoms 的 content_seed 流程
+tasks_created: true
+tdd_red_confirmed: true
