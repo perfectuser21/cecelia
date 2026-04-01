@@ -294,8 +294,10 @@ async function _handleCopyReviewComplete({ task, pipeline, keyword, content_type
   const currentRetry = task.payload?.retry_count || 0;
   if (currentRetry >= MAX_REVIEW_RETRY) {
     await dbPool.query(
-      `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
-      [pipelineId, 'failed', `copy-review 重试达上限(${MAX_REVIEW_RETRY})，pipeline 终止`]
+      `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3,
+         payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb WHERE id = $1`,
+      [pipelineId, 'failed', `copy-review 重试达上限(${MAX_REVIEW_RETRY})，pipeline 终止`,
+        JSON.stringify({ failure_class: 'pipeline_terminal_failure' })]
     );
     console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} copy-review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
     return { advanced: true, action: 'pipeline_failed_max_retry' };
@@ -344,8 +346,10 @@ async function _handleImageReviewComplete({ task, pipeline, keyword, content_typ
   const currentRetry = task.payload?.retry_count || 0;
   if (currentRetry >= MAX_REVIEW_RETRY) {
     await dbPool.query(
-      `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
-      [pipelineId, 'failed', `image-review 重试达上限(${MAX_REVIEW_RETRY})，pipeline 终止`]
+      `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3,
+         payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb WHERE id = $1`,
+      [pipelineId, 'failed', `image-review 重试达上限(${MAX_REVIEW_RETRY})，pipeline 终止`,
+        JSON.stringify({ failure_class: 'pipeline_terminal_failure' })]
     );
     console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} image-review 重试达上限(${MAX_REVIEW_RETRY})，标记 failed`);
     return { advanced: true, action: 'pipeline_failed_max_retry' };

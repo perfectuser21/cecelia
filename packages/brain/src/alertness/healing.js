@@ -36,7 +36,7 @@ const LOCK_DIR = '/tmp/cecelia-locks';
 // 可重试的失败类别
 const RETRYABLE_FAILURE_CLASSES = ['transient'];
 // 不可重试的失败类别
-const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error'];
+const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error', 'pipeline_terminal_failure'];
 
 // ============================================================
 // 进程存活检测（跨平台）— 统一使用 platform-utils.processExists()
