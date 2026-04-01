@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 3.6.0
+version: 3.7.0
 created: 2026-03-20
-updated: 2026-03-31
+updated: 2026-04-01
 changelog:
+  - 3.7.0: 写完 .dev-mode.{branch} 后立即 git add + commit，防止上下文压缩后状态层丢失（状态持久化）
   - 3.6.0: 新增 1.1.7 Lite 路径判断 — 5条件全满足时跳过 Planner subagent 和 Sprint Contract，主 agent 直接写 Task Card，写入 .dev-gate-lite.{branch} 和 task_track: lite
   - 3.5.0: Sprint Contract Gate Step 4 改为调用 sprint-contract-loop.sh — 脚本机械判断 blocker_count，状态写磁盘（.sprint-contract-state.{branch}），移除 prev_divergence 死循环检测，纯 while true 只有 exit 0 才退出
   - 3.4.0: Sprint Contract Gate 移除固定轮数上限（原值=3），改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
@@ -306,6 +307,35 @@ step_3_integrate: pending
 step_4_ship: pending
 EOF
 ```
+
+## 1.3.1 状态持久化：git commit .dev-mode.{branch}（CRITICAL — v3.7.0 新增）
+
+> **写完 .dev-mode.{branch} 后立即 commit 进功能分支。**
+> 目的：上下文压缩后 worktree 内的 .dev-mode.{branch} 可通过 `git checkout` 恢复，
+> devloop-check.sh 不再失明（不会从 step_1 pending 重新开始）。
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# 将 .dev-mode.{branch} 加入 git 追踪并 commit
+# 注意：.gitignore 已移除 .dev-mode.* 的忽略，只保留忽略 .dev-mode（无后缀主 symlink）
+git add ".dev-mode.${BRANCH}" 2>/dev/null || true
+if ! git diff --cached --quiet 2>/dev/null; then
+    git commit -m "chore: [state] persist .dev-mode.${BRANCH} — Stage 1 Spec 完成
+
+上下文压缩后可通过 git checkout 恢复状态层，devloop-check.sh 不再失明。
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>/dev/null || true
+    echo "✅ [state] .dev-mode.${BRANCH} 已 commit 进分支，上下文压缩后可恢复"
+else
+    echo "ℹ️  [state] .dev-mode.${BRANCH} 无变更（已是最新状态）"
+fi
+```
+
+**为什么要 commit**：
+- `.dev-mode.*` 文件之前被 `.gitignore` 忽略，上下文压缩后消失
+- devloop-check.sh 读不到 step 状态 → 认为 step_1 pending → agent 从头开始
+- commit 后 git worktree add 会自动恢复文件，devloop-check.sh 能读到正确状态
 
 ## ⛔ 自检：Task Card 格式验证（继续前必须通过）
 

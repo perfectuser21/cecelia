@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 6.3.0
+version: 6.4.0
 created: 2026-03-14
-updated: 2026-03-31
+updated: 2026-04-01
 changelog:
+  - 6.4.0: 标记 step_2_code done 后立即 git add + commit .dev-mode.{branch}，防止上下文压缩后状态层丢失（状态持久化）
   - 6.3.0: 新增 2.3.4 独立 Evaluator 步骤 — Generator 自验证后，由 playwright-evaluator.sh 独立执行 Task Card [BEHAVIOR] Test 命令，FAIL 打回 Generator 修复代码，消除 Generator 自验自过问题
   - 6.2.0: 内容注入原则 — 主 agent 必须直接嵌入 Task Card 实际内容到 prompt，禁止传文件路径让 subagent 自己读
   - 6.1.0: Generator subagent 完成后写 .dev-gate-generator.{BRANCH} seal 文件（Stage 3 前置检查）
@@ -619,6 +620,26 @@ DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 sed -i '' "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE" 2>/dev/null || \\
 sed -i "s/^step_2_code: pending/step_2_code: done/" "$DEV_MODE_FILE"
 echo "✅ Stage 2 完成标记已写入 .dev-mode"
+```
+
+**状态持久化：git commit .dev-mode.{branch}（v6.4.0 新增，CRITICAL）**：
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+# 将更新后的 .dev-mode.{branch} commit 进分支
+# 上下文压缩后可通过 git checkout 恢复状态层，devloop-check.sh 不再失明
+git add ".dev-mode.${BRANCH_NAME}" 2>/dev/null || true
+if ! git diff --cached --quiet 2>/dev/null; then
+    git commit -m "chore: [state] persist .dev-mode.${BRANCH_NAME} — Stage 2 Code 完成
+
+上下文压缩后可通过 git checkout 恢复状态层，devloop-check.sh 不再失明。
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>/dev/null || true
+    echo "✅ [state] .dev-mode.${BRANCH_NAME} 已 commit 进分支（step_2_code: done）"
+else
+    echo "ℹ️  [state] .dev-mode.${BRANCH_NAME} 无变更（已是最新状态）"
+fi
 ```
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "STAGE_2_TASK_ID", status: "completed" })`

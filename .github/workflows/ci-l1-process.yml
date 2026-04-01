@@ -1062,11 +1062,83 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           exit 1
 
+  # ─── Frontend Browser DoD Check ──────────────────────────────────────
+
+  frontend-browser-dod-check:
+    name: Frontend Browser DoD Check
+    needs: [changes, verify-dev-workflow, detect-stage]
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check frontend DoD contains browser verification
+        env:
+          BRANCH: ${{ github.head_ref }}
+          STAGE: ${{ needs.detect-stage.outputs.current_stage }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Frontend Browser DoD Check"
+          echo "  Branch: $BRANCH  Stage: ${STAGE:-?}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Stage 1 仅做格式检查，不要求浏览器验证
+          if [ "${STAGE:-4}" -lt 2 ]; then
+            echo "Stage < 2: 跳过浏览器验证检查（Stage 1 仅格式）"
+            exit 0
+          fi
+
+          # 定位 DoD 文件（与 dod-check job 保持一致）
+          DOD_FILE=""
+          TASK_CARD=".task-${BRANCH}.md"
+          if [ -f "$TASK_CARD" ]; then
+            DOD_FILE="$TASK_CARD"
+          elif [ -f ".dod-${BRANCH}.md" ]; then
+            DOD_FILE=".dod-${BRANCH}.md"
+          elif [ -f ".dod.md" ]; then
+            DOD_FILE=".dod.md"
+          fi
+
+          if [ -z "$DOD_FILE" ]; then
+            echo "⚠️  DoD 文件未找到，跳过浏览器验证检查（由 dod-check job 处理缺失问题）"
+            exit 0
+          fi
+
+          echo "DoD 文件: $DOD_FILE"
+          echo ""
+
+          # 检查是否有浏览器验证关键词：manual:chrome: / localhost:5211 / localhost:5210
+          if grep -q "manual:chrome:\|localhost:5211\|localhost:5210" "$DOD_FILE"; then
+            echo "✅ 找到浏览器验证步骤，检查通过"
+            grep -n "manual:chrome:\|localhost:5211\|localhost:5210" "$DOD_FILE" | head -5
+            exit 0
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ❌ Frontend Browser DoD Check FAILED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "  本 PR 修改了前端文件（apps/dashboard/ 或 apps/api/），"
+          echo "  但 DoD 中未找到浏览器验证步骤。"
+          echo ""
+          echo "  请在 DoD 的 [BEHAVIOR] 条目中添加（至少一个）："
+          echo ""
+          echo "    - [ ] [BEHAVIOR] 在浏览器验证主流程"
+          echo "      Test: manual:chrome: 打开 http://localhost:5211/xxx → 完成操作 → 无报错"
+          echo ""
+          echo "  或含 localhost:5211 / localhost:5210 的验证步骤。"
+          echo ""
+          exit 1
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan, rci-stale-refs-check, fake-dod-test-check, manual-cmd-whitelist-check, instruction-book-required]
+    needs: [changes, detect-stage, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1, dev-health-check, secrets-scan, rci-stale-refs-check, fake-dod-test-check, manual-cmd-whitelist-check, instruction-book-required, frontend-browser-dod-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1204,6 +1276,16 @@ jobs:
             fi
           else
             echo "Stage $STAGE < 2: skipping Instruction Book Required (expected skipped)"
+          fi
+
+          # Stage 2+: Frontend Browser DoD Check（前端 PR 必须有浏览器验证步骤）
+          if [ "$STAGE" -ge 2 ] && [ "${{ needs.changes.outputs.frontend }}" = "true" ]; then
+            if [ "${{ needs.frontend-browser-dod-check.result }}" != "success" ]; then
+              echo "FAIL: Frontend Browser DoD Check (${{ needs.frontend-browser-dod-check.result }})"
+              FAILED=true
+            fi
+          else
+            echo "Stage $STAGE / frontend=${{ needs.changes.outputs.frontend }}: skipping Frontend Browser DoD Check"
           fi
 
           if [ "$FAILED" = "true" ]; then

@@ -17,8 +17,12 @@
 
 version: "4.0.0"
 updated: "2026-04-01"
-# ci-trigger: 13.75.3
+# ci-trigger: 13.76.0
 changelog:
+  - version: "13.76.0"
+    date: "2026-04-01"
+    change: "[CONFIG] feat(engine): .dev-mode.{branch} 状态持久化 — 修改 .gitignore 允许追踪，关键写入点（01-spec/02-code/sprint-contract-loop）写后立即 git commit，防上下文压缩状态层丢失"
+    scope: ".gitignore,packages/engine/skills/dev/steps/01-spec.md,packages/engine/skills/dev/steps/02-code.md,packages/engine/scripts/devgate/sprint-contract-loop.sh"
   - version: "13.75.1"
     date: "2026-03-31"
     change: "[CONFIG] fix(engine): sprint-contract-loop.sh 收敛后自动 commit seal 文件 + 02-code.md/04-ship.md 补提交步骤（防上下文压缩状态丢失）"
