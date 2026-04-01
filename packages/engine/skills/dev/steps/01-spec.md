@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 3.7.0
+version: 3.8.0
 created: 2026-03-20
 updated: 2026-04-01
 changelog:
+  - 3.8.0: Step 4 新增 Step 4.0 恢复检测 — while 循环开始前调用 sprint-contract-loop.sh --resume，上下文压缩后自动跳过已收敛的 Sprint Contract，避免重复对抗
   - 3.7.0: 写完 .dev-mode.{branch} 后立即 git add + commit，防止上下文压缩后状态层丢失（状态持久化）
   - 3.6.0: 新增 1.1.7 Lite 路径判断 — 5条件全满足时跳过 Planner subagent 和 Sprint Contract，主 agent 直接写 Task Card，写入 .dev-gate-lite.{branch} 和 task_track: lite
   - 3.5.0: Sprint Contract Gate Step 4 改为调用 sprint-contract-loop.sh — 脚本机械判断 blocker_count，状态写磁盘（.sprint-contract-state.{branch}），移除 prev_divergence 死循环检测，纯 while true 只有 exit 0 才退出
@@ -540,11 +541,33 @@ ${TASK_CARD_STRIPPED}
 > 主 agent 只负责：spawn 双方 → 调脚本 → 根据 exit code 决定继续还是重跑。
 > 唯一停止条件：脚本 exit 0（blocker_count == 0）。
 
+#### Step 4.0：恢复检测（断点续跑，context 压缩后必须先执行）
+
+> **上下文压缩场景**：压缩发生在 Sprint Contract 两轮之间时，主 agent 上下文丢失不知道已完成几轮。
+> 进入 while 循环前，先用 `--resume` 检测是否已收敛，避免重复对抗。
+
 ```bash
-# Step 4 执行流程（主 agent 按此执行，while true 无轮数上限）
+# Step 4.0：上下文压缩恢复检测（while 循环开始前执行，不可跳过）
 
 PROJECT_ROOT=$(pwd)
 LOOP_SCRIPT="packages/engine/scripts/devgate/sprint-contract-loop.sh"
+
+# 调用 --resume 检测 state 文件
+bash "$LOOP_SCRIPT" "$BRANCH" --resume "$PROJECT_ROOT"
+RESUME_EXIT=$?
+
+if [[ $RESUME_EXIT -eq 0 ]]; then
+  # ✅ 已收敛（state 文件存在且 blocker_count==0）
+  # 上下文压缩恢复后发现 Sprint Contract 已完成，直接跳过整个 while 循环
+  echo "sprint-contract-state: already-converged" >> ".dev-mode.${BRANCH}"
+  # 跳转到 PASS 后验证（Step 4 结束）
+fi
+
+# exit 2（state 不存在或未收敛）→ 正常执行 while 循环
+```
+
+```bash
+# Step 4 执行流程（主 agent 按此执行，while true 无轮数上限）
 
 while true; do
   # 执行 Step 2（Generator subagent）和 Step 3（Evaluator subagent）
