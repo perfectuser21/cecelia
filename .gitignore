@@ -39,8 +39,9 @@ Thumbs.db
 # Dev workflow state files（绝对不允许进 git）
 # 注意：.prd-*.md 和 .dod-*.md 已从此处移除（A+ 强制开发证据方案）
 # 这两类文件现在必须随 PR 提交到仓库，CI 会验证其存在
+# 注意：.dev-mode.{branch}（有后缀的 per-branch 文件）允许被 git 追踪
+# 目的：上下文压缩后 worktree 仍能通过 git 恢复状态，devloop-check 不失明
 .dev-mode
-.dev-mode.*
 .dev-mode.lock
 .dev-lock
 .dev-lock.*
