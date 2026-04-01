@@ -28,8 +28,9 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "13.77.0"
+version: "13.77.1"
 updated: 2026-04-01
+# devloop-check: seal 文件反推 (v3.7.0)
 
 # ============================================================================
 # Hooks 回归契约

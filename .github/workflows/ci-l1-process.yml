@@ -8,6 +8,7 @@ name: L1 Process Gate
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: l1-process-${{ github.ref }}
@@ -34,7 +35,7 @@ jobs:
       - name: Detect affected packages
         id: filter
         run: |
-          BASE_REF="${{ github.base_ref }}"
+          BASE_REF="${{ github.base_ref || 'main' }}"
           CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
           echo "Changed files:"
           echo "$CHANGED_FILES"
@@ -78,7 +79,7 @@ jobs:
       - name: Parse .dev-mode file for current stage
         id: parse
         env:
-          BRANCH: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           DEV_MODE_FILE=".dev-mode.${BRANCH}"
           echo "Looking for: $DEV_MODE_FILE"
@@ -126,7 +127,7 @@ jobs:
     steps:
       - name: 验证分支必须通过 /dev 创建
         run: |
-          BRANCH="${{ github.head_ref }}"
+          BRANCH="${{ github.head_ref || github.ref_name }}"
           echo "检查分支名: $BRANCH"
           if ! echo "$BRANCH" | grep -qP '^cp-\d{8}-[a-z0-9-]+$'; then
             echo ""
@@ -494,7 +495,8 @@ jobs:
       - name: Audit CI config changes
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  CI Config Audit"
@@ -518,7 +520,10 @@ jobs:
           echo "$CI_CHANGED" | sed 's/^/  - /'
           echo ""
 
-          if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+          # workflow_dispatch: PR_TITLE 为空，跳过 [CONFIG] 标签检查（手动触发无 PR 上下文）
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "workflow_dispatch: 跳过 PR 标题 [CONFIG] 检查"
+          elif [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  ❌ CI Config Audit FAILED"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -575,6 +580,7 @@ jobs:
       - name: Config Audit
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Config Audit (P1)"
@@ -610,7 +616,9 @@ jobs:
             done
             echo ""
 
-            if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "workflow_dispatch: 跳过 PR 标题 [CONFIG] 检查"
+            elif [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "PR title must contain [CONFIG] or [INFRA] tag"
               echo "Suggested: [CONFIG] $PR_TITLE"
               exit 1
@@ -638,6 +646,7 @@ jobs:
       - name: Known-Failures Protection
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Known-Failures Protection (P0)"
@@ -650,7 +659,9 @@ jobs:
             echo "detected: $KF_PATH was modified"
             echo ""
 
-            if [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "workflow_dispatch: 跳过 [INFRA] 标签检查"
+            elif [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "known-failures.json modified but PR title missing [INFRA] tag"
               echo ""
               echo "Modifying the test whitelist is a high-risk operation."
@@ -1076,8 +1087,9 @@ jobs:
 
       - name: Check frontend DoD contains browser verification
         env:
-          BRANCH: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
           STAGE: ${{ needs.detect-stage.outputs.current_stage }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Frontend Browser DoD Check"
@@ -1089,6 +1101,16 @@ jobs:
             echo "Stage < 2: 跳过浏览器验证检查（Stage 1 仅格式）"
             exit 0
           fi
+
+          # 检查是否有实际 apps/ 文件变动（frontend=true 可能由 CI workflow 变动触发，非真正前端改动）
+          ACTUAL_FRONTEND=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null | grep "^apps/" || true)
+          if [ -z "$ACTUAL_FRONTEND" ]; then
+            echo "No actual apps/ files changed (frontend=true triggered by CI workflow or other global change)"
+            echo "跳过浏览器验证检查（无实际前端文件改动）"
+            exit 0
+          fi
+          echo "Actual frontend files changed: $ACTUAL_FRONTEND"
+          echo ""
 
           # 定位 DoD 文件（与 dod-check job 保持一致）
           DOD_FILE=""

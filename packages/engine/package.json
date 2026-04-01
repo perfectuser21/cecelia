@@ -32,5 +32,5 @@
     "@vitest/coverage-v8": "^3.2.4",
     "vitest": "^3.2.4"
   },
-  "version": "13.77.0"
+  "version": "13.77.1"
 }

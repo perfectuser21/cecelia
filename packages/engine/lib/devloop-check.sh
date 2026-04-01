@@ -10,7 +10,7 @@
 #
 # 适配器永远不改，只改这一个文件。
 #
-# 版本: v3.6.0
+# 版本: v3.7.0
 # 创建: 2026-03-13
 # 更新: 2026-03-20 — 4-Stage Pipeline 重构
 # 更新: 2026-03-21 — Pipeline 死锁修复（#1286/#1294）
@@ -21,6 +21,7 @@
 # 更新: 2026-03-22 — P0 安全：seal 文件机制（#seal-gate），条件 1.5/2.5 读 seal 文件，自认证检测
 # 更新: 2026-03-30 — 移除条件 4.5：Playwright Evaluator（改为 post-merge 触发）
 # 更新: 2026-03-30 — 新增条件 1.6/2.8：Planner→Generator seal 三阶段对齐检查
+# 更新: 2026-04-01 — devloop_check_main: seal 文件反推（.dev-mode 消失 fallback, v3.7.0）
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
@@ -697,6 +698,112 @@ devloop_check_main() {
     echo ""
 
     if [[ ${#dev_mode_files[@]} -eq 0 ]]; then
+        # ===== seal 文件反推（.dev-mode 消失时的 fallback）=====
+        # .dev-mode 不存在时，尝试从当前目录的 seal 文件反推 stage 状态
+        # 规则：
+        #   .dev-gate-planner.{branch} 或 .dev-gate-lite.{branch} 存在 → step_1 = done
+        #   .dev-gate-crg.{branch} 存在 → step_2 = done
+        #   gh pr list 有结果 → step_3 = done
+
+        local _infer_dir
+        _infer_dir=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+        local _infer_branch
+        _infer_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+        # 跳过 main/develop（没有任务 seal 文件）
+        local _infer_found=false
+        if [[ -n "$_infer_branch" && "$_infer_branch" != "main" && "$_infer_branch" != "develop" ]]; then
+            # 检查各 seal 文件
+            local _seal_planner="$_infer_dir/.dev-gate-planner.${_infer_branch}"
+            local _seal_lite="$_infer_dir/.dev-gate-lite.${_infer_branch}"
+            local _seal_crg="$_infer_dir/.dev-gate-crg.${_infer_branch}"
+            local _seal_generator="$_infer_dir/.dev-gate-generator.${_infer_branch}"
+
+            # 至少有一个 seal 文件 → 说明这是一个有历史的 dev 会话
+            if [[ -f "$_seal_planner" || -f "$_seal_lite" || -f "$_seal_crg" || -f "$_seal_generator" ]]; then
+                _infer_found=true
+
+                # 推断各 stage 状态
+                local _infer_s1="pending" _infer_s2="pending" _infer_s3="pending"
+
+                # step_1: planner seal 或 lite seal 存在 → done
+                if [[ -f "$_seal_planner" || -f "$_seal_lite" ]]; then
+                    _infer_s1="done"
+                fi
+
+                # step_2: crg seal 存在（code_review_gate 完成标志）→ done
+                if [[ -f "$_seal_crg" ]]; then
+                    _infer_s2="done"
+                fi
+
+                # step_3: PR 已创建 → done
+                local _infer_pr=""
+                if command -v gh &>/dev/null; then
+                    _infer_pr=$(gh pr list --head "$_infer_branch" --state all --json number -q '.[0].number' 2>/dev/null || echo "")
+                fi
+                if [[ -n "$_infer_pr" ]]; then
+                    _infer_s3="done"
+                fi
+
+                # 推断当前 stage（第一个 pending 的 stage）
+                local _infer_current_stage="" _infer_action=""
+                if [[ "$_infer_s1" == "pending" ]]; then
+                    _infer_current_stage="Stage 1 Spec"
+                    _infer_action="读取 skills/dev/steps/01-spec.md 并执行 Stage 1"
+                elif [[ "$_infer_s2" == "pending" ]]; then
+                    _infer_current_stage="Stage 2 Code"
+                    _infer_action="读取 skills/dev/steps/02-code.md 并执行 Stage 2"
+                elif [[ "$_infer_s3" == "pending" ]]; then
+                    _infer_current_stage="Stage 3 Integrate"
+                    _infer_action="读取 skills/dev/steps/03-integrate.md 并执行 Stage 3（push + 创建 PR）"
+                else
+                    _infer_current_stage="Stage 4 Ship"
+                    _infer_action="读取 skills/dev/steps/04-ship.md 并执行 Stage 4（写 Learning + 合并 PR）"
+                fi
+
+                # 列出缺失的文件
+                local _infer_missing=""
+                [[ ! -f "$_seal_planner" && ! -f "$_seal_lite" ]] && _infer_missing="$_infer_missing .dev-gate-planner/lite"
+                [[ ! -f "$_seal_crg" ]] && _infer_missing="$_infer_missing .dev-gate-crg"
+                [[ ! -f "$_seal_generator" ]] && _infer_missing="$_infer_missing .dev-gate-generator"
+
+                echo "=== .dev-mode 不存在，从 seal 文件反推状态 ==="
+                echo ""
+                echo "分支:         $_infer_branch"
+                echo "推断来源:     seal 文件（.dev-mode 已消失）"
+                echo ""
+                echo "Seal 文件状态:"
+                [[ -f "$_seal_lite" ]]      && echo "  ✅ .dev-gate-lite:      存在" || echo "  ⬜ .dev-gate-lite:      不存在"
+                [[ -f "$_seal_planner" ]]   && echo "  ✅ .dev-gate-planner:   存在" || echo "  ⬜ .dev-gate-planner:   不存在"
+                [[ -f "$_seal_crg" ]]       && echo "  ✅ .dev-gate-crg:       存在" || echo "  ⬜ .dev-gate-crg:       不存在"
+                [[ -f "$_seal_generator" ]] && echo "  ✅ .dev-gate-generator: 存在" || echo "  ⬜ .dev-gate-generator: 不存在"
+                echo ""
+                echo "推断 Stage 状态:"
+                echo "  step_1_spec:      $_infer_s1"
+                echo "  step_2_code:      $_infer_s2"
+                echo "  step_3_integrate: $_infer_s3"
+                echo ""
+                echo "当前推断 Stage: $_infer_current_stage"
+                [[ -n "$_infer_missing" ]] && echo "缺失文件:      $_infer_missing"
+                echo ""
+                echo "下一步:"
+                echo "  1. 重建 .dev-mode 文件（branch: $_infer_branch）"
+                echo "  2. $_infer_action"
+                echo ""
+                echo "重建 .dev-mode 命令参考："
+                echo "  cat > .dev-mode.${_infer_branch} <<'DEVMODE'"
+                echo "  dev"
+                echo "  branch: ${_infer_branch}"
+                echo "  step_1_spec: ${_infer_s1}"
+                echo "  step_2_code: ${_infer_s2}"
+                echo "  step_3_integrate: ${_infer_s3}"
+                echo "  step_4_ship: pending"
+                echo "  DEVMODE"
+                return 0
+            fi
+        fi
+
+        # 没有找到任何 seal 文件（真正的空白状态）
         echo "状态: NO_ACTIVE_SESSION"
         echo "未找到 .dev-mode.* 文件（没有活跃的 /dev 会话）"
         echo ""
