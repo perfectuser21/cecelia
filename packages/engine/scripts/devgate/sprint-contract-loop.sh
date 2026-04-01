@@ -176,6 +176,25 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>/dev/null || true
   fi
   # ─────────────────────────────────────────────────────────────────────────────
 
+  # ── [state] commit .dev-mode.{branch} 状态持久化（防上下文压缩状态层丢失）────────
+  # 原因：Sprint Contract 收敛时 .dev-mode.{branch} 已含 spec_review_status: pass
+  # commit 后上下文压缩/会话重启时 git checkout 可恢复，devloop-check.sh 不再失明
+  _DEV_MODE_FILE="${PROJECT_ROOT}/.dev-mode.${BRANCH}"
+  if [[ -f "$_DEV_MODE_FILE" ]]; then
+    git -C "${PROJECT_ROOT}" add "$_DEV_MODE_FILE" 2>/dev/null || true
+    if ! git -C "${PROJECT_ROOT}" diff --cached --quiet 2>/dev/null; then
+      git -C "${PROJECT_ROOT}" commit -m "chore: [state] persist .dev-mode.${BRANCH} — Sprint Contract 收敛
+
+上下文压缩后可通过 git checkout 恢复状态层，devloop-check.sh 不再失明。
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>/dev/null || true
+      echo "  ✅ [state] .dev-mode.${BRANCH} 已 commit 到分支（Sprint Contract 收敛后）"
+    else
+      echo "  ℹ️  [state] .dev-mode.${BRANCH} 无变更（已是最新状态）"
+    fi
+  fi
+  # ─────────────────────────────────────────────────────────────────────────────
+
   exit 0
 else
   echo "  ❌ 未收敛，${BLOCKER_COUNT} 条 blocker 需要解决："
