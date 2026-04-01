@@ -1,0 +1,13 @@
+{
+  "stage": "planner",
+  "status": "completed",
+  "task_id": "cp-03312348-019a2866-b93d-436d-82e1-46b51a",
+  "branch": "cp-03312348-019a2866-b93d-436d-82e1-46b51a",
+  "task_card": ".task-cp-03312348-019a2866-b93d-436d-82e1-46b51a.md",
+  "summary": "内容选题自动化 MVP：修复 LLM cortex profile fallback + 新增 GET /api/brain/topics 路由",
+  "dod_count": 7,
+  "artifacts": ["GET /api/brain/topics 路由文件 + routes.js 注册"],
+  "behaviors": ["topics 列表查询（按日期过滤）", "trigger-topics LLM 调用成功", "cortex profile fallback 不中断流程"],
+  "preserve": ["topic-selection-scheduler 每日 UTC 01:00 调度不变"],
+  "created_at": "2026-03-31T00:00:00Z"
+}
