@@ -3131,9 +3131,9 @@ product_features:
 
     golden_path: |
       上下文压缩重启
-        → bash sprint-contract-loop.sh BRANCH --resume
-        → state 文件存在且 blocker_count==0 → exit 0 → 已收敛，跳过
-        → state 文件不存在或 blocker_count>0 → exit 2 → 正常执行 Sprint Contract
+        -> bash sprint-contract-loop.sh BRANCH --resume
+        -> state 文件存在且 blocker_count==0 -> exit 0 -> 已收敛，跳过
+        -> state 文件不存在或 blocker_count>0 -> exit 2 -> 正常执行 Sprint Contract
 
     minimal_paths:
       - "--resume 时读 .sprint-contract-state.{branch}"
