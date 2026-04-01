@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
+// e2e 测试目录: tests/e2e/（串行运行，需要 shell 命令）
+
 // 无 shell/exec/spawn 依赖的测试文件 — 可并行
 const PARALLEL_TESTS = [
   'tests/ci/known-failures-expiry.test.ts',
