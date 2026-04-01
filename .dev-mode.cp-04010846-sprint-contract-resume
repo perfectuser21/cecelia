@@ -3,7 +3,7 @@ branch: cp-04010846-sprint-contract-resume
 task_card: .task-cp-04010846-sprint-contract-resume.md
 started: 2026-04-01T08:46:00+08:00
 step_0_worktree: done
-step_1_spec: pending
+step_1_spec: done
 step_2_code: pending
 step_3_integrate: pending
 step_4_ship: pending
@@ -12,3 +12,4 @@ confidence_score: 9
 confidence_reason: 任务边界清晰，只改2个文件，逻辑简单：增加参数解析和 state 文件读取
 confidence_risk: 无
 spec_review_status: pass
+tasks_created: true
