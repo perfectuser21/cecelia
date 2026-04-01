@@ -1,0 +1,387 @@
+# API Registry - Brain REST API 接口清单
+# 更新时间: 2026-04-01
+# 基础 URL: http://localhost:5221
+
+endpoints:
+
+  # ============================================================
+  # 上下文 & 状态
+  # ============================================================
+
+  - method: GET
+    path: /api/brain/context
+    purpose: 一次获取全景摘要（OKR + 最近PR + 活跃任务 + 有效决策）
+    code_file: packages/brain/src/routes/status.js
+    covers_feature: tick_loop
+    auth: none
+
+  - method: GET
+    path: /api/brain/status
+    purpose: 精简决策包（LLM 决策用），含 task/memory/policy 摘要
+    code_file: packages/brain/src/routes/status.js
+    covers_feature: tick_loop
+    auth: none
+
+  - method: GET
+    path: /api/brain/health
+    purpose: 系统健康检查（tick/N8N/task 状态）
+    code_file: packages/brain/src/routes/goals.js
+    covers_feature: monitor_loop
+    auth: none
+
+  - method: GET
+    path: /api/brain/briefing
+    purpose: Dashboard 首屏数据聚合
+    code_file: packages/brain/src/routes/status.js
+    covers_feature: tick_loop
+    auth: none
+
+  # ============================================================
+  # 任务系统
+  # ============================================================
+
+  - method: GET
+    path: /api/brain/tasks
+    purpose: 查询任务列表，支持 status/task_type 过滤
+    code_file: packages/brain/src/routes/tasks.js
+    covers_feature: task_create
+    params:
+      - name: status
+        type: string
+        example: "in_progress"
+      - name: limit
+        type: number
+        example: 10
+    auth: none
+
+  - method: POST
+    path: /api/brain/tasks
+    purpose: 创建任务
+    code_file: packages/brain/src/routes/tasks.js
+    covers_feature: task_create
+    body:
+      title: string
+      description: string
+      task_type: string
+      trigger_source: string
+    auth: none
+
+  - method: GET
+    path: /api/brain/tasks/:id
+    purpose: 获取任务详情
+    code_file: packages/brain/src/routes/tasks.js
+    covers_feature: task_create
+    auth: none
+
+  - method: PATCH
+    path: /api/brain/tasks/:id
+    purpose: 更新任务状态或字段
+    code_file: packages/brain/src/routes/tasks.js
+    covers_feature: task_callback
+    body:
+      status: string
+      result: object
+    auth: none
+
+  - method: POST
+    path: /api/brain/tasks/:id/feedback
+    purpose: 接收执行引擎回调（completed/failed）
+    code_file: packages/brain/src/routes/tasks.js
+    covers_feature: task_callback
+    auth: none
+
+  - method: POST
+    path: /api/brain/execution-callback
+    purpose: 通用执行完成回调
+    code_file: packages/brain/src/routes/execution.js
+    covers_feature: task_callback
+    auth: none
+
+  # ============================================================
+  # Tick 调度
+  # ============================================================
+
+  - method: POST
+    path: /api/brain/tick
+    purpose: 手动触发一次 tick
+    code_file: packages/brain/src/routes/tick.js
+    covers_feature: tick_loop
+    auth: none
+
+  - method: GET
+    path: /api/brain/tick/status
+    purpose: 获取 tick 状态（上次执行时间、动作数）
+    code_file: packages/brain/src/routes/tick.js
+    covers_feature: tick_loop
+    auth: none
+
+  - method: POST
+    path: /api/brain/tick/enable
+    purpose: 启用自动 tick
+    code_file: packages/brain/src/routes/tick.js
+    covers_feature: tick_loop
+    auth: none
+
+  - method: POST
+    path: /api/brain/tick/disable
+    purpose: 禁用自动 tick
+    code_file: packages/brain/src/routes/tick.js
+    covers_feature: tick_loop
+    auth: none
+
+  - method: POST
+    path: /api/brain/tick/drain
+    purpose: 优雅关闭（暂停新任务，等待在途完成）
+    code_file: packages/brain/src/routes/tick.js
+    covers_feature: tick_loop
+    auth: none
+
+  # ============================================================
+  # 记忆系统
+  # ============================================================
+
+  - method: POST
+    path: /api/brain/memory/search
+    purpose: 语义搜索历史记录
+    code_file: packages/brain/src/routes/memory.js
+    covers_feature: memory_search
+    body:
+      query: string
+      limit: number
+    auth: none
+
+  - method: GET
+    path: /api/brain/memory/detail/:id
+    purpose: 获取历史记录完整详情
+    code_file: packages/brain/src/routes/memory.js
+    covers_feature: memory_search
+    auth: none
+
+  # ============================================================
+  # OKR 系统
+  # ============================================================
+
+  - method: GET
+    path: /api/brain/okr/current
+    purpose: OKR 进度树形结构（objectives → key_results）
+    code_file: packages/brain/src/routes/okr-hierarchy.js
+    covers_feature: okr_system
+    auth: none
+
+  - method: GET
+    path: /api/brain/okr/visions
+    purpose: 列出所有 Vision
+    code_file: packages/brain/src/routes/okr-hierarchy.js
+    covers_feature: okr_system
+    auth: none
+
+  - method: POST
+    path: /api/brain/okr/visions
+    purpose: 创建 Vision
+    code_file: packages/brain/src/routes/okr-hierarchy.js
+    covers_feature: okr_system
+    auth: none
+
+  - method: GET
+    path: /api/brain/okr/objectives
+    purpose: 列出所有 Objective
+    code_file: packages/brain/src/routes/okr-hierarchy.js
+    covers_feature: okr_system
+    auth: none
+
+  - method: POST
+    path: /api/brain/okr/objectives
+    purpose: 创建 Objective
+    code_file: packages/brain/src/routes/okr-hierarchy.js
+    covers_feature: okr_system
+    auth: none
+
+  - method: GET
+    path: /api/brain/okr/key-results
+    purpose: 列出所有 Key Result
+    code_file: packages/brain/src/routes/okr-hierarchy.js
+    covers_feature: okr_system
+    auth: none
+
+  - method: POST
+    path: /api/brain/okr/key-results
+    purpose: 创建 Key Result
+    code_file: packages/brain/src/routes/okr-hierarchy.js
+    covers_feature: okr_system
+    auth: none
+
+  # ============================================================
+  # 决策系统
+  # ============================================================
+
+  - method: GET
+    path: /api/brain/decisions
+    purpose: 获取历史决策记录（只读，审计用）
+    code_file: packages/brain/src/routes/status.js
+    covers_feature: decision_engine
+    params:
+      - name: status
+        type: string
+        example: "active"
+    auth: none
+
+  - method: GET
+    path: /api/brain/pending-actions
+    purpose: 获取待审批动作列表
+    code_file: packages/brain/src/routes/actions.js
+    covers_feature: proposal_system
+    auth: none
+
+  - method: POST
+    path: /api/brain/proposals
+    purpose: 创建 proposal（高危动作审批）
+    code_file: packages/brain/src/routes/actions.js
+    covers_feature: proposal_system
+    auth: none
+
+  - method: PATCH
+    path: /api/brain/proposals/:id/approve
+    purpose: 批准 proposal
+    code_file: packages/brain/src/routes/actions.js
+    covers_feature: proposal_system
+    auth: none
+
+  - method: PATCH
+    path: /api/brain/proposals/:id/reject
+    purpose: 拒绝 proposal
+    code_file: packages/brain/src/routes/actions.js
+    covers_feature: proposal_system
+    auth: none
+
+  # ============================================================
+  # 内容管道
+  # ============================================================
+
+  - method: GET
+    path: /api/brain/pipelines
+    purpose: 列出 content-pipeline 任务
+    code_file: packages/brain/src/routes/content-pipeline.js
+    covers_feature: pipeline_orchestrator
+    auth: none
+
+  - method: POST
+    path: /api/brain/pipelines
+    purpose: 创建新 content-pipeline 任务
+    code_file: packages/brain/src/routes/content-pipeline.js
+    covers_feature: pipeline_orchestrator
+    body:
+      content_type: string
+      topic: string
+    auth: none
+
+  - method: POST
+    path: /api/brain/pipelines/:id/run
+    purpose: 手动触发 pipeline 执行
+    code_file: packages/brain/src/routes/content-pipeline.js
+    covers_feature: pipeline_orchestrator
+    auth: none
+
+  - method: GET
+    path: /api/brain/pipelines/:id/stages
+    purpose: 查询 pipeline 子任务进度
+    code_file: packages/brain/src/routes/content-pipeline.js
+    covers_feature: pipeline_orchestrator
+    auth: none
+
+  - method: GET
+    path: /api/brain/pipelines/:id/output
+    purpose: 查询 pipeline 产出物（manifest）
+    code_file: packages/brain/src/routes/content-pipeline.js
+    covers_feature: pipeline_export
+    auth: none
+
+  - method: POST
+    path: /api/brain/pipelines/trigger-topics
+    purpose: 手动触发今日选题生成
+    code_file: packages/brain/src/routes/content-pipeline.js
+    covers_feature: pipeline_orchestrator
+    auth: none
+
+  # ============================================================
+  # 发布任务
+  # ============================================================
+
+  - method: GET
+    path: /api/brain/publish-jobs
+    purpose: 查询发布任务列表（支持按 platform/status 过滤）
+    code_file: packages/brain/src/routes/publish-jobs.js
+    covers_feature: publish_monitor
+    auth: none
+
+  - method: POST
+    path: /api/brain/publish-jobs
+    purpose: 创建发布任务
+    code_file: packages/brain/src/routes/publish-jobs.js
+    covers_feature: publish_monitor
+    auth: none
+
+  - method: PATCH
+    path: /api/brain/publish-jobs/:id
+    purpose: 更新发布任务状态
+    code_file: packages/brain/src/routes/publish-jobs.js
+    covers_feature: publish_monitor
+    auth: none
+
+  # ============================================================
+  # 设计文档 & 知识库
+  # ============================================================
+
+  - method: GET
+    path: /api/brain/design-docs
+    purpose: 查询设计文档/日报
+    code_file: packages/brain/src/routes/knowledge.js
+    covers_feature: memory_distilled_docs
+    params:
+      - name: type
+        example: "diary"
+      - name: limit
+        example: 7
+    auth: none
+
+  - method: GET
+    path: /api/brain/dev-records
+    purpose: 最近 PR 记录
+    code_file: packages/brain/src/routes/knowledge.js
+    covers_feature: task_create
+    auth: none
+
+  # ============================================================
+  # 实时 & WebSocket
+  # ============================================================
+
+  - method: WS
+    path: /ws
+    purpose: WebSocket，推送系统事件
+    code_file: packages/brain/server.js
+    covers_feature: tick_loop
+    auth: none
+
+  - method: POST
+    path: /api/brain/orchestrator/chat
+    purpose: 纯意识对话，返回 Cecelia 回应
+    code_file: packages/brain/server.js
+    covers_feature: decision_engine
+    auth: none
+
+summary:
+  total_endpoints: 42
+  by_method:
+    GET: 22
+    POST: 14
+    PATCH: 5
+    WS: 1
+  by_system:
+    task: 6
+    tick: 5
+    memory: 3
+    okr: 7
+    decision: 5
+    pipeline: 6
+    publisher: 3
+    other: 7
+  last_updated: "2026-04-01"

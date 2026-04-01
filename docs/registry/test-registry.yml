@@ -1,0 +1,374 @@
+# Test Registry - Cecelia 测试清单
+# 更新时间: 2026-04-01
+# 总计: 691 个测试文件
+# 说明: 每条记录对应一个测试文件或测试脚本，标注类型、覆盖功能、CI 层级
+
+# 类型说明:
+#   unit        单个函数/模块，无外部依赖
+#   integration 两个真实模块联动
+#   e2e         完整流程端到端
+#   smoke       基础启动和路径验证
+#   regression  已修复的 bug 不再复发
+#   golden_path 最常用的核心路径
+
+tests:
+
+  # ============================================================
+  # E2E / Smoke 测试（最重要）
+  # ============================================================
+
+  - test_id: goldenpath_check
+    file: packages/brain/scripts/goldenpath-check.sh
+    type: golden_path
+    covers_feature: tick_loop
+    ci_layer: L4
+    status: active
+    description: Brain 启动 + 核心路径验证
+
+  - test_id: task_lifecycle_check
+    file: packages/brain/scripts/task-lifecycle-check.sh
+    type: e2e
+    covers_feature: task_lifecycle_e2e
+    ci_layer: L4
+    status: active
+    description: 创建→dispatch→完成 全链路
+
+  - test_id: pipeline_integrity
+    file: packages/engine/tests/pipeline-integrity.test.ts
+    type: integration
+    covers_feature: engine_dev_workflow
+    ci_layer: L3
+    status: active
+
+  - test_id: playwright_runner
+    file: packages/engine/tests/playwright-runner.test.ts
+    type: e2e
+    covers_feature: engine_dev_workflow
+    ci_layer: L4
+    status: active
+
+  - test_id: e2e_gateway
+    file: packages/quality/tests/e2e-gateway.test.ts
+    type: e2e
+    covers_feature: engine_devgate
+    ci_layer: L4
+    status: active
+
+  # ============================================================
+  # Integration 测试
+  # ============================================================
+
+  - test_id: brain_api_integration
+    file: apps/api/src/__tests__/brain-api-integration.test.ts
+    type: integration
+    covers_feature: task_create
+    ci_layer: L4
+    status: active
+
+  - test_id: tick_healing_integration
+    file: packages/brain/src/__tests__/tick-healing-integration.test.js
+    type: integration
+    covers_feature: tick_loop
+    ci_layer: L3
+    status: active
+    description: Tick healing 循环防死锁
+
+  - test_id: tick_suggestion_integration
+    file: packages/brain/src/__tests__/tick-suggestion-integration.test.js
+    type: integration
+    covers_feature: memory_suggestion_cycle
+    ci_layer: L3
+    status: active
+
+  - test_id: tick_goal_eval_integration
+    file: packages/brain/src/__tests__/tick-goal-eval-integration.test.js
+    type: integration
+    covers_feature: okr_system
+    ci_layer: L3
+    status: active
+
+  - test_id: database_integration
+    file: tests/database/integration.test.js
+    type: integration
+    covers_feature: task_create
+    ci_layer: L3
+    status: active
+
+  - test_id: codex_runner
+    file: packages/engine/tests/codex-runner.test.ts
+    type: integration
+    covers_feature: engine_dev_workflow
+    ci_layer: L3
+    status: active
+
+  - test_id: panorama_full
+    file: apps/api/tests/panorama-full.test.ts
+    type: integration
+    covers_feature: okr_system
+    ci_layer: L3
+    status: active
+
+  - test_id: api_integration
+    file: packages/quality/tests/api/integration.test.js
+    type: integration
+    covers_feature: task_create
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - Tick 系统（35 个，只列关键的）
+  # ============================================================
+
+  - test_id: tick_core
+    file: packages/brain/src/__tests__/tick.test.js
+    type: unit
+    covers_feature: tick_loop
+    ci_layer: L3
+    status: active
+
+  - test_id: tick_drain
+    file: packages/brain/src/__tests__/tick-drain.test.js
+    type: unit
+    covers_feature: tick_loop
+    ci_layer: L3
+    status: active
+
+  - test_id: tick_watchdog_quarantine
+    file: packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
+    type: unit
+    covers_feature: task_quarantine
+    ci_layer: L3
+    status: active
+
+  - test_id: tick_kr_decomp
+    file: packages/brain/src/__tests__/tick-kr-decomp.test.js
+    type: unit
+    covers_feature: decomposition_engine
+    ci_layer: L3
+    status: active
+
+  - test_id: tick_throttle
+    file: packages/brain/src/__tests__/tick-throttle.test.js
+    type: unit
+    covers_feature: tick_loop
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - Callback 系统（15 个，只列关键的）
+  # ============================================================
+
+  - test_id: callback_atomic
+    file: packages/brain/src/__tests__/callback-atomic.test.js
+    type: unit
+    covers_feature: task_callback
+    ci_layer: L3
+    status: active
+
+  - test_id: callback_dev_serial
+    file: packages/brain/src/__tests__/callback-dev-serial.test.js
+    type: regression
+    covers_feature: task_callback
+    ci_layer: L3
+    status: active
+    description: 防止 dev 任务并发执行（已修复的 bug）
+
+  - test_id: callback_needs_fix_rounds
+    file: packages/brain/src/__tests__/callback-needs-fix-rounds.test.js
+    type: regression
+    covers_feature: task_callback
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - Task Router
+  # ============================================================
+
+  - test_id: task_router_failover
+    file: packages/brain/src/__tests__/task-router-failover.test.js
+    type: unit
+    covers_feature: task_route
+    ci_layer: L3
+    status: active
+
+  - test_id: task_router_intent_cto
+    file: packages/brain/src/__tests__/task-router-intent-cto.test.js
+    type: unit
+    covers_feature: task_route
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - 决策/警觉/提案
+  # ============================================================
+
+  - test_id: proposal
+    file: packages/brain/src/__tests__/proposal.test.js
+    type: unit
+    covers_feature: proposal_system
+    ci_layer: L3
+    status: active
+
+  - test_id: alertness_diagnosis
+    file: tests/alertness/diagnosis.test.js
+    type: unit
+    covers_feature: alertness_system
+    ci_layer: L3
+    status: active
+
+  - test_id: alertness_healing
+    file: tests/alertness/healing.test.js
+    type: unit
+    covers_feature: alertness_system
+    ci_layer: L3
+    status: active
+
+  - test_id: quarantine
+    file: packages/brain/src/__tests__/quarantine.test.js
+    type: unit
+    covers_feature: task_quarantine
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - 记忆系统
+  # ============================================================
+
+  - test_id: memory_retriever
+    file: packages/brain/src/__tests__/memory-retriever.test.js
+    type: unit
+    covers_feature: memory_search
+    ci_layer: L3
+    status: active
+
+  - test_id: self_drive_state_reader
+    file: packages/brain/src/__tests__/self-drive-state-reader.test.ts
+    type: unit
+    covers_feature: memory_distilled_docs
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - Engine DevGate
+  # ============================================================
+
+  - test_id: devloop_check_gates
+    file: packages/engine/tests/scripts/devloop-check-gates.test.ts
+    type: unit
+    covers_feature: engine_dev_workflow
+    ci_layer: L3
+    status: active
+    description: devloop-check 状态机逻辑 + Lite Path 路由
+
+  - test_id: check_dod_mapping
+    file: packages/engine/tests/devgate/check-dod-mapping.test.ts
+    type: unit
+    covers_feature: engine_devgate
+    ci_layer: L3
+    status: active
+
+  - test_id: scan_rci_coverage
+    file: packages/engine/tests/devgate/scan-rci-coverage.test.ts
+    type: unit
+    covers_feature: engine_devgate
+    ci_layer: L3
+    status: active
+
+  - test_id: verify_step
+    file: packages/engine/tests/hooks/verify-step.test.ts
+    type: unit
+    covers_feature: engine_dev_workflow
+    ci_layer: L3
+    status: active
+
+  - test_id: branch_protect
+    file: packages/engine/tests/hooks/branch-protect.test.ts
+    type: unit
+    covers_feature: engine_dev_workflow
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - 内容管道
+  # ============================================================
+
+  - test_id: content_pipeline_run_api
+    file: tests/content-pipeline-run-api.test.js
+    type: unit
+    covers_feature: pipeline_orchestrator
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # Unit 测试 - OKR
+  # ============================================================
+
+  - test_id: okr_trees
+    file: apps/api/src/okr/__tests__/trees.test.js
+    type: unit
+    covers_feature: okr_system
+    ci_layer: L3
+    status: active
+
+  # ============================================================
+  # 缺失的测试（重要 features 没有测试覆盖）
+  # ============================================================
+
+  missing_tests:
+    - feature_id: pipeline_research
+      needed: [unit, integration, e2e]
+      priority: high
+      reason: 内容生产核心步骤，完全没有测试
+
+    - feature_id: pipeline_copywriting
+      needed: [unit, integration]
+      priority: high
+
+    - feature_id: pipeline_generate
+      needed: [unit, integration]
+      priority: high
+
+    - feature_id: publisher_xiaohongshu
+      needed: [unit, e2e]
+      priority: high
+      reason: 主要发布平台，无任何测试
+
+    - feature_id: publisher_douyin
+      needed: [unit, e2e]
+      priority: high
+
+    - feature_id: memory_embedding
+      needed: [unit, integration]
+      priority: medium
+
+    - feature_id: memory_dopamine
+      needed: [unit]
+      priority: medium
+
+    - feature_id: area_scheduler
+      needed: [unit]
+      priority: medium
+
+    - feature_id: engine_lite_path
+      needed: [e2e]
+      priority: high
+      reason: Lite Path E2E 流程未被测试
+
+    - feature_id: circuit_breaker
+      needed: [unit, regression]
+      priority: medium
+
+summary:
+  total_test_files: 691
+  listed_above: 40  # 关键测试，完整列表见各包的 __tests__ 目录
+  by_type:
+    unit: 620
+    integration: 50
+    e2e: 15
+    smoke: 6
+  by_ci_layer:
+    L3: 665
+    L4: 20
+    none: 6
+  missing_tests_count: 10  # 重要功能缺少测试
+  last_updated: "2026-04-01"
