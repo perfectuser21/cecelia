@@ -21,7 +21,7 @@
 # 更新: 2026-03-22 — P0 安全：seal 文件机制（#seal-gate），条件 1.5/2.5 读 seal 文件，自认证检测
 # 更新: 2026-03-30 — 移除条件 4.5：Playwright Evaluator（改为 post-merge 触发）
 # 更新: 2026-03-30 — 新增条件 1.6/2.8：Planner→Generator seal 三阶段对齐检查
-# 更新: 2026-04-01 — devloop_check_main 新增 seal 文件反推（.dev-mode 消失 fallback）v3.7.0
+# 更新: 2026-04-01 — devloop_check_main 新增 seal 文件反推（.dev-mode 消失 fallback, v3.7.0）
 # ============================================================================
 #
 # 4-Stage Pipeline 条件顺序:
