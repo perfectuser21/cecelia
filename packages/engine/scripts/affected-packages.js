@@ -31,6 +31,7 @@ const PATH_TO_PACKAGE = [
   { prefix: 'packages/workflows/', pkg: 'workflows' },
   { prefix: 'apps/api/', pkg: 'api' },
   { prefix: 'apps/dashboard/', pkg: 'dashboard' },
+  { prefix: 'docs/', pkg: 'engine' },  // docs/learnings/ 等不触发 ALL，归 engine
 ];
 
 /**
