@@ -257,3 +257,12 @@ tests:
     ci: L3
     status: active
     note: "social-trending API合约：路由注册、platform/limit参数、失败降级"
+
+  # — Tick Loop 诊断集成测试 ——————————————————————————————————————————————————————
+
+  - id: tick-integration
+    path: tests/integration/tick.integration.test.ts
+    type: integration
+    ci: L4
+    status: pending-ci
+    note: "诊断型：Tick loop触发→任务状态流转。目的是记录真实行为，status:pending-ci暂不接入gate"
