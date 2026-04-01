@@ -150,7 +150,16 @@ async function main() {
   process.stdout.write(JSON.stringify(affected) + '\n');
 }
 
-main().catch(err => {
-  process.stderr.write(`错误: ${err.message}\n`);
-  process.exit(1);
-});
+// 导出内部函数供测试使用（ESM 命名导出）
+export { computeAffectedPackages, mapFileToPackage };
+
+// CLI 入口：仅当直接运行（非 import）时执行
+const isMain = process.argv[1]
+  && (process.argv[1].endsWith('affected-packages.js') || process.argv[1].includes('affected-packages'));
+
+if (isMain) {
+  main().catch(err => {
+    process.stderr.write(`错误: ${err.message}\n`);
+    process.exit(1);
+  });
+}
