@@ -44,6 +44,27 @@ workspace_suite:
   type: unit
   count: 44
 
+# ─── packages/quality/ ────────────────────────────────────────────────────────
+# QA 基础设施测试：整目录由 vitest 管理，已接入 L3
+quality_suite:
+  managed_by: packages/quality/vitest.config.ts
+  ci: L3
+  type: unit
+
+# ─── apps/dashboard/ ──────────────────────────────────────────────────────────
+# Dashboard UI 测试：已接入 L3
+dashboard_suite:
+  managed_by: apps/dashboard/vitest.config.ts
+  ci: L3
+  type: unit
+
+# ─── frontend/ ────────────────────────────────────────────────────────────────
+# Legacy frontend 测试：已接入 L3（迁移期间保留）
+frontend_suite:
+  managed_by: frontend/vitest.config.ts
+  ci: L3
+  type: unit
+
 # ─── tests/ 根目录（孤儿文件，需显式注册）─────────────────────────────────────
 
 tests:
