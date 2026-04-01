@@ -883,3 +883,251 @@ davelosert action 读取 coverage-summary.json →
 **生成时间**: 2026-04-01
 ### S15: codex-playwright task type + 03-branch.md regression stub
 
+```
+Brain 派发 codex_playwright 任务 →
+playwright-runner.sh 获取 Task 详情 →
+Codex 探索阶段：生成 .cjs 脚本（CDP 连接 100.97.242.124:19225）→
+脚本保存到 ~/playwright-scripts/<task_id>.cjs →
+执行阶段：直接运行 .cjs 无需 LLM
+```
+
+---
+
+### bash-guard-main-write-block: bash-guard 补漏：拦截 main 分支 Bash 重定向写入源码目录
+
+```
+main 分支 Bash 命令包含 > packages/ →
+bash-guard.sh 规则 3b 检测 →
+exit 2 + [SKILL_REQUIRED: dev]
+```
+
+---
+
+### code-review-pre-push: code_review_gate 前移到 Stage 2（push 前审查）
+
+```
+Stage 2 完成 →
+02-code.md 派发 code_review_gate →
+devloop-check 条件 2.5 检查 →
+Codex 审查 PASS →
+Stage 3 push + CI
+```
+
+---
+
+### devloop-check-ci-timeout-blocked: devloop-check CI 超时返回 blocked + P0 诊断任务
+
+```
+CI 超时 90 分钟 →
+devloop-check 检测 elapsed > 5400 →
+curl POST Brain /api/brain/tasks P0 →
+返回 blocked + return 2
+```
+
+---
+
+### branch-protect-prd-content-fallback: branch-protect hook 修复 prd_id→prd_content 双重检测
+
+```
+Write 操作 →
+branch-protect 检查 .dev-mode task_id →
+Brain API 获取 prd_id // prd_content →
+prd_content 存在则放行
+```
+
+---
+
+### learning-content-validation: Learning 内容实质性检查 + devloop-check PR 合并目标验证
+
+```
+PR CI →
+check-learning.sh 检查 Learning 内容行数 →
+根本原因 ≥3 行、下次预防 ≥1 行 →
+devloop-check.sh PR 合并验证 baseRefName == main →
+完成
+```
+
+---
+
+### devloop-check-drift-detection: Stage3 Drift Check
+
+```
+Stage 2 完成 →
+devloop-check.sh 条件 2.7 drift check →
+实际改动文件与 Task Card Scope 对比 →
+有 drift 则 warning（继续）→
+条件 3 PR 创建 →
+完成
+```
+
+---
+
+### hook-ci-r12-gate0d-version-sync: Gate 0d Engine 版本同步检查
+
+```
+verify-step.sh step2 →
+Gate 0d 检测 packages/engine/ 版本文件 →
+调用 check-version-sync.sh →
+5 文件版本一致 → PASS
+```
+
+---
+
+### devgate-coverage-high-risk-whitelist: Devgate 覆盖率检查高风险白名单机制
+
+```
+check-coverage-completeness.mjs Check 3 →
+高风险脚本缺测试 → exit 1（CI 阻断）→
+低风险脚本缺测试 → warning（不阻断）→
+所有高风险脚本有测试 → PASS
+```
+
+---
+
+### brain-src-coverage-check: Brain src 覆盖率检查（Check 4）
+
+```
+check-coverage-completeness.mjs Check 4 →
+扫描 packages/brain/src/*.js →
+高风险模块缺测试 → exit 1（CI 阻断）→
+普通模块缺测试 → warning（不阻断）→
+所有高风险模块有测试 → PASS
+```
+
+---
+
+### dod-ci-incompatible-command-detection: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
+
+```
+DoD manual:curl localhost → detectCiIncompatibleCommand → exit 1 + 建议
+DoD manual:psql → exit 1 + 建议用 tests/
+DoD manual:node -e → 通过检查
+```
+
+---
+
+### planner-subagent-stage1: Planner subagent — Stage 1 Task Card 生成独立化
+
+```
+/dev 启动 →
+Stage 1: 主 agent spawn Planner subagent →
+Planner 接收任务描述 + SYSTEM_MAP →
+Planner 输出 Task Card + DoD（只含 WHAT，无 HOW）→
+主 agent 继续 Sprint Contract Gate
+```
+
+---
+
+### verify-step-symlink-path-fix: verify-step.sh symlink 物理路径解析修复
+
+```
+hooks/verify-step.sh（symlink）→
+pwd -P 获取物理路径 →
+拼接 ../scripts/devgate/check-manual-cmd-whitelist.cjs →
+Node.js 词法解析成功 →
+DoD whitelist 检查正常执行
+```
+
+---
+
+### sprint-contract-fix-adversarial: Sprint Contract Gate 对抗审查修复
+
+```
+CRG subagent 输出 reviewer_model 字段 →
+stats 非全零 →
+seal 文件包含 reviewer_model →
+spec_review plans.length > 0 →
+Sprint Contract 验证有效
+```
+
+---
+
+### sprint-contract-gate-fix: Sprint Contract Gate 防橡皮图章修复
+
+```
+spec_review subagent 调用 → plans.length > 0（有独立测试计划）→
+CRG subagent 调用 → stats 非全零（有实质审查）→
+reviewer_model 字段正确写入 seal 文件
+```
+
+---
+
+### adversarial-redesign: Sprint Contract Gate 双独立提案对抗架构
+
+```
+Orchestrator 剥离 Task Card Test 字段 →
+Generator subagent 独立提案 → .dev-gate-generator-sprint.{branch} →
+Evaluator subagent 独立提案 → .dev-gate-spec.{branch} →
+Orchestrator 比对 → 有分歧 → 双方互看 → 无限收敛（死循环检测）→
+Evaluator 提案写入 Task Card Test 字段
+```
+
+---
+
+### evaluator-reconnect: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
+
+```
+Generator 写代码 → 自验证（2.3.3）→
+独立 Evaluator（playwright-evaluator.sh）执行 [BEHAVIOR] Test →
+PASS → CRG 审查 → push
+FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator → 直到 PASS
+```
+
+---
+
+### sprint-contract-loop: Sprint Contract 收敛循环 shell 脚本驱动
+
+```
+Generator subagent 提案 → Evaluator subagent 提案 →
+bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
+exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
+```
+
+---
+
+### worktree-persistent-path: Worktree 持久路径（WORKTREE_BASE）
+
+```
+/dev 启动 → Step 0 → worktree-manage.sh create →
+检查 WORKTREE_BASE → 默认 ~/worktrees/{project}/{branch} →
+跨会话持久化，上下文压缩后仍可找回
+```
+
+---
+
+### devloop-session-recovery: devloop-check 会话压缩恢复入口
+
+```
+会话压缩重启
+  → bash packages/engine/lib/devloop-check.sh
+  → 输出当前 stage + 缺失 seal 文件 + 下一步 action
+  → agent 恢复执行对应 Stage
+```
+
+---
+
+### sprint-contract-resume: sprint-contract-loop.sh --resume 断点续跑
+
+```
+上下文压缩重启
+  → bash sprint-contract-loop.sh BRANCH --resume
+  → state 文件存在且 blocker_count==0 → exit 0 → 已收敛，跳过
+  → state 文件不存在或 blocker_count>0 → exit 2 → 正常执行 Sprint Contract
+```
+
+---
+
+## 更新规则
+
+**本文件自动生成，不要手动编辑**。
+
+所有变更必须：
+1. 先更新 `features/feature-registry.yml`
+2. 运行: `bash scripts/generate-path-views.sh`
+3. 提交生成的视图文件
+
+---
+
+**来源**: features/feature-registry.yml
+**版本**: 4.0.0
+**生成时间**: 2026-04-01
