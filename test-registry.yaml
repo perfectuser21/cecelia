@@ -1,0 +1,238 @@
+# Test Registry — Cecelia Monorepo
+# SSOT for all test files. Every *.test.* file must be registered here.
+# CI L2 (orphan-test-check) enforces this: unregistered tests block PR merge.
+#
+# Fields:
+#   id       — unique identifier (kebab-case)
+#   path     — relative path from repo root
+#   type     — unit | integration | e2e
+#   ci       — L3 | L4 (which CI layer runs this)
+#   status   — active | deprecated | pending-ci
+#   note     — optional context
+#
+# Taxonomy (see docs/adr/0001-test-taxonomy.md):
+#   unit        — single module, all deps mocked, no I/O. Runs in L3.
+#   integration — crosses a real boundary (DB/HTTP). Needs PostgreSQL. Runs in L4.
+#   e2e         — full workflow from external perspective. Runs in L4 shard 1.
+
+version: "1.0.0"
+updated: "2026-04-01"
+
+# ─── packages/brain/src/__tests__/ ────────────────────────────────────────────
+# Brain 集成测试：503 个文件，已接入 L4（4 shards + 真实 PostgreSQL）
+# 不在本 registry 逐一列举，由 packages/brain/vitest.config.ts 统一管理
+brain_integration_suite:
+  managed_by: packages/brain/vitest.config.ts
+  ci: L4
+  type: integration
+  count: 503
+  note: "Brain src/__tests__/ 整体由 vitest shard 管理，L4 统一运行"
+
+# ─── packages/engine/ ─────────────────────────────────────────────────────────
+# Engine 测试：101 个文件，已接入 L3
+engine_suite:
+  managed_by: packages/engine/vitest.config.ts
+  ci: L3
+  type: unit
+  count: 101
+
+# ─── apps/api/ ────────────────────────────────────────────────────────────────
+# Workspace 前端测试：44 个文件，已接入 L3
+workspace_suite:
+  managed_by: apps/api/vitest.config.ts
+  ci: L3
+  type: unit
+  count: 44
+
+# ─── tests/ 根目录（孤儿文件，需显式注册）─────────────────────────────────────
+
+tests:
+
+  # — alertness 系统（Brain 活跃模块，tick loop 每次调用）——————————————————————
+
+  - id: alertness-diagnosis
+    path: tests/alertness/diagnosis.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "问题诊断、趋势分析、异常预测"
+
+  - id: alertness-escalation
+    path: tests/alertness/escalation.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "4级响应体系(L0/L1/L2/L3)触发逻辑"
+
+  - id: alertness-healing
+    path: tests/alertness/healing.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "自愈策略定义、恢复阶段"
+
+  - id: alertness-levels
+    path: tests/alertness/levels.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "5级警觉等级状态转换"
+
+  - id: alertness-metrics
+    path: tests/alertness/metrics.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "5种核心指标采集（内存/CPU/响应时间/错误率/队列深度）"
+
+  # — 路由与执行器 ——————————————————————————————————————————————————————————————
+
+  - id: b-class-executor-routing
+    path: tests/b-class-executor-routing.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "B类任务在US位置的执行器路由规则（local-codex vs cecelia-bridge）"
+
+  - id: task-router-xian-m1
+    path: tests/task-router-xian-m1.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "isValidLocation(xian_m1) 验证西安M1节点路由合法性"
+
+  - id: content-pipeline-run-api
+    path: tests/content-pipeline-run-api.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "LOCATION_MAP 中 content-pipeline → xian 路由配置"
+
+  # — 内容与捕获管道 ————————————————————————————————————————————————————————————
+
+  - id: content-pipeline-llm
+    path: tests/content-pipeline-llm.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "4个executor的callLLM调用逻辑 + 降级处理（mock LLM）"
+
+  - id: capture-digestion-job
+    path: tests/capture-digestion-job.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "runCaptureDigestion：解析captures为6种target_type（mock DB）"
+
+  - id: capability-probe-rumination
+    path: tests/capability-probe-rumination.test.js
+    type: unit
+    ci: L3
+    status: active
+    note: "probeRumination使用48h窗口和idle状态判断（合约测试）"
+
+  - id: conversation-digest-tick
+    path: tests/conversation-digest-tick.test.js
+    type: unit
+    ci: L3
+    status: pending-ci
+    note: "验证tick.js引用conversation-digest（代码结构合约），价值一般"
+
+  - id: conversation-captures-route
+    path: tests/conversation-captures-route.test.js
+    type: unit
+    ci: L3
+    status: pending-ci
+    note: "Router结构验证（mock Express），价值一般"
+
+  - id: capture-api
+    path: tests/capture-api.test.js
+    type: unit
+    ci: L3
+    status: pending-ci
+    note: "Captures API mock测试，全mock无真实DB，价值有限"
+
+  - id: capture-digestion-api
+    path: tests/capture-digestion-api.test.js
+    type: unit
+    ci: L3
+    status: pending-ci
+    note: "Capture Atoms API mock测试，全mock无真实DB，价值有限"
+
+  # — 知识模块 ——————————————————————————————————————————————————————————————————
+
+  - id: knowledge-modules
+    path: tests/knowledge-modules.test.ts
+    type: unit
+    ci: L3
+    status: pending-ci
+    note: "KnowledgeModules分组逻辑、优先级标签（mock数据，价值一般）"
+
+  # — 数据库集成测试（需要真实 PostgreSQL）———————————————————————————————————————
+
+  - id: database-credentials-encryption
+    path: tests/database/credentials-encryption.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "凭证加密/解密、DAO CRUD操作（需真实DB）"
+
+  - id: database-integration
+    path: tests/database/integration.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "完整发布工作流：任务创建→凭证设置→记录保存（需真实DB）"
+
+  # — 前端测试 ——————————————————————————————————————————————————————————————————
+
+  - id: frontend-log-entry
+    path: tests/frontend/LogEntry.test.tsx
+    type: unit
+    ci: L3
+    status: deprecated
+    note: "老旧UI单元测试(Mar 7)，React Testing Library，低价值"
+
+  - id: frontend-log-filter
+    path: tests/frontend/LogFilter.test.tsx
+    type: unit
+    ci: L3
+    status: deprecated
+    note: "老旧UI单元测试(Mar 7)，低价值"
+
+  - id: frontend-log-viewer
+    path: tests/frontend/LogViewer.test.tsx
+    type: unit
+    ci: L3
+    status: deprecated
+    note: "老旧UI单元测试(Mar 7)，mock fetch，低价值"
+
+  - id: frontend-okr-page-preserve
+    path: tests/frontend/okr-page-preserve.test.ts
+    type: unit
+    ci: L3
+    status: active
+    note: "OKRPage回归合约：进度条、状态徽章、InlineEdit集成保护"
+
+  - id: frontend-project-detail-preserve
+    path: tests/frontend/project-detail-preserve.test.ts
+    type: unit
+    ci: L3
+    status: active
+    note: "ProjectDetail回归合约：任务列表、API调用保护"
+
+  # — packages 目录下的合约测试 —————————————————————————————————————————————————
+
+  - id: packages-brain-registry
+    path: tests/packages/brain/__tests__/registry.test.js
+    type: unit
+    ci: L3
+    status: pending-ci
+    note: "Migration 197存在、registry路由存在（文件存在性检查，价值一般）"
+
+  - id: packages-brain-social-trending
+    path: tests/packages/brain/src/__tests__/social-trending.test.ts
+    type: unit
+    ci: L3
+    status: active
+    note: "social-trending API合约：路由注册、platform/limit参数、失败降级"
