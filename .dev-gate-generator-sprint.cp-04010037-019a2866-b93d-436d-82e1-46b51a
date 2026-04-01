@@ -1,0 +1,25 @@
+{
+  "sealed_by": "sprint-contract-generator",
+  "branch": "cp-04010037-019a2866-b93d-436d-82e1-46b51a",
+  "timestamp": "2026-04-01T01:20:00.000Z",
+  "round": 2,
+  "note": "第2轮收敛：ARTIFACT条目从目录扫描改为精确路径（与Evaluator对齐）",
+  "proposals": [
+    {
+      "dod_item": "migration 209 存在且含 source 字段 DDL",
+      "proposed_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/migrations/209_content_topics_source.sql','utf8');if(!c.includes('ADD COLUMN IF NOT EXISTS source'))process.exit(1)\""
+    },
+    {
+      "dod_item": "triggerDailyTopicSelection 写入 content_topics 候选库并自动采纳 top 5",
+      "proposed_test": "tests/topic-selection-candidate-pool.test.ts"
+    },
+    {
+      "dod_item": "GET /api/brain/topics 返回候选列表（支持 ?status= 过滤）",
+      "proposed_test": "tests/topic-selection-candidate-pool.test.ts"
+    },
+    {
+      "dod_item": "GET /api/brain/topics/today 返回今日选题决策（adopted/pending 分类）",
+      "proposed_test": "tests/topic-selection-candidate-pool.test.ts"
+    }
+  ]
+}

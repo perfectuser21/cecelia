@@ -1,0 +1,42 @@
+{
+  "verdict": "PASS",
+  "round": 2,
+  "independent_test_plans": [
+    {
+      "dod_item": "migration 209 存在且含 source 字段 DDL",
+      "my_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/migrations/209_content_topics_source.sql','utf8');if(!c.includes('ADD COLUMN IF NOT EXISTS source'))process.exit(1)\"",
+      "agent_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/migrations/209_content_topics_source.sql','utf8');if(!c.includes('ADD COLUMN IF NOT EXISTS source'))process.exit(1)\"",
+      "consistent": true,
+      "note": "第1轮Generator用目录扫描，第2轮收敛为精确路径。现一致。"
+    },
+    {
+      "dod_item": "triggerDailyTopicSelection 写入 content_topics 候选库并自动采纳 top 5",
+      "my_test": "tests/topic-selection-candidate-pool.test.ts",
+      "agent_test": "tests/topic-selection-candidate-pool.test.ts",
+      "consistent": true,
+      "note": "调度/DB逻辑适合vitest mock测试，一致"
+    },
+    {
+      "dod_item": "GET /api/brain/topics 返回候选列表（支持 ?status= 过滤）",
+      "my_test": "tests/topic-selection-candidate-pool.test.ts",
+      "agent_test": "tests/topic-selection-candidate-pool.test.ts",
+      "consistent": true,
+      "note": "vitest + supertest 可验证 HTTP 端点行为，一致"
+    },
+    {
+      "dod_item": "GET /api/brain/topics/today 返回今日选题决策（adopted/pending 分类）",
+      "my_test": "tests/topic-selection-candidate-pool.test.ts",
+      "agent_test": "tests/topic-selection-candidate-pool.test.ts",
+      "consistent": true,
+      "note": "同上，一致"
+    }
+  ],
+  "negotiation_result": {
+    "consistent_count": 4,
+    "divergence_count": 1,
+    "blockers_from_divergence": 0,
+    "summary": "经过2轮协商收敛：第1轮ARTIFACT条目有1处分歧（目录扫描vs精确路径），第2轮全部收敛。divergence_count=1记录历史分歧，最终无blocker，PASS"
+  },
+  "issues": [],
+  "summary": "DoD全覆盖，测试命令CI兼容，白名单合规，协商后完全收敛，PASS"
+}

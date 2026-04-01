@@ -1,0 +1,7 @@
+{
+  "sealed_by": "main-agent-planner",
+  "branch": "cp-04010037-019a2866-b93d-436d-82e1-46b51a",
+  "timestamp": "2026-04-01T09:00:00+08:00",
+  "task_card": ".task-cp-04010037-019a2866-b93d-436d-82e1-46b51a.md",
+  "note": "主 agent 已完成 Task Card 写作（包含需求/DoD/Test字段），本 seal 记录此事实"
+}
