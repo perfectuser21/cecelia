@@ -4,6 +4,10 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    include: [
+      'src/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      '../../tests/packages/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html', 'json', 'json-summary'],

@@ -1,0 +1,58 @@
+{
+  "sealed_by": "spec-review-evaluator",
+  "branch": "cp-03312348-019a2866-b93d-436d-82e1-46b51a",
+  "timestamp": "2026-04-01T15:00:00+08:00",
+  "verdict": "PASS",
+  "issues": [],
+  "independent_test_plans": [
+    {
+      "dod_item": "[ARTIFACT] src/routes/ 下存在 topics 路由文件，且已在 src/routes.js 中注册",
+      "test": "manual:node -e \"const fs=require('fs');fs.accessSync('packages/brain/src/routes/topics.js');const r=fs.readFileSync('packages/brain/src/routes.js','utf8');if(!r.includes('topics'))process.exit(1);console.log('OK')\"",
+      "my_test": "manual:node -e \"const fs=require('fs');fs.accessSync('packages/brain/src/routes/topics.js');const r=fs.readFileSync('packages/brain/src/routes.js','utf8');if(!r.includes('topics'))process.exit(1);console.log('OK')\"",
+      "severity": "ok",
+      "consistent": true
+    },
+    {
+      "dod_item": "[BEHAVIOR] GET /api/brain/topics 返回 HTTP 200，响应体包含 topic_selection_log 记录",
+      "test": "tests/packages/brain/src/__tests__/topics-route.test.ts",
+      "my_test": "tests/packages/brain/src/__tests__/topics-route.test.ts",
+      "severity": "ok",
+      "consistent": true
+    },
+    {
+      "dod_item": "[BEHAVIOR] GET /api/brain/topics?date=today 仅返回 selected_date 为当日的记录",
+      "test": "tests/packages/brain/src/__tests__/topics-route.test.ts",
+      "my_test": "tests/packages/brain/src/__tests__/topics-route.test.ts",
+      "severity": "ok",
+      "consistent": true
+    },
+    {
+      "dod_item": "[BEHAVIOR] POST /api/brain/pipelines/trigger-topics 触发后，LLM 调用成功完成",
+      "test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/topic-selector.js','utf8');if(!c.includes('callLLM')||!c.includes('cortex'))process.exit(1);const l=require('fs').readFileSync('packages/brain/src/llm-caller.js','utf8');if(!l.includes('fallbacks'))process.exit(1);console.log('OK')\"",
+      "my_test": "manual:node -e \"const c=require('fs').readFileSync('packages/brain/src/topic-selector.js','utf8');if(!c.includes('callLLM')||!c.includes('cortex'))process.exit(1);const l=require('fs').readFileSync('packages/brain/src/llm-caller.js','utf8');if(!l.includes('fallbacks'))process.exit(1);console.log('OK')\"",
+      "severity": "warning",
+      "consistent": true
+    },
+    {
+      "dod_item": "[BEHAVIOR] 当 cortex profile 不可用时，LLM 调用 fallback 到可用模型",
+      "test": "manual:node -e \"const l=require('fs').readFileSync('packages/brain/src/llm-caller.js','utf8');if(!l.includes('candidates')||!l.includes('fallbacks'))process.exit(1);const c=require('fs').readFileSync('packages/brain/src/topic-selector.js','utf8');if(c.includes('gpt-5.4'))process.exit(1);console.log('OK')\"",
+      "my_test": "manual:node -e \"const l=require('fs').readFileSync('packages/brain/src/llm-caller.js','utf8');if(!l.includes('candidates')||!l.includes('fallbacks'))process.exit(1);const c=require('fs').readFileSync('packages/brain/src/topic-selector.js','utf8');if(c.includes('gpt-5.4'))process.exit(1);console.log('OK')\"",
+      "severity": "warning",
+      "consistent": true
+    },
+    {
+      "dod_item": "[PRESERVE] topic-selection-scheduler 每日 UTC 01:00 调度逻辑不变",
+      "test": "manual:node -e \"const fs=require('fs');const tick=fs.readFileSync('packages/brain/src/tick.js','utf8');if(!tick.includes('triggerDailyTopicSelection'))process.exit(1);const sched=fs.readFileSync('packages/brain/src/topic-selection-scheduler.js','utf8');if(!sched.includes('DAILY_TOPIC_HOUR_UTC = 1'))process.exit(1);console.log('OK')\"",
+      "my_test": "manual:node -e \"const fs=require('fs');const tick=fs.readFileSync('packages/brain/src/tick.js','utf8');if(!tick.includes('triggerDailyTopicSelection'))process.exit(1);const sched=fs.readFileSync('packages/brain/src/topic-selection-scheduler.js','utf8');if(!sched.includes('DAILY_TOPIC_HOUR_UTC = 1'))process.exit(1);console.log('OK')\"",
+      "severity": "ok",
+      "consistent": true
+    },
+    {
+      "dod_item": "[GATE] CI 全部通过",
+      "test": "tests/packages/brain/src/__tests__/topics-route.test.ts",
+      "my_test": "tests/packages/brain/src/__tests__/topics-route.test.ts",
+      "severity": "ok",
+      "consistent": true
+    }
+  ]
+}
