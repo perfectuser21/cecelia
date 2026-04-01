@@ -4,6 +4,10 @@
 
 Engine 有 102 个 unit 测试但 E2E 为 0——所有测试验证单个脚本，从未端到端组装验证 /dev 全流程。
 
+这种缺口在 Engine 重构前尤其危险：删除 Stage 系统、精简 stop-dev.sh 之类的改动若没有行为级安全网，只能靠人工回归。
+
+bash 变量赋值 `result=$(fn)` 是一个常见陷阱——bash 不对赋值语句应用 `set -e`，导致函数返回的非零退出码被静默吞掉。
+
 ## 什么有效
 
 `result=$(devloop_check ...)` 在 bash 中会吞掉函数 exit code（bash 赋值语句不触发 `set -e`），直接调用 `devloop_check ...` 才能让返回码正确传播。
