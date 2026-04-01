@@ -101,6 +101,7 @@ GET  /api/brain/dev-records         最近 PR 记录
 GET  /api/brain/policies            免疫系统策略
 GET  /api/brain/immune/dashboard    免疫系统仪表盘
 GET  /api/brain/kr-project-map     KR-Project 依赖图（krs + orphaned_projects + tier 分层）
+GET  /api/brain/topics              查询内容选题候选库（topic_selection_log，支持 ?date= 过滤）
 ```
 
 ---

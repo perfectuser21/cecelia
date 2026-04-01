@@ -257,3 +257,12 @@ tests:
     ci: L3
     status: active
     note: "social-trending API合约：路由注册、platform/limit参数、失败降级"
+
+  # — Brain API 路由契约测试 —————————————————————————————————————————————————————
+
+  - id: brain-topics-route-contract
+    path: tests/packages/brain/src/__tests__/topics-route.test.ts
+    type: unit
+    ci: L3
+    status: active
+    note: "GET /api/brain/topics 路由契约：文件存在、路由注册、实现结构、topic-selector/llm-caller 契约"
