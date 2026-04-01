@@ -257,3 +257,10 @@ tests:
     ci: L3
     status: active
     note: "social-trending API合约：路由注册、platform/limit参数、失败降级"
+
+  - id: callback-integration
+    path: tests/integration/callback.integration.test.ts
+    type: integration
+    ci: L4
+    status: pending-ci
+    note: "Executor callback → task状态更新 → DB持久化 链路验证"
