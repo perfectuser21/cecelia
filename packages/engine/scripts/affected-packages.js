@@ -31,6 +31,7 @@ const PATH_TO_PACKAGE = [
   { prefix: 'packages/workflows/', pkg: 'workflows' },
   { prefix: 'apps/api/', pkg: 'api' },
   { prefix: 'apps/dashboard/', pkg: 'dashboard' },
+  { prefix: 'docs/', pkg: 'engine' },  // docs/learnings/ 等不触发 ALL，归 engine
 ];
 
 /**
@@ -149,7 +150,5 @@ async function main() {
   process.stdout.write(JSON.stringify(affected) + '\n');
 }
 
-main().catch(err => {
-  process.stderr.write(`错误: ${err.message}\n`);
-  process.exit(1);
-});
+export { computeAffectedPackages, mapFileToPackage }; // ESM 导出供测试
+if (process.argv[1]?.includes('affected-packages')) { main().catch(err => { process.stderr.write(`错误: ${err.message}\n`); process.exit(1); }); } /* c8 ignore line */

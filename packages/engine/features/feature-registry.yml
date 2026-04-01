@@ -3113,3 +3113,32 @@ product_features:
       - "无 .dev-mode 时输出 NO_ACTIVE_SESSION"
 
     rcis: []
+
+  - id: sprint-contract-resume
+    name: "sprint-contract-loop.sh --resume 断点续跑"
+    version: "13.77.0"
+    updated: "2026-04-01"
+    description: |
+      sprint-contract-loop.sh 新增 --resume 标志：上下文压缩后 agent 调用此模式，
+      读 .sprint-contract-state.{branch} 判断是否已收敛（blocker_count==0）。
+      已收敛 → exit 0 跳过完整执行；未收敛 → exit 2 触发正常流程。
+      01-spec.md Step 4 新增 Step 4.0 恢复检测，while 循环前必须先调用 --resume。
+
+    entrypoints:
+      - type: script
+        file: packages/engine/scripts/devgate/sprint-contract-loop.sh
+        trigger: "bash sprint-contract-loop.sh BRANCH --resume [PROJECT_ROOT]"
+
+    golden_path: |
+      上下文压缩重启
+        -> bash sprint-contract-loop.sh BRANCH --resume
+        -> state 文件存在且 blocker_count==0 -> exit 0 -> 已收敛，跳过
+        -> state 文件不存在或 blocker_count>0 -> exit 2 -> 正常执行 Sprint Contract
+
+    minimal_paths:
+      - "--resume 时读 .sprint-contract-state.{branch}"
+      - "blocker_count==0 时 exit 0 并打印跳过信息"
+      - "state 文件不存在时 exit 2 降级为普通模式"
+      - "原调用格式 sprint-contract-loop.sh BRANCH [PROJECT_ROOT] 完全向后兼容"
+
+    rcis: []

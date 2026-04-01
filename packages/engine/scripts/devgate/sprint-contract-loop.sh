@@ -5,17 +5,26 @@
 # 用途：读取 Generator 和 Evaluator 的 seal 文件，机械判断是否收敛
 #
 # 参数：
-#   $1  BRANCH        分支名（必须）
-#   $2  PROJECT_ROOT  项目根目录（可选，默认 pwd）
+#   $1  BRANCH           分支名（必须）
+#   $2  [--resume]       可选标志：恢复模式，读 state 文件判断是否已收敛
+#                        若已收敛（blocker_count==0）直接 exit 0，跳过完整执行
+#                        若未收敛或 state 文件不存在，exit 2（降级为普通模式）
+#   $2  PROJECT_ROOT     项目根目录（可选，默认 pwd，与 --resume 互斥作为 $2）
+#   $3  PROJECT_ROOT     项目根目录（--resume 时，PROJECT_ROOT 移至 $3）
 #
 # 返回：
 #   exit 0  收敛（blocker_count == 0）— 主 agent 可进入 Stage 2
 #   exit 1  未收敛（还有 blocker）   — 主 agent 展示差异给双方，重跑一轮
-#   exit 2  前置条件缺失（seal 文件不存在或格式错误）
+#   exit 2  前置条件缺失（seal 文件不存在或格式错误）或 resume 时未收敛
 #
 # 状态持久化：
 #   .sprint-contract-state.{branch}  — 当前轮次/divergence 写磁盘
 #   格式：JSON { round, timestamp, blocker_count, divergence[] }
+#
+# 断点续跑（--resume 模式）：
+#   上下文压缩后 agent 可调用 --resume 检测是否已完成 Sprint Contract，
+#   若已收敛则直接跳过，避免重复对抗。
+#   调用示例：bash sprint-contract-loop.sh BRANCH --resume [PROJECT_ROOT]
 #
 # 依赖：node（用于解析 JSON seal 文件）
 # State persists across sessions via disk files
@@ -24,11 +33,71 @@
 set -euo pipefail
 
 BRANCH="${1:-}"
-PROJECT_ROOT="${2:-$(pwd)}"
+RESUME_MODE=false
+PROJECT_ROOT=""
 
+# ── 参数解析（支持 --resume 标志）──────────────────────────────────────────────
 if [[ -z "$BRANCH" ]]; then
-  echo "❌ 用法: bash sprint-contract-loop.sh <BRANCH> [PROJECT_ROOT]" >&2
+  echo "❌ 用法: bash sprint-contract-loop.sh <BRANCH> [--resume] [PROJECT_ROOT]" >&2
   exit 2
+fi
+
+shift  # 消费 $1（BRANCH）
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --resume)
+      RESUME_MODE=true
+      shift
+      ;;
+    *)
+      PROJECT_ROOT="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$PROJECT_ROOT" ]]; then
+  PROJECT_ROOT="$(pwd)"
+fi
+
+# ── --resume 模式：快速判断是否已收敛，跳过完整执行 ────────────────────────────
+# 用途：上下文压缩后 agent 调用此模式，读 state 文件判断是否还需要继续 Sprint Contract
+# 逻辑：state 文件存在且 blocker_count==0 → 已收敛，exit 0（跳过）
+#       state 文件不存在或 blocker_count>0 → 未收敛，exit 2（触发完整执行）
+if [[ "$RESUME_MODE" == "true" ]]; then
+  STATE_FILE_CHECK="${PROJECT_ROOT}/.sprint-contract-state.${BRANCH}"
+  if [[ -f "$STATE_FILE_CHECK" ]]; then
+    RESUME_BLOCKER=$(node -e "
+      try {
+        const s = JSON.parse(require('fs').readFileSync('${STATE_FILE_CHECK}', 'utf8'));
+        process.stdout.write(String(s.blocker_count !== undefined ? s.blocker_count : -1));
+      } catch(e) { process.stdout.write('-1'); }
+    " 2>/dev/null || echo "-1")
+    RESUME_ROUND=$(node -e "
+      try {
+        const s = JSON.parse(require('fs').readFileSync('${STATE_FILE_CHECK}', 'utf8'));
+        process.stdout.write(String(s.round || 0));
+      } catch(e) { process.stdout.write('0'); }
+    " 2>/dev/null || echo "0")
+    if [[ "$RESUME_BLOCKER" -eq 0 ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  Sprint Contract Loop — [RESUME] 已收敛，跳过"
+      echo "  Branch: ${BRANCH}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  上次收敛轮次: Round ${RESUME_ROUND}"
+      echo "  blocker_count: 0（已完成 Sprint Contract）"
+      echo "  ✅ 已收敛，无需重跑——直接继续 Stage 2"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      exit 0
+    else
+      echo "  ℹ️  [RESUME] state 文件存在但未收敛（blocker_count=${RESUME_BLOCKER}，round=${RESUME_ROUND}），需要继续 Sprint Contract" >&2
+      exit 2
+    fi
+  else
+    echo "  ℹ️  [RESUME] state 文件不存在，需要从头开始 Sprint Contract" >&2
+    exit 2
+  fi
 fi
 
 EVAL_SEAL="${PROJECT_ROOT}/.dev-gate-spec.${BRANCH}"
