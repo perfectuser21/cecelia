@@ -4,9 +4,11 @@ task_card: .task-cp-03312348-019a2866-b93d-436d-82e1-46b51a.md
 started: 2026-04-01T14:54:57+08:00
 step_0_worktree: done
 step_1_spec: done
-step_2_code: pending
+step_2_code: done
+code_review_gate: pass
 step_3_integrate: pending
 step_4_ship: pending
 task_track: full
 tasks_created: true
 spec_review_status: pass
+tdd_red_confirmed: true

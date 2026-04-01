@@ -14,6 +14,7 @@ import capacityBudgetRouter from './routes/capacity-budget.js';
 import registryRouter from './routes/registry.js';
 import contentPipelineRouter from './routes/content-pipeline.js';
 import socialTrendingRouter from './routes/social-trending.js';
+import topicsRouter from './routes/topics.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -31,5 +32,8 @@ router.use('/pipelines', contentPipelineRouter);
 
 // 社媒热点 — GET /social/trending
 router.use('/social', socialTrendingRouter);
+
+// 内容选题候选库 — GET /topics
+router.use('/topics', topicsRouter);
 
 export default router;
