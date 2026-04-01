@@ -153,7 +153,6 @@ async function main() {
 // 导出内部函数供测试使用（ESM 命名导出）
 export { computeAffectedPackages, mapFileToPackage };
 
-// CLI 入口：仅当直接运行时执行 main()
-if (process.argv[1]?.includes('affected-packages')) {
-  main().catch(err => { process.stderr.write(`错误: ${err.message}\n`); process.exit(1); });
-}
+// CLI 入口：仅当直接运行时执行 main()（import 时跳过）
+/* c8 ignore next */
+if (process.argv[1]?.includes('affected-packages')) { main().catch(err => { process.stderr.write(`错误: ${err.message}\n`); process.exit(1); }); }
