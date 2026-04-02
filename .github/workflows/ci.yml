@@ -143,33 +143,17 @@ jobs:
     steps:
       - name: Check results
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  CI Results"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
           FAILED=false
 
-          for job in secrets-scan engine-tests brain-unit brain-integration workspace-build; do
-            result="${{ needs[job].result || 'skipped' }}"
-            if [ "$result" = "failure" ]; then
-              echo "FAIL: $job"
-              FAILED=true
-            elif [ "$result" = "skipped" ]; then
-              echo "SKIP: $job (no changes)"
-            else
-              echo "PASS: $job"
-            fi
-          done
+          check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
+
+          check "secrets-scan"      "${{ needs.secrets-scan.result }}"
+          check "engine-tests"      "${{ needs.engine-tests.result }}"
+          check "brain-unit"        "${{ needs.brain-unit.result }}"
+          check "brain-integration" "${{ needs.brain-integration.result }}"
+          check "workspace-build"   "${{ needs.workspace-build.result }}"
 
           if [ "$FAILED" = "true" ]; then
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ❌ CI FAILED"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            exit 1
+            echo ""; echo "❌ CI FAILED"; exit 1
           fi
-
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  ✅ CI PASSED"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""; echo "✅ CI PASSED"
