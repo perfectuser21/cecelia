@@ -1,0 +1,10 @@
+dev
+branch: cp-04021907-engine-tmpfiles-cleanup
+task_card: none
+started: 2026-04-02T19:07:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: pending
+step_4_ship: pending
+cleanup_done: false

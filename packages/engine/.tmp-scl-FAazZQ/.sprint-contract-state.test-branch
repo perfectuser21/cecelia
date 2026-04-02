@@ -1,8 +1,0 @@
-{
-  "branch": "test-branch",
-  "round": 1,
-  "timestamp": "2026-04-02T09:13:25+08:00",
-  "blocker_count": 0,
-  "plans_count": 2,
-  "divergence": []
-}
