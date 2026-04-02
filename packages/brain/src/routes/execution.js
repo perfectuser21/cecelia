@@ -102,6 +102,25 @@ router.post('/execution-callback', async (req, res) => {
       }
     }
 
+    // P1-0: terminal failure guard — 不允许 execution-callback 覆盖 pipeline_terminal_failure 终态
+    // 场景：orchestrator 在 Xian 执行期间将 content-pipeline 设为 failed + failure_class=pipeline_terminal_failure，
+    //       Xian 完成后调用 execution-callback(AI Done) 试图将状态改回 completed。
+    // 即使主 UPDATE 有 WHERE status='in_progress' 保护，也需此守卫覆盖竞态情形。
+    if (newStatus === 'completed') {
+      try {
+        const terminalCheck = await pool.query(
+          `SELECT payload->>'failure_class' AS failure_class FROM tasks WHERE id = $1`,
+          [task_id]
+        );
+        if (terminalCheck.rows[0]?.failure_class === 'pipeline_terminal_failure') {
+          console.warn(`[execution-callback] 终态守卫命中：task=${task_id} failure_class=pipeline_terminal_failure，拒绝覆盖为 completed`);
+          return res.json({ success: true, skipped: true, reason: 'terminal_failure_guard' });
+        }
+      } catch (terminalCheckErr) {
+        console.error(`[execution-callback] terminal failure check error（降级继续）: ${terminalCheckErr.message}`);
+      }
+    }
+
     // 2. Build the update payload
     const lastRunResult = {
       run_id,
