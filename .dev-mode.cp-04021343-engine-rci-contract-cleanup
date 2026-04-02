@@ -1,0 +1,12 @@
+dev
+branch: cp-04021343-engine-rci-contract-cleanup
+task_card: .task-cp-04021343-engine-rci-contract-cleanup.md
+started: 2026-04-02T13:43:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
+confidence_score: 9
+confidence_reason: 纯删除操作，行号精确定位，无逻辑变更
+confidence_risk: 无
