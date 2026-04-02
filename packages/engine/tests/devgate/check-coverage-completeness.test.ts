@@ -33,13 +33,7 @@ describe('check-coverage-completeness.mjs — HIGH_RISK_DEVGATE_SCRIPTS 白名�
     expect(HIGH_RISK_DEVGATE_SCRIPTS.has('check-coverage-completeness')).toBe(true);
   });
 
-  it('HIGH_RISK_DEVGATE_SCRIPTS 包含 scan-rci-coverage', () => {
-    expect(HIGH_RISK_DEVGATE_SCRIPTS.has('scan-rci-coverage')).toBe(true);
-  });
-
-  it('HIGH_RISK_DEVGATE_SCRIPTS 包含 check-rci-stale-refs', () => {
-    expect(HIGH_RISK_DEVGATE_SCRIPTS.has('check-rci-stale-refs')).toBe(true);
-  });
+  // scan-rci-coverage 和 check-rci-stale-refs 已在 slim-engine 中删除
 });
 
 describe('check-coverage-completeness.mjs — checkDevgateCoverage 函数', () => {
