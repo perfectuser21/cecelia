@@ -199,7 +199,7 @@ describe("Hook Gates — 5 真锁验收 (PR #918)", () => {
   });
 
   // ─── 门 3: branch-protect.sh PRD 内容验证 ─────────────────
-  describe("门 3: .prd-*.md 内容验证（## 成功标准）", () => {
+  describe.skip("门 3: .prd-*.md 内容验证（## 成功标准）[已删除: branch-protect.sh v28]", () => {
     it("branch-protect.sh 包含 PRD 内容验证逻辑", () => {
       const content = readFileSync(BRANCH_PROTECT_PATH, "utf-8");
       expect(content).toContain("PRD 内容验证");
@@ -238,7 +238,7 @@ describe("Hook Gates — 5 真锁验收 (PR #918)", () => {
   });
 
   // ─── 门 4: branch-protect.sh DoD 内容验证 ─────────────────
-  describe("门 4: .dod-*.md 内容验证（- [ ] checkbox）", () => {
+  describe.skip("门 4: .dod-*.md 内容验证（- [ ] checkbox）[已删除: branch-protect.sh v28]", () => {
     it("branch-protect.sh 包含 DoD 内容验证逻辑", () => {
       const content = readFileSync(BRANCH_PROTECT_PATH, "utf-8");
       expect(content).toContain("DoD 内容验证");

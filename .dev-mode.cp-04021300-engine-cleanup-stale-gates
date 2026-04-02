@@ -1,0 +1,12 @@
+dev
+branch: {b}
+task_card: .task-cp-04021300-engine-cleanup-stale-gates.md
+started: 2026-04-02T13:00:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
+confidence_score: 9
+confidence_reason: 改动明确只删代码无新增逻辑
+confidence_risk: 无
