@@ -18,7 +18,7 @@ describe('affected-packages.js', () => {
     });
 
     it('packages/engine/ 文件正常映射到 engine', () => {
-      const affected = computeAffectedPackages(['packages/engine/scripts/devgate/sprint-contract-loop.sh']);
+      const affected = computeAffectedPackages(['packages/engine/scripts/devgate/rci-execution-gate.sh']);
       expect(affected).toContain('engine');
       expect(affected).not.toContain('api');
     });
@@ -37,8 +37,8 @@ describe('affected-packages.js', () => {
 
     it('engine + docs/learnings/ 混合变更只影响 engine', () => {
       const affected = computeAffectedPackages([
-        'packages/engine/scripts/devgate/sprint-contract-loop.sh',
-        'docs/learnings/cp-04010846-sprint-contract-resume.md',
+        'packages/engine/scripts/devgate/rci-execution-gate.sh',
+        'docs/learnings/cp-04021852-engine-deep-cleanup.md',
       ]);
       expect(affected).toContain('engine');
       expect(affected).not.toContain('api');

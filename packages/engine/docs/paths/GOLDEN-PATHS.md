@@ -674,24 +674,7 @@ exit 2 + [SKILL_REQUIRED: dev]
 
 ---
 
-## GP-043: code_review_gate 前移到 Stage 2（push 前审查） (code-review-pre-push)
-
-**Feature**: code-review-pre-push - code_review_gate 前移到 Stage 2（push 前审查）
-**Priority**: P0
-
-### Golden Path
-
-```
-Stage 2 完成 →
-02-code.md 派发 code_review_gate →
-devloop-check 条件 2.5 检查 →
-Codex 审查 PASS →
-Stage 3 push + CI
-```
-
----
-
-## GP-044: devloop-check CI 超时返回 blocked + P0 诊断任务 (devloop-check-ci-timeout-blocked)
+## GP-043: devloop-check CI 超时返回 blocked + P0 诊断任务 (devloop-check-ci-timeout-blocked)
 
 **Feature**: devloop-check-ci-timeout-blocked - devloop-check CI 超时返回 blocked + P0 诊断任务
 **Priority**: P1
@@ -707,7 +690,7 @@ curl POST Brain /api/brain/tasks P0 →
 
 ---
 
-## GP-045: branch-protect hook 修复 prd_id→prd_content 双重检测 (branch-protect-prd-content-fallback)
+## GP-044: branch-protect hook 修复 prd_id→prd_content 双重检测 (branch-protect-prd-content-fallback)
 
 **Feature**: branch-protect-prd-content-fallback - branch-protect hook 修复 prd_id→prd_content 双重检测
 **Priority**: P1
@@ -723,7 +706,7 @@ prd_content 存在则放行
 
 ---
 
-## GP-046: Learning 内容实质性检查 + devloop-check PR 合并目标验证 (learning-content-validation)
+## GP-045: Learning 内容实质性检查 + devloop-check PR 合并目标验证 (learning-content-validation)
 
 **Feature**: learning-content-validation - Learning 内容实质性检查 + devloop-check PR 合并目标验证
 **Priority**: P1
@@ -740,7 +723,7 @@ devloop-check.sh PR 合并验证 baseRefName == main →
 
 ---
 
-## GP-047: Stage3 Drift Check (devloop-check-drift-detection)
+## GP-046: Stage3 Drift Check (devloop-check-drift-detection)
 
 **Feature**: devloop-check-drift-detection - Stage3 Drift Check
 **Priority**: P2
@@ -758,7 +741,7 @@ devloop-check.sh 条件 2.7 drift check →
 
 ---
 
-## GP-048: Gate 0d Engine 版本同步检查 (hook-ci-r12-gate0d-version-sync)
+## GP-047: Gate 0d Engine 版本同步检查 (hook-ci-r12-gate0d-version-sync)
 
 **Feature**: hook-ci-r12-gate0d-version-sync - Gate 0d Engine 版本同步检查
 **Priority**: P2
@@ -774,7 +757,7 @@ Gate 0d 检测 packages/engine/ 版本文件 →
 
 ---
 
-## GP-049: Devgate 覆盖率检查高风险白名单机制 (devgate-coverage-high-risk-whitelist)
+## GP-048: Devgate 覆盖率检查高风险白名单机制 (devgate-coverage-high-risk-whitelist)
 
 **Feature**: devgate-coverage-high-risk-whitelist - Devgate 覆盖率检查高风险白名单机制
 **Priority**: P1
@@ -790,7 +773,7 @@ check-coverage-completeness.mjs Check 3 →
 
 ---
 
-## GP-050: Brain src 覆盖率检查（Check 4） (brain-src-coverage-check)
+## GP-049: Brain src 覆盖率检查（Check 4） (brain-src-coverage-check)
 
 **Feature**: brain-src-coverage-check - Brain src 覆盖率检查（Check 4）
 **Priority**: P1
@@ -807,7 +790,7 @@ check-coverage-completeness.mjs Check 4 →
 
 ---
 
-## GP-051: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand) (dod-ci-incompatible-command-detection)
+## GP-050: DoD CI 不兼容命令检测 (detectCiIncompatibleCommand) (dod-ci-incompatible-command-detection)
 
 **Feature**: dod-ci-incompatible-command-detection - DoD CI 不兼容命令检测 (detectCiIncompatibleCommand)
 **Priority**: P1
@@ -822,7 +805,7 @@ DoD manual:node -e → 通过检查
 
 ---
 
-## GP-052: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
+## GP-051: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
 
 **Feature**: verify-step-symlink-path-fix - verify-step.sh symlink 物理路径解析修复
 **Priority**: P1
@@ -839,39 +822,7 @@ DoD whitelist 检查正常执行
 
 ---
 
-## GP-053: Sprint Contract Gate 对抗审查修复 (sprint-contract-fix-adversarial)
-
-**Feature**: sprint-contract-fix-adversarial - Sprint Contract Gate 对抗审查修复
-**Priority**: P1
-
-### Golden Path
-
-```
-CRG subagent 输出 reviewer_model 字段 →
-stats 非全零 →
-seal 文件包含 reviewer_model →
-spec_review plans.length > 0 →
-Sprint Contract 验证有效
-```
-
----
-
-## GP-054: Sprint Contract Gate 防橡皮图章修复 (sprint-contract-gate-fix)
-
-**Feature**: sprint-contract-gate-fix - Sprint Contract Gate 防橡皮图章修复
-**Priority**: P0
-
-### Golden Path
-
-```
-spec_review subagent 调用 → plans.length > 0（有独立测试计划）→
-CRG subagent 调用 → stats 非全零（有实质审查）→
-reviewer_model 字段正确写入 seal 文件
-```
-
----
-
-## GP-055: Sprint Contract Gate 双独立提案对抗架构 (adversarial-redesign)
+## GP-052: Sprint Contract Gate 双独立提案对抗架构 (adversarial-redesign)
 
 **Feature**: adversarial-redesign - Sprint Contract Gate 双独立提案对抗架构
 **Priority**: P0
@@ -888,7 +839,7 @@ Evaluator 提案写入 Task Card Test 字段
 
 ---
 
-## GP-056: Worktree 持久路径（WORKTREE_BASE） (worktree-persistent-path)
+## GP-053: Worktree 持久路径（WORKTREE_BASE） (worktree-persistent-path)
 
 **Feature**: worktree-persistent-path - Worktree 持久路径（WORKTREE_BASE）
 **Priority**: P1
@@ -903,7 +854,7 @@ Evaluator 提案写入 Task Card Test 字段
 
 ---
 
-## GP-057: devloop-check 会话压缩恢复入口 (devloop-session-recovery)
+## GP-054: devloop-check 会话压缩恢复入口 (devloop-session-recovery)
 
 **Feature**: devloop-session-recovery - devloop-check 会话压缩恢复入口
 **Priority**: null
@@ -915,22 +866,6 @@ Evaluator 提案写入 Task Card Test 字段
   → bash packages/engine/lib/devloop-check.sh
   → 输出当前 stage + 缺失 seal 文件 + 下一步 action
   → agent 恢复执行对应 Stage
-```
-
----
-
-## GP-058: sprint-contract-loop.sh --resume 断点续跑 (sprint-contract-resume)
-
-**Feature**: sprint-contract-resume - sprint-contract-loop.sh --resume 断点续跑
-**Priority**: null
-
-### Golden Path
-
-```
-上下文压缩重启
-  -> bash sprint-contract-loop.sh BRANCH --resume
-  -> state 文件存在且 blocker_count==0 -> exit 0 -> 已收敛，跳过
-  -> state 文件不存在或 blocker_count>0 -> exit 2 -> 正常执行 Sprint Contract
 ```
 
 ---

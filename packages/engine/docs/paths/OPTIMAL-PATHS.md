@@ -440,18 +440,6 @@ exit 2 + [SKILL_REQUIRED: dev]
 
 ---
 
-### code-review-pre-push: code_review_gate 前移到 Stage 2（push 前审查）
-
-```
-Stage 2 完成 →
-02-code.md 派发 code_review_gate →
-devloop-check 条件 2.5 检查 →
-Codex 审查 PASS →
-Stage 3 push + CI
-```
-
----
-
 ### devloop-check-ci-timeout-blocked: devloop-check CI 超时返回 blocked + P0 诊断任务
 
 ```
@@ -555,28 +543,6 @@ DoD whitelist 检查正常执行
 
 ---
 
-### sprint-contract-fix-adversarial: Sprint Contract Gate 对抗审查修复
-
-```
-CRG subagent 输出 reviewer_model 字段 →
-stats 非全零 →
-seal 文件包含 reviewer_model →
-spec_review plans.length > 0 →
-Sprint Contract 验证有效
-```
-
----
-
-### sprint-contract-gate-fix: Sprint Contract Gate 防橡皮图章修复
-
-```
-spec_review subagent 调用 → plans.length > 0（有独立测试计划）→
-CRG subagent 调用 → stats 非全零（有实质审查）→
-reviewer_model 字段正确写入 seal 文件
-```
-
----
-
 ### adversarial-redesign: Sprint Contract Gate 双独立提案对抗架构
 
 ```
@@ -606,17 +572,6 @@ Evaluator 提案写入 Task Card Test 字段
   → bash packages/engine/lib/devloop-check.sh
   → 输出当前 stage + 缺失 seal 文件 + 下一步 action
   → agent 恢复执行对应 Stage
-```
-
----
-
-### sprint-contract-resume: sprint-contract-loop.sh --resume 断点续跑
-
-```
-上下文压缩重启
-  -> bash sprint-contract-loop.sh BRANCH --resume
-  -> state 文件存在且 blocker_count==0 -> exit 0 -> 已收敛，跳过
-  -> state 文件不存在或 blocker_count>0 -> exit 2 -> 正常执行 Sprint Contract
 ```
 
 ---

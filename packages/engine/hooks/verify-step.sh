@@ -62,22 +62,6 @@ _pass() {
         _devlog_event "verify-step" "$STEP" "pass" "$1"
     fi
     echo "  ✅ [STATE MACHINE] $1 验证通过" >&2
-    # 写入验签到 .dev-seal.${BRANCH}（供 Stop Hook 三层兜底检查）
-    if [[ -n "${PROJECT_ROOT:-}" && -n "${BRANCH:-}" ]]; then
-        local _seal_file="$PROJECT_ROOT/.dev-seal.${BRANCH}"
-        local _ts
-        _ts=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-        # seal key 映射：STEP 变量值 → stop-dev.sh _SEALED_STEPS 期望的 key 名
-        local _seal_key
-        case "$STEP" in
-            step1) _seal_key="step_1_spec_seal" ;;
-            step2) _seal_key="step_2_code_seal" ;;
-            step4) _seal_key="step_4_ship_seal" ;;
-            *)     _seal_key="${STEP}_seal" ;;
-        esac
-        echo "${_seal_key}: verified@${_ts}" >> "$_seal_file" 2>/dev/null || true
-        echo "  🔏 验签已写入: ${_seal_key} → .dev-seal.${BRANCH}" >&2
-    fi
 }
 
 # ============================================================================

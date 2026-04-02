@@ -385,14 +385,6 @@ changelog:
 
 ---
 
-### code-review-pre-push: code_review_gate 前移到 Stage 2（push 前审查）
-
-1. ✅ **Stage 2 完成后派发 code_review_gate**
-2. ✅ **devloop-check 条件 2.5 在 step_2_code done 后检查**
-3. ✅ **Stage 3 不再派发 code_review_gate**
-
----
-
 ### devloop-check-ci-timeout-blocked: devloop-check CI 超时返回 blocked + P0 诊断任务
 
 1. ✅ **CI 超时 90 分钟 → blocked（非 done）**
@@ -461,21 +453,6 @@ changelog:
 
 ---
 
-### sprint-contract-fix-adversarial: Sprint Contract Gate 对抗审查修复
-
-1. ✅ **CRG seal 包含 reviewer_model 字段**
-2. ✅ **spec_review seal independent_test_plans 非空**
-
----
-
-### sprint-contract-gate-fix: Sprint Contract Gate 防橡皮图章修复
-
-1. ✅ **spec_review independent_test_plans.length > 0**
-2. ✅ **CRG stats 非全零**
-3. ✅ **两个 seal 文件均含 reviewer_model 字段**
-
----
-
 ### adversarial-redesign: Sprint Contract Gate 双独立提案对抗架构
 
 1. ✅ **Generator subagent 写入 .dev-gate-generator-sprint.{branch}**
@@ -497,15 +474,6 @@ changelog:
 1. ✅ **devloop-check.sh 直接执行时调用 devloop_check_main**
 2. ✅ **devloop_check_main 搜索主仓库 + 所有 worktree 中的 .dev-mode.* 文件**
 3. ✅ **无 .dev-mode 时输出 NO_ACTIVE_SESSION**
-
----
-
-### sprint-contract-resume: sprint-contract-loop.sh --resume 断点续跑
-
-1. ✅ **--resume 时读 .sprint-contract-state.{branch}**
-2. ✅ **blocker_count==0 时 exit 0 并打印跳过信息**
-3. ✅ **state 文件不存在时 exit 2 降级为普通模式**
-4. ✅ **原调用格式 sprint-contract-loop.sh BRANCH [PROJECT_ROOT] 完全向后兼容**
 
 ---
 

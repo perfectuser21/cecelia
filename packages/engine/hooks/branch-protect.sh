@@ -181,7 +181,7 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
     exit 0
 fi
 
-# 禁止的分支（main, develop, 其他）
+# 禁止的分支（非 cp-* 分支不允许写代码）
 echo "  只能在 cp-MMDDHHNN-task-name 分支修改代码（当前: $CURRENT_BRANCH）" >&2
 echo "  请先运行 /dev 创建 cp-* 分支" >&2
 echo "[SKILL_REQUIRED: dev]" >&2
