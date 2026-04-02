@@ -1,0 +1,14 @@
+dev
+branch: cp-04021500-engine-e2e-test
+task_card: .task-cp-04021500-engine-e2e-test.md
+started: 2026-04-02T17:00:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
+task_track: full
+brain_task_id: 5c60c20f-cdca-4206-bfbb-fb912fb9136b
+confidence_score: 8
+confidence_reason: PRD clear, test scope defined
+confidence_risk: gh CLI mock edge cases
