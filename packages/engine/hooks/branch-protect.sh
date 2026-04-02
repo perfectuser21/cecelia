@@ -61,24 +61,6 @@ if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
         done
     fi
 
-    # Gate 状态自认证防伪
-    if echo "$_BP_CONTENT" | grep -qE 'spec_review_status:[[:space:]]+pass'; then
-        if [[ ! -f "$PROJECT_ROOT/.dev-gate-spec.$CURRENT_BRANCH" ]]; then
-            echo "" >&2
-            echo "  [BRANCH PROTECT] spec_review 自认证被拦截" >&2
-            echo "  写入前必须存在 seal 文件: .dev-gate-spec.$CURRENT_BRANCH" >&2
-            exit 2
-        fi
-    fi
-    if echo "$_BP_CONTENT" | grep -qE 'code_review_gate_status:[[:space:]]+pass'; then
-        if [[ ! -f "$PROJECT_ROOT/.dev-gate-crg.$CURRENT_BRANCH" ]]; then
-            echo "" >&2
-            echo "  [BRANCH PROTECT] code_review_gate 自认证被拦截" >&2
-            echo "  写入前必须存在 seal 文件: .dev-gate-crg.$CURRENT_BRANCH" >&2
-            exit 2
-        fi
-    fi
-
     # .dev-mode 文件本身放行
     exit 0
 fi

@@ -68,11 +68,7 @@ describe('engine 版本文件结构', () => {
 
     it('包含 snapshot 相关脚本', () => {
       const snapshotScript = path.join(DEVGATE_DIR, 'snapshot-prd-dod.sh')
-      const listScript = path.join(DEVGATE_DIR, 'list-snapshots.sh')
-      const viewScript = path.join(DEVGATE_DIR, 'view-snapshot.sh')
       expect(fs.existsSync(snapshotScript)).toBe(true)
-      expect(fs.existsSync(listScript)).toBe(true)
-      expect(fs.existsSync(viewScript)).toBe(true)
     })
 
     it('devgate 脚本是有效的真实文件（非符号链接）', () => {

@@ -86,6 +86,13 @@ artifacts/screenshots/*.png
 # Backup files
 *.bak
 
+# Runtime artifacts (never commit)
+.dev-agent-seal.*
+.quality-evidence.json
+.dev-feedback-report.json
+quality-summary.json
+.git-rewrite/
+
 # Archive directories (old code, never commit)
 .archive/
 

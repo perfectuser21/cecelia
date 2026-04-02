@@ -28,17 +28,17 @@ const CI_FILES: WorkflowFile[] = [
   {
     name: 'ci-l1-process.yml',
     path: join(WORKFLOWS_DIR, 'ci-l1-process.yml'),
-    keyJobs: ['changes', 'dod-check', 'engine-l1', 'l1-passed'],
+    keyJobs: ['verify-dev-workflow', 'ci-config-audit', 'secrets-scan', 'l1-passed'],
   },
   {
     name: 'ci-l2-consistency.yml',
     path: join(WORKFLOWS_DIR, 'ci-l2-consistency.yml'),
-    keyJobs: ['changes', 'engine-l2', 'l2-passed'],
+    keyJobs: ['changes', 'evolution-check', 'l2-passed'],
   },
   {
     name: 'ci-l3-code.yml',
     path: join(WORKFLOWS_DIR, 'ci-l3-code.yml'),
-    keyJobs: ['changes', 'engine-l3', 'l3-passed'],
+    keyJobs: ['changes', 'detect-commit-type', 'l3-passed'],
   },
   {
     name: 'ci-l4-runtime.yml',

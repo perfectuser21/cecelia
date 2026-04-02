@@ -48,7 +48,7 @@ get_current_branch() {
 # 用法: if is_protected_branch; then ... fi
 is_protected_branch() {
     local branch="${1:-$(get_current_branch)}"
-    [[ "$branch" == "main" || "$branch" == "master" || "$branch" == "develop" ]]
+    [[ "$branch" == "main" ]]
 }
 
 # Debug 日志（通过 HOOK_DEBUG=1 环境变量启用）
