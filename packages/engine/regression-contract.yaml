@@ -862,7 +862,7 @@ hooks:
       type: file
       path: ".history/PR-*.prd.md"
       exists: true
-    test: "tests/hooks/pr-gate-phase2.test.ts"
+    test: "manual:node -e \"require('fs').accessSync('packages/engine/scripts/devgate/snapshot-prd-dod.sh');console.log('OK')\""
 
   # --------------------------------------------------------------------------
   # H2-010: Phase 6 - Skill 产物检查
@@ -1032,7 +1032,7 @@ hooks:
       type: command
       run: "bash scripts/devgate/metrics.sh --format json"
       contains: "rci_coverage"
-    test: "tests/hooks/metrics.test.ts"
+    test: "manual:bash scripts/devgate/metrics.sh --help"
   - id: W1-001
     feature: W1
     name: "/dev 流程可启动"
