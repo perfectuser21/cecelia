@@ -822,24 +822,7 @@ DoD manual:node -e → 通过检查
 
 ---
 
-## GP-052: Planner subagent — Stage 1 Task Card 生成独立化 (planner-subagent-stage1)
-
-**Feature**: planner-subagent-stage1 - Planner subagent — Stage 1 Task Card 生成独立化
-**Priority**: P2
-
-### Golden Path
-
-```
-/dev 启动 →
-Stage 1: 主 agent spawn Planner subagent →
-Planner 接收任务描述 + SYSTEM_MAP →
-Planner 输出 Task Card + DoD（只含 WHAT，无 HOW）→
-主 agent 继续 Sprint Contract Gate
-```
-
----
-
-## GP-053: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
+## GP-052: verify-step.sh symlink 物理路径解析修复 (verify-step-symlink-path-fix)
 
 **Feature**: verify-step-symlink-path-fix - verify-step.sh symlink 物理路径解析修复
 **Priority**: P1
@@ -856,7 +839,7 @@ DoD whitelist 检查正常执行
 
 ---
 
-## GP-054: Sprint Contract Gate 对抗审查修复 (sprint-contract-fix-adversarial)
+## GP-053: Sprint Contract Gate 对抗审查修复 (sprint-contract-fix-adversarial)
 
 **Feature**: sprint-contract-fix-adversarial - Sprint Contract Gate 对抗审查修复
 **Priority**: P1
@@ -873,7 +856,7 @@ Sprint Contract 验证有效
 
 ---
 
-## GP-055: Sprint Contract Gate 防橡皮图章修复 (sprint-contract-gate-fix)
+## GP-054: Sprint Contract Gate 防橡皮图章修复 (sprint-contract-gate-fix)
 
 **Feature**: sprint-contract-gate-fix - Sprint Contract Gate 防橡皮图章修复
 **Priority**: P0
@@ -888,7 +871,7 @@ reviewer_model 字段正确写入 seal 文件
 
 ---
 
-## GP-056: Sprint Contract Gate 双独立提案对抗架构 (adversarial-redesign)
+## GP-055: Sprint Contract Gate 双独立提案对抗架构 (adversarial-redesign)
 
 **Feature**: adversarial-redesign - Sprint Contract Gate 双独立提案对抗架构
 **Priority**: P0
@@ -905,38 +888,7 @@ Evaluator 提案写入 Task Card Test 字段
 
 ---
 
-## GP-057: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛 (evaluator-reconnect)
-
-**Feature**: evaluator-reconnect - Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
-**Priority**: P0
-
-### Golden Path
-
-```
-Generator 写代码 → 自验证（2.3.3）→
-独立 Evaluator（playwright-evaluator.sh）执行 [BEHAVIOR] Test →
-PASS → CRG 审查 → push
-FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator → 直到 PASS
-```
-
----
-
-## GP-058: Sprint Contract 收敛循环 shell 脚本驱动 (sprint-contract-loop)
-
-**Feature**: sprint-contract-loop - Sprint Contract 收敛循环 shell 脚本驱动
-**Priority**: P0
-
-### Golden Path
-
-```
-Generator subagent 提案 → Evaluator subagent 提案 →
-bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
-exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
-```
-
----
-
-## GP-059: Worktree 持久路径（WORKTREE_BASE） (worktree-persistent-path)
+## GP-056: Worktree 持久路径（WORKTREE_BASE） (worktree-persistent-path)
 
 **Feature**: worktree-persistent-path - Worktree 持久路径（WORKTREE_BASE）
 **Priority**: P1
@@ -951,7 +903,7 @@ exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再
 
 ---
 
-## GP-060: devloop-check 会话压缩恢复入口 (devloop-session-recovery)
+## GP-057: devloop-check 会话压缩恢复入口 (devloop-session-recovery)
 
 **Feature**: devloop-session-recovery - devloop-check 会话压缩恢复入口
 **Priority**: null
@@ -967,7 +919,7 @@ exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再
 
 ---
 
-## GP-061: sprint-contract-loop.sh --resume 断点续跑 (sprint-contract-resume)
+## GP-058: sprint-contract-loop.sh --resume 断点续跑 (sprint-contract-resume)
 
 **Feature**: sprint-contract-resume - sprint-contract-loop.sh --resume 断点续跑
 **Priority**: null
