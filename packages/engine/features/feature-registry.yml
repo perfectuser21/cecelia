@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.6"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): 深度清理 — 删除 40+ 个孤儿文件/废弃目录/全skip测试/构建产物"
+    scope: "packages/engine/scripts/,packages/engine/lib/,packages/engine/tests/,packages/engine/ci/,packages/engine/skills/"
   - version: "13.78.5"
     date: "2026-04-02"
     change: "[CONFIG] chore(engine): bash-guard 去掉 develop 分支 + CI L2 删除重复 brain-new-files 内联检查"
