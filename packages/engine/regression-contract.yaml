@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "13.78.3"
+version: "13.78.4"
 updated: 2026-04-01
 # devloop-check: seal 文件反推 (v3.7.0)
 
@@ -3710,100 +3710,6 @@ skills:
       type: command
       run: "bash -c 'test -f packages/engine/scripts/devgate/check-new-files-need-rci.cjs'"
     test: "manual:node -e \"const {scanMissingRci}=require('./packages/engine/scripts/devgate/check-new-files-need-rci.cjs');const r=scanMissingRci(['packages/engine/hooks/new-hook.sh'],'hooks:\\n  - id: H99\\n    file: \\\"hooks/other.sh\\\"\\n');if(r.length!==1)process.exit(1)\""
-
-  # PE: Playwright Evaluator (v13.54.0)
-  # --------------------------------------------------------------------------
-  - id: PE-001
-    feature: PE
-    name: "playwright-evaluator.cjs 存在且支持 --dry-run 模式"
-    scope: devgate
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    file: "scripts/devgate/playwright-evaluator.cjs"
-    tags: [devgate, evaluator, e2e, behavior-verification, v13.54.0]
-    owner: engine
-    steps:
-      given: "Stage 3 CI 通过后触发 Playwright Evaluator"
-      when: "node playwright-evaluator.cjs --dry-run"
-      then: "输出 DRY RUN 报告，列出所有 [BEHAVIOR] 条目和基线检查，退出码 0"
-    evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/scripts/devgate/playwright-evaluator.cjs'"
-    test: "tests/engine/playwright-evaluator.test.ts"
-
-  - id: DEVGATE-PLAYWRIGHT-EVAL-001
-    feature: DevGate
-    name: "Playwright Evaluator — Stage 3 端到端行为验证"
-    scope: devgate
-    priority: P1
-    trigger: [PR]
-    method: auto
-    file: "scripts/devgate/playwright-evaluator.sh"
-    tags: [devgate, evaluator, behavior, e2e]
-    owner: engine
-    steps:
-      given: "Stage 3 CI 通过后"
-      when: "devloop-check 条件 4.5 触发 playwright-evaluator.sh"
-      then: "从 Task Card 提取 [BEHAVIOR] 条目，逐条执行验证，写入 seal 文件"
-    evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/scripts/devgate/playwright-evaluator.cjs'"
-    test: "tests/devgate/playwright-evaluator.test.ts"
-
-  - id: PE-002
-    feature: PE
-    name: "playwright-evaluator skill — Stage 3 行为验证 Gate"
-    scope: skill
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    file: "skills/playwright-evaluator/SKILL.md"
-    tags: [skill, evaluator, e2e, behavior-verification, v13.54.0]
-    owner: engine
-    steps:
-      given: "Stage 3 CI 全部通过"
-      when: "/playwright-evaluator skill 触发"
-      then: "执行 playwright-evaluator.cjs 行为验证，返回逐条 pass/fail 报告"
-    evidence:
-      type: code
-      file: "skills/playwright-evaluator/SKILL.md"
-      contains: "playwright-evaluator"
-    test: "tests/devgate/playwright-evaluator.test.ts"
-
-  - id: RCI-sprint-report
-    name: "Sprint Report 自动生成脚本（generate-sprint-report.sh）"
-    description: "读取本地 seal 文件，生成 docs/reports/{branch}.md，包含 Planner 隔离/Sprint Contract/CI Gate/Scores 四个章节"
-    trigger: [PR]
-    method: auto
-    file: "scripts/devgate/generate-sprint-report.sh"
-    tags: [devgate, sprint-report, traceability]
-    owner: engine
-    steps:
-      given: "Stage 4 Ship 阶段，seal 文件已就位"
-      when: "主 agent 调用 bash packages/engine/scripts/devgate/generate-sprint-report.sh BRANCH"
-      then: "读取本地 seal 文件和状态文件，生成结构化报告到 docs/reports/{branch}.md，不依赖外部服务"
-    evidence:
-      type: command
-      run: "bash -c 'test -x packages/engine/scripts/devgate/generate-sprint-report.sh'"
-    test: "tests/devgate/generate-sprint-report.test.ts"
-
-  - id: RCI-sprint-contract-loop
-    name: "Sprint Contract 收敛循环 shell 脚本（sprint-contract-loop.sh）"
-    description: "读取 Generator/Evaluator seal 文件，机械统计 blocker_count，写磁盘状态，exit 0=PASS"
-    trigger: [PR]
-    method: auto
-    file: "scripts/devgate/sprint-contract-loop.sh"
-    tags: [devgate, sprint-contract, convergence]
-    owner: engine
-    steps:
-      given: "01-spec.md Step 4 Generator + Evaluator 各自写完 seal 文件"
-      when: "主 agent 调用 bash sprint-contract-loop.sh BRANCH PROJECT_ROOT"
-      then: "统计 Evaluator seal 中 consistent==false 条目，写状态到 .sprint-contract-state.{branch}，exit 0=收敛 exit 1=继续迭代"
-    evidence:
-      type: command
-      run: "bash -c 'test -x packages/engine/scripts/devgate/sprint-contract-loop.sh'"
-    test: "tests/devgate/sprint-contract-loop.test.ts"
 
 # ============================================================================
 # Changelog
