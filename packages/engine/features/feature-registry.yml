@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.11"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): 最终清理 — 删过时docs+templates+feature-registry过时条目"
+    scope: "packages/engine/docs/,packages/engine/templates/,packages/engine/features/"
   - version: "13.78.10"
     date: "2026-04-02"
     change: "[CONFIG] chore(engine): 同步 skills/dev/ 到 v5.0.0 — 删18个过时脚本+lib+更新所有step文件"
@@ -2849,38 +2853,6 @@ product_features:
       - "psql 被拦截"
       - "npm test 被拦截"
       - "node -e 命令正常通过"
-
-  - id: planner-subagent-stage1
-    name: Planner subagent — Stage 1 Task Card 生成独立化
-    category: skills
-    status: Committed
-    priority: P2
-    version: "13.59.0"
-    updated: "2026-03-29"
-    description: |
-      Stage 1 Task Card + DoD 生成从主 agent 内部拆成独立 Planner subagent。
-      Planner subagent 只接收任务描述 + SYSTEM_MAP.md，不接收 CLAUDE.md 或 Brain context。
-      主 agent 变成纯编排者，拿 Planner 输出继续 Sprint Contract Gate。
-      与 Stage 2 的 Generator subagent 模式对称。
-
-    entrypoints:
-      - type: skill
-        file: packages/engine/skills/dev/steps/01-spec.md
-        trigger: "/dev Stage 1 启动时，主 agent spawn Planner subagent"
-
-    golden_path: |
-      /dev 启动 →
-      Stage 1: 主 agent spawn Planner subagent →
-      Planner 接收任务描述 + SYSTEM_MAP →
-      Planner 输出 Task Card + DoD（只含 WHAT，无 HOW）→
-      主 agent 继续 Sprint Contract Gate
-
-    minimal_paths:
-      - "Planner subagent 隔离：不接收 CLAUDE.md 和 Brain context"
-      - "Sprint Contract Gate 正常继续工作"
-
-    rcis: []
-
   - id: verify-step-symlink-path-fix
     name: verify-step.sh symlink 物理路径解析修复
     category: hooks
@@ -3022,77 +2994,6 @@ product_features:
       - "planner-prompt.md 所有 Test 字段为占位符"
 
     rcis: []
-
-  - id: evaluator-reconnect
-    name: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
-    category: workflows
-    status: Committed
-    priority: P0
-    version: "13.71.0"
-    updated: "2026-03-31"
-    description: |
-      修复对抗网络两个缺陷：
-      - 01-spec.md：去掉 MAX_ROUNDS=3 固定上限，改为死循环检测（连续2轮 divergence 相同则报 P1 FAIL）
-      - 02-code.md：在 Generator 自验证（2.3.3）之后、CRG（2.4）之前，新增 2.3.4 独立 Evaluator 步骤
-        调用 playwright-evaluator.sh 独立执行 Task Card [BEHAVIOR] Test 命令，FAIL 打回 Generator
-
-    entrypoints:
-      - type: step
-        file: packages/engine/skills/dev/steps/01-spec.md
-        trigger: "Stage 1 Sprint Contract Gate 收敛循环"
-      - type: step
-        file: packages/engine/skills/dev/steps/02-code.md
-        trigger: "Stage 2 自验证之后（步骤 2.3.4）"
-      - type: script
-        file: packages/engine/scripts/devgate/playwright-evaluator.sh
-        trigger: "02-code.md 2.3.4 调用"
-
-    golden_path: |
-      Generator 写代码 → 自验证（2.3.3）→
-      独立 Evaluator（playwright-evaluator.sh）执行 [BEHAVIOR] Test →
-      PASS → CRG 审查 → push
-      FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator → 直到 PASS
-
-    minimal_paths:
-      - "02-code.md 含 playwright-evaluator.sh 步骤"
-      - "01-spec.md 不含 MAX_ROUNDS"
-      - "01-spec.md Step 4 调用 sprint-contract-loop.sh"
-
-    rcis: []
-
-  - id: sprint-contract-loop
-    name: Sprint Contract 收敛循环 shell 脚本驱动
-    category: workflows
-    status: Committed
-    priority: P0
-    version: "13.72.0"
-    updated: "2026-03-31"
-    description: |
-      把 Sprint Contract Gate 的收敛 while loop 从 MD 伪代码改为 shell 脚本管理状态。
-      sprint-contract-loop.sh 读取 Generator/Evaluator seal 文件，机械统计 blocker_count，
-      状态写入磁盘（.sprint-contract-state.{branch}），exit 0 = PASS，exit 1 = 继续迭代。
-      主 agent 只负责 spawn 双方 → 调脚本 → 根据 exit code 决定下一步，loop 状态不依赖 context。
-
-    entrypoints:
-      - type: script
-        file: packages/engine/scripts/devgate/sprint-contract-loop.sh
-        trigger: "01-spec.md Step 4 调用"
-      - type: step
-        file: packages/engine/skills/dev/steps/01-spec.md
-        trigger: "Stage 1 Sprint Contract Gate Step 4"
-
-    golden_path: |
-      Generator subagent 提案 → Evaluator subagent 提案 →
-      bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
-      exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
-
-    minimal_paths:
-      - "sprint-contract-loop.sh 存在且可执行"
-      - "脚本读 .dev-gate-spec.{branch} 统计 consistent==false"
-      - "01-spec.md Step 4 bash sprint-contract-loop.sh"
-
-    rcis: []
-
   - id: worktree-persistent-path
     name: Worktree 持久路径（WORKTREE_BASE）
     category: core-infra
