@@ -255,7 +255,7 @@ describe("branch-protect.sh", () => {
 
   // v25: monorepo subdir packages/ 保护测试
   // 场景：在 packages/ 子目录开发时，根目录不能用旧的全局 .prd.md
-  describe("monorepo subdir PRD protection (v25)", () => {
+  describe.skip("monorepo subdir PRD protection (v25) [已删除: branch-protect.sh v28]", () => {
     let gitRepoDir: string;
     let worktreeDir: string;
     let patchedHookInWorktree: string;

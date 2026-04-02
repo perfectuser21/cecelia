@@ -321,52 +321,6 @@ if echo "$CMD" | grep -qE '\.dev-mode' && \
     fi
 fi
 
-# ─── 规则 5b: Gate 状态自认证防伪（~2ms）──────────────────────
-# 拦截 Bash 写入 spec_review_status: pass / code_review_gate_status: pass
-# 无 seal 文件时视为主 AI 自认证，必须拦截
-# seal 文件由 subagent 写入：.dev-gate-spec.<BRANCH> / .dev-gate-crg.<BRANCH>
-if echo "$CMD" | grep -qE '\.dev-mode' && \
-   echo "$CMD" | grep -qE '(spec_review_status|code_review_gate_status):[[:space:]]*pass'; then
-    _SEAL_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    _SEAL_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-    _GATE_TYPE=""
-    _SEAL_FILE=""
-    if echo "$CMD" | grep -qE 'spec_review_status:[[:space:]]*pass'; then
-        _GATE_TYPE="spec_review"
-        _SEAL_FILE="$_SEAL_ROOT/.dev-gate-spec.$_SEAL_BRANCH"
-    else
-        _GATE_TYPE="code_review_gate"
-        _SEAL_FILE="$_SEAL_ROOT/.dev-gate-crg.$_SEAL_BRANCH"
-    fi
-    if [[ ! -f "$_SEAL_FILE" ]]; then
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [BASH GUARD] Gate 自认证被拦截" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "" >&2
-        echo "  Gate: $_GATE_TYPE" >&2
-        echo "  不允许直接写入 gate status，必须先由 subagent 写入 seal 文件：" >&2
-        echo "  $_SEAL_FILE" >&2
-        echo "" >&2
-        echo "  正确做法：调用对应 subagent（spec-review / code-review-gate），" >&2
-        echo "  subagent 写入 seal 文件后，才能标记 gate status。" >&2
-        echo "" >&2
-        exit 2
-    fi
-    _SEAL_VERDICT=$(jq -r '.verdict // ""' "$_SEAL_FILE" 2>/dev/null || echo "")
-    if [[ "$_SEAL_VERDICT" != "PASS" ]]; then
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [BASH GUARD] seal 文件 verdict 非 PASS" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "" >&2
-        echo "  seal 文件：$_SEAL_FILE" >&2
-        echo "  verdict=$_SEAL_VERDICT（期望 PASS）" >&2
-        echo "" >&2
-        exit 2
-    fi
-fi
-
 # ─── 规则 2: HK 部署防护（两步匹配，命中才跑 git）─────────
 # 第一步：是否是 rsync/scp 命令？（~1ms）
 if ! echo "$CMD" | grep -Eq "$DEPLOY_CMDS"; then

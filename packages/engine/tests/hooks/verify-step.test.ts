@@ -503,7 +503,7 @@ describe("verify-step.sh symlink path resolution", () => {
   });
 });
 
-describe("verify-step.sh LITE 路径豁免", () => {
+describe.skip("verify-step.sh LITE 路径豁免 [已删除: LITE/FULL路径+subagent gates]", () => {
   const BRANCH = "cp-test-lite";
   let liteTestDir: string;
 

@@ -17,7 +17,7 @@ const BASH_GUARD_PATH = resolve(__dirname, "../../hooks/bash-guard.sh");
 const BRANCH_PROTECT_PATH = resolve(__dirname, "../../hooks/branch-protect.sh");
 const DEVLOOP_CHECK_PATH = resolve(__dirname, "../../lib/devloop-check.sh");
 
-describe("bash-guard.sh Rule 5b — Gate 状态防伪 seal 验证", () => {
+describe.skip("bash-guard.sh Rule 5b — Gate 状态防伪 seal 验证 [已删除: slim-engine-heartbeat]", () => {
   it("bash-guard.sh 包含规则 5b 标识", () => {
     const content = readFileSync(BASH_GUARD_PATH, "utf-8");
     expect(content).toContain("规则 5b");
