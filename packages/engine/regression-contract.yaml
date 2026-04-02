@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "13.78.7"
+version: "13.78.8"
 updated: 2026-04-01
 # devloop-check: seal 文件反推 (v3.7.0)
 
@@ -294,29 +294,6 @@ hooks:
       run: "bash hooks/verify-step.sh step1"
       contains: "dev-seal"
     test: "tests/hooks/verify-step.test.ts"
-
-  - id: H1-019
-    feature: H1
-    name: "Stop Hook 验签兜底：step_N done 无 seal → exit 2"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-dev, seal, state-machine, triple-defense]
-    owner: infra
-    steps:
-      given: ".dev-mode 中 step_N 标记为 done 但 .dev-seal 文件中无对应验签"
-      when: "Stop Hook 执行完成条件检查"
-      then: "输出验签缺失警告并 exit 2 强制补验"
-    evidence:
-      type: code
-      run: "bash hooks/stop-dev.sh"
-      contains: "dev-seal"
-    test: "tests/hooks/stop-dev-seal.test.ts"
-
-  # --------------------------------------------------------------------------
-  # H7: stop.sh - 循环控制器
-  # --------------------------------------------------------------------------
   - id: H7-001
     feature: H7
     name: "Stop Hook 检测 .dev-mode 文件"
@@ -411,26 +388,6 @@ hooks:
       file: "hooks/stop.sh"
       contains: "SESSION_ID_IN_FILE"
     test: "tests/hooks/concurrency.test.ts"
-
-  - id: H7-007
-    feature: H7
-    name: "共享锁工具库原子操作（.dev-mode 并发安全）"
-    scope: lib
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [lock, atomic, concurrency]
-    owner: infra
-    steps:
-      given: "多个进程同时操作 .dev-mode 文件"
-      when: "使用 lib/lock-utils.sh 的原子操作函数"
-      then: "mktemp + mv 保证写入原子性，flock 保证互斥"
-    evidence:
-      type: code
-      file: "lib/lock-utils.sh"
-      contains: "atomic_write_dev_mode"
-    test: "tests/hooks/concurrency.test.ts"
-
   - id: H7-008
     feature: H7
     name: "Stop Hook TTY 隔离（有头模式按 terminal 隔离）"
@@ -676,26 +633,6 @@ hooks:
       file: "hooks/stop-dev.sh"
       contains: "_branch_in_lock\" == \"$CURRENT_BRANCH\""
     test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
-  - id: H7-021
-    feature: H7
-    name: "worktree-gc.sh 删除前检查脏状态"
-    scope: script
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [worktree-gc, data-loss, dirty-check, bug-fix]
-    owner: infra
-    steps:
-      given: "worktree-gc.sh 要删除一个 worktree"
-      when: "worktree 有未提交的改动"
-      then: "跳过删除，输出警告"
-    evidence:
-      type: code
-      file: "skills/dev/scripts/worktree-gc.sh"
-      contains: "git -C \"$WT_PATH\" status --porcelain"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
   - id: H7-022
     feature: H7
     name: "stop-dev.sh 孤儿状态重试上限"
@@ -714,45 +651,6 @@ hooks:
       file: "hooks/stop-dev.sh"
       contains: ".dev-orphan-retry"
     test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
-  - id: H7-023
-    feature: H7
-    name: "lock-utils.sh 不覆写调用者 DEV_MODE_FILE"
-    scope: library
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    tags: [lock-utils, variable-collision, bug-fix]
-    owner: infra
-    steps:
-      given: "调用者设置了 DEV_MODE_FILE 为 per-branch 路径"
-      when: "调用 acquire_dev_mode_lock（内部调用 _get_lock_paths）"
-      then: "调用者的 DEV_MODE_FILE 不被覆写"
-    evidence:
-      type: code
-      file: "lib/lock-utils.sh"
-      contains: "_LU_DEV_MODE_FILE"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
-  - id: H7-024
-    feature: H7
-    name: "lock-utils.sh worktree .git 文件检测"
-    scope: library
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    tags: [lock-utils, worktree, bug-fix]
-    owner: infra
-    steps:
-      given: "在 worktree 中运行（.git 是文件非目录）"
-      when: "_get_lock_paths 检测锁目录"
-      then: "使用 git rev-parse --git-dir 获取真正的 git 目录"
-    evidence:
-      type: code
-      file: "lib/lock-utils.sh"
-      contains: "git rev-parse --git-dir"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
   - id: H7-025
     feature: H7
     name: "cleanup.sh worktree 感知"
@@ -771,45 +669,6 @@ hooks:
       file: "skills/dev/scripts/cleanup.sh"
       contains: "IS_WORKTREE"
     test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
-  - id: H7-026
-    feature: H7
-    name: "stop-dev.sh FD 冲突修复"
-    scope: hook
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-hook, fd-conflict, bug-fix]
-    owner: infra
-    steps:
-      given: "stop-dev.sh 使用 flock 更新 retry_count"
-      when: "同时 lock-utils.sh 也使用 flock"
-      then: "使用不同的 FD（202 vs 200），不冲突"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "flock -x 202"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
-  - id: H7-027
-    feature: H7
-    name: "worktree-gc.sh 路径安全精确匹配"
-    scope: script
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [worktree-gc, path-safety, bug-fix]
-    owner: infra
-    steps:
-      given: "worktree-gc.sh 需要 rm -rf fallback 清理"
-      when: "执行路径安全检查"
-      then: "使用 .claude/worktrees 或同父目录精确匹配，不用 dirname 过宽匹配"
-    evidence:
-      type: code
-      file: "skills/dev/scripts/worktree-gc.sh"
-      contains: "worktree_dir"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
-
   - id: H7-028
     feature: H7
     name: "stop-dev.sh orphan retry 分离 + 清理"
@@ -1174,56 +1033,6 @@ hooks:
       run: "bash scripts/devgate/metrics.sh --format json"
       contains: "rci_coverage"
     test: "tests/hooks/metrics.test.ts"
-
-  - id: H4-002
-    feature: H4
-    name: "快照 Meta 格式增强"
-    scope: hook
-    priority: P1
-    trigger: [Release]
-    method: auto
-    tags: [snapshot, meta, phase4]
-    owner: infra
-    steps:
-      given: "存在 .prd.md 和 .dod.md"
-      when: "运行 snapshot-prd-dod.sh 创建快照"
-      then: "快照顶部包含完整 meta: pr, base, priority, head, merged, created"
-    evidence:
-      type: file
-      path: ".history/PR-*.dod.md"
-      contains: "<!-- pr:"
-    test: "tests/hooks/metrics.test.ts"
-
-  # --------------------------------------------------------------------------
-  # H4-003: v8.24.0 安全修复 (run-regression.sh)
-  # --------------------------------------------------------------------------
-  - id: H4-003
-    feature: H4
-    name: "RCI ID 格式白名单验证"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: manual
-    tags: [security, validation, whitelist, v8.24.0]
-    owner: infra
-    steps:
-      given: "run-regression.sh 接收 RCI ID 参数"
-      when: "处理 ID 前"
-      then: "验证 ID 符合 [A-Z][0-9]-[0-9]{3} 格式，拒绝非法字符防止命令注入"
-    evidence:
-      type: code
-      file: "scripts/run-regression.sh"
-      contains: "^[A-Z][0-9]-[0-9]{3}$"
-
-# ============================================================================
-# Workflow 回归契约
-# ============================================================================
-# TODO: W1 系列当前为 manual 测试，需要添加自动化测试
-# 自动化方向：使用 expect 脚本或 playwright 模拟交互式会话
-workflow:
-  # --------------------------------------------------------------------------
-  # W1: /dev 11 步流程
-  # --------------------------------------------------------------------------
   - id: W1-001
     feature: W1
     name: "/dev 流程可启动"
@@ -2059,58 +1868,6 @@ ci:
   # --------------------------------------------------------------------------
   # C4: regression-pr (develop PR L3 subset)
   # --------------------------------------------------------------------------
-  - id: C4-001
-    feature: C4
-    name: "develop PR 回归测试（L3 子集）"
-    scope: ci
-    priority: P1
-    trigger: [PR]
-    method: manual
-    tags: [ci, regression, pr, develop, v10.5.0]
-    owner: infra
-    steps:
-      given: "PR to develop"
-      when: "CI regression-pr job 运行"
-      then: "跑 trigger 包含 PR 的 RCI 子集，防止 develop 分支腐烂"
-    note: "v10.5.0: 新增 regression-pr job，develop PR 也跑回归测试子集"
-    evidence:
-      type: ci_job
-      name: "regression-pr"
-      status: success
-    verification:
-      - desc: "确认 regression-pr job 存在于 ci.yml"
-        command: "grep -q 'regression-pr:' .github/workflows/ci.yml"
-      - desc: "确认调用 scripts/run-regression.sh pr"
-        command: "grep -q 'run-regression.sh pr' .github/workflows/ci.yml"
-
-  # --------------------------------------------------------------------------
-  # C5: release-check
-  # --------------------------------------------------------------------------
-  - id: C5-001
-    feature: C5
-    name: "Release 前 DoD 完成度检查"
-    scope: ci
-    priority: P1
-    # Note: Only PR trigger because running scripts/release-check.sh inside
-    # the release-check job creates a circular dependency (C5-001 calls
-    # release-check.sh which is already being run by run-regression.sh)
-    trigger: [PR]
-    method: auto
-    tags: [ci, release, dod]
-    owner: infra
-    steps:
-      given: "PR 到 main 分支"
-      when: "运行 npm run release:check"
-      then: "DoD 所有必要项完成，Evidence 引用正确"
-    evidence:
-      type: command
-      run: "bash scripts/release-check.sh"
-      contains: "Release 检查通过"
-    test: "scripts/release-check.sh"
-
-# --------------------------------------------------------------------------
-  # C8: Evidence Truth System (P0-1)
-  # --------------------------------------------------------------------------
   - id: C8-001
     feature: C8
     name: "Evidence 来自真实 CI 结果"
@@ -2428,132 +2185,6 @@ export:
   # --------------------------------------------------------------------------
   # E1: QA Reporting
   # --------------------------------------------------------------------------
-  - id: E1-001
-    feature: E1
-    name: "QA 审计脚本输出合法 JSON"
-    scope: export
-    priority: P1
-    trigger: [Release]
-    method: auto
-    tags: [export, qa, json]
-    owner: infra
-    steps:
-      given: "项目包含 regression-contract.yaml 和 FEATURES.md"
-      when: "运行 bash scripts/qa-report.sh"
-      then: "输出合法的 JSON 格式"
-    evidence:
-      type: command
-      run: "bash scripts/qa-report.sh | jq . > /dev/null && echo valid"
-      contains: "valid"
-    test: "scripts/qa-report.sh"
-
-  - id: E1-002
-    feature: E1
-    name: "QA JSON 包含完整结构"
-    scope: export
-    priority: P1
-    trigger: [Release]
-    method: auto
-    tags: [export, qa, json, schema]
-    owner: infra
-    steps:
-      given: "运行 qa-report.sh"
-      when: "解析 JSON 输出"
-      then: "包含 repo, version, timestamp, summary, features, rcis, golden_paths, gates 字段"
-    evidence:
-      type: command
-      run: "bash scripts/qa-report.sh | jq 'keys'"
-      contains: "repo"
-    test: "scripts/qa-report.sh"
-
-  - id: E1-003
-    feature: E1
-    name: "QA 审计 summary 计算正确"
-    scope: export
-    priority: P2
-    trigger: [Release]
-    method: auto
-    tags: [export, qa, summary]
-    owner: infra
-    steps:
-      given: "项目包含完整的 QA 基础设施"
-      when: "解析 summary 字段"
-      then: "meta, unit, e2e 百分比在 0-100 范围内"
-    evidence:
-      type: command
-      run: "bash scripts/qa-report.sh --fast | jq '.summary.overall'"
-      contains: "[0-9]+"
-      description: "返回 0-100 的数字"
-    test: "scripts/qa-report.sh"
-
-  # --------------------------------------------------------------------------
-  # E2: Dev Session Reporting
-  # --------------------------------------------------------------------------
-  - id: E2-001
-    feature: E2
-    name: "开发任务报告生成 JSON"
-    scope: export
-    priority: P1
-    trigger: [Release]
-    method: manual
-    tags: [export, dev, session, json]
-    owner: workflow
-    steps:
-      given: "完成一次 /dev 流程"
-      when: "cleanup 阶段调用 generate-report.sh"
-      then: "在 .dev-runs/ 生成 JSON 报告"
-    evidence:
-      type: manual
-      desc: "检查 .dev-runs/ 目录是否生成 *-report.json 文件（需要实际运行 /dev workflow）"
-    test: "skills/dev/scripts/generate-report.sh"
-
-  - id: E2-002
-    feature: E2
-    name: "报告包含 mode 字段"
-    scope: export
-    priority: P1
-    trigger: [Release]
-    method: auto
-    tags: [export, dev, session, mode]
-    owner: workflow
-    steps:
-      given: "生成开发任务报告"
-      when: "解析 JSON"
-      then: "包含 mode 字段（interactive 或 headless）"
-    evidence:
-      type: command
-      run: "jq '.mode' .dev-runs/*-report.json"
-      contains: "interactive|headless"
-      description: "返回 interactive 或 headless"
-    test: "skills/dev/scripts/generate-report.sh"
-
-  - id: E2-003
-    feature: E2
-    name: "报告包含质检结果"
-    scope: export
-    priority: P1
-    trigger: [Release]
-    method: auto
-    tags: [export, dev, session, quality]
-    owner: workflow
-    steps:
-      given: "生成开发任务报告"
-      when: "解析 JSON"
-      then: "包含 quality_report 字段（L1/L2/L3 状态）"
-    evidence:
-      type: command
-      run: "jq '.quality_report' .dev-runs/*-report.json"
-      contains: "L1_automated|L2_verification|L3_acceptance"
-      description: "返回 L1/L2/L3 状态对象"
-    test: "skills/dev/scripts/generate-report.sh"
-
-# ============================================================================
-# N8N Integration 回归契约
-# ============================================================================
-n8n:
-  # --------------------------------------------------------------------------
-  # P1: Regression Testing Framework - 回归测试框架
-  # --------------------------------------------------------------------------
   - id: P1-001
     feature: P1
     name: "rc-filter.sh 正确过滤 RCI"
@@ -2572,26 +2203,6 @@ n8n:
       run: "bash scripts/rc-filter.sh pr | head -5"
       contains: "H1-001|H2-001"
     test: "manual:bash scripts/rc-filter.sh pr && bash scripts/rc-filter.sh release"
-
-  - id: P1-002
-    feature: P1
-    name: "run-regression.sh 执行回归测试"
-    scope: regression
-    priority: P0
-    trigger: [Release]
-    method: auto
-    tags: [regression, execution]
-    owner: qa
-    steps:
-      given: "RCI 定义存在"
-      when: "运行 bash scripts/run-regression.sh"
-      then: "执行对应的自动化测试"
-    evidence:
-      type: command
-      run: "bash scripts/run-regression.sh --dry-run"
-      contains: "tests/"
-    test: "manual:bash scripts/run-regression.sh --dry-run"
-
   - id: P1-003
     feature: P1
     name: "regression-contract.yaml 格式解析"
@@ -2773,28 +2384,6 @@ golden_paths:
 
   # --------------------------------------------------------------------------
   # GP-005: Export 链路
-  # --------------------------------------------------------------------------
-  - id: GP-005
-    name: "Export 链路"
-    description: "QA 审计 + Dev Session 报告输出"
-    trigger: [Release]
-    method: auto
-    rcis:
-      - E1-001  # QA 审计脚本输出合法 JSON
-      - E1-002  # QA JSON 包含完整结构
-      - E2-001  # 开发任务报告生成 JSON
-      - E2-002  # 报告包含 mode 字段
-      - E2-003  # 报告包含质检结果
-    verification:
-      type: end-to-end
-      steps:
-        - "运行 bash scripts/qa-report.sh，确认输出合法 JSON"
-        - "完成一次 /dev 流程，确认 .dev-runs/ 生成报告"
-        - "检查报告包含 mode 字段（interactive/headless）"
-    test: "scripts/qa-report.sh"
-
-  # --------------------------------------------------------------------------
-  # GP-006: N8N/Cecilia 无头链路
   # --------------------------------------------------------------------------
   - id: GP-006
     name: "N8N/Cecilia 无头链路"
@@ -3089,24 +2678,6 @@ quality_enforcement:
 # Skills 回归契约
 # ============================================================================
 skills:
-  - id: S1-006
-    feature: S1
-    name: "Dev Feedback Report Generation"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [dev, feedback, reporting, json]
-    owner: infra
-    steps:
-      given: "/dev workflow 完成"
-      when: "运行 generate-feedback-report.sh"
-      then: "生成包含 11 个字段的结构化反馈报告 JSON"
-    evidence:
-      type: file
-      path: "tests/dev/test-generate-feedback-report.sh"
-    test: "tests/dev/test-generate-feedback-report.sh"
-
   - id: S1-007
     feature: S1
     name: "Dev Task ID Support (Phase 3a)"
@@ -3141,25 +2712,6 @@ skills:
       type: file
       path: "tests/dev/test-workflow-integration.sh"
     test: "tests/dev/test-workflow-integration.sh"
-
-  - id: S1-009
-    feature: S1
-    name: "Dev Feedback Upload (Phase 4a)"
-    scope: script
-    priority: P1
-    trigger: [PR]
-    method: auto
-    tags: [dev, feedback, brain-api, upload]
-    owner: infra
-    steps:
-      given: ".dev-feedback-report.json 存在"
-      when: "运行 upload-feedback.sh <task_id>"
-      then: "反馈上传到 Brain API，返回成功"
-    evidence:
-      type: file
-      path: "tests/dev/test-upload-feedback.sh"
-    test: "tests/dev/test-upload-feedback.sh"
-
   - id: S1-010
     feature: S1
     name: "Dev Task Status Sync (Phase 4a)"
@@ -3217,26 +2769,6 @@ skills:
       type: file
       path: "tests/validation-loop/test-dod-validation.sh"
     test: "tests/validation-loop/test-dod-validation.sh"
-
-  - id: S2-003
-    feature: S2
-    name: "PRD/DoD Anti-Cheat 机制"
-    scope: workflow
-    priority: P0
-    trigger: [PR]
-    method: auto
-    tags: [anti-cheat, validation, security]
-    owner: workflow
-    steps:
-      given: "验证报告生成"
-      when: "运行 anti-cheat-prd.sh 或 anti-cheat-dod.sh"
-      then: "10 层检查全部通过，SHA256 hash 匹配，分数 >= 90"
-    evidence:
-      type: file
-      path: "tests/validation-loop/test-anti-cheat.sh"
-    test: "tests/validation-loop/test-anti-cheat.sh"
-
-
   - id: PCPV-001
     feature: pre-commit-path-views
     name: "pre-commit hook 自动运行 generate-path-views.sh"
@@ -3337,25 +2869,6 @@ skills:
       type: command
       run: "node -e \"const c=require('fs').readFileSync('packages/brain/package.json','utf8');const j=JSON.parse(c);if(!j.scripts.test.includes('OOM worker exit'))process.exit(1);console.log('OOM-aware test script present')\""
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/brain/package.json','utf8');const j=JSON.parse(c);if(!j.scripts.test.includes('OOM worker exit')){console.error('Missing OOM detection in test script');process.exit(1)}console.log('OOM-aware OK')\""
-
-  - id: DEV-S2-SEAL-001
-    feature: DEV
-    name: ".dev-seal 验签格式校验（三字段）"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [dev-pipeline, stage2, seal, verify-step]
-    owner: infra
-    steps:
-      given: "verify-step.sh 通过 Stage 2 验证后"
-      when: "写入 .dev-seal.<branch> 文件"
-      then: "文件包含 stepN_seal: verified@<timestamp> 格式（三字段：step/verified/时间戳）"
-    evidence:
-      type: log
-      contains: "dev-seal"
-    test: "tests/hooks/stop-dev-seal.test.ts"
-
   - id: DEV-S3-REQPATHS-001
     feature: DEV
     name: "Required Dev Paths — 高风险路径必须有 PRD 证据"
@@ -3373,29 +2886,6 @@ skills:
       type: command
       run: "bash -c 'test -f packages/engine/config/required-dev-paths.yml && grep -q executor.js packages/engine/config/required-dev-paths.yml'"
     test: "manual:node -e \"const c=require('fs').readFileSync('packages/engine/config/required-dev-paths.yml','utf8');if(!c.includes('executor.js')){console.error('executor.js not in required-dev-paths');process.exit(1)}console.log('required-dev-paths OK')\""
-
-  - id: DEV-S4-LEARNING-001
-    feature: DEV
-    name: "Learning 文件必须在 PR 合并前写好"
-    scope: script
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [dev-pipeline, stage4, learning, check-learning]
-    owner: infra
-    steps:
-      given: "Stage 4 Ship 阶段，CI 已通过"
-      when: "尝试合并 PR 前执行 check-learning.sh"
-      then: "检查 docs/learnings/<branch>.md 存在且包含 ### 根本原因 + ### 下次预防 + - [ ] checklist"
-    evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/scripts/devgate/check-learning.sh'"
-    test: "manual:node -e \"const c=require('fs').readFileSync('packages/engine/scripts/devgate/check-learning.sh','utf8');if(!c.includes('根本原因')){console.error('check-learning.sh missing 根本原因 check');process.exit(1)}console.log('check-learning.sh validates Learning format')\""
-
-  # --------------------------------------------------------------------------
-  # P0: Brain 核心模块行为
-  # --------------------------------------------------------------------------
-
   - id: BRAIN-EXEC-001
     feature: BRAIN
     name: "Brain Executor — B类任务 executor 动态切换（Claude Code / Codex）"
@@ -3691,55 +3181,3 @@ skills:
       type: command
       run: "bash -c 'test -f apps/dashboard/src/pages/tasks/TaskTypeConfigPage.tsx'"
     test: "manual:node -e \"const c=require('fs').readFileSync('apps/dashboard/src/pages/tasks/TaskTypeConfigPage.tsx','utf8');if(!c.includes('executor')){console.error('TaskTypeConfigPage missing executor field');process.exit(1)}console.log('Dashboard executor field present')\""
-
-  - id: DEVGATE-NEW-FILES-RCI-001
-    feature: DevGate
-    name: "新增 hooks/devgate 文件必须有 RCI 条目检查"
-    scope: devgate
-    priority: P1
-    trigger: [PR]
-    method: auto
-    file: "scripts/devgate/check-new-files-need-rci.cjs"
-    tags: [devgate, ci, rci, quality-gate]
-    owner: engine
-    steps:
-      given: "PR 向 packages/engine/hooks/ 或 packages/engine/scripts/devgate/ 新增文件"
-      when: "CI L2 运行 new-files-need-rci-check job"
-      then: "检测新增文件是否在 regression-contract.yaml 中有 RCI 条目，无则阻断"
-    evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/scripts/devgate/check-new-files-need-rci.cjs'"
-    test: "manual:node -e \"const {scanMissingRci}=require('./packages/engine/scripts/devgate/check-new-files-need-rci.cjs');const r=scanMissingRci(['packages/engine/hooks/new-hook.sh'],'hooks:\\n  - id: H99\\n    file: \\\"hooks/other.sh\\\"\\n');if(r.length!==1)process.exit(1)\""
-
-# ============================================================================
-# Changelog
-# ============================================================================
-# 13.73.1 (2026-03-31): feat(engine): [CONFIG] Sprint Report 自动生成 — generate-sprint-report.sh + 04-ship.md v1.4.0
-# 13.59.0 (2026-03-29): feat(engine): [CONFIG] Planner subagent — Stage 1 Task Card 生成从主 agent 拆出
-# 13.55.0 (2026-03-29): feat(engine): Playwright Evaluator 层 — Stage 3 端到端行为验证
-# 13.37.0 (2026-03-23): feat(engine): 02-code.md 本地测试改为精准测试（targeted-local-test，去全量，去重复）
-# 13.36.0 (2026-03-23): feat(engine): CI Gate — 新增 hook/devgate 文件必须有 RCI 条目（L2 检查）
-# 13.29.0 (2026-03-23): feat(rci): 全量注册 /dev pipeline + Brain 核心能力（20条 RCI：P0×7 + P1×7 + P2×6）
-# 12.83.0 (2026-03-16): refactor(engine): 删除 ci-tools/ 符号链接目录，统一引用 scripts/devgate/
-# 12.82.0 (2026-03-16): fix(engine): git add -A 改 -u + Stop Hook 90分钟超时保护
-# 12.81.0 (2026-03-15): feat(engine): 04-learning.md 修正 Learning 模板格式 + Brain execution-callback 回调方式
-
-
-  - id: ENGINE-PIPELINE-TRACE-001
-    feature: DevTools
-    name: "pipeline-trace.sh — 任意 branch /dev 执行全景视图"
-    scope: observability
-    priority: P2
-    trigger: [PR]
-    method: auto
-    file: "scripts/pipeline-trace.sh"
-    tags: [pipeline, trace, observability, devtools]
-    owner: engine
-    steps:
-      given: "开发者传入 branch 名称"
-      when: "运行 pipeline-trace.sh <branch>"
-      then: "读取 .dev-mode、seal 文件、Learning，输出 Stage 0-4 结构化执行摘要"
-    evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/scripts/pipeline-trace.sh && test -x packages/engine/scripts/pipeline-trace.sh'"
-    test: "tests/scripts/pipeline-trace.test.ts"

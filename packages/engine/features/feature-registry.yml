@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.8"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): regression-contract.yaml 清除 26 个腐烂条目（引用已删文件/测试）183→157条"
+    scope: "packages/engine/regression-contract.yaml"
   - version: "13.78.7"
     date: "2026-04-02"
     change: "[CONFIG] chore(engine): 删除 136 个临时/archive/备份文件 + 补 .gitignore 防再提交"
