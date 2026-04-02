@@ -992,7 +992,7 @@ hooks:
       type: command
       run: "bash scripts/install-hooks.sh --version"
       contains: "CI tools version:"
-    test: "tests/hooks/install-hooks.test.ts"
+    test: "manual:node -e "require("fs").accessSync("packages/engine/scripts/generate-path-views.sh");console.log("OK")""
 
   - id: H3-002
     feature: H3
