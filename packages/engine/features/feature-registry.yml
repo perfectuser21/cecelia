@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.1"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): 精简 branch-protect.sh v28 — 998行→206行，只留 worktree/分支保护+verify-step+Gate seal 防伪，PRD/DoD 检查移交 CI"
+    scope: "packages/engine/hooks/branch-protect.sh"
   - version: "13.77.2"
     date: "2026-04-02"
     change: "[CONFIG] fix(engine): 精简 stop-dev.sh + devloop-check.sh — 删除 seal 防伪机制（v16.0.0）"
