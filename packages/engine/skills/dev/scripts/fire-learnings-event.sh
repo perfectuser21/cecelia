@@ -14,7 +14,6 @@ set -euo pipefail
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 # Per-branch learning 文件：优先 docs/learnings/<branch>.md，兜底 docs/LEARNINGS.md
 LEARNINGS_FILE="${LEARNINGS_FILE:-}"
-INCIDENT_FILE="${INCIDENT_FILE:-.dev-incident-log.json}"
 
 # 参数解析
 BRANCH_NAME=""
@@ -34,12 +33,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# 从 .dev-mode 自动读取（如果未传参）
-if [[ -z "$BRANCH_NAME" && -f ".dev-mode" ]]; then
-  BRANCH_NAME=$(grep "^branch:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+# 从 .dev-mode.{branch} 自动读取（v5.0.0 per-branch 格式）
+if [[ -z "$BRANCH_NAME" ]]; then
+  BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 fi
-if [[ -z "$TASK_ID" && -f ".dev-mode" ]]; then
-  TASK_ID=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+if [[ ! -f "$DEV_MODE_FILE" ]]; then
+  DEV_MODE_FILE=".dev-mode"
+fi
+if [[ -z "$BRANCH_NAME" && -f "$DEV_MODE_FILE" ]]; then
+  BRANCH_NAME=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
+fi
+if [[ -z "$TASK_ID" && -f "$DEV_MODE_FILE" ]]; then
+  TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
 fi
 
 # ── 自动检测 Learning 文件路径 ─────────────────────────────────────────
@@ -53,23 +59,6 @@ if [[ -z "$LEARNINGS_FILE" ]]; then
     LEARNINGS_FILE="docs/LEARNINGS.md"
   fi
 fi
-
-# ── 提取 issues_found（来自 incident log，已有 bug/失败记录）─────────
-extract_issues() {
-  if [[ -f "$INCIDENT_FILE" ]]; then
-    local count
-    count=$(jq 'length' "$INCIDENT_FILE" 2>/dev/null || echo "0")
-    if [[ "$count" -gt 0 ]]; then
-      # 提取 ci_failure 和 test_failure 类型的失败记录
-      jq -r '[.[] | select(.type == "ci_failure" or .type == "test_failure") |
-        "[" + .step + "] " + .description +
-        (if .resolution != "" then " → 修复: " + .resolution else "" end)]' \
-        "$INCIDENT_FILE" 2>/dev/null || echo "[]"
-      return
-    fi
-  fi
-  echo "[]"
-}
 
 # ── 提取 next_steps_suggested（来自 LEARNINGS.md 最后一节的预防措施）─
 extract_next_steps() {
@@ -96,30 +85,25 @@ extract_next_steps() {
 }
 
 # ── 构建 payload ──────────────────────────────────────────────────────
-ISSUES=$(extract_issues)
 NEXT_STEPS=$(extract_next_steps)
-
-ISSUES_COUNT=$(echo "$ISSUES" | jq 'length' 2>/dev/null || echo "0")
 STEPS_COUNT=$(echo "$NEXT_STEPS" | jq 'length' 2>/dev/null || echo "0")
 
 echo "📚 LEARNINGS_RECEIVED 事件准备："
-echo "  issues_found: ${ISSUES_COUNT} 条（来自 incident log）"
-echo "  next_steps_suggested: ${STEPS_COUNT} 条（来自 LEARNINGS.md 预防措施）"
+echo "  next_steps_suggested: ${STEPS_COUNT} 条（来自 Learning 预防措施）"
 
-if [[ "$ISSUES_COUNT" -eq 0 && "$STEPS_COUNT" -eq 0 ]]; then
+if [[ "$STEPS_COUNT" -eq 0 ]]; then
   echo "  ℹ️  无内容，跳过发送"
   exit 0
 fi
 
 PAYLOAD=$(jq -n \
-  --argjson issues "$ISSUES" \
   --argjson steps "$NEXT_STEPS" \
   --arg branch "$BRANCH_NAME" \
   --arg pr "$PR_NUMBER" \
   --arg task_id "$TASK_ID" \
   --arg repo "$REPO" \
   '{
-    issues_found: $issues,
+    issues_found: [],
     next_steps_suggested: $steps,
     branch_name: $branch,
     pr_number: ($pr | if . == "" then null else . end),

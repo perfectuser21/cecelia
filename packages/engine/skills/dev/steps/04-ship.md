@@ -1,12 +1,11 @@
 ---
 id: dev-stage-04-ship
-version: 1.4.0
+version: 2.0.0
 created: 2026-03-20
+updated: 2026-04-02
 changelog:
-  - 1.4.0: 新增 4.1.4 Sprint Report 自动生成步骤（在 Learning 提交后、push 前生成 docs/reports/{branch}.md）
-  - 1.3.0: 新增 4.4.5 更新系统状态步骤（PR 合并后写 CURRENT_STATE.md）
-  - 1.2.0: 删除 4.0 Simplify 章节（Simplify 已集成进 code-review-gate Stage 2，Stage 4 重复且位置错）
-  - 1.1.0: 新增 Simplify 步骤（已在 1.2.0 删除，功能移至 code-review-gate）
+  - 2.0.0: 精简 — 删除 Sprint Report 生成、seal 文件安全网、.dev-incident-log 读取
+  - 1.3.0: 新增更新系统状态步骤
   - 1.0.0: 合并原 04-learning.md + 05-clean.md 为 Stage 4 Ship
 ---
 
@@ -55,31 +54,14 @@ docs/learnings/<branch-name>.md
 
 ### 执行方式
 
-#### 0. 读取过程数据
-
-```bash
-INCIDENT_FILE=".dev-incident-log.json"
-if [[ -f "$INCIDENT_FILE" ]]; then
-    echo "=== 本次开发 Incident Log ==="
-    jq -r '.[] | "[\(.step)] \(.type): \(.description)\n  错误: \(.error | split("\n")[0])\n  修复: \(.resolution)\n"' "$INCIDENT_FILE"
-    CI_FAILURES=$(jq '[.[] | select(.type == "ci_failure")] | length' "$INCIDENT_FILE")
-    TEST_FAILURES=$(jq '[.[] | select(.type == "test_failure")] | length' "$INCIDENT_FILE")
-else
-    echo "无 Incident Log（本次开发无失败记录）"
-    CI_FAILURES=0
-    TEST_FAILURES=0
-fi
-```
-
 #### 1. 强制回答以下问题
 
-| # | 问题 | 数据来源 |
-|---|------|---------|
-| Q1 | 本次 CI 失败了几次？每次的根本原因是什么？ | `.dev-incident-log.json` |
-| Q2 | 本次本地验证失败了几次？ | `.dev-incident-log.json` |
-| Q3 | 有没有哪个判断"以为对但后来发现是错的"？ | 回顾整个开发过程 |
-| Q4 | 这些问题会不会再次出现？ | 分析根因 |
-| Q5 | 有没有什么应该加入 MEMORY.md 的新踩坑？ | 判断 |
+| # | 问题 |
+|---|------|
+| Q1 | 本次 CI 失败了几次？每次的根本原因是什么？ |
+| Q2 | 有没有哪个判断"以为对但后来发现是错的"？ |
+| Q3 | 这些问题会不会再次出现？ |
+| Q4 | 有没有什么应该加入 MEMORY.md 的新踩坑？ |
 
 #### 2. 写 Learning
 
@@ -118,64 +100,19 @@ fi
 echo "✅ Learning 格式验证通过"
 ```
 
-#### 2.5b ⛔ CI 镜像检查
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-export GITHUB_HEAD_REF="$BRANCH_NAME"
-export PR_TITLE=$(git log --oneline -1 2>/dev/null || echo "feat: temp")
-
-bash packages/engine/scripts/devgate/check-learning.sh
-```
-
-#### 3. 生成 Sprint Report（push 前）
-
-> **⚠️ 顺序铁律：Sprint Report 必须先于提交步骤（步骤4）执行，确保报告被纳入 commit。**
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-
-# 生成 Sprint Report（汇总 Planner/Generator/Evaluator 对抗过程 + CI 结果 + 评分）
-bash packages/engine/scripts/devgate/generate-sprint-report.sh "$BRANCH_NAME"
-
-echo "✅ Sprint Report 已生成: docs/reports/${BRANCH_NAME}.md"
-```
-
-#### 3.6 [seal] 安全网：补提交未 commit 的 seal 文件
-
-> **在 Learning commit 之前执行**，确保所有 seal 文件已 commit 进分支（防上下文压缩丢失漏网）。
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-
-# [seal] 补提交任何尚未 commit 的 seal 文件（sprint-contract-loop.sh 已处理大部分，这里兜底）
-for _sf in .dev-gate-*.${BRANCH_NAME} .sprint-contract-state.${BRANCH_NAME}; do
-  [[ -f "$_sf" ]] && git add "$_sf" 2>/dev/null || true
-done
-if ! git diff --cached --quiet 2>/dev/null; then
-  git commit -m "chore: [seal] 补提交未 commit 的 seal 文件（Stage 4 安全网）
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
-  echo "✅ [seal] 剩余 seal 文件已补提交"
-else
-  echo "ℹ️  [seal] 无未提交的 seal 文件"
-fi
-```
-
-#### 4. 提交 Learning + Sprint Report
+#### 3. 提交 Learning
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 LEARNING_FILE="docs/learnings/${BRANCH_NAME}.md"
-REPORT_FILE="docs/reports/${BRANCH_NAME}.md"
 
-git add "$LEARNING_FILE" "$REPORT_FILE"
-git commit -m "docs: 记录 <任务简述> 的开发经验 + Sprint Report
+git add "$LEARNING_FILE"
+git commit -m "docs: add learning for ${BRANCH_NAME}
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 git push origin HEAD
-echo "✅ Learning + Sprint Report 已推送到功能分支"
+echo "✅ Learning 已推送到功能分支"
 ```
 
 #### 3.5 触发 LEARNINGS_RECEIVED 事件
@@ -314,14 +251,14 @@ mv ".task-${BRANCH_NAME}.md" .history/ 2>/dev/null || true
 
 ```bash
 # 删除本分支的 gate 文件和 dev-mode 文件（合并后无用）
-rm -f ".dev-gate-spec.${BRANCH_NAME}" ".dev-gate-crg.${BRANCH_NAME}" ".dev-mode.${BRANCH_NAME}"
-echo "✅ dev-gate-spec/crg.${BRANCH_NAME} 和 dev-mode.${BRANCH_NAME} 已清理"
+rm -f ".dev-mode.${BRANCH_NAME}"
+echo "✅ dev-mode.${BRANCH_NAME} 已清理"
 ```
 
 ### 使用 cleanup 脚本
 
 ```bash
-BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
+BASE_BRANCH="main"
 bash skills/dev/scripts/cleanup.sh "$BRANCH_NAME" "$BASE_BRANCH"
 ```
 

@@ -1,15 +1,11 @@
 ---
 id: dev-step-02-code
-version: 6.4.0
+version: 7.0.0
 created: 2026-03-14
-updated: 2026-04-01
+updated: 2026-04-02
 changelog:
-  - 6.4.0: 标记 step_2_code done 后立即 git add + commit .dev-mode.{branch}，防止上下文压缩后状态层丢失（状态持久化）
-  - 6.3.0: 新增 2.3.4 独立 Evaluator 步骤 — Generator 自验证后，由 playwright-evaluator.sh 独立执行 Task Card [BEHAVIOR] Test 命令，FAIL 打回 Generator 修复代码，消除 Generator 自验自过问题
-  - 6.2.0: 内容注入原则 — 主 agent 必须直接嵌入 Task Card 实际内容到 prompt，禁止传文件路径让 subagent 自己读
-  - 6.1.0: Generator subagent 完成后写 .dev-gate-generator.{BRANCH} seal 文件（Stage 3 前置检查）
-  - 6.0.0: 2.2 写代码拆为 Generator subagent（主 agent 变纯编排者）
-  - 5.3.0: 2.3.1 改为精准测试（vitest run 相关文件，不跑全量），2.3.7 删除重复全量测试
+  - 7.0.0: 精简 — 删除 Generator subagent、code_review_gate、独立 Evaluator。主 agent 直接写代码。
+  - 6.4.0: .dev-mode 状态持久化
   - 5.2.0: 新增 2.3.6 强制周边一致性扫描（改A时扫描同目录文件矛盾），原 2.3.6 顺延为 2.3.7
   - 5.1.0: 修复 2.3.2 CI镜像检查无 exit 1（build/precheck/version-sync 失败现在正确拦截）；还原被 PR#1366 覆盖的 Step 2.0 行为快照+Step 2.1.5 TDD先行+2.3.6 exit 1
   - 5.0.0: 新增 Step 2.0 行为快照[PRESERVE]（探索前必须执行）；新增 Step 2.1.5 TDD先行（红灯→绿灯）；修复 2.3.6 || true 改 exit 1
