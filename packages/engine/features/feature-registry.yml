@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.9"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): 最终扫尾 — 删5僵尸测试+死hook代码+运行时产物+.git-rewrite"
+    scope: "packages/engine/hooks/,packages/engine/lib/,packages/engine/tests/,packages/engine/ci/"
   - version: "13.78.8"
     date: "2026-04-02"
     change: "[CONFIG] chore(engine): regression-contract.yaml 清除 26 个腐烂条目（引用已删文件/测试）183→157条"

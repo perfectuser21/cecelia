@@ -281,12 +281,6 @@ if echo "$CMD" | grep -Eq ">>?[[:space:]]*['\"]?(packages|apps|scripts|hooks)/";
     fi
 fi
 
-# ─── 规则 4: 已移除（Skill 文件写入保护）─────────────────────
-# 原规则基于 ~/.claude/skills/ → packages/*/skills/ symlink 链条假设
-# 现在 skills 已全部改为独立真实目录（仅 dev skill 保留 engine symlink）
-# branch-protect.sh 负责对 dev skill（engine symlink）的写入保护
-# bash-guard 不再重复承担此职责
-
 # ─── 规则 5: .dev-mode Bash 写入检测（~3ms）──────────────────
 # 拦截 Bash 工具对 .dev-mode 文件的 step_N: done 写操作
 # 与 branch-protect.sh 的 Write/Edit 拦截形成对称保护
