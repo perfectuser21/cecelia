@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.13"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): 激进精简 — 删11个devgate孤儿+intent-expand+重写01-spec/02-code+清22条RCI"
+    scope: "packages/engine/scripts/devgate/,packages/engine/skills/,packages/engine/regression-contract.yaml"
   - version: "13.78.12"
     date: "2026-04-02"
     change: "[CONFIG] chore(engine): 5路agent审计扫尾 — seal孤儿代码+过时脚本+docs+registry+测试修复"
