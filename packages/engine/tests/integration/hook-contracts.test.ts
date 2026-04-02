@@ -114,7 +114,7 @@ function createTestEnv(name: string): TestEnv {
   // Copy engine libs
   const libDir = path.join(worktree, "packages/engine/lib");
   fs.mkdirSync(libDir, { recursive: true });
-  for (const f of ["hook-utils.sh", "ci-status.sh", "lock-utils.sh"]) {
+  for (const f of ["hook-utils.sh", "execution-logger.sh"]) {
     const src = path.resolve(ENGINE_ROOT, "lib", f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(libDir, f));
   }
@@ -197,7 +197,7 @@ function copyEngineFiles(targetDir: string): void {
   const hookDir = path.join(targetDir, "packages/engine/hooks");
   fs.mkdirSync(libDir, { recursive: true });
   fs.mkdirSync(hookDir, { recursive: true });
-  for (const f of ["hook-utils.sh", "ci-status.sh", "lock-utils.sh"]) {
+  for (const f of ["hook-utils.sh", "execution-logger.sh"]) {
     const src = path.resolve(ENGINE_ROOT, "lib", f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(libDir, f));
   }
@@ -354,100 +354,7 @@ describe("Contract 2: Worktree 检测契约", () => {
   });
 });
 
-// ── Contract 3: CI status JSON ────────────────────────────────────────
-
-describe("Contract 3: CI 状态 JSON 契约", () => {
-  let env: TestEnv;
-
-  beforeAll(() => { env = createTestEnv("ci"); });
-  afterAll(() => { destroyTestEnv(env); });
-
-  it("ci-status.sh 输出标准 JSON {status, conclusion, run_id}", () => {
-    createMockGh(env.mockBin, '[{"status":"completed","conclusion":"success","databaseId":12345}]');
-
-    const testScript = path.join(env.worktree, "test-ci.sh");
-    const ciLib = path.join(env.worktree, "packages/engine/lib/ci-status.sh");
-    fs.writeFileSync(testScript, [
-      "#!/bin/bash",
-      "export CI_MAX_RETRIES=1",
-      "export CI_RETRY_DELAY=0",
-      `source "${ciLib}"`,
-      'get_ci_status "test-branch"',
-    ].join("\n"), { mode: 0o755 });
-
-    const result = runBash(testScript, env.worktree, undefined, {
-      PATH: `${env.mockBin}:${SYSTEM_PATH}`,
-    });
-
-    expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed).toHaveProperty("status", "completed");
-    expect(parsed).toHaveProperty("conclusion", "success");
-    expect(parsed).toHaveProperty("run_id");
-  });
-
-  it("ci-status.sh 在 gh 不可用时返回 unknown", () => {
-    const testScript = path.join(env.worktree, "test-ci-nogh.sh");
-    const ciLib = path.join(env.worktree, "packages/engine/lib/ci-status.sh");
-    fs.writeFileSync(testScript, [
-      "#!/bin/bash",
-      "export CI_MAX_RETRIES=1",
-      "export CI_RETRY_DELAY=0",
-      'CLEAN_PATH=""',
-      'IFS=: read -ra DIRS <<< "$PATH"',
-      'for d in "${DIRS[@]}"; do',
-      '  if [[ ! -x "$d/gh" ]]; then',
-      '    CLEAN_PATH="${CLEAN_PATH:+$CLEAN_PATH:}$d"',
-      '  fi',
-      'done',
-      'export PATH="$CLEAN_PATH"',
-      `source "${ciLib}"`,
-      'get_ci_status "test-branch"',
-    ].join("\n"), { mode: 0o755 });
-
-    const result = runBash(testScript, env.worktree);
-    const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed.status).toBe("unknown");
-  });
-
-  it("is_ci_passed 正确判断成功状态", () => {
-    createMockGh(env.mockBin, '[{"status":"completed","conclusion":"success","databaseId":99}]');
-
-    const testScript = path.join(env.worktree, "test-ci-passed.sh");
-    const ciLib = path.join(env.worktree, "packages/engine/lib/ci-status.sh");
-    fs.writeFileSync(testScript, [
-      "#!/bin/bash",
-      "export CI_MAX_RETRIES=1",
-      "export CI_RETRY_DELAY=0",
-      `source "${ciLib}"`,
-      'if is_ci_passed "test-branch"; then echo "PASSED"; else echo "NOT_PASSED"; fi',
-    ].join("\n"), { mode: 0o755 });
-
-    const result = runBash(testScript, env.worktree, undefined, {
-      PATH: `${env.mockBin}:${SYSTEM_PATH}`,
-    });
-    expect(result.stdout.trim()).toBe("PASSED");
-  });
-
-  it("is_ci_failed 正确判断失败状态", () => {
-    createMockGh(env.mockBin, '[{"status":"completed","conclusion":"failure","databaseId":100}]');
-
-    const testScript = path.join(env.worktree, "test-ci-failed.sh");
-    const ciLib = path.join(env.worktree, "packages/engine/lib/ci-status.sh");
-    fs.writeFileSync(testScript, [
-      "#!/bin/bash",
-      "export CI_MAX_RETRIES=1",
-      "export CI_RETRY_DELAY=0",
-      `source "${ciLib}"`,
-      'if is_ci_failed "test-branch"; then echo "FAILED"; else echo "NOT_FAILED"; fi',
-    ].join("\n"), { mode: 0o755 });
-
-    const result = runBash(testScript, env.worktree, undefined, {
-      PATH: `${env.mockBin}:${SYSTEM_PATH}`,
-    });
-    expect(result.stdout.trim()).toBe("FAILED");
-  });
-});
+// Contract 3 已删除（ci-status.sh 在 slim-engine-heartbeat 中移除）
 
 // ── Contract 4: hook-utils shared functions ───────────────────────────
 
