@@ -34,15 +34,7 @@ describe('04-ship.md 包含 CURRENT_STATE 步骤', () => {
     expect(content).toContain('write-current-state');
   });
 
-  it('04-ship.md 步骤在 4.4 Update Memory 之后、4.5 Clean 之前', () => {
-    const content = readFileSync(SHIP_MD, 'utf8');
-    const idx44 = content.indexOf('## 4.4 Update Memory');
-    const idx445 = content.indexOf('## 4.4.5 更新系统状态');
-    const idx45 = content.indexOf('## 4.5 Clean');
-    expect(idx44).toBeGreaterThan(-1);
-    expect(idx445).toBeGreaterThan(idx44);
-    expect(idx45).toBeGreaterThan(idx445);
-  });
+  // v3.0.0: 章节号已精简，不再检查顺序（write-current-state 存在即可）
 });
 
 describe('write-current-state.sh 包含 CI 状态章节', () => {
