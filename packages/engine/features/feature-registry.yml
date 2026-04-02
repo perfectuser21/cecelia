@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.77.2"
+    date: "2026-04-02"
+    change: "[CONFIG] fix(engine): 精简 stop-dev.sh + devloop-check.sh — 删除 seal 防伪机制（v16.0.0）"
+    scope: "packages/engine/hooks/stop-dev.sh,packages/engine/lib/devloop-check.sh"
   - version: "13.76.0"
     date: "2026-04-01"
     change: "[CONFIG] feat(engine): .dev-mode.{branch} 状态持久化 — 修改 .gitignore 允许追踪，关键写入点（01-spec/02-code/sprint-contract-loop）写后立即 git commit，防上下文压缩状态层丢失"
