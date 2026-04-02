@@ -6,7 +6,7 @@ description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走
 trigger: /dev, --task-id <id>
 ---
 
-> **语言规则**: 所有输出使用简体中文。
+> **CRITICAL LANGUAGE RULE（语言规则）**: 所有输出必须使用简体中文。
 
 ## 启动
 

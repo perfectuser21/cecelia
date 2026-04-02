@@ -47,6 +47,14 @@ bash skills/dev/scripts/fire-learnings-event.sh \
 
 ---
 
+## 4.1.5 更新系统状态
+
+```bash
+bash scripts/write-current-state.sh
+```
+
+---
+
 ## 4.2 合并 PR
 
 ```bash
