@@ -14,7 +14,8 @@ import { resolve } from "path";
 
 const STOP_DEV_PATH = resolve(__dirname, "../../hooks/stop-dev.sh");
 
-describe("stop-dev.sh — report_step_to_brain (PR #964)", () => {
+// v16.0.0: report_step_to_brain 已从 stop-dev.sh 删除（Engine 重构），相关测试 skip
+describe.skip("stop-dev.sh — report_step_to_brain (PR #964)", () => {
   it("stop-dev.sh 存在且可执行", () => {
     expect(existsSync(STOP_DEV_PATH)).toBe(true);
     expect(() => execSync(`test -x "${STOP_DEV_PATH}"`, { encoding: "utf-8" })).not.toThrow();

@@ -77,7 +77,8 @@ describe('反模式：N 次后放行（已删除）', () => {
     expect(content).toContain('无上限')
   })
 
-  it('devloop-check.sh divergence_count=0 应被拦截（不能是橡皮图章）', () => {
+  // v16.0.0: divergence_count门禁已删除（Engine重构）
+  it.skip('devloop-check.sh divergence_count=0 应被拦截（不能是橡皮图章）', () => {
     const content = read('packages/engine/lib/devloop-check.sh')
     // 必须检查 divergence_count
     expect(content).toContain('divergence_count')
@@ -85,7 +86,8 @@ describe('反模式：N 次后放行（已删除）', () => {
     expect(content).toContain('check_divergence_count')
   })
 
-  it('devloop-check.sh 自认证检测：无 seal 但 .dev-mode 有 pass → 拦截', () => {
+  // v16.0.0: 自认证检测逻辑已删除（Engine重构）
+  it.skip('devloop-check.sh 自认证检测：无 seal 但 .dev-mode 有 pass → 拦截', () => {
     const content = read('packages/engine/lib/devloop-check.sh')
     // 自认证检测文字
     expect(content).toContain('自认证')
@@ -96,7 +98,8 @@ describe('反模式：N 次后放行（已删除）', () => {
 // 3. gate 链完整性
 // ============================================================================
 
-describe('gate 链完整性', () => {
+// v16.0.0: seal防伪机制及gate条件已删除（Engine重构）
+describe.skip('gate 链完整性', () => {
   const GATES = [
     { key: 'dev-gate-spec', desc: '条件 1.5: spec_review seal 验证' },
     { key: 'dev-gate-planner', desc: '条件 1.6: planner seal 验证（Sprint Contract）' },
@@ -161,7 +164,8 @@ describe('关键文件存在性', () => {
 // 5. seal 格式校验
 // ============================================================================
 
-describe('seal 格式校验', () => {
+// v16.0.0: seal防伪机制及divergence_count门禁已删除（Engine重构）
+describe.skip('seal 格式校验', () => {
   it('devloop-check.sh 验证 spec seal 文件的 verdict 字段', () => {
     const content = read('packages/engine/lib/devloop-check.sh')
     expect(content).toContain('spec_seal_verdict')

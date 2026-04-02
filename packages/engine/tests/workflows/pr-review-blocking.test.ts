@@ -99,7 +99,8 @@ describe('pr-review.yml — workflow 配置验证', () => {
   });
 });
 
-describe('devloop-check.sh — check_divergence_count 函数存在性', () => {
+// v16.0.0: divergence_count 门禁已删除（Engine重构）
+describe.skip('devloop-check.sh — check_divergence_count 函数存在性', () => {
   it('C1: devloop-check.sh 必须包含 check_divergence_count 函数', () => {
     expect(existsSync(DEVLOOP_CHECK), `${DEVLOOP_CHECK} 应存在`).toBe(true);
     const content = readFileSync(DEVLOOP_CHECK, 'utf8');

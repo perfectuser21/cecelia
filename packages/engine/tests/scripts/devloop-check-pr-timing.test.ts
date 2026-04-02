@@ -15,7 +15,8 @@ describe('devloop-check.sh — 4-Stage Pipeline 条件顺序', () => {
   const COND3  = '===== 条件 3: PR';
   const COND4  = '===== 条件 4: CI';
 
-  describe('条件顺序验证（subagent 架构，含 1.5/2.5 gate）', () => {
+  // v16.0.0: seal防伪机制及gate条件已删除（Engine重构）
+  describe.skip('条件顺序验证（subagent 架构，含 1.5/2.5 gate）', () => {
     it('step_1_spec（条件 1）在 step_2_code（条件 2）之前', () => {
       const s1Pos = content.indexOf(COND1);
       const s2Pos = content.indexOf(COND2);

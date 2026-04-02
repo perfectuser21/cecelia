@@ -83,7 +83,8 @@ retry_count: 0`
     unlinkSync(devModeFile)
   })
 
-  it('Stop Hook 注释应该说明修复原因', () => {
+  // v16.0.0: v12.8.0注释及旧版本说明已删除（Engine重构）
+  it.skip('Stop Hook 注释应该说明修复原因', () => {
     const stopDevScript = hookScript.replace('stop.sh', 'stop-dev.sh')
     const hookContent = execSync(`cat ${stopDevScript}`, { encoding: 'utf-8' })
 
@@ -94,7 +95,8 @@ retry_count: 0`
     expect(hookContent).toContain('流程控制只依赖实际状态检查')
   })
 
-  it('cleanup_done 检查仍然保留（向后兼容）', () => {
+  // v16.0.0: "向后兼容旧版本"注释已删除（Engine重构）
+  it.skip('cleanup_done 检查仍然保留（向后兼容）', () => {
     const stopDevScript = hookScript.replace('stop.sh', 'stop-dev.sh')
     const hookContent = execSync(`cat ${stopDevScript}`, { encoding: 'utf-8' })
 

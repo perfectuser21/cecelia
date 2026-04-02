@@ -326,7 +326,8 @@ describe("lib/ci-status.sh", () => {
 });
 
 describe("stop.sh session isolation", () => {
-  it("should contain session_id check code", () => {
+  // v16.0.0: P0-4注释已删除（Engine重构）
+  it.skip("should contain session_id check code", () => {
     // v13.0.0: session 隔离逻辑已移到 stop-dev.sh
     const stopDevPath = join(PROJECT_ROOT, "hooks", "stop-dev.sh");
     const content = readFileSync(stopDevPath, "utf-8");
@@ -335,7 +336,8 @@ describe("stop.sh session isolation", () => {
     expect(content).toContain("P0-4");
   });
 
-  it("should contain lock-utils sourcing", () => {
+  // v16.0.0: lock-utils.sh/ci-status.sh sourcing已删除（Engine重构）
+  it.skip("should contain lock-utils sourcing", () => {
     // v13.0.0: lock-utils 和 ci-status 已移到 stop-dev.sh
     const stopDevPath = join(PROJECT_ROOT, "hooks", "stop-dev.sh");
     const content = readFileSync(stopDevPath, "utf-8");

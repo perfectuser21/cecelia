@@ -13,7 +13,8 @@ import { spawnSync } from 'child_process';
 
 const DEVLOOP_CHECK = resolve(__dirname, '../../../../packages/engine/lib/devloop-check.sh');
 
-describe('devloop-check.sh — check_divergence_count 函数', () => {
+// v16.0.0: divergence_count 门禁已删除（Engine重构）
+describe.skip('devloop-check.sh — check_divergence_count 函数', () => {
   it('A1: devloop-check.sh 文件必须存在', () => {
     expect(existsSync(DEVLOOP_CHECK), `${DEVLOOP_CHECK} 应存在`).toBe(true);
   });
