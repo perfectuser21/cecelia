@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.5"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): bash-guard 去掉 develop 分支 + CI L2 删除重复 brain-new-files 内联检查"
+    scope: "packages/engine/hooks/bash-guard.sh,.github/workflows/ci-l2-consistency.yml"
   - version: "13.78.4"
     date: "2026-04-02"
     change: "[CONFIG] chore(engine): 清理 regression-contract.yaml 已删文件条目（PE/Evaluator/Sprint Report/Sprint Contract）+ 删除孤儿脚本 push-metrics.sh/check-learning.sh"

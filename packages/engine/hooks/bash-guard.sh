@@ -33,7 +33,7 @@ HK_TARGETS='(124\.156\.138\.116|100\.86\.118\.99)'
 DEPLOY_CMDS='(^|\s|&&|\||\;)(rsync|scp)(\s)'
 
 # 允许部署的分支
-DEPLOY_ALLOW_BRANCH='^(main|develop)$'
+DEPLOY_ALLOW_BRANCH='^main$'
 
 # ─── 规则 1: 凭据泄露检测（纯字符串，~1ms）─────────────────
 if text_contains_token "$CMD"; then
@@ -394,7 +394,7 @@ if ! [[ "$BRANCH" =~ $DEPLOY_ALLOW_BRANCH ]]; then
     echo "  [BASH GUARD] 分支 '$BRANCH' 不允许部署" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "" >&2
-    echo "只允许从 main 或 develop 分支部署到 HK。" >&2
+    echo "只允许从 main 分支部署到 HK。" >&2
     echo "" >&2
     exit 2
 fi
