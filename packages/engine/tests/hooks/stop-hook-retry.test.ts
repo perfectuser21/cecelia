@@ -116,7 +116,8 @@ retry_count: 50
     // v15.4.0: 不再有硬上限，不会强制退出
   });
 
-  it('应该使用 pipeline_rescue 机制替代硬限制', () => {
+  // v16.0.0: pipeline_rescue机制已删除（Engine重构）
+  it.skip('应该使用 pipeline_rescue 机制替代硬限制', () => {
     const hookContent = execSync(
       `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
       { encoding: 'utf-8' }
@@ -129,7 +130,8 @@ retry_count: 50
     expect(hookContent).not.toContain('MAX_RETRIES=30');
   });
 
-  it('应该定期检查并创建 pipeline_rescue 任务', () => {
+  // v16.0.0: pipeline_rescue机制已删除（Engine重构）
+  it.skip('应该定期检查并创建 pipeline_rescue 任务', () => {
     const hookContent = execSync(
       `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
       { encoding: 'utf-8' }
@@ -142,7 +144,8 @@ retry_count: 50
     expect(hookContent).toContain('RESCUE_CHECK_INTERVAL');
   });
 
-  it('应该在每次 block 时保存 last_block_reason', () => {
+  // v16.0.0: save_block_reason函数已删除（Engine重构）
+  it.skip('应该在每次 block 时保存 last_block_reason', () => {
     const hookContent = execSync(
       `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
       { encoding: 'utf-8' }

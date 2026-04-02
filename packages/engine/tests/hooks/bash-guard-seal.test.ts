@@ -99,7 +99,8 @@ describe("branch-protect.sh — Gate 状态防伪 seal 验证", () => {
   });
 });
 
-describe("devloop-check.sh — 条件 1.5/2.5 seal 文件读取", () => {
+// v16.0.0: 条件 1.5/2.5 seal 防伪机制已从 devloop-check.sh 删除（Engine 重构），相关测试 skip
+describe.skip("devloop-check.sh — 条件 1.5/2.5 seal 文件读取", () => {
   it("devloop-check.sh 条件 1.5 读 .dev-gate-spec seal 文件", () => {
     const content = readFileSync(DEVLOOP_CHECK_PATH, "utf-8");
     expect(content).toContain("dev-gate-spec");

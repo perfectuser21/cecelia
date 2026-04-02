@@ -4,7 +4,8 @@ import { mkdirSync, rmSync, writeFileSync, existsSync } from 'fs'
 import { resolve } from 'path'
 import os from 'os'
 
-describe('Stop Hook - Sentinel 文件清理（修复 .git 保护）', () => {
+// v16.0.0: sentinel清理逻辑已删除（Engine重构）
+describe.skip('Stop Hook - Sentinel 文件清理（修复 .git 保护）', () => {
   let testDir: string
   const stopHookScript = resolve(__dirname, '../../hooks/stop-dev.sh')
 

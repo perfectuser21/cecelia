@@ -26,7 +26,8 @@ const VERIFY_STEP_PATH = resolve(__dirname, "../../hooks/verify-step.sh");
 
 let tempDir: string;
 
-describe("stop-dev.sh seal integrity check", () => {
+// v16.0.0: seal 防伪机制已删除（Engine 重构 PR slim-engine-heartbeat），相关测试 skip
+describe.skip("stop-dev.sh seal integrity check", () => {
   beforeAll(() => {
     expect(existsSync(STOP_DEV_PATH)).toBe(true);
     tempDir = mkdtempSync(join(tmpdir(), "stop-dev-seal-test-"));

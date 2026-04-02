@@ -275,7 +275,8 @@ describe("Hook Gates — 5 真锁验收 (PR #918)", () => {
   });
 
   // ─── 门 5: stop-dev.sh Learning 内容验证 ─────────────────
-  describe("门 5: stop-dev.sh Learning 内容验证 (v14.1.0)", () => {
+  // v16.0.0: check-learning.sh 逻辑已从 stop-dev.sh 删除（Engine重构）
+  describe.skip("门 5: stop-dev.sh Learning 内容验证 (v14.1.0)", () => {
     it("stop-dev.sh 包含 Learning 内容验证逻辑 (v14.1.0)", () => {
       const content = readFileSync(STOP_DEV_PATH, "utf-8");
       expect(content).toContain("v14.1.0");
