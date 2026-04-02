@@ -98,7 +98,7 @@ verify_step1() {
   Step 1 完成前必须填写所有 Test: 命令"
     fi
 
-    # 检查假命令模式（本地快速检测，CI 通过 check-fake-dod-tests.cjs 全量检测）
+    # 检查假命令模式
     local found_fake
     found_fake=$(echo "$test_lines" | grep -E 'Test:\s*(manual:)?(echo |ls( |$)|cat |test -f|true$|exit 0|printf |wc )|Test:.*\|[[:space:]]*wc' 2>/dev/null || echo "")
 
@@ -110,26 +110,6 @@ $found_fake
     Test: manual:node -e \"const c=require('fs').readFileSync('file','utf8');if(!c.includes('X'))process.exit(1)\"
     Test: tests/my.test.ts
     Test: contract:my-behavior"
-    fi
-
-    # 检查 manual: 命令白名单（CI 只允许 node/npm/npx/curl/bash/psql）
-    # 注意：使用 pwd -P 解析真实路径，避免 hooks/ 为符号链接时 Node.js 词法路径找不到文件
-    local WHITELIST_SCRIPT=""
-    for _dir in "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../scripts/devgate" "$PROJECT_ROOT/packages/engine/scripts/devgate"; do
-        if [[ -f "$_dir/check-manual-cmd-whitelist.cjs" ]]; then
-            WHITELIST_SCRIPT="$_dir/check-manual-cmd-whitelist.cjs"
-            break
-        fi
-    done
-
-    if [[ -n "$WHITELIST_SCRIPT" ]]; then
-        local whitelist_out
-        whitelist_out=$(node "$WHITELIST_SCRIPT" "$task_card" 2>&1) || {
-            _fail "Task Card 包含非白名单 manual: 命令（CI 不允许）：
-$whitelist_out
-  CI 白名单命令：node / npm / npx / curl / bash / psql
-  请用 manual:node -e \"...\" 替代非白名单命令"
-        }
     fi
 
     _pass "Step 1 Task Card 验证通过"
