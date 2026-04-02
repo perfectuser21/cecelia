@@ -79,6 +79,16 @@ artifacts/screenshots/*.png
 .dev-gate-*
 .dev-seal-*
 
+# Temp directories (test fixtures, never commit)
+.tmp-scl-*/
+.tmp-test-*/
+
+# Backup files
+*.bak
+
+# Archive directories (old code, never commit)
+.archive/
+
 # Claude Code worktrees
 .claude/worktrees/
 

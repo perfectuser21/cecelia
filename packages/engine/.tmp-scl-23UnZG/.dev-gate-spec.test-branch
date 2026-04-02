@@ -1,1 +1,0 @@
-{"verdict":"PASS","sealed_by":"spec-review","branch":"test-branch","timestamp":"2026-04-02T01:11:17.037Z","independent_test_plans":[{"dod_item":"item 1","my_test":"node -e \"1\"","agent_test":"TODO","consistent":true}],"negotiation_result":"test","issues":[]}
