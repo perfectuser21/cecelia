@@ -19,6 +19,10 @@ version: "4.0.0"
 updated: "2026-04-01"
 # ci-trigger: 13.76.0
 changelog:
+  - version: "13.78.12"
+    date: "2026-04-02"
+    change: "[CONFIG] chore(engine): 5路agent审计扫尾 — seal孤儿代码+过时脚本+docs+registry+测试修复"
+    scope: "packages/engine/hooks/,packages/engine/scripts/,packages/engine/docs/,packages/engine/features/,packages/engine/tests/"
   - version: "13.78.11"
     date: "2026-04-02"
     change: "[CONFIG] chore(engine): 最终清理 — 删过时docs+templates+feature-registry过时条目"
@@ -2567,41 +2571,6 @@ product_features:
       - "cp-* 分支同样命令 → 放行"
 
     rcis: []
-
-  - id: code-review-pre-push
-    name: code_review_gate 前移到 Stage 2（push 前审查）
-    category: workflow
-    status: Committed
-    priority: P0
-    version: "13.9.0"
-    updated: "2026-03-21"
-    description: |
-      code_review_gate 从 Stage 3（CI 后）前移到 Stage 2（push 前）。
-      Stage 2 代码写完后立即派发 Codex 审查，审查通过才允许 push。
-      减少 CI 后等待时间，实现"每步审完再推"。
-
-    entrypoints:
-      - type: skill
-        file: packages/engine/skills/dev/steps/02-code.md
-        trigger: "Stage 2 代码完成 + 自验证通过"
-      - type: lib
-        file: packages/engine/lib/devloop-check.sh
-        trigger: "step_2_code done 后检查 code_review_gate"
-
-    golden_path: |
-      Stage 2 完成 →
-      02-code.md 派发 code_review_gate →
-      devloop-check 条件 2.5 检查 →
-      Codex 审查 PASS →
-      Stage 3 push + CI
-
-    minimal_paths:
-      - "Stage 2 完成后派发 code_review_gate"
-      - "devloop-check 条件 2.5 在 step_2_code done 后检查"
-      - "Stage 3 不再派发 code_review_gate"
-
-    rcis: []
-
   - id: devloop-check-ci-timeout-blocked
     name: devloop-check CI 超时返回 blocked + P0 诊断任务
     category: protection
@@ -2883,80 +2852,6 @@ product_features:
       - "物理路径下 verify-step 行为不变"
 
     rcis: []
-
-  - id: sprint-contract-fix-adversarial
-    name: Sprint Contract Gate 对抗审查修复
-    category: skills
-    status: Committed
-    priority: P1
-    version: "13.69.0"
-    updated: "2026-03-31"
-    description: |
-      修复 Sprint Contract Gate 橡皮图章问题：
-      1. CRG v1.7.0：添加 reviewer_model 字段；stats 全零时 exit 2（至少需要1条 info 观察）
-      2. spec_review v1.6.0：添加 reviewer_model 字段；plans.length == 0 时 exit 2（Evaluator 必须生成独立测试计划）
-      3. 01-spec.md v3.2.0：Sprint Contract PASS 后额外验证 plans.length > 0
-
-    entrypoints:
-      - type: skill
-        file: packages/workflows/skills/code-review-gate/SKILL.md
-        trigger: "/dev Stage 2 代码写完后（push 前）"
-      - type: skill
-        file: packages/workflows/skills/spec-review/SKILL.md
-        trigger: "/dev Stage 1 Spec 完成后"
-      - type: step
-        file: packages/engine/skills/dev/steps/01-spec.md
-        trigger: "Sprint Contract Gate PASS 后验证 plans.length"
-
-    golden_path: |
-      CRG subagent 输出 reviewer_model 字段 →
-      stats 非全零 →
-      seal 文件包含 reviewer_model →
-      spec_review plans.length > 0 →
-      Sprint Contract 验证有效
-
-    minimal_paths:
-      - "CRG seal 包含 reviewer_model 字段"
-      - "spec_review seal independent_test_plans 非空"
-
-    rcis: []
-
-  - id: sprint-contract-gate-fix
-    name: Sprint Contract Gate 防橡皮图章修复
-    category: workflows
-    status: Committed
-    priority: P0
-    version: "13.69.0"
-    updated: "2026-03-30"
-    description: |
-      修复 Sprint Contract Gate 形同虚设问题：
-      - CRG v1.7.0：新增 reviewer_model 字段；all-zero stats 时强制补充至少1条 info 观察（exit 2）
-      - spec_review v1.6.0：新增 reviewer_model 字段；plans.length == 0 时强制 exit 2
-      - 01-spec.md v3.2.0：Sprint Contract Gate PASS 后额外验证 plans.length > 0
-
-    entrypoints:
-      - type: skill
-        file: packages/workflows/skills/code-review-gate/SKILL.md
-        trigger: "/dev Stage 2 代码完成后 push 前触发"
-      - type: skill
-        file: packages/workflows/skills/spec-review/SKILL.md
-        trigger: "/dev Stage 1 Spec 完成后触发"
-      - type: step
-        file: packages/engine/skills/dev/steps/01-spec.md
-        trigger: "Stage 1 Sprint Contract Gate 调用"
-
-    golden_path: |
-      spec_review subagent 调用 → plans.length > 0（有独立测试计划）→
-      CRG subagent 调用 → stats 非全零（有实质审查）→
-      reviewer_model 字段正确写入 seal 文件
-
-    minimal_paths:
-      - "spec_review independent_test_plans.length > 0"
-      - "CRG stats 非全零"
-      - "两个 seal 文件均含 reviewer_model 字段"
-
-    rcis: []
-
   - id: adversarial-redesign
     name: Sprint Contract Gate 双独立提案对抗架构
     category: workflows
@@ -3056,34 +2951,5 @@ product_features:
       - "devloop-check.sh 直接执行时调用 devloop_check_main"
       - "devloop_check_main 搜索主仓库 + 所有 worktree 中的 .dev-mode.* 文件"
       - "无 .dev-mode 时输出 NO_ACTIVE_SESSION"
-
-    rcis: []
-
-  - id: sprint-contract-resume
-    name: "sprint-contract-loop.sh --resume 断点续跑"
-    version: "13.77.0"
-    updated: "2026-04-01"
-    description: |
-      sprint-contract-loop.sh 新增 --resume 标志：上下文压缩后 agent 调用此模式，
-      读 .sprint-contract-state.{branch} 判断是否已收敛（blocker_count==0）。
-      已收敛 → exit 0 跳过完整执行；未收敛 → exit 2 触发正常流程。
-      01-spec.md Step 4 新增 Step 4.0 恢复检测，while 循环前必须先调用 --resume。
-
-    entrypoints:
-      - type: script
-        file: packages/engine/scripts/devgate/sprint-contract-loop.sh
-        trigger: "bash sprint-contract-loop.sh BRANCH --resume [PROJECT_ROOT]"
-
-    golden_path: |
-      上下文压缩重启
-        -> bash sprint-contract-loop.sh BRANCH --resume
-        -> state 文件存在且 blocker_count==0 -> exit 0 -> 已收敛，跳过
-        -> state 文件不存在或 blocker_count>0 -> exit 2 -> 正常执行 Sprint Contract
-
-    minimal_paths:
-      - "--resume 时读 .sprint-contract-state.{branch}"
-      - "blocker_count==0 时 exit 0 并打印跳过信息"
-      - "state 文件不存在时 exit 2 降级为普通模式"
-      - "原调用格式 sprint-contract-loop.sh BRANCH [PROJECT_ROOT] 完全向后兼容"
 
     rcis: []
