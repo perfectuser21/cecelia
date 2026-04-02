@@ -1,15 +1,11 @@
 ---
 id: dev-stage-01-spec
-version: 3.8.0
+version: 4.0.0
 created: 2026-03-20
-updated: 2026-04-01
+updated: 2026-04-02
 changelog:
-  - 3.8.0: Step 4 新增 Step 4.0 恢复检测 — while 循环开始前调用 sprint-contract-loop.sh --resume，上下文压缩后自动跳过已收敛的 Sprint Contract，避免重复对抗
-  - 3.7.0: 写完 .dev-mode.{branch} 后立即 git add + commit，防止上下文压缩后状态层丢失（状态持久化）
-  - 3.6.0: 新增 1.1.7 Lite 路径判断 — 5条件全满足时跳过 Planner subagent 和 Sprint Contract，主 agent 直接写 Task Card，写入 .dev-gate-lite.{branch} 和 task_track: lite
-  - 3.5.0: Sprint Contract Gate Step 4 改为调用 sprint-contract-loop.sh — 脚本机械判断 blocker_count，状态写磁盘（.sprint-contract-state.{branch}），移除 prev_divergence 死循环检测，纯 while true 只有 exit 0 才退出
-  - 3.4.0: Sprint Contract Gate 移除固定轮数上限（原值=3），改为死循环检测 — 连续 2 轮 divergence 列表完全相同则判定死循环，注册 P1 任务并 FAIL；否则无限收敛直到 blocker_count == 0
-  - 3.3.0: Sprint Contract Gate 重写为双独立提案架构 — Generator subagent + Evaluator subagent 各自从剥离版 Task Card 独立提案，Orchestrator 比对，收敛上限为 3 轮；Planner 输出不再含任何 Test 命令
+  - 4.0.0: 精简 — 删除 Planner subagent、Sprint Contract Gate、LITE/FULL 路径。主 agent 直接写 Task Card。
+  - 3.7.0: .dev-mode 状态持久化（git commit 防上下文压缩丢失）
   - 3.2.0: Sprint Contract Gate PASS 后额外验证 plans.length > 0 — 若 seal 中 independent_test_plans 为空且 Task Card 含 DoD，视为 FAIL 重试
   - 3.2.0: PASS 后验证 plans.length > 0（防空提案）+ seal 文件完整性检查（伪码改为含错误处理的伪码）
   - 3.1.0: spec_review Evaluator prompt 显式内容注入 — 主 agent 在 spawn 前先读 SKILL.md + Task Card，直接嵌入 prompt，禁止传文件路径

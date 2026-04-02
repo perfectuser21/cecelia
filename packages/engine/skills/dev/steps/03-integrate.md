@@ -1,14 +1,12 @@
 ---
 id: dev-stage-03-integrate
-version: 1.4.0
+version: 1.5.0
 created: 2026-03-20
-updated: 2026-03-30
+updated: 2026-04-02
 changelog:
-  - 1.4.0: 移除 3.3 Playwright Evaluator（改为 post-merge 触发），3.4/3.5 回退为 3.3/3.4
-  - 1.3.0: 新增 3.3 Playwright Evaluator（CI 通过后验证 DoD [BEHAVIOR] 条目），原 3.3/3.4 顺延为 3.4/3.5
-  - 1.2.0: 新增 3.1.4 Drift Detection（push 前检测改动文件是否偏离 Task Card 声明范围，warning 级）
-  - 1.1.0: code_review_gate 前移到 Stage 2（push 前审查），Stage 3 仅负责 push + CI
-  - 1.0.0: 从 03-prci.md 重构为 Stage 3 Integrate，删除 4 个 Codex 注册，改为 CI 后 1 个 code_review
+  - 1.5.0: 精简 — 删除 Playwright Evaluator/code_review_gate/develop 引用，Stage 3 仅负责 push + CI
+  - 1.4.0: 移除 3.3 Playwright Evaluator（改为 post-merge 触发）
+  - 1.0.0: 从 03-prci.md 重构为 Stage 3 Integrate
 ---
 
 # Stage 3: Integrate — Push + CI
@@ -243,7 +241,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### 3.1.7 创建 PR
 
 ```bash
-BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
+BASE_BRANCH="main"
 gh pr create --base $BASE_BRANCH --title "feat: <功能描述>" --body "## Summary
 - <主要改动>
 
@@ -392,54 +390,20 @@ git push origin HEAD
 
 ---
 
-## 3.3 Playwright Evaluator — 端到端行为验证
+## 3.3 CI 通过 → 进入 Stage 4
 
-> CI 通过后自动触发。对照 Task Card [BEHAVIOR] DoD 条目逐条执行 Test: 命令，
-> 始终包含 Brain API `/api/brain/health` 基线检查。
-> 评估失败 → 修复代码 → 重新 push → 等 CI → 再次 evaluator（循环）。
-
-```bash
-# 执行 Playwright Evaluator
-node packages/engine/scripts/devgate/playwright-evaluator.cjs --run
-EXIT_CODE=$?
-
-if [[ $EXIT_CODE -ne 0 ]]; then
-    echo "❌ Playwright Evaluator FAIL — 分析失败条目，修复后重新 push"
-    # 修复策略：
-    # 1. 读取失败输出，定位哪条 [BEHAVIOR] 未通过
-    # 2. 修复对应代码或确认服务是否运行
-    # 3. git add -u && git commit && git push origin HEAD
-    # 4. 等待 CI 通过后再次运行 evaluator
-    exit 1
-fi
-
-echo "✅ Playwright Evaluator PASS — 所有行为验证通过"
-```
-
-**跳过条件**：如果 Task Card 没有 [BEHAVIOR] 条目且 Brain 无需验证，evaluator 仍会运行基线检查。
-
-**调试命令**（先 dry-run 查看清单再执行）：
-```bash
-node packages/engine/scripts/devgate/playwright-evaluator.cjs --dry-run
-```
+> CI 全部通过后，进入 Stage 4。
 
 ---
 
-## 3.4 CI 通过 → 进入 Stage 4
-
-> code_review_gate 已在 Stage 2 完成（push 前审查）。
-> CI 全部通过 + Playwright Evaluator PASS 后，进入 Stage 4。
-
----
-
-## 3.5 Stop Hook 完成条件
+## 3.4 Stop Hook 完成条件
 
 | 条件 | 状态 | Stop Hook 行为 |
 |------|------|---------------|
 | PR 未创建 | ❌ | exit 2（继续创建 PR）|
 | CI 失败 | ❌ | exit 2（继续修复）|
 | CI 进行中 | ⏳ | exit 2（继续等待）|
-| CI 通过 + Evaluator PASS | ✅ | exit 2（继续 Stage 4）|
+| CI 通过 | ✅ | exit 2（继续 Stage 4）|
 
 ---
 

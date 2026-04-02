@@ -1,26 +1,18 @@
 ---
 name: dev
-version: 4.0.0
-updated: 2026-03-20
+version: 5.0.0
+updated: 2026-04-02
 description: |
-  统一开发工作流入口（4-Stage Pipeline）。任何会进 git 的代码变更都必须走 /dev，没有例外。
+  统一开发工作流入口（v5.0 简化心跳架构）。任何会进 git 的代码变更都必须走 /dev，没有例外。
   不走 /dev 不允许改代码——branch-protect Hook 会强制阻止。
 
   4-Stage Pipeline：
-  Stage 1: Spec（读 PRD + 写 DoD）→ 派发 spec_review → 等 stop hook 放行
-  Stage 2: Code（Generator subagent 写代码 + 本地验证）→ 派发 code_review_gate → 等 stop hook 放行
+  Stage 1: Spec（主 agent 直接写 Task Card）→ 写 .dev-mode → 进入 Stage 2
+  Stage 2: Code（主 agent 探索 + 写代码 + 逐条验证 DoD）→ 进入 Stage 3
   Stage 3: Integrate（push + CI）→ CI 通过即放行
   Stage 4: Ship（Learning + 合并 + Clean）
 
   ⚠️ 顺序铁律：Learning 必须在合并 PR 之前完成。
-  CI 通过后禁止立即合并——必须先执行 Stage 4 写 Learning。
-
-  触发词（凡用户意图涉及代码改动，必须触发）：
-  开始开发、加功能、修 bug、修复 bug、实现 XXX、改代码、改配置、
-  调整代码、优化代码、重构、补测试、做这个功能、/dev、
-  这里有问题、这段有 bug、帮我改一下、帮我调整、
-  补充一下、完成这个任务、写代码、改一下 XXX、
-  看看为什么不过（需要改代码时）、优化一下。
 
   有 --task-id 参数时从 Brain PostgreSQL 自动读取 Task PRD。
 ---
