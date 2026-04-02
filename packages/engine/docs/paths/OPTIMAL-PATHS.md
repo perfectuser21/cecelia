@@ -543,18 +543,6 @@ DoD manual:node -e → 通过检查
 
 ---
 
-### planner-subagent-stage1: Planner subagent — Stage 1 Task Card 生成独立化
-
-```
-/dev 启动 →
-Stage 1: 主 agent spawn Planner subagent →
-Planner 接收任务描述 + SYSTEM_MAP →
-Planner 输出 Task Card + DoD（只含 WHAT，无 HOW）→
-主 agent 继续 Sprint Contract Gate
-```
-
----
-
 ### verify-step-symlink-path-fix: verify-step.sh symlink 物理路径解析修复
 
 ```
@@ -597,27 +585,6 @@ Generator subagent 独立提案 → .dev-gate-generator-sprint.{branch} →
 Evaluator subagent 独立提案 → .dev-gate-spec.{branch} →
 Orchestrator 比对 → 有分歧 → 双方互看 → 无限收敛（死循环检测）→
 Evaluator 提案写入 Task Card Test 字段
-```
-
----
-
-### evaluator-reconnect: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
-
-```
-Generator 写代码 → 自验证（2.3.3）→
-独立 Evaluator（playwright-evaluator.sh）执行 [BEHAVIOR] Test →
-PASS → CRG 审查 → push
-FAIL → 打回 Generator 修代码 → 重新自验证 → 重新 Evaluator → 直到 PASS
-```
-
----
-
-### sprint-contract-loop: Sprint Contract 收敛循环 shell 脚本驱动
-
-```
-Generator subagent 提案 → Evaluator subagent 提案 →
-bash sprint-contract-loop.sh → exit 0（blocker_count==0）→ 收敛，进入 Stage 2
-exit 1 → 展示差异给双方 → 删除 seal 文件 → 重新 spawn → 再调脚本 → 无限循环直到 PASS
 ```
 
 ---

@@ -454,13 +454,6 @@ changelog:
 
 ---
 
-### planner-subagent-stage1: Planner subagent — Stage 1 Task Card 生成独立化
-
-1. ✅ **Planner subagent 隔离：不接收 CLAUDE.md 和 Brain context**
-2. ✅ **Sprint Contract Gate 正常继续工作**
-
----
-
 ### verify-step-symlink-path-fix: verify-step.sh symlink 物理路径解析修复
 
 1. ✅ **symlink 环境下 verify-step 正常执行**
@@ -488,22 +481,6 @@ changelog:
 1. ✅ **Generator subagent 写入 .dev-gate-generator-sprint.{branch}**
 2. ✅ **Evaluator subagent 写入 .dev-gate-spec.{branch}**
 3. ✅ **planner-prompt.md 所有 Test 字段为占位符**
-
----
-
-### evaluator-reconnect: Stage 2 独立 Evaluator 接回 + Sprint Contract 无限收敛
-
-1. ✅ **02-code.md 含 playwright-evaluator.sh 步骤**
-2. ✅ **01-spec.md 不含 MAX_ROUNDS**
-3. ✅ **01-spec.md Step 4 调用 sprint-contract-loop.sh**
-
----
-
-### sprint-contract-loop: Sprint Contract 收敛循环 shell 脚本驱动
-
-1. ✅ **sprint-contract-loop.sh 存在且可执行**
-2. ✅ **脚本读 .dev-gate-spec.{branch} 统计 consistent==false**
-3. ✅ **01-spec.md Step 4 bash sprint-contract-loop.sh**
 
 ---
 
