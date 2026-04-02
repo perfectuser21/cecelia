@@ -1,0 +1,12 @@
+dev
+branch: cp-04021326-engine-cleanup-zombie-tests
+task_card: .task-cp-04021326-engine-cleanup-zombie-tests.md
+started: 2026-04-02T13:26:30+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: pending
+step_4_ship: pending
+confidence_score: 9
+confidence_reason: 纯删除操作，无逻辑变更，风险极低
+confidence_risk: 无

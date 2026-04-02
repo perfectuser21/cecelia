@@ -75,6 +75,10 @@ artifacts/screenshots/*.png
 .subagent-proof.json
 .gate-*-passed
 
+# Dev Gate state files (runtime, never commit)
+.dev-gate-*
+.dev-seal-*
+
 # Claude Code worktrees
 .claude/worktrees/
 
