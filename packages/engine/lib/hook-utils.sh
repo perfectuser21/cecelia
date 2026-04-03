@@ -86,7 +86,7 @@ text_contains_token() {
     for pattern in "${TOKEN_PATTERNS[@]}"; do
         if echo "$text" | grep -qE "$pattern"; then
             # P1 修复：placeholder 必须是值的主体部分（开头或结尾），不是中间子串
-            if echo "$text" | grep -qE '(^YOUR_|^PLACEHOLDER_|^EXAMPLE_|_YOUR_KEY$|_YOUR_SECRET$|_YOUR_TOKEN$|^example$|^placeholder$|^xxx+$)'; then
+            if echo "$text" | grep -qiE '(^YOUR_|^PLACEHOLDER_|^EXAMPLE_|_YOUR_KEY$|_YOUR_SECRET$|_YOUR_TOKEN$|^example$|^placeholder$|^xxx+$|PLACEHOLDER|YOUR_API|YOUR_TOKEN|YOUR_KEY|YOUR_SECRET|CHANGE_ME|INSERT_HERE)'; then
                 continue
             fi
             return 0

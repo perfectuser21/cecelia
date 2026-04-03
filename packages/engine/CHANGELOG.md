@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [14.2.0] - 2026-04-03
+
+### Fixed
+- 深度 bug 修复 — devloop-check PROJECT_ROOT 未定义 + hook-utils 占位符误判 + worktree-manage cleanup 命令失效
+
 ## [14.1.1] - 2026-04-03
 
 ### Fixed
