@@ -321,7 +321,8 @@ TASK1_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
     "status": "queued",
     "payload": {
       "architecture_ref": "architecture.md",
-      "sequence_order": 1
+      "sequence_order": 1,
+      "harness_mode": true
     }
   }' | jq -r '.id')
 
@@ -341,7 +342,8 @@ TASK2_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
     \"payload\": {
       \"architecture_ref\": \"architecture.md\",
       \"sequence_order\": 2,
-      \"depends_on_prev\": \"true\"
+      \"depends_on_prev\": \"true\",
+      \"harness_mode\": true
     }
   }" | jq -r '.id')
 
@@ -362,7 +364,8 @@ TASKN_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
       \"architecture_ref\": \"architecture.md\",
       \"sequence_order\": N,
       \"depends_on_prev\": \"true\",
-      \"integration_test_owner\": true
+      \"integration_test_owner\": true,
+      \"harness_mode\": true
     }
   }" | jq -r '.id')
 
