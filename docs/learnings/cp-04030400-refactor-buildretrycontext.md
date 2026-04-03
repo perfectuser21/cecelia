@@ -1,23 +1,24 @@
-## 根本原因
+# Learning: 重构 buildRetryContext（复杂度 22 → ~4）
 
-`buildRetryContext` 函数承担了三个独立职责：
-1. 构建失败分类文本块
-2. 构建反馈文本块
-3. 拼装并截断最终上下文字符串
+**Branch**: cp-04030400-f4a39456-239f-4bd4-b306-e8b504
+**Task**: f4a39456-239f-4bd4-b306-e8b504810e0e
 
-三者混在一个函数里，加上多个条件分支（optional chaining、三元表达式、Array.isArray 判断），导致圈复杂度达到 22，超出阈值（10）两倍以上。
+### 根本原因
 
-## 解决方案
+`buildRetryContext` 函数将失败分类解析、反馈解析、字符串拼接和截断逻辑都混在一个函数里，导致圈复杂度高达 22（阈值 10）。
 
-将三个职责提取为独立私有函数：
-- `_retryFailureBlock(classification, watchdogKill)` — 处理失败分类
-- `_retryFeedbackBlock(feedback)` — 处理反馈条目
-- `_assembleRetryContext(failureCount, body)` — 拼装 + 截断
+### 重构策略
 
-主函数 `buildRetryContext` 仅做调度，复杂度降至 3。
+将 3 类职责提取为独立子函数：
 
-## 下次预防
+1. `_retryFailureBlock(classification, watchdogKill)` — 只处理失败分类逻辑
+2. `_retryFeedbackBlock(feedback)` — 只处理反馈解析逻辑
+3. `_assembleRetryContext(failureCount, body)` — 只处理拼接与截断
 
-- [ ] 单函数职责不超过 1 个，超出即提取
-- [ ] 复杂度扫描阈值 10，超出时拆分是首选而非重写
-- [ ] 私有辅助函数用 `_` 前缀标记，与公共 API 区分
+主函数 `buildRetryContext` 降至复杂度 ~4（2 个早返回 + filter + 1 个函数调用）。
+
+### 下次预防
+
+- [ ] 新建函数前先估算复杂度：超过 4 个条件分支就考虑提取子函数
+- [ ] 命名约定：模块内部辅助函数以 `_` 前缀标识（`_retryXxx`）
+- [ ] worktree 没有 node_modules 时，在主仓库跑测试：`cd /Users/administrator/perfect21/cecelia && npx vitest run <test-file>`
