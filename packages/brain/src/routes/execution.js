@@ -1470,7 +1470,7 @@ ${resultStr.substring(0, 2000)}
         const harnessPayload = harnessTask?.payload || {};
 
         // sprint_generate 完成 → 创建 sprint_evaluate
-        if (harnessTask?.task_type === 'sprint_generate') {
+        if (harnessTask?.task_type === 'sprint_generate' || (harnessTask?.task_type === 'dev' && harnessPayload.harness_mode)) {
           const { createTask: createHarnessTask } = await import('../actions.js');
           await createHarnessTask({
             title: `[Evaluator] 测试 Sprint — ${harnessTask.title}`,
