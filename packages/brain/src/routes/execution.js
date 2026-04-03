@@ -1513,7 +1513,7 @@ ${resultStr.substring(0, 2000)}
           }
           // 如果顶层没有 verdict，从 summary/findings 字符串中提取
           if (!resultObj.verdict) {
-            const textToSearch = resultObj.summary || resultObj.findings || (typeof result === 'string' ? result : '');
+            const textToSearch = resultObj.summary || resultObj.findings || resultObj.result || (typeof result === 'string' ? result : '');
             if (typeof textToSearch === 'string') {
               const verdictMatch = textToSearch.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
               if (verdictMatch) {
