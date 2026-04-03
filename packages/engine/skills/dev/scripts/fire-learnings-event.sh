@@ -67,21 +67,12 @@ extract_next_steps() {
     return
   fi
 
-  # 提取最后一个 ### 节的**预防措施**内容
-  local raw
-  raw=$(awk '/^### /{found=1; content=""} found{content=content"\n"$0} END{print content}' "$LEARNINGS_FILE" 2>/dev/null || echo "")
-
-  if [[ -z "$raw" ]]; then
-    echo "[]"
-    return
-  fi
-
-  # 提取下次预防列表项（### 下次预防 下面的 - [ ] 行）
-  echo "$raw" | awk '
+  # 直接全文搜索 ### 下次预防 节（不预先限制到"最后一节"）
+  awk '
     /^### 下次预防/ { in_section=1; next }
     in_section && /^- / { print substr($0, 3) }
-    in_section && /^### / && !/下次预防/ { in_section=0 }
-  ' | jq -R . | jq -s . 2>/dev/null || echo "[]"
+    in_section && /^### / { in_section=0 }
+  ' "$LEARNINGS_FILE" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]"
 }
 
 # ── 构建 payload ──────────────────────────────────────────────────────

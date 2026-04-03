@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [14.2.1] - 2026-04-03
+
+### Fixed
+- P0+P1 深度修复 — check-version-sync exit 0 门禁失效 + devloop-check date 误触发90分钟告警 + execution-logger %→%% 日志污染 + fire-learnings awk 只读最后节
+
 ## [14.2.0] - 2026-04-03
 
 ### Fixed

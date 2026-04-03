@@ -70,7 +70,7 @@ _devlog_event() {
     else
         # jq 不可用时的简单 fallback（转义双引号）
         local safe_detail
-        safe_detail=$(printf '%s' "$detail" | sed 's/"/\\"/g; s/%/%%/g' | tr '\n' ' ' | head -c 500)
+        safe_detail=$(printf '%s' "$detail" | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 500)
         printf '{"ts":"%s","source":"%s","step":"%s","event":"%s","detail":"%s","branch":"%s"}\n' \
             "$ts" "$source" "$step" "$event" "$safe_detail" "$branch" \
             >> "$_DEVLOG_FILE" 2>/dev/null

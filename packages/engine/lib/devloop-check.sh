@@ -191,13 +191,16 @@ devloop_check() {
             "in_progress"|"queued"|"waiting"|"pending")
                 local _started _se _elapsed
                 _started=$(grep "^started:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-                if [[ -z "$_started" ]]; then
-                    _se=0
-                else
-                    _se=$(date -d "$_started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${_started%+*}" +%s 2>/dev/null || echo 0)
+                _se=""
+                if [[ -n "$_started" ]]; then
+                    _se=$(date -d "$_started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${_started%+*}" +%s 2>/dev/null || echo "")
                 fi
-                _elapsed=$(( $(date +%s) - _se ))
-                if [[ -n "$_started" && $_elapsed -gt 5400 ]]; then
+                if [[ -n "$_started" && -n "$_se" && $_se -gt 0 ]]; then
+                    _elapsed=$(( $(date +%s) - _se ))
+                else
+                    _elapsed=0
+                fi
+                if [[ -n "$_started" && -n "$_se" && $_elapsed -gt 5400 ]]; then
                     _devloop_jq -n --arg b "$branch" '{"status":"blocked","reason":"CI 已 pending 90+ 分钟，可能卡死","action":"检查 CI：gh run list --branch \($b) --limit 5"}'
                     return 2
                 fi

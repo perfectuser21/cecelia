@@ -34,8 +34,8 @@ fi
 
 BASE_VERSION=$(_json_version "package.json" ".version")
 if [[ -z "$BASE_VERSION" || "$BASE_VERSION" == "null" ]]; then
-    echo "⚠️  无法读取 package.json 版本，跳过检查"
-    exit 0
+    echo "❌ 无法读取 package.json 版本，版本同步检查失败"
+    exit 1
 fi
 echo "基准版本 (package.json): $BASE_VERSION"
 echo ""
