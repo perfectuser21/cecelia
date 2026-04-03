@@ -117,6 +117,11 @@ jobs:
       - name: Integration Tests
         env:
           DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
           NODE_ENV: test
         run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
 
