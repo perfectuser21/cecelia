@@ -1283,6 +1283,7 @@ function getSkillForTaskType(taskType, payload) {
     'project_plan': '/decomp',      // Phase 4: Project 内规划下一个 Scope
     'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
     'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
+    'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
   };
   return skillMap[taskType] || '/dev';
 }
