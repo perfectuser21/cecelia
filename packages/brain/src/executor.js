@@ -1801,6 +1801,49 @@ PUT /api/tasks/goals/${krId}
     return `/decomp\n\n[project_plan] ${task.description || task.title}${formatHint}`;
   }
 
+  // sprint_generate / sprint_fix → /dev harness 模式
+  if (taskType === 'sprint_generate' || taskType === 'sprint_fix') {
+    const payload = task.payload || {};
+    const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
+    const devTaskId = payload.dev_task_id || '';
+    const evalRound = payload.eval_round || 0;
+    const isFixMode = taskType === 'sprint_fix';
+
+    return `/dev --task-id ${task.id}
+
+## Harness v2.0 — Sprint ${isFixMode ? 'Fix (R' + evalRound + ')' : 'Generate'}
+
+**模式**: harness_mode
+**Sprint 目录**: ${sprintDir}
+**Dev Task ID**: ${devTaskId}
+**Initiative**: ${task.project_id || 'unknown'}
+${isFixMode ? `\n**修复轮次**: R${evalRound}\n**读取 evaluation.md 中的反馈进行修复**` : ''}
+
+任务描述:
+${task.description || task.title}`;
+  }
+
+  // sprint_evaluate → /sprint-evaluator
+  if (taskType === 'sprint_evaluate') {
+    const payload = task.payload || {};
+    const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
+    const devTaskId = payload.dev_task_id || '';
+    const evalRound = payload.eval_round || 1;
+
+    return `/sprint-evaluator
+
+## Harness v2.0 — Sprint Evaluator (R${evalRound})
+
+**任务 ID**: ${task.id}
+**Sprint 目录**: ${sprintDir}
+**Dev Task ID**: ${devTaskId}
+**评估轮次**: R${evalRound}
+**Initiative**: ${task.project_id || 'unknown'}
+
+你的目标: 读取 ${sprintDir}/sprint-contract.md，逐条验证 Generator 的代码。
+输出: ${sprintDir}/evaluation.md (PASS 或 FAIL + 具体问题)`;
+  }
+
   // initiative_verify：调用 /architect Mode 3 verify，传入 initiative_id
   if (taskType === 'initiative_verify') {
     const initiativeId = task.project_id || task.payload?.initiative_id || '';
