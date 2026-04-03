@@ -990,13 +990,16 @@
     "spec_review": "/spec-review",
     "code_review_gate": "/code-review-gate",
     "initiative_review": "/initiative-review",
+    "sprint_generate": "/dev",
+    "sprint_evaluate": "/sprint-evaluator",
+    "sprint_fix": "/dev",
     "scope_plan": "/decomp",
     "project_plan": "/decomp",
     "okr_initiative_plan": "/decomp",
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-03-27T00:42:41.819Z",
+  "generatedAt": "2026-04-03T11:03:01.865Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
