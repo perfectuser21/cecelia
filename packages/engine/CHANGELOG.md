@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [14.2.2] - 2026-04-03
+
+### Fixed
+- P2 修复 — devloop-check jq CI状态提取加错误处理 + stop.sh curl后台加disown防SIGHUP
+
 ## [14.2.1] - 2026-04-03
 
 ### Fixed
