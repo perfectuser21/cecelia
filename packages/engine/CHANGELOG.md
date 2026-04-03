@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [14.1.1] - 2026-04-03
+
+### Fixed
+- 深度审计修复 — stop-dev.sh curl 超时 + devloop-check 容错 + bash-guard 安全加固 + branch-protect 精简 (#1816)
+- Harness v2.0 端到端修复 — preparePrompt sprint 路由 + devloop 容错 (#1817)
+
+## [14.1.0] - 2026-04-03
+
+### Added
+- /dev 适配 Harness v2.0 模式 — Generator/Evaluator 双 Agent 架构，sprint-contract 驱动 (#1814)
+
+## [14.0.0] - 2026-04-02
+
+### Changed
+- **BREAKING**: CI 重设计 — 4层32job → 1层6job，精简 90%+ CI 代码 (-12,299行) (#1802)
+- Hook 精简 — 删除 verify-step 状态机，CI brain-unit 硬卡 (-1,365行) (#1804)
+
+## [13.78.14] - 2026-04-02
+
+### Changed
+- 大规模清理 sprint（v13.78.x）— 5路 agent 审计，删除 42+ 孤儿文件、136+ 临时文件、26个腐烂 regression 条目、11个废弃 devgate，共减少 30,000+ 行 (#1793-#1801)
+- skills/dev/ 同步到 v5.0.0：4-Stage Pipeline 架构 (#1797)
+- branch-protect.sh 精简 v28 — 998行→206行，PRD/DoD 检查移交 CI (#1786)
+- 补 E2E 测试 — devloop-check 全 7 条件覆盖 (#1787)
+
+## [13.77.2] - 2026-04-02
+
+### Fixed
+- stop-dev.sh + devloop-check.sh 精简 — 删除 seal 防伪机制（v16.0.0），减少状态混乱 (#1784)
+
 ## [13.3.0] - 2026-03-19
 
 ### Changed
