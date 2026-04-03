@@ -195,69 +195,48 @@ function _loadFindings(keyword) {
   return findings;
 }
 
-export async function executeCopywriting(task) {
-  const keyword = task.payload?.pipeline_keyword || task.title;
-  const contentType = task.payload?.content_type || 'solo-company-case';
-  const previousFeedback = task.payload?.previous_feedback;
-
-  console.log(`[copywriting] 开始: ${keyword}`);
-
-  // 从 DB/YAML 读取内容类型配置
-  let typeConfig = null;
-  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
-
-  const dir = join(OUTPUT_BASE, `${today()}-${slug(keyword)}`);
-  ensureDir(join(dir, 'cards'));
-  ensureDir(join(dir, 'article'));
-
-  const findings = _loadFindings(keyword);
+function _filterTopFindings(findings) {
   let top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 7);
-  console.log(`[copywriting] 找到 ${findings.length} 条 findings，筛选 ${top.length} 条`);
-
   if (top.length === 0 && findings.length > 0) {
-    // 降级使用全部 findings（不过滤 brand_relevance），让 copy-review 做质量判断
     console.warn(`[copywriting] 无高质量 findings（brand_relevance>=3），降级使用全部 ${findings.length} 条`);
     top = findings.slice(0, 7);
   }
-
   if (top.length === 0) {
-    // 无任何 findings：降级到静态模板（无调研素材），继续 pipeline
     console.warn(`[copywriting] 无 research findings，降级使用全部静态模板生成文案`);
   }
+  return top;
+}
 
-  // ─── Claude 调用：使用配置 prompt 生成文案 ─────────────────────
-  if (typeConfig?.template?.generate_prompt) {
-    try {
-      const findingsSummary = top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 200)}`).join('\n');
-
-      let prompt = typeConfig.template.generate_prompt.replace(/\{keyword\}/g, keyword);
-      prompt += `\n\n## 调研素材（${top.length} 条）\n${findingsSummary}`;
-
-      if (previousFeedback) {
-        prompt += `\n\n## 上次审查意见（请针对以下问题改进）\n${previousFeedback}`;
-      }
-
-      prompt += `\n\n请严格按以下格式输出，不要省略分隔符：\n=== 社交媒体文案 ===\n[在此输出小红书/抖音风格文案，500-800字，口语化，含互动引导]\n=== 公众号长文 ===\n[在此输出深度分析长文，1500-2000字，结构清晰]`;
-
-      const { text } = await callLLM('thalamus', prompt, { maxTokens: 4096, timeout: 120000 });
-
-      const socialMatch = text.match(/=== 社交媒体文案 ===([\s\S]*?)(?:=== 公众号长文 ===|$)/);
-      const articleMatch = text.match(/=== 公众号长文 ===([\s\S]*?)$/);
-      const socialCopy = socialMatch?.[1]?.trim() || text;
-      const articleCopy = articleMatch?.[1]?.trim() || text;
-
-      writeFileSync(join(dir, 'cards', 'copy.md'), `# ${keyword}：社交媒体文案\n\n${socialCopy}\n`, 'utf-8');
-      writeFileSync(join(dir, 'article', 'article.md'), `# ${keyword}：深度分析\n\n${articleCopy}\n`, 'utf-8');
-
-      return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'], llm_generated: true };
-    } catch (err) {
-      console.error(`[copywriting] Claude 调用失败，降级到静态模板: ${err.message}`);
-    }
+function _buildCopywritingPrompt(keyword, top, typeConfig, previousFeedback) {
+  const findingsSummary = top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 200)}`).join('\n');
+  let prompt = typeConfig.template.generate_prompt.replace(/\{keyword\}/g, keyword);
+  prompt += `\n\n## 调研素材（${top.length} 条）\n${findingsSummary}`;
+  if (previousFeedback) {
+    prompt += `\n\n## 上次审查意见（请针对以下问题改进）\n${previousFeedback}`;
   }
-  // ─────────────────────────────────────────────────────────────
+  prompt += `\n\n请严格按以下格式输出，不要省略分隔符：\n=== 社交媒体文案 ===\n[在此输出小红书/抖音风格文案，500-800字，口语化，含互动引导]\n=== 公众号长文 ===\n[在此输出深度分析长文，1500-2000字，结构清晰]`;
+  return prompt;
+}
 
-  // 社交媒体文案（仅当 typeConfig 无 generate_prompt 时才会到达这里）
-  const copy = [
+async function _executeLLMPath(keyword, top, typeConfig, previousFeedback, dir) {
+  try {
+    const prompt = _buildCopywritingPrompt(keyword, top, typeConfig, previousFeedback);
+    const { text } = await callLLM('thalamus', prompt, { maxTokens: 4096, timeout: 120000 });
+    const socialMatch = text.match(/=== 社交媒体文案 ===([\s\S]*?)(?:=== 公众号长文 ===|$)/);
+    const articleMatch = text.match(/=== 公众号长文 ===([\s\S]*?)$/);
+    const socialCopy = socialMatch?.[1]?.trim() || text;
+    const articleCopy = articleMatch?.[1]?.trim() || text;
+    writeFileSync(join(dir, 'cards', 'copy.md'), `# ${keyword}：社交媒体文案\n\n${socialCopy}\n`, 'utf-8');
+    writeFileSync(join(dir, 'article', 'article.md'), `# ${keyword}：深度分析\n\n${articleCopy}\n`, 'utf-8');
+    return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'], llm_generated: true };
+  } catch (err) {
+    console.error(`[copywriting] Claude 调用失败，降级到静态模板: ${err.message}`);
+    return null;
+  }
+}
+
+function _buildStaticSocialCopy(keyword, top) {
+  return [
     `# ${keyword}：过去只有公司才有的能力，现在一个人就够了\n`,
     `你知道吗？越来越多人正在证明：一个人 + 正确的系统 = 一家公司的能力。\n`,
     `今天拆解 ${keyword}，看看哪些"公司级能力"已经被个人拥有了。\n`,
@@ -271,10 +250,10 @@ export async function executeCopywriting(task) {
     `你觉得哪个能力对你最有用？评论区告诉我！\n`,
     `\n#一人公司 #能力放大 #AI驱动 #个人创业 #能力下放\n`,
   ].join('\n');
-  writeFileSync(join(dir, 'cards', 'copy.md'), copy, 'utf-8');
+}
 
-  // 公众号长文
-  const article = [
+function _buildStaticArticle(keyword, top) {
+  return [
     `# ${keyword}：一个人如何拥有公司级能力\n`,
     `> 帮助个人和小组织，用 AI 拥有过去只有公司才有的能力。\n`,
     `\n在这个时代，"一人公司"不再是一种妥协。它是一种系统性的选择——用 AI 和自动化替代人力规模，用能力密度替代团队数量。\n`,
@@ -292,7 +271,33 @@ export async function executeCopywriting(task) {
     `\n这不是未来。这是正在发生的事。\n`,
     `\n**你准备好拥有这些能力了吗？**\n`,
   ].join('\n');
-  writeFileSync(join(dir, 'article', 'article.md'), article, 'utf-8');
+}
+
+export async function executeCopywriting(task) {
+  const keyword = task.payload?.pipeline_keyword || task.title;
+  const contentType = task.payload?.content_type || 'solo-company-case';
+  const previousFeedback = task.payload?.previous_feedback;
+
+  console.log(`[copywriting] 开始: ${keyword}`);
+
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
+
+  const dir = join(OUTPUT_BASE, `${today()}-${slug(keyword)}`);
+  ensureDir(join(dir, 'cards'));
+  ensureDir(join(dir, 'article'));
+
+  const findings = _loadFindings(keyword);
+  const top = _filterTopFindings(findings);
+  console.log(`[copywriting] 找到 ${findings.length} 条 findings，筛选 ${top.length} 条`);
+
+  if (typeConfig?.template?.generate_prompt) {
+    const result = await _executeLLMPath(keyword, top, typeConfig, previousFeedback, dir);
+    if (result) return result;
+  }
+
+  writeFileSync(join(dir, 'cards', 'copy.md'), _buildStaticSocialCopy(keyword, top), 'utf-8');
+  writeFileSync(join(dir, 'article', 'article.md'), _buildStaticArticle(keyword, top), 'utf-8');
 
   console.log(`[copywriting] 完成 → ${dir}`);
   return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'], llm_generated: false };
