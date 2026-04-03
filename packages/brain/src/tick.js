@@ -32,6 +32,7 @@ import { runCaptureDigestion } from './capture-digestion.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { triggerDailyPublish } from './daily-publish-scheduler.js';
 import { generateDailyReport } from './daily-report-generator.js';
+import { generateWeeklyReport } from './weekly-report-generator.js';
 import { monitorPublishQueue } from './publish-monitor.js';
 import { schedulePostPublishCollection } from './post-publish-data-collector.js';
 import { runDesireSystem } from './desire/index.js';
@@ -671,7 +672,16 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
   // Watchdog backoff: skip tasks with next_run_at in the future
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
   // Safety: NULL, empty string, or unparseable values are treated as "no backoff".
-  const queryParams = [goalIds];
+  // goalIds=null 表示不按 goal 过滤（派发任何可用任务），
+  // goalIds=[] 或数组时按 goal_id 过滤（含 goal_id IS NULL）
+  const queryParams = [];
+  let goalCondition;
+  if (goalIds == null) {
+    goalCondition = '(1=1)';
+  } else {
+    queryParams.push(goalIds);
+    goalCondition = `(t.goal_id = ANY($${queryParams.length}) OR t.goal_id IS NULL)`;
+  }
   let excludeClause = '';
   if (excludeIds.length > 0) {
     queryParams.push(excludeIds);
@@ -681,7 +691,7 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload,
            t.queued_at, t.task_type, t.created_at, t.metadata, t.project_id
     FROM tasks t
-    WHERE (t.goal_id = ANY($1) OR t.goal_id IS NULL)
+    WHERE ${goalCondition}
       AND t.status = 'queued'
       ${excludeClause}
       AND (
@@ -2752,6 +2762,10 @@ async function executeTick() {
   // 10.17d 每日内容日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
   Promise.resolve().then(() => generateDailyReport(pool))
     .catch(e => console.warn('[tick] 每日内容日报失败:', e.message));
+
+  // 10.17e 每周内容周报（每周一 UTC 01:00 = 北京时间 09:00，汇总上周数据，fire-and-forget）
+  Promise.resolve().then(() => generateWeeklyReport(pool))
+    .catch(e => console.warn('[tick] 每周内容周报失败:', e.message));
 
   // 10.17c 发布队列监控（每 tick，自动重试 failed 任务 + 更新今日统计，fire-and-forget）
   Promise.resolve().then(() => monitorPublishQueue(pool))
