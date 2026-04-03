@@ -81,6 +81,13 @@ function readCurrentState() {
     }
 
     const content = fs.readFileSync(statePath, 'utf-8');
+
+    // 占位符检测：文件尚未由 /dev Stage 4 写入真实数据时，跳过以防 LLM 误判
+    if (content.includes('(待更新)') || content.includes('初始占位')) {
+      console.log('[SelfDrive] CURRENT_STATE.md 仍为占位符，跳过（避免 LLM 误判 degraded）');
+      return null;
+    }
+
     console.log(`[SelfDrive] CURRENT_STATE.md 已读取（${content.length} 字符）`);
     return content;
   } catch (err) {
