@@ -4,6 +4,6 @@ task_card: .task-cp-04031825-harness-first-sprint-entry.md
 started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 step_0_worktree: done
 step_1_spec: done
-step_2_code: pending
+step_2_code: done
 step_3_integrate: pending
 step_4_ship: pending

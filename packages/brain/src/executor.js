@@ -1801,8 +1801,9 @@ PUT /api/tasks/goals/${krId}
     return `/decomp\n\n[project_plan] ${task.description || task.title}${formatHint}`;
   }
 
+  // dev + harness_mode → 当作 sprint_generate 处理（第一个 Sprint 的入口）
   // sprint_generate / sprint_fix → /dev harness 模式
-  if (taskType === 'sprint_generate' || taskType === 'sprint_fix') {
+  if (taskType === 'sprint_generate' || taskType === 'sprint_fix' || (taskType === 'dev' && task.payload?.harness_mode)) {
     const payload = task.payload || {};
     const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
     const devTaskId = payload.dev_task_id || '';
