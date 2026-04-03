@@ -73,13 +73,17 @@ devloop_check() {
     # 不检查 DoD 勾选、CI 通过、Learning 等
     local _harness_mode="false"
     if [[ -f "$dev_mode_file" ]]; then
-        _harness_mode=$(grep "^harness_mode:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "false")
+        local _hm_raw
+        _hm_raw=$(grep "^harness_mode:" "$dev_mode_file" 2>/dev/null | awk '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)
+        [[ -n "$_hm_raw" ]] && _harness_mode="$_hm_raw"
     fi
 
     if [[ "$_harness_mode" == "true" ]]; then
         # 检查 1: step_2_code done?
-        local _h_step2
-        _h_step2=$(grep "^step_2_code:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+        local _h_step2="pending"
+        local _h_step2_raw
+        _h_step2_raw=$(grep "^step_2_code:" "$dev_mode_file" 2>/dev/null | awk '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)
+        [[ -n "$_h_step2_raw" ]] && _h_step2="$_h_step2_raw"
         if [[ "$_h_step2" != "done" ]]; then
             _devloop_jq -n '{"status":"blocked","reason":"[Harness] Stage 2 Code 未完成","action":"立即读取 skills/dev/steps/02-code.md 并执行 Stage 2（harness 模式）。禁止询问用户。"}'
             return 2
