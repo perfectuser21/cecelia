@@ -114,11 +114,7 @@ features:
         entry_file: packages/workflows/skills/decomp/SKILL.md
         version: "2.1.0"
         status: active
-      - skill_id: intent_expand
-        command: intent_expand
-        entry_file: packages/engine/skills/intent-expand/SKILL.md
-        version: "1.0.0"
-        status: active
+      # intent_expand skill 已移除（SKILL.md 不存在）
     apis:
       - method: GET
         path: /api/brain/okr/current

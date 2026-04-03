@@ -42,10 +42,8 @@ features:
     tests:
       unit:
         - packages/engine/tests/scripts/devloop-check-gates.test.ts
-        - packages/engine/tests/hooks/verify-step.test.ts
         - packages/engine/tests/hooks/branch-protect.test.ts
       integration:
-        - packages/engine/tests/pipeline-integrity.test.ts
         - packages/engine/tests/codex-runner.test.ts
       e2e:
         - packages/engine/tests/playwright-runner.test.ts
@@ -76,17 +74,11 @@ features:
         entry_file: packages/engine/skills/dev/SKILL.md
         version: "4.0.0"
         status: active
-      - skill_id: playwright_evaluator
-        command: /playwright-evaluator
-        entry_file: packages/engine/skills/playwright-evaluator/SKILL.md
-        version: "1.0.0"
-        status: active
+      # playwright_evaluator skill 已移除（SKILL.md 不存在）
     apis: []
     tests:
       unit:
         - packages/engine/tests/scripts/devloop-check-gates.test.ts
-        - packages/engine/tests/devgate/check-dod-mapping.test.ts
-        - packages/engine/tests/devgate/scan-rci-coverage.test.ts
       integration: []
       e2e:
         - packages/quality/tests/e2e-gateway.test.ts
