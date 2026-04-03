@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v28
-# v28: 精简版 — 只留 worktree/分支保护核心逻辑 + verify-step + Gate seal 防伪
-#      PRD/DoD/Learning/版本/数据库检查全部移交 CI
-# v26: .dev-mode Step 完成验证（State Machine 强制层）— 保留
+# ZenithJoy Engine - 分支保护 Hook v29
+# v29: 删除状态机门禁 — Hook 只做安全兜底，验证放 CI
+# v28: 精简版 — 只留 worktree/分支保护核心逻辑
 # v24: 统一分支命名规范 — cp-* 为唯一合法格式
 # v21: worktree 检测双重保险 — 保留
 
@@ -36,32 +35,8 @@ if [[ -z "$FILE_PATH" ]]; then
     exit 0
 fi
 
-# ===== .dev-mode Step 完成验证（State Machine 强制层）v26 =====
+# ===== .dev-mode 文件放行（不再做状态机验证，验证由 CI 负责）=====
 if echo "$FILE_PATH" | grep -qE '(^|/)\.dev-mode(\.[^/]+)?$'; then
-    _BP_CONTENT=""
-    if [[ "$TOOL_NAME" == "Write" ]]; then
-        _BP_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null || echo "")
-    elif [[ "$TOOL_NAME" == "Edit" ]]; then
-        _BP_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null || echo "")
-    fi
-
-    VERIFY_SCRIPT="$SCRIPT_DIR/verify-step.sh"
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-
-    if [[ -f "$VERIFY_SCRIPT" && -n "$_BP_CONTENT" ]]; then
-        for step_pattern in "step_1_(spec|taskcard):step1" "step_2_code:step2" "step_4_(ship|learning):step4"; do
-            pattern="${step_pattern%%:*}"
-            step_arg="${step_pattern##*:}"
-            if echo "$_BP_CONTENT" | grep -qE "^${pattern}:[[:space:]]+done"; then
-                if ! bash "$VERIFY_SCRIPT" "$step_arg" "$CURRENT_BRANCH" "$PROJECT_ROOT" >&2; then
-                    exit 2
-                fi
-            fi
-        done
-    fi
-
-    # .dev-mode 文件本身放行
     exit 0
 fi
 

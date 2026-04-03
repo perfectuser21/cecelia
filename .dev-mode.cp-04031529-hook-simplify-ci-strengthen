@@ -1,0 +1,10 @@
+dev
+branch: cp-04031529-hook-simplify-ci-strengthen
+task_card: .task-cp-04031529-hook-simplify-ci-strengthen.md
+started: 2026-04-03T15:29:00+08:00
+step_0_worktree: done
+step_1_spec: done
+tdd_red_confirmed: true
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending

@@ -97,7 +97,7 @@ devloop_check() {
             _dod_unchecked=$(grep -cE '^\s*-\s+\[ \]\s+\[' "$_task_card_abs" 2>/dev/null || echo "0")
             if [[ "$_dod_unchecked" -gt 0 ]]; then
                 _devloop_jq -n --argjson n "$_dod_unchecked" \
-                    '{"status":"blocked","reason":"DoD 有 \($n) 条未验证（[ ] 未改为 [x]）","action":"运行 verify-step.sh step2，Gate 2 自动标记 [x]；若已跑过则检查 Test 命令是否实际通过"}'
+                    '{"status":"blocked","reason":"DoD 有 \($n) 条未验证（[ ] 未改为 [x]）","action":"逐条运行 Test 命令验证，通过后改为 [x]"}'
                 return 2
             fi
         fi
