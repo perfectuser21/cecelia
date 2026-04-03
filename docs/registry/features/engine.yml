@@ -4,16 +4,15 @@
 
 system_id: engine
 system_name: 开发引擎
-
 features:
-
   - feature_id: engine_dev_workflow
     name: /dev 开发工作流
     purpose: Spec→Code→Integrate→Ship 四阶段开发流水线
     maturity: 2
     code:
       root: packages/engine/skills/dev
-      entry_files: [packages/engine/skills/dev/]
+      entry_files:
+        - packages/engine/skills/dev/
       language: typescript
       runtime: node
     docs:
@@ -41,12 +40,24 @@ features:
     apis: []
     tests:
       unit:
-        - packages/engine/tests/scripts/devloop-check-gates.test.ts
-        - packages/engine/tests/hooks/branch-protect.test.ts
-      integration:
+        - packages/engine/tests/codex-runner-v2.5.test.ts
         - packages/engine/tests/codex-runner.test.ts
+        - packages/engine/tests/dev/checklist.test.ts
+        - packages/engine/tests/devgate-fake-test-detection.wrapper.test.ts
+        - packages/engine/tests/devgate/devloop-check-no-playwright.test.ts
+        - packages/engine/tests/playwright-runner.test.ts
+        - packages/engine/tests/scripts/devloop-check-evaluator.test.ts
+        - packages/engine/tests/scripts/devloop-check-gates.test.ts
+        - packages/engine/tests/scripts/devloop-check-pr-timing.test.ts
+        - packages/engine/tests/stop-hook-bypass-fix.test.ts
+        - packages/engine/tests/write-current-state.test.ts
+        - packages/quality/tests/hooks/pr-gate-phase1.test.ts
+        - packages/quality/tests/hooks/pr-gate-phase2.test.ts
+        - packages/quality/tests/hooks/pr-gate.test.ts
+      integration: []
       e2e:
         - packages/engine/tests/playwright-runner.test.ts
+        - packages/engine/tests/e2e/dev-workflow-e2e.test.ts
       regression: []
     capabilities:
       - id: engine_dev_workflow_pipeline
@@ -55,25 +66,40 @@ features:
         maturity: 4
         tests:
           unit:
-            - packages/engine/tests/scripts/devloop-check-gates.test.ts
-            - packages/engine/tests/hooks/branch-protect.test.ts
-          integration:
+            - packages/engine/tests/codex-runner-v2.5.test.ts
             - packages/engine/tests/codex-runner.test.ts
+            - packages/engine/tests/dev/checklist.test.ts
+            - packages/engine/tests/devgate-fake-test-detection.wrapper.test.ts
+            - packages/engine/tests/devgate/devloop-check-no-playwright.test.ts
+            - packages/engine/tests/playwright-runner.test.ts
+            - packages/engine/tests/scripts/devloop-check-evaluator.test.ts
+            - packages/engine/tests/scripts/devloop-check-gates.test.ts
+            - packages/engine/tests/scripts/devloop-check-pr-timing.test.ts
+            - packages/engine/tests/stop-hook-bypass-fix.test.ts
+            - packages/engine/tests/write-current-state.test.ts
+            - packages/quality/tests/hooks/pr-gate-phase1.test.ts
+            - packages/quality/tests/hooks/pr-gate-phase2.test.ts
+            - packages/quality/tests/hooks/pr-gate.test.ts
+          integration: []
           e2e:
             - packages/engine/tests/playwright-runner.test.ts
+            - packages/engine/tests/e2e/dev-workflow-e2e.test.ts
         status: active
     ci:
-      jobs: [engine-tests]
-      layers: [L3, L4]
+      jobs:
+        - engine-tests
+      layers:
+        - L3
+        - L4
     runtime: {}
-
   - feature_id: engine_devloop_check
     name: DevLoop 循环检查
     purpose: Stop Hook 完成条件检查，驱动 /dev 自动推进
-    maturity: 2
+    maturity: 4
     code:
       root: packages/engine/lib
-      entry_files: [packages/engine/lib/devloop-check.sh]
+      entry_files:
+        - packages/engine/lib/devloop-check.sh
       language: bash
       runtime: node
     docs:
@@ -88,12 +114,46 @@ features:
         entry_file: packages/engine/skills/dev/SKILL.md
         version: "4.0.0"
         status: active
-      # playwright_evaluator skill 已移除（SKILL.md 不存在）
     apis: []
     tests:
       unit:
-        - packages/engine/tests/scripts/devloop-check-gates.test.ts
-      integration: []
+        - packages/engine/src/index.test.ts
+        - packages/engine/tests/devgate-fake-test-detection.test.cjs
+        - packages/engine/tests/engine/devloop-check-entry.test.ts
+        - packages/engine/tests/hooks/bash-guard.test.ts
+        - packages/engine/tests/hooks/branch-protect.test.ts
+        - packages/engine/tests/hooks/hook-gates.test.ts
+        - packages/engine/tests/hooks/stop-hook-exit-codes.test.ts
+        - packages/engine/tests/hooks/stop-hook-exit.test.ts
+        - packages/engine/tests/hooks/stop-hook-retry.test.ts
+        - packages/engine/tests/hooks/stop-hook-state-integrity.test.ts
+        - packages/engine/tests/hooks/stop-hook.test.ts
+        - packages/engine/tests/scripts/affected-packages.test.ts
+        - packages/engine/tests/scripts/cleanup-validation.test.ts
+        - packages/engine/tests/scripts/cleanup.test.ts
+        - packages/engine/tests/scripts/safe-rm-rf.test.ts
+        - packages/engine/tests/scripts/setup-branch-protection.test.sh
+        - packages/engine/tests/skills/language-rule.test.ts
+        - packages/engine/tests/skills/session-registration.test.ts
+        - packages/engine/tests/skills/worktree-multi-session.test.ts
+        - packages/engine/tests/skills/worktree-path-migration.test.ts
+        - packages/engine/tests/stop-hook-basic.test.sh
+        - packages/engine/tests/stop-hook-router.test.sh
+        - packages/engine/tests/utils/mathUtils.test.ts
+        - packages/engine/tests/workflows/cleanup-artifacts.test.ts
+        - packages/engine/tests/workflows/pr-review-blocking.test.ts
+        - packages/quality/tests/devgate/l2a-check.test.ts
+        - packages/quality/tests/e2e-gateway.test.ts
+        - packages/quality/tests/gate/draft-gci.test.ts
+        - packages/quality/tests/gate/gate.test.ts
+        - packages/quality/tests/gate/scan-rci-coverage.test.ts
+        - packages/quality/tests/gateway.test.ts
+        - packages/quality/tests/hooks/branch-protect.test.ts
+        - packages/quality/tests/hooks/install-hooks.test.ts
+      integration:
+        - packages/engine/tests/integration/cleanup-write-state.test.ts
+        - packages/engine/tests/integration/current-state-format.test.ts
+        - packages/engine/tests/integration/hook-contracts.test.ts
       e2e:
         - packages/quality/tests/e2e-gateway.test.ts
       regression: []
@@ -101,15 +161,53 @@ features:
       - id: engine_devloop_check_gates
         name: DevLoop 完成条件检查
         entry_file: packages/engine/lib/devloop-check.sh
-        maturity: 2
+        maturity: 4
         tests:
           unit:
-            - packages/engine/tests/scripts/devloop-check-gates.test.ts
-          integration: []
+            - packages/engine/src/index.test.ts
+            - packages/engine/tests/devgate-fake-test-detection.test.cjs
+            - packages/engine/tests/engine/devloop-check-entry.test.ts
+            - packages/engine/tests/hooks/bash-guard.test.ts
+            - packages/engine/tests/hooks/branch-protect.test.ts
+            - packages/engine/tests/hooks/hook-gates.test.ts
+            - packages/engine/tests/hooks/stop-hook-exit-codes.test.ts
+            - packages/engine/tests/hooks/stop-hook-exit.test.ts
+            - packages/engine/tests/hooks/stop-hook-retry.test.ts
+            - packages/engine/tests/hooks/stop-hook-state-integrity.test.ts
+            - packages/engine/tests/hooks/stop-hook.test.ts
+            - packages/engine/tests/scripts/affected-packages.test.ts
+            - packages/engine/tests/scripts/cleanup-validation.test.ts
+            - packages/engine/tests/scripts/cleanup.test.ts
+            - packages/engine/tests/scripts/safe-rm-rf.test.ts
+            - packages/engine/tests/scripts/setup-branch-protection.test.sh
+            - packages/engine/tests/skills/language-rule.test.ts
+            - packages/engine/tests/skills/session-registration.test.ts
+            - packages/engine/tests/skills/worktree-multi-session.test.ts
+            - packages/engine/tests/skills/worktree-path-migration.test.ts
+            - packages/engine/tests/stop-hook-basic.test.sh
+            - packages/engine/tests/stop-hook-router.test.sh
+            - packages/engine/tests/utils/mathUtils.test.ts
+            - packages/engine/tests/workflows/cleanup-artifacts.test.ts
+            - packages/engine/tests/workflows/pr-review-blocking.test.ts
+            - packages/quality/tests/devgate/l2a-check.test.ts
+            - packages/quality/tests/e2e-gateway.test.ts
+            - packages/quality/tests/gate/draft-gci.test.ts
+            - packages/quality/tests/gate/gate.test.ts
+            - packages/quality/tests/gate/scan-rci-coverage.test.ts
+            - packages/quality/tests/gateway.test.ts
+            - packages/quality/tests/hooks/branch-protect.test.ts
+            - packages/quality/tests/hooks/install-hooks.test.ts
+          integration:
+            - packages/engine/tests/integration/cleanup-write-state.test.ts
+            - packages/engine/tests/integration/current-state-format.test.ts
+            - packages/engine/tests/integration/hook-contracts.test.ts
           e2e:
             - packages/quality/tests/e2e-gateway.test.ts
         status: active
     ci:
-      jobs: [engine-tests]
-      layers: [L3, L4]
+      jobs:
+        - engine-tests
+      layers:
+        - L3
+        - L4
     runtime: {}

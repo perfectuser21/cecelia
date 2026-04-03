@@ -15,26 +15,30 @@
 #   integration — crosses a real boundary (DB/HTTP). Needs PostgreSQL. Runs in L4.
 #   e2e         — full workflow from external perspective. Runs in L4 shard 1.
 
-version: "1.0.0"
-updated: "2026-04-01"
+version: "2.0.0"
+updated: "2026-04-03"
 
 # ─── packages/brain/src/__tests__/ ────────────────────────────────────────────
-# Brain 集成测试：503 个文件，已接入 L4（4 shards + 真实 PostgreSQL）
+# Brain 测试：507 个文件，已接入 L4（4 shards + 真实 PostgreSQL）
 # 不在本 registry 逐一列举，由 packages/brain/vitest.config.ts 统一管理
+# 按 feature 归属已注册到 docs/registry/features/*.yml 的 capabilities.tests 段
 brain_integration_suite:
   managed_by: packages/brain/vitest.config.ts
   ci: L4
   type: integration
-  count: 503
-  note: "Brain src/__tests__/ 整体由 vitest shard 管理，L4 统一运行"
+  count: 507
+  feature_registry: docs/registry/features/{decision,memory,orchestration,pipeline,publisher,task}.yml
+  note: "Brain src/__tests__/ 整体由 vitest shard 管理，L4 统一运行。所有 507 个文件已按 feature 归属注册到 capabilities。"
 
 # ─── packages/engine/ ─────────────────────────────────────────────────────────
-# Engine 测试：101 个文件，已接入 L3
+# Engine 测试：40 个文件，已接入 L3
+# 按 feature 归属已注册到 docs/registry/features/engine.yml
 engine_suite:
   managed_by: packages/engine/vitest.config.ts
   ci: L3
   type: unit
-  count: 101
+  count: 40
+  feature_registry: docs/registry/features/engine.yml
 
 # ─── apps/api/ ────────────────────────────────────────────────────────────────
 # Workspace 前端测试：44 个文件，已接入 L3
@@ -45,11 +49,14 @@ workspace_suite:
   count: 44
 
 # ─── packages/quality/ ────────────────────────────────────────────────────────
-# QA 基础设施测试：整目录由 vitest 管理，已接入 L3
+# QA 基础设施测试：30 个文件，已接入 L3
+# 按 feature 归属已注册到 docs/registry/features/{task,engine,orchestration,memory}.yml
 quality_suite:
   managed_by: packages/quality/vitest.config.ts
   ci: L3
   type: unit
+  count: 30
+  feature_registry: docs/registry/features/{task,engine,orchestration,memory}.yml
 
 # ─── apps/dashboard/ ──────────────────────────────────────────────────────────
 # Dashboard UI 测试：已接入 L3
@@ -64,6 +71,16 @@ frontend_suite:
   managed_by: frontend/vitest.config.ts
   ci: L3
   type: unit
+
+# ─── packages/workflows/ ──────────────────────────────────────────────────────
+# Workflows / Publisher 测试：19 个文件
+# 按 feature 归属已注册到 docs/registry/features/publisher.yml
+workflows_suite:
+  ci: L3
+  type: unit
+  count: 19
+  feature_registry: docs/registry/features/publisher.yml
+  note: "各平台 publisher 的单元测试（douyin/kuaishou/wechat/weibo/xiaohongshu/zhihu/toutiao）"
 
 # ─── tests/ 根目录（孤儿文件，需显式注册）─────────────────────────────────────
 

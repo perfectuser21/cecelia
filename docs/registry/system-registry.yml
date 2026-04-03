@@ -13,7 +13,7 @@ systems:
     package: packages/brain
     purpose: 任务创建、路由、执行、隔离的完整生命周期
     features_file: features/task.yml
-    feature_count: 5
+    feature_count: 8
     ci_jobs: [brain-unit, brain-integration]
     health:
       maturity_avg: 2.0
@@ -26,7 +26,7 @@ systems:
     package: packages/brain
     purpose: 语义搜索、embedding、多巴胺奖励、建议循环、蒸馏文档
     features_file: features/memory.yml
-    feature_count: 5
+    feature_count: 12
     ci_jobs: [brain-unit]
     health:
       maturity_avg: 0.6
@@ -65,7 +65,7 @@ systems:
     package: packages/brain
     purpose: 6步内容生产流水线（research→export）+ 编排 + 巡航
     features_file: features/pipeline.yml
-    feature_count: 8
+    feature_count: 11
     ci_jobs: [brain-unit]
     health:
       maturity_avg: 0.125
@@ -78,7 +78,7 @@ systems:
     package: packages/workflows
     purpose: 8平台内容发布 + 调度 + 监控重试
     features_file: features/publisher.yml
-    feature_count: 8
+    feature_count: 9
     ci_jobs: []
     health:
       maturity_avg: 0.0
@@ -101,7 +101,7 @@ systems:
 
 summary:
   total_systems: 7
-  total_features: 37
+  total_features: 51
   ci_jobs_available: [secrets-scan, engine-tests, brain-unit, brain-integration, workspace-build, ci-passed]
   maturity_distribution:
     level_0: 17
