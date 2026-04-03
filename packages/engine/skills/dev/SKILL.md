@@ -1,8 +1,8 @@
 ---
 name: dev
-version: 5.1.0
-updated: 2026-04-02
-description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。
+version: 5.2.0
+updated: 2026-04-03
+description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。
 trigger: /dev, --task-id <id>
 ---
 
@@ -18,7 +18,26 @@ cat ~/.claude-account1/skills/dev/steps/00-worktree-auto.md 2>/dev/null || cat ~
 
 ---
 
-## 流程
+## Harness v2.0 模式
+
+当 task payload 包含 `harness_mode: true` 时，/dev 作为 Generator 执行器运行：
+
+```
+Harness 模式简化流程:
+  Step 0: Worktree  → 创建独立 worktree（不变）
+  Stage 1: Spec     → 跳过自写 Task Card/DoD，读 sprint-contract.md
+  Stage 2: Code     → 写代码，不逐条验证 DoD（Evaluator 来验）
+  Stage 3: Integrate → push + PR 创建
+  Stop Hook         → 代码完成 + PR 已创建 → exit 0（Brain 派 Evaluator）
+```
+
+**不执行**: DoD 逐条验证、CI 等待、Learning 写入、PR 合并。
+
+`.dev-mode` 中标记 `harness_mode: true` + `sprint_dir: sprints/sprint-N`。
+
+---
+
+## 流程（标准模式）
 
 ```
 Step 0: Worktree → 创建独立 worktree
@@ -43,6 +62,8 @@ Stage 4: Ship   → Learning + 合并 PR + 清理
 
 ## Stop Hook 完成条件（devloop-check.sh）
 
+### 标准模式
+
 ```
 0. cleanup_done: true → exit 0（结束）
 1. step_1_spec done？
@@ -51,6 +72,15 @@ Stage 4: Ship   → Learning + 合并 PR + 清理
 4. CI 通过？（失败→修复→重推）
 5. step_4_ship done？（Learning 已写）
 6. PR 已合并？→ cleanup_done: true
+```
+
+### Harness 模式（harness_mode: true）
+
+```
+0. cleanup_done: true → exit 0（结束）
+1. step_2_code done？
+2. PR 已创建？
+→ 两项满足即 exit 0，Brain 派 Evaluator
 ```
 
 ---

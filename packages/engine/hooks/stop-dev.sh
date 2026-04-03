@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.0.0
+# Stop Hook: Claude Code 协议适配器 v16.1.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.0.0 — 精简（删除 seal + Pipeline Rescue + report_step_to_brain）
+# 版本: v16.1.0 — Harness v2.0 适配（harness_mode 由 devloop-check 快速通道处理）
 
 set -euo pipefail
 
@@ -116,7 +116,14 @@ SESSION_ID_IN_FILE=$(grep "^session_id:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' 
 [[ -n "$SESSION_ID_IN_FILE" && -n "${CLAUDE_SESSION_ID:-}" && "$SESSION_ID_IN_FILE" != "${CLAUDE_SESSION_ID:-}" ]] && exit 0
 
 BRANCH_NAME="${BRANCH_IN_FILE:-$CUR_BRANCH}"
-echo "  [Stop Hook] /dev 完成条件检查 — 分支: $BRANCH_NAME" >&2
+
+# Harness 模式标识
+HARNESS_MODE_FLAG=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
+if [[ "$HARNESS_MODE_FLAG" == "true" ]]; then
+    echo "  [Stop Hook] /dev harness 模式 — 分支: $BRANCH_NAME（只检查代码完成+PR创建）" >&2
+else
+    echo "  [Stop Hook] /dev 完成条件检查 — 分支: $BRANCH_NAME" >&2
+fi
 
 # 调用 devloop_check（SSOT）
 if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then

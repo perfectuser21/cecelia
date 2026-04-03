@@ -4,11 +4,12 @@
 # ============================================================================
 # SSOT：所有 Provider 适配器 source 此文件，通过 devloop_check() 获取当前状态。
 #
-# 版本: v4.0.0
-# 更新: 2026-04-02 — 精简：删除 seal 防伪机制 + LITE mode + execution logger
+# 版本: v4.1.0
+# 更新: 2026-04-03 — Harness v2.0 适配：harness_mode 快速通道（跳过 DoD/CI/Learning）
 #
 # 4-Stage Pipeline 条件顺序:
 #   0. cleanup_done → exit 0（唯一出口）
+#   0.5 harness_mode → 快速通道（只检查 code done + PR 创建）
 #   1. step_1_spec done?
 #   2. step_2_code done?
 #   2.6. DoD 完整性检查（[ ] → [x]）
@@ -64,6 +65,41 @@ devloop_check() {
     # ===== 条件 0: cleanup_done =====
     if [[ -f "$dev_mode_file" ]] && grep -q "cleanup_done: true" "$dev_mode_file" 2>/dev/null; then
         _devloop_jq -n '{"status":"done"}'
+        return 0
+    fi
+
+    # ===== 条件 0.5: harness_mode 快速通道 =====
+    # Harness v2.0: Generator 只需写代码 + 创建 PR，然后 exit 0 让 Brain 派 Evaluator
+    # 不检查 DoD 勾选、CI 通过、Learning 等
+    local _harness_mode="false"
+    if [[ -f "$dev_mode_file" ]]; then
+        _harness_mode=$(grep "^harness_mode:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "false")
+    fi
+
+    if [[ "$_harness_mode" == "true" ]]; then
+        # 检查 1: step_2_code done?
+        local _h_step2
+        _h_step2=$(grep "^step_2_code:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$_h_step2" != "done" ]]; then
+            _devloop_jq -n '{"status":"blocked","reason":"[Harness] Stage 2 Code 未完成","action":"立即读取 skills/dev/steps/02-code.md 并执行 Stage 2（harness 模式）。禁止询问用户。"}'
+            return 2
+        fi
+
+        # 检查 2: PR 已创建?
+        local _h_pr=""
+        if command -v gh &>/dev/null; then
+            _h_pr=$(gh pr list --head "$branch" --state all --json number -q '.[0].number' 2>/dev/null || echo "")
+        fi
+        if [[ -z "$_h_pr" ]]; then
+            _devloop_jq -n --arg branch "$branch" \
+                '{"status":"blocked","reason":"[Harness] PR 未创建","action":"立即 push + 创建 PR（gh pr create --base main --head \($branch)）"}'
+            return 2
+        fi
+
+        # Harness 模式: 代码写完 + PR 已创建 → done，让 Brain 派 Evaluator
+        _mark_cleanup_done "$dev_mode_file"
+        _devloop_jq -n --arg pr "$_h_pr" \
+            '{"status":"done","reason":"[Harness] 代码完成 + PR #\($pr) 已创建，session 结束，Brain 将派 Evaluator 验证"}'
         return 0
     fi
 
