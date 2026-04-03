@@ -92,9 +92,9 @@ const SKILL_WHITELIST = {
   'code_review_gate': '/code-review-gate',  // 代码质量门禁
   'initiative_review': '/initiative-review', // Initiative 整体审查
   // Harness v2.0 Sprint 循环（Generator ↔ Evaluator 对抗）
-  'sprint_generate': '/sprint-generator',    // Generator 写 contract + 代码
+  'sprint_generate': '/dev',                  // Generator 写 contract + 代码
   'sprint_evaluate': '/sprint-evaluator',    // Evaluator 测运行中的代码
-  'sprint_fix': '/sprint-generator',         // Generator 修复（复用 Generator skill）
+  'sprint_fix': '/dev',                      // Generator 修复（复用 /dev）
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
