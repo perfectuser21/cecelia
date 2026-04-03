@@ -1511,6 +1511,16 @@ ${resultStr.substring(0, 2000)}
               }
             }
           }
+          // 如果顶层没有 verdict，从 summary/findings 字符串中提取
+          if (!resultObj.verdict) {
+            const textToSearch = resultObj.summary || resultObj.findings || (typeof result === 'string' ? result : '');
+            if (typeof textToSearch === 'string') {
+              const verdictMatch = textToSearch.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
+              if (verdictMatch) {
+                resultObj.verdict = verdictMatch[1].toUpperCase();
+              }
+            }
+          }
           const verdict = resultObj.verdict || 'FAIL';
           console.log(`[execution-callback] harness: sprint_evaluate verdict=${verdict} (result type=${typeof result})`);
           const devTaskId = harnessPayload.dev_task_id;
