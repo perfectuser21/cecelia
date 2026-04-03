@@ -173,7 +173,7 @@ features:
   - feature_id: task_lifecycle_e2e
     name: 任务全生命周期
     purpose: 创建→分发→执行→完成 完整链路
-    maturity: 2
+    maturity: 0
     code:
       root: packages/brain/scripts
       entry_files: [packages/brain/scripts/task-lifecycle-check.sh]
