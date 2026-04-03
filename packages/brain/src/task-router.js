@@ -26,6 +26,7 @@ const VALID_TASK_TYPES = [
   'intent_expand',
   // 内容工厂 Pipeline（Content Factory）
   'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
+  'content_publish',  // 发布阶段（export 完成后逐平台创建，executor.js 按 payload.platform 路由到对应 publisher skill）
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Harness v2.0 Sprint 循环（Generator ↔ Evaluator 对抗）
@@ -195,6 +196,7 @@ const LOCATION_MAP = {
   'content-generate': 'xian',  // 图片生成 → 西安 (/content-creator)
   'content-image-review': 'xian', // 图片审核 → 西安（规则+视觉检查）
   'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
+  'content_publish': 'us',     // 发布阶段 → US 本机（publisher skills 需要浏览器 CDP，在 US Mac mini 跑）
   // Harness v2.0 Sprint 循环 → US 本机（需读 worktree + 跑测试）
   'sprint_generate': 'us',        // Generator 写 contract + 代码 → US 本机
   'sprint_evaluate': 'us',        // Evaluator 测代码 → US 本机（需启动服务跑测试）
@@ -274,6 +276,7 @@ const TASK_REQUIREMENTS = {
   'content-image-review': ['general'],
   'content-export':     ['general'],
   'platform_scraper':   ['has_browser'],  // 需要 CDP 浏览器接入各平台
+  'content_publish':    ['has_browser'],  // 发布 skill（douyin/kuaishou 等）需要 CDP 浏览器控制
 };
 
 /**

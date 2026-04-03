@@ -477,6 +477,14 @@ queued → in_progress → completed
 | sprint_generate | US | Harness Generator — 写 sprint contract + 代码 (/dev) | Sonnet / - | 默认 anthropic |
 | sprint_evaluate | US | Harness Evaluator — 测运行中的代码 (/sprint-evaluator) | Sonnet / - | 默认 anthropic |
 | sprint_fix | US | Harness Generator 修复轮次 (/dev) | Sonnet / - | 默认 anthropic |
+| content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
+| content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
+| content-copywriting | 西安 | 文案生成阶段 (/content-creator) | - | general |
+| content-copy-review | 西安 | 文案审核阶段 (/content-creator) | - | general |
+| content-generate | 西安 | 图片生成阶段 (/content-creator) | - | general |
+| content-image-review | 西安 | 图片审核阶段 (/content-creator) | - | general |
+| content-export | 西安 | 内容导出阶段，生成卡片并上传 NAS (/content-creator) | - | general |
+| content_publish | US | 内容发布阶段，按平台路由到对应 publisher skill（douyin/kuaishou 等需要 CDP 浏览器） | Sonnet / - | 默认 anthropic |
 
 ---
 

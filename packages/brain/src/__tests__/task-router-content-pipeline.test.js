@@ -1,6 +1,6 @@
 /**
  * task-router-content-pipeline.test.js
- * Validates content-* task_type registration in Brain routing (6-stage pipeline)
+ * Validates content-* task_type registration in Brain routing (6-stage pipeline + content_publish)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -86,5 +86,23 @@ describe('content-* LOCATION_MAP routing', () => {
 
   it('LOCATION_MAP contains content-pipeline mapped to xian', () => {
     expect(LOCATION_MAP['content-pipeline']).toBe('xian');
+  });
+});
+
+describe('content_publish task_type registration', () => {
+  it('VALID_TASK_TYPES includes content_publish', () => {
+    expect(VALID_TASK_TYPES).toContain('content_publish');
+  });
+
+  it('isValidTaskType returns true for content_publish', () => {
+    expect(isValidTaskType('content_publish')).toBe(true);
+  });
+
+  it('LOCATION_MAP routes content_publish to us (publisher skills need browser on US Mac)', () => {
+    expect(LOCATION_MAP['content_publish']).toBe('us');
+  });
+
+  it('getTaskLocation returns us for content_publish', () => {
+    expect(getTaskLocation('content_publish')).toBe('us');
   });
 });
