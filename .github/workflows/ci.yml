@@ -78,7 +78,7 @@ jobs:
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # Brain 有预存在的 flaky 测试，暂不阻塞 CI
+    # Brain 测试必须通过才能合并
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

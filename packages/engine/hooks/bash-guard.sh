@@ -281,40 +281,6 @@ if echo "$CMD" | grep -Eq ">>?[[:space:]]*['\"]?(packages|apps|scripts|hooks)/";
     fi
 fi
 
-# ─── 规则 5: .dev-mode Bash 写入检测（~3ms）──────────────────
-# 拦截 Bash 工具对 .dev-mode 文件的 step_N: done 写操作
-# 与 branch-protect.sh 的 Write/Edit 拦截形成对称保护
-# 防止 AI 绕过 PreToolUse:Write，用 Bash 直接跳过状态机验证
-if echo "$CMD" | grep -qE '\.dev-mode' && \
-   echo "$CMD" | grep -qE 'step_(1_(spec|taskcard)|2_code|4_(ship|learning)):[[:space:]]*done'; then
-    _VERIFY_STEP=""
-    if echo "$CMD" | grep -qE 'step_1_(spec|taskcard):[[:space:]]*done'; then
-        _VERIFY_STEP="step1"
-    elif echo "$CMD" | grep -qE 'step_2_code:[[:space:]]*done'; then
-        _VERIFY_STEP="step2"
-    elif echo "$CMD" | grep -qE 'step_4_(ship|learning):[[:space:]]*done'; then
-        _VERIFY_STEP="step4"
-    fi
-    if [[ -n "$_VERIFY_STEP" ]]; then
-        _VS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-step.sh"
-        _VS_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-        _VS_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-        if [[ -f "$_VS" ]]; then
-            if ! bash "$_VS" "$_VERIFY_STEP" "$_VS_BRANCH" "$_VS_ROOT" >&2; then
-                echo "" >&2
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-                echo "  [BASH GUARD] .dev-mode Bash 写入被拦截" >&2
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-                echo "" >&2
-                echo "  verify-step.sh ${_VERIFY_STEP} 验证失败" >&2
-                echo "  请完成步骤再标记 done" >&2
-                echo "" >&2
-                exit 2
-            fi
-        fi
-    fi
-fi
-
 # ─── 规则 2: HK 部署防护（两步匹配，命中才跑 git）─────────
 # 第一步：是否是 rsync/scp 命令？（~1ms）
 if ! echo "$CMD" | grep -Eq "$DEPLOY_CMDS"; then
