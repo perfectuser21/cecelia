@@ -130,7 +130,7 @@ cmd_create() {
         echo -e "${RED}ERROR: worktree 数量已达上限（$existing_count/$MAX_WORKTREES）${NC}" >&2
         echo "  运行以下命令查看现有 worktree：" >&2
         echo "  git worktree list" >&2
-        echo "  运行 worktree-gc.sh 清理已合并的 worktree 后再重试" >&2
+        echo "  运行 worktree-manage.sh cleanup 清理已合并的 worktree 后再重试" >&2
         exit 1
     fi
 
@@ -345,21 +345,49 @@ cmd_remove() {
 }
 
 # 清理已合并的 worktree
-# v1.3.0: 委托给 worktree-gc.sh（用 gh pr list 检测，不用 git branch --merged）
+# v1.4.0: 内联实现 — 用 gh pr list 检测已合并 PR，不依赖外部 worktree-gc.sh
 cmd_cleanup() {
     echo -e "${BLUE}清理已合并的 Worktree...${NC}"
     echo ""
 
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local gc_script="$script_dir/worktree-gc.sh"
+    local main_wt
+    main_wt=$(get_main_worktree)
+    local worktree_base="${WORKTREE_BASE:-$HOME/worktrees}"
+    local cleaned=0
+    local skipped=0
 
-    if [[ -f "$gc_script" ]]; then
-        bash "$gc_script" "$@"
-    else
-        echo -e "${RED}错误: worktree-gc.sh 不存在${NC}" >&2
-        exit 1
-    fi
+    while IFS= read -r wt_line; do
+        local wt_path wt_branch
+        wt_path=$(echo "$wt_line" | awk '{print $1}')
+        wt_branch=$(echo "$wt_line" | awk '{print $3}' | tr -d '[]')
+
+        # 跳过主仓库
+        [[ "$wt_path" == "$main_wt" ]] && continue
+        # 跳过 HEAD detached 状态
+        [[ "$wt_branch" == "(HEAD" || -z "$wt_branch" ]] && continue
+
+        # 用 gh pr list 检测该分支的 PR 是否已合并
+        local pr_state=""
+        if command -v gh &>/dev/null; then
+            pr_state=$(gh pr list --head "$wt_branch" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
+        fi
+
+        if [[ -n "$pr_state" ]]; then
+            echo -e "${YELLOW}移除已合并 worktree: $wt_path (分支: $wt_branch, PR #$pr_state)${NC}"
+            git worktree remove --force "$wt_path" 2>/dev/null || true
+            if [[ -d "$wt_path" ]]; then
+                safe_rm_rf "$wt_path" "$worktree_base"
+            fi
+            git branch -D "$wt_branch" 2>/dev/null || true
+            ((cleaned++))
+        else
+            echo -e "  跳过: $wt_branch（未合并或无 PR）"
+            ((skipped++))
+        fi
+    done < <(git worktree list 2>/dev/null | tail -n +2)
+
+    echo ""
+    echo -e "${GREEN}✅ 清理完成：移除 $cleaned 个，跳过 $skipped 个${NC}"
 }
 
 # 主入口

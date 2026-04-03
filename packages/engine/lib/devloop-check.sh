@@ -56,6 +56,8 @@ _mark_cleanup_done() {
 devloop_check() {
     local branch="${1:-}"
     local dev_mode_file="${2:-}"
+    local PROJECT_ROOT
+    PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
     if [[ -z "$branch" ]]; then
         _devloop_jq -n '{"status":"blocked","reason":"branch 参数为空","action":"检查调用方传入的 BRANCH 参数"}'
