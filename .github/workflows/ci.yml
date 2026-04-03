@@ -114,6 +114,14 @@ jobs:
         with:
           node-version: '22'
       - run: cd packages/brain && npm ci
+      - name: Run Migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: cd packages/brain && node src/migrate.js
       - name: Integration Tests
         env:
           DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
