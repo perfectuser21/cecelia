@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 4.0.0
+version: 4.1.0
 created: 2026-03-20
-updated: 2026-04-02
+updated: 2026-04-03
 changelog:
+  - 4.1.0: Harness v2.0 适配 — harness_mode 下跳过自写 Task Card/DoD，读 sprint-contract.md
   - 4.0.0: 精简 — 删除 Planner subagent、Sprint Contract Gate、LITE/FULL 路径。主 agent 直接写 Task Card。
 ---
 
@@ -12,6 +13,55 @@ changelog:
 > 主 agent 直接写 Task Card + DoD，不经 subagent。
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "1", status: "in_progress" })`
+
+---
+
+## 0. Harness 模式判断（harness_mode）
+
+检测 task payload 是否包含 `harness_mode: true`：
+
+```bash
+TASK_ID="<从 parse-dev-args.sh 获取>"
+# 查询 Brain 获取 task payload
+TASK_JSON=$(curl -s "http://localhost:5221/api/brain/tasks/${TASK_ID}")
+HARNESS_MODE=$(echo "$TASK_JSON" | jq -r '.payload.harness_mode // false')
+```
+
+### harness_mode = true 时
+
+**跳过自写 Spec/Task Card/DoD。** Sprint Contract 已由 Generator 写好。
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+SPRINT_DIR=$(echo "$TASK_JSON" | jq -r '.payload.sprint_dir // "sprints/sprint-1"')
+
+# 读取现有的 sprint-contract.md 作为实现指南
+cat "${SPRINT_DIR}/sprint-contract.md"
+
+# 写 .dev-mode（标记 harness_mode）
+cat > ".dev-mode.${BRANCH_NAME}" << EOF
+dev
+branch: ${BRANCH_NAME}
+harness_mode: true
+sprint_dir: ${SPRINT_DIR}
+task_id: ${TASK_ID}
+started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
+EOF
+
+git add ".dev-mode.${BRANCH_NAME}"
+git commit -m "chore: [state] persist .dev-mode (harness) — Stage 1 跳过"
+```
+
+**直接进入 Stage 2 (Code)** — 读取 `skills/dev/steps/02-code.md` 并执行。
+
+---
+
+### harness_mode = false（默认，现有流程不变）
 
 ---
 
