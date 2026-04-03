@@ -473,6 +473,9 @@ queued → in_progress → completed
 | okr_initiative_plan | 西安 | OKR Scope 下规划下一个 Initiative (/decomp) | - | general |
 | okr_scope_plan | 西安 | OKR Project 下规划下一个 Scope (/decomp) | - | general |
 | okr_project_plan | 西安 | OKR Project 层完成后规划下一步 (/decomp) | - | general |
+| sprint_generate | US | Harness Generator — 写 sprint-contract + 代码 (/dev) | Sonnet / - | 默认 anthropic |
+| sprint_evaluate | US | Harness Evaluator — 测运行中代码 (/sprint-evaluator) | Sonnet / - | 默认 anthropic |
+| sprint_fix | US | Harness Generator 修复轮次 (/dev) | Sonnet / - | 默认 anthropic |
 
 ---
 
