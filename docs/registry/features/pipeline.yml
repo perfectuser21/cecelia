@@ -29,6 +29,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_research_fetch
+        name: 选题资料抓取
+        entry_file: packages/brain/src/content-pipeline-executors.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -56,6 +66,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_copywriting_generate
+        name: AI 文案生成
+        entry_file: packages/brain/src/content-pipeline-executors.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -83,6 +103,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_copy_review_check
+        name: 文案质量审查
+        entry_file: packages/brain/src/content-pipeline-executors.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -110,6 +140,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_generate_image
+        name: 信息图生成
+        entry_file: packages/brain/src/content-pipeline-executors.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -137,6 +177,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_image_review_check
+        name: 图片质量审查
+        entry_file: packages/brain/src/content-pipeline-executors.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -170,6 +220,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_export_archive
+        name: 内容导出归档
+        entry_file: packages/brain/src/content-pipeline-executors.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -228,6 +288,17 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_orchestrator_state
+        name: Pipeline 状态机编排
+        entry_file: packages/brain/src/content-pipeline-orchestrator.js
+        maturity: 2
+        tests:
+          unit:
+            - tests/content-pipeline-run-api.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -255,6 +326,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: pipeline_patrol_guard
+        name: Pipeline 巡航守护
+        entry_file: packages/brain/src/pipeline-patrol.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []

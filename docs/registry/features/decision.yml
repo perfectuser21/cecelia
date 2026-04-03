@@ -51,6 +51,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: decision_engine_decide
+        name: 决策生成
+        entry_file: packages/brain/src/decision.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -103,6 +113,17 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: proposal_system_approve
+        name: 提案审批处理
+        entry_file: packages/brain/src/proposal.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/proposal.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -132,6 +153,18 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: alertness_system_evaluate
+        name: 压力水位评估
+        entry_file: packages/brain/src/alertness/
+        maturity: 2
+        tests:
+          unit:
+            - tests/alertness/diagnosis.test.js
+            - tests/alertness/healing.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -159,6 +192,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: circuit_breaker_fuse
+        name: 服务熔断
+        entry_file: packages/brain/src/circuit-breaker.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -192,6 +235,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: monitor_loop_heal
+        name: 监控自愈循环
+        entry_file: packages/brain/src/monitor-loop.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []

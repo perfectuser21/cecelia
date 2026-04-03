@@ -59,6 +59,21 @@ features:
       e2e:
         - packages/brain/scripts/task-lifecycle-check.sh
       regression: []
+    capabilities:
+      - id: task_create_api
+        name: 任务创建 API
+        entry_file: packages/brain/src/routes/tasks.js
+        maturity: 4
+        tests:
+          unit:
+            - packages/brain/src/__tests__/tick.test.js
+          integration:
+            - apps/api/src/__tests__/brain-api-integration.test.ts
+            - tests/database/integration.test.js
+            - packages/quality/tests/api/integration.test.js
+          e2e:
+            - packages/brain/scripts/task-lifecycle-check.sh
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3, L4]
@@ -88,6 +103,18 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: task_route_router
+        name: 任务路由分发
+        entry_file: packages/brain/src/task-router.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/task-router-failover.test.js
+            - packages/brain/src/__tests__/task-router-intent-cto.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -136,6 +163,17 @@ features:
       regression:
         - packages/brain/src/__tests__/callback-dev-serial.test.js
         - packages/brain/src/__tests__/callback-needs-fix-rounds.test.js
+    capabilities:
+      - id: task_callback_execution
+        name: 执行回调处理
+        entry_file: packages/brain/src/routes/execution.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/callback-atomic.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -165,6 +203,18 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: task_quarantine_detect
+        name: 异常任务隔离
+        entry_file: packages/brain/src/quarantine.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
+            - packages/brain/src/__tests__/quarantine.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -193,6 +243,17 @@ features:
       e2e:
         - packages/brain/scripts/task-lifecycle-check.sh
       regression: []
+    capabilities:
+      - id: task_lifecycle_e2e_check
+        name: 生命周期端到端检查
+        entry_file: packages/brain/scripts/task-lifecycle-check.sh
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e:
+            - packages/brain/scripts/task-lifecycle-check.sh
+        status: active
     ci:
       jobs: []
       layers: [L4]

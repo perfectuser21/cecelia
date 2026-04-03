@@ -88,6 +88,21 @@ features:
       e2e:
         - packages/brain/scripts/goldenpath-check.sh
       regression: []
+    capabilities:
+      - id: tick_loop_scheduler
+        name: Tick 调度引擎
+        entry_file: packages/brain/src/tick.js
+        maturity: 4
+        tests:
+          unit:
+            - packages/brain/src/__tests__/tick.test.js
+            - packages/brain/src/__tests__/tick-drain.test.js
+            - packages/brain/src/__tests__/tick-throttle.test.js
+          integration:
+            - packages/brain/src/__tests__/tick-healing-integration.test.js
+          e2e:
+            - packages/brain/scripts/goldenpath-check.sh
+        status: active
     ci:
       jobs: [brain-unit, brain-integration]
       layers: [L3, L4]
@@ -166,6 +181,19 @@ features:
         - apps/api/tests/panorama-full.test.ts
       e2e: []
       regression: []
+    capabilities:
+      - id: okr_system_hierarchy
+        name: OKR 层级管理
+        entry_file: packages/brain/src/routes/okr-hierarchy.js
+        maturity: 3
+        tests:
+          unit:
+            - apps/api/src/okr/__tests__/trees.test.js
+          integration:
+            - packages/brain/src/__tests__/tick-goal-eval-integration.test.js
+            - apps/api/tests/panorama-full.test.ts
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -193,6 +221,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: area_scheduler_select
+        name: 工作区域调度
+        entry_file: packages/brain/src/area-scheduler.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -241,6 +279,17 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: decomposition_engine_decompose
+        name: KR 拆解
+        entry_file: packages/brain/src/decomposition-checker.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/tick-kr-decomp.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
