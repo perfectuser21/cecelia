@@ -10,7 +10,10 @@ set -euo pipefail
 # ===== 共享工具函数 =====
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/hook-utils.sh
-source "$SCRIPT_DIR/../lib/hook-utils.sh"
+if ! source "$SCRIPT_DIR/../lib/hook-utils.sh" 2>/dev/null; then
+    echo "[ERROR] hook-utils.sh 加载失败: $SCRIPT_DIR/../lib/hook-utils.sh" >&2
+    exit 2
+fi
 
 # ===== jq 检查 =====
 if ! command -v jq &>/dev/null; then
@@ -103,13 +106,13 @@ if [[ -z "$PROJECT_ROOT" ]]; then
 fi
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-if [[ -z "$CURRENT_BRANCH" ]]; then
+if [[ -z "${CURRENT_BRANCH}" ]]; then
     echo "[ERROR] 无法获取当前分支名" >&2
     exit 2
 fi
 
 # ===== 分支检查：cp-* 为唯一合法格式 =====
-if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
+if [[ "${CURRENT_BRANCH}" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
 
     # Worktree 检测（双重保险）
     GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null || echo "")
@@ -120,7 +123,7 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
         IS_WORKTREE=true
     fi
     if [[ "$IS_WORKTREE" == false ]]; then
-        echo "  必须在独立 worktree 中开发（当前在主仓库 $CURRENT_BRANCH）" >&2
+        echo "  必须在独立 worktree 中开发（当前在主仓库 ${CURRENT_BRANCH}）" >&2
         echo "[SKILL_REQUIRED: dev]" >&2
         exit 2
     fi
@@ -132,9 +135,9 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
         COMMITS_AHEAD=$(clean_number "$COMMITS_AHEAD")
     fi
     if [[ "$COMMITS_AHEAD" -eq 0 ]]; then
-        REMOTE_BRANCH=$(git ls-remote --heads origin "$CURRENT_BRANCH" 2>/dev/null || echo "FETCH_FAILED")
+        REMOTE_BRANCH=$(git ls-remote --heads origin "${CURRENT_BRANCH}" 2>/dev/null || echo "FETCH_FAILED")
         if [[ "$REMOTE_BRANCH" != "FETCH_FAILED" && -n "$REMOTE_BRANCH" ]]; then
-            echo "  僵尸 Worktree：分支 $CURRENT_BRANCH 已合并到 main" >&2
+            echo "  僵尸 Worktree：分支 ${CURRENT_BRANCH} 已合并到 main" >&2
             echo "[SKILL_REQUIRED: dev]" >&2
             exit 2
         fi
@@ -157,7 +160,7 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
 fi
 
 # 禁止的分支（非 cp-* 分支不允许写代码）
-echo "  只能在 cp-MMDDHHNN-task-name 分支修改代码（当前: $CURRENT_BRANCH）" >&2
+echo "  只能在 cp-MMDDHHNN-task-name 分支修改代码（当前: ${CURRENT_BRANCH}）" >&2
 echo "  请先运行 /dev 创建 cp-* 分支" >&2
 echo "[SKILL_REQUIRED: dev]" >&2
 exit 2

@@ -46,8 +46,15 @@ function runBash(
   hookInput?: string,
   extraEnv?: Record<string, string>
 ): { exitCode: number; stdout: string; stderr: string } {
+  // 清除 git 环境变量，防止外层 git 仓库干扰测试中的临时 repo
+  const cleanEnv = { ...(process.env as Record<string, string>) };
+  for (const key of Object.keys(cleanEnv)) {
+    if (key.startsWith("GIT_") && key !== "GIT_EDITOR") {
+      delete cleanEnv[key];
+    }
+  }
   const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
+    ...cleanEnv,
     HOME: os.homedir(),
     ...extraEnv,
   };

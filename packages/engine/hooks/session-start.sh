@@ -91,7 +91,7 @@ CURRENT_STATE_FILE="${_MAIN_REPO}/.agent-knowledge/CURRENT_STATE.md"
 if [[ -f "$CURRENT_STATE_FILE" ]]; then
     # 读取 probe 摘要行（第一个 > 行包含探针结果统计）
     PROBE_SUMMARY=$(grep "^> 最后探针时间" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 || echo "")
-    HEALTH_LINE=$(grep "| Brain API |" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 | sed 's/[| ]//g' | sed 's/BrainAPI//g' || echo "")
+    HEALTH_LINE=$(grep "| Brain API |" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$3); print $3}' || echo "")
     ALERTNESS_LINE=$(grep "| 警觉等级 |" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 | awk -F'|' '{print $3}' | tr -d ' ' || echo "")
     GEN_TIME=$(grep "^generated:" "$CURRENT_STATE_FILE" 2>/dev/null | head -1 | sed 's/generated: //' || echo "")
 

@@ -185,7 +185,11 @@ devloop_check() {
             "in_progress"|"queued"|"waiting"|"pending")
                 local _started _se _elapsed
                 _started=$(grep "^started:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-                _se=$(date -d "$_started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${_started%+*}" +%s 2>/dev/null || echo 0)
+                if [[ -z "$_started" ]]; then
+                    _se=0
+                else
+                    _se=$(date -d "$_started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${_started%+*}" +%s 2>/dev/null || echo 0)
+                fi
                 _elapsed=$(( $(date +%s) - _se ))
                 if [[ -n "$_started" && $_elapsed -gt 5400 ]]; then
                     _devloop_jq -n --arg b "$branch" '{"status":"blocked","reason":"CI 已 pending 90+ 分钟，可能卡死","action":"检查 CI：gh run list --branch \($b) --limit 5"}'
@@ -233,7 +237,9 @@ devloop_check() {
             if [[ -n "$_cleanup_script" ]]; then
                 echo "🧹 自动执行 cleanup.sh..." >&2
                 if (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script") 2>/dev/null; then
-                    _devloop_jq -n '{"status":"blocked","reason":"PR 已合并，cleanup 执行完成，等待下次检查","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
+                    _mark_cleanup_done "$dev_mode_file"
+                    _devloop_jq -n '{"status":"done","reason":"PR 已合并，cleanup 完成"}'
+                    return 0
                 else
                     _devloop_jq -n '{"status":"blocked","reason":"PR 已合并，cleanup.sh 执行失败","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4 Ship"}'
                 fi

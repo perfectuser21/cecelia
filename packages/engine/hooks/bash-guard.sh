@@ -72,9 +72,8 @@ if echo "$CMD" | grep -qF ".credentials/"; then
         echo "" >&2
         exit 2
     fi
-    # 拦截：读取凭据文件 + 重定向到文件或 tee
-    if echo "$CMD" | grep -qE '(cat|head|tail|grep|sed|awk)\s+.*\.credentials/\S+' && \
-       echo "$CMD" | grep -qE '>>?\s*\S|[|]\s*tee\s'; then
+    # 拦截：读取凭据文件 + 重定向到文件或 tee（单行内同时包含两者才拦截）
+    if echo "$CMD" | grep -qE '(cat|head|tail|grep|sed|awk)\s+.*\.credentials/\S+.*(>>?\s*\S|\|\s*tee\s)'; then
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "  [BASH GUARD] 检测到凭据内容重定向" >&2

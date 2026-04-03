@@ -697,7 +697,8 @@ fi
 GC_SCRIPT_FOR_AUTO="${SCRIPT_DIR}/worktree-gc.sh"
 GC_MAIN_WT=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
 if [[ -f "$GC_SCRIPT_FOR_AUTO" && -n "$GC_MAIN_WT" ]]; then
-    (cd "$GC_MAIN_WT" && bash "$GC_SCRIPT_FOR_AUTO") &
+    setsid bash -c "cd '$GC_MAIN_WT' && bash '$GC_SCRIPT_FOR_AUTO'" >/dev/null 2>&1 &
+    disown 2>/dev/null || true
     echo -e "   ${GREEN}[INFO] worktree GC 已在后台启动（从 $GC_MAIN_WT 执行）${NC}"
 else
     if [[ -z "$GC_MAIN_WT" ]]; then
