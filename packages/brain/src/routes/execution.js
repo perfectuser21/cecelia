@@ -1496,8 +1496,23 @@ ${resultStr.substring(0, 2000)}
 
         // sprint_evaluate 完成 → 根据 verdict 路由
         if (harnessTask?.task_type === 'sprint_evaluate') {
-          const resultObj = typeof result === 'object' && result !== null ? result : {};
+          // verdict 解析：兼容对象和字符串（cecelia-run webhook 可能传纯文本）
+          let resultObj = typeof result === 'object' && result !== null ? result : {};
+          if (typeof result === 'string') {
+            // 尝试完整 JSON 解析
+            try {
+              const parsed = JSON.parse(result);
+              if (parsed && typeof parsed === 'object' && parsed.verdict) resultObj = parsed;
+            } catch {
+              // 非 JSON，尝试正则提取 verdict
+              const verdictMatch = result.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
+              if (verdictMatch) {
+                resultObj = { verdict: verdictMatch[1].toUpperCase() };
+              }
+            }
+          }
           const verdict = resultObj.verdict || 'FAIL';
+          console.log(`[execution-callback] harness: sprint_evaluate verdict=${verdict} (result type=${typeof result})`);
           const devTaskId = harnessPayload.dev_task_id;
           const { createTask: createHarnessTask } = await import('../actions.js');
 
