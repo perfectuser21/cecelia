@@ -75,7 +75,7 @@ fi
 
 # ===== 触发对话结束 summary（fire-and-forget，不阻塞）=====
 # conversation-consolidator 写入 memory_stream，让 Brain 记住本次对话
-curl -s -X POST "http://localhost:5221/api/brain/conversation-summary" \
+curl -s --connect-timeout 5 --max-time 10 -X POST "http://localhost:5221/api/brain/conversation-summary" \
   -H "Content-Type: application/json" \
   -d '{"trigger":"session_end"}' > /dev/null 2>&1 &
 
