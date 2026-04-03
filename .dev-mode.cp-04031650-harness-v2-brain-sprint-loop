@@ -5,6 +5,6 @@ started: 2026-04-03T16:51:19+08:00
 task_id: e7545a4c-6f29-4d87-89f6-dd6727e1bc9d
 step_0_worktree: done
 step_1_spec: done
-step_2_code: pending
+step_2_code: done
 step_3_integrate: pending
 step_4_ship: pending
