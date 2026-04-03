@@ -1,7 +1,7 @@
 name: CI
 
 # Cecelia 统一 CI — 精简版
-# 只做机器能客观判断的事：secrets + types + tests + build
+# 只做机器能客观判断的事：secrets + types + tests + build + lint
 
 on:
   pull_request:
@@ -52,6 +52,66 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Registry Lint（始终运行）────────────────────────────────
+  registry-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Registry 完整性检查
+        run: node scripts/registry-lint.mjs
+
+  # ─── ESLint（brain 或 workspace 变更时）──────────────────────
+  eslint:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Lint Brain
+        if: needs.changes.outputs.brain == 'true'
+        run: cd packages/brain && npm ci && npx eslint src/ --max-warnings=50
+      - name: Lint Workspace API
+        if: needs.changes.outputs.workspace == 'true'
+        run: cd apps/api && npm ci && npx eslint src/ --max-warnings=50
+
+  # ─── PR Size Check（仅 PR 触发）─────────────────────────────
+  pr-size-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 检查 PR 变更行数
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          ADDITIONS=$(git diff --numstat "$BASE"..."$HEAD" | awk '{s+=$1} END {print s+0}')
+          DELETIONS=$(git diff --numstat "$BASE"..."$HEAD" | awk '{s+=$2} END {print s+0}')
+          TOTAL=$((ADDITIONS + DELETIONS))
+
+          echo "📊 PR 变更统计："
+          echo "  新增: +${ADDITIONS} 行"
+          echo "  删除: -${DELETIONS} 行"
+          echo "  总计: ${TOTAL} 行"
+          echo ""
+
+          if [ "$TOTAL" -gt 500 ]; then
+            echo "⚠️  警告: PR 超过 500 行（${TOTAL} 行），建议拆分为更小的 PR"
+            echo "::warning::PR 变更量 ${TOTAL} 行，超过 500 行阈值，建议拆分"
+          else
+            echo "✅ PR 大小合理（${TOTAL} 行）"
+          fi
 
   # ─── Engine: TypeCheck + Tests ─────────────────────────────
   engine-tests:
@@ -137,7 +197,7 @@ jobs:
 
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
-    needs: [secrets-scan, engine-tests, brain-unit, brain-integration, workspace-build]
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, engine-tests, brain-unit, brain-integration, workspace-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -149,6 +209,9 @@ jobs:
           check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
 
           check "secrets-scan"      "${{ needs.secrets-scan.result }}"
+          check "registry-lint"     "${{ needs.registry-lint.result }}"
+          check "eslint"            "${{ needs.eslint.result }}"
+          check "pr-size-check"     "${{ needs.pr-size-check.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "brain-unit"        "${{ needs.brain-unit.result }}"
           check "brain-integration" "${{ needs.brain-integration.result }}"

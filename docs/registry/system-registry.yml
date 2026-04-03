@@ -1,7 +1,7 @@
 # System Registry - Cecelia 全系统总表
 # 更新时间: 2026-04-03
 # 说明: 每个 system 是一组相关 feature 的集合，详情见 features/*.yml
-# CI Jobs: secrets-scan | engine-tests | brain-unit | brain-integration | workspace-build | ci-passed
+# CI Jobs: secrets-scan | registry-lint | eslint | pr-size-check | engine-tests | brain-unit | brain-integration | workspace-build | ci-passed
 
 systems:
 
