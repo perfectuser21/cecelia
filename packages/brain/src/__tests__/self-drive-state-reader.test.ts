@@ -47,4 +47,14 @@ describe('Day5: 状态感知任务生成', () => {
     expect(content).toContain('readCurrentState()');
     expect(content).toContain('currentState');
   });
+
+  it('readCurrentState 对占位符内容返回 null（防止 LLM 误判 degraded）', () => {
+    const content = readFileSync(resolve(__dirname, '../self-drive.js'), 'utf-8');
+    const fnMatch = content.match(/function readCurrentState\(\)[\s\S]*?\n\}/);
+    expect(fnMatch).not.toBeNull();
+    const fn = fnMatch![0];
+    expect(fn).toContain('待更新');
+    expect(fn).toContain('初始占位');
+    expect(fn).toContain('return null');
+  });
 });
