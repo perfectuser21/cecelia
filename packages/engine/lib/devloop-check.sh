@@ -169,9 +169,9 @@ devloop_check() {
         local run_info
         run_info=$(gh run list --branch "$branch" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
         if [[ -n "$run_info" && "$run_info" != "[]" ]]; then
-            ci_status=$(echo "$run_info" | jq -r '.[0].status // "unknown"')
-            ci_conclusion=$(echo "$run_info" | jq -r '.[0].conclusion // ""')
-            ci_run_id=$(echo "$run_info" | jq -r '.[0].databaseId // ""')
+            ci_status=$(echo "$run_info" | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")
+            ci_conclusion=$(echo "$run_info" | jq -r '.[0].conclusion // ""' 2>/dev/null || echo "")
+            ci_run_id=$(echo "$run_info" | jq -r '.[0].databaseId // ""' 2>/dev/null || echo "")
         fi
 
         case "$ci_status" in

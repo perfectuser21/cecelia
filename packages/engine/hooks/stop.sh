@@ -78,6 +78,7 @@ fi
 curl -s --connect-timeout 5 --max-time 10 -X POST "http://localhost:5221/api/brain/conversation-summary" \
   -H "Content-Type: application/json" \
   -d '{"trigger":"session_end"}' > /dev/null 2>&1 &
+disown $! 2>/dev/null || true
 
 # ===== 没有任何 mode 文件 → 普通对话，允许结束 =====
 exit 0
