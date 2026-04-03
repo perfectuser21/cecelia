@@ -212,6 +212,7 @@ const LOCATION_MAP = {
   'okr_scope_plan': 'xian',        // OKR Scope 规划 → 西安 Codex (B類，/decomp skill)
   'okr_project_plan': 'xian',      // OKR Project 规划 → 西安 Codex (B類，/decomp skill)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
+  'platform_scraper': 'cn',       // 平台数据采集 → CN Mac mini（需 CDP 浏览器 + 各平台登录态）
 };
 
 // Default location
@@ -272,6 +273,7 @@ const TASK_REQUIREMENTS = {
   'content-generate':   ['general'],
   'content-image-review': ['general'],
   'content-export':     ['general'],
+  'platform_scraper':   ['has_browser'],  // 需要 CDP 浏览器接入各平台
 };
 
 /**

@@ -32,6 +32,7 @@ import { runCaptureDigestion } from './capture-digestion.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { triggerDailyPublish } from './daily-publish-scheduler.js';
 import { generateDailyReport } from './daily-report-generator.js';
+import { generateWeeklyReport } from './weekly-report-generator.js';
 import { monitorPublishQueue } from './publish-monitor.js';
 import { schedulePostPublishCollection } from './post-publish-data-collector.js';
 import { runDesireSystem } from './desire/index.js';
@@ -2761,6 +2762,10 @@ async function executeTick() {
   // 10.17d 每日内容日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
   Promise.resolve().then(() => generateDailyReport(pool))
     .catch(e => console.warn('[tick] 每日内容日报失败:', e.message));
+
+  // 10.17e 每周内容周报（每周一 UTC 01:00 = 北京时间 09:00，汇总上周数据，fire-and-forget）
+  Promise.resolve().then(() => generateWeeklyReport(pool))
+    .catch(e => console.warn('[tick] 每周内容周报失败:', e.message));
 
   // 10.17c 发布队列监控（每 tick，自动重试 failed 任务 + 更新今日统计，fire-and-forget）
   Promise.resolve().then(() => monitorPublishQueue(pool))
