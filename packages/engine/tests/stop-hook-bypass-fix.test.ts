@@ -83,25 +83,4 @@ retry_count: 0`
     unlinkSync(devModeFile)
   })
 
-  // v16.0.0: v12.8.0注释及旧版本说明已删除（Engine重构）
-  it.skip('Stop Hook 注释应该说明修复原因', () => {
-    const stopDevScript = hookScript.replace('stop.sh', 'stop-dev.sh')
-    const hookContent = execSync(`cat ${stopDevScript}`, { encoding: 'utf-8' })
-
-    // 验证修复注释存在
-    expect(hookContent).toContain('v12.8.0')
-    expect(hookContent).toContain('删除了"11步全部done"的提前退出逻辑')
-    expect(hookContent).toContain('步骤状态（step_*）只用于进度展示')
-    expect(hookContent).toContain('流程控制只依赖实际状态检查')
-  })
-
-  // v16.0.0: "向后兼容旧版本"注释已删除（Engine重构）
-  it.skip('cleanup_done 检查仍然保留（向后兼容）', () => {
-    const stopDevScript = hookScript.replace('stop.sh', 'stop-dev.sh')
-    const hookContent = execSync(`cat ${stopDevScript}`, { encoding: 'utf-8' })
-
-    // 验证 cleanup_done 检查仍在
-    expect(hookContent).toContain('cleanup_done: true')
-    expect(hookContent).toContain('向后兼容旧版本')
-  })
 })

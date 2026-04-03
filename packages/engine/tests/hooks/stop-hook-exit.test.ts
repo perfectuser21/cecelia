@@ -120,21 +120,6 @@ step_5_clean: pending
   });
 
   describe('JSON API exit behavior', () => {
-    // v16.0.0: JSON格式已变更（Engine重构）
-    it.skip('should use jq -n to output JSON with exit 2', () => {
-      const hookContent = execSync(
-        `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
-        { encoding: 'utf-8' }
-      );
-
-      // 验证所有阻止退出的地方都使用 JSON API
-      expect(hookContent).toContain('jq -n');
-      expect(hookContent).toContain('{"decision": "block"');
-
-      // stop-dev.sh 使用 exit 2 阻止会话结束
-      expect(hookContent).toContain('exit 2');
-    });
-
     it('should validate JSON output format for different scenarios', () => {
       // Test PR not created
       const prNotCreated = execSync(

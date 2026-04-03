@@ -41,10 +41,6 @@ describe("stop.sh", () => {
     expect(hookContent).toContain('v14.0.0');
   });
 
-  // REMOVED: stop_hook_active 检查已删除（改用 15 次 retry_count 机制）
-  // v11.25.0: 改用 JSON API，重试上限从 20 改为 15
-  it.todo("stop_hook_active is removed - now uses retry_count (max 15)");
-
   describe("Router architecture (v13.0.0)", () => {
     it("stop.sh should be a router that delegates to mode-specific hooks", () => {
       const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
@@ -54,26 +50,6 @@ describe("stop.sh", () => {
       expect(hookContent).toContain('stop-dev.sh');
       expect(hookContent).toContain('.dev-mode');
       expect(hookContent).toContain('v14.0.0');
-    });
-
-    // v16.0.0: JSON格式已变更（Engine重构）
-    it.skip("stop-dev.sh should use JSON API format", () => {
-      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
-      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
-
-      // Verify JSON API usage
-      expect(hookContent).toContain('{"decision": "block"');
-      expect(hookContent).toContain("jq -n");
-      expect(hookContent).toContain("--arg reason");
-    });
-
-    // v16.0.0: v15.1.0版本标记已删除（Engine重构）
-    it.skip("stop-dev.sh should have v15.1.0 version marker", () => {
-      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
-      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
-
-      expect(hookContent).toContain("v15.1.0");
-      expect(hookContent).toContain("JSON API");
     });
 
     it("should validate JSON output format", () => {
@@ -144,18 +120,6 @@ started: 2026-01-30`;
   });
 
   describe("session isolation (H7-005)", () => {
-    // v16.0.0: P0-3注释及CURRENT_BRANCH变量命名已变更（Engine重构）
-    it.skip("should detect branch mismatch pattern in code", () => {
-      // Verify the session isolation code exists in stop-dev.sh
-      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
-      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
-
-      // Check for the key session isolation logic
-      expect(hookContent).toContain("BRANCH_IN_FILE");
-      expect(hookContent).toContain("CURRENT_BRANCH");
-      expect(hookContent).toContain("P0-3");
-    });
-
     it("should extract branch from .dev-mode correctly", () => {
       const testContent = `dev
 branch: cp-other-session
@@ -185,16 +149,6 @@ tasks_created: true`;
   });
 
   describe("TTY isolation (H7-008)", () => {
-    // v16.0.0: TTY_IN_FILE/CURRENT_TTY/H7-008变量命名已变更（Engine重构）
-    it.skip("should have TTY check logic in stop-dev.sh", () => {
-      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
-      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
-
-      expect(hookContent).toContain("TTY_IN_FILE");
-      expect(hookContent).toContain("CURRENT_TTY");
-      expect(hookContent).toContain("H7-008");
-    });
-
     it("should extract tty field from .dev-mode correctly", () => {
       const testContent = `dev
 branch: cp-test
@@ -237,28 +191,5 @@ session_id: abc123`;
       expect(result.trim()).toBe("");
     });
 
-    // v16.0.0: H7-008标记及TTY_IN_FILE/CURRENT_TTY变量命名已删除（Engine重构）
-    it.skip("should skip TTY check when tty field is 'not a tty'", () => {
-      // v15.6.0: pre-check + 主检查 TTY 匹配改为 /dev/* 前缀精确判断有效 TTY 路径
-      // 语义：只有两端 TTY 均为 /dev/ 设备路径时才做比较，完全避免 "not a tty" 误判
-      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
-      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
-
-      // H7-008 TTY 检查仍然存在
-      expect(hookContent).toContain("H7-008");
-      // pre-check 已改为 /dev/* 前缀；H7-008 section 仍使用 -n 检查（配合 != 比较）
-      expect(hookContent).toMatch(/\[\[ -n "\$TTY_IN_FILE" && -n "\$CURRENT_TTY"/);
-    });
-
-    // v16.0.0: TTY_IN_FILE/CURRENT_TTY变量命名已变更（Engine重构）
-    it.skip("should exit 0 on TTY mismatch (different terminal)", () => {
-      // Verify the exit 0 logic for TTY mismatch exists
-      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
-      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
-
-      // Check the mismatch comparison and exit 0
-      expect(hookContent).toMatch(/TTY_IN_FILE.*!=.*CURRENT_TTY/);
-      expect(hookContent).toContain("# 不是当前 terminal 的任务，允许结束");
-    });
   });
 });

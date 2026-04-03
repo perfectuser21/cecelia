@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { join } from 'path';
 import { spawnSync } from 'child_process';
 
 /**
@@ -15,8 +15,6 @@ import { spawnSync } from 'child_process';
 const ROOT_DIR = join(__dirname, '../../../..');
 const DETECT_SCRIPT = join(ROOT_DIR, 'scripts/devgate/detect-review-issues.js');
 const PR_REVIEW_WORKFLOW = join(ROOT_DIR, '.github/workflows/pr-review.yml');
-const DEVLOOP_CHECK = resolve(__dirname, '../../../../packages/engine/lib/devloop-check.sh');
-
 describe('detect-review-issues.js — 严重问题检测', () => {
   it('A1: 脚本文件必须存在', () => {
     expect(existsSync(DETECT_SCRIPT), `${DETECT_SCRIPT} 应存在`).toBe(true);
@@ -99,11 +97,3 @@ describe('pr-review.yml — workflow 配置验证', () => {
   });
 });
 
-// v16.0.0: divergence_count 门禁已删除（Engine重构）
-describe.skip('devloop-check.sh — check_divergence_count 函数存在性', () => {
-  it('C1: devloop-check.sh 必须包含 check_divergence_count 函数', () => {
-    expect(existsSync(DEVLOOP_CHECK), `${DEVLOOP_CHECK} 应存在`).toBe(true);
-    const content = readFileSync(DEVLOOP_CHECK, 'utf8');
-    expect(content).toContain('check_divergence_count');
-  });
-});
