@@ -74,17 +74,20 @@ echo ""
 # 判断需要哪些部署步骤
 NEED_BRAIN=false
 NEED_DASHBOARD=false
+NEED_WORKFLOW_SKILLS=false
 
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     [[ "$file" == packages/brain/* ]] && NEED_BRAIN=true
     # apps/dashboard/ 直接改动，或 apps/api/（被 dashboard vite alias 引用）均需重建 dashboard
     [[ "$file" == apps/dashboard/* || "$file" == apps/api/* ]] && NEED_DASHBOARD=true
+    # workflow skills 变更 → 重新部署软链接
+    [[ "$file" == packages/workflows/skills/* ]] && NEED_WORKFLOW_SKILLS=true
 done <<< "$CHANGED_FILES"
 
 # 没有相关改动，跳过
-if [[ "$NEED_BRAIN" == false && "$NEED_DASHBOARD" == false ]]; then
-    echo "⏭️  跳过：没有 Brain 或 Dashboard 改动，无需部署"
+if [[ "$NEED_BRAIN" == false && "$NEED_DASHBOARD" == false && "$NEED_WORKFLOW_SKILLS" == false ]]; then
+    echo "⏭️  跳过：没有 Brain、Dashboard 或 Workflow Skills 改动，无需部署"
     exit 0
 fi
 
@@ -142,6 +145,22 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         fi
     else
         echo "⚠️  Dashboard dist/ 不存在，跳过 HK 同步"
+    fi
+    echo ""
+fi
+
+# 部署 Workflow Skills 软链接（packages/workflows/skills/ → ~/.claude-accountN/skills/）
+if [[ "$NEED_WORKFLOW_SKILLS" == true ]]; then
+    echo "🔗 Workflow Skills 变更 → 更新 skill 软链接"
+    DEPLOY_SKILLS="$MAIN_ROOT/packages/workflows/scripts/deploy-workflow-skills.sh"
+    if [[ -f "$DEPLOY_SKILLS" ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            echo "  [dry-run] bash $DEPLOY_SKILLS --dry-run"
+        else
+            bash "$DEPLOY_SKILLS"
+        fi
+    else
+        echo "⚠️  deploy-workflow-skills.sh 不存在，跳过 skill 软链接更新"
     fi
     echo ""
 fi

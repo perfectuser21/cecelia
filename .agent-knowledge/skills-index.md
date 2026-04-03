@@ -131,6 +131,8 @@
 | `/playwright` | — | /playwright — Playwright 自动化探索 Skill |
 | `/prd-review` | — | PRD 审查 Gate（Codex Gate 1/4）。合并了 decomp-check（拆解质检）和 prd_audit（PRD 审计）。 |
 | `/spec-review` | — | Spec 审查 Gate（Codex Gate 2/4）。合并了 dod_verify（DoD 验证）和 cto_review 的单 PR 审查部分。 |
+| `/sprint-evaluator` | Brain 自动派发 sprint_evaluate | Harness v2.0 代码验证角色。独立 agent，对抗态度：读 sprint-contract.md 逐条验证，输出 evaluation.md（PASS/FAIL + 具体问题）。 |
+| `/sprint-generator` | Brain 自动派发 sprint_generate/sprint_fix | Harness v2.0 代码生成角色。读 architecture.md + task description，写 sprint-contract.md + 代码实现 + PR。 |
 
 ---
 
@@ -156,6 +158,9 @@ Brain 根据 `task_type` 自动路由到对应 Skill 和执行位置：
 | `data` | — | HK（N8N） |
 | `codex_dev` | `/dev` | 西安 Mac mini |
 | `codex_qa` | — | 西安 Mac mini |
+| `sprint_generate` | `/dev`（harness_mode） | US（Opus）|
+| `sprint_evaluate` | `/sprint-evaluator` | US（Opus） |
+| `sprint_fix` | `/dev`（harness_mode fix） | US（Opus） |
 
 ---
 
