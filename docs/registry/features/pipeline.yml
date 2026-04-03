@@ -369,7 +369,7 @@ features:
     code:
       root: packages/brain/src
       entry_files:
-        - packages/brain/src/content-type-registry.js
+        - packages/brain/src/content-types/content-type-registry.js
       language: javascript
       runtime: node
     docs:
@@ -392,7 +392,7 @@ features:
     capabilities:
       - id: pipeline_content_type_core
         name: 内容类型注册
-        entry_file: packages/brain/src/content-type-registry.js
+        entry_file: packages/brain/src/content-types/content-type-registry.js
         maturity: 2
         tests:
           unit:

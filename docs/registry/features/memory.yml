@@ -588,7 +588,7 @@ features:
     code:
       root: packages/brain/src
       entry_files:
-        - packages/brain/src/desire-system.js
+        - packages/brain/src/desire/desire-formation.js
       language: javascript
       runtime: node
     docs:
@@ -614,7 +614,7 @@ features:
     capabilities:
       - id: memory_desire_core
         name: 欲望系统
-        entry_file: packages/brain/src/desire-system.js
+        entry_file: packages/brain/src/desire/desire-formation.js
         maturity: 2
         tests:
           unit:
@@ -696,7 +696,7 @@ features:
     code:
       root: packages/brain/src
       entry_files:
-        - packages/brain/src/routes/captures.js
+        - packages/brain/src/routes/capture-atoms.js
       language: javascript
       runtime: node
     docs:
@@ -716,7 +716,7 @@ features:
     capabilities:
       - id: memory_capture_core
         name: 捕获管道
-        entry_file: packages/brain/src/routes/captures.js
+        entry_file: packages/brain/src/routes/capture-atoms.js
         maturity: 2
         tests:
           unit:
