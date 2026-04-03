@@ -158,7 +158,7 @@ export async function dispatchToDevSkill(failure, rcaResult, signature) {
   const activeResult = await pool.query(
     `SELECT COUNT(*) AS active_count FROM tasks
      WHERE trigger_source = 'auto_fix'
-       AND tags::jsonb ? $1
+       AND $1 = ANY(tags)
        AND status IN ('queued', 'in_progress')`,
     [signature]
   );
@@ -172,7 +172,7 @@ export async function dispatchToDevSkill(failure, rcaResult, signature) {
   const countResult = await pool.query(
     `SELECT COUNT(*) AS failed_count FROM tasks
      WHERE trigger_source = 'auto_fix'
-       AND tags::jsonb ? $1
+       AND $1 = ANY(tags)
        AND status = 'failed'
        AND updated_at > NOW() - INTERVAL '7 days'`,
     [signature]
@@ -196,7 +196,7 @@ export async function dispatchToDevSkill(failure, rcaResult, signature) {
     skill: '/dev',
     prd_content: prdContent,
     trigger_source: 'auto_fix',
-    tags: JSON.stringify(['auto-fix', 'rca', signature])
+    tags: ['auto-fix', 'rca', signature]
   };
 
   const taskId = await createTask(taskData);
@@ -222,7 +222,7 @@ export async function getAutoFixStats() {
       COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress_fixes,
       COUNT(*) FILTER (WHERE status = 'queued') AS queued_fixes
     FROM tasks
-    WHERE tags::jsonb ? 'auto-fix'
+    WHERE 'auto-fix' = ANY(tags)
   `;
 
   const result = await pool.query(query);

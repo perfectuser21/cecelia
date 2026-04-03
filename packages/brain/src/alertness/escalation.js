@@ -428,7 +428,7 @@ async function recordEscalation(fromLevel, toLevel, reason) {
         gen_random_uuid(), NOW(), $1, $2, $3, $4
       )
     `, [
-      fromLevel,
+      fromLevel ?? 'none',
       toLevel,
       reason,
       escalationState.currentLevel
