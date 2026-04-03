@@ -164,7 +164,7 @@ search_related_learnings() {
         [[ ${#keywords[@]} -ge 5 ]] && break
     done < <(echo "$task_title" | tr ' ' '\n' | \
         grep -vE '^(的|是|在|了|和|与|or|and|the|for|with|to|a|an|from|修复|实现|添加|更新|优化|重构|P0|P1|P2|PR)$' \
-        2>/dev/null)
+        2>/dev/null || true)
 
     [[ ${#keywords[@]} -eq 0 ]] && return 0
 

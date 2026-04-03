@@ -22,7 +22,7 @@ _json_version() {
     if command -v jq &>/dev/null; then
         jq -r "${_field}" "$_file" 2>/dev/null || echo ""
     else
-        node -e "try{const d=JSON.parse(require('fs').readFileSync('${_file}','utf8'));const keys='${_field}'.replace(/^\./,'').split('.');let v=d;for(const k of keys)v=v&&v[k];console.log(v||'')}catch(e){}" 2>/dev/null || echo ""
+        _FILE="$_file" _FIELD="$_field" node -e "try{const d=JSON.parse(require('fs').readFileSync(process.env._FILE,'utf8'));const keys=process.env._FIELD.replace(/^\./,'').split('.');let v=d;for(const k of keys)v=v&&v[k];console.log(v||'')}catch(e){}" 2>/dev/null || echo ""
     fi
 }
 

@@ -32,7 +32,7 @@ _session_matches() {
     elif [[ -n "$lock_session" && -n "$cur_session" && "$lock_session" == "$cur_session" ]]; then
         return 0
     elif [[ ("$lock_tty" == "not a tty" || -z "$lock_tty") && -z "$lock_session" ]] || \
-         [[ -z "$cur_tty" || "$cur_tty" == "not a tty" ]] && [[ -z "$cur_session" ]]; then
+         { [[ -z "$cur_tty" || "$cur_tty" == "not a tty" ]] && [[ -z "$cur_session" ]]; }; then
         [[ -n "$lock_branch" && "$lock_branch" == "$cur_branch" ]] && return 0
     fi
     return 1
