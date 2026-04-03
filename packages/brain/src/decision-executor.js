@@ -47,8 +47,10 @@ const actionHandlers = {
    */
   async dispatch_task(params, context) {
     // 这里调用现有的 tick 派发逻辑
+    // 传 null 表示不按 goal 过滤，派发任何优先级最高的可用任务
+    // 注意：不能传 params.trigger（字符串），dispatchNextTask 期望 UUID 数组或 null
     const { dispatchNextTask } = await import('./tick.js');
-    const result = await dispatchNextTask(params.trigger || 'thalamus');
+    const result = await dispatchNextTask(null);
     return { success: true, dispatched: result };
   },
 
