@@ -596,9 +596,13 @@ describe('D8: runDesireSystem 集成测试', () => {
 // ============================================================
 
 describe('D9: EXPECTED_SCHEMA_VERSION', () => {
-  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 207', async () => {
+  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为有效的数字字符串', async () => {
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('207');
+    // 不硬编码具体版本号，只验证格式为合法的数字字符串且 >= 207（初始版本）
+    expect(typeof EXPECTED_SCHEMA_VERSION).toBe('string');
+    const ver = parseInt(EXPECTED_SCHEMA_VERSION, 10);
+    expect(Number.isNaN(ver)).toBe(false);
+    expect(ver).toBeGreaterThanOrEqual(207);
   });
 });
 

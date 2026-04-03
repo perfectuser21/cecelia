@@ -78,7 +78,6 @@ jobs:
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # TODO: 修完 desire-system/promotion-job/quarantine-release 后去掉
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
