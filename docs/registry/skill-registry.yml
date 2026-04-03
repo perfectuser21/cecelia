@@ -1,6 +1,9 @@
 # Skill Registry - Cecelia Agent 技能清单
 # 更新时间: 2026-04-01
 # 说明: 每个 skill 是 Agent 能执行的一个指令
+#
+# [DEPRECATED] SSOT 已迁移至 features/*.yml（schema v2.0.0）
+# 此文件保留作为参考，后续可删除。新增/修改请直接编辑 features/*.yml 中对应 feature 的 skills 段。
 
 skills:
 

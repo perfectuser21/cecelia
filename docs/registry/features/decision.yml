@@ -1,5 +1,6 @@
 # 决策系统 (decision) - Feature 详情
 # 更新时间: 2026-04-03
+# Schema: v2.0.0
 
 system_id: decision
 system_name: 决策系统
@@ -9,54 +10,189 @@ features:
   - feature_id: decision_engine
     name: 决策引擎
     purpose: 根据 OKR 进度和任务状态生成决策，自动调整执行策略
-    code_path: packages/brain/src/decision.js
-    tests:
-      unit: null
-      integration: null
-      e2e: null
-    ci_jobs: []
     maturity: 0
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/decision.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: cecelia
+        command: /cecelia
+        entry_file: packages/workflows/skills/cecelia/SKILL.md
+        version: "5.0.0"
+        status: active
+      - skill_id: cecelia_brain
+        command: /cecelia-brain
+        entry_file: packages/workflows/skills/cecelia-brain/SKILL.md
+        version: "2.0.0"
+        status: active
+    apis:
+      - method: GET
+        path: /api/brain/decisions
+        service: brain
+        purpose: 获取历史决策记录（只读，审计用）
+        code_file: packages/brain/src/routes/status.js
+        auth: none
+      - method: POST
+        path: /api/brain/orchestrator/chat
+        service: brain
+        purpose: 纯意识对话，返回 Cecelia 回应
+        code_file: packages/brain/server.js
+        auth: none
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: []
+      layers: []
+    runtime: {}
 
   - feature_id: proposal_system
     name: 提案审批
     purpose: 高危动作创建 proposal，人工审批后执行
-    code_path: packages/brain/src/proposal.js
-    tests:
-      unit: packages/brain/src/__tests__/proposal.test.js
-      integration: null
-      e2e: null
-    ci_jobs: [brain-unit]
     maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/proposal.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis:
+      - method: GET
+        path: /api/brain/pending-actions
+        service: brain
+        purpose: 获取待审批动作列表
+        code_file: packages/brain/src/routes/actions.js
+        auth: none
+      - method: POST
+        path: /api/brain/proposals
+        service: brain
+        purpose: 创建 proposal（高危动作审批）
+        code_file: packages/brain/src/routes/actions.js
+        auth: none
+      - method: PATCH
+        path: /api/brain/proposals/:id/approve
+        service: brain
+        purpose: 批准 proposal
+        code_file: packages/brain/src/routes/actions.js
+        auth: none
+      - method: PATCH
+        path: /api/brain/proposals/:id/reject
+        service: brain
+        purpose: 拒绝 proposal
+        code_file: packages/brain/src/routes/actions.js
+        auth: none
+    tests:
+      unit:
+        - packages/brain/src/__tests__/proposal.test.js
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: [brain-unit]
+      layers: [L3]
+    runtime: {}
 
   - feature_id: alertness_system
     name: 警觉度系统
     purpose: 评估系统压力水位，自动调整决策保守度
-    code_path: packages/brain/src/alertness/
-    tests:
-      unit: tests/alertness/diagnosis.test.js
-      integration: null
-      e2e: null
-    ci_jobs: [brain-unit]
     maturity: 2
+    code:
+      root: packages/brain/src/alertness
+      entry_files: [packages/brain/src/alertness/]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - tests/alertness/diagnosis.test.js
+        - tests/alertness/healing.test.js
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: [brain-unit]
+      layers: [L3]
+    runtime: {}
 
   - feature_id: circuit_breaker
     name: 断路器
     purpose: 自动熔断异常服务链路，防止级联故障
-    code_path: packages/brain/src/circuit-breaker.js
-    tests:
-      unit: null
-      integration: null
-      e2e: null
-    ci_jobs: []
     maturity: 0
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/circuit-breaker.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: []
+      layers: []
+    runtime: {}
 
   - feature_id: monitor_loop
     name: 监控自愈
     purpose: 30s 间隔检测并自动修复卡住任务
-    code_path: packages/brain/src/monitor-loop.js
-    tests:
-      unit: null
-      integration: null
-      e2e: null
-    ci_jobs: []
     maturity: 0
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/monitor-loop.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis:
+      - method: GET
+        path: /api/brain/health
+        service: brain
+        purpose: 系统健康检查（tick/N8N/task 状态）
+        code_file: packages/brain/src/routes/goals.js
+        auth: none
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: []
+      layers: []
+    runtime: {}
