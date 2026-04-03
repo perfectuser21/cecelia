@@ -57,15 +57,27 @@ describe('shouldRunDaily', () => {
     expect(shouldRunDaily(now)).toBe(true);
   });
 
-  it('在 DAILY_HOUR_UTC 第4分钟返回 true', () => {
+  it('在 DAILY_HOUR_UTC 第5分钟返回 true（宽窗口：>= 18 即触发）', () => {
     const now = new Date();
-    now.setUTCHours(18, 4, 0, 0);
+    now.setUTCHours(18, 5, 0, 0);
     expect(shouldRunDaily(now)).toBe(true);
   });
 
-  it('在 DAILY_HOUR_UTC 第5分钟返回 false（窗口外）', () => {
+  it('在 UTC 21:00 返回 true（6h 宽窗口内）', () => {
     const now = new Date();
-    now.setUTCHours(18, 5, 0, 0);
+    now.setUTCHours(21, 0, 0, 0);
+    expect(shouldRunDaily(now)).toBe(true);
+  });
+
+  it('在 UTC 23:59 返回 true（宽窗口末尾）', () => {
+    const now = new Date();
+    now.setUTCHours(23, 59, 0, 0);
+    expect(shouldRunDaily(now)).toBe(true);
+  });
+
+  it('在 UTC 17:00 返回 false（未到触发时间）', () => {
+    const now = new Date();
+    now.setUTCHours(17, 0, 0, 0);
     expect(shouldRunDaily(now)).toBe(false);
   });
 

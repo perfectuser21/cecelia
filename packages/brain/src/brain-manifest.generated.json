@@ -558,6 +558,10 @@
             {
               "taskType": "codex_test_gen",
               "skill": "/codex-test-gen"
+            },
+            {
+              "taskType": "platform_scraper",
+              "skill": "/media-scraping"
             }
           ]
         },
@@ -946,7 +950,8 @@
     "scope_plan": "/decomp",
     "project_plan": "/decomp",
     "pipeline_rescue": "/dev",
-    "codex_test_gen": "/codex-test-gen"
+    "codex_test_gen": "/codex-test-gen",
+    "platform_scraper": "/media-scraping"
   },
   "skillWhitelist": {
     "dev": "/dev",
@@ -999,7 +1004,7 @@
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-04-03T11:04:19.536Z",
+  "generatedAt": "2026-04-03T11:19:07.528Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

@@ -34,13 +34,21 @@ async function getNotebookId(db, key) {
 
 /** 日级触发小时（UTC），默认 18 = 北京凌晨 2 点 */
 const DAILY_HOUR_UTC = parseInt(process.env.SYNTHESIS_DAILY_HOUR_UTC || '18', 10);
-/** 日级触发窗口（分钟） */
-const DAILY_WINDOW_MIN = 5;
 
 // ── 时间检查 ──────────────────────────────────────────────
 
+/**
+ * 日级合成触发条件：UTC 18:00 ~ 23:59（6 小时宽窗口）
+ *
+ * 原 5 分钟窗口在以下情况会导致当天合成完全缺失：
+ * - Brain 在 18:00 重启，tick 未能在窗口内执行
+ * - 系统繁忙（isSystemIdle=false），runRumination 路径被阻断
+ *
+ * runDailySynthesis 内部的 hasTodaySynthesis 检查保证幂等：
+ * 今日已完成则立即返回 skipped:already_done，不会重复调用 NotebookLM。
+ */
 export function shouldRunDaily(now = new Date()) {
-  return now.getUTCHours() === DAILY_HOUR_UTC && now.getUTCMinutes() < DAILY_WINDOW_MIN;
+  return now.getUTCHours() >= DAILY_HOUR_UTC;
 }
 
 // ── 防重复检查 ────────────────────────────────────────────
