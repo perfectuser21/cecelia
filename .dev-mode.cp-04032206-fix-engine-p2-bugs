@@ -1,0 +1,9 @@
+dev
+branch: cp-04032206-fix-engine-p2-bugs
+task_card: .task-cp-04032206-fix-engine-p2-bugs.md
+started: 2026-04-03T22:06:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
