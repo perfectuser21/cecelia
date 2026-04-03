@@ -4,16 +4,15 @@
 
 system_id: orchestration
 system_name: 编排系统
-
 features:
-
   - feature_id: tick_loop
     name: Tick 调度引擎
     purpose: 5s 轮询 / 5min 执行，驱动 Brain 自动化运转
-    maturity: 3
+    maturity: 4
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/tick.js]
+      entry_files:
+        - packages/brain/src/tick.js
       language: javascript
       runtime: node
     docs:
@@ -80,11 +79,106 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/tick.test.js
+        - packages/brain/src/__tests__/activation-scorer.test.js
+        - packages/brain/src/__tests__/backfill-l1.test.js
+        - packages/brain/src/__tests__/bare-modules/brain-manifest.test.js
+        - packages/brain/src/__tests__/bare-modules/focus.test.js
+        - packages/brain/src/__tests__/bare-modules/migrate.test.js
+        - packages/brain/src/__tests__/bare-modules/nightly-tick.test.js
+        - packages/brain/src/__tests__/blocks.test.js
+        - packages/brain/src/__tests__/briefing-core.test.js
+        - packages/brain/src/__tests__/briefing.test.js
+        - packages/brain/src/__tests__/capabilities-api.test.js
+        - packages/brain/src/__tests__/capability-probe-highlevel.test.js
+        - packages/brain/src/__tests__/capability-probe.test.js
+        - packages/brain/src/__tests__/capability-scanner.test.js
+        - packages/brain/src/__tests__/contract-scan-scheduler.test.js
+        - packages/brain/src/__tests__/contracts/planner-contract.test.js
+        - packages/brain/src/__tests__/daily-report-generator.test.js
+        - packages/brain/src/__tests__/daily-review-scheduler.test.js
+        - packages/brain/src/__tests__/db-config.test.js
+        - packages/brain/src/__tests__/dep-cascade.test.js
+        - packages/brain/src/__tests__/dept-head-apis.test.js
+        - packages/brain/src/__tests__/dept-heartbeat-task-type.test.js
+        - packages/brain/src/__tests__/dept-heartbeat.test.js
+        - packages/brain/src/__tests__/event-bus.test.js
+        - packages/brain/src/__tests__/focus.test.js
+        - packages/brain/src/__tests__/format-bytes.test.js
+        - packages/brain/src/__tests__/greet.test.js
+        - packages/brain/src/__tests__/heartbeat-api.test.js
+        - packages/brain/src/__tests__/heartbeat-inspector.test.js
+        - packages/brain/src/__tests__/heartbeat-tick.test.js
+        - packages/brain/src/__tests__/heartbeat-whitelist.test.js
+        - packages/brain/src/__tests__/heartbeat.test.js
+        - packages/brain/src/__tests__/hello.test.js
+        - packages/brain/src/__tests__/init-tick-retry.test.js
+        - packages/brain/src/__tests__/migration-015.test.js
+        - packages/brain/src/__tests__/migration-016.test.js
+        - packages/brain/src/__tests__/migration-018.test.js
+        - packages/brain/src/__tests__/migration-030.test.js
+        - packages/brain/src/__tests__/migration-041.test.js
+        - packages/brain/src/__tests__/migrations-087-suggestions.test.js
+        - packages/brain/src/__tests__/nightly-tick.test.js
+        - packages/brain/src/__tests__/planner-area-stream.test.js
+        - packages/brain/src/__tests__/planner-domain-routing.test.js
+        - packages/brain/src/__tests__/planner-initiative-plan.test.js
+        - packages/brain/src/__tests__/planner-insight.test.js
+        - packages/brain/src/__tests__/planner-learning-penalty.test.js
+        - packages/brain/src/__tests__/planner-scope.test.js
+        - packages/brain/src/__tests__/planner.test.js
+        - packages/brain/src/__tests__/recurring.test.js
+        - packages/brain/src/__tests__/registry.test.js
+        - packages/brain/src/__tests__/role-registry.test.js
+        - packages/brain/src/__tests__/routes-stats.test.js
+        - packages/brain/src/__tests__/routes.test.js
+        - packages/brain/src/__tests__/routes/tick-startup-errors.test.js
+        - packages/brain/src/__tests__/shepherd.test.js
+        - packages/brain/src/__tests__/smoke.test.js
+        - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
+        - packages/brain/src/__tests__/startup-recovery.test.js
+        - packages/brain/src/__tests__/startup-sync.test.js
+        - packages/brain/src/__tests__/stats.test.js
+        - packages/brain/src/__tests__/strategy-session-parser.test.js
+        - packages/brain/src/__tests__/strategy-tree-routes.test.js
+        - packages/brain/src/__tests__/system-reports-route.test.js
+        - packages/brain/src/__tests__/tick-billing-pause.test.js
+        - packages/brain/src/__tests__/tick-blocked-recovery.test.js
+        - packages/brain/src/__tests__/tick-blocked-release.test.js
+        - packages/brain/src/__tests__/tick-burst-limiter.test.js
+        - packages/brain/src/__tests__/tick-cleanup.test.js
+        - packages/brain/src/__tests__/tick-codex-immune.test.js
+        - packages/brain/src/__tests__/tick-dispatch-scope-decomposing.test.js
         - packages/brain/src/__tests__/tick-drain.test.js
-        - packages/brain/src/__tests__/tick-throttle.test.js
-      integration:
+        - packages/brain/src/__tests__/tick-empty-goals-early-return.test.js
+        - packages/brain/src/__tests__/tick-global-fallback-planner.test.js
+        - packages/brain/src/__tests__/tick-goal-eval-integration.test.js
+        - packages/brain/src/__tests__/tick-gradient-requeue.test.js
         - packages/brain/src/__tests__/tick-healing-integration.test.js
+        - packages/brain/src/__tests__/tick-health-monitor.test.js
+        - packages/brain/src/__tests__/tick-kr-decomp.test.js
+        - packages/brain/src/__tests__/tick-layer2-health.test.js
+        - packages/brain/src/__tests__/tick-rampup.test.js
+        - packages/brain/src/__tests__/tick-report.test.js
+        - packages/brain/src/__tests__/tick-suggestion-integration.test.js
+        - packages/brain/src/__tests__/tick-throttle.test.js
+        - packages/brain/src/__tests__/tick-timeout-requeue.test.js
+        - packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
+        - packages/brain/src/__tests__/tick-watchdog.test.js
+        - packages/brain/src/__tests__/tick.test.js
+        - packages/brain/src/__tests__/websocket-events.test.js
+        - packages/brain/src/__tests__/websocket-new-events.test.js
+        - packages/brain/src/__tests__/websocket.test.js
+        - packages/brain/src/__tests__/weekly-report-generator.test.js
+        - packages/brain/src/__tests__/work-streams-route.test.js
+        - packages/brain/src/utils/format-duration.test.js
+        - packages/quality/tests/api/dashboard.test.ts
+        - packages/quality/tests/api/registry.test.ts
+        - packages/quality/tests/heartbeat.test.ts
+      integration:
+        - packages/brain/src/__tests__/integration/brain-endpoint-contracts.test.js
+        - packages/brain/src/__tests__/integration/critical-routes.integration.test.js
+        - packages/brain/src/__tests__/integration/system-registry-api.integration.test.js
+        - packages/brain/src/__tests__/integration/tick-full-loop.integration.test.js
       e2e:
         - packages/brain/scripts/goldenpath-check.sh
       regression: []
@@ -95,26 +189,125 @@ features:
         maturity: 4
         tests:
           unit:
-            - packages/brain/src/__tests__/tick.test.js
+            - packages/brain/src/__tests__/activation-scorer.test.js
+            - packages/brain/src/__tests__/backfill-l1.test.js
+            - packages/brain/src/__tests__/bare-modules/brain-manifest.test.js
+            - packages/brain/src/__tests__/bare-modules/focus.test.js
+            - packages/brain/src/__tests__/bare-modules/migrate.test.js
+            - packages/brain/src/__tests__/bare-modules/nightly-tick.test.js
+            - packages/brain/src/__tests__/blocks.test.js
+            - packages/brain/src/__tests__/briefing-core.test.js
+            - packages/brain/src/__tests__/briefing.test.js
+            - packages/brain/src/__tests__/capabilities-api.test.js
+            - packages/brain/src/__tests__/capability-probe-highlevel.test.js
+            - packages/brain/src/__tests__/capability-probe.test.js
+            - packages/brain/src/__tests__/capability-scanner.test.js
+            - packages/brain/src/__tests__/contract-scan-scheduler.test.js
+            - packages/brain/src/__tests__/contracts/planner-contract.test.js
+            - packages/brain/src/__tests__/daily-report-generator.test.js
+            - packages/brain/src/__tests__/daily-review-scheduler.test.js
+            - packages/brain/src/__tests__/db-config.test.js
+            - packages/brain/src/__tests__/dep-cascade.test.js
+            - packages/brain/src/__tests__/dept-head-apis.test.js
+            - packages/brain/src/__tests__/dept-heartbeat-task-type.test.js
+            - packages/brain/src/__tests__/dept-heartbeat.test.js
+            - packages/brain/src/__tests__/event-bus.test.js
+            - packages/brain/src/__tests__/focus.test.js
+            - packages/brain/src/__tests__/format-bytes.test.js
+            - packages/brain/src/__tests__/greet.test.js
+            - packages/brain/src/__tests__/heartbeat-api.test.js
+            - packages/brain/src/__tests__/heartbeat-inspector.test.js
+            - packages/brain/src/__tests__/heartbeat-tick.test.js
+            - packages/brain/src/__tests__/heartbeat-whitelist.test.js
+            - packages/brain/src/__tests__/heartbeat.test.js
+            - packages/brain/src/__tests__/hello.test.js
+            - packages/brain/src/__tests__/init-tick-retry.test.js
+            - packages/brain/src/__tests__/migration-015.test.js
+            - packages/brain/src/__tests__/migration-016.test.js
+            - packages/brain/src/__tests__/migration-018.test.js
+            - packages/brain/src/__tests__/migration-030.test.js
+            - packages/brain/src/__tests__/migration-041.test.js
+            - packages/brain/src/__tests__/migrations-087-suggestions.test.js
+            - packages/brain/src/__tests__/nightly-tick.test.js
+            - packages/brain/src/__tests__/planner-area-stream.test.js
+            - packages/brain/src/__tests__/planner-domain-routing.test.js
+            - packages/brain/src/__tests__/planner-initiative-plan.test.js
+            - packages/brain/src/__tests__/planner-insight.test.js
+            - packages/brain/src/__tests__/planner-learning-penalty.test.js
+            - packages/brain/src/__tests__/planner-scope.test.js
+            - packages/brain/src/__tests__/planner.test.js
+            - packages/brain/src/__tests__/recurring.test.js
+            - packages/brain/src/__tests__/registry.test.js
+            - packages/brain/src/__tests__/role-registry.test.js
+            - packages/brain/src/__tests__/routes-stats.test.js
+            - packages/brain/src/__tests__/routes.test.js
+            - packages/brain/src/__tests__/routes/tick-startup-errors.test.js
+            - packages/brain/src/__tests__/shepherd.test.js
+            - packages/brain/src/__tests__/smoke.test.js
+            - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
+            - packages/brain/src/__tests__/startup-recovery.test.js
+            - packages/brain/src/__tests__/startup-sync.test.js
+            - packages/brain/src/__tests__/stats.test.js
+            - packages/brain/src/__tests__/strategy-session-parser.test.js
+            - packages/brain/src/__tests__/strategy-tree-routes.test.js
+            - packages/brain/src/__tests__/system-reports-route.test.js
+            - packages/brain/src/__tests__/tick-billing-pause.test.js
+            - packages/brain/src/__tests__/tick-blocked-recovery.test.js
+            - packages/brain/src/__tests__/tick-blocked-release.test.js
+            - packages/brain/src/__tests__/tick-burst-limiter.test.js
+            - packages/brain/src/__tests__/tick-cleanup.test.js
+            - packages/brain/src/__tests__/tick-codex-immune.test.js
+            - packages/brain/src/__tests__/tick-dispatch-scope-decomposing.test.js
             - packages/brain/src/__tests__/tick-drain.test.js
-            - packages/brain/src/__tests__/tick-throttle.test.js
-          integration:
+            - packages/brain/src/__tests__/tick-empty-goals-early-return.test.js
+            - packages/brain/src/__tests__/tick-global-fallback-planner.test.js
+            - packages/brain/src/__tests__/tick-goal-eval-integration.test.js
+            - packages/brain/src/__tests__/tick-gradient-requeue.test.js
             - packages/brain/src/__tests__/tick-healing-integration.test.js
+            - packages/brain/src/__tests__/tick-health-monitor.test.js
+            - packages/brain/src/__tests__/tick-kr-decomp.test.js
+            - packages/brain/src/__tests__/tick-layer2-health.test.js
+            - packages/brain/src/__tests__/tick-rampup.test.js
+            - packages/brain/src/__tests__/tick-report.test.js
+            - packages/brain/src/__tests__/tick-suggestion-integration.test.js
+            - packages/brain/src/__tests__/tick-throttle.test.js
+            - packages/brain/src/__tests__/tick-timeout-requeue.test.js
+            - packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
+            - packages/brain/src/__tests__/tick-watchdog.test.js
+            - packages/brain/src/__tests__/tick.test.js
+            - packages/brain/src/__tests__/websocket-events.test.js
+            - packages/brain/src/__tests__/websocket-new-events.test.js
+            - packages/brain/src/__tests__/websocket.test.js
+            - packages/brain/src/__tests__/weekly-report-generator.test.js
+            - packages/brain/src/__tests__/work-streams-route.test.js
+            - packages/brain/src/utils/format-duration.test.js
+            - packages/quality/tests/api/dashboard.test.ts
+            - packages/quality/tests/api/registry.test.ts
+            - packages/quality/tests/heartbeat.test.ts
+          integration:
+            - packages/brain/src/__tests__/integration/brain-endpoint-contracts.test.js
+            - packages/brain/src/__tests__/integration/critical-routes.integration.test.js
+            - packages/brain/src/__tests__/integration/system-registry-api.integration.test.js
+            - packages/brain/src/__tests__/integration/tick-full-loop.integration.test.js
           e2e:
             - packages/brain/scripts/goldenpath-check.sh
         status: active
     ci:
-      jobs: [brain-unit, brain-integration]
-      layers: [L3, L4]
+      jobs:
+        - brain-unit
+        - brain-integration
+      layers:
+        - L3
+        - L4
     runtime: {}
-
   - feature_id: okr_system
     name: OKR 层级管理
     purpose: 管理 Vision→Objective→KR→Project→Scope→Initiative→Task 7层结构
-    maturity: 2
+    maturity: 3
     code:
       root: packages/brain/src/routes
-      entry_files: [packages/brain/src/routes/okr-hierarchy.js]
+      entry_files:
+        - packages/brain/src/routes/okr-hierarchy.js
       language: javascript
       runtime: node
     docs:
@@ -129,7 +322,6 @@ features:
         entry_file: packages/workflows/skills/decomp/SKILL.md
         version: "2.1.0"
         status: active
-      # intent_expand skill 已移除（SKILL.md 不存在）
     apis:
       - method: GET
         path: /api/brain/okr/current
@@ -175,10 +367,37 @@ features:
         auth: none
     tests:
       unit:
-        - apps/api/src/okr/__tests__/trees.test.js
+        - packages/brain/src/__tests__/bare-modules/initiative-closer.test.js
+        - packages/brain/src/__tests__/check-okr-structure.test.js
+        - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
+        - packages/brain/src/__tests__/goal-evaluator.test.js
+        - packages/brain/src/__tests__/initiative-closer.test.js
+        - packages/brain/src/__tests__/initiative-completion-review.test.js
+        - packages/brain/src/__tests__/initiative-completion.test.js
+        - packages/brain/src/__tests__/initiative-lock.test.js
+        - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
+        - packages/brain/src/__tests__/initiative-queue.test.js
+        - packages/brain/src/__tests__/kr-completion.test.js
+        - packages/brain/src/__tests__/kr-convergence.test.js
+        - packages/brain/src/__tests__/kr-progress.test.js
+        - packages/brain/src/__tests__/kr-verifier.test.js
+        - packages/brain/src/__tests__/okr-closer.test.js
+        - packages/brain/src/__tests__/okr-tick.test.js
+        - packages/brain/src/__tests__/progress-ledger.test.js
+        - packages/brain/src/__tests__/progress-reviewer.test.js
+        - packages/brain/src/__tests__/project-activator.test.js
+        - packages/brain/src/__tests__/project-compare-push.test.js
+        - packages/brain/src/__tests__/project-compare.test.js
+        - packages/brain/src/__tests__/promotion-job.test.js
+        - packages/brain/src/__tests__/routes/task-goals.test.js
+        - packages/brain/src/__tests__/routes/task-projects.test.js
+        - packages/brain/src/__tests__/validate-okr-cycle.test.js
+        - packages/brain/src/__tests__/validate-okr-spec-load.test.js
+        - packages/brain/src/__tests__/validate-okr-structure.test.js
+        - packages/quality/tests/api/goals.test.ts
+        - packages/quality/tests/api/projects.test.ts
       integration:
-        - packages/brain/src/__tests__/tick-goal-eval-integration.test.js
-        - apps/api/tests/panorama-full.test.ts
+        - packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js
       e2e: []
       regression: []
     capabilities:
@@ -188,24 +407,54 @@ features:
         maturity: 3
         tests:
           unit:
-            - apps/api/src/okr/__tests__/trees.test.js
+            - packages/brain/src/__tests__/bare-modules/initiative-closer.test.js
+            - packages/brain/src/__tests__/check-okr-structure.test.js
+            - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
+            - packages/brain/src/__tests__/goal-evaluator.test.js
+            - packages/brain/src/__tests__/initiative-closer.test.js
+            - packages/brain/src/__tests__/initiative-completion-review.test.js
+            - packages/brain/src/__tests__/initiative-completion.test.js
+            - packages/brain/src/__tests__/initiative-lock.test.js
+            - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
+            - packages/brain/src/__tests__/initiative-queue.test.js
+            - packages/brain/src/__tests__/kr-completion.test.js
+            - packages/brain/src/__tests__/kr-convergence.test.js
+            - packages/brain/src/__tests__/kr-progress.test.js
+            - packages/brain/src/__tests__/kr-verifier.test.js
+            - packages/brain/src/__tests__/okr-closer.test.js
+            - packages/brain/src/__tests__/okr-tick.test.js
+            - packages/brain/src/__tests__/progress-ledger.test.js
+            - packages/brain/src/__tests__/progress-reviewer.test.js
+            - packages/brain/src/__tests__/project-activator.test.js
+            - packages/brain/src/__tests__/project-compare-push.test.js
+            - packages/brain/src/__tests__/project-compare.test.js
+            - packages/brain/src/__tests__/promotion-job.test.js
+            - packages/brain/src/__tests__/routes/task-goals.test.js
+            - packages/brain/src/__tests__/routes/task-projects.test.js
+            - packages/brain/src/__tests__/validate-okr-cycle.test.js
+            - packages/brain/src/__tests__/validate-okr-spec-load.test.js
+            - packages/brain/src/__tests__/validate-okr-structure.test.js
+            - packages/quality/tests/api/goals.test.ts
+            - packages/quality/tests/api/projects.test.ts
           integration:
-            - packages/brain/src/__tests__/tick-goal-eval-integration.test.js
-            - apps/api/tests/panorama-full.test.ts
+            - packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+        - L4
     runtime: {}
-
   - feature_id: area_scheduler
     name: Area 调度器
     purpose: 根据优先级自动选择下一个执行的工作区域
-    maturity: 0
+    maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/area-scheduler.js]
+      entry_files:
+        - packages/brain/src/area-scheduler.js
       language: javascript
       runtime: node
     docs:
@@ -217,7 +466,8 @@ features:
     skills: []
     apis: []
     tests:
-      unit: []
+      unit:
+        - packages/brain/src/__tests__/area-scheduler.test.js
       integration: []
       e2e: []
       regression: []
@@ -225,24 +475,26 @@ features:
       - id: area_scheduler_select
         name: 工作区域调度
         entry_file: packages/brain/src/area-scheduler.js
-        maturity: 0
+        maturity: 2
         tests:
-          unit: []
+          unit:
+            - packages/brain/src/__tests__/area-scheduler.test.js
           integration: []
           e2e: []
         status: active
     ci:
       jobs: []
-      layers: []
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: decomposition_engine
     name: OKR 拆解引擎
     purpose: 将 KR 自动拆解为具体 Project/Scope/Initiative/Task
     maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/decomposition-checker.js]
+      entry_files:
+        - packages/brain/src/decomposition-checker.js
       language: javascript
       runtime: node
     docs:
@@ -275,7 +527,13 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/tick-kr-decomp.test.js
+        - packages/brain/src/__tests__/decomp-capacity-gate.test.js
+        - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
+        - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
+        - packages/brain/src/__tests__/decomp-checker-domain.test.js
+        - packages/brain/src/__tests__/decomp-checker-null-krid.test.js
+        - packages/brain/src/__tests__/decomp-finder-findings.test.js
+        - packages/brain/src/__tests__/decomposition-checker.test.js
       integration: []
       e2e: []
       regression: []
@@ -286,11 +544,19 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/tick-kr-decomp.test.js
+            - packages/brain/src/__tests__/decomp-capacity-gate.test.js
+            - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
+            - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
+            - packages/brain/src/__tests__/decomp-checker-domain.test.js
+            - packages/brain/src/__tests__/decomp-checker-null-krid.test.js
+            - packages/brain/src/__tests__/decomp-finder-findings.test.js
+            - packages/brain/src/__tests__/decomposition-checker.test.js
           integration: []
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}

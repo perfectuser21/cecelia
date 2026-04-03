@@ -4,16 +4,15 @@
 
 system_id: memory
 system_name: 记忆系统
-
 features:
-
   - feature_id: memory_search
     name: 语义搜索记忆
     purpose: 根据语义相似度搜索历史任务/决策/对话
-    maturity: 2
+    maturity: 3
     code:
       root: packages/brain/src/services
-      entry_files: [packages/brain/src/services/memory-service.js]
+      entry_files:
+        - packages/brain/src/services/memory-service.js
       language: javascript
       runtime: node
     docs:
@@ -43,107 +42,76 @@ features:
         auth: none
     tests:
       unit:
+        - packages/brain/src/__tests__/bare-modules/memory-utils.test.js
+        - packages/brain/src/__tests__/contracts/memory-retriever-contract.test.js
+        - packages/brain/src/__tests__/eviction.test.js
+        - packages/brain/src/__tests__/memory-capabilities-search.test.js
+        - packages/brain/src/__tests__/memory-closure-chain.test.js
+        - packages/brain/src/__tests__/memory-consolidator-wiring.test.js
+        - packages/brain/src/__tests__/memory-embedding-wiring.test.js
+        - packages/brain/src/__tests__/memory-retriever-chat.test.js
+        - packages/brain/src/__tests__/memory-retriever-l1.test.js
+        - packages/brain/src/__tests__/memory-retriever-quota.test.js
+        - packages/brain/src/__tests__/memory-retriever-world-state.test.js
         - packages/brain/src/__tests__/memory-retriever.test.js
-      integration: []
+        - packages/brain/src/__tests__/memory-router.test.js
+        - packages/brain/src/__tests__/memory-selection-log.test.js
+        - packages/brain/src/__tests__/memory-sync.test.js
+        - packages/brain/src/__tests__/memory-utils.test.js
+        - packages/brain/src/__tests__/memory-wiring.test.js
+        - packages/brain/src/__tests__/mmr-observability.test.js
+        - packages/brain/src/__tests__/routes/memory.test.js
+        - packages/brain/src/__tests__/services/memory-service.test.js
+      integration:
+        - packages/brain/src/__tests__/integration/memory-router-retriever.integration.test.js
       e2e: []
       regression: []
     capabilities:
       - id: memory_search_semantic
         name: 语义搜索
         entry_file: packages/brain/src/services/memory-service.js
-        maturity: 2
+        maturity: 3
         tests:
           unit:
+            - packages/brain/src/__tests__/bare-modules/memory-utils.test.js
+            - packages/brain/src/__tests__/contracts/memory-retriever-contract.test.js
+            - packages/brain/src/__tests__/eviction.test.js
+            - packages/brain/src/__tests__/memory-capabilities-search.test.js
+            - packages/brain/src/__tests__/memory-closure-chain.test.js
+            - packages/brain/src/__tests__/memory-consolidator-wiring.test.js
+            - packages/brain/src/__tests__/memory-embedding-wiring.test.js
+            - packages/brain/src/__tests__/memory-retriever-chat.test.js
+            - packages/brain/src/__tests__/memory-retriever-l1.test.js
+            - packages/brain/src/__tests__/memory-retriever-quota.test.js
+            - packages/brain/src/__tests__/memory-retriever-world-state.test.js
             - packages/brain/src/__tests__/memory-retriever.test.js
-          integration: []
+            - packages/brain/src/__tests__/memory-router.test.js
+            - packages/brain/src/__tests__/memory-selection-log.test.js
+            - packages/brain/src/__tests__/memory-sync.test.js
+            - packages/brain/src/__tests__/memory-utils.test.js
+            - packages/brain/src/__tests__/memory-wiring.test.js
+            - packages/brain/src/__tests__/mmr-observability.test.js
+            - packages/brain/src/__tests__/routes/memory.test.js
+            - packages/brain/src/__tests__/services/memory-service.test.js
+          integration:
+            - packages/brain/src/__tests__/integration/memory-router-retriever.integration.test.js
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+        - L4
     runtime: {}
-
   - feature_id: memory_embedding
     name: 向量化生成
     purpose: 为任务/对话/学习生成 embedding，支持语义搜索
-    maturity: 0
+    maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/embedding-service.js]
-      language: javascript
-      runtime: node
-    docs:
-      prd: null
-      dod: null
-      adr: null
-      api_doc: null
-      runbook: null
-    skills: []
-    apis: []
-    tests:
-      unit: []
-      integration: []
-      e2e: []
-      regression: []
-    capabilities:
-      - id: memory_embedding_generate
-        name: 向量化生成
-        entry_file: packages/brain/src/embedding-service.js
-        maturity: 0
-        tests:
-          unit: []
-          integration: []
-          e2e: []
-        status: active
-    ci:
-      jobs: []
-      layers: []
-    runtime: {}
-
-  - feature_id: memory_dopamine
-    name: 多巴胺奖励
-    purpose: 任务完成→奖赏计算→习惯强化
-    maturity: 0
-    code:
-      root: packages/brain/src
-      entry_files: [packages/brain/src/dopamine.js]
-      language: javascript
-      runtime: node
-    docs:
-      prd: null
-      dod: null
-      adr: null
-      api_doc: null
-      runbook: null
-    skills: []
-    apis: []
-    tests:
-      unit: []
-      integration: []
-      e2e: []
-      regression: []
-    capabilities:
-      - id: memory_dopamine_reward
-        name: 多巴胺奖励计算
-        entry_file: packages/brain/src/dopamine.js
-        maturity: 0
-        tests:
-          unit: []
-          integration: []
-          e2e: []
-        status: active
-    ci:
-      jobs: []
-      layers: []
-    runtime: {}
-
-  - feature_id: memory_suggestion_cycle
-    name: 建议循环
-    purpose: 将 active desires 注入 suggestion pipeline，生成行动建议
-    maturity: 1
-    code:
-      root: packages/brain/src
-      entry_files: [packages/brain/src/suggestion-cycle.js]
+      entry_files:
+        - packages/brain/src/embedding-service.js
       language: javascript
       runtime: node
     docs:
@@ -156,7 +124,103 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/tick-suggestion-integration.test.js
+        - packages/brain/src/__tests__/embedding-service-backfill.test.js
+        - packages/brain/src/__tests__/embedding-service.test.js
+        - packages/brain/src/__tests__/generate-capability-embeddings.test.js
+        - packages/brain/src/__tests__/similarity-vectors.test.js
+        - packages/brain/src/__tests__/similarity.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_embedding_generate
+        name: 向量化生成
+        entry_file: packages/brain/src/embedding-service.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/embedding-service-backfill.test.js
+            - packages/brain/src/__tests__/embedding-service.test.js
+            - packages/brain/src/__tests__/generate-capability-embeddings.test.js
+            - packages/brain/src/__tests__/similarity-vectors.test.js
+            - packages/brain/src/__tests__/similarity.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_dopamine
+    name: 多巴胺奖励
+    purpose: 任务完成→奖赏计算→习惯强化
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/dopamine.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/dopamine-rpe.test.js
+        - packages/brain/src/__tests__/dopamine.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_dopamine_reward
+        name: 多巴胺奖励计算
+        entry_file: packages/brain/src/dopamine.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/dopamine-rpe.test.js
+            - packages/brain/src/__tests__/dopamine.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_suggestion_cycle
+    name: 建议循环
+    purpose: 将 active desires 注入 suggestion pipeline，生成行动建议
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/suggestion-cycle.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/suggestion-api.test.js
+        - packages/brain/src/__tests__/suggestion-dispatcher-domain.test.js
+        - packages/brain/src/__tests__/suggestion-dispatcher-thalamus.test.js
+        - packages/brain/src/__tests__/suggestion-dispatcher.test.js
+        - packages/brain/src/__tests__/suggestion-events.test.js
+        - packages/brain/src/__tests__/suggestion-integration.test.js
+        - packages/brain/src/__tests__/suggestion-triage.test.js
       integration: []
       e2e: []
       regression: []
@@ -167,22 +231,30 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/tick-suggestion-integration.test.js
+            - packages/brain/src/__tests__/suggestion-api.test.js
+            - packages/brain/src/__tests__/suggestion-dispatcher-domain.test.js
+            - packages/brain/src/__tests__/suggestion-dispatcher-thalamus.test.js
+            - packages/brain/src/__tests__/suggestion-dispatcher.test.js
+            - packages/brain/src/__tests__/suggestion-events.test.js
+            - packages/brain/src/__tests__/suggestion-integration.test.js
+            - packages/brain/src/__tests__/suggestion-triage.test.js
           integration: []
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: memory_distilled_docs
     name: 蒸馏文档
     purpose: 维护 SOUL/WORLD_STATE/SELF_MODEL/USER_PROFILE 四大核心文档
-    maturity: 1
+    maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/distilled-docs.js]
+      entry_files:
+        - packages/brain/src/distilled-docs.js
       language: javascript
       runtime: node
     docs:
@@ -201,7 +273,15 @@ features:
         auth: none
     tests:
       unit:
+        - packages/brain/src/__tests__/distilled-docs.test.js
+        - packages/brain/src/__tests__/routes/self-drive.test.js
+        - packages/brain/src/__tests__/self-drive-config.test.js
+        - packages/brain/src/__tests__/self-drive-routes.test.js
         - packages/brain/src/__tests__/self-drive-state-reader.test.ts
+        - packages/brain/src/__tests__/self-drive.test.js
+        - packages/brain/src/__tests__/self-model.test.js
+        - packages/brain/src/__tests__/self-report-collector.test.js
+        - packages/brain/src/__tests__/selfcheck.test.js
       integration: []
       e2e: []
       regression: []
@@ -212,11 +292,441 @@ features:
         maturity: 2
         tests:
           unit:
+            - packages/brain/src/__tests__/distilled-docs.test.js
+            - packages/brain/src/__tests__/routes/self-drive.test.js
+            - packages/brain/src/__tests__/self-drive-config.test.js
+            - packages/brain/src/__tests__/self-drive-routes.test.js
             - packages/brain/src/__tests__/self-drive-state-reader.test.ts
+            - packages/brain/src/__tests__/self-drive.test.js
+            - packages/brain/src/__tests__/self-model.test.js
+            - packages/brain/src/__tests__/self-report-collector.test.js
+            - packages/brain/src/__tests__/selfcheck.test.js
           integration: []
           e2e: []
         status: active
     ci:
       jobs: []
-      layers: [L3]
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_cortex
+    name: 皮层认知
+    purpose: Cortex 高级认知：RCA 分析、反思、质量评估、情感处理
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/cortex.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/bare-modules/evolution-scanner.test.js
+        - packages/brain/src/__tests__/cognitive-core.test.js
+        - packages/brain/src/__tests__/cognitive-map-api.test.js
+        - packages/brain/src/__tests__/cortex-cross-task-rca.test.js
+        - packages/brain/src/__tests__/cortex-dedup-persist.test.js
+        - packages/brain/src/__tests__/cortex-feedback-loop.test.js
+        - packages/brain/src/__tests__/cortex-insight-autoclose.test.js
+        - packages/brain/src/__tests__/cortex-memory.test.js
+        - packages/brain/src/__tests__/cortex-output-dedup.test.js
+        - packages/brain/src/__tests__/cortex-p2.test.js
+        - packages/brain/src/__tests__/cortex-quality-feedback.test.js
+        - packages/brain/src/__tests__/cortex-quality.test.js
+        - packages/brain/src/__tests__/cortex-rca.test.js
+        - packages/brain/src/__tests__/cortex-reflection-breaker.test.js
+        - packages/brain/src/__tests__/cortex-report-dedup.test.js
+        - packages/brain/src/__tests__/cortex-report.test.js
+        - packages/brain/src/__tests__/cortex-structure.test.js
+        - packages/brain/src/__tests__/cortex-timeout-classifier.test.js
+        - packages/brain/src/__tests__/cortex-timeout.test.js
+        - packages/brain/src/__tests__/cortex-timing.test.js
+        - packages/brain/src/__tests__/cortex.test.js
+        - packages/brain/src/__tests__/curiosity-scorer.test.js
+        - packages/brain/src/__tests__/emotion-dispatch.test.js
+        - packages/brain/src/__tests__/emotion-layer.test.js
+        - packages/brain/src/__tests__/entity-linker.test.js
+        - packages/brain/src/__tests__/evolution-scanner.test.js
+        - packages/brain/src/__tests__/evolution-synthesizer.test.js
+        - packages/brain/src/__tests__/fact-extractor.test.js
+        - packages/brain/src/__tests__/inner-life-api.test.js
+        - packages/brain/src/__tests__/owner-input-extractor.test.js
+        - packages/brain/src/__tests__/person-model.test.js
+        - packages/brain/src/__tests__/profile-facts-api.test.js
+        - packages/brain/src/__tests__/reflection.test.js
+        - packages/brain/src/__tests__/salience-score.test.js
+        - packages/brain/src/__tests__/user-profile-extraction.test.js
+        - packages/brain/src/__tests__/user-profile-vector.test.js
+        - packages/brain/src/__tests__/user-profile.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_cortex_core
+        name: 皮层认知
+        entry_file: packages/brain/src/cortex.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/bare-modules/evolution-scanner.test.js
+            - packages/brain/src/__tests__/cognitive-core.test.js
+            - packages/brain/src/__tests__/cognitive-map-api.test.js
+            - packages/brain/src/__tests__/cortex-cross-task-rca.test.js
+            - packages/brain/src/__tests__/cortex-dedup-persist.test.js
+            - packages/brain/src/__tests__/cortex-feedback-loop.test.js
+            - packages/brain/src/__tests__/cortex-insight-autoclose.test.js
+            - packages/brain/src/__tests__/cortex-memory.test.js
+            - packages/brain/src/__tests__/cortex-output-dedup.test.js
+            - packages/brain/src/__tests__/cortex-p2.test.js
+            - packages/brain/src/__tests__/cortex-quality-feedback.test.js
+            - packages/brain/src/__tests__/cortex-quality.test.js
+            - packages/brain/src/__tests__/cortex-rca.test.js
+            - packages/brain/src/__tests__/cortex-reflection-breaker.test.js
+            - packages/brain/src/__tests__/cortex-report-dedup.test.js
+            - packages/brain/src/__tests__/cortex-report.test.js
+            - packages/brain/src/__tests__/cortex-structure.test.js
+            - packages/brain/src/__tests__/cortex-timeout-classifier.test.js
+            - packages/brain/src/__tests__/cortex-timeout.test.js
+            - packages/brain/src/__tests__/cortex-timing.test.js
+            - packages/brain/src/__tests__/cortex.test.js
+            - packages/brain/src/__tests__/curiosity-scorer.test.js
+            - packages/brain/src/__tests__/emotion-dispatch.test.js
+            - packages/brain/src/__tests__/emotion-layer.test.js
+            - packages/brain/src/__tests__/entity-linker.test.js
+            - packages/brain/src/__tests__/evolution-scanner.test.js
+            - packages/brain/src/__tests__/evolution-synthesizer.test.js
+            - packages/brain/src/__tests__/fact-extractor.test.js
+            - packages/brain/src/__tests__/inner-life-api.test.js
+            - packages/brain/src/__tests__/owner-input-extractor.test.js
+            - packages/brain/src/__tests__/person-model.test.js
+            - packages/brain/src/__tests__/profile-facts-api.test.js
+            - packages/brain/src/__tests__/reflection.test.js
+            - packages/brain/src/__tests__/salience-score.test.js
+            - packages/brain/src/__tests__/user-profile-extraction.test.js
+            - packages/brain/src/__tests__/user-profile-vector.test.js
+            - packages/brain/src/__tests__/user-profile.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_consolidation
+    name: 记忆整合
+    purpose: 对话合并、待处理会话管理、统一对话接口
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/consolidation.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
+        - packages/brain/src/__tests__/consolidation.test.js
+        - packages/brain/src/__tests__/conversation-consolidator.test.js
+        - packages/brain/src/__tests__/conversation-digest.test.js
+        - packages/brain/src/__tests__/pending-conversations.test.js
+        - packages/brain/src/__tests__/unified-conversations.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_consolidation_core
+        name: 记忆整合
+        entry_file: packages/brain/src/consolidation.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
+            - packages/brain/src/__tests__/consolidation.test.js
+            - packages/brain/src/__tests__/conversation-consolidator.test.js
+            - packages/brain/src/__tests__/conversation-digest.test.js
+            - packages/brain/src/__tests__/pending-conversations.test.js
+            - packages/brain/src/__tests__/unified-conversations.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_learning
+    name: 学习系统
+    purpose: 从任务执行中提取学习点，向量化存储，后续检索复用
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/learning.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/learning-effectiveness.test.js
+        - packages/brain/src/__tests__/learning-retriever.test.js
+        - packages/brain/src/__tests__/learning-search.test.js
+        - packages/brain/src/__tests__/learning.test.js
+        - packages/brain/src/__tests__/learnings-received.test.js
+        - packages/brain/src/__tests__/learnings-vectorize.test.js
+        - packages/brain/src/__tests__/upsert-learning.test.js
+        - packages/quality/tests/hooks/append-learnings.test.ts
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_learning_core
+        name: 学习系统
+        entry_file: packages/brain/src/learning.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/learning-effectiveness.test.js
+            - packages/brain/src/__tests__/learning-retriever.test.js
+            - packages/brain/src/__tests__/learning-search.test.js
+            - packages/brain/src/__tests__/learning.test.js
+            - packages/brain/src/__tests__/learnings-received.test.js
+            - packages/brain/src/__tests__/learnings-vectorize.test.js
+            - packages/brain/src/__tests__/upsert-learning.test.js
+            - packages/quality/tests/hooks/append-learnings.test.ts
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_knowledge
+    name: 知识管理
+    purpose: Notion 同步、知识模块路由、知识去重
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/routes/knowledge.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/bare-modules/recurring-notion-sync.test.js
+        - packages/brain/src/__tests__/knowledge-dedup.test.js
+        - packages/brain/src/__tests__/knowledge-modules-route.test.js
+        - packages/brain/src/__tests__/knowledge-routes.test.js
+        - packages/brain/src/__tests__/notion-memory-sync.test.js
+        - packages/brain/src/__tests__/notion-sync.test.js
+        - packages/brain/src/__tests__/routes/notion-sync.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_knowledge_core
+        name: 知识管理
+        entry_file: packages/brain/src/routes/knowledge.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/bare-modules/recurring-notion-sync.test.js
+            - packages/brain/src/__tests__/knowledge-dedup.test.js
+            - packages/brain/src/__tests__/knowledge-modules-route.test.js
+            - packages/brain/src/__tests__/knowledge-routes.test.js
+            - packages/brain/src/__tests__/notion-memory-sync.test.js
+            - packages/brain/src/__tests__/notion-sync.test.js
+            - packages/brain/src/__tests__/routes/notion-sync.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_desire
+    name: 欲望系统
+    purpose: 管理 Cecelia 的 desires（想做的事），驱动主动行为
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/desire-system.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
+        - packages/brain/src/__tests__/desire-feedback.test.js
+        - packages/brain/src/__tests__/desire-respond-api.test.js
+        - packages/brain/src/__tests__/desire-suggestion-cycle.test.js
+        - packages/brain/src/__tests__/desire-suggestions.test.js
+        - packages/brain/src/__tests__/desire-system.test.js
+        - packages/brain/src/__tests__/desires-api.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_desire_core
+        name: 欲望系统
+        entry_file: packages/brain/src/desire-system.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
+            - packages/brain/src/__tests__/desire-feedback.test.js
+            - packages/brain/src/__tests__/desire-respond-api.test.js
+            - packages/brain/src/__tests__/desire-suggestion-cycle.test.js
+            - packages/brain/src/__tests__/desire-suggestions.test.js
+            - packages/brain/src/__tests__/desire-system.test.js
+            - packages/brain/src/__tests__/desires-api.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_rumination
+    name: 反刍系统
+    purpose: 对失败任务或重要事件进行反复思考，生成深度洞察
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/rumination.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/rumination-dedup.test.js
+        - packages/brain/src/__tests__/rumination-fallback-context.test.js
+        - packages/brain/src/__tests__/rumination-memory-stream.test.js
+        - packages/brain/src/__tests__/rumination-quarantine.test.js
+        - packages/brain/src/__tests__/rumination-scheduler.test.js
+        - packages/brain/src/__tests__/rumination-suggestions.test.js
+        - packages/brain/src/__tests__/rumination-threshold.test.js
+        - packages/brain/src/__tests__/rumination.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_rumination_core
+        name: 反刍系统
+        entry_file: packages/brain/src/rumination.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/rumination-dedup.test.js
+            - packages/brain/src/__tests__/rumination-fallback-context.test.js
+            - packages/brain/src/__tests__/rumination-memory-stream.test.js
+            - packages/brain/src/__tests__/rumination-quarantine.test.js
+            - packages/brain/src/__tests__/rumination-scheduler.test.js
+            - packages/brain/src/__tests__/rumination-suggestions.test.js
+            - packages/brain/src/__tests__/rumination-threshold.test.js
+            - packages/brain/src/__tests__/rumination.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: memory_capture
+    name: 捕获管道
+    purpose: 从对话和外部输入中捕获有价值的信息片段
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/routes/captures.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/capture-atoms-route.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: memory_capture_core
+        name: 捕获管道
+        entry_file: packages/brain/src/routes/captures.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/capture-atoms-route.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}

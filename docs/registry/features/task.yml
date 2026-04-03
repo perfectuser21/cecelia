@@ -5,16 +5,15 @@
 
 system_id: task
 system_name: 任务系统
-
 features:
-
   - feature_id: task_create
     name: 创建任务
     purpose: 注册新任务到 Brain，分配 ID 和类型
     maturity: 2
     code:
       root: packages/brain/src/routes
-      entry_files: [packages/brain/src/routes/tasks.js]
+      entry_files:
+        - packages/brain/src/routes/tasks.js
       language: javascript
       runtime: node
     docs:
@@ -51,11 +50,34 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/tick.test.js
-      integration:
-        - apps/api/src/__tests__/brain-api-integration.test.ts
-        - tests/database/integration.test.js
+        - packages/brain/src/__tests__/autocreate-task-from-cortex.test.js
+        - packages/brain/src/__tests__/bare-modules/task-updater.test.js
+        - packages/brain/src/__tests__/routes/task-tasks.test.js
+        - packages/brain/src/__tests__/task-cleanup.test.js
+        - packages/brain/src/__tests__/task-feedback-suggestions.test.js
+        - packages/brain/src/__tests__/task-generator-dedup.test.js
+        - packages/brain/src/__tests__/task-generator-scheduler.test.js
+        - packages/brain/src/__tests__/task-generators/base-scanner.test.js
+        - packages/brain/src/__tests__/task-generators/complexity-scanner.test.js
+        - packages/brain/src/__tests__/task-generators/coverage-scanner.test.js
+        - packages/brain/src/__tests__/task-generators/scheduler.test.js
+        - packages/brain/src/__tests__/task-generators/untested-scanner.test.js
+        - packages/brain/src/__tests__/task-quality-gate.test.js
+        - packages/brain/src/__tests__/task-run-metrics-parse.test.js
+        - packages/brain/src/__tests__/task-updater.test.js
+        - packages/brain/src/__tests__/task-websocket.test.js
+        - packages/brain/src/__tests__/task-weight-rpe.test.js
+        - packages/brain/src/__tests__/task-weight.test.js
+        - packages/brain/src/__tests__/tasks-status.test.js
+        - packages/quality/src/task-lifecycle.test.ts
+        - packages/quality/tests/api/contracts.test.ts
+        - packages/quality/tests/api/db.test.ts
+        - packages/quality/tests/api/error-handling.test.ts
         - packages/quality/tests/api/integration.test.js
+        - packages/quality/tests/api/links.test.ts
+        - packages/quality/tests/api/tasks.test.ts
+        - packages/quality/tests/state.test.ts
+      integration: []
       e2e:
         - packages/brain/scripts/task-lifecycle-check.sh
       regression: []
@@ -66,26 +88,52 @@ features:
         maturity: 4
         tests:
           unit:
-            - packages/brain/src/__tests__/tick.test.js
-          integration:
-            - apps/api/src/__tests__/brain-api-integration.test.ts
-            - tests/database/integration.test.js
+            - packages/brain/src/__tests__/autocreate-task-from-cortex.test.js
+            - packages/brain/src/__tests__/bare-modules/task-updater.test.js
+            - packages/brain/src/__tests__/routes/task-tasks.test.js
+            - packages/brain/src/__tests__/task-cleanup.test.js
+            - packages/brain/src/__tests__/task-feedback-suggestions.test.js
+            - packages/brain/src/__tests__/task-generator-dedup.test.js
+            - packages/brain/src/__tests__/task-generator-scheduler.test.js
+            - packages/brain/src/__tests__/task-generators/base-scanner.test.js
+            - packages/brain/src/__tests__/task-generators/complexity-scanner.test.js
+            - packages/brain/src/__tests__/task-generators/coverage-scanner.test.js
+            - packages/brain/src/__tests__/task-generators/scheduler.test.js
+            - packages/brain/src/__tests__/task-generators/untested-scanner.test.js
+            - packages/brain/src/__tests__/task-quality-gate.test.js
+            - packages/brain/src/__tests__/task-run-metrics-parse.test.js
+            - packages/brain/src/__tests__/task-updater.test.js
+            - packages/brain/src/__tests__/task-websocket.test.js
+            - packages/brain/src/__tests__/task-weight-rpe.test.js
+            - packages/brain/src/__tests__/task-weight.test.js
+            - packages/brain/src/__tests__/tasks-status.test.js
+            - packages/quality/src/task-lifecycle.test.ts
+            - packages/quality/tests/api/contracts.test.ts
+            - packages/quality/tests/api/db.test.ts
+            - packages/quality/tests/api/error-handling.test.ts
             - packages/quality/tests/api/integration.test.js
+            - packages/quality/tests/api/links.test.ts
+            - packages/quality/tests/api/tasks.test.ts
+            - packages/quality/tests/state.test.ts
+          integration: []
           e2e:
             - packages/brain/scripts/task-lifecycle-check.sh
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3, L4]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+        - L4
     runtime: {}
-
   - feature_id: task_route
     name: 路由分发任务
     purpose: 识别任务类型，路由到 US/HK 对应 agent 执行
     maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/task-router.js]
+      entry_files:
+        - packages/brain/src/task-router.js
       language: javascript
       runtime: node
     docs:
@@ -98,8 +146,27 @@ features:
     apis: []
     tests:
       unit:
+        - packages/brain/src/__tests__/contracts/task-router-contract.test.js
+        - packages/brain/src/__tests__/domain-detector.test.js
+        - packages/brain/src/__tests__/intent-match.test.js
+        - packages/brain/src/__tests__/intent.test.js
+        - packages/brain/src/__tests__/p2p-query-dispatch.test.js
+        - packages/brain/src/__tests__/routes/task-router-diagnose.test.js
+        - packages/brain/src/__tests__/routing-decisions.test.js
+        - packages/brain/src/__tests__/task-router-code-review.test.js
+        - packages/brain/src/__tests__/task-router-codex-immune.test.js
+        - packages/brain/src/__tests__/task-router-content-pipeline.test.js
+        - packages/brain/src/__tests__/task-router-core.test.js
+        - packages/brain/src/__tests__/task-router-crystallize.test.js
+        - packages/brain/src/__tests__/task-router-decomp-review.test.js
+        - packages/brain/src/__tests__/task-router-diagnose.test.js
+        - packages/brain/src/__tests__/task-router-domain.test.js
         - packages/brain/src/__tests__/task-router-failover.test.js
+        - packages/brain/src/__tests__/task-router-initiative.test.js
         - packages/brain/src/__tests__/task-router-intent-cto.test.js
+        - packages/brain/src/__tests__/task-router-strategy-session.test.js
+        - packages/brain/src/__tests__/task-router-suggestion-plan.test.js
+        - packages/quality/tests/hooks/detect-priority.test.ts
       integration: []
       e2e: []
       regression: []
@@ -110,23 +177,44 @@ features:
         maturity: 2
         tests:
           unit:
+            - packages/brain/src/__tests__/contracts/task-router-contract.test.js
+            - packages/brain/src/__tests__/domain-detector.test.js
+            - packages/brain/src/__tests__/intent-match.test.js
+            - packages/brain/src/__tests__/intent.test.js
+            - packages/brain/src/__tests__/p2p-query-dispatch.test.js
+            - packages/brain/src/__tests__/routes/task-router-diagnose.test.js
+            - packages/brain/src/__tests__/routing-decisions.test.js
+            - packages/brain/src/__tests__/task-router-code-review.test.js
+            - packages/brain/src/__tests__/task-router-codex-immune.test.js
+            - packages/brain/src/__tests__/task-router-content-pipeline.test.js
+            - packages/brain/src/__tests__/task-router-core.test.js
+            - packages/brain/src/__tests__/task-router-crystallize.test.js
+            - packages/brain/src/__tests__/task-router-decomp-review.test.js
+            - packages/brain/src/__tests__/task-router-diagnose.test.js
+            - packages/brain/src/__tests__/task-router-domain.test.js
             - packages/brain/src/__tests__/task-router-failover.test.js
+            - packages/brain/src/__tests__/task-router-initiative.test.js
             - packages/brain/src/__tests__/task-router-intent-cto.test.js
+            - packages/brain/src/__tests__/task-router-strategy-session.test.js
+            - packages/brain/src/__tests__/task-router-suggestion-plan.test.js
+            - packages/quality/tests/hooks/detect-priority.test.ts
           integration: []
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: task_callback
     name: 接收执行反馈
     purpose: 接收 agent 执行完成/失败回调，更新任务状态
     maturity: 2
     code:
       root: packages/brain/src/routes
-      entry_files: [packages/brain/src/routes/execution.js]
+      entry_files:
+        - packages/brain/src/routes/execution.js
       language: javascript
       runtime: node
     docs:
@@ -157,7 +245,26 @@ features:
         auth: none
     tests:
       unit:
+        - packages/brain/src/__tests__/async-callback-routing.test.js
         - packages/brain/src/__tests__/callback-atomic.test.js
+        - packages/brain/src/__tests__/callback-billing-pause.test.js
+        - packages/brain/src/__tests__/callback-coding-pathway-cleanup.test.js
+        - packages/brain/src/__tests__/callback-crystallize-pipeline.test.js
+        - packages/brain/src/__tests__/callback-dev-serial.test.js
+        - packages/brain/src/__tests__/callback-error-fields.test.js
+        - packages/brain/src/__tests__/callback-initiative-pipeline-fixes.test.js
+        - packages/brain/src/__tests__/callback-initiative-pipeline-p0.test.js
+        - packages/brain/src/__tests__/callback-initiative-plan-vivian.test.js
+        - packages/brain/src/__tests__/callback-needs-fix-rounds.test.js
+        - packages/brain/src/__tests__/callback-null-fallback.test.js
+        - packages/brain/src/__tests__/callback-quota-exhausted.test.js
+        - packages/brain/src/__tests__/effectiveresult-db-fallback.test.js
+        - packages/brain/src/__tests__/execution-callback-no-diagnostic.test.js
+        - packages/brain/src/__tests__/execution-logs-routes.test.js
+        - packages/brain/src/__tests__/execution-status.test.js
+        - packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js
+        - packages/brain/src/__tests__/failure-classification.test.js
+        - packages/brain/src/__tests__/tasks-feedback.test.js
       integration: []
       e2e: []
       regression:
@@ -170,22 +277,43 @@ features:
         maturity: 2
         tests:
           unit:
+            - packages/brain/src/__tests__/async-callback-routing.test.js
             - packages/brain/src/__tests__/callback-atomic.test.js
+            - packages/brain/src/__tests__/callback-billing-pause.test.js
+            - packages/brain/src/__tests__/callback-coding-pathway-cleanup.test.js
+            - packages/brain/src/__tests__/callback-crystallize-pipeline.test.js
+            - packages/brain/src/__tests__/callback-dev-serial.test.js
+            - packages/brain/src/__tests__/callback-error-fields.test.js
+            - packages/brain/src/__tests__/callback-initiative-pipeline-fixes.test.js
+            - packages/brain/src/__tests__/callback-initiative-pipeline-p0.test.js
+            - packages/brain/src/__tests__/callback-initiative-plan-vivian.test.js
+            - packages/brain/src/__tests__/callback-needs-fix-rounds.test.js
+            - packages/brain/src/__tests__/callback-null-fallback.test.js
+            - packages/brain/src/__tests__/callback-quota-exhausted.test.js
+            - packages/brain/src/__tests__/effectiveresult-db-fallback.test.js
+            - packages/brain/src/__tests__/execution-callback-no-diagnostic.test.js
+            - packages/brain/src/__tests__/execution-logs-routes.test.js
+            - packages/brain/src/__tests__/execution-status.test.js
+            - packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js
+            - packages/brain/src/__tests__/failure-classification.test.js
+            - packages/brain/src/__tests__/tasks-feedback.test.js
           integration: []
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: task_quarantine
     name: 隔离异常任务
     purpose: 检测并隔离反复失败的任务，防止无限循环
     maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/quarantine.js]
+      entry_files:
+        - packages/brain/src/quarantine.js
       language: javascript
       runtime: node
     docs:
@@ -198,8 +326,16 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
+        - packages/brain/src/__tests__/quarantine-auto-release.test.js
+        - packages/brain/src/__tests__/quarantine-billing-pause.test.js
+        - packages/brain/src/__tests__/quarantine-block.test.js
+        - packages/brain/src/__tests__/quarantine-classification.test.js
+        - packages/brain/src/__tests__/quarantine-learning-integration.test.js
+        - packages/brain/src/__tests__/quarantine-release.test.js
+        - packages/brain/src/__tests__/quarantine-systemic.test.js
         - packages/brain/src/__tests__/quarantine.test.js
+        - packages/brain/src/__tests__/quota-exhausted-no-quarantine.test.js
+        - packages/brain/src/__tests__/quota-exhausted.test.js
       integration: []
       e2e: []
       regression: []
@@ -210,23 +346,33 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
+            - packages/brain/src/__tests__/quarantine-auto-release.test.js
+            - packages/brain/src/__tests__/quarantine-billing-pause.test.js
+            - packages/brain/src/__tests__/quarantine-block.test.js
+            - packages/brain/src/__tests__/quarantine-classification.test.js
+            - packages/brain/src/__tests__/quarantine-learning-integration.test.js
+            - packages/brain/src/__tests__/quarantine-release.test.js
+            - packages/brain/src/__tests__/quarantine-systemic.test.js
             - packages/brain/src/__tests__/quarantine.test.js
+            - packages/brain/src/__tests__/quota-exhausted-no-quarantine.test.js
+            - packages/brain/src/__tests__/quota-exhausted.test.js
           integration: []
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: task_lifecycle_e2e
     name: 任务全生命周期
     purpose: 创建→分发→执行→完成 完整链路
     maturity: 0
     code:
       root: packages/brain/scripts
-      entry_files: [packages/brain/scripts/task-lifecycle-check.sh]
+      entry_files:
+        - packages/brain/scripts/task-lifecycle-check.sh
       language: bash
       runtime: node
     docs:
@@ -256,5 +402,308 @@ features:
         status: active
     ci:
       jobs: []
-      layers: [L4]
+      layers:
+        - L4
+    runtime: {}
+  - feature_id: task_dispatch
+    name: 任务派发
+    purpose: 将待执行任务分配给可用 agent，管理派发队列和成功率
+    maturity: 3
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/dispatch.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/dedup-dispatch-fixes.test.js
+        - packages/brain/src/__tests__/dispatch-effectiveness.test.js
+        - packages/brain/src/__tests__/dispatch-executor-fail.test.js
+        - packages/brain/src/__tests__/dispatch-low-rate.test.js
+        - packages/brain/src/__tests__/dispatch-now.test.js
+        - packages/brain/src/__tests__/dispatch-preflight-description.test.js
+        - packages/brain/src/__tests__/dispatch-preflight-skip.test.js
+        - packages/brain/src/__tests__/dispatch-stats.test.js
+        - packages/brain/src/__tests__/dispatch-success-rate.test.js
+        - packages/brain/src/__tests__/dispatch-task-action.test.js
+        - packages/brain/src/__tests__/dispatcher-quota-cooling.test.js
+        - packages/quality/tests/queue.test.ts
+      integration:
+        - packages/brain/src/__tests__/integration/tick-dispatch.integration.test.js
+      e2e: []
+      regression: []
+    capabilities:
+      - id: task_dispatch_core
+        name: 任务派发
+        entry_file: packages/brain/src/dispatch.js
+        maturity: 3
+        tests:
+          unit:
+            - packages/brain/src/__tests__/dedup-dispatch-fixes.test.js
+            - packages/brain/src/__tests__/dispatch-effectiveness.test.js
+            - packages/brain/src/__tests__/dispatch-executor-fail.test.js
+            - packages/brain/src/__tests__/dispatch-low-rate.test.js
+            - packages/brain/src/__tests__/dispatch-now.test.js
+            - packages/brain/src/__tests__/dispatch-preflight-description.test.js
+            - packages/brain/src/__tests__/dispatch-preflight-skip.test.js
+            - packages/brain/src/__tests__/dispatch-stats.test.js
+            - packages/brain/src/__tests__/dispatch-success-rate.test.js
+            - packages/brain/src/__tests__/dispatch-task-action.test.js
+            - packages/brain/src/__tests__/dispatcher-quota-cooling.test.js
+            - packages/quality/tests/queue.test.ts
+          integration:
+            - packages/brain/src/__tests__/integration/tick-dispatch.integration.test.js
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+        - L4
+    runtime: {}
+  - feature_id: task_executor
+    name: 任务执行引擎
+    purpose: 管理 Codex/Local 执行器，处理 LLM 调用、模型选择、账号轮转
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/executor.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/account-usage-scheduling.test.js
+        - packages/brain/src/__tests__/account-usage.test.js
+        - packages/brain/src/__tests__/bridge-llm-timeout.test.js
+        - packages/brain/src/__tests__/bridge-timeout.test.js
+        - packages/brain/src/__tests__/ci-diagnostics.test.js
+        - packages/brain/src/__tests__/code-review-trigger.test.js
+        - packages/brain/src/__tests__/codex-bridge-lb.test.js
+        - packages/brain/src/__tests__/codex-bridge-token-inject.test.js
+        - packages/brain/src/__tests__/codex-oauth-team-rotation.test.js
+        - packages/brain/src/__tests__/coding-passway.test.js
+        - packages/brain/src/__tests__/completed-no-pr.test.js
+        - packages/brain/src/__tests__/contracts/executor-contract.test.js
+        - packages/brain/src/__tests__/coverage-config.test.js
+        - packages/brain/src/__tests__/coverage-reporters.test.js
+        - packages/brain/src/__tests__/coverage-thresholds.test.js
+        - packages/brain/src/__tests__/cto-review-callback.test.js
+        - packages/brain/src/__tests__/deploy-status.test.js
+        - packages/brain/src/__tests__/dev-failure-classifier.test.js
+        - packages/brain/src/__tests__/dev-logs.test.js
+        - packages/brain/src/__tests__/dev-pipeline-health.test.js
+        - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
+        - packages/brain/src/__tests__/executor-code-review-env.test.js
+        - packages/brain/src/__tests__/executor-codex-review.test.js
+        - packages/brain/src/__tests__/executor-content-publish.test.js
+        - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
+        - packages/brain/src/__tests__/executor-diagnostics.test.js
+        - packages/brain/src/__tests__/executor-domain-prompt.test.js
+        - packages/brain/src/__tests__/executor-error-message.test.js
+        - packages/brain/src/__tests__/executor-initiative-skill-map.test.js
+        - packages/brain/src/__tests__/executor-input-validation.test.js
+        - packages/brain/src/__tests__/executor-local-account-select.test.js
+        - packages/brain/src/__tests__/executor-local-codex-exec.test.js
+        - packages/brain/src/__tests__/executor-max-seats-override.test.js
+        - packages/brain/src/__tests__/executor-model-select.test.js
+        - packages/brain/src/__tests__/executor-okr-project-layer.test.js
+        - packages/brain/src/__tests__/executor-payload-routing.test.js
+        - packages/brain/src/__tests__/executor-requeue-learning.test.js
+        - packages/brain/src/__tests__/executor-retry-strategy.test.js
+        - packages/brain/src/__tests__/executor-skill-override.test.js
+        - packages/brain/src/__tests__/executor-sprint-prompt.test.js
+        - packages/brain/src/__tests__/executor-startup-sync.test.js
+        - packages/brain/src/__tests__/executor-strategy-session.test.js
+        - packages/brain/src/__tests__/executor-system-context.test.js
+        - packages/brain/src/__tests__/executor-task-type-match.test.js
+        - packages/brain/src/__tests__/executor-task-type-null-fix.test.js
+        - packages/brain/src/__tests__/exploratory-prompt.test.js
+        - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
+        - packages/brain/src/__tests__/fleet-resource-cache.test.js
+        - packages/brain/src/__tests__/harness-sprint-loop.test.js
+        - packages/brain/src/__tests__/llm-account-deficit.test.js
+        - packages/brain/src/__tests__/llm-caller-account-selection.test.js
+        - packages/brain/src/__tests__/llm-caller-stream.test.js
+        - packages/brain/src/__tests__/llm-caller.test.js
+        - packages/brain/src/__tests__/minimax-provider.test.js
+        - packages/brain/src/__tests__/model-profile-dispatch.test.js
+        - packages/brain/src/__tests__/model-profile.test.js
+        - packages/brain/src/__tests__/model-registry.test.js
+        - packages/brain/src/__tests__/openai-client.test.js
+        - packages/brain/src/__tests__/pr-callback-handler.test.js
+        - packages/brain/src/__tests__/pr-progress.test.js
+        - packages/brain/src/__tests__/pre-flight-check.test.js
+        - packages/brain/src/__tests__/prepare-prompt-retry-context.test.js
+        - packages/brain/src/__tests__/prompt-time-context.test.js
+        - packages/brain/src/__tests__/resolve-repo-path.test.js
+        - packages/brain/src/__tests__/review-gate.test.js
+        - packages/brain/src/__tests__/routes/dev-logs.test.js
+        - packages/brain/src/__tests__/session-tracking.test.js
+        - packages/brain/src/__tests__/staff-skills-api.test.js
+        - packages/brain/src/__tests__/templates.test.js
+        - packages/brain/src/__tests__/token-budget-planner.test.js
+        - packages/brain/src/__tests__/token-pressure.test.js
+        - packages/quality/tests/api/executor.test.ts
+        - packages/quality/tests/worker.test.ts
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: task_executor_core
+        name: 任务执行引擎
+        entry_file: packages/brain/src/executor.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/account-usage-scheduling.test.js
+            - packages/brain/src/__tests__/account-usage.test.js
+            - packages/brain/src/__tests__/bridge-llm-timeout.test.js
+            - packages/brain/src/__tests__/bridge-timeout.test.js
+            - packages/brain/src/__tests__/ci-diagnostics.test.js
+            - packages/brain/src/__tests__/code-review-trigger.test.js
+            - packages/brain/src/__tests__/codex-bridge-lb.test.js
+            - packages/brain/src/__tests__/codex-bridge-token-inject.test.js
+            - packages/brain/src/__tests__/codex-oauth-team-rotation.test.js
+            - packages/brain/src/__tests__/coding-passway.test.js
+            - packages/brain/src/__tests__/completed-no-pr.test.js
+            - packages/brain/src/__tests__/contracts/executor-contract.test.js
+            - packages/brain/src/__tests__/coverage-config.test.js
+            - packages/brain/src/__tests__/coverage-reporters.test.js
+            - packages/brain/src/__tests__/coverage-thresholds.test.js
+            - packages/brain/src/__tests__/cto-review-callback.test.js
+            - packages/brain/src/__tests__/deploy-status.test.js
+            - packages/brain/src/__tests__/dev-failure-classifier.test.js
+            - packages/brain/src/__tests__/dev-logs.test.js
+            - packages/brain/src/__tests__/dev-pipeline-health.test.js
+            - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
+            - packages/brain/src/__tests__/executor-code-review-env.test.js
+            - packages/brain/src/__tests__/executor-codex-review.test.js
+            - packages/brain/src/__tests__/executor-content-publish.test.js
+            - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
+            - packages/brain/src/__tests__/executor-diagnostics.test.js
+            - packages/brain/src/__tests__/executor-domain-prompt.test.js
+            - packages/brain/src/__tests__/executor-error-message.test.js
+            - packages/brain/src/__tests__/executor-initiative-skill-map.test.js
+            - packages/brain/src/__tests__/executor-input-validation.test.js
+            - packages/brain/src/__tests__/executor-local-account-select.test.js
+            - packages/brain/src/__tests__/executor-local-codex-exec.test.js
+            - packages/brain/src/__tests__/executor-max-seats-override.test.js
+            - packages/brain/src/__tests__/executor-model-select.test.js
+            - packages/brain/src/__tests__/executor-okr-project-layer.test.js
+            - packages/brain/src/__tests__/executor-payload-routing.test.js
+            - packages/brain/src/__tests__/executor-requeue-learning.test.js
+            - packages/brain/src/__tests__/executor-retry-strategy.test.js
+            - packages/brain/src/__tests__/executor-skill-override.test.js
+            - packages/brain/src/__tests__/executor-sprint-prompt.test.js
+            - packages/brain/src/__tests__/executor-startup-sync.test.js
+            - packages/brain/src/__tests__/executor-strategy-session.test.js
+            - packages/brain/src/__tests__/executor-system-context.test.js
+            - packages/brain/src/__tests__/executor-task-type-match.test.js
+            - packages/brain/src/__tests__/executor-task-type-null-fix.test.js
+            - packages/brain/src/__tests__/exploratory-prompt.test.js
+            - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
+            - packages/brain/src/__tests__/fleet-resource-cache.test.js
+            - packages/brain/src/__tests__/harness-sprint-loop.test.js
+            - packages/brain/src/__tests__/llm-account-deficit.test.js
+            - packages/brain/src/__tests__/llm-caller-account-selection.test.js
+            - packages/brain/src/__tests__/llm-caller-stream.test.js
+            - packages/brain/src/__tests__/llm-caller.test.js
+            - packages/brain/src/__tests__/minimax-provider.test.js
+            - packages/brain/src/__tests__/model-profile-dispatch.test.js
+            - packages/brain/src/__tests__/model-profile.test.js
+            - packages/brain/src/__tests__/model-registry.test.js
+            - packages/brain/src/__tests__/openai-client.test.js
+            - packages/brain/src/__tests__/pr-callback-handler.test.js
+            - packages/brain/src/__tests__/pr-progress.test.js
+            - packages/brain/src/__tests__/pre-flight-check.test.js
+            - packages/brain/src/__tests__/prepare-prompt-retry-context.test.js
+            - packages/brain/src/__tests__/prompt-time-context.test.js
+            - packages/brain/src/__tests__/resolve-repo-path.test.js
+            - packages/brain/src/__tests__/review-gate.test.js
+            - packages/brain/src/__tests__/routes/dev-logs.test.js
+            - packages/brain/src/__tests__/session-tracking.test.js
+            - packages/brain/src/__tests__/staff-skills-api.test.js
+            - packages/brain/src/__tests__/templates.test.js
+            - packages/brain/src/__tests__/token-budget-planner.test.js
+            - packages/brain/src/__tests__/token-pressure.test.js
+            - packages/quality/tests/api/executor.test.ts
+            - packages/quality/tests/worker.test.ts
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: task_slot
+    name: 并发槽位管理
+    purpose: 管理执行器并发容量，分配和回收 slot
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/slot-allocator.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/capacity-budget.test.js
+        - packages/brain/src/__tests__/capacity-endpoint.test.js
+        - packages/brain/src/__tests__/capacity.test.js
+        - packages/brain/src/__tests__/dual-capacity.test.js
+        - packages/brain/src/__tests__/slot-allocator.test.js
+        - packages/brain/src/__tests__/slot-buffer.test.js
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: task_slot_core
+        name: 并发槽位管理
+        entry_file: packages/brain/src/slot-allocator.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/capacity-budget.test.js
+            - packages/brain/src/__tests__/capacity-endpoint.test.js
+            - packages/brain/src/__tests__/capacity.test.js
+            - packages/brain/src/__tests__/dual-capacity.test.js
+            - packages/brain/src/__tests__/slot-allocator.test.js
+            - packages/brain/src/__tests__/slot-buffer.test.js
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}

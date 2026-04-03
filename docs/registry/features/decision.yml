@@ -4,16 +4,15 @@
 
 system_id: decision
 system_name: 决策系统
-
 features:
-
   - feature_id: decision_engine
     name: 决策引擎
     purpose: 根据 OKR 进度和任务状态生成决策，自动调整执行策略
-    maturity: 0
+    maturity: 3
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/decision.js]
+      entry_files:
+        - packages/brain/src/decision.js
       language: javascript
       runtime: node
     docs:
@@ -47,32 +46,94 @@ features:
         code_file: packages/brain/server.js
         auth: none
     tests:
-      unit: []
-      integration: []
+      unit:
+        - packages/brain/src/__tests__/actions-dedup.test.js
+        - packages/brain/src/__tests__/actions-domain-role.test.js
+        - packages/brain/src/__tests__/actions-goal-validation.test.js
+        - packages/brain/src/__tests__/actions-initiative-orchestration.test.js
+        - packages/brain/src/__tests__/actions.test.js
+        - packages/brain/src/__tests__/attach-decision-routes.test.js
+        - packages/brain/src/__tests__/bare-modules/proactive-mouth.test.js
+        - packages/brain/src/__tests__/cecelia-proactive-push.test.js
+        - packages/brain/src/__tests__/cecelia-routes.test.js
+        - packages/brain/src/__tests__/cecelia-voice-retrieval.test.js
+        - packages/brain/src/__tests__/chat-action-dispatcher.test.js
+        - packages/brain/src/__tests__/contracts/decision-contract.test.js
+        - packages/brain/src/__tests__/decision-executor.test.js
+        - packages/brain/src/__tests__/decision.test.js
+        - packages/brain/src/__tests__/decisions-context.test.js
+        - packages/brain/src/__tests__/notifier.test.js
+        - packages/brain/src/__tests__/orchestrator-chat-memory.test.js
+        - packages/brain/src/__tests__/orchestrator-chat-route.test.js
+        - packages/brain/src/__tests__/orchestrator-chat-stream-route.test.js
+        - packages/brain/src/__tests__/orchestrator-chat.test.js
+        - packages/brain/src/__tests__/orchestrator-realtime.test.js
+        - packages/brain/src/__tests__/policy-validator.test.js
+        - packages/brain/src/__tests__/proactive-mouth.test.js
+        - packages/brain/src/__tests__/thalamus-memory-injection.test.js
+        - packages/brain/src/__tests__/thalamus-record-llm-error.test.js
+        - packages/brain/src/__tests__/thalamus-scope-layer.test.js
+        - packages/brain/src/__tests__/thalamus-self-awareness.test.js
+        - packages/brain/src/__tests__/thalamus-suggest-task-type.test.js
+        - packages/brain/src/__tests__/thalamus.test.js
+      integration:
+        - packages/brain/src/__tests__/integration/thalamus-action-whitelist.integration.test.js
       e2e: []
       regression: []
     capabilities:
       - id: decision_engine_decide
         name: 决策生成
         entry_file: packages/brain/src/decision.js
-        maturity: 0
+        maturity: 3
         tests:
-          unit: []
-          integration: []
+          unit:
+            - packages/brain/src/__tests__/actions-dedup.test.js
+            - packages/brain/src/__tests__/actions-domain-role.test.js
+            - packages/brain/src/__tests__/actions-goal-validation.test.js
+            - packages/brain/src/__tests__/actions-initiative-orchestration.test.js
+            - packages/brain/src/__tests__/actions.test.js
+            - packages/brain/src/__tests__/attach-decision-routes.test.js
+            - packages/brain/src/__tests__/bare-modules/proactive-mouth.test.js
+            - packages/brain/src/__tests__/cecelia-proactive-push.test.js
+            - packages/brain/src/__tests__/cecelia-routes.test.js
+            - packages/brain/src/__tests__/cecelia-voice-retrieval.test.js
+            - packages/brain/src/__tests__/chat-action-dispatcher.test.js
+            - packages/brain/src/__tests__/contracts/decision-contract.test.js
+            - packages/brain/src/__tests__/decision-executor.test.js
+            - packages/brain/src/__tests__/decision.test.js
+            - packages/brain/src/__tests__/decisions-context.test.js
+            - packages/brain/src/__tests__/notifier.test.js
+            - packages/brain/src/__tests__/orchestrator-chat-memory.test.js
+            - packages/brain/src/__tests__/orchestrator-chat-route.test.js
+            - packages/brain/src/__tests__/orchestrator-chat-stream-route.test.js
+            - packages/brain/src/__tests__/orchestrator-chat.test.js
+            - packages/brain/src/__tests__/orchestrator-realtime.test.js
+            - packages/brain/src/__tests__/policy-validator.test.js
+            - packages/brain/src/__tests__/proactive-mouth.test.js
+            - packages/brain/src/__tests__/thalamus-memory-injection.test.js
+            - packages/brain/src/__tests__/thalamus-record-llm-error.test.js
+            - packages/brain/src/__tests__/thalamus-scope-layer.test.js
+            - packages/brain/src/__tests__/thalamus-self-awareness.test.js
+            - packages/brain/src/__tests__/thalamus-suggest-task-type.test.js
+            - packages/brain/src/__tests__/thalamus.test.js
+          integration:
+            - packages/brain/src/__tests__/integration/thalamus-action-whitelist.integration.test.js
           e2e: []
         status: active
     ci:
       jobs: []
-      layers: []
+      layers:
+        - L3
+        - L4
     runtime: {}
-
   - feature_id: proposal_system
     name: 提案审批
     purpose: 高危动作创建 proposal，人工审批后执行
     maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/proposal.js]
+      entry_files:
+        - packages/brain/src/proposal.js
       language: javascript
       runtime: node
     docs:
@@ -109,6 +170,12 @@ features:
         auth: none
     tests:
       unit:
+        - packages/brain/src/__tests__/proposal-comment-api.test.js
+        - packages/brain/src/__tests__/proposal-migration.test.js
+        - packages/brain/src/__tests__/proposal-select-api.test.js
+        - packages/brain/src/__tests__/proposal-system.test.js
+        - packages/brain/src/__tests__/proposal-throttle.test.js
+        - packages/brain/src/__tests__/proposal-websocket.test.js
         - packages/brain/src/__tests__/proposal.test.js
       integration: []
       e2e: []
@@ -120,22 +187,30 @@ features:
         maturity: 2
         tests:
           unit:
+            - packages/brain/src/__tests__/proposal-comment-api.test.js
+            - packages/brain/src/__tests__/proposal-migration.test.js
+            - packages/brain/src/__tests__/proposal-select-api.test.js
+            - packages/brain/src/__tests__/proposal-system.test.js
+            - packages/brain/src/__tests__/proposal-throttle.test.js
+            - packages/brain/src/__tests__/proposal-websocket.test.js
             - packages/brain/src/__tests__/proposal.test.js
           integration: []
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: alertness_system
     name: 警觉度系统
     purpose: 评估系统压力水位，自动调整决策保守度
     maturity: 2
     code:
       root: packages/brain/src/alertness
-      entry_files: [packages/brain/src/alertness/]
+      entry_files:
+        - packages/brain/src/alertness/
       language: javascript
       runtime: node
     docs:
@@ -148,8 +223,13 @@ features:
     apis: []
     tests:
       unit:
-        - tests/alertness/diagnosis.test.js
-        - tests/alertness/healing.test.js
+        - packages/brain/src/__tests__/alerting.test.js
+        - packages/brain/src/__tests__/alertness-actions.test.js
+        - packages/brain/src/__tests__/alertness-recovery.test.js
+        - packages/brain/src/__tests__/alertness/diagnosis.test.js
+        - packages/brain/src/__tests__/alertness/escalation.test.js
+        - packages/brain/src/__tests__/alertness/healing.test.js
+        - packages/brain/src/__tests__/alertness/metrics.test.js
       integration: []
       e2e: []
       regression: []
@@ -160,23 +240,30 @@ features:
         maturity: 2
         tests:
           unit:
-            - tests/alertness/diagnosis.test.js
-            - tests/alertness/healing.test.js
+            - packages/brain/src/__tests__/alerting.test.js
+            - packages/brain/src/__tests__/alertness-actions.test.js
+            - packages/brain/src/__tests__/alertness-recovery.test.js
+            - packages/brain/src/__tests__/alertness/diagnosis.test.js
+            - packages/brain/src/__tests__/alertness/escalation.test.js
+            - packages/brain/src/__tests__/alertness/healing.test.js
+            - packages/brain/src/__tests__/alertness/metrics.test.js
           integration: []
           e2e: []
         status: active
     ci:
-      jobs: [brain-unit]
-      layers: [L3]
+      jobs:
+        - brain-unit
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: circuit_breaker
     name: 断路器
     purpose: 自动熔断异常服务链路，防止级联故障
-    maturity: 0
+    maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/circuit-breaker.js]
+      entry_files:
+        - packages/brain/src/circuit-breaker.js
       language: javascript
       runtime: node
     docs:
@@ -188,7 +275,11 @@ features:
     skills: []
     apis: []
     tests:
-      unit: []
+      unit:
+        - packages/brain/src/__tests__/circuit-breaker-state-machine.test.js
+        - packages/brain/src/__tests__/circuit-breaker-success.test.js
+        - packages/brain/src/__tests__/circuit-breaker-transient-bypass.test.js
+        - packages/brain/src/__tests__/circuit-breaker.test.js
       integration: []
       e2e: []
       regression: []
@@ -196,24 +287,29 @@ features:
       - id: circuit_breaker_fuse
         name: 服务熔断
         entry_file: packages/brain/src/circuit-breaker.js
-        maturity: 0
+        maturity: 2
         tests:
-          unit: []
+          unit:
+            - packages/brain/src/__tests__/circuit-breaker-state-machine.test.js
+            - packages/brain/src/__tests__/circuit-breaker-success.test.js
+            - packages/brain/src/__tests__/circuit-breaker-transient-bypass.test.js
+            - packages/brain/src/__tests__/circuit-breaker.test.js
           integration: []
           e2e: []
         status: active
     ci:
       jobs: []
-      layers: []
+      layers:
+        - L3
     runtime: {}
-
   - feature_id: monitor_loop
     name: 监控自愈
     purpose: 30s 间隔检测并自动修复卡住任务
-    maturity: 0
+    maturity: 2
     code:
       root: packages/brain/src
-      entry_files: [packages/brain/src/monitor-loop.js]
+      entry_files:
+        - packages/brain/src/monitor-loop.js
       language: javascript
       runtime: node
     docs:
@@ -231,7 +327,40 @@ features:
         code_file: packages/brain/src/routes/goals.js
         auth: none
     tests:
-      unit: []
+      unit:
+        - packages/brain/src/__tests__/auto-fix-circuit-breaker.test.js
+        - packages/brain/src/__tests__/auto-fix.test.js
+        - packages/brain/src/__tests__/auto-learning.test.js
+        - packages/brain/src/__tests__/auto-rca.test.js
+        - packages/brain/src/__tests__/bare-modules/auto-fix.test.js
+        - packages/brain/src/__tests__/bare-modules/health-monitor.test.js
+        - packages/brain/src/__tests__/bare-modules/rca-deduplication.test.js
+        - packages/brain/src/__tests__/bare-modules/trace-routes.test.js
+        - packages/brain/src/__tests__/chaos-hardening.test.js
+        - packages/brain/src/__tests__/cpu-sampler.test.js
+        - packages/brain/src/__tests__/emergency-cleanup-retry.test.js
+        - packages/brain/src/__tests__/emergency-cleanup.test.js
+        - packages/brain/src/__tests__/health-monitor.test.js
+        - packages/brain/src/__tests__/immune-api.test.js
+        - packages/brain/src/__tests__/immune-system.test.js
+        - packages/brain/src/__tests__/liveness-probe.test.js
+        - packages/brain/src/__tests__/metrics-routes.test.js
+        - packages/brain/src/__tests__/monitor-loop-p2.test.js
+        - packages/brain/src/__tests__/monitor-loop.test.js
+        - packages/brain/src/__tests__/monitor-resource-snapshot.test.js
+        - packages/brain/src/__tests__/rca-deduplication.test.js
+        - packages/brain/src/__tests__/resource-monitor.test.js
+        - packages/brain/src/__tests__/routes/infra-status.test.js
+        - packages/brain/src/__tests__/routes/vps-monitor.test.js
+        - packages/brain/src/__tests__/trace-routes.test.js
+        - packages/brain/src/__tests__/trace.test.js
+        - packages/brain/src/__tests__/watchdog-crisis-kill.test.js
+        - packages/brain/src/__tests__/watchdog-quarantine-race.test.js
+        - packages/brain/src/__tests__/watchdog.test.js
+        - packages/brain/src/__tests__/zombie-cleaner.test.js
+        - packages/brain/src/__tests__/zombie-sweep.test.js
+        - packages/quality/tests/hooks/metrics.test.ts
+        - packages/workflows/skills/janitor/__tests__/janitor_orphan.test.sh
       integration: []
       e2e: []
       regression: []
@@ -239,13 +368,47 @@ features:
       - id: monitor_loop_heal
         name: 监控自愈循环
         entry_file: packages/brain/src/monitor-loop.js
-        maturity: 0
+        maturity: 2
         tests:
-          unit: []
+          unit:
+            - packages/brain/src/__tests__/auto-fix-circuit-breaker.test.js
+            - packages/brain/src/__tests__/auto-fix.test.js
+            - packages/brain/src/__tests__/auto-learning.test.js
+            - packages/brain/src/__tests__/auto-rca.test.js
+            - packages/brain/src/__tests__/bare-modules/auto-fix.test.js
+            - packages/brain/src/__tests__/bare-modules/health-monitor.test.js
+            - packages/brain/src/__tests__/bare-modules/rca-deduplication.test.js
+            - packages/brain/src/__tests__/bare-modules/trace-routes.test.js
+            - packages/brain/src/__tests__/chaos-hardening.test.js
+            - packages/brain/src/__tests__/cpu-sampler.test.js
+            - packages/brain/src/__tests__/emergency-cleanup-retry.test.js
+            - packages/brain/src/__tests__/emergency-cleanup.test.js
+            - packages/brain/src/__tests__/health-monitor.test.js
+            - packages/brain/src/__tests__/immune-api.test.js
+            - packages/brain/src/__tests__/immune-system.test.js
+            - packages/brain/src/__tests__/liveness-probe.test.js
+            - packages/brain/src/__tests__/metrics-routes.test.js
+            - packages/brain/src/__tests__/monitor-loop-p2.test.js
+            - packages/brain/src/__tests__/monitor-loop.test.js
+            - packages/brain/src/__tests__/monitor-resource-snapshot.test.js
+            - packages/brain/src/__tests__/rca-deduplication.test.js
+            - packages/brain/src/__tests__/resource-monitor.test.js
+            - packages/brain/src/__tests__/routes/infra-status.test.js
+            - packages/brain/src/__tests__/routes/vps-monitor.test.js
+            - packages/brain/src/__tests__/trace-routes.test.js
+            - packages/brain/src/__tests__/trace.test.js
+            - packages/brain/src/__tests__/watchdog-crisis-kill.test.js
+            - packages/brain/src/__tests__/watchdog-quarantine-race.test.js
+            - packages/brain/src/__tests__/watchdog.test.js
+            - packages/brain/src/__tests__/zombie-cleaner.test.js
+            - packages/brain/src/__tests__/zombie-sweep.test.js
+            - packages/quality/tests/hooks/metrics.test.ts
+            - packages/workflows/skills/janitor/__tests__/janitor_orphan.test.sh
           integration: []
           e2e: []
         status: active
     ci:
       jobs: []
-      layers: []
+      layers:
+        - L3
     runtime: {}
