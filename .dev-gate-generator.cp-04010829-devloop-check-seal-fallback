@@ -1,8 +1,0 @@
-{
-  "sealed_by": "main-agent-generator",
-  "branch": "cp-04010829-devloop-check-seal-fallback",
-  "timestamp": "2026-04-01T08:50:00+08:00",
-  "verdict": "pass",
-  "files_modified": ["packages/engine/lib/devloop-check.sh"],
-  "summary": "devloop_check_main() 添加 seal 文件反推逻辑，.dev-mode 消失时从 seal 文件推断 stage 状态"
-}

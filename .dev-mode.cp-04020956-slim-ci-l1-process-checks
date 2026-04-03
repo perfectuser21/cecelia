@@ -1,9 +1,0 @@
-dev
-branch: cp-04020956-slim-ci-l1-process-checks
-task_card: .task-cp-04020956-slim-ci-l1-process-checks.md
-task_id: adaaac9b-3a0e-4fb4-8314-b0ce567fd93c
-step_0_worktree: done
-step_1_spec: done
-step_2_code: done
-step_3_integrate: pending
-step_4_ship: pending
