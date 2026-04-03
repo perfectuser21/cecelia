@@ -1,0 +1,52 @@
+# 编排系统 (orchestration) - Feature 详情
+# 更新时间: 2026-04-03
+
+system_id: orchestration
+system_name: 编排系统
+
+features:
+
+  - feature_id: tick_loop
+    name: Tick 调度引擎
+    purpose: 5s 轮询 / 5min 执行，驱动 Brain 自动化运转
+    code_path: packages/brain/src/tick.js
+    tests:
+      unit: packages/brain/src/__tests__/tick.test.js
+      integration: packages/brain/src/__tests__/tick-healing-integration.test.js
+      e2e: packages/brain/scripts/goldenpath-check.sh
+      regression: packages/brain/src/__tests__/tick-drain.test.js
+    ci_jobs: [brain-unit, brain-integration]
+    maturity: 3
+
+  - feature_id: okr_system
+    name: OKR 层级管理
+    purpose: 管理 Vision→Objective→KR→Project→Scope→Initiative→Task 7层结构
+    code_path: packages/brain/src/routes/okr-hierarchy.js
+    tests:
+      unit: apps/api/src/okr/__tests__/trees.test.js
+      integration: null
+      e2e: null
+    ci_jobs: [brain-unit]
+    maturity: 2
+
+  - feature_id: area_scheduler
+    name: Area 调度器
+    purpose: 根据优先级自动选择下一个执行的工作区域
+    code_path: packages/brain/src/area-scheduler.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: decomposition_engine
+    name: OKR 拆解引擎
+    purpose: 将 KR 自动拆解为具体 Project/Scope/Initiative/Task
+    code_path: packages/brain/src/decomposition-checker.js
+    tests:
+      unit: packages/brain/src/__tests__/tick-kr-decomp.test.js
+      integration: null
+      e2e: null
+    ci_jobs: [brain-unit]
+    maturity: 2

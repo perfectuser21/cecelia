@@ -1,0 +1,110 @@
+# System Registry - Cecelia 全系统总表
+# 更新时间: 2026-04-03
+# 说明: 每个 system 是一组相关 feature 的集合，详情见 features/*.yml
+# CI Jobs: secrets-scan | engine-tests | brain-unit | brain-integration | workspace-build | ci-passed
+
+systems:
+
+  - id: task
+    name: 任务系统
+    package: packages/brain
+    purpose: 任务创建、路由、执行、隔离的完整生命周期
+    features_file: features/task.yml
+    feature_count: 5
+    ci_jobs: [brain-unit, brain-integration]
+    health:
+      maturity_avg: 2.0
+      has_unit: true
+      has_integration: false
+      has_e2e: true
+
+  - id: memory
+    name: 记忆系统
+    package: packages/brain
+    purpose: 语义搜索、embedding、多巴胺奖励、建议循环、蒸馏文档
+    features_file: features/memory.yml
+    feature_count: 5
+    ci_jobs: [brain-unit]
+    health:
+      maturity_avg: 0.6
+      has_unit: true
+      has_integration: false
+      has_e2e: false
+
+  - id: orchestration
+    name: 编排系统
+    package: packages/brain
+    purpose: Tick 调度、OKR 管理、Area 调度、拆解引擎
+    features_file: features/orchestration.yml
+    feature_count: 4
+    ci_jobs: [brain-unit, brain-integration]
+    health:
+      maturity_avg: 1.75
+      has_unit: true
+      has_integration: true
+      has_e2e: true
+
+  - id: decision
+    name: 决策系统
+    package: packages/brain
+    purpose: 决策引擎、提案审批、警觉度、断路器、监控自愈
+    features_file: features/decision.yml
+    feature_count: 5
+    ci_jobs: [brain-unit]
+    health:
+      maturity_avg: 0.8
+      has_unit: true
+      has_integration: false
+      has_e2e: false
+
+  - id: pipeline
+    name: 内容管道
+    package: packages/brain
+    purpose: 6步内容生产流水线（research→export）+ 编排 + 巡航
+    features_file: features/pipeline.yml
+    feature_count: 8
+    ci_jobs: [brain-unit]
+    health:
+      maturity_avg: 0.125
+      has_unit: true
+      has_integration: false
+      has_e2e: false
+
+  - id: publisher
+    name: 发布系统
+    package: packages/workflows
+    purpose: 8平台内容发布 + 调度 + 监控重试
+    features_file: features/publisher.yml
+    feature_count: 8
+    ci_jobs: []
+    health:
+      maturity_avg: 0.0
+      has_unit: false
+      has_integration: false
+      has_e2e: false
+
+  - id: engine
+    name: 开发引擎
+    package: packages/engine
+    purpose: /dev 四阶段工作流 + devloop 检查
+    features_file: features/engine.yml
+    feature_count: 2
+    ci_jobs: [engine-tests]
+    health:
+      maturity_avg: 2.0
+      has_unit: true
+      has_integration: false
+      has_e2e: false
+
+summary:
+  total_systems: 7
+  total_features: 37
+  ci_jobs_available: [secrets-scan, engine-tests, brain-unit, brain-integration, workspace-build, ci-passed]
+  maturity_distribution:
+    level_0: 17
+    level_1: 3
+    level_2: 14
+    level_3: 2
+    level_4: 0
+    level_5: 0
+  last_updated: "2026-04-03"

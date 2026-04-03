@@ -1,0 +1,29 @@
+# 开发引擎 (engine) - Feature 详情
+# 更新时间: 2026-04-03
+
+system_id: engine
+system_name: 开发引擎
+
+features:
+
+  - feature_id: engine_dev_workflow
+    name: /dev 开发工作流
+    purpose: Spec→Code→Integrate→Ship 四阶段开发流水线
+    code_path: packages/engine/skills/dev/
+    tests:
+      unit: packages/engine/tests/scripts/devloop-check-gates.test.ts
+      integration: null
+      e2e: null
+    ci_jobs: [engine-tests]
+    maturity: 2
+
+  - feature_id: engine_devloop_check
+    name: DevLoop 循环检查
+    purpose: Stop Hook 完成条件检查，驱动 /dev 自动推进
+    code_path: packages/engine/lib/devloop-check.sh
+    tests:
+      unit: packages/engine/tests/scripts/devloop-check-gates.test.ts
+      integration: null
+      e2e: null
+    ci_jobs: [engine-tests]
+    maturity: 2
