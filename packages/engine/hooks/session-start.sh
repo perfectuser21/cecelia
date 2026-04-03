@@ -4,7 +4,7 @@
 # 在每次对话第一条消息时，自动注入 Brain 当前状态（活跃任务摘要）
 #
 # 工作原理：
-# - 使用 PPID（Claude Code 进程 PID）作为 session 标识
+# - 使用 PPID + Claude 配置目录哈希作为 session 标识（避免多会话冲突）
 # - 首条消息 → 查询 Brain API → 输出 additionalContext → 创建 session 标记
 # - 后续消息 → 检测到标记 → 静默退出
 # - Brain 离线 → 静默退出（exit 0），不阻塞对话
@@ -13,7 +13,9 @@
 set -euo pipefail
 
 BRAIN_URL="http://localhost:5221"
-SESSION_MARKER="/tmp/.cecelia-session-${PPID}.injected"
+# P1 修复：PPID + Claude 配置目录哈希，避免多会话/多账号 PPID 冲突
+_SESSION_EXTRA=$(printf '%s' "${CLAUDE_CONFIG_DIR:-default}" | shasum 2>/dev/null | cut -c1-8 || echo "0")
+SESSION_MARKER="/tmp/.cecelia-session-${PPID}-${_SESSION_EXTRA}.injected"
 
 # 已经注入过 → 静默退出
 if [[ -f "$SESSION_MARKER" ]]; then

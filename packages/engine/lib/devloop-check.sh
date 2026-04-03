@@ -229,36 +229,16 @@ devloop_check() {
         _devloop_jq -n --arg pr "$pr_number" '{"status":"blocked","reason":"PR #\($pr) 状态非 OPEN","action":"检查 PR 状态"}'
         return 2; }
 
-    echo "[devloop-check] 自动合并 PR #$pr_number（CI 通过 + Stage 4 完成）..." >&2
-    if gh pr merge "$pr_number" --squash --delete-branch 2>&1; then
-        echo "[devloop-check] PR #$pr_number 已合并" >&2
-
-        # Brain execution-callback
-        local _cb_task_id=""
-        _cb_task_id=$(grep "^brain_task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        [[ -z "$_cb_task_id" ]] && \
-            _cb_task_id=$(grep "^task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-        if [[ -n "$_cb_task_id" ]]; then
-            local _cb_url="${BRAIN_URL:-http://localhost:5221}"
-            local _cb_repo="" _cb_pr_url="" _cb_goal_id=""
-            _cb_repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
-            [[ -n "$_cb_repo" ]] && _cb_pr_url="https://github.com/${_cb_repo}/pull/${pr_number}"
-            _cb_goal_id=$(grep "^goal_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
-            curl -s -X POST "$_cb_url/api/brain/execution-callback" \
-                -H "Content-Type: application/json" \
-                -d "{\"task_id\":\"$_cb_task_id\",\"status\":\"completed\",\"goal_id\":\"$_cb_goal_id\",\"pr_url\":\"${_cb_pr_url}\"}" \
-                --max-time 10 2>/dev/null || true
-        fi
-
-        _devloop_jq -n --arg pr "$pr_number" \
-            '{"status":"merged","reason":"PR #\($pr) 已自动合并","action":"执行 cleanup"}'
-        return 0
-    else
-        echo "[devloop-check] ⚠️ PR #$pr_number 合并失败，等待下次重试..." >&2
-        _devloop_jq -n --arg pr "$pr_number" \
-            '{"status":"blocked","reason":"PR #\($pr) 自动合并失败，等待下次重试"}'
-        return 2
-    fi
+    # P0 修复：不自动合并，输出 JSON action 建议用户手动合并
+    # 合并失败时由用户处理（不再自动重试）→ return 2
+    echo "[devloop-check] PR #$pr_number CI 通过 + Stage 4 完成，建议手动合并" >&2
+    local _repo_name=""
+    _repo_name=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
+    local _pr_url=""
+    [[ -n "$_repo_name" ]] && _pr_url="https://github.com/${_repo_name}/pull/${pr_number}"
+    _devloop_jq -n --arg pr "$pr_number" --arg url "$_pr_url" \
+        '{"status":"ready_to_merge","reason":"PR #\($pr) CI 通过 + Stage 4 完成，可以合并","action":"请手动执行: gh pr merge \($pr) --squash --delete-branch","pr_url":$url}'
+    return 0
 }
 
 # ============================================================================
