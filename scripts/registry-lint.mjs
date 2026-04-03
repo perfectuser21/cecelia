@@ -2,13 +2,15 @@
 /**
  * Registry Auto-Sync Phase 0 — 只读检查 + CI block
  *
- * 6 项检查:
+ * 8 项检查:
  * 1. entry_files 存在性：features/*.yml 每个 feature 的 code.entry_files 必须全部存在
  * 2. 测试文件存在性：tests.unit/integration/e2e/regression 列出的文件必须存在
  * 3. skill 文件存在性：skills[].entry_file 非 null 时必须存在
  * 4. maturity 诚实性：maturity 等级与文档/测试覆盖一致
  * 5. feature_count 一致性：system-registry.yml 的 feature_count 和实际数量一致
  * 6. schema_version 一致性：features/*.yml 注释中的版本和 system-registry.yml 一致
+ * 7. capability entry_file 存在性：capabilities[].entry_file 必须存在
+ * 8. capability test 文件存在性：capabilities[].tests 列出的文件必须存在
  *
  * 零外部依赖，纯 Node.js 实现
  */
@@ -197,7 +199,50 @@ function parseFeatures(content) {
       }
     }
 
-    features.push({ feature_id: featureId, maturity, entry_files: entryFiles, docs, tests, skills });
+    // capabilities — 提取 id, entry_file, tests
+    const capabilities = [];
+    const capBlocks = fullBlock.split(/^\s+- id:/m);
+    capBlocks.shift(); // 去掉 id 之前的部分
+    for (const cb of capBlocks) {
+      const fullCb = '      - id:' + cb;
+      const capId = extractScalar(fullCb, 'id');
+      const capEntryFile = extractScalar(fullCb, 'entry_file');
+      // 只处理在 capabilities 段内的 id（排除 skill_id 等其他 id 字段）
+      if (!capId || !capEntryFile) continue;
+
+      // 提取 capability 内的 tests
+      const capTests = { unit: [], integration: [], e2e: [] };
+      for (const cat of ['unit', 'integration', 'e2e']) {
+        const catRegex = new RegExp(`^\\s+${cat}:\\s*$`, 'm');
+        const catMatch = catRegex.exec(fullCb);
+        if (catMatch) {
+          const afterCat = fullCb.slice(catMatch.index + catMatch[0].length);
+          const lines = afterCat.split('\n');
+          for (const line of lines) {
+            const itemMatch = line.match(/^\s+-\s+(.+)$/);
+            if (itemMatch) {
+              let val = itemMatch[1].trim();
+              if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                val = val.slice(1, -1);
+              }
+              capTests[cat].push(val);
+            } else if (line.trim() && !line.match(/^\s*$/)) {
+              break;
+            }
+          }
+        }
+        // inline array 格式
+        const inlineRegex = new RegExp(`^\\s+${cat}:\\s*(\\[.+\\])\\s*$`, 'm');
+        const inlineMatch = inlineRegex.exec(fullCb);
+        if (inlineMatch && capTests[cat].length === 0) {
+          capTests[cat] = parseInlineArray(inlineMatch[1]);
+        }
+      }
+
+      capabilities.push({ id: capId, entry_file: capEntryFile, tests: capTests });
+    }
+
+    features.push({ feature_id: featureId, maturity, entry_files: entryFiles, docs, tests, skills, capabilities });
   }
 
   return features;
@@ -337,6 +382,34 @@ for (const ymlFile of featureYmls) {
     }
     if (maturity >= 3 && feature.tests.integration.length === 0) {
       fail(`${fid}: maturity=${maturity} >= 3 但 tests.integration 为空`);
+    }
+
+    // ─── 检查 7: capability entry_file 存在性 ─────────────────
+    console.log(`  [7/8] capabilities entry_file 存在性 (${fid})`);
+    for (const cap of feature.capabilities) {
+      if (cap.entry_file) {
+        if (pathExists(cap.entry_file)) {
+          ok(`capability ${cap.id}: ${cap.entry_file}`);
+        } else {
+          fail(`${fid}: capability ${cap.id} entry_file 不存在: ${cap.entry_file}`);
+        }
+      } else {
+        fail(`${fid}: capability ${cap.id} 缺少 entry_file`);
+      }
+    }
+
+    // ─── 检查 8: capability test 文件存在性 ───────────────────
+    console.log(`  [8/8] capabilities test 文件存在性 (${fid})`);
+    for (const cap of feature.capabilities) {
+      for (const cat of ['unit', 'integration', 'e2e']) {
+        for (const tf of cap.tests[cat]) {
+          if (pathExists(tf)) {
+            ok(`capability ${cap.id} tests.${cat}: ${tf}`);
+          } else {
+            fail(`${fid}: capability ${cap.id} tests.${cat} 文件不存在: ${tf}`);
+          }
+        }
+      }
     }
   }
 }

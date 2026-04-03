@@ -47,6 +47,17 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: memory_search_semantic
+        name: 语义搜索
+        entry_file: packages/brain/src/services/memory-service.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/memory-retriever.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -74,6 +85,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: memory_embedding_generate
+        name: 向量化生成
+        entry_file: packages/brain/src/embedding-service.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -101,6 +122,16 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: memory_dopamine_reward
+        name: 多巴胺奖励计算
+        entry_file: packages/brain/src/dopamine.js
+        maturity: 0
+        tests:
+          unit: []
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: []
@@ -129,6 +160,17 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: memory_suggestion_cycle_suggest
+        name: 行动建议生成
+        entry_file: packages/brain/src/suggestion-cycle.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/tick-suggestion-integration.test.js
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: [brain-unit]
       layers: [L3]
@@ -163,6 +205,17 @@ features:
       integration: []
       e2e: []
       regression: []
+    capabilities:
+      - id: memory_distilled_docs_maintain
+        name: 蒸馏文档维护
+        entry_file: packages/brain/src/distilled-docs.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/self-drive-state-reader.test.ts
+          integration: []
+          e2e: []
+        status: active
     ci:
       jobs: []
       layers: [L3]

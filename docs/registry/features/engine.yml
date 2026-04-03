@@ -48,6 +48,20 @@ features:
       e2e:
         - packages/engine/tests/playwright-runner.test.ts
       regression: []
+    capabilities:
+      - id: engine_dev_workflow_pipeline
+        name: 开发流水线
+        entry_file: packages/engine/skills/dev/
+        maturity: 4
+        tests:
+          unit:
+            - packages/engine/tests/scripts/devloop-check-gates.test.ts
+            - packages/engine/tests/hooks/branch-protect.test.ts
+          integration:
+            - packages/engine/tests/codex-runner.test.ts
+          e2e:
+            - packages/engine/tests/playwright-runner.test.ts
+        status: active
     ci:
       jobs: [engine-tests]
       layers: [L3, L4]
@@ -83,6 +97,18 @@ features:
       e2e:
         - packages/quality/tests/e2e-gateway.test.ts
       regression: []
+    capabilities:
+      - id: engine_devloop_check_gates
+        name: DevLoop 完成条件检查
+        entry_file: packages/engine/lib/devloop-check.sh
+        maturity: 2
+        tests:
+          unit:
+            - packages/engine/tests/scripts/devloop-check-gates.test.ts
+          integration: []
+          e2e:
+            - packages/quality/tests/e2e-gateway.test.ts
+        status: active
     ci:
       jobs: [engine-tests]
       layers: [L3, L4]
