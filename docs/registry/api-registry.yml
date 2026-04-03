@@ -1,6 +1,9 @@
 # API Registry - Brain REST API 接口清单
 # 更新时间: 2026-04-01
 # 基础 URL: http://localhost:5221
+#
+# [DEPRECATED] SSOT 已迁移至 features/*.yml（schema v2.0.0）
+# 此文件保留作为参考，后续可删除。新增/修改请直接编辑 features/*.yml 中对应 feature 的 apis 段。
 
 endpoints:
 

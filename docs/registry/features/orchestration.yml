@@ -1,5 +1,6 @@
 # 编排系统 (orchestration) - Feature 详情
 # 更新时间: 2026-04-03
+# Schema: v2.0.0
 
 system_id: orchestration
 system_name: 编排系统
@@ -9,44 +10,242 @@ features:
   - feature_id: tick_loop
     name: Tick 调度引擎
     purpose: 5s 轮询 / 5min 执行，驱动 Brain 自动化运转
-    code_path: packages/brain/src/tick.js
-    tests:
-      unit: packages/brain/src/__tests__/tick.test.js
-      integration: packages/brain/src/__tests__/tick-healing-integration.test.js
-      e2e: packages/brain/scripts/goldenpath-check.sh
-      regression: packages/brain/src/__tests__/tick-drain.test.js
-    ci_jobs: [brain-unit, brain-integration]
     maturity: 3
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/tick.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis:
+      - method: GET
+        path: /api/brain/context
+        service: brain
+        purpose: 一次获取全景摘要（OKR + 最近PR + 活跃任务 + 有效决策）
+        code_file: packages/brain/src/routes/status.js
+        auth: none
+      - method: GET
+        path: /api/brain/status
+        service: brain
+        purpose: 精简决策包（LLM 决策用），含 task/memory/policy 摘要
+        code_file: packages/brain/src/routes/status.js
+        auth: none
+      - method: GET
+        path: /api/brain/briefing
+        service: brain
+        purpose: Dashboard 首屏数据聚合
+        code_file: packages/brain/src/routes/status.js
+        auth: none
+      - method: POST
+        path: /api/brain/tick
+        service: brain
+        purpose: 手动触发一次 tick
+        code_file: packages/brain/src/routes/tick.js
+        auth: none
+      - method: GET
+        path: /api/brain/tick/status
+        service: brain
+        purpose: 获取 tick 状态（上次执行时间、动作数）
+        code_file: packages/brain/src/routes/tick.js
+        auth: none
+      - method: POST
+        path: /api/brain/tick/enable
+        service: brain
+        purpose: 启用自动 tick
+        code_file: packages/brain/src/routes/tick.js
+        auth: none
+      - method: POST
+        path: /api/brain/tick/disable
+        service: brain
+        purpose: 禁用自动 tick
+        code_file: packages/brain/src/routes/tick.js
+        auth: none
+      - method: POST
+        path: /api/brain/tick/drain
+        service: brain
+        purpose: 优雅关闭（暂停新任务，等待在途完成）
+        code_file: packages/brain/src/routes/tick.js
+        auth: none
+      - method: WS
+        path: /ws
+        service: brain
+        purpose: WebSocket，推送系统事件
+        code_file: packages/brain/server.js
+        auth: none
+    tests:
+      unit:
+        - packages/brain/src/__tests__/tick.test.js
+        - packages/brain/src/__tests__/tick-drain.test.js
+        - packages/brain/src/__tests__/tick-throttle.test.js
+      integration:
+        - packages/brain/src/__tests__/tick-healing-integration.test.js
+      e2e:
+        - packages/brain/scripts/goldenpath-check.sh
+      regression: []
+    ci:
+      jobs: [brain-unit, brain-integration]
+      layers: [L3, L4]
+    runtime: {}
 
   - feature_id: okr_system
     name: OKR 层级管理
     purpose: 管理 Vision→Objective→KR→Project→Scope→Initiative→Task 7层结构
-    code_path: packages/brain/src/routes/okr-hierarchy.js
-    tests:
-      unit: apps/api/src/okr/__tests__/trees.test.js
-      integration: null
-      e2e: null
-    ci_jobs: [brain-unit]
     maturity: 2
+    code:
+      root: packages/brain/src/routes
+      entry_files: [packages/brain/src/routes/okr-hierarchy.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: decomp
+        command: /decomp
+        entry_file: packages/workflows/skills/decomp/SKILL.md
+        version: "2.1.0"
+        status: active
+      - skill_id: intent_expand
+        command: intent_expand
+        entry_file: packages/engine/skills/intent-expand/SKILL.md
+        version: "1.0.0"
+        status: active
+    apis:
+      - method: GET
+        path: /api/brain/okr/current
+        service: brain
+        purpose: OKR 进度树形结构（objectives → key_results）
+        code_file: packages/brain/src/routes/okr-hierarchy.js
+        auth: none
+      - method: GET
+        path: /api/brain/okr/visions
+        service: brain
+        purpose: 列出所有 Vision
+        code_file: packages/brain/src/routes/okr-hierarchy.js
+        auth: none
+      - method: POST
+        path: /api/brain/okr/visions
+        service: brain
+        purpose: 创建 Vision
+        code_file: packages/brain/src/routes/okr-hierarchy.js
+        auth: none
+      - method: GET
+        path: /api/brain/okr/objectives
+        service: brain
+        purpose: 列出所有 Objective
+        code_file: packages/brain/src/routes/okr-hierarchy.js
+        auth: none
+      - method: POST
+        path: /api/brain/okr/objectives
+        service: brain
+        purpose: 创建 Objective
+        code_file: packages/brain/src/routes/okr-hierarchy.js
+        auth: none
+      - method: GET
+        path: /api/brain/okr/key-results
+        service: brain
+        purpose: 列出所有 Key Result
+        code_file: packages/brain/src/routes/okr-hierarchy.js
+        auth: none
+      - method: POST
+        path: /api/brain/okr/key-results
+        service: brain
+        purpose: 创建 Key Result
+        code_file: packages/brain/src/routes/okr-hierarchy.js
+        auth: none
+    tests:
+      unit:
+        - apps/api/src/okr/__tests__/trees.test.js
+      integration:
+        - packages/brain/src/__tests__/tick-goal-eval-integration.test.js
+        - apps/api/tests/panorama-full.test.ts
+      e2e: []
+      regression: []
+    ci:
+      jobs: [brain-unit]
+      layers: [L3]
+    runtime: {}
 
   - feature_id: area_scheduler
     name: Area 调度器
     purpose: 根据优先级自动选择下一个执行的工作区域
-    code_path: packages/brain/src/area-scheduler.js
-    tests:
-      unit: null
-      integration: null
-      e2e: null
-    ci_jobs: []
     maturity: 0
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/area-scheduler.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: []
+      layers: []
+    runtime: {}
 
   - feature_id: decomposition_engine
     name: OKR 拆解引擎
     purpose: 将 KR 自动拆解为具体 Project/Scope/Initiative/Task
-    code_path: packages/brain/src/decomposition-checker.js
-    tests:
-      unit: packages/brain/src/__tests__/tick-kr-decomp.test.js
-      integration: null
-      e2e: null
-    ci_jobs: [brain-unit]
     maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/decomposition-checker.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: plan
+        command: /plan
+        entry_file: packages/workflows/skills/plan/SKILL.md
+        version: "1.8.0"
+        status: active
+      - skill_id: decomp
+        command: /decomp
+        entry_file: packages/workflows/skills/decomp/SKILL.md
+        version: "2.1.0"
+        status: active
+      - skill_id: decomp_check
+        command: /decomp-check
+        entry_file: packages/workflows/skills/decomp-check/SKILL.md
+        version: "2.1.0"
+        status: active
+      - skill_id: autumnrice
+        command: /autumnrice
+        entry_file: packages/workflows/skills/autumnrice/SKILL.md
+        version: "7.0.0"
+        status: active
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/tick-kr-decomp.test.js
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: [brain-unit]
+      layers: [L3]
+    runtime: {}

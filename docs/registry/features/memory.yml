@@ -1,5 +1,6 @@
 # 记忆系统 (memory) - Feature 详情
 # 更新时间: 2026-04-03
+# Schema: v2.0.0
 
 system_id: memory
 system_name: 记忆系统
@@ -9,54 +10,160 @@ features:
   - feature_id: memory_search
     name: 语义搜索记忆
     purpose: 根据语义相似度搜索历史任务/决策/对话
-    code_path: packages/brain/src/services/memory-service.js
-    tests:
-      unit: packages/brain/src/__tests__/memory-retriever.test.js
-      integration: null
-      e2e: null
-    ci_jobs: [brain-unit]
     maturity: 2
+    code:
+      root: packages/brain/src/services
+      entry_files: [packages/brain/src/services/memory-service.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: cecelia_brain
+        command: /cecelia-brain
+        entry_file: packages/workflows/skills/cecelia-brain/SKILL.md
+        version: "2.0.0"
+        status: active
+    apis:
+      - method: POST
+        path: /api/brain/memory/search
+        service: brain
+        purpose: 语义搜索历史记录
+        code_file: packages/brain/src/routes/memory.js
+        auth: none
+      - method: GET
+        path: /api/brain/memory/detail/:id
+        service: brain
+        purpose: 获取历史记录完整详情
+        code_file: packages/brain/src/routes/memory.js
+        auth: none
+    tests:
+      unit:
+        - packages/brain/src/__tests__/memory-retriever.test.js
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: [brain-unit]
+      layers: [L3]
+    runtime: {}
 
   - feature_id: memory_embedding
     name: 向量化生成
     purpose: 为任务/对话/学习生成 embedding，支持语义搜索
-    code_path: packages/brain/src/embedding-service.js
-    tests:
-      unit: null
-      integration: null
-      e2e: null
-    ci_jobs: []
     maturity: 0
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/embedding-service.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: []
+      layers: []
+    runtime: {}
 
   - feature_id: memory_dopamine
     name: 多巴胺奖励
     purpose: 任务完成→奖赏计算→习惯强化
-    code_path: packages/brain/src/dopamine.js
-    tests:
-      unit: null
-      integration: null
-      e2e: null
-    ci_jobs: []
     maturity: 0
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/dopamine.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: []
+      layers: []
+    runtime: {}
 
   - feature_id: memory_suggestion_cycle
     name: 建议循环
     purpose: 将 active desires 注入 suggestion pipeline，生成行动建议
-    code_path: packages/brain/src/suggestion-cycle.js
-    tests:
-      unit: packages/brain/src/__tests__/tick-suggestion-integration.test.js
-      integration: null
-      e2e: null
-    ci_jobs: [brain-unit]
     maturity: 1
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/suggestion-cycle.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/tick-suggestion-integration.test.js
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: [brain-unit]
+      layers: [L3]
+    runtime: {}
 
   - feature_id: memory_distilled_docs
     name: 蒸馏文档
     purpose: 维护 SOUL/WORLD_STATE/SELF_MODEL/USER_PROFILE 四大核心文档
-    code_path: packages/brain/src/distilled-docs.js
-    tests:
-      unit: null
-      integration: null
-      e2e: null
-    ci_jobs: []
     maturity: 1
+    code:
+      root: packages/brain/src
+      entry_files: [packages/brain/src/distilled-docs.js]
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis:
+      - method: GET
+        path: /api/brain/design-docs
+        service: brain
+        purpose: 查询设计文档/日报
+        code_file: packages/brain/src/routes/knowledge.js
+        auth: none
+    tests:
+      unit:
+        - packages/brain/src/__tests__/self-drive-state-reader.test.ts
+      integration: []
+      e2e: []
+      regression: []
+    ci:
+      jobs: []
+      layers: [L3]
+    runtime: {}

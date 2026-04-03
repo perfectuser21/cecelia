@@ -3,6 +3,9 @@
 # 说明: 每个 system 是一组相关 feature 的集合，详情见 features/*.yml
 # CI Jobs: secrets-scan | registry-lint | eslint | pr-size-check | engine-tests | brain-unit | brain-integration | workspace-build | ci-passed
 
+schema_version: "2.0.0"
+repo: cecelia
+
 systems:
 
   - id: task
