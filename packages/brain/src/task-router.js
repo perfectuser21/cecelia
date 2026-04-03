@@ -28,6 +28,8 @@ const VALID_TASK_TYPES = [
   'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
+  // Harness v2.0 Sprint 循环（Generator ↔ Evaluator 对抗）
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix',
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
   'scope_plan', 'project_plan',
   // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives 三层拆解）
@@ -89,6 +91,10 @@ const SKILL_WHITELIST = {
   'spec_review': '/spec-review',            // Spec 审查
   'code_review_gate': '/code-review-gate',  // 代码质量门禁
   'initiative_review': '/initiative-review', // Initiative 整体审查
+  // Harness v2.0 Sprint 循环（Generator ↔ Evaluator 对抗）
+  'sprint_generate': '/sprint-generator',    // Generator 写 contract + 代码
+  'sprint_evaluate': '/sprint-evaluator',    // Evaluator 测运行中的代码
+  'sprint_fix': '/sprint-generator',         // Generator 修复（复用 Generator skill）
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
@@ -189,6 +195,10 @@ const LOCATION_MAP = {
   'content-generate': 'xian',  // 图片生成 → 西安 (/content-creator)
   'content-image-review': 'xian', // 图片审核 → 西安（规则+视觉检查）
   'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
+  // Harness v2.0 Sprint 循环 → US 本机（需读 worktree + 跑测试）
+  'sprint_generate': 'us',        // Generator 写 contract + 代码 → US 本机
+  'sprint_evaluate': 'us',        // Evaluator 测代码 → US 本机（需启动服务跑测试）
+  'sprint_fix': 'us',             // Generator 修复 → US 本机
   // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
   'prd_review': 'us',            // PRD 审查 → US 本机 Codex
   'spec_review': 'us',           // Spec 审查 → US 本机 Codex
