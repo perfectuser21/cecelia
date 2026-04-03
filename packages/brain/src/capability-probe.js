@@ -163,16 +163,16 @@ async function probeMonitorLoop() {
 // === 高层意识循环探针 ===
 
 async function probeRumination() {
-  // 检查 48h 内有没有反刍产出（synthesis_archive 表）
+  // 阶段 1：检查 48h 内有没有反刍产出（synthesis_archive 表）
   // 使用 48h 而非 24h：runRumination 和 runDailySynthesis 两路写入可能产生约 40h 时间差
   // （runRumination 早上写入后，同日调度器 hasTodaySynthesis 检测到已存在而跳过）
-  const result = await pool.query(
+  const archiveResult = await pool.query(
     `SELECT count(*) AS cnt, max(created_at) AS last_run
      FROM synthesis_archive
      WHERE created_at > NOW() - INTERVAL '48 hours'`
   );
-  const cnt = parseInt(result.rows[0]?.cnt || 0);
-  const lastRun = result.rows[0]?.last_run;
+  const cnt = parseInt(archiveResult.rows[0]?.cnt || 0);
+  const lastRun = archiveResult.rows[0]?.last_run;
 
   if (cnt > 0) {
     return {
@@ -181,7 +181,7 @@ async function probeRumination() {
     };
   }
 
-  // 48h 内无产出 → 检查是否有待消化内容
+  // 阶段 2：48h 内无 synthesis → 检查是否有待消化内容
   // 若无待消化内容，系统处于合理静默状态（非故障）
   const pendingResult = await pool.query(
     `SELECT count(*) AS cnt FROM learnings
@@ -196,9 +196,38 @@ async function probeRumination() {
     };
   }
 
+  // 阶段 3：有未消化内容但无近期 synthesis → 判断是误报还是真实故障
+  // 误报场景："空白日"无新 learnings → 无 synthesis 写入 → 新 learnings 晚到 → 旧 synthesis 滑出 48h 窗口
+  // 真实故障：rumination 完全停止运行（无任何 rumination_output 事件）
+  //
+  // 检查 24h 内是否有 rumination_output 事件（rumination 实际运行的证据）
+  const runEventResult = await pool.query(
+    `SELECT count(*) AS cnt, max(created_at) AS last_event
+     FROM cecelia_events
+     WHERE event_type = 'rumination_output'
+       AND created_at > NOW() - INTERVAL '24 hours'`
+  );
+  const recentRuns = parseInt(runEventResult.rows[0]?.cnt || 0);
+  const lastEvent = runEventResult.rows[0]?.last_event;
+
+  // 检查 synthesis_archive 是否超过 72h 未更新（更严格的兜底）
+  const staleResult = await pool.query(
+    `SELECT count(*) AS cnt FROM synthesis_archive
+     WHERE created_at > NOW() - INTERVAL '72 hours'`
+  );
+  const within72h = parseInt(staleResult.rows[0]?.cnt || 0);
+
+  if (recentRuns > 0 && within72h > 0) {
+    // rumination 在运行，synthesis 只是暂时没更新（正常的"空白日"场景）
+    return {
+      ok: true,
+      detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} (running: recent_outputs=${recentRuns} last_event=${lastEvent})`,
+    };
+  }
+
   return {
     ok: false,
-    detail: `48h_count=${cnt} last_run=${lastRun || 'never'} undigested=${undigested}`,
+    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns}`,
   };
 }
 
