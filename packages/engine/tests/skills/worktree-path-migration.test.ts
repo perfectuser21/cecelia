@@ -63,42 +63,6 @@ describe("Worktree path migration", () => {
       }).not.toThrow();
     });
 
-    // v16.0.0: force_cleanup_worktree函数已删除（Engine重构）
-    it.skip("should have force_cleanup_worktree function", () => {
-      const content = readFileSync(STOP_DEV, "utf-8");
-      expect(content).toContain("force_cleanup_worktree()");
-    });
-
-    // v16.0.0: force_cleanup_worktree函数已删除（Engine重构）
-    it.skip("should call force_cleanup_worktree in cleanup_done exit path", () => {
-      const content = readFileSync(STOP_DEV, "utf-8");
-      // cleanup_done path should call force_cleanup_worktree before rm -f
-      const cleanupDoneSection = content.indexOf('cleanup_done: true');
-      const nextRmF = content.indexOf('rm -f "$DEV_MODE_FILE"', cleanupDoneSection);
-      const forceCleanup = content.indexOf('force_cleanup_worktree', cleanupDoneSection);
-      expect(forceCleanup).toBeGreaterThan(cleanupDoneSection);
-      expect(forceCleanup).toBeLessThan(nextRmF);
-    });
-
-    // v16.0.0: pipeline_rescue机制已删除（Engine重构）
-    it.skip("should use pipeline_rescue instead of hard retry limit (v15.4.0)", () => {
-      const content = readFileSync(STOP_DEV, "utf-8");
-      // v15.4.0: 不再有硬限制退出路径，改为 pipeline_rescue 机制
-      expect(content).toContain('pipeline_rescue');
-      expect(content).toContain('RESCUE_CHECK_INTERVAL');
-      expect(content).not.toContain('MAX_RETRIES=30');
-    });
-
-    // v16.0.0: force_cleanup_worktree函数已删除（Engine重构）
-    it.skip("should call force_cleanup_worktree in PR merged exit path", () => {
-      const content = readFileSync(STOP_DEV, "utf-8");
-      // PR merged path should call force_cleanup_worktree before rm -f
-      const mergedSection = content.indexOf('工作流完成！正在清理');
-      const rmSection = content.indexOf('rm -f "$DEV_MODE_FILE"', mergedSection);
-      const forceCleanup = content.indexOf('force_cleanup_worktree', mergedSection);
-      expect(forceCleanup).toBeGreaterThan(mergedSection);
-      expect(forceCleanup).toBeLessThan(rmSection);
-    });
   });
 
   describe("cleanup.sh", () => {
