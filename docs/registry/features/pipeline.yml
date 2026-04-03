@@ -1,0 +1,95 @@
+# 内容管道 (pipeline) - Feature 详情
+# 更新时间: 2026-04-03
+
+system_id: pipeline
+system_name: 内容管道
+
+features:
+
+  - feature_id: pipeline_research
+    name: 内容研究
+    purpose: Pipeline 第1步：抓取选题相关资料
+    code_path: packages/brain/src/content-pipeline-executors.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: pipeline_copywriting
+    name: 文案生成
+    purpose: Pipeline 第2步：AI 生成内容文案
+    code_path: packages/brain/src/content-pipeline-executors.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: pipeline_copy_review
+    name: 文案审查
+    purpose: Pipeline 第3步：审查文案质量，最多重试3次
+    code_path: packages/brain/src/content-pipeline-executors.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: pipeline_generate
+    name: 信息图生成
+    purpose: Pipeline 第4步：生成配套图片
+    code_path: packages/brain/src/content-pipeline-executors.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: pipeline_image_review
+    name: 图片审查
+    purpose: Pipeline 第5步：审查图片质量，最多重试3次
+    code_path: packages/brain/src/content-pipeline-executors.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: pipeline_export
+    name: 内容导出归档
+    purpose: Pipeline 第6步：归档产出物，创建发布任务
+    code_path: packages/brain/src/content-pipeline-executors.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: pipeline_orchestrator
+    name: Pipeline 状态机编排
+    purpose: 管理 Pipeline 整体状态流转，处理 healing 和重试
+    code_path: packages/brain/src/content-pipeline-orchestrator.js
+    tests:
+      unit: tests/content-pipeline-run-api.test.js
+      integration: null
+      e2e: null
+    ci_jobs: [brain-unit]
+    maturity: 1
+
+  - feature_id: pipeline_patrol
+    name: Pipeline 巡航监控
+    purpose: 横向巡航所有活跃 pipeline，外围守护防止卡死
+    code_path: packages/brain/src/pipeline-patrol.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0

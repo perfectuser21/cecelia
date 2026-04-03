@@ -1,0 +1,62 @@
+# 记忆系统 (memory) - Feature 详情
+# 更新时间: 2026-04-03
+
+system_id: memory
+system_name: 记忆系统
+
+features:
+
+  - feature_id: memory_search
+    name: 语义搜索记忆
+    purpose: 根据语义相似度搜索历史任务/决策/对话
+    code_path: packages/brain/src/services/memory-service.js
+    tests:
+      unit: packages/brain/src/__tests__/memory-retriever.test.js
+      integration: null
+      e2e: null
+    ci_jobs: [brain-unit]
+    maturity: 2
+
+  - feature_id: memory_embedding
+    name: 向量化生成
+    purpose: 为任务/对话/学习生成 embedding，支持语义搜索
+    code_path: packages/brain/src/embedding-service.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: memory_dopamine
+    name: 多巴胺奖励
+    purpose: 任务完成→奖赏计算→习惯强化
+    code_path: packages/brain/src/dopamine.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 0
+
+  - feature_id: memory_suggestion_cycle
+    name: 建议循环
+    purpose: 将 active desires 注入 suggestion pipeline，生成行动建议
+    code_path: packages/brain/src/suggestion-cycle.js
+    tests:
+      unit: packages/brain/src/__tests__/tick-suggestion-integration.test.js
+      integration: null
+      e2e: null
+    ci_jobs: [brain-unit]
+    maturity: 1
+
+  - feature_id: memory_distilled_docs
+    name: 蒸馏文档
+    purpose: 维护 SOUL/WORLD_STATE/SELF_MODEL/USER_PROFILE 四大核心文档
+    code_path: packages/brain/src/distilled-docs.js
+    tests:
+      unit: null
+      integration: null
+      e2e: null
+    ci_jobs: []
+    maturity: 1

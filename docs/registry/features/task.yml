@@ -1,0 +1,64 @@
+# 任务系统 (task) - Feature 详情
+# 更新时间: 2026-04-03
+# 成熟度: 0=只有代码 1=+文档 2=+unit 3=+integration+ADR 4=+e2e+api_docs 5=+runbook+regression
+
+system_id: task
+system_name: 任务系统
+
+features:
+
+  - feature_id: task_create
+    name: 创建任务
+    purpose: 注册新任务到 Brain，分配 ID 和类型
+    code_path: packages/brain/src/routes/tasks.js
+    tests:
+      unit: packages/brain/src/__tests__/tick.test.js
+      integration: null
+      e2e: packages/brain/scripts/task-lifecycle-check.sh
+    ci_jobs: [brain-unit]
+    maturity: 2
+
+  - feature_id: task_route
+    name: 路由分发任务
+    purpose: 识别任务类型，路由到 US/HK 对应 agent 执行
+    code_path: packages/brain/src/task-router.js
+    tests:
+      unit: packages/brain/src/__tests__/task-router-failover.test.js
+      integration: null
+      e2e: null
+    ci_jobs: [brain-unit]
+    maturity: 2
+
+  - feature_id: task_callback
+    name: 接收执行反馈
+    purpose: 接收 agent 执行完成/失败回调，更新任务状态
+    code_path: packages/brain/src/routes/execution.js
+    tests:
+      unit: packages/brain/src/__tests__/callback-atomic.test.js
+      integration: null
+      e2e: null
+      regression: packages/brain/src/__tests__/callback-dev-serial.test.js
+    ci_jobs: [brain-unit]
+    maturity: 2
+
+  - feature_id: task_quarantine
+    name: 隔离异常任务
+    purpose: 检测并隔离反复失败的任务，防止无限循环
+    code_path: packages/brain/src/quarantine.js
+    tests:
+      unit: packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
+      integration: null
+      e2e: null
+    ci_jobs: [brain-unit]
+    maturity: 2
+
+  - feature_id: task_lifecycle_e2e
+    name: 任务全生命周期
+    purpose: 创建→分发→执行→完成 完整链路
+    code_path: packages/brain/scripts/task-lifecycle-check.sh
+    tests:
+      unit: null
+      integration: null
+      e2e: packages/brain/scripts/task-lifecycle-check.sh
+    ci_jobs: []
+    maturity: 2
