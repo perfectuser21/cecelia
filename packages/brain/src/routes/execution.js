@@ -94,8 +94,12 @@ router.post('/execution-callback', async (req, res) => {
         const taskType = taskRow.rows[0]?.task_type;
         const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
         if (taskType === 'dev' && !isDecomposition) {
-          newStatus = 'completed_no_pr';
-          console.warn(`[execution-callback] Dev task ${task_id} completed without PR → completed_no_pr`);
+          // Harness 模式的 dev task 不降级 — 由 sprint_evaluate 验证，不需要 PR
+          const isHarness = taskRow.rows[0]?.payload?.harness_mode;
+          if (!isHarness) {
+            newStatus = 'completed_no_pr';
+            console.warn(`[execution-callback] Dev task ${task_id} completed without PR → completed_no_pr`);
+          }
         }
       } catch (prCheckErr) {
         console.error(`[execution-callback] PR check error (non-fatal): ${prCheckErr.message}`);
