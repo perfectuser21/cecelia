@@ -34,7 +34,7 @@ export default [
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'no-undef': 'warn',
       'no-constant-condition': 'warn',
-      'no-empty': ['warn', { allowEmpty: true }],
+      'no-empty': ['warn', { allowEmptyCatch: true }],
     },
   },
 ];
