@@ -485,6 +485,7 @@ queued → in_progress → completed
 | content-image-review | 西安 | 图片审核阶段 (/content-creator) | - | general |
 | content-export | 西安 | 内容导出阶段，生成卡片并上传 NAS (/content-creator) | - | general |
 | content_publish | US | 内容发布阶段，按平台路由到对应 publisher skill（douyin/kuaishou 等需要 CDP 浏览器） | Sonnet / - | 默认 anthropic |
+| platform_scraper | CN | 自媒体平台数据采集（抖音/小红书/视频号/公众号/快手/知乎，CDP 浏览器） | Sonnet / - | 默认 anthropic |
 
 ---
 
