@@ -1495,54 +1495,62 @@ function buildRetryContext(task) {
   const payload = task.payload || {};
   const failureCount = payload.failure_count || 0;
   const classification = payload.failure_classification;
-  const watchdogKill = payload.watchdog_kill;
 
-  // No retry context on first execution
-  if (failureCount === 0 && !classification) {
-    return '';
-  }
+  if (failureCount === 0 && !classification) return '';
 
-  const parts = [];
+  const parts = [
+    _retryFailureBlock(classification, payload.watchdog_kill),
+    _retryFeedbackBlock(task.feedback),
+  ].filter(Boolean);
 
-  // Failure classification block
+  if (parts.length === 0) return '';
+
+  return _assembleRetryContext(failureCount, parts.join('\n\n'));
+}
+
+/** @returns {string|null} */
+function _retryFailureBlock(classification, watchdogKill) {
   if (classification) {
     const cls = classification.class || 'unknown';
     const reason = classification.retry_strategy?.reason || watchdogKill?.reason || '';
-    parts.push(`上次执行失败，原因分类：${cls}${reason ? `\n失败详情：${reason}` : ''}`);
-  } else if (watchdogKill?.reason) {
-    parts.push(`上次执行被 Watchdog 终止：${watchdogKill.reason}`);
+    return `上次执行失败，原因分类：${cls}${reason ? `\n失败详情：${reason}` : ''}`;
   }
-
-  // Feedback block (most recent entry)
-  const feedbackArr = Array.isArray(task.feedback) ? task.feedback : [];
-  const lastFeedback = feedbackArr.length > 0 ? feedbackArr[feedbackArr.length - 1] : null;
-  if (lastFeedback) {
-    if (lastFeedback.summary) {
-      parts.push(`### 上次反馈摘要\n${lastFeedback.summary}`);
-    }
-    const issuesFound = lastFeedback.issues_found;
-    if (Array.isArray(issuesFound) && issuesFound.length > 0) {
-      parts.push(`### 发现的问题\n${issuesFound.map(i => `- ${i}`).join('\n')}`);
-    } else if (typeof issuesFound === 'string' && issuesFound.trim()) {
-      parts.push(`### 发现的问题\n${issuesFound}`);
-    }
+  if (watchdogKill?.reason) {
+    return `上次执行被 Watchdog 终止：${watchdogKill.reason}`;
   }
+  return null;
+}
 
-  if (parts.length === 0) {
-    return '';
+/** @returns {string|null} */
+function _retryFeedbackBlock(feedback) {
+  const feedbackArr = Array.isArray(feedback) ? feedback : [];
+  const lastFeedback = feedbackArr[feedbackArr.length - 1];
+  if (!lastFeedback) return null;
+
+  const parts = [];
+  if (lastFeedback.summary) {
+    parts.push(`### 上次反馈摘要\n${lastFeedback.summary}`);
   }
+  const issuesFound = lastFeedback.issues_found;
+  if (Array.isArray(issuesFound) && issuesFound.length > 0) {
+    parts.push(`### 发现的问题\n${issuesFound.map(i => `- ${i}`).join('\n')}`);
+  } else if (typeof issuesFound === 'string' && issuesFound.trim()) {
+    parts.push(`### 发现的问题\n${issuesFound}`);
+  }
+  return parts.length > 0 ? parts.join('\n\n') : null;
+}
 
-  const MAX_RETRY_CONTEXT_LENGTH = 2000;
+const MAX_RETRY_CONTEXT_LENGTH = 2000;
+
+/** @returns {string} */
+function _assembleRetryContext(failureCount, body) {
   const header = `\n\n## ⚠️ 重试上下文（第 ${failureCount} 次尝试）\n\n`;
   const footer = '\n\n请在本次执行中重点关注以上问题，避免重复失败。';
-  const body = parts.join('\n\n');
   let full = header + body + footer;
-
   if (full.length > MAX_RETRY_CONTEXT_LENGTH) {
-    const allowedBody = MAX_RETRY_CONTEXT_LENGTH - header.length - footer.length - 12; // 12 for '...[已截断]'
+    const allowedBody = MAX_RETRY_CONTEXT_LENGTH - header.length - footer.length - 12;
     full = header + body.slice(0, Math.max(0, allowedBody)) + '...[已截断]' + footer;
   }
-
   return full;
 }
 
