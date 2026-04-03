@@ -190,7 +190,8 @@ devloop_check() {
             local _cleanup_script=""
             for _cs in \
                 "${PROJECT_ROOT:-}/packages/engine/skills/dev/scripts/cleanup.sh" \
-                "$HOME/.claude/skills/dev/scripts/cleanup.sh"; do
+                "$HOME/.claude/skills/dev/scripts/cleanup.sh" \
+                "$HOME/.claude-account1/skills/dev/scripts/cleanup.sh"; do
                 [[ -f "$_cs" ]] && { _cleanup_script="$_cs"; break; }
             done
             if [[ -n "$_cleanup_script" ]]; then
