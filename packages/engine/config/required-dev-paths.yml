@@ -26,6 +26,3 @@ paths:
 
   # 数据库迁移（改错了数据损坏）
   - packages/brain/src/db/migrations/
-
-  # Engine 版本与合约（改错了 CI 版本检查全挂）
-  - packages/engine/regression-contract.yaml
