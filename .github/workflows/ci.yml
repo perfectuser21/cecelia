@@ -140,7 +140,7 @@ jobs:
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # TODO: 修完 desire-system/promotion-job/quarantine-release 后去掉
+    continue-on-error: true  # Worker OOM: 506 test files 导致 ubuntu-latest 内存不足
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -177,9 +177,22 @@ jobs:
         with:
           node-version: '22'
       - run: cd packages/brain && npm ci
+      - name: Run Migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: cd packages/brain && node src/migrate.js
       - name: Integration Tests
         env:
           DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
           NODE_ENV: test
         run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
 

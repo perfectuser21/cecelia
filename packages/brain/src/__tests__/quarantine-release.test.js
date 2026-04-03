@@ -1,294 +1,436 @@
 /**
- * quarantine-release.test.js - 隔离区自动释放机制测试
+ * quarantine-release.test.js - 隔离区自动释放机制测试（DB-mocked 版本）
+ *
+ * 所有数据库操作使用 vitest mock，无需真实 PostgreSQL 连接。
+ * 测试逻辑：验证 quarantineTask 和 checkExpiredQuarantineTasks 的行为。
  */
 
-import { describe, it, expect, beforeEach, vi, beforeAll } from 'vitest';
-let pool;
-let quarantineTask, checkExpiredQuarantineTasks, getQuarantinedTasks, QUARANTINE_REASONS, FAILURE_CLASS;
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ quarantineTask, checkExpiredQuarantineTasks, getQuarantinedTasks, QUARANTINE_REASONS, FAILURE_CLASS } = await import('../quarantine.js'));
-});
+// ============================================================
+// Mock 所有外部依赖
+// ============================================================
 
-describe('Quarantine Auto-Release', () => {
-  let testTaskId;
+// 用于存储 mock 的任务数据（模拟数据库）
+let tasksStore = {};
 
-  beforeEach(async () => {
-    // 清理测试数据
-    await pool.query("DELETE FROM tasks WHERE title LIKE 'TEST_%'");
+const mockPool = {
+  query: vi.fn(),
+};
 
-    // 创建测试任务
-    const result = await pool.query(`
-      INSERT INTO tasks (title, task_type, status, payload)
-      VALUES ('TEST_quarantine_release', 'dev', 'queued', '{}')
-      RETURNING id
-    `);
-    testTaskId = result.rows[0].id;
+vi.mock('../db.js', () => ({
+  default: mockPool,
+}));
+
+vi.mock('../event-bus.js', () => ({
+  emit: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../learning.js', () => ({
+  upsertLearning: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock alertness — 默认 NORMAL（允许释放）
+vi.mock('../alertness/index.js', () => ({
+  getCurrentAlertness: vi.fn(() => ({ level: 0, levelName: 'NORMAL' })),
+  ALERTNESS_LEVELS: { NORMAL: 0, ELEVATED: 1, ALERT: 2, PANIC: 3 },
+}));
+
+// Mock llm-caller（quarantineTask 在 repeated_failure 时动态 import）
+vi.mock('../llm-caller.js', () => ({
+  callLLM: vi.fn().mockResolvedValue({ text: '分析结果', model: 'test', provider: 'test', elapsed_ms: 10 }),
+}));
+
+// 导入被测模块
+const {
+  quarantineTask,
+  checkExpiredQuarantineTasks,
+  getQuarantinedTasks,
+  QUARANTINE_REASONS,
+  FAILURE_CLASS,
+} = await import('../quarantine.js');
+
+// ============================================================
+// 辅助函数
+// ============================================================
+
+/**
+ * 创建一个模拟任务对象
+ */
+function createMockTask(id, overrides = {}) {
+  return {
+    id,
+    title: `TEST_task_${id}`,
+    task_type: 'dev',
+    status: 'queued',
+    payload: {},
+    ...overrides,
+  };
+}
+
+/**
+ * 配置 mockPool.query 使其模拟 DB 行为。
+ * 支持 SELECT/UPDATE tasks 表基本操作。
+ */
+function setupMockDB(initialTasks = {}) {
+  tasksStore = { ...initialTasks };
+
+  mockPool.query.mockImplementation((sql, params) => {
+    // SELECT task by ID
+    if (sql.includes('SELECT') && sql.includes('FROM tasks') && sql.includes('$1') && params?.[0]) {
+      const task = tasksStore[params[0]];
+      return { rows: task ? [{ ...task }] : [] };
+    }
+
+    // UPDATE tasks SET status = 'quarantined'
+    if (sql.includes('UPDATE tasks') && sql.includes("status = 'quarantined'") && params?.[0]) {
+      const taskId = params[0];
+      if (tasksStore[taskId]) {
+        tasksStore[taskId].status = 'quarantined';
+        if (params[1]) {
+          const payloadUpdate = JSON.parse(params[1]);
+          tasksStore[taskId].payload = { ...tasksStore[taskId].payload, ...payloadUpdate };
+        }
+      }
+      return { rows: [] };
+    }
+
+    // UPDATE tasks SET status (release)
+    if (sql.includes('UPDATE tasks') && sql.includes('SET status = $2') && params) {
+      const [taskId, newStatus, newPayload] = params;
+      if (tasksStore[taskId]) {
+        tasksStore[taskId].status = newStatus;
+        tasksStore[taskId].payload = JSON.parse(newPayload);
+      }
+      return { rows: [] };
+    }
+
+    // SELECT quarantined tasks with expired release_at
+    if (sql.includes("status = 'quarantined'") && sql.includes('release_at')) {
+      const expired = Object.values(tasksStore).filter(t => {
+        if (t.status !== 'quarantined') return false;
+        const releaseAt = t.payload?.quarantine_info?.release_at;
+        if (!releaseAt || releaseAt === 'null') return false;
+        return new Date(releaseAt) < new Date();
+      });
+      return { rows: expired };
+    }
+
+    // SELECT quarantined tasks (getQuarantinedTasks)
+    if (sql.includes("status = 'quarantined'") && sql.includes('ORDER BY')) {
+      const quarantined = Object.values(tasksStore).filter(t => t.status === 'quarantined');
+      return { rows: quarantined };
+    }
+
+    return { rows: [] };
+  });
+}
+
+// ============================================================
+// 测试
+// ============================================================
+
+describe('Quarantine Auto-Release (mocked)', () => {
+  const TEST_TASK_ID = 'test-task-001';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupMockDB({
+      [TEST_TASK_ID]: createMockTask(TEST_TASK_ID),
+    });
   });
 
-  describe('释放条件检查', () => {
-    it('隔离时间超过阈值时可以释放', async () => {
-      // 隔离任务（TTL=1小时）
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.RESOURCE_HOG, {
+  // ============================================================
+  // quarantineTask 基本功能
+  // ============================================================
+  describe('quarantineTask 基本功能', () => {
+    it('隔离任务后状态变为 quarantined', async () => {
+      const result = await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.RESOURCE_HOG, {
         failure_class: FAILURE_CLASS.RESOURCE,
       });
 
-      // 手动设置 release_at 为过去时间
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '1 minute')::text)
-        )
-        WHERE id = $1
-      `, [testTaskId]);
-
-      // 检查释放
-      const released = await checkExpiredQuarantineTasks();
-
-      expect(released.length).toBeGreaterThan(0);
-      expect(released.some(r => r.task_id === testTaskId)).toBe(true);
-
-      // 验证任务状态已恢复为 queued
-      const task = await pool.query('SELECT status FROM tasks WHERE id = $1', [testTaskId]);
-      expect(task.rows[0].status).toBe('queued');
+      expect(result.success).toBe(true);
+      expect(tasksStore[TEST_TASK_ID].status).toBe('quarantined');
     });
 
-    it('隔离时间未到时不释放', async () => {
-      // 隔离任务（TTL=1小时）
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.RESOURCE_HOG, {
+    it('已隔离的任务不重复处理', async () => {
+      // 先隔离
+      await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.RESOURCE_HOG, {
         failure_class: FAILURE_CLASS.RESOURCE,
       });
 
-      // release_at 在未来，不应该释放
-      const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(false);
+      // 再次隔离
+      const result = await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.RESOURCE_HOG, {
+        failure_class: FAILURE_CLASS.RESOURCE,
+      });
 
-      // 验证任务仍在隔离区
-      const task = await pool.query('SELECT status FROM tasks WHERE id = $1', [testTaskId]);
-      expect(task.rows[0].status).toBe('quarantined');
+      expect(result.success).toBe(true);
+      expect(result.already_quarantined).toBe(true);
     });
 
-    // Note: Alertness check is implemented in checkExpiredQuarantineTasks()
-    // but testing it requires complex module mocking setup.
-    // The functionality is verified by manual testing and integration tests.
+    it('不存在的任务返回失败', async () => {
+      const result = await quarantineTask('non-existent', QUARANTINE_REASONS.RESOURCE_HOG, {});
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Task not found');
+    });
   });
 
-  describe('释放策略实现', () => {
-    it('BILLING_CAP: 等到 reset_time 后自动释放', async () => {
-      const resetTime = new Date(Date.now() - 60000).toISOString(); // 1分钟前
+  // ============================================================
+  // TTL / release_at 计算
+  // ============================================================
+  describe('TTL 计算', () => {
+    it('RESOURCE 类型 TTL 为 1 小时', async () => {
+      await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.RESOURCE_HOG, {
+        failure_class: FAILURE_CLASS.RESOURCE,
+      });
 
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.REPEATED_FAILURE, {
+      const info = tasksStore[TEST_TASK_ID].payload?.quarantine_info;
+      expect(info.ttl_ms).toBe(60 * 60 * 1000);
+      expect(info.release_at).not.toBeNull();
+    });
+
+    it('NETWORK 类型 TTL 为 30 分钟', async () => {
+      await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.REPEATED_FAILURE, {
+        failure_class: FAILURE_CLASS.NETWORK,
+      });
+
+      const info = tasksStore[TEST_TASK_ID].payload?.quarantine_info;
+      expect(info.ttl_ms).toBe(30 * 60 * 1000);
+    });
+
+    it('RATE_LIMIT 类型 TTL 为 30 分钟', async () => {
+      await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.REPEATED_FAILURE, {
+        failure_class: FAILURE_CLASS.RATE_LIMIT,
+      });
+
+      const info = tasksStore[TEST_TASK_ID].payload?.quarantine_info;
+      expect(info.ttl_ms).toBe(30 * 60 * 1000);
+    });
+
+    it('repeated_failure 类型 TTL 为 24 小时', async () => {
+      await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.REPEATED_FAILURE, {
+        failure_class: 'repeated_failure',
+      });
+
+      const info = tasksStore[TEST_TASK_ID].payload?.quarantine_info;
+      expect(info.ttl_ms).toBe(24 * 60 * 60 * 1000);
+    });
+
+    it('BILLING_CAP 使用 reset_time', async () => {
+      const resetTime = new Date(Date.now() + 3600000).toISOString();
+      await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.REPEATED_FAILURE, {
         failure_class: FAILURE_CLASS.BILLING_CAP,
         reset_time: resetTime,
       });
 
-      const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(true);
+      const info = tasksStore[TEST_TASK_ID].payload?.quarantine_info;
+      expect(info.release_at).toBe(resetTime);
     });
 
-    it('NETWORK: 冷却 30 分钟后自动释放', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.REPEATED_FAILURE, {
-        failure_class: FAILURE_CLASS.NETWORK,
-      });
+    it('MANUAL 类型永不自动释放（release_at = null）', async () => {
+      await quarantineTask(TEST_TASK_ID, QUARANTINE_REASONS.MANUAL, {});
 
-      // 设置 release_at 为 30 分钟前
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '30 minutes')::text)
-        )
-        WHERE id = $1
-      `, [testTaskId]);
-
-      const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(true);
+      const info = tasksStore[TEST_TASK_ID].payload?.quarantine_info;
+      expect(info.release_at).toBeNull();
     });
 
-    it('RATE_LIMIT: 冷却 30 分钟后自动释放', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.REPEATED_FAILURE, {
-        failure_class: FAILURE_CLASS.RATE_LIMIT,
-      });
+    it('未知原因使用默认 30 分钟 TTL', async () => {
+      await quarantineTask(TEST_TASK_ID, 'unknown_reason', {});
 
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '30 minutes')::text)
-        )
-        WHERE id = $1
-      `, [testTaskId]);
+      const info = tasksStore[TEST_TASK_ID].payload?.quarantine_info;
+      expect(info.ttl_ms).toBe(30 * 60 * 1000);
+      expect(info.release_at).not.toBeNull();
+    });
+  });
+
+  // ============================================================
+  // checkExpiredQuarantineTasks — 自动释放
+  // ============================================================
+  describe('checkExpiredQuarantineTasks', () => {
+    it('release_at 已过期的任务被释放', async () => {
+      // 手动设置一个已过期的隔离任务
+      tasksStore[TEST_TASK_ID] = {
+        ...tasksStore[TEST_TASK_ID],
+        status: 'quarantined',
+        payload: {
+          quarantine_info: {
+            quarantined_at: new Date(Date.now() - 7200000).toISOString(),
+            reason: QUARANTINE_REASONS.RESOURCE_HOG,
+            failure_class: FAILURE_CLASS.RESOURCE,
+            release_at: new Date(Date.now() - 60000).toISOString(), // 1 分钟前
+            ttl_ms: 3600000,
+            previous_status: 'queued',
+          },
+        },
+      };
 
       const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(true);
+      expect(released.length).toBe(1);
+      expect(released[0].task_id).toBe(TEST_TASK_ID);
     });
 
-    it('RESOURCE: 冷却 1 小时后自动释放', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.RESOURCE_HOG, {
-        failure_class: FAILURE_CLASS.RESOURCE,
-      });
-
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '1 hour')::text)
-        )
-        WHERE id = $1
-      `, [testTaskId]);
+    it('release_at 未过期的任务不释放', async () => {
+      tasksStore[TEST_TASK_ID] = {
+        ...tasksStore[TEST_TASK_ID],
+        status: 'quarantined',
+        payload: {
+          quarantine_info: {
+            quarantined_at: new Date().toISOString(),
+            reason: QUARANTINE_REASONS.RESOURCE_HOG,
+            failure_class: FAILURE_CLASS.RESOURCE,
+            release_at: new Date(Date.now() + 3600000).toISOString(), // 1 小时后
+            ttl_ms: 3600000,
+            previous_status: 'queued',
+          },
+        },
+      };
 
       const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(true);
+      expect(released.length).toBe(0);
+    });
+
+    it('release_at 为 null 的任务不释放（MANUAL）', async () => {
+      tasksStore[TEST_TASK_ID] = {
+        ...tasksStore[TEST_TASK_ID],
+        status: 'quarantined',
+        payload: {
+          quarantine_info: {
+            quarantined_at: new Date().toISOString(),
+            reason: QUARANTINE_REASONS.MANUAL,
+            release_at: null,
+            previous_status: 'queued',
+          },
+        },
+      };
+
+      const released = await checkExpiredQuarantineTasks();
+      expect(released.length).toBe(0);
+    });
+
+    it('释放后任务状态变为 queued', async () => {
+      tasksStore[TEST_TASK_ID] = {
+        ...tasksStore[TEST_TASK_ID],
+        status: 'quarantined',
+        payload: {
+          quarantine_info: {
+            quarantined_at: new Date(Date.now() - 7200000).toISOString(),
+            reason: QUARANTINE_REASONS.RESOURCE_HOG,
+            failure_class: FAILURE_CLASS.RESOURCE,
+            release_at: new Date(Date.now() - 60000).toISOString(),
+            ttl_ms: 3600000,
+            previous_status: 'queued',
+          },
+        },
+      };
+
+      await checkExpiredQuarantineTasks();
+      expect(tasksStore[TEST_TASK_ID].status).toBe('queued');
     });
 
     it('REPEATED_FAILURE: 24 小时后允许重试一次', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.REPEATED_FAILURE, {
-        failure_class: 'repeated_failure',
-      });
-
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '24 hours')::text)
-        )
-        WHERE id = $1
-      `, [testTaskId]);
+      tasksStore[TEST_TASK_ID] = {
+        ...tasksStore[TEST_TASK_ID],
+        status: 'quarantined',
+        payload: {
+          quarantine_info: {
+            quarantined_at: new Date(Date.now() - 25 * 3600 * 1000).toISOString(),
+            reason: QUARANTINE_REASONS.REPEATED_FAILURE,
+            failure_class: 'repeated_failure',
+            release_at: new Date(Date.now() - 3600000).toISOString(), // 1 小时前过期
+            ttl_ms: 24 * 60 * 60 * 1000,
+            previous_status: 'queued',
+          },
+        },
+      };
 
       const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(true);
+      expect(released.some(r => r.task_id === TEST_TASK_ID)).toBe(true);
     });
 
-    it('MANUAL: 永不自动释放', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.MANUAL, {});
+    it('多个过期任务同时释放', async () => {
+      const task2Id = 'test-task-002';
+      const task3Id = 'test-task-003';
 
-      // 检查 release_at 应该是 null
-      const task = await pool.query(
-        "SELECT payload->'quarantine_info'->>'release_at' as release_at FROM tasks WHERE id = $1",
-        [testTaskId]
-      );
-      expect(task.rows[0].release_at).toBeNull();
-
-      // 即使等很久也不会自动释放
-      const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(false);
-    });
-  });
-
-  describe('自动释放逻辑', () => {
-    it('满足条件的任务从隔离区移出，状态重置为 queued', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.RESOURCE_HOG, {
-        failure_class: FAILURE_CLASS.RESOURCE,
+      const expiredPayload = (reason, fc) => ({
+        quarantine_info: {
+          quarantined_at: new Date(Date.now() - 7200000).toISOString(),
+          reason,
+          failure_class: fc,
+          release_at: new Date(Date.now() - 60000).toISOString(),
+          ttl_ms: 3600000,
+          previous_status: 'queued',
+        },
       });
 
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '1 minute')::text)
-        )
-        WHERE id = $1
-      `, [testTaskId]);
+      tasksStore[TEST_TASK_ID] = {
+        ...createMockTask(TEST_TASK_ID),
+        status: 'quarantined',
+        payload: expiredPayload(QUARANTINE_REASONS.RESOURCE_HOG, FAILURE_CLASS.RESOURCE),
+      };
+      tasksStore[task2Id] = {
+        ...createMockTask(task2Id),
+        status: 'quarantined',
+        payload: expiredPayload(QUARANTINE_REASONS.TIMEOUT_PATTERN, FAILURE_CLASS.NETWORK),
+      };
+      tasksStore[task3Id] = {
+        ...createMockTask(task3Id),
+        status: 'quarantined',
+        payload: expiredPayload(QUARANTINE_REASONS.SUSPICIOUS_INPUT, 'unknown'),
+      };
 
-      await checkExpiredQuarantineTasks();
-
-      const task = await pool.query('SELECT status FROM tasks WHERE id = $1', [testTaskId]);
-      expect(task.rows[0].status).toBe('queued');
-    });
-
-    it('释放后的任务重新进入调度队列', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.TIMEOUT_PATTERN, {
-        failure_class: FAILURE_CLASS.NETWORK,
-      });
-
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '1 minute')::text)
-        )
-        WHERE id = $1
-      `, [testTaskId]);
-
-      await checkExpiredQuarantineTasks();
-
-      // 验证任务在 queued 状态
-      const queuedTasks = await pool.query(
-        "SELECT id FROM tasks WHERE status = 'queued' AND id = $1",
-        [testTaskId]
-      );
-      expect(queuedTasks.rows.length).toBe(1);
-    });
-  });
-
-  describe('边界情况', () => {
-    it('隔离原因为空或未知时使用默认 TTL (30分钟)', async () => {
-      await quarantineTask(testTaskId, 'unknown_reason', {});
-
-      const task = await pool.query(
-        "SELECT payload->'quarantine_info' as info FROM tasks WHERE id = $1",
-        [testTaskId]
-      );
-      const info = task.rows[0].info;
-
-      expect(info.ttl_ms).toBe(30 * 60 * 1000); // 30分钟
-      expect(info.release_at).not.toBeNull();
-    });
-
-    it('多个任务同时满足释放条件时正确处理', async () => {
-      // 创建多个测试任务
-      const task2 = await pool.query(`
-        INSERT INTO tasks (title, task_type, status, payload)
-        VALUES ('TEST_quarantine_release_2', 'dev', 'queued', '{}')
-        RETURNING id
-      `);
-      const task3 = await pool.query(`
-        INSERT INTO tasks (title, task_type, status, payload)
-        VALUES ('TEST_quarantine_release_3', 'dev', 'queued', '{}')
-        RETURNING id
-      `);
-
-      // 隔离三个任务
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.RESOURCE_HOG, {
-        failure_class: FAILURE_CLASS.RESOURCE,
-      });
-      await quarantineTask(task2.rows[0].id, QUARANTINE_REASONS.TIMEOUT_PATTERN, {
-        failure_class: FAILURE_CLASS.NETWORK,
-      });
-      await quarantineTask(task3.rows[0].id, QUARANTINE_REASONS.SUSPICIOUS_INPUT, {});
-
-      // 全部设置为过期
-      await pool.query(`
-        UPDATE tasks
-        SET payload = jsonb_set(
-          payload,
-          '{quarantine_info,release_at}',
-          to_jsonb((NOW() - INTERVAL '1 minute')::text)
-        )
-        WHERE id IN ($1, $2, $3)
-      `, [testTaskId, task2.rows[0].id, task3.rows[0].id]);
-
-      // 释放所有过期任务
       const released = await checkExpiredQuarantineTasks();
       expect(released.length).toBe(3);
     });
 
-    it('release_at 为 null 的任务不会被释放', async () => {
-      await quarantineTask(testTaskId, QUARANTINE_REASONS.MANUAL, {});
+    it('BILLING_CAP: reset_time 过后自动释放', async () => {
+      tasksStore[TEST_TASK_ID] = {
+        ...tasksStore[TEST_TASK_ID],
+        status: 'quarantined',
+        payload: {
+          quarantine_info: {
+            quarantined_at: new Date(Date.now() - 7200000).toISOString(),
+            reason: QUARANTINE_REASONS.REPEATED_FAILURE,
+            failure_class: FAILURE_CLASS.BILLING_CAP,
+            release_at: new Date(Date.now() - 60000).toISOString(),
+            previous_status: 'queued',
+          },
+        },
+      };
 
-      // MANUAL 的 release_at 应该是 null
       const released = await checkExpiredQuarantineTasks();
-      expect(released.some(r => r.task_id === testTaskId)).toBe(false);
+      expect(released.some(r => r.task_id === TEST_TASK_ID)).toBe(true);
+    });
+  });
+
+  // ============================================================
+  // Alertness 高时不释放
+  // ============================================================
+  describe('Alertness 保护', () => {
+    it('Alertness >= ALERT 时不释放任何任务', async () => {
+      // 设置 alertness 为 ALERT
+      const { getCurrentAlertness } = await import('../alertness/index.js');
+      getCurrentAlertness.mockReturnValue({ level: 2, levelName: 'ALERT' });
+
+      tasksStore[TEST_TASK_ID] = {
+        ...tasksStore[TEST_TASK_ID],
+        status: 'quarantined',
+        payload: {
+          quarantine_info: {
+            quarantined_at: new Date(Date.now() - 7200000).toISOString(),
+            reason: QUARANTINE_REASONS.RESOURCE_HOG,
+            failure_class: FAILURE_CLASS.RESOURCE,
+            release_at: new Date(Date.now() - 60000).toISOString(),
+            ttl_ms: 3600000,
+            previous_status: 'queued',
+          },
+        },
+      };
+
+      const released = await checkExpiredQuarantineTasks();
+      expect(released.length).toBe(0);
+
+      // 恢复
+      getCurrentAlertness.mockReturnValue({ level: 0, levelName: 'NORMAL' });
     });
   });
 });
