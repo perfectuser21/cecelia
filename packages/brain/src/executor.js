@@ -3002,6 +3002,13 @@ async function probeTaskLiveness() {
       continue;
     }
 
+    // content-pipeline parent tasks are orchestrated in-Brain (no OS process).
+    // They are managed by orchestrateContentPipelines() / advanceContentPipeline() and
+    // should never be killed by the liveness probe.
+    if (task.task_type === 'content-pipeline' || task.payload?.pipeline_orchestrated === true) {
+      continue;
+    }
+
     // Decomposition tasks (/decomp) and initiative_plan/initiative_verify tasks run for
     // 3-10+ minutes — apply extended grace period to avoid false-positive failures.
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
