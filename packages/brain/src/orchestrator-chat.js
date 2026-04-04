@@ -568,16 +568,18 @@ export async function handleChat(message, context = {}, messages = [], imageCont
 }
 
 /** @internal */
-async function _handleChatInner(message, context, messages, imageContent, pressure) {
-  // 1. 标记用户在线（user_last_seen = 实时在场；last_alex_chat_at = 今天来过）
+// ─── _handleChatInner 子函数（CC 拆分） ────────────────────────────────────
+
+/** 标记用户在线（user_last_seen + last_alex_chat_at） */
+async function _updateUserPresence(poolInst) {
   try {
     const nowIso = JSON.stringify(new Date().toISOString());
-    await pool.query(`
+    await poolInst.query(`
       INSERT INTO working_memory (key, value_json, updated_at)
       VALUES ('user_last_seen', $1, NOW())
       ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
     `, [nowIso]);
-    await pool.query(`
+    await poolInst.query(`
       INSERT INTO working_memory (key, value_json, updated_at)
       VALUES ('last_alex_chat_at', $1, NOW())
       ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
@@ -585,48 +587,41 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
   } catch (err) {
     console.warn('[orchestrator-chat] Failed to update user_last_seen:', err.message);
   }
+}
 
-  // 2. 写入 memory_stream（让 desire system 感知到对话）
-  const senderName = context.sender_name || 'Alex';
-  const relationship = context.relationship || 'owner';
-  const sourceType = context.source === 'feishu' ? 'feishu_chat' : 'orchestrator_chat';
-
-  // 读取情绪标签（non-fatal）
-  let emotionTag = null;
+/** 读取当前情绪标签（non-fatal） */
+async function _readEmotionTag(poolInst) {
   try {
-    const emRes = await pool.query("SELECT value_json FROM working_memory WHERE key='emotion_state'");
+    const emRes = await poolInst.query("SELECT value_json FROM working_memory WHERE key='emotion_state'");
     const raw = emRes.rows[0]?.value_json;
-    emotionTag = typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : null;
-  } catch (_) { /* non-fatal */ }
+    return typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : null;
+  } catch (_) {
+    return null;
+  }
+}
 
-  const salience = computeSalience(message);
-  const importanceVal = Math.max(1, Math.min(10, Math.round(salience * 10)));
-
+/** 将用户消息写入 memory_stream */
+async function _writeUserMessageToStream(poolInst, message, senderName, salience, importanceVal, emotionTag) {
   try {
     const userContent = `[用户对话] ${senderName} 说：${message.slice(0, 200)}`;
-    const userResult = await pool.query(`
+    const userResult = await poolInst.query(`
       INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at, salience_score, emotion_tag)
       VALUES ($1, $2, $3, 'short', 'conversation_turn', NOW() + INTERVAL '7 days', $4, $5)
       RETURNING id
     `, [userContent, generateL0Summary(userContent), importanceVal, salience, emotionTag]);
     const userRecordId = userResult.rows[0]?.id;
     if (userRecordId) {
-      generateMemoryStreamL1Async(userRecordId, userContent, pool);
-      Promise.resolve().then(() => generateMemoryStreamEmbeddingAsync(userRecordId, userContent, pool))
+      generateMemoryStreamL1Async(userRecordId, userContent, poolInst);
+      Promise.resolve().then(() => generateMemoryStreamEmbeddingAsync(userRecordId, userContent, poolInst))
         .catch(e => console.warn('[orchestrator-chat] user embedding failed:', e.message));
     }
   } catch (err) {
     console.warn('[orchestrator-chat] Failed to write chat to memory_stream:', err.message);
   }
+}
 
-  // 3. 加载5层内在状态，直接调 LLM
-  // Tier 2: Medium pressure (0.7~1.0) — use haiku model
-  const callOptions = {};
-  if (pressure >= 0.7) {
-    callOptions.preferModel = 'claude-haiku-4-5-20251001';
-    console.log(`[orchestrator-chat] Mouth tier 2: pressure=${pressure}, using haiku`);
-  }
-  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, '', relationship, senderName);
+/** LLM 调用 + call_brain_api 工具循环（最多 3 轮），返回 { reply, thalamus_signal } */
+async function _callLLMWithToolUse(message, systemPrompt, callOptions, messages, imageContent) {
   let reply;
   let thalamus_signal = null;
 
@@ -636,14 +631,11 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
     thalamus_signal = result.thalamus_signal || null;
   } catch (err) {
     console.error('[orchestrator-chat] LLM call failed:', err.message);
-    reply = '（此刻有些恍神，稍后再聊）';
+    return { reply: '（此刻有些恍神，稍后再聊）', thalamus_signal: null };
   }
 
-  // 3b. Tool-use 循环：call_brain_api 同步执行，结果注入后重新调用 LLM（最多 3 轮）
-  let toolUseRound = 0;
   const MAX_TOOL_ROUNDS = 3;
-  while (thalamus_signal?.type === 'call_brain_api' && toolUseRound < MAX_TOOL_ROUNDS) {
-    toolUseRound++;
+  for (let round = 0; round < MAX_TOOL_ROUNDS && thalamus_signal?.type === 'call_brain_api'; round++) {
     const apiResult = await callBrainApi(
       thalamus_signal.path,
       thalamus_signal.method || 'GET',
@@ -661,43 +653,37 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
     }
   }
 
-  // 3c. 嘴巴→丘脑信号（异步，不阻塞回复）
-  if (thalamus_signal) {
-    Promise.resolve().then(() =>
-      observeChat(thalamus_signal, { user_message: message, reply })
-    ).catch(err => console.warn('[orchestrator-chat] observeChat failed:', err.message));
-  }
+  return { reply, thalamus_signal };
+}
 
-  // 4. 记录对话事件
-  await recordChatEvent(message, reply, {
-    conversation_id: context.conversation_id || null,
-  });
-
-  // 5. 写 Cecelia 回复到 memory_stream（异步不阻塞）
+/** 异步写 Cecelia 回复到 memory_stream（不阻塞主流程） */
+function _writeReplyToStreamAsync(poolInst, senderName, message, reply, salience, importanceVal, emotionTag) {
   Promise.resolve().then(async () => {
     try {
       const replyContent = `[对话回复] ${senderName}: ${message.slice(0, 150)}\nCecelia: ${reply.slice(0, 350)}`;
-      const replyResult = await pool.query(`
+      const replyResult = await poolInst.query(`
         INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at, salience_score, emotion_tag)
         VALUES ($1, $2, $3, 'short', 'conversation_turn', NOW() + INTERVAL '30 days', $4, $5)
         RETURNING id
       `, [replyContent, generateL0Summary(replyContent), importanceVal, salience, emotionTag]);
       const replyRecordId = replyResult.rows[0]?.id;
       if (replyRecordId) {
-        generateMemoryStreamL1Async(replyRecordId, replyContent, pool);
-        Promise.resolve().then(() => generateMemoryStreamEmbeddingAsync(replyRecordId, replyContent, pool))
+        generateMemoryStreamL1Async(replyRecordId, replyContent, poolInst);
+        Promise.resolve().then(() => generateMemoryStreamEmbeddingAsync(replyRecordId, replyContent, poolInst))
           .catch(e => console.warn('[orchestrator-chat] reply embedding failed:', e.message));
       }
     } catch (err) {
       console.warn('[orchestrator-chat] Failed to write reply to memory_stream:', err.message);
     }
   }).catch(err => console.error('[orchestrator-chat] silent error:', err));
+}
 
+/** 触发所有对话后异步副作用（sections 6-11） */
+function _fireAsyncSideEffects(poolInst, userId, message, reply, messages) {
   // 6. 异步提取用户事实（仅 owner 触发）
-  const userId = context.user_id || 'owner';
   if (userId === 'owner') {
     Promise.resolve().then(() =>
-      extractAndSaveUserFacts(pool, 'owner', messages, reply)
+      extractAndSaveUserFacts(poolInst, 'owner', messages, reply)
     ).catch(err => console.error('[orchestrator-chat] silent error:', err));
   }
 
@@ -705,7 +691,7 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
   Promise.resolve().then(async () => {
     try {
       const dashParticipantId = userId === 'owner' ? 'owner' : userId;
-      await pool.query(
+      await poolInst.query(
         `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content)
          VALUES ($1, 'dashboard', NULL, 'user', $2), ($1, 'dashboard', NULL, 'assistant', $3)`,
         [dashParticipantId, message.slice(0, 2000), reply.slice(0, 2000)]
@@ -717,33 +703,32 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
 
   // 7. P0-A：异步提取对话 learning（深度对话 → learning → 反刍 → self-model 闭环）
   Promise.resolve().then(() =>
-    extractConversationLearning(message, reply, pool)
+    extractConversationLearning(message, reply, poolInst)
   ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 7b. 混合事实捕获（正则 + Haiku 反哺进化）：偏好/习惯 → person_signals，纠正 → learnings
   Promise.resolve().then(() =>
-    processMessageFacts(pool, userId, message, callLLM)
+    processMessageFacts(poolInst, userId, message, callLLM)
   ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 8. 异步提取人物信号 → person_signals（个人认知表更新）
   Promise.resolve().then(() =>
-    extractPersonSignals(pool, userId, message, reply, callLLM)
+    extractPersonSignals(poolInst, userId, message, reply, callLLM)
   ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 9. 收到回复 → 标记 pending_conversations 已解决（Alex 说话了，不再待回音）
   Promise.resolve().then(() =>
-    resolveByPersonReply(pool, userId, 'user_reply')
+    resolveByPersonReply(poolInst, userId, 'user_reply')
   ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 10. 对话驱动任务订阅：检测 Alex 是否在询问某个任务，存入 working_memory
   Promise.resolve().then(() =>
-    detectAndStoreTaskInterest(pool, message)
+    detectAndStoreTaskInterest(poolInst, message)
   ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 11. 欲望闭环：Alex 回复时，标记近期表达过的欲望为 acknowledged
-  //     reasoning: Alex 的回复表明他在线且看到了 Cecelia 最近发出的消息
   Promise.resolve().then(async () => {
-    const { rowCount } = await pool.query(
+    const { rowCount } = await poolInst.query(
       `UPDATE desires SET status = 'acknowledged', updated_at = NOW()
        WHERE status = 'expressed'
          AND updated_at > NOW() - INTERVAL '12 hours'`
@@ -752,6 +737,42 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
       console.log(`[orchestrator-chat] 欲望闭环：${rowCount} 个 desire 已标记为 acknowledged`);
     }
   }).catch(err => console.error('[orchestrator-chat] silent error:', err));
+}
+
+// ─── 主函数（重构后，CC ≤ 10） ──────────────────────────────────────────────
+
+async function _handleChatInner(message, context, messages, imageContent, pressure) {
+  await _updateUserPresence(pool);
+
+  const senderName = context.sender_name || 'Alex';
+  const relationship = context.relationship || 'owner';
+  const userId = context.user_id || 'owner';
+
+  const emotionTag = await _readEmotionTag(pool);
+  const salience = computeSalience(message);
+  const importanceVal = Math.max(1, Math.min(10, Math.round(salience * 10)));
+
+  await _writeUserMessageToStream(pool, message, senderName, salience, importanceVal, emotionTag);
+
+  const callOptions = {};
+  if (pressure >= 0.7) {
+    callOptions.preferModel = 'claude-haiku-4-5-20251001';
+    console.log(`[orchestrator-chat] Mouth tier 2: pressure=${pressure}, using haiku`);
+  }
+  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, '', relationship, senderName);
+
+  const { reply, thalamus_signal } = await _callLLMWithToolUse(message, systemPrompt, callOptions, messages, imageContent);
+
+  if (thalamus_signal) {
+    Promise.resolve().then(() =>
+      observeChat(thalamus_signal, { user_message: message, reply })
+    ).catch(err => console.warn('[orchestrator-chat] observeChat failed:', err.message));
+  }
+
+  await recordChatEvent(message, reply, { conversation_id: context.conversation_id || null });
+
+  _writeReplyToStreamAsync(pool, senderName, message, reply, salience, importanceVal, emotionTag);
+  _fireAsyncSideEffects(pool, userId, message, reply, messages);
 
   return { reply };
 }
