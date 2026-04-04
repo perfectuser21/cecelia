@@ -1,0 +1,9 @@
+dev
+branch: cp-04041621-cp-04041621-fix-stop-hook-test-format
+task_card: .task-cp-04041621-cp-04041621-fix-stop-hook-test-format.md
+started: 2026-04-04T16:21:55+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
