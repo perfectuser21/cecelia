@@ -13,6 +13,8 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
+
+const execAsync = promisify(exec);
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getContentType } from './content-types/content-type-registry.js';
@@ -39,10 +41,15 @@ const BANNED_WORDS = ['coding', '搭建', 'agent workflow', 'builder', 'Cecelia'
 
 async function run(cmd, timeout = 60000) {
   try {
-    const { stdout } = await execAsync(cmd, { encoding: 'utf-8', timeout });
+    const { stdout } = await execAsync(cmd, {
+      encoding: 'utf-8',
+      timeout,
+      maxBuffer: 10 * 1024 * 1024,
+      shell: true,
+    });
     return stdout.trim();
   } catch (err) {
-    console.error(`[executor] cmd failed: ${cmd.substring(0, 80)}… → ${(err.stderr || err.message).substring(0, 200)}`);
+    console.error(`[executor] cmd failed: ${cmd.substring(0, 80)}… → ${(err.stderr || err.message || '').substring(0, 200)}`);
     return null;
   }
 }
