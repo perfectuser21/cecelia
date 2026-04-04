@@ -5,6 +5,6 @@ task_card: .task-cp-04040617-ec20b116-fc3c-49d6-98ab-811523.md
 started: 2026-04-04T21:17:29+08:00
 step_0_worktree: done
 step_1_spec: done
-step_2_code: pending
+step_2_code: done
 step_3_integrate: pending
 step_4_ship: pending
