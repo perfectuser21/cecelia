@@ -107,6 +107,8 @@ function checkBrainEmbeddedSources(health, capId, embeddedSourcesActive) {
  */
 function collectSkillActivity(health, relatedSkills, skillUsageMap, taskUsageMap) {
   let hasSkillActivity = false;
+  let totalRuns = 0;
+  let totalCompleted = 0;
   for (const skill of relatedSkills) {
     const usage = skillUsageMap[skill] || taskUsageMap[skill];
     if (!usage) continue;
@@ -118,11 +120,12 @@ function collectSkillActivity(health, relatedSkills, skillUsageMap, taskUsageMap
       health.last_activity = lastDate;
     }
     health.usage_30d += parseInt(usage.recent_30d || 0);
-    const total = parseInt(usage.total || usage.total_runs || 0);
-    const completed = parseInt(usage.completed || 0);
-    if (total > 0) {
-      health.success_rate = Math.round((completed / total) * 100);
-    }
+    totalRuns += parseInt(usage.total || usage.total_runs || 0);
+    totalCompleted += parseInt(usage.completed || 0);
+  }
+  // 汇总所有关联 skill 计算成功率，避免末位 skill 覆盖前面高权重 skill 的问题
+  if (totalRuns > 0) {
+    health.success_rate = Math.round((totalCompleted / totalRuns) * 100);
   }
   return hasSkillActivity;
 }

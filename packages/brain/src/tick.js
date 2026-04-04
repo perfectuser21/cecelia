@@ -1890,15 +1890,20 @@ async function executeTick() {
   }
 
   // 0.5.6. Content Pipeline Executor — 执行 queued 的 content-* 子任务
+  // ⚠️ fire-and-forget：不 await。内部用 execSync（NotebookLM/LLM），会阻塞事件循环，
+  //    必须异步启动。executeQueuedContentTasks 内部有并发守卫防止重叠。
   try {
     const { executeQueuedContentTasks } = await import('./content-pipeline-orchestrator.js');
-    const execResult = await executeQueuedContentTasks();
-    if (execResult.executed > 0) {
-      console.log(`[tick] Content pipeline executor: ${execResult.executed} tasks executed`);
-      actionsTaken.push({ action: 'content_pipeline_execution', executed: execResult.executed });
-    }
+    executeQueuedContentTasks().then(r => {
+      if (r.executed > 0) {
+        console.log(`[tick] Content pipeline executor: ${r.executed} tasks executed`);
+        actionsTaken.push({ action: 'content_pipeline_execution', executed: r.executed });
+      }
+    }).catch(execErr => {
+      console.error('[tick] Content pipeline executor failed:', execErr.message);
+    });
   } catch (execErr) {
-    console.error('[tick] Content pipeline executor failed:', execErr.message);
+    console.error('[tick] Content pipeline executor import failed:', execErr.message);
   }
 
   // 0.6. Recurring Tasks Check

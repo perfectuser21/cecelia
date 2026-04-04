@@ -572,38 +572,52 @@ async function _executeStageTask(task, stage, executor, dbPool) {
   }
 }
 
+// 并发守卫：防止 tick 重叠调用（executors 使用 execSync 会阻塞事件循环）
+let _contentExecutorBusy = false;
+
 /**
  * 由 tick 调用。检测 queued 的 content-* 子任务，自动执行。
+ * ⚠️ 内部使用 execSync（NotebookLM/LLM 调用），必须在 tick 中以 fire-and-forget 方式调用，
+ *    否则会阻塞 Brain 事件循环。
  * @param {import('pg').Pool} [dbPool]
  */
 export async function executeQueuedContentTasks(dbPool = pool) {
+  if (_contentExecutorBusy) {
+    console.log('[content-executor] 上一批任务仍在执行，跳过本次 tick');
+    return { executed: 0 };
+  }
+  _contentExecutorBusy = true;
   let executed = 0;
 
-  for (const stage of PIPELINE_STAGES) {
-    const executor = EXECUTOR_MAP[stage];
-    if (!executor) continue;
+  try {
+    for (const stage of PIPELINE_STAGES) {
+      const executor = EXECUTOR_MAP[stage];
+      if (!executor) continue;
 
-    const result = await dbPool.query(`
-      SELECT id, title, task_type, payload, project_id, goal_id
-      FROM tasks
-      WHERE task_type = $1 AND status = 'queued'
-        AND payload->>'parent_pipeline_id' IS NOT NULL
-      ORDER BY created_at ASC
-      LIMIT 3
-    `, [stage]);
+      const result = await dbPool.query(`
+        SELECT id, title, task_type, payload, project_id, goal_id
+        FROM tasks
+        WHERE task_type = $1 AND status = 'queued'
+          AND payload->>'parent_pipeline_id' IS NOT NULL
+        ORDER BY created_at ASC
+        LIMIT 3
+      `, [stage]);
 
-    for (const task of result.rows) {
-      try {
-        await _executeStageTask(task, stage, executor, dbPool);
-        executed++;
-      } catch (err) {
-        console.error(`[content-executor] ${stage} 执行失败: ${err.message}`);
-        await dbPool.query(
-          `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
-          [task.id, 'failed', err.message]
-        ).catch(() => {});
+      for (const task of result.rows) {
+        try {
+          await _executeStageTask(task, stage, executor, dbPool);
+          executed++;
+        } catch (err) {
+          console.error(`[content-executor] ${stage} 执行失败: ${err.message}`);
+          await dbPool.query(
+            `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+            [task.id, 'failed', err.message]
+          ).catch(() => {});
+        }
       }
     }
+  } finally {
+    _contentExecutorBusy = false;
   }
 
   return { executed };
