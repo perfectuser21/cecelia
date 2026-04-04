@@ -157,13 +157,13 @@ function destroyTestEnv(env: TestEnv): void {
   fs.rmSync(base, { recursive: true, force: true });
 }
 
-/** Write a valid .dev-mode file */
+/** Write a valid .dev-mode file (per-branch format, v14.0.0+) */
 function writeDevMode(dir: string, branch: string, extra: Record<string, string> = {}): void {
   let content = `dev\nbranch: ${branch}\nprd: .prd-${branch}.md\nstarted: 2026-03-05T10:00:00+00:00\ntasks_created: true\n`;
   for (const [k, v] of Object.entries(extra)) {
     content += `${k}: ${v}\n`;
   }
-  fs.writeFileSync(path.join(dir, ".dev-mode"), content);
+  fs.writeFileSync(path.join(dir, `.dev-mode.${branch}`), content);
 }
 
 /** Write minimal PRD/DoD files (must contain Chinese keywords for validation) */
@@ -259,7 +259,7 @@ describe("Contract 1: .dev-mode 格式契约", () => {
   it("stop-dev 读取 branch 字段与 branch-protect 写入格式一致", () => {
     writeDevMode(env.worktree, env.branch);
 
-    const devModeContent = fs.readFileSync(path.join(env.worktree, ".dev-mode"), "utf-8");
+    const devModeContent = fs.readFileSync(path.join(env.worktree, `.dev-mode.${env.branch}`), "utf-8");
     const lines = devModeContent.split("\n");
 
     expect(lines[0]).toBe("dev");
@@ -275,7 +275,7 @@ describe("Contract 1: .dev-mode 格式契约", () => {
 
   it("stop-dev 正确解析 retry_count 字段", () => {
     writeDevMode(env.worktree, env.branch, { retry_count: "5" });
-    const content = fs.readFileSync(path.join(env.worktree, ".dev-mode"), "utf-8");
+    const content = fs.readFileSync(path.join(env.worktree, `.dev-mode.${env.branch}`), "utf-8");
     const match = content.match(/^retry_count:\s*(\d+)/m);
     expect(match).not.toBeNull();
     expect(parseInt(match![1], 10)).toBe(5);
@@ -283,7 +283,7 @@ describe("Contract 1: .dev-mode 格式契约", () => {
 
   it("cleanup_done: true 格式能被 stop-dev 正确识别", () => {
     writeDevMode(env.worktree, env.branch, { cleanup_done: "true" });
-    const content = fs.readFileSync(path.join(env.worktree, ".dev-mode"), "utf-8");
+    const content = fs.readFileSync(path.join(env.worktree, `.dev-mode.${env.branch}`), "utf-8");
     expect(content).toMatch(/cleanup_done: true/);
   });
 });

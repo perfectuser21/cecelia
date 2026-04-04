@@ -86,6 +86,17 @@ if [[ -f ".hook-core-version" ]]; then
     fi
 fi
 
+# 检查 hooks/VERSION
+if [[ -f "hooks/VERSION" ]]; then
+    HV_VERSION=$(cat hooks/VERSION | tr -d '\n')
+    if [[ "$HV_VERSION" != "$BASE_VERSION" ]]; then
+        echo "❌ hooks/VERSION: $HV_VERSION (期望: $BASE_VERSION)"
+        ERRORS=$((ERRORS + 1))
+    else
+        echo "✅ hooks/VERSION: $HV_VERSION"
+    fi
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 

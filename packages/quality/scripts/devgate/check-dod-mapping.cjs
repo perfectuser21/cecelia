@@ -60,7 +60,7 @@ function parseDodItems(content) {
       if (i + 1 < lines.length) {
         const nextLine = lines[i + 1];
         const testMatch = nextLine.match(
-          /^\s*Test:\s*(tests\/[^\s]+|contract:[^\s]+|manual:[^\s]+)\s*$/
+          /^\s*Test:\s*(tests\/\S+|contract:\S+|manual:[^\r\n]+?)\s*$/
         );
         if (testMatch) {
           testRef = testMatch[1];
