@@ -1,0 +1,10 @@
+dev
+branch: cp-04041742-fix-executor-fetch-timeout
+task_id: 7fbe255a-7656-455a-8058-d2e578f3157a
+task_card: .task-cp-04041742-fix-executor-fetch-timeout.md
+started: 2026-04-04T17:42:56+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
