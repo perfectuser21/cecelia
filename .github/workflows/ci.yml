@@ -115,6 +115,27 @@ jobs:
             echo "✅ PR 大小合理（${TOTAL} 行）"
           fi
 
+  # ─── 分支命名检查（仅 PR 触发）────────────────────────────────
+  branch-naming:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 检查分支命名规范
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          # 基础分支直接跳过
+          if echo "$BRANCH" | grep -qE '^(main|master|develop|staging|release)$'; then
+            echo "✅ 基础分支，跳过命名检查: $BRANCH"
+            exit 0
+          fi
+          if echo "$BRANCH" | grep -qE '^(cp-|feature/|fix/|chore/|docs/)'; then
+            echo "✅ 分支命名规范: $BRANCH"
+          else
+            echo "::error::分支名 '$BRANCH' 不符合规范，应以 cp-/feature//fix//chore//docs/ 开头"
+            exit 1
+          fi
+
   # ─── Engine: TypeCheck + Tests ─────────────────────────────
   engine-tests:
     needs: changes
@@ -123,6 +144,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -135,6 +158,45 @@ jobs:
         run: cd packages/engine && bash ci/scripts/check-version-sync.sh
       - name: Contract Refs Check
         run: cd packages/engine && bash ci/scripts/check-contract-refs.sh
+      - name: DoD 格式检查
+        run: |
+          # 检测 PR 中的 task-card.md 文件（跳过未含 task-card 的 PR）
+          TASK_CARD=""
+          for f in .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 task-card.md，跳过 DoD 格式检查"
+            exit 0
+          fi
+          echo "📋 检查 DoD 文件: $TASK_CARD"
+          # 检查至少有一个 [BEHAVIOR] 条目
+          if ! grep -q '\[BEHAVIOR\]' "$TASK_CARD"; then
+            echo "::error::Task Card 缺少 [BEHAVIOR] 条目，至少需要一个"
+            exit 1
+          fi
+          echo "✅ 已发现 [BEHAVIOR] 条目"
+          # 检查所有条目是否已勾选（不允许 [ ] 未验证条目）
+          UNCHECKED=$(grep -c '^\- \[ \]' "$TASK_CARD" || true)
+          if [ "$UNCHECKED" -gt 0 ]; then
+            echo "::error::DoD 有 ${UNCHECKED} 个未验证条目（[ ]），push 前必须全部勾选为 [x]"
+            grep '^\- \[ \]' "$TASK_CARD" | head -5
+            exit 1
+          fi
+          echo "✅ 所有 DoD 条目已验证"
+      - name: Feature Registry 同步检查
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+          if echo "$CHANGED" | grep -qE '^packages/engine/skills/'; then
+            if ! echo "$CHANGED" | grep -q 'feature-registry.yml'; then
+              echo "::error::修改了 packages/engine/skills/ 但未更新 feature-registry.yml"
+              exit 1
+            fi
+            echo "✅ feature-registry.yml 已同步更新"
+          else
+            echo "⏭️  未修改 packages/engine/skills/，跳过 feature-registry 检查"
+          fi
 
   # ─── Brain: Unit Tests ─────────────────────────────────────
   brain-unit:
@@ -215,7 +277,7 @@ jobs:
 
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
-    needs: [secrets-scan, registry-lint, eslint, pr-size-check, engine-tests, brain-unit, brain-integration, workspace-build]
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -230,6 +292,7 @@ jobs:
           check "registry-lint"     "${{ needs.registry-lint.result }}"
           check "eslint"            "${{ needs.eslint.result }}"
           check "pr-size-check"     "${{ needs.pr-size-check.result }}"
+          check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "brain-unit"        "${{ needs.brain-unit.result }}"
           check "brain-integration" "${{ needs.brain-integration.result }}"
