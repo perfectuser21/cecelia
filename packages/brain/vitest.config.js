@@ -50,6 +50,14 @@ export default defineConfig({
       'src/__tests__/tick-rampup.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
+      // 以下测试使用 pg.Pool 直接连接 DB（非 db.js），需要真实 PostgreSQL
+      'src/__tests__/cortex-quality-feedback.test.js',
+      'src/__tests__/executor-retry-strategy.test.js',
+      'src/__tests__/actions-dedup.test.js',
+      'src/__tests__/execution-strategy-session-kr-link.test.js',
+      'src/__tests__/notebook-feeder.test.js',
+      'src/__tests__/migration-016.test.js',
+      'src/__tests__/rumination-scheduler.test.js',
       // 以下测试因 mock 不完整或代码逻辑变更导致失败，暂时排除（pre-existing issue）
       'src/__tests__/content-pipeline-executors.test.js',
       'src/__tests__/content-pipeline-llm.test.js',
