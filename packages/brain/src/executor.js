@@ -2729,6 +2729,7 @@ async function triggerCeceliaRun(task) {
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(30000),
       body: JSON.stringify({
         task_id: task.id,
         checkpoint_id: checkpointId,
@@ -2787,7 +2788,11 @@ async function triggerCeceliaRun(task) {
     };
 
   } catch (err) {
-    console.error(`[executor] Error triggering via bridge: ${err.message}`);
+    if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+      console.error(`[executor] Bridge /trigger-cecelia timed out (30s) for task=${task.id} — bridge may be unresponsive`);
+    } else {
+      console.error(`[executor] Error triggering via bridge: ${err.message}`);
+    }
 
     // Trace: failure
     await trace.end({
@@ -2798,7 +2803,7 @@ async function triggerCeceliaRun(task) {
     return {
       success: false,
       taskId: task.id,
-      error: err.message,
+      error: err.name === 'AbortError' || err.name === 'TimeoutError' ? 'bridge_timeout' : err.message,
     };
   }
 }

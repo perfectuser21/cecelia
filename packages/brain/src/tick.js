@@ -75,7 +75,7 @@ const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50
 const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter：单次 tick 最多新派发 N 个，防队列积压后雪崩
 
 // Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
-const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '5', 10);
+const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '60', 10);
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
