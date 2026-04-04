@@ -995,6 +995,9 @@
     "spec_review": "/spec-review",
     "code_review_gate": "/code-review-gate",
     "initiative_review": "/initiative-review",
+    "sprint_planner": "/sprint-planner",
+    "sprint_contract_propose": "/sprint-contract-proposer",
+    "sprint_contract_review": "/sprint-contract-reviewer",
     "sprint_generate": "/dev",
     "sprint_evaluate": "/sprint-evaluator",
     "sprint_fix": "/dev",
@@ -1004,7 +1007,7 @@
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-04-03T11:37:45.862Z",
+  "generatedAt": "2026-04-04T08:10:14.112Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

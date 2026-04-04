@@ -415,7 +415,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
 | **content_type_configs** | 内容类型配置（YAML→DB 迁移，JSONB config，前端可编辑） |
 | **topic_selection_log** | 每日选题去重日志（migration 203，selected_date + keyword 唯一索引，7 日避重） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 209 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 210 |
 | **distilled_docs** | 蒸馏文档层 Layer 2（SOUL/SELF_MODEL/USER_PROFILE/WORLD_STATE） |
 | **kr_verifiers** | KR 指标自动验证（SQL 查询, threshold, current_value, 定时采集） |
 | **blocks** | 通用 block 存储 |
@@ -477,6 +477,9 @@ queued → in_progress → completed
 | sprint_generate | US | Harness Generator — 写 sprint contract + 代码 (/dev) | Sonnet / - | 默认 anthropic |
 | sprint_evaluate | US | Harness Evaluator — 测运行中的代码 (/sprint-evaluator) | Sonnet / - | 默认 anthropic |
 | sprint_fix | US | Harness Generator 修复轮次 (/dev) | Sonnet / - | 默认 anthropic |
+| sprint_planner | US | Harness Planner — 拆分 Sprint 任务计划 | Sonnet / - | 默认 anthropic |
+| sprint_contract_propose | US | Harness Contract 提案 — 生成 sprint-contract.md | Sonnet / - | 默认 anthropic |
+| sprint_contract_review | US | Harness Contract 审查 — 验证 sprint-contract.md | Sonnet / - | 默认 anthropic |
 | content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
 | content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
 | content-copywriting | 西安 | 文案生成阶段 (/content-creator) | - | general |
