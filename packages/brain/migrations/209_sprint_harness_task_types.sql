@@ -32,6 +32,7 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
     -- 内容工厂 Pipeline
     'content-pipeline', 'content-research', 'content-generate',
     'content-review', 'content-export', 'content_publish',
+    'content-copywriting', 'content-copy-review', 'content-image-review',
     -- 救援类型
     'pipeline_rescue',
     -- crystallize 能力蒸馏流水线
@@ -44,8 +45,8 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
 
 INSERT INTO schema_version (version, description, applied_at)
 VALUES (
-  'add-sprint-task-types',
-  'Sprint Harness task types: sprint_generate / sprint_evaluate / sprint_fix',
+  '209',
+  'Sprint Harness task types: sprint_generate / sprint_evaluate / sprint_fix + content subtypes',
   NOW()
 )
 ON CONFLICT (version) DO NOTHING;
