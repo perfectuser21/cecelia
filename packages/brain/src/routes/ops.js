@@ -2747,5 +2747,55 @@ router.post('/deploy', async (req, res) => {
   }
 });
 
+// POST /api/brain/deploy/rollback — 回滚到指定 SHA
+router.post('/deploy/rollback', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+
+  if (!expectedToken || !token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { stable_sha, reason } = req.body || {};
+  if (!stable_sha || !/^[0-9a-f]{7,40}$/.test(stable_sha)) {
+    return res.status(400).json({ error: 'stable_sha required (7-40 hex chars)' });
+  }
+
+  deployState.status = 'rolling_back';
+  deployState.started_at = new Date().toISOString();
+  deployState.error = null;
+
+  res.status(202).json({ status: 'accepted', message: `Rollback to ${stable_sha} triggered`, reason });
+
+  const { execSync } = await import('child_process');
+  const repoRoot = new URL('../../../..', import.meta.url).pathname;
+  const startTime = Date.now();
+
+  try {
+    console.log(`[rollback] 回滚到 ${stable_sha}，原因: ${reason || 'unspecified'}`);
+    execSync(
+      `git fetch origin && git checkout ${stable_sha} -- packages/brain/src packages/brain/migrations packages/brain/package.json packages/brain/package-lock.json`,
+      { cwd: repoRoot, timeout: 120_000, stdio: 'inherit' }
+    );
+    execSync(`cd packages/brain && npm install --prefer-offline 2>/dev/null || npm install`, {
+      cwd: repoRoot, timeout: 120_000, stdio: 'inherit', shell: true,
+    });
+    execSync(`pm2 restart brain 2>/dev/null || true`, { cwd: repoRoot, stdio: 'inherit', shell: true });
+
+    const elapsed = Date.now() - startTime;
+    deployState.status = 'rolled_back';
+    deployState.finished_at = new Date().toISOString();
+    deployState.elapsed_ms = elapsed;
+    console.log(`[rollback] ✅ 回滚成功 (${(elapsed / 1000).toFixed(1)}s)`);
+  } catch (err) {
+    const elapsed = Date.now() - startTime;
+    deployState.status = 'rollback_failed';
+    deployState.finished_at = new Date().toISOString();
+    deployState.elapsed_ms = elapsed;
+    deployState.error = err.message;
+    console.error(`[rollback] ❌ 回滚失败:`, err.message);
+  }
+});
+
 
 export default router;

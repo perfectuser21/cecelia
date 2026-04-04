@@ -156,3 +156,33 @@ jobs:
             echo "::error::烟雾测试失败 (HTTP $HTTP_CODE) — 部署成功但 Brain 不健康"
             exit 1
           fi
+
+      - name: 部署失败 — 触发回滚
+        if: failure()
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'https://dev-autopilot.zenjoymedia.media' }}
+          STABLE_SHA: ${{ github.event.before }}
+        run: |
+          echo "::error::部署失败，触发回滚到稳定版本 $STABLE_SHA"
+
+          if [ -z "$DEPLOY_TOKEN" ] || [ -z "$STABLE_SHA" ] || [ "$STABLE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "::warning::无法自动回滚（缺少 token 或 SHA），请手动执行：git revert HEAD && git push origin main"
+            exit 0
+          fi
+
+          HTTP_CODE=$(curl -s -o /tmp/rollback_response.txt -w "%{http_code}" \
+            -X POST "${BRAIN_URL}/api/brain/deploy/rollback" \
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"stable_sha\": \"${STABLE_SHA}\", \"reason\": \"deploy_failed_in_ci\"}" \
+            --connect-timeout 30 --max-time 60 2>/dev/null || echo "000")
+
+          echo "Rollback response ($HTTP_CODE):"
+          if [ -f /tmp/rollback_response.txt ]; then cat /tmp/rollback_response.txt; fi
+
+          if [ "$HTTP_CODE" = "202" ]; then
+            echo "✅ 回滚已触发，Brain 将恢复到 $STABLE_SHA"
+          else
+            echo "::warning::回滚请求失败 (HTTP $HTTP_CODE)，请手动回滚"
+          fi

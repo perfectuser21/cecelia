@@ -90,6 +90,7 @@ const SKILL_WHITELIST = {
   'content-generate': '/content-creator',
   'content-image-review': '/content-creator',
   'content-export': '/content-creator',
+  'content_publish': '/content-creator',  // 发布阶段 → executor 按 payload.platform 路由到对应 publisher skill
   // Codex Gate 审查任务类型
   'prd_review': '/prd-review',              // PRD 审查
   'spec_review': '/spec-review',            // Spec 审查
