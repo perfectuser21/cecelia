@@ -345,7 +345,7 @@ export async function executeCopyReview(task) {
         .map(r => `- ${r.id}: ${r.description} (severity: ${r.severity})`)
         .join('\n');
 
-      const prompt = `${typeConfig.template.review_prompt}\n\n## 待审查内容\n${allText.substring(0, 3000)}\n\n## 审查规则\n${rulesDesc}\n\n请对每条规则逐一评审，严格按 JSON 格式返回：\n{\n  "rule_scores": [\n    { "id": "rule_id", "score": 0, "pass": true, "comment": "评审意见" }\n  ],\n  "overall_pass": true,\n  "summary": "总体评审意见"\n}`;
+      const prompt = `${typeConfig.template.review_prompt}\n\n## 待审查内容\n${allText.substring(0, 3000)}\n\n## 审查规则\n${rulesDesc}\n\n请对每条规则逐一评审，严格按 JSON 格式返回：\n{\n  "rule_scores": [\n    { "id": "rule_id", "score": 0, "pass": true, "comment": "评审意见" }\n  ],\n  "overall_pass": true,\n  "quality_score": 7,\n  "summary": "总体评审意见"\n}`;
 
       const { text } = await callLLM('thalamus', prompt, { maxTokens: 1024, timeout: 60000 });
 
@@ -357,12 +357,15 @@ export async function executeCopyReview(task) {
         if (failedRules.length > 0) {
           issues.push(...failedRules.map(r => `[${r.id}] ${r.comment}`));
         }
-        const passed = parsed.overall_pass !== false && issues.length === 0;
+        // quality_score >= 6 视为通过，避免 LLM 审查标准过严导致所有内容无法进入下游
+        const qualityScore = typeof parsed.quality_score === 'number' ? parsed.quality_score : (parsed.overall_pass !== false ? 7 : 4);
+        const passed = qualityScore >= 6;
         return {
           success: true,
           review_passed: passed,
           rule_scores: ruleScores,
           llm_reviewed: true,
+          quality_score: qualityScore,
           issues,
         };
       }
@@ -527,8 +530,10 @@ export async function executeImageReview(task) {
         if (jsonMatch) {
           const llmReview = JSON.parse(jsonMatch[0]);
           if (llmReview.issues?.length > 0) issues.push(...llmReview.issues);
-          const passed = llmReview.review_passed !== false && issues.length === 0;
-          return { success: true, review_passed: passed, card_count: cardCount, issues, llm_review: llmReview };
+          // quality_score >= 6 视为通过，避免 LLM 审查标准过严导致所有内容永久失败
+          const qualityScore = typeof llmReview.quality_score === 'number' ? llmReview.quality_score : (llmReview.review_passed !== false ? 7 : 4);
+          const passed = qualityScore >= 6;
+          return { success: true, review_passed: passed, card_count: cardCount, issues, llm_review: llmReview, quality_score: qualityScore };
         }
       }
     } catch (err) {

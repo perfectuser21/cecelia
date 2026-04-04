@@ -23,8 +23,10 @@ const TRIGGER_WINDOW_MINUTES = 5;
 /** 每日最多创建的 content-pipeline tasks 数量 */
 const MAX_DAILY_TOPICS = 10;
 
-/** KR goal_id：选题+文案自动化 Initiative 所属 KR（内容生产自动化） */
-const CONTENT_KR_GOAL_ID = 'fedab43c-a8b8-428c-bcc1-6aad6e6210fc';
+/** KR goal_id：内容生成 KR（AI每天产出≥5条内容）
+ * 通过 SELECT id FROM key_results WHERE status='active' AND title ILIKE '%内容生成%' 验证
+ */
+const CONTENT_KR_GOAL_ID = '65b4142d-242b-457d-abfa-c0c38037f1e9';
 
 // ─── 主入口 ──────────────────────────────────────────────────────────────────
 
