@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 14.3.1
+version: 14.3.2
 updated: 2026-04-04
 
 # ============================================================================
@@ -191,7 +191,6 @@ hooks:
       type: code
       run: "bash hooks/verify-step.sh step1"
       contains: "verify_step1"
-    test: "tests/hooks/verify-step.test.ts"
 
   - id: H1-015
     feature: H1
@@ -210,7 +209,6 @@ hooks:
       type: code
       run: "bash hooks/verify-step.sh step2"
       contains: "verify_step2"
-    test: "tests/hooks/verify-step.test.ts"
 
   - id: H1-016
     feature: H1
@@ -229,7 +227,6 @@ hooks:
       type: code
       run: "bash hooks/verify-step.sh step4"
       contains: "verify_step4"
-    test: "tests/hooks/verify-step.test.ts"
 
   # --------------------------------------------------------------------------
   # H1-017~H1-019: v12.97.0 State Machine 三层防御 P0+P1
@@ -270,7 +267,6 @@ hooks:
       type: code
       run: "bash hooks/verify-step.sh step1"
       contains: "dev-seal"
-    test: "tests/hooks/verify-step.test.ts"
 
   - id: H1-019
     feature: H1
@@ -553,7 +549,6 @@ hooks:
       type: code
       file: "hooks/stop-dev.sh"
       contains: "PR_STATE.*merged"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-016
     feature: H7
@@ -572,7 +567,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/cleanup.sh"
       contains: "dev-mode.${CP_BRANCH}"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-017
     feature: H7
@@ -591,7 +585,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/cleanup.sh"
       contains: "gh pr list"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-018
     feature: H7
@@ -610,7 +603,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/cleanup.sh"
       not_contains: "(bash.*worktree-gc.*&)"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   # v12.41.0: Deep Bug Fixes
   - id: H7-019
@@ -630,7 +622,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/cleanup.sh"
       contains: "_mark_cleanup_done"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-020
     feature: H7
@@ -649,7 +640,6 @@ hooks:
       type: code
       file: "hooks/stop-dev.sh"
       contains: "_branch_in_lock\" == \"$CURRENT_BRANCH\""
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-021
     feature: H7
@@ -668,7 +658,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/worktree-gc.sh"
       contains: "git -C \"$WT_PATH\" status --porcelain"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-022
     feature: H7
@@ -687,7 +676,6 @@ hooks:
       type: code
       file: "hooks/stop-dev.sh"
       contains: ".dev-orphan-retry"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-023
     feature: H7
@@ -706,7 +694,6 @@ hooks:
       type: code
       file: "lib/lock-utils.sh"
       contains: "_LU_DEV_MODE_FILE"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-024
     feature: H7
@@ -725,7 +712,6 @@ hooks:
       type: code
       file: "lib/lock-utils.sh"
       contains: "git rev-parse --git-dir"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-025
     feature: H7
@@ -744,7 +730,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/cleanup.sh"
       contains: "IS_WORKTREE"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-026
     feature: H7
@@ -763,7 +748,6 @@ hooks:
       type: code
       file: "hooks/stop-dev.sh"
       contains: "flock -x 202"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-027
     feature: H7
@@ -782,7 +766,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/worktree-gc.sh"
       contains: "worktree_dir"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   - id: H7-028
     feature: H7
@@ -801,7 +784,6 @@ hooks:
       type: code
       file: "hooks/stop-dev.sh"
       contains: ".dev-orphan-retry-sentinel"
-    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
@@ -1046,7 +1028,6 @@ hooks:
       type: code
       file: "scripts/devgate/detect-priority.cjs"
       contains: "CRITICAL|HIGH|security"
-    test: "tests/hooks/detect-priority.test.ts"
 
   # [DEPRECATED] H7 Stop Hook 从未实现，已被 Ralph Loop + PR Gate 替代
   # - id: H7-004
@@ -1095,7 +1076,6 @@ hooks:
       type: command
       run: "bash scripts/install-hooks.sh --version"
       contains: "CI tools version:"
-    test: "tests/hooks/install-hooks.test.ts"
 
   - id: H3-002
     feature: H3
@@ -1135,7 +1115,6 @@ hooks:
       type: command
       run: "bash scripts/devgate/metrics.sh --format json"
       contains: "rci_coverage"
-    test: "tests/hooks/metrics.test.ts"
 
   - id: H4-002
     feature: H4
@@ -1154,7 +1133,6 @@ hooks:
       type: file
       path: ".history/PR-*.dod.md"
       contains: "<!-- pr:"
-    test: "tests/hooks/metrics.test.ts"
 
   # --------------------------------------------------------------------------
   # H4-003: v8.24.0 安全修复 (run-regression.sh)
@@ -1655,7 +1633,6 @@ workflow:
       type: code
       file: "scripts/devgate/scan-rci-coverage.cjs"
       contains: "replace(/\\*\\*/g"
-    test: "tests/devgate/scan-rci-coverage.test.ts"
 
   - id: W8-002
     feature: W8
@@ -1674,7 +1651,6 @@ workflow:
       type: code
       file: "scripts/devgate/snapshot-prd-dod.sh"
       contains: "ESCAPED_TITLE.*\\$"
-    test: "tests/devgate/snapshot-prd-dod.test.ts"
 
 # ============================================================================
 # CI/Release 回归契约
@@ -1763,7 +1739,6 @@ ci:
       type: code
       file: ".github/workflows/ci.yml"
       contains: "timeout-minutes:"
-    test: "tests/workflows/ci-timeout.test.ts"
 
   - id: C1-005
     feature: C1
@@ -2147,7 +2122,6 @@ ci:
       type: code
       file: "scripts/devgate/check-dod-mapping.cjs"
       contains: "validateManualEvidence"
-    test: "tests/ci/scan-rci-coverage.test.ts"
 
   - id: C9-002
     feature: C9
@@ -2166,7 +2140,6 @@ ci:
       type: code
       file: "scripts/devgate/check-dod-mapping.cjs"
       contains: "!verification.actor || !verification.timestamp || !verification.evidence"
-    test: "tests/ci/scan-rci-coverage.test.ts"
 
   # --------------------------------------------------------------------------
   # C10: CI Security Fixes (P0 v11.12.2)
@@ -2370,7 +2343,6 @@ ci:
       type: code
       file: "scripts/devgate/scan-rci-coverage.cjs"
       contains: "P1-2: 移除了 name.includes 误判逻辑"
-    test: "tests/ci/scan-rci-coverage.test.ts"
 
 # ============================================================================
 # Export 回归契约
@@ -3055,7 +3027,6 @@ skills:
     evidence:
       type: file
       path: "tests/dev/test-generate-feedback-report.sh"
-    test: "tests/dev/test-generate-feedback-report.sh"
 
   - id: S1-007
     feature: S1
@@ -3090,7 +3061,6 @@ skills:
     evidence:
       type: file
       path: "tests/dev/test-workflow-integration.sh"
-    test: "tests/dev/test-workflow-integration.sh"
 
   - id: S1-009
     feature: S1
@@ -3108,7 +3078,6 @@ skills:
     evidence:
       type: file
       path: "tests/dev/test-upload-feedback.sh"
-    test: "tests/dev/test-upload-feedback.sh"
 
   - id: S1-010
     feature: S1
@@ -3126,7 +3095,6 @@ skills:
     evidence:
       type: file
       path: "tests/dev/test-update-task-status.sh"
-    test: "tests/dev/test-update-task-status.sh"
 
   # ============================================================================
   # S2: PRD/DoD Validation Loop
@@ -3184,7 +3152,6 @@ skills:
     evidence:
       type: file
       path: "tests/validation-loop/test-anti-cheat.sh"
-    test: "tests/validation-loop/test-anti-cheat.sh"
 
 
   - id: PCPV-001
@@ -3244,7 +3211,6 @@ skills:
     evidence:
       type: command
       run: "bash -c 'test -f packages/engine/skills/intent-expand/SKILL.md'"
-    test: "tests/skills/intent-expand.test.ts"
 
   # DEPRECATED: code-quality 已被 code_review_gate 替代（Pipeline v2），Skill 目录已删除
   # - id: S4-003

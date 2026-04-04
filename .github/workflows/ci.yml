@@ -133,6 +133,8 @@ jobs:
         run: cd packages/engine && npx vitest run --reporter=verbose
       - name: Version Sync
         run: cd packages/engine && bash ci/scripts/check-version-sync.sh
+      - name: Contract Refs Check
+        run: cd packages/engine && bash ci/scripts/check-contract-refs.sh
 
   # ─── Brain: Unit Tests ─────────────────────────────────────
   brain-unit:

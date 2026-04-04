@@ -14,6 +14,23 @@ changelog:
 
 ---
 
+## 4.0 完工清理检查（Engine 改动时必做）
+
+改动了 `packages/engine/` 下任何文件时，先运行完工检查：
+
+```bash
+bash packages/engine/skills/dev/scripts/check-cleanup.sh
+```
+
+检查内容：
+- regression-contract.yaml 里的测试引用是否都存在
+- Shell 脚本硬引用的路径是否存在
+- 6 个版本文件是否同步
+
+**有问题必须修复后再继续**。
+
+---
+
 ## 4.1 写 Learning
 
 ```markdown
