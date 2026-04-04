@@ -10,13 +10,16 @@
  *   6. executeExport        — 归档 + manifest.json + 在线预览
  */
 
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getContentType } from './content-types/content-type-registry.js';
 import { callLLM } from './llm-caller.js';
 import { listSources, deleteSource } from './notebook-adapter.js';
+
+const execAsync = promisify(exec);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -34,9 +37,10 @@ const BANNED_WORDS = ['coding', '搭建', 'agent workflow', 'builder', 'Cecelia'
 
 // ─── 工具 ───────────────────────────────────────────────────
 
-function run(cmd, timeout = 60000) {
+async function run(cmd, timeout = 60000) {
   try {
-    return execSync(cmd, { encoding: 'utf-8', timeout, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    const { stdout } = await execAsync(cmd, { encoding: 'utf-8', timeout });
+    return stdout.trim();
   } catch (err) {
     console.error(`[executor] cmd failed: ${cmd.substring(0, 80)}… → ${(err.stderr || err.message).substring(0, 200)}`);
     return null;
@@ -131,17 +135,17 @@ export async function executeResearch(task) {
   const dir = join(OUTPUT_BASE, 'research', `${contentType}-${slug(keyword)}-${today()}`);
   ensureDir(dir);
 
-  run(`notebooklm use ${notebookId} 2>&1`);
+  await run(`notebooklm use ${notebookId} 2>&1`);
   await clearNotebookSources(notebookId, '旧 ');
 
   console.log(`[research] 开始 web 搜索: ${keyword}`);
-  run(`notebooklm source add-research "${keyword}" --mode deep --no-wait 2>&1`, 30000);
+  await run(`notebooklm source add-research "${keyword}" --mode deep --no-wait 2>&1`, 30000);
 
-  const waitResult = run(`notebooklm research wait --timeout 300 --import-all 2>&1`, 330000);
+  const waitResult = await run(`notebooklm research wait --timeout 300 --import-all 2>&1`, 330000);
   console.log(`[research] 研究完成: ${waitResult?.substring(0, 200) || '(无输出)'}`);
 
   const researchPrompt = buildResearchPrompt(typeConfig, keyword);
-  const raw = run(`notebooklm ask "${researchPrompt}" --json 2>&1`, 120000);
+  const raw = await run(`notebooklm ask "${researchPrompt}" --json 2>&1`, 120000);
 
   let findings;
   try {
@@ -716,7 +720,7 @@ export async function executeExport(task) {
     const nasDir = `${NAS_BASE}/${pipelineId}`;
     const nasRemotePath = `${NAS_USER}@${NAS_IP}:${nasDir}/`;
     try {
-      execSync(`rsync -az --timeout=30 "${dir}/" "${nasRemotePath}"`, { timeout: 60000 });
+      await execAsync(`rsync -az --timeout=30 "${dir}/" "${nasRemotePath}"`, { timeout: 60000 });
       export_path = nasDir;
       console.log(`[export] NAS 上传成功: ${export_path}`);
     } catch (nasErr) {
