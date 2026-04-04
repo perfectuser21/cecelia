@@ -243,8 +243,8 @@ devloop_check() {
 
         if [[ "$step_4_status" == "done" ]]; then
             _mark_cleanup_done "$dev_mode_file"
-            _devloop_jq -n '{"status":"blocked","reason":"Stage 4 Ship 已完成，cleanup_done 已标记，等待下次检查退出","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
-            return 2
+            _devloop_jq -n '{"status":"done","reason":"Stage 4 Ship 已完成，cleanup_done 已标记，工作流结束"}'
+            return 0
         else
             local _cleanup_script=""
             for _cs in \

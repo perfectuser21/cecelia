@@ -113,19 +113,9 @@ if [[ "$DEV_MODE_FIRST" != "dev" ]]; then
     exit 2
 fi
 
-# 会话隔离（分支 / TTY / session_id）
-BRANCH_IN_FILE=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
-CUR_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-if [[ -n "$BRANCH_IN_FILE" && "$BRANCH_IN_FILE" != "$CUR_BRANCH" ]]; then
-    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"; exit 0
-fi
-TTY_IN=$(grep "^tty:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2- || echo "")
-CUR_TTY=$(tty 2>/dev/null || echo "")
-[[ -n "$TTY_IN" && -n "$CUR_TTY" && "$TTY_IN" != "$CUR_TTY" ]] && exit 0
-SESSION_ID_IN_FILE=$(grep "^session_id:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
-[[ -n "$SESSION_ID_IN_FILE" && -n "${CLAUDE_SESSION_ID:-}" && "$SESSION_ID_IN_FILE" != "${CLAUDE_SESSION_ID:-}" ]] && exit 0
-
-BRANCH_NAME="${BRANCH_IN_FILE:-$CUR_BRANCH}"
+# 会话隔离由 .dev-lock 扫描阶段的 _session_matches 已完成（L63-73）
+# BRANCH_NAME 直接从 .dev-lock 的 branch 字段（_lb）获取，不依赖 .dev-mode
+BRANCH_NAME="${_lb:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")}"
 
 # Harness 模式标识
 HARNESS_MODE_FLAG=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
