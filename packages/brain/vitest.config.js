@@ -58,6 +58,10 @@ export default defineConfig({
       'src/__tests__/notebook-feeder.test.js',
       'src/__tests__/migration-016.test.js',
       'src/__tests__/rumination-scheduler.test.js',
+      // 以下 .ts 集成测试需要真实 DB
+      'src/__tests__/content-pipeline-orphan.test.ts',
+      // services 子目录的集成测试
+      'src/__tests__/services/memory-service.test.js',
       // 以下测试因 mock 不完整或代码逻辑变更导致失败，暂时排除（pre-existing issue）
       'src/__tests__/content-pipeline-executors.test.js',
       'src/__tests__/content-pipeline-llm.test.js',
