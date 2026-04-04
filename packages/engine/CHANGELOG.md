@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [14.3.0] - 2026-04-04
+
+### Changed
+- P0: 确认 hooks/ 根目录为软链接（git tree mode 120000 → packages/engine/hooks）
+- P2: stop-dev.sh _session_matches 去掉 headless fallback 的 `-z "$lock_session"` 约束，允许 CLAUDE_SESSION_ID 未传递时回退 branch 匹配
+- P3: stop-dev.sh 并发锁加 macOS fallback — flock 不可用时用 mkdir 原子锁（最多重试 20×0.1s）
+
 ## [14.2.2] - 2026-04-03
 
 ### Fixed

@@ -31,7 +31,7 @@ _session_matches() {
         return 0
     elif [[ -n "$lock_session" && -n "$cur_session" && "$lock_session" == "$cur_session" ]]; then
         return 0
-    elif [[ ("$lock_tty" == "not a tty" || -z "$lock_tty") && -z "$lock_session" ]] || \
+    elif [[ ("$lock_tty" == "not a tty" || -z "$lock_tty") ]] || \
          { [[ -z "$cur_tty" || "$cur_tty" == "not a tty" ]] && [[ -z "$cur_session" ]]; }; then
         [[ -n "$lock_branch" && "$lock_branch" == "$cur_branch" ]] && return 0
     fi
@@ -76,11 +76,21 @@ done < <(_collect_search_dirs "$PROJECT_ROOT")
 [[ -z "$DEV_LOCK_FILE" ]] && exit 0
 
 # 并发锁（per-worktree）
+_git_dir="$(git -C "$MATCHED_DIR" rev-parse --git-dir 2>/dev/null || echo "/tmp")"
+[[ ! -d "$_git_dir" ]] && _git_dir="/tmp"
 if command -v flock &>/dev/null; then
-    _git_dir="$(git -C "$MATCHED_DIR" rev-parse --git-dir 2>/dev/null || echo "/tmp")"
-    [[ ! -d "$_git_dir" ]] && _git_dir="/tmp"
     exec 201>"$_git_dir/cecelia-stop.lock"
     flock -w 2 201 || { jq -n '{"decision":"block","reason":"并发锁获取失败，等待重试"}'; exit 2; }
+else
+    # macOS fallback: mkdir 原子锁（mkdir 是 POSIX 原子操作）
+    _lock_dir="$_git_dir/cecelia-stop.lockdir"
+    _lock_try=0
+    until mkdir "$_lock_dir" 2>/dev/null; do
+        _lock_try=$((_lock_try + 1))
+        [[ $_lock_try -ge 20 ]] && { jq -n '{"decision":"block","reason":"并发锁获取超时（macOS mkdir），等待重试"}'; exit 2; }
+        sleep 0.1
+    done
+    trap 'rmdir "$_lock_dir" 2>/dev/null' EXIT INT TERM
 fi
 
 # .dev-mode 不存在 → 状态丢失，无上限阻止退出（fail-closed）
