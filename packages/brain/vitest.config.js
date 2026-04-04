@@ -144,7 +144,7 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 3   // 3 fork 并行：每 fork 3GB = 9GB，ubuntu-latest 16GB 余量充足
+        maxForks: 1   // 单 fork：避免多进程并发 OOM（ubuntu-latest 7GB 总内存）
       }
     }
   }
