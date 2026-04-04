@@ -442,7 +442,7 @@ describe('auto-fix.js', () => {
       await dispatchToDevSkill(baseFailure, baseRca, 'sig-xyz');
 
       const callArg = mockCreateTask.mock.calls[0][0];
-      const tags = JSON.parse(callArg.tags);
+      const tags = Array.isArray(callArg.tags) ? callArg.tags : JSON.parse(callArg.tags);
       expect(tags).toContain('auto-fix');
       expect(tags).toContain('rca');
       expect(tags).toContain('sig-xyz');
@@ -521,13 +521,13 @@ describe('auto-fix.js', () => {
       expect(sql).toContain('auto-fix');
     });
 
-    it('SQL 使用 jsonb ? 操作符', async () => {
+    it('SQL 使用 ANY(tags) 数组包含操作', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{}] });
 
       await getAutoFixStats();
 
       const sql = mockQuery.mock.calls[0][0];
-      expect(sql).toContain('?');
+      expect(sql).toMatch(/ANY\(tags\)|= ANY/);
     });
 
     it('SQL 包含 COUNT(*) 聚合', async () => {
