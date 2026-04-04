@@ -231,7 +231,9 @@ describe('Harness v2.0 Sprint Loop', () => {
 
   it('task-router.js 包含 3 个新 task_type', async () => {
     const fs = await import('fs');
-    const content = fs.readFileSync('packages/brain/src/task-router.js', 'utf8');
+    const { resolve } = await import('path');
+    const ROOT = resolve(import.meta.dirname, '../..');
+    const content = fs.readFileSync(resolve(ROOT, 'src/task-router.js'), 'utf8');
 
     expect(content).toContain('sprint_generate');
     expect(content).toContain('sprint_evaluate');
@@ -243,7 +245,9 @@ describe('Harness v2.0 Sprint Loop', () => {
 
   it('execution.js 包含 harness_mode 兼容判断', async () => {
     const fs = await import('fs');
-    const content = fs.readFileSync('packages/brain/src/routes/execution.js', 'utf8');
+    const { resolve } = await import('path');
+    const ROOT = resolve(import.meta.dirname, '../..');
+    const content = fs.readFileSync(resolve(ROOT, 'src/routes/execution.js'), 'utf8');
 
     expect(content).toContain('harness_mode');
     expect(content).toContain('!devTask.payload?.harness_mode');
