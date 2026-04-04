@@ -228,6 +228,63 @@ async function handleStuckRun(stuck) {
 }
 
 /**
+ * Fetch task metadata (title, type, description head) from tasks table.
+ * @param {string} taskId
+ * @returns {Promise<{task_title,task_type,task_description_head}|null>}
+ */
+async function _fetchTaskMetadata(taskId) {
+  const result = await pool.query(
+    `SELECT title, task_type, LEFT(description, 500) AS description_head
+     FROM tasks WHERE id = $1 LIMIT 1`,
+    [taskId]
+  );
+  if (result.rows.length === 0) return null;
+  const t = result.rows[0];
+  return { task_title: t.title, task_type: t.task_type, task_description_head: t.description_head };
+}
+
+/**
+ * Fetch stderr / log_tail from the latest failed run_event payload.
+ * @param {string} runId
+ * @returns {Promise<{stderr,log_tail}|null>}
+ */
+async function _fetchRunPayload(runId) {
+  const result = await pool.query(
+    `SELECT payload FROM run_events
+     WHERE run_id = $1 AND status = 'failed'
+     ORDER BY ts_end DESC NULLS LAST LIMIT 1`,
+    [runId]
+  );
+  if (result.rows.length === 0) return null;
+  const payload = result.rows[0].payload;
+  if (!payload || typeof payload !== 'object') return null;
+  return {
+    stderr: (payload.stderr || payload.error || '').toString().slice(-2000),
+    log_tail: (payload.log_tail || payload.output || '').toString().slice(-1000),
+  };
+}
+
+/**
+ * Count recent similar failures (same reason_code, last 24h).
+ * @param {string} reasonCode
+ * @returns {Promise<{count,affected_steps}>}
+ */
+async function _fetchSimilarFailures(reasonCode) {
+  const result = await pool.query(
+    `SELECT count(*) AS cnt, array_agg(DISTINCT step_name) AS steps
+     FROM run_events
+     WHERE reason_code = $1 AND status = 'failed'
+       AND ts_start > NOW() - INTERVAL '24 hours'`,
+    [reasonCode]
+  );
+  if (result.rows.length === 0) return { count: 0, affected_steps: [] };
+  return {
+    count: parseInt(result.rows[0].cnt) || 0,
+    affected_steps: result.rows[0].steps || [],
+  };
+}
+
+/**
  * Gather rich failure context from run_events and tasks tables
  * so Cortex can produce high-confidence RCA diagnoses.
  *
@@ -253,53 +310,14 @@ async function gatherFailureContext(failure) {
   };
 
   try {
-    // 1. Get task metadata (title, type, description head)
     if (failure.task_id) {
-      const taskResult = await pool.query(
-        `SELECT title, task_type, LEFT(description, 500) AS description_head
-         FROM tasks WHERE id = $1 LIMIT 1`,
-        [failure.task_id]
-      );
-      if (taskResult.rows.length > 0) {
-        const t = taskResult.rows[0];
-        ctx.task_title = t.title;
-        ctx.task_type = t.task_type;
-        ctx.task_description_head = t.description_head;
-      }
+      Object.assign(ctx, await _fetchTaskMetadata(failure.task_id));
     }
-
-    // 2. Get stderr / log_tail from run_events payload (if stored)
     if (failure.run_id) {
-      const runResult = await pool.query(
-        `SELECT payload FROM run_events
-         WHERE run_id = $1 AND status = 'failed'
-         ORDER BY ts_end DESC NULLS LAST LIMIT 1`,
-        [failure.run_id]
-      );
-      if (runResult.rows.length > 0) {
-        const payload = runResult.rows[0].payload;
-        if (payload && typeof payload === 'object') {
-          ctx.stderr = (payload.stderr || payload.error || '').toString().slice(-2000);
-          ctx.log_tail = (payload.log_tail || payload.output || '').toString().slice(-1000);
-        }
-      }
+      Object.assign(ctx, await _fetchRunPayload(failure.run_id));
     }
-
-    // 3. Count recent similar failures (same reason_code, last 24h)
     if (failure.reason_code) {
-      const similarResult = await pool.query(
-        `SELECT count(*) AS cnt, array_agg(DISTINCT step_name) AS steps
-         FROM run_events
-         WHERE reason_code = $1 AND status = 'failed'
-           AND ts_start > NOW() - INTERVAL '24 hours'`,
-        [failure.reason_code]
-      );
-      if (similarResult.rows.length > 0) {
-        ctx.recent_similar_failures = {
-          count: parseInt(similarResult.rows[0].cnt) || 0,
-          affected_steps: similarResult.rows[0].steps || [],
-        };
-      }
+      ctx.recent_similar_failures = await _fetchSimilarFailures(failure.reason_code);
     }
   } catch (err) {
     console.warn(`[Monitor] gatherFailureContext partial failure: ${err.message}`);
