@@ -390,6 +390,27 @@ export function isWorldStateQuery(query) {
  * @param {0|1|2} [depth=0] - 对话深度：0=L0简短，1=L1详情，2=全文
  * @returns {string}
  */
+function buildExtras(item) {
+  const extras = [];
+  if (item.task_count != null) extras.push(`关联任务 ${item.task_count} 个`);
+  if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
+  return extras;
+}
+
+function appendExtras(base, extras) {
+  return extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
+}
+
+function getPreview(item, depth) {
+  if (depth === 0) {
+    return (item.description || item.text || '').slice(0, 80);
+  }
+  const content = depth >= 2
+    ? (item.full_content || item.description || item.text || '')
+    : (item.description || item.text || '').slice(0, 250);
+  return appendExtras(content, buildExtras(item));
+}
+
 function formatItem(item, depth = 0) {
   const sourceLabel = {
     task: '任务',
@@ -404,28 +425,7 @@ function formatItem(item, depth = 0) {
   const label = sourceLabel[item.source] || item.source;
   const title = (item.title || '').slice(0, 80);
   const statusHint = item.status ? ` (${item.status})` : '';
-
-  let preview;
-  if (depth === 0) {
-    // L0：轻点一下，简短
-    preview = (item.description || item.text || '').slice(0, 80);
-  } else if (depth === 1) {
-    // L1：更多细节 + 关联数量
-    const base = (item.description || item.text || '').slice(0, 250);
-    const extras = [];
-    if (item.task_count !== undefined && item.task_count !== null) extras.push(`关联任务 ${item.task_count} 个`);
-    if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
-    preview = extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
-  } else {
-    // depth >= 2：全文
-    const base = item.full_content || item.description || item.text || '';
-    const extras = [];
-    if (item.task_count !== undefined && item.task_count !== null) extras.push(`关联任务 ${item.task_count} 个`);
-    if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
-    preview = extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
-  }
-
-  return `- [${label}] **${title}**${statusHint}: ${preview}`;
+  return `- [${label}] **${title}**${statusHint}: ${getPreview(item, depth)}`;
 }
 
 // ============================================================
