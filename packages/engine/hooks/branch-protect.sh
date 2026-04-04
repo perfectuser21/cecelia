@@ -143,12 +143,8 @@ if [[ "${CURRENT_BRANCH}" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
         fi
     fi
 
-    # .dev-mode 存在检查
-    if [[ -f "$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}" ]]; then
-        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
-    else
-        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
-    fi
+    # .dev-mode 存在检查（仅支持 per-branch 格式，v14.0.0 已废弃无后缀格式）
+    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
     if [[ ! -f "$DEV_MODE_FILE" ]]; then
         echo "  没有活跃的 /dev 会话（.dev-mode 缺失），请运行 /dev" >&2
         echo "[SKILL_REQUIRED: dev]" >&2

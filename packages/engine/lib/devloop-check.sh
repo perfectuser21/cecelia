@@ -51,6 +51,18 @@ _mark_cleanup_done() {
 }
 
 # ============================================================================
+# 内部函数: _get_step4_status — 读取 step_4_ship 或 step_4_learning 状态
+# ============================================================================
+_get_step4_status() {
+    local dev_mode_file="${1:-}"
+    local status
+    status=$(grep "^step_4_ship:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+    [[ "$status" == "pending" ]] && \
+        status=$(grep "^step_4_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+    echo "$status"
+}
+
+# ============================================================================
 # 主函数: devloop_check BRANCH DEV_MODE_FILE
 # ============================================================================
 devloop_check() {
@@ -227,9 +239,7 @@ devloop_check() {
         fi
 
         local step_4_status
-        step_4_status=$(grep "^step_4_ship:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
-        [[ "$step_4_status" == "pending" ]] && \
-            step_4_status=$(grep "^step_4_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+        step_4_status=$(_get_step4_status "$dev_mode_file")
 
         if [[ "$step_4_status" == "done" ]]; then
             _mark_cleanup_done "$dev_mode_file"
@@ -261,9 +271,7 @@ devloop_check() {
 
     # ===== 条件 6: CI 通过 + Stage 4 Learning → 执行合并 =====
     local step_4_status
-    step_4_status=$(grep "^step_4_ship:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
-    [[ "$step_4_status" == "pending" ]] && \
-        step_4_status=$(grep "^step_4_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
+    step_4_status=$(_get_step4_status "$dev_mode_file")
 
     if [[ "$step_4_status" != "done" ]]; then
         _devloop_jq -n --arg pr "$pr_number" \
