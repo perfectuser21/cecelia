@@ -322,6 +322,7 @@ TASK1_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
     "payload": {
       "architecture_ref": "architecture.md",
       "sequence_order": 1,
+      "sprint_dir": "sprints/sprint-1",
       "harness_mode": true
     }
   }' | jq -r '.id')
@@ -342,6 +343,7 @@ TASK2_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
     \"payload\": {
       \"architecture_ref\": \"architecture.md\",
       \"sequence_order\": 2,
+      \"sprint_dir\": \"sprints/sprint-2\",
       \"depends_on_prev\": \"true\",
       \"harness_mode\": true
     }
@@ -363,6 +365,7 @@ TASKN_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
     \"payload\": {
       \"architecture_ref\": \"architecture.md\",
       \"sequence_order\": N,
+      \"sprint_dir\": \"sprints/sprint-N\",
       \"depends_on_prev\": \"true\",
       \"integration_test_owner\": true,
       \"harness_mode\": true
