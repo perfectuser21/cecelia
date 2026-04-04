@@ -603,7 +603,29 @@ export async function executeQueuedContentTasks(dbPool = pool) {
         LIMIT 3
       `, [stage]);
 
+      // 批量检查父 pipeline 状态，跳过已失败/取消的子任务
+      const parentIds = [...new Set(result.rows.map(t => t.payload?.parent_pipeline_id).filter(Boolean))];
+      let aliveParents = new Set();
+      if (parentIds.length > 0) {
+        const parentResult = await dbPool.query(
+          `SELECT id FROM tasks WHERE id = ANY($1::uuid[]) AND status IN ('queued','in_progress')`,
+          [parentIds]
+        );
+        aliveParents = new Set(parentResult.rows.map(r => r.id));
+      }
+
       for (const task of result.rows) {
+        const parentId = task.payload?.parent_pipeline_id;
+        if (parentId && !aliveParents.has(parentId)) {
+          // 父 pipeline 已 failed/cancelled — 子任务标记 cancelled 并跳过
+          await dbPool.query(
+            `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), error_message = $2 WHERE id = $1`,
+            [task.id, '父 pipeline 已失败，子任务自动取消']
+          ).catch(() => {});
+          console.log(`[content-executor] 子任务 ${task.id}（${stage}）父 pipeline ${parentId?.substring(0,8)} 已失败，已取消`);
+          continue;
+        }
+
         try {
           await _executeStageTask(task, stage, executor, dbPool);
           executed++;

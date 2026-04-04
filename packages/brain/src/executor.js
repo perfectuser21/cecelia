@@ -3086,6 +3086,25 @@ async function syncOrphanTasksOnStartup() {
       // No matching process — this is an orphan
       orphansFound++;
 
+      // Tasks with run_id = null never spawned a real process — they are inline
+      // orchestration markers (e.g. content-pipeline). On Brain restart these
+      // should always be requeued rather than quarantined, because no process
+      // actually died; the task was simply running inline when Brain stopped.
+      if (!runId) {
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'queued',
+            error_message = NULL,
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+            updated_at = NOW()
+          WHERE id = $1`,
+          [task.id, JSON.stringify({ watchdog_retry_count: 0 })]
+        );
+        requeued++;
+        console.log(`[startup-sync] Inline task requeued (no process): task=${task.id} title="${task.title}"`);
+        continue;
+      }
+
       const QUARANTINE_AFTER_KILLS = 2; // Must match requeueTask's constant
       const watchdogRetryCount = task.payload?.watchdog_retry_count || 0;
       const hasExistingError = !!task.error_message;
