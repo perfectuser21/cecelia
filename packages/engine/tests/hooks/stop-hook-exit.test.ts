@@ -6,6 +6,9 @@
  * - 修复分支不匹配时的 .dev-mode 泄漏
  * - 统一退出条件：只有 cleanup_done: true 或所有 6 步全部完成
  * - v11.25.0: 所有 exit 2 改为 jq -n 输出 JSON + exit 0
+ *
+ * NOTE: stop-dev.sh v14.0.0+ 使用 per-branch 格式：.dev-mode.{branch}
+ * beforeEach 创建分支 cp-test-branch，devModeFile 对应 .dev-mode.cp-test-branch
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -14,13 +17,16 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'fs
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+const TEST_BRANCH = 'cp-test-branch';
+
 describe('Stop Hook 退出条件', () => {
   let tempDir: string;
   let devModeFile: string;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'stop-hook-exit-test-'));
-    devModeFile = join(tempDir, '.dev-mode');
+    // per-branch 格式：文件名含分支名后缀
+    devModeFile = join(tempDir, `.dev-mode.${TEST_BRANCH}`);
 
     // 初始化 git 仓库
     execSync('git init', { cwd: tempDir });
@@ -33,7 +39,7 @@ describe('Stop Hook 退出条件', () => {
     execSync('git commit -m "Initial commit"', { cwd: tempDir });
 
     // 创建测试分支
-    execSync('git checkout -b cp-test-branch', { cwd: tempDir });
+    execSync(`git checkout -b ${TEST_BRANCH}`, { cwd: tempDir });
   });
 
   afterEach(() => {
@@ -46,7 +52,7 @@ describe('Stop Hook 退出条件', () => {
     writeFileSync(
       devModeFile,
       `dev
-branch: cp-test-branch
+branch: ${TEST_BRANCH}
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
 cleanup_done: true
@@ -63,7 +69,7 @@ cleanup_done: true
     writeFileSync(
       devModeFile,
       `dev
-branch: cp-test-branch
+branch: ${TEST_BRANCH}
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
 step_0_worktree: done
@@ -91,7 +97,7 @@ step_5_clean: done
     writeFileSync(
       devModeFile,
       `dev
-branch: cp-test-branch
+branch: ${TEST_BRANCH}
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
 step_0_worktree: done
@@ -116,7 +122,7 @@ step_5_clean: pending
     }
 
     expect(hasPending).toBe(true);
-    // Stop Hook 应该阻止退出（JSON API + exit 0）
+    // Stop Hook 应该阻止退出（JSON API + exit 2）
   });
 
   describe('JSON API exit behavior', () => {
@@ -160,10 +166,12 @@ step_5_clean: pending
     });
   });
 
-  it('应该在分支不匹配时删除泄漏的 .dev-mode', () => {
-    // .dev-mode 记录的分支是 cp-old-branch
+  it('应该在分支不匹配时删除泄漏的 .dev-mode（per-branch 格式）', () => {
+    // per-branch 格式中，每个分支有自己的 .dev-mode.{branch} 文件，
+    // 分支不匹配场景：.dev-mode.cp-old-branch 文件中记录的 branch 与当前分支不同
+    const oldBranchDevMode = join(tempDir, '.dev-mode.cp-old-branch');
     writeFileSync(
-      devModeFile,
+      oldBranchDevMode,
       `dev
 branch: cp-old-branch
 prd: .prd.md
@@ -177,16 +185,16 @@ started: 2026-02-01T10:00:00+00:00
       encoding: 'utf-8',
     }).trim();
 
-    expect(currentBranch).toBe('cp-test-branch');
+    expect(currentBranch).toBe(TEST_BRANCH);
 
-    const content = readFileSync(devModeFile, 'utf-8');
+    const content = readFileSync(oldBranchDevMode, 'utf-8');
     const branchMatch = content.match(/^branch:\s*(.+)$/m);
     const branchInFile = branchMatch ? branchMatch[1].trim() : '';
 
     expect(branchInFile).toBe('cp-old-branch');
     expect(branchInFile).not.toBe(currentBranch);
 
-    // Stop Hook 应该检测到分支不匹配，删除 .dev-mode 文件
+    // Stop Hook 应该检测到分支不匹配，删除 .dev-mode.cp-old-branch 文件
     // （实际删除由 Stop Hook 脚本执行）
   });
 
@@ -195,7 +203,7 @@ started: 2026-02-01T10:00:00+00:00
     writeFileSync(
       devModeFile,
       `dev
-branch: cp-test-branch
+branch: ${TEST_BRANCH}
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
 pr_merged: true
