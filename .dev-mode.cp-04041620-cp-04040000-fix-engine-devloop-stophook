@@ -6,4 +6,4 @@ step_0_worktree: done
 step_1_spec: done
 step_2_code: done
 step_3_integrate: pending
-step_4_ship: pending
+step_4_ship: done
