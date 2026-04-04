@@ -1,9 +1,0 @@
-dev
-branch: cp-04041621-cp-04040000-engine-cleanup-dead-code
-task_card: .task-cp-04041621-cp-04040000-engine-cleanup-dead-code.md
-started: 2026-04-04T16:21:54+08:00
-step_0_worktree: done
-step_1_spec: done
-step_2_code: done
-step_3_integrate: pending
-step_4_ship: pending

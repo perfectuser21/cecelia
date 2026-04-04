@@ -1,9 +1,0 @@
-dev
-branch: cp-04031840-fix-engine-sync
-task_card: .task-cp-04031840-fix-engine-sync.md
-started: 2026-04-03T18:42:42+08:00
-step_0_worktree: done
-step_1_spec: done
-step_2_code: done
-step_3_integrate: pending
-step_4_ship: pending
