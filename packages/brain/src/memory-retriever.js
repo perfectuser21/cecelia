@@ -384,6 +384,45 @@ export function isWorldStateQuery(query) {
   return /OKR|目标|KR|关键结果|项目|任务|计划|平台|进度|完成|执行|initiative|objective|key result|project|task/i.test(query);
 }
 
+const SOURCE_LABEL_MAP = {
+  task: '任务',
+  learning: '经验',
+  event: '事件',
+  capability: '能力',
+  kr: 'KR目标',
+  initiative: 'Initiative',
+  project: '项目容器',
+  okr: 'OKR',
+};
+
+/** 取 description → text → '' 兜底 */
+function getItemText(item) {
+  return item.description || item.text || '';
+}
+
+/** 根据深度取基础文本 */
+function getBaseText(item, depth) {
+  if (depth === 0) return getItemText(item).slice(0, 80);
+  if (depth === 1) return getItemText(item).slice(0, 250);
+  return item.full_content || getItemText(item);
+}
+
+/** 构建关联扩展信息数组 */
+function buildItemExtras(item) {
+  const extras = [];
+  if (item.task_count != null) extras.push(`关联任务 ${item.task_count} 个`);
+  if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
+  return extras;
+}
+
+/** 构建预览文本（depth=0 无扩展，depth≥1 附加关联信息） */
+function buildItemPreview(item, depth) {
+  const base = getBaseText(item, depth);
+  if (depth === 0) return base;
+  const extras = buildItemExtras(item);
+  return extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
+}
+
 /**
  * 格式化单条记忆项
  * @param {Object} item - 候选记忆
@@ -391,40 +430,10 @@ export function isWorldStateQuery(query) {
  * @returns {string}
  */
 function formatItem(item, depth = 0) {
-  const sourceLabel = {
-    task: '任务',
-    learning: '经验',
-    event: '事件',
-    capability: '能力',
-    kr: 'KR目标',
-    initiative: 'Initiative',
-    project: '项目容器',
-    okr: 'OKR',
-  };
-  const label = sourceLabel[item.source] || item.source;
+  const label = SOURCE_LABEL_MAP[item.source] || item.source;
   const title = (item.title || '').slice(0, 80);
   const statusHint = item.status ? ` (${item.status})` : '';
-
-  let preview;
-  if (depth === 0) {
-    // L0：轻点一下，简短
-    preview = (item.description || item.text || '').slice(0, 80);
-  } else if (depth === 1) {
-    // L1：更多细节 + 关联数量
-    const base = (item.description || item.text || '').slice(0, 250);
-    const extras = [];
-    if (item.task_count !== undefined && item.task_count !== null) extras.push(`关联任务 ${item.task_count} 个`);
-    if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
-    preview = extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
-  } else {
-    // depth >= 2：全文
-    const base = item.full_content || item.description || item.text || '';
-    const extras = [];
-    if (item.task_count !== undefined && item.task_count !== null) extras.push(`关联任务 ${item.task_count} 个`);
-    if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
-    preview = extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
-  }
-
+  const preview = buildItemPreview(item, depth);
   return `- [${label}] **${title}**${statusHint}: ${preview}`;
 }
 
