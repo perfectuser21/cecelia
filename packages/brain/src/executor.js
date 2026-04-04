@@ -1570,24 +1570,11 @@ function buildSystemContextBlock() {
 `;
 }
 
-async function preparePrompt(task) {
-  const taskType = task.task_type || 'dev';
-  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
+// ─── preparePrompt 子函数（圈复杂度拆分）─────────────────────────────────────
 
-  // OKR 拆解任务：秋米用 /decomp skill + Opus
-  // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
-  const decomposition = task.payload?.decomposition;
-  if (decomposition === 'true' || decomposition === 'continue') {
-    const krId = task.goal_id || task.payload?.kr_id || '';
-    const krTitle = task.title?.replace(/^(OKR 拆解|拆解|继续拆解)[：:]\s*/, '') || '';
-    const projectId = task.project_id || task.payload?.project_id || '';
-    const isContinue = decomposition === 'continue';
-    const previousResult = task.payload?.previous_result || '';
-    const initiativeId = task.payload?.initiative_id || task.payload?.feature_id || '';
-
-    // 继续拆解：秋米收到前一个 Task 的执行结果，决定下一步
-    if (isContinue && initiativeId) {
-      return `/decomp
+function _buildDecompContinuePrompt(task, krId, krTitle, initiativeId) {
+  const previousResult = task.payload?.previous_result || '';
+  return `/decomp
 
 # 继续拆解: ${krTitle}
 
@@ -1622,11 +1609,10 @@ POST /api/brain/action/create-task
     "kr_goal": "${task.payload?.kr_goal || ''}"
   }
 }`;
-    }
+}
 
-    // Initiative 级别补充拆解：给空 Initiative 创建 Task（由 decomp-checker Check 6 触发）
-    if (!isContinue && initiativeId) {
-      return `/decomp
+function _buildDecompInitiativePrompt(task, krId, krTitle, projectId, initiativeId) {
+  return `/decomp
 
 # Initiative 补充拆解: ${krTitle}
 
@@ -1660,11 +1646,11 @@ POST /api/brain/action/create-task
 - ❌ 不要创建新的 Initiative 或 Project（已经有了）
 - ❌ Task 的 project_id 必须指向 Initiative ID: ${initiativeId}
 - ❌ Task 的 goal_id 必须 = KR ID: ${krId}`;
-    }
+}
 
-    // 首次拆解：秋米需要创建 KR 专属 Project + Initiative + Task
-    const timeContext = await buildTimeContext(krId);
-    return `/decomp
+async function _buildDecompFirstPrompt(task, krId, krTitle) {
+  const timeContext = await buildTimeContext(krId);
+  return `/decomp
 
 # OKR 拆解: ${krTitle}
 
@@ -1760,66 +1746,79 @@ PUT /api/tasks/goals/${krId}
 6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
 
 参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
+}
+
+function _extractDecompIds(task) {
+  const payload = task.payload || {};
+  return {
+    krId: task.goal_id || payload.kr_id || '',
+    krTitle: task.title?.replace(/^(OKR 拆解|拆解|继续拆解)[：:]\s*/, '') || '',
+    projectId: task.project_id || payload.project_id || '',
+    isContinue: payload.decomposition === 'continue',
+    initiativeId: payload.initiative_id || payload.feature_id || '',
+  };
+}
+
+async function _handleDecomposition(task) {
+  const { krId, krTitle, projectId, isContinue, initiativeId } = _extractDecompIds(task);
+  if (isContinue && initiativeId) {
+    return _buildDecompContinuePrompt(task, krId, krTitle, initiativeId);
   }
-
-  // initiative_plan：直接将任务描述作为 /decomp Phase 2 上下文注入
-  if (taskType === 'initiative_plan') {
-    return `/decomp\n\n${task.description || task.title}`;
+  if (!isContinue && initiativeId) {
+    return _buildDecompInitiativePrompt(task, krId, krTitle, projectId, initiativeId);
   }
+  return _buildDecompFirstPrompt(task, krId, krTitle);
+}
 
-  // scope_plan：Scope 内规划下一个 Initiative（/decomp Phase 3）
-  if (taskType === 'scope_plan') {
-    const formatHint = [
-      '\n\n## 输出格式要求',
-      '用结构化 Markdown 输出。每个 Initiative：',
-      '### Initiative N：名称',
-      '| 维度 | 内容 |',
-      '|------|------|',
-      '| **功能边界** | 只做什么、不碰什么 |',
-      '| **交付物** | 具体产出清单 |',
-      '| **SPIDR-S** | Spike 策略 |',
-      '| **SPIDR-P** | Path 切割 |',
-      '| **SPIDR-I** | Interface 版本 |',
-      '| **SPIDR-D** | Data 范围 |',
-      '| **SPIDR-R** | Rules 渐进 |',
-    ].join('\n');
-    return `/decomp\n\n[scope_plan] ${task.description || task.title}${formatHint}`;
-  }
+function _buildScopePlanPrompt(task) {
+  const formatHint = [
+    '\n\n## 输出格式要求',
+    '用结构化 Markdown 输出。每个 Initiative：',
+    '### Initiative N：名称',
+    '| 维度 | 内容 |',
+    '|------|------|',
+    '| **功能边界** | 只做什么、不碰什么 |',
+    '| **交付物** | 具体产出清单 |',
+    '| **SPIDR-S** | Spike 策略 |',
+    '| **SPIDR-P** | Path 切割 |',
+    '| **SPIDR-I** | Interface 版本 |',
+    '| **SPIDR-D** | Data 范围 |',
+    '| **SPIDR-R** | Rules 渐进 |',
+  ].join('\n');
+  return `/decomp\n\n[scope_plan] ${task.description || task.title}${formatHint}`;
+}
 
-  // project_plan：Project 内规划下一个 Scope（/decomp Phase 4）
-  if (taskType === 'project_plan') {
-    const formatHint = [
-      '\n\n## 输出格式要求',
-      '用结构化 Markdown 输出。每个 Scope：',
-      '### Scope N：名称',
-      '| 维度 | 内容 |',
-      '|------|------|',
-      '| **功能边界** | 只处理什么、不碰什么 |',
-      '| **交付物** | 具体产出清单 |',
-      '| **完成条件** | 可验证的验收标准 |',
-      '| **SPIDR-S** | Spike 策略 |',
-      '| **SPIDR-P** | Path 切割 |',
-      '| **SPIDR-I** | Interface 版本 |',
-      '| **SPIDR-D** | Data 范围 |',
-      '| **SPIDR-R** | Rules 渐进 |',
-      '',
-      '最后加总结表：',
-      '| Scope | 对应成功标准 | 预计天数 | 执行顺序 |',
-      '|-------|------------|---------|---------|',
-    ].join('\n');
-    return `/decomp\n\n[project_plan] ${task.description || task.title}${formatHint}`;
-  }
+function _buildProjectPlanPrompt(task) {
+  const formatHint = [
+    '\n\n## 输出格式要求',
+    '用结构化 Markdown 输出。每个 Scope：',
+    '### Scope N：名称',
+    '| 维度 | 内容 |',
+    '|------|------|',
+    '| **功能边界** | 只处理什么、不碰什么 |',
+    '| **交付物** | 具体产出清单 |',
+    '| **完成条件** | 可验证的验收标准 |',
+    '| **SPIDR-S** | Spike 策略 |',
+    '| **SPIDR-P** | Path 切割 |',
+    '| **SPIDR-I** | Interface 版本 |',
+    '| **SPIDR-D** | Data 范围 |',
+    '| **SPIDR-R** | Rules 渐进 |',
+    '',
+    '最后加总结表：',
+    '| Scope | 对应成功标准 | 预计天数 | 执行顺序 |',
+    '|-------|------------|---------|---------|',
+  ].join('\n');
+  return `/decomp\n\n[project_plan] ${task.description || task.title}${formatHint}`;
+}
 
-  // dev + harness_mode → 当作 sprint_generate 处理（第一个 Sprint 的入口）
-  // sprint_generate / sprint_fix → /dev harness 模式
-  if (taskType === 'sprint_generate' || taskType === 'sprint_fix' || (taskType === 'dev' && task.payload?.harness_mode)) {
-    const payload = task.payload || {};
-    const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
-    const devTaskId = payload.dev_task_id || '';
-    const evalRound = payload.eval_round || 0;
-    const isFixMode = taskType === 'sprint_fix';
+function _buildSprintGeneratePrompt(task, taskType) {
+  const payload = task.payload || {};
+  const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
+  const devTaskId = payload.dev_task_id || '';
+  const evalRound = payload.eval_round || 0;
+  const isFixMode = taskType === 'sprint_fix';
 
-    return `/dev --task-id ${task.id}
+  return `/dev --task-id ${task.id}
 
 ## Harness v2.0 — Sprint ${isFixMode ? 'Fix (R' + evalRound + ')' : 'Generate'}
 
@@ -1831,16 +1830,15 @@ ${isFixMode ? `\n**修复轮次**: R${evalRound}\n**读取 evaluation.md 中的�
 
 任务描述:
 ${task.description || task.title}`;
-  }
+}
 
-  // sprint_evaluate → /sprint-evaluator
-  if (taskType === 'sprint_evaluate') {
-    const payload = task.payload || {};
-    const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
-    const devTaskId = payload.dev_task_id || '';
-    const evalRound = payload.eval_round || 1;
+function _buildSprintEvaluatePrompt(task) {
+  const payload = task.payload || {};
+  const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
+  const devTaskId = payload.dev_task_id || '';
+  const evalRound = payload.eval_round || 1;
 
-    return `/sprint-evaluator
+  return `/sprint-evaluator
 
 ## Harness v2.0 — Sprint Evaluator (R${evalRound})
 
@@ -1852,75 +1850,77 @@ ${task.description || task.title}`;
 
 你的目标: 读取 ${sprintDir}/sprint-contract.md，逐条验证 Generator 的代码。
 输出: ${sprintDir}/evaluation.md (PASS 或 FAIL + 具体问题)`;
-  }
+}
 
-  // initiative_verify：调用 /architect Mode 3 verify，传入 initiative_id
-  if (taskType === 'initiative_verify') {
-    const initiativeId = task.project_id || task.payload?.initiative_id || '';
-    return `/architect verify --initiative-id ${initiativeId}\n\n${task.description || task.title}`;
-  }
+function _buildInitiativePlanPrompt(task) {
+  return `/decomp\n\n${task.description || task.title}`;
+}
 
-  // architecture_design：调用 /architect Mode 2，将 Initiative 描述和 ID 作为上下文注入
-  if (taskType === 'architecture_design') {
-    return `/architect\n\n${task.description || task.title}`;
-  }
+function _buildArchitectureDesignPrompt(task) {
+  return `/architect\n\n${task.description || task.title}`;
+}
 
-  // decomp_review：将任务描述传给 /decomp-check 做拆解质检
-  if (taskType === 'decomp_review') {
-    return `/decomp-check\n\n${task.description || task.title}`;
-  }
+function _buildDecompReviewPrompt(task) {
+  return `/decomp-check\n\n${task.description || task.title}`;
+}
 
-  // Codex Gate 审查任务类型
-  if (taskType === 'prd_review') {
-    return `/prd-review\n\n${task.description || task.title}`;
-  }
-  if (taskType === 'spec_review') {
-    // payload.branch 优先，兼容 metadata.branch（两种派发方式）
-    const branch = task.payload?.branch || task.metadata?.branch || '';
-    let taskCardContent = task.description || task.title || '';
-    if (branch) {
-      const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
-      const taskCardPath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug, `.task-${branch}.md`);
-      try {
-        taskCardContent = readFileSync(taskCardPath, 'utf-8');
-      } catch {
-        // 降级使用 task.description（description 中已含 Task Card 内容时也有效）
-      }
+function _buildPrdReviewPrompt(task) {
+  return `/prd-review\n\n${task.description || task.title}`;
+}
+
+function _buildInitiativeVerifyPrompt(task) {
+  const initiativeId = task.project_id || task.payload?.initiative_id || '';
+  return `/architect verify --initiative-id ${initiativeId}\n\n${task.description || task.title}`;
+}
+
+function _buildSpecReviewPrompt(task) {
+  // payload.branch 优先，兼容 metadata.branch（两种派发方式）
+  const branch = task.payload?.branch || task.metadata?.branch || '';
+  let taskCardContent = task.description || task.title || '';
+  if (branch) {
+    const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
+    const taskCardPath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug, `.task-${branch}.md`);
+    try {
+      taskCardContent = readFileSync(taskCardPath, 'utf-8');
+    } catch {
+      // 降级使用 task.description（description 中已含 Task Card 内容时也有效）
     }
-    return `/spec-review\n\n${taskCardContent}`;
   }
-  if (taskType === 'code_review_gate') {
-    // payload.branch 优先，兼容 metadata.branch
-    const branch = task.payload?.branch || task.metadata?.branch || '';
-    let diffContent = '';
-    if (branch) {
-      const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
-      const worktreePath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug);
-      try {
-        // 用 origin/main..HEAD 确保拿到完整的分支改动（不含 origin/main 本身）
-        diffContent = execSync('git diff origin/main..HEAD', {
-          cwd: worktreePath,
-          encoding: 'utf-8',
-          timeout: 15000,
-        });
-      } catch {
-        // ignore diff errors
-      }
-    }
-    const basePrompt = task.description || task.title || '';
-    return diffContent
-      ? `/code-review-gate\n\n${basePrompt}\n\n## Git Diff\n\`\`\`diff\n${diffContent}\n\`\`\``
-      : `/code-review-gate\n\n${basePrompt}`;
-  }
-  if (taskType === 'initiative_review') {
-    const initiativeId = task.project_id || task.payload?.initiative_id || '';
-    const phase = task.payload?.phase || 1;
-    return `/initiative-review --phase ${phase} --initiative-id ${initiativeId}\n\n${task.description || task.title}`;
-  }
+  return `/spec-review\n\n${taskCardContent}`;
+}
 
-  // Talk 类型：可以写文档（日报、总结等），但不能改代码
-  if (taskType === 'talk') {
-    return `请完成以下任务，你可以创建/编辑 markdown 文档，但不能修改任何代码文件：
+function _buildCodeReviewGatePrompt(task) {
+  // payload.branch 优先，兼容 metadata.branch
+  const branch = task.payload?.branch || task.metadata?.branch || '';
+  let diffContent = '';
+  if (branch) {
+    const worktreeSlug = branch.replace(/^cp-\d{8}-/, '');
+    const worktreePath = path.join(WORK_DIR, '.claude/worktrees', worktreeSlug);
+    try {
+      // 用 origin/main..HEAD 确保拿到完整的分支改动（不含 origin/main 本身）
+      diffContent = execSync('git diff origin/main..HEAD', {
+        cwd: worktreePath,
+        encoding: 'utf-8',
+        timeout: 15000,
+      });
+    } catch {
+      // ignore diff errors
+    }
+  }
+  const basePrompt = task.description || task.title || '';
+  return diffContent
+    ? `/code-review-gate\n\n${basePrompt}\n\n## Git Diff\n\`\`\`diff\n${diffContent}\n\`\`\``
+    : `/code-review-gate\n\n${basePrompt}`;
+}
+
+function _buildInitiativeReviewPrompt(task) {
+  const initiativeId = task.project_id || task.payload?.initiative_id || '';
+  const phase = task.payload?.phase || 1;
+  return `/initiative-review --phase ${phase} --initiative-id ${initiativeId}\n\n${task.description || task.title}`;
+}
+
+function _buildTalkPrompt(task) {
+  return `请完成以下任务，你可以创建/编辑 markdown 文档，但不能修改任何代码文件：
 
 # ${task.title}
 
@@ -1934,19 +1934,10 @@ ${task.description || ''}
 
 输出要求：
 - 将结果写入适当的 markdown 文件`;
-  }
+}
 
-  // review / qa / audit 类型：统一路由到 /code-review
-  if (taskType === 'review' || taskType === 'qa' || taskType === 'audit') {
-    const repoPath = task.payload?.repo_path || '';
-    const since = task.payload?.since_hours ? `--since=${task.payload.since_hours}h` : '';
-    const repoArg = repoPath ? `${repoPath}` : '';
-    return `/code-review ${repoArg} ${since}`.trim();
-  }
-
-  // Research 类型：完全只读
-  if (taskType === 'research') {
-    return `请调研以下内容，只读取和分析，不要修改任何文件：
+function _buildResearchPrompt(task) {
+  return `请调研以下内容，只读取和分析，不要修改任何文件：
 
 # ${task.title}
 
@@ -1956,20 +1947,27 @@ ${task.description || ''}
 - ✅ 可以读取代码/文档/日志
 - ✅ 输出调研结果和建议
 - ❌ 不能创建、修改或删除任何文件`;
-  }
+}
 
-  // code_review 类型：传入 repo_path 给 /code-review skill
-  if (taskType === 'code_review') {
-    const repoPath = task.payload?.repo_path || '';
-    const since = task.payload?.since_hours ? `--since=${task.payload.since_hours}h` : '';
-    const repoArg = repoPath ? `${repoPath}` : '';
-    return `/code-review ${repoArg} ${since}`.trim();
-  }
+function _buildCodeReviewTypePrompt(task) {
+  const repoPath = task.payload?.repo_path || '';
+  const since = task.payload?.since_hours ? `--since=${task.payload.since_hours}h` : '';
+  return `/code-review ${repoPath} ${since}`.trim();
+}
 
-  // 有明确 PRD 内容的任务
+function _buildDomainCtx(task) {
+  const domain = task.domain || null;
+  const ownerRole = task.owner_role || null;
+  return (domain || ownerRole)
+    ? `\n## 业务领域上下文\n任务所属领域：${domain || '(未指定)'}\n负责角色：${ownerRole || '(未指定)'}\n`
+    : '';
+}
+
+async function _buildDefaultPrdPrompt(task, skill) {
   const sysCtx = buildSystemContextBlock();
   const retryCtx = buildRetryContext(task);
   const learningCtx = await buildLearningContext(task);
+
   if (task.prd_content) {
     return `${skill}\n\n${sysCtx}${task.prd_content}${learningCtx}${retryCtx}`;
   }
@@ -1980,27 +1978,56 @@ ${task.description || ''}
     return `${skill} ${task.payload.prd_path}${learningCtx}${retryCtx}`;
   }
 
-  // 自动生成 PRD（注入 domain/owner_role 上下文）
-  const domain = task.domain || null;
-  const ownerRole = task.owner_role || null;
-  const domainCtx = (domain || ownerRole)
-    ? `\n## 业务领域上下文\n任务所属领域：${domain || '(未指定)'}\n负责角色：${ownerRole || '(未指定)'}\n`
-    : '';
-
-  const prd = `# PRD - ${task.title}
-
-## 背景
-任务来自 Brain 自动调度。
-任务类型：${taskType}
-${domainCtx}
-## 功能描述
-${task.description || task.title}
-
-## 成功标准
-- [ ] 任务完成
-`;
+  const domainCtx = _buildDomainCtx(task);
+  const taskType = task.task_type || 'dev';
+  const prd = `# PRD - ${task.title}\n\n## 背景\n任务来自 Brain 自动调度。\n任务类型：${taskType}\n${domainCtx}\n## 功能描述\n${task.description || task.title}\n\n## 成功标准\n- [ ] 任务完成\n`;
 
   return `${skill}\n\n${sysCtx}${prd}${learningCtx}${retryCtx}`;
+}
+
+/**
+ * Prepare prompt content from task
+ * Routes to different skills based on task.task_type
+ */
+async function preparePrompt(task) {
+  const taskType = task.task_type || 'dev';
+  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
+  const decomposition = task.payload?.decomposition;
+
+  if (decomposition === 'true' || decomposition === 'continue') {
+    return _handleDecomposition(task);
+  }
+
+  if (taskType === 'dev' && task.payload?.harness_mode) {
+    return _buildSprintGeneratePrompt(task, taskType);
+  }
+
+  const typeHandlers = {
+    initiative_plan:     () => _buildInitiativePlanPrompt(task),
+    scope_plan:          () => _buildScopePlanPrompt(task),
+    project_plan:        () => _buildProjectPlanPrompt(task),
+    sprint_generate:     () => _buildSprintGeneratePrompt(task, 'sprint_generate'),
+    sprint_fix:          () => _buildSprintGeneratePrompt(task, 'sprint_fix'),
+    sprint_evaluate:     () => _buildSprintEvaluatePrompt(task),
+    initiative_verify:   () => _buildInitiativeVerifyPrompt(task),
+    architecture_design: () => _buildArchitectureDesignPrompt(task),
+    decomp_review:       () => _buildDecompReviewPrompt(task),
+    prd_review:          () => _buildPrdReviewPrompt(task),
+    spec_review:         () => _buildSpecReviewPrompt(task),
+    code_review_gate:    () => _buildCodeReviewGatePrompt(task),
+    initiative_review:   () => _buildInitiativeReviewPrompt(task),
+    talk:                () => _buildTalkPrompt(task),
+    review:              () => _buildCodeReviewTypePrompt(task),
+    qa:                  () => _buildCodeReviewTypePrompt(task),
+    audit:               () => _buildCodeReviewTypePrompt(task),
+    research:            () => _buildResearchPrompt(task),
+    code_review:         () => _buildCodeReviewTypePrompt(task),
+  };
+
+  const handler = typeHandlers[taskType];
+  if (handler) return handler();
+
+  return _buildDefaultPrdPrompt(task, skill);
 }
 
 /**
