@@ -236,9 +236,9 @@ describe('Harness v2.0 Sprint Loop', () => {
     expect(content).toContain('sprint_generate');
     expect(content).toContain('sprint_evaluate');
     expect(content).toContain('sprint_fix');
-    expect(content).toContain("'sprint_generate': '/sprint-generator'");
+    expect(content).toContain("'sprint_generate': '/dev'");
     expect(content).toContain("'sprint_evaluate': '/sprint-evaluator'");
-    expect(content).toContain("'sprint_fix': '/sprint-generator'");
+    expect(content).toContain("'sprint_fix': '/dev'");
   });
 
   it('execution.js 包含 harness_mode 兼容判断', async () => {
