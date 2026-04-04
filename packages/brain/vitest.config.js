@@ -104,6 +104,8 @@ export default defineConfig({
       'src/__tests__/watchdog-quarantine-race.test.js',
       'src/__tests__/watchdog.test.js',
       'src/__tests__/zombie-cleaner.test.js',
+      // integration/ 子目录的集成测试（需要真实 DB，brain-integration CI 负责）
+      'src/__tests__/integration/**',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       'src/__tests__/content-pipeline-executors.test.js',
       'src/__tests__/content-pipeline-llm.test.js',
