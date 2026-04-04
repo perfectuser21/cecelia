@@ -500,9 +500,9 @@ describe('getValidTaskTypes', () => {
 // ============================================================
 
 describe('LOCATION_MAP 完整性', () => {
-  it('所有 value 只能是 us、xian 或 xian_m1', () => {
+  it('所有 value 只能是 us、xian、xian_m1 或 cn', () => {
     for (const [type, loc] of Object.entries(LOCATION_MAP)) {
-      expect(['us', 'xian', 'xian_m1'], `task_type=${type} location 非法`).toContain(loc);
+      expect(['us', 'xian', 'xian_m1', 'cn'], `task_type=${type} location 非法`).toContain(loc);
     }
   });
 
