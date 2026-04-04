@@ -8,6 +8,13 @@ export default defineConfig({
       'src/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/packages/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
+    // 以下测试需要真实 PostgreSQL 连接，仅在 brain-integration CI 中运行
+    exclude: [
+      'src/__tests__/blocks.test.js',
+      'src/__tests__/suggestion-triage.test.js',
+      'src/__tests__/suggestion-integration.test.js',
+      'src/__tests__/cortex-memory.test.js',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html', 'json', 'json-summary'],
