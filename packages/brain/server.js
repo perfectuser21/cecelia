@@ -355,8 +355,12 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   }
 
   // Log concurrency ceiling configuration for observability
-  const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup } = await import('./src/executor.js');
+  const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup, _startResourcePolling } = await import('./src/executor.js');
   console.log(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);
+
+  // Start async resource polling — prevents execSync blocking the event loop
+  _startResourcePolling();
+  console.log('[Server] Resource polling started (15s interval) - async sysctl/vm_stat, no event loop block');
 
   // Sync orphan in_progress tasks with actual processes (requeue vs fail with process check)
   try {

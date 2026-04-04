@@ -496,7 +496,19 @@
               "skill": "/notebooklm"
             },
             {
+              "taskType": "content-copywriting",
+              "skill": "/content-creator"
+            },
+            {
+              "taskType": "content-copy-review",
+              "skill": "/content-creator"
+            },
+            {
               "taskType": "content-generate",
+              "skill": "/content-creator"
+            },
+            {
+              "taskType": "content-image-review",
               "skill": "/content-creator"
             },
             {
@@ -935,7 +947,10 @@
     "strategy_session": "/strategy-session",
     "content-pipeline": "/content-creator",
     "content-research": "/notebooklm",
+    "content-copywriting": "/content-creator",
+    "content-copy-review": "/content-creator",
     "content-generate": "/content-creator",
+    "content-image-review": "/content-creator",
     "content-review": "/content-creator",
     "content-export": "/content-creator",
     "qa": "/code-review",
@@ -1007,7 +1022,7 @@
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-04-04T08:10:14.112Z",
+  "generatedAt": "2026-04-04T10:52:02.845Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

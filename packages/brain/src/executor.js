@@ -15,7 +15,7 @@
 
 /* global console */
 import crypto from 'crypto';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, exec } from 'child_process';
 import { writeFile, mkdir } from 'fs/promises';
 import { readFileSync, readdirSync, unlinkSync } from 'fs';
 import os from 'os';
@@ -41,61 +41,94 @@ import {
   IS_DARWIN,
 } from './platform-utils.js';
 
-/**
- * Get macOS memory pressure level via sysctl vm.memory_pressure.
- * Inlined from platform-utils to avoid vitest mock interference in tests.
- * Returns 0/1/2/3 or -1 on error.
- * @returns {number}
- */
-function getMacOSMemoryPressure() {
-  if (process.platform !== 'darwin') return -1;
-  try {
-    const output = execSync('sysctl vm.memory_pressure', {
-      encoding: 'utf-8',
-      timeout: 2000,
-    }).trim();
-    const match = output.match(/vm\.memory_pressure:\s*(\d+)/);
-    if (match) {
-      const level = parseInt(match[1], 10);
-      return [0, 1, 2, 3].includes(level) ? level : -1;
-    }
-    return -1;
-  } catch {
-    return -1;
+// ─── Resource Cache ─────────────────────────────────────────────────────────
+// Prevents execSync from blocking the Node.js event loop in the hot path.
+// Seeded with safe defaults on module load, then refreshed every 15s via
+// async exec() so the event loop is never blocked by sysctl/vm_stat calls.
+// ─────────────────────────────────────────────────────────────────────────────
+const RESOURCE_POLL_INTERVAL_MS = 15000;
+const _resourceCache = {
+  memPressureSignal: -1,
+  availableMemMB: Math.round(os.freemem() / 1024 / 1024),
+  swapUsedPct: 0,
+  lastUpdated: 0,
+};
+
+function _pollResourceAsync() {
+  if (process.platform !== 'darwin') {
+    _resourceCache.availableMemMB = Math.round(os.freemem() / 1024 / 1024);
+    _resourceCache.lastUpdated = Date.now();
+    return;
   }
+  let completed = 0;
+  const done = () => { if (++completed === 3) _resourceCache.lastUpdated = Date.now(); };
+
+  exec('sysctl vm.memory_pressure', { timeout: 3000 }, (err, stdout) => {
+    if (!err && stdout) {
+      const match = stdout.match(/vm\.memory_pressure:\s*(\d+)/);
+      if (match) {
+        const level = parseInt(match[1], 10);
+        _resourceCache.memPressureSignal = [0, 1, 2, 3].includes(level) ? level : -1;
+      }
+    }
+    done();
+  });
+
+  exec('vm_stat', { timeout: 3000 }, (err, stdout) => {
+    if (!err && stdout) {
+      const pageSizeMatch = stdout.match(/page size of (\d+) bytes/);
+      const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : 16384;
+      const getPages = (re) => { const m = stdout.match(re); return m ? parseInt(m[1], 10) : 0; };
+      const activePages = getPages(/Pages active:\s+(\d+)/);
+      const wiredPages = getPages(/Pages wired down:\s+(\d+)/);
+      const freePages = getPages(/Pages free:\s+(\d+)/);
+      const inactivePages = getPages(/Pages inactive:\s+(\d+)/);
+      const speculativePages = getPages(/Pages speculative:\s+(\d+)/);
+      const totalPages = activePages + wiredPages + freePages + inactivePages + speculativePages;
+      if (totalPages > 0) {
+        const usedRatio = (activePages + wiredPages) / totalPages;
+        _resourceCache.availableMemMB = Math.round((1 - usedRatio) * totalPages * pageSize / 1024 / 1024);
+      } else {
+        _resourceCache.availableMemMB = Math.round(os.freemem() / 1024 / 1024);
+      }
+    }
+    done();
+  });
+
+  exec('sysctl vm.swapusage', { timeout: 3000 }, (err, stdout) => {
+    if (!err && stdout) {
+      const totalMatch = stdout.match(/total\s*=\s*([\d.]+)M/);
+      const usedMatch = stdout.match(/used\s*=\s*([\d.]+)M/);
+      if (totalMatch && usedMatch) {
+        const total = parseFloat(totalMatch[1]);
+        const used = parseFloat(usedMatch[1]);
+        _resourceCache.swapUsedPct = total > 0 ? Math.round((used / total) * 100) : 0;
+      }
+    }
+    done();
+  });
+}
+
+export function _startResourcePolling() {
+  _pollResourceAsync();
+  setInterval(_pollResourceAsync, RESOURCE_POLL_INTERVAL_MS).unref();
 }
 
 /**
- * Get available memory in MB — platform-aware.
- * Inlined from platform-utils to avoid vitest mock interference in tests.
+ * Get macOS memory pressure level — reads from cache (no execSync).
+ * Returns 0/1/2/3 or -1.
+ * @returns {number}
+ */
+function getMacOSMemoryPressure() {
+  return _resourceCache.memPressureSignal;
+}
+
+/**
+ * Get available memory in MB — reads from cache (no execSync).
  * @returns {number} Available memory in MB
  */
 function getAvailableMemoryMB() {
-  if (process.platform === 'darwin') {
-    try {
-      const output = execSync('vm_stat', { encoding: 'utf-8', timeout: 2000 });
-      const pageSizeMatch = output.match(/page size of (\d+) bytes/);
-      const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : 16384;
-      const activeMatch = output.match(/Pages active:\s+(\d+)/);
-      const wiredMatch = output.match(/Pages wired down:\s+(\d+)/);
-      const freeMatch = output.match(/Pages free:\s+(\d+)/);
-      const inactiveMatch = output.match(/Pages inactive:\s+(\d+)/);
-      const speculativeMatch = output.match(/Pages speculative:\s+(\d+)/);
-      const activePages = activeMatch ? parseInt(activeMatch[1], 10) : 0;
-      const wiredPages = wiredMatch ? parseInt(wiredMatch[1], 10) : 0;
-      const freePages = freeMatch ? parseInt(freeMatch[1], 10) : 0;
-      const inactivePages = inactiveMatch ? parseInt(inactiveMatch[1], 10) : 0;
-      const speculativePages = speculativeMatch ? parseInt(speculativeMatch[1], 10) : 0;
-      const totalPages = activePages + wiredPages + freePages + inactivePages + speculativePages;
-      if (totalPages === 0) return Math.round(os.freemem() / 1024 / 1024);
-      const usedPages = activePages + wiredPages;
-      const used_ratio = usedPages / totalPages;
-      return Math.round((1 - used_ratio) * totalPages * pageSize / 1024 / 1024);
-    } catch {
-      return Math.round(os.freemem() / 1024 / 1024);
-    }
-  }
-  return Math.round(os.freemem() / 1024 / 1024);
+  return _resourceCache.availableMemMB;
 }
 
 // HK MiniMax Executor URL (via Tailscale)
@@ -466,8 +499,8 @@ function checkServerResources(memReservedMb = 0) {
   const freeMem = getAvailableMemoryMB() - memReservedMb;
   const dynMaxSeats = getEffectiveMaxSeats();
 
-  // Read swap usage (platform-aware: Darwin uses sysctl, Linux uses /proc/meminfo)
-  const swapUsedPct = getSwapUsedPct();
+  // Read swap usage from cache (no execSync; updated every 15s by _pollResourceAsync)
+  const swapUsedPct = IS_DARWIN ? _resourceCache.swapUsedPct : getSwapUsedPct();
 
   // CPU pressure from real CPU% (replaces load average)
   const rawCpuPct = sampleCpuUsage();
@@ -1259,11 +1292,14 @@ function getSkillForTaskType(taskType, payload) {
     // 战略会议：C-Suite 模拟讨论，输出带 domain 的 KR
     'strategy_session': '/strategy-session',
     // 内容工厂 Pipeline（Content Factory）
-    'content-pipeline': '/content-creator',  // 编排入口：触发完整内容生成流程
-    'content-research': '/notebooklm',        // 调研阶段：NotebookLM 深度调研
-    'content-generate': '/content-creator',  // 生成阶段：图片+文案生成
-    'content-review': '/content-creator',    // 审核阶段：AI 质量评分
-    'content-export': '/content-creator',    // 导出阶段：NAS 存储 + manifest
+    'content-pipeline': '/content-creator',      // 编排入口：触发完整内容生成流程
+    'content-research': '/notebooklm',           // 调研阶段：NotebookLM 深度调研
+    'content-copywriting': '/content-creator',   // 文案生成阶段
+    'content-copy-review': '/content-creator',   // 文案审核阶段
+    'content-generate': '/content-creator',      // 生成阶段：图片+文案生成
+    'content-image-review': '/content-creator',  // 图片审核阶段
+    'content-review': '/content-creator',        // 审核阶段：AI 质量评分
+    'content-export': '/content-creator',        // 导出阶段：NAS 存储 + manifest
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
