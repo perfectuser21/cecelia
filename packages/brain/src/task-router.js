@@ -29,8 +29,11 @@ const VALID_TASK_TYPES = [
   'content_publish',  // 发布阶段（export 完成后逐平台创建，executor.js 按 payload.platform 路由到对应 publisher skill）
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
-  // Harness v2.0 Sprint 循环（Generator ↔ Evaluator 对抗）
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix',
+  // Harness v2.0 官方三层：Planner → Contract协商 → 代码对抗
+  'sprint_planner',            // Layer 1: 需求→PRD（不碰代码）
+  'sprint_contract_propose',   // Layer 2a: Generator 提合同草案
+  'sprint_contract_review',    // Layer 2b: Evaluator 挑战合同 → APPROVED/REVISION
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix',  // Layer 3: 代码对抗
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
   'scope_plan', 'project_plan',
   // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives 三层拆解）
@@ -92,10 +95,13 @@ const SKILL_WHITELIST = {
   'spec_review': '/spec-review',            // Spec 审查
   'code_review_gate': '/code-review-gate',  // 代码质量门禁
   'initiative_review': '/initiative-review', // Initiative 整体审查
-  // Harness v2.0 Sprint 循环（Generator ↔ Evaluator 对抗）
-  'sprint_generate': '/dev',                  // Generator 写 contract + 代码
-  'sprint_evaluate': '/sprint-evaluator',    // Evaluator 测运行中的代码
-  'sprint_fix': '/dev',                      // Generator 修复（复用 /dev）
+  // Harness v2.0 官方三层
+  'sprint_planner': '/sprint-planner',                      // Layer 1: 需求→PRD
+  'sprint_contract_propose': '/sprint-contract-proposer',   // Layer 2a: 提合同草案
+  'sprint_contract_review': '/sprint-contract-reviewer',    // Layer 2b: 挑战合同
+  'sprint_generate': '/dev',                                // Layer 3a: Generator 写代码
+  'sprint_evaluate': '/sprint-evaluator',                   // Layer 3b: Evaluator 测代码
+  'sprint_fix': '/dev',                                     // Layer 3c: Generator 修复
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
@@ -197,10 +203,13 @@ const LOCATION_MAP = {
   'content-image-review': 'xian', // 图片审核 → 西安（规则+视觉检查）
   'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
   'content_publish': 'us',     // 发布阶段 → US 本机（publisher skills 需要浏览器 CDP，在 US Mac mini 跑）
-  // Harness v2.0 Sprint 循环 → US 本机（需读 worktree + 跑测试）
-  'sprint_generate': 'us',        // Generator 写 contract + 代码 → US 本机
-  'sprint_evaluate': 'us',        // Evaluator 测代码 → US 本机（需启动服务跑测试）
-  'sprint_fix': 'us',             // Generator 修复 → US 本机
+  // Harness v2.0 官方三层 → US 本机
+  'sprint_planner': 'us',              // Layer 1: Planner → US（写 PRD）
+  'sprint_contract_propose': 'us',     // Layer 2a: Generator 提合同草案 → US
+  'sprint_contract_review': 'us',      // Layer 2b: Evaluator 挑战合同 → US
+  'sprint_generate': 'us',             // Layer 3a: Generator 写代码 → US
+  'sprint_evaluate': 'us',             // Layer 3b: Evaluator 测代码 → US
+  'sprint_fix': 'us',                  // Layer 3c: Generator 修复 → US
   // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
   'prd_review': 'us',            // PRD 审查 → US 本机 Codex
   'spec_review': 'us',           // Spec 审查 → US 本机 Codex

@@ -1460,11 +1460,14 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] dev 串行调度失败 (non-fatal): ${serialErr.message}`);
       }
 
-      // 5c-harness. Harness v2.0 Sprint 循环断链
-      // sprint_generate 完成 → sprint_evaluate
-      // sprint_evaluate PASS → 标记 dev task completed + 解锁下一个 + 检查 Initiative 完成
-      // sprint_evaluate FAIL → sprint_fix
-      // sprint_fix 完成 → sprint_evaluate（再测）
+      // 5c-harness. Harness v2.0 官方三层断链
+      // Layer 1: sprint_planner 完成 → sprint_contract_propose（第1个Sprint协商）
+      // Layer 2: sprint_contract_propose 完成 → sprint_contract_review
+      //          sprint_contract_review APPROVED → sprint_generate
+      //          sprint_contract_review REVISION → sprint_contract_propose（带反馈重来）
+      // Layer 3: sprint_generate 完成 → sprint_evaluate
+      //          sprint_evaluate PASS → 检查PRD是否完成 → 下一个contract_propose或arch_review
+      //          sprint_evaluate FAIL → sprint_fix → sprint_evaluate
       try {
         const harnessRow = await pool.query(
           'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
@@ -1472,8 +1475,106 @@ ${resultStr.substring(0, 2000)}
         );
         const harnessTask = harnessRow.rows[0];
         const harnessPayload = harnessTask?.payload || {};
+        const { createTask: createHarnessTask } = await import('../actions.js');
 
-        // sprint_generate 完成 → 创建 sprint_evaluate
+        // Layer 1: sprint_planner 完成 → 创建第1个 sprint_contract_propose
+        if (harnessTask?.task_type === 'sprint_planner') {
+          const sprintDir = 'sprints/sprint-1';
+          await createHarnessTask({
+            title: `[Contract] Sprint 1 合同提案 — ${harnessTask.title}`,
+            description: `Generator 根据 PRD 提出 Sprint 1 的合同草案（功能清单+验收标准）。\nPRD task_id: ${task_id}`,
+            priority: 'P1',
+            project_id: harnessTask.project_id,
+            goal_id: harnessTask.goal_id,
+            task_type: 'sprint_contract_propose',
+            trigger_source: 'execution_callback_harness',
+            payload: {
+              sprint_dir: sprintDir,
+              sprint_num: 1,
+              planner_task_id: task_id,
+              propose_round: 1,
+              harness_mode: true
+            }
+          });
+          console.log(`[execution-callback] harness: sprint_planner ${task_id} → sprint_contract_propose created`);
+        }
+
+        // Layer 2a: sprint_contract_propose 完成 → sprint_contract_review
+        if (harnessTask?.task_type === 'sprint_contract_propose') {
+          await createHarnessTask({
+            title: `[Contract Review] Sprint ${harnessPayload.sprint_num} 合同审查 — ${harnessTask.title}`,
+            description: `Evaluator 审查合同草案，找出不清晰的验收标准和遗漏的边界情况。\npropose task_id: ${task_id}`,
+            priority: 'P1',
+            project_id: harnessTask.project_id,
+            goal_id: harnessTask.goal_id,
+            task_type: 'sprint_contract_review',
+            trigger_source: 'execution_callback_harness',
+            payload: {
+              sprint_dir: harnessPayload.sprint_dir,
+              sprint_num: harnessPayload.sprint_num,
+              planner_task_id: harnessPayload.planner_task_id,
+              propose_task_id: task_id,
+              propose_round: harnessPayload.propose_round || 1,
+              harness_mode: true
+            }
+          });
+          console.log(`[execution-callback] harness: sprint_contract_propose ${task_id} → sprint_contract_review created`);
+        }
+
+        // Layer 2b: sprint_contract_review 完成 → APPROVED/REVISION 路由
+        if (harnessTask?.task_type === 'sprint_contract_review') {
+          // 解析 verdict: APPROVED 或 REVISION
+          let reviewVerdict = 'REVISION';
+          const reviewResultRaw = typeof result === 'object' ? (result?.verdict || result?.decision || result?.result || '') : (result || '');
+          const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
+          if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
+            reviewVerdict = 'APPROVED';
+          }
+          console.log(`[execution-callback] harness: sprint_contract_review verdict=${reviewVerdict}`);
+
+          if (reviewVerdict === 'APPROVED') {
+            // 合同获批 → 创建 sprint_generate（Generator 写代码）
+            await createHarnessTask({
+              title: `[Generator] Sprint ${harnessPayload.sprint_num} 写代码 — ${harnessTask.title}`,
+              description: `Generator 根据已批准的 Sprint Contract 写代码。\ncontract_review task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'sprint_generate',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                sprint_num: harnessPayload.sprint_num,
+                planner_task_id: harnessPayload.planner_task_id,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: sprint_contract_review APPROVED → sprint_generate created (sprint ${harnessPayload.sprint_num})`);
+          } else {
+            // 合同被挑战 → 重新提案（带反馈）
+            const nextRound = (harnessPayload.propose_round || 1) + 1;
+            await createHarnessTask({
+              title: `[Contract] Sprint ${harnessPayload.sprint_num} 合同提案 R${nextRound} — ${harnessTask.title}`,
+              description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'sprint_contract_propose',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                sprint_num: harnessPayload.sprint_num,
+                planner_task_id: harnessPayload.planner_task_id,
+                propose_round: nextRound,
+                review_feedback_task_id: task_id,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: sprint_contract_review REVISION → sprint_contract_propose R${nextRound} created`);
+          }
+        }
+
+        // Layer 3a: sprint_generate 完成 → 创建 sprint_evaluate
         if (harnessTask?.task_type === 'sprint_generate' || (harnessTask?.task_type === 'dev' && harnessPayload.harness_mode)) {
           const { createTask: createHarnessTask } = await import('../actions.js');
           await createHarnessTask({
@@ -1524,94 +1625,65 @@ ${resultStr.substring(0, 2000)}
           const verdict = resultObj.verdict || 'FAIL';
           console.log(`[execution-callback] harness: sprint_evaluate verdict=${verdict} (result type=${typeof result})`);
           const devTaskId = harnessPayload.dev_task_id;
-          const { createTask: createHarnessTask } = await import('../actions.js');
 
           if (verdict === 'PASS') {
-            // PASS: 标记对应 dev task completed
-            if (devTaskId) {
-              await pool.query(
-                `UPDATE tasks SET status = 'completed', updated_at = NOW() WHERE id = $1 AND status != 'completed'`,
-                [devTaskId]
-              );
-              console.log(`[execution-callback] harness: sprint_evaluate PASS → dev task ${devTaskId} → completed`);
+            // 官方流程: PASS → 触发下一个 Sprint 的合同协商
+            // Generator（sprint_generate）决定是否还有更多 Sprint 需要做
+            // 通过 result.more_sprints 字段传递（true=继续，false/missing=全部完成）
+            const sprintNum = harnessPayload.sprint_num || 1;
+            const moreSprints = resultObj.more_sprints !== false; // 默认继续，除非明确说false
 
-              // 解锁下一个串行 dev task（复用 sequence_order 逻辑）
-              const devTaskRow = await pool.query(
-                'SELECT payload FROM tasks WHERE id = $1', [devTaskId]
+            console.log(`[execution-callback] harness: sprint_evaluate PASS sprint=${sprintNum} more_sprints=${moreSprints}`);
+
+            if (moreSprints) {
+              // 开始下一个 Sprint 的合同协商
+              const nextSprintNum = sprintNum + 1;
+              const nextSprintDir = `sprints/sprint-${nextSprintNum}`;
+              // 幂等检查
+              const existingNext = await pool.query(
+                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'sprint_contract_propose'
+                 AND (payload->>'sprint_num')::int = $2 AND status IN ('queued','in_progress') LIMIT 1`,
+                [harnessTask.project_id, nextSprintNum]
               );
-              const devPayload = devTaskRow.rows[0]?.payload || {};
-              if (devPayload.sequence_order != null) {
-                const currentSeq = Number(devPayload.sequence_order);
-                const nextTaskRow = await pool.query(
-                  `SELECT id, title, payload FROM tasks
-                   WHERE project_id = $1 AND task_type = 'dev' AND status = 'blocked'
-                     AND (payload->>'sequence_order')::int = $2
-                     AND payload->>'depends_on_prev' = 'true'
-                   LIMIT 1`,
-                  [harnessTask.project_id, currentSeq + 1]
-                );
-                if (nextTaskRow.rows.length > 0) {
-                  const nextTask = nextTaskRow.rows[0];
-                  const nextPayload = nextTask.payload || {};
-                  if (nextPayload.harness_mode) {
-                    // Harness 模式: 直接 unblock 下一个 dev task（它自己携带 harness_mode，执行时作 Generator）
-                    // sprint_dir 若未设置则按 sequence_order 推导
-                    const nextSprintDir = nextPayload.sprint_dir || `sprints/sprint-${currentSeq + 1}`;
-                    const newPayload = {
-                      ...nextPayload,
-                      sprint_dir: nextSprintDir,
-                      prev_sprint_result: { task_id: devTaskId, seq: currentSeq }
-                    };
-                    await pool.query(
-                      `UPDATE tasks SET status = 'queued', payload = $1::jsonb, updated_at = NOW()
-                       WHERE id = $2 AND status = 'blocked'`,
-                      [JSON.stringify(newPayload), nextTask.id]
-                    );
-                    console.log(`[execution-callback] harness: sprint_evaluate PASS → unblocked next dev task ${nextTask.id} (seq=${currentSeq + 1})`);
-                  } else {
-                    // 非 harness 的下一个 task，正常解锁
-                    const newPayload = { ...nextPayload, prev_task_result: { task_id: devTaskId, summary: 'sprint passed' } };
-                    await pool.query(
-                      `UPDATE tasks SET status = 'queued', payload = $1::jsonb, updated_at = NOW()
-                       WHERE id = $2 AND status = 'blocked'`,
-                      [JSON.stringify(newPayload), nextTask.id]
-                    );
+              if (existingNext.rows.length === 0) {
+                await createHarnessTask({
+                  title: `[Contract] Sprint ${nextSprintNum} 合同提案`,
+                  description: `Sprint ${sprintNum} PASS。Generator 提出 Sprint ${nextSprintNum} 的合同草案。`,
+                  priority: 'P1',
+                  project_id: harnessTask.project_id,
+                  goal_id: harnessTask.goal_id,
+                  task_type: 'sprint_contract_propose',
+                  trigger_source: 'execution_callback_harness',
+                  payload: {
+                    sprint_dir: nextSprintDir,
+                    sprint_num: nextSprintNum,
+                    planner_task_id: harnessPayload.planner_task_id,
+                    propose_round: 1,
+                    prev_sprint_num: sprintNum,
+                    harness_mode: true
                   }
-                }
+                });
+                console.log(`[execution-callback] harness: sprint_evaluate PASS → sprint_contract_propose for sprint ${nextSprintNum}`);
               }
-
-              // 检查是否所有 dev task 都完成 → 创建 arch_review（Initiative 整体验收）
-              const pendingDev = await pool.query(
-                `SELECT COUNT(*) AS cnt FROM tasks
-                 WHERE project_id = $1 AND task_type = 'dev'
-                 AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined')`,
+            } else {
+              // Generator 说没有更多 Sprint → arch_review（Initiative 整体验收）
+              const existingAr = await pool.query(
+                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'arch_review'
+                 AND payload->>'scope' = 'initiative' AND status IN ('queued', 'in_progress') LIMIT 1`,
                 [harnessTask.project_id]
               );
-              if (parseInt(pendingDev.rows[0]?.cnt || 0) === 0) {
-                // 幂等检查: 是否已有 arch_review
-                const existingAr = await pool.query(
-                  `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'arch_review'
-                   AND payload->>'scope' = 'initiative' AND payload->>'trigger' = 'all_sprints_passed'
-                   AND status IN ('queued', 'in_progress') LIMIT 1`,
-                  [harnessTask.project_id]
-                );
-                if (existingAr.rows.length === 0) {
-                  await createHarnessTask({
-                    title: `[验收] Initiative 整体审查 — Harness v2`,
-                    description: `所有 Sprint Evaluator PASS，执行 Initiative 级架构审查。检查跨 Sprint 集成 + 架构漂移。`,
-                    priority: 'P1',
-                    project_id: harnessTask.project_id,
-                    goal_id: harnessTask.goal_id,
-                    task_type: 'arch_review',
-                    trigger_source: 'execution_callback_harness',
-                    payload: {
-                      scope: 'initiative',
-                      trigger: 'all_sprints_passed',
-                      harness_mode: true
-                    }
-                  });
-                  console.log(`[execution-callback] harness: all sprints PASS → arch_review created for project ${harnessTask.project_id}`);
-                }
+              if (existingAr.rows.length === 0) {
+                await createHarnessTask({
+                  title: `[验收] Initiative 整体审查 — Harness 完成`,
+                  description: `所有 Sprint PASS，Generator 确认 PRD 全部实现。执行 Initiative 级整体验收。`,
+                  priority: 'P1',
+                  project_id: harnessTask.project_id,
+                  goal_id: harnessTask.goal_id,
+                  task_type: 'arch_review',
+                  trigger_source: 'execution_callback_harness',
+                  payload: { scope: 'initiative', trigger: 'all_sprints_passed', harness_mode: true }
+                });
+                console.log(`[execution-callback] harness: all sprints PASS → arch_review created`);
               }
             }
           } else {
@@ -1637,7 +1709,6 @@ ${resultStr.substring(0, 2000)}
 
         // sprint_fix 完成 → 创建新的 sprint_evaluate（再测）
         if (harnessTask?.task_type === 'sprint_fix') {
-          const { createTask: createHarnessTask } = await import('../actions.js');
           await createHarnessTask({
             title: `[Evaluator] 重测 Sprint R${harnessPayload.eval_round || 1} — ${harnessTask.title}`,
             description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
