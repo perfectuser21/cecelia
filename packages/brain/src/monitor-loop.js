@@ -227,15 +227,8 @@ async function handleStuckRun(stuck) {
   }
 }
 
-/**
- * Gather rich failure context from run_events and tasks tables
- * so Cortex can produce high-confidence RCA diagnoses.
- *
- * @param {Object} failure - row from run_events (must have task_id, run_id)
- * @returns {Promise<Object>} enriched context object
- */
-async function gatherFailureContext(failure) {
-  const ctx = {
+function buildBaseContext(failure) {
+  return {
     reason_code: failure.reason_code || 'UNKNOWN',
     reason_kind: failure.reason_kind || 'UNKNOWN',
     layer: failure.layer || 'N/A',
@@ -251,60 +244,81 @@ async function gatherFailureContext(failure) {
     task_description_head: null,
     recent_similar_failures: [],
   };
+}
 
+async function enrichWithTaskMetadata(ctx, taskId) {
+  if (!taskId) return;
+  const result = await pool.query(
+    `SELECT title, task_type, LEFT(description, 500) AS description_head
+     FROM tasks WHERE id = $1 LIMIT 1`,
+    [taskId]
+  );
+  if (result.rows.length > 0) {
+    const t = result.rows[0];
+    ctx.task_title = t.title;
+    ctx.task_type = t.task_type;
+    ctx.task_description_head = t.description_head;
+  }
+}
+
+function extractPayloadFields(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  return {
+    stderr: (payload.stderr || payload.error || '').toString().slice(-2000),
+    log_tail: (payload.log_tail || payload.output || '').toString().slice(-1000),
+  };
+}
+
+async function enrichWithRunPayload(ctx, runId) {
+  if (!runId) return;
+  const result = await pool.query(
+    `SELECT payload FROM run_events
+     WHERE run_id = $1 AND status = 'failed'
+     ORDER BY ts_end DESC NULLS LAST LIMIT 1`,
+    [runId]
+  );
+  if (result.rows.length > 0) {
+    const fields = extractPayloadFields(result.rows[0].payload);
+    if (fields) {
+      ctx.stderr = fields.stderr;
+      ctx.log_tail = fields.log_tail;
+    }
+  }
+}
+
+async function enrichWithSimilarFailures(ctx, reasonCode) {
+  if (!reasonCode) return;
+  const result = await pool.query(
+    `SELECT count(*) AS cnt, array_agg(DISTINCT step_name) AS steps
+     FROM run_events
+     WHERE reason_code = $1 AND status = 'failed'
+       AND ts_start > NOW() - INTERVAL '24 hours'`,
+    [reasonCode]
+  );
+  if (result.rows.length > 0) {
+    ctx.recent_similar_failures = {
+      count: parseInt(result.rows[0].cnt) || 0,
+      affected_steps: result.rows[0].steps || [],
+    };
+  }
+}
+
+/**
+ * Gather rich failure context from run_events and tasks tables
+ * so Cortex can produce high-confidence RCA diagnoses.
+ *
+ * @param {Object} failure - row from run_events (must have task_id, run_id)
+ * @returns {Promise<Object>} enriched context object
+ */
+async function gatherFailureContext(failure) {
+  const ctx = buildBaseContext(failure);
   try {
-    // 1. Get task metadata (title, type, description head)
-    if (failure.task_id) {
-      const taskResult = await pool.query(
-        `SELECT title, task_type, LEFT(description, 500) AS description_head
-         FROM tasks WHERE id = $1 LIMIT 1`,
-        [failure.task_id]
-      );
-      if (taskResult.rows.length > 0) {
-        const t = taskResult.rows[0];
-        ctx.task_title = t.title;
-        ctx.task_type = t.task_type;
-        ctx.task_description_head = t.description_head;
-      }
-    }
-
-    // 2. Get stderr / log_tail from run_events payload (if stored)
-    if (failure.run_id) {
-      const runResult = await pool.query(
-        `SELECT payload FROM run_events
-         WHERE run_id = $1 AND status = 'failed'
-         ORDER BY ts_end DESC NULLS LAST LIMIT 1`,
-        [failure.run_id]
-      );
-      if (runResult.rows.length > 0) {
-        const payload = runResult.rows[0].payload;
-        if (payload && typeof payload === 'object') {
-          ctx.stderr = (payload.stderr || payload.error || '').toString().slice(-2000);
-          ctx.log_tail = (payload.log_tail || payload.output || '').toString().slice(-1000);
-        }
-      }
-    }
-
-    // 3. Count recent similar failures (same reason_code, last 24h)
-    if (failure.reason_code) {
-      const similarResult = await pool.query(
-        `SELECT count(*) AS cnt, array_agg(DISTINCT step_name) AS steps
-         FROM run_events
-         WHERE reason_code = $1 AND status = 'failed'
-           AND ts_start > NOW() - INTERVAL '24 hours'`,
-        [failure.reason_code]
-      );
-      if (similarResult.rows.length > 0) {
-        ctx.recent_similar_failures = {
-          count: parseInt(similarResult.rows[0].cnt) || 0,
-          affected_steps: similarResult.rows[0].steps || [],
-        };
-      }
-    }
+    await enrichWithTaskMetadata(ctx, failure.task_id);
+    await enrichWithRunPayload(ctx, failure.run_id);
+    await enrichWithSimilarFailures(ctx, failure.reason_code);
   } catch (err) {
     console.warn(`[Monitor] gatherFailureContext partial failure: ${err.message}`);
   }
-
   return ctx;
 }
 
