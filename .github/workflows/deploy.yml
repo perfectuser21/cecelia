@@ -134,3 +134,25 @@ jobs:
           done
 
           echo "::warning::Deploy status poll timed out after ${MAX_WAIT}s — webhook accepted but result unknown"
+
+      - name: Smoke Test — 验证 Brain 健康
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'https://dev-autopilot.zenjoymedia.media' }}
+        run: |
+          echo "运行烟雾测试..."
+          sleep 5
+
+          HTTP_CODE=$(curl -s -o /tmp/smoke_response.txt -w "%{http_code}" \
+            "${BRAIN_URL}/api/brain/health" \
+            --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
+
+          echo "Health check HTTP: $HTTP_CODE"
+          if [ -f /tmp/smoke_response.txt ]; then cat /tmp/smoke_response.txt; fi
+          echo ""
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ 烟雾测试通过 — Brain /health 响应正常"
+          else
+            echo "::error::烟雾测试失败 (HTTP $HTTP_CODE) — 部署成功但 Brain 不健康"
+            exit 1
+          fi
