@@ -1,0 +1,9 @@
+dev
+branch: cp-04041920-fix-content-pipeline-execsync
+task_id: 8d92ed4d-c692-4ffd-a491-3de30466ee1c
+started: 2026-04-04T19:20:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
