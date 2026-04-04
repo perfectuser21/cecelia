@@ -112,63 +112,73 @@ function isUrlStr(s) {
   return /^https?:\/\//i.test(s?.trim());
 }
 
+// ─── Contact 字段键集合（模块级常量）────────────────────────────
+
+const CONTACT_KEY_SETS = {
+  RELATION: new Set(['实际关系', '关系', 'relation', 'relationship']),
+  CATEGORY: new Set(['分类', 'category', '类别', '标签', 'tag', 'tags']),
+  JOB:      new Set(['职业', '工作', 'job', 'profession', 'title', 'occupation']),
+  NICKNAME: new Set(['称呼', '昵称', 'nickname', 'alias']),
+  BIRTHDAY: new Set(['生日', 'birthday', '出生日期', 'dob']),
+  EMAIL:    new Set(['邮箱', '邮件', 'email', 'mail']),
+  PHONE:    new Set(['电话', '手机', '联系方式', 'phone', 'mobile', 'tel']),
+  URL:      new Set(['网址', '主页', '链接', 'url', 'website', 'homepage', 'linkedin']),
+  NOTE:     new Set(['备注', '说明', '描述', 'notes', 'remark', 'memo', 'desc']),
+  SKIP:     new Set(['姓名', 'name', '名字']),
+};
+
+// 简单 key 精确匹配（CC=6）
+function _contactMapKnownKey(key, val) {
+  const { RELATION, CATEGORY, JOB, NICKNAME, NOTE } = CONTACT_KEY_SETS;
+  if (RELATION.has(key)) return { '关系': { select: { name: truncate(val, 100) } } };
+  if (CATEGORY.has(key)) {
+    const tags = val.split(/[,，、]/).map(t => t.trim()).filter(Boolean);
+    return { '分类': { multi_select: tags.map(t => ({ name: truncate(t, 100) })) } };
+  }
+  if (JOB.has(key))      return { '职业': { rich_text: [{ text: { content: truncate(val, 500) } }] } };
+  if (NICKNAME.has(key)) return { '称呼': { rich_text: [{ text: { content: truncate(val, 200) } }] } };
+  if (NOTE.has(key))     return { '备注': { rich_text: [{ text: { content: truncate(val, 2000) } }] } };
+  return null;
+}
+
+// key + 值条件混合匹配（CC=9）
+function _contactMapWithCondition(key, val) {
+  const { BIRTHDAY, EMAIL, PHONE, URL } = CONTACT_KEY_SETS;
+  if (BIRTHDAY.has(key) && isDateStr(val))  return { '生日': { date: { start: val.replace(/\//g, '-') } } };
+  if (EMAIL.has(key) || isEmailStr(val))    return { '邮箱': { email: truncate(val, 200) } };
+  if (PHONE.has(key) && !isEmailStr(val))   return { '电话': { phone_number: truncate(val, 50) } };
+  if (URL.has(key) || isUrlStr(val))        return { '网址': { url: truncate(val, 2000) } };
+  return null;
+}
+
+// 未知 key 时按值内容自动检测（CC=9）
+function _contactInferFromValue(val, props) {
+  if (isEmailStr(val) && !props['邮箱']) return { '邮箱': { email: truncate(val, 200) } };
+  if (isPhoneStr(val) && !props['电话']) return { '电话': { phone_number: truncate(val, 50) } };
+  if (isUrlStr(val)   && !props['网址']) return { '网址': { url: truncate(val, 2000) } };
+  if (isDateStr(val)  && !props['生日']) return { '生日': { date: { start: val.replace(/\//g, '-') } } };
+  return null;
+}
+
+// 单字段分派（CC=1）
+function _contactMapField(key, val, props) {
+  return _contactMapKnownKey(key, val)
+    ?? _contactMapWithCondition(key, val)
+    ?? _contactInferFromValue(val, props);
+}
+
 /**
- * 把解析出的 contact 字段映射到 Notion properties 对象
+ * 把解析出的 contact 字段映射到 Notion properties 对象（CC=7）
  */
 export function contactFieldsToNotionProps(fields, sourceName, updatedAt) {
   const props = {};
-
-  const RELATION_KEYS = new Set(['实际关系', '关系', 'relation', 'relationship']);
-  const CATEGORY_KEYS = new Set(['分类', 'category', '类别', '标签', 'tag', 'tags']);
-  const JOB_KEYS      = new Set(['职业', '工作', 'job', 'profession', 'title', 'occupation']);
-  const NICKNAME_KEYS = new Set(['称呼', '昵称', 'nickname', 'alias']);
-  const BIRTHDAY_KEYS = new Set(['生日', 'birthday', '出生日期', 'dob']);
-  const EMAIL_KEYS    = new Set(['邮箱', '邮件', 'email', 'mail']);
-  const PHONE_KEYS    = new Set(['电话', '手机', '联系方式', 'phone', 'mobile', 'tel']);
-  const URL_KEYS      = new Set(['网址', '主页', '链接', 'url', 'website', 'homepage', 'linkedin']);
-  const NOTE_KEYS     = new Set(['备注', '说明', '描述', 'notes', 'remark', 'memo', 'desc']);
-  const SKIP_KEYS     = new Set(['姓名', 'name', '名字']);
-
   for (const [key, val] of Object.entries(fields)) {
-    if (!val || SKIP_KEYS.has(key)) continue;
-
-    if (RELATION_KEYS.has(key)) {
-      props['关系'] = { select: { name: truncate(val, 100) } };
-    } else if (CATEGORY_KEYS.has(key)) {
-      const tags = val.split(/[,，、]/).map(t => t.trim()).filter(Boolean);
-      props['分类'] = { multi_select: tags.map(t => ({ name: truncate(t, 100) })) };
-    } else if (JOB_KEYS.has(key)) {
-      props['职业'] = { rich_text: [{ text: { content: truncate(val, 500) } }] };
-    } else if (NICKNAME_KEYS.has(key)) {
-      props['称呼'] = { rich_text: [{ text: { content: truncate(val, 200) } }] };
-    } else if (BIRTHDAY_KEYS.has(key) && isDateStr(val)) {
-      props['生日'] = { date: { start: val.replace(/\//g, '-') } };
-    } else if (EMAIL_KEYS.has(key) || isEmailStr(val)) {
-      props['邮箱'] = { email: truncate(val, 200) };
-    } else if (PHONE_KEYS.has(key) && !isEmailStr(val)) {
-      props['电话'] = { phone_number: truncate(val, 50) };
-    } else if (URL_KEYS.has(key) || isUrlStr(val)) {
-      props['网址'] = { url: truncate(val, 2000) };
-    } else if (NOTE_KEYS.has(key)) {
-      props['备注'] = { rich_text: [{ text: { content: truncate(val, 2000) } }] };
-    } else {
-      // 未知 key：根据值内容自动检测类型
-      if (isEmailStr(val) && !props['邮箱']) {
-        props['邮箱'] = { email: truncate(val, 200) };
-      } else if (isPhoneStr(val) && !props['电话']) {
-        props['电话'] = { phone_number: truncate(val, 50) };
-      } else if (isUrlStr(val) && !props['网址']) {
-        props['网址'] = { url: truncate(val, 2000) };
-      } else if (isDateStr(val) && !props['生日']) {
-        props['生日'] = { date: { start: val.replace(/\//g, '-') } };
-      }
-      // 其他未识别字段：数据已在原始 content 备注中保留
-    }
+    if (!val || CONTACT_KEY_SETS.SKIP.has(key)) continue;
+    const mapped = _contactMapField(key, val, props);
+    if (mapped) Object.assign(props, mapped);
   }
-
   if (sourceName) props['来源']     = { select: { name: sourceName } };
   if (updatedAt)  props['更新时间'] = { date: { start: fmtDate(updatedAt) } };
-
   return props;
 }
 
