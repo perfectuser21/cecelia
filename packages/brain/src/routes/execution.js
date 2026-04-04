@@ -1486,7 +1486,7 @@ ${resultStr.substring(0, 2000)}
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
-              dev_task_id: harnessPayload.dev_task_id,
+              dev_task_id: harnessPayload.dev_task_id || task_id,
               eval_round: 1,
               harness_mode: true
             }
@@ -1552,24 +1552,22 @@ ${resultStr.substring(0, 2000)}
                 );
                 if (nextTaskRow.rows.length > 0) {
                   const nextTask = nextTaskRow.rows[0];
-                  // Harness 模式: 不直接解锁 dev task，而是创建 sprint_generate
                   const nextPayload = nextTask.payload || {};
                   if (nextPayload.harness_mode) {
-                    await createHarnessTask({
-                      title: `[Generator] Sprint ${currentSeq + 1} — ${nextTask.title}`,
-                      description: `Generator 为下一个 Sprint 写 contract + 代码。\ndev_task: ${nextTask.id}`,
-                      priority: 'P1',
-                      project_id: harnessTask.project_id,
-                      goal_id: harnessTask.goal_id,
-                      task_type: 'sprint_generate',
-                      trigger_source: 'execution_callback_harness',
-                      payload: {
-                        sprint_dir: `sprints/sprint-${currentSeq + 1}`,
-                        dev_task_id: nextTask.id,
-                        harness_mode: true
-                      }
-                    });
-                    console.log(`[execution-callback] harness: sprint_evaluate PASS → sprint_generate created for next sprint (seq=${currentSeq + 1})`);
+                    // Harness 模式: 直接 unblock 下一个 dev task（它自己携带 harness_mode，执行时作 Generator）
+                    // sprint_dir 若未设置则按 sequence_order 推导
+                    const nextSprintDir = nextPayload.sprint_dir || `sprints/sprint-${currentSeq + 1}`;
+                    const newPayload = {
+                      ...nextPayload,
+                      sprint_dir: nextSprintDir,
+                      prev_sprint_result: { task_id: devTaskId, seq: currentSeq }
+                    };
+                    await pool.query(
+                      `UPDATE tasks SET status = 'queued', payload = $1::jsonb, updated_at = NOW()
+                       WHERE id = $2 AND status = 'blocked'`,
+                      [JSON.stringify(newPayload), nextTask.id]
+                    );
+                    console.log(`[execution-callback] harness: sprint_evaluate PASS → unblocked next dev task ${nextTask.id} (seq=${currentSeq + 1})`);
                   } else {
                     // 非 harness 的下一个 task，正常解锁
                     const newPayload = { ...nextPayload, prev_task_result: { task_id: devTaskId, summary: 'sprint passed' } };
