@@ -7,7 +7,7 @@
  * - sprint_evaluate → /sprint-evaluator 模式
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock executor.js 的外部依赖
 vi.mock('../db.js', () => ({
