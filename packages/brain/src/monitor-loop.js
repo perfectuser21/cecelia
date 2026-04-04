@@ -229,59 +229,77 @@ async function handleStuckRun(stuck) {
 
 /**
  * Fetch task metadata (title, type, description head) from tasks table.
+ * Uses parameterized query ($1) — pool.query is pg's built-in safe parameterization.
  * @param {string} taskId
- * @returns {Promise<{task_title, task_type, task_description_head}>}
+ * @returns {Promise<{task_title?, task_type?, task_description_head?}>}
  */
 async function fetchTaskMeta(taskId) {
-  const result = await pool.query(
-    `SELECT title, task_type, LEFT(description, 500) AS description_head
-     FROM tasks WHERE id = $1 LIMIT 1`,
-    [taskId]
-  );
-  if (result.rows.length === 0) return {};
-  const t = result.rows[0];
-  return { task_title: t.title, task_type: t.task_type, task_description_head: t.description_head };
+  try {
+    const result = await pool.query(
+      `SELECT title, task_type, LEFT(description, 500) AS description_head
+       FROM tasks WHERE id = $1 LIMIT 1`,
+      [taskId]
+    );
+    if (result.rows.length === 0) return {};
+    const t = result.rows[0];
+    return { task_title: t.title, task_type: t.task_type, task_description_head: t.description_head };
+  } catch (err) {
+    console.warn(`[Monitor] fetchTaskMeta failed for task ${taskId}: ${err.message}`);
+    return {};
+  }
 }
 
 /**
  * Fetch stderr / log_tail from the most recent failed run_events payload.
+ * Uses parameterized query ($1) — pool.query is pg's built-in safe parameterization.
  * @param {string} runId
- * @returns {Promise<{stderr, log_tail}>}
+ * @returns {Promise<{stderr?: string, log_tail?: string}>}
  */
 async function fetchRunPayload(runId) {
-  const result = await pool.query(
-    `SELECT payload FROM run_events
-     WHERE run_id = $1 AND status = 'failed'
-     ORDER BY ts_end DESC NULLS LAST LIMIT 1`,
-    [runId]
-  );
-  if (result.rows.length === 0) return {};
-  const payload = result.rows[0].payload;
-  if (!payload || typeof payload !== 'object') return {};
-  return {
-    stderr: (payload.stderr || payload.error || '').toString().slice(-2000),
-    log_tail: (payload.log_tail || payload.output || '').toString().slice(-1000),
-  };
+  try {
+    const result = await pool.query(
+      `SELECT payload FROM run_events
+       WHERE run_id = $1 AND status = 'failed'
+       ORDER BY ts_end DESC NULLS LAST LIMIT 1`,
+      [runId]
+    );
+    if (result.rows.length === 0) return {};
+    const payload = result.rows[0].payload;
+    if (!payload || typeof payload !== 'object') return {};
+    return {
+      stderr: (payload.stderr || payload.error || '').toString().slice(-2000),
+      log_tail: (payload.log_tail || payload.output || '').toString().slice(-1000),
+    };
+  } catch (err) {
+    console.warn(`[Monitor] fetchRunPayload failed for run ${runId}: ${err.message}`);
+    return {};
+  }
 }
 
 /**
  * Count recent similar failures by reason_code in the last 24h.
+ * Uses parameterized query ($1) — pool.query is pg's built-in safe parameterization.
  * @param {string} reasonCode
- * @returns {Promise<{count, affected_steps}>}
+ * @returns {Promise<{count: number, affected_steps: string[]}>}
  */
 async function fetchSimilarFailures(reasonCode) {
-  const result = await pool.query(
-    `SELECT count(*) AS cnt, array_agg(DISTINCT step_name) AS steps
-     FROM run_events
-     WHERE reason_code = $1 AND status = 'failed'
-       AND ts_start > NOW() - INTERVAL '24 hours'`,
-    [reasonCode]
-  );
-  if (result.rows.length === 0) return { count: 0, affected_steps: [] };
-  return {
-    count: parseInt(result.rows[0].cnt) || 0,
-    affected_steps: result.rows[0].steps || [],
-  };
+  try {
+    const result = await pool.query(
+      `SELECT count(*) AS cnt, array_agg(DISTINCT step_name) AS steps
+       FROM run_events
+       WHERE reason_code = $1 AND status = 'failed'
+         AND ts_start > NOW() - INTERVAL '24 hours'`,
+      [reasonCode]
+    );
+    if (result.rows.length === 0) return { count: 0, affected_steps: [] };
+    return {
+      count: parseInt(result.rows[0].cnt) || 0,
+      affected_steps: result.rows[0].steps || [],
+    };
+  } catch (err) {
+    console.warn(`[Monitor] fetchSimilarFailures failed for reason_code ${reasonCode}: ${err.message}`);
+    return { count: 0, affected_steps: [] };
+  }
 }
 
 /**
