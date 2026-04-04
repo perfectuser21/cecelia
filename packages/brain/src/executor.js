@@ -1970,6 +1970,23 @@ async function preparePrompt(task) {
     return _prepareSprintPrompt(task, taskType);
   }
 
+  // Harness 官方三层新增 task types
+  if (taskType === 'sprint_planner') {
+    const sprintDir = task.payload?.sprint_dir || 'sprints';
+    return `/sprint-planner\n\n## Harness v2.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
+  }
+  if (taskType === 'sprint_contract_propose') {
+    const sprintNum = task.payload?.sprint_num || 1;
+    const sprintDir = task.payload?.sprint_dir || `sprints/sprint-${sprintNum}`;
+    const proposeRound = task.payload?.propose_round || 1;
+    return `/sprint-contract-proposer\n\n## Harness v2.0 — Sprint Contract Proposer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\n\n${task.description || task.title}`;
+  }
+  if (taskType === 'sprint_contract_review') {
+    const sprintNum = task.payload?.sprint_num || 1;
+    const sprintDir = task.payload?.sprint_dir || `sprints/sprint-${sprintNum}`;
+    return `/sprint-contract-reviewer\n\n## Harness v2.0 — Sprint Contract Reviewer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\n\n${task.description || task.title}`;
+  }
+
   // 路由表：taskType → handler
   const routes = {
     initiative_plan:     () => `/decomp\n\n${task.description || task.title}`,
