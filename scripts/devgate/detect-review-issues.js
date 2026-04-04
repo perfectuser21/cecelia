@@ -40,7 +40,10 @@ process.stdin.on('end', () => {
     || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}-\s*\*\*无\*\*/.test(input)
     || /🔴\s*\*\*严重问题\*\*[\s\S]{0,200}未发现/.test(input)
     || /🔴\s*严重问题[：:]\s*未发现/.test(input)
-    || /严重问题[：:]\s*未发现/.test(input);
+    || /严重问题[：:]\s*未发现/.test(input)
+    // 支持 "没有发现严重问题（🔴）" 正文格式（DeepSeek 有时在结尾总结中使用此格式）
+    || /没有发现严重问题[（(]🔴[)）]/.test(input)
+    || /未发现严重问题[（(]🔴[)）]/.test(input);
 
   // 排除标题里的 🔴（兼容全角/半角括号及 bold 标题格式），检测正文中的实际问题标记
   const textWithoutHeadings = input
