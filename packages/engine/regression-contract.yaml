@@ -28,8 +28,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 14.3.0
-updated: 2026-04-03
+version: 14.3.1
+updated: 2026-04-04
 
 # ============================================================================
 # Hooks 回归契约
@@ -289,7 +289,6 @@ hooks:
       type: code
       run: "bash hooks/stop-dev.sh"
       contains: "dev-seal"
-    test: "tests/hooks/stop-dev-seal.test.ts"
 
   # --------------------------------------------------------------------------
   # H7: stop.sh - 循环控制器
@@ -387,7 +386,6 @@ hooks:
       type: code
       file: "hooks/stop.sh"
       contains: "SESSION_ID_IN_FILE"
-    test: "tests/hooks/concurrency.test.ts"
 
   - id: H7-007
     feature: H7
@@ -406,7 +404,6 @@ hooks:
       type: code
       file: "lib/lock-utils.sh"
       contains: "atomic_write_dev_mode"
-    test: "tests/hooks/concurrency.test.ts"
 
   - id: H7-008
     feature: H7
@@ -825,7 +822,6 @@ hooks:
     evidence:
       type: log
       contains: "PR GATE"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-002
     feature: H2
@@ -843,7 +839,6 @@ hooks:
     evidence:
       type: exit_code
       equals: 2
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-003
     feature: H2
@@ -865,7 +860,6 @@ hooks:
     verification:
       - desc: "确认 hooks/pr-gate-v2.sh 中不含 FAST_MODE"
         command: "! grep -q 'FAST_MODE' hooks/pr-gate-v2.sh"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-004
     feature: H2
@@ -883,7 +877,6 @@ hooks:
     evidence:
       type: log
       contains: "Release 模式"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-005
     feature: H2
@@ -901,7 +894,6 @@ hooks:
     evidence:
       type: log
       contains: "PR 模式 (L1 only)"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-006
     feature: H2
@@ -919,7 +911,6 @@ hooks:
     evidence:
       type: log
       contains: "DoD"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # H2-007: Phase 1 - DoD 映射检查
@@ -940,7 +931,6 @@ hooks:
     evidence:
       type: log
       contains: "DoD ↔ Test 映射检查"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-008
     feature: H2
@@ -958,7 +948,6 @@ hooks:
     evidence:
       type: log
       contains: "P0/P1 → RCI 更新检查"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # H2-009: Phase 2 - PRD/DoD 快照
@@ -980,7 +969,6 @@ hooks:
       type: file
       path: ".history/PR-*.prd.md"
       exists: true
-    test: "tests/hooks/pr-gate-phase2.test.ts"
 
   # --------------------------------------------------------------------------
   # H2-010: Phase 6 - Skill 产物检查
@@ -1001,7 +989,6 @@ hooks:
     evidence:
       type: log
       contains: "Phase 6: Skill 产物检查"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # H2-011~H2-013: v8.24.0 安全修复 (pr-gate-v2.sh)
@@ -1023,7 +1010,6 @@ hooks:
       type: code
       file: "hooks/pr-gate-v2.sh"
       contains: "jq -e . >/dev/null 2>&1"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-012
     feature: H2
@@ -1042,7 +1028,6 @@ hooks:
       type: code
       file: "hooks/pr-gate-v2.sh"
       contains: "sed -n 's#"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   - id: H2-013
     feature: H2
@@ -1845,7 +1830,6 @@ ci:
         command: "test -f docs/QA-DECISION.md && grep -q 'Decision:' docs/QA-DECISION.md"
       - desc: "确认 docs/AUDIT-REPORT.md 存在 + Decision: PASS"
         command: "test -f docs/AUDIT-REPORT.md && grep -q 'Decision: PASS' docs/AUDIT-REPORT.md"
-    test: "tests/devgate/l2a-check.test.ts"
 
   - id: C2-003
     feature: C2
@@ -1869,7 +1853,6 @@ ci:
         command: "! grep -qE '^\\s*-\\s*\\[\\s*\\]' .dod.md"
       - desc: "确认 docs/QA-DECISION.md Decision: PASS"
         command: "grep -q 'Decision: PASS' docs/QA-DECISION.md"
-    test: "tests/devgate/l2a-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C3: shell syntax check
@@ -2106,7 +2089,6 @@ ci:
       type: code
       file: "ci/scripts/generate-evidence.sh"
       not_contains: "qa_gate_passed: true"
-    test: "tests/ci/evidence.test.ts"
 
   - id: C8-002
     feature: C8
@@ -2125,7 +2107,6 @@ ci:
       type: code
       file: "ci/scripts/evidence-gate.sh"
       contains: "REQUIRED_CHECKS"
-    test: "tests/ci/evidence.test.ts"
 
   - id: C8-003
     feature: C8
@@ -2144,7 +2125,6 @@ ci:
       type: code
       file: "ci/scripts/evidence-gate.sh"
       contains: "sha256sum"
-    test: "tests/ci/evidence.test.ts"
 
   # --------------------------------------------------------------------------
   # C9: DoD manual: backdoor fix (P0-2)
@@ -2270,7 +2250,6 @@ ci:
       type: code
       file: "scripts/devgate/l2b-check.sh"
       contains: "Evidence 时间戳验证"
-    test: "tests/devgate/l2b-check.test.ts"
 
   - id: C11-002
     feature: C11
@@ -2290,7 +2269,6 @@ ci:
       type: code
       file: "scripts/devgate/l2b-check.sh"
       contains: "Evidence 文件存在性验证"
-    test: "tests/devgate/l2b-check.test.ts"
 
   - id: C11-003
     feature: C11
@@ -2310,7 +2288,6 @@ ci:
       type: code
       file: "scripts/devgate/l2b-check.sh"
       contains: "Evidence Metadata 验证"
-    test: "tests/devgate/l2b-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C12: L2A Structure Validation (v12.3.0 P1-1)
@@ -2333,7 +2310,6 @@ ci:
       type: code
       file: "scripts/devgate/l2a-check.sh"
       contains: "PRD 结构检查"
-    test: "tests/devgate/l2a-check.test.ts"
 
   - id: C12-002
     feature: C12
@@ -2353,7 +2329,6 @@ ci:
       type: code
       file: "scripts/devgate/l2a-check.sh"
       contains: "DoD 结构检查"
-    test: "tests/devgate/l2a-check.test.ts"
 
   - id: C12-003
     feature: C12
@@ -2373,7 +2348,6 @@ ci:
       type: code
       file: "scripts/devgate/l2b-check.sh"
       contains: "P1-1: 可复现性验证"
-    test: "tests/devgate/l2b-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C13: RCI Coverage Precise Matching (v12.3.0 P1-2)
@@ -2725,7 +2699,6 @@ golden_paths:
         - "运行 gh pr create，确认被 Hook 阻止"
         - "修复错误，npm run qa 通过"
         - "运行 gh pr create，确认 Hook 放行"
-    test: "tests/hooks/pr-gate-phase1.test.ts"
 
   # --------------------------------------------------------------------------
   # GP-004: CI 链路
