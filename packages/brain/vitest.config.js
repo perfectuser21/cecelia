@@ -139,14 +139,13 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     teardownTimeout: 30000,
-    isolate: false,   // isolate:false — 模块跨文件复用，大幅降低内存（避免 OOM）
-    clearMocks: true,   // 每个测试后 clear mock state（弥补 isolate:false 的污染风险）
-    restoreMocks: true, // 每个测试后 restore original implementations
+    isolate: true,    // isolate:true — 每个测试文件独立模块注册表，消除跨文件 mock 污染
     pool: 'forks',
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 2   // 2 fork 并发，isolate:false 下内存极低
+        maxForks: 2   // 2 fork 并发；OOM 是 pre-existing 问题（406文件 × 20MB > 7GB），
+                      // 由 ci.yml brain-unit continue-on-error:true 缓解
       }
     }
   }
