@@ -139,12 +139,14 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     teardownTimeout: 30000,
-    isolate: true,    // isolate:true — 每个测试文件独立模块注册表，消除跨文件 mock 污染
+    isolate: false,   // isolate:false — 模块跨文件复用，大幅降低内存（避免 OOM）
+    clearMocks: true,   // 每个测试后 clear mock state（弥补 isolate:false 的污染风险）
+    restoreMocks: true, // 每个测试后 restore original implementations
     pool: 'forks',
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 4   // 4 fork 并发：每 fork ~100 文件 × 15MB = ~1500MB，fit in 2GB/fork
+        maxForks: 2   // 2 fork 并发，isolate:false 下内存极低
       }
     }
   }
