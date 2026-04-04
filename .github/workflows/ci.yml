@@ -142,7 +142,6 @@ jobs:
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # Worker OOM: 506 test files 导致 ubuntu-latest 内存不足
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -150,7 +149,9 @@ jobs:
           node-version: '22'
       - run: cd packages/brain && npm ci
       - name: Unit Tests
-        run: cd packages/brain && npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose
+        env:
+          NODE_OPTIONS: '--max-old-space-size=3072'
+        run: cd packages/brain && npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --pool=forks --maxWorkers=2
 
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
   brain-integration:
@@ -158,7 +159,6 @@ jobs:
     if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true  # TODO: integration tests 环境依赖问题待修复
     services:
       postgres:
         image: pgvector/pgvector:pg15
