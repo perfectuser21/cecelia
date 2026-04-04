@@ -22,6 +22,52 @@ const TYPE_LABELS = {
   best_practice: '✅ 最佳实践',
 };
 
+/** Returns recency bonus based on age in days */
+function getAgeBonus(createdAt) {
+  const ageInDays = (Date.now() - new Date(createdAt).getTime()) / 86400000;
+  if (ageInDays <= 7) return 3;
+  if (ageInDays <= 30) return 2;
+  return 1;
+}
+
+/** Scores a single learning row against the current task context */
+function scoreRow(row, taskType, domain, titleWords) {
+  const meta = row.metadata || {};
+  const contentLower = (row.content || '').toLowerCase();
+  let rawScore = 0;
+
+  if (meta.task_type === taskType) rawScore += 10;
+  if (domain && meta.domain === domain) rawScore += 6;
+
+  const kwMatches = titleWords.filter(w => contentLower.includes(w)).length;
+  rawScore += Math.min(kwMatches * 2, 8);
+
+  if (row.category === 'failure_pattern') rawScore += 4;
+  rawScore += getAgeBonus(row.created_at);
+
+  return { ...row, normalizedScore: rawScore / SCORE_MAX };
+}
+
+/** Groups an array of learning records by learning_type */
+function groupByType(learnings) {
+  const byType = {};
+  for (const r of learnings) {
+    const ltype = r.learning_type || r.category || 'best_practice';
+    if (!byType[ltype]) byType[ltype] = [];
+    byType[ltype].push(r);
+  }
+  return byType;
+}
+
+/** Formats a single learning-type section as markdown */
+function formatSection(ltype, records) {
+  const label = TYPE_LABELS[ltype] || ltype;
+  const items = records
+    .map(r => `- **${r.title}**\n  ${(r.content || '').slice(0, 300).replace(/\n+/g, ' ')}`)
+    .join('\n');
+  return `### ${label}\n${items}`;
+}
+
 /**
  * Build a learning context string to inject into task prompts.
  * Queries learnings table, scores by keyword relevance, returns formatted block.
@@ -33,7 +79,7 @@ export async function buildLearningContext(task) {
   const start = Date.now();
   try {
     const taskType = task.task_type || 'dev';
-    const titleLower = (task.title || '').toLowerCase();
+    const titleWords = (task.title || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
     const domain = task.domain || '';
 
     const result = await pool.query(`
@@ -49,52 +95,16 @@ export async function buildLearningContext(task) {
       console.warn(`[learning-retriever] slow query: ${elapsed}ms (task=${task.id})`);
     }
 
-    // Score each learning record
-    const titleWords = titleLower.split(/\s+/).filter(w => w.length > 3);
-
-    const scored = result.rows.map(row => {
-      let rawScore = 0;
-      const meta = row.metadata || {};
-      const contentLower = (row.content || '').toLowerCase();
-
-      // Task type match (+10)
-      if (meta.task_type === taskType) rawScore += 10;
-      // Domain match (+6)
-      if (domain && meta.domain === domain) rawScore += 6;
-      // Title keyword overlap (max +8, +2 per word)
-      const kwMatches = titleWords.filter(w => contentLower.includes(w)).length;
-      rawScore += Math.min(kwMatches * 2, 8);
-      // Category: failure_pattern bonus (+4)
-      if (row.category === 'failure_pattern') rawScore += 4;
-      // Age recency bonus
-      const ageInDays = (Date.now() - new Date(row.created_at).getTime()) / 86400000;
-      rawScore += ageInDays <= 7 ? 3 : ageInDays <= 30 ? 2 : 1;
-
-      return { ...row, normalizedScore: rawScore / SCORE_MAX };
-    });
-
-    const topLearnings = scored
+    const topLearnings = result.rows
+      .map(row => scoreRow(row, taskType, domain, titleWords))
       .filter(r => r.normalizedScore > SCORE_THRESHOLD)
       .sort((a, b) => b.normalizedScore - a.normalizedScore)
       .slice(0, MAX_INJECT);
 
     if (topLearnings.length === 0) return '';
 
-    // Group by learning_type
-    const byType = {};
-    for (const r of topLearnings) {
-      const ltype = r.learning_type || r.category || 'best_practice';
-      if (!byType[ltype]) byType[ltype] = [];
-      byType[ltype].push(r);
-    }
-
-    const sections = Object.entries(byType).map(([ltype, records]) => {
-      const label = TYPE_LABELS[ltype] || ltype;
-      const items = records
-        .map(r => `- **${r.title}**\n  ${(r.content || '').slice(0, 300).replace(/\n+/g, ' ')}`)
-        .join('\n');
-      return `### ${label}\n${items}`;
-    });
+    const byType = groupByType(topLearnings);
+    const sections = Object.entries(byType).map(([ltype, records]) => formatSection(ltype, records));
 
     return `\n\n## 📖 相关历史 Learning（避免重复踩坑）\n\n${sections.join('\n\n')}`;
   } catch (err) {
