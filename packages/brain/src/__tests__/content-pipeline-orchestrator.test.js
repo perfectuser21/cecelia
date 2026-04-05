@@ -333,7 +333,7 @@ describe('content-export → content_publish', () => {
     expect(result.action).toBe('pipeline_completed');
     const publishInserts = insertCalls.filter(p => String(p[0]).startsWith('[发布]'));
     expect(publishInserts).toHaveLength(8);
-    const platforms = publishInserts.map(p => JSON.parse(p[5]).platform);
+    const platforms = publishInserts.map(p => JSON.parse(p[6]).platform);
     expect(platforms).toContain('douyin');
     expect(platforms).toContain('wechat');
   });

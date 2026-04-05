@@ -695,14 +695,20 @@ export async function executeExport(task) {
     }
   } catch { /* */ }
 
-  // 生成 /share-card 9:16 卡片
+  // 生成 /share-card 9:16 卡片（失败时降级：文章内容存在即视为部分成功，不阻断发布）
   const cardsGenerated = generateCards(dir, keyword, findings);
   if (!cardsGenerated) {
-    const errMsg = findings.length === 0
-      ? '无调研数据（findings 为空），无法生成图片卡片。请检查 research 阶段是否成功写入 findings.json。'
-      : 'resvg 渲染失败（count=0），请检查 @resvg/resvg-js 是否可用。';
-    console.error(`[export] FAIL: ${errMsg}`);
-    return { success: false, error: errMsg };
+    const articleExists = existsSync(join(dir, 'article', 'article.md'));
+    const copyExists = existsSync(join(dir, 'cards', 'copy.md'));
+    if (!articleExists && !copyExists) {
+      const errMsg = findings.length === 0
+        ? '无调研数据（findings 为空），无文章内容，export 阶段无产出。'
+        : 'resvg 渲染失败且无文章内容，export 阶段无产出。';
+      console.error(`[export] FAIL: ${errMsg}`);
+      return { success: false, error: errMsg };
+    }
+    // 有文章/文案内容，允许无图片卡片继续发布（图文平台降级为纯文章）
+    console.warn(`[export] 无图片卡片（cardsGenerated=false），但文章/文案存在，降级继续：article=${articleExists} copy=${copyExists}`);
   }
 
   // manifest.json
