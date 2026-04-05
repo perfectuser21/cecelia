@@ -1,31 +1,23 @@
-# Task Card: fix(brain): 改进成功率计算精度 — 终态过滤 + quarantine 时间戳
+# Task Card: content-pipeline 幂等检查修复
 
-## 任务概述
-任务成功率从 57% 恢复到 90%+。PR #1885 修复了主要根因（pipeline_rescue 任务风暴 + `total` 全量统计）。本 PR 进一步精确成功率计算，消除残余计算误差。
+**Task ID**: 840db267-3c84-4651-97be-ed4b7fb50ae2  
+**Branch**: cp-04050228-840db267-3c84-4651-97be-ed4b7f
 
-## 根因分析
+## 问题
 
-| 问题 | 根因 | 已/待修 |
-|------|------|---------|
-| 成功率 57% | `getTaskStats24h` total=count(*) + 320 pipeline_rescue canceled 任务 | ✅ PR #1885 |
-| 12 content-export cancelled 任务污染分母 | `started_at IS NOT NULL` 包含已取消任务，轻微拉低成功率 | ✅ 本PR |
-| quarantine 缺少 completed_at/updated_at | quarantine.js 只设 status，时间字段缺失导致统计窗口不准 | ✅ 本PR |
-| content cancel 不更新 updated_at | orchestrator cancel SQL 缺 `updated_at = NOW()` | ✅ 本PR |
+`_startOnePipeline` 的幂等检查遗漏 `completed` 状态，导致 export 失败后 pipeline 被重排队时无限创建 research 子任务。
 
-## 修改内容
+## 修复
 
-### self-drive.js — `getTaskStats24h`
-- `total` 从 `started_at IS NOT NULL` → `status IN ('completed','failed','quarantined')` （只计终态，排除 canceled）
-- `completed_at` 替代 `updated_at` 作为时间窗口过滤（更精准）
-- quarantined 没有 `completed_at` 时兜底用 `updated_at`
+`packages/brain/src/content-pipeline-orchestrator.js` 第 119 行：
+- 旧: `AND status IN ('queued', 'in_progress')`
+- 新: `AND status IN ('queued', 'in_progress', 'completed')`
 
-### quarantine.js
-- quarantine UPDATE 新增 `completed_at = NOW(), updated_at = NOW()`
+## DoD
 
-### content-pipeline-orchestrator.js
-- 子任务 cancel 时新增 `updated_at = NOW()`
+- [x] [ARTIFACT] `content-pipeline-orchestrator.js` 中 `_startOnePipeline` 的幂等检查包含 `'completed'` 状态
+  - File: `packages/brain/src/content-pipeline-orchestrator.js`
+  - Check: `node -e "const c=require('fs').readFileSync('packages/brain/src/content-pipeline-orchestrator.js','utf8');if(!c.includes(\"status IN ('queued', 'in_progress', 'completed')\"))process.exit(1);console.log('OK')"`
 
-## 成功标准
-
-- [x] `self-drive-success-rate.test.ts` 4 个测试全部通过
-- [x] 当前数据库验证：成功率 94.9% → 精确计算后 ≥98%
+- [x] [BEHAVIOR] Brain 重启后 pipeline re-queue 不会重新创建已完成的 research 子任务
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/content-pipeline-orchestrator.js','utf8');const match=c.match(/status IN \\([^)]+\\)/g);if(!match||!match.some(m=>m.includes('completed')))process.exit(1);console.log('幂等检查包含 completed 状态 OK')"`

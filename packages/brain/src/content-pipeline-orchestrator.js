@@ -109,13 +109,14 @@ async function _startOnePipeline(pipeline, dbPool) {
     }
   }
 
-  // 幂等检查：是否已有 content-research 子任务「活跃中」
-  // 注意：只检查 queued/in_progress，不含 completed —— completed 的旧子任务不应阻止 rerun
+  // 幂等检查：是否已有 content-research 子任务（含 completed）
+  // 修复：completed 也需要检查 —— 若 research 已完成但后续阶段失败被 requeue，
+  // 不应从头重新创建 research 子任务，否则会导致无限 research 重建循环。
   const existingResult = await dbPool.query(`
     SELECT id FROM tasks
     WHERE payload->>'parent_pipeline_id' = $1
       AND task_type = 'content-research'
-      AND status IN ('queued', 'in_progress')
+      AND status IN ('queued', 'in_progress', 'completed')
     LIMIT 1
   `, [pipelineId]);
 
