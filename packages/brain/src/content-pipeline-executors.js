@@ -17,7 +17,10 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 
 const execAsync = promisify(exec);
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { getContentType } from './content-types/content-type-registry.js';
+
+const _require = createRequire(import.meta.url);
 import { callLLM } from './llm-caller.js';
 import { listSources, deleteSource } from './notebook-adapter.js';
 
@@ -603,7 +606,7 @@ function generateCards(dir, keyword, findings) {
   function renderPng(svg, outPath) {
     try {
       const resvgPath = join(process.env.HOME || '/Users/administrator', 'claude-output', 'scripts', 'node_modules', '@resvg', 'resvg-js');
-      const { Resvg } = require(resvgPath);
+      const { Resvg } = _require(resvgPath);
       const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 2160 } });
       writeFileSync(outPath, resvg.render().asPng());
       console.log(`[export] 卡片 → ${outPath}`);
@@ -695,7 +698,9 @@ export async function executeExport(task) {
   // 生成 /share-card 9:16 卡片
   const cardsGenerated = generateCards(dir, keyword, findings);
   if (!cardsGenerated) {
-    const errMsg = '有效 findings 为 0（brand_relevance < 3），无法生成图片卡片。请检查 research 阶段是否获得有效调研数据。';
+    const errMsg = findings.length === 0
+      ? '无调研数据（findings 为空），无法生成图片卡片。请检查 research 阶段是否成功写入 findings.json。'
+      : 'resvg 渲染失败（count=0），请检查 @resvg/resvg-js 是否可用。';
     console.error(`[export] FAIL: ${errMsg}`);
     return { success: false, error: errMsg };
   }
