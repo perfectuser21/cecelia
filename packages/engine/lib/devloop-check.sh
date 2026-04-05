@@ -4,11 +4,12 @@
 # ============================================================================
 # SSOT：所有 Provider 适配器 source 此文件，通过 devloop_check() 获取当前状态。
 #
-# 版本: v4.1.0
-# 更新: 2026-04-03 — Harness v2.0 适配：harness_mode 快速通道（跳过 DoD/CI/Learning）
+# 版本: v4.2.0
+# 更新: 2026-04-05 — Bug fix: harness 模式下跳过 cleanup_done 残留文件早退检查
 #
 # 4-Stage Pipeline 条件顺序:
-#   0. cleanup_done → exit 0（唯一出口）
+#   0. harness_mode 预检 → 若 harness_mode=true，跳过 cleanup_done 通用早退
+#   0.1 cleanup_done → exit 0（非 harness 唯一出口；harness 由 0.5 控制）
 #   0.5 harness_mode → 快速通道（只检查 code done + PR 创建）
 #   1. step_1_spec done?
 #   2. step_2_code done?
@@ -76,8 +77,20 @@ devloop_check() {
         return 2
     fi
 
-    # ===== 条件 0: cleanup_done =====
-    if [[ -f "$dev_mode_file" ]] && grep -q "cleanup_done: true" "$dev_mode_file" 2>/dev/null; then
+    # ===== 条件 0 (预检): 读取 harness_mode（必须在 cleanup_done 之前）=====
+    # Bug fix v4.2.0: 残留 .dev-mode 含 cleanup_done: true 会导致 harness 新会话早退。
+    # 解决方案：先读 harness_mode，harness 模式跳过通用 cleanup_done 早退路径，
+    # 由 0.5 的 harness 专用通道（检查 step_2_code + PR）来决定是否 done。
+    local _harness_mode="false"
+    if [[ -f "$dev_mode_file" ]]; then
+        local _hm_raw
+        _hm_raw=$(grep "^harness_mode:" "$dev_mode_file" 2>/dev/null | awk '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)
+        [[ -n "$_hm_raw" ]] && _harness_mode="$_hm_raw"
+    fi
+
+    # ===== 条件 0.1: cleanup_done（跳过 harness 模式）=====
+    if [[ "$_harness_mode" != "true" ]] && \
+       [[ -f "$dev_mode_file" ]] && grep -q "cleanup_done: true" "$dev_mode_file" 2>/dev/null; then
         _devloop_jq -n '{"status":"done"}'
         return 0
     fi
@@ -85,12 +98,7 @@ devloop_check() {
     # ===== 条件 0.5: harness_mode 快速通道 =====
     # Harness v2.0: Generator 只需写代码 + 创建 PR，然后 exit 0 让 Brain 派 Evaluator
     # 不检查 DoD 勾选、CI 通过、Learning 等
-    local _harness_mode="false"
-    if [[ -f "$dev_mode_file" ]]; then
-        local _hm_raw
-        _hm_raw=$(grep "^harness_mode:" "$dev_mode_file" 2>/dev/null | awk '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)
-        [[ -n "$_hm_raw" ]] && _harness_mode="$_hm_raw"
-    fi
+    # （_harness_mode 已在条件 0 预检中读取，此处直接使用）
 
     if [[ "$_harness_mode" == "true" ]]; then
         # 检查 1: step_2_code done?
