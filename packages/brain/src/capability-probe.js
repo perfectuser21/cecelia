@@ -8,11 +8,15 @@
  * Cecelia 每小时验证自己的核心能力是否还在线。
  */
 
+import { execFile } from 'child_process';
+import { fileURLToPath } from 'url';
+import path from 'path';
 import pool from './db.js';
 import {
   shouldAutoFix,
   dispatchToDevSkill,
 } from './auto-fix.js';
+import { raise } from './alerting.js';
 
 // ============================================================
 // Configuration
@@ -20,6 +24,19 @@ import {
 
 const PROBE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const PROBE_TIMEOUT_MS = 30_000; // per-probe timeout
+
+// Rollback thresholds — conservative design
+const ROLLBACK_THRESHOLDS = {
+  consecutive: 3,   // same probe fails 3 times in a row → rollback
+  batch_total: 5,   // ≥5 probes fail in one batch → rollback
+};
+
+// Rate-limit rollback: at most once per 30 min to avoid loops
+const ROLLBACK_RATE_LIMIT_MS = 30 * 60 * 1000;
+let _lastRollbackAt = 0;
+
+// Per-probe consecutive failure counters (reset to 0 on any pass)
+const _consecutiveFailures = new Map();
 
 // ============================================================
 // Probe definitions
@@ -295,6 +312,39 @@ async function probeSelfDriveHealth() {
 }
 
 // ============================================================
+// Rollback executor
+// ============================================================
+
+/**
+ * Execute brain-rollback.sh and raise a P0 Feishu alert with rollback status.
+ * @param {string} reason  - Human-readable trigger reason
+ * @param {Array}  failures - Failed probe results for this batch
+ */
+async function triggerRollback(reason, failures) {
+  const __filename = fileURLToPath(import.meta.url);
+  const rollbackScript = path.resolve(path.dirname(__filename), '../../../scripts/brain-rollback.sh');
+  const failureNames = failures.map(f => f.name).join(', ');
+
+  return new Promise((resolve) => {
+    execFile('bash', [rollbackScript], { timeout: 90_000 }, (err, stdout, stderr) => {
+      const success = !err;
+      const output = (stdout || '').trim() || (stderr || '').trim();
+      const status = success ? '✅ 回滚成功' : `❌ 回滚失败: ${err?.message || 'unknown'}`;
+
+      console.log(`[Probe] Rollback result: ${status}`);
+      if (output) console.log(`[Probe] Rollback output:\n${output}`);
+
+      raise(
+        'P0',
+        'probe_rollback_triggered',
+        `🔄 Brain 自动回滚已触发\n原因: ${reason}\n失败探针: ${failureNames}\n回滚状态: ${status}\n${output ? `输出摘要: ${output.slice(0, 300)}` : ''}`
+      );
+      resolve({ success, output });
+    });
+  });
+}
+
+// ============================================================
 // Core probe runner
 // ============================================================
 
@@ -388,6 +438,15 @@ async function runProbeCycle() {
     console.error(`[Probe] Failed to persist results: ${err.message}`);
   }
 
+  // Update consecutive failure counters
+  for (const r of results) {
+    if (r.ok) {
+      _consecutiveFailures.set(r.name, 0);
+    } else {
+      _consecutiveFailures.set(r.name, (_consecutiveFailures.get(r.name) || 0) + 1);
+    }
+  }
+
   // Log summary
   if (failures.length === 0) {
     console.log(`[Probe] All ${results.length} probes passed ✅`);
@@ -395,6 +454,34 @@ async function runProbeCycle() {
     console.log(`[Probe] ${failures.length}/${results.length} probes FAILED ❌`);
     for (const f of failures) {
       console.log(`  ❌ ${f.name}: ${f.error || f.detail}`);
+    }
+
+    // Single failure: P2 alert only (conservative design — no rollback)
+    if (failures.length === 1) {
+      const f = failures[0];
+      raise('P2', `probe_fail_${f.name}`, `探针单次失败 [${f.name}]: ${f.error || f.detail}`);
+    }
+
+    // Check rollback conditions
+    const consecutiveTrigger = failures.find(
+      f => (_consecutiveFailures.get(f.name) || 0) >= ROLLBACK_THRESHOLDS.consecutive
+    );
+    const batchTrigger = failures.length >= ROLLBACK_THRESHOLDS.batch_total;
+
+    if ((consecutiveTrigger || batchTrigger) && failures.length > 1) {
+      const reason = consecutiveTrigger
+        ? `探针 "${consecutiveTrigger.name}" 连续失败 ${_consecutiveFailures.get(consecutiveTrigger.name)} 次`
+        : `本批次总失败数 ${failures.length} ≥ ${ROLLBACK_THRESHOLDS.batch_total}`;
+
+      const now = Date.now();
+      if (now - _lastRollbackAt >= ROLLBACK_RATE_LIMIT_MS) {
+        _lastRollbackAt = now;
+        console.log(`[Probe] Rollback triggered: ${reason}`);
+        await triggerRollback(reason, failures);
+      } else {
+        console.log(`[Probe] Rollback rate-limited, skipping (triggered: ${reason})`);
+        raise('P1', 'probe_rollback_ratelimited', `回滚触发条件满足但限流中: ${reason}`);
+      }
     }
 
     // Trigger auto-fix for each failed probe
@@ -451,12 +538,19 @@ export function startProbeLoop() {
  * Get probe system status.
  */
 export function getProbeStatus() {
+  const consecutiveCounts = {};
+  for (const [name, count] of _consecutiveFailures.entries()) {
+    if (count > 0) consecutiveCounts[name] = count;
+  }
   return {
     running: _probeTimer !== null,
     interval_ms: PROBE_INTERVAL_MS,
     probe_count: PROBES.length,
     probe_names: PROBES.map(p => p.name),
+    rollback_thresholds: ROLLBACK_THRESHOLDS,
+    consecutive_failures: consecutiveCounts,
+    last_rollback_at: _lastRollbackAt ? new Date(_lastRollbackAt).toISOString() : null,
   };
 }
 
-export { runProbeCycle, PROBES };
+export { runProbeCycle, PROBES, ROLLBACK_THRESHOLDS, _consecutiveFailures };
