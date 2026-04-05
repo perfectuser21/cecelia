@@ -326,6 +326,51 @@ describe('executeCopywriting', () => {
     const aCount = (calledPrompt.match(/A/g) || []).length;
     expect(aCount).toBeGreaterThanOrEqual(1500);
   });
+
+  it('重试时应将 review_feedback 传入 LLM prompt（修复反馈丢失 bug）', async () => {
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      template: { generate_prompt: '生成关于{keyword}的内容' },
+    });
+    mockCallLLM.mockResolvedValue({ text: '=== 社交媒体文案 ===\n测试文案\n=== 公众号长文 ===\n测试长文\n' });
+
+    const feedback = '[data_accuracy] 缺少数据来源';
+    const task = {
+      payload: {
+        pipeline_keyword: '重试测试',
+        content_type: 'solo-company-case',
+        review_feedback: feedback,  // orchestrator 重试时写入的字段
+      },
+      title: '重试测试',
+    };
+    await executeCopywriting(task);
+
+    expect(mockCallLLM).toHaveBeenCalled();
+    const calledPrompt = mockCallLLM.mock.calls[0][1];
+    expect(calledPrompt).toContain(feedback);
+  });
+
+  it('review_feedback 优先于 previous_feedback', async () => {
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      template: { generate_prompt: '生成关于{keyword}的内容' },
+    });
+    mockCallLLM.mockResolvedValue({ text: '=== 社交媒体文案 ===\n测试\n=== 公众号长文 ===\n测试\n' });
+
+    const task = {
+      payload: {
+        pipeline_keyword: '优先级测试',
+        content_type: 'solo-company-case',
+        review_feedback: 'review_feedback内容',
+        previous_feedback: 'previous_feedback内容',
+      },
+      title: '优先级测试',
+    };
+    await executeCopywriting(task);
+
+    const calledPrompt = mockCallLLM.mock.calls[0][1];
+    expect(calledPrompt).toContain('review_feedback内容');
+  });
 });
 
 describe('executeGenerate', () => {
