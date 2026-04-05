@@ -30,6 +30,10 @@ const PROBE_TIMEOUT_MS = 30_000; // per-probe timeout
 // 保守设计：3 次连续失败 ≈ 3 小时持续异常，才视为需要回滚
 const ROLLBACK_CONSECUTIVE_THRESHOLD = 3;
 
+// 批次失败阈值：单次探针批次中失败探针总数 ≥ N 时立即触发回滚
+// 适用场景：系统大面积崩溃（多探针同时失败），无需等待连续 3 次
+const ROLLBACK_BATCH_THRESHOLD = 5;
+
 // brain-rollback.sh 路径（相对项目根目录）
 const _thisFile = fileURLToPath(import.meta.url);
 const _projectRoot = path.resolve(path.dirname(_thisFile), '../../..');
@@ -538,6 +542,57 @@ async function runProbeCycle() {
       }
     }
 
+    // ── 批次失败检测：单批次总失败数 ≥ 阈值时立即触发回滚 ──
+    // 优先于连续失败检测，适用于系统大面积崩溃场景
+    if (failures.length >= ROLLBACK_BATCH_THRESHOLD) {
+      const batchTriggerReason = `单次探针批次总失败数 ${failures.length} 达到阈值 ${ROLLBACK_BATCH_THRESHOLD}（失败探针：${failures.map(f => f.name).join(', ')}），触发自动回滚`;
+
+      await raise(
+        'P0',
+        `probe_rollback_trigger_batch_failures`,
+        `🔄 自动回滚触发（批次过载）— ${batchTriggerReason}`
+      );
+
+      const batchRollbackResult = executeRollback(batchTriggerReason);
+
+      if (batchRollbackResult.success) {
+        await raise(
+          'P0',
+          `probe_rollback_result_batch_failures`,
+          `✅ 自动回滚成功（批次过载）— batch_failures=${failures.length}/${ROLLBACK_BATCH_THRESHOLD}，brain-rollback.sh 退出码 0`
+        );
+      } else {
+        await raise(
+          'P0',
+          `probe_rollback_result_batch_failures`,
+          `❌ 自动回滚失败（批次过载）— batch_failures=${failures.length}/${ROLLBACK_BATCH_THRESHOLD}，brain-rollback.sh 退出码 ${batchRollbackResult.exitCode}。错误: ${batchRollbackResult.stderr.slice(0, 200)}`
+        );
+      }
+
+      try {
+        await pool.query(
+          `INSERT INTO cecelia_events (event_type, source, payload)
+           VALUES ('probe_rollback_triggered', 'capability-probe', $1)`,
+          [JSON.stringify({
+            timestamp: new Date().toISOString(),
+            trigger_type: 'batch_failures',
+            batch_failures: failures.length,
+            threshold: ROLLBACK_BATCH_THRESHOLD,
+            failed_probes: failures.map(f => f.name),
+            trigger_reason: batchTriggerReason,
+            rollback_success: batchRollbackResult.success,
+            rollback_exit_code: batchRollbackResult.exitCode,
+            rollback_stderr: batchRollbackResult.stderr.slice(0, 500),
+          })]
+        );
+      } catch (evtErr) {
+        console.error(`[Probe] 批次回滚事件写入失败: ${evtErr.message}`);
+      }
+
+      // 批次回滚已触发，跳过逐探针的连续失败检测
+      return results;
+    }
+
     // ── 连续失败检测：阈值内连续失败才触发回滚（兜底机制）──
     // 注意：此处在当前批次结果已持久化后执行，所以查询历史包含本次
     for (const f of failures) {
@@ -635,4 +690,4 @@ export function getProbeStatus() {
   };
 }
 
-export { runProbeCycle, PROBES };
+export { runProbeCycle, PROBES, ROLLBACK_BATCH_THRESHOLD, ROLLBACK_CONSECUTIVE_THRESHOLD };
