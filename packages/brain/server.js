@@ -339,12 +339,20 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   console.log(`Realtime WebSocket ready at ws://localhost:${PORT}/api/brain/orchestrator/realtime/ws`);
 
   // Initialize narrative timer from DB (prevent duplicate diary on restart)
-  await initNarrativeTimer(pool);
-  console.log('[Server] Narrative timer initialized from DB');
+  try {
+    await initNarrativeTimer(pool);
+    console.log('[Server] Narrative timer initialized from DB');
+  } catch (narrativeErr) {
+    console.error('[Server] Narrative timer init failed (non-fatal):', narrativeErr.message);
+  }
 
   // Startup recovery: environment cleanup (worktree / lock slot / dev-mode files)
-  const { runStartupRecovery } = await import('./src/startup-recovery.js');
-  await runStartupRecovery();
+  try {
+    const { runStartupRecovery } = await import('./src/startup-recovery.js');
+    await runStartupRecovery();
+  } catch (recoveryErr) {
+    console.error('[Server] Startup recovery failed (non-fatal):', recoveryErr.message);
+  }
 
   // Load dynamic task type routing configs from DB into memory cache
   const { loadCache: loadTaskTypeCache } = await import('./src/task-type-config-cache.js');
@@ -379,9 +387,13 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   await initTickLoop();
 
   // Initialize Monitoring Loop (auto-healing)
-  const { startMonitorLoop } = await import('./src/monitor-loop.js');
-  startMonitorLoop();
-  console.log('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
+  try {
+    const { startMonitorLoop } = await import('./src/monitor-loop.js');
+    startMonitorLoop();
+    console.log('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
+  } catch (monitorErr) {
+    console.error('[Server] Monitor Loop init failed (non-fatal):', monitorErr.message);
+  }
 
   // Initialize Capability Probe (self-awareness — 每小时探测关键链路健康)
   const { startProbeLoop } = await import('./src/capability-probe.js');
