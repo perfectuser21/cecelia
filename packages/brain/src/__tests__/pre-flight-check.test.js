@@ -311,6 +311,25 @@ describe('system task type exemption', () => {
     expect(result.passed).toBe(false);
     expect(result.issues).toContain('Task description is empty');
   });
+
+  it('content_publish passes pre-flight without description', async () => {
+    const task = { title: '[发布] 行业跟进能力 → toutiao', priority: 'P1', task_type: 'content_publish' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Task description is empty');
+  });
+
+  it('content-pipeline passes pre-flight without description', async () => {
+    const task = { title: '[内容流水线] 行业跟进能力 2026-04-05', priority: 'P1', task_type: 'content-pipeline' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+  });
+
+  it('content-copy-review passes pre-flight without description', async () => {
+    const task = { title: '[文案审核] 行业跟进能力', priority: 'P1', task_type: 'content-copy-review' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+  });
 });
 
 describe('getPreFlightStats', () => {

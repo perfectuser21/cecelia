@@ -288,7 +288,7 @@ function _buildStaticArticle(keyword, top) {
 export async function executeCopywriting(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
   const contentType = task.payload?.content_type || 'solo-company-case';
-  const previousFeedback = task.payload?.previous_feedback;
+  const previousFeedback = task.payload?.review_feedback || task.payload?.previous_feedback;
 
   console.log(`[copywriting] 开始: ${keyword}`);
 
