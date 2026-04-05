@@ -99,12 +99,32 @@ async function screenshot(cdp, name) {
 }
 
 // ============================================================
-// SCP：通过 xian-mac 跳板复制图片到 Windows
+// SCP：复制图片到 Windows（优先直连 xian-pc，降级走 xian-mac 跳板）
 // ============================================================
 function scpImagesToWindows(localImages, windowsDir) {
-  console.log(`[XHS] 0️⃣  复制图片到 Windows（通过 ${XIAN_MAC_HOST}）...`);
+  const winDirForward = windowsDir.replace(/\\/g, '/');
 
-  // 1. rsync 到 xian-mac /tmp
+  // 优先直连 xian-pc（US Mac mini 可直接到达，Tailscale relay 需较长超时）
+  try {
+    console.log(`[XHS] 0️⃣  复制图片到 Windows（直连 xian-pc）...`);
+    execSync(
+      `ssh -o ConnectTimeout=30 xian-pc "powershell -command \\"New-Item -ItemType Directory -Force -Path '${winDirForward}' | Out-Null; Write-Host ok\\""`,
+      { timeout: 45000, stdio: 'pipe' }
+    );
+    for (const imgPath of localImages) {
+      const fname = path.basename(imgPath);
+      execSync(
+        `scp -o ConnectTimeout=30 -o StrictHostKeyChecking=no "${imgPath}" "xian-pc:${winDirForward}/${fname}"`,
+        { timeout: 60000, stdio: 'pipe' }
+      );
+    }
+    console.log(`[XHS]    ✅ ${localImages.length} 张图片已复制到 Windows（直连）`);
+    return;
+  } catch (directErr) {
+    console.warn(`[XHS]    直连失败 (${directErr.message})，降级走 xian-mac 跳板...`);
+  }
+
+  // 降级：通过 xian-mac 跳板
   const tmpDir = `/tmp/xhs-upload-${Date.now()}`;
   execSync(`ssh ${XIAN_MAC_HOST} "mkdir -p ${tmpDir}"`, { timeout: 10000, stdio: 'pipe' });
   for (const imgPath of localImages) {
@@ -113,16 +133,10 @@ function scpImagesToWindows(localImages, windowsDir) {
       { timeout: 30000, stdio: 'pipe' }
     );
   }
-  console.log(`[XHS]    图片已复制到 xian-mac:${tmpDir}`);
-
-  // 2. 在 xian-mac 上创建 Windows 目标目录
-  const winDirForward = windowsDir.replace(/\\/g, '/');
   execSync(
     `ssh ${XIAN_MAC_HOST} "ssh -i ${XIAN_MAC_SSH_KEY} -o StrictHostKeyChecking=no xuxia@${WINDOWS_IP} 'powershell -command \\"New-Item -ItemType Directory -Force -Path ${winDirForward} | Out-Null; Write-Host ok\\""'"`,
     { timeout: 15000, stdio: 'pipe' }
   );
-
-  // 3. 从 xian-mac scp 到 Windows
   for (const imgPath of localImages) {
     const fname = path.basename(imgPath);
     execSync(
@@ -130,10 +144,8 @@ function scpImagesToWindows(localImages, windowsDir) {
       { timeout: 30000, stdio: 'pipe' }
     );
   }
-
-  // 4. 清理 xian-mac 临时目录
   execSync(`ssh ${XIAN_MAC_HOST} "rm -rf ${tmpDir}"`, { timeout: 10000, stdio: 'pipe' });
-  console.log(`[XHS]    ✅ ${localImages.length} 张图片已复制到 Windows`);
+  console.log(`[XHS]    ✅ ${localImages.length} 张图片已复制到 Windows（跳板）`);
 }
 
 // ============================================================
@@ -292,14 +304,19 @@ async function main(contentDir, titleText, contentText, windowsImages, musicQuer
     // ===== Step 2: 选择图文类型 =====
     console.log('[XHS] 2️⃣  选择图文模式...');
     await sleep(2000);
-    await cdp.send('Runtime.evaluate', {
+    const modeResult = await cdp.send('Runtime.evaluate', {
       expression: `(function() {
         const all = Array.from(document.querySelectorAll('*'));
-        const el = all.find(e => e.textContent.trim() === '图文' && e.offsetParent !== null && e.children.length === 0);
-        if (el) { el.click(); return '图文'; }
+        // 兼容多种 tab 文字：'上传图文' / '图文'
+        for (const text of ['上传图文', '图文']) {
+          const el = all.find(e => e.textContent.trim() === text && e.offsetParent !== null && e.children.length === 0);
+          if (el) { el.click(); return text; }
+        }
+        return null;
       })()`,
       returnByValue: true
     });
+    console.log(`[XHS]    图文 tab 点击结果: ${modeResult.result.value}`);
     await sleep(2000);
 
     // ===== Step 3: 上传图片（Input.dispatchMouseEvent + Page.fileChooserOpened）=====
