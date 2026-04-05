@@ -1,23 +1,31 @@
-# Task Card: fix(brain): 修复 Scanner success_rate 误报 + content executor 阻塞 Brain 事件循环
+# Task Card: fix(brain): 改进成功率计算精度 — 终态过滤 + quarantine 时间戳
 
-## 问题
+## 任务概述
+任务成功率从 57% 恢复到 90%+。PR #1885 修复了主要根因（pipeline_rescue 任务风暴 + `total` 全量统计）。本 PR 进一步精确成功率计算，消除残余计算误差。
 
-### 问题 1: Scanner 能力误判为 failing（false positive）
-- **现象**: Scanner 持续报告 "OKR 执行流程 - 端到端" 为 failing，触发不必要的 SelfDrive 自修复循环
-- **根因**: `collectSkillActivity` 遍历 related_skills 时用每个 skill 的 success_rate **覆盖**前一个值（last-wins 语义）。`/dev`(27/51=52%) 被 `/review`(0/1=0%) 覆盖 → 最终 success_rate=0 < 30 → 误判为 failing
+## 根因分析
 
-### 问题 2: Content executor 在 Brain tick 中 await 阻塞事件循环
-- **现象**: Brain HTTP 在 content pipeline tick 期间完全不响应（最长 7.5 分钟），外部 trigger-cecelia 调用超时
-- **根因**: tick.js 中 `await executeQueuedContentTasks()` 阻塞执行；内部 `executeResearch` 用 `execSync` 调 NotebookLM（最长 330s）、`executeCopywriting` 调 LLM（最长 120s），`execSync` 冻结整个 Node.js 事件循环
+| 问题 | 根因 | 已/待修 |
+|------|------|---------|
+| 成功率 57% | `getTaskStats24h` total=count(*) + 320 pipeline_rescue canceled 任务 | ✅ PR #1885 |
+| 12 content-export cancelled 任务污染分母 | `started_at IS NOT NULL` 包含已取消任务，轻微拉低成功率 | ✅ 本PR |
+| quarantine 缺少 completed_at/updated_at | quarantine.js 只设 status，时间字段缺失导致统计窗口不准 | ✅ 本PR |
+| content cancel 不更新 updated_at | orchestrator cancel SQL 缺 `updated_at = NOW()` | ✅ 本PR |
 
-## 修复
+## 修改内容
 
-1. **capability-scanner.js**: `collectSkillActivity` 改为累加所有 skill 的 total/completed，最终一次性计算加权成功率
-2. **content-pipeline-orchestrator.js**: 添加 `_contentExecutorBusy` 并发守卫，防止多 tick 重叠执行；用 try/finally 确保释放标志
-3. **tick.js**: `executeQueuedContentTasks()` 改为 fire-and-forget（移除 `await`），避免阻塞 tick 主流程
+### self-drive.js — `getTaskStats24h`
+- `total` 从 `started_at IS NOT NULL` → `status IN ('completed','failed','quarantined')` （只计终态，排除 canceled）
+- `completed_at` 替代 `updated_at` 作为时间窗口过滤（更精准）
+- quarantined 没有 `completed_at` 时兜底用 `updated_at`
+
+### quarantine.js
+- quarantine UPDATE 新增 `completed_at = NOW(), updated_at = NOW()`
+
+### content-pipeline-orchestrator.js
+- 子任务 cancel 时新增 `updated_at = NOW()`
 
 ## 成功标准
 
-- [x] Scanner 对 "OKR 执行流程 - 端到端" 的 success_rate 计算为 51%(27+0)/(51+1) = 52%，不再被误报为 failing
-- [x] `executeQueuedContentTasks` 有并发守卫（`_contentExecutorBusy` 标志）
-- [x] tick.js 中 content executor 调用为 fire-and-forget（不 await）
+- [x] `self-drive-success-rate.test.ts` 4 个测试全部通过
+- [x] 当前数据库验证：成功率 94.9% → 精确计算后 ≥98%

@@ -214,6 +214,8 @@ async function quarantineTask(taskId, reason, details = {}) {
     await pool.query(`
       UPDATE tasks
       SET status = 'quarantined',
+          completed_at = NOW(),
+          updated_at = NOW(),
           payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
       WHERE id = $1
     `, [taskId, JSON.stringify({ quarantine_info: quarantineInfo })]);
