@@ -26,8 +26,9 @@ const STAGE_TIMEOUT_MS = {
 // 默认阈值（未知 stage 用 20 分钟）
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000;
 
-// 防止重复创建任务的冷却时间（同一个 branch 的 pipeline_rescue 任务 2 小时内不重复创建）
-const DEDUP_COOLDOWN_MS = 2 * 60 * 60 * 1000;
+// 防止重复创建任务的冷却时间（同一个 branch 的 pipeline_rescue 任务 24 小时内不重复创建）
+// 延长至 24h 防止 canceled 后立即重建的循环：cancel → 2h 后重建 → cancel → 循环
+const DEDUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /**
  * 获取主仓库根路径
@@ -238,12 +239,15 @@ async function createRescueTask(dbPool, info) {
   const { branch, currentStage, blockReason, elapsedMs, worktreePath, isOrphan } = info;
 
   // 去重检查：同一 branch 的 pipeline_rescue 任务在冷却期内不重复创建
+  // 条件：24h 内存在活跃任务，或 24h 内已有 completed/canceled 任务（防止取消后立即重建循环）
   const dedupResult = await dbPool.query(`
-    SELECT id, created_at FROM tasks
+    SELECT id, created_at, status FROM tasks
     WHERE task_type = 'pipeline_rescue'
       AND title LIKE $1
-      AND status NOT IN ('completed', 'cancelled', 'canceled', 'failed')
-      AND created_at > NOW() - INTERVAL '2 hours'
+      AND (
+        status NOT IN ('completed', 'cancelled', 'canceled', 'failed', 'quarantined')
+        OR (status IN ('completed', 'cancelled', 'canceled') AND created_at > NOW() - INTERVAL '24 hours')
+      )
     LIMIT 1
   `, [`%${branch}%`]);
 
