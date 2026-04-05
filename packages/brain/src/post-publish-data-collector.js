@@ -22,7 +22,7 @@ const SCRAPER_TASK_TYPE = 'platform_scraper';
 async function fetchPendingCollectionTasks(pool) {
   const { rows } = await pool.query(
     `SELECT t.id, t.title, t.payload, t.completed_at,
-            t.payload->>'pipeline_id' AS pipeline_id,
+            COALESCE(t.payload->>'pipeline_id', t.payload->>'parent_pipeline_id') AS pipeline_id,
             t.payload->>'platform' AS platform
      FROM tasks t
      WHERE t.task_type = 'content_publish'
@@ -34,7 +34,6 @@ async function fetchPendingCollectionTasks(pool) {
          WHERE s.task_type = $1
            AND s.payload->>'source_publish_task_id' = t.id::text
        )
-       AND t.payload->>'pipeline_id' IS NOT NULL
        AND t.payload->>'platform' IS NOT NULL
      ORDER BY t.completed_at ASC
      LIMIT 20`,
