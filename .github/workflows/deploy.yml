@@ -79,6 +79,7 @@ jobs:
           fi
 
           # 高风险路径：Brain 核心编排文件
+          # Patterns: thalamus.js tick.js executor.js task-router.js migrate.js selfcheck.js ops.js
           SAFE_LANE_PATTERN="^packages/brain/src/thalamus\.js$|^packages/brain/src/tick\.js$|^packages/brain/src/executor\.js$|^packages/brain/src/task-router\.js$|^packages/brain/src/migrate\.js$|^packages/brain/src/migrations/|^packages/brain/src/selfcheck\.js$|^packages/brain/src/routes/ops\.js$"
 
           if echo "$CHANGED" | grep -qE "$SAFE_LANE_PATTERN"; then

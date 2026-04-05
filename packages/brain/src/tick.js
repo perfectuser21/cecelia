@@ -89,7 +89,19 @@ const TASK_TYPE_AGENT_MAP = {
   'talk': '/talk',         // 对话任务 → HK MiniMax
   'qa': '/code-review',    // 旧类型 → 已迁移到 /code-review
   'audit': '/code-review', // 旧类型 → 已迁移到 /code-review
-  'research': null         // 需要人工/Opus 处理
+  'research': null,        // 需要人工/Opus 处理
+  'content_publish': null  // Platform-aware routing via routeTask
+};
+
+const PLATFORM_SKILL_MAP = {
+  'zhihu': '/zhihu-publisher',
+  'douyin': '/douyin-publisher',
+  'xiaohongshu': '/xiaohongshu-publisher',
+  'weibo': '/weibo-publisher',
+  'wechat': '/wechat-publisher',
+  'toutiao': '/toutiao-publisher',
+  'kuaishou': '/kuaishou-publisher',
+  'shipinhao': '/shipinhao-publisher'
 };
 
 /**
@@ -104,6 +116,16 @@ function routeTask(task) {
   if (agent === undefined) {
     console.warn(`[routeTask] Unknown task_type: ${taskType}, defaulting to /dev`);
     return '/dev';
+  }
+
+  // Special handling for content_publish: route by platform
+  if (taskType === 'content_publish' && task.payload) {
+    const platform = task.payload.platform;
+    if (platform && PLATFORM_SKILL_MAP[platform]) {
+      return PLATFORM_SKILL_MAP[platform];
+    }
+    console.warn(`[routeTask] Unknown platform: ${platform} in content_publish task ${task.id}`);
+    return null;
   }
 
   return agent;
