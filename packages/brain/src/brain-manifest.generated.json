@@ -1006,6 +1006,7 @@
     "content-generate": "/content-creator",
     "content-image-review": "/content-creator",
     "content-export": "/content-creator",
+    "content_publish": "/content-creator",
     "prd_review": "/prd-review",
     "spec_review": "/spec-review",
     "code_review_gate": "/code-review-gate",
@@ -1022,7 +1023,7 @@
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp"
   },
-  "generatedAt": "2026-04-04T10:52:02.845Z",
+  "generatedAt": "2026-04-05T02:39:09.264Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
