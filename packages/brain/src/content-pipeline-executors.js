@@ -553,7 +553,11 @@ export async function executeImageReview(task) {
  * 直接在 Node.js 里生成 SVG → resvg 渲染 PNG（不生成外部 .mjs 脚本）
  */
 function generateCards(dir, keyword, findings) {
-  const top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 6);
+  let top = findings.filter(f => (f.brand_relevance || 0) >= 3).slice(0, 6);
+  if (top.length === 0 && findings.length > 0) {
+    console.warn(`[export] 无高质量 findings（brand_relevance>=3），降级使用全部 ${findings.length} 条`);
+    top = findings.slice(0, 6);
+  }
   if (top.length === 0) { console.log('[export] 无 findings，跳过卡片生成'); return false; }
 
   const topic = slug(keyword);
