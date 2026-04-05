@@ -19,7 +19,6 @@ export default defineConfig({
       'src/__tests__/area-scheduler.test.js',
       'src/__tests__/blocks.test.js',
       'src/__tests__/capabilities-api.test.js',
-      'src/__tests__/capability-probe.test.js',
       'src/__tests__/capability-scanner.test.js',
       'src/__tests__/code-review-trigger.test.js',
       'src/__tests__/consolidation.test.js',

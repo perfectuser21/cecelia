@@ -169,18 +169,43 @@ async function probeCortex() {
   };
 }
 
+// 连续 5 个监控周期（5 × 30s = 150s）都没有新 cycle 才视为"卡死"
+// 宽限期：loop 刚启动时 cycle_count=0，不误报
+const STUCK_CYCLE_GAP_MS = PROBE_TIMEOUT_MS * 5; // 150s
+
 async function probeMonitorLoop() {
   const { getMonitorStatus, startMonitorLoop } = await import('./monitor-loop.js');
   let status = getMonitorStatus();
   if (!status.running) {
     // Self-heal: monitor loop wasn't started (likely a startup error), restart it now
     console.log('[Probe] monitor_loop not running, attempting self-heal via startMonitorLoop()');
-    startMonitorLoop();
+    try {
+      startMonitorLoop();
+    } catch (healErr) {
+      console.error('[Probe] monitor_loop self-heal failed:', healErr.message);
+      return {
+        ok: false,
+        detail: `running=false self_heal_error=${healErr.message}`,
+      };
+    }
     status = getMonitorStatus();
   }
+
+  // Stuck detection: timer running but no cycle executed in too long
+  // Only check after at least one cycle has completed (cycle_count > 0)
+  if (status.running && status.cycle_count > 0 && status.last_cycle_at !== null) {
+    const ageMs = Date.now() - status.last_cycle_at;
+    if (ageMs > STUCK_CYCLE_GAP_MS) {
+      return {
+        ok: false,
+        detail: `running=true but stuck: last_cycle_age=${Math.round(ageMs / 1000)}s cycle_count=${status.cycle_count}`,
+      };
+    }
+  }
+
   return {
     ok: status.running === true,
-    detail: `running=${status.running} interval=${status.interval_ms}ms`,
+    detail: `running=${status.running} interval=${status.interval_ms}ms cycle_count=${status.cycle_count ?? 0}`,
   };
 }
 

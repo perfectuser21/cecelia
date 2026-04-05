@@ -117,8 +117,8 @@ describe('capability-probe', () => {
       const monitorLoop = await import('../monitor-loop.js');
       // First call returns running=false (simulating startup failure), second returns true
       monitorLoop.getMonitorStatus
-        .mockReturnValueOnce({ running: false, interval_ms: 30000 })
-        .mockReturnValue({ running: true, interval_ms: 30000 });
+        .mockReturnValueOnce({ running: false, interval_ms: 30000, cycle_count: 0, last_cycle_at: null })
+        .mockReturnValue({ running: true, interval_ms: 30000, cycle_count: 0, last_cycle_at: null });
 
       const pool = (await import('../db.js')).default;
       pool.query.mockResolvedValue({ rows: [] });
@@ -134,7 +134,7 @@ describe('capability-probe', () => {
 
     it('should return ok=true without calling startMonitorLoop when already running', async () => {
       const monitorLoop = await import('../monitor-loop.js');
-      monitorLoop.getMonitorStatus.mockReturnValue({ running: true, interval_ms: 30000 });
+      monitorLoop.getMonitorStatus.mockReturnValue({ running: true, interval_ms: 30000, cycle_count: 3, last_cycle_at: Date.now() - 5000 });
 
       const pool = (await import('../db.js')).default;
       pool.query.mockResolvedValue({ rows: [] });
@@ -144,6 +144,72 @@ describe('capability-probe', () => {
       const monitorResult = results.find(r => r.name === 'monitor_loop');
 
       expect(monitorResult).toBeDefined();
+      expect(monitorResult.ok).toBe(true);
+      expect(monitorLoop.startMonitorLoop).not.toHaveBeenCalled();
+    });
+
+    it('should return ok=false with detail when startMonitorLoop throws during self-heal', async () => {
+      const monitorLoop = await import('../monitor-loop.js');
+      monitorLoop.getMonitorStatus.mockReturnValue({ running: false, interval_ms: 30000, cycle_count: 0, last_cycle_at: null });
+      monitorLoop.startMonitorLoop.mockImplementation(() => {
+        throw new Error('setInterval unavailable');
+      });
+
+      const pool = (await import('../db.js')).default;
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const { runProbes } = await import('../capability-probe.js');
+      const results = await runProbes();
+      const monitorResult = results.find(r => r.name === 'monitor_loop');
+
+      expect(monitorResult).toBeDefined();
+      expect(monitorResult.ok).toBe(false);
+      expect(monitorResult.detail).toContain('self_heal_error');
+      // error field should be null (handled inside probe, not propagated to runProbes catch)
+      expect(monitorResult.error).toBeNull();
+    });
+
+    it('should return ok=false when running=true but loop is stuck (last_cycle_at is stale)', async () => {
+      const monitorLoop = await import('../monitor-loop.js');
+      // Simulate: timer is running, cycles happened before, but last cycle was 5 minutes ago
+      const staleTs = Date.now() - 5 * 60 * 1000; // 5 min ago
+      monitorLoop.getMonitorStatus.mockReturnValue({
+        running: true,
+        interval_ms: 30000,
+        cycle_count: 10,
+        last_cycle_at: staleTs,
+      });
+
+      const pool = (await import('../db.js')).default;
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const { runProbes } = await import('../capability-probe.js');
+      const results = await runProbes();
+      const monitorResult = results.find(r => r.name === 'monitor_loop');
+
+      expect(monitorResult).toBeDefined();
+      expect(monitorResult.ok).toBe(false);
+      expect(monitorResult.detail).toContain('stuck');
+    });
+
+    it('should return ok=true when running=true with cycle_count=0 (fresh start, no cycles yet)', async () => {
+      const monitorLoop = await import('../monitor-loop.js');
+      monitorLoop.getMonitorStatus.mockReturnValue({
+        running: true,
+        interval_ms: 30000,
+        cycle_count: 0,
+        last_cycle_at: null,
+      });
+
+      const pool = (await import('../db.js')).default;
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const { runProbes } = await import('../capability-probe.js');
+      const results = await runProbes();
+      const monitorResult = results.find(r => r.name === 'monitor_loop');
+
+      expect(monitorResult).toBeDefined();
+      // Fresh start: cycle_count=0 → skip stuck check → ok=true
       expect(monitorResult.ok).toBe(true);
       expect(monitorLoop.startMonitorLoop).not.toHaveBeenCalled();
     });
