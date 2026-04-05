@@ -619,7 +619,7 @@ export async function executeQueuedContentTasks(dbPool = pool) {
         if (parentId && !aliveParents.has(parentId)) {
           // 父 pipeline 已 failed/cancelled — 子任务标记 cancelled 并跳过
           await dbPool.query(
-            `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), error_message = $2 WHERE id = $1`,
+            `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), updated_at = NOW(), error_message = $2 WHERE id = $1`,
             [task.id, '父 pipeline 已失败，子任务自动取消']
           ).catch(() => {});
           console.log(`[content-executor] 子任务 ${task.id}（${stage}）父 pipeline ${parentId?.substring(0,8)} 已失败，已取消`);

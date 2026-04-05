@@ -434,11 +434,10 @@ async function getTaskStats24h() {
   try {
     const result = await pool.query(
       `SELECT
-        count(*) filter (where status = 'completed') as completed,
-        count(*) filter (where status IN ('failed', 'quarantined')) as failed,
-        count(*) filter (where started_at IS NOT NULL) as total
-       FROM tasks
-       WHERE updated_at > NOW() - INTERVAL '24 hours'`
+        count(*) filter (where status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours') as completed,
+        count(*) filter (where status IN ('failed', 'quarantined') AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as failed,
+        count(*) filter (where status IN ('completed', 'failed', 'quarantined') AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as total
+       FROM tasks`
     );
     const row = result.rows[0] || { completed: 0, failed: 0, total: 0 };
     return {

@@ -1,16 +1,15 @@
-# DoD: 修复 self_drive_health 链路探针故障
+# DoD: fix(brain): 改进成功率计算精度
 
-- [ ] [PRESERVE] 现有 PROBES 数组定义不变（rumination/evolution/consolidation 探针保持原样）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/capability-probe-highlevel.test.js','utf8');if(!c.includes('rumination'))process.exit(1);if(!c.includes('evolution'))process.exit(1);if(!c.includes('consolidation'))process.exit(1);console.log('OK')"
+## 交付物
 
-- [ ] [ARTIFACT] 创建 `packages/brain/migrations/192_fix_thalamus_model.sql`，重置 profile-anthropic 的 thalamus 为 anthropic/claude-haiku-4-5-20251001
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/192_fix_thalamus_model.sql','utf8');if(!c.includes('claude-haiku-4-5-20251001'))process.exit(1);if(!c.includes('profile-anthropic'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `packages/brain/src/self-drive.js` — `getTaskStats24h` 改用终态统计
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/self-drive.js','utf8');if(!c.includes(\"status IN ('completed', 'failed', 'quarantined')\"))process.exit(1)"`
 
-- [ ] [BEHAVIOR] `probeSelfDriveHealth` 查询逻辑更新为：有 cycle_complete 或 no_action 事件即返回 ok:true
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/capability-probe.js','utf8');if(!c.includes('cycle_complete'))process.exit(1);if(!c.includes('no_action'))process.exit(1);if(!c.includes('success_cnt'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `packages/brain/src/quarantine.js` — quarantine UPDATE 新增 `completed_at/updated_at`
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/quarantine.js','utf8');if(!c.includes('completed_at = NOW()'))process.exit(1)"`
 
-- [ ] [ARTIFACT] `capability-probe-highlevel.test.js` 新增至少 2 个 self_drive_health 场景单测（成功路径 + 失败路径）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/capability-probe-highlevel.test.js','utf8');const m=c.match(/self_drive_health/g);if(!m||m.length<2)process.exit(1);console.log('OK: self_drive_health tests found: '+m.length)"
+- [x] [ARTIFACT] `packages/brain/src/content-pipeline-orchestrator.js` — cancel 新增 `updated_at = NOW()`
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/content-pipeline-orchestrator.js','utf8');const idx=c.indexOf('父 pipeline 已失败');if(!c.substring(idx-200,idx).includes('updated_at = NOW()'))process.exit(1)"`
 
-- [ ] [GATE] 所有现有测试通过
-  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/capability-probe-highlevel.test.js');console.log('OK')"
+- [x] [BEHAVIOR] `self-drive-success-rate.test.ts` — 4 个成功率计算测试通过
+  - Test: `tests/packages/brain/src/__tests__/self-drive-success-rate.test.ts`
