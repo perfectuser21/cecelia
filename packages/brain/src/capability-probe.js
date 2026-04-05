@@ -152,8 +152,14 @@ async function probeCortex() {
 }
 
 async function probeMonitorLoop() {
-  const { getMonitorStatus } = await import('./monitor-loop.js');
-  const status = getMonitorStatus();
+  const { getMonitorStatus, startMonitorLoop } = await import('./monitor-loop.js');
+  let status = getMonitorStatus();
+  if (!status.running) {
+    // Self-heal: monitor loop wasn't started (likely a startup error), restart it now
+    console.log('[Probe] monitor_loop not running, attempting self-heal via startMonitorLoop()');
+    startMonitorLoop();
+    status = getMonitorStatus();
+  }
   return {
     ok: status.running === true,
     detail: `running=${status.running} interval=${status.interval_ms}ms`,

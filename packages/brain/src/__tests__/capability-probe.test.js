@@ -27,6 +27,7 @@ vi.mock('../cortex.js', () => ({
 
 vi.mock('../monitor-loop.js', () => ({
   getMonitorStatus: vi.fn().mockReturnValue({ running: true, interval_ms: 30000 }),
+  startMonitorLoop: vi.fn(),
 }));
 
 describe('capability-probe', () => {
@@ -108,6 +109,43 @@ describe('capability-probe', () => {
       // Verify shouldAutoFix logic
       expect(shouldAutoFix({ confidence: 0.9, proposed_fix: 'fix something important here' })).toBe(true);
       expect(shouldAutoFix({ confidence: 0.5, proposed_fix: 'fix something' })).toBe(false);
+    });
+  });
+
+  describe('probeMonitorLoop self-heal', () => {
+    it('should call startMonitorLoop and return ok=true when running=false', async () => {
+      const monitorLoop = await import('../monitor-loop.js');
+      // First call returns running=false (simulating startup failure), second returns true
+      monitorLoop.getMonitorStatus
+        .mockReturnValueOnce({ running: false, interval_ms: 30000 })
+        .mockReturnValue({ running: true, interval_ms: 30000 });
+
+      const pool = (await import('../db.js')).default;
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const { runProbes } = await import('../capability-probe.js');
+      const results = await runProbes();
+      const monitorResult = results.find(r => r.name === 'monitor_loop');
+
+      expect(monitorResult).toBeDefined();
+      expect(monitorResult.ok).toBe(true);
+      expect(monitorLoop.startMonitorLoop).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return ok=true without calling startMonitorLoop when already running', async () => {
+      const monitorLoop = await import('../monitor-loop.js');
+      monitorLoop.getMonitorStatus.mockReturnValue({ running: true, interval_ms: 30000 });
+
+      const pool = (await import('../db.js')).default;
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const { runProbes } = await import('../capability-probe.js');
+      const results = await runProbes();
+      const monitorResult = results.find(r => r.name === 'monitor_loop');
+
+      expect(monitorResult).toBeDefined();
+      expect(monitorResult.ok).toBe(true);
+      expect(monitorLoop.startMonitorLoop).not.toHaveBeenCalled();
     });
   });
 });
