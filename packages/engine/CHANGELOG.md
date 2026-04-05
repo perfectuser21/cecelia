@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [14.3.3] - 2026-04-05
+
+### Fixed
+- P0: worktree-manage.sh 上限达到时自动触发 cleanup 清理已合并 worktree，避免 content_publish 并发任务因上限阻塞
+- 将 MAX_WORKTREES 默认值从 10 提升至 15，适配 8 个并发 content_publish 场景
+- 同步修复 packages/workflows/skills/dev/scripts/worktree-manage.sh（加入数量上限检查 + 自动清理逻辑）
+
 ## [14.3.0] - 2026-04-04
 
 ### Changed
