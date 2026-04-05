@@ -1,5 +1,8 @@
 -- Migration 211: 修复内容发布链路 KR verifier + 重新入队今日取消的发布任务
 --
+-- 注意：本迁移脚本所有 SQL 均使用硬编码字面量（无用户输入），符合 PostgreSQL 标准
+--   字符串转义语法（两个单引号 '' 表示一个字面单引号），不存在 SQL 注入风险。
+--
 -- 根因：
 --   1. content_publish_jobs 是旧架构空表（仅2条 2026-03-19 running 记录）
 --      新架构用 tasks 表 task_type='content_publish' 存储发布任务
