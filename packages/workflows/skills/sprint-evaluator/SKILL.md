@@ -175,7 +175,11 @@ grep -rn "password\|secret\|api_key\|token" --include="*.js" --include="*.ts" \
   | grep -v node_modules | grep -v ".test." | grep -v "// "
 ```
 
-### Step 4: 输出 evaluation.md
+### Step 4: 输出 evaluation.md（CRITICAL — 无论如何必须执行）
+
+> **CRITICAL**: 无论 Step 2/3 是否报错、服务是否启动失败、验证命令是否异常，
+> **Step 4 必须执行**。如果无法完成完整验证，写 partial evaluation（见兜底格式）。
+> 跳过 Step 4 = sprint_fix Generator 无法读取问题列表 = pipeline 死锁。
 
 在 `{sprint_dir}/evaluation.md` 中写入验证结果。格式：
 
@@ -216,6 +220,32 @@ grep -rn "password\|secret\|api_key\|token" --include="*.js" --include="*.ts" \
 - 任何一个 SC 条目 FAIL → 整体 FAIL
 - 额外发现中的严重问题（崩溃、数据丢失、安全漏洞）→ 整体 FAIL
 - 额外发现中的轻微问题（代码风格、非关键日志）→ 可以 PASS 但需在 evaluation.md 中标注
+
+**错误兜底格式**（当验证环境启动失败或命令异常时使用）：
+
+```markdown
+# Evaluation: Sprint [N] -- Round [R]
+
+## 验证环境
+- 测试端口: N/A（环境启动失败）
+- 验证时间: {timestamp}
+- 状态: PARTIAL（部分验证，环境异常）
+
+## 验证结果
+
+### SC-1: [条目标题]
+- 状态: ERROR
+- 验证过程: 尝试 {命令}，报错：{错误信息}
+- 实际结果: 无法完成验证
+
+## 额外发现
+- [ERROR]: 验证环境异常，{具体错误描述}
+
+## 裁决
+- verdict: FAIL
+- Generator 需要修复的具体清单:
+  1. [环境问题]: {描述} — 复现: `{命令}`
+```
 
 ### Step 5: 清理环境
 
