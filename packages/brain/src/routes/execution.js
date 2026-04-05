@@ -1727,7 +1727,7 @@ ${resultStr.substring(0, 2000)}
           console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate created (round=${harnessPayload.eval_round || 1})`);
         }
       } catch (harnessErr) {
-        console.error(`[execution-callback] harness sprint loop error (non-fatal): ${harnessErr.message}`);
+        console.error(`[execution-callback] harness sprint loop error (non-fatal): ${harnessErr.message}`, harnessErr.stack);
       }
 
       // 5c9. 断链 #5: dev 完成 → 检查同 project 所有 dev 是否全完成 → 创建 code_review (Initiative 级别)
