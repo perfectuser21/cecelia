@@ -122,16 +122,21 @@ cmd_create() {
     fi
 
     # 数量上限检查（不含主仓库）
-    # 支持环境变量覆盖，默认 10
-    local MAX_WORKTREES="${MAX_WORKTREES:-10}"
+    # 支持环境变量覆盖，默认 15（8 个并发 content_publish + 若干 dev 任务）
+    local MAX_WORKTREES="${MAX_WORKTREES:-15}"
     local existing_count
     existing_count=$(git worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
     if [[ $existing_count -ge $MAX_WORKTREES ]]; then
-        echo -e "${RED}ERROR: worktree 数量已达上限（$existing_count/$MAX_WORKTREES）${NC}" >&2
-        echo "  运行以下命令查看现有 worktree：" >&2
-        echo "  git worktree list" >&2
-        echo "  运行 worktree-manage.sh cleanup 清理已合并的 worktree 后再重试" >&2
-        exit 1
+        echo -e "${YELLOW}⚠️  worktree 数量已达上限（$existing_count/$MAX_WORKTREES），尝试自动清理已合并的 worktree...${NC}" >&2
+        cmd_cleanup
+        existing_count=$(git worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+        if [[ $existing_count -ge $MAX_WORKTREES ]]; then
+            echo -e "${RED}ERROR: 清理后仍达上限（$existing_count/$MAX_WORKTREES），所有 worktree 均为活跃状态${NC}" >&2
+            echo "  运行以下命令查看现有 worktree：" >&2
+            echo "  git worktree list" >&2
+            exit 1
+        fi
+        echo -e "${GREEN}✅ 清理后可用，继续创建 worktree${NC}" >&2
     fi
 
     # 生成分支名和 worktree 路径
