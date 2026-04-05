@@ -621,6 +621,7 @@ async function restartStuckExecutors() {
       FROM tasks
       WHERE status = 'in_progress'
         AND updated_at < NOW() - INTERVAL '30 minutes'
+        AND task_type != 'content-pipeline'
     `);
 
     if (stuckTasksResult.rows.length === 0) {
