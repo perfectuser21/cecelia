@@ -227,17 +227,29 @@ function _buildCopywritingPrompt(keyword, top, typeConfig, previousFeedback) {
     prompt += `\n\n## 上次审查意见（请针对以下问题改进）\n${previousFeedback}`;
   }
   prompt += `\n\n请严格按以下格式输出，不要省略分隔符：\n=== 社交媒体文案 ===\n[在此输出小红书/抖音风格文案，500-800字，口语化，含互动引导]\n=== 公众号长文 ===\n[在此输出深度分析长文，1500-2000字，结构清晰]`;
+  prompt += `\n\n**绝对禁止**：不要询问用户问题，不要说"需要更多信息"，不要提示素材不足，不要输出选项A/B让用户选择。无论素材多少，必须直接输出完整文案。如果缺乏具体案例数据，用行业通识和合理类比补充，并用「据公开资料」「行业通常」「估计」等词汇标注，切勿编造精确数字。`;
   return prompt;
 }
+
+/** 最小内容长度校验（字符数），防止 LLM 输出澄清问题而非实际文案 */
+const MIN_SOCIAL_COPY_LEN = 200;
+const MIN_ARTICLE_LEN = 500;
 
 async function _executeLLMPath(keyword, top, typeConfig, previousFeedback, dir) {
   try {
     const prompt = _buildCopywritingPrompt(keyword, top, typeConfig, previousFeedback);
     const { text } = await callLLM('thalamus', prompt, { maxTokens: 4096, timeout: 120000 });
-    const socialMatch = text.match(/=== 社交媒体文案 ===([\s\S]*?)(?:=== 公众号长文 ===|$)/);
-    const articleMatch = text.match(/=== 公众号长文 ===([\s\S]*?)$/);
-    const socialCopy = socialMatch?.[1]?.trim() || text;
-    const articleCopy = articleMatch?.[1]?.trim() || text;
+    const socialMatch = text.match(/=== 社交媒体文案 ===([\s\S]*?)(?:=== 公众长文 ===|=== 公众号长文 ===|$)/);
+    const articleMatch = text.match(/=== 公众[号]?长文 ===([\s\S]*?)$/);
+    const socialCopy = socialMatch?.[1]?.trim();
+    const articleCopy = articleMatch?.[1]?.trim();
+
+    // 格式校验：两段均须存在且达到最小长度，否则降级静态模板
+    if (!socialCopy || socialCopy.length < MIN_SOCIAL_COPY_LEN || !articleCopy || articleCopy.length < MIN_ARTICLE_LEN) {
+      console.warn(`[copywriting] LLM 输出不符格式要求（社交 ${socialCopy?.length ?? 0}字/${MIN_SOCIAL_COPY_LEN}，长文 ${articleCopy?.length ?? 0}字/${MIN_ARTICLE_LEN}），降级到静态模板`);
+      return null;
+    }
+
     writeFileSync(join(dir, 'cards', 'copy.md'), `# ${keyword}：社交媒体文案\n\n${socialCopy}\n`, 'utf-8');
     writeFileSync(join(dir, 'article', 'article.md'), `# ${keyword}：深度分析\n\n${articleCopy}\n`, 'utf-8');
     return { success: true, output_dir: dir, files: ['cards/copy.md', 'article/article.md'], llm_generated: true };

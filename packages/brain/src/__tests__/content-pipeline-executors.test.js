@@ -246,6 +246,59 @@ describe('executeCopywriting', () => {
     expect(result.success).toBe(true);
   });
 
+  it('LLM 返回无分隔符内容时应降级到静态模板（不写"澄清问题"文件）', async () => {
+    // 模拟 LLM 返回澄清问题而非实际文案（无 === 分隔符）
+    mockCallLLM.mockResolvedValue({ text: '选项A：补充更多素材。选项B：生成框架。请问您选择哪个方案？' });
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      template: { generate_prompt: '生成关于{keyword}的内容' },
+    });
+
+    const { writeFileSync } = await import('fs');
+    const task = { payload: { pipeline_keyword: '行业跟进能力', content_type: 'solo-company-case' }, title: '测试' };
+    const result = await executeCopywriting(task);
+
+    expect(result.success).toBe(true);
+    // 降级到静态模板时，writeFileSync 仍会被调用（写静态内容），不应包含澄清性问题
+    const allWrittenContent = writeFileSync.mock.calls.map(c => c[1]).join('\n');
+    expect(allWrittenContent).not.toMatch(/选项A|选项B|请问您选择/);
+  });
+
+  it('LLM 返回内容太短（<200字）时应降级到静态模板', async () => {
+    mockCallLLM.mockResolvedValue({
+      text: '=== 社交媒体文案 ===\n短内容\n=== 公众号长文 ===\n也很短',
+    });
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      template: { generate_prompt: '生成关于{keyword}的内容' },
+    });
+
+    const { writeFileSync } = await import('fs');
+    writeFileSync.mockClear();
+    const task = { payload: { pipeline_keyword: '短内容测试', content_type: 'solo-company-case' }, title: '测试' };
+    const result = await executeCopywriting(task);
+
+    expect(result.success).toBe(true);
+    // 静态模板应被调用，结果不含 LLM 的"短内容"
+    const allWrittenContent = writeFileSync.mock.calls.map(c => c[1]).join('\n');
+    expect(allWrittenContent).not.toBe('短内容');
+  });
+
+  it('prompt 应包含禁止询问用户的指令', async () => {
+    mockCallLLM.mockResolvedValue({ text: '' });
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      template: { generate_prompt: '生成关于{keyword}的内容' },
+    });
+
+    const task = { payload: { pipeline_keyword: '测试指令', content_type: 'solo-company-case' }, title: '测试' };
+    await executeCopywriting(task);
+
+    expect(mockCallLLM).toHaveBeenCalled();
+    const calledPrompt = mockCallLLM.mock.calls[0][1];
+    expect(calledPrompt).toContain('绝对禁止');
+  });
+
   it('_buildCopywritingPrompt 应传递 finding 内容至少 1500 字符（不被 200 截断）', async () => {
     const longContent = 'A'.repeat(2000);
     readdirSync.mockImplementation((dir) => {
