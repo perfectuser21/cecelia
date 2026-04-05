@@ -8,11 +8,16 @@
  * Cecelia 每小时验证自己的核心能力是否还在线。
  */
 
+import { spawnSync } from 'child_process';
+import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
+import path from 'path';
 import pool from './db.js';
 import {
   shouldAutoFix,
   dispatchToDevSkill,
 } from './auto-fix.js';
+import { raise } from './alerting.js';
 
 // ============================================================
 // Configuration
@@ -20,6 +25,15 @@ import {
 
 const PROBE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const PROBE_TIMEOUT_MS = 30_000; // per-probe timeout
+
+// 连续失败阈值：同一探针在最近 N 次探针批次中均失败才触发回滚
+// 保守设计：3 次连续失败 ≈ 3 小时持续异常，才视为需要回滚
+const ROLLBACK_CONSECUTIVE_THRESHOLD = 3;
+
+// brain-rollback.sh 路径（相对项目根目录）
+const _thisFile = fileURLToPath(import.meta.url);
+const _projectRoot = path.resolve(path.dirname(_thisFile), '../../..');
+const ROLLBACK_SCRIPT = path.join(_projectRoot, 'scripts', 'brain-rollback.sh');
 
 // ============================================================
 // Probe definitions
@@ -356,6 +370,99 @@ export async function getProbeResults(limit = 5) {
 }
 
 // ============================================================
+// 连续失败检测 + 自动回滚
+// ============================================================
+
+/**
+ * 查询指定探针在最近 N 次探针批次中是否连续失败。
+ * 从 cecelia_events 中读取历史记录（Brain 重启后不丢失）。
+ *
+ * @param {string} probeName - 探针名称（如 'db'、'dispatch'）
+ * @param {number} threshold - 连续失败阈值（默认 ROLLBACK_CONSECUTIVE_THRESHOLD）
+ * @returns {Promise<{consecutive: number, shouldRollback: boolean}>}
+ */
+export async function checkConsecutiveFailures(probeName, threshold = ROLLBACK_CONSECUTIVE_THRESHOLD) {
+  try {
+    const result = await pool.query(
+      `SELECT payload FROM cecelia_events
+       WHERE event_type = 'capability_probe'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [threshold]
+    );
+
+    if (result.rows.length < threshold) {
+      // 历史记录不足，无法判断连续失败
+      return { consecutive: result.rows.length, shouldRollback: false };
+    }
+
+    let consecutive = 0;
+    for (const row of result.rows) {
+      const payload = typeof row.payload === 'string'
+        ? JSON.parse(row.payload)
+        : row.payload;
+
+      const probeResults = payload?.probes || [];
+      const probeEntry = probeResults.find(p => p.name === probeName);
+
+      if (probeEntry && probeEntry.ok === false) {
+        consecutive++;
+      } else {
+        // 只要中间有一次成功，连续失败链断开
+        break;
+      }
+    }
+
+    return {
+      consecutive,
+      shouldRollback: consecutive >= threshold,
+    };
+  } catch (err) {
+    console.error(`[Probe] checkConsecutiveFailures 查询失败: ${err.message}`);
+    return { consecutive: 0, shouldRollback: false };
+  }
+}
+
+/**
+ * 执行 brain-rollback.sh，同步调用，捕获退出码和输出。
+ *
+ * @param {string} triggerReason - 触发原因（用于日志和告警）
+ * @returns {{ success: boolean, stdout: string, stderr: string, exitCode: number }}
+ */
+export function executeRollback(triggerReason) {
+  // 执行前必须打印明确的触发原因
+  console.log(`[Probe] 触发自动回滚 — 原因: ${triggerReason}`);
+  console.log(`[Probe] 回滚脚本路径: ${ROLLBACK_SCRIPT}`);
+
+  if (!existsSync(ROLLBACK_SCRIPT)) {
+    const msg = `回滚脚本不存在: ${ROLLBACK_SCRIPT}`;
+    console.error(`[Probe] ${msg}`);
+    return { success: false, stdout: '', stderr: msg, exitCode: -1 };
+  }
+
+  const proc = spawnSync('bash', [ROLLBACK_SCRIPT], {
+    timeout: 90_000, // 90 秒超时
+    encoding: 'utf8',
+    env: { ...process.env },
+  });
+
+  const exitCode = proc.status ?? -1;
+  const stdout = proc.stdout || '';
+  const stderr = proc.stderr || '';
+
+  if (exitCode === 0) {
+    console.log(`[Probe] 自动回滚成功 ✅`);
+    if (stdout) console.log(`[Probe] 回滚输出:\n${stdout.slice(0, 500)}`);
+  } else {
+    console.error(`[Probe] 自动回滚失败 ❌ (exit=${exitCode})`);
+    if (stderr) console.error(`[Probe] 回滚错误:\n${stderr.slice(0, 500)}`);
+    if (proc.error) console.error(`[Probe] 进程错误: ${proc.error.message}`);
+  }
+
+  return { success: exitCode === 0, stdout, stderr, exitCode };
+}
+
+// ============================================================
 // Scheduled probe cycle
 // ============================================================
 
@@ -423,6 +530,69 @@ async function runProbeCycle() {
           console.error(`[Probe] Auto-fix dispatch failed for ${f.name}: ${dispatchErr.message}`);
         }
       }
+    }
+
+    // ── 连续失败检测：阈值内连续失败才触发回滚（兜底机制）──
+    // 注意：此处在当前批次结果已持久化后执行，所以查询历史包含本次
+    for (const f of failures) {
+      const { consecutive, shouldRollback } = await checkConsecutiveFailures(f.name);
+
+      if (!shouldRollback) {
+        if (consecutive > 1) {
+          console.log(`[Probe] ${f.name} 连续失败 ${consecutive}/${ROLLBACK_CONSECUTIVE_THRESHOLD} 次，暂不回滚`);
+        }
+        continue;
+      }
+
+      const triggerReason = `探针 "${f.name}"（${f.description}）连续失败 ${consecutive} 次，达到阈值 ${ROLLBACK_CONSECUTIVE_THRESHOLD}，触发自动回滚`;
+
+      // P0 告警：回滚即将触发
+      await raise(
+        'P0',
+        `probe_rollback_trigger_${f.name}`,
+        `🔄 自动回滚触发 — ${triggerReason}`
+      );
+
+      // 执行回滚（同步，防止 Brain 进程在此期间继续处理其他事）
+      const rollbackResult = executeRollback(triggerReason);
+
+      // P0 告警：回滚结果
+      if (rollbackResult.success) {
+        await raise(
+          'P0',
+          `probe_rollback_result_${f.name}`,
+          `✅ 自动回滚成功 — 探针 "${f.name}" 触发，brain-rollback.sh 退出码 0`
+        );
+      } else {
+        await raise(
+          'P0',
+          `probe_rollback_result_${f.name}`,
+          `❌ 自动回滚失败 — 探针 "${f.name}" 触发，brain-rollback.sh 退出码 ${rollbackResult.exitCode}。错误: ${rollbackResult.stderr.slice(0, 200)}`
+        );
+      }
+
+      // 回滚后记录事件，便于后续审计
+      try {
+        await pool.query(
+          `INSERT INTO cecelia_events (event_type, source, payload)
+           VALUES ('probe_rollback_triggered', 'capability-probe', $1)`,
+          [JSON.stringify({
+            timestamp: new Date().toISOString(),
+            probe_name: f.name,
+            consecutive_failures: consecutive,
+            threshold: ROLLBACK_CONSECUTIVE_THRESHOLD,
+            trigger_reason: triggerReason,
+            rollback_success: rollbackResult.success,
+            rollback_exit_code: rollbackResult.exitCode,
+            rollback_stderr: rollbackResult.stderr.slice(0, 500),
+          })]
+        );
+      } catch (evtErr) {
+        console.error(`[Probe] 回滚事件写入失败: ${evtErr.message}`);
+      }
+
+      // 同一批次只对第一个达到阈值的探针触发一次回滚，避免重复执行
+      break;
     }
   }
 
