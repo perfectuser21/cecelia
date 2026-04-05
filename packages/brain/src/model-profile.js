@@ -19,7 +19,7 @@ export const FALLBACK_PROFILE = {
   name: 'Anthropic 主力（Claude Code 无头）',
   config: {
     thalamus: {
-      provider: 'anthropic',
+      provider: 'anthropic-api',
       model: 'claude-haiku-4-5-20251001',
     },
     cortex: {
