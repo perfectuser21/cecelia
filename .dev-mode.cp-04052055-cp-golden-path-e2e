@@ -1,0 +1,10 @@
+dev
+branch: cp-04052055-cp-golden-path-e2e
+task_card: .task-cp-04052055-cp-golden-path-e2e.md
+task_id: 2085f739-20fe-4144-acb0-04d32a52f50b
+started: 2026-04-05T20:56:25+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: pending
+step_4_ship: pending
