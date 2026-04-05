@@ -345,7 +345,7 @@ async function cancelPendingTasks(keepCritical) {
           'research', 'suggestion_plan',
           'content-pipeline', 'content-research', 'content-copywriting',
           'content-copy-review', 'content-generate', 'content-image-review',
-          'content-export', 'content-publish'
+          'content-export', 'content-publish', 'content_publish'
         )
     `;
 
