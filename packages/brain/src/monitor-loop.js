@@ -36,6 +36,8 @@ const RESOURCE_PRESSURE_THRESHOLD = 0.85;
 // State
 let _monitorTimer = null;
 let _monitoring = false;
+let _lastCycleAt = null;
+let _cycleCount = 0;
 
 /**
  * Detector: Stuck Runs
@@ -723,7 +725,9 @@ async function runMonitorCycle() {
 
     const elapsed = Date.now() - startTime;
     console.log(`[Monitor] Cycle completed in ${elapsed}ms`);
-    
+    _lastCycleAt = Date.now();
+    _cycleCount++;
+
   } catch (error) {
     console.error('[Monitor] Error in monitoring cycle:', error);
   } finally {
@@ -757,6 +761,8 @@ export function getMonitorStatus() {
     running: _monitorTimer !== null,
     monitoring: _monitoring,
     interval_ms: MONITOR_INTERVAL_MS,
+    last_cycle_at: _lastCycleAt,
+    cycle_count: _cycleCount,
     thresholds: {
       stuck_minutes: STUCK_THRESHOLD_MINUTES,
       failure_spike_rate: FAILURE_SPIKE_THRESHOLD,
