@@ -14,8 +14,18 @@ vi.mock('fs', () => ({
   readdirSync: vi.fn(() => []),
 }));
 
+// Mock llm-caller — 捕获实际 prompt，供 _buildCopywritingPrompt 截断测试用
+const mockCallLLM = vi.fn().mockResolvedValue({ text: '' });
+vi.mock('../llm-caller.js', () => ({
+  callLLM: (...args) => mockCallLLM(...args),
+}));
+
 vi.mock('child_process', () => ({
   execSync: vi.fn(() => ''),
+  exec: vi.fn((cmd, opts, cb) => {
+    const callback = typeof opts === 'function' ? opts : cb;
+    if (callback) callback(null, '', '');
+  }),
 }));
 
 // Mock getContentType — 默认返回 null（fallback 路径）
@@ -234,6 +244,34 @@ describe('executeCopywriting', () => {
     const result = await executeCopywriting(task);
     // typeConfig 不可用且无 findings 时降级到静态模板继续 pipeline
     expect(result.success).toBe(true);
+  });
+
+  it('_buildCopywritingPrompt 应传递 finding 内容至少 1500 字符（不被 200 截断）', async () => {
+    const longContent = 'A'.repeat(2000);
+    readdirSync.mockImplementation((dir) => {
+      if (dir.includes('research')) return ['solo-company-case-截断测试-2026-04-05'];
+      return [];
+    });
+    existsSync.mockImplementation((p) => p.includes('findings.json') || p.includes('research'));
+    readFileSync.mockImplementation((p) => {
+      if (p.includes('findings.json')) {
+        return JSON.stringify({ findings: [{ title: '测试案例', content: longContent, brand_relevance: 5, used_in: [] }] });
+      }
+      return '';
+    });
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      template: { generate_prompt: '请基于调研素材生成关于{keyword}的内容' },
+    });
+
+    const task = { payload: { pipeline_keyword: '截断测试', content_type: 'solo-company-case' }, title: '测试' };
+    await executeCopywriting(task);
+
+    expect(mockCallLLM).toHaveBeenCalled();
+    const calledPrompt = mockCallLLM.mock.calls[0][1];
+    // finding 内容在 prompt 中应出现至少 1500 字符（旧限制 200 会被识别为截断）
+    const aCount = (calledPrompt.match(/A/g) || []).length;
+    expect(aCount).toBeGreaterThanOrEqual(1500);
   });
 });
 

@@ -220,7 +220,7 @@ function _filterTopFindings(findings) {
 }
 
 function _buildCopywritingPrompt(keyword, top, typeConfig, previousFeedback) {
-  const findingsSummary = top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 200)}`).join('\n');
+  const findingsSummary = top.map((f, i) => `${i + 1}. ${f.title}: ${(f.content || '').substring(0, 1500)}`).join('\n');
   let prompt = typeConfig.template.generate_prompt.replace(/\{keyword\}/g, keyword);
   prompt += `\n\n## 调研素材（${top.length} 条）\n${findingsSummary}`;
   if (previousFeedback) {
