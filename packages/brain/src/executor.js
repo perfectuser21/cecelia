@@ -3005,10 +3005,14 @@ async function probeTaskLiveness() {
       continue;
     }
 
-    // content-pipeline parent tasks are orchestrated in-Brain (no OS process).
-    // They are managed by orchestrateContentPipelines() / advanceContentPipeline() and
-    // should never be killed by the liveness probe.
-    if (task.task_type === 'content-pipeline' || task.payload?.pipeline_orchestrated === true) {
+    // content-pipeline parent tasks and all content-* stage tasks are orchestrated in-Brain
+    // (no OS process). They are managed by orchestrateContentPipelines() / executeQueuedContentTasks()
+    // and should never be killed by the liveness probe.
+    const CONTENT_PIPELINE_TYPES = new Set([
+      'content-pipeline', 'content-research', 'content-copywriting',
+      'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
+    ]);
+    if (CONTENT_PIPELINE_TYPES.has(task.task_type) || task.payload?.pipeline_orchestrated === true) {
       continue;
     }
 

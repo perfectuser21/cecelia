@@ -18,8 +18,12 @@ export const FALLBACK_PROFILE = {
   id: 'profile-anthropic',
   name: 'Anthropic 主力（Claude Code 无头）',
   config: {
+    // thalamus uses anthropic-api (direct REST) instead of anthropic (bridge/claude -p).
+    // Reason: claude -p bridge exits with code 1 in <1s, causing silent fallback to static templates.
+    // Direct REST API is stable (same as cortex). Rollback: UPDATE model_profiles
+    // SET config=jsonb_set(config,'{thalamus,provider}','"anthropic"') WHERE id='profile-anthropic'
     thalamus: {
-      provider: 'anthropic',
+      provider: 'anthropic-api',
       model: 'claude-haiku-4-5-20251001',
     },
     cortex: {
