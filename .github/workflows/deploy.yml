@@ -3,6 +3,12 @@ name: Deploy
 # 合并到 main 后自动部署（Brain + Workspace）
 # 触发：push to main only（PR 合并通过 CI 检查后自动触发）
 # 方案：GitHub Actions → Brain Webhook → 本地部署脚本
+#
+# 发布决策层：Fast Lane / Safe Lane
+#   Fast Lane（risk_level=low）：自动 deploy（默认路径）
+#   Safe Lane（risk_level=high）：risk_gate 失败，阻止自动 deploy
+#     高风险路径：thalamus/tick/executor/task-router/migrate/selfcheck/ops.js
+#     bypass：commit message 含 [SAFE-DEPLOY] 时强制走 Fast Lane
 
 on:
   push:
@@ -21,6 +27,7 @@ jobs:
       brain: ${{ steps.filter.outputs.brain }}
       workspace: ${{ steps.filter.outputs.workspace }}
       changed_paths: ${{ steps.filter.outputs.changed_paths }}
+      risk_level: ${{ steps.filter.outputs.risk_level }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,14 +37,19 @@ jobs:
         run: |
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.event.after }}"
+          COMMIT_MSG=$(git log -1 --pretty=%B 2>/dev/null || echo "")
+
           # If this is the first commit (before is all zeros), treat as full change
           if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
             echo "brain=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "changed_paths=packages/brain/ apps/" >> $GITHUB_OUTPUT
+            echo "risk_level=low" >> $GITHUB_OUTPUT
             exit 0
           fi
+
           CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+
           if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$"; then
             echo "brain=true" >> $GITHUB_OUTPUT
           else
@@ -48,15 +60,61 @@ jobs:
           else
             echo "workspace=false" >> $GITHUB_OUTPUT
           fi
+
           # Pass changed paths to webhook
           PATHS=$(echo "$CHANGED" | tr '\n' ' ')
           echo "changed_paths=$PATHS" >> $GITHUB_OUTPUT
+
+          # ── 风险等级检测 ──────────────────────────────────────────────────
+          # [SAFE-DEPLOY] 在 commit message 中 → 强制 Fast Lane（bypass）
+          if echo "$COMMIT_MSG" | grep -qF "[SAFE-DEPLOY]"; then
+            echo "risk_level=low" >> $GITHUB_OUTPUT
+            echo "⚡ [SAFE-DEPLOY] bypass 激活 — 强制 Fast Lane"
+            exit 0
+          fi
+
+          # 高风险路径：Brain 核心编排文件
+          SAFE_LANE_PATTERN="^packages/brain/src/thalamus\.js$|^packages/brain/src/tick\.js$|^packages/brain/src/executor\.js$|^packages/brain/src/task-router\.js$|^packages/brain/src/migrate\.js$|^packages/brain/src/migrations/|^packages/brain/src/selfcheck\.js$|^packages/brain/src/routes/ops\.js$"
+
+          if echo "$CHANGED" | grep -qE "$SAFE_LANE_PATTERN"; then
+            echo "risk_level=high" >> $GITHUB_OUTPUT
+            echo "🔴 Safe Lane 触发 — 检测到高风险文件改动"
+            echo "$CHANGED" | grep -E "$SAFE_LANE_PATTERN" | sed 's/^/  /'
+          else
+            echo "risk_level=low" >> $GITHUB_OUTPUT
+            echo "🟢 Fast Lane — 无高风险文件改动"
+          fi
+
+  # ─── Risk Gate：发布决策门禁 ──────────────────────────────────────────────
+
+  risk_gate:
+    name: Risk Gate
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fast Lane / Safe Lane 判断
+        run: |
+          RISK="${{ needs.changes.outputs.risk_level }}"
+          echo "风险等级: $RISK"
+
+          if [ "$RISK" = "high" ]; then
+            echo ""
+            echo "::error::🔴 Safe Lane 阻断 — 本次改动包含 Brain 核心文件，禁止自动 deploy"
+            echo "::error::高风险路径: thalamus.js / tick.js / executor.js / task-router.js / migrate.js / migrations/ / selfcheck.js / routes/ops.js"
+            echo "::error::如确认改动安全，在 commit message 中加入 [SAFE-DEPLOY] 后 push 空 commit 重触发"
+            echo "::error::  git commit --allow-empty -m 'chore: [SAFE-DEPLOY] 确认本次部署安全' && git push"
+            echo "::error::或直接本地运行: bash scripts/brain-deploy.sh"
+            exit 1
+          fi
+
+          echo "✅ Fast Lane 通过 — 自动 deploy"
 
   # ─── Trigger Deploy via Brain Webhook ────────────────────────────────────
 
   deploy:
     name: Trigger Deploy
-    needs: changes
+    needs: [changes, risk_gate]
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
