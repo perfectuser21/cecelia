@@ -68,6 +68,39 @@ function formatSection(ltype, records) {
   return `### ${label}\n${items}`;
 }
 
+/** Queries DB for recent learnings and warns on slow queries */
+async function queryLearnings(taskId) {
+  const start = Date.now();
+  const result = await pool.query(`
+    SELECT id, title, content, learning_type, category, metadata, created_at
+    FROM learnings
+    WHERE is_latest = true
+    ORDER BY created_at DESC
+    LIMIT 80
+  `);
+  const elapsed = Date.now() - start;
+  if (elapsed > 200) {
+    console.warn(`[learning-retriever] slow query: ${elapsed}ms (task=${taskId})`);
+  }
+  return result.rows;
+}
+
+/** Scores, filters, and ranks rows; returns top MAX_INJECT learnings */
+function selectTopLearnings(rows, taskType, domain, titleWords) {
+  return rows
+    .map(row => scoreRow(row, taskType, domain, titleWords))
+    .filter(r => r.normalizedScore > SCORE_THRESHOLD)
+    .sort((a, b) => b.normalizedScore - a.normalizedScore)
+    .slice(0, MAX_INJECT);
+}
+
+/** Formats top learnings into an injectable markdown block */
+function formatContext(topLearnings) {
+  const byType = groupByType(topLearnings);
+  const sections = Object.entries(byType).map(([ltype, records]) => formatSection(ltype, records));
+  return `\n\n## 📖 相关历史 Learning（避免重复踩坑）\n\n${sections.join('\n\n')}`;
+}
+
 /**
  * Build a learning context string to inject into task prompts.
  * Queries learnings table, scores by keyword relevance, returns formatted block.
@@ -76,37 +109,15 @@ function formatSection(ltype, records) {
  * @returns {Promise<string>} Formatted learning context block, or '' if none qualify
  */
 export async function buildLearningContext(task) {
-  const start = Date.now();
   try {
     const taskType = task.task_type || 'dev';
     const titleWords = (task.title || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
     const domain = task.domain || '';
 
-    const result = await pool.query(`
-      SELECT id, title, content, learning_type, category, metadata, created_at
-      FROM learnings
-      WHERE is_latest = true
-      ORDER BY created_at DESC
-      LIMIT 80
-    `);
-
-    const elapsed = Date.now() - start;
-    if (elapsed > 200) {
-      console.warn(`[learning-retriever] slow query: ${elapsed}ms (task=${task.id})`);
-    }
-
-    const topLearnings = result.rows
-      .map(row => scoreRow(row, taskType, domain, titleWords))
-      .filter(r => r.normalizedScore > SCORE_THRESHOLD)
-      .sort((a, b) => b.normalizedScore - a.normalizedScore)
-      .slice(0, MAX_INJECT);
-
+    const rows = await queryLearnings(task.id);
+    const topLearnings = selectTopLearnings(rows, taskType, domain, titleWords);
     if (topLearnings.length === 0) return '';
-
-    const byType = groupByType(topLearnings);
-    const sections = Object.entries(byType).map(([ltype, records]) => formatSection(ltype, records));
-
-    return `\n\n## 📖 相关历史 Learning（避免重复踩坑）\n\n${sections.join('\n\n')}`;
+    return formatContext(topLearnings);
   } catch (err) {
     console.warn(`[learning-retriever] retrieval failed: ${err.message} (task=${task.id})`);
     return '';
