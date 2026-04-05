@@ -693,7 +693,7 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
     FROM tasks t
     WHERE ${goalCondition}
       AND t.status = 'queued'
-      AND t.task_type != 'content-export'
+      AND t.task_type NOT IN ('content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review')
       ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
