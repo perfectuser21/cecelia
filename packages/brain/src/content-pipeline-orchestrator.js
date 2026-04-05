@@ -402,7 +402,7 @@ async function _markPipelineFailed(ctx, dbPool) {
   const { task, pipeline } = ctx;
   const pipelineId = pipeline.id;
   await dbPool.query(
-    `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
+    `UPDATE tasks SET status = $2, completed_at = NOW(), updated_at = NOW(), error_message = $3 WHERE id = $1`,
     [pipelineId, 'failed', `阶段 ${task.task_type} 执行失败，pipeline 终止`]
   );
   return { advanced: true, action: 'pipeline_failed_stage_error' };
