@@ -693,21 +693,29 @@ async function _createPublishJobs(dbPool, pipeline, exportTask) {
       continue;
     }
 
+    const exportPath = exportTask?.payload?.export_path || null;
+    const publishDesc = `内容发布任务：将「${keyword}」内容发布到 ${platform} 平台。` +
+      `关键词：${keyword}，内容类型：${contentType}，` +
+      (exportPath ? `产物目录：${exportPath}。` : '产物目录：待定。') +
+      `使用对应平台发布 skill 自动发布图文内容。`;
+
     await dbPool.query(
       `INSERT INTO tasks (title, task_type, status, priority, project_id, goal_id,
-                         trigger_source, payload, created_at)
-       VALUES ($1, 'content_publish', 'queued', $2, $3, $4, $5, $6, NOW())`,
+                         trigger_source, description, payload, created_at)
+       VALUES ($1, 'content_publish', 'queued', $2, $3, $4, $5, $6, $7, NOW())`,
       [
         `[发布] ${keyword} → ${platform}`,
         'P1',
         pipeline.project_id,
         pipeline.goal_id,
         'content_pipeline_orchestrator',
+        publishDesc,
         JSON.stringify({
           parent_pipeline_id: pipelineId,
           platform,
           pipeline_keyword: keyword,
           content_type: contentType,
+          export_path: exportPath,
         }),
       ]
     );
