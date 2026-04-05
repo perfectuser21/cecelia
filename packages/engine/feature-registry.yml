@@ -1,0 +1,15 @@
+# Engine Feature Registry
+# 记录 packages/engine/skills/ 目录下的能力变更历史
+# 每次修改 skills/ 时必须在此追加 changelog 条目
+
+version: "1.0.0"
+updated: "2026-04-05"
+
+changelog:
+  - version: "14.3.3"
+    date: "2026-04-05"
+    skill: "dev"
+    change: "fix"
+    description: "worktree-manage.sh: 上限满时自动 cleanup 已合并 worktree + MAX_WORKTREES 10→15"
+    files:
+      - "skills/dev/scripts/worktree-manage.sh"
