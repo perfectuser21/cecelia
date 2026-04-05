@@ -216,4 +216,37 @@ describe('createTask - goal_id validation', () => {
       }
     });
   });
+
+  describe('execution_callback_harness exemption', () => {
+    it('should allow sprint_evaluate without goal_id when triggered by execution_callback_harness', async () => {
+      // Bug fix: execution_callback_harness was missing from systemSources,
+      // causing sprint_generate → sprint_evaluate auto-creation to silently fail
+      const result = await createTask({
+        title: 'Test Task - Harness Sprint Evaluate',
+        description: 'Harness evaluator auto-created by Brain execution callback',
+        priority: 'P1',
+        task_type: 'sprint_evaluate',
+        trigger_source: 'execution_callback_harness',
+        payload: { sprint_dir: 'sprints/sprint-1', harness_mode: true, eval_round: 1 }
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.task.goal_id).toBeNull();
+      expect(result.task.task_type).toBe('sprint_evaluate');
+    });
+
+    it('should allow sprint_fix without goal_id when triggered by execution_callback_harness', async () => {
+      const result = await createTask({
+        title: 'Test Task - Harness Sprint Fix',
+        description: 'Harness fix auto-created by Brain execution callback',
+        priority: 'P1',
+        task_type: 'sprint_fix',
+        trigger_source: 'execution_callback_harness',
+        payload: { sprint_dir: 'sprints/sprint-1', harness_mode: true, eval_round: 2 }
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.task.goal_id).toBeNull();
+    });
+  });
 });
