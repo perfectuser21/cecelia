@@ -53,6 +53,7 @@ import { triggerCodeQualityScan, getScannerStatus } from './task-generator-sched
 import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
+import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -2807,6 +2808,10 @@ async function executeTick() {
   // 10.17d 发布后数据回收（每 tick，触发 4h 后的平台数据采集，fire-and-forget）
   Promise.resolve().then(() => schedulePostPublishCollection(pool))
     .catch(e => console.warn('[tick] 发布后数据回收失败:', e.message));
+
+  // 10.17f 每日全平台采集调度（UTC 20:00 = 北京时间次日 04:00，fire-and-forget）
+  Promise.resolve().then(() => scheduleDailyScrape(pool))
+    .catch(e => console.warn('[tick] 每日平台采集调度失败:', e.message));
 
   // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
   Promise.resolve().then(() => runSuggestionCycle(pool))
