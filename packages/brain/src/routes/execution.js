@@ -1671,6 +1671,36 @@ ${resultStr.substring(0, 2000)}
 
         // sprint_evaluate 完成 → 根据 verdict 路由
         if (harnessTask?.task_type === 'sprint_evaluate') {
+          // Bug fix: result=null 表示 Evaluator 会话崩溃（未能写回结果）
+          // 此场景不应创建 sprint_fix（无 evaluation.md 可读），而应重试 sprint_evaluate
+          if (result === null) {
+            const evalRound = harnessPayload.eval_round || 0;
+            const MAX_EVAL_ROUNDS = 15;
+            if (evalRound >= MAX_EVAL_ROUNDS) {
+              // 安全阀：超过最大轮次，记录警告并停止循环（不再派发任何任务）
+              console.error(`[execution-callback] harness: sprint_evaluate result=null at round ${evalRound} >= MAX(${MAX_EVAL_ROUNDS}), stopping loop`);
+            } else {
+              // 重试：Evaluator 会话崩溃，重新派发 sprint_evaluate（而非 sprint_fix）
+              console.warn(`[execution-callback] harness: sprint_evaluate result=null (session crash) at round ${evalRound}, retrying evaluation`);
+              await createHarnessTask({
+                title: `[Evaluator] 重试 Sprint R${evalRound + 1}（会话崩溃后重试）— ${harnessTask.title}`,
+                description: `Evaluator 会话崩溃（result=null），重新派发评估。\n原始 sprint_evaluate task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'sprint_evaluate',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  dev_task_id: harnessPayload.dev_task_id,
+                  eval_round: evalRound + 1,
+                  harness_mode: true,
+                  retry_reason: 'evaluator_session_crash'
+                }
+              });
+              console.log(`[execution-callback] harness: sprint_evaluate result=null → sprint_evaluate retry (round=${evalRound + 1})`);
+            }
+          } else {
           // verdict 解析：兼容对象和字符串（cecelia-run webhook 可能传纯文本）
           let resultObj = typeof result === 'object' && result !== null ? result : {};
           if (typeof result === 'string') {
@@ -1785,6 +1815,7 @@ ${resultStr.substring(0, 2000)}
             });
             console.log(`[execution-callback] harness: sprint_evaluate FAIL → sprint_fix created (round=${(harnessPayload.eval_round || 0) + 1})`);
           }
+          } // end else (result !== null)
         }
 
         // sprint_fix 完成 → 创建新的 sprint_evaluate（再测）
