@@ -17,6 +17,43 @@ import { callLLM } from './llm-caller.js';
 import { getHighPerformingTopics } from './topic-heat-scorer.js';
 import { queryWeeklyROI } from './content-analytics.js';
 
+// ─── LLM Fallback Helper ─────────────────────────────────────────────────────
+// 当主 LLM（cortex profile，当前指向 Codex）失败时，自动 fallback 到
+// claude-sonnet-4-6（anthropic-api 直连），避免每日选题因配额耗尽而中断。
+const CLAUDE_FALLBACK_MODEL    = 'claude-sonnet-4-6';
+const CLAUDE_FALLBACK_PROVIDER = 'anthropic-api';
+
+export function _isFallbackError(err) {
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('usage limit') ||
+    msg.includes('quota') ||
+    msg.includes('stream disconnected') ||
+    msg.includes('codex exec failed') ||
+    msg.includes('chatgpt.com')
+  );
+}
+
+async function _callLLMWithFallback(agentId, prompt, options = {}) {
+  try {
+    return await callLLM(agentId, prompt, options);
+  } catch (primaryErr) {
+    if (_isFallbackError(primaryErr)) {
+      console.warn(
+        `[topic-selector] ${agentId} 主 LLM 失败（${primaryErr.message.substring(0, 80)}），` +
+        `自动 fallback 到 ${CLAUDE_FALLBACK_MODEL}`
+      );
+      return await callLLM(agentId, prompt, {
+        ...options,
+        model:    CLAUDE_FALLBACK_MODEL,
+        provider: CLAUDE_FALLBACK_PROVIDER,
+      });
+    }
+    throw primaryErr;
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ─── 品牌画像常量 ────────────────────────────────────────────────────────────
 
 const BRAND_KEYWORDS = ['能力', '系统', '一人公司', '小组织', 'AI驱动', '能力下放', '能力放大'];
@@ -45,7 +82,7 @@ async function buildHotspotContext() {
 - 只输出 5 行，不要其他文字`;
 
   try {
-    const { text } = await callLLM('cortex', hotspotPrompt, { maxTokens: 400, timeout: 20000 });
+    const { text } = await _callLLMWithFallback('cortex', hotspotPrompt, { maxTokens: 400, timeout: 20000 });
     if (text && text.trim().length > 10) {
       return `\n【垂类当前热点话题方向】（结合这些方向选题，不要照搬，要与品牌定位结合）\n${text.trim()}\n`;
     }
@@ -152,7 +189,7 @@ export async function generateTopics(pool) {
   ]);
   const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext);
 
-  const { text } = await callLLM('cortex', prompt, {
+  const { text } = await _callLLMWithFallback('cortex', prompt, {
     maxTokens: 2048,
     timeout: 60000,
   });
