@@ -24,7 +24,8 @@
  *   content-image-review PASS → 创建 content-export(queued)
  *   content-image-review FAIL (retry < MAX) → 重建 content-generate, retry+1
  *   content-image-review FAIL (retry >= MAX) → pipeline failed
- *   content-export 完成 → pipeline completed
+ *   content-export 完成 → pre-publish-check（质量验证）→ PASS：pipeline completed + 创建 publish jobs
+ *                        → FAIL：pipeline pre_publish_failed（不创建 publish jobs）
  *
  * Payload 规范（子任务）：
  *   payload.parent_pipeline_id   — 父 content-pipeline 任务 ID
@@ -42,6 +43,7 @@
 import pool from './db.js';
 import { getContentType } from './content-types/content-type-registry.js';
 import { executeResearch, executeCopywriting, executeCopyReview, executeGenerate, executeImageReview, executeExport } from './content-pipeline-executors.js';
+import { validateAllVariants } from './content-quality-validator.js';
 
 // ───────────────────────────────────────────────────────
 // 常量
@@ -462,6 +464,60 @@ async function _writeToWorksTable(dbPool, pipeline, exportTask) {
 async function _handleExportComplete({ task, pipeline }, dbPool) {
   const pipelineId = pipeline.id;
 
+  // ── pre-publish-check：发布前质量门控 ─────────────────────────────────────
+  // 读取本地 export 产出文案，执行程序化质量验证（字数/关键词/语气）。
+  // 验证失败：pipeline 标 pre_publish_failed，跳过创建 publish jobs，防止劣质内容发出。
+  // 验证通过或内容文件缺失（宽松通过）：继续正常流程。
+  let pre_publish_check = { passed: true, skipped: true };
+  try {
+    const { readFileSync, existsSync, readdirSync } = await import('fs');
+    const { join } = await import('path');
+    const keyword = pipeline.payload?.keyword || task.payload?.pipeline_keyword || pipeline.title;
+    const contentType = pipeline.payload?.content_type || 'solo-company-case';
+    const outputBase = join(process.env.HOME || '/Users/administrator', 'claude-output');
+    const slugified = keyword.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '-').replace(/-+/g, '-');
+
+    let contentMap = {};
+    try {
+      const dirs = readdirSync(outputBase).filter((d) => d.includes(slugified));
+      if (dirs.length > 0) {
+        const outputDir = join(outputBase, dirs[dirs.length - 1]);
+        const copyPath = join(outputDir, 'cards', 'copy.md');
+        const articlePath = join(outputDir, 'article', 'article.md');
+        if (existsSync(copyPath)) contentMap.short_copy = readFileSync(copyPath, 'utf-8');
+        if (existsSync(articlePath)) contentMap.long_form = readFileSync(articlePath, 'utf-8');
+      }
+    } catch { /* 目录不存在，宽松通过 */ }
+
+    if (Object.keys(contentMap).length > 0) {
+      let typeConfig = {};
+      try { typeConfig = await getContentType(contentType) || {}; } catch { /* 宽松 */ }
+      const { passed, results } = validateAllVariants(contentMap, typeConfig);
+      pre_publish_check = { passed, skipped: false, results };
+      if (!passed) {
+        const blockingIssues = Object.values(results)
+          .flatMap((r) => r.issues.filter((i) => i.severity === 'blocking'))
+          .map((i) => i.message);
+        console.warn(`[content-pipeline-orchestrator] pipeline ${pipelineId} pre-publish-check 未通过：${blockingIssues.join('; ')}`);
+        await dbPool.query(
+          `UPDATE tasks SET status = 'pre_publish_failed', completed_at = NOW(),
+             payload = payload || $2::jsonb, error_message = $3
+           WHERE id = $1`,
+          [
+            pipelineId,
+            JSON.stringify({ pre_publish_check }),
+            `pre-publish-check 未通过：${blockingIssues.join('; ')}`,
+          ]
+        );
+        return { advanced: true, action: 'pipeline_pre_publish_failed' };
+      }
+    }
+  } catch (checkErr) {
+    // 验证流程本身报错时宽松通过，不阻断发布
+    console.warn(`[content-pipeline-orchestrator] pipeline ${pipelineId} pre-publish-check 异常（宽松通过）: ${checkErr.message}`);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // 写入作品库（幂等，失败不阻断后续流程）
   await _writeToWorksTable(dbPool, pipeline, task);
 
@@ -469,17 +525,20 @@ async function _handleExportComplete({ task, pipeline }, dbPool) {
 
   // 将 export_path 回写到 pipeline 的 payload
   const export_path = task.payload?.export_path || null;
+  const extra_payload = { pre_publish_check };
   if (export_path) {
     await dbPool.query(
       `UPDATE tasks SET status = 'completed', completed_at = NOW(),
          payload = payload || $2::jsonb
        WHERE id = $1`,
-      [pipelineId, JSON.stringify({ export_path })]
+      [pipelineId, JSON.stringify({ export_path, ...extra_payload })]
     );
   } else {
     await dbPool.query(
-      `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-      [pipelineId]
+      `UPDATE tasks SET status = 'completed', completed_at = NOW(),
+         payload = payload || $2::jsonb
+       WHERE id = $1`,
+      [pipelineId, JSON.stringify(extra_payload)]
     );
   }
   console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} 全部完成 ✅`);

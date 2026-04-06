@@ -9,6 +9,7 @@
  * POST /api/brain/pipelines                    创建新 content-pipeline 任务
  * POST /api/brain/pipelines/trigger-topics     手动触发今日选题生成（忽略时间窗口限制）
  * POST /api/brain/pipelines/e2e-trigger        端到端流程触发（选题→Pipeline创建→执行）
+ * POST /api/brain/pipelines/batch-e2e-trigger  批量端到端触发（一次创建多条 pipeline，默认5条）
  * POST /api/brain/pipelines/:id/run            手动触发 pipeline 执行（不依赖 tick）
  * POST /api/brain/pipelines/:id/pre-publish-check  发布前内容质量检查
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
@@ -830,6 +831,93 @@ router.post('/e2e-trigger', async (req, res) => {
     console.error('[routes/content-pipeline] POST /e2e-trigger error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * POST /pipelines/batch-e2e-trigger
+ * 批量端到端触发：一次创建多条 content-pipeline，轮换3种内容类型，
+ * 用于验证"AI一人公司"主题的完整内容生成闭环。
+ *
+ * Body: {
+ *   keywords: string[],       // 必填：关键词数组（建议5个，支持1-10个）
+ *   skip_topic_selection?: boolean,  // 可选：跳过选题生成，默认 true（批量场景通常已有关键词）
+ * }
+ *
+ * 内容类型轮换策略：
+ *   索引 0,3 → solo-company-case
+ *   索引 1,4 → ai-tools-review
+ *   索引 2   → ai-workflow-guide
+ *
+ * Response: { ok: boolean, created: number, pipelines: Array<{pipeline_id, keyword, content_type}> }
+ */
+router.post('/batch-e2e-trigger', async (req, res) => {
+  const { keywords, skip_topic_selection = true } = req.body || {};
+
+  if (!Array.isArray(keywords) || keywords.length === 0) {
+    return res.status(400).json({ error: '必填字段 keywords 不能为空，需为字符串数组' });
+  }
+  if (keywords.length > 10) {
+    return res.status(400).json({ error: 'keywords 最多10个' });
+  }
+
+  // 内容类型轮换表（"AI一人公司"主题3种）
+  const CONTENT_TYPE_ROTATION = ['solo-company-case', 'ai-tools-review', 'ai-workflow-guide'];
+
+  const results = [];
+  const errors = [];
+
+  // 可选触发一次选题生成
+  if (!skip_topic_selection) {
+    try { await triggerDailyTopicSelection(); } catch { /* 不阻断 */ }
+  }
+
+  for (let i = 0; i < keywords.length; i++) {
+    const keyword = String(keywords[i]).trim();
+    if (!keyword) continue;
+
+    const content_type = CONTENT_TYPE_ROTATION[i % CONTENT_TYPE_ROTATION.length];
+
+    try {
+      const pipelinePayload = {
+        keyword,
+        content_type,
+        trigger_source: 'batch-e2e-trigger',
+        batch_index: i,
+        triggered_at: new Date().toISOString(),
+      };
+
+      const insertResult = await pool.query(
+        `INSERT INTO tasks (title, task_type, status, payload, priority, tags)
+         VALUES ($1, 'content-pipeline', 'queued', $2::jsonb, 'P2', ARRAY['batch-e2e-trigger','auto'])
+         RETURNING id`,
+        [`[Pipeline] ${keyword} (${content_type})`, JSON.stringify(pipelinePayload)]
+      );
+
+      const pipelineId = insertResult.rows[0].id;
+      results.push({ pipeline_id: pipelineId, keyword, content_type, status: 'queued' });
+      console.log(`[batch-e2e-trigger] [${i + 1}/${keywords.length}] 创建 pipeline ${pipelineId}：${keyword} (${content_type})`);
+    } catch (err) {
+      errors.push({ keyword, error: err.message });
+      console.error(`[batch-e2e-trigger] 创建 pipeline 失败：${keyword} — ${err.message}`);
+    }
+  }
+
+  // 触发一次编排，让 tick 接管后续执行
+  try {
+    await orchestrateContentPipelines(pool);
+  } catch (orchErr) {
+    console.warn(`[batch-e2e-trigger] 编排启动失败（将由 tick 接管）: ${orchErr.message}`);
+  }
+
+  return res.json({
+    ok: errors.length === 0,
+    created: results.length,
+    failed: errors.length,
+    pipelines: results,
+    errors: errors.length > 0 ? errors : undefined,
+    message: `已创建 ${results.length} 条 pipeline，内容类型: ${[...new Set(results.map((r) => r.content_type))].join(', ')}`,
+    check_each: results.map((r) => `/api/brain/pipelines/${r.pipeline_id}/stages`),
+  });
 });
 
 export default router;
