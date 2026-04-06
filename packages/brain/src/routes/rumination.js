@@ -9,8 +9,6 @@
  *   查询反刍系统状态（daily_count, budget, undigested 等）
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 import { runManualRumination, runRuminationForce, getRuminationStatus, getUndigestedCount } from '../rumination.js';

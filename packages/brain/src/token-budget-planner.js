@@ -11,8 +11,6 @@
  * - 失败时保守降级：返回 moderate（不阻塞，但也不全速跑）
  */
 
-/* global console */
-
 import { getAccountUsage } from './account-usage.js';
 
 // ============================================================

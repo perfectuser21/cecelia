@@ -8,8 +8,6 @@
  * - WORLD_STATE:  活跃 OKR/项目状态/关键事实（每天更新）
  */
 
-/* global console */
-
 import pool from './db.js';
 
 export const DOC_TYPES = ['SOUL', 'SELF_MODEL', 'USER_PROFILE', 'WORLD_STATE'];

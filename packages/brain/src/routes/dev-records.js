@@ -7,8 +7,6 @@
  * PUT  /api/brain/dev-records/:id   — 更新（评分、review 结果）
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 

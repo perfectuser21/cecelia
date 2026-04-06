@@ -7,8 +7,6 @@
  * DELETE /api/brain/user-annotations/:id                       — 删除
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 

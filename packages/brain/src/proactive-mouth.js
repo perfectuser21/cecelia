@@ -13,8 +13,6 @@
  *   - 主动关怀（proactive — 定期问候）
  */
 
-/* global console */
-
 import { sendFeishu } from './notifier.js';
 import { recordOutbound } from './pending-conversations.js';
 

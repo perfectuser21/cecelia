@@ -8,8 +8,6 @@
  * 数据来源：packages/brain/scripts/generate-manifest.mjs 自动生成
  */
 
-/* global console, URL */
-
 import { Router } from 'express';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';

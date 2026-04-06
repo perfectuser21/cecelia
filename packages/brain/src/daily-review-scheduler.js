@@ -11,8 +11,6 @@
  *   2. 如果 DB 查询失败，fallback 到硬编码列表
  */
 
-/* global console */
-
 // 每日触发时间（UTC 小时）
 const DAILY_REVIEW_HOUR_UTC = 2;
 

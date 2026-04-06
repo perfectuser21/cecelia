@@ -14,8 +14,6 @@
  *   - Half-life: hourly=2h, weekly=72h, permanent=∞
  */
 
-/* global console */
-
 const DECAY_HALF_LIFE_HOURS = {
   hourly: 2,
   weekly: 72,

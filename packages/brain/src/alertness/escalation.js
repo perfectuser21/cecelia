@@ -8,8 +8,6 @@
  * - L3: 人工介入
  */
 
-/* global console */
-
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
 

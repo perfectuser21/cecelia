@@ -6,7 +6,6 @@
  * block for injection into the agent prompt.
  */
 
-/* global console */
 import pool from './db.js';
 
 // Scoring constants

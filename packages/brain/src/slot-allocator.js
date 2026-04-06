@@ -10,8 +10,6 @@
  * Graceful: Never kills running tasks, only stops new dispatches.
  */
 
-/* global console */
-
 import os from 'os';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';

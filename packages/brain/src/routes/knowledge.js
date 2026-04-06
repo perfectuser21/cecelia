@@ -10,8 +10,6 @@
  *   返回：{ meta, groups: [{ id, label, items: [...] }] }
  */
 
-/* global console */
-
 import { Router } from 'express';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';

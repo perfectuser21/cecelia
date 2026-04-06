@@ -9,8 +9,6 @@
  *   node packages/brain/src/scripts/backfill-dev-records.js [--limit 200]
  */
 
-/* global process, console */
-
 import { execSync } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';

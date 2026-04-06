@@ -1,4 +1,3 @@
-/* global process, console */
 import 'dotenv/config';
 import pg from 'pg';
 import { DB_DEFAULTS } from './db-config.js';

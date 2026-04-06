@@ -6,8 +6,6 @@
  * 2. 未来可扩展向量搜索
  */
 
-/* global console */
-
 import pool from './db.js';
 
 /**

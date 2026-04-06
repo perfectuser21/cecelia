@@ -9,8 +9,6 @@
  * - fire-and-forget，失败静默（不阻塞对话回复）
  */
 
-/* global console */
-
 import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 /** 需要生成 suggestion 的意图类型（大写，比较时统一转换） */

@@ -10,8 +10,6 @@
  *   4. extractAndSaveUserFacts(...)            — 从对话提取事实（fire-and-forget）
  */
 
-/* global console */
-
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';

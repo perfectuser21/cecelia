@@ -6,8 +6,6 @@
  *   数据来源：实时运行 runPerception()，附加静态元数据（重要性、是否有消费者）
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 import { runPerception } from '../desire/perception.js';

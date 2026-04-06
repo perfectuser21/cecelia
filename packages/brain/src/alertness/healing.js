@@ -11,8 +11,6 @@
  * 观察期 → 试探恢复 → 逐步恢复 → 完全恢复
  */
 
-/* global console, process, global */
-
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { readdirSync, readFileSync } from 'fs';

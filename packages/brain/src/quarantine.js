@@ -16,8 +16,6 @@
  * 核心原则：宁可错杀，不可放过（保护系统稳定）
  */
 
-/* global console */
-
 import pool from './db.js';
 import { emit } from './event-bus.js';
 import { upsertLearning } from './learning.js';

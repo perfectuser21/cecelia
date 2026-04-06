@@ -9,7 +9,6 @@
  *       更新 working_memory last_conversation_summary_at 防重复
  */
 
-/* global console */
 import crypto from 'crypto';
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';

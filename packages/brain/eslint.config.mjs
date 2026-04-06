@@ -1,9 +1,10 @@
 import js from '@eslint/js';
+import globals from 'globals';
 
 export default [
   js.configs.recommended,
   {
-    ignores: ['node_modules/**', 'coverage/**'],
+    ignores: ['node_modules/**', 'coverage/**', 'src/__tests__/**', 'src/**/*.mjs'],
   },
   {
     files: ['src/**/*.js'],
@@ -11,23 +12,15 @@ export default [
       ecmaVersion: 2022,
       sourceType: 'module',
       globals: {
-        console: 'readonly',
-        process: 'readonly',
-        Buffer: 'readonly',
-        setTimeout: 'readonly',
-        setInterval: 'readonly',
-        clearTimeout: 'readonly',
-        clearInterval: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        require: 'readonly',
-        module: 'readonly',
-        exports: 'readonly',
-        global: 'readonly',
-        URL: 'readonly',
+        ...globals.node,
+        // Web APIs available in Node 18+
         fetch: 'readonly',
         AbortController: 'readonly',
+        AbortSignal: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
         crypto: 'readonly',
+        WebSocket: 'readonly',
       },
     },
     rules: {
@@ -35,6 +28,7 @@ export default [
       'no-undef': 'warn',
       'no-constant-condition': 'warn',
       'no-empty': ['warn', { allowEmptyCatch: true }],
+      'no-case-declarations': 'warn',
     },
   },
 ];

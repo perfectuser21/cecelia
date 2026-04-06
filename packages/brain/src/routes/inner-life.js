@@ -5,8 +5,6 @@
  *   返回：反刍状态 + 反思累积 + 最近洞察 + pending desires 统计
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 import { DAILY_BUDGET } from '../rumination.js';

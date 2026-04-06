@@ -5,8 +5,6 @@
  *   返回：15 个子系统状态 + 21 条连接关系
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 

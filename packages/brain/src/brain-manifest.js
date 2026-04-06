@@ -16,8 +16,6 @@
  *   fixed    🔒 — 静态逻辑，不随时间变化（Cecelia 当前全动态）
  */
 
-/* global Object */
-
 export const BRAIN_MANIFEST = {
   version: '4.0.0',
 

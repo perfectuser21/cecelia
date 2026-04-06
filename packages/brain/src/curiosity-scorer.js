@@ -10,8 +10,6 @@
  * 触发：每次 research/curiosity 任务完成后
  */
 
-/* global console */
-
 import pool from './db.js';
 
 // ── 权重 ────────────────────────────────────────────────────────────

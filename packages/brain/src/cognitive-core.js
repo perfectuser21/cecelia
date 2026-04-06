@@ -13,8 +13,6 @@
  * 8. 内在叙事       — 今天的故事
  */
 
-/* global console, process */
-
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';
 

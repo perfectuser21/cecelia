@@ -7,8 +7,6 @@
  * - 失败时记录日志 + 写入重试队列（working_memory key=embedding_retry_queue）
  */
 
-/* global console */
-
 import pool from './db.js';
 import { generateEmbedding } from './openai-client.js';
 

@@ -8,8 +8,6 @@
  * 若是，则生成今日日报写入 design_docs（type='diary'），去重。
  */
 
-/* global console */
-
 // 每日触发时间（UTC 小时）15:00 UTC = 23:00 上海时间
 const DIARY_HOUR_UTC = 15;
 

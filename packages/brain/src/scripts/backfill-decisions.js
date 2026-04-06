@@ -9,8 +9,6 @@
  *   node packages/brain/src/scripts/backfill-decisions.js [--dry-run]
  */
 
-/* global process, console */
-
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';

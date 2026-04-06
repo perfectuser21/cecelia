@@ -13,7 +13,6 @@
  * - Suspect tracking: double-confirm before marking failed (avoid false positives)
  */
 
-/* global console */
 import crypto from 'crypto';
 import { spawn, execSync, exec } from 'child_process';
 import { writeFile, mkdir } from 'fs/promises';
