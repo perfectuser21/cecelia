@@ -251,7 +251,7 @@ else
 
         # 去重
         if [[ ${#ENGINE_TEST_FILES[@]} -gt 0 ]]; then
-            mapfile -t ENGINE_TEST_FILES < <(printf '%s\n' "${ENGINE_TEST_FILES[@]}" | sort -u)
+            ENGINE_TEST_FILES=($(printf '%s\n' "${ENGINE_TEST_FILES[@]}" | sort -u))
             echo -e "  ▶ 找到 ${#ENGINE_TEST_FILES[@]} 个相关测试文件，运行..."
             if (cd packages/engine && \
                 NODE_OPTIONS='--max-old-space-size=2048' \

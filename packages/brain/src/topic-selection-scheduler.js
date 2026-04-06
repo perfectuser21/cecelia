@@ -11,6 +11,7 @@
  */
 
 import { generateTopics } from './topic-selector.js';
+import { saveSuggestions } from './topic-suggestion-manager.js';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -65,11 +66,19 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
   // 4. 限流：最多取 MAX_DAILY_TOPICS 个
   const toCreate = topics.slice(0, MAX_DAILY_TOPICS);
 
-  // 5. 为每个选题创建 content-pipeline task
-  let created = 0;
+  // 5. 将 TOP 5 存入推荐队列（pending），其余直接创建 content-pipeline task
   const today = toDateString(now);
+  const savedSuggestions = await saveSuggestions(pool, toCreate, today).catch(err => {
+    console.warn('[topic-selection-scheduler] saveSuggestions 失败:', err.message);
+    return 0;
+  });
+  console.log(`[topic-selection-scheduler] 已推荐 ${savedSuggestions} 个选题待 Alex 审核（2h 后自动晋级）`);
 
-  for (const topic of toCreate) {
+  // 剩余选题直接进内容队列
+  const autoQueue = toCreate.slice(savedSuggestions);
+  let created = 0;
+
+  for (const topic of autoQueue) {
     try {
       await createContentPipelineTask(pool, topic, today);
       created++;

@@ -28,12 +28,40 @@ const TARGET_TOPIC_COUNT = 10;
 // ─── Prompt 构建 ─────────────────────────────────────────────────────────────
 
 /**
+ * 提取「AI一人公司」垂类当前热点话题上下文。
+ * 通过 LLM 合成当前该垂类的主要讨论方向，注入选题 Prompt。
+ *
+ * @returns {Promise<string>} 热点上下文段落，格式化后可直接嵌入 Prompt
+ */
+async function buildHotspotContext() {
+  const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  const hotspotPrompt = `今天是 ${today}。
+请列出目前「AI一人公司 / 个人用AI提效 / AI副业创业」垂类在中文社交媒体（微信、抖音、小红书、知乎）上正在热烈讨论的 5 个话题方向。
+
+要求：
+- 每个方向一行，格式：「方向关键词：一句话说明为什么现在热」
+- 聚焦创业者/企业主/副业人群的真实痛点
+- 只输出 5 行，不要其他文字`;
+
+  try {
+    const { text } = await callLLM('cortex', hotspotPrompt, { maxTokens: 400, timeout: 20000 });
+    if (text && text.trim().length > 10) {
+      return `\n【垂类当前热点话题方向】（结合这些方向选题，不要照搬，要与品牌定位结合）\n${text.trim()}\n`;
+    }
+  } catch {
+    // 热点提取失败不影响主流程
+  }
+  return '';
+}
+
+/**
  * 构建选题生成 Prompt
  * @param {string[]} recentKeywords - 近 7 日已使用的关键词列表（用于去重）
  * @param {Array<{topic_keyword: string, heat_score: number}>} highPerformingTopics - 历史高热话题（正向参考）
+ * @param {string} [hotspotContext] - 垂类热点上下文（由 buildHotspotContext 生成）
  * @returns {string}
  */
-function buildTopicPrompt(recentKeywords = [], highPerformingTopics = []) {
+function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '') {
   const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const recentList = recentKeywords.length > 0
     ? recentKeywords.map(k => `- ${k}`).join('\n')
@@ -55,7 +83,7 @@ function buildTopicPrompt(recentKeywords = [], highPerformingTopics = []) {
 
 【近 7 日已用选题】（请避免重复或相似的主题）
 ${recentList}
-${highHeatSection}
+${highHeatSection}${hotspotContext}
 【任务要求】
 请生成 ${TARGET_TOPIC_COUNT} 个内容选题，每个选题必须：
 1. 与"一人公司/AI能力放大/小组织效能"主题强相关
@@ -88,11 +116,12 @@ ${highHeatSection}
  * @returns {Promise<Array<{keyword, content_type, title_candidates, hook, why_hot, priority_score}>>}
  */
 export async function generateTopics(pool) {
-  const [recentKeywords, highPerformingTopics] = await Promise.all([
+  const [recentKeywords, highPerformingTopics, hotspotContext] = await Promise.all([
     getRecentKeywords(pool),
     getHighPerformingTopics(pool).catch(() => []),
+    buildHotspotContext(),
   ]);
-  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics);
+  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext);
 
   const { text } = await callLLM('cortex', prompt, {
     maxTokens: 2048,

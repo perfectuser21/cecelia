@@ -1,5 +1,10 @@
 import { Router } from 'express';
 import pool from '../db.js';
+import {
+  getActiveSuggestions,
+  approveSuggestion,
+  rejectSuggestion,
+} from '../topic-suggestion-manager.js';
 
 const router = Router();
 
@@ -17,7 +22,6 @@ router.get('/', async (req, res) => {
     let params;
 
     if (date) {
-      // 指定日期
       queryText = `
         SELECT id, selected_date, keyword, content_type,
                title_candidates, hook, why_hot, priority_score, created_at
@@ -27,7 +31,6 @@ router.get('/', async (req, res) => {
       `;
       params = [date];
     } else {
-      // 默认今日
       queryText = `
         SELECT id, selected_date, keyword, content_type,
                title_candidates, hook, why_hot, priority_score, created_at
@@ -39,7 +42,6 @@ router.get('/', async (req, res) => {
     }
 
     const result = await pool.query(queryText, params);
-
     const selectedDate = date || new Date().toISOString().slice(0, 10);
 
     res.json({
@@ -49,6 +51,62 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('[topics-route] 查询失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/topics/suggestions
+ * 获取选题推荐队列（默认今日 pending）
+ * 支持 ?date=YYYY-MM-DD&status=pending|approved|rejected|auto_promoted
+ */
+router.get('/suggestions', async (req, res) => {
+  try {
+    const { date, status = 'pending' } = req.query;
+    const data = await getActiveSuggestions(pool, { date, status });
+    res.json({ data, total: data.length, status });
+  } catch (err) {
+    console.error('[topics-route] GET /suggestions 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/topics/suggestions/:id/approve
+ * Alex 批准选题 → 创建 content-pipeline task
+ * Body: { reviewer?: string }
+ */
+router.post('/suggestions/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const reviewer = req.body?.reviewer || 'alex';
+    const result = await approveSuggestion(pool, id, reviewer);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.error });
+    }
+    res.json({ ok: true, pipeline_task_id: result.pipeline_task_id });
+  } catch (err) {
+    console.error('[topics-route] POST /suggestions/:id/approve 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/topics/suggestions/:id/reject
+ * Alex 拒绝选题
+ * Body: { reviewer?: string }
+ */
+router.post('/suggestions/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const reviewer = req.body?.reviewer || 'alex';
+    const result = await rejectSuggestion(pool, id, reviewer);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.error });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[topics-route] POST /suggestions/:id/reject 失败:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -30,6 +30,7 @@ import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
 import { runConversationDigest } from './conversation-digest.js';
 import { runCaptureDigestion } from './capture-digestion.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
+import { autoPromoteSuggestions } from './topic-suggestion-manager.js';
 import { triggerDailyPublish } from './daily-publish-scheduler.js';
 import { generateDailyReport } from './daily-report-generator.js';
 import { generateWeeklyReport } from './weekly-report-generator.js';
@@ -2782,6 +2783,10 @@ async function executeTick() {
   // 10.17 每日内容选题（UTC 01:00 = 北京时间 09:00，AI 自动生成 ≥10 个选题，fire-and-forget）
   Promise.resolve().then(() => triggerDailyTopicSelection(pool))
     .catch(e => console.warn('[tick] 每日内容选题失败:', e.message));
+
+  // 10.17c 选题推荐自动晋级（每 tick 检查 pending 超过 2h 的建议，fire-and-forget）
+  Promise.resolve().then(() => autoPromoteSuggestions(pool))
+    .catch(e => console.warn('[tick] 选题自动晋级失败:', e.message));
 
   // 10.17b 每日发布调度（UTC 03:00 = 北京时间 11:00，处理 pending content_publish_jobs，fire-and-forget）
   Promise.resolve().then(() => triggerDailyPublish(pool))
