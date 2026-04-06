@@ -143,8 +143,7 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 2   // 2 fork 并发；OOM 是 pre-existing 问题（406文件 × 20MB > 7GB），
-                      // 由 ci.yml brain-unit continue-on-error:true 缓解
+        maxForks: 1   // maxForks=1 串行执行，彻底消除 OOM；CI gate 已恢复（无 continue-on-error）
       }
     }
   }

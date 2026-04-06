@@ -204,9 +204,6 @@ jobs:
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # 已知 OOM：406文件 × 20MB/文件 > ubuntu-latest 7GB 内存，
-                              # 测试本身全部通过（406 passed），Worker 崩溃是 V8 堆碎片问题。
-                              # TODO: 需要更大 runner 或拆分 test batches 才能根治
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -215,8 +212,8 @@ jobs:
       - run: cd packages/brain && npm ci
       - name: Unit Tests
         env:
-          NODE_OPTIONS: '--max-old-space-size=3072'
-        run: cd packages/brain && npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose --pool=forks --maxWorkers=2
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: cd packages/brain && npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose --pool=forks --maxWorkers=1
 
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
   brain-integration:
