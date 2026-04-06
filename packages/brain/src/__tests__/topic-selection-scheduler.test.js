@@ -30,15 +30,20 @@ import { generateTopics } from '../topic-selector.js';
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
-/** 构造在触发窗口内（UTC 01:02）的 Date */
+/** 构造在触发窗口内（UTC 01:02，首选窗口）的 Date */
 function makeWindowTime() {
   const d = new Date('2026-03-19T01:02:00Z');
   return d;
 }
 
-/** 构造在触发窗口外（UTC 10:00）的 Date */
-function makeOutsideWindowTime() {
+/** 构造在补偿窗口内（UTC 10:00，09:00-北京时间之后）的 Date */
+function makeCatchupWindowTime() {
   return new Date('2026-03-19T10:00:00Z');
+}
+
+/** 构造在触发窗口外（UTC 13:00，超过补偿截止时间 12:00）的 Date */
+function makeOutsideWindowTime() {
+  return new Date('2026-03-19T13:00:00Z');
 }
 
 /** 构造 N 个选题 */
@@ -91,6 +96,33 @@ describe('triggerDailyTopicSelection', () => {
     expect(result.skipped_window).toBe(true);
     expect(result.triggered).toBe(0);
     expect(generateTopics).not.toHaveBeenCalled();
+  });
+
+  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 12:00 整点不触发（超出补偿窗口）', async () => {
+    const atCutoff = new Date('2026-03-19T12:00:00Z');
+    const result = await triggerDailyTopicSelection(pool, atCutoff);
+    expect(result.skipped_window).toBe(true);
+    expect(result.triggered).toBe(0);
+  });
+
+  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 11:59 在补偿窗口内可触发', async () => {
+    const topics = makeTopics(1);
+    generateTopics.mockResolvedValue(topics);
+    const justBeforeCutoff = new Date('2026-03-19T11:59:00Z');
+    const result = await triggerDailyTopicSelection(pool, justBeforeCutoff);
+    expect(result.skipped_window).toBe(false);
+    expect(result.triggered).toBe(1);
+  });
+
+  it('补偿窗口内（UTC 10:00）且无今日任务时触发', async () => {
+    const topics = makeTopics(3);
+    generateTopics.mockResolvedValue(topics);
+
+    const result = await triggerDailyTopicSelection(pool, makeCatchupWindowTime());
+
+    expect(result.skipped_window).toBe(false);
+    expect(result.triggered).toBe(3);
+    expect(generateTopics).toHaveBeenCalledTimes(1);
   });
 
   // ─── 去重逻辑 ─────────────────────────────────────────────────────────────

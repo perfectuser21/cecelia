@@ -5,7 +5,10 @@
  * 每次 Tick 末尾调用 triggerDailyTopicSelection()，内部判断是否到达每日触发时间（01:00 UTC = 09:00 北京时间）。
  * 如果是，则调用 topic-selector.js 生成选题，并为每个选题创建 content-pipeline task。
  *
- * 触发窗口：UTC 01:00 - 01:05（北京时间 09:00 - 09:05）
+ * 触发窗口：UTC 01:00 - 12:00（北京时间 09:00 - 20:00）
+ *   - 首选窗口：UTC 01:00（北京 09:00），正常触发
+ *   - 补偿窗口：UTC 01:00-12:00，任何 tick 均可触发，由 hasTodayTopics 负责幂等
+ *   - 超过 UTC 12:00（北京 20:00）则不再补偿（避免夜间触发）
  * 去重策略：同一天内已有 payload.trigger_source = daily_topic_selection 的 content-pipeline task → 跳过
  * 限流：每日最多创建 MAX_DAILY_TOPICS 条 content-pipeline tasks
  */
@@ -18,8 +21,8 @@ import { saveSuggestions } from './topic-suggestion-manager.js';
 /** 每日触发时间（UTC 小时）= 北京时间 09:00 */
 const DAILY_TOPIC_HOUR_UTC = 1;
 
-/** 触发窗口分钟数（与 daily-review-scheduler.js 保持一致） */
-const TRIGGER_WINDOW_MINUTES = 5;
+/** 补偿窗口截止时间（UTC 小时）= 北京时间 20:00。超过此时间不再补偿生成 */
+const DAILY_TOPIC_CATCHUP_CUTOFF_UTC = 12;
 
 /** 每日最多创建的 content-pipeline tasks 数量 */
 const MAX_DAILY_TOPICS = 10;
@@ -94,14 +97,15 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────────
 
 /**
- * 判断当前时间是否在每日触发窗口内（UTC 01:00 - 01:05）
+ * 判断当前时间是否在每日触发窗口内。
+ * 窗口：UTC 01:00 - 12:00（北京时间 09:00 - 20:00）
+ * 幂等保护由 hasTodayTopics() 负责，避免重复触发。
  * @param {Date} now
  * @returns {boolean}
  */
 function isInTriggerWindow(now) {
   const utcHour = now.getUTCHours();
-  const utcMinute = now.getUTCMinutes();
-  return utcHour === DAILY_TOPIC_HOUR_UTC && utcMinute < TRIGGER_WINDOW_MINUTES;
+  return utcHour >= DAILY_TOPIC_HOUR_UTC && utcHour < DAILY_TOPIC_CATCHUP_CUTOFF_UTC;
 }
 
 /**
