@@ -2701,6 +2701,11 @@ router.post('/deploy', async (req, res) => {
     return res.status(401).json({ error: 'Invalid or missing deploy token' });
   }
 
+  // 并发锁：running 或 rolling_back 时拒绝重复触发
+  if (deployState.status === 'running' || deployState.status === 'rolling_back') {
+    return res.status(409).json({ error: 'deploy already in progress', current_status: deployState.status });
+  }
+
   const { changed_paths } = req.body || {};
 
   // 更新状态为 running，立即返回 202
