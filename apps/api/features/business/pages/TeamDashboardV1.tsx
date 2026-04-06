@@ -250,54 +250,96 @@ const SuccessRatePanel = ({ data }: { data: PublishStats | null }) => (
 
 const contentRanking = 'contentRanking';
 
-const ContentRankingPanel = ({ data }: { data: ContentPerformance | null }) => (
-  <Card className="col-span-2">
-    <CardHeader icon={TrendingUp} title="近7日内容排行" subtitle="浏览 · 互动数" color="violet" />
-    <div className="p-5">
-      {data?.has_data ? (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-slate-400 uppercase border-b border-slate-200 dark:border-slate-700">
-                <th className="pb-2 text-left w-8">#</th>
-                <th className="pb-2 text-left">内容</th>
-                <th className="pb-2 text-right">平台</th>
-                <th className="pb-2 text-right">浏览</th>
-                <th className="pb-2 text-right">互动</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.posts.map((post, i) => (
-                <tr
-                  key={i}
-                  className="border-b border-slate-100 dark:border-slate-700/50 last:border-0"
-                >
-                  <td className="py-2 text-slate-400 text-xs">{i + 1}</td>
-                  <td className="py-2 text-slate-700 dark:text-slate-300 truncate max-w-[200px]">
-                    {post.title || post.author || '—'}
-                  </td>
-                  <td className="py-2 text-right text-xs text-slate-500">
-                    {PLATFORM_LABELS[post.platform] ?? post.platform}
-                  </td>
-                  <td className="py-2 text-right text-slate-600 dark:text-slate-400">
-                    {post.view_count?.toLocaleString() ?? '—'}
-                  </td>
-                  <td className="py-2 text-right text-slate-600 dark:text-slate-400">
-                    {post.like_count !== undefined
-                      ? (post.like_count + (post.comment_count ?? 0)).toLocaleString()
-                      : '—'}
-                  </td>
+const ContentRankingPanel = ({ data }: { data: ContentPerformance | null }) => {
+  // 优先展示自有内容效果数据（analytics/content），降级到平台趋势（social/trending）
+  const hasAnalytics = (data?.analytics?.length ?? 0) > 0;
+  const hasPosts = (data?.posts?.length ?? 0) > 0;
+
+  return (
+    <Card className="col-span-2">
+      <CardHeader icon={TrendingUp} title="近7日内容排行" subtitle="浏览 · 互动数" color="violet" />
+      <div className="p-5">
+        {hasAnalytics ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-400 uppercase border-b border-slate-200 dark:border-slate-700">
+                  <th className="pb-2 text-left w-8">#</th>
+                  <th className="pb-2 text-left">内容</th>
+                  <th className="pb-2 text-right">平台</th>
+                  <th className="pb-2 text-right">浏览</th>
+                  <th className="pb-2 text-right">互动</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <EmptyState msg="内容效果数据采集进行中（数据闭环任务）" />
-      )}
-    </div>
-  </Card>
-);
+              </thead>
+              <tbody>
+                {data!.analytics.map((item, i) => (
+                  <tr
+                    key={item.id}
+                    className="border-b border-slate-100 dark:border-slate-700/50 last:border-0"
+                  >
+                    <td className="py-2 text-slate-400 text-xs">{i + 1}</td>
+                    <td className="py-2 text-slate-700 dark:text-slate-300 truncate max-w-[200px]">
+                      {item.title || item.content_id || '—'}
+                    </td>
+                    <td className="py-2 text-right text-xs text-slate-500">
+                      {PLATFORM_LABELS[item.platform] ?? item.platform}
+                    </td>
+                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
+                      {item.view_count.toLocaleString()}
+                    </td>
+                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
+                      {(item.like_count + item.comment_count).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : hasPosts ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-400 uppercase border-b border-slate-200 dark:border-slate-700">
+                  <th className="pb-2 text-left w-8">#</th>
+                  <th className="pb-2 text-left">内容</th>
+                  <th className="pb-2 text-right">平台</th>
+                  <th className="pb-2 text-right">浏览</th>
+                  <th className="pb-2 text-right">互动</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data!.posts.map((post, i) => (
+                  <tr
+                    key={i}
+                    className="border-b border-slate-100 dark:border-slate-700/50 last:border-0"
+                  >
+                    <td className="py-2 text-slate-400 text-xs">{i + 1}</td>
+                    <td className="py-2 text-slate-700 dark:text-slate-300 truncate max-w-[200px]">
+                      {post.title || post.author || '—'}
+                    </td>
+                    <td className="py-2 text-right text-xs text-slate-500">
+                      {PLATFORM_LABELS[post.platform] ?? post.platform}
+                    </td>
+                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
+                      {post.view_count?.toLocaleString() ?? '—'}
+                    </td>
+                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
+                      {post.like_count !== undefined
+                        ? (post.like_count + (post.comment_count ?? 0)).toLocaleString()
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState msg="内容效果数据采集进行中（数据闭环任务）" />
+        )}
+      </div>
+    </Card>
+  );
+};
 
 // ── 面板 4: KR 进度 ──────────────────────────────────
 

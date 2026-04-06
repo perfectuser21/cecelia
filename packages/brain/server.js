@@ -162,6 +162,10 @@ app.use('/api/brain/user-annotations', userAnnotationsRoutes);
 app.use('/api/brain/strategic-decisions', strategicDecisionsRoutes);
 app.use('/api/brain/conversation-captures', conversationCapturesRoutes);
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
+// Mount brain routes BEFORE contentPipelineRoutes to prevent /:id/stats wildcard
+// from intercepting /publish-results/stats and other specific routes in brainRoutes
+app.use('/api/brain', brainRoutes);
+
 app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/self-drive', selfDriveRoutes);
@@ -172,9 +176,6 @@ app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
-
-// Mount brain routes
-app.use('/api/brain', brainRoutes);
 
 // POST /api/brain/tasks fallback: brainRoutes 无 POST /tasks handler，此处补齐
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
