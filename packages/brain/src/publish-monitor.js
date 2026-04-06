@@ -17,6 +17,9 @@
 /** 最大重试次数（超过则不再重试，需人工介入） */
 const MAX_RETRY = 3;
 
+/** 重试退避基数（秒）。第 N 次重试等待 RETRY_BACKOFF_BASE_SEC * 2^(N-1) 秒，最长 30 分钟 */
+const RETRY_BACKOFF_BASE_SEC = 30;
+
 /** working_memory key：今日发布统计 */
 const STATS_KEY = 'daily_publish_stats';
 
@@ -44,21 +47,53 @@ async function fetchRetryableTasks(pool) {
 }
 
 /**
- * 重置 task 为 queued 状态并增加 retry_count。
+ * 检查同 pipeline_id + platform 是否已有 completed 的发布任务（幂等保护）。
+ * 若已成功发布，重试无意义且会导致重复发帖。
+ *
+ * @param {import('pg').Pool} pool
+ * @param {object} task - 包含 payload 字段的任务行
+ * @returns {Promise<boolean>} true = 已成功发布，无需重试
+ */
+async function isAlreadyPublished(pool, task) {
+  const pipelineId = task.payload?.pipeline_id;
+  const platform = task.payload?.platform;
+
+  // 无 pipeline_id 时无法判断，保守允许重试
+  if (!pipelineId || !platform) return false;
+
+  const { rows } = await pool.query(
+    `SELECT id FROM tasks
+     WHERE task_type = 'content_publish'
+       AND status = 'completed'
+       AND payload->>'pipeline_id' = $1
+       AND payload->>'platform' = $2
+     LIMIT 1`,
+    [pipelineId, platform]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * 重置 task 为 queued 状态并增加 retry_count，同时写入指数退避时间。
  *
  * @param {import('pg').Pool} pool
  * @param {string} taskId
  * @param {number} currentRetry
  */
 async function retryTask(pool, taskId, currentRetry) {
+  // 指数退避：30s * 2^currentRetry，最长 1800s（30 分钟）
+  const backoffSec = Math.min(RETRY_BACKOFF_BASE_SEC * Math.pow(2, currentRetry), 1800);
+  const nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
+
   await pool.query(
     `UPDATE tasks
      SET status = 'queued',
          retry_count = $2,
          started_at = NULL,
-         updated_at = NOW()
+         updated_at = NOW(),
+         payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
      WHERE id = $1`,
-    [taskId, currentRetry + 1]
+    [taskId, currentRetry + 1, JSON.stringify({ next_run_at: nextRunAt })]
   );
 }
 
@@ -137,10 +172,24 @@ export async function monitorPublishQueue(pool) {
     const retryable = await fetchRetryableTasks(pool);
     for (const task of retryable) {
       try {
+        // 幂等保护：若同 pipeline_id+platform 已有 completed 记录，跳过重试直接标记完成
+        const alreadyDone = await isAlreadyPublished(pool, task);
+        if (alreadyDone) {
+          await pool.query(
+            `UPDATE tasks SET status = 'completed', updated_at = NOW()
+             WHERE id = $1 AND status = 'failed'`,
+            [task.id]
+          );
+          const platform = task.payload?.platform || 'unknown';
+          console.log(`[publish-monitor] 跳过重试 ${platform}：pipeline_id=${task.payload?.pipeline_id} 已在该平台成功发布，直接标记 completed`);
+          continue;
+        }
+
         await retryTask(pool, task.id, task.retry_count);
         retried++;
         const platform = task.payload?.platform || 'unknown';
-        console.log(`[publish-monitor] 重试 content_publish: ${platform} (retry ${task.retry_count + 1}/${MAX_RETRY})`);
+        const backoffSec = Math.min(RETRY_BACKOFF_BASE_SEC * Math.pow(2, task.retry_count), 1800);
+        console.log(`[publish-monitor] 重试 content_publish: ${platform} (retry ${task.retry_count + 1}/${MAX_RETRY}, 退避 ${backoffSec}s)`);
       } catch (err) {
         console.error(`[publish-monitor] 重试任务 ${task.id} 失败: ${err.message}`);
       }
