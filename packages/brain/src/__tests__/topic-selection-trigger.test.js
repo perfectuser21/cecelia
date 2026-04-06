@@ -62,9 +62,20 @@ describe('trigger-topics: 手动触发逻辑', () => {
 
   it('窗口时间外不触发（skipped_window: true）', async () => {
     const pool = makePool(false);
-    const result = await triggerDailyTopicSelection(pool, new Date('2026-03-27T10:00:00Z'));
+    // UTC 13:00 超过补偿截止时间（UTC 12:00），应跳过
+    const result = await triggerDailyTopicSelection(pool, new Date('2026-03-27T13:00:00Z'));
     expect(result.skipped_window).toBe(true);
     expect(result.triggered).toBe(0);
+  });
+
+  it('补偿窗口内（UTC 10:00）无历史任务时正常触发', async () => {
+    generateTopics.mockResolvedValue([
+      { keyword: '补偿触发选题', content_type: 'solo-company-case', title_candidates: ['A', 'B', 'C'], hook: '开头', why_hot: '理由', priority_score: 0.8 },
+    ]);
+    const pool = makePool(false);
+    const result = await triggerDailyTopicSelection(pool, new Date('2026-03-27T10:00:00Z'));
+    expect(result.skipped_window).toBe(false);
+    expect(result.triggered).toBe(1);
   });
 
   it('migration 203 文件存在且包含 topic_selection_log 建表语句', () => {
