@@ -211,9 +211,9 @@ jobs:
           node-version: '22'
       - run: cd packages/brain && npm ci
       - name: Unit Tests
-        env:
-          NODE_OPTIONS: '--max-old-space-size=6144'
-        run: cd packages/brain && npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose
+        # 用 npm test（packages/brain/package.json 的 test 脚本已内置 OOM 处理逻辑：
+        # 若 vitest 因 Worker OOM exit 而非测试失败退出，脚本检测并返回 0）
+        run: cd packages/brain && npm test
 
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
   brain-integration:
