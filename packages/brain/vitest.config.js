@@ -139,12 +139,11 @@ export default defineConfig({
     hookTimeout: 30000,
     teardownTimeout: 30000,
     isolate: true,    // isolate:true — 每个测试文件独立模块注册表，消除跨文件 mock 污染
-    pool: 'forks',
+    pool: 'threads',
     poolOptions: {
-      forks: {
-        minForks: 1,
-        maxForks: 1,       // 单 fork 串行：465文件 × ~20MB / fork，避免 ubuntu-latest OOM
-        singleFork: true   // 复用同一进程跑所有文件，防止每文件重建进程时 exit-OOM 报 "Worker exited unexpectedly"
+      threads: {
+        minThreads: 1,
+        maxThreads: 2   // threads 模式共享内存（不 fork），内存效率远高于 forks，避免 ubuntu-latest OOM
       }
     }
   }

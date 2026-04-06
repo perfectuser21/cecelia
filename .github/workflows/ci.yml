@@ -212,8 +212,8 @@ jobs:
       - run: cd packages/brain && npm ci
       - name: Unit Tests
         env:
-          NODE_OPTIONS: '--max-old-space-size=6144'
-        run: cd packages/brain && npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose --pool=forks --maxWorkers=1
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: cd packages/brain && npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose --pool=threads --maxWorkers=2
 
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
   brain-integration:
