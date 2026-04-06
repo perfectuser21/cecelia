@@ -15,6 +15,7 @@
 
 import { callLLM } from './llm-caller.js';
 import { getHighPerformingTopics } from './topic-heat-scorer.js';
+import { queryWeeklyROI } from './content-analytics.js';
 
 // ─── 品牌画像常量 ────────────────────────────────────────────────────────────
 
@@ -55,13 +56,40 @@ async function buildHotspotContext() {
 }
 
 /**
+ * 查询近 7 日各平台高ROI内容特征，生成可注入 Prompt 的上下文段落。
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string>}
+ */
+export async function get7DayROIContext(pool) {
+  try {
+    const end = new Date();
+    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const rows = await queryWeeklyROI(pool, start, end);
+    if (!rows || rows.length === 0) return '';
+
+    const lines = rows
+      .filter(r => r.content_count > 0)
+      .map(r => `- ${r.platform}：${r.content_count}篇内容，平均 ${r.avg_views_per_content} 播放，互动率 ${r.engagement_rate}‰`)
+      .join('\n');
+
+    return lines
+      ? `\n【近7日实际发布数据参考】（基于此优先选择高互动潜力话题）\n${lines}\n`
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 构建选题生成 Prompt
  * @param {string[]} recentKeywords - 近 7 日已使用的关键词列表（用于去重）
  * @param {Array<{topic_keyword: string, heat_score: number}>} highPerformingTopics - 历史高热话题（正向参考）
  * @param {string} [hotspotContext] - 垂类热点上下文（由 buildHotspotContext 生成）
+ * @param {string} [roiContext] - 近7日ROI数据上下文（由 get7DayROIContext 生成）
  * @returns {string}
  */
-function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '') {
+function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '', roiContext = '') {
   const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const recentList = recentKeywords.length > 0
     ? recentKeywords.map(k => `- ${k}`).join('\n')
@@ -83,7 +111,7 @@ function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspo
 
 【近 7 日已用选题】（请避免重复或相似的主题）
 ${recentList}
-${highHeatSection}${hotspotContext}
+${highHeatSection}${roiContext}${hotspotContext}
 【任务要求】
 请生成 ${TARGET_TOPIC_COUNT} 个内容选题，每个选题必须：
 1. 与"一人公司/AI能力放大/小组织效能"主题强相关
@@ -116,12 +144,13 @@ ${highHeatSection}${hotspotContext}
  * @returns {Promise<Array<{keyword, content_type, title_candidates, hook, why_hot, priority_score}>>}
  */
 export async function generateTopics(pool) {
-  const [recentKeywords, highPerformingTopics, hotspotContext] = await Promise.all([
+  const [recentKeywords, highPerformingTopics, hotspotContext, roiContext] = await Promise.all([
     getRecentKeywords(pool),
     getHighPerformingTopics(pool).catch(() => []),
     buildHotspotContext(),
+    get7DayROIContext(pool).catch(() => ''),
   ]);
-  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext);
+  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext);
 
   const { text } = await callLLM('cortex', prompt, {
     maxTokens: 2048,

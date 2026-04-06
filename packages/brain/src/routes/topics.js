@@ -4,7 +4,9 @@ import {
   getActiveSuggestions,
   approveSuggestion,
   rejectSuggestion,
+  saveSuggestions,
 } from '../topic-suggestion-manager.js';
+import { generateTopics } from '../topic-selector.js';
 
 const router = Router();
 
@@ -108,6 +110,24 @@ router.post('/suggestions/:id/reject', async (req, res) => {
   } catch (err) {
     console.error('[topics-route] POST /suggestions/:id/reject 失败:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/topics/generate
+ * 手动触发选题生成（调试/测试用，不受每日触发窗口限制）
+ * 生成选题后保存为 pending 推荐，返回保存数量
+ * Body: { date?: "YYYY-MM-DD" }
+ */
+router.post('/generate', async (req, res) => {
+  try {
+    const today = req.body?.date || new Date().toISOString().slice(0, 10);
+    const topics = await generateTopics(pool);
+    const saved = await saveSuggestions(pool, topics, today);
+    res.json({ ok: true, triggered: saved, total_generated: topics.length, date: today });
+  } catch (err) {
+    console.error('[topics-route] POST /generate 失败:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
