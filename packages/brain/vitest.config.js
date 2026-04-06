@@ -143,8 +143,7 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 1,       // 单 fork 串行：465文件 × ~20MB / fork，避免 ubuntu-latest OOM
-        singleFork: true   // 复用同一进程跑所有文件，防止每文件重建进程时 exit-OOM 报 "Worker exited unexpectedly"
+        maxForks: 1        // 单 fork 串行：465文件 × ~20MB / fork，ubuntu-latest 7GB 内
       }
     }
   }
