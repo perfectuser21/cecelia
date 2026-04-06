@@ -1935,4 +1935,171 @@ router.get('/analytics/compute-usage', async (req, res) => {
   }
 });
 
+// ─── 采集仪表盘 ────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/analytics/collection-dashboard
+ * 采集仪表盘：各平台每日数据量 + 采集任务失败率 + 平均延迟 + 全平台正常率。
+ *
+ * Query params:
+ * - days: 统计天数（默认 7）
+ *
+ * Returns:
+ * {
+ *   generated_at, days, normality_rate,
+ *   platforms: [{ platform, daily_counts, total_count, failure_rate, avg_latency_min, last_collected_at, is_healthy }],
+ *   summary: { total_data_points, platforms_with_data, platforms_missing, healthy_platform_count }
+ * }
+ */
+router.get('/analytics/collection-dashboard', async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 7, 90);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // 1. 每日数据量：按平台 + 日期聚合
+    const { rows: dailyRows } = await pool.query(
+      `SELECT
+         platform,
+         DATE(collected_at AT TIME ZONE 'Asia/Shanghai')::text AS day,
+         COUNT(*)::int AS count
+       FROM content_analytics
+       WHERE collected_at >= $1
+       GROUP BY platform, day
+       ORDER BY platform, day`,
+      [since]
+    );
+
+    // 2. platform_scraper 任务统计：成功/失败数量 + 平均延迟
+    const { rows: taskRows } = await pool.query(
+      `SELECT
+         payload->>'platform'                                   AS platform,
+         COUNT(*)::int                                          AS total_tasks,
+         COUNT(*) FILTER (WHERE status = 'failed')::int        AS failed_tasks,
+         COUNT(*) FILTER (WHERE status = 'completed')::int     AS completed_tasks,
+         ROUND(
+           AVG(
+             EXTRACT(EPOCH FROM (completed_at - created_at)) / 60
+           ) FILTER (WHERE status = 'completed' AND completed_at IS NOT NULL),
+           1
+         )                                                      AS avg_latency_min
+       FROM tasks
+       WHERE task_type = 'platform_scraper'
+         AND created_at >= $1
+         AND payload->>'platform' IS NOT NULL
+       GROUP BY payload->>'platform'`,
+      [since]
+    );
+
+    // 3. 最后采集时间（从 content_analytics）
+    const { rows: lastRows } = await pool.query(
+      `SELECT platform, MAX(collected_at) AS last_collected_at
+       FROM content_analytics
+       WHERE collected_at >= $1
+       GROUP BY platform`,
+      [since]
+    );
+    const lastMap = new Map(lastRows.map(r => [r.platform, r.last_collected_at]));
+
+    // 整合数据
+    const KNOWN_PLATFORMS_DASH = [
+      'douyin', 'kuaishou', 'xiaohongshu', 'toutiao', 'toutiao-2',
+      'weibo', 'channels', 'gongzhonghao',
+    ];
+
+    // 构建日期序列（最近 days 天，精确到日）
+    const dateLabels = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      const tz = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+      const label = `${tz.getFullYear()}-${String(tz.getMonth() + 1).padStart(2, '0')}-${String(tz.getDate()).padStart(2, '0')}`;
+      dateLabels.push(label);
+    }
+
+    // 建立 dailyMap: platform → { date → count }
+    const dailyMap = new Map();
+    for (const r of dailyRows) {
+      if (!dailyMap.has(r.platform)) dailyMap.set(r.platform, new Map());
+      dailyMap.get(r.platform).set(r.day, r.count);
+    }
+
+    // 建立 taskMap: platform → stats
+    const taskMap = new Map(taskRows.map(r => [r.platform, r]));
+
+    // 合并所有出现过的平台（已知 + 实际有数据的）
+    const allPlatforms = new Set([
+      ...KNOWN_PLATFORMS_DASH,
+      ...dailyMap.keys(),
+      ...taskMap.keys(),
+    ]);
+
+    // 计算每日正常（有数据）的 platform-day 数量
+    let totalPlatformDays = 0;
+    let normalPlatformDays = 0;
+
+    const platforms = [];
+    for (const platform of allPlatforms) {
+      const dayMap = dailyMap.get(platform) || new Map();
+      const stats = taskMap.get(platform);
+
+      const daily_counts = dateLabels.map(date => ({
+        date,
+        count: dayMap.get(date) || 0,
+      }));
+
+      const total_count = daily_counts.reduce((s, d) => s + d.count, 0);
+
+      // 正常率计算：有数据的天 / 总天数
+      totalPlatformDays += days;
+      normalPlatformDays += daily_counts.filter(d => d.count > 0).length;
+
+      const total_tasks = stats ? Number(stats.total_tasks) : 0;
+      const failed_tasks = stats ? Number(stats.failed_tasks) : 0;
+      const failure_rate = total_tasks > 0
+        ? Math.round((failed_tasks / total_tasks) * 1000) / 10
+        : null;
+      const avg_latency_min = stats?.avg_latency_min != null
+        ? Number(stats.avg_latency_min)
+        : null;
+
+      const last_collected_at = lastMap.get(platform) || null;
+      const is_healthy = total_count > 0 && (failure_rate === null || failure_rate < 50);
+
+      platforms.push({
+        platform,
+        daily_counts,
+        total_count,
+        failure_rate,
+        avg_latency_min,
+        last_collected_at,
+        is_healthy,
+      });
+    }
+
+    platforms.sort((a, b) => b.total_count - a.total_count);
+
+    const normality_rate = totalPlatformDays > 0
+      ? Math.round((normalPlatformDays / totalPlatformDays) * 1000) / 10
+      : 0;
+
+    const platforms_with_data = platforms.filter(p => p.total_count > 0).map(p => p.platform);
+    const platforms_missing = KNOWN_PLATFORMS_DASH.filter(p => !platforms_with_data.includes(p));
+
+    res.json({
+      generated_at: new Date().toISOString(),
+      days,
+      normality_rate,
+      platforms,
+      summary: {
+        total_data_points: platforms.reduce((s, p) => s + p.total_count, 0),
+        platforms_with_data: platforms_with_data.length,
+        platforms_missing,
+        healthy_platform_count: platforms.filter(p => p.is_healthy).length,
+      },
+    });
+  } catch (err) {
+    console.error('[API] analytics/collection-dashboard GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
