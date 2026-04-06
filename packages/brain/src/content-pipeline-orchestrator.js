@@ -78,13 +78,16 @@ export const PUBLISH_PLATFORMS = [
 // Tick 侧：检测并启动 queued content-pipeline 任务
 // ───────────────────────────────────────────────────────
 
+/** 未配置 content_type 时的默认类型（确保 notebook_id 能从注册表获取） */
+const DEFAULT_CONTENT_TYPE = 'solo-company-case';
+
 /**
  * 从 pipeline 任务行提取关键参数（隔离 optional chaining，降低调用方复杂度）。
  */
 function _parsePipelineParams(pipeline) {
   return {
     keyword: pipeline.payload?.pipeline_keyword || pipeline.payload?.keyword || pipeline.title,
-    content_type: pipeline.payload?.content_type || null,
+    content_type: pipeline.payload?.content_type || DEFAULT_CONTENT_TYPE,
     priority: pipeline.payload?.priority || 'P1',
   };
 }

@@ -6,6 +6,7 @@
  * PUT  /api/brain/content-types/:type/config   更新指定类型配置到 DB
  * POST /api/brain/content-types/seed           从 YAML 批量导入所有类型配置到 DB
  * GET  /api/brain/pipelines                    列出 content-pipeline 任务
+ * GET  /api/brain/pipelines/daily-stats        每日产出统计（completed/in_progress/failed/queued）
  * POST /api/brain/pipelines                    创建新 content-pipeline 任务
  * POST /api/brain/pipelines/trigger-topics     手动触发今日选题生成（忽略时间窗口限制）
  * POST /api/brain/pipelines/e2e-trigger        端到端流程触发（选题→Pipeline创建→执行）
@@ -214,6 +215,51 @@ router.put('/content-types/:type/config', async (req, res) => {
     res.json({ ok: true, ...result.rows[0] });
   } catch (err) {
     console.error('[routes/content-pipeline] PUT /content-types/:type/config error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /daily-stats
+ * 每日内容产出统计：返回指定日期（默认今日，北京时间）的 content-pipeline 任务数量分布。
+ * Query: date=YYYY-MM-DD（可选，默认今日）
+ */
+router.get('/daily-stats', async (req, res) => {
+  const rawDate = req.query.date;
+  // 格式校验：只接受 YYYY-MM-DD（防止非预期输入）
+  if (rawDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    return res.status(400).json({ error: 'date 参数格式无效，请使用 YYYY-MM-DD' });
+  }
+  const dateStr = rawDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         status,
+         COUNT(*)::int AS count
+       FROM tasks
+       WHERE task_type = 'content-pipeline'
+         AND created_at >= ($1::date)::timestamptz
+         AND created_at <  ($1::date + INTERVAL '1 day')::timestamptz
+       GROUP BY status`,
+      [dateStr]
+    );
+
+    const stats = { completed: 0, in_progress: 0, failed: 0, queued: 0 };
+    for (const row of result.rows) {
+      if (row.status in stats) stats[row.status] = row.count;
+    }
+
+    res.json({
+      date: dateStr,
+      completed: stats.completed,
+      in_progress: stats.in_progress,
+      failed: stats.failed,
+      queued: stats.queued,
+      total: result.rows.reduce((s, r) => s + r.count, 0),
+    });
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /daily-stats error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

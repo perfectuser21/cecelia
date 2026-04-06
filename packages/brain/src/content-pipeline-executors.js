@@ -161,6 +161,52 @@ function parseResearchFindings(raw, keyword) {
 
 // ─── 1. Research ────────────────────────────────────────────
 
+/**
+ * LLM 直接研究降级路径：无 notebook_id 时，用 callLLM 生成 findings，
+ * 避免 pipeline 因 notebook_id 未配置而整体失败。
+ * @param {string} keyword - 研究关键词
+ * @param {string} contentType - 内容类型
+ * @param {object|null} typeConfig - 内容类型配置（含 template.research_prompt）
+ * @returns {Promise<{success: boolean, findings_path?: string, findings_count?: number, error?: string}>}
+ */
+async function _executeResearchViaLLM(keyword, contentType, typeConfig) {
+  const dir = join(OUTPUT_BASE, 'research', `${contentType}-${slug(keyword)}-${today()}`);
+  ensureDir(dir);
+
+  const researchPrompt = buildResearchPrompt(typeConfig, keyword);
+  const fullPrompt = `你是内容研究专家，负责为内容创作提供素材。\n\n请围绕主题"${keyword}"，${researchPrompt}\n\n输出格式（每条用 **N. 开头）：\n**1. [发现标题]\n[详细内容，100-300字，含具体数据或案例]\n\n**2. [发现标题]\n...\n\n请至少输出5条发现，每条须与品牌方向（一人公司、AI能力放大、小组织效率）相关。`;
+
+  let text;
+  try {
+    const result = await _callLLMWithFallback('thalamus', fullPrompt, { maxTokens: 3000, timeout: 90000 });
+    text = result.text;
+  } catch (err) {
+    console.error(`[research] LLM fallback 调用失败: ${err.message}`);
+    return { success: false, error: `LLM research failed: ${err.message}` };
+  }
+
+  const parts = (text || '').split(/\n\*\*\d+\./).filter(Boolean);
+  const findings = parts.map((p, i) => ({
+    id: `f${String(i + 1).padStart(3, '0')}`,
+    title: p.split('\n')[0]?.replace(/\*+/g, '').trim().substring(0, 100) || `发现${i + 1}`,
+    content: p.trim(),
+    source: 'LLM',
+    brand_relevance: 3,
+    used_in: [],
+  })).filter(f => f.content.length > 50);
+
+  if (findings.length === 0) {
+    return { success: false, error: 'LLM research 返回空内容' };
+  }
+
+  const fp = join(dir, 'findings.json');
+  const data = { keyword, series: contentType, notebook_id: null, source: 'llm', extracted_at: today(), total_findings: findings.length, findings };
+  writeFileSync(fp, JSON.stringify(data, null, 2), 'utf-8');
+
+  console.log(`[research] LLM fallback 完成: ${findings.length} findings → ${fp}`);
+  return { success: true, findings_path: fp, findings_count: findings.length };
+}
+
 export async function executeResearch(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
   const notebookId = task.payload?.notebook_id;
@@ -169,9 +215,10 @@ export async function executeResearch(task) {
   console.log(`[research] 开始: ${keyword} (notebook=${notebookId || '无'})`);
 
   if (!notebookId) {
-    const errMsg = 'notebook_id 未配置，请在系列设置中配置 NotebookLM notebook_id';
-    console.error(`[research] FAIL: ${errMsg}`);
-    return { success: false, error: errMsg };
+    console.warn(`[research] notebook_id 未配置，降级到 LLM 直接研究: ${keyword}`);
+    let typeConfig = null;
+    try { typeConfig = await getContentType(contentType); } catch { /* 不可用，使用默认 prompt */ }
+    return await _executeResearchViaLLM(keyword, contentType, typeConfig);
   }
 
   let typeConfig = null;
