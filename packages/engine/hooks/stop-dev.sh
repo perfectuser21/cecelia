@@ -103,6 +103,7 @@ fi
 # Bug fix v16.2.0: 残留 .dev-mode 含 cleanup_done: true 时，harness 新会话不能早退
 HARNESS_MODE_IN_FILE=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
 if [[ "$HARNESS_MODE_IN_FILE" != "true" ]] && grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
+    # harness 模式已在入口过滤（HARNESS_MODE_IN_FILE != true），此处仅 non-harness 可达
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
     jq -n '{"decision":"allow","reason":"PR 已合并且 Stage 4 完成，工作流结束"}'
     exit 0
