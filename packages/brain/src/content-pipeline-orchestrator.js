@@ -84,7 +84,7 @@ export const PUBLISH_PLATFORMS = [
 function _parsePipelineParams(pipeline) {
   return {
     keyword: pipeline.payload?.pipeline_keyword || pipeline.payload?.keyword || pipeline.title,
-    content_type: pipeline.payload?.content_type || null,
+    content_type: pipeline.payload?.content_type || 'solo-company-case',
     priority: pipeline.payload?.priority || 'P1',
   };
 }

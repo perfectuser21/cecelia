@@ -163,19 +163,21 @@ function parseResearchFindings(raw, keyword) {
 
 export async function executeResearch(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
-  const notebookId = task.payload?.notebook_id;
   const contentType = task.payload?.content_type || 'solo-company-case';
+
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
+
+  // notebook_id 优先取 payload，次选 content type 配置（支持无 content_type 的旧 pipeline）
+  const notebookId = task.payload?.notebook_id || typeConfig?.notebook_id;
 
   console.log(`[research] 开始: ${keyword} (notebook=${notebookId || '无'})`);
 
   if (!notebookId) {
-    const errMsg = 'notebook_id 未配置，请在系列设置中配置 NotebookLM notebook_id';
+    const errMsg = `notebook_id 未配置，内容类型 "${contentType}" 请在 content-types YAML 中配置 notebook_id`;
     console.error(`[research] FAIL: ${errMsg}`);
     return { success: false, error: errMsg };
   }
-
-  let typeConfig = null;
-  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
 
   const dir = join(OUTPUT_BASE, 'research', `${contentType}-${slug(keyword)}-${today()}`);
   ensureDir(dir);
