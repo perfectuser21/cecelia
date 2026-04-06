@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.2.0
+# Stop Hook: Claude Code 协议适配器 v16.3.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.2.0 — Bug fix: harness 模式跳过 cleanup_done 残留文件早退（与 devloop-check v4.2.0 同步）
+# 版本: v16.3.0 — Fix: cleanup_done harness guard 注释补全，SC-2 验证可读性修复
 
 set -euo pipefail
 
@@ -103,6 +103,7 @@ fi
 # Bug fix v16.2.0: 残留 .dev-mode 含 cleanup_done: true 时，harness 新会话不能早退
 HARNESS_MODE_IN_FILE=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
 if [[ "$HARNESS_MODE_IN_FILE" != "true" ]] && grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
+    # harness guard: harness_mode=true 时跳过此 cleanup_done 早退路径
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
     jq -n '{"decision":"allow","reason":"PR 已合并且 Stage 4 完成，工作流结束"}'
     exit 0

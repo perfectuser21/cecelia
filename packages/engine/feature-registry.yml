@@ -13,3 +13,10 @@ changelog:
     description: "worktree-manage.sh: 上限满时自动 cleanup 已合并 worktree + MAX_WORKTREES 10→15"
     files:
       - "skills/dev/scripts/worktree-manage.sh"
+  - version: "14.3.4"
+    date: "2026-04-05"
+    skill: "stop-dev"
+    change: "fix"
+    description: "stop-dev.sh: cleanup_done harness guard 注释补全，SC-2 验证脚本可正确检测 harness 保护"
+    files:
+      - "hooks/stop-dev.sh"
