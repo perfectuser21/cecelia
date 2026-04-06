@@ -16,6 +16,8 @@ import {
   getTopContentByPlatform,
   upsertPipelinePublishStats,
 } from '../content-analytics.js';
+import { scheduleDailyScrape } from '../daily-scrape-scheduler.js';
+import { getAccountUsage } from '../account-usage.js';
 
 const router = Router();
 
@@ -1768,6 +1770,117 @@ router.get('/analytics/platform-summary', async (req, res) => {
     });
   } catch (err) {
     console.error('[API] analytics/platform-summary GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── 每日平台采集手动触发 ──────────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/analytics/trigger-platform-scrape
+ * 立即为所有平台创建 platform_scraper 任务（跳过时间窗口检查）。
+ * 用于初始数据填充和手动补采。
+ *
+ * Returns: { created: number, skipped: number }
+ */
+router.post('/analytics/trigger-platform-scrape', async (req, res) => {
+  try {
+    const { scheduled, skipped } = await scheduleDailyScrape(pool, { force: true });
+    res.status(201).json({ created: scheduled, skipped });
+  } catch (err) {
+    console.error('[API] analytics/trigger-platform-scrape POST 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── 算力消耗快照 ──────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/analytics/compute-snapshot
+ * 立即将当前账号用量快照写入 llm_usage_snapshots。
+ * tick 每日调用一次；也支持手动触发。
+ *
+ * Returns: { saved: number }
+ */
+router.post('/analytics/compute-snapshot', async (req, res) => {
+  try {
+    const usage = await getAccountUsage(true);
+    const accounts = Object.values(usage);
+    let saved = 0;
+    for (const acc of accounts) {
+      await pool.query(
+        `INSERT INTO llm_usage_snapshots
+           (account_id, five_hour_pct, seven_day_pct, seven_day_sonnet_pct, is_spending_capped, recorded_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())`,
+        [
+          acc.account_id,
+          acc.five_hour_pct || 0,
+          acc.seven_day_pct || 0,
+          acc.seven_day_sonnet_pct || 0,
+          acc.is_spending_capped || false,
+        ]
+      );
+      saved++;
+    }
+    res.json({ saved });
+  } catch (err) {
+    console.error('[API] analytics/compute-snapshot POST 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/analytics/compute-usage
+ * 查询最近 N 天的算力消耗历史快照。
+ *
+ * Query params:
+ * - days: 统计天数（默认 7）
+ * - account_id: 筛选特定账号（可选）
+ *
+ * Returns: { snapshots: Array, summary: { avg_five_hour_pct, avg_seven_day_pct } }
+ */
+router.get('/analytics/compute-usage', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const accountId = req.query.account_id;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const params = [since];
+    const accountClause = accountId ? `AND account_id = $2` : '';
+    if (accountId) params.push(accountId);
+
+    const { rows } = await pool.query(
+      `SELECT
+         account_id,
+         ROUND(AVG(five_hour_pct)::numeric, 1)         AS avg_five_hour_pct,
+         ROUND(AVG(seven_day_pct)::numeric, 1)         AS avg_seven_day_pct,
+         ROUND(AVG(seven_day_sonnet_pct)::numeric, 1)  AS avg_sonnet_pct,
+         ROUND(MAX(five_hour_pct)::numeric, 1)         AS peak_five_hour_pct,
+         COUNT(*)::int                                  AS snapshot_count,
+         MIN(recorded_at)                               AS first_recorded_at,
+         MAX(recorded_at)                               AS last_recorded_at
+       FROM llm_usage_snapshots
+       WHERE recorded_at >= $1
+         ${accountClause}
+       GROUP BY account_id
+       ORDER BY account_id`,
+      params
+    );
+
+    const snapshots = rows.map(r => ({
+      account_id: r.account_id,
+      avg_five_hour_pct: Number(r.avg_five_hour_pct),
+      avg_seven_day_pct: Number(r.avg_seven_day_pct),
+      avg_sonnet_pct: Number(r.avg_sonnet_pct),
+      peak_five_hour_pct: Number(r.peak_five_hour_pct),
+      snapshot_count: Number(r.snapshot_count),
+      first_recorded_at: r.first_recorded_at,
+      last_recorded_at: r.last_recorded_at,
+    }));
+
+    res.json({ since: since.toISOString(), days, snapshots });
+  } catch (err) {
+    console.error('[API] analytics/compute-usage GET 失败:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
