@@ -24,6 +24,43 @@ const _require = createRequire(import.meta.url);
 import { callLLM } from './llm-caller.js';
 import { listSources, deleteSource } from './notebook-adapter.js';
 
+// ─── LLM Fallback Helper ─────────────────────────────────────
+// 当主 LLM（thalamus profile 的 anthropic-api/haiku）失败时，
+// 若错误特征匹配 Codex/OpenAI 配额耗尽或连接断开，自动 fallback 到
+// claude-sonnet-4-6（anthropic-api 直连），避免整个 pipeline 降级静态模板。
+const CLAUDE_FALLBACK_MODEL    = 'claude-sonnet-4-6';
+const CLAUDE_FALLBACK_PROVIDER = 'anthropic-api';
+
+function _isFallbackError(err) {
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('usage limit') ||
+    msg.includes('quota') ||
+    msg.includes('stream disconnected') ||
+    msg.includes('chatgpt.com')
+  );
+}
+
+async function _callLLMWithFallback(agentId, prompt, options = {}) {
+  try {
+    return await callLLM(agentId, prompt, options);
+  } catch (primaryErr) {
+    if (_isFallbackError(primaryErr)) {
+      console.warn(
+        `[content-pipeline] ${agentId} 主 LLM 失败（${primaryErr.message.substring(0, 80)}），` +
+        `自动 fallback 到 ${CLAUDE_FALLBACK_MODEL}`
+      );
+      return await callLLM(agentId, prompt, {
+        ...options,
+        model:    CLAUDE_FALLBACK_MODEL,
+        provider: CLAUDE_FALLBACK_PROVIDER,
+      });
+    }
+    throw primaryErr;
+  }
+}
+// ─────────────────────────────────────────────────────────────
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ─── 配置 ───────────────────────────────────────────────────
@@ -238,7 +275,7 @@ const MIN_ARTICLE_LEN = 500;
 async function _executeLLMPath(keyword, top, typeConfig, previousFeedback, dir) {
   try {
     const prompt = _buildCopywritingPrompt(keyword, top, typeConfig, previousFeedback);
-    const { text } = await callLLM('thalamus', prompt, { maxTokens: 4096, timeout: 120000 });
+    const { text } = await _callLLMWithFallback('thalamus', prompt, { maxTokens: 4096, timeout: 120000 });
     const socialMatch = text.match(/=== 社交媒体文案 ===([\s\S]*?)(?:=== 公众长文 ===|=== 公众号长文 ===|$)/);
     const articleMatch = text.match(/=== 公众[号]?长文 ===([\s\S]*?)$/);
     const socialCopy = socialMatch?.[1]?.trim();
@@ -362,7 +399,7 @@ export async function executeCopyReview(task) {
 
       const prompt = `${typeConfig.template.review_prompt}\n\n## 待审查内容\n${allText.substring(0, 3000)}\n\n## 审查规则\n${rulesDesc}\n\n请对每条规则逐一评审，严格按 JSON 格式返回：\n{\n  "rule_scores": [\n    { "id": "rule_id", "score": 0, "pass": true, "comment": "评审意见" }\n  ],\n  "overall_pass": true,\n  "quality_score": 7,\n  "summary": "总体评审意见"\n}`;
 
-      const { text } = await callLLM('thalamus', prompt, { maxTokens: 1024, timeout: 60000 });
+      const { text } = await _callLLMWithFallback('thalamus', prompt, { maxTokens: 1024, timeout: 60000 });
 
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -469,7 +506,7 @@ export async function executeGenerate(task) {
 
       const prompt = `${generatePrompt.replace(/\{keyword\}/g, keyword)}\n\n## 调研素材\n${findingsSummary}\n\n请为 ${imageCount} 张信息图生成具体内容描述，严格按 JSON 格式返回：\n{\n  "cards": [\n    { "index": 1, "title": "卡片标题", "content": "卡片主体内容（50-80字）", "highlight": "高亮数据或引言" }\n  ]\n}`;
 
-      const { text } = await callLLM('thalamus', prompt, { maxTokens: 2048, timeout: 60000 });
+      const { text } = await _callLLMWithFallback('thalamus', prompt, { maxTokens: 2048, timeout: 60000 });
 
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -539,7 +576,7 @@ export async function executeImageReview(task) {
       if (contentForReview) {
         const prompt = `${imageReviewPrompt.replace(/\{keyword\}/g, keyword)}\n\n## 待审核内容\n${contentForReview.substring(0, 2000)}\n\n请评审内容质量，严格按 JSON 格式返回：\n{\n  "review_passed": true,\n  "issues": [],\n  "suggestions": ["建议1"],\n  "quality_score": 8\n}`;
 
-        const { text } = await callLLM('thalamus', prompt, { maxTokens: 512, timeout: 45000 });
+        const { text } = await _callLLMWithFallback('thalamus', prompt, { maxTokens: 512, timeout: 45000 });
 
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
