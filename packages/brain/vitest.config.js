@@ -99,7 +99,6 @@ export default defineConfig({
       'src/__tests__/tick-layer2-health.test.js',
       'src/__tests__/tick-rampup.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
-      'src/__tests__/topic-selection-scheduler.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
       'src/__tests__/watchdog.test.js',
       'src/__tests__/zombie-cleaner.test.js',

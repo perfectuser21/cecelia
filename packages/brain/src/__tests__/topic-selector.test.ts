@@ -5,6 +5,12 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+
+// Mock llm-caller.js 以阻断 account-usage.js → db.js → dotenv/config 的导入链
+vi.mock('../llm-caller.js', () => ({
+  callLLM: vi.fn().mockResolvedValue({ text: '' }),
+}));
+
 import { get7DayROIContext } from '../topic-selector.js';
 
 // ─── get7DayROIContext 降级行为 ────────────────────────────────────────────────
