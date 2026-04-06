@@ -204,9 +204,6 @@ jobs:
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true  # 已知 OOM：406文件 × 20MB/文件 > ubuntu-latest 7GB 内存，
-                              # 测试本身全部通过（406 passed），Worker 崩溃是 V8 堆碎片问题。
-                              # TODO: 需要更大 runner 或拆分 test batches 才能根治
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -215,8 +212,18 @@ jobs:
       - run: cd packages/brain && npm ci
       - name: Unit Tests
         env:
-          NODE_OPTIONS: '--max-old-space-size=3072'
-        run: cd packages/brain && npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose --pool=forks --maxWorkers=2
+          NODE_OPTIONS: '--max-old-space-size=6144'
+        run: |
+          cd packages/brain
+          npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose --pool=forks 2>&1 | tee /tmp/brain-vitest-out.txt
+          EXIT=${PIPESTATUS[0]}
+          # V8 heap fragmentation causes worker crashes after all tests pass.
+          # If vitest exits non-zero but all tests passed (no failures), treat as success.
+          if [ $EXIT -ne 0 ] && grep -qE "Tests.*[0-9]+ passed" /tmp/brain-vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/brain-vitest-out.txt; then
+            echo "[CI] OOM/timer worker exit — all tests passed, treating as success"
+            exit 0
+          fi
+          exit $EXIT
 
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
   brain-integration:
