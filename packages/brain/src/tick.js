@@ -36,6 +36,7 @@ import { generateDailyReport } from './daily-report-generator.js';
 import { generateWeeklyReport } from './weekly-report-generator.js';
 import { monitorPublishQueue } from './publish-monitor.js';
 import { schedulePostPublishCollection } from './post-publish-data-collector.js';
+import { syncSocialMediaData } from './social-media-sync.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
@@ -2807,6 +2808,10 @@ async function executeTick() {
   // 10.17d 发布后数据回收（每 tick，触发 4h 后的平台数据采集，fire-and-forget）
   Promise.resolve().then(() => schedulePostPublishCollection(pool))
     .catch(e => console.warn('[tick] 发布后数据回收失败:', e.message));
+
+  // 10.17e social_media_raw 数据同步（每 tick，将本机 raw DB 同步到 content_analytics，fire-and-forget）
+  Promise.resolve().then(() => syncSocialMediaData(pool))
+    .catch(e => console.warn('[tick] social-media-sync 失败:', e.message));
 
   // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
   Promise.resolve().then(() => runSuggestionCycle(pool))

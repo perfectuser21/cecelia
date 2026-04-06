@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
+import { syncSocialMediaData, getCollectionCoverage } from '../social-media-sync.js';
 import { getMonthlyPRCount, getMonthlyPRsByKR, getPRSuccessRate, getPRTrend } from '../stats.js';
 import { searchRelevantAnalyses } from '../cortex.js';
 import {
@@ -1768,6 +1769,55 @@ router.get('/analytics/platform-summary', async (req, res) => {
     });
   } catch (err) {
     console.error('[API] analytics/platform-summary GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── 采集覆盖状态 ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/analytics/collection-coverage
+ * 查询各平台在 content_analytics 中的数据覆盖状态。
+ *
+ * 返回 8 个已知平台的数据条数、最后采集时间、是否新鲜（7天内）。
+ * 供选题引擎感知哪些平台数据缺失，自动触发补采。
+ */
+router.get('/analytics/collection-coverage', async (req, res) => {
+  try {
+    const coverage = await getCollectionCoverage(pool);
+    const missing = coverage.filter(p => !p.has_data).map(p => p.platform);
+    const stale   = coverage.filter(p => p.has_data && !p.is_fresh).map(p => p.platform);
+
+    res.json({
+      platforms: coverage,
+      summary: {
+        total:   coverage.length,
+        has_data: coverage.filter(p => p.has_data).length,
+        missing,
+        stale,
+        coverage_pct: coverage.length > 0
+          ? Math.round(coverage.filter(p => p.has_data).length / coverage.length * 100)
+          : 0,
+      },
+    });
+  } catch (err) {
+    console.error('[API] analytics/collection-coverage GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/analytics/social-media-sync
+ * 手动触发从 social_media_raw 到 content_analytics 的数据同步。
+ *
+ * 无需 body。返回同步结果: { synced, skipped, source_count }
+ */
+router.post('/analytics/social-media-sync', async (req, res) => {
+  try {
+    const result = await syncSocialMediaData(pool);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] analytics/social-media-sync POST 失败:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
