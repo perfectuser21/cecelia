@@ -5,7 +5,7 @@
  * 每次 Tick 末尾调用 triggerDailyTopicSelection()，内部判断是否到达每日触发时间（01:00 UTC = 09:00 北京时间）。
  * 如果是，则调用 topic-selector.js 生成选题，并为每个选题创建 content-pipeline task。
  *
- * 触发窗口：UTC 01:00 - 01:05（北京时间 09:00 - 09:05）
+ * 触发窗口：UTC 01:00 - 20:00（catch-up 机制：若窗口被 Brain 重启/CI 部署错过，后续 tick 可补触发）
  * 去重策略：同一天内已有 payload.trigger_source = daily_topic_selection 的 content-pipeline task → 跳过
  * 限流：每日最多创建 MAX_DAILY_TOPICS 条 content-pipeline tasks
  */
@@ -18,8 +18,11 @@ import { saveSuggestions } from './topic-suggestion-manager.js';
 /** 每日触发时间（UTC 小时）= 北京时间 09:00 */
 const DAILY_TOPIC_HOUR_UTC = 1;
 
-/** 触发窗口分钟数（与 daily-review-scheduler.js 保持一致） */
+/** 触发窗口分钟数（主窗口） */
 const TRIGGER_WINDOW_MINUTES = 5;
+
+/** catch-up 窗口截止（UTC 小时）：若主窗口被错过，允许在此时刻前的任意 tick 补触发 */
+const CATCH_UP_END_HOUR_UTC = 20;
 
 /** 每日最多创建的 content-pipeline tasks 数量 */
 const MAX_DAILY_TOPICS = 10;
@@ -94,14 +97,25 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────────
 
 /**
- * 判断当前时间是否在每日触发窗口内（UTC 01:00 - 01:05）
+ * 判断当前时间是否在每日触发窗口内。
+ *
+ * 主窗口：UTC 01:00 - 01:05（北京时间 09:00-09:05）
+ * catch-up：UTC 01:05 - 20:00，若主窗口被 Brain 重启/CI 部署错过，
+ *           后续 tick 仍可触发。hasTodayTopics() 负责去重，防止重复生成。
+ *
  * @param {Date} now
  * @returns {boolean}
  */
-function isInTriggerWindow(now) {
+export function isInTriggerWindow(now) {
   const utcHour = now.getUTCHours();
   const utcMinute = now.getUTCMinutes();
-  return utcHour === DAILY_TOPIC_HOUR_UTC && utcMinute < TRIGGER_WINDOW_MINUTES;
+  // 主窗口：UTC 01:00-01:05
+  if (utcHour === DAILY_TOPIC_HOUR_UTC && utcMinute < TRIGGER_WINDOW_MINUTES) return true;
+  // catch-up 窗口：UTC 01:05+ 至 CATCH_UP_END_HOUR_UTC（含同一小时内主窗口结束后的分钟）
+  const pastPrimary = utcHour > DAILY_TOPIC_HOUR_UTC ||
+    (utcHour === DAILY_TOPIC_HOUR_UTC && utcMinute >= TRIGGER_WINDOW_MINUTES);
+  if (pastPrimary && utcHour < CATCH_UP_END_HOUR_UTC) return true;
+  return false;
 }
 
 /**
