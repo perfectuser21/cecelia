@@ -561,9 +561,11 @@ describe('H: Haiku 独立模式', () => {
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
+      // account2 使用 resetsInMin=60（比 120 短），elapsedMs 更大 → sevenDayDeficit 更高
+      // 确保 account2 在 sevenDayDeficit DESC 排序中排第一，避免相同 deficit 时的 flaky 排序
       const rows = [
         makeRow('account1', 50, 120),
-        makeRow('account2', 10, 120),
+        makeRow('account2', 10, 60),
         makeRow('account3', 30, 120),
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
