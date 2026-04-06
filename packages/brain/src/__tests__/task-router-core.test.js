@@ -339,7 +339,7 @@ describe('routeTaskCreate - task_type → skill + location 映射', () => {
     { task_type: 'dept_heartbeat',     location: 'us',   skill: '/cecelia' },
     { task_type: 'architecture_design',location: 'us',   skill: '/architect design' },
     { task_type: 'architecture_scan',  location: 'us',   skill: '/architect scan' },
-    { task_type: 'arch_review',        location: 'xian', skill: '/arch-review review' },
+    { task_type: 'arch_review',        location: 'us',   skill: '/arch-review review' },
     { task_type: 'initiative_verify',  location: 'us',   skill: '/arch-review verify' },
   ];
 
