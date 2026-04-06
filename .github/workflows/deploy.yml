@@ -243,6 +243,9 @@ jobs:
   deploy:
     name: Trigger Deploy
     needs: [changes, risk_gate, staging_deploy]
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     # Fast Lane: risk_gate 通过（staging_deploy 跳过）
     # Safe Lane: staging_deploy 通过（risk_gate 跳过）
     # always() 配合条件判断，确保两种 lane 都能触发
