@@ -370,10 +370,101 @@ async function _handleImageReviewComplete({ task, pipeline, keyword, content_typ
 }
 
 /**
- * content-export 完成 → 创建 content_publish 任务（8 平台）+ 标记 pipeline completed
+ * Pipeline content_type → zenithjoy.works content_type 映射。
+ * works 表 CHECK 约束：只允许 long_form_article / image_text / video。
+ */
+function _mapToWorksContentType(pipelineContentType) {
+  if (!pipelineContentType) return 'image_text';
+  const t = pipelineContentType.toLowerCase();
+  if (t.includes('video')) return 'video';
+  if (t.includes('article') || t.includes('long') || t.includes('wechat')) return 'long_form_article';
+  return 'image_text';
+}
+
+/**
+ * Pipeline 完成后写入 zenithjoy.works 作品库（幂等：同一 pipeline_id 不重复写）。
+ *
+ * 字段映射：
+ *   pipeline_id       → content_id（幂等键，UNIQUE）
+ *   pipeline_keyword  → title
+ *   article.md 正文   → body（读取失败不阻断）
+ *   content_type      → content_type（经 _mapToWorksContentType 映射）
+ *   export_path(NAS)  → nas_path
+ *   card_files[0] URL → cover_image
+ *   card_files[] URL  → media_files
+ *
+ * @param {import('pg').Pool} dbPool
+ * @param {object} pipeline - 父 pipeline 任务行
+ * @param {object} exportTask - content-export 子任务行（payload 含 export_path, card_files）
+ * @returns {Promise<string|null>} 新建或已存在的 works.id
+ */
+async function _writeToWorksTable(dbPool, pipeline, exportTask) {
+  const pipelineId = pipeline.id;
+  const keyword = pipeline.payload?.keyword || exportTask.payload?.pipeline_keyword || pipeline.title;
+  const rawContentType = pipeline.payload?.content_type || exportTask.payload?.content_type || null;
+  const worksContentType = _mapToWorksContentType(rawContentType);
+  const exportPath = exportTask.payload?.export_path || null;
+  const cardFiles = exportTask.payload?.card_files || [];
+
+  // 幂等检查：同一 pipeline_id 不写两次
+  const existing = await dbPool.query(
+    `SELECT id FROM zenithjoy.works WHERE content_id = $1 LIMIT 1`,
+    [pipelineId]
+  );
+  if (existing.rows.length > 0) {
+    console.log(`[content-pipeline-orchestrator] zenithjoy.works 已有记录(pipeline=${pipelineId.substring(0, 8)})，跳过写入`);
+    return existing.rows[0].id;
+  }
+
+  // 尝试读取本地 article.md 正文（失败不阻断）
+  let body = null;
+  try {
+    const { readFileSync, existsSync } = await import('fs');
+    const { join } = await import('path');
+    const OUTPUT_BASE = join(process.env.HOME || '/Users/administrator', 'claude-output');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const keySlug = keyword.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u4e00-\u9fa5-]/g, '');
+    const candidatePaths = [
+      join(OUTPUT_BASE, `${dateStr}-${keySlug}`, 'article', 'article.md'),
+      join(OUTPUT_BASE, keySlug, 'article', 'article.md'),
+    ];
+    for (const p of candidatePaths) {
+      if (existsSync(p)) { body = readFileSync(p, 'utf-8'); break; }
+    }
+  } catch { /* 读取失败不阻断写入 */ }
+
+  // cover image 和 media_files：基于 card_files 构建 URL
+  const IMAGE_BASE_URL = 'http://38.23.47.81:9998/images/';
+  const coverImage = cardFiles.length > 0 ? `${IMAGE_BASE_URL}${cardFiles[0]}` : null;
+  const mediaFiles = cardFiles.map(f => `${IMAGE_BASE_URL}${f}`);
+
+  try {
+    const result = await dbPool.query(
+      `INSERT INTO zenithjoy.works
+         (content_id, title, body, content_type, nas_path, cover_image, media_files, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'ready', NOW())
+       RETURNING id`,
+      [pipelineId, keyword, body, worksContentType, exportPath, coverImage, JSON.stringify(mediaFiles)]
+    );
+    const worksId = result.rows[0].id;
+    console.log(`[content-pipeline-orchestrator] zenithjoy.works 写入成功: id=${worksId} title="${keyword}"`);
+    return worksId;
+  } catch (err) {
+    // 写入失败不阻断 pipeline 完成流程
+    console.error(`[content-pipeline-orchestrator] zenithjoy.works 写入失败（不阻断）: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * content-export 完成 → 写入 zenithjoy.works + 创建 content_publish 任务（8 平台）+ 标记 pipeline completed
  */
 async function _handleExportComplete({ task, pipeline }, dbPool) {
   const pipelineId = pipeline.id;
+
+  // 写入作品库（幂等，失败不阻断后续流程）
+  await _writeToWorksTable(dbPool, pipeline, task);
+
   await _createPublishJobs(dbPool, pipeline, task);
 
   // 将 export_path 回写到 pipeline 的 payload

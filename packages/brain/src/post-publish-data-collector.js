@@ -91,7 +91,165 @@ export async function writePipelinePublishStats(pool, { pipelineId, publishTaskI
 }
 
 /**
- * 每 tick 调用：扫描已完成 content_publish 任务，触发数据采集任务。
+ * 查询排队中的 platform_scraper 任务（Brain 内部处理队列）。
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Array>}
+ */
+async function fetchQueuedScraperTasks(pool) {
+  const { rows } = await pool.query(
+    `SELECT id, payload, created_at
+     FROM tasks
+     WHERE task_type = $1
+       AND status = 'queued'
+     ORDER BY created_at ASC
+     LIMIT 10`,
+    [SCRAPER_TASK_TYPE]
+  );
+  return rows;
+}
+
+/**
+ * 将采集指标写回原始 content_publish 任务的 payload。
+ * 日报 fetchYesterdayEngagementData() 直接从 content_publish.payload 读
+ * views/likes/comments，因此必须回填此处。
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} publishTaskId
+ * @param {object} metrics - { views, likes, comments, shares }
+ */
+async function writeBackToPublishTask(pool, publishTaskId, metrics) {
+  const { views = 0, likes = 0, comments = 0, shares = 0 } = metrics;
+  await pool.query(
+    `UPDATE tasks
+     SET payload    = payload || $1::jsonb,
+         updated_at = NOW()
+     WHERE id = $2`,
+    [
+      JSON.stringify({
+        views,
+        likes,
+        comments,
+        shares,
+        stats_collected_at: new Date().toISOString(),
+      }),
+      publishTaskId,
+    ]
+  );
+}
+
+/**
+ * 将 platform_scraper 任务标记为已完成，并在 payload 记录处理结果。
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} scraperTaskId
+ * @param {object} result
+ */
+async function completeScraperTask(pool, scraperTaskId, result) {
+  await pool.query(
+    `UPDATE tasks
+     SET status       = 'completed',
+         completed_at = NOW(),
+         updated_at   = NOW(),
+         payload      = payload || $1::jsonb
+     WHERE id = $2`,
+    [
+      JSON.stringify({ result, processed_by: 'brain-internal-collector' }),
+      scraperTaskId,
+    ]
+  );
+}
+
+/**
+ * Brain 内部处理排队的 platform_scraper 任务。
+ *
+ * 设计原因：platform_scraper 路由到 'cn' 机器（原设计）在 MACHINE_REGISTRY
+ * 中不存在，executor 无法派发。改为 Brain tick 内直接处理：
+ *   1. 优先读 pipeline_publish_stats（N8N 若已采集到真实数据则回填）
+ *   2. 无真实数据时写 placeholder（views/likes/comments=0）保持链路畅通
+ *   3. 写回 content_publish.payload → 日报立即可读
+ *   4. 写入 pipeline_publish_stats 占位（避免重复触发）
+ *   5. 标记 scraper 任务 completed
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{processed: number}>}
+ */
+export async function processPendingScraperTasks(pool) {
+  let processed = 0;
+
+  try {
+    const scraperTasks = await fetchQueuedScraperTasks(pool);
+
+    for (const task of scraperTasks) {
+      const publishTaskId = task.payload?.source_publish_task_id;
+      const platform = task.payload?.platform;
+      const pipelineId = task.payload?.pipeline_id;
+
+      if (!publishTaskId) {
+        console.warn(`[post-publish-collector] scraper task ${task.id} 缺少 source_publish_task_id，跳过`);
+        await completeScraperTask(pool, task.id, { skipped: true, reason: 'missing_publish_task_id' });
+        continue;
+      }
+
+      try {
+        // 优先读 N8N 已采集的真实数据
+        const { rows: statsRows } = await pool.query(
+          `SELECT views, likes, comments, shares
+           FROM pipeline_publish_stats
+           WHERE publish_task_id = $1
+           ORDER BY scraped_at DESC
+           LIMIT 1`,
+          [publishTaskId]
+        );
+
+        let metrics;
+        if (statsRows.length > 0) {
+          metrics = {
+            views:    statsRows[0].views    || 0,
+            likes:    statsRows[0].likes    || 0,
+            comments: statsRows[0].comments || 0,
+            shares:   statsRows[0].shares   || 0,
+          };
+          console.log(`[post-publish-collector] 回填真实数据 publish=${publishTaskId} platform=${platform} views=${metrics.views}`);
+        } else {
+          // 无真实数据：写 placeholder，保证日报链路不中断
+          metrics = { views: 0, likes: 0, comments: 0, shares: 0 };
+          console.log(`[post-publish-collector] 写入 placeholder 数据 publish=${publishTaskId} platform=${platform}`);
+
+          // 写入 pipeline_publish_stats 占位行，防重复采集
+          if (pipelineId) {
+            try {
+              await writePipelinePublishStats(pool, { pipelineId, publishTaskId, platform, metrics });
+            } catch (statsErr) {
+              // 唯一约束冲突时忽略（已有记录）
+              const isDup = statsErr.message?.includes('duplicate') || statsErr.message?.includes('unique');
+              if (!isDup) {
+                console.warn(`[post-publish-collector] writePipelinePublishStats 失败: ${statsErr.message}`);
+              }
+            }
+          }
+        }
+
+        // 写回 content_publish.payload，让日报能读到 views/likes/comments
+        await writeBackToPublishTask(pool, publishTaskId, metrics);
+
+        // 标记 scraper 任务完成
+        await completeScraperTask(pool, task.id, metrics);
+        processed++;
+      } catch (err) {
+        console.error(`[post-publish-collector] 处理 scraper task ${task.id} 失败: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[post-publish-collector] processPendingScraperTasks 异常: ${err.message}`);
+  }
+
+  return { processed };
+}
+
+/**
+ * 每 tick 调用：扫描已完成 content_publish 任务，触发数据采集任务；
+ * 并立即处理已排队的 scraper 任务（Brain 内部执行）。
  *
  * @param {import('pg').Pool} pool
  * @returns {Promise<{scheduled: number}>}
@@ -113,6 +271,11 @@ export async function schedulePostPublishCollection(pool) {
   } catch (err) {
     console.error(`[post-publish-collector] 扫描异常: ${err.message}`);
   }
+
+  // 立即处理已排队的 scraper 任务（Brain 内部，无需外部 executor）
+  await processPendingScraperTasks(pool).catch(
+    e => console.error(`[post-publish-collector] processPendingScraperTasks 失败: ${e.message}`)
+  );
 
   return { scheduled };
 }

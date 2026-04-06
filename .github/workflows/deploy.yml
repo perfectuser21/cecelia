@@ -19,6 +19,11 @@ on:
   push:
     branches: [main]
 
+# 串行部署：同一时间只允许一个 deploy workflow 运行，排队等待而非取消
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   # ─── Detect Changes ───────────────────────────────────────────────────────
 
@@ -238,6 +243,9 @@ jobs:
   deploy:
     name: Trigger Deploy
     needs: [changes, risk_gate, staging_deploy]
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     # Fast Lane: risk_gate 通过（staging_deploy 跳过）
     # Safe Lane: staging_deploy 通过（risk_gate 跳过）
     # always() 配合条件判断，确保两种 lane 都能触发
