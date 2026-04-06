@@ -146,12 +146,17 @@ export async function shepherdOpenPRs(pool) {
       const prInfo = checkPrStatus(task.pr_url);
 
       if (prInfo.state === 'MERGED' || prInfo.ciStatus === 'merged') {
-        // PR 已被外部合并
+        // PR 已被外部合并 → 同步关闭任务，触发 KR 进度链
         await pool.query(
-          `UPDATE tasks SET pr_status = 'merged', pr_merged_at = COALESCE(pr_merged_at, NOW()) WHERE id = $1`,
+          `UPDATE tasks
+           SET pr_status = 'merged',
+               pr_merged_at = COALESCE(pr_merged_at, NOW()),
+               status = 'completed',
+               completed_at = COALESCE(completed_at, NOW())
+           WHERE id = $1 AND status != 'completed'`,
           [task.id]
         );
-        console.log(`[shepherd] PR 已合并: ${task.title} (${task.pr_url})`);
+        console.log(`[shepherd] PR 已合并，任务标记完成: ${task.title} (${task.pr_url})`);
         result.merged++;
 
       } else if (prInfo.state === 'CLOSED' || prInfo.ciStatus === 'closed') {
