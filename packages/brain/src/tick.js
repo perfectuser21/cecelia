@@ -54,6 +54,7 @@ import { triggerCodeQualityScan, getScannerStatus } from './task-generator-sched
 import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
+import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -2812,6 +2813,10 @@ async function executeTick() {
   // 10.17e social_media_raw 数据同步（每 tick，将本机 raw DB 同步到 content_analytics，fire-and-forget）
   Promise.resolve().then(() => syncSocialMediaData(pool))
     .catch(e => console.warn('[tick] social-media-sync 失败:', e.message));
+
+  // 10.17f 每日全平台采集调度（UTC 20:00 = 北京时间次日 04:00，fire-and-forget）
+  Promise.resolve().then(() => scheduleDailyScrape(pool))
+    .catch(e => console.warn('[tick] 每日平台采集调度失败:', e.message));
 
   // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
   Promise.resolve().then(() => runSuggestionCycle(pool))
