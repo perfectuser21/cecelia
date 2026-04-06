@@ -871,9 +871,17 @@ router.post('/batch-e2e-trigger', async (req, res) => {
     try { await triggerDailyTopicSelection(); } catch { /* 不阻断 */ }
   }
 
+  // 关键词安全校验：只允许中英文、数字、空格和常用符号，最长50字符
+  const SAFE_KEYWORD_RE = /^[\w\u4e00-\u9fa5\-\s]{1,50}$/;
+
   for (let i = 0; i < keywords.length; i++) {
     const keyword = String(keywords[i]).trim();
     if (!keyword) continue;
+
+    if (!SAFE_KEYWORD_RE.test(keyword)) {
+      errors.push({ keyword, error: '关键词包含非法字符或超过50字符' });
+      continue;
+    }
 
     const content_type = CONTENT_TYPE_ROTATION[i % CONTENT_TYPE_ROTATION.length];
 

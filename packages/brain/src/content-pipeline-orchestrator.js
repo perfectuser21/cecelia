@@ -482,6 +482,13 @@ async function _handleExportComplete({ task, pipeline }, dbPool) {
       const dirs = readdirSync(outputBase).filter((d) => d.includes(slugified));
       if (dirs.length > 0) {
         const outputDir = join(outputBase, dirs[dirs.length - 1]);
+        // 路径遍历防护：确保 outputDir 仍在 outputBase 下
+        const { resolve } = await import('path');
+        const resolvedOut = resolve(outputDir);
+        const resolvedBase = resolve(outputBase);
+        if (!resolvedOut.startsWith(resolvedBase + '/') && resolvedOut !== resolvedBase) {
+          throw new Error('路径遍历检测：outputDir 超出 outputBase 范围');
+        }
         const copyPath = join(outputDir, 'cards', 'copy.md');
         const articlePath = join(outputDir, 'article', 'article.md');
         if (existsSync(copyPath)) contentMap.short_copy = readFileSync(copyPath, 'utf-8');

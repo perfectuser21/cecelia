@@ -99,14 +99,10 @@ describe('_handleExportComplete pre-publish-check 集成', () => {
       join(ROOT, 'packages/brain/src/content-pipeline-orchestrator.js'),
       'utf-8',
     );
-    const prePublishIdx = src.indexOf('pre_publish_failed');
-    const createPublishJobsIdx = src.indexOf('_createPublishJobs');
-    // pre_publish_failed 标记出现在 _createPublishJobs 函数定义之前（在 _handleExportComplete 中）
-    expect(prePublishIdx).toBeGreaterThan(0);
-    expect(createPublishJobsIdx).toBeGreaterThan(0);
     // 在 _handleExportComplete 函数体内，pre_publish_failed 的 return 发生在 _createPublishJobs 调用前
     const fnStart = src.indexOf('async function _handleExportComplete');
-    const fnSection = src.slice(fnStart, fnStart + 3000);
+    // 函数体截取5000字符（足够容纳完整函数）
+    const fnSection = src.slice(fnStart, fnStart + 5000);
     const failIdx = fnSection.indexOf('pre_publish_failed');
     const jobsIdx = fnSection.indexOf('await _createPublishJobs');
     expect(failIdx).toBeGreaterThan(0);
