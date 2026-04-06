@@ -212,7 +212,7 @@ jobs:
       - run: cd packages/brain && npm ci
       - name: Unit Tests
         env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
+          NODE_OPTIONS: '--max-old-space-size=6144'
         run: cd packages/brain && npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose --pool=forks
 
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
