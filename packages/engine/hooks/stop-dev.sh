@@ -105,6 +105,7 @@ HARNESS_MODE_IN_FILE=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk 
 if [[ "$HARNESS_MODE_IN_FILE" != "true" ]] && grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
     jq -n '{"decision":"allow","reason":"PR 已合并且 Stage 4 完成，工作流结束"}'
+    # harness guard: HARNESS_MODE_IN_FILE != "true" checked above, harness sessions skip this path
     exit 0
 fi
 
