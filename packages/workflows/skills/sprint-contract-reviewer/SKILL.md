@@ -52,6 +52,14 @@ cat "sprints/sprint-prd.md"
 
 ### Phase 3: 做出判断
 
+**轮次感知规则（CRITICAL）**:
+
+当 `propose_round >= 3` 时，应优先接受（APPROVED）合同，除非存在以下情况之一：
+- 验收标准完全无法用自动化命令验证（纯主观判断）
+- Sprint 范围超过 5 个独立 SC 条目
+
+在 R3/R4/R5 中，细节挑剔不是拒绝的理由。合同已经经历多轮打磨，应当收敛而不是继续循环。
+
 **如果合同质量足够高**（验收标准清晰可测、范围合理、无明显遗漏）：
 → APPROVED，写入 `${sprint_dir}/sprint-contract.md`（最终版）
 
