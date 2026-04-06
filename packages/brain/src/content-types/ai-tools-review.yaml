@@ -1,0 +1,96 @@
+# Content Type: AI Tools Review
+# AI工具评测 — 面向"AI一人公司"主题的内容类型配置
+content_type: ai-tools-review
+title: AI工具评测（一人公司视角）
+version: "1.0"
+description: 深度评测某款AI工具或产品，从"一人公司/小团队"使用视角出发，输出实操报告 + 对比分析。
+
+# 图片配置
+images:
+  count: 6
+  format: svg
+  size: "1080x1080"
+  style: "professional-infographic"
+  nas_path: "zenithjoy-creator/content/ai-tools-review"
+
+# 内容模板配置
+template:
+  research_prompt: |
+    深度调研 {keyword} 这款AI工具/产品。
+    调研重点（一人公司/小团队视角）：
+    - 核心功能与使用场景
+    - 定价模型与性价比（月费/年费/免费额度）
+    - 上手难度（0基础能用吗？）
+    - 与同类工具的核心差异（比 ChatGPT/Claude/其他 强在哪）
+    - 真实用户评价（社交媒体、Reddit、ProductHunt）
+    - 一人公司/副业创业者的典型用法
+    来源：官网、ProductHunt、Twitter/X、YouTube测评、知乎小红书。
+  generate_prompt: |
+    基于调研报告，生成以下内容：
+    1. 6张信息图：
+       - 图1：工具核心功能全景（一句话概括每个功能）
+       - 图2：定价对比（免费/付费方案对比表）
+       - 图3：适合谁用（一人公司场景匹配度）
+       - 图4：上手3步流程（零基础版）
+       - 图5：与竞品对比（核心差异点）
+       - 图6：总结评分（易用性/性价比/AI能力/适合度）
+    2. 小红书图文（400-600字）：
+       - 口语化，"我用了X天的真实感受"叙述角度
+       - 必须有具体数字（省了多少时间/钱）
+       - 结尾提问引导互动
+    3. 深度长文（1500字）：
+       - 标题：《[工具名]：一人公司必备/不必备？深度用了X天后说实话》
+       - 结构：为什么测评 → 上手体验 → 真实效果 → 性价比 → 适合谁 → 结论
+  review_prompt: |
+    审查内容是否符合以下标准：
+    1. 有至少3个具体使用场景（不能只说"提高效率"）
+    2. 有价格数据且标注来源或测评日期
+    3. 有明确结论（推荐/不推荐，适合谁）
+    4. 无夸大宣传，有优点也有局限性
+
+# AI 审查规则
+review_rules:
+  - id: "concrete_use_cases"
+    description: "必须包含至少3个具体使用场景（如：用XX生成周报/自动回复客户消息）"
+    severity: "blocking"
+  - id: "price_data"
+    description: "必须提及价格信息，并注明测评时间或来源"
+    severity: "blocking"
+  - id: "clear_conclusion"
+    description: "必须有明确的推荐/不推荐结论，并说明适合人群"
+    severity: "blocking"
+  - id: "balanced_review"
+    description: "必须同时提及优点和至少1个局限性，避免软文感"
+    severity: "warning"
+  - id: "ai_one_person_angle"
+    description: "内容必须从一人公司/小团队角度出发，而非企业级用户"
+    severity: "warning"
+
+# 文案规则
+copy_rules:
+  platform_tone:
+    xiaohongshu: "一人公司主理人口吻，真实感强，多用'我'视角，数字具体，有个人判断不模糊"
+    douyin: "直给，前3秒点出工具名+核心卖点，用数字冲击（省X小时/省X元）"
+    weibo: "观点鲜明，可以有争议性，适合引发讨论（值不值/必买/避坑）"
+    zhihu: "深度分析，结构清晰，数据充分，有实际截图或案例支撑"
+  keywords_required:
+    - "AI"
+    - "一人公司"
+  hashtags:
+    base: ["AI工具", "一人公司", "效率提升", "副业创业"]
+    content_type_specific: ["工具评测", "AI效率", "省时神器"]
+  min_word_count:
+    short_copy: 350
+    long_form: 1500
+
+# 产出物定义
+outputs:
+  - type: "images"
+    count: 6
+    format: "svg"
+  - type: "short_copy"
+    platforms: ["xiaohongshu", "douyin", "weibo"]
+  - type: "long_form"
+    platforms: ["zhihu", "wechat"]
+  - type: "manifest"
+    format: "json"
