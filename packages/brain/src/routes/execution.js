@@ -583,6 +583,80 @@ router.post('/execution-callback', async (req, res) => {
         console.warn(`[execution-callback] learnings 写入失败（非致命）: ${learningErr.message}`);
       }
 
+      // content_publish 完成 → 写入 zenithjoy.publish_logs（fire-and-forget）
+      Promise.resolve().then(async () => {
+        try {
+          const pubTaskRow = await pool.query(
+            'SELECT task_type, payload FROM tasks WHERE id = $1',
+            [task_id]
+          );
+          const pubTask = pubTaskRow.rows[0];
+          if (!pubTask || pubTask.task_type !== 'content_publish') return;
+
+          const { platform, pipeline_keyword, parent_pipeline_id, content_type } = pubTask.payload || {};
+          if (!platform) return;
+
+          // 规范化 platform：publish_logs 只接受固定枚举值
+          const VALID_PLATFORMS = ['wechat', 'douyin', 'xiaohongshu', 'zhihu', 'toutiao', 'kuaishou', 'weibo', 'channels'];
+          if (!VALID_PLATFORMS.includes(platform)) {
+            console.warn(`[execution-callback] publish_logs: platform '${platform}' 不在枚举列表，跳过`);
+            return;
+          }
+
+          // 规范化 content_type → works 表枚举（long_form_article / image_text / video）
+          const CONTENT_TYPE_MAP = {
+            article: 'long_form_article',
+            long_form: 'long_form_article',
+            long_form_article: 'long_form_article',
+            image_text: 'image_text',
+            'image-text': 'image_text',
+            'solo-company-case': 'image_text',
+            video: 'video',
+          };
+          const normalizedContentType = CONTENT_TYPE_MAP[content_type] || 'image_text';
+
+          // Upsert zenithjoy.works（以 parent_pipeline_id 为 content_id，幂等）
+          const workTitle = pipeline_keyword || `pipeline:${parent_pipeline_id || task_id}`;
+          const contentId = parent_pipeline_id || task_id;
+
+          const workUpsert = await pool.query(
+            `INSERT INTO zenithjoy.works (content_id, title, content_type, status)
+             VALUES ($1, $2, $3, 'published')
+             ON CONFLICT (content_id) DO UPDATE SET
+               status = 'published',
+               updated_at = NOW()
+             RETURNING id`,
+            [contentId, workTitle, normalizedContentType]
+          );
+          const workId = workUpsert.rows[0]?.id;
+          if (!workId) return;
+
+          // 幂等检查 publish_logs（同一 work_id + platform 不重复写）
+          const existing = await pool.query(
+            `SELECT id FROM zenithjoy.publish_logs WHERE work_id = $1 AND platform = $2`,
+            [workId, platform]
+          );
+          if (existing.rows.length > 0) {
+            console.log(`[execution-callback] publish_logs 已存在 work_id=${workId} platform=${platform}，跳过`);
+            return;
+          }
+
+          await pool.query(
+            `INSERT INTO zenithjoy.publish_logs
+               (work_id, platform, status, published_at, response)
+             VALUES ($1, $2, 'published', NOW(), $3)`,
+            [
+              workId,
+              platform,
+              JSON.stringify({ task_id, pipeline_keyword: pipeline_keyword || null, parent_pipeline_id: parent_pipeline_id || null })
+            ]
+          );
+          console.log(`[execution-callback] publish_logs 写入成功: work_id=${workId} platform=${platform} keyword=${pipeline_keyword}`);
+        } catch (plErr) {
+          console.warn(`[execution-callback] publish_logs 写入失败（非致命）: ${plErr.message}`);
+        }
+      }).catch(err => console.warn(`[execution-callback] publish_logs 异步异常: ${err.message}`));
+
       // 小任务积累触发：dev 任务完成后检查是否需要触发 code_review（fire-and-forget）
       Promise.resolve().then(async () => {
         const taskMeta = await pool.query('SELECT task_type, project_id FROM tasks WHERE id = $1', [task_id]);
