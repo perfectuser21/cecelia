@@ -6,6 +6,13 @@ version: "1.0.0"
 updated: "2026-04-06"
 
 changelog:
+  - version: "14.3.7"
+    date: "2026-04-06"
+    skill: "lib"
+    change: "fix"
+    description: "修复 devloop-check.sh DoD 完整性检查中 grep -c 返回 0 时触发 || echo '0' 导致 '0\\n0' 语法错误"
+    files:
+      - "lib/devloop-check.sh"
   - version: "14.3.6"
     date: "2026-04-06"
     skill: "hooks"

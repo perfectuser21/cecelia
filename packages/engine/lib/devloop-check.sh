@@ -156,7 +156,8 @@ devloop_check() {
         _worktree_root=$(dirname "$dev_mode_file")
         _task_card_abs="$_worktree_root/$_task_card_rel"
         if [[ -n "$_task_card_rel" && -f "$_task_card_abs" ]]; then
-            _dod_unchecked=$(grep -cE '^\s*-\s+\[ \]\s+\[' "$_task_card_abs" 2>/dev/null || echo "0")
+            _dod_unchecked=$(grep -cE '^\s*-\s+\[ \]\s+\[' "$_task_card_abs" 2>/dev/null; true)
+            _dod_unchecked="${_dod_unchecked:-0}"
             if [[ "$_dod_unchecked" -gt 0 ]]; then
                 _devloop_jq -n --argjson n "$_dod_unchecked" \
                     '{"status":"blocked","reason":"DoD 有 \($n) 条未验证（[ ] 未改为 [x]）","action":"逐条运行 Test 命令验证，通过后改为 [x]"}'
