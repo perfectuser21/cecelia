@@ -16,6 +16,16 @@ vi.mock('../topic-selector.js', () => ({
   generateTopics: vi.fn(),
 }));
 
+// Mock topic-suggestion-manager.js 阻断模块级 import pool from './db.js'
+// saveSuggestions 返回 0 表示无选题存入推荐队列，所有选题走直接入队流程
+vi.mock('../topic-suggestion-manager.js', () => ({
+  saveSuggestions: vi.fn().mockResolvedValue(0),
+  autoPromoteSuggestions: vi.fn().mockResolvedValue(0),
+  getActiveSuggestions: vi.fn().mockResolvedValue([]),
+  approveSuggestion: vi.fn(),
+  rejectSuggestion: vi.fn(),
+}));
+
 import { generateTopics } from '../topic-selector.js';
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────

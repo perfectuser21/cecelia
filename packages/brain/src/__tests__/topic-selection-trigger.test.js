@@ -14,6 +14,15 @@ vi.mock('../topic-selector.js', () => ({
   generateTopics: vi.fn(),
 }));
 
+// Mock topic-suggestion-manager.js 阻断其直接导入 db.js（模块级 import pool from './db.js'）
+vi.mock('../topic-suggestion-manager.js', () => ({
+  saveSuggestions: vi.fn().mockResolvedValue(0),
+  autoPromoteSuggestions: vi.fn().mockResolvedValue(0),
+  getActiveSuggestions: vi.fn().mockResolvedValue([]),
+  approveSuggestion: vi.fn(),
+  rejectSuggestion: vi.fn(),
+}));
+
 import { generateTopics } from '../topic-selector.js';
 
 // UTC 01:02 — 触发窗口内
