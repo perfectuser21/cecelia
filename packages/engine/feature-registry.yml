@@ -3,16 +3,17 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-05"
+updated: "2026-04-06"
 
 changelog:
-  - version: "14.3.5"
+  - version: "14.3.6"
     date: "2026-04-06"
     skill: "hooks"
-    change: "fix"
-    description: "bash-guard.sh: [CONFIG] 检测改用 origin/main...HEAD diff，避免主仓库工作区脏文件误触"
+    change: "feat"
+    description: "[CONFIG] 护城河1：新增 pre-push.sh hook + scripts/quickcheck.sh，git push 前强制跑 TypeCheck/ESLint/Unit Test，60秒内完成，失败阻止 push"
     files:
-      - "hooks/bash-guard.sh"
+      - "hooks/pre-push.sh"
+      - "scripts/quickcheck.sh"
   - version: "14.3.4"
     date: "2026-04-06"
     skill: "hooks"
