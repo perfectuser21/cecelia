@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# pre-push — git pre-push hook
+#
+# 在 push 前运行 quickcheck（TypeCheck + ESLint + unit test）。
+# 安装方式：bash scripts/install-git-hooks.sh
+#
+# 跳过：git push --no-verify
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+QUICKCHECK="$REPO_ROOT/scripts/quickcheck.sh"
+
+if [ ! -f "$QUICKCHECK" ]; then
+    echo "⚠️  scripts/quickcheck.sh 不存在，跳过 quickcheck" >&2
+    exit 0
+fi
+
+exec bash "$QUICKCHECK"
