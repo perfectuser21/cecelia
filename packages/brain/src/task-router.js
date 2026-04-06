@@ -37,7 +37,9 @@ const VALID_TASK_TYPES = [
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
   'scope_plan', 'project_plan',
   // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives 三层拆解）
-  'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan'
+  'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan',
+  // 发布后数据回收（Brain 内部处理，不走外部 executor）
+  'platform_scraper',
 ];
 
 // 支持 P2P 异步回调的任务类型
@@ -110,6 +112,8 @@ const SKILL_WHITELIST = {
   'okr_initiative_plan': '/decomp',  // OKR Scope 内规划下一个 Initiative
   'okr_scope_plan': '/decomp',       // OKR Project 内规划下一个 Scope
   'okr_project_plan': '/decomp',     // OKR Project 层完成后规划
+  // 发布后数据回收（Brain 内部处理，声明 skill 避免路由校验失败）
+  'platform_scraper': '/media-scraping',
 };
 
 // Fallback strategies when primary routing fails
@@ -224,7 +228,7 @@ const LOCATION_MAP = {
   'okr_scope_plan': 'xian',        // OKR Scope 规划 → 西安 Codex (B類，/decomp skill)
   'okr_project_plan': 'xian',      // OKR Project 规划 → 西安 Codex (B類，/decomp skill)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
-  'platform_scraper': 'cn',       // 平台数据采集 → CN Mac mini（需 CDP 浏览器 + 各平台登录态）
+  'platform_scraper': 'us',       // 数据采集任务 → Brain 内部处理（不走外部 executor，见 post-publish-data-collector.js）
 };
 
 // Default location
