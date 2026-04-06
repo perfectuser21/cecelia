@@ -305,10 +305,10 @@ else
     if [[ ${#BRAIN_TEST_FILES[@]} -eq 0 ]]; then
         echo -e "  ⏭  Brain 无对应 unit test，跳过"
     else
-        # bash 3.2 兼容（macOS 默认 bash 不支持 mapfile）
-        local _tmp_arr=("${BRAIN_TEST_FILES[@]}")
+        # bash 3.2 兼容（macOS 默认 bash 不支持 mapfile，local 在顶层无效）
+        _tmp_brain_arr=("${BRAIN_TEST_FILES[@]}")
         BRAIN_TEST_FILES=()
-        while IFS= read -r _line; do BRAIN_TEST_FILES+=("$_line"); done < <(printf '%s\n' "${_tmp_arr[@]}" | sort -u)
+        while IFS= read -r _line; do BRAIN_TEST_FILES+=("$_line"); done < <(printf '%s\n' "${_tmp_brain_arr[@]}" | sort -u)
         echo -e "  ▶ 找到 ${#BRAIN_TEST_FILES[@]} 个 Brain 测试，运行..."
 
         if [[ ! -d "packages/brain/node_modules" ]]; then
