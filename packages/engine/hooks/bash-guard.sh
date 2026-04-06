@@ -182,7 +182,8 @@ if echo "$CMD" | grep -qE '\bgh\s+pr\s+create\b'; then
         fi
 
         # 检查 Engine 改动是否有 [CONFIG] 标签
-        CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || true)
+        # 使用 PR 分支与 main 的 diff，避免主仓库工作区脏文件误触
+        CHANGED_FILES=$(git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only main...HEAD 2>/dev/null || true)
         if echo "$CHANGED_FILES" | grep -q "packages/engine/"; then
             if ! echo "$PR_TITLE" | grep -q "\[CONFIG\]"; then
                 echo "" >&2
