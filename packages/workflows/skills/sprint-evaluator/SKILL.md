@@ -298,14 +298,23 @@ curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
     \"result\": {
       \"verdict\": \"${VERDICT}\",
       \"evaluation_file\": \"${sprint_dir}/evaluation.md\",
-      \"eval_round\": ${eval_round},
-      \"sc_results\": {
-        \"SC-1\": \"PASS\",
-        \"SC-2\": \"FAIL\"
-      },
-      \"extra_findings\": 0
+      \"eval_round\": ${eval_round}
     }
   }"
+```
+
+**⚠️ CRITICAL — 最终输出格式要求（必须遵守）**:
+
+在 Step 6 PATCH 调用完成后，**必须**将以下 JSON 作为你的最后一条消息输出（字面量 JSON，不要用代码块包裹）。Brain 的 execution-callback 从 session 输出解析 verdict，PATCH body 不会被 callback 读取：
+
+```
+{"verdict": "PASS", "eval_round": N, "sprint_dir": "sprints/sprint-X"}
+```
+
+或 FAIL 时：
+
+```
+{"verdict": "FAIL", "eval_round": N, "sprint_dir": "sprints/sprint-X"}
 ```
 
 **Brain 收到回调后的路由逻辑**:
