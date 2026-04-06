@@ -62,7 +62,8 @@ describe('trigger-topics: 手动触发逻辑', () => {
 
   it('窗口时间外不触发（skipped_window: true）', async () => {
     const pool = makePool(false);
-    const result = await triggerDailyTopicSelection(pool, new Date('2026-03-27T10:00:00Z'));
+    // UTC 22:00 超过 catch-up 截止时间（20:00），确实在窗口外
+    const result = await triggerDailyTopicSelection(pool, new Date('2026-03-27T22:00:00Z'));
     expect(result.skipped_window).toBe(true);
     expect(result.triggered).toBe(0);
   });

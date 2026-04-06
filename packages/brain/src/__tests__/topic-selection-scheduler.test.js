@@ -36,9 +36,9 @@ function makeWindowTime() {
   return d;
 }
 
-/** 构造在触发窗口外（UTC 10:00）的 Date */
+/** 构造在触发窗口外（UTC 22:00，超过 catch-up 截止时间 20:00）的 Date */
 function makeOutsideWindowTime() {
-  return new Date('2026-03-19T10:00:00Z');
+  return new Date('2026-03-19T22:00:00Z');
 }
 
 /** 构造 N 个选题 */
