@@ -8,7 +8,9 @@
  * GET  /api/brain/pipelines                    列出 content-pipeline 任务
  * POST /api/brain/pipelines                    创建新 content-pipeline 任务
  * POST /api/brain/pipelines/trigger-topics     手动触发今日选题生成（忽略时间窗口限制）
+ * POST /api/brain/pipelines/e2e-trigger        端到端流程触发（选题→Pipeline创建→执行）
  * POST /api/brain/pipelines/:id/run            手动触发 pipeline 执行（不依赖 tick）
+ * POST /api/brain/pipelines/:id/pre-publish-check  发布前内容质量检查
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
  * GET  /api/brain/pipelines/:id/output         查询 pipeline 产出物（manifest）
  */
@@ -21,6 +23,7 @@ import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTy
 import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
 import { triggerDailyTopicSelection, hasTodayTopics } from '../topic-selection-scheduler.js';
 import { callLLM } from '../llm-caller.js';
+import { validateAllVariants } from '../content-quality-validator.js';
 
 const router = express.Router();
 
@@ -654,6 +657,177 @@ router.get('/:id/stats', async (req, res) => {
     res.json({ pipeline_id: id, stats });
   } catch (err) {
     console.error('[routes/content-pipeline] GET /:id/stats error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /pipelines/:id/pre-publish-check
+ * 发布前内容质量检查：读取 pipeline 产出的文案内容，执行程序化质量验证。
+ *
+ * Body（可选）：{ content_override: string } — 直接传入内容文本（用于测试）
+ *
+ * Response: { passed: boolean, pipeline_id: string, issues: Array, word_count?: number }
+ */
+router.post('/:id/pre-publish-check', async (req, res) => {
+  const { id } = req.params;
+  const { content_override } = req.body || {};
+
+  try {
+    // 获取 pipeline 任务
+    const pipelineResult = await pool.query(
+      `SELECT id, title, payload, status FROM tasks WHERE id = $1 AND task_type = 'content-pipeline'`,
+      [id]
+    );
+    if (pipelineResult.rows.length === 0) {
+      return res.status(404).json({ error: `Pipeline ${id} 不存在` });
+    }
+
+    const pipeline = pipelineResult.rows[0];
+    const contentType = pipeline.payload?.content_type || 'solo-company-case';
+
+    // 获取内容类型配置（用于质量规则）
+    let typeConfig = {};
+    try {
+      typeConfig = await getContentType(contentType);
+    } catch {
+      // 找不到配置时使用空配置（验证器有默认值兜底）
+    }
+
+    // 优先用 content_override，否则从 pipeline 产出目录读取文案
+    let contentMap = {};
+    if (content_override) {
+      contentMap = { short_copy: content_override };
+    } else {
+      // 尝试从 export 产出的 manifest.json 读取
+      const keyword = pipeline.payload?.keyword || pipeline.title;
+      const outputBase = join(process.env.HOME || '/Users/administrator', 'claude-output');
+      const slugified = keyword.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '-').replace(/-+/g, '-');
+
+      // 查找产出目录（支持带时间戳的目录名）
+      let outputDir = null;
+      try {
+        const dirs = readdirSync(outputBase).filter((d) => d.includes(slugified));
+        if (dirs.length > 0) {
+          outputDir = join(outputBase, dirs[dirs.length - 1]);
+        }
+      } catch {
+        // 目录不存在时忽略
+      }
+
+      if (outputDir) {
+        const copyPath = join(outputDir, 'cards', 'copy.md');
+        const articlePath = join(outputDir, 'article', 'article.md');
+        if (existsSync(copyPath)) {
+          contentMap.short_copy = readFileSync(copyPath, 'utf-8');
+        }
+        if (existsSync(articlePath)) {
+          contentMap.long_form = readFileSync(articlePath, 'utf-8');
+        }
+      }
+    }
+
+    if (Object.keys(contentMap).length === 0) {
+      return res.json({
+        passed: false,
+        pipeline_id: id,
+        issues: [{ rule: 'content_not_found', severity: 'blocking', message: '未找到 pipeline 产出的内容文件，请确认 pipeline 已完成 export 阶段' }],
+      });
+    }
+
+    const { passed, results } = validateAllVariants(contentMap, typeConfig);
+
+    // 汇总所有 issues
+    const allIssues = [];
+    for (const [variant, result] of Object.entries(results)) {
+      for (const issue of result.issues) {
+        allIssues.push({ ...issue, variant });
+      }
+    }
+
+    console.log(`[pre-publish-check] pipeline ${id}: passed=${passed}, issues=${allIssues.length}`);
+    return res.json({ passed, pipeline_id: id, content_type: contentType, issues: allIssues, results });
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /:id/pre-publish-check error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /pipelines/e2e-trigger
+ * 端到端链路触发：选题（可选）→ 创建 Pipeline → 立即执行第一阶段。
+ *
+ * Body: {
+ *   keyword: string,        // 必填：内容关键词（如 "Cursor AI"）
+ *   content_type?: string,  // 可选：内容类型，默认 "solo-company-case"
+ *   skip_topic_selection?: boolean,  // 可选：跳过选题生成，默认 false
+ * }
+ *
+ * Response: { pipeline_id: string, status: string, message: string }
+ */
+router.post('/e2e-trigger', async (req, res) => {
+  const { keyword, content_type = 'solo-company-case', skip_topic_selection = false } = req.body || {};
+
+  if (!keyword || typeof keyword !== 'string' || keyword.trim().length === 0) {
+    return res.status(400).json({ error: '必填字段 keyword 不能为空' });
+  }
+
+  const cleanKeyword = keyword.trim();
+
+  try {
+    // Step 1: 触发选题生成（除非跳过）
+    let topicTriggered = false;
+    if (!skip_topic_selection) {
+      try {
+        await triggerDailyTopicSelection();
+        topicTriggered = true;
+      } catch (topicErr) {
+        console.warn(`[e2e-trigger] 选题生成失败（不阻断流程）: ${topicErr.message}`);
+      }
+    }
+
+    // Step 2: 创建 content-pipeline 任务
+    const pipelinePayload = {
+      keyword: cleanKeyword,
+      content_type,
+      trigger_source: 'e2e-trigger',
+      triggered_at: new Date().toISOString(),
+    };
+
+    const insertResult = await pool.query(
+      `INSERT INTO tasks (title, task_type, status, payload, priority, tags)
+       VALUES ($1, 'content-pipeline', 'queued', $2::jsonb, 'P2', ARRAY['e2e-trigger','auto'])
+       RETURNING id`,
+      [`[Pipeline] ${cleanKeyword} (${content_type})`, JSON.stringify(pipelinePayload)]
+    );
+
+    const pipelineId = insertResult.rows[0].id;
+    console.log(`[e2e-trigger] 创建 pipeline ${pipelineId}：${cleanKeyword}`);
+
+    // Step 3: 立即触发 pipeline 执行（不等 tick）
+    let executionStarted = false;
+    try {
+      await orchestrateContentPipelines(pool);
+      await executeQueuedContentTasks(pool);
+      executionStarted = true;
+    } catch (execErr) {
+      console.warn(`[e2e-trigger] pipeline 立即执行失败（将由 tick 接管）: ${execErr.message}`);
+    }
+
+    return res.json({
+      ok: true,
+      pipeline_id: pipelineId,
+      keyword: cleanKeyword,
+      content_type,
+      topic_triggered: topicTriggered,
+      execution_started: executionStarted,
+      message: executionStarted
+        ? `Pipeline ${pipelineId} 已创建并开始执行第一阶段`
+        : `Pipeline ${pipelineId} 已创建，将由 tick 自动执行`,
+      check_progress: `/api/brain/pipelines/${pipelineId}/stages`,
+    });
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /e2e-trigger error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
