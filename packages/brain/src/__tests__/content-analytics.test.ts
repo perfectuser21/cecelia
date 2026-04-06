@@ -13,6 +13,7 @@ let writeContentAnalytics: (pool: any, params: any) => Promise<string>;
 let bulkWriteContentAnalytics: (pool: any, items: any[]) => Promise<number>;
 let queryWeeklyROI: (pool: any, start: Date, end: Date) => Promise<any[]>;
 let getTopContentByPlatform: (pool: any, opts?: any) => Promise<any[]>;
+let upsertPipelinePublishStats: (pool: any, params: any) => Promise<void>;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -22,6 +23,7 @@ beforeEach(async () => {
   bulkWriteContentAnalytics = mod.bulkWriteContentAnalytics;
   queryWeeklyROI = mod.queryWeeklyROI;
   getTopContentByPlatform = mod.getTopContentByPlatform;
+  upsertPipelinePublishStats = mod.upsertPipelinePublishStats;
 });
 
 describe('writeContentAnalytics', () => {
@@ -117,6 +119,60 @@ describe('queryWeeklyROI', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     const roi = await queryWeeklyROI(mockPool, new Date(), new Date());
     expect(roi).toEqual([]);
+  });
+});
+
+describe('upsertPipelinePublishStats', () => {
+  it('成功写入 pipeline_publish_stats', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    await upsertPipelinePublishStats(mockPool, {
+      publishTaskId: 'pub-task-123',
+      pipelineId: 'pipe-456',
+      platform: 'douyin',
+      metrics: { views: 1000, likes: 50, comments: 10, shares: 5 },
+    });
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const sql = mockQuery.mock.calls[0][0] as string;
+    expect(sql).toContain('INSERT INTO pipeline_publish_stats');
+    const params = mockQuery.mock.calls[0][1] as any[];
+    expect(params[1]).toBe('pub-task-123'); // publish_task_id
+    expect(params[2]).toBe('douyin');        // platform
+    expect(params[3]).toBe(1000);            // views
+    expect(params[4]).toBe(50);              // likes
+  });
+
+  it('缺少 publishTaskId 时抛出错误', async () => {
+    await expect(
+      upsertPipelinePublishStats(mockPool, { publishTaskId: '', platform: 'weibo', metrics: {} })
+    ).rejects.toThrow('publishTaskId is required');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('metrics 为空时默认全为 0', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    await upsertPipelinePublishStats(mockPool, {
+      publishTaskId: 'pub-task-789',
+      platform: 'xiaohongshu',
+      metrics: {},
+    });
+    const params = mockQuery.mock.calls[0][1] as any[];
+    expect(params[3]).toBe(0); // views
+    expect(params[4]).toBe(0); // likes
+    expect(params[5]).toBe(0); // comments
+    expect(params[6]).toBe(0); // shares
+  });
+
+  it('pipelineId 为空时写入 null', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    await upsertPipelinePublishStats(mockPool, {
+      publishTaskId: 'pub-task-000',
+      platform: 'weibo',
+      metrics: { views: 500 },
+    });
+    const params = mockQuery.mock.calls[0][1] as any[];
+    expect(params[0]).toBeNull(); // pipeline_id
   });
 });
 
