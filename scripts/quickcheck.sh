@@ -201,12 +201,22 @@ else
         fi
 
         if [[ ${#WORKSPACE_LINT_FILES[@]} -gt 0 ]]; then
-            echo -e "  ▶ Workspace ESLint..."
-            if "$ESLINT_BIN" "${WORKSPACE_LINT_FILES[@]}" --max-warnings 0 2>&1; then
-                echo -e "  ${GREEN}✅ Workspace ESLint 通过${RESET}"
+            # 只 lint apps/api/src/ 下的文件（有 eslint.config.js + ESLint v9）
+            # apps/api/features/ 和 apps/dashboard/ 不在 ESLint scope 内，与 CI 保持一致
+            API_SRC_FILES=()
+            for f in "${WORKSPACE_LINT_FILES[@]}"; do
+                [[ "$f" == apps/api/src/* ]] && API_SRC_FILES+=("${f#apps/api/}")
+            done
+            if [[ ${#API_SRC_FILES[@]} -eq 0 ]]; then
+                echo -e "  ⏭  无 apps/api/src/ 改动，跳过 Workspace ESLint"
             else
-                echo -e "  ${RED}❌ Workspace ESLint 失败${RESET}"
-                LINT_OK=false
+                echo -e "  ▶ Workspace ESLint (apps/api/src/)..."
+                if (cd apps/api && "$ESLINT_BIN" "${API_SRC_FILES[@]}" --max-warnings 0 2>&1); then
+                    echo -e "  ${GREEN}✅ Workspace ESLint 通过${RESET}"
+                else
+                    echo -e "  ${RED}❌ Workspace ESLint 失败${RESET}"
+                    LINT_OK=false
+                fi
             fi
         fi
 
