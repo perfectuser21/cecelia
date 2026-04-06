@@ -138,7 +138,11 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
     expect(inserted.pipeline_stage).toBe('content-research');
   });
 
-  it('无 content_type 时照常启动（向后兼容）', async () => {
+  it('无 content_type 时使用默认 solo-company-case 启动（v1 修复后行为）', async () => {
+    // v1 修复：无 content_type 时默认 DEFAULT_CONTENT_TYPE='solo-company-case'
+    // 注册表返回有效 typeConfig，pipeline 正常 orchestrate
+    getContentType.mockResolvedValue(MOCK_TYPE_CONFIG);
+
     const pool = makeMockPool({
       pipelines: [{
         id: 'pipe-003',
@@ -152,7 +156,8 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
 
     const result = await orchestrateContentPipelines(pool);
 
-    expect(getContentType).not.toHaveBeenCalled();
+    // getContentType 现在会被调用（以 DEFAULT_CONTENT_TYPE 为参数）
+    expect(getContentType).toHaveBeenCalledWith('solo-company-case');
     expect(result.summary.orchestrated).toBe(1);
   });
 
