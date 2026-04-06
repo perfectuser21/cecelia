@@ -30,6 +30,14 @@ import { validatePolicyJson } from './policy-validator.js';
 // Configuration
 const MONITOR_INTERVAL_MS = 30000; // 30 seconds
 const STUCK_THRESHOLD_MINUTES = 5;
+// Harness v2.0 pipeline tasks run much longer than normal tasks:
+// sprint_generate/sprint_fix (Generator): ~13 min, sprint_evaluate (Evaluator): ~4 min
+// Use a 30-minute threshold to avoid false "stuck" detection during legitimate runs.
+const HARNESS_STUCK_THRESHOLD_MINUTES = 30;
+const HARNESS_TASK_TYPES = [
+  'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
+];
 const FAILURE_SPIKE_THRESHOLD = 0.3; // 30% failure rate in last hour
 const RESOURCE_PRESSURE_THRESHOLD = 0.85;
 
@@ -42,10 +50,13 @@ let _cycleCount = 0;
 /**
  * Detector: Stuck Runs
  * 检测卡住的任务（心跳超时或运行时间过长）
+ *
+ * Harness v2.0 任务（sprint_generate/sprint_fix/sprint_evaluate 等）运行时间远超 5 分钟，
+ * 使用独立的 HARNESS_STUCK_THRESHOLD_MINUTES（30 分钟）避免误判。
  */
 async function detectStuckRuns() {
   const query = `
-    SELECT 
+    SELECT
       r.run_id,
       r.task_id,
       r.span_id,
@@ -55,13 +66,22 @@ async function detectStuckRuns() {
       r.heartbeat_ts,
       EXTRACT(EPOCH FROM (NOW() - r.heartbeat_ts)) / 60 AS minutes_since_heartbeat
     FROM run_events r
+    LEFT JOIN tasks t ON t.id = r.task_id
     WHERE r.status = 'running'
-      AND r.heartbeat_ts < NOW() - INTERVAL '${STUCK_THRESHOLD_MINUTES} minutes'
+      AND (
+        -- Non-harness tasks: standard 5-minute threshold
+        (t.task_type IS NULL OR t.task_type != ALL($1::text[]))
+        AND r.heartbeat_ts < NOW() - INTERVAL '${STUCK_THRESHOLD_MINUTES} minutes'
+        OR
+        -- Harness tasks: extended 30-minute threshold
+        (t.task_type = ANY($1::text[]))
+        AND r.heartbeat_ts < NOW() - INTERVAL '${HARNESS_STUCK_THRESHOLD_MINUTES} minutes'
+      )
     ORDER BY r.heartbeat_ts ASC
     LIMIT 10
   `;
-  
-  const result = await pool.query(query);
+
+  const result = await pool.query(query, [HARNESS_TASK_TYPES]);
   return result.rows;
 }
 

@@ -1,15 +1,25 @@
-# DoD: fix(brain): 改进成功率计算精度
+# DoD: Harness Pipeline 防误杀
 
-## 交付物
+## [ARTIFACT] escalation.js cancelPendingTasks 白名单
+- Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/alertness/escalation.js','utf8');if(!c.includes(\"'sprint_generate'\"))process.exit(1);if(!c.includes(\"'sprint_evaluate'\"))process.exit(1);if(!c.includes(\"'sprint_fix'\"))process.exit(1);console.log('PASS')"`
+- [x] sprint_generate/sprint_evaluate/sprint_fix/arch_review 在 cancelPendingTasks NOT IN 白名单
 
-- [x] [ARTIFACT] `packages/brain/src/self-drive.js` — `getTaskStats24h` 改用终态统计
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/self-drive.js','utf8');if(!c.includes(\"status IN ('completed', 'failed', 'quarantined')\"))process.exit(1)"`
+## [ARTIFACT] escalation.js pauseLowPriorityTasks 白名单
+- Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/alertness/escalation.js','utf8');const idx=c.indexOf('async function pauseLowPriorityTasks');const chunk=c.slice(idx,idx+600);if(!chunk.includes('sprint_generate'))process.exit(1);console.log('PASS')"`
+- [x] pauseLowPriorityTasks SQL 含 Harness 类型过滤
 
-- [x] [ARTIFACT] `packages/brain/src/quarantine.js` — quarantine UPDATE 新增 `completed_at/updated_at`
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/quarantine.js','utf8');if(!c.includes('completed_at = NOW()'))process.exit(1)"`
+## [ARTIFACT] alertness index.js 健康升级 guard
+- Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/alertness/index.js','utf8');if(!c.includes('patterns?.length === 0'))process.exit(1);console.log('PASS')"`
+- [x] 无 pattern 时 targetLevel 不超过 AWARE(2)
 
-- [x] [ARTIFACT] `packages/brain/src/content-pipeline-orchestrator.js` — cancel 新增 `updated_at = NOW()`
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/content-pipeline-orchestrator.js','utf8');const idx=c.indexOf('父 pipeline 已失败');if(!c.substring(idx-200,idx).includes('updated_at = NOW()'))process.exit(1)"`
+## [ARTIFACT] task-cleanup.js PROTECTED_TASK_TYPES
+- Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/task-cleanup.js','utf8');if(!c.includes(\"'sprint_generate'\"))process.exit(1);if(!c.includes(\"'sprint_fix'\"))process.exit(1);console.log('PASS')"`
+- [x] 所有 Harness 类型在 PROTECTED_TASK_TYPES
 
-- [x] [BEHAVIOR] `self-drive-success-rate.test.ts` — 4 个成功率计算测试通过
-  - Test: `tests/packages/brain/src/__tests__/self-drive-success-rate.test.ts`
+## [BEHAVIOR] monitor-loop.js 对 Harness 任务宽限期
+- Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/monitor-loop.js','utf8');if(!c.includes('HARNESS_STUCK_THRESHOLD_MINUTES')||!c.includes('sprint_generate'))process.exit(1);console.log('PASS')"`
+- [x] Harness 任务类型有独立 stuck 检测阈值（30 分钟）防止 5 分钟误判
+
+## [ARTIFACT] sprint-evaluator SKILL.md evaluation.md 持久化
+- Test: `manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/sprint-evaluator/SKILL.md','utf8');if(!c.includes('git add')&&!c.includes('git commit'))process.exit(1);console.log('PASS')"`
+- [x] SKILL.md 含 git commit + push evaluation.md 步骤

@@ -29,7 +29,10 @@ const RECURRING_TASK_TYPES = [
 // These task types are critical for system operation and must be manually managed
 const PROTECTED_TASK_TYPES = [
   'initiative_plan',   // Initiative planning tasks - must not be auto-canceled
-  'initiative_verify'  // Initiative verification tasks - must not be auto-canceled
+  'initiative_verify', // Initiative verification tasks - must not be auto-canceled
+  // Harness v2.0 pipeline tasks — must never be auto-canceled (sprint loop integrity)
+  'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
 ];
 
 // Recurring task title patterns (fallback detection when task_type not set)

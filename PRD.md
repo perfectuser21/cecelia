@@ -1,14 +1,15 @@
-# Brain 部署脚本支持 launchd 模式
+# PRD: Harness Pipeline 防误杀
 
 ## 背景
+昨晚 sprint_fix 任务被 escalation emergency_brake 批量取消，原因是 alertness healthScore 与 diagnosis.summary 两套标准打架，导致系统"因为健康"触发紧急刹车，顺带清空 Harness 队列。
 
-Brain 在 Mac mini 上通过 **launchd** 管理（`com.cecelia.brain.plist`），不用 Docker。
-现有 `brain-deploy.sh` 全程依赖 Docker，无法在无 Docker 环境下工作，导致 deploy webhook 链路断裂。
+## 修复目标
+6 个问题全修，确保 Harness pipeline 不被系统自保机制误杀。
 
 ## 成功标准
-
-1. `brain-deploy.sh` 新增 launchd 模式：Docker 不可用时自动切换，跳过镜像构建，用 `launchctl kickstart -k` 重启
-2. `brain-reload.sh` 新增 launchd 模式：Docker 不可用时用 launchctl 替代 docker compose restart
-3. `bash scripts/brain-deploy.sh --dry-run` 在当前 Mac mini 输出 launchd 模式路径
-4. 修复 `/home/xx/` 硬编码路径 → `${HOST_HOME:-$HOME}`
-5. 所有现有测试通过
+- [ ] cancelPendingTasks 白名单包含全部 Harness 类型
+- [ ] pauseLowPriorityTasks 白名单包含全部 Harness 类型
+- [ ] alertness index.js：健康时不触发 ALERT 升级
+- [ ] task-cleanup PROTECTED_TASK_TYPES 包含全部 Harness 类型
+- [ ] watchdog 对 Harness 任务有更长宽限期
+- [ ] sprint-evaluator SKILL.md 有 git commit+push evaluation.md 步骤

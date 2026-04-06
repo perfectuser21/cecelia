@@ -317,6 +317,10 @@ async function pauseLowPriorityTasks(priorities) {
           updated_at = NOW()
       WHERE status IN ('queued', 'pending')
         AND priority = ANY($1)
+        AND task_type NOT IN (
+          'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
+          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
+        )
       RETURNING id
     `, [priorities]);
 
@@ -345,7 +349,9 @@ async function cancelPendingTasks(keepCritical) {
           'research', 'suggestion_plan',
           'content-pipeline', 'content-research', 'content-copywriting',
           'content-copy-review', 'content-generate', 'content-image-review',
-          'content-export', 'content_publish'
+          'content-export', 'content_publish',
+          'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
+          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
         )
     `;
 

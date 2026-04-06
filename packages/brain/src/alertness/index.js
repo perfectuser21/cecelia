@@ -93,7 +93,16 @@ export async function evaluateAlertness() {
     // 3. 确定目标等级
     let targetLevel = determineTargetLevel(healthScore, diagnosis);
 
-    // 3.5 PANIC 抖动稳定期：连续 N 次 critical 才真正升级到 PANIC
+    // 3.5 健康/pattern 双标准冲突保护：
+    // healthScore 计算和 diagnosis.patterns 是两套独立标准，可能打架。
+    // 例：healthScore=55 → ALERT(3)，但 patterns=[] → summary="System is healthy"
+    // 这种矛盾场景下保守处理：无异常 pattern 时不允许升级到 ALERT 或以上。
+    if (targetLevel >= ALERTNESS_LEVELS.ALERT && diagnosis.patterns?.length === 0) {
+      console.log(`[Alertness] 双标准冲突：healthScore=${healthScore} 建议 ALERT，但无异常 pattern，限制到 AWARE`);
+      targetLevel = Math.min(targetLevel, ALERTNESS_LEVELS.AWARE);
+    }
+
+    // 3.6 PANIC 抖动稳定期：连续 N 次 critical 才真正升级到 PANIC
     if (targetLevel === ALERTNESS_LEVELS.PANIC) {
       _consecutiveCriticalCount++;
       if (_consecutiveCriticalCount < PANIC_CONSECUTIVE_THRESHOLD) {

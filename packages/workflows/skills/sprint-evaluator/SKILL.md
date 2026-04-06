@@ -6,10 +6,11 @@ description: |
   读取 sprint-contract.md 逐条验证运行中的代码（不是读代码），
   输出 evaluation.md（PASS/FAIL + 具体问题 + 复现步骤）。
   由 Brain 自动派发 sprint_evaluate 任务触发。
-version: 1.0.0
+version: 1.1.0
 created: 2026-04-03
-updated: 2026-04-03
+updated: 2026-04-06
 changelog:
+  - 1.1.0: Step 4.5 — evaluation.md 写完后立即 git commit + push，确保 sprint_fix Generator 能读到
   - 1.0.0: 初始版本 — 强 CI 验证 + 环境隔离 + 对抗态度
 ---
 
@@ -245,6 +246,30 @@ grep -rn "password\|secret\|api_key\|token" --include="*.js" --include="*.ts" \
 - verdict: FAIL
 - Generator 需要修复的具体清单:
   1. [环境问题]: {描述} — 复现: `{命令}`
+```
+
+### Step 4.5: 持久化 evaluation.md（CRITICAL）
+
+> **CRITICAL**: evaluation.md 必须 git commit + push 到分支，否则 sprint_fix Generator
+> 切入同一 worktree 时读不到这个文件（worktree 文件不会自动同步到 remote）。
+> 跳过此步 = sprint_fix 看不到 Evaluator 的问题列表 = Generator 盲目修复。
+
+```bash
+# 进入 worktree 目录（Generator 的 worktree，即当前工作目录）
+cd "$(git rev-parse --show-toplevel)"
+
+# 确认在正确分支（应为 cp-* 分支，非 main）
+CURRENT_BRANCH=$(git branch --show-current)
+echo "当前分支: ${CURRENT_BRANCH}"
+
+# Stage 并提交 evaluation.md
+git add "${sprint_dir}/evaluation.md"
+git commit -m "feat(eval): evaluation.md sprint-${SPRINT_ID} round-${eval_round} verdict=${VERDICT}"
+
+# Push 到 remote（Brain 派发 sprint_fix 时 Generator 会从 remote 拿代码）
+git push origin "${CURRENT_BRANCH}"
+
+echo "evaluation.md 已持久化到 ${CURRENT_BRANCH}"
 ```
 
 ### Step 5: 清理环境
