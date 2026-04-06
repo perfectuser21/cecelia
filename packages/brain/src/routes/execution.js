@@ -1767,44 +1767,83 @@ ${resultStr.substring(0, 2000)}
               }
             }
           } else {
-            // FAIL: 创建 sprint_fix
+            // FAIL: 创建 sprint_fix（幂等保护 — 防止回调重复触发创建多个 sprint_fix）
+            const nextFixRound = (harnessPayload.eval_round || 0) + 1;
+            // 检查是否 PASS 路径已被处理（sprint_contract_propose 已存在）
+            const nextSprintForCheck = (harnessPayload.sprint_num || 1) + 1;
+            const passAlreadyHandled = await pool.query(
+              `SELECT id FROM tasks WHERE task_type IN ('sprint_contract_propose', 'arch_review')
+               AND project_id = $1
+               AND (payload->>'sprint_num' IS NULL OR (payload->>'sprint_num')::int = $2)
+               AND status IN ('queued', 'in_progress', 'completed')
+               LIMIT 1`,
+              [harnessTask.project_id, nextSprintForCheck]
+            );
+            if (passAlreadyHandled.rows.length > 0) {
+              console.log(`[execution-callback] harness: sprint_evaluate FAIL skipped — PASS route already created (sprint_contract_propose/arch_review exists)`);
+            } else {
+              // 检查 sprint_fix 是否已存在（相同 sprint_dir + eval_round）
+              const existingFix = await pool.query(
+                `SELECT id FROM tasks WHERE task_type = 'sprint_fix'
+                 AND payload->>'sprint_dir' = $1
+                 AND (payload->>'eval_round')::int = $2
+                 AND status IN ('queued', 'in_progress') LIMIT 1`,
+                [harnessPayload.sprint_dir, nextFixRound]
+              );
+              if (existingFix.rows.length === 0) {
+                await createHarnessTask({
+                  title: `[Fix] Sprint 修复 R${nextFixRound} — ${harnessTask.title}`,
+                  description: `Evaluator 发现问题，Generator 需要修复。读取 evaluation.md 中的具体问题列表。\n原始 sprint_evaluate task_id: ${task_id}`,
+                  priority: 'P1',
+                  project_id: harnessTask.project_id,
+                  goal_id: harnessTask.goal_id,
+                  task_type: 'sprint_fix',
+                  trigger_source: 'execution_callback_harness',
+                  payload: {
+                    sprint_dir: harnessPayload.sprint_dir,
+                    dev_task_id: harnessPayload.dev_task_id,
+                    eval_round: nextFixRound,
+                    harness_mode: true
+                  }
+                });
+                console.log(`[execution-callback] harness: sprint_evaluate FAIL → sprint_fix created (round=${nextFixRound})`);
+              } else {
+                console.log(`[execution-callback] harness: sprint_evaluate FAIL → sprint_fix round=${nextFixRound} already exists, skipped`);
+              }
+            }
+          }
+        }
+
+        // sprint_fix 完成 → 创建新的 sprint_evaluate（再测，幂等保护）
+        if (harnessTask?.task_type === 'sprint_fix') {
+          const evalRound = harnessPayload.eval_round || 1;
+          const existingEval = await pool.query(
+            `SELECT id FROM tasks WHERE task_type = 'sprint_evaluate'
+             AND payload->>'sprint_dir' = $1
+             AND (payload->>'eval_round')::int = $2
+             AND status IN ('queued', 'in_progress') LIMIT 1`,
+            [harnessPayload.sprint_dir, evalRound]
+          );
+          if (existingEval.rows.length === 0) {
             await createHarnessTask({
-              title: `[Fix] Sprint 修复 R${(harnessPayload.eval_round || 0) + 1} — ${harnessTask.title}`,
-              description: `Evaluator 发现问题，Generator 需要修复。读取 evaluation.md 中的具体问题列表。\n原始 sprint_evaluate task_id: ${task_id}`,
+              title: `[Evaluator] 重测 Sprint R${evalRound} — ${harnessTask.title}`,
+              description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
               goal_id: harnessTask.goal_id,
-              task_type: 'sprint_fix',
+              task_type: 'sprint_evaluate',
               trigger_source: 'execution_callback_harness',
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
                 dev_task_id: harnessPayload.dev_task_id,
-                eval_round: (harnessPayload.eval_round || 0) + 1,
+                eval_round: evalRound,
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: sprint_evaluate FAIL → sprint_fix created (round=${(harnessPayload.eval_round || 0) + 1})`);
+            console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate created (round=${evalRound})`);
+          } else {
+            console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate round=${evalRound} already exists, skipped`);
           }
-        }
-
-        // sprint_fix 完成 → 创建新的 sprint_evaluate（再测）
-        if (harnessTask?.task_type === 'sprint_fix') {
-          await createHarnessTask({
-            title: `[Evaluator] 重测 Sprint R${harnessPayload.eval_round || 1} — ${harnessTask.title}`,
-            description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
-            priority: 'P1',
-            project_id: harnessTask.project_id,
-            goal_id: harnessTask.goal_id,
-            task_type: 'sprint_evaluate',
-            trigger_source: 'execution_callback_harness',
-            payload: {
-              sprint_dir: harnessPayload.sprint_dir,
-              dev_task_id: harnessPayload.dev_task_id,
-              eval_round: harnessPayload.eval_round || 1,
-              harness_mode: true
-            }
-          });
-          console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate created (round=${harnessPayload.eval_round || 1})`);
         }
       } catch (harnessErr) {
         console.error(`[execution-callback] harness sprint loop error (non-fatal): ${harnessErr.message}`, harnessErr.stack);

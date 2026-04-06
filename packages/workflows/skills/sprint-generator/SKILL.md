@@ -131,17 +131,21 @@ Brain 派发 sprint_generate
 
 #### Step 5: 回调 Brain
 
+> **CRITICAL**: 使用 `POST /api/brain/execution-callback`，不能用 `PATCH /api/brain/tasks`。
+
 ```bash
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
+curl -X POST localhost:5221/api/brain/execution-callback \
   -H "Content-Type: application/json" \
-  -d '{
-    "status": "completed",
-    "result": {
-      "pr_url": "...",
-      "sprint_contract": "sprints/sprint-N/sprint-contract.md",
-      "files_changed": ["file1.js", "file2.js"]
+  -d "{
+    \"task_id\": \"${TASK_ID}\",
+    \"run_id\": \"gen-${TASK_ID}\",
+    \"status\": \"AI Done\",
+    \"result\": {
+      \"pr_url\": \"...\",
+      \"sprint_contract\": \"sprints/sprint-N/sprint-contract.md\",
+      \"files_changed\": [\"file1.js\", \"file2.js\"]
     }
-  }'
+  }"
 ```
 
 ---
@@ -168,16 +172,20 @@ curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
 
 #### Step 4: 回调 Brain
 
+> **CRITICAL**: 使用 `POST /api/brain/execution-callback`，不能用 `PATCH /api/brain/tasks`。
+
 ```bash
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
+curl -X POST localhost:5221/api/brain/execution-callback \
   -H "Content-Type: application/json" \
-  -d '{
-    "status": "completed",
-    "result": {
-      "fixes_applied": ["SC-1: ...", "SC-3: ..."],
-      "eval_round": N
+  -d "{
+    \"task_id\": \"${TASK_ID}\",
+    \"run_id\": \"fix-${TASK_ID}\",
+    \"status\": \"AI Done\",
+    \"result\": {
+      \"fixes_applied\": [\"SC-1: ...\", \"SC-3: ...\"],
+      \"eval_round\": ${eval_round}
     }
-  }'
+  }"
 ```
 
 ---

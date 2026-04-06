@@ -287,29 +287,43 @@ rm -f test-results.json
 
 ### Step 6: 回调 Brain
 
+> **CRITICAL**: 必须使用 `POST /api/brain/execution-callback`，不能用 `PATCH /api/brain/tasks`。
+> PATCH 端点不保存 `result` 字段，也不触发 harness 路由，会导致 verdict 丢失。
+
 ```bash
 # 提取 verdict
 VERDICT="PASS"  # 或 "FAIL"
 
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
+curl -X POST localhost:5221/api/brain/execution-callback \
   -H "Content-Type: application/json" \
   -d "{
-    \"status\": \"completed\",
+    \"task_id\": \"${TASK_ID}\",
+    \"run_id\": \"eval-${TASK_ID}\",
+    \"status\": \"AI Done\",
     \"result\": {
       \"verdict\": \"${VERDICT}\",
       \"evaluation_file\": \"${sprint_dir}/evaluation.md\",
-      \"eval_round\": ${eval_round},
-      \"sc_results\": {
-        \"SC-1\": \"PASS\",
-        \"SC-2\": \"FAIL\"
-      },
-      \"extra_findings\": 0
+      \"eval_round\": ${eval_round}
     }
   }"
 ```
 
+**最终输出（必须包含 verdict）**:
+
+Step 6 调用完成后，Claude 的最终文本输出**必须**包含如下 JSON 摘要（供 cecelia-run 兜底提取）：
+
+```
+{"verdict": "PASS", "eval_round": N, "sprint_dir": "sprints/sprint-N"}
+```
+或
+```
+{"verdict": "FAIL", "eval_round": N, "sprint_dir": "sprints/sprint-N"}
+```
+
+> 双引号是必须的，否则 Brain 无法通过正则提取 verdict。
+
 **Brain 收到回调后的路由逻辑**:
-- `verdict: "PASS"` → 标记 dev task completed → 解锁下一个 sprint
+- `verdict: "PASS"` → 触发下一个 sprint 合同协商
 - `verdict: "FAIL"` → 创建 sprint_fix 任务 → Generator 修复 → Evaluator 再测
 
 ---
