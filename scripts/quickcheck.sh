@@ -211,7 +211,7 @@ else
                 echo -e "  ⏭  无 apps/api/src/ 改动，跳过 Workspace ESLint"
             else
                 echo -e "  ▶ Workspace ESLint (apps/api/src/)..."
-                if (cd apps/api && "$ESLINT_BIN" "${API_SRC_FILES[@]}" --max-warnings 0 2>&1); then
+                if (cd apps/api && npx eslint "${API_SRC_FILES[@]}" --max-warnings 0 2>&1); then
                     echo -e "  ${GREEN}✅ Workspace ESLint 通过${RESET}"
                 else
                     echo -e "  ${RED}❌ Workspace ESLint 失败${RESET}"
