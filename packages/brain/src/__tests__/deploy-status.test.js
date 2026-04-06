@@ -54,6 +54,8 @@ describe('deploy-status', () => {
   let deployState;
 
   beforeEach(async () => {
+    // 设置 DEPLOY_TOKEN 使 POST /deploy 能通过 token 校验
+    process.env.DEPLOY_TOKEN = 'test-token';
     vi.resetModules();
     const mod = await import('../routes/ops.js');
     deployState = mod.deployState;
@@ -122,5 +124,35 @@ describe('deploy-status', () => {
     expect(res.body.status).toBe('failed');
     expect(res.body.error).toBe('docker build failed');
     expect(res.body.elapsed_ms).toBe(3000);
+  });
+
+  it('POST /api/brain/deploy 在 running 时返回 409（并发互斥保护）', async () => {
+    // 模拟已有部署正在进行
+    deployState.status = 'running';
+    deployState.started_at = new Date().toISOString();
+
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer test-token')
+      .send({ changed_paths: ['packages/brain/'] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Deploy already in progress');
+    expect(res.body.current_status).toBe('running');
+    expect(res.body.started_at).toBeDefined();
+  });
+
+  it('POST /api/brain/deploy 在 rolling_back 时也返回 409', async () => {
+    deployState.status = 'rolling_back';
+    deployState.started_at = new Date().toISOString();
+
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer test-token')
+      .send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Deploy already in progress');
+    expect(res.body.current_status).toBe('rolling_back');
   });
 });
