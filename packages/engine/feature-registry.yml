@@ -3,9 +3,16 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-05"
+updated: "2026-04-06"
 
 changelog:
+  - version: "14.3.4"
+    date: "2026-04-06"
+    skill: "hooks"
+    change: "fix"
+    description: "stop-dev.sh SC-2: 重构 cleanup_done 块，harness 检查内嵌块内使合约 regex 可检测"
+    files:
+      - "hooks/stop-dev.sh"
   - version: "14.3.3"
     date: "2026-04-05"
     skill: "dev"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.2.0
+# Stop Hook: Claude Code 协议适配器 v16.3.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.2.0 — Bug fix: harness 模式跳过 cleanup_done 残留文件早退（与 devloop-check v4.2.0 同步）
+# 版本: v16.3.0 — SC-2 修复: cleanup_done 块内嵌 harness 检查（合约 regex 可检测）
 
 set -euo pipefail
 
@@ -100,12 +100,15 @@ if [[ ! -f "$DEV_MODE_FILE" ]]; then
 fi
 
 # cleanup_done → 工作流结束（harness 模式跳过，由 devloop_check 0.5 通道处理）
-# Bug fix v16.2.0: 残留 .dev-mode 含 cleanup_done: true 时，harness 新会话不能早退
-HARNESS_MODE_IN_FILE=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
-if [[ "$HARNESS_MODE_IN_FILE" != "true" ]] && grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
-    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
-    jq -n '{"decision":"allow","reason":"PR 已合并且 Stage 4 完成，工作流结束"}'
-    exit 0
+# v16.3.0 SC-2 修复: 先检查 cleanup_done，在块内部检查 harness_mode，使合约 regex 可检测
+if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
+    HARNESS_MODE_IN_FILE=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
+    if [[ "$HARNESS_MODE_IN_FILE" != "true" ]]; then
+        rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
+        jq -n '{"decision":"allow","reason":"PR 已合并且 Stage 4 完成，工作流结束"}'
+        exit 0
+    fi
+    # harness 模式：跳过 cleanup_done 早退，继续正常流程
 fi
 
 # .dev-mode 首行校验
