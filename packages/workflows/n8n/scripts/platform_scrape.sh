@@ -22,6 +22,12 @@ set -uo pipefail
 
 PLATFORM="${1:-}"
 SCRAPER_DIR="${SCRAPER_DIR:-${HOME}}"
+# 若设置此变量，采集完成后自动 POST 结果到 Brain API
+# 示例：BRAIN_API_URL=http://38.23.47.81:5221
+BRAIN_API_URL="${BRAIN_API_URL:-}"
+# content_publish 任务 ID（可选，有则写入 pipeline_publish_stats）
+PUBLISH_TASK_ID="${PUBLISH_TASK_ID:-}"
+PIPELINE_ID="${PIPELINE_ID:-}"
 
 # 输出 JSON 错误并退出（含 duration_ms，exit 0 让 N8N 通过 JSON 判断成功）
 error_json() {
@@ -101,8 +107,8 @@ if [[ "$SCRAPER_EXIT" -ne 0 ]] || [[ -z "$SCRAPER_OUTPUT" ]]; then
     error_json "$ERR_MSG" "$DURATION_MS"
 fi
 
-# 将 duration_ms 注入采集器输出 JSON
-echo "$SCRAPER_OUTPUT" | node -e "
+# 将 duration_ms 注入采集器输出 JSON，并可选回写到 Brain API
+FINAL_OUTPUT=$(echo "$SCRAPER_OUTPUT" | node -e "
 const chunks = [];
 process.stdin.on('data', c => chunks.push(c));
 process.stdin.on('end', () => {
@@ -122,4 +128,41 @@ process.stdin.on('end', () => {
         }) + '\n');
     }
 });
-" "$DURATION_MS"
+" "$DURATION_MS")
+
+# 输出最终 JSON（N8N 读取）
+echo "$FINAL_OUTPUT"
+
+# 若设置了 BRAIN_API_URL，将采集结果 POST 到 Brain analytics 端点
+if [[ -n "$BRAIN_API_URL" ]] && command -v curl >/dev/null 2>&1; then
+    # 构造写回 payload：从输出中提取 items（若有），否则发空 items（触发平台有数据的信号）
+    WRITE_BACK_PAYLOAD=$(echo "$FINAL_OUTPUT" | node -e "
+const chunks = [];
+process.stdin.on('data', c => chunks.push(c));
+process.stdin.on('end', () => {
+    try {
+        const d = JSON.parse(chunks.join('').trim());
+        const payload = {
+            platform: process.env.PLATFORM,
+            publishTaskId: process.env.PUBLISH_TASK_ID || undefined,
+            pipelineId: process.env.PIPELINE_ID || undefined,
+            items: Array.isArray(d.items) ? d.items : [],
+        };
+        if (!payload.publishTaskId) delete payload.publishTaskId;
+        if (!payload.pipelineId) delete payload.pipelineId;
+        process.stdout.write(JSON.stringify(payload));
+    } catch (e) {
+        process.stdout.write(JSON.stringify({ platform: process.env.PLATFORM, items: [] }));
+    }
+});
+" 2>/dev/null)
+
+    BRAIN_ENDPOINT="${BRAIN_API_URL}/api/brain/analytics/scrape-result"
+    curl -s -o /dev/null -w "%{http_code}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d "$WRITE_BACK_PAYLOAD" \
+        "$BRAIN_ENDPOINT" \
+        --max-time 10 \
+        2>/dev/null || true
+fi

@@ -14,6 +14,7 @@ import {
   bulkWriteContentAnalytics,
   queryWeeklyROI,
   getTopContentByPlatform,
+  upsertPipelinePublishStats,
 } from '../content-analytics.js';
 
 const router = Router();
@@ -1617,6 +1618,156 @@ router.get('/analytics/roi', async (req, res) => {
     res.json({ start: startDate.toISOString(), end: endDate.toISOString(), roi });
   } catch (err) {
     console.error('[API] analytics/roi GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── 爬虫结果写回（N8N / platform_scrape.sh → Brain）──────────────────────────
+
+/**
+ * POST /api/brain/analytics/scrape-result
+ * 接收平台爬虫采集结果，写入 content_analytics（ROI 计算）和
+ * pipeline_publish_stats（话题热度评分）。
+ *
+ * Body:
+ * {
+ *   platform: string,                  // 平台名（必填）
+ *   publishTaskId?: string,            // content_publish 任务 ID（带时则写 pipeline_publish_stats）
+ *   pipelineId?: string,               // 上游 pipeline ID（可选）
+ *   items: Array<{                     // 采集到的内容列表
+ *     contentId?: string,
+ *     title?: string,
+ *     publishedAt?: string,
+ *     views?: number,
+ *     likes?: number,
+ *     comments?: number,
+ *     shares?: number,
+ *     clicks?: number,
+ *     rawData?: object,
+ *   }>
+ * }
+ *
+ * Returns: { written: number, platform: string, totals: { views, likes, comments, shares } }
+ */
+router.post('/analytics/scrape-result', async (req, res) => {
+  try {
+    const { platform, publishTaskId, pipelineId, items } = req.body;
+    if (!platform) {
+      return res.status(400).json({ error: 'platform is required' });
+    }
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'items must be an array' });
+    }
+
+    // 1. 写入 content_analytics（每条内容单独记录，供 ROI 计算）
+    const analyticsItems = items.map(item => ({
+      platform,
+      contentId: item.contentId,
+      title: item.title,
+      publishedAt: item.publishedAt,
+      metrics: {
+        views: item.views || 0,
+        likes: item.likes || 0,
+        comments: item.comments || 0,
+        shares: item.shares || 0,
+        clicks: item.clicks || 0,
+      },
+      source: 'scraper',
+      pipelineId: pipelineId || null,
+      rawData: item.rawData || {},
+    }));
+    const written = await bulkWriteContentAnalytics(pool, analyticsItems);
+
+    // 2. 聚合指标写入 pipeline_publish_stats（供话题热度评分）
+    let totals = { views: 0, likes: 0, comments: 0, shares: 0 };
+    if (publishTaskId && items.length > 0) {
+      totals = items.reduce(
+        (acc, item) => ({
+          views: acc.views + (item.views || 0),
+          likes: acc.likes + (item.likes || 0),
+          comments: acc.comments + (item.comments || 0),
+          shares: acc.shares + (item.shares || 0),
+        }),
+        { views: 0, likes: 0, comments: 0, shares: 0 }
+      );
+      await upsertPipelinePublishStats(pool, {
+        publishTaskId,
+        pipelineId: pipelineId || null,
+        platform,
+        metrics: totals,
+      });
+    }
+
+    res.status(201).json({ written, platform, totals });
+  } catch (err) {
+    console.error('[API] analytics/scrape-result POST 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/analytics/platform-summary
+ * 按平台聚合内容效果数据（供 Dashboard 和周报使用）。
+ *
+ * Query params:
+ * - days: 统计天数（默认 7）
+ * - platform: 筛选特定平台（可选）
+ */
+router.get('/analytics/platform-summary', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const platform = req.query.platform;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const params = [since];
+    const platformClause = platform ? `AND platform = $2` : '';
+    if (platform) params.push(platform);
+
+    const { rows } = await pool.query(
+      `SELECT
+         platform,
+         COUNT(*)::int                                    AS content_count,
+         COALESCE(SUM(views), 0)::bigint                 AS total_views,
+         COALESCE(SUM(likes), 0)::bigint                 AS total_likes,
+         COALESCE(SUM(comments), 0)::bigint              AS total_comments,
+         COALESCE(SUM(shares), 0)::bigint                AS total_shares,
+         CASE WHEN COUNT(*) > 0
+           THEN ROUND(COALESCE(SUM(views), 0)::numeric / COUNT(*), 0)
+           ELSE 0
+         END                                             AS avg_views,
+         CASE WHEN COALESCE(SUM(views), 0) > 0
+           THEN ROUND(
+             (COALESCE(SUM(likes), 0) + COALESCE(SUM(comments), 0) + COALESCE(SUM(shares), 0))::numeric
+             / COALESCE(SUM(views), 0) * 1000, 2
+           )
+           ELSE 0
+         END                                             AS engagement_rate,
+         MAX(collected_at)                               AS last_collected_at
+       FROM content_analytics
+       WHERE collected_at >= $1
+         ${platformClause}
+       GROUP BY platform
+       ORDER BY total_views DESC`,
+      params
+    );
+
+    res.json({
+      since: since.toISOString(),
+      days,
+      platforms: rows.map(r => ({
+        platform: r.platform,
+        content_count: Number(r.content_count),
+        total_views: Number(r.total_views),
+        total_likes: Number(r.total_likes),
+        total_comments: Number(r.total_comments),
+        total_shares: Number(r.total_shares),
+        avg_views: Number(r.avg_views),
+        engagement_rate: Number(r.engagement_rate),
+        last_collected_at: r.last_collected_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[API] analytics/platform-summary GET 失败:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -140,6 +140,30 @@ export async function queryWeeklyROI(pool, start, end) {
 }
 
 /**
+ * 将采集结果写入 pipeline_publish_stats 表（用于话题热度评分）。
+ * 多次采集同一发布任务时追加新行（时序快照语义）。
+ *
+ * @param {import('pg').Pool} pool
+ * @param {object} params
+ * @param {string} params.publishTaskId - content_publish 任务 ID
+ * @param {string|null} [params.pipelineId] - 上游 pipeline ID
+ * @param {string} params.platform     - 平台名
+ * @param {object} params.metrics      - { views, likes, comments, shares }
+ * @returns {Promise<void>}
+ */
+export async function upsertPipelinePublishStats(pool, { publishTaskId, pipelineId, platform, metrics }) {
+  if (!publishTaskId) throw new Error('publishTaskId is required');
+  if (!platform) throw new Error('platform is required');
+  const { views = 0, likes = 0, comments = 0, shares = 0 } = metrics || {};
+  await pool.query(
+    `INSERT INTO pipeline_publish_stats
+       (pipeline_id, publish_task_id, platform, views, likes, comments, shares, scraped_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+    [pipelineId || null, publishTaskId, platform, views, likes, comments, shares]
+  );
+}
+
+/**
  * 获取指定时间范围内按平台分组的热门内容（按曝光量排序）。
  *
  * @param {import('pg').Pool} pool
