@@ -54,6 +54,8 @@ describe('deploy-status', () => {
   let deployState;
 
   beforeEach(async () => {
+    // 设置 DEPLOY_TOKEN 使 POST /deploy 能通过 token 校验
+    process.env.DEPLOY_TOKEN = 'test-token';
     vi.resetModules();
     const mod = await import('../routes/ops.js');
     deployState = mod.deployState;
