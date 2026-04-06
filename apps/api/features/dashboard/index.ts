@@ -21,6 +21,11 @@ const manifest: FeatureManifest = {
     { path: '/dashboard/command', component: 'CommandCenter' },
     { path: '/dashboard/command/*', component: 'CommandCenter' },
     { path: '/dashboard/panorama', component: 'PanoramaV3' },
+    {
+      path: '/dashboard/team',
+      component: 'TeamDashboardV1',
+      navItem: { label: '团队 Dashboard', icon: 'LayoutGrid', group: 'dashboard' },
+    },
     // Default route
     { path: '/', redirect: '/dashboard' },
     // Legacy redirects
@@ -32,6 +37,7 @@ const manifest: FeatureManifest = {
   components: {
     CommandCenter: () => import('../business/pages/CommandCenter'),
     PanoramaV3: () => import('../business/pages/PanoramaV3'),
+    TeamDashboardV1: () => import('../business/pages/TeamDashboardV1'),
   },
 };
 

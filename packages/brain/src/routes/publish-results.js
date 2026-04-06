@@ -85,4 +85,69 @@ router.get('/publish-results', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/publish-results/stats
+ * 发布统计聚合 — 供 Dashboard 使用
+ * Query: days (default 1 = 昨日) | 7 = 近7天
+ */
+router.get('/publish-results/stats', async (req, res) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 1, 30);
+
+    // 按平台+成功/失败分组统计
+    const byPlatform = await pool.query(
+      `SELECT
+         platform,
+         COUNT(*) FILTER (WHERE success = true)  AS success_count,
+         COUNT(*) FILTER (WHERE success = false) AS fail_count,
+         COUNT(*)                                 AS total_count,
+         array_agg(DISTINCT error) FILTER (WHERE error IS NOT NULL AND success = false) AS fail_reasons
+       FROM publish_results
+       WHERE created_at >= NOW() - make_interval(days => $1)
+       GROUP BY platform
+       ORDER BY total_count DESC`,
+      [days]
+    );
+
+    // 每日趋势（按天分组）
+    const daily = await pool.query(
+      `SELECT
+         DATE(created_at AT TIME ZONE 'Asia/Shanghai') AS day,
+         COUNT(*) FILTER (WHERE success = true)  AS success_count,
+         COUNT(*) FILTER (WHERE success = false) AS fail_count
+       FROM publish_results
+       WHERE created_at >= NOW() - make_interval(days => $1)
+       GROUP BY day
+       ORDER BY day DESC`,
+      [days]
+    );
+
+    const totalSuccess = byPlatform.rows.reduce((s, r) => s + Number(r.success_count), 0);
+    const totalFail    = byPlatform.rows.reduce((s, r) => s + Number(r.fail_count), 0);
+    const total        = totalSuccess + totalFail;
+
+    res.json({
+      success: true,
+      period_days: days,
+      total,
+      total_success: totalSuccess,
+      total_fail: totalFail,
+      by_platform: byPlatform.rows.map(r => ({
+        platform:      r.platform,
+        success_count: Number(r.success_count),
+        fail_count:    Number(r.fail_count),
+        total_count:   Number(r.total_count),
+        success_rate:  Number(r.total_count) > 0
+          ? Math.round((Number(r.success_count) / Number(r.total_count)) * 100)
+          : null,
+        fail_reasons: r.fail_reasons?.filter(Boolean) || [],
+      })),
+      daily_trend: daily.rows,
+    });
+  } catch (err) {
+    console.error('[publish-results] /stats 失败:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

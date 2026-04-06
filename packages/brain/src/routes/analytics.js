@@ -9,6 +9,12 @@ import {
 } from '../cortex-quality.js';
 import { runDecompositionChecks } from '../decomposition-checker.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
+import {
+  writeContentAnalytics,
+  bulkWriteContentAnalytics,
+  queryWeeklyROI,
+  getTopContentByPlatform,
+} from '../content-analytics.js';
 
 const router = Router();
 
@@ -1522,6 +1528,96 @@ router.post('/attach-decision', async (req, res) => {
       error: 'Failed to make attachment decision',
       details: err.message
     });
+  }
+});
+
+// ─── 内容效果数据采集 API ─────────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/analytics/content
+ * 写入内容效果采集快照（单条）。
+ *
+ * Body: { platform, contentId?, title?, publishedAt?, metrics: { views, likes, comments, shares, clicks }, source?, pipelineId?, rawData? }
+ */
+router.post('/analytics/content', async (req, res) => {
+  try {
+    const { platform, contentId, title, publishedAt, metrics, source, pipelineId, rawData } = req.body;
+    if (!platform) {
+      return res.status(400).json({ error: 'platform is required' });
+    }
+    const id = await writeContentAnalytics(pool, {
+      platform, contentId, title, publishedAt, metrics, source, pipelineId, rawData,
+    });
+    res.status(201).json({ id });
+  } catch (err) {
+    console.error('[API] analytics/content POST 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/analytics/content/bulk
+ * 批量写入内容效果采集快照。
+ *
+ * Body: { items: Array<{ platform, contentId?, title?, publishedAt?, metrics, source?, pipelineId?, rawData? }> }
+ */
+router.post('/analytics/content/bulk', async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'items must be an array' });
+    }
+    const count = await bulkWriteContentAnalytics(pool, items);
+    res.status(201).json({ written: count });
+  } catch (err) {
+    console.error('[API] analytics/content/bulk POST 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/analytics/content
+ * 查询内容效果数据（最近 7 天，按平台分组热门）。
+ *
+ * Query params:
+ * - platform: 筛选平台
+ * - limit: 返回条数（默认 10）
+ * - since: ISO 日期字符串（默认 7 天前）
+ */
+router.get('/analytics/content', async (req, res) => {
+  try {
+    const { platform, limit, since } = req.query;
+    const sinceDate = since ? new Date(since) : undefined;
+    const items = await getTopContentByPlatform(pool, {
+      platform,
+      since: sinceDate,
+      limit: parseInt(limit) || 10,
+    });
+    res.json(items);
+  } catch (err) {
+    console.error('[API] analytics/content GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/analytics/roi
+ * 查询指定时间范围内的内容 ROI（平台维度汇总）。
+ *
+ * Query params:
+ * - start: ISO 日期（默认 7 天前）
+ * - end: ISO 日期（默认当前时间）
+ */
+router.get('/analytics/roi', async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const startDate = start ? new Date(start) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const endDate = end ? new Date(end) : new Date();
+    const roi = await queryWeeklyROI(pool, startDate, endDate);
+    res.json({ start: startDate.toISOString(), end: endDate.toISOString(), roi });
+  } catch (err) {
+    console.error('[API] analytics/roi GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
