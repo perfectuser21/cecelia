@@ -138,7 +138,9 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
     expect(inserted.pipeline_stage).toBe('content-research');
   });
 
-  it('无 content_type 时照常启动（向后兼容）', async () => {
+  it('无 content_type 时使用默认 solo-company-case 照常启动', async () => {
+    getContentType.mockResolvedValue(MOCK_TYPE_CONFIG);
+
     const pool = makeMockPool({
       pipelines: [{
         id: 'pipe-003',
@@ -152,7 +154,8 @@ describe('orchestrateContentPipelines — YAML 配置集成', () => {
 
     const result = await orchestrateContentPipelines(pool);
 
-    expect(getContentType).not.toHaveBeenCalled();
+    // 修复后：无 content_type 时默认使用 solo-company-case，getContentType 会被调用
+    expect(getContentType).toHaveBeenCalledWith('solo-company-case');
     expect(result.summary.orchestrated).toBe(1);
   });
 
