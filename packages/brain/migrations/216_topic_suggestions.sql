@@ -1,6 +1,7 @@
 -- Migration 216: 选题推荐队列表
 -- 数据驱动选题闭环 I5：在"生成选题"→"创建内容Pipeline"之间增加推荐审核层
 -- Alex 可 approve/reject；2小时内无操作则 auto_promoted 自动进入内容队列
+-- 注：215 已被 content_analytics 占用，本表使用 216
 
 CREATE TABLE IF NOT EXISTS topic_suggestions (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -35,5 +36,5 @@ CREATE INDEX IF NOT EXISTS idx_topic_suggestions_status_created
 
 -- 记录 schema 版本
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('215', 'topic_suggestions 表 - 选题推荐审核队列', NOW())
+VALUES ('216', 'topic_suggestions 表 - 选题推荐审核队列', NOW())
 ON CONFLICT (version) DO NOTHING;
