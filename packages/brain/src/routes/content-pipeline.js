@@ -225,7 +225,12 @@ router.put('/content-types/:type/config', async (req, res) => {
  * Query: date=YYYY-MM-DD（可选，默认今日）
  */
 router.get('/daily-stats', async (req, res) => {
-  const dateStr = req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  const rawDate = req.query.date;
+  // 格式校验：只接受 YYYY-MM-DD（防止非预期输入）
+  if (rawDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    return res.status(400).json({ error: 'date 参数格式无效，请使用 YYYY-MM-DD' });
+  }
+  const dateStr = rawDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
 
   try {
     const result = await pool.query(
