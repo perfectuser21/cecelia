@@ -1555,7 +1555,7 @@ ${resultStr.substring(0, 2000)}
         if (harnessTask?.task_type === 'sprint_planner') {
           const sprintDir = 'sprints/sprint-1';
           await createHarnessTask({
-            title: `[Contract] Sprint 1 合同提案 — ${harnessTask.title}`,
+            title: `[Contract] sprint-1 P1`,
             description: `Generator 根据 PRD 提出 Sprint 1 的合同草案（功能清单+验收标准）。\nPRD task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1576,7 +1576,7 @@ ${resultStr.substring(0, 2000)}
         // Layer 2a: sprint_contract_propose 完成 → sprint_contract_review
         if (harnessTask?.task_type === 'sprint_contract_propose') {
           await createHarnessTask({
-            title: `[Contract Review] Sprint ${harnessPayload.sprint_num} 合同审查 — ${harnessTask.title}`,
+            title: `[Contract Review] sprint-${harnessPayload.sprint_num} R${harnessPayload.propose_round || 1}`,
             description: `Evaluator 审查合同草案，找出不清晰的验收标准和遗漏的边界情况。\npropose task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1609,7 +1609,7 @@ ${resultStr.substring(0, 2000)}
           if (reviewVerdict === 'APPROVED') {
             // 合同获批 → 创建 sprint_generate（Generator 写代码）
             await createHarnessTask({
-              title: `[Generator] Sprint ${harnessPayload.sprint_num} 写代码 — ${harnessTask.title}`,
+              title: `[Generator] sprint-${harnessPayload.sprint_num} 写代码`,
               description: `Generator 根据已批准的 Sprint Contract 写代码。\ncontract_review task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1628,7 +1628,7 @@ ${resultStr.substring(0, 2000)}
             // 合同被挑战 → 重新提案（带反馈）
             const nextRound = (harnessPayload.propose_round || 1) + 1;
             await createHarnessTask({
-              title: `[Contract] Sprint ${harnessPayload.sprint_num} 合同提案 R${nextRound} — ${harnessTask.title}`,
+              title: `[Contract] sprint-${harnessPayload.sprint_num} P${nextRound}`,
               description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1651,8 +1651,9 @@ ${resultStr.substring(0, 2000)}
         // Layer 3a: sprint_generate 完成 → 创建 sprint_evaluate
         if (harnessTask?.task_type === 'sprint_generate' || (harnessTask?.task_type === 'dev' && harnessPayload.harness_mode)) {
           const { createTask: createHarnessTask } = await import('../actions.js');
+          const sprintLabelEval = harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'sprint';
           await createHarnessTask({
-            title: `[Evaluator] 测试 Sprint — ${harnessTask.title}`,
+            title: `[Evaluator] ${sprintLabelEval} R1`,
             description: `Evaluator 对 Generator 的代码进行对抗性验证。读取 sprint-contract.md，逐条测试运行中的代码。\n原始 sprint_generate task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1661,7 +1662,9 @@ ${resultStr.substring(0, 2000)}
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
+              sprint_num: harnessPayload.sprint_num,
               dev_task_id: harnessPayload.dev_task_id || task_id,
+              planner_task_id: harnessPayload.planner_task_id,
               eval_round: 1,
               harness_mode: true
             }
@@ -1683,7 +1686,7 @@ ${resultStr.substring(0, 2000)}
               // 重试：Evaluator 会话崩溃，重新派发 sprint_evaluate（而非 sprint_fix）
               console.warn(`[execution-callback] harness: sprint_evaluate result=null (session crash) at round ${evalRound}, retrying evaluation`);
               await createHarnessTask({
-                title: `[Evaluator] 重试 Sprint R${evalRound + 1}（会话崩溃后重试）— ${harnessTask.title}`,
+                title: `[Evaluator] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'sprint'} R${evalRound + 1} (retry)`,
                 description: `Evaluator 会话崩溃（result=null），重新派发评估。\n原始 sprint_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -1692,7 +1695,9 @@ ${resultStr.substring(0, 2000)}
                 trigger_source: 'execution_callback_harness',
                 payload: {
                   sprint_dir: harnessPayload.sprint_dir,
+                  sprint_num: harnessPayload.sprint_num,
                   dev_task_id: harnessPayload.dev_task_id,
+                  planner_task_id: harnessPayload.planner_task_id,
                   eval_round: evalRound + 1,
                   harness_mode: true,
                   retry_reason: 'evaluator_session_crash'
@@ -1757,7 +1762,7 @@ ${resultStr.substring(0, 2000)}
               );
               if (existingNext.rows.length === 0) {
                 await createHarnessTask({
-                  title: `[Contract] Sprint ${nextSprintNum} 合同提案`,
+                  title: `[Contract] sprint-${nextSprintNum} P1`,
                   description: `Sprint ${sprintNum} PASS。Generator 提出 Sprint ${nextSprintNum} 的合同草案。`,
                   priority: 'P1',
                   project_id: harnessTask.project_id,
@@ -1799,7 +1804,7 @@ ${resultStr.substring(0, 2000)}
           } else {
             // FAIL: 创建 sprint_fix
             await createHarnessTask({
-              title: `[Fix] Sprint 修复 R${(harnessPayload.eval_round || 0) + 1} — ${harnessTask.title}`,
+              title: `[Fix] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'sprint'} R${(harnessPayload.eval_round || 0) + 1}`,
               description: `Evaluator 发现问题，Generator 需要修复。读取 evaluation.md 中的具体问题列表。\n原始 sprint_evaluate task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1821,7 +1826,7 @@ ${resultStr.substring(0, 2000)}
         // sprint_fix 完成 → 创建新的 sprint_evaluate（再测）
         if (harnessTask?.task_type === 'sprint_fix') {
           await createHarnessTask({
-            title: `[Evaluator] 重测 Sprint R${harnessPayload.eval_round || 1} — ${harnessTask.title}`,
+            title: `[Evaluator] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'sprint'} R${harnessPayload.eval_round || 1}`,
             description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1830,7 +1835,9 @@ ${resultStr.substring(0, 2000)}
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
+              sprint_num: harnessPayload.sprint_num,
               dev_task_id: harnessPayload.dev_task_id,
+              planner_task_id: harnessPayload.planner_task_id,
               eval_round: harnessPayload.eval_round || 1,
               harness_mode: true
             }

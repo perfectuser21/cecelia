@@ -27,6 +27,7 @@ const manifest: FeatureManifest = {
           { path: '/system/engine', label: 'Engine', icon: 'Cpu', order: 6 },
           { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
           { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 9 },
+          { path: '/collection-dashboard', label: 'Collection', icon: 'Database', order: 12 },
           { path: '/okr-roadmap', label: 'OKR Roadmap', icon: 'MapPin', order: 10 },
           { path: '/system/team', label: 'Team', icon: 'Users', order: 11 },
         ],
@@ -44,6 +45,7 @@ const manifest: FeatureManifest = {
     { path: '/system/skills-registry', redirect: '/system/team' },
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
+    { path: '/collection-dashboard', component: 'CollectionDashboardPage' },
     { path: '/okr-roadmap', component: 'OKRRoadmap' },
     { path: '/account-usage', component: 'AccountUsagePage' },
     { path: '/brain-models', component: 'BrainModelsPage' },
@@ -143,6 +145,7 @@ const manifest: FeatureManifest = {
     SystemTabbed: () => import('./pages/SystemTabbed'),
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
+    CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),
     OKRRoadmap: () => import('../../../dashboard/src/pages/roadmap/RoadmapPage'),
     AccountUsagePage: () => import('../../../dashboard/src/pages/account-usage/AccountUsagePage'),
     BrainModelsPage: () => import('../../../dashboard/src/pages/brain-models/BrainModelsPage'),

@@ -135,7 +135,7 @@ router.get('/session-info/:pid', (req, res) => {
   // 读取 provider/model 环境变量
   const env = readProcessEnv(pid, ['CECELIA_PROVIDER', 'CECELIA_MODEL', 'ANTHROPIC_BASE_URL']);
   let provider: string = 'anthropic';
-  let model: string | null = env.CECELIA_MODEL;
+  const model: string | null = env.CECELIA_MODEL;
   if (env.CECELIA_PROVIDER) {
     provider = env.CECELIA_PROVIDER;
   } else if (env.ANTHROPIC_BASE_URL?.includes('minimax')) {

@@ -2102,4 +2102,152 @@ router.get('/analytics/collection-dashboard', async (req, res) => {
   }
 });
 
+// ─── 采集仪表盘统计 ────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/analytics/collection-stats
+ * 采集仪表盘：各平台每日数据量、scraper 任务成功率、整体健康率。
+ *
+ * Query params:
+ *   - days: 回溯天数（默认 7，最大 30）
+ *
+ * Returns:
+ *   {
+ *     health: { overall_inflow_rate, target_rate, healthy },
+ *     platforms: [{ platform, daily_volumes, scraper_stats, last_collected_at, is_fresh }],
+ *     synced_at: ISO string
+ *   }
+ */
+router.get('/analytics/collection-stats', async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 7, 30);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // 1. 各平台每日数据量（content_analytics）
+    const { rows: volumeRows } = await pool.query(
+      `SELECT
+         platform,
+         DATE(collected_at AT TIME ZONE 'UTC') AS date,
+         COUNT(*)::int                          AS count
+       FROM content_analytics
+       WHERE collected_at >= $1
+       GROUP BY platform, DATE(collected_at AT TIME ZONE 'UTC')
+       ORDER BY platform, date`,
+      [since.toISOString()]
+    );
+
+    // 2. platform_scraper 任务成功率（tasks 表，忽略不存在的 task_type）
+    let scraperRows = [];
+    try {
+      const { rows } = await pool.query(
+        `SELECT
+           payload->>'platform'  AS platform,
+           status,
+           COUNT(*)::int          AS cnt
+         FROM tasks
+         WHERE task_type = 'platform_scraper'
+           AND created_at >= $1
+         GROUP BY payload->>'platform', status`,
+        [since.toISOString()]
+      );
+      scraperRows = rows;
+    } catch (_) {
+      // platform_scraper 类型不存在时静默忽略
+    }
+
+    // 3. 各平台最后采集时间
+    const { rows: coverageRows } = await pool.query(
+      `SELECT
+         platform,
+         COUNT(*)::int  AS total_records,
+         MAX(collected_at) AS last_collected_at
+       FROM content_analytics
+       GROUP BY platform`
+    );
+
+    // 整理 scraper stats per platform
+    const scraperMap = {};
+    for (const r of scraperRows) {
+      if (!r.platform) continue;
+      if (!scraperMap[r.platform]) {
+        scraperMap[r.platform] = { total: 0, completed: 0, failed: 0 };
+      }
+      scraperMap[r.platform].total += r.cnt;
+      if (r.status === 'completed') scraperMap[r.platform].completed += r.cnt;
+      if (r.status === 'failed') scraperMap[r.platform].failed += r.cnt;
+    }
+
+    // 整理 coverage per platform
+    const coverageMap = {};
+    for (const r of coverageRows) {
+      coverageMap[r.platform] = {
+        total_records: r.total_records,
+        last_collected_at: r.last_collected_at,
+      };
+    }
+
+    // 整理 daily volumes per platform
+    const volumeMap = {};
+    for (const r of volumeRows) {
+      if (!volumeMap[r.platform]) volumeMap[r.platform] = [];
+      volumeMap[r.platform].push({ date: r.date, count: r.count });
+    }
+
+    // 所有出现过的平台（已知 + DB 实际）
+    const { KNOWN_PLATFORMS } = await import('../social-media-sync.js');
+    const allPlatforms = new Set([...KNOWN_PLATFORMS, ...Object.keys(volumeMap), ...Object.keys(coverageMap)]);
+
+    // 生成返回结构
+    const freshCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const platforms = [...allPlatforms].sort().map(platform => {
+      const cov = coverageMap[platform] || {};
+      const scraper = scraperMap[platform] || { total: 0, completed: 0, failed: 0 };
+      const lastAt = cov.last_collected_at ? new Date(cov.last_collected_at) : null;
+      const isFresh = lastAt ? lastAt > freshCutoff : false;
+      const successRate = scraper.total > 0
+        ? Math.round((scraper.completed / scraper.total) * 100)
+        : null;
+
+      return {
+        platform,
+        daily_volumes: volumeMap[platform] || [],
+        last_collected_at: cov.last_collected_at || null,
+        is_fresh: isFresh,
+        has_data: Boolean(cov.total_records > 0),
+        total_records: cov.total_records || 0,
+        scraper_stats: {
+          total: scraper.total,
+          completed: scraper.completed,
+          failed: scraper.failed,
+          success_rate: successRate,
+        },
+      };
+    });
+
+    // 整体健康率：过去 N 天内，有数据的平台占比
+    const activeDays = days;
+    const platformsWithData = platforms.filter(p => p.has_data).length;
+    const overallInflowRate = platforms.length > 0
+      ? Math.round((platformsWithData / platforms.length) * 100)
+      : 0;
+    const TARGET_RATE = 95;
+
+    res.json({
+      health: {
+        overall_inflow_rate: overallInflowRate,
+        target_rate: TARGET_RATE,
+        healthy: overallInflowRate >= TARGET_RATE,
+        platforms_with_data: platformsWithData,
+        total_platforms: platforms.length,
+      },
+      platforms,
+      query_days: activeDays,
+      synced_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[API] analytics/collection-stats GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
