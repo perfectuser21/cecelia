@@ -50,19 +50,28 @@ async function backfill() {
   let errors = 0;
 
   try {
-    // 1. 查询所有已完成的 content_publish 任务
-    const dateFilter = DAYS
-      ? `AND completed_at >= NOW() - INTERVAL '${DAYS} days'`
-      : '';
-
-    const { rows: tasks } = await pool.query(
-      `SELECT id, title, payload, completed_at
-       FROM tasks
-       WHERE task_type = 'content_publish'
-         AND status = 'completed'
-         ${dateFilter}
-       ORDER BY completed_at ASC`
-    );
+    // 1. 查询所有已完成的 content_publish 任务（参数化查询，避免 SQL 注入）
+    let tasksResult;
+    if (DAYS) {
+      tasksResult = await pool.query(
+        `SELECT id, title, payload, completed_at
+         FROM tasks
+         WHERE task_type = 'content_publish'
+           AND status = 'completed'
+           AND completed_at >= NOW() - ($1 * INTERVAL '1 day')
+         ORDER BY completed_at ASC`,
+        [DAYS]
+      );
+    } else {
+      tasksResult = await pool.query(
+        `SELECT id, title, payload, completed_at
+         FROM tasks
+         WHERE task_type = 'content_publish'
+           AND status = 'completed'
+         ORDER BY completed_at ASC`
+      );
+    }
+    const { rows: tasks } = tasksResult;
 
     console.log(`[backfill] 找到 ${tasks.length} 个已完成的 content_publish 任务`);
 
@@ -146,7 +155,7 @@ async function backfill() {
       }
     }
   } finally {
-    await pool.end().catch(() => {});
+    await pool.end().catch(err => console.warn('[backfill] pool.end 失败:', err.message));
   }
 
   console.log(`\n[backfill] 完成：处理=${processed} 写入=${inserted} 跳过=${skipped} 错误=${errors}`);
