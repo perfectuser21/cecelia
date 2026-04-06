@@ -19,6 +19,11 @@ on:
   push:
     branches: [main]
 
+# 串行部署：同一时间只允许一个 deploy workflow 运行，排队等待而非取消
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   # ─── Detect Changes ───────────────────────────────────────────────────────
 
