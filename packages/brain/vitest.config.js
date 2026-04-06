@@ -143,7 +143,7 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 1
+        maxForks: 1        // 单 fork 串行：465文件 × ~20MB / fork，ubuntu-latest 7GB 内
       }
     }
   }
