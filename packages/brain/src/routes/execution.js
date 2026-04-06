@@ -1597,12 +1597,18 @@ ${resultStr.substring(0, 2000)}
 
         // Layer 2b: sprint_contract_review 完成 → APPROVED/REVISION 路由
         if (harnessTask?.task_type === 'sprint_contract_review') {
-          // 解析 verdict: APPROVED 或 REVISION
+          // SC-1: 严格解析 verdict — 当 result 是对象且含 verdict 字段时，直接用严格等号，不走文本正则
           let reviewVerdict = 'REVISION';
-          const reviewResultRaw = typeof result === 'object' ? (result?.verdict || result?.decision || result?.result || '') : (result || '');
-          const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
-          if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
-            reviewVerdict = 'APPROVED';
+          if (result !== null && typeof result === 'object' && result.verdict) {
+            // 对象类型优先：严格比较（不用正则，避免 "部分 APPROVED" 误判）
+            reviewVerdict = result.verdict.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REVISION';
+          } else {
+            // 降级：文本正则（兼容旧格式）
+            const reviewResultRaw = typeof result === 'object' ? (result?.decision || result?.result || '') : (result || '');
+            const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
+            if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
+              reviewVerdict = 'APPROVED';
+            }
           }
           console.log(`[execution-callback] harness: sprint_contract_review verdict=${reviewVerdict}`);
 
