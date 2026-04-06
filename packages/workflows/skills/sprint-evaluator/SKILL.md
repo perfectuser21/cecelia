@@ -217,6 +217,15 @@ grep -rn "password\|secret\|api_key\|token" --include="*.js" --include="*.ts" \
   2. [问题 2]: [描述] — 复现: `[命令]`
 ```
 
+**SC 验证命令判定规则（CRITICAL）**:
+
+当执行 sprint-contract.md 中的验证命令（`node -e "..."`）时：
+- exit code 非 0 → 该 SC **FAIL**（无论输出内容）
+- 输出不包含 "PASS" → 该 SC **FAIL**
+- exit code 为 0 且输出包含 "PASS" → 该 SC **PASS**
+
+不允许人工解读命令输出来绕过 exit code 和 PASS 检查。
+
 **裁决规则**:
 - 任何一个 SC 条目 FAIL → 整体 FAIL
 - 额外发现中的严重问题（崩溃、数据丢失、安全漏洞）→ 整体 FAIL
