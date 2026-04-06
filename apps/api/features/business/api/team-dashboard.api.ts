@@ -77,8 +77,22 @@ export interface SocialPost {
   scraped_at: string;
 }
 
+/** 来自 content_analytics 表的自有内容数据（PR #1941 新增） */
+export interface ContentAnalyticsItem {
+  id: string;
+  platform: string;
+  content_id: string;
+  title?: string;
+  view_count: number;
+  like_count: number;
+  comment_count: number;
+  share_count: number;
+  collected_at: string;
+}
+
 export interface ContentPerformance {
   posts: SocialPost[];
+  analytics: ContentAnalyticsItem[];
   has_data: boolean;
 }
 
@@ -101,13 +115,24 @@ export async function fetchClusterStatus(): Promise<ClusterStatus> {
 }
 
 export async function fetchContentPerformance(days = 7): Promise<ContentPerformance> {
-  try {
-    const r = await fetch(`${BRAIN}/social/trending?days=${days}&limit=10`);
-    if (!r.ok) return { posts: [], has_data: false };
-    const data = await r.json();
-    const posts: SocialPost[] = Array.isArray(data) ? data : [];
-    return { posts, has_data: posts.length > 0 };
-  } catch {
-    return { posts: [], has_data: false };
-  }
+  // 并行：自有内容效果（analytics/content）+ 平台趋势（social/trending）
+  const [analyticsResult, trendingResult] = await Promise.allSettled([
+    fetch(`${BRAIN}/analytics/content?days=${days}&limit=10`).then(r =>
+      r.ok ? (r.json() as Promise<ContentAnalyticsItem[]>) : Promise.resolve([])
+    ),
+    fetch(`${BRAIN}/social/trending?days=${days}&limit=10`).then(r =>
+      r.ok ? (r.json() as Promise<SocialPost[]>) : Promise.resolve([])
+    ),
+  ]);
+
+  const analytics: ContentAnalyticsItem[] =
+    analyticsResult.status === 'fulfilled' && Array.isArray(analyticsResult.value)
+      ? analyticsResult.value
+      : [];
+  const posts: SocialPost[] =
+    trendingResult.status === 'fulfilled' && Array.isArray(trendingResult.value)
+      ? trendingResult.value
+      : [];
+
+  return { posts, analytics, has_data: analytics.length > 0 || posts.length > 0 };
 }
