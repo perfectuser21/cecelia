@@ -117,6 +117,25 @@ describe('buildWeeklyReportText()', () => {
     expect(text).toContain('本周无数据回收记录');
     expect(text).toContain('无发布失败记录');
   });
+
+  it('有话题热度数据时展示爆款主题板块', () => {
+    const topicHeatData = [
+      { topic_keyword: 'AI降本增效', heat_score: 85.5, total_likes: 300, total_comments: 50, total_shares: 20 },
+      { topic_keyword: '一人公司实战', heat_score: 72.0, total_likes: 200, total_comments: 30, total_shares: 15 },
+    ];
+    const text = buildWeeklyReportText(weekKey, startStr, endStr, { count: 0, topics: [] }, [], [], 0, topicHeatData);
+    expect(text).toContain('== 爆款主题 ==');
+    expect(text).toContain('AI降本增效');
+    expect(text).toContain('85.5');
+    expect(text).toContain('== 下周推荐方向 ==');
+    expect(text).toContain('AI降本增效'); // heat_score >= 60 才推荐
+  });
+
+  it('无话题热度数据时显示提示文案', () => {
+    const text = buildWeeklyReportText(weekKey, startStr, endStr, { count: 0, topics: [] }, [], [], 0, []);
+    expect(text).toContain('== 爆款主题 ==');
+    expect(text).toContain('暂无话题热度数据');
+  });
 });
 
 // ─── generateWeeklyReport ─────────────────────────────────────────────────────

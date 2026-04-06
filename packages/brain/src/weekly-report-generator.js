@@ -17,6 +17,7 @@
 
 import pool from './db.js';
 import { sendFeishu } from './notifier.js';
+import { computeTopicHeatScores, saveTopicFeedback } from './topic-heat-scorer.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -240,7 +241,7 @@ function fmt(val) {
 }
 
 /**
- * 生成周报文本（五个板块：内容产出、发布情况、数据回收、异常告警、周总结）。
+ * 生成周报文本（七个板块：内容产出、发布情况、数据回收、爆款主题、下周推荐、异常告警、周总结）。
  *
  * @param {string} weekKey - YYYY-WNN
  * @param {string} startStr - 上周一 YYYY-MM-DD
@@ -249,9 +250,10 @@ function fmt(val) {
  * @param {Array<{platform: string, success: number, failed: number}>} publishStats
  * @param {Array<{platform: string, views: number, likes: number, comments: number, shares: number}>} engagementData
  * @param {number} failureCount
+ * @param {Array<{topic_keyword: string, heat_score: number, total_likes: number, total_comments: number, total_shares: number}>} [topicHeatData]
  * @returns {string}
  */
-export function buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount) {
+export function buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData = []) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容周报 ${weekKey}`);
@@ -300,7 +302,33 @@ export function buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, 
   }
   lines.push('');
 
-  // ── 板块四：异常告警 ──────────────────────────────────────────────────────
+  // ── 板块四：爆款主题 ──────────────────────────────────────────────────────
+  lines.push('== 爆款主题 ==');
+  if (!topicHeatData || topicHeatData.length === 0) {
+    lines.push('本周暂无话题热度数据（发布后需等待 4h 数据回收）。');
+  } else {
+    const top5 = topicHeatData.slice(0, 5);
+    for (let i = 0; i < top5.length; i++) {
+      const t = top5[i];
+      lines.push(`  ${i + 1}. ${t.topic_keyword}（热度 ${t.heat_score.toFixed(1)}分 | 点赞 ${fmt(t.total_likes)} / 评论 ${fmt(t.total_comments)} / 转发 ${fmt(t.total_shares)}）`);
+    }
+  }
+  lines.push('');
+
+  // ── 板块五：下周推荐方向 ──────────────────────────────────────────────────
+  lines.push('== 下周推荐方向 ==');
+  const recommended = (topicHeatData || []).filter(t => t.heat_score >= 60).slice(0, 3);
+  if (recommended.length === 0) {
+    lines.push('本周无热度达标话题，建议下周继续尝试多样化选题。');
+  } else {
+    lines.push('基于本周数据，推荐继续深耕以下方向：');
+    for (const t of recommended) {
+      lines.push(`  · ${t.topic_keyword}`);
+    }
+  }
+  lines.push('');
+
+  // ── 板块六：异常告警 ──────────────────────────────────────────────────────
   lines.push('== 异常告警 ==');
   if (failureCount === 0) {
     lines.push('本周无发布失败记录，一切正常。');
@@ -309,7 +337,7 @@ export function buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, 
   }
   lines.push('');
 
-  // ── 板块五：周总结 ────────────────────────────────────────────────────────
+  // ── 板块七：周总结 ────────────────────────────────────────────────────────
   lines.push('== 周总结 ==');
   const totalPublish = publishStats.reduce((s, r) => s + r.success + r.failed, 0);
   const totalViews = engagementData.reduce((s, r) => s + r.views, 0);
@@ -375,24 +403,33 @@ export async function generateWeeklyReport(dbPool = pool, now = new Date()) {
   console.log(`[weekly-report-generator] 开始生成 ${weekKey} 周报，统计范围：${startStr} ~ ${endStr}`);
 
   try {
-    // 3. 并发查询四类数据
-    const [contentOutput, publishStats, engagementData, failureCount] = await Promise.all([
+    // 3. 并发查询四类数据 + 话题热度评分
+    const [contentOutput, publishStats, engagementData, failureCount, topicHeatData] = await Promise.all([
       fetchWeekContentOutput(dbPool, start, end),
       fetchWeekPublishStats(dbPool, start, end),
       fetchWeekEngagementData(dbPool, start, end),
       fetchWeekFailureCount(dbPool, start, end),
+      computeTopicHeatScores(dbPool, start, end).catch(err => {
+        console.error(`[weekly-report-generator] 话题热度评分失败（跳过）: ${err.message}`);
+        return [];
+      }),
     ]);
 
-    // 4. 生成周报文本
-    const reportText = buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount);
+    // 4. 保存话题反馈（用于下周选题参考），不阻塞主流程
+    saveTopicFeedback(dbPool, weekKey, topicHeatData).catch(err => {
+      console.error(`[weekly-report-generator] 保存话题反馈失败: ${err.message}`);
+    });
 
-    // 5. 写入 working_memory
+    // 5. 生成周报文本
+    const reportText = buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData);
+
+    // 6. 写入 working_memory
     await saveWeeklyReportToWorkingMemory(dbPool, weekKey, reportText);
 
-    // 6. 标记本周已完成（幂等锁，在推送前写入，避免推送失败导致重复生成）
+    // 7. 标记本周已完成（幂等锁，在推送前写入，避免推送失败导致重复生成）
     await markThisWeekDone(dbPool, weekKey);
 
-    // 7. 飞书推送（推送失败不影响幂等锁）
+    // 8. 飞书推送（推送失败不影响幂等锁）
     await sendFeishu(reportText).catch(err => {
       console.error(`[weekly-report-generator] 飞书推送失败（周报已存储）: ${err.message}`);
     });
