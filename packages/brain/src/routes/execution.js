@@ -1662,7 +1662,9 @@ ${resultStr.substring(0, 2000)}
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
+              sprint_num: harnessPayload.sprint_num,
               dev_task_id: harnessPayload.dev_task_id || task_id,
+              planner_task_id: harnessPayload.planner_task_id,
               eval_round: 1,
               harness_mode: true
             }
@@ -1693,7 +1695,9 @@ ${resultStr.substring(0, 2000)}
                 trigger_source: 'execution_callback_harness',
                 payload: {
                   sprint_dir: harnessPayload.sprint_dir,
+                  sprint_num: harnessPayload.sprint_num,
                   dev_task_id: harnessPayload.dev_task_id,
+                  planner_task_id: harnessPayload.planner_task_id,
                   eval_round: evalRound + 1,
                   harness_mode: true,
                   retry_reason: 'evaluator_session_crash'
@@ -1831,7 +1835,9 @@ ${resultStr.substring(0, 2000)}
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
+              sprint_num: harnessPayload.sprint_num,
               dev_task_id: harnessPayload.dev_task_id,
+              planner_task_id: harnessPayload.planner_task_id,
               eval_round: harnessPayload.eval_round || 1,
               harness_mode: true
             }
