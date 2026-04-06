@@ -18,6 +18,7 @@
 import pool from './db.js';
 import { sendFeishu } from './notifier.js';
 import { computeTopicHeatScores, saveTopicFeedback } from './topic-heat-scorer.js';
+import { queryWeeklyROI } from './content-analytics.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -253,7 +254,7 @@ function fmt(val) {
  * @param {Array<{topic_keyword: string, heat_score: number, total_likes: number, total_comments: number, total_shares: number}>} [topicHeatData]
  * @returns {string}
  */
-export function buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData = []) {
+export function buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData = [], roiData = []) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容周报 ${weekKey}`);
@@ -337,7 +338,22 @@ export function buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, 
   }
   lines.push('');
 
-  // ── 板块七：周总结 ────────────────────────────────────────────────────────
+  // ── 板块七：内容ROI ───────────────────────────────────────────────────────
+  lines.push('== 内容ROI ==');
+  if (!roiData || roiData.length === 0) {
+    lines.push('本周暂无 content_analytics 数据，ROI 待采集后更新。');
+  } else {
+    const totalROIViews = roiData.reduce((s, r) => s + r.total_views, 0);
+    const totalROIContent = roiData.reduce((s, r) => s + r.content_count, 0);
+    const avgViewsAll = totalROIContent > 0 ? Math.round(totalROIViews / totalROIContent) : 0;
+    lines.push(`全平台均值：${totalROIContent} 条内容 / 平均每篇 ${fmt(avgViewsAll)} 次曝光`);
+    for (const r of roiData) {
+      lines.push(`  ${r.platform}：${r.content_count} 条 | 均曝光 ${fmt(r.avg_views_per_content)} | 互动率 ${r.engagement_rate}‰`);
+    }
+  }
+  lines.push('');
+
+  // ── 板块八：周总结 ────────────────────────────────────────────────────────
   lines.push('== 周总结 ==');
   const totalPublish = publishStats.reduce((s, r) => s + r.success + r.failed, 0);
   const totalViews = engagementData.reduce((s, r) => s + r.views, 0);
@@ -403,14 +419,18 @@ export async function generateWeeklyReport(dbPool = pool, now = new Date()) {
   console.log(`[weekly-report-generator] 开始生成 ${weekKey} 周报，统计范围：${startStr} ~ ${endStr}`);
 
   try {
-    // 3. 并发查询四类数据 + 话题热度评分
-    const [contentOutput, publishStats, engagementData, failureCount, topicHeatData] = await Promise.all([
+    // 3. 并发查询四类数据 + 话题热度评分 + 内容ROI
+    const [contentOutput, publishStats, engagementData, failureCount, topicHeatData, roiData] = await Promise.all([
       fetchWeekContentOutput(dbPool, start, end),
       fetchWeekPublishStats(dbPool, start, end),
       fetchWeekEngagementData(dbPool, start, end),
       fetchWeekFailureCount(dbPool, start, end),
       computeTopicHeatScores(dbPool, start, end).catch(err => {
         console.error(`[weekly-report-generator] 话题热度评分失败（跳过）: ${err.message}`);
+        return [];
+      }),
+      queryWeeklyROI(dbPool, start, end).catch(err => {
+        console.error(`[weekly-report-generator] ROI 计算失败（跳过）: ${err.message}`);
         return [];
       }),
     ]);
@@ -421,7 +441,7 @@ export async function generateWeeklyReport(dbPool = pool, now = new Date()) {
     });
 
     // 5. 生成周报文本
-    const reportText = buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData);
+    const reportText = buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData, roiData);
 
     // 6. 写入 working_memory
     await saveWeeklyReportToWorkingMemory(dbPool, weekKey, reportText);
