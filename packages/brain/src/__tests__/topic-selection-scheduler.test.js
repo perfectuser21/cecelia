@@ -98,6 +98,22 @@ describe('triggerDailyTopicSelection', () => {
     expect(generateTopics).not.toHaveBeenCalled();
   });
 
+  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 12:00 整点不触发（超出补偿窗口）', async () => {
+    const atCutoff = new Date('2026-03-19T12:00:00Z');
+    const result = await triggerDailyTopicSelection(pool, atCutoff);
+    expect(result.skipped_window).toBe(true);
+    expect(result.triggered).toBe(0);
+  });
+
+  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 11:59 在补偿窗口内可触发', async () => {
+    const topics = makeTopics(1);
+    generateTopics.mockResolvedValue(topics);
+    const justBeforeCutoff = new Date('2026-03-19T11:59:00Z');
+    const result = await triggerDailyTopicSelection(pool, justBeforeCutoff);
+    expect(result.skipped_window).toBe(false);
+    expect(result.triggered).toBe(1);
+  });
+
   it('补偿窗口内（UTC 10:00）且无今日任务时触发', async () => {
     const topics = makeTopics(3);
     generateTopics.mockResolvedValue(topics);
