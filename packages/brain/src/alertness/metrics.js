@@ -9,8 +9,6 @@
  * 5. 队列深度
  */
 
-/* global console, process */
-
 import os from 'os';
 import pool, { getPoolHealth } from '../db.js';
 

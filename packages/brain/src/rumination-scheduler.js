@@ -12,8 +12,6 @@
  * 触发条件：各级有独立的时间窗口检查（daily=每天，weekly=每7天，monthly=每30天）
  */
 
-/* global console */
-
 import pool from './db.js';
 import { queryNotebook, addTextSource, deleteSource } from './notebook-adapter.js';
 import { callLLM } from './llm-caller.js';

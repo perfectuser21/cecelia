@@ -11,8 +11,6 @@
  * 防重复设计：如果该部门已有 queued/in_progress 的 heartbeat task，跳过。
  */
 
-/* global console */
-
 /**
  * 查询所有 enabled=true 的部门配置
  * @param {import('pg').Pool} pool

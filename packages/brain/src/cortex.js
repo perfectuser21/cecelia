@@ -15,8 +15,6 @@
  * 核心原则：LLM 只能下"指令"，不能直接改世界
  */
 
-/* global console */
-
 import crypto from 'crypto';
 import pool from './db.js';
 import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage } from './thalamus.js';

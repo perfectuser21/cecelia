@@ -11,7 +11,6 @@
  * 5. 返回执行报告
  */
 
-/* global console */
 import pool from './db.js';
 import { createTask, updateTask } from './actions.js';
 import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thalamus.js';

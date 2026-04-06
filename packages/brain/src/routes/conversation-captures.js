@@ -9,8 +9,6 @@
  * POST /api/brain/conversation-captures         — 新建（会话结束自动调用）
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 

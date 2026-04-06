@@ -9,7 +9,6 @@
  * 5. Record learnings for future reference
  */
 
-/* global console */
 import crypto from 'crypto';
 import pool from './db.js';
 import { generateEmbedding } from './openai-client.js';

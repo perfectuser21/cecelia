@@ -1,4 +1,3 @@
-/* global console */
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
 import { detectDomain } from './domain-detector.js';

@@ -17,8 +17,6 @@
  * 核心原则：LLM 只能下"指令"，不能直接改世界
  */
 
-/* global console */
-
 import pool from './db.js';
 import { getRecentLearnings, upsertLearning } from './learning.js';
 import { buildMemoryContext } from './memory-retriever.js';

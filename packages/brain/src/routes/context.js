@@ -6,8 +6,6 @@
  * 用途：Claude 对话开始时调用，获取感知基础
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 

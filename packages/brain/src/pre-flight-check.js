@@ -84,7 +84,8 @@ export async function preFlightCheck(task) {
     // `xxx` is only flagged when surrounded by non-CJK characters (avoids Chinese prose context).
     const hasWordPlaceholder = /\b(todo|tbd|fixme)\b/.test(desc);
     // `xxx` flagged only as a standalone token (word boundary, not inside Chinese text)
-    const hasXxx = /(?<![^\x00-\x7F])xxx(?![^\x00-\x7F])/.test(stripped.toLowerCase());
+    // eslint-disable-next-line no-control-regex
+    const hasXxx = /(?<![^\u0000-\u007F])xxx(?![^\u0000-\u007F])/.test(stripped.toLowerCase());
     const hasPlaceholder = hasWordPlaceholder || hasXxx;
 
     if (hasPlaceholder) {

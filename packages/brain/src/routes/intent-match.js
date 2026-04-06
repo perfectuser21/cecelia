@@ -13,7 +13,7 @@ const router = Router();
  */
 function splitKeywords(query) {
   return query
-    .split(/[\s,，。？！、；：\.\?\!;:]+/)
+    .split(/[\s,，。？！、；：.?!;:]+/)
     .map(w => w.trim())
     .filter(w => w.length >= 2);
 }

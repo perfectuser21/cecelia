@@ -12,8 +12,6 @@
  * 参考：ComPeer (UIST 2024) — 用重要性分数 vs 随机数决定是否主动发送
  */
 
-/* global console */
-
 const MAX_FOLLOWUP_COUNT = 3;          // 最多跟进次数（避免骚扰）
 const MIN_FOLLOWUP_INTERVAL_HOURS = 1; // 两次跟进之间的最短间隔
 

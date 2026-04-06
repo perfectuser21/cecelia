@@ -11,8 +11,6 @@
  * Reference: watchdog.js IS_DARWIN pattern (already working well)
  */
 
-/* global console */
-
 import { execSync } from 'child_process';
 import { readFileSync, readlinkSync, existsSync } from 'fs';
 import os from 'os';

@@ -1,4 +1,3 @@
-/* global console */
 /**
  * Intent Recognition Module (KR1)
  *

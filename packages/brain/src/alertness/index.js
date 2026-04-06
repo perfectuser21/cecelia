@@ -10,8 +10,6 @@
  * - 自愈恢复策略
  */
 
-/* global console */
-
 import { collectMetrics, getRecentMetrics, calculateHealthScore } from './metrics.js';
 import { diagnoseProblem, getAnomalyPatterns } from './diagnosis.js';
 import { escalateResponse, getCurrentResponseLevel, executeResponse } from './escalation.js';

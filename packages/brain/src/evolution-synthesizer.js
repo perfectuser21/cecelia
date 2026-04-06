@@ -7,8 +7,6 @@
  * 3. runEvolutionSynthesis(pool) — 皮层合成（每周一次，per component）
  */
 
-/* global console */
-
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';
 

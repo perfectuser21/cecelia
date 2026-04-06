@@ -12,8 +12,6 @@
  * 防重复：通过 working_memory key 'notebook_last_feed_date' 检查今日是否已喂
  */
 
-/* global console */
-
 import pool from './db.js';
 import { addTextSource } from './notebook-adapter.js';
 

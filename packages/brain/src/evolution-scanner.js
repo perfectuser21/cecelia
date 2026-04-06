@@ -12,8 +12,6 @@
  *   - GITHUB_TOKEN 可选：无 token 也能用（公开仓库，60 req/h 限额）
  */
 
-/* global console, process, fetch */
-
 import { runEvolutionSynthesis } from './evolution-synthesizer.js';
 
 const OWNER = 'perfectuser21';

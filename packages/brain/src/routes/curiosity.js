@@ -6,8 +6,6 @@
  *   优先返回缓存；无缓存时实时计算
  */
 
-/* global console */
-
 import { Router } from 'express';
 import { calculateCuriosityScore, getCachedScore } from '../curiosity-scorer.js';
 

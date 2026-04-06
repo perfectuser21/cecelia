@@ -12,8 +12,6 @@
  *   npm run backfill:l1 -- --dry-run             # 同上
  */
 
-/* global process, console */
-
 import pg from 'pg';
 import { DB_DEFAULTS } from '../db-config.js';
 import { loadActiveProfile } from '../model-profile.js';

@@ -97,7 +97,7 @@ export function parseContactContent(content) {
 }
 
 function isDateStr(s) {
-  return /^\d{4}[-\/]\d{2}[-\/]\d{2}$/.test(s?.trim());
+  return /^\d{4}[-/]\d{2}[-/]\d{2}$/.test(s?.trim());
 }
 
 function isEmailStr(s) {
@@ -105,7 +105,7 @@ function isEmailStr(s) {
 }
 
 function isPhoneStr(s) {
-  return /^[\+\-\(\)\s\d]{5,}$/.test(s?.trim());
+  return /^[+\-()\\s\d]{5,}$/.test(s?.trim());
 }
 
 function isUrlStr(s) {

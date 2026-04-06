@@ -145,7 +145,7 @@ class ComplexityScanner extends BaseScanner {
       /\bswitch\b/g,
       /\bcase\b/g,
       /\bcatch\b/g,
-      /\&\&/g,
+      /&&/g,
       /\|\|/g,
       /\?[^:]+:/g // 三元运算符
     ];

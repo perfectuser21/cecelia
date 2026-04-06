@@ -9,8 +9,6 @@
  * PUT  /api/brain/strategic-decisions/:id    — 更新状态/内容
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 

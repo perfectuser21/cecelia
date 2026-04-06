@@ -7,8 +7,6 @@
  *     limit - 返回条数（默认 20，最大 100）
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 

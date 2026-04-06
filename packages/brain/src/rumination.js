@@ -9,8 +9,6 @@
  * 成本控制：每 tick ≤5 条，每日 ≤20 条，30 分钟冷却期
  */
 
-/* global console */
-
 import crypto from 'node:crypto';
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';

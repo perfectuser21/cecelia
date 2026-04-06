@@ -14,8 +14,6 @@
  * 幂等：用 title 去重，已存在则跳过。
  */
 
-/* global process, console */
-
 import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';

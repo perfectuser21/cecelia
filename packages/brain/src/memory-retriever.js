@@ -11,8 +11,6 @@
  * 替代 thalamus 原有的双注入逻辑（learningBlock + memoryBlock）
  */
 
-/* global console */
-
 import SimilarityService from './similarity.js';
 import { searchRelevantLearnings } from './learning.js';
 import { routeMemory } from './memory-router.js';

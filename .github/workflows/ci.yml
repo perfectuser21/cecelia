@@ -78,11 +78,9 @@ jobs:
           node-version: '22'
       - name: Lint Brain
         if: needs.changes.outputs.brain == 'true'
-        continue-on-error: true
         run: cd packages/brain && npm ci && npx eslint src/
       - name: Lint Workspace API
         if: needs.changes.outputs.workspace == 'true'
-        continue-on-error: true
         run: cd apps/api && npm ci && npx eslint src/
 
   # ─── PR Size Check（仅 PR 触发）─────────────────────────────

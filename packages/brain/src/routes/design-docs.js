@@ -7,8 +7,6 @@
  * PUT  /api/brain/design-docs/:id   — 更新状态/内容
  */
 
-/* global console */
-
 import { Router } from 'express';
 import pool from '../db.js';
 import { callLLM } from '../llm-caller.js';
