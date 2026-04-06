@@ -1536,9 +1536,7 @@ ${resultStr.substring(0, 2000)}
 
       // 5c-harness. Harness v2.0 官方三层断链
       // Layer 1: sprint_planner 完成 → sprint_contract_propose（第1个Sprint协商）
-      // Layer 2: sprint_contract_propose 完成 → sprint_contract_review
-      //          sprint_contract_review APPROVED → sprint_generate
-      //          sprint_contract_review REVISION → sprint_contract_propose（带反馈重来）
+      // Layer 2: sprint_contract_propose 完成 → sprint_contract_review（APPROVED/REVISION）
       // Layer 3: sprint_generate 完成 → sprint_evaluate
       //          sprint_evaluate PASS → 检查PRD是否完成 → 下一个contract_propose或arch_review
       //          sprint_evaluate FAIL → sprint_fix → sprint_evaluate
@@ -1597,12 +1595,17 @@ ${resultStr.substring(0, 2000)}
 
         // Layer 2b: sprint_contract_review 完成 → APPROVED/REVISION 路由
         if (harnessTask?.task_type === 'sprint_contract_review') {
-          // 解析 verdict: APPROVED 或 REVISION
           let reviewVerdict = 'REVISION';
-          const reviewResultRaw = typeof result === 'object' ? (result?.verdict || result?.decision || result?.result || '') : (result || '');
-          const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
-          if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
-            reviewVerdict = 'APPROVED';
+          if (result !== null && typeof result === 'object' && result.verdict) {
+            // 对象类型优先：直接读取 verdict 字段
+            reviewVerdict = /^APPROVED$/i.test(result.verdict) ? 'APPROVED' : 'REVISION';
+          } else {
+            // 降级：文本正则（兼容旧格式）
+            const reviewResultRaw = typeof result === 'object' ? (result?.decision || result?.result || '') : (result || '');
+            const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
+            if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
+              reviewVerdict = 'APPROVED';
+            }
           }
           console.log(`[execution-callback] harness: sprint_contract_review verdict=${reviewVerdict}`);
 
@@ -1625,26 +1628,32 @@ ${resultStr.substring(0, 2000)}
             });
             console.log(`[execution-callback] harness: sprint_contract_review APPROVED → sprint_generate created (sprint ${harnessPayload.sprint_num})`);
           } else {
-            // 合同被挑战 → 重新提案（带反馈）
+            // SC-2: 协商轮次安全阀 — 超出 MAX_PROPOSE_ROUNDS 时停止
+            const MAX_PROPOSE_ROUNDS = 5;
             const nextRound = (harnessPayload.propose_round || 1) + 1;
-            await createHarnessTask({
-              title: `[Contract] Sprint ${harnessPayload.sprint_num} 合同提案 R${nextRound} — ${harnessTask.title}`,
-              description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: 'sprint_contract_propose',
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                sprint_num: harnessPayload.sprint_num,
-                planner_task_id: harnessPayload.planner_task_id,
-                propose_round: nextRound,
-                review_feedback_task_id: task_id,
-                harness_mode: true
-              }
-            });
-            console.log(`[execution-callback] harness: sprint_contract_review REVISION → sprint_contract_propose R${nextRound} created`);
+            if (nextRound > MAX_PROPOSE_ROUNDS) {
+              console.error(`[execution-callback] harness: sprint_contract_review REVISION but MAX_PROPOSE_ROUNDS (${MAX_PROPOSE_ROUNDS}) exceeded at round ${nextRound - 1}, stopping negotiation`);
+            } else {
+              // 合同被挑战 → 重新提案（带反馈）
+              await createHarnessTask({
+                title: `[Contract] Sprint ${harnessPayload.sprint_num} 合同提案 R${nextRound} — ${harnessTask.title}`,
+                description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'sprint_contract_propose',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  sprint_num: harnessPayload.sprint_num,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  propose_round: nextRound,
+                  review_feedback_task_id: task_id,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: sprint_contract_review REVISION → sprint_contract_propose R${nextRound} created`);
+            }
           }
         }
 
@@ -1730,6 +1739,27 @@ ${resultStr.substring(0, 2000)}
               if (verdictMatch) {
                 resultObj.verdict = verdictMatch[1].toUpperCase();
               }
+            }
+          }
+          // Bug fix (R8): 当 result 为空对象且没有 verdict 时，从 evaluation.md 读取 verdict
+          // 场景：Evaluator 写回 result={} 但 evaluation.md 已包含正确 verdict（反复触发 sprint_fix 的根因）
+          if (!resultObj.verdict && harnessPayload.sprint_dir) {
+            try {
+              const evalPath = new URL(`../../../../${harnessPayload.sprint_dir}/evaluation.md`, import.meta.url);
+              const evalContent = readFileSync(evalPath, 'utf8');
+              // 匹配 "- **verdict**: PASS" 或 "verdict: PASS" 或 "verdict=PASS"
+              const evalVerdictMatch = evalContent.match(/\*\*verdict\*\*:\s*(PASS|FAIL)/i) ||
+                                       evalContent.match(/^-\s*verdict:\s*(PASS|FAIL)/im) ||
+                                       evalContent.match(/verdict[=:]\s*(PASS|FAIL)/i);
+              if (evalVerdictMatch) {
+                const extracted = evalVerdictMatch[1].toUpperCase();
+                if (extracted === 'PASS' || extracted === 'FAIL') {
+                  resultObj.verdict = extracted;
+                  console.log(`[execution-callback] harness: verdict extracted from evaluation.md: ${resultObj.verdict} (result was empty)`);
+                }
+              }
+            } catch (err) {
+              console.warn(`[execution-callback] harness: could not read evaluation.md for verdict fallback: ${err.message}`);
             }
           }
           const verdict = resultObj.verdict || 'FAIL';
