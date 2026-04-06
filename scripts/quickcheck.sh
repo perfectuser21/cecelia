@@ -251,7 +251,7 @@ else
 
         # 去重
         if [[ ${#ENGINE_TEST_FILES[@]} -gt 0 ]]; then
-            mapfile -t ENGINE_TEST_FILES < <(printf '%s\n' "${ENGINE_TEST_FILES[@]}" | sort -u)
+            ENGINE_TEST_FILES=($(printf '%s\n' "${ENGINE_TEST_FILES[@]}" | sort -u))
             echo -e "  ▶ 找到 ${#ENGINE_TEST_FILES[@]} 个相关测试文件，运行..."
             if (cd packages/engine && \
                 NODE_OPTIONS='--max-old-space-size=2048' \
@@ -305,7 +305,7 @@ else
     if [[ ${#BRAIN_TEST_FILES[@]} -eq 0 ]]; then
         echo -e "  ⏭  Brain 无对应 unit test，跳过"
     else
-        mapfile -t BRAIN_TEST_FILES < <(printf '%s\n' "${BRAIN_TEST_FILES[@]}" | sort -u)
+        BRAIN_TEST_FILES=($(printf '%s\n' "${BRAIN_TEST_FILES[@]}" | sort -u))
         echo -e "  ▶ 找到 ${#BRAIN_TEST_FILES[@]} 个 Brain 测试，运行..."
 
         if [[ ! -d "packages/brain/node_modules" ]]; then
