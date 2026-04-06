@@ -13,6 +13,7 @@ import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
 import registryRouter from './routes/registry.js';
 import contentPipelineRouter from './routes/content-pipeline.js';
+import contentLibraryRouter from './routes/content-library.js';
 import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
 
@@ -29,6 +30,9 @@ router.use('/registry', registryRouter);
 
 // 内容 pipeline — GET /pipelines/:id/stats 等路由
 router.use('/pipelines', contentPipelineRouter);
+
+// 内容库 — GET /content-library / PATCH /content-library/:id/review
+router.use('/content-library', contentLibraryRouter);
 
 // 社媒热点 — GET /social/trending
 router.use('/social', socialTrendingRouter);
