@@ -1,0 +1,10 @@
+dev
+branch: cp-04052250-f343fa2a-f1f6-444c-9020-03d183
+task_id: f343fa2a-f1f6-444c-9020-03d1836a30ae
+task_card: .task-cp-04052250-f343fa2a-f1f6-444c-9020-03d183.md
+started: 2026-04-06T13:55:16+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
