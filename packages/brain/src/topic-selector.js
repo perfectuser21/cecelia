@@ -14,6 +14,7 @@
  */
 
 import { callLLM } from './llm-caller.js';
+import { getHighPerformingTopics } from './topic-heat-scorer.js';
 
 // ─── 品牌画像常量 ────────────────────────────────────────────────────────────
 
@@ -29,13 +30,18 @@ const TARGET_TOPIC_COUNT = 10;
 /**
  * 构建选题生成 Prompt
  * @param {string[]} recentKeywords - 近 7 日已使用的关键词列表（用于去重）
+ * @param {Array<{topic_keyword: string, heat_score: number}>} highPerformingTopics - 历史高热话题（正向参考）
  * @returns {string}
  */
-function buildTopicPrompt(recentKeywords = []) {
+function buildTopicPrompt(recentKeywords = [], highPerformingTopics = []) {
   const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const recentList = recentKeywords.length > 0
     ? recentKeywords.map(k => `- ${k}`).join('\n')
     : '（暂无历史记录）';
+
+  const highHeatSection = highPerformingTopics.length > 0
+    ? `\n【有实证的高热话题方向】（过去4周实际获得高互动，可参考延伸，不要照搬）\n${highPerformingTopics.map(t => `- ${t.topic_keyword}（热度 ${t.heat_score.toFixed(0)} 分）`).join('\n')}\n`
+    : '';
 
   return `你是一位专注于"一人公司/个人IP/AI能力放大"领域的内容策划师。
 
@@ -49,7 +55,7 @@ function buildTopicPrompt(recentKeywords = []) {
 
 【近 7 日已用选题】（请避免重复或相似的主题）
 ${recentList}
-
+${highHeatSection}
 【任务要求】
 请生成 ${TARGET_TOPIC_COUNT} 个内容选题，每个选题必须：
 1. 与"一人公司/AI能力放大/小组织效能"主题强相关
@@ -82,8 +88,11 @@ ${recentList}
  * @returns {Promise<Array<{keyword, content_type, title_candidates, hook, why_hot, priority_score}>>}
  */
 export async function generateTopics(pool) {
-  const recentKeywords = await getRecentKeywords(pool);
-  const prompt = buildTopicPrompt(recentKeywords);
+  const [recentKeywords, highPerformingTopics] = await Promise.all([
+    getRecentKeywords(pool),
+    getHighPerformingTopics(pool).catch(() => []),
+  ]);
+  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics);
 
   const { text } = await callLLM('cortex', prompt, {
     maxTokens: 2048,
