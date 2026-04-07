@@ -201,7 +201,9 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
   describe('PATCH /api/brain/tasks/:id — 更新任务契约', () => {
     it('更新 status 成功返回更新后的任务', async () => {
       const updated = { ...SAMPLE_TASK, status: 'completed' };
-      pool.query.mockResolvedValueOnce({ rows: [updated] });
+      // PATCH handler 先 SELECT 当前状态（状态机保护），再 UPDATE
+      pool.query.mockResolvedValueOnce({ rows: [{ status: 'queued' }] }); // SELECT current status
+      pool.query.mockResolvedValueOnce({ rows: [updated] }); // UPDATE ... RETURNING *
 
       const res = await request(makeApp())
         .patch('/api/brain/tasks/task-contract-001')
@@ -212,6 +214,7 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
     });
 
     it('任务不存在时返回 404', async () => {
+      // 状态机保护的 SELECT 返回空行 → 直接 404
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       await request(makeApp())

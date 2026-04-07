@@ -248,13 +248,16 @@ describe('task-tasks routes', () => {
     });
 
     it('updates status and priority', async () => {
+      // 状态机保护：PATCH handler 先 SELECT 当前状态，再 UPDATE
+      mockPool.query.mockResolvedValueOnce({ rows: [{ status: 'queued' }] }); // SELECT current status
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: 't1', status: 'completed', priority: 'P0' }],
-      });
+      }); // UPDATE RETURNING *
 
       const res = await request(app).patch('/tasks/t1').send({ status: 'completed', priority: 'P0' });
       expect(res.status).toBe(200);
-      const [sql] = mockPool.query.mock.calls[0];
+      // mock.calls[1] 是 UPDATE（calls[0] 是 SELECT current status）
+      const [sql] = mockPool.query.mock.calls[1];
       expect(sql).toContain('status = $1');
       expect(sql).toContain('priority = $2');
     });
