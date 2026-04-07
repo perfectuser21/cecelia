@@ -223,6 +223,8 @@ if (task.status !== 'completed') {
 
 ### Step 5: 写入 eval-round-N.md（CRITICAL — 无论成功失败必须执行）
 
+> **版本说明**: v3.x 输出文件为 `evaluation.md`；v4.0+ 改为 `eval-round-N.md`（含轮次编号，支持多轮验证追踪）。
+
 **无论任何情况（验证失败、命令报错、环境问题），必须写入 eval-round-N.md。**
 
 ```bash
