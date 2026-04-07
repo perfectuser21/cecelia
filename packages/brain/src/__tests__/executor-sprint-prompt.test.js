@@ -1,9 +1,9 @@
 /**
  * Test: executor.js preparePrompt 对 sprint 类型任务的处理
  *
- * 验证 Harness v2.0 三种 sprint 任务类型：
- * - sprint_generate → /dev --task-id 模式
- * - sprint_fix → /dev --task-id 模式（含修复轮次）
+ * 验证 Harness v3.1 三种 sprint 任务类型：
+ * - sprint_generate → /sprint-generator 模式
+ * - sprint_fix → /sprint-generator 模式（含修复轮次）
  * - sprint_evaluate → /sprint-evaluator 模式
  */
 
@@ -57,7 +57,7 @@ describe('preparePrompt: sprint 任务类型', () => {
     preparePrompt = executor.preparePrompt;
   });
 
-  it('sprint_generate 返回 /dev harness 模式 prompt', async () => {
+  it('sprint_generate 返回 /sprint-generator 模式 prompt', async () => {
     const task = {
       id: 'task-gen-001',
       task_type: 'sprint_generate',
@@ -66,25 +66,24 @@ describe('preparePrompt: sprint 任务类型', () => {
       project_id: 'initiative-abc',
       payload: {
         sprint_dir: 'sprints/sprint-3',
-        dev_task_id: 'dev-task-xyz',
         eval_round: 0
       }
     };
 
     const result = await preparePrompt(task);
 
-    expect(result).toContain('/dev --task-id task-gen-001');
+    expect(result).toContain('/sprint-generator');
     expect(result).toContain('Sprint Generate');
-    expect(result).toContain('harness_mode');
+    expect(result).toContain('task_id');
+    expect(result).toContain('task-gen-001');
+    expect(result).toContain('sprint_generate');
     expect(result).toContain('sprints/sprint-3');
-    expect(result).toContain('dev-task-xyz');
-    expect(result).toContain('initiative-abc');
     expect(result).toContain('实现基于 JWT 的用户登录');
     // generate 不应包含修复轮次
-    expect(result).not.toContain('修复轮次');
+    expect(result).not.toContain('eval_round');
   });
 
-  it('sprint_fix 返回 /dev harness 模式 prompt（含修复轮次）', async () => {
+  it('sprint_fix 返回 /sprint-generator 模式 prompt（含修复轮次）', async () => {
     const task = {
       id: 'task-fix-002',
       task_type: 'sprint_fix',
@@ -93,20 +92,19 @@ describe('preparePrompt: sprint 任务类型', () => {
       project_id: 'initiative-abc',
       payload: {
         sprint_dir: 'sprints/sprint-3',
-        dev_task_id: 'dev-task-xyz',
         eval_round: 2
       }
     };
 
     const result = await preparePrompt(task);
 
-    expect(result).toContain('/dev --task-id task-fix-002');
-    expect(result).toContain('Sprint Fix (R2)');
-    expect(result).toContain('harness_mode');
+    expect(result).toContain('/sprint-generator');
+    expect(result).toContain('Sprint Fix (Round 2)');
+    expect(result).toContain('sprint_fix');
+    expect(result).toContain('task-fix-002');
     expect(result).toContain('sprints/sprint-3');
-    expect(result).toContain('修复轮次');
-    expect(result).toContain('R2');
-    expect(result).toContain('evaluation.md');
+    expect(result).toContain('eval_round');
+    expect(result).toContain('eval-round-2.md');
     expect(result).toContain('修复 JWT 过期检查');
   });
 
@@ -148,9 +146,9 @@ describe('preparePrompt: sprint 任务类型', () => {
 
     const result = await preparePrompt(task);
 
-    expect(result).toContain('/dev --task-id task-gen-004');
-    expect(result).toContain('sprints'); // 默认目录（扁平路径）
-    expect(result).not.toContain('sprints/sprint-1'); // 不再使用旧的子目录格式
+    expect(result).toContain('/sprint-generator');
+    expect(result).toContain('task-gen-004');
+    expect(result).toContain('sprints'); // 默认目录
     expect(result).toContain('Sprint Generate');
   });
 });
