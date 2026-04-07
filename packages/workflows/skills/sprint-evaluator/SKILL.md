@@ -43,6 +43,16 @@ changelog:
 | 测什么 | 只测命令覆盖的 happy path | happy path + 边界 + 失败情况 + 数据一致性 |
 | 谁决定测法 | Generator | Evaluator 自己 |
 
+### 验证命令 exit code 判断规则
+
+当合同中包含验证命令（`node -e "..."`）时，判断该 SC 是否通过的规则：
+
+- **exit code 非 0**：该 SC 标记为 **FAIL**，无论输出内容
+- **exit code 为 0 但输出不包含 "PASS"**：该 SC 标记为 **FAIL**
+- **exit code 为 0 且输出包含 "PASS"**：该 SC 标记为 **PASS**
+
+> 注意：Evaluator 设计自主测试时，最终判断标准同样适用：验证脚本的 exit code 非 0 或输出不包含 "PASS"，则该 Feature 为 FAIL。
+
 ### 绝对禁止
 
 - **禁止**：从合同里提取"验证命令"并执行

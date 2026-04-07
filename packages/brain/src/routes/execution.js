@@ -1638,9 +1638,12 @@ ${resultStr.substring(0, 2000)}
             });
             console.log(`[execution-callback] harness: sprint_contract_review APPROVED → sprint_generate created`);
           } else {
-            // REVISION：继续 GAN 对抗，无轮次上限，直到 Evaluator APPROVED 为止
+            // REVISION：继续 GAN 对抗，MAX_PROPOSE_ROUNDS 安全阀防止无限循环
+            const MAX_PROPOSE_ROUNDS = 5;
             const nextRound = (harnessPayload.propose_round || 1) + 1;
-            {
+            if (nextRound > MAX_PROPOSE_ROUNDS) {
+              console.error(`[execution-callback] harness: sprint_contract_review REVISION R${nextRound} 超出 MAX_PROPOSE_ROUNDS=${MAX_PROPOSE_ROUNDS}，stopping 协商循环`);
+            } else {
               await createHarnessTask({
                 title: `[Contract] P${nextRound}`,
                 description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
