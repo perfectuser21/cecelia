@@ -483,6 +483,7 @@ queued → in_progress → completed
 | sprint_planner | US | Harness Planner — 拆分 Sprint 任务计划 | Sonnet / - | 默认 anthropic |
 | sprint_contract_propose | US | Harness Contract 提案 — 生成 sprint-contract.md | Sonnet / - | 默认 anthropic |
 | sprint_contract_review | US | Harness Contract 审查 — 验证 sprint-contract.md | Sonnet / - | 默认 anthropic |
+| sprint_report | US | Harness Reporter — 生成 Sprint 最终报告 (/sprint-report) | Sonnet / - | 默认 anthropic |
 | content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
 | content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
 | content-copywriting | 西安 | 文案生成阶段 (/content-creator) | - | general |
