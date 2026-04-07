@@ -10,6 +10,17 @@
 // 退出码：
 //   0 — 未检测到严重问题，PR 可以合并
 //   1 — 检测到🔴严重问题，阻塞合并
+//
+// 检测策略：
+//   DeepSeek 使用两种输出格式：
+//   格式A：section 标题格式 — "#### 🔴 严重问题\n- <内容>" 或 "🔴 严重问题：\n- <内容>"
+//   格式B：行内标记格式 — "- 🔴 **问题描述**"
+//
+//   对于格式A：
+//     - 找到"严重问题"section，检查其内容是否为"未发现"（无问题）
+//     - 如果内容是真实问题描述，触发 exit(1)
+//   对于格式B：
+//     - 直接检测 bullet list 里的 🔴 标记
 // ============================================================================
 
 'use strict';
@@ -23,37 +34,32 @@ process.stdin.on('data', (chunk) => {
 });
 
 process.stdin.on('end', () => {
-  // 检测真实的🔴严重问题标记
-  // 排除误报场景：
-  //   "严重问题（🔴）" — section heading，🔴 在括号内，不代表有实际问题
-  //   "- **无**" — bullet 形式的无问题声明
-  // 触发场景（表示有真实问题）：
-  //   "🔴 **issue**" — 行内标记的实际问题
-  //   "- 🔴" — bullet 列表里的问题标记
+  // 策略一：检测"严重问题"section（格式A）
+  // 判断是否有 "🔴 严重问题" section，并检查该 section 是否声明"未发现"
+  const hasRedSection = /🔴\s*严重问题|严重问题[^#\n]*🔴/.test(input);
 
-  // 检查正文是否声明了无严重问题
-  // 支持全角括号（🔴）和半角括号 (🔴)，及标题与括号间的空格
-  // 也支持 DeepSeek 的 "🔴 **严重问题**\n- 未发现" 格式（emoji 在 bold 标题前）
-  const noIssuesDeclared = /[（(]🔴[)）][\s\S]*?[-*]\s*\*\*无\*\*/.test(input)
-    || /严重问题\s*[（(]🔴[)）][\s\S]{0,200}无严重问题/.test(input)
-    || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}\*\*无\*\*/.test(input)
-    || /严重问题\s*[（(]🔴[)）][\s\S]{0,100}-\s*\*\*无\*\*/.test(input)
-    || /🔴\s*\*\*严重问题\*\*[\s\S]{0,200}未发现/.test(input)
-    || /🔴\s*严重问题[：:]\s*未发现/.test(input)
-    || /🔴\s*严重问题[：:][\s\S]{0,100}-\s*未发现/.test(input)
-    || /严重问题[：:]\s*未发现/.test(input)
-    || /严重问题[：:][\s\S]{0,100}-\s*未发现/.test(input)
-    // 支持 "没有发现严重问题（🔴）" 正文格式（DeepSeek 有时在结尾总结中使用此格式）
-    || /没有发现严重问题[（(]🔴[)）]/.test(input)
-    || /未发现严重问题[（(]🔴[)）]/.test(input);
+  if (hasRedSection) {
+    // 有"严重问题"section — 检查内容是否为"未发现"
+    // 在 "严重问题" 出现后的 400 字符内，查找"未发现"
+    const sectionSaysNoIssues = /严重问题[\s\S]{0,400}未发现/.test(input)
+      || /严重问题[\s\S]{0,200}[-*]\s*\*\*无\*\*/.test(input)
+      || /严重问题[\s\S]{0,200}[-*]\s*无\b/.test(input);
 
-  // 排除标题里的 🔴（兼容全角/半角括号及 bold 标题格式），检测正文中的实际问题标记
-  const textWithoutHeadings = input
-    .replace(/#+\s*[^🔴\n]*[（(]🔴[)）][^\n]*/g, '')       // ## 标题（🔴）格式
-    .replace(/🔴\s*\*\*[^*\n]+\*\*[^\n]*/g, '');           // 🔴 **标题** 格式
-  const hasActualRedFlag = /🔴/.test(textWithoutHeadings) && !noIssuesDeclared;
+    if (sectionSaysNoIssues) {
+      process.stderr.write('[detect-review-issues] 未检测到严重问题，审查通过\n');
+      process.exit(0);
+    } else {
+      process.stderr.write('[detect-review-issues] 检测到🔴严重问题，阻塞 PR 合并\n');
+      process.exit(1);
+    }
+  }
 
-  if (hasActualRedFlag) {
+  // 策略二：无"严重问题"section — 检测行内 🔴 标记（格式B）
+  // 任何出现 🔴 且未声明"无问题"即为真实问题
+  const noIssuesDeclared = /没有发现严重问题|未发现严重问题/.test(input);
+  const hasInlineRedFlag = /🔴/.test(input) && !noIssuesDeclared;
+
+  if (hasInlineRedFlag) {
     process.stderr.write('[detect-review-issues] 检测到🔴严重问题，阻塞 PR 合并\n');
     process.exit(1);
   } else {
