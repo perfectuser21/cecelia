@@ -280,9 +280,10 @@ router.get('/tasks', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
     const { status, task_type } = req.query;
+    const sprintDir = req.query.sprint_dir || null;
 
     // If filters provided, use custom query instead of getTopTasks
-    if (status || task_type) {
+    if (status || task_type || sprintDir) {
       let query = 'SELECT * FROM tasks WHERE 1=1';
       const params = [];
       let paramIndex = 1;
@@ -296,6 +297,12 @@ router.get('/tasks', async (req, res) => {
       if (task_type) {
         query += ` AND task_type = $${paramIndex}`;
         params.push(task_type);
+        paramIndex++;
+      }
+
+      if (sprintDir) {
+        query += ` AND sprint_dir = $${paramIndex}`;
+        params.push(sprintDir);
         paramIndex++;
       }
 
