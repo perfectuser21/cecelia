@@ -1,0 +1,10 @@
+dev
+branch: cp-04071725-39ee9652-ed4d-4eab-84ec-32955a
+task_id: 39ee9652-ed4d-4eab-84ec-32955a346c79
+task_card: .task-cp-04071725-39ee9652-ed4d-4eab-84ec-32955a.md
+started: 2026-04-07T17:27:33+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
