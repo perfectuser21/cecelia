@@ -22,7 +22,7 @@ created: 2026-04-07
 
 | 参数 | 来源 | 说明 |
 |------|------|------|
-| `sprint_dir` | payload | sprint 文件目录（如 `sprints/sprint-1`） |
+| `sprint_dir` | payload | sprint 文件目录（扁平路径，如 `sprints`） |
 | `planner_task_id` | payload | Planner 任务 ID（用于查询同 project 所有任务） |
 | `eval_round` | payload | 最终评估轮次（评估了几轮） |
 | `harness_mode` | payload | 固定为 true |
@@ -169,7 +169,7 @@ echo "sprint-report.md 已推送到 ${CURRENT_BRANCH}"
 **必须**将以下 JSON 作为**最后一条消息**输出：
 
 ```
-{"verdict": "DONE", "report_path": "sprints/sprint-N/sprint-report.md", "eval_rounds": N, "fix_count": M}
+{"verdict": "DONE", "report_path": "sprints/sprint-report.md", "eval_rounds": N, "fix_count": M}
 ```
 
 ---

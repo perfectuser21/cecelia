@@ -125,7 +125,7 @@ Brain 派发 sprint_generate
 #### Step 4: Push + 创建 PR
 
 1. `git add` 所有改动（包括 sprint-contract.md + 代码）
-2. commit message 格式: `feat(sprint-N): [描述]`
+2. commit message 格式: `feat(sprint): [描述]`
 3. `git push -u origin {branch}`
 4. `gh pr create`（PR 描述包含 sprint contract 摘要）
 
@@ -138,7 +138,7 @@ curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
     "status": "completed",
     "result": {
       "pr_url": "...",
-      "sprint_contract": "sprints/sprint-N/sprint-contract.md",
+      "sprint_contract": "sprints/sprint-contract.md",
       "files_changed": ["file1.js", "file2.js"]
     }
   }'
@@ -163,7 +163,7 @@ curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
 #### Step 3: Push
 
 1. `git add` 修复的文件
-2. commit message 格式: `fix(sprint-N): 修复 R{eval_round} 评估问题`
+2. commit message 格式: `fix(sprint): 修复 R{eval_round} 评估问题`
 3. `git push`
 
 #### Step 4: 回调 Brain
