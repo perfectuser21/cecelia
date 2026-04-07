@@ -1572,25 +1572,33 @@ ${resultStr.substring(0, 2000)}
         }
 
         // Layer 2a: sprint_contract_propose 完成 → sprint_contract_review
+        // GAN 守卫：只有 Proposer 真正产出草案（verdict=PROPOSED）才派 Reviewer
         if (harnessTask?.task_type === 'sprint_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
-          await createHarnessTask({
-            title: `[Contract Review] R${proposeRound}`,
-            description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
-            priority: 'P1',
-            project_id: harnessTask.project_id,
-            goal_id: harnessTask.goal_id,
-            task_type: 'sprint_contract_review',
-            trigger_source: 'execution_callback_harness',
-            payload: {
-              sprint_dir: harnessPayload.sprint_dir,
-              planner_task_id: harnessPayload.planner_task_id,
-              propose_task_id: task_id,
-              propose_round: proposeRound,
-              harness_mode: true
-            }
-          });
-          console.log(`[execution-callback] harness: sprint_contract_propose ${task_id} → sprint_contract_review created`);
+          const proposeVerdict = (result !== null && typeof result === 'object')
+            ? (result.verdict || result?.result?.verdict)
+            : null;
+          if (proposeVerdict !== 'PROPOSED') {
+            console.log(`[execution-callback] harness: sprint_contract_propose ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
+          } else {
+            await createHarnessTask({
+              title: `[Contract Review] R${proposeRound}`,
+              description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'sprint_contract_review',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                planner_task_id: harnessPayload.planner_task_id,
+                propose_task_id: task_id,
+                propose_round: proposeRound,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: sprint_contract_propose ${task_id} → sprint_contract_review created`);
+          }
         }
 
         // Layer 2b: sprint_contract_review 完成 → APPROVED/REVISION 路由

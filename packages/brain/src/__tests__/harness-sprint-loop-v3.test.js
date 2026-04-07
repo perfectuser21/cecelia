@@ -53,8 +53,15 @@ async function simulateHarnessCallback(taskData, result) {
   }
 
   // Layer 2a: sprint_contract_propose PROPOSED → sprint_contract_review
+  // GAN 守卫：只有 verdict=PROPOSED 才派 Reviewer
   if (taskData.task_type === 'sprint_contract_propose') {
     const proposeRound = harnessPayload.propose_round || 1;
+    const proposeVerdict = (result !== null && typeof result === 'object')
+      ? (result.verdict || result?.result?.verdict)
+      : null;
+    if (proposeVerdict !== 'PROPOSED') {
+      return;
+    }
     await createTask({
       title: `[Contract Review] R${proposeRound}`,
       description: `Evaluator 挑战合同草案（第${proposeRound}轮）`,
@@ -213,7 +220,7 @@ async function simulateHarnessCallback(taskData, result) {
   }
 }
 
-describe('Harness v3.1 Sprint Loop — 10 个链路转接点', () => {
+describe('Harness v3.1 Sprint Loop — 13 个链路转接点', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -396,5 +403,51 @@ describe('Harness v3.1 Sprint Loop — 10 个链路转接点', () => {
 
     expect(mockCreateTask).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  // GAN 守卫测试：Proposer 失败时不派 Reviewer
+  // 11. verdict=null（Proposer 被 quarantine）→ 不创建 review 任务
+  it('11. sprint_contract_propose verdict=null → 不创建 review 任务（quarantine 场景）', async () => {
+    const task = {
+      id: 'propose-1',
+      task_type: 'sprint_contract_propose',
+      project_id: 'ini-1',
+      goal_id: 'kr-1',
+      payload: { sprint_dir: 'sprints', planner_task_id: 'planner-1', propose_round: 1, harness_mode: true }
+    };
+
+    await simulateHarnessCallback(task, null);
+
+    expect(mockCreateTask).not.toHaveBeenCalled();
+  });
+
+  // 12. verdict=undefined（result 对象无 verdict 字段）→ 不创建 review 任务
+  it('12. sprint_contract_propose verdict=undefined → 不创建 review 任务', async () => {
+    const task = {
+      id: 'propose-1',
+      task_type: 'sprint_contract_propose',
+      project_id: 'ini-1',
+      goal_id: 'kr-1',
+      payload: { sprint_dir: 'sprints', planner_task_id: 'planner-1', propose_round: 1, harness_mode: true }
+    };
+
+    await simulateHarnessCallback(task, { error: 'auth_failed' });
+
+    expect(mockCreateTask).not.toHaveBeenCalled();
+  });
+
+  // 13. verdict=FAILED（Proposer 明确失败）→ 不创建 review 任务
+  it('13. sprint_contract_propose verdict=FAILED → 不创建 review 任务', async () => {
+    const task = {
+      id: 'propose-1',
+      task_type: 'sprint_contract_propose',
+      project_id: 'ini-1',
+      goal_id: 'kr-1',
+      payload: { sprint_dir: 'sprints', planner_task_id: 'planner-1', propose_round: 1, harness_mode: true }
+    };
+
+    await simulateHarnessCallback(task, { verdict: 'FAILED', error: 'generation_error' });
+
+    expect(mockCreateTask).not.toHaveBeenCalled();
   });
 });
