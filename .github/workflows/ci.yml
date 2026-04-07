@@ -182,6 +182,46 @@ jobs:
             exit 1
           fi
           echo "✅ 所有 DoD 条目已验证"
+      - name: DoD BEHAVIOR 命令执行
+        run: |
+          # 检测 PR 中的 task-card.md 文件
+          TASK_CARD=""
+          for f in .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 task-card.md，跳过 BEHAVIOR 命令执行"
+            exit 0
+          fi
+          echo "🔬 执行 DoD BEHAVIOR 验证命令: $TASK_CARD"
+          FAILED=0
+          SKIPPED=0
+          PASSED=0
+          # 提取所有 Test: manual: 行
+          while IFS= read -r line; do
+            CMD="${line#*Test: manual:}"
+            CMD="${CMD#"${CMD%%[![:space:]]*}"}"  # trim leading spaces
+            if [[ "$CMD" == node* ]]; then
+              echo "▶️  执行: node ${CMD#node }"
+              if ! node ${CMD#node }; then
+                echo "::error::DoD BEHAVIOR 验证失败: node ${CMD#node }"
+                FAILED=$((FAILED + 1))
+              else
+                PASSED=$((PASSED + 1))
+              fi
+            elif [[ "$CMD" == curl* ]] || [[ "$CMD" == chrome:* ]] || [[ "$CMD" == psql* ]] || [[ "$CMD" == bash* ]] || [[ "$CMD" == npm* ]]; then
+              echo "⏭️  跳过（需要运行时服务）: ${CMD%% *} ..."
+              SKIPPED=$((SKIPPED + 1))
+            else
+              echo "⏭️  跳过（未知前缀）: ${CMD%% *} ..."
+              SKIPPED=$((SKIPPED + 1))
+            fi
+          done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
+          echo "✅ BEHAVIOR 验证完成 — 通过: $PASSED，跳过: $SKIPPED，失败: $FAILED"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::${FAILED} 个 BEHAVIOR 验证命令执行失败"
+            exit 1
+          fi
       - name: Feature Registry 同步检查
         run: |
           BASE_REF="origin/${{ github.base_ref || 'main' }}"
