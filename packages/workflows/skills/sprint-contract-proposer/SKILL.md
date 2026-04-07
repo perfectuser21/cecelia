@@ -1,10 +1,11 @@
 ---
 id: sprint-contract-proposer-skill
-description: /sprint-contract-proposer — Harness v3.1：Generator 提出合同草案（功能+可执行验证命令），GAN 对抗起点
-version: 2.0.0
+description: /sprint-contract-proposer — Harness v3.1：Generator 提出合同草案（功能+行为描述+硬阈值），GAN 对抗起点
+version: 3.0.0
 created: 2026-04-04
 updated: 2026-04-07
 changelog:
+  - 3.0.0: 合同格式重写 — 从"验证命令"改为"行为描述+硬阈值"，Evaluator 自主决定验证方式
   - 2.0.0: v3.1 — 去掉 sprint_num，验证命令根据任务类型自选（curl/npm/psql/playwright/bash）
   - 1.0.0: 初始版本
 ---
@@ -12,9 +13,9 @@ changelog:
 # /sprint-contract-proposer — Harness v3.1: Generator 提合同草案
 
 **角色**: Generator（合同提案方）
-**职责**: 读取 Planner 的 PRD，提出具体的实现合同草案——包含功能范围、技术路线、以及**可执行的验证命令**。
+**职责**: 读取 Planner 的 PRD，提出具体的实现合同草案——包含功能范围、技术路线、以及**每个 Feature 的行为描述和可量化的硬阈值**。
 
-**这是 GAN 对抗的起点**：Generator 提出合同，Evaluator 挑战，直到双方对齐。
+**这是 GAN 对抗的起点**：Generator 提出合同（行为标准），Evaluator 挑战，直到双方对齐。
 
 ---
 
@@ -44,16 +45,7 @@ fi
 
 ### Phase 2: 写合同草案
 
-合同草案的核心是**验证命令**——根据任务类型选择合适的验证方式：
-
-| 任务类型 | 验证方式 |
-|---------|---------|
-| API/后端接口 | `curl` 调真实接口，检查返回值 |
-| 数据库状态 | `psql` 查记录 |
-| 代码逻辑单元 | `npm test` / `npx vitest run` |
-| UI/前端交互 | `playwright` 真实浏览器操作 |
-| 文件/配置 | `node -e` 读文件验证内容 |
-| 脚本行为 | `bash` 执行脚本看输出 |
+合同草案的核心是**行为描述 + 硬阈值**——清晰描述系统在各种情况下应如何运作，以及可量化的验收标准。Evaluator 将根据这些标准自主决定验证方式。
 
 写入 `${sprint_dir}/contract-draft.md`：
 
@@ -66,27 +58,33 @@ fi
 
 ## 验收标准（DoD）
 
-### Feature A
-- [ ] <用户行为> → <系统响应>
-- [ ] <边界情况> → <正确处理>
+### Feature A: <功能名>
 
-**验证命令**：
-```bash
-# 根据任务类型选择合适命令，exit code 0 = PASS
-curl -s http://localhost:5221/api/xxx | jq -e '.field == "expected"'
-# 或
-npx vitest run src/__tests__/feature-a.test.ts
-# 或
-psql cecelia -c "SELECT count(*) FROM xxx WHERE yyy" | grep -q "1"
-```
+**行为描述**：
+- 当 <触发条件> 时，<系统行为>
+- 当 <边界情况/错误输入> 时，<正确处理方式>
+- 当 <并发/高负载> 时，<系统表现>
 
-### Feature B
-- [ ] ...
+**硬阈值**：
+- <具体指标> < <数值>（如：API 响应时间 < 500ms）
+- 返回数据必须包含 <字段列表>（如：task_id、status、created_at）
+- DB 中对应记录 <字段> 必须更新为 <期望值>
+- 失败情况：<无效输入时> 返回 <错误码>，不崩溃
+- <其他可量化标准>
 
-**验证命令**：
-```bash
-# ...
-```
+**验收判断**：Evaluator 用任意方式验证以上行为是否成立
+
+### Feature B: <功能名>
+
+**行为描述**：
+- 当 <触发条件> 时，<系统行为>
+- 当 <边界情况> 时，<正确处理>
+
+**硬阈值**：
+- <具体量化标准>
+- <错误路径的预期行为>
+
+**验收判断**：Evaluator 用任意方式验证以上行为是否成立
 
 ## 技术实现方向（高层）
 - <关键技术选型/接口设计>
@@ -94,6 +92,11 @@ psql cecelia -c "SELECT count(*) FROM xxx WHERE yyy" | grep -q "1"
 ## 不在本次范围内
 - <明确排除项>
 ```
+
+**合同写作规则**：
+- 硬阈值必须可量化，禁止"合理"、"正确"、"适当"等模糊词
+- 每个 Feature 必须覆盖正常路径 + 至少一个失败/边界路径
+- 行为描述使用"当…时，…"格式，明确触发条件和预期结果
 
 ### Phase 3: 持久化草案并完成
 
