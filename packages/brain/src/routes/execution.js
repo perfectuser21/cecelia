@@ -1624,24 +1624,54 @@ ${resultStr.substring(0, 2000)}
             });
             console.log(`[execution-callback] harness: sprint_contract_review APPROVED → sprint_generate created`);
           } else {
+            const MAX_CONTRACT_ROUNDS = 3;
             const nextRound = (harnessPayload.propose_round || 1) + 1;
-            await createHarnessTask({
-              title: `[Contract] P${nextRound}`,
-              description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: 'sprint_contract_propose',
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                planner_task_id: harnessPayload.planner_task_id,
-                propose_round: nextRound,
-                review_feedback_task_id: task_id,
-                harness_mode: true
-              }
-            });
-            console.log(`[execution-callback] harness: sprint_contract_review REVISION → sprint_contract_propose R${nextRound}`);
+            if (nextRound > MAX_CONTRACT_ROUNDS) {
+              // GAN 防死循环：超限时创建 P0 告警并强制推进到 sprint_generate
+              await createHarnessTask({
+                title: `[Harness] Contract GAN 达上限 ${MAX_CONTRACT_ROUNDS} 轮（R${harnessPayload.propose_round}），强制推进到 sprint_generate`,
+                description: `Contract GAN 对抗已达 ${MAX_CONTRACT_ROUNDS} 轮上限，强制用现有草案推进。\nreview task_id: ${task_id}`,
+                priority: 'P0',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'cecelia_event',
+                trigger_source: 'execution_callback_harness',
+                payload: { sprint_dir: harnessPayload.sprint_dir }
+              });
+              await createHarnessTask({
+                title: `[Generator] 写代码（合同强制推进）`,
+                description: `Contract GAN 达上限，用现有草案 sprint-contract.md 写代码。\nreview task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'sprint_generate',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: sprint_contract_review REVISION × ${MAX_CONTRACT_ROUNDS} → P0 告警 + sprint_generate 强制推进`);
+            } else {
+              await createHarnessTask({
+                title: `[Contract] P${nextRound}`,
+                description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'sprint_contract_propose',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  propose_round: nextRound,
+                  review_feedback_task_id: task_id,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: sprint_contract_review REVISION → sprint_contract_propose R${nextRound}`);
+            }
           }
         }
 
