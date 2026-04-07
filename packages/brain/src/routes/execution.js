@@ -206,6 +206,22 @@ router.post('/execution-callback', async (req, res) => {
         blockedDetail = JSON.stringify(blockedDetailObj);
       }
 
+      // Extract execution metadata from result object ($12).
+      // Feature 3 completeness constraint: if any of the 5 keys is present,
+      // all 5 must be written (missing keys default to 0).
+      const EXEC_META_KEYS = ['duration_ms', 'total_cost_usd', 'num_turns', 'input_tokens', 'output_tokens'];
+      let execMetaJson = null;
+      if (result !== null && typeof result === 'object') {
+        const hasAnyMetaKey = EXEC_META_KEYS.some(k => k in result);
+        if (hasAnyMetaKey) {
+          const execMeta = {};
+          for (const k of EXEC_META_KEYS) {
+            execMeta[k] = result[k] ?? 0;
+          }
+          execMetaJson = JSON.stringify(execMeta);
+        }
+      }
+
       await client.query(`
         UPDATE tasks
         SET
@@ -216,6 +232,7 @@ router.post('/execution-callback', async (req, res) => {
             'pr_url', $5::text
           ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END
             || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
+          result = CASE WHEN $12::jsonb IS NOT NULL THEN COALESCE(result, '{}'::jsonb) || $12::jsonb ELSE result END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
           quota_exhausted_at = CASE WHEN $11 THEN NOW() ELSE quota_exhausted_at END,
           pr_url = COALESCE($5::text, pr_url),
@@ -223,7 +240,7 @@ router.post('/execution-callback', async (req, res) => {
           error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
           blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson]);
 
       // Log the execution result（带 WHERE NOT EXISTS 防重复写入）
       await client.query(`
