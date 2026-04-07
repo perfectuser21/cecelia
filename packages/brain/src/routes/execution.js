@@ -1553,6 +1553,10 @@ ${resultStr.substring(0, 2000)}
         // Layer 1: sprint_planner 完成 → 创建 sprint_contract_propose
         if (harnessTask?.task_type === 'sprint_planner') {
           const sprintDir = harnessPayload.sprint_dir || 'sprints';
+          // 从 planner 的 result 中提取分支（Planner SKILL.md 输出 verdict 含 branch 字段）
+          const plannerBranch = (result !== null && typeof result === 'object')
+            ? (result.branch || result?.result?.branch || null)
+            : null;
           await createHarnessTask({
             title: `[Contract] P1`,
             description: `Generator 读取 PRD，提出合同草案（功能范围+验证命令）。\nPRD task_id: ${task_id}`,
@@ -1564,11 +1568,12 @@ ${resultStr.substring(0, 2000)}
             payload: {
               sprint_dir: sprintDir,
               planner_task_id: task_id,
+              planner_branch: plannerBranch,
               propose_round: 1,
               harness_mode: true
             }
           });
-          console.log(`[execution-callback] harness: sprint_planner ${task_id} → sprint_contract_propose created`);
+          console.log(`[execution-callback] harness: sprint_planner ${task_id} → sprint_contract_propose created (planner_branch=${plannerBranch})`);
         }
 
         // Layer 2a: sprint_contract_propose 完成 → sprint_contract_review
@@ -1592,6 +1597,7 @@ ${resultStr.substring(0, 2000)}
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
                 planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch,
                 propose_task_id: task_id,
                 propose_round: proposeRound,
                 harness_mode: true

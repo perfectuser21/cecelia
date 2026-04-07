@@ -95,6 +95,8 @@ echo "✅ sprint-prd.md 已推送到 ${CURRENT_BRANCH}"
 
 ## 输出 verdict
 
+**CRITICAL**: 必须在输出中包含 `branch` 字段，Brain 用它告诉 Proposer 去哪个分支读 sprint-prd.md。
+
 ```json
-{"verdict": "DONE", "prd_path": "sprints/sprint-prd.md"}
+{"verdict": "DONE", "prd_path": "sprints/sprint-prd.md", "branch": "<git branch --show-current 的值>"}
 ```

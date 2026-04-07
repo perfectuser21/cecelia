@@ -1868,7 +1868,7 @@ function _prepareProjectPlanPrompt(task) {
 
 function _prepareSprintPrompt(task, taskType) {
   const payload = task.payload || {};
-  const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
+  const sprintDir = payload.sprint_dir || 'sprints';
   const devTaskId = payload.dev_task_id || '';
   const evalRound = payload.eval_round || 0;
   const isFixMode = taskType === 'sprint_fix';
@@ -1888,7 +1888,7 @@ ${task.description || task.title}`;
 
 function _prepareSprintEvaluatePrompt(task) {
   const payload = task.payload || {};
-  const sprintDir = payload.sprint_dir || 'sprints/sprint-1';
+  const sprintDir = payload.sprint_dir || 'sprints';
   const devTaskId = payload.dev_task_id || '';
   const evalRound = payload.eval_round || 1;
   return `/sprint-evaluator
@@ -2041,11 +2041,10 @@ async function preparePrompt(task) {
     return `/sprint-planner\n\n## Harness v2.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
   }
   if (taskType === 'sprint_contract_propose') {
-    const sprintNum = task.payload?.sprint_num || 1;
-    const sprintDir = task.payload?.sprint_dir || `sprints/sprint-${sprintNum}`;
+    const sprintDir = task.payload?.sprint_dir || 'sprints';
     const proposeRound = task.payload?.propose_round || 1;
     const plannerBranch = task.payload?.planner_branch || 'main';
-    let basePrompt = `/sprint-contract-proposer\n\n## Harness v2.0 — Sprint Contract Proposer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\n\n${task.description || task.title}`;
+    let basePrompt = `/sprint-contract-proposer\n\n## Harness v2.0 — Sprint Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\n\n${task.description || task.title}`;
     const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
     if (sprintPrdContent) {
       basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;
@@ -2053,10 +2052,9 @@ async function preparePrompt(task) {
     return basePrompt;
   }
   if (taskType === 'sprint_contract_review') {
-    const sprintNum = task.payload?.sprint_num || 1;
-    const sprintDir = task.payload?.sprint_dir || `sprints/sprint-${sprintNum}`;
+    const sprintDir = task.payload?.sprint_dir || 'sprints';
     const plannerBranch = task.payload?.planner_branch || 'main';
-    let basePrompt = `/sprint-contract-reviewer\n\n## Harness v2.0 — Sprint Contract Reviewer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\n\n${task.description || task.title}`;
+    let basePrompt = `/sprint-contract-reviewer\n\n## Harness v2.0 — Sprint Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\n\n${task.description || task.title}`;
     const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
     if (sprintPrdContent) {
       basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;

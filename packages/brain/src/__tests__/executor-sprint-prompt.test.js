@@ -149,7 +149,8 @@ describe('preparePrompt: sprint 任务类型', () => {
     const result = await preparePrompt(task);
 
     expect(result).toContain('/dev --task-id task-gen-004');
-    expect(result).toContain('sprints/sprint-1'); // 默认目录
+    expect(result).toContain('sprints'); // 默认目录（扁平路径）
+    expect(result).not.toContain('sprints/sprint-1'); // 不再使用旧的子目录格式
     expect(result).toContain('Sprint Generate');
   });
 });
