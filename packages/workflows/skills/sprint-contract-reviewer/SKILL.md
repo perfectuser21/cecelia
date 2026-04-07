@@ -1,24 +1,27 @@
 ---
 id: sprint-contract-reviewer-skill
-description: /sprint-contract-reviewer — Harness v2.0 Layer 2b：Evaluator 对抗性审查合同草案
-version: 1.0.0
+description: /sprint-contract-reviewer — Harness v3.1：Evaluator 对抗性审查合同草案，重点挑战验证命令是否够严格
+version: 2.0.0
 created: 2026-04-04
+updated: 2026-04-07
+changelog:
+  - 2.0.0: v3.1 — 去掉 sprint_num，重点审查验证命令的广谱性和严格性
+  - 1.0.0: 初始版本
 ---
 
-# /sprint-contract-reviewer — Harness Layer 2b: 对抗性审查合同
+# /sprint-contract-reviewer — Harness v3.1: Evaluator 挑战合同
 
-**角色**: Evaluator（合同审查方）
-**职责**: 以对抗性视角审查 Generator 提出的合同草案，找出不清晰的验收标准、遗漏的边界情况、过大的 Sprint 范围。
+**角色**: Evaluator（合同挑战者）
+**职责**: 以对抗性视角审查 Generator 的合同草案——重点挑战**验证命令是否够严格、够广谱、能真正发现问题**。
 
-**心态**: 你是一个严苛的质量门禁，不是合作者。你的目标是让合同无懈可击，让后续代码对抗测试有清晰的标准可依。
+**心态**: 你是最后一道质量门禁。合同通过后，你只能机械执行命令，不能再发挥主观判断。所以现在必须把每一个漏洞找出来。
 
 ---
 
 ## 输入
 
 ```
-sprint_num: <Sprint 编号>
-sprint_dir: <sprints/sprint-N>
+sprint_dir: <文件目录>
 propose_task_id: <proposer task id>
 propose_round: <当前是第几轮审查>
 ```
@@ -29,50 +32,62 @@ propose_round: <当前是第几轮审查>
 
 ```bash
 cat "${sprint_dir}/contract-draft.md"
-cat "sprints/sprint-prd.md"
+cat "${sprint_dir}/sprint-prd.md"
 ```
 
 ### Phase 2: 对抗性审查
 
 逐条检查，寻找以下问题：
 
-**验收标准问题**：
-- 是否有模糊词（"正确"、"合理"、"良好"）？→ 必须量化或给出具体示例
-- 是否可以用自动化工具验证？→ 不可验证的标准不合格
-- 是否覆盖了失败路径/边界情况？
+**验证命令问题（最重要）**：
+- 命令是否真的能发现 bug？还是只是检查"存在性"？
+- 是否覆盖了失败路径（空输入、错误参数、边界值）？
+- 是否有"自证清白"的弱测试（Generator 自己写的 happy path）？
+- 命令是否真实可执行（语法正确、依赖存在）？
+- 是否遗漏了重要的验证点（对比 PRD 的验收标准）？
 
-**范围问题**：
-- Sprint 范围是否太大（超过 3 个独立功能）？
-- 功能之间是否有未说明的依赖？
-- 是否有遗漏的核心功能（对比 PRD）？
+**功能范围问题**：
+- 是否有 PRD 里的功能被遗漏？
+- 是否有模糊词（"正确"、"合理"）没有量化？
+- 边界情况是否考虑到？
 
 **技术风险**：
-- 实现方向是否有明显的技术陷阱？
-- 是否有需要提前澄清的技术决策？
+- 实现方向是否有明显陷阱？
 
 ### Phase 3: 做出判断
 
-**如果合同质量足够高**（验收标准清晰可测、范围合理、无明显遗漏）：
-→ APPROVED，写入 `${sprint_dir}/sprint-contract.md`（最终版）
+**APPROVED 条件**（必须全部满足）：
+- 每个 Feature 都有验证命令
+- 验证命令覆盖正常路径 + 至少一个边界/失败路径
+- 命令真实可执行（不是伪代码）
+- PRD 里的功能点全部覆盖
 
-**如果有问题**（任何一条验收标准模糊/不可测/范围太大）：
-→ REVISION，写详细反馈到 `${sprint_dir}/contract-review-feedback.md`
+**REVISION 条件**（任一满足）：
+- 验证命令是弱测试（只检查文件存在、只检查 200 状态码）
+- 缺少边界情况测试
+- 有 PRD 功能点遗漏
+- 验证命令语法有问题
 
 ### Phase 4a: APPROVED — 写最终合同
 
-将草案升级为最终合同，写入 `${sprint_dir}/sprint-contract.md`（可补充审查意见中的澄清）。
+将草案升级为最终合同，写入 `${sprint_dir}/sprint-contract.md`。
+
+```bash
+cp "${sprint_dir}/contract-draft.md" "${sprint_dir}/sprint-contract.md"
+# 可在文件头部加入审查通过备注
+```
 
 ### Phase 4b: REVISION — 写反馈
 
 写入 `${sprint_dir}/contract-review-feedback.md`：
 
 ```markdown
-# Sprint ${sprint_num} 合同审查反馈（第 ${propose_round} 轮）
+# 合同审查反馈（第 ${propose_round} 轮）
 
-## 必须修改的问题
-1. [验收标准模糊] Feature A 的"返回正确结果"——什么是正确？请给出具体示例
-2. [缺少边界情况] 当用户输入为空时，Feature B 应如何响应？
-3. [范围过大] Feature C 应拆分为两个独立功能
+## 必须修改
+1. [验证命令太弱] Feature A 的验证只检查 HTTP 200，没有检查返回值内容
+2. [缺边界测试] Feature B 缺少空输入的测试命令
+3. [PRD 遗漏] PRD 里的 Feature C 在合同里没有出现
 
 ## 可选改进
 - ...
@@ -82,12 +97,12 @@ cat "sprints/sprint-prd.md"
 
 ## 输出 verdict
 
-APPROVED:
+APPROVED：
 ```json
-{"verdict": "APPROVED", "contract_path": "sprints/sprint-N/sprint-contract.md", "sprint_num": N}
+{"verdict": "APPROVED", "contract_path": "sprints/sprint-contract.md"}
 ```
 
-REVISION:
+REVISION：
 ```json
-{"verdict": "REVISION", "feedback_path": "sprints/sprint-N/contract-review-feedback.md", "sprint_num": N, "issues_count": 3}
+{"verdict": "REVISION", "feedback_path": "sprints/contract-review-feedback.md", "issues_count": 3}
 ```
