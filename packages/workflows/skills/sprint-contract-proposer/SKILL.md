@@ -95,9 +95,18 @@ psql cecelia -c "SELECT count(*) FROM xxx WHERE yyy" | grep -q "1"
 - <明确排除项>
 ```
 
-### Phase 3: 完成
+### Phase 3: 持久化草案并完成
 
-写入后返回。Brain 断链自动创建 sprint_contract_review 任务（Evaluator 开始挑战）。
+写入 `contract-draft.md` 后，立即 git push 使草案跨 worktree 可访问：
+
+```bash
+cd "${sprint_dir}/.." 2>/dev/null || true
+git add "${sprint_dir}/contract-draft.md" "${sprint_dir}/contract-review-feedback.md" 2>/dev/null || git add "${sprint_dir}/contract-draft.md"
+git commit -m "chore(harness): contract draft round ${propose_round}" || true
+git push origin HEAD
+```
+
+Brain 断链自动创建 sprint_contract_review 任务（Evaluator 开始挑战）。
 
 ---
 

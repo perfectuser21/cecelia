@@ -91,3 +91,15 @@ done
 echo ""
 echo "=== 完成 ==="
 echo "  新建: $CREATED | 跳过(已有软链接): $SKIPPED | 警告(真实目录): $WARNED"
+
+# ── 验证关键 skills 已部署 ────────────────────────────────────────────────────
+# 以下 skills 是 Harness v3.1 流程必须部署的核心 skill：
+# sprint-planner, sprint-contract-proposer, sprint-contract-reviewer,
+# sprint-generator, sprint-evaluator, sprint-report
+for _required in sprint-planner sprint-contract-proposer sprint-contract-reviewer sprint-generator sprint-evaluator sprint-report; do
+  if [[ -L "$ACCOUNT_SKILLS/$_required" || -d "$ACCOUNT_SKILLS/$_required" ]]; then
+    echo "  ✅ 已部署: $_required"
+  else
+    echo "  ⚠️  未部署: $_required（请检查 $SKILLS_SRC/$_required 目录是否存在）"
+  fi
+done

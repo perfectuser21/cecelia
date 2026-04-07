@@ -161,6 +161,7 @@ Brain 根据 `task_type` 自动路由到对应 Skill 和执行位置：
 | `sprint_generate` | `/dev`（harness_mode） | US（Opus）|
 | `sprint_evaluate` | `/sprint-evaluator` | US（Opus） |
 | `sprint_fix` | `/dev`（harness_mode fix） | US（Opus） |
+| `sprint_report` | `/sprint-report` | US（Opus） |
 
 ---
 

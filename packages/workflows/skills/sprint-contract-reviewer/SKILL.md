@@ -28,7 +28,16 @@ propose_round: <当前是第几轮审查>
 
 ## 执行步骤
 
-### Phase 1: 读取合同草案
+### Phase 1: 拉取最新草案并读取
+
+先 git pull/fetch 确保拿到 Proposer 刚推送的最新草案：
+
+```bash
+git fetch origin
+git checkout origin/HEAD -- "${sprint_dir}/contract-draft.md" 2>/dev/null || git pull --rebase origin HEAD
+```
+
+然后读取：
 
 ```bash
 cat "${sprint_dir}/contract-draft.md"
