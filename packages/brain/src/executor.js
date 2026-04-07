@@ -1608,6 +1608,33 @@ function buildSystemContextBlock() {
 `;
 }
 
+// ─── Sprint Harness：account1 强绑定列表 ─────────────────────────────────────
+
+const SPRINT_ACCOUNT1_TASK_TYPES = [
+  'sprint_contract_propose', 'sprint_contract_review',
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report'
+];
+
+// ─── Sprint 跨 worktree 文件读取（git fetch + git show） ─────────────────────
+
+async function _fetchSprintFile(branch, filePath) {
+  try {
+    execSync('git fetch origin', { cwd: WORK_DIR, stdio: 'pipe' });
+  } catch {
+    // fetch 失败不阻塞，继续尝试 show
+  }
+  try {
+    const content = execSync(`git show origin/${branch}:${filePath}`, {
+      cwd: WORK_DIR,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+    return content;
+  } catch {
+    return null;
+  }
+}
+
 // ─── preparePrompt 子函数 ────────────────────────────────────────────────────
 
 function _prepareContinueDecompWithInitiative(task, krId, krTitle, initiativeId) {
@@ -2017,12 +2044,28 @@ async function preparePrompt(task) {
     const sprintNum = task.payload?.sprint_num || 1;
     const sprintDir = task.payload?.sprint_dir || `sprints/sprint-${sprintNum}`;
     const proposeRound = task.payload?.propose_round || 1;
-    return `/sprint-contract-proposer\n\n## Harness v2.0 — Sprint Contract Proposer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\n\n${task.description || task.title}`;
+    const plannerBranch = task.payload?.planner_branch || 'main';
+    let basePrompt = `/sprint-contract-proposer\n\n## Harness v2.0 — Sprint Contract Proposer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\n\n${task.description || task.title}`;
+    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
+    if (sprintPrdContent) {
+      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;
+    }
+    return basePrompt;
   }
   if (taskType === 'sprint_contract_review') {
     const sprintNum = task.payload?.sprint_num || 1;
     const sprintDir = task.payload?.sprint_dir || `sprints/sprint-${sprintNum}`;
-    return `/sprint-contract-reviewer\n\n## Harness v2.0 — Sprint Contract Reviewer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\n\n${task.description || task.title}`;
+    const plannerBranch = task.payload?.planner_branch || 'main';
+    let basePrompt = `/sprint-contract-reviewer\n\n## Harness v2.0 — Sprint Contract Reviewer\n\ntask_id: ${task.id}\nsprint_num: ${sprintNum}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\n\n${task.description || task.title}`;
+    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
+    if (sprintPrdContent) {
+      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;
+    }
+    const contractDraftContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/contract-draft.md`);
+    if (contractDraftContent) {
+      basePrompt += `\n\n## ${sprintDir}/contract-draft.md\n${contractDraftContent}`;
+    }
+    return basePrompt;
   }
 
   // 路由表：taskType → handler
@@ -2715,9 +2758,20 @@ async function triggerCeceliaRun(task) {
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
     let provider = getProviderForTask(task);
 
+    // Sprint 任务强绑定 account1（spending-cap 时 fallback 到 selectBestAccount）
+    if (SPRINT_ACCOUNT1_TASK_TYPES.includes(task.task_type)) {
+      const { isSpendingCapped } = await import('./account-usage.js');
+      if (!isSpendingCapped('account1')) {
+        extraEnv.CECELIA_CREDENTIALS = 'account1';
+        console.log(`[executor] Sprint task_type=${task.task_type} hardwired to account1`);
+      } else {
+        console.log(`[executor] Sprint task_type=${task.task_type} account1 spending-capped, fallback to selectBestAccount`);
+      }
+    }
+
     // Get credentials file for the task (universal, works for all providers)
     const credentials = getCredentialsForTask(task);
-    if (credentials && credentials.startsWith('account')) {
+    if (!extraEnv.CECELIA_CREDENTIALS && credentials && credentials.startsWith('account')) {
       // Profile 中固定了账号，先检查 spending cap
       const { isSpendingCapped } = await import('./account-usage.js');
       if (isSpendingCapped(credentials)) {
