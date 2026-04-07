@@ -1557,6 +1557,28 @@ ${resultStr.substring(0, 2000)}
       // Layer 2: sprint_contract_propose → sprint_contract_review（Evaluator 挑战）← GAN 对抗
       //          APPROVED → sprint_generate；REVISION → sprint_contract_propose（带反馈）
       // Layer 3: sprint_generate → sprint_evaluate（机械执行合同里的验证命令）
+
+      // 辅助：从任意格式 result（对象/字符串/嵌套）中提取 verdict 字段
+      // cecelia-run webhook 传回的 result 可能是纯文本 Claude 输出，需从中正则提取 JSON
+      function extractVerdictFromResult(res, validVerdicts) {
+        if (res === null || res === undefined) return null;
+        // 对象：直接读
+        if (typeof res === 'object') {
+          const v = res.verdict || res?.result?.verdict;
+          if (v) return v.toUpperCase();
+        }
+        // 字符串：先尝试完整 JSON 解析
+        if (typeof res === 'string') {
+          try {
+            const parsed = JSON.parse(res);
+            if (parsed?.verdict) return parsed.verdict.toUpperCase();
+          } catch { /* not JSON */ }
+          // 正则提取最后一个 "verdict": "XXX"
+          const matches = [...res.matchAll(/"verdict"\s*:\s*"([^"]+)"/gi)];
+          if (matches.length > 0) return matches[matches.length - 1][1].toUpperCase();
+        }
+        return null;
+      }
       //          PASS → sprint_report；FAIL → sprint_fix → sprint_evaluate
       try {
         const harnessRow = await pool.query(
@@ -1571,9 +1593,14 @@ ${resultStr.substring(0, 2000)}
         if (harnessTask?.task_type === 'sprint_planner') {
           const sprintDir = harnessPayload.sprint_dir || 'sprints';
           // 从 planner 的 result 中提取分支（Planner SKILL.md 输出 verdict 含 branch 字段）
-          const plannerBranch = (result !== null && typeof result === 'object')
-            ? (result.branch || result?.result?.branch || null)
-            : null;
+          // 兼容对象和纯文本字符串（cecelia-run 传回 Claude 完整输出）
+          let plannerBranch = null;
+          if (result !== null && typeof result === 'object') {
+            plannerBranch = result.branch || result?.result?.branch || null;
+          } else if (typeof result === 'string') {
+            const branchMatch = result.match(/"branch"\s*:\s*"([^"]+)"/);
+            if (branchMatch) plannerBranch = branchMatch[1];
+          }
           await createHarnessTask({
             title: `[Contract] P1`,
             description: `Generator 读取 PRD，提出合同草案（功能范围+验证命令）。\nPRD task_id: ${task_id}`,
@@ -1597,9 +1624,7 @@ ${resultStr.substring(0, 2000)}
         // GAN 守卫：只有 Proposer 真正产出草案（verdict=PROPOSED）才派 Reviewer
         if (harnessTask?.task_type === 'sprint_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
-          const proposeVerdict = (result !== null && typeof result === 'object')
-            ? (result.verdict || result?.result?.verdict)
-            : null;
+          const proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
           if (proposeVerdict !== 'PROPOSED') {
             console.log(`[execution-callback] harness: sprint_contract_propose ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
