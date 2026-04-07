@@ -1869,18 +1869,17 @@ function _prepareProjectPlanPrompt(task) {
 function _prepareSprintPrompt(task, taskType) {
   const payload = task.payload || {};
   const sprintDir = payload.sprint_dir || 'sprints';
-  const devTaskId = payload.dev_task_id || '';
   const evalRound = payload.eval_round || 0;
   const isFixMode = taskType === 'sprint_fix';
-  return `/dev --task-id ${task.id}
+  const mode = isFixMode ? 'sprint_fix' : 'sprint_generate';
+  return `/sprint-generator
 
-## Harness v2.0 — Sprint ${isFixMode ? 'Fix (R' + evalRound + ')' : 'Generate'}
+## Harness v3.1 — ${isFixMode ? 'Sprint Fix (Round ' + evalRound + ')' : 'Sprint Generate'}
 
-**模式**: harness_mode
-**Sprint 目录**: ${sprintDir}
-**Dev Task ID**: ${devTaskId}
-**Initiative**: ${task.project_id || 'unknown'}
-${isFixMode ? `\n**修复轮次**: R${evalRound}\n**读取 evaluation.md 中的反馈进行修复**` : ''}
+**task_type**: ${mode}
+**task_id**: ${task.id}
+**sprint_dir**: ${sprintDir}
+${isFixMode ? `**eval_round**: ${evalRound}\n**读取 eval-round-${evalRound}.md 中的 FAIL 反馈进行修复**` : ''}
 
 任务描述:
 ${task.description || task.title}`;
