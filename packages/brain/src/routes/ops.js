@@ -2684,12 +2684,23 @@ export const deployState = {
   error: null,
 };
 
+// In-memory staging deploy state（Safe Lane 专用，与 production 隔离）
+export const stagingDeployState = {
+  status: 'idle',       // idle | running | success | failed
+  version: null,
+  started_at: null,
+  finished_at: null,
+  elapsed_ms: null,
+  error: null,
+};
+
 // GET /api/brain/deploy/status — 查询最近一次部署状态
 router.get('/deploy/status', (req, res) => {
   res.json({ ...deployState });
 });
 
 // POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
+// 支持 mode='staging' 或 staging=true 走 Safe Lane staging 分支（端口 5222）
 router.post('/deploy', async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
   const expectedToken = process.env.DEPLOY_TOKEN;
@@ -2701,6 +2712,76 @@ router.post('/deploy', async (req, res) => {
     return res.status(401).json({ error: 'Invalid or missing deploy token' });
   }
 
+  const { changed_paths, staging, mode } = req.body || {};
+  const isStagingDeploy = staging === true || mode === 'staging';
+
+  // ── Staging 分支（Safe Lane）──────────────────────────────────────────────
+  if (isStagingDeploy) {
+    if (stagingDeployState.status === 'running') {
+      return res.status(409).json({
+        error: 'Staging deploy already in progress',
+        current_status: stagingDeployState.status,
+        started_at: stagingDeployState.started_at,
+      });
+    }
+
+    stagingDeployState.status = 'running';
+    stagingDeployState.started_at = new Date().toISOString();
+    stagingDeployState.finished_at = null;
+    stagingDeployState.elapsed_ms = null;
+    stagingDeployState.error = null;
+
+    res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
+
+    const { execSync } = await import('child_process');
+    const repoRoot = new URL('../../../..', import.meta.url).pathname;
+    const startTime = Date.now();
+
+    try {
+      const stagingScript = new URL('../../../../scripts/staging-deploy.sh', import.meta.url).pathname;
+      const { existsSync } = await import('fs');
+      let cmd;
+
+      if (existsSync(stagingScript)) {
+        let args = '';
+        if (changed_paths && changed_paths.length > 0) {
+          args = ` --changed="${changed_paths.join(' ').replace(/"/g, '\\"')}"`;
+        }
+        cmd = `bash "${stagingScript}"${args}`;
+      } else {
+        // 降级：用 PM2 在端口 5222 启动 staging 实例
+        cmd = [
+          'BRAIN_PORT=5222',
+          'NODE_ENV=staging',
+          'pm2 start packages/brain/src/server.js',
+          '--name brain-staging',
+          '--env staging',
+          '-- --port 5222',
+          '2>/dev/null || pm2 restart brain-staging 2>/dev/null || true',
+        ].join(' ');
+      }
+
+      console.log(`[staging-deploy] 开始 staging 部署: ${cmd}`);
+      execSync(cmd, { cwd: repoRoot, timeout: 600_000, stdio: 'inherit', shell: true });
+
+      const elapsed = Date.now() - startTime;
+      stagingDeployState.status = 'success';
+      stagingDeployState.finished_at = new Date().toISOString();
+      stagingDeployState.elapsed_ms = elapsed;
+      console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
+    } catch (err) {
+      const elapsed = Date.now() - startTime;
+      stagingDeployState.status = 'failed';
+      stagingDeployState.finished_at = new Date().toISOString();
+      stagingDeployState.elapsed_ms = elapsed;
+      stagingDeployState.error = err.message;
+      console.error(`[staging-deploy] ❌ Staging 部署失败 (${(elapsed / 1000).toFixed(1)}s):`, err.message);
+    }
+    return;
+  }
+
+  // ── Production 分支（Fast Lane / Safe Lane 提升后）────────────────────────
+
   // 并发互斥保护：running 或 rolling_back 时拒绝新请求
   if (deployState.status === 'running' || deployState.status === 'rolling_back') {
     return res.status(409).json({
@@ -2709,8 +2790,6 @@ router.post('/deploy', async (req, res) => {
       started_at: deployState.started_at,
     });
   }
-
-  const { changed_paths } = req.body || {};
 
   // 更新状态为 running，立即返回 202
   deployState.status = 'running';
@@ -2753,6 +2832,43 @@ router.post('/deploy', async (req, res) => {
     deployState.elapsed_ms = elapsed;
     deployState.error = err.message;
     console.error(`[deploy-webhook] ❌ 部署失败 (${(elapsed / 1000).toFixed(1)}s):`, err.message);
+  }
+});
+
+// GET /api/brain/deploy/staging/status — 查询 staging 部署状态（Safe Lane 轮询用）
+router.get('/deploy/staging/status', (req, res) => {
+  res.json({ ...stagingDeployState });
+});
+
+// POST /api/brain/deploy/staging/cleanup — 清理 staging 环境（Safe Lane 失败时触发）
+router.post('/deploy/staging/cleanup', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+
+  if (!expectedToken || !token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  res.status(202).json({ status: 'accepted', message: 'Staging cleanup triggered' });
+
+  try {
+    const { execSync } = await import('child_process');
+    const repoRoot = new URL('../../../..', import.meta.url).pathname;
+
+    console.log('[staging-cleanup] 清理 staging 环境...');
+    execSync(
+      'pm2 delete brain-staging 2>/dev/null || true',
+      { cwd: repoRoot, timeout: 30_000, stdio: 'inherit', shell: true }
+    );
+
+    stagingDeployState.status = 'idle';
+    stagingDeployState.started_at = null;
+    stagingDeployState.finished_at = null;
+    stagingDeployState.elapsed_ms = null;
+    stagingDeployState.error = null;
+    console.log('[staging-cleanup] ✅ Staging 清理完成');
+  } catch (err) {
+    console.error('[staging-cleanup] ⚠️ 清理异常（非阻塞）:', err.message);
   }
 });
 
