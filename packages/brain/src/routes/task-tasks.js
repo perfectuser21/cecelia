@@ -142,7 +142,24 @@ router.get('/:id', async (req, res) => {
 // PATCH /tasks/:id — 更新 task 字段
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, priority, title, okr_initiative_id } = req.body;
+    const { status, priority, title, okr_initiative_id, pr_url, result: taskResult } = req.body;
+
+    // 状态机保护：已终止的任务不能回退到非终止状态
+    const TERMINAL_STATUSES = ['completed', 'cancelled'];
+    const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled', 'failed', 'blocked'];
+    if (status !== undefined) {
+      const current = await pool.query('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
+      if (!current.rows.length) {
+        return res.status(404).json({ error: 'Task not found', id: req.params.id });
+      }
+      const currentStatus = current.rows[0].status;
+      if (TERMINAL_STATUSES.includes(currentStatus) && !TERMINAL_STATUSES.includes(status)) {
+        return res.status(409).json({
+          error: 'State machine violation',
+          details: `Cannot transition from terminal status '${currentStatus}' to '${status}'`,
+        });
+      }
+    }
 
     const setClauses = [];
     const params = [];
@@ -151,6 +168,13 @@ router.patch('/:id', async (req, res) => {
     if (status !== undefined) {
       setClauses.push(`status = $${paramIndex++}`);
       params.push(status);
+      // 自动设置时间戳
+      if (status === 'in_progress') {
+        setClauses.push(`started_at = COALESCE(started_at, NOW())`);
+      }
+      if (status === 'completed') {
+        setClauses.push(`completed_at = COALESCE(completed_at, NOW())`);
+      }
     }
     if (priority !== undefined) {
       setClauses.push(`priority = $${paramIndex++}`);
@@ -163,6 +187,14 @@ router.patch('/:id', async (req, res) => {
     if (okr_initiative_id !== undefined) {
       setClauses.push(`okr_initiative_id = $${paramIndex++}`);
       params.push(okr_initiative_id);
+    }
+    if (pr_url !== undefined) {
+      setClauses.push(`pr_url = $${paramIndex++}`);
+      params.push(pr_url);
+    }
+    if (taskResult !== undefined) {
+      setClauses.push(`success_metrics = $${paramIndex++}`);
+      params.push(JSON.stringify(taskResult));
     }
 
     if (setClauses.length === 0) {
