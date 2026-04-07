@@ -70,6 +70,8 @@ cat "${sprint_dir}/sprint-prd.md"
 
 ### Phase 3: 做出判断
 
+> **轮次感知规则**：当 `propose_round >= 3` 时，若合同中所有 SC 均可验证且总数 ≤ 5，应优先偏向 APPROVED，避免无限对抗循环。只有存在**不可验证的验收标准**或**范围明显超出 PRD**时，才继续 REVISION。
+
 **APPROVED 条件**（必须全部满足）：
 - 每个 Feature 都有"行为描述 + 硬阈值"
 - 行为描述清晰可验证（触发条件明确，预期结果具体）
