@@ -207,16 +207,16 @@ router.post('/execution-callback', async (req, res) => {
       }
 
       // Extract execution metadata from result object ($12).
-      // Feature 3 completeness constraint: if any of the 5 keys is present,
-      // all 5 must be written (missing keys default to 0).
+      // Feature 3 completeness constraint: only write if ALL 5 keys are present.
+      // Partial keys (1-4) are ignored entirely — result column remains unchanged.
       const EXEC_META_KEYS = ['duration_ms', 'total_cost_usd', 'num_turns', 'input_tokens', 'output_tokens'];
       let execMetaJson = null;
       if (result !== null && typeof result === 'object') {
-        const hasAnyMetaKey = EXEC_META_KEYS.some(k => k in result);
-        if (hasAnyMetaKey) {
+        const hasAllMetaKeys = EXEC_META_KEYS.every(k => k in result);
+        if (hasAllMetaKeys) {
           const execMeta = {};
           for (const k of EXEC_META_KEYS) {
-            execMeta[k] = result[k] ?? 0;
+            execMeta[k] = result[k];
           }
           execMetaJson = JSON.stringify(execMeta);
         }
