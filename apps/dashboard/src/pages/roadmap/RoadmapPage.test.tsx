@@ -86,7 +86,7 @@ describe('RoadmapPage', () => {
     const mockProjects = [
       {
         id: 'proj-1',
-        name: '测试进行中项目',
+        title: '测试进行中项目',
         status: 'in_progress',
         kr_id: null,
         goal_id: null,
@@ -144,7 +144,7 @@ describe('RoadmapPage', () => {
       { id: 'goal-1', title: '测试 KR', type: 'area_okr', progress: 65, status: 'pending', priority: 'P1', parent_id: null, area_id: null },
     ];
     const mockProjects = [
-      { id: 'proj-2', name: 'KR 关联项目', status: 'pending', kr_id: 'goal-1', goal_id: null, deadline: null, type: 'initiative', parent_id: null, created_at: '2026-03-01T00:00:00Z' },
+      { id: 'proj-2', title: 'KR 关联项目', status: 'pending', kr_id: 'goal-1', goal_id: null, deadline: null, type: 'initiative', parent_id: null, created_at: '2026-03-01T00:00:00Z' },
     ];
 
     (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {

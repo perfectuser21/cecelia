@@ -32,23 +32,26 @@ import {
 interface Goal {
   id: string;
   title: string;
-  type: 'area_okr' | 'global_okr' | 'kr';
-  progress: number;
+  type: 'area_okr' | 'area_kr' | 'global_okr' | 'kr';
+  progress: number | null;
+  current_value: string | null;
+  target_value: string | null;
   status: string;
-  priority: string;
+  priority?: string;
   parent_id: string | null;
   area_id: string | null;
 }
 
 interface Project {
   id: string;
-  name: string;
-  type: string;
+  title: string;
+  type?: string;
   status: string;
   parent_id: string | null;
   kr_id: string | null;
   priority?: string;
   deadline: string | null;
+  end_date?: string | null;
   created_at: string | null;
   description?: string | null;
 }
@@ -73,6 +76,20 @@ interface SelfDriveEvent {
     adjustments?: Array<{ type: string }>;
   };
   created_at: string;
+}
+
+// ── Progress helpers ─────────────────────────────────────────────
+
+function computeKrProgress(g: Goal): number {
+  // 优先用 progress 字段（如后端有）
+  if (g.progress !== null && g.progress !== undefined) return g.progress;
+  // 用 current_value / target_value
+  const cur = parseFloat(g.current_value ?? '0');
+  const tgt = parseFloat(g.target_value ?? '0');
+  if (tgt > 0) return Math.min(Math.round((cur / tgt) * 100), 100);
+  // target_value 为空时，current_value 直接当百分比（0-100）
+  if (!isNaN(cur) && cur >= 0 && cur <= 100) return Math.round(cur);
+  return 0;
 }
 
 // ── Column logic ─────────────────────────────────────────────────
@@ -144,7 +161,7 @@ function ProjectCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-white leading-tight truncate max-w-[180px]">
-              {project.name}
+              {project.title}
             </span>
             <PriorityBadge priority={project.priority} />
           </div>
@@ -163,17 +180,17 @@ function ProjectCard({
               <span className="truncate">{linkedKR.title}</span>
             </span>
             <span className="text-slate-300 font-medium ml-2 flex-shrink-0">
-              {Math.round(linkedKR.progress)}%
+              {computeKrProgress(linkedKR)}%
             </span>
           </div>
           <ProgressBar
-            value={linkedKR.progress}
+            value={computeKrProgress(linkedKR)}
             color={
-              linkedKR.progress >= 80
+              computeKrProgress(linkedKR) >= 80
                 ? 'green'
-                : linkedKR.progress >= 50
+                : computeKrProgress(linkedKR) >= 50
                 ? 'blue'
-                : linkedKR.progress >= 20
+                : computeKrProgress(linkedKR) >= 20
                 ? 'amber'
                 : 'red'
             }
@@ -182,10 +199,10 @@ function ProjectCard({
       )}
 
       {/* Deadline */}
-      {project.deadline && (
+      {(project.deadline || project.end_date) && (
         <div className="mt-2 flex items-center gap-1 text-xs text-slate-500">
           <Clock className="w-3 h-3" />
-          {new Date(project.deadline).toLocaleDateString('zh-CN')}
+          {new Date((project.deadline || project.end_date)!).toLocaleDateString('zh-CN')}
         </div>
       )}
     </div>
@@ -336,11 +353,11 @@ function AgentsPanel({ tasks }: { tasks: BrainTask[] }) {
 // ── KR 摘要卡片 ───────────────────────────────────────────────────
 
 function KRSummary({ goals }: { goals: Goal[] }) {
-  const krs = goals.filter((g) => g.type === 'kr');
+  const krs = goals.filter((g) => g.type === 'area_kr' || g.type === 'kr');
   if (krs.length === 0) return null;
 
-  const avg = krs.reduce((s, k) => s + k.progress, 0) / krs.length;
-  const done = krs.filter((k) => k.progress >= 100).length;
+  const avg = krs.reduce((s, k) => s + computeKrProgress(k), 0) / krs.length;
+  const done = krs.filter((k) => computeKrProgress(k) >= 100).length;
 
   return (
     <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4">
@@ -351,11 +368,11 @@ function KRSummary({ goals }: { goals: Goal[] }) {
       </div>
       <div className="flex items-center gap-4 mb-3">
         <div className="text-center">
-          <div className="text-2xl font-bold text-white">{Math.round(avg)}%</div>
+          <div className="text-2xl font-bold text-white">{Math.round(avg) || 0}%</div>
           <div className="text-xs text-slate-400">平均进度</div>
         </div>
         <div className="flex-1">
-          <ProgressBar value={avg} color={avg >= 70 ? 'green' : avg >= 40 ? 'blue' : 'amber'} />
+          <ProgressBar value={avg || 0} color={(avg || 0) >= 70 ? 'green' : (avg || 0) >= 40 ? 'blue' : 'amber'} />
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-green-400">{done}</div>
@@ -364,18 +381,21 @@ function KRSummary({ goals }: { goals: Goal[] }) {
       </div>
       {/* Top 5 KRs */}
       <div className="space-y-2">
-        {krs.slice(0, 5).map((kr) => (
-          <div key={kr.id} className="space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-300 truncate max-w-[200px]">{kr.title}</span>
-              <span className="text-slate-400 ml-2 flex-shrink-0">{Math.round(kr.progress)}%</span>
+        {krs.slice(0, 5).map((kr) => {
+          const pct = computeKrProgress(kr);
+          return (
+            <div key={kr.id} className="space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-300 truncate max-w-[200px]">{kr.title}</span>
+                <span className="text-slate-400 ml-2 flex-shrink-0">{pct}%</span>
+              </div>
+              <ProgressBar
+                value={pct}
+                color={pct >= 80 ? 'green' : pct >= 50 ? 'blue' : 'amber'}
+              />
             </div>
-            <ProgressBar
-              value={kr.progress}
-              color={kr.progress >= 80 ? 'green' : kr.progress >= 50 ? 'blue' : 'amber'}
-            />
-          </div>
-        ))}
+          );
+        })}
         {krs.length > 5 && (
           <p className="text-xs text-slate-500">+ {krs.length - 5} 更多 KR...</p>
         )}
@@ -478,7 +498,7 @@ export default function RoadmapPage() {
           <div>
             <h1 className="text-xl font-bold text-white">OKR Roadmap</h1>
             <p className="text-xs text-slate-400">
-              {activeProjects.length} 个项目 · {goals.filter((g) => g.type === 'kr').length} 个 KR
+              {activeProjects.length} 个项目 · {goals.filter((g) => g.type === 'area_kr' || g.type === 'kr').length} 个 KR
               {lastUpdated && (
                 <span className="ml-2">
                   · 更新于{' '}

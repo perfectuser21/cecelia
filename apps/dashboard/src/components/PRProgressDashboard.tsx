@@ -27,9 +27,11 @@ interface TaskItem {
 interface GoalItem {
   id: string;
   title: string;
-  progress: number;
+  progress?: number | null;
+  current_value?: string | null;
+  target_value?: string | null;
   status: string;
-  priority: string;
+  priority?: string;
 }
 
 interface DailyCount {
