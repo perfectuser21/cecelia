@@ -418,7 +418,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 221 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 222 |
 | **distilled_docs** | 蒸馏文档层 Layer 2（SOUL/SELF_MODEL/USER_PROFILE/WORLD_STATE） |
 | **kr_verifiers** | KR 指标自动验证（SQL 查询, threshold, current_value, 定时采集） |
 | **blocks** | 通用 block 存储 |
@@ -484,6 +484,15 @@ queued → in_progress → completed
 | sprint_contract_propose | US | Harness Contract 提案 — 生成 sprint-contract.md | Sonnet / - | 默认 anthropic |
 | sprint_contract_review | US | Harness Contract 审查 — 验证 sprint-contract.md | Sonnet / - | 默认 anthropic |
 | sprint_report | US | Harness Reporter — 生成 Sprint 最终报告 (/sprint-report) | Sonnet / - | 默认 anthropic |
+| harness_planner | US | Harness v4.0 Planner — 拆分 Harness 任务计划 | Sonnet / - | 默认 anthropic |
+| harness_contract_propose | US | Harness v4.0 Contract 提案 — 生成 harness-contract.md | Sonnet / - | 默认 anthropic |
+| harness_contract_review | US | Harness v4.0 Contract 审查 — 验证 harness-contract.md | Sonnet / - | 默认 anthropic |
+| harness_generate | US | Harness v4.0 Generator — 写代码 (/dev) | Sonnet / - | 默认 anthropic |
+| harness_evaluate | US | Harness v4.0 Evaluator — 独立广谱验证 (/sprint-evaluator) | Sonnet / - | 默认 anthropic |
+| harness_fix | US | Harness v4.0 Generator 修复轮次 (/dev) | Sonnet / - | 默认 anthropic |
+| harness_ci_watch | US | Harness v4.0 CI 监控 — 等待 CI 结果 | Sonnet / - | 默认 anthropic |
+| harness_deploy_watch | US | Harness v4.0 Deploy 监控 — 等待部署结果 | Sonnet / - | 默认 anthropic |
+| harness_report | US | Harness v4.0 Reporter — 生成最终报告 (/sprint-report) | Sonnet / - | 默认 anthropic |
 | content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
 | content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
 | content-copywriting | 西安 | 文案生成阶段 (/content-creator) | - | general |
