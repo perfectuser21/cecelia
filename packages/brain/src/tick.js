@@ -56,7 +56,7 @@ import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
-import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth } from './credential-expiry-checker.js';
+import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
@@ -1646,6 +1646,15 @@ async function executeTick() {
       }
     }).catch(err => {
       console.error('[tick] Auth layer health scan failed (non-fatal):', err.message);
+    });
+
+    // [清理] 救援风暴清理：凭据恢复后自动取消同分支重复的 quarantined pipeline_rescue 任务
+    cleanupDuplicateRescueTasks(pool).then(r => {
+      if (r.cancelled > 0) {
+        tickLog(`[tick] [rescue-cleanup] ✅ ${r.branches} 个分支，取消 ${r.cancelled} 条重复 rescue 任务`);
+      }
+    }).catch(err => {
+      console.error('[tick] Rescue storm cleanup failed (non-fatal):', err.message);
     });
   }
 
