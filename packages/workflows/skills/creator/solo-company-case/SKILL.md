@@ -70,18 +70,28 @@ notebooklm create "<主题名>" --json
 notebooklm source add-research "<主题关键词>" --mode deep --no-wait
 ```
 
-等待完成后提取核心数据：
+等待调研完成（必须等，否则数据不完整）：
+
+```bash
+# 轮询等待，最多10分钟
+notebooklm research wait -n <notebook_id> --import-all --timeout 600
+
+# 确认来源就绪
+notebooklm source list -n <notebook_id> --json
+```
+
+提取核心数据（**所有 ask 命令必须带 `-n <notebook_id>`**）：
 
 ```bash
 # 人物主题
-notebooklm ask "总结商业模式：收入构成、内容策略、日常工作流、关键数字" --json
-notebooklm ask "列出职业发展时间线的5个关键节点（年份+事件+描述）" --json
-notebooklm ask "最常被引用的3-5句名言" --json
+notebooklm ask -n <notebook_id> "总结商业模式：收入构成、内容策略、日常工作流、关键数字" --json
+notebooklm ask -n <notebook_id> "列出职业发展时间线的5个关键节点（年份+事件+描述）" --json
+notebooklm ask -n <notebook_id> "最常被引用的3-5句名言" --json
 
 # 通用主题
-notebooklm ask "总结核心框架/方法论：3-5个关键要点" --json
-notebooklm ask "列出关键数据/证据/案例" --json
-notebooklm ask "对普通人最有价值的3个行动洞察" --json
+notebooklm ask -n <notebook_id> "总结核心框架/方法论：3-5个关键要点" --json
+notebooklm ask -n <notebook_id> "列出关键数据/证据/案例" --json
+notebooklm ask -n <notebook_id> "对普通人最有价值的3个行动洞察" --json
 ```
 
 ---
@@ -130,6 +140,37 @@ base64 -i /tmp/avatar.jpg > /tmp/avatar-b64.txt
 ```
 
 通用主题跳过。
+
+---
+
+### Step 3.5 — 草稿确认（生成图片前必须先确认）
+
+在开始写代码之前，先向用户输出文案草稿：
+
+```
+**社媒文案草稿**
+标题：xxx（≤20字）
+正文：...（100-200字）
+
+**公众号长文草稿**
+标题：《xxx》
+[钩子] ...
+一、洞察1 ...
+二、洞察2 ...
+三、洞察3 ...
+[结语] ...
+
+**卡片规划（7张）**
+封面：...
+01：...
+02：...
+03：...
+04：...
+05：...
+06：...
+```
+
+**等用户确认或修改后，再进入 Step 4。**
 
 ---
 
@@ -217,11 +258,13 @@ node ~/claude-output/scripts/validate-cards.mjs {slug}
 
 #### Gate 2：视觉审查（8项）
 
-底部重叠 / 右侧越界 / iconDot遮字 / 内容溢出 / XML乱码 / 底部大片空白(>600px) / 视觉单调 / 无框浮字。任何一项 FAIL → 修脚本重新生成。
+**用 Read 工具逐张读取 PNG 文件进行目检**，核对以下8项（任何一项 FAIL → 修脚本重新生成）：
+
+底部重叠 / 右侧越界 / iconDot遮字 / 内容溢出 / XML乱码 / 底部大片空白(>600px) / 视觉单调 / 无框浮字。
 
 ---
 
-### Step 5 — 文案生成（两种）
+### Step 5 — 文案生成 + 长文输出文件
 
 **平台硬限制**：图片最多9张，标题最多20字，社媒正文100-200字，公众号正文800字以上。
 **不要分别写抖音和小红书**——社交媒体通用一版。
@@ -246,6 +289,28 @@ node ~/claude-output/scripts/validate-cards.mjs {slug}
   [结语：普通人如何开始，1-2句]
 ```
 
+#### 输出文件（两个，NAS 上传必须）
+
+```bash
+# HTML 版（公众号直接粘贴用）
+cat > /tmp/content.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;max-width:680px;margin:auto;line-height:1.8;">
+<h1>标题</h1>
+<p>正文...</p>
+</body>
+</html>
+EOF
+
+# Markdown 版（备份/二次编辑用）
+cat > /tmp/text_v1.md << 'EOF'
+# 标题
+
+正文...
+EOF
+```
+
 ---
 
 ### Step 6 — 上传 NAS + 注册数据库
@@ -255,7 +320,7 @@ CONTENT_ID=$(date +%Y-%m-%d)-$(openssl rand -hex 3)
 NAS_USER="徐啸"
 NAS_IP="100.110.241.76"
 NAS_BASE="/volume1/workspace/vault/zenithjoy-creator/content"
-TITLE="文章标题"
+TITLE="<Step 5 确定的文章标题>"   # 使用实际标题，不能用占位符
 
 bash /Users/administrator/perfect21/infrastructure/scripts/nas-content-manager.sh \
   create "${CONTENT_ID}" "${TITLE}" "full_suite"
@@ -263,8 +328,6 @@ bash /Users/administrator/perfect21/infrastructure/scripts/nas-content-manager.s
 scp ~/claude-output/images/{slug}-*.png \
   "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/images/"
 
-echo "${TITLE}" > /tmp/title.txt
-scp /tmp/title.txt    "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/exports/"
 scp /tmp/content.html "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/exports/"
 scp /tmp/text_v1.md   "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/text/"
 
