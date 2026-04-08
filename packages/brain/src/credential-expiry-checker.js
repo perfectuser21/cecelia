@@ -333,3 +333,103 @@ export async function scanAuthLayerHealth(pool) {
 
   return { scanned: ACCOUNTS.length, alerted, accounts: alertedAccounts };
 }
+
+// ============================================================
+// 救援风暴清理（Rescue Storm Cleanup）
+// ============================================================
+
+/**
+ * cleanupDuplicateRescueTasks — 清理 auth 故障导致的重复 pipeline_rescue 任务
+ *
+ * 背景：当 auth 故障期间，同一个 worktree 分支的 rescue 任务反复失败，
+ * watchdog 每次都创建新的 pipeline_rescue，导致同一分支可能有 3-7 条
+ * quarantined rescue 任务堆积（救援风暴）。
+ *
+ * 逻辑：
+ * 1. 仅在凭据全部健康时运行（复用 credential 守卫）
+ * 2. 查找同 branch 有 ≥ 2 条 quarantined pipeline_rescue 任务的分支
+ * 3. 每个分支保留 updated_at 最新的一条，其余标记为 cancelled
+ * 4. 记录 cleanup_reason: 'duplicate_rescue_after_auth_outage' 便于追溯
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ skipped: string|null, cancelled: number, branches: number }>}
+ */
+export async function cleanupDuplicateRescueTasks(pool) {
+  // 守卫：凭据不健康时跳过，避免清理正在恢复中的任务
+  const { criticalAccounts } = checkCredentialExpiry();
+  if (criticalAccounts.length > 0) {
+    const names = criticalAccounts.map(a => a.account).join(', ');
+    return { skipped: `credentials not healthy (${names})`, cancelled: 0, branches: 0 };
+  }
+
+  // Step 1: 找出同分支有重复 quarantined pipeline_rescue 任务的分支
+  let duplicateBranches;
+  try {
+    const result = await pool.query(`
+      SELECT
+        payload->>'branch' AS branch,
+        COUNT(*) AS task_count
+      FROM tasks
+      WHERE status = 'quarantined'
+        AND task_type = 'pipeline_rescue'
+        AND payload->>'branch' IS NOT NULL
+      GROUP BY payload->>'branch'
+      HAVING COUNT(*) > 1
+    `);
+    duplicateBranches = result.rows;
+  } catch (err) {
+    console.error('[rescue-cleanup] 查询重复分支失败 (non-fatal):', err.message);
+    return { skipped: `query failed: ${err.message}`, cancelled: 0, branches: 0 };
+  }
+
+  if (duplicateBranches.length === 0) {
+    return { skipped: null, cancelled: 0, branches: 0 };
+  }
+
+  let totalCancelled = 0;
+
+  for (const { branch } of duplicateBranches) {
+    try {
+      // Step 2: 获取该分支所有 quarantined rescue 任务，按 updated_at 降序排列
+      const tasksResult = await pool.query(`
+        SELECT id, updated_at
+        FROM tasks
+        WHERE status = 'quarantined'
+          AND task_type = 'pipeline_rescue'
+          AND payload->>'branch' = $1
+        ORDER BY updated_at DESC
+      `, [branch]);
+
+      const tasks = tasksResult.rows;
+      if (tasks.length <= 1) continue;
+
+      // 保留最新的（tasks[0]），取消其余
+      const toCancel = tasks.slice(1).map(t => t.id);
+      const placeholders = toCancel.map((_, i) => `$${i + 1}`).join(', ');
+
+      await pool.query(`
+        UPDATE tasks
+        SET status = 'cancelled',
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+              'cleanup_reason', 'duplicate_rescue_after_auth_outage',
+              'kept_task_id', $${toCancel.length + 1},
+              'cancelled_by', 'rescue_storm_cleanup',
+              'cancelled_at', NOW()::text
+            ),
+            updated_at = NOW()
+        WHERE id IN (${placeholders})
+      `, [...toCancel, tasks[0].id]);
+
+      totalCancelled += toCancel.length;
+      console.log(`[rescue-cleanup] 分支 ${branch.slice(0, 30)}: 保留 ${tasks[0].id.slice(0, 8)}，取消 ${toCancel.length} 条重复`);
+    } catch (err) {
+      console.error(`[rescue-cleanup] 处理分支 ${branch} 失败 (non-fatal):`, err.message);
+    }
+  }
+
+  if (totalCancelled > 0) {
+    console.log(`[rescue-cleanup] ✅ 救援风暴清理完成：${duplicateBranches.length} 个分支，取消 ${totalCancelled} 条重复任务`);
+  }
+
+  return { skipped: null, cancelled: totalCancelled, branches: duplicateBranches.length };
+}
