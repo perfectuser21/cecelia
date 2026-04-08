@@ -1,0 +1,10 @@
+dev
+branch: cp-04080112-15ded60e-4704-4ec8-b8c4-a32ed0
+task_id: 15ded60e-4704-4ec8-b8c4-a32ed09bc599
+task_card: .task-cp-04080112-15ded60e-4704-4ec8-b8c4-a32ed0.md
+started: 2026-04-08T16:18:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
