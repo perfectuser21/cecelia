@@ -18,6 +18,13 @@ import { saveSuggestions } from './topic-suggestion-manager.js';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
+/**
+ * 禁用开关：true = AI 自动选题关闭，由用户在 Dashboard 手动输入人名触发 pipeline。
+ * 背景：原 SelfDrive 为完成 KR 指标自动建立此机制，但选题无依据（无 NotebookLM），
+ * 内容质量差。现改为用户主动提交人名，系统按 V6 流程执行。
+ */
+const DISABLED = true;
+
 /** 每日触发时间（UTC 小时）= 北京时间 09:00 */
 const DAILY_TOPIC_HOUR_UTC = 1;
 
@@ -42,6 +49,10 @@ const CONTENT_KR_GOAL_ID = '65b4142d-242b-457d-abfa-c0c38037f1e9';
  * @returns {Promise<{triggered: number, skipped: boolean, skipped_window: boolean}>}
  */
 export async function triggerDailyTopicSelection(pool, now = new Date()) {
+  if (DISABLED) {
+    return { triggered: 0, skipped: false, skipped_window: true, disabled: true };
+  }
+
   // 1. 判断是否在触发窗口内
   if (!isInTriggerWindow(now)) {
     return { triggered: 0, skipped: false, skipped_window: true };
