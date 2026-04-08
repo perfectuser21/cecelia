@@ -720,13 +720,19 @@ router.post('/execution-callback', async (req, res) => {
 
         console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
 
-        // Store classification in task payload
+        // Store classification in task payload.
+        // Also COALESCE-write error_message: if the main UPDATE above was skipped (task not in_progress
+        // at that moment — e.g., watchdog changed status before callback arrived), error_message stays
+        // NULL. This fallback ensures the excerpt is always visible for debugging.
         await pool.query(
-          `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          `UPDATE tasks
+           SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+               error_message = COALESCE(error_message, $3)
+           WHERE id = $1`,
           [task_id, JSON.stringify({
             failure_class: classification.class,
             failure_detail: { pattern: classification.pattern, error_excerpt: errorMsg.slice(0, 500) },
-          })]
+          }), errorMsg.slice(0, 2000)]
         );
 
         const strategy = classification.retry_strategy;
