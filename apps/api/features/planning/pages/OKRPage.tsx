@@ -434,12 +434,15 @@ export default function OKRPage() {
       const allProjects = Array.isArray(projectsData) ? projectsData : [];
       setProjects(allProjects);
 
-      // Brain 返回 area_kr，统一标准化为 kr
+      // Brain 返回 area_kr，统一标准化为 kr；progress 从 metadata.metric_current 或 current_value 映射
       const allGoals = (Array.isArray(goalsData) ? goalsData : []).map((g: any) => ({
         ...g,
         type: g.type === 'area_kr' ? 'kr' : g.type,
         priority: g.priority ?? 'P2',
-        progress: g.progress ?? 0,
+        progress:
+          typeof g.progress === 'number'
+            ? g.progress
+            : parseFloat(String(g.metadata?.metric_current ?? g.current_value ?? '0')) || 0,
       }));
 
       // area_okr（无 parent_id）= Objective 层级
