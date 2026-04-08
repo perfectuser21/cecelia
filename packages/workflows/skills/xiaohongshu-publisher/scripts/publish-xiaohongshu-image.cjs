@@ -118,7 +118,7 @@ function scpImagesToWindows(localImages, windowsDir) {
   // 2. 在 xian-mac 上创建 Windows 目标目录
   const winDirForward = windowsDir.replace(/\\/g, '/');
   execSync(
-    `ssh ${XIAN_MAC_HOST} "ssh -i ${XIAN_MAC_SSH_KEY} -o StrictHostKeyChecking=no xuxia@${WINDOWS_IP} 'powershell -command \\"New-Item -ItemType Directory -Force -Path ${winDirForward} | Out-Null; Write-Host ok\\""'"`,
+    `ssh ${XIAN_MAC_HOST} "ssh -i ${XIAN_MAC_SSH_KEY} -o StrictHostKeyChecking=no xuxia@${WINDOWS_IP} 'powershell -command \\"New-Item -ItemType Directory -Force -Path ${winDirForward} | Out-Null; Write-Host ok\\"'"`,
     { timeout: 15000, stdio: 'pipe' }
   );
 
@@ -254,8 +254,13 @@ async function main(contentDir, titleText, contentText, windowsImages, musicQuer
     // ===== Step 0: SCP 图片到 Windows =====
     const { dateDir, contentDirName } = extractDirNames(contentDir);
     const localImages = findImages(contentDir).slice(0, 9);
-    const winDir = path.join(WINDOWS_BASE_DIR, dateDir, contentDirName).replace(/\//g, '\\');
+    // 非ASCII目录名（中文等）会导致嵌套SSH命令引号解析失败，改用时间戳安全名
+    const hasNonAscii = /[^\x00-\x7F]/.test(contentDirName);
+    const safeWinDirName = hasNonAscii ? `xhs-${Date.now()}` : contentDirName;
+    const winDir = path.join(WINDOWS_BASE_DIR, dateDir, safeWinDirName).replace(/\//g, '\\');
     scpImagesToWindows(localImages, winDir);
+    // 更新 windowsImages 为安全路径（与实际SCP目标一致）
+    windowsImages = convertToWindowsPaths(localImages, WINDOWS_BASE_DIR, dateDir, safeWinDirName);
 
     // ===== CDP 连接 =====
     console.log('\n[XHS] 连接 CDP...');
@@ -292,15 +297,24 @@ async function main(contentDir, titleText, contentText, windowsImages, musicQuer
     // ===== Step 2: 选择图文类型 =====
     console.log('[XHS] 2️⃣  选择图文模式...');
     await sleep(2000);
-    await cdp.send('Runtime.evaluate', {
+    const tabResult = await cdp.send('Runtime.evaluate', {
       expression: `(function() {
         const all = Array.from(document.querySelectorAll('*'));
-        const el = all.find(e => e.textContent.trim() === '图文' && e.offsetParent !== null && e.children.length === 0);
-        if (el) { el.click(); return '图文'; }
+        // 精确匹配"上传图文"或"图文"的tab元素
+        for (const text of ['上传图文', '图文']) {
+          const el = all.find(e => e.textContent.trim() === text && e.offsetParent !== null);
+          if (el) { el.click(); return text; }
+        }
+        // 降级：找所有 tab 类型元素
+        const tabEl = all.find(e => e.textContent.trim().includes('图文') && !e.textContent.trim().includes('视频') && e.offsetParent !== null && e.tagName !== 'BODY' && e.tagName !== 'HTML');
+        if (tabEl) { tabEl.click(); return 'fuzzy:' + tabEl.textContent.trim().slice(0,10); }
+        return null;
       })()`,
       returnByValue: true
     });
-    await sleep(2000);
+    console.log(`[XHS]    Tab点击结果: ${tabResult.result.value}`);
+    await sleep(3000);
+    await screenshot(cdp, '02-after-tab');
 
     // ===== Step 3: 上传图片（Input.dispatchMouseEvent + Page.fileChooserOpened）=====
     console.log(`[XHS] 3️⃣  上传图片（${windowsImages.length} 张）...`);
@@ -550,7 +564,8 @@ if (require.main === module) {
 
   const contentText = readContent(contentDir);
   const rawTitle = readTitle(contentDir);
-  const titleText = rawTitle || contentText.replace(/#[^#\s]+/g, '').trim().slice(0, 20);
+  const rawTitleTrimmed = rawTitle ? rawTitle.slice(0, 20) : null;
+  const titleText = rawTitleTrimmed || contentText.replace(/#[^#\s]+/g, '').trim().slice(0, 20);
   const musicQuery = readMusicQuery(contentDir);
 
   const { dateDir, contentDirName } = extractDirNames(contentDir);
