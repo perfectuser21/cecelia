@@ -222,6 +222,72 @@ export async function loadAuthFailuresFromDB() {
   }
 }
 
+// ─── Proactive Token Expiry Check ─────────────────────────────────────────────
+
+const EXPIRY_WARN_MINUTES = 30; // 提前告警阈值（分钟）
+const _expiryAlertedAccounts = new Set(); // 防重复告警
+
+/**
+ * 读取账号 OAuth token 的过期信息（不缓存，直接读文件）
+ * @param {string} accountId
+ * @returns {{ isExpired: boolean, expiresAt: number|null, minsRemaining: number|null }}
+ */
+function getTokenExpiryInfo(accountId) {
+  try {
+    const path = `${homedir()}/.claude-${accountId}/.credentials.json`;
+    const creds = JSON.parse(readFileSync(path, 'utf8'));
+    const expiresAt = creds.claudeAiOauth?.expiresAt;
+    if (!expiresAt) return { isExpired: false, expiresAt: null, minsRemaining: null };
+    const minsRemaining = (expiresAt - Date.now()) / 60000;
+    return { isExpired: minsRemaining <= 0, expiresAt, minsRemaining };
+  } catch {
+    return { isExpired: false, expiresAt: null, minsRemaining: null };
+  }
+}
+
+/**
+ * 主动检测所有账号 OAuth token 过期状态，无需等待 401 回调：
+ * - token 已过期 → 立即 markAuthFailure()，阻止派发
+ * - token < 30min 过期 → 触发 P1 告警（每个账号只告警一次）
+ * - token 有效 + 之前已 markAuthFailure → 清除熔断（token 已刷新）
+ */
+export async function proactiveTokenCheck() {
+  for (const accountId of ACCOUNTS) {
+    const { isExpired, minsRemaining } = getTokenExpiryInfo(accountId);
+
+    if (isExpired) {
+      if (!isAuthFailed(accountId)) {
+        markAuthFailure(accountId, new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
+        console.log(`[account-usage] [proactive-check] ${accountId}: token 已过期，标记 auth-failed（24h 熔断）`);
+        try {
+          const { raise } = await import('./alerting.js');
+          raise('P1', `token_expired_${accountId}`, `🔑 ${accountId} OAuth token 已过期 — 新任务已暂停派发，请刷新凭证`).catch(() => {});
+        } catch { /* 告警失败不阻断主流程 */ }
+      }
+    } else if (minsRemaining !== null && minsRemaining < EXPIRY_WARN_MINUTES) {
+      if (!_expiryAlertedAccounts.has(accountId)) {
+        _expiryAlertedAccounts.add(accountId);
+        console.log(`[account-usage] [proactive-check] ${accountId}: token 将在 ${Math.floor(minsRemaining)} 分钟后过期`);
+        try {
+          const { raise } = await import('./alerting.js');
+          raise('P1', `token_expiring_soon_${accountId}`, `⏰ ${accountId} OAuth token 将在 ${Math.floor(minsRemaining)} 分钟后过期 — 请提前刷新凭证`).catch(() => {});
+        } catch { /* 告警失败不阻断主流程 */ }
+      }
+    } else {
+      // token 有效：清除过期告警标记；若 auth-failed 是因过期设置的则清除熔断
+      _expiryAlertedAccounts.delete(accountId);
+      if (isAuthFailed(accountId)) {
+        _authFailureMap.delete(accountId);
+        pool.query(
+          `UPDATE account_usage_cache SET is_auth_failed = false, auth_fail_resets_at = NULL WHERE account_id = $1`,
+          [accountId]
+        ).catch(err => console.warn(`[account-usage] proactiveTokenCheck 清除 auth-failed 失败: ${err.message}`));
+        console.log(`[account-usage] [proactive-check] ${accountId}: token 已刷新，清除 auth-failed 熔断`);
+      }
+    }
+  }
+}
+
 // ─── OAuth Token ─────────────────────────────────────────────────────────────
 
 /**
@@ -414,6 +480,7 @@ function effectivePct(pct, resetsAt) {
  *   null → 所有账号不可用，调用方降级到 MiniMax
  */
 export async function selectBestAccount(options = {}) {
+  await proactiveTokenCheck();
   const { model: requestedModel, cascade: requestedCascade } = options;
   try {
     const usage = await getAccountUsage();
