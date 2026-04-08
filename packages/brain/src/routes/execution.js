@@ -1554,6 +1554,7 @@ ${resultStr.substring(0, 2000)}
       // 5c-harness. Harness v4.0 断链（对标 Anthropic 论文）
       // Planner → GAN 对抗 → Generator 写代码 → CI watch → Evaluator 验证 diff → auto-merge → Deploy watch → Report
       // Layer 1: harness_planner → harness_contract_propose
+      const MAX_GAN_ROUNDS = 5; // GAN 对抗最大轮次，超过后强制 APPROVED 防死循环
       // Layer 2a: harness_contract_propose → harness_contract_review
       // Layer 2b: harness_contract_review APPROVED → harness_generate / REVISION → 继续对抗
       // Layer 3a: harness_generate / harness_fix → harness_ci_watch（Brain tick 轮询 CI）
@@ -1661,6 +1662,12 @@ ${resultStr.substring(0, 2000)}
               reviewVerdict = 'APPROVED';
             }
           }
+          // GAN 防死循环：超过 MAX_GAN_ROUNDS 轮次时强制 APPROVED
+          const currentProposeRound = harnessPayload.propose_round || 1;
+          if (reviewVerdict === 'REVISION' && currentProposeRound >= MAX_GAN_ROUNDS) {
+            reviewVerdict = 'APPROVED';
+            console.warn(`[execution-callback] harness: GAN 对抗已达 MAX_GAN_ROUNDS(${MAX_GAN_ROUNDS})，强制 APPROVED（propose_round=${currentProposeRound}）`);
+          }
           console.log(`[execution-callback] harness: ${harnessType} verdict=${reviewVerdict}`);
 
           if (reviewVerdict === 'APPROVED') {
@@ -1676,7 +1683,8 @@ ${resultStr.substring(0, 2000)}
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
                 planner_task_id: harnessPayload.planner_task_id,
-                harness_mode: true
+                harness_mode: true,
+                ...(currentProposeRound >= MAX_GAN_ROUNDS ? { forced_approval: true } : {})
               }
             });
             console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} created`);

@@ -18,8 +18,13 @@ import { checkPrStatus, classifyFailedChecks } from './shepherd.js';
 import { execSync } from 'child_process';
 import { createTask } from './actions.js';
 
-const MAX_CI_WATCH_POLLS = 120;   // 最多轮询次数（每 5s tick → 最多 10 分钟）
-const MAX_DEPLOY_WATCH_POLLS = 60; // 最多轮询次数（最多 5 分钟）
+const MAX_CI_WATCH_POLLS = 120;    // 最多轮询次数（每 30s 实际轮询 → 最多 1 小时）
+const MAX_DEPLOY_WATCH_POLLS = 60; // 最多轮询次数（最多 30 分钟）
+const POLL_INTERVAL_MS = 30000;    // 实际调用 GitHub API 的最小间隔（30 秒）
+
+// 模块级 Map：记录每个 harness_ci_watch 任务的上次实际轮询时间戳
+// key: task_id, value: Date.now()
+const lastPollTime = new Map();
 
 /**
  * 处理所有待处理的 harness_ci_watch 任务
@@ -64,20 +69,50 @@ export async function processHarnessCiWatchers(pool) {
       continue;
     }
 
-    // 超过最大轮询次数 → 超时失败
+    // 超过最大轮询次数 → 超时降级：创建 harness_evaluate(ci_timeout:true)，不直接 fail
     if (pollCount >= MAX_CI_WATCH_POLLS) {
-      console.error(`[harness-watcher] harness_ci_watch ${task.id} timed out after ${pollCount} polls`);
+      console.warn(`[harness-watcher] harness_ci_watch ${task.id} timed out after ${pollCount} polls → 降级创建 harness_evaluate`);
       await pool.query(
         `UPDATE tasks
-         SET status = 'failed',
-             error_message = $2,
-             payload = COALESCE(payload, '{}'::jsonb) || '{"ci_timeout": true}'::jsonb
+         SET status = 'completed',
+             completed_at = NOW(),
+             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('ci_timeout', true, 'poll_count', $2)
          WHERE id = $1`,
-        [task.id, `CI watch timed out after ${pollCount} polls (~${Math.round(pollCount * 5 / 60)} min)`]
+        [task.id, pollCount]
       );
-      result.errors++;
+      const evalRound = payload.eval_round || 1;
+      await createTask({
+        title: `[Evaluator] R${evalRound} (CI timeout)`,
+        description: `CI watch 超时（${pollCount} 次轮询），Evaluator 基于当前 PR diff 决定是否继续验证。\nharness_ci_watch task_id: ${task.id}`,
+        priority: 'P1',
+        project_id: task.project_id,
+        goal_id: task.goal_id,
+        task_type: 'harness_evaluate',
+        trigger_source: 'harness_watcher',
+        payload: {
+          sprint_dir: payload.sprint_dir,
+          pr_url: prUrl,
+          dev_task_id: payload.dev_task_id,
+          planner_task_id: payload.planner_task_id,
+          eval_round: evalRound,
+          ci_timeout: true,
+          harness_mode: true,
+        },
+      });
+      lastPollTime.delete(task.id);
+      console.log(`[harness-watcher] CI timeout → harness_evaluate R${evalRound}(ci_timeout:true) created`);
+      result.ci_pending++;
       continue;
     }
+
+    // 轮询节流：距上次实际调用 GitHub API 不足 POLL_INTERVAL_MS（30s）则跳过
+    const now = Date.now();
+    const lastPoll = lastPollTime.get(task.id) || 0;
+    if (now - lastPoll < POLL_INTERVAL_MS) {
+      // 不计入 poll_count，仅跳过
+      continue;
+    }
+    lastPollTime.set(task.id, now);
 
     try {
       const prInfo = checkPrStatus(prUrl);
@@ -108,6 +143,7 @@ export async function processHarnessCiWatchers(pool) {
             harness_mode: true,
           },
         });
+        lastPollTime.delete(task.id);
         console.log(`[harness-watcher] CI passed for ${task.id} → harness_evaluate R${evalRound} created`);
         result.ci_passed++;
 
@@ -142,6 +178,7 @@ export async function processHarnessCiWatchers(pool) {
             harness_mode: true,
           },
         });
+        lastPollTime.delete(task.id);
         console.log(`[harness-watcher] CI failed for ${task.id} (${failType}) → harness_fix created`);
         result.ci_failed++;
 
@@ -309,6 +346,7 @@ async function _createHarnessReport(task, payload, deployNote) {
       planner_task_id: payload.planner_task_id,
       eval_round: payload.eval_round || 1,
       deploy_note: deployNote,
+      deploy_timeout: deployNote === 'deploy_timeout',
       harness_mode: true,
     },
   });
