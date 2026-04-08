@@ -80,7 +80,13 @@ NEED_WORKFLOW_SKILLS=false
 
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
-    [[ "$file" == packages/brain/* ]] && NEED_BRAIN=true
+    # Brain 部署只触发 src/ 核心代码变更（排除测试/工具脚本，它们不影响运行时）
+    if [[ "$file" == packages/brain/* ]]; then
+        [[ "$file" == packages/brain/src/__tests__/* ]] && continue
+        [[ "$file" == packages/brain/src/scripts/* ]] && continue
+        [[ "$file" == packages/brain/scripts/* ]] && continue
+        NEED_BRAIN=true
+    fi
     # apps/dashboard/ 直接改动，或 apps/api/（被 dashboard vite alias 引用）均需重建 dashboard
     [[ "$file" == apps/dashboard/* || "$file" == apps/api/* ]] && NEED_DASHBOARD=true
     # workflow skills 变更 → 重新部署软链接

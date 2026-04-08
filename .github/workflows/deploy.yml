@@ -179,6 +179,10 @@ jobs:
               ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
               echo "✅ Staging deploy confirmed success (${ELAPSED_MS}ms)"
               exit 0
+            elif echo "$STATUS" | grep -q "^skipped_"; then
+              SKIP_REASON=$(echo "$STATUS_JSON" | jq -r '.skip_reason // "unknown"' 2>/dev/null || echo "unknown")
+              echo "⚠️  Staging 跳过 (${SKIP_REASON}) — production 部署不受阻断"
+              exit 0
             elif [ "$STATUS" = "failed" ]; then
               ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
               echo "::error::Staging deploy failed: $ERR"
