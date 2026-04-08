@@ -396,14 +396,13 @@ router.post('/recover', async (req, res) => {
       });
     }
 
-    // 查询符合条件的 quarantined auth 任务
+    // 查询符合条件的 quarantined auth 任务（不依赖 retry_count/max_retries 以兼容旧 schema）
     const candidateResult = await pool.query(
       `SELECT id, title
        FROM tasks
        WHERE status = 'quarantined'
          AND payload->>'failure_class' = 'auth'
          AND task_type != 'pipeline_rescue'
-         AND retry_count < max_retries
          AND updated_at > NOW() - INTERVAL '48 hours'
        ORDER BY updated_at DESC`
     );
