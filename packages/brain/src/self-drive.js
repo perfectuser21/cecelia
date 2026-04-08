@@ -475,13 +475,13 @@ async function getTaskStats24h() {
       `SELECT
         count(*) filter (where status = 'completed' AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as completed,
         count(*) filter (where status IN ('failed', 'quarantined')
-          AND payload->>'failure_class' != 'auth'
+          AND (payload->>'failure_class' IS DISTINCT FROM 'auth')
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as failed,
         count(*) filter (where status IN ('failed', 'quarantined')
           AND payload->>'failure_class' = 'auth'
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as auth_failed,
         count(*) filter (where status IN ('completed', 'failed', 'quarantined')
-          AND payload->>'failure_class' != 'auth'
+          AND (payload->>'failure_class' IS DISTINCT FROM 'auth')
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as total
        FROM tasks
        WHERE task_type != 'pipeline_rescue'`
