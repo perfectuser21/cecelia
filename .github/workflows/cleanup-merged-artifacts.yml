@@ -45,11 +45,10 @@ jobs:
 
       - name: Commit cleanup
         if: steps.cleanup.outputs.changed == 'true'
+        env:
+          COUNT: ${{ steps.cleanup.outputs.count }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(cleanup): 自动清理合并后的 prd/task 文件（${{ steps.cleanup.outputs.count }} 个）
-
-这些文件由 /dev 工作流生成，仅在 PR review 期间需要，合并后自动清除。
-Auto-cleanup by cleanup-merged-artifacts.yml"
+          git commit -m "chore(cleanup): 自动清理合并后的 prd/task 文件（${COUNT} 个）[bot]"
           git push
