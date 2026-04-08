@@ -55,6 +55,7 @@ import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
+import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -718,7 +719,8 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
     FROM tasks t
     WHERE ${goalCondition}
       AND t.status = 'queued'
-      AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review')
+      AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
+                               'harness_ci_watch', 'harness_deploy_watch')
       ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
@@ -2112,6 +2114,21 @@ async function executeTick() {
     }
   } catch (shepherdErr) {
     console.error('[tick] PR shepherd failed (non-fatal):', shepherdErr.message);
+  }
+
+  // 0.15. Harness Watcher：每次 tick 处理 harness_ci_watch / harness_deploy_watch（内联 CI/CD 轮询）
+  try {
+    const ciResult = await processHarnessCiWatchers(pool);
+    const deployResult = await processHarnessDeployWatchers(pool);
+    if (ciResult.processed > 0 || deployResult.processed > 0) {
+      actionsTaken.push({
+        action: 'harness_watcher',
+        ci: ciResult,
+        deploy: deployResult,
+      });
+    }
+  } catch (harnessWatchErr) {
+    console.error('[tick] Harness watcher failed (non-fatal):', harnessWatchErr.message);
   }
 
   // 1. Decision Engine: Compare goal progress

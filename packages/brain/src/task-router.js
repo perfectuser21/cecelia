@@ -29,11 +29,19 @@ const VALID_TASK_TYPES = [
   'content_publish',  // 发布阶段（export 完成后逐平台创建，executor.js 按 payload.platform 路由到对应 publisher skill）
   // Codex Gate 审查任务类型
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
-  // Harness v3.1 官方流程：Planner → Contract对抗(GAN) → 代码生成 → Evaluator机械验证 → Report
-  'sprint_planner',            // Layer 1: 需求→PRD（不碰代码）
-  'sprint_contract_propose',   // Layer 2a: Generator 提合同草案
-  'sprint_contract_review',    // Layer 2b: Evaluator 挑战合同 → APPROVED/REVISION
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report',  // Layer 3: 代码对抗 + 最终报告
+  // Harness v3.x 旧类型（向后兼容）
+  'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report',
+  // Harness v4.0：sprint_* → harness_*，新增 CI/Deploy watch
+  'harness_planner',          // Layer 1: 需求→PRD
+  'harness_contract_propose', // Layer 2a: Generator 提合同草案
+  'harness_contract_review',  // Layer 2b: Evaluator 挑战合同 → APPROVED/REVISION
+  'harness_generate',         // Layer 3a: Generator 写代码
+  'harness_ci_watch',         // Layer 3b: Brain tick 轮询 CI（内联，不派 agent）
+  'harness_evaluate',         // Layer 3c: Evaluator 验证 PR diff（读 diff vs 合同）
+  'harness_fix',              // Layer 3d: Generator 修复
+  'harness_deploy_watch',     // Layer 3e: Brain tick 轮询 CD（内联，不派 agent）
+  'harness_report',           // Layer 4: 最终报告
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
   'scope_plan', 'project_plan',
   // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives 三层拆解）
@@ -98,14 +106,24 @@ const SKILL_WHITELIST = {
   'spec_review': '/spec-review',            // Spec 审查
   'code_review_gate': '/code-review-gate',  // 代码质量门禁
   'initiative_review': '/initiative-review', // Initiative 整体审查
-  // Harness v3.1 官方流程
-  'sprint_planner': '/sprint-planner',                      // Layer 1: 需求→PRD
-  'sprint_contract_propose': '/sprint-contract-proposer',   // Layer 2a: 提合同草案
-  'sprint_contract_review': '/sprint-contract-reviewer',    // Layer 2b: 挑战合同
-  'sprint_generate': '/dev',                                // Layer 3a: Generator 写代码
-  'sprint_evaluate': '/sprint-evaluator',                   // Layer 3b: Evaluator 测代码
-  'sprint_fix': '/dev',                                     // Layer 3c: Generator 修复
-  'sprint_report': '/sprint-report',                         // Layer 4: 最终报告
+  // Harness v3.x 旧类型（向后兼容）
+  'sprint_planner': '/sprint-planner',
+  'sprint_contract_propose': '/sprint-contract-proposer',
+  'sprint_contract_review': '/sprint-contract-reviewer',
+  'sprint_generate': '/dev',
+  'sprint_evaluate': '/sprint-evaluator',
+  'sprint_fix': '/dev',
+  'sprint_report': '/sprint-report',
+  // Harness v4.0 新类型
+  'harness_planner': '/harness-planner',                      // Layer 1: 需求→PRD
+  'harness_contract_propose': '/harness-contract-proposer',   // Layer 2a: 提合同草案
+  'harness_contract_review': '/harness-contract-reviewer',    // Layer 2b: 挑战合同
+  'harness_generate': '/harness-generator',                   // Layer 3a: Generator 写代码
+  'harness_ci_watch': '/_internal',                           // Brain tick 内联处理（不派 agent）
+  'harness_evaluate': '/harness-evaluator',                   // Layer 3c: Evaluator 验证 PR diff
+  'harness_fix': '/harness-generator',                        // Layer 3d: Generator 修复（同 generator skill）
+  'harness_deploy_watch': '/_internal',                       // Brain tick 内联处理（不派 agent）
+  'harness_report': '/harness-report',                        // Layer 4: 最终报告
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
@@ -209,14 +227,24 @@ const LOCATION_MAP = {
   'content-image-review': 'xian', // 图片审核 → 西安（规则+视觉检查）
   'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
   'content_publish': 'us',     // 发布阶段 → US 本机（publisher skills 需要浏览器 CDP，在 US Mac mini 跑）
-  // Harness v3.1 官方流程 → US 本机
-  'sprint_planner': 'us',              // Layer 1: Planner → US（写 PRD）
-  'sprint_contract_propose': 'us',     // Layer 2a: Generator 提合同草案 → US
-  'sprint_contract_review': 'us',      // Layer 2b: Evaluator 挑战合同 → US
-  'sprint_generate': 'us',             // Layer 3a: Generator 写代码 → US
-  'sprint_evaluate': 'us',             // Layer 3b: Evaluator 测代码 → US
-  'sprint_fix': 'us',                  // Layer 3c: Generator 修复 → US
-  'sprint_report': 'us',               // Layer 4: 最终报告 → US
+  // Harness v3.x 旧类型（向后兼容）→ US 本机
+  'sprint_planner': 'us',
+  'sprint_contract_propose': 'us',
+  'sprint_contract_review': 'us',
+  'sprint_generate': 'us',
+  'sprint_evaluate': 'us',
+  'sprint_fix': 'us',
+  'sprint_report': 'us',
+  // Harness v4.0 → US 本机
+  'harness_planner': 'us',            // Layer 1: Planner → US（写 PRD）
+  'harness_contract_propose': 'us',   // Layer 2a: Generator 提合同草案 → US
+  'harness_contract_review': 'us',    // Layer 2b: Evaluator 挑战合同 → US
+  'harness_generate': 'us',           // Layer 3a: Generator 写代码 → US
+  'harness_ci_watch': 'us',           // Layer 3b: CI 监控（Brain tick 内联处理）→ US
+  'harness_evaluate': 'us',           // Layer 3c: Evaluator 验证 PR diff → US
+  'harness_fix': 'us',                // Layer 3d: Generator 修复 → US
+  'harness_deploy_watch': 'us',       // Layer 3e: Deploy 监控（Brain tick 内联处理）→ US
+  'harness_report': 'us',             // Layer 4: 最终报告 → US
   // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
   'prd_review': 'us',            // PRD 审查 → US 本机 Codex
   'spec_review': 'us',           // Spec 审查 → US 本机 Codex

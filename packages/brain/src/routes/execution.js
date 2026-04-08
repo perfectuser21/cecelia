@@ -94,7 +94,7 @@ router.post('/execution-callback', async (req, res) => {
         const taskType = taskRow.rows[0]?.task_type;
         const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
         if (taskType === 'dev' && !isDecomposition) {
-          // Harness 模式的 dev task 不降级 — 由 sprint_evaluate 验证，不需要 PR
+          // Harness 模式的 dev task 不降级 — 由 harness_evaluate / sprint_evaluate 验证，不需要 PR
           const isHarness = taskRow.rows[0]?.payload?.harness_mode;
           if (!isHarness) {
             newStatus = 'completed_no_pr';
@@ -1551,35 +1551,34 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] dev 串行调度失败 (non-fatal): ${serialErr.message}`);
       }
 
-      // 5c-harness. Harness v3.1 断链（对标 Anthropic 论文）
-      // Planner → contract 对抗（GAN）→ Generator 写代码 → Evaluator 机械执行 → sprint_report
-      // Layer 1: sprint_planner 完成 → sprint_contract_propose（Generator 提合同草案）
-      // Layer 2: sprint_contract_propose → sprint_contract_review（Evaluator 挑战）← GAN 对抗
-      //          APPROVED → sprint_generate；REVISION → sprint_contract_propose（带反馈）
-      // Layer 3: sprint_generate → sprint_evaluate（机械执行合同里的验证命令）
+      // 5c-harness. Harness v4.0 断链（对标 Anthropic 论文）
+      // Planner → GAN 对抗 → Generator 写代码 → CI watch → Evaluator 验证 diff → auto-merge → Deploy watch → Report
+      // Layer 1: harness_planner → harness_contract_propose
+      // Layer 2a: harness_contract_propose → harness_contract_review
+      // Layer 2b: harness_contract_review APPROVED → harness_generate / REVISION → 继续对抗
+      // Layer 3a: harness_generate / harness_fix → harness_ci_watch（Brain tick 轮询 CI）
+      // Layer 3b: CI 通过 → harness_evaluate（读 PR diff vs 合同，不调 live API）
+      // Layer 3c: harness_evaluate PASS → auto-merge + harness_deploy_watch / FAIL → harness_fix
+      // Layer 3d: Deploy 完成 → harness_report
 
       // 辅助：从任意格式 result（对象/字符串/嵌套）中提取 verdict 字段
-      // cecelia-run webhook 传回的 result 可能是纯文本 Claude 输出，需从中正则提取 JSON
       function extractVerdictFromResult(res, validVerdicts) {
         if (res === null || res === undefined) return null;
-        // 对象：直接读
         if (typeof res === 'object') {
           const v = res.verdict || res?.result?.verdict;
           if (v) return v.toUpperCase();
         }
-        // 字符串：先尝试完整 JSON 解析
         if (typeof res === 'string') {
           try {
             const parsed = JSON.parse(res);
             if (parsed?.verdict) return parsed.verdict.toUpperCase();
           } catch { /* not JSON */ }
-          // 正则提取最后一个 "verdict": "XXX"
           const matches = [...res.matchAll(/"verdict"\s*:\s*"([^"]+)"/gi)];
           if (matches.length > 0) return matches[matches.length - 1][1].toUpperCase();
         }
         return null;
       }
-      //          PASS → sprint_report；FAIL → sprint_fix → sprint_evaluate
+
       try {
         const harnessRow = await pool.query(
           'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
@@ -1587,13 +1586,12 @@ ${resultStr.substring(0, 2000)}
         );
         const harnessTask = harnessRow.rows[0];
         const harnessPayload = harnessTask?.payload || {};
+        const harnessType = harnessTask?.task_type;
         const { createTask: createHarnessTask } = await import('../actions.js');
 
-        // Layer 1: sprint_planner 完成 → 创建 sprint_contract_propose
-        if (harnessTask?.task_type === 'sprint_planner') {
+        // Layer 1: harness_planner / sprint_planner 完成 → 创建 contract_propose
+        if (harnessType === 'harness_planner' || harnessType === 'sprint_planner') {
           const sprintDir = harnessPayload.sprint_dir || 'sprints';
-          // 从 planner 的 result 中提取分支（Planner SKILL.md 输出 verdict 含 branch 字段）
-          // 兼容对象和纯文本字符串（cecelia-run 传回 Claude 完整输出）
           let plannerBranch = null;
           if (result !== null && typeof result === 'object') {
             plannerBranch = result.branch || result?.result?.branch || null;
@@ -1601,13 +1599,14 @@ ${resultStr.substring(0, 2000)}
             const branchMatch = result.match(/"branch"\s*:\s*"([^"]+)"/);
             if (branchMatch) plannerBranch = branchMatch[1];
           }
+          const proposeType = harnessType === 'harness_planner' ? 'harness_contract_propose' : 'sprint_contract_propose';
           await createHarnessTask({
             title: `[Contract] P1`,
             description: `Generator 读取 PRD，提出合同草案（功能范围+验证命令）。\nPRD task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
             goal_id: harnessTask.goal_id,
-            task_type: 'sprint_contract_propose',
+            task_type: proposeType,
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: sprintDir,
@@ -1617,24 +1616,25 @@ ${resultStr.substring(0, 2000)}
               harness_mode: true
             }
           });
-          console.log(`[execution-callback] harness: sprint_planner ${task_id} → sprint_contract_propose created (planner_branch=${plannerBranch})`);
+          console.log(`[execution-callback] harness: ${harnessType} ${task_id} → ${proposeType} created (planner_branch=${plannerBranch})`);
         }
 
-        // Layer 2a: sprint_contract_propose 完成 → sprint_contract_review
-        // GAN 守卫：只有 Proposer 真正产出草案（verdict=PROPOSED）才派 Reviewer
-        if (harnessTask?.task_type === 'sprint_contract_propose') {
+        // Layer 2a: contract_propose 完成 → contract_review
+        // GAN 守卫：只有 Proposer 产出草案（verdict=PROPOSED）才派 Reviewer
+        if (harnessType === 'harness_contract_propose' || harnessType === 'sprint_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
           const proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
           if (proposeVerdict !== 'PROPOSED') {
-            console.log(`[execution-callback] harness: sprint_contract_propose ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
+            console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
+            const reviewType = harnessType === 'harness_contract_propose' ? 'harness_contract_review' : 'sprint_contract_review';
             await createHarnessTask({
               title: `[Contract Review] R${proposeRound}`,
               description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
               goal_id: harnessTask.goal_id,
-              task_type: 'sprint_contract_review',
+              task_type: reviewType,
               trigger_source: 'execution_callback_harness',
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
@@ -1645,12 +1645,12 @@ ${resultStr.substring(0, 2000)}
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: sprint_contract_propose ${task_id} → sprint_contract_review created`);
+            console.log(`[execution-callback] harness: ${harnessType} ${task_id} → ${reviewType} created`);
           }
         }
 
-        // Layer 2b: sprint_contract_review 完成 → APPROVED/REVISION 路由
-        if (harnessTask?.task_type === 'sprint_contract_review') {
+        // Layer 2b: contract_review 完成 → APPROVED/REVISION 路由
+        if (harnessType === 'harness_contract_review' || harnessType === 'sprint_contract_review') {
           let reviewVerdict = 'REVISION';
           if (result !== null && typeof result === 'object' && result.verdict) {
             reviewVerdict = result.verdict.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REVISION';
@@ -1661,16 +1661,17 @@ ${resultStr.substring(0, 2000)}
               reviewVerdict = 'APPROVED';
             }
           }
-          console.log(`[execution-callback] harness: sprint_contract_review verdict=${reviewVerdict}`);
+          console.log(`[execution-callback] harness: ${harnessType} verdict=${reviewVerdict}`);
 
           if (reviewVerdict === 'APPROVED') {
+            const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
             await createHarnessTask({
               title: `[Generator] 写代码`,
-              description: `合同已批准，Generator 按 sprint-contract.md 写代码。\ncontract_review task_id: ${task_id}`,
+              description: `合同已批准，Generator 按 sprint-contract.md 写代码 + 创建 PR。\ncontract_review task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
               goal_id: harnessTask.goal_id,
-              task_type: 'sprint_generate',
+              task_type: generateType,
               trigger_source: 'execution_callback_harness',
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
@@ -1678,38 +1679,69 @@ ${resultStr.substring(0, 2000)}
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: sprint_contract_review APPROVED → sprint_generate created`);
+            console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} created`);
           } else {
-            // REVISION：继续 GAN 对抗，无轮次上限，直到 Evaluator APPROVED 为止
+            // REVISION：继续 GAN 对抗
             const nextRound = (harnessPayload.propose_round || 1) + 1;
-            {
-              await createHarnessTask({
-                title: `[Contract] P${nextRound}`,
-                description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: 'sprint_contract_propose',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  propose_round: nextRound,
-                  review_feedback_task_id: task_id,
-                  harness_mode: true
-                }
-              });
-              console.log(`[execution-callback] harness: sprint_contract_review REVISION → sprint_contract_propose R${nextRound}`);
-            }
+            const proposeType = harnessType === 'harness_contract_review' ? 'harness_contract_propose' : 'sprint_contract_propose';
+            await createHarnessTask({
+              title: `[Contract] P${nextRound}`,
+              description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: proposeType,
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                planner_task_id: harnessPayload.planner_task_id,
+                propose_round: nextRound,
+                review_feedback_task_id: task_id,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: ${harnessType} REVISION → ${proposeType} R${nextRound}`);
           }
         }
 
-        // Layer 3a: sprint_generate 完成 → 创建 sprint_evaluate
-        if (harnessTask?.task_type === 'sprint_generate' || (harnessTask?.task_type === 'dev' && harnessPayload.harness_mode)) {
-          const { createTask: createHarnessTask } = await import('../actions.js');
+        // Layer 3a: harness_generate 完成 → 创建 harness_ci_watch（等 CI 通过再 evaluate）
+        // v3.x 兼容: sprint_generate 仍直接创建 sprint_evaluate（旧行为保留）
+        if (harnessType === 'harness_generate') {
+          // 从 Generator 的 result 中提取 pr_url
+          let prUrl = pr_url || null;
+          if (!prUrl && result !== null && typeof result === 'object') {
+            prUrl = result.pr_url || result?.result?.pr_url || null;
+          }
+          if (!prUrl && typeof result === 'string') {
+            const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
+            if (prMatch) prUrl = prMatch[0];
+          }
+          await createHarnessTask({
+            title: `[CI Watch] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'harness'}`,
+            description: `等待 CI 通过后创建 Evaluator。\n原始 harness_generate task_id: ${task_id}`,
+            priority: 'P1',
+            project_id: harnessTask.project_id,
+            goal_id: harnessTask.goal_id,
+            task_type: 'harness_ci_watch',
+            trigger_source: 'execution_callback_harness',
+            payload: {
+              sprint_dir: harnessPayload.sprint_dir,
+              pr_url: prUrl,
+              dev_task_id: task_id,
+              planner_task_id: harnessPayload.planner_task_id,
+              eval_round: 1,
+              poll_count: 0,
+              harness_mode: true
+            }
+          });
+          console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_ci_watch created (pr_url=${prUrl})`);
+        }
+
+        // v3.x 兼容: sprint_generate → sprint_evaluate（旧流程，不加 CI watch）
+        if (harnessType === 'sprint_generate' || (harnessType === 'dev' && harnessPayload.harness_mode)) {
           await createHarnessTask({
             title: `[Evaluator] R1`,
-            description: `Evaluator 执行 sprint-contract.md 里的验证命令，机械执行，看 exit code。\n原始 sprint_generate task_id: ${task_id}`,
+            description: `Evaluator 执行 sprint-contract.md 里的验证命令。\n原始 task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
             goal_id: harnessTask.goal_id,
@@ -1725,22 +1757,133 @@ ${resultStr.substring(0, 2000)}
           });
           console.log(`[execution-callback] harness: sprint_generate ${task_id} → sprint_evaluate created`);
         }
-        // sprint_evaluate 完成 → 根据 verdict 路由
-        if (harnessTask?.task_type === 'sprint_evaluate') {
-          // Bug fix: result=null 表示 Evaluator 会话崩溃（未能写回结果）
-          // 此场景不应创建 sprint_fix（无 evaluation.md 可读），而应重试 sprint_evaluate
+
+        // Layer 3b: harness_evaluate 完成 → 根据 verdict 路由
+        if (harnessType === 'harness_evaluate') {
           if (result === null) {
             const evalRound = harnessPayload.eval_round || 0;
             const MAX_EVAL_ROUNDS = 15;
             if (evalRound >= MAX_EVAL_ROUNDS) {
-              // 安全阀：超过最大轮次，记录警告并停止循环（不再派发任何任务）
+              console.error(`[execution-callback] harness: harness_evaluate result=null at round ${evalRound} >= MAX(${MAX_EVAL_ROUNDS}), stopping loop`);
+            } else {
+              console.warn(`[execution-callback] harness: harness_evaluate result=null (session crash) at round ${evalRound}, retrying`);
+              await createHarnessTask({
+                title: `[Evaluator] R${evalRound + 1} (retry)`,
+                description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 harness_evaluate task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'harness_evaluate',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  pr_url: harnessPayload.pr_url,
+                  dev_task_id: harnessPayload.dev_task_id,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  eval_round: evalRound + 1,
+                  harness_mode: true,
+                  retry_reason: 'evaluator_session_crash'
+                }
+              });
+            }
+          } else {
+            // 解析 verdict
+            let resultObj = typeof result === 'object' && result !== null ? result : {};
+            if (typeof result === 'string') {
+              try {
+                const parsed = JSON.parse(result);
+                if (parsed?.verdict) resultObj = parsed;
+              } catch {
+                const m = result.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
+                if (m) resultObj = { verdict: m[1].toUpperCase() };
+              }
+            }
+            if (!resultObj.verdict && typeof resultObj.result === 'object' && resultObj.result?.verdict) {
+              resultObj.verdict = resultObj.result.verdict;
+            }
+            if (!resultObj.verdict) {
+              const txt = resultObj.summary || resultObj.findings || (typeof resultObj.result === 'string' ? resultObj.result : '') || (typeof result === 'string' ? result : '');
+              if (typeof txt === 'string') {
+                const m = txt.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
+                if (m) resultObj.verdict = m[1].toUpperCase();
+              }
+            }
+            const verdict = resultObj.verdict || 'FAIL';
+            console.log(`[execution-callback] harness: harness_evaluate verdict=${verdict}`);
+
+            if (verdict === 'PASS') {
+              // PASS → auto-merge PR + harness_deploy_watch
+              const prUrlToMerge = harnessPayload.pr_url;
+              if (prUrlToMerge) {
+                try {
+                  const { executeMerge } = await import('../shepherd.js');
+                  executeMerge(prUrlToMerge);
+                  console.log(`[execution-callback] harness: auto-merge triggered for ${prUrlToMerge}`);
+                } catch (mergeErr) {
+                  console.warn(`[execution-callback] harness: auto-merge failed (non-fatal): ${mergeErr.message}`);
+                }
+              }
+              // 幂等检查
+              const existingDw = await pool.query(
+                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'harness_deploy_watch'
+                 AND status IN ('queued', 'in_progress') LIMIT 1`,
+                [harnessTask.project_id]
+              );
+              if (existingDw.rows.length === 0) {
+                await createHarnessTask({
+                  title: `[Deploy Watch] Harness`,
+                  description: `Evaluator PASS + PR 已合并。等待 CD deploy 完成后生成 Report。`,
+                  priority: 'P1',
+                  project_id: harnessTask.project_id,
+                  goal_id: harnessTask.goal_id,
+                  task_type: 'harness_deploy_watch',
+                  trigger_source: 'execution_callback_harness',
+                  payload: {
+                    sprint_dir: harnessPayload.sprint_dir,
+                    pr_url: prUrlToMerge,
+                    planner_task_id: harnessPayload.planner_task_id,
+                    eval_round: harnessPayload.eval_round || 1,
+                    poll_count: 0,
+                    harness_mode: true
+                  }
+                });
+                console.log(`[execution-callback] harness: harness_evaluate PASS → harness_deploy_watch created`);
+              }
+            } else {
+              // FAIL → harness_fix（Generator 修复，然后重走 CI watch）
+              await createHarnessTask({
+                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1}`,
+                description: `Evaluator 发现问题，Generator 修复后重新提交。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 harness_evaluate task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'harness_fix',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  dev_task_id: harnessPayload.dev_task_id,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  eval_round: (harnessPayload.eval_round || 0) + 1,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: harness_evaluate FAIL → harness_fix created (round=${(harnessPayload.eval_round || 0) + 1})`);
+            }
+          }
+        }
+
+        // v3.x 兼容: sprint_evaluate 完成 → 旧路由逻辑（保留不变）
+        if (harnessType === 'sprint_evaluate') {
+          if (result === null) {
+            const evalRound = harnessPayload.eval_round || 0;
+            const MAX_EVAL_ROUNDS = 15;
+            if (evalRound >= MAX_EVAL_ROUNDS) {
               console.error(`[execution-callback] harness: sprint_evaluate result=null at round ${evalRound} >= MAX(${MAX_EVAL_ROUNDS}), stopping loop`);
             } else {
-              // 重试：Evaluator 会话崩溃，重新派发 sprint_evaluate（而非 sprint_fix）
-              console.warn(`[execution-callback] harness: sprint_evaluate result=null (session crash) at round ${evalRound}, retrying evaluation`);
+              console.warn(`[execution-callback] harness: sprint_evaluate result=null (session crash) at round ${evalRound}, retrying`);
               await createHarnessTask({
-                title: `[Evaluator] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'sprint'} R${evalRound + 1} (retry)`,
-                description: `Evaluator 会话崩溃（result=null），重新派发评估。\n原始 sprint_evaluate task_id: ${task_id}`,
+                title: `[Evaluator] R${evalRound + 1} (retry)`,
+                description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 sprint_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
                 goal_id: harnessTask.goal_id,
@@ -1755,95 +1898,106 @@ ${resultStr.substring(0, 2000)}
                   retry_reason: 'evaluator_session_crash'
                 }
               });
-              console.log(`[execution-callback] harness: sprint_evaluate result=null → sprint_evaluate retry (round=${evalRound + 1})`);
             }
           } else {
-          // verdict 解析：兼容对象和字符串（cecelia-run webhook 可能传纯文本）
-          let resultObj = typeof result === 'object' && result !== null ? result : {};
-          if (typeof result === 'string') {
-            // 尝试完整 JSON 解析
-            try {
-              const parsed = JSON.parse(result);
-              if (parsed && typeof parsed === 'object' && parsed.verdict) resultObj = parsed;
-            } catch {
-              // 非 JSON，尝试正则提取 verdict
-              const verdictMatch = result.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
-              if (verdictMatch) {
-                resultObj = { verdict: verdictMatch[1].toUpperCase() };
+            let resultObj = typeof result === 'object' && result !== null ? result : {};
+            if (typeof result === 'string') {
+              try { const p = JSON.parse(result); if (p?.verdict) resultObj = p; } catch { /* not JSON */ }
+              if (!resultObj.verdict) {
+                const m = result.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
+                if (m) resultObj = { verdict: m[1].toUpperCase() };
               }
             }
-          }
-          // Bug fix: 先检查 nested result.result.verdict（对象嵌套场景）
-          // 场景：Evaluator 回调 { result: { verdict: "PASS", ... } }
-          if (!resultObj.verdict && typeof resultObj.result === 'object' && resultObj.result !== null && resultObj.result.verdict) {
-            resultObj.verdict = resultObj.result.verdict;
-          }
-          // 如果顶层没有 verdict，从 summary/findings/result 字符串中提取
-          if (!resultObj.verdict) {
-            const resultStr = typeof resultObj.result === 'string' ? resultObj.result : '';
-            const textToSearch = resultObj.summary || resultObj.findings || resultStr || (typeof result === 'string' ? result : '');
-            if (typeof textToSearch === 'string') {
-              const verdictMatch = textToSearch.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
-              if (verdictMatch) {
-                resultObj.verdict = verdictMatch[1].toUpperCase();
-              }
+            if (!resultObj.verdict && typeof resultObj.result === 'object' && resultObj.result?.verdict) {
+              resultObj.verdict = resultObj.result.verdict;
             }
-          }
-          const verdict = resultObj.verdict || 'FAIL';
-          console.log(`[execution-callback] harness: sprint_evaluate verdict=${verdict} (result type=${typeof result})`);
-          const devTaskId = harnessPayload.dev_task_id;
+            if (!resultObj.verdict) {
+              const txt = resultObj.summary || resultObj.findings || (typeof resultObj.result === 'string' ? resultObj.result : '') || (typeof result === 'string' ? result : '');
+              if (typeof txt === 'string') { const m = txt.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i); if (m) resultObj.verdict = m[1].toUpperCase(); }
+            }
+            const verdict = resultObj.verdict || 'FAIL';
+            console.log(`[execution-callback] harness: sprint_evaluate verdict=${verdict}`);
 
-          if (verdict === 'PASS') {
-            // v3.0 官方流程: PASS → 直接创建 sprint_report（Harness 完成）
-            console.log(`[execution-callback] harness: sprint_evaluate PASS → sprint_report`);
-            const existingSr = await pool.query(
-              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'sprint_report'
-               AND status IN ('queued', 'in_progress') LIMIT 1`,
-              [harnessTask.project_id]
-            );
-            if (existingSr.rows.length === 0) {
+            if (verdict === 'PASS') {
+              const existingSr = await pool.query(
+                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'sprint_report'
+                 AND status IN ('queued', 'in_progress') LIMIT 1`,
+                [harnessTask.project_id]
+              );
+              if (existingSr.rows.length === 0) {
+                await createHarnessTask({
+                  title: `[Report] Harness 完成报告`,
+                  description: `所有验证 PASS。生成 Harness 报告。`,
+                  priority: 'P1',
+                  project_id: harnessTask.project_id,
+                  goal_id: harnessTask.goal_id,
+                  task_type: 'sprint_report',
+                  trigger_source: 'execution_callback_harness',
+                  payload: {
+                    sprint_dir: harnessPayload.sprint_dir,
+                    planner_task_id: harnessPayload.planner_task_id,
+                    eval_round: harnessPayload.eval_round || 1,
+                    harness_mode: true
+                  }
+                });
+                console.log(`[execution-callback] harness: sprint_evaluate PASS → sprint_report created`);
+              }
+            } else {
               await createHarnessTask({
-                title: `[Report] Harness 完成报告`,
-                description: `所有验证 PASS。生成 Harness 完成报告：PRD 目标、对抗轮次、修复清单、成本统计。`,
+                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1}`,
+                description: `Evaluator 发现问题，Generator 修复。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 sprint_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
                 goal_id: harnessTask.goal_id,
-                task_type: 'sprint_report',
+                task_type: 'sprint_fix',
                 trigger_source: 'execution_callback_harness',
                 payload: {
                   sprint_dir: harnessPayload.sprint_dir,
+                  dev_task_id: harnessPayload.dev_task_id,
                   planner_task_id: harnessPayload.planner_task_id,
-                  eval_round: harnessPayload.eval_round || 1,
+                  eval_round: (harnessPayload.eval_round || 0) + 1,
                   harness_mode: true
                 }
               });
-              console.log(`[execution-callback] harness: sprint_evaluate PASS → sprint_report created`);
+              console.log(`[execution-callback] harness: sprint_evaluate FAIL → sprint_fix created`);
             }
-          } else {
-            // FAIL: 创建 sprint_fix
-            await createHarnessTask({
-              title: `[Fix] R${(harnessPayload.eval_round || 0) + 1}`,
-              description: `Evaluator 发现问题，Generator 需要修复。读取 eval-round-${harnessPayload.eval_round || 1}.md 中的具体问题列表。\n原始 sprint_evaluate task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: 'sprint_fix',
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                dev_task_id: harnessPayload.dev_task_id,
-                planner_task_id: harnessPayload.planner_task_id,
-                eval_round: (harnessPayload.eval_round || 0) + 1,
-                harness_mode: true
-              }
-            });
-            console.log(`[execution-callback] harness: sprint_evaluate FAIL → sprint_fix created (round=${(harnessPayload.eval_round || 0) + 1})`);
           }
-          } // end else (result !== null)
         }
 
-        // sprint_fix 完成 → 创建新的 sprint_evaluate（再测）
-        if (harnessTask?.task_type === 'sprint_fix') {
+        // Layer 3c: harness_fix 完成 → 创建 harness_ci_watch（等新 PR 的 CI）
+        if (harnessType === 'harness_fix') {
+          let prUrl = pr_url || null;
+          if (!prUrl && result !== null && typeof result === 'object') {
+            prUrl = result.pr_url || result?.result?.pr_url || null;
+          }
+          if (!prUrl && typeof result === 'string') {
+            const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
+            if (prMatch) prUrl = prMatch[0];
+          }
+          const evalRound = harnessPayload.eval_round || 1;
+          await createHarnessTask({
+            title: `[CI Watch] Fix-R${evalRound}`,
+            description: `Generator 修复完成，等待 CI 通过后 Evaluator 重新验证。\n原始 harness_fix task_id: ${task_id}`,
+            priority: 'P1',
+            project_id: harnessTask.project_id,
+            goal_id: harnessTask.goal_id,
+            task_type: 'harness_ci_watch',
+            trigger_source: 'execution_callback_harness',
+            payload: {
+              sprint_dir: harnessPayload.sprint_dir,
+              pr_url: prUrl,
+              dev_task_id: harnessPayload.dev_task_id,
+              planner_task_id: harnessPayload.planner_task_id,
+              eval_round: evalRound,
+              poll_count: 0,
+              harness_mode: true
+            }
+          });
+          console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_ci_watch created (eval_round=${evalRound}, pr_url=${prUrl})`);
+        }
+
+        // v3.x 兼容: sprint_fix → sprint_evaluate（旧流程）
+        if (harnessType === 'sprint_fix') {
           await createHarnessTask({
             title: `[Evaluator] R${harnessPayload.eval_round || 1}`,
             description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
@@ -1863,7 +2017,7 @@ ${resultStr.substring(0, 2000)}
           console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate created (round=${harnessPayload.eval_round || 1})`);
         }
       } catch (harnessErr) {
-        console.error(`[execution-callback] harness sprint loop error (non-fatal): ${harnessErr.message}`, harnessErr.stack);
+        console.error(`[execution-callback] harness loop error (non-fatal): ${harnessErr.message}`, harnessErr.stack);
       }
 
       // 5c9. 断链 #5: dev 完成 → 检查同 project 所有 dev 是否全完成 → 创建 code_review (Initiative 级别)
