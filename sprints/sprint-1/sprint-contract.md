@@ -3,6 +3,7 @@
 **生成者**: Generator (Sprint 2)
 **任务**: 确保 sprint-evaluator skill 能被 headless session 正确执行
 **评估轮次**: R1
+**状态**: APPROVED
 
 ---
 
