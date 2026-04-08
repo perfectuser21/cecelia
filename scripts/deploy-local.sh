@@ -40,7 +40,9 @@ for arg in "$@"; do
             DRY_RUN=true
             ;;
         --changed=*)
+            # 将空格分隔的文件列表转为换行符分隔（与 git diff --name-only 输出格式一致）
             CHANGED_FILES="${arg#*=}"
+            CHANGED_FILES="${CHANGED_FILES// /$'\n'}"
             ;;
         --*)
             ;;
