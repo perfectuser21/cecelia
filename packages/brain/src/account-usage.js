@@ -154,20 +154,40 @@ export function getSpendingCapStatus() {
 // ─── Auth Failure 账号级熔断 ─────────────────────────────────────────────────
 
 /**
- * 内存 Map：accountId → { resetTime: ISO string, setAt: ISO string }
+ * 内存 Map：accountId → { resetTime: ISO string, setAt: ISO string, failureCount: number }
  * auth 失败（401）的账号在此 Map 中记录，选账号时跳过，防止级联 quarantine。
  */
 const _authFailureMap = new Map();
 
 /**
+ * 内存 Map：accountId → number
+ * 跟踪各账号连续 auth 失败次数，用于指数退避计算。
+ * 凭据恢复（proactiveTokenCheck 确认 token 有效）时重置。
+ */
+const _authFailureCountMap = new Map();
+
+/**
+ * 计算指数退避熔断时长（小时）
+ * 第 1 次: 2h，第 2 次: 4h，第 3 次: 8h，第 4+ 次: 24h（封顶）
+ */
+function _authBackoffHours(failureCount) {
+  return Math.min(Math.pow(2, failureCount), 24);
+}
+
+/**
  * 标记账号 auth 失败（内存 + 持久化到 DB）
+ * 连续失败时自动指数退避：2h → 4h → 8h → 24h（封顶）
  * @param {string} accountId - 账号 ID（如 'account3'）
- * @param {string|null} resetTimeISO - 恢复时间（ISO 8601），null 表示 2h 后
+ * @param {string|null} resetTimeISO - 恢复时间（ISO 8601），null 表示按退避策略计算
  */
 export function markAuthFailure(accountId, resetTimeISO = null) {
-  const resetTime = resetTimeISO || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-  _authFailureMap.set(accountId, { resetTime, setAt: new Date().toISOString() });
-  console.log(`[account-usage] [auth-circuit-breaker] markAuthFailure: ${accountId} excluded until ${resetTime}`);
+  const failureCount = (_authFailureCountMap.get(accountId) || 0) + 1;
+  _authFailureCountMap.set(accountId, failureCount);
+
+  const backoffHours = _authBackoffHours(failureCount);
+  const resetTime = resetTimeISO || new Date(Date.now() + backoffHours * 60 * 60 * 1000).toISOString();
+  _authFailureMap.set(accountId, { resetTime, setAt: new Date().toISOString(), failureCount });
+  console.log(`[account-usage] [auth-circuit-breaker] markAuthFailure: ${accountId} excluded ${backoffHours}h (attempt ${failureCount}) until ${resetTime}`);
   pool.query(
     `INSERT INTO account_usage_cache (account_id, is_auth_failed, auth_fail_resets_at)
      VALUES ($1, true, $2)
@@ -186,7 +206,7 @@ export function isAuthFailed(accountId) {
   if (!entry) return false;
   if (new Date(entry.resetTime) <= new Date()) {
     _authFailureMap.delete(accountId);
-    console.log(`[account-usage] [auth-circuit-breaker] ${accountId}: auth 失败窗口已过期，自动恢复`);
+    console.log(`[account-usage] [auth-circuit-breaker] ${accountId}: auth 失败窗口已过期，自动恢复（退避计数保留至凭据验证）`);
     pool.query(
       `UPDATE account_usage_cache SET is_auth_failed = false, auth_fail_resets_at = NULL
        WHERE account_id = $1`,
@@ -195,6 +215,17 @@ export function isAuthFailed(accountId) {
     return false;
   }
   return true;
+}
+
+/**
+ * 重置账号的 auth 失败退避计数（凭据已确认恢复时调用）
+ * @param {string} accountId
+ */
+export function resetAuthFailureCount(accountId) {
+  if (_authFailureCountMap.has(accountId)) {
+    _authFailureCountMap.delete(accountId);
+    console.log(`[account-usage] [auth-circuit-breaker] ${accountId}: 退避计数已重置（凭据已恢复）`);
+  }
 }
 
 /**
@@ -274,10 +305,11 @@ export async function proactiveTokenCheck() {
         } catch { /* 告警失败不阻断主流程 */ }
       }
     } else {
-      // token 有效：清除过期告警标记；若 auth-failed 是因过期设置的则清除熔断
+      // token 有效：清除过期告警标记；若 auth-failed 是因过期设置的则清除熔断和退避计数
       _expiryAlertedAccounts.delete(accountId);
       if (isAuthFailed(accountId)) {
         _authFailureMap.delete(accountId);
+        resetAuthFailureCount(accountId);
         pool.query(
           `UPDATE account_usage_cache SET is_auth_failed = false, auth_fail_resets_at = NULL WHERE account_id = $1`,
           [accountId]
