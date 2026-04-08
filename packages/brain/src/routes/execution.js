@@ -1720,7 +1720,26 @@ ${resultStr.substring(0, 2000)}
         // GAN 守卫：只有 Proposer 产出草案（verdict=PROPOSED）才派 Reviewer
         if (harnessType === 'harness_contract_propose' || harnessType === 'sprint_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
-          const proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
+          let proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
+
+          // 正则 fallback：agent 可能输出纯文本不含 JSON，直接搜索 PROPOSED 关键字
+          if (!proposeVerdict) {
+            const innerText = typeof result === 'object'
+              ? (typeof result?.result === 'string' ? result.result : '')
+              : (typeof result === 'string' ? result : '');
+            if (/\bPROPOSED\b/i.test(innerText)) {
+              proposeVerdict = 'PROPOSED';
+              console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=PROPOSED (bare-word fallback)`);
+            }
+          }
+
+          // 最终兜底：成功完成的 propose 任务，若无明确反对信号，默认 PROPOSED
+          // 根因：agent 有时输出纯中文描述不含 verdict JSON（如"合同草案已提交"）
+          if (!proposeVerdict && newStatus === 'completed') {
+            proposeVerdict = 'PROPOSED';
+            console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict 未在结果中检测到，任务成功完成，默认 PROPOSED`);
+          }
+
           if (proposeVerdict !== 'PROPOSED') {
             console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
