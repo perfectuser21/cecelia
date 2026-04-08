@@ -1619,6 +1619,8 @@ ${resultStr.substring(0, 2000)}
         const harnessTask = harnessRow.rows[0];
         const harnessPayload = harnessTask?.payload || {};
         const harnessType = harnessTask?.task_type;
+        // Unique suffix per pipeline run — prevents 24h dedup collision across test runs with same title+null goal_id
+        const plannerShort = (harnessPayload.planner_task_id || task_id).substring(0, 8);
         const { createTask: _createHarnessTaskBase } = await import('../actions.js');
         // Fix 2: 包装 createHarnessTask，对特定 task_type 校验必填 payload 字段
         const HARNESS_REQUIRED_PAYLOAD = {
@@ -1696,7 +1698,7 @@ ${resultStr.substring(0, 2000)}
           }
           const proposeType = harnessType === 'harness_planner' ? 'harness_contract_propose' : 'sprint_contract_propose';
           await createHarnessTask({
-            title: `[Contract] P1`,
+            title: `[Contract] P1 — ${plannerShort}`,
             description: `Generator 读取 PRD，提出合同草案（功能范围+验证命令）。\nPRD task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1724,7 +1726,7 @@ ${resultStr.substring(0, 2000)}
           } else {
             const reviewType = harnessType === 'harness_contract_propose' ? 'harness_contract_review' : 'sprint_contract_review';
             await createHarnessTask({
-              title: `[Contract Review] R${proposeRound}`,
+              title: `[Contract Review] R${proposeRound} — ${plannerShort}`,
               description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1769,7 +1771,7 @@ ${resultStr.substring(0, 2000)}
           if (reviewVerdict === 'APPROVED') {
             const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
             await createHarnessTask({
-              title: `[Generator] 写代码`,
+              title: `[Generator] G1 — ${plannerShort}`,
               description: `合同已批准，Generator 按 sprint-contract.md 写代码 + 创建 PR。\ncontract_review task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1789,7 +1791,7 @@ ${resultStr.substring(0, 2000)}
             const nextRound = (harnessPayload.propose_round || 1) + 1;
             const proposeType = harnessType === 'harness_contract_review' ? 'harness_contract_propose' : 'sprint_contract_propose';
             await createHarnessTask({
-              title: `[Contract] P${nextRound}`,
+              title: `[Contract] P${nextRound} — ${plannerShort}`,
               description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1829,7 +1831,7 @@ ${resultStr.substring(0, 2000)}
             throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_generate result (task_id=${task_id})`);
           }
           await createHarnessTask({
-            title: `[CI Watch] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'harness'}`,
+            title: `[CI Watch] ${plannerShort}`,
             description: `等待 CI 通过后创建 Evaluator。\n原始 harness_generate task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1853,7 +1855,7 @@ ${resultStr.substring(0, 2000)}
         // v3.x 兼容: sprint_generate → sprint_evaluate（旧流程，不加 CI watch）
         if (harnessType === 'sprint_generate' || (harnessType === 'dev' && harnessPayload.harness_mode)) {
           await createHarnessTask({
-            title: `[Evaluator] R1`,
+            title: `[Evaluator] R1 — ${plannerShort}`,
             description: `Evaluator 执行 sprint-contract.md 里的验证命令。\n原始 task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1881,7 +1883,7 @@ ${resultStr.substring(0, 2000)}
             } else {
               console.warn(`[execution-callback] harness: harness_evaluate result=null (session crash) at round ${evalRound}, retrying`);
               await createHarnessTask({
-                title: `[Evaluator] R${evalRound + 1} (retry)`,
+                title: `[Evaluator] R${evalRound + 1} retry — ${plannerShort}`,
                 description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 harness_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -1946,7 +1948,7 @@ ${resultStr.substring(0, 2000)}
               );
               if (existingDw.rows.length === 0) {
                 await createHarnessTask({
-                  title: `[Deploy Watch] Harness`,
+                  title: `[Deploy Watch] ${plannerShort}`,
                   description: `Evaluator PASS + PR 已合并。等待 CD deploy 完成后生成 Report。`,
                   priority: 'P1',
                   project_id: harnessTask.project_id,
@@ -1967,7 +1969,7 @@ ${resultStr.substring(0, 2000)}
             } else {
               // FAIL → harness_fix（Generator 修复，然后重走 CI watch）
               await createHarnessTask({
-                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1}`,
+                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1} — ${plannerShort}`,
                 description: `Evaluator 发现问题，Generator 修复后重新提交。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 harness_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -1997,7 +1999,7 @@ ${resultStr.substring(0, 2000)}
             } else {
               console.warn(`[execution-callback] harness: sprint_evaluate result=null (session crash) at round ${evalRound}, retrying`);
               await createHarnessTask({
-                title: `[Evaluator] R${evalRound + 1} (retry)`,
+                title: `[Evaluator] R${evalRound + 1} retry — ${plannerShort}`,
                 description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 sprint_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -2042,7 +2044,7 @@ ${resultStr.substring(0, 2000)}
               );
               if (existingSr.rows.length === 0) {
                 await createHarnessTask({
-                  title: `[Report] Harness 完成报告`,
+                  title: `[Report] ${plannerShort}`,
                   description: `所有验证 PASS。生成 Harness 报告。`,
                   priority: 'P1',
                   project_id: harnessTask.project_id,
@@ -2060,7 +2062,7 @@ ${resultStr.substring(0, 2000)}
               }
             } else {
               await createHarnessTask({
-                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1}`,
+                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1} — ${plannerShort}`,
                 description: `Evaluator 发现问题，Generator 修复。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 sprint_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -2095,7 +2097,7 @@ ${resultStr.substring(0, 2000)}
             throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_fix result (task_id=${task_id})`);
           }
           await createHarnessTask({
-            title: `[CI Watch] Fix-R${evalRound}`,
+            title: `[CI Watch] Fix-R${evalRound} — ${plannerShort}`,
             description: `Generator 修复完成，等待 CI 通过后 Evaluator 重新验证。\n原始 harness_fix task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -2118,7 +2120,7 @@ ${resultStr.substring(0, 2000)}
         // v3.x 兼容: sprint_fix → sprint_evaluate（旧流程）
         if (harnessType === 'sprint_fix') {
           await createHarnessTask({
-            title: `[Evaluator] R${harnessPayload.eval_round || 1}`,
+            title: `[Evaluator] R${harnessPayload.eval_round || 1} — ${plannerShort}`,
             description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
