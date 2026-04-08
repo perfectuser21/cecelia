@@ -416,11 +416,12 @@ export default function RoadmapPage() {
         raw.map((g) => ({
           ...g,
           type: g.type === 'area_kr' ? 'kr' : g.type,
-          progress: parseFloat(
-            (g.current_value as string) ??
-            ((g.metadata as Record<string, unknown>)?.metric_current as string) ??
-            '0'
-          ) || 0,
+          progress: parseFloat(String(
+            g.current_value ??
+            (g.metadata as Record<string, unknown>)?.metric_current ??
+            g.progress ??
+            0
+          )) || 0,
         } as Goal));
       setGoals(normalizeGoalType(Array.isArray(goalsData) ? goalsData : []));
       // Brain projects 返回 title/end_date，规范化为前端期望的 name/deadline
