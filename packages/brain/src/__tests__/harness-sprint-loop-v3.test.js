@@ -54,11 +54,26 @@ async function simulateHarnessCallback(taskData, result) {
 
   // Layer 2a: sprint_contract_propose PROPOSED → sprint_contract_review
   // GAN 守卫：只有 verdict=PROPOSED 才派 Reviewer
+  // 对齐生产代码 execution.js 的 extractVerdictFromResult + 纯文本 fallback
   if (taskData.task_type === 'sprint_contract_propose') {
     const proposeRound = harnessPayload.propose_round || 1;
-    const proposeVerdict = (result !== null && typeof result === 'object')
-      ? (result.verdict || result?.result?.verdict)
-      : null;
+    // 结构化提取
+    let proposeVerdict = null;
+    if (result !== null && typeof result === 'object') {
+      const dv = result.verdict || result?.result?.verdict;
+      if (dv && dv.toUpperCase() === 'PROPOSED') proposeVerdict = 'PROPOSED';
+    }
+    // 纯文本 fallback（cecelia-run 可能传纯文本字符串）
+    if (!proposeVerdict) {
+      const rawText = typeof result === 'string' ? result
+        : (result != null && typeof result === 'object'
+            ? (typeof result.result === 'string' ? result.result
+              : (result.summary || result.findings || ''))
+            : '');
+      if (rawText && (/"verdict"\s*:\s*"PROPOSED"/i.test(rawText) || /\bPROPOSED\b/.test(rawText))) {
+        proposeVerdict = 'PROPOSED';
+      }
+    }
     if (proposeVerdict !== 'PROPOSED') {
       return;
     }
@@ -82,10 +97,19 @@ async function simulateHarnessCallback(taskData, result) {
   }
 
   // Layer 2b: sprint_contract_review APPROVED/REVISION 路由
+  // 对齐生产代码：结构化提取 + 纯文本 fallback
   if (taskData.task_type === 'sprint_contract_review') {
     let reviewVerdict = 'REVISION';
     if (result !== null && typeof result === 'object' && result.verdict) {
       reviewVerdict = result.verdict.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REVISION';
+    } else {
+      const reviewResultRaw = result != null && typeof result === 'object'
+        ? (result.decision || result.result || result.summary || result.findings || '')
+        : (typeof result === 'string' ? result : '');
+      const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
+      if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
+        reviewVerdict = 'APPROVED';
+      }
     }
 
     if (reviewVerdict === 'APPROVED') {
@@ -449,5 +473,96 @@ describe('Harness v3.1 Sprint Loop — 13 个链路转接点', () => {
     await simulateHarnessCallback(task, { verdict: 'FAILED', error: 'generation_error' });
 
     expect(mockCreateTask).not.toHaveBeenCalled();
+  });
+
+  // 纯文本 verdict 提取测试（cecelia-run 传纯文本字符串场景）
+  // 14. result 是纯文本字符串 "PROPOSED" → 应创建 review 任务
+  it('14. sprint_contract_propose result=纯文本"PROPOSED" → 创建 sprint_contract_review', async () => {
+    const task = {
+      id: 'propose-pt-1',
+      task_type: 'sprint_contract_propose',
+      project_id: 'ini-1',
+      goal_id: 'kr-1',
+      payload: { sprint_dir: 'sprints', planner_task_id: 'planner-1', propose_round: 1, harness_mode: true }
+    };
+
+    // cecelia-run 可能直接把 stdout 作为纯文本字符串传回
+    await simulateHarnessCallback(task, 'verdict: PROPOSED\n\n## Sprint Contract Draft...');
+
+    expect(mockCreateTask).toHaveBeenCalledOnce();
+    const call = mockCreateTask.mock.calls[0][0];
+    expect(call.task_type).toBe('sprint_contract_review');
+    expect(call.payload.propose_round).toBe(1);
+  });
+
+  // 15. result 是 Claude SDK JSON 对象（result.result 为纯文本）→ 应创建 review 任务
+  it('15. sprint_contract_propose result={result:"...PROPOSED..."} → 创建 sprint_contract_review', async () => {
+    const task = {
+      id: 'propose-sdk-1',
+      task_type: 'sprint_contract_propose',
+      project_id: 'ini-1',
+      goal_id: 'kr-1',
+      payload: { sprint_dir: 'sprints', planner_task_id: 'planner-1', propose_round: 2, harness_mode: true }
+    };
+
+    // Claude CLI --output-format json 典型输出格式
+    const claudeCliResult = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'verdict: PROPOSED\n\nThe sprint contract draft has been written to sprints/sprint-contract.md.',
+      session_id: 'abc123',
+      total_cost_usd: 0.01
+    };
+
+    await simulateHarnessCallback(task, claudeCliResult);
+
+    expect(mockCreateTask).toHaveBeenCalledOnce();
+    const call = mockCreateTask.mock.calls[0][0];
+    expect(call.task_type).toBe('sprint_contract_review');
+    expect(call.payload.propose_round).toBe(2);
+  });
+
+  // 16. sprint_contract_review result 是纯文本 "APPROVED" → 应派 Generator
+  it('16. sprint_contract_review result=纯文本"APPROVED" → 创建 sprint_generate', async () => {
+    const task = {
+      id: 'review-pt-1',
+      task_type: 'sprint_contract_review',
+      project_id: 'ini-1',
+      goal_id: 'kr-1',
+      payload: { sprint_dir: 'sprints', planner_task_id: 'planner-1', propose_round: 1, harness_mode: true }
+    };
+
+    await simulateHarnessCallback(task, 'The contract looks good. APPROVED.');
+
+    expect(mockCreateTask).toHaveBeenCalledOnce();
+    const call = mockCreateTask.mock.calls[0][0];
+    expect(call.task_type).toBe('sprint_generate');
+  });
+
+  // 17. sprint_contract_review result.result 含 "APPROVED" → 应派 Generator
+  it('17. sprint_contract_review result={result:"...APPROVED..."} → 创建 sprint_generate', async () => {
+    const task = {
+      id: 'review-sdk-1',
+      task_type: 'sprint_contract_review',
+      project_id: 'ini-1',
+      goal_id: 'kr-1',
+      payload: { sprint_dir: 'sprints', planner_task_id: 'planner-1', propose_round: 1, harness_mode: true }
+    };
+
+    const claudeCliResult = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: '"verdict": "APPROVED"\n\nAll validation commands are rigorous.',
+      session_id: 'def456',
+      total_cost_usd: 0.02
+    };
+
+    await simulateHarnessCallback(task, claudeCliResult);
+
+    expect(mockCreateTask).toHaveBeenCalledOnce();
+    const call = mockCreateTask.mock.calls[0][0];
+    expect(call.task_type).toBe('sprint_generate');
   });
 });

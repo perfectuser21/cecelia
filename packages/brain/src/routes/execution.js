@@ -1584,29 +1584,37 @@ ${resultStr.substring(0, 2000)}
 
       // 辅助：从任意格式 result（对象/字符串/嵌套）中提取 verdict 字段
       function extractVerdictFromResult(res, validVerdicts) {
+        const _check = (v) => {
+          if (!v) return null;
+          const upper = v.toUpperCase();
+          return (!validVerdicts || validVerdicts.includes(upper)) ? upper : null;
+        };
         if (res === null || res === undefined) return null;
         if (typeof res === 'object') {
           // 直接字段
           const dv = res.verdict || (typeof res.result === 'object' ? res.result?.verdict : null);
-          if (dv) return dv.toUpperCase();
+          const dvChecked = _check(dv);
+          if (dvChecked) return dvChecked;
           // claude --output-format json 输出：{type, result: string, ...}
           // res.result 是字符串，需与 string 分支一致搜索
           if (typeof res.result === 'string') {
             try {
               const parsed = JSON.parse(res.result);
-              if (parsed?.verdict) return parsed.verdict.toUpperCase();
+              const pv = _check(parsed?.verdict);
+              if (pv) return pv;
             } catch { /* not JSON */ }
             const matches = [...res.result.matchAll(/"verdict"\s*:\s*"([^"]+)"/gi)];
-            if (matches.length > 0) return matches[matches.length - 1][1].toUpperCase();
+            if (matches.length > 0) return _check(matches[matches.length - 1][1]);
           }
         }
         if (typeof res === 'string') {
           try {
             const parsed = JSON.parse(res);
-            if (parsed?.verdict) return parsed.verdict.toUpperCase();
+            const pv = _check(parsed?.verdict);
+            if (pv) return pv;
           } catch { /* not JSON */ }
           const matches = [...res.matchAll(/"verdict"\s*:\s*"([^"]+)"/gi)];
-          if (matches.length > 0) return matches[matches.length - 1][1].toUpperCase();
+          if (matches.length > 0) return _check(matches[matches.length - 1][1]);
         }
         return null;
       }
