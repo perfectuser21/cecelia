@@ -104,6 +104,7 @@ export default function CollectionDashboardPage() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<CollectionStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [triggering, setTriggering] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState('');
@@ -111,8 +112,15 @@ export default function CollectionDashboardPage() {
   const fetchStats = useCallback(async () => {
     try {
       const res = await fetch('/api/brain/analytics/collection-stats?days=7');
-      if (res.ok) setStats(await res.json());
-    } catch { /* 静默 */ } finally {
+      if (res.ok) {
+        setStats(await res.json());
+        setError(null);
+      } else {
+        setError(`加载失败 (HTTP ${res.status})`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '网络错误，请检查服务状态');
+    } finally {
       setLoading(false);
     }
   }, []);
@@ -245,6 +253,18 @@ export default function CollectionDashboardPage() {
     return (
       <div style={s.page}>
         <div style={{ textAlign: 'center', padding: '60px', color: '#8b949e' }}>加载中…</div>
+      </div>
+    );
+  }
+
+  if (error && !stats) {
+    return (
+      <div style={s.page}>
+        <div style={{ textAlign: 'center', padding: '60px', color: '#f85149' }}>
+          ⚠️ {error}
+          <br />
+          <button style={{ marginTop: '16px', padding: '8px 16px', cursor: 'pointer', background: '#21262d', color: '#e6edf3', border: '1px solid #30363d', borderRadius: '6px' }} onClick={fetchStats}>重试</button>
+        </div>
       </div>
     );
   }
