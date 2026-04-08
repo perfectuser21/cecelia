@@ -97,17 +97,17 @@ describe('GET /dev-success-rate', () => {
       pool.query
         .mockResolvedValueOnce({
           rows: [
-            { status: 'completed', failure_reason: null, cnt: '70' },
-            { status: 'failed', failure_reason: 'CI workflow failed', cnt: '15' },
-            { status: 'failed', failure_reason: 'branch protection prevented push', cnt: '5' },
-            { status: 'cancelled', failure_reason: null, cnt: '10' },
+            { status: 'completed', failure_reason: null, error_message: null, cnt: '70' },
+            { status: 'failed', failure_reason: 'CI workflow failed', error_message: null, cnt: '15' },
+            { status: 'failed', failure_reason: 'branch protection prevented push', error_message: null, cnt: '5' },
+            { status: 'cancelled', failure_reason: null, error_message: null, cnt: '10' },
           ],
         })
         // Mock 每日趋势查询
         .mockResolvedValueOnce({
           rows: [
-            { date: '2026-02-26', success: '10', failed: '3', cancelled: '1', total: '14' },
-            { date: '2026-02-27', success: '12', failed: '2', cancelled: '0', total: '14' },
+            { date: '2026-02-26', success: '10', failed: '3', excluded: '1', total: '14' },
+            { date: '2026-02-27', success: '12', failed: '2', excluded: '0', total: '14' },
           ],
         });
 
@@ -122,8 +122,8 @@ describe('GET /dev-success-rate', () => {
       expect(data.total).toBe(100);
       expect(data.success).toBe(70);
       expect(data.failed).toBe(20);
-      expect(data.cancelled).toBe(10);
-      // success_rate = 70 / (100 - 10) * 100 = 77.8%
+      expect(data.excluded).toBe(10);
+      // success_rate = 70 / (100 - 10) * 100 = 77.8%（仅终态：completed + failed）
       expect(data.success_rate).toBe(77.8);
 
       // 每日趋势
@@ -137,6 +137,33 @@ describe('GET /dev-success-rate', () => {
       expect(data.failure_reasons.branch_protection).toBe(5);
       expect(data.failure_reasons.dev_skill_error).toBe(0);
       expect(data.failure_reasons.other).toBe(0);
+    });
+
+    it('canceled（美式）和 paused 任务不计入分母', async () => {
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { status: 'completed', failure_reason: null, error_message: null, cnt: '30' },
+            { status: 'quarantined', failure_reason: null, error_message: '[watchdog] reason=liveness_dead', cnt: '10' },
+            { status: 'canceled', failure_reason: null, error_message: null, cnt: '20' },   // 美式拼写
+            { status: 'paused', failure_reason: null, error_message: null, cnt: '15' },     // 暂停
+            { status: 'queued', failure_reason: null, error_message: null, cnt: '5' },      // 未完成
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { req, res } = mockReqRes();
+      await handler(req, res);
+
+      expect(res._status).toBe(200);
+      const data = res._data;
+      // excluded = 20(canceled) + 15(paused) + 5(queued) = 40
+      expect(data.excluded).toBe(40);
+      // denominator = 80 - 40 = 40（仅 completed + quarantined）
+      // success_rate = 30 / 40 = 75%
+      expect(data.success_rate).toBe(75);
+      // liveness_dead 分类生效
+      expect(data.failure_reasons.liveness_dead).toBe(10);
     });
 
     it('支持自定义 days=30 参数', async () => {
@@ -184,7 +211,7 @@ describe('GET /dev-success-rate', () => {
     it('全部取消时 success_rate 为 0（分母为 0）', async () => {
       pool.query
         .mockResolvedValueOnce({
-          rows: [{ status: 'cancelled', failure_reason: null, cnt: '10' }],
+          rows: [{ status: 'cancelled', failure_reason: null, error_message: null, cnt: '10' }],
         })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -192,7 +219,7 @@ describe('GET /dev-success-rate', () => {
       await handler(req, res);
 
       expect(res._status).toBe(200);
-      expect(res._data.cancelled).toBe(10);
+      expect(res._data.excluded).toBe(10);
       expect(res._data.success_rate).toBe(0);
     });
   });
@@ -200,12 +227,43 @@ describe('GET /dev-success-rate', () => {
   // --- 失败原因分类 ---
 
   describe('失败原因分类', () => {
-    it('CI 相关失败分类为 ci_failure', async () => {
+    it('error_message 含 liveness_dead 分类为 liveness_dead', async () => {
       pool.query
         .mockResolvedValueOnce({
           rows: [
-            { status: 'failed', failure_reason: 'CI failed on test step', cnt: '3' },
-            { status: 'failed', failure_reason: 'github action timeout', cnt: '2' },
+            { status: 'quarantined', failure_reason: null, error_message: '[watchdog] reason=liveness_dead at 2026-04-08', cnt: '8' },
+            { status: 'quarantined', failure_reason: null, error_message: '[watchdog] liveness check failed', cnt: '3' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { req, res } = mockReqRes();
+      await handler(req, res);
+
+      expect(res._data.failure_reasons.liveness_dead).toBe(11);
+    });
+
+    it('error_message 含 crisis/oom 分类为 resource_pressure', async () => {
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { status: 'quarantined', failure_reason: null, error_message: 'Crisis: pressure=1.25, RSS=1MB', cnt: '4' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { req, res } = mockReqRes();
+      await handler(req, res);
+
+      expect(res._data.failure_reasons.resource_pressure).toBe(4);
+    });
+
+    it('CI 相关失败分类为 ci_failure（从 failure_reason）', async () => {
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { status: 'failed', failure_reason: 'CI failed on test step', error_message: null, cnt: '3' },
+            { status: 'failed', failure_reason: 'github action timeout', error_message: null, cnt: '2' },
           ],
         })
         .mockResolvedValueOnce({ rows: [] });
@@ -220,7 +278,7 @@ describe('GET /dev-success-rate', () => {
       pool.query
         .mockResolvedValueOnce({
           rows: [
-            { status: 'failed', failure_reason: 'branch protection rule prevented push', cnt: '4' },
+            { status: 'failed', failure_reason: 'branch protection rule prevented push', error_message: null, cnt: '4' },
           ],
         })
         .mockResolvedValueOnce({ rows: [] });
@@ -235,7 +293,7 @@ describe('GET /dev-success-rate', () => {
       pool.query
         .mockResolvedValueOnce({
           rows: [
-            { status: 'failed', failure_reason: '/dev skill step 6 failed', cnt: '2' },
+            { status: 'failed', failure_reason: '/dev skill step 6 failed', error_message: null, cnt: '2' },
           ],
         })
         .mockResolvedValueOnce({ rows: [] });
@@ -246,11 +304,11 @@ describe('GET /dev-success-rate', () => {
       expect(res._data.failure_reasons.dev_skill_error).toBe(2);
     });
 
-    it('无 failure_reason 分类为 other', async () => {
+    it('无 failure_reason 且无 error_message 分类为 other', async () => {
       pool.query
         .mockResolvedValueOnce({
           rows: [
-            { status: 'failed', failure_reason: null, cnt: '7' },
+            { status: 'failed', failure_reason: null, error_message: null, cnt: '7' },
           ],
         })
         .mockResolvedValueOnce({ rows: [] });
@@ -259,6 +317,23 @@ describe('GET /dev-success-rate', () => {
       await handler(req, res);
 
       expect(res._data.failure_reasons.other).toBe(7);
+    });
+
+    it('error_message 优先于 failure_reason 分类（liveness_dead 覆盖 ci_failure）', async () => {
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            { status: 'quarantined', failure_reason: 'CI workflow failed', error_message: '[watchdog] reason=liveness_dead', cnt: '2' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const { req, res } = mockReqRes();
+      await handler(req, res);
+
+      // error_message 优先 → liveness_dead，不是 ci_failure
+      expect(res._data.failure_reasons.liveness_dead).toBe(2);
+      expect(res._data.failure_reasons.ci_failure).toBe(0);
     });
   });
 
