@@ -5,6 +5,10 @@
  * 在过期前 4h 创建 Brain 告警任务，防止凭据静默失效造成 auth 级联故障。
  *
  * 集成点：tick.js 每 30 分钟调用 checkAndAlertExpiringCredentials()
+ *
+ * 附加功能：recoverAuthQuarantinedTasks()
+ *   当凭据已恢复健康，自动重排队因 auth 失败而被隔离的任务（非 pipeline_rescue）。
+ *   防止凭据轮换后业务任务永久沉没在 quarantined 状态。
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -128,4 +132,110 @@ export async function checkAndAlertExpiringCredentials(pool) {
   }
 
   return { checked: accounts.length, alerted, skipped: accounts.length - criticalAccounts.length };
+}
+
+// ============================================================
+// 凭据恢复机制
+// ============================================================
+
+// 凭据恢复时，最多追溯多久之前的 auth 失败任务
+const RECOVERY_LOOKBACK_HOURS = 48;
+
+// 不恢复的任务类型（这些任务即使 auth 恢复也不应重新排队）
+const SKIP_TASK_TYPES = ['pipeline_rescue'];
+
+/**
+ * 凭据恢复后自动重排队 auth 隔离任务
+ *
+ * 逻辑：
+ * 1. 检查所有账号凭据是否健康（无过期、无 is_auth_failed）
+ * 2. 若健康，查找 RECOVERY_LOOKBACK_HOURS 内因 auth 失败被 quarantined 的任务
+ * 3. 排除 pipeline_rescue（这些对应旧 worktree，无需恢复）
+ * 4. 排除 retry_count >= max_retries 的任务
+ * 5. 将符合条件的任务重置为 queued
+ *
+ * @param {import('pg').Pool} pool - DB 连接池
+ * @returns {Promise<{ skipped: string, recovered: number, taskIds: string[] }>}
+ */
+export async function recoverAuthQuarantinedTasks(pool) {
+  // Step 1: 检查本地凭据文件是否健康
+  const { criticalAccounts } = checkCredentialExpiry();
+  if (criticalAccounts.length > 0) {
+    const names = criticalAccounts.map(a => a.account).join(', ');
+    return { skipped: `credentials not healthy (${names})`, recovered: 0, taskIds: [] };
+  }
+
+  // Step 2: 检查 DB 中 is_auth_failed 熔断状态
+  let dbAuthFailed = false;
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) as cnt FROM account_usage_cache WHERE is_auth_failed = true`
+    );
+    dbAuthFailed = parseInt(result.rows[0]?.cnt || '0', 10) > 0;
+  } catch {
+    // account_usage_cache 不存在时降级跳过 DB 检查
+  }
+
+  if (dbAuthFailed) {
+    return { skipped: 'db auth_failed circuit still open', recovered: 0, taskIds: [] };
+  }
+
+  // Step 3: 查找需要恢复的任务
+  const skipTypesPlaceholders = SKIP_TASK_TYPES.map((_, i) => `$${i + 1}`).join(', ');
+  let candidateRows;
+  try {
+    const result = await pool.query(
+      `SELECT id, title, retry_count, max_retries
+       FROM tasks
+       WHERE status = 'quarantined'
+         AND payload->>'failure_class' = 'auth'
+         AND task_type NOT IN (${skipTypesPlaceholders})
+         AND updated_at > NOW() - INTERVAL '${RECOVERY_LOOKBACK_HOURS} hours'
+       ORDER BY updated_at DESC`,
+      SKIP_TASK_TYPES
+    );
+    candidateRows = result.rows;
+  } catch (err) {
+    console.error('[credential-recovery] 查询候选任务失败:', err.message);
+    return { skipped: `query failed: ${err.message}`, recovered: 0, taskIds: [] };
+  }
+
+  if (candidateRows.length === 0) {
+    return { skipped: 'no quarantined auth tasks found', recovered: 0, taskIds: [] };
+  }
+
+  // Step 4 & 5: 过滤并重排队
+  const eligible = candidateRows.filter(row => {
+    const retryCount = parseInt(row.retry_count || '0', 10);
+    const maxRetries = parseInt(row.max_retries || '3', 10);
+    return retryCount < maxRetries;
+  });
+
+  if (eligible.length === 0) {
+    return { skipped: 'all candidates exceeded max_retries', recovered: 0, taskIds: [] };
+  }
+
+  const ids = eligible.map(r => r.id);
+  const idPlaceholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+
+  try {
+    await pool.query(
+      `UPDATE tasks
+       SET status = 'queued',
+           payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || '{"recovery_source":"credential_recovery"}'::jsonb,
+           updated_at = NOW()
+       WHERE id IN (${idPlaceholders})`,
+      ids
+    );
+
+    console.log(`[credential-recovery] ✅ 凭据恢复：${eligible.length} 个 auth 任务已重排队`);
+    for (const row of eligible) {
+      console.log(`[credential-recovery]   → ${row.id.slice(0, 8)} ${row.title.slice(0, 60)}`);
+    }
+
+    return { skipped: null, recovered: eligible.length, taskIds: ids };
+  } catch (err) {
+    console.error('[credential-recovery] 重排队失败:', err.message);
+    return { skipped: `update failed: ${err.message}`, recovered: 0, taskIds: [] };
+  }
 }
