@@ -1604,7 +1604,44 @@ ${resultStr.substring(0, 2000)}
         const harnessTask = harnessRow.rows[0];
         const harnessPayload = harnessTask?.payload || {};
         const harnessType = harnessTask?.task_type;
-        const { createTask: createHarnessTask } = await import('../actions.js');
+        const { createTask: _createHarnessTaskBase } = await import('../actions.js');
+        // Fix 2: 包装 createHarnessTask，对特定 task_type 校验必填 payload 字段
+        const HARNESS_REQUIRED_PAYLOAD = {
+          harness_ci_watch: ['pr_url'],
+        };
+        const createHarnessTask = (params) => {
+          const required = HARNESS_REQUIRED_PAYLOAD[params.task_type] || [];
+          for (const field of required) {
+            if (!params.payload?.[field]) {
+              throw new Error(`createHarnessTask: task_type="${params.task_type}" requires payload.${field}`);
+            }
+          }
+          return _createHarnessTaskBase(params);
+        };
+
+        // Fix 1: 对产生 verdict 的 harness 任务类型，将 verdict 持久化到 tasks.result
+        const VERDICT_HARNESS_TYPES = new Set([
+          'harness_contract_propose', 'sprint_contract_propose',
+          'harness_contract_review', 'sprint_contract_review',
+          'harness_evaluate', 'sprint_evaluate',
+        ]);
+        if (VERDICT_HARNESS_TYPES.has(harnessType)) {
+          const extractedVerdict = extractVerdictFromResult(result, null);
+          if (extractedVerdict) {
+            try {
+              const resultSummary = (result !== null && typeof result === 'object')
+                ? (result.summary || result.findings || null)
+                : (typeof result === 'string' ? result.slice(0, 1000) : null);
+              await pool.query(
+                `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || $1::jsonb WHERE id = $2`,
+                [JSON.stringify({ verdict: extractedVerdict, result_summary: resultSummary }), task_id]
+              );
+              console.log(`[execution-callback] harness: verdict=${extractedVerdict} written to tasks.result for ${task_id}`);
+            } catch (verdictWriteErr) {
+              console.warn(`[execution-callback] harness: verdict write to tasks.result failed (non-fatal): ${verdictWriteErr.message}`);
+            }
+          }
+        }
 
         // Feature 4: 检查 planner 是否已取消，避免已取消链路继续派生子任务
         const plannerTaskId = harnessPayload?.planner_task_id;
