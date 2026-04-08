@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import crypto from 'crypto';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { readFileSync } from 'fs';
 import { runTickSafe, getTickStatus } from '../tick.js';
@@ -1819,13 +1819,46 @@ ${resultStr.substring(0, 2000)}
         // v3.x 兼容: sprint_generate 仍直接创建 sprint_evaluate（旧行为保留）
         if (harnessType === 'harness_generate') {
           // 从 Generator 的 result 中提取 pr_url
+          // 层次 1: callback payload 直接携带
           let prUrl = pr_url || null;
+          // 层次 2: result 对象顶层或 result.result 对象（Generator 正确输出 JSON 时）
           if (!prUrl && result !== null && typeof result === 'object') {
             prUrl = result.pr_url || result?.result?.pr_url || null;
+            // 层次 3: result.result 是字符串时，尝试 JSON 解析（Generator 输出 JSON verdict 文本）
+            if (!prUrl && typeof result.result === 'string') {
+              try {
+                const parsed = JSON.parse(result.result.trim());
+                prUrl = parsed.pr_url || null;
+              } catch {}
+              // 层次 4: 从文本中正则提取完整 GitHub URL
+              if (!prUrl) {
+                const m = result.result.match(/https:\/\/github\.com\/[^\s"']+\/pull\/\d+/);
+                if (m) prUrl = m[0];
+              }
+              // 层次 4.5: 从文本中提取 PR # 并构造完整 URL（覆盖 "PR #2074" 格式）
+              if (!prUrl) {
+                const prNumMatch = result.result.match(/PR\s+#(\d+)/i) || result.result.match(/pull\/(\d+)/);
+                if (prNumMatch) {
+                  try {
+                    const repoUrl = execSync('git remote get-url origin', { encoding: 'utf-8', timeout: 5000 }).trim()
+                      .replace(/\.git$/, '').replace(/^git@github\.com:/, 'https://github.com/');
+                    prUrl = `${repoUrl}/pull/${prNumMatch[1]}`;
+                  } catch {}
+                }
+              }
+            }
           }
+          // 层次 5: result 本身是字符串时正则提取
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
             if (prMatch) prUrl = prMatch[0];
+          }
+          // 层次 6: 从 DB 任务的 pr_url 列读取（Generator 自己 PATCH 过的情况）
+          if (!prUrl) {
+            try {
+              const dbPrRow = await pool.query('SELECT pr_url FROM tasks WHERE id=$1', [task_id]);
+              prUrl = dbPrRow.rows[0]?.pr_url || null;
+            } catch {}
           }
           if (!prUrl) {
             throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_generate result (task_id=${task_id})`);
