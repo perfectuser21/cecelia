@@ -207,7 +207,15 @@ if [[ "$DEPLOY_MODE" == "launchd" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] launchctl kickstart -k gui/$(id -u)/${LAUNCHD_SERVICE}"
     else
-        launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_SERVICE}"
+        # 先 kill 游离 Brain 进程（launchd 外启动的进程 kickstart -k 无法 kill）
+        STALE_PID=$(lsof -ti:5221 2>/dev/null | head -1)
+        LAUNCHD_PID=$(launchctl list "${LAUNCHD_SERVICE}" 2>/dev/null | grep -E '^\s*[0-9]+' | awk '{print $1}' | head -1)
+        if [[ -n "$STALE_PID" && "$STALE_PID" != "$LAUNCHD_PID" ]]; then
+            echo "  发现游离 Brain 进程 PID=$STALE_PID（launchd 记录=$LAUNCHD_PID），先终止..."
+            kill "$STALE_PID" 2>/dev/null && sleep 2 || true
+        fi
+        launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_SERVICE}" || \
+            launchctl start "${LAUNCHD_SERVICE}" 2>/dev/null || true
     fi
 
 fi  # end launchd mode
