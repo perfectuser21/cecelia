@@ -591,8 +591,11 @@ describe('H: Haiku 独立模式', () => {
         makeRow('account2', 10, 120),
         makeRow('account3', 30, 120),
       ];
-      if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
-        return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
+      if (typeof sql === 'string' && sql.includes('account_usage_cache')) {
+        if (params?.[0]) {
+          return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
+        }
+        return Promise.resolve({ rows });
       }
       return Promise.resolve({ rows: [] });
     });
