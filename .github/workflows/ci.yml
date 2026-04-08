@@ -328,6 +328,23 @@ jobs:
       - name: Build
         run: cd apps/dashboard && npm run build
 
+  workspace-test:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install root deps
+        run: npm ci
+      - name: Test apps/api
+        run: cd apps/api && npm ci && npm test
+      - name: Test apps/dashboard
+        run: cd apps/dashboard && npm ci && npx vitest run
+
   # ─── E2E Smoke（每次 PR 必跑，不依赖 changes 过滤）────────────
   # 覆盖跨包盲区：无论改哪个包，都验证系统级关键路径没有断。
   # 包含：golden-path（3条核心链路） + agent-lifecycle（状态机完整性）
@@ -379,7 +396,7 @@ jobs:
 
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
-    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build, e2e-smoke]
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build, workspace-test, e2e-smoke]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -399,6 +416,7 @@ jobs:
           check "brain-unit"        "${{ needs.brain-unit.result }}"
           check "brain-integration" "${{ needs.brain-integration.result }}"
           check "workspace-build"   "${{ needs.workspace-build.result }}"
+          check "workspace-test"    "${{ needs.workspace-test.result }}"
           check "e2e-smoke"         "${{ needs.e2e-smoke.result }}"
 
           if [ "$FAILED" = "true" ]; then
