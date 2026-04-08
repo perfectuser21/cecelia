@@ -17,10 +17,7 @@ router.get('/', async (req, res) => {
       // 当前活跃 OKR（objectives）
       pool.query(`
         SELECT o.title, o.status,
-          COALESCE(
-            ROUND(AVG(kr.current_value::numeric / NULLIF(kr.target_value::numeric, 0) * 100), 0),
-            0
-          ) AS progress_pct
+          COALESCE(ROUND(AVG(COALESCE(kr.progress, 0))), 0) AS progress_pct
         FROM objectives o
         LEFT JOIN key_results kr ON kr.objective_id = o.id AND kr.status != 'archived'
         WHERE o.status != 'archived'
