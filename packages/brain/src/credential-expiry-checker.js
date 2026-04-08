@@ -245,10 +245,11 @@ export async function recoverAuthQuarantinedTasks(pool) {
 // ============================================================
 
 /**
- * 近1小时 auth 失败次数超过此阈值时触发 P1 告警
+ * 近4小时 auth 失败次数超过此阈值时触发 P1 告警
  * 任何单个账号超阈值即告警（不是总量）
+ * 阈值设为 3：account3 故障时实际失败率约 3/UTC-hour，原值 5 从未触发
  */
-const AUTH_FAIL_RATE_THRESHOLD = 5;
+const AUTH_FAIL_RATE_THRESHOLD = 3;
 
 /**
  * scanAuthLayerHealth — 认证层健康度实时探针
@@ -257,8 +258,8 @@ const AUTH_FAIL_RATE_THRESHOLD = 5;
  * 后者无法感知"token 虽未过期，但 executor 运行时认证失败率爆增"的场景。
  *
  * 逻辑：
- * 1. 查询 tasks 表，统计过去 1 小时内 failure_class = 'auth' 的任务，按 dispatched_account 分组
- * 2. 任意账号近1小时 auth 失败 ≥ AUTH_FAIL_RATE_THRESHOLD → 创建 P1 告警任务
+ * 1. 查询 tasks 表，统计过去 4 小时内 failure_class = 'auth' 的任务，按 dispatched_account 分组
+ * 2. 任意账号近4小时 auth 失败 ≥ AUTH_FAIL_RATE_THRESHOLD → 创建 P1 告警任务
  * 3. 6 小时内已有同账号告警任务（未处理）则跳过重复告警
  *
  * @param {import('pg').Pool} pool
@@ -273,7 +274,7 @@ export async function scanAuthLayerHealth(pool) {
         COUNT(*) AS fail_count
       FROM tasks
       WHERE payload->>'failure_class' = 'auth'
-        AND updated_at > NOW() - INTERVAL '1 hour'
+        AND updated_at > NOW() - INTERVAL '4 hours'
       GROUP BY payload->>'dispatched_account'
       HAVING COUNT(*) >= $1
     `, [AUTH_FAIL_RATE_THRESHOLD]);
@@ -309,15 +310,15 @@ export async function scanAuthLayerHealth(pool) {
       }
 
       await createTask({
-        title: `[P1][auth-rate-alert] ${account} 近1小时 auth 失败 ${failCount} 次，超过阈值 ${AUTH_FAIL_RATE_THRESHOLD}`,
-        description: `认证层健康度探针触发告警：\n\n账号 ${account} 在过去 1 小时内出现 ${failCount} 次 auth 失败（阈值 ${AUTH_FAIL_RATE_THRESHOLD}）。\n\n这通常表示：\n- OAuth token 已过期但熔断未及时触发\n- Executor 运行时凭据无效（codex provider key 问题）\n- 网络原因导致认证服务不可达\n\n建议：\n1. 检查 /api/brain/credentials/health 确认熔断状态\n2. 检查 ~/.claude-${account}/.credentials.json 中 expiresAt\n3. 必要时从 1Password 同步最新 token`,
+        title: `[P1][auth-rate-alert] ${account} 近4小时 auth 失败 ${failCount} 次，超过阈值 ${AUTH_FAIL_RATE_THRESHOLD}`,
+        description: `认证层健康度探针触发告警：\n\n账号 ${account} 在过去 4 小时内出现 ${failCount} 次 auth 失败（阈值 ${AUTH_FAIL_RATE_THRESHOLD}）。\n\n这通常表示：\n- OAuth token 已过期但熔断未及时触发\n- Executor 运行时凭据无效（codex provider key 问题）\n- 网络原因导致认证服务不可达\n\n建议：\n1. 检查 /api/brain/credentials/health 确认熔断状态\n2. 检查 ~/.claude-${account}/.credentials.json 中 expiresAt\n3. 必要时从 1Password 同步最新 token`,
         task_type: 'research',
         priority: 'P1',
         tags: ['auth-layer-alert', 'auto-generated', account],
         payload: {
           auth_rate_alert: true,
           account,
-          fail_count_1h: failCount,
+          fail_count_4h: failCount,
           threshold: AUTH_FAIL_RATE_THRESHOLD,
           alert_reason: 'auth_fail_rate_exceeded',
         },
@@ -325,7 +326,7 @@ export async function scanAuthLayerHealth(pool) {
 
       alerted++;
       alertedAccounts.push({ account, fail_count: failCount });
-      console.log(`[auth-layer-probe] ⚠️ ${account} 近1小时 auth 失败 ${failCount} 次，已创建 P1 告警`);
+      console.log(`[auth-layer-probe] ⚠️ ${account} 近4小时 auth 失败 ${failCount} 次，已创建 P1 告警`);
     } catch (err) {
       console.error(`[auth-layer-probe] 创建告警任务失败 (${account}):`, err.message);
     }
