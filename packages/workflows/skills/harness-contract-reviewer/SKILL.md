@@ -74,6 +74,16 @@ git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" > "${SPRINT_
 git add "${SPRINT_DIR}/sprint-contract.md"
 git commit -m "feat(contract): APPROVED — sprint-contract.md finalized"
 git push origin "${REVIEW_BRANCH}"
+
+# 同时把合同写到 planner_branch 上，供 harness_generate/harness_evaluate 直接读
+git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
+CONTRACT_BRANCH="cp-harness-contract-${TASK_ID_SHORT}"
+git checkout -b "${CONTRACT_BRANCH}" "origin/${PLANNER_BRANCH}" 2>/dev/null || git checkout "${CONTRACT_BRANCH}"
+mkdir -p "${SPRINT_DIR}"
+git show "origin/${REVIEW_BRANCH}:${SPRINT_DIR}/sprint-contract.md" > "${SPRINT_DIR}/sprint-contract.md"
+git add "${SPRINT_DIR}/sprint-contract.md"
+git commit -m "feat(contract): APPROVED — sprint-contract.md 写入 sprint_dir 供后续 Agent 读取" 2>/dev/null || true
+git push origin "${CONTRACT_BRANCH}"
 ```
 
 **REVISION**：有必须修改项（模糊/遗漏/不可测）。
@@ -106,7 +116,7 @@ git push origin "${REVIEW_BRANCH}"
 
 APPROVED：
 ```
-{"verdict": "APPROVED", "contract_path": "sprints/.../sprint-contract.md"}
+{"verdict": "APPROVED", "contract_path": "${SPRINT_DIR}/sprint-contract.md", "review_branch": "${REVIEW_BRANCH}", "contract_branch": "${CONTRACT_BRANCH}"}
 ```
 
 REVISION：
