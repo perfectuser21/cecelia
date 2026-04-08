@@ -5,7 +5,7 @@
  * 1. 查询所有 pr_url IS NOT NULL AND pr_status IN ('open', 'ci_pending') 的任务
  * 2. 调用 gh CLI 检查每个 PR 的 CI 状态和 mergeable 属性
  * 3. 根据结果更新 pr_status：
- *    - CI 全通过 + mergeable → ci_passed，执行 gh pr merge --squash --auto
+ *    - CI 全通过 + mergeable → ci_passed，执行 gh pr merge --squash
  *    - CI 失败 → ci_failed，提取失败类型，重派 /dev（最多 2 次）或 quarantine
  *    - 已合并 → merged，更新 pr_merged_at
  *    - 已关闭 → closed
@@ -97,7 +97,7 @@ export function classifyFailedChecks(failedChecks) {
  */
 export function executeMerge(prUrl) {
   try {
-    execSync(`gh pr merge "${prUrl}" --squash --auto`, {
+    execSync(`gh pr merge "${prUrl}" --squash`, {
       encoding: 'utf-8',
       timeout: 30000,
       stdio: ['pipe', 'pipe', 'pipe'],
