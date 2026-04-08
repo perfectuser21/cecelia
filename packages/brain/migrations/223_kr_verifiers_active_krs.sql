@@ -129,4 +129,7 @@ FROM (VALUES
 ) AS t(kr_id, verifier_type, query, metric_field, threshold, check_interval_minutes, enabled)
 WHERE NOT EXISTS (
   SELECT 1 FROM kr_verifiers WHERE kr_verifiers.kr_id = t.kr_id
+)
+AND EXISTS (
+  SELECT 1 FROM key_results WHERE id = t.kr_id
 );
