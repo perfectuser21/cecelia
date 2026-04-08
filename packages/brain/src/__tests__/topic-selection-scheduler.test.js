@@ -2,9 +2,8 @@
  * topic-selection-scheduler.test.js
  *
  * 测试每日内容选题调度器的核心行为：
- *   1. 触发时间窗口内创建 content-pipeline tasks
- *   2. 当天已有任务时跳过（去重）
- *   3. 每日最多创建 10 条任务（限流）
+ *   注：DISABLED = true 后，triggerDailyTopicSelection 始终提前返回 { disabled: true }
+ *   原"启用路径"测试已更新为验证 disabled 模式行为。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -17,7 +16,6 @@ vi.mock('../topic-selector.js', () => ({
 }));
 
 // Mock topic-suggestion-manager.js 阻断模块级 import pool from './db.js'
-// saveSuggestions 返回 0 表示无选题存入推荐队列，所有选题走直接入队流程
 vi.mock('../topic-suggestion-manager.js', () => ({
   saveSuggestions: vi.fn().mockResolvedValue(0),
   autoPromoteSuggestions: vi.fn().mockResolvedValue(0),
@@ -71,16 +69,13 @@ describe('triggerDailyTopicSelection', () => {
     pool = {
       query: vi.fn(async (sql) => {
         const s = sql.trim();
-        // hasTodayTopics 查询
         if (s.includes("payload->>'trigger_source' = 'daily_topic_selection'")) {
-          return { rows: [] }; // 默认：今天没有任务
+          return { rows: [] };
         }
-        // INSERT content-pipeline
         if (s.startsWith('INSERT INTO tasks')) {
           insertedTasks.push(sql);
           return { rows: [] };
         }
-        // INSERT topic_selection_log
         if (s.startsWith('INSERT INTO topic_selection_log')) {
           return { rows: [] };
         }
@@ -89,46 +84,49 @@ describe('triggerDailyTopicSelection', () => {
     };
   });
 
-  // ─── 触发窗口外 ──────────────────────────────────────────────────────────
+  // ─── DISABLED 模式（DISABLED = true）─────────────────────────────────────
 
-  it('触发窗口外不触发（skipped_window: true）', async () => {
+  it('DISABLED 模式：窗口外调用返回 disabled: true，triggered 为 0', async () => {
     const result = await triggerDailyTopicSelection(pool, makeOutsideWindowTime());
-    expect(result.skipped_window).toBe(true);
     expect(result.triggered).toBe(0);
+    expect(result.disabled).toBe(true);
     expect(generateTopics).not.toHaveBeenCalled();
   });
 
-  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 12:00 整点不触发（超出补偿窗口）', async () => {
+  it('DISABLED 模式：窗口内调用也返回 disabled: true，不创建任务', async () => {
+    generateTopics.mockResolvedValue(makeTopics(3));
+    const result = await triggerDailyTopicSelection(pool, makeWindowTime());
+    expect(result.triggered).toBe(0);
+    expect(result.disabled).toBe(true);
+    expect(generateTopics).not.toHaveBeenCalled();
+    expect(insertedTasks).toHaveLength(0);
+  });
+
+  it('DISABLED 模式：补偿窗口内调用也返回 disabled: true', async () => {
+    generateTopics.mockResolvedValue(makeTopics(1));
+    const result = await triggerDailyTopicSelection(pool, makeCatchupWindowTime());
+    expect(result.triggered).toBe(0);
+    expect(result.disabled).toBe(true);
+    expect(generateTopics).not.toHaveBeenCalled();
+  });
+
+  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 12:00 整点调用返回 disabled: true', async () => {
     const atCutoff = new Date('2026-03-19T12:00:00Z');
     const result = await triggerDailyTopicSelection(pool, atCutoff);
-    expect(result.skipped_window).toBe(true);
     expect(result.triggered).toBe(0);
+    expect(result.disabled).toBe(true);
   });
 
-  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 11:59 在补偿窗口内可触发', async () => {
-    const topics = makeTopics(1);
-    generateTopics.mockResolvedValue(topics);
+  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 11:59 调用返回 disabled: true', async () => {
+    generateTopics.mockResolvedValue(makeTopics(1));
     const justBeforeCutoff = new Date('2026-03-19T11:59:00Z');
     const result = await triggerDailyTopicSelection(pool, justBeforeCutoff);
-    expect(result.skipped_window).toBe(false);
-    expect(result.triggered).toBe(1);
+    expect(result.triggered).toBe(0);
+    expect(result.disabled).toBe(true);
+    expect(generateTopics).not.toHaveBeenCalled();
   });
 
-  it('补偿窗口内（UTC 10:00）且无今日任务时触发', async () => {
-    const topics = makeTopics(3);
-    generateTopics.mockResolvedValue(topics);
-
-    const result = await triggerDailyTopicSelection(pool, makeCatchupWindowTime());
-
-    expect(result.skipped_window).toBe(false);
-    expect(result.triggered).toBe(3);
-    expect(generateTopics).toHaveBeenCalledTimes(1);
-  });
-
-  // ─── 去重逻辑 ─────────────────────────────────────────────────────────────
-
-  it('当天已有 daily_topic_selection 任务时跳过（skipped: true）', async () => {
-    // mock hasTodayTopics → 已有任务
+  it('DISABLED 模式：当天已有任务时调用同样返回 disabled: true（不进入去重逻辑）', async () => {
     pool.query = vi.fn(async (sql) => {
       if (sql.includes("payload->>'trigger_source' = 'daily_topic_selection'")) {
         return { rows: [{ id: 'existing-task' }] };
@@ -137,81 +135,40 @@ describe('triggerDailyTopicSelection', () => {
     });
 
     const result = await triggerDailyTopicSelection(pool, makeWindowTime());
-    expect(result.skipped).toBe(true);
     expect(result.triggered).toBe(0);
+    expect(result.disabled).toBe(true);
+    // DISABLED 提前返回，pool.query 不应被调用
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('DISABLED 模式：generateTopics 即使 mock 有返回值，也不调用也不创建任务', async () => {
+    generateTopics.mockResolvedValue(makeTopics(15));
+
+    const result = await triggerDailyTopicSelection(pool, makeWindowTime());
+
+    expect(result.triggered).toBe(0);
+    expect(result.disabled).toBe(true);
     expect(generateTopics).not.toHaveBeenCalled();
+    expect(insertedTasks).toHaveLength(0);
   });
 
-  // ─── 正常触发：创建 content-pipeline tasks ────────────────────────────────
-
-  it('触发时间窗口内且无重复时，创建与选题数量相同的 content-pipeline tasks', async () => {
-    const topics = makeTopics(5);
-    generateTopics.mockResolvedValue(topics);
-
-    const result = await triggerDailyTopicSelection(pool, makeWindowTime());
-
-    expect(result.skipped).toBe(false);
-    expect(result.skipped_window).toBe(false);
-    expect(result.triggered).toBe(5);
-    // 每个选题: 1x INSERT tasks + 1x INSERT topic_selection_log = 5+5 = 10 calls + 1x hasTodayTopics
-    const insertTaskCalls = insertedTasks.filter(s => s.includes("'content-pipeline'"));
-    expect(insertTaskCalls).toHaveLength(5);
-  });
-
-  it('创建的 tasks 包含 pipeline_keyword 和 trigger_source: daily_topic_selection', async () => {
-    const topics = makeTopics(1);
-    generateTopics.mockResolvedValue(topics);
-
-    const insertedPayloads = [];
-    pool.query = vi.fn(async (sql, params) => {
-      if (sql.trim().startsWith('INSERT INTO tasks')) {
-        insertedPayloads.push(params);
-      }
-      if (sql.includes("payload->>'trigger_source' = 'daily_topic_selection'")) {
-        return { rows: [] };
-      }
-      return { rows: [] };
-    });
-
-    await triggerDailyTopicSelection(pool, makeWindowTime());
-
-    expect(insertedPayloads).toHaveLength(1);
-    const payload = JSON.parse(insertedPayloads[0][2]); // 第3个参数是 payload JSON
-    expect(payload.pipeline_keyword).toBe('选题关键词1');
-    expect(payload.trigger_source).toBe('daily_topic_selection');
-    expect(payload.content_type).toBe('solo-company-case');
-    expect(payload.title_candidates).toHaveLength(3);
-  });
-
-  // ─── 限流：最多创建 10 条 ──────────────────────────────────────────────────
-
-  it('generateTopics 返回超过 10 个时，最多只创建 10 条 content-pipeline tasks', async () => {
-    const topics = makeTopics(15); // 超过限额
-    generateTopics.mockResolvedValue(topics);
-
-    const result = await triggerDailyTopicSelection(pool, makeWindowTime());
-
-    expect(result.triggered).toBe(10); // 限流生效
-    const insertTaskCalls = insertedTasks.filter(s => s.includes("'content-pipeline'"));
-    expect(insertTaskCalls).toHaveLength(10);
-  });
-
-  it('generateTopics 返回空数组时，triggered 为 0', async () => {
+  it('DISABLED 模式：generateTopics 即使 mock 为空数组，triggered 仍为 0', async () => {
     generateTopics.mockResolvedValue([]);
 
     const result = await triggerDailyTopicSelection(pool, makeWindowTime());
 
     expect(result.triggered).toBe(0);
-    expect(insertedTasks).toHaveLength(0);
+    expect(result.disabled).toBe(true);
   });
 
-  it('generateTopics 抛出错误时，返回 error 字段且 triggered 为 0', async () => {
+  it('DISABLED 模式：generateTopics 即使 mock 抛出错误，也不执行（不返回 error 字段）', async () => {
     generateTopics.mockRejectedValue(new Error('Claude API 不可用'));
 
     const result = await triggerDailyTopicSelection(pool, makeWindowTime());
 
     expect(result.triggered).toBe(0);
-    expect(result.error).toContain('Claude API 不可用');
+    expect(result.disabled).toBe(true);
+    expect(result.error).toBeUndefined();
   });
 });
 
