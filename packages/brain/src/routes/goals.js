@@ -848,4 +848,19 @@ router.post('/okr/verifiers/run', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/okr/verifiers/health — KR verifier 可信度校验报告
+ * 返回所有 active KR verifier 的健康状态（healthy/warn/critical）
+ * 用途：运维巡检、每日可信度审计
+ */
+router.get('/okr/verifiers/health', async (req, res) => {
+  try {
+    const { getKrVerifierHealth } = await import('../kr-verifier.js');
+    const result = await getKrVerifierHealth();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

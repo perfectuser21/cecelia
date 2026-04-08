@@ -156,6 +156,7 @@ let _lastReportTime = 0; // track last 48h system report generation time
 let _lastZombieSweepTime = 0; // track last zombie sweep time
 let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
 let _lastPipelinePatrolTime = 0; // track last pipeline patrol time
+let _lastKrHealthDailyTime = 0; // track last daily KR health check time
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
@@ -1797,6 +1798,29 @@ async function executeTick() {
       }
     } catch (krErr) {
       console.error('[tick] KR verifier/progress sync failed (non-fatal):', krErr.message);
+    }
+  }
+
+  // [感知] KR 可信度日巡检：每 24h 一次，记录 warn/critical 状态供运维审计
+  const krHealthElapsed = Date.now() - _lastKrHealthDailyTime;
+  if (krHealthElapsed >= CLEANUP_INTERVAL_MS * 24) {
+    _lastKrHealthDailyTime = Date.now();
+    try {
+      const { getKrVerifierHealth } = await import('./kr-verifier.js');
+      const healthResult = await getKrVerifierHealth();
+      const { summary, verifiers: vList } = healthResult;
+      console.log(`[TICK] KR 可信度日巡检: healthy=${summary.healthy} warn=${summary.warn} critical=${summary.critical}`);
+      const problematics = vList.filter(v => v.health !== 'healthy');
+      for (const v of problematics) {
+        console.warn(`[TICK] KR 可信度问题 [${v.health.toUpperCase()}] "${v.kr_title}": issues=${v.issues.join(',')}`);
+      }
+      actionsTaken.push({
+        action: 'kr_health_check',
+        summary,
+        issues_count: problematics.length,
+      });
+    } catch (krHealthErr) {
+      console.error('[tick] KR health check failed (non-fatal):', krHealthErr.message);
     }
   }
 
