@@ -20,6 +20,9 @@ import { createTask } from './actions.js';
 
 const MAX_CI_WATCH_POLLS = 120;   // 最多轮询次数（每 5s tick → 最多 10 分钟）
 const MAX_DEPLOY_WATCH_POLLS = 60; // 最多轮询次数（最多 5 分钟）
+const HARNESS_WATCH_INTERVAL_MS = 30000; // 30s 节流：避免每次 tick（5s）都轮询
+
+let _lastHarnessWatchMs = 0;
 
 /**
  * 处理所有待处理的 harness_ci_watch 任务
@@ -28,6 +31,13 @@ const MAX_DEPLOY_WATCH_POLLS = 60; // 最多轮询次数（最多 5 分钟）
  */
 export async function processHarnessCiWatchers(pool) {
   const result = { processed: 0, ci_passed: 0, ci_failed: 0, ci_pending: 0, errors: 0 };
+
+  // 30s 节流：避免每次 Brain tick（5s）都轮询 gh CLI
+  const now = Date.now();
+  if (now - _lastHarnessWatchMs < HARNESS_WATCH_INTERVAL_MS) {
+    return result;
+  }
+  _lastHarnessWatchMs = now;
 
   let rows;
   try {
@@ -64,7 +74,7 @@ export async function processHarnessCiWatchers(pool) {
       continue;
     }
 
-    // 超过最大轮询次数 → 超时失败
+    // 超过最大轮询次数 → 超时：标记 failed 并创建 harness_evaluate(ci_timeout:true)
     if (pollCount >= MAX_CI_WATCH_POLLS) {
       console.error(`[harness-watcher] harness_ci_watch ${task.id} timed out after ${pollCount} polls`);
       await pool.query(
@@ -75,7 +85,27 @@ export async function processHarnessCiWatchers(pool) {
          WHERE id = $1`,
         [task.id, `CI watch timed out after ${pollCount} polls (~${Math.round(pollCount * 5 / 60)} min)`]
       );
-      result.errors++;
+      const evalRound = payload.eval_round || 1;
+      await createTask({
+        title: `[Evaluator] CI-Timeout R${evalRound}`,
+        description: `CI watch 超时（${pollCount} 次轮询），Evaluator 基于静态分析做降级验证。\nharness_ci_watch task_id: ${task.id}`,
+        priority: 'P1',
+        project_id: task.project_id,
+        goal_id: task.goal_id,
+        task_type: 'harness_evaluate',
+        trigger_source: 'harness_watcher',
+        payload: {
+          sprint_dir: payload.sprint_dir,
+          pr_url: prUrl,
+          dev_task_id: payload.dev_task_id,
+          planner_task_id: payload.planner_task_id,
+          eval_round: evalRound,
+          ci_timeout: true,
+          harness_mode: true,
+        },
+      });
+      console.log(`[harness-watcher] CI timeout for ${task.id} → harness_evaluate R${evalRound} created (ci_timeout=true)`);
+      result.ci_failed++;
       continue;
     }
 
@@ -213,10 +243,10 @@ export async function processHarnessDeployWatchers(pool) {
     const pollCount = payload.poll_count || 0;
 
     if (pollCount >= MAX_DEPLOY_WATCH_POLLS) {
-      console.warn(`[harness-watcher] harness_deploy_watch ${task.id} timed out, creating report anyway`);
+      console.warn(`[harness-watcher] harness_deploy_watch ${task.id} timed out, creating degraded report`);
       await pool.query(`UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`, [task.id]);
-      await _createHarnessReport(task, payload, 'deploy_timeout');
-      result.deploy_passed++;
+      await _createHarnessReport(task, payload, 'deploy_timeout', { coverage_degraded: true });
+      result.deploy_pending++;
       continue;
     }
 
@@ -295,7 +325,7 @@ function _checkDeployStatus() {
   }
 }
 
-async function _createHarnessReport(task, payload, deployNote) {
+async function _createHarnessReport(task, payload, deployNote, extraPayload = {}) {
   await createTask({
     title: `[Report] Harness 完成报告`,
     description: `Harness v4.0 完成。生成报告：PRD 目标、GAN 对抗轮次、修复清单、CI/Deploy 状态、成本统计。\ndeploy_note: ${deployNote}`,
@@ -310,6 +340,7 @@ async function _createHarnessReport(task, payload, deployNote) {
       eval_round: payload.eval_round || 1,
       deploy_note: deployNote,
       harness_mode: true,
+      ...extraPayload,
     },
   });
 }

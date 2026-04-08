@@ -1681,26 +1681,31 @@ ${resultStr.substring(0, 2000)}
             });
             console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} created`);
           } else {
-            // REVISION：继续 GAN 对抗
+            // REVISION：继续 GAN 对抗（防死循环）
+            const MAX_GAN_ROUNDS = 3;
             const nextRound = (harnessPayload.propose_round || 1) + 1;
-            const proposeType = harnessType === 'harness_contract_review' ? 'harness_contract_propose' : 'sprint_contract_propose';
-            await createHarnessTask({
-              title: `[Contract] P${nextRound}`,
-              description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: proposeType,
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                planner_task_id: harnessPayload.planner_task_id,
-                propose_round: nextRound,
-                review_feedback_task_id: task_id,
-                harness_mode: true
-              }
-            });
-            console.log(`[execution-callback] harness: ${harnessType} REVISION → ${proposeType} R${nextRound}`);
+            if (nextRound > MAX_GAN_ROUNDS) {
+              console.error(`[execution-callback] harness: GAN reached MAX_GAN_ROUNDS(${MAX_GAN_ROUNDS}), stopping loop at round ${nextRound - 1}`);
+            } else {
+              const proposeType = harnessType === 'harness_contract_review' ? 'harness_contract_propose' : 'sprint_contract_propose';
+              await createHarnessTask({
+                title: `[Contract] P${nextRound}`,
+                description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: proposeType,
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  propose_round: nextRound,
+                  review_feedback_task_id: task_id,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: ${harnessType} REVISION → ${proposeType} R${nextRound}`);
+            }
           }
         }
 
@@ -1861,6 +1866,7 @@ ${resultStr.substring(0, 2000)}
                 trigger_source: 'execution_callback_harness',
                 payload: {
                   sprint_dir: harnessPayload.sprint_dir,
+                  pr_url: harnessPayload.pr_url,
                   dev_task_id: harnessPayload.dev_task_id,
                   planner_task_id: harnessPayload.planner_task_id,
                   eval_round: (harnessPayload.eval_round || 0) + 1,
