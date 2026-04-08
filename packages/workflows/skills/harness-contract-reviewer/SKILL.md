@@ -33,17 +33,11 @@ changelog:
 ### Step 1: 读取草案
 
 ```bash
-# 从 task payload 读取关键字段
-TASK_RESPONSE=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID})
-SPRINT_DIR=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.sprint_dir||d.payload?.sprint_dir||'')" <<< "$TASK_RESPONSE")
-PLANNER_BRANCH=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.planner_branch||d.payload?.planner_branch||'')" <<< "$TASK_RESPONSE")
-PROPOSE_TASK_ID=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.propose_task_id||d.payload?.propose_task_id||'')" <<< "$TASK_RESPONSE")
-
-# 从 propose 任务的 result 中获取 propose_branch
-PROPOSE_BRANCH=$(node -e "
-  const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  process.stdout.write(d.task?.result?.propose_branch||d.result?.propose_branch||'');
-" <<< "$(curl -s localhost:5221/api/brain/tasks/${PROPOSE_TASK_ID})")
+# TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_BRANCH 由 cecelia-run 通过 prompt 注入，直接使用：
+# TASK_ID={TASK_ID}
+# SPRINT_DIR={sprint_dir}
+# PLANNER_BRANCH={planner_branch}
+# PROPOSE_BRANCH={propose_branch}（来自 propose 任务的 result.propose_branch）
 
 # fetch 所有相关分支
 git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
@@ -80,10 +74,6 @@ git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" > "${SPRINT_
 git add "${SPRINT_DIR}/sprint-contract.md"
 git commit -m "feat(contract): APPROVED — sprint-contract.md finalized"
 git push origin "${REVIEW_BRANCH}"
-
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
-  -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"APPROVED\",\"contract_path\":\"${SPRINT_DIR}/sprint-contract.md\",\"review_branch\":\"${REVIEW_BRANCH}\"}}"
 ```
 
 **REVISION**：有必须修改项（模糊/遗漏/不可测）。
@@ -110,10 +100,6 @@ FEEDBACK
 git add "${SPRINT_DIR}/contract-review-feedback.md"
 git commit -m "feat(contract): REVISION — feedback round N"
 git push origin "${REVIEW_BRANCH}"
-
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
-  -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"REVISION\",\"feedback_path\":\"${SPRINT_DIR}/contract-review-feedback.md\",\"review_branch\":\"${REVIEW_BRANCH}\",\"issues_count\":N}}"
 ```
 
 **最后一条消息**：

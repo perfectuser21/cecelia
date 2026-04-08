@@ -20,6 +20,8 @@ import { createTask } from './actions.js';
 
 const MAX_CI_WATCH_POLLS = 120;   // 最多轮询次数（每 5s tick → 最多 10 分钟）
 const MAX_DEPLOY_WATCH_POLLS = 60; // 最多轮询次数（最多 5 分钟）
+const POLL_INTERVAL_MS = 30000;   // GitHub API 节流窗口（30s）
+const lastPollTime = new Map();    // 模块级：记录每个 ci_watch 任务上次 API 调用时间
 
 /**
  * 处理所有待处理的 harness_ci_watch 任务
@@ -64,20 +66,47 @@ export async function processHarnessCiWatchers(pool) {
       continue;
     }
 
-    // 超过最大轮询次数 → 超时失败
+    // 超过最大轮询次数 → 超时，链路继续（不中断）
     if (pollCount >= MAX_CI_WATCH_POLLS) {
-      console.error(`[harness-watcher] harness_ci_watch ${task.id} timed out after ${pollCount} polls`);
+      console.log(`[harness-watcher] harness_ci_watch ${task.id} timed out after ${pollCount} polls, creating harness_evaluate with ci_timeout=true`);
       await pool.query(
         `UPDATE tasks
-         SET status = 'failed',
-             error_message = $2,
+         SET status = 'completed',
+             completed_at = NOW(),
              payload = COALESCE(payload, '{}'::jsonb) || '{"ci_timeout": true}'::jsonb
          WHERE id = $1`,
-        [task.id, `CI watch timed out after ${pollCount} polls (~${Math.round(pollCount * 5 / 60)} min)`]
+        [task.id]
       );
-      result.errors++;
+      const evalRound = payload.eval_round || 1;
+      await createTask({
+        title: `[Evaluator] R${evalRound} (CI Timeout)`,
+        description: `CI watch 超时（${pollCount} polls），链路继续，Evaluator 自行验证 PR diff。\nharness_ci_watch task_id: ${task.id}`,
+        priority: 'P1',
+        project_id: task.project_id,
+        goal_id: task.goal_id,
+        task_type: 'harness_evaluate',
+        trigger_source: 'harness_watcher',
+        payload: {
+          ci_timeout: true,
+          sprint_dir: payload.sprint_dir,
+          planner_task_id: payload.planner_task_id,
+          planner_branch: payload.planner_branch,
+          pr_url: prUrl,
+          dev_task_id: payload.dev_task_id,
+          eval_round: evalRound,
+          harness_mode: true,
+        },
+      });
+      result.ci_passed++;
       continue;
     }
+
+    // 节流：同一任务 30s 内不重复调用 GitHub API
+    if (Date.now() - (lastPollTime.get(task.id) || 0) < POLL_INTERVAL_MS) {
+      result.ci_pending++;
+      continue;
+    }
+    lastPollTime.set(task.id, Date.now());
 
     try {
       const prInfo = checkPrStatus(prUrl);

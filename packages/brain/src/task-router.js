@@ -321,6 +321,16 @@ const TASK_REQUIREMENTS = {
   'content-export':     ['general'],
   'platform_scraper':   ['has_browser'],  // 需要 CDP 浏览器接入各平台
   'content_publish':    ['has_browser'],  // 发布 skill（douyin/kuaishou 等）需要 CDP 浏览器控制
+  // Harness v4.0 — 需要 git 访问（US M4 独有）
+  'harness_planner':          ['has_git'],
+  'harness_contract_propose': ['has_git'],
+  'harness_contract_review':  ['has_git'],
+  'harness_generate':         ['has_git'],
+  'harness_ci_watch':         ['has_git'],
+  'harness_evaluate':         ['has_git'],
+  'harness_fix':              ['has_git'],
+  'harness_deploy_watch':     ['has_git'],
+  'harness_report':           ['has_git'],
 };
 
 /**
