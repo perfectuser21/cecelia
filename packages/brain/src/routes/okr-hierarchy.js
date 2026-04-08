@@ -380,4 +380,21 @@ router.get('/current', async (req, res) => {
   }
 });
 
+// ─── KR Verifier 手动触发 ─────────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/okr/sync-verifiers
+ * 立即运行所有启用的 KR verifier，更新 key_results.progress
+ * 正常由 tick.js 每小时自动触发，此端点用于手动强制同步
+ */
+router.post('/sync-verifiers', async (req, res) => {
+  try {
+    const { runAllVerifiers } = await import('../kr-verifier.js');
+    const result = await runAllVerifiers();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
