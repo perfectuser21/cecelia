@@ -1246,7 +1246,11 @@ export default function LiveMonitorPage() {
     if (r[4].status === 'fulfilled' && Array.isArray(r[4].value)) setProjects(r[4].value);
     if (r[9].status === 'fulfilled') {
       const goals = Array.isArray(r[9].value) ? r[9].value : [];
-      setAllGoals(goals.filter((g: any) => ['area_okr', 'global_okr', 'kr'].includes(g.type)));
+      setAllGoals(
+        goals
+          .filter((g: any) => ['area_okr', 'global_okr', 'kr', 'area_kr'].includes(g.type))
+          .map((g: any) => g.type === 'area_kr' ? { ...g, type: 'kr' } : g)
+      );
     }
     if (r[10].status === 'fulfilled' && !r[10].value?.error) setHkVps(r[10].value);
     if (r[5].status === 'fulfilled') {
