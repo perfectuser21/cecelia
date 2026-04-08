@@ -69,6 +69,7 @@ export default function BrainModelsPage() {
   const [savingOrgan, setSavingOrgan] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
@@ -94,8 +95,11 @@ export default function BrainModelsPage() {
         const d = await modelsRes.json();
         if (d.success) setAvailableModels(d.models);
       }
+      setFetchError(null);
       setLastRefresh(new Date());
-    } catch { /* 静默 */ }
+    } catch (e: unknown) {
+      setFetchError(e instanceof Error ? e.message : '数据加载失败，请刷新重试');
+    }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -229,6 +233,20 @@ export default function BrainModelsPage() {
           transition: 'opacity 0.3s',
         }}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* 加载错误提示 */}
+      {fetchError && (
+        <div style={{
+          background: '#2d1515', border: '1px solid #da3633', borderRadius: 8,
+          color: '#f85149', padding: '10px 16px', marginBottom: 16, fontSize: 13,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <span>⚠ {fetchError}</span>
+          <button style={{ ...S.editBtn, color: '#f85149', borderColor: '#da363344' }} onClick={fetchData}>
+            重试
+          </button>
         </div>
       )}
 

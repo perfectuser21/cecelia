@@ -85,9 +85,10 @@ export async function updateConfig(pool, taskType, updates) {
   if (!location && !executor && !skill) return null;
 
   // UPSERT：不存在则插入，已存在则只更新提供的字段
+  // INSERT 时用 COALESCE 保证 NOT NULL 字段有默认值，避免只传 location 或只传 executor 时报错
   const { rows } = await pool.query(
     `INSERT INTO task_type_configs (task_type, location, executor, skill, is_dynamic, updated_at)
-     VALUES ($1, $2, $3, $4, true, NOW())
+     VALUES ($1, COALESCE($2, 'xian'), COALESCE($3, 'codex_bridge'), $4, true, NOW())
      ON CONFLICT (task_type) DO UPDATE SET
        location   = COALESCE($2, task_type_configs.location),
        executor   = COALESCE($3, task_type_configs.executor),

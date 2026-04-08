@@ -104,7 +104,7 @@ export default function CollectionDashboardPage() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<CollectionStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [triggering, setTriggering] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState('');
@@ -114,12 +114,12 @@ export default function CollectionDashboardPage() {
       const res = await fetch('/api/brain/analytics/collection-stats?days=7');
       if (res.ok) {
         setStats(await res.json());
-        setError(null);
+        setFetchError(null);
       } else {
-        setError(`加载失败 (HTTP ${res.status})`);
+        setFetchError(`服务器错误 ${res.status}`);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '网络错误，请检查服务状态');
+    } catch (e: unknown) {
+      setFetchError(e instanceof Error ? e.message : '数据加载失败，请刷新重试');
     } finally {
       setLoading(false);
     }
@@ -257,13 +257,17 @@ export default function CollectionDashboardPage() {
     );
   }
 
-  if (error && !stats) {
+  if (fetchError && !stats) {
     return (
       <div style={s.page}>
-        <div style={{ textAlign: 'center', padding: '60px', color: '#f85149' }}>
-          ⚠️ {error}
-          <br />
-          <button style={{ marginTop: '16px', padding: '8px 16px', cursor: 'pointer', background: '#21262d', color: '#e6edf3', border: '1px solid #30363d', borderRadius: '6px' }} onClick={fetchStats}>重试</button>
+        <div style={{
+          background: '#2d1515', border: '1px solid #da3633', borderRadius: 8,
+          color: '#f85149', padding: '20px 24px', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 14, marginBottom: 8 }}>⚠ 加载失败：{fetchError}</div>
+          <button style={{ ...s.btn(false), display: 'inline-block' }} onClick={fetchStats}>
+            重试
+          </button>
         </div>
       </div>
     );
