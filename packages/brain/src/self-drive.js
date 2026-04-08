@@ -185,10 +185,14 @@ export async function runSelfDrive() {
         continue;
       }
 
-      // Check queued/in_progress tasks for similar titles
+      // Check queued/in_progress/recently-quarantined tasks for similar titles
+      // 覆盖近24h quarantined：防止 account3 auth失败时诊断任务被反复创建放大
       const similar = await pool.query(
         `SELECT id FROM tasks
-         WHERE status IN ('queued', 'in_progress')
+         WHERE (
+           status IN ('queued', 'in_progress')
+           OR (status = 'quarantined' AND updated_at > NOW() - INTERVAL '24 hours')
+         )
            AND LOWER(title) LIKE $1
          LIMIT 1`,
         [`%${dedupKey.slice(0, 30)}%`]
@@ -428,7 +432,10 @@ async function getKRProgress() {
 }
 
 /**
- * 获取最近 24h 任务完成率统计
+ * 获取最近 24h 任务完成率统计（排除 pipeline_rescue 噪音）
+ *
+ * pipeline_rescue storm 时会产生大量 quarantined 任务，将其纳入成功率计算
+ * 会严重掩盖业务任务的真实健康状态。此处只统计业务任务。
  */
 async function getTaskStats24h() {
   try {
@@ -437,7 +444,8 @@ async function getTaskStats24h() {
         count(*) filter (where status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours') as completed,
         count(*) filter (where status IN ('failed', 'quarantined') AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as failed,
         count(*) filter (where status IN ('completed', 'failed', 'quarantined') AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as total
-       FROM tasks`
+       FROM tasks
+       WHERE task_type != 'pipeline_rescue'`
     );
     const row = result.rows[0] || { completed: 0, failed: 0, total: 0 };
     return {
