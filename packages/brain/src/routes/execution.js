@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import crypto from 'crypto';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { readFileSync } from 'fs';
 import { runTickSafe, getTickStatus } from '../tick.js';
@@ -1584,29 +1584,37 @@ ${resultStr.substring(0, 2000)}
 
       // 辅助：从任意格式 result（对象/字符串/嵌套）中提取 verdict 字段
       function extractVerdictFromResult(res, validVerdicts) {
+        const _check = (v) => {
+          if (!v) return null;
+          const upper = v.toUpperCase();
+          return (!validVerdicts || validVerdicts.includes(upper)) ? upper : null;
+        };
         if (res === null || res === undefined) return null;
         if (typeof res === 'object') {
           // 直接字段
           const dv = res.verdict || (typeof res.result === 'object' ? res.result?.verdict : null);
-          if (dv) return dv.toUpperCase();
+          const dvChecked = _check(dv);
+          if (dvChecked) return dvChecked;
           // claude --output-format json 输出：{type, result: string, ...}
           // res.result 是字符串，需与 string 分支一致搜索
           if (typeof res.result === 'string') {
             try {
               const parsed = JSON.parse(res.result);
-              if (parsed?.verdict) return parsed.verdict.toUpperCase();
+              const pv = _check(parsed?.verdict);
+              if (pv) return pv;
             } catch { /* not JSON */ }
             const matches = [...res.result.matchAll(/"verdict"\s*:\s*"([^"]+)"/gi)];
-            if (matches.length > 0) return matches[matches.length - 1][1].toUpperCase();
+            if (matches.length > 0) return _check(matches[matches.length - 1][1]);
           }
         }
         if (typeof res === 'string') {
           try {
             const parsed = JSON.parse(res);
-            if (parsed?.verdict) return parsed.verdict.toUpperCase();
+            const pv = _check(parsed?.verdict);
+            if (pv) return pv;
           } catch { /* not JSON */ }
           const matches = [...res.matchAll(/"verdict"\s*:\s*"([^"]+)"/gi)];
-          if (matches.length > 0) return matches[matches.length - 1][1].toUpperCase();
+          if (matches.length > 0) return _check(matches[matches.length - 1][1]);
         }
         return null;
       }
@@ -1619,6 +1627,8 @@ ${resultStr.substring(0, 2000)}
         const harnessTask = harnessRow.rows[0];
         const harnessPayload = harnessTask?.payload || {};
         const harnessType = harnessTask?.task_type;
+        // Unique suffix per pipeline run — prevents 24h dedup collision across test runs with same title+null goal_id
+        const plannerShort = (harnessPayload.planner_task_id || task_id).substring(0, 8);
         const { createTask: _createHarnessTaskBase } = await import('../actions.js');
         // Fix 2: 包装 createHarnessTask，对特定 task_type 校验必填 payload 字段
         const HARNESS_REQUIRED_PAYLOAD = {
@@ -1696,7 +1706,7 @@ ${resultStr.substring(0, 2000)}
           }
           const proposeType = harnessType === 'harness_planner' ? 'harness_contract_propose' : 'sprint_contract_propose';
           await createHarnessTask({
-            title: `[Contract] P1`,
+            title: `[Contract] P1 — ${plannerShort}`,
             description: `Generator 读取 PRD，提出合同草案（功能范围+验证命令）。\nPRD task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1718,13 +1728,24 @@ ${resultStr.substring(0, 2000)}
         // GAN 守卫：只有 Proposer 产出草案（verdict=PROPOSED）才派 Reviewer
         if (harnessType === 'harness_contract_propose' || harnessType === 'sprint_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
-          const proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
+          // 先尝试结构化提取，失败后 fallback 到纯文本正则（cecelia-run 可能传纯文本字符串）
+          let proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
+          if (!proposeVerdict) {
+            const proposeRawText = typeof result === 'string' ? result
+              : (result != null && typeof result === 'object'
+                  ? (typeof result.result === 'string' ? result.result
+                    : (result.summary || result.findings || ''))
+                  : '');
+            if (proposeRawText && (/"verdict"\s*:\s*"PROPOSED"/i.test(proposeRawText) || /\bPROPOSED\b/.test(proposeRawText))) {
+              proposeVerdict = 'PROPOSED';
+            }
+          }
           if (proposeVerdict !== 'PROPOSED') {
             console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
             const reviewType = harnessType === 'harness_contract_propose' ? 'harness_contract_review' : 'sprint_contract_review';
             await createHarnessTask({
-              title: `[Contract Review] R${proposeRound}`,
+              title: `[Contract Review] R${proposeRound} — ${plannerShort}`,
               description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1757,7 +1778,10 @@ ${resultStr.substring(0, 2000)}
           if (result !== null && typeof result === 'object' && result.verdict) {
             reviewVerdict = result.verdict.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REVISION';
           } else {
-            const reviewResultRaw = typeof result === 'object' ? (result?.decision || result?.result || '') : (result || '');
+            // 兼容 Claude SDK JSON（result.result 为纯文本）和直接字符串
+            const reviewResultRaw = result != null && typeof result === 'object'
+              ? (result.decision || result.result || result.summary || result.findings || '')
+              : (typeof result === 'string' ? result : '');
             const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
             if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
               reviewVerdict = 'APPROVED';
@@ -1769,7 +1793,7 @@ ${resultStr.substring(0, 2000)}
           if (reviewVerdict === 'APPROVED') {
             const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
             await createHarnessTask({
-              title: `[Generator] 写代码`,
+              title: `[Generator] G1 — ${plannerShort}`,
               description: `合同已批准，Generator 按 sprint-contract.md 写代码 + 创建 PR。\ncontract_review task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1789,7 +1813,7 @@ ${resultStr.substring(0, 2000)}
             const nextRound = (harnessPayload.propose_round || 1) + 1;
             const proposeType = harnessType === 'harness_contract_review' ? 'harness_contract_propose' : 'sprint_contract_propose';
             await createHarnessTask({
-              title: `[Contract] P${nextRound}`,
+              title: `[Contract] P${nextRound} — ${plannerShort}`,
               description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
@@ -1817,19 +1841,52 @@ ${resultStr.substring(0, 2000)}
         // v3.x 兼容: sprint_generate 仍直接创建 sprint_evaluate（旧行为保留）
         if (harnessType === 'harness_generate') {
           // 从 Generator 的 result 中提取 pr_url
+          // 层次 1: callback payload 直接携带
           let prUrl = pr_url || null;
+          // 层次 2: result 对象顶层或 result.result 对象（Generator 正确输出 JSON 时）
           if (!prUrl && result !== null && typeof result === 'object') {
             prUrl = result.pr_url || result?.result?.pr_url || null;
+            // 层次 3: result.result 是字符串时，尝试 JSON 解析（Generator 输出 JSON verdict 文本）
+            if (!prUrl && typeof result.result === 'string') {
+              try {
+                const parsed = JSON.parse(result.result.trim());
+                prUrl = parsed.pr_url || null;
+              } catch {}
+              // 层次 4: 从文本中正则提取完整 GitHub URL
+              if (!prUrl) {
+                const m = result.result.match(/https:\/\/github\.com\/[^\s"']+\/pull\/\d+/);
+                if (m) prUrl = m[0];
+              }
+              // 层次 4.5: 从文本中提取 PR # 并构造完整 URL（覆盖 "PR #2074" 格式）
+              if (!prUrl) {
+                const prNumMatch = result.result.match(/PR\s+#(\d+)/i) || result.result.match(/pull\/(\d+)/);
+                if (prNumMatch) {
+                  try {
+                    const repoUrl = execSync('git remote get-url origin', { encoding: 'utf-8', timeout: 5000 }).trim()
+                      .replace(/\.git$/, '').replace(/^git@github\.com:/, 'https://github.com/');
+                    prUrl = `${repoUrl}/pull/${prNumMatch[1]}`;
+                  } catch {}
+                }
+              }
+            }
           }
+          // 层次 5: result 本身是字符串时正则提取
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
             if (prMatch) prUrl = prMatch[0];
+          }
+          // 层次 6: 从 DB 任务的 pr_url 列读取（Generator 自己 PATCH 过的情况）
+          if (!prUrl) {
+            try {
+              const dbPrRow = await pool.query('SELECT pr_url FROM tasks WHERE id=$1', [task_id]);
+              prUrl = dbPrRow.rows[0]?.pr_url || null;
+            } catch {}
           }
           if (!prUrl) {
             throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_generate result (task_id=${task_id})`);
           }
           await createHarnessTask({
-            title: `[CI Watch] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'harness'}`,
+            title: `[CI Watch] ${plannerShort}`,
             description: `等待 CI 通过后创建 Evaluator。\n原始 harness_generate task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1853,7 +1910,7 @@ ${resultStr.substring(0, 2000)}
         // v3.x 兼容: sprint_generate → sprint_evaluate（旧流程，不加 CI watch）
         if (harnessType === 'sprint_generate' || (harnessType === 'dev' && harnessPayload.harness_mode)) {
           await createHarnessTask({
-            title: `[Evaluator] R1`,
+            title: `[Evaluator] R1 — ${plannerShort}`,
             description: `Evaluator 执行 sprint-contract.md 里的验证命令。\n原始 task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -1881,7 +1938,7 @@ ${resultStr.substring(0, 2000)}
             } else {
               console.warn(`[execution-callback] harness: harness_evaluate result=null (session crash) at round ${evalRound}, retrying`);
               await createHarnessTask({
-                title: `[Evaluator] R${evalRound + 1} (retry)`,
+                title: `[Evaluator] R${evalRound + 1} retry — ${plannerShort}`,
                 description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 harness_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -1946,7 +2003,7 @@ ${resultStr.substring(0, 2000)}
               );
               if (existingDw.rows.length === 0) {
                 await createHarnessTask({
-                  title: `[Deploy Watch] Harness`,
+                  title: `[Deploy Watch] ${plannerShort}`,
                   description: `Evaluator PASS + PR 已合并。等待 CD deploy 完成后生成 Report。`,
                   priority: 'P1',
                   project_id: harnessTask.project_id,
@@ -1967,7 +2024,7 @@ ${resultStr.substring(0, 2000)}
             } else {
               // FAIL → harness_fix（Generator 修复，然后重走 CI watch）
               await createHarnessTask({
-                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1}`,
+                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1} — ${plannerShort}`,
                 description: `Evaluator 发现问题，Generator 修复后重新提交。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 harness_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -1997,7 +2054,7 @@ ${resultStr.substring(0, 2000)}
             } else {
               console.warn(`[execution-callback] harness: sprint_evaluate result=null (session crash) at round ${evalRound}, retrying`);
               await createHarnessTask({
-                title: `[Evaluator] R${evalRound + 1} (retry)`,
+                title: `[Evaluator] R${evalRound + 1} retry — ${plannerShort}`,
                 description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 sprint_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -2042,7 +2099,7 @@ ${resultStr.substring(0, 2000)}
               );
               if (existingSr.rows.length === 0) {
                 await createHarnessTask({
-                  title: `[Report] Harness 完成报告`,
+                  title: `[Report] ${plannerShort}`,
                   description: `所有验证 PASS。生成 Harness 报告。`,
                   priority: 'P1',
                   project_id: harnessTask.project_id,
@@ -2060,7 +2117,7 @@ ${resultStr.substring(0, 2000)}
               }
             } else {
               await createHarnessTask({
-                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1}`,
+                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1} — ${plannerShort}`,
                 description: `Evaluator 发现问题，Generator 修复。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 sprint_evaluate task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
@@ -2095,7 +2152,7 @@ ${resultStr.substring(0, 2000)}
             throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_fix result (task_id=${task_id})`);
           }
           await createHarnessTask({
-            title: `[CI Watch] Fix-R${evalRound}`,
+            title: `[CI Watch] Fix-R${evalRound} — ${plannerShort}`,
             description: `Generator 修复完成，等待 CI 通过后 Evaluator 重新验证。\n原始 harness_fix task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
@@ -2118,7 +2175,7 @@ ${resultStr.substring(0, 2000)}
         // v3.x 兼容: sprint_fix → sprint_evaluate（旧流程）
         if (harnessType === 'sprint_fix') {
           await createHarnessTask({
-            title: `[Evaluator] R${harnessPayload.eval_round || 1}`,
+            title: `[Evaluator] R${harnessPayload.eval_round || 1} — ${plannerShort}`,
             description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,

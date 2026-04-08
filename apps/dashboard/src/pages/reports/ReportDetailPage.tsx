@@ -40,6 +40,17 @@ interface ReportContent {
   risks?: string[];
   generated_at?: string;
   generated_by?: string;
+  // weekly_report 专属字段
+  week_key?: string;
+  start_date?: string;
+  end_date?: string;
+  report_text?: string;
+  content_output?: { count: number; topics: string[] };
+  publish_stats?: Array<{ platform: string; success: number; failed: number }>;
+  engagement_data?: Array<{ platform: string; views: number; likes: number; comments: number; shares: number }>;
+  failure_count?: number;
+  top_topics?: Array<{ topic_keyword: string; heat_score: number; total_likes: number; total_comments: number; total_shares: number }>;
+  roi_data?: Array<{ platform: string; content_count: number; avg_views_per_content: number; engagement_rate: number }>;
   [key: string]: unknown;
 }
 
@@ -170,14 +181,101 @@ export default function ReportDetailPage() {
   }
 
   const c = report.content || {};
+  const createdAt = new Date(report.created_at);
+  const formattedDate = `${createdAt.getFullYear()}/${createdAt.getMonth() + 1}/${createdAt.getDate()} ${String(createdAt.getHours()).padStart(2, '0')}:${String(createdAt.getMinutes()).padStart(2, '0')}`;
+
+  // ── 周报专属渲染 ──────────────────────────────────────────────────────────────
+  if (report.type === 'weekly_report') {
+    const publishStats = c.publish_stats || [];
+    const engagementData = c.engagement_data || [];
+    const topTopics = c.top_topics || [];
+    const totalSuccess = publishStats.reduce((s: number, r: { success: number }) => s + r.success, 0);
+    const totalViews = engagementData.reduce((s: number, r: { views: number }) => s + r.views, 0);
+    const totalLikes = engagementData.reduce((s: number, r: { likes: number }) => s + r.likes, 0);
+
+    return (
+      <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0d1117 0%, #161b22 100%)', color: '#e6edf3', padding: '32px' }}>
+        <button onClick={() => navigate('/reports')} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: '#8b949e', fontSize: '13px', cursor: 'pointer', marginBottom: '16px' }}>
+          ← 返回列表
+        </button>
+        <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#e6edf3', margin: '0 0 4px 0' }}>
+          {c.title || `内容周报 ${c.week_key}`}
+        </h1>
+        <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: '#6e7681', marginBottom: '24px' }}>
+          <span>生成时间：{formattedDate}</span>
+          {c.start_date && c.end_date && <span>统计范围：{c.start_date} ~ {c.end_date}</span>}
+        </div>
+
+        {/* 概览数字 */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px' }}>
+          <StatBox label="内容产出" value={c.content_output?.count ?? 0} color="#3fb950" />
+          <StatBox label="全平台发布成功" value={totalSuccess} color="#38bdf8" />
+          <StatBox label="总阅读量" value={totalViews.toLocaleString('zh-CN')} color="#818cf8" />
+          <StatBox label="总点赞数" value={totalLikes.toLocaleString('zh-CN')} color="#f97316" />
+        </div>
+
+        {/* 发布平台明细 */}
+        {publishStats.length > 0 && (
+          <Section title="发布情况">
+            {publishStats.map((stat: { platform: string; success: number; failed: number }, idx: number) => (
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: idx < publishStats.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none', fontSize: '13px' }}>
+                <span style={{ color: '#e6edf3' }}>{stat.platform}</span>
+                <span>
+                  <span style={{ color: '#3fb950' }}>✓ {stat.success}</span>
+                  {stat.failed > 0 && <span style={{ color: '#f85149', marginLeft: '12px' }}>✗ {stat.failed}</span>}
+                </span>
+              </div>
+            ))}
+          </Section>
+        )}
+
+        {/* 互动数据 */}
+        {engagementData.length > 0 && (
+          <Section title="数据回收">
+            {engagementData.map((item: { platform: string; views: number; likes: number; comments: number; shares: number }, idx: number) => (
+              <div key={idx} style={{ marginBottom: idx < engagementData.length - 1 ? '8px' : 0, padding: '10px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', fontSize: '13px' }}>
+                <span style={{ color: '#e6edf3', fontWeight: 600 }}>{item.platform}</span>
+                <span style={{ color: '#6e7681', marginLeft: '12px' }}>
+                  阅读 {item.views.toLocaleString('zh-CN')} · 点赞 {item.likes.toLocaleString('zh-CN')} · 评论 {item.comments.toLocaleString('zh-CN')} · 转发 {item.shares.toLocaleString('zh-CN')}
+                </span>
+              </div>
+            ))}
+          </Section>
+        )}
+
+        {/* 爆款主题 */}
+        {topTopics.length > 0 && (
+          <Section title="爆款主题 TOP5">
+            {topTopics.map((t: { topic_keyword: string; heat_score: number; total_likes: number; total_comments: number; total_shares: number }, idx: number) => (
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: idx < topTopics.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none', fontSize: '13px' }}>
+                <span style={{ color: '#e6edf3' }}>{idx + 1}. {t.topic_keyword}</span>
+                <span style={{ color: '#d29922' }}>热度 {t.heat_score.toFixed(1)}</span>
+              </div>
+            ))}
+          </Section>
+        )}
+
+        {/* 完整周报文本 */}
+        {c.report_text && (
+          <details style={{ marginTop: '12px' }}>
+            <summary style={{ cursor: 'pointer', fontSize: '12px', color: '#6e7681', padding: '8px 0' }}>
+              查看完整周报文本（飞书格式）
+            </summary>
+            <pre style={{ padding: '16px', borderRadius: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', fontSize: '12px', color: '#8b949e', overflow: 'auto', maxHeight: '500px', marginTop: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {c.report_text}
+            </pre>
+          </details>
+        )}
+      </div>
+    );
+  }
+
+  // ── 标准报告渲染（48h_summary / daily_report 等）────────────────────────────
   const taskStats = c.task_stats || {};
   const health = c.system_health || {};
   const krProgress = c.kr_progress || [];
   const anomalies = c.anomalies || [];
   const risks = c.risks || [];
-
-  const createdAt = new Date(report.created_at);
-  const formattedDate = `${createdAt.getFullYear()}/${createdAt.getMonth() + 1}/${createdAt.getDate()} ${String(createdAt.getHours()).padStart(2, '0')}:${String(createdAt.getMinutes()).padStart(2, '0')}`;
 
   const healthColor = health.status === 'ok' || health.status === 'healthy'
     ? '#3fb950'

@@ -1,21 +1,22 @@
 /**
  * topic-selection-scheduler.test.js
  *
- * 测试每日内容选题调度器的核心行为：
- *   注：DISABLED = true 后，triggerDailyTopicSelection 始终提前返回 { disabled: true }
- *   原"启用路径"测试已更新为验证 disabled 模式行为。
+ * 测试每日内容选题调度器的核心行为（内容生成引擎 v1：DISABLED = false）：
+ *   - 触发窗口内且今天无记录时：调用 generateTopics 并保存推荐
+ *   - 窗口外：跳过（skipped_window: true）
+ *   - 今天已触发过：跳过（skipped: true）
+ *   - 传入主题库种子词给 generateTopics
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { triggerDailyTopicSelection, hasTodayTopics } from '../topic-selection-scheduler.js';
 
-// ─── Mock topic-selector.js ──────────────────────────────────────────────────
+// ─── Mock 依赖 ────────────────────────────────────────────────────────────────
 
 vi.mock('../topic-selector.js', () => ({
   generateTopics: vi.fn(),
 }));
 
-// Mock topic-suggestion-manager.js 阻断模块级 import pool from './db.js'
 vi.mock('../topic-suggestion-manager.js', () => ({
   saveSuggestions: vi.fn().mockResolvedValue(0),
   autoPromoteSuggestions: vi.fn().mockResolvedValue(0),
@@ -24,17 +25,33 @@ vi.mock('../topic-suggestion-manager.js', () => ({
   rejectSuggestion: vi.fn(),
 }));
 
+vi.mock('../content-types/ai-solopreneur-topic-library.js', () => ({
+  AI_SOLOPRENEUR_TOPICS: Array.from({ length: 30 }, (_, i) => ({
+    keyword: `种子词${i}`,
+    category: 'case',
+    content_type: 'solo-company-case',
+  })),
+  sampleTopics: vi.fn().mockReturnValue([
+    { keyword: '种子词A', category: 'case', content_type: 'solo-company-case' },
+    { keyword: '种子词B', category: 'case', content_type: 'solo-company-case' },
+    { keyword: '种子词C', category: 'case', content_type: 'solo-company-case' },
+    { keyword: '种子词D', category: 'case', content_type: 'solo-company-case' },
+    { keyword: '种子词E', category: 'case', content_type: 'solo-company-case' },
+  ]),
+}));
+
 import { generateTopics } from '../topic-selector.js';
+import { saveSuggestions } from '../topic-suggestion-manager.js';
+import { sampleTopics } from '../content-types/ai-solopreneur-topic-library.js';
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
 /** 构造在触发窗口内（UTC 01:02，首选窗口）的 Date */
 function makeWindowTime() {
-  const d = new Date('2026-03-19T01:02:00Z');
-  return d;
+  return new Date('2026-03-19T01:02:00Z');
 }
 
-/** 构造在补偿窗口内（UTC 10:00，09:00-北京时间之后）的 Date */
+/** 构造在补偿窗口内（UTC 10:00）的 Date */
 function makeCatchupWindowTime() {
   return new Date('2026-03-19T10:00:00Z');
 }
@@ -45,7 +62,7 @@ function makeOutsideWindowTime() {
 }
 
 /** 构造 N 个选题 */
-function makeTopics(n = 10) {
+function makeTopics(n = 5) {
   return Array.from({ length: n }, (_, i) => ({
     keyword: `选题关键词${i + 1}`,
     content_type: 'solo-company-case',
@@ -68,9 +85,9 @@ describe('triggerDailyTopicSelection', () => {
 
     pool = {
       query: vi.fn(async (sql) => {
-        const s = sql.trim();
+        const s = typeof sql === 'string' ? sql.trim() : '';
         if (s.includes("payload->>'trigger_source' = 'daily_topic_selection'")) {
-          return { rows: [] };
+          return { rows: [] }; // 今天没有触发过
         }
         if (s.startsWith('INSERT INTO tasks')) {
           insertedTasks.push(sql);
@@ -82,93 +99,99 @@ describe('triggerDailyTopicSelection', () => {
         return { rows: [] };
       }),
     };
+
+    generateTopics.mockResolvedValue(makeTopics(5));
+    saveSuggestions.mockResolvedValue(5);
   });
 
-  // ─── DISABLED 模式（DISABLED = true）─────────────────────────────────────
+  // ─── 启用路径：窗口内触发 ───────────────────────────────────────────────────
 
-  it('DISABLED 模式：窗口外调用返回 disabled: true，triggered 为 0', async () => {
-    const result = await triggerDailyTopicSelection(pool, makeOutsideWindowTime());
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
-    expect(generateTopics).not.toHaveBeenCalled();
-  });
-
-  it('DISABLED 模式：窗口内调用也返回 disabled: true，不创建任务', async () => {
-    generateTopics.mockResolvedValue(makeTopics(3));
+  it('触发窗口内且今天无记录时：调用 generateTopics，不返回 disabled', async () => {
     const result = await triggerDailyTopicSelection(pool, makeWindowTime());
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
-    expect(generateTopics).not.toHaveBeenCalled();
-    expect(insertedTasks).toHaveLength(0);
+    expect(result.disabled).toBeUndefined();
+    expect(result.skipped_window).toBe(false);
+    expect(result.skipped).toBe(false);
+    expect(generateTopics).toHaveBeenCalled();
   });
 
-  it('DISABLED 模式：补偿窗口内调用也返回 disabled: true', async () => {
-    generateTopics.mockResolvedValue(makeTopics(1));
+  it('触发窗口内：generateTopics 被调用时传入 seedKeywords', async () => {
+    await triggerDailyTopicSelection(pool, makeWindowTime());
+    expect(sampleTopics).toHaveBeenCalled();
+    expect(generateTopics).toHaveBeenCalledWith(
+      pool,
+      expect.arrayContaining(['种子词A'])
+    );
+  });
+
+  it('补偿窗口内（UTC 10:00）：也触发选题生成', async () => {
     const result = await triggerDailyTopicSelection(pool, makeCatchupWindowTime());
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
+    expect(result.disabled).toBeUndefined();
+    expect(result.skipped_window).toBe(false);
+    expect(generateTopics).toHaveBeenCalled();
+  });
+
+  it('generateTopics 返回 5 个选题时，保存推荐队列', async () => {
+    await triggerDailyTopicSelection(pool, makeWindowTime());
+    expect(saveSuggestions).toHaveBeenCalledWith(pool, expect.any(Array), expect.any(String));
+  });
+
+  // ─── 跳过路径：窗口外 ──────────────────────────────────────────────────────
+
+  it('窗口外（UTC 13:00）：跳过，不调用 generateTopics', async () => {
+    const result = await triggerDailyTopicSelection(pool, makeOutsideWindowTime());
+    expect(result.skipped_window).toBe(true);
     expect(generateTopics).not.toHaveBeenCalled();
   });
 
-  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 12:00 整点调用返回 disabled: true', async () => {
+  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 12:00 整点超出窗口，跳过', async () => {
     const atCutoff = new Date('2026-03-19T12:00:00Z');
     const result = await triggerDailyTopicSelection(pool, atCutoff);
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
-  });
-
-  it('DAILY_TOPIC_CATCHUP_CUTOFF_UTC 边界：UTC 11:59 调用返回 disabled: true', async () => {
-    generateTopics.mockResolvedValue(makeTopics(1));
-    const justBeforeCutoff = new Date('2026-03-19T11:59:00Z');
-    const result = await triggerDailyTopicSelection(pool, justBeforeCutoff);
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
+    expect(result.skipped_window).toBe(true);
     expect(generateTopics).not.toHaveBeenCalled();
   });
 
-  it('DISABLED 模式：当天已有任务时调用同样返回 disabled: true（不进入去重逻辑）', async () => {
+  it('UTC 11:59 在窗口内：触发', async () => {
+    const justBeforeCutoff = new Date('2026-03-19T11:59:00Z');
+    const result = await triggerDailyTopicSelection(pool, justBeforeCutoff);
+    expect(result.skipped_window).toBe(false);
+    expect(generateTopics).toHaveBeenCalled();
+  });
+
+  // ─── 跳过路径：今天已触发 ──────────────────────────────────────────────────
+
+  it('今天已有触发记录时：跳过（skipped: true），不调用 generateTopics', async () => {
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes("payload->>'trigger_source' = 'daily_topic_selection'")) {
-        return { rows: [{ id: 'existing-task' }] };
+      const s = typeof sql === 'string' ? sql.trim() : '';
+      if (s.includes("payload->>'trigger_source' = 'daily_topic_selection'")) {
+        return { rows: [{ id: 'existing-task' }] }; // 今天已有记录
       }
       return { rows: [] };
     });
 
     const result = await triggerDailyTopicSelection(pool, makeWindowTime());
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
-    // DISABLED 提前返回，pool.query 不应被调用
-    expect(pool.query).not.toHaveBeenCalled();
-  });
-
-  it('DISABLED 模式：generateTopics 即使 mock 有返回值，也不调用也不创建任务', async () => {
-    generateTopics.mockResolvedValue(makeTopics(15));
-
-    const result = await triggerDailyTopicSelection(pool, makeWindowTime());
-
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
+    expect(result.skipped).toBe(true);
     expect(generateTopics).not.toHaveBeenCalled();
-    expect(insertedTasks).toHaveLength(0);
   });
 
-  it('DISABLED 模式：generateTopics 即使 mock 为空数组，triggered 仍为 0', async () => {
-    generateTopics.mockResolvedValue([]);
+  // ─── 错误处理 ──────────────────────────────────────────────────────────────
 
-    const result = await triggerDailyTopicSelection(pool, makeWindowTime());
-
-    expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
-  });
-
-  it('DISABLED 模式：generateTopics 即使 mock 抛出错误，也不执行（不返回 error 字段）', async () => {
+  it('generateTopics 抛出错误时：返回 error 字段，triggered 为 0', async () => {
     generateTopics.mockRejectedValue(new Error('Claude API 不可用'));
 
     const result = await triggerDailyTopicSelection(pool, makeWindowTime());
 
     expect(result.triggered).toBe(0);
-    expect(result.disabled).toBe(true);
-    expect(result.error).toBeUndefined();
+    expect(result.error).toBe('Claude API 不可用');
+    expect(result.disabled).toBeUndefined();
+  });
+
+  it('generateTopics 返回空数组时：triggered 为 0，不创建任务', async () => {
+    generateTopics.mockResolvedValue([]);
+
+    const result = await triggerDailyTopicSelection(pool, makeWindowTime());
+
+    expect(result.triggered).toBe(0);
+    expect(insertedTasks).toHaveLength(0);
   });
 });
 

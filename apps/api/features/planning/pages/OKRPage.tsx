@@ -419,9 +419,12 @@ export default function OKRPage() {
   const fetchData = useCallback(async () => {
     try {
       const [goalsRes, projectsRes] = await Promise.all([
-        fetch('/api/goals?limit=200'),
-        fetch('/api/tasks/projects?limit=200')
+        fetch('/api/brain/goals?limit=200'),
+        fetch('/api/brain/projects?limit=200')
       ]);
+
+      if (!goalsRes.ok) throw new Error(`goals ${goalsRes.status}`);
+      if (!projectsRes.ok) throw new Error(`projects ${projectsRes.status}`);
 
       const [goalsData, projectsData] = await Promise.all([
         goalsRes.json(),
@@ -431,10 +434,21 @@ export default function OKRPage() {
       const allProjects = Array.isArray(projectsData) ? projectsData : [];
       setProjects(allProjects);
 
-      const allGoals = Array.isArray(goalsData) ? goalsData : [];
+      // Brain 返回 area_kr，统一标准化为 kr；progress 从 metadata.metric_current 或 current_value 映射
+      const allGoals = (Array.isArray(goalsData) ? goalsData : []).map((g: any) => ({
+        ...g,
+        type: g.type === 'area_kr' ? 'kr' : g.type,
+        priority: g.priority ?? 'P2',
+        progress:
+          typeof g.progress === 'number'
+            ? g.progress
+            : parseFloat(String(g.metadata?.metric_current ?? g.current_value ?? '0')) || 0,
+      }));
 
-      // area_okr（无 parent_id）= Objective 层级
-      const areaOkrs = allGoals.filter((g: any) => g.type === 'area_okr' && !g.parent_id);
+      // area_okr（无 parent_id, 且 active 状态）= Objective 层级
+      const areaOkrs = allGoals.filter(
+        (g: any) => g.type === 'area_okr' && !g.parent_id && g.status === 'active'
+      );
 
       const treesWithChildren: OKRTree[] = areaOkrs.map((obj: any) => {
         // KR = type='kr'，parent_id 指向该 Objective
@@ -454,12 +468,18 @@ export default function OKRPage() {
           (p: Project) => p.kr_id && krIds.has(p.kr_id) && !p.parent_id
         );
 
+        // Objective 进度 = 子 KR 的平均进度（area_okr 本身无 progress 字段）
+        const avgKrProgress =
+          krs.length > 0
+            ? Math.round(krs.reduce((sum, kr) => sum + kr.progress, 0) / krs.length)
+            : 0;
+
         return {
           id: obj.id,
           title: obj.title,
           description: obj.description ?? '',
           priority: obj.priority ?? 'P2',
-          progress: obj.progress ?? 0,
+          progress: avgKrProgress,
           status: obj.status ?? 'active',
           children: krs,
           linkedProjects,

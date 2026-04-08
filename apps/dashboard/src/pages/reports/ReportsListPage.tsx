@@ -58,6 +58,7 @@ export default function ReportsListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [generatingWeekly, setGeneratingWeekly] = useState(false);
 
   const fetchReports = useCallback(async () => {
     try {
@@ -94,6 +95,23 @@ export default function ReportsListPage() {
     }
   };
 
+  const handleGenerateWeekly = async () => {
+    setGeneratingWeekly(true);
+    try {
+      const res = await fetch('/api/brain/reports/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'weekly_report' }),
+      });
+      if (!res.ok) throw new Error(`生成失败: HTTP ${res.status}`);
+      await fetchReports();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '周报生成失败');
+    } finally {
+      setGeneratingWeekly(false);
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -108,7 +126,7 @@ export default function ReportsListPage() {
             系统简报
           </h1>
           <p style={{ fontSize: '13px', color: '#8b949e', marginTop: '4px' }}>
-            48h 自动生成的系统状态简报
+            系统简报 · 48h 摘要 · 内容周报
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -125,6 +143,22 @@ export default function ReportsListPage() {
             }}
           >
             刷新
+          </button>
+          <button
+            onClick={handleGenerateWeekly}
+            disabled={generatingWeekly}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: '1px solid rgba(129,140,248,0.3)',
+              background: 'rgba(129,140,248,0.1)',
+              color: '#818cf8',
+              fontSize: '13px',
+              cursor: generatingWeekly ? 'not-allowed' : 'pointer',
+              opacity: generatingWeekly ? 0.6 : 1,
+            }}
+          >
+            {generatingWeekly ? '生成中...' : '手动生成周报'}
           </button>
           <button
             onClick={handleGenerate}

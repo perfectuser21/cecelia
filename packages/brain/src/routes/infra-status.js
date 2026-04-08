@@ -6,9 +6,11 @@
 
 import { Router } from 'express';
 import os from 'os';
+import { readFileSync, existsSync } from 'fs';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import pool from '../db.js';
+import { checkAndAlertExpiringCredentials, checkCredentialExpiry } from '../credential-expiry-checker.js';
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -320,10 +322,11 @@ router.get('/servers', async (_req, res) => {
 });
 
 /**
- * GET /credentials/health
- * 凭据健康度检查 — 返回所有 Claude 账号的 auth 熔断状态 + 近期 auth 失败统计
+ * GET /health
+ * 凭据健康度检查 — 返回所有 Claude 账号的 auth 熔断状态 + 近期 auth 失败统计 + token 到期时间
+ * 完整路径: /api/brain/credentials/health（server.js: app.use('/api/brain/credentials', infraStatusRoutes)）
  */
-router.get('/credentials/health', async (req, res) => {
+router.get('/health', async (req, res) => {
   try {
     const [accountsResult, authFailStats] = await Promise.all([
       pool.query(`
@@ -351,13 +354,36 @@ router.get('/credentials/health', async (req, res) => {
       };
     }
 
-    const accounts = accountsResult.rows.map(row => ({
-      account_id: row.account_id,
-      is_auth_failed: row.is_auth_failed,
-      auth_fail_resets_at: row.auth_fail_resets_at,
-      last_checked: row.fetched_at,
-      ...failStatsByAccount[row.account_id],
-    }));
+    const accounts = accountsResult.rows.map(row => {
+      // 读取 token 到期信息
+      let tokenExpiry = { token_expires_at: null, token_remaining_hours: null, token_status: 'unknown' };
+      try {
+        const credPath = `${os.homedir()}/.claude-${row.account_id}/.credentials.json`;
+        if (existsSync(credPath)) {
+          const raw = JSON.parse(readFileSync(credPath, 'utf8'));
+          const expiresAtMs = raw?.claudeAiOauth?.expiresAt;
+          if (expiresAtMs) {
+            const remainingMs = expiresAtMs - Date.now();
+            const remainingHours = Math.round(remainingMs / 3600000 * 10) / 10;
+            const expiresAt = new Date(expiresAtMs).toISOString();
+            let token_status;
+            if (remainingMs < 0) token_status = 'expired';
+            else if (remainingMs < 8 * 3600000) token_status = 'expiring_soon';
+            else token_status = 'ok';
+            tokenExpiry = { token_expires_at: expiresAt, token_remaining_hours: remainingHours, token_status };
+          }
+        }
+      } catch { /* non-fatal */ }
+
+      return {
+        account_id: row.account_id,
+        is_auth_failed: row.is_auth_failed,
+        auth_fail_resets_at: row.auth_fail_resets_at,
+        last_checked: row.fetched_at,
+        ...tokenExpiry,
+        ...failStatsByAccount[row.account_id],
+      };
+    });
 
     const healthy = accounts.every(a => !a.is_auth_failed);
 
@@ -372,4 +398,112 @@ router.get('/credentials/health', async (req, res) => {
   }
 });
 
+/**
+ * POST /recover
+ * 按需触发凭据恢复 — 将因 auth 失败而 quarantined 的业务任务重排队（非 pipeline_rescue）
+ * 完整路径: /api/brain/credentials/recover
+ *
+ * 条件：
+ *   - 当前所有账号 is_auth_failed = false（熔断未激活）
+ *   - 任务 status=quarantined, failure_class=auth, task_type!=pipeline_rescue
+ *   - retry_count < max_retries, updated_at 在 48h 内
+ */
+router.post('/recover', async (req, res) => {
+  try {
+    // 检查是否有账号仍处于 auth 熔断状态
+    const circuitResult = await pool.query(
+      `SELECT account_id FROM account_usage_cache WHERE is_auth_failed = true LIMIT 1`
+    );
+    if (circuitResult.rows.length > 0) {
+      return res.status(409).json({
+        recovered: 0,
+        skipped: `auth circuit still open for: ${circuitResult.rows.map(r => r.account_id).join(', ')}`,
+      });
+    }
+
+    // 查询符合条件的 quarantined auth 任务（不依赖 retry_count/max_retries 以兼容旧 schema）
+    const candidateResult = await pool.query(
+      `SELECT id, title
+       FROM tasks
+       WHERE status = 'quarantined'
+         AND payload->>'failure_class' = 'auth'
+         AND task_type != 'pipeline_rescue'
+         AND updated_at > NOW() - INTERVAL '48 hours'
+       ORDER BY updated_at DESC`
+    );
+
+    if (candidateResult.rows.length === 0) {
+      return res.json({ recovered: 0, skipped: 'no eligible quarantined auth tasks', taskIds: [] });
+    }
+
+    const ids = candidateResult.rows.map(r => r.id);
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+
+    // 排除同名任务已在 queued/in_progress 的情况（避免唯一约束冲突）
+    await pool.query(
+      `UPDATE tasks t
+       SET status     = 'queued',
+           payload    = (COALESCE(t.payload, '{}'::jsonb) - 'failure_class')
+                        || '{"recovery_source":"manual_credentials_recover"}'::jsonb,
+           updated_at = NOW()
+       WHERE t.id IN (${placeholders})
+         AND NOT EXISTS (
+           SELECT 1 FROM tasks dup
+           WHERE dup.title = t.title
+             AND dup.status IN ('queued', 'in_progress')
+             AND COALESCE(dup.goal_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                 = COALESCE(t.goal_id, '00000000-0000-0000-0000-000000000000'::uuid)
+             AND COALESCE(dup.project_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                 = COALESCE(t.project_id, '00000000-0000-0000-0000-000000000000'::uuid)
+             AND dup.id != t.id
+         )`,
+      ids
+    );
+
+    res.json({
+      recovered: ids.length,
+      taskIds: ids,
+      tasks: candidateResult.rows.map(r => ({ id: r.id, title: r.title })),
+      recovered_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /check
+ * 手动触发凭据有效期检查 — 立即扫描所有账号 token 状态并创建告警任务
+ * 完整路径: /api/brain/credentials/check
+ *
+ * 用途：
+ *   - 无需等待 30 分钟 tick 周期
+ *   - 排查凭据告警是否正确创建
+ *   - 可由 Brain self-drive / 管理脚本主动触发
+ */
+router.post('/check', async (_req, res) => {
+  try {
+    const { accounts, criticalAccounts } = checkCredentialExpiry();
+    const result = await checkAndAlertExpiringCredentials(pool);
+
+    res.json({
+      checked: result.checked,
+      alerted: result.alerted,
+      skipped: result.skipped,
+      accounts: accounts.map(a => ({
+        account: a.account,
+        status: a.status,
+        remaining_ms: a.remainingMs,
+        expires_at: a.expiresAt,
+        error: a.error,
+      })),
+      critical_count: criticalAccounts.length,
+      checked_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
+

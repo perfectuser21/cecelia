@@ -1,351 +1,384 @@
 ---
-description: 一人公司成功案例内容生成流水线。输入：人物名称。输出：图文帖子（9:16，5张图+文案）+ 长文配图（公众号封面+3张配图+800字文章）+ 预览 HTML。
+description: 全套内容生成流水线。输入：任意主题（人物/概念/方法论）。输出：竖版图(封面+6张) + 公众号横版图(封面+3张) + 社媒文案 + 公众号长文 → 存 NAS → 注册数据库。
 ---
 
-# solo-company-case — 一人公司成功案例生成器
+# solo-company-case — 全套内容生成器
 
 ## 适用场景
 
-用户想制作"一人公司 / solopreneur 成功案例"内容，例如：
-- "做一套 Dan Koe 的内容"
-- "帮我做个 Sahil Bloom 的案例"
-- "制作一人公司成功案例图文"
+任意主题均可：
+- 人物案例："做一套 Dan Koe 的内容"、"做 Karpathy"
+- 方法论/概念："AI学习方法论"、"Software 2.0"、"一人公司商业模式"
+- 事件/趋势："大模型横评"、"315曝光GEO"
 
 ---
 
 ## 输出规格
 
-### A. 图文帖子（适合抖音/小红书/朋友圈）
+### A. 竖版图（适合抖音/小红书/朋友圈）
 
-| 文件 | 尺寸 | 内容 |
+| 文件 | 尺寸 | 说明 |
 |------|------|------|
-| `v6-cover.png` | 1080×1464 | 封面：头像+姓名+核心数字+钩子标题 |
-| `v6-01-profile.png` | 1080×1920 | Card1：故事时间线（5个节点） |
-| `v6-02-flywheel.png` | 1080×1920 | Card2：内容飞轮图（圆心+4卫星） |
-| `v6-03-day.png` | 1080×1920 | Card3：24小时时间块 |
-| `v6-04-qa.png` | 1080×1920 | Card4：Q&A 对话格 |
-| 文案 | 100-200字 | 适合社媒配图发布 |
+| `{slug}-cover.png` | 1080×1464 | 封面 |
+| `{slug}-01-xxx.png` | 1080×1920 | Card1 |
+| `{slug}-02-xxx.png` | 1080×1920 | Card2 |
+| `{slug}-03-xxx.png` | 1080×1920 | Card3 |
+| `{slug}-04-xxx.png` | 1080×1920 | Card4 |
+| `{slug}-05-xxx.png` | 1080×1920 | Card5 |
+| `{slug}-06-xxx.png` | 1080×1920 | Card6 |
+| 社媒文案 | 100-200字 | 通用一版（抖音/小红书/朋友圈） |
 
-### B. 长文配图（适合微信公众号）
+### B. 公众号横版图（适合微信公众号）
 
-| 文件 | 尺寸 | 内容 |
+| 文件 | 尺寸 | 说明 |
 |------|------|------|
-| `v6-lf-cover.png` | 900×383 | 封面：头像在右+标题+副标题 |
-| `v6-lf-01-flywheel.png` | 1080×810 | 配图1：内容飞轮 |
-| `v6-lf-02-income.png` | 1080×810 | 配图2：收入结构 |
-| `v6-lf-03-roadmap.png` | 1080×810 | 配图3：成长路线图 |
-| 文章 | ~800字 | 结构：钩子→三点洞察→结语 |
+| `{slug}-lf-cover.png` | 900×383 | 公众号封面 (2.35:1) |
+| `{slug}-lf-01-xxx.png` | 1080×810 | 正文配图1 (4:3) |
+| `{slug}-lf-02-xxx.png` | 1080×810 | 正文配图2 (4:3) |
+| `{slug}-lf-03-xxx.png` | 1080×810 | 正文配图3 (4:3) |
+| 公众号长文 | 800字+ | content.html + text_v1.md |
+
+---
+
+## 卡片版式映射（无数据时换通用版式）
+
+| 卡片 | 人物主题 | 通用主题 | 视觉形式 |
+|------|---------|---------|---------|
+| 封面 | 头像+核心数字+钩子 | 大字标题+核心主张 | 大字/渐变/视觉冲击 |
+| Card1 | 人物档案（时间线+统计） | 背景+核心成就 | 时间线+数字格 |
+| Card2 | 飞轮圆图（中心+4卫星） | 核心框架/系统图 | 圆形节点图 |
+| Card3 | 真实一天（横向时间块） | 路径/阶段图 | 时间轴/步骤块 |
+| Card4 | Q&A对话格 | 对比/反常识 | 两列对比格 |
+| Card5 | 金句/语录 | 核心观点/金句 | 引用框+要点列表 |
+| Card6 | 行动指南 | 落地方法/下一步 | 步骤箱式布局 |
+| LF配图1 | 飞轮/内容策略 | 核心框架可视化 | 图表/节点 |
+| LF配图2 | 收入结构 | 关键数据/对比 | 数字格/对比 |
+| LF配图3 | 成长路线图 | 落地路径图 | 阶段线 |
+
+**判断规则**：有头像/收入数字/时间线 → 人物模板；否则 → 通用模板。可混用。
 
 ---
 
 ## 流水线步骤
 
-### Step 1 — NotebookLM 深度调研
+### Step 1 — 判断主题类型 + NotebookLM 调研
 
 ```bash
-# 检查 auth
-notebooklm status
-
-# 创建 notebook
-notebooklm create "一人公司案例：<人物名>" --json
+notebooklm create "<主题名>" --json
 # → {"id": "<notebook_id>"}
 
-# 深度调研（deep 模式，20+ 来源）
-notebooklm source add-research "<人物名> solopreneur creator economy" --mode deep --no-wait
-
-# 后台等待并导入（启动子任务）
-# notebooklm research wait -n <notebook_id> --import-all --timeout 600
+notebooklm source add-research "<主题关键词>" --mode deep --no-wait
 ```
 
-等待完成后：
+等待调研完成（必须等，否则数据不完整）：
 
 ```bash
+# 轮询等待，最多10分钟
+notebooklm research wait -n <notebook_id> --import-all --timeout 600
+
 # 确认来源就绪
 notebooklm source list -n <notebook_id> --json
-
-# 核心问题提取
-notebooklm ask "总结该人物的商业模式：收入构成、内容策略、日常工作流、关键数字" --json
-notebooklm ask "列出该人物职业发展时间线的5个关键节点（年份+事件+描述）" --json
-notebooklm ask "该人物最常被引用的3-5句名言" --json
-notebooklm ask "该人物的收入结构分解（按产品类型和比例）" --json
 ```
+
+提取核心数据（**所有 ask 命令必须带 `-n <notebook_id>`**）：
+
+```bash
+# 人物主题
+notebooklm ask -n <notebook_id> "总结商业模式：收入构成、内容策略、日常工作流、关键数字" --json
+notebooklm ask -n <notebook_id> "列出职业发展时间线的5个关键节点（年份+事件+描述）" --json
+notebooklm ask -n <notebook_id> "最常被引用的3-5句名言" --json
+
+# 通用主题
+notebooklm ask -n <notebook_id> "总结核心框架/方法论：3-5个关键要点" --json
+notebooklm ask -n <notebook_id> "列出关键数据/证据/案例" --json
+notebooklm ask -n <notebook_id> "对普通人最有价值的3个行动洞察" --json
+```
+
+---
 
 ### Step 2 — 数据结构化
 
-从调研结果提取并填充以下结构（JSON 格式，供 Step 3 使用）：
-
 ```json
 {
-  "name": "Dan Koe",
-  "handle": "@thedankoe",
-  "tagline": "作家 · 内容创业者 · 年入 $5M+",
-  "headline": "一个人，年赚500万美元",
-  "sub_headline": "他的极简商业哲学",
-  "stats": {
-    "revenue": "$5M",
-    "followers": "470万",
-    "margin": "70%"
-  },
+  "slug": "karpathy",
+  "topic_type": "person | concept",
+  "name": "Andrej Karpathy",
+  "tagline": "OpenAI联合创始人 · 深度学习布道者",
+  "headline": "AI时代最值得学的人",
+  "sub_headline": "他的学习地图，普通人能直接用",
+  "stats": [
+    { "value": "2017", "label": "Software 2.0 预言" },
+    { "value": "千万+", "label": "YouTube 播放" },
+    { "value": "5步", "label": "Zero to Hero" }
+  ],
   "timeline": [
-    { "year": "早年", "title": "平凡上班族", "desc": "..." },
-    { "year": "2019", "title": "开始在网上写作", "desc": "..." },
-    { "year": "2021", "title": "第一门课程上线", "desc": "..." },
-    { "year": "2022", "title": "收入突破六位数", "desc": "..." },
-    { "year": "2024", "title": "年入 $5M+ 一人公司", "desc": "..." }
+    { "year": "2015", "title": "联合创立 OpenAI", "desc": "..." }
   ],
-  "flywheel": {
-    "center": "内容飞轮",
-    "nodes": ["每日写作 2-3小时", "沉淀产品 课程·书", "多平台 分发", "被动收入 自动流入"]
+  "framework": {
+    "center": "核心概念",
+    "nodes": ["要点1", "要点2", "要点3", "要点4"]
   },
-  "day_blocks": [
-    { "time": "05:00", "label": "睡眠", "hours": 7, "color": "#818cf8" },
-    { "time": "07:00", "label": "晨间仪式", "hours": 1, "color": "#34d399" },
-    { "time": "08:00", "label": "深度写作", "hours": 3, "color": "#c084fc" },
-    { "time": "11:00", "label": "运动", "hours": 1, "color": "#f87171" },
-    { "time": "13:00", "label": "休息·阅读", "hours": 2, "color": "#60a5fa" },
-    { "time": "15:00", "label": "回复·社交", "hours": 2, "color": "#fbbf24" },
-    { "time": "17:00", "label": "自由时间", "hours": 4, "color": "#a78bfa" }
+  "steps": [
+    { "label": "步骤1", "desc": "说明" }
   ],
-  "qa": [
-    { "q": "为什么不招员工？", "a": "系统比团队更可靠，人扩大复杂度，系统扩大收益。" },
-    { "q": "每天写什么？", "a": "一篇通讯 → 拆成推文、脚本、课程模块，一内容多渠道。" },
-    { "q": "普通人能复制吗？", "a": "不需要复制，需要找到你的「一件事」，然后建系统。" },
-    { "q": "最重要的建议？", "a": "你不需要一支团队，你需要一套系统。" }
+  "contrasts": [
+    { "bad": "常见方式", "good": "推荐方式" }
   ],
-  "quote": "你不需要一支团队，你需要一套系统。",
-  "income_breakdown": [
-    { "label": "数字课程", "pct": 55 },
-    { "label": "付费订阅", "pct": 25 },
-    { "label": "联盟佣金", "pct": 12 },
-    { "label": "其他", "pct": 8 }
-  ]
+  "quotes": ["金句1", "金句2"],
+  "actions": ["行动1", "行动2", "行动3"],
+  "income_breakdown": null
 }
 ```
 
-### Step 3 — 头像获取
+---
+
+### Step 3 — 头像获取（仅人物主题）
 
 ```bash
-# 获取 Twitter 头像（400×400 JPEG）
 curl -L "https://unavatar.io/twitter/<handle>" -o /tmp/avatar.jpg
 base64 -i /tmp/avatar.jpg > /tmp/avatar-b64.txt
 ```
 
+通用主题跳过。
+
+---
+
+### Step 3.5 — 草稿确认（生成图片前必须先确认）
+
+在开始写代码之前，先向用户输出文案草稿：
+
+```
+**社媒文案草稿**
+标题：xxx（≤20字）
+正文：...（100-200字）
+
+**公众号长文草稿**
+标题：《xxx》
+[钩子] ...
+一、洞察1 ...
+二、洞察2 ...
+三、洞察3 ...
+[结语] ...
+
+**卡片规划（7张）**
+封面：...
+01：...
+02：...
+03：...
+04：...
+05：...
+06：...
+```
+
+**等用户确认或修改后，再进入 Step 4。**
+
+---
+
 ### Step 4 — 图片生成（SVG/resvg）
 
-**技术规范**（基于验证过的 v6 设计系统）：
-
-#### 依赖
-
-```js
-import { Resvg } from '@resvg/resvg-js';
-import fs from 'fs';
-// Node 18+，无 canvas 依赖
-```
+在 `~/claude-output/scripts/` 创建 `gen-{slug}.mjs`。
 
 #### 尺寸常量
 
 ```js
-const W = 1080, H = 1920;     // 9:16 内容卡
-const WC = 1080, HC = 1464;   // 封面（图文）
-const WLC = 900, HLC = 383;   // 长文封面
-const WLB = 1080, HLB = 810;  // 长文配图
+const W=1080, H=1920;        // 9:16 内容卡
+const WC=1080, HC=1464;      // 竖版封面
+const WLC=900,  HLC=383;     // 公众号封面
+const WLB=1080, HLB=810;     // 公众号配图
+
+const CX=80, CR=820, CW=740;
+const CT=264, CB=1660, CH=CB-CT;
 ```
 
-#### 安全区（CRITICAL）
-
-```js
-const CX = 80, CR = 820, CW = 740;   // 左边界=80，右边界=820
-const CT = 264, CB = 1660;            // 上边界=264，下边界=1660
-const CH = CB - CT;                   // 1396px 可用高度
-```
-
-内容必须在安全区内填满，不能留大片空白。
-
-#### 品牌角落
-
-```js
-function corners(T, topTag, pageNum, w=W, h=H) {
-  // 左上：标签胶囊（topTag）
-  // 右侧：大湖成长日记 竖排文字
-  // 左下：ZenithJoy
-  // pageNum：如 "2/5"
-}
-```
-
-#### 渲染函数
+#### 渲染（2x 质量）
 
 ```js
 function render(svg, filename) {
   const resvg = new Resvg(svg, {
     font: { loadSystemFonts: true },
-    fitTo: { mode: 'width', value: W * 2 }  // 2x 质量
+    fitTo: { mode: 'width', value: W * 2 }
   });
   const png = resvg.render().asPng();
   fs.writeFileSync(`${OUT}/${filename}`, png);
+  console.log(`  ✅ ${filename}  ${Math.round(png.length/1024)}KB`);
 }
 ```
 
-#### 重叠预防规则（CRITICAL）
-
-所有 y 坐标必须从上往下显式计算，禁止猜测或依赖 SVG 自动排列：
+#### 配色方案
 
 ```js
-// 正确：显式链式计算
+const T0 = { TC:'#c084fc', BG1:'#0d0520', BG2:'#170a35', G1:'#a855f7', G2:'#d946ef' }; // 紫
+const T1 = { TC:'#f472b6', BG1:'#15050e', BG2:'#200618', G1:'#ec4899', G2:'#fb923c' }; // 粉
+const T2 = { TC:'#818cf8', BG1:'#08091a', BG2:'#0e1030', G1:'#6366f1', G2:'#8b5cf6' }; // 蓝
+const T3 = { TC:'#2dd4bf', BG1:'#021512', BG2:'#061e1a', G1:'#14b8a6', G2:'#06b6d4' }; // 青
+const AC = ['#f87171','#34d399','#60a5fa','#fbbf24','#a78bfa'];
+// 分配：cover=T0, 01=T0, 02=T1, 03=T2, 04=T3, 05=T0, 06=T1
+```
+
+#### 卡片版式规则（CRITICAL — 禁止全用列表）
+
+```
+封面   → 头像(人物) / 大字渐变(通用) + 核心数字
+Card1  → 时间线（5节点）+ 统计格（3个数字）+ 底部金句
+Card2  → 圆形节点图（中心+4卫星，虚线连接）+ 底部数据
+Card3  → 横向色块时间轴 / 阶段步骤块（带时间标签）
+Card4  → 两列对比格（Q&A 或 Bad/Good）
+Card5  → 引用大字框 + 要点箱式列表（ACCENTS 轮换）
+Card6  → 步骤箱式布局（numbered iconDot + 描述）
+```
+
+#### y 坐标链式计算（CRITICAL）
+
+```js
 const SECTION_A_TOP = CT + 64;
 const SECTION_A_BOT = SECTION_A_TOP + SECTION_A_H;
-const SECTION_B_TOP = SECTION_A_BOT + GAP;  // 有间距
-
-// 禁止：硬编码可能重叠的绝对值
+const SECTION_B_TOP = SECTION_A_BOT + GAP;
+// 禁止硬编码绝对值
 ```
 
-在每个卡片函数开头加 `console.log` 验证所有区间不重叠：
-
-```js
-console.log(`card2: wheel[${SAT_TOP}-${SAT_BOT}] stat[${STAT_TOP}-${STAT_BOT}] ins[${INS_TOP}-${CB}]`);
-```
-
-#### 配色方案（B类暖创意）
-
-```js
-const T0 = { TC:'#c084fc', BG1:'#0d0520', BG2:'#170a35', G1:'#a855f7' };  // 紫
-const T1 = { TC:'#f472b6', BG1:'#15050e', BG2:'#200618', G1:'#ec4899' };  // 粉
-const T2 = { TC:'#818cf8', BG1:'#08091a', BG2:'#0e1030', G1:'#6366f1' };  // 蓝
-const T3 = { TC:'#2dd4bf', BG1:'#021512', BG2:'#061e1a', G1:'#14b8a6' };  // 青
-const AC = ['#f87171','#34d399','#60a5fa','#fbbf24','#a78bfa'];            // 高亮色
-```
-
-#### 头像嵌入
+#### 头像嵌入（人物主题）
 
 ```js
 const AV = `data:image/jpeg;base64,${fs.readFileSync('/tmp/avatar-b64.txt','utf8').trim()}`;
-
-// 圆形裁剪
 `<defs><clipPath id="av"><circle cx="${cx}" cy="${cy}" r="${r}"/></clipPath></defs>
  <circle cx="${cx}" cy="${cy}" r="${r+6}" fill="none" stroke="#c084fc" stroke-width="4"/>
  <image href="${AV}" x="${cx-r}" y="${cy-r}" width="${r*2}" height="${r*2}" clip-path="url(#av)"/>`
 ```
 
-#### 卡片内容类型（禁止全用列表）
+运行：
+```bash
+cd ~/claude-output/scripts && node gen-{slug}.mjs
+```
 
-| 卡片 | 形式 | 关键元素 |
-|------|------|----------|
-| 封面 | 头像+大字标题 | 头像（圆形）、核心数字、钩子文案 |
-| Card1 人物档案 | 故事时间线 | 5节点时间线、3格统计、金句 |
-| Card2 核心方法 | 飞轮圆图 | 中心圆+4卫星圆、虚线连接 |
-| Card3 真实一天 | 时间块 | 横向色块、时间标签、图例 |
-| Card4 问答 | 对话格 | Q(紫色背景)+A(深色背景) |
-| 长文封面 | 头像在右 | 900×383，头像在右侧 |
-| 长文配图 | 纯内容 | 无头像，信息密度高 |
+#### Gate 1：机械验证
 
-### Step 5 — 文案生成（只有两种）
+```bash
+node ~/claude-output/scripts/validate-cards.mjs {slug}
+```
+
+#### Gate 2：视觉审查（8项）
+
+**用 Read 工具逐张读取 PNG 文件进行目检**，核对以下8项（任何一项 FAIL → 修脚本重新生成）：
+
+底部重叠 / 右侧越界 / iconDot遮字 / 内容溢出 / XML乱码 / 底部大片空白(>600px) / 视觉单调 / 无框浮字。
+
+---
+
+### Step 5 — 文案生成 + 长文输出文件
 
 **平台硬限制**：图片最多9张，标题最多20字，社媒正文100-200字，公众号正文800字以上。
-**不要分别写抖音和小红书文案**——社交媒体一版通用。
-**内容公式**：P支柱 x A角度 x I意图 x S结构（8模块选4-7个）。
-**自检**：镜头？代价？对号入座？结论+边界？最小动作？明确互动？人格标签？
+**不要分别写抖音和小红书**——社交媒体通用一版。
 
-#### 原 Step 5 文案生成
-
-#### 图文帖子文案（100-200字，Dan Koe Newsletter 框架）
+#### 社媒文案（100-200字）
 
 ```
+公式：P支柱 × A角度 × I意图 × S结构（8模块选4-7个）
+结构：钩子 → 对象与问题 → 核心观点 → 方法/证据 → CTA
+自检：前2句有镜头？说清代价？读者对号入座？结论+边界？1个最小动作？
+```
+
+#### 公众号长文（800字+）
+
+```
+标题：《<主题>：<核心主张>》（20字以内）
 结构：
-朋友分享了 <人物名> 这个案例，看完有点震撼。
-[钩子：一句话点出最震撼的数字]
-[方法：他是怎么做到的，用"他的逻辑很简单"引出]
-[名言：一句他说过的话]
-[结语：普通人能学到什么]
-#一人公司 #内容创业 #个人品牌
+  [钩子：1-2句，点出最反常识的事实]
+  一、<洞察1>（~200字）[问题→洞察→数据→名言]
+  二、<洞察2>（~200字）[问题→洞察→案例→启发]
+  三、<洞察3>（~200字）[问题→洞察→可复制方法论]
+  [结语：普通人如何开始，1-2句]
 ```
 
-#### 长文文章（~800字，公众号格式）
+#### 输出文件（两个，NAS 上传必须）
 
-```
-结构：
-标题：《<人物名>：一个人，<核心数字>，靠的是什么》
+```bash
+# HTML 版（公众号直接粘贴用）
+cat > /tmp/content.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;max-width:680px;margin:auto;line-height:1.8;">
+<h1>标题</h1>
+<p>正文...</p>
+</body>
+</html>
+EOF
 
-[钩子段：1-2句，点出最反常识的事实]
+# Markdown 版（备份/二次编辑用）
+cat > /tmp/text_v1.md << 'EOF'
+# 标题
 
-一、<洞察1>（~200字）
-[问题→洞察→具体数据→引用名言]
-
-二、<洞察2>（~200字）
-[问题→洞察→具体案例→行动启发]
-
-三、<洞察3>（~200字）
-[问题→洞察→可复制的方法论]
-
-[结语：普通人如何开始，1-2句]
-```
-
-### Step 6 — 预览页生成
-
-创建 `~/claude-output/<人物拼音>-preview.html`，包含：
-- 图文帖子横向滚动行（高度 440px 缩略图）
-- 点击灯箱放大
-- 文案展示区
-- 长文配图展示
-
-关键 CSS：
-```css
-.cards-row { display:flex; gap:16px; overflow-x:auto; align-items:flex-start; }
-.lightbox { position:fixed; inset:0; background:rgba(0,0,0,0.92); display:none; }
-.lightbox.active { display:flex; align-items:center; justify-content:center; }
+正文...
+EOF
 ```
 
-### Step 7 — 输出
+---
 
-图片保存到 `~/claude-output/images/`，公网访问：
-`http://38.23.47.81:9998/images/<文件名>.png`
+### Step 6 — 上传 NAS + 注册数据库
 
-预览页公网访问：
-`http://38.23.47.81:9998/<人物拼音>-preview.html`
+```bash
+CONTENT_ID=$(date +%Y-%m-%d)-$(openssl rand -hex 3)
+NAS_USER="徐啸"
+NAS_IP="100.110.241.76"
+NAS_BASE="/volume1/workspace/vault/zenithjoy-creator/content"
+TITLE="<Step 5 确定的文章标题>"   # 使用实际标题，不能用占位符
+
+bash /Users/administrator/perfect21/infrastructure/scripts/nas-content-manager.sh \
+  create "${CONTENT_ID}" "${TITLE}" "full_suite"
+
+scp ~/claude-output/images/{slug}-*.png \
+  "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/images/"
+
+scp /tmp/content.html "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/exports/"
+scp /tmp/text_v1.md   "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/text/"
+
+bash /Users/administrator/perfect21/infrastructure/scripts/nas-content-manager.sh \
+  update-status "${CONTENT_ID}" ready
+```
+
+```bash
+PGPASSWORD="${POSTGRES_PASSWORD}" psql -h localhost -p 5432 -U postgres -d cecelia -c "
+  INSERT INTO zenithjoy.works (
+    content_id, title, content_type, nas_path, status
+  ) VALUES (
+    '${CONTENT_ID}', '${TITLE}', 'full_suite',
+    '${NAS_BASE}/${CONTENT_ID}', 'ready'
+  )
+  ON CONFLICT (content_id) DO UPDATE SET
+    title = EXCLUDED.title, status = EXCLUDED.status, updated_at = NOW();
+" || echo "⚠️ works 表注册失败，继续"
+```
+
+---
+
+### Step 7 — 输出摘要
+
+```
+✅ 全套内容生成完成
+
+Content ID : {content_id}
+主题       : {主题}
+NAS 路径   : /volume1/workspace/vault/zenithjoy-creator/content/{content_id}/
+
+竖版图（9:16）：
+  {slug}-cover.png       封面 1080×1464
+  {slug}-01~06-xxx.png   内容卡 1080×1920 ×6
+
+公众号横版：
+  {slug}-lf-cover.png    封面 900×383
+  {slug}-lf-01~03.png    配图 1080×810 ×3
+
+下一步发布：
+  社媒（抖音/小红书）→ 从 NAS 取竖版图 + 社媒文案
+  公众号              → 从 NAS 取横版图 + 长文 HTML
+```
 
 ---
 
 ## 注意事项
 
-- **禁止 emoji**：SVG 中不用 emoji，用 `·`、圆点、中文符号替代
-- **禁止浮动内容**：所有内容必须填满安全区，不允许居中浮在中间
-- **头像放封面**：图文帖子头像在封面，不在内容卡；长文头像在封面（900×383），不在配图
-- **y 坐标链式计算**：每段从上一段的 bottom + gap 开始，不硬编码
-- **生成后验证**：打开预览页检查是否有重叠，用 console.log 输出各区间
-
----
-
-## 完整生成脚本模板
-
-```js
-// gen-<slug>.mjs
-import { Resvg } from '@resvg/resvg-js';
-import fs from 'fs';
-
-const SLUG = 'dankoe';
-const OUT = '/Users/administrator/claude-output/images';
-const AVATAR_B64 = fs.readFileSync('/tmp/avatar-b64.txt','utf8').trim();
-const AV = `data:image/jpeg;base64,${AVATAR_B64}`;
-
-// 常量（直接复用，不改）
-const W=1080,H=1920,WC=1080,HC=1464,WLC=900,HLC=383,WLB=1080,HLB=810;
-const CX=80,CR=820,CW=740,CT=264,CB=1660,CH=CB-CT;
-
-// 替换为调研得到的数据
-const DATA = { /* Step 2 结构化输出 */ };
-
-// 生成函数
-function cover() { /* ... */ }
-function card1() { /* ... */ }
-function card2() { /* ... */ }
-function card3() { /* ... */ }
-function card4() { /* ... */ }
-function lfCover() { /* ... */ }
-function lfCard1() { /* ... */ }
-function lfCard2() { /* ... */ }
-function lfCard3() { /* ... */ }
-
-cover(); card1(); card2(); card3(); card4();
-lfCover(); lfCard1(); lfCard2(); lfCard3();
-console.log('Done');
-```
-
-参考实现：`/Users/administrator/claude-output/scripts/gen-dankoe-v6.mjs`（已验证无重叠）
+- **禁止 emoji**：SVG 中不用 emoji，用 `iconDot()` 或中文符号替代
+- **禁止全用列表**：每张卡片版式必须不同，参考卡片版式映射表
+- **y 坐标必须链式计算**：禁止硬编码绝对值
+- **通用主题无头像**：封面改用渐变大字
+- **NAS SSH**：已配置免密，直接 scp
+- **参考实现**：`~/claude-output/scripts/gen-dankoe-v6.mjs`（已验证无重叠）

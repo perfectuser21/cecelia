@@ -36,6 +36,11 @@ const DEDUP_QUARANTINE_COOLDOWN_MS = 72 * 60 * 60 * 1000;
 // 背景：rescue 任务反复被 watchdog liveness_dead 杀死，是陈旧 .dev-mode 文件的主要失败来源（85%）
 const MAX_RESCUE_QUARANTINE = 3;
 
+// 同一分支 rescue 任务总数上限（不分状态）：防止 rescue 风暴
+// 背景：account3 认证故障期间，rescue 任务在 queued→quarantined 窗口内被 patrol 重复创建（单 PR 最多 50 次）
+// 根因：dedup 检查只看已 quarantined 任务，queued/in_progress 中的任务不在检查范围内
+const MAX_RESCUE_PER_BRANCH = 5;
+
 /**
  * 获取主仓库根路径
  * @returns {string|null}
@@ -280,6 +285,23 @@ function checkStuck(parsed) {
 async function createRescueTask(dbPool, info) {
   const { branch, currentStage, blockReason, elapsedMs, worktreePath, isOrphan } = info;
 
+  // rescue 风暴检查：同一分支总 rescue 任务数（不分状态）>= MAX_RESCUE_PER_BRANCH 时，停止创建
+  // 这是防止 rescue storm 的关键：dedup 只看已结束的任务，无法阻止 queued/in_progress 期间的重复创建
+  const totalCountResult = await dbPool.query(`
+    SELECT COUNT(*) as count FROM tasks
+    WHERE task_type = 'pipeline_rescue'
+      AND payload->>'branch' = $1
+  `, [branch]);
+  const totalRescueCount = parseInt(totalCountResult.rows[0]?.count || '0', 10);
+  if (totalRescueCount >= MAX_RESCUE_PER_BRANCH) {
+    writeCleanupDone(worktreePath, branch);
+    console.log(`[pipeline-patrol] rescue storm 检测：${branch} 已有 ${totalRescueCount} 个 rescue 任务（上限 ${MAX_RESCUE_PER_BRANCH}），标记 cleanup_done`);
+    return {
+      created: false,
+      reason: `rescue storm: ${totalRescueCount} 次 rescue（上限 ${MAX_RESCUE_PER_BRANCH}），已标记 cleanup_done`,
+    };
+  }
+
   // 封顶检查：同一分支 quarantined rescue 次数 >= MAX_RESCUE_QUARANTINE 时，
   // 写 cleanup_done 到 .dev-mode 文件，永久停止该分支的 rescue 循环
   // 使用 payload->>'branch' 精确匹配（避免 title LIKE 在多 worktree 场景下命中错误任务）
@@ -479,4 +501,5 @@ export {
   DEDUP_COOLDOWN_MS,
   DEDUP_QUARANTINE_COOLDOWN_MS,
   MAX_RESCUE_QUARANTINE,
+  MAX_RESCUE_PER_BRANCH,
 };

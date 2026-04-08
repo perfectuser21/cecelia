@@ -36,12 +36,15 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => {
   // 策略一：检测"严重问题"section（格式A）
   // 判断是否有 "🔴 严重问题" section，并检查该 section 是否声明"未发现"
-  const hasRedSection = /🔴\s*严重问题|严重问题[^#\n]*🔴/.test(input);
+  // 支持格式：🔴 严重问题 / 🔴 **严重问题** / 严重问题...🔴
+  const hasRedSection = /🔴\s*\*{0,2}\s*严重问题|严重问题[^#\n]*🔴/.test(input);
 
   if (hasRedSection) {
     // 有"严重问题"section — 检查内容是否为"未发现"
     // 在 "严重问题" 出现后的 400 字符内，查找"未发现"
     const sectionSaysNoIssues = /严重问题[\s\S]{0,400}未发现/.test(input)
+      || /未发现[\s\S]{0,50}严重问题/.test(input)
+      || /没有发现[\s\S]{0,30}严重问题/.test(input)
       || /严重问题[\s\S]{0,200}[-*]\s*\*\*无\*\*/.test(input)
       || /严重问题[\s\S]{0,200}[-*]\s*无\b/.test(input);
 

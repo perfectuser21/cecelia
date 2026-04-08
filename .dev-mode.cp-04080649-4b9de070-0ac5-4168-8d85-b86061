@@ -1,0 +1,9 @@
+dev
+branch: cp-04080649-4b9de070-0ac5-4168-8d85-b86061
+task_card: .task-cp-04080649-4b9de070-0ac5-4168-8d85-b86061.md
+started: 2026-04-08T21:51:58+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending

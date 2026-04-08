@@ -30,6 +30,7 @@ const manifest: FeatureManifest = {
           { path: '/collection-dashboard', label: 'Collection', icon: 'Database', order: 12 },
           { path: '/viral-analysis', label: '爆款分析', icon: 'TrendingUp', order: 13 },
           { path: '/okr-roadmap', label: 'OKR Roadmap', icon: 'MapPin', order: 10 },
+          { path: '/reports', label: 'Reports', icon: 'FileText', order: 14 },
           { path: '/system/team', label: 'Team', icon: 'Users', order: 11 },
         ],
       },

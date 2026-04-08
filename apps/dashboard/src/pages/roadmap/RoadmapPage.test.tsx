@@ -79,7 +79,7 @@ describe('RoadmapPage', () => {
       render(<RoadmapPage />);
     });
     await act(async () => {});
-    expect(screen.getByText('暂无 SelfDrive 记录')).toBeInTheDocument();
+    expect(screen.getByText('暂无 Brain 活动记录')).toBeInTheDocument();
   });
 
   it('有 in_progress 项目时显示在 Now 列', async () => {

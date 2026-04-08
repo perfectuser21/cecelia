@@ -1236,7 +1236,7 @@ export default function LiveMonitorPage() {
       fetch('/api/v1/vps-monitor/stats').then(x => x.json()),
       fetch('/api/v1/vps-monitor/services').then(x => x.json()),
       fetch('/api/cluster/scan-sessions').then(x => x.json()),
-      fetch('/api/goals?limit=200').then(x => x.json()),
+      fetch('/api/brain/goals').then(x => x.json()),
       fetch('/api/v1/vps-monitor/hk-stats').then(x => x.json()),
     ]);
     if (r[0].status === 'fulfilled') setBrainStatus(r[0].value);

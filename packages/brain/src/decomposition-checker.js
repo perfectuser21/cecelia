@@ -104,18 +104,22 @@ async function createDecompositionTask({ title, description, goalId, projectId, 
  * 秋米负责：KR → Project → Initiative（带方向描述 + 成功标准）
  *
  * 触发条件：
- *   - KR status = 'pending'
+ *   - KR status = 'pending'（仅 pending，不含 ready）
  *   - 没有已存在的拆解任务（去重）
  *   - 未达 WIP 上限
+ *
+ * 注意：ready 状态的 KR 已由 Vivian 审核通过，不应再触发新拆解任务。
+ * ready KR 的后续流程由 Check B（Initiative 状态检测）和 Check C（无 Project 回退）处理。
  */
 async function checkPendingKRs() {
   const actions = [];
 
-  // 找 pending 状态且没有子结构的 KR（新 OKR 表：key_results）
+  // 找 pending 状态的 KR（新 OKR 表：key_results）
+  // 不包含 ready：ready KR 已完成拆解审核，超出 dedup 窗口后不应被重新触发
   const result = await pool.query(`
     SELECT g.id, g.title, g.description, NULL::text AS priority, g.objective_id AS parent_id
     FROM key_results g
-    WHERE g.status IN ('pending', 'ready')
+    WHERE g.status = 'pending'
   `);
 
   for (const kr of result.rows) {

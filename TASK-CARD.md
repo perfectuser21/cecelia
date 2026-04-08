@@ -1,44 +1,36 @@
-# Task Card: [SelfDrive] [数据闭环] 选题决策反馈系统 v1
+# Task Card: [SelfDrive] Test KR for decomp — 执行验证 & 首个迭代交付
+
+**任务 ID**: ba5dd980-c113-4571-a1b2-147e6ad62c4f
+**分支**: cp-04080726-ba5dd980-c113-4571-a1b2-147e6a
+**领域**: agent_ops
+**优先级**: P1
 
 ## 目标
-实现内容发布数据（点赞/评论/分享）→ 选题热度评分 → 下周选题推荐的完整反馈闭环。
+
+对 decomp（OKR 拆解方法论）的 Test KR 进行执行验证，输出首个迭代交付：
+1. 明确验证标准（success 定义）
+2. 完成第一个测试周期
+3. 输出验证报告，驱动 decomp 方法论迭代
+
+## 验证结论（分析阶段）
+
+Test KR（goals 表，type=area_kr，id=90a9e33e）已于 2026-04-08 归档（archived），current_value=38。
+分析发现 decomp-checker v2.0 存在一个 bug：
+
+**Check A 查询了 `ready` 状态的 KR（不应该）**
+- 代码：`WHERE g.status IN ('pending', 'ready')`
+- 注释说明：「检测 pending 且未拆过的 KR」
+- `ready` 状态的 KR 已经完成拆解并由 Vivian 审核通过，不应触发新的拆解任务
+- 超过 24h dedup 窗口后，`ready` KR 会被错误地重新触发拆解 → 强制改回 `decomposing`
 
 ## 实现范围
 
-### 1. DB Migration（214_topic_decision_feedback.sql）
-新增 `topic_decision_feedback` 表，存储每周话题热度评分和推荐记录：
-- `week_key` — YYYY-WNN
-- `topic_keyword` — 话题关键词
-- `heat_score` — 综合热度分（0-100）
-- `total_likes/comments/shares/views` — 汇总指标
-- `recommended_next_week` — 是否推荐为下周方向
+1. `packages/brain/src/decomposition-checker.js`
+   - Check A 查询改为 `status = 'pending'`（移除 `ready`）
+   - 注释更新与代码一致
 
-### 2. topic-heat-scorer.js（新文件）
-- `computeTopicHeatScores(pool, start, end)` — 聚合 pipeline_publish_stats 到话题级别
-- 热度公式：`views*0.1 + likes*3 + comments*5 + shares*7`，归一化到0-100
-- `saveTopicFeedback(pool, weekKey, scoredTopics)` — 写入 topic_decision_feedback
+2. `packages/brain/src/__tests__/decomposition-checker.test.js`
+   - 新增测试：`ready` KR 不应触发拆解任务
 
-### 3. weekly-report-generator.js（修改）
-- 调用 topic-heat-scorer 获取本周爆款话题 TOP 5
-- 在周报中增加"爆款主题"和"下周推荐方向"两个板块
-
-### 4. topic-selector.js（修改）
-- 新增 `getHighPerformingTopics(pool)` 查询近4周 heat_score > 60 的历史话题
-- 将高热话题作为正向参考注入选题 Prompt
-
-## DoD
-
-- [x] [ARTIFACT] `packages/brain/migrations/214_topic_decision_feedback.sql` 文件存在
-  - Test: `manual:node -e "require('fs').accessSync('packages/brain/migrations/214_topic_decision_feedback.sql')"`
-
-- [x] [ARTIFACT] `packages/brain/src/topic-heat-scorer.js` 文件存在且导出 computeTopicHeatScores 和 saveTopicFeedback
-  - Test: `manual:node -e "const m=require('./packages/brain/src/topic-heat-scorer.js');if(!m.computeTopicHeatScores||!m.saveTopicFeedback)process.exit(1)"`
-
-- [x] [BEHAVIOR] topic-heat-scorer 热度公式正确（views*0.1 + likes*3 + comments*5 + shares*7，归一化到0-100）
-  - Test: `tests/topic-heat-scorer.test.ts`
-
-- [x] [BEHAVIOR] weekly-report-generator 周报文本包含"爆款主题"板块
-  - Test: `tests/weekly-report-generator.test.ts`
-
-- [x] [BEHAVIOR] topic-selector 的 Prompt 包含高热话题正向参考
-  - Test: `tests/topic-heat-scorer.test.ts`
+3. `docs/learnings/cp-04080726-test-kr-decomp-verification.md`
+   - 验证报告：Test KR 生命周期 + 方法论发现 + 下次改进建议
