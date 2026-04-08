@@ -57,6 +57,7 @@ import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
 import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks } from './credential-expiry-checker.js';
+import { proactiveTokenCheck } from './account-usage.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -994,6 +995,14 @@ async function dispatchNextTask(goalIds) {
     const qcState = getQuotaCoolingState();
     console.log(`[tick] quota cooling until: ${qcState.until}`);
     return { skipped: true, reason: 'quota_cooling' };
+  }
+
+  // 0a-token. Proactive token expiry check — 派发前主动检测各账号 token 状态
+  // token 过期 → 立即 markAuthFailure 熔断，阻止派发级联 401
+  try {
+    await proactiveTokenCheck();
+  } catch (tokenCheckErr) {
+    console.error('[tick] proactiveTokenCheck failed (non-fatal):', tokenCheckErr.message);
   }
 
   // 0a. Billing pause check — quota_exhausted 全局熔断
