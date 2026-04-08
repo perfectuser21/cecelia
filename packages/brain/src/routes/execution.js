@@ -774,6 +774,18 @@ router.post('/execution-callback', async (req, res) => {
             [task_id, JSON.stringify({ needs_human_review: true })]
           );
           console.log(`[execution-callback] Needs human review: task=${task_id} class=${classification.class}`);
+
+          // Auth 失败：触发账号级熔断，排除该账号 2h，防止新任务继续派到失效账号（级联 quarantine）
+          if (classification.class === 'auth') {
+            const failedAccount = taskPayload.dispatched_account;
+            if (failedAccount) {
+              const { markAuthFailure } = await import('../account-usage.js');
+              markAuthFailure(failedAccount);
+              console.log(`[execution-callback] [auth-circuit-breaker] ${failedAccount} 已触发 auth 熔断，2h 内新任务自动绕开`);
+            } else {
+              console.warn(`[execution-callback] [auth-circuit-breaker] auth 失败但 payload 缺少 dispatched_account，无法精准熔断`);
+            }
+          }
         }
 
         // === Dev 任务失败智能重试（补充 quarantine 未处理的 code_error / transient）===
