@@ -12,7 +12,7 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 
 // 卡住阈值（毫秒）
@@ -31,6 +31,10 @@ const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000;
 const DEDUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 // quarantined 冷却期更长（72h）：rescue 本身失败说明环境有问题，不应频繁重试
 const DEDUP_QUARANTINE_COOLDOWN_MS = 72 * 60 * 60 * 1000;
+
+// 同一分支 rescue 任务 quarantined 次数上限：超限后标记 cleanup_done，永久停止创建
+// 背景：rescue 任务反复被 watchdog liveness_dead 杀死，是陈旧 .dev-mode 文件的主要失败来源（85%）
+const MAX_RESCUE_QUARANTINE = 3;
 
 /**
  * 获取主仓库根路径
@@ -200,6 +204,29 @@ function hasDevLock(dirPath, branch) {
 }
 
 /**
+ * 将 .dev-mode 文件标记为 cleanup_done: true，停止后续 patrol 扫描
+ * @param {string} dirPath - worktree 路径
+ * @param {string} branch - 分支名
+ */
+function writeCleanupDone(dirPath, branch) {
+  const devModeFile = path.join(dirPath, `.dev-mode.${branch}`);
+  if (!existsSync(devModeFile)) return;
+  try {
+    let content = readFileSync(devModeFile, 'utf8');
+    if (content.includes('cleanup_done: true')) return;
+    if (content.includes('cleanup_done:')) {
+      content = content.replace(/cleanup_done:\s*\S+/, 'cleanup_done: true');
+    } else {
+      content = content.trimEnd() + '\ncleanup_done: true\n';
+    }
+    writeFileSync(devModeFile, content, 'utf8');
+    console.log(`[pipeline-patrol] 标记 cleanup_done: ${branch}（rescue quarantine 次数达上限 ${MAX_RESCUE_QUARANTINE}）`);
+  } catch (err) {
+    console.error(`[pipeline-patrol] 写入 cleanup_done 失败 (${branch}):`, err.message);
+  }
+}
+
+/**
  * 判断 pipeline 是否卡住
  * @param {object} parsed - parseDevMode 返回的对象
  * @returns {{stuck: boolean, reason: string, elapsedMs: number}}
@@ -240,11 +267,27 @@ function checkStuck(parsed) {
 async function createRescueTask(dbPool, info) {
   const { branch, currentStage, blockReason, elapsedMs, worktreePath, isOrphan } = info;
 
+  // 封顶检查：同一分支 quarantined rescue 次数 >= MAX_RESCUE_QUARANTINE 时，
+  // 写 cleanup_done 到 .dev-mode 文件，永久停止该分支的 rescue 循环
+  const quarantineCountResult = await dbPool.query(`
+    SELECT COUNT(*) as count FROM tasks
+    WHERE task_type = 'pipeline_rescue'
+      AND title LIKE $1
+      AND status = 'quarantined'
+  `, [`%${branch}%`]);
+  const quarantineCount = parseInt(quarantineCountResult.rows[0]?.count || '0', 10);
+  if (quarantineCount >= MAX_RESCUE_QUARANTINE) {
+    writeCleanupDone(worktreePath, branch);
+    return {
+      created: false,
+      reason: `quarantine_cap: ${quarantineCount} 次 quarantined，已标记 cleanup_done`,
+    };
+  }
+
   // 去重检查：同一 branch 的 pipeline_rescue 任务在冷却期内不重复创建
   // 条件1：任务仍活跃（in_progress/queued/paused 等）→ 不重建
   // 条件2：24h 内已有 completed/cancelled/canceled 任务 → 不重建
   // 条件3：72h 内已有 quarantined 任务 → 不重建（rescue 自身失败说明环境问题，需更长冷却）
-  // Bug fix: 原逻辑遗漏 quarantined 的 24h 检查，导致 rescue 失败后无限重建循环
   const dedupResult = await dbPool.query(`
     SELECT id, created_at, status FROM tasks
     WHERE task_type = 'pipeline_rescue'
@@ -415,8 +458,10 @@ export {
   scanDevModeFiles as _scanDevModeFiles,
   parseDevMode as _parseDevMode,
   checkStuck as _checkStuck,
+  writeCleanupDone as _writeCleanupDone,
   STAGE_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   DEDUP_COOLDOWN_MS,
   DEDUP_QUARANTINE_COOLDOWN_MS,
+  MAX_RESCUE_QUARANTINE,
 };
