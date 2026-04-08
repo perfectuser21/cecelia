@@ -1824,6 +1824,63 @@ router.post('/analytics/social-media-sync', async (req, res) => {
   }
 });
 
+// ─── 数据管道健康状态 ──────────────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/analytics/pipeline-status
+ * 返回全平台数据采集管道的健康状态。
+ *
+ * 供 Dashboard、选题引擎、日报感知哪些平台数据新鲜、哪些缺失。
+ *
+ * Returns:
+ * {
+ *   overall_health: 'healthy' | 'stale' | 'empty',
+ *   content_analytics_total: number,
+ *   platforms: [{ platform, content_count, last_collected_at, is_fresh, has_data }],
+ *   missing_platforms: string[],
+ *   stale_platforms: string[],
+ *   coverage_pct: number,
+ *   checked_at: string (ISO)
+ * }
+ */
+router.get('/analytics/pipeline-status', async (req, res) => {
+  try {
+    const [coverage, totalResult] = await Promise.all([
+      getCollectionCoverage(pool),
+      pool.query('SELECT COUNT(*)::int AS total FROM content_analytics'),
+    ]);
+
+    const total         = totalResult.rows[0]?.total || 0;
+    const missingPlats  = coverage.filter(p => !p.has_data).map(p => p.platform);
+    const stalePlats    = coverage.filter(p => p.has_data && !p.is_fresh).map(p => p.platform);
+    const coveragePct   = coverage.length > 0
+      ? Math.round(coverage.filter(p => p.has_data).length / coverage.length * 100)
+      : 0;
+
+    let overallHealth;
+    if (total === 0) {
+      overallHealth = 'empty';
+    } else if (stalePlats.length >= Math.ceil(coverage.length / 2)) {
+      overallHealth = 'stale';
+    } else {
+      overallHealth = 'healthy';
+    }
+
+    res.json({
+      overall_health:           overallHealth,
+      content_analytics_total:  total,
+      platforms:                coverage,
+      missing_platforms:        missingPlats,
+      stale_platforms:          stalePlats,
+      coverage_pct:             coveragePct,
+      checked_at:               new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[API] analytics/pipeline-status GET 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── 每日平台采集手动触发 ──────────────────────────────────────────────────────
 
 /**
