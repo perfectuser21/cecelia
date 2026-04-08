@@ -32,18 +32,25 @@ changelog:
 ### Step 1: 读取 PRD
 
 ```bash
-TASK_PAYLOAD=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID} | jq '.payload')
-SPRINT_DIR=$(echo $TASK_PAYLOAD | jq -r '.sprint_dir')
-PROPOSE_ROUND=$(echo $TASK_PAYLOAD | jq -r '.propose_round // "1"')
-REVIEW_FEEDBACK_ID=$(echo $TASK_PAYLOAD | jq -r '.review_feedback_task_id // ""')
+# 从 task payload 读取关键字段
+TASK_RESPONSE=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID})
+SPRINT_DIR=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.sprint_dir||d.payload?.sprint_dir||'')" <<< "$TASK_RESPONSE")
+PLANNER_BRANCH=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.planner_branch||d.payload?.planner_branch||'')" <<< "$TASK_RESPONSE")
+PROPOSE_ROUND=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(String(d.task?.payload?.propose_round||d.payload?.propose_round||1))" <<< "$TASK_RESPONSE")
 
-cat "${SPRINT_DIR}/sprint-prd.md"
+# PRD 在 planner 的分支上，fetch 后用 git show 读取（不依赖本地文件是否存在）
+git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
+git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || \
+  cat "${SPRINT_DIR}/sprint-prd.md"   # fallback：已合并到本分支的场景
 ```
 
-**如果是修订轮（propose_round > 1）**，读取上轮 Reviewer 反馈：
+**如果是修订轮（propose_round > 1）**，读取上轮 Reviewer 的反馈：
 ```bash
-FEEDBACK_FILE="${SPRINT_DIR}/contract-review-feedback.md"
-[ -f "$FEEDBACK_FILE" ] && cat "$FEEDBACK_FILE"
+REVIEW_BRANCH=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.review_branch||d.payload?.review_branch||'')" <<< "$TASK_RESPONSE")
+if [ -n "$REVIEW_BRANCH" ]; then
+  git fetch origin "${REVIEW_BRANCH}" 2>/dev/null || true
+  git show "origin/${REVIEW_BRANCH}:${SPRINT_DIR}/contract-review-feedback.md" 2>/dev/null || true
+fi
 ```
 
 ### Step 2: 写合同草案
@@ -68,19 +75,25 @@ FEEDBACK_FILE="${SPRINT_DIR}/contract-review-feedback.md"
 
 **禁止在硬阈值中引用内部实现**（如函数名、代码路径）。
 
-### Step 3: push + 回写 Brain
+### Step 3: 建分支 + push + 回写 Brain
+
+**重要**：在独立 cp-* 分支上 push，不能推 main：
 
 ```bash
+TASK_ID_SHORT=$(echo {TASK_ID} | cut -c1-8)
+PROPOSE_BRANCH="cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID_SHORT}"
+git checkout -b "${PROPOSE_BRANCH}" 2>/dev/null || git checkout "${PROPOSE_BRANCH}"
+mkdir -p "${SPRINT_DIR}"
 git add "${SPRINT_DIR}/contract-draft.md"
 git commit -m "feat(contract): round-${PROPOSE_ROUND} draft"
-git push origin HEAD
+git push origin "${PROPOSE_BRANCH}"
 
 curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
   -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"PROPOSED\",\"contract_draft_path\":\"${SPRINT_DIR}/contract-draft.md\"}}"
+  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"PROPOSED\",\"contract_draft_path\":\"${SPRINT_DIR}/contract-draft.md\",\"propose_branch\":\"${PROPOSE_BRANCH}\"}}"
 ```
 
 **最后一条消息**：
 ```
-{"verdict": "PROPOSED", "contract_draft_path": "sprints/.../contract-draft.md"}
+{"verdict": "PROPOSED", "contract_draft_path": "sprints/.../contract-draft.md", "propose_branch": "cp-harness-propose-r1-xxxxxxxx"}
 ```
