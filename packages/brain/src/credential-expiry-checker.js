@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { createTask } from './actions.js';
 
-const ALERT_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 小时
+const ALERT_THRESHOLD_MS = 8 * 60 * 60 * 1000; // 8 小时（给更多响应窗口）
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 
 /**

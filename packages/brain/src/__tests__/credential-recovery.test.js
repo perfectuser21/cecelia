@@ -44,7 +44,7 @@ function mockHealthyCredentials() {
   existsSync.mockReturnValue(true);
   readFileSync.mockReturnValue(JSON.stringify({
     claudeAiOauth: {
-      expiresAt: Date.now() + 8 * 60 * 60 * 1000, // 8 hours from now
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours from now (well above any alert threshold)
     },
   }));
 }
