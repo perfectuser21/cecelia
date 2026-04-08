@@ -98,7 +98,7 @@ describe('RoadmapPage', () => {
     ];
 
     (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/api/tasks/projects')) {
+      if (typeof url === 'string' && url.includes('/api/brain/projects')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(mockProjects) });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
@@ -148,10 +148,10 @@ describe('RoadmapPage', () => {
     ];
 
     (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/api/goals')) {
+      if (typeof url === 'string' && url.includes('/api/brain/goals')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(mockGoals) });
       }
-      if (typeof url === 'string' && url.includes('/api/tasks/projects')) {
+      if (typeof url === 'string' && url.includes('/api/brain/projects')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(mockProjects) });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });

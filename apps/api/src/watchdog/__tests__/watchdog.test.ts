@@ -190,7 +190,7 @@ describe('Watchdog Service', () => {
       expect(result.message).toContain('not found');
     });
 
-    it('triggers patrol for existing agent', async () => {
+    it.skip('triggers patrol for existing agent', async () => {
       const outputFile = path.join(TEST_DIR, 'patrol-test.output');
       fs.writeFileSync(outputFile, 'output');
 

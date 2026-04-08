@@ -398,8 +398,8 @@ export default function RoadmapPage() {
   const fetchAll = useCallback(async () => {
     try {
       const [goalsRes, projectsRes, tasksRes, eventsRes] = await Promise.all([
-        fetch('/api/goals?limit=200'),
-        fetch('/api/tasks/projects?limit=200'),
+        fetch('/api/brain/goals?limit=200'),
+        fetch('/api/brain/projects?limit=200'),
         fetch('/api/brain/tasks?status=in_progress'),
         fetch('/api/brain/events?event_type=cycle_complete&limit=5'),
       ]);
