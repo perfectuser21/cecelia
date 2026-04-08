@@ -70,11 +70,11 @@ export async function runAllVerifiers() {
         await pool.query(`
           UPDATE key_results
           SET progress = $1,
-              current_value = $2::numeric,
-              metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', ($2::numeric)::text),
+              current_value = $2,
+              metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $3),
               updated_at = NOW()
-          WHERE id = $3
-        `, [progress, currentValue, v.kr_id]);
+          WHERE id = $4
+        `, [progress, currentValue, String(currentValue), v.kr_id]);
 
         updated++;
         results.push({
@@ -124,10 +124,10 @@ export async function resetAllKrProgress() {
     await pool.query(`
       UPDATE key_results SET progress = $1,
         current_value = $2,
-        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $2::text),
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $3),
         updated_at = NOW()
-      WHERE id = $3
-    `, [progress, currentValue, v.kr_id]);
+      WHERE id = $4
+    `, [progress, currentValue, String(currentValue), v.kr_id]);
     fixed++;
   }
   return { fixed };
