@@ -300,7 +300,6 @@ export async function executeCopyReview(task) {
   if (!allText.trim()) return { success: true, review_passed: false, issues: ['文案内容为空'] };
 
   const issues = [];
-  let ruleScores = null;
 
   // ─── Claude 调用：使用配置 review_prompt 审查文案 ──────────────
   const reviewRules = typeConfig?.review_rules;
