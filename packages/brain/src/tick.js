@@ -56,7 +56,7 @@ import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
-import { checkAndAlertExpiringCredentials } from './credential-expiry-checker.js';
+import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks } from './credential-expiry-checker.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -1602,7 +1602,7 @@ async function executeTick() {
     });
   }
 
-  // [感知] 凭据有效期检查：每 30 分钟一次，过期前 4h 创建告警任务
+  // [感知] 凭据有效期检查：每 30 分钟一次，过期前 4h 创建告警任务 + 凭据恢复后重排队
   const credentialCheckElapsed = Date.now() - _lastCredentialCheckTime;
   if (credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
     _lastCredentialCheckTime = Date.now();
@@ -1612,6 +1612,15 @@ async function executeTick() {
       }
     }).catch(err => {
       console.error('[tick] Credential expiry check failed (non-fatal):', err.message);
+    });
+
+    // [恢复] 凭据健康时，自动重排队因 auth 失败被隔离的业务任务（非 pipeline_rescue）
+    recoverAuthQuarantinedTasks(pool).then(r => {
+      if (r.recovered > 0) {
+        console.log(`[tick] [credential-recovery] ✅ ${r.recovered} 个 auth 隔离任务已恢复排队`);
+      }
+    }).catch(err => {
+      console.error('[tick] Credential recovery failed (non-fatal):', err.message);
     });
   }
 
