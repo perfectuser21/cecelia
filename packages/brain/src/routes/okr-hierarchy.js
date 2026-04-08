@@ -397,4 +397,21 @@ router.post('/sync-verifiers', async (req, res) => {
   }
 });
 
+// ─── current_value 全量回填 ───────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/okr/backfill-current-values
+ * 从 kr_verifiers.current_value 回填所有 key_results.current_value
+ * 适用场景：Brain 重启后/紧急修复 current_value 为 0 的情况
+ */
+router.post('/backfill-current-values', async (req, res) => {
+  try {
+    const { resetAllKrProgress } = await import('../kr-verifier.js');
+    const result = await resetAllKrProgress();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

@@ -117,10 +117,11 @@ export async function resetAllKrProgress() {
 
     await pool.query(`
       UPDATE key_results SET progress = $1,
+        current_value = $2,
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $2::text),
         updated_at = NOW()
-      WHERE id = $3 AND progress != $1
-    `, [progress, currentValue.toString(), v.kr_id]);
+      WHERE id = $3
+    `, [progress, currentValue, v.kr_id]);
     fixed++;
   }
   return { fixed };
