@@ -124,9 +124,10 @@ export async function get7DayROIContext(pool) {
  * @param {Array<{topic_keyword: string, heat_score: number}>} highPerformingTopics - 历史高热话题（正向参考）
  * @param {string} [hotspotContext] - 垂类热点上下文（由 buildHotspotContext 生成）
  * @param {string} [roiContext] - 近7日ROI数据上下文（由 get7DayROIContext 生成）
+ * @param {string[]} [seedKeywords] - 精选主题库种子词（由调度器注入，引导选题方向）
  * @returns {string}
  */
-function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '', roiContext = '') {
+function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '', roiContext = '', seedKeywords = []) {
   const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const recentList = recentKeywords.length > 0
     ? recentKeywords.map(k => `- ${k}`).join('\n')
@@ -134,6 +135,10 @@ function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspo
 
   const highHeatSection = highPerformingTopics.length > 0
     ? `\n【有实证的高热话题方向】（过去4周实际获得高互动，可参考延伸，不要照搬）\n${highPerformingTopics.map(t => `- ${t.topic_keyword}（热度 ${t.heat_score.toFixed(0)} 分）`).join('\n')}\n`
+    : '';
+
+  const seedSection = seedKeywords.length > 0
+    ? `\n【今日精选方向】（请围绕以下种子关键词展开，可延伸变化，不要原词照搬）\n${seedKeywords.map(k => `- ${k}`).join('\n')}\n`
     : '';
 
   return `你是一位专注于"一人公司/个人IP/AI能力放大"领域的内容策划师。
@@ -148,7 +153,7 @@ function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspo
 
 【近 7 日已用选题】（请避免重复或相似的主题）
 ${recentList}
-${highHeatSection}${roiContext}${hotspotContext}
+${highHeatSection}${seedSection}${roiContext}${hotspotContext}
 【任务要求】
 请生成 ${TARGET_TOPIC_COUNT} 个内容选题，每个选题必须：
 1. 与"一人公司/AI能力放大/小组织效能"主题强相关
@@ -180,14 +185,14 @@ ${highHeatSection}${roiContext}${hotspotContext}
  * @param {import('pg').Pool} pool - PostgreSQL 连接池（用于查询历史选题）
  * @returns {Promise<Array<{keyword, content_type, title_candidates, hook, why_hot, priority_score}>>}
  */
-export async function generateTopics(pool) {
+export async function generateTopics(pool, seedKeywords = []) {
   const [recentKeywords, highPerformingTopics, hotspotContext, roiContext] = await Promise.all([
     getRecentKeywords(pool),
     getHighPerformingTopics(pool).catch(() => []),
     buildHotspotContext(),
     get7DayROIContext(pool).catch(() => ''),
   ]);
-  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext);
+  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext, seedKeywords);
 
   const { text } = await _callLLMWithFallback('cortex', prompt, {
     maxTokens: 2048,
