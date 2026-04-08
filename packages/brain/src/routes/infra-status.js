@@ -323,7 +323,7 @@ router.get('/servers', async (_req, res) => {
  * GET /credentials/health
  * 凭据健康度检查 — 返回所有 Claude 账号的 auth 熔断状态 + 近期 auth 失败统计
  */
-router.get('/credentials/health', async (req, res) => {
+router.get('/health', async (req, res) => {
   try {
     const [accountsResult, authFailStats] = await Promise.all([
       pool.query(`
