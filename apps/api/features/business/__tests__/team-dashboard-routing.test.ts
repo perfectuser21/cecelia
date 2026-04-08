@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-const ROOT = resolve(__dirname, '../../../../../..');
+const ROOT = resolve(__dirname, '../../../../..');
 
 describe('server.js 路由顺序：brainRoutes 早于 contentPipelineRoutes 通用挂载', () => {
   it('brainRoutes 挂载位置在 contentPipelineRoutes 通用挂载之前', () => {
