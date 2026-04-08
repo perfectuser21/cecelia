@@ -107,6 +107,73 @@ export async function runAllVerifiers() {
 }
 
 /**
+ * KR verifier 健康度校验 — 返回所有 active KR verifier 的健康状态
+ *
+ * 健康等级：
+ * - healthy: 无已知问题
+ * - warn: 使用静态 SQL / 数据陈旧（>3h 未采集）/ 已禁用
+ * - critical: 最近采集报错
+ *
+ * @returns {Promise<{ verifiers: Array, summary: { healthy: number, warn: number, critical: number } }>}
+ */
+export async function getKrVerifierHealth() {
+  const STALE_HOURS = 3;
+
+  const { rows: verifiers } = await pool.query(`
+    SELECT v.id, v.kr_id, v.verifier_type, v.query, v.threshold,
+           v.current_value, v.last_checked, v.last_error, v.enabled,
+           v.check_interval_minutes,
+           g.title as kr_title, g.status as kr_status, g.progress_pct
+    FROM kr_verifiers v
+    JOIN key_results g ON g.id = v.kr_id
+    WHERE g.status IN ('active', 'in_progress')
+    ORDER BY g.title
+  `);
+
+  const results = verifiers.map(v => {
+    const issues = [];
+
+    const isStatic = /^\s*SELECT\s+\d+(::\w+)?\s+as\s+\w+\s*$/i.test((v.query || '').trim());
+    if (isStatic) issues.push('static_sql');
+
+    const lastChecked = v.last_checked ? new Date(v.last_checked) : null;
+    const hoursSinceCheck = lastChecked
+      ? (Date.now() - lastChecked.getTime()) / 3_600_000
+      : Infinity;
+    if (hoursSinceCheck > STALE_HOURS) issues.push('stale');
+
+    if (v.last_error) issues.push('has_error');
+    if (!v.enabled) issues.push('disabled');
+
+    const health = issues.includes('has_error') ? 'critical'
+      : issues.length > 0 ? 'warn'
+      : 'healthy';
+
+    return {
+      kr_id: v.kr_id,
+      kr_title: v.kr_title,
+      kr_status: v.kr_status,
+      progress_pct: v.progress_pct,
+      current_value: v.current_value !== null ? parseFloat(v.current_value) : null,
+      threshold: v.threshold !== null ? parseFloat(v.threshold) : null,
+      last_checked: v.last_checked,
+      hours_since_check: isFinite(hoursSinceCheck) ? Math.round(hoursSinceCheck * 10) / 10 : null,
+      health,
+      issues,
+      last_error: v.last_error || null,
+      is_static_sql: isStatic,
+    };
+  });
+
+  const summary = results.reduce(
+    (acc, v) => { acc[v.health] = (acc[v.health] || 0) + 1; return acc; },
+    { healthy: 0, warn: 0, critical: 0 }
+  );
+
+  return { verifiers: results, summary };
+}
+
+/**
  * 重置所有 KR 的 progress 为 verifier 计算值（修复假数据）
  */
 export async function resetAllKrProgress() {
