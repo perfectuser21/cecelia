@@ -24,12 +24,10 @@ changelog:
 ### Step 1: 收集数据
 
 ```bash
-TASK_PAYLOAD=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID} | jq '.payload')
-SPRINT_DIR=$(echo $TASK_PAYLOAD | jq -r '.sprint_dir')
-PROJECT_ID=$(echo $TASK_PAYLOAD | jq -r '.project_id // ""')
-
-# 查询所有相关任务
-curl -s "localhost:5221/api/brain/tasks?sprint_dir=${SPRINT_DIR}" | jq '.'
+# TASK_ID、SPRINT_DIR、PROJECT_ID 由 cecelia-run 通过 prompt 注入，直接使用：
+# TASK_ID={TASK_ID}
+# SPRINT_DIR={sprint_dir}
+# PROJECT_ID={project_id}
 ```
 
 ### Step 2: 生成报告
@@ -69,14 +67,6 @@ cat > "${SPRINT_DIR}/harness-report.md" << 'REPORT'
 
 ✅ Harness v4.0 完成。所有 Feature 验证通过，PR 已合并。
 REPORT
-```
-
-### Step 3: 回写 Brain
-
-```bash
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
-  -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"report_path\":\"${SPRINT_DIR}/harness-report.md\"}}"
 ```
 
 **最后一条消息**：

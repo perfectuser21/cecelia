@@ -1606,6 +1606,19 @@ ${resultStr.substring(0, 2000)}
         const harnessType = harnessTask?.task_type;
         const { createTask: createHarnessTask } = await import('../actions.js');
 
+        // Feature 4: 检查 planner 是否已取消，避免已取消链路继续派生子任务
+        const plannerTaskId = harnessPayload?.planner_task_id;
+        if (plannerTaskId) {
+          const plannerRow = await pool.query(
+            'SELECT status FROM tasks WHERE id = $1',
+            [plannerTaskId]
+          );
+          if (plannerRow.rows[0]?.status === 'cancelled') {
+            console.log(`[execution-callback] harness: planner task ${plannerTaskId} is cancelled, skipping chain for ${task_id}`);
+            return res.json({ success: true, skipped: true, reason: 'planner_cancelled' });
+          }
+        }
+
         // Layer 1: harness_planner / sprint_planner 完成 → 创建 contract_propose
         if (harnessType === 'harness_planner' || harnessType === 'sprint_planner') {
           const sprintDir = harnessPayload.sprint_dir || 'sprints';
@@ -1693,6 +1706,7 @@ ${resultStr.substring(0, 2000)}
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
                 planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch,
                 harness_mode: true
               }
             });
@@ -1746,6 +1760,7 @@ ${resultStr.substring(0, 2000)}
               pr_url: prUrl,
               dev_task_id: task_id,
               planner_task_id: harnessPayload.planner_task_id,
+              planner_branch: harnessPayload.planner_branch,
               eval_round: 1,
               poll_count: 0,
               harness_mode: true

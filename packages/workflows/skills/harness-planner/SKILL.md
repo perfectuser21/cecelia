@@ -32,8 +32,9 @@ changelog:
 ### Step 1: 读取任务描述
 
 ```bash
-TASK_PAYLOAD=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID} | jq '.payload')
-SPRINT_DIR=$(echo $TASK_PAYLOAD | jq -r '.sprint_dir // "sprints"')
+# TASK_ID 和 SPRINT_DIR 由 cecelia-run 通过 prompt 注入，直接使用：
+# TASK_ID={TASK_ID}
+# SPRINT_DIR={sprint_dir}（来自 task payload，注入到 prompt 上下文）
 mkdir -p "$SPRINT_DIR"
 ```
 
@@ -79,9 +80,6 @@ git commit -m "feat(harness): sprint PRD — {目标}"
 git push origin HEAD
 
 BRANCH=$(git branch --show-current)
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
-  -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"branch\":\"$BRANCH\",\"sprint_dir\":\"$SPRINT_DIR\"}}"
 ```
 
 **最后一条消息**：
