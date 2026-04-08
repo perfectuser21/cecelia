@@ -10,6 +10,7 @@ import { readFileSync, existsSync } from 'fs';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import pool from '../db.js';
+import { checkAndAlertExpiringCredentials, checkCredentialExpiry } from '../credential-expiry-checker.js';
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -464,6 +465,40 @@ router.post('/recover', async (req, res) => {
       taskIds: ids,
       tasks: candidateResult.rows.map(r => ({ id: r.id, title: r.title })),
       recovered_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /check
+ * 手动触发凭据有效期检查 — 立即扫描所有账号 token 状态并创建告警任务
+ * 完整路径: /api/brain/credentials/check
+ *
+ * 用途：
+ *   - 无需等待 30 分钟 tick 周期
+ *   - 排查凭据告警是否正确创建
+ *   - 可由 Brain self-drive / 管理脚本主动触发
+ */
+router.post('/check', async (_req, res) => {
+  try {
+    const { accounts, criticalAccounts } = checkCredentialExpiry();
+    const result = await checkAndAlertExpiringCredentials(pool);
+
+    res.json({
+      checked: result.checked,
+      alerted: result.alerted,
+      skipped: result.skipped,
+      accounts: accounts.map(a => ({
+        account: a.account,
+        status: a.status,
+        remaining_ms: a.remainingMs,
+        expires_at: a.expiresAt,
+        error: a.error,
+      })),
+      critical_count: criticalAccounts.length,
+      checked_at: new Date().toISOString(),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
