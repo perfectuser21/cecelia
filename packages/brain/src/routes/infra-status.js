@@ -6,6 +6,7 @@
 
 import { Router } from 'express';
 import os from 'os';
+import { readFileSync, existsSync } from 'fs';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import pool from '../db.js';
@@ -321,7 +322,7 @@ router.get('/servers', async (_req, res) => {
 
 /**
  * GET /health
- * 凭据健康度检查 — 返回所有 Claude 账号的 auth 熔断状态 + 近期 auth 失败统计
+ * 凭据健康度检查 — 返回所有 Claude 账号的 auth 熔断状态 + 近期 auth 失败统计 + token 到期时间
  * 完整路径: /api/brain/credentials/health（server.js: app.use('/api/brain/credentials', infraStatusRoutes)）
  */
 router.get('/health', async (req, res) => {
@@ -352,13 +353,36 @@ router.get('/health', async (req, res) => {
       };
     }
 
-    const accounts = accountsResult.rows.map(row => ({
-      account_id: row.account_id,
-      is_auth_failed: row.is_auth_failed,
-      auth_fail_resets_at: row.auth_fail_resets_at,
-      last_checked: row.fetched_at,
-      ...failStatsByAccount[row.account_id],
-    }));
+    const accounts = accountsResult.rows.map(row => {
+      // 读取 token 到期信息
+      let tokenExpiry = { token_expires_at: null, token_remaining_hours: null, token_status: 'unknown' };
+      try {
+        const credPath = `${os.homedir()}/.claude-${row.account_id}/.credentials.json`;
+        if (existsSync(credPath)) {
+          const raw = JSON.parse(readFileSync(credPath, 'utf8'));
+          const expiresAtMs = raw?.claudeAiOauth?.expiresAt;
+          if (expiresAtMs) {
+            const remainingMs = expiresAtMs - Date.now();
+            const remainingHours = Math.round(remainingMs / 3600000 * 10) / 10;
+            const expiresAt = new Date(expiresAtMs).toISOString();
+            let token_status;
+            if (remainingMs < 0) token_status = 'expired';
+            else if (remainingMs < 8 * 3600000) token_status = 'expiring_soon';
+            else token_status = 'ok';
+            tokenExpiry = { token_expires_at: expiresAt, token_remaining_hours: remainingHours, token_status };
+          }
+        }
+      } catch { /* non-fatal */ }
+
+      return {
+        account_id: row.account_id,
+        is_auth_failed: row.is_auth_failed,
+        auth_fail_resets_at: row.auth_fail_resets_at,
+        last_checked: row.fetched_at,
+        ...tokenExpiry,
+        ...failStatsByAccount[row.account_id],
+      };
+    });
 
     const healthy = accounts.every(a => !a.is_auth_failed);
 
