@@ -31,6 +31,7 @@ export default function AreaSlotsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -39,9 +40,12 @@ export default function AreaSlotsPage() {
       if (data.success) {
         setConfig(data.config);
         setStatus(data.status || {});
+        setError(null);
+      } else {
+        setError(data.error ?? '配置加载失败');
       }
     } catch (err) {
-      console.error('Failed to fetch area slots:', err);
+      setError(err instanceof Error ? err.message : '网络错误，请检查 Brain 服务状态');
     } finally {
       setLoading(false);
     }
@@ -85,6 +89,15 @@ export default function AreaSlotsPage() {
 
   if (loading) {
     return <div style={styles.container}><p>加载中...</p></div>;
+  }
+
+  if (error && Object.keys(config).length === 0) {
+    return (
+      <div style={styles.container}>
+        <p style={{ color: '#f85149' }}>⚠️ {error}</p>
+        <button onClick={fetchConfig} style={{ marginTop: '8px', padding: '6px 14px', cursor: 'pointer' }}>重试</button>
+      </div>
+    );
   }
 
   const areas = Object.keys(AREA_META);
