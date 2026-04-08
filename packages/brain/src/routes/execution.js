@@ -1565,10 +1565,11 @@ ${resultStr.substring(0, 2000)}
       function extractVerdictFromResult(res, validVerdicts) {
         if (res === null || res === undefined) return null;
         if (typeof res === 'object') {
-          const v = res.verdict || res?.result?.verdict;
-          if (v) return v.toUpperCase();
-          // claude --output-format json 格式：{type:"result", result:"最后一条消息文字", ...}
-          // res.result 是字符串，需要单独搜索
+          // 直接字段
+          const dv = res.verdict || (typeof res.result === 'object' ? res.result?.verdict : null);
+          if (dv) return dv.toUpperCase();
+          // claude --output-format json 输出：{type, result: string, ...}
+          // res.result 是字符串，需与 string 分支一致搜索
           if (typeof res.result === 'string') {
             try {
               const parsed = JSON.parse(res.result);
