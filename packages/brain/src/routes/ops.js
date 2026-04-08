@@ -2,7 +2,7 @@ import express, { Router } from 'express';
 import pool from '../db.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { readFileSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync } from 'fs';
 import { createTask, updateTask } from '../actions.js';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
@@ -2674,8 +2674,24 @@ router.get('/docs/instruction-book', async (req, res) => {
 
 // ─── Deploy Webhook ──────────────────────────────────────────────────────────
 
-// In-memory deploy state tracker（进程重启后重置为 idle，属预期行为）
-export const deployState = {
+const DEPLOY_STATUS_FILE = '/tmp/cecelia-deploy-status.json';
+
+function readDeployStatusFile() {
+  try {
+    const data = JSON.parse(readFileSync(DEPLOY_STATUS_FILE, 'utf8'));
+    const age = Date.now() - new Date(data.started_at || 0).getTime();
+    if (age < 15 * 60 * 1000 && data.status && data.status !== 'idle') return data;
+  } catch {}
+  return null;
+}
+
+function writeDeployStatusFile(data) {
+  try { writeFileSync(DEPLOY_STATUS_FILE, JSON.stringify(data)); } catch {}
+}
+
+// Deploy state — 启动时从文件恢复（Brain 重启后可延续上次 deploy 状态）
+const _savedDeploy = readDeployStatusFile();
+export const deployState = _savedDeploy ? { ..._savedDeploy } : {
   status: 'idle',       // idle | running | success | failed
   version: null,
   started_at: null,
@@ -2695,8 +2711,12 @@ export const stagingDeployState = {
   skip_reason: null,    // 跳过原因：'no_docker' | 'no_env' | null（仅 skipped_* 状态时有值）
 };
 
-// GET /api/brain/deploy/status — 查询最近一次部署状态
+// GET /api/brain/deploy/status — 查询最近一次部署状态（文件优先，防止 Brain 重启后状态丢失）
 router.get('/deploy/status', (req, res) => {
+  const fileStatus = readDeployStatusFile();
+  if (fileStatus && fileStatus.status !== deployState.status) {
+    Object.assign(deployState, fileStatus);
+  }
   res.json({ ...deployState });
 });
 
@@ -2817,39 +2837,48 @@ router.post('/deploy', async (req, res) => {
 
   res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
 
-  const { execSync } = await import('child_process');
-  const startTime = Date.now();
+  // 写入文件状态，Brain 重启后可通过文件恢复 running 状态
+  writeDeployStatusFile({ ...deployState });
 
-  try {
-    // 构建 deploy-local.sh 参数
-    const scriptDir = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
-    let cmd = `bash "${scriptDir}" main`;
+  const { spawn } = await import('child_process');
+  const repoRoot = new URL('../../../..', import.meta.url).pathname;
+  const scriptDir = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
 
-    if (changed_paths && changed_paths.length > 0) {
-      const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
-      cmd = `bash "${scriptDir}" --changed="${escaped}" main`;
-    }
-
-    console.log(`[deploy-webhook] 开始部署: ${cmd}`);
-    execSync(cmd, {
-      cwd: new URL('../../../..', import.meta.url).pathname,
-      timeout: 600_000, // 10 分钟超时
-      stdio: 'inherit',
-    });
-
-    const elapsed = Date.now() - startTime;
-    deployState.status = 'success';
-    deployState.finished_at = new Date().toISOString();
-    deployState.elapsed_ms = elapsed;
-    console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
-  } catch (err) {
-    const elapsed = Date.now() - startTime;
-    deployState.status = 'failed';
-    deployState.finished_at = new Date().toISOString();
-    deployState.elapsed_ms = elapsed;
-    deployState.error = err.message;
-    console.error(`[deploy-webhook] ❌ 部署失败 (${(elapsed / 1000).toFixed(1)}s):`, err.message);
+  const args = ['bash', scriptDir];
+  if (changed_paths && changed_paths.length > 0) {
+    const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
+    args.push(`--changed=${escaped}`);
   }
+  args.push('main');
+
+  console.log(`[deploy-webhook] 开始部署（detached）: bash ${scriptDir}`);
+
+  // 使用 detached spawn：Brain 重启自身时不阻塞事件循环，避免 EADDRINUSE
+  const child = spawn(args[0], args.slice(1), {
+    detached: true,
+    stdio: 'ignore',  // 不继承 stdio，避免 Brain 退出时子进程也退出
+    cwd: repoRoot,
+  });
+  child.unref(); // 完全解绑，Brain 可自由退出/重启
+
+  // 若 Brain 在子进程完成前仍在运行，捕获退出码更新状态
+  const startTime = Date.now();
+  child.on('close', (code, signal) => {
+    const elapsed = Date.now() - startTime;
+    if (code === 0) {
+      deployState.status = 'success';
+      deployState.elapsed_ms = elapsed;
+      deployState.finished_at = new Date().toISOString();
+      console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
+    } else {
+      deployState.status = 'failed';
+      deployState.error = `deploy-local.sh exited code=${code} signal=${signal}`;
+      deployState.elapsed_ms = elapsed;
+      deployState.finished_at = new Date().toISOString();
+      console.error(`[deploy-webhook] ❌ 部署失败 code=${code} (${(elapsed / 1000).toFixed(1)}s)`);
+    }
+    writeDeployStatusFile({ ...deployState });
+  });
 });
 
 // GET /api/brain/deploy/staging/status — 查询 staging 部署状态（Safe Lane 轮询用）

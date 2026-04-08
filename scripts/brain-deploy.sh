@@ -5,9 +5,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 BRAIN_DIR="$ROOT_DIR/packages/brain"
+DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
+
+# ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────
+DEPLOY_SUCCESS=false
+_write_deploy_status() {
+    if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
+        printf '{"status":"success","version":"%s","finished_at":"%s"}' \
+            "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
+    else
+        printf '{"status":"failed","error":"brain-deploy.sh exited before success","finished_at":"%s"}' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
+    fi
+}
+trap '_write_deploy_status' EXIT
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 DRY_RUN=false
@@ -237,6 +251,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
   sleep 5
   TRIES=$((TRIES + 1))
   if curl -sf http://localhost:5221/api/brain/tick/status > /dev/null 2>&1; then
+    DEPLOY_SUCCESS=true
     echo ""
     echo "=== Deploy SUCCESS: cecelia-brain v${VERSION} is healthy (${DEPLOY_MODE}) ==="
 
