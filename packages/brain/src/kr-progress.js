@@ -51,12 +51,12 @@ export async function updateKrProgress(pool, krId) {
 
   const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  // 更新 objectives.progress
+  // 更新 key_results.progress（fallback 链路：基于 initiative 完成率）
   await pool.query(`
-    UPDATE objectives
-    SET updated_at = NOW()
+    UPDATE key_results
+    SET progress = $2, updated_at = NOW()
     WHERE id = $1
-  `, [krId]);
+  `, [krId, progress]);
 
   return { krId, progress, completed, total };
 }
@@ -68,11 +68,14 @@ export async function updateKrProgress(pool, krId) {
  * @returns {Promise<{ updated: number, results: Array }>}
  */
 export async function syncAllKrProgress(pool) {
-  // 查所有活跃 KR（迁移：goals → objectives UNION key_results）
+  // 只查 key_results（okr_projects.kr_id → key_results.id）
+  // 排除已有启用 verifier 的 KR（避免 fallback 覆盖 kr-verifier 的计算结果）
   const krsResult = await pool.query(`
-    SELECT id, title FROM objectives WHERE status NOT IN ('completed', 'cancelled')
-    UNION ALL
-    SELECT id, title FROM key_results WHERE status NOT IN ('completed', 'cancelled')
+    SELECT id, title FROM key_results
+    WHERE status NOT IN ('completed', 'cancelled')
+      AND id NOT IN (
+        SELECT kr_id FROM kr_verifiers WHERE enabled = true
+      )
   `);
 
   const results = [];

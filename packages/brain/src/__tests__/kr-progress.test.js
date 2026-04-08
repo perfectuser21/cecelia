@@ -29,13 +29,13 @@ function makeMockPool({
         return { rows: [initiativeStats] };
       }
 
-      // updateKrProgress: UPDATE objectives
-      if (s.includes('UPDATE objectives')) {
+      // updateKrProgress: UPDATE key_results SET progress = $2, updated_at = NOW()
+      if (s.includes('UPDATE key_results') && s.includes('progress')) {
         return { rows: [] };
       }
 
-      // syncAllKrProgress: 查所有活跃 KR (FROM objectives UNION ALL FROM key_results)
-      if (s.includes('FROM objectives') && s.includes('UNION ALL')) {
+      // syncAllKrProgress: 查 key_results 排除已有 verifier 的 KR
+      if (s.includes('FROM key_results') && s.includes('kr_verifiers')) {
         return { rows: krs };
       }
 
@@ -62,12 +62,12 @@ describe('D6: updateKrProgress', () => {
     expect(result.completed).toBe(3);
     expect(result.total).toBe(10);
 
-    // 验证 UPDATE objectives 被调用
+    // 验证 UPDATE key_results SET progress 被调用
     const updateCall = pool.query.mock.calls.find(c =>
-      c[0].includes('UPDATE objectives')
+      c[0].includes('UPDATE key_results') && c[0].includes('progress')
     );
     expect(updateCall).toBeTruthy();
-    expect(updateCall[1]).toEqual(['kr-001']);
+    expect(updateCall[1]).toEqual(['kr-001', 30]);
   });
 
   it('handles zero initiatives gracefully (progress = 0)', async () => {
@@ -130,7 +130,7 @@ describe('D6: updateKrProgress', () => {
 // ────────────────────────────────────────────────────────────────────
 
 describe('D6: syncAllKrProgress', () => {
-  it('syncs all active KRs', async () => {
+  it('syncs active KRs without verifiers', async () => {
     const pool = makeMockPool({
       projects: [{ id: 'proj-001' }],
       initiativeStats: { total: '4', completed: '2' },

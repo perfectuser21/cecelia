@@ -525,7 +525,8 @@ describe('P: Spending Cap 持久化', () => {
 // H: Haiku 独立模式（selectBestAccount({ model: 'haiku' })）
 // ============================================================
 describe('H: Haiku 独立模式', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await clearAllSpendingCaps();
     vi.resetModules();
   });
 
