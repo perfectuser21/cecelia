@@ -1,17 +1,21 @@
-# DoD: 内容选题调度器补偿窗口
+# DoD — [SelfDrive] 24h任务成功率39%根因分析
 
-## [ARTIFACT] topic-selection-scheduler.js 含补偿窗口截止常量
-- Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/topic-selection-scheduler.js','utf8');if(!c.includes('DAILY_TOPIC_CATCHUP_CUTOFF_UTC'))process.exit(1);console.log('PASS')"`
-- [x] DAILY_TOPIC_CATCHUP_CUTOFF_UTC 常量存在
+## 任务目标
+分析 229 条失败任务的根因，按 module/stage 分类，输出修复建议。
 
-## [BEHAVIOR] 补偿窗口内（UTC 10:00）触发选题生成
-- Test: `tests/packages/brain/src/__tests__/topic-selection-scheduler.test.js`
-- [x] makeCatchupWindowTime() 测试：UTC 10:00 时 skipped_window=false，正常触发
+## 交付物
 
-## [BEHAVIOR] 补偿窗口外（UTC 13:00）不触发
-- Test: `tests/packages/brain/src/__tests__/topic-selection-scheduler.test.js`
-- [x] makeOutsideWindowTime() 测试：UTC 13:00 时 skipped_window=true
+- [x] [ARTIFACT] 分析报告文件 `docs/learnings/cp-04072300-task-success-rate-analysis.md` 存在
+  Test: `manual:node -e "require('fs').accessSync('docs/learnings/cp-04072300-task-success-rate-analysis.md')"`
 
-## [BEHAVIOR] 幂等保护：当天已有任务不重复生成
-- Test: `tests/packages/brain/src/__tests__/topic-selection-scheduler.test.js`
-- [x] hasTodayTopics=true 时 skipped=true，generateTopics 不被调用
+- [x] [BEHAVIOR] 报告包含根因分类（pipeline_rescue storm + auth 失败）
+  Test: `manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-04072300-task-success-rate-analysis.md','utf8');if(!c.includes('pipeline_rescue'))process.exit(1)"`
+
+- [x] [BEHAVIOR] 报告包含7天趋势数据
+  Test: `manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-04072300-task-success-rate-analysis.md','utf8');if(!c.includes('2026-04-05'))process.exit(1)"`
+
+- [x] [BEHAVIOR] 报告包含修复建议
+  Test: `manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-04072300-task-success-rate-analysis.md','utf8');if(!c.includes('account3'))process.exit(1)"`
+
+## 成功标准
+分析报告输出，识别系统性故障根因，提报 P1 bug。
