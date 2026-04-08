@@ -9,8 +9,8 @@
  *   - total: 总任务数
  *   - success: 成功数 (status = completed)
  *   - failed: 失败数 (status = failed | quarantined)
- *   - cancelled: 取消数 (status = cancelled)
- *   - success_rate: 成功率（排除取消）
+ *   - excluded: 排除数 (status = cancelled | canceled | paused | queued | in_progress)
+ *   - success_rate: 成功率（仅计算终态：completed + failed/quarantined）
  *   - daily_trend: 每日趋势数组
  *   - failure_reasons: 失败原因分类
  */
@@ -21,11 +21,21 @@ import pool from '../db.js';
 const router = Router();
 
 /**
- * 将 failure_reason 字符串分类为标准类别
- * @param {string|null} reason - 原始 failure_reason
- * @returns {string} - 分类：ci_failure | branch_protection | dev_skill_error | other
+ * 将 failure_reason（metadata）+ error_message 联合分类为标准类别
+ * @param {string|null} reason - metadata->>'failure_reason'
+ * @param {string|null} errorMessage - tasks.error_message
+ * @returns {string} - 分类：liveness_dead | ci_failure | branch_protection | dev_skill_error | other
  */
-function classifyFailureReason(reason) {
+function classifyFailureReason(reason, errorMessage) {
+  // 优先从 error_message 分类（watchdog/liveness_dead 等常见模式）
+  const msg = (errorMessage || '').toLowerCase();
+  if (msg.includes('liveness_dead') || msg.includes('watchdog')) {
+    return 'liveness_dead';
+  }
+  if (msg.includes('crisis') || msg.includes('oom') || msg.includes('memory')) {
+    return 'resource_pressure';
+  }
+
   if (!reason) return 'other';
   const r = reason.toLowerCase();
   if (r.includes('ci') || r.includes('test') || r.includes('workflow') || r.includes('github action')) {
@@ -38,6 +48,15 @@ function classifyFailureReason(reason) {
     return 'dev_skill_error';
   }
   return 'other';
+}
+
+/**
+ * 判断任务状态是否为「已排除」（不计入成功率分母）
+ * 排除：两种拼写的取消 + paused + 未完成（queued/in_progress）
+ */
+function isExcludedStatus(status) {
+  return status === 'cancelled' || status === 'canceled' || status === 'paused' ||
+    status === 'queued' || status === 'in_progress';
 }
 
 // GET /dev-success-rate — dev 任务成功率统计
@@ -62,16 +81,17 @@ router.get('/dev-success-rate', async (req, res) => {
     since.setDate(since.getDate() - days);
     since.setHours(0, 0, 0, 0);
 
-    // 查询整体统计 + 失败原因（含 metadata）
+    // 查询整体统计 + 失败原因（含 metadata + error_message）
     const overallResult = await pool.query(
       `SELECT
          status,
          metadata->>'failure_reason' AS failure_reason,
+         error_message,
          COUNT(*) AS cnt
        FROM tasks
        WHERE task_type = 'dev'
          AND created_at >= $1
-       GROUP BY status, metadata->>'failure_reason'`,
+       GROUP BY status, metadata->>'failure_reason', error_message`,
       [since.toISOString()]
     );
 
@@ -79,8 +99,8 @@ router.get('/dev-success-rate', async (req, res) => {
     let total = 0;
     let success = 0;
     let failed = 0;
-    let cancelled = 0;
-    const failureReasons = { ci_failure: 0, branch_protection: 0, dev_skill_error: 0, other: 0 };
+    let excluded = 0;
+    const failureReasons = { liveness_dead: 0, resource_pressure: 0, ci_failure: 0, branch_protection: 0, dev_skill_error: 0, other: 0 };
 
     for (const row of overallResult.rows) {
       const cnt = parseInt(row.cnt, 10);
@@ -91,16 +111,17 @@ router.get('/dev-success-rate', async (req, res) => {
         success += cnt;
       } else if (status === 'failed' || status === 'quarantined') {
         failed += cnt;
-        // 分类失败原因
-        const category = classifyFailureReason(row.failure_reason);
-        failureReasons[category] += cnt;
-      } else if (status === 'cancelled') {
-        cancelled += cnt;
+        // 从 error_message + failure_reason 联合分类
+        const category = classifyFailureReason(row.failure_reason, row.error_message);
+        failureReasons[category] = (failureReasons[category] || 0) + cnt;
+      } else if (isExcludedStatus(status)) {
+        excluded += cnt;
       }
     }
 
-    // 计算成功率（排除取消的任务）
-    const denominator = total - cancelled;
+    // 计算成功率（仅基于终态任务：completed + failed/quarantined）
+    // 排除：cancelled/canceled（取消）、paused（暂停）、queued/in_progress（未完成）
+    const denominator = total - excluded;
     const successRate = denominator > 0 ? Math.round((success / denominator) * 1000) / 10 : 0;
 
     // 查询每日趋势
@@ -109,7 +130,7 @@ router.get('/dev-success-rate', async (req, res) => {
          DATE(created_at) AS date,
          SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS success,
          SUM(CASE WHEN status IN ('failed', 'quarantined') THEN 1 ELSE 0 END) AS failed,
-         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+         SUM(CASE WHEN status IN ('cancelled', 'canceled', 'paused', 'queued', 'in_progress') THEN 1 ELSE 0 END) AS excluded,
          COUNT(*) AS total
        FROM tasks
        WHERE task_type = 'dev'
@@ -123,8 +144,8 @@ router.get('/dev-success-rate', async (req, res) => {
       const dayTotal = parseInt(row.total, 10);
       const daySuccess = parseInt(row.success, 10);
       const dayFailed = parseInt(row.failed, 10);
-      const dayCancelled = parseInt(row.cancelled, 10);
-      const dayDenominator = dayTotal - dayCancelled;
+      const dayExcluded = parseInt(row.excluded, 10);
+      const dayDenominator = dayTotal - dayExcluded;
       const dayRate = dayDenominator > 0 ? Math.round((daySuccess / dayDenominator) * 1000) / 10 : 0;
 
       return {
@@ -132,7 +153,7 @@ router.get('/dev-success-rate', async (req, res) => {
         total: dayTotal,
         success: daySuccess,
         failed: dayFailed,
-        cancelled: dayCancelled,
+        excluded: dayExcluded,
         success_rate: dayRate,
       };
     });
@@ -142,7 +163,7 @@ router.get('/dev-success-rate', async (req, res) => {
       total,
       success,
       failed,
-      cancelled,
+      excluded,
       success_rate: successRate,
       daily_trend: dailyTrend,
       failure_reasons: failureReasons,
