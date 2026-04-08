@@ -1878,9 +1878,12 @@ function _prepareSprintPrompt(task, taskType) {
   const isHarnessV4 = ['harness_generate', 'harness_fix'].includes(taskType);
   const skillCmd = isHarnessV4 ? '/harness-generator' : '/sprint-generator';
   const mode = isFixMode ? taskType : (isHarnessV4 ? 'harness_generate' : 'sprint_generate');
+  const headerText = isHarnessV4
+    ? `## Harness v4.0 — ${isFixMode ? 'Fix (Round ' + evalRound + ')' : 'Generate'}`
+    : `## Harness v3.1 — ${isFixMode ? 'Sprint Fix (Round ' + evalRound + ')' : 'Sprint Generate'}`;
   return `${skillCmd}
 
-## Harness v4.0 — ${isFixMode ? 'Fix (Round ' + evalRound + ')' : 'Generate'}
+${headerText}
 
 **task_type**: ${mode}
 **task_id**: ${task.id}

@@ -119,10 +119,10 @@ const SKILL_WHITELIST = {
   'harness_contract_propose': '/harness-contract-proposer',   // Layer 2a: 提合同草案
   'harness_contract_review': '/harness-contract-reviewer',    // Layer 2b: 挑战合同
   'harness_generate': '/harness-generator',                   // Layer 3a: Generator 写代码
-  // harness_ci_watch: 内联 Brain tick，不派 agent（无 skill entry）
+  'harness_ci_watch': '_internal',                            // Brain tick 内联处理（不派 agent）
   'harness_evaluate': '/harness-evaluator',                   // Layer 3c: Evaluator 验证 PR diff
   'harness_fix': '/harness-generator',                        // Layer 3d: Generator 修复（同 generator skill）
-  // harness_deploy_watch: 内联 Brain tick，不派 agent（无 skill entry）
+  'harness_deploy_watch': '_internal',                        // Brain tick 内联处理（不派 agent）
   'harness_report': '/harness-report',                        // Layer 4: 最终报告
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
