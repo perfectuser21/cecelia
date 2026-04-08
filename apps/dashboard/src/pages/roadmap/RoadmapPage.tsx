@@ -82,9 +82,10 @@ interface SelfDriveEvent {
 type Column = 'now' | 'next' | 'later';
 
 function classifyProject(project: Project): Column {
-  if (project.status === 'in_progress') return 'now';
+  // active/in_progress/queued = 当前正在推进
+  if (project.status === 'in_progress' || project.status === 'active' || project.status === 'queued') return 'now';
   if (project.status === 'completed') return 'later'; // completed 归 later，稍后过滤
-  // pending 项目：有 kr_id → next，否则 later
+  // planning + kr_id → next；其余 → later
   if (project.kr_id) return 'next';
   return 'later';
 }
@@ -405,9 +406,11 @@ export default function RoadmapPage() {
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  // 按列分类（仅展示非 completed 项目）
+  // 按列分类（仅展示非 completed、非 inactive 项目）
   const goalsById = Object.fromEntries(goals.map((g) => [g.id, g]));
-  const activeProjects = projects.filter((p) => p.status !== 'completed');
+  const activeProjects = projects.filter(
+    (p) => p.status !== 'completed' && p.status !== 'inactive'
+  );
 
   const nowProjects = activeProjects.filter((p) => classifyProject(p) === 'now');
   const nextProjects = activeProjects.filter((p) => classifyProject(p) === 'next');
