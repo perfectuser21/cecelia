@@ -9,11 +9,12 @@
  *   返回指定简报详情
  *
  * POST /api/brain/reports/generate
- *   手动生成一条测试简报（端到端测试用）
+ *   手动生成一条简报。type=weekly_report 触发真实周报生成；其他类型生成测试简报。
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { generateWeeklyReport } from '../weekly-report-generator.js';
 
 const router = Router();
 
@@ -98,15 +99,28 @@ router.get('/:id', async (req, res) => {
 
 /**
  * POST /generate
- * 手动生成一条测试简报（端到端测试 / 调试用）
+ * 手动生成一条简报。
+ * - type=weekly_report：触发真实周报生成（force 模式，跳过时间窗口），写入 system_reports
+ * - 其他类型：写入测试简报
  * @body {string} type - 报告类型（默认 '48h_summary'）
- * @body {string} title - 报告标题（可选）
+ * @body {string} title - 报告标题（可选，非 weekly_report 时生效）
  */
 router.post('/generate', async (req, res) => {
   try {
     const type = req.body.type || '48h_summary';
-    const title = req.body.title || `手动生成简报 ${new Date().toISOString()}`;
 
+    if (type === 'weekly_report') {
+      const result = await generateWeeklyReport(pool, new Date(), { force: true });
+      if (!result.generated) {
+        return res.status(500).json({ error: '周报生成失败', detail: result });
+      }
+      const { rows } = await pool.query(
+        `SELECT id, type, metadata, created_at FROM system_reports WHERE type = 'weekly_report' ORDER BY created_at DESC LIMIT 1`
+      );
+      return res.json({ success: true, report: rows[0] || { week: result.week, report_id: result.report_id } });
+    }
+
+    const title = req.body.title || `手动生成简报 ${new Date().toISOString()}`;
     const content = {
       title,
       summary: '手动生成的测试简报，用于端到端验证。',
@@ -119,16 +133,11 @@ router.post('/generate', async (req, res) => {
       risks: [],
     };
 
-    const metadata = {
-      triggered_by: 'api',
-      version: '1.0',
-    };
-
     const { rows } = await pool.query(
       `INSERT INTO system_reports (type, content, metadata)
        VALUES ($1, $2::jsonb, $3::jsonb)
        RETURNING id, type, metadata, created_at`,
-      [type, JSON.stringify(content), JSON.stringify(metadata)]
+      [type, JSON.stringify(content), JSON.stringify({ triggered_by: 'api', version: '1.0' })]
     );
 
     res.json({ success: true, report: rows[0] });
