@@ -33,11 +33,27 @@ changelog:
 ### Step 1: 读取草案
 
 ```bash
-TASK_PAYLOAD=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID} | jq '.payload')
-SPRINT_DIR=$(echo $TASK_PAYLOAD | jq -r '.sprint_dir')
+# 从 task payload 读取关键字段
+TASK_RESPONSE=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID})
+SPRINT_DIR=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.sprint_dir||d.payload?.sprint_dir||'')" <<< "$TASK_RESPONSE")
+PLANNER_BRANCH=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.planner_branch||d.payload?.planner_branch||'')" <<< "$TASK_RESPONSE")
+PROPOSE_TASK_ID=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.propose_task_id||d.payload?.propose_task_id||'')" <<< "$TASK_RESPONSE")
 
-cat "${SPRINT_DIR}/sprint-prd.md"
-cat "${SPRINT_DIR}/contract-draft.md"
+# 从 propose 任务的 result 中获取 propose_branch
+PROPOSE_BRANCH=$(node -e "
+  const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+  process.stdout.write(d.task?.result?.propose_branch||d.result?.propose_branch||'');
+" <<< "$(curl -s localhost:5221/api/brain/tasks/${PROPOSE_TASK_ID})")
+
+# fetch 所有相关分支
+git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
+[ -n "$PROPOSE_BRANCH" ] && git fetch origin "${PROPOSE_BRANCH}" 2>/dev/null || true
+
+# 读 PRD（来自 planner 分支）
+git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || cat "${SPRINT_DIR}/sprint-prd.md"
+
+# 读合同草案（来自 propose 分支）
+git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" 2>/dev/null || cat "${SPRINT_DIR}/contract-draft.md"
 ```
 
 ### Step 2: 逐条审查（对每个 Feature）
@@ -53,18 +69,32 @@ cat "${SPRINT_DIR}/contract-draft.md"
 **APPROVED**：所有 Feature 清晰可测，无歧义，无遗漏。
 
 ```bash
-# 写最终合同（approved 版）
-cp "${SPRINT_DIR}/contract-draft.md" "${SPRINT_DIR}/sprint-contract.md"
+# 在独立 review 分支上 push 最终合同
+TASK_ID_SHORT=$(echo {TASK_ID} | cut -c1-8)
+REVIEW_BRANCH="cp-harness-review-approved-${TASK_ID_SHORT}"
+git checkout -b "${REVIEW_BRANCH}" 2>/dev/null || git checkout "${REVIEW_BRANCH}"
+
+# 把草案复制为最终合同（从 propose 分支 checkout）
+mkdir -p "${SPRINT_DIR}"
+git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" > "${SPRINT_DIR}/sprint-contract.md"
+git add "${SPRINT_DIR}/sprint-contract.md"
+git commit -m "feat(contract): APPROVED — sprint-contract.md finalized"
+git push origin "${REVIEW_BRANCH}"
 
 curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
   -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"APPROVED\",\"contract_path\":\"${SPRINT_DIR}/sprint-contract.md\"}}"
+  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"APPROVED\",\"contract_path\":\"${SPRINT_DIR}/sprint-contract.md\",\"review_branch\":\"${REVIEW_BRANCH}\"}}"
 ```
 
 **REVISION**：有必须修改项（模糊/遗漏/不可测）。
 
 ```bash
-# 写反馈文件
+# 在独立 review 分支上 push 反馈文件
+TASK_ID_SHORT=$(echo {TASK_ID} | cut -c1-8)
+REVIEW_BRANCH="cp-harness-review-revision-${TASK_ID_SHORT}"
+git checkout -b "${REVIEW_BRANCH}" 2>/dev/null || git checkout "${REVIEW_BRANCH}"
+mkdir -p "${SPRINT_DIR}"
+
 cat > "${SPRINT_DIR}/contract-review-feedback.md" << 'FEEDBACK'
 # Contract Review Feedback (Round N)
 
@@ -77,9 +107,13 @@ cat > "${SPRINT_DIR}/contract-review-feedback.md" << 'FEEDBACK'
 **建议**: <如何修改使合同清晰>
 FEEDBACK
 
+git add "${SPRINT_DIR}/contract-review-feedback.md"
+git commit -m "feat(contract): REVISION — feedback round N"
+git push origin "${REVIEW_BRANCH}"
+
 curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
   -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"REVISION\",\"feedback_path\":\"${SPRINT_DIR}/contract-review-feedback.md\",\"issues_count\":N}}"
+  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"REVISION\",\"feedback_path\":\"${SPRINT_DIR}/contract-review-feedback.md\",\"review_branch\":\"${REVIEW_BRANCH}\",\"issues_count\":N}}"
 ```
 
 **最后一条消息**：
