@@ -60,44 +60,38 @@ describe('Fix 1 — content_publish pre-flight bypass', () => {
 
 // ─── Fix 3: executeExport 零图片降级 ────────────────────────────────────────
 
-describe('Fix 3 — executeExport 零图片卡片降级', () => {
-  // Mock fs 模块，模拟有文章/文案存在的场景
-  beforeEach(() => {
-    vi.mock('fs', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('fs')>();
-      return {
-        ...actual,
-        existsSync: vi.fn((p: string) => {
-          if (p.includes('article.md')) return true;
-          if (p.includes('copy.md')) return true;
-          return actual.existsSync(p);
-        }),
-      };
-    });
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('无图片卡片但有文章/文案时 executeExport 不失败 — 验证降级逻辑代码存在', () => {
-    // 验证 executeExport 源码包含降级逻辑
+describe('Fix 3 — executeExport 使用 V6 generator', () => {
+  it('executeExport 调用 gen-v6-person.mjs 生成图片 — 验证 V6 调用代码存在', () => {
     const { readFileSync } = require('fs');
     const src = readFileSync(
       require('path').join(__dirname, '../content-pipeline-executors.js'),
       'utf-8'
     );
-    expect(src).toContain('articleExists');
-    expect(src).toContain('copyExists');
-    expect(src).toContain('降级继续');
+    expect(src).toContain('gen-v6-person.mjs');
+    expect(src).toContain('person-data.json');
+    expect(src).toContain('GEN_V6_SCRIPT');
   });
 
-  it('无图片卡片且无文章/文案时 executeExport 返回失败 — 验证不可降级场景代码', () => {
+  it('executeExport findings 为空时直接返回失败 — 无静默降级', () => {
     const { readFileSync } = require('fs');
     const src = readFileSync(
       require('path').join(__dirname, '../content-pipeline-executors.js'),
       'utf-8'
     );
-    expect(src).toContain('无文章内容，export 阶段无产出');
+    expect(src).toContain('findings 为空，无法提取 person-data.json');
+  });
+
+  it('generateCards 已废弃注释存在 — 确认旧函数不被调用', () => {
+    const { readFileSync } = require('fs');
+    const src = readFileSync(
+      require('path').join(__dirname, '../content-pipeline-executors.js'),
+      'utf-8'
+    );
+    expect(src).toContain('generateCards() 已废弃');
+    // generateCards() 不应被主动调用（注释掉的调用不算）
+    const activeCallCount = src.split('generateCards(').filter(
+      (_, i, arr) => i > 0 && !arr[i-1].trimEnd().endsWith('//')
+    ).length;
+    expect(activeCallCount).toBe(0);
   });
 });
