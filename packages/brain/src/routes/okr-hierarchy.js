@@ -414,4 +414,89 @@ router.post('/backfill-current-values', async (req, res) => {
   }
 });
 
+// ─── OKR Project 进度手动更新 ─────────────────────────────────────────────────
+
+/**
+ * PATCH /api/brain/okr/projects/:id
+ * 手动更新 okr_project 的 progress（0-100）和/或 status
+ * 用途：当 verifier 采集不到真实进度时，由人/agent 手动补填历史数据
+ */
+router.patch('/projects/:id', async (req, res) => {
+  const { id } = req.params;
+  const { progress, status, notes } = req.body;
+
+  if (progress !== undefined && (typeof progress !== 'number' || progress < 0 || progress > 100)) {
+    return res.status(400).json({ error: 'progress must be a number between 0 and 100' });
+  }
+
+  const updates = [];
+  const values = [];
+  let idx = 1;
+
+  if (progress !== undefined) { updates.push(`progress = $${idx++}`); values.push(progress); }
+  if (status !== undefined)   { updates.push(`status = $${idx++}`); values.push(status); }
+  if (notes !== undefined)    { updates.push(`custom_props = COALESCE(custom_props,'{}') || jsonb_build_object('notes', $${idx++}::text)`); values.push(notes); }
+
+  if (updates.length === 0) return res.status(400).json({ error: 'no fields to update' });
+
+  updates.push(`updated_at = NOW()`);
+  values.push(id);
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE okr_projects SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, title, status, progress`,
+      values
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'project not found' });
+    res.json({ success: true, project: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── KR Verifier 健康度汇总 ──────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/okr/health
+ * 汇总所有活跃 KR verifier 健康状态
+ * healthy = 无错误且 last_checked < 2h 前
+ * stale   = last_checked > 2h 前
+ * error   = last_error 非空
+ */
+router.get('/health', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        kr.id AS kr_id,
+        kr.title,
+        kv.current_value,
+        kv.last_checked,
+        kv.last_error,
+        kv.enabled,
+        CASE
+          WHEN kv.last_error IS NOT NULL THEN 'error'
+          WHEN kv.last_checked IS NULL OR kv.last_checked < NOW() - INTERVAL '2 hours' THEN 'stale'
+          ELSE 'healthy'
+        END AS health_status
+      FROM kr_verifiers kv
+      JOIN key_results kr ON kr.id = kv.kr_id
+      WHERE kr.status = 'active' AND kv.enabled = true
+      ORDER BY health_status, kr.title
+    `);
+
+    const summary = rows.reduce((acc, r) => {
+      acc[r.health_status] = (acc[r.health_status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const total = rows.length;
+    const healthy = summary.healthy || 0;
+    const trust_score = total > 0 ? Math.round((healthy / total) * 100) : 0;
+
+    res.json({ success: true, trust_score, summary, verifiers: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
