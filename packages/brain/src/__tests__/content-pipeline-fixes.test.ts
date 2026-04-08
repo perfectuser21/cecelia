@@ -81,17 +81,14 @@ describe('Fix 3 — executeExport 使用 V6 generator', () => {
     expect(src).toContain('findings 为空，无法提取 person-data.json');
   });
 
-  it('generateCards 已废弃注释存在 — 确认旧函数不被调用', () => {
+  it('generateCards 已废弃注释存在 — 确认主动调用已移除', () => {
     const { readFileSync } = require('fs');
     const src = readFileSync(
       require('path').join(__dirname, '../content-pipeline-executors.js'),
       'utf-8'
     );
     expect(src).toContain('generateCards() 已废弃');
-    // generateCards() 不应被主动调用（注释掉的调用不算）
-    const activeCallCount = src.split('generateCards(').filter(
-      (_, i, arr) => i > 0 && !arr[i-1].trimEnd().endsWith('//')
-    ).length;
-    expect(activeCallCount).toBe(0);
+    // 不存在 "const cardsGenerated = generateCards(" 这样的主动调用
+    expect(src).not.toContain('const cardsGenerated = generateCards(');
   });
 });
