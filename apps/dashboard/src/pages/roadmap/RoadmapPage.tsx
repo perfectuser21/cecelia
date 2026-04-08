@@ -411,11 +411,27 @@ export default function RoadmapPage() {
         eventsRes.json(),
       ]);
 
-      // Brain 返回 area_kr，标准化为 kr 以匹配前端过滤逻辑
+      // Brain 返回 area_kr，标准化为 kr；current_value 字段解析为 progress 数字
       const normalizeGoalType = (raw: Record<string, unknown>[]): Goal[] =>
-        raw.map((g) => ({ ...g, type: g.type === 'area_kr' ? 'kr' : g.type } as Goal));
+        raw.map((g) => ({
+          ...g,
+          type: g.type === 'area_kr' ? 'kr' : g.type,
+          progress: parseFloat(String(
+            g.current_value ??
+            (g.metadata as Record<string, unknown>)?.metric_current ??
+            g.progress ??
+            0
+          )) || 0,
+        } as Goal));
       setGoals(normalizeGoalType(Array.isArray(goalsData) ? goalsData : []));
-      setProjects(Array.isArray(projectsData) ? projectsData : []);
+      // Brain projects 返回 title/end_date，规范化为前端期望的 name/deadline
+      const normalizeProject = (raw: Record<string, unknown>[]): Project[] =>
+        raw.map((p) => ({
+          ...p,
+          name: (p.title as string) ?? (p.name as string) ?? '',
+          deadline: (p.end_date as string) ?? (p.deadline as string) ?? null,
+        } as Project));
+      setProjects(normalizeProject(Array.isArray(projectsData) ? projectsData : []));
       setAgentTasks(Array.isArray(tasksData) ? tasksData : []);
       setSelfDriveEvents(
         eventsData?.events
