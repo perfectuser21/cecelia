@@ -8,6 +8,7 @@ import { Router } from 'express';
 import os from 'os';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
+import pool from '../db.js';
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -312,6 +313,59 @@ router.get('/servers', async (_req, res) => {
         offline: servers.filter((s) => s.status === 'offline').length,
       },
       timestamp: Date.now(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /credentials/health
+ * 凭据健康度检查 — 返回所有 Claude 账号的 auth 熔断状态 + 近期 auth 失败统计
+ */
+router.get('/credentials/health', async (req, res) => {
+  try {
+    const [accountsResult, authFailStats] = await Promise.all([
+      pool.query(`
+        SELECT account_id, is_auth_failed, auth_fail_resets_at, fetched_at
+        FROM account_usage_cache
+        ORDER BY account_id
+      `),
+      pool.query(`
+        SELECT
+          payload->>'dispatched_account' as account,
+          COUNT(*) as auth_fail_count,
+          MAX(updated_at) as latest_failure
+        FROM tasks
+        WHERE payload->>'failure_class' = 'auth'
+          AND updated_at > NOW() - INTERVAL '24 hours'
+        GROUP BY payload->>'dispatched_account'
+      `),
+    ]);
+
+    const failStatsByAccount = {};
+    for (const row of authFailStats.rows) {
+      failStatsByAccount[row.account || 'unknown'] = {
+        auth_fail_count_24h: parseInt(row.auth_fail_count, 10),
+        latest_failure: row.latest_failure,
+      };
+    }
+
+    const accounts = accountsResult.rows.map(row => ({
+      account_id: row.account_id,
+      is_auth_failed: row.is_auth_failed,
+      auth_fail_resets_at: row.auth_fail_resets_at,
+      last_checked: row.fetched_at,
+      ...failStatsByAccount[row.account_id],
+    }));
+
+    const healthy = accounts.every(a => !a.is_auth_failed);
+
+    res.json({
+      healthy,
+      accounts,
+      auth_fail_total_24h: Object.values(failStatsByAccount).reduce((s, v) => s + v.auth_fail_count_24h, 0),
+      checked_at: new Date().toISOString(),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -782,8 +782,11 @@ router.post('/execution-callback', async (req, res) => {
               const { markAuthFailure } = await import('../account-usage.js');
               markAuthFailure(failedAccount);
               console.log(`[execution-callback] [auth-circuit-breaker] ${failedAccount} 已触发 auth 熔断，2h 内新任务自动绕开`);
+              // 立即 P0 告警：auth 失败是基础设施故障，需即时通知
+              raise('P0', `infra_auth_failure_${failedAccount}`, `账号 ${failedAccount} API 凭据失效（auth error）— 已触发熔断，2h 内新任务自动绕开。请检查 1Password 凭据是否过期。task=${task_id}`).catch(err => console.error('[routes] auth alert error:', err));
             } else {
               console.warn(`[execution-callback] [auth-circuit-breaker] auth 失败但 payload 缺少 dispatched_account，无法精准熔断`);
+              raise('P1', 'infra_auth_failure_unknown', `auth 失败但无法确定账号 — 无法精准熔断。task=${task_id} 请检查 dispatched_account 字段`).catch(err => console.error('[routes] auth alert error:', err));
             }
           }
         }
