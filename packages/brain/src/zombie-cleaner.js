@@ -19,7 +19,7 @@ import { resolveTaskPids } from './watchdog.js';
 import { removeActiveProcess } from './executor.js';
 
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
-const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
+const WORKTREE_BASE = process.env.WORKTREE_BASE || `${process.env.HOME}/worktrees/cecelia`;
 const REPO_ROOT = process.env.REPO_ROOT || '/Users/administrator/perfect21/cecelia';
 
 // 保护阈值
