@@ -16,6 +16,7 @@ import { homedir } from 'os';
 import { createTask } from './actions.js';
 
 const ALERT_THRESHOLD_MS = 8 * 60 * 60 * 1000; // 8 小时（给更多响应窗口）
+const CRITICAL_THRESHOLD_MS = 3 * 60 * 60 * 1000; // 3 小时 — 触发升级 P0 告警
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 
 /**
@@ -71,6 +72,11 @@ export function checkCredentialExpiry() {
 
 /**
  * 检查凭据并在需要时创建 Brain 告警任务
+ *
+ * 两层告警机制：
+ * 1. 常规告警（< 8h）: 6h 去重窗口，同账号不重复创建
+ * 2. 紧急升级告警（< 3h）: 2h 去重窗口，以 [URGENT] 前缀绕过常规去重，确保临期不漏报
+ *
  * @param {import('pg').Pool} pool - DB 连接池（已传入，无需新建）
  * @returns {Promise<{ checked: number, alerted: number, skipped: number }>}
  */
@@ -80,6 +86,8 @@ export async function checkAndAlertExpiringCredentials(pool) {
   if (criticalAccounts.length === 0) {
     return { checked: accounts.length, alerted: 0, skipped: accounts.length };
   }
+
+  console.log(`[credential-checker] 发现 ${criticalAccounts.length} 个账号凭据即将过期: ${criticalAccounts.map(a => `${a.account}(${a.status})`).join(', ')}`);
 
   let alerted = 0;
 
@@ -91,25 +99,71 @@ export async function checkAndAlertExpiringCredentials(pool) {
       ? Math.floor((acc.remainingMs % 3600000) / 60000)
       : 0;
 
+    const isCritical = acc.remainingMs > 0 && acc.remainingMs < CRITICAL_THRESHOLD_MS;
     const statusLabel = acc.status === 'expired' ? '已过期' : `还剩 ${remainingH}h${remainingM}m`;
-    const title = `[P0][凭据告警] ${acc.account} OAuth token ${statusLabel}，需立即刷新`;
 
-    // 检查是否已有相同的告警任务（避免重复）
     try {
+      // 紧急升级告警：< 3h 时使用 [URGENT] 前缀 + 2h 去重窗口
+      if (isCritical) {
+        const urgentTitle = `[P0][URGENT][凭据告警] ${acc.account} OAuth token ${statusLabel}，需立即刷新`;
+        const urgentExisting = await pool.query(
+          `SELECT id FROM tasks
+           WHERE title LIKE $1
+             AND status IN ('queued', 'in_progress')
+             AND created_at > NOW() - INTERVAL '2 hours'
+           LIMIT 1`,
+          [`%[URGENT][凭据告警] ${acc.account}%`]
+        );
+
+        if (urgentExisting.rows.length === 0) {
+          const result = await createTask({
+            title: urgentTitle,
+            description: `🚨 紧急凭据告警：${acc.account} 的 OAuth token ${statusLabel}（过期时间：${acc.expiresAt}）。\n\n需要立即手动刷新：\n1. 在对应账号目录下重新登录 claude\n2. 或从 1Password CS Vault 同步最新 token\n\n距离过期不足 ${remainingH}h${remainingM}m，任务将开始失败！`,
+            task_type: 'research',
+            priority: 'P0',
+            tags: ['credential-alert', 'credential-urgent', 'auto-generated', acc.account],
+            payload: {
+              credential_alert: true,
+              credential_urgent: true,
+              account: acc.account,
+              expires_at: acc.expiresAt,
+              remaining_ms: acc.remainingMs,
+              alert_reason: 'critical_expiry',
+            },
+          });
+          if (!result.deduplicated) {
+            alerted++;
+            console.log(`[credential-checker] 🚨 URGENT ${acc.account} token ${statusLabel}，已创建紧急 P0 告警`);
+          } else {
+            console.log(`[credential-checker] ⏭️ ${acc.account} 紧急告警已存在（dedup），跳过`);
+          }
+          continue;
+        } else {
+          console.log(`[credential-checker] ⏭️ ${acc.account} 紧急告警已存在（2h window），跳过`);
+          continue;
+        }
+      }
+
+      // 常规告警：6h 去重窗口（queued/in_progress）+ 也排除 24h 内已完成的告警
       const existing = await pool.query(
-        `SELECT id FROM tasks
+        `SELECT id, status FROM tasks
          WHERE title LIKE $1
-           AND status IN ('queued', 'in_progress')
-           AND created_at > NOW() - INTERVAL '6 hours'
+           AND (
+             (status IN ('queued', 'in_progress'))
+             OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours')
+           )
+           AND created_at > NOW() - INTERVAL '24 hours'
          LIMIT 1`,
         [`%${acc.account} OAuth token%`]
       );
 
       if (existing.rows.length > 0) {
-        continue; // 已有未处理的告警，跳过
+        console.log(`[credential-checker] ⏭️ ${acc.account} 告警已存在（status: ${existing.rows[0].status}），跳过`);
+        continue;
       }
 
-      await createTask({
+      const title = `[P0][凭据告警] ${acc.account} OAuth token ${statusLabel}，需立即刷新`;
+      const result = await createTask({
         title,
         description: `凭据告警：${acc.account} 的 OAuth token ${statusLabel}（过期时间：${acc.expiresAt}）。\n\n需要手动刷新：在对应账号目录下重新登录 claude，或从 1Password 同步最新 token。`,
         task_type: 'research',
@@ -124,8 +178,12 @@ export async function checkAndAlertExpiringCredentials(pool) {
         },
       });
 
-      alerted++;
-      console.log(`[credential-checker] ⚠️ ${acc.account} token ${statusLabel}，已创建告警任务`);
+      if (!result.deduplicated) {
+        alerted++;
+        console.log(`[credential-checker] ⚠️ ${acc.account} token ${statusLabel}，已创建告警任务`);
+      } else {
+        console.log(`[credential-checker] ⏭️ ${acc.account} 告警已存在（createTask dedup），跳过`);
+      }
     } catch (err) {
       console.error(`[credential-checker] 创建告警任务失败 (${acc.account}):`, err.message);
     }
