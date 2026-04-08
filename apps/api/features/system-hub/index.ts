@@ -28,6 +28,7 @@ const manifest: FeatureManifest = {
           { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
           { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 9 },
           { path: '/collection-dashboard', label: 'Collection', icon: 'Database', order: 12 },
+          { path: '/viral-analysis', label: '爆款分析', icon: 'TrendingUp', order: 13 },
           { path: '/okr-roadmap', label: 'OKR Roadmap', icon: 'MapPin', order: 10 },
           { path: '/system/team', label: 'Team', icon: 'Users', order: 11 },
         ],
@@ -46,6 +47,7 @@ const manifest: FeatureManifest = {
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
     { path: '/collection-dashboard', component: 'CollectionDashboardPage' },
+    { path: '/viral-analysis', component: 'ViralAnalysisPage' },
     { path: '/okr-roadmap', component: 'OKRRoadmap' },
     { path: '/account-usage', component: 'AccountUsagePage' },
     { path: '/brain-models', component: 'BrainModelsPage' },
@@ -146,6 +148,7 @@ const manifest: FeatureManifest = {
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
     CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),
+    ViralAnalysisPage: () => import('../../../dashboard/src/pages/viral-analysis/ViralAnalysisPage'),
     OKRRoadmap: () => import('../../../dashboard/src/pages/roadmap/RoadmapPage'),
     AccountUsagePage: () => import('../../../dashboard/src/pages/account-usage/AccountUsagePage'),
     BrainModelsPage: () => import('../../../dashboard/src/pages/brain-models/BrainModelsPage'),

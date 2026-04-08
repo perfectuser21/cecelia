@@ -233,7 +233,7 @@ const MIN_ARTICLE_LEN = 500;
 
 async function _executeLLMPath(keyword, top, typeConfig, previousFeedback, dir) {
   const prompt = _buildCopywritingPrompt(keyword, top, typeConfig, previousFeedback);
-  const { text } = await callLLM('thalamus', prompt, { maxTokens: 4096, timeout: 120000 });
+  const { text } = await callLLM('thalamus', prompt, { maxTokens: 8192, timeout: 180000 });
   const socialMatch = text.match(/=== 社交媒体文案 ===([\s\S]*?)(?:=== 公众长文 ===|=== 公众号长文 ===|$)/);
   const articleMatch = text.match(/=== 公众[号]?长文 ===([\s\S]*?)$/);
   const socialCopy = socialMatch?.[1]?.trim();

@@ -638,7 +638,10 @@ router.get('/:id/output', async (req, res) => {
       // 同时尝试带连字符（dan-koe-）和不带连字符（dankoe-）两种前缀
       const topicNoDash = topic.replace(/-/g, '');
       const allFiles = readdirSync(IMAGES_DIR)
-        .filter(f => (f.startsWith(`${topic}-`) || (topicNoDash !== topic && f.startsWith(`${topicNoDash}-`))) && f.endsWith('.png'))
+        .filter(f => {
+          const fl = f.toLowerCase();
+          return (fl.startsWith(`${topic}-`) || (topicNoDash !== topic && fl.startsWith(`${topicNoDash}-`))) && f.endsWith('.png');
+        })
         .sort();
       let cardIndex = 1;
       for (const file of allFiles) {
