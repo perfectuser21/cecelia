@@ -204,25 +204,38 @@ function hasDevLock(dirPath, branch) {
 }
 
 /**
- * 将 .dev-mode 文件标记为 cleanup_done: true，停止后续 patrol 扫描
- * @param {string} dirPath - worktree 路径
+ * 将 .dev-mode 文件标记为 cleanup_done: true，停止后续 patrol 扫描。
+ * 扫描所有 worktree 路径，确保同一分支在多个 worktree 中的文件都被标记。
+ * 背景：.dev-mode 文件可能因为 git 追踪而出现在多个 worktree 中（同一文件被所有 checkout 继承）。
+ * @param {string} dirPath - worktree 路径（首要路径，其他路径通过 getAllWorktreePaths 补全）
  * @param {string} branch - 分支名
  */
 function writeCleanupDone(dirPath, branch) {
-  const devModeFile = path.join(dirPath, `.dev-mode.${branch}`);
-  if (!existsSync(devModeFile)) return;
+  // 收集所有需要标记的路径（首要路径 + 所有其他 worktree 路径）
+  const allPaths = new Set([dirPath]);
   try {
-    let content = readFileSync(devModeFile, 'utf8');
-    if (content.includes('cleanup_done: true')) return;
-    if (content.includes('cleanup_done:')) {
-      content = content.replace(/cleanup_done:\s*\S+/, 'cleanup_done: true');
-    } else {
-      content = content.trimEnd() + '\ncleanup_done: true\n';
+    const worktreePaths = getAllWorktreePaths();
+    for (const p of worktreePaths) allPaths.add(p);
+  } catch {
+    // 获取 worktree 列表失败时只写首要路径
+  }
+
+  for (const targetDir of allPaths) {
+    const devModeFile = path.join(targetDir, `.dev-mode.${branch}`);
+    if (!existsSync(devModeFile)) continue;
+    try {
+      let content = readFileSync(devModeFile, 'utf8');
+      if (content.includes('cleanup_done: true')) continue;
+      if (content.includes('cleanup_done:')) {
+        content = content.replace(/cleanup_done:\s*\S+/, 'cleanup_done: true');
+      } else {
+        content = content.trimEnd() + '\ncleanup_done: true\n';
+      }
+      writeFileSync(devModeFile, content, 'utf8');
+      console.log(`[pipeline-patrol] 标记 cleanup_done: ${branch} @ ${targetDir}`);
+    } catch (err) {
+      console.error(`[pipeline-patrol] 写入 cleanup_done 失败 (${branch} @ ${targetDir}):`, err.message);
     }
-    writeFileSync(devModeFile, content, 'utf8');
-    console.log(`[pipeline-patrol] 标记 cleanup_done: ${branch}（rescue quarantine 次数达上限 ${MAX_RESCUE_QUARANTINE}）`);
-  } catch (err) {
-    console.error(`[pipeline-patrol] 写入 cleanup_done 失败 (${branch}):`, err.message);
   }
 }
 
