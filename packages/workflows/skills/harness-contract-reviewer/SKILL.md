@@ -1,36 +1,37 @@
 ---
 id: harness-contract-reviewer-skill
 description: |
-  Harness Contract Reviewer — Harness v4.0 GAN Layer 2b：
-  Evaluator 角色，对抗性审查合同草案，挑战模糊性和可测性，输出 APPROVED/REVISION。
-version: 4.0.0
+  Harness Contract Reviewer — Harness v4.1 GAN Layer 2b：
+  Evaluator 角色，对抗性审查合同草案，重点挑战验证命令是否足够严格、能否检测出错误实现。
+version: 4.1.0
 created: 2026-04-08
 updated: 2026-04-08
 changelog:
-  - 4.0.0: 改名 harness-contract-reviewer（原 sprint-contract-reviewer）
+  - 4.1.0: 修正 v4.0 错误 — 审查重点恢复为挑战验证命令严格性（而非审查"清晰可测性/歧义"）
+  - 4.0.0: 错误版本 — 审查维度改为"行为描述是否清晰、硬阈值是否量化"，移除了对命令严格性的挑战
+  - 3.0.0: 改名 harness-contract-reviewer（原 sprint-contract-reviewer）
 ---
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 
-# /harness-contract-reviewer — Harness v4.0 Contract Reviewer
+# /harness-contract-reviewer — Harness v4.1 Contract Reviewer
 
-**角色**: Evaluator（合同审查者）  
+**角色**: Evaluator（合同挑战者）  
 **对应 task_type**: `harness_contract_review`
 
 ---
 
 ## 职责
 
-扮演"挑剔的 Evaluator"，从 Evaluator 视角审查合同草案：
-- **每个行为描述清晰吗？** 能根据描述独立设计测试吗？
-- **每个硬阈值可量化吗？** 通过/失败界限清晰吗？
-- **边界情况定义了吗？** 错误输入、并发、空值如何处理？
+以对抗性视角审查 Generator 的合同草案——**重点挑战验证命令是否足够严格、是否广谱覆盖、是否能检测出错误实现**。
+
+**心态**: 你即将执行这些命令来验证实现。站在"寻找合同漏洞"的角度：哪些命令太弱，能被错误实现蒙混过关？哪些边界没测？哪些工具选择不对？
 
 ---
 
 ## 执行流程
 
-### Step 1: 读取草案
+### Step 1: 拉取最新草案并读取
 
 ```bash
 # TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_BRANCH 由 cecelia-run 通过 prompt 注入，直接使用：
@@ -50,21 +51,55 @@ git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || c
 git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" 2>/dev/null || cat "${SPRINT_DIR}/contract-draft.md"
 ```
 
-### Step 2: 逐条审查（对每个 Feature）
+### Step 2: 对抗性审查——挑战验证命令
 
-审查维度：
-1. **歧义检查**：行为描述是否有多种合理解释？任何一种都能声称合规？
-2. **硬阈值完整性**：合同列出的所有字段/条件都有对应阈值吗？
-3. **边界情况定义**：空输入、最大值、特殊字符的预期行为明确吗？
-4. **可测性**：基于行为描述，Evaluator 能设计独立测试吗（不看源码）？
+逐条检查验证命令，寻找以下问题：
 
-### Step 3: 写反馈 + 输出 verdict
+**命令严格性问题（最重要）**：
+- 命令是否能检测出错误实现？（一个空实现能通过这个命令吗？）
+- 命令只测了 happy path，没测失败路径吗？
+- 命令用了弱验证（如只检查 HTTP 200，不检查响应体内容）吗？
+- 命令能否被"假实现"蒙混过关？（如只检查字段存在，不检查字段值正确）
 
-**APPROVED**：所有 Feature 清晰可测，无歧义，无遗漏。
+**广谱性问题**：
+- 全是 curl 命令，UI 功能没用 playwright 验证吗？
+- DB 状态变更没用 psql 验证 DB 实际记录吗？
+- 业务逻辑没用 npm test 验证单元行为吗？
+- 只测了 API 层，没测数据一致性（API vs DB）吗？
+
+**覆盖度问题**：
+- PRD 里的功能点，合同里有没有对应的验证命令？
+- 有没有重要边界情况（空输入、并发、超时）没有对应命令？
+- Feature 数量是否匹配 PRD 功能数量？
+
+**命令可执行性问题**：
+- 命令里有没有需要手动替换的占位符（如 `{task_id}`）？
+- 命令依赖的服务/端口假设是否合理（Brain 在 5221，Dashboard 在 5211）？
+- 命令的 exit code 语义是否正确（成功=0，失败=非零）？
+
+### Step 3: 做出判断
+
+**APPROVED 条件**（必须全部满足）：
+- 每个 Feature 都有可直接执行的验证命令（无占位符）
+- 命令覆盖 happy path + 至少一个失败/边界路径
+- 命令足够严格，能检测出错误实现（非空校验、非 HTTP 200 校验）
+- 命令广谱：根据任务类型使用了合适的工具（不全是 curl）
+- PRD 里的功能点全部有对应命令
+- Evaluator 能无脑执行这些命令并得到明确的 PASS/FAIL 信号
+
+**REVISION 条件**（任一满足）：
+- 有验证命令含占位符（如 `{task_id}`，无法直接执行）
+- 命令只测 happy path，无失败路径
+- 命令太弱（只查 HTTP 状态码，不验证响应体）
+- 有 PRD 功能点没有对应命令
+- 全是 curl，没有 psql/playwright/npm test 等广谱工具
+- 命令 exit code 语义不清晰
+
+### Step 4a: APPROVED — 写最终合同
 
 ```bash
 # 在独立 review 分支上 push 最终合同
-TASK_ID_SHORT=$(echo {TASK_ID} | cut -c1-8)
+TASK_ID_SHORT=$(echo "${TASK_ID}" | cut -c1-8)
 REVIEW_BRANCH="cp-harness-review-approved-${TASK_ID_SHORT}"
 git checkout -b "${REVIEW_BRANCH}" 2>/dev/null || git checkout "${REVIEW_BRANCH}"
 
@@ -86,11 +121,12 @@ git commit -m "feat(contract): APPROVED — sprint-contract.md 写入 sprint_dir
 git push origin "${CONTRACT_BRANCH}"
 ```
 
-**REVISION**：有必须修改项（模糊/遗漏/不可测）。
+### Step 4b: REVISION — 写反馈
+
+写反馈时，**必须以"命令问题"为主要反馈类型**，而非"描述模糊"：
 
 ```bash
-# 在独立 review 分支上 push 反馈文件
-TASK_ID_SHORT=$(echo {TASK_ID} | cut -c1-8)
+TASK_ID_SHORT=$(echo "${TASK_ID}" | cut -c1-8)
 REVIEW_BRANCH="cp-harness-review-revision-${TASK_ID_SHORT}"
 git checkout -b "${REVIEW_BRANCH}" 2>/dev/null || git checkout "${REVIEW_BRANCH}"
 mkdir -p "${SPRINT_DIR}"
@@ -100,11 +136,23 @@ cat > "${SPRINT_DIR}/contract-review-feedback.md" << 'FEEDBACK'
 
 ## 必须修改项
 
-### 1. [类型] Feature X — <问题描述>
+### 1. [命令太弱] Feature X — <具体命令问题>
+**问题**: <命令只检查 HTTP 200，未验证响应体字段>
+**影响**: <空实现也能通过此命令>
+**建议**: <加上对响应体关键字段的校验，如 node -e 验证 JSON 结构>
 
-**问题**: <具体哪里模糊/遗漏>
-**影响**: <为什么这让 Evaluator 无法裁定>
-**建议**: <如何修改使合同清晰>
+### 2. [缺失边界] Feature Y — <缺失边界路径>
+**问题**: <没有测试空输入/无效参数时的返回行为>
+
+### 3. [工具不对] Feature Z — <工具选择问题>
+**问题**: <UI 功能应用 playwright 验证，不能只用 curl>
+
+### 4. [有占位符] Feature W — 命令含 `{task_id}`，无法直接执行
+
+### 5. [PRD 遗漏] PRD 里的 Feature V 在合同里没有验证命令
+
+## 可选改进
+- ...
 FEEDBACK
 
 git add "${SPRINT_DIR}/contract-review-feedback.md"
@@ -112,7 +160,7 @@ git commit -m "feat(contract): REVISION — feedback round N"
 git push origin "${REVIEW_BRANCH}"
 ```
 
-**最后一条消息**：
+**最后一条消息**（字面量 JSON，不要用代码块包裹）：
 
 APPROVED：
 ```
@@ -121,5 +169,5 @@ APPROVED：
 
 REVISION：
 ```
-{"verdict": "REVISION", "feedback_path": "sprints/.../contract-review-feedback.md", "issues_count": N}
+{"verdict": "REVISION", "feedback_path": "${SPRINT_DIR}/contract-review-feedback.md", "issues_count": N, "review_branch": "${REVIEW_BRANCH}"}
 ```
