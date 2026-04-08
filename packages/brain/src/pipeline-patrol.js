@@ -29,6 +29,8 @@ const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000;
 // 防止重复创建任务的冷却时间（同一个 branch 的 pipeline_rescue 任务 24 小时内不重复创建）
 // 延长至 24h 防止 canceled 后立即重建的循环：cancel → 2h 后重建 → cancel → 循环
 const DEDUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+// quarantined 冷却期更长（72h）：rescue 本身失败说明环境有问题，不应频繁重试
+const DEDUP_QUARANTINE_COOLDOWN_MS = 72 * 60 * 60 * 1000;
 
 /**
  * 获取主仓库根路径
@@ -239,7 +241,10 @@ async function createRescueTask(dbPool, info) {
   const { branch, currentStage, blockReason, elapsedMs, worktreePath, isOrphan } = info;
 
   // 去重检查：同一 branch 的 pipeline_rescue 任务在冷却期内不重复创建
-  // 条件：24h 内存在活跃任务，或 24h 内已有 completed/canceled 任务（防止取消后立即重建循环）
+  // 条件1：任务仍活跃（in_progress/queued/paused 等）→ 不重建
+  // 条件2：24h 内已有 completed/cancelled/canceled 任务 → 不重建
+  // 条件3：72h 内已有 quarantined 任务 → 不重建（rescue 自身失败说明环境问题，需更长冷却）
+  // Bug fix: 原逻辑遗漏 quarantined 的 24h 检查，导致 rescue 失败后无限重建循环
   const dedupResult = await dbPool.query(`
     SELECT id, created_at, status FROM tasks
     WHERE task_type = 'pipeline_rescue'
@@ -247,6 +252,7 @@ async function createRescueTask(dbPool, info) {
       AND (
         status NOT IN ('completed', 'cancelled', 'canceled', 'failed', 'quarantined')
         OR (status IN ('completed', 'cancelled', 'canceled') AND created_at > NOW() - INTERVAL '24 hours')
+        OR (status = 'quarantined' AND created_at > NOW() - INTERVAL '72 hours')
       )
     LIMIT 1
   `, [`%${branch}%`]);
@@ -412,4 +418,5 @@ export {
   STAGE_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   DEDUP_COOLDOWN_MS,
+  DEDUP_QUARANTINE_COOLDOWN_MS,
 };

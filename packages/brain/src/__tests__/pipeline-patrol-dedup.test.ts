@@ -17,11 +17,15 @@ vi.mock('fs', () => ({
   existsSync: vi.fn().mockReturnValue(false),
 }));
 
-import { DEDUP_COOLDOWN_MS } from '../pipeline-patrol.js';
+import { DEDUP_COOLDOWN_MS, DEDUP_QUARANTINE_COOLDOWN_MS } from '../pipeline-patrol.js';
 
 describe('DEDUP_COOLDOWN_MS', () => {
   it('冷却时间为 24h（86400000ms）', () => {
     expect(DEDUP_COOLDOWN_MS).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it('quarantined 冷却时间为 72h（防止 rescue 失败后无限重建）', () => {
+    expect(DEDUP_QUARANTINE_COOLDOWN_MS).toBe(72 * 60 * 60 * 1000);
   });
 });
 
@@ -55,5 +59,15 @@ describe('pipeline-patrol dedup SQL', () => {
     expect(src).toContain('24 hours');
     // 旧的 2h 单独 dedup 窗口不再存在
     expect(src).not.toMatch(/AND created_at > NOW\(\) - INTERVAL '2 hours'/);
+  });
+
+  it('dedup SQL 对 quarantined 状态生效（72h 窗口内阻止重建）', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.join(__dirname, '../pipeline-patrol.js'), 'utf8');
+
+    // Bug fix 验证：quarantined 必须在 dedup SQL 中被覆盖，否则 rescue 失败后无限循环
+    expect(src).toContain("status = 'quarantined'");
+    expect(src).toContain('72 hours');
   });
 });
