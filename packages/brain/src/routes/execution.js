@@ -1567,6 +1567,16 @@ ${resultStr.substring(0, 2000)}
         if (typeof res === 'object') {
           const v = res.verdict || res?.result?.verdict;
           if (v) return v.toUpperCase();
+          // claude --output-format json 格式：{type:"result", result:"最后一条消息文字", ...}
+          // res.result 是字符串，需要单独搜索
+          if (typeof res.result === 'string') {
+            try {
+              const parsed = JSON.parse(res.result);
+              if (parsed?.verdict) return parsed.verdict.toUpperCase();
+            } catch { /* not JSON */ }
+            const matches = [...res.result.matchAll(/"verdict"\s*:\s*"([^"]+)"/gi)];
+            if (matches.length > 0) return matches[matches.length - 1][1].toUpperCase();
+          }
         }
         if (typeof res === 'string') {
           try {
