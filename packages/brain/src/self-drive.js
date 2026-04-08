@@ -202,33 +202,6 @@ export async function runSelfDrive() {
         continue;
       }
 
-      // 关键词级去重：成功率/失败诊断类任务用语义关键词匹配，防止标题略有不同但含义相同的任务反复创建
-      const FAILURE_DIAGNOSIS_KEYWORDS = ['成功率', '失败根因', '任务失败', '失败率', '执行成功率', '失败分析', '根因分析'];
-      const titleLower = (action.title || '').toLowerCase();
-      const isFailureDiagnosisTask = FAILURE_DIAGNOSIS_KEYWORDS.some(k => titleLower.includes(k));
-      if (isFailureDiagnosisTask) {
-        const keywordDup = await pool.query(
-          `SELECT id FROM tasks
-           WHERE (
-             status IN ('queued', 'in_progress')
-             OR (status = 'quarantined' AND updated_at > NOW() - INTERVAL '24 hours')
-           )
-             AND (
-               LOWER(title) LIKE '%成功率%'
-               OR LOWER(title) LIKE '%失败根因%'
-               OR LOWER(title) LIKE '%任务失败%'
-               OR LOWER(title) LIKE '%失败率%'
-               OR LOWER(title) LIKE '%失败分析%'
-               OR LOWER(title) LIKE '%根因分析%'
-             )
-           LIMIT 1`
-        );
-        if (keywordDup.rows.length > 0) {
-          console.log(`[SelfDrive] Skip dedup (failure-keyword): "${action.title}" — similar failure-diagnosis task ${keywordDup.rows[0].id} already exists`);
-          continue;
-        }
-      }
-
       try {
         const goalId = await getGoalIdForArea(action.area);
         const taskId = await createTask({
@@ -473,15 +446,15 @@ async function getTaskStats24h() {
   try {
     const result = await pool.query(
       `SELECT
-        count(*) filter (where status = 'completed' AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as completed,
+        count(*) filter (where status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours') as completed,
         count(*) filter (where status IN ('failed', 'quarantined')
-          AND (payload->>'failure_class' IS DISTINCT FROM 'auth')
+          AND COALESCE(payload->>'failure_class', '') != 'auth'
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as failed,
         count(*) filter (where status IN ('failed', 'quarantined')
           AND payload->>'failure_class' = 'auth'
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as auth_failed,
         count(*) filter (where status IN ('completed', 'failed', 'quarantined')
-          AND (payload->>'failure_class' IS DISTINCT FROM 'auth')
+          AND COALESCE(payload->>'failure_class', '') != 'auth'
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as total
        FROM tasks
        WHERE task_type != 'pipeline_rescue'`
@@ -691,7 +664,7 @@ ${tasksSummary}
 3. **高价值孤岛激活** > 低价值孤岛（stage 高的 > stage 低的，cecelia scope > external）
 4. **不要重复创建已有的任务**
 5. **KR 进度落后** — 如果某个 KR 进度远低于预期，建议调整优先级或加速推进
-6. **任务成功率严重下降（<60%）** — 分析原因（是代码质量问题还是任务拆分问题），建议修复。注意：若成功率 >= 60%，不要创建失败分析任务，属于正常范围波动。
+6. **任务成功率下降** — 分析原因（是代码质量问题还是任务拆分问题），建议修复
 7. **满足感持续低迷** — 如果 Dopamine 分数持续 < 0，可能需要换个方向或调整节奏
 
 注意：

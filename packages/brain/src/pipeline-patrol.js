@@ -282,12 +282,13 @@ async function createRescueTask(dbPool, info) {
 
   // 封顶检查：同一分支 quarantined rescue 次数 >= MAX_RESCUE_QUARANTINE 时，
   // 写 cleanup_done 到 .dev-mode 文件，永久停止该分支的 rescue 循环
+  // 使用 payload->>'branch' 精确匹配（避免 title LIKE 在多 worktree 场景下命中错误任务）
   const quarantineCountResult = await dbPool.query(`
     SELECT COUNT(*) as count FROM tasks
     WHERE task_type = 'pipeline_rescue'
-      AND title LIKE $1
+      AND payload->>'branch' = $1
       AND status = 'quarantined'
-  `, [`%${branch}%`]);
+  `, [branch]);
   const quarantineCount = parseInt(quarantineCountResult.rows[0]?.count || '0', 10);
   if (quarantineCount >= MAX_RESCUE_QUARANTINE) {
     writeCleanupDone(worktreePath, branch);
@@ -301,17 +302,18 @@ async function createRescueTask(dbPool, info) {
   // 条件1：任务仍活跃（in_progress/queued/paused 等）→ 不重建
   // 条件2：24h 内已有 completed/cancelled/canceled 任务 → 不重建
   // 条件3：72h 内已有 quarantined 任务 → 不重建（rescue 自身失败说明环境问题，需更长冷却）
+  // 使用 payload->>'branch' 精确匹配，防止多 worktree 扫描到同一分支时绕过 dedup
   const dedupResult = await dbPool.query(`
     SELECT id, created_at, status FROM tasks
     WHERE task_type = 'pipeline_rescue'
-      AND title LIKE $1
+      AND payload->>'branch' = $1
       AND (
         status NOT IN ('completed', 'cancelled', 'canceled', 'failed', 'quarantined')
         OR (status IN ('completed', 'cancelled', 'canceled') AND created_at > NOW() - INTERVAL '24 hours')
         OR (status = 'quarantined' AND created_at > NOW() - INTERVAL '72 hours')
       )
     LIMIT 1
-  `, [`%${branch}%`]);
+  `, [branch]);
 
   if (dedupResult.rows.length > 0) {
     return {
