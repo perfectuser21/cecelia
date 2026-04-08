@@ -12,8 +12,14 @@
 #   - cecelia-brain:${VERSION} 镜像已由 brain-deploy.sh 构建（复用同版本镜像）
 #   - .env.staging 文件存在（包含 DB_PASSWORD 等敏感配置）
 #   - cecelia_staging 数据库已存在（或 postgres 用户有权创建）
+#
+# 优雅降级：
+#   - 若 docker 不可用 → 打印警告并以 exit 0 退出（staging skipped, no docker）
+#   - 若 .env.staging 不存在且无法自动生成 → 打印警告并以 exit 0 退出（staging skipped, no env）
+#   - 这两种情况都会输出 STAGING_SKIP_REASON=no_docker/no_env，供调用方识别
+#   - staging 是"加分项"，不应无限期阻断 production 发布
 
-set -euo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -35,11 +41,45 @@ done
 echo "=== Staging Deploy: cecelia-brain v${VERSION} (port=${STAGING_PORT}, db=${STAGING_DB}) ==="
 echo ""
 
+# ── 检查 docker 是否可用 ──────────────────────────────────────────────────────
+if ! command -v docker > /dev/null 2>&1; then
+    echo "[WARN] docker 命令不在 PATH 中，staging 部署跳过"
+    echo "  原因：此机器未安装 docker 或 docker 不在 PATH"
+    echo "  影响：staging 验证被跳过（STAGING_SKIP_REASON=no_docker）"
+    echo "  说明：staging 是可选验证环节，production 部署不受影响"
+    echo ""
+    echo "=== Staging Deploy SKIPPED (no docker) ==="
+    # 输出机器可读的跳过原因，供 ops.js 解析
+    echo "STAGING_SKIP_REASON=no_docker"
+    exit 0
+fi
+
 # ── 检查 .env.staging ──────────────────────────────────────────────────────────
 if [[ ! -f "$ROOT_DIR/.env.staging" ]]; then
-    echo "[FAIL] .env.staging 不存在"
-    echo "  请创建 .env.staging（参考 .env.docker.example），设置 DB_PASSWORD 等配置"
-    exit 1
+    echo "[WARN] .env.staging 不存在，尝试自动生成..."
+    # 尝试运行 setup 脚本（若存在）
+    SETUP_SCRIPT="$SCRIPT_DIR/setup-staging-env.sh"
+    if [[ -f "$SETUP_SCRIPT" ]]; then
+        echo "  执行: bash $SETUP_SCRIPT"
+        if bash "$SETUP_SCRIPT" > /dev/null 2>&1; then
+            echo "  ✓ .env.staging 已自动生成"
+        else
+            echo "  setup-staging-env.sh 执行失败，staging 部署跳过"
+        fi
+    fi
+
+    # 再次检查（setup 可能成功创建了）
+    if [[ ! -f "$ROOT_DIR/.env.staging" ]]; then
+        echo "[WARN] .env.staging 仍不存在，staging 部署跳过"
+        echo "  原因：staging 环境未配置（STAGING_SKIP_REASON=no_env）"
+        echo "  修复：运行 bash scripts/setup-staging-env.sh 生成 .env.staging"
+        echo "  参考：.env.docker.example 中的变量定义"
+        echo ""
+        echo "=== Staging Deploy SKIPPED (no .env.staging) ==="
+        # 输出机器可读的跳过原因，供 ops.js 解析
+        echo "STAGING_SKIP_REASON=no_env"
+        exit 0
+    fi
 fi
 
 # ── 检查镜像是否存在（复用 production 同版本镜像，不重新 build）──────────────

@@ -2686,12 +2686,13 @@ export const deployState = {
 
 // In-memory staging deploy state（Safe Lane 专用，与 production 隔离）
 export const stagingDeployState = {
-  status: 'idle',       // idle | running | success | failed
+  status: 'idle',       // idle | running | success | failed | skipped_no_env | skipped_no_docker
   version: null,
   started_at: null,
   finished_at: null,
   elapsed_ms: null,
   error: null,
+  skip_reason: null,    // 跳过原因：'no_docker' | 'no_env' | null（仅 skipped_* 状态时有值）
 };
 
 // GET /api/brain/deploy/status — 查询最近一次部署状态
@@ -2730,6 +2731,7 @@ router.post('/deploy', async (req, res) => {
     stagingDeployState.finished_at = null;
     stagingDeployState.elapsed_ms = null;
     stagingDeployState.error = null;
+    stagingDeployState.skip_reason = null;
 
     res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
 
@@ -2762,20 +2764,35 @@ router.post('/deploy', async (req, res) => {
       }
 
       console.log(`[staging-deploy] 开始 staging 部署: ${cmd}`);
-      execSync(cmd, { cwd: repoRoot, timeout: 600_000, stdio: 'inherit', shell: true });
+      // 捕获输出以检测 STAGING_SKIP_REASON（脚本 exit 0 时正常完成，但可能是跳过）
+      const output = execSync(cmd, { cwd: repoRoot, timeout: 600_000, shell: true }).toString();
+      console.log(output);
 
       const elapsed = Date.now() - startTime;
-      stagingDeployState.status = 'success';
-      stagingDeployState.finished_at = new Date().toISOString();
-      stagingDeployState.elapsed_ms = elapsed;
-      console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
+
+      // 解析脚本输出中的 STAGING_SKIP_REASON，区分"跳过"和"真正成功"
+      const skipMatch = output.match(/STAGING_SKIP_REASON=(\S+)/);
+      if (skipMatch) {
+        const skipReason = skipMatch[1]; // 'no_docker' | 'no_env'
+        const skippedStatus = `skipped_${skipReason}`; // 'skipped_no_docker' | 'skipped_no_env'
+        stagingDeployState.status = skippedStatus;
+        stagingDeployState.finished_at = new Date().toISOString();
+        stagingDeployState.elapsed_ms = elapsed;
+        stagingDeployState.skip_reason = skipReason;
+        console.log(`[staging-deploy] ⚠️ Staging 部署已跳过 (${skipReason}): production 部署不受阻断 (${(elapsed / 1000).toFixed(1)}s)`);
+      } else {
+        stagingDeployState.status = 'success';
+        stagingDeployState.finished_at = new Date().toISOString();
+        stagingDeployState.elapsed_ms = elapsed;
+        console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
+      }
     } catch (err) {
       const elapsed = Date.now() - startTime;
       stagingDeployState.status = 'failed';
       stagingDeployState.finished_at = new Date().toISOString();
       stagingDeployState.elapsed_ms = elapsed;
       stagingDeployState.error = err.message;
-      console.error(`[staging-deploy] ❌ Staging 部署失败 (${(elapsed / 1000).toFixed(1)}s):`, err.message);
+      console.error(`[staging-deploy] ❌ Staging 部署失败（真实错误，非环境未配置）(${(elapsed / 1000).toFixed(1)}s):`, err.message);
     }
     return;
   }
