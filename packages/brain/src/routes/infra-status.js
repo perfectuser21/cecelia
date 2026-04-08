@@ -10,7 +10,7 @@ import { readFileSync, existsSync } from 'fs';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import pool from '../db.js';
-import { checkAndAlertExpiringCredentials, checkCredentialExpiry } from '../credential-expiry-checker.js';
+import { checkAndAlertExpiringCredentials, checkCredentialExpiry, cleanupAuthQuarantinedRescueTasks } from '../credential-expiry-checker.js';
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -499,6 +499,28 @@ router.post('/check', async (_req, res) => {
       })),
       critical_count: criticalAccounts.length,
       checked_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /cleanup
+ * 手动触发 auth 故障遗留 rescue 任务清理
+ * 完整路径: /api/brain/credentials/cleanup
+ *
+ * 用途：
+ *   - auth 故障恢复后，立即清理 quarantined pipeline_rescue 任务（无需等待 tick）
+ *   - cleanupDuplicateRescueTasks 清理重复副本；本端点清理剩余单实例
+ */
+router.post('/cleanup', async (_req, res) => {
+  try {
+    const result = await cleanupAuthQuarantinedRescueTasks(pool);
+    res.json({
+      cancelled: result.cancelled,
+      skipped: result.skipped,
+      cleaned_at: new Date().toISOString(),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

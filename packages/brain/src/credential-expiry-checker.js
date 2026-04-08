@@ -492,3 +492,74 @@ export async function cleanupDuplicateRescueTasks(pool) {
 
   return { skipped: null, cancelled: totalCancelled, branches: duplicateBranches.length };
 }
+
+// ============================================================
+// Auth 故障遗留 Rescue 清理（Stale Auth Rescue Cleanup）
+// ============================================================
+
+/**
+ * cleanupAuthQuarantinedRescueTasks — 清理 auth 故障后遗留的所有 quarantined pipeline_rescue 任务
+ *
+ * 背景：cleanupDuplicateRescueTasks 仅取消"同分支多余副本"，保留每个分支最新一条。
+ * 但这些保留下来的单实例任务同样是 auth 故障产物：
+ *   - recoverAuthQuarantinedTasks 明确排除 pipeline_rescue（设计正确，无需恢复）
+ *   - 一旦凭据恢复，这些任务的源 worktree 通常已不存在，永远不会被处理
+ *
+ * 本函数补全这一清理盲区：凭据全健康时，取消所有 quarantined pipeline_rescue
+ * 中 failure_class='auth' 的任务，防止任务表无限累积。
+ *
+ * 逻辑：
+ * 1. 守卫：凭据全健康 + DB auth circuit 全关才执行
+ * 2. 批量取消所有 quarantined pipeline_rescue（failure_class='auth'）
+ * 3. 记录 cleanup_reason: 'auth_outage_rescue_stale' 便于追溯
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ skipped: string|null, cancelled: number }>}
+ */
+export async function cleanupAuthQuarantinedRescueTasks(pool) {
+  // 守卫 1：凭据不健康时跳过
+  const { criticalAccounts } = checkCredentialExpiry();
+  if (criticalAccounts.length > 0) {
+    const names = criticalAccounts.map(a => a.account).join(', ');
+    return { skipped: `credentials not healthy (${names})`, cancelled: 0 };
+  }
+
+  // 守卫 2：DB auth circuit 仍开启时跳过（可能仍在恢复中）
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) as cnt FROM account_usage_cache WHERE is_auth_failed = true`
+    );
+    if (parseInt(result.rows[0]?.cnt || '0', 10) > 0) {
+      return { skipped: 'db auth_failed circuit still open', cancelled: 0 };
+    }
+  } catch {
+    // account_usage_cache 不存在时降级继续
+  }
+
+  // 批量取消所有 quarantined pipeline_rescue（failure_class='auth'）
+  try {
+    const result = await pool.query(`
+      UPDATE tasks
+      SET status = 'cancelled',
+          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+            'cleanup_reason', 'auth_outage_rescue_stale',
+            'cancelled_by', 'auth_rescue_cleanup',
+            'cancelled_at', NOW()::text
+          ),
+          updated_at = NOW()
+      WHERE status = 'quarantined'
+        AND task_type = 'pipeline_rescue'
+        AND payload->>'failure_class' = 'auth'
+      RETURNING id
+    `);
+
+    const cancelled = result.rowCount || 0;
+    if (cancelled > 0) {
+      console.log(`[auth-rescue-cleanup] ✅ auth 故障遗留 rescue 清理完成：${cancelled} 条已取消`);
+    }
+    return { skipped: null, cancelled };
+  } catch (err) {
+    console.error('[auth-rescue-cleanup] 清理失败 (non-fatal):', err.message);
+    return { skipped: `error: ${err.message}`, cancelled: 0 };
+  }
+}

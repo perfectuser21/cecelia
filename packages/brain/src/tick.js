@@ -56,7 +56,7 @@ import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
-import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks } from './credential-expiry-checker.js';
+import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks, cleanupAuthQuarantinedRescueTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
@@ -1655,6 +1655,16 @@ async function executeTick() {
       }
     }).catch(err => {
       console.error('[tick] Rescue storm cleanup failed (non-fatal):', err.message);
+    });
+
+    // [清理] auth 故障遗留 rescue 清理：取消所有 quarantined pipeline_rescue（failure_class=auth）
+    // cleanupDuplicateRescueTasks 保留每分支最新一条，本函数清理这些剩余单实例（永远无法恢复）
+    cleanupAuthQuarantinedRescueTasks(pool).then(r => {
+      if (r.cancelled > 0) {
+        tickLog(`[tick] [auth-rescue-cleanup] ✅ ${r.cancelled} 条 auth 故障遗留 rescue 任务已取消`);
+      }
+    }).catch(err => {
+      console.error('[tick] Auth rescue cleanup failed (non-fatal):', err.message);
     });
   }
 
