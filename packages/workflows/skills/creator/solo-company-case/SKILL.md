@@ -1,384 +1,541 @@
 ---
-description: 全套内容生成流水线。输入：任意主题（人物/概念/方法论）。输出：竖版图(封面+6张) + 公众号横版图(封面+3张) + 社媒文案 + 公众号长文 → 存 NAS → 注册数据库。
+description: 成功案例内容生成流水线。输入：任意主题（一人公司人物、AI工具、方法论等）。输出：竖版封面+6张图（抖音/小红书）+ 公众号封面+3张配图 + 社媒文案 + 公众号长文 + 预览页。遇到"做一套 XX 的内容"、"帮我做个 XX 的案例"、"制作案例图文"立即触发。
 ---
 
-# solo-company-case — 全套内容生成器
+# solo-company-case — 成功案例内容生成流水线
 
 ## 适用场景
 
-任意主题均可：
-- 人物案例："做一套 Dan Koe 的内容"、"做 Karpathy"
-- 方法论/概念："AI学习方法论"、"Software 2.0"、"一人公司商业模式"
-- 事件/趋势："大模型横评"、"315曝光GEO"
+- "做一套 Dan Koe 的内容"
+- "帮我做个 Karpathy 的案例"
+- "制作一人公司成功案例图文"
+- "做个关于 XX 方法论 / XX 工具 / XX 公司 的内容"
 
 ---
 
 ## 输出规格
 
-### A. 竖版图（适合抖音/小红书/朋友圈）
+### A. 竖版图文（抖音 / 小红书 / 朋友圈）
 
-| 文件 | 尺寸 | 说明 |
+| 文件 | 尺寸 | 内容 |
 |------|------|------|
-| `{slug}-cover.png` | 1080×1464 | 封面 |
-| `{slug}-01-xxx.png` | 1080×1920 | Card1 |
-| `{slug}-02-xxx.png` | 1080×1920 | Card2 |
-| `{slug}-03-xxx.png` | 1080×1920 | Card3 |
-| `{slug}-04-xxx.png` | 1080×1920 | Card4 |
-| `{slug}-05-xxx.png` | 1080×1920 | Card5 |
-| `{slug}-06-xxx.png` | 1080×1920 | Card6 |
-| 社媒文案 | 100-200字 | 通用一版（抖音/小红书/朋友圈） |
+| `<slug>-cover.png` | 1080×1464 | 封面：核心视觉+大字标题 |
+| `<slug>-01-<theme>.png` | 1080×1920 | 内容卡1 |
+| `<slug>-02-<theme>.png` | 1080×1920 | 内容卡2 |
+| `<slug>-03-<theme>.png` | 1080×1920 | 内容卡3 |
+| `<slug>-04-<theme>.png` | 1080×1920 | 内容卡4 |
+| `<slug>-05-<theme>.png` | 1080×1920 | 内容卡5 |
+| `<slug>-06-<theme>.png` | 1080×1920 | 内容卡6 |
+| 社媒文案 | 100-200字 | 抖音/小红书通用一版 |
 
-### B. 公众号横版图（适合微信公众号）
+### B. 公众号配图
 
-| 文件 | 尺寸 | 说明 |
+| 文件 | 尺寸 | 内容 |
 |------|------|------|
-| `{slug}-lf-cover.png` | 900×383 | 公众号封面 (2.35:1) |
-| `{slug}-lf-01-xxx.png` | 1080×810 | 正文配图1 (4:3) |
-| `{slug}-lf-02-xxx.png` | 1080×810 | 正文配图2 (4:3) |
-| `{slug}-lf-03-xxx.png` | 1080×810 | 正文配图3 (4:3) |
-| 公众号长文 | 800字+ | content.html + text_v1.md |
-
----
-
-## 卡片版式映射（无数据时换通用版式）
-
-| 卡片 | 人物主题 | 通用主题 | 视觉形式 |
-|------|---------|---------|---------|
-| 封面 | 头像+核心数字+钩子 | 大字标题+核心主张 | 大字/渐变/视觉冲击 |
-| Card1 | 人物档案（时间线+统计） | 背景+核心成就 | 时间线+数字格 |
-| Card2 | 飞轮圆图（中心+4卫星） | 核心框架/系统图 | 圆形节点图 |
-| Card3 | 真实一天（横向时间块） | 路径/阶段图 | 时间轴/步骤块 |
-| Card4 | Q&A对话格 | 对比/反常识 | 两列对比格 |
-| Card5 | 金句/语录 | 核心观点/金句 | 引用框+要点列表 |
-| Card6 | 行动指南 | 落地方法/下一步 | 步骤箱式布局 |
-| LF配图1 | 飞轮/内容策略 | 核心框架可视化 | 图表/节点 |
-| LF配图2 | 收入结构 | 关键数据/对比 | 数字格/对比 |
-| LF配图3 | 成长路线图 | 落地路径图 | 阶段线 |
-
-**判断规则**：有头像/收入数字/时间线 → 人物模板；否则 → 通用模板。可混用。
+| `<slug>-lf-cover.png` | 900×383 | 封面（2.35:1） |
+| `<slug>-lf-01-<theme>.png` | 1080×810 | 配图1 |
+| `<slug>-lf-02-<theme>.png` | 1080×810 | 配图2 |
+| `<slug>-lf-03-<theme>.png` | 1080×810 | 配图3 |
+| 公众号文章 | ~800字 | 钩子→三段洞察→结语 |
 
 ---
 
 ## 流水线步骤
 
-### Step 1 — 判断主题类型 + NotebookLM 调研
+### Step 1 — 调研（NotebookLM）
 
 ```bash
-notebooklm create "<主题名>" --json
+# 检查 auth
+notebooklm status
+
+# 创建 notebook
+notebooklm create "<主题名称>" --json
 # → {"id": "<notebook_id>"}
 
-notebooklm source add-research "<主题关键词>" --mode deep --no-wait
+# 深度调研
+notebooklm source add-research "<主题关键词>" --mode deep
 ```
 
-等待调研完成（必须等，否则数据不完整）：
+等待完成（轮询，不阻塞，每 30 秒检查一次，最多 10 分钟）：
 
 ```bash
-# 轮询等待，最多10分钟
-notebooklm research wait -n <notebook_id> --import-all --timeout 600
-
-# 确认来源就绪
+# 检查调研状态（注意：-n 参数传 notebook_id）
 notebooklm source list -n <notebook_id> --json
 ```
 
-提取核心数据（**所有 ask 命令必须带 `-n <notebook_id>`**）：
+确认来源数 > 3 后提问：
 
 ```bash
-# 人物主题
-notebooklm ask -n <notebook_id> "总结商业模式：收入构成、内容策略、日常工作流、关键数字" --json
-notebooklm ask -n <notebook_id> "列出职业发展时间线的5个关键节点（年份+事件+描述）" --json
-notebooklm ask -n <notebook_id> "最常被引用的3-5句名言" --json
-
-# 通用主题
-notebooklm ask -n <notebook_id> "总结核心框架/方法论：3-5个关键要点" --json
-notebooklm ask -n <notebook_id> "列出关键数据/证据/案例" --json
-notebooklm ask -n <notebook_id> "对普通人最有价值的3个行动洞察" --json
+notebooklm ask -n <notebook_id> "总结核心商业模式/方法论：关键数字、策略、阶段" --json
+notebooklm ask -n <notebook_id> "列出发展历程的5个关键节点（时间+事件+一句话描述）" --json
+notebooklm ask -n <notebook_id> "最常被引用的3-5句名言或核心观点" --json
+notebooklm ask -n <notebook_id> "详细拆解收入/影响力结构（分项和比例）" --json
 ```
 
----
-
 ### Step 2 — 数据结构化
+
+从调研结果提取，填充通用数据结构：
 
 ```json
 {
   "slug": "karpathy",
-  "topic_type": "person | concept",
   "name": "Andrej Karpathy",
-  "tagline": "OpenAI联合创始人 · 深度学习布道者",
-  "headline": "AI时代最值得学的人",
-  "sub_headline": "他的学习地图，普通人能直接用",
-  "stats": [
-    { "value": "2017", "label": "Software 2.0 预言" },
-    { "value": "千万+", "label": "YouTube 播放" },
-    { "value": "5步", "label": "Zero to Hero" }
-  ],
+  "tagline": "AI 研究员 · 前 OpenAI / Tesla",
+  "headline": "把 AI 教给所有人",
+  "sub_headline": "一个人，开源，免费",
+  "stats": { "s1": "400万", "l1": "订阅者", "s2": "零收费", "l2": "全部免费", "s3": "5年", "l3": "持续产出" },
   "timeline": [
-    { "year": "2015", "title": "联合创立 OpenAI", "desc": "..." }
+    { "year": "2015", "title": "斯坦福博士毕业", "desc": "..." },
+    { "year": "2015", "title": "加入 OpenAI", "desc": "..." },
+    { "year": "2017", "title": "加入 Tesla", "desc": "..." },
+    { "year": "2022", "title": "回归 OpenAI", "desc": "..." },
+    { "year": "2023", "title": "独立，全力做教育", "desc": "..." }
   ],
-  "framework": {
-    "center": "核心概念",
-    "nodes": ["要点1", "要点2", "要点3", "要点4"]
+  "flywheel": {
+    "center": "核心方法",
+    "nodes": ["节点1", "节点2", "节点3", "节点4"]
   },
-  "steps": [
-    { "label": "步骤1", "desc": "说明" }
+  "qa": [
+    { "q": "核心问题1？", "a": "回答1" },
+    { "q": "核心问题2？", "a": "回答2" },
+    { "q": "核心问题3？", "a": "回答3" },
+    { "q": "核心问题4？", "a": "回答4" }
   ],
-  "contrasts": [
-    { "bad": "常见方式", "good": "推荐方式" }
+  "quote": "最重要的那句名言",
+  "insights": [
+    { "n": "01", "title": "洞察标题", "desc": "一句话描述", "sub": "补充说明" },
+    { "n": "02", "title": "洞察标题", "desc": "一句话描述", "sub": "补充说明" },
+    { "n": "03", "title": "洞察标题", "desc": "一句话描述", "sub": "补充说明" },
+    { "n": "04", "title": "洞察标题", "desc": "一句话描述", "sub": "补充说明" },
+    { "n": "05", "title": "洞察标题", "desc": "一句话描述", "sub": "补充说明" }
   ],
-  "quotes": ["金句1", "金句2"],
-  "actions": ["行动1", "行动2", "行动3"],
-  "income_breakdown": null
+  "comparison": [
+    { "label": "维度", "bad": "传统方式", "good": "该主题方式" },
+    { "label": "维度", "bad": "...", "good": "..." }
+  ],
+  "income_breakdown": [
+    { "label": "来源1", "pct": 50 },
+    { "label": "来源2", "pct": 30 },
+    { "label": "来源3", "pct": 20 }
+  ]
 }
+```
+
+若主题是工具或方法论（非人物），省略 `timeline` / `flywheel`，用 `insights` + `comparison` 代替。
+
+### Step 3 — 内容卡文案草稿确认
+
+**先出文案，等用户确认，再生成图片。**
+
+每张卡输出格式：
+
+```
+**卡N（版式类型）：[主题]**
+> 大标题：xxx
+> 副标题：xxx
+- 要点1：主文字 / 副说明
+- 要点2：主文字 / 副说明
+...
+```
+
+等用户说"可以"或提出修改 → 进入 Step 4。
+
+---
+
+## 版式库（11种，按内容匹配）
+
+### 选版式三步法
+
+**Step A — 盘点数据类型**
+
+| 数据类型 | 例子 |
+|---------|------|
+| 时间序列 | 5年发展历程、里程碑节点 |
+| 环形关系 | 飞轮、闭环、循环系统 |
+| 时间块 | 24小时日程、周计划 |
+| Q&A | 读者问题、FAQ |
+| 对比 | 传统vs新方式、before/after |
+| 纯数字 | 核心指标、成就数据 |
+| 洞察列表 | 行动建议、方法论要点 |
+| 名言/引用 | 核心观点、金句 |
+| 步骤流程 | 操作路径、流水线 |
+| 阶段进化 | Level 1→5、从初学到专家 |
+
+**Step B — 数据→版式匹配规则**
+
+| 如果数据是… | 优先选版式 |
+|------------|-----------|
+| 时间序列（4-6个节点） | 时间线型 |
+| 环形/闭环关系 | 飞轮/节点图型 |
+| 时间段分配 | 横向时间块型 |
+| 问答对（3-5对） | Q&A对话格型 |
+| 两列对比（3-6行） | 双列对比格型 |
+| 3个大数字 + 说明 | 数字网格型 |
+| 1个核心金句 + 5个洞察 | 引用大字框型 |
+| 5-6个有序步骤 | 步骤行列型 |
+| 5个洞察/要点（有大数字编号） | 大数字背景型 |
+| 3-5个阶段/层级 | 阶段路径型 |
+| 1个核心结论 + 对比数据 | 大字撞色型 |
+
+**Step C — 多样性检查**
+
+6张卡里：
+- 同一版式不能超过 **2次**
+- 必须覆盖至少 **4种不同版式**
+- 不允许连续两张用同类视觉（同为"行列堆叠"算同类）
+
+如果选出来不满足，重新调整，优先把最像的两张换成更独特的版式。
+
+---
+
+### 版式参考实现
+
+#### 时间线型（timeline）
+
+```js
+// 5节点纵向时间线，节点间连线
+// yearDot: circle r=28, 年份文字在圆心
+// titleText: y=dot_cy-8, fontSize=40, fontWeight=700
+// descText: y=dot_cy+28, fontSize=26, fill-opacity=0.5
+// 连线: x=dot_cx, y1=dot1_cy+28, y2=dot2_cy-28, stroke=TC, stroke-dasharray="4 6"
+const dotSpacing = Math.floor(CH / 5);
+```
+
+#### 飞轮/节点图型（flywheel）
+
+```js
+// 中心圆 r=110，4个卫星圆 r=70，虚线连接
+// 卫星位置：上/右/下/左（或四角），offsetR=260
+// center文字：两行，fontSize=36/28
+// satellite文字：两行，fontSize=30/24，text-anchor=middle
+```
+
+#### 横向时间块型（day_blocks）
+
+```js
+// 横向色块：x=CX, width=CW, height按时长比例
+// 左侧：时间标签 fontSize=28
+// 中间：活动名称 fontSize=38 fontWeight=700
+// 右侧：时长 fontSize=28
+// 底部：图例行
+const blockHeight = (block.hours / 24) * CH * 0.85;
+```
+
+#### Q&A对话格型（qa）
+
+```js
+// Q：背景色 TC fill-opacity=0.15，左边竖条 TC
+// A：背景色深色 fill-opacity=0.08，左边竖条白色 opacity=0.2
+// Q文字：fontSize=34 fontWeight=700 fill=TC
+// A文字：fontSize=28 fill=white fill-opacity=0.75
+const boxH = Math.floor((CH - 3*GAP) / 4);  // 4对Q&A
+```
+
+#### 双列对比格型（contrast）
+
+```js
+// 左列"传统"：红色 #ef4444，标题 fontSize=26，右列"新方式"：绿色 #34d399
+// 顶部列标题行：height=64，填充背景色
+// 每行 rowH=202，内有2行文字（预定义，禁止 .slice 截断）
+// colW = (CW - 20) / 2
+const rows = [
+  { b: ['传统方式第一行', '第二行补充'], g: ['新方式第一行', '第二行补充'] },
+  ...
+]
+```
+
+#### 数字网格型（stats_grid）
+
+```js
+// 3个大数字格，横向排列或2+1排列
+// 每格：大数字 fontSize=96 fontWeight=900，标签 fontSize=28
+// 下方5条洞察，箱式布局 bxH=118，左竖条 ACCENTS 轮换
+const ACCENTS = ['#f87171','#34d399','#60a5fa','#fbbf24','#a78bfa'];
+```
+
+#### 引用大字框型（quote）
+
+```js
+// 顶部：大号金句 fontSize=52 fontWeight=800，带引号装饰
+// 下方5条洞察，箱式 bxH=118，ACCENTS 轮换颜色
+// quoteBox：rect with TC fill-opacity=0.1，左竖条 TC
+```
+
+#### 步骤行列型（steps）
+
+```js
+// 5-6步，每步 bxH=138，左边数字圆 r=28
+// 数字：fill=TC，fontSize=34 fontWeight=900
+// 标题：fontSize=38 fontWeight=700
+// 说明：fontSize=26 fill-opacity=0.5
+const bxSlot = bxH + bxGap;
+```
+
+#### 大数字背景型（big_number_bg）
+
+```js
+// 5行全宽 box，动态高度填满安全区
+const bxH = Math.floor((CB - (CT + 190) - 5 * bxGap) / 5);  // ≈227px
+// 每行左侧：标题+副文字
+// 每行右侧：大号透明数字作背景（fill-opacity=0.12，fontSize=bxH*0.82）
+// ACCENTS 轮换 box 背景色
+```
+
+#### 阶段路径型（stages）
+
+```js
+// 3-5个阶段，竖向排列，阶段间有箭头连接
+// 每阶段：左侧阶段标签（胶囊），右侧内容（标题+说明）
+// 阶段颜色渐变：从暗到亮，体现进化感
+```
+
+#### 大字撞色型（hero_text）
+
+```js
+// 超大核心数字/结论，fontSize=180-240，占上半屏
+// 下半：3-4条支撑数据，横向排列
+// 背景：双色渐变，或大字与背景撞色
 ```
 
 ---
 
-### Step 3 — 头像获取（仅人物主题）
+## 技术规范
+
+### 尺寸常量
+
+```js
+const W = 1080, H = 1920;     // 9:16 内容卡
+const WC = 1080, HC = 1464;   // 竖版封面
+const WLC = 900, HLC = 383;   // 公众号封面
+const WLB = 1080, HLB = 810;  // 公众号配图
+```
+
+### 安全区（CRITICAL）
+
+```js
+const CX = 80, CR = 820, CW = 740;   // 左=80，右=820
+const CT = 264, CB = 1660;            // 上=264，下=1660
+const CH = CB - CT;                   // 1396px 可用
+```
+
+### 渲染（必须 2x）
+
+```js
+function render(svg, filename, w=W) {
+  const resvg = new Resvg(svg, {
+    font: { loadSystemFonts: true },
+    fitTo: { mode: 'width', value: w * 2 }
+  });
+  fs.writeFileSync(`${OUT}/${filename}`, resvg.render().asPng());
+}
+```
+
+### 重叠预防（CRITICAL）
+
+y 坐标必须显式链式计算，禁止猜测绝对值：
+
+```js
+const sectionA_top = CT + 64;
+const sectionA_bot = sectionA_top + sectionA_h;
+const sectionB_top = sectionA_bot + gap;  // 有间距
+```
+
+每个卡片函数开头打日志验证：
+
+```js
+console.log(`card01: tl[${tlTop}-${tlBot}] stat[${stTop}-${stBot}]`);
+```
+
+### 配色（B类暖创意）
+
+```js
+const THEMES = [
+  { TC:'#c084fc', BG1:'#0d0520', BG2:'#170a35', G1:'#a855f7', G2:'#d946ef' }, // 紫
+  { TC:'#f472b6', BG1:'#15050e', BG2:'#200618', G1:'#ec4899', G2:'#fb923c' }, // 粉
+  { TC:'#818cf8', BG1:'#08091a', BG2:'#0e1030', G1:'#6366f1', G2:'#8b5cf6' }, // 蓝
+  { TC:'#2dd4bf', BG1:'#021512', BG2:'#061e1a', G1:'#14b8a6', G2:'#06b6d4' }, // 青
+];
+const ACCENTS = ['#f87171','#34d399','#60a5fa','#fbbf24','#a78bfa'];
+// cover=T0, card01=T0, 02=T1, 03=T2, 04=T3, 05=T0, 06=T1
+```
+
+### 头像嵌入（人物主题）
 
 ```bash
 curl -L "https://unavatar.io/twitter/<handle>" -o /tmp/avatar.jpg
 base64 -i /tmp/avatar.jpg > /tmp/avatar-b64.txt
 ```
 
-通用主题跳过。
-
----
-
-### Step 3.5 — 草稿确认（生成图片前必须先确认）
-
-在开始写代码之前，先向用户输出文案草稿：
-
-```
-**社媒文案草稿**
-标题：xxx（≤20字）
-正文：...（100-200字）
-
-**公众号长文草稿**
-标题：《xxx》
-[钩子] ...
-一、洞察1 ...
-二、洞察2 ...
-三、洞察3 ...
-[结语] ...
-
-**卡片规划（7张）**
-封面：...
-01：...
-02：...
-03：...
-04：...
-05：...
-06：...
-```
-
-**等用户确认或修改后，再进入 Step 4。**
-
----
-
-### Step 4 — 图片生成（SVG/resvg）
-
-在 `~/claude-output/scripts/` 创建 `gen-{slug}.mjs`。
-
-#### 尺寸常量
-
-```js
-const W=1080, H=1920;        // 9:16 内容卡
-const WC=1080, HC=1464;      // 竖版封面
-const WLC=900,  HLC=383;     // 公众号封面
-const WLB=1080, HLB=810;     // 公众号配图
-
-const CX=80, CR=820, CW=740;
-const CT=264, CB=1660, CH=CB-CT;
-```
-
-#### 渲染（2x 质量）
-
-```js
-function render(svg, filename) {
-  const resvg = new Resvg(svg, {
-    font: { loadSystemFonts: true },
-    fitTo: { mode: 'width', value: W * 2 }
-  });
-  const png = resvg.render().asPng();
-  fs.writeFileSync(`${OUT}/${filename}`, png);
-  console.log(`  ✅ ${filename}  ${Math.round(png.length/1024)}KB`);
-}
-```
-
-#### 配色方案
-
-```js
-const T0 = { TC:'#c084fc', BG1:'#0d0520', BG2:'#170a35', G1:'#a855f7', G2:'#d946ef' }; // 紫
-const T1 = { TC:'#f472b6', BG1:'#15050e', BG2:'#200618', G1:'#ec4899', G2:'#fb923c' }; // 粉
-const T2 = { TC:'#818cf8', BG1:'#08091a', BG2:'#0e1030', G1:'#6366f1', G2:'#8b5cf6' }; // 蓝
-const T3 = { TC:'#2dd4bf', BG1:'#021512', BG2:'#061e1a', G1:'#14b8a6', G2:'#06b6d4' }; // 青
-const AC = ['#f87171','#34d399','#60a5fa','#fbbf24','#a78bfa'];
-// 分配：cover=T0, 01=T0, 02=T1, 03=T2, 04=T3, 05=T0, 06=T1
-```
-
-#### 卡片版式规则（CRITICAL — 禁止全用列表）
-
-```
-封面   → 头像(人物) / 大字渐变(通用) + 核心数字
-Card1  → 时间线（5节点）+ 统计格（3个数字）+ 底部金句
-Card2  → 圆形节点图（中心+4卫星，虚线连接）+ 底部数据
-Card3  → 横向色块时间轴 / 阶段步骤块（带时间标签）
-Card4  → 两列对比格（Q&A 或 Bad/Good）
-Card5  → 引用大字框 + 要点箱式列表（ACCENTS 轮换）
-Card6  → 步骤箱式布局（numbered iconDot + 描述）
-```
-
-#### y 坐标链式计算（CRITICAL）
-
-```js
-const SECTION_A_TOP = CT + 64;
-const SECTION_A_BOT = SECTION_A_TOP + SECTION_A_H;
-const SECTION_B_TOP = SECTION_A_BOT + GAP;
-// 禁止硬编码绝对值
-```
-
-#### 头像嵌入（人物主题）
-
 ```js
 const AV = `data:image/jpeg;base64,${fs.readFileSync('/tmp/avatar-b64.txt','utf8').trim()}`;
-`<defs><clipPath id="av"><circle cx="${cx}" cy="${cy}" r="${r}"/></clipPath></defs>
- <circle cx="${cx}" cy="${cy}" r="${r+6}" fill="none" stroke="#c084fc" stroke-width="4"/>
- <image href="${AV}" x="${cx-r}" y="${cy-r}" width="${r*2}" height="${r*2}" clip-path="url(#av)"/>`
+// 圆形裁剪：<defs><clipPath id="av"><circle cx cy r/></clipPath></defs>
 ```
 
-运行：
-```bash
-cd ~/claude-output/scripts && node gen-{slug}.mjs
-```
+### 文字截断规则（CRITICAL）
 
-#### Gate 1：机械验证
+**禁止 `.slice(n)` 截断**——必须预定义行数组：
 
-```bash
-node ~/claude-output/scripts/validate-cards.mjs {slug}
-```
+```js
+// ❌ 禁止
+text.slice(0, 8)
 
-#### Gate 2：视觉审查（8项）
-
-**用 Read 工具逐张读取 PNG 文件进行目检**，核对以下8项（任何一项 FAIL → 修脚本重新生成）：
-
-底部重叠 / 右侧越界 / iconDot遮字 / 内容溢出 / XML乱码 / 底部大片空白(>600px) / 视觉单调 / 无框浮字。
-
----
-
-### Step 5 — 文案生成 + 长文输出文件
-
-**平台硬限制**：图片最多9张，标题最多20字，社媒正文100-200字，公众号正文800字以上。
-**不要分别写抖音和小红书**——社交媒体通用一版。
-
-#### 社媒文案（100-200字）
-
-```
-公式：P支柱 × A角度 × I意图 × S结构（8模块选4-7个）
-结构：钩子 → 对象与问题 → 核心观点 → 方法/证据 → CTA
-自检：前2句有镜头？说清代价？读者对号入座？结论+边界？1个最小动作？
-```
-
-#### 公众号长文（800字+）
-
-```
-标题：《<主题>：<核心主张>》（20字以内）
-结构：
-  [钩子：1-2句，点出最反常识的事实]
-  一、<洞察1>（~200字）[问题→洞察→数据→名言]
-  二、<洞察2>（~200字）[问题→洞察→案例→启发]
-  三、<洞察3>（~200字）[问题→洞察→可复制方法论]
-  [结语：普通人如何开始，1-2句]
-```
-
-#### 输出文件（两个，NAS 上传必须）
-
-```bash
-# HTML 版（公众号直接粘贴用）
-cat > /tmp/content.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<body style="font-family:sans-serif;max-width:680px;margin:auto;line-height:1.8;">
-<h1>标题</h1>
-<p>正文...</p>
-</body>
-</html>
-EOF
-
-# Markdown 版（备份/二次编辑用）
-cat > /tmp/text_v1.md << 'EOF'
-# 标题
-
-正文...
-EOF
+// ✅ 正确
+const lines = ['第一行文字', '第二行文字']
+lines.map((l, i) => `<text y="${y0 + i*lh}">${l}</text>`)
 ```
 
 ---
 
-### Step 6 — 上传 NAS + 注册数据库
+## 内容生成规则
+
+### 社媒文案（抖音/小红书通用一版，100-200字）
+
+```
+[钩子：一句话点出最震撼的数字或反常识]
+[方法：他/它是怎么做到的]
+[名言或核心观点]
+[结语：读者能学到什么]
+#相关标签 #一人公司 #个人品牌
+```
+
+### 公众号文章（~800字）
+
+```
+标题：《<名称>：<核心结论>》
+
+[钩子段：1-2句，最反常识的事实]
+
+一、<洞察1>（~200字）
+[问题→洞察→具体数据→引用]
+
+二、<洞察2>（~200字）
+[问题→洞察→案例→启发]
+
+三、<洞察3>（~200字）
+[问题→洞察→可复制方法论]
+
+[结语：普通人如何开始]
+```
+
+---
+
+## Step 4 — 生成图片
 
 ```bash
+cd ~/claude-output/scripts && node gen-<slug>.mjs
+```
+
+---
+
+## Gate 检查（生成后必须全部通过）
+
+### Gate 1：机械检查
+
+```bash
+node ~/claude-output/scripts/validate-cards.mjs <slug>
+```
+
+检查项：封面1080×1464、内容卡1080×1920、公众号封面900×383、配图1080×810、所有文件>50KB。
+
+exit 1 → 修脚本重新生成，回到 Gate 1。
+
+### Gate 2：视觉审查（Read 工具逐张目检）
+
+用 `Read` 工具读取每一张 PNG，核对：
+
+| # | 检查项 |
+|---|--------|
+| 1 | 底部重叠：ZenithJoy / 页码 / 底部正文是否叠在一起 |
+| 2 | 右侧越界：内容是否压到右侧竖排文字区（x > CX+CW=820） |
+| 3 | 内容溢出：最后内容块是否超出 CB=1660 |
+| 4 | XML实体：`&`、`<`、`>` 是否未经 `esc()` 处理 |
+| 5 | 底部空白：内容最后一行 y < CB-400（空白超过400px）→ 补充内容 |
+| 6 | 视觉单调：相邻两张是否版式几乎相同 |
+| 7 | 无框浮字：列表项是否直接浮在背景上（必须有 rect box） |
+| 8 | 颜色重复：同张卡内是否所有 box 同一颜色（必须 ACCENTS 轮换） |
+| 9 | 版式多样性：6张内容卡是否覆盖≥4种不同版式（同版式≤2张） |
+
+发现问题 → 修脚本重新生成 → 回到 Gate 1。
+
+**两个 Gate 全过才能给链接。**
+
+---
+
+## Step 5 — NAS 上传与数据库注册
+
+```bash
+# 生成内容 ID（格式：YYYY-MM-DD-<6位随机hex>）
 CONTENT_ID=$(date +%Y-%m-%d)-$(openssl rand -hex 3)
-NAS_USER="徐啸"
-NAS_IP="100.110.241.76"
-NAS_BASE="/volume1/workspace/vault/zenithjoy-creator/content"
-TITLE="<Step 5 确定的文章标题>"   # 使用实际标题，不能用占位符
+echo "CONTENT_ID: ${CONTENT_ID}"
 
-bash /Users/administrator/perfect21/infrastructure/scripts/nas-content-manager.sh \
-  create "${CONTENT_ID}" "${TITLE}" "full_suite"
+# 创建 NAS 目录
+ssh 徐啸@100.110.241.76 "mkdir -p /volume1/ZenithJoy/content/${CONTENT_ID}/images"
 
-scp ~/claude-output/images/{slug}-*.png \
-  "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/images/"
+# 上传图片
+scp ~/claude-output/images/<slug>-*.png 徐啸@100.110.241.76:/volume1/ZenithJoy/content/${CONTENT_ID}/images/
 
-scp /tmp/content.html "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/exports/"
-scp /tmp/text_v1.md   "${NAS_USER}@${NAS_IP}:${NAS_BASE}/${CONTENT_ID}/text/"
+# 上传文案
+scp ~/claude-output/<slug>-content.html 徐啸@100.110.241.76:/volume1/ZenithJoy/content/${CONTENT_ID}/
 
-bash /Users/administrator/perfect21/infrastructure/scripts/nas-content-manager.sh \
-  update-status "${CONTENT_ID}" ready
+# 数据库注册（Brain API）
+curl -X POST localhost:5221/api/brain/content \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"content_id\": \"${CONTENT_ID}\",
+    \"slug\": \"<slug>\",
+    \"title\": \"<标题>\",
+    \"type\": \"solo-company-case\",
+    \"platforms\": [\"douyin\", \"xiaohongshu\", \"wechat\"],
+    \"image_count\": 10,
+    \"status\": \"ready\"
+  }"
 ```
 
-```bash
-PGPASSWORD="${POSTGRES_PASSWORD}" psql -h localhost -p 5432 -U postgres -d cecelia -c "
-  INSERT INTO zenithjoy.works (
-    content_id, title, content_type, nas_path, status
-  ) VALUES (
-    '${CONTENT_ID}', '${TITLE}', 'full_suite',
-    '${NAS_BASE}/${CONTENT_ID}', 'ready'
-  )
-  ON CONFLICT (content_id) DO UPDATE SET
-    title = EXCLUDED.title, status = EXCLUDED.status, updated_at = NOW();
-" || echo "⚠️ works 表注册失败，继续"
+NAS 离线时（ssh timeout）→ 跳过上传，记录 CONTENT_ID，图片已在本地 `~/claude-output/images/`，用户上线后手动上传。
+
+---
+
+## Step 6 — 预览页
+
+生成 `~/claude-output/<slug>-preview.html`，包含：
+- 竖版图文横向滚动行（缩略图高440px）
+- 公众号配图展示行
+- 点击灯箱放大
+- 社媒文案 + 公众号文章展示区
+
+关键 CSS：
+```css
+.cards-row { display:flex; gap:16px; overflow-x:auto; align-items:flex-start; }
+.lightbox { position:fixed; inset:0; background:rgba(0,0,0,0.92); display:none; }
+.lightbox.active { display:flex; align-items:center; justify-content:center; }
 ```
 
 ---
 
-### Step 7 — 输出摘要
+## Step 7 — 输出链接
 
 ```
-✅ 全套内容生成完成
-
-Content ID : {content_id}
-主题       : {主题}
-NAS 路径   : /volume1/workspace/vault/zenithjoy-creator/content/{content_id}/
-
-竖版图（9:16）：
-  {slug}-cover.png       封面 1080×1464
-  {slug}-01~06-xxx.png   内容卡 1080×1920 ×6
-
-公众号横版：
-  {slug}-lf-cover.png    封面 900×383
-  {slug}-lf-01~03.png    配图 1080×810 ×3
-
-下一步发布：
-  社媒（抖音/小红书）→ 从 NAS 取竖版图 + 社媒文案
-  公众号              → 从 NAS 取横版图 + 长文 HTML
+封面：http://38.23.47.81:9998/images/<slug>-cover.png
+卡1：http://38.23.47.81:9998/images/<slug>-01-<theme>.png
+...
+预览：http://38.23.47.81:9998/<slug>-preview.html
 ```
 
 ---
 
-## 注意事项
+## 禁止事项
 
-- **禁止 emoji**：SVG 中不用 emoji，用 `iconDot()` 或中文符号替代
-- **禁止全用列表**：每张卡片版式必须不同，参考卡片版式映射表
-- **y 坐标必须链式计算**：禁止硬编码绝对值
-- **通用主题无头像**：封面改用渐变大字
-- **NAS SSH**：已配置免密，直接 scp
-- **参考实现**：`~/claude-output/scripts/gen-dankoe-v6.mjs`（已验证无重叠）
+- 禁止 emoji（SVG 中用 `·`、圆点、中文符号替代，用 `iconDot()` SVG 图标）
+- 禁止 `.slice(n)` 截断文字（预定义行数组）
+- 禁止硬编码 y 坐标（链式计算）
+- 禁止 6 张卡用同一版式（覆盖≥4种）
+- 禁止连续两张用视觉相似版式
+- 禁止跳过 Gate 检查直接给链接
+
+---
+
+## 参考实现
+
+- 最近生成：`/Users/administrator/claude-output/scripts/gen-karpathy-v2.mjs`
+  - 版式：时间线型(01) / 飞轮圆图(02) / 横向时间块(03) / Q&A对话格(04) / 双列对比格(05) / 大数字背景型(06)
+  - 已验证：无重叠、2x渲染、ACCENTS轮换、预定义行数组
