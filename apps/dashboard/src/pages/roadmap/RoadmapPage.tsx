@@ -66,6 +66,8 @@ interface SelfDriveEvent {
   id: number;
   event_type: string;
   payload: {
+    title?: string;
+    task_id?: string;
     reasoning?: string;
     tasks_created?: number;
     adjustments_executed?: number;
@@ -219,81 +221,29 @@ function SelfDrivePanel({ events }: { events: SelfDriveEvent[] }) {
     return (
       <div className="text-center py-6 text-slate-500">
         <Brain className="w-8 h-8 mx-auto mb-2 opacity-30" />
-        <p className="text-xs">暂无 SelfDrive 记录</p>
+        <p className="text-xs">暂无 Brain 活动记录</p>
       </div>
     );
   }
-  const latest = events[0];
-  const { reasoning, tasks_created = 0, adjustments_executed = 0, tasks = [] } = latest.payload;
 
   return (
-    <div className="space-y-3">
-      {/* 最新 reasoning */}
-      {reasoning && (
-        <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg p-3">
-          <div className="flex items-center gap-1.5 mb-2">
-            <Brain className="w-3.5 h-3.5 text-purple-400" />
-            <span className="text-xs font-medium text-purple-300">最新思考</span>
-            <span className="text-xs text-slate-500 ml-auto">
-              {new Date(latest.created_at).toLocaleTimeString('zh-CN', {
+    <div className="space-y-2">
+      {events.slice(0, 6).map((e) => (
+        <div key={e.id} className="flex items-start gap-2">
+          <Zap className="w-3 h-3 mt-0.5 flex-shrink-0 text-purple-400" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-slate-300 truncate">
+              {e.payload.title ?? e.payload.reasoning?.slice(0, 60) ?? '—'}
+            </p>
+            <span className="text-xs text-slate-600">
+              {new Date(e.created_at).toLocaleTimeString('zh-CN', {
                 hour: '2-digit',
                 minute: '2-digit',
               })}
             </span>
           </div>
-          <p className="text-xs text-slate-300 leading-relaxed">{reasoning}</p>
         </div>
-      )}
-
-      {/* 本轮行动 */}
-      {(tasks_created > 0 || adjustments_executed > 0) && (
-        <div className="flex gap-3">
-          {tasks_created > 0 && (
-            <div className="flex items-center gap-1.5 text-xs text-green-400">
-              <Zap className="w-3 h-3" />
-              创建 {tasks_created} 个任务
-            </div>
-          )}
-          {adjustments_executed > 0 && (
-            <div className="flex items-center gap-1.5 text-xs text-blue-400">
-              <Activity className="w-3 h-3" />
-              {adjustments_executed} 次调整
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 创建的任务列表 */}
-      {tasks.length > 0 && (
-        <div className="space-y-1.5">
-          {tasks.slice(0, 3).map((t, i) => (
-            <div key={i} className="flex items-start gap-1.5 text-xs text-slate-400">
-              <ChevronRight className="w-3 h-3 mt-0.5 flex-shrink-0 text-slate-600" />
-              <span className="truncate">{t.title}</span>
-            </div>
-          ))}
-          {tasks.length > 3 && (
-            <p className="text-xs text-slate-600">+ {tasks.length - 3} 更多...</p>
-          )}
-        </div>
-      )}
-
-      {/* 历史记录 */}
-      {events.length > 1 && (
-        <div className="space-y-1 pt-2 border-t border-slate-700/40">
-          {events.slice(1, 4).map((e) => (
-            <div key={e.id} className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="text-slate-600">
-                {new Date(e.created_at).toLocaleTimeString('zh-CN', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </span>
-              <span className="truncate">{e.payload.reasoning?.slice(0, 60) ?? '—'}...</span>
-            </div>
-          ))}
-        </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -401,7 +351,7 @@ export default function RoadmapPage() {
         fetch('/api/brain/goals?limit=200'),
         fetch('/api/brain/projects?limit=200'),
         fetch('/api/brain/tasks?status=in_progress'),
-        fetch('/api/brain/events?event_type=cycle_complete&limit=5'),
+        fetch('/api/brain/events?event_type=task_dispatched&limit=8'),
       ]);
 
       const [goalsData, projectsData, tasksData, eventsData] = await Promise.all([
