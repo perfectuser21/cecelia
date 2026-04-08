@@ -47,6 +47,12 @@ export async function runAllVerifiers() {
           continue;
         }
 
+        // 检测静态常量 SQL（如 "SELECT 0::numeric" 或 "SELECT 72::numeric"）
+        // 这类 SQL 永远返回固定值，无法反映真实进度，可能是未完成的占位符
+        if (/^\s*SELECT\s+\d+(::\w+)?\s+as\s+\w+\s*$/i.test(v.query.trim())) {
+          console.warn(`[kr-verifier] WARN: "${v.kr_title}" 使用常量 SQL (${v.query.trim()})，进度将永远固定，请替换为真实采集查询`);
+        }
+
         const { rows } = await pool.query(v.query);
         const rawValue = rows[0]?.[v.metric_field] ?? rows[0]?.count ?? 0;
         const currentValue = parseFloat(rawValue) || 0;
