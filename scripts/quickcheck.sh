@@ -28,13 +28,9 @@ _GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || echo "$REPO_ROO
 MAIN_REPO_ROOT="$(dirname "$(cd "$REPO_ROOT" && cd "$_GIT_COMMON_DIR" && pwd)")"
 # 主仓库与 worktree 相同时（正常开发环境），MAIN_REPO_ROOT == REPO_ROOT
 
-# node_modules 实际位置：优先 REPO_ROOT，找不到 fallback 到 MAIN_REPO_ROOT
-ENGINE_NM="$( [[ -d "$REPO_ROOT/packages/engine/node_modules" ]] \
-    && echo "$REPO_ROOT/packages/engine/node_modules" \
-    || echo "$MAIN_REPO_ROOT/packages/engine/node_modules" )"
-BRAIN_NM="$( [[ -d "$REPO_ROOT/packages/brain/node_modules" ]] \
-    && echo "$REPO_ROOT/packages/brain/node_modules" \
-    || echo "$MAIN_REPO_ROOT/packages/brain/node_modules" )"
+# npm workspaces monorepo：二进制全部提升到根目录 node_modules/.bin/
+# 包级 node_modules 是空目录，不含 vitest/eslint 等工具
+ROOT_NM="$MAIN_REPO_ROOT/node_modules"
 
 # ─── 颜色 ──────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -115,9 +111,9 @@ else
         case "$target" in
             engine)
                 if [[ -f "packages/engine/tsconfig.json" ]] && \
-                   [[ -d "$ENGINE_NM" ]]; then
+                   [[ -d "$ROOT_NM" ]]; then
                     echo -e "  ▶ packages/engine — tsc --noEmit..."
-                    if (cd packages/engine && PATH="$ENGINE_NM/.bin:$PATH" npx tsc --noEmit 2>&1); then
+                    if (cd packages/engine && PATH="$ROOT_NM/.bin:$PATH" npx tsc --noEmit 2>&1); then
                         echo -e "  ${GREEN}✅ Engine TypeCheck 通过${RESET}"
                     else
                         echo -e "  ${RED}❌ Engine TypeCheck 失败${RESET}"
@@ -130,15 +126,12 @@ else
                 ;;
             workspace)
                 for app_dir in apps/api apps/dashboard; do
-                    _app_nm="$( [[ -d "$REPO_ROOT/$app_dir/node_modules" ]] \
-                        && echo "$REPO_ROOT/$app_dir/node_modules" \
-                        || echo "$MAIN_REPO_ROOT/$app_dir/node_modules" )"
                     if [[ -f "$app_dir/tsconfig.json" ]] && \
-                       [[ -d "$_app_nm" ]]; then
+                       [[ -d "$ROOT_NM" ]]; then
                         # 只在该 app 有改动时才跑
                         if echo "$CHANGED_FILES" | grep -q "^${app_dir}/"; then
                             echo -e "  ▶ ${app_dir} — tsc --noEmit..."
-                            if (cd "$app_dir" && PATH="$_app_nm/.bin:$PATH" npx tsc --noEmit 2>&1); then
+                            if (cd "$app_dir" && PATH="$ROOT_NM/.bin:$PATH" npx tsc --noEmit 2>&1); then
                                 echo -e "  ${GREEN}✅ ${app_dir} TypeCheck 通过${RESET}"
                             else
                                 echo -e "  ${RED}❌ ${app_dir} TypeCheck 失败${RESET}"
@@ -178,7 +171,7 @@ else
         "packages/brain/node_modules/.bin/eslint" \
         "apps/api/node_modules/.bin/eslint" \
         "$MAIN_REPO_ROOT/node_modules/.bin/eslint" \
-        "$BRAIN_NM/.bin/eslint" \
+        "$ROOT_NM/.bin/eslint" \
         "$MAIN_REPO_ROOT/apps/api/node_modules/.bin/eslint"; do
         [[ -x "$candidate" ]] && { ESLINT_BIN="$candidate"; break; }
     done
@@ -257,8 +250,8 @@ echo -e "${BOLD}[3/4] Engine Unit Tests${RESET}"
 if [[ "$ENGINE_CHANGED" == false ]]; then
     echo -e "  ⏭  无 Engine 改动，跳过"
 else
-    if [[ ! -d "$ENGINE_NM" ]]; then
-        echo -e "  ⚠️  packages/engine 依赖未安装，跳过 Unit Tests"
+    if [[ ! -x "$ROOT_NM/.bin/vitest" ]]; then
+        echo -e "  ⚠️  vitest 未安装（$ROOT_NM/.bin/vitest 不存在），跳过 Unit Tests"
     else
         # 找出改动的 engine 文件对应的测试文件
         ENGINE_TEST_FILES=()
@@ -287,7 +280,7 @@ else
             echo -e "  ▶ 找到 ${#ENGINE_TEST_FILES[@]} 个相关测试文件，运行..."
             if (cd packages/engine && \
                 NODE_OPTIONS='--max-old-space-size=2048' \
-                PATH="$ENGINE_NM/.bin:$PATH" npx vitest run --reporter=verbose \
+                PATH="$ROOT_NM/.bin:$PATH" npx vitest run --reporter=verbose \
                 "${ENGINE_TEST_FILES[@]/#packages\/engine\//}" 2>&1); then
                 echo -e "  ${GREEN}✅ Engine Unit Tests 通过${RESET}"
             else
@@ -300,7 +293,7 @@ else
             echo -e "  ▶ 未找到精确匹配测试，尝试 vitest --changed..."
             if (cd packages/engine && \
                 NODE_OPTIONS='--max-old-space-size=2048' \
-                PATH="$ENGINE_NM/.bin:$PATH" npx vitest run --changed="${BASE_REF}" \
+                PATH="$ROOT_NM/.bin:$PATH" npx vitest run --changed="${BASE_REF}" \
                 --reporter=verbose 2>&1) || true; then
                 echo -e "  ${GREEN}✅ Engine Unit Tests 通过（--changed 模式）${RESET}"
             else
@@ -343,8 +336,8 @@ else
         while IFS= read -r _line; do BRAIN_TEST_FILES+=("$_line"); done < <(printf '%s\n' "${_tmp_brain_arr[@]}" | sort -u)
         echo -e "  ▶ 找到 ${#BRAIN_TEST_FILES[@]} 个 Brain 测试，运行..."
 
-        if [[ ! -d "$BRAIN_NM" ]]; then
-            echo -e "  ⚠️  packages/brain 依赖未安装，跳过"
+        if [[ ! -x "$ROOT_NM/.bin/vitest" ]]; then
+            echo -e "  ⚠️  vitest 未安装，跳过 Brain Tests"
         else
             BRAIN_TEST_RUNNER=""
             [[ -f "packages/brain/package.json" ]] && \
@@ -357,10 +350,10 @@ else
                 # 只跑匹配的测试文件
                 if (cd packages/brain && \
                     node --experimental-vm-modules \
-                    "$BRAIN_NM/.bin/jest" "${BRAIN_TEST_FILES[@]/#packages\/brain\//}" \
+                    "$ROOT_NM/.bin/jest" "${BRAIN_TEST_FILES[@]/#packages\/brain\//}" \
                     --testTimeout=10000 2>&1) || \
                    (cd packages/brain && \
-                    PATH="$BRAIN_NM/.bin:$PATH" npx vitest run "${BRAIN_TEST_FILES[@]/#packages\/brain\//}" 2>&1); then
+                    PATH="$ROOT_NM/.bin:$PATH" npx vitest run "${BRAIN_TEST_FILES[@]/#packages\/brain\//}" 2>&1); then
                     echo -e "  ${GREEN}✅ Brain Unit Tests 通过${RESET}"
                 else
                     echo -e "  ${RED}❌ Brain Unit Tests 失败${RESET}"
