@@ -50,7 +50,6 @@ export default defineConfig({
       'src/__tests__/initiative-queue.test.js',
       'src/__tests__/intent-match.test.js',
       'src/__tests__/intent.test.js',
-      'src/__tests__/kr-verifier.test.js',
       'src/__tests__/learning-effectiveness.test.js',
       'src/__tests__/learning-search.test.js',
       'src/__tests__/learning.test.js',

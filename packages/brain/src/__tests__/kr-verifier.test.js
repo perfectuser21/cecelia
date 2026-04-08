@@ -34,7 +34,7 @@ describe('kr-verifier', () => {
       })
       .mockResolvedValueOnce({ rows: [{ count: 50 }] })  // SQL query result
       .mockResolvedValueOnce({ rows: [] })  // update verifier
-      .mockResolvedValueOnce({ rows: [] }); // update goals
+      .mockResolvedValueOnce({ rows: [] }); // update key_results
 
     const { runAllVerifiers } = await import('../kr-verifier.js');
     const result = await runAllVerifiers();
@@ -43,6 +43,14 @@ describe('kr-verifier', () => {
     expect(result.updated).toBe(1);
     expect(result.results[0].current_value).toBe(50);
     expect(result.results[0].progress).toBe(10); // 50/500 * 100 = 10%
+
+    // 验证 key_results.current_value 被写入
+    const updateCall = pool.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('UPDATE key_results')
+    );
+    expect(updateCall).toBeTruthy();
+    expect(updateCall[0]).toContain('current_value');
+    expect(updateCall[1][1]).toBe(50); // $2 = currentValue
   });
 
   it('should cap progress at 100', async () => {
