@@ -15,15 +15,16 @@
 
 import { generateTopics } from './topic-selector.js';
 import { saveSuggestions } from './topic-suggestion-manager.js';
+import { sampleTopics } from './content-types/ai-solopreneur-topic-library.js';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
 /**
- * 禁用开关：true = AI 自动选题关闭，由用户在 Dashboard 手动输入人名触发 pipeline。
- * 背景：原 SelfDrive 为完成 KR 指标自动建立此机制，但选题无依据（无 NotebookLM），
- * 内容质量差。现改为用户主动提交人名，系统按 V6 流程执行。
+ * 禁用开关：false = AI 自动选题已启用（内容生成引擎 v1）。
+ * 启用条件：solo-company-case.yaml 已配置 NotebookLM notebook_id，
+ * 主题库（ai-solopreneur-topic-library.js）提供精选种子词保证选题质量。
  */
-const DISABLED = true;
+const DISABLED = false;
 
 /** 每日触发时间（UTC 小时）= 北京时间 09:00 */
 const DAILY_TOPIC_HOUR_UTC = 1;
@@ -31,8 +32,14 @@ const DAILY_TOPIC_HOUR_UTC = 1;
 /** 补偿窗口截止时间（UTC 小时）= 北京时间 20:00。超过此时间不再补偿生成 */
 const DAILY_TOPIC_CATCHUP_CUTOFF_UTC = 12;
 
+/** 每日最少创建的 content-pipeline tasks 数量（对应 KR 目标：≥5条） */
+const MIN_DAILY_TOPICS = 5;
+
 /** 每日最多创建的 content-pipeline tasks 数量 */
-const MAX_DAILY_TOPICS = 10;
+const MAX_DAILY_TOPICS = 5;
+
+/** 每日从主题库注入 LLM Prompt 的种子词数量 */
+const SEED_TOPIC_COUNT = 5;
 
 /** KR goal_id：内容生成 KR（AI每天产出≥5条内容）
  * 通过 SELECT id FROM key_results WHERE status='active' AND title ILIKE '%内容生成%' 验证
@@ -63,10 +70,15 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
     return { triggered: 0, skipped: true, skipped_window: false };
   }
 
-  // 3. 生成选题
+  // 3. 从主题库抽取种子词，注入 LLM Prompt 保证选题质量
+  const seedTopics = sampleTopics(SEED_TOPIC_COUNT);
+  const seedKeywords = seedTopics.map(t => t.keyword);
+  console.log(`[topic-selection-scheduler] 今日种子词: ${seedKeywords.join('、')}`);
+
+  // 4. 生成选题（种子词注入 LLM，引导方向）
   let topics;
   try {
-    topics = await generateTopics(pool);
+    topics = await generateTopics(pool, seedKeywords);
   } catch (err) {
     console.error('[topic-selection-scheduler] generateTopics 失败:', err.message);
     return { triggered: 0, skipped: false, skipped_window: false, error: err.message };
@@ -77,18 +89,18 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
     return { triggered: 0, skipped: false, skipped_window: false };
   }
 
-  // 4. 限流：最多取 MAX_DAILY_TOPICS 个
+  // 5. 限流：取 MIN_DAILY_TOPICS～MAX_DAILY_TOPICS 个，确保 ≥5 条
   const toCreate = topics.slice(0, MAX_DAILY_TOPICS);
 
-  // 5. 将 TOP 5 存入推荐队列（pending），其余直接创建 content-pipeline task
+  // 6. 将全部选题存入推荐队列（pending，2h 后自动晋级创建 content-pipeline task）
   const today = toDateString(now);
   const savedSuggestions = await saveSuggestions(pool, toCreate, today).catch(err => {
     console.warn('[topic-selection-scheduler] saveSuggestions 失败:', err.message);
     return 0;
   });
-  console.log(`[topic-selection-scheduler] 已推荐 ${savedSuggestions} 个选题待 Alex 审核（2h 后自动晋级）`);
+  console.log(`[topic-selection-scheduler] 已推荐 ${savedSuggestions} 个选题待审核（2h 后自动晋级，目标≥${MIN_DAILY_TOPICS}条）`);
 
-  // 剩余选题直接进内容队列
+  // 剩余选题（saveSuggestions 未入队的）直接进内容队列
   const autoQueue = toCreate.slice(savedSuggestions);
   let created = 0;
 
@@ -101,8 +113,8 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
     }
   }
 
-  console.log(`[topic-selection-scheduler] 今日选题完成，创建 ${created} 个 content-pipeline tasks`);
-  return { triggered: created, skipped: false, skipped_window: false };
+  console.log(`[topic-selection-scheduler] 今日选题完成，推荐队列 ${savedSuggestions} 个（2h自动晋级），直接创建 ${created} 个`);
+  return { triggered: created, suggested: savedSuggestions, skipped: false, skipped_window: false };
 }
 
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────────
