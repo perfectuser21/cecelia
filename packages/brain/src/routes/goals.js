@@ -834,4 +834,18 @@ router.post('/proposals/:id/rollback', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/brain/okr/verifiers/run — 强制立即执行所有启用的 KR verifiers
+ * 用途：跳过小时级内存锁，运维/测试时手动触发采集
+ */
+router.post('/okr/verifiers/run', async (req, res) => {
+  try {
+    const { runAllVerifiers } = await import('../kr-verifier.js');
+    const result = await runAllVerifiers();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
