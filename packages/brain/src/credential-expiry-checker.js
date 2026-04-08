@@ -239,3 +239,97 @@ export async function recoverAuthQuarantinedTasks(pool) {
     return { skipped: `update failed: ${err.message}`, recovered: 0, taskIds: [] };
   }
 }
+
+// ============================================================
+// 认证层健康度实时探针
+// ============================================================
+
+/**
+ * 近1小时 auth 失败次数超过此阈值时触发 P1 告警
+ * 任何单个账号超阈值即告警（不是总量）
+ */
+const AUTH_FAIL_RATE_THRESHOLD = 5;
+
+/**
+ * scanAuthLayerHealth — 认证层健康度实时探针
+ *
+ * 补充 proactiveTokenCheck（检查 token 文件过期时间）的不足：
+ * 后者无法感知"token 虽未过期，但 executor 运行时认证失败率爆增"的场景。
+ *
+ * 逻辑：
+ * 1. 查询 tasks 表，统计过去 1 小时内 failure_class = 'auth' 的任务，按 dispatched_account 分组
+ * 2. 任意账号近1小时 auth 失败 ≥ AUTH_FAIL_RATE_THRESHOLD → 创建 P1 告警任务
+ * 3. 6 小时内已有同账号告警任务（未处理）则跳过重复告警
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ scanned: number, alerted: number, accounts: Array }>}
+ */
+export async function scanAuthLayerHealth(pool) {
+  let failStats;
+  try {
+    const result = await pool.query(`
+      SELECT
+        payload->>'dispatched_account' AS account,
+        COUNT(*) AS fail_count
+      FROM tasks
+      WHERE payload->>'failure_class' = 'auth'
+        AND updated_at > NOW() - INTERVAL '1 hour'
+      GROUP BY payload->>'dispatched_account'
+      HAVING COUNT(*) >= $1
+    `, [AUTH_FAIL_RATE_THRESHOLD]);
+    failStats = result.rows;
+  } catch (err) {
+    console.error('[auth-layer-probe] 查询失败 (non-fatal):', err.message);
+    return { scanned: 0, alerted: 0, accounts: [] };
+  }
+
+  if (failStats.length === 0) {
+    return { scanned: ACCOUNTS.length, alerted: 0, accounts: [] };
+  }
+
+  let alerted = 0;
+  const alertedAccounts = [];
+
+  for (const row of failStats) {
+    const account = row.account || 'unknown';
+    const failCount = parseInt(row.fail_count, 10);
+
+    try {
+      // 防重：6 小时内已有未处理的同账号速率告警任务
+      const existing = await pool.query(
+        `SELECT id FROM tasks
+         WHERE title LIKE $1
+           AND status IN ('queued', 'in_progress')
+           AND created_at > NOW() - INTERVAL '6 hours'
+         LIMIT 1`,
+        [`%[auth-rate-alert]%${account}%`]
+      );
+      if (existing.rows.length > 0) {
+        continue;
+      }
+
+      await createTask({
+        title: `[P1][auth-rate-alert] ${account} 近1小时 auth 失败 ${failCount} 次，超过阈值 ${AUTH_FAIL_RATE_THRESHOLD}`,
+        description: `认证层健康度探针触发告警：\n\n账号 ${account} 在过去 1 小时内出现 ${failCount} 次 auth 失败（阈值 ${AUTH_FAIL_RATE_THRESHOLD}）。\n\n这通常表示：\n- OAuth token 已过期但熔断未及时触发\n- Executor 运行时凭据无效（codex provider key 问题）\n- 网络原因导致认证服务不可达\n\n建议：\n1. 检查 /api/brain/credentials/health 确认熔断状态\n2. 检查 ~/.claude-${account}/.credentials.json 中 expiresAt\n3. 必要时从 1Password 同步最新 token`,
+        task_type: 'research',
+        priority: 'P1',
+        tags: ['auth-layer-alert', 'auto-generated', account],
+        payload: {
+          auth_rate_alert: true,
+          account,
+          fail_count_1h: failCount,
+          threshold: AUTH_FAIL_RATE_THRESHOLD,
+          alert_reason: 'auth_fail_rate_exceeded',
+        },
+      });
+
+      alerted++;
+      alertedAccounts.push({ account, fail_count: failCount });
+      console.log(`[auth-layer-probe] ⚠️ ${account} 近1小时 auth 失败 ${failCount} 次，已创建 P1 告警`);
+    } catch (err) {
+      console.error(`[auth-layer-probe] 创建告警任务失败 (${account}):`, err.message);
+    }
+  }
+
+  return { scanned: ACCOUNTS.length, alerted, accounts: alertedAccounts };
+}
