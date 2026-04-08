@@ -124,7 +124,7 @@ export async function shepherdOpenPRs(pool) {
       SELECT id, title, pr_url, pr_status, retry_count, payload
       FROM tasks
       WHERE pr_url IS NOT NULL
-        AND pr_status IN ('open', 'ci_pending')
+        AND (pr_status IN ('open', 'ci_pending') OR pr_status IS NULL)
         AND status NOT IN ('quarantined', 'cancelled')
       ORDER BY updated_at ASC
       LIMIT 20
