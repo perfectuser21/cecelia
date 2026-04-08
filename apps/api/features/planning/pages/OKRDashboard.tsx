@@ -57,9 +57,17 @@ export default function OKRDashboard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/tasks/goals');
+      const res = await fetch('/api/brain/goals');
       if (!res.ok) throw new Error(res.status.toString());
-      const data: Goal[] = await res.json();
+      const raw: Goal[] = await res.json();
+      // Brain 返回 area_kr，标准化为 kr；补齐缺省字段
+      const data = raw.map(g => ({
+        ...g,
+        type: g.type === 'area_kr' ? 'kr' : g.type,
+        priority: g.priority ?? 'P2',
+        progress: g.progress ?? 0,
+        weight: (g as any).weight ?? 1.0,
+      }));
       setGoals(data);
     } catch {
       setGoals([]);

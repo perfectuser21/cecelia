@@ -411,7 +411,10 @@ export default function RoadmapPage() {
         eventsRes.json(),
       ]);
 
-      setGoals(Array.isArray(goalsData) ? goalsData : []);
+      // Brain 返回 area_kr，标准化为 kr 以匹配前端过滤逻辑
+      const normalizeGoalType = (raw: Record<string, unknown>[]): Goal[] =>
+        raw.map((g) => ({ ...g, type: g.type === 'area_kr' ? 'kr' : g.type } as Goal));
+      setGoals(normalizeGoalType(Array.isArray(goalsData) ? goalsData : []));
       setProjects(Array.isArray(projectsData) ? projectsData : []);
       setAgentTasks(Array.isArray(tasksData) ? tasksData : []);
       setSelfDriveEvents(
