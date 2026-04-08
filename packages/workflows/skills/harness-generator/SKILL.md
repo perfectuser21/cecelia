@@ -80,13 +80,7 @@ PR_URL=$(gh pr create --title "feat(harness): <目标>" --body "..." | tail -1)
 echo "PR: $PR_URL"
 ```
 
-### Step 6: 回写 Brain + 输出 verdict
-
-```bash
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
-  -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"DONE\",\"pr_url\":\"$PR_URL\"}}"
-```
+### Step 6: 输出 verdict
 
 **最后一条消息**：
 ```

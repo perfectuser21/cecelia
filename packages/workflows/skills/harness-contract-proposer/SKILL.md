@@ -32,11 +32,11 @@ changelog:
 ### Step 1: 读取 PRD
 
 ```bash
-# 从 task payload 读取关键字段
-TASK_RESPONSE=$(curl -s localhost:5221/api/brain/tasks/{TASK_ID})
-SPRINT_DIR=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.sprint_dir||d.payload?.sprint_dir||'')" <<< "$TASK_RESPONSE")
-PLANNER_BRANCH=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.planner_branch||d.payload?.planner_branch||'')" <<< "$TASK_RESPONSE")
-PROPOSE_ROUND=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(String(d.task?.payload?.propose_round||d.payload?.propose_round||1))" <<< "$TASK_RESPONSE")
+# TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_ROUND 由 cecelia-run 通过 prompt 注入，直接使用：
+# TASK_ID={TASK_ID}
+# SPRINT_DIR={sprint_dir}
+# PLANNER_BRANCH={planner_branch}
+# PROPOSE_ROUND={propose_round}
 
 # PRD 在 planner 的分支上，fetch 后用 git show 读取（不依赖本地文件是否存在）
 git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
@@ -46,7 +46,7 @@ git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || \
 
 **如果是修订轮（propose_round > 1）**，读取上轮 Reviewer 的反馈：
 ```bash
-REVIEW_BRANCH=$(node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.task?.payload?.review_branch||d.payload?.review_branch||'')" <<< "$TASK_RESPONSE")
+# REVIEW_BRANCH 由 prompt 注入（review_feedback_task_id 对应的任务 result.review_branch）
 if [ -n "$REVIEW_BRANCH" ]; then
   git fetch origin "${REVIEW_BRANCH}" 2>/dev/null || true
   git show "origin/${REVIEW_BRANCH}:${SPRINT_DIR}/contract-review-feedback.md" 2>/dev/null || true
@@ -87,10 +87,6 @@ mkdir -p "${SPRINT_DIR}"
 git add "${SPRINT_DIR}/contract-draft.md"
 git commit -m "feat(contract): round-${PROPOSE_ROUND} draft"
 git push origin "${PROPOSE_BRANCH}"
-
-curl -X PATCH localhost:5221/api/brain/tasks/{TASK_ID} \
-  -H "Content-Type: application/json" \
-  -d "{\"status\":\"completed\",\"result\":{\"verdict\":\"PROPOSED\",\"contract_draft_path\":\"${SPRINT_DIR}/contract-draft.md\",\"propose_branch\":\"${PROPOSE_BRANCH}\"}}"
 ```
 
 **最后一条消息**：

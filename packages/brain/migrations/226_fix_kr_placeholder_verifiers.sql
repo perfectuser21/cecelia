@@ -1,4 +1,4 @@
--- Migration 224: 修复 KR3/KR4 占位 SQL verifier
+-- Migration 226: 修复 KR3/KR4 占位 SQL verifier
 --
 -- 问题：ZenithJoy KR3（微信小程序上线）和 KR4（geo SEO网站上线）的
 --       kr_verifiers.query 是硬编码占位符 "SELECT 0::numeric as count"

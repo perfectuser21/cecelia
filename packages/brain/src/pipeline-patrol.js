@@ -204,25 +204,38 @@ function hasDevLock(dirPath, branch) {
 }
 
 /**
- * 将 .dev-mode 文件标记为 cleanup_done: true，停止后续 patrol 扫描
- * @param {string} dirPath - worktree 路径
+ * 将 .dev-mode 文件标记为 cleanup_done: true，停止后续 patrol 扫描。
+ * 扫描所有 worktree 路径，确保同一分支在多个 worktree 中的文件都被标记。
+ * 背景：.dev-mode 文件可能因为 git 追踪而出现在多个 worktree 中（同一文件被所有 checkout 继承）。
+ * @param {string} dirPath - worktree 路径（首要路径，其他路径通过 getAllWorktreePaths 补全）
  * @param {string} branch - 分支名
  */
 function writeCleanupDone(dirPath, branch) {
-  const devModeFile = path.join(dirPath, `.dev-mode.${branch}`);
-  if (!existsSync(devModeFile)) return;
+  // 收集所有需要标记的路径（首要路径 + 所有其他 worktree 路径）
+  const allPaths = new Set([dirPath]);
   try {
-    let content = readFileSync(devModeFile, 'utf8');
-    if (content.includes('cleanup_done: true')) return;
-    if (content.includes('cleanup_done:')) {
-      content = content.replace(/cleanup_done:\s*\S+/, 'cleanup_done: true');
-    } else {
-      content = content.trimEnd() + '\ncleanup_done: true\n';
+    const worktreePaths = getAllWorktreePaths();
+    for (const p of worktreePaths) allPaths.add(p);
+  } catch {
+    // 获取 worktree 列表失败时只写首要路径
+  }
+
+  for (const targetDir of allPaths) {
+    const devModeFile = path.join(targetDir, `.dev-mode.${branch}`);
+    if (!existsSync(devModeFile)) continue;
+    try {
+      let content = readFileSync(devModeFile, 'utf8');
+      if (content.includes('cleanup_done: true')) continue;
+      if (content.includes('cleanup_done:')) {
+        content = content.replace(/cleanup_done:\s*\S+/, 'cleanup_done: true');
+      } else {
+        content = content.trimEnd() + '\ncleanup_done: true\n';
+      }
+      writeFileSync(devModeFile, content, 'utf8');
+      console.log(`[pipeline-patrol] 标记 cleanup_done: ${branch} @ ${targetDir}`);
+    } catch (err) {
+      console.error(`[pipeline-patrol] 写入 cleanup_done 失败 (${branch} @ ${targetDir}):`, err.message);
     }
-    writeFileSync(devModeFile, content, 'utf8');
-    console.log(`[pipeline-patrol] 标记 cleanup_done: ${branch}（rescue quarantine 次数达上限 ${MAX_RESCUE_QUARANTINE}）`);
-  } catch (err) {
-    console.error(`[pipeline-patrol] 写入 cleanup_done 失败 (${branch}):`, err.message);
   }
 }
 
@@ -269,12 +282,13 @@ async function createRescueTask(dbPool, info) {
 
   // 封顶检查：同一分支 quarantined rescue 次数 >= MAX_RESCUE_QUARANTINE 时，
   // 写 cleanup_done 到 .dev-mode 文件，永久停止该分支的 rescue 循环
+  // 使用 payload->>'branch' 精确匹配（避免 title LIKE 在多 worktree 场景下命中错误任务）
   const quarantineCountResult = await dbPool.query(`
     SELECT COUNT(*) as count FROM tasks
     WHERE task_type = 'pipeline_rescue'
-      AND title LIKE $1
+      AND payload->>'branch' = $1
       AND status = 'quarantined'
-  `, [`%${branch}%`]);
+  `, [branch]);
   const quarantineCount = parseInt(quarantineCountResult.rows[0]?.count || '0', 10);
   if (quarantineCount >= MAX_RESCUE_QUARANTINE) {
     writeCleanupDone(worktreePath, branch);
@@ -288,17 +302,18 @@ async function createRescueTask(dbPool, info) {
   // 条件1：任务仍活跃（in_progress/queued/paused 等）→ 不重建
   // 条件2：24h 内已有 completed/cancelled/canceled 任务 → 不重建
   // 条件3：72h 内已有 quarantined 任务 → 不重建（rescue 自身失败说明环境问题，需更长冷却）
+  // 使用 payload->>'branch' 精确匹配，防止多 worktree 扫描到同一分支时绕过 dedup
   const dedupResult = await dbPool.query(`
     SELECT id, created_at, status FROM tasks
     WHERE task_type = 'pipeline_rescue'
-      AND title LIKE $1
+      AND payload->>'branch' = $1
       AND (
         status NOT IN ('completed', 'cancelled', 'canceled', 'failed', 'quarantined')
         OR (status IN ('completed', 'cancelled', 'canceled') AND created_at > NOW() - INTERVAL '24 hours')
         OR (status = 'quarantined' AND created_at > NOW() - INTERVAL '72 hours')
       )
     LIMIT 1
-  `, [`%${branch}%`]);
+  `, [branch]);
 
   if (dedupResult.rows.length > 0) {
     return {
