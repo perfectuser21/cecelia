@@ -463,6 +463,11 @@ async function getKRProgress() {
  *
  * pipeline_rescue storm 时会产生大量 quarantined 任务，将其纳入成功率计算
  * 会严重掩盖业务任务的真实健康状态。此处只统计业务任务。
+ *
+ * auth 失败（API 凭据失效）属于基础设施故障，不代表任务代码质量问题。
+ * 若混入成功率分母，会导致 SelfDrive 恐慌并创建大量诊断任务，而那些诊断任务
+ * 也因同一凭据问题失败 → 级联放大成功率下跌 → 恐慌死循环。
+ * 解法：auth_failed 单独统计，成功率仅反映业务逻辑失败。
  */
 async function getTaskStats24h() {
   try {
@@ -616,11 +621,18 @@ function buildAnalysisPrompt(probeResults, scanResults, existingTasks, perceptio
   }
 
   // Build 任务执行效率 summary
-  const { completed = 0, failed = 0, total = 0 } = taskStats;
+  // auth_failed = API 凭据失效导致的基础设施失败，不计入成功率分母（避免恐慌死循环）
+  const { completed = 0, failed = 0, auth_failed = 0, total = 0 } = taskStats;
   const successRate = total > 0 ? Math.round((completed / total) * 100) : 0;
-  const taskEfficiency = total > 0
-    ? `完成: ${completed}, 失败: ${failed}, 总计: ${total}, 成功率: ${successRate}%`
-    : '最近 24h 无任务数据';
+  let taskEfficiency;
+  if (total === 0 && auth_failed === 0) {
+    taskEfficiency = '最近 24h 无任务数据';
+  } else {
+    taskEfficiency = `完成: ${completed}, 业务失败: ${failed}, 总计: ${total}, 成功率: ${successRate}%`;
+    if (auth_failed > 0) {
+      taskEfficiency += `\n⚠️ 基础设施失败（auth凭据）: ${auth_failed} 个 — 不计入成功率，但需检查账号凭据是否已恢复`;
+    }
+  }
 
   // Build Dopamine summary
   const dScore = dopamineScore.score ?? 0;
