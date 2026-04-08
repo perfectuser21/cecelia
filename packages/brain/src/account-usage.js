@@ -40,6 +40,7 @@ const DEFAULT_CASCADE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'];
  */
 function isAccountEligibleForTier(account, tier) {
   if (account.spendingCapped) return false;
+  if (account.authFailed) return false;
   if (account.extraUsed) return false;
   if (account.pct >= USAGE_THRESHOLD) return false; // 5h 超限
 
@@ -148,6 +149,77 @@ export function getSpendingCapStatus() {
     const capped = isSpendingCapped(id);
     return { accountId: id, capped, resetTime: capped ? cap?.resetTime : null };
   });
+}
+
+// ─── Auth Failure 账号级熔断 ─────────────────────────────────────────────────
+
+/**
+ * 内存 Map：accountId → { resetTime: ISO string, setAt: ISO string }
+ * auth 失败（401）的账号在此 Map 中记录，选账号时跳过，防止级联 quarantine。
+ */
+const _authFailureMap = new Map();
+
+/**
+ * 标记账号 auth 失败（内存 + 持久化到 DB）
+ * @param {string} accountId - 账号 ID（如 'account3'）
+ * @param {string|null} resetTimeISO - 恢复时间（ISO 8601），null 表示 2h 后
+ */
+export function markAuthFailure(accountId, resetTimeISO = null) {
+  const resetTime = resetTimeISO || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  _authFailureMap.set(accountId, { resetTime, setAt: new Date().toISOString() });
+  console.log(`[account-usage] [auth-circuit-breaker] markAuthFailure: ${accountId} excluded until ${resetTime}`);
+  pool.query(
+    `INSERT INTO account_usage_cache (account_id, is_auth_failed, auth_fail_resets_at)
+     VALUES ($1, true, $2)
+     ON CONFLICT (account_id) DO UPDATE SET
+       is_auth_failed       = true,
+       auth_fail_resets_at  = EXCLUDED.auth_fail_resets_at`,
+    [accountId, resetTime]
+  ).catch(err => console.warn(`[account-usage] markAuthFailure DB 写入失败: ${err.message}`));
+}
+
+/**
+ * 检查账号是否处于 auth 失败熔断状态（自动清除过期记录）
+ */
+export function isAuthFailed(accountId) {
+  const entry = _authFailureMap.get(accountId);
+  if (!entry) return false;
+  if (new Date(entry.resetTime) <= new Date()) {
+    _authFailureMap.delete(accountId);
+    console.log(`[account-usage] [auth-circuit-breaker] ${accountId}: auth 失败窗口已过期，自动恢复`);
+    pool.query(
+      `UPDATE account_usage_cache SET is_auth_failed = false, auth_fail_resets_at = NULL
+       WHERE account_id = $1`,
+      [accountId]
+    ).catch(err => console.warn(`[account-usage] isAuthFailed DB 清除失败: ${err.message}`));
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Brain 启动时从 DB 恢复 auth 失败状态
+ */
+export async function loadAuthFailuresFromDB() {
+  try {
+    const res = await pool.query(
+      `SELECT account_id, auth_fail_resets_at FROM account_usage_cache
+       WHERE is_auth_failed = true
+         AND auth_fail_resets_at > NOW()`
+    );
+    for (const row of res.rows) {
+      _authFailureMap.set(row.account_id, {
+        resetTime: new Date(row.auth_fail_resets_at).toISOString(),
+        setAt: new Date().toISOString(),
+      });
+      console.log(`[account-usage] [auth-circuit-breaker] loadAuthFailuresFromDB: 恢复 ${row.account_id} excluded until ${row.auth_fail_resets_at}`);
+    }
+    if (res.rows.length === 0) {
+      console.log('[account-usage] loadAuthFailuresFromDB: 无待恢复的 auth 失败记录');
+    }
+  } catch (err) {
+    console.warn(`[account-usage] loadAuthFailuresFromDB 失败: ${err.message}`);
+  }
 }
 
 // ─── OAuth Token ─────────────────────────────────────────────────────────────
@@ -375,11 +447,12 @@ export async function selectBestAccount(options = {}) {
         sevenDaySonnetDeficit,
         extraUsed: u?.extra_used ?? false,
         spendingCapped: isSpendingCapped(id),
+        authFailed: isAuthFailed(id),
       };
     });
 
     const usageSummary = mapped.map(a =>
-      `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '/CAPPED' : ''}`
+      `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '/CAPPED' : ''}${a.authFailed ? '/AUTH_FAILED' : ''}`
     ).join(', ');
 
     // ── 旧接口：Haiku 独立模式（向后兼容）──

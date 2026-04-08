@@ -36,6 +36,9 @@ import {
   getAccountUsage,
   selectBestAccount,
   selectBestAccountForHaiku,
+  markAuthFailure,
+  isAuthFailed,
+  loadAuthFailuresFromDB,
 } from '../account-usage.js';
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -857,6 +860,43 @@ describe('account-usage', () => {
       const usage = await getAccountUsage(true);
       // 虽然 token 过期（warn），但仍会用它调用 API
       expect(mockFetch).toHaveBeenCalled();
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // Auth Failure 熔断机制
+  // ════════════════════════════════════════════════════════════════════════════
+
+  describe('Auth Failure Circuit Breaker', () => {
+    it('markAuthFailure → isAuthFailed 返回 true', () => {
+      mockPool.query.mockResolvedValue({ rows: [] });
+      markAuthFailure('account3');
+      expect(isAuthFailed('account3')).toBe(true);
+    });
+
+    it('未标记的账号 isAuthFailed 返回 false', () => {
+      expect(isAuthFailed('account1')).toBe(false);
+    });
+
+    it('过期的 auth 失败记录自动清除', () => {
+      mockPool.query.mockResolvedValue({ rows: [] });
+      const pastTime = new Date(Date.now() - 1000).toISOString();
+      markAuthFailure('account2', pastTime);
+      expect(isAuthFailed('account2')).toBe(false);
+    });
+
+    it('loadAuthFailuresFromDB 应从 DB 恢复未过期记录', async () => {
+      const futureTime = new Date(Date.now() + 7200000).toISOString();
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ account_id: 'account1', auth_fail_resets_at: futureTime }],
+      });
+      await loadAuthFailuresFromDB();
+      expect(isAuthFailed('account1')).toBe(true);
+    });
+
+    it('loadAuthFailuresFromDB DB 查询失败时不抛异常', async () => {
+      mockPool.query.mockRejectedValue(new Error('DB down'));
+      await expect(loadAuthFailuresFromDB()).resolves.toBeUndefined();
     });
   });
 });
