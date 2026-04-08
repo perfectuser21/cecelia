@@ -56,6 +56,7 @@ import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
+import { checkAndAlertExpiringCredentials } from './credential-expiry-checker.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -157,6 +158,9 @@ let _lastZombieSweepTime = 0; // track last zombie sweep time
 let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
 let _lastPipelinePatrolTime = 0; // track last pipeline patrol time
 let _lastKrHealthDailyTime = 0; // track last daily KR health check time
+let _lastCredentialCheckTime = 0; // track last credential expiry check time
+
+const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHECK_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
@@ -1595,6 +1599,19 @@ async function executeTick() {
       }
     }).catch(err => {
       console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
+    });
+  }
+
+  // [感知] 凭据有效期检查：每 30 分钟一次，过期前 4h 创建告警任务
+  const credentialCheckElapsed = Date.now() - _lastCredentialCheckTime;
+  if (credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
+    _lastCredentialCheckTime = Date.now();
+    checkAndAlertExpiringCredentials(pool).then(r => {
+      if (r.alerted > 0) {
+        console.log(`[tick] [credential-checker] ⚠️ ${r.alerted} 个账号 token 即将过期，已创建告警任务`);
+      }
+    }).catch(err => {
+      console.error('[tick] Credential expiry check failed (non-fatal):', err.message);
     });
   }
 

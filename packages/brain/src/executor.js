@@ -953,13 +953,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
         await pool.query(
           `UPDATE tasks SET status = 'quarantined',
            error_message = $2,
-           payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+           payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || $3::jsonb
            WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,
           [
             taskId,
             `[watchdog-fallback] reason=${reason} prev_status=${fbStatus} at ${new Date().toISOString()}`,
             JSON.stringify({
               watchdog_retry_count: fbRetryCount,
+              failure_class: 'liveness_dead',
               quarantine_info: {
                 quarantined_at: new Date().toISOString(),
                 reason: 'resource_hog_race_condition',
@@ -1002,16 +1003,19 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   if (retryCount >= QUARANTINE_AFTER_KILLS) {
     // Exceeded retry limit → quarantine
+    // Clear stale failure_class to prevent liveness_dead being miscounted as auth failures.
+    // Use jsonb subtraction to remove the old key before merging new data.
     const updateResult = await pool.query(
       `UPDATE tasks SET status = 'quarantined',
        error_message = $2,
-       payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+       payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || $3::jsonb
        WHERE id = $1 AND status = 'in_progress'`,
       [
         taskId,
         `[watchdog] reason=${reason} at ${new Date().toISOString()}`,
         JSON.stringify({
           ...watchdogInfo,
+          failure_class: 'liveness_dead',
           quarantine_info: {
             quarantined_at: new Date().toISOString(),
             reason: 'resource_hog',

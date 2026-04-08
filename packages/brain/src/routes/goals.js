@@ -138,6 +138,34 @@ router.get('/health', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/credentials/status
+ * 返回所有 Claude 账号的 OAuth token 过期状态
+ */
+router.get('/credentials/status', async (req, res) => {
+  try {
+    const { checkCredentialExpiry } = await import('../credential-expiry-checker.js');
+    const result = checkCredentialExpiry();
+    const enriched = result.accounts.map(a => ({
+      account: a.account,
+      status: a.status,
+      expires_at: a.expiresAt || null,
+      remaining_hours: a.remainingMs != null ? Math.floor(a.remainingMs / 3600000) : null,
+      remaining_minutes: a.remainingMs != null ? Math.floor((a.remainingMs % 3600000) / 60000) : null,
+      error: a.error || null,
+    }));
+    res.json({
+      success: true,
+      alert_needed: result.alertNeeded,
+      critical_count: result.criticalAccounts.length,
+      accounts: enriched,
+      checked_at: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Self-Diagnosis API — removed (self-diagnosis.js deleted, diagnosis now handled by cortex.js L2)
 
 // ==================== Blocks API (Notion-like Page Content) ====================
