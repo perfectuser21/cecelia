@@ -56,6 +56,7 @@ import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
+import { runDailyKrAuditIfNeeded } from './kr-daily-audit.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -2846,6 +2847,10 @@ async function executeTick() {
   // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
   Promise.resolve().then(() => memorySyncIfNeeded(pool))
     .catch(e => console.warn("[tick] memory-sync 失败:", e.message));
+
+  // 10.21 每日 KR 进度可信度审计（每天一次，校验所有 verifier 健康状态，fire-and-forget）
+  Promise.resolve().then(() => runDailyKrAuditIfNeeded())
+    .catch(e => console.warn('[tick] KR 每日审计失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });

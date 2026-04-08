@@ -71,7 +71,7 @@ export async function runAllVerifiers() {
           UPDATE key_results
           SET progress = $1,
               current_value = $2,
-              metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $2::text),
+              metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', ($2::numeric)::text),
               updated_at = NOW()
           WHERE id = $3
         `, [progress, currentValue, v.kr_id]);

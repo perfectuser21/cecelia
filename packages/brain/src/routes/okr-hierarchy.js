@@ -414,4 +414,20 @@ router.post('/backfill-current-values', async (req, res) => {
   }
 });
 
+// ─── KR 健康度查询 ────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/okr/health
+ * 返回所有活跃 KR 的 verifier 健康状态和 trust_score
+ */
+router.get('/health', async (req, res) => {
+  try {
+    const { runDailyKrAudit } = await import('../kr-daily-audit.js');
+    const result = await runDailyKrAudit();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
