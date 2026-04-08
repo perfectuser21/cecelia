@@ -341,6 +341,7 @@ router.get('/health', async (req, res) => {
           MAX(updated_at) as latest_failure
         FROM tasks
         WHERE payload->>'failure_class' = 'auth'
+          AND task_type != 'pipeline_rescue'
           AND updated_at > NOW() - INTERVAL '24 hours'
         GROUP BY payload->>'dispatched_account'
       `),

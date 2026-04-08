@@ -332,6 +332,7 @@ export async function scanAuthLayerHealth(pool) {
         COUNT(*) AS fail_count
       FROM tasks
       WHERE payload->>'failure_class' = 'auth'
+        AND task_type != 'pipeline_rescue'
         AND updated_at > NOW() - INTERVAL '4 hours'
       GROUP BY payload->>'dispatched_account'
       HAVING COUNT(*) >= $1
