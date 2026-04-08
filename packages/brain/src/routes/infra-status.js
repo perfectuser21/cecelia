@@ -373,4 +373,79 @@ router.get('/health', async (req, res) => {
   }
 });
 
+/**
+ * POST /recover
+ * 按需触发凭据恢复 — 将因 auth 失败而 quarantined 的业务任务重排队（非 pipeline_rescue）
+ * 完整路径: /api/brain/credentials/recover
+ *
+ * 条件：
+ *   - 当前所有账号 is_auth_failed = false（熔断未激活）
+ *   - 任务 status=quarantined, failure_class=auth, task_type!=pipeline_rescue
+ *   - retry_count < max_retries, updated_at 在 48h 内
+ */
+router.post('/recover', async (req, res) => {
+  try {
+    // 检查是否有账号仍处于 auth 熔断状态
+    const circuitResult = await pool.query(
+      `SELECT account_id FROM account_usage_cache WHERE is_auth_failed = true LIMIT 1`
+    );
+    if (circuitResult.rows.length > 0) {
+      return res.status(409).json({
+        recovered: 0,
+        skipped: `auth circuit still open for: ${circuitResult.rows.map(r => r.account_id).join(', ')}`,
+      });
+    }
+
+    // 查询符合条件的 quarantined auth 任务
+    const candidateResult = await pool.query(
+      `SELECT id, title
+       FROM tasks
+       WHERE status = 'quarantined'
+         AND payload->>'failure_class' = 'auth'
+         AND task_type != 'pipeline_rescue'
+         AND retry_count < max_retries
+         AND updated_at > NOW() - INTERVAL '48 hours'
+       ORDER BY updated_at DESC`
+    );
+
+    if (candidateResult.rows.length === 0) {
+      return res.json({ recovered: 0, skipped: 'no eligible quarantined auth tasks', taskIds: [] });
+    }
+
+    const ids = candidateResult.rows.map(r => r.id);
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+
+    // 排除同名任务已在 queued/in_progress 的情况（避免唯一约束冲突）
+    await pool.query(
+      `UPDATE tasks t
+       SET status     = 'queued',
+           payload    = (COALESCE(t.payload, '{}'::jsonb) - 'failure_class')
+                        || '{"recovery_source":"manual_credentials_recover"}'::jsonb,
+           updated_at = NOW()
+       WHERE t.id IN (${placeholders})
+         AND NOT EXISTS (
+           SELECT 1 FROM tasks dup
+           WHERE dup.title = t.title
+             AND dup.status IN ('queued', 'in_progress')
+             AND COALESCE(dup.goal_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                 = COALESCE(t.goal_id, '00000000-0000-0000-0000-000000000000'::uuid)
+             AND COALESCE(dup.project_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                 = COALESCE(t.project_id, '00000000-0000-0000-0000-000000000000'::uuid)
+             AND dup.id != t.id
+         )`,
+      ids
+    );
+
+    res.json({
+      recovered: ids.length,
+      taskIds: ids,
+      tasks: candidateResult.rows.map(r => ({ id: r.id, title: r.title })),
+      recovered_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
+
