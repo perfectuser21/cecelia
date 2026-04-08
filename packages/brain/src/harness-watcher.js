@@ -47,8 +47,8 @@ export async function processHarnessCiWatchers(pool) {
     return result;
   }
 
+  console.log(`[harness-watcher] CI watch: found ${rows.length} queued tasks`);
   if (rows.length === 0) return result;
-  console.log(`[harness-watcher] CI watch: checking ${rows.length} tasks...`);
 
   for (const task of rows) {
     result.processed++;
