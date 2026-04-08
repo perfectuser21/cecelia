@@ -1606,6 +1606,19 @@ ${resultStr.substring(0, 2000)}
         const harnessType = harnessTask?.task_type;
         const { createTask: createHarnessTask } = await import('../actions.js');
 
+        // 帮助函数：将 harness 任务的 verdict 持久化到 tasks.result
+        const persistHarnessVerdict = async (tid, verdictValue, extra = {}) => {
+          try {
+            const verdictPayload = JSON.stringify({ verdict: verdictValue, verdict_at: new Date().toISOString(), ...extra });
+            await pool.query(
+              `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || $1::jsonb WHERE id = $2`,
+              [verdictPayload, tid]
+            );
+          } catch (pvErr) {
+            console.warn(`[execution-callback] persistHarnessVerdict failed (non-fatal): ${pvErr.message}`);
+          }
+        };
+
         // Feature 4: 检查 planner 是否已取消，避免已取消链路继续派生子任务
         const plannerTaskId = harnessPayload?.planner_task_id;
         if (plannerTaskId) {
@@ -1699,6 +1712,7 @@ ${resultStr.substring(0, 2000)}
             }
           }
           console.log(`[execution-callback] harness: ${harnessType} verdict=${reviewVerdict}`);
+          await persistHarnessVerdict(task_id, reviewVerdict, { task_type: harnessType });
 
           if (reviewVerdict === 'APPROVED') {
             const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
@@ -1760,7 +1774,7 @@ ${resultStr.substring(0, 2000)}
             if (prMatch) prUrl = prMatch[0];
           }
           if (!prUrl) {
-            console.warn(`[execution-callback] harness: harness_generate ${task_id} → harness_ci_watch: pr_url is null/undefined (generate may not have written pr_url yet), creating anyway`);
+            throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_generate result (task_id=${task_id})`);
           }
           await createHarnessTask({
             title: `[CI Watch] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'harness'}`,
@@ -1858,11 +1872,7 @@ ${resultStr.substring(0, 2000)}
             const verdict = resultObj.verdict || 'FAIL';
             const evalRoundForResult = harnessPayload.eval_round || 1;
             console.log(`[execution-callback] harness: harness_evaluate verdict=${verdict}`);
-            // 写入 verdict 到 tasks.result
-            await pool.query(
-              'UPDATE tasks SET result = $1 WHERE id = $2',
-              [JSON.stringify({ verdict, eval_round: evalRoundForResult }), task_id]
-            );
+            await persistHarnessVerdict(task_id, verdict, { task_type: 'harness_evaluate', eval_round: harnessPayload.eval_round || 1 });
 
             if (verdict === 'PASS') {
               // PASS → auto-merge PR + harness_deploy_watch
@@ -1970,6 +1980,7 @@ ${resultStr.substring(0, 2000)}
             }
             const verdict = resultObj.verdict || 'FAIL';
             console.log(`[execution-callback] harness: sprint_evaluate verdict=${verdict}`);
+            await persistHarnessVerdict(task_id, verdict, { task_type: 'sprint_evaluate', eval_round: harnessPayload.eval_round || 1 });
 
             if (verdict === 'PASS') {
               const existingSr = await pool.query(
@@ -2029,7 +2040,7 @@ ${resultStr.substring(0, 2000)}
           }
           const evalRound = harnessPayload.eval_round || 1;
           if (!prUrl) {
-            console.warn(`[execution-callback] harness: harness_fix ${task_id} → harness_ci_watch: pr_url is null/undefined, creating anyway`);
+            throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_fix result (task_id=${task_id})`);
           }
           await createHarnessTask({
             title: `[CI Watch] Fix-R${evalRound}`,
