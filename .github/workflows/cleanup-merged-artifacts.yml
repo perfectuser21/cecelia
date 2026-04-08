@@ -45,6 +45,7 @@ jobs:
 
       - name: Commit cleanup
         if: steps.cleanup.outputs.changed == 'true'
+        continue-on-error: true
         env:
           COUNT: ${{ steps.cleanup.outputs.count }}
         run: |
