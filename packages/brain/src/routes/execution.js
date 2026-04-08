@@ -1720,7 +1720,18 @@ ${resultStr.substring(0, 2000)}
         // GAN 守卫：只有 Proposer 产出草案（verdict=PROPOSED）才派 Reviewer
         if (harnessType === 'harness_contract_propose' || harnessType === 'sprint_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
-          const proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
+          // 先尝试结构化提取，失败后 fallback 到纯文本正则（cecelia-run 可能传纯文本字符串）
+          let proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
+          if (!proposeVerdict) {
+            const proposeRawText = typeof result === 'string' ? result
+              : (result != null && typeof result === 'object'
+                  ? (typeof result.result === 'string' ? result.result
+                    : (result.summary || result.findings || ''))
+                  : '');
+            if (proposeRawText && (/"verdict"\s*:\s*"PROPOSED"/i.test(proposeRawText) || /\bPROPOSED\b/.test(proposeRawText))) {
+              proposeVerdict = 'PROPOSED';
+            }
+          }
           if (proposeVerdict !== 'PROPOSED') {
             console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
@@ -1759,7 +1770,10 @@ ${resultStr.substring(0, 2000)}
           if (result !== null && typeof result === 'object' && result.verdict) {
             reviewVerdict = result.verdict.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REVISION';
           } else {
-            const reviewResultRaw = typeof result === 'object' ? (result?.decision || result?.result || '') : (result || '');
+            // 兼容 Claude SDK JSON（result.result 为纯文本）和直接字符串
+            const reviewResultRaw = result != null && typeof result === 'object'
+              ? (result.decision || result.result || result.summary || result.findings || '')
+              : (typeof result === 'string' ? result : '');
             const reviewText = typeof reviewResultRaw === 'string' ? reviewResultRaw : JSON.stringify(reviewResultRaw);
             if (/"verdict"\s*:\s*"APPROVED"/i.test(reviewText) || /\bAPPROVED\b/.test(reviewText)) {
               reviewVerdict = 'APPROVED';
