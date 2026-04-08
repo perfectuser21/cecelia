@@ -448,22 +448,24 @@ async function getTaskStats24h() {
       `SELECT
         count(*) filter (where status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours') as completed,
         count(*) filter (where status IN ('failed', 'quarantined')
-          AND COALESCE(payload->>'failure_class', '') != 'auth'
+          AND payload->>'failure_class' IS DISTINCT FROM 'auth'
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as failed,
         count(*) filter (where status IN ('failed', 'quarantined')
           AND payload->>'failure_class' = 'auth'
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as auth_failed,
         count(*) filter (where status IN ('completed', 'failed', 'quarantined')
-          AND COALESCE(payload->>'failure_class', '') != 'auth'
+          AND payload->>'failure_class' IS DISTINCT FROM 'auth'
           AND (completed_at > NOW() - INTERVAL '24 hours' OR updated_at > NOW() - INTERVAL '24 hours')) as total
        FROM tasks
        WHERE task_type != 'pipeline_rescue'`
     );
     const row = result.rows[0] || { completed: 0, failed: 0, auth_failed: 0, total: 0 };
+    const authFailed = parseInt(row.auth_failed) || 0;
     return {
       completed: parseInt(row.completed) || 0,
       failed: parseInt(row.failed) || 0,
-      auth_failed: parseInt(row.auth_failed) || 0,
+      auth_failed: authFailed,
+      infrastructure_failure: authFailed,
       total: parseInt(row.total) || 0,
     };
   } catch {
