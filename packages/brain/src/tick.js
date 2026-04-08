@@ -59,6 +59,12 @@ import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harnes
 import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
 
+// Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
+function tickLog(...args) {
+  const ts = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  console.log(`[${ts}]`, ...args);
+}
+
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
 const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
@@ -284,7 +290,7 @@ async function runTickSafe(source = 'loop', tickFn) {
       console.warn(`[tick-loop] Tick still running after ${TICK_TIMEOUT_MS}ms timeout, skipping this round (source: ${source})`);
       return { skipped: true, reason: 'tick_timeout_still_running', source };
     } else {
-      console.log(`[tick-loop] Tick already running, skipping (source: ${source})`);
+      tickLog(`[tick-loop] Tick already running, skipping (source: ${source})`);
       return { skipped: true, reason: 'already_running', source };
     }
   }
@@ -295,7 +301,7 @@ async function runTickSafe(source = 'loop', tickFn) {
   try {
     const result = await doTick();
     _lastExecuteTime = Date.now();
-    console.log(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
+    tickLog(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
     return result;
   } catch (err) {
     console.error(`[tick-loop] Tick failed (source: ${source}):`, err.message);
@@ -311,7 +317,7 @@ async function runTickSafe(source = 'loop', tickFn) {
  */
 function startTickLoop() {
   if (_loopTimer) {
-    console.log('[tick-loop] Loop already running, skipping start');
+    tickLog('[tick-loop] Loop already running, skipping start');
     return false;
   }
 
@@ -348,7 +354,7 @@ function startTickLoop() {
     _loopTimer.unref();
   }
 
-  console.log(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
+  tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
 }
 
@@ -357,13 +363,13 @@ function startTickLoop() {
  */
 function stopTickLoop() {
   if (!_loopTimer) {
-    console.log('[tick-loop] No loop running, skipping stop');
+    tickLog('[tick-loop] No loop running, skipping stop');
     return false;
   }
 
   clearInterval(_loopTimer);
   _loopTimer = null;
-  console.log('[tick-loop] Stopped');
+  tickLog('[tick-loop] Stopped');
   return true;
 }
 
@@ -408,7 +414,7 @@ async function _recordRecoveryAttempt(success, errMessage) {
 async function tryRecoverTickLoop() {
   // 如果 tick loop 已经在运行，停止恢复
   if (_loopTimer) {
-    console.log('[tick-loop] Recovery: tick loop already running, clearing recovery timer');
+    tickLog('[tick-loop] Recovery: tick loop already running, clearing recovery timer');
     if (_recoveryTimer) {
       clearInterval(_recoveryTimer);
       _recoveryTimer = null;
@@ -416,7 +422,7 @@ async function tryRecoverTickLoop() {
     return;
   }
 
-  console.log('[tick-loop] Recovery: attempting to start tick loop...');
+  tickLog('[tick-loop] Recovery: attempting to start tick loop...');
 
   try {
     const { ensureEventsTable } = await import('./event-bus.js');
@@ -430,14 +436,14 @@ async function tryRecoverTickLoop() {
       if (status.enabled) {
         startTickLoop();
       } else {
-        console.log('[tick-loop] Recovery: tick disabled in DB, skipping');
+        tickLog('[tick-loop] Recovery: tick disabled in DB, skipping');
         await _recordRecoveryAttempt(false, 'tick_disabled_in_db');
         return;
       }
     }
 
     // 成功：清除恢复 timer 并记录
-    console.log('[tick-loop] Recovery: tick loop started successfully, clearing recovery timer');
+    tickLog('[tick-loop] Recovery: tick loop started successfully, clearing recovery timer');
     if (_recoveryTimer) {
       clearInterval(_recoveryTimer);
       _recoveryTimer = null;
@@ -460,7 +466,7 @@ async function initTickLoop() {
     // Initialize alertness system
     try {
       await initAlertness();
-      console.log(`[tick-loop] Alertness system initialized`);
+      tickLog(`[tick-loop] Alertness system initialized`);
     } catch (alertErr) {
       console.error('[tick-loop] Alertness init failed:', alertErr.message);
     }
@@ -472,14 +478,14 @@ async function initTickLoop() {
     // Auto-enable tick from env var if set
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
     if (envEnabled === 'true') {
-      console.log('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling tick');
+      tickLog('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling tick');
       await enableTick();
       return;
     }
 
     const status = await getTickStatus();
     if (status.enabled) {
-      console.log('[tick-loop] Tick is enabled in DB, starting loop on startup');
+      tickLog('[tick-loop] Tick is enabled in DB, starting loop on startup');
       startTickLoop();
     } else {
       // Check if tick has been disabled for too long — auto-recover
@@ -509,9 +515,9 @@ async function initTickLoop() {
             })]
           );
         } catch { /* event logging is best-effort */ }
-        console.log('[tick-loop] tick_auto_recover: tick re-enabled after extended disable period');
+        tickLog('[tick-loop] tick_auto_recover: tick re-enabled after extended disable period');
       } else {
-        console.log(`[tick-loop] Tick is disabled in DB (${Math.round(minutesDisabled)}min, threshold ${TICK_AUTO_RECOVER_MINUTES}min), not starting loop`);
+        tickLog(`[tick-loop] Tick is disabled in DB (${Math.round(minutesDisabled)}min, threshold ${TICK_AUTO_RECOVER_MINUTES}min), not starting loop`);
       }
     }
 
@@ -523,7 +529,7 @@ async function initTickLoop() {
 
     // 启动后台恢复 timer（每 INIT_RECOVERY_INTERVAL_MS 重试一次）
     if (!_recoveryTimer) {
-      console.log(`[tick-loop] Starting background recovery timer (interval: ${INIT_RECOVERY_INTERVAL_MS}ms)`);
+      tickLog(`[tick-loop] Starting background recovery timer (interval: ${INIT_RECOVERY_INTERVAL_MS}ms)`);
       _recoveryTimer = setInterval(tryRecoverTickLoop, INIT_RECOVERY_INTERVAL_MS);
       // 允许进程在没有其他活跃引用时正常退出
       if (_recoveryTimer.unref) {
@@ -540,7 +546,7 @@ async function initTickLoop() {
  */
 function startTickWatchdog() {
   if (_tickWatchdogTimer) {
-    console.log('[tick-watchdog] Already running, skipping start');
+    tickLog('[tick-watchdog] Already running, skipping start');
     return;
   }
 
@@ -587,7 +593,7 @@ function startTickWatchdog() {
     _tickWatchdogTimer.unref();
   }
 
-  console.log(`[tick-watchdog] Started (interval: ${TICK_WATCHDOG_INTERVAL_MS}ms)`);
+  tickLog(`[tick-watchdog] Started (interval: ${TICK_WATCHDOG_INTERVAL_MS}ms)`);
 }
 
 /**
@@ -597,7 +603,7 @@ function stopTickWatchdog() {
   if (_tickWatchdogTimer) {
     clearInterval(_tickWatchdogTimer);
     _tickWatchdogTimer = null;
-    console.log('[tick-watchdog] Stopped');
+    tickLog('[tick-watchdog] Stopped');
   }
 }
 
@@ -755,7 +761,7 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
   for (const task of weightedTasks) {
     // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
     if (mitigationState.p2_paused && task.priority === 'P2') {
-      console.log(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
+      tickLog(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
       continue;
     }
 
@@ -800,7 +806,7 @@ async function autoCreateTasksFromCortex(rcaResult, context = {}) {
         project_id: action.params.project_id || context.project_id || null,
       });
       created.push({ title: action.params.title, deduplicated: result.deduplicated || false });
-      console.log(`[tick] autoCreateTasksFromCortex: "${action.params.title}" created (dedup=${result.deduplicated || false})`);
+      tickLog(`[tick] autoCreateTasksFromCortex: "${action.params.title}" created (dedup=${result.deduplicated || false})`);
     } catch (err) {
       console.error(`[tick] autoCreateTasksFromCortex: failed to create "${action.params.title}": ${err.message}`);
     }
@@ -816,7 +822,7 @@ async function autoCreateTasksFromCortex(rcaResult, context = {}) {
  */
 async function processCortexTask(task, actions) {
   try {
-    console.log(`[tick] Processing Cortex task: ${task.title} (id=${task.id})`);
+    tickLog(`[tick] Processing Cortex task: ${task.title} (id=${task.id})`);
 
     // Update status to in_progress
     await updateTask({ task_id: task.id, status: 'in_progress' });
@@ -869,7 +875,7 @@ async function processCortexTask(task, actions) {
 
         // Record learning
         const learningRecord = await recordLearning(rcaResult);
-        console.log(`[tick] Learning recorded: ${learningRecord.id}`);
+        tickLog(`[tick] Learning recorded: ${learningRecord.id}`);
 
         // Apply strategy adjustments if any
         const strategyAdjustments = rcaResult.recommended_actions?.filter(
@@ -878,7 +884,7 @@ async function processCortexTask(task, actions) {
 
         if (strategyAdjustments.length > 0) {
           const applyResult = await applyStrategyAdjustments(strategyAdjustments, learningRecord.id);
-          console.log(`[tick] Strategy adjustments applied: ${applyResult.applied}, skipped: ${applyResult.skipped}`);
+          tickLog(`[tick] Strategy adjustments applied: ${applyResult.applied}, skipped: ${applyResult.skipped}`);
         }
       } catch (learningErr) {
         console.error(`[tick] Learning processing failed: ${learningErr.message}`);
@@ -901,7 +907,7 @@ async function processCortexTask(task, actions) {
       WHERE id = $3
     `, ['completed', JSON.stringify(updatedPayload), task.id]);
 
-    console.log(`[tick] Cortex task completed: ${task.id}, confidence=${rcaResult.confidence}`);
+    tickLog(`[tick] Cortex task completed: ${task.id}, confidence=${rcaResult.confidence}`);
 
     actions.push({
       action: 'cortex-complete',
@@ -931,7 +937,7 @@ async function processCortexTask(task, actions) {
     // Use handleTaskFailure for quarantine check (repeated failures → auto-quarantine)
     const quarantineResult = await handleTaskFailure(task.id);
     if (quarantineResult.quarantined) {
-      console.log(`[tick] Cortex task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
+      tickLog(`[tick] Cortex task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
       actions.push({
         action: 'cortex-quarantined',
         task_id: task.id,
@@ -993,7 +999,7 @@ async function dispatchNextTask(goalIds) {
   }
   if (_qcActive) {
     const qcState = getQuotaCoolingState();
-    console.log(`[tick] quota cooling until: ${qcState.until}`);
+    tickLog(`[tick] quota cooling until: ${qcState.until}`);
     return { skipped: true, reason: 'quota_cooling' };
   }
 
@@ -1008,7 +1014,7 @@ async function dispatchNextTask(goalIds) {
   // 0a. Billing pause check — quota_exhausted 全局熔断
   const billingPause = getBillingPause();
   if (billingPause.active) {
-    console.log(`[tick] Billing pause active until ${billingPause.resetTime} (${billingPause.reason}), skipping dispatch`);
+    tickLog(`[tick] Billing pause active until ${billingPause.resetTime} (${billingPause.reason}), skipping dispatch`);
     await recordDispatchResult(pool, false, 'billing_pause');
     return {
       dispatched: false,
@@ -1034,7 +1040,7 @@ async function dispatchNextTask(goalIds) {
         const { findEvictionCandidate, requeueEvictedTask } = await import('./eviction.js');
         const candidate = await findEvictionCandidate(nextPriority);
         if (candidate) {
-          console.log(`[tick] Eviction: ${nextPriority} task waiting, evicting ${candidate.priority} task=${candidate.taskId} (score=${candidate.score.toFixed(1)})`);
+          tickLog(`[tick] Eviction: ${nextPriority} task waiting, evicting ${candidate.priority} task=${candidate.taskId} (score=${candidate.score.toFixed(1)})`);
           const evictKill = await killProcessTwoStage(candidate.taskId, candidate.pgid);
           if (evictKill.killed) {
             // Emergency cleanup for evicted task
@@ -1070,7 +1076,7 @@ async function dispatchNextTask(goalIds) {
           `);
           const nextType = peekXian.rows[0]?.task_type;
           if (nextType && getTaskLocation(nextType) === 'xian') {
-            console.log(`[tick] Codex xian bypass: task_pool full but codex pool available for task_type=${nextType}`);
+            tickLog(`[tick] Codex xian bypass: task_pool full but codex pool available for task_type=${nextType}`);
             xianBypass = true;
           }
         } catch (bypassErr) {
@@ -1150,7 +1156,7 @@ async function dispatchNextTask(goalIds) {
     );
     if (lockCheck.rows.length > 0) {
       const blocker = lockCheck.rows[0];
-      console.log(`[dispatch] Initiative 已有进行中任务 (task_id: ${blocker.id})，跳过派发: ${nextTask.title}`);
+      tickLog(`[dispatch] Initiative 已有进行中任务 (task_id: ${blocker.id})，跳过派发: ${nextTask.title}`);
       await recordDispatchResult(pool, false, 'initiative_locked');
       return { dispatched: false, reason: 'initiative_locked', blocking_task_id: blocker.id, task_id: nextTask.id, actions };
     }
@@ -1161,7 +1167,7 @@ async function dispatchNextTask(goalIds) {
   if (isCodexNativeTask) {
     const codexSlots = slotBudget?.codex;
     if (codexSlots && !codexSlots.available) {
-      console.log(`[dispatch] Codex pool full (${codexSlots.running}/${codexSlots.max}), skipping codex task ${nextTask.id}`);
+      tickLog(`[dispatch] Codex pool full (${codexSlots.running}/${codexSlots.max}), skipping codex task ${nextTask.id}`);
       await recordDispatchResult(pool, false, 'codex_pool_full');
       return { dispatched: false, reason: 'codex_pool_full', codex_running: codexSlots.running, codex_max: codexSlots.max, task_id: nextTask.id, actions };
     }
@@ -1213,7 +1219,7 @@ async function dispatchNextTask(goalIds) {
     const budgetState = slotBudget?.budgetState?.state || 'abundant';
     const taskType = taskToDispatch.task_type || 'dev';
     if (shouldDowngrade(taskType, budgetState)) {
-      console.log(`[dispatch] budget_state=${budgetState} → downgrade task=${taskToDispatch.id} type=${taskType} to codex`);
+      tickLog(`[dispatch] budget_state=${budgetState} → downgrade task=${taskToDispatch.id} type=${taskType} to codex`);
       taskToDispatch = {
         ...taskToDispatch,
         provider: 'codex',
@@ -1362,7 +1368,7 @@ async function autoFailTimedOutTasks(inProgressTasks) {
       // Check if task should be quarantined
       const quarantineResult = await handleTaskFailure(task.id);
       if (quarantineResult.quarantined) {
-        console.log(`[tick] Task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
+        tickLog(`[tick] Task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
         actions.push({
           action: 'quarantine',
           task_id: task.id,
@@ -1476,7 +1482,7 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
 
   // Log rate changes
   if (newRate !== currentRate) {
-    console.log(`[tick] Ramped dispatch: ${currentRate} → ${newRate} (pressure: ${pressure.toFixed(2)}, alertness: ${alertness.levelName}, reason: ${reason})`);
+    tickLog(`[tick] Ramped dispatch: ${currentRate} → ${newRate} (pressure: ${pressure.toFixed(2)}, alertness: ${alertness.levelName}, reason: ${reason})`);
   }
 
   return newRate;
@@ -1508,7 +1514,7 @@ async function executeTick() {
   try {
     alertnessResult = await evaluateAlertness();
     if (alertnessResult.level >= ALERTNESS_LEVELS.ALERT) {
-      console.log(`[tick] Alertness: ${LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
+      tickLog(`[tick] Alertness: ${LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
       actionsTaken.push({
         action: 'alertness_check',
         level: alertnessResult.level,
@@ -1519,7 +1525,7 @@ async function executeTick() {
 
     // In PANIC mode, skip everything except basic health checks
     if (alertnessResult.level >= ALERTNESS_LEVELS.PANIC) {
-      console.log('[tick] PANIC mode: skipping all operations, only heartbeat');
+      tickLog('[tick] PANIC mode: skipping all operations, only heartbeat');
       return {
         success: true,
         alertness: alertnessResult,
@@ -1574,7 +1580,7 @@ async function executeTick() {
     updateSubjectiveTime();
     recordTickEvent({ phase: 'tick', detail: `警觉=${alertnessResult?.levelName || 'CALM'}, 情绪=${emotionResult.label}` });
     cognitionSnapshot = { emotion: emotionResult, time: getSubjectiveTime?.() };
-    console.log(`[tick] 认知状态: 情绪=${emotionResult.label}(${emotionResult.state}), 队列=${queueDepth}, 成功率=${Math.round(successRate * 100)}%, 派发修正=${emotionResult.dispatch_rate_modifier}`);
+    tickLog(`[tick] 认知状态: 情绪=${emotionResult.label}(${emotionResult.state}), 队列=${queueDepth}, 成功率=${Math.round(successRate * 100)}%, 派发修正=${emotionResult.dispatch_rate_modifier}`);
   } catch (cogErr) {
     console.warn('[tick] 认知评估跳过:', cogErr.message);
   }
@@ -1592,7 +1598,7 @@ async function executeTick() {
     _lastZombieSweepTime = Date.now();
     zombieSweep().then(r => {
       const summary = `worktrees:${r.worktrees.removed} processes:${r.processes.killed} locks:${r.lock_slots.removed}`;
-      console.log(`[tick] Zombie sweep done. ${summary}`);
+      tickLog(`[tick] Zombie sweep done. ${summary}`);
     }).catch(err => {
       console.error('[tick] Zombie sweep failed (non-fatal):', err.message);
     });
@@ -1604,7 +1610,7 @@ async function executeTick() {
     _lastPipelinePatrolTime = Date.now();
     runPipelinePatrol(pool).then(r => {
       if (r.stuck > 0 || r.rescued > 0) {
-        console.log(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
+        tickLog(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
       }
     }).catch(err => {
       console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
@@ -1617,7 +1623,7 @@ async function executeTick() {
     _lastCredentialCheckTime = Date.now();
     checkAndAlertExpiringCredentials(pool).then(r => {
       if (r.alerted > 0) {
-        console.log(`[tick] [credential-checker] ⚠️ ${r.alerted} 个账号 token 即将过期，已创建告警任务`);
+        tickLog(`[tick] [credential-checker] ⚠️ ${r.alerted} 个账号 token 即将过期，已创建告警任务`);
       }
     }).catch(err => {
       console.error('[tick] Credential expiry check failed (non-fatal):', err.message);
@@ -1626,7 +1632,7 @@ async function executeTick() {
     // [恢复] 凭据健康时，自动重排队因 auth 失败被隔离的业务任务（非 pipeline_rescue）
     recoverAuthQuarantinedTasks(pool).then(r => {
       if (r.recovered > 0) {
-        console.log(`[tick] [credential-recovery] ✅ ${r.recovered} 个 auth 隔离任务已恢复排队`);
+        tickLog(`[tick] [credential-recovery] ✅ ${r.recovered} 个 auth 隔离任务已恢复排队`);
       }
     }).catch(err => {
       console.error('[tick] Credential recovery failed (non-fatal):', err.message);
@@ -1639,7 +1645,7 @@ async function executeTick() {
     _lastHealthCheckTime = Date.now();
     try {
       const healthResult = await runLayer2HealthCheck(pool);
-      console.log(`[tick] ${healthResult.summary}`);
+      tickLog(`[tick] ${healthResult.summary}`);
     } catch (healthErr) {
       console.error('[tick] Layer2 health check failed (non-fatal):', healthErr.message);
     }
@@ -1650,7 +1656,7 @@ async function executeTick() {
     const { checkKRCompletion } = await import('./kr-completion.js');
     const krResult = await checkKRCompletion(pool);
     if (krResult.closedCount > 0) {
-      console.log(`[TICK] KR 完成检查: ${krResult.closedCount} 个已关闭`);
+      tickLog(`[TICK] KR 完成检查: ${krResult.closedCount} 个已关闭`);
       actionsTaken.push({
         action: 'kr_completion_check',
         closed_count: krResult.closedCount,
@@ -1665,7 +1671,7 @@ async function executeTick() {
   try {
     const { checkInitiativeCompletion } = await import('./initiative-closer.js');
     const initiativeResult = await checkInitiativeCompletion(pool);
-    console.log(`[TICK] Initiative 完成检查: ${initiativeResult.closedCount} 个已关闭`);
+    tickLog(`[TICK] Initiative 完成检查: ${initiativeResult.closedCount} 个已关闭`);
     if (initiativeResult.closedCount > 0) {
       actionsTaken.push({
         action: 'initiative_completion_check',
@@ -1682,7 +1688,7 @@ async function executeTick() {
     const { checkScopeCompletion } = await import('./initiative-closer.js');
     const scopeResult = await checkScopeCompletion(pool);
     if (scopeResult.closedCount > 0) {
-      console.log(`[TICK] Scope 完成检查: ${scopeResult.closedCount} 个已关闭`);
+      tickLog(`[TICK] Scope 完成检查: ${scopeResult.closedCount} 个已关闭`);
       actionsTaken.push({
         action: 'scope_completion_check',
         closed_count: scopeResult.closedCount,
@@ -1698,7 +1704,7 @@ async function executeTick() {
     const { checkProjectCompletion } = await import('./initiative-closer.js');
     const projectResult = await checkProjectCompletion(pool);
     if (projectResult.closedCount > 0) {
-      console.log(`[TICK] Project 完成检查: ${projectResult.closedCount} 个已关闭`);
+      tickLog(`[TICK] Project 完成检查: ${projectResult.closedCount} 个已关闭`);
       actionsTaken.push({
         action: 'project_completion_check',
         closed_count: projectResult.closedCount,
@@ -1759,7 +1765,7 @@ async function executeTick() {
     const { activateNextInitiatives } = await import('./initiative-closer.js');
     const activated = await activateNextInitiatives(pool);
     if (activated > 0) {
-      console.log(`[TICK] Initiative 激活: ${activated} 个从 pending → active`);
+      tickLog(`[TICK] Initiative 激活: ${activated} 个从 pending → active`);
       actionsTaken.push({
         action: 'initiative_queue_activate',
         activated_count: activated,
@@ -1774,7 +1780,7 @@ async function executeTick() {
     const { activateNextKRs } = await import('./kr-completion.js');
     const krsActivated = await activateNextKRs(pool);
     if (krsActivated > 0) {
-      console.log(`[TICK] KR 激活: ${krsActivated} 个从 pending → in_progress`);
+      tickLog(`[TICK] KR 激活: ${krsActivated} 个从 pending → in_progress`);
       actionsTaken.push({
         action: 'kr_queue_activate',
         activated_count: krsActivated,
@@ -1792,7 +1798,7 @@ async function executeTick() {
     const cap = computeCapacity(DEFAULT_SLOTS);
     const projectResult = await manageProjectActivation(pool, cap.project);
     if (projectResult.activated > 0 || projectResult.deactivated > 0) {
-      console.log(`[TICK] Project 容量管理: +${projectResult.activated} 激活, -${projectResult.deactivated} 降级`);
+      tickLog(`[TICK] Project 容量管理: +${projectResult.activated} 激活, -${projectResult.deactivated} 降级`);
       actionsTaken.push({
         action: 'project_capacity_management',
         activated: projectResult.activated,
@@ -1813,7 +1819,7 @@ async function executeTick() {
       const { runAllVerifiers } = await import('./kr-verifier.js');
       const verifierResult = await runAllVerifiers();
       if (verifierResult.updated > 0) {
-        console.log(`[TICK] KR 指标验证: ${verifierResult.updated} 个 KR 已更新（基于数据源）`);
+        tickLog(`[TICK] KR 指标验证: ${verifierResult.updated} 个 KR 已更新（基于数据源）`);
         actionsTaken.push({
           action: 'kr_verifier_sync',
           updated_count: verifierResult.updated,
@@ -1825,7 +1831,7 @@ async function executeTick() {
       const { syncAllKrProgress } = await import('./kr-progress.js');
       const krResult = await syncAllKrProgress(pool);
       if (krResult.updated > 0) {
-        console.log(`[TICK] KR 进度同步（fallback）: ${krResult.updated} 个 KR 已更新`);
+        tickLog(`[TICK] KR 进度同步（fallback）: ${krResult.updated} 个 KR 已更新`);
         actionsTaken.push({
           action: 'kr_progress_sync',
           updated_count: krResult.updated,
@@ -1844,7 +1850,7 @@ async function executeTick() {
       const { getKrVerifierHealth } = await import('./kr-verifier.js');
       const healthResult = await getKrVerifierHealth();
       const { summary, verifiers: vList } = healthResult;
-      console.log(`[TICK] KR 可信度日巡检: healthy=${summary.healthy} warn=${summary.warn} critical=${summary.critical}`);
+      tickLog(`[TICK] KR 可信度日巡检: healthy=${summary.healthy} warn=${summary.warn} critical=${summary.critical}`);
       const problematics = vList.filter(v => v.health !== 'healthy');
       for (const v of problematics) {
         console.warn(`[TICK] KR 可信度问题 [${v.health.toUpperCase()}] "${v.kr_title}": issues=${v.issues.join(',')}`);
@@ -1878,7 +1884,7 @@ async function executeTick() {
     // Otherwise, execute the thalamus decision
     const thalamusAction = thalamusResult.actions?.[0]?.type;
     if (thalamusAction && thalamusAction !== 'fallback_to_tick' && thalamusAction !== 'no_action') {
-      console.log(`[tick] Thalamus decision: ${thalamusAction}`);
+      tickLog(`[tick] Thalamus decision: ${thalamusAction}`);
 
       // Execute thalamus decision
       const execReport = await executeThalamusDecision(thalamusResult);
@@ -1912,7 +1918,7 @@ async function executeTick() {
     const { checkPrPlansCompletion } = await import('./planner.js');
     const completedPrPlans = await checkPrPlansCompletion();
     if (completedPrPlans.length > 0) {
-      console.log(`[tick] Auto-completed ${completedPrPlans.length} PR Plans`);
+      tickLog(`[tick] Auto-completed ${completedPrPlans.length} PR Plans`);
       actionsTaken.push({
         action: 'pr_plans_completion_check',
         completed_count: completedPrPlans.length,
@@ -1930,7 +1936,7 @@ async function executeTick() {
     const decompSummary = await runDecompositionChecks();
     if (decompSummary.total_created > 0) {
       const activePaths = decompSummary.active_paths?.length ?? 0;
-      console.log(`[tick] Created ${decompSummary.total_created} decomposition tasks (${activePaths} active paths)`);
+      tickLog(`[tick] Created ${decompSummary.total_created} decomposition tasks (${activePaths} active paths)`);
       actionsTaken.push({
         action: 'decomposition_check',
         created_count: decompSummary.total_created,
@@ -1947,7 +1953,7 @@ async function executeTick() {
     const { advanceCrystallizePipeline } = await import('./crystallize-orchestrator.js');
     const crystallizeResult = await advanceCrystallizePipeline();
     if (crystallizeResult.total_actions > 0) {
-      console.log(`[tick] Crystallize orchestration: ${crystallizeResult.total_actions} actions (orchestrated=${crystallizeResult.summary.orchestrated}, skipped=${crystallizeResult.summary.skipped})`);
+      tickLog(`[tick] Crystallize orchestration: ${crystallizeResult.total_actions} actions (orchestrated=${crystallizeResult.summary.orchestrated}, skipped=${crystallizeResult.summary.skipped})`);
       actionsTaken.push({
         action: 'crystallize_orchestration',
         total_actions: crystallizeResult.total_actions,
@@ -1964,7 +1970,7 @@ async function executeTick() {
     const { orchestrateContentPipelines } = await import('./content-pipeline-orchestrator.js');
     const pipelineResult = await orchestrateContentPipelines();
     if (pipelineResult.total_actions > 0) {
-      console.log(`[tick] Content pipeline orchestration: ${pipelineResult.total_actions} actions (orchestrated=${pipelineResult.summary.orchestrated}, skipped=${pipelineResult.summary.skipped})`);
+      tickLog(`[tick] Content pipeline orchestration: ${pipelineResult.total_actions} actions (orchestrated=${pipelineResult.summary.orchestrated}, skipped=${pipelineResult.summary.skipped})`);
       actionsTaken.push({
         action: 'content_pipeline_orchestration',
         total_actions: pipelineResult.total_actions,
@@ -1983,7 +1989,7 @@ async function executeTick() {
     const { executeQueuedContentTasks } = await import('./content-pipeline-orchestrator.js');
     executeQueuedContentTasks().then(r => {
       if (r.executed > 0) {
-        console.log(`[tick] Content pipeline executor: ${r.executed} tasks executed`);
+        tickLog(`[tick] Content pipeline executor: ${r.executed} tasks executed`);
         actionsTaken.push({ action: 'content_pipeline_execution', executed: r.executed });
       }
     }).catch(execErr => {
@@ -1998,7 +2004,7 @@ async function executeTick() {
     const { checkRecurringTasks } = await import('./recurring.js');
     const recurringCreated = await checkRecurringTasks(now);
     if (recurringCreated.length > 0) {
-      console.log(`[tick] Created ${recurringCreated.length} recurring task instances`);
+      tickLog(`[tick] Created ${recurringCreated.length} recurring task instances`);
       actionsTaken.push({
         action: 'recurring_tasks_check',
         created_count: recurringCreated.length,
@@ -2016,7 +2022,7 @@ async function executeTick() {
     const { sendFollowUp } = await import('./proactive-mouth.js');
     const toFollowUp = await checkPendingFollowups(pool);
     if (toFollowUp.length > 0) {
-      console.log(`[tick] ${toFollowUp.length} 条待回音消息需要跟进`);
+      tickLog(`[tick] ${toFollowUp.length} 条待回音消息需要跟进`);
       for (const conv of toFollowUp) {
         sendFollowUp(pool, callLLM, conv).catch(err =>
           console.warn('[tick] sendFollowUp failed:', err.message)
@@ -2039,7 +2045,7 @@ async function executeTick() {
       const zombieResult = await runZombieCleanup(pool);
       _lastZombieCleanupTime = Date.now();
       if (zombieResult.slotsReclaimed > 0 || zombieResult.worktreesRemoved > 0) {
-        console.log(`[tick] Zombie cleanup: slots=${zombieResult.slotsReclaimed} worktrees=${zombieResult.worktreesRemoved}`);
+        tickLog(`[tick] Zombie cleanup: slots=${zombieResult.slotsReclaimed} worktrees=${zombieResult.worktreesRemoved}`);
       }
     } catch (zombieErr) {
       console.error('[tick] Zombie cleanup failed (non-fatal):', zombieErr.message);
@@ -2053,7 +2059,7 @@ async function executeTick() {
       const cleanupResult = await pool.query('SELECT run_periodic_cleanup() AS msg');
       const msg = cleanupResult.rows[0]?.msg || 'done';
       _lastCleanupTime = Date.now();
-      console.log(`[tick] Periodic cleanup: ${msg}`);
+      tickLog(`[tick] Periodic cleanup: ${msg}`);
     } catch (cleanupErr) {
       console.error('[tick] Periodic cleanup failed (non-fatal):', cleanupErr.message);
     }
@@ -2069,7 +2075,7 @@ async function executeTick() {
           AND created_at < NOW() - INTERVAL '90 days'
       `);
       if (archiveResult.rowCount > 0) {
-        console.log(`[tick] Archived ${archiveResult.rowCount} old learnings`);
+        tickLog(`[tick] Archived ${archiveResult.rowCount} old learnings`);
       }
     } catch (archiveErr) {
       console.error('[tick] Knowledge archive failed (non-fatal):', archiveErr.message);
@@ -2081,7 +2087,7 @@ async function executeTick() {
     try {
       const expiredCount = await expireStaleProposals();
       if (expiredCount > 0) {
-        console.log(`[tick] Expired ${expiredCount} stale proposals`);
+        tickLog(`[tick] Expired ${expiredCount} stale proposals`);
       }
     } catch (expireErr) {
       console.error('[tick] Proposal expiry check failed (non-fatal):', expireErr.message);
@@ -2099,13 +2105,13 @@ async function executeTick() {
       const alertCount = evaluationResults.filter(r => r.shouldAlert).length;
 
       if (evaluationResults.length > 0) {
-        console.log(`[tick] Progress evaluation: ${evaluationResults.length} tasks evaluated, ${alertCount} alerts`);
+        tickLog(`[tick] Progress evaluation: ${evaluationResults.length} tasks evaluated, ${alertCount} alerts`);
 
         // 如果有高风险任务，提升警觉度
         if (alertCount > 0) {
           alertnessResult.score += Math.min(alertCount * 10, 50); // 每个警报+10分，最多+50分
           alertnessResult.reasons.push(`${alertCount} tasks with progress anomalies detected`);
-          console.log(`[tick] Alertness increased due to progress anomalies: +${Math.min(alertCount * 10, 50)} points`);
+          tickLog(`[tick] Alertness increased due to progress anomalies: +${Math.min(alertCount * 10, 50)} points`);
         }
       }
     } catch (progressErr) {
@@ -2123,7 +2129,7 @@ async function executeTick() {
       if (goalResults.length > 0) {
         const stalledCount = goalResults.filter(r => r.verdict === 'stalled').length;
         const attentionCount = goalResults.filter(r => r.verdict === 'needs_attention').length;
-        console.log(`[tick] Goal outer loop: ${goalResults.length} goals evaluated, ${stalledCount} stalled, ${attentionCount} needs_attention`);
+        tickLog(`[tick] Goal outer loop: ${goalResults.length} goals evaluated, ${stalledCount} stalled, ${attentionCount} needs_attention`);
         if (stalledCount > 0) {
           actionsTaken.push({
             action: 'goal_outer_loop',
@@ -2147,7 +2153,7 @@ async function executeTick() {
       const hbResult = await runHeartbeatInspection(pool);
       _lastHeartbeatTime = Date.now(); // 仅成功后更新，失败时下次 tick 立即重试
       if (!hbResult.skipped && hbResult.actions_count > 0) {
-        console.log(`[TICK] Heartbeat 巡检: ${hbResult.actions_count} 个行动`);
+        tickLog(`[TICK] Heartbeat 巡检: ${hbResult.actions_count} 个行动`);
         actionsTaken.push({
           action: 'heartbeat_inspection',
           actions_count: hbResult.actions_count,
@@ -2291,7 +2297,7 @@ async function executeTick() {
       { action: 'global_fallback', reason: 'no_focus' },
       { success: true, skipped: false }
     );
-    console.log('[tick] No active Objective found, falling back to global task dispatch');
+    tickLog('[tick] No active Objective found, falling back to global task dispatch');
   }
 
   const focus = hasFocus ? focusResult.focus : null;
@@ -2329,7 +2335,7 @@ async function executeTick() {
     const { unblockExpiredTasks } = await import('./task-updater.js');
     const recovered = await unblockExpiredTasks({ limit: UNBLOCK_BATCH_LIMIT });
     if (recovered.length > 0) {
-      console.log(`[tick] Auto-unblocked ${recovered.length} expired blocked task(s)`);
+      tickLog(`[tick] Auto-unblocked ${recovered.length} expired blocked task(s)`);
       for (const r of recovered) {
         actionsTaken.push({
           action: 'auto_unblock',
@@ -2345,7 +2351,7 @@ async function executeTick() {
 
   // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
   if (allGoalIds.length === 0) {
-    console.log('[tick] No active goals found, skipping tick');
+    tickLog('[tick] No active goals found, skipping tick');
     return {
       success: true,
       alertness: alertnessResult,
@@ -2382,7 +2388,7 @@ async function executeTick() {
     const livenessActions = await probeTaskLiveness();
     actionsTaken.push(...livenessActions);
     if (livenessActions.length > 0) {
-      console.log(`[tick-loop] Liveness probe: ${livenessActions.length} tasks auto-failed`);
+      tickLog(`[tick-loop] Liveness probe: ${livenessActions.length} tasks auto-failed`);
     }
   } catch (livenessErr) {
     console.error('[tick-loop] Liveness probe error:', livenessErr.message);
@@ -2396,7 +2402,7 @@ async function executeTick() {
 
     for (const action of watchdogResult.actions) {
       if (action.action === 'kill') {
-        console.log(`[tick] Watchdog kill: task=${action.taskId} reason=${action.reason}`);
+        tickLog(`[tick] Watchdog kill: task=${action.taskId} reason=${action.reason}`);
         const killResult = await killProcessTwoStage(action.taskId, action.pgid);
         if (killResult.killed) {
           // Phase 2: Emergency cleanup (worktree, lock slot, .dev-mode)
@@ -2405,7 +2411,7 @@ async function executeTick() {
             const slot = action.slot || (pidMap && pidMap.get?.(action.taskId)?.slot);
             if (slot) {
               const cleanupResult = emergencyCleanup(action.taskId, slot);
-              console.log(`[tick] Emergency cleanup: wt=${cleanupResult.worktree} lock=${cleanupResult.lock}`);
+              tickLog(`[tick] Emergency cleanup: wt=${cleanupResult.worktree} lock=${cleanupResult.lock}`);
             }
           } catch (cleanupErr) {
             console.error(`[tick] Emergency cleanup failed (non-fatal): ${cleanupErr.message}`);
@@ -2414,7 +2420,7 @@ async function executeTick() {
           const requeueResult = await requeueTask(action.taskId, action.reason, action.evidence);
           // P0 FIX: fallback quarantine 日志（竞态条件下 requeueTask 仍能 quarantine）
           if (requeueResult.reason === 'fallback_quarantine') {
-            console.log(`[tick] Watchdog fallback quarantine: task=${action.taskId} (race condition resolved)`);
+            tickLog(`[tick] Watchdog fallback quarantine: task=${action.taskId} (race condition resolved)`);
           }
           cleanupMetrics(action.taskId);
           await emit('watchdog_kill', 'watchdog', {
@@ -2434,7 +2440,7 @@ async function executeTick() {
           console.error(`[tick] Watchdog kill FAILED: task=${action.taskId} stage=${killResult.stage}`);
         }
       } else if (action.action === 'warn') {
-        console.log(`[tick] Watchdog warn: task=${action.taskId} reason=${action.reason}`);
+        tickLog(`[tick] Watchdog warn: task=${action.taskId} reason=${action.reason}`);
       }
     }
   } catch (watchdogErr) {
@@ -2448,7 +2454,7 @@ async function executeTick() {
 
     for (const action of idleResult.actions) {
       if (action.action === 'kill') {
-        console.log(`[tick] idle-session kill: pid=${action.pid} reason=${action.reason}`);
+        tickLog(`[tick] idle-session kill: pid=${action.pid} reason=${action.reason}`);
         try {
           process.kill(action.pid, 'SIGTERM');
           // Schedule SIGKILL after 60 seconds if still alive
@@ -2497,7 +2503,7 @@ async function executeTick() {
       });
     }
     if (blockedReleased.length > 0) {
-      console.log(`[tick] Released ${blockedReleased.length} blocked task(s) back to queued`);
+      tickLog(`[tick] Released ${blockedReleased.length} blocked task(s) back to queued`);
     }
   } catch (blockedErr) {
     console.error('[tick] Blocked task release error:', blockedErr.message);
@@ -2544,7 +2550,7 @@ async function executeTick() {
         });
       } else if (planned.reason === 'no_project_for_kr') {
         // KR exists but has no linked Project — decomposition-checker Check C will handle
-        console.log(`[tick-loop] no_project_for_kr: KR "${planned.kr?.title}" has no linked project, decomposition-checker Check C will repair`);
+        tickLog(`[tick-loop] no_project_for_kr: KR "${planned.kr?.title}" has no linked project, decomposition-checker Check C will repair`);
         actionsTaken.push({
           action: 'no_project_for_kr',
           kr: planned.kr,
@@ -2555,7 +2561,7 @@ async function executeTick() {
       console.error('[tick-loop] Planner error:', planErr.message);
     }
   } else if (!canPlan() && queued.length === 0 && inProgress.length === 0) {
-    console.log(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
+    tickLog(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
   }
 
   // Note: Auto OKR decomposition now handled by decomposition-checker.js (0.7)
@@ -2581,8 +2587,8 @@ async function executeTick() {
           `SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'quota_exhausted'`
         );
         const remaining = parseInt(remainingResult.rows[0]?.cnt || '0', 10);
-        console.log(`[tick] Requeued ${requeueResult.rowCount}/${requeueResult.rowCount + remaining} quota_exhausted task(s) (remaining=${remaining})`);
-        requeueResult.rows.forEach(r => console.log(`[tick]   - ${r.id} ${r.title}`));
+        tickLog(`[tick] Requeued ${requeueResult.rowCount}/${requeueResult.rowCount + remaining} quota_exhausted task(s) (remaining=${remaining})`);
+        requeueResult.rows.forEach(r => tickLog(`[tick]   - ${r.id} ${r.title}`));
       }
     } catch (requeueErr) {
       console.error('[tick] quota_exhausted requeue error (non-fatal):', requeueErr.message);
@@ -2590,7 +2596,7 @@ async function executeTick() {
   }
 
   // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
-  console.log(`[tick] Phase 7 reached: queued=${queued.length} inProgress=${inProgress.length} allGoalIds=${allGoalIds.length}`);
+  tickLog(`[tick] Phase 7 reached: queued=${queued.length} inProgress=${inProgress.length} allGoalIds=${allGoalIds.length}`);
   publishCognitiveState({ phase: 'dispatching', detail: '派发任务…' });
   //    Respect alertness level dispatch settings
   let dispatched = 0;
@@ -2598,9 +2604,9 @@ async function executeTick() {
 
   // Check if dispatch is allowed (using enhanced alertness)
   const _canDispatchResult = canDispatch();
-  console.log(`[tick] canDispatch=${_canDispatchResult} alertness=${alertnessResult?.level || '?'}`);
+  tickLog(`[tick] canDispatch=${_canDispatchResult} alertness=${alertnessResult?.level || '?'}`);
   if (!_canDispatchResult) {
-    console.log(`[tick] Dispatch disabled at alertness level ${alertnessResult?.levelName || 'UNKNOWN'}`);
+    tickLog(`[tick] Dispatch disabled at alertness level ${alertnessResult?.levelName || 'UNKNOWN'}`);
     return {
       success: true,
       alertness: alertnessResult,
@@ -2619,7 +2625,7 @@ async function executeTick() {
   // 自愈恢复期间额外限速：isRecovering=true 时上限 50%，防止恢复期加剧过载
   const healingStatus = getRecoveryStatus();
   if (healingStatus.isRecovering && dispatchRate > RECOVERY_DISPATCH_CAP) {
-    console.log(`[tick] Healing recovery active (phase=${healingStatus.phase}): capping dispatch rate ${Math.round(dispatchRate * 100)}% → ${Math.round(RECOVERY_DISPATCH_CAP * 100)}%`);
+    tickLog(`[tick] Healing recovery active (phase=${healingStatus.phase}): capping dispatch rate ${Math.round(dispatchRate * 100)}% → ${Math.round(RECOVERY_DISPATCH_CAP * 100)}%`);
     dispatchRate = RECOVERY_DISPATCH_CAP;
   }
 
@@ -2627,7 +2633,7 @@ async function executeTick() {
   const emotionState = cognitionSnapshot?.emotion?.state ?? 'calm';
   const emotionDispatchModifier = cognitionSnapshot?.emotion?.dispatch_rate_modifier ?? 1.0;
   if (emotionState === 'overloaded') {
-    console.log('[tick] 情绪过载，跳过本轮派发（dispatch_rate_modifier=' + emotionDispatchModifier + '）');
+    tickLog('[tick] 情绪过载，跳过本轮派发（dispatch_rate_modifier=' + emotionDispatchModifier + '）');
     actionsTaken.push({ action: 'emotion_gate', emotion: emotionState, reason: 'overloaded_skip_dispatch' });
     return {
       success: true,
@@ -2649,13 +2655,13 @@ async function executeTick() {
     ? Math.max(1, Math.floor(poolCAvailable * dispatchRate * emotionDispatchModifier))
     : 0;
   if (emotionDispatchModifier !== 1.0) {
-    console.log(`[tick] 情绪派发修正: ${emotionState} × ${emotionDispatchModifier} → effectiveMax=${effectiveDispatchMax}`);
+    tickLog(`[tick] 情绪派发修正: ${emotionState} × ${emotionDispatchModifier} → effectiveMax=${effectiveDispatchMax}`);
   }
   if (tickSlotBudget.user.mode !== 'absent') {
-    console.log(`[tick] User mode: ${tickSlotBudget.user.mode} (${tickSlotBudget.user.used} headed), Pool C: ${poolCAvailable}/${tickSlotBudget.taskPool.budget}`);
+    tickLog(`[tick] User mode: ${tickSlotBudget.user.mode} (${tickSlotBudget.user.used} headed), Pool C: ${poolCAvailable}/${tickSlotBudget.taskPool.budget}`);
   }
   if (dispatchRate < 1.0) {
-    console.log(`[tick] Dispatch rate limited to ${Math.round(dispatchRate * 100)}% (max ${effectiveDispatchMax} tasks)`);
+    tickLog(`[tick] Dispatch rate limited to ${Math.round(dispatchRate * 100)}% (max ${effectiveDispatchMax} tasks)`);
   }
 
   // Apply gradual ramp-up to avoid sudden load spikes
@@ -2665,7 +2671,7 @@ async function executeTick() {
   const burstOverride = tickSlotBudget.backpressure?.override_burst_limit;
   const effectiveBurstLimit = burstOverride ?? MAX_NEW_DISPATCHES_PER_TICK;
   if (burstOverride != null) {
-    console.log(`[tick] Backpressure active: queue_depth=${tickSlotBudget.backpressure.queue_depth} > ${tickSlotBudget.backpressure.threshold}, burst_limit=${effectiveBurstLimit}`);
+    tickLog(`[tick] Backpressure active: queue_depth=${tickSlotBudget.backpressure.queue_depth} > ${tickSlotBudget.backpressure.threshold}, burst_limit=${effectiveBurstLimit}`);
   }
 
   // 7a. Fill slots from focused objective's tasks
@@ -2676,7 +2682,7 @@ async function executeTick() {
   for (let i = 0; i < rampedDispatchMax; i++) {
     // Burst limiter：单次 tick 新派发上限，防止队列积压后瞬间雪崩
     if (newDispatchCount >= effectiveBurstLimit) {
-      console.log(`[tick] Burst limiter: reached effectiveBurstLimit=${effectiveBurstLimit}, stopping 7a dispatch`);
+      tickLog(`[tick] Burst limiter: reached effectiveBurstLimit=${effectiveBurstLimit}, stopping 7a dispatch`);
       break;
     }
 
@@ -2684,7 +2690,7 @@ async function executeTick() {
     if (memReservedMb > 0) {
       const predictedResources = checkServerResources(memReservedMb);
       if (!predictedResources.ok || predictedResources.metrics.max_pressure >= 0.9) {
-        console.log(`[tick] Predictive gate: stopping dispatch (reserved=${memReservedMb}MB, predicted_pressure=${predictedResources.metrics.max_pressure})`);
+        tickLog(`[tick] Predictive gate: stopping dispatch (reserved=${memReservedMb}MB, predicted_pressure=${predictedResources.metrics.max_pressure})`);
         await logTickDecision(
           'tick',
           `Predictive gate: reserved ${memReservedMb}MB would exceed threshold`,
@@ -2702,7 +2708,7 @@ async function executeTick() {
       const areaDecision = await selectAreaForDispatch(poolCAvailable);
       if (areaDecision.area && areaDecision.goalIds.length > 0) {
         areaGoalIds = areaDecision.goalIds;
-        console.log(`[tick] Area dispatch: ${areaDecision.area} (${areaDecision.reason})`);
+        tickLog(`[tick] Area dispatch: ${areaDecision.area} (${areaDecision.reason})`);
       }
     } catch (areaErr) {
       console.warn(`[tick] Area scheduler failed (fallback to global): ${areaErr.message}`);
@@ -2711,7 +2717,7 @@ async function executeTick() {
     const dispatchResult = await dispatchNextTask(areaGoalIds);
     actionsTaken.push(...dispatchResult.actions);
     lastDispatchResult = dispatchResult;
-    console.log(`[tick] Dispatch attempt ${i}: dispatched=${dispatchResult.dispatched} reason=${dispatchResult.reason || 'ok'}`);
+    tickLog(`[tick] Dispatch attempt ${i}: dispatched=${dispatchResult.dispatched} reason=${dispatchResult.reason || 'ok'}`);
 
     if (!dispatchResult.dispatched) {
       if (dispatchResult.reason !== 'no_dispatchable_task') {
@@ -2737,7 +2743,7 @@ async function executeTick() {
         for (let i = dispatched; i < rampedDispatchMax; i++) {
           // Burst limiter：7b 同样受 effectiveBurstLimit 约束（含背压降速）
           if (newDispatchCount >= effectiveBurstLimit) {
-            console.log(`[tick] Burst limiter: reached effectiveBurstLimit=${effectiveBurstLimit}, stopping 7b dispatch`);
+            tickLog(`[tick] Burst limiter: reached effectiveBurstLimit=${effectiveBurstLimit}, stopping 7b dispatch`);
             break;
           }
           const globalDispatch = await dispatchNextTask(readyKrIds);
@@ -2754,7 +2760,7 @@ async function executeTick() {
 
   const burstLimited = newDispatchCount >= effectiveBurstLimit;
   if (dispatched > 0) {
-    console.log(`[tick-loop] Dispatched ${dispatched} tasks this tick (burst_limited=${burstLimited})`);
+    tickLog(`[tick-loop] Dispatched ${dispatched} tasks this tick (burst_limited=${burstLimited})`);
   }
 
   // 8. Update tick state
@@ -2920,7 +2926,7 @@ async function executeTick() {
   try {
     scanResult = await triggerCodeQualityScan(pool);
     if (scanResult?.triggered) {
-      console.log('[tick] Code quality scan triggered:', scanResult);
+      tickLog('[tick] Code quality scan triggered:', scanResult);
     }
   } catch (scanErr) {
     console.error('[tick] code quality scan error:', scanErr.message);
@@ -2955,7 +2961,7 @@ async function executeTick() {
         message: recentNarrative.rows[0].content.slice(0, 500),
         meta: { source: 'tick_proactive' },
       });
-      console.log('[tick] 主动推送新叙事');
+      tickLog('[tick] 主动推送新叙事');
     }
   } catch (pushErr) {
     console.warn('[tick] 主动推送叙事失败（non-critical）:', pushErr.message);
@@ -3085,7 +3091,7 @@ async function check48hReport(dbPool, { force = false } = {}) {
   }
 
   _lastReportTime = Date.now();
-  console.log(`[tick] 触发 48h 系统简报生成（elapsed: ${Math.round(elapsed / 3600000)}h, force: ${force}）`);
+  tickLog(`[tick] 触发 48h 系统简报生成（elapsed: ${Math.round(elapsed / 3600000)}h, force: ${force}）`);
 
   try {
     // 调用 cortex.generateSystemReport() 生成真实 AI 简报（含 LLM 深度分析）
@@ -3097,7 +3103,7 @@ async function check48hReport(dbPool, { force = false } = {}) {
       throw new Error('cortex.generateSystemReport 返回无效结果');
     }
 
-    console.log(`[tick] 48h 简报已生成（by cortex），id: ${report.id}`);
+    tickLog(`[tick] 48h 简报已生成（by cortex），id: ${report.id}`);
     return { id: report.id, created_at: report.generated_at };
   } catch (err) {
     console.error('[tick] 48h 简报生成失败（non-critical）:', err.message);
@@ -3117,7 +3123,7 @@ async function drainTick() {
 
   _draining = true;
   _drainStartedAt = new Date().toISOString();
-  console.log(`[tick] Drain mode activated at ${_drainStartedAt}`);
+  tickLog(`[tick] Drain mode activated at ${_drainStartedAt}`);
 
   // Count in_progress tasks for initial status (no auto-complete on activation)
   const inProgressResult = await pool.query(
@@ -3155,7 +3161,7 @@ async function getDrainStatus() {
   // Auto-complete drain: if no in_progress tasks remain, enter post-drain cooldown
   // (NOT disableTick — that would kill the entire tick loop, causing system-wide stop)
   if (tasks.length === 0) {
-    console.log('[tick] Drain complete — no in_progress tasks remain, entering post-drain cooldown (dispatch rate → 1)');
+    tickLog('[tick] Drain complete — no in_progress tasks remain, entering post-drain cooldown (dispatch rate → 1)');
     const drainEnd = new Date().toISOString();
     const startedAt = _drainStartedAt;
     _draining = false;
@@ -3167,7 +3173,7 @@ async function getDrainStatus() {
     _postDrainCooldownTimer = setTimeout(() => {
       _postDrainCooldown = false;
       _postDrainCooldownTimer = null;
-      console.log('[tick] Post-drain cooldown expired — dispatch rate restored to normal');
+      tickLog('[tick] Post-drain cooldown expired — dispatch rate restored to normal');
     }, 5 * 60 * 1000); // 5 minutes
     if (_postDrainCooldownTimer.unref) _postDrainCooldownTimer.unref();
 
@@ -3202,7 +3208,7 @@ function cancelDrain() {
     return { success: true, was_draining: false };
   }
 
-  console.log('[tick] Drain mode cancelled, resuming normal dispatch');
+  tickLog('[tick] Drain mode cancelled, resuming normal dispatch');
   _draining = false;
   _drainStartedAt = null;
   return { success: true, was_draining: true };
@@ -3294,7 +3300,7 @@ export async function ensureCodexImmune(dbPool) {
     '/Users/administrator/perfect21/cecelia/quality/scripts/run-codex-immune.sh'
   ]);
 
-  console.log('[tick] Codex immune task created (last check: ' +
+  tickLog('[tick] Codex immune task created (last check: ' +
     (lastCreatedAt ? new Date(lastCreatedAt).toISOString() : 'never') + ')');
   return { created: true, elapsed_ms: elapsed };
 }
