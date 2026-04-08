@@ -1,23 +1,21 @@
-# Task Card: content-pipeline 幂等检查修复
+# Task Card: fix execution-callback verdict 写入 + ci_watch payload 校验
 
-**Task ID**: 840db267-3c84-4651-97be-ed4b7fb50ae2  
-**Branch**: cp-04050228-840db267-3c84-4651-97be-ed4b7f
+## Task ID
+9a7e1e0a-3d52-46e5-b6e8-830f5fb47bb5
 
 ## 问题
-
-`_startOnePipeline` 的幂等检查遗漏 `completed` 状态，导致 export 失败后 pipeline 被重排队时无限创建 research 子任务。
+1. execution-callback 处理 harness 任务完成后，从未执行 `UPDATE tasks SET result` — verdict 只用于链路决策，不持久化到 DB
+2. createHarnessTask 创建 harness_ci_watch 时，pr_url 可能为 null 但没有任何 warning
 
 ## 修复
+### Fix 1: verdict 写入 tasks.result
+- harness_contract_propose: `{"verdict":"PROPOSED","propose_round":N}`
+- harness_contract_review: `{"verdict":"APPROVED"/"REVISION","review_branch":"..."}`
+- harness_evaluate: `{"verdict":"PASS"/"FAIL","eval_round":N}`
 
-`packages/brain/src/content-pipeline-orchestrator.js` 第 119 行：
-- 旧: `AND status IN ('queued', 'in_progress')`
-- 新: `AND status IN ('queued', 'in_progress', 'completed')`
+### Fix 2: ci_watch pr_url warning
+- harness_generate → ci_watch: pr_url null 时打印 warning 但允许创建
+- harness_fix → ci_watch: 同上
 
-## DoD
-
-- [x] [ARTIFACT] `content-pipeline-orchestrator.js` 中 `_startOnePipeline` 的幂等检查包含 `'completed'` 状态
-  - File: `packages/brain/src/content-pipeline-orchestrator.js`
-  - Check: `node -e "const c=require('fs').readFileSync('packages/brain/src/content-pipeline-orchestrator.js','utf8');if(!c.includes(\"status IN ('queued', 'in_progress', 'completed')\"))process.exit(1);console.log('OK')"`
-
-- [x] [BEHAVIOR] Brain 重启后 pipeline re-queue 不会重新创建已完成的 research 子任务
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/content-pipeline-orchestrator.js','utf8');const match=c.match(/status IN \\([^)]+\\)/g);if(!match||!match.some(m=>m.includes('completed')))process.exit(1);console.log('幂等检查包含 completed 状态 OK')"`
+## 文件
+- packages/brain/src/routes/execution.js

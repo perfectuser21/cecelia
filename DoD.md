@@ -1,21 +1,21 @@
-# DoD — [SelfDrive] 24h任务成功率39%根因分析
-
-## 任务目标
-分析 229 条失败任务的根因，按 module/stage 分类，输出修复建议。
-
-## 交付物
-
-- [x] [ARTIFACT] 分析报告文件 `docs/learnings/cp-04072300-task-success-rate-analysis.md` 存在
-  Test: `manual:node -e "require('fs').accessSync('docs/learnings/cp-04072300-task-success-rate-analysis.md')"`
-
-- [x] [BEHAVIOR] 报告包含根因分类（pipeline_rescue storm + auth 失败）
-  Test: `manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-04072300-task-success-rate-analysis.md','utf8');if(!c.includes('pipeline_rescue'))process.exit(1)"`
-
-- [x] [BEHAVIOR] 报告包含7天趋势数据
-  Test: `manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-04072300-task-success-rate-analysis.md','utf8');if(!c.includes('2026-04-05'))process.exit(1)"`
-
-- [x] [BEHAVIOR] 报告包含修复建议
-  Test: `manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-04072300-task-success-rate-analysis.md','utf8');if(!c.includes('account3'))process.exit(1)"`
+# DoD: fix execution-callback verdict 写入 + ci_watch payload 校验
 
 ## 成功标准
-分析报告输出，识别系统性故障根因，提报 P1 bug。
+
+- [x] [ARTIFACT] harness_evaluate 完成后执行 `UPDATE tasks SET result` 写入 verdict+eval_round
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('UPDATE tasks SET result'))process.exit(1);console.log('OK')"`
+
+- [x] [ARTIFACT] harness_contract_propose 完成后执行 `UPDATE tasks SET result` 写入 verdict+propose_round
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const matches=c.match(/propose_round.*proposeRound/g)||[];if(matches.length<2)process.exit(1);console.log('OK: found propose_round in result',matches.length)"`
+
+- [x] [ARTIFACT] harness_contract_review 完成后执行 `UPDATE tasks SET result` 写入 verdict+review_branch
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('review_branch'))process.exit(1);console.log('OK')"`
+
+- [x] [BEHAVIOR] harness_generate 创建 ci_watch 时 pr_url 为 null 输出 warning
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('pr_url is null/undefined (generate may not have written pr_url yet)'))process.exit(1);console.log('OK')"`
+
+- [x] [BEHAVIOR] harness_fix 创建 ci_watch 时 pr_url 为 null 输出 warning
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('harness_fix') || !c.includes('pr_url is null/undefined'))process.exit(1);console.log('OK')"`
+
+- [x] [ARTIFACT] execution.js 语法检查通过
+  - Test: `manual:node --check packages/brain/src/routes/execution.js`

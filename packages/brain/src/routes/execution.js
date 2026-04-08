@@ -1677,6 +1677,13 @@ ${resultStr.substring(0, 2000)}
             });
             console.log(`[execution-callback] harness: ${harnessType} ${task_id} → ${reviewType} created`);
           }
+          // 写入 verdict 到 tasks.result
+          if (proposeVerdict) {
+            await pool.query(
+              'UPDATE tasks SET result = $1 WHERE id = $2',
+              [JSON.stringify({ verdict: proposeVerdict, propose_round: proposeRound }), task_id]
+            );
+          }
         }
 
         // Layer 2b: contract_review 完成 → APPROVED/REVISION 路由
@@ -1733,6 +1740,11 @@ ${resultStr.substring(0, 2000)}
             });
             console.log(`[execution-callback] harness: ${harnessType} REVISION → ${proposeType} R${nextRound}`);
           }
+          // 写入 verdict 到 tasks.result
+          await pool.query(
+            'UPDATE tasks SET result = $1 WHERE id = $2',
+            [JSON.stringify({ verdict: reviewVerdict, review_branch: harnessPayload.planner_branch || null }), task_id]
+          );
         }
 
         // Layer 3a: harness_generate 完成 → 创建 harness_ci_watch（等 CI 通过再 evaluate）
@@ -1746,6 +1758,9 @@ ${resultStr.substring(0, 2000)}
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
             if (prMatch) prUrl = prMatch[0];
+          }
+          if (!prUrl) {
+            console.warn(`[execution-callback] harness: harness_generate ${task_id} → harness_ci_watch: pr_url is null/undefined (generate may not have written pr_url yet), creating anyway`);
           }
           await createHarnessTask({
             title: `[CI Watch] ${harnessPayload.sprint_dir ? harnessPayload.sprint_dir.split('/').pop() : 'harness'}`,
@@ -1841,7 +1856,13 @@ ${resultStr.substring(0, 2000)}
               }
             }
             const verdict = resultObj.verdict || 'FAIL';
+            const evalRoundForResult = harnessPayload.eval_round || 1;
             console.log(`[execution-callback] harness: harness_evaluate verdict=${verdict}`);
+            // 写入 verdict 到 tasks.result
+            await pool.query(
+              'UPDATE tasks SET result = $1 WHERE id = $2',
+              [JSON.stringify({ verdict, eval_round: evalRoundForResult }), task_id]
+            );
 
             if (verdict === 'PASS') {
               // PASS → auto-merge PR + harness_deploy_watch
@@ -2007,6 +2028,9 @@ ${resultStr.substring(0, 2000)}
             if (prMatch) prUrl = prMatch[0];
           }
           const evalRound = harnessPayload.eval_round || 1;
+          if (!prUrl) {
+            console.warn(`[execution-callback] harness: harness_fix ${task_id} → harness_ci_watch: pr_url is null/undefined, creating anyway`);
+          }
           await createHarnessTask({
             title: `[CI Watch] Fix-R${evalRound}`,
             description: `Generator 修复完成，等待 CI 通过后 Evaluator 重新验证。\n原始 harness_fix task_id: ${task_id}`,
