@@ -392,6 +392,48 @@ async function saveWeeklyReportToWorkingMemory(dbPool, weekKey, reportText) {
   );
 }
 
+// ─── 周报写入 system_reports ──────────────────────────────────────────────────
+
+/**
+ * 将周报写入 system_reports 表，使其在 Dashboard /reports 页面可见。
+ *
+ * @param {import('pg').Pool} dbPool
+ * @param {string} weekKey - YYYY-WNN
+ * @param {string} startStr - 上周一 YYYY-MM-DD
+ * @param {string} endStr - 上周日 YYYY-MM-DD
+ * @param {string} reportText - 周报纯文本（飞书格式）
+ * @param {object} rawData - 原始数据（供 Dashboard 结构化展示）
+ * @returns {Promise<string>} 写入的 report id
+ */
+async function saveWeeklyReportToSystemReports(dbPool, weekKey, startStr, endStr, reportText, rawData) {
+  const content = {
+    title: `内容周报 ${weekKey}`,
+    summary: `统计范围：${startStr} ~ ${endStr}，内容产出 ${rawData.contentOutput.count} 条`,
+    week_key: weekKey,
+    start_date: startStr,
+    end_date: endStr,
+    report_text: reportText,
+    content_output: rawData.contentOutput,
+    publish_stats: rawData.publishStats,
+    engagement_data: rawData.engagementData,
+    failure_count: rawData.failureCount,
+    top_topics: (rawData.topicHeatData || []).slice(0, 5),
+    roi_data: rawData.roiData || [],
+    generated_at: new Date().toISOString(),
+  };
+  const metadata = {
+    triggered_by: rawData.force ? 'api_manual' : 'tick_auto',
+    week_key: weekKey,
+  };
+  const { rows } = await dbPool.query(
+    `INSERT INTO system_reports (type, content, metadata)
+     VALUES ('weekly_report', $1::jsonb, $2::jsonb)
+     RETURNING id`,
+    [JSON.stringify(content), JSON.stringify(metadata)]
+  );
+  return rows[0].id;
+}
+
 // ─── 主入口 ──────────────────────────────────────────────────────────────────
 
 /**
@@ -399,11 +441,14 @@ async function saveWeeklyReportToWorkingMemory(dbPool, weekKey, reportText) {
  *
  * @param {import('pg').Pool} [dbPool] - PostgreSQL 连接池（默认使用 db.js 的 pool）
  * @param {Date} [now] - 当前时间（测试时可注入）
- * @returns {Promise<{generated: boolean, week: string, skipped_window: boolean, skipped_dup: boolean}>}
+ * @param {{force?: boolean}} [opts] - force=true 跳过时间窗口检查和幂等检查（手动触发用）
+ * @returns {Promise<{generated: boolean, week: string, skipped_window: boolean, skipped_dup: boolean, report_id?: string}>}
  */
-export async function generateWeeklyReport(dbPool = pool, now = new Date()) {
-  // 1. 判断是否在触发窗口内（每周一 UTC 01:00 ± 5 分钟）
-  if (!isInWeeklyReportTriggerWindow(now)) {
+export async function generateWeeklyReport(dbPool = pool, now = new Date(), opts = {}) {
+  const force = opts.force === true;
+
+  // 1. 判断是否在触发窗口内（每周一 UTC 01:00 ± 5 分钟）；force 模式跳过
+  if (!force && !isInWeeklyReportTriggerWindow(now)) {
     const weekKey = getISOWeekKey(now);
     return { generated: false, week: weekKey, skipped_window: true, skipped_dup: false };
   }
@@ -411,12 +456,12 @@ export async function generateWeeklyReport(dbPool = pool, now = new Date()) {
   const weekKey = getISOWeekKey(now);
   const { start, end, startStr, endStr } = getLastWeekRange(now);
 
-  // 2. 幂等：本周是否已生成（同一周内重复触发只执行一次）
-  if (await hasThisWeekReport(dbPool, weekKey)) {
+  // 2. 幂等：本周是否已生成（同一周内重复触发只执行一次）；force 模式跳过
+  if (!force && await hasThisWeekReport(dbPool, weekKey)) {
     return { generated: false, week: weekKey, skipped_window: false, skipped_dup: true };
   }
 
-  console.log(`[weekly-report-generator] 开始生成 ${weekKey} 周报，统计范围：${startStr} ~ ${endStr}`);
+  console.log(`[weekly-report-generator] 开始生成 ${weekKey} 周报，统计范围：${startStr} ~ ${endStr}${force ? ' (force)' : ''}`);
 
   try {
     // 3. 并发查询四类数据 + 话题热度评分 + 内容ROI
@@ -446,16 +491,26 @@ export async function generateWeeklyReport(dbPool = pool, now = new Date()) {
     // 6. 写入 working_memory
     await saveWeeklyReportToWorkingMemory(dbPool, weekKey, reportText);
 
-    // 7. 标记本周已完成（幂等锁，在推送前写入，避免推送失败导致重复生成）
-    await markThisWeekDone(dbPool, weekKey);
+    // 7. 写入 system_reports（Dashboard 可见）
+    const reportId = await saveWeeklyReportToSystemReports(dbPool, weekKey, startStr, endStr, reportText, {
+      contentOutput, publishStats, engagementData, failureCount, topicHeatData, roiData, force,
+    }).catch(err => {
+      console.error(`[weekly-report-generator] 写入 system_reports 失败（不阻塞）: ${err.message}`);
+      return null;
+    });
 
-    // 8. 飞书推送（推送失败不影响幂等锁）
+    // 8. 标记本周已完成（幂等锁，在推送前写入，避免推送失败导致重复生成）
+    if (!force) {
+      await markThisWeekDone(dbPool, weekKey);
+    }
+
+    // 9. 飞书推送（推送失败不影响幂等锁）
     await sendFeishu(reportText).catch(err => {
       console.error(`[weekly-report-generator] 飞书推送失败（周报已存储）: ${err.message}`);
     });
 
-    console.log(`[weekly-report-generator] 周报生成并推送完成 (${weekKey})`);
-    return { generated: true, week: weekKey, skipped_window: false, skipped_dup: false };
+    console.log(`[weekly-report-generator] 周报生成并推送完成 (${weekKey})${reportId ? `, system_reports id=${reportId}` : ''}`);
+    return { generated: true, week: weekKey, skipped_window: false, skipped_dup: false, report_id: reportId };
   } catch (err) {
     console.error(`[weekly-report-generator] 周报生成失败: ${err.message}`);
     throw err;
