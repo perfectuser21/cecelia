@@ -8,5 +8,5 @@ ALTER TABLE account_usage_cache
 
 -- schema version
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('225', 'account_usage_cache: add is_auth_failed / auth_fail_resets_at', NOW())
+VALUES ('228', 'account_usage_cache: add is_auth_failed / auth_fail_resets_at', NOW())
 ON CONFLICT (version) DO NOTHING;
