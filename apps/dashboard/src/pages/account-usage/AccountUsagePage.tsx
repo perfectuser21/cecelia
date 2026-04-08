@@ -82,6 +82,7 @@ export default function AccountUsagePage() {
   const [codexUsage, setCodexUsage] = useState<Record<string, CodexAccountUsage> | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const fetchUsage = useCallback(async () => {
     try {
@@ -97,8 +98,11 @@ export default function AccountUsagePage() {
         const data = await codexRes.json();
         if (data.ok) setCodexUsage(data.usage);
       }
+      setFetchError(null);
       setLastRefresh(new Date());
-    } catch { /* 静默 */ }
+    } catch (e: unknown) {
+      setFetchError(e instanceof Error ? e.message : '数据加载失败，请刷新重试');
+    }
   }, []);
 
   useEffect(() => {
@@ -128,6 +132,23 @@ export default function AccountUsagePage() {
       padding: '24px',
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
     }}>
+      {/* 加载错误提示 */}
+      {fetchError && (
+        <div style={{
+          background: '#2d1515', border: '1px solid #da3633', borderRadius: 8,
+          color: '#f85149', padding: '10px 16px', marginBottom: 16, fontSize: 13,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <span>⚠ {fetchError}</span>
+          <button
+            onClick={fetchUsage}
+            style={{ background: 'none', border: '1px solid #da363344', borderRadius: 4, color: '#f85149', cursor: 'pointer', fontSize: 12, padding: '3px 8px' }}
+          >
+            重试
+          </button>
+        </div>
+      )}
+
       {/* 页头 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
