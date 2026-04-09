@@ -37,6 +37,11 @@ export const DEV_FAILURE_CLASS = {
 
 // transient：暂时性，可重试
 const TRANSIENT_PATTERNS = [
+  // Watchdog / liveness_dead — OOM 或进程被系统抢占，属环境问题非代码 bug
+  /liveness_dead/i,
+  /\[watchdog\]/i,
+  /watchdog.*reason|reason.*liveness/i,
+  /process\s+not\s+found.*probe/i,
   // CI flaky
   /ci.*flaky|flaky.*test/i,
   /test.*timeout|timeout.*test/i,
