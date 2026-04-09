@@ -1,39 +1,28 @@
-# Task Card: Harness GAN v2
+# Task Card: Stop Hook 会话隔离修复
 
-**Task ID**: e7c86b2d-3fdc-42f6-8488-a9b526ca14cb  
-**Branch**: cp-04092151-harness-gan-v2  
+**Task ID**: 81cce048-e2bd-401a-9027-dbf42ead2074  
+**Branch**: cp-04092219-fix-stop-hook-session  
 **Priority**: P1
 
 ## 目标
 
-升级 Harness Pipeline，解决三个核心问题：
-1. GAN 角色使用 Opus 4.6（更强推理能力），Generator 用 Sonnet 4.6（写代码足够）
-2. 大任务支持多 Workstream 并行拆分，不再强制一个 PR
-3. Contract 直接定义 DoD 条目，Generator 复制使用，消除自评漏洞
+修复 Stop Hook 会话隔离 Bug：`.dev-lock` 文件因缺少 `tty`/`session_id` 字段，导致 `_session_matches()` 无法识别当前会话，Stop Hook 错误返回 `exit 0` 允许 Claude 退出。
+
+## 根因
+
+`worktree-manage.sh` 在创建 worktree 后没有写入 `.dev-lock.BRANCH` 文件。Step 0 指令靠 Claude agent 手动创建，但可能创建空文件（`touch`），导致：
+- `lock_tty` 为空 → tty 匹配失败  
+- `lock_session` 为空 → session_id 匹配失败  
+- `lock_branch` = `cp-XXXXX` 但 `cur_branch` = `main`（agent 在主仓库运行）→ 分支匹配失败  
+- → `_session_matches()` 返回 false → 找不到 DEV_LOCK_FILE → `exit 0`
 
 ## 改动范围
 
-### F1: model-profile.js — 模型分配
-- harness_planner / harness_contract_propose / harness_contract_review → claude-opus-4-6
-- harness_generate / harness_report → claude-sonnet-4-6
-
-### F2: harness-contract-proposer/SKILL.md — Contract 格式升级
-- 输出 Workstreams 区块，每个 workstream 含标题、范围、大小(S/M/L)、DoD条目
-
-### F3: harness-contract-reviewer/SKILL.md — 审查新增 Workstream 验证
-- Reviewer 必须验证 workstream 边界清晰、DoD 可机械执行、大小估计合理
-
-### F4: execution.js — APPROVED 后并行拆分
-- 解析 contract 中 workstream 数量 N
-- 并行创建 N 个 harness_generate，每个携带 workstream_index
-
-### F5: harness-generator/SKILL.md — 按 Workstream 实现
-- 读取 workstream_index，只实现对应 workstream 范围
-- 直接使用 contract 中该 workstream 的 DoD 条目
+### F1: worktree-manage.sh — 自动创建 .dev-lock（v1.4.0）
+- `cmd_create()` 在 `git worktree add` 成功后立即写入 `.dev-lock.BRANCH` 到主仓库根目录
+- 内容包含：`branch`、`session_id`（含 `$CLAUDE_SESSION_ID`）、`tty`（`$(tty)`）、`worktree_path`、`created`
 
 ## 成功标准
 
-- GAN 任务使用 claude-opus-4-6
-- Generator 任务使用 claude-sonnet-4-6  
-- 大任务触发多个并行 harness_generate
-- Generator DoD 来自 contract，非自行起草
+- `worktree-manage.sh create` 执行后，主仓库中出现 `.dev-lock.BRANCH` 文件且含有 tty 字段
+- Stop Hook 能正确识别该会话，不再误返回 `exit 0`

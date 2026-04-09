@@ -3,9 +3,16 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-06"
+updated: "2026-04-09"
 
 changelog:
+  - version: "14.5.0"
+    date: "2026-04-09"
+    skill: "dev"
+    change: "fix"
+    description: "worktree-manage.sh v1.4.0: cmd_create() 在 git worktree add 后自动写入 .dev-lock.BRANCH（含 tty/session_id），修复 Stop Hook 会话隔离失败"
+    files:
+      - "skills/dev/scripts/worktree-manage.sh"
   - version: "14.3.7"
     date: "2026-04-06"
     skill: "lib"
