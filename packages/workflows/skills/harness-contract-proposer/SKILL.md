@@ -1,13 +1,14 @@
 ---
 id: harness-contract-proposer-skill
 description: |
-  Harness Contract Proposer — Harness v4.1 GAN Layer 2a：
-  Generator 角色，读取 PRD，提出合同草案（功能范围 + 行为描述 + 硬阈值 + 验证命令）。
-  GAN 对抗核心是 Evaluator 挑战验证命令是否足够严格。
-version: 4.1.0
+  Harness Contract Proposer — Harness v4.2 GAN Layer 2a：
+  Generator 角色，读取 PRD，提出合同草案（功能范围 + Workstreams 拆分 + DoD条目 + 验证命令）。
+  合同必须包含 ## Workstreams 区块，定义 N 个独立 workstream，每个含 DoD 条目供 Generator 直接复制。
+version: 4.2.0
 created: 2026-04-08
-updated: 2026-04-08
+updated: 2026-04-09
 changelog:
+  - 4.2.0: 合同新增 ## Workstreams 区块 — 定义拆分数量+DoD条目(- [ ] [BEHAVIOR/ARTIFACT])，供 Generator 直接复制使用
   - 4.1.0: 修正 v4.0 错误 — 合同格式恢复验证命令代码块（广谱：curl/npm/psql/playwright），GAN 对抗核心是命令严格性
   - 4.0.0: 错误版本 — 合同只有行为描述+硬阈值，移除了验证命令（破坏 GAN 对抗）
   - 3.0.0: Harness v4.0 Contract Proposer（GAN Layer 2a，独立 skill）
@@ -123,6 +124,45 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/tasks/
 
 **禁止在硬阈值中引用内部实现**（如函数名、代码路径）。
 
+### Step 2b: 定义 Workstreams 区块（每个合同必须有）
+
+在合同末尾追加 `## Workstreams` 区块，定义 N 个独立可并行的工作流：
+
+````markdown
+## Workstreams
+
+workstream_count: {N}
+
+### Workstream 1: {标题}
+
+**范围**: {清晰的实现边界，与其他 workstream 无交集}
+**大小**: S（<100行）/ M（100-300行）/ L（>300行）
+**依赖**: 无 / Workstream X 完成后
+
+**DoD**:
+- [ ] [ARTIFACT] {文件/配置 存在且格式正确}
+  Test: node -e "require('fs').accessSync('{路径}'); console.log('OK')"
+- [ ] [BEHAVIOR] {可观测行为描述}
+  Test: {可直接执行的命令，返回有意义的 PASS/FAIL}
+
+### Workstream 2: {标题}
+
+**范围**: {清晰的实现边界}
+**大小**: M
+**依赖**: 无
+
+**DoD**:
+- [ ] [BEHAVIOR] {行为描述}
+  Test: {命令}
+````
+
+**Workstream 拆分规则**：
+- S 任务（总改动 <100行）：1 个 workstream
+- M 任务（100-500行）：1-2 个 workstream
+- L 任务（>500行，或跨多个子系统）：2-4 个 workstream
+- 每个 workstream 必须**独立可测试**，不能依赖另一个未完成的 workstream
+- DoD 条目格式严格：`- [ ] [BEHAVIOR]` 或 `- [ ] [ARTIFACT]`，Test 字段必填
+
 ### Step 3: 建分支 + push + 回写 Brain
 
 **重要**：在独立 cp-* 分支上 push，不能推 main：
@@ -139,5 +179,5 @@ git push origin "${PROPOSE_BRANCH}"
 
 **最后一条消息**（字面量 JSON，不要用代码块包裹）：
 ```
-{"verdict": "PROPOSED", "contract_draft_path": "${SPRINT_DIR}/contract-draft.md", "propose_branch": "cp-harness-propose-r1-xxxxxxxx"}
+{"verdict": "PROPOSED", "contract_draft_path": "${SPRINT_DIR}/contract-draft.md", "propose_branch": "cp-harness-propose-r1-xxxxxxxx", "workstream_count": N}
 ```

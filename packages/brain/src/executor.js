@@ -2075,7 +2075,13 @@ async function preparePrompt(task) {
   if (taskType === 'harness_generate' || taskType === 'harness_fix') {
     const sprintDir = task.payload?.sprint_dir || 'sprints';
     const contractBranch = task.payload?.contract_branch || null;
+    const workstreamIndex = task.payload?.workstream_index || null;
+    const workstreamCount = task.payload?.workstream_count || 1;
     let basePrompt = _prepareSprintPrompt(task, taskType);
+    // 注入 workstream 信息供 Generator skill 读取
+    if (workstreamIndex) {
+      basePrompt += `\nworkstream_index: ${workstreamIndex}\nworkstream_count: ${workstreamCount}`;
+    }
     if (contractBranch) {
       const contractContent = await _fetchSprintFile(contractBranch, `${sprintDir}/sprint-contract.md`);
       if (contractContent) {

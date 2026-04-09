@@ -1,12 +1,31 @@
-# DoD: Test KR for decomp — 验证交付
+# DoD: Harness GAN v2
 
-**分支**: cp-04080726-ba5dd980-c113-4571-a1b2-147e6a
+## F1: model-profile.js 模型分配
 
-- [x] [ARTIFACT] `docs/learnings/cp-04080726-test-kr-decomp-verification.md` 文件存在（验证报告）
-  - Test: `manual:node -e "require('fs').accessSync('docs/learnings/cp-04080726-test-kr-decomp-verification.md')"`
+- [x] [ARTIFACT] model-profile.js FALLBACK_PROFILE 包含 harness GAN→Opus, Generator→Sonnet 配置
+  Test: node -e "import('./packages/brain/src/model-profile.js').then(m=>{const mp=m.FALLBACK_PROFILE.config.executor.model_map;if(mp.harness_contract_propose?.anthropic!=='claude-opus-4-6')process.exit(1);if(mp.harness_generate?.anthropic!=='claude-sonnet-4-6')process.exit(1);console.log('OK')})"
 
-- [x] [ARTIFACT] `decomposition-checker.js` Check A 不再查询 `ready` 状态 KR
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/decomposition-checker.js','utf8');if(c.includes(\"status IN ('pending', 'ready')\"))process.exit(1)"`
+## F2: Proposer skill — Workstreams 格式
 
-- [x] [BEHAVIOR] checkPendingKRs 不为 `ready` 状态的 KR 创建拆解任务
-  - Test: `tests/decomposition-checker-ready-kr.test.js`
+- [x] [ARTIFACT] harness-contract-proposer/SKILL.md 包含 Workstreams 区块格式 + workstream_count 输出
+  Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-proposer/SKILL.md','utf8');if(!c.includes('Workstreams'))process.exit(1);if(!c.includes('workstream_count'))process.exit(1);console.log('OK')"
+
+## F3: Reviewer skill — Workstream 审查
+
+- [x] [ARTIFACT] harness-contract-reviewer/SKILL.md 包含 Workstream 审查条件 + workstream_count 输出
+  Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');if(!c.includes('Workstream'))process.exit(1);if(!c.includes('workstream_count'))process.exit(1);console.log('OK')"
+
+## F4: execution.js — 多 workstream 拆分
+
+- [x] [BEHAVIOR] execution.js APPROVED 后读 workstream_count 并创建 N 个 harness_generate
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('workstream_index'))process.exit(1);if(!c.includes('workstream_count'))process.exit(1);if(!c.includes('safeWsCount'))process.exit(1);console.log('OK')"
+
+## F5: Generator skill — Workstream 定向实现
+
+- [x] [ARTIFACT] harness-generator/SKILL.md 包含 workstream_index 读取和合同 DoD 复制指令
+  Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-generator/SKILL.md','utf8');if(!c.includes('workstream_index'))process.exit(1);if(!c.includes('DoD 条目'))process.exit(1);console.log('OK')"
+
+## F6: executor.js — workstream 参数注入 prompt
+
+- [x] [BEHAVIOR] executor.js 在构建 harness_generate prompt 时注入 workstream_index 和 workstream_count
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('workstream_index'))process.exit(1);if(!c.includes('workstream_count'))process.exit(1);console.log('OK')"

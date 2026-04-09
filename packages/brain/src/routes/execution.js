@@ -1845,23 +1845,48 @@ ${resultStr.substring(0, 2000)}
 
           if (reviewVerdict === 'APPROVED') {
             const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
-            await createHarnessTask({
-              title: `[Generator] G1 — ${plannerShort}`,
-              description: `合同已批准，Generator 按 sprint-contract.md 写代码 + 创建 PR。\ncontract_review task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: generateType,
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                planner_task_id: harnessPayload.planner_task_id,
-                planner_branch: harnessPayload.planner_branch,
-                contract_branch: contractBranch,  // Generator 读最终合同所需
-                harness_mode: true
+            // 从 Reviewer result 提取 workstream_count（默认 1）
+            const workstreamCount = (() => {
+              const extractWs = (obj) => {
+                if (!obj) return null;
+                if (obj.workstream_count) return parseInt(obj.workstream_count, 10);
+                if (typeof obj.result === 'string') {
+                  try { const p = JSON.parse(obj.result); if (p.workstream_count) return parseInt(p.workstream_count, 10); } catch {}
+                  const m = obj.result.match(/"workstream_count"\s*:\s*(\d+)/);
+                  if (m) return parseInt(m[1], 10);
+                }
+                return null;
+              };
+              if (result != null && typeof result === 'object') { const v = extractWs(result); if (v) return v; }
+              if (typeof result === 'string') {
+                try { const p = JSON.parse(result); if (p.workstream_count) return parseInt(p.workstream_count, 10); } catch {}
+                const m = result.match(/"workstream_count"\s*:\s*(\d+)/);
+                if (m) return parseInt(m[1], 10);
               }
-            });
-            console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} created`);
+              return 1;
+            })();
+            const safeWsCount = Math.max(1, Math.min(workstreamCount, 6)); // 上限 6 防爆炸
+            for (let wsIdx = 1; wsIdx <= safeWsCount; wsIdx++) {
+              await createHarnessTask({
+                title: `[Generator] G${wsIdx}/${safeWsCount} — ${plannerShort}`,
+                description: `合同已批准，Generator 按 Workstream ${wsIdx}/${safeWsCount} 写代码 + 创建 PR。\ncontract_review task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: generateType,
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  planner_branch: harnessPayload.planner_branch,
+                  contract_branch: contractBranch,
+                  workstream_index: wsIdx,
+                  workstream_count: safeWsCount,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} W${wsIdx}/${safeWsCount} created`);
+            }
           } else {
             // REVISION：继续 GAN 对抗，必须传递 planner_branch 和 review_branch
             const nextRound = (harnessPayload.propose_round || 1) + 1;

@@ -4,10 +4,11 @@ description: |
   Harness Generator — Harness v4.0 严格合同执行者。
   读取 GAN 对抗已批准的 sprint-contract.md，严格按合同实现，不越界。
   合同外的任何东西一个字不加。完成后创建 PR（供 CI + Evaluator 验证）。
-version: 4.0.1
+version: 4.1.0
 created: 2026-04-08
 updated: 2026-04-09
 changelog:
+  - 4.1.0: 按 workstream_index 定向实现；DoD 直接从合同复制（禁止自起草）
   - 4.0.1: 禁止 find /Users 广泛搜索，只能在当前目录(.)内搜索
   - 4.0.0: Harness v4.0 Generator（严格合同执行者，输出 pr_url 供 harness_ci_watch 使用）
 ---
@@ -51,29 +52,65 @@ grep -r "tick_stats" packages/brain/src/
 
 ## Mode 1: harness_generate（首次实现）
 
-### Step 1: 读取已批准合同
+### Step 1: 读取合同 + 确定 Workstream
 
 ```bash
 CONTRACT_FILE="${SPRINT_DIR}/sprint-contract.md"
 cat "$CONTRACT_FILE"
 ```
 
-只读 `sprint-contract.md`，不读 `contract-draft.md`。
+**只读 `sprint-contract.md`，不读 `contract-draft.md`。**
+
+如果 payload 包含 `workstream_index`（由 Brain 注入），只实现对应 workstream：
+
+```
+WORKSTREAM_INDEX={workstream_index}  # 1-based，Brain 从 execution.js 注入
+WORKSTREAM_COUNT={workstream_count}
+```
+
+**读取当前 workstream 的范围和 DoD**：
+- 在合同的 `## Workstreams` 区块找到 `### Workstream {WORKSTREAM_INDEX}`
+- 读取该 workstream 的"范围"、"大小"和"DoD"条目
+- DoD 条目格式为 `- [ ] [BEHAVIOR/ARTIFACT] ...`
+- **将这些 DoD 条目原样复制到 DoD.md，不得修改、删减或新增**
+
+如果没有 workstream_index（单 workstream 任务），实现整个合同。
 
 ### Step 2: 创建 cp-* 分支
 
 ```bash
-BRANCH="cp-$(date +%m%d%H%M)-harness-$(basename $SPRINT_DIR)"
+WS_SUFFIX=${WORKSTREAM_INDEX:+"-ws${WORKSTREAM_INDEX}"}
+BRANCH="cp-$(date +%m%d%H%M)-harness-$(basename $SPRINT_DIR)${WS_SUFFIX}"
 git checkout -b "$BRANCH"
 ```
 
-### Step 3: 逐 Feature 实现
+### Step 3: 写 DoD.md（先于写代码）
 
-- 读行为描述和硬阈值，写最小实现代码
+**从合同中当前 workstream 的 DoD 区块原样复制 DoD 条目到 DoD.md**：
+
+```bash
+# DoD.md 内容来自合同，不自己起草
+cat > DoD.md << 'DODEOF'
+# DoD: Workstream {WORKSTREAM_INDEX}/{WORKSTREAM_COUNT} — {标题}
+
+## {Workstream 标题}
+
+- [ ] [ARTIFACT] {从合同复制的 DoD 条目 1}
+  Test: {从合同复制的 Test 命令 1}
+- [ ] [BEHAVIOR] {从合同复制的 DoD 条目 2}
+  Test: {从合同复制的 Test 命令 2}
+DODEOF
+```
+
+### Step 4: 逐 DoD 条目实现
+
+- 按 DoD.md 中每个条目实现对应功能
+- **只实现当前 workstream 范围内的内容**，其他 workstream 的内容不碰
 - **不加合同未提及的任何东西**（安全阀、额外测试、顺手修复全不加）
+- 每实现一个 DoD 条目，执行 Test 命令验证通过后将 `- [ ]` 改为 `- [x]`
 - 发现合同外问题 → 只写进 PR description，不实现
 
-### Step 4: 写 Learning 文件（push 前必须完成）
+### Step 5: 写 Learning 文件（push 前必须完成）
 
 ```bash
 cat > docs/learnings/cp-$(date +%m%d%H%M)-harness-generator.md << 'EOF'
@@ -88,7 +125,7 @@ cat > docs/learnings/cp-$(date +%m%d%H%M)-harness-generator.md << 'EOF'
 EOF
 ```
 
-### Step 5: Push + PR
+### Step 6: Push + PR
 
 ```bash
 git add <改动文件>
@@ -98,7 +135,7 @@ PR_URL=$(gh pr create --title "feat(harness): <目标>" --body "..." | tail -1)
 echo "PR created: $PR_URL"
 ```
 
-### Step 6: 输出 verdict（⚠️ 关键 — Brain 通过此提取 pr_url）
+### Step 7: 输出 verdict（⚠️ 关键 — Brain 通过此提取 pr_url）
 
 > **CRITICAL**: 最后一条消息必须是**纯 JSON**，禁止任何其他文字（不加 markdown、不加说明）。
 > Brain 的 execution.js 依赖此 JSON 提取 pr_url 并创建 harness_ci_watch。

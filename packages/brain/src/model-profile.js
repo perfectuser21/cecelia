@@ -68,6 +68,13 @@ export const FALLBACK_PROFILE = {
         architecture_design:{ anthropic: 'claude-sonnet-4-6', minimax: null,
                               cascade: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'] },
         code_review:        { anthropic: 'claude-sonnet-4-6', minimax: null },
+        // harness pipeline：GAN 三件套用 Opus（推理/规格），Generator/Report 用 Sonnet（执行/写代码）
+        harness_planner:          { anthropic: 'claude-opus-4-6', minimax: null },
+        harness_contract_propose: { anthropic: 'claude-opus-4-6', minimax: null },
+        harness_contract_review:  { anthropic: 'claude-opus-4-6', minimax: null },
+        harness_generate:         { anthropic: 'claude-sonnet-4-6', minimax: null },
+        harness_fix:              { anthropic: 'claude-sonnet-4-6', minimax: null },
+        harness_report:           { anthropic: 'claude-sonnet-4-6', minimax: null },
       },
       fixed_provider: {
         codex_qa:        'openai',
