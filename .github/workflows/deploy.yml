@@ -204,6 +204,15 @@ jobs:
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
         run: |
+          # 先查询 staging 状态：若已被跳过（无 Docker），跳过 smoke test
+          STAGING_STATUS=$(curl -s --connect-timeout 5 --max-time 10 \
+            "${BRAIN_URL}/api/brain/deploy/staging/status" 2>/dev/null | \
+            jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+          if echo "$STAGING_STATUS" | grep -q "^skipped_"; then
+            echo "⚠️  Staging 已跳过 (${STAGING_STATUS})，跳过 smoke test"
+            exit 0
+          fi
+
           echo "验证 staging Brain 健康（端口 5222）..."
           sleep 5
 

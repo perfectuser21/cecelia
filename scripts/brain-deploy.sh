@@ -222,7 +222,8 @@ if [[ "$DEPLOY_MODE" == "launchd" ]]; then
         echo "  [dry-run] launchctl kickstart -k gui/$(id -u)/${LAUNCHD_SERVICE}"
     else
         # 先 kill 游离 Brain 进程（launchd 外启动的进程 kickstart -k 无法 kill）
-        STALE_PID=$(lsof -ti:5221 2>/dev/null | head -1)
+        # 使用完整路径 /usr/sbin/lsof 避免 launchd 最小 PATH 中找不到 lsof（code=127）
+        STALE_PID=$(PATH="/usr/sbin:$PATH" lsof -ti:5221 2>/dev/null | head -1 || echo "")
         LAUNCHD_PID=$(launchctl list "${LAUNCHD_SERVICE}" 2>/dev/null | grep -E '^\s*[0-9]+' | awk '{print $1}' | head -1)
         if [[ -n "$STALE_PID" && "$STALE_PID" != "$LAUNCHD_PID" ]]; then
             echo "  发现游离 Brain 进程 PID=$STALE_PID（launchd 记录=$LAUNCHD_PID），先终止..."
