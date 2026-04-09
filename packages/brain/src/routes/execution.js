@@ -1740,6 +1740,12 @@ ${resultStr.substring(0, 2000)}
               proposeVerdict = 'PROPOSED';
             }
           }
+          // Fallback：agent 完成但未输出 PROPOSED 关键字 → 假设已提交草案，让 Reviewer 验证
+          // 原因：AI Done = agent 正常完成，contract_review 会校验合同质量，不应在此卡死链路
+          if (!proposeVerdict) {
+            console.warn(`[execution-callback] harness: ${harnessType} ${task_id} verdict=null，fallback→PROPOSED（Reviewer 将验证合同质量）`);
+            proposeVerdict = 'PROPOSED';
+          }
           if (proposeVerdict !== 'PROPOSED') {
             console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
