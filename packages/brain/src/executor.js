@@ -2082,7 +2082,7 @@ async function preparePrompt(task) {
     const proposeRound = task.payload?.propose_round || 1;
     const plannerBranch = task.payload?.planner_branch || 'main';
     const skillName = taskType === 'harness_contract_propose' ? '/harness-contract-proposer' : '/sprint-contract-proposer';
-    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\n\n${task.description || task.title}`;
+    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nplanner_branch: ${plannerBranch}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\nreview_branch: ${task.payload?.review_branch || ''}\n\n${task.description || task.title}`;
     const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
     if (sprintPrdContent) {
       basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;
@@ -2094,13 +2094,15 @@ async function preparePrompt(task) {
   if (taskType === 'sprint_contract_review' || taskType === 'harness_contract_review') {
     const sprintDir = task.payload?.sprint_dir || 'sprints';
     const plannerBranch = task.payload?.planner_branch || 'main';
+    // contract-draft.md 由 Proposer 写入其自身分支，应从 propose_branch 读取
+    const proposeBranch = task.payload?.propose_branch || plannerBranch;
     const skillName = taskType === 'harness_contract_review' ? '/harness-contract-reviewer' : '/sprint-contract-reviewer';
-    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\n\n${task.description || task.title}`;
+    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\nplanner_branch: ${plannerBranch}\npropose_branch: ${proposeBranch}\n\n${task.description || task.title}`;
     const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
     if (sprintPrdContent) {
       basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;
     }
-    const contractDraftContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/contract-draft.md`);
+    const contractDraftContent = await _fetchSprintFile(proposeBranch, `${sprintDir}/contract-draft.md`);
     if (contractDraftContent) {
       basePrompt += `\n\n## ${sprintDir}/contract-draft.md\n${contractDraftContent}`;
     }

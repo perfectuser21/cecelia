@@ -1728,6 +1728,14 @@ ${resultStr.substring(0, 2000)}
         // GAN 守卫：只有 Proposer 产出草案（verdict=PROPOSED）才派 Reviewer
         if (harnessType === 'harness_contract_propose' || harnessType === 'sprint_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
+          // 提取 Proposer 运行的分支（用于 Reviewer 读取 contract-draft.md）
+          let proposeBranch = null;
+          if (result !== null && typeof result === 'object') {
+            proposeBranch = result.branch || result?.result?.branch || null;
+          } else if (typeof result === 'string') {
+            const branchMatch = result.match(/"branch"\s*:\s*"([^"]+)"/);
+            if (branchMatch) proposeBranch = branchMatch[1];
+          }
           // 先尝试结构化提取，失败后 fallback 到纯文本正则（cecelia-run 可能传纯文本字符串）
           let proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
           if (!proposeVerdict) {
@@ -1763,6 +1771,7 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: harnessPayload.planner_task_id,
                 planner_branch: harnessPayload.planner_branch,
                 propose_task_id: task_id,
+                propose_branch: proposeBranch,
                 propose_round: proposeRound,
                 harness_mode: true
               }
@@ -1773,13 +1782,21 @@ ${resultStr.substring(0, 2000)}
           if (proposeVerdict) {
             await pool.query(
               'UPDATE tasks SET result = $1 WHERE id = $2',
-              [JSON.stringify({ verdict: proposeVerdict, propose_round: proposeRound }), task_id]
+              [JSON.stringify({ verdict: proposeVerdict, propose_round: proposeRound, propose_branch: proposeBranch }), task_id]
             );
           }
         }
 
         // Layer 2b: contract_review 完成 → APPROVED/REVISION 路由
         if (harnessType === 'harness_contract_review' || harnessType === 'sprint_contract_review') {
+          // 提取 Reviewer 自身运行分支（存入 result 并传给下一轮 Proposer）
+          let reviewBranch = null;
+          if (result !== null && typeof result === 'object') {
+            reviewBranch = result.branch || result?.result?.branch || null;
+          } else if (typeof result === 'string') {
+            const branchMatch = result.match(/"branch"\s*:\s*"([^"]+)"/);
+            if (branchMatch) reviewBranch = branchMatch[1];
+          }
           let reviewVerdict = 'REVISION';
           if (result !== null && typeof result === 'object' && result.verdict) {
             reviewVerdict = result.verdict.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REVISION';
@@ -1829,6 +1846,8 @@ ${resultStr.substring(0, 2000)}
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
                 planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch,
+                review_branch: reviewBranch,
                 propose_round: nextRound,
                 review_feedback_task_id: task_id,
                 harness_mode: true
@@ -1839,7 +1858,7 @@ ${resultStr.substring(0, 2000)}
           // 写入 verdict 到 tasks.result
           await pool.query(
             'UPDATE tasks SET result = $1 WHERE id = $2',
-            [JSON.stringify({ verdict: reviewVerdict, review_branch: harnessPayload.planner_branch || null }), task_id]
+            [JSON.stringify({ verdict: reviewVerdict, review_branch: reviewBranch }), task_id]
           );
         }
 
