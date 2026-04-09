@@ -1,0 +1,10 @@
+dev
+branch: cp-04082346-3db491d4-965d-454e-9914-c0bfe9
+task_card: .task-cp-04082346-3db491d4-965d-454e-9914-c0bfe9.md
+task_id: 3db491d4-965d-454e-9914-c0bfe94eb628
+started: 2026-04-09T14:47:00+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: pending
+step_4_ship: pending
