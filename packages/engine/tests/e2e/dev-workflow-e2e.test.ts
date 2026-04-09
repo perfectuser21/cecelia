@@ -512,3 +512,140 @@ describe('devloop_check edge cases', () => {
     expect(status).toBe(2);
   });
 });
+
+// ============================================================================
+// Harness 模式（harness_mode=true）完整路径
+// ============================================================================
+
+describe('devloop_check harness mode', () => {
+  const BRANCH = 'cp-04090001-harness-e2e';
+
+  // 创建 mock gh 脚本的辅助函数
+  function makeMockGh(dir: string, output: string): void {
+    const mockGh = join(dir, 'gh');
+    writeFileSync(mockGh, `#!/bin/bash\necho "${output}"\n`);
+    execSync(`chmod +x "${mockGh}"`);
+  }
+
+  it('Harness 模式：step_2_code=done + mock PR 存在 → exit 0', () => {
+    const tmpBin = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-ghbin-'));
+    tmpDirs.push(tmpBin);
+    makeMockGh(tmpBin, '9999');
+
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'harness_mode: true',
+        'sprint_dir: sprints',
+        'step_1_spec: done',
+        'step_2_code: done',
+      ],
+      BRANCH
+    );
+
+    const script = `source "${DEVLOOP_CHECK}"; export PATH="${tmpBin}:$PATH"; devloop_check "${BRANCH}" "${dir}/.dev-mode.${BRANCH}"`;
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', cwd: dir, timeout: 10000 });
+    expect(result.status).toBe(0);
+    const combined = (result.stdout || '') + (result.stderr || '');
+    expect(combined).toContain('done');
+  });
+
+  it('Harness 模式：step_2_code=pending → exit 2（Stage 2 未完成）', () => {
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'harness_mode: true',
+        'sprint_dir: sprints',
+        'step_1_spec: done',
+        'step_2_code: pending',
+      ],
+      BRANCH
+    );
+
+    const { status, output } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    expect(status).toBe(2);
+    expect(output).toContain('Harness');
+  });
+
+  it('Harness 模式：cleanup_done 残留 + step_2_code=pending → exit 2（不走通用 cleanup_done 早退）', () => {
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'harness_mode: true',
+        'sprint_dir: sprints',
+        'step_1_spec: pending',
+        'step_2_code: pending',
+        'cleanup_done: true',
+      ],
+      BRANCH
+    );
+
+    const { status, output } = runDevloopCheck(BRANCH, `${dir}/.dev-mode.${BRANCH}`, dir);
+    // Harness 模式下 cleanup_done 不触发通用早退，被 0.5 通道处理 → stage 2 未完成 → exit 2
+    expect(status).toBe(2);
+    expect(output).toContain('blocked');
+  });
+
+  it('Harness 模式：step_2_code=done + mock gh 返回空（无 PR）→ exit 2', () => {
+    const tmpBin = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-ghbin2-'));
+    tmpDirs.push(tmpBin);
+    makeMockGh(tmpBin, '');
+
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${BRANCH}`,
+        'harness_mode: true',
+        'sprint_dir: sprints',
+        'step_1_spec: done',
+        'step_2_code: done',
+      ],
+      BRANCH
+    );
+
+    const script = `source "${DEVLOOP_CHECK}"; export PATH="${tmpBin}:$PATH"; devloop_check "${BRANCH}" "${dir}/.dev-mode.${BRANCH}"`;
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', cwd: dir, timeout: 10000 });
+    expect(result.status).toBe(2);
+    const combined = (result.stdout || '') + (result.stderr || '');
+    expect(combined).toContain('PR');
+  });
+
+  it('标准模式：cleanup_done=true（无 harness_mode）→ exit 0（正常早退不受 Harness 修复影响）', () => {
+    const STANDARD_BRANCH = 'cp-04090001-standard-cleanup';
+    const dir = makeTmpRepo(
+      [
+        'dev',
+        `branch: ${STANDARD_BRANCH}`,
+        'harness_mode: false',
+        'step_1_spec: done',
+        'step_2_code: done',
+        'cleanup_done: true',
+      ],
+      STANDARD_BRANCH
+    );
+
+    const { status, output } = runDevloopCheck(STANDARD_BRANCH, `${dir}/.dev-mode.${STANDARD_BRANCH}`, dir);
+    expect(status).toBe(0);
+    expect(output).toContain('done');
+  });
+
+  it('stop-dev.sh 在无 .dev-lock 匹配当前 worktree 时 exit 0', () => {
+    const dir = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-stophook-'));
+    tmpDirs.push(dir);
+    execSync('git init -q', { cwd: dir });
+    execSync('git config user.email "test@example.com"', { cwd: dir });
+    execSync('git config user.name "Test"', { cwd: dir });
+
+    // 无任何 .dev-lock 文件
+    const result = spawnSync('bash', [STOP_DEV], {
+      encoding: 'utf8',
+      cwd: dir,
+      env: { ...process.env, HOME: dir },
+      timeout: 10000,
+    });
+    expect(result.status).toBe(0);
+  });
+});
