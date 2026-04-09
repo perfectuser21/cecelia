@@ -2805,6 +2805,9 @@ async function triggerCeceliaRun(task) {
     }
     const permissionMode = getPermissionModeForTaskType(taskType);
     const extraEnv = getExtraEnvForTaskType(taskType);
+    // 无头模式下 tty 不可用，注入 CLAUDE_SESSION_ID 供 Stop Hook _session_matches() 会话隔离
+    // worktree-manage.sh 写 .dev-lock 时读取此变量作为 session_id 字段
+    extraEnv.CLAUDE_SESSION_ID = task.id;
     const model = getModelForTask(task);
 
     // Update task with run info before execution
