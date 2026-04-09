@@ -7,10 +7,11 @@ version: 4.0.0
 created: 2026-04-08
 updated: 2026-04-08
 changelog:
-  - 4.0.0: 改名 harness-planner（原 sprint-planner）
+  - 4.0.0: Harness v4.0 Planner（独立 skill，不依赖其他 skill）
 ---
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
+> **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
 # /harness-planner — Harness v4.0 Planner
 
