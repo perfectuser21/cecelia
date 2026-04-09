@@ -2998,23 +2998,27 @@ async function executeTick() {
     .catch(e => console.warn("[tick] memory-sync 失败:", e.message));
 
   // 11. 欲望系统（六层主动意识）
-  publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
-  try {
-    desireResult = await runDesireSystem(pool);
-  } catch (desireErr) {
-    console.error('[tick] desire system error:', desireErr.message);
+  if (!BRAIN_QUIET_MODE) {
+    publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
+    try {
+      desireResult = await runDesireSystem(pool);
+    } catch (desireErr) {
+      console.error('[tick] desire system error:', desireErr.message);
+    }
   }
 
   // 11.5 代码质量扫描（每天首次 tick 时触发）
   let scanResult = null;
-  try {
-    scanResult = await triggerCodeQualityScan(pool);
-    if (scanResult?.triggered) {
-      tickLog('[tick] Code quality scan triggered:', scanResult);
+  if (!BRAIN_QUIET_MODE) {
+    try {
+      scanResult = await triggerCodeQualityScan(pool);
+      if (scanResult?.triggered) {
+        tickLog('[tick] Code quality scan triggered:', scanResult);
+      }
+    } catch (scanErr) {
+      console.error('[tick] code quality scan error:', scanErr.message);
     }
-  } catch (scanErr) {
-    console.error('[tick] code quality scan error:', scanErr.message);
   }
 
   // 12. 广播 tick:executed WebSocket 事件

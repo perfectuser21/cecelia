@@ -1577,9 +1577,7 @@ ${resultStr.substring(0, 2000)}
       // Layer 1: harness_planner → harness_contract_propose
       // Layer 2a: harness_contract_propose → harness_contract_review
       // Layer 2b: harness_contract_review APPROVED → harness_generate / REVISION → 继续对抗
-      // Layer 3a: harness_generate / harness_fix → harness_ci_watch（Brain tick 轮询 CI）
-      // Layer 3b: CI 通过 → auto-merge + harness_report（CI 即 Evaluator，三层架构）
-      // Layer 3c: CI 失败 → harness_fix（Generator 修代码重走 CI）
+      // Layer 3: harness_generate → harness_report（直接，跳过 ci_watch/evaluate/fix 链路）
 
       // 辅助：从任意格式 result（对象/字符串/嵌套）中提取 verdict 字段
       function extractVerdictFromResult(res, validVerdicts) {
@@ -1893,7 +1891,7 @@ ${resultStr.substring(0, 2000)}
           );
         }
 
-        // Layer 3a: harness_generate 完成 → 创建 harness_ci_watch（等 CI 通过再 evaluate）
+        // Layer 3: harness_generate 完成 → 直接创建 harness_report（三层架构，跳过 ci_watch/evaluate）
         // v3.x 兼容: sprint_generate 仍直接创建 sprint_evaluate（旧行为保留）
         if (harnessType === 'harness_generate') {
           // 从 Generator 的 result 中提取 pr_url
@@ -1964,13 +1962,14 @@ ${resultStr.substring(0, 2000)}
             console.log(`[execution-callback] harness: harness_generate ${task_id} pr_url 缺失 → harness_fix 已创建`);
             return; // 不继续创建 ci_watch
           }
+          // 三层架构：CI 即 Evaluator，harness_generate 完成后直接创建 harness_report，跳过 ci_watch/evaluate/fix 链路
           await createHarnessTask({
-            title: `[CI Watch] ${plannerShort}`,
-            description: `等待 CI 通过后创建 Evaluator。\n原始 harness_generate task_id: ${task_id}`,
+            title: `[Report] ${plannerShort}`,
+            description: `Generator 完成，PR 已创建。生成 Harness 报告。\n原始 harness_generate task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
             goal_id: harnessTask.goal_id,
-            task_type: 'harness_ci_watch',
+            task_type: 'harness_report',
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
@@ -1979,11 +1978,10 @@ ${resultStr.substring(0, 2000)}
               planner_task_id: harnessPayload.planner_task_id,
               planner_branch: harnessPayload.planner_branch,
               eval_round: 1,
-              poll_count: 0,
               harness_mode: true
             }
           });
-          console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_ci_watch created (pr_url=${prUrl})`);
+          console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_report created (pr_url=${prUrl})`);
         }
 
         // v3.x 兼容: sprint_generate → sprint_evaluate（旧流程，不加 CI watch）

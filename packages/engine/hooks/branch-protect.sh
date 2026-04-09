@@ -99,11 +99,25 @@ if ! cd "$FILE_DIR" 2>/dev/null; then
     exit 2
 fi
 
+# worktree 子目录中 --show-toplevel 需要 GIT_WORK_TREE，先尝试普通方式，失败则从 .git 文件解析
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -z "$PROJECT_ROOT" ]]; then
+    # 向上查找包含 .git 的目录（worktree 根目录有 .git 文件）
+    _SEARCH_DIR="$(pwd)"
+    while [[ "$_SEARCH_DIR" != "/" ]]; do
+        if [[ -f "$_SEARCH_DIR/.git" ]] || [[ -d "$_SEARCH_DIR/.git" ]]; then
+            PROJECT_ROOT="$_SEARCH_DIR"
+            break
+        fi
+        _SEARCH_DIR="$(dirname "$_SEARCH_DIR")"
+    done
+fi
 if [[ -z "$PROJECT_ROOT" ]]; then
     echo "[ERROR] 不在 git 仓库中" >&2
     exit 2
 fi
+# 设置 GIT_WORK_TREE 以确保后续 git 命令在 worktree 中正常工作
+export GIT_WORK_TREE="$PROJECT_ROOT"
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 if [[ -z "${CURRENT_BRANCH}" ]]; then

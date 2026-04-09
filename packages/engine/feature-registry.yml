@@ -6,6 +6,13 @@ version: "1.0.0"
 updated: "2026-04-06"
 
 changelog:
+  - version: "14.5.0"
+    date: "2026-04-09"
+    skill: "hooks"
+    change: "fix"
+    description: "[CONFIG] branch-protect.sh: 修复 worktree 子目录中 git rev-parse --show-toplevel 失败问题，向上遍历查找 .git 并设置 GIT_WORK_TREE"
+    files:
+      - "hooks/branch-protect.sh"
   - version: "14.3.7"
     date: "2026-04-06"
     skill: "lib"
