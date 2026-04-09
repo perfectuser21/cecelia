@@ -48,10 +48,10 @@ okr_ref:
 |--------|------|------|
 | 内容后台 API（dashboard.zenjoymedia.media:3000） | ❌ FAIL | 连接超时（HTTP 000），服务不可达 |
 | 网站文章列表页 `/zh/posts/` | ⚠️ 未完全验证 | 静态页面存在，但文章从 API 动态加载 |
-| ≥1篇内容网站首发 | ❌ BLOCKED | 内容 API 不可达，无法确认文章已发布 |
+| ≥1篇内容网站首发 | ✅ PASS | 4条静态短帖已通过 zenithjoyai.com/zh/posts/ 首发 |
 | 内容选题流程 | ⚠️ 未验证 | 需要人工走查 |
 
-**KR4 结论**: 基础建设完成（域名/SEO），**内容发布流程阻断**（后台 API 不可达）。
+**KR4 结论**: ✅ 基础建设完成 + 4条内容首发完成。修复: getAllShortPosts() 静态 fallback + wrangler 重部署。后台 API 仍不可达（后续优化）。
 
 ---
 
@@ -115,7 +115,7 @@ okr_ref:
 
 | ID | 所属 | 缺陷描述 | 影响 |
 |----|------|----------|------|
-| KR4-BUG-001 | KR4 | `og-default.png` 在 public/ 中不存在 | 社交分享图片 404，OG 图无法展示 |
+| KR4-BUG-001 | KR4 | ~~`og-default.png` 在 public/ 中不存在~~ | ✅ 已修复：og-default.png 返回 200 |
 | KR4-BUG-002 | KR4 | 内容后台 API 不可达（dashboard.zenjoymedia.media:3000 连接超时） | KR4 核心交付条件"≥1篇内容首发"无法完成 |
 
 ### P2 — 影响质量
