@@ -16,7 +16,6 @@
 import { callLLM } from './llm-caller.js';
 import { getHighPerformingTopics } from './topic-heat-scorer.js';
 import { queryWeeklyROI } from './content-analytics.js';
-import { getContentGapSignal } from './topic-gap-analyzer.js';
 
 // ─── LLM Fallback Helper ─────────────────────────────────────────────────────
 // 当主 LLM（cortex profile，当前指向 Codex）失败时，自动 fallback 到
@@ -120,16 +119,55 @@ export async function get7DayROIContext(pool) {
 }
 
 /**
+ * 分析内容库缺口：统计各 content_type 近 30 日的发布量，
+ * 识别发布不足的类型作为选题补充方向。
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string>} 可直接注入 Prompt 的上下文段落
+ */
+export async function getContentGapContext(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         payload->>'content_type' AS content_type,
+         COUNT(*) AS cnt
+       FROM tasks
+       WHERE task_type IN ('content-pipeline','content_pipeline','content_generation')
+         AND created_at >= NOW() - INTERVAL '30 days'
+         AND payload->>'content_type' IS NOT NULL
+       GROUP BY 1
+       ORDER BY 2 ASC`
+    );
+    if (!rows || rows.length === 0) return '';
+
+    // 找出发布量最少的类型（相对缺口）
+    const minCnt = Number(rows[0].cnt);
+    const maxCnt = Number(rows[rows.length - 1].cnt);
+    if (maxCnt === 0) return '';
+
+    const gaps = rows
+      .filter(r => Number(r.cnt) <= minCnt * 1.5)
+      .map(r => `- ${r.content_type}（近30日仅 ${r.cnt} 条）`);
+
+    if (gaps.length === 0) return '';
+
+    return `\n【内容库缺口方向】（以下类型近期产出偏少，优先补充）\n${gaps.join('\n')}\n`;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 构建选题生成 Prompt
  * @param {string[]} recentKeywords - 近 7 日已使用的关键词列表（用于去重）
  * @param {Array<{topic_keyword: string, heat_score: number}>} highPerformingTopics - 历史高热话题（正向参考）
  * @param {string} [hotspotContext] - 垂类热点上下文（由 buildHotspotContext 生成）
  * @param {string} [roiContext] - 近7日ROI数据上下文（由 get7DayROIContext 生成）
  * @param {string[]} [seedKeywords] - 精选主题库种子词（由调度器注入，引导选题方向）
- * @param {string} [gapSignal] - 内容库缺口信号（由 topic-gap-analyzer 生成）
+ * @param {string} [contentGapContext] - 内容库缺口信号（由 getContentGapContext 生成）
  * @returns {string}
  */
-function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '', roiContext = '', seedKeywords = [], gapSignal = '') {
+function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '', roiContext = '', seedKeywords = [], contentGapContext = '') {
   const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const recentList = recentKeywords.length > 0
     ? recentKeywords.map(k => `- ${k}`).join('\n')
@@ -155,7 +193,7 @@ function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspo
 
 【近 7 日已用选题】（请避免重复或相似的主题）
 ${recentList}
-${highHeatSection}${seedSection}${gapSignal}${roiContext}${hotspotContext}
+${highHeatSection}${seedSection}${contentGapContext}${roiContext}${hotspotContext}
 【任务要求】
 请生成 ${TARGET_TOPIC_COUNT} 个内容选题，每个选题必须：
 1. 与"一人公司/AI能力放大/小组织效能"主题强相关
@@ -188,14 +226,14 @@ ${highHeatSection}${seedSection}${gapSignal}${roiContext}${hotspotContext}
  * @returns {Promise<Array<{keyword, content_type, title_candidates, hook, why_hot, priority_score}>>}
  */
 export async function generateTopics(pool, seedKeywords = []) {
-  const [recentKeywords, highPerformingTopics, hotspotContext, roiContext, gapSignal] = await Promise.all([
+  const [recentKeywords, highPerformingTopics, hotspotContext, roiContext, contentGapContext] = await Promise.all([
     getRecentKeywords(pool),
     getHighPerformingTopics(pool).catch(() => []),
     buildHotspotContext(),
     get7DayROIContext(pool).catch(() => ''),
-    getContentGapSignal(pool).catch(() => ''),
+    getContentGapContext(pool).catch(() => ''),
   ]);
-  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext, seedKeywords, gapSignal);
+  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext, seedKeywords, contentGapContext);
 
   const { text } = await _callLLMWithFallback('cortex', prompt, {
     maxTokens: 2048,
