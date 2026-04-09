@@ -114,6 +114,56 @@ router.post('/suggestions/:id/reject', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/topics/stats
+ * 选题决策统计：返回近 N 日的建议数、审核数、通过率。
+ * 支持 ?days=7（默认 7 天）
+ */
+router.get('/stats', async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 7, 90);
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*)                                           AS total,
+         COUNT(*) FILTER (WHERE status = 'approved')       AS approved,
+         COUNT(*) FILTER (WHERE status = 'rejected')       AS rejected,
+         COUNT(*) FILTER (WHERE status = 'auto_promoted')  AS auto_promoted,
+         COUNT(*) FILTER (WHERE status = 'pending')        AS pending,
+         COUNT(*) FILTER (WHERE status IN ('approved','rejected','auto_promoted')) AS reviewed
+       FROM topic_suggestions
+       WHERE selected_date >= CURRENT_DATE - ($1 - 1) * INTERVAL '1 day'`,
+      [days]
+    );
+    const row = rows[0];
+    const total = Number(row.total);
+    const approved = Number(row.approved);
+    const rejected = Number(row.rejected);
+    const auto_promoted = Number(row.auto_promoted);
+    const reviewed = Number(row.reviewed);
+    // 通过率 = 人工 approved / (approved + rejected)，不计 auto_promoted
+    const human_reviewed = approved + rejected;
+    const approval_rate = human_reviewed > 0
+      ? Math.round((approved / human_reviewed) * 100) / 100
+      : null;
+
+    res.json({
+      days,
+      total,
+      approved,
+      rejected,
+      auto_promoted,
+      pending: Number(row.pending),
+      reviewed,
+      approval_rate,
+      target_approval_rate: 0.7,
+      meets_target: approval_rate !== null ? approval_rate >= 0.7 : null,
+    });
+  } catch (err) {
+    console.error('[topics-route] GET /stats 失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/topics/generate
  * 手动触发选题生成（调试/测试用，不受每日触发窗口限制）
  * 生成选题后保存为 pending 推荐，返回保存数量
