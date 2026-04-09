@@ -2063,8 +2063,22 @@ async function preparePrompt(task) {
     return _prepareDecompositionPrompt(task);
   }
 
+  // Harness Generator v4.0：从 contract_branch 嵌入 sprint-contract.md 内容
+  if (taskType === 'harness_generate' || taskType === 'harness_fix') {
+    const sprintDir = task.payload?.sprint_dir || 'sprints';
+    const contractBranch = task.payload?.contract_branch || null;
+    let basePrompt = _prepareSprintPrompt(task, taskType);
+    if (contractBranch) {
+      const contractContent = await _fetchSprintFile(contractBranch, `${sprintDir}/sprint-contract.md`);
+      if (contractContent) {
+        basePrompt += `\n\n## ${sprintDir}/sprint-contract.md（来自 ${contractBranch}）\n${contractContent}`;
+      }
+    }
+    return basePrompt;
+  }
+
   // Harness Generator/Fix 模式（v3.x + v4.0 统一处理）
-  if (['sprint_generate', 'sprint_fix', 'harness_generate', 'harness_fix'].includes(taskType)
+  if (['sprint_generate', 'sprint_fix'].includes(taskType)
       || (taskType === 'dev' && task.payload?.harness_mode)) {
     return _prepareSprintPrompt(task, taskType);
   }
