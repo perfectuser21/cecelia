@@ -155,6 +155,7 @@ const TICK_ENABLED_KEY = 'tick_enabled';
 const TICK_LAST_KEY = 'tick_last';
 const TICK_ACTIONS_TODAY_KEY = 'tick_actions_today';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
+const TICK_STATS_KEY = 'tick_execution_stats';
 
 // Loop state (in-memory)
 let _loopTimer = null;
@@ -201,8 +202,8 @@ const TICK_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_WATCHDOG_INT
 async function getTickStatus() {
   const result = await pool.query(`
     SELECT key, value_json FROM working_memory
-    WHERE key IN ($1, $2, $3, $4, $5, $6)
-  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY, 'startup_errors', 'recovery_attempts']);
+    WHERE key IN ($1, $2, $3, $4, $5, $6, $7)
+  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY, 'startup_errors', 'recovery_attempts', TICK_STATS_KEY]);
 
   const memory = {};
   for (const row of result.rows) {
@@ -244,6 +245,13 @@ async function getTickStatus() {
     slotBudget = await calculateSlotBudget();
   } catch { /* ignore */ }
 
+  const rawTickStats = memory[TICK_STATS_KEY] || null;
+  const tickStats = {
+    total_executions: rawTickStats?.total_executions ?? 0,
+    last_executed_at: rawTickStats?.last_executed_at ?? null,
+    last_duration_ms: rawTickStats?.last_duration_ms ?? null,
+  };
+
   return {
     enabled,
     loop_running: _loopTimer !== null,
@@ -269,7 +277,8 @@ async function getTickStatus() {
     dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
     circuit_breakers: getAllStates(),
     alertness: getCurrentAlertness(),
-    quarantine: quarantineStats
+    quarantine: quarantineStats,
+    tick_stats: tickStats,
   };
 }
 
@@ -2801,6 +2810,34 @@ async function executeTick() {
   // Record tick execution time for alertness metrics
   const tickDuration = Date.now() - tickStartTime;
   recordTickTime(tickDuration);
+
+  // Update tick_stats (total_executions, last_executed_at in Shanghai UTC+8, last_duration_ms)
+  // Uses transaction + parameterized queries ($1, $2) to ensure data consistency and prevent injection
+  let statsClient;
+  try {
+    statsClient = await pool.connect();
+    await statsClient.query('BEGIN');
+    const statsRow = await statsClient.query(
+      'SELECT value_json FROM working_memory WHERE key = $1 FOR UPDATE',
+      [TICK_STATS_KEY]
+    );
+    const currentStats = statsRow.rows[0]?.value_json || { total_executions: 0 };
+    const newTotalExec = (currentStats.total_executions || 0) + 1;
+    // Format as "YYYY-MM-DD HH:mm:ss" using Intl API for accurate Asia/Shanghai timezone
+    const lastExecutedAt = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    // All values passed as parameterized query args ($1, $2) — no string interpolation into SQL
+    const newStats = { total_executions: newTotalExec, last_executed_at: lastExecutedAt, last_duration_ms: tickDuration };
+    await statsClient.query(
+      'INSERT INTO working_memory (key, value_json, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()',
+      [TICK_STATS_KEY, newStats]
+    );
+    await statsClient.query('COMMIT');
+  } catch (statsErr) {
+    if (statsClient) await statsClient.query('ROLLBACK').catch(() => {});
+    console.error('[tick] Failed to update tick_stats:', statsErr.message);
+  } finally {
+    if (statsClient) statsClient.release();
+  }
 
   // Record operation success (tick completed successfully)
   recordOperation(true, 'tick');
