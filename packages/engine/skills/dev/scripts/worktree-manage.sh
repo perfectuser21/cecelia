@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Worktree 管理脚本
+# v1.4.0: 自动创建 .dev-lock（含 tty/session_id），修复 Stop Hook 会话隔离
 # v1.3.0: WORKTREE_BASE 支持 — 默认路径改为 ~/worktrees/{project}，跨会话持久化
 # v1.2.0: 路径迁移到 .claude/worktrees/（对齐官方 Claude Code 约定）
 # v1.1.0: rm -rf 安全验证
@@ -231,6 +232,20 @@ cmd_create() {
         git config "branch.$branch_name.base-branch" "$base_branch"
 
         echo -e "${GREEN}✅ Worktree 创建成功${NC}" >&2
+
+        # v1.4.0: 自动写入 .dev-lock（含 tty/session_id），供 Stop Hook 会话隔离使用
+        # 放在主仓库根目录，Stop Hook 优先扫描主仓库
+        local dev_lock_file="$main_wt/.dev-lock.${branch_name}"
+        {
+            echo "dev"
+            echo "branch: ${branch_name}"
+            echo "session_id: ${CLAUDE_SESSION_ID:-headed-$$-${branch_name}}"
+            echo "tty: $(tty 2>/dev/null || echo "none")"
+            echo "worktree_path: ${worktree_path}"
+            echo "created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)"
+        } > "$dev_lock_file"
+        echo -e "${GREEN}✅ .dev-lock 已写入: .dev-lock.${branch_name}${NC}" >&2
+
         echo "" >&2
         echo "下一步:" >&2
         echo "  cd $worktree_path" >&2
