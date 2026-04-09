@@ -17,6 +17,7 @@ interface ModelInfo {
 interface OrganConfig {
   model: string;
   provider: string;
+  tier?: string;
 }
 
 interface ProfileConfig {

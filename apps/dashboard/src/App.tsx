@@ -78,7 +78,7 @@ function AppContent() {
   // ============ 配置驱动菜单 ============
   const baseNavGroups = useMemo(() => {
     if (coreConfig) {
-      return convertCoreNavGroups(coreConfig.navGroups);
+      return convertCoreNavGroups(coreConfig.navGroups as any);
     }
     return [];
   }, [coreConfig]);
