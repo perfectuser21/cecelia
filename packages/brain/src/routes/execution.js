@@ -1964,26 +1964,25 @@ ${resultStr.substring(0, 2000)}
             console.log(`[execution-callback] harness: harness_generate ${task_id} pr_url 缺失 → harness_fix 已创建`);
             return; // 不继续创建 ci_watch
           }
+          // CI 由 /dev 自身保证（Stage 3 等 CI + Stage 4 合并），generate 完成即直接报告
           await createHarnessTask({
-            title: `[CI Watch] ${plannerShort}`,
-            description: `等待 CI 通过后创建 Evaluator。\n原始 harness_generate task_id: ${task_id}`,
+            title: `[Report] ${plannerShort}`,
+            description: `/dev 完成（CI + 合并），生成 Harness 报告。\n原始 harness_generate task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
             goal_id: harnessTask.goal_id,
-            task_type: 'harness_ci_watch',
+            task_type: 'harness_report',
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
               pr_url: prUrl,
               dev_task_id: task_id,
               planner_task_id: harnessPayload.planner_task_id,
-              planner_branch: harnessPayload.planner_branch,
               eval_round: 1,
-              poll_count: 0,
               harness_mode: true
             }
           });
-          console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_ci_watch created (pr_url=${prUrl})`);
+          console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_report created (pr_url=${prUrl})`);
         }
 
         // v3.x 兼容: sprint_generate → sprint_evaluate（旧流程，不加 CI watch）
@@ -2100,7 +2099,7 @@ ${resultStr.substring(0, 2000)}
           }
         }
 
-        // Layer 3c: harness_fix 完成 → 创建 harness_ci_watch（等新 PR 的 CI）
+        // Layer 3c: harness_fix 完成 → 直接创建 harness_report（CI 由 /dev 自身保证）
         if (harnessType === 'harness_fix') {
           let prUrl = pr_url || null;
           if (!prUrl && result !== null && typeof result === 'object') {
@@ -2111,16 +2110,13 @@ ${resultStr.substring(0, 2000)}
             if (prMatch) prUrl = prMatch[0];
           }
           const evalRound = harnessPayload.eval_round || 1;
-          if (!prUrl) {
-            throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_fix result (task_id=${task_id})`);
-          }
           await createHarnessTask({
-            title: `[CI Watch] Fix-R${evalRound} — ${plannerShort}`,
-            description: `Generator 修复完成，等待 CI 通过后 Evaluator 重新验证。\n原始 harness_fix task_id: ${task_id}`,
+            title: `[Report] Fix-R${evalRound} — ${plannerShort}`,
+            description: `/dev 修复完成（CI + 合并），生成 Harness 报告。\n原始 harness_fix task_id: ${task_id}`,
             priority: 'P1',
             project_id: harnessTask.project_id,
             goal_id: harnessTask.goal_id,
-            task_type: 'harness_ci_watch',
+            task_type: 'harness_report',
             trigger_source: 'execution_callback_harness',
             payload: {
               sprint_dir: harnessPayload.sprint_dir,
@@ -2128,11 +2124,10 @@ ${resultStr.substring(0, 2000)}
               dev_task_id: harnessPayload.dev_task_id,
               planner_task_id: harnessPayload.planner_task_id,
               eval_round: evalRound,
-              poll_count: 0,
               harness_mode: true
             }
           });
-          console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_ci_watch created (eval_round=${evalRound}, pr_url=${prUrl})`);
+          console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_report created (eval_round=${evalRound}, pr_url=${prUrl})`);
         }
 
         // v3.x 兼容: sprint_fix → sprint_evaluate（旧流程）
