@@ -15,6 +15,12 @@ _GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || echo "$REPO_ROO
 MAIN_REPO_ROOT="$(dirname "$(cd "$REPO_ROOT" && cd "$_GIT_COMMON_DIR" && pwd)")"
 ROOT_NM="$MAIN_REPO_ROOT/node_modules"
 
+# worktree 中 ESM 模块解析向上找 node_modules 时找不到主仓库（不同目录树）
+# 创建符号链接使 vitest config 中的 import 'vitest' 能被 Node.js 解析
+if [[ "$REPO_ROOT" != "$MAIN_REPO_ROOT" ]] && [[ ! -e "$REPO_ROOT/node_modules" ]]; then
+  ln -sf "$ROOT_NM" "$REPO_ROOT/node_modules"
+fi
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
 
 START_TIME=$(date +%s)
