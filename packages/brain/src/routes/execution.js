@@ -1866,27 +1866,26 @@ ${resultStr.substring(0, 2000)}
               return 1;
             })();
             const safeWsCount = Math.max(1, Math.min(workstreamCount, 6)); // 上限 6 防爆炸
-            for (let wsIdx = 1; wsIdx <= safeWsCount; wsIdx++) {
-              await createHarnessTask({
-                title: `[Generator] G${wsIdx}/${safeWsCount} — ${plannerShort}`,
-                description: `合同已批准，Generator 按 Workstream ${wsIdx}/${safeWsCount} 写代码 + 创建 PR。\ncontract_review task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: generateType,
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  planner_branch: harnessPayload.planner_branch,
-                  contract_branch: contractBranch,
-                  workstream_index: wsIdx,
-                  workstream_count: safeWsCount,
-                  harness_mode: true
-                }
-              });
-              console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} W${wsIdx}/${safeWsCount} created`);
-            }
+            // 串行：APPROVED 只创建 WS1，后续由 harness_generate 完成回调链式触发
+            await createHarnessTask({
+              title: `[Generator] G1/${safeWsCount} — ${plannerShort}`,
+              description: `合同已批准，Generator 按 Workstream 1/${safeWsCount} 写代码 + 创建 PR（串行首个）。\ncontract_review task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: generateType,
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch,
+                contract_branch: contractBranch,
+                workstream_index: 1,
+                workstream_count: safeWsCount,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} W1/${safeWsCount} created（串行，后续由完成回调链式触发）`);
           } else {
             // REVISION：继续 GAN 对抗，必须传递 planner_branch 和 review_branch
             const nextRound = (harnessPayload.propose_round || 1) + 1;
@@ -2008,6 +2007,32 @@ ${resultStr.substring(0, 2000)}
             }
           });
           console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_report created (pr_url=${prUrl})`);
+
+          // 串行 Workstream 链式触发：当前 WS 完成 → 触发下一个 WS（若还有剩余）
+          const currentWsIdx = harnessPayload.workstream_index || 1;
+          const totalWsCount = harnessPayload.workstream_count || 1;
+          if (currentWsIdx < totalWsCount) {
+            const nextWsIdx = currentWsIdx + 1;
+            await createHarnessTask({
+              title: `[Generator] G${nextWsIdx}/${totalWsCount} — ${plannerShort}`,
+              description: `合同已批准，Generator 按 Workstream ${nextWsIdx}/${totalWsCount} 写代码 + 创建 PR（串行，WS${currentWsIdx} 已完成）。\ncontract_branch: ${harnessPayload.contract_branch}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_generate',
+              trigger_source: 'execution_callback_harness_serial',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch,
+                contract_branch: harnessPayload.contract_branch,
+                workstream_index: nextWsIdx,
+                workstream_count: totalWsCount,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: WS${currentWsIdx}/${totalWsCount} 完成 → 串行触发 WS${nextWsIdx}/${totalWsCount}`);
+          }
         }
 
         // v3.x 兼容: sprint_generate → sprint_evaluate（旧流程，不加 CI watch）
