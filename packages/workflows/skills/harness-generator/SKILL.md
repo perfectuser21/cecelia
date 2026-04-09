@@ -29,6 +29,23 @@ changelog:
 发现其他问题：写进 PR description，不实现
 ```
 
+## ⚠️ 文件搜索规则（CRITICAL — 违反会导致系统挂起数小时）
+
+**当前工作目录（pwd）即项目根目录，直接使用相对路径。**
+
+```bash
+# ❌ 严禁（会遍历 iCloud/网络挂载点，挂起数小时）
+find /Users -name "server.js"
+find /home -name "*.js"
+find / -name "*.ts"
+
+# ✅ 只在当前目录内搜索
+find . -name "server.js" -path "*/brain/src/*" 2>/dev/null | head -5
+ls packages/brain/src/
+cat packages/brain/src/server.js
+grep -r "tick_stats" packages/brain/src/
+```
+
 ---
 
 ## Mode 1: harness_generate（首次实现）
