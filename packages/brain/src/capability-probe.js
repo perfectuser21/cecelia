@@ -99,6 +99,12 @@ const PROBES = [
     description: 'Self-Drive 自驱引擎（24h 内是否成功创建任务）',
     fn: probeSelfDriveHealth,
   },
+  // === 外部产品健康探针 ===
+  {
+    name: 'geo_website',
+    description: 'geo SEO网站（zenithjoyai.com）可访问 + blog + posts 有内容',
+    fn: probeGeoWebsite,
+  },
 ];
 
 // ============================================================
@@ -341,6 +347,32 @@ async function probeSelfDriveHealth() {
     ok: successCnt > 0,
     detail: `24h: successful_cycles=${successCnt} errors=${errorCnt} tasks_created=${tasksCreated} last_success=${lastSuccess || 'never'}`,
   };
+}
+
+async function probeGeoWebsite() {
+  const BASE = 'https://zenithjoyai.com';
+  const checks = [
+    { url: `${BASE}/zh/`, expect: 'ZenithJoyAI', label: 'homepage' },
+    { url: `${BASE}/zh/blog/`, expect: '/zh/blog/', label: 'blog_list' },
+    { url: `${BASE}/zh/posts/`, expect: null, label: 'posts_page' },
+  ];
+
+  const details = [];
+  let allOk = true;
+
+  for (const check of checks) {
+    try {
+      const res = await fetch(check.url, { redirect: 'follow', signal: AbortSignal.timeout(10000) });
+      const ok = res.status === 200 && (!check.expect || (await res.text()).includes(check.expect));
+      details.push(`${check.label}=${ok ? 'ok' : `fail(${res.status})`}`);
+      if (!ok) allOk = false;
+    } catch (err) {
+      details.push(`${check.label}=error(${err.message.slice(0, 40)})`);
+      allOk = false;
+    }
+  }
+
+  return { ok: allOk, detail: details.join(' ') };
 }
 
 // ============================================================
