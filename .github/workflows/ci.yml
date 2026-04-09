@@ -396,9 +396,73 @@ jobs:
             src/__tests__/integration/agent-lifecycle.integration.test.js \
             --reporter=verbose
 
+  # ─── Harness DoD 完整性校验（harness PR 专用，非 harness 自动跳过）──
+  harness-dod-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Harness DoD 完整性校验
+        run: |
+          # 读取 DoD.md 中的 contract_branch header
+          if [ ! -f "DoD.md" ] || ! grep -q "^contract_branch:" DoD.md 2>/dev/null; then
+            echo "⏭️  非 harness PR（DoD.md 无 contract_branch 字段），跳过校验"
+            exit 0
+          fi
+
+          CONTRACT_BRANCH=$(grep "^contract_branch:" DoD.md | awk '{print $2}')
+          WS_INDEX=$(grep "^workstream_index:" DoD.md | awk '{print $2}' || echo "1")
+          WS_INDEX=${WS_INDEX:-1}
+          echo "contract_branch=$CONTRACT_BRANCH  workstream_index=$WS_INDEX"
+
+          # fetch contract branch
+          git fetch origin "$CONTRACT_BRANCH" 2>/dev/null || {
+            echo "⚠️  无法 fetch contract branch '$CONTRACT_BRANCH'，跳过校验（可能已合并）"
+            exit 0
+          }
+
+          # 读取 contract DoD 文件
+          CONTRACT_DOD=$(git show "origin/${CONTRACT_BRANCH}:contract-dod-ws${WS_INDEX}.md" 2>/dev/null) || {
+            echo "⚠️  contract-dod-ws${WS_INDEX}.md 不存在于 $CONTRACT_BRANCH，跳过校验"
+            exit 0
+          }
+
+          # 对比 DoD 条目（忽略 [ ] vs [x] 差异，只比较条目文本）
+          node -e "
+            const contractText = \`${CONTRACT_DOD}\`;
+            const genText = require('fs').readFileSync('DoD.md', 'utf8');
+
+            const normalize = (text) => {
+              const items = text.match(/^- \[[ x]\] \[(BEHAVIOR|ARTIFACT)\] .+/gm) || [];
+              return items.map(m => m.replace(/^- \[.\]/, '- []').trim());
+            };
+
+            const contractItems = normalize(contractText);
+            const generatorItems = normalize(genText);
+
+            const missing = contractItems.filter(c => !generatorItems.includes(c));
+            const extra = generatorItems.filter(g => !contractItems.includes(g));
+
+            let failed = false;
+            if (missing.length > 0) {
+              console.error('❌ Generator DoD 缺少 contract 中的条目:');
+              missing.forEach(m => console.error('  ' + m));
+              failed = true;
+            }
+            if (extra.length > 0) {
+              console.error('❌ Generator DoD 包含 contract 中没有的额外条目:');
+              extra.forEach(e => console.error('  ' + e));
+              failed = true;
+            }
+            if (failed) process.exit(1);
+            console.log('✅ Harness DoD 完整性校验通过（' + generatorItems.length + ' 个条目与 contract 一致）');
+          "
+
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
-    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build, workspace-test, e2e-smoke]
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -417,9 +481,10 @@ jobs:
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "brain-unit"        "${{ needs.brain-unit.result }}"
           check "brain-integration" "${{ needs.brain-integration.result }}"
-          check "workspace-build"   "${{ needs.workspace-build.result }}"
-          check "workspace-test"    "${{ needs.workspace-test.result }}"
-          check "e2e-smoke"         "${{ needs.e2e-smoke.result }}"
+          check "workspace-build"        "${{ needs.workspace-build.result }}"
+          check "workspace-test"         "${{ needs.workspace-test.result }}"
+          check "e2e-smoke"              "${{ needs.e2e-smoke.result }}"
+          check "harness-dod-integrity"  "${{ needs.harness-dod-integrity.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1
