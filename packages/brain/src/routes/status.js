@@ -4,6 +4,7 @@ import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from '
 import { getTickStatus, TASK_TYPE_AGENT_MAP } from '../tick.js';
 import { getDispatchStats } from '../dispatch-stats.js';
 import { getActivePolicy, getWorkingMemory, getTopTasks, getRecentDecisions, IDEMPOTENCY_TTL, ALLOWED_ACTIONS } from './shared.js';
+import { getNightlyOrchestratorStatus } from '../nightly-orchestrator.js';
 import websocketService from '../websocket.js';
 
 const router = Router();
@@ -222,6 +223,7 @@ router.get('/status/full', async (req, res) => {
         last_tick_at: tickStatus.last_tick || null,
         interval_minutes: tickStatus.interval_minutes || 5
       },
+      nightly_orchestrator: getNightlyOrchestratorStatus(),
       token_stats: {
         today_usd: 0
       }
