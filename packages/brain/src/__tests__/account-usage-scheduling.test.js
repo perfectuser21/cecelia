@@ -576,7 +576,9 @@ describe('H: Haiku 独立模式', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const { selectBestAccount } = await import('../account-usage.js');
+    const { markSpendingCap, selectBestAccount } = await import('../account-usage.js');
+    // 清除 H1 遗留的 account2 spending cap（模块级 Map 跨测试保持状态）
+    markSpendingCap('account2', new Date(Date.now() - 1000).toISOString());
     const result = await selectBestAccount({ model: 'haiku' });
     expect(result).toEqual({ accountId: 'account2', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
   });
@@ -600,7 +602,9 @@ describe('H: Haiku 独立模式', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const { selectBestAccountForHaiku } = await import('../account-usage.js');
+    const { markSpendingCap, selectBestAccountForHaiku } = await import('../account-usage.js');
+    // 清除 H1/H2 遗留的 account2 spending cap（模块级 Map 跨测试保持状态）
+    markSpendingCap('account2', new Date(Date.now() - 1000).toISOString());
     const result = await selectBestAccountForHaiku();
     // 兼容别名：返回 string（不是对象）
     expect(typeof result).toBe('string');

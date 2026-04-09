@@ -1394,7 +1394,6 @@ async function autoFailTimedOutTasks(inProgressTasks) {
         });
       }
 
-      await recordFailure('cecelia-run');
       await emit('patrol_cleanup', 'patrol', {
         task_id: task.id,
         title: task.title,
