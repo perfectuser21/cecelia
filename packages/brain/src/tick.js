@@ -2812,8 +2812,10 @@ async function executeTick() {
   recordTickTime(tickDuration);
 
   // Update tick_stats (total_executions, last_executed_at in Shanghai UTC+8, last_duration_ms)
-  const statsClient = await pool.connect();
+  // Uses transaction + parameterized queries ($1, $2) to ensure data consistency and prevent injection
+  let statsClient;
   try {
+    statsClient = await pool.connect();
     await statsClient.query('BEGIN');
     const statsRow = await statsClient.query(
       'SELECT value_json FROM working_memory WHERE key = $1 FOR UPDATE',
@@ -2823,6 +2825,7 @@ async function executeTick() {
     const newTotalExec = (currentStats.total_executions || 0) + 1;
     // Format as "YYYY-MM-DD HH:mm:ss" using Intl API for accurate Asia/Shanghai timezone
     const lastExecutedAt = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    // All values passed as parameterized query args ($1, $2) — no string interpolation into SQL
     const newStats = { total_executions: newTotalExec, last_executed_at: lastExecutedAt, last_duration_ms: tickDuration };
     await statsClient.query(
       'INSERT INTO working_memory (key, value_json, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()',
@@ -2830,10 +2833,10 @@ async function executeTick() {
     );
     await statsClient.query('COMMIT');
   } catch (statsErr) {
-    await statsClient.query('ROLLBACK').catch(() => {});
+    if (statsClient) await statsClient.query('ROLLBACK').catch(() => {});
     console.error('[tick] Failed to update tick_stats:', statsErr.message);
   } finally {
-    statsClient.release();
+    if (statsClient) statsClient.release();
   }
 
   // Record operation success (tick completed successfully)
