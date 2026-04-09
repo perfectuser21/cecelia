@@ -48,7 +48,7 @@ for PKG in packages/engine packages/brain apps/api apps/dashboard; do
     echo -e "${BOLD}▶ $PKG${RESET}"
     if [[ ! -x "$ROOT_NM/.bin/vitest" ]]; then
       echo -e "  ${YELLOW}⚠️  vitest 未安装，跳过${RESET}"
-    elif (cd "$PKG" && PATH="$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048' vitest run 2>&1); then
+    elif (cd "$PKG" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && PATH="$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048' vitest run 2>&1); then
       echo -e "  ${GREEN}✅ 通过${RESET}"
     else
       echo -e "  ${RED}❌ 失败 — 修复后重新 push${RESET}"
