@@ -114,6 +114,8 @@ router.get('/health', async (req, res) => {
 
     res.json({
       status: healthy ? 'healthy' : 'degraded',
+      uptime: Math.floor(process.uptime()),
+      tick_stats: tickStatus.tick_stats || { total_executions: 0, last_executed_at: null, last_duration_ms: null },
       organs: {
         scheduler: {
           status: tickStatus.loop_running ? 'running' : 'stopped',
