@@ -2812,24 +2812,28 @@ async function executeTick() {
   recordTickTime(tickDuration);
 
   // Update tick_stats (total_executions, last_executed_at in Shanghai UTC+8, last_duration_ms)
+  const statsClient = await pool.connect();
   try {
-    const statsRow = await pool.query(
-      'SELECT value_json FROM working_memory WHERE key = $1',
+    await statsClient.query('BEGIN');
+    const statsRow = await statsClient.query(
+      'SELECT value_json FROM working_memory WHERE key = $1 FOR UPDATE',
       [TICK_STATS_KEY]
     );
     const currentStats = statsRow.rows[0]?.value_json || { total_executions: 0 };
     const newTotalExec = (currentStats.total_executions || 0) + 1;
-    // Format as "YYYY-MM-DD HH:mm:ss" in Shanghai timezone (UTC+8)
-    const shanghaiMs = now.getTime() + 8 * 60 * 60 * 1000;
-    const shanghaiDate = new Date(shanghaiMs);
-    const lastExecutedAt = shanghaiDate.toISOString().replace('T', ' ').substring(0, 19);
-    await pool.query(`
-      INSERT INTO working_memory (key, value_json, updated_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-    `, [TICK_STATS_KEY, { total_executions: newTotalExec, last_executed_at: lastExecutedAt, last_duration_ms: tickDuration }]);
+    // Format as "YYYY-MM-DD HH:mm:ss" using Intl API for accurate Asia/Shanghai timezone
+    const lastExecutedAt = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    const newStats = { total_executions: newTotalExec, last_executed_at: lastExecutedAt, last_duration_ms: tickDuration };
+    await statsClient.query(
+      'INSERT INTO working_memory (key, value_json, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()',
+      [TICK_STATS_KEY, newStats]
+    );
+    await statsClient.query('COMMIT');
   } catch (statsErr) {
+    await statsClient.query('ROLLBACK').catch(() => {});
     console.error('[tick] Failed to update tick_stats:', statsErr.message);
+  } finally {
+    statsClient.release();
   }
 
   // Record operation success (tick completed successfully)
