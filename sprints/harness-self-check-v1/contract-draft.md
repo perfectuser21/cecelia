@@ -1,8 +1,9 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > Sprint: harness-self-check-v1  
 > PRD: Harness Pipeline 自检：三处系统性缺陷修复  
-> Proposer: d462e6b3
+> Proposer: 4a878c5f  
+> 修订说明: Round 1 REVISION — 修复两处假阳性检查（Feature 1 白名单检查不在特定区块内）
 
 ---
 
@@ -14,37 +15,33 @@ Reviewer 在审查合同时，若发现任何 Feature 的验证命令含有 `gre
 只允许 `node`/`npm`/`curl`/`bash`/`psql` 出现在 Test 字段。
 
 **硬阈值**:
-- `harness-contract-reviewer/SKILL.md` 的 REVISION 条件中，明确列出 "Test 命令含 grep/ls/cat/sed/echo → REVISION" 规则
-- `harness-contract-reviewer/SKILL.md` 的 APPROVED 条件中，明确要求 "Test 命令只使用 node/npm/curl/bash/psql"
-- 原有"全是 curl"弱检查保留，新增白名单检查作为独立条目
+- `harness-contract-reviewer/SKILL.md` 的 REVISION 条件区块中，明确列出 "Test 命令含 grep/ls/cat/sed/echo → REVISION" 规则
+- `harness-contract-reviewer/SKILL.md` 的 APPROVED 条件区块中，明确要求 "Test 命令只使用 node/npm/curl/bash/psql"
 
 **验证命令**:
 ```bash
-# Happy path: Reviewer SKILL.md 含有白名单关键词
+# Happy path: REVISION 条件区块包含 grep 白名单规则
 node -e "
   const c = require('fs').readFileSync(
     'packages/workflows/skills/harness-contract-reviewer/SKILL.md', 'utf8'
   );
-  if (!c.includes('grep') || !c.includes('REVISION')) {
-    throw new Error('FAIL: 未找到 grep 相关 REVISION 规则');
+  const revBlock = c.split('**REVISION 条件**')[1]?.split('###')[0] || '';
+  if (!revBlock.includes('grep')) {
+    throw new Error('FAIL: REVISION 条件区块未列出 grep 禁用规则');
   }
-  if (!c.includes('node') && !c.includes('npm') && !c.includes('psql')) {
-    throw new Error('FAIL: 未找到 CI 白名单允许工具');
-  }
-  console.log('PASS: Reviewer SKILL.md 含有 CI 白名单规则');
+  console.log('PASS: REVISION 区块含 grep 规则');
 "
 
-# 边界路径: APPROVED 条件必须包含白名单限制
+# 边界: APPROVED 条件区块明确列出白名单工具（不能是全文搜索）
 node -e "
   const c = require('fs').readFileSync(
     'packages/workflows/skills/harness-contract-reviewer/SKILL.md', 'utf8'
   );
-  const approvedSection = c.split('**APPROVED 条件**')[1];
-  if (!approvedSection) throw new Error('FAIL: 找不到 APPROVED 条件区块');
-  if (!approvedSection.includes('node') && !approvedSection.includes('psql')) {
-    throw new Error('FAIL: APPROVED 条件未列出白名单工具');
+  const approvedBlock = c.split('**APPROVED 条件**')[1]?.split('**REVISION 条件**')[0] || '';
+  if (!approvedBlock.includes('node') || !approvedBlock.includes('psql')) {
+    throw new Error('FAIL: APPROVED 条件区块未明确列出 node/psql 白名单');
   }
-  console.log('PASS: APPROVED 条件包含白名单约束');
+  console.log('PASS: APPROVED 区块含 node/psql 白名单');
 "
 ```
 
@@ -65,7 +62,7 @@ CI `harness-dod-integrity` job 也从 `${SPRINT_DIR}/contract-dod-ws${WS_INDEX}.
 
 **验证命令**:
 ```bash
-# Happy path: Proposer SKILL.md 已使用 sprint_dir 前缀
+# Proposer SKILL.md 已使用 sprint_dir 前缀
 node -e "
   const c = require('fs').readFileSync(
     'packages/workflows/skills/harness-contract-proposer/SKILL.md', 'utf8'
@@ -87,9 +84,9 @@ node -e "
   const lines = c.split('\n').filter(l => l.includes('contract-dod-ws'));
   const badLines = lines.filter(l => !l.includes('SPRINT_DIR') && !l.includes('sprint_dir'));
   if (badLines.length > 0) {
-    throw new Error('FAIL: Generator 有 ' + badLines.length + ' 行未使用 SPRINT_DIR 前缀: ' + badLines[0]);
+    throw new Error('FAIL: Generator 有 ' + badLines.length + ' 行未使用 SPRINT_DIR: ' + badLines[0]);
   }
-  console.log('PASS: Generator 所有 contract-dod 引用均含 SPRINT_DIR');
+  console.log('PASS: Generator 所有 contract-dod 引用含 SPRINT_DIR');
 "
 
 # CI yml 路径验证
@@ -100,7 +97,7 @@ node -e "
   if (badLines.length > 0) {
     throw new Error('FAIL: ci.yml 有 ' + badLines.length + ' 行未使用 SPRINT_DIR: ' + badLines[0]);
   }
-  console.log('PASS: ci.yml 所有 contract-dod 引用均含 SPRINT_DIR');
+  console.log('PASS: ci.yml 所有 contract-dod 引用含 SPRINT_DIR');
 "
 
 # 边界：git add 行也必须使用 sprint_dir
@@ -125,13 +122,13 @@ Planner 在写 PRD 之前，先读取与任务描述相关的现有文件（`ls`
 在 PRD 末尾附"预期受影响文件"小节（`## 预期受影响文件`），列出实际存在的文件路径。
 
 **硬阈值**:
-- `harness-planner/SKILL.md` 在 Step 1 之前或其中，包含读取/列出目录的步骤
+- `harness-planner/SKILL.md` 在 Step 1 之前或其中，包含读取/列出目录的 bash 步骤
 - Planner 输出的 PRD 模板中包含 `## 预期受影响文件` 小节
 - `harness-planner/SKILL.md` version bump 到 4.1.0
 
 **验证命令**:
 ```bash
-# Happy path: Planner SKILL.md 包含"预期受影响文件"模板
+# SKILL.md 包含"预期受影响文件"模板
 node -e "
   const c = require('fs').readFileSync(
     'packages/workflows/skills/harness-planner/SKILL.md', 'utf8'
@@ -142,16 +139,17 @@ node -e "
   console.log('PASS: Planner SKILL.md 含受影响文件小节');
 "
 
-# 边界: 必须有读文件的步骤（ls 或 cat 相关指令说明）
+# 有 bash 代码块含 ls 或 cat（读文件步骤）
 node -e "
   const c = require('fs').readFileSync(
     'packages/workflows/skills/harness-planner/SKILL.md', 'utf8'
   );
-  const hasReadStep = c.includes('ls') || c.includes('cat') || c.includes('读取');
+  const bashBlocks = c.match(/\`\`\`bash[\s\S]*?\`\`\`/g) || [];
+  const hasReadStep = bashBlocks.some(b => b.includes('ls ') || b.includes('cat '));
   if (!hasReadStep) {
-    throw new Error('FAIL: Planner 无读取文件步骤');
+    throw new Error('FAIL: 没有任何 bash 代码块含 ls 或 cat 读文件步骤');
   }
-  console.log('PASS: Planner 包含读取文件步骤');
+  console.log('PASS: Planner 有 bash 代码块含读文件步骤');
 "
 
 # 版本号验证
@@ -178,14 +176,14 @@ node -e "
 **大小**: S（两个 Markdown 文件，各增加 2-5 行）
 
 DoD:
-- [ ] [ARTIFACT] harness-contract-reviewer/SKILL.md REVISION 条件新增一条：Test 命令含 grep/ls/cat/sed/echo → 必须 REVISION
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');if(!c.includes('grep'))throw new Error('FAIL');console.log('PASS')"
-- [ ] [BEHAVIOR] Reviewer SKILL.md 的 APPROVED 条件明确列出允许工具白名单（node/npm/curl/bash/psql）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');const s=c.split('APPROVED 条件')[1]||'';if(!s.includes('node')||!s.includes('psql'))throw new Error('FAIL');console.log('PASS')"
+- [ ] [ARTIFACT] harness-contract-reviewer/SKILL.md REVISION 条件区块新增：Test 命令含 grep/ls/cat/sed/echo → 必须 REVISION
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');const revBlock=c.split('**REVISION 条件**')[1]?.split('###')[0]||'';if(!revBlock.includes('grep'))throw new Error('FAIL');console.log('PASS')"
+- [ ] [BEHAVIOR] Reviewer SKILL.md 的 APPROVED 条件区块明确列出白名单（node/npm/curl/bash/psql）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');const s=c.split('**APPROVED 条件**')[1]?.split('**REVISION 条件**')[0]||'';if(!s.includes('node')||!s.includes('psql'))throw new Error('FAIL');console.log('PASS')"
 - [ ] [ARTIFACT] harness-planner/SKILL.md 新增"预期受影响文件"PRD 模板小节
   Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-planner/SKILL.md','utf8');if(!c.includes('预期受影响文件'))throw new Error('FAIL');console.log('PASS')"
-- [ ] [BEHAVIOR] harness-planner/SKILL.md 在写 PRD 前有读取文件的步骤
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-planner/SKILL.md','utf8');if(!c.includes('ls')||!c.includes('cat'))throw new Error('FAIL');console.log('PASS')"
+- [ ] [BEHAVIOR] harness-planner/SKILL.md 有 bash 代码块含 ls/cat 读文件步骤
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-planner/SKILL.md','utf8');const blocks=c.match(/\`\`\`bash[\s\S]*?\`\`\`/g)||[];if(!blocks.some(b=>b.includes('ls ')||b.includes('cat ')))throw new Error('FAIL');console.log('PASS')"
 
 ### WS2: contract-dod 路径三处统一（M）
 
