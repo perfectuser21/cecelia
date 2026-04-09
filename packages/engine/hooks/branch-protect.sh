@@ -111,6 +111,29 @@ if [[ -z "${CURRENT_BRANCH}" ]]; then
     exit 2
 fi
 
+# ===== DoD 未勾选条目检测（场景3）=====
+# 当 Task Card / DoD 文件被写入时，检测是否存在 [ ] 未勾选项
+_check_dod_unchecked() {
+    local task_card=""
+    for f in "$PROJECT_ROOT"/.task-*.md "$PROJECT_ROOT/task-card.md" "$PROJECT_ROOT/DoD.md"; do
+        [[ -f "$f" ]] && task_card="$f" && break
+    done
+    [[ -z "$task_card" ]] && return 0
+    local unchecked
+    unchecked=$(grep -c '^- \[ \]' "$task_card" 2>/dev/null || echo 0)
+    if [[ "${unchecked}" -gt 0 ]]; then
+        echo "[ERROR] DoD 有 ${unchecked} 个未勾选条目（- [ ]），push 前必须全部验证并改为 [x]：" >&2
+        grep -n '^- \[ \]' "$task_card" | head -10 >&2
+        echo "  请将所有 '- [ ]' 改为 '- [x]' 后重新提交" >&2
+        exit 2
+    fi
+}
+
+# DoD 文件写入时触发检测
+if echo "$FILE_PATH" | grep -qE '(task-card|DoD|\.task-[^/]+)\.md$'; then
+    _check_dod_unchecked
+fi
+
 # ===== 分支检查：cp-* 为唯一合法格式 =====
 if [[ "${CURRENT_BRANCH}" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
 

@@ -235,6 +235,8 @@ jobs:
           else
             echo "⏭️  未修改 packages/engine/skills/，跳过 feature-registry 检查"
           fi
+      - name: E2E Integrity Check
+        run: bash packages/engine/scripts/e2e-integrity-check.sh
 
   # ─── Brain: Unit Tests ─────────────────────────────────────
   brain-unit:
