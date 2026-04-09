@@ -929,8 +929,12 @@ async function killProcessTwoStage(taskId, pgid, waitMs = 10000) {
  * @returns {Promise<{requeued: boolean, quarantined?: boolean, retry_count?: number, next_run_at?: string}>}
  */
 async function requeueTask(taskId, reason, evidence = {}) {
-  // Kill 1 → retry with backoff; Kill 2 → quarantine
-  const QUARANTINE_AFTER_KILLS = 2;
+  // liveness_dead = OOM/系统抢占（环境问题），给更多重试机会让系统恢复
+  // 其他 watchdog kill（Crisis/高内存）= 资源耗尽，保持 2 次限制
+  const LIVENESS_QUARANTINE_AFTER_KILLS = 3;
+  const QUARANTINE_AFTER_KILLS = reason === 'liveness_dead' ? LIVENESS_QUARANTINE_AFTER_KILLS : 2;
+  // liveness_dead 最短退避 15min（900s），让系统内存有时间恢复
+  const LIVENESS_MIN_BACKOFF_SEC = 900;
 
   // P0 #2: Only requeue tasks that are still in_progress (prevents reviving completed/failed tasks)
   const result = await pool.query(
@@ -1041,7 +1045,11 @@ async function requeueTask(taskId, reason, evidence = {}) {
     console.log(`[executor] Using classified retry strategy: ${retryStrategy.reason || 'unknown'}`);
   } else {
     // Fallback: Exponential backoff (2min for retry 1, max 30min)
-    const backoffSec = Math.min(Math.pow(2, retryCount) * 60, 1800);
+    let backoffSec = Math.min(Math.pow(2, retryCount) * 60, 1800);
+    // liveness_dead 强制最低 15min，避免系统内存未恢复时立即重试被再次 kill
+    if (reason === 'liveness_dead') {
+      backoffSec = Math.max(backoffSec, LIVENESS_MIN_BACKOFF_SEC);
+    }
     nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
     console.log(`[executor] Using default exponential backoff: ${backoffSec}s`);
   }
@@ -3282,7 +3290,8 @@ async function syncOrphanTasksOnStartup() {
         continue;
       }
 
-      const QUARANTINE_AFTER_KILLS = 2; // Must match requeueTask's constant
+      // startup-sync 使用较保守的 2 次限制（重启时原因未知，不区分 liveness_dead）
+      const QUARANTINE_AFTER_KILLS = 2;
       const watchdogRetryCount = task.payload?.watchdog_retry_count || 0;
       const hasExistingError = !!task.error_message;
       const canRetry = watchdogRetryCount < QUARANTINE_AFTER_KILLS && !hasExistingError;

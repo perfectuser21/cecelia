@@ -173,6 +173,25 @@ describe('classifyDevFailure - transient', () => {
     expect(result.retryable).toBe(false);
     expect(result.reason).toContain('exhausted');
   });
+
+  // liveness_dead / watchdog 模式 — OOM 或进程被系统抢占，属暂时性环境问题
+  it('classifies liveness_dead as transient (retryable)', () => {
+    const result = classifyDevFailure('[watchdog] reason=liveness_dead at 2026-04-09T00:00:00.000Z');
+    expect(result.class).toBe(DEV_FAILURE_CLASS.TRANSIENT);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies bare liveness_dead string as transient', () => {
+    const result = classifyDevFailure('liveness_dead');
+    expect(result.class).toBe(DEV_FAILURE_CLASS.TRANSIENT);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies [watchdog] prefix as transient', () => {
+    const result = classifyDevFailure('[watchdog] reason=Crisis: pressure=1.05, RSS=2MB');
+    expect(result.class).toBe(DEV_FAILURE_CLASS.TRANSIENT);
+    expect(result.retryable).toBe(true);
+  });
 });
 
 // ============================================================
