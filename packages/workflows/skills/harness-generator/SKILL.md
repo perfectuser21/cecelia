@@ -4,10 +4,11 @@ description: |
   Harness Generator — Harness v4.0 严格合同执行者。
   读取 GAN 对抗已批准的 sprint-contract.md，严格按合同实现，不越界。
   合同外的任何东西一个字不加。完成后创建 PR（供 CI + Evaluator 验证）。
-version: 4.0.0
+version: 4.0.1
 created: 2026-04-08
-updated: 2026-04-08
+updated: 2026-04-09
 changelog:
+  - 4.0.1: 禁止 find /Users 广泛搜索，只能在当前目录(.)内搜索
   - 4.0.0: Harness v4.0 Generator（严格合同执行者，输出 pr_url 供 harness_ci_watch 使用）
 ---
 
@@ -130,3 +131,4 @@ echo "{\"verdict\": \"FIXED\", \"fixes\": [\"Feature X: <说明>\"], \"pr_url\":
 2. **禁止加合同外内容**
 3. **禁止自判 PASS**
 4. **禁止在 main 分支操作**
+5. **禁止广泛文件搜索**：禁止 `find /Users`、`find /home` 或任何绝对路径搜索。文件搜索只能在当前目录内进行（`find .`），否则会触发系统级扫描导致挂起。
