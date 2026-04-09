@@ -73,6 +73,10 @@ function tickLog(...args) {
   }
 }
 
+// Quiet mode — 设为 true 时跳过所有后台 LLM 调用（thalamus/rumination/narrative 等）
+// 通过环境变量 BRAIN_QUIET_MODE=true 启用，Brain 任务调度和 API 保持正常运行
+const QUIET_MODE = process.env.BRAIN_QUIET_MODE === 'true';
+
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
 const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
@@ -1904,6 +1908,8 @@ async function executeTick() {
   // ═══════════════════════════════════════════════════════════════════
 
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
+  // QUIET_MODE: 跳过 thalamus LLM 调用（不消耗 Claude token）
+  if (!QUIET_MODE) {
   publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
   try {
     const tickEvent = {
@@ -1946,6 +1952,7 @@ async function executeTick() {
     console.error('[tick] Thalamus error, falling back to code-based tick:', thalamusErr.message);
     // Continue with normal tick if thalamus fails
   }
+  } // end if (!QUIET_MODE) — thalamus block
 
   // 0.5. PR Plans Completion Check (三层拆解状态自动更新)
   try {
@@ -2867,6 +2874,9 @@ async function executeTick() {
   Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
     .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
 
+  // 10.3 ~ 10.11 后台 LLM 任务（QUIET_MODE=true 时全部跳过，不消耗任何 token）
+  let ruminationResult = null;
+  if (!QUIET_MODE) {
   // 10.3 对话日志提炼（每 5 分钟扫描 ~/.claude-account1/projects/ .jsonl 文件）
   Promise.resolve().then(() => runConversationDigest())
     .catch(e => console.warn('[tick] conversation digest 失败:', e.message));
@@ -2877,7 +2887,6 @@ async function executeTick() {
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });
-  let ruminationResult = null;
   try {
     ruminationResult = await runRumination(pool);
   } catch (rumErr) {
@@ -2905,6 +2914,7 @@ async function executeTick() {
   // 10.11 分层记忆压缩调度（daily/weekly/monthly synthesis，fire-and-forget）
   Promise.resolve().then(() => runSynthesisSchedulerIfNeeded(pool))
     .catch(e => console.warn('[tick] synthesis scheduler 失败:', e.message));
+  } // end if (!QUIET_MODE) — 后台 LLM 任务块
 
   // 10.12 分级报警刷新（P1 每小时，P2 每日，fire-and-forget）
   Promise.resolve().then(() => flushAlertsIfNeeded())
