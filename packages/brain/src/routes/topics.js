@@ -96,13 +96,14 @@ router.post('/suggestions/:id/approve', async (req, res) => {
 /**
  * POST /api/brain/topics/suggestions/:id/reject
  * Alex 拒绝选题
- * Body: { reviewer?: string }
+ * Body: { reviewer?: string, rejection_reason?: string }
  */
 router.post('/suggestions/:id/reject', async (req, res) => {
   try {
     const { id } = req.params;
     const reviewer = req.body?.reviewer || 'alex';
-    const result = await rejectSuggestion(pool, id, reviewer);
+    const reason = req.body?.rejection_reason || null;
+    const result = await rejectSuggestion(pool, id, reviewer, reason);
     if (!result.ok) {
       return res.status(400).json({ ok: false, error: result.error });
     }
@@ -178,6 +179,55 @@ router.post('/generate', async (req, res) => {
   } catch (err) {
     console.error('[topics-route] POST /generate 失败:', err.message);
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/topics/analytics
+ * 选题决策闭环通过率统计
+ * 支持 ?days=7（默认 7 天）查询近 N 日的审核数据
+ *
+ * 返回：
+ *   { days, total, approved, rejected, auto_promoted, pending, pass_rate }
+ *   pass_rate = (approved + auto_promoted) / total × 100，精确到 1 位小数
+ */
+router.get('/analytics', async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days || '7', 10)));
+    const { rows } = await pool.query(
+      `SELECT
+         status,
+         COUNT(*) AS cnt
+       FROM topic_suggestions
+       WHERE created_at >= NOW() - INTERVAL '${days} days'
+       GROUP BY status`
+    );
+
+    const countMap = { approved: 0, rejected: 0, auto_promoted: 0, pending: 0 };
+    for (const row of rows) {
+      if (row.status in countMap) {
+        countMap[row.status] = parseInt(row.cnt, 10);
+      }
+    }
+    const total = Object.values(countMap).reduce((s, v) => s + v, 0);
+    const passCount = countMap.approved + countMap.auto_promoted;
+    const reviewedCount = passCount + countMap.rejected;
+    const pass_rate = reviewedCount > 0
+      ? Math.round((passCount / reviewedCount) * 1000) / 10
+      : null;
+
+    res.json({
+      days,
+      total,
+      approved: countMap.approved,
+      rejected: countMap.rejected,
+      auto_promoted: countMap.auto_promoted,
+      pending: countMap.pending,
+      pass_rate,
+    });
+  } catch (err) {
+    console.error('[topics-route] GET /analytics 失败:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
