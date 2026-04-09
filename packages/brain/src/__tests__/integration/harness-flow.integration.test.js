@@ -115,6 +115,8 @@ describe('Harness Flow — harness_generate 任务状态流转与过滤（真实
 
   afterAll(async () => {
     if (insertedTaskIds.length > 0) {
+      // 先删 run_events（FK 约束），再删 tasks
+      await testPool.query('DELETE FROM run_events WHERE task_id = ANY($1)', [insertedTaskIds]);
       await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
     }
     await testPool.end();
