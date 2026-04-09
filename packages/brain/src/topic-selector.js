@@ -16,6 +16,7 @@
 import { callLLM } from './llm-caller.js';
 import { getHighPerformingTopics } from './topic-heat-scorer.js';
 import { queryWeeklyROI } from './content-analytics.js';
+import { getContentGapSignal } from './topic-gap-analyzer.js';
 
 // ─── LLM Fallback Helper ─────────────────────────────────────────────────────
 // 当主 LLM（cortex profile，当前指向 Codex）失败时，自动 fallback 到
@@ -125,9 +126,10 @@ export async function get7DayROIContext(pool) {
  * @param {string} [hotspotContext] - 垂类热点上下文（由 buildHotspotContext 生成）
  * @param {string} [roiContext] - 近7日ROI数据上下文（由 get7DayROIContext 生成）
  * @param {string[]} [seedKeywords] - 精选主题库种子词（由调度器注入，引导选题方向）
+ * @param {string} [gapSignal] - 内容库缺口信号（由 topic-gap-analyzer 生成）
  * @returns {string}
  */
-function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '', roiContext = '', seedKeywords = []) {
+function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspotContext = '', roiContext = '', seedKeywords = [], gapSignal = '') {
   const today = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const recentList = recentKeywords.length > 0
     ? recentKeywords.map(k => `- ${k}`).join('\n')
@@ -153,7 +155,7 @@ function buildTopicPrompt(recentKeywords = [], highPerformingTopics = [], hotspo
 
 【近 7 日已用选题】（请避免重复或相似的主题）
 ${recentList}
-${highHeatSection}${seedSection}${roiContext}${hotspotContext}
+${highHeatSection}${seedSection}${gapSignal}${roiContext}${hotspotContext}
 【任务要求】
 请生成 ${TARGET_TOPIC_COUNT} 个内容选题，每个选题必须：
 1. 与"一人公司/AI能力放大/小组织效能"主题强相关
@@ -186,13 +188,14 @@ ${highHeatSection}${seedSection}${roiContext}${hotspotContext}
  * @returns {Promise<Array<{keyword, content_type, title_candidates, hook, why_hot, priority_score}>>}
  */
 export async function generateTopics(pool, seedKeywords = []) {
-  const [recentKeywords, highPerformingTopics, hotspotContext, roiContext] = await Promise.all([
+  const [recentKeywords, highPerformingTopics, hotspotContext, roiContext, gapSignal] = await Promise.all([
     getRecentKeywords(pool),
     getHighPerformingTopics(pool).catch(() => []),
     buildHotspotContext(),
     get7DayROIContext(pool).catch(() => ''),
+    getContentGapSignal(pool).catch(() => ''),
   ]);
-  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext, seedKeywords);
+  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext, seedKeywords, gapSignal);
 
   const { text } = await _callLLMWithFallback('cortex', prompt, {
     maxTokens: 2048,
