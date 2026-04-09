@@ -2080,12 +2080,24 @@ async function preparePrompt(task) {
   if (taskType === 'sprint_contract_propose' || taskType === 'harness_contract_propose') {
     const sprintDir = task.payload?.sprint_dir || 'sprints';
     const proposeRound = task.payload?.propose_round || 1;
-    const plannerBranch = task.payload?.planner_branch || 'main';
+    const plannerBranch = task.payload?.planner_branch || null;
+    const reviewBranch = task.payload?.review_branch || null;
     const skillName = taskType === 'harness_contract_propose' ? '/harness-contract-proposer' : '/sprint-contract-proposer';
-    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\n\n${task.description || task.title}`;
-    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
-    if (sprintPrdContent) {
-      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;
+    // planner_branch 和 review_branch 注入 prompt，SKILL.md 的 bash 命令读取这些变量
+    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nplanner_branch: ${plannerBranch || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\nreview_branch: ${reviewBranch || ''}\n\n${task.description || task.title}`;
+    // 从 planner 分支直接嵌入 PRD 内容，消除对 PLANNER_BRANCH 变量的依赖
+    if (plannerBranch) {
+      const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
+      if (sprintPrdContent) {
+        basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
+      }
+    }
+    // 从 review 分支嵌入反馈内容（修订轮）
+    if (reviewBranch) {
+      const reviewFeedback = await _fetchSprintFile(reviewBranch, `${sprintDir}/contract-review-feedback.md`);
+      if (reviewFeedback) {
+        basePrompt += `\n\n## ${sprintDir}/contract-review-feedback.md（来自 ${reviewBranch}）\n${reviewFeedback}`;
+      }
     }
     return basePrompt;
   }
@@ -2093,16 +2105,24 @@ async function preparePrompt(task) {
   // Harness Contract Reviewer 类型
   if (taskType === 'sprint_contract_review' || taskType === 'harness_contract_review') {
     const sprintDir = task.payload?.sprint_dir || 'sprints';
-    const plannerBranch = task.payload?.planner_branch || 'main';
+    const plannerBranch = task.payload?.planner_branch || null;
+    const proposeBranch = task.payload?.propose_branch || null;
     const skillName = taskType === 'harness_contract_review' ? '/harness-contract-reviewer' : '/sprint-contract-reviewer';
-    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\n\n${task.description || task.title}`;
-    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
-    if (sprintPrdContent) {
-      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md\n${sprintPrdContent}`;
+    // planner_branch 和 propose_branch 注入 prompt，SKILL.md 的 bash 命令读取这些变量
+    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\nplanner_branch: ${plannerBranch || ''}\npropose_branch: ${proposeBranch || ''}\n\n${task.description || task.title}`;
+    // 从 planner 分支嵌入 PRD
+    if (plannerBranch) {
+      const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
+      if (sprintPrdContent) {
+        basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
+      }
     }
-    const contractDraftContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/contract-draft.md`);
-    if (contractDraftContent) {
-      basePrompt += `\n\n## ${sprintDir}/contract-draft.md\n${contractDraftContent}`;
+    // 从 propose 分支嵌入合同草案（Proposer 写的 contract-draft.md）
+    if (proposeBranch) {
+      const contractDraftContent = await _fetchSprintFile(proposeBranch, `${sprintDir}/contract-draft.md`);
+      if (contractDraftContent) {
+        basePrompt += `\n\n## ${sprintDir}/contract-draft.md（来自 ${proposeBranch}）\n${contractDraftContent}`;
+      }
     }
     return basePrompt;
   }
