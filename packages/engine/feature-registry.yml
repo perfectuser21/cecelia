@@ -35,3 +35,12 @@ changelog:
     description: "worktree-manage.sh: 上限满时自动 cleanup 已合并 worktree + MAX_WORKTREES 10→15"
     files:
       - "skills/dev/scripts/worktree-manage.sh"
+  - version: "14.4.0"
+    date: "2026-04-09"
+    skill: "hooks"
+    change: "refactor"
+    description: "[CONFIG] 删除 QUICKCHECK_SKIP 后门（pre-push.sh + quickcheck.sh），pre-push 无绕过路径；/dev SKILL.md 加 Janitor 自检步骤（Stage 2 末尾 pre-PR）"
+    files:
+      - "hooks/pre-push.sh"
+      - "scripts/quickcheck.sh"
+      - "skills/dev/SKILL.md"

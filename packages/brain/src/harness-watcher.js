@@ -1,20 +1,17 @@
 /**
- * Harness Watcher — Brain-内联 CI/CD 监控（Harness v4.0）
+ * Harness Watcher — Brain-内联 CI 监控（Harness v4.0 三层架构）
  *
  * 职责：
  * 1. harness_ci_watch — 轮询 PR CI 状态
- *    - CI 全通过 → 更新任务为 completed，创建 harness_evaluate
+ *    - CI 全通过 → executeMerge(prUrl) + 创建 harness_report（CI 即 Evaluator）
  *    - CI 失败 → 更新任务为 failed，创建 harness_fix（含 ci_fail_context）
  *    - CI 进行中 → 保持 queued，下次 tick 继续
- * 2. harness_deploy_watch — 轮询 CD 部署状态
- *    - Deploy 成功 → 更新任务为 completed，创建 harness_report
- *    - Deploy 失败 → 更新任务为 failed（记录警告，不循环）
- *    - Deploy 进行中 → 保持 queued，下次 tick 继续
  *
- * 注意：两种 watch 任务均不派发给外部 agent，由 Brain tick 内联处理。
+ * 注意：harness_ci_watch 不派发给外部 agent，由 Brain tick 内联处理。
+ * 设计原则：CI 通过即代表质量验收通过，直接 merge，无需独立 evaluator agent。
  */
 
-import { checkPrStatus, classifyFailedChecks } from './shepherd.js';
+import { checkPrStatus, classifyFailedChecks, executeMerge } from './shepherd.js';
 import { execSync } from 'child_process';
 import { createTask } from './actions.js';
 
@@ -112,32 +109,40 @@ export async function processHarnessCiWatchers(pool) {
       const prInfo = checkPrStatus(prUrl);
 
       if (prInfo.ciStatus === 'ci_passed' || prInfo.ciStatus === 'merged') {
-        // CI 全通过 → 创建 harness_evaluate
+        // CI 全通过 → 直接 merge + 创建 harness_report（CI 即 Evaluator，无需独立 evaluate agent）
         await pool.query(
           `UPDATE tasks SET status = 'completed', completed_at = NOW(),
             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('ci_conclusion', 'passed', 'poll_count', $2)
            WHERE id = $1`,
           [task.id, pollCount]
         );
-        const evalRound = payload.eval_round || 1;
+        // auto-merge
+        if (prUrl && prInfo.ciStatus !== 'merged') {
+          try {
+            executeMerge(prUrl);
+            console.log(`[harness-watcher] CI passed → auto-merge triggered for ${prUrl}`);
+          } catch (mergeErr) {
+            console.warn(`[harness-watcher] auto-merge failed (non-fatal): ${mergeErr.message}`);
+          }
+        }
+        // 创建 harness_report
+        const plannerShort = (payload.planner_task_id || task.id).slice(0, 8);
         await createTask({
-          title: `[Evaluator] R${evalRound}`,
-          description: `CI 通过，Evaluator 读取 PR diff 验证代码是否符合合同。\nharness_ci_watch task_id: ${task.id}`,
+          title: `[Report] ${plannerShort}`,
+          description: `CI 通过 + PR 已合并。生成 Harness 完成报告。\nharness_ci_watch task_id: ${task.id}`,
           priority: 'P1',
           project_id: task.project_id,
           goal_id: task.goal_id,
-          task_type: 'harness_evaluate',
+          task_type: 'harness_report',
           trigger_source: 'harness_watcher',
           payload: {
             sprint_dir: payload.sprint_dir,
             pr_url: prUrl,
-            dev_task_id: payload.dev_task_id,
             planner_task_id: payload.planner_task_id,
-            eval_round: evalRound,
             harness_mode: true,
           },
         });
-        console.log(`[harness-watcher] CI passed for ${task.id} → harness_evaluate R${evalRound} created`);
+        console.log(`[harness-watcher] CI passed for ${task.id} → merge + harness_report created`);
         result.ci_passed++;
 
       } else if (prInfo.ciStatus === 'ci_failed') {

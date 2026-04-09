@@ -1578,9 +1578,8 @@ ${resultStr.substring(0, 2000)}
       // Layer 2a: harness_contract_propose → harness_contract_review
       // Layer 2b: harness_contract_review APPROVED → harness_generate / REVISION → 继续对抗
       // Layer 3a: harness_generate / harness_fix → harness_ci_watch（Brain tick 轮询 CI）
-      // Layer 3b: CI 通过 → harness_evaluate（读 PR diff vs 合同，不调 live API）
-      // Layer 3c: harness_evaluate PASS → auto-merge + harness_deploy_watch / FAIL → harness_fix
-      // Layer 3d: Deploy 完成 → harness_report
+      // Layer 3b: CI 通过 → auto-merge + harness_report（CI 即 Evaluator，三层架构）
+      // Layer 3c: CI 失败 → harness_fix（Generator 修代码重走 CI）
 
       // 辅助：从任意格式 result（对象/字符串/嵌套）中提取 verdict 字段
       function extractVerdictFromResult(res, validVerdicts) {
@@ -2006,124 +2005,6 @@ ${resultStr.substring(0, 2000)}
             }
           });
           console.log(`[execution-callback] harness: sprint_generate ${task_id} → sprint_evaluate created`);
-        }
-
-        // Layer 3b: harness_evaluate 完成 → 根据 verdict 路由
-        if (harnessType === 'harness_evaluate') {
-          if (result === null) {
-            const evalRound = harnessPayload.eval_round || 0;
-            const MAX_EVAL_ROUNDS = 15;
-            if (evalRound >= MAX_EVAL_ROUNDS) {
-              console.error(`[execution-callback] harness: harness_evaluate result=null at round ${evalRound} >= MAX(${MAX_EVAL_ROUNDS}), stopping loop`);
-            } else {
-              console.warn(`[execution-callback] harness: harness_evaluate result=null (session crash) at round ${evalRound}, retrying`);
-              await createHarnessTask({
-                title: `[Evaluator] R${evalRound + 1} retry — ${plannerShort}`,
-                description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 harness_evaluate task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: 'harness_evaluate',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  pr_url: harnessPayload.pr_url,
-                  dev_task_id: harnessPayload.dev_task_id,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  eval_round: evalRound + 1,
-                  harness_mode: true,
-                  retry_reason: 'evaluator_session_crash'
-                }
-              });
-            }
-          } else {
-            // 解析 verdict
-            let resultObj = typeof result === 'object' && result !== null ? result : {};
-            if (typeof result === 'string') {
-              try {
-                const parsed = JSON.parse(result);
-                if (parsed?.verdict) resultObj = parsed;
-              } catch {
-                const m = result.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
-                if (m) resultObj = { verdict: m[1].toUpperCase() };
-              }
-            }
-            if (!resultObj.verdict && typeof resultObj.result === 'object' && resultObj.result?.verdict) {
-              resultObj.verdict = resultObj.result.verdict;
-            }
-            if (!resultObj.verdict) {
-              const txt = resultObj.summary || resultObj.findings || (typeof resultObj.result === 'string' ? resultObj.result : '') || (typeof result === 'string' ? result : '');
-              if (typeof txt === 'string') {
-                const m = txt.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
-                if (m) resultObj.verdict = m[1].toUpperCase();
-              }
-            }
-            const verdict = resultObj.verdict || 'FAIL';
-            const evalRoundForResult = harnessPayload.eval_round || 1;
-            console.log(`[execution-callback] harness: harness_evaluate verdict=${verdict}`);
-            await persistHarnessVerdict(task_id, verdict, { task_type: 'harness_evaluate', eval_round: harnessPayload.eval_round || 1 });
-
-            if (verdict === 'PASS') {
-              // PASS → auto-merge PR + harness_deploy_watch
-              const prUrlToMerge = harnessPayload.pr_url;
-              if (prUrlToMerge) {
-                try {
-                  const { executeMerge } = await import('../shepherd.js');
-                  executeMerge(prUrlToMerge);
-                  console.log(`[execution-callback] harness: auto-merge triggered for ${prUrlToMerge}`);
-                } catch (mergeErr) {
-                  console.warn(`[execution-callback] harness: auto-merge failed (non-fatal): ${mergeErr.message}`);
-                }
-              }
-              // 幂等检查
-              const existingDw = await pool.query(
-                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'harness_deploy_watch'
-                 AND status IN ('queued', 'in_progress') LIMIT 1`,
-                [harnessTask.project_id]
-              );
-              if (existingDw.rows.length === 0) {
-                await createHarnessTask({
-                  title: `[Deploy Watch] ${plannerShort}`,
-                  description: `Evaluator PASS + PR 已合并。等待 CD deploy 完成后生成 Report。`,
-                  priority: 'P1',
-                  project_id: harnessTask.project_id,
-                  goal_id: harnessTask.goal_id,
-                  task_type: 'harness_deploy_watch',
-                  trigger_source: 'execution_callback_harness',
-                  payload: {
-                    sprint_dir: harnessPayload.sprint_dir,
-                    pr_url: prUrlToMerge,
-                    planner_task_id: harnessPayload.planner_task_id,
-                    eval_round: harnessPayload.eval_round || 1,
-                    poll_count: 0,
-                    harness_mode: true
-                  }
-                });
-                console.log(`[execution-callback] harness: harness_evaluate PASS → harness_deploy_watch created`);
-              }
-            } else {
-              // FAIL → harness_fix（Generator 修复，然后重走 CI watch）
-              await createHarnessTask({
-                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1} — ${plannerShort}`,
-                description: `Evaluator 发现问题，Generator 修复后重新提交。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 harness_evaluate task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: 'harness_fix',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  dev_task_id: harnessPayload.dev_task_id,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  planner_branch: harnessPayload.planner_branch || null,
-                  contract_branch: harnessPayload.contract_branch || null,
-                  eval_round: (harnessPayload.eval_round || 0) + 1,
-                  harness_mode: true
-                }
-              });
-              console.log(`[execution-callback] harness: harness_evaluate FAIL → harness_fix created (round=${(harnessPayload.eval_round || 0) + 1})`);
-            }
-          }
         }
 
         // v3.x 兼容: sprint_evaluate 完成 → 旧路由逻辑（保留不变）

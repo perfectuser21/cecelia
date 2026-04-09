@@ -202,9 +202,9 @@ jobs:
             CMD="${line#*Test: manual:}"
             CMD="${CMD#"${CMD%%[![:space:]]*}"}"  # trim leading spaces
             if [[ "$CMD" == node* ]]; then
-              echo "▶️  执行: node ${CMD#node }"
-              if ! node ${CMD#node }; then
-                echo "::error::DoD BEHAVIOR 验证失败: node ${CMD#node }"
+              echo "▶️  执行: $CMD"
+              if ! eval "$CMD"; then
+                echo "::error::DoD BEHAVIOR 验证失败: $CMD"
                 FAILED=$((FAILED + 1))
               else
                 PASSED=$((PASSED + 1))
