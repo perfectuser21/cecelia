@@ -39,6 +39,8 @@ const STARTUP_GRACE_SEC = 60;
 // === Crisis mode kill budget ===
 const CRISIS_KILL_RATIO = 0.25;  // Crisis 模式杀 top 25% 进程
 const CRISIS_KILL_MAX = 4;        // Crisis 模式最多杀 4 个进程
+// 最小 RSS 阈值：top offender 低于此值时 Crisis 模式不执行杀进程（防止误杀刚启动的轻量任务）
+const CRISIS_KILL_MIN_RSS_MB = parseInt(process.env.CRISIS_KILL_MIN_RSS_MB || '20');
 
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 
@@ -526,12 +528,20 @@ function checkRunaways(systemPressure) {
   }
 
   // P0 #4: Crisis mode — kill top 25% RSS offenders (min 1, max CRISIS_KILL_MAX)
+  // Skip entirely if top offender RSS is below minimum threshold to avoid killing newly-started tasks.
   const crisisCandidates = actions.filter(a => a.action === 'kill_if_top_offender');
   if (crisisCandidates.length > 0) {
     crisisCandidates.sort((a, b) => b.rss - a.rss);
-    const killCount = Math.max(1, Math.min(CRISIS_KILL_MAX, Math.ceil(crisisCandidates.length * CRISIS_KILL_RATIO)));
-    for (let i = 0; i < crisisCandidates.length; i++) {
-      crisisCandidates[i].action = i < killCount ? 'kill' : 'warn';
+    if (crisisCandidates[0].rss >= CRISIS_KILL_MIN_RSS_MB) {
+      const killCount = Math.max(1, Math.min(CRISIS_KILL_MAX, Math.ceil(crisisCandidates.length * CRISIS_KILL_RATIO)));
+      for (let i = 0; i < crisisCandidates.length; i++) {
+        crisisCandidates[i].action = i < killCount ? 'kill' : 'warn';
+      }
+    } else {
+      // All candidates below minimum threshold — downgrade to warn only
+      for (const candidate of crisisCandidates) {
+        candidate.action = 'warn';
+      }
     }
   }
 
@@ -770,6 +780,7 @@ export {
   HEALING_COOLDOWN_MS,
   CRISIS_KILL_RATIO,
   CRISIS_KILL_MAX,
+  CRISIS_KILL_MIN_RSS_MB,
   _taskMetrics,
   _idleMetrics,
   _lastHealingTrigger,
