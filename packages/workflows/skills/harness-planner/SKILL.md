@@ -1,12 +1,13 @@
 ---
 id: harness-planner-skill
 description: |
-  Harness Planner — Harness v4.0 Layer 1：将用户需求展开为高层产品 spec。
-  输出 sprint-prd.md（What，不写 How），供 GAN 对抗层使用。
-version: 4.0.0
+  Harness Planner — Harness v4.1 Layer 1：将用户需求展开为高层产品 spec。
+  输出 sprint-prd.md（What，不写 How），附"预期受影响文件"列表，供 GAN 对抗层使用。
+version: 4.1.0
 created: 2026-04-08
-updated: 2026-04-08
+updated: 2026-04-09
 changelog:
+  - 4.1.0: 新增 Step 0 — 写 PRD 前先读取相关代码文件，PRD 末尾附"预期受影响文件"小节（路径可追溯）
   - 4.0.0: Harness v4.0 Planner（独立 skill，不依赖其他 skill）
 ---
 
@@ -29,6 +30,24 @@ changelog:
 ---
 
 ## 执行流程
+
+### Step 0: 读取受影响代码文件（写 PRD 前必须执行）
+
+在写 PRD 之前，先探索与任务描述相关的代码目录，确认受影响文件的真实路径：
+
+```bash
+# 列出可能相关的目录，确认文件存在
+ls packages/workflows/skills/ 2>/dev/null | head -20
+ls packages/brain/src/ 2>/dev/null | head -10
+
+# 读取核心文件（根据任务描述判断相关性）
+# 示例：任务涉及 harness pipeline → 读相关 SKILL.md
+cat packages/workflows/skills/harness-contract-reviewer/SKILL.md 2>/dev/null | head -30
+cat packages/workflows/skills/harness-planner/SKILL.md 2>/dev/null | head -30
+# 根据实际任务内容调整上面的命令
+```
+
+**目的**：确认文件路径存在、了解当前实现，避免 Proposer 写出引用不存在路径的验证命令。
 
 ### Step 1: 读取任务描述
 
@@ -70,6 +89,13 @@ mkdir -p "$SPRINT_DIR"
 
 **在范围内**: ...
 **不在范围内**: ...
+
+## 预期受影响文件
+
+（由 Planner 在 Step 0 读取代码后填写，列出实际存在的文件路径）
+
+- `{实际文件路径 1}`：{一句话说明为何受影响}
+- `{实际文件路径 2}`：{一句话说明为何受影响}
 ```
 
 ### Step 3: push + 输出
