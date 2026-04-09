@@ -26,7 +26,7 @@ function getTotalCapacity() { return getEffectiveMaxSeats(); }
 const CECELIA_RESERVED = 0;                  // Pool A: removed static reserve — dynamic model handles this
 const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent (1 slot suffices)
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
-const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
+const SESSION_TTL_SECONDS = 24 * 60 * 60;   // 24 hours: long-running harness/pipeline sessions stay valid
 const CODEX_ACCOUNT_COUNT = 5;              // Codex 账号总数（硬上限）
 const CODEX_FALLBACK_CONCURRENT = 3;        // Fleet cache 不可用时的降级值
 

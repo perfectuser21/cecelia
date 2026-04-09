@@ -113,7 +113,7 @@ describe('Slot Allocator Constants', () => {
     expect(CECELIA_RESERVED).toBe(0); // dynamic model: no static reserve
     expect(USER_RESERVED_BASE).toBe(1);
     expect(USER_PRIORITY_HEADROOM).toBe(1);
-    expect(SESSION_TTL_SECONDS).toBe(4 * 60 * 60); // 4 hours
+    expect(SESSION_TTL_SECONDS).toBe(24 * 60 * 60); // 24 hours
   });
 
   it('TOTAL_CAPACITY equals MAX_SEATS from executor', () => {
