@@ -117,8 +117,14 @@ jobs:
             fi
           done
 
-          # 所有重试耗尽，仍无有效内容 → fail-closed
+          # 所有重试耗尽，仍无有效内容 → 区分 rate limit（429）和真实错误
           if [[ -z "$REVIEW_CONTENT" ]]; then
+            # 检查最后一次响应是否为 rate limit（429）
+            LAST_STATUS_CODE=$(echo "$RESPONSE" | jq -r '.error.code // 0' 2>/dev/null || echo 0)
+            if [[ "$LAST_STATUS_CODE" == "429" ]] || echo "$RESPONSE" | grep -q '"code":429'; then
+              echo "::warning::OpenRouter API rate limit（429），跳过审查，不阻止 PR 合并"
+              exit 0
+            fi
             API_ERROR=true
             echo "❌ OpenRouter API 调用全部失败（已重试 ${MAX_RETRY} 次），阻止 PR 合并" >&2
             exit 1
