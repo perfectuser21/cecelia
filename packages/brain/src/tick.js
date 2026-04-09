@@ -1647,7 +1647,7 @@ async function executeTick() {
     // [探针] 认证层健康度实时探针：检查近1小时 auth 失败率是否超阈值
     scanAuthLayerHealth(pool).then(r => {
       if (r.alerted > 0) {
-        console.log(`[tick] [auth-layer-probe] ⚠️ ${r.alerted} 个账号 auth 失败率告警已创建`);
+        tickLog(`[tick] [auth-layer-probe] ⚠️ ${r.alerted} 个账号 auth 失败率告警已创建`);
       }
     }).catch(err => {
       console.error('[tick] Auth layer health scan failed (non-fatal):', err.message);
