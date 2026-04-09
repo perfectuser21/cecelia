@@ -1,13 +1,14 @@
 ---
 id: harness-contract-proposer-skill
 description: |
-  Harness Contract Proposer — Harness v4.2 GAN Layer 2a：
+  Harness Contract Proposer — Harness v4.3 GAN Layer 2a：
   Generator 角色，读取 PRD，提出合同草案（功能范围 + Workstreams 拆分 + DoD条目 + 验证命令）。
-  合同必须包含 ## Workstreams 区块，定义 N 个独立 workstream，每个含 DoD 条目供 Generator 直接复制。
-version: 4.2.0
+  合同必须包含 ## Workstreams 区块，并为每个 workstream 单独输出 contract-dod-ws{N}.md 文件（DoD 单一来源）。
+version: 4.3.0
 created: 2026-04-08
 updated: 2026-04-09
 changelog:
+  - 4.3.0: 每个 workstream 输出独立 contract-dod-ws{N}.md 文件并 push 到 propose branch，供 Generator 原样复制 + CI 完整性校验
   - 4.2.0: 合同新增 ## Workstreams 区块 — 定义拆分数量+DoD条目(- [ ] [BEHAVIOR/ARTIFACT])，供 Generator 直接复制使用
   - 4.1.0: 修正 v4.0 错误 — 合同格式恢复验证命令代码块（广谱：curl/npm/psql/playwright），GAN 对抗核心是命令严格性
   - 4.0.0: 错误版本 — 合同只有行为描述+硬阈值，移除了验证命令（破坏 GAN 对抗）
@@ -163,17 +164,40 @@ workstream_count: {N}
 - 每个 workstream 必须**独立可测试**，不能依赖另一个未完成的 workstream
 - DoD 条目格式严格：`- [ ] [BEHAVIOR]` 或 `- [ ] [ARTIFACT]`，Test 字段必填
 
-### Step 3: 建分支 + push + 回写 Brain
+### Step 3: 建分支 + 输出 contract-dod-ws{N}.md + push + 回写 Brain
 
-**重要**：在独立 cp-* 分支上 push，不能推 main：
+**重要**：在独立 cp-* 分支上 push，不能推 main。
 
 ```bash
 TASK_ID_SHORT=$(echo "${TASK_ID}" | cut -c1-8)
 PROPOSE_BRANCH="cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID_SHORT}"
 git checkout -b "${PROPOSE_BRANCH}" 2>/dev/null || git checkout "${PROPOSE_BRANCH}"
 mkdir -p "${SPRINT_DIR}"
-git add "${SPRINT_DIR}/contract-draft.md"
-git commit -m "feat(contract): round-${PROPOSE_ROUND} draft"
+```
+
+**为每个 workstream 单独输出 contract-dod-ws{N}.md**（DoD 唯一来源，Generator 原样复制，CI 校验用）：
+
+```bash
+# 例：workstream_count=2，生成 contract-dod-ws1.md 和 contract-dod-ws2.md
+# 每个文件只包含该 workstream 的 DoD 条目，格式严格：
+# - [ ] [BEHAVIOR/ARTIFACT] <描述>
+#   Test: <可执行命令>
+
+cat > "contract-dod-ws1.md" << 'DODEOF'
+# Contract DoD — Workstream 1: {标题}
+
+- [ ] [ARTIFACT] {DoD 条目 1 描述}
+  Test: {可直接执行的命令}
+- [ ] [BEHAVIOR] {DoD 条目 2 描述}
+  Test: {可直接执行的命令}
+DODEOF
+
+# 对每个 workstream 重复上述操作
+```
+
+```bash
+git add "${SPRINT_DIR}/contract-draft.md" contract-dod-ws*.md
+git commit -m "feat(contract): round-${PROPOSE_ROUND} draft + DoD files"
 git push origin "${PROPOSE_BRANCH}"
 ```
 

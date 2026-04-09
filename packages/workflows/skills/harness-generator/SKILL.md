@@ -1,13 +1,14 @@
 ---
 id: harness-generator-skill
 description: |
-  Harness Generator — Harness v4.0 严格合同执行者。
+  Harness Generator — Harness v4.2 严格合同执行者。
   读取 GAN 对抗已批准的 sprint-contract.md，严格按合同实现，不越界。
-  合同外的任何东西一个字不加。完成后创建 PR（供 CI + Evaluator 验证）。
-version: 4.1.0
+  DoD 从 contract-dod-ws{N}.md 原样复制（不得修改），CI 会校验一致性。
+version: 4.2.0
 created: 2026-04-08
 updated: 2026-04-09
 changelog:
+  - 4.2.0: DoD 来源改为 contract-dod-ws{N}.md（独立文件），DoD.md 加 contract_branch header 供 CI 完整性校验
   - 4.1.0: 按 workstream_index 定向实现；DoD 直接从合同复制（禁止自起草）
   - 4.0.1: 禁止 find /Users 广泛搜索，只能在当前目录(.)内搜索
   - 4.0.0: Harness v4.0 Generator（严格合同执行者，输出 pr_url 供 harness_ci_watch 使用）
@@ -84,23 +85,38 @@ BRANCH="cp-$(date +%m%d%H%M)-harness-$(basename $SPRINT_DIR)${WS_SUFFIX}"
 git checkout -b "$BRANCH"
 ```
 
-### Step 3: 写 DoD.md（先于写代码）
+### Step 3: 写 DoD.md（先于写代码，从 contract-dod-ws{N}.md 原样复制）
 
-**从合同中当前 workstream 的 DoD 区块原样复制 DoD 条目到 DoD.md**：
+**⚠️ DoD 必须从 contract branch 的 `contract-dod-ws{WORKSTREAM_INDEX}.md` 原样复制，禁止自行起草或修改任何条目。CI 会检查一致性。**
 
 ```bash
-# DoD.md 内容来自合同，不自己起草
-cat > DoD.md << 'DODEOF'
-# DoD: Workstream {WORKSTREAM_INDEX}/{WORKSTREAM_COUNT} — {标题}
+# 从 contract branch 读取该 workstream 的 DoD 文件
+CONTRACT_BRANCH="${CONTRACT_BRANCH}"  # 由 Brain payload 注入
+WS_IDX="${WORKSTREAM_INDEX:-1}"
 
-## {Workstream 标题}
+git fetch origin "${CONTRACT_BRANCH}" 2>/dev/null || true
+CONTRACT_DOD=$(git show "origin/${CONTRACT_BRANCH}:contract-dod-ws${WS_IDX}.md" 2>/dev/null)
 
-- [ ] [ARTIFACT] {从合同复制的 DoD 条目 1}
-  Test: {从合同复制的 Test 命令 1}
-- [ ] [BEHAVIOR] {从合同复制的 DoD 条目 2}
-  Test: {从合同复制的 Test 命令 2}
+if [ -z "$CONTRACT_DOD" ]; then
+  # fallback：从合同草案手动提取（contract-dod 文件不存在的降级处理）
+  echo "⚠️  contract-dod-ws${WS_IDX}.md 不存在，从 contract-draft.md 提取"
+  CONTRACT_DOD=$(git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-draft.md" 2>/dev/null | \
+    awk "/### Workstream ${WS_IDX}:/,/### Workstream [0-9]+:/" | \
+    grep -E "^- \[[ x]\] \[(BEHAVIOR|ARTIFACT)\]" || echo "")
+fi
+
+# 写入 DoD.md（原样复制，加 contract 来源 header 供 CI 校验）
+cat > DoD.md << DODEOF
+# DoD: Workstream ${WS_IDX}/${WORKSTREAM_COUNT:-1}
+
+contract_branch: ${CONTRACT_BRANCH}
+workstream_index: ${WS_IDX}
+
+${CONTRACT_DOD}
 DODEOF
 ```
+
+**禁止修改从合同复制的任何 DoD 条目文字**（只允许把 `- [ ]` 改为 `- [x]` 表示已验证通过）。
 
 ### Step 4: 逐 DoD 条目实现
 
