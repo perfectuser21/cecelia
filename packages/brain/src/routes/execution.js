@@ -1883,7 +1883,28 @@ ${resultStr.substring(0, 2000)}
             } catch {}
           }
           if (!prUrl) {
-            throw new Error(`[harness_ci_watch] pr_url is required but missing from harness_generate result (task_id=${task_id})`);
+            // pr_url 缺失：Generator session 崩溃或输出解析失败，创建 harness_fix 重试（自愈）
+            console.error(`[execution-callback] harness_generate ${task_id} pr_url 缺失，创建 harness_fix 重试`);
+            await createHarnessTask({
+              title: `[Fix] Generator 结果丢失 — ${plannerShort}`,
+              description: `Generator 完成但 pr_url 缺失（session 崩溃或输出解析失败），重新生成 PR。\n原始 harness_generate task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_fix',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                dev_task_id: task_id,
+                planner_task_id: harnessPayload.planner_task_id,
+                eval_round: 1,
+                ci_fail_context: `[PR_URL_MISSING] harness_generate ${task_id} 完成但 pr_url 丢失，需重新创建 PR`,
+                ci_fail_type: 'pr_url_missing',
+                harness_mode: true,
+              },
+            });
+            console.log(`[execution-callback] harness: harness_generate ${task_id} pr_url 缺失 → harness_fix 已创建`);
+            return; // 不继续创建 ci_watch
           }
           await createHarnessTask({
             title: `[CI Watch] ${plannerShort}`,
