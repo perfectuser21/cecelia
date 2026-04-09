@@ -78,6 +78,7 @@ jobs:
           MAX_RETRY=3
           RETRY_COUNT=0
           API_ERROR=false
+          RATE_LIMITED=false
           REVIEW_CONTENT=""
 
           while [[ $RETRY_COUNT -lt $MAX_RETRY ]]; do
@@ -107,20 +108,36 @@ jobs:
 
             if [[ -n "$REVIEW_CONTENT" ]]; then
               echo "API 调用成功（第 ${RETRY_COUNT} 次）"
+              RATE_LIMITED=false
               break
+            fi
+
+            # 检测 429 限速错误
+            ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // 0' 2>/dev/null || echo "0")
+            if [[ "$ERROR_CODE" == "429" ]]; then
+              echo "⚠️  OpenRouter 限速（429），第 ${RETRY_COUNT} 次请求被限流"
+              RATE_LIMITED=true
+            else
+              RATE_LIMITED=false
             fi
 
             echo "API 调用失败（第 ${RETRY_COUNT} 次），响应：$(echo "$RESPONSE" | head -c 200)"
             if [[ $RETRY_COUNT -lt $MAX_RETRY ]]; then
-              echo "等待 5 秒后重试..."
-              sleep 5
+              echo "等待 10 秒后重试..."
+              sleep 10
             fi
           done
 
-          # 所有重试耗尽，仍无有效内容 → fail-closed
+          # 所有重试耗尽，仍无有效内容
           if [[ -z "$REVIEW_CONTENT" ]]; then
+            if [[ "$RATE_LIMITED" == "true" ]]; then
+              # 429 限速是外部 API 问题，不应阻止 PR 合并
+              echo "⚠️  OpenRouter API 限速（所有 ${MAX_RETRY} 次均返回 429），跳过 AI 审查"
+              echo "rate_limited_skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             API_ERROR=true
-            echo "❌ OpenRouter API 调用全部失败（已重试 ${MAX_RETRY} 次），阻止 PR 合并" >&2
+            echo "❌ OpenRouter API 调用全部失败（非限速，已重试 ${MAX_RETRY} 次），阻止 PR 合并" >&2
             exit 1
           fi
 
@@ -145,6 +162,7 @@ jobs:
           echo "评论发布失败（可能权限不足），继续执行严重问题检测"
 
       - name: 检测严重问题（🔴 则 job 失败）
+        if: steps.ai-review.outputs.rate_limited_skip != 'true'
         run: |
           echo "正在检测审查结果中是否包含🔴严重问题..."
           cat /tmp/review-result.txt | node scripts/devgate/detect-review-issues.js

@@ -160,6 +160,7 @@ jobs:
           fi
 
       - name: 等待 Staging 部署完成
+        id: wait_staging
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
         run: |
@@ -178,18 +179,22 @@ jobs:
             if [ "$STATUS" = "success" ]; then
               ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
               echo "✅ Staging deploy confirmed success (${ELAPSED_MS}ms)"
+              echo "staging_ran=true" >> "$GITHUB_OUTPUT"
               exit 0
             elif echo "$STATUS" | grep -q "^skipped_"; then
               SKIP_REASON=$(echo "$STATUS_JSON" | jq -r '.skip_reason // "unknown"' 2>/dev/null || echo "unknown")
-              echo "⚠️  Staging 跳过 (${SKIP_REASON}) — production 部署不受阻断"
+              echo "⚠️  Staging 跳过 (${SKIP_REASON}) — production 部署不受阻断，跳过 smoke test"
+              echo "staging_ran=false" >> "$GITHUB_OUTPUT"
               exit 0
             elif [ "$STATUS" = "failed" ]; then
               ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
               echo "::error::Staging deploy failed: $ERR"
               echo "::error::Production deploy 已阻止，请检查 staging 日志后重新触发"
+              echo "staging_ran=false" >> "$GITHUB_OUTPUT"
               exit 1
             elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
               echo "::warning::Staging deploy status idle after ${ELAPSED}s — 可能已跳过"
+              echo "staging_ran=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
@@ -198,9 +203,11 @@ jobs:
           done
 
           echo "::error::Staging deploy poll 超时 (${MAX_WAIT}s)，阻止 production deploy"
+          echo "staging_ran=false" >> "$GITHUB_OUTPUT"
           exit 1
 
       - name: Staging Smoke Test
+        if: steps.wait_staging.outputs.staging_ran == 'true'
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
         run: |
