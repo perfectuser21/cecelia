@@ -1,21 +1,31 @@
-# Task Card: fix execution-callback verdict 写入 + ci_watch payload 校验
+# Task Card: Harness Pipeline 稳定性修复 — 4 个 Bug
 
-## Task ID
-9a7e1e0a-3d52-46e5-b6e8-830f5fb47bb5
+## 任务目标
 
-## 问题
-1. execution-callback 处理 harness 任务完成后，从未执行 `UPDATE tasks SET result` — verdict 只用于链路决策，不持久化到 DB
-2. createHarnessTask 创建 harness_ci_watch 时，pr_url 可能为 null 但没有任何 warning
+修复阻塞 Harness v4.0 自主运行的 4 个 Bug，使 pipeline 能完整跑通无需人工干预。
 
-## 修复
-### Fix 1: verdict 写入 tasks.result
-- harness_contract_propose: `{"verdict":"PROPOSED","propose_round":N}`
-- harness_contract_review: `{"verdict":"APPROVED"/"REVISION","review_branch":"..."}`
-- harness_evaluate: `{"verdict":"PASS"/"FAIL","eval_round":N}`
+## 背景
 
-### Fix 2: ci_watch pr_url warning
-- harness_generate → ci_watch: pr_url null 时打印 warning 但允许创建
-- harness_fix → ci_watch: 同上
+E2E v4 测试显示：
+1. `harness-watcher.js` CI 失败路径 SQL 类型推断错误 → watcher crash
+2. `tick.js` 超时重入队错误计入熔断器失败次数 → 熔断误开
+3. `execution.js` 创建 `harness_ci_watch` 任务缺少 `description` 字段 → pre-flight 拒绝
+4. `account-usage-scheduling.test.js` H2/H3 因 H1 设置的 spending cap 泄漏导致测试失败 → brain-unit CI 失败
 
-## 文件
-- packages/brain/src/routes/execution.js
+## DoD
+
+- [x] **[ARTIFACT]** `harness-watcher.js` 中 SQL 参数改为 `$2::text` 和 `$3::int`
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');if(!c.includes('\$2::text'))process.exit(1);console.log('OK')"`
+
+- [x] **[ARTIFACT]** `tick.js` 超时重入队路径不再调用 `recordFailure('cecelia-run')`
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(c.includes('requeue') && c.includes('recordFailure'))process.exit(1);console.log('OK')"`
+
+- [x] **[ARTIFACT]** `execution.js` 两处 `harness_ci_watch` 创建路径（generate/fix 完成后）均包含非空 `description`（已存在，无需修改）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('等待 CI 通过后创建 Evaluator'))process.exit(1);console.log('OK')"`
+
+- [x] **[BEHAVIOR]** `account-usage-scheduling.test.js` H2 和 H3 通过（无 spending cap 状态泄漏）
+  - Test: `tests/brain-unit`
+
+## 成功标准
+
+`brain-unit` CI 全部通过；harness pipeline 可在 CI 失败路径下正常路由；超时重入队不再触发熔断器。

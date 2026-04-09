@@ -147,7 +147,7 @@ export async function processHarnessCiWatchers(pool) {
         await pool.query(
           `UPDATE tasks SET status = 'failed', completed_at = NOW(),
             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
-              'ci_conclusion', 'failed', 'ci_fail_type', $2, 'poll_count', $3
+              'ci_conclusion', 'failed', 'ci_fail_type', $2::text, 'poll_count', $3::int
             )
            WHERE id = $1`,
           [task.id, failType, pollCount]
