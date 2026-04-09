@@ -3,10 +3,11 @@ id: harness-contract-reviewer-skill
 description: |
   Harness Contract Reviewer — Harness v4.1 GAN Layer 2b：
   Evaluator 角色，对抗性审查合同草案，重点挑战验证命令是否足够严格、能否检测出错误实现。
-version: 4.1.0
+version: 4.2.0
 created: 2026-04-08
 updated: 2026-04-08
 changelog:
+  - 4.2.0: 新增 Workstream 审查维度（边界清晰/DoD可执行/大小合理）+ APPROVED 时输出 workstream_count
   - 4.1.0: 修正 v4.0 错误 — 审查重点恢复为挑战验证命令严格性（而非审查"清晰可测性/歧义"）
   - 4.0.0: 错误版本 — 审查维度改为"行为描述是否清晰、硬阈值是否量化"，移除了对命令严格性的挑战
   - 3.0.0: Harness v4.0 Contract Reviewer（GAN Layer 2b，独立 skill）
@@ -87,6 +88,11 @@ git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" 2>/dev/null 
 - 命令广谱：根据任务类型使用了合适的工具（不全是 curl）
 - PRD 里的功能点全部有对应命令
 - Evaluator 能无脑执行这些命令并得到明确的 PASS/FAIL 信号
+- **合同包含 ## Workstreams 区块**，且每个 workstream：
+  - 边界清晰、与其他 workstream 无交集
+  - 含 `- [ ] [BEHAVIOR]` 或 `- [ ] [ARTIFACT]` 格式的 DoD 条目
+  - DoD Test 字段命令可直接执行（无占位符）
+  - 大小估计合理（S/M/L）
 
 **REVISION 条件**（任一满足）：
 - 有验证命令含占位符（如 `{task_id}`，无法直接执行）
@@ -95,6 +101,9 @@ git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" 2>/dev/null 
 - 有 PRD 功能点没有对应命令
 - 全是 curl，没有 psql/playwright/npm test 等广谱工具
 - 命令 exit code 语义不清晰
+- **缺少 ## Workstreams 区块**
+- Workstream 边界模糊（两个 workstream 改同一文件的同一部分）
+- DoD 条目格式不对（缺 [BEHAVIOR]/[ARTIFACT] 标签，或 Test 字段缺失）
 
 ### Step 4a: APPROVED — 写最终合同
 
@@ -165,7 +174,7 @@ git push origin "${REVIEW_BRANCH}"
 
 APPROVED：
 ```
-{"verdict": "APPROVED", "contract_path": "${SPRINT_DIR}/sprint-contract.md", "review_branch": "${REVIEW_BRANCH}", "contract_branch": "${CONTRACT_BRANCH}"}
+{"verdict": "APPROVED", "contract_path": "${SPRINT_DIR}/sprint-contract.md", "review_branch": "${REVIEW_BRANCH}", "contract_branch": "${CONTRACT_BRANCH}", "workstream_count": N}
 ```
 
 REVISION：
