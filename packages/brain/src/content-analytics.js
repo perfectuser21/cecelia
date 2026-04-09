@@ -180,7 +180,9 @@ export async function getTopContentByPlatform(pool, { platform, since, limit = 1
   if (platform) params.push(platform);
 
   const { rows } = await pool.query(
-    `SELECT platform, title, content_id, views, likes, comments, shares, collected_at
+    `SELECT id, platform, title, content_id,
+            views::int, likes::int, comments::int, shares::int,
+            collected_at
      FROM content_analytics
      WHERE collected_at >= $1
        ${platformClause}

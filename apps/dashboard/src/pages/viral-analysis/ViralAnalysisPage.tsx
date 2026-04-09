@@ -163,9 +163,8 @@ function PlatformCard({ p }: { p: PlatformSummary }) {
 
 function ContentRow({ item, rank }: { item: ContentItem; rank: number }) {
   const [hover, setHover] = useState(false);
-  const engRate = item.views > 0
-    ? ((item.likes + item.comments + item.shares) / item.views * 1000).toFixed(1)
-    : '0';
+  const v = Number(item.views), l = Number(item.likes), c = Number(item.comments), sh = Number(item.shares);
+  const engRate = v > 0 ? ((l + c + sh) / v * 1000).toFixed(1) : '0';
   return (
     <div style={s.contentRow(hover)} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div style={s.rank(rank)}>{rank}</div>
@@ -175,9 +174,9 @@ function ContentRow({ item, rank }: { item: ContentItem; rank: number }) {
           <span style={s.contentTitle}>{item.title || item.content_id || '(无标题)'}</span>
         </div>
         <div style={s.metrics}>
-          <span>👁 <span style={s.metricBadge}>{fmtNum(item.views)}</span></span>
-          <span>❤️ <span style={s.metricBadge}>{fmtNum(item.likes)}</span></span>
-          <span>💬 <span style={s.metricBadge}>{fmtNum(item.comments)}</span></span>
+          <span>👁 <span style={s.metricBadge}>{fmtNum(v)}</span></span>
+          <span>❤️ <span style={s.metricBadge}>{fmtNum(l)}</span></span>
+          <span>💬 <span style={s.metricBadge}>{fmtNum(c)}</span></span>
           <span>🔗 <span style={s.metricBadge}>{engRate}‰</span></span>
           <span style={{ marginLeft: 'auto', color: '#484f58' }}>{fmtTime(item.collected_at)}</span>
         </div>
@@ -287,7 +286,7 @@ export default function ViralAnalysisPage() {
             ) : (
               <div style={s.contentList}>
                 {content.map((item, i) => (
-                  <ContentRow key={item.id} item={item} rank={i + 1} />
+                  <ContentRow key={item.id ?? item.content_id ?? String(i)} item={item} rank={i + 1} />
                 ))}
               </div>
             )}

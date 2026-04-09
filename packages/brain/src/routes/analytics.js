@@ -1590,8 +1590,12 @@ router.post('/analytics/content/bulk', async (req, res) => {
  */
 router.get('/analytics/content', async (req, res) => {
   try {
-    const { platform, limit, since } = req.query;
-    const sinceDate = since ? new Date(since) : undefined;
+    const { platform, limit, since, days } = req.query;
+    const sinceDate = since
+      ? new Date(since)
+      : days
+      ? new Date(Date.now() - parseInt(days) * 24 * 60 * 60 * 1000)
+      : undefined;
     const items = await getTopContentByPlatform(pool, {
       platform,
       since: sinceDate,
