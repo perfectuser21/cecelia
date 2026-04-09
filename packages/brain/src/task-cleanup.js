@@ -32,7 +32,11 @@ const PROTECTED_TASK_TYPES = [
   'initiative_verify', // Initiative verification tasks - must not be auto-canceled
   // Harness v2.0 pipeline tasks — must never be auto-canceled (sprint loop integrity)
   'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
+  // Harness v4.0 pipeline tasks — must never be auto-canceled
+  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
+  'harness_generate', 'harness_evaluate', 'harness_fix',
+  'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
 ];
 
 // Recurring task title patterns (fallback detection when task_type not set)
