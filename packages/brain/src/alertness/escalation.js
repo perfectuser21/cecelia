@@ -349,7 +349,10 @@ async function cancelPendingTasks(keepCritical) {
           'content-copy-review', 'content-generate', 'content-image-review',
           'content-export', 'content_publish',
           'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
+          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
+          'harness_planner', 'harness_contract_propose', 'harness_contract_review',
+          'harness_generate', 'harness_evaluate', 'harness_fix',
+          'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
         )
     `;
 
