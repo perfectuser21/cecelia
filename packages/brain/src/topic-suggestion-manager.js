@@ -133,7 +133,7 @@ export async function approveSuggestion(dbPool, suggestionId, reviewer = 'alex')
  * @param {string} [reviewer]
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
-export async function rejectSuggestion(dbPool, suggestionId, reviewer = 'alex') {
+export async function rejectSuggestion(dbPool, suggestionId, reviewer = 'alex', reason = null) {
   const suggestion = await getSuggestionById(dbPool, suggestionId);
   if (!suggestion) return { ok: false, error: '选题不存在' };
   if (suggestion.status !== 'pending') {
@@ -142,9 +142,10 @@ export async function rejectSuggestion(dbPool, suggestionId, reviewer = 'alex') 
 
   await dbPool.query(
     `UPDATE topic_suggestions
-     SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $1, updated_at = NOW()
-     WHERE id = $2`,
-    [reviewer, suggestionId]
+     SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $1,
+         rejection_reason = $2, updated_at = NOW()
+     WHERE id = $3`,
+    [reviewer, reason || null, suggestionId]
   );
 
   return { ok: true };
