@@ -61,9 +61,15 @@ import { proactiveTokenCheck } from './account-usage.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
+// tickLog call counter for periodic summary
+let _tickLogCallCount = 0;
 function tickLog(...args) {
   const ts = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   _tickWrite(`[${ts}]`, ...args);
+  _tickLogCallCount++;
+  if (_tickLogCallCount % 100 === 0) {
+    _tickWrite(`[tick-summary] ${_tickLogCallCount} ticks completed`);
+  }
 }
 
 // Tick configuration
