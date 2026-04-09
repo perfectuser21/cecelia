@@ -121,6 +121,7 @@ fi
 BRANCH_NAME="${_lb:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")}"
 
 # Harness 模式标识
+# Harness 完成条件：step_2_code=done + pr_url 已创建（委托 devloop_check 0.5 通道判断）
 HARNESS_MODE_FLAG=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
 if [[ "$HARNESS_MODE_FLAG" == "true" ]]; then
     echo "  [Stop Hook] /dev harness 模式 — 分支: $BRANCH_NAME（只检查代码完成+PR创建）" >&2
