@@ -8,7 +8,7 @@ version: 4.0.0
 created: 2026-04-08
 updated: 2026-04-08
 changelog:
-  - 4.0.0: Harness v4.0 — 改名 harness-generator，输出 pr_url 供 harness_ci_watch 使用
+  - 4.0.0: Harness v4.0 Generator（严格合同执行者，输出 pr_url 供 harness_ci_watch 使用）
   - 3.0.0: sprint-generator v3.1 版本
 ---
 
