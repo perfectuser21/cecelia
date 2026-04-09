@@ -1,0 +1,12 @@
+dev
+branch: cp-04090047-c1702349-00c6-40bb-80ba-89c754
+task_id: c1702349-00c6-40bb-80ba-89c7546754aa
+task_card: .task-cp-04090047-c1702349-00c6-40bb-80ba-89c754.md
+miniapp_branch: cp-04090047-payment-wx-request-payment
+miniapp_dir: /Users/administrator/perfect21/zenithjoy-miniapp
+started: 2026-04-09T15:49:34+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: pending
+step_4_ship: pending
