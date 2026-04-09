@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v4.3 GAN Layer 2a：
   Generator 角色，读取 PRD，提出合同草案（功能范围 + Workstreams 拆分 + DoD条目 + 验证命令）。
   合同必须包含 ## Workstreams 区块，并为每个 workstream 单独输出 contract-dod-ws{N}.md 文件（DoD 单一来源）。
-version: 4.3.0
+version: 4.4.0
 created: 2026-04-08
 updated: 2026-04-09
 changelog:
+  - 4.4.0: contract-dod-ws{N}.md 写入路径改为 ${SPRINT_DIR}/contract-dod-ws{N}.md（防止多次运行时根目录文件覆盖）
   - 4.3.0: 每个 workstream 输出独立 contract-dod-ws{N}.md 文件并 push 到 propose branch，供 Generator 原样复制 + CI 完整性校验
   - 4.2.0: 合同新增 ## Workstreams 区块 — 定义拆分数量+DoD条目(- [ ] [BEHAVIOR/ARTIFACT])，供 Generator 直接复制使用
   - 4.1.0: 修正 v4.0 错误 — 合同格式恢复验证命令代码块（广谱：curl/npm/psql/playwright），GAN 对抗核心是命令严格性
@@ -183,7 +184,7 @@ mkdir -p "${SPRINT_DIR}"
 # - [ ] [BEHAVIOR/ARTIFACT] <描述>
 #   Test: <可执行命令>
 
-cat > "contract-dod-ws1.md" << 'DODEOF'
+cat > "${SPRINT_DIR}/contract-dod-ws1.md" << 'DODEOF'
 # Contract DoD — Workstream 1: {标题}
 
 - [ ] [ARTIFACT] {DoD 条目 1 描述}
@@ -196,7 +197,7 @@ DODEOF
 ```
 
 ```bash
-git add "${SPRINT_DIR}/contract-draft.md" contract-dod-ws*.md
+git add "${SPRINT_DIR}/contract-draft.md" "${SPRINT_DIR}/contract-dod-ws"*.md
 git commit -m "feat(contract): round-${PROPOSE_ROUND} draft + DoD files"
 git push origin "${PROPOSE_BRANCH}"
 ```
