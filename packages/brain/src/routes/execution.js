@@ -1750,6 +1750,19 @@ ${resultStr.substring(0, 2000)}
             console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
             const reviewType = harnessType === 'harness_contract_propose' ? 'harness_contract_review' : 'sprint_contract_review';
+            // 从 Proposer 的 result 提取 propose_branch（Proposer push 合同草案的分支）
+            const proposeBranch = (() => {
+              const raw = result != null && typeof result === 'object'
+                ? (result.propose_branch || (typeof result.result === 'string'
+                    ? (() => { try { return JSON.parse(result.result).propose_branch; } catch { return null; } })()
+                    : null))
+                : (typeof result === 'string'
+                    ? (() => { try { return JSON.parse(result).propose_branch; } catch {
+                        const m = result.match(/"propose_branch"\s*:\s*"([^"]+)"/); return m ? m[1] : null;
+                      } })()
+                    : null);
+              return raw || null;
+            })();
             await createHarnessTask({
               title: `[Contract Review] R${proposeRound} — ${plannerShort}`,
               description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
@@ -1763,17 +1776,30 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: harnessPayload.planner_task_id,
                 planner_branch: harnessPayload.planner_branch,
                 propose_task_id: task_id,
+                propose_branch: proposeBranch,   // Reviewer 读 contract-draft 所需
                 propose_round: proposeRound,
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: ${harnessType} ${task_id} → ${reviewType} created`);
+            console.log(`[execution-callback] harness: ${harnessType} ${task_id} → ${reviewType} created (propose_branch=${proposeBranch})`);
           }
-          // 写入 verdict 到 tasks.result
+          // 写入 verdict + propose_branch 到 tasks.result（供后续轮读取）
           if (proposeVerdict) {
+            const proposeBranchForResult = (() => {
+              const raw = result != null && typeof result === 'object'
+                ? (result.propose_branch || (typeof result.result === 'string'
+                    ? (() => { try { return JSON.parse(result.result).propose_branch; } catch { return null; } })()
+                    : null))
+                : (typeof result === 'string'
+                    ? (() => { try { return JSON.parse(result).propose_branch; } catch {
+                        const m = result.match(/"propose_branch"\s*:\s*"([^"]+)"/); return m ? m[1] : null;
+                      } })()
+                    : null);
+              return raw || null;
+            })();
             await pool.query(
               'UPDATE tasks SET result = $1 WHERE id = $2',
-              [JSON.stringify({ verdict: proposeVerdict, propose_round: proposeRound }), task_id]
+              [JSON.stringify({ verdict: proposeVerdict, propose_round: proposeRound, propose_branch: proposeBranchForResult }), task_id]
             );
           }
         }
@@ -1793,7 +1819,29 @@ ${resultStr.substring(0, 2000)}
               reviewVerdict = 'APPROVED';
             }
           }
-          console.log(`[execution-callback] harness: ${harnessType} verdict=${reviewVerdict}`);
+          // 从 Reviewer result 提取 review_branch（Reviewer push 反馈的分支）
+          const reviewBranch = (() => {
+            const raw = result != null && typeof result === 'object'
+              ? (result.review_branch || (typeof result.result === 'string'
+                  ? (() => { try { return JSON.parse(result.result).review_branch; } catch { return null; } })()
+                  : null))
+              : (typeof result === 'string'
+                  ? (() => { try { return JSON.parse(result).review_branch; } catch {
+                      const m = result.match(/"review_branch"\s*:\s*"([^"]+)"/); return m ? m[1] : null;
+                    } })()
+                  : null);
+            return raw || null;
+          })();
+          // 从 Reviewer result 提取 contract_branch（APPROVED 时 Reviewer 写最终合同的分支）
+          const contractBranch = (() => {
+            if (result != null && typeof result === 'object') {
+              return result.contract_branch || (typeof result.result === 'string'
+                ? (() => { try { return JSON.parse(result.result).contract_branch; } catch { return null; } })()
+                : null);
+            }
+            return null;
+          })();
+          console.log(`[execution-callback] harness: ${harnessType} verdict=${reviewVerdict} review_branch=${reviewBranch}`);
           await persistHarnessVerdict(task_id, reviewVerdict, { task_type: harnessType });
 
           if (reviewVerdict === 'APPROVED') {
@@ -1810,12 +1858,13 @@ ${resultStr.substring(0, 2000)}
                 sprint_dir: harnessPayload.sprint_dir,
                 planner_task_id: harnessPayload.planner_task_id,
                 planner_branch: harnessPayload.planner_branch,
+                contract_branch: contractBranch,  // Generator 读最终合同所需
                 harness_mode: true
               }
             });
             console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} created`);
           } else {
-            // REVISION：继续 GAN 对抗
+            // REVISION：继续 GAN 对抗，必须传递 planner_branch 和 review_branch
             const nextRound = (harnessPayload.propose_round || 1) + 1;
             const proposeType = harnessType === 'harness_contract_review' ? 'harness_contract_propose' : 'sprint_contract_propose';
             await createHarnessTask({
@@ -1829,17 +1878,19 @@ ${resultStr.substring(0, 2000)}
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
                 planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch,   // 必须传递，Proposer 读 PRD 所需
                 propose_round: nextRound,
                 review_feedback_task_id: task_id,
+                review_branch: reviewBranch,    // Proposer 读反馈所需
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: ${harnessType} REVISION → ${proposeType} R${nextRound}`);
+            console.log(`[execution-callback] harness: ${harnessType} REVISION → ${proposeType} R${nextRound} (review_branch=${reviewBranch})`);
           }
-          // 写入 verdict 到 tasks.result
+          // 写入 verdict + review_branch 到 tasks.result
           await pool.query(
             'UPDATE tasks SET result = $1 WHERE id = $2',
-            [JSON.stringify({ verdict: reviewVerdict, review_branch: harnessPayload.planner_branch || null }), task_id]
+            [JSON.stringify({ verdict: reviewVerdict, review_branch: reviewBranch, contract_branch: contractBranch || null }), task_id]
           );
         }
 
