@@ -7,10 +7,11 @@ version: 4.0.0
 created: 2026-04-08
 updated: 2026-04-08
 changelog:
-  - 4.0.0: 改名 harness-report，新增 CI/Deploy watch 状态
+  - 4.0.0: Harness v4.0 Report（独立 skill，新增 CI/Deploy watch 状态）
 ---
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
+> **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
 # /harness-report — Harness v4.0 最终报告
 

@@ -10,10 +10,11 @@ updated: 2026-04-08
 changelog:
   - 4.1.0: 修正 v4.0 错误 — 合同格式恢复验证命令代码块（广谱：curl/npm/psql/playwright），GAN 对抗核心是命令严格性
   - 4.0.0: 错误版本 — 合同只有行为描述+硬阈值，移除了验证命令（破坏 GAN 对抗）
-  - 3.0.0: 改名 harness-contract-proposer（原 sprint-contract-proposer）
+  - 3.0.0: Harness v4.0 Contract Proposer（GAN Layer 2a，独立 skill）
 ---
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
+> **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
 # /harness-contract-proposer — Harness v4.1 Contract Proposer
 
