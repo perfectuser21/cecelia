@@ -426,14 +426,14 @@ jobs:
 
           # 读取 contract DoD 文件（优先从 SPRINT_DIR/，兼容旧的根目录格式）
           DOD_PATH="${SPRINT_DIR:+${SPRINT_DIR}/}contract-dod-ws${WS_INDEX}.md"
-          CONTRACT_DOD=$(git show "origin/${CONTRACT_BRANCH}:${DOD_PATH}" 2>/dev/null) || {
+          git show "origin/${CONTRACT_BRANCH}:${DOD_PATH}" > /tmp/contract-dod.md 2>/dev/null || {
             echo "⚠️  ${DOD_PATH} 不存在于 $CONTRACT_BRANCH，跳过校验"
             exit 0
           }
 
           # 对比 DoD 条目（忽略 [ ] vs [x] 差异，只比较条目文本）
           node -e "
-            const contractText = \`${CONTRACT_DOD}\`;
+            const contractText = require('fs').readFileSync('/tmp/contract-dod.md', 'utf8');
             const genText = require('fs').readFileSync('DoD.md', 'utf8');
 
             const normalize = (text) => {
