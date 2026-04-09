@@ -8,6 +8,13 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+// @types/react@19 与 recharts@2 类型兼容性补丁
+const RC = ResponsiveContainer as any;
+const LC = LineChart as any;
+const XA = XAxis as any;
+const YA = YAxis as any;
+const TT = Tooltip as any;
+const LN = Line as any;
 
 // ── 数据类型 ──────────────────────────────────────────────────────────────────
 
@@ -192,23 +199,23 @@ const TrendChart: React.FC<TrendChartProps> = ({ data }) => {
   return (
     <div style={cardStyle}>
       <div style={sectionLabelStyle}>过去 7 天 PR 产出趋势</div>
-      <ResponsiveContainer width="100%" height={100}>
-        <LineChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+      <RC width="100%" height={100}>
+        <LC data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
-          <XAxis
+          <XA
             dataKey="date"
             tick={{ fontSize: 9, fill: '#484f58' }}
             tickLine={false}
             axisLine={{ stroke: '#21262d' }}
           />
-          <YAxis
+          <YA
             tick={{ fontSize: 9, fill: '#484f58' }}
             tickLine={false}
             axisLine={false}
             domain={[0, Math.ceil(maxCount * 1.2) || 5]}
             allowDecimals={false}
           />
-          <Tooltip
+          <TT
             contentStyle={{
               background: '#0d1117',
               border: '1px solid #21262d',
@@ -219,7 +226,7 @@ const TrendChart: React.FC<TrendChartProps> = ({ data }) => {
             formatter={(value: number) => [`${value} 个 PR`, '完成']}
             labelStyle={{ color: '#8b949e', marginBottom: 2 }}
           />
-          <Line
+          <LN
             type="monotone"
             dataKey="count"
             stroke="#58a6ff"
@@ -227,8 +234,8 @@ const TrendChart: React.FC<TrendChartProps> = ({ data }) => {
             dot={{ fill: '#58a6ff', r: 3, strokeWidth: 0 }}
             activeDot={{ r: 4, fill: '#58a6ff', strokeWidth: 0 }}
           />
-        </LineChart>
-      </ResponsiveContainer>
+        </LC>
+      </RC>
     </div>
   );
 };

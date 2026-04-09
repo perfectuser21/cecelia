@@ -343,6 +343,7 @@ export function CeceliaProvider({ children, onNavigate }: CeceliaProviderProps) 
       registerPage,
       unregisterPage,
       navigateTo,
+      showNavigationToast,
       frontendTools,
       executeFrontendTool: async () => '', // Placeholder
       getPageContext: () => '', // Will be set below

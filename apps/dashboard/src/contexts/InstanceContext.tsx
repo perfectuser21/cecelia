@@ -37,7 +37,7 @@ export async function loadCoreConfig(): Promise<CoreDynamicConfig | null> {
 
   try {
     const { buildCoreConfig } = await import('@features/core');
-    cachedCoreConfig = await buildCoreConfig();
+    cachedCoreConfig = await buildCoreConfig() as any;
     return cachedCoreConfig;
   } catch (error) {
     console.warn('Core features not available:', error);

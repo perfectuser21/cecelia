@@ -8,6 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { act } from 'react';
 import { MemoryRouter } from 'react-router-dom';
+// @types/react@19 与 react-router-dom@6 类型兼容性补丁
+const MemoryRouterComp = MemoryRouter as any;
 import LiveMonitorPage from './LiveMonitorPage';
 
 // Mock react-router-dom 避免 React 18/19 双实例冲突
@@ -40,9 +42,9 @@ beforeEach(() => {
 
 function renderWithRouter() {
   return render(
-    <MemoryRouter>
+    <MemoryRouterComp>
       <LiveMonitorPage />
-    </MemoryRouter>
+    </MemoryRouterComp>
   );
 }
 

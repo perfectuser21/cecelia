@@ -7,6 +7,9 @@
 import type { ComponentType} from 'react';
 import { Suspense, lazy, useMemo } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+// @types/react@19 与 react-router-dom@6 类型兼容性补丁
+const RouteComp = Route as any;
+const RoutesComp = Routes as any;
 import { useAuth } from '../contexts/AuthContext';
 import { useInstance } from '../contexts/InstanceContext';
 import PrivateRoute from './PrivateRoute';
@@ -83,7 +86,7 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
     // 重定向路由
     if (route.redirect) {
       return (
-        <Route
+        <RouteComp
           key={route.path}
           path={route.path}
           element={<Navigate to={route.redirect} replace />}
@@ -106,7 +109,7 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
           <PlaceholderPage title={route.component} />
         </PrivateRoute>
       );
-      return <Route key={route.path} path={route.path} element={element} />;
+      return <RouteComp key={route.path} path={route.path} element={element} />;
     }
 
     // 根据权限包装
@@ -127,11 +130,11 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
       element = <PrivateRoute>{element}</PrivateRoute>;
     }
 
-    return <Route key={route.path} path={route.path} element={element} />;
+    return <RouteComp key={route.path} path={route.path} element={element} />;
   };
 
   return (
-    <Routes>
+    <RoutesComp>
       {/* 额外的静态路由（登录页等） */}
       {children}
 
@@ -139,7 +142,7 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
       {allRoutes.map(renderRoute)}
 
       {/* 404 重定向 */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      <RouteComp path="*" element={<Navigate to="/" replace />} />
+    </RoutesComp>
   );
 }

@@ -158,7 +158,7 @@ export default function CollectionDashboardPage() {
 
   // ─── Styles ──────────────────────────────────────────────────────────────
 
-  const s: Record<string, React.CSSProperties> = {
+  const s = {
     page: {
       minHeight: '100%',
       background: 'linear-gradient(135deg, #0d1117 0%, #161b22 100%)',
