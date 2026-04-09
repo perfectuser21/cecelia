@@ -157,7 +157,8 @@ describe('Harness Flow — harness_generate 任务状态流转与过滤（真实
     );
     expect(dbRes.rows).toHaveLength(1);
     expect(dbRes.rows[0].task_type).toBe('harness_generate');
-    expect(dbRes.rows[0].status).toBe('queued');
+    // 容忍 Brain 实时调度：任务可能已被 tick 更新为 in_progress/completed
+    expect(['queued', 'in_progress', 'completed']).toContain(dbRes.rows[0].status);
     expect(dbRes.rows[0].payload?.sprint_dir).toBe('/path/to/sprint-1');
     expect(dbRes.rows[0].payload?.eval_round).toBe(1);
   });

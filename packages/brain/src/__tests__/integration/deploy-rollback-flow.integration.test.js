@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { unlinkSync } from 'fs';
 import express from 'express';
 import request from 'supertest';
 
@@ -158,6 +159,8 @@ describe('Deploy / Rollback Flow — API 合约测试（in-memory 状态机，�
   let app;
 
   beforeAll(async () => {
+    // 清除 deploy 状态文件，防止 Brain 持久化状态污染测试初始值
+    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
     app = await makeApp();
   }, 20000);
 

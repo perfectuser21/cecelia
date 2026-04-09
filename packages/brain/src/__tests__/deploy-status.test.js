@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { unlinkSync } from 'fs';
 
 // Mock ops.js 的所有重依赖，确保测试轻量
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
@@ -56,6 +57,8 @@ describe('deploy-status', () => {
   beforeEach(async () => {
     // 设置 DEPLOY_TOKEN 使 POST /deploy 能通过 token 校验
     process.env.DEPLOY_TOKEN = 'test-token';
+    // 清除 deploy 状态文件，防止 Brain 运行时的持久化状态污染测试初始值
+    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
     vi.resetModules();
     const mod = await import('../routes/ops.js');
     deployState = mod.deployState;
