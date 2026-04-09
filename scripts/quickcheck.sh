@@ -3,7 +3,6 @@
 #
 # 逻辑：改了哪个包就跑哪个包的测试，4个包全覆盖
 # 用法：bash scripts/quickcheck.sh
-#       QUICKCHECK_SKIP=1 git push   # 紧急跳过
 # 退出码：0 = 通过，1 = 失败
 
 set -uo pipefail
@@ -17,10 +16,6 @@ MAIN_REPO_ROOT="$(dirname "$(cd "$REPO_ROOT" && cd "$_GIT_COMMON_DIR" && pwd)")"
 ROOT_NM="$MAIN_REPO_ROOT/node_modules"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
-
-if [[ "${QUICKCHECK_SKIP:-0}" == "1" ]]; then
-  echo -e "${YELLOW}⚠️  QUICKCHECK_SKIP=1，已跳过本地预检${RESET}" >&2; exit 0
-fi
 
 START_TIME=$(date +%s)
 echo -e "\n${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -63,7 +58,7 @@ if [[ "$PASS" == true ]]; then
   echo -e "${GREEN}${BOLD}✅ QuickCheck 通过（耗时 $((END_TIME - START_TIME))s）${RESET}"
 else
   echo -e "${RED}${BOLD}❌ QuickCheck 失败 — push 被阻止${RESET}"
-  echo -e "${YELLOW}   紧急跳过：QUICKCHECK_SKIP=1 git push${RESET}"
+  echo -e "${YELLOW}   请修复错误后重新 push${RESET}"
 fi
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
 
