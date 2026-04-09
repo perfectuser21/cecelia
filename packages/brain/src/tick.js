@@ -77,6 +77,12 @@ function tickLog(...args) {
 const TICK_INTERVAL_MINUTES = 2;
 const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
+
+// Quiet Mode — 跳过所有后台 LLM 调用（dev 调试用）
+const BRAIN_QUIET_MODE = process.env.BRAIN_QUIET_MODE === 'true';
+if (BRAIN_QUIET_MODE) {
+  console.log('[Brain] BRAIN_QUIET_MODE=true — thalamus/rumination/narrative/digest/self-report/synthesis/notebook-feeder 全部跳过');
+}
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
@@ -1904,6 +1910,7 @@ async function executeTick() {
   // ═══════════════════════════════════════════════════════════════════
 
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
+  if (!BRAIN_QUIET_MODE) {
   publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
   try {
     const tickEvent = {
@@ -1946,6 +1953,7 @@ async function executeTick() {
     console.error('[tick] Thalamus error, falling back to code-based tick:', thalamusErr.message);
     // Continue with normal tick if thalamus fails
   }
+  } // end !BRAIN_QUIET_MODE (thalamus)
 
   // 0.5. PR Plans Completion Check (三层拆解状态自动更新)
   try {
@@ -2050,6 +2058,7 @@ async function executeTick() {
   }
 
   // 0.7. Pending Conversations Check — 检查待回音消息，判断是否跟进
+  if (!BRAIN_QUIET_MODE) {
   try {
     const { checkPendingFollowups } = await import('./pending-conversations.js');
     const { callLLM } = await import('./llm-caller.js');
@@ -2070,6 +2079,7 @@ async function executeTick() {
   } catch (followupErr) {
     console.error('[tick] Pending followup check failed:', followupErr.message);
   }
+  } // end !BRAIN_QUIET_MODE (pending followups)
 
   // 0.4.5. Zombie resource cleanup: 每 20 分钟清理一次 stale slots + 孤儿 worktrees
   const zombieElapsed = Date.now() - _lastZombieCleanupTime;
@@ -2867,6 +2877,9 @@ async function executeTick() {
   Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
     .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
 
+  // 10.3–10.8 LLM 后台调用（BRAIN_QUIET_MODE=true 时全部跳过）
+  if (!BRAIN_QUIET_MODE) {
+
   // 10.3 对话日志提炼（每 5 分钟扫描 ~/.claude-account1/projects/ .jsonl 文件）
   Promise.resolve().then(() => runConversationDigest())
     .catch(e => console.warn('[tick] conversation digest 失败:', e.message));
@@ -2893,18 +2906,24 @@ async function executeTick() {
   // 10.8 欲望轨迹采集（每 6 小时一次，fire-and-forget，Layer 4）
   Promise.resolve().then(() => collectSelfReport(pool)).catch(e => console.warn('[tick] self-report 采集失败:', e.message));
 
+  } // end !BRAIN_QUIET_MODE (10.3–10.8 LLM calls)
+
   // 10.9 每日合并循环（UTC 19:00 = 北京凌晨 3:00，fire-and-forget）
   // 汇总今日对话/learnings/任务 → 情节记忆 + self-model 演化
   Promise.resolve().then(() => runDailyConsolidationIfNeeded(pool))
     .catch(e => console.warn('[tick] 每日合并失败:', e.message));
 
   // 10.10 NotebookLM 喂入（每天定时喂入 learnings/memory/OKR，fire-and-forget）
-  Promise.resolve().then(() => feedDailyIfNeeded(pool))
-    .catch(e => console.warn('[tick] notebook feeder 失败:', e.message));
+  if (!BRAIN_QUIET_MODE) {
+    Promise.resolve().then(() => feedDailyIfNeeded(pool))
+      .catch(e => console.warn('[tick] notebook feeder 失败:', e.message));
+  }
 
   // 10.11 分层记忆压缩调度（daily/weekly/monthly synthesis，fire-and-forget）
-  Promise.resolve().then(() => runSynthesisSchedulerIfNeeded(pool))
-    .catch(e => console.warn('[tick] synthesis scheduler 失败:', e.message));
+  if (!BRAIN_QUIET_MODE) {
+    Promise.resolve().then(() => runSynthesisSchedulerIfNeeded(pool))
+      .catch(e => console.warn('[tick] synthesis scheduler 失败:', e.message));
+  }
 
   // 10.12 分级报警刷新（P1 每小时，P2 每日，fire-and-forget）
   Promise.resolve().then(() => flushAlertsIfNeeded())
