@@ -55,6 +55,7 @@ import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
+import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
 import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
@@ -2960,6 +2961,10 @@ async function executeTick() {
   // 10.17f 每日全平台采集调度（UTC 20:00 = 北京时间次日 04:00，fire-and-forget）
   Promise.resolve().then(() => scheduleDailyScrape(pool))
     .catch(e => console.warn('[tick] 每日平台采集调度失败:', e.message));
+
+  // 10.17g KR3 每日进度报告（UTC 06:00 = 北京时间 14:00，fire-and-forget）
+  Promise.resolve().then(() => scheduleKR3ProgressReport(pool))
+    .catch(e => console.warn('[tick] KR3 进度报告失败:', e.message));
 
   // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
   Promise.resolve().then(() => runSuggestionCycle(pool))

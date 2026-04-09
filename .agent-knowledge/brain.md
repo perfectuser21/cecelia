@@ -62,6 +62,7 @@ Tick Loop（派发 → /dev 执行 → CI 验证）
 | Area 调度 | `area-scheduler.js` | YARN Fair Scheduler 模型：min/max/weight 三参数，按业务线公平分配 slot |
 | Pipeline 巡航 | `pipeline-patrol.js` | 扫描所有 .dev-mode 文件，检测卡住的 /dev 会话，自动创建 pipeline_rescue 任务 |
 | 免疫系统 | `immune-system.js` | 失败签名分析、自动修复路径 |
+| KR3 进度报告 | `kr3-progress-scheduler.js` | UTC 06:00 每日触发，查询 KR3 微信小程序进度 + dev 任务统计，输出结构化日志 |
 
 ---
 
