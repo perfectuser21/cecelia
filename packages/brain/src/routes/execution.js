@@ -1845,6 +1845,11 @@ ${resultStr.substring(0, 2000)}
 
           if (reviewVerdict === 'APPROVED') {
             const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
+            // Bug Fix: contract_branch 为 null 时不创建必失败的 Generator（P0 guard）
+            if (!contractBranch) {
+              console.error(`[P0][execution-callback] harness: ${harnessType} APPROVED 但 contract_branch=null，无法创建 Generator — 终止链式触发。task_id=${task_id}`);
+              return;
+            }
             // 从 Reviewer result 提取 workstream_count（默认 1）
             const workstreamCount = (() => {
               const extractWs = (obj) => {
@@ -1988,50 +1993,65 @@ ${resultStr.substring(0, 2000)}
             console.log(`[execution-callback] harness: harness_generate ${task_id} pr_url 缺失 → harness_fix 已创建`);
             return; // 不继续创建 ci_watch
           }
-          // CI 由 /dev 自身保证（Stage 3 等 CI + Stage 4 合并），generate 完成即直接报告
-          await createHarnessTask({
-            title: `[Report] ${plannerShort}`,
-            description: `/dev 完成（CI + 合并），生成 Harness 报告。\n原始 harness_generate task_id: ${task_id}`,
-            priority: 'P1',
-            project_id: harnessTask.project_id,
-            goal_id: harnessTask.goal_id,
-            task_type: 'harness_report',
-            trigger_source: 'execution_callback_harness',
-            payload: {
-              sprint_dir: harnessPayload.sprint_dir,
-              pr_url: prUrl,
-              dev_task_id: task_id,
-              planner_task_id: harnessPayload.planner_task_id,
-              eval_round: 1,
-              harness_mode: true
-            }
-          });
-          console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_report created (pr_url=${prUrl})`);
-
           // 串行 Workstream 链式触发：当前 WS 完成 → 触发下一个 WS（若还有剩余）
           const currentWsIdx = harnessPayload.workstream_index || 1;
           const totalWsCount = harnessPayload.workstream_count || 1;
           if (currentWsIdx < totalWsCount) {
             const nextWsIdx = currentWsIdx + 1;
+            // Bug Fix: 幂等检查 — 已有同 WS 任务则跳过，防止 callback 重复触发
+            const existingWs = await pool.query(
+              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'harness_generate'
+               AND payload->>'workstream_index' = $2 AND status IN ('queued','in_progress') LIMIT 1`,
+              [harnessTask.project_id, String(nextWsIdx)]
+            );
+            if (existingWs.rows.length > 0) {
+              console.log(`[execution-callback] harness: WS${nextWsIdx} already queued, skip creation`);
+            } else {
+              await createHarnessTask({
+                title: `[Generator] G${nextWsIdx}/${totalWsCount} — ${plannerShort}`,
+                description: `合同已批准，Generator 按 Workstream ${nextWsIdx}/${totalWsCount} 写代码 + 创建 PR（串行，WS${currentWsIdx} 已完成）。\ncontract_branch: ${harnessPayload.contract_branch}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                // Bug Fix: harness 任务不挂 goal，使用 execution_callback_harness trigger 绕过 goal_id 校验
+                task_type: 'harness_generate',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  planner_branch: harnessPayload.planner_branch,
+                  contract_branch: harnessPayload.contract_branch,
+                  workstream_index: nextWsIdx,
+                  workstream_count: totalWsCount,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: WS${currentWsIdx}/${totalWsCount} 完成 → 串行触发 WS${nextWsIdx}/${totalWsCount}`);
+            }
+          }
+
+          // Bug Fix: harness_report 只在最后一个 WS 完成时创建（避免多 WS 时 W2/W3 PR 缺失）
+          if (currentWsIdx === totalWsCount) {
             await createHarnessTask({
-              title: `[Generator] G${nextWsIdx}/${totalWsCount} — ${plannerShort}`,
-              description: `合同已批准，Generator 按 Workstream ${nextWsIdx}/${totalWsCount} 写代码 + 创建 PR（串行，WS${currentWsIdx} 已完成）。\ncontract_branch: ${harnessPayload.contract_branch}`,
+              title: `[Report] ${plannerShort}`,
+              description: `/dev 完成（CI + 合并），生成 Harness 报告。\n原始 harness_generate task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: 'harness_generate',
-              trigger_source: 'execution_callback_harness_serial',
+              task_type: 'harness_report',
+              trigger_source: 'execution_callback_harness',
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
+                pr_url: prUrl,
+                dev_task_id: task_id,
                 planner_task_id: harnessPayload.planner_task_id,
-                planner_branch: harnessPayload.planner_branch,
-                contract_branch: harnessPayload.contract_branch,
-                workstream_index: nextWsIdx,
-                workstream_count: totalWsCount,
+                // Bug Fix: 传入 project_id 供 Report skill 查询 DB 关联信息
+                project_id: harnessTask.project_id,
+                eval_round: 1,
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: WS${currentWsIdx}/${totalWsCount} 完成 → 串行触发 WS${nextWsIdx}/${totalWsCount}`);
+            console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_report created (pr_url=${prUrl})`);
+          } else {
+            console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount} 完成，等待后续 WS，暂不创建 report`);
           }
         }
 
