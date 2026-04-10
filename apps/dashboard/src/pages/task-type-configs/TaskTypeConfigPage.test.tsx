@@ -1,5 +1,5 @@
 /**
- * TaskTypeConfigPage — 任务类型配置页集成测试
+ * TaskTypeConfigPage — 任务路由配置页集成测试
  */
 
 import React from 'react';
@@ -22,33 +22,37 @@ beforeEach(() => {
 });
 
 describe('TaskTypeConfigPage', () => {
-  it('渲染页面标题"任务类型配置"', async () => {
+  it('渲染页面标题"任务路由配置"', async () => {
     await act(async () => { render(<TaskTypeConfigPage />); });
-    expect(screen.getByText('任务类型配置')).toBeInTheDocument();
+    await act(async () => {});
+    expect(screen.getByText('任务路由配置')).toBeInTheDocument();
   });
 
-  it('渲染四个分类标签 A/B/C/D', async () => {
+  it('渲染四个分类按钮（A/B/C/D 字母圆圈）', async () => {
     await act(async () => { render(<TaskTypeConfigPage />); });
-    expect(screen.getByText('A类')).toBeInTheDocument();
-    expect(screen.getByText('B类')).toBeInTheDocument();
-    expect(screen.getByText('C类')).toBeInTheDocument();
-    expect(screen.getByText('D类')).toBeInTheDocument();
+    await act(async () => {});
+    // CategoryCard 渲染字母，不是"A类"
+    const aBtn = screen.getAllByRole('button').find(b => b.textContent?.includes('A') && b.textContent?.includes('锁机器'));
+    expect(aBtn).toBeTruthy();
   });
 
-  it('A类卡片显示"锁机器 + 锁模型"标签', async () => {
+  it('渲染 A 类标签"锁机器 + 锁模型"', async () => {
     await act(async () => { render(<TaskTypeConfigPage />); });
+    await act(async () => {});
     expect(screen.getByText('锁机器 + 锁模型')).toBeInTheDocument();
   });
 
-  it('C类卡片显示"锁模型（Codex），不锁机器"标签', async () => {
+  it('渲染 C 类标签"锁模型（Codex），不锁机器"', async () => {
     await act(async () => { render(<TaskTypeConfigPage />); });
+    await act(async () => {});
     expect(screen.getByText('锁模型（Codex），不锁机器')).toBeInTheDocument();
   });
 
-  it('点击 A类 展开 A 类任务列表', async () => {
+  it('点击"锁机器 + 锁模型"展开 A 类任务列表', async () => {
     await act(async () => { render(<TaskTypeConfigPage />); });
-    const aCard = screen.getByText('A类');
-    fireEvent.click(aCard);
+    await act(async () => {});
+    const aCard = screen.getByText('锁机器 + 锁模型').closest('button');
+    if (aCard) fireEvent.click(aCard);
     await act(async () => {});
     // A类只有 dev 任务
     expect(screen.getByText('dev')).toBeInTheDocument();

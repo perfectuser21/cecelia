@@ -55,8 +55,9 @@ beforeEach(() => {
 });
 
 describe('CollectionDashboardPage', () => {
-  it('渲染页面标题"数据采集仪表盘"', () => {
-    render(<CollectionDashboardPage />);
+  it('渲染页面标题"数据采集仪表盘"', async () => {
+    await act(async () => { render(<CollectionDashboardPage />); });
+    await act(async () => {});
     expect(screen.getByText('数据采集仪表盘')).toBeInTheDocument();
   });
 
