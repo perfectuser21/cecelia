@@ -1,13 +1,8 @@
-contract_branch: cp-harness-contract-e1a9f0ad
+contract_branch: cp-harness-contract-8f005193
 workstream_index: 1
+sprint_dir: sprints/harness-self-check-v2
 
-# Contract DoD — Workstream 1: Reviewer + Planner SKILL.md 更新
-
-- [x] [ARTIFACT] harness-contract-reviewer/SKILL.md REVISION 条件区块新增：Test 命令含 grep/ls/cat/sed/echo → 必须 REVISION
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');const revBlock=c.split('**REVISION 条件**')[1]?.split('###')[0]||'';if(!revBlock.includes('grep'))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] Reviewer SKILL.md 的 APPROVED 条件区块明确列出白名单（node/npm/curl/bash/psql）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');const s=c.split('**APPROVED 条件**')[1]?.split('**REVISION 条件**')[0]||'';if(!s.includes('node')||!s.includes('psql'))throw new Error('FAIL');console.log('PASS')"
-- [x] [ARTIFACT] harness-planner/SKILL.md 新增"预期受影响文件"PRD 模板小节
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-planner/SKILL.md','utf8');if(!c.includes('预期受影响文件'))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] harness-planner/SKILL.md 有 bash 代码块含 ls/cat 读文件步骤
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-planner/SKILL.md','utf8');const blocks=c.match(/\`\`\`bash[\s\S]*?\`\`\`/g)||[];if(!blocks.some(b=>b.includes('ls ')||b.includes('cat ')))throw new Error('FAIL');console.log('PASS')"
+- [x] [ARTIFACT] `sprints/harness-self-check-v2/contract-draft.md` 存在且含 >= 4 个 Feature 标题，每个 Feature 的 bash 块含 CI 白名单工具调用
+  Test: node -e "const c=require('fs').readFileSync('sprints/harness-self-check-v2/contract-draft.md','utf8');const fb=c.split(/^## Feature \d+/gm);fb.shift();if(fb.length<4)throw new Error('FAIL:Feature='+fb.length);const TR=/\bnode\s+-e\b|\bcurl\s|\bbash\s|\bpsql\s|\bnpm\s/;fb.forEach((b,i)=>{const bm=b.match(/\x60\x60\x60bash\n([\s\S]*?)\x60\x60\x60/g)||[];if(!bm.some(x=>TR.test(x)))throw new Error('FAIL:Feature '+(i+1)+'无CI白名单工具调用')});console.log('PASS:'+fb.length+'个Feature均含CI白名单工具调用')"
+- [x] [BEHAVIOR] Proposer 输出的草案包含 >= 8 个 bash 命令块，且每个 contract-dod-ws 文件中 [BEHAVIOR] 的 Test: 以白名单工具开头
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/harness-self-check-v2/contract-draft.md','utf8');const b=(c.match(/^\x60\x60\x60bash/gm)||[]).length;if(b<8)throw new Error('FAIL:bash='+b);const TR=/^Test:\s*(node|npm|curl|bash|psql|manual:\s*(node|npm|curl|bash|psql))/;const dods=fs.readdirSync('sprints/harness-self-check-v2').filter(f=>f.startsWith('contract-dod-ws'));dods.forEach(f=>{const d=fs.readFileSync('sprints/harness-self-check-v2/'+f,'utf8');const lines=d.split('\n');let beh=0,ok=0;for(let i=0;i<lines.length;i++){if(lines[i].includes('[BEHAVIOR]')){beh++;const t=lines.slice(i+1,i+6).find(l=>l.trim().startsWith('Test:'));if(t&&TR.test(t.trim()))ok++}}if(beh<1)throw new Error('FAIL:'+f+'无BEHAVIOR');if(ok<beh)throw new Error('FAIL:'+f+'有'+beh+'个BEHAVIOR但'+ok+'个Test:以白名单工具开头')});console.log('PASS:bash='+b+'，DoD文件='+dods.length+'（Test:均以白名单工具开头）')"
