@@ -108,8 +108,10 @@ export default defineConfig({
       'src/__tests__/startup-sync.test.js',
       // content_type 注册表加载缺少 content_type 字段 — 预先存在（main 上已失败）
       'src/__tests__/content-type-registry.test.js',
-      // 需要真实 PostgreSQL 连接的集成测试
+      // 需要真实 PostgreSQL 连接的集成测试（由 brain-integration CI job 执行，本地 QuickCheck 不跑）
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
+      // cross-package 集成测试：需要干净测试 DB，dedup 约束与本地残留数据冲突
+      'src/__tests__/integration/cross-package-brain-api.integration.test.js',
     ],
     coverage: {
       provider: 'v8',
