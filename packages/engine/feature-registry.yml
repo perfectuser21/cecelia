@@ -6,6 +6,13 @@ version: "1.0.0"
 updated: "2026-04-09"
 
 changelog:
+  - version: "14.5.1"
+    date: "2026-04-10"
+    skill: "lib"
+    change: "fix"
+    description: "devloop-check.sh harness 模式 0.5 快速通道：PR 创建后补加 gh pr merge --squash --auto，修复 Generator 退出后 PR 未开启 auto-merge 的问题"
+    files:
+      - "lib/devloop-check.sh"
   - version: "14.5.0"
     date: "2026-04-09"
     skill: "dev"
