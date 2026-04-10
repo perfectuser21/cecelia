@@ -2877,6 +2877,9 @@ async function executeTick() {
   Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
     .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
 
+  // ruminationResult 声明在块外，确保 BRAIN_QUIET_MODE=true 时 return 语句仍可访问
+  let ruminationResult = null;
+
   // 10.3–10.8 LLM 后台调用（BRAIN_QUIET_MODE=true 时全部跳过）
   if (!BRAIN_QUIET_MODE) {
 
@@ -2890,7 +2893,6 @@ async function executeTick() {
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });
-  let ruminationResult = null;
   try {
     ruminationResult = await runRumination(pool);
   } catch (rumErr) {
