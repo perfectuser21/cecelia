@@ -279,68 +279,79 @@ export async function executeCopywriting(task) {
 
 // ─── 3. Copy Review（文案审核）─────────────────────────────────
 
+function _loadCopyText(dir) {
+  const cp = join(dir, 'cards', 'copy.md');
+  const ap = join(dir, 'article', 'article.md');
+  const copyText = existsSync(cp) ? readFileSync(cp, 'utf-8') : '';
+  const articleText = existsSync(ap) ? '\n' + readFileSync(ap, 'utf-8') : '';
+  return copyText + articleText;
+}
+
+function _validateCopyReviewConfig(typeConfig, contentType) {
+  const reviewRules = typeConfig?.review_rules;
+  if (!typeConfig?.template?.review_prompt || !reviewRules || !Array.isArray(reviewRules)) {
+    return { valid: false, error: `内容类型 ${contentType} 缺少 review_prompt 或 review_rules 配置` };
+  }
+  return { valid: true, reviewRules, reviewPrompt: typeConfig.template.review_prompt };
+}
+
+async function _callReviewLLM(reviewPrompt, allText, reviewRules) {
+  const rulesDesc = reviewRules
+    .map(r => `- ${r.id}: ${r.description} (severity: ${r.severity})`)
+    .join('\n');
+  const prompt = `${reviewPrompt}\n\n## 待审查内容\n${allText.substring(0, 3000)}\n\n## 审查规则\n${rulesDesc}\n\n请对每条规则逐一评审，严格按 JSON 格式返回：\n{\n  "rule_scores": [\n    { "id": "rule_id", "score": 0, "pass": true, "comment": "评审意见" }\n  ],\n  "overall_pass": true,\n  "quality_score": 7,\n  "summary": "总体评审意见"\n}`;
+  try {
+    const { text } = await callLLM('thalamus', prompt, { maxTokens: 1024, timeout: 60000 });
+    return { text, error: null };
+  } catch (err) {
+    return { text: null, error: `Claude 文案审核调用失败: ${err.message}` };
+  }
+}
+
+function _parseReviewResult(text) {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { ok: false, error: 'Claude 文案审核返回格式无效（无 JSON）' };
+  const parsed = JSON.parse(jsonMatch[0]);
+  const ruleScores = parsed.rule_scores || [];
+  const issues = ruleScores.filter(r => !r.pass).map(r => `[${r.id}] ${r.comment}`);
+  const qualityScore = typeof parsed.quality_score === 'number'
+    ? parsed.quality_score
+    : (parsed.overall_pass !== false ? 7 : 4);
+  return { ok: true, ruleScores, issues, qualityScore };
+}
+
 export async function executeCopyReview(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
   const contentType = task.payload?.content_type || 'solo-company-case';
   console.log(`[copy-review] 开始: ${keyword}`);
 
-  // 从 DB/YAML 读取内容类型配置
   let typeConfig = null;
   try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
 
   const dir = findOutputDir(keyword);
   if (!dir) return { success: true, review_passed: false, issues: ['找不到产出目录'] };
 
-  let allText = '';
-  const cp = join(dir, 'cards', 'copy.md');
-  const ap = join(dir, 'article', 'article.md');
-  if (existsSync(cp)) allText += readFileSync(cp, 'utf-8');
-  if (existsSync(ap)) allText += '\n' + readFileSync(ap, 'utf-8');
-
+  const allText = _loadCopyText(dir);
   if (!allText.trim()) return { success: true, review_passed: false, issues: ['文案内容为空'] };
 
-  const issues = [];
+  const configResult = _validateCopyReviewConfig(typeConfig, contentType);
+  if (!configResult.valid) return { success: false, error: configResult.error };
 
-  // ─── Claude 调用：使用配置 review_prompt 审查文案 ──────────────
-  const reviewRules = typeConfig?.review_rules;
-  if (!typeConfig?.template?.review_prompt || !reviewRules || !Array.isArray(reviewRules)) {
-    return { success: false, error: `内容类型 ${contentType} 缺少 review_prompt 或 review_rules 配置` };
-  }
+  const { text, error: llmError } = await _callReviewLLM(configResult.reviewPrompt, allText, configResult.reviewRules);
+  if (llmError) return { success: false, error: llmError };
 
-  const rulesDesc = reviewRules
-    .map(r => `- ${r.id}: ${r.description} (severity: ${r.severity})`)
-    .join('\n');
+  const result = _parseReviewResult(text);
+  if (!result.ok) return { success: false, error: result.error };
 
-  const prompt = `${typeConfig.template.review_prompt}\n\n## 待审查内容\n${allText.substring(0, 3000)}\n\n## 审查规则\n${rulesDesc}\n\n请对每条规则逐一评审，严格按 JSON 格式返回：\n{\n  "rule_scores": [\n    { "id": "rule_id", "score": 0, "pass": true, "comment": "评审意见" }\n  ],\n  "overall_pass": true,\n  "quality_score": 7,\n  "summary": "总体评审意见"\n}`;
-
-  let text;
-  try {
-    ({ text } = await callLLM('thalamus', prompt, { maxTokens: 1024, timeout: 60000 }));
-  } catch (err) {
-    return { success: false, error: `Claude 文案审核调用失败: ${err.message}` };
-  }
-
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    return { success: false, error: 'Claude 文案审核返回格式无效（无 JSON）' };
-  }
-
-  const parsed = JSON.parse(jsonMatch[0]);
-  const ruleScores = parsed.rule_scores || [];
-  const failedRules = ruleScores.filter(r => !r.pass);
-  if (failedRules.length > 0) {
-    issues.push(...failedRules.map(r => `[${r.id}] ${r.comment}`));
-  }
-  const qualityScore = typeof parsed.quality_score === 'number' ? parsed.quality_score : (parsed.overall_pass !== false ? 7 : 4);
-  const passed = qualityScore >= 6;
-  console.log(`[copy-review] ${passed ? 'PASS' : 'FAIL'}: quality=${qualityScore}`);
+  const passed = result.qualityScore >= 6;
+  console.log(`[copy-review] ${passed ? 'PASS' : 'FAIL'}: quality=${result.qualityScore}`);
   return {
     success: true,
     review_passed: passed,
-    rule_scores: ruleScores,
+    rule_scores: result.ruleScores,
     llm_reviewed: true,
-    quality_score: qualityScore,
-    issues,
+    quality_score: result.qualityScore,
+    issues: result.issues,
   };
 }
 
