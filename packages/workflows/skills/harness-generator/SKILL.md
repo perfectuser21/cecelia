@@ -4,10 +4,11 @@ description: |
   Harness Generator — Harness v4.2 严格合同执行者。
   读取 GAN 对抗已批准的 sprint-contract.md，严格按合同实现，不越界。
   DoD 从 ${SPRINT_DIR}/contract-dod-ws{N}.md 原样复制（不得修改），CI 会校验一致性。
-version: 4.3.0
+version: 4.4.0
 created: 2026-04-08
-updated: 2026-04-09
+updated: 2026-04-10
 changelog:
+  - 4.4.0: Mode 2 修复 — 去掉 eval-round-N.md 死链，改为读 CI 失败 context（ci_fail_context payload）
   - 4.3.0: contract-dod-ws 读取路径改为 ${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md（与 Proposer 写入路径对齐）
   - 4.2.0: DoD 来源改为 ${SPRINT_DIR}/contract-dod-ws{N}.md（独立文件），DoD.md 加 contract_branch header 供 CI 完整性校验
   - 4.1.0: 按 workstream_index 定向实现；DoD 直接从合同复制（禁止自起草）
@@ -170,11 +171,14 @@ echo "{\"verdict\": \"DONE\", \"pr_url\": \"$PR_URL\"}"
 
 ---
 
-## Mode 2: harness_fix（修复 Evaluator 反馈 / CI 失败）
+## Mode 2: harness_fix（修复 CI 失败）
 
-读 `eval-round-N.md`（Evaluator 反馈）或 `payload.ci_fail_context`（CI 失败）：
-- 只修复 FAIL 的 Feature / CI 错误
+读 `payload.ci_fail_context`（Brain 注入的 CI 失败信息）：
+- 只修复 CI 失败的内容（不添加合同外功能）
 - 推到原 PR 分支（不创建新 PR）
+
+> 注意：`eval-round-N.md` 已废弃（harness_evaluate 已从 pipeline 移除），
+> CI 失败信息统一由 Brain 通过 `ci_fail_context` payload 字段注入。
 
 ```bash
 # 切到 PR 分支

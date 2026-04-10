@@ -1,12 +1,14 @@
 ---
 id: harness-contract-reviewer-skill
 description: |
-  Harness Contract Reviewer — Harness v4.3 GAN Layer 2b：
-  Evaluator 角色，对抗性审查合同草案，重点挑战验证命令是否足够严格、能否检测出错误实现。
-version: 4.3.0
+  Harness Contract Reviewer — Harness v4.4 GAN Layer 2b：
+  Evaluator 角色，对抗性审查合同草案。核心任务：对每条 Test 命令构造"最懒假实现"，
+  证明命令能否被绕过。能被绕过 → 命令无效，必须 REVISION。
+version: 4.4.0
 created: 2026-04-08
-updated: 2026-04-09
+updated: 2026-04-10
 changelog:
+  - 4.4.0: 核心升级 — Step 2 加入对抗证伪机制：对每条 Test 命令构造最懒假实现，判断能否绕过。能绕过 → 必须 REVISION
   - 4.3.0: 新增 CI 白名单强制检查 — Test 命令含 grep/ls/cat/sed/echo → 必须 REVISION；APPROVED 条件明确列出允许工具
   - 4.2.0: 新增 Workstream 审查维度（边界清晰/DoD可执行/大小合理）+ APPROVED 时输出 workstream_count
   - 4.1.0: 修正 v4.0 错误 — 审查重点恢复为挑战验证命令严格性（而非审查"清晰可测性/歧义"）
@@ -17,7 +19,7 @@ changelog:
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
-# /harness-contract-reviewer — Harness v4.1 Contract Reviewer
+# /harness-contract-reviewer — Harness v4.4 Contract Reviewer
 
 **角色**: Evaluator（合同挑战者）  
 **对应 task_type**: `harness_contract_review`
@@ -26,9 +28,10 @@ changelog:
 
 ## 职责
 
-以对抗性视角审查 Generator 的合同草案——**重点挑战验证命令是否足够严格、是否广谱覆盖、是否能检测出错误实现**。
+以对抗性视角审查 Generator 的合同草案。**你的核心任务不是"看命令像不像对的"，而是主动构造攻击：用最懒的假实现去试图绕过每条 Test 命令。**
 
-**心态**: 你即将执行这些命令来验证实现。站在"寻找合同漏洞"的角度：哪些命令太弱，能被错误实现蒙混过关？哪些边界没测？哪些工具选择不对？
+> 官方 Anthropic 踩过的坑：Evaluator "发现合法问题，然后说服自己这不是大问题，就 APPROVE 了"。
+> 防止这个问题的唯一方法：强制构造反例，不允许主观判断替代。
 
 ---
 
@@ -43,87 +46,91 @@ changelog:
 # PLANNER_BRANCH={planner_branch}
 # PROPOSE_BRANCH={propose_branch}（来自 propose 任务的 result.propose_branch）
 
-# fetch 所有相关分支
 git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
 [ -n "$PROPOSE_BRANCH" ] && git fetch origin "${PROPOSE_BRANCH}" 2>/dev/null || true
 
-# 读 PRD（来自 planner 分支）
+# 读 PRD
 git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || cat "${SPRINT_DIR}/sprint-prd.md"
 
-# 读合同草案（来自 propose 分支）
+# 读合同草案
 git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" 2>/dev/null || cat "${SPRINT_DIR}/contract-draft.md"
 ```
 
-### Step 2: 对抗性审查——挑战验证命令
+### Step 2: 对抗证伪——对每条 Test 命令构造最懒假实现
 
-逐条检查验证命令，寻找以下问题：
+**这是核心步骤，不可跳过。**
 
-**命令严格性问题（最重要）**：
-- 命令是否能检测出错误实现？（一个空实现能通过这个命令吗？）
-- 命令只测了 happy path，没测失败路径吗？
-- 命令用了弱验证（如只检查 HTTP 200，不检查响应体内容）吗？
-- 命令能否被"假实现"蒙混过关？（如只检查字段存在，不检查字段值正确）
+对合同草案中每个 Feature 的每条 Test 命令，逐一输出以下分析：
 
-**广谱性问题**：
-- 全是 curl 命令，UI 功能没用 playwright 验证吗？
-- DB 状态变更没用 psql 验证 DB 实际记录吗？
-- 业务逻辑没用 npm test 验证单元行为吗？
-- 只测了 API 层，没测数据一致性（API vs DB）吗？
+```
+命令：<原始 Test 命令>
+最懒假实现：<描述——空文件/echo 固定字符串/hardcode 返回值/touch/mkdir 等>
+能否绕过：YES / NO
+理由：<YES→说明假实现如何让命令 exit 0；NO→说明哪个断言会 throw>
+```
 
-**覆盖度问题**：
-- PRD 里的功能点，合同里有没有对应的验证命令？
-- 有没有重要边界情况（空输入、并发、超时）没有对应命令？
-- Feature 数量是否匹配 PRD 功能数量？
+**判断规则**：
+- 任意命令 `能否绕过: YES` → 该命令无效，整个合同必须 REVISION
+- 所有命令全部 `NO` → 继续检查 Step 3 其他维度
 
-**命令可执行性问题**：
-- 命令里有没有需要手动替换的占位符（如 `{task_id}`）？
-- 命令依赖的服务/端口假设是否合理（Brain 在 5221，Dashboard 在 5211）？
-- 命令的 exit code 语义是否正确（成功=0，失败=非零）？
+**常见假实现参照**：
 
-### Step 3: 做出判断
+| 假实现 | 能绕过的弱命令 | 无法绕过的强命令 |
+|--------|--------------|---------------|
+| `touch file` | `accessSync('file')` — 只查存在 | `readFileSync` + 内容结构校验 |
+| `echo 'keyword' > file` | `c.includes('keyword')` — 只查字符串 | 多字段同时存在 + 结构解析 |
+| `mkdir -p dir` | `statSync('dir')` — 只查路径 | 目录内文件数量 + 具体内容 |
+| 空 JS 文件 | `require('./file')` — 只查不报错 | `require` 后调用具体导出函数并验证返回值 |
+| hardcode HTTP 200 | `curl -sf url` — 只查状态码 | `curl` + `node -e` 校验响应体字段值 |
+
+### Step 3: 检查其他维度（Step 2 全部 NO 后才执行）
+
+**广谱性**：
+- 全是 curl？UI 功能没用 playwright？DB 变更没用 psql？逻辑没用 npm test？
+
+**覆盖度**：
+- PRD 里的功能点，合同里全有对应命令吗？
+- 重要边界（空输入、无效参数）有没有测试路径？
+
+**可执行性**：
+- 命令有占位符（如 `{task_id}`）吗？无法直接执行 → REVISION
+- CI 白名单：含 `grep`/`ls`/`cat`/`sed`/`echo` → REVISION
+
+**Workstream 完整性**：
+- 合同有 `## Workstreams` 区块吗？
+- 每个 workstream 边界清晰、无交集？
+- DoD 条目格式：`- [ ] [BEHAVIOR/ARTIFACT]` + Test 字段可执行？
+
+### Step 4: 做出判断
+
+**REVISION 条件**（任一满足即 REVISION，无例外）：
+- Step 2 任意命令 `能否绕过: YES`
+- 命令含占位符
+- CI 白名单违规（含 grep/ls/cat/sed/echo）
+- PRD 功能点有遗漏
+- 缺少 `## Workstreams` 区块
+- Workstream 边界模糊或 DoD 格式错误
 
 **APPROVED 条件**（必须全部满足）：
-- 每个 Feature 都有可直接执行的验证命令（无占位符）
-- 命令覆盖 happy path + 至少一个失败/边界路径
-- 命令足够严格，能检测出错误实现（非空校验、非 HTTP 200 校验）
-- 命令广谱：根据任务类型使用了合适的工具（不全是 curl）
-- **Test 命令只使用 CI 白名单工具：`node`/`npm`/`curl`/`bash`/`psql`**（禁止 grep/ls/cat/sed/echo）
-- PRD 里的功能点全部有对应命令
-- Evaluator 能无脑执行这些命令并得到明确的 PASS/FAIL 信号
-- **合同包含 ## Workstreams 区块**，且每个 workstream：
-  - 边界清晰、与其他 workstream 无交集
-  - 含 `- [ ] [BEHAVIOR]` 或 `- [ ] [ARTIFACT]` 格式的 DoD 条目
-  - DoD Test 字段命令可直接执行（无占位符）
-  - 大小估计合理（S/M/L）
+- Step 2 所有命令均 `能否绕过: NO`
+- 命令广谱（不全是 curl）
+- PRD 功能点全覆盖
+- CI 白名单合规
+- Workstreams 区块完整
 
-**REVISION 条件**（任一满足）：
-- 有验证命令含占位符（如 `{task_id}`，无法直接执行）
-- 命令只测 happy path，无失败路径
-- 命令太弱（只查 HTTP 状态码，不验证响应体）
-- 有 PRD 功能点没有对应命令
-- 全是 curl，没有 psql/playwright/npm test 等广谱工具
-- 命令 exit code 语义不清晰
-- **Test 命令含 `grep`/`ls`/`cat`/`sed`/`echo`**（CI 白名单拒绝，Generator 的 DoD 会被 CI 拦截）
-- **缺少 ## Workstreams 区块**
-- Workstream 边界模糊（两个 workstream 改同一文件的同一部分）
-- DoD 条目格式不对（缺 [BEHAVIOR]/[ARTIFACT] 标签，或 Test 字段缺失）
-
-### Step 4a: APPROVED — 写最终合同
+### Step 5a: APPROVED — 写最终合同
 
 ```bash
-# 在独立 review 分支上 push 最终合同
 TASK_ID_SHORT=$(echo "${TASK_ID}" | cut -c1-8)
 REVIEW_BRANCH="cp-harness-review-approved-${TASK_ID_SHORT}"
 git checkout -b "${REVIEW_BRANCH}" 2>/dev/null || git checkout "${REVIEW_BRANCH}"
 
-# 把草案复制为最终合同（从 propose 分支 checkout）
 mkdir -p "${SPRINT_DIR}"
 git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" > "${SPRINT_DIR}/sprint-contract.md"
 git add "${SPRINT_DIR}/sprint-contract.md"
 git commit -m "feat(contract): APPROVED — sprint-contract.md finalized"
 git push origin "${REVIEW_BRANCH}"
 
-# 同时把合同写到 planner_branch 上，供 harness_generate/harness_evaluate 直接读
 git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
 CONTRACT_BRANCH="cp-harness-contract-${TASK_ID_SHORT}"
 git checkout -b "${CONTRACT_BRANCH}" "origin/${PLANNER_BRANCH}" 2>/dev/null || git checkout "${CONTRACT_BRANCH}"
@@ -134,9 +141,9 @@ git commit -m "feat(contract): APPROVED — sprint-contract.md 写入 sprint_dir
 git push origin "${CONTRACT_BRANCH}"
 ```
 
-### Step 4b: REVISION — 写反馈
+### Step 5b: REVISION — 写反馈
 
-写反馈时，**必须以"命令问题"为主要反馈类型**，而非"描述模糊"：
+反馈必须包含 Step 2 的完整证伪分析，让 Proposer 知道哪条命令被哪种假实现绕过：
 
 ```bash
 TASK_ID_SHORT=$(echo "${TASK_ID}" | cut -c1-8)
@@ -147,22 +154,27 @@ mkdir -p "${SPRINT_DIR}"
 cat > "${SPRINT_DIR}/contract-review-feedback.md" << 'FEEDBACK'
 # Contract Review Feedback (Round N)
 
+## 证伪分析（Step 2 输出）
+
+### Feature X — Test 命令 1
+命令：`node -e "require('fs').accessSync('file')"`
+最懒假实现：`touch file`
+能否绕过：YES
+理由：accessSync 只检查存在，touch 创建的空文件完全满足，未实现功能也能通过
+
+### Feature Y — Test 命令 2
+命令：`node -e "const c=require('fs').readFileSync('f','utf8');if(!c.includes('keyword'))throw new Error('FAIL')"`
+最懒假实现：`echo 'keyword' > f`
+能否绕过：YES
+理由：includes 只检查字符串存在，echo 一行就能通过
+
 ## 必须修改项
 
-### 1. [命令太弱] Feature X — <具体命令问题>
-**问题**: <命令只检查 HTTP 200，未验证响应体字段>
-**影响**: <空实现也能通过此命令>
-**建议**: <加上对响应体关键字段的校验，如 node -e 验证 JSON 结构>
+### 1. [假实现可绕过] Feature X
+**建议**: 改为读内容并校验结构，如 `if(c.trim().length < 50 || !c.includes('必要字段'))throw new Error('FAIL')`
 
-### 2. [缺失边界] Feature Y — <缺失边界路径>
-**问题**: <没有测试空输入/无效参数时的返回行为>
-
-### 3. [工具不对] Feature Z — <工具选择问题>
-**问题**: <UI 功能应用 playwright 验证，不能只用 curl>
-
-### 4. [有占位符] Feature W — 命令含 `{task_id}`，无法直接执行
-
-### 5. [PRD 遗漏] PRD 里的 Feature V 在合同里没有验证命令
+### 2. [假实现可绕过] Feature Y
+**建议**: 用多字段同时校验或结构解析，而非单一 includes
 
 ## 可选改进
 - ...
@@ -170,7 +182,7 @@ FEEDBACK
 
 git add "${SPRINT_DIR}/contract-review-feedback.md"
 git commit -m "feat(contract): REVISION — feedback round N"
-git push origin "${REVIEW_BRANCH}"
+git push origin "${REVIEW_BRANCH}" || { echo "[FATAL] git push failed"; exit 1; }
 ```
 
 **最后一条消息**（字面量 JSON，不要用代码块包裹）：
