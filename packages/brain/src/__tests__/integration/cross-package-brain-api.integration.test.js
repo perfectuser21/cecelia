@@ -120,7 +120,7 @@ async function createTestTask(app, overrides = {}) {
       description: 'Cross-Package API 集成测试自动创建，测试完毕后自动清理',
       task_type: 'dev',
       priority: 'P2',
-      trigger_source: 'api',
+      trigger_source: 'integration-test',
       ...overrides,
     })
     .expect(201);
@@ -139,9 +139,12 @@ describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreS
   }, 20000);
 
   afterAll(async () => {
+    // 清理本次测试创建的任务（按 ID）
     if (insertedTaskIds.length > 0) {
       await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
     }
+    // 兜底：清理所有残留的 integration-test 任务（防止测试中途失败未被跟踪的任务积累）
+    await testPool.query("DELETE FROM tasks WHERE trigger_source = 'integration-test'");
     await testPool.end();
   });
 

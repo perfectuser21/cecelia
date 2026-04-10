@@ -762,6 +762,7 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
       AND t.status = 'queued'
       AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
                                'harness_ci_watch', 'harness_deploy_watch')
+      AND (t.trigger_source IS NULL OR t.trigger_source != 'integration-test')
       ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
