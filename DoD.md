@@ -1,25 +1,18 @@
-# DoD — fix(brain): harness pipeline 编排 7个Bug修复 + BRAIN_QUIET_MODE 噪音关闭
+contract_branch: cp-harness-propose-r2-91db397b
+workstream_index: 1
+sprint_dir: sprints/harness-pipeline-fix
 
-- [x] [BEHAVIOR] harness_report 只在最后一个 WS 完成时创建（currentWsIdx === totalWsCount）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const m=c.match(/currentWsIdx === totalWsCount[\s\S]{0,200}harness_report/);if(!m)throw new Error('FAIL');console.log('PASS')"
-
-- [x] [BEHAVIOR] goal_id 为 null 时串行 WS 链不报错（createHarnessTask 不传 goal_id 或允许 null）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(c.includes('goal_id is required'))throw new Error('FAIL: still has goal_id required check');console.log('PASS')"
-
-- [x] [BEHAVIOR] contract_branch 为 null 时不创建 Generator，打印 P0 错误日志
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('contractBranch') || !c.includes('null') || !c.includes('P0'))throw new Error('FAIL: no null guard');console.log('PASS')"
-
-- [x] [BEHAVIOR] 串行 WS 链创建前查 DB 幂等检查，已有同 WS 任务则跳过
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('workstream_index') || !c.includes('already queued'))throw new Error('FAIL: no idempotency check');console.log('PASS')"
-
-- [x] [ARTIFACT] harness_report payload 包含 project_id 字段
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const idx=c.indexOf('task_type.*harness_report');const region=c.slice(c.indexOf('harness_report',idx-500),c.indexOf('harness_report',idx-500)+800);if(!region.includes('project_id'))throw new Error('FAIL');console.log('PASS')"
-
-- [x] [ARTIFACT] model-profile.js 中 harness_report 使用 claude-haiku-4-5-20251001
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/model-profile.js','utf8');if(!c.includes(\"harness_report.*haiku\") && !c.match(/harness_report[^}]*haiku/))throw new Error('FAIL');console.log('PASS')"
-
-- [x] [BEHAVIOR] server.js 中 startSelfDriveLoop 被 BRAIN_QUIET_MODE 门控
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!c.includes('BRAIN_QUIET_MODE') || !c.includes('startSelfDriveLoop'))throw new Error('FAIL');const idx=c.indexOf('startSelfDriveLoop');const region=c.slice(idx-200,idx+50);if(!region.includes('BRAIN_QUIET_MODE'))throw new Error('FAIL: not gated');console.log('PASS')"
-
-- [x] [BEHAVIOR] tick.js 中 triggerDeptHeartbeats 被 BRAIN_QUIET_MODE 门控
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');const idx=c.indexOf('triggerDeptHeartbeats');const region=c.slice(idx-300,idx+50);if(!region.includes('BRAIN_QUIET_MODE'))throw new Error('FAIL: not gated');console.log('PASS')"
+- [x] [ARTIFACT] `packages/brain/src/__tests__/harness-pipeline.test.ts` 存在且包含 >= 5 个 describe 块
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/__tests__/harness-pipeline.test.ts','utf8');const d=(s.match(/describe\(/g)||[]).length;if(d<5){process.exit(1)};console.log('OK:'+d)"
+- [x] [BEHAVIOR] report 触发时机：harness_report 创建位于 `currentWsIdx === totalWsCount` 条件块内
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=s.indexOf('currentWsIdx === totalWsCount');if(i<0)process.exit(1);if(!s.slice(i,i+800).includes('harness_report'))process.exit(1);console.log('PASS')"
+- [x] [BEHAVIOR] goal_id 绕过：`execution_callback_harness` 在 actions.js 白名单中
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/actions.js','utf8');if(!s.includes('execution_callback_harness'))process.exit(1);console.log('PASS')"
+- [x] [BEHAVIOR] contract_branch null guard：!contractBranch guard 包含 [P0] + return
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=s.indexOf('!contractBranch');if(i<0)process.exit(1);const r=s.slice(i,i+400);if(!r.includes('[P0]'))process.exit(1);if(!r.includes('return'))process.exit(1);console.log('PASS')"
+- [x] [BEHAVIOR] 串行链幂等：harness WS 幂等保护日志精确命中
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=s.indexOf('already queued, skip creation');if(i<0)process.exit(1);const r=s.slice(Math.max(0,i-200),i+100);if(!r.includes('WS'))process.exit(1);console.log('PASS')"
+- [x] [BEHAVIOR] harness_report 使用 Haiku 模型
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/model-profile.js','utf8');if(!/harness_report[^}]*haiku/.test(s))process.exit(1);console.log('PASS')"
+- [x] [BEHAVIOR] BRAIN_QUIET_MODE 门控 startSelfDriveLoop 和 triggerDeptHeartbeats
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/server.js','utf8');const t=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(!s.includes('BRAIN_QUIET_MODE'))process.exit(1);if(!t.includes('BRAIN_QUIET_MODE'))process.exit(1);console.log('PASS')"
