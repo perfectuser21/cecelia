@@ -3,11 +3,10 @@ id: harness-report-skill
 description: |
   Harness Report — Harness v4.0 最终步骤：生成完整报告。
   包含 PRD 目标/GAN 对抗轮次/代码生成/CI 状态/Evaluator 轮次/成本统计。
-version: 4.1.0
+version: 4.0.0
 created: 2026-04-08
-updated: 2026-04-10
+updated: 2026-04-08
 changelog:
-  - 4.1.0: 移除已废弃的 Evaluator 列，与三层架构对齐（CI 是唯一验收器）
   - 4.0.0: Harness v4.0 Report（独立 skill，新增 CI/Deploy watch 状态）
 ---
 
@@ -57,9 +56,9 @@ cat > "${SPRINT_DIR}/harness-report.md" << 'REPORT'
 
 ## 代码生成
 
-| 任务 | PR | CI | 结论 |
-|-----|----|----|------|
-| harness_generate | #NNN | PASS | ✅ |
+| 任务 | PR | CI | Evaluator | 结论 |
+|-----|----|----|-----------|------|
+| harness_generate | #NNN | PASS | PASS | ✅ |
 
 ## 成本统计
 
