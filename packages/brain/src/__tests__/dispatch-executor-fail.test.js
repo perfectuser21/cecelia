@@ -88,6 +88,11 @@ vi.mock('../quarantine.js', () => ({
   checkExpiredQuarantineTasks: vi.fn().mockResolvedValue([])
 }));
 
+// quota-guard: fail-open（不限制优先级），避免测试 DB 调用干扰 mock 序列
+vi.mock('../quota-guard.js', () => ({
+  checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
+}));
+
 describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=false', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -80,6 +80,14 @@ export function checkCredentialExpiry() {
  * @param {import('pg').Pool} pool - DB 连接池（已传入，无需新建）
  * @returns {Promise<{ checked: number, alerted: number, skipped: number }>}
  */
+
+// 内存去重：dedupKey（`${account}_${level}`）→ 上次告警时间戳
+const _alertDedup = new Map();
+const ALERT_DEDUP_MS = 60 * 60 * 1000; // 1 小时内同账号同级别不重复推送
+
+/** 测试用：清除告警去重缓存（仅供 test 调用） */
+export function _resetAlertDedup() { _alertDedup.clear(); }
+
 export async function checkAndAlertExpiringCredentials(pool) {
   const { accounts, criticalAccounts } = checkCredentialExpiry();
 

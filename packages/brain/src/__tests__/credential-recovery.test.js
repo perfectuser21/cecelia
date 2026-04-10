@@ -18,10 +18,14 @@ vi.mock('os', () => ({
 vi.mock('../actions.js', () => ({
   createTask: vi.fn().mockResolvedValue({ id: 'mock-task-id', deduplicated: false }),
 }));
+vi.mock('../alerting.js', () => ({
+  raise: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { readFileSync, existsSync } from 'fs';
-import { recoverAuthQuarantinedTasks, checkAndAlertExpiringCredentials } from '../credential-expiry-checker.js';
+import { recoverAuthQuarantinedTasks, checkAndAlertExpiringCredentials, _resetAlertDedup } from '../credential-expiry-checker.js';
 import { createTask } from '../actions.js';
+import { raise } from '../alerting.js';
 
 // Helper: build a fresh mock pool
 function makePool({ accountUsageRows = [], candidateRows = [], updateOk = true } = {}) {
@@ -199,7 +203,7 @@ describe('recoverAuthQuarantinedTasks', () => {
 });
 
 // ============================================================
-// checkAndAlertExpiringCredentials — 两层告警机制测试
+// checkAndAlertExpiringCredentials — raise() 轻量告警通道测试
 // ============================================================
 
 describe('checkAndAlertExpiringCredentials', () => {
@@ -212,84 +216,70 @@ describe('checkAndAlertExpiringCredentials', () => {
     }));
   }
 
-  function makeAlertPool({ urgentExists = false, regularExists = false } = {}) {
-    return {
-      query: vi.fn().mockImplementation(async (sql) => {
-        // 紧急告警去重查询 ([URGENT])
-        if (sql.includes('URGENT') || (sql.includes('INTERVAL') && sql.includes('2 hours'))) {
-          return { rows: urgentExists ? [{ id: 'existing-urgent' }] : [] };
-        }
-        // 常规告警去重查询
-        if (sql.includes('24 hours') && sql.includes('title LIKE')) {
-          return { rows: regularExists ? [{ id: 'existing-regular', status: 'queued' }] : [] };
-        }
-        return { rows: [] };
-      }),
-    };
-  }
+  const pool = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }) };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    createTask.mockResolvedValue({ id: 'new-task-id', deduplicated: false });
+    _resetAlertDedup(); // 清除内存去重缓存，确保每个测试独立
   });
 
-  it('< 3h 剩余：创建 URGENT P0 告警', async () => {
+  it('< 3h 剩余：通过 raise() 发送 P0 紧急告警', async () => {
     mockExpiringCredential(2 * 60 * 60 * 1000); // 2h remaining
-    const pool = makeAlertPool({ urgentExists: false });
 
     const result = await checkAndAlertExpiringCredentials(pool);
 
-    expect(result.alerted).toBe(3); // account1/2/3 全部告警（mock 返回相同剩余时间）
-    expect(createTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: expect.stringContaining('[URGENT]'),
-        priority: 'P0',
-        tags: expect.arrayContaining(['credential-urgent']),
-      })
+    expect(result.alerted).toBe(3); // account1/2/3 全部告警
+    expect(raise).toHaveBeenCalledWith(
+      'P0',
+      expect.stringContaining('credential_expiry_account'),
+      expect.stringContaining('需立即刷新')
     );
+    expect(createTask).not.toHaveBeenCalled(); // 不再创建 research 任务
   });
 
-  it('< 3h 剩余：URGENT 告警已存在时跳过', async () => {
+  it('< 3h 剩余：1h 内已告警时跳过（内存去重）', async () => {
     mockExpiringCredential(2 * 60 * 60 * 1000); // 2h remaining
-    const pool = makeAlertPool({ urgentExists: true });
-
+    // 第一次调用 — 填充去重缓存
+    await checkAndAlertExpiringCredentials(pool);
+    vi.clearAllMocks();
+    // 第二次调用 — 1h 内同账号同级别应被跳过
     const result = await checkAndAlertExpiringCredentials(pool);
 
     expect(result.alerted).toBe(0);
-    expect(createTask).not.toHaveBeenCalled();
+    expect(raise).not.toHaveBeenCalled();
   });
 
-  it('3h~8h 剩余：创建常规告警', async () => {
-    mockExpiringCredential(5 * 60 * 60 * 1000); // 5h remaining — above critical, below alert threshold
-    const pool = makeAlertPool({ urgentExists: false, regularExists: false });
+  it('3h~8h 剩余：通过 raise() 发送 P1 常规告警', async () => {
+    mockExpiringCredential(5 * 60 * 60 * 1000); // 5h remaining
 
     const result = await checkAndAlertExpiringCredentials(pool);
 
     expect(result.alerted).toBe(3);
-    expect(createTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: expect.not.stringContaining('[URGENT]'),
-      })
+    expect(raise).toHaveBeenCalledWith(
+      'P1',
+      expect.stringContaining('credential_expiry_account'),
+      expect.stringContaining('需尽快刷新')
     );
-  });
-
-  it('3h~8h 剩余：常规告警已存在时跳过', async () => {
-    mockExpiringCredential(5 * 60 * 60 * 1000); // 5h remaining
-    const pool = makeAlertPool({ urgentExists: false, regularExists: true });
-
-    const result = await checkAndAlertExpiringCredentials(pool);
-
-    expect(result.alerted).toBe(0);
     expect(createTask).not.toHaveBeenCalled();
   });
 
-  it('凭据健康（> 8h）：不创建告警', async () => {
+  it('3h~8h 剩余：1h 内已告警时跳过（内存去重）', async () => {
+    mockExpiringCredential(5 * 60 * 60 * 1000); // 5h remaining
+    await checkAndAlertExpiringCredentials(pool);
+    vi.clearAllMocks();
+    const result = await checkAndAlertExpiringCredentials(pool);
+
+    expect(result.alerted).toBe(0);
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('凭据健康（> 8h）：不告警', async () => {
     mockExpiringCredential(10 * 60 * 60 * 1000); // 10h — above 8h threshold
-    const pool = makeAlertPool();
 
     const result = await checkAndAlertExpiringCredentials(pool);
 
     expect(result.alerted).toBe(0);
+    expect(raise).not.toHaveBeenCalled();
     expect(createTask).not.toHaveBeenCalled();
   });
 });
