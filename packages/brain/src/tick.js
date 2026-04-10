@@ -2854,11 +2854,14 @@ async function executeTick() {
   recordOperation(true, 'tick');
 
   // 9. Trigger dept heartbeats (每轮 Tick 末尾，为活跃部门创建 heartbeat task)
+  // BRAIN_QUIET_MODE=true 时跳过，避免 heartbeat 噪音干扰手动 pipeline 验证
   let deptHeartbeatResult = { triggered: 0, skipped: 0, results: [] };
-  try {
-    deptHeartbeatResult = await triggerDeptHeartbeats(pool);
-  } catch (deptErr) {
-    console.error('[tick] dept heartbeat error:', deptErr.message);
+  if (!BRAIN_QUIET_MODE) {
+    try {
+      deptHeartbeatResult = await triggerDeptHeartbeats(pool);
+    } catch (deptErr) {
+      console.error('[tick] dept heartbeat error:', deptErr.message);
+    }
   }
 
   // 10. Trigger daily code review (每天 02:00 UTC，为活跃 repo 创建 code_review task)

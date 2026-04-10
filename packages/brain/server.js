@@ -410,9 +410,14 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   console.log('[Server] Capability Scanner started (6h interval) - island detection for unused capabilities');
 
   // Initialize Self-Drive Engine (自驱 — 看到体检报告后自主创建任务)
-  const { startSelfDriveLoop } = await import('./src/self-drive.js');
-  startSelfDriveLoop();
-  console.log('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
+  // BRAIN_QUIET_MODE=true 时跳过，避免噪音任务干扰手动 pipeline 验证
+  if (process.env.BRAIN_QUIET_MODE !== 'true') {
+    const { startSelfDriveLoop } = await import('./src/self-drive.js');
+    startSelfDriveLoop();
+    console.log('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
+  } else {
+    console.log('[Server] Self-Drive Engine SKIPPED (BRAIN_QUIET_MODE=true)');
+  }
 
   // Initialize Evolution Scanner (进化追踪 — 扫描自身代码演进)
   try {

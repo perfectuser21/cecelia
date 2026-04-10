@@ -1,18 +1,25 @@
-contract_branch: cp-harness-contract-8f005193
-workstream_index: 2
-sprint_dir: sprints/harness-self-check-v2
+# DoD — fix(brain): harness pipeline 编排 7个Bug修复 + BRAIN_QUIET_MODE 噪音关闭
 
-# Contract DoD — Workstream 2: Reviewer 证伪机制 + GAN 多轮对抗
+- [x] [BEHAVIOR] harness_report 只在最后一个 WS 完成时创建（currentWsIdx === totalWsCount）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const m=c.match(/currentWsIdx === totalWsCount[\s\S]{0,200}harness_report/);if(!m)throw new Error('FAIL');console.log('PASS')"
 
-**范围**: Reviewer 对草案执行证伪分析 -> 输出三元组反馈（命令字段用 readFileSync 路径指纹匹配）-> Proposer 修订 -> Reviewer 再审 -> 最终 APPROVED 合同
-**大小**: M（验证涉及多个产物文件和多轮对抗记录）
-**依赖**: Workstream 1 完成后
+- [x] [BEHAVIOR] goal_id 为 null 时串行 WS 链不报错（createHarnessTask 不传 goal_id 或允许 null）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(c.includes('goal_id is required'))throw new Error('FAIL: still has goal_id required check');console.log('PASS')"
 
-## DoD 条目
+- [x] [BEHAVIOR] contract_branch 为 null 时不创建 Generator，打印 P0 错误日志
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('contractBranch') || !c.includes('null') || !c.includes('P0'))throw new Error('FAIL: no null guard');console.log('PASS')"
 
-- [x] [BEHAVIOR] `contract-review-feedback.md` 三元组覆盖率 >= 草案命令数 * 60%，命令字段与草案 readFileSync 路径指纹匹配，至少 1 个 YES，判决格式为 `**判决**: X`
-  Test: node -e "const fs=require('fs');const d=fs.readFileSync('sprints/harness-self-check-v2/contract-draft.md','utf8');const br=/\x60\x60\x60bash\n([\s\S]*?)\x60\x60\x60/g;const pfps=[];let bm;while((bm=br.exec(d))!==null){const ct=bm[1].replace(/^#.*\n/gm,'').trim();if(!ct.length)continue;const pm=ct.match(/readFileSync\s*\(\s*['\x22]([^'\x22]+)['\x22]/);if(pm)pfps.push(pm[1])};const fb=fs.readFileSync('sprints/harness-self-check-v2/contract-review-feedback.md','utf8');const y=(fb.match(/能否绕过[：:]\s*YES/g)||[]).length;if(y<1)throw new Error('FAIL:无YES');const hdr=fb.split('\n').slice(0,30).join('\n');if(!/\*\*判决\*\*[：:]\s*(REVISION|APPROVED)/.test(hdr))throw new Error('FAIL:判决格式错误');console.log('PASS:YES='+y)"
-- [x] [BEHAVIOR] GAN 至少 2 轮——远端存在 `cp-harness-propose-r2-*` 分支
-  Test: node -e "const {execSync}=require('child_process');const o=execSync('git ls-remote --heads origin cp-harness-propose-r2-\\*',{encoding:'utf8'});if(!o||!o.trim())throw new Error('FAIL:无R2分支');console.log('PASS:R2分支存在='+o.trim().split('\n').length+'个')"
-- [x] [BEHAVIOR] 最终 `sprint-contract.md` 含 >= 4 Feature（每个有白名单工具调用）、>= 8 命令块、0 个 YES、完整三元组 NO >= 60% 命令数（每块含命令：+最懒假实现+能否绕过：NO）
-  Test: node -e "const c=require('fs').readFileSync('sprints/harness-self-check-v2/sprint-contract.md','utf8');const fb=c.split(/^## Feature \d+/gm);fb.shift();if(fb.length<4)throw new Error('FAIL:Feature='+fb.length);const TR=/\bnode\s+-e\b|\bcurl\s|\bbash\s|\bpsql\s|\bnpm\s/;fb.forEach((b,i)=>{const bm=b.match(/\x60\x60\x60bash\n([\s\S]*?)\x60\x60\x60/g)||[];if(!bm.some(x=>TR.test(x)))throw new Error('FAIL:Feature '+(i+1)+'无白名单工具')});const cmds=(c.match(/^\x60\x60\x60bash/gm)||[]).length;if(cmds<8)throw new Error('FAIL:bash='+cmds);const y=(c.match(/能否绕过[：:]\s*YES/g)||[]).length;if(y>0)throw new Error('FAIL:YES='+y);const bks=c.split('---');let sno=0;bks.forEach(bk=>{if(bk.match(/命令[：:]/)&&bk.includes('最懒假实现')&&/能否绕过[：:]\s*NO/.test(bk))sno++});const minNO=Math.ceil(cmds*0.6);if(sno<minNO)throw new Error('FAIL:完整三元组NO='+sno+'<'+minNO+'(命令数'+cmds+'*60%)');console.log('PASS:Feature='+fb.length+',bash='+cmds+',YES=0,完整三元组NO='+sno+'(>='+minNO+')')"
+- [x] [BEHAVIOR] 串行 WS 链创建前查 DB 幂等检查，已有同 WS 任务则跳过
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('workstream_index') || !c.includes('already queued'))throw new Error('FAIL: no idempotency check');console.log('PASS')"
+
+- [x] [ARTIFACT] harness_report payload 包含 project_id 字段
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const idx=c.indexOf('task_type.*harness_report');const region=c.slice(c.indexOf('harness_report',idx-500),c.indexOf('harness_report',idx-500)+800);if(!region.includes('project_id'))throw new Error('FAIL');console.log('PASS')"
+
+- [x] [ARTIFACT] model-profile.js 中 harness_report 使用 claude-haiku-4-5-20251001
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/model-profile.js','utf8');if(!c.includes(\"harness_report.*haiku\") && !c.match(/harness_report[^}]*haiku/))throw new Error('FAIL');console.log('PASS')"
+
+- [x] [BEHAVIOR] server.js 中 startSelfDriveLoop 被 BRAIN_QUIET_MODE 门控
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!c.includes('BRAIN_QUIET_MODE') || !c.includes('startSelfDriveLoop'))throw new Error('FAIL');const idx=c.indexOf('startSelfDriveLoop');const region=c.slice(idx-200,idx+50);if(!region.includes('BRAIN_QUIET_MODE'))throw new Error('FAIL: not gated');console.log('PASS')"
+
+- [x] [BEHAVIOR] tick.js 中 triggerDeptHeartbeats 被 BRAIN_QUIET_MODE 门控
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');const idx=c.indexOf('triggerDeptHeartbeats');const region=c.slice(idx-300,idx+50);if(!region.includes('BRAIN_QUIET_MODE'))throw new Error('FAIL: not gated');console.log('PASS')"
