@@ -462,9 +462,62 @@ jobs:
             console.log('✅ Harness DoD 完整性校验通过（' + generatorItems.length + ' 个条目与 contract 一致）');
           "
 
+  # ─── Harness Contract Lint（DoD/contract 文件变更时触发）────────
+  harness-contract-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 检查 DoD/contract 文件变更
+        id: detect-dod
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD" 2>/dev/null || echo "")
+          DOD_FILES=$(echo "$CHANGED" | grep -E '(^|/)DoD\.md$|(^|/)contract-dod-ws[0-9]+\.md$' || true)
+          if [ -z "$DOD_FILES" ]; then
+            echo "has_dod=false" >> $GITHUB_OUTPUT
+            echo "⏭️  无 DoD/contract 文件变更，跳过 harness-contract-lint"
+          else
+            echo "has_dod=true" >> $GITHUB_OUTPUT
+            {
+              echo "dod_files<<DODEOF"
+              echo "$DOD_FILES"
+              echo "DODEOF"
+            } >> $GITHUB_OUTPUT
+            echo "🔍 检测到 DoD/contract 文件变更:"
+            echo "$DOD_FILES"
+          fi
+      - name: Lint DoD/contract 文件
+        if: steps.detect-dod.outputs.has_dod == 'true'
+        run: |
+          FAILED=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            [ -f "$f" ] || continue
+            echo "── 检查: $f"
+            if node scripts/harness-contract-lint.mjs "$f"; then
+              echo "✅ $f 通过"
+            else
+              echo "❌ $f 不合规"
+              FAILED=$((FAILED + 1))
+            fi
+          done <<< "${{ steps.detect-dod.outputs.dod_files }}"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::${FAILED} 个 DoD/contract 文件不合规，请修复后重新 push"
+            exit 1
+          fi
+          echo "✅ harness-contract-lint: 所有 DoD/contract 文件合规"
+
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
-    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity]
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
