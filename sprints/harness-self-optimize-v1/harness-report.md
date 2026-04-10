@@ -60,7 +60,7 @@
 | `650de0a1` | harness_contract_propose (R1) | ✅ completed | 3分25秒 |
 | `5c877fc3` | harness_contract_review (R1) | ✅ completed | 2分12秒 |
 | `eae5c75f` | harness_generate (WS1/2) | ✅ completed | 5分37秒 |
-| `9c21bf0c` | harness_report | ✅ completed | — |
+| `9c21bf0c` | harness_report | ✅ completed | ~5分钟 |
 
 ---
 
