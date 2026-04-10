@@ -1,18 +1,16 @@
-contract_branch: cp-harness-propose-r2-91db397b
+contract_branch: cp-harness-contract-5c877fc3
 workstream_index: 1
-sprint_dir: sprints/harness-pipeline-fix
+sprint_dir: sprints/harness-self-optimize-v1
 
-- [x] [ARTIFACT] `packages/brain/src/__tests__/harness-pipeline.test.ts` 存在且包含 >= 5 个 describe 块
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/__tests__/harness-pipeline.test.ts','utf8');const d=(s.match(/describe\(/g)||[]).length;if(d<5){process.exit(1)};console.log('OK:'+d)"
-- [x] [BEHAVIOR] report 触发时机：harness_report 创建位于 `currentWsIdx === totalWsCount` 条件块内
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=s.indexOf('currentWsIdx === totalWsCount');if(i<0)process.exit(1);if(!s.slice(i,i+800).includes('harness_report'))process.exit(1);console.log('PASS')"
-- [x] [BEHAVIOR] goal_id 绕过：`execution_callback_harness` 在 actions.js 白名单中
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/actions.js','utf8');if(!s.includes('execution_callback_harness'))process.exit(1);console.log('PASS')"
-- [x] [BEHAVIOR] contract_branch null guard：!contractBranch guard 包含 [P0] + return
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=s.indexOf('!contractBranch');if(i<0)process.exit(1);const r=s.slice(i,i+400);if(!r.includes('[P0]'))process.exit(1);if(!r.includes('return'))process.exit(1);console.log('PASS')"
-- [x] [BEHAVIOR] 串行链幂等：harness WS 幂等保护日志精确命中
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=s.indexOf('already queued, skip creation');if(i<0)process.exit(1);const r=s.slice(Math.max(0,i-200),i+100);if(!r.includes('WS'))process.exit(1);console.log('PASS')"
-- [x] [BEHAVIOR] harness_report 使用 Haiku 模型
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/model-profile.js','utf8');if(!/harness_report[^}]*haiku/.test(s))process.exit(1);console.log('PASS')"
-- [x] [BEHAVIOR] BRAIN_QUIET_MODE 门控 startSelfDriveLoop 和 triggerDeptHeartbeats
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/server.js','utf8');const t=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(!s.includes('BRAIN_QUIET_MODE'))process.exit(1);if(!t.includes('BRAIN_QUIET_MODE'))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] `scripts/harness-contract-lint.mjs` 存在且可执行
+  Test: node -e "require('fs').accessSync('scripts/harness-contract-lint.mjs'); console.log('PASS')"
+- [x] [BEHAVIOR] lint 脚本对白名单违规工具（grep/ls/cat/sed/echo）返回非零退出码
+  Test: node -e "const fs=require('fs');const tmp='/tmp/test-lint-wl.md';fs.writeFileSync(tmp,'- [x] [BEHAVIOR] x\n  Test: grep -c foo bar');const{execSync}=require('child_process');try{execSync('node scripts/harness-contract-lint.mjs '+tmp,{stdio:'pipe'});console.log('FAIL');process.exit(1)}catch(e){console.log('PASS')}"
+- [x] [BEHAVIOR] lint 脚本对空 Test 字段返回非零退出码
+  Test: node -e "const fs=require('fs');const tmp='/tmp/test-lint-empty.md';fs.writeFileSync(tmp,'- [x] [BEHAVIOR] x\n  Test:');const{execSync}=require('child_process');try{execSync('node scripts/harness-contract-lint.mjs '+tmp,{stdio:'pipe'});console.log('FAIL');process.exit(1)}catch(e){console.log('PASS')}"
+- [x] [BEHAVIOR] lint 脚本对未勾选条目返回非零退出码
+  Test: node -e "const fs=require('fs');const tmp='/tmp/test-lint-uc.md';fs.writeFileSync(tmp,'- [ ] [BEHAVIOR] x\n  Test: curl -sf localhost:5221');const{execSync}=require('child_process');try{execSync('node scripts/harness-contract-lint.mjs '+tmp,{stdio:'pipe'});console.log('FAIL');process.exit(1)}catch(e){console.log('PASS')}"
+- [x] [ARTIFACT] `.github/workflows/ci.yml` 包含 `harness-contract-lint` job，条件触发于 DoD/contract 文件变更
+  Test: node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('harness-contract-lint'))process.exit(1);console.log('PASS')"
+- [x] [BEHAVIOR] Reviewer SKILL.md 覆盖率阈值 >= 80%，含 proof-of-falsification 格式要求
+  Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');if(!(c.includes('0.8')||c.includes('80%')))process.exit(1);if(!c.includes('proof-of-falsification'))process.exit(1);console.log('PASS')"

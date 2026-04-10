@@ -3,10 +3,11 @@ id: harness-contract-reviewer-skill
 description: |
   Harness Contract Reviewer — Harness v4.3 GAN Layer 2b：
   Evaluator 角色，对抗性审查合同草案，重点挑战验证命令是否足够严格、能否检测出错误实现。
-version: 4.3.0
+version: 4.4.0
 created: 2026-04-08
-updated: 2026-04-09
+updated: 2026-04-10
 changelog:
+  - 4.4.0: 覆盖率阈值提升至 80%（原 60%）；每个 can_bypass: Y triple 必须附带 proof-of-falsification 代码片段；REVISION 输出格式要求三部分（原始命令/假实现片段/建议修复命令）
   - 4.3.0: 新增 CI 白名单强制检查 — Test 命令含 grep/ls/cat/sed/echo → 必须 REVISION；APPROVED 条件明确列出允许工具
   - 4.2.0: 新增 Workstream 审查维度（边界清晰/DoD可执行/大小合理）+ APPROVED 时输出 workstream_count
   - 4.1.0: 修正 v4.0 错误 — 审查重点恢复为挑战验证命令严格性（而非审查"清晰可测性/歧义"）
@@ -54,7 +55,37 @@ git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || c
 git show "origin/${PROPOSE_BRANCH}:${SPRINT_DIR}/contract-draft.md" 2>/dev/null || cat "${SPRINT_DIR}/contract-draft.md"
 ```
 
-### Step 2: 对抗性审查——挑战验证命令
+### Step 2: 对抗性审查——Triple 分析 + 覆盖率计算
+
+**Triple 分析**：对每条验证命令构造 Triple：
+```
+{
+  "command": "<原始命令>",
+  "can_bypass": "Y/N",          // Y = 可被假实现蒙混过关
+  "proof": "<可执行代码片段>",   // 仅当 can_bypass: Y 时必填，必须是可直接执行的代码，不能是纯文字描述
+  "fix": "<建议修复命令>"        // 仅当 can_bypass: Y 时必填
+}
+```
+
+**覆盖率阈值：80%**（Triple 分析必须覆盖至少 80% 的验证命令，原 60%）
+
+计算方式：`covered_count / total_command_count >= 0.8`
+
+**Triple 中 can_bypass: Y 的判断标准**：
+- 命令只检查 HTTP 200，不验证响应体内容 → Y
+- 命令只检查文件存在，不验证文件内容 → Y
+- 命令只检查进程/服务存活，不验证实际行为 → Y
+- 命令用 grep 验证代码文本存在，但代码可以是死代码/注释掉的 → Y
+- 命令只检查字段存在，不检查字段值正确 → Y
+
+**proof 字段格式要求（proof-of-falsification）**：
+每个 `can_bypass: Y` 的 triple 必须包含可执行的假实现代码片段，格式示例：
+```javascript
+// 假实现：空函数总能通过此命令
+function retryReport() { return Promise.resolve(); }
+// 但命令 "grep 'MAX_REPORT_RETRIES' file.js" 不能检测到这个假实现
+```
+**禁止纯文字描述**（如"可以写一个空函数"），必须是实际可运行的代码片段。
 
 逐条检查验证命令，寻找以下问题：
 
@@ -136,7 +167,8 @@ git push origin "${CONTRACT_BRANCH}"
 
 ### Step 4b: REVISION — 写反馈
 
-写反馈时，**必须以"命令问题"为主要反馈类型**，而非"描述模糊"：
+写反馈时，**必须以"命令问题"为主要反馈类型**，而非"描述模糊"。
+**每个 issue 必须包含三部分：原始命令、假实现片段（proof-of-falsification）、建议修复命令。**
 
 ```bash
 TASK_ID_SHORT=$(echo "${TASK_ID}" | cut -c1-8)
@@ -150,17 +182,50 @@ cat > "${SPRINT_DIR}/contract-review-feedback.md" << 'FEEDBACK'
 ## 必须修改项
 
 ### 1. [命令太弱] Feature X — <具体命令问题>
-**问题**: <命令只检查 HTTP 200，未验证响应体字段>
-**影响**: <空实现也能通过此命令>
-**建议**: <加上对响应体关键字段的校验，如 node -e 验证 JSON 结构>
+
+**原始命令**:
+```bash
+curl -sf localhost:5221/api/brain/tasks
+```
+
+**假实现片段**（proof-of-falsification）:
+```javascript
+// 假实现：返回空数组，命令仍然通过（只检查 HTTP 200）
+app.get('/api/brain/tasks', (req, res) => res.json([]));
+```
+
+**建议修复命令**:
+```bash
+node -e "
+  const { execSync } = require('child_process');
+  const out = execSync('curl -sf localhost:5221/api/brain/tasks').toString();
+  const data = JSON.parse(out);
+  if (!Array.isArray(data.tasks)) { console.log('FAIL: 响应缺少 tasks 字段'); process.exit(1); }
+  console.log('PASS');
+"
+```
 
 ### 2. [缺失边界] Feature Y — <缺失边界路径>
-**问题**: <没有测试空输入/无效参数时的返回行为>
+
+**原始命令**: <原始命令>
+
+**假实现片段**（proof-of-falsification）:
+```javascript
+// 假实现：只处理正常情况，不处理边界
+function handleRequest(input) { return { ok: true }; }
+```
+
+**建议修复命令**: <加入边界测试的命令>
 
 ### 3. [工具不对] Feature Z — <工具选择问题>
-**问题**: <UI 功能应用 playwright 验证，不能只用 curl>
+**原始命令**: <原始命令>
+**假实现片段**（proof-of-falsification）: <可执行代码>
+**建议修复命令**: <使用 playwright/psql/npm test 等正确工具>
 
 ### 4. [有占位符] Feature W — 命令含 `{task_id}`，无法直接执行
+**原始命令**: <含占位符的命令>
+**假实现片段**（proof-of-falsification）: （占位符导致命令无法执行，跳过）
+**建议修复命令**: <用固定值或 shell 变量替换占位符>
 
 ### 5. [PRD 遗漏] PRD 里的 Feature V 在合同里没有验证命令
 
