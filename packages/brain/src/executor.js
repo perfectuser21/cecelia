@@ -2097,6 +2097,13 @@ async function preparePrompt(task) {
     return _prepareSprintPrompt(task, taskType);
   }
 
+  // Harness Report 类型（sprint_report / harness_report → 固定走对应 skill，禁止 fallback 到 /dev）
+  if (taskType === 'sprint_report' || taskType === 'harness_report') {
+    const sprintDir = task.payload?.sprint_dir || 'sprints';
+    const skillName = taskType === 'harness_report' ? '/harness-report' : '/sprint-report';
+    return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${task.description || task.title}`;
+  }
+
   // Harness Planner 类型
   if (taskType === 'sprint_planner' || taskType === 'harness_planner') {
     const sprintDir = task.payload?.sprint_dir || 'sprints';
