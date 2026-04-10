@@ -84,6 +84,10 @@ vi.mock('../pre-flight-check.js', () => ({
   getPreFlightStats: (...args) => mockGetPreFlightStats(...args),
 }));
 
+vi.mock('../quota-guard.js', () => ({
+  checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
+}));
+
 describe('selectNextDispatchableTask: excludeIds 参数', () => {
   beforeEach(() => {
     vi.clearAllMocks();

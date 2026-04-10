@@ -74,6 +74,10 @@ vi.mock('../pre-flight-check.js', () => ({
   getPreFlightStats: vi.fn().mockResolvedValue({ totalChecked: 0, passed: 0, failed: 0, passRate: '0%' }),
 }));
 
+vi.mock('../quota-guard.js', () => ({
+  checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
+}));
+
 describe('selectNextDispatchableTask: Initiative 锁 SQL', () => {
   beforeEach(() => {
     vi.clearAllMocks();
