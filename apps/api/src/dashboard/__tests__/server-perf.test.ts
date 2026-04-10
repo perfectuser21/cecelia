@@ -1,17 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
-import compression from 'compression';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readdirSync } from 'fs';
+
+// Mock compression to avoid requiring the package to be installed locally.
+// The real middleware is tested via integration tests against the running server.
+vi.mock('compression', () => ({
+  default: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+}));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Build a minimal test app that mirrors the server's static serving setup
-function createTestApp() {
+async function createTestApp() {
   const app = express();
+  const { default: compression } = await import('compression');
 
   // Compression (same as server.ts)
   app.use(compression() as unknown as express.RequestHandler);
@@ -40,7 +46,8 @@ function createTestApp() {
 }
 
 describe('Server performance middleware', () => {
-  const app = createTestApp();
+  let app: express.Express;
+  beforeAll(async () => { app = await createTestApp(); });
 
   it('hashed assets have immutable cache-control', async () => {
     // Find an actual asset file from the build output
