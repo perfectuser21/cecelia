@@ -65,103 +65,115 @@ const PANIC_CONSECUTIVE_THRESHOLD = 3;
 // ============================================================
 
 /**
+ * 检查并清除已过期的手动覆盖
+ */
+function checkAndClearExpiredOverride() {
+  if (_manualOverride && Date.now() > _manualOverride.until) {
+    console.log('[Alertness] Manual override expired');
+    _manualOverride = null;
+  }
+}
+
+/**
+ * 双标准冲突保护：无异常 pattern 时不允许升级到 ALERT 或以上
+ * healthScore 计算和 diagnosis.patterns 是两套独立标准，矛盾时保守处理
+ */
+function applyDualStandardGuard(targetLevel, diagnosis) {
+  if (targetLevel >= ALERTNESS_LEVELS.ALERT && diagnosis.patterns?.length === 0) {
+    console.log(`[Alertness] 双标准冲突：healthScore 建议 ALERT，但无异常 pattern，限制到 AWARE`);
+    return Math.min(targetLevel, ALERTNESS_LEVELS.AWARE);
+  }
+  return targetLevel;
+}
+
+/**
+ * PANIC 抖动稳定：连续 N 次 critical 才真正升级到 PANIC
+ */
+function applyPanicDebounce(targetLevel) {
+  if (targetLevel !== ALERTNESS_LEVELS.PANIC) {
+    _consecutiveCriticalCount = 0;
+    return targetLevel;
+  }
+  _consecutiveCriticalCount++;
+  if (_consecutiveCriticalCount < PANIC_CONSECUTIVE_THRESHOLD) {
+    console.log(`[Alertness] PANIC 抖动稳定: ${_consecutiveCriticalCount}/${PANIC_CONSECUTIVE_THRESHOLD}，暂时降级为 ALERT`);
+    return ALERTNESS_LEVELS.ALERT;
+  }
+  console.log(`[Alertness] PANIC 抖动稳定: 连续 ${_consecutiveCriticalCount} 次 critical，允许升级到 PANIC`);
+  return targetLevel;
+}
+
+/**
+ * 处理等级转换，含渐进式恢复逻辑
+ * 渐进式恢复：目标被跳级规则 block 时自动降一级（如 ALERT→CALM 被 block → ALERT→AWARE）
+ */
+async function handleLevelTransition(targetLevel, diagnosis) {
+  const canTransition = checkTransitionRules(currentState.level, targetLevel);
+  if (canTransition && targetLevel !== currentState.level) {
+    await transitionToLevel(targetLevel, diagnosis.summary || 'Health score based transition');
+  } else if (!canTransition && targetLevel < currentState.level) {
+    const stepTarget = currentState.level - 1;
+    if (checkTransitionRules(currentState.level, stepTarget)) {
+      await transitionToLevel(stepTarget, `Step recovery: ${diagnosis.summary || 'Health improved'}`);
+    }
+  }
+}
+
+/**
+ * AWARE 及以上时执行响应动作
+ */
+async function executeConditionalResponse(diagnosis) {
+  if (currentState.level < ALERTNESS_LEVELS.AWARE) return;
+  const response = await escalateResponse(currentState.level, diagnosis);
+  if (response) {
+    await executeResponse(response);
+  }
+}
+
+/**
+ * ALERT 及以上且未在恢复中时触发自愈
+ */
+async function triggerHealingIfNeeded(diagnosis) {
+  if (currentState.level < ALERTNESS_LEVELS.ALERT || currentState.isRecovering) return;
+  const healingNeeded = await checkHealingConditions(diagnosis);
+  if (healingNeeded) {
+    await startRecovery(diagnosis.issues);
+  }
+}
+
+/**
  * 评估系统健康并更新 Alertness 等级
  */
 export async function evaluateAlertness() {
   try {
-    // Check manual override expiration
-    if (_manualOverride && Date.now() > _manualOverride.until) {
-      console.log('[Alertness] Manual override expired');
-      _manualOverride = null;
-    }
-
-    // If manual override is active, skip evaluation
+    checkAndClearExpiredOverride();
     if (_manualOverride) {
       currentState.lastEvaluation = new Date();
       return currentState;
     }
 
-    // 1. 收集指标
     const metrics = await collectMetrics();
     const healthScore = calculateHealthScore(metrics);
-
-    // 2. 诊断问题
     const diagnosis = await diagnoseProblem(metrics, stateHistory);
 
-    // 3. 确定目标等级
     let targetLevel = determineTargetLevel(healthScore, diagnosis);
+    targetLevel = applyDualStandardGuard(targetLevel, diagnosis);
+    targetLevel = applyPanicDebounce(targetLevel);
 
-    // 3.5 健康/pattern 双标准冲突保护：
-    // healthScore 计算和 diagnosis.patterns 是两套独立标准，可能打架。
-    // 例：healthScore=55 → ALERT(3)，但 patterns=[] → summary="System is healthy"
-    // 这种矛盾场景下保守处理：无异常 pattern 时不允许升级到 ALERT 或以上。
-    if (targetLevel >= ALERTNESS_LEVELS.ALERT && diagnosis.patterns?.length === 0) {
-      console.log(`[Alertness] 双标准冲突：healthScore=${healthScore} 建议 ALERT，但无异常 pattern，限制到 AWARE`);
-      targetLevel = Math.min(targetLevel, ALERTNESS_LEVELS.AWARE);
-    }
+    await handleLevelTransition(targetLevel, diagnosis);
+    await executeConditionalResponse(diagnosis);
+    await triggerHealingIfNeeded(diagnosis);
 
-    // 3.6 PANIC 抖动稳定期：连续 N 次 critical 才真正升级到 PANIC
-    if (targetLevel === ALERTNESS_LEVELS.PANIC) {
-      _consecutiveCriticalCount++;
-      if (_consecutiveCriticalCount < PANIC_CONSECUTIVE_THRESHOLD) {
-        // 未达到连续阈值，降级到 ALERT
-        console.log(`[Alertness] PANIC 抖动稳定: ${_consecutiveCriticalCount}/${PANIC_CONSECUTIVE_THRESHOLD}，暂时降级为 ALERT`);
-        targetLevel = ALERTNESS_LEVELS.ALERT;
-      } else {
-        console.log(`[Alertness] PANIC 抖动稳定: 连续 ${_consecutiveCriticalCount} 次 critical，允许升级到 PANIC`);
-      }
-    } else {
-      // 非 critical 评估，重置计数器
-      _consecutiveCriticalCount = 0;
-    }
-
-    // 4. 检查状态转换规则
-    const canTransition = checkTransitionRules(currentState.level, targetLevel);
-
-    if (canTransition && targetLevel !== currentState.level) {
-      await transitionToLevel(targetLevel, diagnosis.summary || 'Health score based transition');
-    } else if (!canTransition && targetLevel < currentState.level) {
-      // 渐进式恢复：目标被跳级规则 block 时，自动降一级
-      // 例：ALERT(3)→CALM(1) 被 block → 改为 ALERT(3)→AWARE(2)
-      const stepTarget = currentState.level - 1;
-      if (checkTransitionRules(currentState.level, stepTarget)) {
-        const stepReason = `Step recovery: ${diagnosis.summary || 'Health improved'}`;
-        await transitionToLevel(stepTarget, stepReason);
-      }
-    }
-
-    // 5. 执行响应动作
-    if (currentState.level >= ALERTNESS_LEVELS.AWARE) {
-      const response = await escalateResponse(currentState.level, diagnosis);
-      if (response) {
-        await executeResponse(response);
-      }
-    }
-
-    // 6. 检查自愈条件
-    if (currentState.level >= ALERTNESS_LEVELS.ALERT && !currentState.isRecovering) {
-      const healingNeeded = await checkHealingConditions(diagnosis);
-      if (healingNeeded) {
-        await startRecovery(diagnosis.issues);
-      }
-    }
-
-    // 更新状态
     currentState.metrics = metrics;
     currentState.diagnosis = diagnosis;
     currentState.lastEvaluation = new Date();
-
-    // 保存到历史
     saveToHistory();
-
-    // 持久化到数据库
     await persistMetrics(metrics);
 
     return currentState;
 
   } catch (error) {
     console.error('[Alertness] Evaluation error:', error);
-    // 评估失败时提升警觉等级
     if (currentState.level < ALERTNESS_LEVELS.AWARE) {
       await transitionToLevel(ALERTNESS_LEVELS.AWARE, 'Evaluation error');
     }
