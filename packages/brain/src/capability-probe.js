@@ -530,22 +530,10 @@ export function executeRollback(triggerReason) {
 }
 
 // ============================================================
-// Scheduled probe cycle
+// Scheduled probe cycle — helper functions
 // ============================================================
 
-let _probeTimer = null;
-
-/**
- * Run probes, persist results, and trigger auto-fix for failures.
- */
-async function runProbeCycle() {
-  console.log('[Probe] Starting capability probe cycle...');
-
-  const results = await runProbes();
-  const failures = results.filter(r => !r.ok);
-  const timestamp = new Date().toISOString();
-
-  // Persist to cecelia_events
+async function persistProbeResults(results, failures, timestamp) {
   try {
     await pool.query(
       `INSERT INTO cecelia_events (event_type, source, payload)
@@ -561,157 +549,154 @@ async function runProbeCycle() {
   } catch (err) {
     console.error(`[Probe] Failed to persist results: ${err.message}`);
   }
+}
 
-  // Log summary
+async function persistRollbackEvent(payload) {
+  try {
+    await pool.query(
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('probe_rollback_triggered', 'capability-probe', $1)`,
+      [JSON.stringify(payload)]
+    );
+  } catch (evtErr) {
+    console.error(`[Probe] 回滚事件写入失败: ${evtErr.message}`);
+  }
+}
+
+async function dispatchAutoFixes(failures) {
+  for (const f of failures) {
+    const rcaResult = {
+      confidence: 0.75,
+      root_cause: `Capability probe "${f.name}" (${f.description}) failed: ${f.error || f.detail}`,
+      proposed_fix: `Investigate and fix the ${f.name} subsystem. Error: ${f.error || f.detail}. This probe checks: ${f.description}.`,
+      action_plan: `1. Read the ${f.name} related code\n2. Identify why it fails\n3. Fix the issue\n4. Verify the probe passes`,
+      evidence: `Probe result: ok=${f.ok}, latency=${f.latency_ms}ms, error=${f.error || 'none'}`,
+    };
+
+    if (!shouldAutoFix(rcaResult)) continue;
+
+    try {
+      const signature = `probe_${f.name}`;
+      const failure = {
+        task_id: null,
+        reason_code: `PROBE_FAIL_${f.name.toUpperCase()}`,
+        layer: 'probe',
+        step_name: f.name,
+        run_id: null,
+      };
+      const taskId = await dispatchToDevSkill(failure, rcaResult, signature);
+      console.log(`[Probe] Auto-fix task created for ${f.name}: ${taskId}`);
+    } catch (dispatchErr) {
+      console.error(`[Probe] Auto-fix dispatch failed for ${f.name}: ${dispatchErr.message}`);
+    }
+  }
+}
+
+// ── 批次失败检测：单批次总失败数 ≥ 阈值时立即触发回滚 ──
+// 返回 true 表示已触发回滚，调用方应跳过逐探针连续失败检测
+async function handleBatchRollback(failures) {
+  if (failures.length < ROLLBACK_BATCH_THRESHOLD) return false;
+
+  const batchTriggerReason = `单次探针批次总失败数 ${failures.length} 达到阈值 ${ROLLBACK_BATCH_THRESHOLD}（失败探针：${failures.map(f => f.name).join(', ')}），触发自动回滚`;
+
+  await raise('P0', 'probe_rollback_trigger_batch_failures', `🔄 自动回滚触发（批次过载）— ${batchTriggerReason}`);
+
+  const result = executeRollback(batchTriggerReason);
+  const resultMsg = result.success
+    ? `✅ 自动回滚成功（批次过载）— batch_failures=${failures.length}/${ROLLBACK_BATCH_THRESHOLD}，brain-rollback.sh 退出码 0`
+    : `❌ 自动回滚失败（批次过载）— batch_failures=${failures.length}/${ROLLBACK_BATCH_THRESHOLD}，brain-rollback.sh 退出码 ${result.exitCode}。错误: ${result.stderr.slice(0, 200)}`;
+
+  await raise('P0', 'probe_rollback_result_batch_failures', resultMsg);
+
+  await persistRollbackEvent({
+    timestamp: new Date().toISOString(),
+    trigger_type: 'batch_failures',
+    batch_failures: failures.length,
+    threshold: ROLLBACK_BATCH_THRESHOLD,
+    failed_probes: failures.map(f => f.name),
+    trigger_reason: batchTriggerReason,
+    rollback_success: result.success,
+    rollback_exit_code: result.exitCode,
+    rollback_stderr: result.stderr.slice(0, 500),
+  });
+
+  return true;
+}
+
+// ── 连续失败检测：阈值内连续失败才触发回滚（兜底机制）──
+// 返回 true 表示已触发回滚，调用方应停止检查后续探针
+async function handleConsecutiveRollback(f) {
+  const { consecutive, shouldRollback } = await checkConsecutiveFailures(f.name);
+
+  if (!shouldRollback) {
+    if (consecutive > 1) {
+      console.log(`[Probe] ${f.name} 连续失败 ${consecutive}/${ROLLBACK_CONSECUTIVE_THRESHOLD} 次，暂不回滚`);
+    }
+    return false;
+  }
+
+  const triggerReason = `探针 "${f.name}"（${f.description}）连续失败 ${consecutive} 次，达到阈值 ${ROLLBACK_CONSECUTIVE_THRESHOLD}，触发自动回滚`;
+
+  await raise('P0', `probe_rollback_trigger_${f.name}`, `🔄 自动回滚触发 — ${triggerReason}`);
+
+  // 执行回滚（同步，防止 Brain 进程在此期间继续处理其他事）
+  const result = executeRollback(triggerReason);
+  const resultMsg = result.success
+    ? `✅ 自动回滚成功 — 探针 "${f.name}" 触发，brain-rollback.sh 退出码 0`
+    : `❌ 自动回滚失败 — 探针 "${f.name}" 触发，brain-rollback.sh 退出码 ${result.exitCode}。错误: ${result.stderr.slice(0, 200)}`;
+
+  await raise('P0', `probe_rollback_result_${f.name}`, resultMsg);
+
+  await persistRollbackEvent({
+    timestamp: new Date().toISOString(),
+    probe_name: f.name,
+    consecutive_failures: consecutive,
+    threshold: ROLLBACK_CONSECUTIVE_THRESHOLD,
+    trigger_reason: triggerReason,
+    rollback_success: result.success,
+    rollback_exit_code: result.exitCode,
+    rollback_stderr: result.stderr.slice(0, 500),
+  });
+
+  return true;
+}
+
+// ============================================================
+// Scheduled probe cycle
+// ============================================================
+
+let _probeTimer = null;
+
+/**
+ * Run probes, persist results, and trigger auto-fix for failures.
+ */
+async function runProbeCycle() {
+  console.log('[Probe] Starting capability probe cycle...');
+
+  const results = await runProbes();
+  const failures = results.filter(r => !r.ok);
+  const timestamp = new Date().toISOString();
+
+  await persistProbeResults(results, failures, timestamp);
+
   if (failures.length === 0) {
     console.log(`[Probe] All ${results.length} probes passed ✅`);
-  } else {
-    console.log(`[Probe] ${failures.length}/${results.length} probes FAILED ❌`);
-    for (const f of failures) {
-      console.log(`  ❌ ${f.name}: ${f.error || f.detail}`);
-    }
+    return results;
+  }
 
-    // Trigger auto-fix for each failed probe
-    for (const f of failures) {
-      const rcaResult = {
-        confidence: 0.75,
-        root_cause: `Capability probe "${f.name}" (${f.description}) failed: ${f.error || f.detail}`,
-        proposed_fix: `Investigate and fix the ${f.name} subsystem. Error: ${f.error || f.detail}. This probe checks: ${f.description}.`,
-        action_plan: `1. Read the ${f.name} related code\n2. Identify why it fails\n3. Fix the issue\n4. Verify the probe passes`,
-        evidence: `Probe result: ok=${f.ok}, latency=${f.latency_ms}ms, error=${f.error || 'none'}`,
-      };
+  console.log(`[Probe] ${failures.length}/${results.length} probes FAILED ❌`);
+  for (const f of failures) {
+    console.log(`  ❌ ${f.name}: ${f.error || f.detail}`);
+  }
 
-      if (shouldAutoFix(rcaResult)) {
-        try {
-          const signature = `probe_${f.name}`;
-          const failure = {
-            task_id: null,
-            reason_code: `PROBE_FAIL_${f.name.toUpperCase()}`,
-            layer: 'probe',
-            step_name: f.name,
-            run_id: null,
-          };
-          const taskId = await dispatchToDevSkill(failure, rcaResult, signature);
-          console.log(`[Probe] Auto-fix task created for ${f.name}: ${taskId}`);
-        } catch (dispatchErr) {
-          console.error(`[Probe] Auto-fix dispatch failed for ${f.name}: ${dispatchErr.message}`);
-        }
-      }
-    }
+  await dispatchAutoFixes(failures);
 
-    // ── 批次失败检测：单批次总失败数 ≥ 阈值时立即触发回滚 ──
-    // 优先于连续失败检测，适用于系统大面积崩溃场景
-    if (failures.length >= ROLLBACK_BATCH_THRESHOLD) {
-      const batchTriggerReason = `单次探针批次总失败数 ${failures.length} 达到阈值 ${ROLLBACK_BATCH_THRESHOLD}（失败探针：${failures.map(f => f.name).join(', ')}），触发自动回滚`;
+  // 批次失败优先检测，触发则跳过逐探针连续失败检测
+  if (await handleBatchRollback(failures)) return results;
 
-      await raise(
-        'P0',
-        `probe_rollback_trigger_batch_failures`,
-        `🔄 自动回滚触发（批次过载）— ${batchTriggerReason}`
-      );
-
-      const batchRollbackResult = executeRollback(batchTriggerReason);
-
-      if (batchRollbackResult.success) {
-        await raise(
-          'P0',
-          `probe_rollback_result_batch_failures`,
-          `✅ 自动回滚成功（批次过载）— batch_failures=${failures.length}/${ROLLBACK_BATCH_THRESHOLD}，brain-rollback.sh 退出码 0`
-        );
-      } else {
-        await raise(
-          'P0',
-          `probe_rollback_result_batch_failures`,
-          `❌ 自动回滚失败（批次过载）— batch_failures=${failures.length}/${ROLLBACK_BATCH_THRESHOLD}，brain-rollback.sh 退出码 ${batchRollbackResult.exitCode}。错误: ${batchRollbackResult.stderr.slice(0, 200)}`
-        );
-      }
-
-      try {
-        await pool.query(
-          `INSERT INTO cecelia_events (event_type, source, payload)
-           VALUES ('probe_rollback_triggered', 'capability-probe', $1)`,
-          [JSON.stringify({
-            timestamp: new Date().toISOString(),
-            trigger_type: 'batch_failures',
-            batch_failures: failures.length,
-            threshold: ROLLBACK_BATCH_THRESHOLD,
-            failed_probes: failures.map(f => f.name),
-            trigger_reason: batchTriggerReason,
-            rollback_success: batchRollbackResult.success,
-            rollback_exit_code: batchRollbackResult.exitCode,
-            rollback_stderr: batchRollbackResult.stderr.slice(0, 500),
-          })]
-        );
-      } catch (evtErr) {
-        console.error(`[Probe] 批次回滚事件写入失败: ${evtErr.message}`);
-      }
-
-      // 批次回滚已触发，跳过逐探针的连续失败检测
-      return results;
-    }
-
-    // ── 连续失败检测：阈值内连续失败才触发回滚（兜底机制）──
-    // 注意：此处在当前批次结果已持久化后执行，所以查询历史包含本次
-    for (const f of failures) {
-      const { consecutive, shouldRollback } = await checkConsecutiveFailures(f.name);
-
-      if (!shouldRollback) {
-        if (consecutive > 1) {
-          console.log(`[Probe] ${f.name} 连续失败 ${consecutive}/${ROLLBACK_CONSECUTIVE_THRESHOLD} 次，暂不回滚`);
-        }
-        continue;
-      }
-
-      const triggerReason = `探针 "${f.name}"（${f.description}）连续失败 ${consecutive} 次，达到阈值 ${ROLLBACK_CONSECUTIVE_THRESHOLD}，触发自动回滚`;
-
-      // P0 告警：回滚即将触发
-      await raise(
-        'P0',
-        `probe_rollback_trigger_${f.name}`,
-        `🔄 自动回滚触发 — ${triggerReason}`
-      );
-
-      // 执行回滚（同步，防止 Brain 进程在此期间继续处理其他事）
-      const rollbackResult = executeRollback(triggerReason);
-
-      // P0 告警：回滚结果
-      if (rollbackResult.success) {
-        await raise(
-          'P0',
-          `probe_rollback_result_${f.name}`,
-          `✅ 自动回滚成功 — 探针 "${f.name}" 触发，brain-rollback.sh 退出码 0`
-        );
-      } else {
-        await raise(
-          'P0',
-          `probe_rollback_result_${f.name}`,
-          `❌ 自动回滚失败 — 探针 "${f.name}" 触发，brain-rollback.sh 退出码 ${rollbackResult.exitCode}。错误: ${rollbackResult.stderr.slice(0, 200)}`
-        );
-      }
-
-      // 回滚后记录事件，便于后续审计
-      try {
-        await pool.query(
-          `INSERT INTO cecelia_events (event_type, source, payload)
-           VALUES ('probe_rollback_triggered', 'capability-probe', $1)`,
-          [JSON.stringify({
-            timestamp: new Date().toISOString(),
-            probe_name: f.name,
-            consecutive_failures: consecutive,
-            threshold: ROLLBACK_CONSECUTIVE_THRESHOLD,
-            trigger_reason: triggerReason,
-            rollback_success: rollbackResult.success,
-            rollback_exit_code: rollbackResult.exitCode,
-            rollback_stderr: rollbackResult.stderr.slice(0, 500),
-          })]
-        );
-      } catch (evtErr) {
-        console.error(`[Probe] 回滚事件写入失败: ${evtErr.message}`);
-      }
-
-      // 同一批次只对第一个达到阈值的探针触发一次回滚，避免重复执行
-      break;
-    }
+  // 注意：此处在当前批次结果已持久化后执行，所以查询历史包含本次
+  for (const f of failures) {
+    if (await handleConsecutiveRollback(f)) break;
   }
 
   return results;
