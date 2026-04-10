@@ -352,7 +352,7 @@ export default function RoadmapPage() {
         fetch('/api/brain/goals?limit=200'),
         fetch('/api/brain/projects?limit=200'),
         fetch('/api/brain/tasks?status=in_progress'),
-        fetch('/api/brain/events?event_type=task_dispatched&limit=8'),
+        fetch('/api/brain/events?event_type=cycle_complete&limit=8'),
       ]);
 
       const [goalsData, projectsData, tasksData, eventsData] = await Promise.all([

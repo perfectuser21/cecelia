@@ -1,0 +1,10 @@
+dev
+branch: cp-04100051-ceaea7ee-bf2d-4015-9f75-6e4b20
+task_card: .task-cp-04100051-ceaea7ee-bf2d-4015-9f75-6e4b20.md
+task_id: ceaea7ee-bf2d-4015-9f75-6e4b200df6c8
+started: 2026-04-10T16:00:25+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: pending
+step_4_ship: pending
