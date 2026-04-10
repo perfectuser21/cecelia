@@ -2,18 +2,23 @@
  * credential-expiry-checker.js
  *
  * 凭据有效期检查器。读取各 Claude 账号的 OAuth token 过期时间，
- * 在过期前 4h 创建 Brain 告警任务，防止凭据静默失效造成 auth 级联故障。
+ * 在过期前告警，防止凭据静默失效造成 auth 级联故障。
  *
  * 集成点：tick.js 每 30 分钟调用 checkAndAlertExpiringCredentials()
+ *
+ * 告警通道：直接调用 raise()（Feishu 推送），不创建需要 Claude API 的 research 任务。
+ * 原因：凭据告警创建的 research 任务在 quota 耗尽时本身也会死亡，形成正反馈循环。
  *
  * 附加功能：recoverAuthQuarantinedTasks()
  *   当凭据已恢复健康，自动重排队因 auth 失败而被隔离的任务（非 pipeline_rescue）。
  *   防止凭据轮换后业务任务永久沉没在 quarantined 状态。
+ *
+ * 附加功能：cancelCredentialAlertTasks()
+ *   批量取消所有 quarantined/queued 凭据告警任务（旧机制遗留）。
  */
 
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
-import { createTask } from './actions.js';
 
 const ALERT_THRESHOLD_MS = 8 * 60 * 60 * 1000; // 8 小时（给更多响应窗口）
 const CRITICAL_THRESHOLD_MS = 3 * 60 * 60 * 1000; // 3 小时 — 触发升级 P0 告警
@@ -73,11 +78,10 @@ export function checkCredentialExpiry() {
 /**
  * 检查凭据并在需要时创建 Brain 告警任务
  *
- * 两层告警机制：
- * 1. 常规告警（< 8h）: 6h 去重窗口，同账号不重复创建
- * 2. 紧急升级告警（< 3h）: 2h 去重窗口，以 [URGENT] 前缀绕过常规去重，确保临期不漏报
+ * 告警通道：使用 raise()（Feishu 推送），不再创建 research 任务。
+ * 去重：同账号同级别 1h 内只告警一次（内存去重）。
  *
- * @param {import('pg').Pool} pool - DB 连接池（已传入，无需新建）
+ * @param {import('pg').Pool} pool - DB 连接池（保留参数，兼容调用方）
  * @returns {Promise<{ checked: number, alerted: number, skipped: number }>}
  */
 
@@ -97,6 +101,7 @@ export async function checkAndAlertExpiringCredentials(pool) {
 
   console.log(`[credential-checker] 发现 ${criticalAccounts.length} 个账号凭据即将过期: ${criticalAccounts.map(a => `${a.account}(${a.status})`).join(', ')}`);
 
+  const { raise } = await import('./alerting.js');
   let alerted = 0;
 
   for (const acc of criticalAccounts) {
@@ -108,96 +113,77 @@ export async function checkAndAlertExpiringCredentials(pool) {
       : 0;
 
     const isCritical = acc.remainingMs > 0 && acc.remainingMs < CRITICAL_THRESHOLD_MS;
-    const statusLabel = acc.status === 'expired' ? '已过期' : `还剩 ${remainingH}h${remainingM}m`;
+    const isExpired = acc.status === 'expired';
+    const statusLabel = isExpired ? '已过期' : `还剩 ${remainingH}h${remainingM}m`;
+    const level = (isCritical || isExpired) ? 'P0' : 'P1';
+    const dedupKey = `${acc.account}_${level}`;
+
+    // 去重检查
+    const lastAlert = _alertDedup.get(dedupKey);
+    if (lastAlert && (Date.now() - lastAlert) < ALERT_DEDUP_MS) {
+      console.log(`[credential-checker] ⏭️ ${acc.account} ${level} 告警已在 1h 内发送，跳过`);
+      continue;
+    }
 
     try {
-      // 紧急升级告警：< 3h 时使用 [URGENT] 前缀 + 2h 去重窗口
-      if (isCritical) {
-        const urgentTitle = `[P0][URGENT][凭据告警] ${acc.account} OAuth token ${statusLabel}，需立即刷新`;
-        const urgentExisting = await pool.query(
-          `SELECT id FROM tasks
-           WHERE title LIKE $1
-             AND status IN ('queued', 'in_progress')
-             AND created_at > NOW() - INTERVAL '2 hours'
-           LIMIT 1`,
-          [`%[URGENT][凭据告警] ${acc.account}%`]
-        );
+      const msg = isCritical || isExpired
+        ? `🚨 [凭据紧急] ${acc.account} OAuth token ${statusLabel}，需立即刷新！（过期时间：${acc.expiresAt}）`
+        : `⚠️ [凭据告警] ${acc.account} OAuth token ${statusLabel}，需尽快刷新（过期时间：${acc.expiresAt}）`;
 
-        if (urgentExisting.rows.length === 0) {
-          const result = await createTask({
-            title: urgentTitle,
-            description: `🚨 紧急凭据告警：${acc.account} 的 OAuth token ${statusLabel}（过期时间：${acc.expiresAt}）。\n\n需要立即手动刷新：\n1. 在对应账号目录下重新登录 claude\n2. 或从 1Password CS Vault 同步最新 token\n\n距离过期不足 ${remainingH}h${remainingM}m，任务将开始失败！`,
-            task_type: 'research',
-            priority: 'P0',
-            tags: ['credential-alert', 'credential-urgent', 'auto-generated', acc.account],
-            payload: {
-              credential_alert: true,
-              credential_urgent: true,
-              account: acc.account,
-              expires_at: acc.expiresAt,
-              remaining_ms: acc.remainingMs,
-              alert_reason: 'critical_expiry',
-            },
-          });
-          if (!result.deduplicated) {
-            alerted++;
-            console.log(`[credential-checker] 🚨 URGENT ${acc.account} token ${statusLabel}，已创建紧急 P0 告警`);
-          } else {
-            console.log(`[credential-checker] ⏭️ ${acc.account} 紧急告警已存在（dedup），跳过`);
-          }
-          continue;
-        } else {
-          console.log(`[credential-checker] ⏭️ ${acc.account} 紧急告警已存在（2h window），跳过`);
-          continue;
-        }
-      }
-
-      // 常规告警：6h 去重窗口（queued/in_progress）+ 也排除 24h 内已完成的告警
-      const existing = await pool.query(
-        `SELECT id, status FROM tasks
-         WHERE title LIKE $1
-           AND (
-             (status IN ('queued', 'in_progress'))
-             OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours')
-           )
-           AND created_at > NOW() - INTERVAL '24 hours'
-         LIMIT 1`,
-        [`%${acc.account} OAuth token%`]
-      );
-
-      if (existing.rows.length > 0) {
-        console.log(`[credential-checker] ⏭️ ${acc.account} 告警已存在（status: ${existing.rows[0].status}），跳过`);
-        continue;
-      }
-
-      const title = `[P0][凭据告警] ${acc.account} OAuth token ${statusLabel}，需立即刷新`;
-      const result = await createTask({
-        title,
-        description: `凭据告警：${acc.account} 的 OAuth token ${statusLabel}（过期时间：${acc.expiresAt}）。\n\n需要手动刷新：在对应账号目录下重新登录 claude，或从 1Password 同步最新 token。`,
-        task_type: 'research',
-        priority: acc.status === 'expired' ? 'P0' : 'P1',
-        tags: ['credential-alert', 'auto-generated', acc.account],
-        payload: {
-          credential_alert: true,
-          account: acc.account,
-          expires_at: acc.expiresAt,
-          remaining_ms: acc.remainingMs,
-          alert_reason: acc.status,
-        },
-      });
-
-      if (!result.deduplicated) {
-        alerted++;
-        console.log(`[credential-checker] ⚠️ ${acc.account} token ${statusLabel}，已创建告警任务`);
-      } else {
-        console.log(`[credential-checker] ⏭️ ${acc.account} 告警已存在（createTask dedup），跳过`);
-      }
+      await raise(level, `credential_expiry_${acc.account}`, msg);
+      _alertDedup.set(dedupKey, Date.now());
+      alerted++;
+      console.log(`[credential-checker] ${level === 'P0' ? '🚨' : '⚠️'} ${acc.account} token ${statusLabel}，已通过 raise() 发送 ${level} 告警`);
     } catch (err) {
-      console.error(`[credential-checker] 创建告警任务失败 (${acc.account}):`, err.message);
+      console.error(`[credential-checker] raise() 告警失败 (${acc.account}):`, err.message);
     }
   }
 
   return { checked: accounts.length, alerted, skipped: accounts.length - criticalAccounts.length };
+}
+
+// ============================================================
+// 凭据告警任务清理
+// ============================================================
+
+/**
+ * 批量取消 quarantined/queued 的凭据告警任务
+ *
+ * 背景：旧机制通过创建 research 任务触发告警，这些任务在 quota 耗尽时会堆积在
+ * quarantined 状态。改用 raise() 后这些历史任务已无用，统一 cancel 清理。
+ *
+ * 幂等：每次 tick 调用安全，已 cancel 的任务不会被重复处理。
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ cancelled: number, taskIds: string[] }>}
+ */
+export async function cancelCredentialAlertTasks(pool) {
+  try {
+    const result = await pool.query(`
+      UPDATE tasks
+      SET status = 'cancelled',
+          updated_at = NOW(),
+          metadata = jsonb_set(
+            COALESCE(metadata, '{}'::jsonb),
+            '{cancel_reason}',
+            '"credential_alert_channel_migrated_to_raise"'
+          )
+      WHERE (
+        tags @> ARRAY['credential-alert']::text[]
+        OR title LIKE '%凭据告警%'
+        OR title LIKE '%credential-alert%'
+      )
+        AND status IN ('quarantined', 'queued')
+      RETURNING id
+    `);
+    if (result.rowCount > 0) {
+      console.log(`[credential-checker] 🧹 批量取消 ${result.rowCount} 个凭据告警任务（已迁移至 raise() 通道）`);
+    }
+    return { cancelled: result.rowCount, taskIds: result.rows.map(r => r.id) };
+  } catch (err) {
+    console.error('[credential-checker] cancelCredentialAlertTasks 失败 (non-fatal):', err.message);
+    return { cancelled: 0, taskIds: [] };
+  }
 }
 
 // ============================================================
