@@ -83,6 +83,12 @@ const BRAIN_QUIET_MODE = process.env.BRAIN_QUIET_MODE === 'true';
 if (BRAIN_QUIET_MODE) {
   console.log('[Brain] BRAIN_QUIET_MODE=true — thalamus/rumination/narrative/digest/self-report/synthesis/notebook-feeder 全部跳过');
 }
+
+// Minimal Mode — 只保留心跳 + 手动任务派发，跳过所有自动调度（内容线/巡检/告警）
+const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
+if (MINIMAL_MODE) {
+  console.log('[Brain] BRAIN_MINIMAL_MODE=true — 所有自动调度已关闭，只保留心跳和手动任务派发');
+}
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
@@ -1028,10 +1034,13 @@ async function dispatchNextTask(goalIds) {
 
   // 0a-token. Proactive token expiry check — 派发前主动检测各账号 token 状态
   // token 过期 → 立即 markAuthFailure 熔断，阻止派发级联 401
+  // MINIMAL_MODE 下跳过（不创建 research 告警任务）
+  if (!MINIMAL_MODE) {
   try {
     await proactiveTokenCheck();
   } catch (tokenCheckErr) {
     console.error('[tick] proactiveTokenCheck failed (non-fatal):', tokenCheckErr.message);
+  }
   }
 
   // 0a. Billing pause check — quota_exhausted 全局熔断
@@ -2008,6 +2017,7 @@ async function executeTick() {
   }
 
   // 0.5.5. Content Pipeline Orchestration Check — 检测 queued content-pipeline 任务，创建子任务
+  if (!MINIMAL_MODE) {
   try {
     const { orchestrateContentPipelines } = await import('./content-pipeline-orchestrator.js');
     const pipelineResult = await orchestrateContentPipelines();
@@ -2023,10 +2033,12 @@ async function executeTick() {
   } catch (pipelineErr) {
     console.error('[tick] Content pipeline orchestration check failed:', pipelineErr.message);
   }
+  } // end !MINIMAL_MODE (0.5.5)
 
   // 0.5.6. Content Pipeline Executor — 执行 queued 的 content-* 子任务
   // ⚠️ fire-and-forget：不 await。内部用 execSync（NotebookLM/LLM），会阻塞事件循环，
   //    必须异步启动。executeQueuedContentTasks 内部有并发守卫防止重叠。
+  if (!MINIMAL_MODE) {
   try {
     const { executeQueuedContentTasks } = await import('./content-pipeline-orchestrator.js');
     executeQueuedContentTasks().then(r => {
@@ -2040,6 +2052,7 @@ async function executeTick() {
   } catch (execErr) {
     console.error('[tick] Content pipeline executor import failed:', execErr.message);
   }
+  } // end !MINIMAL_MODE (0.5.6)
 
   // 0.6. Recurring Tasks Check
   try {
@@ -2864,6 +2877,9 @@ async function executeTick() {
     }
   }
 
+  // 10.x 所有自动调度 — MINIMAL_MODE 下全部跳过
+  if (!MINIMAL_MODE) {
+
   // 10. Trigger daily code review (每天 02:00 UTC，为活跃 repo 创建 code_review task)
   let dailyReviewResult = { triggered: 0, skipped: 0, skipped_window: true, results: [] };
   try {
@@ -3001,6 +3017,8 @@ async function executeTick() {
   // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
   Promise.resolve().then(() => memorySyncIfNeeded(pool))
     .catch(e => console.warn("[tick] memory-sync 失败:", e.message));
+
+  } // end !MINIMAL_MODE (10.x 所有自动调度)
 
   // 11. 欲望系统（六层主动意识）— BRAIN_QUIET_MODE 时跳过
   let desireResult = null;
