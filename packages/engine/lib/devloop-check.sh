@@ -122,10 +122,11 @@ devloop_check() {
             return 2
         fi
 
-        # Harness 模式: 代码写完 + PR 已创建 → done，让 Brain 派 Evaluator
+        # Harness 模式: 代码写完 + PR 已创建 → 开启 auto-merge → done
+        gh pr merge "$_h_pr" --squash --auto 2>/dev/null || true
         _mark_cleanup_done "$dev_mode_file"
         _devloop_jq -n --arg pr "$_h_pr" \
-            '{"status":"done","reason":"[Harness] 代码完成 + PR #\($pr) 已创建，session 结束，Brain 将派 Evaluator 验证"}'
+            '{"status":"done","reason":"[Harness] 代码完成 + PR #\($pr) 已创建（auto-merge 已开启），session 结束，Brain 将派 Evaluator 验证"}'
         return 0
     fi
 
