@@ -29,7 +29,7 @@ const path = require('path');
  * 其他命令（grep/ls/cat/find/sed/awk）在 CI 环境中可能行为不一致，
  * 且通常被用于无断言的输出型测试。
  */
-const ALLOWED_COMMANDS = new Set(['node', 'npm', 'npx', 'curl', 'bash', 'psql']);
+const ALLOWED_COMMANDS = new Set(['node', 'npm', 'npx', 'curl', 'bash', 'psql', 'playwright']);
 
 // ============================================================================
 // 核心逻辑（导出供测试使用）
