@@ -1650,7 +1650,7 @@ async function executeTick() {
 
   // [感知] 凭据有效期检查：每 30 分钟一次，过期前 4h 创建告警任务 + 凭据恢复后重排队
   const credentialCheckElapsed = Date.now() - _lastCredentialCheckTime;
-  if (credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
+  if (!MINIMAL_MODE && credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
     _lastCredentialCheckTime = Date.now();
     checkAndAlertExpiringCredentials(pool).then(r => {
       if (r.alerted > 0) {
