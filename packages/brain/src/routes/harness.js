@@ -237,6 +237,7 @@ async function readSprintFiles(sprintDir) {
  * 从远程分支读取文件内容（复用 executor.js _fetchSprintFile 逻辑）
  */
 function fetchFileFromBranch(branch, filePath) {
+  if (!branch) return null;
   try {
     execSync('git fetch origin', { cwd: REPO_ROOT, stdio: 'pipe' });
   } catch {
@@ -249,7 +250,38 @@ function fetchFileFromBranch(branch, filePath) {
       stdio: 'pipe',
     });
   } catch {
-    return null;
+    // 也尝试本地分支
+    try {
+      return execSync(`git show ${branch}:${filePath}`, {
+        cwd: REPO_ROOT,
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * 在 git 分支列表中搜索含有 task_id 前缀的分支
+ */
+function findBranchesByTaskId(taskId) {
+  if (!taskId) return [];
+  const prefix = taskId.slice(0, 8);
+  try {
+    const output = execSync('git branch -a', {
+      cwd: REPO_ROOT,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+      timeout: 5000,
+    });
+    return output.split('\n')
+      .map(b => b.trim().replace(/^\* /, '').replace(/^remotes\/origin\//, ''))
+      .filter(b => b.includes(prefix) && b !== '')
+      .filter((b, i, arr) => arr.indexOf(b) === i);
+  } catch {
+    return [];
   }
 }
 
@@ -324,11 +356,13 @@ async function getStepInput(task, sprintDir) {
   }
 
   if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
-    const plannerBranch = task.payload?.planner_branch;
-    if (plannerBranch) {
-      return fetchFileFromBranch(plannerBranch, `${sprintDir}/sprint-prd.md`);
+    let plannerBranch = task.payload?.planner_branch;
+    // planner_branch 常为 null，通过 planner_task_id 的 git branch 搜索
+    if (!plannerBranch && task.payload?.planner_task_id) {
+      const branches = findBranchesByTaskId(task.payload.planner_task_id);
+      plannerBranch = branches.find(b => b.includes('planner')) || branches[0] || null;
     }
-    return null;
+    return fetchFileFromBranch(plannerBranch, `${sprintDir}/sprint-prd.md`);
   }
 
   if (t === 'harness_contract_review' || t === 'sprint_contract_review') {
@@ -342,11 +376,13 @@ async function getStepInput(task, sprintDir) {
         );
         proposeBranch = rows[0]?.branch || null;
       } catch { /* 忽略 */ }
+      // 仍未找到：通过 propose_task_id 搜 git branch
+      if (!proposeBranch && task.payload?.propose_task_id) {
+        const branches = findBranchesByTaskId(task.payload.propose_task_id);
+        proposeBranch = branches.find(b => b.includes('propose') || b.includes('contract')) || branches[0] || null;
+      }
     }
-    if (proposeBranch) {
-      return fetchFileFromBranch(proposeBranch, `${sprintDir}/contract-draft.md`);
-    }
-    return null;
+    return fetchFileFromBranch(proposeBranch, `${sprintDir}/contract-draft.md`);
   }
 
   if (t === 'harness_generate' || t === 'sprint_generate' || t === 'harness_fix') {
@@ -371,41 +407,59 @@ async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
   const t = task.task_type;
   const branch = getResultBranch(task);
 
-  // Planner 的 branch 不在自身的 result，而是从 propose 任务的 payload.planner_branch 传入
+  // Planner：branch 不在自身 result，从 propose 任务 payload 或 git branch 搜索
   if (t === 'harness_planner' || t === 'sprint_planner') {
-    const useBranch = branch || plannerBranchFromPropose;
-    if (useBranch) return fetchFileFromBranch(useBranch, `${sprintDir}/sprint-prd.md`);
-    return null;
-  }
-
-  if (!branch) {
-    if (task.result?.verdict) return `Verdict: ${task.result.verdict}`;
-    if (task.result?.feedback) return task.result.feedback;
-    if (task.result?.result_summary) return task.result.result_summary;
-    return null;
-  }
-
-  if (t === 'harness_planner' || t === 'sprint_planner') {
-    return fetchFileFromBranch(branch, `${sprintDir}/sprint-prd.md`);
+    let useBranch = branch || plannerBranchFromPropose;
+    // 通过 task_id 前缀搜 git branch 作为 fallback
+    if (!useBranch) {
+      const branches = findBranchesByTaskId(task.task_id);
+      useBranch = branches.find(b => b.includes('planner')) || branches[0] || null;
+    }
+    return fetchFileFromBranch(useBranch, `${sprintDir}/sprint-prd.md`);
   }
 
   if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
-    return fetchFileFromBranch(branch, `${sprintDir}/contract-draft.md`);
+    // propose_branch 可能为 null，通过 task_id 搜 git branch
+    let useBranch = branch;
+    if (!useBranch) {
+      const branches = findBranchesByTaskId(task.task_id);
+      useBranch = branches.find(b => b.includes('propose') || b.includes('contract')) || branches[0] || null;
+    }
+    const content = fetchFileFromBranch(useBranch, `${sprintDir}/contract-draft.md`);
+    if (content) return content;
+    // fallback：verdict/feedback 摘要
+    if (task.result?.verdict) return `Verdict: ${task.result.verdict}`;
+    return task.result?.feedback || task.result?.result_summary || null;
   }
 
   if (t === 'harness_contract_review' || t === 'sprint_contract_review') {
-    const feedback = fetchFileFromBranch(branch, `${sprintDir}/contract-review-feedback.md`);
+    // review_branch 通常存在于 result
+    let useBranch = branch;
+    if (!useBranch) {
+      const branches = findBranchesByTaskId(task.task_id);
+      useBranch = branches.find(b => b.includes('review')) || branches[0] || null;
+    }
+    const feedback = fetchFileFromBranch(useBranch, `${sprintDir}/contract-review-feedback.md`);
     if (feedback) return feedback;
     if (task.result?.feedback) return task.result.feedback;
     return task.result?.verdict ? `Verdict: ${task.result.verdict}` : null;
   }
 
   if (t === 'harness_generate' || t === 'sprint_generate' || t === 'harness_fix') {
-    return task.pr_url ? `PR: ${task.pr_url}` : null;
+    const prUrl = task.pr_url || task.result?.pr_url || null;
+    return prUrl ? `PR: ${prUrl}` : null;
   }
 
   if (t === 'harness_report' || t === 'sprint_report') {
-    return fetchFileFromBranch(branch, `${sprintDir}/harness-report.md`);
+    const content = fetchFileFromBranch(branch, `${sprintDir}/harness-report.md`);
+    if (content) return content;
+    return task.result?.result_summary || null;
+  }
+
+  if (!branch) {
+    if (task.result?.verdict) return `Verdict: ${task.result.verdict}`;
+    if (task.result?.feedback) return task.result.feedback;
+    return task.result?.result_summary || null;
   }
 
   return null;
