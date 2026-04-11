@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.2.0
+# Stop Hook: Claude Code 协议适配器 v16.3.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.2.0 — Bug fix: harness 模式跳过 cleanup_done 残留文件早退（与 devloop-check v4.2.0 同步）
+# 版本: v16.3.0 — 文件隔离：自动清理主仓库残留 dev-lock/dev-mode（这些文件只应在 worktree 中）
 
 set -euo pipefail
 
@@ -39,6 +39,25 @@ _session_matches() {
 }
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# v16.3.0: 清理主仓库残留的 .dev-lock/.dev-mode（迁移：这些文件应只存在于 worktree）
+# 仅在有 worktree 存在时清理主仓库（无 worktree = 单仓库/测试环境，不清理）
+_main_wt=""
+_has_worktrees=false
+while IFS= read -r _l; do
+    if [[ "$_l" == "worktree "* ]]; then
+        if [[ -z "$_main_wt" ]]; then
+            _main_wt="${_l#worktree }"
+        else
+            _has_worktrees=true; break
+        fi
+    fi
+done < <(git worktree list --porcelain 2>/dev/null)
+if [[ "$_has_worktrees" == "true" && -n "$_main_wt" && -d "$_main_wt" ]]; then
+    for _stale in "$_main_wt"/.dev-lock.* "$_main_wt"/.dev-mode.*; do
+        [[ -f "$_stale" ]] && rm -f "$_stale" 2>/dev/null
+    done
+fi
 
 # 加载 devloop-check.sh（SSOT）
 DEVLOOP_CHECK_LIB=""

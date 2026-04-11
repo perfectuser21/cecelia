@@ -233,9 +233,9 @@ cmd_create() {
 
         echo -e "${GREEN}✅ Worktree 创建成功${NC}" >&2
 
-        # v1.4.0: 自动写入 .dev-lock（含 tty/session_id），供 Stop Hook 会话隔离使用
-        # 放在主仓库根目录，Stop Hook 优先扫描主仓库
-        local dev_lock_file="$main_wt/.dev-lock.${branch_name}"
+        # v1.5.0: .dev-lock 写入 worktree 目录（不再写主仓库，防止跨会话污染）
+        # Stop Hook 通过 _collect_search_dirs 扫描所有 worktree，能正确找到
+        local dev_lock_file="$worktree_path/.dev-lock.${branch_name}"
         {
             echo "dev"
             echo "branch: ${branch_name}"
