@@ -6,6 +6,15 @@ version: "1.0.0"
 updated: "2026-04-11"
 
 changelog:
+  - version: "14.6.2"
+    date: "2026-04-11"
+    skill: "dev"
+    change: "fix"
+    description: "[CONFIG] steps/*.md 停止 git add dev-mode/dev-lock，防止文件被 commit 到 git 历史导致 worktree 复制残留"
+    files:
+      - "skills/dev/steps/01-spec.md"
+      - "skills/dev/steps/02-code.md"
+      - "skills/dev/steps/04-ship.md"
   - version: "14.6.1"
     date: "2026-04-11"
     skill: "dev"

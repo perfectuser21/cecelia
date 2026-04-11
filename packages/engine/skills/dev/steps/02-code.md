@@ -103,7 +103,7 @@ cd packages/engine && npx vitest run <相关测试文件>
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 sed -i '' 's/step_2_code: pending/step_2_code: done/' "$DEV_MODE_FILE"
-git add "$DEV_MODE_FILE" && git commit -m "chore: [state] step_2_code: done"
+# .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
 ```
 
 ---
