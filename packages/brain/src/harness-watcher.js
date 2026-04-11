@@ -139,6 +139,7 @@ export async function processHarnessCiWatchers(pool) {
             sprint_dir: payload.sprint_dir,
             pr_url: prUrl,
             planner_task_id: payload.planner_task_id,
+            contract_branch: payload.contract_branch,
             harness_mode: true,
           },
         });
@@ -170,6 +171,7 @@ export async function processHarnessCiWatchers(pool) {
             sprint_dir: payload.sprint_dir,
             dev_task_id: payload.dev_task_id,
             planner_task_id: payload.planner_task_id,
+            contract_branch: payload.contract_branch,
             eval_round: evalRound,
             ci_fail_context: ciContext,
             ci_fail_type: failType,

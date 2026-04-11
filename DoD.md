@@ -1,10 +1,12 @@
-contract_branch: cp-harness-propose-r5-c0ef97b5
+contract_branch: cp-harness-contract-19fd9c85
 workstream_index: 1
-sprint_dir: sprints/harness-stability-v1
+sprint_dir: sprints/harness-contract-fix-v1
 
-# Contract DoD — Workstream 1: CI 白名单 — playwright 加入
-
-- [x] [ARTIFACT] `scripts/devgate/check-manual-cmd-whitelist.cjs` 中 ALLOWED_COMMANDS 非注释代码包含 `'playwright'`
-  Test: node -e "const c=require('fs').readFileSync('scripts/devgate/check-manual-cmd-whitelist.cjs','utf8');const lines=c.split('\n').filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*'));const code=lines.join('\n');if(!code.includes(\"'playwright'\")&&!code.includes('\"playwright\"')){console.log('FAIL');process.exit(1)}console.log('PASS: ALLOWED_COMMANDS 包含 playwright')"
-- [x] [BEHAVIOR] 白名单脚本语法正确可解析
-  Test: node -e "try{const c=require('fs').readFileSync('scripts/devgate/check-manual-cmd-whitelist.cjs','utf8');new Function(c);console.log('PASS')}catch(e){console.log('FAIL: '+e.message);process.exit(1)}"
+- [x] [BEHAVIOR] harness-watcher.js CI通过（ci_passed）分支的 createTask payload 包含 contract_branch，值来自 payload.contract_branch（去除注释后验证）
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const a=code.indexOf(\"ciStatus === 'ci_passed'\");const b=code.indexOf(\"ciStatus === 'ci_failed'\");if(a<0||b<0){console.error('FAIL');process.exit(1)}const nc=code.substring(a,b).replace(/\/\/.*$/gm,'').replace(/\/\*[\s\S]*?\*\//g,'');if(!/contract_branch:\s*payload\.contract_branch/.test(nc)){console.error('FAIL: CI通过→report 缺少 contract_branch');process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] harness-watcher.js CI失败（ci_failed）分支的 createTask payload 包含 contract_branch，值来自 payload.contract_branch（去除注释后验证）
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const a=code.indexOf(\"ciStatus === 'ci_failed'\");if(a<0){console.error('FAIL');process.exit(1)}const nc=code.substring(a,a+1500).replace(/\/\/.*$/gm,'').replace(/\/\*[\s\S]*?\*\//g,'');if(!/contract_branch:\s*payload\.contract_branch/.test(nc)){console.error('FAIL: CI失败→fix 缺少 contract_branch');process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] execution.js harness_fix→harness_report 的 createTask payload 包含 contract_branch，且赋值来源为 harnessPayload.contract_branch（去除注释后验证）
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=code.indexOf(\"harnessType === 'harness_fix'\");if(i<0){console.error('FAIL');process.exit(1)}const af=code.substring(i);const n=af.indexOf('harnessType ===',10);const bl=n>0?af.substring(0,n):af.substring(0,800);const nc=bl.replace(/\/\/.*$/gm,'').replace(/\/\*[\s\S]*?\*\//g,'');if(!/contract_branch:\s*harnessPayload\.contract_branch/.test(nc)){console.error('FAIL');process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] execution.js harness_generate(最后WS)→harness_report 的 createTask payload 包含 contract_branch，且赋值来源为 harnessPayload.contract_branch（块结束符定界，fallback 1200）
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=code.indexOf(\"harnessType === 'harness_generate'\");if(i<0){console.error('FAIL');process.exit(1)}const af=code.substring(i);const ws=af.indexOf('currentWsIdx === totalWsCount');if(ws<0){console.error('FAIL: 无最后WS逻辑');process.exit(1)}const raw=af.substring(ws);const be=raw.indexOf('} else {');const bl=be>0?raw.substring(0,be):raw.substring(0,1200);const nc=bl.replace(/\/\/.*$/gm,'').replace(/\/\*[\s\S]*?\*\//g,'');if(!/contract_branch:\s*harnessPayload\.contract_branch/.test(nc)){console.error('FAIL');process.exit(1)}console.log('PASS')"

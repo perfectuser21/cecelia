@@ -2060,6 +2060,7 @@ ${resultStr.substring(0, 2000)}
                 pr_url: prUrl,
                 dev_task_id: task_id,
                 planner_task_id: harnessPayload.planner_task_id,
+                contract_branch: harnessPayload.contract_branch,
                 // Bug Fix: 传入 project_id 供 Report skill 查询 DB 关联信息
                 project_id: harnessTask.project_id,
                 eval_round: 1,
@@ -2210,6 +2211,7 @@ ${resultStr.substring(0, 2000)}
               pr_url: prUrl,
               dev_task_id: harnessPayload.dev_task_id,
               planner_task_id: harnessPayload.planner_task_id,
+              contract_branch: harnessPayload.contract_branch,
               eval_round: evalRound,
               harness_mode: true
             }
