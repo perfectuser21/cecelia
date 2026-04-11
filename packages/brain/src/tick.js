@@ -58,6 +58,7 @@ import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
 import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks, cancelCredentialAlertTasks } from './credential-expiry-checker.js';
+import { refreshExpiringCredentials } from './credential-refresher.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 
@@ -1685,6 +1686,22 @@ async function executeTick() {
   const credentialCheckElapsed = Date.now() - _lastCredentialCheckTime;
   if (!MINIMAL_MODE && credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
     _lastCredentialCheckTime = Date.now();
+
+    // [刷新] 主动刷新即将过期的 token（single owner，与 cron 脚本通过 lockfile 互斥）
+    refreshExpiringCredentials().then(r => {
+      if (!r.locked) return; // 被 cron 锁占用，跳过本次
+      const refreshed = r.results.filter(x => x.status === 'ok');
+      const errors = r.results.filter(x => x.status === 'error' || x.status === 'mismatch');
+      if (refreshed.length > 0) {
+        tickLog(`[tick] [credential-refresher] ✅ 刷新 ${refreshed.length} 个账号 token`);
+      }
+      if (errors.length > 0) {
+        tickLog(`[tick] [credential-refresher] ❌ ${errors.length} 个账号刷新失败: ${errors.map(e => `${e.account}(${e.detail})`).join(', ')}`);
+      }
+    }).catch(err => {
+      console.error('[tick] Credential refresh failed (non-fatal):', err.message);
+    });
+
     checkAndAlertExpiringCredentials(pool).then(r => {
       if (r.alerted > 0) {
         tickLog(`[tick] [credential-checker] ⚠️ ${r.alerted} 个账号 token 即将过期，已创建告警任务`);
