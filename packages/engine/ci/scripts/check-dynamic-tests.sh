@@ -56,30 +56,34 @@ fi
 
 echo ""
 
-# ===== 规则 2（仅 feat PR）：DoD 至少引用一个 .test.ts =====
-# 读取 commit message 判断是否 feat
+# ===== 规则 2（feat PR）：改了 engine 代码必须有测试文件变更 =====
 COMMIT_TYPE=$(git log "$BASE_BRANCH"..HEAD --format="%s" | head -1 | grep -oE "^(feat|fix|refactor|test|chore|docs)" || echo "unknown")
 
 if [[ "$COMMIT_TYPE" == "feat" ]]; then
-    # 搜索 task card 中的 DoD
-    TASK_CARDS=$(git diff "$BASE_BRANCH" --name-only | grep -E "\.task-.*\.md$" || true)
+    CHANGED_ENGINE_CODE=$(git diff "$BASE_BRANCH" --name-only -- \
+        'packages/engine/hooks/*.sh' \
+        'packages/engine/lib/*.sh' \
+        'packages/engine/skills/**/*.sh' \
+        'packages/engine/ci/**/*.sh' \
+        'packages/engine/scripts/**/*.sh' \
+        2>/dev/null | grep -v '/tests/' || true)
 
-    if [[ -n "$TASK_CARDS" ]]; then
-        HAS_TEST_REF=false
-        for tc in $TASK_CARDS; do
-            [[ -f "$tc" ]] || continue
-            if grep -qE "Test:.*tests/.*\.test\.ts" "$tc" 2>/dev/null; then
-                HAS_TEST_REF=true
-                echo "✅ DoD 引用测试文件: $tc"
-            fi
-        done
-
-        if [[ "$HAS_TEST_REF" != "true" ]]; then
-            echo "⚠️  feat PR 的 DoD 未引用 .test.ts 文件（建议但不阻塞）"
+    if [[ -n "$CHANGED_ENGINE_CODE" ]]; then
+        CHANGED_TESTS=$(git diff "$BASE_BRANCH" --name-only -- 'packages/engine/tests/**/*.test.ts' 2>/dev/null || true)
+        if [[ -z "$CHANGED_TESTS" ]]; then
+            echo "❌ feat PR 改了 Engine 代码但没有测试文件变更"
+            echo "   改动的代码文件："
+            echo "$CHANGED_ENGINE_CODE" | sed 's/^/     /'
+            echo "   → feat PR 必须同时有 tests/*.test.ts 变更"
+            FAILED=$((FAILED + 1))
+        else
+            echo "✅ feat PR 有测试文件变更"
         fi
+    else
+        echo "⏭️  feat PR 未改 Engine 代码文件，跳过测试要求"
     fi
 else
-    echo "⏭️  非 feat PR（$COMMIT_TYPE），跳过 DoD 引用检查"
+    echo "⏭️  非 feat PR（$COMMIT_TYPE），跳过 feat 测试要求"
 fi
 
 echo ""

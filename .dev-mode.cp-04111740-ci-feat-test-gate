@@ -1,0 +1,7 @@
+dev
+branch: cp-04111740-ci-feat-test-gate
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
