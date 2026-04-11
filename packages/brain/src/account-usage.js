@@ -228,6 +228,12 @@ export function resetAuthFailureCount(accountId) {
   }
 }
 
+/** 测试用：清除所有 auth 失败状态（仅供 test 调用） */
+export function _resetAuthFailures() {
+  _authFailureMap.clear();
+  _authFailureCountMap.clear();
+}
+
 /**
  * Brain 启动时从 DB 恢复 auth 失败状态
  */

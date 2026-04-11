@@ -57,8 +57,9 @@ import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
-import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks } from './credential-expiry-checker.js';
+import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks, cancelCredentialAlertTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
+import { checkQuotaGuard } from './quota-guard.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -730,7 +731,9 @@ async function incrementActionsToday(count = 1) {
  * @param {string[]} [excludeIds=[]] - Task IDs to exclude (e.g. pre-flight failures)
  * @returns {Object|null} - The next task to dispatch, or null
  */
-async function selectNextDispatchableTask(goalIds, excludeIds = []) {
+async function selectNextDispatchableTask(goalIds, excludeIds = [], options = {}) {
+  const { priorityFilter = null } = options;
+
   // Check if P2 tasks should be paused (alertness mitigation)
   const { getMitigationState } = await import('./alertness-actions.js');
   const mitigationState = getMitigationState();
@@ -788,6 +791,12 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
   const weightedTasks = sortTasksByWeight(result.rows);
 
   for (const task of weightedTasks) {
+    // Skip tasks not matching quota guard priority filter
+    if (priorityFilter && !priorityFilter.includes(task.priority)) {
+      tickLog(`[tick] Skipping ${task.priority} task ${task.id} (quota guard: only ${priorityFilter.join('/')} allowed)`);
+      continue;
+    }
+
     // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
     if (mitigationState.p2_paused && task.priority === 'P2') {
       tickLog(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
@@ -1056,6 +1065,30 @@ async function dispatchNextTask(goalIds) {
     };
   }
 
+  // 0b. Quota guard check — 根据账号 5h 余量限制调度范围（MINIMAL_MODE 下跳过）
+  let _quotaPriorityFilter = null;
+  if (!MINIMAL_MODE) {
+    try {
+      const qg = await checkQuotaGuard();
+      if (!qg.allow) {
+        tickLog(`[tick] quota guard: ${qg.reason} bestPct=${qg.bestPct.toFixed(1)}%，暂停全部调度`);
+        await recordDispatchResult(pool, false, 'quota_critical');
+        return {
+          dispatched: false,
+          reason: 'quota_critical',
+          detail: `所有账号 quota > 98%（最优=${qg.bestPct.toFixed(1)}%），请等待 quota 重置`,
+          actions,
+        };
+      }
+      if (qg.priorityFilter) {
+        _quotaPriorityFilter = qg.priorityFilter;
+        tickLog(`[tick] quota guard: ${qg.reason} bestPct=${qg.bestPct.toFixed(1)}%，仅派 ${qg.priorityFilter.join('/')}`);
+      }
+    } catch (qgErr) {
+      console.error('[tick] quota guard check failed (non-fatal):', qgErr.message);
+    }
+  }
+
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
   if (!slotBudget.dispatchAllowed) {
@@ -1144,7 +1177,7 @@ async function dispatchNextTask(goalIds) {
   const { preFlightCheck } = await import('./pre-flight-check.js');
 
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
-    const candidate = await selectNextDispatchableTask(goalIds, preFlightFailedIds);
+    const candidate = await selectNextDispatchableTask(goalIds, preFlightFailedIds, { priorityFilter: _quotaPriorityFilter });
     if (!candidate) {
       return { dispatched: false, reason: 'no_dispatchable_task', actions };
     }
@@ -1650,7 +1683,7 @@ async function executeTick() {
 
   // [感知] 凭据有效期检查：每 30 分钟一次，过期前 4h 创建告警任务 + 凭据恢复后重排队
   const credentialCheckElapsed = Date.now() - _lastCredentialCheckTime;
-  if (credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
+  if (!MINIMAL_MODE && credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
     _lastCredentialCheckTime = Date.now();
     checkAndAlertExpiringCredentials(pool).then(r => {
       if (r.alerted > 0) {
@@ -1685,6 +1718,15 @@ async function executeTick() {
       }
     }).catch(err => {
       console.error('[tick] Rescue storm cleanup failed (non-fatal):', err.message);
+    });
+
+    // [清理] 凭据告警任务清理：取消 quarantined/queued 的凭据告警任务（现已改用 raise() 轻量通道）
+    cancelCredentialAlertTasks(pool).then(r => {
+      if (r.cancelled > 0) {
+        tickLog(`[tick] [credential-alert-cleanup] ✅ 取消 ${r.cancelled} 个 quarantined 凭据告警任务`);
+      }
+    }).catch(err => {
+      console.error('[tick] Credential alert task cleanup failed (non-fatal):', err.message);
     });
   }
 

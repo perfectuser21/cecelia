@@ -1,36 +1,26 @@
-# Task Card: [SelfDrive] Test KR for decomp — 执行验证 & 首个迭代交付
+# Task Card: [Brain] credential-expiry-checker MINIMAL_MODE guard 修复
 
-**任务 ID**: ba5dd980-c113-4571-a1b2-147e6ad62c4f
-**分支**: cp-04080726-ba5dd980-c113-4571-a1b2-147e6a
-**领域**: agent_ops
+**任务 ID**: 929d4868-3ef2-4913-8ad3-f7748c97e370
+**分支**: cp-04110834-929d4868-credential-expiry-minimal-mode-fix
 **优先级**: P1
 
-## 目标
+## 问题
 
-对 decomp（OKR 拆解方法论）的 Test KR 进行执行验证，输出首个迭代交付：
-1. 明确验证标准（success 定义）
-2. 完成第一个测试周期
-3. 输出验证报告，驱动 decomp 方法论迭代
+`BRAIN_MINIMAL_MODE=true` 时，`tick.js` 第 1653 行的凭据有效期检查块未被 MINIMAL_MODE guard 覆盖。
+导致每 30 分钟仍会调用 `checkAndAlertExpiringCredentials` 和 `scanAuthLayerHealth`，在 DB 创建告警任务，浪费 token。
 
-## 验证结论（分析阶段）
+## 修复范围
 
-Test KR（goals 表，type=area_kr，id=90a9e33e）已于 2026-04-08 归档（archived），current_value=38。
-分析发现 decomp-checker v2.0 存在一个 bug：
+`packages/brain/src/tick.js` 第 1651–1689 行：
+- `checkAndAlertExpiringCredentials`（创建告警任务）→ 加 `!MINIMAL_MODE` guard
+- `scanAuthLayerHealth`（创建 auth 失败告警）→ 加 `!MINIMAL_MODE` guard
+- `recoverAuthQuarantinedTasks`（恢复隔离任务，有益）→ 保留（不管 MINIMAL_MODE）
+- `cleanupDuplicateRescueTasks`（清理重复任务，有益）→ 保留
 
-**Check A 查询了 `ready` 状态的 KR（不应该）**
-- 代码：`WHERE g.status IN ('pending', 'ready')`
-- 注释说明：「检测 pending 且未拆过的 KR」
-- `ready` 状态的 KR 已经完成拆解并由 Vivian 审核通过，不应触发新的拆解任务
-- 超过 24h dedup 窗口后，`ready` KR 会被错误地重新触发拆解 → 强制改回 `decomposing`
+## DoD
 
-## 实现范围
+- [x] `[ARTIFACT]` tick.js 第 1653 行条件加 `!MINIMAL_MODE &&` guard
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(!c.includes('!MINIMAL_MODE && credentialCheckElapsed'))process.exit(1);console.log('OK')"`
 
-1. `packages/brain/src/decomposition-checker.js`
-   - Check A 查询改为 `status = 'pending'`（移除 `ready`）
-   - 注释更新与代码一致
-
-2. `packages/brain/src/__tests__/decomposition-checker.test.js`
-   - 新增测试：`ready` KR 不应触发拆解任务
-
-3. `docs/learnings/cp-04080726-test-kr-decomp-verification.md`
-   - 验证报告：Test KR 生命周期 + 方法论发现 + 下次改进建议
+- [x] `[BEHAVIOR]` MINIMAL_MODE 下 checkAndAlertExpiringCredentials 不被调用
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');const idx=c.split('\\n').findIndex(l=>l.includes('!MINIMAL_MODE && credentialCheckElapsed'));if(idx<0)process.exit(1);console.log('guard at line '+(idx+1))"`
