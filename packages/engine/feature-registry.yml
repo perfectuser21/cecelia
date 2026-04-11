@@ -6,6 +6,13 @@ version: "1.0.0"
 updated: "2026-04-09"
 
 changelog:
+  - version: "14.5.2"
+    date: "2026-04-11"
+    skill: "dev"
+    change: "fix"
+    description: "[CONFIG] worktree-manage.sh: 分支名时间戳从分钟精度(+%m%d%H%M)改为秒精度(+%m%d%H%M%S)，防止同一任务同一分钟内重试生成相同分支名冲突"
+    files:
+      - "skills/dev/scripts/worktree-manage.sh"
   - version: "14.5.1"
     date: "2026-04-10"
     skill: "lib"
