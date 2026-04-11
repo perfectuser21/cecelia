@@ -4,8 +4,8 @@
 # ============================================================================
 # SSOT：所有 Provider 适配器 source 此文件，通过 devloop_check() 获取当前状态。
 #
-# 版本: v4.2.0
-# 更新: 2026-04-05 — Bug fix: harness 模式下跳过 cleanup_done 残留文件早退检查
+# 版本: v4.3.0
+# 更新: 2026-04-11 — 单一出口原则：删除 ready_to_merge 中间状态，CI 通过 + step4 done 直接自动合并；CI in_progress 不输出 action 字段
 #
 # 4-Stage Pipeline 条件顺序:
 #   0. harness_mode 预检 → 若 harness_mode=true，跳过 cleanup_done 通用早退
@@ -226,7 +226,7 @@ devloop_check() {
                     _devloop_jq -n --arg b "$branch" '{"status":"blocked","reason":"CI 已 pending 90+ 分钟，可能卡死","action":"检查 CI：gh run list --branch \($b) --limit 5"}'
                     return 2
                 fi
-                _devloop_jq -n --arg s "$ci_status" '{"status":"blocked","reason":"CI 进行中（\($s)）","action":"CI 正在运行，Stop Hook 会自动重新检查。禁止询问用户。"}'
+                _devloop_jq -n --arg s "$ci_status" '{"status":"blocked","reason":"CI 进行中（\($s)）"}'
                 return 2
                 ;;
             *)
@@ -299,16 +299,17 @@ devloop_check() {
         _devloop_jq -n --arg pr "$pr_number" '{"status":"blocked","reason":"PR #\($pr) 状态非 OPEN","action":"检查 PR 状态"}'
         return 2; }
 
-    # P0 修复：不自动合并，输出 JSON action 建议用户手动合并
-    # 合并失败时由用户处理（不再自动重试）→ return 2
-    echo "[devloop-check] PR #$pr_number CI 通过 + Stage 4 完成，建议手动合并" >&2
-    local _repo_name=""
-    _repo_name=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
-    local _pr_url=""
-    [[ -n "$_repo_name" ]] && _pr_url="https://github.com/${_repo_name}/pull/${pr_number}"
-    _devloop_jq -n --arg pr "$pr_number" --arg url "$_pr_url" \
-        '{"status":"ready_to_merge","reason":"PR #\($pr) CI 通过 + Stage 4 完成，可以合并","action":"请手动执行: gh pr merge \($pr) --squash --delete-branch","pr_url":$url}'
-    return 0
+    # 自动合并（单一 exit 0 出口原则：条件全满足则直接合并，不外抛给用户）
+    echo "[devloop-check] PR #$pr_number CI 通过 + Stage 4 完成，自动合并中..." >&2
+    if gh pr merge "$pr_number" --squash --delete-branch 2>/dev/null; then
+        _mark_cleanup_done "$dev_mode_file"
+        _devloop_jq -n --arg pr "$pr_number" '{"status":"done","reason":"PR #\($pr) 已自动合并，工作流结束"}'
+        return 0
+    else
+        _devloop_jq -n --arg pr "$pr_number" \
+            '{"status":"blocked","reason":"PR #\($pr) 自动合并失败","action":"检查冲突或权限问题，执行: gh pr merge \($pr) --squash --delete-branch"}'
+        return 2
+    fi
 }
 
 # ============================================================================
