@@ -26,8 +26,16 @@ if [[ "$GIT_DIR" == *"worktrees"* ]]; then
     DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock.${CURRENT_BRANCH}"
     
     if [[ -f "$DEV_MODE_FILE" && ! -f "$DEV_LOCK_FILE" ]]; then
-        cp "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
-        echo "✅ .dev-lock 已重建"
+        # 重建时必须生成含 tty/session_id 的完整格式，不能 cp dev-mode
+        # （dev-mode 无 session 字段，cp 出的 dev-lock 导致 _session_matches 永远失败）
+        cat > "$DEV_LOCK_FILE" <<LOCKEOF
+dev
+branch: ${CURRENT_BRANCH}
+session_id: headed-$(date +%s)-$$-${CURRENT_BRANCH}
+tty: $(tty 2>/dev/null || echo "none")
+created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+LOCKEOF
+        echo "✅ .dev-lock 已重建（with session info）"
     elif [[ ! -f "$DEV_LOCK_FILE" ]]; then
         cat > "$DEV_LOCK_FILE" <<LOCKEOF
 dev

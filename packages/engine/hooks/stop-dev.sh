@@ -73,7 +73,26 @@ while IFS= read -r _dir; do
     done
 done < <(_collect_search_dirs "$PROJECT_ROOT")
 
-[[ -z "$DEV_LOCK_FILE" ]] && exit 0
+# fail-closed：无 dev-lock 时扫描所有 worktree，发现未完成的 dev-mode 则阻止退出
+if [[ -z "$DEV_LOCK_FILE" ]]; then
+    _orphan_branch=""
+    while IFS= read -r _dir; do
+        for _dmf in "$_dir"/.dev-mode.*; do
+            [[ -f "$_dmf" ]] || continue
+            head -1 "$_dmf" 2>/dev/null | grep -q "^dev$" || continue
+            grep -q "cleanup_done: true" "$_dmf" 2>/dev/null && continue
+            grep -qE "^step_(2|3|4).*pending" "$_dmf" 2>/dev/null || continue
+            _orphan_branch=$(grep "^branch:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "unknown")
+            break 2
+        done
+    done < <(_collect_search_dirs "$PROJECT_ROOT")
+    if [[ -n "$_orphan_branch" ]]; then
+        jq -n --arg b "$_orphan_branch" \
+            '{"decision":"block","reason":"dev-lock 丢失但发现未完成 session（分支: \($b)）。重新运行 /dev 重建 dev-lock，禁止退出。"}'
+        exit 2
+    fi
+    exit 0
+fi
 
 # 并发锁（per-worktree）
 _git_dir="$(git -C "$MATCHED_DIR" rev-parse --git-dir 2>/dev/null || echo "/tmp")"

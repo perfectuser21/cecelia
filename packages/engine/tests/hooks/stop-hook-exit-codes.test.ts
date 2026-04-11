@@ -53,8 +53,8 @@ describe("hooks/stop-dev.sh exit codes", () => {
   });
 
   describe("exit 0 scenarios (allow session end)", () => {
-    it("should return exit 0 when no .dev-lock exists (no active session)", () => {
-      // 无 .dev-lock → hook 判断无活跃会话 → exit 0
+    it("should return exit 0 when no .dev-lock and no incomplete .dev-mode (no active session)", () => {
+      // 无 .dev-lock 且无未完成 .dev-mode → hook 判断无活跃会话 → exit 0
       const exitCode = execSync(
         `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" < /dev/null; echo $?`,
         { encoding: "utf-8" }
@@ -119,6 +119,43 @@ describe("hooks/stop-dev.sh exit codes", () => {
   });
 
   describe("exit 2 scenarios (block session end)", () => {
+    it("should return exit 2 when no .dev-lock but incomplete .dev-mode exists (fail-closed)", () => {
+      // dev-lock 丢失但 dev-mode 有未完成步骤 → fail-closed → exit 2
+      const branch = "test-orphan-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+
+      // 只写 dev-mode，不写 dev-lock（模拟 dev-lock 丢失场景）
+      writeFileSync(
+        join(tempDir, `.dev-mode.${branch}`),
+        `dev\nbranch: ${branch}\nstep_2_code: pending\nstep_3_integrate: pending\nstep_4_ship: pending\n`
+      );
+
+      const result = execSync(
+        `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" < /dev/null || echo "exit:$?"`,
+        { encoding: "utf-8" }
+      );
+      expect(result).toContain("exit:2");
+      // 应输出 dev-lock 丢失的 block 原因
+      expect(result).toContain("dev-lock");
+    });
+
+    it("should return exit 0 when no .dev-lock and .dev-mode has cleanup_done (completed session)", () => {
+      // dev-lock 丢失但 dev-mode 含 cleanup_done: true → 已完成会话 → exit 0
+      const branch = "test-completed-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+
+      writeFileSync(
+        join(tempDir, `.dev-mode.${branch}`),
+        `dev\nbranch: ${branch}\ncleanup_done: true\n`
+      );
+
+      const exitCode = execSync(
+        `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" < /dev/null; echo $?`,
+        { encoding: "utf-8" }
+      );
+      expect(exitCode.trim()).toBe("0");
+    });
+
     it("should return exit 2 when PR not created", () => {
       const branch = "test-branch";
       // Create initial commit so we can create a branch
