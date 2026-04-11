@@ -169,6 +169,26 @@ router.get('/services', (_req, res) => {
   }
 });
 
+// GET /hk-stats — 从 HK VPS（Tailscale: 100.86.118.99）代理 stats
+router.get('/hk-stats', async (_req, res) => {
+  const HK_BRAIN_URL = 'http://100.86.118.99:5221/api/brain/vps-monitor/stats';
+  const TIMEOUT_MS = 5000;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const upstream = await fetch(HK_BRAIN_URL, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!upstream.ok) {
+      return res.status(502).json({ error: `HK Brain returned ${upstream.status}` });
+    }
+    const data = await upstream.json();
+    res.json(data);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(503).json({ error: `HK VPS unreachable: ${msg}` });
+  }
+});
+
 // GET /history
 router.get('/history', (req, res) => {
   const hours = parseInt(req.query.hours) || 24;

@@ -1233,11 +1233,11 @@ export default function LiveMonitorPage() {
       fetch('/api/brain/tasks?status=queued').then(x => x.json()),
       fetch('/api/tasks/projects').then(x => x.json()),
       fetch('/api/brain/cluster/status').then(x => x.json()),
-      fetch('/api/v1/vps-monitor/stats').then(x => x.json()),
-      fetch('/api/v1/vps-monitor/services').then(x => x.json()),
+      fetch('/api/brain/vps-monitor/stats').then(x => x.json()),
+      fetch('/api/brain/vps-monitor/services').then(x => x.json()),
       fetch('/api/cluster/scan-sessions').then(x => x.json()),
       fetch('/api/brain/goals').then(x => x.json()),
-      fetch('/api/v1/vps-monitor/hk-stats').then(x => x.json()),
+      fetch('/api/brain/vps-monitor/hk-stats').then(x => x.json()),
     ]);
     if (r[0].status === 'fulfilled') setBrainStatus(r[0].value);
     if (r[1].status === 'fulfilled') setTick(r[1].value);

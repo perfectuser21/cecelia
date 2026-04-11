@@ -518,4 +518,31 @@ describe('vps-monitor routes', () => {
       }
     });
   });
+
+  describe('GET /hk-stats', () => {
+    it('HK VPS 可达时代理返回 stats 数据', async () => {
+      const mockStats = {
+        hostname: 'hk-vps', cpu: { usage: 20 }, memory: { usagePercent: 50 },
+        disk: { usagePercent: 30 }, uptime: 3600,
+      };
+      global.fetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockStats,
+      });
+
+      const res = await request(app).get('/vps/hk-stats');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ hostname: 'hk-vps' });
+    });
+
+    it('HK VPS 不可达时返回 503', async () => {
+      global.fetch = vi.fn().mockRejectedValueOnce(new Error('Connection refused'));
+
+      const res = await request(app).get('/vps/hk-stats');
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/unreachable/);
+    });
+  });
 });
