@@ -3,9 +3,19 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-09"
+updated: "2026-04-11"
 
 changelog:
+  - version: "14.6.0"
+    date: "2026-04-11"
+    skill: "dev"
+    change: "refactor"
+    description: "[CONFIG] 职责分离 — 文档面(steps/*.md)只产出，代码面(devloop-check.sh)控制流程：条件6加cleanup.sh调用，03-integrate删CI轮询加harness分支，04-ship删手动合并/cleanup_done/cleanup.sh"
+    files:
+      - "lib/devloop-check.sh"
+      - "skills/dev/steps/03-integrate.md"
+      - "skills/dev/steps/04-ship.md"
+      - "skills/dev/SKILL.md"
   - version: "14.5.2"
     date: "2026-04-11"
     skill: "dev"
