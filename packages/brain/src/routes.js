@@ -17,6 +17,7 @@ import contentLibraryRouter from './routes/content-library.js';
 import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
 import llmServiceRouter from './routes/llm-service.js';
+import harnessRouter from './routes/harness.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -43,5 +44,8 @@ router.use('/topics', topicsRouter);
 
 // LLM 服务 — POST /llm/call（供外部系统如 zenithjoy 调用）
 router.use('/llm', llmServiceRouter);
+
+// Harness 可视化 — GET /harness/pipeline-detail, GET /harness/pipeline/:id
+router.use('/harness', harnessRouter);
 
 export default router;
