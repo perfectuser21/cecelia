@@ -77,9 +77,8 @@ bash scripts/write-current-state.sh
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 sed -i '' "s/step_4_ship: pending/step_4_ship: done/" "$DEV_MODE_FILE"
-git add "$DEV_MODE_FILE" && git commit -m "chore: [state] step_4_ship: done
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+# .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
+# devloop-check 读取本地文件，不需要 push
 git push origin HEAD
 ```
 

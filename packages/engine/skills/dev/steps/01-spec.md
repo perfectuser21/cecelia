@@ -53,8 +53,9 @@ step_3_integrate: pending
 step_4_ship: pending
 EOF
 
-git add ".dev-mode.${BRANCH_NAME}"
-git commit -m "chore: [state] persist .dev-mode (harness) — Stage 1 跳过"
+# .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
+# 只提交 task card 等代码文件
+git commit --allow-empty -m "chore: [state] Stage 1 跳过 (harness)"
 ```
 
 **直接进入 Stage 2 (Code)** — 读取 `skills/dev/steps/02-code.md` 并执行。
@@ -150,9 +151,10 @@ step_3_integrate: pending
 step_4_ship: pending
 EOF
 
-# 立即 commit 防止上下文压缩丢失
-git add ".dev-mode.${BRANCH_NAME}" ".task-${BRANCH_NAME}.md"
-git commit -m "chore: [state] persist .dev-mode — Stage 1 Spec 完成"
+# .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
+# 只提交 task card（代码文件）
+git add ".task-${BRANCH_NAME}.md"
+git commit -m "chore: [state] Stage 1 Spec 完成"
 ```
 
 ---
