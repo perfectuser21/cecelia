@@ -270,6 +270,50 @@ jobs:
             exit $EXIT
           fi
 
+  # ─── Brain: Diff Coverage Gate ────────────────────────────
+  # PR 新增行覆盖率 < 80% 则 CI fail，迫使为新代码路径补测试
+  brain-diff-coverage:
+    needs: [changes, brain-unit]
+    if: needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # diff-cover 需要 origin/main 历史做比较
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cd packages/brain && npm ci
+      - name: Run Tests with Coverage
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: |
+          cd packages/brain
+          set +e
+          npx vitest run --coverage --exclude='src/__tests__/integration/**' 2>&1 | tee /tmp/vitest-coverage-out.txt
+          EXIT=${PIPESTATUS[0]}
+          if [ $EXIT -ne 0 ]; then
+            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-coverage-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-coverage-out.txt; then
+              echo "[brain-coverage] OOM worker exit but all tests passed — continuing"
+            else
+              exit $EXIT
+            fi
+          fi
+      - name: Diff Coverage Gate
+        run: |
+          pip install diff-cover --quiet
+          git fetch origin main
+          cd packages/brain
+          diff-cover coverage/lcov.info \
+            --compare-branch=origin/main \
+            --fail-under=80 \
+            --exclude='src/__tests__/**' \
+            --exclude='**/*.test.js' \
+            --exclude='**/*.test.ts' \
+            --exclude='**/*.spec.js' \
+            --exclude='**/*.spec.ts'
+
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
   brain-integration:
     needs: changes
@@ -517,7 +561,7 @@ jobs:
 
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
-    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -534,8 +578,9 @@ jobs:
           check "pr-size-check"     "${{ needs.pr-size-check.result }}"
           check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
-          check "brain-unit"        "${{ needs.brain-unit.result }}"
-          check "brain-integration" "${{ needs.brain-integration.result }}"
+          check "brain-unit"          "${{ needs.brain-unit.result }}"
+          check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
+          check "brain-integration"   "${{ needs.brain-integration.result }}"
           check "workspace-build"        "${{ needs.workspace-build.result }}"
           check "workspace-test"         "${{ needs.workspace-test.result }}"
           check "e2e-smoke"              "${{ needs.e2e-smoke.result }}"
