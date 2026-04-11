@@ -16,6 +16,7 @@ import contentPipelineRouter from './routes/content-pipeline.js';
 import contentLibraryRouter from './routes/content-library.js';
 import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
+import llmServiceRouter from './routes/llm-service.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -39,5 +40,8 @@ router.use('/social', socialTrendingRouter);
 
 // 内容选题候选库 — GET /topics
 router.use('/topics', topicsRouter);
+
+// LLM 服务 — POST /llm/call（供外部系统如 zenithjoy 调用）
+router.use('/llm', llmServiceRouter);
 
 export default router;
