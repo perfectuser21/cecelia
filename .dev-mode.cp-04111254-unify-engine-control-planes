@@ -1,9 +1,0 @@
-dev
-branch: cp-04111254-unify-engine-control-planes
-task_card: .task-cp-04111254-unify-engine-control-planes.md
-started: 2026-04-11T12:56:20+08:00
-step_0_worktree: done
-step_1_spec: done
-step_2_code: done
-step_3_integrate: done
-step_4_ship: done
