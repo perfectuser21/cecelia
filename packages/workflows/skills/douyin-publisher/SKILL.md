@@ -7,7 +7,8 @@ created: 2026-02-12
 updated: 2026-03-19
 changelog:
   - 1.0.0: ✅ 2026-02-12 完成 - 三种类型全部验证通过（zenithjoy）
-  - 1.1.0: ✅ 2026-03-19 迁移到 cecelia - 图文/视频脚本迁移，CDP 直连架构，.cjs 格式，内容目录接口
+  - 1.1.0: 迁移脚本到 cecelia（已废弃）
+  - 1.2.0: ✅ 2026-04-11 统一到 zenithjoy - 脚本迁移至 services/creator/scripts/publishers/douyin-publisher/
 ---
 
 # Douyin Publisher
@@ -44,8 +45,8 @@ Windows PC（西安，100.97.242.124）
 ### 视频发布
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/douyin-publisher/scripts/publish-douyin-video.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/douyin-publisher/publish-douyin-video.cjs \
   --content ~/.douyin-queue/2026-03-19/video-1/
 ```
 
@@ -61,8 +62,8 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
 ### 图文发布
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/douyin-publisher/scripts/publish-douyin-image.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/douyin-publisher/publish-douyin-image.cjs \
   --content ~/.douyin-queue/2026-03-19/image-1/
 ```
 
@@ -78,7 +79,7 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
 ### 批量发布
 
 ```bash
-bash packages/workflows/skills/douyin-publisher/scripts/batch-publish-douyin.sh 2026-03-19
+bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/douyin-publisher/batch-publish-douyin.sh 2026-03-19
 ```
 
 **退出码**：
@@ -106,11 +107,11 @@ ssh xian-mac "ssh -i ~/.ssh/windows_ed xuxia@100.97.242.124 'schtasks /run /tn S
 ### 找不到 ws 模块
 
 ```bash
-export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
+export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules
 ```
 
 ---
 
 **版本**: 1.1.0
-**状态**: ✅ **cecelia 架构就绪** - 图文/视频脚本迁移完成，CDP 直连 Windows
+**状态**: ✅ **zenithjoy 统一管理** - 脚本位于 zenithjoy/services/creator/scripts/publishers/douyin-publisher/
 **架构**: Mac mini → xian-mac SCP → Windows CDP → 抖音

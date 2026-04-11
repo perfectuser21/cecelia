@@ -55,8 +55,8 @@ Windows PC (100.97.242.124:19223)
 ### 会话状态检查（推荐发布前先运行）
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/kuaishou-publisher/scripts/check-kuaishou-session.cjs
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/check-kuaishou-session.cjs
 ```
 
 **输出示例**：
@@ -67,16 +67,16 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
 ### 新 API 方案（推荐）
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-api.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/publish-kuaishou-api.cjs \
   --content ~/.kuaishou-queue/2026-03-07/image-1/
 ```
 
 ### 视频发布
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-video.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/publish-kuaishou-video.cjs \
   --video /path/to/video.mp4 \
   --title "视频标题" \
   --tags "标签1,标签2" \
@@ -97,15 +97,15 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
 ### 旧 CDP 方案（备用）
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-image.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/publish-kuaishou-image.cjs \
   --content ~/.kuaishou-queue/2026-03-07/image-1/
 ```
 
 ### 批量发布
 
 ```bash
-bash packages/workflows/skills/kuaishou-publisher/scripts/batch-publish-kuaishou.sh 2026-03-07
+bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/batch-publish-kuaishou.sh 2026-03-07
 ```
 
 ### 内容目录结构
@@ -128,7 +128,7 @@ bash packages/workflows/skills/kuaishou-publisher/scripts/batch-publish-kuaishou
 | 上传 Token API | `https://cp.kuaishou.com/rest/cp/works/upload/photo/token` |
 | 发布 API | `https://cp.kuaishou.com/rest/cp/works/photo/new` |
 | 会话 Cookie | `kuaishou.web.cp.api_st` / `kuaishou.web.cp.api_ph` |
-| NODE_PATH | `/Users/administrator/perfect21/cecelia/node_modules` |
+| NODE_PATH | `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules` |
 
 ## 故障排查
 
@@ -141,7 +141,7 @@ curl http://100.97.242.124:19223/json
 ### 找不到 ws 模块
 
 ```bash
-export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
+export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules
 ```
 
 ### API 端点返回 404

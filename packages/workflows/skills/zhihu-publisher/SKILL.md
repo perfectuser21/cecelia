@@ -44,8 +44,8 @@ Windows PC Chrome (100.97.242.124)
 
 | 脚本 | 功能 | 状态 |
 |------|------|------|
-| `scripts/publish-zhihu-article.cjs` | 单篇文章发布（CDP 自动化） | ✅ 生产可用 |
-| `scripts/batch-publish-zhihu.sh` | 批量发布（扫描队列目录） | ✅ 生产可用 |
+| `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/zhihu-publisher/publish-zhihu-article.cjs` | 单篇文章发布（CDP 自动化） | ✅ 生产可用 |
+| `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/zhihu-publisher/batch-publish-zhihu.sh` | 批量发布（扫描队列目录） | ✅ 生产可用 |
 
 ---
 
@@ -54,11 +54,11 @@ Windows PC Chrome (100.97.242.124)
 ### 单篇发布
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node scripts/publish-zhihu-article.cjs --content /path/to/article-1/
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/zhihu-publisher/publish-zhihu-article.cjs --content /path/to/article-1/
 
 # 干运行（不实际连接 CDP）
-node scripts/publish-zhihu-article.cjs --content /path/to/article-1/ --dry-run
+node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/zhihu-publisher/publish-zhihu-article.cjs --content /path/to/article-1/ --dry-run
 ```
 
 **内容目录结构**：
@@ -73,10 +73,10 @@ article-1/
 
 ```bash
 # 发布指定日期的内容
-bash scripts/batch-publish-zhihu.sh 2026-03-10
+bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/zhihu-publisher/batch-publish-zhihu.sh 2026-03-10
 
 # 发布今天的内容
-bash scripts/batch-publish-zhihu.sh
+bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/zhihu-publisher/batch-publish-zhihu.sh
 ```
 
 **队列目录结构**（`~/.zhihu-queue/YYYY-MM-DD/`）：
@@ -106,7 +106,7 @@ bash scripts/batch-publish-zhihu.sh
 
 3. **Tailscale 连通**：确认 VPS/Mac mini 能访问 `100.97.242.124:19229`
 
-4. **Node.js 依赖**：已安装 cecelia monorepo 依赖（`npm install`）
+4. **Node.js 依赖**：已安装 zenithjoy publishers 依赖（`npm install` in `services/creator/scripts/publishers/`）
 
 ---
 
@@ -147,10 +147,10 @@ bash scripts/batch-publish-zhihu.sh
 
 ```bash
 # 单元测试（纯函数，无需 CDP）
-node --test scripts/__tests__/publish-zhihu-article.test.cjs
+# 测试已迁移到 zenithjoy repo
 
 # 干运行测试（验证参数，不实际发布）
-node scripts/publish-zhihu-article.cjs --content /tmp/test-article/ --dry-run
+node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/zhihu-publisher/publish-zhihu-article.cjs --content /tmp/test-article/ --dry-run
 ```
 
 ---

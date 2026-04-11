@@ -61,13 +61,13 @@ curl -X POST https://n8n.zenjoymedia.media/webhook/content-publish \
 
 ```bash
 # 图文发布（在 Mac mini 上执行）
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/xiaohongshu-publisher/publish-xiaohongshu-image.cjs \
   --content ~/.xiaohongshu-queue/2026-03-10/image-1/
 
 # 视频发布（在 Mac mini 上执行）
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-video.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/xiaohongshu-publisher/publish-xiaohongshu-video.cjs \
   --video /path/to/video.mp4 \
   --title "视频标题" \
   --tags "美食,旅行"
@@ -77,7 +77,7 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
 
 ```bash
 # 在 Mac mini 上执行
-bash ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/batch-publish-xiaohongshu.sh 2026-03-10
+bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/xiaohongshu-publisher/batch-publish-xiaohongshu.sh 2026-03-10
 ```
 
 ### 内容目录结构
@@ -101,7 +101,7 @@ bash ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts
 | 发布页面 | `https://creator.xiaohongshu.com/publish/publish` |
 | Windows 图片目录 | `C:\Users\xuxia\xiaohongshu-media\{date}\{dir}\` |
 | 截图目录（调试） | `/tmp/xiaohongshu-publish-screenshots/` |
-| NODE_PATH | `/Users/administrator/perfect21/cecelia/node_modules` |
+| NODE_PATH | `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules` |
 | N8N SSH Credential | VPS SSH Key (ID: vvJsQOZ95sqzemla) |
 
 ## N8N Flow 节点说明

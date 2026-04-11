@@ -38,7 +38,7 @@ Mac mini (localhost)
 **关键路径**：
 - 凭据：`~/.credentials/wechat.env`（WECHAT_APPID + WECHAT_APPSECRET）
 - Token 缓存：`/tmp/wechat_token.json`（有效期 7200s，提前 5min 刷新）
-- 脚本位置：`packages/workflows/skills/wechat-publisher/scripts/`
+- 脚本位置：`/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/`
 
 ---
 
@@ -56,8 +56,8 @@ Mac mini (localhost)
 ### 直接参数模式
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/wechat-publisher/scripts/publish-wechat-article.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/publish-wechat-article.cjs \
   --title "今日分享" \
   --content "<p>文章正文内容</p>" \
   --author "作者名" \
@@ -68,8 +68,8 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
 ### 内容目录模式
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/wechat-publisher/scripts/publish-wechat-article.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/publish-wechat-article.cjs \
   --content-dir ~/.wechat-queue/2026-03-10/article-1/
 ```
 
@@ -88,8 +88,8 @@ article-1/
 ### Token 检查
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/wechat-publisher/scripts/check-wechat-token.cjs
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/check-wechat-token.cjs
 ```
 
 **输出**：
