@@ -54,23 +54,23 @@ Windows PC (100.97.242.124:19227)
 
 ```bash
 # 单条发布
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/weibo-publisher/scripts/publish-weibo-api.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/weibo-publisher/publish-weibo-api.cjs \
   --content ~/.weibo-queue/2026-03-07/image-1/
 ```
 
 ### 旧 CDP 方案（备用）
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node packages/workflows/skills/weibo-publisher/scripts/publish-weibo-image.cjs \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
+  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/weibo-publisher/publish-weibo-image.cjs \
   --content ~/.weibo-queue/2026-03-07/image-1/
 ```
 
 ### 批量发布
 
 ```bash
-bash packages/workflows/skills/weibo-publisher/scripts/batch-publish-weibo.sh 2026-03-07
+bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/weibo-publisher/batch-publish-weibo.sh 2026-03-07
 ```
 
 ### 内容目录结构
@@ -91,7 +91,7 @@ bash packages/workflows/skills/weibo-publisher/scripts/batch-publish-weibo.sh 20
 | 发布页面 | `https://weibo.com/p/publish/` |
 | Windows 图片目录 | `C:\Users\xuxia\weibo-media\{date}\{contentDirName}\{file}` |
 | 截图目录（调试） | `/tmp/weibo-publish-screenshots/` |
-| NODE_PATH | `/Users/administrator/perfect21/cecelia/node_modules` |
+| NODE_PATH | `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules` |
 
 ## 验证码处理模块
 
