@@ -1862,10 +1862,28 @@ ${resultStr.substring(0, 2000)}
 
           if (reviewVerdict === 'APPROVED') {
             const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
-            // Bug Fix: contract_branch 为 null 时不创建必失败的 Generator（P0 guard）
-            if (!contractBranch) {
-              console.error(`[P0][execution-callback] harness: ${harnessType} APPROVED 但 contract_branch=null，无法创建 Generator — 终止链式触发。task_id=${task_id}`);
-              return;
+            // Bug Fix: contract_branch 为 null 时自动 fallback（P0 guard + recovery）
+            let resolvedContractBranch = contractBranch;
+            if (!resolvedContractBranch) {
+              // Fallback: 检查 git remote 是否有 cp-harness-review-approved-{task_id_short} 分支
+              const taskIdShort = task_id.split('-')[0]; // 前 8 位 hex
+              const fallbackBranchName = `cp-harness-review-approved-${taskIdShort}`;
+              try {
+                const lsRemoteOutput = execSync(
+                  `git ls-remote --heads origin ${fallbackBranchName}`,
+                  { encoding: 'utf-8', timeout: 8000 }
+                ).trim();
+                if (lsRemoteOutput.includes(fallbackBranchName)) {
+                  resolvedContractBranch = fallbackBranchName;
+                  console.warn(`[RECOVERY][execution-callback] harness: ${harnessType} contract_branch=null，fallback 成功 → ${fallbackBranchName}。task_id=${task_id}`);
+                }
+              } catch (lsErr) {
+                console.error(`[execution-callback] git ls-remote fallback 失败: ${lsErr.message}`);
+              }
+              if (!resolvedContractBranch) {
+                console.error(`[P0][execution-callback] harness: ${harnessType} APPROVED 但 contract_branch=null 且 fallback 分支 ${fallbackBranchName} 不存在 — 终止链式触发。task_id=${task_id}`);
+                return;
+              }
             }
             // 从 Reviewer result 提取 workstream_count（默认 1）
             const workstreamCount = (() => {
@@ -1901,7 +1919,7 @@ ${resultStr.substring(0, 2000)}
                 sprint_dir: harnessPayload.sprint_dir,
                 planner_task_id: harnessPayload.planner_task_id,
                 planner_branch: harnessPayload.planner_branch,
-                contract_branch: contractBranch,
+                contract_branch: resolvedContractBranch,
                 workstream_index: 1,
                 workstream_count: safeWsCount,
                 harness_mode: true
