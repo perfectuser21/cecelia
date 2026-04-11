@@ -179,14 +179,15 @@ function _authBackoffHours(failureCount) {
  * 连续失败时自动指数退避：2h → 4h → 8h → 24h（封顶）
  * @param {string} accountId - 账号 ID（如 'account3'）
  * @param {string|null} resetTimeISO - 恢复时间（ISO 8601），null 表示按退避策略计算
+ * @param {string} source - 失败来源：'api_error'（API 401）或 'token_expired'（token 文件过期）
  */
-export function markAuthFailure(accountId, resetTimeISO = null) {
+export function markAuthFailure(accountId, resetTimeISO = null, source = 'api_error') {
   const failureCount = (_authFailureCountMap.get(accountId) || 0) + 1;
   _authFailureCountMap.set(accountId, failureCount);
 
   const backoffHours = _authBackoffHours(failureCount);
   const resetTime = resetTimeISO || new Date(Date.now() + backoffHours * 60 * 60 * 1000).toISOString();
-  _authFailureMap.set(accountId, { resetTime, setAt: new Date().toISOString(), failureCount });
+  _authFailureMap.set(accountId, { resetTime, setAt: new Date().toISOString(), failureCount, source });
   console.log(`[account-usage] [auth-circuit-breaker] markAuthFailure: ${accountId} excluded ${backoffHours}h (attempt ${failureCount}) until ${resetTime}`);
   pool.query(
     `INSERT INTO account_usage_cache (account_id, is_auth_failed, auth_fail_resets_at)
@@ -294,7 +295,7 @@ export async function proactiveTokenCheck() {
 
     if (isExpired) {
       if (!isAuthFailed(accountId)) {
-        markAuthFailure(accountId, new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
+        markAuthFailure(accountId, new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
         console.log(`[account-usage] [proactive-check] ${accountId}: token 已过期，标记 auth-failed（24h 熔断）`);
         try {
           const { raise } = await import('./alerting.js');
@@ -311,16 +312,21 @@ export async function proactiveTokenCheck() {
         } catch { /* 告警失败不阻断主流程 */ }
       }
     } else {
-      // token 有效：清除过期告警标记；若 auth-failed 是因过期设置的则清除熔断和退避计数
+      // token 有效：清除过期告警标记；只清除 token_expired 来源的 auth_failed（api_error 来源的保留）
       _expiryAlertedAccounts.delete(accountId);
       if (isAuthFailed(accountId)) {
-        _authFailureMap.delete(accountId);
-        resetAuthFailureCount(accountId);
-        pool.query(
-          `UPDATE account_usage_cache SET is_auth_failed = false, auth_fail_resets_at = NULL WHERE account_id = $1`,
-          [accountId]
-        ).catch(err => console.warn(`[account-usage] proactiveTokenCheck 清除 auth-failed 失败: ${err.message}`));
-        console.log(`[account-usage] [proactive-check] ${accountId}: token 已刷新，清除 auth-failed 熔断`);
+        const entry = _authFailureMap.get(accountId);
+        if (entry?.source === 'token_expired') {
+          _authFailureMap.delete(accountId);
+          resetAuthFailureCount(accountId);
+          pool.query(
+            `UPDATE account_usage_cache SET is_auth_failed = false, auth_fail_resets_at = NULL WHERE account_id = $1`,
+            [accountId]
+          ).catch(err => console.warn(`[account-usage] proactiveTokenCheck 清除 auth-failed 失败: ${err.message}`));
+          console.log(`[account-usage] [proactive-check] ${accountId}: token 已刷新，清除 token_expired 熔断`);
+        } else {
+          console.log(`[account-usage] [proactive-check] ${accountId}: token 有效但 auth_failed source=${entry?.source}，保留熔断（等 resetTime 自然过期）`);
+        }
       }
     }
   }
