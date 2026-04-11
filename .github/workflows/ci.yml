@@ -243,14 +243,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: cd packages/brain && npm ci
-      - name: Unit Tests
+      - name: Unit Tests (with coverage)
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
         # vitest forks 模式下，fork 进程跑完后可能因内存碎片 OOM 退出，
@@ -260,7 +262,7 @@ jobs:
         run: |
           cd packages/brain
           set +e
-          npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
+          npx vitest run --coverage --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
           EXIT=${PIPESTATUS[0]}
           if [ $EXIT -ne 0 ]; then
             if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
@@ -269,6 +271,19 @@ jobs:
             fi
             exit $EXIT
           fi
+      - name: Setup Python for diff-cover
+        if: github.event_name == 'pull_request'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Diff Coverage Gate (新增行 ≥ 80%)
+        if: github.event_name == 'pull_request'
+        run: |
+          pip install diff-cover
+          diff-cover packages/brain/coverage/lcov.info \
+            --compare-branch=origin/${{ github.base_ref }} \
+            --fail-under=80 \
+            --exclude-patterns='packages/brain/src/__tests__/**'
 
   # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
   brain-integration:
