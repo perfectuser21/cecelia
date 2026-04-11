@@ -35,6 +35,26 @@ vi.mock('../db.js', () => ({
   }
 }));
 
+// 模拟凭据文件：所有账号 token 有效（1 年后过期），避免 proactiveTokenCheck 标记 auth-failed
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    readFileSync: vi.fn((path, ...args) => {
+      if (typeof path === 'string' && path.includes('/.claude-') && path.includes('/.credentials.json')) {
+        return JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() + 365 * 24 * 3600 * 1000 } });
+      }
+      return actual.readFileSync(path, ...args);
+    }),
+    existsSync: vi.fn((path) => {
+      if (typeof path === 'string' && path.includes('/.claude-') && path.includes('/.credentials.json')) {
+        return true;
+      }
+      return actual.existsSync(path);
+    }),
+  };
+});
+
 function makeRow(accountId, fivePct, resetsInMin, sevenDayPct = 0, sevenDaySonnetPct = 0, extraUsed = false) {
   return {
     account_id: accountId,

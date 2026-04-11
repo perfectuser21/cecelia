@@ -93,6 +93,16 @@ vi.mock('../quota-guard.js', () => ({
   checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
 }));
 
+// account-usage: mock proactiveTokenCheck 避免真实 DB 调用消耗 mock 序列
+vi.mock('../account-usage.js', () => ({
+  proactiveTokenCheck: vi.fn().mockResolvedValue(undefined),
+  selectBestAccount: vi.fn().mockResolvedValue({ account: 'account2', model: 'claude-sonnet-4-6' }),
+  getAccountUsage: vi.fn().mockResolvedValue([]),
+  refreshUsageCache: vi.fn().mockResolvedValue(undefined),
+  markAuthFailure: vi.fn().mockResolvedValue(undefined),
+  getAuthFailedAccounts: vi.fn().mockReturnValue([]),
+}));
+
 describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=false', () => {
   beforeEach(() => {
     vi.clearAllMocks();
