@@ -3,10 +3,9 @@
  * 路由：/pipeline/:id
  *
  * 展示单个 Pipeline 的完整执行链路：
- * - 阶段时间线
- * - 用户输入 + PRD
- * - GAN 对抗轮次（DOD 草稿 + 评审 verdict/反馈）
- * - 最终合同 + 报告
+ * - 阶段时间线概览
+ * - 串行步骤列表（按时间排序）
+ * - 点击步骤展开三栏视图：Input | Prompt | Output
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -14,29 +13,20 @@ import { useParams, useNavigate } from 'react-router-dom';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface GanRoundPropose {
+interface PipelineStep {
+  step: number;
   task_id: string;
+  task_type: string;
+  label: string;
   status: string;
-  created_at: string;
+  created_at: string | null;
   completed_at: string | null;
   verdict: string | null;
-  propose_round: number;
-}
-
-interface GanRoundReview {
-  task_id: string;
-  status: string;
-  created_at: string;
-  completed_at: string | null;
-  verdict: string | null;
-  feedback: string | null;
-  contract_branch: string | null;
-}
-
-interface GanRound {
-  round: number;
-  propose: GanRoundPropose | null;
-  review: GanRoundReview | null;
+  pr_url: string | null;
+  error_message: string | null;
+  input_content: string | null;
+  prompt_content: string | null;
+  output_content: string | null;
 }
 
 interface DetailStage {
@@ -63,19 +53,20 @@ interface PipelineDetail {
   status: string;
   created_at: string | null;
   stages: DetailStage[];
-  gan_rounds: GanRound[];
+  steps: PipelineStep[];
+  gan_rounds: unknown[];
   file_contents: Record<string, string | null>;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const STATUS_ICON: Record<string, string> = {
-  completed: '✅',
-  in_progress: '🔄',
-  failed: '❌',
-  queued: '⏳',
-  not_started: '—',
-  canceled: '🚫',
+  completed: '\u2705',
+  in_progress: '\uD83D\uDD04',
+  failed: '\u274C',
+  queued: '\u23F3',
+  not_started: '\u2014',
+  canceled: '\uD83D\uDEAB',
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -85,13 +76,6 @@ const STATUS_COLOR: Record<string, string> = {
   queued: 'text-amber-600 dark:text-amber-400',
   not_started: 'text-slate-400 dark:text-slate-500',
   canceled: 'text-slate-500 dark:text-slate-400',
-};
-
-const VERDICT_STYLE: Record<string, string> = {
-  APPROVED: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
-  REVISION: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  PROPOSED: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  REJECTED: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
 };
 
 // ─── Utils ──────────────────────────────────────────────────────────────────
@@ -116,44 +100,6 @@ function formatTime(dateStr: string | null): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-// ─── Section: Markdown Content ──────────────────────────────────────────────
-
-function MarkdownSection({ title, content, defaultOpen = false }: {
-  title: string;
-  content: string | null;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  if (!content) {
-    return (
-      <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 mb-3">
-        <div className="text-sm font-medium text-slate-400 dark:text-slate-500">{title}</div>
-        <div className="text-xs text-slate-400 dark:text-slate-500 mt-1 italic">暂无内容</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="border border-slate-200 dark:border-slate-700 rounded-lg mb-3 overflow-hidden">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
-      >
-        <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{title}</span>
-        <span className="text-xs text-slate-400">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className="border-t border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-900/30">
-          <pre className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono leading-relaxed max-h-96 overflow-y-auto">
-            {content}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Section: Stage Timeline ────────────────────────────────────────────────
 
 function StageTimeline({ stages }: { stages: DetailStage[] }) {
@@ -168,12 +114,12 @@ function StageTimeline({ stages }: { stages: DetailStage[] }) {
           return (
             <div key={stage.task_type} className="flex items-center">
               <div className="flex flex-col items-center min-w-[80px]">
-                <span className="text-lg">{STATUS_ICON[s] ?? '—'}</span>
+                <span className="text-lg">{STATUS_ICON[s] ?? '\u2014'}</span>
                 <span className={`text-xs font-medium mt-0.5 ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
                   {stage.label}
                 </span>
                 {stage.count > 1 && (
-                  <span className="text-[10px] text-slate-400">×{stage.count}</span>
+                  <span className="text-[10px] text-slate-400">\u00D7{stage.count}</span>
                 )}
                 {stage.created_at && stage.completed_at && (
                   <span className="text-[10px] text-slate-400 mt-0.5">
@@ -192,17 +138,44 @@ function StageTimeline({ stages }: { stages: DetailStage[] }) {
   );
 }
 
-// ─── Section: GAN Rounds ────────────────────────────────────────────────────
+// ─── Section: Content Panel ─────────────────────────────────────────────────
 
-function GanRoundsSection({ rounds }: { rounds: GanRound[] }) {
-  if (rounds.length === 0) {
+function ContentPanel({ title, content }: { title: string; content: string | null }) {
+  return (
+    <div className="flex-1 min-w-0 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+      <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
+        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+          {title}
+        </span>
+      </div>
+      <div className="p-3 max-h-[500px] overflow-y-auto bg-white dark:bg-slate-900/50">
+        {content ? (
+          <pre className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
+            {content}
+          </pre>
+        ) : (
+          <div className="text-xs text-slate-400 dark:text-slate-500 italic py-4 text-center">
+            暂无数据
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Section: Step List ─────────────────────────────────────────────────────
+
+function StepList({ steps }: { steps: PipelineStep[] }) {
+  const [expandedStep, setExpandedStep] = useState<number | null>(null);
+
+  if (steps.length === 0) {
     return (
       <div className="mb-6">
         <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
-          GAN 对抗轮次
+          执行步骤
         </h2>
         <div className="text-sm text-slate-400 dark:text-slate-500 italic p-4 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg">
-          暂无对抗记录
+          此 Pipeline 尚未开始执行
         </div>
       </div>
     );
@@ -211,87 +184,79 @@ function GanRoundsSection({ rounds }: { rounds: GanRound[] }) {
   return (
     <div className="mb-6">
       <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
-        GAN 对抗轮次 ({rounds.length} 轮)
+        执行步骤 ({steps.length})
       </h2>
-      <div className="space-y-3">
-        {rounds.map(round => (
-          <GanRoundCard key={round.round} round={round} />
-        ))}
-      </div>
-    </div>
-  );
-}
+      <div className="space-y-2">
+        {steps.map(step => {
+          const isExpanded = expandedStep === step.step;
+          const s = step.status in STATUS_ICON ? step.status : 'not_started';
 
-function GanRoundCard({ round }: { round: GanRound }) {
-  const [expanded, setExpanded] = useState(false);
-  const verdict = round.review?.verdict || round.propose?.verdict || '—';
-  const verdictStyle = VERDICT_STYLE[verdict] || 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+          return (
+            <div key={step.step} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setExpandedStep(isExpanded ? null : step.step)}
+                className="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-slate-400 dark:text-slate-500 w-8 text-center">
+                    {step.step}
+                  </span>
+                  <span className="text-sm">
+                    {STATUS_ICON[s] ?? '\u2014'}
+                  </span>
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                    {step.label}
+                  </span>
+                  <span className={`text-xs ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
+                    {step.status}
+                  </span>
+                  {step.verdict && (
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
+                      step.verdict === 'APPROVED' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                      step.verdict === 'REVISION' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                      'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                    }`}>
+                      {step.verdict}
+                    </span>
+                  )}
+                  {step.pr_url && (
+                    <a
+                      href={step.pr_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      className="text-xs text-blue-500 hover:underline"
+                    >
+                      PR ↗
+                    </a>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  {step.created_at && (
+                    <span className="text-[10px] text-slate-400">{formatTime(step.created_at)}</span>
+                  )}
+                  {step.created_at && step.completed_at && (
+                    <span className="text-[10px] text-slate-400">
+                      {formatDuration(step.created_at, step.completed_at)}
+                    </span>
+                  )}
+                  <span className="text-xs text-slate-400">{isExpanded ? '\u25B2' : '\u25BC'}</span>
+                </div>
+              </button>
 
-  return (
-    <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-      <div
-        className="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 w-6">
-            R{round.round}
-          </span>
-          <span className={`text-xs font-medium px-2 py-0.5 rounded ${verdictStyle}`}>
-            {verdict}
-          </span>
-          {round.propose && (
-            <span className="text-xs text-slate-400">
-              Propose: {round.propose.status}
-            </span>
-          )}
-          {round.review && (
-            <span className="text-xs text-slate-400">
-              Review: {round.review.status}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {round.propose?.created_at && (
-            <span className="text-[10px] text-slate-400">{formatTime(round.propose.created_at)}</span>
-          )}
-          <span className="text-xs text-slate-400">{expanded ? '▲' : '▼'}</span>
-        </div>
-      </div>
-      {expanded && (
-        <div className="border-t border-slate-200 dark:border-slate-700 p-3 bg-slate-50/50 dark:bg-slate-900/30 space-y-2">
-          {round.propose && (
-            <div className="text-xs">
-              <span className="font-medium text-slate-600 dark:text-slate-300">Proposer</span>
-              <span className="text-slate-400 ml-2">
-                {round.propose.status} · {formatTime(round.propose.created_at)}
-                {round.propose.completed_at && ` → ${formatTime(round.propose.completed_at)}`}
-              </span>
-            </div>
-          )}
-          {round.review && (
-            <div className="text-xs">
-              <span className="font-medium text-slate-600 dark:text-slate-300">Reviewer</span>
-              <span className="text-slate-400 ml-2">
-                {round.review.status} · verdict: {round.review.verdict || '—'}
-              </span>
-              {round.review.contract_branch && (
-                <span className="text-blue-500 dark:text-blue-400 ml-2 font-mono text-[10px]">
-                  {round.review.contract_branch}
-                </span>
+              {isExpanded && (
+                <div className="border-t border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-900/30">
+                  <div className="grid grid-cols-3 gap-3">
+                    <ContentPanel title="Input" content={step.input_content} />
+                    <ContentPanel title="Prompt" content={step.prompt_content} />
+                    <ContentPanel title="Output" content={step.output_content} />
+                  </div>
+                </div>
               )}
             </div>
-          )}
-          {round.review?.feedback && (
-            <div className="mt-2 p-2 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">
-              <div className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-1 uppercase">反馈</div>
-              <pre className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono leading-relaxed max-h-40 overflow-y-auto">
-                {round.review.feedback}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -327,7 +292,7 @@ export default function HarnessPipelineDetailPage() {
 
   if (loading && !data) {
     return (
-      <div className="max-w-4xl mx-auto p-6">
+      <div className="max-w-5xl mx-auto p-6">
         <div className="flex items-center gap-3">
           <div className="w-6 h-6 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
           <span className="text-slate-500 dark:text-slate-400">加载中...</span>
@@ -338,7 +303,7 @@ export default function HarnessPipelineDetailPage() {
 
   if (error) {
     return (
-      <div className="max-w-4xl mx-auto p-6">
+      <div className="max-w-5xl mx-auto p-6">
         <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg p-4">
           <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
           <button
@@ -354,18 +319,15 @@ export default function HarnessPipelineDetailPage() {
 
   if (!data) return null;
 
-  const hasGanRounds = data.gan_rounds.length > 0;
-  const fileKeys = Object.keys(data.file_contents || {}).filter(k => data.file_contents[k] !== null);
-
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-5xl mx-auto">
       {/* 头部导航 */}
       <div className="flex items-center gap-3 mb-6">
         <button
           onClick={() => navigate('/pipeline')}
           className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
         >
-          ← Pipeline 列表
+          &larr; Pipeline 列表
         </button>
       </div>
 
@@ -376,7 +338,7 @@ export default function HarnessPipelineDetailPage() {
         </h1>
         <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 dark:text-slate-400">
           <span className={STATUS_COLOR[data.status] || STATUS_COLOR.not_started}>
-            {STATUS_ICON[data.status] || '—'} {data.status}
+            {STATUS_ICON[data.status] || '\u2014'} {data.status}
           </span>
           {data.created_at && <span>{formatTime(data.created_at)}</span>}
           <span className="font-mono text-slate-400">{data.sprint_dir}</span>
@@ -390,125 +352,11 @@ export default function HarnessPipelineDetailPage() {
         </div>
       </div>
 
-      {/* 阶段时间线 */}
+      {/* 阶段时间线概览 */}
       <StageTimeline stages={data.stages} />
 
-      {/* 用户输入 */}
-      {data.user_input && (
-        <div className="mb-6">
-          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
-            用户输入
-          </h2>
-          <div className="p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <pre className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
-              {data.user_input}
-            </pre>
-          </div>
-        </div>
-      )}
-
-      {/* PRD */}
-      <MarkdownSection
-        title="Sprint PRD"
-        content={data.file_contents?.['sprint-prd.md'] || null}
-        defaultOpen={!hasGanRounds}
-      />
-
-      {/* GAN 对抗轮次 */}
-      <GanRoundsSection rounds={data.gan_rounds} />
-
-      {/* 合同草稿 */}
-      <MarkdownSection
-        title="合同草稿 (Contract Draft)"
-        content={data.file_contents?.['contract-draft.md'] || null}
-      />
-
-      {/* 评审反馈文件 */}
-      <MarkdownSection
-        title="评审反馈 (Review Feedback)"
-        content={data.file_contents?.['contract-review-feedback.md'] || null}
-      />
-
-      {/* 最终合同 */}
-      <MarkdownSection
-        title="最终合同 (Sprint Contract)"
-        content={data.file_contents?.['sprint-contract.md'] || null}
-        defaultOpen
-      />
-
-      {/* Workstream 合同 */}
-      {[1, 2, 3, 4, 5].map(i => {
-        const wsKey = `contract-dod-ws${i}.md`;
-        const wsContent = data.file_contents?.[wsKey];
-        return wsContent ? (
-          <MarkdownSection
-            key={wsKey}
-            title={`Workstream ${i} DoD`}
-            content={wsContent}
-          />
-        ) : null;
-      })}
-
-      {/* 报告 */}
-      <MarkdownSection
-        title="Harness Report"
-        content={data.file_contents?.['harness-report.md'] || null}
-      />
-
-      {/* 阶段详情表格 */}
-      <div className="mb-6">
-        <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
-          阶段详情
-        </h2>
-        <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400">
-                <th className="text-left p-2 font-medium">阶段</th>
-                <th className="text-left p-2 font-medium">状态</th>
-                <th className="text-left p-2 font-medium">开始</th>
-                <th className="text-left p-2 font-medium">耗时</th>
-                <th className="text-left p-2 font-medium">PR</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.stages.map(stage => (
-                <tr key={stage.task_type} className="border-t border-slate-100 dark:border-slate-700/50">
-                  <td className="p-2 font-medium text-slate-700 dark:text-slate-300">
-                    {STATUS_ICON[stage.status] || '—'} {stage.label}
-                  </td>
-                  <td className={`p-2 ${STATUS_COLOR[stage.status] || STATUS_COLOR.not_started}`}>
-                    {stage.status}
-                  </td>
-                  <td className="p-2 text-slate-400">{formatTime(stage.created_at)}</td>
-                  <td className="p-2 text-slate-400">
-                    {formatDuration(stage.started_at || stage.created_at, stage.completed_at)}
-                  </td>
-                  <td className="p-2">
-                    {stage.pr_url && (
-                      <a
-                        href={stage.pr_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-500 hover:underline"
-                      >
-                        PR ↗
-                      </a>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* 无内容提示 */}
-      {!hasGanRounds && fileKeys.length === 0 && data.stages.every(s => s.status === 'not_started') && (
-        <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-sm">
-          此 Pipeline 尚未开始执行
-        </div>
-      )}
+      {/* 串行步骤列表 + 三栏钻取 */}
+      <StepList steps={data.steps || []} />
     </div>
   );
 }

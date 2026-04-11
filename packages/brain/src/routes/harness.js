@@ -10,6 +10,7 @@
 
 import { Router } from 'express';
 import { readFile } from 'fs/promises';
+import { execSync } from 'child_process';
 import { join } from 'path';
 import pool from '../db.js';
 
@@ -98,6 +99,9 @@ router.get('/pipeline-detail', async (req, res) => {
     // 5. 读取 sprint 目录下的文件内容
     const fileContents = await readSprintFiles(sprintDir);
 
+    // 6. 构建串行步骤列表（含 input/prompt/output）
+    const steps = await buildSteps(tasks, sprintDir);
+
     res.json({
       planner_task_id,
       title: planner?.title || '',
@@ -109,6 +113,7 @@ router.get('/pipeline-detail', async (req, res) => {
       stages,
       gan_rounds: ganRounds,
       file_contents: fileContents,
+      steps,
     });
   } catch (err) {
     console.error('[GET /harness/pipeline-detail]', err.message);
@@ -226,6 +231,248 @@ async function readSprintFiles(sprintDir) {
   }
 
   return files;
+}
+
+/**
+ * 从远程分支读取文件内容（复用 executor.js _fetchSprintFile 逻辑）
+ */
+function fetchFileFromBranch(branch, filePath) {
+  try {
+    execSync('git fetch origin', { cwd: REPO_ROOT, stdio: 'pipe' });
+  } catch {
+    // fetch 失败不阻塞
+  }
+  try {
+    return execSync(`git show origin/${branch}:${filePath}`, {
+      cwd: REPO_ROOT,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 获取任务的结果分支名（根据任务类型读不同字段）
+ * - propose 任务：result.propose_branch
+ * - review 任务：result.review_branch
+ * - generate/fix 任务：result.contract_branch 或 payload.contract_branch
+ */
+function getResultBranch(task) {
+  return task.result?.propose_branch
+    || task.result?.review_branch
+    || task.result?.branch
+    || task.result?.contract_branch
+    || task.payload?.contract_branch
+    || null;
+}
+
+/**
+ * 为单个任务重建 prompt（简化版，匹配 executor.js preparePrompt 逻辑）
+ */
+function rebuildPrompt(task, sprintDir) {
+  const t = task.task_type;
+  const id = task.task_id;
+  const desc = task.description || task.title || '';
+
+  if (t === 'harness_planner' || t === 'sprint_planner') {
+    return `/harness-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\n\n${desc}`;
+  }
+
+  if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
+    const round = task.payload?.propose_round || 1;
+    const plannerBranch = task.payload?.planner_branch || '';
+    const reviewBranch = task.payload?.review_branch || '';
+    return `/harness-contract-proposer\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\npropose_round: ${round}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nplanner_branch: ${plannerBranch}\nreview_branch: ${reviewBranch}\n\n${desc}`;
+  }
+
+  if (t === 'harness_contract_review' || t === 'sprint_contract_review') {
+    const plannerBranch = task.payload?.planner_branch || '';
+    const proposeBranch = task.payload?.propose_branch || '';
+    return `/harness-contract-reviewer\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\nplanner_branch: ${plannerBranch}\npropose_branch: ${proposeBranch}\n\n${desc}`;
+  }
+
+  if (t === 'harness_generate' || t === 'sprint_generate' || t === 'harness_fix' || t === 'sprint_fix') {
+    const contractBranch = task.payload?.contract_branch || '';
+    const wsIdx = task.payload?.workstream_index || '';
+    const wsCnt = task.payload?.workstream_count || 1;
+    let p = `/harness-generator\n\n## Harness v4.0 — Generator\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\ncontract_branch: ${contractBranch}\n\n${desc}`;
+    if (wsIdx) p += `\nworkstream_index: ${wsIdx}\nworkstream_count: ${wsCnt}`;
+    return p;
+  }
+
+  if (t === 'harness_evaluate' || t === 'sprint_evaluate') {
+    return `/harness-evaluator\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\n\n${desc}`;
+  }
+
+  if (t === 'harness_report' || t === 'sprint_report') {
+    return `/harness-report\n\n## Harness v4.0 — Report\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${desc}`;
+  }
+
+  return desc;
+}
+
+/**
+ * 为单个步骤获取 input 内容
+ */
+async function getStepInput(task, sprintDir) {
+  const t = task.task_type;
+
+  if (t === 'harness_planner' || t === 'sprint_planner') {
+    return task.description || task.payload?.description || task.title || null;
+  }
+
+  if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
+    const plannerBranch = task.payload?.planner_branch;
+    if (plannerBranch) {
+      return fetchFileFromBranch(plannerBranch, `${sprintDir}/sprint-prd.md`);
+    }
+    return null;
+  }
+
+  if (t === 'harness_contract_review' || t === 'sprint_contract_review') {
+    // propose_branch 在 payload 里常为 null，需从 propose 任务的 result 里取
+    let proposeBranch = task.payload?.propose_branch;
+    if (!proposeBranch && task.payload?.propose_task_id) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT result->>'propose_branch' AS branch FROM tasks WHERE id::text = $1 LIMIT 1`,
+          [task.payload.propose_task_id]
+        );
+        proposeBranch = rows[0]?.branch || null;
+      } catch { /* 忽略 */ }
+    }
+    if (proposeBranch) {
+      return fetchFileFromBranch(proposeBranch, `${sprintDir}/contract-draft.md`);
+    }
+    return null;
+  }
+
+  if (t === 'harness_generate' || t === 'sprint_generate' || t === 'harness_fix') {
+    const contractBranch = task.payload?.contract_branch;
+    if (contractBranch) {
+      return fetchFileFromBranch(contractBranch, `${sprintDir}/sprint-contract.md`);
+    }
+    return null;
+  }
+
+  if (t === 'harness_report' || t === 'sprint_report') {
+    return task.description || task.title || null;
+  }
+
+  return null;
+}
+
+/**
+ * 为单个步骤获取 output 内容
+ */
+async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
+  const t = task.task_type;
+  const branch = getResultBranch(task);
+
+  // Planner 的 branch 不在自身的 result，而是从 propose 任务的 payload.planner_branch 传入
+  if (t === 'harness_planner' || t === 'sprint_planner') {
+    const useBranch = branch || plannerBranchFromPropose;
+    if (useBranch) return fetchFileFromBranch(useBranch, `${sprintDir}/sprint-prd.md`);
+    return null;
+  }
+
+  if (!branch) {
+    if (task.result?.verdict) return `Verdict: ${task.result.verdict}`;
+    if (task.result?.feedback) return task.result.feedback;
+    if (task.result?.result_summary) return task.result.result_summary;
+    return null;
+  }
+
+  if (t === 'harness_planner' || t === 'sprint_planner') {
+    return fetchFileFromBranch(branch, `${sprintDir}/sprint-prd.md`);
+  }
+
+  if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
+    return fetchFileFromBranch(branch, `${sprintDir}/contract-draft.md`);
+  }
+
+  if (t === 'harness_contract_review' || t === 'sprint_contract_review') {
+    const feedback = fetchFileFromBranch(branch, `${sprintDir}/contract-review-feedback.md`);
+    if (feedback) return feedback;
+    if (task.result?.feedback) return task.result.feedback;
+    return task.result?.verdict ? `Verdict: ${task.result.verdict}` : null;
+  }
+
+  if (t === 'harness_generate' || t === 'sprint_generate' || t === 'harness_fix') {
+    return task.pr_url ? `PR: ${task.pr_url}` : null;
+  }
+
+  if (t === 'harness_report' || t === 'sprint_report') {
+    return fetchFileFromBranch(branch, `${sprintDir}/harness-report.md`);
+  }
+
+  return null;
+}
+
+/**
+ * 生成步骤标签（含轮次编号）
+ */
+function buildStepLabel(taskType, counters) {
+  const BASE_LABELS = {
+    harness_planner: 'Planner', sprint_planner: 'Planner',
+    harness_contract_propose: 'Propose', sprint_contract_propose: 'Propose',
+    harness_contract_review: 'Review', sprint_contract_review: 'Review',
+    harness_generate: 'Generate', sprint_generate: 'Generate',
+    harness_fix: 'Fix', sprint_fix: 'Fix',
+    harness_evaluate: 'Evaluate', sprint_evaluate: 'Evaluate',
+    harness_ci_watch: 'CI Watch',
+    harness_report: 'Report', sprint_report: 'Report',
+  };
+
+  const base = BASE_LABELS[taskType] || taskType;
+  const needsRound = taskType.includes('propose') || taskType.includes('review');
+  if (!needsRound) return base;
+
+  counters[taskType] = (counters[taskType] || 0) + 1;
+  return `${base} R${counters[taskType]}`;
+}
+
+/**
+ * 构建串行步骤数组（按 created_at 升序，含 input/prompt/output）
+ */
+async function buildSteps(tasks, sprintDir) {
+  const counters = {};
+  const steps = [];
+
+  // 预计算 planner branch（从第一个 propose 任务的 payload.planner_branch 取）
+  const plannerBranchFromPropose = tasks.find(
+    t => (t.task_type === 'harness_contract_propose' || t.task_type === 'sprint_contract_propose')
+      && t.payload?.planner_branch
+  )?.payload?.planner_branch || null;
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    const label = buildStepLabel(task.task_type, counters);
+    const [inputContent, outputContent] = await Promise.all([
+      getStepInput(task, sprintDir),
+      getStepOutput(task, sprintDir, plannerBranchFromPropose),
+    ]);
+
+    steps.push({
+      step: i + 1,
+      task_id: task.task_id,
+      task_type: task.task_type,
+      label,
+      status: task.status,
+      created_at: task.created_at,
+      completed_at: task.completed_at,
+      verdict: task.result?.verdict || null,
+      pr_url: task.pr_url || task.result?.pr_url || null,
+      error_message: task.error_message || null,
+      input_content: inputContent,
+      prompt_content: rebuildPrompt(task, sprintDir),
+      output_content: outputContent,
+    });
+  }
+
+  return steps;
 }
 
 export default router;

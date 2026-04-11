@@ -91,6 +91,19 @@ export interface PipelineDetailStage {
   count: number;
 }
 
+export interface PipelineStep {
+  step: number;
+  task_id: string;
+  task_type: string;
+  label: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  input_content: string | null;
+  prompt_content: string | null;
+  output_content: string | null;
+}
+
 export interface PipelineDetailResponse {
   planner_task_id: string;
   title: string;
@@ -102,6 +115,7 @@ export interface PipelineDetailResponse {
   stages: PipelineDetailStage[];
   gan_rounds: GanRound[];
   file_contents: Record<string, string | null>;
+  steps: PipelineStep[];
 }
 
 export async function getHarnessPipelineDetail(
