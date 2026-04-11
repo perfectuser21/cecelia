@@ -399,6 +399,7 @@ router.get('/harness-pipelines', async (req, res) => {
       if (task.task_type === 'harness_planner') {
         pipeline.created_at = task.created_at;
         pipeline.planner_title = task.title;
+        pipeline.planner_task_id = task.id;
         pipeline.sprint_goal = task.payload?.sprint_goal || '';
       }
     }
@@ -437,6 +438,7 @@ router.get('/harness-pipelines', async (req, res) => {
 
         return {
           sprint_dir: pipeline.sprint_dir,
+          planner_task_id: pipeline.planner_task_id || null,
           title: pipeline.planner_title || pipeline.sprint_dir,
           sprint_goal: pipeline.sprint_goal || '',
           verdict,

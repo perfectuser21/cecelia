@@ -49,6 +49,7 @@ const manifest: FeatureManifest = {
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
     { path: '/pipeline', component: 'HarnessPipelinePage' },
+    { path: '/pipeline/:id', component: 'HarnessPipelineDetailPage' },
     { path: '/collection-dashboard', component: 'CollectionDashboardPage' },
     { path: '/viral-analysis', component: 'ViralAnalysisPage' },
     { path: '/okr-roadmap', component: 'OKRRoadmap' },
@@ -151,6 +152,7 @@ const manifest: FeatureManifest = {
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
     HarnessPipelinePage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelinePage'),
+    HarnessPipelineDetailPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage'),
     CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),
     ViralAnalysisPage: () => import('../../../dashboard/src/pages/viral-analysis/ViralAnalysisPage'),
     OKRRoadmap: () => import('../../../dashboard/src/pages/roadmap/RoadmapPage'),

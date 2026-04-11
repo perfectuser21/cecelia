@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ interface PipelineStage {
 
 interface Pipeline {
   sprint_dir: string;
+  planner_task_id?: string | null;
   title: string;
   sprint_goal?: string;
   verdict: string;
@@ -149,6 +151,7 @@ function StageBadge({ stage }: { stage: PipelineStage }) {
 
 function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
   const [expanded, setExpanded] = useState(false);
+  const navigate = useNavigate();
   const { stages, verdict, elapsed_ms, created_at, sprint_goal, current_step, title } = pipeline;
 
   const completedCount = stages.filter(s => s.status === 'completed').length;
@@ -203,9 +206,19 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
             </div>
           </div>
         </div>
-        <span className="text-slate-400 dark:text-slate-500 ml-3 shrink-0 text-xs">
-          {expanded ? '▲' : '▼'}
-        </span>
+        <div className="flex items-center gap-2 ml-3 shrink-0">
+          {pipeline.planner_task_id && (
+            <button
+              onClick={(e) => { e.stopPropagation(); navigate(`/pipeline/${pipeline.planner_task_id}`); }}
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+            >
+              详情 →
+            </button>
+          )}
+          <span className="text-slate-400 dark:text-slate-500 text-xs">
+            {expanded ? '▲' : '▼'}
+          </span>
+        </div>
       </div>
 
       {/* 阶段徽章栏 */}

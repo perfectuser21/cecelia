@@ -48,3 +48,65 @@ export async function getHarnessPipelines(params?: {
   const res = await apiClient.get(`/brain/harness-pipelines${query}`);
   return res.data;
 }
+
+// ─── Pipeline Detail Types ──────────────────────────────────────────────────
+
+export interface GanRoundPropose {
+  task_id: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  verdict: string | null;
+  propose_round: number;
+}
+
+export interface GanRoundReview {
+  task_id: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  verdict: string | null;
+  feedback: string | null;
+  contract_branch: string | null;
+}
+
+export interface GanRound {
+  round: number;
+  propose: GanRoundPropose | null;
+  review: GanRoundReview | null;
+}
+
+export interface PipelineDetailStage {
+  task_type: string;
+  label: string;
+  status: HarnessStageStatus;
+  task_id: string | null;
+  title: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  pr_url: string | null;
+  result: Record<string, unknown> | null;
+  count: number;
+}
+
+export interface PipelineDetailResponse {
+  planner_task_id: string;
+  title: string;
+  description: string;
+  user_input: string;
+  sprint_dir: string;
+  status: string;
+  created_at: string | null;
+  stages: PipelineDetailStage[];
+  gan_rounds: GanRound[];
+  file_contents: Record<string, string | null>;
+}
+
+export async function getHarnessPipelineDetail(
+  plannerTaskId: string
+): Promise<PipelineDetailResponse> {
+  const res = await apiClient.get(`/brain/harness/pipeline-detail?planner_task_id=${encodeURIComponent(plannerTaskId)}`);
+  return res.data;
+}
