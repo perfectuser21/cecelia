@@ -2268,6 +2268,34 @@ ${resultStr.substring(0, 2000)}
           });
           console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate created (round=${harnessPayload.eval_round || 1})`);
         }
+
+        if (harnessType === 'harness_report') {
+          if (result === null) {
+            if (harnessPayload.retry_count >= 3) {
+              console.error(`[execution-callback] harness_report retry_count >= 3, pipeline failed. planner=${harnessPayload.planner_task_id}`);
+              return;
+            }
+            const nextRetryCount = (harnessPayload.retry_count || 0) + 1;
+            await createHarnessTask({
+              title: `[Report] Retry-${nextRetryCount} — ${plannerShort}`,
+              description: `harness_report session 崩溃/无输出，自动重试（retry_count=${nextRetryCount}）。\n原始 harness_report task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_report',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                planner_task_id: harnessPayload.planner_task_id,
+                pr_url: harnessPayload.pr_url,
+                retry_count: nextRetryCount,
+                contract_branch: harnessPayload.contract_branch,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness_report retry created (retry_count=${nextRetryCount}, planner=${harnessPayload.planner_task_id})`);
+          }
+        }
       } catch (harnessErr) {
         console.error(`[execution-callback] harness loop error (non-fatal): ${harnessErr.message}`, harnessErr.stack);
       }

@@ -1,5 +1,5 @@
 contract_branch: cp-harness-contract-19fd9c85
-workstream_index: 2
+workstream_index: 3
 sprint_dir: sprints/harness-contract-fix-v1
 
 ## Workstream 2: Pipeline 状态可视化 API
