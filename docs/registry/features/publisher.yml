@@ -29,8 +29,7 @@ features:
         status: active
     apis: []
     tests:
-      unit:
-        - packages/workflows/skills/douyin-publisher/scripts/__tests__/utils.test.cjs
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -41,8 +40,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/workflows/skills/douyin-publisher/scripts/__tests__/utils.test.cjs
-          integration: []
+              integration: []
           e2e: []
         status: active
     ci:
@@ -74,10 +72,7 @@ features:
         status: active
     apis: []
     tests:
-      unit:
-        - packages/workflows/skills/xiaohongshu-publisher/scripts/__tests__/publish-xiaohongshu-image.test.cjs
-        - packages/workflows/skills/xiaohongshu-publisher/scripts/__tests__/publish-xiaohongshu-video.test.cjs
-        - packages/workflows/skills/xiaohongshu-publisher/scripts/__tests__/utils.test.cjs
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -88,10 +83,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/workflows/skills/xiaohongshu-publisher/scripts/__tests__/publish-xiaohongshu-image.test.cjs
-            - packages/workflows/skills/xiaohongshu-publisher/scripts/__tests__/publish-xiaohongshu-video.test.cjs
-            - packages/workflows/skills/xiaohongshu-publisher/scripts/__tests__/utils.test.cjs
-          integration: []
+                      integration: []
           e2e: []
         status: active
     ci:
@@ -123,8 +115,7 @@ features:
         status: active
     apis: []
     tests:
-      unit:
-        - packages/workflows/skills/wechat-publisher/scripts/__tests__/publish-wechat-article.test.cjs
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -135,8 +126,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/workflows/skills/wechat-publisher/scripts/__tests__/publish-wechat-article.test.cjs
-          integration: []
+              integration: []
           e2e: []
         status: active
     ci:
@@ -168,10 +158,7 @@ features:
         status: active
     apis: []
     tests:
-      unit:
-        - packages/workflows/skills/kuaishou-publisher/scripts/__tests__/publish-kuaishou-api.test.cjs
-        - packages/workflows/skills/kuaishou-publisher/scripts/__tests__/publish-kuaishou-video.test.cjs
-        - packages/workflows/skills/kuaishou-publisher/scripts/__tests__/utils.test.cjs
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -182,10 +169,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/workflows/skills/kuaishou-publisher/scripts/__tests__/publish-kuaishou-api.test.cjs
-            - packages/workflows/skills/kuaishou-publisher/scripts/__tests__/publish-kuaishou-video.test.cjs
-            - packages/workflows/skills/kuaishou-publisher/scripts/__tests__/utils.test.cjs
-          integration: []
+                      integration: []
           e2e: []
         status: active
     ci:
@@ -217,11 +201,7 @@ features:
         status: active
     apis: []
     tests:
-      unit:
-        - packages/workflows/skills/weibo-publisher/scripts/__tests__/cdp-client.test.cjs
-        - packages/workflows/skills/weibo-publisher/scripts/__tests__/publish-weibo-api.test.cjs
-        - packages/workflows/skills/weibo-publisher/scripts/__tests__/publish-weibo-image.test.cjs
-        - packages/workflows/skills/weibo-publisher/scripts/__tests__/utils.test.cjs
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -232,11 +212,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/workflows/skills/weibo-publisher/scripts/__tests__/cdp-client.test.cjs
-            - packages/workflows/skills/weibo-publisher/scripts/__tests__/publish-weibo-api.test.cjs
-            - packages/workflows/skills/weibo-publisher/scripts/__tests__/publish-weibo-image.test.cjs
-            - packages/workflows/skills/weibo-publisher/scripts/__tests__/utils.test.cjs
-          integration: []
+                          integration: []
           e2e: []
         status: active
     ci:
@@ -268,9 +244,7 @@ features:
         status: active
     apis: []
     tests:
-      unit:
-        - packages/workflows/skills/zhihu-publisher/scripts/__tests__/publish-zhihu-api.test.cjs
-        - packages/workflows/skills/zhihu-publisher/scripts/__tests__/publish-zhihu-article.test.cjs
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -281,9 +255,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/workflows/skills/zhihu-publisher/scripts/__tests__/publish-zhihu-api.test.cjs
-            - packages/workflows/skills/zhihu-publisher/scripts/__tests__/publish-zhihu-article.test.cjs
-          integration: []
+                  integration: []
           e2e: []
         status: active
     ci:
@@ -419,8 +391,7 @@ features:
         status: active
     apis: []
     tests:
-      unit:
-        - packages/workflows/skills/toutiao-publisher/scripts/__tests__/publish-toutiao-article.test.cjs
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -431,8 +402,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/workflows/skills/toutiao-publisher/scripts/__tests__/publish-toutiao-article.test.cjs
-          integration: []
+              integration: []
           e2e: []
         status: active
     ci:
