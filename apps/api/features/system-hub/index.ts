@@ -28,6 +28,7 @@ const manifest: FeatureManifest = {
           { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
           { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 9 },
           { path: '/pipeline', label: 'Harness Pipeline', icon: 'GitBranch', order: 15 },
+          { path: '/brain-models', label: 'Brain Models', icon: 'Cpu', order: 16 },
           { path: '/collection-dashboard', label: 'Collection', icon: 'Database', order: 12 },
           { path: '/viral-analysis', label: '爆款分析', icon: 'TrendingUp', order: 13 },
           { path: '/okr-roadmap', label: 'OKR Roadmap', icon: 'MapPin', order: 10 },

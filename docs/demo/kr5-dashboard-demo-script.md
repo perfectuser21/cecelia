@@ -85,7 +85,7 @@ curl -s http://localhost:5211/ -o /dev/null -w "%{http_code}"
 
 ## 模块 3: Brain Models — 模型切换面板（5 分钟）
 
-**路径**: System → Brain Models（侧边栏或直接访问 `/brain-models`）
+**路径**: System → Brain Models（侧边栏，直接点击导航子项 `/brain-models`）
 
 ### 演示点
 
