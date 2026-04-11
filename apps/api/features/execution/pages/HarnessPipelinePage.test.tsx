@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-// Mock axios before import chain resolves
 vi.mock('axios', () => ({
   default: {
     create: vi.fn(() => ({
@@ -17,7 +16,7 @@ vi.mock('../api/harness-pipeline.api', () => ({
 }));
 
 import HarnessPipelinePage from './HarnessPipelinePage';
-import * as api from '../api/harness-pipeline.api';
+import { getHarnessPipelines } from '../api/harness-pipeline.api';
 
 const mockPipeline = {
   sprint_dir: 'sprints/sprint-1',
@@ -39,7 +38,7 @@ const mockPipeline = {
 
 describe('HarnessPipelinePage', () => {
   beforeEach(() => {
-    vi.mocked(api.getHarnessPipelines).mockResolvedValue({
+    vi.mocked(getHarnessPipelines).mockResolvedValue({
       pipelines: [mockPipeline],
       total: 1,
     });
@@ -57,7 +56,7 @@ describe('HarnessPipelinePage', () => {
   });
 
   it('shows empty state when no pipelines', async () => {
-    vi.mocked(api.getHarnessPipelines).mockResolvedValue({ pipelines: [], total: 0 });
+    vi.mocked(getHarnessPipelines).mockResolvedValue({ pipelines: [], total: 0 });
     render(<HarnessPipelinePage />);
     const msg = await screen.findByText('暂无 Harness Pipeline 记录');
     expect(msg).toBeTruthy();
