@@ -67,6 +67,7 @@ const STATUS_ICON: Record<string, string> = {
   queued: '\u23F3',
   not_started: '\u2014',
   canceled: '\uD83D\uDEAB',
+  paused: '\u23F8',
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -76,6 +77,7 @@ const STATUS_COLOR: Record<string, string> = {
   queued: 'text-amber-600 dark:text-amber-400',
   not_started: 'text-slate-400 dark:text-slate-500',
   canceled: 'text-slate-500 dark:text-slate-400',
+  paused: 'text-violet-600 dark:text-violet-400',
 };
 
 // ─── Utils ──────────────────────────────────────────────────────────────────
