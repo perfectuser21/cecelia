@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { readFileSync } from 'fs';
 import pool from '../db.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from '../focus.js';
 import { getTickStatus, TASK_TYPE_AGENT_MAP } from '../tick.js';
@@ -7,6 +8,7 @@ import { getActivePolicy, getWorkingMemory, getTopTasks, getRecentDecisions, IDE
 import { getNightlyOrchestratorStatus } from '../nightly-orchestrator.js';
 import websocketService from '../websocket.js';
 
+const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 const router = Router();
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
@@ -630,6 +632,27 @@ router.get('/hello', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to say hello', details: err.message });
   }
+});
+
+// ==================== Ping Extended API ====================
+
+/**
+ * GET /api/brain/ping-extended
+ * 扩展健康检查端点：返回 status/timestamp/version
+ */
+router.get('/ping-extended', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: pkg.version
+  });
+});
+
+/**
+ * 非 GET 方法返回 405
+ */
+router.all('/ping-extended', (req, res) => {
+  res.status(405).json({ error: 'Method Not Allowed' });
 });
 
 export default router;

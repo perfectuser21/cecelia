@@ -1,6 +1,12 @@
-## Workstream 1: 修复 harness_report 模型配置（Haiku→Sonnet）
+contract_branch: cp-harness-review-approved-95c3e029
+workstream_index: 1
+sprint_dir: sprints
 
-- [x] [BEHAVIOR] model-profile.js FALLBACK_PROFILE 中 harness_report.anthropic 为 claude-sonnet-4-6（不再是 Haiku）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/model-profile.js','utf8');const m=c.match(/harness_report[^}]*anthropic[^']*'([^']+)'/);if(!m||m[1]!=='claude-sonnet-4-6')throw new Error('FAIL: got '+(m?m[1]:'not found'));console.log('PASS:',m[1])"
-- [x] [BEHAVIOR] model-profile.js 中不再出现 harness_report 使用 claude-haiku 的配置
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/model-profile.js','utf8');const haiku=c.match(/harness_report[^}]*anthropic[^']*'claude-haiku[^']*'/);if(haiku)throw new Error('FAIL: still has haiku: '+haiku[0]);console.log('PASS: no haiku in harness_report')"
+- [x] [ARTIFACT] packages/brain/src/ 中存在注册 `/api/brain/ping-extended` 路由的代码（含 app.get 或 router.get）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('ping-extended')||(!c.includes('app.get')&&!c.includes('router.get')))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] GET /api/brain/ping-extended 返回 200 + {status:"ok", timestamp:<ISO8601>, version:<semver>}，恰好 3 个字段
+  Test: curl -sf "localhost:5221/api/brain/ping-extended" | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));if(Object.keys(b).length!==3)process.exit(1);if(b.status!=='ok')process.exit(1);if(!/^\d+\.\d+\.\d+/.test(b.version))process.exit(1);if(isNaN(new Date(b.timestamp).getTime()))process.exit(1);console.log('PASS')"
+- [x] [BEHAVIOR] POST /api/brain/ping-extended 返回 4xx（非 GET 方法拒绝）
+  Test: node -e "const{execSync}=require('child_process');const s=execSync('curl -s -o /dev/null -w \"%{http_code}\" -X POST localhost:5221/api/brain/ping-extended').toString().trim();const c=parseInt(s);if(c<400||c>=500){console.log('FAIL:'+c);process.exit(1)}console.log('PASS:'+c)"
+- [x] [BEHAVIOR] version 字段与 packages/brain/package.json 一致
+  Test: node -e "const{execSync}=require('child_process');const a=JSON.parse(execSync('curl -sf localhost:5221/api/brain/ping-extended').toString()).version;const p=require('./packages/brain/package.json').version;if(a!==p){console.log('FAIL:'+a+'!='+p);process.exit(1)}console.log('PASS:'+a)"
