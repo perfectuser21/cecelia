@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v29
+# ZenithJoy Engine - 分支保护 Hook v30
+# v30: regex 支持 8-10 位时间戳（MMDDHHMMss 格式兼容）
 # v29: 删除状态机门禁 — Hook 只做安全兜底，验证放 CI
 # v28: 精简版 — 只留 worktree/分支保护核心逻辑
 # v24: 统一分支命名规范 — cp-* 为唯一合法格式
@@ -135,7 +136,7 @@ if echo "$FILE_PATH" | grep -qE '(task-card|DoD|\.task-[^/]+)\.md$'; then
 fi
 
 # ===== 分支检查：cp-* 为唯一合法格式 =====
-if [[ "${CURRENT_BRANCH}" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
+if [[ "${CURRENT_BRANCH}" =~ ^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$ ]]; then
 
     # Worktree 检测（双重保险）
     GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null || echo "")

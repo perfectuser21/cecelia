@@ -1,8 +1,9 @@
 ---
 id: dev-step-00-worktree-auto
-version: 3.0.0
-updated: 2026-04-02
+version: 3.1.0
+updated: 2026-04-11
 changelog:
+  - 3.1.0: dev-lock 重建生成含 session_id/tty/created 字段（修复 cp dev-mode 缺字段导致 _session_matches 永远失败）
   - 3.0.0: 精简 — 保留核心 worktree 创建逻辑
 ---
 
@@ -26,8 +27,15 @@ if [[ "$GIT_DIR" == *"worktrees"* ]]; then
     DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock.${CURRENT_BRANCH}"
     
     if [[ -f "$DEV_MODE_FILE" && ! -f "$DEV_LOCK_FILE" ]]; then
-        cp "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
-        echo "✅ .dev-lock 已重建"
+        _branch_from_mode=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2- | xargs 2>/dev/null || echo "$CURRENT_BRANCH")
+        cat > "$DEV_LOCK_FILE" <<LOCKEOF
+dev
+branch: ${_branch_from_mode:-$CURRENT_BRANCH}
+session_id: headed-$(date +%s)-$$-${_branch_from_mode:-$CURRENT_BRANCH}
+tty: $(tty 2>/dev/null || echo "none")
+created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+LOCKEOF
+        echo "✅ .dev-lock 已重建（含 session 字段）"
     elif [[ ! -f "$DEV_LOCK_FILE" ]]; then
         cat > "$DEV_LOCK_FILE" <<LOCKEOF
 dev

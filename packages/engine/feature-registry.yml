@@ -65,3 +65,12 @@ changelog:
       - "hooks/pre-push.sh"
       - "scripts/quickcheck.sh"
       - "skills/dev/SKILL.md"
+  - version: "14.5.3"
+    date: "2026-04-11"
+    skill: "hooks"
+    change: "fix"
+    description: "[CONFIG] stop-dev.sh fail-closed：无 dev-lock 时扫 dev-mode 未完成项 block；00-worktree-auto.md dev-lock 重建含 session_id/tty 字段；branch-protect.sh 支持 10 位时间戳格式"
+    files:
+      - "hooks/stop-dev.sh"
+      - "hooks/branch-protect.sh"
+      - "skills/dev/steps/00-worktree-auto.md"

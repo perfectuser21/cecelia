@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.2.0
+# Stop Hook: Claude Code 协议适配器 v16.3.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.2.0 — Bug fix: harness 模式跳过 cleanup_done 残留文件早退（与 devloop-check v4.2.0 同步）
+# 版本: v16.3.0 — fail-closed: 无 dev-lock 时扫 dev-mode 未完成项则 block
 
 set -euo pipefail
 
@@ -73,7 +73,24 @@ while IFS= read -r _dir; do
     done
 done < <(_collect_search_dirs "$PROJECT_ROOT")
 
-[[ -z "$DEV_LOCK_FILE" ]] && exit 0
+# fail-closed: 无 dev-lock 时扫 dev-mode 未完成项
+if [[ -z "$DEV_LOCK_FILE" ]]; then
+    while IFS= read -r _dir; do
+        for _dmf in "$_dir"/.dev-mode.*; do
+            [[ -f "$_dmf" ]] || continue
+            # dev-mode 首行须为 dev 且有未完成项（步骤处于 pending）且非 cleanup_done
+            _first_line=$(head -1 "$_dmf" 2>/dev/null || echo "")
+            [[ "$_first_line" != "dev" ]] && continue
+            if grep -q "^step_.*: pending" "$_dmf" 2>/dev/null && \
+               ! grep -q "^cleanup_done: true" "$_dmf" 2>/dev/null; then
+                jq -n --arg f "$(basename "$_dmf")" \
+                    '{"decision":"block","reason":"无 .dev-lock 但 \($f) 有未完成步骤，fail-closed 阻止退出（dev-lock 可能丢失，请重新运行 /dev）"}'
+                exit 2
+            fi
+        done
+    done < <(_collect_search_dirs "$PROJECT_ROOT")
+    exit 0
+fi
 
 # 并发锁（per-worktree）
 _git_dir="$(git -C "$MATCHED_DIR" rev-parse --git-dir 2>/dev/null || echo "/tmp")"
