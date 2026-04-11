@@ -19,7 +19,7 @@ import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.j
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
-import { getRecoveryStatus } from './alertness/healing.js';
+import { getRecoveryStatus, startRecovery } from './alertness/healing.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
@@ -2421,11 +2421,38 @@ async function executeTick() {
   } else if (readyKrIds.length > 0) {
     allGoalIds = readyKrIds;
   } else {
-    // Fallback: if no active KRs exist yet, use all non-archived key_results (transition period)
-    const allGoalsResult = await pool.query(`
-      SELECT id FROM key_results WHERE status NOT IN ('completed', 'cancelled', 'archived')
-    `);
-    allGoalIds = allGoalsResult.rows.map(r => r.id);
+    // active_goals=0: no focus AND no ready KRs
+    // Do NOT fall back to global KR query — check health first
+    const isHealthAbnormal = alertnessResult && alertnessResult.level >= ALERTNESS_LEVELS.ALERT;
+    if (isHealthAbnormal) {
+      // Health abnormal → switch to recovery mode, skip dispatch entirely
+      tickLog(`[tick] active_goals=0 + health abnormal (alertness=${LEVEL_NAMES[alertnessResult.level]}): switching to recovery mode`);
+      await logTickDecision(
+        'tick',
+        `No active goals + health abnormal — entering recovery mode`,
+        { action: 'recovery_mode', alertness_level: alertnessResult.level },
+        { success: true, dispatched: 0 }
+      );
+      try {
+        await startRecovery(['high_error_rate']);
+      } catch (recoveryErr) {
+        console.error('[tick] Failed to start recovery (non-fatal):', recoveryErr.message);
+      }
+      return {
+        success: true,
+        alertness: alertnessResult,
+        decision_engine: decisionEngineResult,
+        focus: null,
+        dispatch: { dispatched: 0, reason: 'recovery_mode', active_goals: 0 },
+        actions_taken: actionsTaken,
+        summary: { in_progress: 0, queued: 0, stale: 0 },
+        tick_duration_ms: Date.now() - now.getTime(),
+        next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+      };
+    }
+    // Health normal: skip global fallback dispatch, let no_active_goals handle it
+    tickLog('[tick] active_goals=0: skipping global fallback dispatch');
+    allGoalIds = [];
   }
 
   // Auto-recover expired blocked tasks (blocked_until < now → queued)
