@@ -1,7 +1,7 @@
 ---
 repo: cecelia-quality
 version: 1.0.0
-last_updated: 2026-01-27
+last_updated: 2026-04-11
 
 rcis:
   - id: C-DB-INIT-001
