@@ -1,9 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+
+// Mock axios before import chain resolves
+vi.mock('axios', () => ({
+  default: {
+    create: vi.fn(() => ({
+      get: vi.fn(),
+      post: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
+    })),
+  },
+}));
+
+vi.mock('../api/harness-pipeline.api', () => ({
+  getHarnessPipelines: vi.fn(),
+}));
+
 import HarnessPipelinePage from './HarnessPipelinePage';
 import * as api from '../api/harness-pipeline.api';
-
-vi.mock('../api/harness-pipeline.api');
 
 const mockPipeline = {
   sprint_dir: 'sprints/sprint-1',
