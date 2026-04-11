@@ -4,6 +4,6 @@ task_card: .task-cp-04101853-8f5450bc-82e5-470e-9c9b-1926c4.md
 started: 2026-04-11T09:54:29+08:00
 step_0_worktree: done
 step_1_spec: done
-step_2_code: pending
+step_2_code: done
 step_3_integrate: pending
 step_4_ship: pending

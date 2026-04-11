@@ -142,7 +142,7 @@ cmd_create() {
 
     # 生成分支名和 worktree 路径
     local timestamp
-    timestamp=$(date +%m%d%H%M)
+    timestamp=$(date +%m%d%H%M%S)
     local branch_name="cp-${timestamp}-${task_name}"
     local worktree_path
     worktree_path=$(generate_worktree_path "$task_name")

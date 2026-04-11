@@ -3,9 +3,16 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-09"
+updated: "2026-04-11"
 
 changelog:
+  - version: "14.5.2"
+    date: "2026-04-11"
+    skill: "dev"
+    change: "fix"
+    description: "worktree-manage.sh: timestamp 精度从分钟(%m%d%H%M)改为秒(%m%d%H%M%S)，防止同一分钟内重试生成重复分支名导致 quarantine 循环"
+    files:
+      - "skills/dev/scripts/worktree-manage.sh"
   - version: "14.5.1"
     date: "2026-04-10"
     skill: "lib"
