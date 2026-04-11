@@ -74,7 +74,7 @@ export const FALLBACK_PROFILE = {
         harness_contract_review:  { anthropic: 'claude-opus-4-6', minimax: null },
         harness_generate:         { anthropic: 'claude-sonnet-4-6', minimax: null },
         harness_fix:              { anthropic: 'claude-sonnet-4-6', minimax: null },
-        harness_report:           { anthropic: 'claude-haiku-4-5-20251001', minimax: null },
+        harness_report:           { anthropic: 'claude-sonnet-4-6', minimax: null },
       },
       fixed_provider: {
         codex_qa:        'openai',
