@@ -70,12 +70,19 @@ describe('GET /analytics/collection-dashboard', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('有数据时返回正确结构', async () => {
+    // 使用相对日期（基于 Asia/Shanghai 时区），确保测试与日期无关
+    const tzNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+    const daysAgo = (n) => {
+      const d = new Date(tzNow);
+      d.setDate(d.getDate() - n);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    };
     // 模拟 3 次 pool.query 调用：daily_counts / task_stats / last_collected
     pool.query
       .mockResolvedValueOnce({ rows: [
-        { platform: 'douyin', day: '2026-04-05', count: 10 },
-        { platform: 'douyin', day: '2026-04-06', count: 8 },
-        { platform: 'weibo',  day: '2026-04-06', count: 3 },
+        { platform: 'douyin', day: daysAgo(2), count: 10 },
+        { platform: 'douyin', day: daysAgo(1), count: 8 },
+        { platform: 'weibo',  day: daysAgo(1), count: 3 },
       ]})
       .mockResolvedValueOnce({ rows: [
         { platform: 'douyin', total_tasks: 2, failed_tasks: 0, completed_tasks: 2, avg_latency_min: 5.2 },
