@@ -8,7 +8,7 @@ features:
   - feature_id: publisher_douyin
     name: 抖音发布
     purpose: 发布视频内容到抖音平台
-    maturity: 2
+    maturity: 1
     code:
       root: packages/workflows/skills/douyin-publisher
       entry_files:
@@ -51,7 +51,7 @@ features:
   - feature_id: publisher_xiaohongshu
     name: 小红书发布
     purpose: 发布图文内容到小红书平台
-    maturity: 2
+    maturity: 1
     code:
       root: packages/workflows/skills/xiaohongshu-publisher
       entry_files:
@@ -94,7 +94,7 @@ features:
   - feature_id: publisher_wechat
     name: 微信公众号发布
     purpose: 发布文章到微信公众号
-    maturity: 2
+    maturity: 1
     code:
       root: packages/workflows/skills/wechat-publisher
       entry_files:
@@ -137,7 +137,7 @@ features:
   - feature_id: publisher_kuaishou
     name: 快手发布
     purpose: 发布视频到快手平台
-    maturity: 2
+    maturity: 1
     code:
       root: packages/workflows/skills/kuaishou-publisher
       entry_files:
@@ -180,7 +180,7 @@ features:
   - feature_id: publisher_weibo
     name: 微博发布
     purpose: 发布推文到微博平台
-    maturity: 2
+    maturity: 1
     code:
       root: packages/workflows/skills/weibo-publisher
       entry_files:
@@ -223,7 +223,7 @@ features:
   - feature_id: publisher_zhihu
     name: 知乎发布
     purpose: 发布文章到知乎平台
-    maturity: 2
+    maturity: 1
     code:
       root: packages/workflows/skills/zhihu-publisher
       entry_files:
@@ -370,7 +370,7 @@ features:
   - feature_id: publisher_toutiao
     name: 今日头条发布
     purpose: 发布微头条/文章/视频到今日头条
-    maturity: 2
+    maturity: 1
     code:
       root: packages/workflows/skills/toutiao-publisher
       entry_files:
