@@ -1,0 +1,12 @@
+# Contract DoD — Workstream 1: contract_branch 透传 + Report 重试
+
+- [ ] [BEHAVIOR] harness-watcher.js CI 通过路径的 harness_report payload 包含 `contract_branch: payload.contract_branch`
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const i=c.indexOf(\"task_type: 'harness_report'\");if(i<0)process.exit(1);const b=c.substring(Math.max(0,i-400),i+200);if(!b.includes('contract_branch: payload.contract_branch')){console.error('FAIL');process.exit(1)}console.log('PASS')"
+- [ ] [BEHAVIOR] harness-watcher.js CI 失败路径的 harness_fix payload 包含 `contract_branch: payload.contract_branch`
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const i=c.indexOf(\"task_type: 'harness_fix'\");if(i<0)process.exit(1);const b=c.substring(Math.max(0,i-400),i+200);if(!b.includes('contract_branch: payload.contract_branch')){console.error('FAIL');process.exit(1)}console.log('PASS')"
+- [ ] [BEHAVIOR] execution.js harness_fix→harness_report payload 包含 `contract_branch: harnessPayload.contract_branch`
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=c.indexOf(\"harnessType === 'harness_fix'\");if(i<0)process.exit(1);const b=c.substring(i,i+1200);if(!/contract_branch:\s*harnessPayload\.contract_branch/.test(b)){console.error('FAIL');process.exit(1)}console.log('PASS')"
+- [ ] [BEHAVIOR] execution.js 存在 `harnessType === 'harness_report'` 回调分支，result=null 时创建重试任务，retry_count >= 3 时终止
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=c.indexOf(\"harnessType === 'harness_report'\");if(i<0){console.error('FAIL: no branch');process.exit(1)}const b=c.substring(i,i+1500).replace(/\/\/.*$/gm,'');if(!/retry_count\s*>=\s*3/.test(b)){console.error('FAIL: no >= 3');process.exit(1)}if(!b.includes('createTask')&&!b.includes('createHarnessTask')){console.error('FAIL: no create');process.exit(1)}console.log('PASS')"
+- [ ] [BEHAVIOR] harness_report 重试 payload 包含 sprint_dir、planner_task_id、pr_url、retry_count
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const i=c.indexOf(\"harnessType === 'harness_report'\");if(i<0)process.exit(1);const b=c.substring(i,i+1500);for(const f of['sprint_dir','planner_task_id','retry_count','pr_url']){if(!b.includes(f)){console.error('FAIL: missing '+f);process.exit(1)}}console.log('PASS')"
