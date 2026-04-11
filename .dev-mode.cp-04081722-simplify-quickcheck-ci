@@ -1,9 +1,0 @@
-dev
-branch: cp-04081722-simplify-quickcheck-ci
-task_card: .task-cp-04081722-simplify-quickcheck-ci.md
-started: 2026-04-08T17:22:35+08:00
-step_0_worktree: done
-step_1_spec: done
-step_2_code: pending
-step_3_integrate: pending
-step_4_ship: pending

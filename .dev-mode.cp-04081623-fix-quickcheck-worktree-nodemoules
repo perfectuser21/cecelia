@@ -1,9 +1,0 @@
-dev
-branch: cp-04081623-fix-quickcheck-worktree-nodemoules
-task_card: .task-cp-04081623-fix-quickcheck-worktree-nodemoules.md
-started: 2026-04-08T16:23:43+08:00
-step_0_worktree: done
-step_1_spec: done
-step_2_code: done
-step_3_integrate: pending
-step_4_ship: done

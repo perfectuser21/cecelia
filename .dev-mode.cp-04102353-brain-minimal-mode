@@ -1,9 +1,0 @@
-dev
-branch: cp-04102353-brain-minimal-mode
-task_card: task-card.md
-started: 2026-04-10T23:54:10+08:00
-step_0_worktree: done
-step_1_spec: done
-step_2_code: pending
-step_3_integrate: pending
-step_4_ship: pending
