@@ -60,7 +60,7 @@ manual:node -e "const src=require('fs').readFileSync('packages/brain/src/tick.js
 
 验证命令：
 ```
-manual:node -e "const src=require('fs').readFileSync('packages/brain/src/server.js','utf8'); if(src.includes('tickLog(')){throw new Error('server.js 不应调用 tickLog')}"
+manual:node -e "const src=require('fs').readFileSync('packages/brain/server.js','utf8'); if(src.includes('tickLog(')){throw new Error('server.js 不应调用 tickLog')}"
 ```
 
 ---
