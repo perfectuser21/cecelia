@@ -136,6 +136,57 @@ describe('harness pipeline — Proposer 去重', () => {
   });
 });
 
+describe('harness pipeline — report 失败自动重试', () => {
+  it('harness_report 分支存在且含有 createHarnessTask 调用', () => {
+    const idx = execSrc.indexOf("harnessType === 'harness_report'");
+    expect(idx).toBeGreaterThan(0);
+    const block = execSrc.substring(idx, idx + 1500);
+    const nc = block.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(nc).toMatch(/createTask|createHarnessTask/);
+  });
+
+  it('createHarnessTask 在 result null 条件守护之后（不无条件执行）', () => {
+    const idx = execSrc.indexOf("harnessType === 'harness_report'");
+    const block = execSrc.substring(idx, idx + 1500);
+    const nc = block.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const nullIdx = nc.search(/result\s*===?\s*null|!\s*result/);
+    const createIdx = nc.search(/createTask|createHarnessTask/);
+    expect(nullIdx).toBeGreaterThan(0);
+    expect(createIdx).toBeGreaterThan(nullIdx);
+  });
+
+  it('retry_count >= 3 上限使用 >= 运算符，之后有 return/break/throw 终止', () => {
+    const idx = execSrc.indexOf("harnessType === 'harness_report'");
+    const block = execSrc.substring(idx, idx + 1500);
+    const nc = block.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(nc).toMatch(/retry_count\s*>=\s*3/);
+    const li = nc.search(/retry_count\s*>=\s*3/);
+    const af = nc.substring(li, li + 300);
+    expect(af.substring(0, 200)).toMatch(/return|break|throw/);
+  });
+
+  it('重试 payload 包含 sprint_dir、planner_task_id、retry_count、pr_url', () => {
+    const idx = execSrc.indexOf("harnessType === 'harness_report'");
+    const block = execSrc.substring(idx, idx + 1500);
+    const nc = block.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(nc).toContain('sprint_dir');
+    expect(nc).toContain('planner_task_id');
+    expect(nc).toContain('retry_count');
+    expect(nc).toContain('pr_url');
+  });
+
+  it('retry_count >= 3 到 return 之间不允许出现 createHarnessTask', () => {
+    const idx = execSrc.indexOf("harnessType === 'harness_report'");
+    const block = execSrc.substring(idx, idx + 1500);
+    const nc = block.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const li = nc.search(/retry_count\s*>=\s*3/);
+    const af = nc.substring(li, li + 300);
+    const ti = af.search(/return|break|throw/);
+    expect(ti).toBeGreaterThan(0);
+    expect(af.substring(0, ti)).not.toMatch(/createTask|createHarnessTask/);
+  });
+});
+
 describe('quarantine — auth/network/rate_limit 失败 skipCount', () => {
   it('handleTaskFailure 支持 skipCount 选项', () => {
     // 函数签名支持 options 参数
