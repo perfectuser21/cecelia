@@ -65,12 +65,18 @@ describe('harness pipeline — goal_id 绕过', () => {
 });
 
 describe('harness pipeline — contract_branch guard', () => {
-  it('contract_branch 为 null 时不创建 Generator，打印 P0 错误', () => {
+  it('contract_branch=null 时先做 fallback（git ls-remote），fallback 失败才终止不创建 Generator', () => {
+    // P0 guard 仍然存在（fallback 失败后才触发）
     expect(execSrc).toContain('contract_branch=null');
     expect(execSrc).toContain('[P0][execution-callback]');
-    // Guard block must contain early return to prevent Generator creation
-    const guardIdx = execSrc.indexOf('contract_branch=null');
-    const region = execSrc.slice(guardIdx, guardIdx + 200);
+    // Fallback 逻辑：查找 cp-harness-review-approved-{taskIdShort} 分支
+    expect(execSrc).toContain('cp-harness-review-approved-');
+    expect(execSrc).toContain('git ls-remote --heads origin');
+    // RECOVERY 日志：fallback 成功时输出
+    expect(execSrc).toContain('[RECOVERY][execution-callback]');
+    // fallback 失败才 return（P0 guard 仍在，但在 fallback 之后）
+    const p0Idx = execSrc.indexOf('[P0][execution-callback]');
+    const region = execSrc.slice(p0Idx, p0Idx + 300);
     expect(region).toContain('return');
   });
 });
