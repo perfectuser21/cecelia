@@ -66,24 +66,35 @@ function mockReqRes(query = {}) {
   return { req, res };
 }
 
+// 生成相对于"今天"（上海时区）的日期字符串，offset=-N 表示 N 天前
+function shDate(offsetDays = 0) {
+  const d = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
+  const tz = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  return `${tz.getFullYear()}-${String(tz.getMonth() + 1).padStart(2, '0')}-${String(tz.getDate()).padStart(2, '0')}`;
+}
+
 describe('GET /analytics/collection-dashboard', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('有数据时返回正确结构', async () => {
+    // 使用相对日期（2天前、1天前），确保始终在 7天窗口内
+    const day1 = shDate(-2);
+    const day2 = shDate(-1);
+
     // 模拟 3 次 pool.query 调用：daily_counts / task_stats / last_collected
     pool.query
       .mockResolvedValueOnce({ rows: [
-        { platform: 'douyin', day: '2026-04-05', count: 10 },
-        { platform: 'douyin', day: '2026-04-06', count: 8 },
-        { platform: 'weibo',  day: '2026-04-06', count: 3 },
+        { platform: 'douyin', day: day1, count: 10 },
+        { platform: 'douyin', day: day2, count: 8 },
+        { platform: 'weibo',  day: day2, count: 3 },
       ]})
       .mockResolvedValueOnce({ rows: [
         { platform: 'douyin', total_tasks: 2, failed_tasks: 0, completed_tasks: 2, avg_latency_min: 5.2 },
         { platform: 'weibo',  total_tasks: 1, failed_tasks: 0, completed_tasks: 1, avg_latency_min: 8.0 },
       ]})
       .mockResolvedValueOnce({ rows: [
-        { platform: 'douyin', last_collected_at: new Date('2026-04-06') },
-        { platform: 'weibo',  last_collected_at: new Date('2026-04-06') },
+        { platform: 'douyin', last_collected_at: new Date(day2) },
+        { platform: 'weibo',  last_collected_at: new Date(day2) },
       ]});
 
     const handler = getHandler('/analytics/collection-dashboard');
