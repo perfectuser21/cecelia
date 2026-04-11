@@ -13,6 +13,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
+import { homedir } from 'os';
 
 const execAsync = promisify(exec);
 import { join, dirname } from 'path';
@@ -29,8 +30,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ─── 配置 ───────────────────────────────────────────────────
 
-const OUTPUT_BASE = process.env.CONTENT_OUTPUT_DIR
-  || join(__dirname, '../../../../zenithjoy/content-output');
+const OUTPUT_BASE = (() => {
+  if (process.env.CONTENT_OUTPUT_DIR) return process.env.CONTENT_OUTPUT_DIR;
+  // 任务级别的 output_dir 由调用方通过 task.payload.output_dir 传入
+  // 这里提供环境级别的安全 fallback（不再跨库）
+  const fallback = join(homedir(), 'content-output');
+  console.warn(`[content-pipeline] CONTENT_OUTPUT_DIR not set, using fallback: ${fallback}`);
+  return fallback;
+})();
 
 const NAS_USER = process.env.NAS_USER || '徐啸';
 const NAS_IP = process.env.NAS_IP || '100.110.241.76';
@@ -619,6 +626,8 @@ export async function executeExport(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
   const contentType = task.payload?.content_type || 'solo-company-case';
   const pipelineId = task.payload?.parent_pipeline_id;
+  // 任务级别 output_dir 优先（由调用方通过 task.payload.output_dir 传入）
+  const outputDir = task?.payload?.output_dir || OUTPUT_BASE;
 
   console.log(`[export] 开始: ${keyword}`);
 
@@ -628,7 +637,7 @@ export async function executeExport(task) {
   // 读 findings 用于生成卡片
   let findings = [];
   try {
-    const rDir = join(OUTPUT_BASE, 'research');
+    const rDir = join(outputDir, 'research');
     if (existsSync(rDir)) {
       const s = slug(keyword);
       for (const cand of readdirSync(rDir).filter(d => d.includes(s))) {

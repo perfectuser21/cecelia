@@ -465,6 +465,9 @@ router.post('/batch', async (req, res) => {
  * 用于测试、调试或手动补充当日选题
  */
 router.post('/trigger-topics', async (req, res) => {
+  res.set('Deprecation', 'true');
+  res.set('Sunset', '2026-07-11');
+  res.set('Link', '</api/brain/tasks>; rel="successor-version"');
   try {
     const alreadyDone = await hasTodayTopics(pool);
     if (alreadyDone && !req.query.force) {
@@ -816,6 +819,9 @@ router.post('/:id/pre-publish-check', async (req, res) => {
  * Response: { pipeline_id: string, status: string, message: string }
  */
 router.post('/e2e-trigger', async (req, res) => {
+  res.set('Deprecation', 'true');
+  res.set('Sunset', '2026-07-11');
+  res.set('Link', '</api/brain/tasks>; rel="successor-version"');
   const { keyword, content_type = 'solo-company-case', skip_topic_selection = false } = req.body || {};
 
   if (!keyword || typeof keyword !== 'string' || keyword.trim().length === 0) {
@@ -900,6 +906,9 @@ router.post('/e2e-trigger', async (req, res) => {
  * Response: { ok: boolean, created: number, pipelines: Array<{pipeline_id, keyword, content_type}> }
  */
 router.post('/batch-e2e-trigger', async (req, res) => {
+  res.set('Deprecation', 'true');
+  res.set('Sunset', '2026-07-11');
+  res.set('Link', '</api/brain/tasks>; rel="successor-version"');
   const { keywords, skip_topic_selection = true } = req.body || {};
 
   if (!Array.isArray(keywords) || keywords.length === 0) {
