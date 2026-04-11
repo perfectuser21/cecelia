@@ -2856,14 +2856,15 @@ async function triggerCeceliaRun(task) {
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
     let provider = getProviderForTask(task);
 
-    // Sprint 任务强绑定 account1（spending-cap 时 fallback 到 selectBestAccount）
+    // Sprint 任务强绑定 account1（spending-cap 或 auth-failed 时 fallback 到 selectBestAccount）
     if (SPRINT_ACCOUNT1_TASK_TYPES.includes(task.task_type)) {
-      const { isSpendingCapped } = await import('./account-usage.js');
-      if (!isSpendingCapped('account1')) {
+      const { isSpendingCapped, isAuthFailed } = await import('./account-usage.js');
+      if (!isSpendingCapped('account1') && !isAuthFailed('account1')) {
         extraEnv.CECELIA_CREDENTIALS = 'account1';
         console.log(`[executor] Sprint task_type=${task.task_type} hardwired to account1`);
       } else {
-        console.log(`[executor] Sprint task_type=${task.task_type} account1 spending-capped, fallback to selectBestAccount`);
+        const reason = isAuthFailed('account1') ? 'auth-failed' : 'spending-capped';
+        console.log(`[executor] Sprint task_type=${task.task_type} account1 ${reason}, fallback to selectBestAccount`);
       }
     }
 
