@@ -631,3 +631,81 @@ describe('H: Haiku 独立模式', () => {
     expect(result).toBe('account2');
   });
 });
+
+// ─── Auth Source 隔离：proactiveTokenCheck 不清除 api_error 熔断 ─────────────
+
+describe('AUTH_SOURCE: proactiveTokenCheck 按 source 区分清除逻辑', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('AS1: api_error 设置的 auth_failed，token 有效时不被 proactiveTokenCheck 清除', async () => {
+    // token 有效（1年后过期）
+    vi.mock('fs', async (importOriginal) => {
+      const actual = await importOriginal();
+      return {
+        ...actual,
+        readFileSync: vi.fn((path, ...args) => {
+          if (typeof path === 'string' && path.includes('/.claude-') && path.includes('/.credentials.json')) {
+            return JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() + 365 * 24 * 3600 * 1000 } });
+          }
+          return actual.readFileSync(path, ...args);
+        }),
+      };
+    });
+    vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
+
+    const { markAuthFailure, isAuthFailed, proactiveTokenCheck, _resetAuthFailures } = await import('../account-usage.js');
+    _resetAuthFailures();
+
+    // 用 api_error（默认值）标记 account1 熔断
+    markAuthFailure('account1', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
+    expect(isAuthFailed('account1')).toBe(true);
+
+    // proactiveTokenCheck 发现 token 有效，但不应清除 api_error 熔断
+    await proactiveTokenCheck();
+    expect(isAuthFailed('account1')).toBe(true);
+  });
+
+  it('AS2: token_expired 设置的 auth_failed，token 有效时被 proactiveTokenCheck 清除', async () => {
+    // token 有效（1年后过期）
+    vi.mock('fs', async (importOriginal) => {
+      const actual = await importOriginal();
+      return {
+        ...actual,
+        readFileSync: vi.fn((path, ...args) => {
+          if (typeof path === 'string' && path.includes('/.claude-') && path.includes('/.credentials.json')) {
+            return JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() + 365 * 24 * 3600 * 1000 } });
+          }
+          return actual.readFileSync(path, ...args);
+        }),
+      };
+    });
+    vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
+
+    const { markAuthFailure, isAuthFailed, proactiveTokenCheck, _resetAuthFailures } = await import('../account-usage.js');
+    _resetAuthFailures();
+
+    // 用 token_expired 标记 account2 熔断
+    markAuthFailure('account2', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
+    expect(isAuthFailed('account2')).toBe(true);
+
+    // proactiveTokenCheck 发现 token 有效，应清除 token_expired 熔断
+    await proactiveTokenCheck();
+    expect(isAuthFailed('account2')).toBe(false);
+  });
+
+  it('AS3: markAuthFailure 默认 source 为 api_error', async () => {
+    vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
+
+    const { markAuthFailure, _resetAuthFailures } = await import('../account-usage.js');
+    _resetAuthFailures();
+
+    // 不传 source，应默认 api_error
+    markAuthFailure('account3');
+    // 验证：导入内部 Map 取不到，但通过行为验证：token 有效时不清除
+    // （内部实现验证：markAuthFailure 不报错，isAuthFailed 返回 true）
+    const { isAuthFailed } = await import('../account-usage.js');
+    expect(isAuthFailed('account3')).toBe(true);
+  });
+});

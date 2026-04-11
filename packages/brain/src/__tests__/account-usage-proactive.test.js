@@ -76,8 +76,8 @@ describe('proactiveTokenCheck', () => {
     );
   });
 
-  it('token 有效 + 之前 auth-failed → 清除熔断（token 刷新场景）', async () => {
-    markAuthFailure('account1');
+  it('token 有效 + 之前 token_expired auth-failed → 清除熔断（token 刷新场景）', async () => {
+    markAuthFailure('account1', null, 'token_expired');
     expect(isAuthFailed('account1')).toBe(true);
 
     const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
