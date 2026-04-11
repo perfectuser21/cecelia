@@ -39,6 +39,11 @@ describe('constants', () => {
 // ──────────────────────────────────────────
 
 describe('orchestrateContentPipelines', () => {
+  beforeEach(() => {
+    // 清除本地 .env 可能设置的 PIPELINE_SELF_TRIGGER_DISABLED，确保测试不受本地配置影响
+    delete process.env.PIPELINE_SELF_TRIGGER_DISABLED;
+  });
+
   it('无 queued pipeline 时返回 total_actions=0', async () => {
     const pool = {
       query: vi.fn(async () => ({ rows: [] })),
