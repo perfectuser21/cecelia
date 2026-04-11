@@ -30,6 +30,12 @@ const manifest: FeatureManifest = {
     { path: '/n8n/workflows/:instance/:id', component: 'N8nWorkflowDetail' },
     { path: '/n8n/live-status', component: 'N8nLiveStatus' },
     { path: '/n8n/live-status/:instance/:executionId', component: 'N8nLiveStatusDetail' },
+    // Harness Pipeline
+    {
+      path: '/harness-pipeline',
+      component: 'HarnessPipelinePage',
+      navItem: { label: 'Harness Pipeline', icon: 'GitBranch', group: 'execution', order: 30 },
+    },
     // Workers
     {
       path: '/workers',
@@ -62,6 +68,7 @@ const manifest: FeatureManifest = {
     N8nLiveStatus: () => import('./pages/N8nLiveStatus'),
     N8nLiveStatusDetail: () => import('./pages/N8nLiveStatusDetail'),
     WorkersOverview: () => import('./pages/WorkersOverview'),
+    HarnessPipelinePage: () => import('./pages/HarnessPipelinePage'),
   },
 };
 

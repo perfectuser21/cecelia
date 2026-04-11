@@ -326,6 +326,135 @@ router.get('/tasks', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/harness-pipelines
+ * 返回按 sprint_dir 聚合的 Harness Pipeline 状态列表
+ */
+const HARNESS_STAGE_ORDER = [
+  'harness_planner',
+  'harness_contract_propose',
+  'harness_contract_review',
+  'harness_generate',
+  'harness_ci_watch',
+  'harness_report',
+];
+
+const HARNESS_STAGE_LABELS = {
+  harness_planner: 'Planner',
+  harness_contract_propose: 'Propose',
+  harness_contract_review: 'Review',
+  harness_generate: 'Generate',
+  harness_ci_watch: 'CI Watch',
+  harness_report: 'Report',
+};
+
+router.get('/harness-pipelines', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const statusFilter = req.query.status || null;
+
+    let query = `
+      SELECT id, title, task_type, status, sprint_dir, created_at, started_at, completed_at,
+             updated_at, payload, error_message, pr_url, result
+      FROM tasks
+      WHERE task_type = ANY($1)
+    `;
+    const params = [HARNESS_STAGE_ORDER];
+    let paramIdx = 2;
+
+    if (statusFilter) {
+      query += ` AND status = $${paramIdx}`;
+      params.push(statusFilter);
+      paramIdx++;
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${paramIdx}`;
+    params.push(limit * HARNESS_STAGE_ORDER.length);
+
+    const { rows } = await pool.query(query, params);
+
+    const pipelineMap = new Map();
+
+    for (const task of rows) {
+      const dir = task.sprint_dir || task.payload?.sprint_dir || 'unknown';
+      if (!pipelineMap.has(dir)) {
+        pipelineMap.set(dir, { sprint_dir: dir, stages: {}, created_at: task.created_at });
+      }
+      const pipeline = pipelineMap.get(dir);
+      if (!pipeline.stages[task.task_type] ||
+          new Date(task.created_at) > new Date(pipeline.stages[task.task_type].created_at)) {
+        pipeline.stages[task.task_type] = {
+          id: task.id,
+          task_type: task.task_type,
+          label: HARNESS_STAGE_LABELS[task.task_type] || task.task_type,
+          status: task.status,
+          title: task.title,
+          created_at: task.created_at,
+          started_at: task.started_at,
+          completed_at: task.completed_at,
+          updated_at: task.updated_at,
+          error_message: task.error_message,
+          pr_url: task.pr_url,
+        };
+      }
+      if (task.task_type === 'harness_planner') {
+        pipeline.created_at = task.created_at;
+        pipeline.planner_title = task.title;
+        pipeline.sprint_goal = task.payload?.sprint_goal || '';
+      }
+    }
+
+    const pipelines = Array.from(pipelineMap.values())
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, limit)
+      .map(pipeline => {
+        const stages = HARNESS_STAGE_ORDER.map(type => pipeline.stages[type] || {
+          task_type: type,
+          label: HARNESS_STAGE_LABELS[type],
+          status: 'not_started',
+        });
+
+        const activeStage = stages.find(s => s.status === 'in_progress' || s.status === 'queued');
+        const currentStep = activeStage?.label || null;
+
+        const lastDone = [...stages].reverse().find(s => s.status && s.status !== 'not_started');
+        let verdict = 'pending';
+        if (lastDone) {
+          if (lastDone.task_type === 'harness_report' && lastDone.status === 'completed') {
+            verdict = 'passed';
+          } else if (['failed', 'canceled', 'quarantined'].includes(lastDone.status)) {
+            verdict = 'failed';
+          } else if (lastDone.status === 'in_progress' || lastDone.status === 'queued') {
+            verdict = 'in_progress';
+          } else {
+            verdict = lastDone.status;
+          }
+        }
+
+        const startTime = new Date(pipeline.created_at);
+        const reportStage = pipeline.stages['harness_report'];
+        const endTime = reportStage?.completed_at ? new Date(reportStage.completed_at) : new Date();
+        const elapsed_ms = endTime - startTime;
+
+        return {
+          sprint_dir: pipeline.sprint_dir,
+          title: pipeline.planner_title || pipeline.sprint_dir,
+          sprint_goal: pipeline.sprint_goal || '',
+          verdict,
+          current_step: currentStep,
+          elapsed_ms,
+          created_at: pipeline.created_at,
+          stages,
+        };
+      });
+
+    res.json({ pipelines, total: pipelines.length });
+  } catch (err) {
+    console.error('[GET /harness-pipelines] error:', err.message);
+    res.status(500).json({ error: 'Failed to get harness pipelines', details: err.message });
+  }
+});
+
+/**
  * GET /api/brain/goals
  * 查询 goals 列表（从新 OKR 表：objectives + key_results UNION ALL）
  * Query params:
