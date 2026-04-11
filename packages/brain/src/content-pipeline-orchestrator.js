@@ -45,6 +45,37 @@ import { getContentType } from './content-types/content-type-registry.js';
 import { executeResearch, executeCopywriting, executeCopyReview, executeGenerate, executeImageReview, executeExport } from './content-pipeline-executors.js';
 import { validateAllVariants } from './content-quality-validator.js';
 
+/**
+ * 若 pipeline.payload 含 callback_url，向 zenithjoy 发送状态回调（fire-and-forget）。
+ */
+async function _notifyZenithjoy(pipeline, status, outputManifest = null) {
+  const callbackUrl = pipeline.payload?.callback_url;
+  const runId = pipeline.payload?.zenithjoy_pipeline_run_id;
+  if (!callbackUrl || !runId) return;
+
+  try {
+    const body = JSON.stringify({
+      zenithjoy_pipeline_run_id: runId,
+      cecelia_task_id: pipeline.id,
+      status,
+      output_manifest: outputManifest,
+    });
+    const res = await fetch(callbackUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      console.warn(`[content-pipeline] zenithjoy callback 失败: ${res.status} ${callbackUrl}`);
+    } else {
+      console.log(`[content-pipeline] zenithjoy callback 成功: run_id=${runId} status=${status}`);
+    }
+  } catch (err) {
+    console.warn(`[content-pipeline] zenithjoy callback 异常（不阻断）: ${err.message}`);
+  }
+}
+
 // ───────────────────────────────────────────────────────
 // 常量
 // ───────────────────────────────────────────────────────
@@ -175,6 +206,12 @@ async function _startOnePipeline(pipeline, dbPool) {
  * @returns {Promise<{total_actions: number, summary: {orchestrated: number, skipped: number}}>}
  */
 export async function orchestrateContentPipelines(dbPool = pool) {
+  // 环境变量门控：zenithjoy 接管触发权后，可设置此变量禁用 cecelia 自主创建 pipeline
+  if (process.env.PIPELINE_SELF_TRIGGER_DISABLED === 'true') {
+    console.log('[content-pipeline] PIPELINE_SELF_TRIGGER_DISABLED=true，跳过自主 pipeline 创建');
+    return { created: 0, skipped: 0, reason: 'self_trigger_disabled' };
+  }
+
   let orchestrated = 0;
   let skipped = 0;
 
@@ -552,6 +589,9 @@ async function _handleExportComplete({ task, pipeline }, dbPool) {
     );
   }
   console.log(`[content-pipeline-orchestrator] pipeline ${pipelineId} 全部完成 ✅`);
+  // 回调 zenithjoy（若本次 pipeline 是由 zenithjoy 触发的）
+  const outputManifest = export_path ? { export_path, pre_publish_check } : { pre_publish_check };
+  await _notifyZenithjoy(pipeline, 'completed', outputManifest);
   return { advanced: true, action: 'pipeline_completed' };
 }
 
@@ -565,6 +605,7 @@ async function _markPipelineFailed(ctx, dbPool) {
     `UPDATE tasks SET status = $2, completed_at = NOW(), updated_at = NOW(), error_message = $3 WHERE id = $1`,
     [pipelineId, 'failed', `阶段 ${task.task_type} 执行失败，pipeline 终止`]
   );
+  await _notifyZenithjoy(pipeline, 'failed', null);
   return { advanced: true, action: 'pipeline_failed_stage_error' };
 }
 
