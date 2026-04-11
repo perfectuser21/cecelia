@@ -220,6 +220,35 @@ router.get('/services', (_req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/v1/vps-monitor/hk-stats
+ * 从 HK VPS（Tailscale: 100.86.118.99）获取系统指标
+ * 通过调用 HK Brain 的 /api/brain/vps-monitor/stats 端点代理
+ */
+router.get('/hk-stats', async (_req: Request, res: Response) => {
+  const HK_BRAIN_URL = 'http://100.86.118.99:5221/api/brain/vps-monitor/stats';
+  const TIMEOUT_MS = 5000;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    const upstream = await fetch(HK_BRAIN_URL, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if (!upstream.ok) {
+      return res.status(502).json({ error: `HK Brain returned ${upstream.status}` });
+    }
+
+    const data = await upstream.json();
+    res.json(data);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    // 连接失败时返回空数据（LiveMonitor 会显示 "—"，不崩溃）
+    res.status(503).json({ error: `HK VPS unreachable: ${message}` });
+  }
+});
+
+/**
  * GET /api/v1/vps-monitor/history
  */
 router.get('/history', (req: Request, res: Response) => {
