@@ -2,6 +2,7 @@
  * harness-pipeline.test.ts
  * 验证 execution.js harness pipeline 编排逻辑的关键路径
  * 覆盖：report触发时机 / goal_id绕过 / contract_branch guard / 幂等检查
+ *       Proposer 去重 / auth 失败 skipCount
  */
 
 import { describe, it, expect } from 'vitest';
@@ -25,6 +26,10 @@ const tickSrc = fs.readFileSync(
 );
 const modelProfileSrc = fs.readFileSync(
   path.join(__dirname, '../model-profile.js'),
+  'utf8'
+);
+const quarantineSrc = fs.readFileSync(
+  path.join(__dirname, '../quarantine.js'),
   'utf8'
 );
 
@@ -105,5 +110,51 @@ describe('BRAIN_QUIET_MODE — 噪音关闭', () => {
     expect(callIdx).toBeGreaterThan(0);
     const region = tickSrc.slice(callIdx - 400, callIdx + 100);
     expect(region).toContain('BRAIN_QUIET_MODE');
+  });
+});
+
+describe('harness pipeline — Proposer 去重', () => {
+  it('Layer 1 创建 Proposer 前先查 DB 检查是否已有活跃的同 planner_task_id Proposer', () => {
+    // 去重查询：task_type = proposeType AND payload->>'planner_task_id' = $2
+    expect(execSrc).toContain("payload->>'planner_task_id'");
+    // 查询包含 queued/in_progress 状态检查
+    const dedupIdx = execSrc.indexOf("payload->>'planner_task_id'");
+    const region = execSrc.slice(dedupIdx - 100, dedupIdx + 300);
+    expect(region).toContain("status IN ('queued', 'in_progress')");
+  });
+
+  it('Layer 1 发现已有活跃 Proposer 时打印 skip 日志，不重复创建', () => {
+    // 已有 Proposer 时跳过创建并打印日志
+    expect(execSrc).toContain('已有活跃 Proposer');
+    expect(execSrc).toContain('跳过创建');
+    // 去重逻辑使用 if/else 结构，保证有 Proposer 时 createHarnessTask 不被调用
+    // existingProposer.rows.length > 0 与日志在相邻行
+    expect(execSrc).toContain('existingProposer.rows.length > 0');
+    const checkIdx = execSrc.indexOf('existingProposer.rows.length > 0');
+    const region = execSrc.slice(checkIdx, checkIdx + 300);
+    expect(region).toContain('已有活跃 Proposer');
+  });
+});
+
+describe('quarantine — auth/network/rate_limit 失败 skipCount', () => {
+  it('handleTaskFailure 支持 skipCount 选项', () => {
+    // 函数签名支持 options 参数
+    expect(quarantineSrc).toContain('async function handleTaskFailure(taskId, options = {})');
+    expect(quarantineSrc).toContain('skipCount = false');
+  });
+
+  it('skipCount=true 时只 requeue，不累计失败次数', () => {
+    // skipCount 分支：UPDATE tasks SET status=queued + 返回 skipped_count: true
+    // 检查整个 quarantine.js 中存在这些关键字符串
+    expect(quarantineSrc).toContain("status='queued'");
+    expect(quarantineSrc).toContain('skipped_count: true');
+    expect(quarantineSrc).toContain('failure_count: 0, skipped_count: true');
+  });
+
+  it('execution-callback 对 isTransientApiError 传 skipCount=true', () => {
+    // execution.js 中对 auth/network/rate_limit 调用 handleTaskFailure({ skipCount })
+    expect(execSrc).toContain('skipCount = isTransientApiError');
+    expect(execSrc).toContain('handleTaskFailure(task_id, { skipCount })');
+    expect(execSrc).toContain('skipped_count');
   });
 });

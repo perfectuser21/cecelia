@@ -864,10 +864,14 @@ router.post('/execution-callback', async (req, res) => {
       }
 
       // Check if task should be quarantined (only if not already handled by smart retry)
+      // auth/network/rate_limit 属于外部错误，skipCount=true 只 requeue 不累计失败次数
       if (!failureHandled) {
         try {
-          const quarantineResult = await handleTaskFailure(task_id);
-          if (quarantineResult.quarantined) {
+          const skipCount = isTransientApiError; // rate_limit / network / auth
+          const quarantineResult = await handleTaskFailure(task_id, { skipCount });
+          if (quarantineResult.skipped_count) {
+            console.log(`[execution-callback] 外部错误跳过失败计数，任务已 requeue（task=${task_id}）`);
+          } else if (quarantineResult.quarantined) {
             quarantined = true;
             console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
             raise('P1', 'task_quarantined', `任务隔离：${task_id}（${quarantineResult.result?.reason || '反复失败'}）`).catch(err => console.error('[routes] silent error:', err));
@@ -1704,23 +1708,36 @@ ${resultStr.substring(0, 2000)}
             if (branchMatch) plannerBranch = branchMatch[1];
           }
           const proposeType = harnessType === 'harness_planner' ? 'harness_contract_propose' : 'sprint_contract_propose';
-          await createHarnessTask({
-            title: `[Contract] P1 — ${plannerShort}`,
-            description: `Generator 读取 PRD，提出合同草案（功能范围+验证命令）。\nPRD task_id: ${task_id}`,
-            priority: 'P1',
-            project_id: harnessTask.project_id,
-            goal_id: harnessTask.goal_id,
-            task_type: proposeType,
-            trigger_source: 'execution_callback_harness',
-            payload: {
-              sprint_dir: sprintDir,
-              planner_task_id: task_id,
-              planner_branch: plannerBranch,
-              propose_round: 1,
-              harness_mode: true
-            }
-          });
-          console.log(`[execution-callback] harness: ${harnessType} ${task_id} → ${proposeType} created (planner_branch=${plannerBranch})`);
+          // Proposer 去重：同 planner_task_id 已有 queued/in_progress Proposer 时跳过创建，防止重复派发
+          const existingProposer = await pool.query(
+            `SELECT id FROM tasks
+             WHERE task_type = $1
+               AND payload->>'planner_task_id' = $2
+               AND status IN ('queued', 'in_progress')
+             LIMIT 1`,
+            [proposeType, task_id]
+          );
+          if (existingProposer.rows.length > 0) {
+            console.log(`[execution-callback] 已有活跃 Proposer ${existingProposer.rows[0].id}（planner_task_id=${task_id}），跳过创建`);
+          } else {
+            await createHarnessTask({
+              title: `[Contract] P1 — ${plannerShort}`,
+              description: `Generator 读取 PRD，提出合同草案（功能范围+验证命令）。\nPRD task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: proposeType,
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: sprintDir,
+                planner_task_id: task_id,
+                planner_branch: plannerBranch,
+                propose_round: 1,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: ${harnessType} ${task_id} → ${proposeType} created (planner_branch=${plannerBranch})`);
+          }
         }
 
         // Layer 2a: contract_propose 完成 → contract_review

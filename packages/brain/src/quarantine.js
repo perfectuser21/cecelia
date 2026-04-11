@@ -972,9 +972,27 @@ async function checkExpiredQuarantineTasks({ limit = Infinity } = {}) {
 /**
  * 处理任务失败，检查是否需要隔离
  * @param {string} taskId - 任务 ID
+ * @param {Object} options - 选项
+ * @param {boolean} options.skipCount - true 时只 requeue，不累计失败次数，不触发 quarantine
  * @returns {Object} - { quarantined, result }
  */
-async function handleTaskFailure(taskId) {
+async function handleTaskFailure(taskId, options = {}) {
+  const { skipCount = false } = options;
+
+  // skipCount 模式：auth/network/rate_limit 等外部错误，只 requeue 不累计失败
+  if (skipCount) {
+    try {
+      await pool.query(
+        `UPDATE tasks SET status='queued', payload=COALESCE(payload,'{}'::jsonb)||'{"run_status":null}'::jsonb WHERE id=$1`,
+        [taskId]
+      );
+      console.log(`[quarantine] skipCount=true: task ${taskId} requeued without failure count`);
+    } catch (requeueErr) {
+      console.error(`[quarantine] skipCount requeue error: ${requeueErr.message}`);
+    }
+    return { quarantined: false, failure_count: 0, skipped_count: true };
+  }
+
   try {
     // 获取任务
     const taskResult = await pool.query(
