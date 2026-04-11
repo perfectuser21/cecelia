@@ -53,6 +53,7 @@ import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
 import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
+import harnessRoutes from './src/routes/harness.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -177,6 +178,7 @@ app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
+app.use('/api/brain/harness', harnessRoutes);
 
 // POST /api/brain/tasks fallback: brainRoutes 无 POST /tasks handler，此处补齐
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks

@@ -2219,6 +2219,35 @@ ${resultStr.substring(0, 2000)}
           console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_report created (eval_round=${evalRound}, pr_url=${prUrl})`);
         }
 
+        // harness_report 失败自动重试（result=null 表示 session 崩溃）
+        if (harnessType === 'harness_report') {
+          if (result === null) {
+            const retry_count = harnessPayload.retry_count || 0;
+            if (retry_count >= 3) {
+              console.error(`[execution-callback] harness_report ${task_id} 崩溃次数已达上限（retry_count=${retry_count} >= 3），标记 pipeline 失败，停止重试`);
+              return;
+            }
+            await createHarnessTask({
+              title: `[Report] Retry-${retry_count + 1} — ${plannerShort}`,
+              description: `harness_report 会话崩溃（result=null），自动重试 #${retry_count + 1}。\n原始 harness_report task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              task_type: 'harness_report',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                pr_url: harnessPayload.pr_url,
+                dev_task_id: harnessPayload.dev_task_id,
+                planner_task_id: harnessPayload.planner_task_id,
+                retry_count: retry_count + 1,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness_report ${task_id} → 重试任务已创建 (retry_count=${retry_count + 1})`);
+          }
+          // result 非 null：正常完成，不触发重试
+        }
+
         // v3.x 兼容: sprint_fix → sprint_evaluate（旧流程）
         if (harnessType === 'sprint_fix') {
           await createHarnessTask({
