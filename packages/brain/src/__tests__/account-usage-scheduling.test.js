@@ -443,6 +443,69 @@ describe('M: 三阶段模型降级链', () => {
 });
 
 // ============================================================
+// AF: Auth Failure source 区分（api_error vs token_expired）
+// ============================================================
+describe('AF: Auth Failure source 区分', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+  });
+
+  // AF1: api_error 设置的熔断在 token 有效时不被 proactiveTokenCheck 清除
+  it('AF1: api_error 熔断在 token 有效时不被 proactiveTokenCheck 清除', async () => {
+    const { default: pool } = await import('../db.js');
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const { markAuthFailure, isAuthFailed, _resetAuthFailures, proactiveTokenCheck } = await import('../account-usage.js');
+    _resetAuthFailures();
+
+    // 模拟 API 401 设置的熔断（source=api_error，默认值）
+    markAuthFailure('account1', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
+    expect(isAuthFailed('account1')).toBe(true);
+
+    // token 文件已有效（fs mock 返回 1 年后过期）→ proactiveTokenCheck 不应清除 api_error 熔断
+    await proactiveTokenCheck();
+    expect(isAuthFailed('account1')).toBe(true);
+  });
+
+  // AF2: token_expired 设置的熔断在 token 有效时被 proactiveTokenCheck 清除
+  it('AF2: token_expired 熔断在 token 有效时被 proactiveTokenCheck 清除', async () => {
+    const { default: pool } = await import('../db.js');
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const { markAuthFailure, isAuthFailed, _resetAuthFailures, proactiveTokenCheck } = await import('../account-usage.js');
+    _resetAuthFailures();
+
+    // 模拟 token 过期设置的熔断（source=token_expired）
+    markAuthFailure('account1', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
+    expect(isAuthFailed('account1')).toBe(true);
+
+    // token 文件现在有效（fs mock 返回 1 年后过期）→ proactiveTokenCheck 应清除 token_expired 熔断
+    await proactiveTokenCheck();
+    expect(isAuthFailed('account1')).toBe(false);
+  });
+
+  // AF3: markAuthFailure 默认 source 为 api_error
+  it('AF3: markAuthFailure 不传 source 时默认为 api_error', async () => {
+    const { default: pool } = await import('../db.js');
+    pool.query.mockResolvedValue({ rows: [] });
+
+    // 直接测试内部 Map 结构需要访问导出
+    // 通过行为验证：api_error 熔断在 token 有效时不被清除
+    const { markAuthFailure, isAuthFailed, _resetAuthFailures, proactiveTokenCheck } = await import('../account-usage.js');
+    _resetAuthFailures();
+
+    // 不传 source，默认 api_error
+    markAuthFailure('account2', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
+    expect(isAuthFailed('account2')).toBe(true);
+
+    await proactiveTokenCheck();
+    // 默认 api_error，token 有效也不清除
+    expect(isAuthFailed('account2')).toBe(true);
+  });
+});
+
+// ============================================================
 // P: Spending Cap 持久化（DB 读写）
 // ============================================================
 describe('P: Spending Cap 持久化', () => {

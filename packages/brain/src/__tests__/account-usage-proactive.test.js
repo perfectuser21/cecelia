@@ -76,8 +76,8 @@ describe('proactiveTokenCheck', () => {
     );
   });
 
-  it('token 有效 + 之前 auth-failed → 清除熔断（token 刷新场景）', async () => {
-    markAuthFailure('account1');
+  it('token 有效 + 之前 token_expired 熔断 → 清除熔断（token 刷新场景）', async () => {
+    markAuthFailure('account1', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
     expect(isAuthFailed('account1')).toBe(true);
 
     const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
@@ -90,6 +90,25 @@ describe('proactiveTokenCheck', () => {
       expect.stringContaining('is_auth_failed = false'),
       ['account1']
     );
+  });
+
+  it('token 有效 + 之前 api_error 熔断 → 不清除熔断（等 resetTime 自然过期）', async () => {
+    markAuthFailure('account1', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
+    expect(isAuthFailed('account1')).toBe(true);
+
+    const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
+    mockReadFileSync.mockImplementation(() => makeCredentials(futureExpiry));
+    mockPool.query.mockClear();
+
+    await proactiveTokenCheck();
+
+    // api_error 熔断不因 token 有效而清除
+    expect(isAuthFailed('account1')).toBe(true);
+    // 不触发 DB 清除
+    const clearCalls = mockPool.query.mock.calls.filter(([sql]) =>
+      typeof sql === 'string' && sql.includes('is_auth_failed = false')
+    );
+    expect(clearCalls.length).toBe(0);
   });
 
   it('token 无 expiresAt → 视为有效，不熔断', async () => {
