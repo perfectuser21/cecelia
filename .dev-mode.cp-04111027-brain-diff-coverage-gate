@@ -1,0 +1,10 @@
+dev
+branch: cp-04111027-brain-diff-coverage-gate
+task_id: a4d5f807-e216-4d22-b3da-862bf849cdf7
+task_card: .task-cp-04111027-brain-diff-coverage-gate.md
+started: 2026-04-11T10:30:24+08:00
+step_0_worktree: done
+step_1_spec: done
+step_2_code: done
+step_3_integrate: done
+step_4_ship: done
