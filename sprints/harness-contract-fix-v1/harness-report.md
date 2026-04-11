@@ -59,6 +59,7 @@ Planner (4.5min) → Generator (11min) → Fix (7min) → Report (此刻)
 | WS1 | harness_generate | Planner → Generator | [#2201](https://github.com/perfectuser21/cecelia/pull/2201) | ✅ MERGED | 2026-04-11 02:27 |
 | WS2 | harness_pipeline_api | Planner → Generator | [#2208](https://github.com/perfectuser21/cecelia/pull/2208) | ✅ MERGED | 2026-04-11 03:08 |
 | WS3 | harness_fix (PR恢复) | Fix Task Runner | [#2212](https://github.com/perfectuser21/cecelia/pull/2212) | ✅ MERGED | 2026-04-11 03:30 |
+| WS3b | harness_report 重试 | Report Follow-up | [#2209](https://github.com/perfectuser21/cecelia/pull/2209) | ✅ MERGED | 2026-04-11 03:45 |
 
 ### PR 交付清单
 
@@ -126,7 +127,7 @@ Planner (4.5min) → Generator (11min) → Fix (7min) → Report (此刻)
 | contract_branch 端到端透传 | grep -n "contract_branch" output.log | ✅ PASS |
 | PR URL 在 task.pr_url 中可用 | curl /api/brain/tasks/{id} \| jq .pr_url | ✅ PASS |
 | report 重试机制在 CI 中可观测 | grep -n "retry_attempt" brain.log | ✅ PASS |
-| WS1/WS2/WS3 全部 PR 已合并 | gh pr list --state merged | ✅ #2201, #2208, #2212 |
+| WS1/WS2/WS3/WS3b 全部 PR 已合并 | gh pr list --state merged | ✅ #2201, #2208, #2212, #2209 |
 | Learning 文档已提交 | ls docs/learnings/ | ✅ cp-041105*-harness-contract-fix-* |
 
 ### 已知遗留
@@ -145,7 +146,8 @@ Planner (4.5min) → Generator (11min) → Fix (7min) → Report (此刻)
 | contract_branch 数据流连贯 | ✅ #2201 MERGED |
 | Pipeline API 可观测 | ✅ #2208 MERGED |
 | PR URL 恢复自愈机制 | ✅ #2212 MERGED |
-| 3 个 Workstream PR 全部合并 | ✅ 100% |
+| Report 重试机制 WS3b | ✅ #2209 MERGED |
+| 4 个 Workstream PR 全部合并 | ✅ 100% |
 | 回归契约覆盖 | ✅ DoD/Test/Review/Merge 全通过 |
 | 成本控制 | ✅ $0.39 USD（3 个任务） |
 
