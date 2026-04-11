@@ -378,15 +378,19 @@ async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
     return null;
   }
 
+  // Generate/Fix：优先从 pr_url 构建输出（result 里没有 branch 字段）
+  if (t === 'harness_generate' || t === 'sprint_generate' || t === 'harness_fix') {
+    const prUrl = task.pr_url || task.result?.pr_url;
+    if (prUrl) return `PR created: ${prUrl}`;
+    if (branch) return fetchFileFromBranch(branch, `${sprintDir}/sprint-contract.md`);
+    return null;
+  }
+
   if (!branch) {
     if (task.result?.verdict) return `Verdict: ${task.result.verdict}`;
     if (task.result?.feedback) return task.result.feedback;
     if (task.result?.result_summary) return task.result.result_summary;
     return null;
-  }
-
-  if (t === 'harness_planner' || t === 'sprint_planner') {
-    return fetchFileFromBranch(branch, `${sprintDir}/sprint-prd.md`);
   }
 
   if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
@@ -397,11 +401,13 @@ async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
     const feedback = fetchFileFromBranch(branch, `${sprintDir}/contract-review-feedback.md`);
     if (feedback) return feedback;
     if (task.result?.feedback) return task.result.feedback;
+    // 尝试从 contract_branch 读取最终合同（APPROVED 时）
+    const contractBranch = task.result?.contract_branch || task.payload?.contract_branch;
+    if (contractBranch) {
+      const contract = fetchFileFromBranch(contractBranch, `${sprintDir}/sprint-contract.md`);
+      if (contract) return contract;
+    }
     return task.result?.verdict ? `Verdict: ${task.result.verdict}` : null;
-  }
-
-  if (t === 'harness_generate' || t === 'sprint_generate' || t === 'harness_fix') {
-    return task.pr_url ? `PR: ${task.pr_url}` : null;
   }
 
   if (t === 'harness_report' || t === 'sprint_report') {
