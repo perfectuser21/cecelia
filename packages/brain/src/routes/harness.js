@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import { execSync } from 'child_process';
 import pool from '../db.js';
 
 const router = Router();
@@ -95,7 +96,10 @@ router.get('/pipeline-detail', async (req, res) => {
     // 4. 构建阶段列表
     const stages = buildStages(tasks);
 
-    // 5. 读取 sprint 目录下的文件内容
+    // 5. 构建串行步骤列表（含 input/prompt/output 数据重建）
+    const steps = buildSteps(tasks, sprintDir);
+
+    // 6. 读取 sprint 目录下的文件内容
     const fileContents = await readSprintFiles(sprintDir);
 
     res.json({
@@ -108,6 +112,7 @@ router.get('/pipeline-detail', async (req, res) => {
       created_at: planner?.created_at || null,
       stages,
       gan_rounds: ganRounds,
+      steps,
       file_contents: fileContents,
     });
   } catch (err) {
@@ -191,6 +196,221 @@ function buildStages(tasks) {
       count: matching.length,
     };
   });
+}
+
+// ─── Steps 串行步骤构建 ──────────────────────────────────────────────────────
+
+const SKILL_MAP = {
+  harness_planner: 'harness-planner',
+  sprint_planner: 'harness-planner',
+  harness_contract_propose: 'harness-contract-proposer',
+  sprint_contract_propose: 'harness-contract-proposer',
+  harness_contract_review: 'harness-contract-reviewer',
+  sprint_contract_review: 'harness-contract-reviewer',
+  harness_generate: 'harness-generator',
+  sprint_generate: 'harness-generator',
+  harness_fix: 'harness-generator',
+  harness_report: 'harness-report',
+  sprint_report: 'harness-report',
+};
+
+/**
+ * 从 git 中读取指定分支的文件内容
+ */
+function gitShowFile(branch, filePath) {
+  if (!branch) return null;
+  for (const ref of [`origin/${branch}`, branch]) {
+    try {
+      return execSync(`git show ${ref}:${filePath}`, {
+        cwd: REPO_ROOT,
+        encoding: 'utf-8',
+        stdio: 'pipe',
+        timeout: 10000,
+      });
+    } catch {
+      // 继续尝试下一个 ref
+    }
+  }
+  return null;
+}
+
+/**
+ * 在 git 分支列表中搜索含有 task_id 前缀的分支
+ */
+function findBranchesByTaskId(taskId) {
+  if (!taskId) return [];
+  const prefix = taskId.slice(0, 8);
+  try {
+    const output = execSync('git branch -a', {
+      cwd: REPO_ROOT,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+      timeout: 5000,
+    });
+    return output.split('\n')
+      .map(b => b.trim().replace(/^\* /, '').replace(/^remotes\/origin\//, ''))
+      .filter(b => b.includes(prefix) && b !== '')
+      .filter((b, i, arr) => arr.indexOf(b) === i); // dedupe
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 为 harness_planner 任务找到其输出分支（存有 sprint-prd.md 的分支）
+ * 策略：从同 pipeline 的 propose 任务的 payload.planner_branch 字段获取
+ */
+function findPlannerBranch(plannerTask, allTasks) {
+  // 先从 propose 任务的 payload 里找
+  for (const t of allTasks) {
+    if ((t.task_type === 'harness_contract_propose' || t.task_type === 'sprint_contract_propose')
+        && t.payload?.planner_branch) {
+      return t.payload.planner_branch;
+    }
+  }
+  // fallback：按 task_id 前缀搜 git branch
+  const branches = findBranchesByTaskId(plannerTask.task_id);
+  return branches.find(b => b.includes('planner') || b.includes(plannerTask.task_id?.slice(0, 8))) || branches[0] || null;
+}
+
+/**
+ * 为 propose 任务找到其输出分支
+ */
+function findProposeBranch(task) {
+  if (task.result?.propose_branch) return task.result.propose_branch;
+  const branches = findBranchesByTaskId(task.task_id);
+  return branches.find(b => b.includes('propose')) || branches[0] || null;
+}
+
+/**
+ * 为 review 任务找到其输出分支
+ */
+function findReviewBranch(task) {
+  if (task.result?.review_branch) return task.result.review_branch;
+  if (task.result?.contract_branch) return task.result.contract_branch;
+  const branches = findBranchesByTaskId(task.task_id);
+  return branches.find(b => b.includes('review')) || branches[0] || null;
+}
+
+/**
+ * 重建某一步骤的 input / prompt / output 内容
+ */
+function reconstructStepContent(task, sprintDir, allTasks) {
+  const taskType = task.task_type;
+  const desc = task.description || task.payload?.feature_description || task.title || '';
+  const taskId = task.task_id;
+
+  if (taskType === 'harness_planner' || taskType === 'sprint_planner') {
+    const plannerBranch = findPlannerBranch(task, allTasks);
+    const input = desc;
+    const prompt = `/harness-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${taskId}\nsprint_dir: ${sprintDir}\n\n${desc}`;
+    const output = gitShowFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
+    return { input, prompt, output };
+  }
+
+  if (taskType === 'harness_contract_propose' || taskType === 'sprint_contract_propose') {
+    const plannerBranch = task.payload?.planner_branch || null;
+    const proposeBranch = findProposeBranch(task);
+    const proposeRound = task.payload?.propose_round || 1;
+    const input = gitShowFile(plannerBranch, `${sprintDir}/sprint-prd.md`) || desc;
+    const prompt = `/harness-contract-proposer\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${taskId}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nplanner_branch: ${plannerBranch || ''}\n\n${desc}`;
+    const output = gitShowFile(proposeBranch, `${sprintDir}/contract-draft.md`);
+    return { input, prompt, output };
+  }
+
+  if (taskType === 'harness_contract_review' || taskType === 'sprint_contract_review') {
+    const proposeBranch = task.payload?.propose_branch || null;
+    const reviewBranch = findReviewBranch(task);
+    const proposeRound = task.payload?.propose_round || 1;
+    const input = gitShowFile(proposeBranch, `${sprintDir}/contract-draft.md`) || desc;
+    const prompt = `/harness-contract-reviewer\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${taskId}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${proposeRound}\npropose_branch: ${proposeBranch || ''}\n\n${desc}`;
+    const output = gitShowFile(reviewBranch, `${sprintDir}/contract-review-feedback.md`);
+    return { input, prompt, output };
+  }
+
+  if (taskType === 'harness_generate' || taskType === 'harness_fix' || taskType === 'sprint_generate') {
+    const contractBranch = task.payload?.contract_branch || null;
+    const input = gitShowFile(contractBranch, `${sprintDir}/sprint-contract.md`) || desc;
+    const prompt = `/harness-generator\n\n## Harness v4.0 — Generate\n\ntask_id: ${taskId}\nsprint_dir: ${sprintDir}\n\n${desc}`;
+    const output = null; // Generate 输出为 PR，无法从 git 直接读取单文件
+    return { input, prompt, output };
+  }
+
+  if (taskType === 'harness_report' || taskType === 'sprint_report') {
+    const input = desc;
+    const prompt = `/harness-report\n\n## Harness v4.0 — Report\n\ntask_id: ${taskId}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${desc}`;
+    const output = gitShowFile(null, `${sprintDir}/harness-report.md`);
+    return { input, prompt, output };
+  }
+
+  // 未知类型 fallback
+  const skillName = SKILL_MAP[taskType] || taskType;
+  return {
+    input: desc,
+    prompt: `/${skillName}\n\ntask_id: ${taskId}\n\n${desc}`,
+    output: null,
+  };
+}
+
+/**
+ * 构建串行步骤列表
+ */
+function buildSteps(tasks, sprintDir) {
+  const steps = [];
+  let stepNum = 0;
+  const proposeCount = {};
+  const reviewCount = {};
+
+  for (const task of tasks) {
+    stepNum++;
+    const taskType = task.task_type;
+    let label;
+
+    if (taskType === 'harness_contract_propose' || taskType === 'sprint_contract_propose') {
+      const round = task.payload?.propose_round || (proposeCount[taskType] = (proposeCount[taskType] || 0) + 1, proposeCount[taskType]);
+      label = `Propose R${round}`;
+    } else if (taskType === 'harness_contract_review' || taskType === 'sprint_contract_review') {
+      const round = task.payload?.propose_round || (reviewCount[taskType] = (reviewCount[taskType] || 0) + 1, reviewCount[taskType]);
+      label = `Review R${round}`;
+    } else {
+      const labels = {
+        harness_planner: 'Planner', sprint_planner: 'Planner',
+        harness_generate: 'Generate', sprint_generate: 'Generate',
+        harness_fix: 'Fix',
+        harness_ci_watch: 'CI Watch',
+        harness_report: 'Report', sprint_report: 'Report',
+        harness_evaluate: 'Evaluate',
+      };
+      label = labels[taskType] || taskType;
+    }
+
+    const isCompleted = task.status === 'completed';
+    let inputContent = null;
+    let promptContent = null;
+    let outputContent = null;
+
+    if (isCompleted) {
+      const content = reconstructStepContent(task, sprintDir, tasks);
+      inputContent = content.input ?? null;
+      promptContent = content.prompt ?? null;
+      outputContent = content.output ?? null;
+    }
+
+    steps.push({
+      step: stepNum,
+      task_id: task.task_id,
+      task_type: taskType,
+      label,
+      status: task.status,
+      created_at: task.created_at,
+      completed_at: task.completed_at || null,
+      input_content: isCompleted ? inputContent : null,
+      prompt_content: isCompleted ? promptContent : null,
+      output_content: isCompleted ? outputContent : null,
+    });
+  }
+
+  return steps;
 }
 
 /**
