@@ -1,16 +1,15 @@
 ---
 id: dev-stage-04-ship
-version: 3.0.0
-updated: 2026-04-02
+version: 4.0.0
+updated: 2026-04-11
 changelog:
+  - 4.0.0: 职责分离 — 合并/cleanup_done/cleanup.sh 全部由 devloop-check 自动执行，文档只负责 Learning + 标记完成
   - 3.0.0: 精简 — 只保留 Learning + 合并 + 清理核心流程
 ---
 
-# Stage 4: Ship — Learning + 合并 + 清理
+# Stage 4: Ship — Learning + 标记完成
 
-> Learning 必须在合并 PR 之前完成。
-
-**Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "in_progress" })`
+> 写 Learning 并标记 step_4_ship: done。合并和清理由 Stop Hook (devloop-check) 自动执行。
 
 ---
 
@@ -72,23 +71,19 @@ bash scripts/write-current-state.sh
 
 ---
 
-## 4.2 合并 PR
-
-```bash
-gh pr merge <PR_NUMBER> --squash
-```
-
----
-
-## 4.3 清理 + 标记完成
+## 4.2 标记完成
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 sed -i '' "s/step_4_ship: pending/step_4_ship: done/" "$DEV_MODE_FILE"
-echo "cleanup_done: true" >> "$DEV_MODE_FILE"
+git add "$DEV_MODE_FILE" && git commit -m "chore: [state] step_4_ship: done
 
-bash skills/dev/scripts/cleanup.sh "$BRANCH_NAME" "main"
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+git push origin HEAD
 ```
 
-**Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "completed" })`
+> 标记后 Stop Hook 自动执行：
+> 1. devloop-check 条件 6 检测到 step_4_ship=done + CI passed → 自动合并 PR
+> 2. 合并成功 → 执行 cleanup.sh（部署/归档/GC）
+> 3. 写 cleanup_done: true → 删除 .dev-mode/.dev-lock → exit 0（会话结束）

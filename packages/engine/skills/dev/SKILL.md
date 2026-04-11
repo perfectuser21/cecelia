@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 5.2.0
-updated: 2026-04-03
+version: 5.3.0
+updated: 2026-04-11
 description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。
 trigger: /dev, --task-id <id>
 ---
@@ -43,11 +43,15 @@ Harness 模式简化流程:
 Step 0: Worktree → 创建独立 worktree
 Stage 1: Spec   → 主 agent 写 Task Card + DoD → 写 .dev-mode
 Stage 2: Code   → 主 agent 写代码 + 逐条验证 DoD
-Stage 3: Integrate → push + PR + CI 监控
-Stage 4: Ship   → Learning + 合并 PR + 清理
+Stage 3: Integrate → push + PR 创建（CI 由 Stop Hook 自动监控）
+Stage 4: Ship   → Learning + 标记完成（合并/清理由 Stop Hook 自动执行）
 ```
 
 **唯一完成标志**: PR 已合并到 main。
+
+**职责分离原则**：
+- **文档面**（steps/*.md）：产出代码、Learning、状态标记（step_N: done）
+- **代码面**（devloop-check.sh）：CI 监控、PR 合并、cleanup.sh 调用、cleanup_done 写入
 
 ---
 
@@ -57,6 +61,7 @@ Stage 4: Ship   → Learning + 合并 PR + 清理
 2. **遇到问题自动修复**（禁止"建议手动"/"等待用户"）
 3. **Stop Hook 保证循环**：PR 未合并 → exit 2 → 继续执行
 4. **每步完成后立即执行下一步**，不停顿
+5. **职责分离**：文档面产出，代码面控制（CI/合并/清理）
 
 ---
 
@@ -69,9 +74,9 @@ Stage 4: Ship   → Learning + 合并 PR + 清理
 1. step_1_spec done？
 2. step_2_code done？ + DoD 全部 [x]
 3. PR 已创建？
-4. CI 通过？（失败→修复→重推）
-5. step_4_ship done？（Learning 已写）
-6. PR 已合并？→ cleanup_done: true
+4. CI 通过？（失败→Stop Hook 指导修复→重推）
+5. PR 已合并？→ cleanup.sh + cleanup_done → exit 0
+6. step_4_ship done？→ 自动合并 PR → cleanup.sh → cleanup_done → exit 0
 ```
 
 ### Harness 模式（harness_mode: true）

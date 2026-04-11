@@ -4,8 +4,9 @@
 # ============================================================================
 # SSOT：所有 Provider 适配器 source 此文件，通过 devloop_check() 获取当前状态。
 #
-# 版本: v4.3.0
-# 更新: 2026-04-11 — 单一出口原则：删除 ready_to_merge 中间状态，CI 通过 + step4 done 直接自动合并；CI in_progress 不输出 action 字段
+# 版本: v4.4.0
+# 更新: 2026-04-11 — 职责分离���条件 6 自动合并后调用 cleanup.sh（与条件 5 一致），文档面不再负责合并/清理
+# 更新: 2026-04-11 — v4.3.0 单一出口原则：删除 ready_to_merge 中间状态，CI 通过 + step4 done 直接自动合并；CI in_progress 不输出 action 字段
 #
 # 4-Stage Pipeline 条件顺序:
 #   0. harness_mode 预检 → 若 harness_mode=true，跳过 cleanup_done 通用早退
@@ -302,6 +303,18 @@ devloop_check() {
     # 自动合并（单一 exit 0 出口原则：条件全满足则直接合并，不外抛给用户）
     echo "[devloop-check] PR #$pr_number CI 通过 + Stage 4 完成，自动合并中..." >&2
     if gh pr merge "$pr_number" --squash --delete-branch 2>/dev/null; then
+        # 合并成功 → 调用 cleanup.sh（与条件 5 一致，确保部署/归档/GC 等清理工作执行）
+        local _cleanup_script_6=""
+        for _cs6 in \
+            "${PROJECT_ROOT:-}/packages/engine/skills/dev/scripts/cleanup.sh" \
+            "$HOME/.claude/skills/dev/scripts/cleanup.sh" \
+            "$HOME/.claude-account1/skills/dev/scripts/cleanup.sh"; do
+            [[ -f "$_cs6" ]] && { _cleanup_script_6="$_cs6"; break; }
+        done
+        if [[ -n "$_cleanup_script_6" ]]; then
+            echo "🧹 自动执行 cleanup.sh（合并后清理）..." >&2
+            (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script_6") 2>/dev/null || true
+        fi
         _mark_cleanup_done "$dev_mode_file"
         _devloop_jq -n --arg pr "$pr_number" '{"status":"done","reason":"PR #\($pr) 已自动合并，工作流结束"}'
         return 0
