@@ -6,6 +6,15 @@ version: "1.0.0"
 updated: "2026-04-11"
 
 changelog:
+  - version: "14.6.1"
+    date: "2026-04-11"
+    skill: "dev"
+    change: "fix"
+    description: "[CONFIG] 文件隔离：.dev-lock 从主仓库移到 worktree 目录，stop hook 自动清理主仓库残留，防止并行会话跨 worktree 污染"
+    files:
+      - "skills/dev/scripts/worktree-manage.sh"
+      - "hooks/stop.sh"
+      - "hooks/stop-dev.sh"
   - version: "14.6.0"
     date: "2026-04-11"
     skill: "dev"

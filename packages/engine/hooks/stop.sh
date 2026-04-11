@@ -25,23 +25,27 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ===== 检查 .dev-lock.<branch>（per-branch 硬钥匙）→ 调用 stop-dev.sh =====
-# v14.1.0: 除主仓库外，也扫描所有 worktree 目录（.dev-lock 可能在 worktree 中创建）
+# v14.2.0: .dev-lock 只存在于 worktree 目录（不在主仓库），扫描所有 worktree
+# 主仓库残留的 .dev-lock 自动清理（迁移兼容）
 _DEV_LOCK_FOUND=false
-for _f in "$PROJECT_ROOT"/.dev-lock.*; do
-    [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break
-done
 
-# 主仓库没找到 → 扫描所有 worktree
-if [[ "$_DEV_LOCK_FOUND" == "false" ]]; then
-    while IFS= read -r _wt_line; do
-        if [[ "$_wt_line" == "worktree "* ]]; then
-            _wt_path="${_wt_line#worktree }"
-            [[ "$_wt_path" == "$PROJECT_ROOT" ]] && continue
-            for _f in "$_wt_path"/.dev-lock.*; do
-                [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break 2
-            done
-        fi
-    done < <(git worktree list --porcelain 2>/dev/null)
+# 扫描所有 worktree 查找 .dev-lock（v14.2.0: dev-lock 只在 worktree，不在主仓库）
+_wt_count=0
+while IFS= read -r _wt_line; do
+    if [[ "$_wt_line" == "worktree "* ]]; then
+        _wt_count=$((_wt_count + 1))
+        _wt_path="${_wt_line#worktree }"
+        for _f in "$_wt_path"/.dev-lock.*; do
+            [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break 2
+        done
+    fi
+done < <(git worktree list --porcelain 2>/dev/null)
+
+# 有 worktree 时清理主仓库残留的 .dev-lock（迁移兼容，无 worktree 不清理）
+if [[ $_wt_count -gt 1 ]]; then
+    for _f in "$PROJECT_ROOT"/.dev-lock.*; do
+        [[ -f "$_f" ]] && rm -f "$_f" 2>/dev/null
+    done
 fi
 
 if [[ "$_DEV_LOCK_FOUND" == "true" ]]; then
