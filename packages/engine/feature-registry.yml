@@ -3,9 +3,17 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-09"
+updated: "2026-04-11"
 
 changelog:
+  - version: "14.5.3"
+    date: "2026-04-11"
+    skill: "dev + hooks"
+    change: "fix"
+    description: "[CONFIG] stop-dev.sh fail-closed: dev-lock 丢失时扫 dev-mode 未完成项则 block；00-worktree-auto.md: 修复 dev-lock 重建用 cp dev-mode（无 session 字段）+ heredoc 内 tty 命令双行 bug"
+    files:
+      - "hooks/stop-dev.sh"
+      - "skills/dev/steps/00-worktree-auto.md"
   - version: "14.5.2"
     date: "2026-04-11"
     skill: "dev"

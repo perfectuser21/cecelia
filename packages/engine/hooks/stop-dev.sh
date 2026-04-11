@@ -73,7 +73,21 @@ while IFS= read -r _dir; do
     done
 done < <(_collect_search_dirs "$PROJECT_ROOT")
 
-[[ -z "$DEV_LOCK_FILE" ]] && exit 0
+# dev-lock 未找到 — fail-closed：检查当前分支是否有未完成 dev-mode（dev-lock 可能丢失）
+if [[ -z "$DEV_LOCK_FILE" ]]; then
+    _cb=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ "$_cb" =~ ^cp- ]]; then
+        while IFS= read -r _dir; do
+            _dmf="$_dir/.dev-mode.${_cb}"
+            if [[ -f "$_dmf" ]] && ! grep -q "cleanup_done: true" "$_dmf" 2>/dev/null; then
+                jq -n --arg b "$_cb" \
+                    '{"decision":"block","reason":"dev-lock 丢失，分支 \($b) 有 dev-mode 未完成，Step 0 会自动重建 .dev-lock"}'
+                exit 2
+            fi
+        done < <(_collect_search_dirs "$PROJECT_ROOT")
+    fi
+    exit 0
+fi
 
 # 并发锁（per-worktree）
 _git_dir="$(git -C "$MATCHED_DIR" rev-parse --git-dir 2>/dev/null || echo "/tmp")"

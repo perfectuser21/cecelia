@@ -25,15 +25,24 @@ if [[ "$GIT_DIR" == *"worktrees"* ]]; then
     DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
     DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock.${CURRENT_BRANCH}"
     
+    # 计算 tty（避免在 heredoc 内调用 tty 命令导致"not a tty\nnone"双行问题）
+    _LOCK_TTY=$(tty 2>/dev/null) || _LOCK_TTY="none"
     if [[ -f "$DEV_MODE_FILE" && ! -f "$DEV_LOCK_FILE" ]]; then
-        cp "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
-        echo "✅ .dev-lock 已重建"
+        _branch_from_mode=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2- | xargs 2>/dev/null || echo "$CURRENT_BRANCH")
+        cat > "$DEV_LOCK_FILE" <<LOCKEOF
+dev
+branch: ${_branch_from_mode:-$CURRENT_BRANCH}
+session_id: headed-$(date +%s)-$$-${_branch_from_mode:-$CURRENT_BRANCH}
+tty: ${_LOCK_TTY}
+created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+LOCKEOF
+        echo "✅ .dev-lock 已重建（含 session 字段）"
     elif [[ ! -f "$DEV_LOCK_FILE" ]]; then
         cat > "$DEV_LOCK_FILE" <<LOCKEOF
 dev
 branch: ${CURRENT_BRANCH}
 session_id: headed-$(date +%s)-$$-${CURRENT_BRANCH}
-tty: $(tty 2>/dev/null || echo "none")
+tty: ${_LOCK_TTY}
 created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 LOCKEOF
         echo "✅ .dev-lock 已创建"
