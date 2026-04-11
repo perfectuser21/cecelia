@@ -135,7 +135,7 @@ if echo "$FILE_PATH" | grep -qE '(task-card|DoD|\.task-[^/]+)\.md$'; then
 fi
 
 # ===== 分支检查：cp-* 为唯一合法格式 =====
-if [[ "${CURRENT_BRANCH}" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
+if [[ "${CURRENT_BRANCH}" =~ ^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$ ]]; then
 
     # Worktree 检测（双重保险）
     GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null || echo "")

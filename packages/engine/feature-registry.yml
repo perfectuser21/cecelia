@@ -6,6 +6,12 @@ version: "1.0.0"
 updated: "2026-04-09"
 
 changelog:
+  - version: "14.5.3"
+    date: "2026-04-11"
+    changes:
+      - "fix(stop-dev): dev-lock 丢失时 fail-closed（扫描 dev-mode 未完成项则 block）"
+      - "fix(branch-protect): 正则支持 8-10 位时间戳（兼容 Brain 自动派发分支格式）"
+      - "fix(00-worktree-auto): dev-lock 重建时生成含 session_id/tty 字段的规范文件"
   - version: "14.5.2"
     date: "2026-04-11"
     skill: "dev"

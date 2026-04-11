@@ -73,7 +73,27 @@ while IFS= read -r _dir; do
     done
 done < <(_collect_search_dirs "$PROJECT_ROOT")
 
-[[ -z "$DEV_LOCK_FILE" ]] && exit 0
+# dev-lock 未找到 — fail-closed：扫描当前分支的 dev-mode 是否有未完成项
+if [[ -z "$DEV_LOCK_FILE" ]]; then
+    _cur_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    _orphan_mode=""
+    while IFS= read -r _dir; do
+        for _mf in "$_dir"/.dev-mode.*; do
+            [[ -f "$_mf" ]] || continue
+            [[ "$(head -1 "$_mf" 2>/dev/null)" == "dev" ]] || continue
+            grep -q "cleanup_done: true" "$_mf" 2>/dev/null && continue
+            _mf_branch=$(grep "^branch:" "$_mf" 2>/dev/null | awk '{print $2}' || echo "")
+            [[ -n "$_mf_branch" && "$_mf_branch" == "$_cur_branch" ]] || continue
+            _orphan_mode="$_mf"
+            break 2
+        done
+    done < <(_collect_search_dirs "$PROJECT_ROOT")
+    if [[ -n "$_orphan_mode" ]]; then
+        jq -n --arg f "$(basename "$_orphan_mode")"             '{"decision":"block","reason":"dev-lock 丢失但 dev-mode 有未完成项（\($f)），禁止退出。请执行 Step 00 重建 .dev-lock 后继续"}'
+        exit 2
+    fi
+    exit 0
+fi
 
 # 并发锁（per-worktree）
 _git_dir="$(git -C "$MATCHED_DIR" rev-parse --git-dir 2>/dev/null || echo "/tmp")"
