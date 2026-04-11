@@ -1,4 +1,5 @@
 # Node.js
+node_modules
 node_modules/
 
 # Environment (ALL .env files except .env.example)
