@@ -51,6 +51,7 @@ const STATUS_ICON: Record<string, string> = {
   not_started: '—',
   canceled: '🚫',
   quarantined: '🔒',
+  paused: '⏸',
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -61,6 +62,7 @@ const STATUS_COLOR: Record<string, string> = {
   not_started: 'text-slate-400 dark:text-slate-500',
   canceled: 'text-slate-500 dark:text-slate-400',
   quarantined: 'text-orange-600 dark:text-orange-400',
+  paused: 'text-violet-600 dark:text-violet-400',
 };
 
 const STATUS_BG: Record<string, string> = {
@@ -71,6 +73,7 @@ const STATUS_BG: Record<string, string> = {
   not_started: 'bg-slate-50 border-slate-200 dark:bg-slate-800/30 dark:border-slate-700',
   canceled: 'bg-slate-50 border-slate-200 dark:bg-slate-800/30 dark:border-slate-700',
   quarantined: 'bg-orange-50 border-orange-200 dark:bg-orange-950/30 dark:border-orange-800',
+  paused: 'bg-violet-50 border-violet-200 dark:bg-violet-950/30 dark:border-violet-800',
 };
 
 const VERDICT_COLOR: Record<string, string> = {
@@ -78,6 +81,8 @@ const VERDICT_COLOR: Record<string, string> = {
   failed: 'text-red-600 dark:text-red-400',
   in_progress: 'text-blue-600 dark:text-blue-400',
   pending: 'text-slate-500 dark:text-slate-400',
+  paused: 'text-violet-600 dark:text-violet-400',
+  completed: 'text-emerald-600 dark:text-emerald-400',
 };
 
 const VERDICT_LABEL: Record<string, string> = {
@@ -85,6 +90,8 @@ const VERDICT_LABEL: Record<string, string> = {
   failed: '失败',
   in_progress: '进行中',
   pending: '待开始',
+  paused: '已暂停',
+  completed: '已完成',
 };
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
