@@ -633,6 +633,8 @@ describe('H: Haiku 独立模式', () => {
 });
 
 // ─── Auth Source 隔离：proactiveTokenCheck 不清除 api_error 熔断 ─────────────
+// 注：使用顶层 vi.mock('fs', ...) 和 vi.mock('../db.js', ...)，避免重复 mock 导致
+// vitest 1.x hoisting 覆盖顶层 mock 引发 H2 等测试的跨测试状态污染
 
 describe('AUTH_SOURCE: proactiveTokenCheck 按 source 区分清除逻辑', () => {
   beforeEach(() => {
@@ -640,21 +642,7 @@ describe('AUTH_SOURCE: proactiveTokenCheck 按 source 区分清除逻辑', () =>
   });
 
   it('AS1: api_error 设置的 auth_failed，token 有效时不被 proactiveTokenCheck 清除', async () => {
-    // token 有效（1年后过期）
-    vi.mock('fs', async (importOriginal) => {
-      const actual = await importOriginal();
-      return {
-        ...actual,
-        readFileSync: vi.fn((path, ...args) => {
-          if (typeof path === 'string' && path.includes('/.claude-') && path.includes('/.credentials.json')) {
-            return JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() + 365 * 24 * 3600 * 1000 } });
-          }
-          return actual.readFileSync(path, ...args);
-        }),
-      };
-    });
-    vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
-
+    // 顶层 fs mock 已保证所有账号 token 有效（1年后过期）
     const { markAuthFailure, isAuthFailed, proactiveTokenCheck, _resetAuthFailures } = await import('../account-usage.js');
     _resetAuthFailures();
 
@@ -668,21 +656,7 @@ describe('AUTH_SOURCE: proactiveTokenCheck 按 source 区分清除逻辑', () =>
   });
 
   it('AS2: token_expired 设置的 auth_failed，token 有效时被 proactiveTokenCheck 清除', async () => {
-    // token 有效（1年后过期）
-    vi.mock('fs', async (importOriginal) => {
-      const actual = await importOriginal();
-      return {
-        ...actual,
-        readFileSync: vi.fn((path, ...args) => {
-          if (typeof path === 'string' && path.includes('/.claude-') && path.includes('/.credentials.json')) {
-            return JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() + 365 * 24 * 3600 * 1000 } });
-          }
-          return actual.readFileSync(path, ...args);
-        }),
-      };
-    });
-    vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
-
+    // 顶层 fs mock 已保证所有账号 token 有效（1年后过期）
     const { markAuthFailure, isAuthFailed, proactiveTokenCheck, _resetAuthFailures } = await import('../account-usage.js');
     _resetAuthFailures();
 
@@ -695,17 +669,12 @@ describe('AUTH_SOURCE: proactiveTokenCheck 按 source 区分清除逻辑', () =>
     expect(isAuthFailed('account2')).toBe(false);
   });
 
-  it('AS3: markAuthFailure 默认 source 为 api_error', async () => {
-    vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
-
-    const { markAuthFailure, _resetAuthFailures } = await import('../account-usage.js');
+  it('AS3: markAuthFailure 默认 source 为 api_error，isAuthFailed 返回 true', async () => {
+    const { markAuthFailure, isAuthFailed, _resetAuthFailures } = await import('../account-usage.js');
     _resetAuthFailures();
 
-    // 不传 source，应默认 api_error
+    // 不传 source，应默认 api_error，isAuthFailed 返回 true
     markAuthFailure('account3');
-    // 验证：导入内部 Map 取不到，但通过行为验证：token 有效时不清除
-    // （内部实现验证：markAuthFailure 不报错，isAuthFailed 返回 true）
-    const { isAuthFailed } = await import('../account-usage.js');
     expect(isAuthFailed('account3')).toBe(true);
   });
 });
