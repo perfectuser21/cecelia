@@ -1,8 +1,0 @@
-dev
-branch: cp-04111430-engine-dynamic-tests
-started: 2026-04-11T14:44:54+08:00
-step_0_worktree: done
-step_1_spec: done
-step_2_code: pending
-step_3_integrate: pending
-step_4_ship: pending
