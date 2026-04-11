@@ -87,7 +87,8 @@ describe('GET /analytics/collection-dashboard', () => {
       ]});
 
     const handler = getHandler('/analytics/collection-dashboard');
-    const { req, res } = mockReqRes({ days: '7' });
+    // 使用 90 天窗口，确保 mock 的固定日期（2026-04-05/06）永远在范围内
+    const { req, res } = mockReqRes({ days: '90' });
     await handler(req, res);
 
     expect(res._status).toBe(200);
