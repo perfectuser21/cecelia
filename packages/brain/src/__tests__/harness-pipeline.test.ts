@@ -85,9 +85,9 @@ describe('harness pipeline — 幂等保护', () => {
 });
 
 describe('harness pipeline — 模型配置', () => {
-  it('harness_report 使用 Haiku（report 只是汇总，不需要 Sonnet）', () => {
-    expect(modelProfileSrc).toMatch(/harness_report[^}]*haiku/);
-    expect(modelProfileSrc).not.toMatch(/harness_report[^}]*sonnet-4-6/);
+  it('harness_report 使用 Sonnet（与 generate/fix 保持一致）', () => {
+    expect(modelProfileSrc).toMatch(/harness_report[^}]*claude-sonnet-4-6/);
+    expect(modelProfileSrc).not.toMatch(/harness_report[^}]*haiku/);
   });
 
   it('harness GAN 三件套（planner/propose/review）使用 Opus', () => {
