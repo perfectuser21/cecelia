@@ -66,6 +66,6 @@ content.txt (可选) + image.jpg
 bash scripts/batch-publish-kuaishou.sh YYYY-MM-DD
 
 # 单条发布
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
   node scripts/publish-kuaishou-image.cjs --content ~/.kuaishou-queue/2026-03-07/image-1/
 ```

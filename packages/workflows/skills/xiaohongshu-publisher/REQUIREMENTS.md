@@ -72,6 +72,6 @@ title.txt (必需) + content.txt (可选) + image.jpg
 bash scripts/batch-publish-xiaohongshu.sh YYYY-MM-DD
 
 # 单条发布
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
   node scripts/publish-xiaohongshu-image.cjs --content ~/.xiaohongshu-queue/2026-03-08/image-1/
 ```

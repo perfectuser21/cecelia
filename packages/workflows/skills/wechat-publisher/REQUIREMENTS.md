@@ -76,11 +76,11 @@ article-1/
 node check-wechat-token.cjs
 
 # 内容目录发布
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
   node publish-wechat-article.cjs --content-dir ~/.wechat-queue/2026-03-10/article-1/
 
 # 直接参数发布
-NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
   node publish-wechat-article.cjs \
   --title "今日分享" \
   --content "<p>内容</p>" \
