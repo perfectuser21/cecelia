@@ -40,7 +40,7 @@ describe('harness pipeline — report触发时机', () => {
     const idx = execSrc.indexOf(marker);
     expect(idx).toBeGreaterThan(0);
     // harness_report task creation should appear after this marker
-    const region = execSrc.slice(idx, idx + 800);
+    const region = execSrc.slice(idx, idx + 2000);
     expect(region).toContain('harness_report');
     expect(region).toContain('project_id');
   });

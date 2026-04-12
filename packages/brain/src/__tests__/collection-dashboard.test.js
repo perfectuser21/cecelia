@@ -71,11 +71,19 @@ describe('GET /analytics/collection-dashboard', () => {
 
   it('有数据时返回正确结构', async () => {
     // 模拟 3 次 pool.query 调用：daily_counts / task_stats / last_collected
+    // 使用动态日期（上海时区）确保落在查询的 days=7 窗口内
+    const fmt = (d) => {
+      const tz = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+      return `${tz.getFullYear()}-${String(tz.getMonth()+1).padStart(2,'0')}-${String(tz.getDate()).padStart(2,'0')}`;
+    };
+    const today = new Date();
+    const d1 = new Date(today); d1.setDate(d1.getDate() - 1);
+    const d2 = new Date(today); d2.setDate(d2.getDate() - 2);
     pool.query
       .mockResolvedValueOnce({ rows: [
-        { platform: 'douyin', day: '2026-04-05', count: 10 },
-        { platform: 'douyin', day: '2026-04-06', count: 8 },
-        { platform: 'weibo',  day: '2026-04-06', count: 3 },
+        { platform: 'douyin', day: fmt(d2), count: 10 },
+        { platform: 'douyin', day: fmt(d1), count: 8 },
+        { platform: 'weibo',  day: fmt(d1), count: 3 },
       ]})
       .mockResolvedValueOnce({ rows: [
         { platform: 'douyin', total_tasks: 2, failed_tasks: 0, completed_tasks: 2, avg_latency_min: 5.2 },

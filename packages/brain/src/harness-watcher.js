@@ -325,9 +325,16 @@ function _checkDeployStatus() {
       return latest.conclusion === 'success' ? 'success' : 'failure';
     }
     return 'pending';
-  } catch {
-    // gh CLI 失败（无 deploy 工作流等）→ 认为 deploy 已成功，直接触发 report
-    return 'success';
+  } catch (err) {
+    // no deploy workflow → 视为成功（无需部署验证）
+    const errMsg = err.stderr?.toString() || err.message || '';
+    if (errMsg.includes('could not find any workflows') || errMsg.includes('no workflow') || errMsg.includes('not found')) {
+      console.log('[harness-watcher] _checkDeployStatus: no deploy workflow found, treating as success');
+      return 'success';
+    }
+    // 真错误（网络/认证/gh CLI 缺失）→ 返回 pending 让调用方重试
+    console.error(`[harness-watcher] _checkDeployStatus error (will retry): ${errMsg}`);
+    return 'pending';
   }
 }
 
