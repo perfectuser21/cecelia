@@ -1331,9 +1331,9 @@ function getSkillForTaskType(taskType, payload) {
     'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
     'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
     'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
-    // 注意：sprint_generate/sprint_fix/sprint_evaluate 不在此处
-    // 它们由 preparePrompt() 提前路由（_prepareSprintPrompt / _prepareSprintEvaluatePrompt），
-    // 不经过 skillMap。实际路由见 task-router.js LOCATION_MAP。
+    // 注意：harness_generate/harness_fix 等不在此处
+    // 它们由 preparePrompt() 提前路由，不经过 skillMap。
+    // 实际路由见 task-router.js LOCATION_MAP。
   };
   return skillMap[taskType] || '/dev';
 }
@@ -1623,12 +1623,8 @@ function buildSystemContextBlock() {
 // ─── Harness：account1 强绑定列表 ─────────────────────────────────────────────
 
 const SPRINT_ACCOUNT1_TASK_TYPES = [
-  // v3.x 旧类型（向后兼容）
-  'sprint_contract_propose', 'sprint_contract_review',
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report',
-  // v4.0 新类型
   'harness_contract_propose', 'harness_contract_review',
-  'harness_generate', 'harness_evaluate', 'harness_fix', 'harness_report',
+  'harness_generate', 'harness_fix', 'harness_report',
   'harness_planner', 'harness_ci_watch', 'harness_deploy_watch',
 ];
 

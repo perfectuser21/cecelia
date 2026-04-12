@@ -91,10 +91,6 @@ describe('preparePrompt 重构：路由表覆盖关键 taskType', () => {
     expect(executorSrc).toContain("project_plan");
   });
 
-  it('routes 对象包含 sprint_evaluate', () => {
-    expect(executorSrc).toContain("sprint_evaluate");
-  });
-
   it('routes 对象包含 talk', () => {
     expect(executorSrc).toContain("talk");
   });
@@ -124,9 +120,7 @@ describe('preparePrompt 重构：主函数为 dispatcher 结构', () => {
     expect(executorSrc).toContain("_prepareDecompositionPrompt(task)");
   });
 
-  it('preparePrompt 包含 sprint/harness 分支', () => {
-    expect(executorSrc).toContain("sprint_generate");
-    expect(executorSrc).toContain("sprint_fix");
+  it('preparePrompt 包含 harness 分支', () => {
     expect(executorSrc).toContain("harness_mode");
     expect(executorSrc).toContain("_prepareSprintPrompt(task, taskType)");
   });

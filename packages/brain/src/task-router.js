@@ -31,14 +31,13 @@ const VALID_TASK_TYPES = [
   'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
   // Harness v3.x 旧类型（向后兼容）
   'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report',
+  'sprint_generate', 'sprint_fix', 'sprint_report',
   // Harness v4.0：sprint_* → harness_*，新增 CI/Deploy watch
   'harness_planner',          // Layer 1: 需求→PRD
   'harness_contract_propose', // Layer 2a: Generator 提合同草案
   'harness_contract_review',  // Layer 2b: Evaluator 挑战合同 → APPROVED/REVISION
   'harness_generate',         // Layer 3a: Generator 写代码
   'harness_ci_watch',         // Layer 3b: Brain tick 轮询 CI（内联，不派 agent）
-  'harness_evaluate',         // Layer 3c: Evaluator 验证 PR diff（读 diff vs 合同）
   'harness_fix',              // Layer 3d: Generator 修复
   'harness_deploy_watch',     // Layer 3e: Brain tick 轮询 CD（内联，不派 agent）
   'harness_report',           // Layer 4: 最终报告
@@ -111,7 +110,6 @@ const SKILL_WHITELIST = {
   'sprint_contract_propose': '/sprint-contract-proposer',
   'sprint_contract_review': '/sprint-contract-reviewer',
   'sprint_generate': '/dev',
-  'sprint_evaluate': '/sprint-evaluator',
   'sprint_fix': '/dev',
   'sprint_report': '/sprint-report',
   // Harness v4.0 新类型
@@ -120,7 +118,6 @@ const SKILL_WHITELIST = {
   'harness_contract_review': '/harness-contract-reviewer',    // Layer 2b: 挑战合同
   'harness_generate': '/harness-generator',                   // Layer 3a: Generator 写代码
   'harness_ci_watch': '/_internal',                           // Brain tick 内联处理（不派 agent）
-  'harness_evaluate': '/harness-evaluator',                   // Layer 3c: Evaluator 验证 PR diff
   'harness_fix': '/harness-generator',                        // Layer 3d: Generator 修复（同 generator skill）
   'harness_deploy_watch': '/_internal',                       // Brain tick 内联处理（不派 agent）
   'harness_report': '/harness-report',                        // Layer 4: 最终报告
@@ -232,7 +229,6 @@ const LOCATION_MAP = {
   'sprint_contract_propose': 'us',
   'sprint_contract_review': 'us',
   'sprint_generate': 'us',
-  'sprint_evaluate': 'us',
   'sprint_fix': 'us',
   'sprint_report': 'us',
   // Harness v4.0 → US 本机
@@ -241,7 +237,6 @@ const LOCATION_MAP = {
   'harness_contract_review': 'us',    // Layer 2b: Evaluator 挑战合同 → US
   'harness_generate': 'us',           // Layer 3a: Generator 写代码 → US
   'harness_ci_watch': 'us',           // Layer 3b: CI 监控（Brain tick 内联处理）→ US
-  'harness_evaluate': 'us',           // Layer 3c: Evaluator 验证 PR diff → US
   'harness_fix': 'us',                // Layer 3d: Generator 修复 → US
   'harness_deploy_watch': 'us',       // Layer 3e: Deploy 监控（Brain tick 内联处理）→ US
   'harness_report': 'us',             // Layer 4: 最终报告 → US
@@ -327,7 +322,6 @@ const TASK_REQUIREMENTS = {
   'harness_contract_review':  ['has_git'],
   'harness_generate':         ['has_git'],
   'harness_ci_watch':         ['has_git'],
-  'harness_evaluate':         ['has_git'],
   'harness_fix':              ['has_git'],
   'harness_deploy_watch':     ['has_git'],
   'harness_report':           ['has_git'],

@@ -30,13 +30,13 @@ import { validatePolicyJson } from './policy-validator.js';
 // Configuration
 const MONITOR_INTERVAL_MS = 30000; // 30 seconds
 const STUCK_THRESHOLD_MINUTES = 5;
-// Harness v2.0 pipeline tasks run much longer than normal tasks:
-// sprint_generate/sprint_fix (Generator): ~13 min, sprint_evaluate (Evaluator): ~4 min
+// Harness pipeline tasks run much longer than normal tasks:
+// harness_generate/harness_fix (Generator): ~13 min, harness evaluator: ~4 min
 // Use a 30-minute threshold to avoid false "stuck" detection during legitimate runs.
 const HARNESS_STUCK_THRESHOLD_MINUTES = 30;
 const HARNESS_TASK_TYPES = [
-  'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
+  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
+  'harness_generate', 'harness_fix', 'arch_review'
 ];
 const FAILURE_SPIKE_THRESHOLD = 0.3; // 30% failure rate in last hour
 const RESOURCE_PRESSURE_THRESHOLD = 0.85;
@@ -51,7 +51,7 @@ let _cycleCount = 0;
  * Detector: Stuck Runs
  * 检测卡住的任务（心跳超时或运行时间过长）
  *
- * Harness v2.0 任务（sprint_generate/sprint_fix/sprint_evaluate 等）运行时间远超 5 分钟，
+ * Harness 任务（harness_generate/harness_fix 等）运行时间远超 5 分钟，
  * 使用独立的 HARNESS_STUCK_THRESHOLD_MINUTES（30 分钟）避免误判。
  */
 async function detectStuckRuns() {
@@ -176,7 +176,7 @@ async function handleStuckRun(stuck) {
     'harness_planner', 'harness_contract_propose', 'harness_contract_review',
     'harness_generate', 'harness_fix', 'harness_report',
     'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-    'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report'
+    'sprint_generate', 'sprint_fix', 'sprint_report'
   ]);
 
   // 查询任务类型
@@ -220,6 +220,32 @@ async function handleStuckRun(stuck) {
         [stuck.run_id]
       );
       return; // 跳过重启逻辑
+    }
+    // 回调调和：检查 run 是否已结束但回调丢失
+    const runCheck = await pool.query(
+      `SELECT status, ts_end FROM run_events WHERE run_id = $1 ORDER BY ts_start DESC LIMIT 1`,
+      [stuck.run_id]
+    );
+    const runStatus = runCheck.rows[0];
+    if (runStatus && (runStatus.ts_end !== null || runStatus.status === 'completed' || runStatus.status === 'failed')) {
+      console.log(
+        `[Monitor] Harness reconciliation: task ${stuck.task_id} (${taskType}) run already ended ` +
+        `(status=${runStatus.status}), simulating callback with result=null to trigger retry chain`
+      );
+      await pool.query(
+        `UPDATE tasks SET status = 'completed', result = NULL WHERE id = $1`,
+        [stuck.task_id]
+      );
+      await pool.query(
+        `UPDATE run_events
+         SET status = 'completed',
+             ts_end = NOW(),
+             reason_code = 'MONITOR_CALLBACK_RECONCILED',
+             reason_kind = 'RECONCILED'
+         WHERE run_id = $1 AND status = 'running'`,
+        [stuck.run_id]
+      );
+      return;
     }
     console.log(`[Monitor] Harness chain: task ${stuck.task_id} (${taskType}) has no downstream tasks, proceeding with normal stuck handling`);
   }
