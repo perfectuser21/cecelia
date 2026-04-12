@@ -1585,6 +1585,28 @@ ${resultStr.substring(0, 2000)}
       // Layer 3b: CI 通过 → auto-merge + harness_report（CI 即 Evaluator，三层架构）
       // Layer 3c: CI 失败 → harness_fix（Generator 修代码重走 CI）
 
+      // 辅助：检查 PR 的 CI 状态
+      async function checkPrCiStatus(prUrl) {
+        if (!prUrl) return null; // 无法检查
+        try {
+          const prNumber = prUrl.match(/\/pull\/(\d+)/)?.[1];
+          if (!prNumber) return null;
+          const output = execSync(
+            `gh pr checks ${prNumber} --json name,state 2>/dev/null || echo "[]"`,
+            { encoding: 'utf-8', timeout: 15000 }
+          ).trim();
+          const checks = JSON.parse(output);
+          if (!Array.isArray(checks) || checks.length === 0) return null; // 无 CI 检查
+          const failed = checks.some(c => c.state === 'FAILURE' || c.state === 'ERROR');
+          const pending = checks.some(c => c.state === 'PENDING');
+          if (failed) return false;
+          if (pending) return null; // 还在跑
+          return true; // 全部通过
+        } catch {
+          return null; // 检查失败，不阻塞
+        }
+      }
+
       // 辅助：从任意格式 result（对象/字符串/嵌套）中提取 verdict 字段
       function extractVerdictFromResult(res, validVerdicts) {
         const _check = (v) => {
@@ -1706,6 +1728,26 @@ ${resultStr.substring(0, 2000)}
           } else if (typeof result === 'string') {
             const branchMatch = result.match(/"branch"\s*:\s*"([^"]+)"/);
             if (branchMatch) plannerBranch = branchMatch[1];
+          }
+          // plannerBranch fallback: Planner crash 时从 git 分支名推断
+          if (!plannerBranch) {
+            try {
+              const branches = execSync(
+                `git branch -r --list "origin/cp-*" --sort=-committerdate | head -10`,
+                { encoding: 'utf-8', timeout: 5000 }
+              ).trim().split('\n').map(b => b.trim());
+              const plannerIdPrefix = task_id.substring(0, 8);
+              const match = branches.find(b => b.includes(plannerIdPrefix));
+              if (match) {
+                plannerBranch = match.replace('origin/', '');
+                console.log(`[execution-callback] harness: plannerBranch fallback found: ${plannerBranch} (from task_id prefix ${plannerIdPrefix})`);
+              }
+            } catch (branchErr) {
+              console.warn(`[execution-callback] harness: plannerBranch fallback failed: ${branchErr.message}`);
+            }
+          }
+          if (!plannerBranch) {
+            console.error(`[execution-callback] harness: plannerBranch is null for ${harnessType} ${task_id}, Proposer may fail to locate PRD`);
           }
           const proposeType = harnessType === 'harness_planner' ? 'harness_contract_propose' : 'sprint_contract_propose';
           // Proposer 去重：同 planner_task_id 已有 queued/in_progress Proposer 时跳过创建，防止重复派发
@@ -2066,26 +2108,57 @@ ${resultStr.substring(0, 2000)}
 
           // Bug Fix: harness_report 只在最后一个 WS 完成时创建（避免多 WS 时 W2/W3 PR 缺失）
           if (currentWsIdx === totalWsCount) {
-            await createHarnessTask({
-              title: `[Report] ${plannerShort}`,
-              description: `/dev 完成（CI + 合并），生成 Harness 报告。\n原始 harness_generate task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              task_type: 'harness_report',
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                pr_url: prUrl,
-                dev_task_id: task_id,
-                planner_task_id: harnessPayload.planner_task_id,
-                contract_branch: harnessPayload.contract_branch,
-                // Bug Fix: 传入 project_id 供 Report skill 查询 DB 关联信息
-                project_id: harnessTask.project_id,
-                eval_round: 1,
-                harness_mode: true
+            // CI 状态检查：PR 存在时验证 CI 是否通过，失败则走 harness_fix
+            let ciCheckFailed = false;
+            if (prUrl) {
+              const ciPassed = await checkPrCiStatus(prUrl);
+              if (ciPassed === false) {
+                ciCheckFailed = true;
+                console.log(`[execution-callback] harness: harness_generate ${task_id} CI failed → harness_fix`);
+                await createHarnessTask({
+                  title: `[Fix] CI 失败 — ${plannerShort}`,
+                  description: `Generator PR CI 失败，自动修复。\npr_url: ${prUrl}`,
+                  priority: 'P1',
+                  project_id: harnessTask.project_id,
+                  goal_id: harnessTask.goal_id,
+                  task_type: 'harness_fix',
+                  trigger_source: 'execution_callback_harness',
+                  payload: {
+                    sprint_dir: harnessPayload.sprint_dir,
+                    dev_task_id: task_id,
+                    planner_task_id: harnessPayload.planner_task_id,
+                    planner_branch: harnessPayload.planner_branch || null,
+                    contract_branch: harnessPayload.contract_branch || null,
+                    pr_url: prUrl,
+                    eval_round: 1,
+                    ci_fail_type: 'ci_failed_after_generate',
+                    harness_mode: true,
+                  },
+                });
               }
-            });
-            console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_report created (pr_url=${prUrl})`);
+            }
+            if (!ciCheckFailed) {
+              await createHarnessTask({
+                title: `[Report] ${plannerShort}`,
+                description: `/dev 完成（CI + 合并），生成 Harness 报告。\n原始 harness_generate task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                task_type: 'harness_report',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  pr_url: prUrl,
+                  dev_task_id: task_id,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  contract_branch: harnessPayload.contract_branch,
+                  // Bug Fix: 传入 project_id 供 Report skill 查询 DB 关联信息
+                  project_id: harnessTask.project_id,
+                  eval_round: 1,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_report created (pr_url=${prUrl})`);
+            }
           } else {
             console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount} 完成，等待后续 WS，暂不创建 report`);
           }
@@ -2216,25 +2289,56 @@ ${resultStr.substring(0, 2000)}
             if (prMatch) prUrl = prMatch[0];
           }
           const evalRound = harnessPayload.eval_round || 1;
-          await createHarnessTask({
-            title: `[Report] Fix-R${evalRound} — ${plannerShort}`,
-            description: `/dev 修复完成（CI + 合并），生成 Harness 报告。\n原始 harness_fix task_id: ${task_id}`,
-            priority: 'P1',
-            project_id: harnessTask.project_id,
-            goal_id: harnessTask.goal_id,
-            task_type: 'harness_report',
-            trigger_source: 'execution_callback_harness',
-            payload: {
-              sprint_dir: harnessPayload.sprint_dir,
-              pr_url: prUrl,
-              dev_task_id: harnessPayload.dev_task_id,
-              planner_task_id: harnessPayload.planner_task_id,
-              contract_branch: harnessPayload.contract_branch,
-              eval_round: evalRound,
-              harness_mode: true
+          // CI 状态检查：fix 完成后验证 CI 是否通过
+          let fixCiCheckFailed = false;
+          if (prUrl) {
+            const ciPassed = await checkPrCiStatus(prUrl);
+            if (ciPassed === false && evalRound < 5) {
+              fixCiCheckFailed = true;
+              console.log(`[execution-callback] harness: harness_fix ${task_id} CI still failing → harness_fix retry (eval_round=${evalRound + 1})`);
+              await createHarnessTask({
+                title: `[Fix] CI 失败 R${evalRound + 1} — ${plannerShort}`,
+                description: `Fix 后 CI 仍然失败，继续修复。\npr_url: ${prUrl}`,
+                priority: 'P1',
+                project_id: harnessTask.project_id,
+                goal_id: harnessTask.goal_id,
+                task_type: 'harness_fix',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  sprint_dir: harnessPayload.sprint_dir,
+                  dev_task_id: harnessPayload.dev_task_id || task_id,
+                  planner_task_id: harnessPayload.planner_task_id,
+                  planner_branch: harnessPayload.planner_branch || null,
+                  contract_branch: harnessPayload.contract_branch || null,
+                  pr_url: prUrl,
+                  eval_round: evalRound + 1,
+                  ci_fail_type: 'ci_failed_after_fix',
+                  harness_mode: true,
+                },
+              });
             }
-          });
-          console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_report created (eval_round=${evalRound}, pr_url=${prUrl})`);
+          }
+          if (!fixCiCheckFailed) {
+            await createHarnessTask({
+              title: `[Report] Fix-R${evalRound} — ${plannerShort}`,
+              description: `/dev 修复完成（CI + 合并），生成 Harness 报告。\n原始 harness_fix task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_report',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                pr_url: prUrl,
+                dev_task_id: harnessPayload.dev_task_id,
+                planner_task_id: harnessPayload.planner_task_id,
+                contract_branch: harnessPayload.contract_branch,
+                eval_round: evalRound,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_report created (eval_round=${evalRound}, pr_url=${prUrl})`);
+          }
         }
 
         // harness_report 失败自动重试（result=null 表示 session 崩溃）
@@ -2287,35 +2391,45 @@ ${resultStr.substring(0, 2000)}
           console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate created (round=${harnessPayload.eval_round || 1})`);
         }
 
-        if (harnessType === 'harness_report') {
-          if (result === null) {
-            if (harnessPayload.retry_count >= 3) {
-              console.error(`[execution-callback] harness_report retry_count >= 3, pipeline failed. planner=${harnessPayload.planner_task_id}`);
-              return;
-            }
-            const nextRetryCount = (harnessPayload.retry_count || 0) + 1;
-            await createHarnessTask({
-              title: `[Report] Retry-${nextRetryCount} — ${plannerShort}`,
-              description: `harness_report session 崩溃/无输出，自动重试（retry_count=${nextRetryCount}）。\n原始 harness_report task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: 'harness_report',
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                planner_task_id: harnessPayload.planner_task_id,
-                pr_url: harnessPayload.pr_url,
-                retry_count: nextRetryCount,
-                contract_branch: harnessPayload.contract_branch,
-                harness_mode: true
-              }
-            });
-            console.log(`[execution-callback] harness_report retry created (retry_count=${nextRetryCount}, planner=${harnessPayload.planner_task_id})`);
-          }
-        }
       } catch (harnessErr) {
         console.error(`[execution-callback] harness loop error (non-fatal): ${harnessErr.message}`, harnessErr.stack);
+      }
+
+      // harness_report_failed_retry: AI Failed 时也重试（不只 session crash）
+      if (newStatus === 'failed') {
+        try {
+          const failedTaskRow = await pool.query(
+            'SELECT task_type, payload, project_id, goal_id FROM tasks WHERE id = $1',
+            [task_id]
+          );
+          const failedTask = failedTaskRow.rows[0];
+          if (failedTask?.task_type === 'harness_report') {
+            const failedPayload = failedTask.payload || {};
+            const retryCount = failedPayload.retry_count || 0;
+            if (retryCount < 3) {
+              const { createTask: _createFailedRetry } = await import('../actions.js');
+              await _createFailedRetry({
+                title: `[Report] FailRetry-${retryCount + 1} — ${(failedPayload.planner_task_id || task_id).substring(0, 8)}`,
+                description: `harness_report AI Failed（非 crash），自动重试 #${retryCount + 1}。\n原始 task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: failedTask.project_id,
+                goal_id: failedTask.goal_id,
+                task_type: 'harness_report',
+                trigger_source: 'execution_callback_harness',
+                payload: {
+                  ...failedPayload,
+                  retry_count: retryCount + 1,
+                  harness_mode: true
+                }
+              });
+              console.log(`[execution-callback] harness_report_failed_retry: task ${task_id} → retry #${retryCount + 1} created`);
+            } else {
+              console.error(`[execution-callback] harness_report_failed_retry: task ${task_id} retry exhausted (${retryCount} >= 3)`);
+            }
+          }
+        } catch (failRetryErr) {
+          console.error(`[execution-callback] harness_report_failed_retry error: ${failRetryErr.message}`);
+        }
       }
 
       // 5c9. 断链 #5: dev 完成 → 检查同 project 所有 dev 是否全完成 → 创建 code_review (Initiative 级别)
