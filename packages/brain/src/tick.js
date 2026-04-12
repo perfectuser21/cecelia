@@ -315,10 +315,14 @@ async function runTickSafe(source = 'loop', tickFn) {
 
   // Reentry guard: check if already running
   if (_tickRunning) {
-    // Timeout protection: skip this round to prevent concurrent ticks
+    // Timeout protection: if tick has been running > TICK_TIMEOUT_MS, force-release the lock
+    // 根因：doTick() 内部有 unresolved promise 时，finally 永远不执行，锁永不释放
+    // 修复：超时后强制释放，让下一轮 tick 能正常执行
     if (_tickLockTime && (Date.now() - _tickLockTime > TICK_TIMEOUT_MS)) {
-      console.warn(`[tick-loop] Tick still running after ${TICK_TIMEOUT_MS}ms timeout, skipping this round (source: ${source})`);
-      return { skipped: true, reason: 'tick_timeout_still_running', source };
+      console.warn(`[tick-loop] Tick stuck for ${Math.round((Date.now() - _tickLockTime) / 1000)}s (>${TICK_TIMEOUT_MS / 1000}s), FORCE-RELEASING lock (source: ${source})`);
+      _tickRunning = false;
+      _tickLockTime = null;
+      // 不 return — 继续执行本轮 tick
     } else {
       tickLog(`[tick-loop] Tick already running, skipping (source: ${source})`);
       return { skipped: true, reason: 'already_running', source };
