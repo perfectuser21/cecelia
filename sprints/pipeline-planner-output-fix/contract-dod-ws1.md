@@ -1,0 +1,10 @@
+# Contract DoD — Workstream 1: Planner branch 持久化 + pipeline-detail 数据补全
+
+- [ ] [BEHAVIOR] Planner 任务完成时，execution-callback 将 planner_branch 写入 tasks.result.branch 字段（JSONB merge）
+  Test: curl -sf "localhost:5221/api/brain/tasks?task_type=harness_planner&status=completed&limit=3" | node -e "const ts=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const ok=ts.filter(t=>t.result&&t.result.branch);if(ok.length===0)throw new Error('FAIL');console.log('PASS: '+ok.length+' tasks with branch')"
+- [ ] [BEHAVIOR] pipeline-detail API 对已完成 Planner 步骤返回非 null 的 output_content（含 sprint-prd.md 内容）
+  Test: manual:curl -sf "localhost:5221/api/brain/harness/pipeline-detail?planner_task_id=$(curl -sf 'localhost:5221/api/brain/tasks?task_type=harness_planner&status=completed&limit=1' | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'))[0]?.id||'')")" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const s=d.steps?.find(s=>s.task_type==='harness_planner');if(!s||!s.output_content)throw new Error('FAIL');console.log('PASS')"
+- [ ] [BEHAVIOR] pipeline-detail API 对 Propose 步骤返回来自 Planner branch 的 input_content
+  Test: manual:curl -sf "localhost:5221/api/brain/harness/pipeline-detail?planner_task_id=$(curl -sf 'localhost:5221/api/brain/tasks?task_type=harness_planner&status=completed&limit=1' | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'))[0]?.id||'')")" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const ps=d.steps?.find(s=>s.task_type==='harness_contract_propose');if(ps&&!ps.input_content)throw new Error('FAIL');console.log('PASS')"
+- [ ] [BEHAVIOR] 当 planner_branch 不存在时，pipeline-detail API 返回 HTTP 200 且对应字段为 null（优雅降级）
+  Test: manual:curl -sf -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/pipeline-detail?planner_task_id=00000000-0000-0000-0000-000000000000" | node -e "const c=require('fs').readFileSync('/dev/stdin','utf8').trim();if(c!=='200'&&c!=='404')throw new Error('FAIL: '+c);console.log('PASS: '+c)"
