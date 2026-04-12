@@ -22,6 +22,7 @@ export interface HarnessStage {
 }
 
 export interface HarnessPipeline {
+  planner_task_id: string;
   sprint_dir: string;
   title: string;
   sprint_goal: string;

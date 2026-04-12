@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   RefreshCw,
   CheckCircle2,
@@ -15,6 +16,7 @@ import {
   ChevronRight,
   GitBranch,
   ExternalLink,
+  ArrowRight,
 } from 'lucide-react';
 import { getHarnessPipelines, type HarnessPipeline, type HarnessStage, type HarnessStageStatus } from '../api/harness-pipeline.api';
 
@@ -120,6 +122,7 @@ function StageFlowBar({ stages }: { stages: HarnessStage[] }) {
 
 function PipelineCard({ pipeline }: { pipeline: HarnessPipeline }) {
   const [expanded, setExpanded] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl overflow-hidden">
@@ -170,11 +173,19 @@ function PipelineCard({ pipeline }: { pipeline: HarnessPipeline }) {
       {/* Expanded Detail */}
       {expanded && (
         <div className="border-t border-slate-100 dark:border-slate-700/50 px-5 py-4 space-y-2">
-          <div className="flex items-center gap-2 mb-3">
-            <GitBranch className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-              {pipeline.sprint_dir}
-            </span>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <GitBranch className="w-3.5 h-3.5 text-slate-400" />
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                {pipeline.sprint_dir}
+              </span>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); navigate(`/harness-pipeline/${pipeline.planner_task_id}`); }}
+              className="flex items-center gap-1 text-xs text-blue-500 dark:text-blue-400 hover:underline"
+            >
+              查看详情 <ArrowRight className="w-3 h-3" />
+            </button>
           </div>
 
           {pipeline.stages.map((stage) => (

@@ -303,7 +303,7 @@ export default function HarnessPipelineDetailPage() {
       {/* 头部导航 */}
       <div className="flex items-center gap-3 mb-6">
         <button
-          onClick={() => navigate('/pipeline')}
+          onClick={() => navigate('/harness-pipeline')}
           className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
         >
           &larr; Pipeline 列表
