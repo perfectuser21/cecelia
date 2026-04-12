@@ -168,6 +168,41 @@ describe('LiveMonitorPage v19', () => {
     expect(screen.getByText('步骤未知')).toBeInTheDocument();
   });
 
+  it('fetch 调用使用 /api/brain/projects（不再使用旧的 /api/tasks/projects）', () => {
+    renderWithRouter();
+    const calls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c: any[]) => c[0] as string);
+    const hasBrainProjects = calls.some((url) => url.includes('/api/brain/projects'));
+    const hasOldPath = calls.some((url) => url.includes('/api/tasks/projects'));
+    expect(hasBrainProjects).toBe(true);
+    expect(hasOldPath).toBe(false);
+  });
+
+  it('Projects 区块：okr_projects 返回 title/kr_id 时，归一化后正确显示项目名', async () => {
+    const brainProject = {
+      id: 'proj-1',
+      title: '测试项目标题',
+      kr_id: 'kr-999',
+      status: 'active',
+      parent_id: null,
+      created_at: '2026-04-01T00:00:00Z',
+      updated_at: '2026-04-01T00:00:00Z',
+      end_date: null,
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/brain/projects')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([brainProject]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+
+    await act(async () => { renderWithRouter(); });
+    await act(async () => {});
+
+    // 归一化后 name 应来自 title 字段
+    expect(screen.getByText('测试项目标题')).toBeInTheDocument();
+  });
+
   it('DevStepPanel: 非 dev 类型任务不显示在 DEV STEPS 面板', async () => {
     const nonDevTask = {
       id: 'test-task-3',

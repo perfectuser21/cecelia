@@ -930,7 +930,7 @@ function DevStepPanel({ tasks }: { tasks: BrainTask[] }) {
 
 // ── Projects by Area ──────────────────────────────────────────────
 
-const INACTIVE_STATUSES = new Set(['completed', 'archived', 'cancelled', 'done']);
+const INACTIVE_STATUSES = new Set(['completed', 'archived', 'cancelled', 'done', 'inactive']);
 
 function projStatusColor(s: string): string {
   if (s === 'in_progress' || s === 'active') return '#10b981';
@@ -1231,7 +1231,7 @@ export default function LiveMonitorPage() {
       fetch('/api/brain/tick/status').then(x => x.json()),
       fetch('/api/brain/tasks?status=in_progress').then(x => x.json()),
       fetch('/api/brain/tasks?status=queued').then(x => x.json()),
-      fetch('/api/tasks/projects').then(x => x.json()),
+      fetch('/api/brain/projects?limit=200').then(x => x.json()),
       fetch('/api/brain/cluster/status').then(x => x.json()),
       fetch('/api/v1/vps-monitor/stats').then(x => x.json()),
       fetch('/api/v1/vps-monitor/services').then(x => x.json()),
@@ -1243,7 +1243,15 @@ export default function LiveMonitorPage() {
     if (r[1].status === 'fulfilled') setTick(r[1].value);
     if (r[2].status === 'fulfilled') setActiveTasks(Array.isArray(r[2].value) ? r[2].value : []);
     if (r[3].status === 'fulfilled') setQueuedTasks(Array.isArray(r[3].value) ? r[3].value : []);
-    if (r[4].status === 'fulfilled' && Array.isArray(r[4].value)) setProjects(r[4].value);
+    if (r[4].status === 'fulfilled' && Array.isArray(r[4].value)) {
+      setProjects(r[4].value.map((p: any) => ({
+        ...p,
+        name: p.title ?? p.name ?? '',
+        type: p.type ?? (p.parent_id ? 'initiative' : 'project'),
+        goal_id: p.goal_id ?? p.kr_id ?? null,
+        deadline: p.deadline ?? p.end_date ?? null,
+      })));
+    }
     if (r[9].status === 'fulfilled') {
       const goals = Array.isArray(r[9].value) ? r[9].value : [];
       setAllGoals(
