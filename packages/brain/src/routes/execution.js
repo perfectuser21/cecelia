@@ -2214,13 +2214,29 @@ ${resultStr.substring(0, 2000)}
 
         // Layer 3c: harness_fix 完成 → 直接创建 harness_report（CI 由 /dev 自身保证）
         if (harnessType === 'harness_fix') {
-          let prUrl = pr_url || null;
+          // pr_url 提取：优先 payload（从上游传入），然后 callback result，最后 dev_records
+          let prUrl = harnessPayload.pr_url || pr_url || null;
           if (!prUrl && result !== null && typeof result === 'object') {
             prUrl = result.pr_url || result?.result?.pr_url || null;
           }
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
             if (prMatch) prUrl = prMatch[0];
+          }
+          // fallback: 从 dev_records 或 gh pr list 查
+          if (!prUrl) {
+            try {
+              const devRecRow = await pool.query('SELECT pr_url, branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [task_id]);
+              prUrl = devRecRow.rows[0]?.pr_url || null;
+              if (!prUrl && devRecRow.rows[0]?.branch) {
+                try {
+                  const ghOut = execSync(`gh pr list --head "${devRecRow.rows[0].branch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                  const ghPrs = JSON.parse(ghOut);
+                  if (ghPrs.length > 0) prUrl = ghPrs[0].url;
+                } catch {}
+              }
+              if (prUrl) console.log(`[execution-callback] harness_fix: pr_url recovered from dev_records/gh: ${prUrl}`);
+            } catch {}
           }
           const evalRound = harnessPayload.eval_round || 1;
           // CI 状态检查：fix 完成后验证 CI 是否通过
@@ -2284,6 +2300,21 @@ ${resultStr.substring(0, 2000)}
           if (!prUrl && result !== null && typeof result === 'object') {
             prUrl = result.pr_url || null;
           }
+          // fallback: 从 dev_task_id 的 dev_records 或 gh 查 PR
+          if (!prUrl && harnessPayload.dev_task_id) {
+            try {
+              const devRecRow = await pool.query('SELECT pr_url, branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [harnessPayload.dev_task_id]);
+              prUrl = devRecRow.rows[0]?.pr_url || null;
+              if (!prUrl && devRecRow.rows[0]?.branch) {
+                try {
+                  const ghOut = execSync(`gh pr list --head "${devRecRow.rows[0].branch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                  const ghPrs = JSON.parse(ghOut);
+                  if (ghPrs.length > 0) prUrl = ghPrs[0].url;
+                } catch {}
+              }
+              if (prUrl) console.log(`[execution-callback] harness_evaluate: pr_url recovered: ${prUrl}`);
+            } catch {}
+          }
 
           // 提取 verdict: PASS / FAIL
           let evalVerdict = 'FAIL'; // 默认 FAIL（对抗性：宁可误杀不放过）
@@ -2318,8 +2349,8 @@ ${resultStr.substring(0, 2000)}
               }
             });
             console.log(`[execution-callback] harness: harness_evaluate PASS → harness_report created`);
-          } else if (evalRound < 3) {
-            // FAIL + 未达上限 → 创建 harness_fix
+          } else {
+            // FAIL → 无上限，一直 Fix 直到 PASS（AI-native 全自动，跟 GAN 一样无上限）
             const failedFeatures = result?.failed_features || [];
             await createHarnessTask({
               title: `[Fix] Evaluator-R${evalRound} — ${plannerShort}`,
@@ -2343,28 +2374,6 @@ ${resultStr.substring(0, 2000)}
               },
             });
             console.log(`[execution-callback] harness: harness_evaluate FAIL → harness_fix created (eval_round=${evalRound})`);
-          } else {
-            // FAIL + 达到上限（3轮）→ 创建 report 标记 needs_human_review
-            await createHarnessTask({
-              title: `[Report] Evaluator-FAIL-max — ${plannerShort}`,
-              description: `Evaluator 连续 ${evalRound} 轮 FAIL，超过上限，标记需人工审查。\npr_url: ${prUrl}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: 'harness_report',
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                pr_url: prUrl,
-                dev_task_id: harnessPayload.dev_task_id,
-                planner_task_id: harnessPayload.planner_task_id,
-                contract_branch: harnessPayload.contract_branch,
-                eval_round: evalRound,
-                needs_human_review: true,
-                harness_mode: true
-              }
-            });
-            console.log(`[execution-callback] harness: harness_evaluate FAIL (round ${evalRound} >= 3) → harness_report with needs_human_review`);
           }
         }
 
