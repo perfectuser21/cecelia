@@ -1,0 +1,8 @@
+# Contract DoD — Workstream 1: Health 端点新增 evaluator_stats 聚合查询
+
+- [ ] [BEHAVIOR] `GET /api/brain/health` 响应包含 `evaluator_stats` 对象，含 `total_runs`/`passed`/`failed`/`last_run_at` 四个字段，数值与 DB 中 `task_type='harness_evaluate'` 终态记录精确一致（passed/failed 分别核对，last_run_at 偏差 ≤ 2s）
+  Test: manual:bash -c 'PASSED=$(psql -t -A cecelia -c "SELECT count(*)::integer FROM tasks WHERE task_type='"'"'harness_evaluate'"'"' AND status='"'"'completed'"'"'") && FAILED=$(psql -t -A cecelia -c "SELECT count(*)::integer FROM tasks WHERE task_type='"'"'harness_evaluate'"'"' AND status='"'"'canceled'"'"'") && curl -sf localhost:5221/api/brain/health | node -e "const s=JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'/dev/stdin'"'"','"'"'utf8'"'"')).evaluator_stats;const ep=parseInt(process.argv[1]),ef=parseInt(process.argv[2]);if(s.passed!==ep||s.failed!==ef||s.total_runs!==ep+ef){console.log('"'"'FAIL'"'"');process.exit(1)}console.log('"'"'PASS'"'"')" "$PASSED" "$FAILED"'
+- [ ] [BEHAVIOR] 无 Evaluator 终态记录时，`evaluator_stats` 返回零值对象 `{total_runs:0, passed:0, failed:0, last_run_at:null}` 而非 null 或缺失
+  Test: manual:curl -sf localhost:5221/api/brain/health | node -e "const s=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).evaluator_stats;if(!s||typeof s!=='object'){process.exit(1)}if(!('total_runs' in s)||!('passed' in s)||!('failed' in s)||!('last_run_at' in s)){process.exit(1)}console.log('PASS')"
+- [ ] [BEHAVIOR] Health 端点响应时间无显著退化（新增查询增量 < 200ms）
+  Test: manual:node -e "const{execSync}=require('child_process');const s=Date.now();execSync('curl -sf localhost:5221/api/brain/health');const e=Date.now()-s;if(e>=200){console.log('FAIL:'+e+'ms');process.exit(1)}console.log('PASS:'+e+'ms')"
