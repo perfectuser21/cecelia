@@ -163,8 +163,9 @@ function PlatformCard({ p }: { p: PlatformSummary }) {
 
 function ContentRow({ item, rank }: { item: ContentItem; rank: number }) {
   const [hover, setHover] = useState(false);
-  const engRate = item.views > 0
-    ? ((item.likes + item.comments + item.shares) / item.views * 1000).toFixed(1)
+  const views = Number(item.views);
+  const engRate = views > 0
+    ? ((Number(item.likes) + Number(item.comments) + Number(item.shares)) / views * 1000).toFixed(1)
     : '0';
   return (
     <div style={s.contentRow(hover)} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
