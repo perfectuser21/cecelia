@@ -105,7 +105,7 @@ export default function HarnessPipelineStepPage() {
       {/* 返回按钮 */}
       <div className="flex items-center gap-3 mb-6">
         <button
-          onClick={() => navigate(`/harness-pipeline/${id}`)}
+          onClick={() => navigate(`/pipeline/${id}`)}
           className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
         >
           &larr; 返回 Pipeline 详情
