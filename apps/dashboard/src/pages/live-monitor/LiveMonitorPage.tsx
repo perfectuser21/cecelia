@@ -1250,10 +1250,13 @@ export default function LiveMonitorPage() {
         goals
           .filter((g: any) => ['area_okr', 'global_okr', 'kr', 'area_kr'].includes(g.type))
           .map((g: any) => {
-            // 计算 progress：current_value/target_value*100，无 target_value 时直接用 current_value（已是百分比）
+            // 优先使用 API 返回的 progress_pct（含手动设置值），退化到 current_value/target_value 计算
+            const progressPct = g.progress_pct != null ? Number(g.progress_pct) : null;
             const cv = g.current_value != null ? Number(g.current_value) : null;
             const tv = g.target_value != null ? Number(g.target_value) : null;
-            const progress = cv != null
+            const progress = progressPct != null
+              ? progressPct
+              : cv != null
               ? (tv != null && tv > 0 ? Math.round(cv / tv * 100) : Math.round(cv))
               : (g.progress ?? null);
             const remapped = g.type === 'area_kr' ? { ...g, type: 'kr' } : g;

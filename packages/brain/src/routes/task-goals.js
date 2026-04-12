@@ -31,7 +31,8 @@ const OBJ_SELECT = `
   metadata,
   custom_props,
   created_at,
-  updated_at
+  updated_at,
+  NULL::integer AS progress_pct
 `;
 
 // 统一投影：将 key_results 行格式化为旧 goals 兼容格式
@@ -53,7 +54,14 @@ const KR_SELECT = `
   metadata,
   custom_props,
   created_at,
-  updated_at
+  updated_at,
+  COALESCE(
+    progress,
+    CASE WHEN target_value > 0
+      THEN ROUND(current_value::numeric / target_value::numeric * 100, 0)
+      ELSE NULL
+    END
+  )::integer AS progress_pct
 `;
 
 // GET /goals — 列出目标（UNION ALL objectives + key_results）
