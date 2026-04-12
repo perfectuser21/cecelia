@@ -9,14 +9,13 @@ import { describe, it, expect } from 'vitest';
 describe('Pipeline Steps — label generation', () => {
   function buildStepLabel(taskType, counters) {
     const BASE_LABELS = {
-      harness_planner: 'Planner', sprint_planner: 'Planner',
-      harness_contract_propose: 'Propose', sprint_contract_propose: 'Propose',
-      harness_contract_review: 'Review', sprint_contract_review: 'Review',
-      harness_generate: 'Generate', sprint_generate: 'Generate',
-      harness_fix: 'Fix', sprint_fix: 'Fix',
-      harness_evaluate: 'Evaluate', sprint_evaluate: 'Evaluate',
+      harness_planner: 'Planner',
+      harness_contract_propose: 'Propose',
+      harness_contract_review: 'Review',
+      harness_generate: 'Generate',
+      harness_fix: 'Fix',
       harness_ci_watch: 'CI Watch',
-      harness_report: 'Report', sprint_report: 'Report',
+      harness_report: 'Report',
     };
 
     const base = BASE_LABELS[taskType] || taskType;
@@ -45,13 +44,6 @@ describe('Pipeline Steps — label generation', () => {
     expect(buildStepLabel('harness_contract_propose', counters)).toBe('Propose R3');
   });
 
-  it('handles sprint_ prefixed task types', () => {
-    const counters = {};
-    expect(buildStepLabel('sprint_planner', counters)).toBe('Planner');
-    expect(buildStepLabel('sprint_contract_propose', counters)).toBe('Propose R1');
-    expect(buildStepLabel('sprint_contract_review', counters)).toBe('Review R1');
-  });
-
   it('returns task_type as label for unknown types', () => {
     const counters = {};
     expect(buildStepLabel('unknown_type', counters)).toBe('unknown_type');
@@ -64,11 +56,11 @@ describe('Pipeline Steps — rebuildPrompt', () => {
     const id = task.task_id;
     const desc = task.description || task.title || '';
 
-    if (t === 'harness_planner' || t === 'sprint_planner') {
+    if (t === 'harness_planner') {
       return `/harness-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\n\n${desc}`;
     }
 
-    if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
+    if (t === 'harness_contract_propose') {
       const round = task.payload?.propose_round || 1;
       return `/harness-contract-proposer\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\npropose_round: ${round}\n\n${desc}`;
     }

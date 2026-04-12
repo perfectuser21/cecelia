@@ -65,7 +65,7 @@ export async function processHarnessCiWatchers(pool) {
 
     // 超过最大轮询次数 → 超时，链路继续（不中断）
     if (pollCount >= MAX_CI_WATCH_POLLS) {
-      console.log(`[harness-watcher] harness_ci_watch ${task.id} timed out after ${pollCount} polls, creating harness_evaluate with ci_timeout=true`);
+      console.log(`[harness-watcher] harness_ci_watch ${task.id} timed out after ${pollCount} polls, creating harness_fix with ci_timeout=true`);
       await pool.query(
         `UPDATE tasks
          SET status = 'completed',
@@ -76,12 +76,12 @@ export async function processHarnessCiWatchers(pool) {
       );
       const evalRound = payload.eval_round || 1;
       await createTask({
-        title: `[Evaluator] R${evalRound} (CI Timeout)`,
-        description: `CI watch 超时（${pollCount} polls），链路继续，Evaluator 自行验证 PR diff。\nharness_ci_watch task_id: ${task.id}`,
+        title: `[Fix] R${evalRound} (CI Timeout)`,
+        description: `CI watch 超时（${pollCount} polls），Generator 重新检查并修复。\nharness_ci_watch task_id: ${task.id}`,
         priority: 'P1',
         project_id: task.project_id,
         goal_id: task.goal_id,
-        task_type: 'harness_evaluate',
+        task_type: 'harness_fix',
         trigger_source: 'harness_watcher',
         payload: {
           ci_timeout: true,

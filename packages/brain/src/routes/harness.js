@@ -303,10 +303,6 @@ function rebuildPrompt(task, sprintDir) {
     return p;
   }
 
-  if (t === 'harness_evaluate' || t === 'sprint_evaluate') {
-    return `/harness-evaluator\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\n\n${desc}`;
-  }
-
   if (t === 'harness_report' || t === 'sprint_report') {
     return `/harness-report\n\n## Harness v4.0 — Report\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${desc}`;
   }
@@ -454,7 +450,6 @@ function buildStepLabel(taskType, counters) {
     harness_contract_review: 'Review', sprint_contract_review: 'Review',
     harness_generate: 'Generate', sprint_generate: 'Generate',
     harness_fix: 'Fix', sprint_fix: 'Fix',
-    harness_evaluate: 'Evaluate', sprint_evaluate: 'Evaluate',
     harness_ci_watch: 'CI Watch',
     harness_report: 'Report', sprint_report: 'Report',
   };

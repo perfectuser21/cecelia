@@ -94,7 +94,7 @@ router.post('/execution-callback', async (req, res) => {
         const taskType = taskRow.rows[0]?.task_type;
         const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
         if (taskType === 'dev' && !isDecomposition) {
-          // Harness 模式的 dev task 不降级 — 由 harness_evaluate / sprint_evaluate 验证，不需要 PR
+          // Harness 模式的 dev task 不降级 — 由 harness_evaluate 验证，不需要 PR
           const isHarness = taskRow.rows[0]?.payload?.harness_mode;
           if (!isHarness) {
             newStatus = 'completed_no_pr';
@@ -1671,9 +1671,9 @@ ${resultStr.substring(0, 2000)}
 
         // Fix 1: 对产生 verdict 的 harness 任务类型，将 verdict 持久化到 tasks.result
         const VERDICT_HARNESS_TYPES = new Set([
-          'harness_contract_propose', 'sprint_contract_propose',
-          'harness_contract_review', 'sprint_contract_review',
-          'harness_evaluate', 'sprint_evaluate',
+          'harness_contract_propose',
+          'harness_contract_review',
+          'harness_evaluate',
         ]);
         if (VERDICT_HARNESS_TYPES.has(harnessType)) {
           const extractedVerdict = extractVerdictFromResult(result, null);
@@ -1692,6 +1692,24 @@ ${resultStr.substring(0, 2000)}
             }
           }
         }
+
+        // 帮助函数：从 result 中提取指定分支名（propose_branch / review_branch / contract_branch 等）
+        const extractBranchFromResult = (resultVal, branchKey) => {
+          if (resultVal !== null && typeof resultVal === 'object') {
+            const direct = resultVal[branchKey] || resultVal?.result?.[branchKey] || null;
+            if (direct) return direct;
+            if (typeof resultVal.result === 'string') {
+              try { const p = JSON.parse(resultVal.result); if (p?.[branchKey]) return p[branchKey]; } catch {}
+              const m = resultVal.result.match(new RegExp(`"${branchKey}"\\s*:\\s*"([^"]+)"`));
+              if (m) return m[1];
+            }
+          }
+          if (typeof resultVal === 'string') {
+            const m = resultVal.match(new RegExp(`"${branchKey}"\\s*:\\s*"([^"]+)"`));
+            if (m) return m[1];
+          }
+          return null;
+        };
 
         // 帮助函数：将 harness 任务的 verdict 持久化到 tasks.result
         const persistHarnessVerdict = async (tid, verdictValue, extra = {}) => {
@@ -1719,8 +1737,8 @@ ${resultStr.substring(0, 2000)}
           }
         }
 
-        // Layer 1: harness_planner / sprint_planner 完成 → 创建 contract_propose
-        if (harnessType === 'harness_planner' || harnessType === 'sprint_planner') {
+        // Layer 1: harness_planner 完成 → 创建 contract_propose
+        if (harnessType === 'harness_planner') {
           const sprintDir = harnessPayload.sprint_dir || 'sprints';
           let plannerBranch = null;
           if (result !== null && typeof result === 'object') {
@@ -1749,7 +1767,7 @@ ${resultStr.substring(0, 2000)}
           if (!plannerBranch) {
             console.error(`[execution-callback] harness: plannerBranch is null for ${harnessType} ${task_id}, Proposer may fail to locate PRD`);
           }
-          const proposeType = harnessType === 'harness_planner' ? 'harness_contract_propose' : 'sprint_contract_propose';
+          const proposeType = 'harness_contract_propose';
           // Proposer 去重：同 planner_task_id 已有 queued/in_progress Proposer 时跳过创建，防止重复派发
           const existingProposer = await pool.query(
             `SELECT id FROM tasks
@@ -1784,7 +1802,7 @@ ${resultStr.substring(0, 2000)}
 
         // Layer 2a: contract_propose 完成 → contract_review
         // GAN 守卫：只有 Proposer 产出草案（verdict=PROPOSED）才派 Reviewer
-        if (harnessType === 'harness_contract_propose' || harnessType === 'sprint_contract_propose') {
+        if (harnessType === 'harness_contract_propose') {
           const proposeRound = harnessPayload.propose_round || 1;
           // 先尝试结构化提取，失败后 fallback 到纯文本正则（cecelia-run 可能传纯文本字符串）
           let proposeVerdict = extractVerdictFromResult(result, ['PROPOSED']);
@@ -1807,20 +1825,9 @@ ${resultStr.substring(0, 2000)}
           if (proposeVerdict !== 'PROPOSED') {
             console.log(`[execution-callback] harness: ${harnessType} ${task_id} verdict=${proposeVerdict}，非 PROPOSED，不派 Reviewer`);
           } else {
-            const reviewType = harnessType === 'harness_contract_propose' ? 'harness_contract_review' : 'sprint_contract_review';
+            const reviewType = 'harness_contract_review';
             // 从 Proposer 的 result 提取 propose_branch（Proposer push 合同草案的分支）
-            const proposeBranch = (() => {
-              const raw = result != null && typeof result === 'object'
-                ? (result.propose_branch || (typeof result.result === 'string'
-                    ? (() => { try { return JSON.parse(result.result).propose_branch; } catch { return null; } })()
-                    : null))
-                : (typeof result === 'string'
-                    ? (() => { try { return JSON.parse(result).propose_branch; } catch {
-                        const m = result.match(/"propose_branch"\s*:\s*"([^"]+)"/); return m ? m[1] : null;
-                      } })()
-                    : null);
-              return raw || null;
-            })();
+            const proposeBranch = extractBranchFromResult(result, 'propose_branch');
             await createHarnessTask({
               title: `[Contract Review] R${proposeRound} — ${plannerShort}`,
               description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
@@ -1843,18 +1850,7 @@ ${resultStr.substring(0, 2000)}
           }
           // 写入 verdict + propose_branch 到 tasks.result（供后续轮读取）
           if (proposeVerdict) {
-            const proposeBranchForResult = (() => {
-              const raw = result != null && typeof result === 'object'
-                ? (result.propose_branch || (typeof result.result === 'string'
-                    ? (() => { try { return JSON.parse(result.result).propose_branch; } catch { return null; } })()
-                    : null))
-                : (typeof result === 'string'
-                    ? (() => { try { return JSON.parse(result).propose_branch; } catch {
-                        const m = result.match(/"propose_branch"\s*:\s*"([^"]+)"/); return m ? m[1] : null;
-                      } })()
-                    : null);
-              return raw || null;
-            })();
+            const proposeBranchForResult = extractBranchFromResult(result, 'propose_branch');
             await pool.query(
               'UPDATE tasks SET result = $1 WHERE id = $2',
               [JSON.stringify({ verdict: proposeVerdict, propose_round: proposeRound, propose_branch: proposeBranchForResult }), task_id]
@@ -1863,7 +1859,7 @@ ${resultStr.substring(0, 2000)}
         }
 
         // Layer 2b: contract_review 完成 → APPROVED/REVISION 路由
-        if (harnessType === 'harness_contract_review' || harnessType === 'sprint_contract_review') {
+        if (harnessType === 'harness_contract_review') {
           let reviewVerdict = 'REVISION';
           if (result !== null && typeof result === 'object' && result.verdict) {
             reviewVerdict = result.verdict.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REVISION';
@@ -1878,32 +1874,14 @@ ${resultStr.substring(0, 2000)}
             }
           }
           // 从 Reviewer result 提取 review_branch（Reviewer push 反馈的分支）
-          const reviewBranch = (() => {
-            const raw = result != null && typeof result === 'object'
-              ? (result.review_branch || (typeof result.result === 'string'
-                  ? (() => { try { return JSON.parse(result.result).review_branch; } catch { return null; } })()
-                  : null))
-              : (typeof result === 'string'
-                  ? (() => { try { return JSON.parse(result).review_branch; } catch {
-                      const m = result.match(/"review_branch"\s*:\s*"([^"]+)"/); return m ? m[1] : null;
-                    } })()
-                  : null);
-            return raw || null;
-          })();
+          const reviewBranch = extractBranchFromResult(result, 'review_branch');
           // 从 Reviewer result 提取 contract_branch（APPROVED 时 Reviewer 写最终合同的分支）
-          const contractBranch = (() => {
-            if (result != null && typeof result === 'object') {
-              return result.contract_branch || (typeof result.result === 'string'
-                ? (() => { try { return JSON.parse(result.result).contract_branch; } catch { return null; } })()
-                : null);
-            }
-            return null;
-          })();
+          const contractBranch = extractBranchFromResult(result, 'contract_branch');
           console.log(`[execution-callback] harness: ${harnessType} verdict=${reviewVerdict} review_branch=${reviewBranch}`);
           await persistHarnessVerdict(task_id, reviewVerdict, { task_type: harnessType });
 
           if (reviewVerdict === 'APPROVED') {
-            const generateType = harnessType === 'harness_contract_review' ? 'harness_generate' : 'sprint_generate';
+            const generateType = 'harness_generate';
             // Bug Fix: contract_branch 为 null 时自动 fallback（P0 guard + recovery）
             let resolvedContractBranch = contractBranch;
             if (!resolvedContractBranch) {
@@ -1971,7 +1949,7 @@ ${resultStr.substring(0, 2000)}
           } else {
             // REVISION：继续 GAN 对抗，必须传递 planner_branch 和 review_branch
             const nextRound = (harnessPayload.propose_round || 1) + 1;
-            const proposeType = harnessType === 'harness_contract_review' ? 'harness_contract_propose' : 'sprint_contract_propose';
+            const proposeType = 'harness_contract_propose';
             await createHarnessTask({
               title: `[Contract] P${nextRound} — ${plannerShort}`,
               description: `Generator 根据 Evaluator 反馈修改合同草案（第${nextRound}轮）。\nreview task_id: ${task_id}`,
@@ -2000,26 +1978,32 @@ ${resultStr.substring(0, 2000)}
         }
 
         // Layer 3a: harness_generate 完成 → 创建 harness_ci_watch（等 CI 通过再 evaluate）
-        // v3.x 兼容: sprint_generate 仍直接创建 sprint_evaluate（旧行为保留）
         if (harnessType === 'harness_generate') {
           // 从 Generator 的 result 中提取 pr_url
           // 层次 1: callback payload 直接携带
           let prUrl = pr_url || null;
-          // 层次 2: result 对象顶层或 result.result 对象（Generator 正确输出 JSON 时）
+          // 层次 2: 从 DB 任务的 pr_url 列读取（Generator 自己 PATCH 过的情况，最可靠）
+          if (!prUrl) {
+            try {
+              const dbPrRow = await pool.query('SELECT pr_url FROM tasks WHERE id=$1', [task_id]);
+              prUrl = dbPrRow.rows[0]?.pr_url || null;
+            } catch {}
+          }
+          // 层次 3: result 对象顶层或 result.result 对象（Generator 正确输出 JSON 时）
           if (!prUrl && result !== null && typeof result === 'object') {
             prUrl = result.pr_url || result?.result?.pr_url || null;
-            // 层次 3: result.result 是字符串时，尝试 JSON 解析（Generator 输出 JSON verdict 文本）
+            // 层次 4: result.result 是字符串时，尝试 JSON 解析（Generator 输出 JSON verdict 文本）
             if (!prUrl && typeof result.result === 'string') {
               try {
                 const parsed = JSON.parse(result.result.trim());
                 prUrl = parsed.pr_url || null;
               } catch {}
-              // 层次 4: 从文本中正则提取完整 GitHub URL
+              // 层次 5: 从文本中正则提取完整 GitHub URL
               if (!prUrl) {
                 const m = result.result.match(/https:\/\/github\.com\/[^\s"']+\/pull\/\d+/);
                 if (m) prUrl = m[0];
               }
-              // 层次 4.5: 从文本中提取 PR # 并构造完整 URL（覆盖 "PR #2074" 格式）
+              // 层次 5.5: 从文本中提取 PR # 并构造完整 URL（覆盖 "PR #2074" 格式）
               if (!prUrl) {
                 const prNumMatch = result.result.match(/PR\s+#(\d+)/i) || result.result.match(/pull\/(\d+)/);
                 if (prNumMatch) {
@@ -2032,17 +2016,10 @@ ${resultStr.substring(0, 2000)}
               }
             }
           }
-          // 层次 5: result 本身是字符串时正则提取
+          // 层次 6: result 本身是字符串时正则提取
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
             if (prMatch) prUrl = prMatch[0];
-          }
-          // 层次 6: 从 DB 任务的 pr_url 列读取（Generator 自己 PATCH 过的情况）
-          if (!prUrl) {
-            try {
-              const dbPrRow = await pool.query('SELECT pr_url FROM tasks WHERE id=$1', [task_id]);
-              prUrl = dbPrRow.rows[0]?.pr_url || null;
-            } catch {}
           }
           if (!prUrl) {
             // pr_url 缺失：Generator session 崩溃或输出解析失败，创建 harness_fix 重试（自愈）
@@ -2164,120 +2141,6 @@ ${resultStr.substring(0, 2000)}
           }
         }
 
-        // v3.x 兼容: sprint_generate → sprint_evaluate（旧流程，不加 CI watch）
-        if (harnessType === 'sprint_generate' || (harnessType === 'dev' && harnessPayload.harness_mode)) {
-          await createHarnessTask({
-            title: `[Evaluator] R1 — ${plannerShort}`,
-            description: `Evaluator 执行 sprint-contract.md 里的验证命令。\n原始 task_id: ${task_id}`,
-            priority: 'P1',
-            project_id: harnessTask.project_id,
-            goal_id: harnessTask.goal_id,
-            task_type: 'sprint_evaluate',
-            trigger_source: 'execution_callback_harness',
-            payload: {
-              sprint_dir: harnessPayload.sprint_dir,
-              dev_task_id: harnessPayload.dev_task_id || task_id,
-              planner_task_id: harnessPayload.planner_task_id,
-              eval_round: 1,
-              harness_mode: true
-            }
-          });
-          console.log(`[execution-callback] harness: sprint_generate ${task_id} → sprint_evaluate created`);
-        }
-
-        // v3.x 兼容: sprint_evaluate 完成 → 旧路由逻辑（保留不变）
-        if (harnessType === 'sprint_evaluate') {
-          if (result === null) {
-            const evalRound = harnessPayload.eval_round || 0;
-            const MAX_EVAL_ROUNDS = 15;
-            if (evalRound >= MAX_EVAL_ROUNDS) {
-              console.error(`[execution-callback] harness: sprint_evaluate result=null at round ${evalRound} >= MAX(${MAX_EVAL_ROUNDS}), stopping loop`);
-            } else {
-              console.warn(`[execution-callback] harness: sprint_evaluate result=null (session crash) at round ${evalRound}, retrying`);
-              await createHarnessTask({
-                title: `[Evaluator] R${evalRound + 1} retry — ${plannerShort}`,
-                description: `Evaluator 会话崩溃（result=null），重新派发。\n原始 sprint_evaluate task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: 'sprint_evaluate',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  dev_task_id: harnessPayload.dev_task_id,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  eval_round: evalRound + 1,
-                  harness_mode: true,
-                  retry_reason: 'evaluator_session_crash'
-                }
-              });
-            }
-          } else {
-            let resultObj = typeof result === 'object' && result !== null ? result : {};
-            if (typeof result === 'string') {
-              try { const p = JSON.parse(result); if (p?.verdict) resultObj = p; } catch { /* not JSON */ }
-              if (!resultObj.verdict) {
-                const m = result.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i);
-                if (m) resultObj = { verdict: m[1].toUpperCase() };
-              }
-            }
-            if (!resultObj.verdict && typeof resultObj.result === 'object' && resultObj.result?.verdict) {
-              resultObj.verdict = resultObj.result.verdict;
-            }
-            if (!resultObj.verdict) {
-              const txt = resultObj.summary || resultObj.findings || (typeof resultObj.result === 'string' ? resultObj.result : '') || (typeof result === 'string' ? result : '');
-              if (typeof txt === 'string') { const m = txt.match(/"verdict"\s*:\s*"(PASS|FAIL)"/i); if (m) resultObj.verdict = m[1].toUpperCase(); }
-            }
-            const verdict = resultObj.verdict || 'FAIL';
-            console.log(`[execution-callback] harness: sprint_evaluate verdict=${verdict}`);
-            await persistHarnessVerdict(task_id, verdict, { task_type: 'sprint_evaluate', eval_round: harnessPayload.eval_round || 1 });
-
-            if (verdict === 'PASS') {
-              const existingSr = await pool.query(
-                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'sprint_report'
-                 AND status IN ('queued', 'in_progress') LIMIT 1`,
-                [harnessTask.project_id]
-              );
-              if (existingSr.rows.length === 0) {
-                await createHarnessTask({
-                  title: `[Report] ${plannerShort}`,
-                  description: `所有验证 PASS。生成 Harness 报告。`,
-                  priority: 'P1',
-                  project_id: harnessTask.project_id,
-                  goal_id: harnessTask.goal_id,
-                  task_type: 'sprint_report',
-                  trigger_source: 'execution_callback_harness',
-                  payload: {
-                    sprint_dir: harnessPayload.sprint_dir,
-                    planner_task_id: harnessPayload.planner_task_id,
-                    eval_round: harnessPayload.eval_round || 1,
-                    harness_mode: true
-                  }
-                });
-                console.log(`[execution-callback] harness: sprint_evaluate PASS → sprint_report created`);
-              }
-            } else {
-              await createHarnessTask({
-                title: `[Fix] R${(harnessPayload.eval_round || 0) + 1} — ${plannerShort}`,
-                description: `Evaluator 发现问题，Generator 修复。读取 eval-round-${harnessPayload.eval_round || 1}.md。\n原始 sprint_evaluate task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: 'sprint_fix',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  dev_task_id: harnessPayload.dev_task_id,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  eval_round: (harnessPayload.eval_round || 0) + 1,
-                  harness_mode: true
-                }
-              });
-              console.log(`[execution-callback] harness: sprint_evaluate FAIL → sprint_fix created`);
-            }
-          }
-        }
-
         // Layer 3c: harness_fix 完成 → 直接创建 harness_report（CI 由 /dev 自身保证）
         if (harnessType === 'harness_fix') {
           let prUrl = pr_url || null;
@@ -2370,27 +2233,6 @@ ${resultStr.substring(0, 2000)}
           // result 非 null：正常完成，不触发重试
         }
 
-        // v3.x 兼容: sprint_fix → sprint_evaluate（旧流程）
-        if (harnessType === 'sprint_fix') {
-          await createHarnessTask({
-            title: `[Evaluator] R${harnessPayload.eval_round || 1} — ${plannerShort}`,
-            description: `Generator 已修复，Evaluator 重新验证。\n原始 sprint_fix task_id: ${task_id}`,
-            priority: 'P1',
-            project_id: harnessTask.project_id,
-            goal_id: harnessTask.goal_id,
-            task_type: 'sprint_evaluate',
-            trigger_source: 'execution_callback_harness',
-            payload: {
-              sprint_dir: harnessPayload.sprint_dir,
-              dev_task_id: harnessPayload.dev_task_id,
-              planner_task_id: harnessPayload.planner_task_id,
-              eval_round: harnessPayload.eval_round || 1,
-              harness_mode: true
-            }
-          });
-          console.log(`[execution-callback] harness: sprint_fix ${task_id} → sprint_evaluate created (round=${harnessPayload.eval_round || 1})`);
-        }
-
       } catch (harnessErr) {
         console.error(`[execution-callback] harness loop error (non-fatal): ${harnessErr.message}`, harnessErr.stack);
       }
@@ -2433,7 +2275,7 @@ ${resultStr.substring(0, 2000)}
       }
 
       // 5c9. 断链 #5: dev 完成 → 检查同 project 所有 dev 是否全完成 → 创建 code_review (Initiative 级别)
-      // ⚠️ Harness 模式的 Initiative 不走此断链（sprint_evaluate PASS 时已处理）
+      // ⚠️ Harness 模式的 Initiative 不走此断链（harness_evaluate PASS 时已处理）
       try {
         const devRow = await pool.query('SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1', [task_id]);
         const devTask = devRow.rows[0];
