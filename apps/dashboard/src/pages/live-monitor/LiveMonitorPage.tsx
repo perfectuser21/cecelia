@@ -1249,7 +1249,19 @@ export default function LiveMonitorPage() {
       setAllGoals(
         goals
           .filter((g: any) => ['area_okr', 'global_okr', 'kr', 'area_kr'].includes(g.type))
-          .map((g: any) => g.type === 'area_kr' ? { ...g, type: 'kr' } : g)
+          .map((g: any) => {
+            // 优先使用 API 返回的 progress_pct（含手动设置值），退化到 current_value/target_value 计算
+            const progressPct = g.progress_pct != null ? Number(g.progress_pct) : null;
+            const cv = g.current_value != null ? Number(g.current_value) : null;
+            const tv = g.target_value != null ? Number(g.target_value) : null;
+            const progress = progressPct != null
+              ? progressPct
+              : cv != null
+              ? (tv != null && tv > 0 ? Math.round(cv / tv * 100) : Math.round(cv))
+              : (g.progress ?? null);
+            const remapped = g.type === 'area_kr' ? { ...g, type: 'kr' } : g;
+            return { ...remapped, progress };
+          })
       );
     }
     if (r[10].status === 'fulfilled' && !r[10].value?.error) setHkVps(r[10].value);
@@ -1303,7 +1315,17 @@ export default function LiveMonitorPage() {
   const totalAgents = foregroundProcs.length + backgroundProcs.length;
 
   const activeGlobals = allGoals.filter(g => g.type === 'global_okr' && !INACTIVE_STATUSES.has(g.status));
-  const activeAreas = allGoals.filter(g => g.type === 'area_okr' && !g.parent_id && !INACTIVE_STATUSES.has(g.status));
+  const activeAreas = allGoals
+    .filter(g => g.type === 'area_okr' && !g.parent_id && !INACTIVE_STATUSES.has(g.status))
+    .map(area => {
+      // 从子 KR 聚合进度：取子 KR progress 平均值
+      const childKRs = allGoals.filter(g => g.type === 'kr' && g.parent_id === area.id && g.status !== 'cancelled' && g.status !== 'archived');
+      const progValues = childKRs.map(k => k.progress).filter((v): v is number => v != null);
+      const computedProgress = progValues.length > 0
+        ? Math.round(progValues.reduce((a, b) => a + b, 0) / progValues.length)
+        : (area.progress ?? 0);
+      return { ...area, progress: computedProgress };
+    });
   const todayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
 
   const wrapStyle: React.CSSProperties = fullscreen
@@ -1560,7 +1582,7 @@ export default function LiveMonitorPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', letterSpacing: 1.4, textTransform: 'uppercase' }}>OKR 总览</span>
                   <span style={{ fontSize: 9, color: '#484f58' }}>
-                    {activeAreas.length} Area · {allGoals.filter(g => g.type === 'kr' && (g.status === 'in_progress' || g.status === 'ready')).length} 活跃 KR
+                    {activeAreas.length} Area · {allGoals.filter(g => g.type === 'kr' && (g.status === 'active' || g.status === 'in_progress' || g.status === 'ready')).length} 活跃 KR
                   </span>
                   <div style={{ flex: 1, height: 1, background: '#21262d' }} />
                   <span style={{ fontSize: 10, color: '#484f58' }}>↗</span>

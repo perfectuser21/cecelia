@@ -1747,18 +1747,33 @@ ${resultStr.substring(0, 2000)}
             const branchMatch = result.match(/"branch"\s*:\s*"([^"]+)"/);
             if (branchMatch) plannerBranch = branchMatch[1];
           }
-          // plannerBranch fallback: Planner crash 时从 git 分支名推断
+          // plannerBranch fallback 1: 从 dev_records 查（Planner /dev 会写 dev_records）
+          if (!plannerBranch) {
+            try {
+              const devRecRow = await pool.query('SELECT branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [task_id]);
+              if (devRecRow.rows[0]?.branch) {
+                plannerBranch = devRecRow.rows[0].branch;
+                console.log(`[execution-callback] harness: plannerBranch from dev_records: ${plannerBranch}`);
+              }
+            } catch {}
+          }
+          // plannerBranch fallback 2: 从 git 分支名匹配（task_id 前 8 位 或 "planner-prd" 关键词）
           if (!plannerBranch) {
             try {
               const branches = execSync(
-                `git branch -r --list "origin/cp-*" --sort=-committerdate | head -10`,
+                `git branch -r --list "origin/cp-*" --sort=-committerdate | head -20`,
                 { encoding: 'utf-8', timeout: 5000 }
               ).trim().split('\n').map(b => b.trim());
               const plannerIdPrefix = task_id.substring(0, 8);
-              const match = branches.find(b => b.includes(plannerIdPrefix));
+              // 先按 task_id 前缀匹配
+              let match = branches.find(b => b.includes(plannerIdPrefix));
+              // 再按 "planner-prd" 或 "harness-prd" 关键词匹配最近的
+              if (!match) {
+                match = branches.find(b => b.includes('planner-prd') || b.includes('harness-prd'));
+              }
               if (match) {
                 plannerBranch = match.replace('origin/', '');
-                console.log(`[execution-callback] harness: plannerBranch fallback found: ${plannerBranch} (from task_id prefix ${plannerIdPrefix})`);
+                console.log(`[execution-callback] harness: plannerBranch fallback found: ${plannerBranch}`);
               }
             } catch (branchErr) {
               console.warn(`[execution-callback] harness: plannerBranch fallback failed: ${branchErr.message}`);
@@ -1827,7 +1842,28 @@ ${resultStr.substring(0, 2000)}
           } else {
             const reviewType = 'harness_contract_review';
             // 从 Proposer 的 result 提取 propose_branch（Proposer push 合同草案的分支）
-            const proposeBranch = extractBranchFromResult(result, 'propose_branch');
+            let proposeBranch = extractBranchFromResult(result, 'propose_branch');
+            // fallback: 从 dev_records 查
+            if (!proposeBranch) {
+              try {
+                const devRecRow = await pool.query('SELECT branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [task_id]);
+                proposeBranch = devRecRow.rows[0]?.branch || null;
+                if (proposeBranch) console.log(`[execution-callback] harness: propose_branch from dev_records: ${proposeBranch}`);
+              } catch {}
+            }
+            // fallback: 从 git 分支名匹配
+            if (!proposeBranch) {
+              try {
+                const taskIdShort = task_id.substring(0, 8);
+                const branches = execSync(`git branch -r --list "origin/cp-harness-propose-*" --sort=-committerdate | head -5`, { encoding: 'utf-8', timeout: 5000 })
+                  .trim().split('\n').map(b => b.trim());
+                const match = branches.find(b => b.includes(taskIdShort));
+                if (match) {
+                  proposeBranch = match.replace('origin/', '');
+                  console.log(`[execution-callback] harness: propose_branch from git: ${proposeBranch}`);
+                }
+              } catch {}
+            }
             await createHarnessTask({
               title: `[Contract Review] R${proposeRound} — ${plannerShort}`,
               description: `Evaluator 挑战合同草案：验证命令够严格吗？覆盖边界情况吗？\npropose task_id: ${task_id}`,
@@ -2020,6 +2056,39 @@ ${resultStr.substring(0, 2000)}
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
             if (prMatch) prUrl = prMatch[0];
+          }
+          // 层次 7: 从 dev_records 查（Generator /dev 会写 dev_records）
+          if (!prUrl) {
+            try {
+              const devRecRow = await pool.query('SELECT pr_url, branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [task_id]);
+              prUrl = devRecRow.rows[0]?.pr_url || null;
+              // 层次 7b: dev_records 有 branch 但没 pr_url → 从 gh pr list 查
+              if (!prUrl && devRecRow.rows[0]?.branch) {
+                try {
+                  const ghOut = execSync(`gh pr list --head "${devRecRow.rows[0].branch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                  const ghPrs = JSON.parse(ghOut);
+                  if (ghPrs.length > 0) prUrl = ghPrs[0].url;
+                } catch {}
+              }
+              if (prUrl) console.log(`[execution-callback] harness: pr_url recovered from dev_records/gh: ${prUrl}`);
+            } catch {}
+          }
+          // 层次 8: 从 git branch 名推断 → gh pr list 查
+          if (!prUrl) {
+            try {
+              const taskIdShort = task_id.substring(0, 8);
+              const branches = execSync(`git branch -r --list "origin/cp-*" --sort=-committerdate | head -20`, { encoding: 'utf-8', timeout: 5000 })
+                .trim().split('\n').map(b => b.trim().replace('origin/', ''));
+              const matchBranch = branches.find(b => b.includes(taskIdShort));
+              if (matchBranch) {
+                const ghOut = execSync(`gh pr list --head "${matchBranch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                const ghPrs = JSON.parse(ghOut);
+                if (ghPrs.length > 0) {
+                  prUrl = ghPrs[0].url;
+                  console.log(`[execution-callback] harness: pr_url recovered from git branch ${matchBranch}: ${prUrl}`);
+                }
+              }
+            } catch {}
           }
           if (!prUrl) {
             // pr_url 缺失：Generator session 崩溃或输出解析失败，创建 harness_fix 重试（自愈）

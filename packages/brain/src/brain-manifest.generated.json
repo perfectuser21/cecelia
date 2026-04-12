@@ -1033,7 +1033,7 @@
     "okr_project_plan": "/decomp",
     "platform_scraper": "/media-scraping"
   },
-  "generatedAt": "2026-04-12T05:08:38.715Z",
+  "generatedAt": "2026-04-12T07:47:18.281Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
