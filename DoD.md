@@ -1,18 +1,10 @@
-# DoD: Dashboard KR5 KR 进度数据修复
+contract_branch: cp-harness-contract-66540294
+workstream_index: 1
+sprint_dir: sprints/harness-v5-e2e-test2
 
-## 验收标准
-
-- [x] [ARTIFACT] `packages/brain/src/routes/task-goals.js` 的 KR_SELECT 包含 `progress_pct` 字段
-  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/task-goals.js','utf8');if(!c.includes('progress_pct'))process.exit(1);console.log('OK')"`
-
-- [x] [BEHAVIOR] `task-goals.js` KR_SELECT SQL 含 COALESCE(progress,...) AS progress_pct，OBJ_SELECT 含 NULL::integer AS progress_pct
-  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/task-goals.js','utf8');if(!c.includes('COALESCE')||!c.includes('NULL::integer AS progress_pct'))process.exit(1);console.log('OK')"`
-
-- [x] [ARTIFACT] `apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx` 使用 `progress_pct` 字段
-  Test: `manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx','utf8');if(!c.includes('progress_pct'))process.exit(1);console.log('OK')"`
-
-- [x] [ARTIFACT] `apps/dashboard/src/pages/roadmap/RoadmapPage.tsx` 使用 `progress_pct` 字段
-  Test: `manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/roadmap/RoadmapPage.tsx','utf8');if(!c.includes('progress_pct'))process.exit(1);console.log('OK')"`
-
-- [x] [BEHAVIOR] TypeScript 编译无错误（主仓库源码编译验证）
-  Test: `manual:node -e "const {execSync}=require('child_process');try{execSync('node_modules/.bin/tsc --project apps/dashboard/tsconfig.json --noEmit',{stdio:'pipe',cwd:'/Users/administrator/perfect21/cecelia'});console.log('OK')}catch(e){console.error(e.stderr?.toString());process.exit(1)}"`
+- [x] [BEHAVIOR] `GET /api/brain/health` 返回 JSON 包含 `active_pipelines` 非负整数字段
+  Test: curl -sf localhost:5221/api/brain/health | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const v=d.active_pipelines;if(v===undefined||v===null){console.error('FAIL: 字段不存在');process.exit(1)}if(!Number.isInteger(v)||v<0){console.error('FAIL: 非法值='+v);process.exit(1)}console.log('PASS: active_pipelines='+v)"
+- [x] [BEHAVIOR] `active_pipelines` 值与 DB 中 harness_planner in_progress 计数一致
+  Test: bash -c 'API_VAL=$(curl -sf localhost:5221/api/brain/health | node -e "process.stdout.write(String(JSON.parse(require(\"fs\").readFileSync(\"/dev/stdin\",\"utf8\")).active_pipelines))"); DB_VAL=$(psql cecelia -t -A -c "SELECT count(*) FROM tasks WHERE task_type='"'"'harness_planner'"'"' AND status='"'"'in_progress'"'"'"); [ "$API_VAL" = "$DB_VAL" ] && echo "PASS: API=$API_VAL == DB=$DB_VAL" || { echo "FAIL: API=$API_VAL != DB=$DB_VAL"; exit 1; }'
+- [x] [BEHAVIOR] 仅统计 harness_planner，注入 harness_generator 后 API 值不变
+  Test: bash -c 'BEFORE=$(curl -sf localhost:5221/api/brain/health | node -e "process.stdout.write(String(JSON.parse(require(\"fs\").readFileSync(\"/dev/stdin\",\"utf8\")).active_pipelines))"); TEMP_ID=$(psql cecelia -t -A -c "INSERT INTO tasks (title,task_type,status,priority,description) VALUES ('"'"'__contract_test_probe__'"'"','"'"'harness_generator'"'"','"'"'in_progress'"'"','"'"'P3'"'"','"'"'temp probe'"'"') RETURNING id"); AFTER=$(curl -sf localhost:5221/api/brain/health | node -e "process.stdout.write(String(JSON.parse(require(\"fs\").readFileSync(\"/dev/stdin\",\"utf8\")).active_pipelines))"); PLANNER_ONLY=$(psql cecelia -t -A -c "SELECT count(*) FROM tasks WHERE task_type='"'"'harness_planner'"'"' AND status='"'"'in_progress'"'"'"); ALL_HARNESS=$(psql cecelia -t -A -c "SELECT count(*) FROM tasks WHERE task_type LIKE '"'"'harness_%'"'"' AND status='"'"'in_progress'"'"'"); psql cecelia -c "DELETE FROM tasks WHERE id='"'"'$TEMP_ID'"'"'" > /dev/null; if [ "$BEFORE" = "$AFTER" ] && [ "$AFTER" = "$PLANNER_ONLY" ] && [ "$ALL_HARNESS" != "$PLANNER_ONLY" ]; then echo "PASS: API=$AFTER == planner=$PLANNER_ONLY != all_harness=$ALL_HARNESS"; else echo "FAIL: BEFORE=$BEFORE AFTER=$AFTER planner=$PLANNER_ONLY all=$ALL_HARNESS"; exit 1; fi'
