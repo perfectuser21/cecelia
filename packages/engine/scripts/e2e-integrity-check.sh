@@ -128,6 +128,20 @@ else
     _fail "pre-push.sh 不存在：$PRE_PUSH"
 fi
 
+# ─── 检测 9：quickcheck.sh DoD 守卫（本地拦截 DoD 未勾选）───────
+# 根因：harness-contract-lint CI 因 DoD [ ] 未勾选失败是可预防的本地错误
+QUICKCHECK="$PROJECT_ROOT/scripts/quickcheck.sh"
+if [[ -f "$QUICKCHECK" ]]; then
+    CONTENT=$(cat "$QUICKCHECK")
+    if echo "$CONTENT" | grep -q 'DoD 未勾选'; then
+        _pass "quickcheck.sh 包含 DoD 守卫（本地拦截未勾选条目）"
+    else
+        _fail "quickcheck.sh 未包含 DoD 守卫 — harness-contract-lint CI 失败无法本地拦截"
+    fi
+else
+    _fail "quickcheck.sh 不存在：$QUICKCHECK"
+fi
+
 # ─── 汇总 ─────────────────────────────────────────────────────────
 echo ""
 echo "=== 检测结果汇总 ==="
