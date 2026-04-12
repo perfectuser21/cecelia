@@ -32,7 +32,21 @@ const OBJ_SELECT = `
   custom_props,
   created_at,
   updated_at,
-  NULL::integer AS progress_pct
+  COALESCE(
+    (SELECT ROUND(AVG(
+      COALESCE(
+        kr.progress,
+        CASE WHEN kr.target_value > 0
+          THEN kr.current_value::numeric / kr.target_value::numeric * 100
+          ELSE NULL
+        END
+      ))::numeric
+    )::integer
+    FROM key_results kr
+    WHERE kr.objective_id = objectives.id
+      AND kr.status NOT IN ('cancelled', 'archived')
+    ), 0
+  ) AS progress_pct
 `;
 
 // 统一投影：将 key_results 行格式化为旧 goals 兼容格式
