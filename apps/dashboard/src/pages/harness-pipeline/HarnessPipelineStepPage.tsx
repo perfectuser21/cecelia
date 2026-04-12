@@ -74,7 +74,7 @@ export default function HarnessPipelineStepPage() {
   }, [fetchDetail]);
 
   const stepNum = step ? parseInt(step, 10) : null;
-  const stepData = data?.steps.find(s => s.step === stepNum) ?? null;
+  const stepData = (data?.steps ?? []).find(s => s.step === stepNum) ?? null;
 
   if (loading && !data) {
     return (
