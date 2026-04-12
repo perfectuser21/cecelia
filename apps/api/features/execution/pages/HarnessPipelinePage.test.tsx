@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('axios', () => ({
   default: {
@@ -19,6 +20,7 @@ import HarnessPipelinePage from './HarnessPipelinePage';
 import { getHarnessPipelines } from '../api/harness-pipeline.api';
 
 const mockPipeline = {
+  planner_task_id: 'test-planner-id-001',
   sprint_dir: 'sprints/sprint-1',
   title: '测试 Pipeline',
   sprint_goal: '验证功能',
@@ -45,19 +47,19 @@ describe('HarnessPipelinePage', () => {
   });
 
   it('renders page title', async () => {
-    render(<HarnessPipelinePage />);
+    render(<MemoryRouter><HarnessPipelinePage /></MemoryRouter>);
     expect(screen.getByText('Harness Pipeline')).toBeTruthy();
   });
 
   it('shows pipeline after loading', async () => {
-    render(<HarnessPipelinePage />);
+    render(<MemoryRouter><HarnessPipelinePage /></MemoryRouter>);
     const title = await screen.findByText('测试 Pipeline');
     expect(title).toBeTruthy();
   });
 
   it('shows empty state when no pipelines', async () => {
     vi.mocked(getHarnessPipelines).mockResolvedValue({ pipelines: [], total: 0 });
-    render(<HarnessPipelinePage />);
+    render(<MemoryRouter><HarnessPipelinePage /></MemoryRouter>);
     const msg = await screen.findByText('暂无 Harness Pipeline 记录');
     expect(msg).toBeTruthy();
   });
