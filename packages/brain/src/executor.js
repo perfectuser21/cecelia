@@ -1624,7 +1624,7 @@ function buildSystemContextBlock() {
 
 const SPRINT_ACCOUNT1_TASK_TYPES = [
   'harness_contract_propose', 'harness_contract_review',
-  'harness_generate', 'harness_fix', 'harness_report',
+  'harness_generate', 'harness_evaluate', 'harness_fix', 'harness_report',
   'harness_planner', 'harness_ci_watch', 'harness_deploy_watch',
 ];
 
