@@ -2065,6 +2065,82 @@ ${task.description || task.title}
   return `${skill}\n\n${sysCtx}${prd}${learningCtx}${retryCtx}`;
 }
 
+// ─── preparePrompt 子函数（Harness 系列）────────────────────────────────────
+
+async function _prepareHarnessGeneratePrompt(task) {
+  const taskType = task.task_type || 'dev';
+  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const contractBranch = task.payload?.contract_branch || null;
+  const workstreamIndex = task.payload?.workstream_index || null;
+  const workstreamCount = task.payload?.workstream_count || 1;
+  let basePrompt = _prepareSprintPrompt(task, taskType);
+  if (workstreamIndex) {
+    basePrompt += `\nworkstream_index: ${workstreamIndex}\nworkstream_count: ${workstreamCount}`;
+  }
+  if (contractBranch) {
+    const contractContent = await _fetchSprintFile(contractBranch, `${sprintDir}/sprint-contract.md`);
+    if (contractContent) {
+      basePrompt += `\n\n## ${sprintDir}/sprint-contract.md（来自 ${contractBranch}）\n${contractContent}`;
+    }
+  }
+  return basePrompt;
+}
+
+function _prepareHarnessReportPrompt(task, taskType) {
+  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const skillName = taskType === 'harness_report' ? '/harness-report' : '/sprint-report';
+  return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${task.description || task.title}`;
+}
+
+function _prepareHarnessPlannerPrompt(task, taskType) {
+  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const skillName = taskType === 'harness_planner' ? '/harness-planner' : '/sprint-planner';
+  return `${skillName}\n\n## Harness v4.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
+}
+
+async function _prepareContractProposePrompt(task, taskType) {
+  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const proposeRound = task.payload?.propose_round || 1;
+  const plannerBranch = task.payload?.planner_branch || null;
+  const reviewBranch = task.payload?.review_branch || null;
+  const skillName = taskType === 'harness_contract_propose' ? '/harness-contract-proposer' : '/sprint-contract-proposer';
+  let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nplanner_branch: ${plannerBranch || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\nreview_branch: ${reviewBranch || ''}\n\n${task.description || task.title}`;
+  if (plannerBranch) {
+    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
+    if (sprintPrdContent) {
+      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
+    }
+  }
+  if (reviewBranch) {
+    const reviewFeedback = await _fetchSprintFile(reviewBranch, `${sprintDir}/contract-review-feedback.md`);
+    if (reviewFeedback) {
+      basePrompt += `\n\n## ${sprintDir}/contract-review-feedback.md（来自 ${reviewBranch}）\n${reviewFeedback}`;
+    }
+  }
+  return basePrompt;
+}
+
+async function _prepareContractReviewPrompt(task, taskType) {
+  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const plannerBranch = task.payload?.planner_branch || null;
+  const proposeBranch = task.payload?.propose_branch || null;
+  const skillName = taskType === 'harness_contract_review' ? '/harness-contract-reviewer' : '/sprint-contract-reviewer';
+  let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\nplanner_branch: ${plannerBranch || ''}\npropose_branch: ${proposeBranch || ''}\n\n${task.description || task.title}`;
+  if (plannerBranch) {
+    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
+    if (sprintPrdContent) {
+      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
+    }
+  }
+  if (proposeBranch) {
+    const contractDraftContent = await _fetchSprintFile(proposeBranch, `${sprintDir}/contract-draft.md`);
+    if (contractDraftContent) {
+      basePrompt += `\n\n## ${sprintDir}/contract-draft.md（来自 ${proposeBranch}）\n${contractDraftContent}`;
+    }
+  }
+  return basePrompt;
+}
+
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
 
 async function preparePrompt(task) {
@@ -2079,22 +2155,7 @@ async function preparePrompt(task) {
 
   // Harness Generator v4.0：从 contract_branch 嵌入 sprint-contract.md 内容
   if (taskType === 'harness_generate' || taskType === 'harness_fix') {
-    const sprintDir = task.payload?.sprint_dir || 'sprints';
-    const contractBranch = task.payload?.contract_branch || null;
-    const workstreamIndex = task.payload?.workstream_index || null;
-    const workstreamCount = task.payload?.workstream_count || 1;
-    let basePrompt = _prepareSprintPrompt(task, taskType);
-    // 注入 workstream 信息供 Generator skill 读取
-    if (workstreamIndex) {
-      basePrompt += `\nworkstream_index: ${workstreamIndex}\nworkstream_count: ${workstreamCount}`;
-    }
-    if (contractBranch) {
-      const contractContent = await _fetchSprintFile(contractBranch, `${sprintDir}/sprint-contract.md`);
-      if (contractContent) {
-        basePrompt += `\n\n## ${sprintDir}/sprint-contract.md（来自 ${contractBranch}）\n${contractContent}`;
-      }
-    }
-    return basePrompt;
+    return _prepareHarnessGeneratePrompt(task);
   }
 
   // Harness Generator/Fix 模式（v3.x + v4.0 统一处理）
@@ -2103,95 +2164,38 @@ async function preparePrompt(task) {
     return _prepareSprintPrompt(task, taskType);
   }
 
-  // Harness Report 类型（sprint_report / harness_report → 固定走对应 skill，禁止 fallback 到 /dev）
-  if (taskType === 'sprint_report' || taskType === 'harness_report') {
-    const sprintDir = task.payload?.sprint_dir || 'sprints';
-    const skillName = taskType === 'harness_report' ? '/harness-report' : '/sprint-report';
-    return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${task.description || task.title}`;
-  }
-
-  // Harness Planner 类型
-  if (taskType === 'sprint_planner' || taskType === 'harness_planner') {
-    const sprintDir = task.payload?.sprint_dir || 'sprints';
-    const skillName = taskType === 'harness_planner' ? '/harness-planner' : '/sprint-planner';
-    return `${skillName}\n\n## Harness v4.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
-  }
-
-  // Harness Contract Proposer 类型
-  if (taskType === 'sprint_contract_propose' || taskType === 'harness_contract_propose') {
-    const sprintDir = task.payload?.sprint_dir || 'sprints';
-    const proposeRound = task.payload?.propose_round || 1;
-    const plannerBranch = task.payload?.planner_branch || null;
-    const reviewBranch = task.payload?.review_branch || null;
-    const skillName = taskType === 'harness_contract_propose' ? '/harness-contract-proposer' : '/sprint-contract-proposer';
-    // planner_branch 和 review_branch 注入 prompt，SKILL.md 的 bash 命令读取这些变量
-    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nplanner_branch: ${plannerBranch || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\nreview_branch: ${reviewBranch || ''}\n\n${task.description || task.title}`;
-    // 从 planner 分支直接嵌入 PRD 内容，消除对 PLANNER_BRANCH 变量的依赖
-    if (plannerBranch) {
-      const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
-      if (sprintPrdContent) {
-        basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
-      }
-    }
-    // 从 review 分支嵌入反馈内容（修订轮）
-    if (reviewBranch) {
-      const reviewFeedback = await _fetchSprintFile(reviewBranch, `${sprintDir}/contract-review-feedback.md`);
-      if (reviewFeedback) {
-        basePrompt += `\n\n## ${sprintDir}/contract-review-feedback.md（来自 ${reviewBranch}）\n${reviewFeedback}`;
-      }
-    }
-    return basePrompt;
-  }
-
-  // Harness Contract Reviewer 类型
-  if (taskType === 'sprint_contract_review' || taskType === 'harness_contract_review') {
-    const sprintDir = task.payload?.sprint_dir || 'sprints';
-    const plannerBranch = task.payload?.planner_branch || null;
-    const proposeBranch = task.payload?.propose_branch || null;
-    const skillName = taskType === 'harness_contract_review' ? '/harness-contract-reviewer' : '/sprint-contract-reviewer';
-    // planner_branch 和 propose_branch 注入 prompt，SKILL.md 的 bash 命令读取这些变量
-    let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\nplanner_branch: ${plannerBranch || ''}\npropose_branch: ${proposeBranch || ''}\n\n${task.description || task.title}`;
-    // 从 planner 分支嵌入 PRD
-    if (plannerBranch) {
-      const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
-      if (sprintPrdContent) {
-        basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
-      }
-    }
-    // 从 propose 分支嵌入合同草案（Proposer 写的 contract-draft.md）
-    if (proposeBranch) {
-      const contractDraftContent = await _fetchSprintFile(proposeBranch, `${sprintDir}/contract-draft.md`);
-      if (contractDraftContent) {
-        basePrompt += `\n\n## ${sprintDir}/contract-draft.md（来自 ${proposeBranch}）\n${contractDraftContent}`;
-      }
-    }
-    return basePrompt;
-  }
-
   // 路由表：taskType → handler
   const routes = {
-    initiative_plan:          () => `/decomp\n\n${task.description || task.title}`,
-    scope_plan:               () => _prepareScopePlanPrompt(task),
-    project_plan:             () => _prepareProjectPlanPrompt(task),
-    sprint_evaluate:          () => _prepareSprintEvaluatePrompt(task),
-    harness_evaluate:         () => _prepareHarnessEvaluatePrompt(task),
-    initiative_verify:   () => `/architect verify --initiative-id ${task.project_id || task.payload?.initiative_id || ''}\n\n${task.description || task.title}`,
-    architecture_design: () => `/architect\n\n${task.description || task.title}`,
-    decomp_review:       () => `/decomp-check\n\n${task.description || task.title}`,
-    prd_review:          () => `/prd-review\n\n${task.description || task.title}`,
-    spec_review:         () => _prepareSpecReviewPrompt(task),
-    code_review_gate:    () => _prepareCodeReviewGatePrompt(task),
-    initiative_review:   () => `/initiative-review --phase ${task.payload?.phase || 1} --initiative-id ${task.project_id || task.payload?.initiative_id || ''}\n\n${task.description || task.title}`,
-    talk:                () => _prepareTalkPrompt(task),
-    review:              () => _prepareCodeReviewArgs(task),
-    qa:                  () => _prepareCodeReviewArgs(task),
-    audit:               () => _prepareCodeReviewArgs(task),
-    research:            () => _prepareResearchPrompt(task),
-    code_review:         () => _prepareCodeReviewArgs(task),
+    sprint_report:            (t) => _prepareHarnessReportPrompt(t, taskType),
+    harness_report:           (t) => _prepareHarnessReportPrompt(t, taskType),
+    sprint_planner:           (t) => _prepareHarnessPlannerPrompt(t, taskType),
+    harness_planner:          (t) => _prepareHarnessPlannerPrompt(t, taskType),
+    sprint_contract_propose:  (t) => _prepareContractProposePrompt(t, taskType),
+    harness_contract_propose: (t) => _prepareContractProposePrompt(t, taskType),
+    sprint_contract_review:   (t) => _prepareContractReviewPrompt(t, taskType),
+    harness_contract_review:  (t) => _prepareContractReviewPrompt(t, taskType),
+    initiative_plan:          (t) => `/decomp\n\n${t.description || t.title}`,
+    scope_plan:               (t) => _prepareScopePlanPrompt(t),
+    project_plan:             (t) => _prepareProjectPlanPrompt(t),
+    sprint_evaluate:          (t) => _prepareSprintEvaluatePrompt(t),
+    harness_evaluate:         (t) => _prepareHarnessEvaluatePrompt(t),
+    initiative_verify:        (t) => `/architect verify --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`,
+    architecture_design:      (t) => `/architect\n\n${t.description || t.title}`,
+    decomp_review:            (t) => `/decomp-check\n\n${t.description || t.title}`,
+    prd_review:               (t) => `/prd-review\n\n${t.description || t.title}`,
+    spec_review:              (t) => _prepareSpecReviewPrompt(t),
+    code_review_gate:         (t) => _prepareCodeReviewGatePrompt(t),
+    initiative_review:        (t) => `/initiative-review --phase ${t.payload?.phase || 1} --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`,
+    talk:                     (t) => _prepareTalkPrompt(t),
+    review:                   (t) => _prepareCodeReviewArgs(t),
+    qa:                       (t) => _prepareCodeReviewArgs(t),
+    audit:                    (t) => _prepareCodeReviewArgs(t),
+    research:                 (t) => _prepareResearchPrompt(t),
+    code_review:              (t) => _prepareCodeReviewArgs(t),
   };
 
   const handler = routes[taskType];
-  if (handler) return handler();
+  if (handler) return handler(task);
 
   return _prepareDefaultPrompt(task, skill);
 }
