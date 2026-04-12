@@ -33,16 +33,17 @@ const quarantineSrc = fs.readFileSync(
   'utf8'
 );
 
-describe('harness pipeline — evaluator触发时机', () => {
-  it('harness_evaluate 只在最后一个 WS 完成时创建（currentWsIdx === totalWsCount）', () => {
-    // v5.0: Generator 完成后创建 harness_evaluate（不是 harness_report）
+describe('harness pipeline — report触发时机', () => {
+  it('harness_ci_watch 只在最后一个 WS 完成时创建（currentWsIdx === totalWsCount）', () => {
+    // The ci_watch creation must be inside the `currentWsIdx === totalWsCount` block
     const marker = 'currentWsIdx === totalWsCount';
     const idx = execSrc.indexOf(marker);
     expect(idx).toBeGreaterThan(0);
-    // harness_evaluate task creation should appear after this marker
-    const region = execSrc.slice(idx, idx + 2000);
-    expect(region).toContain('harness_evaluate');
-    expect(region).toContain('project_id');
+    // harness_ci_watch task creation should appear after this marker (CI Watch 链路)
+    // 使用 1200 chars 窗口：仅覆盖 currentWsIdx===totalWsCount 块（harness_fix 块在 ~1134 chars 后开始）
+    const region = execSrc.slice(idx, idx + 1200);
+    expect(region).toContain('harness_ci_watch');
+    expect(region).not.toContain('checkPrCiStatus');
   });
 
   it('harness_report 创建前不应有不带 totalWsCount 检查的早期触发', () => {

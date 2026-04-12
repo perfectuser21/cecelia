@@ -121,6 +121,7 @@ const SKILL_WHITELIST = {
   'harness_ci_watch': '/_internal',                           // Brain tick 内联处理（不派 agent）
   'harness_fix': '/harness-generator',                        // Layer 3d: Generator 修复（同 generator skill）
   'harness_deploy_watch': '/_internal',                       // Brain tick 内联处理（不派 agent）
+  'harness_post_merge': '/_internal',                         // Layer 3f: Brain tick 内联处理（post-merge 收尾）
   'harness_report': '/harness-report',                        // Layer 4: 最终报告
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
