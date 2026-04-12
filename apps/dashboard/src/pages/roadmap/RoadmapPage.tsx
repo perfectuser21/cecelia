@@ -362,17 +362,19 @@ export default function RoadmapPage() {
         eventsRes.json(),
       ]);
 
-      // Brain 返回 area_kr，标准化为 kr；current_value 字段解析为 progress 数字
+      // Brain 返回 area_kr，标准化为 kr；优先使用 progress_pct（含手动设置），退化到 current_value
       const normalizeGoalType = (raw: Record<string, unknown>[]): Goal[] =>
         raw.map((g) => ({
           ...g,
           type: g.type === 'area_kr' ? 'kr' : g.type,
-          progress: parseFloat(String(
-            g.current_value ??
-            (g.metadata as Record<string, unknown>)?.metric_current ??
-            g.progress ??
-            0
-          )) || 0,
+          progress: g.progress_pct != null
+            ? Number(g.progress_pct)
+            : parseFloat(String(
+                g.current_value ??
+                (g.metadata as Record<string, unknown>)?.metric_current ??
+                g.progress ??
+                0
+              )) || 0,
         } as Goal));
       setGoals(normalizeGoalType(Array.isArray(goalsData) ? goalsData : []));
       // Brain projects 返回 title/end_date，规范化为前端期望的 name/deadline
