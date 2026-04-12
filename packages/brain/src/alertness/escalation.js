@@ -317,7 +317,9 @@ async function pauseLowPriorityTasks(priorities) {
         AND priority = ANY($1)
         AND task_type NOT IN (
           'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review'
+          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
+          'content-pipeline', 'content-research', 'content-copywriting',
+          'content-copy-review', 'content-generate', 'content-image-review', 'content-export'
         )
       RETURNING id
     `, [priorities]);
