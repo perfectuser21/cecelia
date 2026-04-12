@@ -2119,36 +2119,8 @@ ${resultStr.substring(0, 2000)}
             if (prMatch) prUrl = prMatch[0];
           }
           const evalRound = harnessPayload.eval_round || 1;
-          // CI 状态检查：fix 完成后验证 CI 是否通过
-          let fixCiCheckFailed = false;
-          if (prUrl) {
-            const ciPassed = await checkPrCiStatus(prUrl);
-            if (ciPassed === false && evalRound < 5) {
-              fixCiCheckFailed = true;
-              console.log(`[execution-callback] harness: harness_fix ${task_id} CI still failing → harness_fix retry (eval_round=${evalRound + 1})`);
-              await createHarnessTask({
-                title: `[Fix] CI 失败 R${evalRound + 1} — ${plannerShort}`,
-                description: `Fix 后 CI 仍然失败，继续修复。\npr_url: ${prUrl}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: 'harness_fix',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  dev_task_id: harnessPayload.dev_task_id || task_id,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  planner_branch: harnessPayload.planner_branch || null,
-                  contract_branch: harnessPayload.contract_branch || null,
-                  pr_url: prUrl,
-                  eval_round: evalRound + 1,
-                  ci_fail_type: 'ci_failed_after_fix',
-                  harness_mode: true,
-                },
-              });
-            }
-          }
-          if (!fixCiCheckFailed) {
+          // CI 由 /dev 自身保证（Stop Hook 等待 CI 通过后才回调），直接进入 Evaluator
+          {
             // v5.0: fix 完成后创建 harness_evaluate 重新验收（不直接创建 report）
             await createHarnessTask({
               title: `[Evaluator] E${evalRound + 1} — ${plannerShort}`,
