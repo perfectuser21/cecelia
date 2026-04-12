@@ -12,6 +12,7 @@ import { Router } from 'express';
 import { readFile } from 'fs/promises';
 import { execSync } from 'child_process';
 import { join } from 'path';
+import { homedir } from 'os';
 import pool from '../db.js';
 
 const router = Router();
@@ -411,6 +412,38 @@ async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
   return null;
 }
 
+// task_type → skill 目录名映射
+const TASK_TYPE_TO_SKILL = {
+  harness_planner: 'harness-planner',
+  sprint_planner: 'harness-planner',
+  harness_contract_propose: 'harness-contract-proposer',
+  sprint_contract_propose: 'harness-contract-proposer',
+  harness_contract_review: 'harness-contract-reviewer',
+  sprint_contract_review: 'harness-contract-reviewer',
+  harness_generate: 'harness-generator',
+  sprint_generate: 'harness-generator',
+  harness_fix: 'harness-generator',
+  sprint_fix: 'harness-generator',
+  harness_evaluate: 'harness-evaluator',
+  sprint_evaluate: 'harness-evaluator',
+  harness_report: 'harness-report',
+  sprint_report: 'harness-report',
+};
+
+/**
+ * 读取对应 skill 的 SKILL.md 内容；无则返回 null
+ */
+async function getSystemPromptContent(taskType) {
+  const skillName = TASK_TYPE_TO_SKILL[taskType];
+  if (!skillName) return null;
+  const skillPath = join(homedir(), '.claude-account1', 'skills', skillName, 'SKILL.md');
+  try {
+    return await readFile(skillPath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 生成步骤标签（含轮次编号）
  */
@@ -450,9 +483,10 @@ async function buildSteps(tasks, sprintDir) {
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
     const label = buildStepLabel(task.task_type, counters);
-    const [inputContent, outputContent] = await Promise.all([
+    const [inputContent, outputContent, systemPromptContent] = await Promise.all([
       getStepInput(task, sprintDir),
       getStepOutput(task, sprintDir, plannerBranchFromPropose),
+      getSystemPromptContent(task.task_type),
     ]);
 
     steps.push({
@@ -469,6 +503,7 @@ async function buildSteps(tasks, sprintDir) {
       input_content: inputContent,
       prompt_content: rebuildPrompt(task, sprintDir),
       output_content: outputContent,
+      system_prompt_content: systemPromptContent,
     });
   }
 
