@@ -417,39 +417,63 @@ export async function executeGenerate(task) {
 
 // ─── 5. Image Review（图片审核）───────────────────────────────
 
+async function _imageReviewLoadConfig(contentType) {
+  let typeConfig = null;
+  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
+  return typeConfig;
+}
+
+function _imageReviewCheckFiles(dir) {
+  const issues = [];
+  if (!existsSync(join(dir, 'cards', 'copy.md'))) issues.push('缺少 cards/copy.md 文案文件');
+  if (!existsSync(join(dir, 'article', 'article.md'))) issues.push('缺少 article/article.md 长文文件');
+  return issues;
+}
+
+function _imageReviewCountImages(topic) {
+  const IMAGES_DIR = join(process.env.HOME || '/Users/administrator', 'claude-output', 'images');
+  try {
+    if (existsSync(IMAGES_DIR)) {
+      return readdirSync(IMAGES_DIR).filter(f => f.startsWith(topic) && f.endsWith('.png')).length;
+    }
+  } catch { /* */ }
+  return 0;
+}
+
+function _imageReviewLoadContent(dir, copyPath) {
+  const cardContentPath = join(dir, 'cards', 'llm-card-content.json');
+  if (existsSync(cardContentPath)) return readFileSync(cardContentPath, 'utf-8');
+  if (existsSync(copyPath)) return readFileSync(copyPath, 'utf-8').substring(0, 1000);
+  return '';
+}
+
+async function _imageReviewCallLLM(imageReviewPrompt, keyword, contentForReview) {
+  const prompt = `${imageReviewPrompt.replace(/\{keyword\}/g, keyword)}\n\n## 待审核内容\n${contentForReview.substring(0, 2000)}\n\n请评审内容质量，严格按 JSON 格式返回：\n{\n  "review_passed": true,\n  "issues": [],\n  "suggestions": ["建议1"],\n  "quality_score": 8\n}`;
+  let reviewText;
+  try {
+    ({ text: reviewText } = await callLLM('thalamus', prompt, { maxTokens: 512, timeout: 45000 }));
+  } catch (err) {
+    return { error: `Claude 图片审核调用失败: ${err.message}` };
+  }
+  const jsonMatch = reviewText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { error: 'Claude 图片审核返回格式无效（无 JSON）' };
+  return { llmReview: JSON.parse(jsonMatch[0]) };
+}
+
 export async function executeImageReview(task) {
   const keyword = task.payload?.pipeline_keyword || task.title;
   const contentType = task.payload?.content_type || 'solo-company-case';
   console.log(`[image-review] 开始: ${keyword}`);
 
-  // 从 DB/YAML 读取内容类型配置
-  let typeConfig = null;
-  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
+  const typeConfig = await _imageReviewLoadConfig(contentType);
   const maxImageCount = typeConfig?.images?.count || 9;
 
   const dir = findOutputDir(keyword);
   if (!dir) return { success: true, review_passed: false, issues: ['找不到产出目录'] };
 
-  const issues = [];
-
-  // 检查文案文件存在（图片生成的前提）
-  const cp = join(dir, 'cards', 'copy.md');
-  if (!existsSync(cp)) issues.push('缺少 cards/copy.md 文案文件');
-
-  const ap = join(dir, 'article', 'article.md');
-  if (!existsSync(ap)) issues.push('缺少 article/article.md 长文文件');
-
-  // 检查图片目录（如果已有卡片图）
-  const topic = slug(keyword);
-  const IMAGES_DIR = join(process.env.HOME || '/Users/administrator', 'claude-output', 'images');
-  let cardCount = 0;
-  try {
-    if (existsSync(IMAGES_DIR)) {
-      cardCount = readdirSync(IMAGES_DIR).filter(f => f.startsWith(topic) && f.endsWith('.png')).length;
-    }
-  } catch { /* */ }
-
-  // 图片数量检查（允许 0，因为实际渲染可能在 export 阶段）
+  const copyPath = join(dir, 'cards', 'copy.md');
+  const issues = _imageReviewCheckFiles(dir);
+  const cardCount = _imageReviewCountImages(slug(keyword));
   if (cardCount > maxImageCount) issues.push(`图片数量 ${cardCount} 超过限制（最多 ${maxImageCount} 张）`);
 
   if (issues.length > 0) {
@@ -457,39 +481,15 @@ export async function executeImageReview(task) {
     return { success: true, review_passed: false, card_count: cardCount, issues };
   }
 
-  // ─── Claude 调用：审核内容质量 ────────────────────────────────
   const imageReviewPrompt = typeConfig?.template?.image_review_prompt || typeConfig?.template?.review_prompt;
-  if (!imageReviewPrompt) {
-    return { success: false, error: `内容类型 ${contentType} 缺少 image_review_prompt 配置` };
-  }
+  if (!imageReviewPrompt) return { success: false, error: `内容类型 ${contentType} 缺少 image_review_prompt 配置` };
 
-  const cardContentPath = join(dir, 'cards', 'llm-card-content.json');
-  let contentForReview = '';
-  if (existsSync(cardContentPath)) {
-    contentForReview = readFileSync(cardContentPath, 'utf-8');
-  } else if (existsSync(cp)) {
-    contentForReview = readFileSync(cp, 'utf-8').substring(0, 1000);
-  }
+  const contentForReview = _imageReviewLoadContent(dir, copyPath);
+  if (!contentForReview) return { success: false, error: '无可审核内容（llm-card-content.json 和 copy.md 均不存在）' };
 
-  if (!contentForReview) {
-    return { success: false, error: '无可审核内容（llm-card-content.json 和 copy.md 均不存在）' };
-  }
+  const { error, llmReview } = await _imageReviewCallLLM(imageReviewPrompt, keyword, contentForReview);
+  if (error) return { success: false, error };
 
-  const prompt = `${imageReviewPrompt.replace(/\{keyword\}/g, keyword)}\n\n## 待审核内容\n${contentForReview.substring(0, 2000)}\n\n请评审内容质量，严格按 JSON 格式返回：\n{\n  "review_passed": true,\n  "issues": [],\n  "suggestions": ["建议1"],\n  "quality_score": 8\n}`;
-
-  let reviewText;
-  try {
-    ({ text: reviewText } = await callLLM('thalamus', prompt, { maxTokens: 512, timeout: 45000 }));
-  } catch (err) {
-    return { success: false, error: `Claude 图片审核调用失败: ${err.message}` };
-  }
-
-  const jsonMatch = reviewText.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    return { success: false, error: 'Claude 图片审核返回格式无效（无 JSON）' };
-  }
-
-  const llmReview = JSON.parse(jsonMatch[0]);
   if (llmReview.issues?.length > 0) issues.push(...llmReview.issues);
   const qualityScore = typeof llmReview.quality_score === 'number' ? llmReview.quality_score : (llmReview.review_passed !== false ? 7 : 4);
   const passed = qualityScore >= 6;
