@@ -530,7 +530,6 @@ features:
         - packages/brain/src/__tests__/executor-requeue-learning.test.js
         - packages/brain/src/__tests__/executor-retry-strategy.test.js
         - packages/brain/src/__tests__/executor-skill-override.test.js
-        - packages/brain/src/__tests__/executor-sprint-prompt.test.js
         - packages/brain/src/__tests__/executor-startup-sync.test.js
         - packages/brain/src/__tests__/executor-strategy-session.test.js
         - packages/brain/src/__tests__/executor-system-context.test.js
@@ -539,7 +538,6 @@ features:
         - packages/brain/src/__tests__/exploratory-prompt.test.js
         - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
         - packages/brain/src/__tests__/fleet-resource-cache.test.js
-        - packages/brain/src/__tests__/harness-sprint-loop.test.js
         - packages/brain/src/__tests__/llm-account-deficit.test.js
         - packages/brain/src/__tests__/llm-caller-account-selection.test.js
         - packages/brain/src/__tests__/llm-caller-stream.test.js
@@ -613,8 +611,7 @@ features:
             - packages/brain/src/__tests__/executor-requeue-learning.test.js
             - packages/brain/src/__tests__/executor-retry-strategy.test.js
             - packages/brain/src/__tests__/executor-skill-override.test.js
-            - packages/brain/src/__tests__/executor-sprint-prompt.test.js
-            - packages/brain/src/__tests__/executor-startup-sync.test.js
+                - packages/brain/src/__tests__/executor-startup-sync.test.js
             - packages/brain/src/__tests__/executor-strategy-session.test.js
             - packages/brain/src/__tests__/executor-system-context.test.js
             - packages/brain/src/__tests__/executor-task-type-match.test.js
@@ -622,8 +619,7 @@ features:
             - packages/brain/src/__tests__/exploratory-prompt.test.js
             - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
             - packages/brain/src/__tests__/fleet-resource-cache.test.js
-            - packages/brain/src/__tests__/harness-sprint-loop.test.js
-            - packages/brain/src/__tests__/llm-account-deficit.test.js
+                - packages/brain/src/__tests__/llm-account-deficit.test.js
             - packages/brain/src/__tests__/llm-caller-account-selection.test.js
             - packages/brain/src/__tests__/llm-caller-stream.test.js
             - packages/brain/src/__tests__/llm-caller.test.js
