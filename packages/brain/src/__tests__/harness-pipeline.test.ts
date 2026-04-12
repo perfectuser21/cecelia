@@ -39,9 +39,10 @@ describe('harness pipeline — evaluator触发时机', () => {
     const marker = 'currentWsIdx === totalWsCount';
     const idx = execSrc.indexOf(marker);
     expect(idx).toBeGreaterThan(0);
-    // harness_evaluate task creation should appear after this marker
-    const region = execSrc.slice(idx, idx + 2000);
-    expect(region).toContain('harness_evaluate');
+    // harness_report task creation should appear after this marker
+    // 窗口设为 4000（当前 if 块长度约 2515 chars），为后续代码扩展预留 1500 chars 余量
+    const region = execSrc.slice(idx, idx + 4000);
+    expect(region).toContain('harness_report');
     expect(region).toContain('project_id');
   });
 
