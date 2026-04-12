@@ -1,14 +1,18 @@
-contract_branch: cp-harness-contract-16184cb2
-workstream_index: 2
-sprint_dir: sprints/pipeline-node-detail
+# DoD: Dashboard KR5 KR 进度数据修复
 
-- [x] [ARTIFACT] apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx 文件存在
-  Test: node -e "require('fs').accessSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx');console.log('OK')"
-- [x] [BEHAVIOR] 路由 /harness-pipeline/:id/step/:step 已注册在 execution feature manifest 中，path 配置含 :step 参数
-  Test: node -e "const c=require('fs').readFileSync('apps/api/features/execution/index.ts','utf8');if(!/path:\s*['\"].*:step/.test(c))throw new Error('FAIL');if(!/[Ss]tep[Pp]age|[Ss]tep[Dd]etail/.test(c))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] Pipeline 详情页卡片展示 label/status/verdict/duration 四项信息，onClick 绑定 /step/ 导航（非注释），有 cursor-pointer 样式
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');const lines=c.split('\n');const real=lines.filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*')&&/onClick\s*=\s*\{/.test(l));if(real.length===0)throw new Error('FAIL: onClick 仅在注释中');if(!(/\/step\//.test(c)&&c.includes('cursor-pointer')))throw new Error('FAIL');if(!/label|\.label/.test(c))throw new Error('FAIL: 无 label');if(!/duration|elapsed|耗时/.test(c))throw new Error('FAIL: 无耗时');if(!/verdict/.test(c))throw new Error('FAIL: 无 verdict');console.log('PASS')"
-- [x] [BEHAVIOR] 步骤详情子页面三栏区块展示实际数据（引用 input_content/system_prompt_content/output_content 字段），等宽字体，暂无数据占位
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');if(!/input_content/.test(c))throw new Error('FAIL: 无 input_content');if(!/system_prompt_content/.test(c))throw new Error('FAIL: 无 system_prompt_content');if(!/output_content/.test(c))throw new Error('FAIL: 无 output_content');if(!c.includes('font-mono'))throw new Error('FAIL: 无等宽');if(!c.includes('暂无数据'))throw new Error('FAIL: 无占位');console.log('PASS')"
-- [x] [BEHAVIOR] 返回按钮 onClick 绑定 navigate 指向 harness-pipeline 路径（非仅 import 声明）
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');const lines=c.split('\n');const hasRealOnClick=lines.some(l=>!l.trim().startsWith('//')&&/onClick\s*=\s*\{/.test(l));const hasNavCall=lines.some(l=>!l.trim().startsWith('//')&&/navigate\s*\(/.test(l));if(!hasRealOnClick||!hasNavCall)throw new Error('FAIL: 无真实 onClick+navigate 绑定');if(!/harness-pipeline/.test(c))throw new Error('FAIL: 未指向正确路径');console.log('PASS')"
+## 验收标准
+
+- [ ] [ARTIFACT] `packages/brain/src/routes/task-goals.js` 的 KR_SELECT 包含 `progress_pct` 字段
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/task-goals.js','utf8');if(!c.includes('progress_pct'))process.exit(1);console.log('OK')"`
+
+- [ ] [BEHAVIOR] `/api/brain/goals` 端点返回的 area_kr 条目含 `progress_pct` 字段
+  Test: `manual:curl -s http://localhost:5221/api/brain/goals | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const kr=d.find(g=>g.type==='area_kr');if(!kr||kr.progress_pct===undefined)process.exit(1);console.log('OK progress_pct='+kr.progress_pct)"`
+
+- [ ] [ARTIFACT] `apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx` 使用 `progress_pct` 字段
+  Test: `manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx','utf8');if(!c.includes('progress_pct'))process.exit(1);console.log('OK')"`
+
+- [ ] [ARTIFACT] `apps/dashboard/src/pages/roadmap/RoadmapPage.tsx` 使用 `progress_pct` 字段
+  Test: `manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/roadmap/RoadmapPage.tsx','utf8');if(!c.includes('progress_pct'))process.exit(1);console.log('OK')"`
+
+- [ ] [BEHAVIOR] TypeScript 编译无错误
+  Test: `manual:node -e "const {execSync}=require('child_process');try{execSync('node_modules/.bin/tsc --project apps/dashboard/tsconfig.json --noEmit',{stdio:'pipe'});console.log('OK')}catch(e){console.error(e.stderr?.toString());process.exit(1)}"`
