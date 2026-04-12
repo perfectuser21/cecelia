@@ -1,0 +1,12 @@
+# Contract DoD — Workstream 2: Frontend — 卡片布局 + 步骤详情子页面 + 路由
+
+- [ ] [ARTIFACT] apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx 文件存在
+  Test: node -e "require('fs').accessSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx');console.log('OK')"
+- [ ] [BEHAVIOR] 路由 /harness-pipeline/:id/step/:step 已注册在 execution feature manifest 中，path 配置含 :step 参数
+  Test: node -e "const c=require('fs').readFileSync('apps/api/features/execution/index.ts','utf8');if(!/path:\s*['\"].*:step/.test(c))throw new Error('FAIL');if(!/[Ss]tep[Pp]age|[Ss]tep[Dd]etail/.test(c))throw new Error('FAIL');console.log('PASS')"
+- [ ] [BEHAVIOR] Pipeline 详情页卡片展示 label/status/verdict/duration 四项信息，onClick 绑定 /step/ 导航（非注释），有 cursor-pointer 样式
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');const lines=c.split('\n');const real=lines.filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*')&&/onClick\s*=\s*\{/.test(l));if(real.length===0)throw new Error('FAIL: onClick 仅在注释中');if(!(/\/step\//.test(c)&&c.includes('cursor-pointer')))throw new Error('FAIL');if(!/label|\.label/.test(c))throw new Error('FAIL: 无 label');if(!/duration|elapsed|耗时/.test(c))throw new Error('FAIL: 无耗时');if(!/verdict/.test(c))throw new Error('FAIL: 无 verdict');console.log('PASS')"
+- [ ] [BEHAVIOR] 步骤详情子页面三栏区块展示实际数据（引用 input_content/system_prompt_content/output_content 字段），等宽字体，暂无数据占位
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');if(!/input_content/.test(c))throw new Error('FAIL: 无 input_content');if(!/system_prompt_content/.test(c))throw new Error('FAIL: 无 system_prompt_content');if(!/output_content/.test(c))throw new Error('FAIL: 无 output_content');if(!c.includes('font-mono'))throw new Error('FAIL: 无等宽');if(!c.includes('暂无数据'))throw new Error('FAIL: 无占位');console.log('PASS')"
+- [ ] [BEHAVIOR] 返回按钮 onClick 绑定 navigate 指向 harness-pipeline 路径（非仅 import 声明）
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');const lines=c.split('\n');const hasRealOnClick=lines.some(l=>!l.trim().startsWith('//')&&/onClick\s*=\s*\{/.test(l));const hasNavCall=lines.some(l=>!l.trim().startsWith('//')&&/navigate\s*\(/.test(l));if(!hasRealOnClick||!hasNavCall)throw new Error('FAIL: 无真实 onClick+navigate 绑定');if(!/harness-pipeline/.test(c))throw new Error('FAIL: 未指向正确路径');console.log('PASS')"
