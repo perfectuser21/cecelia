@@ -76,6 +76,26 @@ describe('preparePrompt 重构：子函数存在', () => {
   it('提取了 _prepareDefaultPrompt 子函数', () => {
     expect(executorSrc).toContain('_prepareDefaultPrompt');
   });
+
+  it('提取了 _prepareHarnessGeneratePrompt 子函数', () => {
+    expect(executorSrc).toContain('_prepareHarnessGeneratePrompt');
+  });
+
+  it('提取了 _prepareHarnessReportPrompt 子函数', () => {
+    expect(executorSrc).toContain('_prepareHarnessReportPrompt');
+  });
+
+  it('提取了 _prepareHarnessPlannerPrompt 子函数', () => {
+    expect(executorSrc).toContain('_prepareHarnessPlannerPrompt');
+  });
+
+  it('提取了 _prepareContractProposePrompt 子函数', () => {
+    expect(executorSrc).toContain('_prepareContractProposePrompt');
+  });
+
+  it('提取了 _prepareContractReviewPrompt 子函数', () => {
+    expect(executorSrc).toContain('_prepareContractReviewPrompt');
+  });
 });
 
 describe('preparePrompt 重构：路由表覆盖关键 taskType', () => {
