@@ -1,12 +1,14 @@
-contract_branch: cp-harness-review-approved-95c3e029
-workstream_index: 1
-sprint_dir: sprints
+contract_branch: cp-harness-contract-16184cb2
+workstream_index: 2
+sprint_dir: sprints/pipeline-node-detail
 
-- [x] [ARTIFACT] packages/brain/src/ 中存在注册 `/api/brain/ping-extended` 路由的代码（含 app.get 或 router.get）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('ping-extended')||(!c.includes('app.get')&&!c.includes('router.get')))process.exit(1);console.log('OK')"
-- [x] [BEHAVIOR] GET /api/brain/ping-extended 返回 200 + {status:"ok", timestamp:<ISO8601>, version:<semver>}，恰好 3 个字段
-  Test: curl -sf "localhost:5221/api/brain/ping-extended" | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));if(Object.keys(b).length!==3)process.exit(1);if(b.status!=='ok')process.exit(1);if(!/^\d+\.\d+\.\d+/.test(b.version))process.exit(1);if(isNaN(new Date(b.timestamp).getTime()))process.exit(1);console.log('PASS')"
-- [x] [BEHAVIOR] POST /api/brain/ping-extended 返回 4xx（非 GET 方法拒绝）
-  Test: node -e "const{execSync}=require('child_process');const s=execSync('curl -s -o /dev/null -w \"%{http_code}\" -X POST localhost:5221/api/brain/ping-extended').toString().trim();const c=parseInt(s);if(c<400||c>=500){console.log('FAIL:'+c);process.exit(1)}console.log('PASS:'+c)"
-- [x] [BEHAVIOR] version 字段与 packages/brain/package.json 一致
-  Test: node -e "const{execSync}=require('child_process');const a=JSON.parse(execSync('curl -sf localhost:5221/api/brain/ping-extended').toString()).version;const p=require('./packages/brain/package.json').version;if(a!==p){console.log('FAIL:'+a+'!='+p);process.exit(1)}console.log('PASS:'+a)"
+- [x] [ARTIFACT] apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx 文件存在
+  Test: node -e "require('fs').accessSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx');console.log('OK')"
+- [x] [BEHAVIOR] 路由 /harness-pipeline/:id/step/:step 已注册在 execution feature manifest 中，path 配置含 :step 参数
+  Test: node -e "const c=require('fs').readFileSync('apps/api/features/execution/index.ts','utf8');if(!/path:\s*['\"].*:step/.test(c))throw new Error('FAIL');if(!/[Ss]tep[Pp]age|[Ss]tep[Dd]etail/.test(c))throw new Error('FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] Pipeline 详情页卡片展示 label/status/verdict/duration 四项信息，onClick 绑定 /step/ 导航（非注释），有 cursor-pointer 样式
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');const lines=c.split('\n');const real=lines.filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*')&&/onClick\s*=\s*\{/.test(l));if(real.length===0)throw new Error('FAIL: onClick 仅在注释中');if(!(/\/step\//.test(c)&&c.includes('cursor-pointer')))throw new Error('FAIL');if(!/label|\.label/.test(c))throw new Error('FAIL: 无 label');if(!/duration|elapsed|耗时/.test(c))throw new Error('FAIL: 无耗时');if(!/verdict/.test(c))throw new Error('FAIL: 无 verdict');console.log('PASS')"
+- [x] [BEHAVIOR] 步骤详情子页面三栏区块展示实际数据（引用 input_content/system_prompt_content/output_content 字段），等宽字体，暂无数据占位
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');if(!/input_content/.test(c))throw new Error('FAIL: 无 input_content');if(!/system_prompt_content/.test(c))throw new Error('FAIL: 无 system_prompt_content');if(!/output_content/.test(c))throw new Error('FAIL: 无 output_content');if(!c.includes('font-mono'))throw new Error('FAIL: 无等宽');if(!c.includes('暂无数据'))throw new Error('FAIL: 无占位');console.log('PASS')"
+- [x] [BEHAVIOR] 返回按钮 onClick 绑定 navigate 指向 harness-pipeline 路径（非仅 import 声明）
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');const lines=c.split('\n');const hasRealOnClick=lines.some(l=>!l.trim().startsWith('//')&&/onClick\s*=\s*\{/.test(l));const hasNavCall=lines.some(l=>!l.trim().startsWith('//')&&/navigate\s*\(/.test(l));if(!hasRealOnClick||!hasNavCall)throw new Error('FAIL: 无真实 onClick+navigate 绑定');if(!/harness-pipeline/.test(c))throw new Error('FAIL: 未指向正确路径');console.log('PASS')"
