@@ -1767,6 +1767,14 @@ ${resultStr.substring(0, 2000)}
           if (!plannerBranch) {
             console.error(`[execution-callback] harness: plannerBranch is null for ${harnessType} ${task_id}, Proposer may fail to locate PRD`);
           }
+          // Feature 1: 持久化 plannerBranch 到 tasks.result.branch（JSONB merge，保留已有字段）
+          if (plannerBranch) {
+            await pool.query(
+              `UPDATE tasks SET result = COALESCE(result, '{}') || jsonb_build_object('branch', $1) WHERE id = $2`,
+              [plannerBranch, task_id]
+            );
+            console.log(`[execution-callback] harness: plannerBranch ${plannerBranch} persisted to result.branch for task ${task_id}`);
+          }
           const proposeType = 'harness_contract_propose';
           // Proposer 去重：同 planner_task_id 已有 queued/in_progress Proposer 时跳过创建，防止重复派发
           const existingProposer = await pool.query(

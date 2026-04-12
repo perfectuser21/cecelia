@@ -312,8 +312,9 @@ function rebuildPrompt(task, sprintDir) {
 
 /**
  * 为单个步骤获取 input 内容
+ * @param {object} context - 可选上下文，含 plannerBranch（来自 planner result.branch）
  */
-async function getStepInput(task, sprintDir) {
+async function getStepInput(task, sprintDir, context = {}) {
   const t = task.task_type;
 
   if (t === 'harness_planner' || t === 'sprint_planner') {
@@ -321,7 +322,8 @@ async function getStepInput(task, sprintDir) {
   }
 
   if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
-    const plannerBranch = task.payload?.planner_branch;
+    // 优先用 payload.planner_branch，回退到 planner task 的 result.branch
+    const plannerBranch = task.payload?.planner_branch || context.plannerBranch || null;
     if (plannerBranch) {
       return fetchFileFromBranch(plannerBranch, `${sprintDir}/sprint-prd.md`);
     }
@@ -469,18 +471,20 @@ async function buildSteps(tasks, sprintDir) {
   const counters = {};
   const steps = [];
 
-  // 预计算 planner branch（从第一个 propose 任务的 payload.planner_branch 取）
+  // 预计算 planner branch：优先从 planner 任务的 result.branch，回退到 propose 的 payload.planner_branch
+  const plannerTask = tasks.find(t => t.task_type === 'harness_planner' || t.task_type === 'sprint_planner');
   const plannerBranchFromPropose = tasks.find(
     t => (t.task_type === 'harness_contract_propose' || t.task_type === 'sprint_contract_propose')
       && t.payload?.planner_branch
   )?.payload?.planner_branch || null;
+  const plannerBranch = plannerTask?.result?.branch || plannerBranchFromPropose || null;
 
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
     const label = buildStepLabel(task.task_type, counters);
     const [inputContent, outputContent, systemPromptContent] = await Promise.all([
-      getStepInput(task, sprintDir),
-      getStepOutput(task, sprintDir, plannerBranchFromPropose),
+      getStepInput(task, sprintDir, { plannerBranch }),
+      getStepOutput(task, sprintDir, plannerBranch),
       getSystemPromptContent(task.task_type),
     ]);
 

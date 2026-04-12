@@ -92,3 +92,31 @@ describe('Pipeline Steps — rebuildPrompt', () => {
     expect(rebuildPrompt(task, 'sprints')).toBe('fallback');
   });
 });
+
+describe('Pipeline Steps — plannerBranch context in buildSteps', () => {
+  it('harness.js getStepInput accepts context parameter with plannerBranch', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const harnessSrc = fs.readFileSync(
+      path.join(__dirname, '../routes/harness.js'),
+      'utf8'
+    );
+    // getStepInput 应接受 context 参数
+    expect(harnessSrc).toContain('getStepInput(task, sprintDir, context = {})');
+    // propose 任务应回退到 context.plannerBranch
+    expect(harnessSrc).toContain('context.plannerBranch');
+  });
+
+  it('harness.js buildSteps 从 planner result.branch 计算 plannerBranch', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const harnessSrc = fs.readFileSync(
+      path.join(__dirname, '../routes/harness.js'),
+      'utf8'
+    );
+    // buildSteps 优先从 planner task 的 result.branch 取
+    expect(harnessSrc).toContain('plannerTask?.result?.branch');
+    // 将 plannerBranch 作为 context 传入 getStepInput
+    expect(harnessSrc).toContain('getStepInput(task, sprintDir, { plannerBranch })');
+  });
+});

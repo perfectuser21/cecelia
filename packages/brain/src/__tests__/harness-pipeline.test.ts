@@ -215,3 +215,21 @@ describe('quarantine — auth/network/rate_limit 失败 skipCount', () => {
     expect(execSrc).toContain('skipped_count');
   });
 });
+
+describe('harness pipeline — planner branch 持久化', () => {
+  it('harness_planner 完成后使用 JSONB merge 写入 result.branch', () => {
+    // JSONB merge 语义：COALESCE(result, '{}') || jsonb_build_object('branch', $1)
+    expect(execSrc).toContain("COALESCE(result, '{}') || jsonb_build_object('branch', $1)");
+    // 写入操作在 plannerBranch 非 null 时才执行
+    expect(execSrc).toContain('persisted to result.branch for task');
+  });
+
+  it('JSONB merge 写入在提取 plannerBranch 之后、创建 Proposer 之前执行', () => {
+    const plannerBlock = execSrc.slice(execSrc.indexOf("Layer 1: harness_planner 完成"));
+    const mergeIdx = plannerBlock.indexOf('COALESCE(result');
+    const proposerIdx = plannerBlock.indexOf('proposeType');
+    // merge 必须在 Proposer 创建之前
+    expect(mergeIdx).toBeGreaterThan(0);
+    expect(proposerIdx).toBeGreaterThan(mergeIdx);
+  });
+});
