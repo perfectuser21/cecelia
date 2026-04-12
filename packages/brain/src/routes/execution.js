@@ -2138,26 +2138,28 @@ ${resultStr.substring(0, 2000)}
               }
             }
             if (!ciCheckFailed) {
+              // v5.0: CI 通过后创建 harness_evaluate（对抗性 E2E 验收），不直接创建 report
               await createHarnessTask({
-                title: `[Report] ${plannerShort}`,
-                description: `/dev 完成（CI + 合并），生成 Harness 报告。\n原始 harness_generate task_id: ${task_id}`,
+                title: `[Evaluator] E1 — ${plannerShort}`,
+                description: `E2E 功能验收：部署服务 + API 验证 + 前端验证。\npr_url: ${prUrl}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
-                task_type: 'harness_report',
+                goal_id: harnessTask.goal_id,
+                task_type: 'harness_evaluate',
                 trigger_source: 'execution_callback_harness',
                 payload: {
                   sprint_dir: harnessPayload.sprint_dir,
                   pr_url: prUrl,
                   dev_task_id: task_id,
                   planner_task_id: harnessPayload.planner_task_id,
+                  planner_branch: harnessPayload.planner_branch || null,
                   contract_branch: harnessPayload.contract_branch,
-                  // Bug Fix: 传入 project_id 供 Report skill 查询 DB 关联信息
                   project_id: harnessTask.project_id,
                   eval_round: 1,
                   harness_mode: true
                 }
               });
-              console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_report created (pr_url=${prUrl})`);
+              console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_evaluate created (pr_url=${prUrl})`);
             }
           } else {
             console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount} 完成，等待后续 WS，暂不创建 report`);
@@ -2319,9 +2321,101 @@ ${resultStr.substring(0, 2000)}
             }
           }
           if (!fixCiCheckFailed) {
+            // v5.0: fix 完成后创建 harness_evaluate 重新验收（不直接创建 report）
             await createHarnessTask({
-              title: `[Report] Fix-R${evalRound} — ${plannerShort}`,
-              description: `/dev 修复完成（CI + 合并），生成 Harness 报告。\n原始 harness_fix task_id: ${task_id}`,
+              title: `[Evaluator] E${evalRound + 1} — ${plannerShort}`,
+              description: `Fix 后 E2E 重新验收。\npr_url: ${prUrl}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_evaluate',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                pr_url: prUrl,
+                dev_task_id: harnessPayload.dev_task_id || task_id,
+                planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch || null,
+                contract_branch: harnessPayload.contract_branch,
+                eval_round: evalRound + 1,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_evaluate created (eval_round=${evalRound + 1}, pr_url=${prUrl})`);
+          }
+        }
+
+        // Layer 3d: harness_evaluate 完成 → PASS→report / FAIL→fix（v5.0 对抗性 E2E 验收）
+        if (harnessType === 'harness_evaluate') {
+          const evalRound = harnessPayload.eval_round || 1;
+          let prUrl = harnessPayload.pr_url || pr_url || null;
+          if (!prUrl && result !== null && typeof result === 'object') {
+            prUrl = result.pr_url || null;
+          }
+
+          // 提取 verdict: PASS / FAIL
+          let evalVerdict = 'FAIL'; // 默认 FAIL（对抗性：宁可误杀不放过）
+          if (result !== null && typeof result === 'object') {
+            if (result.verdict?.toUpperCase() === 'PASS') evalVerdict = 'PASS';
+          }
+          if (typeof result === 'string') {
+            if (/"verdict"\s*:\s*"PASS"/i.test(result)) evalVerdict = 'PASS';
+          }
+
+          console.log(`[execution-callback] harness: harness_evaluate ${task_id} verdict=${evalVerdict} eval_round=${evalRound}`);
+
+          if (evalVerdict === 'PASS') {
+            // PASS → 创建 harness_report
+            await createHarnessTask({
+              title: `[Report] ${plannerShort}`,
+              description: `Evaluator PASS，生成 Harness 报告。\npr_url: ${prUrl}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_report',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                pr_url: prUrl,
+                dev_task_id: harnessPayload.dev_task_id,
+                planner_task_id: harnessPayload.planner_task_id,
+                contract_branch: harnessPayload.contract_branch,
+                project_id: harnessTask.project_id,
+                eval_round: evalRound,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: harness_evaluate PASS → harness_report created`);
+          } else if (evalRound < 3) {
+            // FAIL + 未达上限 → 创建 harness_fix
+            const failedFeatures = result?.failed_features || [];
+            await createHarnessTask({
+              title: `[Fix] Evaluator-R${evalRound} — ${plannerShort}`,
+              description: `Evaluator FAIL (round ${evalRound})，需要修复。\n失败项: ${failedFeatures.join(', ') || '见 eval-round.md'}\npr_url: ${prUrl}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_fix',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                dev_task_id: harnessPayload.dev_task_id,
+                planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch || null,
+                contract_branch: harnessPayload.contract_branch || null,
+                pr_url: prUrl,
+                eval_round: evalRound,
+                ci_fail_context: `evaluator_verdict_fail_round_${evalRound}`,
+                failed_features: failedFeatures,
+                harness_mode: true,
+              },
+            });
+            console.log(`[execution-callback] harness: harness_evaluate FAIL → harness_fix created (eval_round=${evalRound})`);
+          } else {
+            // FAIL + 达到上限（3轮）→ 创建 report 标记 needs_human_review
+            await createHarnessTask({
+              title: `[Report] Evaluator-FAIL-max — ${plannerShort}`,
+              description: `Evaluator 连续 ${evalRound} 轮 FAIL，超过上限，标记需人工审查。\npr_url: ${prUrl}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
               goal_id: harnessTask.goal_id,
@@ -2334,10 +2428,11 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: harnessPayload.planner_task_id,
                 contract_branch: harnessPayload.contract_branch,
                 eval_round: evalRound,
+                needs_human_review: true,
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: harness_fix ${task_id} → harness_report created (eval_round=${evalRound}, pr_url=${prUrl})`);
+            console.log(`[execution-callback] harness: harness_evaluate FAIL (round ${evalRound} >= 3) → harness_report with needs_human_review`);
           }
         }
 
