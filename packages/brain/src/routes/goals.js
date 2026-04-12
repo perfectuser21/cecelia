@@ -96,7 +96,7 @@ router.get('/health', async (req, res) => {
         SELECT
           COALESCE(COUNT(CASE WHEN status = 'completed' THEN 1 END)::integer, 0) AS passed,
           COALESCE(COUNT(CASE WHEN status IN ('canceled', 'failed') THEN 1 END)::integer, 0) AS failed,
-          MAX(completed_at) AS last_run_at
+          to_char(MAX(completed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_run_at
         FROM tasks
         WHERE task_type = 'harness_evaluate'
           AND status IN ('completed', 'canceled', 'failed')
@@ -131,7 +131,7 @@ router.get('/health', async (req, res) => {
         total_runs: passed + failed,
         passed,
         failed,
-        last_run_at: row.last_run_at ? new Date(row.last_run_at).toISOString() : null
+        last_run_at: row.last_run_at || null
       };
     } else {
       evaluatorStats = { total_runs: 0, passed: 0, failed: 0, last_run_at: null };
