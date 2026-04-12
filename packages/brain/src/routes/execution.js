@@ -2318,8 +2318,8 @@ ${resultStr.substring(0, 2000)}
               }
             });
             console.log(`[execution-callback] harness: harness_evaluate PASS → harness_report created`);
-          } else if (evalRound < 3) {
-            // FAIL + 未达上限 → 创建 harness_fix
+          } else {
+            // FAIL → 无上限，一直 Fix 直到 PASS（AI-native 全自动，跟 GAN 一样无上限）
             const failedFeatures = result?.failed_features || [];
             await createHarnessTask({
               title: `[Fix] Evaluator-R${evalRound} — ${plannerShort}`,
@@ -2343,28 +2343,6 @@ ${resultStr.substring(0, 2000)}
               },
             });
             console.log(`[execution-callback] harness: harness_evaluate FAIL → harness_fix created (eval_round=${evalRound})`);
-          } else {
-            // FAIL + 达到上限（3轮）→ 创建 report 标记 needs_human_review
-            await createHarnessTask({
-              title: `[Report] Evaluator-FAIL-max — ${plannerShort}`,
-              description: `Evaluator 连续 ${evalRound} 轮 FAIL，超过上限，标记需人工审查。\npr_url: ${prUrl}`,
-              priority: 'P1',
-              project_id: harnessTask.project_id,
-              goal_id: harnessTask.goal_id,
-              task_type: 'harness_report',
-              trigger_source: 'execution_callback_harness',
-              payload: {
-                sprint_dir: harnessPayload.sprint_dir,
-                pr_url: prUrl,
-                dev_task_id: harnessPayload.dev_task_id,
-                planner_task_id: harnessPayload.planner_task_id,
-                contract_branch: harnessPayload.contract_branch,
-                eval_round: evalRound,
-                needs_human_review: true,
-                harness_mode: true
-              }
-            });
-            console.log(`[execution-callback] harness: harness_evaluate FAIL (round ${evalRound} >= 3) → harness_report with needs_human_review`);
           }
         }
 
