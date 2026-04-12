@@ -1015,7 +1015,6 @@
     "sprint_contract_propose": "/sprint-contract-proposer",
     "sprint_contract_review": "/sprint-contract-reviewer",
     "sprint_generate": "/dev",
-    "sprint_evaluate": "/sprint-evaluator",
     "sprint_fix": "/dev",
     "sprint_report": "/sprint-report",
     "harness_planner": "/harness-planner",
@@ -1023,7 +1022,6 @@
     "harness_contract_review": "/harness-contract-reviewer",
     "harness_generate": "/harness-generator",
     "harness_ci_watch": "/_internal",
-    "harness_evaluate": "/harness-evaluator",
     "harness_fix": "/harness-generator",
     "harness_deploy_watch": "/_internal",
     "harness_report": "/harness-report",
@@ -1034,7 +1032,7 @@
     "okr_project_plan": "/decomp",
     "platform_scraper": "/media-scraping"
   },
-  "generatedAt": "2026-04-08T04:23:09.630Z",
+  "generatedAt": "2026-04-12T05:53:27.735Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
