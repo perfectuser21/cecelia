@@ -3,9 +3,17 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-11"
+updated: "2026-04-13"
 
 changelog:
+  - version: "14.6.3"
+    date: "2026-04-13"
+    change: "feat"
+    description: "CI 绿灯率加固：新增 bump-version.sh 一键同步 6 个版本文件；check-version-sync.sh 新增 regression-contract.yaml 检查；新增版本同步自洽性测试"
+    files:
+      - "scripts/bump-version.sh"
+      - "ci/scripts/check-version-sync.sh"
+      - "tests/version-sync/version-files-sync.test.ts"
   - version: "14.6.2"
     date: "2026-04-11"
     skill: "dev"
