@@ -88,10 +88,13 @@ router.post('/circuit-breaker/:key/reset', (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const [tickStatus, cbStates] = await Promise.all([
+    const [tickStatus, cbStates, harnessCountResult] = await Promise.all([
       getTickStatus(),
-      Promise.resolve(getAllCBStates())
+      Promise.resolve(getAllCBStates()),
+      pool.query(`SELECT COUNT(*)::int AS count FROM tasks WHERE task_type = 'harness_planner' AND status = 'in_progress'`)
     ]);
+
+    const harnessPipelineCount = harnessCountResult.rows[0]?.count || 0;
 
     const openBreakers = Object.entries(cbStates)
       .filter(([, v]) => v.state === 'OPEN')
@@ -133,6 +136,7 @@ router.get('/health', async (req, res) => {
         notifier: { status: process.env.FEISHU_BOT_WEBHOOK ? 'configured' : 'unconfigured' },
         planner: { status: 'v2' }
       },
+      harness_pipeline_count: harnessPipelineCount,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
