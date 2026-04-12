@@ -33,15 +33,15 @@ const quarantineSrc = fs.readFileSync(
   'utf8'
 );
 
-describe('harness pipeline — report触发时机', () => {
-  it('harness_report 只在最后一个 WS 完成时创建（currentWsIdx === totalWsCount）', () => {
-    // The report creation must be inside the `currentWsIdx === totalWsCount` block
+describe('harness pipeline — evaluator触发时机', () => {
+  it('harness_evaluate 只在最后一个 WS 完成时创建（currentWsIdx === totalWsCount）', () => {
+    // v5.0: Generator 完成后创建 harness_evaluate（不是 harness_report）
     const marker = 'currentWsIdx === totalWsCount';
     const idx = execSrc.indexOf(marker);
     expect(idx).toBeGreaterThan(0);
-    // harness_report task creation should appear after this marker
+    // harness_evaluate task creation should appear after this marker
     const region = execSrc.slice(idx, idx + 2000);
-    expect(region).toContain('harness_report');
+    expect(region).toContain('harness_evaluate');
     expect(region).toContain('project_id');
   });
 

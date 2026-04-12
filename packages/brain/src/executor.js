@@ -1922,24 +1922,34 @@ function _prepareSprintEvaluatePrompt(task) {
 输出: ${sprintDir}/evaluation.md (PASS 或 FAIL + 具体问题)`;
 }
 
-function _prepareHarnessEvaluatePrompt(task) {
+async function _prepareHarnessEvaluatePrompt(task) {
   const payload = task.payload || {};
   const sprintDir = payload.sprint_dir || 'sprints';
   const prUrl = payload.pr_url || '';
   const evalRound = payload.eval_round || 1;
+  const contractBranch = payload.contract_branch || '';
+
+  // v5.0: Evaluator 是对抗性 E2E 验收 Agent，不是机械命令执行器
+  // 注入合同内容供 Evaluator 理解验收标准（Given-When-Then）
+  let contractContent = '';
+  if (contractBranch) {
+    const content = await _fetchSprintFile(contractBranch, `${sprintDir}/sprint-contract.md`);
+    if (content) contractContent = `\n\n## ${sprintDir}/sprint-contract.md（来自 ${contractBranch}）\n${content}`;
+  }
+
   return `/harness-evaluator
 
-## Harness v4.0 — Evaluator (R${evalRound})
+## Harness v5.0 — Evaluator (R${evalRound})
 
 **task_id**: ${task.id}
 **sprint_dir**: ${sprintDir}
 **pr_url**: ${prUrl}
 **eval_round**: ${evalRound}
-**Initiative**: ${task.project_id || 'unknown'}
+**contract_branch**: ${contractBranch}
 
-目标：读取 ${sprintDir}/sprint-contract.md 和 PR diff，静态验证代码是否符合合同规格。
-禁止调用 localhost API。输出 verdict: PASS 或 FAIL + 问题清单。
-写入 ${sprintDir}/eval-round-${evalRound}.md。`;
+目标：部署服务（重启 Brain / Dashboard），然后对照合同验收标准（Given-When-Then）进行 E2E 功能验收。
+用 curl 验证 API，用 Playwright/浏览器验证前端。你的工作是找到失败，不是确认成功。
+写入 ${sprintDir}/eval-round-${evalRound}.md。${contractContent}`;
 }
 
 function _prepareSpecReviewPrompt(task) {
