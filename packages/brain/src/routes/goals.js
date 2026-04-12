@@ -88,10 +88,19 @@ router.post('/circuit-breaker/:key/reset', (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const [tickStatus, cbStates, activePipelinesResult] = await Promise.all([
+    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
-      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_planner' AND status='in_progress'")
+      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_planner' AND status='in_progress'"),
+      pool.query(`
+        SELECT
+          COALESCE(COUNT(CASE WHEN status = 'completed' THEN 1 END)::integer, 0) AS passed,
+          COALESCE(COUNT(CASE WHEN status IN ('canceled', 'failed') THEN 1 END)::integer, 0) AS failed,
+          MAX(completed_at) AS last_run_at
+        FROM tasks
+        WHERE task_type = 'harness_evaluate'
+          AND status IN ('completed', 'canceled', 'failed')
+      `).catch(() => null)
     ]);
 
     const openBreakers = Object.entries(cbStates)
@@ -111,6 +120,21 @@ router.get('/health', async (req, res) => {
       cbStatus = 'recovering';
     } else {
       cbStatus = 'all_closed';
+    }
+
+    let evaluatorStats;
+    if (evaluatorStatsResult && evaluatorStatsResult.rows.length > 0) {
+      const row = evaluatorStatsResult.rows[0];
+      const passed = parseInt(row.passed, 10) || 0;
+      const failed = parseInt(row.failed, 10) || 0;
+      evaluatorStats = {
+        total_runs: passed + failed,
+        passed,
+        failed,
+        last_run_at: row.last_run_at ? new Date(row.last_run_at).toISOString() : null
+      };
+    } else {
+      evaluatorStats = { total_runs: 0, passed: 0, failed: 0, last_run_at: null };
     }
 
     res.json({
@@ -135,6 +159,7 @@ router.get('/health', async (req, res) => {
         notifier: { status: process.env.FEISHU_BOT_WEBHOOK ? 'configured' : 'unconfigured' },
         planner: { status: 'v2' }
       },
+      evaluator_stats: evaluatorStats,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
