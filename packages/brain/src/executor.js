@@ -2141,30 +2141,60 @@ async function _prepareContractReviewPrompt(task, taskType) {
   return basePrompt;
 }
 
+// ─── preparePrompt 路由表子函数（简单 taskType 映射）────────────────────────
+
+function _prepareInitiativePlanPrompt(t) {
+  return `/decomp\n\n${t.description || t.title}`;
+}
+
+function _prepareInitiativeVerifyPrompt(t) {
+  const initiativeId = t.project_id || t.payload?.initiative_id || '';
+  return `/architect verify --initiative-id ${initiativeId}\n\n${t.description || t.title}`;
+}
+
+function _prepareArchitectureDesignPrompt(t) {
+  return `/architect\n\n${t.description || t.title}`;
+}
+
+function _prepareDecompReviewPrompt(t) {
+  return `/decomp-check\n\n${t.description || t.title}`;
+}
+
+function _preparePrdReviewPrompt(t) {
+  return `/prd-review\n\n${t.description || t.title}`;
+}
+
+function _prepareInitiativeReviewPrompt(t) {
+  const phase = t.payload?.phase || 1;
+  const initiativeId = t.project_id || t.payload?.initiative_id || '';
+  return `/initiative-review --phase ${phase} --initiative-id ${initiativeId}\n\n${t.description || t.title}`;
+}
+
+// ─── preparePrompt 特殊场景解析（早返回）────────────────────────────────────
+
+async function _resolveSpecialCasePrompt(task, taskType) {
+  const decomposition = task.payload?.decomposition;
+  if (decomposition === 'true' || decomposition === 'continue') {
+    return _prepareDecompositionPrompt(task);
+  }
+  if (taskType === 'harness_generate' || taskType === 'harness_fix') {
+    return _prepareHarnessGeneratePrompt(task);
+  }
+  const isSprintTask = ['sprint_generate', 'sprint_fix'].includes(taskType)
+    || (taskType === 'dev' && task.payload?.harness_mode);
+  if (isSprintTask) return _prepareSprintPrompt(task, taskType);
+  return undefined;
+}
+
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
 
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
-  // OKR 拆解（三种子场景：继续/补充/首次）
-  const decomposition = task.payload?.decomposition;
-  if (decomposition === 'true' || decomposition === 'continue') {
-    return _prepareDecompositionPrompt(task);
-  }
+  const special = await _resolveSpecialCasePrompt(task, taskType);
+  if (special !== undefined) return special;
 
-  // Harness Generator v4.0：从 contract_branch 嵌入 sprint-contract.md 内容
-  if (taskType === 'harness_generate' || taskType === 'harness_fix') {
-    return _prepareHarnessGeneratePrompt(task);
-  }
-
-  // Harness Generator/Fix 模式（v3.x + v4.0 统一处理）
-  if (['sprint_generate', 'sprint_fix'].includes(taskType)
-      || (taskType === 'dev' && task.payload?.harness_mode)) {
-    return _prepareSprintPrompt(task, taskType);
-  }
-
-  // 路由表：taskType → handler
   const routes = {
     sprint_report:            (t) => _prepareHarnessReportPrompt(t, taskType),
     harness_report:           (t) => _prepareHarnessReportPrompt(t, taskType),
@@ -2174,18 +2204,18 @@ async function preparePrompt(task) {
     harness_contract_propose: (t) => _prepareContractProposePrompt(t, taskType),
     sprint_contract_review:   (t) => _prepareContractReviewPrompt(t, taskType),
     harness_contract_review:  (t) => _prepareContractReviewPrompt(t, taskType),
-    initiative_plan:          (t) => `/decomp\n\n${t.description || t.title}`,
+    initiative_plan:          _prepareInitiativePlanPrompt,
     scope_plan:               (t) => _prepareScopePlanPrompt(t),
     project_plan:             (t) => _prepareProjectPlanPrompt(t),
     sprint_evaluate:          (t) => _prepareSprintEvaluatePrompt(t),
     harness_evaluate:         (t) => _prepareHarnessEvaluatePrompt(t),
-    initiative_verify:        (t) => `/architect verify --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`,
-    architecture_design:      (t) => `/architect\n\n${t.description || t.title}`,
-    decomp_review:            (t) => `/decomp-check\n\n${t.description || t.title}`,
-    prd_review:               (t) => `/prd-review\n\n${t.description || t.title}`,
+    initiative_verify:        _prepareInitiativeVerifyPrompt,
+    architecture_design:      _prepareArchitectureDesignPrompt,
+    decomp_review:            _prepareDecompReviewPrompt,
+    prd_review:               _preparePrdReviewPrompt,
     spec_review:              (t) => _prepareSpecReviewPrompt(t),
     code_review_gate:         (t) => _prepareCodeReviewGatePrompt(t),
-    initiative_review:        (t) => `/initiative-review --phase ${t.payload?.phase || 1} --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`,
+    initiative_review:        _prepareInitiativeReviewPrompt,
     talk:                     (t) => _prepareTalkPrompt(t),
     review:                   (t) => _prepareCodeReviewArgs(t),
     qa:                       (t) => _prepareCodeReviewArgs(t),
