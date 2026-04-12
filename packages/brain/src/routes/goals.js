@@ -88,11 +88,28 @@ router.post('/circuit-breaker/:key/reset', (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const [tickStatus, cbStates, activePipelinesResult] = await Promise.all([
+    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
-      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_planner' AND status='in_progress'")
+      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_planner' AND status='in_progress'"),
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'completed')::integer AS passed,
+          COUNT(*) FILTER (WHERE status IN ('canceled', 'failed'))::integer AS failed,
+          MAX(completed_at) AS last_run_at
+        FROM tasks
+        WHERE task_type = 'harness_evaluate'
+          AND status IN ('completed', 'canceled', 'failed')
+      `).catch(() => null)
     ]);
+
+    const esRow = evaluatorStatsResult?.rows?.[0] ?? null;
+    const evaluatorStats = {
+      total_runs: (esRow ? (esRow.passed + esRow.failed) : 0),
+      passed: esRow ? esRow.passed : 0,
+      failed: esRow ? esRow.failed : 0,
+      last_run_at: esRow?.last_run_at ? new Date(esRow.last_run_at).toISOString() : null
+    };
 
     const openBreakers = Object.entries(cbStates)
       .filter(([, v]) => v.state === 'OPEN')
@@ -117,6 +134,7 @@ router.get('/health', async (req, res) => {
       status: healthy ? 'healthy' : 'degraded',
       uptime: Math.floor(process.uptime()),
       active_pipelines: activePipelinesResult.rows[0].cnt,
+      evaluator_stats: evaluatorStats,
       tick_stats: tickStatus.tick_stats || { total_executions: 0, last_executed_at: null, last_duration_ms: null },
       organs: {
         scheduler: {
