@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 describe('Task System API Integration', () => {
   const API_BASE = process.env.API_BASE || 'http://localhost:5220';
@@ -12,6 +12,19 @@ describe('Task System API Integration', () => {
     const wsRes = await fetch(`${API_BASE}/api/workspaces`);
     const workspaces = await wsRes.json();
     workspaceId = workspaces[0]?.id;
+  });
+
+  afterAll(async () => {
+    // 清理测试数据，防止污染数据库
+    if (taskId) {
+      await fetch(`${API_BASE}/api/tasks/${taskId}`, { method: 'DELETE' }).catch(() => {});
+    }
+    if (goalId) {
+      await fetch(`${API_BASE}/api/goals/${goalId}`, { method: 'DELETE' }).catch(() => {});
+    }
+    if (projectId) {
+      await fetch(`${API_BASE}/api/projects/${projectId}`, { method: 'DELETE' }).catch(() => {});
+    }
   });
 
   describe('Projects API', () => {
