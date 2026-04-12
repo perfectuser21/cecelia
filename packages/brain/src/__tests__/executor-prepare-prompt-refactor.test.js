@@ -135,8 +135,8 @@ describe('preparePrompt 重构：主函数为 dispatcher 结构', () => {
     expect(executorSrc).toContain('async function preparePrompt(task)');
   });
 
-  it('preparePrompt 包含 decomposition 分支', () => {
-    expect(executorSrc).toContain("decomposition === 'true'");
+  it('preparePrompt 包含 decomposition 分支（用 _DECOMP_TYPES Set 替代 || 链）', () => {
+    expect(executorSrc).toContain('_DECOMP_TYPES');
     expect(executorSrc).toContain("_prepareDecompositionPrompt(task)");
   });
 
@@ -145,9 +145,9 @@ describe('preparePrompt 重构：主函数为 dispatcher 结构', () => {
     expect(executorSrc).toContain("_prepareSprintPrompt(task, taskType)");
   });
 
-  it('preparePrompt 包含 routes dispatch table', () => {
-    expect(executorSrc).toContain('const routes = {');
-    expect(executorSrc).toContain('const handler = routes[taskType]');
+  it('preparePrompt 使用模块级路由表 _TASK_ROUTES', () => {
+    expect(executorSrc).toContain('const _TASK_ROUTES = {');
+    expect(executorSrc).toContain('const handler = _TASK_ROUTES[taskType]');
   });
 
   it('preparePrompt 最终回落到 _prepareDefaultPrompt', () => {

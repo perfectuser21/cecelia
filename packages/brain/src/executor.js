@@ -2141,60 +2141,81 @@ async function _prepareContractReviewPrompt(task, taskType) {
   return basePrompt;
 }
 
+// ─── preparePrompt 辅助：条件判断 + 路由内联 lambda 拆分 ────────────────────
+
+function _isSprintOrHarnessDevMode(taskType, payload) {
+  return ['sprint_generate', 'sprint_fix'].includes(taskType)
+    || (taskType === 'dev' && payload?.harness_mode);
+}
+
+function _prepareInitiativePlanPrompt(t) {
+  return `/decomp\n\n${t.description || t.title}`;
+}
+
+function _prepareInitiativeVerifyPrompt(t) {
+  return `/architect verify --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`;
+}
+
+function _prepareArchitectureDesignPrompt(t) {
+  return `/architect\n\n${t.description || t.title}`;
+}
+
+function _prepareDecompReviewPrompt(t) {
+  return `/decomp-check\n\n${t.description || t.title}`;
+}
+
+function _preparePrdReviewPrompt(t) {
+  return `/prd-review\n\n${t.description || t.title}`;
+}
+
+function _prepareInitiativeReviewPrompt(t) {
+  return `/initiative-review --phase ${t.payload?.phase || 1} --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`;
+}
+
+const _DECOMP_TYPES = new Set(['true', 'continue']);
+const _HARNESS_GENERATE_TYPES = new Set(['harness_generate', 'harness_fix']);
+
+// 路由表：taskType → handler（模块级常量，避免每次调用重建）
+const _TASK_ROUTES = {
+  sprint_report:            (t) => _prepareHarnessReportPrompt(t, 'sprint_report'),
+  harness_report:           (t) => _prepareHarnessReportPrompt(t, 'harness_report'),
+  sprint_planner:           (t) => _prepareHarnessPlannerPrompt(t, 'sprint_planner'),
+  harness_planner:          (t) => _prepareHarnessPlannerPrompt(t, 'harness_planner'),
+  sprint_contract_propose:  (t) => _prepareContractProposePrompt(t, 'sprint_contract_propose'),
+  harness_contract_propose: (t) => _prepareContractProposePrompt(t, 'harness_contract_propose'),
+  sprint_contract_review:   (t) => _prepareContractReviewPrompt(t, 'sprint_contract_review'),
+  harness_contract_review:  (t) => _prepareContractReviewPrompt(t, 'harness_contract_review'),
+  initiative_plan:          _prepareInitiativePlanPrompt,
+  scope_plan:               _prepareScopePlanPrompt,
+  project_plan:             _prepareProjectPlanPrompt,
+  sprint_evaluate:          _prepareSprintEvaluatePrompt,
+  harness_evaluate:         _prepareHarnessEvaluatePrompt,
+  initiative_verify:        _prepareInitiativeVerifyPrompt,
+  architecture_design:      _prepareArchitectureDesignPrompt,
+  decomp_review:            _prepareDecompReviewPrompt,
+  prd_review:               _preparePrdReviewPrompt,
+  spec_review:              _prepareSpecReviewPrompt,
+  code_review_gate:         _prepareCodeReviewGatePrompt,
+  initiative_review:        _prepareInitiativeReviewPrompt,
+  talk:                     _prepareTalkPrompt,
+  review:                   _prepareCodeReviewArgs,
+  qa:                       _prepareCodeReviewArgs,
+  audit:                    _prepareCodeReviewArgs,
+  research:                 _prepareResearchPrompt,
+  code_review:              _prepareCodeReviewArgs,
+};
+
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
 
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
-  // OKR 拆解（三种子场景：继续/补充/首次）
-  const decomposition = task.payload?.decomposition;
-  if (decomposition === 'true' || decomposition === 'continue') {
-    return _prepareDecompositionPrompt(task);
-  }
+  if (_DECOMP_TYPES.has(task.payload?.decomposition)) return _prepareDecompositionPrompt(task);
+  if (_HARNESS_GENERATE_TYPES.has(taskType)) return _prepareHarnessGeneratePrompt(task);
+  if (_isSprintOrHarnessDevMode(taskType, task.payload)) return _prepareSprintPrompt(task, taskType);
 
-  // Harness Generator v4.0：从 contract_branch 嵌入 sprint-contract.md 内容
-  if (taskType === 'harness_generate' || taskType === 'harness_fix') {
-    return _prepareHarnessGeneratePrompt(task);
-  }
-
-  // Harness Generator/Fix 模式（v3.x + v4.0 统一处理）
-  if (['sprint_generate', 'sprint_fix'].includes(taskType)
-      || (taskType === 'dev' && task.payload?.harness_mode)) {
-    return _prepareSprintPrompt(task, taskType);
-  }
-
-  // 路由表：taskType → handler
-  const routes = {
-    sprint_report:            (t) => _prepareHarnessReportPrompt(t, taskType),
-    harness_report:           (t) => _prepareHarnessReportPrompt(t, taskType),
-    sprint_planner:           (t) => _prepareHarnessPlannerPrompt(t, taskType),
-    harness_planner:          (t) => _prepareHarnessPlannerPrompt(t, taskType),
-    sprint_contract_propose:  (t) => _prepareContractProposePrompt(t, taskType),
-    harness_contract_propose: (t) => _prepareContractProposePrompt(t, taskType),
-    sprint_contract_review:   (t) => _prepareContractReviewPrompt(t, taskType),
-    harness_contract_review:  (t) => _prepareContractReviewPrompt(t, taskType),
-    initiative_plan:          (t) => `/decomp\n\n${t.description || t.title}`,
-    scope_plan:               (t) => _prepareScopePlanPrompt(t),
-    project_plan:             (t) => _prepareProjectPlanPrompt(t),
-    sprint_evaluate:          (t) => _prepareSprintEvaluatePrompt(t),
-    harness_evaluate:         (t) => _prepareHarnessEvaluatePrompt(t),
-    initiative_verify:        (t) => `/architect verify --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`,
-    architecture_design:      (t) => `/architect\n\n${t.description || t.title}`,
-    decomp_review:            (t) => `/decomp-check\n\n${t.description || t.title}`,
-    prd_review:               (t) => `/prd-review\n\n${t.description || t.title}`,
-    spec_review:              (t) => _prepareSpecReviewPrompt(t),
-    code_review_gate:         (t) => _prepareCodeReviewGatePrompt(t),
-    initiative_review:        (t) => `/initiative-review --phase ${t.payload?.phase || 1} --initiative-id ${t.project_id || t.payload?.initiative_id || ''}\n\n${t.description || t.title}`,
-    talk:                     (t) => _prepareTalkPrompt(t),
-    review:                   (t) => _prepareCodeReviewArgs(t),
-    qa:                       (t) => _prepareCodeReviewArgs(t),
-    audit:                    (t) => _prepareCodeReviewArgs(t),
-    research:                 (t) => _prepareResearchPrompt(t),
-    code_review:              (t) => _prepareCodeReviewArgs(t),
-  };
-
-  const handler = routes[taskType];
+  const handler = _TASK_ROUTES[taskType];
   if (handler) return handler(task);
 
   return _prepareDefaultPrompt(task, skill);
