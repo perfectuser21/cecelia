@@ -1,14 +1,18 @@
-contract_branch: cp-harness-contract-16184cb2
-workstream_index: 2
-sprint_dir: sprints/pipeline-node-detail
+contract_branch: cp-harness-contract-7899243b
+workstream_index: 1
+sprint_dir: sprints/harness-pipeline-closure-v1
 
-- [x] [ARTIFACT] apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx 文件存在
-  Test: node -e "require('fs').accessSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx');console.log('OK')"
-- [x] [BEHAVIOR] 路由 /harness-pipeline/:id/step/:step 已注册在 execution feature manifest 中，path 配置含 :step 参数
-  Test: node -e "const c=require('fs').readFileSync('apps/api/features/execution/index.ts','utf8');if(!/path:\s*['\"].*:step/.test(c))throw new Error('FAIL');if(!/[Ss]tep[Pp]age|[Ss]tep[Dd]etail/.test(c))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] Pipeline 详情页卡片展示 label/status/verdict/duration 四项信息，onClick 绑定 /step/ 导航（非注释），有 cursor-pointer 样式
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');const lines=c.split('\n');const real=lines.filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*')&&/onClick\s*=\s*\{/.test(l));if(real.length===0)throw new Error('FAIL: onClick 仅在注释中');if(!(/\/step\//.test(c)&&c.includes('cursor-pointer')))throw new Error('FAIL');if(!/label|\.label/.test(c))throw new Error('FAIL: 无 label');if(!/duration|elapsed|耗时/.test(c))throw new Error('FAIL: 无耗时');if(!/verdict/.test(c))throw new Error('FAIL: 无 verdict');console.log('PASS')"
-- [x] [BEHAVIOR] 步骤详情子页面三栏区块展示实际数据（引用 input_content/system_prompt_content/output_content 字段），等宽字体，暂无数据占位
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');if(!/input_content/.test(c))throw new Error('FAIL: 无 input_content');if(!/system_prompt_content/.test(c))throw new Error('FAIL: 无 system_prompt_content');if(!/output_content/.test(c))throw new Error('FAIL: 无 output_content');if(!c.includes('font-mono'))throw new Error('FAIL: 无等宽');if(!c.includes('暂无数据'))throw new Error('FAIL: 无占位');console.log('PASS')"
-- [x] [BEHAVIOR] 返回按钮 onClick 绑定 navigate 指向 harness-pipeline 路径（非仅 import 声明）
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');const lines=c.split('\n');const hasRealOnClick=lines.some(l=>!l.trim().startsWith('//')&&/onClick\s*=\s*\{/.test(l));const hasNavCall=lines.some(l=>!l.trim().startsWith('//')&&/navigate\s*\(/.test(l));if(!hasRealOnClick||!hasNavCall)throw new Error('FAIL: 无真实 onClick+navigate 绑定');if(!/harness-pipeline/.test(c))throw new Error('FAIL: 未指向正确路径');console.log('PASS')"
+- [x] [BEHAVIOR] harness_generate 最后 WS 回调不再 inline 调 checkPrCiStatus，改为创建 harness_ci_watch 任务
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const idx=c.indexOf('currentWsIdx === totalWsCount');const s=c.substring(idx,idx+2000);if(s.includes('checkPrCiStatus')){console.log('FAIL: 仍有 inline CI 检查');process.exit(1)}if(!s.includes('harness_ci_watch')){console.log('FAIL: 未创建 ci_watch');process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] harness_ci_watch payload 含全部必要字段（key: value 赋值格式，排除纯注释）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const idx=c.indexOf('currentWsIdx === totalWsCount');const s=c.substring(idx,idx+2000);const ci=s.indexOf('harness_ci_watch');if(ci===-1){console.log('FAIL');process.exit(1)}const p=s.substring(ci,ci+800);const r=['pr_url','sprint_dir','workstream_index','workstream_count'];const m=r.filter(f=>!new RegExp(f+'\\s*[:=,]').test(p));if(m.length){console.log('FAIL: 缺字段(需key:value): '+m.join(', '));process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] CI 超时后（pollCount >= MAX）创建后续任务，链路不中断
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const m=c.match(/(?:poll_count|pollCount)\s*>=?\s*MAX_CI_WATCH_POLLS/);if(!m){console.log('FAIL: 未找到超时判断');process.exit(1)}const s=c.substring(m.index,m.index+1500);if(!s.includes('createTask')&&!s.includes('harness_post_merge')){console.log('FAIL: 超时未创建后续任务');process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] CI passed 段创建 harness_post_merge 且不再直接创建 harness_report
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const i=c.indexOf(\"ciStatus === 'ci_passed'\");if(i===-1){console.log('FAIL: 无 ci_passed 段');process.exit(1)}const s=c.substring(i,i+2000);if(!s.includes('harness_post_merge')){console.log('FAIL: 未创建 post_merge');process.exit(1)}if(/createTask[^}]*harness_report/s.test(s)){console.log('FAIL: 仍直接创建 harness_report');process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] post_merge 段内清理已合并 WS 的 worktree（exec 调用限定在 post_merge 段内）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const i=c.indexOf('post_merge');if(i===-1){console.log('FAIL');process.exit(1)}const s=c.substring(i,i+3000);if(!/exec(?:Sync)?\s*\([^)]*worktree\s*remove/s.test(s)&&!/exec(?:Sync)?\s*\([^)]*git\s+worktree/s.test(s)){console.log('FAIL: post_merge 段内无 worktree 清理');process.exit(1)}console.log('PASS')"
+- [x] [BEHAVIOR] post_merge 回写 planner 任务状态为 completed 并创建 harness_report
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watcher.js','utf8');const i=c.indexOf('post_merge');if(i===-1){console.log('FAIL: 无 post_merge 段');process.exit(1)}const s=c.substring(i,i+3000);if(!s.includes('planner_task_id')||!s.includes('completed')){console.log('FAIL: 缺 planner 回写');process.exit(1)}if(!s.includes('harness_report')){console.log('FAIL: 缺 report 创建');process.exit(1)}console.log('PASS')"
+- [x] [ARTIFACT] harness_post_merge 在 VALID_TASK_TYPES 数组中注册且有 LOCATION_MAP 路由
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/task-router.js','utf8');const a=c.substring(c.indexOf('['),c.indexOf('];'));if(!a.includes(\"'harness_post_merge'\")){console.log('FAIL: VALID_TASK_TYPES 未注册');process.exit(1)}if(!c.substring(c.indexOf('LOCATION_MAP')).includes('harness_post_merge')){console.log('FAIL: LOCATION_MAP 未注册');process.exit(1)}console.log('PASS')"

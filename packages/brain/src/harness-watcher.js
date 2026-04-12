@@ -15,6 +15,108 @@ import { checkPrStatus, classifyFailedChecks, executeMerge } from './shepherd.js
 import { execSync } from 'child_process';
 import { createTask } from './actions.js';
 
+/**
+ * 处理所有待处理的 harness_post_merge 任务
+ * Post-Merge 收尾流程：worktree 清理 + planner 任务回写 + harness_report 创建
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ processed: number, completed: number, errors: number }>}
+ */
+export async function processHarnessPostMerge(pool) {
+  const result = { processed: 0, completed: 0, errors: 0 };
+
+  let rows;
+  try {
+    const qr = await pool.query(`
+      SELECT id, title, payload, project_id, goal_id
+      FROM tasks
+      WHERE task_type = 'harness_post_merge'
+        AND status = 'queued'
+      ORDER BY created_at ASC
+      LIMIT 5
+    `);
+    rows = qr.rows;
+  } catch (err) {
+    console.error('[harness-watcher] post_merge DB query failed (non-fatal):', err.message);
+    return result;
+  }
+
+  if (rows.length === 0) return result;
+  console.log(`[harness-watcher] post_merge: found ${rows.length} queued tasks`);
+
+  for (const task of rows) {
+    result.processed++;
+    const payload = task.payload || {};
+
+    try {
+      // 标记为 in_progress（防止并发重入）
+      await pool.query(
+        `UPDATE tasks SET status = 'in_progress' WHERE id = $1 AND status = 'queued'`,
+        [task.id]
+      );
+
+      // 1. 清理已合并 WS 的 worktree 目录（non-fatal，失败不中断）
+      const sprintDir = payload.sprint_dir || '';
+      if (sprintDir) {
+        try {
+          execSync(`git worktree remove --force "${sprintDir}" 2>/dev/null || true`, {
+            encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          console.log(`[harness-watcher] post_merge: worktree remove attempted for ${sprintDir}`);
+        } catch (wtErr) {
+          console.warn(`[harness-watcher] post_merge: git worktree remove failed (non-fatal): ${wtErr.message}`);
+        }
+      }
+
+      // 2. 回写 planner 任务状态为 completed
+      const planner_task_id = payload.planner_task_id;
+      if (planner_task_id) {
+        await pool.query(
+          `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+          [planner_task_id]
+        );
+        console.log(`[harness-watcher] post_merge: planner task ${planner_task_id} → completed`);
+      }
+
+      // 3. 创建 harness_report 任务生成最终报告
+      const plannerShort = (planner_task_id || task.id).slice(0, 8);
+      await createTask({
+        title: `[Report] ${plannerShort}`,
+        description: `Post-merge 收尾完成，生成 Harness 最终报告。\nharness_post_merge task_id: ${task.id}`,
+        priority: 'P1',
+        project_id: task.project_id,
+        goal_id: task.goal_id,
+        task_type: 'harness_report',
+        trigger_source: 'harness_watcher',
+        payload: {
+          sprint_dir: payload.sprint_dir,
+          pr_url: payload.pr_url,
+          planner_task_id: planner_task_id,
+          contract_branch: payload.contract_branch,
+          harness_mode: true,
+        },
+      });
+
+      // 4. 标记 post_merge 任务为 completed
+      await pool.query(
+        `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+        [task.id]
+      );
+
+      result.completed++;
+      console.log(`[harness-watcher] post_merge task ${task.id} completed → harness_report created`);
+    } catch (err) {
+      console.error(`[harness-watcher] post_merge error for ${task.id} (non-fatal): ${err.message}`);
+      await pool.query(
+        `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
+        [task.id, err.message.slice(0, 500)]
+      ).catch(() => {});
+      result.errors++;
+    }
+  }
+
+  return result;
+}
+
 const MAX_CI_WATCH_POLLS = 120;   // 最多轮询次数（每 5s tick → 最多 10 分钟）
 const MAX_DEPLOY_WATCH_POLLS = 60; // 最多轮询次数（最多 5 分钟）
 const POLL_INTERVAL_MS = 30000;   // GitHub API 节流窗口（30s）
@@ -109,7 +211,7 @@ export async function processHarnessCiWatchers(pool) {
       const prInfo = checkPrStatus(prUrl);
 
       if (prInfo.ciStatus === 'ci_passed' || prInfo.ciStatus === 'merged') {
-        // CI 全通过 → 直接 merge + 创建 harness_report（CI 即 Evaluator，无需独立 evaluate agent）
+        // CI 全通过 → 直接 merge + 创建 harness_post_merge 收尾任务
         await pool.query(
           `UPDATE tasks SET status = 'completed', completed_at = NOW(),
             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('ci_conclusion', 'passed', 'poll_count', $2)
@@ -125,25 +227,27 @@ export async function processHarnessCiWatchers(pool) {
             console.warn(`[harness-watcher] auto-merge failed (non-fatal): ${mergeErr.message}`);
           }
         }
-        // 创建 harness_report
+        // 创建 harness_post_merge（由 tick 轮询处理：contract 校验 + worktree 清理 + Brain 回写 + 报告）
         const plannerShort = (payload.planner_task_id || task.id).slice(0, 8);
         await createTask({
-          title: `[Report] ${plannerShort}`,
-          description: `CI 通过 + PR 已合并。生成 Harness 完成报告。\nharness_ci_watch task_id: ${task.id}`,
+          title: `[Post-Merge] ${plannerShort}`,
+          description: `CI 通过 + PR 已合并。执行收尾：worktree 清理 + planner 回写 + 生成报告。\nharness_ci_watch task_id: ${task.id}`,
           priority: 'P1',
           project_id: task.project_id,
           goal_id: task.goal_id,
-          task_type: 'harness_report',
+          task_type: 'harness_post_merge',
           trigger_source: 'harness_watcher',
           payload: {
             sprint_dir: payload.sprint_dir,
             pr_url: prUrl,
             planner_task_id: payload.planner_task_id,
             contract_branch: payload.contract_branch,
+            workstream_index: payload.workstream_index,
+            workstream_count: payload.workstream_count,
             harness_mode: true,
           },
         });
-        console.log(`[harness-watcher] CI passed for ${task.id} → merge + harness_report created`);
+        console.log(`[harness-watcher] CI passed for ${task.id} → merge + harness_post_merge created`);
         result.ci_passed++;
 
       } else if (prInfo.ciStatus === 'ci_failed') {
@@ -356,3 +460,4 @@ async function _createHarnessReport(task, payload, deployNote) {
     },
   });
 }
+

@@ -40,6 +40,7 @@ const VALID_TASK_TYPES = [
   'harness_ci_watch',         // Layer 3b: Brain tick 轮询 CI（内联，不派 agent）
   'harness_fix',              // Layer 3d: Generator 修复
   'harness_deploy_watch',     // Layer 3e: Brain tick 轮询 CD（内联，不派 agent）
+  'harness_post_merge',       // Layer 3f: Post-Merge 收尾（contract 校验 + worktree 清理 + Brain 回写 + 报告）
   'harness_report',           // Layer 4: 最终报告
   // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
   'scope_plan', 'project_plan',
@@ -239,6 +240,7 @@ const LOCATION_MAP = {
   'harness_ci_watch': 'us',           // Layer 3b: CI 监控（Brain tick 内联处理）→ US
   'harness_fix': 'us',                // Layer 3d: Generator 修复 → US
   'harness_deploy_watch': 'us',       // Layer 3e: Deploy 监控（Brain tick 内联处理）→ US
+  'harness_post_merge': 'us',         // Layer 3f: Post-Merge 收尾 → US
   'harness_report': 'us',             // Layer 4: 最终报告 → US
   // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
   'prd_review': 'us',            // PRD 审查 → US 本机 Codex

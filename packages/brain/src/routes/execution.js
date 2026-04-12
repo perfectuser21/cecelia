@@ -2083,61 +2083,26 @@ ${resultStr.substring(0, 2000)}
             }
           }
 
-          // Bug Fix: harness_report 只在最后一个 WS 完成时创建（避免多 WS 时 W2/W3 PR 缺失）
+          // 最后一个 WS 完成 → 创建 harness_ci_watch，由 Brain tick 轮询 CI（不再 inline 检查）
           if (currentWsIdx === totalWsCount) {
-            // CI 状态检查：PR 存在时验证 CI 是否通过，失败则走 harness_fix
-            let ciCheckFailed = false;
-            if (prUrl) {
-              const ciPassed = await checkPrCiStatus(prUrl);
-              if (ciPassed === false) {
-                ciCheckFailed = true;
-                console.log(`[execution-callback] harness: harness_generate ${task_id} CI failed → harness_fix`);
-                await createHarnessTask({
-                  title: `[Fix] CI 失败 — ${plannerShort}`,
-                  description: `Generator PR CI 失败，自动修复。\npr_url: ${prUrl}`,
-                  priority: 'P1',
-                  project_id: harnessTask.project_id,
-                  goal_id: harnessTask.goal_id,
-                  task_type: 'harness_fix',
-                  trigger_source: 'execution_callback_harness',
-                  payload: {
-                    sprint_dir: harnessPayload.sprint_dir,
-                    dev_task_id: task_id,
-                    planner_task_id: harnessPayload.planner_task_id,
-                    planner_branch: harnessPayload.planner_branch || null,
-                    contract_branch: harnessPayload.contract_branch || null,
-                    pr_url: prUrl,
-                    eval_round: 1,
-                    ci_fail_type: 'ci_failed_after_generate',
-                    harness_mode: true,
-                  },
-                });
-              }
-            }
-            if (!ciCheckFailed) {
-              // v5.0: CI 通过后创建 harness_evaluate（对抗性 E2E 验收），不直接创建 report
-              await createHarnessTask({
-                title: `[Evaluator] E1 — ${plannerShort}`,
-                description: `E2E 功能验收：部署服务 + API 验证 + 前端验证。\npr_url: ${prUrl}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                goal_id: harnessTask.goal_id,
-                task_type: 'harness_evaluate',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  pr_url: prUrl,
-                  dev_task_id: task_id,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  planner_branch: harnessPayload.planner_branch || null,
-                  contract_branch: harnessPayload.contract_branch,
-                  project_id: harnessTask.project_id,
-                  eval_round: 1,
-                  harness_mode: true
-                }
-              });
-              console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_evaluate created (pr_url=${prUrl})`);
-            }
+            await createHarnessTask({
+              title: `[CI Watch] ${plannerShort}`,
+              description: `等待 CI 通过后自动合并并创建 harness_post_merge 收尾任务。\npr_url: ${prUrl}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              task_type: 'harness_ci_watch',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                pr_url: prUrl,
+                sprint_dir: harnessPayload.sprint_dir,
+                workstream_index: currentWsIdx,
+                workstream_count: totalWsCount,
+                planner_task_id: harnessPayload.planner_task_id,
+                contract_branch: harnessPayload.contract_branch,
+                harness_mode: true,
+              },
+            });
+            console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_ci_watch created (pr_url=${prUrl})`);
           } else {
             console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount} 完成，等待后续 WS，暂不创建 report`);
           }
