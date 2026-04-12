@@ -35,6 +35,7 @@ while IFS= read -r _wt_line; do
     if [[ "$_wt_line" == "worktree "* ]]; then
         _wt_count=$((_wt_count + 1))
         _wt_path="${_wt_line#worktree }"
+        [[ -d "$_wt_path" ]] || continue
         for _f in "$_wt_path"/.dev-lock.*; do
             [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break 2
         done

@@ -6,6 +6,9 @@ version: "1.0.0"
 updated: "2026-04-11"
 
 changelog:
+  - version: "14.6.3"
+    date: "2026-04-12"
+    changes: "fix(stop.sh): worktree 遍历段在 .dev-lock 检测前加 -d 目录存在性检查，防止已删除 worktree 残留 git 记录误触发 DEV_LOCK_FOUND"
   - version: "14.6.2"
     date: "2026-04-11"
     skill: "dev"
