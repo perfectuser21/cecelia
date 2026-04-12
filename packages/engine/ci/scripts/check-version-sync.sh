@@ -97,6 +97,17 @@ if [[ -f "hooks/VERSION" ]]; then
     fi
 fi
 
+# 检查 regression-contract.yaml
+if [[ -f "regression-contract.yaml" ]]; then
+    RC_VERSION=$(grep '^version:' regression-contract.yaml | head -1 | awk '{print $2}')
+    if [[ "$RC_VERSION" != "$BASE_VERSION" ]]; then
+        echo "❌ regression-contract.yaml: $RC_VERSION (期望: $BASE_VERSION)"
+        ERRORS=$((ERRORS + 1))
+    else
+        echo "✅ regression-contract.yaml: $RC_VERSION"
+    fi
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -104,14 +115,17 @@ if [[ $ERRORS -gt 0 ]]; then
     echo "  ❌ 版本不同步 ($ERRORS 个文件)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "修复方法："
-    echo "  npm version patch --no-git-tag-version"
-    echo "  cat package.json | jq -r .version > VERSION"
-    echo "  npm install --package-lock-only"
-    echo "  # 同步其他版本文件..."
+    echo "修复方法（一键同步所有 6 个文件）："
+    echo "  bash packages/engine/scripts/bump-version.sh"
+    echo ""
+    echo "或手动逐步修复："
+    echo "  echo -n '$BASE_VERSION' > .hook-core-version"
+    echo "  echo -n '$BASE_VERSION' > hooks/VERSION"
+    echo "  sed -i'' 's/^version: .*/version: $BASE_VERSION/' regression-contract.yaml"
+    echo "  # 同步 package.json / VERSION / package-lock.json..."
     echo ""
     exit 1
 else
-    echo "  ✅ 所有版本文件同步"
+    echo "  ✅ 所有版本文件同步 (6 个文件)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 fi
