@@ -1,14 +1,10 @@
-contract_branch: cp-harness-contract-16184cb2
-workstream_index: 2
-sprint_dir: sprints/pipeline-node-detail
+contract_branch: cp-harness-contract-cc589b18
+workstream_index: 1
+sprint_dir: sprints/harness-v5-validation
 
-- [x] [ARTIFACT] apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx 文件存在
-  Test: node -e "require('fs').accessSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx');console.log('OK')"
-- [x] [BEHAVIOR] 路由 /harness-pipeline/:id/step/:step 已注册在 execution feature manifest 中，path 配置含 :step 参数
-  Test: node -e "const c=require('fs').readFileSync('apps/api/features/execution/index.ts','utf8');if(!/path:\s*['\"].*:step/.test(c))throw new Error('FAIL');if(!/[Ss]tep[Pp]age|[Ss]tep[Dd]etail/.test(c))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] Pipeline 详情页卡片展示 label/status/verdict/duration 四项信息，onClick 绑定 /step/ 导航（非注释），有 cursor-pointer 样式
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');const lines=c.split('\n');const real=lines.filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*')&&/onClick\s*=\s*\{/.test(l));if(real.length===0)throw new Error('FAIL: onClick 仅在注释中');if(!(/\/step\//.test(c)&&c.includes('cursor-pointer')))throw new Error('FAIL');if(!/label|\.label/.test(c))throw new Error('FAIL: 无 label');if(!/duration|elapsed|耗时/.test(c))throw new Error('FAIL: 无耗时');if(!/verdict/.test(c))throw new Error('FAIL: 无 verdict');console.log('PASS')"
-- [x] [BEHAVIOR] 步骤详情子页面三栏区块展示实际数据（引用 input_content/system_prompt_content/output_content 字段），等宽字体，暂无数据占位
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');if(!/input_content/.test(c))throw new Error('FAIL: 无 input_content');if(!/system_prompt_content/.test(c))throw new Error('FAIL: 无 system_prompt_content');if(!/output_content/.test(c))throw new Error('FAIL: 无 output_content');if(!c.includes('font-mono'))throw new Error('FAIL: 无等宽');if(!c.includes('暂无数据'))throw new Error('FAIL: 无占位');console.log('PASS')"
-- [x] [BEHAVIOR] 返回按钮 onClick 绑定 navigate 指向 harness-pipeline 路径（非仅 import 声明）
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage.tsx','utf8');const lines=c.split('\n');const hasRealOnClick=lines.some(l=>!l.trim().startsWith('//')&&/onClick\s*=\s*\{/.test(l));const hasNavCall=lines.some(l=>!l.trim().startsWith('//')&&/navigate\s*\(/.test(l));if(!hasRealOnClick||!hasNavCall)throw new Error('FAIL: 无真实 onClick+navigate 绑定');if(!/harness-pipeline/.test(c))throw new Error('FAIL: 未指向正确路径');console.log('PASS')"
+- [ ] [BEHAVIOR] GET /api/brain/health 响应包含 `harness_pipeline_count` 字段，值为 status='in_progress' 且 task_type='harness_planner' 的任务数量（非负整数）
+  Test: curl -sf "localhost:5221/api/brain/health" | node -e "const h=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));if(!('harness_pipeline_count' in h))throw new Error('FAIL');if(typeof h.harness_pipeline_count!=='number'||!Number.isInteger(h.harness_pipeline_count)||h.harness_pipeline_count<0)throw new Error('FAIL');console.log('PASS: '+h.harness_pipeline_count)"
+- [ ] [BEHAVIOR] 新增字段不破坏已有响应结构（status/uptime/tick_stats/organs/timestamp 均存在）
+  Test: curl -sf "localhost:5221/api/brain/health" | node -e "const h=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));['status','uptime','tick_stats','organs','timestamp','harness_pipeline_count'].forEach(k=>{if(!(k in h))throw new Error('FAIL: missing '+k)});console.log('PASS')"
+- [x] [ARTIFACT] 单元测试文件存在且覆盖 harness_pipeline_count 字段
+  Test: node -e "require('fs').accessSync('packages/brain/src/__tests__/health-harness-count.test.js');console.log('OK')"
