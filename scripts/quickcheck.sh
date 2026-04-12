@@ -43,22 +43,30 @@ echo -e "📂 改动文件数：$(echo "$CHANGED_FILES" | grep -c . 2>/dev/null 
 PASS=true
 
 # ─── DoD 未勾选守卫 ────────────────────────────────────────────────
-# 检测工作目录中是否有 DoD.md / DoD-*.md 含未勾选条目（[ ]）
+# 检测本次 PR 新增或修改的 DoD.md / DoD-*.md 含未勾选条目（[ ]）
+# 只检查相对于 origin/main 变更的文件（不检查已在 main 中的旧文件）
 # 根因：harness-contract-lint CI 步骤因 DoD 未勾选而失败，在本地拦截更早
-DOD_FILES=$(find "$REPO_ROOT" -maxdepth 2 -name "DoD.md" -o -name "DoD-*.md" 2>/dev/null | grep -v ".git" | head -5)
+DOD_FILES=$(echo "$CHANGED_FILES" | grep -E '(^|/)DoD(-[^/]+)?\.md$' || true)
 if [[ -n "$DOD_FILES" ]]; then
   DOD_UNCHECKED=0
-  for dod_file in $DOD_FILES; do
+  DOD_FAILED_FILES=""
+  while IFS= read -r dod_rel; do
+    [[ -z "$dod_rel" ]] && continue
+    dod_file="$REPO_ROOT/$dod_rel"
+    [[ -f "$dod_file" ]] || continue
     count=$(grep -c '^\- \[ \]' "$dod_file" 2>/dev/null || true)
-    DOD_UNCHECKED=$((DOD_UNCHECKED + count))
-  done
+    if [[ $count -gt 0 ]]; then
+      DOD_UNCHECKED=$((DOD_UNCHECKED + count))
+      DOD_FAILED_FILES="${DOD_FAILED_FILES} $dod_rel"
+    fi
+  done <<< "$DOD_FILES"
   if [[ $DOD_UNCHECKED -gt 0 ]]; then
     echo -e "${RED}${BOLD}❌ DoD 未勾选守卫：发现 ${DOD_UNCHECKED} 个未验证条目（[ ]）${RESET}"
     echo -e "${YELLOW}   push 前必须将所有 DoD 条目改为 [x]${RESET}"
-    echo -e "${YELLOW}   受影响文件：${DOD_FILES}${RESET}\n"
+    echo -e "${YELLOW}   受影响文件：${DOD_FAILED_FILES}${RESET}\n"
     PASS=false
   else
-    echo -e "${GREEN}✅ DoD 守卫：所有条目已勾选${RESET}\n"
+    echo -e "${GREEN}✅ DoD 守卫：本次 PR 的 DoD 条目均已勾选${RESET}\n"
   fi
 fi
 
