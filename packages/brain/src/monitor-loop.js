@@ -170,7 +170,60 @@ async function handleStuckRun(stuck) {
   }
   
   const retryCount = taskQuery.rows[0].retry_count || 0;
-  
+
+  // harness 链式任务感知：检查是否已有下游任务
+  const HARNESS_CHAIN_TYPES = new Set([
+    'harness_planner', 'harness_contract_propose', 'harness_contract_review',
+    'harness_generate', 'harness_fix', 'harness_report',
+    'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
+    'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report'
+  ]);
+
+  // 查询任务类型
+  const typeQuery = await pool.query(
+    'SELECT task_type, payload FROM tasks WHERE id = $1',
+    [stuck.task_id]
+  );
+  const taskType = typeQuery.rows[0]?.task_type;
+  const taskPayload = typeQuery.rows[0]?.payload || {};
+
+  if (HARNESS_CHAIN_TYPES.has(taskType)) {
+    // 检查是否已有基于此任务派生的下游任务（completed/queued/in_progress）
+    const downstreamCheck = await pool.query(
+      `SELECT id, task_type, status FROM tasks
+       WHERE payload->>'planner_task_id' = $1
+          OR payload->>'dev_task_id' = $1
+       ORDER BY created_at DESC LIMIT 5`,
+      [stuck.task_id]
+    );
+    const activeDownstream = downstreamCheck.rows.filter(
+      r => ['queued', 'in_progress', 'completed'].includes(r.status)
+    );
+    if (activeDownstream.length > 0) {
+      console.log(
+        `[Monitor] Harness chain: task ${stuck.task_id} (${taskType}) has ${activeDownstream.length} downstream tasks ` +
+        `(${activeDownstream.map(d => `${d.task_type}:${d.status}`).join(', ')}), ` +
+        `marking as completed instead of restarting to avoid duplicates`
+      );
+      // 标记当前任务为 completed（下游已存在说明它已成功完成过，只是回调没更新状态）
+      await pool.query(
+        `UPDATE tasks SET status = 'completed' WHERE id = $1`,
+        [stuck.task_id]
+      );
+      await pool.query(
+        `UPDATE run_events
+         SET status = 'completed',
+             ts_end = NOW(),
+             reason_code = 'MONITOR_HARNESS_CHAIN_RESOLVED',
+             reason_kind = 'RESOLVED'
+         WHERE run_id = $1 AND status = 'running'`,
+        [stuck.run_id]
+      );
+      return; // 跳过重启逻辑
+    }
+    console.log(`[Monitor] Harness chain: task ${stuck.task_id} (${taskType}) has no downstream tasks, proceeding with normal stuck handling`);
+  }
+
   if (retryCount === 0) {
     // First time: restart (requeue)
     console.log(`[Monitor] Action: RESTART task ${stuck.task_id} (1st stuck)`);

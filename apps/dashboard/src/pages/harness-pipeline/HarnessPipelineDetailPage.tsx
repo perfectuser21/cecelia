@@ -165,10 +165,10 @@ function ContentPanel({ title, content }: { title: string; content: string | nul
   );
 }
 
-// ─── Section: Step List ─────────────────────────────────────────────────────
+// ─── Section: Step Cards ────────────────────────────────────────────────────
 
-function StepList({ steps }: { steps: PipelineStep[] }) {
-  const [expandedStep, setExpandedStep] = useState<number | null>(null);
+function StepCards({ steps, pipelineId }: { steps: PipelineStep[]; pipelineId: string }) {
+  const navigate = useNavigate();
 
   if (steps.length === 0) {
     return (
@@ -188,73 +188,50 @@ function StepList({ steps }: { steps: PipelineStep[] }) {
       <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
         执行步骤 ({steps.length})
       </h2>
-      <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {steps.map(step => {
-          const isExpanded = expandedStep === step.step;
           const s = step.status in STATUS_ICON ? step.status : 'not_started';
+          const duration = formatDuration(step.created_at, step.completed_at);
 
           return (
-            <div key={step.step} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-              <button
-                onClick={() => setExpandedStep(isExpanded ? null : step.step)}
-                className="w-full flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-bold text-slate-400 dark:text-slate-500 w-8 text-center">
-                    {step.step}
-                  </span>
-                  <span className="text-sm">
-                    {STATUS_ICON[s] ?? '\u2014'}
-                  </span>
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                    {step.label}
-                  </span>
-                  <span className={`text-xs ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
-                    {step.status}
-                  </span>
-                  {step.verdict && (
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
-                      step.verdict === 'APPROVED' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                      step.verdict === 'REVISION' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
-                      'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                    }`}>
-                      {step.verdict}
-                    </span>
-                  )}
-                  {step.pr_url && (
-                    <a
-                      href={step.pr_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      className="text-xs text-blue-500 hover:underline"
-                    >
-                      PR ↗
-                    </a>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  {step.created_at && (
-                    <span className="text-[10px] text-slate-400">{formatTime(step.created_at)}</span>
-                  )}
-                  {step.created_at && step.completed_at && (
-                    <span className="text-[10px] text-slate-400">
-                      {formatDuration(step.created_at, step.completed_at)}
-                    </span>
-                  )}
-                  <span className="text-xs text-slate-400">{isExpanded ? '\u25B2' : '\u25BC'}</span>
-                </div>
-              </button>
+            <div
+              key={step.step}
+              className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-blue-300 dark:hover:border-blue-600 transition-colors"
+              onClick={() => navigate(`/harness-pipeline/${pipelineId}/step/${step.step}`)}
+            >
+              {/* 步骤号 + 状态图标 */}
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
+                  #{step.step}
+                </span>
+                <span className="text-base">{STATUS_ICON[s] ?? '\u2014'}</span>
+              </div>
 
-              {isExpanded && (
-                <div className="border-t border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-900/30">
-                  <div className="grid grid-cols-3 gap-3">
-                    <ContentPanel title="Input" content={step.input_content} />
-                    <ContentPanel title="Prompt" content={step.prompt_content} />
-                    <ContentPanel title="Output" content={step.output_content} />
-                  </div>
-                </div>
-              )}
+              {/* label */}
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-2 leading-snug">
+                {step.label}
+              </div>
+
+              {/* status + verdict + duration */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-xs ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
+                  {step.status}
+                </span>
+                {step.verdict && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
+                    step.verdict === 'APPROVED' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                    step.verdict === 'REVISION' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                    'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                  }`}>
+                    {step.verdict}
+                  </span>
+                )}
+                {duration && (
+                  <span className="text-xs text-slate-400 dark:text-slate-500 ml-auto">
+                    耗时 {duration}
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}
@@ -358,7 +335,7 @@ export default function HarnessPipelineDetailPage() {
       <StageTimeline stages={data.stages} />
 
       {/* 串行步骤列表 + 三栏钻取 */}
-      <StepList steps={data.steps || []} />
+      <StepCards steps={data.steps || []} pipelineId={id!} />
     </div>
   );
 }

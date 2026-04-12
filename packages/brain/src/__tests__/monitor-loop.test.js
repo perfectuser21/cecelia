@@ -416,6 +416,10 @@ describe('monitor-loop', () => {
           // SELECT retry_count FROM tasks
           return Promise.resolve({ rows: [{ retry_count: 0 }] });
         }
+        if (queryIndex === 3) {
+          // SELECT task_type, payload (harness chain check)
+          return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
+        }
         // UPDATE run_events + resource_snapshot + detectFailureSpike etc.
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
@@ -439,6 +443,7 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 0 }] });
+        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
       mockUpdateTask.mockResolvedValue({ success: true });
@@ -481,6 +486,7 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 1 }] });
+        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
 
@@ -506,6 +512,7 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 1 }] });
+        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
 
@@ -534,6 +541,7 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 2 }] });
+        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
 
@@ -561,6 +569,7 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: null }] });
+        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
       mockUpdateTask.mockResolvedValue({ success: true });
@@ -583,12 +592,16 @@ describe('monitor-loop', () => {
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck1, stuck2] });
         // SELECT retry_count for task-A
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 0 }] });
+        // SELECT task_type, payload for task-A (harness chain check)
+        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         // UPDATE run_events for task-A
-        if (queryIndex === 3) return Promise.resolve({ rows: [] });
+        if (queryIndex === 4) return Promise.resolve({ rows: [] });
         // SELECT retry_count for task-B
-        if (queryIndex === 4) return Promise.resolve({ rows: [{ retry_count: 0 }] });
+        if (queryIndex === 5) return Promise.resolve({ rows: [{ retry_count: 0 }] });
+        // SELECT task_type, payload for task-B (harness chain check)
+        if (queryIndex === 6) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         // UPDATE run_events for task-B
-        if (queryIndex === 5) return Promise.resolve({ rows: [] });
+        if (queryIndex === 7) return Promise.resolve({ rows: [] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
       mockUpdateTask.mockResolvedValue({ success: true });
