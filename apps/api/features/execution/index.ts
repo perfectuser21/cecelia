@@ -37,6 +37,7 @@ const manifest: FeatureManifest = {
       navItem: { label: 'Harness Pipeline', icon: 'GitBranch', group: 'execution', order: 30 },
     },
     { path: '/harness-pipeline/:id', component: 'HarnessPipelineDetailPage' },
+    { path: '/harness-pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
     // Workers
     {
       path: '/workers',
@@ -71,6 +72,7 @@ const manifest: FeatureManifest = {
     WorkersOverview: () => import('./pages/WorkersOverview'),
     HarnessPipelinePage: () => import('./pages/HarnessPipelinePage'),
     HarnessPipelineDetailPage: () => import('./pages/HarnessPipelineDetailPage'),
+    HarnessPipelineStepPage: () => import('./pages/HarnessPipelineStepPage'),
   },
 };
 
