@@ -88,9 +88,10 @@ router.post('/circuit-breaker/:key/reset', (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const [tickStatus, cbStates] = await Promise.all([
+    const [tickStatus, cbStates, activePipelinesResult] = await Promise.all([
       getTickStatus(),
-      Promise.resolve(getAllCBStates())
+      Promise.resolve(getAllCBStates()),
+      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_planner' AND status='in_progress'")
     ]);
 
     const openBreakers = Object.entries(cbStates)
@@ -115,6 +116,7 @@ router.get('/health', async (req, res) => {
     res.json({
       status: healthy ? 'healthy' : 'degraded',
       uptime: Math.floor(process.uptime()),
+      active_pipelines: activePipelinesResult.rows[0].cnt,
       tick_stats: tickStatus.tick_stats || { total_executions: 0, last_executed_at: null, last_duration_ms: null },
       organs: {
         scheduler: {
