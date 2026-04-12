@@ -197,7 +197,7 @@ function StepCards({ steps, pipelineId }: { steps: PipelineStep[]; pipelineId: s
             <div
               key={step.step}
               className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-blue-300 dark:hover:border-blue-600 transition-colors"
-              onClick={() => navigate(`/harness-pipeline/${pipelineId}/step/${step.step}`)}
+              onClick={() => navigate(`/pipeline/${pipelineId}/step/${step.step}`)}
             >
               {/* 步骤号 + 状态图标 */}
               <div className="flex items-center justify-between mb-2">
@@ -303,7 +303,7 @@ export default function HarnessPipelineDetailPage() {
       {/* 头部导航 */}
       <div className="flex items-center gap-3 mb-6">
         <button
-          onClick={() => navigate('/harness-pipeline')}
+          onClick={() => navigate('/pipeline')}
           className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
         >
           &larr; Pipeline 列表
