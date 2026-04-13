@@ -2316,13 +2316,25 @@ ${resultStr.substring(0, 2000)}
             } catch {}
           }
 
-          // 提取 verdict: PASS / FAIL
-          let evalVerdict = 'FAIL'; // 默认 FAIL（对抗性：宁可误杀不放过）
-          if (result !== null && typeof result === 'object') {
-            if (result.verdict?.toUpperCase() === 'PASS') evalVerdict = 'PASS';
-          }
-          if (typeof result === 'string') {
-            if (/"verdict"\s*:\s*"PASS"/i.test(result)) evalVerdict = 'PASS';
+          // 提取 verdict: 优先从 DB task.result 读（agent curl 回写的），然后从 callback result 解析
+          let evalVerdict = 'FAIL';
+          // 优先：agent 通过 curl PATCH 回写的 verdict（最可靠）
+          try {
+            const dbResult = await pool.query('SELECT result FROM tasks WHERE id = $1', [task_id]);
+            const dbVerdict = dbResult.rows[0]?.result?.verdict?.toUpperCase();
+            if (dbVerdict === 'PASS' || dbVerdict === 'FAIL') {
+              evalVerdict = dbVerdict;
+              console.log(`[execution-callback] harness_evaluate: verdict from DB (agent curl writeback): ${evalVerdict}`);
+            }
+          } catch {}
+          // 备选：从 callback result 解析
+          if (evalVerdict === 'FAIL') {
+            if (result !== null && typeof result === 'object') {
+              if (result.verdict?.toUpperCase() === 'PASS') evalVerdict = 'PASS';
+            }
+            if (typeof result === 'string') {
+              if (/"verdict"\s*:\s*"PASS"/i.test(result)) evalVerdict = 'PASS';
+            }
           }
 
           console.log(`[execution-callback] harness: harness_evaluate ${task_id} verdict=${evalVerdict} eval_round=${evalRound}`);
