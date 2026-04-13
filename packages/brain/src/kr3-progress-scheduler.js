@@ -12,6 +12,8 @@
  * 目标 KR: ZenithJoy KR3 — 微信小程序上线（基础功能可用，无重大bug）
  */
 
+import { checkKR3ConfigDB } from './kr3-config-checker.js';
+
 /** 每日触发小时（UTC）= 北京时间 14:00 */
 const KR3_REPORT_HOUR_UTC = 6;
 
@@ -107,9 +109,10 @@ export async function scheduleKR3ProgressReport(pool, { force = false } = {}) {
   }
 
   try {
-    const [kr3, taskStats] = await Promise.all([
+    const [kr3, taskStats, configStatus] = await Promise.all([
       getKR3KeyResult(pool),
       getKR3TaskStats(pool),
+      checkKR3ConfigDB(pool),
     ]);
 
     const progress = kr3?.progress_pct ?? '未知';
@@ -120,6 +123,16 @@ export async function scheduleKR3ProgressReport(pool, { force = false } = {}) {
     console.log(`[kr3-progress] 目标: ${kr3?.title || 'KR3 微信小程序上线'}`);
     console.log(`[kr3-progress] 当前进度: ${progress}% | 剩余: ${remaining}%`);
     console.log(`[kr3-progress] Dev 任务: 总${taskStats.total} | 完成${taskStats.completed} | 进行中${taskStats.in_progress} | 排队${taskStats.queued} | 失败${taskStats.failed}`);
+    console.log(`[kr3-progress] 前置配置: ${configStatus.summary}`);
+    if (!configStatus.wxPayConfigured) {
+      console.log('[kr3-progress] ⚠️  阻断: 微信支付商户号未配置 — 需在微信云控制台设置 WX_PAY_* 环境变量，完成后调用 POST /api/brain/kr3/mark-wx-pay');
+    }
+    if (!configStatus.adminOidReady) {
+      console.log('[kr3-progress] ⚠️  阻断: 管理员 OpenID 未初始化 — 需调用 miniapp bootstrapAdmin 云函数，完成后调用 POST /api/brain/kr3/mark-admin-oid');
+    }
+    if (configStatus.wxPayConfigured && configStatus.adminOidReady) {
+      console.log('[kr3-progress] ✅ 前置配置全部就绪，可推进下一步（云函数部署 + 真机联调）');
+    }
     console.log('[kr3-progress] ===========================');
 
     _lastReportDate = todayStr;
