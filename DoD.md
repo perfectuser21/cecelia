@@ -1,10 +1,16 @@
-contract_branch: cp-harness-contract-5430fba3
+contract_branch: cp-harness-contract-6712f0f5
 workstream_index: 1
-sprint_dir: sprints/harness-v5-final
+sprint_dir: sprints/ai-native-dev-redesign
 
-- [ ] [BEHAVIOR] `GET /api/brain/health` 响应顶级包含 `evaluator_stats` 对象，含 `total_runs`/`passed`/`failed`/`last_run_at` 四个字段且仅此四个字段，数值与 DB 中 `task_type='harness_evaluate'` 终态记录精确一致
-  Test: manual:bash -c 'PASSED=$(psql -t -A cecelia -c "SELECT count(*)::integer FROM tasks WHERE task_type='"'"'harness_evaluate'"'"' AND status='"'"'completed'"'"'") && FAILED=$(psql -t -A cecelia -c "SELECT count(*)::integer FROM tasks WHERE task_type='"'"'harness_evaluate'"'"' AND status IN ('"'"'canceled'"'"','"'"'failed'"'"')") && curl -sf localhost:5221/api/brain/health | node -e "const s=JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'/dev/stdin'"'"','"'"'utf8'"'"')).evaluator_stats;const ep=parseInt(process.argv[1]),ef=parseInt(process.argv[2]);if(!s||s.passed!==ep||s.failed!==ef||s.total_runs!==ep+ef){console.log('"'"'FAIL:'"'"'+JSON.stringify(s));process.exit(1)}console.log('"'"'PASS: passed='"'"'+s.passed+'"'"' failed='"'"'+s.failed+'"'"' total='"'"'+s.total_runs)" "$PASSED" "$FAILED"'
-- [ ] [BEHAVIOR] 无 Evaluator 终态记录时返回零值对象，有记录时字段类型正确
-  Test: manual:curl -sf localhost:5221/api/brain/health | node -e "const s=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).evaluator_stats;if(!s||typeof s!=='object'||Array.isArray(s)){process.exit(1)}const k=Object.keys(s).sort();if(JSON.stringify(k)!==JSON.stringify(['failed','last_run_at','passed','total_runs'])){process.exit(1)}if(typeof s.total_runs!=='number'||typeof s.passed!=='number'||typeof s.failed!=='number'){process.exit(1)}if(s.passed+s.failed!==s.total_runs){process.exit(1)}console.log('PASS')"
-- [ ] [BEHAVIOR] Health 端点响应时间 < 200ms
-  Test: manual:node -e "const{execSync}=require('child_process');const s=Date.now();execSync('curl -sf localhost:5221/api/brain/health');const e=Date.now()-s;if(e>=200){console.log('FAIL:'+e+'ms');process.exit(1)}console.log('PASS:'+e+'ms')"
+- [x] [ARTIFACT] `scripts/post-merge-deploy.sh` 存在且可执行
+  Test: node -e "const fs=require('fs');const st=fs.statSync('scripts/post-merge-deploy.sh');if(!(st.mode & 0o111))throw new Error('FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] 脚本排除注释后包含 health check 轮询（curl+循环）、Brain 重启（pm2/systemctl/brain-reload）、回退（git revert/reset）
+  Test: node -e "const lines=require('fs').readFileSync('scripts/post-merge-deploy.sh','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/curl[^;]*health/.test(lines))throw new Error('FAIL: 无 health check');if(!/while\b|for\b/.test(lines))throw new Error('FAIL: 无循环');if(!/git\s+(revert|reset)/.test(lines))throw new Error('FAIL: 无 rollback');if(!/pm2\s+restart|systemctl\s+restart|brain-reload/.test(lines))throw new Error('FAIL: 无 restart');console.log('PASS')"
+- [x] [BEHAVIOR] Health check 超时阈值 <= 60 秒
+  Test: node -e "const c=require('fs').readFileSync('scripts/post-merge-deploy.sh','utf8');const m=c.match(/(?:timeout|TIMEOUT|max_wait|MAX_WAIT|HEALTH_TIMEOUT)[^=]*=\s*(\d+)/);if(!m)throw new Error('FAIL: 无超时变量');if(parseInt(m[1])>60)throw new Error('FAIL: 超过60s');console.log('PASS: '+m[1]+'s')"
+- [x] [BEHAVIOR] Dashboard 构建在 if 条件分支内（非无条件执行）
+  Test: node -e "const lines=require('fs').readFileSync('scripts/post-merge-deploy.sh','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/if[\s\S]{0,200}apps\/dashboard[\s\S]{0,300}(npm run build|npx vite build|pnpm.*build)/.test(lines))throw new Error('FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] 部署失败时回写 Brain 任务（curl PATCH /api/brain/tasks）
+  Test: node -e "const lines=require('fs').readFileSync('scripts/post-merge-deploy.sh','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/curl[\s\S]{0,100}-X\s*PATCH[\s\S]{0,200}api\/brain\/tasks/.test(lines))throw new Error('FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] Health check 通过后回写 deployed 状态，时序在 health check 之后
+  Test: node -e "const lines=require('fs').readFileSync('scripts/post-merge-deploy.sh','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');const h=lines.search(/curl[^;]*health/);const d=lines.search(/deployed|deploy_success|status.*completed/);if(h<0)throw new Error('FAIL: 无health');if(d<0)throw new Error('FAIL: 无deployed');if(d<h)throw new Error('FAIL: 时序错');console.log('PASS')"
