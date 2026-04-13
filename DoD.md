@@ -2,7 +2,7 @@ contract_branch: cp-harness-contract-1f195ce6
 workstream_index: 1
 sprint_dir: sprints/v51-final-test
 
-- [ ] [BEHAVIOR] `GET /api/brain/health` 响应包含 `harness_version` 字段，值为字符串 `"5.1"`
+- [x] [BEHAVIOR] `GET /api/brain/health` 响应包含 `harness_version` 字段，值为字符串 `"5.1"`
   Test: curl -sf localhost:5221/api/brain/health | node -e "const h=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); if(h.harness_version!=='5.1') throw new Error('FAIL'); console.log('PASS')"
-- [ ] [BEHAVIOR] Health 端点现有字段（status/uptime/organs/timestamp 等）保持不变
+- [x] [BEHAVIOR] Health 端点现有字段（status/uptime/organs/timestamp 等）保持不变
   Test: curl -sf localhost:5221/api/brain/health | node -e "const h=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); const r=['status','uptime','organs','timestamp']; const m=r.filter(k=>!(k in h)); if(m.length) throw new Error('FAIL: missing '+m); console.log('PASS')"
