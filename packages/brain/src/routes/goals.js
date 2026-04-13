@@ -132,6 +132,7 @@ router.get('/health', async (req, res) => {
 
     res.json({
       status: healthy ? 'healthy' : 'degraded',
+      harness_version: '5.1',
       uptime: Math.floor(process.uptime()),
       active_pipelines: activePipelinesResult.rows[0].cnt,
       evaluator_stats: evaluatorStats,
