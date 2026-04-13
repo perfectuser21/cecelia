@@ -238,17 +238,21 @@ app.use((err, _req, res, _next) => {
 });
 
 // Run migrations with retry (PG transient failures should not kill the process)
-for (let attempt = 1; attempt <= 3; attempt++) {
-  try {
-    await runMigrations(pool);
-    break;
-  } catch (err) {
-    if (attempt === 3) {
-      console.error('[FATAL] Migration failed after 3 attempts:', err.message);
-      process.exit(1);
+if (process.env.SKIP_MIGRATIONS === 'true') {
+  console.log('[Server] SKIP_MIGRATIONS=true — 跳过数据库迁移');
+} else {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await runMigrations(pool);
+      break;
+    } catch (err) {
+      if (attempt === 3) {
+        console.error('[FATAL] Migration failed after 3 attempts:', err.message);
+        process.exit(1);
+      }
+      console.warn(`[Server] Migration failed (attempt ${attempt}/3), retrying in 5s...`, err.message);
+      await new Promise(r => setTimeout(r, 5000));
     }
-    console.warn(`[Server] Migration failed (attempt ${attempt}/3), retrying in 5s...`, err.message);
-    await new Promise(r => setTimeout(r, 5000));
   }
 }
 
@@ -388,6 +392,12 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   // Initialize Fleet Resource Cache (全局多机器资源感知)
   startFleetRefresh();
   console.log('[Server] Fleet Resource Cache started (30s interval) - 全局资源感知');
+
+  // BRAIN_EVALUATOR_MODE: 仅 HTTP API，跳过所有自动化模块
+  if (process.env.BRAIN_EVALUATOR_MODE === 'true') {
+    console.log('[Server] BRAIN_EVALUATOR_MODE — 仅 HTTP API，跳过所有自动化模块');
+    return;
+  }
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();

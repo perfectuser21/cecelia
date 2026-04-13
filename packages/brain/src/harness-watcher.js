@@ -116,14 +116,9 @@ export async function processHarnessCiWatchers(pool) {
            WHERE id = $1`,
           [task.id, pollCount]
         );
-        // auto-merge
+        // auto-merge disabled — Evaluator will handle merge decisions
         if (prUrl && prInfo.ciStatus !== 'merged') {
-          try {
-            executeMerge(prUrl);
-            console.log(`[harness-watcher] CI passed → auto-merge triggered for ${prUrl}`);
-          } catch (mergeErr) {
-            console.warn(`[harness-watcher] auto-merge failed (non-fatal): ${mergeErr.message}`);
-          }
+          console.log(`[harness-watcher] CI passed, skipping auto-merge (Evaluator will handle): ${prUrl}`);
         }
         // 创建 harness_report
         const plannerShort = (payload.planner_task_id || task.id).slice(0, 8);
