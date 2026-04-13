@@ -168,6 +168,20 @@ export async function callLLM(agentId, prompt, options = {}) {
     }
   }
 
+  // Implicit fallback: anthropic（bridge）所有候选失败时，自动尝试 anthropic-api 直连。
+  // 适用于未配置 fallbacks 的 agent（如 reflection / mouth / narrative / memory / fact_extractor）。
+  if (primary.provider === 'anthropic') {
+    console.warn(`[llm-caller] ${agentId} bridge 所有候选失败，尝试 anthropic-api 直连`);
+    try {
+      const text = await callAnthropicAPI(prompt, primary.model, timeout, maxTokens, imageContent);
+      const elapsed = Date.now() - startTime;
+      console.log(`[llm-caller] ${agentId} → ${primary.model} (anthropic-api implicit fallback) in ${elapsed}ms`);
+      return { text, model: primary.model, provider: 'anthropic-api', elapsed_ms: elapsed, attempted_fallback: true };
+    } catch (apiErr) {
+      console.warn(`[llm-caller] ${agentId} anthropic-api 直连也失败: ${apiErr.message}`);
+    }
+  }
+
   if (lastError) {
     lastError.llm_model = lastModel;
     lastError.llm_provider = lastProvider;
