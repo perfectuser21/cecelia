@@ -18,6 +18,7 @@ import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
 import llmServiceRouter from './routes/llm-service.js';
 import harnessRouter from './routes/harness.js';
+import kr3Router from './routes/kr3.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -47,5 +48,8 @@ router.use('/llm', llmServiceRouter);
 
 // Harness 可视化 — GET /harness/pipeline-detail, GET /harness/pipeline/:id
 router.use('/harness', harnessRouter);
+
+// KR3 小程序配置状态 — GET /kr3/check-config, POST /kr3/mark-wx-pay, POST /kr3/mark-admin-oid
+router.use('/kr3', kr3Router);
 
 export default router;
