@@ -170,7 +170,8 @@ export async function callLLM(agentId, prompt, options = {}) {
 
   // Implicit fallback: anthropic（bridge）所有候选失败时，自动尝试 anthropic-api 直连。
   // 适用于未配置 fallbacks 的 agent（如 reflection / mouth / narrative / memory / fact_extractor）。
-  if (primary.provider === 'anthropic') {
+  // 例外：基础设施故障（dyld/ENOENT/spawn，infraFailure=true）不走 fallback，避免无效调用。
+  if (primary.provider === 'anthropic' && !lastError?.infraFailure) {
     console.warn(`[llm-caller] ${agentId} bridge 所有候选失败，尝试 anthropic-api 直连`);
     try {
       const text = await callAnthropicAPI(prompt, primary.model, timeout, maxTokens, imageContent);
@@ -277,11 +278,12 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
     if (!response.ok) {
       const errBody = await response.json().catch(() => null);
       const errText = errBody ? JSON.stringify(errBody) : await response.text().catch(() => 'unknown');
-      // 不可重试错误（dyld/spawn/ENOENT/基础设施故障）：立即抛，不走退避
+      // 不可重试错误（dyld/spawn/ENOENT/基础设施故障）：立即抛，不走退避，不走 implicit fallback
       if (errBody?.retryable === false) {
         console.error(`[llm-caller] Bridge 500 不可重试（基础设施故障）: ${errBody.error?.slice(0, 100)}`);
         const infraErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
         infraErr.status = response.status;
+        infraErr.infraFailure = true; // 标记：跳过 implicit anthropic-api fallback
         throw infraErr;
       }
       // 500 是瞬态错误（CLI 限流/临时失败），重试；4xx 是客户端错误，直接抛出
