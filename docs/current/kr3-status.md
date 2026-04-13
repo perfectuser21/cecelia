@@ -1,20 +1,37 @@
 # KR3 微信小程序上线状态
 
-**更新时间**: 2026-04-13
-**代码完成度**: ~90%（27 个 miniapp PR 已合并）
+**更新时间**: 2026-04-13（post-PR#2329）
+**代码完成度**: ~95%（27 个 miniapp PR + Brain 配置检测器已合并）
 **Brain OKR current_value**: 70
-**状态**: 🟡 代码就绪，等待 CN Mac mini 手动部署
+**状态**: 🟡 代码就绪，等待 CN Mac mini 手动部署 + Brain 重启激活 kr3 路由
 
 ---
 
-## 最新进展（PR#27 — 2026-04-13）
+## 最新进展
 
 | PR | 内容 | 状态 |
 |----|------|------|
-| #27 | `notifyPayment` 云函数：微信支付 V3 回调处理器（AES-256-GCM 解密 + 激活会员）；修复 `createPaymentOrder` 的 `notify_url`（旧值错误指向微信自己服务器） | ✅ MERGED |
-| #26 | `checkAdmin` 三层 fallback（DB → ADMIN_OPENIDS env → 内置 OpenID）+ 灰度 Phase 1 | ✅ MERGED |
-| #25 | 灰度阶段 0 完成 → 阶段 1 就绪标注 | ✅ MERGED |
-| #1-#24 | 核心功能全量（首页/AI聊天/文案/文章库/会员/支付/用户管理） | ✅ MERGED |
+| cecelia#2329 | Brain `kr3-config-checker.js` + `/api/brain/kr3/check-config` 端点 | ✅ MERGED |
+| cecelia#2327 | `notifyPayment` 支付配置追踪文档 | ✅ MERGED |
+| miniapp#27 | `notifyPayment` 云函数：微信支付 V3 回调处理器（AES-256-GCM 解密 + 激活会员）；修复 `createPaymentOrder` 的 `notify_url` | ✅ MERGED |
+| miniapp#26 | `checkAdmin` 三层 fallback（DB → ADMIN_OPENIDS env → 内置 OpenID）+ 灰度 Phase 1 | ✅ MERGED |
+| miniapp#25 | 灰度阶段 0 完成 → 阶段 1 就绪标注 | ✅ MERGED |
+| miniapp#1-#24 | 核心功能全量（首页/AI聊天/文案/文章库/会员/支付/用户管理） | ✅ MERGED |
+
+### Brain kr3 配置检测 API
+
+Brain 已有 `packages/brain/src/kr3-config-checker.js`，待 Brain 重启后可用：
+
+```bash
+# 查询配置状态
+curl localhost:5221/api/brain/kr3/check-config
+
+# 标记微信支付已配置（商户号申请完成后调用）
+curl -X POST localhost:5221/api/brain/kr3/mark-wx-pay -H "Content-Type: application/json" -d '{"note":"已在云控制台配置5个WX_PAY_*环境变量"}'
+
+# 标记管理员 OpenID 已初始化（bootstrapAdmin 调用后执行）
+curl -X POST localhost:5221/api/brain/kr3/mark-admin-oid -H "Content-Type: application/json" -d '{"note":"已调用bootstrapAdmin初始化"}'
+```
 
 ---
 
