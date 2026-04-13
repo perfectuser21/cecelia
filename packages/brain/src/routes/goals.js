@@ -133,6 +133,7 @@ router.get('/health', async (req, res) => {
     res.json({
       status: healthy ? 'healthy' : 'degraded',
       uptime: Math.floor(process.uptime()),
+      pipeline_version: '5.1',
       active_pipelines: activePipelinesResult.rows[0].cnt,
       evaluator_stats: evaluatorStats,
       tick_stats: tickStatus.tick_stats || { total_executions: 0, last_executed_at: null, last_duration_ms: null },
