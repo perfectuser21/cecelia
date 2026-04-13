@@ -246,7 +246,11 @@ describe('llm-caller', () => {
     });
 
     it('bridge HTTP 错误时抛出错误', async () => {
-      global.fetch.mockResolvedValueOnce(makeErrorResponse(500, 'internal error'));
+      // 重试逻辑：1 次初始调用 + 最多 2 次重试 = 共 3 次 500 才最终失败
+      global.fetch
+        .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'))
+        .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'))
+        .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'));
 
       await expect(callLLM('cortex', '测试')).rejects.toThrow('Bridge /llm-call error: 500');
     });
