@@ -255,7 +255,7 @@ describe('llm-caller', () => {
       await expect(callLLM('cortex', '测试')).rejects.toThrow('Bridge /llm-call error: 500');
     });
 
-    it('selectBestAccount 失败时仍能调用（不带 accountId）', async () => {
+    it('selectBestAccount 失败时仍能调用（使用 fallback accountId）', async () => {
       selectBestAccount.mockRejectedValueOnce(new Error('DB down'));
       global.fetch.mockResolvedValueOnce(makeBridgeResponse('降级回复'));
 
@@ -263,17 +263,19 @@ describe('llm-caller', () => {
 
       expect(result.text).toBe('降级回复');
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      expect(body.accountId).toBeUndefined();
+      // 异常时使用 fallback_account（account1），确保 Bridge 有 CLAUDE_CONFIG_DIR
+      expect(body.accountId).toBe('account1');
     });
 
-    it('selectBestAccount 返回 null 时不带 accountId', async () => {
+    it('selectBestAccount 返回 null 时使用 fallback accountId', async () => {
       selectBestAccount.mockResolvedValueOnce(null);
       global.fetch.mockResolvedValueOnce(makeBridgeResponse('ok'));
 
       await callLLM('cortex', '测试');
 
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      expect(body.accountId).toBeUndefined();
+      // null 时使用 fallback_account（account1），避免 Bridge 无 CLAUDE_CONFIG_DIR 报 "Not logged in"
+      expect(body.accountId).toBe('account1');
     });
 
     it('有图片时 provider=anthropic 自动升级到 anthropic-api', async () => {
