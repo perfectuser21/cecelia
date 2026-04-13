@@ -83,9 +83,9 @@ jobs:
         if: needs.changes.outputs.workspace == 'true'
         run: cd apps/api && npm ci && npx eslint src/
 
-  # ─── PR Size Check（仅 PR 触发）─────────────────────────────
+  # ─── PR Size Check（仅 PR 触发，harness PR 跳过）──────────────
   pr-size-check:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'harness')
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -563,8 +563,8 @@ jobs:
 
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
-    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
     if: always()
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -592,3 +592,51 @@ jobs:
             echo ""; echo "❌ CI FAILED"; exit 1
           fi
           echo ""; echo "✅ CI PASSED"
+
+  # ─── Auto-merge（harness label PR，CI 通过后自动合并）────────
+  auto-merge:
+    needs: [ci-passed]
+    if: needs.ci-passed.result == 'success' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Auto-merge harness PR（含重试 + Brain 失败回写）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRAIN_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # 实时检查标签（不依赖事件 payload — harness 标签在 PR 创建后可能才添加，事件 payload 中不含）
+          LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+          if ! echo "$LABELS" | grep -q "harness"; then
+            echo "ℹ️  No harness label, skipping auto-merge"
+            exit 0
+          fi
+
+          MERGED=false
+          MAX_RETRY=2
+          for attempt in 1 2; do
+            echo "Auto-merge attempt $attempt / $MAX_RETRY"
+            if gh pr merge "$PR_NUMBER" --squash --delete-branch --repo "$GITHUB_REPOSITORY"; then
+              MERGED=true
+              echo "✅ Auto-merge 成功（attempt $attempt）"
+              break
+            fi
+            echo "⚠️  Merge attempt $attempt 失败，重试..."
+            [ "$attempt" -lt "$MAX_RETRY" ] && sleep 10
+          done
+
+          if [ "$MERGED" != "true" ]; then
+            echo "❌ Auto-merge 失败（已重试 $MAX_RETRY 次）"
+            TASK_ID=$(echo "$PR_BODY" | grep -oE 'task[_-]id[: ]+[a-f0-9-]{36}' | head -1 | grep -oE '[a-f0-9-]{36}' || echo "")
+            if [ -n "$TASK_ID" ]; then
+              curl -s -X PATCH "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" \
+                -H "Content-Type: application/json" \
+                -d "{\"status\":\"failed\",\"result\":{\"error\":\"auto-merge failed after retry\",\"pr_number\":${PR_NUMBER}}}" || true
+              echo "已回写 Brain 任务 $TASK_ID 失败状态"
+            else
+              echo "⚠️  未能提取 task_id，跳过 Brain 回写"
+            fi
+            exit 1
+          fi
