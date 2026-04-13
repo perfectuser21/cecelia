@@ -9,6 +9,34 @@ const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
 const BRIDGE_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
 
 /**
+ * 自动发现 claude 二进制文件路径。
+ * 优先级：CLAUDE_BIN 环境变量 → 候选路径列表 → which claude 兜底。
+ * 修复 spawn ENOENT：当 CLAUDE_BIN 指向不存在路径时自动搜索。
+ */
+function discoverClaudeBin() {
+  const explicit = process.env.CLAUDE_BIN;
+  if (explicit) {
+    try { fs.accessSync(explicit, fs.constants.X_OK); return explicit; } catch {}
+    console.warn(`[bridge] CLAUDE_BIN=${explicit} 不可执行，自动搜索 claude 路径...`);
+  }
+  const candidates = [
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    `${process.env.HOME || '/Users/administrator'}/.local/bin/claude`,
+    `${process.env.HOME || '/Users/administrator'}/.npm-global/bin/claude`,
+  ];
+  for (const p of candidates) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
+  }
+  try {
+    const found = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (found) return found;
+  } catch {}
+  return 'claude';
+}
+const CLAUDE_BIN = discoverClaudeBin();
+
+/**
  * Safe response helper — prevents ERR_HTTP_HEADERS_SENT crash.
  * Once res.end() is called, subsequent calls are no-ops.
  */
@@ -81,7 +109,6 @@ const server = http.createServer((req, res) => {
         const modelArg = model || 'haiku';
         const MAX_BRIDGE_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_MAX_TIMEOUT_MS || '600000', 10);
         const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, MAX_BRIDGE_LLM_TIMEOUT_MS);
-        const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 
         const startTime = Date.now();
@@ -96,7 +123,7 @@ const server = http.createServer((req, res) => {
 
         const llmWorkDir = '/tmp/cecelia-llm';
         try { fs.mkdirSync(llmWorkDir, { recursive: true }); } catch {}
-        const child = spawn(claudeBin, args, {
+        const child = spawn(CLAUDE_BIN, args, {
           env,
           cwd: llmWorkDir,
           stdio: ['ignore', 'pipe', 'pipe'],
