@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-13"
 
 changelog:
+  - version: "14.6.5"
+    date: "2026-04-13"
+    change: "feat"
+    description: "Harness 极简路径：04-ship.md 新增 harness_mode 双路径（harness 跳过 Learning+fire-learnings-event）；devloop-check.sh 新增 Brain 失败回写（curl PATCH）；stop.sh 新增 harness 模式检测（跳过用户确认）"
+    files:
+      - "packages/engine/skills/dev/steps/04-ship.md"
+      - "packages/engine/lib/devloop-check.sh"
+      - "packages/engine/hooks/stop.sh"
   - version: "14.6.4"
     date: "2026-04-12"
     change: "feat"

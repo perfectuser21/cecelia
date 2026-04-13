@@ -1,8 +1,9 @@
 ---
 id: dev-stage-04-ship
-version: 4.0.0
-updated: 2026-04-11
+version: 4.1.0
+updated: 2026-04-13
 changelog:
+  - 4.1.0: 新增 harness_mode 双路径 — harness 模式跳过 Learning + fire-learnings-event，非 harness 保持完整流程
   - 4.0.0: 职责分离 — 合并/cleanup_done/cleanup.sh 全部由 devloop-check 自动执行，文档只负责 Learning + 标记完成
   - 3.0.0: 精简 — 只保留 Learning + 合并 + 清理核心流程
 ---
@@ -13,7 +14,32 @@ changelog:
 
 ---
 
-## 4.0 完工清理检查（Engine 改动时必做）
+## 4.0 harness_mode 检测（必须先执行）
+
+读取当前会话是否处于 harness 模式：
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+harness_mode="false"
+if [[ -f "$DEV_MODE_FILE" ]]; then
+    _hm=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || true)
+    [[ "$_hm" == "true" ]] && harness_mode="true"
+fi
+```
+
+**harness_mode=true（Harness Generator 极简路径）**：
+- **跳过（skip）** Learning 文件写入 — `docs/learnings/` 无需创建任何文件
+- **跳过（skip）** `fire-learnings-event` 调用 — omit fire-learnings-event 在 harness 模式下不执行
+- 直接跳至 **4.2 标记完成**
+
+**harness_mode=false（正常 /dev 流程）**：
+- 依次执行 **4.0.5 完工清理检查** → **4.1 写 Learning** → **4.1.5 更新系统状态** → **4.2 标记完成**
+- 完整 Learning 流程：写 `docs/learnings/` 文件 + 调用 `fire-learnings-event`
+
+---
+
+## 4.0.5 完工清理检查（Engine 改动时必做，仅 harness_mode=false 时执行）
 
 改动了 `packages/engine/` 下任何文件时，先运行完工检查：
 

@@ -108,6 +108,15 @@ devloop_check() {
         _h_step2_raw=$(grep "^step_2_code:" "$dev_mode_file" 2>/dev/null | awk '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)
         [[ -n "$_h_step2_raw" ]] && _h_step2="$_h_step2_raw"
         if [[ "$_h_step2" != "done" ]]; then
+            local _task_id
+            _task_id=$(grep "^task_id:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
+            if [[ -n "$_task_id" && "$_harness_mode" == "true" ]]; then
+                curl -s --connect-timeout 3 --max-time 5 \
+                    -X PATCH "http://localhost:5221/api/brain/tasks/$_task_id" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"status\":\"failed\",\"result\":{\"error_message\":\"[Harness] Stage 2 Code 未完成，devloop-check 检测到失败\"}}" \
+                    >/dev/null 2>&1 || true
+            fi
             _devloop_jq -n '{"status":"blocked","reason":"[Harness] Stage 2 Code 未完成","action":"立即读取 skills/dev/steps/02-code.md 并执行 Stage 2（harness 模式）。禁止询问用户。"}'
             return 2
         fi
