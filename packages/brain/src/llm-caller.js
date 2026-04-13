@@ -247,14 +247,19 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
 
   // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理
   // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
-  let accountId;
+  // fallback_account：selectBestAccount 返回 null（全账号超配额/异常）时，仍传一个账号给 bridge
+  // 避免 bridge 在无 CLAUDE_CONFIG_DIR 环境下 spawn claude 报 "Not logged in"
+  const FALLBACK_ACCOUNT = process.env.CECELIA_FALLBACK_ACCOUNT || 'account1';
+  let accountId = FALLBACK_ACCOUNT;
   try {
     const selection = await selectBestAccount({ model: claudeModel });
     if (selection) {
       accountId = selection.accountId;
+    } else {
+      console.warn(`[llm-caller] selectBestAccount 返回 null，使用 fallback_account=${FALLBACK_ACCOUNT}`);
     }
   } catch (err) {
-    console.warn('[llm-caller] selectBestAccount failed, using default account:', err.message);
+    console.warn('[llm-caller] selectBestAccount failed, using fallback_account:', err.message);
   }
 
   const BRIDGE_500_MAX_RETRIES = 2;

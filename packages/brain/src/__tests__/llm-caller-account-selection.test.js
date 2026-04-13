@@ -103,7 +103,7 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
     expect(requestBody.configDir).toBeUndefined();
   });
 
-  it('ACS3: selectBestAccount 返回 null 时，不传 accountId', async () => {
+  it('ACS3: selectBestAccount 返回 null 时，使用 fallback accountId', async () => {
     mockSelectBestAccount.mockResolvedValue(null);
 
     await callLLM('thalamus', '测试 prompt');
@@ -112,8 +112,8 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
     const callArgs = mockFetch.mock.calls[0];
     const requestBody = JSON.parse(callArgs[1].body);
 
-    // null 时不应有 accountId 字段
-    expect(requestBody.accountId).toBeUndefined();
+    // null 时使用 fallback_account（account1），避免 Bridge 无 CLAUDE_CONFIG_DIR 报 "Not logged in"
+    expect(requestBody.accountId).toBe('account1');
     expect(requestBody.configDir).toBeUndefined();
   });
 });

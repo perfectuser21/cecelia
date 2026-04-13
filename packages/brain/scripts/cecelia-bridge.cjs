@@ -115,10 +115,18 @@ const server = http.createServer((req, res) => {
         let timedOut = false;
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
+        const { homedir } = require('os');
+        const { join } = require('path');
         if (accountId) {
-          const { homedir } = require('os');
-          const { join } = require('path');
           env.CLAUDE_CONFIG_DIR = join(homedir(), '.claude-' + accountId);
+        } else {
+          // 无 accountId 时用默认账号，防止 claude -p 因 CLAUDE_CONFIG_DIR 未设置而报 "Not logged in"
+          const DEFAULT_CLAUDE_CONFIG_DIR = process.env.DEFAULT_CLAUDE_CONFIG_DIR
+            || join(homedir(), '.claude-account1');
+          if (!env.CLAUDE_CONFIG_DIR) {
+            env.CLAUDE_CONFIG_DIR = DEFAULT_CLAUDE_CONFIG_DIR;
+            console.log(`[bridge] /llm-call 无 accountId，使用默认 CLAUDE_CONFIG_DIR=${DEFAULT_CLAUDE_CONFIG_DIR}`);
+          }
         }
 
         const llmWorkDir = '/tmp/cecelia-llm';
