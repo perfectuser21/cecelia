@@ -1,16 +1,14 @@
 contract_branch: cp-harness-contract-6712f0f5
-workstream_index: 2
+workstream_index: 3
 sprint_dir: sprints/ai-native-dev-redesign
 
-- [x] [BEHAVIOR] CI 包含 harness 条件跳过逻辑（排除注释行后可见）
-  Test: node -e "const lines=require('fs').readFileSync('.github/workflows/ci.yml','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/if:[\s\S]{0,100}(harness|contains.*label)/.test(lines))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] 核心 job（brain-unit/brain-integration/eslint/secrets-scan/e2e-smoke）不被 harness skip 影响
-  Test: node -e "const lines=require('fs').readFileSync('.github/workflows/ci.yml','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');const r=['brain-unit','brain-integration','eslint','secrets-scan','e2e-smoke'];for(const j of r){if(new RegExp(j+':[\\\\s\\\\S]{0,500}(harness.*skip|!contains.*harness)','i').test(lines))throw new Error('FAIL: '+j);}console.log('PASS')"
-- [x] [BEHAVIOR] ci-passed job 包含 `if: always()`，防止被跳过的 job 阻塞合并
-  Test: node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/ci-passed:[\s\S]{0,200}if:\s*always\(\)/.test(c))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] auto-merge step 存在且使用 gh pr merge，限定 harness label
-  Test: node -e "const lines=require('fs').readFileSync('.github/workflows/ci.yml','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/gh\s+pr\s+merge/.test(lines))throw new Error('FAIL: 无 gh pr merge');if(!/auto.merge[\s\S]{0,500}harness|harness[\s\S]{0,500}auto.merge/.test(lines))throw new Error('FAIL: 未限定 harness');console.log('PASS')"
-- [x] [BEHAVIOR] auto-merge 包含重试机制（至少 1 次重试）
-  Test: node -e "const lines=require('fs').readFileSync('.github/workflows/ci.yml','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/retry|RETRY|attempt|ATTEMPT|for\s+i\s+in|while.*merge/.test(lines))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] merge 失败时回写 Brain 任务状态（curl PATCH 在 auto-merge failure 路径内）
-  Test: node -e "const lines=require('fs').readFileSync('.github/workflows/ci.yml','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/auto.merge[\s\S]{0,2000}curl[\s\S]{0,100}(PATCH|patch)[\s\S]{0,200}(brain|tasks)/.test(lines)&&!/auto.merge[\s\S]{0,2000}(fail|error)[\s\S]{0,500}(brain|tasks)/.test(lines))throw new Error('FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] 04-ship.md 包含 harness_mode 变量检测 + 跳过 Learning 路径 + 保留非 harness 完整 Learning 流程
+  Test: node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/steps/04-ship.md','utf8');if(!/harness_mode|harness.mode|HARNESS_MODE/.test(c))throw new Error('FAIL: 无检测');const skip=/harness[\s\S]{0,500}(skip|跳过|不执行|省略|omit)[\s\S]{0,200}(learning|Learning)/i.test(c);const normal=/docs\/learnings/.test(c)&&/fire-learnings-event/.test(c);if(!skip)throw new Error('FAIL: 无跳过指令');if(!normal)throw new Error('FAIL: 非harness路径不完整');console.log('PASS')"
+- [x] [BEHAVIOR] harness 模式明确跳过 fire-learnings-event 调用
+  Test: node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/steps/04-ship.md','utf8');if(!/harness[\s\S]{0,500}(skip|跳过|省略|omit)[\s\S]{0,200}fire-learnings-event/i.test(c)&&!/harness[\s\S]{0,500}(skip|跳过|省略|omit)[\s\S]{0,200}(learning|Learning)[\s\S]{0,200}fire-learnings/i.test(c))throw new Error('FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] devloop-check.sh（排除注释后）包含 harness 模式检测
+  Test: node -e "const lines=require('fs').readFileSync('packages/engine/lib/devloop-check.sh','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/harness.*mode|_harness_mode|HARNESS_MODE/.test(lines))throw new Error('FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] devloop-check.sh harness 失败回写 Brain（curl PATCH 在 _harness_mode 守卫内，2000 字符窗口）
+  Test: node -e "const c=require('fs').readFileSync('packages/engine/lib/devloop-check.sh','utf8');if(!/curl[\s\S]{0,100}-X\s*PATCH[\s\S]{0,200}api\/brain\/tasks/.test(c))throw new Error('FAIL: 无PATCH');const i=c.indexOf('PATCH');const b=c.substring(Math.max(0,i-2000),i);if(!/_harness_mode.*==.*true|harness_mode.*true/.test(b))throw new Error('FAIL: 无守卫');console.log('PASS')"
+- [x] [BEHAVIOR] stop.sh（排除注释后）包含 harness 模式检测
+  Test: node -e "const lines=require('fs').readFileSync('packages/engine/hooks/stop.sh','utf8').split('\n').filter(l=>!l.trimStart().startsWith('#')).join('\n');if(!/harness.*mode|_harness_mode|HARNESS_MODE/.test(lines))throw new Error('FAIL');console.log('PASS')"

@@ -24,6 +24,18 @@ set -euo pipefail
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ===== harness_mode 检测（harness 模式下跳过用户确认）=====
+_HARNESS_MODE=false
+for _dmf in "$PROJECT_ROOT"/.dev-mode.*; do
+    [[ -f "$_dmf" ]] || continue
+    _hm=$(grep "^harness_mode:" "$_dmf" 2>/dev/null | awk '{print $2}' || true)
+    if [[ "$_hm" == "true" ]]; then
+        _HARNESS_MODE=true
+        break
+    fi
+done
+export HARNESS_MODE="$_HARNESS_MODE"
+
 # ===== 检查 .dev-lock.<branch>（per-branch 硬钥匙）→ 调用 stop-dev.sh =====
 # v14.2.0: .dev-lock 只存在于 worktree 目录（不在主仓库），扫描所有 worktree
 # 主仓库残留的 .dev-lock 自动清理（迁移兼容）
