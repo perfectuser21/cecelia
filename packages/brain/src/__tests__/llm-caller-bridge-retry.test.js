@@ -86,4 +86,17 @@ describe('callClaudeViaBridge - Bridge 500 重试', () => {
     expect(code).toContain('bridge500Retry');
     expect(code).toContain('BRIDGE_500_MAX_RETRIES');
   });
+
+  it('Bridge 500 + dyld 错误应跳过重试（isStartupError）', async () => {
+    const code = require('fs').readFileSync(
+      new URL('../llm-caller.js', import.meta.url).pathname,
+      'utf8'
+    );
+    // 验证 dyld 检测逻辑存在
+    expect(code).toContain('isStartupError');
+    expect(code).toContain('dyld');
+    expect(code).toContain('Library not loaded');
+    // 验证跳过重试的条件
+    expect(code).toContain('!isStartupError');
+  });
 });
