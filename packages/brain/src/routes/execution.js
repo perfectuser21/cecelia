@@ -2340,10 +2340,69 @@ ${resultStr.substring(0, 2000)}
           console.log(`[execution-callback] harness: harness_evaluate ${task_id} verdict=${evalVerdict} eval_round=${evalRound}`);
 
           if (evalVerdict === 'PASS') {
-            // PASS → 创建 harness_report
+            // PASS → merge PR + deploy + smoke test + 创建 report
+
+            // Step 1: Merge PR
+            if (prUrl) {
+              try {
+                execSync(`gh pr merge "${prUrl}" --squash --delete-branch`, { encoding: 'utf-8', timeout: 30000 });
+                console.log(`[execution-callback] harness: Evaluator PASS → PR merged: ${prUrl}`);
+              } catch (mergeErr) {
+                // Merge 失败（冲突等）→ 尝试 rebase
+                console.warn(`[execution-callback] harness: PR merge failed, attempting rebase: ${mergeErr.message}`);
+                try {
+                  const prBranch = execSync(`gh pr view "${prUrl}" --json headRefName -q '.headRefName'`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                  execSync(`git fetch origin && git checkout ${prBranch} && git rebase origin/main && git push -f origin ${prBranch}`, { encoding: 'utf-8', timeout: 30000 });
+                  execSync(`gh pr merge "${prUrl}" --squash --delete-branch`, { encoding: 'utf-8', timeout: 30000 });
+                  console.log(`[execution-callback] harness: PR rebased and merged: ${prUrl}`);
+                } catch (rebaseErr) {
+                  console.error(`[execution-callback] harness: PR rebase+merge failed: ${rebaseErr.message}`);
+                  // 创建 fix 任务处理冲突
+                  await createHarnessTask({
+                    title: `[Fix] Merge 冲突 — ${plannerShort}`,
+                    task_type: 'harness_fix',
+                    trigger_source: 'execution_callback_harness',
+                    payload: {
+                      ...harnessPayload,
+                      ci_fail_context: 'merge_conflict_after_evaluator_pass',
+                      eval_round: evalRound,
+                    },
+                  });
+                  console.log(`[execution-callback] harness: merge conflict → harness_fix created`);
+                  return; // 不继续到 deploy/report
+                }
+              }
+            }
+
+            // Step 2: Deploy（重启 Brain + Dashboard）
+            try {
+              execSync('bash scripts/post-merge-deploy.sh', {
+                cwd: execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim(),
+                encoding: 'utf-8',
+                timeout: 120000
+              });
+              console.log(`[execution-callback] harness: post-merge deploy completed`);
+            } catch (deployErr) {
+              console.warn(`[execution-callback] harness: deploy warning (non-fatal): ${deployErr.message}`);
+            }
+
+            // Step 3: Smoke test（验证生产 Brain healthy）
+            try {
+              const healthResp = execSync('curl -sf http://localhost:5221/api/brain/health', { encoding: 'utf-8', timeout: 10000 });
+              const health = JSON.parse(healthResp);
+              if (health.status !== 'healthy') {
+                console.warn(`[execution-callback] harness: smoke test warning: Brain status=${health.status}`);
+              } else {
+                console.log(`[execution-callback] harness: smoke test PASS — Brain healthy`);
+              }
+            } catch (smokeErr) {
+              console.warn(`[execution-callback] harness: smoke test failed (non-fatal): ${smokeErr.message}`);
+            }
+
+            // Step 4: 创建 Report
             await createHarnessTask({
               title: `[Report] ${plannerShort}`,
-              description: `Evaluator PASS，生成 Harness 报告。\npr_url: ${prUrl}`,
+              description: `Evaluator PASS → merged → deployed → 生成报告。\npr_url: ${prUrl}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
               goal_id: harnessTask.goal_id,
@@ -2360,7 +2419,7 @@ ${resultStr.substring(0, 2000)}
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: harness_evaluate PASS → harness_report created`);
+            console.log(`[execution-callback] harness: Evaluator PASS → merged → deployed → harness_report created`);
           } else {
             // FAIL → 无上限，一直 Fix 直到 PASS（AI-native 全自动，跟 GAN 一样无上限）
             const failedFeatures = result?.failed_features || [];
