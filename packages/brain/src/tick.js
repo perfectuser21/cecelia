@@ -332,6 +332,16 @@ async function runTickSafe(source = 'loop', tickFn) {
   _tickRunning = true;
   _tickLockTime = Date.now();
 
+  // 保底 setTimeout：无论 doTick() 是否 resolve，TICK_TIMEOUT_MS 后强制释放锁
+  // 解决 _tickLockTime 被清但 _tickRunning 未清的边界情况
+  const _forceReleaseTimer = setTimeout(() => {
+    if (_tickRunning) {
+      console.warn(`[tick-loop] FORCE-RELEASE via setTimeout (${TICK_TIMEOUT_MS / 1000}s safety net, source: ${source})`);
+      _tickRunning = false;
+      _tickLockTime = null;
+    }
+  }, TICK_TIMEOUT_MS);
+
   try {
     const result = await doTick();
     _lastExecuteTime = Date.now();
@@ -341,6 +351,7 @@ async function runTickSafe(source = 'loop', tickFn) {
     console.error(`[tick-loop] Tick failed (source: ${source}):`, err.message);
     return { success: false, error: err.message, source };
   } finally {
+    clearTimeout(_forceReleaseTimer);
     _tickRunning = false;
     _tickLockTime = null;
   }
