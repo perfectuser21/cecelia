@@ -86,4 +86,21 @@ describe('callClaudeViaBridge - Bridge 500 重试', () => {
     expect(code).toContain('bridge500Retry');
     expect(code).toContain('BRIDGE_500_MAX_RETRIES');
   });
+
+  it('bridge 返回 retryable:false 时不重试，立即抛出', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ ok: false, error: 'dyld: Library not loaded', retryable: false }),
+      text: async () => '{"ok":false,"error":"dyld: Library not loaded","retryable":false}',
+    });
+
+    const { callLLM } = await import('../llm-caller.js');
+
+    await expect(
+      callLLM('cortex', '测试 dyld 错误', { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' })
+    ).rejects.toThrow('Bridge /llm-call error: 500');
+    // retryable:false 时不应重试，fetch 只被调用 1 次（而非 3 次）
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 });
