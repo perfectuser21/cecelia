@@ -226,10 +226,10 @@ async function callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent 
 /**
  * 通过 cecelia-bridge 调用 claude -p（走订阅，不需要 API key）
  * 自动选择配额最优账号（通过 configDir 传给 bridge）
+ * Bridge 500 时自动重试（最多 2 次，指数退避 500ms/1000ms）
  */
 async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
   const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
-  const isHaiku = claudeModel === 'haiku';
 
   // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理
   // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
@@ -243,37 +243,51 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
     console.warn('[llm-caller] selectBestAccount failed, using default account:', err.message);
   }
 
-  const response = await fetch(`${BRIDGE_URL}/llm-call`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      model: claudeModel,
-      timeout,
-      ...(accountId ? { accountId } : {}),
-    }),
-    signal: AbortSignal.timeout(timeout + 10000), // bridge 自身超时 + 缓冲
-  });
+  const BRIDGE_500_MAX_RETRIES = 2;
+  const BRIDGE_500_RETRY_BASE_MS = 500;
+  let bridge500Retry = 0;
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => 'unknown');
-    const bridgeErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
-    bridgeErr.status = response.status;
-    throw bridgeErr;
-  }
+  while (true) {
+    const response = await fetch(`${BRIDGE_URL}/llm-call`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        model: claudeModel,
+        timeout,
+        ...(accountId ? { accountId } : {}),
+      }),
+      signal: AbortSignal.timeout(timeout + 10000), // bridge 自身超时 + 缓冲
+    });
 
-  const data = await response.json();
-  if (data.degraded === true) {
-    const err = new Error(`LLM call timed out after ${data.elapsed_ms || timeout}ms`);
-    err.degraded = true;
-    err.status = data.status;
-    throw err;
-  }
-  if (!data.text) {
-    throw new Error('Bridge /llm-call returned empty text');
-  }
+    if (!response.ok) {
+      const errText = await response.text().catch(() => 'unknown');
+      // 500 是瞬态错误（CLI 限流/临时失败），重试；4xx 是客户端错误，直接抛出
+      if (response.status === 500 && bridge500Retry < BRIDGE_500_MAX_RETRIES) {
+        bridge500Retry++;
+        const delayMs = BRIDGE_500_RETRY_BASE_MS * bridge500Retry;
+        console.warn(`[llm-caller] Bridge /llm-call 500，第 ${bridge500Retry} 次重试（${delayMs}ms 后）model=${claudeModel}`);
+        await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+      const bridgeErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
+      bridgeErr.status = response.status;
+      throw bridgeErr;
+    }
 
-  return data.text;
+    const data = await response.json();
+    if (data.degraded === true) {
+      const err = new Error(`LLM call timed out after ${data.elapsed_ms || timeout}ms`);
+      err.degraded = true;
+      err.status = data.status;
+      throw err;
+    }
+    if (!data.text) {
+      throw new Error('Bridge /llm-call returned empty text');
+    }
+
+    return data.text;
+  }
 }
 
 /**
