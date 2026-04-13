@@ -6,6 +6,15 @@ version: "1.0.0"
 updated: "2026-04-13"
 
 changelog:
+  - version: "14.7.0"
+    date: "2026-04-13"
+    change: "feat"
+    description: "Superpowers 融入：01-spec.md 加零占位符+Self-Review；02-code.md 加 TDD 红绿循环+Verification Gate+Systematic Debugging；03-integrate.md 加系统化 CI 修复；SKILL.md 加 Superpowers 集成表"
+    files:
+      - "packages/engine/skills/dev/SKILL.md"
+      - "packages/engine/skills/dev/steps/01-spec.md"
+      - "packages/engine/skills/dev/steps/02-code.md"
+      - "packages/engine/skills/dev/steps/03-integrate.md"
   - version: "14.6.5"
     date: "2026-04-13"
     change: "feat"
