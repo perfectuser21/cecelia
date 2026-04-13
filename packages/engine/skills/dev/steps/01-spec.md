@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 4.1.0
+version: 5.0.0
 created: 2026-03-20
-updated: 2026-04-03
+updated: 2026-04-13
 changelog:
+  - 5.0.0: Superpowers 融入 — 零占位符规则 + DoD 精度标准 + Self-Review 3 步（来自 superpowers:writing-plans）
   - 4.1.0: Harness v2.0 适配 — harness_mode 下跳过自写 Task Card/DoD，读 sprint-contract.md
   - 4.0.0: 精简 — 删除 Planner subagent、Sprint Contract Gate、LITE/FULL 路径。主 agent 直接写 Task Card。
 ---
@@ -132,6 +133,44 @@ created: YYYY-MM-DD
 - 至少 1 个 `[BEHAVIOR]` 条目
 - Test 字段必须立即填写（不留 TODO）
 - `manual:` 命令白名单：`node`/`npm`/`curl`/`bash`/`psql`
+
+### 零占位符规则（来自 superpowers:writing-plans）
+
+以下写法 **禁止出现** 在 DoD 中，出现即停下重写：
+
+| 禁止 | 理由 |
+|------|------|
+| "TBD"、"TODO"、"稍后补充"、"待定" | 空白承诺，CI 无法执行 |
+| "验证 API 返回正确数据" | 什么数据？什么格式？什么状态码？ |
+| "确保功能正常" | 什么功能？怎么确认正常？ |
+| "适当处理错误" | 什么错误？处理成什么？ |
+| "类似上面" / "同上" | 必须写完整，执行者可能乱序看 |
+
+每个 DoD 条目必须包含：
+1. **精确的验证命令**（可直接复制到终端执行）
+2. **预期输出或 exit code**（agent 对比用）
+
+| 差的 DoD | 好的 DoD |
+|---------|---------|
+| 验证 API 正常工作 | `curl -s localhost:5221/api/brain/health \| jq -r '.status'` 预期输出 `ok` |
+| 确保测试通过 | `cd packages/brain && npx vitest run src/tick.test.ts` 预期 exit 0 |
+| 检查文件存在 | `manual:node -e "require('fs').accessSync('src/new-module.js')"` |
+
+---
+
+### 1.2.3 Task Card Self-Review（写完后强制自查）
+
+Task Card 写完后，执行以下 3 步自查，**有任何一项不通过就修改后重查**：
+
+**① Spec 覆盖度**：回读 PRD/需求描述的每个要求，确认每个都有对应的 DoD 条目。列出缺口。
+
+**② 占位符扫描**：在 Task Card 中搜索以下关键词，有则修复：
+`TBD | TODO | 稍后 | 适当 | 相应 | 类似上面 | 待定 | 后续 | 同上`
+
+**③ 命令可执行性**：对每个 `Test:` 命令，检查：
+- 这个命令能直接在终端跑吗？
+- 需要哪些前置条件（服务启动、数据库、文件存在）？
+- 在 CI 环境（无 Brain、无浏览器）能跑吗？如果不能，改用 `manual:node -e` 格式
 
 ---
 

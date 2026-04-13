@@ -1,8 +1,8 @@
 ---
 name: dev
-version: 5.3.0
-updated: 2026-04-11
-description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。
+version: 6.0.0
+updated: 2026-04-13
+description: 统一开发工作流（4-Stage Pipeline）+ Superpowers 行为纪律。代码变更必须走 /dev。
 trigger: /dev, --task-id <id>
 ---
 
@@ -37,13 +37,30 @@ Harness 模式简化流程:
 
 ---
 
+## Superpowers 集成
+
+/dev 流程内嵌了 [Superpowers](https://github.com/obra/superpowers) 插件（v5.0.7）的行为纪律：
+
+| Stage | Superpowers Skill | 作用 |
+|-------|------------------|------|
+| Stage 1 | `superpowers:writing-plans` 零占位符原则 | DoD 精度 + Self-Review |
+| Stage 2 | `superpowers:test-driven-development` | TDD 红绿循环，先红再绿 |
+| Stage 2 | `superpowers:verification-before-completion` | 验证门禁，证据先于声明 |
+| Stage 2 | `superpowers:systematic-debugging` | 4 Phase 调试 + 3 次失败升级 |
+| Stage 3 | `superpowers:systematic-debugging` | CI 失败系统化修复 |
+| 任意 | `superpowers:dispatching-parallel-agents` | 并行 subagent 独立分析 |
+
+**Superpowers 管行为纪律，Engine 管流程强制（Stop Hook + Brain + CI 自动合并）。**
+
+---
+
 ## 流程（标准模式）
 
 ```
 Step 0: Worktree → 创建独立 worktree
-Stage 1: Spec   → 主 agent 写 Task Card + DoD → 写 .dev-mode
-Stage 2: Code   → 主 agent 写代码 + 逐条验证 DoD
-Stage 3: Integrate → push + PR 创建（CI 由 Stop Hook 自动监控）
+Stage 1: Spec   → 写 Task Card + DoD（零占位符 + Self-Review）→ 写 .dev-mode
+Stage 2: Code   → TDD 红绿循环 + Verification Gate + 逐条验证 DoD
+Stage 3: Integrate → push + PR（CI 失败用 Systematic Debugging 修复）
 Stage 4: Ship   → Learning + 标记完成（合并/清理由 Stop Hook 自动执行）
 ```
 
