@@ -276,16 +276,22 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => 'unknown');
-      // 500 是瞬态错误（CLI 限流/临时失败），重试；4xx 是客户端错误，直接抛出
-      if (response.status === 500 && bridge500Retry < BRIDGE_500_MAX_RETRIES) {
+      // dyld/Library not loaded/ENOENT 是启动级别失败，重试无意义，直接抛出
+      const isStartupError = /dyld|Library not loaded|ENOENT|cannot open shared object/.test(errText);
+      // 500 是瞬态错误（CLI 限流/临时失败），重试；4xx 或启动错误直接抛出
+      if (response.status === 500 && !isStartupError && bridge500Retry < BRIDGE_500_MAX_RETRIES) {
         bridge500Retry++;
         const delayMs = BRIDGE_500_RETRY_BASE_MS * bridge500Retry;
         console.warn(`[llm-caller] Bridge /llm-call 500，第 ${bridge500Retry} 次重试（${delayMs}ms 后）model=${claudeModel}`);
         await new Promise(r => setTimeout(r, delayMs));
         continue;
       }
+      if (isStartupError) {
+        console.warn(`[llm-caller] Bridge /llm-call 启动错误，跳过重试: ${errText.slice(0, 120)}`);
+      }
       const bridgeErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
       bridgeErr.status = response.status;
+      bridgeErr.isStartupError = isStartupError;
       throw bridgeErr;
     }
 

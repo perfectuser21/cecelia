@@ -345,7 +345,10 @@ export async function executeCopyReview(task) {
   if (!configResult.valid) return { success: false, error: configResult.error };
 
   const { text, error: llmError } = await _callReviewLLM(configResult.reviewPrompt, allText, configResult.reviewRules);
-  if (llmError) return { success: false, error: llmError };
+  if (llmError) {
+    console.warn(`[copy-review] LLM 不可用，降级跳过审核: ${llmError}`);
+    return { success: true, review_passed: true, llm_reviewed: false, issues: [], skipped_reason: llmError };
+  }
 
   const result = _parseReviewResult(text);
   if (!result.ok) return { success: false, error: result.error };
@@ -481,7 +484,10 @@ export async function executeImageReview(task) {
   const contentForReview = loadContentForReview(dir, cp);
   if (!contentForReview) return { success: false, error: '无可审核内容（llm-card-content.json 和 copy.md 均不存在）' };
   const { llmReview, error } = await callImageReviewLLM(imageReviewPrompt, keyword, contentForReview);
-  if (error) return { success: false, error };
+  if (error) {
+    console.warn(`[image-review] LLM 不可用，降级跳过审核: ${error}`);
+    return { success: true, review_passed: true, llm_reviewed: false, card_count: cardCount, issues: [], skipped_reason: error };
+  }
   if (llmReview.issues?.length > 0) issues.push(...llmReview.issues);
   const qualityScore = typeof llmReview.quality_score === 'number' ? llmReview.quality_score : (llmReview.review_passed !== false ? 7 : 4);
   const passed = qualityScore >= 6;

@@ -132,6 +132,37 @@ describe('executeCopyReview', () => {
     // 仍正常返回（找不到目录）
     expect(result.review_passed).toBe(false);
   });
+
+  it('LLM 调用失败时应降级为 review_passed=true（跳过审核）', async () => {
+    // 配置有效的 typeConfig（含 review_prompt 和 review_rules）
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      review_rules: [{ id: 'data_accuracy', description: '数据准确性', severity: 'blocking' }],
+      template: { review_prompt: '请审查以下内容' },
+    });
+    // 有文案内容
+    readdirSync.mockReturnValue(['test-keyword-dir']);
+    existsSync.mockImplementation((path) => {
+      if (path.includes('test-keyword-dir')) return true;
+      return false;
+    });
+    readFileSync.mockReturnValue('这是一段测试文案内容，长度超过最小要求，用于触发 LLM 审核。');
+
+    // LLM 调用失败
+    mockCallLLM.mockRejectedValue(new Error('Bridge /llm-call error: 500'));
+
+    const task = {
+      payload: { pipeline_keyword: 'test-keyword-dir', content_type: 'solo-company-case' },
+      title: '测试',
+    };
+    const result = await executeCopyReview(task);
+
+    // 降级：LLM 不可用时应跳过审核，允许 pipeline 继续
+    expect(result.success).toBe(true);
+    expect(result.review_passed).toBe(true);
+    expect(result.llm_reviewed).toBe(false);
+    expect(result.skipped_reason).toContain('500');
+  });
 });
 
 describe('executeImageReview', () => {
@@ -175,6 +206,36 @@ describe('executeImageReview', () => {
     };
     const result = await executeImageReview(task);
     expect(result.success).toBe(true);
+  });
+
+  it('LLM 调用失败时应降级为 review_passed=true（跳过审核）', async () => {
+    mockGetContentType.mockResolvedValue({
+      content_type: 'solo-company-case',
+      images: { count: 9 },
+      template: { image_review_prompt: '请审查以下图片内容 {keyword}' },
+    });
+    // 文件检查通过
+    readdirSync.mockReturnValue(['image-test-dir']);
+    existsSync.mockImplementation((path) => {
+      if (path.includes('image-test-dir') || path.includes('copy.md') || path.includes('article.md') || path.includes('llm-card-content.json')) return true;
+      return false;
+    });
+    readFileSync.mockReturnValue(JSON.stringify([{ title: '测试' }]));
+
+    // LLM 调用失败
+    mockCallLLM.mockRejectedValue(new Error('Bridge /llm-call error: 500'));
+
+    const task = {
+      payload: { pipeline_keyword: 'image-test-dir', content_type: 'solo-company-case' },
+      title: '测试',
+    };
+    const result = await executeImageReview(task);
+
+    // 降级：LLM 不可用时应跳过审核，允许 pipeline 继续
+    expect(result.success).toBe(true);
+    expect(result.review_passed).toBe(true);
+    expect(result.llm_reviewed).toBe(false);
+    expect(result.skipped_reason).toContain('500');
   });
 });
 
