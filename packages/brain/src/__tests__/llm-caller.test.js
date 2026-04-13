@@ -245,7 +245,7 @@ describe('llm-caller', () => {
       await expect(callLLM('cortex', '测试')).rejects.toThrow('empty text');
     });
 
-    it('bridge HTTP 错误时抛出错误', async () => {
+    it('bridge HTTP 错误时抛出错误（3次重试后最终失败）', async () => {
       // 重试逻辑：1 次初始调用 + 最多 2 次重试 = 共 3 次 500 才最终失败
       global.fetch
         .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'))
@@ -253,6 +253,19 @@ describe('llm-caller', () => {
         .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'));
 
       await expect(callLLM('cortex', '测试')).rejects.toThrow('Bridge /llm-call error: 500');
+    });
+
+    it('bridge 500 retryable:false 时立即失败不重试', async () => {
+      // dyld/基础设施故障：retryable: false = 立即失败，只调用1次
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({ ok: false, error: 'dyld: Library not loaded', retryable: false }),
+        text: async () => '{"ok":false,"error":"dyld: Library not loaded","retryable":false}',
+      });
+
+      await expect(callLLM('cortex', '测试')).rejects.toThrow('Bridge /llm-call error: 500');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
     it('selectBestAccount 失败时仍能调用（不带 accountId）', async () => {

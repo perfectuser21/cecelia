@@ -2,9 +2,9 @@ contract_branch: cp-harness-contract-5430fba3
 workstream_index: 1
 sprint_dir: sprints/harness-v5-final
 
-- [ ] [BEHAVIOR] `GET /api/brain/health` 响应顶级包含 `evaluator_stats` 对象，含 `total_runs`/`passed`/`failed`/`last_run_at` 四个字段且仅此四个字段，数值与 DB 中 `task_type='harness_evaluate'` 终态记录精确一致
+- [x] [BEHAVIOR] `GET /api/brain/health` 响应顶级包含 `evaluator_stats` 对象，含 `total_runs`/`passed`/`failed`/`last_run_at` 四个字段且仅此四个字段，数值与 DB 中 `task_type='harness_evaluate'` 终态记录精确一致
   Test: manual:bash -c 'PASSED=$(psql -t -A cecelia -c "SELECT count(*)::integer FROM tasks WHERE task_type='"'"'harness_evaluate'"'"' AND status='"'"'completed'"'"'") && FAILED=$(psql -t -A cecelia -c "SELECT count(*)::integer FROM tasks WHERE task_type='"'"'harness_evaluate'"'"' AND status IN ('"'"'canceled'"'"','"'"'failed'"'"')") && curl -sf localhost:5221/api/brain/health | node -e "const s=JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'/dev/stdin'"'"','"'"'utf8'"'"')).evaluator_stats;const ep=parseInt(process.argv[1]),ef=parseInt(process.argv[2]);if(!s||s.passed!==ep||s.failed!==ef||s.total_runs!==ep+ef){console.log('"'"'FAIL:'"'"'+JSON.stringify(s));process.exit(1)}console.log('"'"'PASS: passed='"'"'+s.passed+'"'"' failed='"'"'+s.failed+'"'"' total='"'"'+s.total_runs)" "$PASSED" "$FAILED"'
-- [ ] [BEHAVIOR] 无 Evaluator 终态记录时返回零值对象，有记录时字段类型正确
+- [x] [BEHAVIOR] 无 Evaluator 终态记录时返回零值对象，有记录时字段类型正确
   Test: manual:curl -sf localhost:5221/api/brain/health | node -e "const s=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).evaluator_stats;if(!s||typeof s!=='object'||Array.isArray(s)){process.exit(1)}const k=Object.keys(s).sort();if(JSON.stringify(k)!==JSON.stringify(['failed','last_run_at','passed','total_runs'])){process.exit(1)}if(typeof s.total_runs!=='number'||typeof s.passed!=='number'||typeof s.failed!=='number'){process.exit(1)}if(s.passed+s.failed!==s.total_runs){process.exit(1)}console.log('PASS')"
-- [ ] [BEHAVIOR] Health 端点响应时间 < 200ms
+- [x] [BEHAVIOR] Health 端点响应时间 < 200ms
   Test: manual:node -e "const{execSync}=require('child_process');const s=Date.now();execSync('curl -sf localhost:5221/api/brain/health');const e=Date.now()-s;if(e>=200){console.log('FAIL:'+e+'ms');process.exit(1)}console.log('PASS:'+e+'ms')"
