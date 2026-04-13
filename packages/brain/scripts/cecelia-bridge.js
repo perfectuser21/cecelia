@@ -122,9 +122,13 @@ const server = http.createServer((req, res) => {
           }
 
           if (code !== 0) {
-            console.error(`[bridge] /llm-call error (${elapsed}ms) code=${code}: ${stderr.slice(0, 200)}`);
+            const errMsg = stderr.slice(0, 500) || `exit code ${code}`;
+            // dyld/spawn 级别错误（库缺失、二进制损坏）属于基础设施故障，不可重试
+            const isDyldError = errMsg.includes('dyld') || errMsg.includes('Library not loaded') || errMsg.includes('image not found');
+            const retryable = !isDyldError;
+            console.error(`[bridge] /llm-call error (${elapsed}ms) code=${code} retryable=${retryable}: ${stderr.slice(0, 200)}`);
             res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: false, error: stderr.slice(0, 500) || `exit code ${code}`, elapsed_ms: elapsed }));
+            res.end(JSON.stringify({ ok: false, error: errMsg, retryable, elapsed_ms: elapsed }));
             return;
           }
 
@@ -137,9 +141,10 @@ const server = http.createServer((req, res) => {
         child.on('error', (err) => {
           clearTimeout(timer);
           const elapsed = Date.now() - startTime;
+          // spawn 错误（ENOENT/EACCES）说明 claude 二进制不可用，不可重试
           console.error(`[bridge] /llm-call spawn error (${elapsed}ms): ${err.message}`);
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: err.message, elapsed_ms: elapsed }));
+          res.end(JSON.stringify({ ok: false, error: err.message, retryable: false, elapsed_ms: elapsed }));
         });
       } catch (err) {
         console.error(`[bridge] /llm-call parse error: ${err.message}`);

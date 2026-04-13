@@ -275,7 +275,15 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
     });
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => 'unknown');
+      const errBody = await response.json().catch(() => null);
+      const errText = errBody ? JSON.stringify(errBody) : await response.text().catch(() => 'unknown');
+      // 不可重试错误（dyld/spawn/ENOENT/基础设施故障）：立即抛，不走退避
+      if (errBody?.retryable === false) {
+        console.error(`[llm-caller] Bridge 500 不可重试（基础设施故障）: ${errBody.error?.slice(0, 100)}`);
+        const infraErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
+        infraErr.status = response.status;
+        throw infraErr;
+      }
       // 500 是瞬态错误（CLI 限流/临时失败），重试；4xx 是客户端错误，直接抛出
       if (response.status === 500 && bridge500Retry < BRIDGE_500_MAX_RETRIES) {
         bridge500Retry++;
