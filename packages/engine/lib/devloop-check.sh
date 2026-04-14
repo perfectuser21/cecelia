@@ -4,7 +4,8 @@
 # ============================================================================
 # SSOT：所有 Provider 适配器 source 此文件，通过 devloop_check() 获取当前状态。
 #
-# 版本: v4.4.0
+# 版本: v4.5.0
+# 更新: 2026-04-14 — CI 失败计数器：.dev-mode 新增 ci_fix_count 字段，>=3 次切 systematic-debugging
 # 更新: 2026-04-11 — 职责分离���条件 6 自动合并后调用 cleanup.sh（与条件 5 一致），文档面不再负责合并/清理
 # 更新: 2026-04-11 — v4.3.0 单一出口原则：删除 ready_to_merge 中间状态，CI 通过 + step4 done 直接自动合并；CI in_progress 不输出 action 字段
 #
@@ -50,6 +51,46 @@ _mark_cleanup_done() {
           sed -i "/^cleanup_done:/d" "$f" 2>/dev/null
       echo "cleanup_done: true" >> "$f"
     }
+}
+
+# ============================================================================
+# 内部函数: _increment_and_check_ci_counter
+# 每次 CI 失败调用，.dev-mode 的 ci_fix_count +1
+# 输出：新的 count（stdout）
+# ============================================================================
+_increment_and_check_ci_counter() {
+    local f="${1:-}"
+    [[ -z "$f" || ! -f "$f" ]] && return 0
+    local current
+    current=$(grep "^ci_fix_count:" "$f" 2>/dev/null | awk '{print $2}' || echo "0")
+    current="${current:-0}"
+    local next=$((current + 1))
+    if grep -q "^ci_fix_count:" "$f" 2>/dev/null; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "s/^ci_fix_count:.*/ci_fix_count: ${next}/" "$f"
+        else
+            sed -i "s/^ci_fix_count:.*/ci_fix_count: ${next}/" "$f"
+        fi
+    else
+        echo "ci_fix_count: ${next}" >> "$f"
+    fi
+    echo "$next"
+}
+
+# ============================================================================
+# 内部函数: _ci_action_for_count
+# 根据 ci_fix_count 返回相应的 action 字符串（stdout）
+# ============================================================================
+_ci_action_for_count() {
+    local f="${1:-}"
+    local count
+    count=$(grep "^ci_fix_count:" "$f" 2>/dev/null | awk '{print $2}' || echo "0")
+    count="${count:-0}"
+    if [[ "$count" -ge 3 ]]; then
+        echo "CI 已失败 ${count} 次（>=3）。停下来，使用 superpowers:systematic-debugging 分析根因。不要再盲目 push 修复。建议派 dispatching-parallel-agents 独立分析。"
+    else
+        echo "CI 失败，查看日志修复问题后重新 push（已失败 ${count} 次）"
+    fi
 }
 
 # ============================================================================
@@ -209,9 +250,12 @@ devloop_check() {
         case "$ci_status" in
             "completed")
                 if [[ "$ci_conclusion" != "success" ]]; then
-                    local action_msg="CI 失败（$ci_conclusion），查看日志修复问题后重新 push"
+                    # v4.5.0: CI 失败计数器 + 3 次切 systematic-debugging
+                    _increment_and_check_ci_counter "$dev_mode_file" >/dev/null
+                    local action_msg
+                    action_msg=$(_ci_action_for_count "$dev_mode_file")
                     [[ -n "$ci_run_id" ]] && \
-                        action_msg="CI 失败（$ci_conclusion），运行 gh run view $ci_run_id --log-failed 查看错误，修复后 git push"
+                        action_msg="${action_msg}（gh run view $ci_run_id --log-failed）"
                     _devloop_jq -n \
                         --arg reason "CI 失败（$ci_conclusion）" \
                         --arg action "$action_msg" \

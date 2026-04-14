@@ -152,9 +152,9 @@ cmd_create() {
     base_branch=$(git rev-parse --abbrev-ref HEAD)
 
     # 如果在 cp-* 或 feature/* 分支，使用其 base 分支
-    if [[ "$base_branch" =~ ^(cp-|feature/) ]]; then
+    if [[ "${base_branch}" =~ ^(cp-|feature/) ]]; then
         local saved_base
-        saved_base=$(git config "branch.$base_branch.base-branch" 2>/dev/null || echo "")
+        saved_base=$(git config "branch.${base_branch}.base-branch" 2>/dev/null || echo "")
         if [[ -n "$saved_base" ]]; then
             base_branch="$saved_base"
         else
@@ -168,32 +168,32 @@ cmd_create() {
     fi
 
     # 🆕 Bug 2 修复：创建前先更新 base 分支
-    echo -e "${BLUE}更新 $base_branch 分支...${NC}" >&2
+    echo -e "${BLUE}更新 ${base_branch} 分支...${NC}" >&2
 
     # 获取主仓库路径
     local main_wt
     main_wt=$(get_main_worktree)
 
     # 在主仓库中更新 develop
-    if git -C "$main_wt" rev-parse --verify "$base_branch" &>/dev/null; then
+    if git -C "$main_wt" rev-parse --verify "${base_branch}" &>/dev/null; then
         # 检查当前分支
         local current_branch
         current_branch=$(git -C "$main_wt" rev-parse --abbrev-ref HEAD)
 
-        if [[ "$current_branch" == "$base_branch" ]]; then
+        if [[ "$current_branch" == "${base_branch}" ]]; then
             # 如果当前在 base 分支上，用 pull
-            if git -C "$main_wt" pull origin "$base_branch" --ff-only 2>&2; then
-                echo -e "${GREEN}✅ $base_branch 已更新${NC}" >&2
+            if git -C "$main_wt" pull origin "${base_branch}" --ff-only 2>&2; then
+                echo -e "${GREEN}✅ ${base_branch} 已更新${NC}" >&2
             else
-                echo -e "${YELLOW}⚠️  无法更新 $base_branch，使用当前版本${NC}" >&2
+                echo -e "${YELLOW}⚠️  无法更新 ${base_branch}，使用当前版本${NC}" >&2
             fi
         else
             # 不在 base 分支上，用 fetch + branch -f
-            if git -C "$main_wt" fetch origin "$base_branch" 2>&2; then
-                if git -C "$main_wt" branch -f "$base_branch" "origin/$base_branch" 2>&2; then
-                    echo -e "${GREEN}✅ $base_branch 已更新${NC}" >&2
+            if git -C "$main_wt" fetch origin "${base_branch}" 2>&2; then
+                if git -C "$main_wt" branch -f "${base_branch}" "origin/${base_branch}" 2>&2; then
+                    echo -e "${GREEN}✅ ${base_branch} 已更新${NC}" >&2
                 else
-                    echo -e "${YELLOW}⚠️  无法更新 $base_branch，使用当前版本${NC}" >&2
+                    echo -e "${YELLOW}⚠️  无法更新 ${base_branch}，使用当前版本${NC}" >&2
                 fi
             else
                 echo -e "${YELLOW}⚠️  无法 fetch，使用当前版本${NC}" >&2
@@ -223,13 +223,13 @@ cmd_create() {
     echo -e "${BLUE}创建 Worktree...${NC}" >&2
     echo "  分支: $branch_name" >&2
     echo "  路径: $worktree_path" >&2
-    echo "  Base: $base_branch" >&2
+    echo "  Base: ${base_branch}" >&2
     echo "" >&2
 
     # 创建 worktree（同时创建新分支）
-    if git worktree add -b "$branch_name" "$worktree_path" "$base_branch" 2>&2; then
+    if git worktree add -b "$branch_name" "$worktree_path" "${base_branch}" 2>&2; then
         # 保存 base 分支到 git config
-        git config "branch.$branch_name.base-branch" "$base_branch"
+        git config "branch.$branch_name.base-branch" "${base_branch}"
 
         echo -e "${GREEN}✅ Worktree 创建成功${NC}" >&2
 
