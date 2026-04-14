@@ -1,9 +1,11 @@
 ---
 id: dev-stage-01-spec
-version: 4.1.0
+version: 6.0.0
 created: 2026-03-20
-updated: 2026-04-03
+updated: 2026-04-14
 changelog:
+  - 6.0.0: autonomous_mode — 内嵌 superpowers:brainstorming + writing-plans 自主流程
+  - 5.0.0: Superpowers 融入 — 零占位符规则 + Self-Review
   - 4.1.0: Harness v2.0 适配 — harness_mode 下跳过自写 Task Card/DoD，读 sprint-contract.md
   - 4.0.0: 精简 — 删除 Planner subagent、Sprint Contract Gate、LITE/FULL 路径。主 agent 直接写 Task Card。
 ---
@@ -16,18 +18,24 @@ changelog:
 
 ---
 
-## 0. Harness 模式判断（harness_mode）
+## 0. 模式判断
 
-检测 task payload 是否包含 `harness_mode: true`：
+检测 task payload 中的模式标志：
 
 ```bash
 TASK_ID="<从 parse-dev-args.sh 获取>"
-# 查询 Brain 获取 task payload
 TASK_JSON=$(curl -s "http://localhost:5221/api/brain/tasks/${TASK_ID}")
 HARNESS_MODE=$(echo "$TASK_JSON" | jq -r '.payload.harness_mode // false')
+AUTONOMOUS_MODE=$(echo "$TASK_JSON" | jq -r '.payload.autonomous_mode // false')
 ```
 
-### harness_mode = true 时
+- `harness_mode = true` → 跳转 **0.1**
+- `autonomous_mode = true` → 跳转 **0.2**
+- 两者均 false → 继续 **1.1（标准模式）**
+
+---
+
+## 0.1 harness_mode = true 时
 
 **跳过自写 Spec/Task Card/DoD。** Sprint Contract 已由 Generator 写好。
 
@@ -62,7 +70,82 @@ git commit --allow-empty -m "chore: [state] Stage 1 跳过 (harness)"
 
 ---
 
-### harness_mode = false（默认，现有流程不变）
+## 0.2 autonomous_mode = true 时（全自动：PRD → Plan，不问用户）
+
+使用 `superpowers:brainstorming` + `superpowers:writing-plans` 的行为纪律，但跳过所有用户确认步骤。
+
+### 0.2.1 探索 + 影响分析
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+```
+
+执行以下探索（与标准模式 1.1-1.2.1 相同）：
+
+1. 获取 PRD：`bash skills/dev/scripts/fetch-task-prd.sh "$TASK_ID"`
+2. 搜索相关 Learning：`ls docs/learnings/ 2>/dev/null | head -10`
+3. 阅读受影响的核心文件，理解当前实现
+4. 识别改动边界：要改什么文件、不改什么
+
+### 0.2.2 自主技术决策（brainstorming 骨架，跳过用户交互）
+
+列出 2-3 个方案，用表格对比：
+
+| 方案 | Good | Bad |
+|------|------|-----|
+| A: ... | ... | ... |
+| B: ... | ... | ... |
+
+自己选最直接的方案。**禁止**问用户"你想要 A 还是 B"。决策依据写入 plan 文件。
+
+### 0.2.3 写 Implementation Plan（writing-plans 规则）
+
+产出 `.plan-${BRANCH_NAME}.md`，符合：
+
+- 每个 task：**精确到文件路径 + 代码 + 测试命令 + 预期输出**
+- 零占位符：TBD/TODO/稍后/适当/相应/同上 **全禁**
+- 每步 2-5 分钟粒度
+- TDD 顺序：写测试 → 验证失败 → 写实现 → 验证通过 → commit
+
+### 0.2.4 Self-Review 3 步
+
+1. **Spec 覆盖度** — PRD 每个需求有对应 task？
+2. **占位符扫描** — 有无 TBD/TODO/稍后/适当？
+3. **命令可执行性** — 每个 Test 命令能在终端跑？
+
+有问题 → 修 → 继续（不重复 review）
+
+### 0.2.5 写 Task Card + 持久化
+
+- `.task-${BRANCH_NAME}.md`（含 DoD，至少 1 个 `[BEHAVIOR]`）
+- 在 DoD 中引用 `.plan-${BRANCH_NAME}.md`
+- 写 `.dev-mode.${BRANCH_NAME}` 标记如下：
+
+```bash
+cat > ".dev-mode.${BRANCH_NAME}" << EOF
+dev
+branch: ${BRANCH_NAME}
+autonomous_mode: true
+task_id: ${TASK_ID}
+task_card: .task-${BRANCH_NAME}.md
+plan: .plan-${BRANCH_NAME}.md
+started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+step_0_worktree: done
+step_1_spec: done
+step_2_code: pending
+step_3_integrate: pending
+step_4_ship: pending
+EOF
+
+git add ".task-${BRANCH_NAME}.md" ".plan-${BRANCH_NAME}.md"
+git commit -m "chore: [state] Stage 1 Spec 完成 (autonomous)"
+```
+
+**直接进入 Stage 2 (Code)** — 读取 `skills/dev/steps/02-code.md` 并执行。
+
+---
+
+### autonomous_mode = false（默认，现有流程不变）
 
 ---
 
