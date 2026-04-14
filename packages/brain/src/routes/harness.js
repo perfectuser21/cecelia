@@ -162,20 +162,26 @@ function buildGanRounds(tasks) {
 }
 
 /**
- * 构建阶段概览（按标准 6 步排列）
+ * 构建阶段概览（完整 10 步：Planner → Propose → Review → Generate →
+ * Evaluate → Report → Auto-merge → Deploy → Smoke-test → Cleanup）
  */
 function buildStages(tasks) {
   const STAGE_ORDER = [
     'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-    'harness_generate', 'harness_ci_watch', 'harness_report',
+    'harness_generate', 'harness_evaluate', 'harness_report',
+    'harness_auto_merge', 'harness_deploy', 'harness_smoke_test', 'harness_cleanup',
   ];
   const STAGE_LABELS = {
     harness_planner: 'Planner',
     harness_contract_propose: 'Propose',
     harness_contract_review: 'Review',
     harness_generate: 'Generate',
-    harness_ci_watch: 'CI Watch',
+    harness_evaluate: 'Evaluate',
     harness_report: 'Report',
+    harness_auto_merge: 'Auto-merge',
+    harness_deploy: 'Deploy',
+    harness_smoke_test: 'Smoke-test',
+    harness_cleanup: 'Cleanup',
   };
 
   return STAGE_ORDER.map(type => {
@@ -504,5 +510,76 @@ async function buildSteps(tasks, sprintDir) {
 
   return steps;
 }
+
+/**
+ * GET /stats
+ * Pipeline 统计：最近 30 天的完成率、平均 GAN 轮次、平均耗时
+ */
+router.get('/stats', async (req, res) => {
+  try {
+    // 最近 30 天 planner 总数
+    const { rows: totalRows } = await pool.query(`
+      SELECT COUNT(*) AS total
+      FROM tasks
+      WHERE task_type = 'harness_planner'
+        AND created_at >= NOW() - INTERVAL '30 days'
+    `);
+    const total = parseInt(totalRows[0]?.total ?? 0, 10);
+
+    // 完成数
+    const { rows: doneRows } = await pool.query(`
+      SELECT COUNT(*) AS done
+      FROM tasks
+      WHERE task_type = 'harness_planner'
+        AND status = 'completed'
+        AND created_at >= NOW() - INTERVAL '30 days'
+    `);
+    const done = parseInt(doneRows[0]?.done ?? 0, 10);
+    const completion_rate = total > 0 ? Math.round((done / total) * 100) / 100 : 0;
+
+    // 平均 GAN 轮次（每个 pipeline 的 propose 任务数）
+    const { rows: ganRows } = await pool.query(`
+      SELECT AVG(propose_count) AS avg_rounds
+      FROM (
+        SELECT payload->>'planner_task_id' AS pid, COUNT(*) AS propose_count
+        FROM tasks
+        WHERE task_type = 'harness_contract_propose'
+          AND created_at >= NOW() - INTERVAL '30 days'
+          AND payload->>'planner_task_id' IS NOT NULL
+        GROUP BY payload->>'planner_task_id'
+      ) sub
+    `);
+    const avg_gan_rounds = ganRows[0]?.avg_rounds != null
+      ? Math.round(parseFloat(ganRows[0].avg_rounds) * 100) / 100
+      : 0;
+
+    // 平均耗时（ms，只统计已完成的 planner）
+    const { rows: durRows } = await pool.query(`
+      SELECT AVG(
+        EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000
+      ) AS avg_ms
+      FROM tasks
+      WHERE task_type = 'harness_planner'
+        AND status = 'completed'
+        AND completed_at IS NOT NULL
+        AND created_at >= NOW() - INTERVAL '30 days'
+    `);
+    const avg_duration = durRows[0]?.avg_ms != null
+      ? Math.round(parseFloat(durRows[0].avg_ms))
+      : 0;
+
+    res.json({
+      period_days: 30,
+      total_pipelines: total,
+      completed_pipelines: done,
+      completion_rate,
+      avg_gan_rounds,
+      avg_duration,
+    });
+  } catch (err) {
+    console.error('[GET /harness/stats]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 export default router;
