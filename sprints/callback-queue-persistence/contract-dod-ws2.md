@@ -1,0 +1,10 @@
+# Contract DoD — Workstream 2: Callback Worker + 共享处理逻辑 + HTTP 端点改造
+
+- [ ] [ARTIFACT] 共享处理函数模块存在（callback-worker.js 或独立模块）
+  Test: node -e "require('fs').accessSync('packages/brain/src/callback-worker.js');console.log('OK')"
+- [ ] [BEHAVIOR] Worker 每 2 秒轮询 callback_queue，处理未处理记录并标记 processed_at
+  Test: manual:curl -sf -X POST localhost:5221/api/brain/execution-callback -H 'Content-Type:application/json' -d '{"task_id":"00000000-0000-0000-0000-test0001","run_id":"ws2-test","status":"AI Done","duration_ms":1,"attempt":1}' && sleep 4 && psql cecelia -t -c "SELECT count(*) FROM callback_queue WHERE run_id='ws2-test' AND processed_at IS NOT NULL" | node -e "if(parseInt(require('fs').readFileSync('/dev/stdin','utf8').trim())<1){process.exit(1)}console.log('PASS')"
+- [ ] [BEHAVIOR] HTTP 端点写入 callback_queue 后立即返回 200，不直接处理
+  Test: manual:node -e "const t=Date.now();const h=require('http');const d=JSON.stringify({task_id:'00000000-0000-0000-0000-test0002',run_id:'latency-test',status:'AI Done',duration_ms:1,attempt:1});const r=h.request({hostname:'localhost',port:5221,path:'/api/brain/execution-callback',method:'POST',headers:{'Content-Type':'application/json','Content-Length':d.length}},res=>{const elapsed=Date.now()-t;if(res.statusCode===200&&elapsed<500){console.log('PASS: '+elapsed+'ms')}else{console.error('FAIL: status='+res.statusCode+' elapsed='+elapsed);process.exit(1)}});r.write(d);r.end()"
+- [ ] [BEHAVIOR] 同一 run_id+status 重复处理时幂等（不产生副作用）
+  Test: manual:curl -sf -X POST localhost:5221/api/brain/execution-callback -H 'Content-Type:application/json' -d '{"task_id":"00000000-0000-0000-0000-test0003","run_id":"idempotent-ws2","status":"AI Done","duration_ms":1,"attempt":1}' && sleep 3 && curl -sf -X POST localhost:5221/api/brain/execution-callback -H 'Content-Type:application/json' -d '{"task_id":"00000000-0000-0000-0000-test0003","run_id":"idempotent-ws2","status":"AI Done","duration_ms":1,"attempt":1}' | node -e "const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));if(r.success)console.log('PASS');else{process.exit(1)}"
