@@ -22,6 +22,7 @@ import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG, resolveRelatedFailureMemories } from './shared.js';
+import { processExecutionCallback } from '../callback-processor.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -50,6 +51,36 @@ router.post('/execution-callback', async (req, res) => {
     }
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
+
+    // ── callback_queue 持久化：fire-and-forget INSERT，确保重启零丢失 ──
+    // Worker (callback-worker.js) 使用 processExecutionCallback 异步处理队列记录。
+    // 此处 INSERT 为非阻塞（不影响当前直接处理的时序），失败时降级继续直接处理。
+    {
+      const _resultJson = (result !== null && typeof result === 'object')
+        ? result
+        : (result != null ? { _raw: result } : null);
+      const _stderrTail = req.body.stderr ? String(req.body.stderr).slice(-500) : null;
+      const _attemptVal = req.body.attempt || iterations || null;
+      pool.query(
+        `INSERT INTO callback_queue
+           (task_id, checkpoint_id, run_id, status, result_json, stderr_tail, duration_ms, attempt, exit_code, failure_class)
+         VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)`,
+        [
+          task_id,
+          checkpoint_id || null,
+          run_id || null,
+          status || null,
+          _resultJson ? JSON.stringify(_resultJson) : null,
+          _stderrTail,
+          duration_ms != null ? parseInt(duration_ms) : null,
+          _attemptVal != null ? parseInt(_attemptVal) : null,
+          exit_code != null ? parseInt(exit_code) : null,
+          req.body.failure_class || null,
+        ]
+      ).catch(err =>
+        console.warn(`[execution-callback] callback_queue INSERT failed (non-fatal): ${err.message}`)
+      );
+    }
 
     // ── 幂等性保护：run_id + status 组合去重 ──
     // 网络重试或外部系统重复调用时，同一 run_id + status 不应重复处理

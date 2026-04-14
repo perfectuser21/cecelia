@@ -3,9 +3,21 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-13"
+updated: "2026-04-14"
 
 changelog:
+  - version: "14.8.0"
+    date: "2026-04-14"
+    change: "feat"
+    description: "autonomous_mode 融合：01-spec.md brainstorming+writing-plans 自主; 02-code.md Subagent 三角色; parse-dev-args 支持 --autonomous; devloop-check CI 失败计数器; Stop Hook session_id 隔离 + worktree 消失自动清理; worktree-manage.sh $base_branch 括号修复"
+    files:
+      - "packages/engine/skills/dev/SKILL.md"
+      - "packages/engine/skills/dev/steps/01-spec.md"
+      - "packages/engine/skills/dev/steps/02-code.md"
+      - "packages/engine/skills/dev/scripts/parse-dev-args.sh"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh"
+      - "packages/engine/hooks/stop-dev.sh"
+      - "packages/engine/lib/devloop-check.sh"
   - version: "14.6.5"
     date: "2026-04-13"
     change: "feat"

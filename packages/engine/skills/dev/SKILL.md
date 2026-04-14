@@ -1,9 +1,9 @@
 ---
 name: dev
-version: 5.3.0
-updated: 2026-04-11
-description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。
-trigger: /dev, --task-id <id>
+version: 7.0.0
+updated: 2026-04-14
+description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。支持 autonomous_mode 全自动模式。
+trigger: /dev, --task-id <id>, --autonomous
 ---
 
 > **CRITICAL LANGUAGE RULE（语言规则）**: 所有输出必须使用简体中文。
@@ -109,3 +109,27 @@ skills/dev/
 ├── steps/04-ship.md      ← Stage 4
 └── scripts/              ← 6 个辅助脚本
 ```
+
+---
+
+## autonomous_mode（全自动模式）
+
+**触发**: `/dev --autonomous` 或 Brain task payload `autonomous_mode: true`
+
+**流程**:
+- Stage 1: `superpowers:brainstorming` + `superpowers:writing-plans` 自主产出 plan（跳过用户交互）
+- Stage 2: `superpowers:subagent-driven-development` 三角色（Implementer / Spec Reviewer / Code Quality Reviewer）
+- Stage 3-4: 不变（push / PR / CI / merge 自动化）
+
+**跳过**:
+- 所有用户交互问询（2-3 方案选择、DoD 确认等）
+- Implementer 的"有问题要问吗"
+
+**不跳过**（质量兜底）:
+- Spec Reviewer 审查（不信任 Implementer 报告）
+- Code Quality Reviewer 审查
+- 失败升级规则（BLOCKED 3 次升级、Reviewer 3 轮换 implementer、3 task BLOCKED 重做 plan）
+- Stop Hook 所有检查
+- CI 自动合并
+
+**适用场景**: PRD 已给，agent 有能力自己做技术决策，无需用户在实现阶段介入

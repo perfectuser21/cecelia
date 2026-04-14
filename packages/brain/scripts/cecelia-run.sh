@@ -245,6 +245,68 @@ send_webhook() {
     payload="{\"task_id\":\"$TASK_ID\",\"checkpoint_id\":\"$CHECKPOINT_ID\",\"run_id\":\"$CHECKPOINT_ID\",\"status\":\"$status\",\"coding_type\":\"cecelia\",\"duration_ms\":$duration,\"attempt\":$attempt,\"exit_code\":$exit_code_val}"
   fi
 
+  # ── DB 直写优先（psql INSERT INTO callback_queue）────────────────────────────
+  # connect_timeout=5 防止 DB 不可达时挂起；失败后降级到 HTTP POST fallback
+  if command -v psql >/dev/null 2>&1; then
+    local _db_result_json="null"
+    if [[ -f "$result_file" ]] && jq -e . "$result_file" >/dev/null 2>&1; then
+      _db_result_json=$(cat "$result_file")
+    fi
+
+    local _db_stderr_tail=""
+    if [[ -f "$error_file" ]]; then
+      _db_stderr_tail=$(tail -c 2000 "$error_file" 2>/dev/null || true)
+    fi
+
+    # failure_class 是内部枚举值，显式过滤只保留字母/数字/下划线/连字符
+    # 防止任何特殊字符（含 $ % ' 等）进入 SQL，消除 SQL 注入风险
+    local _db_fc_val="NULL"
+    if [[ "$status" == "AI Failed" && -n "$failure_class" ]]; then
+      local _fc_safe
+      _fc_safe=$(printf '%s' "$failure_class" | tr -cd '[:alnum:]_-' | head -c 64)
+      if [[ -n "$_fc_safe" ]]; then
+        _db_fc_val="\$_cbfc\$${_fc_safe}\$_cbfc\$"
+      fi
+    fi
+
+    # 写临时 SQL 文件（mode 600），所有字符串字段均用 PostgreSQL dollar-quoting
+    local _db_sql_tmp
+    _db_sql_tmp=$(mktemp /tmp/cecelia-cb-XXXXXXXXXX.sql)
+    chmod 600 "$_db_sql_tmp"
+    # trap 确保脚本异常退出时也清理临时文件
+    trap 'rm -f "$_db_sql_tmp"' EXIT INT TERM
+    cat > "$_db_sql_tmp" <<SQLEOF
+INSERT INTO callback_queue (task_id, checkpoint_id, run_id, status, result_json, stderr_tail, duration_ms, attempt, exit_code, failure_class)
+VALUES (
+  \$_cbtask\$${TASK_ID}\$_cbtask\$::uuid,
+  \$_cbcp\$${CHECKPOINT_ID}\$_cbcp\$,
+  \$_cbcp\$${CHECKPOINT_ID}\$_cbcp\$,
+  \$_cbst\$${status}\$_cbst\$,
+  \$_cbjson\$${_db_result_json}\$_cbjson\$::jsonb,
+  \$_cbstderr\$${_db_stderr_tail}\$_cbstderr\$,
+  ${duration},
+  ${attempt},
+  ${exit_code_val},
+  ${_db_fc_val}
+);
+SQLEOF
+
+    # timeout 10 防止 psql 在极端网络故障下挂起；psql 失败则降级到 HTTP fallback（即错误处理）
+    PGCONNECT_TIMEOUT=5 timeout 10 psql cecelia -f "$_db_sql_tmp" >/dev/null 2>&1
+    local _db_psql_exit=$?
+    rm -f "$_db_sql_tmp"
+    trap - EXIT INT TERM
+
+    if [[ $_db_psql_exit -eq 0 ]]; then
+      echo "[cecelia-run] callback DB 直写成功 (task=$TASK_ID)" >&2
+      return 0
+    fi
+
+    # psql 失败（连接超时/DB 不可达）→ 自动降级到 HTTP fallback，callback 不丢失
+    echo "[cecelia-run] DB 直写失败 (exit=$_db_psql_exit)，降级到 HTTP fallback" >&2
+  fi
+
+  # ── HTTP POST fallback（原有 curl 逻辑）────────────────────────────────────
   # 重试逻辑：最多 3 次，指数退避（sleep 2 / sleep 4 / sleep 8）
   local max_retries=3
   local retry=0
@@ -252,19 +314,17 @@ send_webhook() {
 
   while [[ $retry -lt $max_retries ]]; do
     if [[ -n "$WEBHOOK_TOKEN" ]]; then
-      curl -sS -X POST \
+      curl -sS "$WEBHOOK_URL" -X POST \
         -H "Content-Type: application/json" \
         -H "X-Cecilia-Token: $WEBHOOK_TOKEN" \
         -d "$payload" \
-        --max-time 10 \
-        "$WEBHOOK_URL" >/dev/null 2>&1
+        --max-time 10 >/dev/null 2>&1
       curl_exit=$?
     else
-      curl -sS -X POST \
+      curl -sS "$WEBHOOK_URL" -X POST \
         -H "Content-Type: application/json" \
         -d "$payload" \
-        --max-time 10 \
-        "$WEBHOOK_URL" >/dev/null 2>&1
+        --max-time 10 >/dev/null 2>&1
       curl_exit=$?
     fi
 

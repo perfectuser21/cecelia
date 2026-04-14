@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.3.0
+# Stop Hook: Claude Code 协议适配器 v16.6.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.3.0 — 文件隔离：自动清理主仓库残留 dev-lock/dev-mode（这些文件只应在 worktree 中）
+# 版本: v16.6.0 — dev-lock 自愈（dev-mode 存在但 lock 丢失时用 CLAUDE_SESSION_ID 重建）
 
 set -euo pipefail
 
@@ -39,6 +39,40 @@ _session_matches() {
 }
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# ============================================================================
+# v16.6.0: dev-lock 自愈 — dev-mode 存在但 dev-lock 丢失时自动重建
+# 条件: CLAUDE_SESSION_ID 非空 + dev-mode 首行是 'dev'
+# 目的: 避免 dev-lock 文件意外丢失导致 Stop Hook 永久 block
+# ============================================================================
+if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+    _heal_cur_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ -n "$_heal_cur_branch" ]]; then
+        _heal_cur_tty="$(tty 2>/dev/null || echo 'not a tty')"
+        _heal_now="$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
+        while IFS= read -r _heal_dir; do
+            for _heal_dmf in "$_heal_dir"/.dev-mode.*; do
+                [[ -f "$_heal_dmf" ]] || continue
+                head -1 "$_heal_dmf" 2>/dev/null | grep -q "^dev$" || continue
+                _heal_branch=$(grep "^branch:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
+                [[ -z "$_heal_branch" ]] && continue
+                [[ "$_heal_branch" != "$_heal_cur_branch" ]] && continue
+                _heal_lockf="$_heal_dir/.dev-lock.${_heal_branch}"
+                if [[ ! -f "$_heal_lockf" ]]; then
+                    cat > "$_heal_lockf" <<HEAL_EOF
+dev
+branch: ${_heal_branch}
+session_id: ${CLAUDE_SESSION_ID}
+tty: ${_heal_cur_tty}
+recreated_at: ${_heal_now}
+recovered: true
+HEAL_EOF
+                    echo "[Stop Hook] dev-lock 自愈重建（分支: ${_heal_branch}）" >&2
+                fi
+            done
+        done < <(_collect_search_dirs "$PROJECT_ROOT")
+    fi
+fi
 
 # v16.3.0: 清理主仓库残留的 .dev-lock/.dev-mode（迁移：这些文件应只存在于 worktree）
 # 仅在有 worktree 存在时清理主仓库（无 worktree = 单仓库/测试环境，不清理）
@@ -93,15 +127,45 @@ while IFS= read -r _dir; do
 done < <(_collect_search_dirs "$PROJECT_ROOT")
 
 # fail-closed：无 dev-lock 时扫描所有 worktree，发现未完成的 dev-mode 则阻止退出
+# v16.4.0: 按 session_id 隔离 — 跨 session 的 orphan 只 warning，不 block 当前 session
+# v16.5.0: worktree 消失时自动清理孤儿 dev-mode/dev-lock（不 block）
 if [[ -z "$DEV_LOCK_FILE" ]]; then
     _orphan_branch=""
+    _current_sid="${CLAUDE_SESSION_ID:-}"
     while IFS= read -r _dir; do
         for _dmf in "$_dir"/.dev-mode.*; do
             [[ -f "$_dmf" ]] || continue
             head -1 "$_dmf" 2>/dev/null | grep -q "^dev$" || continue
             grep -q "cleanup_done: true" "$_dmf" 2>/dev/null && continue
             grep -qE "^step_(2|3|4).*pending" "$_dmf" 2>/dev/null || continue
-            _orphan_branch=$(grep "^branch:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "unknown")
+            _ob=$(grep "^branch:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "unknown")
+
+            # v16.5.0: worktree 消失自动清理
+            # 若该分支在 git worktree list 中已不存在 → 孤儿，自动清理
+            _branch_has_worktree=false
+            while IFS= read -r _wtl; do
+                if [[ "$_wtl" == "branch refs/heads/${_ob}" ]]; then
+                    _branch_has_worktree=true
+                    break
+                fi
+            done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
+            if [[ "$_branch_has_worktree" == "false" ]]; then
+                echo "[Stop Hook] worktree gone, auto-cleanup orphan (branch=${_ob}): ${_dmf}" >&2
+                rm -f "$_dmf" "$_dir/.dev-lock.${_ob}" 2>/dev/null || true
+                continue
+            fi
+
+            # 读取对应 dev-lock 的 session_id（若存在）
+            _lockf="$_dir/.dev-lock.${_ob}"
+            _orphan_sid=""
+            [[ -f "$_lockf" ]] && _orphan_sid=$(grep "^session_id:" "$_lockf" 2>/dev/null | awk '{print $2}' || echo "")
+
+            # 跨 session 隔离：当前 session_id 已知 且 orphan session_id 已知 且不同 → 跳过
+            if [[ -n "$_current_sid" && -n "$_orphan_sid" && "$_current_sid" != "$_orphan_sid" ]]; then
+                echo "[Stop Hook] warning: cross-session orphan skipped (orphan_sid=${_orphan_sid}, current=${_current_sid}, branch=${_ob})" >&2
+                continue
+            fi
+            _orphan_branch="$_ob"
             break 2
         done
     done < <(_collect_search_dirs "$PROJECT_ROOT")
