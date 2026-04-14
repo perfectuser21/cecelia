@@ -23,6 +23,12 @@ import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG, resolveRelatedFailureMemories } from './shared.js';
 import { processExecutionCallback } from '../callback-processor.js';
+import {
+  readVerdictWithRetry,
+  persistVerdictTimeout,
+  isBridgeSessionCrash,
+  handleEvaluateSessionCrash,
+} from '../execution.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -2347,25 +2353,42 @@ ${resultStr.substring(0, 2000)}
             } catch {}
           }
 
-          // 提取 verdict: 优先从 DB task.result 读（agent curl 回写的），然后从 callback result 解析
-          let evalVerdict = 'FAIL';
-          // 优先：agent 通过 curl PATCH 回写的 verdict（最可靠）
-          try {
-            const dbResult = await pool.query('SELECT result FROM tasks WHERE id = $1', [task_id]);
-            const dbVerdict = dbResult.rows[0]?.result?.verdict?.toUpperCase();
-            if (dbVerdict === 'PASS' || dbVerdict === 'FAIL') {
-              evalVerdict = dbVerdict;
-              console.log(`[execution-callback] harness_evaluate: verdict from DB (agent curl writeback): ${evalVerdict}`);
-            }
-          } catch {}
+          // Bridge 崩溃检测：result 为 null/empty 表示 session 静默崩溃（0 字节输出）
+          if (isBridgeSessionCrash(result)) {
+            const crashResult = await handleEvaluateSessionCrash({
+              pool,
+              taskId: task_id,
+              plannerShort,
+              harnessTask,
+              harnessPayload,
+              createHarnessTask,
+            });
+            console.log(`[execution-callback] harness_evaluate: session crash handled, action=${crashResult.action}`);
+            return; // 不继续执行 verdict 逻辑
+          }
+
+          // 提取 verdict: 带重试的 DB 读取（处理 agent 写入延迟）
+          let evalVerdict = null;
+          const { verdict: retryVerdict, timedOut } = await readVerdictWithRetry(pool, task_id);
+          if (timedOut) {
+            // verdict_timeout: 记录告警，不创建修复任务，不默认为 FAIL
+            await persistVerdictTimeout(pool, task_id);
+            console.warn(`[execution-callback] harness_evaluate: verdict_timeout for ${task_id} — pipeline paused, no auto-fix`);
+            return;
+          }
+          if (retryVerdict) {
+            evalVerdict = retryVerdict;
+            console.log(`[execution-callback] harness_evaluate: verdict from DB retry: ${evalVerdict}`);
+          }
           // 备选：从 callback result 解析
-          if (evalVerdict === 'FAIL') {
+          if (!evalVerdict) {
             if (result !== null && typeof result === 'object') {
               if (result.verdict?.toUpperCase() === 'PASS') evalVerdict = 'PASS';
             }
             if (typeof result === 'string') {
               if (/"verdict"\s*:\s*"PASS"/i.test(result)) evalVerdict = 'PASS';
             }
+            if (!evalVerdict) evalVerdict = 'FAIL';
           }
 
           console.log(`[execution-callback] harness: harness_evaluate ${task_id} verdict=${evalVerdict} eval_round=${evalRound}`);

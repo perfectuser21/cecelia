@@ -1,12 +1,12 @@
-contract_branch: cp-harness-contract-699c5335
-workstream_index: 2
+contract_branch: cp-0414023209-699c5335-40d8-41a1-94d1-6e0dd9
+workstream_index: 1
 sprint_dir: sprints/harness-v6-hardening
 
-- [x] [BEHAVIOR] Stop hook 自动清理已合并 PR 的孤儿 worktree，失败不阻塞
-  Test: node -e "const fs=require('fs');let code='';try{code=fs.readFileSync('packages/engine/hooks/stop.sh','utf8')}catch(e){}try{code+=fs.readFileSync('packages/engine/hooks/stop-dev.sh','utf8')}catch(e){}if(!code)throw new Error('FAIL');if(!code.includes('worktree')||!code.includes('remove'))throw new Error('FAIL: 缺少worktree remove');if(!code.includes('||'))throw new Error('FAIL: 缺少错误处理');console.log('PASS')"
-- [x] [BEHAVIOR] harness_cleanup 任务覆盖三类产物（worktree + 远程分支 + /tmp 临时文件）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/execution.js','utf8');if(!c.includes('harness_cleanup'))throw new Error('FAIL: 无harness_cleanup');if(!c.includes('worktree')||!c.includes('remove'))throw new Error('FAIL: 缺worktree清理');if(!c.includes('push origin --delete'))throw new Error('FAIL: 缺远程分支删除');if(!c.includes('/tmp/cecelia'))throw new Error('FAIL: 缺临时文件清理');console.log('PASS')"
-- [x] [ARTIFACT] cleanup-stale-branches.sh 存在且包含 7 天保留期 + cp-* 过滤 + 合并检查
-  Test: node -e "const code=require('fs').readFileSync('scripts/cleanup-stale-branches.sh','utf8');if(!code.includes('cp-'))throw new Error('FAIL');if(!/7\s*day|604800|7d/i.test(code))throw new Error('FAIL: 无7天保留');if(!code.includes('merge'))throw new Error('FAIL: 无合并检查');console.log('PASS')"
-- [x] [ARTIFACT] cleanup-stale-branches.sh 有执行权限
-  Test: node -e "const s=require('fs').statSync('scripts/cleanup-stale-branches.sh');if(!(s.mode&parseInt('111',8)))throw new Error('FAIL: 无执行权限');console.log('PASS')"
+- [x] [BEHAVIOR] Verdict 评估包含重试循环（for/while + retryCount），间隔 200ms，上限由常量控制
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');const hasLoop=/for\s*\(.*retry|while\s*\(.*retry|retryCount\s*[<>=]/i.test(code);const hasInterval=/200\s*\)|sleep\s*\(\s*200|setTimeout.*200|await.*200/i.test(code);const hasMax=/MAX_VERDICT_RETRIES|(?:max|limit).*(?:retr|attempt)/i.test(code);if(!hasLoop)throw new Error('FAIL: 无重试循环');if(!hasInterval)throw new Error('FAIL: 无200ms间隔');if(!hasMax)throw new Error('FAIL: 无重试上限');console.log('PASS')"
+- [x] [BEHAVIOR] verdict_timeout 不触发 harness_fix 且不默认 FAIL
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');if(!code.includes('verdict_timeout'))throw new Error('FAIL');const idx=code.indexOf('verdict_timeout');const block=code.substring(idx,idx+800);if(block.includes('harness_fix'))throw new Error('FAIL: verdict_timeout不应创建harness_fix');if(block.includes(\"status = 'FAIL'\")||block.includes('verdict = \"FAIL\"'))throw new Error('FAIL: 不应默认FAIL');console.log('PASS')"
+- [x] [BEHAVIOR] Bridge 0 字节输出标记为 session_crashed 并创建 harness_evaluate（非 harness_fix）
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');if(!code.includes('session_crashed'))throw new Error('FAIL');const idx=code.indexOf('session_crashed');const block=code.substring(idx,idx+800);if(!block.includes('harness_evaluate'))throw new Error('FAIL: 必须创建harness_evaluate');if(block.includes('harness_fix'))throw new Error('FAIL: 不应创建harness_fix');console.log('PASS')"
+- [x] [BEHAVIOR] 二次崩溃标记 permanent_failure，不创建后续任务，写入 error_message
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');if(!code.includes('permanent_failure'))throw new Error('FAIL');const idx=code.indexOf('permanent_failure');const block=code.substring(idx,idx+800);if(!block.includes('error_message')&&!block.includes('error'))throw new Error('FAIL: 需写入error');console.log('PASS')"
