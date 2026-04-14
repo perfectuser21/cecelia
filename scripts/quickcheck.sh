@@ -10,6 +10,37 @@ set -uo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT"
 
+# ============================================================================
+# 互斥锁：同一 repo 最多一个 quickcheck 实例（防并发 vitest 抢资源）
+# 支持 flock (Linux) + mkdir 原子锁 fallback (macOS)
+# ============================================================================
+_GIT_DIR="$(git rev-parse --git-dir 2>/dev/null || echo "${REPO_ROOT}/.git")"
+# git-dir 对 worktree 返回 .git/worktrees/<name> -- 锁应放到主 repo 的 .git 下
+_GIT_COMMON="$(git rev-parse --git-common-dir 2>/dev/null || echo "${_GIT_DIR}")"
+_LOCK_FILE="${_GIT_COMMON}/quickcheck.lock"
+_LOCK_DIR="${_GIT_COMMON}/quickcheck.lockdir"
+
+if command -v flock >/dev/null 2>&1; then
+    exec 200>"${_LOCK_FILE}"
+    if ! flock -w 2 -n 200; then
+        echo "[QuickCheck] 另一个 quickcheck 正在运行，跳过本次预检" >&2
+        exit 0
+    fi
+    # fd 200 持锁，进程退出时内核自动释放
+else
+    # macOS fallback: mkdir 原子锁
+    _lock_try=0
+    until mkdir "${_LOCK_DIR}" 2>/dev/null; do
+        _lock_try=$((_lock_try + 1))
+        if [[ ${_lock_try} -ge 20 ]]; then
+            echo "[QuickCheck] 另一个 quickcheck 正在运行 (mkdir lock 2s timeout), 跳过本次预检" >&2
+            exit 0
+        fi
+        sleep 0.1
+    done
+    trap 'rmdir "${_LOCK_DIR}" 2>/dev/null || true' EXIT INT TERM
+fi
+
 # worktree 兼容：二进制在主仓库根目录 node_modules/.bin/
 _GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || echo "$REPO_ROOT/.git")"
 MAIN_REPO_ROOT="$(dirname "$(cd "$REPO_ROOT" && cd "$_GIT_COMMON_DIR" && pwd)")"
