@@ -79,13 +79,13 @@ export async function checkKR3ConfigDB(dbPool) {
 
   try {
     const { rows } = await dbPool.query(
-      `SELECT key, value, updated_at
+      `SELECT topic, decision, updated_at
        FROM decisions
-       WHERE key = ANY($1) AND status = 'active'`,
+       WHERE topic = ANY($1) AND status = 'active'`,
       [[WX_PAY_READY_KEY, ADMIN_OID_READY_KEY]]
     );
 
-    const byKey = Object.fromEntries(rows.map(r => [r.key, r]));
+    const byKey = Object.fromEntries(rows.map(r => [r.topic, r]));
 
     const wxPayRow = byKey[WX_PAY_READY_KEY];
     const adminOidRow = byKey[ADMIN_OID_READY_KEY];
@@ -102,8 +102,8 @@ export async function checkKR3ConfigDB(dbPool) {
     return {
       wxPayConfigured,
       adminOidReady,
-      wxPayNote: wxPayRow?.value || null,
-      adminOidNote: adminOidRow?.value || null,
+      wxPayNote: wxPayRow?.decision || null,
+      adminOidNote: adminOidRow?.decision || null,
       summary: parts.join(' | '),
       checkedAt,
     };
@@ -131,9 +131,13 @@ export async function checkKR3ConfigDB(dbPool) {
 export async function markWxPayConfigured(dbPool, note = '已配置') {
   if (!dbPool) dbPool = (await import('./db.js')).default;
   await dbPool.query(
-    `INSERT INTO decisions (key, value, status, created_at, updated_at)
-     VALUES ($1, $2, 'active', NOW(), NOW())
-     ON CONFLICT (key) DO UPDATE SET value = $2, status = 'active', updated_at = NOW()`,
+    `UPDATE decisions SET status = 'superseded', updated_at = NOW()
+     WHERE topic = $1 AND category = 'kr3-config' AND status = 'active'`,
+    [WX_PAY_READY_KEY]
+  );
+  await dbPool.query(
+    `INSERT INTO decisions (topic, decision, category, status, made_by, created_at, updated_at)
+     VALUES ($1, $2, 'kr3-config', 'active', 'system', NOW(), NOW())`,
     [WX_PAY_READY_KEY, note]
   );
 }
@@ -147,9 +151,13 @@ export async function markWxPayConfigured(dbPool, note = '已配置') {
 export async function markAdminOidInitialized(dbPool, note = '已初始化') {
   if (!dbPool) dbPool = (await import('./db.js')).default;
   await dbPool.query(
-    `INSERT INTO decisions (key, value, status, created_at, updated_at)
-     VALUES ($1, $2, 'active', NOW(), NOW())
-     ON CONFLICT (key) DO UPDATE SET value = $2, status = 'active', updated_at = NOW()`,
+    `UPDATE decisions SET status = 'superseded', updated_at = NOW()
+     WHERE topic = $1 AND category = 'kr3-config' AND status = 'active'`,
+    [ADMIN_OID_READY_KEY]
+  );
+  await dbPool.query(
+    `INSERT INTO decisions (topic, decision, category, status, made_by, created_at, updated_at)
+     VALUES ($1, $2, 'kr3-config', 'active', 'system', NOW(), NOW())`,
     [ADMIN_OID_READY_KEY, note]
   );
 }
