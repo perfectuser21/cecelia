@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-14"
 
 changelog:
+  - version: "14.12.0"
+    date: "2026-04-14"
+    change: "fix"
+    description: "self-heal v16.8.0 加所有权验证 — 只愈合 owner_session/session_id 匹配的 dev-mode, 或无标识且 HEAD 匹配 (兼容降级), 防误愈 Harness 后台 orphan"
+    files:
+      - "packages/engine/hooks/stop-dev.sh"
+      - "packages/engine/skills/dev/steps/00-worktree-auto.md"
+
   - version: "14.11.0"
     date: "2026-04-14"
     change: "fix"

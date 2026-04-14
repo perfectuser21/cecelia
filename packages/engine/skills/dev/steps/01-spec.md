@@ -51,6 +51,7 @@ cat "${SPRINT_DIR}/sprint-contract.md"
 cat > ".dev-mode.${BRANCH_NAME}" << EOF
 dev
 branch: ${BRANCH_NAME}
+owner_session: ${CLAUDE_SESSION_ID:-unknown}
 harness_mode: true
 sprint_dir: ${SPRINT_DIR}
 task_id: ${TASK_ID}
@@ -145,6 +146,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 cat > ".dev-mode.${BRANCH_NAME}" << EOF
 dev
 branch: ${BRANCH_NAME}
+owner_session: ${CLAUDE_SESSION_ID:-unknown}
 autonomous_mode: true
 task_id: ${TASK_ID}
 task_card: .task-${BRANCH_NAME}.md
@@ -245,6 +247,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 cat > ".dev-mode.${BRANCH_NAME}" << EOF
 dev
 branch: ${BRANCH_NAME}
+owner_session: ${CLAUDE_SESSION_ID:-unknown}
 task_card: .task-${BRANCH_NAME}.md
 started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 step_0_worktree: done
