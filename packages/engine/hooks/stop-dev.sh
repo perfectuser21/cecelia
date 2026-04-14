@@ -46,17 +46,20 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # 目的: 避免 dev-lock 文件意外丢失导致 Stop Hook 永久 block
 # ============================================================================
 if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
-    _heal_cur_tty="$(tty 2>/dev/null || echo 'not a tty')"
-    _heal_now="$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
-    while IFS= read -r _heal_dir; do
-        for _heal_dmf in "$_heal_dir"/.dev-mode.*; do
-            [[ -f "$_heal_dmf" ]] || continue
-            head -1 "$_heal_dmf" 2>/dev/null | grep -q "^dev$" || continue
-            _heal_branch=$(grep "^branch:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
-            [[ -z "$_heal_branch" ]] && continue
-            _heal_lockf="$_heal_dir/.dev-lock.${_heal_branch}"
-            if [[ ! -f "$_heal_lockf" ]]; then
-                cat > "$_heal_lockf" <<HEAL_EOF
+    _heal_cur_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ -n "$_heal_cur_branch" ]]; then
+        _heal_cur_tty="$(tty 2>/dev/null || echo 'not a tty')"
+        _heal_now="$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
+        while IFS= read -r _heal_dir; do
+            for _heal_dmf in "$_heal_dir"/.dev-mode.*; do
+                [[ -f "$_heal_dmf" ]] || continue
+                head -1 "$_heal_dmf" 2>/dev/null | grep -q "^dev$" || continue
+                _heal_branch=$(grep "^branch:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
+                [[ -z "$_heal_branch" ]] && continue
+                [[ "$_heal_branch" != "$_heal_cur_branch" ]] && continue
+                _heal_lockf="$_heal_dir/.dev-lock.${_heal_branch}"
+                if [[ ! -f "$_heal_lockf" ]]; then
+                    cat > "$_heal_lockf" <<HEAL_EOF
 dev
 branch: ${_heal_branch}
 session_id: ${CLAUDE_SESSION_ID}
@@ -64,10 +67,11 @@ tty: ${_heal_cur_tty}
 recreated_at: ${_heal_now}
 recovered: true
 HEAL_EOF
-                echo "[Stop Hook] dev-lock 自愈重建（分支: ${_heal_branch}）" >&2
-            fi
-        done
-    done < <(_collect_search_dirs "$PROJECT_ROOT")
+                    echo "[Stop Hook] dev-lock 自愈重建（分支: ${_heal_branch}）" >&2
+                fi
+            done
+        done < <(_collect_search_dirs "$PROJECT_ROOT")
+    fi
 fi
 
 # v16.3.0: 清理主仓库残留的 .dev-lock/.dev-mode（迁移：这些文件应只存在于 worktree）

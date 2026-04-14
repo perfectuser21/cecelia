@@ -54,8 +54,10 @@ describe('stop-dev.sh — dev-lock 自愈机制', () => {
     expect(output).not.toMatch(/dev-lock 自愈重建/);
   });
 
-  it('场景 2: dev-lock 缺失 + CLAUDE_SESSION_ID 有值 → 自愈重建', () => {
+  it('场景 2: dev-lock 缺失 + CLAUDE_SESSION_ID 有值 + 当前分支匹配 → 自愈重建', () => {
     const branch = 'cp-test-heal';
+    // 切到该分支让 HEAD 匹配 dev-mode branch（自愈条件 3）
+    execSync(`git -C "${wt}" checkout -q -b ${branch}`, { stdio: 'pipe' });
     writeFileSync(
       join(wt, `.dev-mode.${branch}`),
       ['dev', `branch: ${branch}`, 'step_1_spec: done', 'step_2_code: pending'].join('\n')
