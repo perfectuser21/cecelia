@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-14"
 
 changelog:
+  - version: "14.11.0"
+    date: "2026-04-14"
+    change: "fix"
+    description: "dev-lock self-heal 放宽: 不再限 HEAD 分支, 用 git worktree list 检测活跃 worktree; 02-code.md Subagent 三角色加全套回归强制规则"
+    files:
+      - "packages/engine/hooks/stop-dev.sh"
+      - "packages/engine/skills/dev/steps/02-code.md"
+
   - version: "14.10.0"
     date: "2026-04-14"
     change: "feat"
