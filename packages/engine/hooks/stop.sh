@@ -96,6 +96,30 @@ curl -s --connect-timeout 5 --max-time 10 -X POST "http://localhost:5221/api/bra
   -d '{"trigger":"session_end"}' > /dev/null 2>&1 &
 disown $! 2>/dev/null || true
 
+# ===== 孤儿 Worktree 自动清理（已合并 PR → git worktree remove，失败不阻塞）=====
+# 遍历所有 git worktree，检测对应 PR 是否已 merged，是则自动清理孤儿 worktree
+{
+    _orphan_wt_path=""
+    while IFS= read -r _orphan_line; do
+        if [[ "$_orphan_line" == "worktree "* ]]; then
+            _orphan_wt_path="${_orphan_line#worktree }"
+        elif [[ "$_orphan_line" == "branch "* ]]; then
+            _orphan_wt_branch="${_orphan_line#branch refs/heads/}"
+            # 跳过主仓库自身（不清理主仓库）
+            [[ "$_orphan_wt_path" == "$PROJECT_ROOT" ]] && continue
+            # 检查该 worktree 对应的 PR 是否已 merged
+            _orphan_pr_state=$(gh pr view "$_orphan_wt_branch" --json state --jq '.state' 2>/dev/null || echo "")
+            if [[ "$_orphan_pr_state" == "MERGED" ]]; then
+                # git worktree remove 失败不阻塞 hook（|| true）
+                git worktree remove --force "$_orphan_wt_path" 2>/dev/null || \
+                    echo "[Stop Hook] worktree remove 失败（已忽略）: $_orphan_wt_path" >&2 || true
+                echo "[Stop Hook] 已清理已合并 PR 孤儿 worktree: $_orphan_wt_branch" >&2
+            fi
+        fi
+    done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
+} &
+disown $! 2>/dev/null || true
+
 # ===== 没有任何 mode 文件 → 普通对话，允许结束 =====
 exit 0
 # v14.0.0: Unified per-branch format
