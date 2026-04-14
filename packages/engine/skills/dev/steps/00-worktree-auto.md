@@ -1,8 +1,9 @@
 ---
 id: dev-step-00-worktree-auto
-version: 3.0.0
-updated: 2026-04-02
+version: 3.1.0
+updated: 2026-04-14
 changelog:
+  - 3.1.0: dev-lock/dev-mode 写入 owner_session，供 self-heal v16.8.0 所有权验证
   - 3.0.0: 精简 — 保留核心 worktree 创建逻辑
 ---
 
@@ -32,6 +33,7 @@ if [[ "$GIT_DIR" == *"worktrees"* ]]; then
 dev
 branch: ${CURRENT_BRANCH}
 session_id: headed-$(date +%s)-$$-${CURRENT_BRANCH}
+owner_session: ${CLAUDE_SESSION_ID:-unknown}
 tty: $(tty 2>/dev/null || echo "none")
 created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 LOCKEOF
@@ -41,6 +43,7 @@ LOCKEOF
 dev
 branch: ${CURRENT_BRANCH}
 session_id: headed-$(date +%s)-$$-${CURRENT_BRANCH}
+owner_session: ${CLAUDE_SESSION_ID:-unknown}
 tty: $(tty 2>/dev/null || echo "none")
 created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 LOCKEOF
