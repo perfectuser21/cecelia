@@ -22,7 +22,7 @@ _LOCK_DIR="${_GIT_COMMON}/quickcheck.lockdir"
 
 if command -v flock >/dev/null 2>&1; then
     exec 200>"${_LOCK_FILE}"
-    if ! flock -w 2 -n 200; then
+    if ! flock -w 2 200; then
         echo "[QuickCheck] 另一个 quickcheck 正在运行，跳过本次预检" >&2
         exit 0
     fi
