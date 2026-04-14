@@ -42,6 +42,7 @@ import devRecordsRoutes from './src/routes/dev-records.js';
 import designDocsRoutes from './src/routes/design-docs.js';
 import userAnnotationsRoutes from './src/routes/user-annotations.js';
 import strategicDecisionsRoutes from './src/routes/strategic-decisions.js';
+import createDecisionsMatchRouter from './src/routes/decisions.js';
 import conversationCapturesRoutes from './src/routes/conversation-captures.js';
 import captureAtomsRoutes from './src/routes/capture-atoms.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
@@ -163,6 +164,7 @@ app.use('/api/brain/dev-records', devRecordsRoutes);
 app.use('/api/brain/design-docs', designDocsRoutes);
 app.use('/api/brain/user-annotations', userAnnotationsRoutes);
 app.use('/api/brain/strategic-decisions', strategicDecisionsRoutes);
+app.post('/api/brain/decisions/match', express.json(), createDecisionsMatchRouter());
 app.use('/api/brain/conversation-captures', conversationCapturesRoutes);
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
 // Mount brain routes BEFORE contentPipelineRoutes to prevent /:id/stats wildcard

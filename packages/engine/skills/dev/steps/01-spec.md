@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 6.1.0
+version: 6.2.0
 created: 2026-03-20
-updated: 2026-04-14
+updated: 2026-04-15
 changelog:
+  - 6.2.0: autonomous 分支读 Step 0.7 产出的 .decisions-<branch>.yaml，作为技术决策硬约束
   - 6.1.0: autonomous 分支优先读 Step 0.5 enriched PRD
   - 6.0.0: autonomous_mode — 内嵌 superpowers:brainstorming + writing-plans 自主流程
   - 5.0.0: Superpowers 融入 — 零占位符规则 + Self-Review
@@ -95,7 +96,21 @@ fi
 
 后续所有 PRD 读取使用 `${PRD_SOURCE}` 代替原 fetch 路径。
 
-### 0.2.1 探索 + 影响分析
+### 0.2.1 读历史决策约束（Step 0.7 产出）
+
+```bash
+DECISIONS_FILE=".decisions-${BRANCH_NAME}.yaml"
+if [[ -f "$DECISIONS_FILE" ]]; then
+    echo "读取历史决策约束..."
+    cat "$DECISIONS_FILE"
+fi
+```
+
+Task Card 的"实现方案"section 必须引用 matched decisions:
+- 每个重要选择写明 "来自决策 #<id>: <decision>"
+- DoD 加"决策一致性"BEHAVIOR 条目
+
+### 0.2.2 探索 + 影响分析
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
@@ -108,7 +123,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 3. 阅读受影响的核心文件，理解当前实现
 4. 识别改动边界：要改什么文件、不改什么
 
-### 0.2.2 自主技术决策（brainstorming 骨架，跳过用户交互）
+### 0.2.3 自主技术决策（brainstorming 骨架，跳过用户交互）
 
 列出 2-3 个方案，用表格对比：
 
@@ -119,7 +134,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 
 自己选最直接的方案。**禁止**问用户"你想要 A 还是 B"。决策依据写入 plan 文件。
 
-### 0.2.3 写 Implementation Plan（writing-plans 规则）
+### 0.2.4 写 Implementation Plan（writing-plans 规则）
 
 产出 `.plan-${BRANCH_NAME}.md`，符合：
 
@@ -128,7 +143,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 - 每步 2-5 分钟粒度
 - TDD 顺序：写测试 → 验证失败 → 写实现 → 验证通过 → commit
 
-### 0.2.4 Self-Review 3 步
+### 0.2.5 Self-Review 3 步
 
 1. **Spec 覆盖度** — PRD 每个需求有对应 task？
 2. **占位符扫描** — 有无 TBD/TODO/稍后/适当？
@@ -136,7 +151,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 
 有问题 → 修 → 继续（不重复 review）
 
-### 0.2.5 写 Task Card + 持久化
+### 0.2.6 写 Task Card + 持久化
 
 - `.task-${BRANCH_NAME}.md`（含 DoD，至少 1 个 `[BEHAVIOR]`）
 - 在 DoD 中引用 `.plan-${BRANCH_NAME}.md`
