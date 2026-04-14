@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.6.0
+# Stop Hook: Claude Code 协议适配器 v16.7.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.6.0 — dev-lock 自愈（dev-mode 存在但 lock 丢失时用 CLAUDE_SESSION_ID 重建）
+# 版本: v16.7.0 — self-heal 放宽: 对任何活跃 worktree (git worktree list 中) 生效, 不限 HEAD 分支
 
 set -euo pipefail
 
@@ -41,25 +41,35 @@ _session_matches() {
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # ============================================================================
-# v16.6.0: dev-lock 自愈 — dev-mode 存在但 dev-lock 丢失时自动重建
+# v16.7.0: dev-lock 自愈 — dev-mode 存在但 dev-lock 丢失时自动重建
 # 条件: CLAUDE_SESSION_ID 非空 + dev-mode 首行是 'dev'
+# 放宽: 不再限制 HEAD 分支匹配，用 git worktree list 检测活跃 worktree
 # 目的: 避免 dev-lock 文件意外丢失导致 Stop Hook 永久 block
+#       修复: main session 无法治愈 cp-* worktree 中的 dev-mode
 # ============================================================================
 if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
-    _heal_cur_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    if [[ -n "$_heal_cur_branch" ]]; then
-        _heal_cur_tty="$(tty 2>/dev/null || echo 'not a tty')"
-        _heal_now="$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
-        while IFS= read -r _heal_dir; do
-            for _heal_dmf in "$_heal_dir"/.dev-mode.*; do
-                [[ -f "$_heal_dmf" ]] || continue
-                head -1 "$_heal_dmf" 2>/dev/null | grep -q "^dev$" || continue
-                _heal_branch=$(grep "^branch:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
-                [[ -z "$_heal_branch" ]] && continue
-                [[ "$_heal_branch" != "$_heal_cur_branch" ]] && continue
-                _heal_lockf="$_heal_dir/.dev-lock.${_heal_branch}"
-                if [[ ! -f "$_heal_lockf" ]]; then
-                    cat > "$_heal_lockf" <<HEAL_EOF
+    _heal_cur_tty="$(tty 2>/dev/null || echo 'not a tty')"
+    _heal_now="$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
+    while IFS= read -r _heal_dir; do
+        for _heal_dmf in "$_heal_dir"/.dev-mode.*; do
+            [[ -f "$_heal_dmf" ]] || continue
+            head -1 "$_heal_dmf" 2>/dev/null | grep -q "^dev$" || continue
+            _heal_branch=$(grep "^branch:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
+            [[ -z "$_heal_branch" ]] && continue
+            # 只对当前有效 worktree 的 dev-mode 自愈
+            # 条件: _heal_dir 在 git worktree list 中 + 该 worktree HEAD 与 _heal_branch 匹配
+            # 排除 T4 scenario: worktree 已删但目录残留 dev-mode（不在 worktree list 中）
+            # 排除孤儿场景: 主仓库中残留其他分支的 dev-mode（HEAD 不匹配 _heal_branch）
+            _heal_wt_head=$(git -C "$_heal_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+            [[ "$_heal_wt_head" != "$_heal_branch" ]] && continue
+            _heal_is_active=false
+            while IFS= read -r _wt_entry; do
+                [[ "$_wt_entry" == "worktree $_heal_dir" ]] && { _heal_is_active=true; break; }
+            done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
+            [[ "$_heal_is_active" == "false" ]] && continue
+            _heal_lockf="$_heal_dir/.dev-lock.${_heal_branch}"
+            if [[ ! -f "$_heal_lockf" ]]; then
+                cat > "$_heal_lockf" <<HEAL_EOF
 dev
 branch: ${_heal_branch}
 session_id: ${CLAUDE_SESSION_ID}
@@ -67,11 +77,10 @@ tty: ${_heal_cur_tty}
 recreated_at: ${_heal_now}
 recovered: true
 HEAL_EOF
-                    echo "[Stop Hook] dev-lock 自愈重建（分支: ${_heal_branch}）" >&2
-                fi
-            done
-        done < <(_collect_search_dirs "$PROJECT_ROOT")
-    fi
+                echo "[Stop Hook] dev-lock 自愈重建（分支: ${_heal_branch}）" >&2
+            fi
+        done
+    done < <(_collect_search_dirs "$PROJECT_ROOT")
 fi
 
 # v16.3.0: 清理主仓库残留的 .dev-lock/.dev-mode（迁移：这些文件应只存在于 worktree）

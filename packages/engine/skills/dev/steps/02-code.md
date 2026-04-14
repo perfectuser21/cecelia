@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 9.0.0
+version: 9.1.0
 created: 2026-03-14
 updated: 2026-04-14
 changelog:
+  - 9.1.0: Subagent Implementer/Reviewer 加全套回归强制规则（改 hooks/→跑 tests/hooks/ 全套，防止只跑新测试漏 T4 冲突）
   - 9.0.0: 新增 autonomous_mode — Subagent 三角色全自动（Implementer + Spec Reviewer + Code Quality Reviewer），失败自愈，Verification Gate
   - 7.1.0: Harness v2.0 适配 — harness_mode 下读 sprint-contract 写代码，跳过 DoD 逐条验证
   - 7.0.0: 精简 — 删除 Generator subagent、code_review_gate、独立 Evaluator。主 agent 直接写代码。
@@ -88,6 +89,23 @@ TASK_CARD=".task-${BRANCH_NAME}.md"
 | `NEEDS_CONTEXT` | 缺信息 | 补 context 重派（同模型） |
 | `BLOCKED` | 搞不定 | 见 2.5 失败自愈 |
 
+**相关目录全套回归（强制）**:
+
+Implementer 写完代码后，不仅要跑新写的 test，还必须跑"相关目录全套"回归：
+
+| 改动类型 | 必跑目录 |
+|---------|---------|
+| `packages/engine/hooks/*.sh` | `tests/hooks/` 全套 |
+| `packages/engine/lib/*.sh` | `tests/scripts/` + `tests/engine/` 全套 |
+| `packages/engine/skills/dev/scripts/*.sh` | `tests/scripts/` 全套 |
+| `packages/engine/skills/dev/steps/*.md` | `tests/dev/` + `tests/skills/` 全套 |
+| `.github/workflows/*.yml` | `tests/workflows/` 全套 |
+
+命令示例：
+`npx vitest run tests/hooks/` 返回 0 failed 才能报 DONE.
+
+**禁止**只跑新增 test 就报 DONE — PR #2338 self-heal vs T4 冲突就是这么漏的。
+
 **Model 选择**：
 - 改 1-2 文件 + plan 清晰 → Sonnet
 - 多文件集成 / 需全局理解 → Opus
@@ -109,6 +127,14 @@ TASK_CARD=".task-${BRANCH_NAME}.md"
 **输出**：
 - ✅ Spec Compliant → 进 Round 3
 - ❌ Issues → Implementer 修 → 重新 review（循环直到 ✅）
+
+**核心检查 4（来自 PR #2340 教训）：**
+
+- Implementer **是否跑了全套回归**？
+  - 改 hooks/ → 跑完 tests/hooks/ 全套？
+  - 改 lib/ → 跑完 tests/scripts/ + tests/engine/ 全套？
+  - 只跑新 test 不算 — 要求 Implementer 补跑全套
+  - 若 Implementer 报告里没明确提回归范围 → ❌ 拒绝
 
 **Model**: Sonnet（对比工作不需要深推理）
 
