@@ -399,6 +399,15 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
     return;
   }
 
+  // Initialize Callback Queue Worker (async callback processing)
+  try {
+    const { startCallbackWorker } = await import('./src/callback-worker.js');
+    startCallbackWorker();
+    console.log('[Server] Callback Queue Worker started (2s interval) - async execution callback processing');
+  } catch (cbWorkerErr) {
+    console.error('[Server] Callback Worker init failed (non-fatal):', cbWorkerErr.message);
+  }
+
   // Initialize tick loop if enabled in DB
   await initTickLoop();
 
