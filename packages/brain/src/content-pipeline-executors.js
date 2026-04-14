@@ -420,6 +420,33 @@ export async function executeGenerate(task) {
 
 // ─── 5. Image Review（图片审核）───────────────────────────────
 
+function getTaskKeyword(task) {
+  return task.payload?.pipeline_keyword || task.title;
+}
+
+function getTaskContentType(task) {
+  return task.payload?.content_type || 'solo-company-case';
+}
+
+async function fetchTypeConfig(contentType) {
+  try { return await getContentType(contentType); } catch { return null; }
+}
+
+function resolveMaxImageCount(typeConfig) {
+  return typeConfig?.images?.count || 9;
+}
+
+function getImageReviewPrompt(typeConfig, contentType) {
+  const prompt = typeConfig?.template?.image_review_prompt || typeConfig?.template?.review_prompt;
+  if (!prompt) return { error: `内容类型 ${contentType} 缺少 image_review_prompt 配置` };
+  return { prompt };
+}
+
+function computeQualityScore(llmReview) {
+  if (typeof llmReview.quality_score === 'number') return llmReview.quality_score;
+  return llmReview.review_passed !== false ? 7 : 4;
+}
+
 function validateImageFiles(dir, cp, ap) {
   const issues = [];
   if (!existsSync(cp)) issues.push('缺少 cards/copy.md 文案文件');
@@ -461,14 +488,16 @@ async function callImageReviewLLM(imageReviewPrompt, keyword, contentForReview) 
 }
 
 export async function executeImageReview(task) {
-  const keyword = task.payload?.pipeline_keyword || task.title;
-  const contentType = task.payload?.content_type || 'solo-company-case';
+  const keyword = getTaskKeyword(task);
+  const contentType = getTaskContentType(task);
   console.log(`[image-review] 开始: ${keyword}`);
-  let typeConfig = null;
-  try { typeConfig = await getContentType(contentType); } catch { /* DB/YAML 不可用，使用硬编码 fallback */ }
-  const maxImageCount = typeConfig?.images?.count || 9;
+
+  const typeConfig = await fetchTypeConfig(contentType);
+  const maxImageCount = resolveMaxImageCount(typeConfig);
+
   const dir = findOutputDir(keyword);
   if (!dir) return { success: true, review_passed: false, issues: ['找不到产出目录'] };
+
   const cp = join(dir, 'cards', 'copy.md');
   const ap = join(dir, 'article', 'article.md');
   const IMAGES_DIR = join(process.env.HOME || '/Users/administrator', 'claude-output', 'images');
@@ -479,17 +508,21 @@ export async function executeImageReview(task) {
     console.log(`[image-review] FAIL（文件检查）: ${issues.join('; ')}`);
     return { success: true, review_passed: false, card_count: cardCount, issues };
   }
-  const imageReviewPrompt = typeConfig?.template?.image_review_prompt || typeConfig?.template?.review_prompt;
-  if (!imageReviewPrompt) return { success: false, error: `内容类型 ${contentType} 缺少 image_review_prompt 配置` };
+
+  const { prompt: imageReviewPrompt, error: promptError } = getImageReviewPrompt(typeConfig, contentType);
+  if (promptError) return { success: false, error: promptError };
+
   const contentForReview = loadContentForReview(dir, cp);
   if (!contentForReview) return { success: false, error: '无可审核内容（llm-card-content.json 和 copy.md 均不存在）' };
+
   const { llmReview, error } = await callImageReviewLLM(imageReviewPrompt, keyword, contentForReview);
   if (error) {
     console.warn(`[image-review] LLM 不可用，降级跳过审核: ${error}`);
     return { success: true, review_passed: true, llm_reviewed: false, card_count: cardCount, issues: [], skipped_reason: error };
   }
+
   if (llmReview.issues?.length > 0) issues.push(...llmReview.issues);
-  const qualityScore = typeof llmReview.quality_score === 'number' ? llmReview.quality_score : (llmReview.review_passed !== false ? 7 : 4);
+  const qualityScore = computeQualityScore(llmReview);
   const passed = qualityScore >= 6;
   console.log(`[image-review] ${passed ? 'PASS' : 'FAIL'}: quality=${qualityScore}`);
   return { success: true, review_passed: passed, card_count: cardCount, issues, llm_review: llmReview, quality_score: qualityScore };
