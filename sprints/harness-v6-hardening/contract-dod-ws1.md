@@ -1,0 +1,10 @@
+# Contract DoD — Workstream 1: Backend Core — Verdict 重试 + Bridge 崩溃识别
+
+- [ ] [BEHAVIOR] Verdict 评估包含重试循环（for/while + retryCount），间隔 200ms，上限由常量控制
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');const hasLoop=/for\s*\(.*retry|while\s*\(.*retry|retryCount\s*[<>=]/i.test(code);const hasInterval=/200\s*\)|sleep\s*\(\s*200|setTimeout.*200|await.*200/i.test(code);const hasMax=/MAX_VERDICT_RETRIES|(?:max|limit).*(?:retr|attempt)/i.test(code);if(!hasLoop)throw new Error('FAIL: 无重试循环');if(!hasInterval)throw new Error('FAIL: 无200ms间隔');if(!hasMax)throw new Error('FAIL: 无重试上限');console.log('PASS')"
+- [ ] [BEHAVIOR] verdict_timeout 不触发 harness_fix 且不默认 FAIL
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');if(!code.includes('verdict_timeout'))throw new Error('FAIL');const idx=code.indexOf('verdict_timeout');const block=code.substring(idx,idx+800);if(block.includes('harness_fix'))throw new Error('FAIL: verdict_timeout不应创建harness_fix');if(block.includes(\"status = 'FAIL'\")||block.includes('verdict = \"FAIL\"'))throw new Error('FAIL: 不应默认FAIL');console.log('PASS')"
+- [ ] [BEHAVIOR] Bridge 0 字节输出标记为 session_crashed 并创建 harness_evaluate（非 harness_fix）
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');if(!code.includes('session_crashed'))throw new Error('FAIL');const idx=code.indexOf('session_crashed');const block=code.substring(idx,idx+800);if(!block.includes('harness_evaluate'))throw new Error('FAIL: 必须创建harness_evaluate');if(block.includes('harness_fix'))throw new Error('FAIL: 不应创建harness_fix');console.log('PASS')"
+- [ ] [BEHAVIOR] 二次崩溃标记 permanent_failure，不创建后续任务，写入 error_message
+  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/execution.js','utf8');if(!code.includes('permanent_failure'))throw new Error('FAIL');const idx=code.indexOf('permanent_failure');const block=code.substring(idx,idx+800);if(!block.includes('error_message')&&!block.includes('error'))throw new Error('FAIL: 需写入error');console.log('PASS')"
