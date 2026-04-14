@@ -27,6 +27,7 @@ const manifest: FeatureManifest = {
           { path: '/system/engine', label: 'Engine', icon: 'Cpu', order: 6 },
           { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
           { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 9 },
+          { path: '/autonomous', label: 'Autonomous', icon: 'Bot', order: 11 },
           { path: '/pipeline', label: 'Harness Pipeline', icon: 'GitBranch', order: 15 },
           { path: '/brain-models', label: 'Brain Models', icon: 'Cpu', order: 16 },
           { path: '/collection-dashboard', label: 'Collection', icon: 'Database', order: 12 },
@@ -49,6 +50,7 @@ const manifest: FeatureManifest = {
     { path: '/system/skills-registry', redirect: '/system/team' },
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
+    { path: '/autonomous', component: 'AutonomousSessionsPage' },
     { path: '/pipeline', component: 'HarnessPipelinePage' },
     { path: '/pipeline/:id', component: 'HarnessPipelineDetailPage' },
     { path: '/pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
@@ -153,6 +155,7 @@ const manifest: FeatureManifest = {
     SystemTabbed: () => import('./pages/SystemTabbed'),
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
+    AutonomousSessionsPage: () => import('../../../dashboard/src/pages/autonomous/AutonomousSessionsPage'),
     HarnessPipelinePage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelinePage'),
     HarnessPipelineDetailPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage'),
     HarnessPipelineStepPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage'),
