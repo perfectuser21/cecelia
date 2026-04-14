@@ -128,11 +128,11 @@ cmd_create() {
     local existing_count
     existing_count=$(git worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
     if [[ $existing_count -ge $MAX_WORKTREES ]]; then
-        echo -e "${YELLOW}⚠️  worktree 数量已达上限（$existing_count/$MAX_WORKTREES），尝试自动清理已合并的 worktree...${NC}" >&2
+        echo -e "${YELLOW}⚠️  worktree 数量已达上限（$existing_count/${MAX_WORKTREES}），尝试自动清理已合并的 worktree...${NC}" >&2
         cmd_cleanup
         existing_count=$(git worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
         if [[ $existing_count -ge $MAX_WORKTREES ]]; then
-            echo -e "${RED}ERROR: 清理后仍达上限（$existing_count/$MAX_WORKTREES），所有 worktree 均为活跃状态${NC}" >&2
+            echo -e "${RED}ERROR: 清理后仍达上限（$existing_count/${MAX_WORKTREES}），所有 worktree 均为活跃状态${NC}" >&2
             echo "  运行以下命令查看现有 worktree：" >&2
             echo "  git worktree list" >&2
             exit 1
@@ -185,7 +185,7 @@ cmd_create() {
             if git -C "$main_wt" pull origin "$base_branch" --ff-only 2>&2; then
                 echo -e "${GREEN}✅ $base_branch 已更新${NC}" >&2
             else
-                echo -e "${YELLOW}⚠️  无法更新 $base_branch，使用当前版本${NC}" >&2
+                echo -e "${YELLOW}⚠️  无法更新 ${base_branch}，使用当前版本${NC}" >&2
             fi
         else
             # 不在 base 分支上，用 fetch + branch -f
@@ -193,7 +193,7 @@ cmd_create() {
                 if git -C "$main_wt" branch -f "$base_branch" "origin/$base_branch" 2>&2; then
                     echo -e "${GREEN}✅ $base_branch 已更新${NC}" >&2
                 else
-                    echo -e "${YELLOW}⚠️  无法更新 $base_branch，使用当前版本${NC}" >&2
+                    echo -e "${YELLOW}⚠️  无法更新 ${base_branch}，使用当前版本${NC}" >&2
                 fi
             else
                 echo -e "${YELLOW}⚠️  无法 fetch，使用当前版本${NC}" >&2
@@ -401,7 +401,7 @@ cmd_cleanup() {
             git branch -D "$wt_branch" 2>/dev/null || true
             ((cleaned++))
         else
-            echo -e "  跳过: $wt_branch（未合并或无 PR）"
+            echo -e "  跳过: ${wt_branch}（未合并或无 PR）"
             ((skipped++))
         fi
     done < <(git worktree list 2>/dev/null | tail -n +2)

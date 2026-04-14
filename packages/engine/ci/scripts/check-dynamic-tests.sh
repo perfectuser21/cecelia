@@ -83,7 +83,7 @@ if [[ "$COMMIT_TYPE" == "feat" ]]; then
         echo "⏭️  feat PR 未改 Engine 代码文件，跳过测试要求"
     fi
 else
-    echo "⏭️  非 feat PR（$COMMIT_TYPE），跳过 feat 测试要求"
+    echo "⏭️  非 feat PR（${COMMIT_TYPE}），跳过 feat 测试要求"
 fi
 
 echo ""

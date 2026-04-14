@@ -37,7 +37,7 @@ if [[ -f "$BRAIN_PLIST" ]]; then
   fi
   log "✅ com.cecelia.brain 已启用"
 else
-  log "⚠️  Brain plist 不存在：$BRAIN_PLIST（跳过）"
+  log "⚠️  Brain plist 不存在：${BRAIN_PLIST}（跳过）"
 fi
 
 # ── 3. PG17 LaunchDaemon：如不存在则从 homebrew plist 生成 ────

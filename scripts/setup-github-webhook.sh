@@ -114,7 +114,7 @@ echo "🔍 检查已有 Webhook..."
 EXISTING=$(gh api "repos/$REPO/hooks" 2>/dev/null | jq -r ".[] | select(.config.url == \"$WEBHOOK_URL\") | .id" 2>/dev/null || echo "")
 
 if [[ -n "$EXISTING" ]]; then
-  echo "⚠️  已存在相同 URL 的 Webhook（ID: $EXISTING）"
+  echo "⚠️  已存在相同 URL 的 Webhook（ID: ${EXISTING}）"
   echo ""
   echo "选项："
   echo "  1. 删除并重建（推荐，更新 secret）"

@@ -24,7 +24,7 @@ _check() {
   if [[ "$actual" == "$expected_code" ]]; then
     echo "  ✅ $label ($actual)"
   else
-    echo "  ❌ $label — 期望 $expected_code，实际 $actual"
+    echo "  ❌ $label — 期望 ${expected_code}，实际 $actual"
     FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }

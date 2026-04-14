@@ -209,11 +209,11 @@ devloop_check() {
         case "$ci_status" in
             "completed")
                 if [[ "$ci_conclusion" != "success" ]]; then
-                    local action_msg="CI 失败（$ci_conclusion），查看日志修复问题后重新 push"
+                    local action_msg="CI 失败（${ci_conclusion}），查看日志修复问题后重新 push"
                     [[ -n "$ci_run_id" ]] && \
-                        action_msg="CI 失败（$ci_conclusion），运行 gh run view $ci_run_id --log-failed 查看错误，修复后 git push"
+                        action_msg="CI 失败（${ci_conclusion}），运行 gh run view $ci_run_id --log-failed 查看错误，修复后 git push"
                     _devloop_jq -n \
-                        --arg reason "CI 失败（$ci_conclusion）" \
+                        --arg reason "CI 失败（${ci_conclusion}）" \
                         --arg action "$action_msg" \
                         --arg run_id "${ci_run_id:-}" \
                         '{"status":"blocked","reason":$reason,"action":$action,"ci_run_id":$run_id}'

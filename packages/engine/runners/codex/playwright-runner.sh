@@ -238,7 +238,7 @@ RETRY_COUNT=0
 run_codex() {
     local account_idx="$1"
     export CODEX_HOME="${CODEX_ACCOUNT_LIST[$account_idx]}"
-    echo "🚀 调用 Codex（账号 $((account_idx + 1))/${#CODEX_ACCOUNT_LIST[@]}，模型: $CODEX_MODEL）..."
+    echo "🚀 调用 Codex（账号 $((account_idx + 1))/${#CODEX_ACCOUNT_LIST[@]}，模型: ${CODEX_MODEL}）..."
 
     local output
     output=$("$CODEX_BIN" exec \
@@ -284,6 +284,6 @@ while [[ $RETRY_COUNT -lt $CODEX_MAX_RETRIES ]]; do
     echo "⚠️  重试 $RETRY_COUNT/$CODEX_MAX_RETRIES..."
 done
 
-echo "❌ 达到最大重试次数（$CODEX_MAX_RETRIES）" >&2
-send_callback "AI Failed" "" "达到最大重试次数（$CODEX_MAX_RETRIES）"
+echo "❌ 达到最大重试次数（${CODEX_MAX_RETRIES}）" >&2
+send_callback "AI Failed" "" "达到最大重试次数（${CODEX_MAX_RETRIES}）"
 exit 1

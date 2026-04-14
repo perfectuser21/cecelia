@@ -40,7 +40,7 @@ if [ "$BRAIN_CHANGED" = "true" ]; then
   CURR_VER=$(jq -r '.version' packages/brain/package.json 2>/dev/null || echo "")
 
   if [ -n "$BASE_VER" ] && [ "$BASE_VER" = "$CURR_VER" ]; then
-    echo "  ❌ packages/brain/package.json 版本未更新（当前: $CURR_VER，与 main 相同）"
+    echo "  ❌ packages/brain/package.json 版本未更新（当前: ${CURR_VER}，与 main 相同）"
     echo "     修复: npm version patch --no-git-tag-version --workspace packages/brain"
     PASS=false
   else
@@ -69,7 +69,7 @@ if [ -n "$NEW_MIGRATIONS" ]; then
   while IFS= read -r num; do
     [ -z "$num" ] && continue
     if [ "$num" -le "$MAIN_MAX" ]; then
-      echo "  ❌ Migration $num 与 main 冲突（main 最高: $MAIN_MAX）"
+      echo "  ❌ Migration $num 与 main 冲突（main 最高: ${MAIN_MAX}）"
       CONFLICT=true
     fi
   done <<< "$LOCAL_NUMS"
@@ -78,7 +78,7 @@ if [ -n "$NEW_MIGRATIONS" ]; then
     echo "     修复: 将 migration 文件重命名为 $((MAIN_MAX + 1))_xxx.sql"
     PASS=false
   else
-    echo "  ✅ Migration 编号无冲突（main 最高: $MAIN_MAX）"
+    echo "  ✅ Migration 编号无冲突（main 最高: ${MAIN_MAX}）"
   fi
 else
   echo "  ⏭  无新 migration，跳过"
