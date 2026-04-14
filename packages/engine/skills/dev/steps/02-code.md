@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 7.1.0
+version: 9.0.0
 created: 2026-03-14
-updated: 2026-04-03
+updated: 2026-04-14
 changelog:
+  - 9.0.0: 新增 autonomous_mode — Subagent 三角色全自动（Implementer + Spec Reviewer + Code Quality Reviewer），失败自愈，Verification Gate
   - 7.1.0: Harness v2.0 适配 — harness_mode 下读 sprint-contract 写代码，跳过 DoD 逐条验证
   - 7.0.0: 精简 — 删除 Generator subagent、code_review_gate、独立 Evaluator。主 agent 直接写代码。
 ---
@@ -16,15 +17,22 @@ changelog:
 
 ---
 
-## 0. Harness 模式检测（harness_mode）
+## 0. 模式判断（harness / autonomous / standard）
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 HARNESS_MODE=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
+AUTONOMOUS_MODE=$(grep "^autonomous_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
 ```
 
-### harness_mode = true 时
+- `harness_mode = true` → 走 **Section 1**
+- `autonomous_mode = true` → 走 **Section 2**
+- 其他 → 走 **Section 3**（standard）
+
+---
+
+## 1. harness_mode = true 时
 
 读 sprint-contract.md 作为实现指南，写代码，**不逐条验证 DoD**（Evaluator 来验）。
 
@@ -42,15 +50,127 @@ cat "${SPRINT_DIR}/sprint-contract.md"
 6. 标记 step_2_code: done
 7. **直接进入 Stage 3 (Integrate)** — push + PR
 
-完成后跳到 [2.4 标记完成](#24-标记完成--持久化)。
+完成后跳到 [完成后](#完成后)。
 
 ---
 
-### harness_mode = false（默认，现有流程不变）
+## 2. autonomous_mode = true 时（Subagent 三角色全自动）
+
+主 agent 作为协调者，对 `.plan-${BRANCH}.md` 的每个 task 派 3 轮 subagent。
+
+### 2.1 前置准备
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+PLAN_FILE=".plan-${BRANCH_NAME}.md"
+TASK_CARD=".task-${BRANCH_NAME}.md"
+[[ ! -f "$PLAN_FILE" ]] && echo "ERROR: plan 文件缺失，回 Stage 1 重做" && exit 1
+```
+
+读 `.plan-${BRANCH}.md` 提取每个 task 的完整描述（不让 subagent 自己读文件，controller 传 full text）。
+
+### 2.2 Round 1: Implementer Subagent
+
+**使用 `superpowers:test-driven-development` 纪律 + `superpowers:verification-before-completion`**
+
+输入 prompt 模板（参考 `superpowers:subagent-driven-development/implementer-prompt.md`）：
+- Task 完整描述（从 plan 复制，包括所有 Step）
+- 相关代码上下文（主 agent 筛选）
+- TDD 要求：先红再绿
+- 4 种返回状态约定
+
+**4 种状态 + 主 agent 行为**：
+
+| 状态 | 含义 | 主 agent 行为 |
+|------|------|--------------|
+| `DONE` | 完成 | 进 Round 2 |
+| `DONE_WITH_CONCERNS` | 完成但有疑虑 | 读疑虑决定 |
+| `NEEDS_CONTEXT` | 缺信息 | 补 context 重派（同模型） |
+| `BLOCKED` | 搞不定 | 见 2.5 失败自愈 |
+
+**Model 选择**：
+- 改 1-2 文件 + plan 清晰 → Sonnet
+- 多文件集成 / 需全局理解 → Opus
+
+### 2.3 Round 2: Spec Reviewer Subagent
+
+**核心原则**：**不信任 Implementer 的报告。自己读代码验证。**
+
+输入 prompt（参考 `superpowers:subagent-driven-development/spec-reviewer-prompt.md`）：
+- 任务要求（plan 中的 task 描述）
+- Implementer 声称做了什么
+- 指令："不要信任 Implementer 的报告。自己读代码逐行对比。"
+
+**检查维度**：
+1. **缺失的需求** — task 要求了但没实现
+2. **多余的实现** — task 没要求但加了
+3. **理解偏差** — 方向对不对
+
+**输出**：
+- ✅ Spec Compliant → 进 Round 3
+- ❌ Issues → Implementer 修 → 重新 review（循环直到 ✅）
+
+**Model**: Sonnet（对比工作不需要深推理）
+
+### 2.4 Round 3: Code Quality Reviewer Subagent
+
+**前置**：Spec Review 必须先 ✅。顺序不能反。
+
+输入 prompt（参考 `superpowers:subagent-driven-development/code-quality-reviewer-prompt.md`）：
+- 实现完成的 task 描述
+- git diff（BASE_SHA..HEAD_SHA）
+
+**检查维度**：
+- 代码质量（命名/结构/可维护性）
+- 测试质量（测真实行为，不测 mock）— 见 `superpowers:test-driven-development/testing-anti-patterns.md`
+- YAGNI（没过度设计）
+- 文件职责清晰
+
+**输出**：
+- ✅ Approved → 标记 task 完成
+- ❌ Critical/Important Issues → Implementer 修 → 重新 review
+
+**Model**: Sonnet
+
+### 2.5 失败自愈
+
+**Implementer BLOCKED**:
+```
+第 1 次 → 补 context 重派（同模型）
+第 2 次 → 升级到更强模型重派
+第 3 次 → 使用 superpowers:systematic-debugging Phase 1 分析根因
+          派 superpowers:dispatching-parallel-agents 独立诊断
+```
+
+**Spec Reviewer 连续 3 轮 ❌**:
+```
+不再让同一个 Implementer 修 → 派新 Implementer 从头实现这个 task
+```
+
+**连续 3 个 task BLOCKED**:
+```
+plan 本身有问题 → 回 Stage 1 重做 plan
+```
+
+### 2.6 所有 task 完成后
+
+**使用 `superpowers:verification-before-completion` Gate**：
+
+对 `.task-${BRANCH}.md` 每个 DoD 条目：
+1. 运行 `Test:` 命令
+2. 检查 exit code
+3. 有证据才勾 [x]
+4. 无证据 → 修 → 重跑
+
+全部 [x] → `sed -i '' 's/step_2_code: pending/step_2_code: done/' ".dev-mode.${BRANCH_NAME}"`
+
+完成后跳到 [完成后](#完成后)。
 
 ---
 
-## 2.1 探索代码
+## 3. standard mode（默认流程）
+
+### 3.1 探索代码
 
 读取 Task Card 的「实现方案」部分，探索相关文件：
 
@@ -64,7 +184,7 @@ cat "$TASK_CARD"
 
 ---
 
-## 2.2 写代码
+### 3.2 写代码
 
 直接修改代码文件，按 Task Card 实现方案执行。
 
@@ -75,7 +195,7 @@ cat "$TASK_CARD"
 
 ---
 
-## 2.3 逐条验证 DoD
+### 3.3 逐条验证 DoD
 
 > **仅非 Harness 模式执行此步骤。** Harness 模式由 Evaluator 独立验证。
 
@@ -97,7 +217,7 @@ cd packages/engine && npx vitest run <相关测试文件>
 
 ---
 
-## 2.4 标记完成 + 持久化
+### 3.4 标记完成 + 持久化
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
