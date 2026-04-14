@@ -445,7 +445,7 @@ main() {
     project_id=$(echo "$task_json" | jq -r '.project_id // ""')
     local initiative_dod_json=""
     if [[ -n "$project_id" && "$project_id" != "null" ]]; then
-        echo "📥 读取 Initiative DoD（project_id: $project_id）..."
+        echo "📥 读取 Initiative DoD（project_id: ${project_id}）..."
         initiative_dod_json=$(fetch_initiative_dod "$project_id") || true
         if [[ -n "$initiative_dod_json" ]]; then
             echo "✅ 找到 Initiative DoD"

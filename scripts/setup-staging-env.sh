@@ -78,7 +78,7 @@ if [[ -n "$SOURCE_ENV" ]]; then
         "$SOURCE_ENV")
 
     if [[ "$DRY_RUN" == true ]]; then
-        log "[dry-run] 将写入 $OUTPUT_FILE（派生自 $SOURCE_ENV）"
+        log "[dry-run] 将写入 ${OUTPUT_FILE}（派生自 ${SOURCE_ENV}）"
         echo "$DERIVED_CONTENT"
     else
         echo "$DERIVED_CONTENT" > "$OUTPUT_FILE"

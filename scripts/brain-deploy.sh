@@ -226,7 +226,7 @@ if [[ "$DEPLOY_MODE" == "launchd" ]]; then
         STALE_PID=$(PATH="/usr/sbin:$PATH" lsof -ti:5221 2>/dev/null | head -1 || echo "")
         LAUNCHD_PID=$(launchctl list "${LAUNCHD_SERVICE}" 2>/dev/null | grep -E '^\s*[0-9]+' | awk '{print $1}' | head -1)
         if [[ -n "$STALE_PID" && "$STALE_PID" != "$LAUNCHD_PID" ]]; then
-            echo "  发现游离 Brain 进程 PID=$STALE_PID（launchd 记录=$LAUNCHD_PID），先终止..."
+            echo "  发现游离 Brain 进程 PID=${STALE_PID}（launchd 记录=${LAUNCHD_PID}），先终止..."
             kill "$STALE_PID" 2>/dev/null && sleep 2 || true
         fi
         launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_SERVICE}" || \

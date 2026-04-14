@@ -6,6 +6,20 @@ version: "1.0.0"
 updated: "2026-04-14"
 
 changelog:
+  - version: "14.9.0"
+    date: "2026-04-14"
+    change: "feat"
+    description: "中文全角标点炸弹扫描器（CI 防线）+ 17 个 shell 文件 28 处括号修复（防 set -u unbound variable）"
+    files:
+      - "packages/engine/ci/scripts/check-chinese-punctuation-bombs.sh"
+      - "packages/engine/hooks/stop-dev.sh"
+      - "packages/engine/lib/devloop-check.sh"
+      - "packages/engine/runners/codex/playwright-runner.sh"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh"
+      - "packages/engine/skills/dev/scripts/fetch-task-prd.sh"
+      - "packages/engine/skills/dev/scripts/check.sh"
+      - "packages/engine/skills/dev/scripts/cleanup.sh"
+
   - version: "14.8.0"
     date: "2026-04-14"
     change: "feat"

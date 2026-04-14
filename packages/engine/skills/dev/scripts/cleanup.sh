@@ -237,7 +237,7 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [[ "$IS_WORKTREE" == "true" ]]; then
     # worktree 内不能 checkout 到 main/develop（被主仓库锁定）
     # 分支清理由 worktree-gc.sh 从主仓库执行
-    echo -e "   ${GREEN}[OK] 在 worktree 中运行（$CURRENT_BRANCH），跳过分支切换${NC}"
+    echo -e "   ${GREEN}[OK] 在 worktree 中运行（${CURRENT_BRANCH}），跳过分支切换${NC}"
     echo -e "   ${YELLOW}     分支/worktree 清理将由 worktree-gc.sh 从主仓库执行${NC}"
     # 标记跳过 checkout 相关步骤，但不设 FAILED
     CHECKOUT_FAILED=1
@@ -321,7 +321,7 @@ if [[ -f "$WCS_SCRIPT" ]]; then
         WARNINGS=$((WARNINGS + 1))
     fi
 else
-    echo -e "   ${YELLOW}[WARN] write-current-state.sh 不存在（$WCS_SCRIPT），跳过${NC}"
+    echo -e "   ${YELLOW}[WARN] write-current-state.sh 不存在（${WCS_SCRIPT}），跳过${NC}"
 fi
 
 # ========================================

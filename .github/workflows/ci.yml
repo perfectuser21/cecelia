@@ -158,6 +158,8 @@ jobs:
         run: cd packages/engine && bash ci/scripts/check-contract-refs.sh
       - name: Dynamic Test Gate
         run: cd packages/engine && bash ci/scripts/check-dynamic-tests.sh
+      - name: Chinese Punctuation Bomb Scan
+        run: bash packages/engine/ci/scripts/check-chinese-punctuation-bombs.sh
       - name: DoD 格式检查
         run: |
           # 检测 PR 中的 task-card.md 文件（跳过未含 task-card 的 PR）

@@ -29,7 +29,7 @@ for g in goals:
 " 2>/dev/null || echo "")
 
 if [ -n "$EXISTING_OKR" ]; then
-  echo "✅ Objective 已存在，跳过创建（ID: $EXISTING_OKR）"
+  echo "✅ Objective 已存在，跳过创建（ID: ${EXISTING_OKR}）"
   echo "   派发冻结已解除，zenithjoy 任务将在下次 tick 中继续派发。"
   exit 0
 fi

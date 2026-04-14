@@ -82,7 +82,7 @@ else
     if [[ $EXIT_CODE -lt 100 ]]; then
         pass "Brain 离线时脚本未崩溃（exit $EXIT_CODE 可接受）"
     else
-        fail "Brain 离线时脚本崩溃（exit $EXIT_CODE）"
+        fail "Brain 离线时脚本崩溃（exit ${EXIT_CODE}）"
     fi
 fi
 rm -rf "$TMPDIR_OUT"

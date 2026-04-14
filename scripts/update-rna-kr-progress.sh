@@ -58,7 +58,7 @@ CURRENT_PROGRESS=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" 
     "SELECT progress FROM goals WHERE id = '$RNA_KR_ID'" | xargs)
 
 if [[ -z "$CURRENT_PROGRESS" ]]; then
-    echo "❌ RNA KR 不存在（ID: $RNA_KR_ID）"
+    echo "❌ RNA KR 不存在（ID: ${RNA_KR_ID}）"
     exit 1
 fi
 

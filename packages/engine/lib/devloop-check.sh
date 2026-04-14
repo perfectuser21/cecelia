@@ -254,10 +254,10 @@ devloop_check() {
                     _increment_and_check_ci_counter "$dev_mode_file" >/dev/null
                     local action_msg
                     action_msg=$(_ci_action_for_count "$dev_mode_file")
-                    [[ -n "$ci_run_id" ]] && \
-                        action_msg="${action_msg}（gh run view $ci_run_id --log-failed）"
+                    [[ -n "${ci_run_id}" ]] && \
+                        action_msg="${action_msg}（gh run view ${ci_run_id} --log-failed）"
                     _devloop_jq -n \
-                        --arg reason "CI 失败（$ci_conclusion）" \
+                        --arg reason "CI 失败（${ci_conclusion}）" \
                         --arg action "$action_msg" \
                         --arg run_id "${ci_run_id:-}" \
                         '{"status":"blocked","reason":$reason,"action":$action,"ci_run_id":$run_id}'

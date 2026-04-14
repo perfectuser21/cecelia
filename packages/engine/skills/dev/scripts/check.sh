@@ -144,7 +144,7 @@ elif [[ -n "$FEATURE_BRANCH" && "$CURRENT_BRANCH" == "$FEATURE_BRANCH" ]]; then
 elif [[ "$CURRENT_BRANCH" == "develop" || "$CURRENT_BRANCH" =~ ^feature/ ]]; then
   # 在合法的 base 分支上，但与指定的不同
   if [[ -n "$FEATURE_BRANCH" ]]; then
-    echo "  [WARN] 当前在 $CURRENT_BRANCH，但指定的 base 分支是 $FEATURE_BRANCH"
+    echo "  [WARN] 当前在 ${CURRENT_BRANCH}，但指定的 base 分支是 $FEATURE_BRANCH"
     ((COMPLETED_COUNT++))
   else
     echo "  [OK] 已切回 base 分支 ($CURRENT_BRANCH)"
