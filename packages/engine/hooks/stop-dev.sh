@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.3.0
+# Stop Hook: Claude Code 协议适配器 v16.4.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.3.0 — 文件隔离：自动清理主仓库残留 dev-lock/dev-mode（这些文件只应在 worktree 中）
+# 版本: v16.4.0 — 跨 session orphan 隔离（按 session_id 区分）+ 文件隔离
 
 set -euo pipefail
 
@@ -93,15 +93,29 @@ while IFS= read -r _dir; do
 done < <(_collect_search_dirs "$PROJECT_ROOT")
 
 # fail-closed：无 dev-lock 时扫描所有 worktree，发现未完成的 dev-mode 则阻止退出
+# v16.4.0: 按 session_id 隔离 — 跨 session 的 orphan 只 warning，不 block 当前 session
 if [[ -z "$DEV_LOCK_FILE" ]]; then
     _orphan_branch=""
+    _current_sid="${CLAUDE_SESSION_ID:-}"
     while IFS= read -r _dir; do
         for _dmf in "$_dir"/.dev-mode.*; do
             [[ -f "$_dmf" ]] || continue
             head -1 "$_dmf" 2>/dev/null | grep -q "^dev$" || continue
             grep -q "cleanup_done: true" "$_dmf" 2>/dev/null && continue
             grep -qE "^step_(2|3|4).*pending" "$_dmf" 2>/dev/null || continue
-            _orphan_branch=$(grep "^branch:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "unknown")
+            _ob=$(grep "^branch:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "unknown")
+
+            # 读取对应 dev-lock 的 session_id（若存在）
+            _lockf="$_dir/.dev-lock.${_ob}"
+            _orphan_sid=""
+            [[ -f "$_lockf" ]] && _orphan_sid=$(grep "^session_id:" "$_lockf" 2>/dev/null | awk '{print $2}' || echo "")
+
+            # 跨 session 隔离：当前 session_id 已知 且 orphan session_id 已知 且不同 → 跳过
+            if [[ -n "$_current_sid" && -n "$_orphan_sid" && "$_current_sid" != "$_orphan_sid" ]]; then
+                echo "[Stop Hook] warning: cross-session orphan skipped (orphan_sid=${_orphan_sid}, current=${_current_sid}, branch=${_ob})" >&2
+                continue
+            fi
+            _orphan_branch="$_ob"
             break 2
         done
     done < <(_collect_search_dirs "$PROJECT_ROOT")
