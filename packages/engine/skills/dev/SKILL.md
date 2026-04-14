@@ -1,9 +1,12 @@
 ---
 name: dev
-version: 7.0.0
+version: 7.1.0
 updated: 2026-04-14
-description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。支持 autonomous_mode 全自动模式。
+description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。支持 autonomous_mode 全自动模式。autonomous_mode 新增 Step 0.5 PRD Enrich 前置层。
 trigger: /dev, --task-id <id>, --autonomous
+changelog:
+  - 7.1.0: autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 — 粗 PRD 自动丰满
+  - 7.0.0: Superpowers 融入 — autonomous_mode 三角色架构
 ---
 
 > **CRITICAL LANGUAGE RULE（语言规则）**: 所有输出必须使用简体中文。
@@ -40,11 +43,21 @@ Harness 模式简化流程:
 ## 流程（标准模式）
 
 ```
-Step 0: Worktree → 创建独立 worktree
-Stage 1: Spec   → 主 agent 写 Task Card + DoD → 写 .dev-mode
-Stage 2: Code   → 主 agent 写代码 + 逐条验证 DoD
+Step 0: Worktree  → 创建独立 worktree
+Stage 1: Spec     → 主 agent 写 Task Card + DoD → 写 .dev-mode
+Stage 2: Code     → 主 agent 写代码 + 逐条验证 DoD
 Stage 3: Integrate → push + PR 创建（CI 由 Stop Hook 自动监控）
-Stage 4: Ship   → Learning + 标记完成（合并/清理由 Stop Hook 自动执行）
+Stage 4: Ship     → Learning + 标记完成（合并/清理由 Stop Hook 自动执行）
+```
+
+## 流程（autonomous_mode）
+
+```
+Step 0: Worktree
+Step 0.5: PRD Enrich (仅 autonomous_mode，粗 PRD 自动丰满)
+Stage 1: Spec (读 enriched PRD)
+Stage 2: Code (Subagent 三角色)
+Stage 3-4: Integrate + Ship
 ```
 
 **唯一完成标志**: PR 已合并到 main。

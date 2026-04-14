@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 6.0.0
+version: 6.1.0
 created: 2026-03-20
 updated: 2026-04-14
 changelog:
+  - 6.1.0: autonomous 分支优先读 Step 0.5 enriched PRD
   - 6.0.0: autonomous_mode — 内嵌 superpowers:brainstorming + writing-plans 自主流程
   - 5.0.0: Superpowers 融入 — 零占位符规则 + Self-Review
   - 4.1.0: Harness v2.0 适配 — harness_mode 下跳过自写 Task Card/DoD，读 sprint-contract.md
@@ -73,6 +74,25 @@ git commit --allow-empty -m "chore: [state] Stage 1 跳过 (harness)"
 ## 0.2 autonomous_mode = true 时（全自动：PRD → Plan，不问用户）
 
 使用 `superpowers:brainstorming` + `superpowers:writing-plans` 的行为纪律，但跳过所有用户确认步骤。
+
+### 0.2.0 优先读 enriched PRD（v6.1.0 新增）
+
+```bash
+# v6.1.0: 优先读 enriched PRD（由 Step 0.5 产出）
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+ENRICHED_PRD=".enriched-prd-${BRANCH_NAME}.md"
+RAW_PRD=".raw-prd-${BRANCH_NAME}.md"
+
+if [[ -f "$ENRICHED_PRD" ]]; then
+    PRD_SOURCE="$ENRICHED_PRD"
+    echo "使用 enriched PRD (Step 0.5 产出)"
+elif [[ -f "$RAW_PRD" ]]; then
+    PRD_SOURCE="$RAW_PRD"
+    echo "使用 raw PRD (未经 enrich)"
+fi
+```
+
+后续所有 PRD 读取使用 `${PRD_SOURCE}` 代替原 fetch 路径。
 
 ### 0.2.1 探索 + 影响分析
 

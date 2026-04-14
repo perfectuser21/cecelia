@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-14"
 
 changelog:
+  - version: "14.10.0"
+    date: "2026-04-14"
+    change: "feat"
+    description: "autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 — 粗 PRD 由 Enrich Subagent 多轮自反思丰满"
+    files:
+      - "packages/engine/skills/dev/steps/00.5-enrich.md"
+      - "packages/engine/skills/dev/scripts/enrich-decide.sh"
+      - "packages/engine/skills/dev/steps/01-spec.md"
+      - "packages/engine/skills/dev/SKILL.md"
+
   - version: "14.9.0"
     date: "2026-04-14"
     change: "feat"
