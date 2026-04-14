@@ -2394,6 +2394,78 @@ export async function selectBestAccountFromLocal(maxAccounts = 3) {
     .map(({ id, auth }) => ({ id, auth }));
 }
 
+/** Build prompt with decisions summary injection for Codex tasks. */
+async function buildCodexPromptContent(task) {
+  let promptContent = task.description || task.title || '请执行此任务';
+  try {
+    const decisionsSummary = await getDecisionsSummary();
+    if (decisionsSummary) {
+      promptContent = `${decisionsSummary}\n\n---\n\n${promptContent}`;
+    }
+  } catch (err) {
+    console.warn(`[executor] codex decisions 注入失败（不阻塞）: ${err.message}`);
+  }
+  return promptContent;
+}
+
+/** Generate branch name for codex_dev tasks (-cx suffix to distinguish from Claude Code branches). */
+function buildCodexTaskBranch(task, isCodexDev) {
+  if (task.payload?.branch) return task.payload.branch;
+  if (!isCodexDev) return undefined;
+  const dateStr = new Date().toISOString().replace(/[-T:]/g, '').slice(2, 12);
+  return `cp-${dateStr}-${task.id.slice(0, 8)}-cx`;
+}
+
+/** Build runner config for the bridge payload (codex_dev / crystallize / prompt modes). */
+function buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize) {
+  if (isCodexDev) {
+    return {
+      runner: 'packages/engine/runners/codex/runner.sh',
+      runner_args: ['--branch', taskBranch, '--task-id', task.id],
+    };
+  }
+  if (isCrystallize) {
+    return {
+      runner: 'packages/engine/runners/codex/playwright-runner.sh',
+      runner_args: ['--task-id', task.id],
+    };
+  }
+  return { runner: undefined, runner_args: undefined };
+}
+
+/** Assemble the full request body for the Codex Bridge /run endpoint. */
+function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize) {
+  const { runner, runner_args } = buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize);
+  return {
+    task_id: task.id,
+    checkpoint_id: null,
+    prompt: promptContent,
+    task_type: task.task_type,
+    work_dir: task.payload?.repo_path,
+    timeout_ms: 10 * 60 * 1000,
+    runner,
+    runner_args,
+    branch: taskBranch,
+    accounts: injectedAccounts.length > 0 ? injectedAccounts : undefined,
+  };
+}
+
+/** Select best accounts from US local Brain; falls back to empty (Xi'an selects locally). */
+async function selectCodexAccounts() {
+  try {
+    const accounts = await selectBestAccountFromLocal(3);
+    if (accounts.length > 0) {
+      console.log(`[executor] 账号注入: ${accounts.map(a => a.id).join(', ')}`);
+      return accounts;
+    }
+    console.warn('[executor] 账号注入失败（全部查询失败），降级到 Xi\'an 本地选账号');
+    return [];
+  } catch (err) {
+    console.warn(`[executor] 账号选择异常（降级）: ${err.message}`);
+    return [];
+  }
+}
+
 /**
  * Trigger 西安 Mac mini Codex Bridge for a task.
  * Routes codex_qa / codex_dev (and any task with provider=codex) to the Xian Codex CLI.
@@ -2406,106 +2478,37 @@ export async function selectBestAccountFromLocal(maxAccounts = 3) {
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
   const runId = generateRunId(task.id);
-
   try {
-    console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
-
-    // codex_dev 使用 runner 模式（完整 /dev 循环，via runner.sh + devloop-check.sh）
-    // crystallize_forge/verify 使用 playwright-runner.sh（CDP 自动化脚本探索）
-    // codex_qa 和其他类型使用 prompt 模式（单次 codex exec）
     const isCodexDev = task.task_type === 'codex_dev';
     const isCrystallize = task.task_type === 'crystallize_forge' || task.task_type === 'crystallize_verify';
 
-    // Build prompt from task description/title
-    let promptContent = task.description || task.title || '请执行此任务';
+    console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
 
-    // 注入 decisions 摘要到 Codex 任务
-    try {
-      const decisionsSummary = await getDecisionsSummary();
-      if (decisionsSummary) {
-        promptContent = `${decisionsSummary}\n\n---\n\n${promptContent}`;
-      }
-    } catch (err) {
-      console.warn(`[executor] codex decisions 注入失败（不阻塞）: ${err.message}`);
-    }
-
-    // codex_dev: 生成分支名（加 -cx suffix 区分 Claude Code 分支）
-    const branchSuffix = isCodexDev ? '-cx' : '';
-    const taskBranch = task.payload?.branch ||
-      (isCodexDev
-        ? `cp-${new Date().toISOString().replace(/[-T:]/g, '').slice(2, 12)}-${task.id.slice(0, 8)}${branchSuffix}`
-        : undefined);
-
-    // 从美国 M4 本地选最优账号，注入到 Xi'an bridge（降级时由 bridge 自行选本地账号）
-    let injectedAccounts = [];
-    try {
-      injectedAccounts = await selectBestAccountFromLocal(3);
-      if (injectedAccounts.length > 0) {
-        console.log(`[executor] 账号注入: ${injectedAccounts.map(a => a.id).join(', ')}`);
-      } else {
-        console.warn('[executor] 账号注入失败（全部查询失败），降级到 Xi\'an 本地选账号');
-      }
-    } catch (err) {
-      console.warn(`[executor] 账号选择异常（降级）: ${err.message}`);
-    }
+    const promptContent = await buildCodexPromptContent(task);
+    const taskBranch = buildCodexTaskBranch(task, isCodexDev);
+    const injectedAccounts = await selectCodexAccounts();
 
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
+    const payload = buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
     const response = await fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        task_id: task.id,
-        checkpoint_id: null,
-        prompt: promptContent,
-        task_type: task.task_type,
-        work_dir: task.payload?.repo_path,
-        timeout_ms: 10 * 60 * 1000, // 10 minutes for Codex
-        // runner 模式参数（codex_dev 专用 / crystallize_forge+verify 专用）
-        runner: isCodexDev
-          ? 'packages/engine/runners/codex/runner.sh'
-          : isCrystallize
-          ? 'packages/engine/runners/codex/playwright-runner.sh'
-          : undefined,
-        runner_args: isCodexDev
-          ? ['--branch', taskBranch, '--task-id', task.id]
-          : isCrystallize
-          ? ['--task-id', task.id]
-          : undefined,
-        branch: taskBranch,
-        // accounts: US Brain 注入的账号列表（Xi'an bridge 优先使用，否则降级本地选账号）
-        accounts: injectedAccounts.length > 0 ? injectedAccounts : undefined,
-      }),
-      signal: AbortSignal.timeout(15000), // 15s to accept the job
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
     });
 
     const result = await response.json();
 
     if (!result.ok) {
       console.log(`[executor] Codex Bridge rejected: ${result.error}`);
-      return {
-        success: false,
-        taskId: task.id,
-        error: result.error,
-        executor: 'codex-bridge',
-      };
+      return { success: false, taskId: task.id, error: result.error, executor: 'codex-bridge' };
     }
 
     console.log(`[executor] Codex Bridge accepted task=${task.id} account=${result.account}`);
-    return {
-      success: true,
-      taskId: task.id,
-      runId,
-      executor: 'codex-bridge',
-      account: result.account,
-    };
+    return { success: true, taskId: task.id, runId, executor: 'codex-bridge', account: result.account };
   } catch (err) {
     console.error(`[executor] Codex Bridge error: ${err.message}`);
-    return {
-      success: false,
-      taskId: task.id,
-      error: err.message,
-      executor: 'codex-bridge',
-    };
+    return { success: false, taskId: task.id, error: err.message, executor: 'codex-bridge' };
   }
 }
 
