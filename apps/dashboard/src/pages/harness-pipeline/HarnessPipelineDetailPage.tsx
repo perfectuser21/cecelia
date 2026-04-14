@@ -60,6 +60,20 @@ interface PipelineDetail {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
+// 完整 10 步 pipeline 阶段定义
+const PIPELINE_STAGE_LABELS: Record<string, string> = {
+  harness_planner: 'Planner',
+  harness_contract_propose: 'Propose',
+  harness_contract_review: 'Review',
+  harness_generate: 'Generate',
+  harness_evaluate: 'Evaluate',
+  harness_report: 'Report',
+  harness_auto_merge: 'Auto-merge',
+  harness_deploy: 'Deploy',
+  harness_smoke_test: 'Smoke-test',
+  harness_cleanup: 'Cleanup',
+};
+
 const STATUS_ICON: Record<string, string> = {
   completed: '\u2705',
   in_progress: '\uD83D\uDD04',
@@ -104,21 +118,48 @@ function formatTime(dateStr: string | null): string {
 
 // ─── Section: Stage Timeline ────────────────────────────────────────────────
 
+// 所有 10 步的完整顺序，用于补全 API 未返回的步骤（显示为 pending）
+const ALL_PIPELINE_STAGES = [
+  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
+  'harness_generate', 'harness_evaluate', 'harness_report',
+  'harness_auto_merge', 'harness_deploy', 'harness_smoke_test', 'harness_cleanup',
+];
+
 function StageTimeline({ stages }: { stages: DetailStage[] }) {
+  // 补全未在 API 返回中的步骤（显示为 pending/not_started）
+  const stageMap = new Map(stages.map(s => [s.task_type, s]));
+  const fullStages: DetailStage[] = ALL_PIPELINE_STAGES.map(type => (
+    stageMap.get(type) ?? {
+      task_type: type,
+      label: PIPELINE_STAGE_LABELS[type] ?? type,
+      status: 'not_started',
+      task_id: null,
+      title: null,
+      created_at: null,
+      started_at: null,
+      completed_at: null,
+      error_message: null,
+      pr_url: null,
+      result: null,
+      count: 0,
+    }
+  ));
+
   return (
     <div className="mb-6">
       <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
-        阶段时间线
+        阶段时间线（10 步）
       </h2>
-      <div className="flex items-center gap-1">
-        {stages.map((stage, i) => {
+      <div className="flex flex-wrap items-center gap-1">
+        {fullStages.map((stage, i) => {
           const s = stage.status in STATUS_ICON ? stage.status : 'not_started';
+          const label = PIPELINE_STAGE_LABELS[stage.task_type] ?? stage.label;
           return (
             <div key={stage.task_type} className="flex items-center">
-              <div className="flex flex-col items-center min-w-[80px]">
+              <div className="flex flex-col items-center min-w-[72px]">
                 <span className="text-lg">{STATUS_ICON[s] ?? '\u2014'}</span>
-                <span className={`text-xs font-medium mt-0.5 ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
-                  {stage.label}
+                <span className={`text-xs font-medium mt-0.5 text-center ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
+                  {label}
                 </span>
                 {stage.count > 1 && (
                   <span className="text-[10px] text-slate-400">\u00D7{stage.count}</span>
@@ -129,8 +170,8 @@ function StageTimeline({ stages }: { stages: DetailStage[] }) {
                   </span>
                 )}
               </div>
-              {i < stages.length - 1 && (
-                <div className="w-6 h-px bg-slate-300 dark:bg-slate-600 mx-1" />
+              {i < fullStages.length - 1 && (
+                <div className="w-4 h-px bg-slate-300 dark:bg-slate-600 mx-0.5" />
               )}
             </div>
           );

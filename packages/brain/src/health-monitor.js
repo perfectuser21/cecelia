@@ -110,10 +110,33 @@ async function runLayer2HealthCheck(pool) {
     .filter(([, v]) => !v.ok)
     .map(([k]) => k);
 
+  // Check 5: callback_queue_stats — unprocessed + failed_retries counts
+  let callback_queue_stats = { unprocessed: 0, failed_retries: 0 };
+  try {
+    const cqUnprocessed = await pool.query(`
+      SELECT COUNT(*) AS cnt
+      FROM callback_queue
+      WHERE processed_at IS NULL
+    `);
+    const cqFailed = await pool.query(`
+      SELECT COUNT(*) AS cnt
+      FROM callback_queue
+      WHERE retry_count >= 3
+        AND processed_at IS NULL
+    `);
+    callback_queue_stats = {
+      unprocessed: parseInt(cqUnprocessed.rows[0]?.cnt ?? 0, 10),
+      failed_retries: parseInt(cqFailed.rows[0]?.cnt ?? 0, 10),
+    };
+  } catch (err) {
+    console.error('[health-monitor] callback_queue_stats query failed (non-fatal):', err.message);
+  }
+
   const result = {
     level,
     checks,
     failing,
+    callback_queue_stats,
     summary: `Layer2Health: ${level} (${failing.length} issues: ${failing.join(', ') || 'none'})`,
     checked_at: new Date().toISOString(),
   };

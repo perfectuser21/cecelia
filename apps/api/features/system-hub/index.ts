@@ -159,6 +159,7 @@ const manifest: FeatureManifest = {
     HarnessPipelinePage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelinePage'),
     HarnessPipelineDetailPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage'),
     HarnessPipelineStepPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage'),
+    HarnessPipelineStatsPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineStatsPage'),
     CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),
     ViralAnalysisPage: () => import('../../../dashboard/src/pages/viral-analysis/ViralAnalysisPage'),
     OKRRoadmap: () => import('../../../dashboard/src/pages/roadmap/RoadmapPage'),
