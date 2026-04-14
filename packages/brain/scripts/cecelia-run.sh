@@ -245,6 +245,56 @@ send_webhook() {
     payload="{\"task_id\":\"$TASK_ID\",\"checkpoint_id\":\"$CHECKPOINT_ID\",\"run_id\":\"$CHECKPOINT_ID\",\"status\":\"$status\",\"coding_type\":\"cecelia\",\"duration_ms\":$duration,\"attempt\":$attempt,\"exit_code\":$exit_code_val}"
   fi
 
+  # ── DB 直写优先（psql INSERT INTO callback_queue）────────────────────────────
+  # connect_timeout=5 防止 DB 不可达时挂起；失败后降级到 HTTP POST fallback
+  if command -v psql >/dev/null 2>&1; then
+    local _db_result_json="null"
+    if [[ -f "$result_file" ]] && jq -e . "$result_file" >/dev/null 2>&1; then
+      _db_result_json=$(cat "$result_file")
+    fi
+
+    local _db_stderr_tail=""
+    if [[ -f "$error_file" ]]; then
+      _db_stderr_tail=$(tail -c 2000 "$error_file" 2>/dev/null || true)
+    fi
+
+    local _db_fc_sql="NULL"
+    if [[ "$status" == "AI Failed" && -n "$failure_class" ]]; then
+      _db_fc_sql="'$(printf '%s' "$failure_class" | sed "s/'/''/g")'"
+    fi
+
+    # 写临时 SQL 文件，用 PostgreSQL dollar-quoting 处理 JSON 和 stderr（避免单引号问题）
+    local _db_sql_tmp
+    _db_sql_tmp=$(mktemp /tmp/cecelia-cb-XXXXXXXXXX.sql)
+    cat > "$_db_sql_tmp" <<SQLEOF
+INSERT INTO callback_queue (task_id, checkpoint_id, run_id, status, result_json, stderr_tail, duration_ms, attempt, exit_code, failure_class)
+VALUES (
+  '$(printf '%s' "$TASK_ID" | sed "s/'/''/g")'::uuid,
+  '$(printf '%s' "$CHECKPOINT_ID" | sed "s/'/''/g")',
+  '$(printf '%s' "$CHECKPOINT_ID" | sed "s/'/''/g")',
+  '$(printf '%s' "$status" | sed "s/'/''/g")',
+  \$_cbjson\$${_db_result_json}\$_cbjson\$::jsonb,
+  \$_cbstderr\$${_db_stderr_tail}\$_cbstderr\$,
+  ${duration},
+  ${attempt},
+  ${exit_code_val},
+  ${_db_fc_sql}
+);
+SQLEOF
+
+    PGCONNECT_TIMEOUT=5 psql cecelia -f "$_db_sql_tmp" >/dev/null 2>&1
+    local _db_psql_exit=$?
+    rm -f "$_db_sql_tmp"
+
+    if [[ $_db_psql_exit -eq 0 ]]; then
+      echo "[cecelia-run] callback DB 直写成功 (task=$TASK_ID)" >&2
+      return 0
+    fi
+
+    echo "[cecelia-run] DB 直写失败 (psql exit=$_db_psql_exit)，降级到 HTTP fallback (WEBHOOK_URL=$WEBHOOK_URL)" >&2
+  fi
+
+  # ── HTTP POST fallback（原有 curl 逻辑）────────────────────────────────────
   # 重试逻辑：最多 3 次，指数退避（sleep 2 / sleep 4 / sleep 8）
   local max_retries=3
   local retry=0
@@ -252,19 +302,17 @@ send_webhook() {
 
   while [[ $retry -lt $max_retries ]]; do
     if [[ -n "$WEBHOOK_TOKEN" ]]; then
-      curl -sS -X POST \
+      curl -sS "$WEBHOOK_URL" -X POST \
         -H "Content-Type: application/json" \
         -H "X-Cecilia-Token: $WEBHOOK_TOKEN" \
         -d "$payload" \
-        --max-time 10 \
-        "$WEBHOOK_URL" >/dev/null 2>&1
+        --max-time 10 >/dev/null 2>&1
       curl_exit=$?
     else
-      curl -sS -X POST \
+      curl -sS "$WEBHOOK_URL" -X POST \
         -H "Content-Type: application/json" \
         -d "$payload" \
-        --max-time 10 \
-        "$WEBHOOK_URL" >/dev/null 2>&1
+        --max-time 10 >/dev/null 2>&1
       curl_exit=$?
     fi
 
