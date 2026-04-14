@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.4.0
+# Stop Hook: Claude Code 协议适配器 v16.5.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.4.0 — 跨 session orphan 隔离（按 session_id 区分）+ 文件隔离
+# 版本: v16.5.0 — worktree 消失时自动清理孤儿 dev-mode/dev-lock
 
 set -euo pipefail
 
@@ -94,6 +94,7 @@ done < <(_collect_search_dirs "$PROJECT_ROOT")
 
 # fail-closed：无 dev-lock 时扫描所有 worktree，发现未完成的 dev-mode 则阻止退出
 # v16.4.0: 按 session_id 隔离 — 跨 session 的 orphan 只 warning，不 block 当前 session
+# v16.5.0: worktree 消失时自动清理孤儿 dev-mode/dev-lock（不 block）
 if [[ -z "$DEV_LOCK_FILE" ]]; then
     _orphan_branch=""
     _current_sid="${CLAUDE_SESSION_ID:-}"
@@ -104,6 +105,21 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
             grep -q "cleanup_done: true" "$_dmf" 2>/dev/null && continue
             grep -qE "^step_(2|3|4).*pending" "$_dmf" 2>/dev/null || continue
             _ob=$(grep "^branch:" "$_dmf" 2>/dev/null | awk '{print $2}' || echo "unknown")
+
+            # v16.5.0: worktree 消失自动清理
+            # 若该分支在 git worktree list 中已不存在 → 孤儿，自动清理
+            _branch_has_worktree=false
+            while IFS= read -r _wtl; do
+                if [[ "$_wtl" == "branch refs/heads/${_ob}" ]]; then
+                    _branch_has_worktree=true
+                    break
+                fi
+            done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
+            if [[ "$_branch_has_worktree" == "false" ]]; then
+                echo "[Stop Hook] worktree gone, auto-cleanup orphan (branch=${_ob}): ${_dmf}" >&2
+                rm -f "$_dmf" "$_dir/.dev-lock.${_ob}" 2>/dev/null || true
+                continue
+            fi
 
             # 读取对应 dev-lock 的 session_id（若存在）
             _lockf="$_dir/.dev-lock.${_ob}"
