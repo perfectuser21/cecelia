@@ -2,12 +2,14 @@
 # kr3-setup-wx-pay.sh — ZenithJoy KR3 微信支付商户号配置引导
 #
 # 用法:
-#   bash scripts/kr3-setup-wx-pay.sh              # 交互引导模式
+#   bash scripts/kr3-setup-wx-pay.sh              # 检查配置状态（默认）
 #   bash scripts/kr3-setup-wx-pay.sh --check-only # 仅检查现有配置状态
+#   bash scripts/kr3-setup-wx-pay.sh --convert-key # 自动转换 PKCS#1→PKCS#8 私钥并写入 Brain DB
 #   bash scripts/kr3-setup-wx-pay.sh --mark-done  # 已在微信云控制台配置完成，标记为就绪
 #
 # 说明:
 #   WX_PAY_* 环境变量需在微信云开发控制台手动配置（Brain 无法直接注入）。
+#   --convert-key: 将现有 PKCS#1 私钥转换为 PKCS#8，存到 ~/.credentials/apiclient_key.pem
 #   配置完成后运行本脚本 --mark-done 将状态写入 Brain DB，解除 KR3 进度阻断。
 #
 # 所需凭据来源:
@@ -114,18 +116,26 @@ check_config_status() {
 
   # 检查本地私钥
   echo ""
-  if [[ -f "$PRIVATE_KEY_FILE" ]]; then
-    pass "本地私钥已存在: $PRIVATE_KEY_FILE"
+  local pkcs8_file="$CREDS_DIR/apiclient_key.pem"
+  if [[ -f "$pkcs8_file" ]]; then
+    local pkcs8_type
+    pkcs8_type=$(head -1 "$pkcs8_file" 2>/dev/null || echo "")
+    if [[ "$pkcs8_type" == *"PRIVATE KEY"* && "$pkcs8_type" != *"RSA PRIVATE KEY"* ]]; then
+      pass "PKCS#8 私钥已就绪: $pkcs8_file"
+    else
+      warn "$pkcs8_file 存在但格式异常，请运行 --convert-key 重新转换"
+    fi
+  elif [[ -f "$PRIVATE_KEY_FILE" ]]; then
     local key_type
     key_type=$(head -1 "$PRIVATE_KEY_FILE" 2>/dev/null || echo "unknown")
     if [[ "$key_type" == *"RSA PRIVATE KEY"* ]]; then
       warn "私钥格式为 PKCS#1 (RSA)，微信支付要求 PKCS#8 格式"
-      info "转换命令: openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt -in $PRIVATE_KEY_FILE -out $CREDS_DIR/apiclient_key.pem"
+      info "运行: bash scripts/kr3-setup-wx-pay.sh --convert-key 自动转换"
     elif [[ "$key_type" == *"PRIVATE KEY"* ]]; then
       pass "私钥格式正确 (PKCS#8)"
     fi
   else
-    warn "未找到本地私钥 $PRIVATE_KEY_FILE"
+    warn "未找到本地私钥 $PRIVATE_KEY_FILE 或 $pkcs8_file"
     info "请从微信商户平台 → API安全 下载 apiclient_key.pem"
   fi
 
@@ -143,6 +153,75 @@ check_config_status() {
     if [[ -f "$WECHAT_PAY_TEMPLATE" ]]; then
       info "使用模板创建: cp $WECHAT_PAY_TEMPLATE $WECHAT_PAY_ENV 并填写凭据"
     fi
+  fi
+}
+
+# ─── 转换私钥 PKCS#1→PKCS#8 ────────────────────────────────────────────────
+
+convert_key() {
+  title "私钥格式转换 (PKCS#1 → PKCS#8)"
+
+  local pkcs8_file="$CREDS_DIR/apiclient_key.pem"
+
+  # 检查 openssl 是否可用
+  if ! command -v openssl &>/dev/null; then
+    fail "openssl 未安装，请先安装 openssl"
+    return 1
+  fi
+
+  # 检查源私钥文件
+  if [[ ! -f "$PRIVATE_KEY_FILE" ]]; then
+    fail "未找到私钥文件: $PRIVATE_KEY_FILE"
+    info "请先从微信商户平台 → API安全 下载私钥，存放到 $PRIVATE_KEY_FILE"
+    return 1
+  fi
+
+  local key_type
+  key_type=$(head -1 "$PRIVATE_KEY_FILE" 2>/dev/null || echo "unknown")
+
+  if [[ "$key_type" == *"PRIVATE KEY"* && "$key_type" != *"RSA PRIVATE KEY"* ]]; then
+    pass "私钥已是 PKCS#8 格式 ($pkcs8_file 无需转换)"
+    # 若 pkcs8 文件不存在，直接复制
+    if [[ ! -f "$pkcs8_file" ]]; then
+      cp "$PRIVATE_KEY_FILE" "$pkcs8_file"
+      chmod 600 "$pkcs8_file"
+      pass "已复制到 $pkcs8_file"
+    fi
+  elif [[ "$key_type" == *"RSA PRIVATE KEY"* ]]; then
+    info "检测到 PKCS#1 格式，开始转换..."
+    if openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt \
+         -in "$PRIVATE_KEY_FILE" -out "$pkcs8_file" 2>/dev/null; then
+      chmod 600 "$pkcs8_file"
+      pass "私钥已转换为 PKCS#8 格式: $pkcs8_file"
+    else
+      fail "私钥转换失败，请检查源文件格式"
+      return 1
+    fi
+  else
+    fail "无法识别私钥格式: $key_type"
+    return 1
+  fi
+
+  # 验证转换结果
+  local converted_type
+  converted_type=$(head -1 "$pkcs8_file" 2>/dev/null || echo "")
+  if [[ "$converted_type" != *"PRIVATE KEY"* ]]; then
+    fail "转换结果验证失败，$pkcs8_file 格式异常"
+    return 1
+  fi
+
+  echo ""
+  pass "PKCS#8 私钥已就绪: $pkcs8_file"
+  info "WX_PAY_PRIVATE_KEY 值（去掉首尾行，多行合一）:"
+  info "  grep -v 'PRIVATE KEY' $pkcs8_file | tr -d '\\n'"
+
+  # 写入 Brain DB 标记私钥已就绪
+  info "写入 Brain DB: kr3_private_key_ready"
+  local note="apiclient_key.pem (PKCS#8) 已转换并存放到 ~/.credentials/"
+  if mark_via_psql "kr3_private_key_ready" "$note"; then
+    pass "Brain DB 已标记: kr3_private_key_ready ✅"
+  else
+    warn "Brain DB 写入失败，请检查 PostgreSQL 连接（不影响私钥转换结果）"
   fi
 }
 
@@ -204,6 +283,9 @@ main() {
     --check-only)
       check_config_status
       ;;
+    --convert-key)
+      convert_key
+      ;;
     --mark-done)
       check_config_status
       echo ""
@@ -214,14 +296,16 @@ main() {
       echo "用法:"
       echo "  bash scripts/kr3-setup-wx-pay.sh              # 检查配置状态"
       echo "  bash scripts/kr3-setup-wx-pay.sh --check-only # 仅检查（默认）"
+      echo "  bash scripts/kr3-setup-wx-pay.sh --convert-key # 转换 PKCS#1→PKCS#8 私钥"
       echo "  bash scripts/kr3-setup-wx-pay.sh --mark-done  # 标记 WX Pay 已配置"
       echo ""
       echo "配置流程:"
-      echo "  1. 登录微信商户平台 https://pay.weixin.qq.com"
-      echo "  2. 获取商户号 (MCHID) 和 API 证书"
-      echo "  3. 在微信云开发控制台为 createPaymentOrder 配置 5 个环境变量"
-      echo "  4. 运行本脚本 --mark-done 写入 Brain DB"
-      echo "  5. 进行沙盒支付联调"
+      echo "  1. 运行 --convert-key 转换私钥格式（PKCS#1→PKCS#8）"
+      echo "  2. 登录微信商户平台 https://pay.weixin.qq.com"
+      echo "  3. 获取商户号 (MCHID) 和 APIv3 密钥 + 证书序列号"
+      echo "  4. 在微信云开发控制台为 createPaymentOrder 配置 5 个环境变量"
+      echo "  5. 运行本脚本 --mark-done 写入 Brain DB"
+      echo "  6. 进行沙盒支付联调"
       ;;
     *)
       echo "未知参数: $mode"
