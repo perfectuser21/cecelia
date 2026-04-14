@@ -28,10 +28,10 @@ describe('quickcheck.sh — 并发互斥锁', () => {
       // fallback: 找 flock 相关
       const flockMatch = realContent.match(/^([\s\S]*?exec 200[\s\S]*?(?:exit 0|fi))/m);
       writeFileSync(fakeScript, (flockMatch ? flockMatch[1] : realContent.slice(0, 2000)) +
-        '\necho "[test] working..." >&2\nsleep 6\ntouch "${REPO_ROOT:-$(pwd)}/ran.$$"\nexit 0\n');
+        '\necho "[test] working..." >&2\nsleep 3\ntouch "${REPO_ROOT:-$(pwd)}/ran.$$"\nexit 0\n');
     } else {
       writeFileSync(fakeScript, lockBlockMatch[1] +
-        '\necho "[test] working..." >&2\nsleep 6\ntouch "${REPO_ROOT:-$(pwd)}/ran.$$"\nexit 0\n');
+        '\necho "[test] working..." >&2\nsleep 3\ntouch "${REPO_ROOT:-$(pwd)}/ran.$$"\nexit 0\n');
     }
     execSync(`chmod +x "${fakeScript}"`);
   });
