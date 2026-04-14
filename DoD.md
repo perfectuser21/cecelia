@@ -2,13 +2,13 @@ contract_branch: cp-harness-contract-1be39496
 workstream_index: 2
 sprint_dir: sprints/callback-queue-persistence
 
-- [ ] [ARTIFACT] 共享处理函数模块 callback-worker.js 存在
+- [x] [ARTIFACT] 共享处理函数模块 callback-worker.js 存在
   Test: node -e "require('fs').accessSync('packages/brain/src/callback-worker.js');console.log('OK')"
-- [ ] [BEHAVIOR] Worker 每 2 秒轮询 callback_queue，处理未处理记录并标记 processed_at，task 状态正确更新
+- [x] [BEHAVIOR] Worker 每 2 秒轮询 callback_queue，处理未处理记录并标记 processed_at，task 状态正确更新
   Test: manual:psql cecelia -c "INSERT INTO tasks(id,title,status,task_type) VALUES('00000000-0000-0000-0000-ws2test0001','ws2-test','in_progress','dev') ON CONFLICT(id) DO UPDATE SET status='in_progress',result=NULL" && curl -sf -X POST localhost:5221/api/brain/execution-callback -H 'Content-Type:application/json' -d '{"task_id":"00000000-0000-0000-0000-ws2test0001","run_id":"ws2-test-run","status":"AI Done","result":{"r":"ok"},"duration_ms":1,"attempt":1}' && sleep 4 && psql cecelia -t -c "SELECT count(*) FROM callback_queue WHERE run_id='ws2-test-run' AND processed_at IS NOT NULL" | node -e "if(parseInt(require('fs').readFileSync('/dev/stdin','utf8').trim())<1){process.exit(1)}console.log('PASS')"
-- [ ] [BEHAVIOR] HTTP 端点写入 callback_queue 后立即返回 200+success:true，响应 <500ms
+- [x] [BEHAVIOR] HTTP 端点写入 callback_queue 后立即返回 200+success:true，响应 <500ms
   Test: manual:node -e "const t=Date.now();const h=require('http');const d=JSON.stringify({task_id:'00000000-0000-0000-0000-ws2test0002',run_id:'latency-test',status:'AI Done',duration_ms:1,attempt:1});const r=h.request({hostname:'localhost',port:5221,path:'/api/brain/execution-callback',method:'POST',headers:{'Content-Type':'application/json','Content-Length':d.length}},res=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>{const e=Date.now()-t;const j=JSON.parse(b);if(res.statusCode===200&&j.success===true&&e<500){console.log('PASS:'+e+'ms')}else{console.error('FAIL:status='+res.statusCode+' success='+j.success+' elapsed='+e);process.exit(1)}})});r.write(d);r.end()"
-- [ ] [BEHAVIOR] 幂等性：同一 task 的两条 callback 均被 worker 处理，但 task result 不被第二次覆盖
+- [x] [BEHAVIOR] 幂等性：同一 task 的两条 callback 均被 worker 处理，但 task result 不被第二次覆盖
   Test: manual:psql cecelia -c "INSERT INTO tasks(id,title,status,task_type) VALUES('00000000-0000-0000-0000-ws2idemp01','idemp-test','in_progress','dev') ON CONFLICT(id) DO UPDATE SET status='in_progress',result=NULL" && psql cecelia -c "INSERT INTO callback_queue(task_id,run_id,status,result_json,duration_ms,attempt) VALUES('00000000-0000-0000-0000-ws2idemp01','idemp-r1','AI Done','{\"result\":\"first\"}'::jsonb,1,1);INSERT INTO callback_queue(task_id,run_id,status,result_json,duration_ms,attempt) VALUES('00000000-0000-0000-0000-ws2idemp01','idemp-r1','AI Done','{\"result\":\"second\"}'::jsonb,1,1)" && sleep 5 && psql cecelia -t -c "SELECT result->>'result' FROM tasks WHERE id='00000000-0000-0000-0000-ws2idemp01'" | node -e "const v=require('fs').readFileSync('/dev/stdin','utf8').trim();if(v==='second'){console.error('FAIL:result被覆盖');process.exit(1)}console.log('PASS:result='+v)"
-- [ ] [BEHAVIOR] Worker 和路由共享同一处理函数
+- [x] [BEHAVIOR] Worker 和路由共享同一处理函数
   Test: node -e "const fs=require('fs');const f=s=>s.split('\n').filter(l=>!l.trim().startsWith('//')).join('\n');const w=f(fs.readFileSync('packages/brain/src/callback-worker.js','utf8'));const r=f(fs.readFileSync('packages/brain/src/routes/execution.js','utf8'));const fns=['processExecutionCallback','handleExecutionCallback','processCallback'];if(!fns.some(n=>w.includes(n)&&r.includes(n))){console.error('FAIL');process.exit(1)}console.log('PASS')"
