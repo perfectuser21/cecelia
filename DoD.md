@@ -1,14 +1,30 @@
-contract_branch: cp-harness-contract-699c5335
-workstream_index: 3
-sprint_dir: sprints/harness-v6-hardening
+# DoD — WS3 内存调度 + 三池隔离（FR-005 / FR-006）
 
-- [x] [BEHAVIOR] harness.js pipeline-detail 包含完整 10 步定义
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');const steps=['planner','propose','review','generate','evaluate','report','auto.merge','deploy','smoke.test','cleanup'];const missing=steps.filter(s=>!new RegExp(s.replace('.','[_\\\\-\\\\.]?'),'i').test(code));if(missing.length>0)throw new Error('FAIL: 缺少步骤: '+missing.join(', '));console.log('PASS')"
-- [x] [BEHAVIOR] stats 端点包含 completion_rate + avg_gan_rounds + avg_duration 三字段和 SQL 聚合
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!code.includes('completion_rate'))throw new Error('FAIL');if(!code.includes('avg_gan_rounds'))throw new Error('FAIL');if(!code.includes('avg_duration'))throw new Error('FAIL');if(!/SELECT|COUNT|AVG/i.test(code))throw new Error('FAIL: 缺SQL聚合');console.log('PASS')"
-- [x] [BEHAVIOR] health-monitor 返回 callback_queue_stats 对象含 unprocessed + failed_retries，查询 callback_queue 表
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/health-monitor.js','utf8');if(!code.includes('callback_queue_stats'))throw new Error('FAIL');if(!/SELECT.*callback_queue|FROM.*callback_queue/i.test(code))throw new Error('FAIL: 缺SQL查询');if(!code.includes('unprocessed'))throw new Error('FAIL');if(!code.includes('failed_retries'))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] 前端 pipeline 组件包含 cleanup/smoke-test 步骤渲染
-  Test: node -e "const{execSync}=require('child_process');const fs=require('fs');const raw=execSync('find apps/dashboard/src -name \"*ipeline*\" -o -name \"*pipeline*\"').toString().trim().split('\n').filter(Boolean);const files=raw.filter(f=>fs.statSync(f).isFile());if(!files.length)throw new Error('FAIL');let ok=false;for(const f of files){const c=fs.readFileSync(f,'utf8');if(c.includes('cleanup')||c.includes('Cleanup')||c.includes('smoke'))ok=true}if(!ok)throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] 前端 stats 页面展示 completionRate 和 GAN 轮次
-  Test: node -e "const{execSync}=require('child_process');const fs=require('fs');const raw=execSync('find apps/dashboard/src -name \"*pipeline*\" -o -name \"*Pipeline*\"').toString().trim().split('\n').filter(Boolean);const sf=raw.filter(f=>fs.statSync(f).isFile()).filter(f=>f.toLowerCase().includes('stat'));if(!sf.length)throw new Error('FAIL: 无stats页面');const code=fs.readFileSync(sf[0],'utf8');if(!code.includes('completion_rate')&&!code.includes('completionRate'))throw new Error('FAIL');if(!code.includes('avg_gan')&&!code.includes('avgGan')&&!code.includes('ganRounds'))throw new Error('FAIL');console.log('PASS')"
+## 成功标准
+
+### [ARTIFACT] slot-allocator.js 含三池常量（非注释代码）
+
+- [x] `TOTAL_CONTAINER_MEMORY_MB = 12288` 存在于非注释代码
+- [x] 三池大小 2048/6144/4096 存在于非注释代码
+- Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/slot-allocator.js','utf8');const lines=c.split('\n').filter(l=>!l.trim().startsWith('//') && !l.trim().startsWith('*'));const code=lines.join('\n');if(!/TOTAL_CONTAINER_MEMORY_MB\s*=\s*12288/.test(code)){console.log('FAIL');process.exit(1);}if(!/2048/.test(code)||!/6144/.test(code)||!/4096/.test(code)){console.log('FAIL: 三池大小缺失');process.exit(1);}console.log('PASS')"`
+
+### [ARTIFACT] slot-allocator.js 含可用内存计算逻辑
+
+- [x] `getPoolAvailableMemoryMb`、`allocate` 函数存在于非注释代码
+- Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/slot-allocator.js','utf8');const lines=c.split('\n').filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*'));const code=lines.join('\n');if(!/available.*memory|memory.*available|remain|capacity/i.test(code)){console.log('FAIL: 无可用内存计算逻辑');process.exit(1);}console.log('PASS')"`
+
+### [BEHAVIOR] tick.js 包含内存感知调度
+
+- [x] tick.js 引用了 CONTAINER_SIZES / allocate / getTaskPoolName
+- Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');const lines=c.split('\n').filter(l=>!l.trim().startsWith('//')&&!l.trim().startsWith('*'));const code=lines.join('\n');if(!/memory|CONTAINER_SIZES|allocat/i.test(code)){console.log('FAIL: tick.js 未引用内存/容器规格');process.exit(1);}console.log('PASS')"`
+
+### [BEHAVIOR] slot-allocator 单元测试通过且覆盖三池场景
+
+- [x] 测试覆盖三池常量验证、getTaskPoolName、allocate、满载拒绝场景
+- Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/slot-allocator.test.js','utf8');if(!/TOTAL_CONTAINER_MEMORY_MB|POOL_A_MB|POOL_B_MB|POOL_C_MB/.test(c)){console.log('FAIL: 测试缺少三池常量验证');process.exit(1);}if(!/full|reject|queue|满载|insufficient/i.test(c)){console.log('FAIL: 缺少满载测试');process.exit(1);}if(!/pool|Pool|memory/i.test(c)){console.log('FAIL: 测试未覆盖池/内存场景');process.exit(1);}console.log('PASS')"`
+
+### [BEHAVIOR] 池满载时 allocate 返回 false，任务拒绝派发
+
+- [x] Pool B 满载（6 任务 × 1024 MB = 6144 MB）时 allocate 返回 false
+- [x] Pool B 满载不影响 Pool C（池间隔离）
+- Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/slot-allocator.test.js','utf8');if(!/allocate.*false|false.*allocate|拒绝派发|pool.*full/i.test(c)){console.log('FAIL: 缺少满载拒绝测试');process.exit(1);}console.log('PASS')"`

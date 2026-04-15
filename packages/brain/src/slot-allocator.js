@@ -48,6 +48,108 @@ const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动
 const MEMORY_PRESSURE_THRESHOLD_MB = 600;   // 系统可用内存低于此值时触发背压，防止 dev 任务叠加 vitest OOM
 
 // ============================================================
+// Three-Pool Container Memory Model (FR-005 / FR-006)
+// Replaces flat slot-count model with memory-based pool isolation.
+// Total: 12 GB split into three independent pools — no cross-pool borrowing.
+// ============================================================
+
+const TOTAL_CONTAINER_MEMORY_MB = 12288;  // 12 GB total allocatable container budget
+
+// Three independent pools — resources do NOT borrow across pools
+const POOL_A_MB = 2048;  // Pool A: 前台任务（frontend / user-facing tasks）
+const POOL_B_MB = 6144;  // Pool B: Harness pipeline 任务（heavy execution）
+const POOL_C_MB = 4096;  // Pool C: 其他自动派发任务（general auto-dispatch）
+
+// Container memory footprint per task weight class (mirrors WS2 CONTAINER_SIZES in executor.js)
+const CONTAINER_SIZES = {
+  light:  256,   // lightweight tasks (script runs, simple checks)
+  normal: 512,   // standard claude dev/codex tasks
+  heavy:  1024,  // harness / long-running pipeline tasks
+};
+
+/**
+ * Map task_type → pool name ('A' | 'B' | 'C')
+ * Pool A: user-headed sessions (not managed via task_type)
+ * Pool B: harness pipeline tasks
+ * Pool C: all other auto-dispatched tasks
+ */
+function getTaskPoolName(taskType) {
+  if (!taskType) return 'C';
+  if (/^harness/.test(taskType)) return 'B';
+  return 'C';
+}
+
+/**
+ * Map task_type → container size in MB
+ */
+function getContainerSizeMb(taskType) {
+  if (/^harness/.test(taskType)) return CONTAINER_SIZES.heavy;
+  if (/^codex|crystallize/.test(taskType)) return CONTAINER_SIZES.normal;
+  return CONTAINER_SIZES.normal;
+}
+
+/**
+ * Query DB: sum of container memory already allocated in a given pool.
+ * Approximates by counting in_progress tasks × container size per pool.
+ * Throws on DB error — callers must handle.
+ */
+async function getAllocatedContainerMemoryMb(poolName) {
+  if (poolName === 'A') {
+    // Pool A tracks user-headed sessions — not managed via DB task_type
+    return 0;
+  }
+  let query;
+  if (poolName === 'B') {
+    query = `
+      SELECT COUNT(*) FROM tasks
+      WHERE status = 'in_progress'
+      AND task_type LIKE 'harness%'
+    `;
+  } else {
+    // Pool C: everything that is not harness (and not user-headed internal tasks)
+    query = `
+      SELECT COUNT(*) FROM tasks
+      WHERE status = 'in_progress'
+      AND task_type NOT LIKE 'harness%'
+      AND (payload->>'decomposition' IS NULL
+           AND (payload->>'requires_cortex' IS NULL OR payload->>'requires_cortex' != 'true'))
+    `;
+  }
+  const result = await pool.query(query);
+  const count = parseInt(result.rows[0].count, 10);
+  const sizeMb = poolName === 'B' ? CONTAINER_SIZES.heavy : CONTAINER_SIZES.normal;
+  return count * sizeMb;
+}
+
+/**
+ * Calculate remaining available memory in a pool.
+ * Returns 0 on DB error (conservative: assume pool is full when uncertain).
+ */
+async function getPoolAvailableMemoryMb(poolName) {
+  const totalMb = { A: POOL_A_MB, B: POOL_B_MB, C: POOL_C_MB }[poolName] || 0;
+  try {
+    const allocatedMb = await getAllocatedContainerMemoryMb(poolName);
+    return Math.max(0, totalMb - allocatedMb);
+  } catch {
+    return 0;  // conservative: treat as full when DB unavailable
+  }
+}
+
+/**
+ * Check if pool has sufficient remaining capacity for a new task.
+ * Returns true if dispatch is allowed, false if task should queue.
+ * Pool isolation: a full Pool B does not affect Pool C and vice versa.
+ *
+ * @param {string} poolName - 'A' | 'B' | 'C'
+ * @param {number} containerSizeMb - required container memory in MB
+ * @returns {Promise<boolean>}
+ */
+async function allocate(poolName, containerSizeMb = CONTAINER_SIZES.normal) {
+  const availableMemory = await getPoolAvailableMemoryMb(poolName);
+  return availableMemory >= containerSizeMb;
+}
+
+// ============================================================
 // Process Detection
 // ============================================================
 
@@ -468,6 +570,18 @@ export {
   SLOT_BUFFER_MAX_DELTA,
   SLOT_BUFFER_DOWN,
   SLOT_BUFFER_UP,
+  // Three-pool container memory model (FR-005 / FR-006)
+  TOTAL_CONTAINER_MEMORY_MB,
+  POOL_A_MB,
+  POOL_B_MB,
+  POOL_C_MB,
+  CONTAINER_SIZES,
+  getTaskPoolName,
+  getContainerSizeMb,
+  getAllocatedContainerMemoryMb,
+  getPoolAvailableMemoryMb,
+  allocate,
+  // Session detection
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,
