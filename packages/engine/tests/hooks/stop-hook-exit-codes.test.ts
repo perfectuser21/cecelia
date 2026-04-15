@@ -213,6 +213,82 @@ describe("hooks/stop-dev.sh exit codes", () => {
     });
   });
 
+  describe("cross-session orphan isolation (asymmetric fix)", () => {
+    // 用独立 worktree 让 lock_branch != cur_branch，避免 _session_matches 的 branch fallback
+    // 错误匹配；同时让孤儿 branch 在 worktree list 中存在，绕过 worktree-gone 自动清理。
+    function setupPeerWorktree(
+      peerBranch: string,
+      peerSid: string
+    ): { wtDir: string } {
+      const wtDir = mkdtempSync(join(tmpdir(), "stop-hook-peer-"));
+      // 删掉空目录，让 worktree add 用它（add 要求路径不存在）
+      execSync(`rm -rf "${wtDir}"`);
+      execSync(`cd "${tempDir}" && git worktree add "${wtDir}" -b "${peerBranch}" -q`);
+      writeFileSync(
+        join(wtDir, `.dev-lock.${peerBranch}`),
+        `dev\nbranch: ${peerBranch}\nsession_id: ${peerSid}\ntty: not a tty\n`
+      );
+      writeFileSync(
+        join(wtDir, `.dev-mode.${peerBranch}`),
+        `dev\nbranch: ${peerBranch}\nsession_id: ${peerSid}\nstep_2_code: pending\nstep_3_integrate: pending\nstep_4_ship: pending\n`
+      );
+      return { wtDir };
+    }
+
+    it("should return exit 0 when current_sid empty but orphan dev-lock has session_id (headless/nested Claude Code)", () => {
+      // 场景：headless/nested Claude Code 主 session 无 CLAUDE_SESSION_ID
+      // 另一个 session 在独立 worktree 里写了含 session_id 的 dev-lock/dev-mode
+      // 修复前：current_sid 空导致 cross-session 判断失败 → 误 block
+      // 修复后：orphan_sid 明确有值 → 属于别人 → skip → exit 0
+      const peerBranch = "test-peer-branch-headless";
+      setupPeerWorktree(peerBranch, "other-session-uuid-1234");
+
+      const result = execSync(
+        `cd "${tempDir}" && unset CLAUDE_SESSION_ID && bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null; echo "EXIT:$?"`,
+        { encoding: "utf-8" }
+      );
+      expect(result).toContain("EXIT:0");
+      expect(result).toContain("cross-session orphan skipped");
+    });
+
+    it("should return exit 0 when current_sid set but orphan session_id differs (regression protection)", () => {
+      // 场景：两个 session 都有自己的 sid，值不同 → 明确是别人的 orphan
+      const peerBranch = "test-peer-branch-diff-sid";
+      setupPeerWorktree(peerBranch, "peer-session-uuid-5678");
+
+      const result = execSync(
+        `cd "${tempDir}" && CLAUDE_SESSION_ID=my-session-uuid-9999 bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null; echo "EXIT:$?"`,
+        { encoding: "utf-8" }
+      );
+      expect(result).toContain("EXIT:0");
+      expect(result).toContain("cross-session orphan skipped");
+    });
+
+    it("should still block (exit 2) when both current_sid and orphan_sid are empty (no owner info)", () => {
+      // 场景：两边都没 sid → 无主 orphan → 保守 block（保留旧行为）
+      // 用独立 worktree 避开 branch fallback；dev-lock 不含 session_id
+      const peerBranch = "test-peer-branch-anon";
+      const wtDir = mkdtempSync(join(tmpdir(), "stop-hook-anon-"));
+      execSync(`rm -rf "${wtDir}"`);
+      execSync(`cd "${tempDir}" && git worktree add "${wtDir}" -b "${peerBranch}" -q`);
+      // dev-lock 不含 session_id 字段
+      writeFileSync(
+        join(wtDir, `.dev-lock.${peerBranch}`),
+        `dev\nbranch: ${peerBranch}\ntty: not a tty\n`
+      );
+      writeFileSync(
+        join(wtDir, `.dev-mode.${peerBranch}`),
+        `dev\nbranch: ${peerBranch}\nstep_2_code: pending\nstep_3_integrate: pending\n`
+      );
+      const result = execSync(
+        `cd "${tempDir}" && unset CLAUDE_SESSION_ID && bash "${STOP_DEV_HOOK}" < /dev/null || echo "exit:$?"`,
+        { encoding: "utf-8" }
+      );
+      expect(result).toContain("exit:2");
+      expect(result).toContain("dev-lock");
+    });
+  });
+
   describe("exit code consistency", () => {
     it("should never return exit 1 (reserved for errors)", () => {
       const branch = "test-consistency-branch";

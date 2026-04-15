@@ -190,9 +190,12 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
             _orphan_sid=""
             [[ -f "$_lockf" ]] && _orphan_sid=$(grep "^session_id:" "$_lockf" 2>/dev/null | awk '{print $2}' || echo "")
 
-            # 跨 session 隔离：当前 session_id 已知 且 orphan session_id 已知 且不同 → 跳过
-            if [[ -n "$_current_sid" && -n "$_orphan_sid" && "$_current_sid" != "$_orphan_sid" ]]; then
-                echo "[Stop Hook] warning: cross-session orphan skipped (orphan_sid=${_orphan_sid}, current=${_current_sid}, branch=${_ob})" >&2
+            # 跨 session 隔离：orphan 明确有 session_id 且 != current_sid → 属于别的 session
+            # Headless / nested Claude Code 场景下 CLAUDE_SESSION_ID 可能为空；此时仍要把
+            # 明确属于别人的 orphan 跳过，不能因为自己没有 sid 就把别人活跃的 worktree
+            # 误认作自己的孤儿而 block。
+            if [[ -n "$_orphan_sid" && "$_orphan_sid" != "$_current_sid" ]]; then
+                echo "[Stop Hook] warning: cross-session orphan skipped (orphan_sid=${_orphan_sid}, current=${_current_sid:-<empty>}, branch=${_ob})" >&2
                 continue
             fi
             _orphan_branch="$_ob"
