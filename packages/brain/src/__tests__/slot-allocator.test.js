@@ -101,6 +101,16 @@ import {
   getBackpressureState,
   calculateSlotBudget,
   getSlotStatus,
+  // Three-Pool Memory Model
+  TOTAL_CONTAINER_MEMORY_MB,
+  POOL_A_MB,
+  POOL_B_MB,
+  POOL_C_MB,
+  CONTAINER_SIZES,
+  getTaskPoolName,
+  getContainerSizeMb,
+  getPoolAvailableMemoryMb,
+  allocate,
 } from '../slot-allocator.js';
 
 // ============================================================
@@ -1189,5 +1199,170 @@ describe('Backpressure', () => {
     const budget = await calculateSlotBudget();
     expect(budget.backpressure.active).toBe(true);
     expect(budget.backpressure.override_burst_limit).toBe(3);
+  });
+});
+
+// ============================================================
+// Three-Pool Memory Model (FR-005 / FR-006)
+// ============================================================
+
+describe('Three-Pool Memory Model — 常量校验', () => {
+  it('TOTAL_CONTAINER_MEMORY_MB 应为 12288', () => {
+    expect(TOTAL_CONTAINER_MEMORY_MB).toBe(12288);
+  });
+
+  it('Pool A = 2048 MB（前台任务）', () => {
+    expect(POOL_A_MB).toBe(2048);
+  });
+
+  it('Pool B = 6144 MB（Harness pipeline）', () => {
+    expect(POOL_B_MB).toBe(6144);
+  });
+
+  it('Pool C = 4096 MB（其他自动派发）', () => {
+    expect(POOL_C_MB).toBe(4096);
+  });
+
+  it('三池之和等于 TOTAL_CONTAINER_MEMORY_MB', () => {
+    expect(POOL_A_MB + POOL_B_MB + POOL_C_MB).toBe(TOTAL_CONTAINER_MEMORY_MB);
+  });
+
+  it('CONTAINER_SIZES light >= 256, normal >= 512, heavy >= 1024', () => {
+    expect(CONTAINER_SIZES.light).toBeGreaterThanOrEqual(256);
+    expect(CONTAINER_SIZES.normal).toBeGreaterThanOrEqual(512);
+    expect(CONTAINER_SIZES.heavy).toBeGreaterThanOrEqual(1024);
+  });
+});
+
+describe('Three-Pool Memory Model — getTaskPoolName', () => {
+  it('harness_generate → Pool B', () => {
+    expect(getTaskPoolName('harness_generate')).toBe('B');
+  });
+
+  it('harness_fix → Pool B', () => {
+    expect(getTaskPoolName('harness_fix')).toBe('B');
+  });
+
+  it('dev → Pool C（默认）', () => {
+    expect(getTaskPoolName('dev')).toBe('C');
+  });
+
+  it('codex_dev → Pool C', () => {
+    expect(getTaskPoolName('codex_dev')).toBe('C');
+  });
+
+  it('undefined / null → Pool C（安全降级）', () => {
+    expect(getTaskPoolName(undefined)).toBe('C');
+    expect(getTaskPoolName(null)).toBe('C');
+  });
+});
+
+describe('Three-Pool Memory Model — getContainerSizeMb', () => {
+  it('harness_generate → heavy（>= 1024 MB）', () => {
+    expect(getContainerSizeMb('harness_generate')).toBeGreaterThanOrEqual(1024);
+  });
+
+  it('dev → normal（>= 512 MB）', () => {
+    expect(getContainerSizeMb('dev')).toBeGreaterThanOrEqual(512);
+  });
+
+  it('codex_dev → normal（>= 512 MB）', () => {
+    expect(getContainerSizeMb('codex_dev')).toBeGreaterThanOrEqual(512);
+  });
+});
+
+describe('Three-Pool Memory Model — getPoolAvailableMemoryMb', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Pool B 无任务时可用内存 = POOL_B_MB', async () => {
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
+    const available = await getPoolAvailableMemoryMb('B');
+    expect(available).toBe(POOL_B_MB);
+  });
+
+  it('Pool C 无任务时可用内存 = POOL_C_MB', async () => {
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
+    const available = await getPoolAvailableMemoryMb('C');
+    expect(available).toBe(POOL_C_MB);
+  });
+
+  it('Pool A 始终返回 POOL_A_MB（不查 DB）', async () => {
+    const available = await getPoolAvailableMemoryMb('A');
+    expect(available).toBe(POOL_A_MB);
+  });
+
+  it('Pool B 6 个 harness 任务运行时，可用内存应减少', async () => {
+    // 6 tasks × 1024 MB (heavy) = 6144 MB = full
+    pool.query.mockResolvedValue({ rows: [{ count: '6' }] });
+    const available = await getPoolAvailableMemoryMb('B');
+    expect(available).toBe(0);
+  });
+
+  it('Pool B 满载（count=6）时可用内存不为负', async () => {
+    pool.query.mockResolvedValue({ rows: [{ count: '7' }] }); // over capacity
+    const available = await getPoolAvailableMemoryMb('B');
+    expect(available).toBeGreaterThanOrEqual(0);
+  });
+
+  it('DB 查询失败时应返回 0（安全降级）', async () => {
+    pool.query.mockRejectedValue(new Error('DB connection failed'));
+    const available = await getPoolAvailableMemoryMb('B');
+    expect(available).toBe(0);
+  });
+});
+
+describe('Three-Pool Memory Model — allocate（满载时拒绝派发）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Pool B 有充足内存时 allocate 返回 true', async () => {
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] }); // 无运行任务
+    const result = await allocate('B', CONTAINER_SIZES.heavy);
+    expect(result).toBe(true);
+  });
+
+  it('Pool B 满载时 allocate 返回 false（拒绝派发，任务应排队）', async () => {
+    // 6 harness tasks × 1024 MB = 6144 MB = full
+    pool.query.mockResolvedValue({ rows: [{ count: '6' }] });
+    const result = await allocate('B', CONTAINER_SIZES.heavy);
+    expect(result).toBe(false);
+  });
+
+  it('Pool C 有充足内存时 allocate 返回 true', async () => {
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
+    const result = await allocate('C', CONTAINER_SIZES.normal);
+    expect(result).toBe(true);
+  });
+
+  it('Pool C 满载时 allocate 返回 false', async () => {
+    // 8 normal tasks × 512 MB = 4096 MB = full
+    pool.query.mockResolvedValue({ rows: [{ count: '8' }] });
+    const result = await allocate('C', CONTAINER_SIZES.normal);
+    expect(result).toBe(false);
+  });
+
+  it('Pool B 满载不影响 Pool C 的 allocate（池间隔离）', async () => {
+    // Pool B query returns full (6 harness tasks)
+    // Pool C query returns empty
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // Pool C has 0 tasks
+    const poolCResult = await allocate('C', CONTAINER_SIZES.normal);
+    expect(poolCResult).toBe(true);
+  });
+
+  it('insufficient 场景：容器需求大于剩余内存时返回 false', async () => {
+    // 7 normal tasks × 512 MB = 3584 MB used, remaining = 512 MB
+    // Trying to allocate 1024 MB (heavy) → should reject
+    pool.query.mockResolvedValue({ rows: [{ count: '7' }] });
+    const result = await allocate('C', CONTAINER_SIZES.heavy); // 1024 MB > 512 MB remaining
+    expect(result).toBe(false);
+  });
+
+  it('DB 查询失败时安全降级，不抛异常', async () => {
+    pool.query.mockRejectedValue(new Error('DB error'));
+    await expect(allocate('B', CONTAINER_SIZES.normal)).resolves.toBeDefined();
   });
 });

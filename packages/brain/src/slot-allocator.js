@@ -30,6 +30,88 @@ const SESSION_TTL_SECONDS = 24 * 60 * 60;   // 24 hours: long-running harness/pi
 const CODEX_ACCOUNT_COUNT = 5;              // Codex 账号总数（硬上限）
 const CODEX_FALLBACK_CONCURRENT = 3;        // Fleet cache 不可用时的降级值
 
+// ============================================================
+// Three-Pool Container Memory Model (FR-005 / FR-006)
+// ============================================================
+
+const TOTAL_CONTAINER_MEMORY_MB = 12288;  // 12 GB total allocatable container budget
+
+// Three independent pools — resources do NOT borrow across pools
+const POOL_A_MB = 2048;  // Pool A: 前台任务（frontend / user-facing tasks）
+const POOL_B_MB = 6144;  // Pool B: Harness pipeline 任务（heavy execution）
+const POOL_C_MB = 4096;  // Pool C: 其他自动派发任务（general auto-dispatch）
+
+// Container memory footprint per task weight class (mirrors executor.js CONTAINER_SIZES from WS2)
+const CONTAINER_SIZES = {
+  light:  256,   // lightweight tasks (script runs, simple checks)
+  normal: 512,   // standard claude dev/codex tasks
+  heavy:  1024,  // harness / long-running pipeline tasks
+};
+
+// Map task_type → pool name ('A' | 'B' | 'C')
+function getTaskPoolName(taskType) {
+  if (!taskType) return 'C';
+  if (/^harness/.test(taskType)) return 'B';
+  return 'C';  // default pool for all other auto-dispatch tasks
+}
+
+// Map task_type → container size in MB
+function getContainerSizeMb(taskType) {
+  if (/^harness/.test(taskType)) return CONTAINER_SIZES.heavy;
+  if (/^codex|crystallize/.test(taskType)) return CONTAINER_SIZES.normal;
+  return CONTAINER_SIZES.normal;
+}
+
+// Query DB: sum of container memory already allocated in a given pool
+// Throws on DB error — callers must handle
+async function getAllocatedContainerMemoryMb(poolName) {
+  if (poolName === 'A') {
+    // Pool A tracks user-headed sessions — not managed via DB task_type
+    return 0;
+  }
+  let query;
+  if (poolName === 'B') {
+    query = `
+      SELECT COUNT(*) FROM tasks
+      WHERE status = 'in_progress'
+      AND task_type LIKE 'harness%'
+    `;
+  } else {
+    // Pool C: everything that is not harness (and not user-headed internal tasks)
+    query = `
+      SELECT COUNT(*) FROM tasks
+      WHERE status = 'in_progress'
+      AND task_type NOT LIKE 'harness%'
+      AND (payload->>'decomposition' IS NULL
+           AND (payload->>'requires_cortex' IS NULL OR payload->>'requires_cortex' != 'true'))
+    `;
+  }
+  const result = await pool.query(query);
+  const count = parseInt(result.rows[0].count, 10);
+  // Multiply task count by container size to get approximate allocated memory
+  const sizeMb = poolName === 'B' ? CONTAINER_SIZES.heavy : CONTAINER_SIZES.normal;
+  return count * sizeMb;
+}
+
+// Calculate remaining available memory in a pool
+// Returns 0 on DB error (conservative: assume pool is full when uncertain)
+async function getPoolAvailableMemoryMb(poolName) {
+  const totalMb = { A: POOL_A_MB, B: POOL_B_MB, C: POOL_C_MB }[poolName] || 0;
+  try {
+    const allocatedMb = await getAllocatedContainerMemoryMb(poolName);
+    return Math.max(0, totalMb - allocatedMb);
+  } catch {
+    return 0;  // conservative: treat as full when DB unavailable
+  }
+}
+
+// Check if pool has sufficient remaining capacity for a new task
+// Returns true if dispatch is allowed, false if task should queue
+async function allocate(poolName, containerSizeMb = CONTAINER_SIZES.normal) {
+  const availableMemory = await getPoolAvailableMemoryMb(poolName);
+  return availableMemory >= containerSizeMb;
+}
+
 /**
  * 动态计算 Codex 并发上限（基于 fleet cache 的远程机器 effectiveSlots）
  * 上限不超过 CODEX_ACCOUNT_COUNT（5 个账号）
@@ -468,6 +550,17 @@ export {
   SLOT_BUFFER_MAX_DELTA,
   SLOT_BUFFER_DOWN,
   SLOT_BUFFER_UP,
+  // Three-Pool Memory Model exports
+  TOTAL_CONTAINER_MEMORY_MB,
+  POOL_A_MB,
+  POOL_B_MB,
+  POOL_C_MB,
+  CONTAINER_SIZES,
+  getTaskPoolName,
+  getContainerSizeMb,
+  getAllocatedContainerMemoryMb,
+  getPoolAvailableMemoryMb,
+  allocate,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,

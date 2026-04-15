@@ -9,7 +9,7 @@ import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask, createTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
-import { calculateSlotBudget } from './slot-allocator.js';
+import { calculateSlotBudget, CONTAINER_SIZES, allocate, getTaskPoolName } from './slot-allocator.js';
 import { shouldDowngrade } from './token-budget-planner.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
 import { planNextTask } from './planner.js';
@@ -1309,6 +1309,22 @@ async function dispatchNextTask(goalIds) {
     }
   } catch (err) {
     console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
+  }
+
+  // Pool memory gate: check if target pool has sufficient memory capacity before dispatch
+  try {
+    const taskType = taskToDispatch.task_type || 'dev';
+    const poolName = getTaskPoolName(taskType);
+    const containerMb = taskType.startsWith('harness') ? CONTAINER_SIZES.heavy : CONTAINER_SIZES.normal;
+    const poolHasCapacity = await allocate(poolName, containerMb);
+    if (!poolHasCapacity) {
+      await updateTask({ task_id: nextTask.id, status: 'queued' });
+      tickLog(`[dispatch] Pool ${poolName} memory insufficient for task=${nextTask.id} type=${taskType} (need ${containerMb}MB), requeueing`);
+      await recordDispatchResult(pool, false, `pool_${poolName}_memory_full`);
+      return { dispatched: false, reason: `pool_${poolName}_memory_full`, task_id: nextTask.id, actions };
+    }
+  } catch (poolErr) {
+    console.warn(`[dispatch] Pool memory check failed (non-fatal): ${poolErr.message}, proceeding`);
   }
 
   const execResult = await triggerCeceliaRun(taskToDispatch);
@@ -2790,7 +2806,8 @@ async function executeTick() {
 
   // 7a. Fill slots from focused objective's tasks
   // Predictive resource gate: pre-deduct estimated memory per dispatched agent
-  const ESTIMATED_AGENT_MEM_MB = 800;
+  // Uses CONTAINER_SIZES.normal as the per-task memory estimate (from three-pool model)
+  const ESTIMATED_AGENT_MEM_MB = CONTAINER_SIZES.normal;
   let memReservedMb = 0;
   let newDispatchCount = 0; // burst limiter 计数器
   for (let i = 0; i < rampedDispatchMax; i++) {
