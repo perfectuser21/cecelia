@@ -89,7 +89,7 @@ for nb in notebooks:
     ON CONFLICT (key) DO UPDATE SET value_json = '\"$notebook_id\"', updated_at = NOW();
   " > /dev/null 2>&1
 
-  echo "✓ $title → ID: ${notebook_id:0:8}... （已存入 $config_key）"
+  echo "✓ ${title} → ID: ${notebook_id:0:8}... （已存入 ${config_key}）"
 }
 
 # ── 主流程 ────────────────────────────────────────────────

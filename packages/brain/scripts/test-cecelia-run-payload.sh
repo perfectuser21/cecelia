@@ -18,7 +18,7 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 echo "=== test-cecelia-run-payload: send_webhook exit_code 字段验证 ==="
 echo ""
 
-# 创建 fake curl：把 -d 参数写入 $PAYLOAD_CAPTURE_FILE（通过环境变量传入）
+# 创建 fake curl：把 -d 参数写入 ${PAYLOAD_CAPTURE_FILE}（通过环境变量传入）
 FAKE_CURL="$TMPDIR_TEST/curl"
 cat > "$FAKE_CURL" << 'EOF'
 #!/usr/bin/env bash

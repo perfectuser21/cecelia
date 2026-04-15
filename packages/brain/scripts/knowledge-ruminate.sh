@@ -83,7 +83,7 @@ Object.entries(byStatus).forEach(([s, n]) => console.log('  ' + s + ': ' + n + '
 " 2>/dev/null
         ;;
     *)
-        echo "未知 format: $FORMAT（支持 summary|list|json）" >&2
+        echo "未知 format: ${FORMAT}（支持 summary|list|json）" >&2
         exit 1
         ;;
 esac
