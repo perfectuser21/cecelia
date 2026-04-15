@@ -1,10 +1,11 @@
 ---
 name: dev
-version: 7.1.0
-updated: 2026-04-14
-description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。支持 autonomous_mode 全自动模式。autonomous_mode 新增 Step 0.5 PRD Enrich 前置层。
+version: 7.2.0
+updated: 2026-04-15
+description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。支持 autonomous_mode 全自动模式。autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 + autonomous-research-proxy 用户交互替换层。
 trigger: /dev, --task-id <id>, --autonomous
 changelog:
+  - 7.2.0: autonomous_mode 强制加载 autonomous-research-proxy — Superpowers user 交互点全替换为 Research Subagent
   - 7.1.0: autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 — 粗 PRD 自动丰满
   - 7.0.0: Superpowers 融入 — autonomous_mode 三角色架构
 ---
@@ -128,6 +129,8 @@ skills/dev/
 ## autonomous_mode（全自动模式）
 
 **触发**: `/dev --autonomous` 或 Brain task payload `autonomous_mode: true`
+
+**加载顺序 (v14.14.0)**: `/dev --autonomous` 启动后, 主 agent 必须先加载 `packages/engine/skills/dev/steps/autonomous-research-proxy.md` 到系统 context, 再进入 Step 0. 该文件定义 Superpowers 所有 user 交互点 -> Research Subagent 的替换规则。只有加载了 `autonomous-research-proxy.md`, 后续 Superpowers skill 链中的所有 user 交互才会被 Subagent 代替。
 
 **流程**:
 - Stage 1: `superpowers:brainstorming` + `superpowers:writing-plans` 自主产出 plan（跳过用户交互）

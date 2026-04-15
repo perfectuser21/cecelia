@@ -133,14 +133,40 @@ describe('watchdog', () => {
   });
 
   describe('sampleProcess', () => {
-    it('should return null when process does not exist', () => {
-      // Linux: readFileSync throws. Darwin: execSync returns empty (process gone).
-      readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    it('should return null when process does not exist (invalid pid)', () => {
+      // Linux: readFileSync throws for /proc/{pid}/stat. Darwin: pid not in ps output.
+      if (!IS_DARWIN) {
+        readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+      } else {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') return '';
+          return '';
+        });
+      }
       expect(sampleProcess(99999)).toBeNull();
     });
 
+    it('should return null for nonexistent pid (null return path)', () => {
+      // Ensure sampleProcess returns null without throwing for non-existing processes
+      if (!IS_DARWIN) {
+        readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+      } else {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') {
+            return '  1000    1  10240  0:01.00\n'; // pid 99999 not in output
+          }
+          return '';
+        });
+      }
+      const result = sampleProcess(99999);
+      expect(result).toBeNull();
+    });
+
     it.skipIf(IS_DARWIN)('should parse /proc correctly (P0 #3: comm with spaces)', () => {
-      // statm: pages[1] = RSS
+      // readdirSync returns empty (no children), only main pid is sampled
+      readdirSync.mockReturnValue([]);
       readFileSync.mockImplementation((path) => {
         if (path.includes('statm')) {
           return '100000 50000 30000 10 0 40000 0'; // 50000 pages * 4096 / 1M ≈ 195MB
@@ -158,6 +184,37 @@ describe('watchdog', () => {
       // After last ')': fields[11]=utime=500, fields[12]=stime=200
       expect(result.cpu_ticks).toBe(700);
       expect(result.timestamp).toBeGreaterThan(0);
+    });
+
+    it.skipIf(IS_DARWIN)('should sum rss across child processes (recursive child rss collection)', () => {
+      // pid 1234 has child 5678 (ppid=1234); sampleProcess should sum both
+      // rss: 1234=100MB, 5678=200MB → total 300MB
+      const rss1234Pages = Math.round((100 * 1024 * 1024) / 4096);
+      const rss5678Pages = Math.round((200 * 1024 * 1024) / 4096);
+
+      readdirSync.mockReturnValue([
+        { name: '1234', isDirectory: () => true },
+        { name: '5678', isDirectory: () => true },
+        { name: '9999', isDirectory: () => true }, // unrelated process
+      ]);
+
+      readFileSync.mockImplementation((path) => {
+        // /proc scan for ppid map
+        if (path === '/proc/1234/stat') return `1234 (main) S 1 1234 1234 0 -1 0 0 0 0 0 100 0 0 0 20 0 1 0 0 0 0 0 0 0 0 0`;
+        if (path === '/proc/5678/stat') return `5678 (child) S 1234 5678 5678 0 -1 0 0 0 0 0 50 0 0 0 20 0 1 0 0 0 0 0 0 0 0 0`;
+        if (path === '/proc/9999/stat') return `9999 (other) S 1 9999 9999 0 -1 0 0 0 0 0 10 0 0 0 20 0 1 0 0 0 0 0 0 0 0 0`;
+        // RSS via statm
+        if (path === '/proc/1234/statm') return `${rss1234Pages} ${rss1234Pages} 0 0 0 0 0`;
+        if (path === '/proc/5678/statm') return `${rss5678Pages} ${rss5678Pages} 0 0 0 0 0`;
+        throw new Error(`unexpected: ${path}`);
+      });
+
+      const result = sampleProcess(1234);
+      expect(result).not.toBeNull();
+      // Total RSS = 100 + 200 = 300 MB
+      expect(result.rss_mb).toBe(300);
+      // CPU ticks from main pid: utime=100, stime=0 → 100
+      expect(result.cpu_ticks).toBe(100);
     });
   });
 
@@ -678,11 +735,13 @@ describe('watchdog', () => {
     });
 
     describe('sampleProcessDarwin', () => {
-      it('should parse ps output and return rss_mb and cpu_ticks', () => {
-        // ps -o rss=,time= output: "204800 1:23.45" (RSS in KB, time MM:SS.ss)
+      it('should parse ps output and return rss_mb and cpu_ticks for single process', () => {
+        // ps -ax -o pid= -o ppid= -o rss= -o time= output: pid ppid rss_kb time
         execSync.mockImplementation((cmd) => {
           if (cmd === 'getconf PAGE_SIZE') return '4096\n';
-          if (cmd.startsWith('ps -o rss=,time= -p')) return '204800 1:23.45\n';
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') {
+            return '  1234    1  204800  1:23.45\n';
+          }
           return '';
         });
         const result = sampleProcessDarwin(1234);
@@ -692,10 +751,44 @@ describe('watchdog', () => {
         expect(result.timestamp).toBeGreaterThan(0);
       });
 
-      it('should return null when ps output is empty (process gone)', () => {
+      it('should sum rss across child processes (recursive child rss collection)', () => {
+        // pid 1234 has child 5678 (ppid=1234), grandchild 9012 (ppid=5678)
+        // rss: 1234=100MB, 5678=200MB, 9012=150MB → total should be 450MB
         execSync.mockImplementation((cmd) => {
           if (cmd === 'getconf PAGE_SIZE') return '4096\n';
-          if (cmd.startsWith('ps -o rss=,time= -p')) return '';
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') {
+            return [
+              '  1234    1  102400  0:30.00', // 100 MB
+              '  5678 1234  204800  0:20.00', // 200 MB (child of 1234)
+              '  9012 5678  153600  0:10.00', // 150 MB (grandchild of 1234)
+              '  9999    1   10240  0:05.00', // unrelated process
+            ].join('\n') + '\n';
+          }
+          return '';
+        });
+        const result = sampleProcessDarwin(1234);
+        expect(result).not.toBeNull();
+        // Total: (102400 + 204800 + 153600) / 1024 = 450 MB
+        expect(result.rss_mb).toBe(450);
+        // CPU ticks from main pid only
+        expect(result.cpu_ticks).toBe(Math.round(30 * 100));
+      });
+
+      it('should return null when pid not in ps output (process gone / nonexistent pid)', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') {
+            return '  1000    1  10240  0:01.00\n'; // pid 99999 not present
+          }
+          return '';
+        });
+        expect(sampleProcessDarwin(99999)).toBeNull();
+      });
+
+      it('should return null when ps output is empty', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') return '';
           return '';
         });
         expect(sampleProcessDarwin(99999)).toBeNull();
@@ -704,7 +797,7 @@ describe('watchdog', () => {
       it('should return null when ps throws (process does not exist)', () => {
         execSync.mockImplementation((cmd) => {
           if (cmd === 'getconf PAGE_SIZE') return '4096\n';
-          if (cmd.startsWith('ps -o rss=,time= -p')) throw new Error('ps: illegal pid value');
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') throw new Error('ps: failed');
           return '';
         });
         expect(sampleProcessDarwin(99999)).toBeNull();
@@ -713,7 +806,9 @@ describe('watchdog', () => {
       it('should handle 0 RSS correctly', () => {
         execSync.mockImplementation((cmd) => {
           if (cmd === 'getconf PAGE_SIZE') return '4096\n';
-          if (cmd.startsWith('ps -o rss=,time= -p')) return '0 0:00.00\n';
+          if (cmd === 'ps -ax -o pid= -o ppid= -o rss= -o time=') {
+            return '     1    0       0  0:00.00\n';
+          }
           return '';
         });
         const result = sampleProcessDarwin(1);

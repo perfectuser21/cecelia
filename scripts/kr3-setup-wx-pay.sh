@@ -269,6 +269,46 @@ mark_wx_pay_done() {
   info "下一步: 通过微信开发者工具部署所有云函数，进行沙盒支付联调"
 }
 
+# ─── 标记管理员 OpenID 已初始化 ────────────────────────────────────────────
+
+mark_admin_oid_done() {
+  title "标记管理员 OpenID 已初始化"
+
+  # checkAdmin 三层 fallback 中的内置管理员 OpenID
+  local BUILT_IN_OID="o2lLz62X0iyQEYcpnS2ljUvXlHF0"
+  local note="checkAdmin 内置 fallback 已就绪（${BUILT_IN_OID}），bootstrapAdmin 可写入 admins 集合"
+
+  info "写入 Brain DB: kr3_admin_oid_initialized"
+  info "备注: $note"
+
+  # 先尝试 Brain API
+  local api_ok=false
+  if curl -sf -X POST "$BRAIN_URL/api/brain/kr3/mark-admin-oid" \
+     -H "Content-Type: application/json" \
+     -d "{\"note\":\"$note\"}" 2>/dev/null | grep -q '"ok":true'; then
+    api_ok=true
+  fi
+
+  if $api_ok; then
+    pass "Brain API 标记成功"
+  else
+    # 回退到 psql 直写
+    warn "Brain API 不可用，通过 psql 直接写入..."
+    if mark_via_psql "kr3_admin_oid_initialized" "$note"; then
+      pass "psql 写入成功"
+    else
+      fail "写入失败，请检查 PostgreSQL 连接"
+      return 1
+    fi
+  fi
+
+  echo ""
+  pass "管理员 OpenID 已标记为就绪！"
+  info "内置 OpenID: $BUILT_IN_OID"
+  info "三层 fallback 机制: admins DB → ADMIN_OPENIDS 环境变量 → 代码内置"
+  info "下一步（可选）: 微信开发者工具 → 云函数 → bootstrapAdmin → 本地调用 {} → 写入 admins 集合"
+}
+
 # ─── 主入口 ─────────────────────────────────────────────────────────────────
 
 main() {
@@ -291,21 +331,26 @@ main() {
       echo ""
       mark_wx_pay_done
       ;;
+    --mark-admin-oid)
+      mark_admin_oid_done
+      ;;
     --help|-h)
       echo ""
       echo "用法:"
-      echo "  bash scripts/kr3-setup-wx-pay.sh              # 检查配置状态"
-      echo "  bash scripts/kr3-setup-wx-pay.sh --check-only # 仅检查（默认）"
-      echo "  bash scripts/kr3-setup-wx-pay.sh --convert-key # 转换 PKCS#1→PKCS#8 私钥"
-      echo "  bash scripts/kr3-setup-wx-pay.sh --mark-done  # 标记 WX Pay 已配置"
+      echo "  bash scripts/kr3-setup-wx-pay.sh                  # 检查配置状态"
+      echo "  bash scripts/kr3-setup-wx-pay.sh --check-only     # 仅检查（默认）"
+      echo "  bash scripts/kr3-setup-wx-pay.sh --convert-key    # 转换 PKCS#1→PKCS#8 私钥"
+      echo "  bash scripts/kr3-setup-wx-pay.sh --mark-done      # 标记 WX Pay 已配置"
+      echo "  bash scripts/kr3-setup-wx-pay.sh --mark-admin-oid # 标记管理员 OpenID 已初始化"
       echo ""
       echo "配置流程:"
       echo "  1. 运行 --convert-key 转换私钥格式（PKCS#1→PKCS#8）"
       echo "  2. 登录微信商户平台 https://pay.weixin.qq.com"
       echo "  3. 获取商户号 (MCHID) 和 APIv3 密钥 + 证书序列号"
       echo "  4. 在微信云开发控制台为 createPaymentOrder 配置 5 个环境变量"
-      echo "  5. 运行本脚本 --mark-done 写入 Brain DB"
-      echo "  6. 进行沙盒支付联调"
+      echo "  5. 运行本脚本 --mark-done 写入 Brain DB（WX_PAY）"
+      echo "  6. 运行本脚本 --mark-admin-oid 写入 Brain DB（管理员 OpenID）"
+      echo "  7. 进行沙盒支付联调"
       ;;
     *)
       echo "未知参数: $mode"

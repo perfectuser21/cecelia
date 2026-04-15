@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 9.2.0
+version: 9.3.0
 created: 2026-03-14
 updated: 2026-04-15
 changelog:
+  - 9.3.0: autonomous 分支 Implementer 派遣时机改为来自 Superpowers subagent-driven-development skill，Research Subagent 处理 user 交互
   - 9.2.0: Implementer 开始前读 .decisions-<branch>.yaml 作为硬约束；Spec Reviewer 核心检查 5 验决策一致性
   - 9.1.0: Subagent Implementer/Reviewer 加全套回归强制规则（改 hooks/→跑 tests/hooks/ 全套，防止只跑新测试漏 T4 冲突）
   - 9.0.0: 新增 autonomous_mode — Subagent 三角色全自动（Implementer + Spec Reviewer + Code Quality Reviewer），失败自愈，Verification Gate
@@ -57,6 +58,11 @@ cat "${SPRINT_DIR}/sprint-contract.md"
 ---
 
 ## 2. autonomous_mode = true 时（Subagent 三角色全自动）
+
+**v9.3.0 autonomous 分支变化**:
+autonomous_mode=true 时, Implementer subagent 派遣仍由主 agent 做,
+但触发时机来自 Superpowers `subagent-driven-development` skill 而非本 step 直接。
+Research Subagent 处理 Superpowers 链中的 user 交互, Implementer 做实际实现。
 
 主 agent 作为协调者，对 `.plan-${BRANCH}.md` 的每个 task 派 3 轮 subagent。
 

@@ -98,20 +98,59 @@ function parseDarwinCpuTime(timeStr) {
 }
 
 /**
- * Sample RSS and CPU for a single PID on Darwin using `ps`.
- * `ps -o rss=,time= -p <pid>` returns RSS in KB and CPU time as HH:MM:SS or MM:SS.ss.
+ * Sample RSS and CPU for a PID on Darwin, including all child processes (recursive).
+ * Uses `ps -ax -o pid= -o ppid= -o rss= -o time=` to collect the full process tree,
+ * then BFS from the target PID to sum RSS across all descendant processes.
+ * CPU ticks are taken from the root PID only (representative of the task).
  * Returns { rss_mb, cpu_ticks, timestamp } or null if process gone / ps failed.
  */
 function sampleProcessDarwin(pid) {
   try {
-    const out = execSync(`ps -o rss=,time= -p ${pid}`, { encoding: 'utf-8', timeout: 2000 }).trim();
+    // Collect all processes with ppid for recursive child process RSS collection
+    const out = execSync('ps -ax -o pid= -o ppid= -o rss= -o time=', { encoding: 'utf-8', timeout: 2000 }).trim();
     if (!out) return null;
-    const parts = out.split(/\s+/);
-    const rssKb = parseInt(parts[0], 10);
-    if (!Number.isFinite(rssKb) || rssKb < 0) return null;
+
+    const ppidMap = new Map(); // pid → ppid
+    const rssMap  = new Map(); // pid → rss_kb
+    const timeMap = new Map(); // pid → cpu_time_str
+
+    for (const line of out.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 4) continue;
+      const p     = parseInt(parts[0], 10);
+      const ppid  = parseInt(parts[1], 10);
+      const rssKb = parseInt(parts[2], 10);
+      if (!Number.isFinite(p) || p <= 0) continue;
+      ppidMap.set(p, ppid);
+      rssMap.set(p, rssKb);
+      timeMap.set(p, parts[3]);
+    }
+
+    if (!rssMap.has(pid)) return null;
+
+    // BFS to find all descendants of pid and sum their RSS
+    const queue = [pid];
+    const allPids = new Set([pid]);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const [childPid, parentPid] of ppidMap) {
+        if (parentPid === current && !allPids.has(childPid)) {
+          allPids.add(childPid);
+          queue.push(childPid);
+        }
+      }
+    }
+
+    let totalRssKb = 0;
+    for (const p of allPids) {
+      totalRssKb += (rssMap.get(p) || 0);
+    }
+
+    if (!Number.isFinite(totalRssKb) || totalRssKb < 0) return null;
+
     return {
-      rss_mb: Math.round(rssKb / 1024),
-      cpu_ticks: parseDarwinCpuTime(parts[1] || '0:00.00'),
+      rss_mb: Math.round(totalRssKb / 1024),
+      cpu_ticks: parseDarwinCpuTime(timeMap.get(pid) || '0:00.00'),
       timestamp: Date.now(),
     };
   } catch {
@@ -186,8 +225,10 @@ function resolveTaskPids() {
 }
 
 /**
- * Sample RSS and CPU ticks from /proc for a single PID.
- * Returns { rss_mb, cpu_ticks, timestamp } or null if process gone.
+ * Sample RSS and CPU ticks for a PID, including all child processes (recursive).
+ * On Linux: scans /proc to build a ppid map, BFS to find all descendants,
+ * then sums RSS from /proc/{p}/statm for each process in the tree.
+ * CPU ticks are taken from the root PID's /proc/{pid}/stat only.
  *
  * P0 #3: Parse /proc/stat correctly — comm field can contain spaces
  * and parentheses, so find last ')' before splitting.
@@ -195,18 +236,54 @@ function resolveTaskPids() {
 function sampleProcess(pid) {
   if (IS_DARWIN) return sampleProcessDarwin(pid);
   try {
-    // RSS from /proc/{pid}/statm (field 1 = resident pages)
-    const statm = readFileSync(`/proc/${pid}/statm`, 'utf-8').trim().split(' ');
-    const rssMb = Math.round((parseInt(statm[1], 10) * PAGE_SIZE) / 1024 / 1024);
+    // Build ppid map by scanning /proc to find all child processes
+    const ppidMap = new Map(); // childPid → ppid
+    try {
+      for (const entry of readdirSync('/proc', { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const childPid = parseInt(entry.name, 10);
+        if (!Number.isFinite(childPid) || childPid <= 0) continue;
+        try {
+          const stat = readFileSync(`/proc/${childPid}/stat`, 'utf-8');
+          const closeParen = stat.lastIndexOf(')');
+          const fields = stat.substring(closeParen + 2).split(' ');
+          const ppid = parseInt(fields[1], 10);
+          ppidMap.set(childPid, ppid);
+        } catch { /* process gone during scan */ }
+      }
+    } catch { /* /proc unavailable in test env */ }
 
-    // CPU from /proc/{pid}/stat
+    // BFS from pid to find all descendants
+    const queue = [pid];
+    const allPids = new Set([pid]);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const [childPid, parentPid] of ppidMap) {
+        if (parentPid === current && !allPids.has(childPid)) {
+          allPids.add(childPid);
+          queue.push(childPid);
+        }
+      }
+    }
+
+    // Sum RSS for all processes in the tree
+    let totalRssMb = 0;
+    for (const p of allPids) {
+      try {
+        const statm = readFileSync(`/proc/${p}/statm`, 'utf-8').trim().split(' ');
+        const rss = Math.round((parseInt(statm[1], 10) * PAGE_SIZE) / 1024 / 1024);
+        totalRssMb += rss;
+      } catch { /* process gone */ }
+    }
+
+    // CPU from main pid only (representative of the task)
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
     const closeParen = stat.lastIndexOf(')');
     const fields = stat.substring(closeParen + 2).split(' ');
     // fields[11] = utime, fields[12] = stime (0-indexed after comm)
     const cpuTicks = parseInt(fields[11], 10) + parseInt(fields[12], 10);
 
-    return { rss_mb: rssMb, cpu_ticks: cpuTicks, timestamp: Date.now() };
+    return { rss_mb: totalRssMb, cpu_ticks: cpuTicks, timestamp: Date.now() };
   } catch {
     return null; // process gone
   }

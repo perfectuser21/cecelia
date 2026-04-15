@@ -276,7 +276,7 @@ router.post('/execution-callback', async (req, res) => {
           pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
           error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
           blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
-        WHERE id = $1 AND status = 'in_progress'
+        WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson]);
 
       // Log the execution result（带 WHERE NOT EXISTS 防重复写入）
