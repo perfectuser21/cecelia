@@ -400,6 +400,15 @@ function setBudgetCap(n) {
   return getBudgetCap();
 }
 
+// ─── Docker 容器规格映射（MB）────────────────────────────────────────────────
+// 三档内存配额：light（低强度审查）/ normal（标准开发）/ heavy（harness 生成/评估）
+// cecelia-run.sh 的 _get_container_memory_mb() 保持与此常量同步
+const CONTAINER_SIZES = {
+  light:  512,   // MB — code_review / spec_review / prd_review
+  normal: 1024,  // MB — dev / decomp / 标准 agent 任务
+  heavy:  2048,  // MB — harness_generate / harness_evaluate / harness_fix
+};
+
 // Auto-dispatch thresholds (derived from constants above)
 const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
 const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
@@ -3485,6 +3494,7 @@ export {
   getModelForTask,
   // v12: Multi-account credentials
   getCredentialsForTask,
+  CONTAINER_SIZES,
   MODELS,
   MODEL_MAP,
   FIXED_PROVIDER,

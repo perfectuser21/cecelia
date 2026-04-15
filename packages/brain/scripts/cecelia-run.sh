@@ -369,6 +369,40 @@ kill_tree() {
   kill -"$sig" "$pid" 2>/dev/null || true
 }
 
+# ─── Docker 辅助函数 ────────────────────────────────────────────────────────
+
+# 检测 Docker daemon 是否可用（timeout 3s 防挂起）
+_docker_available() {
+  timeout 3 docker info >/dev/null 2>&1
+}
+
+# 根据 task_type 返回容器内存规格（MB）
+# 对应 executor.js CONTAINER_SIZES 常量（light=512/normal=1024/heavy=2048）
+_get_container_memory_mb() {
+  local task_type="${1:-dev}"
+  case "$task_type" in
+    harness_generate|harness_evaluate|harness_fix|harness_planner)
+      echo "2048" ;;  # heavy
+    harness_contract_propose|harness_contract_review|harness_report|harness_ci_watch|harness_deploy_watch)
+      echo "1024" ;;  # normal
+    code_review_gate|spec_review|prd_review|initiative_review)
+      echo "512" ;;   # light
+    *)
+      echo "1024" ;;  # normal（默认）
+  esac
+}
+
+# 根据 task_type 返回容器 CPU 配额
+_get_container_cpus() {
+  local task_type="${1:-dev}"
+  case "$task_type" in
+    harness_generate|harness_evaluate|harness_fix|harness_planner)
+      echo "2" ;;   # heavy
+    *)
+      echo "1" ;;   # normal/light
+  esac
+}
+
 # 主逻辑
 main() {
   local start_time end_time duration
@@ -567,10 +601,57 @@ main() {
       echo "[cecelia-run] 🔄 从 checkpoint resume (attempt=$attempt, session=$SESSION_UUID)" >&2
       CLAUDE_INVOKE="claude --resume $SESSION_UUID -p \"继续执行，上次因超时/中断未完成，请从中断处继续\""
     fi
-    if [[ "$PERMISSION_MODE" == "plan" ]]; then
+    # ── Docker 模式判断 ──────────────────────────────────────────────────────
+    # HARNESS_DOCKER_ENABLED=true + docker daemon 可用 → docker run 沙箱
+    # 否则（默认）→ setsid bash -c（零回归）
+    local USE_DOCKER=false
+    if [[ "${HARNESS_DOCKER_ENABLED:-false}" == "true" ]]; then
+      if _docker_available; then
+        USE_DOCKER=true
+        echo "[cecelia-run] Docker 模式已启用 (HARNESS_DOCKER_ENABLED=true, daemon 可用)" >&2
+      else
+        echo "[cecelia-run] WARN: HARNESS_DOCKER_ENABLED=true 但 docker daemon 不可用，回退到 setsid 模式" >&2
+      fi
+    fi
+
+    if [[ "$USE_DOCKER" == "true" ]]; then
+      # Docker 沙箱执行
+      local DOCKER_IMAGE="${HARNESS_DOCKER_IMAGE:-cecelia-harness-runner:latest}"
+      local CONTAINER_MEMORY_MB
+      CONTAINER_MEMORY_MB=$(_get_container_memory_mb "${TASK_TYPE:-dev}")
+      local CONTAINER_CPUS
+      CONTAINER_CPUS=$(_get_container_cpus "${TASK_TYPE:-dev}")
+      echo "[cecelia-run] Docker run: image=$DOCKER_IMAGE memory=${CONTAINER_MEMORY_MB}m cpus=$CONTAINER_CPUS" >&2
+
+      if [[ "$PERMISSION_MODE" == "plan" ]]; then
+        setsid bash -c "docker run --rm \
+          --memory=${CONTAINER_MEMORY_MB}m \
+          --cpus=${CONTAINER_CPUS} \
+          --name=cecelia-task-${TASK_ID:0:8}-$$ \
+          -v '${ACTUAL_WORK_DIR}:/workspace' \
+          -w /workspace \
+          -e CECELIA_HEADLESS=true \
+          $(echo \"$PROVIDER_ENV\" | tr ' ' '\n' | grep '=' | sed 's/^/-e /') \
+          '$DOCKER_IMAGE' \
+          bash -c \"unset CLAUDECODE && $CLAUDE_INVOKE --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG --output-format json\" >\"$out_json\" 2>\"$err_log\"" &
+      else
+        echo "[cecelia-run] DEBUG: 启动 claude 进程 (Docker 模式)..." >&2
+        echo "[cecelia-run] DEBUG: WORK_DIR=$ACTUAL_WORK_DIR" >&2
+        setsid bash -c "docker run --rm \
+          --memory=${CONTAINER_MEMORY_MB}m \
+          --cpus=${CONTAINER_CPUS} \
+          --name=cecelia-task-${TASK_ID:0:8}-$$ \
+          -v '${ACTUAL_WORK_DIR}:/workspace' \
+          -w /workspace \
+          -e CECELIA_HEADLESS=true \
+          $(echo \"$PROVIDER_ENV\" | tr ' ' '\n' | grep '=' | sed 's/^/-e /') \
+          '$DOCKER_IMAGE' \
+          bash -c \"unset CLAUDECODE && $CLAUDE_INVOKE --dangerously-skip-permissions $MODEL_FLAG $MAX_TURNS_FLAG --output-format json\" >\"$out_json\" 2>\"$err_log\"" &
+      fi
+    elif [[ "$PERMISSION_MODE" == "plan" ]]; then
       setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" &
     else
-        echo "[cecelia-run] DEBUG: 启动 claude 进程..." >&2
+      echo "[cecelia-run] DEBUG: 启动 claude 进程..." >&2
       echo "[cecelia-run] DEBUG: WORK_DIR=$ACTUAL_WORK_DIR" >&2
       echo "[cecelia-run] DEBUG: MODEL_FLAG=$MODEL_FLAG" >&2
       echo "[cecelia-run] DEBUG: PROMPT=${original_prompt:0:200}..." >&2
