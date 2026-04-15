@@ -418,7 +418,9 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 233 |
+| **topics** | 主理人选题池（migration 234，status: draft/已通过/已发布/已废弃，priority 排序，与 topic_suggestions AI队列并列独立） |
+| **topics_rhythm_config** | 选题池每日触发上限配置（migration 234，daily_limit 默认 1） |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 234 |
 | **distilled_docs** | 蒸馏文档层 Layer 2（SOUL/SELF_MODEL/USER_PROFILE/WORLD_STATE） |
 | **kr_verifiers** | KR 指标自动验证（SQL 查询, threshold, current_value, 定时采集） |
 | **blocks** | 通用 block 存储 |
