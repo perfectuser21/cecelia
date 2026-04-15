@@ -27,12 +27,18 @@ const manifest: FeatureManifest = {
       component: 'SeatsStatus',
       navItem: { label: 'Seats 详情', icon: 'Monitor', group: 'brain', order: 2 },
     },
+    {
+      path: '/llm-observability',
+      component: 'LangfuseObservability',
+      navItem: { label: 'LLM 观测', icon: 'Activity', group: 'brain', order: 3 },
+    },
   ],
 
   components: {
     CeceliaOverview: () => import('./pages/CeceliaOverview'),
     ServerDetail: () => import('./pages/ServerDetail'),
     SeatsStatus: () => import('./pages/SeatsStatus'),
+    LangfuseObservability: () => import('./pages/LangfuseObservability'),
   },
 };
 

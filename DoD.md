@@ -1,14 +1,19 @@
-contract_branch: cp-harness-contract-ad3cd28b
-workstream_index: 1
-sprint_dir: sprints/harness-v7-docker-sandbox
+# DoD
 
-## Feature 1: 子进程递归内存采集（FR-001 / US-003）
+## [ARTIFACT] Files
+- [x] `packages/brain/src/langfuse-reporter.js` 存在
+  - Test: `manual:node -e "require('fs').accessSync('packages/brain/src/langfuse-reporter.js')"`
+- [x] `frontend/src/features/core/brain/pages/LangfuseObservability.tsx` 存在
+  - Test: `manual:node -e "require('fs').accessSync('frontend/src/features/core/brain/pages/LangfuseObservability.tsx')"`
+- [x] 单元测试 `packages/brain/src/__tests__/langfuse-reporter.test.js` 存在
+  - Test: `manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/langfuse-reporter.test.js')"`
 
-- [x] [BEHAVIOR] sampleProcess 函数体内包含 ppid 父子进程关联 + 递归/循环遍历子进程逻辑 + rss 累加
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/watchdog.js','utf8');const lines=c.split('\n').filter(l=>!l.trim().startsWith('//'));const code=lines.join('\n');const fn=code.match(/function\s+sampleProcess[\s\S]*?\n\}/);if(!fn){console.log('FAIL: sampleProcess 未找到');process.exit(1);}const body=fn[0];if(!body.includes('ppid')){console.log('FAIL: 无 ppid');process.exit(1);}if(!/while|for|recur|queue|stack/.test(body)){console.log('FAIL: 无循环/递归');process.exit(1);}if(!/rss/.test(body)){console.log('FAIL: 无 rss');process.exit(1);}console.log('PASS');"
-
-- [x] [BEHAVIOR] watchdog 单元测试通过，覆盖子进程递归采集场景（含 sampleProcess/recursive/child rss 命名）
-  Test: tests/brain/watchdog.test.js
-
-- [x] [BEHAVIOR] sampleProcess 对不存在的 PID 返回 null 不抛异常
-  Test: tests/brain/watchdog.test.js
+## [BEHAVIOR] 运行时行为
+- [x] langfuse-reporter 在 env 缺失时 isEnabled() 返回 false（不抛错）
+  - Test: `packages/brain/src/__tests__/langfuse-reporter.test.js`
+- [x] langfuse-reporter 在 env 完整时构造含 trace-create + generation-create 的合法 payload
+  - Test: `packages/brain/src/__tests__/langfuse-reporter.test.js`
+- [x] llm-caller.js import 并在成功/失败路径调用 reportCall（非阻塞）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/llm-caller.js','utf8');if(!c.includes('langfuse-reporter'))process.exit(1);if(!c.includes('reportCall'))process.exit(1)"`
+- [x] brain feature 注册 /llm-observability 路由指向 LangfuseObservability 组件
+  - Test: `manual:node -e "const c=require('fs').readFileSync('frontend/src/features/core/brain/index.ts','utf8');if(!c.includes('LangfuseObservability'))process.exit(1);if(!c.includes('/llm-observability'))process.exit(1)"`
