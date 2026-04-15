@@ -116,6 +116,53 @@ describe("hooks/stop-dev.sh exit codes", () => {
         expect(result).not.toContain("exit:1");
       }
     });
+    it("should return exit 0 when current_sid is empty and orphan dev-lock has different session_id (cross-session isolation fix)", () => {
+      // 修复场景：headless/nested session（CLAUDE_SESSION_ID 为空）
+      // orphan dev-lock 含 session_id → 属于别的 session → 不应 block
+      const branch = "test-cross-session-empty-current";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+
+      const orphanBranch = "orphan-session-branch";
+      const orphanSessionId = "orphan-sid-4aac48fe";
+      // 写孤儿 dev-mode（有未完成步骤）和 dev-lock（含 session_id）
+      writeDevMode(
+        tempDir,
+        orphanBranch,
+        `dev\nbranch: ${orphanBranch}\nstep_2_code: pending\nstep_3_integrate: pending\nstep_4_ship: pending\n`
+      );
+      writeDevLock(tempDir, orphanBranch, orphanSessionId);
+
+      // 当前 session 无 dev-lock（CLAUDE_SESSION_ID 为空 = headless）
+      // 孤儿 session_id 非空且不同 → 应 skip → exit 0
+      const exitCode = execSync(
+        `cd "${tempDir}" && CLAUDE_SESSION_ID="" bash "${STOP_DEV_HOOK}" < /dev/null; echo $?`,
+        { encoding: "utf-8" }
+      );
+      expect(exitCode.trim()).toBe("0");
+    });
+
+    it("should return exit 0 when current_sid differs from orphan session_id (cross-session isolation regression)", () => {
+      // 回归保护：current_sid 非空 + orphan_sid 非空 + 不同 → skip → exit 0
+      const branch = "test-cross-session-both-known";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+
+      const currentSessionId = "current-sid-abc123";
+      const orphanBranch = "orphan-session-branch-b";
+      const orphanSessionId = "orphan-sid-xyz789";
+      writeDevMode(
+        tempDir,
+        orphanBranch,
+        `dev\nbranch: ${orphanBranch}\nstep_2_code: pending\nstep_3_integrate: pending\nstep_4_ship: pending\n`
+      );
+      writeDevLock(tempDir, orphanBranch, orphanSessionId);
+
+      // 当前 session 有 CLAUDE_SESSION_ID，但与孤儿不同 → skip → exit 0
+      const exitCode = execSync(
+        `cd "${tempDir}" && CLAUDE_SESSION_ID=${currentSessionId} bash "${STOP_DEV_HOOK}" < /dev/null; echo $?`,
+        { encoding: "utf-8" }
+      );
+      expect(exitCode.trim()).toBe("0");
+    });
   });
 
   describe("exit 2 scenarios (block session end)", () => {

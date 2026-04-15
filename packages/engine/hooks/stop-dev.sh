@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.8.0
+# Stop Hook: Claude Code 协议适配器 v16.9.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.8.0 — self-heal 加所有权验证（只愈合 owner_session/session_id 匹配的 dev-mode，防误愈 Harness 后台任务 orphan）
+# 版本: v16.9.0 — 跨 session 孤儿隔离对称修复：current_sid 空时 orphan_sid 有值且不同仍正确 skip
 
 set -euo pipefail
 
@@ -190,9 +190,11 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
             _orphan_sid=""
             [[ -f "$_lockf" ]] && _orphan_sid=$(grep "^session_id:" "$_lockf" 2>/dev/null | awk '{print $2}' || echo "")
 
-            # 跨 session 隔离：当前 session_id 已知 且 orphan session_id 已知 且不同 → 跳过
-            if [[ -n "$_current_sid" && -n "$_orphan_sid" && "$_current_sid" != "$_orphan_sid" ]]; then
-                echo "[Stop Hook] warning: cross-session orphan skipped (orphan_sid=${_orphan_sid}, current=${_current_sid}, branch=${_ob})" >&2
+            # 跨 session 隔离：orphan session_id 已知 且不等于当前 session_id → 属于别人 → 跳过
+            # v16.9.0: 去掉对 _current_sid 非空的要求 — headless session (current_sid="") 下
+            # 只要 orphan_sid 有值且不同，就判定属于别的 session，不应 block 当前退出
+            if [[ -n "$_orphan_sid" && "$_orphan_sid" != "$_current_sid" ]]; then
+                echo "[Stop Hook] warning: cross-session orphan skipped (orphan_sid=${_orphan_sid}, current=${_current_sid:-<empty>}, branch=${_ob})" >&2
                 continue
             fi
             _orphan_branch="$_ob"

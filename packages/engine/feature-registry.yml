@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-15"
 
 changelog:
+  - version: "14.14.1"
+    date: "2026-04-15"
+    change: "fix"
+    description: "[CONFIG] stop-dev.sh v16.9.0 — 跨 session orphan 隔离对称修复：current_sid 为空时 orphan_sid 有值且不同仍正确 skip，不误 block headless session 退出"
+    files:
+      - "packages/engine/hooks/stop-dev.sh"
+      - "packages/engine/tests/hooks/stop-hook-exit-codes.test.ts"
+
   - version: "14.14.0"
     date: "2026-04-15"
     change: "feat"
