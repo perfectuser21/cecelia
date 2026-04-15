@@ -1,31 +1,17 @@
 /**
  * TopicsPoolPage.test.tsx — 选题池页面单元测试
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
-// Mock fetch
-global.fetch = vi.fn();
+// 基准目录：从当前测试文件向上找仓库根
+const REPO_ROOT = resolve(__dirname, '../../../../..');
 
-describe('TopicsPoolPage', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-    // rhythm mock
-    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
-      if (url.includes('/rhythm')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ daily_limit: 1 }) });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ topics: [], total: 0 }),
-      });
-    });
-  });
-
-  it('topic-pool-scheduler.js 导出 triggerTopicPoolSchedule', async () => {
-    const fs = await import('fs');
-    const content = fs.readFileSync(
-      new URL('../../../../../brain/src/topic-pool-scheduler.js', import.meta.url),
+describe('TopicsPoolPage — 文件存在性与内容校验', () => {
+  it('topic-pool-scheduler.js 导出 triggerTopicPoolSchedule', () => {
+    const content = readFileSync(
+      resolve(REPO_ROOT, 'packages/brain/src/topic-pool-scheduler.js'),
       'utf8'
     );
     expect(content).toContain('triggerTopicPoolSchedule');
@@ -33,29 +19,26 @@ describe('TopicsPoolPage', () => {
     expect(content).toContain("status = '已发布'");
   });
 
-  it('topic-selection-scheduler.js DISABLED = true', async () => {
-    const fs = await import('fs');
-    const content = fs.readFileSync(
-      new URL('../../../../../brain/src/topic-selection-scheduler.js', import.meta.url),
+  it('topic-selection-scheduler.js DISABLED = true', () => {
+    const content = readFileSync(
+      resolve(REPO_ROOT, 'packages/brain/src/topic-selection-scheduler.js'),
       'utf8'
     );
     expect(content).toContain('DISABLED = true');
   });
 
-  it('Migration 234 存在且含 topics 表 DDL', async () => {
-    const fs = await import('fs');
-    const content = fs.readFileSync(
-      new URL('../../../../../brain/migrations/234_topics_pool.sql', import.meta.url),
+  it('Migration 234 存在且含 topics 表 DDL', () => {
+    const content = readFileSync(
+      resolve(REPO_ROOT, 'packages/brain/migrations/234_topics_pool.sql'),
       'utf8'
     );
     expect(content).toContain('CREATE TABLE IF NOT EXISTS topics');
     expect(content).toContain('topics_rhythm_config');
   });
 
-  it('ContentFactory.tsx 含选题池 Tab', async () => {
-    const fs = await import('fs');
-    const content = fs.readFileSync(
-      new URL('./ContentFactory.tsx', import.meta.url),
+  it('ContentFactory.tsx 含选题池 Tab', () => {
+    const content = readFileSync(
+      resolve(__dirname, 'ContentFactory.tsx'),
       'utf8'
     );
     expect(content).toContain('选题池');
