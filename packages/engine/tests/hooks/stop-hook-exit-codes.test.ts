@@ -119,28 +119,32 @@ describe("hooks/stop-dev.sh exit codes", () => {
   });
 
   describe("exit 2 scenarios (block session end)", () => {
-    it("should return exit 2 when no .dev-lock but incomplete .dev-mode exists (fail-closed)", () => {
-      // dev-lock 丢失但 dev-mode 有未完成步骤 → fail-closed → exit 2
+    it("should return exit 2 when no .dev-lock but incomplete .dev-mode exists with foreign owner (fail-closed)", () => {
+      // dev-lock 丢失但 dev-mode 有未完成步骤 + 外来 owner_session → self-heal 不触发 → orphan → exit 2
+      // v16.9.0: B1 让 self-heal 在 HEAD==branch 且 dev-mode 无 owner 时正确自愈；
+      // 此测试改用 foreign owner 确保自愈跳过，orphan 路径才是本测试的目标行为
       const branch = "test-orphan-branch";
       execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
 
-      // 只写 dev-mode，不写 dev-lock（模拟 dev-lock 丢失场景）
       writeFileSync(
         join(tempDir, `.dev-mode.${branch}`),
-        `dev\nbranch: ${branch}\nstep_2_code: pending\nstep_3_integrate: pending\nstep_4_ship: pending\n`
+        `dev\nbranch: ${branch}\nowner_session: foreign-uuid-no-match\nstep_2_code: pending\nstep_3_integrate: pending\nstep_4_ship: pending\n`
       );
 
       const result = execSync(
-        `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" < /dev/null || echo "exit:$?"`,
+        `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null || echo "exit:$?"`,
         { encoding: "utf-8" }
       );
       expect(result).toContain("exit:2");
-      // 应输出 dev-lock 丢失的 block 原因
       expect(result).toContain("dev-lock");
     });
 
     it("should return exit 0 when no .dev-lock and .dev-mode has cleanup_done (completed session)", () => {
-      // dev-lock 丢失但 dev-mode 含 cleanup_done: true → 已完成会话 → exit 0
+      // dev-lock 丢失但 dev-mode 含 cleanup_done: true → exit 0
+      // v16.9.0: B1 让 self-heal 在 HEAD==branch + 无 owner 时重建 dev-lock，
+      //         随后 devloop-check 读到 cleanup_done 仍返回 allow（exit 0）——
+      //         结果正确（exit 0），只是中间经过的路径从 orphan→silent 变成
+      //         self-heal→devloop-check→allow。断言改为 EXIT:0 容忍 JSON 输出。
       const branch = "test-completed-branch";
       execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
 
@@ -149,11 +153,11 @@ describe("hooks/stop-dev.sh exit codes", () => {
         `dev\nbranch: ${branch}\ncleanup_done: true\n`
       );
 
-      const exitCode = execSync(
-        `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" < /dev/null; echo $?`,
+      const result = execSync(
+        `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null; echo "EXIT:$?"`,
         { encoding: "utf-8" }
       );
-      expect(exitCode.trim()).toBe("0");
+      expect(result).toContain("EXIT:0");
     });
 
     it("should return exit 2 when PR not created", () => {
@@ -313,6 +317,93 @@ describe("hooks/stop-dev.sh exit codes", () => {
         const code = parseInt(exitMatch[1]);
         expect([0, 2]).toContain(code);
       }
+    });
+  });
+
+  describe("v16.9.0: B2 bypass env + B1 self-heal without CLAUDE_SESSION_ID", () => {
+    it("B2: CECELIA_STOP_HOOK_BYPASS=1 makes hook exit 0 immediately without any state check", () => {
+      // 即使存在未完成 session（正常情况下会 block），bypass=1 也应立即退出
+      const branch = "test-bypass-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+      writeFileSync(
+        join(tempDir, `.dev-mode.${branch}`),
+        `dev\nbranch: ${branch}\nstep_2_code: pending\nstep_3_integrate: pending\nstep_4_ship: pending\n`
+      );
+
+      const result = execSync(
+        `cd "${tempDir}" && CECELIA_STOP_HOOK_BYPASS=1 bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null; echo "EXIT:$?"`,
+        { encoding: "utf-8" }
+      );
+      expect(result).toContain("EXIT:0");
+      expect(result).toContain("bypass requested via CECELIA_STOP_HOOK_BYPASS");
+    });
+
+    it("B2: bypass not set → normal flow (should block when session incomplete)", () => {
+      // 回归保护：不设 bypass env 时走正常逻辑
+      const branch = "test-bypass-off-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+      writeFileSync(
+        join(tempDir, `.dev-mode.${branch}`),
+        `dev\nbranch: ${branch}\nstep_2_code: pending\n`
+      );
+
+      const result = execSync(
+        `cd "${tempDir}" && unset CECELIA_STOP_HOOK_BYPASS && bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null || echo "exit:$?"`,
+        { encoding: "utf-8" }
+      );
+      expect(result).toContain("exit:2");
+      expect(result).not.toContain("bypass requested");
+    });
+
+    it("B1: self-heal works without CLAUDE_SESSION_ID when dev-mode has no owner and main HEAD matches branch", () => {
+      // 场景：headless/nested Claude Code 主 session 无 CLAUDE_SESSION_ID
+      // dev-mode 无 owner_session / session_id 标识
+      // 主仓库 HEAD == dev-mode.branch
+      // 预期：self-heal 重建 dev-lock（修复前：外层 if 直接跳过自愈）
+      const branch = "test-self-heal-no-sid-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+
+      // 写 dev-mode（无 owner_session / session_id）
+      writeFileSync(
+        join(tempDir, `.dev-mode.${branch}`),
+        `dev\nbranch: ${branch}\nstep_2_code: pending\n`
+      );
+      // 不写 dev-lock → 触发自愈路径
+
+      // 运行 hook，不设 CLAUDE_SESSION_ID；主仓库 HEAD 就是 branch（checkout 过）
+      execSync(
+        `cd "${tempDir}" && unset CLAUDE_SESSION_ID && bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null || true`,
+        { encoding: "utf-8" }
+      );
+
+      // 验证 dev-lock 被重建
+      expect(existsSync(join(tempDir, `.dev-lock.${branch}`))).toBe(true);
+      const lockContent = execSync(`cat "${tempDir}/.dev-lock.${branch}"`, {
+        encoding: "utf-8",
+      });
+      expect(lockContent).toContain("recovered: true");
+      expect(lockContent).toContain(`branch: ${branch}`);
+    });
+
+    it("B1: self-heal does NOT run for dev-mode with foreign owner_session when current sid empty", () => {
+      // 回归保护：dev-mode 有 owner_session 但不等于当前 sid（空）→ 不自愈
+      // 因为内层 1/2 条要求 "both non-empty"，第 3 条要求"无标识"，此场景三条都不成立
+      const branch = "test-foreign-owner-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+
+      writeFileSync(
+        join(tempDir, `.dev-mode.${branch}`),
+        `dev\nbranch: ${branch}\nowner_session: peer-uuid-9999\nstep_2_code: pending\n`
+      );
+      // 不写 dev-lock
+
+      execSync(
+        `cd "${tempDir}" && unset CLAUDE_SESSION_ID && bash "${STOP_DEV_HOOK}" 2>&1 < /dev/null || true`,
+        { encoding: "utf-8" }
+      );
+
+      // dev-lock 不应被重建（foreign owner，非当前 session）
+      expect(existsSync(join(tempDir, `.dev-lock.${branch}`))).toBe(false);
     });
   });
 });
