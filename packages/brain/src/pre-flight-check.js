@@ -45,8 +45,10 @@ export async function preFlightCheck(task) {
 
   // Check 2: Description validation (PRD content)
   // System tasks (dept_heartbeat, codex_qa, etc.) are auto-generated — no PRD required
-  // Use description or prd_content as fallback
-  const descContent = task.description || task.prd_content;
+  // Use description / prd_content / payload.prd_summary as fallback —
+  // autonomous-created tasks often place the PRD in payload.prd_summary
+  // instead of the top-level description column.
+  const descContent = task.description || task.prd_content || task.payload?.prd_summary;
   if (!isSystemTask) {
     if (!descContent || descContent.trim().length === 0) {
       issues.push('Task description is empty');
@@ -57,7 +59,23 @@ export async function preFlightCheck(task) {
     }
   }
 
-  // Check 3: Priority validation
+  // Check 3: Priority validation (with normalization).
+  // Map common non-standard priority labels (urgent/high/normal/medium/low/critical)
+  // onto P0/P1/P2 before validating, so upstream creators using semantic
+  // names aren't rejected outright.
+  const PRIORITY_NORMALIZE_MAP = {
+    urgent: 'P0',
+    critical: 'P0',
+    high: 'P1',
+    normal: 'P2',
+    medium: 'P2',
+    low: 'P2',
+  };
+  if (task.priority && typeof task.priority === 'string') {
+    const mapped = PRIORITY_NORMALIZE_MAP[task.priority.toLowerCase()];
+    if (mapped) task.priority = mapped;
+  }
+
   const validPriorities = ['P0', 'P1', 'P2'];
   if (!task.priority || !validPriorities.includes(task.priority)) {
     issues.push(`Invalid priority: ${task.priority || 'undefined'}`);
