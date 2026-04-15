@@ -53,6 +53,7 @@ import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
+import { checkStuckPipelines } from './pipeline-watchdog.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
@@ -186,6 +187,7 @@ let _lastReportTime = 0; // track last 48h system report generation time
 let _lastZombieSweepTime = 0; // track last zombie sweep time
 let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
 let _lastPipelinePatrolTime = 0; // track last pipeline patrol time
+let _lastPipelineWatchdogTime = 0; // track last pipeline-level stuck watchdog
 let _lastKrHealthDailyTime = 0; // track last daily KR health check time
 let _lastCredentialCheckTime = 0; // track last credential expiry check time
 
@@ -193,6 +195,7 @@ const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHE
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
+const PIPELINE_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_WATCHDOG_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1693,6 +1696,20 @@ async function executeTick() {
       }
     }).catch(err => {
       console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
+    });
+  }
+
+  // [感知] Pipeline-level Watchdog：每 30 分钟检测 pipeline 整体是否卡死
+  // 与 pipeline-patrol 正交（patrol 看 stage 超时，watchdog 看 pipeline 整体 6h 无进展）
+  const pipelineWatchdogElapsed = Date.now() - _lastPipelineWatchdogTime;
+  if (!MINIMAL_MODE && pipelineWatchdogElapsed >= PIPELINE_WATCHDOG_INTERVAL_MS) {
+    _lastPipelineWatchdogTime = Date.now();
+    Promise.resolve().then(() => checkStuckPipelines(pool)).then(r => {
+      if (r.stuck > 0) {
+        tickLog(`[tick] Pipeline watchdog: scanned=${r.scanned} stuck=${r.stuck}`);
+      }
+    }).catch(err => {
+      console.warn('[tick] pipeline-watchdog failed (non-fatal):', err.message);
     });
   }
 
