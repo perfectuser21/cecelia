@@ -332,6 +332,131 @@ describe('system task type exemption', () => {
   });
 });
 
+describe('payload.prd_summary fallback', () => {
+  it('accepts task when description is empty but payload.prd_summary is set', async () => {
+    const task = {
+      title: 'Valid Title',
+      description: '',
+      prd_content: null,
+      priority: 'P1',
+      payload: { prd_summary: 'Implement topic pool with priority-based scheduling and archive flow.' },
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Task description is empty');
+  });
+
+  it('rejects task when both description and payload.prd_summary are empty', async () => {
+    const task = {
+      title: 'Valid Title',
+      description: null,
+      prd_content: null,
+      priority: 'P1',
+      payload: {},
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Task description is empty');
+  });
+
+  it('rejects task when payload.prd_summary is too short', async () => {
+    const task = {
+      title: 'Valid Title',
+      description: null,
+      priority: 'P1',
+      payload: { prd_summary: 'short' },
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Task description too short (< 20 characters)');
+  });
+
+  it('prefers description over payload.prd_summary when both present', async () => {
+    const task = {
+      title: 'Valid Title',
+      description: 'Primary PRD content with enough characters.',
+      priority: 'P1',
+      payload: { prd_summary: 'Secondary PRD content with enough characters.' },
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+  });
+});
+
+describe('priority normalize', () => {
+  const baseTask = () => ({
+    title: 'Valid Title',
+    description: 'Valid description with enough characters for pre-flight',
+  });
+
+  it('normalizes "normal" to P2 and passes', async () => {
+    const task = { ...baseTask(), priority: 'normal' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Invalid priority: normal');
+    expect(task.priority).toBe('P2');
+  });
+
+  it('normalizes "medium" to P2', async () => {
+    const task = { ...baseTask(), priority: 'medium' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(task.priority).toBe('P2');
+  });
+
+  it('normalizes "low" to P2', async () => {
+    const task = { ...baseTask(), priority: 'low' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(task.priority).toBe('P2');
+  });
+
+  it('normalizes "high" to P1', async () => {
+    const task = { ...baseTask(), priority: 'high' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(task.priority).toBe('P1');
+  });
+
+  it('normalizes "urgent" to P0', async () => {
+    const task = { ...baseTask(), priority: 'urgent' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(task.priority).toBe('P0');
+  });
+
+  it('normalizes "critical" to P0', async () => {
+    const task = { ...baseTask(), priority: 'critical' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(task.priority).toBe('P0');
+  });
+
+  it('is case-insensitive (NORMAL, Medium, HIGH)', async () => {
+    for (const raw of ['NORMAL', 'Medium', 'HIGH']) {
+      const task = { ...baseTask(), priority: raw };
+      const result = await preFlightCheck(task);
+      expect(result.passed).toBe(true);
+    }
+  });
+
+  it('still rejects unknown priority values (e.g. "P5", "foo")', async () => {
+    const task = { ...baseTask(), priority: 'foo' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Invalid priority: foo');
+  });
+
+  it('leaves P0/P1/P2 untouched', async () => {
+    for (const p of ['P0', 'P1', 'P2']) {
+      const task = { ...baseTask(), priority: p };
+      const result = await preFlightCheck(task);
+      expect(result.passed).toBe(true);
+      expect(task.priority).toBe(p);
+    }
+  });
+});
+
 describe('getPreFlightStats', () => {
   it('should return stats structure', async () => {
     // Mock pool for testing
