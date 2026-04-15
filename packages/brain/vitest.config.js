@@ -98,7 +98,6 @@ export default defineConfig({
       'src/__tests__/tick-rampup.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
-      'src/__tests__/watchdog.test.js',
       'src/__tests__/zombie-cleaner.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       'src/__tests__/content-pipeline-executors.test.js',

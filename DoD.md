@@ -1,14 +1,14 @@
-contract_branch: cp-harness-contract-699c5335
-workstream_index: 3
-sprint_dir: sprints/harness-v6-hardening
+contract_branch: cp-harness-contract-ad3cd28b
+workstream_index: 1
+sprint_dir: sprints/harness-v7-docker-sandbox
 
-- [x] [BEHAVIOR] harness.js pipeline-detail 包含完整 10 步定义
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');const steps=['planner','propose','review','generate','evaluate','report','auto.merge','deploy','smoke.test','cleanup'];const missing=steps.filter(s=>!new RegExp(s.replace('.','[_\\\\-\\\\.]?'),'i').test(code));if(missing.length>0)throw new Error('FAIL: 缺少步骤: '+missing.join(', '));console.log('PASS')"
-- [x] [BEHAVIOR] stats 端点包含 completion_rate + avg_gan_rounds + avg_duration 三字段和 SQL 聚合
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!code.includes('completion_rate'))throw new Error('FAIL');if(!code.includes('avg_gan_rounds'))throw new Error('FAIL');if(!code.includes('avg_duration'))throw new Error('FAIL');if(!/SELECT|COUNT|AVG/i.test(code))throw new Error('FAIL: 缺SQL聚合');console.log('PASS')"
-- [x] [BEHAVIOR] health-monitor 返回 callback_queue_stats 对象含 unprocessed + failed_retries，查询 callback_queue 表
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/health-monitor.js','utf8');if(!code.includes('callback_queue_stats'))throw new Error('FAIL');if(!/SELECT.*callback_queue|FROM.*callback_queue/i.test(code))throw new Error('FAIL: 缺SQL查询');if(!code.includes('unprocessed'))throw new Error('FAIL');if(!code.includes('failed_retries'))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] 前端 pipeline 组件包含 cleanup/smoke-test 步骤渲染
-  Test: node -e "const{execSync}=require('child_process');const fs=require('fs');const raw=execSync('find apps/dashboard/src -name \"*ipeline*\" -o -name \"*pipeline*\"').toString().trim().split('\n').filter(Boolean);const files=raw.filter(f=>fs.statSync(f).isFile());if(!files.length)throw new Error('FAIL');let ok=false;for(const f of files){const c=fs.readFileSync(f,'utf8');if(c.includes('cleanup')||c.includes('Cleanup')||c.includes('smoke'))ok=true}if(!ok)throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] 前端 stats 页面展示 completionRate 和 GAN 轮次
-  Test: node -e "const{execSync}=require('child_process');const fs=require('fs');const raw=execSync('find apps/dashboard/src -name \"*pipeline*\" -o -name \"*Pipeline*\"').toString().trim().split('\n').filter(Boolean);const sf=raw.filter(f=>fs.statSync(f).isFile()).filter(f=>f.toLowerCase().includes('stat'));if(!sf.length)throw new Error('FAIL: 无stats页面');const code=fs.readFileSync(sf[0],'utf8');if(!code.includes('completion_rate')&&!code.includes('completionRate'))throw new Error('FAIL');if(!code.includes('avg_gan')&&!code.includes('avgGan')&&!code.includes('ganRounds'))throw new Error('FAIL');console.log('PASS')"
+## Feature 1: 子进程递归内存采集（FR-001 / US-003）
+
+- [x] [BEHAVIOR] sampleProcess 函数体内包含 ppid 父子进程关联 + 递归/循环遍历子进程逻辑 + rss 累加
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/watchdog.js','utf8');const lines=c.split('\n').filter(l=>!l.trim().startsWith('//'));const code=lines.join('\n');const fn=code.match(/function\s+sampleProcess[\s\S]*?\n\}/);if(!fn){console.log('FAIL: sampleProcess 未找到');process.exit(1);}const body=fn[0];if(!body.includes('ppid')){console.log('FAIL: 无 ppid');process.exit(1);}if(!/while|for|recur|queue|stack/.test(body)){console.log('FAIL: 无循环/递归');process.exit(1);}if(!/rss/.test(body)){console.log('FAIL: 无 rss');process.exit(1);}console.log('PASS');"
+
+- [x] [BEHAVIOR] watchdog 单元测试通过，覆盖子进程递归采集场景（含 sampleProcess/recursive/child rss 命名）
+  Test: tests/brain/watchdog.test.js
+
+- [x] [BEHAVIOR] sampleProcess 对不存在的 PID 返回 null 不抛异常
+  Test: tests/brain/watchdog.test.js
