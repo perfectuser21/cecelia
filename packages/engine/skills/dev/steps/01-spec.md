@@ -151,11 +151,23 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 - 每步 2-5 分钟粒度
 - TDD 顺序：写测试 → 验证失败 → 写实现 → 验证通过 → commit
 
-### 0.2.5 Self-Review 3 步
+### 0.2.5 Self-Review 4 步
+
+> v14.15.0 补第 4 步"跨 task 类型一致性"，对齐 Superpowers `writing-plans` 官方
+> Self-Review 完整度。防 Task 3 定义 `clearLayers()` vs Task 7 调用
+> `clearFullLayers()` 这类隐性不匹配在 plan 阶段逃脱。
 
 1. **Spec 覆盖度** — PRD 每个需求有对应 task？
 2. **占位符扫描** — 有无 TBD/TODO/稍后/适当？
 3. **命令可执行性** — 每个 Test 命令能在终端跑？
+4. **Step 4: Type consistency（跨 task 类型一致性扫描）** —
+   逐个 task 提取所有**函数签名**（`function xxx(` / `const xxx = (` / `async xxx(`）、
+   **常量/变量定义**、**import/export 名**，对比"被调用名"和"被定义名"：
+   - Task N 定义了 `foo` 但 Task M 调用了 `bar` → 报不匹配
+   - import `{ A, B }` 但下游用 `C` → 报缺失
+   - 同名函数 Task N 签名 `(x, y)` 与 Task M 签名 `(x, y, z)` → 报参数数不一致
+   发现问题 → 立刻修 plan 里的 task → 不触发整轮 Self-Review 重跑
+   （只需局部修正后继续）。
 
 有问题 → 修 → 继续（不重复 review）
 
