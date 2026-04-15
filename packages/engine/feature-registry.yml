@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-15"
 
 changelog:
+  - version: "14.14.1"
+    date: "2026-04-15"
+    change: "fix"
+    description: "Stop Hook 跨 session orphan 隔离不对称 — current_sid 空时仍误 block（headless/nested Claude Code 场景下 30+ 次反复 block 的根因）。orphan_sid 明确有值 → 直接 skip，不再要求 current_sid 非空"
+    files:
+      - "packages/engine/hooks/stop-dev.sh"
+      - "packages/engine/tests/hooks/stop-hook-exit-codes.test.ts"
+
   - version: "14.14.0"
     date: "2026-04-15"
     change: "feat"
