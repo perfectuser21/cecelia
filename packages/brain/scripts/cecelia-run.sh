@@ -672,13 +672,10 @@ main() {
     -d "{\"current_action\":\"$status\",\"step_status\":\"$run_status\"}" \
     >/dev/null 2>&1 || true
 
-  # 更新 Core DB task status（关键！否则 Brain tick 会 auto-fail-timeout）
-  local task_status="failed"
-  [[ $exit_code -eq 0 ]] && task_status="completed"
-  curl -s -X POST "$CORE_API/api/brain/action/update-task" \
-    -H "Content-Type: application/json" \
-    -d "{\"task_id\":\"$TASK_ID\",\"status\":\"$task_status\",\"idempotency_key\":\"cecelia-run-${TASK_ID}-${CHECKPOINT_ID}\"}" \
-    --max-time 5 >/dev/null 2>&1 || true
+  # v2.6.0 (harness-stabilize): 移除抢跑 update-task PATCH.
+  # 之前这里把 tasks.status 改为 completed 会导致 callback-processor 的
+  # WHERE status='in_progress' 守卫失效, 使 agent 的 result 从未写入 tasks.result.
+  # 改由 callback-processor / execution-callback 作为唯一 status+result 写入点.
 
   # 触发本地部署（PR 合并后自动重启服务）
   # 在 send_webhook 之前执行：此时 worktree 还未 fetch，origin/main 是合并前状态，
