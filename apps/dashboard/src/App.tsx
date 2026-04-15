@@ -6,7 +6,11 @@
  */
 
 import { useState, useMemo, lazy, Suspense, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, Route } from 'react-router-dom';
+
+// A1 (Day 2 Epic A): Task PRD viewer at /tasks/:id/prd
+// 用户从 PR body 的 "📋 PRD: <link>" 点进来，看任务的 PRD 全文
+const TaskPrdPage = lazy(() => import('./pages/tasks/TaskPrdPage'));
 import { PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import CollapsibleNavItem from './components/CollapsibleNavItem';
@@ -265,7 +269,17 @@ function AppContent() {
       {/* 主内容区域 - 配置驱动路由 */}
       <main className={isAuthenticated ? `flex-1 overflow-hidden flex flex-col ${collapsed ? 'ml-16' : 'ml-64'} pt-16 transition-all duration-300` : "flex-1 overflow-hidden flex flex-col"}>
         <div key={location.pathname} className={isAuthenticated ? (isFullHeightRoute(location.pathname) ? "flex-1 min-h-0 overflow-hidden page-fade-in" : "flex-1 min-h-0 overflow-y-auto p-8 page-fade-in") : ""}>
-          <DynamicRouter />
+          <DynamicRouter>
+            {/* A1: PRD viewer 静态路由（不进 navigation，仅通过 URL/PR link 访问） */}
+            <Route
+              path="/tasks/:id/prd"
+              element={
+                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
+                  <TaskPrdPage />
+                </Suspense>
+              }
+            />
+          </DynamicRouter>
         </div>
       </main>
 
