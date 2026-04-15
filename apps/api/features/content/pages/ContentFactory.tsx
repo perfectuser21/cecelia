@@ -9,9 +9,11 @@
  * 5. 有进行中 Pipeline 时每 5s 自动刷新列表
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
-import { Factory, Play, RefreshCw, Clock, CheckCircle, XCircle, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Factory, Play, RefreshCw, Clock, CheckCircle, XCircle, Loader2, AlertCircle, ChevronDown, ChevronUp, ListChecks } from 'lucide-react';
+
+const TopicsPoolPage = lazy(() => import('./TopicsPoolPage'));
 
 const BRAIN_API = '/api/brain';
 
@@ -136,7 +138,11 @@ function StageDetail({ stages }: { stages: Record<string, Stage> }) {
   );
 }
 
+type Tab = 'pipeline' | 'topics';
+
 export default function ContentFactory() {
+  const [activeTab, setActiveTab] = useState<Tab>('pipeline');
+
   // 内容类型列表
   const [contentTypes, setContentTypes] = useState<string[]>([]);
   const [typesLoading, setTypesLoading] = useState(true);
@@ -301,6 +307,45 @@ export default function ContentFactory() {
           <p className="text-sm text-gray-500 dark:text-gray-400">选择内容类型 + 输入关键词 → 触发 Brain 自动生产流水线</p>
         </div>
       </div>
+
+      {/* Tab 切换 */}
+      <div className="border-b border-gray-200 dark:border-gray-700">
+        <nav className="-mb-px flex gap-6">
+          <button
+            onClick={() => setActiveTab('pipeline')}
+            className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'pipeline'
+                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            <Factory className="w-4 h-4" />
+            流水线
+          </button>
+          <button
+            onClick={() => setActiveTab('topics')}
+            className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'topics'
+                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            <ListChecks className="w-4 h-4" />
+            选题池
+          </button>
+        </nav>
+      </div>
+
+      {/* 选题池 Tab */}
+      {activeTab === 'topics' && (
+        <Suspense fallback={<div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>}>
+          <TopicsPoolPage />
+        </Suspense>
+      )}
+
+      {/* 流水线 Tab */}
+      {activeTab !== 'topics' && (
+        <>
 
       {/* 触发表单 */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
@@ -504,6 +549,8 @@ export default function ContentFactory() {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

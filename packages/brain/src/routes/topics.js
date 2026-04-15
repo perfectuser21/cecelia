@@ -231,4 +231,216 @@ router.get('/analytics', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 以下为主理人选题池 v1 新增路由（topics 表）
+// 与上方 topic_suggestions / topic_selection_log 路由并列但独立
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/brain/topics/rhythm
+ * 查询每日触发上限配置
+ */
+router.get('/rhythm', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT daily_limit, updated_at FROM topics_rhythm_config ORDER BY id LIMIT 1`
+    );
+    res.json({ daily_limit: rows[0]?.daily_limit ?? 1, updated_at: rows[0]?.updated_at ?? null });
+  } catch (err) {
+    console.error('[topics] GET /rhythm error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/brain/topics/rhythm
+ * Body: { daily_limit: number }
+ */
+router.patch('/rhythm', async (req, res) => {
+  const { daily_limit } = req.body || {};
+  if (typeof daily_limit !== 'number' || daily_limit < 0 || daily_limit > 50) {
+    return res.status(400).json({ error: 'daily_limit 必须是 0-50 的整数' });
+  }
+  try {
+    await pool.query(
+      `UPDATE topics_rhythm_config SET daily_limit = $1, updated_at = NOW()`,
+      [Math.floor(daily_limit)]
+    );
+    res.json({ ok: true, daily_limit: Math.floor(daily_limit) });
+  } catch (err) {
+    console.error('[topics] PATCH /rhythm error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/topics/pool
+ * 主理人选题池列表
+ * Query: status?, limit=20, offset=0
+ */
+router.get('/pool', async (req, res) => {
+  const { status, limit = '20', offset = '0' } = req.query;
+  const lim = Math.min(parseInt(limit, 10) || 20, 100);
+  const off = parseInt(offset, 10) || 0;
+
+  try {
+    const whereParts = [];
+    const params = [];
+
+    if (status) {
+      params.push(status);
+      whereParts.push(`status = $${params.length}`);
+    }
+
+    const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM topics ${where}`,
+      params
+    );
+    const total = countResult.rows[0]?.total ?? 0;
+
+    params.push(lim, off);
+    const { rows } = await pool.query(
+      `SELECT id, title, angle, priority, status, target_platforms, scheduled_date,
+              pipeline_task_id, created_at, updated_at
+       FROM topics
+       ${where}
+       ORDER BY priority DESC, created_at ASC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    res.json({ topics: rows, total, limit: lim, offset: off });
+  } catch (err) {
+    console.error('[topics] GET /pool error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/topics/pool
+ * Body: { title, angle?, priority?, status?, target_platforms?, scheduled_date? }
+ */
+router.post('/pool', async (req, res) => {
+  const {
+    title,
+    angle = null,
+    priority = 50,
+    status = 'draft',
+    target_platforms = [],
+    scheduled_date = null,
+  } = req.body || {};
+
+  if (!title || typeof title !== 'string' || !title.trim()) {
+    return res.status(400).json({ error: 'title 必填' });
+  }
+
+  const validStatuses = ['draft', '已通过', '已发布', '已废弃'];
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ error: `status 必须是: ${validStatuses.join(', ')}` });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO topics (title, angle, priority, status, target_platforms, scheduled_date)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [title.trim(), angle, priority, status, JSON.stringify(target_platforms), scheduled_date]
+    );
+    res.status(201).json({ ok: true, topic: rows[0] });
+  } catch (err) {
+    console.error('[topics] POST /pool error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/brain/topics/pool/:id
+ * Body: 任意可更新字段
+ */
+router.patch('/pool/:id', async (req, res) => {
+  const { id } = req.params;
+  const {
+    title, angle, priority, status, target_platforms, scheduled_date, pipeline_task_id
+  } = req.body || {};
+
+  const validStatuses = ['draft', '已通过', '已发布', '已废弃'];
+  if (status !== undefined && !validStatuses.includes(status)) {
+    return res.status(400).json({ error: `status 必须是: ${validStatuses.join(', ')}` });
+  }
+
+  const setClauses = [];
+  const params = [];
+
+  if (title !== undefined) {
+    params.push(title.trim());
+    setClauses.push(`title = $${params.length}`);
+  }
+  if (angle !== undefined) {
+    params.push(angle);
+    setClauses.push(`angle = $${params.length}`);
+  }
+  if (priority !== undefined) {
+    params.push(priority);
+    setClauses.push(`priority = $${params.length}`);
+  }
+  if (status !== undefined) {
+    params.push(status);
+    setClauses.push(`status = $${params.length}`);
+  }
+  if (target_platforms !== undefined) {
+    params.push(JSON.stringify(target_platforms));
+    setClauses.push(`target_platforms = $${params.length}`);
+  }
+  if (scheduled_date !== undefined) {
+    params.push(scheduled_date);
+    setClauses.push(`scheduled_date = $${params.length}`);
+  }
+  if (pipeline_task_id !== undefined) {
+    params.push(pipeline_task_id);
+    setClauses.push(`pipeline_task_id = $${params.length}`);
+  }
+
+  if (setClauses.length === 0) {
+    return res.status(400).json({ error: '没有可更新的字段' });
+  }
+
+  setClauses.push(`updated_at = NOW()`);
+  params.push(id);
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE topics SET ${setClauses.join(', ')}
+       WHERE id = $${params.length}
+       RETURNING *`,
+      params
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'topic 不存在' });
+    }
+    res.json({ ok: true, topic: rows[0] });
+  } catch (err) {
+    console.error('[topics] PATCH /pool/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/brain/topics/pool/:id
+ */
+router.delete('/pool/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM topics WHERE id = $1`, [id]);
+    if (rowCount === 0) {
+      return res.status(404).json({ error: 'topic 不存在' });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[topics] DELETE /pool/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

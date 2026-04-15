@@ -23,8 +23,11 @@ import { sampleTopics } from './content-types/ai-solopreneur-topic-library.js';
  * 禁用开关：false = AI 自动选题已启用（内容生成引擎 v1）。
  * 启用条件：solo-company-case.yaml 已配置 NotebookLM notebook_id，
  * 主题库（ai-solopreneur-topic-library.js）提供精选种子词保证选题质量。
+ *
+ * 2026-04-15: 主理人选题池 v1 上线，禁用 AI 自动扩词机器。
+ * 选题源头改为主理人在 Dashboard 手写 topics，由 topic-pool-scheduler 按节奏拉取。
  */
-const DISABLED = false;
+const DISABLED = true;
 
 /** 每日触发时间（UTC 小时）= 北京时间 09:00 */
 const DAILY_TOPIC_HOUR_UTC = 1;

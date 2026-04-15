@@ -46,6 +46,7 @@ import createDecisionsMatchRouter from './src/routes/decisions.js';
 import conversationCapturesRoutes from './src/routes/conversation-captures.js';
 import captureAtomsRoutes from './src/routes/capture-atoms.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
+import topicsRoutes from './src/routes/topics.js';
 import selfDriveRoutes from './src/routes/self-drive.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
 import strategyTreeRoutes from './src/routes/strategy-tree.js';
@@ -173,6 +174,7 @@ app.use('/api/brain', brainRoutes);
 
 app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
+app.use('/api/brain/topics', topicsRoutes); // 主理人选题池 v1
 app.use('/api/brain/self-drive', selfDriveRoutes);
 app.use('/api/brain/publish', publishJobsRoutes);
 app.use('/api/brain/okr', okrHierarchyRoutes);

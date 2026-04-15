@@ -31,6 +31,7 @@ import { runConversationDigest } from './conversation-digest.js';
 import { runCaptureDigestion } from './capture-digestion.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { autoPromoteSuggestions } from './topic-suggestion-manager.js';
+import { triggerTopicPoolSchedule } from './topic-pool-scheduler.js';
 import { triggerDailyPublish } from './daily-publish-scheduler.js';
 import { generateDailyReport } from './daily-report-generator.js';
 import { generateWeeklyReport } from './weekly-report-generator.js';
@@ -3024,8 +3025,13 @@ async function executeTick() {
     .catch(e => console.warn('[tick] 契约扫描失败:', e.message));
 
   // 10.17 每日内容选题（UTC 01:00 = 北京时间 09:00，AI 自动生成 ≥10 个选题，fire-and-forget）
+  // 注：DISABLED=true，主理人选题池 v1 已接管，此处调用无副作用
   Promise.resolve().then(() => triggerDailyTopicSelection(pool))
     .catch(e => console.warn('[tick] 每日内容选题失败:', e.message));
+
+  // 10.17e 主理人选题池调度（UTC 01:00-12:00 = 北京时间 09:00-20:00，从 topics 表按节奏拉取，fire-and-forget）
+  Promise.resolve().then(() => triggerTopicPoolSchedule(pool))
+    .catch(e => console.warn('[tick] 选题池调度失败:', e.message));
 
   // 10.17c 选题推荐自动晋级（每 tick 检查 pending 超过 2h 的建议，fire-and-forget）
   Promise.resolve().then(() => autoPromoteSuggestions(pool))
