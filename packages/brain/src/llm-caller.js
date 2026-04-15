@@ -19,6 +19,7 @@ import { join } from 'path';
 import { spawn } from 'child_process';
 import { getActiveProfile } from './model-profile.js';
 import { selectBestAccount } from './account-usage.js';
+import { reportCall } from './langfuse-reporter.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -161,6 +162,7 @@ export async function callLLM(agentId, prompt, options = {}) {
       const elapsed = Date.now() - startTime;
       const fallbackNote = isFallback ? ` [fallback#${i}]` : '';
       console.log(`[llm-caller] ${agentId} → ${model} (${provider})${fallbackNote} in ${elapsed}ms`);
+      reportCall({ agentId, model, provider, prompt, text, elapsedMs: elapsed, startedAt: startTime }).catch(() => {});
       return { text, model, provider, elapsed_ms: elapsed, attempted_fallback: isFallback };
     } catch (err) {
       lastError = err;
@@ -176,6 +178,7 @@ export async function callLLM(agentId, prompt, options = {}) {
       const text = await callAnthropicAPI(prompt, primary.model, timeout, maxTokens, imageContent);
       const elapsed = Date.now() - startTime;
       console.log(`[llm-caller] ${agentId} → ${primary.model} (anthropic-api implicit fallback) in ${elapsed}ms`);
+      reportCall({ agentId, model: primary.model, provider: 'anthropic-api', prompt, text, elapsedMs: elapsed, startedAt: startTime }).catch(() => {});
       return { text, model: primary.model, provider: 'anthropic-api', elapsed_ms: elapsed, attempted_fallback: true };
     } catch (apiErr) {
       console.warn(`[llm-caller] ${agentId} anthropic-api 直连也失败: ${apiErr.message}`);
@@ -188,6 +191,15 @@ export async function callLLM(agentId, prompt, options = {}) {
     lastError.elapsed_ms = Date.now() - startTime;
     lastError.fallback_attempt = candidates.length - 1;
   }
+  reportCall({
+    agentId,
+    model: lastModel,
+    provider: lastProvider,
+    prompt,
+    error: lastError || new Error(`[llm-caller] ${agentId}: all candidates failed`),
+    elapsedMs: Date.now() - startTime,
+    startedAt: startTime,
+  }).catch(() => {});
   throw lastError || new Error(`[llm-caller] ${agentId}: 所有候选模型均失败`);
 }
 
