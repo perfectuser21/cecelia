@@ -2371,10 +2371,36 @@ ${resultStr.substring(0, 2000)}
           let evalVerdict = null;
           const { verdict: retryVerdict, timedOut } = await readVerdictWithRetry(pool, task_id);
           if (timedOut) {
-            // verdict_timeout: 记录告警，不创建修复任务，不默认为 FAIL
-            await persistVerdictTimeout(pool, task_id);
-            console.warn(`[execution-callback] harness_evaluate: verdict_timeout for ${task_id} — pipeline paused, no auto-fix`);
-            return;
+            // Timeout fallback: parse verdict from callback_queue result_json.result (markdown)
+            // 原因：agent 完成了任务并产出报告，只是没 curl PATCH 回写
+            try {
+              const cbRow = await pool.query(
+                `SELECT result_json FROM callback_queue WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`,
+                [task_id]
+              );
+              const reportText = cbRow.rows[0]?.result_json?.result;
+              if (typeof reportText === 'string') {
+                // 支持多种 verdict 格式：PASS/FAIL/PARTIAL
+                const verdictMatch = reportText.match(/(?:裁决|verdict)[\s:：]*\**[:：]?\s*\**([A-Z]+)/i);
+                const parsedVerdict = verdictMatch?.[1]?.toUpperCase();
+                if (parsedVerdict === 'PASS') {
+                  evalVerdict = 'PASS';
+                  console.log(`[execution-callback] harness_evaluate: timeout fallback parsed PASS from report`);
+                } else if (parsedVerdict === 'FAIL' || parsedVerdict === 'PARTIAL') {
+                  evalVerdict = 'FAIL';
+                  console.log(`[execution-callback] harness_evaluate: timeout fallback parsed ${parsedVerdict} → FAIL from report`);
+                }
+              }
+            } catch (err) {
+              console.warn(`[execution-callback] timeout fallback parse failed: ${err.message}`);
+            }
+
+            if (!evalVerdict) {
+              // 真正无法解析：记录告警，不创建修复任务（避免错误判 FAIL 无限循环）
+              await persistVerdictTimeout(pool, task_id);
+              console.warn(`[execution-callback] harness_evaluate: verdict_timeout for ${task_id} — pipeline paused, no auto-fix`);
+              return;
+            }
           }
           if (retryVerdict) {
             evalVerdict = retryVerdict;
