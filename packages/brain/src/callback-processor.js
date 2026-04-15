@@ -424,5 +424,41 @@ export async function processExecutionCallback(data, pool) {
     }
   }
 
+  // Harness 路由（重构：Layer 1-4 路由逻辑从 routes/execution.js 迁移至 harness-router.js）
+  // callback_queue 架构下，worker 只调 processExecutionCallback。若此处不触发 harness 路由，
+  // 通过队列进入的 callback 就永远无法派生下游任务，整个 pipeline 卡死。
+  if ((newStatus === 'completed' || newStatus === 'failed')) {
+    try {
+      const harnessTaskRow = await pool.query(
+        'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
+        [task_id]
+      );
+      const harnessTaskInfo = harnessTaskRow.rows[0];
+      const harnessType = harnessTaskInfo?.task_type;
+      if (harnessType && harnessType.startsWith('harness_')) {
+        const { processHarnessRouting } = await import('./harness-router.js');
+        const { createTask: createHarnessTask } = await import('./actions.js');
+        await processHarnessRouting({
+          task_id,
+          harnessType,
+          harnessPayload: harnessTaskInfo.payload || {},
+          result,
+          pr_url,
+          newStatus,
+          harnessTask: {
+            id: task_id,
+            project_id: harnessTaskInfo.project_id,
+            goal_id: harnessTaskInfo.goal_id,
+            title: harnessTaskInfo.title,
+          },
+          pool,
+          createHarnessTask,
+        });
+      }
+    } catch (harnessErr) {
+      console.error(`[callback-processor] Harness routing failed (non-fatal): ${harnessErr.message}`, harnessErr.stack);
+    }
+  }
+
   return { success: true, newStatus };
 }

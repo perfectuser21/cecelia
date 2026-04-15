@@ -1,19 +1,21 @@
 # DoD
 
 ## [ARTIFACT] Files
-- [x] `packages/brain/src/langfuse-reporter.js` 存在
-  - Test: `manual:node -e "require('fs').accessSync('packages/brain/src/langfuse-reporter.js')"`
-- [x] `frontend/src/features/core/brain/pages/LangfuseObservability.tsx` 存在
-  - Test: `manual:node -e "require('fs').accessSync('frontend/src/features/core/brain/pages/LangfuseObservability.tsx')"`
-- [x] 单元测试 `packages/brain/src/__tests__/langfuse-reporter.test.js` 存在
-  - Test: `manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/langfuse-reporter.test.js')"`
+- [x] `packages/brain/src/harness-router.js` 新建，导出 processHarnessRouting
+  - Test: `manual:node -e "const m=require('fs').readFileSync('packages/brain/src/harness-router.js','utf8');if(!m.includes('export async function processHarnessRouting'))process.exit(1)"`
+- [x] `packages/brain/src/callback-processor.js` 调用 processHarnessRouting
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/callback-processor.js','utf8');if(!c.includes('processHarnessRouting'))process.exit(1)"`
+- [x] `packages/brain/src/routes/execution.js` 的 harness 路由已迁移为委托调用
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');if(!c.includes('processHarnessRouting'))process.exit(1);if(c.includes(\"harnessType === 'harness_planner'\"))process.exit(1)"`
 
 ## [BEHAVIOR] 运行时行为
-- [x] langfuse-reporter 在 env 缺失时 isEnabled() 返回 false（不抛错）
-  - Test: `packages/brain/src/__tests__/langfuse-reporter.test.js`
-- [x] langfuse-reporter 在 env 完整时构造含 trace-create + generation-create 的合法 payload
-  - Test: `packages/brain/src/__tests__/langfuse-reporter.test.js`
-- [x] llm-caller.js import 并在成功/失败路径调用 reportCall（非阻塞）
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/llm-caller.js','utf8');if(!c.includes('langfuse-reporter'))process.exit(1);if(!c.includes('reportCall'))process.exit(1)"`
-- [x] brain feature 注册 /llm-observability 路由指向 LangfuseObservability 组件
-  - Test: `manual:node -e "const c=require('fs').readFileSync('frontend/src/features/core/brain/index.ts','utf8');if(!c.includes('LangfuseObservability'))process.exit(1);if(!c.includes('/llm-observability'))process.exit(1)"`
+- [x] harness-router.js 的 processHarnessRouting 接受完整上下文参数（task_id/harnessType/harnessPayload/result/pr_url/newStatus/harnessTask/pool/createHarnessTask）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-router.js','utf8');for(const k of ['task_id','harnessType','harnessPayload','result','pr_url','newStatus','harnessTask','pool','createHarnessTask']){if(!c.includes(k))process.exit(1)}"`
+- [x] callback-processor.js 在 status update 完成后调用 processHarnessRouting（仅当 task_type 以 harness_ 开头）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/callback-processor.js','utf8');if(!c.includes(\"harnessType.startsWith('harness_')\"))process.exit(1);if(!c.includes('processHarnessRouting'))process.exit(1)"`
+- [x] harness-router.js 覆盖所有 Layer 1-4 路由（planner/propose/review/generate/fix/evaluate/report）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-router.js','utf8');for(const t of ['harness_planner','harness_contract_propose','harness_contract_review','harness_generate','harness_fix','harness_evaluate','harness_report']){if(!c.includes(t))process.exit(1)}"`
+- [x] routes/execution.js HTTP 端点的 harness 路由变成委托调用（接口不变，内部去重）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/execution.js','utf8');const count=(c.match(/processHarnessRouting/g)||[]).length;if(count<1)process.exit(1)"`
+- [x] brace balance 全部 OK（3 个文件均可通过 node --check）
+  - Test: `manual:bash -c "node --check packages/brain/src/harness-router.js && node --check packages/brain/src/callback-processor.js && node --check packages/brain/src/routes/execution.js"`
