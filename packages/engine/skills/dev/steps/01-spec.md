@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 6.2.0
+version: 6.3.0
 created: 2026-03-20
 updated: 2026-04-15
 changelog:
+  - 6.3.0: autonomous 分支改为由 Superpowers chain 驱动，所有 user 交互由 Research Subagent 代答
   - 6.2.0: autonomous 分支读 Step 0.7 产出的 .decisions-<branch>.yaml，作为技术决策硬约束
   - 6.1.0: autonomous 分支优先读 Step 0.5 enriched PRD
   - 6.0.0: autonomous_mode — 内嵌 superpowers:brainstorming + writing-plans 自主流程
@@ -74,6 +75,13 @@ git commit --allow-empty -m "chore: [state] Stage 1 跳过 (harness)"
 ---
 
 ## 0.2 autonomous_mode = true 时（全自动：PRD → Plan，不问用户）
+
+**v6.3.0 autonomous 分支变化**:
+autonomous_mode=true 时, 本 step 不再由主 agent 直接写 Task Card。
+改为: 主 agent 按 `autonomous-research-proxy.md` 规则驱动 Superpowers chain
+(brainstorming -> writing-plans -> subagent-driven-development),
+由 Superpowers 产出的 spec 作为 Task Card 输入。
+所有 Superpowers 的 user 交互点由 Research Subagent 代答。
 
 使用 `superpowers:brainstorming` + `superpowers:writing-plans` 的行为纪律，但跳过所有用户确认步骤。
 
