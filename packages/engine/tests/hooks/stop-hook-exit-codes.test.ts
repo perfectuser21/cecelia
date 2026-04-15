@@ -134,9 +134,9 @@ describe("hooks/stop-dev.sh exit codes", () => {
         `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" < /dev/null || echo "exit:$?"`,
         { encoding: "utf-8" }
       );
+      // B1 修改后：无 owner/session + HEAD 匹配时 self-heal 触发，dev-lock 自动重建，
+      // 再由 devloop-check 判断步骤未完成 → 仍 exit 2 阻止
       expect(result).toContain("exit:2");
-      // 应输出 dev-lock 丢失的 block 原因
-      expect(result).toContain("dev-lock");
     });
 
     it("should return exit 0 when no .dev-lock and .dev-mode has cleanup_done (completed session)", () => {
@@ -149,11 +149,14 @@ describe("hooks/stop-dev.sh exit codes", () => {
         `dev\nbranch: ${branch}\ncleanup_done: true\n`
       );
 
-      const exitCode = execSync(
+      const output = execSync(
         `cd "${tempDir}" && bash "${STOP_DEV_HOOK}" < /dev/null; echo $?`,
         { encoding: "utf-8" }
       );
-      expect(exitCode.trim()).toBe("0");
+      // B1 修改后：cleanup_done dev-mode 可能触发 self-heal 再走 devloop-check，
+      // 最终 exit 0，最后一行为 "0"
+      const lastLine = output.trim().split("\n").at(-1);
+      expect(lastLine).toBe("0");
     });
 
     it("should return exit 2 when PR not created", () => {
@@ -286,6 +289,71 @@ describe("hooks/stop-dev.sh exit codes", () => {
       );
       expect(result).toContain("exit:2");
       expect(result).toContain("dev-lock");
+    });
+  });
+
+  // B2: CECELIA_STOP_HOOK_BYPASS=1 逃生通道测试
+  describe("B2: CECELIA_STOP_HOOK_BYPASS escape hatch", () => {
+    it("should exit 0 when CECELIA_STOP_HOOK_BYPASS=1 even with active dev-mode", () => {
+      const branch = "test-bypass-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+      const sessionId = "bypass-test-session";
+      writeDevLock(tempDir, branch, sessionId);
+      writeDevMode(
+        tempDir,
+        branch,
+        `dev\nbranch: ${branch}\nsession_id: ${sessionId}\nstep_2_code: pending\n`
+      );
+      // CECELIA_STOP_HOOK_BYPASS=1 → 应立即 exit 0，bypass 消息输出到 stderr
+      const result = execSync(
+        `cd "${tempDir}" && CECELIA_STOP_HOOK_BYPASS=1 CLAUDE_SESSION_ID=${sessionId} bash "${STOP_DEV_HOOK}" < /dev/null 2>&1; echo "exit:$?"`,
+        { encoding: "utf-8" }
+      );
+      expect(result).toContain("exit:0");
+      expect(result).toContain("bypass requested");
+    });
+
+    it("should not bypass when CECELIA_STOP_HOOK_BYPASS is unset", () => {
+      const branch = "test-no-bypass-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+      const sessionId = "no-bypass-session";
+      writeDevLock(tempDir, branch, sessionId);
+      writeDevMode(
+        tempDir,
+        branch,
+        `dev\nbranch: ${branch}\nsession_id: ${sessionId}\nstep_2_code: pending\n`
+      );
+      const result = execSync(
+        `cd "${tempDir}" && unset CECELIA_STOP_HOOK_BYPASS && CLAUDE_SESSION_ID=${sessionId} bash "${STOP_DEV_HOOK}" < /dev/null || echo "exit:$?"`,
+        { encoding: "utf-8" }
+      );
+      // 未设置 bypass → 正常阻止（exit 2）
+      expect(result).toContain("exit:2");
+    });
+  });
+
+  // B1: CLAUDE_SESSION_ID 为空时 self-heal 仍可触发（第三条 fallback 规则）
+  describe("B1: self-heal works when CLAUDE_SESSION_ID is empty", () => {
+    it("should rebuild dev-lock when sid empty + no owner/session in dev-mode + main HEAD matches branch", () => {
+      const branch = "test-selfheal-nosid-branch";
+      execSync(`cd "${tempDir}" && git checkout -b ${branch} -q`);
+      // dev-mode 无 owner_session / session_id（触发规则 3）
+      writeDevMode(
+        tempDir,
+        branch,
+        `dev\nbranch: ${branch}\nstep_2_code: pending\n`
+      );
+      // 不写 dev-lock
+      const lockFile = join(tempDir, `.dev-lock.${branch}`);
+      expect(existsSync(lockFile)).toBe(false);
+      // 主仓库 HEAD 已是 branch（git checkout 过了）
+      // CLAUDE_SESSION_ID 为空 → 规则 3 应触发自愈
+      execSync(
+        `cd "${tempDir}" && unset CLAUDE_SESSION_ID && bash "${STOP_DEV_HOOK}" < /dev/null || true`,
+        { encoding: "utf-8" }
+      );
+      // dev-lock 应被重建
+      expect(existsSync(lockFile)).toBe(true);
     });
   });
 

@@ -151,11 +151,12 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 - 每步 2-5 分钟粒度
 - TDD 顺序：写测试 → 验证失败 → 写实现 → 验证通过 → commit
 
-### 0.2.5 Self-Review 3 步
+### 0.2.5 Self-Review 4 步
 
 1. **Spec 覆盖度** — PRD 每个需求有对应 task？
 2. **占位符扫描** — 有无 TBD/TODO/稍后/适当？
 3. **命令可执行性** — 每个 Test 命令能在终端跑？
+4. **Step 4: 跨 task 类型一致性扫描（Type consistency）** — 正则提取 plan 中所有函数签名 / 常量定义 / 导入名，自检 Task 间一致性。防 `clearLayers()` 定义 vs `clearFullLayers()` 调用这类隐性不匹配。发现问题立即修 plan，不重跑 Self-Review。
 
 有问题 → 修 → 继续（不重复 review）
 

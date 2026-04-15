@@ -6,6 +6,15 @@ version: "1.0.0"
 updated: "2026-04-15"
 
 changelog:
+  - version: "14.15.0"
+    date: "2026-04-15"
+    change: "feat"
+    description: "autonomous 顺化 Day 1 (B1+B2+F2): B1—self-heal 去外层 CLAUDE_SESSION_ID 门控，headless/nested 空 sid 场景第三条 fallback 自动触发; B2—CECELIA_STOP_HOOK_BYPASS=1 显式逃生通道; F2—01-spec.md §0.2.5 补 Step 4 跨 task 类型一致性扫描"
+    files:
+      - "packages/engine/hooks/stop-dev.sh"
+      - "packages/engine/tests/hooks/stop-hook-exit-codes.test.ts"
+      - "packages/engine/skills/dev/steps/01-spec.md"
+
   - version: "14.14.1"
     date: "2026-04-15"
     change: "fix"

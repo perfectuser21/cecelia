@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
-# Stop Hook: Claude Code 协议适配器 v16.8.0
+# Stop Hook: Claude Code 协议适配器 v16.9.0
 # 职责：找 .dev-lock → 调 devloop_check → exit 0/2
-# 版本: v16.8.0 — self-heal 加所有权验证（只愈合 owner_session/session_id 匹配的 dev-mode，防误愈 Harness 后台任务 orphan）
+# 版本: v16.9.0 — B2: CECELIA_STOP_HOOK_BYPASS 逃生通道；B1: self-heal 去外层 CLAUDE_SESSION_ID 门控
 
 set -euo pipefail
+
+# ============================================================================
+# v16.9.0 B2: 显式逃生通道 — Stop Hook 误 block 时可设此变量跳过
+# 用法: CECELIA_STOP_HOOK_BYPASS=1 bash stop-dev.sh
+# ============================================================================
+if [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]]; then
+    echo "[Stop Hook] bypass requested via CECELIA_STOP_HOOK_BYPASS=1, exiting" >&2
+    exit 0
+fi
 
 # 收集主仓库 + 所有 worktree 路径（主仓库优先）
 _collect_search_dirs() {
@@ -41,68 +50,68 @@ _session_matches() {
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # ============================================================================
-# v16.8.0: dev-lock 自愈 — dev-mode 存在但 dev-lock 丢失时自动重建
-# 条件: CLAUDE_SESSION_ID 非空 + dev-mode 首行是 'dev'
-# 所有权验证: 任一满足即愈合
+# v16.9.0 B1: dev-lock 自愈 — dev-mode 存在但 dev-lock 丢失时自动重建
+# 条件: dev-mode 首行是 'dev'（不再要求 CLAUDE_SESSION_ID 非空）
+# 所有权验证: 任一满足即愈合（内层自把关，支持 headless/nested 空 sid 场景）
 #   1. dev-mode 含 owner_session: $CLAUDE_SESSION_ID (强匹配)
 #   2. dev-mode 含 session_id: $CLAUDE_SESSION_ID (兼容老格式)
-#   3. 无 owner/session 标识 且 主仓库 HEAD == dev-mode branch (兼容降级)
+#   3. 无 owner/session 标识 且 主仓库 HEAD == dev-mode branch (兼容降级/空 sid)
 # 目的: 避免 dev-lock 文件意外丢失导致 Stop Hook 永久 block
 #       防止: 误愈 Harness 后台任务的 orphan dev-mode
 # ============================================================================
-if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
-    _heal_cur_tty="$(tty 2>/dev/null || echo 'not a tty')"
-    _heal_now="$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
-    while IFS= read -r _heal_dir; do
-        for _heal_dmf in "$_heal_dir"/.dev-mode.*; do
-            [[ -f "$_heal_dmf" ]] || continue
-            head -1 "$_heal_dmf" 2>/dev/null | grep -q "^dev$" || continue
-            _heal_branch=$(grep "^branch:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
-            [[ -z "$_heal_branch" ]] && continue
-            # 只对当前有效 worktree 的 dev-mode 自愈
-            # 条件: _heal_dir 在 git worktree list 中 + 该 worktree HEAD 与 _heal_branch 匹配
-            # 排除 T4 scenario: worktree 已删但目录残留 dev-mode（不在 worktree list 中）
-            # 排除孤儿场景: 主仓库中残留其他分支的 dev-mode（HEAD 不匹配 _heal_branch）
-            _heal_wt_head=$(git -C "$_heal_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-            [[ "$_heal_wt_head" != "$_heal_branch" ]] && continue
-            _heal_is_active=false
-            while IFS= read -r _wt_entry; do
-                [[ "$_wt_entry" == "worktree $_heal_dir" ]] && { _heal_is_active=true; break; }
-            done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
-            [[ "$_heal_is_active" == "false" ]] && continue
-            # v16.8.0: 所有权验证 — 只愈合能证明"属于当前 session"的 dev-mode
-            # 规则 (任一满足即愈合):
-            #   1. dev-mode 含 owner_session: $CLAUDE_SESSION_ID
-            #   2. dev-mode 含 session_id: $CLAUDE_SESSION_ID (兼容老格式)
-            #   3. dev-mode 无 owner/session 标识 且 当前主仓库 HEAD == dev-mode branch (同 shell 创建)
-            _heal_owner=$(grep "^owner_session:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
-            _heal_sid=$(grep "^session_id:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
-            _heal_owned=false
-            if [[ -n "$_heal_owner" && "$_heal_owner" == "$CLAUDE_SESSION_ID" ]]; then
-                _heal_owned=true
-            elif [[ -n "$_heal_sid" && "$_heal_sid" == "$CLAUDE_SESSION_ID" ]]; then
-                _heal_owned=true
-            elif [[ -z "$_heal_owner" && -z "$_heal_sid" ]]; then
-                # 无所有权标识 → 降级到主仓库 HEAD 匹配（兼容早期无 owner_session 的 worktree）
-                _heal_main_head=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-                [[ "$_heal_main_head" == "$_heal_branch" ]] && _heal_owned=true
-            fi
-            [[ "$_heal_owned" == "false" ]] && continue
-            _heal_lockf="$_heal_dir/.dev-lock.${_heal_branch}"
-            if [[ ! -f "$_heal_lockf" ]]; then
-                cat > "$_heal_lockf" <<HEAL_EOF
+_heal_cur_tty="$(tty 2>/dev/null || echo 'not a tty')"
+_heal_now="$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
+while IFS= read -r _heal_dir; do
+    for _heal_dmf in "$_heal_dir"/.dev-mode.*; do
+        [[ -f "$_heal_dmf" ]] || continue
+        head -1 "$_heal_dmf" 2>/dev/null | grep -q "^dev$" || continue
+        _heal_branch=$(grep "^branch:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
+        [[ -z "$_heal_branch" ]] && continue
+        # 只对当前有效 worktree 的 dev-mode 自愈
+        # 条件: _heal_dir 在 git worktree list 中 + 该 worktree HEAD 与 _heal_branch 匹配
+        # 排除 T4 scenario: worktree 已删但目录残留 dev-mode（不在 worktree list 中）
+        # 排除孤儿场景: 主仓库中残留其他分支的 dev-mode（HEAD 不匹配 _heal_branch）
+        _heal_wt_head=$(git -C "$_heal_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        [[ "$_heal_wt_head" != "$_heal_branch" ]] && continue
+        _heal_is_active=false
+        while IFS= read -r _wt_entry; do
+            [[ "$_wt_entry" == "worktree $_heal_dir" ]] && { _heal_is_active=true; break; }
+        done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
+        [[ "$_heal_is_active" == "false" ]] && continue
+        # v16.9.0 B1: 所有权验证 — 三条规则，任一满足即愈合
+        # CLAUDE_SESSION_ID 可为空（headless/nested 场景），空时只有规则 3 可触发
+        # 规则 (任一满足即愈合):
+        #   1. dev-mode 含 owner_session: $CLAUDE_SESSION_ID (非空时强匹配)
+        #   2. dev-mode 含 session_id: $CLAUDE_SESSION_ID (兼容老格式，非空时匹配)
+        #   3. dev-mode 无 owner/session 标识 且 当前主仓库 HEAD == dev-mode branch (空 sid fallback)
+        _heal_owner=$(grep "^owner_session:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
+        _heal_sid=$(grep "^session_id:" "$_heal_dmf" 2>/dev/null | awk '{print $2}' || echo "")
+        _heal_cur_sid="${CLAUDE_SESSION_ID:-}"
+        _heal_owned=false
+        if [[ -n "$_heal_owner" && -n "$_heal_cur_sid" && "$_heal_owner" == "$_heal_cur_sid" ]]; then
+            _heal_owned=true
+        elif [[ -n "$_heal_sid" && -n "$_heal_cur_sid" && "$_heal_sid" == "$_heal_cur_sid" ]]; then
+            _heal_owned=true
+        elif [[ -z "$_heal_owner" && -z "$_heal_sid" ]]; then
+            # 无所有权标识 → 降级到主仓库 HEAD 匹配（兼容早期无 owner_session 的 worktree，以及空 sid headless 场景）
+            _heal_main_head=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+            [[ "$_heal_main_head" == "$_heal_branch" ]] && _heal_owned=true
+        fi
+        [[ "$_heal_owned" == "false" ]] && continue
+        _heal_lockf="$_heal_dir/.dev-lock.${_heal_branch}"
+        if [[ ! -f "$_heal_lockf" ]]; then
+            cat > "$_heal_lockf" <<HEAL_EOF
 dev
 branch: ${_heal_branch}
-session_id: ${CLAUDE_SESSION_ID}
+session_id: ${CLAUDE_SESSION_ID:-}
 tty: ${_heal_cur_tty}
 recreated_at: ${_heal_now}
 recovered: true
 HEAL_EOF
-                echo "[Stop Hook] dev-lock 自愈重建（分支: ${_heal_branch}）" >&2
-            fi
-        done
-    done < <(_collect_search_dirs "$PROJECT_ROOT")
-fi
+            echo "[Stop Hook] dev-lock 自愈重建（分支: ${_heal_branch}）" >&2
+        fi
+    done
+done < <(_collect_search_dirs "$PROJECT_ROOT")
 
 # v16.3.0: 清理主仓库残留的 .dev-lock/.dev-mode（迁移：这些文件应只存在于 worktree）
 # 仅在有 worktree 存在时清理主仓库（无 worktree = 单仓库/测试环境，不清理）
