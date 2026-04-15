@@ -1,14 +1,20 @@
-contract_branch: cp-harness-contract-699c5335
-workstream_index: 3
-sprint_dir: sprints/harness-v6-hardening
+contract_branch: cp-harness-contract-ad3cd28b
+workstream_index: 4
+sprint_dir: sprints/harness-v7-docker-sandbox
 
-- [x] [BEHAVIOR] harness.js pipeline-detail 包含完整 10 步定义
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');const steps=['planner','propose','review','generate','evaluate','report','auto.merge','deploy','smoke.test','cleanup'];const missing=steps.filter(s=>!new RegExp(s.replace('.','[_\\\\-\\\\.]?'),'i').test(code));if(missing.length>0)throw new Error('FAIL: 缺少步骤: '+missing.join(', '));console.log('PASS')"
-- [x] [BEHAVIOR] stats 端点包含 completion_rate + avg_gan_rounds + avg_duration 三字段和 SQL 聚合
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!code.includes('completion_rate'))throw new Error('FAIL');if(!code.includes('avg_gan_rounds'))throw new Error('FAIL');if(!code.includes('avg_duration'))throw new Error('FAIL');if(!/SELECT|COUNT|AVG/i.test(code))throw new Error('FAIL: 缺SQL聚合');console.log('PASS')"
-- [x] [BEHAVIOR] health-monitor 返回 callback_queue_stats 对象含 unprocessed + failed_retries，查询 callback_queue 表
-  Test: node -e "const code=require('fs').readFileSync('packages/brain/src/health-monitor.js','utf8');if(!code.includes('callback_queue_stats'))throw new Error('FAIL');if(!/SELECT.*callback_queue|FROM.*callback_queue/i.test(code))throw new Error('FAIL: 缺SQL查询');if(!code.includes('unprocessed'))throw new Error('FAIL');if(!code.includes('failed_retries'))throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] 前端 pipeline 组件包含 cleanup/smoke-test 步骤渲染
-  Test: node -e "const{execSync}=require('child_process');const fs=require('fs');const raw=execSync('find apps/dashboard/src -name \"*ipeline*\" -o -name \"*pipeline*\"').toString().trim().split('\n').filter(Boolean);const files=raw.filter(f=>fs.statSync(f).isFile());if(!files.length)throw new Error('FAIL');let ok=false;for(const f of files){const c=fs.readFileSync(f,'utf8');if(c.includes('cleanup')||c.includes('Cleanup')||c.includes('smoke'))ok=true}if(!ok)throw new Error('FAIL');console.log('PASS')"
-- [x] [BEHAVIOR] 前端 stats 页面展示 completionRate 和 GAN 轮次
-  Test: node -e "const{execSync}=require('child_process');const fs=require('fs');const raw=execSync('find apps/dashboard/src -name \"*pipeline*\" -o -name \"*Pipeline*\"').toString().trim().split('\n').filter(Boolean);const sf=raw.filter(f=>fs.statSync(f).isFile()).filter(f=>f.toLowerCase().includes('stat'));if(!sf.length)throw new Error('FAIL: 无stats页面');const code=fs.readFileSync(sf[0],'utf8');if(!code.includes('completion_rate')&&!code.includes('completionRate'))throw new Error('FAIL');if(!code.includes('avg_gan')&&!code.includes('avgGan')&&!code.includes('ganRounds'))throw new Error('FAIL');console.log('PASS')"
+## Feature 4: Harness Pipeline 健康监控端点（FR-007 / US-004）
+
+- [x] [ARTIFACT] `packages/brain/src/routes/ops.js` 包含 `/harness/pipeline-health` GET 路由（含 DB 查询 + stuck 检测逻辑）
+- [x] [BEHAVIOR] `GET /api/brain/harness/pipeline-health` 返回 HTTP 200 + JSON，响应包含 `pipelines` 数组（每个元素有 `pipeline_id`、`pipeline_stuck`、`last_activity`）和 `failure_rate` 汇总字段
+- [x] [BEHAVIOR] 超过 6 小时无进展的 pipeline `pipeline_stuck = true`
+- [x] [BEHAVIOR] 无活跃 pipeline 时端点返回空数组，不报错
+- [x] [ARTIFACT] `packages/brain/src/server.js` 包含 pipeline-health 路由注册（非注释代码）
+
+## Feature 5: Dashboard Harness 监控页面（FR-008 / US-004）
+
+- [x] [ARTIFACT] Dashboard 路由已注册 harness 监控页面（非注释代码）
+- [x] [ARTIFACT] 页面组件文件存在于 `apps/dashboard/src/` 目录下
+- [x] [BEHAVIOR] 页面有实际 API 调用（fetch/useSWR/useQuery/axios）并对接 `pipeline-health` API
+- [x] [BEHAVIOR] 卡住的 pipeline 有视觉区分（stuck/warning/error/red/danger 样式）
+- [x] [BEHAVIOR] 无活跃 pipeline 时正常渲染空状态（条件渲染）
+- [x] [BEHAVIOR] 组件含加载状态（loading）和错误状态（error）处理

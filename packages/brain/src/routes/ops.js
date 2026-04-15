@@ -2969,4 +2969,91 @@ router.post('/deploy/rollback', async (req, res) => {
 });
 
 
+// ─────────────────────────────────────────────────────────────
+// Harness Pipeline 健康监控
+// GET /api/brain/harness/pipeline-health
+// 返回所有活跃 pipeline 的健康状态，标记 stuck pipeline，汇总失败率
+// ─────────────────────────────────────────────────────────────
+router.get('/harness/pipeline-health', async (req, res) => {
+  try {
+    const STUCK_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 小时
+
+    // 1. 查询所有非终态的 harness_planner 任务（活跃 pipeline）
+    const { rows: planners } = await pool.query(`
+      SELECT
+        id AS pipeline_id,
+        title,
+        status,
+        created_at,
+        started_at,
+        updated_at,
+        payload->>'sprint_dir' AS sprint_dir
+      FROM tasks
+      WHERE task_type = 'harness_planner'
+        AND status NOT IN ('completed', 'failed', 'canceled')
+      ORDER BY created_at DESC
+      LIMIT 50
+    `);
+
+    // 2. 对每个 planner 查询其子任务的最后活跃时间
+    const pipelines = await Promise.all(planners.map(async (planner) => {
+      const { rows: subTasks } = await pool.query(`
+        SELECT
+          MAX(GREATEST(
+            COALESCE(updated_at, created_at),
+            COALESCE(started_at, created_at),
+            COALESCE(completed_at, created_at)
+          )) AS last_activity,
+          COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+          COUNT(*) AS total_count
+        FROM tasks
+        WHERE (id::text = $1 OR payload->>'planner_task_id' = $1)
+          AND (task_type LIKE 'harness_%' OR task_type LIKE 'sprint_%')
+      `, [planner.pipeline_id]);
+
+      const lastActivityRaw = subTasks[0]?.last_activity || planner.updated_at || planner.started_at || planner.created_at;
+      const lastActivity = lastActivityRaw ? new Date(lastActivityRaw).toISOString() : null;
+      const lastActivityMs = lastActivity ? new Date(lastActivity).getTime() : 0;
+      const pipeline_stuck = lastActivity ? (Date.now() - lastActivityMs > STUCK_THRESHOLD_MS) : true;
+
+      return {
+        pipeline_id: planner.pipeline_id,
+        title: planner.title || '',
+        status: planner.status,
+        sprint_dir: planner.sprint_dir || '',
+        pipeline_stuck,
+        last_activity: lastActivity,
+        created_at: planner.created_at ? new Date(planner.created_at).toISOString() : null,
+        failed_tasks: parseInt(subTasks[0]?.failed_count || 0, 10),
+        total_tasks: parseInt(subTasks[0]?.total_count || 0, 10),
+      };
+    }));
+
+    // 3. 汇总失败率（过去 24 小时内所有 harness 子任务）
+    const { rows: globalStats } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed_total,
+        COUNT(*) AS grand_total
+      FROM tasks
+      WHERE task_type LIKE 'harness_%'
+        AND created_at > NOW() - INTERVAL '24 hours'
+    `);
+
+    const failedTotal = parseInt(globalStats[0]?.failed_total || 0, 10);
+    const grandTotal = parseInt(globalStats[0]?.grand_total || 0, 10);
+    const failure_rate = grandTotal > 0 ? parseFloat((failedTotal / grandTotal).toFixed(4)) : 0;
+
+    res.json({
+      pipelines,
+      failure_rate,
+      stuck_count: pipelines.filter(p => p.pipeline_stuck).length,
+      total_active: pipelines.length,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[GET /harness/pipeline-health]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

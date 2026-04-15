@@ -38,6 +38,7 @@ const manifest: FeatureManifest = {
     },
     { path: '/harness-pipeline/:id', component: 'HarnessPipelineDetailPage' },
     { path: '/harness-pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
+    { path: '/harness-pipeline/health', component: 'HarnessPipelineHealthPage', navItem: { label: 'Pipeline 健康', icon: 'HeartPulse', group: 'execution', order: 31 } },
     // Workers
     {
       path: '/workers',
@@ -74,6 +75,7 @@ const manifest: FeatureManifest = {
     HarnessPipelineDetailPage: () => import('./pages/HarnessPipelineDetailPage'),
     HarnessPipelineStepPage: () => import('./pages/HarnessPipelineStepPage'),
     HarnessPipelineStatsPage: () => import('./pages/HarnessPipelineStatsPage'),
+    HarnessPipelineHealthPage: () => import('./pages/HarnessPipelineHealthPage'),
   },
 };
 
