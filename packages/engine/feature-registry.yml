@@ -6,6 +6,13 @@ version: "1.0.0"
 updated: "2026-04-15"
 
 changelog:
+  - version: "14.16.0"
+    date: "2026-04-16"
+    change: "feat"
+    description: "F3 — 补 Superpowers 三个核心缺口到 Implementer prompt: (1) Condition-Based Waiting 禁 setTimeout/sleep 用 waitFor; (2) Pre-Completion Verification 完成前必证三项; (3) Root-Cause Tracing bug fix 向上追 4+1 步。对齐 Superpowers 5.0.7 systematic-debugging + verification-before-completion"
+    files:
+      - "packages/engine/skills/dev/steps/02-code.md"
+
   - version: "14.15.1"
     date: "2026-04-16"
     change: "feat"
