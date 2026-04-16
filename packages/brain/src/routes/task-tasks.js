@@ -27,7 +27,7 @@ const TTL_MAP = {
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
   try {
-    const {
+    let {
       title,
       description = null,
       priority = 'P2',
@@ -46,6 +46,36 @@ router.post('/', async (req, res) => {
     if (!title || title.trim() === '') {
       return res.status(400).json({ error: 'title is required' });
     }
+
+    // ─── C2: Schema normalize at entry point ────────────────────────
+    // 1. PRD fallback: payload.prd_summary → description
+    //    上游创建者（Brain scheduler / talk / 人工）把 PRD 写在不同字段。
+    //    入口层统一收敛到 description，使 pre-flight 和下游消费者只看一个字段。
+    if (!description && payload?.prd_summary) {
+      description = payload.prd_summary;
+    }
+
+    // 2. Priority normalize: semantic labels → P0/P1/P2
+    //    拒绝完全未知的值（400），但接受常见语义标签。
+    const PRIORITY_NORMALIZE_MAP = {
+      urgent: 'P0', critical: 'P0',
+      high: 'P1',
+      normal: 'P2', medium: 'P2', low: 'P2',
+    };
+    const validPriorities = ['P0', 'P1', 'P2'];
+    if (priority && !validPriorities.includes(priority)) {
+      const mapped = PRIORITY_NORMALIZE_MAP[priority.toLowerCase?.()];
+      if (mapped) {
+        priority = mapped;
+      } else {
+        return res.status(400).json({
+          error: `Invalid priority: ${priority}`,
+          allowed: validPriorities,
+          hint: 'Also accepts: urgent, critical, high, normal, medium, low',
+        });
+      }
+    }
+    // ─── end C2 ─────────────────────────────────────────────────────
 
     // 未提供 domain 时自动检测
     const domain = domainInput ?? detectDomain(`${title} ${description ?? ''}`).domain;
