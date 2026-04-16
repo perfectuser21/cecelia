@@ -40,8 +40,7 @@ describe('constants', () => {
 
 describe('orchestrateContentPipelines', () => {
   beforeEach(() => {
-    // 清除本地 .env 可能设置的 PIPELINE_SELF_TRIGGER_DISABLED，确保测试不受本地配置影响
-    delete process.env.PIPELINE_SELF_TRIGGER_DISABLED;
+    // PIPELINE_SELF_TRIGGER_DISABLED 已废除（阶段3），此 beforeEach 保留为空
   });
 
   it('无 queued pipeline 时返回 total_actions=0', async () => {

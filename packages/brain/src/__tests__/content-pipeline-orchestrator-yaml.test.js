@@ -93,7 +93,7 @@ const MOCK_TYPE_CONFIG = {
 describe('orchestrateContentPipelines — YAML 配置集成', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.PIPELINE_SELF_TRIGGER_DISABLED;
+    // PIPELINE_SELF_TRIGGER_DISABLED 已废除（阶段3）
   });
 
   it('content_type 不存在于注册表时，pipeline 标记 failed', async () => {
