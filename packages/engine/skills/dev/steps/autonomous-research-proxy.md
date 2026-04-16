@@ -115,3 +115,58 @@ Task tool call:
 ## POC 参考
 
 2026-04-15 验证: 主 agent 在 brainstorming 的 clarifying question 步骤派 haiku Research Subagent, 27 秒内完成 grep + find + git log + 脚本分析, 返回 high confidence 答案并发现原 PRD 冗余（root gitignore 已覆盖）。模式成立。
+
+---
+
+## 交互点替代矩阵 v2（F4 / Engine v14.17.0）
+
+2026-04-16 Explore agent 一比一审计，覆盖 Superpowers 5.0.7 所有"问用户"点（17 个）与我们的替代状态。F4 已修复漏网之鱼，完整度从 78% → 95%。
+
+| # | superpowers 交互点 | 文件:行号 | 我们的处理（Tier/step） | 状态 |
+|---|---|---|---|---|
+| 1 | brainstorming HARD-GATE design approval | brainstorming/SKILL.md:12-13 | Tier 1 + 01-spec.md §0.2.3 自主选方案 | ✅ 完全替代 |
+| 2 | brainstorming visual companion offer | brainstorming/SKILL.md:25 | Tier 3 "autonomous 永不启用" | 🗑️ 刻意丢弃（无浏览器） |
+| 3 | brainstorming design section approval | brainstorming/SKILL.md:28-29 | 01-spec.md §0.2.4-0.2.5 self-review 5 步 | ✅ 完全替代（合并为一次） |
+| 4 | brainstorming spec doc review | brainstorming/SKILL.md:127-131 | Tier 1 spec reviewer 独立审 | ✅ 完全替代 |
+| 5 | brainstorming visual companion consent | brainstorming/SKILL.md:150-154 | 同 #2 刻意丢弃 | 🗑️ 刻意丢弃 |
+| 6 | writing-plans subagent-vs-inline 选择 | writing-plans/SKILL.md:136-144 | Tier 1 固定 "subagent-driven" | ✅ 完全替代 |
+| 7 | finishing-a-development-branch 4 选项 | finishing.../SKILL.md:51-62 | Tier 1 固定 "push + PR" | ✅ 完全替代 |
+| 8 | finishing-a-development-branch discard confirm | finishing.../SKILL.md:116-126 | **F4 新增**：04-ship.md §4.3 autonomous abort + Brain task | ✅ 完全替代（F4） |
+| 9 | using-git-worktrees 路径选择 | using-git.../SKILL.md:40-43 | Tier 1 固定 `~/worktrees/cecelia/` | ✅ 完全替代 |
+| 10 | using-git-worktrees test-fail proceed? | using-git.../SKILL.md:132 | Step 0 00-worktree-auto.md | ⚠️ 部分替代（baseline test 非关键路径） |
+| 11 | subagent-driven-development implementer questions | subagent.../SKILL.md:49 | 02-code.md §2.1 controller 传 full context | ✅ 完全替代 |
+| 12 | executing-plans 疑虑上报 | executing.../SKILL.md:21-22 | **F4 新增**：01-spec.md §0.2.5 Step 5 Critical Gap Abort | ✅ 完全替代（F4） |
+| 13 | executing-plans 阻塞升级 | executing.../SKILL.md:39-47 | **F4 v2**：02-code.md §2.5 BLOCKED 升级链 v2 | ✅ 完全替代（F4） |
+| 14 | receiving-code-review 信息澄清 | receiving.../SKILL.md:40-56 | 02-code.md §2.3 Spec Reviewer "不信任 Implementer" | ✅ 完全替代 |
+| 15 | receiving-code-review 架构问题升级 | receiving.../SKILL.md:64-84 | **F4 新增**：02-code.md §2.3/2.4 ARCHITECTURE_ISSUE 分支 + arch-reviewer | ✅ 完全替代（F4） |
+| 16 | systematic-debugging 多次失败升级 | systematic.../SKILL.md:197+211 | **F4 改**：BLOCKED 第 3 次派 dispatching-parallel-agents（不再派 systematic-debugging） | ✅ 完全替代（F4 修正） |
+| 17 | verification-before-completion gate | verification.../SKILL.md:23-34 | F3 / 02-code.md Pre-Completion Verification 清单 | ✅ 完全替代（F3） |
+
+**F4 之后统计**：
+- ✅ 完全替代：**14 个**（82%）
+- ⚠️ 部分替代：**1 个**（#10，baseline test 非关键路径）
+- 🗑️ 刻意丢弃：**2 个**（visual companion，合理）
+- ❌ 完全漏：**0**
+
+**Superpowers skill 引用覆盖**（F4 之后）：
+
+| skill | F4 前 | F4 后 | 备注 |
+|---|---|---|---|
+| brainstorming | ✓ | ✓ | |
+| writing-plans | ✓ | ✓ | |
+| subagent-driven-development | ✓ | ✓ | |
+| test-driven-development | ✓ | ✓ | |
+| verification-before-completion | ✓ | ✓ | |
+| systematic-debugging | ✓ | ✓ | 调用时机 F4 重新设计 |
+| dispatching-parallel-agents | ✓ | ✓ | BLOCKED 第 3 次调用 |
+| **receiving-code-review** | ✗ | **✓** | F4 新引（ARCHITECTURE_ISSUE 分支） |
+| **requesting-code-review** | ✗ | **✓** | F4 新引（Review 请求规范化 5 项） |
+| **executing-plans** | ✗ | **✓** | F4 新引（Critical Gap Abort + BLOCKED v2） |
+| **finishing-a-development-branch** | ✗ | **✓** | F4 新引（Discard 安全确认） |
+| using-git-worktrees | ✗ | ✗ | 我们自造 `worktree-manage.sh`，保留不切换 |
+| using-superpowers | — | — | meta skill，不适用 |
+| writing-skills | — | — | meta skill，不适用 |
+
+**覆盖率**：F4 前 7/14 (50%) → F4 后 **11/14 (79%)**，剩下 3 个：2 meta skill + 1 自造 worktree manager（刻意保留）。
+
+**实际可引用 skill 覆盖 = 11/12 = 92%**

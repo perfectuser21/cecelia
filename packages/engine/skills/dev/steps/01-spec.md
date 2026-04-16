@@ -151,16 +151,18 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 - 每步 2-5 分钟粒度
 - TDD 顺序：写测试 → 验证失败 → 写实现 → 验证通过 → commit
 
-### 0.2.5 Self-Review 4 步
+### 0.2.5 Self-Review 5 步
 
-> v14.15.0 补第 4 步"跨 task 类型一致性"，对齐 Superpowers `writing-plans` 官方
-> Self-Review 完整度。防 Task 3 定义 `clearLayers()` vs Task 7 调用
-> `clearFullLayers()` 这类隐性不匹配在 plan 阶段逃脱。
+> v14.15.0 补第 4 步"跨 task 类型一致性"对齐 Superpowers `writing-plans`。
+> v14.17.0 补第 5 步"Critical Gap Abort"对齐 Superpowers `executing-plans`
+> 的 "If concerns: Raise them with your human partner before starting"。
+> 防 Task 3 定义 `clearLayers()` vs Task 7 调用 `clearFullLayers()` 这类
+> 隐性不匹配在 plan 阶段逃脱，以及 PRD 矛盾 / 核心文件缺失等致命问题。
 
 1. **Spec 覆盖度** — PRD 每个需求有对应 task？
 2. **占位符扫描** — 有无 TBD/TODO/稍后/适当？
 3. **命令可执行性** — 每个 Test 命令能在终端跑？
-4. **Step 4: Type consistency（跨 task 类型一致性扫描）** —
+4. **Type consistency（跨 task 类型一致性扫描）** —
    逐个 task 提取所有**函数签名**（`function xxx(` / `const xxx = (` / `async xxx(`）、
    **常量/变量定义**、**import/export 名**，对比"被调用名"和"被定义名"：
    - Task N 定义了 `foo` 但 Task M 调用了 `bar` → 报不匹配
@@ -168,8 +170,35 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
    - 同名函数 Task N 签名 `(x, y)` 与 Task M 签名 `(x, y, z)` → 报参数数不一致
    发现问题 → 立刻修 plan 里的 task → 不触发整轮 Self-Review 重跑
    （只需局部修正后继续）。
+5. **Step 5: Critical Gap Abort（引 `superpowers:executing-plans`）** —
+   官方原则："If concerns: Raise them with your human partner before starting"。
+   autonomous 下等价：主 agent 对 plan 有**否决权**，发现致命 gap 必须暂停。
 
-有问题 → 修 → 继续（不重复 review）
+   Self-Review 发现以下**任一** critical gap → **暂停 autonomous，不继续 Stage 2**：
+
+   - **PRD 前后矛盾**：例如"不做 X"但 DoD 要求 X
+   - **核心文件不存在**：PRD 引用的文件路径 `grep -l` fail
+   - **DoD Test 命令语法错**：`bash -n <(cmd)` 或 `node -c cmd` fail
+   - **决策冲突**：Plan 引用了 `.decisions-<branch>.yaml` 不存在的 decision #ID
+   - **DoD 无 [BEHAVIOR]**：只有 [ARTIFACT] → CI L1 会失败
+
+   触发动作：
+   ```bash
+   # 在 .dev-mode 中标记
+   echo "autonomous_aborted: true" >> ".dev-mode.${BRANCH_NAME}"
+   echo "abort_reason: <一句话>" >> ".dev-mode.${BRANCH_NAME}"
+   # 创 Brain task 让人介入
+   curl -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{
+     \"title\": \"[autonomous_abort] ${TASK_ID} — Critical gap in plan\",
+     \"task_type\": \"autonomous_abort_review\",
+     \"priority\": \"P0\",
+     \"description\": \"Plan self-review 发现 critical gap: ...\"
+   }"
+   # exit stage 1，不进 Stage 2
+   exit 1
+   ```
+
+有问题 → 修 → 继续（不重复 review）。Step 5 触发 → 直接 abort（不修，让人决策）。
 
 ### 0.2.6 写 Task Card + 持久化
 
