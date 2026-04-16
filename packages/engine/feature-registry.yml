@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-15"
 
 changelog:
+  - version: "14.17.0"
+    date: "2026-04-16"
+    change: "feat"
+    description: "F4 — 1:1 复刻 Superpowers 交互点。新引 4 个 skill：(1) receiving-code-review — Reviewer ARCHITECTURE_ISSUE 升级分支 + arch-reviewer 派发；(2) requesting-code-review — Reviewer 请求规范化 5 项（SHA/PLAN_OR_REQUIREMENTS/DESCRIPTION/FILES_CHANGED/KNOWN_LIMITATIONS）；(3) executing-plans — 01-spec.md Step 5 Critical Gap Abort + 02-code.md BLOCKED 升级链 v2；(4) finishing-a-development-branch — 04-ship.md §4.3 Discard 安全确认（autonomous abort + Brain task）。autonomous-research-proxy.md 新增交互点替代矩阵 v2（17 个点，F4 后完全替代 14 个）。Superpowers skill 覆盖 50% → 79%，交互点 1:1 复刻 78% → 95%。"
+    files:
+      - "packages/engine/skills/dev/steps/01-spec.md"
+      - "packages/engine/skills/dev/steps/02-code.md"
+      - "packages/engine/skills/dev/steps/04-ship.md"
+      - "packages/engine/skills/dev/steps/autonomous-research-proxy.md"
+
   - version: "14.16.0"
     date: "2026-04-16"
     change: "feat"

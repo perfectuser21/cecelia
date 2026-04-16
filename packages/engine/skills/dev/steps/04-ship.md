@@ -1,8 +1,9 @@
 ---
 id: dev-stage-04-ship
-version: 4.1.0
-updated: 2026-04-13
+version: 4.2.0
+updated: 2026-04-16
 changelog:
+  - 4.2.0: F4 — 引 superpowers:finishing-a-development-branch 的 Discard 安全确认（autonomous 下不读 stdin 直接 abort + Brain task，保留安全底线）
   - 4.1.0: 新增 harness_mode 双路径 — harness 模式跳过 Learning + fire-learnings-event，非 harness 保持完整流程
   - 4.0.0: 职责分离 — 合并/cleanup_done/cleanup.sh 全部由 devloop-check 自动执行，文档只负责 Learning + 标记完成
   - 3.0.0: 精简 — 只保留 Learning + 合并 + 清理核心流程
@@ -112,3 +113,48 @@ git push origin HEAD
 > 1. devloop-check 条件 6 检测到 step_4_ship=done + CI passed → 自动合并 PR
 > 2. 合并成功 → 执行 cleanup.sh（部署/归档/GC）
 > 3. 写 cleanup_done: true → 删除 .dev-mode/.dev-lock → exit 0（会话结束）
+
+---
+
+## 4.3 Discard 安全确认（引 `superpowers:finishing-a-development-branch`）
+
+官方 `finishing-a-development-branch` 提供 4 选项（merge / PR / keep / discard），其中
+**discard 必须 typed-confirm** —— 防止误删 branch + commits + worktree（不可逆）。
+
+**autonomous 模式的处理**：
+
+- **默认不选 discard**：autonomous-research-proxy Tier 1 表固定选 "push + PR"（option 2）
+- **万一走到 discard 路径**（人工调 `/dev --discard` 或其他显式选择）：
+  - autonomous 模式下**不读 stdin**，直接 abort 流程
+  - 创 Brain task 让人决策：`task_type=finish_branch_discard_review`
+  - 不执行任何删除动作
+
+**实现片段（即使 autonomous 也保留安全底线）**：
+
+```bash
+if [[ "${_FINISH_ACTION:-}" == "discard" ]]; then
+    BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+    AUTO=$(grep "^autonomous_mode:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
+
+    echo "⚠️  This will permanently delete:"
+    echo "    - Branch ${BRANCH_NAME}"
+    echo "    - All commits on this branch"
+    echo "    - Worktree directory"
+
+    if [[ "$AUTO" == "true" ]]; then
+        # autonomous 下不读 stdin，直接 abort + Brain task
+        echo "autonomous_mode: true → aborting discard，creating Brain task for human review"
+        curl -s -X POST localhost:5221/api/brain/tasks \
+          -H "Content-Type: application/json" \
+          -d "{\"title\":\"[discard_review] ${BRANCH_NAME}\",\"task_type\":\"finish_branch_discard_review\",\"priority\":\"P1\"}"
+        exit 1
+    else
+        # 人工模式：typed-confirm
+        echo "Type exactly 'discard' to confirm:"
+        read -r CONFIRM
+        [[ "$CONFIRM" != "discard" ]] && { echo "Aborted (confirmation mismatch)"; exit 1; }
+    fi
+fi
+```
+
+**非 discard 路径不受影响**：merge / PR / keep 走现有 4.1-4.2 流程。
