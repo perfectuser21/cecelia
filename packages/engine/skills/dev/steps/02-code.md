@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 9.3.0
+version: 9.4.0
 created: 2026-03-14
-updated: 2026-04-15
+updated: 2026-04-16
 changelog:
+  - 9.4.0: F3 — 补 Superpowers 三个核心纪律到 Implementer prompt（Condition-Based Waiting / Pre-Completion Verification / Root-Cause Tracing），对齐 Superpowers 5.0.7 systematic-debugging + verification-before-completion
   - 9.3.0: autonomous 分支 Implementer 派遣时机改为来自 Superpowers subagent-driven-development skill，Research Subagent 处理 user 交互
   - 9.2.0: Implementer 开始前读 .decisions-<branch>.yaml 作为硬约束；Spec Reviewer 核心检查 5 验决策一致性
   - 9.1.0: Subagent Implementer/Reviewer 加全套回归强制规则（改 hooks/→跑 tests/hooks/ 全套，防止只跑新测试漏 T4 冲突）
@@ -278,6 +279,106 @@ DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 sed -i '' 's/step_2_code: pending/step_2_code: done/' "$DEV_MODE_FILE"
 # .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
 ```
+
+---
+
+## Implementer 必须遵守的 Superpowers 纪律（v9.4.0 / Engine v14.16.0 补全）
+
+下面三条规则是 Implementer subagent prompt 的**强制补丁**，对齐官方 Superpowers 5.0.7
+`systematic-debugging` 和 `verification-before-completion` skill。派遣 Implementer 时必须
+把这三块逐字注入 prompt。
+
+### Condition-Based Waiting（防 test flakiness）
+
+测试中**禁止**使用 `setTimeout / sleep / await new Promise(r => setTimeout(...))`。
+必须用条件等待（waitFor 模式）：
+
+```typescript
+// ❌ BEFORE: 负载高时必 flaky
+await new Promise(r => setTimeout(r, 50));
+expect(getResult()).toBeDefined();
+
+// ✅ AFTER: 条件满足就继续
+await waitFor(() => getResult() !== undefined);
+expect(getResult()).toBeDefined();
+```
+
+常用 pattern:
+
+| 等什么 | waitFor 写法 |
+|---|---|
+| 事件 | `waitFor(() => events.find(e => e.type === 'DONE'))` |
+| 状态机 | `waitFor(() => machine.state === 'ready')` |
+| 计数 | `waitFor(() => items.length >= 5)` |
+| 文件 | `waitFor(() => fs.existsSync(path))` |
+| 复合 | `waitFor(() => obj.ready && obj.value > 10)` |
+
+**唯一例外**：测的是 timing 行为本身（debounce / throttle 间隔）——此时必须在测试
+注释里写明 "Testing timing behavior: <why>"，不许悄悄用。
+
+### Pre-Completion Verification（完成前必证）
+
+官方原话：**Evidence before claims, always.** Violating the letter of this rule
+is violating the spirit of this rule.
+
+**铁律**：报 DONE / 完成 / fixed / pass 前，**必须在本条消息里跑过验证命令**。
+没跑过 = 撒谎不是效率。
+
+报告格式强制三项：
+
+```
+DONE.
+1. Test 跑过：
+   $ vitest run packages/foo/__tests__/bar.test.ts
+   → 9/9 passed (实际贴 stdout 尾部 3 行)
+2. DoD 逐条验证：
+   [BEHAVIOR] <条目> → <Test 命令> → <结果>
+   [ARTIFACT] <条目> → <Test 命令> → <结果>
+3. 相关目录全套回归：
+   $ vitest run packages/foo/__tests__/
+   → 42/42 passed
+```
+
+没证据 = BLOCKED，Spec Reviewer 直接打回。
+
+红线（出现任一必须停）：
+- 说 "should pass / probably works / seems fine"
+- 未跑验证就说 "Done! / Great!"
+- 信任 subagent 的 success 报告 without diff 检查
+- "just this once" 的心态
+
+### Root-Cause Tracing（bug fix 专属，向上追 4 步）
+
+官方原则：Trace backward through the call chain until you find the original
+trigger, then fix at the source.
+
+Bug fix 时**禁止**只改症状所在那一行。按 4+1 步追：
+
+**1. Observe the symptom（重现）**
+写一个 fail 的 test 证明 bug 存在。没有 failing test 就开始修 = 瞎改。
+
+**2. Find immediate cause（最近一层）**
+报错在哪行代码？直接触发它的 API 是什么？
+
+**3. Ask what called this（向上追调用链）**
+至少追 2 层：
+```
+WorktreeManager.createSessionWorktree(projectDir, ...)
+  ← called by Session.initializeWorkspace()
+  ← called by Session.create()
+  ← called by test setup
+```
+
+**4. Find original trigger（定位原点）**
+数据从哪来？值为什么错？——是 API response 没校验？是配置默认值空？是 race？
+
+**5. Fix at source + defense-in-depth（修原点 + 加多层防御）**
+修最上游（e.g. fetch 层加 null 检查），并在中间层也加 assertion（e.g. Worktree
+API 入口 assert 非空）。**修完加一条回归测试**覆盖原点路径。
+
+示例：`TypeError: cannot read property "foo" of undefined`
+- ❌ `obj?.foo` — 只修症状
+- ✅ 追到 obj 来自 API response → fetch 层加 null 检查 → 消费层加 fallback → 测试覆盖"API 返回 null"路径
 
 ---
 
