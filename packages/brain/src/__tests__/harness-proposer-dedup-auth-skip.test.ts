@@ -11,7 +11,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// harness 路由已迁移到 harness-router.js，读两个文件合并搜索
 const execSrc = fs.readFileSync(
+  path.join(__dirname, '../harness-router.js'),
+  'utf8'
+) + '\n' + fs.readFileSync(
   path.join(__dirname, '../routes/execution.js'),
   'utf8'
 );

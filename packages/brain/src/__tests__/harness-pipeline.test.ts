@@ -43,10 +43,9 @@ describe('harness pipeline — evaluator触发时机', () => {
     const marker = 'currentWsIdx === totalWsCount';
     const idx = execSrc.indexOf(marker);
     expect(idx).toBeGreaterThan(0);
-    // harness_report task creation should appear after this marker
-    // 窗口设为 4000（当前 if 块长度约 2515 chars），为后续代码扩展预留 1500 chars 余量
+    // v5.0: harness_evaluate task creation should appear after this marker (was harness_report before)
     const region = execSrc.slice(idx, idx + 4000);
-    expect(region).toContain('harness_report');
+    expect(region).toContain('harness_evaluate');
     expect(region).toContain('project_id');
   });
 
@@ -73,14 +72,14 @@ describe('harness pipeline — contract_branch guard', () => {
   it('contract_branch=null 时先做 fallback（git ls-remote），fallback 失败才终止不创建 Generator', () => {
     // P0 guard 仍然存在（fallback 失败后才触发）
     expect(execSrc).toContain('contract_branch=null');
-    expect(execSrc).toContain('[P0][execution-callback]');
+    expect(execSrc).toContain('[harness-router]');
     // Fallback 逻辑：查找 cp-harness-review-approved-{taskIdShort} 分支
     expect(execSrc).toContain('cp-harness-review-approved-');
     expect(execSrc).toContain('git ls-remote --heads origin');
     // RECOVERY 日志：fallback 成功时输出
-    expect(execSrc).toContain('[RECOVERY][execution-callback]');
+    expect(execSrc).toContain('[RECOVERY][harness-router]');
     // fallback 失败才 return（P0 guard 仍在，但在 fallback 之后）
-    const p0Idx = execSrc.indexOf('[P0][execution-callback]');
+    const p0Idx = execSrc.indexOf('[harness-router]');
     const region = execSrc.slice(p0Idx, p0Idx + 300);
     expect(region).toContain('return');
   });
