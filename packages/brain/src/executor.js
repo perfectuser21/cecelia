@@ -30,6 +30,7 @@ import { loadCache, getCachedLocation, getCachedConfig, refreshCache } from './t
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { selectBestAccount, getAccountUsage } from './account-usage.js';
+import { executeInDocker, writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -2947,6 +2948,76 @@ async function triggerCeceliaRun(task) {
       }
     }
 
+    // ── Docker Sandbox 分支（HARNESS_DOCKER_ENABLED=true）───────────────────
+    // 用 Docker container 替换 cecelia-run.sh + worktree spawn 的脆弱模式。
+    // 完成后写 callback_queue，下游 callback-worker 与 bridge 路径一致。
+    if (process.env.HARNESS_DOCKER_ENABLED === 'true') {
+      const extraEnvKeys = Object.keys(extraEnv);
+      const tier = resolveResourceTier(taskType);
+      console.log(
+        `[executor] HARNESS_DOCKER_ENABLED=true → executeInDocker task=${task.id} type=${taskType} tier=${tier.tier}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`
+      );
+
+      // 注入 webhook + 上下文（与 cecelia-run 行为对齐）
+      const dockerEnv = {
+        ...extraEnv,
+        WEBHOOK_URL: `${process.env.BRAIN_URL || 'http://localhost:5221'}/api/brain/execution-callback`,
+        CECELIA_CORE_API: process.env.BRAIN_URL || 'http://localhost:5221',
+        CECELIA_PERMISSION_MODE: permissionMode,
+        CECELIA_TASK_TYPE: taskType,
+      };
+      if (model) dockerEnv.CECELIA_MODEL = model;
+      if (provider) dockerEnv.CECELIA_PROVIDER = provider;
+
+      const dockerResult = await executeInDocker({
+        task,
+        prompt: promptContent,
+        env: dockerEnv,
+        worktreePath: repoPath || undefined,
+      });
+
+      activeProcesses.set(task.id, {
+        pid: null,
+        startedAt: dockerResult.started_at,
+        runId,
+        checkpointId,
+        docker: true,
+        container: dockerResult.container,
+      });
+
+      // 完成后写 callback_queue（保持下游路径兼容）
+      try {
+        await writeDockerCallback(task, runId, checkpointId, dockerResult);
+      } catch (cbErr) {
+        console.error(`[executor] writeDockerCallback failed task=${task.id}: ${cbErr.message}`);
+      }
+
+      await trace.end({
+        status: dockerResult.exit_code === 0 ? STATUS.SUCCESS : STATUS.FAILED,
+        outputSummary: {
+          checkpoint_id: checkpointId,
+          container: dockerResult.container,
+          exit_code: dockerResult.exit_code,
+          duration_ms: dockerResult.duration_ms,
+          timed_out: dockerResult.timed_out,
+        },
+      });
+
+      recordSessionStart();
+
+      return {
+        success: dockerResult.exit_code === 0 && !dockerResult.timed_out,
+        runId,
+        taskId: task.id,
+        checkpointId,
+        docker: true,
+        container: dockerResult.container,
+        exitCode: dockerResult.exit_code,
+        durationMs: dockerResult.duration_ms,
+        timedOut: dockerResult.timed_out,
+      };
+    }
+
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
     const extraEnvKeys = Object.keys(extraEnv);
     console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`);
@@ -3513,4 +3584,9 @@ export {
   // v16: Machine Registry + capability tags routing
   MACHINE_REGISTRY,
   selectBestMachine,
+  // v17: Docker Sandbox executor (HARNESS_DOCKER_ENABLED=true)
+  executeInDocker,
+  writeDockerCallback,
+  resolveResourceTier,
+  isDockerAvailable,
 };
