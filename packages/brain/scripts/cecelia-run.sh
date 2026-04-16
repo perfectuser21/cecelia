@@ -568,13 +568,15 @@ main() {
       CLAUDE_INVOKE="claude --resume $SESSION_UUID -p \"继续执行，上次因超时/中断未完成，请从中断处继续\""
     fi
     if [[ "$PERMISSION_MODE" == "plan" ]]; then
-      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" &
+      # FIX (P0): </dev/null 重定向 stdin，避免 bridge 退出后子进程因 stdin EOF 立即死掉（0 字节根因）
+      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" </dev/null &
     else
         echo "[cecelia-run] DEBUG: 启动 claude 进程..." >&2
       echo "[cecelia-run] DEBUG: WORK_DIR=$ACTUAL_WORK_DIR" >&2
       echo "[cecelia-run] DEBUG: MODEL_FLAG=$MODEL_FLAG" >&2
       echo "[cecelia-run] DEBUG: PROMPT=${original_prompt:0:200}..." >&2
-      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --dangerously-skip-permissions $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" &
+      # FIX (P0): </dev/null 重定向 stdin，避免 bridge 退出后子进程因 stdin EOF 立即死掉（0 字节根因）
+      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --dangerously-skip-permissions $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" </dev/null &
     fi
     CHILD_PID=$!
 

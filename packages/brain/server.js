@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { createWriteStream } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
@@ -344,6 +344,13 @@ async function startCeceliaBridge() {
   });
 
   console.log(`[Server] cecelia-bridge started (pid=${child.pid}), log: /tmp/cecelia-bridge.log`);
+}
+
+// FIX (P0): 启动前清理端口冲突，避免 EADDRINUSE 导致 Brain 拉不起来
+if (!process.env.VITEST) {
+  try {
+    execSync(`lsof -ti :${PORT} | xargs kill -9 2>/dev/null || true`, { stdio: 'pipe' });
+  } catch {}
 }
 
 if (!process.env.VITEST) server.listen(PORT, async () => {
