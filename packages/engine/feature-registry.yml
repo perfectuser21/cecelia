@@ -6,6 +6,13 @@ version: "1.0.0"
 updated: "2026-04-15"
 
 changelog:
+  - version: "14.15.1"
+    date: "2026-04-16"
+    change: "feat"
+    description: "A2 — PR body 模板自动贴 PRD 链接（📋 GitHub .task-<branch>.md + 🖥️ Dashboard /tasks/:id/prd），解决 PRD 发现性问题"
+    files:
+      - "packages/engine/skills/dev/steps/03-integrate.md"
+
   - version: "14.15.0"
     date: "2026-04-15"
     change: "feat"
