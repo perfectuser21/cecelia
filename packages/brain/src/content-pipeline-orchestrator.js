@@ -42,8 +42,9 @@
 
 import pool from './db.js';
 import { getContentType } from './content-types/content-type-registry.js';
-import { executeResearch, executeCopywriting, executeCopyReview, executeGenerate, executeImageReview, executeExport } from './content-pipeline-executors.js';
 import { validateAllVariants } from './content-quality-validator.js';
+// 阶段3: 执行代码已搬到 zenithjoy pipeline-worker（Python），不再从 Cecelia 执行。
+// content-pipeline-executors.js 保留仅供历史参考，不再 import。
 
 /**
  * 若 pipeline.payload 含 callback_url，向 zenithjoy 发送状态回调（fire-and-forget）。
@@ -206,12 +207,6 @@ async function _startOnePipeline(pipeline, dbPool) {
  * @returns {Promise<{total_actions: number, summary: {orchestrated: number, skipped: number}}>}
  */
 export async function orchestrateContentPipelines(dbPool = pool) {
-  // 环境变量门控：zenithjoy 接管触发权后，可设置此变量禁用 cecelia 自主创建 pipeline
-  if (process.env.PIPELINE_SELF_TRIGGER_DISABLED === 'true') {
-    console.log('[content-pipeline] PIPELINE_SELF_TRIGGER_DISABLED=true，跳过自主 pipeline 创建');
-    return { created: 0, skipped: 0, reason: 'self_trigger_disabled' };
-  }
-
   let orchestrated = 0;
   let skipped = 0;
 
@@ -711,140 +706,18 @@ function _isReviewPassed(taskStatus, findings) {
 }
 
 // ───────────────────────────────────────────────────────
-// 自动执行器：检测 queued 的子任务，执行对应 executor，完成后回调推进
+// 阶段3: 自动执行器已废除
+// 执行代码搬到 zenithjoy pipeline-worker（Python）。
+// executeQueuedContentTasks 不再导出，tick.js 不再调用。
+// 保留 stub 以兼容 routes/content-pipeline.js 中仍有的 import（no-op）。
 // ───────────────────────────────────────────────────────
 
-const EXECUTOR_MAP = {
-  'content-research': executeResearch,
-  'content-copywriting': executeCopywriting,
-  'content-copy-review': executeCopyReview,
-  'content-generate': executeGenerate,
-  'content-image-review': executeImageReview,
-  'content-export': executeExport,
-};
-
 /**
- * 执行单个 content-* 子任务：标记 in_progress、调用 executor、更新状态、推进 pipeline。
+ * @deprecated 阶段3 废除。执行搬到 zenithjoy pipeline-worker。
+ * 保留空函数防止 import 报错，实际不执行任何任务。
  */
-async function _executeStageTask(task, stage, executor, dbPool) {
-  await dbPool.query(`UPDATE tasks SET status = 'in_progress', started_at = NOW() WHERE id = $1`, [task.id]);
-  console.log(`[content-executor] 执行 ${stage}: ${task.title}`);
-  const execResult = await executor(task);
-
-  const newStatus = execResult.success ? 'completed' : 'failed';
-
-  // 把 review 结果（issues、review_passed、rule_scores、llm_reviewed）存入 payload，供 stages API 返回给前端
-  if (execResult.issues !== undefined || execResult.review_passed !== undefined) {
-    const reviewPayload = {
-      review_issues: execResult.issues || [],
-      review_passed: execResult.review_passed ?? true,
-    };
-    if (execResult.rule_scores !== undefined) reviewPayload.rule_scores = execResult.rule_scores;
-    if (execResult.llm_reviewed !== undefined) reviewPayload.llm_reviewed = execResult.llm_reviewed;
-    // executeImageReview 返回 llm_review 对象，统一映射到 llm_reviewed: true
-    if (execResult.llm_review !== undefined) reviewPayload.llm_reviewed = true;
-    await dbPool.query(
-      `UPDATE tasks SET status = $1, completed_at = NOW(),
-         payload = payload || $2::jsonb
-       WHERE id = $3`,
-      [newStatus, JSON.stringify(reviewPayload), task.id]
-    );
-  } else if (execResult.export_path) {
-    await dbPool.query(
-      `UPDATE tasks SET status = $1, completed_at = NOW(),
-         payload = payload || $2::jsonb
-       WHERE id = $3`,
-      [newStatus, JSON.stringify({ export_path: execResult.export_path }), task.id]
-    );
-  } else if (newStatus === 'failed' && execResult.error) {
-    await dbPool.query(
-      `UPDATE tasks SET status = $1, completed_at = NOW(), error_message = $2 WHERE id = $3`,
-      [newStatus, execResult.error, task.id]
-    );
-  } else {
-    await dbPool.query(
-      `UPDATE tasks SET status = $1, completed_at = NOW() WHERE id = $2`,
-      [newStatus, task.id]
-    );
-  }
-
-  const advResult = await advanceContentPipeline(task.id, newStatus, execResult, dbPool);
-  if (advResult.advanced) {
-    console.log(`[content-executor] pipeline 推进: ${task.id} → ${advResult.action}`);
-  }
-}
-
-// 并发守卫：防止 tick 重叠调用（executors 使用 execSync 会阻塞事件循环）
-let _contentExecutorBusy = false;
-
-/**
- * 由 tick 调用。检测 queued 的 content-* 子任务，自动执行。
- * ⚠️ 内部使用 execSync（NotebookLM/LLM 调用），必须在 tick 中以 fire-and-forget 方式调用，
- *    否则会阻塞 Brain 事件循环。
- * @param {import('pg').Pool} [dbPool]
- */
-export async function executeQueuedContentTasks(dbPool = pool) {
-  if (_contentExecutorBusy) {
-    console.log('[content-executor] 上一批任务仍在执行，跳过本次 tick');
-    return { executed: 0 };
-  }
-  _contentExecutorBusy = true;
-  let executed = 0;
-
-  try {
-    for (const stage of PIPELINE_STAGES) {
-      const executor = EXECUTOR_MAP[stage];
-      if (!executor) continue;
-
-      const result = await dbPool.query(`
-        SELECT id, title, task_type, payload, project_id, goal_id
-        FROM tasks
-        WHERE task_type = $1 AND status = 'queued'
-          AND payload->>'parent_pipeline_id' IS NOT NULL
-        ORDER BY created_at ASC
-        LIMIT 3
-      `, [stage]);
-
-      // 批量检查父 pipeline 状态，跳过已失败/取消的子任务
-      const parentIds = [...new Set(result.rows.map(t => t.payload?.parent_pipeline_id).filter(Boolean))];
-      let aliveParents = new Set();
-      if (parentIds.length > 0) {
-        const parentResult = await dbPool.query(
-          `SELECT id FROM tasks WHERE id = ANY($1::uuid[]) AND status IN ('queued','in_progress')`,
-          [parentIds]
-        );
-        aliveParents = new Set(parentResult.rows.map(r => r.id));
-      }
-
-      for (const task of result.rows) {
-        const parentId = task.payload?.parent_pipeline_id;
-        if (parentId && !aliveParents.has(parentId)) {
-          // 父 pipeline 已 failed/cancelled — 子任务标记 cancelled 并跳过
-          await dbPool.query(
-            `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), updated_at = NOW(), error_message = $2 WHERE id = $1`,
-            [task.id, '父 pipeline 已失败，子任务自动取消']
-          ).catch(() => {});
-          console.log(`[content-executor] 子任务 ${task.id}（${stage}）父 pipeline ${parentId?.substring(0,8)} 已失败，已取消`);
-          continue;
-        }
-
-        try {
-          await _executeStageTask(task, stage, executor, dbPool);
-          executed++;
-        } catch (err) {
-          console.error(`[content-executor] ${stage} 执行失败: ${err.message}`);
-          await dbPool.query(
-            `UPDATE tasks SET status = $2, completed_at = NOW(), error_message = $3 WHERE id = $1`,
-            [task.id, 'failed', err.message]
-          ).catch(() => {});
-        }
-      }
-    }
-  } finally {
-    _contentExecutorBusy = false;
-  }
-
-  return { executed };
+export async function executeQueuedContentTasks(_dbPool = pool) {
+  return { executed: 0, deprecated: true };
 }
 
 /**

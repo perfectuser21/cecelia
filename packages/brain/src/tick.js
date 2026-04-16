@@ -2090,43 +2090,10 @@ async function executeTick() {
     console.error('[tick] Crystallize orchestration check failed:', crystallizeErr.message);
   }
 
-  // 0.5.5. Content Pipeline Orchestration Check — 检测 queued content-pipeline 任务，创建子任务
-  if (!MINIMAL_MODE) {
-  try {
-    const { orchestrateContentPipelines } = await import('./content-pipeline-orchestrator.js');
-    const pipelineResult = await orchestrateContentPipelines();
-    if (pipelineResult.total_actions > 0) {
-      tickLog(`[tick] Content pipeline orchestration: ${pipelineResult.total_actions} actions (orchestrated=${pipelineResult.summary.orchestrated}, skipped=${pipelineResult.summary.skipped})`);
-      actionsTaken.push({
-        action: 'content_pipeline_orchestration',
-        total_actions: pipelineResult.total_actions,
-        orchestrated: pipelineResult.summary.orchestrated,
-        skipped: pipelineResult.summary.skipped,
-      });
-    }
-  } catch (pipelineErr) {
-    console.error('[tick] Content pipeline orchestration check failed:', pipelineErr.message);
-  }
-  } // end !MINIMAL_MODE (0.5.5)
-
-  // 0.5.6. Content Pipeline Executor — 执行 queued 的 content-* 子任务
-  // ⚠️ fire-and-forget：不 await。内部用 execSync（NotebookLM/LLM），会阻塞事件循环，
-  //    必须异步启动。executeQueuedContentTasks 内部有并发守卫防止重叠。
-  if (!MINIMAL_MODE) {
-  try {
-    const { executeQueuedContentTasks } = await import('./content-pipeline-orchestrator.js');
-    executeQueuedContentTasks().then(r => {
-      if (r.executed > 0) {
-        tickLog(`[tick] Content pipeline executor: ${r.executed} tasks executed`);
-        actionsTaken.push({ action: 'content_pipeline_execution', executed: r.executed });
-      }
-    }).catch(execErr => {
-      console.error('[tick] Content pipeline executor failed:', execErr.message);
-    });
-  } catch (execErr) {
-    console.error('[tick] Content pipeline executor import failed:', execErr.message);
-  }
-  } // end !MINIMAL_MODE (0.5.6)
+  // 0.5.5. Content Pipeline Orchestration — 已废除（阶段3：执行搬到 zenithjoy pipeline-worker）
+  // orchestrateContentPipelines() 和 executeQueuedContentTasks() 不再从 tick 调用。
+  // zenithjoy 的 pipeline-worker 负责轮询 pipeline_runs 并执行 6 阶段。
+  // Cecelia 只提供 can-run 调度接口（POST /api/brain/can-run）。
 
   // 0.6. Recurring Tasks Check
   try {
