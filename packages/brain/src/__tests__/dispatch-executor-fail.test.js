@@ -78,7 +78,8 @@ vi.mock('../dispatch-stats.js', () => ({
 
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn().mockResolvedValue({ passed: true, issues: [], suggestions: [] }),
-  getPreFlightStats: vi.fn().mockResolvedValue({ totalChecked: 0, passed: 0, failed: 0, passRate: '0%' })
+  getPreFlightStats: vi.fn().mockResolvedValue({ totalChecked: 0, passed: 0, failed: 0, passRate: '0%' }),
+  alertOnPreFlightFail: vi.fn().mockResolvedValue(undefined),
 }));
 
 const mockHandleTaskFailure = vi.fn();

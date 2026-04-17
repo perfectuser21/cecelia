@@ -1,23 +1,45 @@
-# Pipeline-Level Stuck Watchdog PRD
+# PRD: C4 Pre-flight Cancel Alerting
+
+Task ID: `61fd2d0d-7b4d-4c21-92b9-344b62dede74`
+Branch: `cp-04172342-c4-preflight-alert`
 
 ## 背景
-今天发现 sprint_dir=harness-v5-e2e-test2（planner d8acf398）跑了 3 天还没完成：
-Evaluator→Fix 循环 47 轮无限 spin。pipeline-patrol 模块只监督单个 stage（.dev-mode 文件级别）超时，
-对"pipeline 整体 N 小时无进展"场景无感知。结果就是任务链在后台反复 spin，持续消耗 slot/账号/token。
 
-## 成功标准
-- 新增 `packages/brain/src/pipeline-watchdog.js`，导出 `checkStuckPipelines(pool, opts?)`
-- 默认阈值 6 小时（可通过 `PIPELINE_STUCK_THRESHOLD_HOURS` 环境变量 / `opts.thresholdHours` 覆盖）
-- 扫描范围：`sprint_dir IS NOT NULL` 的 harness_* 任务
-- 判定规则：该 sprint_dir 的 `MAX(updated_at)` 距今超过阈值、且存在 `queued/in_progress/paused` 任务、且没有 `completed` 的 harness_report
-- stuck 命中时：所有 open 任务 `UPDATE status='canceled', error_message='pipeline_stuck'`
-- 同时 `INSERT INTO cecelia_events (event_type='pipeline_stuck', source='pipeline-watchdog', payload)`，payload 含 sprint_dir / planner_task_id / stuck_for_hours / canceled_task_ids
-- `tick.js` 每 30 分钟调用一次（`MINIMAL_MODE` 下跳过），失败不影响主 tick
-- 单元测试：stuck 命中 / 未过期 / 已完成 / 无 open 任务 / 可配置阈值 / planner_task_id 回退 / 任务类型过滤 共 7 个用例
-- 恢复方式：手动 `PATCH /api/brain/tasks/:id` 任一任务即会刷新 `updated_at`，pipeline 自动解除 stuck
+今天发现 27 个 autonomous dev 任务被 pre-flight 静默 cancel 一周没人看。根因：
+`packages/brain/src/tick.js` 在 pre-flight fail 分支仅写 `metadata.pre_flight_failed = true`，没有任何告警通道。
+
+## 方案
+
+用 Brain 现有 `packages/brain/src/alerting.js` 的 `raise(level, source, message)` 推送飞书。
+- 每次 pre-flight 失败 → 立即 `raise('P2', 'pre_flight_cancel', msg)`（进 24h 汇总）
+- 24h 内累计 fail_count >= 3 → 升级 `raise('P0', 'pre_flight_burst', msg)`（立即推送）
 
 ## 不做
-- 不改 task schema（不加 `planner_task_id` 列，仍然按 `sprint_dir` 聚合，`planner_task_id` 从 payload 读）
-- 不影响非 harness_* 任务类型
-- 不做自动恢复（stuck 后不再主动 rescue，Ken 或用户决定是否重启 pipeline）
-- 不做 Dashboard UI（事件已写入 cecelia_events，后续另立任务展示）
+
+- 不加新推送通道（复用现有飞书）
+- 不改 pre-flight 判断逻辑（只加告警 hook）
+- 不改已 cancel 的历史任务
+- 不做 Engine bump
+
+## 实现位置
+
+- `packages/brain/src/pre-flight-check.js` 末尾添加 `alertOnPreFlightFail(pool, task, checkResult)`
+- `packages/brain/src/tick.js` 在 UPDATE 之后、recordDispatchResult 之前增加 1 行 `await alertOnPreFlightFail(...)`
+- 新增 `packages/brain/src/__tests__/pre-flight-alerting.test.js`
+
+## DoD
+
+- [x] [BEHAVIOR] pre-flight 失败 → raise(P2, 'pre_flight_cancel', msg) 被调用
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/pre-flight-check.js','utf8');if(!/raise\('P2', 'pre_flight_cancel'/.test(c))process.exit(1)"`
+- [x] [BEHAVIOR] 24h 内 fail_count >= 3 → 升级 raise(P0, 'pre_flight_burst', msg)
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/pre-flight-check.js','utf8');if(!/raise\('P0', 'pre_flight_burst'/.test(c))process.exit(1)"`
+- [x] [ARTIFACT] alertOnPreFlightFail 函数导出，签名为 (pool, task, checkResult)
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/pre-flight-check.js','utf8');if(!/export async function alertOnPreFlightFail\s*\(\s*pool,\s*task,\s*checkResult\s*\)/.test(c))process.exit(1)"`
+- [x] [ARTIFACT] 单元测试覆盖单次 fail + 累计阈值 + issues 空数组三个 case
+  Test: `tests/pre-flight-alerting.test.js`
+
+## 成功标准
+
+- `pre-flight-alerting.test.js` 全绿
+- tick.js 改动仅一行 `await alertOnPreFlightFail(pool, candidate, checkResult);`
+- Engine 不需要 bump

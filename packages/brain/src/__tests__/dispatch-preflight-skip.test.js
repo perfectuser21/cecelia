@@ -82,6 +82,7 @@ const mockGetPreFlightStats = vi.fn().mockResolvedValue({
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: (...args) => mockPreFlightCheck(...args),
   getPreFlightStats: (...args) => mockGetPreFlightStats(...args),
+  alertOnPreFlightFail: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../quota-guard.js', () => ({
