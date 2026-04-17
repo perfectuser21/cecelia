@@ -291,8 +291,12 @@ jobs:
     steps:
       - name: Aggregate brain-unit shard results
         run: |
-          if [[ "${{ needs.brain-unit.result }}" != "success" ]]; then
-            echo "❌ brain-unit matrix 有 shard 失败（result=${{ needs.brain-unit.result }}）"
+          # matrix.result 只有全部 shard success 才是 'success'；
+          # 当 packages/brain/* 未改（paths-filter 跳过 brain-unit）时，
+          # result='skipped' 也是合法状态（本 PR 不影响 brain，无需跑测试）。
+          RESULT="${{ needs.brain-unit.result }}"
+          if [[ "$RESULT" != "success" && "$RESULT" != "skipped" ]]; then
+            echo "❌ brain-unit matrix 有 shard 失败（result=$RESULT）"
             exit 1
           fi
           echo "✅ 所有 brain-unit shards 通过"
