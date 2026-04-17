@@ -121,6 +121,7 @@ vi.mock('../dispatch-stats.js', () => ({
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn(async () => ({ passed: true, issues: [], suggestions: [] })),
   getPreFlightStats: vi.fn(async () => ({})),
+  alertOnPreFlightFail: vi.fn(async () => undefined),
 }));
 vi.mock('../ws.js', () => ({
   publishCognitiveState: vi.fn(),
