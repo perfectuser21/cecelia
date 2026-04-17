@@ -127,9 +127,11 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     // Mock pool.query calls:
     // 1. selectNextDispatchableTask → returns task
     mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 2. SELECT * FROM tasks (full task for triggerCeceliaRun)
+    // 2. C1 atomic claim: UPDATE tasks SET claimed_by ... RETURNING id
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: task.id }] });
+    // 3. SELECT * FROM tasks (full task for triggerCeceliaRun)
     mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 3+ post-failure DB calls (logTickDecision, etc.)
+    // 4+ post-failure DB calls (logTickDecision, etc.)
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
 
     const { dispatchNextTask } = await import('../tick.js');
@@ -170,9 +172,11 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
 
     // 1. selectNextDispatchableTask
     mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 2. SELECT * FROM tasks
+    // 2. C1 atomic claim
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: task.id }] });
+    // 3. SELECT * FROM tasks
     mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 3+ post-success DB calls
+    // 4+ post-success DB calls
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
 
     const { dispatchNextTask } = await import('../tick.js');

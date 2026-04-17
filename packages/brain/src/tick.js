@@ -1247,6 +1247,22 @@ async function dispatchNextTask(goalIds) {
     }
   }
 
+  // 3c'. C1 Atomic claim: 确保没被其他 runner（如外部 autonomous agent）抢先 claim
+  //      放在 pre-flight / initiative lock 之后、mark in_progress 之前，
+  //      让 UPDATE...WHERE claimed_by IS NULL 的原子性承担"同一 task 只能派给一个 runner"的保证。
+  const claimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
+  const claimResult = await pool.query(
+    `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
+     WHERE id = $2 AND claimed_by IS NULL
+     RETURNING id`,
+    [claimerId, nextTask.id]
+  );
+  if (claimResult.rows.length === 0) {
+    tickLog(`[dispatch] task ${nextTask.id} already claimed by another runner, skipping`);
+    await recordDispatchResult(pool, false, 'already_claimed');
+    return { dispatched: false, reason: 'already_claimed', task_id: nextTask.id, actions };
+  }
+
   // 3d. Codex Pool D: check concurrent limit for Codex-native task types
   const isCodexNativeTask = nextTask.task_type === 'codex_qa' || nextTask.task_type === 'codex_dev' || nextTask.task_type === 'codex_test_gen';
   if (isCodexNativeTask) {
@@ -1265,6 +1281,11 @@ async function dispatchNextTask(goalIds) {
   });
 
   if (!updateResult.success) {
+    // C1: mark in_progress 失败 → 释放 claim 让下次 tick 重试
+    await pool.query(
+      `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
+      [nextTask.id]
+    );
     return { dispatched: false, reason: 'update_failed', task_id: nextTask.id, actions };
   }
 
@@ -1280,6 +1301,11 @@ async function dispatchNextTask(goalIds) {
   if (!ceceliaAvailable.available) {
     // Revert task to queued so it can be retried next tick
     await updateTask({ task_id: nextTask.id, status: 'queued' });
+    // C1: 释放 claim，否则下次 tick 会被误判为"已被 claim"永远起不来
+    await pool.query(
+      `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
+      [nextTask.id]
+    );
     await logTickDecision(
       'tick',
       `cecelia-run not available, task reverted to queued`,

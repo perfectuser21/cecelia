@@ -169,7 +169,9 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     // pool.query 调用顺序：
     // 1. 主查询 → 候选（无 initiative 锁检查，project_id 为 null）
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-    // 2. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
+    // 2. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: candidateTask.id }] });
+    // 3. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
 
     const { dispatchNextTask } = await import('../tick.js');
@@ -201,7 +203,9 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
     // 2. Initiative 锁检查 → 无 in_progress 任务（锁通过）
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 3. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
+    // 3. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: candidateTask.id }] });
+    // 4. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
 
     const { dispatchNextTask } = await import('../tick.js');

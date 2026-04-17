@@ -248,6 +248,46 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
+// POST /tasks/:id/claim — C1 atomic claim，防止并行 dispatch 重复派发
+// 使用场景：外部 agent（如 autonomous pipeline）在开始处理前主动 claim。
+// 返回 200 表示 claim 成功；返回 409 表示已被其他 runner claim。
+router.post('/:id/claim', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { claimer } = req.body || {};
+    if (!claimer) {
+      return res.status(400).json({ error: 'claimer is required' });
+    }
+
+    const result = await pool.query(
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
+       WHERE id = $2 AND claimed_by IS NULL
+       RETURNING id, claimed_by, claimed_at`,
+      [claimer, id]
+    );
+
+    if (result.rows.length === 0) {
+      // 已被其他 runner claim（或任务不存在）
+      const existing = await pool.query(
+        'SELECT claimed_by, claimed_at FROM tasks WHERE id = $1',
+        [id]
+      );
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Task not found', id });
+      }
+      return res.status(409).json({
+        error: 'Task already claimed',
+        claimed_by: existing.rows[0].claimed_by,
+        claimed_at: existing.rows[0].claimed_at,
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to claim task', details: err.message });
+  }
+});
+
 // POST /tasks/:id/error-report — 错误上报端点
 // 根据错误分类自动决定处理方式：blocked（瞬时错误）/ retry（可重试）/ quarantine（永久错误）
 router.post('/:id/error-report', async (req, res) => {
