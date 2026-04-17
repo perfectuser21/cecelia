@@ -242,19 +242,25 @@ jobs:
       - name: E2E Integrity Check
         run: bash packages/engine/scripts/e2e-integrity-check.sh
 
-  # ─── Brain: Unit Tests ─────────────────────────────────────
+  # ─── Brain: Unit Tests (4-shard matrix) ────────────────────
+  # vitest 原生 --shard=i/N 按测试文件 hash 均匀分布，4 shards 并行
+  # 单 shard 约 110-120 文件，~2-3min 完成（vs 单 job 7-10min）
   brain-unit:
     needs: changes
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: cd packages/brain && npm ci
-      - name: Unit Tests
+      - name: Unit Tests (shard ${{ matrix.shard }}/4)
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
         # vitest forks 模式下，fork 进程跑完后可能因内存碎片 OOM 退出，
@@ -264,15 +270,32 @@ jobs:
         run: |
           cd packages/brain
           set +e
-          npx vitest run --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
+          npx vitest run --shard=${{ matrix.shard }}/4 --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
           EXIT=${PIPESTATUS[0]}
           if [ $EXIT -ne 0 ]; then
             if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
-              echo "[brain-unit] OOM worker exit but all tests passed — treating as success"
+              echo "[brain-unit shard ${{ matrix.shard }}/4] OOM worker exit but all tests passed — treating as success"
               exit 0
             fi
             exit $EXIT
           fi
+
+  # ─── Brain: Unit Tests Aggregation ─────────────────────────
+  # 所有 brain-unit matrix shards 都成功才通过。
+  # 给 ci-passed / 分支保护规则一个稳定的单 check 名字。
+  brain-unit-all:
+    needs: brain-unit
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Aggregate brain-unit shard results
+        run: |
+          if [[ "${{ needs.brain-unit.result }}" != "success" ]]; then
+            echo "❌ brain-unit matrix 有 shard 失败（result=${{ needs.brain-unit.result }}）"
+            exit 1
+          fi
+          echo "✅ 所有 brain-unit shards 通过"
 
   # ─── Brain: Diff Coverage Gate ────────────────────────────
   # PR 新增行覆盖率 < 80% 则 CI fail，迫使为新代码路径补测试
@@ -566,7 +589,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
+    needs: [secrets-scan, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -583,6 +606,7 @@ jobs:
           check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
+          check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
           check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
           check "brain-integration"   "${{ needs.brain-integration.result }}"
           check "workspace-build"        "${{ needs.workspace-build.result }}"
