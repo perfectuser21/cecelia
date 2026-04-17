@@ -245,6 +245,98 @@ function writeCleanupDone(dirPath, branch) {
 }
 
 /**
+ * 检查 branch 最近是否有 git commit 活动
+ *
+ * 先查本地 branch（worktree 可能已有新提交未 push），
+ * 失败再查 origin/<branch>。
+ *
+ * @param {string} branch - 分支名
+ * @param {number} minutes - 时间窗口（分钟）
+ * @param {function} [execFn] - 可注入的 exec 函数（测试用）
+ * @returns {boolean} true = 有最近 commit
+ */
+function hasRecentGitActivity(branch, minutes = 10, execFn = execSync) {
+  if (!branch) return false;
+  const since = `${minutes} minutes ago`;
+  try {
+    // 查本地 branch 最近 commit，若有输出即表示活跃
+    const out = execFn(
+      `git log "${branch}" --since="${since}" -n 1 --format=%H 2>/dev/null`,
+      { encoding: 'utf8', timeout: 5000 }
+    );
+    if (out && out.trim().length > 0) return true;
+  } catch { /* 本地查不到，继续查 remote */ }
+
+  try {
+    // 查 origin/<branch>
+    const out = execFn(
+      `git log "origin/${branch}" --since="${since}" -n 1 --format=%H 2>/dev/null`,
+      { encoding: 'utf8', timeout: 5000 }
+    );
+    if (out && out.trim().length > 0) return true;
+  } catch { /* ignore */ }
+
+  return false;
+}
+
+/**
+ * 检查 branch 对应 PR 最近是否有 CI check-run 活动
+ *
+ * 通过 gh CLI 读取 PR 的 statusCheckRollup，比较每个 check 的 completedAt/startedAt
+ * 是否落在最近 N 分钟内。若无 PR 或 gh 不可用，返回 false。
+ *
+ * @param {string} branch - 分支名
+ * @param {number} minutes - 时间窗口（分钟）
+ * @param {function} [execFn] - 可注入的 exec 函数（测试用）
+ * @returns {boolean} true = 有最近 CI 活动
+ */
+function hasRecentCiActivity(branch, minutes = 10, execFn = execSync) {
+  if (!branch) return false;
+  const windowMs = minutes * 60 * 1000;
+  const cutoff = Date.now() - windowMs;
+  try {
+    const out = execFn(
+      `gh pr view "${branch}" --json statusCheckRollup 2>/dev/null`,
+      { encoding: 'utf8', timeout: 10000 }
+    );
+    if (!out || !out.trim()) return false;
+    const data = JSON.parse(out);
+    const checks = Array.isArray(data.statusCheckRollup) ? data.statusCheckRollup : [];
+    for (const check of checks) {
+      // GitHub check runs 有 startedAt + completedAt；status checks 有 createdAt
+      const timestamps = [check.completedAt, check.startedAt, check.createdAt].filter(Boolean);
+      for (const ts of timestamps) {
+        const t = new Date(ts).getTime();
+        if (!Number.isNaN(t) && t >= cutoff) return true;
+      }
+    }
+  } catch { /* gh 不可用或无 PR，按无活动处理 */ }
+  return false;
+}
+
+/**
+ * 综合检查 branch 是否有最近活动（git 或 CI 任一）
+ *
+ * 用于在 checkStuck 返回 stuck=true 后做二次确认：若有活动，则不算真 stuck，
+ * 避免 "PR 挂在 CI 期间没 mtime 刷新" 被误 cancel。
+ *
+ * 若 branch 为空（未知）或 git/CI 查询都无结果，返回 active=false，
+ * 调用方会退化到"仅时间判"的旧行为，保持向后兼容。
+ *
+ * @param {string} branch
+ * @param {number} minutes
+ * @param {{gitFn?: function, ciFn?: function}} [deps] - 测试注入
+ * @returns {{active: boolean, git: boolean, ci: boolean}}
+ */
+function hasRecentActivity(branch, minutes = 10, deps = {}) {
+  const gitFn = deps.gitFn || hasRecentGitActivity;
+  const ciFn = deps.ciFn || hasRecentCiActivity;
+  const git = !!gitFn(branch, minutes);
+  const ci = !!ciFn(branch, minutes);
+  return { active: git || ci, git, ci };
+}
+
+/**
  * 判断 pipeline 是否卡住
  * @param {object} parsed - parseDevMode 返回的对象
  * @returns {{stuck: boolean, reason: string, elapsedMs: number}}
@@ -445,6 +537,29 @@ export async function runPipelinePatrol(dbPool) {
 
     if (!stuckCheck.stuck && !isOrphan) continue;
 
+    // C3 修复：stuck 命中后加"活动信号"二次确认
+    // 若 branch 最近 10min 有 git commit 或 CI check-run 更新，说明任务还活跃，
+    // 不创建 rescue（避免误 cancel 在 CI 等待期的 PR）。
+    // isOrphan（进程死且无 lock）不做活动检查 — 孤儿 pipeline 本就该接管。
+    let activitySignal = null;
+    if (stuckCheck.stuck && !isOrphan) {
+      activitySignal = hasRecentActivity(dm.branch, 10);
+      if (activitySignal.active) {
+        console.log(`[pipeline-patrol] ${dm.branch} stuck 命中但有活动信号 (git=${activitySignal.git}, ci=${activitySignal.ci})，跳过 rescue`);
+        result.details.push({
+          branch: dm.branch,
+          worktreePath: dm.worktreePath,
+          currentStage: parsed.currentStage,
+          elapsedMs: stuckCheck.elapsedMs,
+          isStuck: true,
+          isOrphan: false,
+          skippedReason: 'recent_activity',
+          activitySignal,
+        });
+        continue;
+      }
+    }
+
     result.stuck++;
 
     const detail = {
@@ -457,6 +572,7 @@ export async function runPipelinePatrol(dbPool) {
       isOrphan,
       isStuck: stuckCheck.stuck,
       stuckReason: stuckCheck.reason,
+      activitySignal,
     };
 
     // 4. 创建 rescue 任务
@@ -496,6 +612,9 @@ export {
   parseDevMode as _parseDevMode,
   checkStuck as _checkStuck,
   writeCleanupDone as _writeCleanupDone,
+  hasRecentGitActivity as _hasRecentGitActivity,
+  hasRecentCiActivity as _hasRecentCiActivity,
+  hasRecentActivity as _hasRecentActivity,
   STAGE_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   DEDUP_COOLDOWN_MS,

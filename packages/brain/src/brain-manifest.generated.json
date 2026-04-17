@@ -1024,6 +1024,7 @@
     "harness_ci_watch": "/_internal",
     "harness_fix": "/harness-generator",
     "harness_deploy_watch": "/_internal",
+    "harness_evaluate": "/harness-evaluator",
     "harness_report": "/harness-report",
     "scope_plan": "/decomp",
     "project_plan": "/decomp",
@@ -1032,7 +1033,7 @@
     "okr_project_plan": "/decomp",
     "platform_scraper": "/media-scraping"
   },
-  "generatedAt": "2026-04-12T06:22:40.579Z",
+  "generatedAt": "2026-04-17T15:17:10.482Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
