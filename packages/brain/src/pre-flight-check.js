@@ -6,6 +6,11 @@
  * @module pre-flight-check
  */
 
+import { raise } from './alerting.js';
+
+// 24h 内累计 pre-flight cancel >= 阈值 → 从 P2 升级到 P0（飞书立即推送）
+export const PRE_FLIGHT_ALERT_THRESHOLD = 3;
+
 /**
  * Perform pre-flight check on a task
  *
@@ -169,4 +174,48 @@ export async function getPreFlightStats(pool) {
     passRate: `${passRate}%`,
     issueDistribution
   };
+}
+
+/**
+ * 在 tick.js 对任务打上 pre_flight_failed 标记之后调用。
+ * 通过 alerting.raise() 推送飞书告警，防止 pre-flight cancel 静默堆积。
+ *
+ * - 单次失败 → raise('P2', 'pre_flight_cancel', ...)（进 24h 汇总）
+ * - 24h 内累计 fail_count >= PRE_FLIGHT_ALERT_THRESHOLD (默认 3)
+ *   → raise('P0', 'pre_flight_burst', ...)（飞书立即推送）
+ *
+ * 注意：此函数必须在 tick.js 写入 metadata.pre_flight_failed=true 之后调用，
+ * 这样 SELECT COUNT 才能把当前这次失败也算进去。
+ *
+ * @param {Object} pool - pg Pool 实例
+ * @param {Object} task - 被 cancel 的任务（含 id/title）
+ * @param {Object} checkResult - preFlightCheck 返回值（含 issues 数组）
+ * @returns {Promise<void>} 不抛异常（告警失败不应影响 dispatch 主流程）
+ */
+export async function alertOnPreFlightFail(pool, task, checkResult) {
+  try {
+    const taskTitle = task.title || '(untitled)';
+    const issuesArr = Array.isArray(checkResult?.issues) ? checkResult.issues : [];
+    const issues = issuesArr.length > 0 ? issuesArr.join('; ') : '(no specific issues)';
+    const basicMsg = `Pre-flight 拒绝任务 "${taskTitle}" (${task.id}): ${issues}`;
+
+    // 查 24h 内累计 cancel 数量（此时本次 task 已写入 metadata，会被统计进去）
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM tasks
+       WHERE metadata->>'pre_flight_failed' = 'true'
+         AND (metadata->>'failed_at')::timestamptz > NOW() - INTERVAL '24 hours'`
+    );
+    const recentCount = countResult.rows?.[0]?.c || 0;
+
+    if (recentCount >= PRE_FLIGHT_ALERT_THRESHOLD) {
+      await raise('P0', 'pre_flight_burst',
+        `【URGENT】24h 内 ${recentCount} 个任务被 pre-flight 拒绝！最新：${basicMsg}`
+      );
+    } else {
+      await raise('P2', 'pre_flight_cancel', basicMsg);
+    }
+  } catch (err) {
+    // 告警失败不能反向影响 dispatch 主流程
+    console.warn('[pre-flight-alerting] alertOnPreFlightFail failed:', err?.message || err);
+  }
 }

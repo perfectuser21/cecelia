@@ -1192,7 +1192,7 @@ async function dispatchNextTask(goalIds) {
   const preFlightFailedIds = [];
   let nextTask = null;
 
-  const { preFlightCheck } = await import('./pre-flight-check.js');
+  const { preFlightCheck, alertOnPreFlightFail } = await import('./pre-flight-check.js');
 
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
     const candidate = await selectNextDispatchableTask(goalIds, preFlightFailedIds, { priorityFilter: _quotaPriorityFilter });
@@ -1224,6 +1224,8 @@ async function dispatchNextTask(goalIds) {
       })]
     );
     await recordDispatchResult(pool, false, 'pre_flight_check_failed');
+    // C4: 通过飞书告警推送 pre-flight cancel，防止任务静默堆积（不抛异常，不影响 dispatch）
+    await alertOnPreFlightFail(pool, candidate, checkResult);
     preFlightFailedIds.push(candidate.id);
   }
 
