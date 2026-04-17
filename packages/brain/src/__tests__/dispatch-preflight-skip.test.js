@@ -167,9 +167,11 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
     mockQuery.mockResolvedValueOnce({ rowCount: 1 });
     // 3. selectNextDispatchableTask query (excludeIds=[task-bad]) → returns goodTask
     mockQuery.mockResolvedValueOnce({ rows: [goodTask] });
-    // 4. SELECT * FROM tasks WHERE id (full task for triggerCeceliaRun)
+    // 4. C1 atomic claim for goodTask
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: goodTask.id }] });
+    // 5. SELECT * FROM tasks WHERE id (full task for triggerCeceliaRun)
     mockQuery.mockResolvedValueOnce({ rows: [goodTask] });
-    // 5+ various post-dispatch calls (working_memory, decision_log, pre-flight stats, etc.)
+    // 6+ various post-dispatch calls (working_memory, decision_log, pre-flight stats, etc.)
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
 
     const { dispatchNextTask } = await import('../tick.js');
