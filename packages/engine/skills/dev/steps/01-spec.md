@@ -1,9 +1,10 @@
 ---
 id: dev-stage-01-spec
-version: 6.3.0
+version: 6.4.0
 created: 2026-03-20
-updated: 2026-04-15
+updated: 2026-04-18
 changelog:
+  - 6.4.0: R7 — 恢复 Superpowers brainstorming HARD-GATE 原话（本地化 `user approved` → `Research Subagent Tier 1 confirmed`），对齐官方 brainstorming/SKILL.md L12-14
   - 6.3.0: autonomous 分支改为由 Superpowers chain 驱动，所有 user 交互由 Research Subagent 代答
   - 6.2.0: autonomous 分支读 Step 0.7 产出的 .decisions-<branch>.yaml，作为技术决策硬约束
   - 6.1.0: autonomous 分支优先读 Step 0.5 enriched PRD
@@ -84,6 +85,24 @@ autonomous_mode=true 时, 本 step 不再由主 agent 直接写 Task Card。
 所有 Superpowers 的 user 交互点由 Research Subagent 代答。
 
 使用 `superpowers:brainstorming` + `superpowers:writing-plans` 的行为纪律，但跳过所有用户确认步骤。
+
+### 0.2.HARD-GATE — Superpowers brainstorming 强制门
+
+> **来源**：Superpowers 5.0.7 brainstorming/SKILL.md L12-14（本地化到 autonomous）
+
+<HARD-GATE>
+Do NOT invoke any implementation skill, write any code, scaffold any project,
+or take any implementation action until you have presented a design and the
+Research Subagent has confirmed it via Tier 1 approval. This applies to
+EVERY task regardless of perceived simplicity.
+</HARD-GATE>
+
+**本地化**：官方要求 `user approved`，autonomous 模式下由 Research Subagent 的
+Tier 1 替代（见 `autonomous-research-proxy.md` Tier 1 表）。Tier 1 返回 ✓ 前
+**禁止**进入 Stage 2 (02-code.md)。
+
+**违规检测**：Stage 2 Implementer 派遣前，Controller 必须确认 `.task-<branch>.md`
+的"实现方案"section 已有 Research Subagent 的 approved 标记。否则 abort。
 
 ### 0.2.0 优先读 enriched PRD（v6.1.0 新增）
 

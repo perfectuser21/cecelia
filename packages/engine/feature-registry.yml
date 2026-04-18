@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.4"
+    date: "2026-04-18"
+    change: "chore"
+    description: "R7 — 补齐 Superpowers 1:1 最后 2 个 gap。(1) 01-spec.md autonomous 分支恢复 <HARD-GATE> 原话（Do NOT invoke any implementation skill ... until design is approved），逐字搬自 Superpowers 5.0.7 brainstorming/SKILL.md L12-14，唯一本地化把 `user has approved it` 换成 `Research Subagent has confirmed it via Tier 1 approval`，以适配 autonomous 模式下无用户交互的场景。(2) 02-code.md Root-Cause Tracing section 补 Phase 2 Pattern Analysis（Find Working Examples / Compare Against References / Identify Differences 三步），逐字搬自 systematic-debugging/SKILL.md L122-150，原 4+1 步重组为 Phase 1 (Reproduce) / Phase 2 (Pattern Analysis) / Phase 3 (Hypothesis) / Phase 4 (Fix + Defense)，完整对齐官方 4-Phase 调试方法论。修正 F3 当初只补 Observe/immediate/call-chain/trigger/fix 五步、漏掉 Pattern Analysis 的遗漏。"
+    files:
+      - "packages/engine/skills/dev/steps/01-spec.md"
+      - "packages/engine/skills/dev/steps/02-code.md"
+
   - version: "14.17.3"
     date: "2026-04-18"
     change: "feat"
