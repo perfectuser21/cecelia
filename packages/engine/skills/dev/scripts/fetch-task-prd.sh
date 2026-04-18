@@ -328,7 +328,7 @@ EOF
         for i in $(seq 0 $((item_count - 1))); do
             local item test_cmd
             item=$(echo "$initiative_dod_json" | jq -r ".[$i].item // .[$i] // "条目 $((i+1))"")
-            test_cmd=$(echo "$initiative_dod_json" | jq -r ".[$i].test // "manual:TODO"")
+            test_cmd=$(echo "$initiative_dod_json" | jq -r ".[$i].test // "manual:bash -c \\"echo REPLACE-WITH-REAL-TEST; exit 1\\""")
             cat >> "$dod_file" <<EOF
 - [ ] $item
       Test: $test_cmd
@@ -353,14 +353,14 @@ EOF
 ## 功能验收
 
 - [ ] 功能按 PRD 实现
-      Test: manual:TODO
+      Test: manual:bash -c "echo REPLACE-WITH-REAL-TEST; exit 1"
 - [ ] 手动测试通过
-      Test: manual:TODO
+      Test: manual:bash -c "echo REPLACE-WITH-REAL-TEST; exit 1"
 
 ## 测试验收
 
 - [ ] 测试脚本存在且通过
-      Test: manual:TODO
+      Test: manual:bash -c "echo REPLACE-WITH-REAL-TEST; exit 1"
 
 ## 质量验收
 

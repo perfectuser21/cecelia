@@ -6,6 +6,22 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.5"
+    date: "2026-04-18"
+    change: "feat"
+    description: "Engine ↔ Superpowers 对齐契约 + DevGate 防退化固化。一次性把 Superpowers 吸收状态从文档引用升级为 CI 强制验证。(1) 新增 packages/engine/contracts/superpowers-alignment.yaml 契约（14 skill: 10 full / 1 partial / 1 rejected / 2 not_applicable），每个 full/partial skill 含 anchor_file + required_keywords + local_prompt.sha256。(2) 本地化 8 个 Superpowers skill 的 18 个核心 prompt（2866 行）到 packages/engine/skills/dev/prompts/。(3) 新增 3 个 DevGate 脚本：check-superpowers-alignment.cjs（读契约验证 anchor/keywords/sha256 漂移）、check-engine-hygiene.cjs（4 项检查：no-manual-todo / no-external-superpowers-ref / regression-contract-non-empty / 5-place-version-sync）、bump-version.sh（原子同步 5 处版本号）。(4) 修 31 条违规：4 处 manual:TODO 占位符、4 处 superpowers:xxx/yyy.md 外部悬空引用、2 处硬编码 ~/.claude-account3/ 绝对路径、SKILL.md frontmatter 7.2.0 → 14.17.5。(5) CI 集成：.github/workflows/ci.yml engine-tests job 新增 2 步 DevGate gate，破坏对齐 → PR 合并被拒。从此 Engine ↔ Superpowers 对齐状态 = 契约 + CI gate，不再靠记忆。"
+    files:
+      - "packages/engine/contracts/superpowers-alignment.yaml"
+      - "packages/engine/contracts/prompt-localization-manifest.yaml"
+      - "packages/engine/skills/dev/prompts/"
+      - "packages/engine/scripts/devgate/check-superpowers-alignment.cjs"
+      - "packages/engine/scripts/devgate/check-engine-hygiene.cjs"
+      - "packages/engine/scripts/devgate/README.md"
+      - "packages/engine/scripts/bump-version.sh"
+      - "packages/engine/skills/dev/steps/02-code.md"
+      - "packages/engine/skills/dev/scripts/fetch-task-prd.sh"
+      - ".github/workflows/ci.yml"
+
   - version: "14.17.4"
     date: "2026-04-18"
     change: "chore"

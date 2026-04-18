@@ -1,0 +1,263 @@
+# Superpowers Prompt 本地化 Manifest
+# Engine ↔ Superpowers 对齐 Initiative / T1 调研产出
+# 用于 Engine CI 在未来校验本地副本与 upstream 源是否漂移
+
+superpowers_source_root: /Users/administrator/.claude-account1/plugins/cache/superpowers-marketplace/superpowers/5.0.7
+superpowers_version: 5.0.7
+superpowers_plugin_name: superpowers
+superpowers_author: Jesse Vincent <jesse@fsck.com>
+superpowers_homepage: https://github.com/obra/superpowers
+superpowers_license: MIT
+generated_at: "2026-04-18"
+generated_by: engine-alignment-initiative T1 agent
+source_status_note: |
+  源目录带 .orphaned_at 标记（timestamp 1776439423786），但 5.0.7 仍是 cache
+  目录下唯一版本。installed_plugins.json 显示 superpowers 已安装；Claude harness
+  已通过 /superpowers:* 前缀成功激活所有 14 个 skill（见系统提示）。
+  该目录是当前 Claude 进程实际读取的 canonical 路径。
+
+# ============================================================
+# 已本地化 skill（共 8 个 skill / 18 个文件）
+# 每个 local 路径是 Engine repo 内的目标位置（相对 packages/engine/skills/dev/prompts/）
+# ============================================================
+skills:
+  - name: subagent-driven-development
+    category: critical
+    reason: Engine 02-code.md 已引用 implementer/spec-reviewer/code-quality-reviewer 但本地无副本
+    source_dir: skills/subagent-driven-development/
+    files:
+      - source: skills/subagent-driven-development/SKILL.md
+        local: packages/engine/skills/dev/prompts/subagent-driven-development/SKILL.md
+        sha256: 081ad3869e55c80bf8f890b4768a90c0e8057daf94b1b6fadebfc85ea5b8304a
+        lines: 277
+      - source: skills/subagent-driven-development/implementer-prompt.md
+        local: packages/engine/skills/dev/prompts/subagent-driven-development/implementer-prompt.md
+        sha256: a416193f881e5a712c988fffabfe1d5a97bffcd091eb95577c84fe2136588617
+        lines: 113
+      - source: skills/subagent-driven-development/spec-reviewer-prompt.md
+        local: packages/engine/skills/dev/prompts/subagent-driven-development/spec-reviewer-prompt.md
+        sha256: 631980e472eec5394de8b89b69d432e54fd3f7f523ecf9afa7eb4cda0c9b2baf
+        lines: 61
+      - source: skills/subagent-driven-development/code-quality-reviewer-prompt.md
+        local: packages/engine/skills/dev/prompts/subagent-driven-development/code-quality-reviewer-prompt.md
+        sha256: 06d1e7c2287e5a00bd1809bf39038abd5f413b4cf917c37d30f00c48f6293421
+        lines: 26
+
+  - name: test-driven-development
+    category: critical
+    reason: Engine /dev Stage 2 代码阶段核心方法论
+    source_dir: skills/test-driven-development/
+    files:
+      - source: skills/test-driven-development/SKILL.md
+        local: packages/engine/skills/dev/prompts/test-driven-development/SKILL.md
+        sha256: 7dee67b4af6bdccc7a914ca34533184d64592d0f5b23aeae631538168db14994
+        lines: 371
+      - source: skills/test-driven-development/testing-anti-patterns.md
+        local: packages/engine/skills/dev/prompts/test-driven-development/testing-anti-patterns.md
+        sha256: bde453bc258f06543987477c837939afaa774ea2acbd9f308d702fc452bc4283
+        lines: 299
+
+  - name: verification-before-completion
+    category: critical
+    reason: DevGate/Stop Hook 前置校验，Engine push 前必读
+    source_dir: skills/verification-before-completion/
+    files:
+      - source: skills/verification-before-completion/SKILL.md
+        local: packages/engine/skills/dev/prompts/verification-before-completion/SKILL.md
+        sha256: ea52d15aabaf72bc6b558efe2c126f161b53961090ddcd712000273bfe8c7b6c
+        lines: 139
+
+  - name: systematic-debugging
+    category: critical
+    reason: CI 失败/bug 修复阶段必读，Engine 需要对齐 root-cause 方法论
+    source_dir: skills/systematic-debugging/
+    files:
+      - source: skills/systematic-debugging/SKILL.md
+        local: packages/engine/skills/dev/prompts/systematic-debugging/SKILL.md
+        sha256: 4999cb851360485eca5074e727bbdd62ef20549c5d5b01216fcbf5831badb473
+        lines: 296
+      - source: skills/systematic-debugging/root-cause-tracing.md
+        local: packages/engine/skills/dev/prompts/systematic-debugging/root-cause-tracing.md
+        sha256: a81bee9448794d261b4aca8487c595d11ff4bd4e10a5f96bca1117dd32527050
+        lines: 169
+      - source: skills/systematic-debugging/defense-in-depth.md
+        local: packages/engine/skills/dev/prompts/systematic-debugging/defense-in-depth.md
+        sha256: 1e175fb86fc357e58c6aebf5441e481e1b7868b4380c0456b63a17eefbd18ba7
+        lines: 122
+      - source: skills/systematic-debugging/condition-based-waiting.md
+        local: packages/engine/skills/dev/prompts/systematic-debugging/condition-based-waiting.md
+        sha256: e89fec8400d6cd50f43407cec9fab50976ba4d55d0ec2eb51c0bd68036b54c26
+        lines: 115
+    skipped_in_source:
+      - skills/systematic-debugging/test-academic.md
+      - skills/systematic-debugging/test-pressure-1.md
+      - skills/systematic-debugging/test-pressure-2.md
+      - skills/systematic-debugging/test-pressure-3.md
+      - skills/systematic-debugging/CREATION-LOG.md
+      - skills/systematic-debugging/find-polluter.sh
+      - skills/systematic-debugging/condition-based-waiting-example.ts
+    skipped_reason: 测试压力样本/创建日志/辅助脚本，非核心 prompt
+
+  - name: receiving-code-review
+    category: high
+    reason: Codex Gate 3/4 架构审查引用，处理 reviewer 反馈的行为规范
+    source_dir: skills/receiving-code-review/
+    files:
+      - source: skills/receiving-code-review/SKILL.md
+        local: packages/engine/skills/dev/prompts/receiving-code-review/SKILL.md
+        sha256: c9382e92b8f32363566068ecfed19d3b2651eaf40d3942b24840f839dedfc406
+        lines: 213
+
+  - name: requesting-code-review
+    category: high
+    reason: Engine code-review-gate 引用，统一 reviewer prompt 模板
+    source_dir: skills/requesting-code-review/
+    files:
+      - source: skills/requesting-code-review/SKILL.md
+        local: packages/engine/skills/dev/prompts/requesting-code-review/SKILL.md
+        sha256: a5ff68586ccf62d1803cedeb71d60fd96ec05591d29c8d123196117eefd34cd0
+        lines: 105
+      - source: skills/requesting-code-review/code-reviewer.md
+        local: packages/engine/skills/dev/prompts/requesting-code-review/code-reviewer.md
+        sha256: 7f5328dca12cb200005ae9d4386f63a9b0acb735ece57f82db206b4a3189ccae
+        lines: 146
+
+  - name: brainstorming
+    category: medium
+    reason: Engine /plan /decomp 前置灵感阶段可复用，supplements 秋米拆解
+    source_dir: skills/brainstorming/
+    files:
+      - source: skills/brainstorming/SKILL.md
+        local: packages/engine/skills/dev/prompts/brainstorming/SKILL.md
+        sha256: bba47904a7f6bbee3bf8a107ebbe84e65d392be683bbb898ded736b29e415f90
+        lines: 164
+      - source: skills/brainstorming/spec-document-reviewer-prompt.md
+        local: packages/engine/skills/dev/prompts/brainstorming/spec-document-reviewer-prompt.md
+        sha256: 12cb5ed58aef41b8da6fbb505547c71ca3f5658c83b66ca6e556c936308b3189
+        lines: 49
+    skipped_in_source:
+      - skills/brainstorming/visual-companion.md
+      - skills/brainstorming/scripts/
+    skipped_reason: visual 渲染/server/helper 脚本是交互式 UI 辅助，Engine CLI 不需要
+
+  - name: writing-plans
+    category: medium
+    reason: Harness Planner / sprint-planner 的上游模板，Engine Stage 1 Spec 可对齐
+    source_dir: skills/writing-plans/
+    files:
+      - source: skills/writing-plans/SKILL.md
+        local: packages/engine/skills/dev/prompts/writing-plans/SKILL.md
+        sha256: 90056bad3d5f196fa7c9fec0ffe592e6d9c86bc983e406642a51d1a4198b7024
+        lines: 152
+      - source: skills/writing-plans/plan-document-reviewer-prompt.md
+        local: packages/engine/skills/dev/prompts/writing-plans/plan-document-reviewer-prompt.md
+        sha256: 6fce2aa83c63715697e9dd86050c820716100b91efbd9f12bab8477ecc060256
+        lines: 49
+
+# ============================================================
+# 不本地化的 skill（明确记录原因，避免后续反复讨论）
+# ============================================================
+skip_reason:
+  - name: executing-plans
+    upstream_skill_md_sha256: a711f83fb762e2ea0fa151f598893da9911a408895c91cc7a7e0770dd59a27b3
+    reason: |
+      Engine 已有更强的 4-Stage Pipeline + Harness v5.x 执行框架，
+      superpowers 的 executing-plans 是通用模板，吸收会造成两套执行器冲突。
+      保留 upstream 作为参考，不本地化。
+
+  - name: dispatching-parallel-agents
+    upstream_skill_md_sha256: 76806091c7f923ba2596546b19cccd98a08e57a68745df77c3a7b998fe838e2b
+    reason: |
+      Engine 有 Brain 调度器 + codex_dev 派发机制，已覆盖并行派发场景。
+      且本地规则禁止 Agent 绕过 /dev（见 feedback_no_agent_bypass_dev.md），
+      superpowers 通用并行模板不适用。
+
+  - name: finishing-a-development-branch
+    upstream_skill_md_sha256: dd2f82c6dc8582b621f9eb57fcb65f557f88eadf872727ac81d0840ae12c504e
+    reason: |
+      Engine 有强约束的 DevGate/Stop Hook/branch-protect.sh/CI L1-L4 门禁，
+      通用 finishing 模板被 Engine 规则完全覆盖。
+
+  - name: using-git-worktrees
+    upstream_skill_md_sha256: de9dcde34840eee074047ec327d4ea6ca4954c5a73a6d874dc48f25fe46c9e7c
+    reason: |
+      Engine 自造 worktree-manage.sh + .dev-lock 协议（见 worktree-patterns.md），
+      刻意不吸收 superpowers 的 worktree 方案避免双实现冲突。
+
+  - name: using-superpowers
+    upstream_skill_md_sha256: 316e29381219adf0cac62190c67aeabf427d6e6e5f2735541d502b3d339be7aa
+    reason: meta skill，告诉 agent 如何调用 superpowers，Engine 内不需要。
+
+  - name: writing-skills
+    upstream_skill_md_sha256: 38ba648975ae6ba512d6695676f146163db61a496b867f716f4bdfb0ee3aca3e
+    reason: |
+      meta skill，Engine 已有 /skill-creator（本机）承担同职责。
+      superpowers 的 writing-skills 可作为 skill-creator 的上游参考，但不复制到 Engine。
+
+# ============================================================
+# 验证命令 — Engine CI 可用来校验本地副本未漂移
+# 假设 Engine 把文件放到 packages/engine/skills/dev/prompts/<skill>/...
+# 如果 upstream 与本地 hash 不一致，命令以 non-zero 退出
+# ============================================================
+verification_commands:
+  # 1) 校验本地副本 hash 与 manifest 记录一致（Engine CI 日常巡检用）
+  verify_local_hashes: |
+    # 从 manifest 里抽出 local + sha256，逐一 shasum 对照
+    python3 -c "
+    import yaml, hashlib, sys, pathlib
+    m = yaml.safe_load(open('packages/engine/skills/dev/prompts/prompt-localization-manifest.yaml'))
+    root = pathlib.Path('.')
+    bad = []
+    for skill in m['skills']:
+        for f in skill['files']:
+            p = root / f['local']
+            if not p.exists():
+                bad.append(f\"MISSING {f['local']}\"); continue
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            if h != f['sha256']:
+                bad.append(f\"HASH_MISMATCH {f['local']} expect={f['sha256']} got={h}\")
+    if bad:
+        print('\n'.join(bad)); sys.exit(1)
+    print(f'OK: {sum(len(s[\"files\"]) for s in m[\"skills\"])} files verified')
+    "
+
+  # 2) 校验 upstream 源未变（检测 superpowers 是否发布新版本、需要重新同步）
+  verify_upstream_drift: |
+    SRC=/Users/administrator/.claude-account1/plugins/cache/superpowers-marketplace/superpowers/5.0.7
+    python3 -c "
+    import yaml, hashlib, sys, pathlib
+    m = yaml.safe_load(open('packages/engine/skills/dev/prompts/prompt-localization-manifest.yaml'))
+    src = pathlib.Path('$SRC')
+    bad = []
+    for skill in m['skills']:
+        for f in skill['files']:
+            p = src / f['source']
+            if not p.exists():
+                bad.append(f\"UPSTREAM_MISSING {f['source']}\"); continue
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            if h != f['sha256']:
+                bad.append(f\"UPSTREAM_CHANGED {f['source']} manifest={f['sha256']} upstream={h}\")
+    if bad:
+        print('\n'.join(bad)); sys.exit(2)
+    print('OK: upstream unchanged vs manifest')
+    "
+
+  # 3) 纯 shell 版一行校验（无 python/yaml 依赖，适合轻量 CI step）
+  verify_quick_shell: |
+    # 任选 3 个关键文件做 spot check
+    set -e
+    cd packages/engine/skills/dev/prompts
+    echo "081ad3869e55c80bf8f890b4768a90c0e8057daf94b1b6fadebfc85ea5b8304a  subagent-driven-development/SKILL.md" | shasum -a 256 -c -
+    echo "7dee67b4af6bdccc7a914ca34533184d64592d0f5b23aeae631538168db14994  test-driven-development/SKILL.md" | shasum -a 256 -c -
+    echo "ea52d15aabaf72bc6b558efe2c126f161b53961090ddcd712000273bfe8c7b6c  verification-before-completion/SKILL.md" | shasum -a 256 -c -
+
+# ============================================================
+# 统计
+# ============================================================
+summary:
+  total_upstream_skills: 14
+  localized_skills: 8
+  localized_files: 18
+  skipped_skills: 6
+  skipped_files_in_localized_skills: 10   # systematic-debugging 7 个 + brainstorming 3 个
+  total_localized_lines: 2666              # 18 文件行数合计
