@@ -2175,6 +2175,17 @@ async function _prepareContractReviewPrompt(task, taskType) {
 
 // ─── preparePrompt 辅助：条件判断 + 路由内联 lambda 拆分 ────────────────────
 
+/**
+ * HARNESS_LANGGRAPH_ENABLED 环境变量检测（executor 内部用）。
+ * 与 harness-graph-runner.js 中的 isLangGraphEnabled 逻辑一致。
+ */
+function _isLangGraphEnabled() {
+  const v = process.env.HARNESS_LANGGRAPH_ENABLED;
+  if (!v) return false;
+  const normalized = String(v).trim().toLowerCase();
+  return !(normalized === '' || normalized === 'false' || normalized === '0');
+}
+
 function _isSprintOrHarnessDevMode(taskType, payload) {
   return ['sprint_generate', 'sprint_fix'].includes(taskType)
     || (taskType === 'dev' && payload?.harness_mode);
@@ -2787,6 +2798,45 @@ async function triggerCeceliaRun(task) {
   if (location === 'us' && dynamicExecutor === 'codex') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Local Codex CLI (dynamic executor=codex)`);
     return triggerLocalCodexExec(task);
+  }
+
+  // 2.9 LangGraph Pipeline（HARNESS_LANGGRAPH_ENABLED=true + harness_planner）
+  // 当启用 LangGraph 时，harness_planner 任务不走单步 Docker 执行，
+  // 而是由 LangGraph 编排完整 6 步 pipeline（planner→proposer→reviewer→generator→evaluator→report）。
+  // LangGraph runner 内部为每个节点调 executeInDocker。
+  if (task.task_type === 'harness_planner' && _isLangGraphEnabled()) {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (HARNESS_LANGGRAPH_ENABLED=true)`);
+    try {
+      const { runHarnessPipeline } = await import('./harness-graph-runner.js');
+      const result = await runHarnessPipeline(task, {
+        onStep: async (stepEvent) => {
+          console.log(`[executor] LangGraph step: node=${stepEvent.node} step=${stepEvent.step_index} task=${task.id}`);
+          // 写 cecelia_events（可选，onStep 失败不阻塞）
+          try {
+            await pool.query(
+              `INSERT INTO cecelia_events (event_type, task_id, payload)
+               VALUES ('langgraph_step', $1::uuid, $2::jsonb)`,
+              [task.id, JSON.stringify(stepEvent.state_snapshot || {})]
+            );
+          } catch { /* non-fatal */ }
+        },
+      });
+      return {
+        success: !result.skipped,
+        taskId: task.id,
+        langgraph: true,
+        steps: result.steps,
+        finalState: result.finalState,
+      };
+    } catch (err) {
+      console.error(`[executor] LangGraph pipeline error task=${task.id}: ${err.message}`);
+      return {
+        success: false,
+        taskId: task.id,
+        langgraph: true,
+        error: err.message,
+      };
+    }
   }
 
   // 3. US → Claude Code（本机 cecelia-bridge，10-slot 池）
