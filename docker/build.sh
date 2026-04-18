@@ -24,16 +24,16 @@ if [[ ! -f "$DOCKERFILE" ]]; then
   exit 1
 fi
 
-EXTRA_ARGS=()
+EXTRA_ARGS=""
 if [[ "${1:-}" == "--no-cache" ]]; then
-  EXTRA_ARGS+=("--no-cache")
+  EXTRA_ARGS="--no-cache"
 fi
 
 echo "[build.sh] 构建镜像 $IMAGE_TAG"
 docker build \
   -f "$DOCKERFILE" \
   -t "$IMAGE_TAG" \
-  "${EXTRA_ARGS[@]}" \
+  $EXTRA_ARGS \
   "$SCRIPT_DIR/cecelia-runner"
 
 echo "[build.sh] 完成: $IMAGE_TAG"

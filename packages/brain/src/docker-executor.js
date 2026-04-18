@@ -19,7 +19,7 @@
  */
 
 import { spawn } from 'child_process';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import pool from './db.js';
@@ -178,6 +178,33 @@ export async function executeInDocker(opts) {
     ...(opts.env || {}),
   };
 
+  // 解析 CECELIA_CREDENTIALS → 注入 ANTHROPIC_API_KEY（容器内无宿主凭据文件）
+  const credName = envFinal.CECELIA_CREDENTIALS;
+  if (credName && !envFinal.ANTHROPIC_API_KEY) {
+    // account1 使用 CLAUDE_CONFIG_DIR，其他 account 从 credentials JSON 读 API key
+    if (credName === 'account1') {
+      const configDir = path.join(os.homedir(), `.claude-account1`);
+      if (existsSync(configDir)) {
+        envFinal.CLAUDE_CONFIG_DIR = configDir;
+      }
+    } else {
+      const credFile = path.join(os.homedir(), '.credentials', `${credName}.json`);
+      try {
+        const cred = JSON.parse(readFileSync(credFile, 'utf8'));
+        if (cred.api_key) envFinal.ANTHROPIC_API_KEY = cred.api_key;
+      } catch (e) {
+        console.warn(`[docker-executor] credentials file not found: ${credFile}`);
+      }
+    }
+  }
+
+  // 额外的 volume 挂载列表
+  const extraVolumes = [];
+  // CLAUDE_CONFIG_DIR 需要挂载到容器内（只读）
+  if (envFinal.CLAUDE_CONFIG_DIR) {
+    extraVolumes.push('-v', `${envFinal.CLAUDE_CONFIG_DIR}:${envFinal.CLAUDE_CONFIG_DIR}:ro`);
+  }
+
   const args = [
     'run',
     '--rm',
@@ -186,6 +213,7 @@ export async function executeInDocker(opts) {
     `--cpus=${cpuCores}`,
     '-v', `${worktreePath}:/workspace`,
     '-v', `${DEFAULT_PROMPT_DIR}:/tmp/cecelia-prompts:ro`,
+    ...extraVolumes,
     ...envToArgs(envFinal),
     image,
     // ENTRYPOINT = ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json"]
