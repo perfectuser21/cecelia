@@ -3,9 +3,20 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-15"
+updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.1"
+    date: "2026-04-18"
+    change: "docs"
+    description: "R1 — Roadmap 视觉系统 + Superpowers 升级追踪。新建 docs/roadmap/ 四份 markdown（README 入口总表 + EPICS 6 Epic 状态 + superpowers-sync 对齐历史 + blind-spots 5 个共同盲点），新增 scripts/check-superpowers-upgrade.sh cron 脚本（每月 1 号检测官方版本）。解决 roadmap/战略方向/升级历史无持久化视图的问题。patch bump 只为记录，不改 engine skill。"
+    files:
+      - "docs/roadmap/README.md"
+      - "docs/roadmap/EPICS.md"
+      - "docs/roadmap/superpowers-sync.md"
+      - "docs/roadmap/blind-spots.md"
+      - "scripts/check-superpowers-upgrade.sh"
+
   - version: "14.17.0"
     date: "2026-04-16"
     change: "feat"
