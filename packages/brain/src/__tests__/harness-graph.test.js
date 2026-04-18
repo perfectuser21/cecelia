@@ -131,7 +131,7 @@ describe('runHarnessPipeline', () => {
       proposer: async (state) => ({ ...state, trace: 'proposer', acceptance_criteria: 'test criteria' }),
       reviewer: async (state) => ({ ...state, trace: 'reviewer', review_verdict: 'APPROVED' }),
       generator: async (state) => ({ ...state, trace: 'generator', pr_url: 'https://github.com/test/1', pr_branch: 'cp-test' }),
-      evaluator: async (state) => ({ ...state, trace: 'evaluator', eval_verdict: 'PASS' }),
+      evaluator: async (state) => ({ ...state, trace: 'evaluator', evaluator_verdict: 'PASS' }),
       report: async (state) => ({ ...state, trace: 'report', report: 'done' }),
     };
     const r = await runHarnessPipeline(
