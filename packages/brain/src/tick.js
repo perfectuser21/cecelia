@@ -190,12 +190,14 @@ let _lastPipelinePatrolTime = 0; // track last pipeline patrol time
 let _lastPipelineWatchdogTime = 0; // track last pipeline-level stuck watchdog
 let _lastKrHealthDailyTime = 0; // track last daily KR health check time
 let _lastCredentialCheckTime = 0; // track last credential expiry check time
+let _lastCleanupWorkerTime = 0; // R4: track last orphan worktree cleanup run time
 
 const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHECK_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
 const PIPELINE_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_WATCHDOG_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
+const CLEANUP_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_WORKER_INTERVAL_MS || String(10 * 60 * 1000), 10); // R4: 10 minutes
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1739,6 +1741,27 @@ async function executeTick() {
       }
     }).catch(err => {
       console.warn('[tick] pipeline-watchdog failed (non-fatal):', err.message);
+    });
+  }
+
+  // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本
+  // 扫描白名单 worktree，若对应 PR 已 merged 超过 1h 且满足安全守卫则清理
+  const cleanupWorkerElapsed = Date.now() - _lastCleanupWorkerTime;
+  if (!MINIMAL_MODE && cleanupWorkerElapsed >= CLEANUP_WORKER_INTERVAL_MS) {
+    _lastCleanupWorkerTime = Date.now();
+    import('./cleanup-worker.js').then(({ runCleanupWorker }) => runCleanupWorker()).then(r => {
+      if (r?.stdout) {
+        const lines = r.stdout.split('\n').filter(Boolean);
+        const cleaned = lines.filter(l => l.includes('[cleanup] removed')).length;
+        if (cleaned > 0) {
+          tickLog(`[tick] cleanup-worker: cleaned=${cleaned} lines=${lines.length}`);
+        }
+      }
+      if (!r?.success && r?.error) {
+        console.warn('[tick] cleanup-worker failed (non-fatal):', r.error);
+      }
+    }).catch(err => {
+      console.warn('[tick] cleanup-worker threw (non-fatal):', err.message);
     });
   }
 

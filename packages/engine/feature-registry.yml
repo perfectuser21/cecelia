@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.3"
+    date: "2026-04-18"
+    change: "feat"
+    description: "R4 — 孤儿 worktree 自动清理 worker。新增 packages/brain/scripts/cleanup-merged-worktrees.sh 纯 bash 脚本，扫描白名单（.claude/worktrees/agent-* 和 ~/worktrees/cecelia/*）下的 worktree，对已 merged 超过 1h 且通过 5 项安全守卫（uncommitted / unpushed / merged_at grace / 主干 branch / human_hold）的 orphan 执行 worktree remove + branch -D。新增 packages/brain/src/cleanup-worker.js 作为 JS 壳，集成到 tick.js 每 10 分钟运行一次（CECELIA_CLEANUP_WORKER_INTERVAL_MS 可调）。解决今天 Agent() isolation:worktree spawn 后 Stop Hook 不触发导致 agent-a6a30b0d/ac87b750/af0765fb 孤儿累积的问题。"
+    files:
+      - "packages/brain/scripts/cleanup-merged-worktrees.sh"
+      - "packages/brain/src/cleanup-worker.js"
+      - "packages/brain/src/tick.js"
+      - "packages/brain/src/__tests__/cleanup-worker.test.js"
+
   - version: "14.17.2"
     date: "2026-04-18"
     change: "chore"
