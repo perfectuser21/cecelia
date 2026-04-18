@@ -73,4 +73,48 @@ describe('cleanup-worker', () => {
     });
     await runCleanupWorker({ timeoutMs: 5000 });
   });
+
+  // ─── PRD DoD [BEHAVIOR] 四个场景 ─────────────────────────────────
+  // shell 脚本里实际做守卫判断，这里通过 mock exec stdout 模拟脚本
+  // 针对各个场景的输出，验证 worker 如实回传（便于 tick 端统计）。
+
+  it('[BEHAVIOR] merged + 无 uncommitted → 脚本打印 [cleanup] removed', async () => {
+    exec.mockImplementation((cmd, opts, cb) => {
+      cb(null, '[cleanup-worker] starting\n[cleanup] removed /path/agent-x (branch=cp-feat, PR #42 merged)\n[cleanup-worker] done\n', '');
+    });
+    const r = await runCleanupWorker();
+    expect(r.success).toBe(true);
+    expect(r.stdout).toContain('[cleanup] removed');
+    expect(r.stdout).toContain('PR #42 merged');
+  });
+
+  it('[BEHAVIOR] 有 uncommitted changes → 脚本打印 skip uncommitted', async () => {
+    exec.mockImplementation((cmd, opts, cb) => {
+      cb(null, '[cleanup-worker] starting\n[cleanup-worker] [skip] /path/agent-y (cp-dirty): has uncommitted changes\n[cleanup-worker] done\n', '');
+    });
+    const r = await runCleanupWorker();
+    expect(r.success).toBe(true);
+    expect(r.stdout).toMatch(/skip.*uncommitted/i);
+    expect(r.stdout).not.toContain('[cleanup] removed');
+  });
+
+  it('[BEHAVIOR] PR 未 merged → 脚本打印 skip PR state', async () => {
+    exec.mockImplementation((cmd, opts, cb) => {
+      cb(null, '[cleanup-worker] starting\n[cleanup-worker] [skip] /path/agent-z (cp-open): PR state=OPEN, not merged\n[cleanup-worker] done\n', '');
+    });
+    const r = await runCleanupWorker();
+    expect(r.success).toBe(true);
+    expect(r.stdout).toMatch(/PR state=OPEN/);
+    expect(r.stdout).not.toContain('[cleanup] removed');
+  });
+
+  it('[BEHAVIOR] branch == main → 脚本打印 protected skip', async () => {
+    exec.mockImplementation((cmd, opts, cb) => {
+      cb(null, '[cleanup-worker] starting\n[cleanup-worker] [skip] /path/agent-main: protected or empty branch (branch=main)\n[cleanup-worker] done\n', '');
+    });
+    const r = await runCleanupWorker();
+    expect(r.success).toBe(true);
+    expect(r.stdout).toMatch(/protected.*branch=main/);
+    expect(r.stdout).not.toContain('[cleanup] removed');
+  });
 });

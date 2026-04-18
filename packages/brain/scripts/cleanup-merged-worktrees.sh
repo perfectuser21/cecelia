@@ -93,15 +93,18 @@ cleanup_one() {
     return 0
   fi
 
-  # Guard E: dev-mode 里有 human_hold 不清
+  # Guard E: dev-mode 里有 human_hold 不清（覆盖 .dev-mode / .dev-mode.* / .dev-mode.*.lock）
   local dm
-  for dm in "$wt"/.dev-mode.*; do
+  shopt -s nullglob
+  for dm in "$wt"/.dev-mode "$wt"/.dev-mode.*; do
     [[ -f "$dm" ]] || continue
     if grep -q "^human_hold: true" "$dm" 2>/dev/null; then
+      shopt -u nullglob
       log "[skip] $wt ($branch): human_hold=true in $(basename "$dm")"
       return 0
     fi
   done
+  shopt -u nullglob
 
   # 所有 guard 通过 → 清理
   if [[ "$DRY_RUN" == "1" ]]; then
