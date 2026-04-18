@@ -1,8 +1,10 @@
-# Contract DoD — Workstream 2: integration 与 smoke 测试覆盖
+# Contract DoD — Workstream 2: integration 与 smoke 测试覆盖（含三种状态 mock 注入）
 
-- [ ] [ARTIFACT] `critical-routes.integration.test.js` 与 `golden-path.integration.test.js` 均包含 `docker_runtime` 关键字的新增断言
+- [ ] [ARTIFACT] 两个 integration 测试文件均包含 `docker_runtime` 关键字
   Test: node -e "const fs=require('fs'); const p1='packages/brain/src/__tests__/integration/critical-routes.integration.test.js'; const p2='packages/brain/src/__tests__/integration/golden-path.integration.test.js'; if(!/docker_runtime/.test(fs.readFileSync(p1,'utf8')))throw new Error('FAIL: '+p1); if(!/docker_runtime/.test(fs.readFileSync(p2,'utf8')))throw new Error('FAIL: '+p2); console.log('PASS')"
-- [ ] [ARTIFACT] 三种状态（healthy / unhealthy / disabled）均在 integration 测试中有字面量覆盖
-  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); ['healthy','unhealthy','disabled'].forEach(s=>{if(!new RegExp(\"['\\\"\`]\"+s+\"['\\\"\`]\").test(c))throw new Error('FAIL miss '+s)}); console.log('PASS')"
-- [ ] [BEHAVIOR] brain integration 测试（critical-routes 与 golden-path）全部通过，零回归
-  Test: cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' 2>&1 | tail -5 && [ "${PIPESTATUS[0]}" = "0" ] && echo PASS || (echo FAIL; exit 1)
+- [ ] [ARTIFACT] integration 测试使用 `jest.mock` / `jest.doMock` / `jest.spyOn` 显式替换 probe 模块（至少 1 处）
+  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); const ok=/jest\.mock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.doMock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.spyOn\s*\([^)]*[dD]ockerRuntimeProbe/.test(c)||/jest\.spyOn\s*\([^)]*,\s*['\"]probe['\"]/.test(c); if(!ok)throw new Error('FAIL: 未见 jest.mock/doMock/spyOn 对 probe 的替换'); console.log('PASS')"
+- [ ] [ARTIFACT] 三种状态字面量 + `degraded` 聚合断言在 integration 测试中全部出现
+  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); ['healthy','unhealthy','disabled','degraded'].forEach(s=>{if(!new RegExp(\"['\\\"\`]\"+s+\"['\\\"\`]\").test(c))throw new Error('FAIL miss '+s)}); console.log('PASS')"
+- [ ] [BEHAVIOR] brain integration 测试（critical-routes + golden-path）全部通过；读取 npm test 真正的退出码（修复 Round 1 Issue 3）
+  Test: set -o pipefail; (cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' 2>&1 | tail -30); E=$?; [ "$E" = "0" ] && echo "PASS exit=$E" || { echo "FAIL exit=$E"; exit 1; }

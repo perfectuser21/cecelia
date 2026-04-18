@@ -1,15 +1,20 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 **Task ID**: 0f7fec19-f9a7-41ac-81d8-81fc15be4503
 **生成时间**: 2026-04-18
 **对应 PRD**: sprints/sprint-prd.md（Brain `/api/brain/health` 新增 `docker_runtime` 字段）
+**Round 1 反馈处理**:
+- 修复 Issue 1/2：删除所有 `DOCKER_HOST=... curl ...` 与 `DISABLE_DOCKER_RUNTIME=true curl ...`（env var 不传递给已启动的 Brain 进程），将「Docker 不可达 / disabled / 聚合 degraded」三类场景的验证完全下沉到 WS2 integration 测试（Jest mock probe 模块）。
+- 修复 Issue 3：Feature 3 删除 SKIP 假阳性分支，live 命令只做「happy path + 聚合一致性」断言，不可达/disabled 场景不在 live 命令中模拟。
+- 修复 Issue 4：Feature 5 第二条命令改用 `PIPESTATUS[0]` + `set -o pipefail`，读正确的 npm test 退出码。
+- 改进建议：WS1 范围明确 Docker 探测模块文件路径为 `packages/brain/src/docker-runtime-probe.js`（与 DoD Test 对齐）。
 
 ---
 
 ## Feature 1: `/api/brain/health` 响应中新增 `docker_runtime` 字段（结构与字段完整性）
 
 **行为描述**:
-调用方发起 `GET /api/brain/health` 时，返回的 JSON 顶层必须包含 `docker_runtime` 对象。该对象至少包含 `enabled`（bool）、`status`（enum）、`reachable`（bool）、`version`（string 或 null）、`error`（string 或 null）五个字段。`status` 取值必须落在 `healthy` / `unhealthy` / `disabled` / `unknown` 四者之一。
+调用方发起 `GET /api/brain/health` 时，返回的 JSON 顶层必须包含 `docker_runtime` 对象。该对象至少包含 `enabled`（bool）、`status`（enum）、`reachable`（bool）、`version`（string 或 null）、`error`（string 或 null）五个字段。`status` 取值必须落在 `healthy` / `unhealthy` / `disabled` / `unknown` 四者之一。Happy path 场景下（Docker daemon 正常 + enabled=true）必须返回 `status='healthy'` / `enabled=true` / `reachable=true`。
 
 **硬阈值**:
 - HTTP 状态码 = 200
@@ -19,106 +24,141 @@
 - `docker_runtime.reachable` 存在且类型为 boolean
 - `docker_runtime.version` 存在，类型为 string 或 null
 - `docker_runtime.error` 存在，类型为 string 或 null
-- 当 `status === 'disabled'` 时 `enabled === false`；当 `status === 'healthy'` 时 `enabled === true` 且 `reachable === true`
+- 结构不变量：当 `status === 'disabled'` 时 `enabled === false`；当 `status === 'healthy'` 时 `enabled === true` 且 `reachable === true`；当 `status === 'unhealthy'` 时 `error` 必须为非空字符串
 
 **验证命令**:
 ```bash
-# 结构完整性 + 字段类型 + 枚举值
-curl -sf http://localhost:5221/api/brain/health | node -e "
-  const body = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  const dr = body.docker_runtime;
+# 结构完整性 + 字段类型 + 枚举值 + 状态不变量（合并 HTTP 状态码与 body 断言为单次调用）
+TMP=$(mktemp)
+CODE=$(curl -s -o "$TMP" -w '%{http_code}' http://localhost:5221/api/brain/health)
+[ "$CODE" = "200" ] || { echo "FAIL: HTTP $CODE（期望 200）"; rm -f "$TMP"; exit 1; }
+node -e "
+  const dr = JSON.parse(require('fs').readFileSync('$TMP','utf8')).docker_runtime;
   if (!dr || typeof dr !== 'object' || Array.isArray(dr)) throw new Error('FAIL: docker_runtime 缺失或类型错误');
   if (typeof dr.enabled !== 'boolean') throw new Error('FAIL: enabled 非 boolean');
   const allowed = ['healthy','unhealthy','disabled','unknown'];
-  if (!allowed.includes(dr.status)) throw new Error('FAIL: status 取值非法 -> ' + dr.status);
+  if (!allowed.includes(dr.status)) throw new Error('FAIL: status 非法 -> ' + dr.status);
   if (typeof dr.reachable !== 'boolean') throw new Error('FAIL: reachable 非 boolean');
   if (!(typeof dr.version === 'string' || dr.version === null)) throw new Error('FAIL: version 非 string|null');
   if (!(typeof dr.error === 'string' || dr.error === null)) throw new Error('FAIL: error 非 string|null');
   if (dr.status === 'disabled' && dr.enabled !== false) throw new Error('FAIL: disabled 必须 enabled=false');
   if (dr.status === 'healthy' && (dr.enabled !== true || dr.reachable !== true)) throw new Error('FAIL: healthy 必须 enabled=true && reachable=true');
-  console.log('PASS: docker_runtime 结构与字段类型全部符合');
+  if (dr.status === 'unhealthy' && (typeof dr.error !== 'string' || dr.error.length === 0)) throw new Error('FAIL: unhealthy 必须 error 非空');
+  console.log('PASS: docker_runtime 结构与字段不变量全部符合');
 "
-
-# HTTP 状态码验证
-STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5221/api/brain/health)
-[ "$STATUS" = "200" ] && echo "PASS: health 端点返回 200" || (echo "FAIL: 期望 200，实际 $STATUS"; exit 1)
+RC=$?; rm -f "$TMP"; exit $RC
 ```
 
 ---
 
-## Feature 2: Docker 探测超时保护与错误隔离
+## Feature 2: Docker 探测超时保护与响应耗时（live 端点层）
 
 **行为描述**:
-Docker 运行时探测必须在 ≤ 2 秒内返回结果；Docker daemon 不可用或超时时，health 端点本身必须返回 200（不降级为 500），并在 `docker_runtime` 字段中以 `status: 'unhealthy'` / `reachable: false` / `error: <非空字符串>` 标记。整个 health 端点在 Docker down 场景下响应时间 ≤ 3 秒。
+health 端点整体响应时间在 Docker 探测正常与超时保护生效两种路径下均必须 ≤ 3000ms。Docker 探测本身必须有 ≤ 2 秒内部超时保护，超时不得抛出未捕获异常使 health 端点返回 500。「Docker 不可达时端点仍 200」以及「超时后 `status='unhealthy'` / `reachable=false` / `error` 非空」的行为断言不由 live 命令承担（`DOCKER_HOST` 对已启动的 Brain 进程不生效，Round 1 Issue 1/2），改由 Workstream 2 的 integration 测试（Jest mock probe 模块）强制触发并断言。
 
 **硬阈值**:
-- health 端点响应时间 ≤ 3000ms（Docker 正常场景下通常 < 500ms）
-- Docker daemon 停止时，HTTP 状态码依然 = 200
-- Docker 不可达时 `docker_runtime.status === 'unhealthy'` 且 `docker_runtime.reachable === false`
-- 当 `status === 'unhealthy'` 时 `error` 字段必须为非空字符串（含失败原因）
-- Docker 探测不得抛出未捕获异常导致 health 端点 500
+- happy path（Docker daemon 正常）下 health 端点响应时间 ≤ 3000ms
+- Docker 探测模块必须导出可被测试替换（mock）的探测函数（供 WS2 integration 测试注入 unhealthy / timeout / disabled 三种状态）
+- Docker 探测模块内部超时常量 ≤ 2000ms（源码可静态检查）
+- 探测模块必须用 try/catch 包裹底层调用，失败路径必须返回结构化错误对象（不得抛出）
 
 **验证命令**:
 ```bash
-# 响应时间验证（正常场景 ≤ 3000ms）
-START=$(date +%s%3N); curl -sf http://localhost:5221/api/brain/health > /dev/null; END=$(date +%s%3N)
+# 1) live 响应耗时（happy path，Docker 正常）≤ 3000ms
+START=$(date +%s%3N)
+curl -sf http://localhost:5221/api/brain/health > /dev/null || { echo "FAIL: health 请求失败"; exit 1; }
+END=$(date +%s%3N)
 ELAPSED=$((END - START))
-[ "$ELAPSED" -le 3000 ] && echo "PASS: health 响应耗时 ${ELAPSED}ms ≤ 3000ms" || (echo "FAIL: 耗时 ${ELAPSED}ms 超过 3000ms 阈值"; exit 1)
+[ "$ELAPSED" -le 3000 ] && echo "PASS: health 响应耗时 ${ELAPSED}ms ≤ 3000ms" || { echo "FAIL: 耗时 ${ELAPSED}ms 超过 3000ms"; exit 1; }
 
-# Docker 探测独立错误保护 — 即使 Docker 不可达，端点必须 200
-# （测试环境：临时设置 DOCKER_HOST=tcp://127.0.0.1:1 模拟不可达）
-DOCKER_HOST=tcp://127.0.0.1:1 curl -s -o /tmp/health.json -w '%{http_code}\n' http://localhost:5221/api/brain/health > /tmp/health.code
-CODE=$(cat /tmp/health.code | tr -d '[:space:]')
-[ "$CODE" = "200" ] || (echo "FAIL: Docker 不可达时 health 端点返回 $CODE（期望 200）"; exit 1)
+# 2) Docker 探测模块可 mock + 超时常量 ≤ 2000ms（源码静态约束，防止探测阻塞主线程超过 PRD 约定）
 node -e "
-  const dr = JSON.parse(require('fs').readFileSync('/tmp/health.json','utf8')).docker_runtime;
-  if (!dr) throw new Error('FAIL: docker_runtime 缺失');
-  if (dr.reachable !== false) throw new Error('FAIL: Docker 不可达场景 reachable 应为 false，实际 ' + dr.reachable);
-  if (dr.status !== 'unhealthy') throw new Error('FAIL: status 应为 unhealthy，实际 ' + dr.status);
-  if (typeof dr.error !== 'string' || dr.error.length === 0) throw new Error('FAIL: unhealthy 状态下 error 必须为非空字符串');
-  console.log('PASS: Docker 不可达场景错误隔离正确');
+  const fs = require('fs');
+  const path = 'packages/brain/src/docker-runtime-probe.js';
+  if (!fs.existsSync(path)) throw new Error('FAIL: ' + path + ' 不存在');
+  const src = fs.readFileSync(path, 'utf8');
+  // 必须以 CommonJS 方式导出（WS2 测试需要 jest.mock / require 替换）
+  if (!/module\.exports\s*=|exports\.probe\s*=|exports\.default\s*=/.test(src)) {
+    throw new Error('FAIL: probe 模块未以 CommonJS 方式导出');
+  }
+  // 必须显式 try/catch 包裹（防止探测异常使 health 端点 500）
+  if (!/\btry\b[\s\S]*\bcatch\b/.test(src)) {
+    throw new Error('FAIL: probe 模块缺少 try/catch（Docker 异常会冒泡导致 500）');
+  }
+  // 超时常量（毫秒数值）≤ 2000
+  const nums = [...src.matchAll(/(?:timeout|TIMEOUT|timeoutMs|TIMEOUT_MS)\s*[:=]\s*(\d+)/g)].map(m => parseInt(m[1], 10));
+  if (nums.length === 0) throw new Error('FAIL: 未找到超时常量（timeout/TIMEOUT）');
+  const maxTimeout = Math.max(...nums);
+  if (maxTimeout > 2000) throw new Error('FAIL: 超时常量 ' + maxTimeout + 'ms 超过 2000ms 上限');
+  console.log('PASS: probe 模块可 mock + 超时常量 ' + maxTimeout + 'ms ≤ 2000ms');
 "
 ```
 
 ---
 
-## Feature 3: 顶层 `status` 聚合规则对 `docker_runtime` 的响应
+## Feature 3: 顶层 `status` 聚合规则一致性（live 层一致性 + 聚合逻辑源码约束）
 
 **行为描述**:
-当 `docker_runtime.enabled === true` 且 `docker_runtime.status === 'unhealthy'` 时，health 响应的顶层 `status` 字段必须聚合为 `degraded`（与既有 `circuit_breaker` open 时的聚合语义一致）。当 `docker_runtime.status === 'disabled'` 时，顶层 `status` 不得因此从 healthy 退化（disabled 表示未启用，不视为故障）。
+当 `docker_runtime.enabled === true` 且 `docker_runtime.status === 'unhealthy'` 时，health 响应的顶层 `status` 聚合为 `degraded`（与既有 `circuit_breaker` open 的聚合语义一致）。当 `docker_runtime.status === 'disabled'` 时，顶层 `status` 不得因此从 healthy 退化。live 端点层只验证「当前 docker_runtime 状态下顶层 status 与聚合规则一致」，三种边界状态（unhealthy + degraded / disabled 不降级 / healthy）的强制触发与断言由 Workstream 2 的 integration 测试通过 mock probe 模块完成。
 
 **硬阈值**:
-- `docker_runtime.enabled === true && docker_runtime.status === 'unhealthy'` ⇒ 顶层 `status === 'degraded'`
-- `docker_runtime.status === 'disabled'` ⇒ 顶层 `status` 由其它器官决定（不因 disabled 本身降级）
-- `docker_runtime.status === 'healthy'` 且其它器官正常 ⇒ 顶层 `status === 'healthy'`
+- live 端点返回的 `(docker_runtime, status, organs.circuit_breaker.open)` 三者组合必须满足一致性规则：
+  - 若 `docker_runtime.enabled=true && docker_runtime.status='unhealthy'` ⇒ 顶层 `status='degraded'`
+  - 若 `docker_runtime.status='healthy'` 且无故障源（`organs.circuit_breaker.open=[]` 且其它器官无异常）⇒ 顶层 `status='healthy'`
+  - 若 `docker_runtime.status='disabled'` 且无其它器官故障 ⇒ 顶层 `status` 不得为 `degraded`
+- 聚合源码 `packages/brain/src/routes/goals.js` 必须显式引用 `docker_runtime` 且在附近出现 `degraded` 字面量（防止"仅添加字段、聚合逻辑遗漏"的应付实现）
 
 **验证命令**:
 ```bash
-# 场景 A：Docker 不可达 + enabled=true → 顶层 degraded
-DOCKER_HOST=tcp://127.0.0.1:1 curl -sf http://localhost:5221/api/brain/health | node -e "
+# 1) live 一致性：无论当前 docker_runtime 处于何种状态，顶层 status 与聚合规则保持一致（无 SKIP 假阳性分支）
+curl -sf http://localhost:5221/api/brain/health | node -e "
   const b = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  if (b.docker_runtime.enabled === true && b.docker_runtime.status === 'unhealthy') {
-    if (b.status !== 'degraded') throw new Error('FAIL: 期望顶层 degraded，实际 ' + b.status);
-    console.log('PASS: unhealthy+enabled 聚合为 degraded');
-  } else {
-    console.log('SKIP: 未满足触发条件（需 enabled=true 且 unhealthy）');
+  const dr = b.docker_runtime;
+  if (!dr) throw new Error('FAIL: docker_runtime 缺失');
+  const cbOpen = (b.organs?.circuit_breaker?.open || []).length > 0;
+  // 规则 1：unhealthy+enabled ⇒ 顶层必须 degraded（若触发则断言，未触发则规则自动满足，不走 SKIP 分支）
+  if (dr.enabled === true && dr.status === 'unhealthy' && b.status !== 'degraded') {
+    throw new Error('FAIL: docker unhealthy+enabled 但顶层 ' + b.status + '（期望 degraded）');
   }
+  // 规则 2：docker healthy + 无 cb open ⇒ 顶层必须 healthy（其它器官异常才允许 degraded，且必须由 open/non-running 证据支持）
+  if (dr.status === 'healthy' && !cbOpen && b.status !== 'healthy') {
+    const nonRunning = ['scheduler','event_bus','notifier','planner']
+      .filter(k => b.organs[k]?.status && b.organs[k].status !== 'running');
+    if (nonRunning.length === 0) {
+      throw new Error('FAIL: docker healthy 且无故障源，但顶层 ' + b.status + '（期望 healthy）');
+    }
+  }
+  // 规则 3：disabled 且无其它器官故障 ⇒ 顶层不得 degraded
+  if (dr.status === 'disabled' && b.status === 'degraded' && !cbOpen) {
+    const nonRunning = ['scheduler','event_bus','notifier','planner']
+      .filter(k => b.organs[k]?.status && b.organs[k].status !== 'running');
+    if (nonRunning.length === 0) {
+      throw new Error('FAIL: disabled 单独触发 degraded（非其它器官故障）');
+    }
+  }
+  console.log('PASS: live 聚合规则一致 docker=' + dr.status + ' 顶层=' + b.status);
 "
 
-# 场景 B：Docker 未启用 → 顶层 status 不因此 degraded
-DISABLE_DOCKER_RUNTIME=true curl -sf http://localhost:5221/api/brain/health | node -e "
-  const b = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  if (b.docker_runtime.status !== 'disabled') {
-    console.log('SKIP: 环境未触发 disabled 状态（需 DISABLE_DOCKER_RUNTIME=true 或等价开关）');
-    process.exit(0);
+# 2) 源码约束：goals.js 聚合逻辑必须显式引用 docker_runtime + 附近含 degraded 关键字
+node -e "
+  const fs = require('fs');
+  const src = fs.readFileSync('packages/brain/src/routes/goals.js', 'utf8');
+  if (!/docker_runtime/.test(src)) throw new Error('FAIL: goals.js 未引用 docker_runtime');
+  const lines = src.split('\n');
+  let hasAggRef = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/docker_runtime/.test(lines[i])) {
+      const start = Math.max(0, i - 20);
+      const end = Math.min(lines.length, i + 20);
+      const window = lines.slice(start, end).join('\n');
+      if (/degraded/.test(window) || /aggregateStatus|overallStatus|topStatus/.test(window)) {
+        hasAggRef = true;
+        break;
+      }
+    }
   }
-  // disabled 不应影响顶层 status；若顶层 degraded 必须由其它器官引起
-  if (b.status === 'degraded') {
-    const cbOpen = (b.organs?.circuit_breaker?.open || []).length > 0;
-    const schedStopped = b.organs?.scheduler?.status !== 'running';
-    if (!cbOpen && !schedStopped) throw new Error('FAIL: 顶层 degraded 但非其它器官原因，疑似 disabled 误降级');
-  }
-  console.log('PASS: disabled 不触发顶层 degraded');
+  if (!hasAggRef) throw new Error('FAIL: goals.js 中 docker_runtime 附近 20 行内未见 degraded/聚合关键字');
+  console.log('PASS: goals.js 聚合逻辑显式引用 docker_runtime + degraded');
 "
 ```
 
@@ -138,7 +178,6 @@ DISABLE_DOCKER_RUNTIME=true curl -sf http://localhost:5221/api/brain/health | no
 
 **验证命令**:
 ```bash
-# 既有字段结构 + 类型保护（回归保护）
 curl -sf http://localhost:5221/api/brain/health | node -e "
   const b = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
   const check = (cond, msg) => { if (!cond) throw new Error('FAIL: ' + msg); };
@@ -164,43 +203,47 @@ curl -sf http://localhost:5221/api/brain/health | node -e "
 
 ---
 
-## Feature 5: integration/smoke 测试新增 docker_runtime 覆盖
+## Feature 5: integration/smoke 测试新增 docker_runtime 覆盖（含三种状态 mock 注入）
 
 **行为描述**:
-`packages/brain/src/__tests__/integration/critical-routes.integration.test.js` 与 `packages/brain/src/__tests__/integration/golden-path.integration.test.js` 中必须新增对 `docker_runtime` 字段结构与三种状态（healthy / unhealthy / disabled）的断言，测试全部通过；既有 health 断言零回归；smoke 测试（若存在 health schema）同步更新。
+`packages/brain/src/__tests__/integration/critical-routes.integration.test.js` 与 `packages/brain/src/__tests__/integration/golden-path.integration.test.js` 中必须新增针对 `docker_runtime` 的断言；必须使用 Jest mock（`jest.mock` / `jest.doMock` / `jest.spyOn`）对 probe 模块注入三种状态（healthy / unhealthy / disabled），并分别断言：healthy 下顶层 `status='healthy'`；unhealthy+enabled 下顶层 `status='degraded'` 且 `error` 非空；disabled 下顶层 `status` 不因此降级。既有 health 断言零回归，brain integration 测试套件全量通过。
 
 **硬阈值**:
-- `critical-routes.integration.test.js` 新增至少 1 个针对 `docker_runtime` 字段结构的测试用例，且测试通过
-- `golden-path.integration.test.js` 已有 health 端点断言扩展覆盖 `docker_runtime` 顶层字段存在性与类型
-- 三种状态（healthy / unhealthy / disabled）各至少 1 个断言覆盖
-- 现有 health 相关测试 100% 通过（零回归）
-- `npm test -- --testPathPattern=brain` 退出码为 0
+- 两个 integration 测试文件均出现 `docker_runtime` 关键字
+- `docker-runtime-probe` 或 `dockerRuntimeProbe` 在测试中被 `jest.mock` / `jest.doMock` / `jest.spyOn` 显式替换（至少 1 处）
+- 三种状态字面量 `'healthy'` / `'unhealthy'` / `'disabled'` 在 integration 测试中全部出现
+- 出现针对顶层 `status` 为 `'degraded'` 的断言（证明聚合规则被真实测到，非仅结构断言）
+- `cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration'` 以正确管道退出码（`PIPESTATUS[0]` 或 `set -o pipefail`）读取为 0
 
 **验证命令**:
 ```bash
-# 新增断言存在性 — 测试文件中出现 docker_runtime 关键字
+# 1) 测试文件包含 docker_runtime 关键字 + mock 调用 + 三种状态 + degraded 断言
 node -e "
   const fs = require('fs');
   const p1 = 'packages/brain/src/__tests__/integration/critical-routes.integration.test.js';
   const p2 = 'packages/brain/src/__tests__/integration/golden-path.integration.test.js';
   const c1 = fs.readFileSync(p1, 'utf8');
   const c2 = fs.readFileSync(p2, 'utf8');
+  const combined = c1 + '\n' + c2;
   if (!/docker_runtime/.test(c1)) throw new Error('FAIL: ' + p1 + ' 未新增 docker_runtime 断言');
   if (!/docker_runtime/.test(c2)) throw new Error('FAIL: ' + p2 + ' 未新增 docker_runtime 断言');
-  // 三种状态覆盖（任一测试文件里出现即可）
-  const combined = c1 + c2;
-  const states = ['healthy','unhealthy','disabled'];
-  for (const s of states) {
+  const hasMock = /jest\.mock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(combined)
+    || /jest\.doMock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(combined)
+    || /jest\.spyOn\s*\([^)]*[dD]ockerRuntimeProbe/.test(combined)
+    || /jest\.spyOn\s*\([^)]*,\s*['\"]probe['\"]/.test(combined);
+  if (!hasMock) throw new Error('FAIL: integration 测试未使用 jest.mock/doMock/spyOn 替换 probe 模块');
+  for (const s of ['healthy','unhealthy','disabled','degraded']) {
     const re = new RegExp(\"['\\\"\`]\" + s + \"['\\\"\`]\");
-    if (!re.test(combined)) throw new Error('FAIL: 三种状态未全覆盖，缺 ' + s);
+    if (!re.test(combined)) throw new Error('FAIL: 缺字面量 ' + s);
   }
-  console.log('PASS: integration 测试新增 docker_runtime + 三状态覆盖');
+  console.log('PASS: docker_runtime 新增断言 + mock 注入 + 三状态 + degraded 聚合全覆盖');
 "
 
-# 测试实际运行 — brain 相关测试全部通过
-cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' 2>&1 | tail -20
+# 2) 实际运行测试 — 使用 pipefail 读正确的 npm test 退出码（修复 Round 1 Issue 3）
+set -o pipefail
+(cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' 2>&1 | tail -30)
 EXIT=$?
-[ "$EXIT" = "0" ] && echo "PASS: brain integration 测试通过" || (echo "FAIL: 测试失败 exit=$EXIT"; exit 1)
+[ "$EXIT" = "0" ] && echo "PASS: brain integration 测试通过 (exit=$EXIT)" || { echo "FAIL: 测试失败 exit=$EXIT"; exit 1; }
 ```
 
 ---
@@ -209,37 +252,53 @@ EXIT=$?
 
 workstream_count: 2
 
-### Workstream 1: Docker 探测模块 + health 端点集成
+### Workstream 1: Docker 探测模块 + health 端点集成 + 聚合规则
 
-**范围**: 新增 Docker 运行时探测模块（文件由实现者定，建议 `packages/brain/src/docker-runtime-probe.js`），实现 probe 函数返回 `{enabled, status, reachable, version, error}`；在 `packages/brain/src/routes/goals.js` 的 health 端点中调用探测并将结果拼入响应 JSON；实现顶层 `status` 聚合规则对 `docker_runtime` 的响应；具备 ≤ 2 秒超时与错误隔离；不得改动任何现有字段。
-**大小**: M（预计 150-250 行）
+**范围**:
+- 新增 `packages/brain/src/docker-runtime-probe.js`（路径硬性约束，与 DoD Test 对齐），以 CommonJS 导出 probe 函数返回 `{enabled, status, reachable, version, error}`，内部超时常量 ≤ 2000ms，必须 try/catch 隔离底层异常；
+- 在 `packages/brain/src/routes/goals.js` 的 health 端点中调用 probe 并将结果拼入响应 JSON；
+- 实现顶层 `status` 聚合：`enabled=true && status='unhealthy'` ⇒ `degraded`；`disabled` 不降级；
+- 不得改动任何现有字段名/类型/嵌套。
+
+**大小**: M（预计 150-250 行，其中探测模块 ~80 行 + 路由改动 ~40 行 + 超时/错误隔离 ~30 行）
 **依赖**: 无
 
 **DoD**:
-- [ ] [ARTIFACT] Docker 探测模块文件存在且导出可调用的探测函数
-  Test: node -e "const m = require('./packages/brain/src/docker-runtime-probe.js'); if (typeof (m.probe || m.default || m) !== 'function') throw new Error('FAIL: 未导出探测函数'); console.log('OK')"
-- [ ] [BEHAVIOR] `GET /api/brain/health` 响应顶层包含 `docker_runtime` 对象，字段类型与枚举值全部符合 Feature 1 硬阈值
-  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const dr=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).docker_runtime; if(!dr||typeof dr.enabled!=='boolean'||!['healthy','unhealthy','disabled','unknown'].includes(dr.status)||typeof dr.reachable!=='boolean'||!(typeof dr.version==='string'||dr.version===null)||!(typeof dr.error==='string'||dr.error===null))throw new Error('FAIL: docker_runtime 字段不符'); console.log('PASS')"
-- [ ] [BEHAVIOR] Docker 不可达时 health 端点返回 200 且耗时 ≤ 3000ms，`reachable=false`/`status=unhealthy`/`error` 非空
-  Test: S=$(date +%s%3N); CODE=$(DOCKER_HOST=tcp://127.0.0.1:1 curl -s -o /tmp/h.json -w '%{http_code}' http://localhost:5221/api/brain/health); E=$(date +%s%3N); [ "$CODE" = "200" ] && [ $((E-S)) -le 3000 ] && node -e "const d=JSON.parse(require('fs').readFileSync('/tmp/h.json','utf8')).docker_runtime; if(d.reachable!==false||d.status!=='unhealthy'||typeof d.error!=='string'||d.error.length===0)throw new Error('FAIL'); console.log('PASS')"
-- [ ] [BEHAVIOR] 顶层 `status` 聚合：`docker_runtime.enabled=true && status=unhealthy` 时顶层为 `degraded`
-  Test: DOCKER_HOST=tcp://127.0.0.1:1 curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); if(b.docker_runtime.enabled===true&&b.docker_runtime.status==='unhealthy'&&b.status!=='degraded')throw new Error('FAIL: 期望 degraded，实际 '+b.status); console.log('PASS')"
-- [ ] [BEHAVIOR] 向后兼容：既有顶层字段（status/uptime/active_pipelines/evaluator_stats/tick_stats/organs/timestamp）与 organs 下五子器官全部保留，类型不变
-  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); ['status','uptime','active_pipelines','evaluator_stats','tick_stats','organs','timestamp'].forEach(k=>{if(!(k in b))throw new Error('FAIL missing '+k)}); ['scheduler','circuit_breaker','event_bus','notifier','planner'].forEach(k=>{if(!b.organs[k])throw new Error('FAIL organs.'+k)}); console.log('PASS')"
+- [ ] [ARTIFACT] `packages/brain/src/docker-runtime-probe.js` 存在、以 CommonJS 导出 probe 函数、含 try/catch、超时常量 ≤ 2000ms
+  Test: node -e "const fs=require('fs'); const p='packages/brain/src/docker-runtime-probe.js'; if(!fs.existsSync(p))throw new Error('FAIL: 文件不存在'); const s=fs.readFileSync(p,'utf8'); if(!/module\.exports\s*=|exports\.probe\s*=|exports\.default\s*=/.test(s))throw new Error('FAIL: 未 CJS 导出'); if(!/\btry\b[\s\S]*\bcatch\b/.test(s))throw new Error('FAIL: 缺 try/catch'); const nums=[...s.matchAll(/(?:timeout|TIMEOUT|timeoutMs|TIMEOUT_MS)\s*[:=]\s*(\d+)/g)].map(m=>parseInt(m[1],10)); if(nums.length===0)throw new Error('FAIL: 无超时常量'); const mx=Math.max(...nums); if(mx>2000)throw new Error('FAIL: 超时 '+mx+'ms > 2000ms'); console.log('PASS: probe 模块结构合规 timeout='+mx+'ms')"
+- [ ] [BEHAVIOR] `GET /api/brain/health` 响应顶层包含 `docker_runtime` 对象，字段类型与状态不变量全部符合
+  Test: T=$(mktemp); C=$(curl -s -o "$T" -w '%{http_code}' http://localhost:5221/api/brain/health); [ "$C" = "200" ] || { echo "FAIL http $C"; rm -f "$T"; exit 1; }; node -e "const dr=JSON.parse(require('fs').readFileSync('$T','utf8')).docker_runtime; if(!dr||typeof dr.enabled!=='boolean'||!['healthy','unhealthy','disabled','unknown'].includes(dr.status)||typeof dr.reachable!=='boolean'||!(typeof dr.version==='string'||dr.version===null)||!(typeof dr.error==='string'||dr.error===null))throw new Error('FAIL: 字段不符'); if(dr.status==='disabled'&&dr.enabled!==false)throw new Error('FAIL: disabled 必须 enabled=false'); if(dr.status==='healthy'&&(dr.enabled!==true||dr.reachable!==true))throw new Error('FAIL: healthy 不变量'); if(dr.status==='unhealthy'&&(typeof dr.error!=='string'||!dr.error.length))throw new Error('FAIL: unhealthy 必须 error 非空'); console.log('PASS')"; RC=$?; rm -f "$T"; exit $RC
+- [ ] [BEHAVIOR] health 端点 happy path 响应耗时 ≤ 3000ms
+  Test: S=$(date +%s%3N); curl -sf http://localhost:5221/api/brain/health > /dev/null || { echo "FAIL: req"; exit 1; }; E=$(date +%s%3N); D=$((E-S)); [ "$D" -le 3000 ] && echo "PASS: ${D}ms" || { echo "FAIL: ${D}ms > 3000ms"; exit 1; }
+- [ ] [BEHAVIOR] live 端点聚合规则一致性（当前 docker_runtime 状态与顶层 status 不矛盾，无 SKIP 假阳性）
+  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); const dr=b.docker_runtime; if(!dr)throw new Error('FAIL: docker_runtime 缺失'); const cbOpen=(b.organs?.circuit_breaker?.open||[]).length>0; if(dr.enabled===true&&dr.status==='unhealthy'&&b.status!=='degraded')throw new Error('FAIL: unhealthy+enabled 应 degraded 实际 '+b.status); if(dr.status==='healthy'&&!cbOpen){const nr=['scheduler','event_bus','notifier','planner'].filter(k=>b.organs[k]?.status&&b.organs[k].status!=='running'); if(b.status!=='healthy'&&nr.length===0)throw new Error('FAIL: healthy 无故障源但顶层 '+b.status)} if(dr.status==='disabled'&&b.status==='degraded'&&!cbOpen){const nr=['scheduler','event_bus','notifier','planner'].filter(k=>b.organs[k]?.status&&b.organs[k].status!=='running'); if(nr.length===0)throw new Error('FAIL: disabled 单独触发 degraded')} console.log('PASS: 聚合一致 docker='+dr.status+' top='+b.status)"
+- [ ] [ARTIFACT] `packages/brain/src/routes/goals.js` 聚合逻辑显式引用 `docker_runtime` 且附近 20 行内含 `degraded` 关键字（防止仅"加字段"不接入聚合）
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/goals.js','utf8'); if(!/docker_runtime/.test(s))throw new Error('FAIL: 未引用 docker_runtime'); const ls=s.split('\n'); let ok=false; for(let i=0;i<ls.length;i++){if(/docker_runtime/.test(ls[i])){const w=ls.slice(Math.max(0,i-20),Math.min(ls.length,i+20)).join('\n'); if(/degraded/.test(w)||/aggregateStatus|overallStatus|topStatus/.test(w)){ok=true;break}}} if(!ok)throw new Error('FAIL: docker_runtime 附近无 degraded/聚合关键字'); console.log('PASS')"
+- [ ] [BEHAVIOR] 向后兼容：既有 7 顶层字段 + 5 organs 子器官全部保留且类型不变
+  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); ['status','uptime','active_pipelines','evaluator_stats','tick_stats','organs','timestamp'].forEach(k=>{if(!(k in b))throw new Error('FAIL missing '+k)}); if(typeof b.status!=='string'||typeof b.uptime!=='number'||typeof b.active_pipelines!=='number')throw new Error('FAIL: 顶层类型'); ['scheduler','circuit_breaker','event_bus','notifier','planner'].forEach(k=>{if(!b.organs[k]||typeof b.organs[k]!=='object')throw new Error('FAIL organs.'+k)}); const cb=b.organs.circuit_breaker; if(typeof cb.status!=='string'||!Array.isArray(cb.open)||!Array.isArray(cb.half_open)||typeof cb.states!=='object')throw new Error('FAIL cb'); console.log('PASS')"
 
-### Workstream 2: integration 与 smoke 测试覆盖
+### Workstream 2: integration 与 smoke 测试覆盖（含三种状态 mock 注入）
 
-**范围**: 在 `packages/brain/src/__tests__/integration/critical-routes.integration.test.js` 与 `packages/brain/src/__tests__/integration/golden-path.integration.test.js` 新增对 `docker_runtime` 结构与三种状态（healthy / unhealthy / disabled）的断言；若 `smoke.test.js` 涉及 health schema 同步更新；既有 health 断言零回归；brain integration 测试全量通过。
-**大小**: S-M（预计 80-150 行测试代码）
-**依赖**: Workstream 1 完成后（需要 docker_runtime 字段已在响应中返回才能断言）
+**范围**:
+- 在 `packages/brain/src/__tests__/integration/critical-routes.integration.test.js` 与 `packages/brain/src/__tests__/integration/golden-path.integration.test.js` 新增对 `docker_runtime` 结构与三种状态（healthy / unhealthy / disabled）的断言；
+- 必须通过 `jest.mock` / `jest.doMock` / `jest.spyOn` 替换 `docker-runtime-probe` 模块，分别注入三种状态并断言：
+  - healthy 下顶层 `status='healthy'`；
+  - unhealthy+enabled 下顶层 `status='degraded'` 且 `error` 非空；
+  - disabled 下顶层 `status` 不因此降级。
+- brain integration 测试套件（critical-routes + golden-path）全量通过；既有 health 断言零回归。
+
+**大小**: M（预计 120-200 行测试代码）
+**依赖**: Workstream 1 完成后（需要 probe 模块与 health 端点字段已落地才能 mock + 断言）
 
 **DoD**:
-- [ ] [ARTIFACT] `critical-routes.integration.test.js` 与 `golden-path.integration.test.js` 均包含 `docker_runtime` 关键字的新增断言
+- [ ] [ARTIFACT] 两个 integration 测试文件均包含 `docker_runtime` 关键字
   Test: node -e "const fs=require('fs'); const p1='packages/brain/src/__tests__/integration/critical-routes.integration.test.js'; const p2='packages/brain/src/__tests__/integration/golden-path.integration.test.js'; if(!/docker_runtime/.test(fs.readFileSync(p1,'utf8')))throw new Error('FAIL: '+p1); if(!/docker_runtime/.test(fs.readFileSync(p2,'utf8')))throw new Error('FAIL: '+p2); console.log('PASS')"
-- [ ] [ARTIFACT] 三种状态（healthy / unhealthy / disabled）均在 integration 测试中有字面量覆盖
-  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); ['healthy','unhealthy','disabled'].forEach(s=>{if(!new RegExp(\"['\\\"\`]\"+s+\"['\\\"\`]\").test(c))throw new Error('FAIL miss '+s)}); console.log('PASS')"
-- [ ] [BEHAVIOR] brain integration 测试（critical-routes 与 golden-path）全部通过，零回归
-  Test: cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' 2>&1 | tail -5 && [ "${PIPESTATUS[0]}" = "0" ] && echo PASS || (echo FAIL; exit 1)
+- [ ] [ARTIFACT] integration 测试使用 `jest.mock` / `jest.doMock` / `jest.spyOn` 显式替换 probe 模块（至少 1 处）
+  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); const ok=/jest\.mock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.doMock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.spyOn\s*\([^)]*[dD]ockerRuntimeProbe/.test(c)||/jest\.spyOn\s*\([^)]*,\s*['\"]probe['\"]/.test(c); if(!ok)throw new Error('FAIL: 未见 jest.mock/doMock/spyOn 对 probe 的替换'); console.log('PASS')"
+- [ ] [ARTIFACT] 三种状态字面量 + `degraded` 聚合断言在 integration 测试中全部出现
+  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); ['healthy','unhealthy','disabled','degraded'].forEach(s=>{if(!new RegExp(\"['\\\"\`]\"+s+\"['\\\"\`]\").test(c))throw new Error('FAIL miss '+s)}); console.log('PASS')"
+- [ ] [BEHAVIOR] brain integration 测试（critical-routes + golden-path）全部通过；读取 npm test 真正的退出码（修复 Round 1 Issue 3）
+  Test: set -o pipefail; (cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' 2>&1 | tail -30); E=$?; [ "$E" = "0" ] && echo "PASS exit=$E" || { echo "FAIL exit=$E"; exit 1; }
 
 ---
 
@@ -248,17 +307,17 @@ workstream_count: 2
 **AC-1**（对应 Feature 1 / FR-001 / FR-002 / 场景 1）:
 - **Given** Brain 启动且 Docker daemon 正常
 - **When** 调用 `GET /api/brain/health`
-- **Then** 响应 200，JSON 顶层存在 `docker_runtime` 对象，字段 `enabled`（boolean）/ `status`（∈{healthy,unhealthy,disabled,unknown}）/ `reachable`（boolean）/ `version`（string|null）/ `error`（string|null）全部就位，且 `status === 'healthy'` / `enabled === true` / `reachable === true`
+- **Then** 响应 200，JSON 顶层存在 `docker_runtime` 对象，字段 `enabled`（boolean）/ `status`（∈{healthy,unhealthy,disabled,unknown}）/ `reachable`（boolean）/ `version`（string|null）/ `error`（string|null）全部就位，且 `status='healthy'` / `enabled=true` / `reachable=true`
 
-**AC-2**（对应 Feature 2 / FR-003 / 场景 2 / 场景 4）:
-- **Given** Docker daemon 不可达（socket 被占或 DOCKER_HOST 指向错误地址）
-- **When** 调用 `GET /api/brain/health`
-- **Then** HTTP 状态码仍为 200（不 500），端点响应耗时 ≤ 3000ms，`docker_runtime.reachable === false`、`docker_runtime.status === 'unhealthy'`、`docker_runtime.error` 为非空字符串
+**AC-2**（对应 Feature 2 / FR-003 / 场景 2 / 场景 4 — 不可达场景下沉 WS2 mock 验证）:
+- **Given** Docker 探测模块被 Jest mock 注入 `reachable=false` + `status='unhealthy'` + `error` 非空的结果
+- **When** integration 测试调用 `GET /api/brain/health`
+- **Then** HTTP 状态码 200（不 500），`docker_runtime.reachable=false` / `status='unhealthy'` / `error` 为非空字符串；且 live 端点 happy path 响应耗时 ≤ 3000ms、probe 模块源码超时常量 ≤ 2000ms、显式含 try/catch
 
-**AC-3**（对应 Feature 3 / FR-004 / 场景 2 / 场景 3）:
-- **Given** `docker_runtime.enabled === true` 且探测结果为 `unhealthy`
-- **When** 调用 `GET /api/brain/health`
-- **Then** 响应顶层 `status === 'degraded'`；反之当 `docker_runtime.status === 'disabled'` 且其它器官正常时，顶层 `status === 'healthy'`，不因 disabled 本身降级
+**AC-3**（对应 Feature 3 / FR-004 / 场景 2 / 场景 3 — 聚合规则下沉 WS2 mock 验证）:
+- **Given** probe 被 mock 为 `enabled=true` + `status='unhealthy'`
+- **When** integration 测试调用 `GET /api/brain/health`
+- **Then** 响应顶层 `status='degraded'`；反之 probe 被 mock 为 `status='disabled'` 且其它器官正常时，顶层 `status='healthy'`，不因 disabled 本身降级；live 端点聚合逻辑与当前 docker_runtime 状态保持一致（无 SKIP 假阳性分支），且 `goals.js` 源码显式引用 `docker_runtime` 并在附近出现 `degraded` 关键字
 
 **AC-4**（对应 Feature 4 / FR-005 / 场景 5）:
 - **Given** 既有 health 响应消费者依赖原有 7 个顶层字段与 5 个 organs 子器官
@@ -266,9 +325,9 @@ workstream_count: 2
 - **Then** 所有既有字段名、类型、嵌套层级保持完全一致；`evaluator_stats` 与 `tick_stats` 的子字段全部保留；`organs.circuit_breaker` 的 `status`/`open`/`half_open`/`states` 结构不变
 
 **AC-5**（对应 Feature 5 / SC-001 / SC-003 / SC-004）:
-- **Given** `docker_runtime` 字段已实现
-- **When** 运行 `npm test -- --testPathPattern='(critical-routes|golden-path)\.integration'`
-- **Then** 测试全部通过，且测试源码包含对 `docker_runtime` 的断言、覆盖 `healthy` / `unhealthy` / `disabled` 三种状态字面量
+- **Given** `docker_runtime` 字段与 probe 模块已实现
+- **When** 运行 `set -o pipefail; cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration'`
+- **Then** 测试全部通过（退出码 0，以 `PIPESTATUS[0]` 或 `pipefail` 读取真实 npm test 退出码，非 tail 的恒 0）；测试源码包含对 `docker_runtime` 的断言、`jest.mock`/`doMock`/`spyOn` 对 probe 模块的替换、`'healthy'` / `'unhealthy'` / `'disabled'` / `'degraded'` 四个字面量全部出现
 
 ---
 
