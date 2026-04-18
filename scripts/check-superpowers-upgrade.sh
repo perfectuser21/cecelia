@@ -24,12 +24,12 @@ if [[ -z "$CURRENT" ]]; then
     exit 0
 fi
 
-if [[ ! -d "$SP_DIR" ]]; then
-    echo "[INFO] Superpowers 目录不存在（$SP_DIR），跳过检测"
+if [[ ! -d "${SP_DIR}" ]]; then
+    echo "[INFO] Superpowers 目录不存在（${SP_DIR}），跳过检测"
     exit 0
 fi
 
-LATEST=$(ls -d "$SP_DIR"/*/ 2>/dev/null | sort -V | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+LATEST=$(ls -d "${SP_DIR}"/*/ 2>/dev/null | sort -V | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
 if [[ -z "$LATEST" ]]; then
     echo "[INFO] Superpowers 目录中无版本化子目录，跳过"
     exit 0
