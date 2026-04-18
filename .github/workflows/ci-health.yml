@@ -1,0 +1,51 @@
+name: CI Health Report
+
+# 每天凌晨 UTC 2:00（北京时间 10:00）跑一次；也支持手动触发
+# 目的：生成 CI 稳定性看板，辅助识别 flaky job 与绿灯率下滑
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Number of recent runs to analyze'
+        required: false
+        default: '100'
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate CI health report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LIMIT="${{ inputs.limit }}"
+          LIMIT="${LIMIT:-100}"
+          mkdir -p reports
+          node scripts/ci-health-report.mjs --limit "$LIMIT" --format md --out reports/ci-health.md
+          node scripts/ci-health-report.mjs --limit "$LIMIT" --format json --out reports/ci-health.json
+          echo "── 报告预览 ──"
+          head -50 reports/ci-health.md
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-health-report
+          path: reports/
+          retention-days: 30
+      - name: Summary
+        run: |
+          {
+            echo "## CI 稳定性看板"
+            echo ""
+            cat reports/ci-health.md
+          } >> "$GITHUB_STEP_SUMMARY"

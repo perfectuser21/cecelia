@@ -263,22 +263,17 @@ jobs:
       - name: Unit Tests (shard ${{ matrix.shard }}/4)
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
-        # vitest forks 模式下，fork 进程跑完后可能因内存碎片 OOM 退出，
-        # tinypool 报 "Worker exited unexpectedly"，导致 vitest 返回 exit 1，
-        # 即使所有测试均已通过。此脚本在 exit 非 0 时检查是否无 test 失败，
-        # 若无则认为是 OOM worker exit（非测试失败），返回 0。
+          LABEL: 'brain-unit shard ${{ matrix.shard }}/4'
+          LOG_FILE: /tmp/vitest-out.txt
+        # vitest forks 模式下 tinypool worker 可能 OOM 退出，产生假阳性失败。
+        # vitest-run-with-oom-guard.sh 通过 "Failed Tests N" header 判断是否真失败，
+        # 避免老版本仅基于 "Tests.*failed" 字符串的误判。
         run: |
           cd packages/brain
-          set +e
-          npx vitest run --shard=${{ matrix.shard }}/4 --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
-          EXIT=${PIPESTATUS[0]}
-          if [ $EXIT -ne 0 ]; then
-            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
-              echo "[brain-unit shard ${{ matrix.shard }}/4] OOM worker exit but all tests passed — treating as success"
-              exit 0
-            fi
-            exit $EXIT
-          fi
+          bash "${GITHUB_WORKSPACE}/scripts/vitest-run-with-oom-guard.sh" \
+            npx vitest run --shard=${{ matrix.shard }}/4 \
+              --exclude='src/__tests__/integration/**' \
+              --reporter=verbose
 
   # ─── Brain: Unit Tests Aggregation ─────────────────────────
   # 所有 brain-unit matrix shards 都成功才通过。
@@ -319,18 +314,12 @@ jobs:
       - name: Run Tests with Coverage
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
+          LABEL: 'brain-coverage'
+          LOG_FILE: /tmp/vitest-coverage-out.txt
         run: |
           cd packages/brain
-          set +e
-          npx vitest run --coverage --exclude='src/__tests__/integration/**' 2>&1 | tee /tmp/vitest-coverage-out.txt
-          EXIT=${PIPESTATUS[0]}
-          if [ $EXIT -ne 0 ]; then
-            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-coverage-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-coverage-out.txt; then
-              echo "[brain-coverage] OOM worker exit but all tests passed — continuing"
-            else
-              exit $EXIT
-            fi
-          fi
+          bash "${GITHUB_WORKSPACE}/scripts/vitest-run-with-oom-guard.sh" \
+            npx vitest run --coverage --exclude='src/__tests__/integration/**'
       - name: Diff Coverage Gate
         run: |
           pip install diff-cover --quiet
