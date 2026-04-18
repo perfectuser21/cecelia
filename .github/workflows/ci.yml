@@ -154,6 +154,10 @@ jobs:
         run: cd packages/engine && npx vitest run --reporter=verbose
       - name: Version Sync
         run: cd packages/engine && bash ci/scripts/check-version-sync.sh
+      - name: Superpowers Alignment Gate
+        run: node packages/engine/scripts/devgate/check-superpowers-alignment.cjs
+      - name: Engine Hygiene Gate
+        run: node packages/engine/scripts/devgate/check-engine-hygiene.cjs
       - name: Contract Refs Check
         run: cd packages/engine && bash ci/scripts/check-contract-refs.sh
       - name: Dynamic Test Gate

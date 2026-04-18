@@ -1,6 +1,6 @@
 ---
 name: dev
-version: 7.2.0
+version: 14.17.5
 updated: 2026-04-15
 description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。支持 autonomous_mode 全自动模式。autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 + autonomous-research-proxy 用户交互替换层。
 trigger: /dev, --task-id <id>, --autonomous
