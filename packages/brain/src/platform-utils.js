@@ -634,4 +634,147 @@ export function getAvailableMemoryMB() {
   return Math.round(os.freemem() / 1024 / 1024);
 }
 
-export { SYSTEM_RESERVED_MB, MAX_PHYSICAL_CAP };
+// ============================================================
+// Memory Health Evaluation — Brain process vs System global
+// ============================================================
+//
+// Why this exists (PIVOT 2026-04-18):
+// Brain used to treat a low system-wide `memory_available_mb` as a reason to
+// halt dispatch. On a multi-session / multi-app dev laptop, any other app
+// eating memory (multiple claude sessions, Virtualization.framework,
+// mds_stores …) would silently drag Brain's `dispatchAllowed` to false —
+// "Brain 被环境勒索停派". The real failure mode we actually want to catch is
+// Brain's own RSS ballooning (a true leak). Everything else is just a
+// warning-level signal.
+//
+// Design:
+//   - Brain RSS > BRAIN_RSS_DANGER_MB (1.5GB)  → real leak, halt dispatch
+//   - Brain RSS > BRAIN_RSS_WARN_MB   (1.0GB)  → warn, keep dispatching
+//   - System available low but Brain OK       → warn only, KEEP DISPATCHING
+//   - Both Brain + System bad                 → halt
+//
+// System threshold scales with hardware: max(600MB, totalMem * 5%). On a
+// 16GB laptop that is 819MB (5%); on a 4GB VPS that is 600MB (floor).
+
+/** Brain process RSS above which we declare a real leak (halt dispatch). */
+const BRAIN_RSS_DANGER_MB = 1500;
+/** Brain process RSS above which we warn but keep dispatching. */
+const BRAIN_RSS_WARN_MB = 1000;
+/** Hard floor for "system available" threshold. */
+const SYSTEM_AVAILABLE_FLOOR_MB = 600;
+/** System available threshold = max(floor, totalMem * this ratio). */
+const SYSTEM_AVAILABLE_RATIO = 0.05;
+
+/**
+ * Evaluate combined Brain-process + system-wide memory health.
+ *
+ * Returns a decision that Brain's schedulers (slot-allocator backpressure,
+ * executor effectiveSlots clamp) can honor. The key distinction is:
+ *
+ *   action === 'halt'   → stop dispatching new tasks (real trouble)
+ *   action === 'warn'   → log only, dispatch as normal
+ *   action === 'proceed'→ everything OK
+ *
+ * Halt is reserved for cases where Brain itself is leaking. Mere "other apps
+ * ate memory" does NOT halt dispatch.
+ *
+ * @param {object} opts
+ * @param {number} opts.brain_rss_mb        - Brain process RSS (MB)
+ * @param {number} opts.system_available_mb - System-wide available memory (MB)
+ * @param {number} [opts.system_total_mb]   - System total memory (MB) for ratio threshold
+ * @param {number} [opts.rss_danger_mb]     - Override BRAIN_RSS_DANGER_MB
+ * @param {number} [opts.rss_warn_mb]       - Override BRAIN_RSS_WARN_MB
+ * @param {number} [opts.system_floor_mb]   - Override SYSTEM_AVAILABLE_FLOOR_MB
+ * @returns {{
+ *   brain_memory_ok: boolean,
+ *   system_memory_ok: boolean,
+ *   action: 'proceed' | 'warn' | 'halt',
+ *   reason: string,
+ *   brain_rss_mb: number,
+ *   system_available_mb: number|null,
+ *   system_threshold_mb: number,
+ *   brain_rss_danger_mb: number,
+ *   brain_rss_warn_mb: number
+ * }}
+ */
+export function evaluateMemoryHealth({
+  brain_rss_mb,
+  system_available_mb,
+  system_total_mb,
+  rss_danger_mb = BRAIN_RSS_DANGER_MB,
+  rss_warn_mb = BRAIN_RSS_WARN_MB,
+  system_floor_mb = SYSTEM_AVAILABLE_FLOOR_MB,
+} = {}) {
+  // Dynamic system threshold: max(floor, total * ratio).
+  // On 16GB machine: max(600, 16384*0.05=819) = 819MB.
+  // On 4GB VPS:     max(600, 4096*0.05=204.8) = 600MB.
+  const ratioThreshold = system_total_mb
+    ? Math.round(system_total_mb * SYSTEM_AVAILABLE_RATIO)
+    : 0;
+  const system_threshold_mb = Math.max(system_floor_mb, ratioThreshold);
+
+  const brainRss = Number.isFinite(brain_rss_mb) ? brain_rss_mb : 0;
+  const sysAvail = Number.isFinite(system_available_mb) ? system_available_mb : Infinity;
+
+  const brainRssReal = brainRss > rss_danger_mb;
+  const systemLow = sysAvail < system_threshold_mb;
+
+  // brain_memory_ok is strict: Brain RSS below DANGER threshold
+  const brain_memory_ok = !brainRssReal;
+  // system_memory_ok is informational: true unless we're below threshold
+  const system_memory_ok = !systemLow;
+
+  let action;
+  let reason;
+  if (brainRssReal) {
+    // Real leak: halt dispatch.
+    action = 'halt';
+    reason = `Brain RSS ${brainRss}MB > ${rss_danger_mb}MB (real leak suspected)`;
+  } else if (systemLow) {
+    // System under pressure but Brain itself is fine: WARN only, do not halt.
+    // This is the "environment is noisy, but Brain is not the problem" path.
+    action = 'warn';
+    reason = `System available ${sysAvail}MB < ${system_threshold_mb}MB (other apps eating memory; Brain RSS ${brainRss}MB is fine)`;
+  } else if (brainRss > rss_warn_mb) {
+    // Brain is elevated but below danger; keep dispatching but emit a warning.
+    action = 'warn';
+    reason = `Brain RSS ${brainRss}MB > ${rss_warn_mb}MB warn level (still below ${rss_danger_mb}MB danger)`;
+  } else {
+    action = 'proceed';
+    reason = 'memory health OK';
+  }
+
+  return {
+    brain_memory_ok,
+    system_memory_ok,
+    action,
+    reason,
+    brain_rss_mb: brainRss,
+    system_available_mb: Number.isFinite(sysAvail) ? sysAvail : null,
+    system_threshold_mb,
+    brain_rss_danger_mb: rss_danger_mb,
+    brain_rss_warn_mb: rss_warn_mb,
+  };
+}
+
+/**
+ * Get current Brain process RSS in MB.
+ * Thin wrapper so consumers don't have to remember the units dance.
+ * @returns {number} Brain process RSS in MB
+ */
+export function getBrainRssMB() {
+  try {
+    return Math.round(process.memoryUsage().rss / 1024 / 1024);
+  } catch {
+    return 0;
+  }
+}
+
+export {
+  SYSTEM_RESERVED_MB,
+  MAX_PHYSICAL_CAP,
+  BRAIN_RSS_DANGER_MB,
+  BRAIN_RSS_WARN_MB,
+  SYSTEM_AVAILABLE_FLOOR_MB,
+  SYSTEM_AVAILABLE_RATIO,
+};

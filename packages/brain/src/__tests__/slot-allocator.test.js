@@ -1097,33 +1097,86 @@ describe('Backpressure', () => {
   });
 
   describe('getBackpressureState', () => {
-    it('low memory triggers active=true regardless of queue depth', () => {
-      const state = getBackpressureState({ queue_depth: 3, memory_available_mb: 200 });
+    // PIVOT 2026-04-18: memory_pressure now requires Brain RSS > danger,
+    // not just low system-wide available memory. System-low + Brain-fine
+    // downgrades to warn (memory_pressure=false).
+
+    it('Brain RSS > danger (1.5GB) triggers memory_pressure=true (real leak)', () => {
+      const state = getBackpressureState({
+        queue_depth: 3,
+        memory_available_mb: 2000,
+        brain_rss_mb: 1600,
+        system_total_mb: 16384,
+      });
       expect(state.active).toBe(true);
       expect(state.memory_pressure).toBe(true);
       expect(state.queue_pressure).toBe(false);
       expect(state.override_burst_limit).toBe(3);
+      expect(state.memory_health.action).toBe('halt');
+    });
+
+    it('system-low but Brain-fine: memory_pressure=false (Brain is victim, not cause)', () => {
+      // This is the exact scenario from the user report:
+      // system available=274MB, Brain RSS=631MB (fine) → must NOT halt.
+      const state = getBackpressureState({
+        queue_depth: 3,
+        memory_available_mb: 274,
+        brain_rss_mb: 631,
+        system_total_mb: 16384,
+      });
+      expect(state.memory_pressure).toBe(false);
+      expect(state.active).toBe(false);
+      expect(state.memory_health.action).toBe('warn');
     });
 
     it('high queue triggers active=true regardless of memory', () => {
-      const state = getBackpressureState({ queue_depth: 25, memory_available_mb: 2000 });
+      const state = getBackpressureState({
+        queue_depth: 25,
+        memory_available_mb: 2000,
+        brain_rss_mb: 500,
+        system_total_mb: 16384,
+      });
       expect(state.active).toBe(true);
       expect(state.queue_pressure).toBe(true);
       expect(state.memory_pressure).toBe(false);
     });
 
     it('normal conditions: active=false', () => {
-      const state = getBackpressureState({ queue_depth: 5, memory_available_mb: 2000 });
+      const state = getBackpressureState({
+        queue_depth: 5,
+        memory_available_mb: 2000,
+        brain_rss_mb: 500,
+        system_total_mb: 16384,
+      });
       expect(state.active).toBe(false);
+      expect(state.memory_pressure).toBe(false);
       expect(state.override_burst_limit).toBeNull();
     });
 
-    it('memory exactly at threshold: active=false (not strictly less than)', () => {
-      const state = getBackpressureState({ queue_depth: 0, memory_available_mb: 600 });
+    it('system exactly at threshold: still OK (Brain fine → warn at worst)', () => {
+      const state = getBackpressureState({
+        queue_depth: 0,
+        memory_available_mb: 600,
+        brain_rss_mb: 500,
+        system_total_mb: 16384,
+      });
       expect(state.active).toBe(false);
+      expect(state.memory_pressure).toBe(false);
     });
 
-    it('memory_available_mb undefined: skips memory check', () => {
+    it('Brain RSS warn zone (>1GB, <1.5GB): memory_pressure=false', () => {
+      const state = getBackpressureState({
+        queue_depth: 3,
+        memory_available_mb: 2000,
+        brain_rss_mb: 1200,
+        system_total_mb: 16384,
+      });
+      expect(state.memory_pressure).toBe(false);
+      expect(state.active).toBe(false);
+      expect(state.memory_health.action).toBe('warn');
+    });
+
+    it('memory_available_mb undefined: skips memory check, pure queue-based', () => {
       const state = getBackpressureState({ queue_depth: 3 });
       expect(state.memory_pressure).toBe(false);
       expect(state.active).toBe(false);

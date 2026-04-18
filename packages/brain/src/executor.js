@@ -38,6 +38,8 @@ import {
   getDmesgInfo as platformGetDmesgInfo,
   countClaudeProcesses,
   calculatePhysicalCapacity,
+  evaluateMemoryHealth,
+  getBrainRssMB,
   IS_DARWIN,
 } from './platform-utils.js';
 
@@ -529,8 +531,28 @@ function checkServerResources(memReservedMb = 0) {
 
   // Smoothed values: CPU = avg of last 5, MEM = max of last 3 (conservative)
   const cpuPressure = _cpuHistory.length > 0 ? _avgHistory(_cpuHistory) : rawCpuPressure;
-  const memPressure = _memHistory.length > 0 ? _maxHistory(_memHistory) : rawMemPressure;
+  let memPressure = _memHistory.length > 0 ? _maxHistory(_memHistory) : rawMemPressure;
   const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;
+
+  // PIVOT 2026-04-18: distinguish Brain-process health from system-wide memory.
+  // If Brain's own RSS is fine but the system is noisy (other apps eating
+  // memory), downgrade memPressure so we don't needlessly halt dispatch.
+  // Only a real Brain leak (RSS > 1.5GB) keeps memPressure at its raw high.
+  const brainRssMB = getBrainRssMB();
+  const memHealth = evaluateMemoryHealth({
+    brain_rss_mb: brainRssMB,
+    system_available_mb: freeMem,
+    system_total_mb: TOTAL_MEM_MB,
+    system_floor_mb: MEM_AVAILABLE_MIN_MB,
+  });
+  if (memHealth.action === 'warn' && memPressure >= 0.9) {
+    // System-wide memory looks bad but Brain itself is healthy; cap the
+    // memory pressure signal so we do NOT zero out effectiveSlots. Still
+    // scale down somewhat (0.6 ≈ warning tier) so dispatch is conservative.
+    console.warn(`[executor] memory warn (not halting): ${memHealth.reason}`);
+    memPressure = Math.min(memPressure, 0.6);
+  }
+
   const maxPressure = Math.max(cpuPressure, Math.max(memPressure, swapPressure));
 
   // Dynamic seat scaling based on highest pressure
@@ -567,14 +589,23 @@ function checkServerResources(memReservedMb = 0) {
     budget_cap: _budgetCap,
     max_seats: dynMaxSeats,
     effective_slots: effectiveSlots,
+    brain_rss_mb: brainRssMB,
+    memory_health_action: memHealth.action,
+    memory_health_reason: memHealth.reason,
   };
 
   if (effectiveSlots === 0) {
     const reasons = [];
     if (cpuPressure >= 1.0) reasons.push(`CPU ${rawCpuPct}% > ${CPU_THRESHOLD_PCT}%`);
-    if (freeMem < MEM_AVAILABLE_MIN_MB) reasons.push(`Memory ${freeMem}MB < ${MEM_AVAILABLE_MIN_MB}MB`);
+    // Only cite memory as a halt reason when Brain itself is the problem.
+    // System-low-but-Brain-fine was already downgraded above; if we still
+    // ended up at 0 slots, it's from another dimension (CPU/swap) — don't
+    // blame the environment.
+    if (freeMem < MEM_AVAILABLE_MIN_MB && memHealth.action === 'halt') {
+      reasons.push(`Brain RSS ${brainRssMB}MB > ${memHealth.brain_rss_danger_mb}MB (real leak)`);
+    }
     if (swapUsedPct > SWAP_USED_MAX_PCT) reasons.push(`Swap ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}%`);
-    return { ok: false, reason: `Server overloaded: ${reasons.join(', ')}`, effectiveSlots: 0, metrics };
+    return { ok: false, reason: `Server overloaded: ${reasons.join(', ') || 'pressure threshold reached'}`, effectiveSlots: 0, metrics };
   }
 
   return { ok: true, reason: null, effectiveSlots, metrics };

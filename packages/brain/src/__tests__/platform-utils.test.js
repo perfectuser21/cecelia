@@ -14,7 +14,9 @@ let IS_DARWIN, IS_LINUX, parseEtime, listProcessesWithElapsed,
   listProcessesWithPpid, countClaudeProcesses, sampleCpuUsage, _resetCpuSampler,
   getSwapUsedPct, getDmesgInfo, readCmdline, readProcessCwd, readProcessEnv,
   processExists, getTopCpuUsage, getNetworkStats, calculatePhysicalCapacity,
-  SYSTEM_RESERVED_MB, MAX_PHYSICAL_CAP;
+  SYSTEM_RESERVED_MB, MAX_PHYSICAL_CAP,
+  evaluateMemoryHealth, getBrainRssMB,
+  BRAIN_RSS_DANGER_MB, BRAIN_RSS_WARN_MB, SYSTEM_AVAILABLE_FLOOR_MB;
 
 beforeAll(async () => {
   // 恢复真实 child_process（executor-*.test.js 可能已 mock 它）
@@ -41,6 +43,11 @@ beforeAll(async () => {
   calculatePhysicalCapacity = mod.calculatePhysicalCapacity;
   SYSTEM_RESERVED_MB = mod.SYSTEM_RESERVED_MB;
   MAX_PHYSICAL_CAP = mod.MAX_PHYSICAL_CAP;
+  evaluateMemoryHealth = mod.evaluateMemoryHealth;
+  getBrainRssMB = mod.getBrainRssMB;
+  BRAIN_RSS_DANGER_MB = mod.BRAIN_RSS_DANGER_MB;
+  BRAIN_RSS_WARN_MB = mod.BRAIN_RSS_WARN_MB;
+  SYSTEM_AVAILABLE_FLOOR_MB = mod.SYSTEM_AVAILABLE_FLOOR_MB;
 });
 
 describe('platform-utils', () => {
@@ -254,6 +261,132 @@ describe('platform-utils', () => {
       const result = calculatePhysicalCapacity(16384, 10, 350, 0.5);
       expect(result).toBeLessThanOrEqual(20);
       expect(result).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('evaluateMemoryHealth (PIVOT 2026-04-18)', () => {
+    // 4 canonical scenarios — Brain OK/bad × System OK/low
+    it('scenario 1: Brain OK + System OK → proceed', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 500,
+        system_available_mb: 8000,
+        system_total_mb: 16384,
+      });
+      expect(r.brain_memory_ok).toBe(true);
+      expect(r.system_memory_ok).toBe(true);
+      expect(r.action).toBe('proceed');
+    });
+
+    it('scenario 2: Brain OK + System LOW → warn (do NOT halt; Brain is victim)', () => {
+      // Exact scenario from the user report: system=274MB, Brain=631MB
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 631,
+        system_available_mb: 274,
+        system_total_mb: 16384,
+      });
+      expect(r.brain_memory_ok).toBe(true);
+      expect(r.system_memory_ok).toBe(false);
+      expect(r.action).toBe('warn');
+      expect(r.reason).toMatch(/other apps/i);
+    });
+
+    it('scenario 3: Brain BAD (RSS > danger) + System OK → halt (real leak)', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 1600,
+        system_available_mb: 8000,
+        system_total_mb: 16384,
+      });
+      expect(r.brain_memory_ok).toBe(false);
+      expect(r.system_memory_ok).toBe(true);
+      expect(r.action).toBe('halt');
+      expect(r.reason).toMatch(/real leak/i);
+    });
+
+    it('scenario 4: Brain BAD + System LOW → halt (Brain is the cause)', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 2000,
+        system_available_mb: 200,
+        system_total_mb: 16384,
+      });
+      expect(r.brain_memory_ok).toBe(false);
+      expect(r.system_memory_ok).toBe(false);
+      expect(r.action).toBe('halt');
+    });
+
+    it('Brain in warn zone (>1GB, <1.5GB) + System OK → warn', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 1200,
+        system_available_mb: 8000,
+        system_total_mb: 16384,
+      });
+      expect(r.brain_memory_ok).toBe(true);
+      expect(r.action).toBe('warn');
+      expect(r.reason).toMatch(/warn level/i);
+    });
+
+    it('system threshold scales: 16GB → 819MB (5%), not 600MB floor', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 500,
+        system_available_mb: 700, // between 600 floor and 819 ratio
+        system_total_mb: 16384,
+      });
+      // 16384 * 5% = 819, > 600 floor → threshold = 819, 700 < 819 → low
+      expect(r.system_threshold_mb).toBe(819);
+      expect(r.system_memory_ok).toBe(false);
+    });
+
+    it('system threshold on 4GB VPS clamps to 600MB floor', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 500,
+        system_available_mb: 800,
+        system_total_mb: 4096,
+      });
+      // 4096 * 5% = 204.8, < 600 floor → threshold = 600, 800 > 600 → OK
+      expect(r.system_threshold_mb).toBe(600);
+      expect(r.system_memory_ok).toBe(true);
+    });
+
+    it('system_total_mb omitted falls back to floor', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 500,
+        system_available_mb: 2000,
+      });
+      expect(r.system_threshold_mb).toBe(SYSTEM_AVAILABLE_FLOOR_MB);
+      expect(r.system_memory_ok).toBe(true);
+    });
+
+    it('exports sensible defaults', () => {
+      expect(BRAIN_RSS_DANGER_MB).toBe(1500);
+      expect(BRAIN_RSS_WARN_MB).toBe(1000);
+      expect(SYSTEM_AVAILABLE_FLOOR_MB).toBe(600);
+    });
+
+    it('custom thresholds can override defaults', () => {
+      const r = evaluateMemoryHealth({
+        brain_rss_mb: 800,
+        system_available_mb: 8000,
+        system_total_mb: 16384,
+        rss_danger_mb: 500,
+        rss_warn_mb: 300,
+      });
+      // Brain RSS 800 > custom danger 500 → halt
+      expect(r.action).toBe('halt');
+    });
+
+    it('handles undefined/invalid inputs gracefully', () => {
+      const r = evaluateMemoryHealth({});
+      expect(r.brain_memory_ok).toBe(true);   // brainRss=0
+      expect(r.system_memory_ok).toBe(true);  // sysAvail=Infinity
+      expect(r.action).toBe('proceed');
+    });
+  });
+
+  describe('getBrainRssMB', () => {
+    it('returns positive integer (this very process has RSS)', () => {
+      const rss = getBrainRssMB();
+      expect(typeof rss).toBe('number');
+      expect(rss).toBeGreaterThan(0);
+      expect(Number.isInteger(rss)).toBe(true);
     });
   });
 });

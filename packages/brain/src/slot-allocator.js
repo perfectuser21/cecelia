@@ -13,7 +13,12 @@
 import os from 'os';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
-import { listProcessesWithElapsed, listProcessesWithPpid } from './platform-utils.js';
+import {
+  listProcessesWithElapsed,
+  listProcessesWithPpid,
+  evaluateMemoryHealth,
+  getBrainRssMB,
+} from './platform-utils.js';
 import { calculateBudgetState } from './token-budget-planner.js';
 import { getFleetStatus, getRemoteCapacity } from './fleet-resource-cache.js';
 
@@ -199,19 +204,58 @@ async function getQueueDepth() {
 }
 
 /**
- * Pure synchronous helper: compute backpressure state from queue depth and system memory.
- * Separating this from calculateSlotBudget() makes it unit-testable without DB.
+ * Pure synchronous helper: compute backpressure state from queue depth and
+ * memory health. Separating this from calculateSlotBudget() makes it
+ * unit-testable without DB.
+ *
+ * PIVOT 2026-04-18: memory_pressure is no longer driven by raw system
+ * available memory. We now distinguish Brain's own RSS health from the
+ * system-wide availability via evaluateMemoryHealth():
+ *
+ *   - Brain RSS > danger (1.5GB)     → memory_pressure=true (real leak)
+ *   - System low but Brain fine      → memory_pressure=false (warn log only)
+ *   - Both fine                      → memory_pressure=false
+ *
+ * Callers that already have memory health metrics (i.e. calculateSlotBudget
+ * computes once per tick) can pass `memory_health` directly. Otherwise we
+ * derive it from brain_rss_mb + memory_available_mb + system_total_mb.
  *
  * @param {object} opts
- * @param {number} opts.queue_depth      - current queued task count
- * @param {number} [opts.memory_available_mb] - available system memory in MB (omit to skip memory check)
- * @returns {{ active: boolean, queue_depth: number, threshold: number, queue_pressure: boolean,
- *             memory_pressure: boolean, memory_available_mb: number|undefined,
- *             memory_threshold_mb: number, override_burst_limit: number|null }}
+ * @param {number} opts.queue_depth            - current queued task count
+ * @param {number} [opts.memory_available_mb]  - system-wide available memory (MB)
+ * @param {number} [opts.brain_rss_mb]         - Brain process RSS (MB)
+ * @param {number} [opts.system_total_mb]      - system total memory (MB)
+ * @param {object} [opts.memory_health]        - pre-computed evaluateMemoryHealth() result
+ * @returns {{ active: boolean, queue_depth: number, threshold: number,
+ *             queue_pressure: boolean, memory_pressure: boolean,
+ *             memory_available_mb: number|undefined,
+ *             memory_threshold_mb: number,
+ *             memory_health: object|null,
+ *             override_burst_limit: number|null }}
  */
-function getBackpressureState({ queue_depth, memory_available_mb } = {}) {
+function getBackpressureState({
+  queue_depth,
+  memory_available_mb,
+  brain_rss_mb,
+  system_total_mb,
+  memory_health,
+} = {}) {
   const queuePressure = queue_depth > BACKPRESSURE_THRESHOLD;
-  const memoryPressure = memory_available_mb !== undefined && memory_available_mb < MEMORY_PRESSURE_THRESHOLD_MB;
+
+  // Resolve memory_health: either pre-computed (fast path) or derive it here.
+  let health = memory_health || null;
+  if (!health && (brain_rss_mb !== undefined || memory_available_mb !== undefined)) {
+    health = evaluateMemoryHealth({
+      brain_rss_mb: brain_rss_mb ?? 0,
+      system_available_mb: memory_available_mb,
+      system_total_mb,
+      system_floor_mb: MEMORY_PRESSURE_THRESHOLD_MB,
+    });
+  }
+
+  // memory_pressure is true ONLY when Brain itself is the problem (halt).
+  // System-low-but-Brain-fine now resolves to action='warn' → memory_pressure=false.
+  const memoryPressure = !!(health && health.action === 'halt');
   const active = queuePressure || memoryPressure;
   return {
     active,
@@ -220,7 +264,8 @@ function getBackpressureState({ queue_depth, memory_available_mb } = {}) {
     queue_pressure: queuePressure,
     memory_pressure: memoryPressure,
     memory_available_mb,
-    memory_threshold_mb: MEMORY_PRESSURE_THRESHOLD_MB,
+    memory_threshold_mb: health?.system_threshold_mb ?? MEMORY_PRESSURE_THRESHOLD_MB,
+    memory_health: health,
     override_burst_limit: active ? BACKPRESSURE_BURST_LIMIT : null,
   };
 }
@@ -331,14 +376,37 @@ async function calculateSlotBudget() {
   // Apply slot change buffer (asymmetric: fast brake, slow recovery)
   const availableBuffered = applySlotBuffer(availableRaw);
 
-  // Backpressure: throttle burst limit when queue is deep or memory is low
+  // Backpressure: throttle burst limit when queue is deep or Brain is leaking.
+  //
+  // PIVOT 2026-04-18: Brain used to stop dispatching whenever system-wide
+  // available memory was low. On dev laptops with many claude sessions that
+  // was "Brain 被环境勒索". We now evaluate Brain's own RSS vs system-wide
+  // available separately. Only a real Brain-level leak halts dispatch;
+  // system-low-but-Brain-fine downgrades to a warn log.
   const queueDepth = await getQueueDepth();
   const memAvailableMB = Math.round(os.freemem() / 1024 / 1024);
-  const backpressure = getBackpressureState({ queue_depth: queueDepth, memory_available_mb: memAvailableMB });
+  const brainRssMB = getBrainRssMB();
+  const systemTotalMB = Math.round(os.totalmem() / 1024 / 1024);
+  const memHealth = evaluateMemoryHealth({
+    brain_rss_mb: brainRssMB,
+    system_available_mb: memAvailableMB,
+    system_total_mb: systemTotalMB,
+    system_floor_mb: MEMORY_PRESSURE_THRESHOLD_MB,
+  });
+  const backpressure = getBackpressureState({
+    queue_depth: queueDepth,
+    memory_available_mb: memAvailableMB,
+    brain_rss_mb: brainRssMB,
+    system_total_mb: systemTotalMB,
+    memory_health: memHealth,
+  });
+  if (memHealth.action === 'warn') {
+    console.warn(`[slot-allocator] memory warn: ${memHealth.reason} (dispatch continues)`);
+  }
   if (backpressure.active) {
     const reason = backpressure.queue_pressure
       ? `queue_depth=${queueDepth} > ${BACKPRESSURE_THRESHOLD}`
-      : `memory=${memAvailableMB}MB < ${MEMORY_PRESSURE_THRESHOLD_MB}MB`;
+      : `brain_rss=${brainRssMB}MB > danger=${memHealth.brain_rss_danger_mb}MB`;
     console.log(`[slot-allocator] Backpressure active: ${reason}, override_burst_limit=${BACKPRESSURE_BURST_LIMIT}`);
   }
 

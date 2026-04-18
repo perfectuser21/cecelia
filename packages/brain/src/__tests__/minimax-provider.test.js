@@ -66,6 +66,18 @@ vi.mock('../platform-utils.js', () => ({
   calculatePhysicalCapacity: vi.fn(() => 4),
   getAvailableMemoryMB: vi.fn(() => 8192),
   getMacOSMemoryPressure: vi.fn(() => 0),
+  getBrainRssMB: vi.fn(() => 500),
+  evaluateMemoryHealth: vi.fn(() => ({
+    brain_memory_ok: true,
+    system_memory_ok: true,
+    action: 'proceed',
+    reason: 'mock',
+    brain_rss_mb: 500,
+    system_available_mb: 8000,
+    system_threshold_mb: 600,
+    brain_rss_danger_mb: 1500,
+    brain_rss_warn_mb: 1000,
+  })),
 }));
 
 // ================================================================
