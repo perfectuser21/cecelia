@@ -33,6 +33,9 @@ RUN (curl -fsSL https://claude.ai/install.sh | sh) \
     || npm install -g @anthropic-ai/claude-code \
     || true
 
+# 非 root 用户 — Claude Code 拒绝 root + --dangerously-skip-permissions
+RUN groupadd -r cecelia && useradd -r -g cecelia -m -d /home/cecelia -s /bin/bash cecelia
+
 # 工作目录：宿主 worktree 通过 -v 挂载到 /workspace
 WORKDIR /workspace
 
@@ -40,6 +43,9 @@ WORKDIR /workspace
 ENV CECELIA_HEADLESS=true \
     CECELIA_DOCKER_SANDBOX=true \
     NODE_NO_WARNINGS=1
+
+# 切到非 root（必须在 ENV 之后）
+USER cecelia
 
 # Healthcheck：claude 二进制是否就绪（buildtime 失败时仍允许构建，运行时再判定）
 HEALTHCHECK --interval=30s --timeout=5s --retries=2 CMD command -v claude >/dev/null 2>&1 || exit 1
