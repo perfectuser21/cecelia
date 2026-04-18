@@ -16,7 +16,7 @@ import contentPipelineRouter from './routes/content-pipeline.js';
 import contentLibraryRouter from './routes/content-library.js';
 import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
-import llmServiceRouter from './routes/llm-service.js';
+// llm-service 在 server.js 里以 /api/brain/llm-service 独立挂载（带 internalAuth 中间件）
 import harnessRouter from './routes/harness.js';
 import kr3Router from './routes/kr3.js';
 
@@ -42,9 +42,6 @@ router.use('/social', socialTrendingRouter);
 
 // 内容选题候选库 — GET /topics
 router.use('/topics', topicsRouter);
-
-// LLM 服务 — POST /llm/call（供外部系统如 zenithjoy 调用）
-router.use('/llm', llmServiceRouter);
 
 // Harness 可视化 — GET /harness/pipeline-detail, GET /harness/pipeline/:id
 router.use('/harness', harnessRouter);

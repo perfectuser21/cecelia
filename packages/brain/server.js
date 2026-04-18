@@ -56,6 +56,8 @@ import contextRoutes from './src/routes/context.js';
 import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
 import harnessRoutes from './src/routes/harness.js';
+import llmServiceRoutes from './src/routes/llm-service.js';
+import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
@@ -184,6 +186,11 @@ app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
 app.use('/api/brain/harness', harnessRoutes);
+
+// LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
+// 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
+app.use('/api/brain/llm-service', internalAuth, llmServiceRoutes);
+
 app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fileURLToPath(import.meta.url)), '.')));
 
 // POST /api/brain/tasks fallback: brainRoutes 无 POST /tasks handler，此处补齐
