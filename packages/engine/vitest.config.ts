@@ -29,7 +29,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     // 排除standalone CommonJS测试脚本（由wrapper.test.ts调用）
-    exclude: ['**/node_modules/**', '**/devgate-fake-test-detection.test.cjs', '**/.claude/worktrees/**'],
+    exclude: ['**/node_modules/**', '**/devgate-fake-test-detection.test.cjs', '**/check-pipeline-evidence.test.cjs', '**/.claude/worktrees/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'json'],
@@ -65,6 +65,7 @@ export default defineConfig({
           exclude: [
             '**/node_modules/**',
             '**/devgate-fake-test-detection.test.cjs',
+            '**/check-pipeline-evidence.test.cjs',
             '**/.claude/worktrees/**',
             ...PARALLEL_TESTS,
           ],

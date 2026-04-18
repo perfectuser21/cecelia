@@ -6,6 +6,20 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.6"
+    date: "2026-04-18"
+    change: "feat"
+    description: "L2 动态契约 — Evidence System + TDD Artifact 强制（opt-in 首轮）。PR #2406 的 L1 把对齐固化到文件结构层，但 CI 仍是静态检查，无法验证 /dev 运行时真的按方法论执行。本 PR 加运行时证据层：(1) 9 种 event closed set 的 Evidence JSONL schema，运行时写到 sprints/<sprint>/pipeline-evidence.jsonl。(2) 新增 record-evidence.sh（383 行）recorder，防伪造（sha256 / exit_code / ts 由脚本自算，拒绝用户传入）。(3) 新增 check-pipeline-evidence.cjs（484 行）CI gate + 209 行单元测试（7 case 全绿），支持 opt-in / enforced 双模式。(4) 扩展 superpowers-alignment.yaml 为 10 full + 1 partial skill 加 runtime_evidence 字段，全 mode: opt-in（第一轮不阻塞合并）。(5) implementer-prompt.md 新增 TDD Deliverables Contract 段落（Red/Green/Refactor 三阶段 + anti-backfill 硬规则 + DONE 报告 3 字段）。(6) spec-reviewer-prompt.md 新增 Core Check #6 TDD Artifact Authenticity（6 步验证：文件存在 / red 合理 / green 合理 / 测试名一致 / anti-backfill mtime+git / exemption 判官）。(7) 02-code.md 插桩 3 个 P0 点（Implementer / Spec Reviewer / Pre-Completion Verification）。(8) CI 集成：.github/workflows/ci.yml engine-tests job 新增 Pipeline Evidence Gate。迁移路径：opt-in 跑满 14 天零假阳性后，tdd_red/tdd_green 先转 enforced。"
+    files:
+      - "packages/engine/contracts/superpowers-alignment.yaml"
+      - "packages/engine/scripts/record-evidence.sh"
+      - "packages/engine/scripts/devgate/check-pipeline-evidence.cjs"
+      - "packages/engine/tests/devgate/check-pipeline-evidence.test.cjs"
+      - "packages/engine/skills/dev/steps/02-code.md"
+      - "packages/engine/skills/dev/prompts/subagent-driven-development/implementer-prompt.md"
+      - "packages/engine/skills/dev/prompts/subagent-driven-development/spec-reviewer-prompt.md"
+      - ".github/workflows/ci.yml"
+
   - version: "14.17.5"
     date: "2026-04-18"
     change: "feat"
