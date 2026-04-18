@@ -147,29 +147,29 @@ function containerName(taskId) {
  * @param {number} [opts.timeoutMs]  — 默认 15 min
  * @param {string} [opts.image]      — 默认 cecelia/runner:latest
  * @returns {Promise<{exit_code:number, stdout:string, stderr:string, duration_ms:number, container:string, timed_out:boolean, started_at:string, ended_at:string}>}
+/**
+ * 构造 docker run 参数（抽出以便单测）。
+ *
+ * @param {Object} opts  含 task / prompt / env / worktreePath / memoryMB / cpuCores / image
+ * @param {Object} [ctx]
+ * @param {string} [ctx.homedir]   覆盖 os.homedir()（测试用）
+ * @param {(p:string)=>boolean} [ctx.existsSyncFn]  覆盖 fs.existsSync（测试用）
+ * @param {(p:string,e:any)=>string} [ctx.readFileSyncFn]  覆盖 fs.readFileSync
+ * @returns {{args:string[], envFinal:Record<string,string>, name:string, memoryMB:number, cpuCores:number, image:string, worktreePath:string, hostClaudeConfigDir:string|null}}
  */
-export async function executeInDocker(opts) {
-  if (!opts || !opts.task || !opts.task.id) {
-    throw new Error('executeInDocker: opts.task.id is required');
-  }
-  if (typeof opts.prompt !== 'string' || opts.prompt.length === 0) {
-    throw new Error('executeInDocker: opts.prompt is required');
-  }
-
+export function buildDockerArgs(opts, ctx = {}) {
   const taskId = opts.task.id;
   const taskType = opts.task.task_type || 'dev';
   const tier = resolveResourceTier(taskType);
   const memoryMB = opts.memoryMB || tier.memoryMB;
   const cpuCores = opts.cpuCores || tier.cpuCores;
-  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
   const image = opts.image || DEFAULT_IMAGE;
   const worktreePath = opts.worktreePath || DEFAULT_WORKTREE_BASE;
   const name = containerName(taskId);
+  const homedir = ctx.homedir || os.homedir();
+  const existsFn = ctx.existsSyncFn || existsSync;
+  const readFn = ctx.readFileSyncFn || readFileSync;
 
-  const promptFile = writePromptFile(taskId, opts.prompt);
-
-  // -v 挂载：宿主 worktree → /workspace；prompt 目录 → /tmp/cecelia-prompts
-  // -e 注入 env，包括 task_id / webhook
   const envFinal = {
     CECELIA_TASK_ID: taskId,
     CECELIA_TASK_TYPE: taskType,
@@ -178,19 +178,26 @@ export async function executeInDocker(opts) {
     ...(opts.env || {}),
   };
 
-  // 解析 CECELIA_CREDENTIALS → 注入 ANTHROPIC_API_KEY（容器内无宿主凭据文件）
+  // 解析 CECELIA_CREDENTIALS → 注入 Anthropic 凭据（容器内无宿主凭据文件）
+  //
+  // 容器内 claude 统一使用 /home/cecelia/.claude（可写副本），由 entrypoint.sh
+  // 从 /host-claude-config（:ro 挂载）复制而来。
+  //   - 宿主 CLAUDE_CONFIG_DIR：docker -v {hostDir}:/host-claude-config:ro
+  //   - 容器内 env：CLAUDE_CONFIG_DIR=/home/cecelia/.claude
+  // 这样 claude 能写 session-env，不再报 ENOENT: mkdir '/host-claude-config/session-env/...'
   const credName = envFinal.CECELIA_CREDENTIALS;
+  let hostClaudeConfigDir = null;
   if (credName && !envFinal.ANTHROPIC_API_KEY) {
-    // account1 使用 CLAUDE_CONFIG_DIR，其他 account 从 credentials JSON 读 API key
-    if (credName === 'account1') {
-      const configDir = path.join(os.homedir(), `.claude-account1`);
-      if (existsSync(configDir)) {
-        envFinal.CLAUDE_CONFIG_DIR = configDir;
+    const accountMatch = String(credName).match(/^account(\d+)$/);
+    if (accountMatch) {
+      const configDir = path.join(homedir, `.claude-${credName}`);
+      if (existsFn(configDir)) {
+        hostClaudeConfigDir = configDir;
       }
     } else {
-      const credFile = path.join(os.homedir(), '.credentials', `${credName}.json`);
+      const credFile = path.join(homedir, '.credentials', `${credName}.json`);
       try {
-        const cred = JSON.parse(readFileSync(credFile, 'utf8'));
+        const cred = JSON.parse(readFn(credFile, 'utf8'));
         if (cred.api_key) envFinal.ANTHROPIC_API_KEY = cred.api_key;
       } catch (e) {
         console.warn(`[docker-executor] credentials file not found: ${credFile}`);
@@ -198,11 +205,38 @@ export async function executeInDocker(opts) {
     }
   }
 
-  // 额外的 volume 挂载列表
+  // 容器内 claude 永远用 /home/cecelia/.claude（entrypoint.sh 复制可写副本）
+  if (hostClaudeConfigDir) {
+    envFinal.CLAUDE_CONFIG_DIR = '/home/cecelia/.claude';
+  } else if (envFinal.CLAUDE_CONFIG_DIR) {
+    hostClaudeConfigDir = envFinal.CLAUDE_CONFIG_DIR;
+    envFinal.CLAUDE_CONFIG_DIR = '/home/cecelia/.claude';
+  }
+
+  // git author/committer 默认值（Cecelia Bot），让 Generator 容器能 git commit/push
+  const defaultGitEnv = {
+    GIT_AUTHOR_NAME: 'Cecelia Bot',
+    GIT_AUTHOR_EMAIL: 'cecelia-bot@noreply.github.com',
+    GIT_COMMITTER_NAME: 'Cecelia Bot',
+    GIT_COMMITTER_EMAIL: 'cecelia-bot@noreply.github.com',
+  };
+  for (const [k, v] of Object.entries(defaultGitEnv)) {
+    if (envFinal[k] === undefined || envFinal[k] === null) {
+      envFinal[k] = v;
+    }
+  }
+
   const extraVolumes = [];
-  // CLAUDE_CONFIG_DIR 需要挂载到容器内（只读）
-  if (envFinal.CLAUDE_CONFIG_DIR) {
-    extraVolumes.push('-v', `${envFinal.CLAUDE_CONFIG_DIR}:${envFinal.CLAUDE_CONFIG_DIR}:ro`);
+  if (hostClaudeConfigDir) {
+    extraVolumes.push('-v', `${hostClaudeConfigDir}:/host-claude-config:ro`);
+  }
+  const hostGitConfig = path.join(homedir, '.gitconfig');
+  if (existsFn(hostGitConfig)) {
+    extraVolumes.push('-v', `${hostGitConfig}:/home/cecelia/.gitconfig:ro`);
+  }
+  const hostGhDir = path.join(homedir, '.config', 'gh');
+  if (existsFn(hostGhDir)) {
+    extraVolumes.push('-v', `${hostGhDir}:/home/cecelia/.config/gh:ro`);
   }
 
   const args = [
@@ -216,11 +250,29 @@ export async function executeInDocker(opts) {
     ...extraVolumes,
     ...envToArgs(envFinal),
     image,
-    // ENTRYPOINT = ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json"]
-    // 末尾参数作为 prompt 传入。读 file 内容并以 stdin 注入更稳，但
-    // 为了与 ENTRYPOINT 兼容这里直接传 prompt 文本。
     opts.prompt,
   ];
+
+  return { args, envFinal, name, memoryMB, cpuCores, image, worktreePath, hostClaudeConfigDir };
+}
+
+export async function executeInDocker(opts) {
+  if (!opts || !opts.task || !opts.task.id) {
+    throw new Error('executeInDocker: opts.task.id is required');
+  }
+  if (typeof opts.prompt !== 'string' || opts.prompt.length === 0) {
+    throw new Error('executeInDocker: opts.prompt is required');
+  }
+
+  const taskId = opts.task.id;
+  const taskType = opts.task.task_type || 'dev';
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+
+  // 写 prompt 文件（宿主侧持久化，用于 debug / audit）
+  writePromptFile(taskId, opts.prompt);
+
+  const { args, envFinal, name, memoryMB, cpuCores, image } = buildDockerArgs(opts);
+  const tier = resolveResourceTier(taskType);
 
   const startedAtMs = Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
@@ -348,4 +400,5 @@ export const __test__ = {
   containerName,
   envToArgs,
   writePromptFile,
+  buildDockerArgs,
 };

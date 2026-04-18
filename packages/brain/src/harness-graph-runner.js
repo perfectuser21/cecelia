@@ -12,6 +12,12 @@ import { compileHarnessApp, createDockerNodes } from './harness-graph.js';
 import { executeInDocker } from './docker-executor.js';
 
 /**
+ * LangGraph 递归上限。官方默认 25，对 GAN 对抗 + Fix 循环远远不够。
+ * 100 = review 10 轮 × 2 节点 + gen/eval 10 轮 × 2 节点 + 6 起止 = 46，预留一倍。
+ */
+export const DEFAULT_RECURSION_LIMIT = 100;
+
+/**
  * 是否启用 LangGraph 路径。
  * 默认 false：未设置/空字符串/'false'/'0' 都视为关闭。
  */
@@ -32,6 +38,7 @@ export function isLangGraphEnabled() {
  * @param {(event) => void} [opts.onStep] 每步回调，调用方可写 cecelia_events
  * @param {Record<string,string>} [opts.env]  额外注入容器的环境变量
  * @param {Function} [opts.dockerExecutor]  自定义 Docker 执行器（测试注入用，默认用 executeInDocker）
+ * @param {number}   [opts.recursionLimit]   LangGraph 递归上限，默认 100（覆盖官方默认 25）
  * @returns {Promise<{ skipped?: boolean, finalState?: object, steps?: number, reason?: string }>}
  */
 export async function runHarnessPipeline(task, opts = {}) {
@@ -56,7 +63,14 @@ export async function runHarnessPipeline(task, opts = {}) {
     checkpointer: opts.checkpointer,
   });
 
-  const config = { configurable: { thread_id: String(task.id) } };
+  // recursionLimit: LangGraph 默认 25。GAN 对抗（propose/review）理论无上限，
+  // Evaluator Fix 循环也可能跑多轮，6 节点 pipeline × 多轮会撞 25 硬墙。
+  // 默认值见 DEFAULT_RECURSION_LIMIT（100），GAN/Fix 本身的上限由 graph 逻辑层处理。
+  const recursionLimit = opts.recursionLimit || DEFAULT_RECURSION_LIMIT;
+  const config = {
+    configurable: { thread_id: String(task.id) },
+    recursionLimit,
+  };
   const initialState = {
     task_id: task.id,
     task_description: task.description || task.title || '',
