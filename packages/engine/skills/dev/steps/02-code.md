@@ -1,9 +1,10 @@
 ---
 id: dev-step-02-code
-version: 9.4.0
+version: 9.5.0
 created: 2026-03-14
-updated: 2026-04-16
+updated: 2026-04-18
 changelog:
+  - 9.5.0: R7 — Root-Cause Tracing 补 Phase 2 Pattern Analysis（逐字搬自 systematic-debugging/SKILL.md L122-150），原 4+1 步重组为 Phase 1/3/4，完整对齐官方 4-Phase 调试方法论
   - 9.4.0: F3 — 补 Superpowers 三个核心纪律到 Implementer prompt（Condition-Based Waiting / Pre-Completion Verification / Root-Cause Tracing），对齐 Superpowers 5.0.7 systematic-debugging + verification-before-completion
   - 9.3.0: autonomous 分支 Implementer 派遣时机改为来自 Superpowers subagent-driven-development skill，Research Subagent 处理 user 交互
   - 9.2.0: Implementer 开始前读 .decisions-<branch>.yaml 作为硬约束；Spec Reviewer 核心检查 5 验决策一致性
@@ -425,15 +426,42 @@ Source: 同上 SKILL.md
 | "Partial check is enough" | Partial proves nothing |
 | "Different words so rule doesn't apply" | Spirit over letter |
 
-### Root-Cause Tracing（bug fix 专属，向上追 4 步）
+### Root-Cause Tracing（bug fix 专属，4 Phase 调试方法论）
 
 官方原则：Trace backward through the call chain until you find the original
 trigger, then fix at the source.
 
-Bug fix 时**禁止**只改症状所在那一行。按 4+1 步追：
+Bug fix 时**禁止**只改症状所在那一行。按下面 4 Phase 推进（Phase 1 → 2 → 3 → 4 不可跳）：
+
+#### Phase 1: Reproduce（重现）
 
 **1. Observe the symptom（重现）**
 写一个 fail 的 test 证明 bug 存在。没有 failing test 就开始修 = 瞎改。
+
+#### Phase 2: Pattern Analysis（逐字搬自 systematic-debugging/SKILL.md L122-150）
+
+> **来源**：Superpowers 5.0.7 systematic-debugging/SKILL.md L122-150。本地化仅限
+> 中文辅助译文，不改原文。
+
+**Find the pattern before fixing:**
+
+1. **Find Working Examples**
+   - Locate similar working code in same codebase
+   - What works that's similar to what's broken?
+   > 本地：在同一代码库找与坏掉逻辑类似的、还能工作的代码。
+
+2. **Compare Against References**
+   - If implementing pattern, read reference implementation COMPLETELY
+   - Don't skim — read every line
+   - Understand the pattern fully before applying
+   > 本地：读完参考实现**每一行**，不要略读。
+
+3. **Identify Differences**
+   - What's different between working and broken?
+   - List every difference, however small
+   > 本地：列出坏代码和工作代码的**每一处**差异，再小也要记。
+
+#### Phase 3: Hypothesis / 追原点（向上追调用链）
 
 **2. Find immediate cause（最近一层）**
 报错在哪行代码？直接触发它的 API 是什么？
@@ -449,6 +477,8 @@ WorktreeManager.createSessionWorktree(projectDir, ...)
 
 **4. Find original trigger（定位原点）**
 数据从哪来？值为什么错？——是 API response 没校验？是配置默认值空？是 race？
+
+#### Phase 4: Fix + Defense-in-depth（修原点 + 加多层防御）
 
 **5. Fix at source + defense-in-depth（修原点 + 加多层防御）**
 修最上游（e.g. fetch 层加 null 检查），并在中间层也加 assertion（e.g. Worktree
