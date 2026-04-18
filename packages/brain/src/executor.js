@@ -2808,7 +2808,16 @@ async function triggerCeceliaRun(task) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (HARNESS_LANGGRAPH_ENABLED=true)`);
     try {
       const { runHarnessPipeline } = await import('./harness-graph-runner.js');
+      // 注入凭据：harness 任务默认 account1（spending-cap 或 auth-failed 时 fallback 无凭据让 Docker 报错）
+      const langGraphEnv = {};
+      try {
+        const { isSpendingCapped, isAuthFailed } = await import('./account-usage.js');
+        if (!isSpendingCapped('account1') && !isAuthFailed('account1')) {
+          langGraphEnv.CECELIA_CREDENTIALS = 'account1';
+        }
+      } catch { /* non-fatal */ }
       const result = await runHarnessPipeline(task, {
+        env: langGraphEnv,
         onStep: async (stepEvent) => {
           console.log(`[executor] LangGraph step: node=${stepEvent.node} step=${stepEvent.step_index} task=${task.id}`);
           // 写 cecelia_events（可选，onStep 失败不阻塞）
