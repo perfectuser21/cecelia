@@ -16,8 +16,40 @@ const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 const FEISHU_ALEX_OPEN_ID = (process.env.FEISHU_OWNER_OPEN_IDS || '').split(',')[0].trim() || '';
 
 // Rate limiting: max 1 message per event type per 60 seconds
+//
+// Memory leak fix: 历史版本里 key 是 `task_completed_${task_id}` 之类（含 UUID），
+// 每次任务完成/失败/patrol 都会 set 一个永不删除的 entry → 每天数千个 UUID 永久驻留
+// 内存。Brain 长时间运行 RSS 从 100MB 涨到 400+MB，直接拉低 memory_available_mb，
+// 触发 slot_budget.dispatchAllowed=false，dispatcher 停止派发。
+// 修复策略：
+//   (1) 每次写入前自动 GC 掉已过期（now - ts >= RATE_LIMIT_MS）的 entry；
+//   (2) 硬上限 _MAX_ENTRIES 兜底，超限时整表清空（最坏情况仅是重复发一次通知）。
 const _lastSent = new Map();
 const RATE_LIMIT_MS = 60 * 1000;
+const _MAX_ENTRIES = 1000;
+
+/**
+ * 清理已过期的 rate-limit 记录。
+ * 过期定义：now - 上次发送时间 >= RATE_LIMIT_MS
+ * （此时即便 key 仍在 Map 中，下一次调用也会直接放行，保留它只是浪费内存）
+ * @param {number} now - 当前时间戳（ms）
+ * @returns {number} 清理的条目数
+ */
+function _pruneExpired(now) {
+  let removed = 0;
+  for (const [key, ts] of _lastSent) {
+    if (now - ts >= RATE_LIMIT_MS) {
+      _lastSent.delete(key);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/** 测试辅助：返回当前 Map size */
+function _lastSentSize() {
+  return _lastSent.size;
+}
 
 /**
  * 通过飞书 Open API 发私信给 Alex
@@ -107,6 +139,17 @@ async function sendFeishu(text) {
  */
 async function sendRateLimited(eventKey, text) {
   const now = Date.now();
+
+  // GC: 写入前清过期条目，防止 UUID-style key 无界累积
+  _pruneExpired(now);
+
+  // 兜底：极端情况下整表过大，直接整表清空（所有 entry 按定义都 <60s，
+  // worst case 是接下来几秒内有人绕过 rate-limit，对业务可接受）
+  if (_lastSent.size >= _MAX_ENTRIES) {
+    console.warn(`[notifier] _lastSent size=${_lastSent.size} reached _MAX_ENTRIES=${_MAX_ENTRIES}, clearing`);
+    _lastSent.clear();
+  }
+
   const lastTime = _lastSent.get(eventKey) || 0;
   if (now - lastTime < RATE_LIMIT_MS) {
     return false;
@@ -182,5 +225,8 @@ export {
   notifyCircuitOpen,
   notifyPatrolCleanup,
   notifyDailySummary,
-  RATE_LIMIT_MS
+  RATE_LIMIT_MS,
+  _MAX_ENTRIES,
+  _pruneExpired,
+  _lastSentSize
 };
