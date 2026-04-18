@@ -396,6 +396,35 @@ DONE.
 - 信任 subagent 的 success 报告 without diff 检查
 - "just this once" 的心态
 
+#### Common Failures（逐字搬自 verification-before-completion/SKILL.md L40-50）
+
+Source: `~/.claude-account3/plugins/cache/superpowers-marketplace/superpowers/5.0.7/skills/verification-before-completion/SKILL.md`
+
+| Claim | Requires | Not Sufficient |
+|-------|----------|----------------|
+| Tests pass | Test command output: 0 failures | Previous run, "should pass" |
+| Linter clean | Linter output: 0 errors | Partial check, extrapolation |
+| Build succeeds | Build command: exit 0 | Linter passing, logs look good |
+| Bug fixed | Test original symptom: passes | Code changed, assumed fixed |
+| Regression test works | Red-green cycle verified | Test passes once |
+| Agent completed | VCS diff shows changes | Agent reports "success" |
+| Requirements met | Line-by-line checklist | Tests passing |
+
+#### Rationalization Prevention（逐字搬自 verification-before-completion/SKILL.md L63-74）
+
+Source: 同上 SKILL.md
+
+| Excuse | Reality |
+|--------|---------|
+| "Should work now" | RUN the verification |
+| "I'm confident" | Confidence ≠ evidence |
+| "Just this once" | No exceptions |
+| "Linter passed" | Linter ≠ compiler |
+| "Agent said success" | Verify independently |
+| "I'm tired" | Exhaustion ≠ excuse |
+| "Partial check is enough" | Partial proves nothing |
+| "Different words so rule doesn't apply" | Spirit over letter |
+
 ### Root-Cause Tracing（bug fix 专属，向上追 4 步）
 
 官方原则：Trace backward through the call chain until you find the original
@@ -428,6 +457,52 @@ API 入口 assert 非空）。**修完加一条回归测试**覆盖原点路径�
 示例：`TypeError: cannot read property "foo" of undefined`
 - ❌ `obj?.foo` — 只修症状
 - ✅ 追到 obj 来自 API response → fetch 层加 null 检查 → 消费层加 fallback → 测试覆盖"API 返回 null"路径
+
+#### Stack Trace 插桩（逐字搬自 systematic-debugging/root-cause-tracing.md L66-106）
+
+Source: `~/.claude-account3/plugins/cache/superpowers-marketplace/superpowers/5.0.7/skills/systematic-debugging/root-cause-tracing.md`
+
+When you can't trace manually, add instrumentation:
+
+```typescript
+// Before the problematic operation
+async function gitInit(directory: string) {
+  const stack = new Error().stack;
+  console.error('DEBUG git init:', {
+    directory,
+    cwd: process.cwd(),
+    nodeEnv: process.env.NODE_ENV,
+    stack,
+  });
+
+  await execFileAsync('git', ['init'], { cwd: directory });
+}
+```
+
+**Critical:** Use `console.error()` in tests (not logger - may not show)
+
+**Run and capture:**
+
+```bash
+# 本地适配: npm test → npx vitest run
+npx vitest run 2>&1 | grep 'DEBUG git init' > /tmp/trace.log
+# 分析 stack 输出找污染源
+```
+
+**Analyze stack traces:**
+- Look for test file names
+- Find the line number triggering the call
+- Identify the pattern (same test? same parameter?)
+
+**Finding Which Test Causes Pollution**
+
+If something appears during tests but you don't know which test, use the bisection script `packages/engine/scripts/find-polluter.sh` (copied from Superpowers):
+
+```bash
+./packages/engine/scripts/find-polluter.sh '.git' 'src/**/*.test.ts'
+```
+
+Runs tests one-by-one, stops at first polluter.
 
 ---
 

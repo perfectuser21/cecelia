@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.2"
+    date: "2026-04-18"
+    change: "chore"
+    description: "R2 — 直接 copy Superpowers 原生工件（不再 paraphrase）。新增 4 个来源：(1) find-polluter bisection script 从 systematic-debugging/find-polluter.sh；(2) condition-based-waiting utilities 从 systematic-debugging/condition-based-waiting-example.ts；(3) Common Failures 教学表 从 verification-before-completion/SKILL.md L40-50；(4) Rationalization Prevention 教学表 + Stack Trace 插桩示例 从 verification-before-completion/SKILL.md L63-74 + systematic-debugging/root-cause-tracing.md L66-106。修正 F3/F4 只补概念未搬工件的遗漏。"
+    files:
+      - "packages/engine/scripts/find-polluter.sh"
+      - "packages/brain/src/utils/condition-based-waiting.ts"
+      - "packages/brain/src/__tests__/condition-based-waiting.test.ts"
+      - "packages/engine/skills/dev/steps/02-code.md"
+
   - version: "14.17.1"
     date: "2026-04-18"
     change: "docs"
