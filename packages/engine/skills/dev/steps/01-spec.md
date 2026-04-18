@@ -1,22 +1,21 @@
 ---
 id: dev-stage-01-spec
-version: 6.4.0
+version: 7.0.0
 created: 2026-03-20
 updated: 2026-04-18
 changelog:
-  - 6.4.0: R7 — 恢复 Superpowers brainstorming HARD-GATE 原话（本地化 `user approved` → `Research Subagent Tier 1 confirmed`），对齐官方 brainstorming/SKILL.md L12-14
-  - 6.3.0: autonomous 分支改为由 Superpowers chain 驱动，所有 user 交互由 Research Subagent 代答
-  - 6.2.0: autonomous 分支读 Step 0.7 产出的 .decisions-<branch>.yaml，作为技术决策硬约束
+  - 7.0.0: 模式统一 — 删除 Standard 分支 + autonomous_mode flag（autonomous 为默认）；harness_mode 保留
+  - 6.4.0: R7 — 恢复 Superpowers brainstorming HARD-GATE 原话
+  - 6.3.0: autonomous 分支改为由 Superpowers chain 驱动
+  - 6.2.0: autonomous 分支读 Step 0.7 产出的 .decisions-<branch>.yaml
   - 6.1.0: autonomous 分支优先读 Step 0.5 enriched PRD
   - 6.0.0: autonomous_mode — 内嵌 superpowers:brainstorming + writing-plans 自主流程
-  - 5.0.0: Superpowers 融入 — 零占位符规则 + Self-Review
-  - 4.1.0: Harness v2.0 适配 — harness_mode 下跳过自写 Task Card/DoD，读 sprint-contract.md
-  - 4.0.0: 精简 — 删除 Planner subagent、Sprint Contract Gate、LITE/FULL 路径。主 agent 直接写 Task Card。
 ---
 
 # Stage 1: Spec — 读 PRD + 写 Task Card
 
-> 主 agent 直接写 Task Card + DoD，不经 subagent。
+> 默认走 Superpowers chain（brainstorming → writing-plans），产出 Task Card + DoD + plan。
+> Research Subagent 代答所有 user 交互点（见 `autonomous-research-proxy.md`）。
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "1", status: "in_progress" })`
 
@@ -24,18 +23,17 @@ changelog:
 
 ## 0. 模式判断
 
-检测 task payload 中的模式标志：
-
 ```bash
 TASK_ID="<从 parse-dev-args.sh 获取>"
 TASK_JSON=$(curl -s "http://localhost:5221/api/brain/tasks/${TASK_ID}")
 HARNESS_MODE=$(echo "$TASK_JSON" | jq -r '.payload.harness_mode // false')
-AUTONOMOUS_MODE=$(echo "$TASK_JSON" | jq -r '.payload.autonomous_mode // false')
 ```
 
 - `harness_mode = true` → 跳转 **0.1**
-- `autonomous_mode = true` → 跳转 **0.2**
-- 两者均 false → 继续 **1.1（标准模式）**
+- 其他 → 跳转 **1.0（默认流程）**
+
+> v7.0.0 起，`autonomous_mode` payload flag 已**废弃**；默认流程即 autonomous。
+> 旧 task payload 中的 `autonomous_mode: true/false` 被忽略。
 
 ---
 
@@ -75,18 +73,16 @@ git commit --allow-empty -m "chore: [state] Stage 1 跳过 (harness)"
 
 ---
 
-## 0.2 autonomous_mode = true 时（全自动：PRD → Plan，不问用户）
+## 1.0 默认流程（autonomous：PRD → Plan → Task Card，不问用户）
 
-**v6.3.0 autonomous 分支变化**:
-autonomous_mode=true 时, 本 step 不再由主 agent 直接写 Task Card。
-改为: 主 agent 按 `autonomous-research-proxy.md` 规则驱动 Superpowers chain
-(brainstorming -> writing-plans -> subagent-driven-development),
+主 agent 按 `autonomous-research-proxy.md` 规则驱动 Superpowers chain
+(brainstorming → writing-plans → subagent-driven-development)，
 由 Superpowers 产出的 spec 作为 Task Card 输入。
 所有 Superpowers 的 user 交互点由 Research Subagent 代答。
 
 使用 `superpowers:brainstorming` + `superpowers:writing-plans` 的行为纪律，但跳过所有用户确认步骤。
 
-### 0.2.HARD-GATE — Superpowers brainstorming 强制门
+### 1.0.HARD-GATE — Superpowers brainstorming 强制门
 
 > **来源**：Superpowers 5.0.7 brainstorming/SKILL.md L12-14（本地化到 autonomous）
 
@@ -97,17 +93,16 @@ Research Subagent has confirmed it via Tier 1 approval. This applies to
 EVERY task regardless of perceived simplicity.
 </HARD-GATE>
 
-**本地化**：官方要求 `user approved`，autonomous 模式下由 Research Subagent 的
+**本地化**：官方要求 `user approved`，本地由 Research Subagent 的
 Tier 1 替代（见 `autonomous-research-proxy.md` Tier 1 表）。Tier 1 返回 ✓ 前
 **禁止**进入 Stage 2 (02-code.md)。
 
 **违规检测**：Stage 2 Implementer 派遣前，Controller 必须确认 `.task-<branch>.md`
 的"实现方案"section 已有 Research Subagent 的 approved 标记。否则 abort。
 
-### 0.2.0 优先读 enriched PRD（v6.1.0 新增）
+### 1.0.0 优先读 enriched PRD
 
 ```bash
-# v6.1.0: 优先读 enriched PRD（由 Step 0.5 产出）
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 ENRICHED_PRD=".enriched-prd-${BRANCH_NAME}.md"
 RAW_PRD=".raw-prd-${BRANCH_NAME}.md"
@@ -123,7 +118,7 @@ fi
 
 后续所有 PRD 读取使用 `${PRD_SOURCE}` 代替原 fetch 路径。
 
-### 0.2.1 读历史决策约束（Step 0.7 产出）
+### 1.0.1 读历史决策约束（Step 0.7 产出）
 
 ```bash
 DECISIONS_FILE=".decisions-${BRANCH_NAME}.yaml"
@@ -137,20 +132,20 @@ Task Card 的"实现方案"section 必须引用 matched decisions:
 - 每个重要选择写明 "来自决策 #<id>: <decision>"
 - DoD 加"决策一致性"BEHAVIOR 条目
 
-### 0.2.2 探索 + 影响分析
+### 1.0.2 探索 + 影响分析
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 ```
 
-执行以下探索（与标准模式 1.1-1.2.1 相同）：
+执行以下探索：
 
 1. 获取 PRD：`bash skills/dev/scripts/fetch-task-prd.sh "$TASK_ID"`
 2. 搜索相关 Learning：`ls docs/learnings/ 2>/dev/null | head -10`
 3. 阅读受影响的核心文件，理解当前实现
 4. 识别改动边界：要改什么文件、不改什么
 
-### 0.2.3 自主技术决策（brainstorming 骨架，跳过用户交互）
+### 1.0.3 自主技术决策（brainstorming 骨架，跳过用户交互）
 
 列出 2-3 个方案，用表格对比：
 
@@ -161,7 +156,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 
 自己选最直接的方案。**禁止**问用户"你想要 A 还是 B"。决策依据写入 plan 文件。
 
-### 0.2.4 写 Implementation Plan（writing-plans 规则）
+### 1.0.4 写 Implementation Plan（writing-plans 规则）
 
 产出 `.plan-${BRANCH_NAME}.md`，符合：
 
@@ -170,11 +165,8 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 - 每步 2-5 分钟粒度
 - TDD 顺序：写测试 → 验证失败 → 写实现 → 验证通过 → commit
 
-### 0.2.5 Self-Review 5 步
+### 1.0.5 Self-Review 5 步
 
-> v14.15.0 补第 4 步"跨 task 类型一致性"对齐 Superpowers `writing-plans`。
-> v14.17.0 补第 5 步"Critical Gap Abort"对齐 Superpowers `executing-plans`
-> 的 "If concerns: Raise them with your human partner before starting"。
 > 防 Task 3 定义 `clearLayers()` vs Task 7 调用 `clearFullLayers()` 这类
 > 隐性不匹配在 plan 阶段逃脱，以及 PRD 矛盾 / 核心文件缺失等致命问题。
 
@@ -193,7 +185,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
    官方原则："If concerns: Raise them with your human partner before starting"。
    autonomous 下等价：主 agent 对 plan 有**否决权**，发现致命 gap 必须暂停。
 
-   Self-Review 发现以下**任一** critical gap → **暂停 autonomous，不继续 Stage 2**：
+   Self-Review 发现以下**任一** critical gap → **暂停，不继续 Stage 2**：
 
    - **PRD 前后矛盾**：例如"不做 X"但 DoD 要求 X
    - **核心文件不存在**：PRD 引用的文件路径 `grep -l` fail
@@ -219,18 +211,17 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 
 有问题 → 修 → 继续（不重复 review）。Step 5 触发 → 直接 abort（不修，让人决策）。
 
-### 0.2.6 写 Task Card + 持久化
+### 1.0.6 写 Task Card + 持久化
 
 - `.task-${BRANCH_NAME}.md`（含 DoD，至少 1 个 `[BEHAVIOR]`）
 - 在 DoD 中引用 `.plan-${BRANCH_NAME}.md`
-- 写 `.dev-mode.${BRANCH_NAME}` 标记如下：
+- 写 `.dev-mode.${BRANCH_NAME}` 标记如下（**不**写 autonomous_mode 字段）：
 
 ```bash
 cat > ".dev-mode.${BRANCH_NAME}" << EOF
 dev
 branch: ${BRANCH_NAME}
 owner_session: ${CLAUDE_SESSION_ID:-unknown}
-autonomous_mode: true
 task_id: ${TASK_ID}
 task_card: .task-${BRANCH_NAME}.md
 plan: .plan-${BRANCH_NAME}.md
@@ -243,44 +234,10 @@ step_4_ship: pending
 EOF
 
 git add ".task-${BRANCH_NAME}.md" ".plan-${BRANCH_NAME}.md"
-git commit -m "chore: [state] Stage 1 Spec 完成 (autonomous)"
+git commit -m "chore: [state] Stage 1 Spec 完成"
 ```
 
-**直接进入 Stage 2 (Code)** — 读取 `skills/dev/steps/02-code.md` 并执行。
-
----
-
-### autonomous_mode = false（默认，现有流程不变）
-
----
-
-## 1.1 参数检测 + PRD 获取
-
-### 有 --task-id 参数时
-
-```bash
-TASK_ID="<从 parse-dev-args.sh 获取>"
-bash skills/dev/scripts/fetch-task-prd.sh "$TASK_ID"
-# 生成 .prd-task-xxx.md + .dod-task-xxx.md
-```
-
-### 无参数时
-
-用户手动提供 PRD，或从对话上下文获取需求。
-
----
-
-## 1.2 探索代码 + 写 Task Card
-
-### 1.2.1 搜索相关 Learning
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-ls docs/learnings/ 2>/dev/null | head -5
-# 搜索与当前任务相关的历史经验
-```
-
-### 1.2.2 写 Task Card
+### Task Card 模板
 
 创建 `.task-${BRANCH_NAME}.md`，包含：
 
@@ -320,31 +277,6 @@ created: YYYY-MM-DD
 - 至少 1 个 `[BEHAVIOR]` 条目
 - Test 字段必须立即填写（不留 TODO）
 - `manual:` 命令白名单：`node`/`npm`/`curl`/`bash`/`psql`
-
----
-
-## 1.3 写入 .dev-mode + 持久化
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-cat > ".dev-mode.${BRANCH_NAME}" << EOF
-dev
-branch: ${BRANCH_NAME}
-owner_session: ${CLAUDE_SESSION_ID:-unknown}
-task_card: .task-${BRANCH_NAME}.md
-started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
-step_0_worktree: done
-step_1_spec: done
-step_2_code: pending
-step_3_integrate: pending
-step_4_ship: pending
-EOF
-
-# .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
-# 只提交 task card（代码文件）
-git add ".task-${BRANCH_NAME}.md"
-git commit -m "chore: [state] Stage 1 Spec 完成"
-```
 
 ---
 

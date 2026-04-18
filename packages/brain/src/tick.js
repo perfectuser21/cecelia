@@ -191,6 +191,7 @@ let _lastPipelineWatchdogTime = 0; // track last pipeline-level stuck watchdog
 let _lastKrHealthDailyTime = 0; // track last daily KR health check time
 let _lastCredentialCheckTime = 0; // track last credential expiry check time
 let _lastCleanupWorkerTime = 0; // R4: track last orphan worktree cleanup run time
+let _lastOrphanPrWorkerTime = 0; // Phase 1: track last orphan cp-* PR sweep time
 
 const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHECK_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
@@ -198,6 +199,7 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
 const PIPELINE_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_WATCHDOG_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 const CLEANUP_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_WORKER_INTERVAL_MS || String(10 * 60 * 1000), 10); // R4: 10 minutes
+const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10); // Phase 1: 30 minutes
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1762,6 +1764,21 @@ async function executeTick() {
       }
     }).catch(err => {
       console.warn('[tick] cleanup-worker threw (non-fatal):', err.message);
+    });
+  }
+
+  // [Phase 1] Orphan cp-* PR 兜底：周期扫描 open > 2h 无 in_progress task 关联的 PR
+  //   - CI 绿 → gh pr merge --squash --delete-branch
+  //   - CI 失败 → gh pr edit --add-label needs-attention
+  const orphanPrWorkerElapsed = Date.now() - _lastOrphanPrWorkerTime;
+  if (!MINIMAL_MODE && orphanPrWorkerElapsed >= ORPHAN_PR_WORKER_INTERVAL_MS) {
+    _lastOrphanPrWorkerTime = Date.now();
+    import('./orphan-pr-worker.js').then(({ runOrphanPrWorker }) => runOrphanPrWorker()).then(r => {
+      if (r && (r.merged > 0 || r.labeled > 0 || r.errors.length > 0)) {
+        tickLog(`[tick] orphan-pr-worker: scanned=${r.scanned} merged=${r.merged} labeled=${r.labeled} skipped=${r.skipped} errors=${r.errors.length}`);
+      }
+    }).catch(err => {
+      console.warn('[tick] orphan-pr-worker threw (non-fatal):', err.message);
     });
   }
 
