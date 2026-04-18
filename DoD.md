@@ -1,11 +1,11 @@
-# DoD: LangGraph 路径注入凭据
+# DoD: LangGraph 节点内联 SKILL 内容
 
-- [x] [ARTIFACT] executor.js 在 runHarnessPipeline 调用前构建 langGraphEnv
-  File: packages/brain/src/executor.js
-  Check: contains "langGraphEnv.CECELIA_CREDENTIALS"
+- [x] [ARTIFACT] harness-graph.js 含 loadSkillContent 函数
+  File: packages/brain/src/harness-graph.js
+  Check: exports loadSkillContent
 
-- [x] [BEHAVIOR] 调用 isSpendingCapped/isAuthFailed 检查 account1 可用
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('isSpendingCapped(\'account1\')'))process.exit(1)"
+- [x] [BEHAVIOR] 6 个节点全部用 loadSkillContent 替换 /slash
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-graph.js','utf8');const m=c.match(/\/harness-(planner|contract|generator|evaluator|report)/g);if(m)process.exit(1)"
 
-- [x] [BEHAVIOR] env 传给 runHarnessPipeline
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.match(/runHarnessPipeline\(task,\s*\{[^}]*env:/s))process.exit(1)"
+- [x] [BEHAVIOR] loadSkillContent 缓存 + 多目录查找
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-graph.js','utf8');if(!c.includes('SKILL_SEARCH_DIRS'))process.exit(1);if(!c.includes('_skillCache'))process.exit(1)"
