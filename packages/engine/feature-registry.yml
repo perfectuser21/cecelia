@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.7"
+    date: "2026-04-18"
+    change: "feat"
+    description: "Phase 1 模式统一 Round 1 — Brain orphan-pr-worker 兜底 + SKILL.md Standard 模式弃用通告。背景：PR #2406 #2408 两次 Stop Hook 过早 exit 留下孤儿 PR，根因是 /dev 3 模式混乱。本 PR 做最高 ROI 的两件事：(1) 新增 packages/brain/src/orphan-pr-worker.js（391 行）扫孤儿 cp-* PR — open>2h 且 Brain 无对应 in_progress task 的 PR：CI 全绿 → 自动 merge --squash，CI 有 fail → 打 needs-attention 标签，CI 在跑 → skip。防伪造设计：Brain DB 挂时保守跳过（宁可漏管不可误 merge），每 PR 独立 try/catch 不阻止其他扫描。(2) 集成到 tick.js（30 分钟周期，!MINIMAL_MODE）。(3) 13 个 vitest 单元测试覆盖 12 个 case 全绿。(4) SKILL.md 明确 Standard 模式弃用通告（代码暂留，下个 PR 删）。从此即使 Stop Hook 漏 exit，orphan-pr-worker 30 分钟后兜底。Phase 2 将 Harness Evaluator 降级为 PR required check，未来做。"
+    files:
+      - "packages/brain/src/orphan-pr-worker.js"
+      - "packages/brain/src/__tests__/orphan-pr-worker.test.js"
+      - "packages/brain/src/tick.js"
+      - "packages/engine/skills/dev/SKILL.md"
+
   - version: "14.17.6"
     date: "2026-04-18"
     change: "feat"
