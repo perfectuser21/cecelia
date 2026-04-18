@@ -158,6 +158,8 @@ jobs:
         run: node packages/engine/scripts/devgate/check-superpowers-alignment.cjs
       - name: Engine Hygiene Gate
         run: node packages/engine/scripts/devgate/check-engine-hygiene.cjs
+      - name: Pipeline Evidence Gate (L2 Dynamic Contract)
+        run: node packages/engine/scripts/devgate/check-pipeline-evidence.cjs
       - name: Contract Refs Check
         run: cd packages/engine && bash ci/scripts/check-contract-refs.sh
       - name: Dynamic Test Gate
