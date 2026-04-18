@@ -18,6 +18,41 @@
  */
 
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
+import { readFileSync, existsSync } from 'fs';
+import path from 'path';
+import os from 'os';
+
+// ─── Skill 内联加载 ──────────────────────────────────────────────────────────
+// Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
+// 必须把 SKILL.md 原文内联到 prompt 里，Claude 才能按 skill 指令工作。
+const SKILL_SEARCH_DIRS = [
+  path.join(os.homedir(), '.claude-account1', 'skills'),
+  path.join(os.homedir(), '.claude-account2', 'skills'),
+  path.join(os.homedir(), '.claude', 'skills'),
+];
+
+const _skillCache = new Map();
+
+/**
+ * 读取 skill 的 SKILL.md 内容（缓存）。
+ * 优先查 ~/.claude-account1/skills/<name>/SKILL.md。
+ * 找不到返回空串（不抛错，让 prompt 能回退）。
+ */
+export function loadSkillContent(skillName) {
+  if (_skillCache.has(skillName)) return _skillCache.get(skillName);
+  for (const base of SKILL_SEARCH_DIRS) {
+    const p = path.join(base, skillName, 'SKILL.md');
+    if (existsSync(p)) {
+      try {
+        const content = readFileSync(p, 'utf8');
+        _skillCache.set(skillName, content);
+        return content;
+      } catch { /* continue */ }
+    }
+  }
+  _skillCache.set(skillName, '');
+  return '';
+}
 
 /**
  * Harness 状态 schema
@@ -220,17 +255,21 @@ export function createDockerNodes(dockerExecutor, task, opts = {}) {
   // ── Planner 节点 ──────────────────────────────────────────────────────────
   const planner = async (state) => {
     const sprintDir = state.sprint_dir || 'sprints';
-    const prompt = `/harness-planner
+    const skillContent = loadSkillContent('harness-planner');
+    const prompt = `你是 harness-planner agent。按下面 SKILL 指令工作。
 
-## Harness v5.0 — Planner (LangGraph)
+${skillContent}
 
+---
+
+## 本次任务参数
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
 
-任务描述:
+## 任务描述
 ${state.task_description || ''}
 
-输出要求:
+## 输出要求
 1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
 2. 包含 User Stories / Given-When-Then / FR-SC 编号 / OKR 对齐 / 假设 / 边界 / 范围限定 / 受影响文件
 3. 在 stdout 最后输出完整 PRD 内容`;
@@ -251,10 +290,14 @@ ${state.task_description || ''}
       ? `\n\n## Reviewer 反馈（Round ${round - 1}）\n${state.review_feedback}`
       : '';
 
-    const prompt = `/harness-contract-proposer
+    const skillContent = loadSkillContent('harness-contract-proposer');
+    const prompt = `你是 harness-contract-proposer agent。按下面 SKILL 指令工作。
 
-## Harness v5.0 — Contract Proposer (LangGraph, Round ${round})
+${skillContent}
 
+---
+
+## 本次任务参数
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
 **propose_round**: ${round}
@@ -263,7 +306,7 @@ ${state.task_description || ''}
 ${state.prd_content || '（PRD 未生成）'}
 ${reviewFeedback}
 
-输出要求:
+## 输出要求
 1. 生成合同草案，包含功能范围 + Workstreams 拆分 + DoD 条目 + 验证命令
 2. 生成 Given-When-Then 验收标准
 3. 在 stdout 输出完整合同内容和验收标准
@@ -297,10 +340,14 @@ ${reviewFeedback}
     const sprintDir = state.sprint_dir || 'sprints';
     const round = state.review_round || 1;
 
-    const prompt = `/harness-contract-reviewer
+    const skillContent = loadSkillContent('harness-contract-reviewer');
+    const prompt = `你是 harness-contract-reviewer agent。按下面 SKILL 指令工作。
 
-## Harness v5.0 — Contract Reviewer (LangGraph, Round ${round})
+${skillContent}
 
+---
+
+## 本次任务参数
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
 **review_round**: ${round}
@@ -314,12 +361,14 @@ ${state.contract_content || '（合同未生成）'}
 ## 验收标准（Given-When-Then）
 ${state.acceptance_criteria || '（验收标准未生成）'}
 
-审查要求:
+## 审查要求
 1. 挑战验收标准是否足够严格，能否检测出错误实现
 2. 验证命令是否可自动执行（不依赖人工）
 3. DoD 条目是否完整覆盖 PRD 需求
 4. 输出裁决：VERDICT: APPROVED 或 VERDICT: REVISION
-5. REVISION 时必须给出具体修改建议`;
+5. REVISION 时必须给出具体修改建议
+
+注意：如果合同基本满足 PRD 要求、DoD 可验证、验证命令可自动执行，应直接 APPROVED 进入 Generator。避免无限挑剔导致对抗循环无法收敛。`;
 
     const { output, error } = await runDockerNode('reviewer', 'harness_contract_review', prompt, state);
 
@@ -347,10 +396,14 @@ ${state.acceptance_criteria || '（验收标准未生成）'}
       ? `\n\n## Evaluator 反馈（Round ${evalRound}）\n${state.eval_feedback}`
       : '';
 
-    const prompt = `/harness-generator
+    const skillContent = loadSkillContent('harness-generator');
+    const prompt = `你是 harness-generator agent。按下面 SKILL 指令工作。
 
-## Harness v5.0 — ${isFixMode ? `Fix (Round ${evalRound})` : 'Generate'} (LangGraph)
+${skillContent}
 
+---
+
+## 本次任务参数
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
 **task_type**: ${isFixMode ? 'harness_fix' : 'harness_generate'}
@@ -366,7 +419,7 @@ ${state.contract_content || '（合同未生成）'}
 ${state.acceptance_criteria || '（验收标准未生成）'}
 ${evalFeedback}
 
-执行要求:
+## 执行要求
 1. 严格按合同实现，不越界
 2. 代码写完后 push PR
 3. 在 stdout 输出 pr_url: <URL> 和 pr_branch: <branch>`;
@@ -394,10 +447,14 @@ ${evalFeedback}
     const sprintDir = state.sprint_dir || 'sprints';
     const round = (state.eval_round || 0) + 1;
 
-    const prompt = `/harness-evaluator
+    const skillContent = loadSkillContent('harness-evaluator');
+    const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
 
-## Harness v5.0 — Evaluator (LangGraph, R${round})
+${skillContent}
 
+---
+
+## 本次任务参数
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
 **pr_url**: ${state.pr_url || ''}
@@ -410,7 +467,8 @@ ${state.contract_content || '（合同未生成）'}
 ## 验收标准（Given-When-Then）
 ${state.acceptance_criteria || '（验收标准未生成）'}
 
-目标：部署服务（重启 Brain / Dashboard），然后对照合同验收标准（Given-When-Then）进行 E2E 功能验收。
+## 目标
+部署服务（重启 Brain / Dashboard），然后对照合同验收标准（Given-When-Then）进行 E2E 功能验收。
 用 curl 验证 API，用 Playwright/浏览器验证前端。你的工作是找到失败，不是确认成功。
 写入 ${sprintDir}/eval-round-${round}.md。
 输出裁决：VERDICT: PASS 或 VERDICT: FAIL`;
@@ -437,10 +495,14 @@ ${state.acceptance_criteria || '（验收标准未生成）'}
   const report = async (state) => {
     const sprintDir = state.sprint_dir || 'sprints';
 
-    const prompt = `/harness-report
+    const skillContent = loadSkillContent('harness-report');
+    const prompt = `你是 harness-report agent。按下面 SKILL 指令工作。
 
-## Harness v5.0 — Report (LangGraph)
+${skillContent}
 
+---
+
+## 本次任务参数
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
 **pr_url**: ${state.pr_url || ''}
@@ -459,6 +521,7 @@ review_verdict: ${state.review_verdict || 'N/A'}
 eval_round: ${state.eval_round || 0}
 evaluator_verdict: ${state.evaluator_verdict || 'N/A'}
 
+## 任务
 生成完整报告，包含：PRD 目标 / GAN 对抗轮次 / 代码生成 / CI 状态 / Evaluator 轮次 / 成本统计。
 输出 report_path: <path>`;
 
