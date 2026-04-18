@@ -1,10 +1,11 @@
 ---
 name: dev
-version: 14.17.6
-updated: 2026-04-15
-description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。支持 Harness v2.0 模式。支持 autonomous_mode 全自动模式。autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 + autonomous-research-proxy 用户交互替换层。
+version: 14.17.7
+updated: 2026-04-18
+description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。**Phase 1 起 autonomous（Superpowers 三角色 subagent）是唯一推荐默认流程**，Standard 模式已弃用。支持 Harness v2.0 模式（Brain 派的 harness_generate task）。autonomous-research-proxy 用户交互替换层默认加载。
 trigger: /dev, --task-id <id>, --autonomous
 changelog:
+  - 14.17.7: Phase 1 模式统一 — Standard 模式正式弃用（代码暂留，下个 PR 删）；autonomous 为唯一推荐默认；新增 Brain orphan-pr-worker 兜底扫孤儿 cp-* PR（open > 2h + 无对应 Brain in_progress task → CI 绿自动合并 / CI 失败打 needs-attention 标签）
   - 7.2.0: autonomous_mode 强制加载 autonomous-research-proxy — Superpowers user 交互点全替换为 Research Subagent
   - 7.1.0: autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 — 粗 PRD 自动丰满
   - 7.0.0: Superpowers 融入 — autonomous_mode 三角色架构
@@ -41,7 +42,11 @@ Harness 模式简化流程:
 
 ---
 
-## 流程（标准模式）
+## 流程（标准模式 — 已弃用，Phase 1 保留供过渡期参考，下个 PR 删除）
+
+> ⚠️ **Standard 模式不再推荐**：无 Superpowers 三角色审查，代码质量无护栏。新 PR 请直接走 autonomous（见下一节）。Brain orphan-pr-worker 会兜底扫"孤儿 cp-* PR"并自动合并 / 打标签。
+
+
 
 ```
 Step 0: Worktree  → 创建独立 worktree
