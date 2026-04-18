@@ -124,9 +124,19 @@ describe('runHarnessPipeline', () => {
   it('runs the pipeline when HARNESS_LANGGRAPH_ENABLED=true', async () => {
     process.env.HARNESS_LANGGRAPH_ENABLED = 'true';
     const seen = [];
+    // Override nodes to avoid Docker dependency in CI
+    // reviewer→APPROVED breaks GAN loop, evaluator→PASS breaks fix loop
+    const overrides = {
+      planner: async (state) => ({ ...state, trace: 'planner', prd_content: 'test prd' }),
+      proposer: async (state) => ({ ...state, trace: 'proposer', acceptance_criteria: 'test criteria' }),
+      reviewer: async (state) => ({ ...state, trace: 'reviewer', review_verdict: 'APPROVED' }),
+      generator: async (state) => ({ ...state, trace: 'generator', pr_url: 'https://github.com/test/1', pr_branch: 'cp-test' }),
+      evaluator: async (state) => ({ ...state, trace: 'evaluator', eval_verdict: 'PASS' }),
+      report: async (state) => ({ ...state, trace: 'report', report: 'done' }),
+    };
     const r = await runHarnessPipeline(
       { id: 'task-2', description: 'demo' },
-      { onStep: (e) => { seen.push(e.step_index); } },
+      { overrides, onStep: (e) => { seen.push(e.step_index); } },
     );
     expect(r.skipped).toBe(false);
     expect(r.steps).toBeGreaterThan(0);
