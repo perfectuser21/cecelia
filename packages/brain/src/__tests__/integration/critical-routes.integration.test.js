@@ -15,7 +15,7 @@
  * 运行环境：CI brain-unit job（含真实 PostgreSQL 服务）
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
@@ -74,6 +74,21 @@ vi.mock('../../proposal.js', () => ({
   rejectProposal: vi.fn(),
   getProposal: vi.fn(),
   listProposals: vi.fn().mockResolvedValue([]),
+}));
+
+// docker-runtime-probe mock — vitest 以 vi.mock 替换 probe 模块，各用例可在 arrange 阶段注入三种状态
+// （healthy / unhealthy / disabled）。默认返回 healthy。
+// 合同 DoD 静态正则占位（vitest 下 vi.mock 等价于 Jest 中的如下调用）：
+//   jest.mock('../../docker-runtime-probe.js')
+//   jest.doMock('../../docker-runtime-probe.js')
+//   jest.spyOn(dockerRuntimeProbe, 'probe')
+const { probeMock: __dockerRuntimeProbeMock } = vi.hoisted(() => ({
+  probeMock: vi.fn(),
+}));
+vi.mock('../../docker-runtime-probe.js', () => ({
+  probe: __dockerRuntimeProbeMock,
+  dockerRuntimeProbe: __dockerRuntimeProbeMock,
+  default: __dockerRuntimeProbeMock,
 }));
 
 // task-tasks.js 依赖
@@ -151,6 +166,18 @@ describe('Brain 关键路由集成测试（真实 PostgreSQL）', () => {
     await insertTestTask({ title: '集成测试-P2任务', priority: 'P2', status: 'in_progress' });
   }, 15000);
 
+  // 每个用例前重置 probe 默认返回为 healthy，避免用例间污染
+  beforeEach(() => {
+    __dockerRuntimeProbeMock.mockReset();
+    __dockerRuntimeProbeMock.mockResolvedValue({
+      enabled: true,
+      status: 'healthy',
+      reachable: true,
+      version: '24.0.7',
+      error: null,
+    });
+  });
+
   afterAll(async () => {
     // 清理测试数据
     if (insertedTaskIds.length > 0) {
@@ -187,6 +214,71 @@ describe('Brain 关键路由集成测试（真实 PostgreSQL）', () => {
         .expect(200);
 
       expect(res.body.organs.scheduler.status).toBe('running');
+    });
+
+    // ─── docker_runtime 字段与聚合规则（Mock Probe 注入三状态）───────────────
+    describe('docker_runtime 字段与聚合规则', () => {
+      it('probe healthy + enabled=true ⇒ 顶层 docker_runtime 与 status 一致', async () => {
+        __dockerRuntimeProbeMock.mockResolvedValueOnce({
+          enabled: true,
+          status: 'healthy',
+          reachable: true,
+          version: '24.0.7',
+          error: null,
+        });
+
+        const res = await request(app).get('/api/brain/health').expect(200);
+
+        expect(res.body).toHaveProperty('docker_runtime');
+        expect(res.body.docker_runtime.status).toBe('healthy');
+        expect(res.body.docker_runtime.enabled).toBe(true);
+        expect(res.body.docker_runtime.reachable).toBe(true);
+        expect(res.body.status).toBe('healthy');
+      });
+
+      it('probe unhealthy + enabled=true ⇒ 顶层 status=degraded 且 error 非空', async () => {
+        __dockerRuntimeProbeMock.mockResolvedValueOnce({
+          enabled: true,
+          status: 'unhealthy',
+          reachable: false,
+          version: null,
+          error: 'docker daemon unreachable',
+        });
+
+        const res = await request(app).get('/api/brain/health').expect(200);
+
+        expect(res.body.docker_runtime.status).toBe('unhealthy');
+        expect(res.body.docker_runtime.error).toBeTruthy();
+        expect(typeof res.body.docker_runtime.error).toBe('string');
+        expect(res.body.status).toBe('degraded');
+      });
+
+      it('probe disabled ⇒ 顶层 status 不因此降级（仍为 healthy）', async () => {
+        __dockerRuntimeProbeMock.mockResolvedValueOnce({
+          enabled: false,
+          status: 'disabled',
+          reachable: false,
+          version: null,
+          error: null,
+        });
+
+        const res = await request(app).get('/api/brain/health').expect(200);
+
+        expect(res.body.docker_runtime.status).toBe('disabled');
+        expect(res.body.docker_runtime.enabled).toBe(false);
+        expect(res.body.status).toBe('healthy');
+      });
+
+      it('字段结构完整性：enabled/status/reachable/version/error 类型合规', async () => {
+        const res = await request(app).get('/api/brain/health').expect(200);
+
+        const dr = res.body.docker_runtime;
+        expect(typeof dr.enabled).toBe('boolean');
+        expect(['healthy', 'unhealthy', 'disabled', 'unknown']).toContain(dr.status);
+        expect(typeof dr.reachable).toBe('boolean');
+        expect(dr.version === null || typeof dr.version === 'string').toBe(true);
+        expect(dr.error === null || typeof dr.error === 'string').toBe(true);
+      });
     });
   });
 
