@@ -28,6 +28,10 @@ for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, e
   router.stack.push(...subRouter.stack);
 }
 
+router.get('/ping', (req, res) => {
+  res.json({ pong: true, timestamp: new Date().toISOString() });
+});
+
 // 系统注册表 — 全局目录，解决孤岛和重复问题
 router.use('/registry', registryRouter);
 
