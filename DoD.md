@@ -1,29 +1,27 @@
-contract_branch: cp-harness-propose-r2-0f7fec19
-workstream_index: 1,2
+contract_branch: cp-harness-review-approved-57ab38ad
+workstream_index: 1
 sprint_dir: sprints
 
-# Contract DoD — Workstream 1: Docker 探测模块 + health 端点集成 + 聚合规则
+# Contract DoD — Workstream 1: 实现 GET /api/brain/ping 路由与测试
 
-- [x] [ARTIFACT] `packages/brain/src/docker-runtime-probe.js` 存在、以 CommonJS 导出 probe 函数、含 try/catch、超时常量 ≤ 2000ms
-  Test: node -e "const fs=require('fs'); const p='packages/brain/src/docker-runtime-probe.js'; if(!fs.existsSync(p))throw new Error('FAIL: 文件不存在'); const s=fs.readFileSync(p,'utf8'); if(!/module\.exports\s*=|exports\.probe\s*=|exports\.default\s*=/.test(s))throw new Error('FAIL: 未 CJS 导出'); if(!/\btry\b[\s\S]*\bcatch\b/.test(s))throw new Error('FAIL: 缺 try/catch'); const nums=[...s.matchAll(/(?:timeout|TIMEOUT|timeoutMs|TIMEOUT_MS)\s*[:=]\s*(\d+)/g)].map(m=>parseInt(m[1],10)); if(nums.length===0)throw new Error('FAIL: 无超时常量'); const mx=Math.max(...nums); if(mx>2000)throw new Error('FAIL: 超时 '+mx+'ms > 2000ms'); console.log('PASS: probe 模块结构合规 timeout='+mx+'ms')"
-- [x] [BEHAVIOR] `GET /api/brain/health` 响应顶层包含 `docker_runtime` 对象，字段类型与状态不变量全部符合
-  Test: T=$(mktemp); C=$(curl -s -o "$T" -w '%{http_code}' http://localhost:5221/api/brain/health); [ "$C" = "200" ] || { echo "FAIL http $C"; rm -f "$T"; exit 1; }; node -e "const dr=JSON.parse(require('fs').readFileSync('$T','utf8')).docker_runtime; if(!dr||typeof dr.enabled!=='boolean'||!['healthy','unhealthy','disabled','unknown'].includes(dr.status)||typeof dr.reachable!=='boolean'||!(typeof dr.version==='string'||dr.version===null)||!(typeof dr.error==='string'||dr.error===null))throw new Error('FAIL: 字段不符'); if(dr.status==='disabled'&&dr.enabled!==false)throw new Error('FAIL: disabled 必须 enabled=false'); if(dr.status==='healthy'&&(dr.enabled!==true||dr.reachable!==true))throw new Error('FAIL: healthy 不变量'); if(dr.status==='unhealthy'&&(typeof dr.error!=='string'||!dr.error.length))throw new Error('FAIL: unhealthy 必须 error 非空'); console.log('PASS')"; RC=$?; rm -f "$T"; exit $RC
-- [x] [BEHAVIOR] health 端点 happy path 响应耗时 ≤ 3000ms
-  Test: S=$(date +%s%3N); curl -sf http://localhost:5221/api/brain/health > /dev/null || { echo "FAIL: req"; exit 1; }; E=$(date +%s%3N); D=$((E-S)); [ "$D" -le 3000 ] && echo "PASS: ${D}ms" || { echo "FAIL: ${D}ms > 3000ms"; exit 1; }
-- [x] [BEHAVIOR] live 端点聚合规则一致性（当前 docker_runtime 状态与顶层 status 不矛盾，无 SKIP 假阳性）
-  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); const dr=b.docker_runtime; if(!dr)throw new Error('FAIL: docker_runtime 缺失'); const cbOpen=(b.organs?.circuit_breaker?.open||[]).length>0; if(dr.enabled===true&&dr.status==='unhealthy'&&b.status!=='degraded')throw new Error('FAIL: unhealthy+enabled 应 degraded 实际 '+b.status); if(dr.status==='healthy'&&!cbOpen){const nr=['scheduler','event_bus','notifier','planner'].filter(k=>b.organs[k]?.status&&b.organs[k].status!=='running'); if(b.status!=='healthy'&&nr.length===0)throw new Error('FAIL: healthy 无故障源但顶层 '+b.status)} if(dr.status==='disabled'&&b.status==='degraded'&&!cbOpen){const nr=['scheduler','event_bus','notifier','planner'].filter(k=>b.organs[k]?.status&&b.organs[k].status!=='running'); if(nr.length===0)throw new Error('FAIL: disabled 单独触发 degraded')} console.log('PASS: 聚合一致 docker='+dr.status+' top='+b.status)"
-- [x] [ARTIFACT] `packages/brain/src/routes/goals.js` 聚合逻辑显式引用 `docker_runtime` 且附近 20 行内含 `degraded` 关键字（防止仅"加字段"不接入聚合）
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/goals.js','utf8'); if(!/docker_runtime/.test(s))throw new Error('FAIL: 未引用 docker_runtime'); const ls=s.split('\n'); let ok=false; for(let i=0;i<ls.length;i++){if(/docker_runtime/.test(ls[i])){const w=ls.slice(Math.max(0,i-20),Math.min(ls.length,i+20)).join('\n'); if(/degraded/.test(w)||/aggregateStatus|overallStatus|topStatus/.test(w)){ok=true;break}}} if(!ok)throw new Error('FAIL: docker_runtime 附近无 degraded/聚合关键字'); console.log('PASS')"
-- [x] [BEHAVIOR] 向后兼容：既有 7 顶层字段 + 5 organs 子器官全部保留且类型不变
-  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); ['status','uptime','active_pipelines','evaluator_stats','tick_stats','organs','timestamp'].forEach(k=>{if(!(k in b))throw new Error('FAIL missing '+k)}); if(typeof b.status!=='string'||typeof b.uptime!=='number'||typeof b.active_pipelines!=='number')throw new Error('FAIL: 顶层类型'); ['scheduler','circuit_breaker','event_bus','notifier','planner'].forEach(k=>{if(!b.organs[k]||typeof b.organs[k]!=='object')throw new Error('FAIL organs.'+k)}); const cb=b.organs.circuit_breaker; if(typeof cb.status!=='string'||!Array.isArray(cb.open)||!Array.isArray(cb.half_open)||typeof cb.states!=='object')throw new Error('FAIL cb'); console.log('PASS')"
-
-# Contract DoD — Workstream 2: integration 与 smoke 测试覆盖（含三种状态 mock 注入）
-
-- [x] [ARTIFACT] 两个 integration 测试文件均包含 `docker_runtime` 关键字
-  Test: node -e "const fs=require('fs'); const p1='packages/brain/src/__tests__/integration/critical-routes.integration.test.js'; const p2='packages/brain/src/__tests__/integration/golden-path.integration.test.js'; if(!/docker_runtime/.test(fs.readFileSync(p1,'utf8')))throw new Error('FAIL: '+p1); if(!/docker_runtime/.test(fs.readFileSync(p2,'utf8')))throw new Error('FAIL: '+p2); console.log('PASS')"
-- [x] [ARTIFACT] integration 测试使用 `jest.mock` / `jest.doMock` / `jest.spyOn` 显式替换 probe 模块（至少 1 处）
-  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); const ok=/jest\.mock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.doMock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.spyOn\s*\([^)]*[dD]ockerRuntimeProbe/.test(c)||/jest\.spyOn\s*\([^)]*,\s*['\"]probe['\"]/.test(c); if(!ok)throw new Error('FAIL: 未见 jest.mock/doMock/spyOn 对 probe 的替换'); console.log('PASS')"
-- [x] [ARTIFACT] 三种状态字面量 + `degraded` 聚合断言在 integration 测试中全部出现
-  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); ['healthy','unhealthy','disabled','degraded'].forEach(s=>{if(!new RegExp(\"['\\\"\`]\"+s+\"['\\\"\`]\").test(c))throw new Error('FAIL miss '+s)}); console.log('PASS')"
-- [x] [BEHAVIOR] brain integration 测试（critical-routes + golden-path）全部通过；读取 npm test 真正的退出码（修复 Round 1 Issue 3）
-  Test: bash -c "cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' >/dev/null 2>&1"; E=$?; [ "$E" = "0" ] && echo "PASS exit=$E" || { echo "FAIL exit=$E"; exit 1; }
+- [x] [ARTIFACT] `api/routes.py` 或其 import 的 brain 子模块中存在 `/api/brain/ping` 路由注册代码
+  Test: python3 -c "from api.routes import register_routes; from flask import Flask; app=Flask(__name__); register_routes(app); rules=[str(r) for r in app.url_map.iter_rules()]; assert '/api/brain/ping' in rules, f'FAIL: 路由未注册，当前: {rules}'; print('PASS: /api/brain/ping 已注册')"
+- [x] [BEHAVIOR] 服务启动后 `GET /api/brain/ping` 返回 HTTP 200 + Content-Type application/json + JSON `{pong: true, timestamp: <str>}`
+  Test: python3 -c "import subprocess,json,sys; r=subprocess.run(['curl','-s','-D','-','http://localhost:5221/api/brain/ping'],capture_output=True,text=True); out=r.stdout; he=out.find('\r\n\r\n'); he=out.find('\n\n') if he<0 else he; h=out[:he].lower(); b=out[he:].strip(); assert '200' in h.split('\n')[0], f'FAIL status: {h.splitlines()[0]!r}'; assert 'content-type: application/json' in h, f'FAIL ct: {h}'; d=json.loads(b); assert d.get('pong') is True and isinstance(d.get('timestamp'),str), f'FAIL body: {d}'; print('PASS: 200 + json + pong=true + timestamp str')"
+- [x] [BEHAVIOR] `timestamp` 字段为合法 ISO 8601 字符串，可被 `datetime.fromisoformat` 解析，且与当前 UTC 时间差 < 5 秒
+  Test: python3 -c "import subprocess,json,sys; from datetime import datetime,timezone; r=subprocess.run(['curl','-sf','http://localhost:5221/api/brain/ping'],capture_output=True,text=True); assert r.returncode==0, f'FAIL curl: {r.returncode}'; ts=json.loads(r.stdout)['timestamp']; p=datetime.fromisoformat(ts.replace('Z','+00:00')); p=p.replace(tzinfo=timezone.utc) if p.tzinfo is None else p; d=abs((datetime.now(timezone.utc)-p).total_seconds()); assert d<5, f'FAIL freshness: {d}s'; print(f'PASS: {ts!r} 解析成功，差 {d:.3f}s')"
+- [x] [BEHAVIOR] 连续两次调用返回的 `timestamp` 不同（证明实时生成、非缓存常量）
+  Test: python3 -c "import subprocess,json,sys,time; f=lambda:json.loads(subprocess.run(['curl','-sf','http://localhost:5221/api/brain/ping'],capture_output=True,text=True).stdout)['timestamp']; t1=f(); time.sleep(0.1); t2=f(); assert t1!=t2, f'FAIL: {t1}=={t2}'; print(f'PASS: {t1} != {t2}')"
+- [x] [BEHAVIOR] `POST` / `PUT` / `PATCH` / `DELETE` 方法请求 `/api/brain/ping` 均返回 405 Method Not Allowed
+  Test: python3 -c "import subprocess,sys
+for m in ['POST','PUT','PATCH','DELETE']:
+    r=subprocess.run(['curl','-s','-o','/dev/null','-w','%{http_code}','-X',m,'http://localhost:5221/api/brain/ping'],capture_output=True,text=True)
+    c=r.stdout.strip()
+    assert c=='405', f'FAIL {m}: 期望 405 实际 {c}'
+print('PASS: POST/PUT/PATCH/DELETE 全部返回 405')"
+- [x] [BEHAVIOR] `GET /api/brain/Ping`（大写 P）返回状态码非 200（路径大小写敏感）
+  Test: python3 -c "import subprocess,sys; r=subprocess.run(['curl','-s','-o','/dev/null','-w','%{http_code}','http://localhost:5221/api/brain/Ping'],capture_output=True,text=True); c=r.stdout.strip(); assert c!='200', f'FAIL: 大写 Ping 返回 200，路径大小写不敏感'; print(f'PASS: /api/brain/Ping 返回 {c}（非 200）')"
+- [x] [ARTIFACT] 存在 pytest 测试（文件名或函数名可被正则 `test_\w*ping\w*\.py::test_\w+` 收集到）
+  Test: python3 -c "import subprocess,sys,re; r=subprocess.run(['python3','-m','pytest','tests/','-k','ping','--collect-only','-q'],capture_output=True,text=True); out=r.stdout+r.stderr; m=re.findall(r'test_\w*ping\w*\.py::test_\w+', out); assert m, f'FAIL: 未发现 ping 测试\n{out}'; print(f'PASS: 发现 {len(m)} 个 ping 测试: {m}')"
+- [x] [BEHAVIOR] pytest 运行 ping 相关测试全部通过（exit code == 0 且至少 1 个 passed）
+  Test: python3 -c "import subprocess,sys,re; r=subprocess.run(['python3','-m','pytest','tests/','-k','ping','-v','--tb=short'],capture_output=True,text=True); out=r.stdout+r.stderr; assert r.returncode==0, f'FAIL exit={r.returncode}\n{out}'; m=re.search(r'(\d+) passed', out); assert m and int(m.group(1))>=1, f'FAIL 无 passed\n{out}'; print(f'PASS: {m.group(1)} 个用例通过')"
