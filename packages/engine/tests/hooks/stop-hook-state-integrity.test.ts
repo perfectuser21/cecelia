@@ -182,27 +182,7 @@ describe("Stop Hook 状态完整性 (PR #550)", () => {
     });
   });
 
-  describe("01-spec.md 修复验证", () => {
-    it("Task Checkpoint 不能追加到裸 .dev-mode（必须是 .dev-mode.${BRANCH}）", () => {
-      const branchMd = readFileSync(
-        join(__dirname, "../../skills/dev/steps/01-spec.md"),
-        "utf-8"
-      );
-      // 匹配 >> .dev-mode 后面不跟 BRANCH 的行（包括 BRANCH_NAME）
-      const lines = branchMd.split("\n");
-      const bareAppends = lines.filter(
-        (l) => l.includes(">> .dev-mode") && !l.includes("BRANCH") && !l.startsWith("#")
-      );
-      expect(bareAppends).toHaveLength(0);
-    });
-
-    it(".dev-mode 文件模板首行必须是 dev", () => {
-      const branchMd = readFileSync(
-        join(__dirname, "../../skills/dev/steps/01-spec.md"),
-        "utf-8"
-      );
-      // 新格式使用 heredoc（cat > ".dev-mode.${BRANCH}" << EOF\ndev\n）而不是 echo "dev"
-      expect(branchMd).toContain("\ndev\n");
-    });
-  });
+  // Phase 4: 01-spec.md 已删除（Superpowers 接力链替代了 Engine 自己的 Spec 阶段）
+  // 原 "01-spec.md 修复验证" 的两个 tests 随文件删除一并移除
+  // .dev-mode 模板现在由 SKILL.md 或 steps/00-worktree-auto.md 写入
 });

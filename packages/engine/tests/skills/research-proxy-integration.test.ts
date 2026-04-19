@@ -71,8 +71,9 @@ describe('SKILL.md 默认加载 autonomous-research-proxy（Phase 1 Round 2 后�
     expect(content).toContain('autonomous-research-proxy');
   });
 
-  it('说明 /dev 默认加载 proxy（不再条件激活）', () => {
-    expect(content).toMatch(/autonomous-research-proxy[\s\S]{0,500}(默认加载|先加载|必须先加载)/);
+  it('说明 /dev 必读 proxy（Phase 4 后 autonomous-research-proxy 是核心价值）', () => {
+    // Phase 4 改为调 /superpowers:* 后，SKILL.md 仍强调 proxy 必读
+    expect(content).toMatch(/autonomous-research-proxy[\s\S]{0,800}(必读|默认加载|Engine (核心|真价值)|替代)/);
   });
 });
 
