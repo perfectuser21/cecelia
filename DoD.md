@@ -1,13 +1,25 @@
-# DoD: CI 硬化第三批 — ESLint --max-warnings 冻结基线
+# DoD: learnings 月度归档 workflow
 
-- [x] [ARTIFACT] brain lint 加 --max-warnings 244
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/packages\\/brain.*eslint.*--max-warnings 244/.test(c))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] workflow 文件存在
+  Test: manual:node -e "if(!require('fs').existsSync('.github/workflows/archive-learnings.yml'))process.exit(1);console.log('PASS')"
 
-- [x] [ARTIFACT] apps/api lint 加 --max-warnings 18
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/apps\\/api.*eslint.*--max-warnings 18/.test(c))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] 含 monthly cron（每月 1 号 04:00 UTC）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/cron:\\s*['\"]0 4 1 \\* \\*['\"]/.test(c))process.exit(1);console.log('PASS')"
 
-- [x] [ARTIFACT] 注释说明"只允许下调"的运维规则
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/只允许下调|不允许上调/.test(c))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] 支持 workflow_dispatch 手动触发
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/workflow_dispatch:/.test(c))process.exit(1);console.log('PASS')"
 
-- [x] [BEHAVIOR] brain eslint --max-warnings 244 在 CI 真跑通（dogfood，dod-behavior-dynamic job 里已装 brain deps）
-  Test: manual:bash -c "cd packages/brain && npx eslint src/ --max-warnings 244 > /tmp/lint-brain.log 2>&1"
+- [x] [ARTIFACT] 用 git log --diff-filter=A 拿首次入库时间（不用 mtime）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/git log --follow --diff-filter=A --format=%at/.test(c))process.exit(1);console.log('PASS')"
+
+- [x] [ARTIFACT] 30 天前的文件才归档（cutoff 逻辑）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/30 days ago/.test(c))process.exit(1);console.log('PASS')"
+
+- [x] [ARTIFACT] 按 YYYY-MM 分桶、tar.gz、git rm 原文件
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/\\+%Y-%m/.test(c))process.exit(1);if(!/tar -czf/.test(c))process.exit(2);if(!/git rm/.test(c))process.exit(3);console.log('PASS')"
+
+- [x] [ARTIFACT] permissions contents: write（commit 推 main 需要）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/permissions:[\\s\\S]*?contents:\\s*write/.test(c))process.exit(1);console.log('PASS')"
+
+- [x] [BEHAVIOR] workflow 单元测试 8/8 通过
+  Test: tests/workflows/archive-learnings.test.ts

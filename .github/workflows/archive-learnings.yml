@@ -1,0 +1,98 @@
+name: Archive Old Learnings
+
+# 每月 1 号自动把 30 天前的 docs/learnings/*.md 归档成 tar.gz，
+# 按 YYYY-MM 分桶（以 git log 首次入库时间为准，不用文件 mtime）。
+# 可手动触发（workflow_dispatch）跑一次性大清理。
+
+on:
+  schedule:
+    - cron: '0 4 1 * *'   # 每月 1 号 04:00 UTC
+  workflow_dispatch:
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0   # 需要全 git log 拿每个文件首次入库时间
+
+      - name: Archive learnings older than 30 days
+        id: archive
+        run: |
+          cd docs/learnings
+          mkdir -p archive
+
+          # cutoff = 30 天前的 unix 时间戳
+          CUTOFF=$(date -u -d '30 days ago' +%s 2>/dev/null || date -u -v-30d +%s)
+          echo "cutoff_ts=$CUTOFF ($(date -u -d @$CUTOFF 2>/dev/null || date -u -r $CUTOFF))"
+
+          TMP_LIST_DIR=$(mktemp -d)
+          TOTAL_OLD=0
+
+          # 遍历顶层 *.md（不递归到 archive/ 子目录）
+          for f in *.md; do
+            [ -f "$f" ] || continue
+
+            # 首次入库 commit 的 author time（unix ts）— 稳定不随 checkout 变
+            FIRST_TS=$(git log --follow --diff-filter=A --format=%at -1 -- "$f" 2>/dev/null || echo "")
+            if [ -z "$FIRST_TS" ]; then
+              echo "  ⚠️  $f 无 git history，跳过"
+              continue
+            fi
+
+            if [ "$FIRST_TS" -ge "$CUTOFF" ]; then
+              continue   # 30 天内，不归档
+            fi
+
+            # 分桶 key = YYYY-MM
+            BUCKET=$(date -u -d "@$FIRST_TS" +%Y-%m 2>/dev/null || date -u -r "$FIRST_TS" +%Y-%m)
+            echo "$f" >> "$TMP_LIST_DIR/$BUCKET.list"
+            TOTAL_OLD=$((TOTAL_OLD + 1))
+          done
+
+          echo "📊 30 天前 learning 总数：$TOTAL_OLD"
+
+          if [ "$TOTAL_OLD" -eq 0 ]; then
+            echo "✅ 无需归档"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 每个桶 tar.gz 一次，删原文件
+          BUCKETS_DONE=0
+          for list in "$TMP_LIST_DIR"/*.list; do
+            [ -f "$list" ] || continue
+            BUCKET=$(basename "$list" .list)
+            COUNT=$(wc -l < "$list" | tr -d ' ')
+            TAR="archive/${BUCKET}.tar.gz"
+
+            echo "📦 归档 $COUNT 个文件 → $TAR"
+            # -T 从文件列表读；每行一个文件名（相对 cwd=docs/learnings）
+            tar -czf "$TAR" -T "$list"
+
+            # 删原文件
+            xargs -a "$list" git rm -q
+            BUCKETS_DONE=$((BUCKETS_DONE + 1))
+          done
+
+          cd ../..
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "total_archived=$TOTAL_OLD" >> "$GITHUB_OUTPUT"
+          echo "buckets=$BUCKETS_DONE" >> "$GITHUB_OUTPUT"
+
+      - name: Commit archive
+        if: steps.archive.outputs.changed == 'true'
+        env:
+          TOTAL: ${{ steps.archive.outputs.total_archived }}
+          BUCKETS: ${{ steps.archive.outputs.buckets }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/learnings/archive/
+          git commit -m "chore(learnings): 月度归档（${TOTAL} 文件 / ${BUCKETS} 月桶）[bot]"
+          git push
