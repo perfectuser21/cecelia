@@ -47,6 +47,10 @@ const VALID_TASK_TYPES = [
   'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan',
   // 发布后数据回收（Brain 内部处理，不走外部 executor）
   'platform_scraper',
+  // Harness v2 新类型（M1）
+  'harness_initiative',    // 阶段 A 入口（一个 Initiative 一条）
+  'harness_task',          // 阶段 B 单 Task（内部状态机，不派 agent）
+  'harness_final_e2e',     // 阶段 C 最终 E2E 验收
 ];
 
 // 支持 P2P 异步回调的任务类型
@@ -131,6 +135,10 @@ const SKILL_WHITELIST = {
   'okr_project_plan': '/decomp',     // OKR Project 层完成后规划
   // 发布后数据回收（Brain 内部处理，声明 skill 避免路由校验失败）
   'platform_scraper': '/media-scraping',
+  // Harness v2 新类型（M1 复用现有 skill，M2/M5 会重写）
+  'harness_initiative': '/harness-planner',   // 阶段 A — M1 复用 planner skill
+  'harness_task': '/_internal',               // 阶段 B — Brain tick 内部状态机，不派 agent
+  'harness_final_e2e': '/harness-evaluator',  // 阶段 C — M1 复用 evaluator skill
 };
 
 // Fallback strategies when primary routing fails
@@ -255,6 +263,10 @@ const LOCATION_MAP = {
   'okr_project_plan': 'xian',      // OKR Project 规划 → 西安 Codex (B類，/decomp skill)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
   'platform_scraper': 'us',       // 数据采集任务 → Brain 内部处理（不走外部 executor，见 post-publish-data-collector.js）
+  // Harness v2 → US 本机
+  'harness_initiative': 'us',     // 阶段 A 入口（复用 planner skill 运行 /dev）
+  'harness_task': 'us',           // 阶段 B 单 Task（tick 内部，US Brain 处理）
+  'harness_final_e2e': 'us',      // 阶段 C 最终 E2E（复用 evaluator skill）
 };
 
 // Default location
@@ -326,6 +338,10 @@ const TASK_REQUIREMENTS = {
   'harness_fix':              ['has_git'],
   'harness_deploy_watch':     ['has_git'],
   'harness_report':           ['has_git'],
+  // Harness v2 — 需要 git 访问（US M4）
+  'harness_initiative':       ['has_git'],
+  'harness_task':             ['has_git'],
+  'harness_final_e2e':        ['has_git'],
 };
 
 /**
