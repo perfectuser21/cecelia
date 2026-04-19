@@ -238,6 +238,14 @@ export function buildDockerArgs(opts, ctx = {}) {
   if (existsFn(hostGhDir)) {
     extraVolumes.push('-v', `${hostGhDir}:/home/cecelia/.config/gh:ro`);
   }
+  // 挂载 content pipeline 产物目录（双向 rw），让节点间共享文件产物。
+  // 没挂载时 research 节点写到容器内 /home/cecelia/content-output/... 会随 --rm 丢失，
+  // 下一个节点（copywrite/copy_review）读不到 findings.json / copy.md 一路 REVISION。
+  // Harness 节点产物是 PR URL 走 state 传递，不需要此挂载；content pipeline 必须。
+  const hostContentOutput = path.join(homedir, 'content-output');
+  if (existsFn(hostContentOutput)) {
+    extraVolumes.push('-v', `${hostContentOutput}:/home/cecelia/content-output:rw`);
+  }
 
   const args = [
     'run',
