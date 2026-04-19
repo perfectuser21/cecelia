@@ -3,9 +3,27 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-18"
+updated: "2026-04-19"
 
 changelog:
+  - version: "15.0.0"
+    date: "2026-04-19"
+    change: "refactor"
+    description: "Phase 5 — Engine Skillification。核心洞察：Phase 4（14.17.11）把 /dev 瘦身到'协调器'并期待主 agent 读到 SKILL.md 里的 /superpowers:* 引用就自动接力 — 实测不工作。Superpowers 真正的接力秘诀是每个 SKILL.md 结尾有 TERMINAL IMPERATIVE（'Now invoke writing-plans. Do NOT invoke any other skill.'），主 agent 读到硬指令才会调下一个 Skill tool。/dev 的 Step 0/0.5/0.7/3/4 只是 md 文档（靠 Read 加载），结尾没有 terminal imperative，读完就散。本 PR（major bump 14.17.11 → 15.0.0）：(1) 新建 4 个真 skill — packages/engine/skills/engine-worktree/SKILL.md, engine-enrich/SKILL.md, engine-decision/SKILL.md, engine-ship/SKILL.md，每个结尾都有 TERMINAL IMPERATIVE 硬指令块（'Your next tool call MUST be Skill({...})'）。(2) 删除 steps/00-worktree-auto.md + 00.5-enrich.md + 00.7-decision-query.md + 04-ship.md（逻辑全部 migrate 到新 skill）。(3) 删除 steps/03-integrate.md（Phase 4 未删的冗余 — 和 Superpowers finishing-a-development-branch 功能重叠，autonomous-research-proxy Tier 1 默认 Option 2 = push+PR 已覆盖）。(4) 改 /dev SKILL.md 为纯点火入口 — TERMINAL IMPERATIVE 指向 engine-worktree。(5) autonomous-research-proxy.md 加 Phase 5 硬规则：Superpowers finishing-a-development-branch 完成后 MUST invoke engine-ship via Skill tool（Superpowers 不知道 Engine 终棒，靠本规则硬接驳）。(6) 新建 4 条 symlink（~/.claude/skills/engine-{worktree,enrich,decision,ship} → packages/engine/skills/engine-{worktree,enrich,decision,ship}）。完整接力链：/dev → engine-worktree → engine-enrich → engine-decision → superpowers:brainstorming → superpowers:writing-plans → superpowers:subagent-driven-development → superpowers:finishing-a-development-branch → engine-ship → (Stop Hook 自动合并)。"
+    files:
+      - "packages/engine/skills/dev/SKILL.md (rewritten as ignition entry)"
+      - "packages/engine/skills/engine-worktree/SKILL.md (new)"
+      - "packages/engine/skills/engine-enrich/SKILL.md (new)"
+      - "packages/engine/skills/engine-decision/SKILL.md (new)"
+      - "packages/engine/skills/engine-ship/SKILL.md (new, terminal)"
+      - "packages/engine/skills/dev/steps/autonomous-research-proxy.md (Phase 5 rule added)"
+      - "packages/engine/skills/dev/steps/00-worktree-auto.md (deleted, migrated)"
+      - "packages/engine/skills/dev/steps/00.5-enrich.md (deleted, migrated)"
+      - "packages/engine/skills/dev/steps/00.7-decision-query.md (deleted, migrated)"
+      - "packages/engine/skills/dev/steps/03-integrate.md (deleted, redundant)"
+      - "packages/engine/skills/dev/steps/04-ship.md (deleted, migrated)"
+      - "packages/engine/VERSION / package.json / .hook-core-version / hooks/VERSION / regression-contract.yaml (bumped 15.0.0)"
+
   - version: "14.17.11"
     date: "2026-04-19"
     change: "refactor"
