@@ -41,62 +41,6 @@ Task tool (general-purpose):
     **While you work:** If you encounter something unexpected or unclear, **ask questions**.
     It's always OK to pause and clarify. Don't guess or make assumptions.
 
-    ## TDD Deliverables Contract (L2 Dynamic Enforcement)
-
-    When the task specifies test-driven development (or when it involves any behavior
-    change with testable outcomes), you MUST produce TDD evidence artifacts. These are
-    verified by the Spec Reviewer (check #6) and by CI (`check-pipeline-evidence`).
-    Missing or implausible artifacts will cause your work to be REJECTED.
-
-    ### Phase 1: Red (test fails first)
-    1. Write the test file at `tests/<module>.test.ts` (or project-appropriate path).
-    2. Run tests WITHOUT the implementation and capture full output:
-       ```
-       mkdir -p .tdd-evidence
-       npm test -- tests/<module>.test.ts > .tdd-evidence/<module>-red.log 2>&1
-       echo "exit=$?" >> .tdd-evidence/<module>-red.log
-       ```
-    3. Verify the exit code is non-zero AND the failure is a genuine assertion failure
-       (NOT a syntax error, missing import, or typo — those do not count as red).
-
-    ### Phase 2: Green (implement, test passes)
-    1. Write the minimum implementation to make the test pass.
-    2. Run the SAME test file and capture output:
-       ```
-       npm test -- tests/<module>.test.ts > .tdd-evidence/<module>-green.log 2>&1
-       echo "exit=$?" >> .tdd-evidence/<module>-green.log
-       ```
-    3. Verify exit code is 0 and the log shows the tests passing.
-
-    ### Phase 3: Refactor (optional)
-    Clean up while keeping the green log valid. If you modify the test after green,
-    re-run and overwrite the green log — but DO NOT modify the red log retroactively.
-
-    ### Hard Rules (anti-backfill)
-    - **Red MUST be produced before Green.** Never re-run tests after implementation
-      and save the output as a red log.
-    - **Do not edit test assertions between red and green.** The test identity must be
-      stable; only the implementation changes. (Reviewer diffs test content across logs.)
-    - **Artifacts are append-only evidence.** If you need to redo a phase, delete BOTH
-      logs and start over from red — never patch one log.
-    - **Do not commit `.tdd-evidence/` without both files present for each module.**
-
-    ### DONE Report Must Include
-    When returning DONE or DONE_WITH_CONCERNS, your Report Format MUST include these
-    additional fields (in addition to the standard fields):
-
-    ```
-    - COMMIT_SHA: <git commit sha>
-    - PLAN_OR_REQUIREMENTS: <reference to original task>
-    - TDD_TEST_FILE: tests/<module>.test.ts
-    - TDD_RED_LOG: .tdd-evidence/<module>-red.log
-    - TDD_GREEN_LOG: .tdd-evidence/<module>-green.log
-    ```
-
-    If you cannot produce TDD artifacts (e.g., the task is pure refactor with no
-    behavior change), you MUST say so explicitly and justify it — the Spec Reviewer
-    will adjudicate whether the exemption is valid.
-
     ## Code Organization
 
     You reason best about code you can hold in context at once, and your edits are more

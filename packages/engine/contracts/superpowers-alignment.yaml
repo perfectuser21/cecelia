@@ -1,23 +1,17 @@
-# Engine ↔ Superpowers Alignment Contract (v2 — L2 Dynamic Evidence)
-# ====================================================================
-# 相对 L1 (PR #2406) 的变化：
-#   - 仅对 coverage_level: full 的 10 个 skill 新增 `runtime_evidence` 字段
-#   - 其它字段（engine_integration / local_prompt / notes）完全保持不变
-#   - 新增 _metadata.schema_version: 2.0.0 与 L2 专属不变式
-#   - 全部 runtime_evidence.mode 第一轮标 `opt-in`
+# Engine ↔ Superpowers Alignment Contract
+# ========================================
+# Engine 作为 Superpowers 5.0.7 的自动化适配层。
 #
-# runtime_evidence 字段语义：
-#   mode:
-#     opt-in    — 缺证据时 CI L3 发 warning 但不 fail。方便 /dev 逐步补 record-evidence.sh 调用
-#     enforced  — 缺证据时 CI L3 fail。待 opt-in 阶段稳定（至少 2 周无假阳性）逐个切
+# 原则：
+#   - 只加 Engine 独有：人机交互替代（autonomous-research-proxy）+ 防退化（本契约）+ 兜底（Stop Hook + orphan-pr-worker）
+#   - 不改 Superpowers 原 skill 内容（1:1 同步 prompt，sha256 锁定防漂移）
+#   - 升级策略：sha256 不匹配 → 告警 → 人工 review 新 upstream → 决定本地化同步或刻意偏离
 #
-#   required_events:
-#     每项约束 pipeline-evidence.jsonl 必须包含多少条某类 event，以及 event 字段的值约束
-#     - event:            event 名，必须在 evidence-schema.md §3 闭集内
-#     - min_occurrences:  最少出现次数（0 = 允许缺席；>=1 = 必须至少有）
-#     - assert_fields:    每个字段 {field, operator, value} 约束
-#                         operator: "==" "!=" ">=" "<=" "in" "matches"
-#     - correlation:      与其它 event 的字段关联（如 tdd_green.test_file == tdd_red.test_file）
+# 每个 full/partial skill 要求：
+#   - engine_integration.anchor_file + required_keywords（流程嵌入位置 + 关键词）
+#   - local_prompt.path + sha256（本地副本，upstream drift 检测）
+# 每个 rejected skill 要求：
+#   - rejection_reason（刻意不吸收的理由）
 
 skills:
 
@@ -39,17 +33,6 @@ skills:
       path: packages/engine/skills/dev/prompts/brainstorming/SKILL.md
       source_path_relative: brainstorming/SKILL.md
       sha256: PENDING_T1
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # brainstorming 阶段通常无强制 subagent 派发（Research Subagent 内嵌在 01-spec.md 逻辑中，
-        # 不走 Task tool），这里先不强制，留 min_occurrences: 0 以后补
-        - event: subagent_dispatched
-          min_occurrences: 0
-          assert_fields:
-            - field: stage
-              operator: "=="
-              value: stage_1_spec
     notes: |
       官方 HARD-GATE 原话已逐字内嵌到 §0.2.HARD-GATE (L93-98)。
       "user approved" 本地化为 "Research Subagent Tier 1 confirmed"
@@ -74,20 +57,6 @@ skills:
       path: packages/engine/skills/dev/prompts/writing-plans/SKILL.md
       source_path_relative: writing-plans/SKILL.md
       sha256: PENDING_T1
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # Stage 2 开始前必须派一个 Implementer subagent，证明选了 subagent-driven 路径
-        # （autonomous-research-proxy Tier 1 已把这题固定答 subagent-driven）
-        - event: subagent_dispatched
-          min_occurrences: 1
-          assert_fields:
-            - field: subagent_type
-              operator: "=="
-              value: implementer
-            - field: stage
-              operator: "=="
-              value: stage_2_code
     notes: |
       Plan 产出 `.plan-${BRANCH}.md`，规则对齐官方 writing-plans：
       文件路径+代码+测试命令+预期输出 / 2-5 分钟粒度 / 零占位符 / TDD 顺序。
@@ -110,38 +79,13 @@ skills:
         - "autonomous_aborted"
         - "否决权"
         - "核心文件不存在"
-    # local_prompt omitted: method已内嵌到 Engine, 不需要本地 prompt 副本
+    local_prompt:
 
-    local_prompt: null
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # 允许 0 个 critical_gap_abort（正常 plan 没缺口）
-        # 但若发生了必须记录，且字段符合约束
-        - event: critical_gap_abort
-          min_occurrences: 0
-          assert_fields:
-            - field: stage
-              operator: "=="
-              value: stage_1_spec
-            - field: trigger_rule
-              operator: in
-              value:
-                - core_file_missing
-                - dep_not_installed
-                - api_not_exist
-                - schema_mismatch
-                - arch_conflict
-        # BLOCKED 升级 level=2 同理（0 或多个）
-        - event: blocked_escalation
-          min_occurrences: 0
-          assert_fields:
-            - field: level
-              operator: ">="
-              value: 1
-            - field: level
-              operator: "<="
-              value: 3
+      path: packages/engine/skills/dev/prompts/executing-plans/SKILL.md
+
+      source_path_relative: executing-plans/SKILL.md
+
+      sha256: a711f83fb762e2ea0fa151f598893da9911a408895c91cc7a7e0770dd59a27b3
     notes: |
       F4 新引 (Engine v14.17.0)。官方原则
       "If concerns: Raise them with your human partner before starting"
@@ -166,29 +110,6 @@ skills:
       path: packages/engine/skills/dev/prompts/subagent-driven-development/SKILL.md
       source_path_relative: subagent-driven-development/SKILL.md
       sha256: PENDING_T1
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # 三角色全自动：至少各派 1 次 Implementer + Spec Reviewer
-        # Code Quality Reviewer 也是 full 流程的一部分，但第一轮 opt-in 放松到 >=0（轮次太多时实际会派）
-        - event: subagent_dispatched
-          min_occurrences: 1
-          assert_fields:
-            - field: subagent_type
-              operator: "=="
-              value: implementer
-            - field: stage
-              operator: "=="
-              value: stage_2_code
-        - event: subagent_dispatched
-          min_occurrences: 1
-          assert_fields:
-            - field: subagent_type
-              operator: "=="
-              value: spec_reviewer
-            - field: stage
-              operator: "=="
-              value: stage_2_code
     notes: |
       三角色全自动：
         Round 1 Implementer (Sonnet/Opus, TDD + 全套回归)
@@ -215,39 +136,6 @@ skills:
       path: packages/engine/skills/dev/prompts/test-driven-development/SKILL.md
       source_path_relative: test-driven-development/SKILL.md
       sha256: PENDING_T1
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # TDD 核心：一条 red + 一条 green，配对（correlate）且 exit_code 对称
-        - event: tdd_red
-          min_occurrences: 1
-          assert_fields:
-            - field: exit_code
-              operator: "!="
-              value: 0
-            - field: stage
-              operator: "=="
-              value: stage_2_code
-        - event: tdd_green
-          min_occurrences: 1
-          assert_fields:
-            - field: exit_code
-              operator: "=="
-              value: 0
-            - field: stage
-              operator: "=="
-              value: stage_2_code
-          correlation:
-            - field: test_file
-              correlate_with_event: tdd_red
-              operator: "=="
-            - field: test_slug
-              correlate_with_event: tdd_red
-              operator: "=="
-            # tdd_red.ts 必须早于 tdd_green.ts
-            - field: ts
-              correlate_with_event: tdd_red
-              operator: ">"
     notes: |
       Implementer prompt 强制补丁 (02-code.md "Implementer 必须遵守的
       Superpowers 纪律" 三条之一)。
@@ -272,19 +160,6 @@ skills:
       path: packages/engine/skills/dev/prompts/verification-before-completion/SKILL.md
       source_path_relative: verification-before-completion/SKILL.md
       sha256: PENDING_T1
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # Implementer 报 DONE 前必须跑过自证清单（Post-Complete Gate）
-        - event: pre_completion_verification
-          min_occurrences: 1
-          assert_fields:
-            - field: all_pass
-              operator: "=="
-              value: true
-            - field: stage
-              operator: "=="
-              value: stage_2_code
     notes: |
       §2.6 Post-Complete Gate 对每个 DoD 条目"运行 Test 命令 → 检查 exit
       code → 有证据才勾 [x]"。
@@ -310,19 +185,8 @@ skills:
       path: packages/engine/skills/dev/prompts/systematic-debugging/SKILL.md
       source_path_relative: systematic-debugging/SKILL.md
       sha256: PENDING_T1
-    # NOTE: partial 级别也保留 runtime_evidence，但 required_events 更宽松
-    # 方法论已内化为 Implementer prompt 补丁，运行时不走 skill 派发。
-    # 若 Implementer BLOCKED 后走 Root-Cause Tracing，由 blocked_escalation 已覆盖。
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # 0+ blocked_escalation（bug 可能不发生，发生了按 executing-plans 约束记录）
-        - event: blocked_escalation
-          min_occurrences: 0
-          assert_fields:
-            - field: stage
-              operator: "=="
-              value: stage_2_code
+    # NOTE: partial 级别 — 方法论已内化为 Implementer prompt 提示，运行时不走 skill 派发。
+    # Superpowers 升级时如 systematic-debugging 内容变化，需重新评估是否吸收新点到 Engine。
     notes: |
       方法论完整内化 (Phase 1 Reproduce / Phase 2 Pattern Analysis /
       Phase 3 Hypothesis / Phase 4 Fix + Defense-in-depth)。R7 / Engine
@@ -349,27 +213,13 @@ skills:
         - "diagnostic subagent"
         - "并行调查"
         - "第 3 次"
-    # local_prompt omitted: method已内嵌到 Engine, 不需要本地 prompt 副本
+    local_prompt:
 
-    local_prompt: null
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # 仅 BLOCKED level=3 时触发，正常流程是 0 次
-        - event: dispatching_parallel_agents
-          min_occurrences: 0
-          assert_fields:
-            - field: agents_count
-              operator: ">="
-              value: 2
-            - field: stage
-              operator: "=="
-              value: stage_2_code
-          correlation:
-            # 若存在，必须能找到对应 blocked_escalation level=3
-            - field: parent_blocked_ts
-              correlate_with_event: blocked_escalation
-              operator: "=="
+      path: packages/engine/skills/dev/prompts/dispatching-parallel-agents/SKILL.md
+
+      source_path_relative: dispatching-parallel-agents/SKILL.md
+
+      sha256: 76806091c7f923ba2596546b19cccd98a08e57a68745df77c3a7b998fe838e2b
     notes: |
       F4 / Engine v14.17.0 在 BLOCKED 升级链第 3 次调用。3 个 diagnostic
       subagent 并行独立调查（取代原 v1 设计的 systematic-debugging）。
@@ -394,32 +244,6 @@ skills:
       path: packages/engine/skills/dev/prompts/receiving-code-review/SKILL.md
       source_path_relative: receiving-code-review/SKILL.md
       sha256: PENDING_T1
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # Spec Reviewer 被派出（Round 2）—— 与 subagent-driven-development 复用同一事件
-        - event: subagent_dispatched
-          min_occurrences: 1
-          assert_fields:
-            - field: subagent_type
-              operator: "=="
-              value: spec_reviewer
-            - field: stage
-              operator: "=="
-              value: stage_2_code
-        # 若 Reviewer 报 ARCHITECTURE_ISSUE 才有下面的 event（0+）
-        - event: architect_reviewer_dispatched
-          min_occurrences: 0
-          assert_fields:
-            - field: stage
-              operator: "=="
-              value: stage_2_code
-            - field: issue_category
-              operator: in
-              value:
-                - design_boundary
-                - data_flow
-                - system_constraint
     notes: |
       F4 新引 (Engine v14.17.0)。官方原则
       "Involves your human partner if architectural" → autonomous 下等价：
@@ -445,20 +269,6 @@ skills:
       path: packages/engine/skills/dev/prompts/requesting-code-review/SKILL.md
       source_path_relative: requesting-code-review/SKILL.md
       sha256: PENDING_T1
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # 同 receiving-code-review：派 spec_reviewer 的证据
-        # 差别在于本 skill 关注"请求方"规范，L2 阶段靠同一条 event 断面覆盖
-        - event: subagent_dispatched
-          min_occurrences: 1
-          assert_fields:
-            - field: subagent_type
-              operator: "=="
-              value: spec_reviewer
-            - field: stage
-              operator: "=="
-              value: stage_2_code
     notes: |
       F4 新引 (Engine v14.17.0)。派 Reviewer 前必须在 prompt 里包含 5 项：
       (1) 精确 commit SHA 或 diff 范围 (不是 "latest"/"HEAD")
@@ -482,28 +292,13 @@ skills:
         - "discard"
         - "finish_branch_discard_review"
         - "不可逆"
-    # local_prompt omitted: method已内嵌到 Engine, 不需要本地 prompt 副本
+    local_prompt:
 
-    local_prompt: null
-    runtime_evidence:
-      mode: opt-in
-      required_events:
-        # 正常 autonomous push 不走 discard 分支，故 min_occurrences: 0
-        # 若走到 discard，typed_confirm 必须 true 且 confirm_source 不允许 human_stdin
-        - event: finishing_discard_confirm
-          min_occurrences: 0
-          assert_fields:
-            - field: typed_confirm
-              operator: "=="
-              value: true
-            - field: confirm_source
-              operator: in
-              value:
-                - research_subagent
-                - brain_task_review
-            - field: stage
-              operator: "=="
-              value: stage_4_ship
+      path: packages/engine/skills/dev/prompts/finishing-a-development-branch/SKILL.md
+
+      source_path_relative: finishing-a-development-branch/SKILL.md
+
+      sha256: dd2f82c6dc8582b621f9eb57fcb65f557f88eadf872727ac81d0840ae12c504e
     notes: |
       F4 新引 (Engine v14.17.0)。官方 4 选项 (merge/PR/keep/discard)
       其中 discard 必须 typed-confirm。
@@ -531,7 +326,6 @@ skills:
           官方 skill 没有回收机制。
       保留官方 skill 的 baseline test 和分支命名约束精神，但实现走自造
       `worktree-manage.sh`（packages/engine/skills/dev/scripts/）。
-    # rejected 不需要 runtime_evidence
     notes: |
       autonomous-research-proxy.md 交互点替代矩阵 v2 #10 标为"⚠️ 部分替代
       (baseline test 非关键路径)"。本契约视为 rejected — 因为 Engine 没
@@ -577,12 +371,6 @@ _metadata:
     covered_full_or_partial: 11
     covered_percent: 92  # 11/12
 
-  # L2 运行时证据覆盖统计
-  runtime_evidence_coverage:
-    total_with_runtime_evidence: 11   # 10 full + 1 partial
-    mode_opt_in: 11                    # 第一轮全部 opt-in
-    mode_enforced: 0
-
   source_audit:
     - path: packages/engine/skills/dev/steps/autonomous-research-proxy.md
       section: "交互点替代矩阵 v2 (F4 / Engine v14.17.0)"
@@ -598,30 +386,11 @@ _metadata:
       description: "Stage 4 Ship — finishing-a-development-branch Discard 安全确认"
 
   invariants:
-    # === L1 不变式（PR #2406 已建立，保留）===
     - "每个 coverage_level: full/partial 的 skill 必须有 local_prompt.sha256 非 PENDING_T1"
     - "所有 anchor_file 路径必须在 repo 中存在 (test -f)"
     - "所有 required_keywords 必须在对应 anchor_file 里 grep 可见 (grep -q)"
     - "coverage_level: rejected 必须有非空 rejection_reason"
     - "coverage_level: full/partial 必须有 engine_integration 字段"
     - "coverage_level: not_applicable 不得有 engine_integration 或 local_prompt"
-    - "每次 Superpowers 官方版本升级 (5.0.7 → x.y.z)，必须重跑 T2 审计并 bump schema_version"
-
-    # === L2 新增不变式（本 v2 引入）===
-    - "coverage_level: full 必须有 runtime_evidence 字段"
-    - "coverage_level: partial 可选 runtime_evidence（若有，mode 限定 opt-in）"
-    - "coverage_level: rejected/not_applicable 不得有 runtime_evidence"
-    - "runtime_evidence.mode ∈ {opt-in, enforced}，初版全部 opt-in"
-    - "runtime_evidence.required_events[].event 必须在 evidence-schema.md §3 闭集"
-    - "mode: enforced 切换前，必须有连续 14 天 CI L3 opt-in warning 零假阳性记录"
-    - "pipeline-evidence.jsonl 所有行必须通过 JSON Schema 校验（version/ts/task_id/branch/stage/event 全非空）"
-    - "tdd_green 必须存在对应 tdd_red（test_slug 匹配），且 ts 晚于 tdd_red"
-
-  # 下一步（T2-T6）
-  next_actions:
-    - T1: "（已在 L1 规划）计算 14 个 Superpowers 官方 SKILL.md 的 sha256，填入 local_prompt.sha256"
-    - T2: "实现 packages/engine/skills/dev/scripts/record-evidence.sh，按 §5 签名提供不可伪造接口"
-    - T3: "Stage 3 integrate.md 加 step：mv evidence jsonl + tdd-evidence 到 sprints/<name>/，git add 归档"
-    - T4: "扩展 packages/engine/scripts/devgate/check-superpowers-alignment.cjs：新增 runtime_evidence 校验"
-    - T5: "CI L3 在 sprints/*/pipeline-evidence.jsonl 存在时读取并按契约 required_events 校验，opt-in 模式下只 warn"
-    - T6: "观察 2 周，opt-in 警告清单稳定后逐个 skill 切 enforced（先 TDD，因其最机械）"
+    - "每次 Superpowers 官方版本升级 (5.0.7 → x.y.z)，必须对比所有 local_prompt.sha256 与 upstream，人工决策是否同步"
+    - "Engine 不得魔改 Superpowers 原 prompt。如需本地化，只在 Engine 层（autonomous-research-proxy / Stop Hook / Brain worker）加，不动 prompts/ 内容"

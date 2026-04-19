@@ -1,6 +1,6 @@
 ---
 name: dev
-version: 14.17.8
+version: 14.17.9
 updated: 2026-04-18
 description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。**Phase 1 Round 2 起 autonomous（Superpowers 三角色 subagent）是唯一模式**，Standard 代码已完全删除。保留 Harness v2.0 模式（Brain 派的 harness_generate task）。autonomous-research-proxy 用户交互替换层默认加载。
 trigger: /dev, --task-id <id>
