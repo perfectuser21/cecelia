@@ -22,12 +22,90 @@
  */
 
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
-import {
-  loadSkillContent,
-  parseDockerOutput,
-  extractField,
-  extractVerdict,
-} from './harness-graph.js';
+import { readFileSync, existsSync } from 'fs';
+import path from 'path';
+import os from 'os';
+
+// ─── Skill 内联加载 ──────────────────────────────────────────────────────────
+// Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
+// 必须把 SKILL.md 原文内联到 prompt 里。
+// 注：此段逻辑与 harness-graph.js 完全对等（复制而非 import，避免拖拽 harness
+// 模块进 content-pipeline 测试文件的 v8 coverage 统计）。
+const SKILL_SEARCH_DIRS = [
+  path.join(os.homedir(), '.claude-account1', 'skills'),
+  path.join(os.homedir(), '.claude-account2', 'skills'),
+  path.join(os.homedir(), '.claude', 'skills'),
+];
+
+const _skillCache = new Map();
+
+export function loadSkillContent(skillName) {
+  if (_skillCache.has(skillName)) return _skillCache.get(skillName);
+  for (const base of SKILL_SEARCH_DIRS) {
+    const p = path.join(base, skillName, 'SKILL.md');
+    if (existsSync(p)) {
+      try {
+        const content = readFileSync(p, 'utf8');
+        _skillCache.set(skillName, content);
+        return content;
+      } catch { /* continue */ }
+    }
+  }
+  _skillCache.set(skillName, '');
+  return '';
+}
+
+// ─── Docker 输出解析 ─────────────────────────────────────────────────────────
+
+export function parseDockerOutput(stdout) {
+  if (!stdout || typeof stdout !== 'string') return '';
+  const trimmed = stdout.trim();
+  if (!trimmed) return '';
+
+  const lines = trimmed.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line.startsWith('{')) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj.result) return typeof obj.result === 'string' ? obj.result : JSON.stringify(obj.result);
+      if (obj.content) return typeof obj.content === 'string' ? obj.content : JSON.stringify(obj.content);
+      return line;
+    } catch {
+      continue;
+    }
+  }
+  return trimmed.slice(-4000);
+}
+
+export function extractField(text, fieldName) {
+  if (!text) return null;
+  const re = new RegExp(`(?:\\*\\*)?${fieldName}(?:\\*\\*)?:\\s*(.+?)(?:\\s+\\w+:|\\n|$)`, 'i');
+  const m = text.match(re);
+  return m ? m[1].trim() : null;
+}
+
+export function extractVerdict(text, validValues) {
+  if (!text) return null;
+  const upper = text.toUpperCase();
+
+  const verdictMatch = upper.match(/(?:VERDICT|裁决|REVIEW_VERDICT|EVALUATOR_VERDICT)\s*[:=]\s*([\w]+)/);
+  if (verdictMatch) {
+    const v = verdictMatch[1];
+    if (validValues.includes(v)) return v;
+  }
+
+  let lastIdx = -1;
+  let lastVal = null;
+  for (const val of validValues) {
+    const idx = upper.lastIndexOf(val);
+    if (idx > lastIdx) {
+      lastIdx = idx;
+      lastVal = val;
+    }
+  }
+  return lastVal;
+}
 
 /**
  * Content Pipeline 状态 schema
