@@ -598,6 +598,14 @@ router.post('/:id/run-langgraph', async (req, res) => {
 
     (async () => {
       try {
+        // Postgres checkpoint 持久化 state（仿 executor.js L2821-2825 harness 模式）
+        // 避免 Brain 重启清零 state。task.id 作为 thread_id 即为 resume key。
+        const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
+        const checkpointer = PostgresSaver.fromConnString(
+          process.env.DATABASE_URL || 'postgresql://cecelia@localhost:5432/cecelia'
+        );
+        await checkpointer.setup();  // 幂等建 checkpoints / checkpoint_blobs / checkpoint_writes
+
         const result = await runContentPipeline(
           {
             id,
@@ -606,17 +614,22 @@ router.post('/:id/run-langgraph', async (req, res) => {
             payload: { notebook_id: notebookId, ...payload },
           },
           {
+            checkpointer,
             onStep: async (evt) => {
-              // 写 cecelia_events（如有该表）— 失败不阻塞
+              // 写 cecelia_events（仿 executor.js L2840-2844 harness 同 schema）
+              // onStep 失败不阻塞 pipeline，但打日志便于诊断
               try {
                 await pool.query(
-                  `INSERT INTO cecelia_events (task_id, kind, payload, created_at)
-                   VALUES ($1, $2, $3, NOW())
-                   ON CONFLICT DO NOTHING`,
-                  [id, 'content-pipeline:step', JSON.stringify({ step: evt.step_index, node: evt.node, snapshot: evt.state_snapshot })],
+                  `INSERT INTO cecelia_events (event_type, task_id, payload)
+                   VALUES ('content_pipeline_step', $1::uuid, $2::jsonb)`,
+                  [id, JSON.stringify({
+                    node: evt.node,
+                    step_index: evt.step_index,
+                    ...(evt.state_snapshot || {}),
+                  })],
                 );
-              } catch {
-                // cecelia_events 表可能不存在或 schema 不同，忽略
+              } catch (err) {
+                console.warn(`[content-pipeline] langgraph_step insert failed task=${id}: ${err.message}`);
               }
             },
           },
