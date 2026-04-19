@@ -2995,9 +2995,11 @@ async function executeTick() {
   Promise.resolve().then(() => triggerArchReview(pool))
     .catch(e => console.warn('[tick] arch review scheduler 失败:', e.message));
 
-  // 10.2 每日日报生成（15:00 UTC = 23:00 上海）
-  Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
-    .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
+  // 10.2 每日日报生成（15:00 UTC = 23:00 上海，CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
+      .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
+  }
 
   // ruminationResult 声明在块外，确保意识关闭时 return 语句仍可访问
   let ruminationResult = null;
@@ -3057,13 +3059,16 @@ async function executeTick() {
   Promise.resolve().then(() => check48hReport(pool))
     .catch(e => console.warn('[tick] 48h 简报检查失败:', e.message));
 
-  // 10.14 进化日志扫描（每日一次，自动记录 cecelia repo 新 PR，fire-and-forget）
-  Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
-    .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
+  // 10.14 + 10.15 进化日志扫描 & 叙事合成（CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    // 10.14 进化日志扫描（每日一次，自动记录 cecelia repo 新 PR，fire-and-forget）
+    Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
+      .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
 
-  // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，fire-and-forget）
-  Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
-    .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
+    // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，fire-and-forget）
+    Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
+      .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
+  }
 
   // 10.16 每日契约扫描（UTC 03:00，检查模块边界是否有测试覆盖，fire-and-forget）
   Promise.resolve().then(() => triggerContractScan(pool))
@@ -3109,13 +3114,17 @@ async function executeTick() {
   Promise.resolve().then(() => scheduleKR3ProgressReport(pool))
     .catch(e => console.warn('[tick] KR3 进度报告失败:', e.message));
 
-  // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
-  Promise.resolve().then(() => runSuggestionCycle(pool))
-    .catch(e => console.warn('[tick] suggestion cycle 失败:', e.message));
+  // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    Promise.resolve().then(() => runSuggestionCycle(pool))
+      .catch(e => console.warn('[tick] suggestion cycle 失败:', e.message));
+  }
 
-  // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，fire-and-forget）
-  Promise.resolve().then(() => runConversationConsolidator())
-    .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
+  // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    Promise.resolve().then(() => runConversationConsolidator())
+      .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
+  }
 
   // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
   Promise.resolve().then(() => memorySyncIfNeeded(pool))
