@@ -2830,10 +2830,17 @@ async function triggerCeceliaRun(task) {
           console.log(`[executor] LangGraph step: node=${stepEvent.node} step=${stepEvent.step_index} task=${task.id}`);
           // 写 cecelia_events（onStep 失败不阻塞 pipeline，但打日志便于诊断）
           try {
+            // payload 含 node + step_index + state_snapshot 展开字段，
+            // 方便 /pipeline-detail API 重建 GAN/Fix 轮次配对
+            const payload = {
+              node: stepEvent.node,
+              step_index: stepEvent.step_index,
+              ...(stepEvent.state_snapshot || {}),
+            };
             await pool.query(
               `INSERT INTO cecelia_events (event_type, task_id, payload)
                VALUES ('langgraph_step', $1::uuid, $2::jsonb)`,
-              [task.id, JSON.stringify(stepEvent.state_snapshot || {})]
+              [task.id, JSON.stringify(payload)]
             );
           } catch (err) {
             console.warn(`[executor] langgraph_step insert failed task=${task.id}: ${err.message}`);

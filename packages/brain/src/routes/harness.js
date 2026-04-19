@@ -20,6 +20,19 @@ const router = Router();
 // routes/harness.js → packages/brain/src/routes/ → 向上 4 级到仓库根
 const REPO_ROOT = new URL('../../../..', import.meta.url).pathname;
 
+// LangGraph Harness pipeline 架构图（静态，节点拓扑从 harness-graph.js 对应过来）
+// 前端用 mermaid.render() 画成 SVG
+const HARNESS_MERMAID = `graph TD
+  Start([START]) --> Planner
+  Planner --> Proposer
+  Proposer --> Reviewer
+  Reviewer -->|APPROVED| Generator
+  Reviewer -->|REVISION| Proposer
+  Generator --> Evaluator
+  Evaluator -->|PASS| Report
+  Evaluator -->|FAIL| Generator
+  Report --> End([END])`;
+
 /**
  * GET /pipeline/:planner_task_id
  * 返回该 planner 下所有 harness/sprint 任务（含 planner 自身）
@@ -103,6 +116,9 @@ router.get('/pipeline-detail', async (req, res) => {
     // 6. 构建串行步骤列表（含 input/prompt/output）
     const steps = await buildSteps(tasks, sprintDir);
 
+    // 7. LangGraph 路径：从 cecelia_events + checkpoints 重建节点时间轴
+    const langgraph = await buildLangGraphInfo(planner_task_id);
+
     res.json({
       planner_task_id,
       title: planner?.title || '',
@@ -115,6 +131,7 @@ router.get('/pipeline-detail', async (req, res) => {
       gan_rounds: ganRounds,
       file_contents: fileContents,
       steps,
+      langgraph,
     });
   } catch (err) {
     console.error('[GET /harness/pipeline-detail]', err.message);
@@ -509,6 +526,162 @@ async function buildSteps(tasks, sprintDir) {
   }
 
   return steps;
+}
+
+/**
+ * LangGraph 时间轴信息
+ *
+ * 从 cecelia_events (event_type='langgraph_step') + checkpoints 表
+ * 重建 LangGraph 路径 pipeline 的可视化数据：
+ *   - enabled: 是否走了 LangGraph 路径（查 cecelia_events 是否有 langgraph_step 事件）
+ *   - thread_id: = taskId (PostgresSaver 用作 checkpoint key)
+ *   - steps: 按 created_at 升序的节点事件（每节点一条）
+ *   - gan_rounds: proposer ↔ reviewer 配对轮次
+ *   - fix_rounds: generator ↔ evaluator 配对轮次
+ *   - checkpoints: 持久化 state 计数（判断是否可断点续跑）
+ *   - mermaid: pipeline 架构图源码（静态，所有 pipeline 一致）
+ *
+ * 非 LangGraph task（老路径，没有 langgraph_step 事件）返回 enabled=false，
+ * 其他字段为空数组/0，mermaid 仍提供（便于老 pipeline 也看架构图）。
+ *
+ * @param {string} taskId  planner_task_id = langgraph thread_id
+ * @returns {Promise<{enabled,thread_id,steps,gan_rounds,fix_rounds,checkpoints,mermaid}>}
+ */
+async function buildLangGraphInfo(taskId) {
+  const empty = {
+    enabled: false,
+    thread_id: taskId,
+    steps: [],
+    gan_rounds: [],
+    fix_rounds: [],
+    checkpoints: { count: 0, latest_checkpoint_id: null, state_available: false },
+    mermaid: HARNESS_MERMAID,
+  };
+
+  // task_id 必须是合法 UUID 才能走 ::uuid cast；不合法直接返回空
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(taskId))) {
+    return empty;
+  }
+
+  let events = [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT payload, created_at
+       FROM cecelia_events
+       WHERE task_id = $1::uuid
+         AND event_type = 'langgraph_step'
+       ORDER BY created_at ASC`,
+      [taskId]
+    );
+    events = rows;
+  } catch (err) {
+    console.warn(`[buildLangGraphInfo] events query failed: ${err.message}`);
+    return empty;
+  }
+
+  // Checkpoints 计数（PostgresSaver 持久化 state）
+  let checkpointRows = [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT checkpoint_id
+       FROM checkpoints
+       WHERE thread_id = $1
+       ORDER BY checkpoint_id DESC`,
+      [String(taskId)]
+    );
+    checkpointRows = rows;
+  } catch (err) {
+    // checkpoints 表可能不存在（PostgresSaver 未初始化），降级为 0
+    console.warn(`[buildLangGraphInfo] checkpoints query failed: ${err.message}`);
+  }
+
+  const checkpoints = {
+    count: checkpointRows.length,
+    latest_checkpoint_id: checkpointRows[0]?.checkpoint_id || null,
+    state_available: checkpointRows.length > 0,
+  };
+
+  if (events.length === 0) {
+    return { ...empty, checkpoints };
+  }
+
+  // 把每条事件 normalize 成 step
+  const steps = events.map((row, idx) => {
+    const p = row.payload || {};
+    // 从 review_verdict / evaluator_verdict 里取一个作为 verdict
+    const verdict = p.review_verdict || p.evaluator_verdict || null;
+    return {
+      step_index: typeof p.step_index === 'number' ? p.step_index : idx + 1,
+      node: p.node || 'unknown',
+      verdict,
+      review_round: p.review_round ?? null,
+      eval_round: p.eval_round ?? null,
+      review_verdict: p.review_verdict || null,
+      evaluator_verdict: p.evaluator_verdict || null,
+      pr_url: p.pr_url || null,
+      error: p.error || null,
+      timestamp: row.created_at,
+      state_snapshot: p,
+    };
+  });
+
+  // 按 step_index 稳定排序（防止时间戳相同时顺序错乱）
+  steps.sort((a, b) => (a.step_index || 0) - (b.step_index || 0));
+
+  // 配对 GAN 轮次：proposer ↔ reviewer
+  const ganRounds = [];
+  let pendingProposer = null;
+  // 配对 Fix 轮次：generator ↔ evaluator
+  const fixRounds = [];
+  let pendingGenerator = null;
+
+  for (const step of steps) {
+    if (step.node === 'proposer') {
+      pendingProposer = step;
+    } else if (step.node === 'reviewer' && pendingProposer) {
+      ganRounds.push({
+        round: ganRounds.length + 1,
+        proposer: pendingProposer,
+        reviewer: step,
+      });
+      pendingProposer = null;
+    } else if (step.node === 'generator') {
+      pendingGenerator = step;
+    } else if (step.node === 'evaluator' && pendingGenerator) {
+      fixRounds.push({
+        round: fixRounds.length + 1,
+        generator: pendingGenerator,
+        evaluator: step,
+      });
+      pendingGenerator = null;
+    }
+  }
+
+  // pending proposer 没收到 reviewer，但 pipeline 还在跑 — 也返回半轮
+  if (pendingProposer) {
+    ganRounds.push({
+      round: ganRounds.length + 1,
+      proposer: pendingProposer,
+      reviewer: null,
+    });
+  }
+  if (pendingGenerator) {
+    fixRounds.push({
+      round: fixRounds.length + 1,
+      generator: pendingGenerator,
+      evaluator: null,
+    });
+  }
+
+  return {
+    enabled: true,
+    thread_id: taskId,
+    steps,
+    gan_rounds: ganRounds,
+    fix_rounds: fixRounds,
+    checkpoints,
+    mermaid: HARNESS_MERMAID,
+  };
 }
 
 /**
