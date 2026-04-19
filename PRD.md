@@ -1,39 +1,40 @@
-# PRD: CI 硬化第二批 — BEHAVIOR 动态命令真执行
+# PRD: CI 硬化第三批 — ESLint --max-warnings 冻结基线
 
 ## 背景
 
-Repo-audit 发现"CI 最虚的一刀"：`.github/workflows/ci.yml:221` 里的 DoD BEHAVIOR 命令执行步骤显式跳过了 `curl / chrome: / psql / bash / npm` 这五类命令，只跑 `node` 命令。
+Repo-audit 发现 `ci.yml:83 / 86` 两处 ESLint 命令没有 `--max-warnings`，默认 Infinity，warnings 可无限累积。实测：
 
-```bash
-elif [[ "$CMD" == curl* ]] || [[ "$CMD" == chrome:* ]] || [[ "$CMD" == psql* ]] || [[ "$CMD" == bash* ]] || [[ "$CMD" == npm* ]]; then
-  echo "⏭️  跳过（需要运行时服务）: ${CMD%% *} ..."
-  SKIPPED=$((SKIPPED + 1))
-```
+- **Brain**：244 warnings（0 errors）
+- **apps/api**：18 warnings（0 errors）
 
-后果：DoD 里声称的"API 可达性、DB 状态、服务行为"等动态验证，CI 从来没真跑过。写 DoD 的人以为自己设了门槛，CI 只是 echo "跳过"。
-
-同时发现第二个 bug：TASK_CARD 扫描用的是老命名 `.task-*.md / task-card.md`，当前 /dev 标准 `DoD.md` 不在扫描列表，所以这步对大部分 PR 根本没触发过。与 cleanup regex bug 同源（命名约定改过，脚本没跟改）。
+后果：每个 PR 都可以悄悄加新 warning，没人拦，技术债随时间单调上涨。
 
 ## 成功标准
 
-1. 新增 `dod-behavior-dynamic` CI job，带 postgres service + Brain 5221 spin-up + 等 `/api/brain/health`
-2. 新 job 执行 DoD 里 `Test: manual:curl/psql/bash/npm` 类型的命令 — 不再跳过
-3. chrome: 仍跳过（需 headful browser）
-4. TASK_CARD 扫描加入 `DoD.md`（主）；保留 `.task-*.md / task-card.md`（兼容）
-5. `dod-behavior-dynamic` 纳入 `ci-passed` needs + check 列表
-6. 早退机制：DoD 无动态命令时，新 job 不启动 Brain（省 postgres 开销）
-7. 本 PR 自带一条 curl 动态测试作为 dogfood（验新 job 能真跑通）
+1. `ci.yml:83` brain lint 加 `--max-warnings 244`
+2. `ci.yml:86` workspace lint 加 `--max-warnings 18`
+3. 当前基线严格匹配：244 / 18
+4. 注释说明"只允许下调，不允许上调"的运维规则
 
 ## 非目标（YAGNI）
 
-- 不碰 engine-tests 里原 "DoD BEHAVIOR 命令执行" 步骤（它继续负责 node 快速路径，与新 job 分工）
-- 不改 chrome: 跳过逻辑（需 headful，暂无刚需）
-- 不改 DoD 格式（向后兼容）
-- 不重写 Brain startup（复用 brain-integration 同款 postgres service 配置）
+- 不主动修现有 244/18 个 warning（那是独立清理工作，工作量大）
+- 不加 `--max-warnings 0`（太严，当前会红一片）
+- 不改 ESLint 规则本身
+- 不改 `changes` detector 触发条件（继续只在 brain/workspace 变更时跑）
 
-## 分工
+## 下调基线的操作流程
 
-| Job | 跑什么 | 需要服务 | 速度 |
-|-----|-------|---------|-----|
-| engine-tests (旧) | `node` + `tests/` | 无 | 快 |
-| dod-behavior-dynamic (新) | `curl` / `psql` / `bash` / `npm` | postgres + Brain | 慢（Brain 需 ~10-30s 起） |
+后续任何 PR 如果修了 warning：
+
+1. 本地跑 `cd packages/brain && npx eslint src/ 2>&1 | tail -1` 得到新数字 N
+2. PR 里把 `--max-warnings 244` 改成 `--max-warnings N`
+3. PR 描述写"warnings 基线从 244 → N"
+
+CI 永远以 ci.yml 里的数字为准；数字只能越改越小。
+
+## 当前 PR 不会触发 ESLint job 的风险
+
+eslint job 现在只在 `brain` 或 `workspace` 变更时触发。本 PR 只改 `.github/workflows/ci.yml`，所以 eslint job 在本 PR **会被 skip**。这是已知事实，不会影响后续 brain/workspace PR 的防护 —— 下次有人改 brain 代码时，CI 会用新的 `--max-warnings 244` 基线验证。
+
+ARTIFACT 层验证通过"ci.yml 含 `--max-warnings 244/18`"的静态检查来保证这次改动真落地。
