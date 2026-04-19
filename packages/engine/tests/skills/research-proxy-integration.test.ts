@@ -64,15 +64,15 @@ describe('autonomous-research-proxy 行为规则', () => {
   });
 });
 
-describe('SKILL.md autonomous_mode 强制加载 proxy', () => {
+describe('SKILL.md 默认加载 autonomous-research-proxy（Phase 1 Round 2 后）', () => {
   const content = readFileSync(SKILL_FILE, 'utf8');
 
   it('提及 autonomous-research-proxy 文件', () => {
     expect(content).toContain('autonomous-research-proxy');
   });
 
-  it('说明 autonomous_mode 必须加载 proxy', () => {
-    expect(content).toMatch(/autonomous_mode[\s\S]{0,300}autonomous-research-proxy/);
+  it('说明 /dev 默认加载 proxy（不再条件激活）', () => {
+    expect(content).toMatch(/autonomous-research-proxy[\s\S]{0,500}(默认加载|先加载|必须先加载)/);
   });
 });
 

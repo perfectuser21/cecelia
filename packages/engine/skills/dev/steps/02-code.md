@@ -22,18 +22,16 @@ changelog:
 
 ---
 
-## 0. 模式判断（harness / autonomous / standard）
+## 0. 模式判断（harness / 主路径）
 
 ```bash
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
 HARNESS_MODE=$(grep "^harness_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
-AUTONOMOUS_MODE=$(grep "^autonomous_mode:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "false")
 ```
 
-- `harness_mode = true` → 走 **Section 1**
-- `autonomous_mode = true` → 走 **Section 2**
-- 其他 → 走 **Section 3**（standard）
+- `harness_mode = true` → 走 **Section 1**（Brain 派的 harness_generate 任务）
+- 其他 → 走 **Section 2**（主路径，Subagent 三角色）
 
 ---
 
@@ -59,12 +57,10 @@ cat "${SPRINT_DIR}/sprint-contract.md"
 
 ---
 
-## 2. autonomous_mode = true 时（Subagent 三角色全自动）
+## 2. 主路径（Subagent 三角色全自动）
 
-**v9.3.0 autonomous 分支变化**:
-autonomous_mode=true 时, Implementer subagent 派遣仍由主 agent 做,
-但触发时机来自 Superpowers `subagent-driven-development` skill 而非本 step 直接。
-Research Subagent 处理 Superpowers 链中的 user 交互, Implementer 做实际实现。
+Implementer subagent 派遣由主 agent 做，触发时机来自 Superpowers `subagent-driven-development` skill。
+Research Subagent 处理 Superpowers 链中的 user 交互（见 autonomous-research-proxy.md），Implementer 做实际实现。
 
 主 agent 作为协调者，对 `.plan-${BRANCH}.md` 的每个 task 派 3 轮 subagent。
 
@@ -308,66 +304,6 @@ plan 本身有问题 → 回 Stage 1 重做 plan（不是单纯重做 implemente
 全部 [x] → `sed -i '' 's/step_2_code: pending/step_2_code: done/' ".dev-mode.${BRANCH_NAME}"`
 
 完成后跳到 [完成后](#完成后)。
-
----
-
-## 3. standard mode（默认流程）
-
-### 3.1 探索代码
-
-读取 Task Card 的「实现方案」部分，探索相关文件：
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-TASK_CARD=".task-${BRANCH_NAME}.md"
-cat "$TASK_CARD"
-```
-
-**探索规则**：先读再改，理解现有代码，确认受影响的文件和函数。
-
----
-
-### 3.2 写代码
-
-直接修改代码文件，按 Task Card 实现方案执行。
-
-**代码规范**：
-- 不加多余注释、不加 console.log
-- 不改 Scope 外的文件
-- 单文件 > 500 行考虑拆分
-
----
-
-### 3.3 逐条验证 DoD
-
-> **仅非 Harness 模式执行此步骤。** Harness 模式由 Evaluator 独立验证。
-
-**对 Task Card 每个 DoD 条目执行 Test 命令验证**：
-
-```
-对每个 DoD 条目：
-  1. 运行 Test: 命令
-  2. 通过 → 勾选 [x]
-  3. 失败 → 修复代码 → 重新验证
-  4. 全部 [x] → 进入 Stage 3
-```
-
-### 本地测试
-
-```bash
-cd packages/engine && npx vitest run <相关测试文件>
-```
-
----
-
-### 3.4 标记完成 + 持久化
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
-sed -i '' 's/step_2_code: pending/step_2_code: done/' "$DEV_MODE_FILE"
-# .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
-```
 
 ---
 

@@ -8,7 +8,7 @@ changelog:
 
 # Autonomous Research Proxy — User 交互点替换清单
 
-> **autonomous_mode=true 时必须加载到系统 context**
+> **/dev 默认必须加载到系统 context**（Phase 1 Round 2 模式统一后唯一路径，不再区分 autonomous_mode）
 > POC 已验证可行（2026-04-15，.bak gitignore 任务，27s Subagent 调研给出高置信度结论+发现原任务冗余）
 
 ## 使用时机

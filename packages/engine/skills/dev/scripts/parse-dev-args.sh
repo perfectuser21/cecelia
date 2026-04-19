@@ -21,7 +21,8 @@ set -euo pipefail
 # ============================================================================
 
 TASK_ID=""
-AUTONOMOUS_MODE=false
+# Phase 1 统一后 /dev 永远 autonomous。保留变量供下游脚本兼容读取。
+AUTONOMOUS_MODE=true
 
 # ============================================================================
 # 参数解析
@@ -38,7 +39,9 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --autonomous)
-            AUTONOMOUS_MODE=true
+            # Phase 1 统一后 --autonomous 已废弃（/dev 默认 autonomous）
+            # 保留别名防老脚本报错，只 warn 不做任何事
+            echo "⚠️  --autonomous flag deprecated since Engine 14.17.8 (Phase 1 Round 2): /dev now defaults to autonomous" >&2
             shift
             ;;
         *)
@@ -47,20 +50,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# ============================================================================
-# 如果有 TASK_ID 且未显式传 --autonomous，查询 Brain payload
-# ============================================================================
-
-if [[ -n "${TASK_ID}" ]] && [[ "${AUTONOMOUS_MODE}" == "false" ]]; then
-    _brain_url="${BRAIN_API_URL:-http://localhost:5221}"
-    _payload_auto=$(curl -s --connect-timeout 2 --max-time 4 \
-        "${_brain_url}/api/brain/tasks/${TASK_ID}" 2>/dev/null | \
-        jq -r '.payload.autonomous_mode // false' 2>/dev/null || echo "false")
-    if [[ "${_payload_auto}" == "true" ]]; then
-        AUTONOMOUS_MODE=true
-    fi
-fi
 
 # ============================================================================
 # 输出

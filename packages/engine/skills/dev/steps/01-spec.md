@@ -22,20 +22,18 @@ changelog:
 
 ---
 
-## 0. 模式判断
+## 0. 模式判断（harness / 主路径）
 
-检测 task payload 中的模式标志：
+检测 task payload 中的 harness 标志：
 
 ```bash
 TASK_ID="<从 parse-dev-args.sh 获取>"
 TASK_JSON=$(curl -s "http://localhost:5221/api/brain/tasks/${TASK_ID}")
 HARNESS_MODE=$(echo "$TASK_JSON" | jq -r '.payload.harness_mode // false')
-AUTONOMOUS_MODE=$(echo "$TASK_JSON" | jq -r '.payload.autonomous_mode // false')
 ```
 
-- `harness_mode = true` → 跳转 **0.1**
-- `autonomous_mode = true` → 跳转 **0.2**
-- 两者均 false → 继续 **1.1（标准模式）**
+- `harness_mode = true` → 跳转 **0.1**（Brain 派的 harness_generate 任务）
+- 其他 → 继续 **0.2**（主路径，Subagent 三角色）
 
 ---
 
@@ -75,11 +73,9 @@ git commit --allow-empty -m "chore: [state] Stage 1 跳过 (harness)"
 
 ---
 
-## 0.2 autonomous_mode = true 时（全自动：PRD → Plan，不问用户）
+## 0.2 主路径（全自动：PRD → Plan，不问用户）
 
-**v6.3.0 autonomous 分支变化**:
-autonomous_mode=true 时, 本 step 不再由主 agent 直接写 Task Card。
-改为: 主 agent 按 `autonomous-research-proxy.md` 规则驱动 Superpowers chain
+主 agent 按 `autonomous-research-proxy.md` 规则驱动 Superpowers chain
 (brainstorming -> writing-plans -> subagent-driven-development),
 由 Superpowers 产出的 spec 作为 Task Card 输入。
 所有 Superpowers 的 user 交互点由 Research Subagent 代答。
@@ -230,7 +226,6 @@ cat > ".dev-mode.${BRANCH_NAME}" << EOF
 dev
 branch: ${BRANCH_NAME}
 owner_session: ${CLAUDE_SESSION_ID:-unknown}
-autonomous_mode: true
 task_id: ${TASK_ID}
 task_card: .task-${BRANCH_NAME}.md
 plan: .plan-${BRANCH_NAME}.md
@@ -247,104 +242,6 @@ git commit -m "chore: [state] Stage 1 Spec 完成 (autonomous)"
 ```
 
 **直接进入 Stage 2 (Code)** — 读取 `skills/dev/steps/02-code.md` 并执行。
-
----
-
-### autonomous_mode = false（默认，现有流程不变）
-
----
-
-## 1.1 参数检测 + PRD 获取
-
-### 有 --task-id 参数时
-
-```bash
-TASK_ID="<从 parse-dev-args.sh 获取>"
-bash skills/dev/scripts/fetch-task-prd.sh "$TASK_ID"
-# 生成 .prd-task-xxx.md + .dod-task-xxx.md
-```
-
-### 无参数时
-
-用户手动提供 PRD，或从对话上下文获取需求。
-
----
-
-## 1.2 探索代码 + 写 Task Card
-
-### 1.2.1 搜索相关 Learning
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-ls docs/learnings/ 2>/dev/null | head -5
-# 搜索与当前任务相关的历史经验
-```
-
-### 1.2.2 写 Task Card
-
-创建 `.task-${BRANCH_NAME}.md`，包含：
-
-```markdown
----
-id: task-${BRANCH_NAME}
-type: task-card
-branch: ${BRANCH_NAME}
-created: YYYY-MM-DD
----
-
-# Task Card: <任务简述>
-
-## 需求（What & Why）
-**功能描述**: （从 PRD 提取）
-**背景**: （为什么要做）
-**不做什么**: （Scope 边界）
-
-## 成功标准
-> [ARTIFACT] 产出物 / [BEHAVIOR] 运行时行为
-
-## 验收条件（DoD）
-
-- [ ] [BEHAVIOR] <条目描述>
-  Test: manual:node -e "<验证命令>"
-
-- [ ] [ARTIFACT] <条目描述>
-  Test: manual:node -e "<验证命令>"
-
-## 实现方案（必填 — 探索后补充）
-**要改的文件**: （具体路径）
-**受影响函数/API**: （具体函数名）
-**不改什么**: （Scope 边界）
-```
-
-**DoD 规则**：
-- 至少 1 个 `[BEHAVIOR]` 条目
-- Test 字段必须立即填写（不留 TODO）
-- `manual:` 命令白名单：`node`/`npm`/`curl`/`bash`/`psql`
-
----
-
-## 1.3 写入 .dev-mode + 持久化
-
-```bash
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-cat > ".dev-mode.${BRANCH_NAME}" << EOF
-dev
-branch: ${BRANCH_NAME}
-owner_session: ${CLAUDE_SESSION_ID:-unknown}
-task_card: .task-${BRANCH_NAME}.md
-started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
-step_0_worktree: done
-step_1_spec: done
-step_2_code: pending
-step_3_integrate: pending
-step_4_ship: pending
-EOF
-
-# .dev-mode 不提交到 git（.gitignore 已排除），只保留在本地
-# 只提交 task card（代码文件）
-git add ".task-${BRANCH_NAME}.md"
-git commit -m "chore: [state] Stage 1 Spec 完成"
-```
 
 ---
 
