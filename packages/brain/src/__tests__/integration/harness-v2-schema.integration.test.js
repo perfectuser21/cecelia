@@ -17,7 +17,7 @@ let pool;
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = (await import('../db.js')).default;
+  pool = (await import('../../db.js')).default;
 });
 
 describe('Harness v2 M1 schema: tables exist', () => {
