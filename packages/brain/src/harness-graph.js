@@ -351,6 +351,129 @@ export function parseWorkstreams(contract) {
   return list;
 }
 
+/**
+ * 从合同正文中解析 `## Tasks` 区块（Harness v2 M3 新格式）。
+ *
+ * 每个 Task 子块结构：
+ *   ### Task: <task_id>
+ *   **title**: ...
+ *   **scope**: ...
+ *   **depends_on**: [id1, id2]
+ *   **files**: [path1, path2]
+ *
+ *   #### DoD
+ *   - [ARTIFACT] ...
+ *   - [BEHAVIOR] ...
+ *
+ *   #### Unit Test Plan（强制测试金字塔）
+ *   - 覆盖点 1: ...
+ *
+ *   #### Integration Test Plan（强制）
+ *   - 场景 1: ...
+ *
+ *   #### 验证命令
+ *   - manual:node -e "..."
+ *
+ * 返回数组；每项
+ *   `{ task_id, title, scope, depends_on[], files[], dod, unit_test_plan,
+ *      integration_test_plan, verify_commands }`。
+ *
+ * 若合同没有 `## Tasks` 区块或区块为空，返回空数组。调用方应 fallback 到
+ * `parseWorkstreams` 以兼容 v1 老合同。
+ *
+ * @param {string} contract  合同 markdown 原文
+ * @returns {Array<{task_id:string, title:string, scope:string, depends_on:string[], files:string[], dod:string, unit_test_plan:string, integration_test_plan:string, verify_commands:string}>}
+ */
+export function parseTasks(contract) {
+  if (!contract || typeof contract !== 'string') return [];
+
+  // 找到 ## Tasks 标题（兼容中文"任务列表"）
+  const headRe = /^##\s+(?:Tasks|tasks|TASKS|任务列表)\s*$/im;
+  const headMatch = contract.match(headRe);
+  if (!headMatch) return [];
+
+  const startIdx = headMatch.index + headMatch[0].length;
+  const rest = contract.slice(startIdx);
+  // 下一个同级 `## ` 或 EOF（允许 `### Task:` 子块）
+  const nextHead = rest.match(/\n##\s+(?!#)\S/);
+  const section = nextHead ? rest.slice(0, nextHead.index) : rest;
+
+  // 按 `### Task:` 切块
+  const taskBlockRe =
+    /###\s+Task\s*[:：]\s*([^\n]+)\n([\s\S]*?)(?=\n###\s+Task\s*[:：]|\n##\s+\S|$)/gi;
+  const tasks = [];
+  let m;
+  while ((m = taskBlockRe.exec(section)) !== null) {
+    const taskId = (m[1] || '').trim();
+    const body = m[2] || '';
+    if (!taskId) continue;
+
+    const title = extractBoldField(body, 'title');
+    const scope = extractBoldField(body, 'scope');
+    const depsRaw = extractBoldField(body, 'depends_on') || '[]';
+    const filesRaw = extractBoldField(body, 'files') || '[]';
+
+    const dod = extractSubSection(body, 'DoD');
+    const unit = extractSubSection(body, 'Unit Test Plan');
+    const integ = extractSubSection(body, 'Integration Test Plan');
+    const verify =
+      extractSubSection(body, '验证命令') ||
+      extractSubSection(body, 'Verify Commands');
+
+    tasks.push({
+      task_id: taskId,
+      title: title || '',
+      scope: scope || '',
+      depends_on: parseListField(depsRaw),
+      files: parseListField(filesRaw),
+      dod: dod || '',
+      unit_test_plan: unit || '',
+      integration_test_plan: integ || '',
+      verify_commands: verify || '',
+    });
+  }
+
+  return tasks;
+}
+
+/**
+ * 从 Task 子块正文里抓 `**field**: value` 到行尾。
+ * @private
+ */
+function extractBoldField(body, field) {
+  const re = new RegExp(`\\*\\*${field}\\*\\*\\s*[:：]\\s*([^\\n]*)`, 'i');
+  const m = body.match(re);
+  return m ? m[1].trim() : '';
+}
+
+/**
+ * 从 Task 子块正文里抓 `#### <name>` 到下一个 `#### ` 或块结束之间的内容。
+ * name 允许带括号后缀（如 "Unit Test Plan（强制测试金字塔）"）。
+ * @private
+ */
+function extractSubSection(body, name) {
+  const re = new RegExp(
+    `####\\s+${name}[^\\n]*\\n([\\s\\S]*?)(?=\\n####\\s+|$)`,
+    'i'
+  );
+  const m = body.match(re);
+  return m ? m[1].trim() : '';
+}
+
+/**
+ * 解析类似 `[id1, id2]` 或 `id1, id2` 的列表字段。空/空括号返回 []。
+ * @private
+ */
+function parseListField(raw) {
+  if (!raw) return [];
+  const inner = raw.replace(/^\[|\]$/g, '').trim();
+  if (!inner) return [];
+  return inner
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 // ─── Docker Node Factory ─────────────────────────────────────────────────────
 
 /**
@@ -481,20 +604,35 @@ ${reviewFeedback}
       }
     }
 
-    // 解析合同中的 ## Workstreams 区块
-    // 若合同没有该区块 → 降级为单 WS（保向后兼容，行为和老版一致）
-    const workstreams = parseWorkstreams(output || '');
-    console.log(
-      `[harness-graph] proposer parsed workstreams count=${workstreams.length} task=${taskId}: ${workstreams.map(w => `WS${w.index}(${w.name})`).join(', ')}`
-    );
+    // Harness v2 M3：先尝试解析新 `## Tasks` 格式（每 Task 强制金字塔 + E2E）
+    // 老合同用 `## Workstreams` 则 fallback（向后兼容）
+    const tasks = parseTasks(output || '');
+    let workstreams;
+    if (tasks.length > 0) {
+      // 把 tasks 投影为 workstreams 形状，保证下游 Generator/Evaluator 还能跑
+      workstreams = tasks.map((t, i) => ({
+        index: i + 1,
+        name: t.task_id,
+        ...(t.files?.length ? { files: t.files } : {}),
+      }));
+      console.log(
+        `[harness-graph] proposer parsed Tasks(v2) count=${tasks.length} task=${taskId}: ${tasks.map(t => t.task_id).join(', ')}`
+      );
+    } else {
+      workstreams = parseWorkstreams(output || '');
+      console.log(
+        `[harness-graph] proposer parsed Workstreams(v1) count=${workstreams.length} task=${taskId}: ${workstreams.map(w => `WS${w.index}(${w.name})`).join(', ')}`
+      );
+    }
 
     return {
       contract_content: output || null,
       acceptance_criteria: acceptanceCriteria,
       workstreams,
+      tasks,                                       // Harness v2 M3 新字段
       review_round: round,
       error: error || null,
-      trace: `proposer(R${round},ws=${workstreams.length})${error ? '(ERROR)' : ''}`,
+      trace: `proposer(R${round},${tasks.length > 0 ? `tasks=${tasks.length}` : `ws=${workstreams.length}`})${error ? '(ERROR)' : ''}`,
     };
   };
 
@@ -524,14 +662,23 @@ ${state.contract_content || '（合同未生成）'}
 ## 验收标准（Given-When-Then）
 ${state.acceptance_criteria || '（验收标准未生成）'}
 
-## 审查要求
-1. 挑战验收标准是否足够严格，能否检测出错误实现
-2. 验证命令是否可自动执行（不依赖人工）
-3. DoD 条目是否完整覆盖 PRD 需求
-4. 输出裁决：VERDICT: APPROVED 或 VERDICT: REVISION
-5. REVISION 时必须给出具体修改建议
+## 审查要求（Harness v2 M3 — skeptical tuning）
 
-注意：如果合同基本满足 PRD 要求、DoD 可验证、验证命令可自动执行，应直接 APPROVED 进入 Generator。避免无限挑剔导致对抗循环无法收敛。`;
+你的工作是**找风险**，不是认可合同。以下 3 个维度**每轮必须都真实挑战过**：
+
+1. **DAG 合理性**：Task 间的 depends_on 是否有隐藏耦合？是否可以更细粒度拆？是否有循环依赖？
+2. **Initiative 级 E2E 覆盖**：合同 ## E2E Acceptance 是否覆盖跨 Task 行为？Given-When-Then 关键分支/异常是否完整？
+3. **测试金字塔完整性**：每 Task 是否同时有 Unit Test Plan 和 Integration Test Plan？缺就 REVISION。
+
+此外保持 v1 已有挑战：验证命令严格性、命令广谱（curl/playwright/psql/node -e）、DoD 格式（[ARTIFACT]/[BEHAVIOR] + Test）。
+
+## 裁决规则（硬约束）
+
+- **每一轮必须列出 ≥2 个具体风险点**（at least 2 concrete risks，覆盖上述 3 维度任意组合）。
+- **找不到 ≥2 个具体风险点不允许 APPROVED**，至少输出 2 条挑战建议走 REVISION。
+- **APPROVED 唯一条件**：3 维度都真实挑战过且真的找不到新风险。
+- 输出裁决：VERDICT: APPROVED 或 VERDICT: REVISION
+- REVISION 时必须给出具体修改建议。`;
 
     const { output, error } = await runDockerNode('reviewer', 'harness_contract_review', prompt, state);
 
