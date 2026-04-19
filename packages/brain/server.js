@@ -64,6 +64,7 @@ import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
 import { initNarrativeTimer } from './src/cognitive-core.js';
+import { isConsciousnessEnabled, logStartupDeclaration } from './src/consciousness-guard.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
 import { loadSpendingCapsFromDB, loadAuthFailuresFromDB } from './src/account-usage.js';
@@ -278,6 +279,8 @@ try {
   console.warn('[Server] Self-check error, starting in degraded mode:', selfCheckErr.message);
 }
 
+logStartupDeclaration();
+
 // Load active model profile
 try {
   await loadActiveProfile(pool);
@@ -369,11 +372,16 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   console.log(`Realtime WebSocket ready at ws://localhost:${PORT}/api/brain/orchestrator/realtime/ws`);
 
   // Initialize narrative timer from DB (prevent duplicate diary on restart)
-  try {
-    await initNarrativeTimer(pool);
-    console.log('[Server] Narrative timer initialized from DB');
-  } catch (narrativeErr) {
-    console.error('[Server] Narrative timer init failed (non-fatal):', narrativeErr.message);
+  // CONSCIOUSNESS_ENABLED=false 时跳过
+  if (isConsciousnessEnabled()) {
+    try {
+      await initNarrativeTimer(pool);
+      console.log('[Server] Narrative timer initialized from DB');
+    } catch (narrativeErr) {
+      console.error('[Server] Narrative timer init failed (non-fatal):', narrativeErr.message);
+    }
+  } else {
+    console.log('[Server] Narrative Timer SKIPPED (CONSCIOUSNESS_ENABLED=false)');
   }
 
   // Startup recovery: environment cleanup (worktree / lock slot / dev-mode files)
@@ -451,28 +459,33 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   console.log('[Server] Capability Scanner started (6h interval) - island detection for unused capabilities');
 
   // Initialize Self-Drive Engine (自驱 — 看到体检报告后自主创建任务)
-  // BRAIN_QUIET_MODE=true 时跳过，避免噪音任务干扰手动 pipeline 验证
-  if (process.env.BRAIN_QUIET_MODE !== 'true') {
+  // CONSCIOUSNESS_ENABLED=false 时跳过
+  if (isConsciousnessEnabled()) {
     const { startSelfDriveLoop } = await import('./src/self-drive.js');
     startSelfDriveLoop();
     console.log('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
   } else {
-    console.log('[Server] Self-Drive Engine SKIPPED (BRAIN_QUIET_MODE=true)');
+    console.log('[Server] Self-Drive Engine SKIPPED (CONSCIOUSNESS_ENABLED=false)');
   }
 
   // Initialize Evolution Scanner (进化追踪 — 扫描自身代码演进)
-  try {
-    const { scanEvolutionIfNeeded } = await import('./src/evolution-scanner.js');
-    // 启动后 10 分钟首次扫描，之后每 24 小时
-    setTimeout(async () => {
-      try { await scanEvolutionIfNeeded(pool); } catch (e) { console.warn('[Server] Evolution scan failed:', e.message); }
-      setInterval(async () => {
+  // CONSCIOUSNESS_ENABLED=false 时跳过
+  if (isConsciousnessEnabled()) {
+    try {
+      const { scanEvolutionIfNeeded } = await import('./src/evolution-scanner.js');
+      // 启动后 10 分钟首次扫描，之后每 24 小时
+      setTimeout(async () => {
         try { await scanEvolutionIfNeeded(pool); } catch (e) { console.warn('[Server] Evolution scan failed:', e.message); }
-      }, 24 * 60 * 60 * 1000);
-    }, 10 * 60 * 1000);
-    console.log('[Server] Evolution Scanner scheduled (24h interval, first run in 10min)');
-  } catch (e) {
-    console.warn('[Server] Evolution Scanner init failed (non-fatal):', e.message);
+        setInterval(async () => {
+          try { await scanEvolutionIfNeeded(pool); } catch (e) { console.warn('[Server] Evolution scan failed:', e.message); }
+        }, 24 * 60 * 60 * 1000);
+      }, 10 * 60 * 1000);
+      console.log('[Server] Evolution Scanner scheduled (24h interval, first run in 10min)');
+    } catch (e) {
+      console.warn('[Server] Evolution Scanner init failed (non-fatal):', e.message);
+    }
+  } else {
+    console.log('[Server] Evolution Scanner SKIPPED (CONSCIOUSNESS_ENABLED=false)');
   }
 
   // Initialize Nightly Tick (每日质检 + 对齐)
