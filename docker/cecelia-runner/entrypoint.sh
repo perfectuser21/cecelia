@@ -59,5 +59,15 @@ if ! git config --global --get user.email >/dev/null 2>&1; then
   git config --global user.email "${GIT_AUTHOR_EMAIL:-cecelia-bot@noreply.github.com}"
 fi
 
-# 5. 启动 claude headless，把所有传入参数当 prompt
+# 5. V6 运行时准备 — 把挂载的 ~/claude-output/scripts/gen-v6-*.mjs 复制到
+# /home/cecelia/v6-runtime/（Dockerfile 预置了 linux @resvg symlink）。让 Claude 跑
+# `node /home/cecelia/v6-runtime/gen-v6-person.mjs` 时 ESM import 'resvg-js'
+# 能 resolve 到 linux 二进制。harness 任务不挂 claude-output，此段 skip。
+V6_SRC="/home/cecelia/claude-output/scripts"
+V6_DST="/home/cecelia/v6-runtime"
+if [[ -d "$V6_SRC" && -d "$V6_DST" ]]; then
+  cp -f "$V6_SRC"/gen-v6-*.mjs "$V6_DST/" 2>/dev/null || true
+fi
+
+# 6. 启动 claude headless，把所有传入参数当 prompt
 exec claude -p --dangerously-skip-permissions --output-format json "$@"
