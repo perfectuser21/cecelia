@@ -22,8 +22,10 @@ describe('Stop Hook 多 worktree session 路由（v17.0.0）', () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'stophook-routing-'));
-    // 创主仓库
+    // 创主仓库 + git config（CI runner 无全局配置）
     execSync(`git init -q -b main "${tmpDir}"`);
+    execSync(`git -C "${tmpDir}" config user.email test@test.com`);
+    execSync(`git -C "${tmpDir}" config user.name test`);
     execSync(`cd "${tmpDir}" && git commit --allow-empty -q -m init`);
     // 2 个 worktree，不同 branch
     execSync(`cd "${tmpDir}" && git worktree add -q "${tmpDir}/wt-A" -b cp-wt-A`);
