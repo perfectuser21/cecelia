@@ -13,4 +13,4 @@
   Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/check\\s+\"dep-audit\"/.test(c))process.exit(1);console.log('PASS')"
 
 - [x] [BEHAVIOR] 本地 npm audit --audit-level=critical 当前通过（0 critical）
-  Test: manual:bash -lc "npm audit --audit-level=critical > /dev/null 2>&1 || { echo 'FAIL: 有 critical 漏洞'; exit 1; }; echo PASS"
+  Test: manual:npm audit --audit-level=critical
