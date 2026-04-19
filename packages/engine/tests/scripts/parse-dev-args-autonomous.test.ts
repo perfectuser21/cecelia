@@ -4,29 +4,30 @@ import { join } from 'path';
 
 const SCRIPT = join(process.cwd(), 'skills', 'dev', 'scripts', 'parse-dev-args.sh');
 
-describe('parse-dev-args.sh -- --autonomous 参数', () => {
-  it('传入 --autonomous 时输出 AUTONOMOUS_MODE=true', () => {
-    const output = execSync(`bash "${SCRIPT}" --autonomous`, { encoding: 'utf8' });
+describe('parse-dev-args.sh -- Phase 1 Round 2 后 AUTONOMOUS_MODE 永远 true', () => {
+  it('默认输出 AUTONOMOUS_MODE=true（/dev 统一后唯一模式）', () => {
+    const output = execSync(`bash "${SCRIPT}"`, { encoding: 'utf8' });
     expect(output).toContain('AUTONOMOUS_MODE=true');
   });
 
-  it('不传 --autonomous 且无 --task-id 时输出 AUTONOMOUS_MODE=false', () => {
-    const output = execSync(`bash "${SCRIPT}"`, { encoding: 'utf8' });
-    expect(output).toContain('AUTONOMOUS_MODE=false');
+  it('--autonomous flag 已废弃，打 warn 但不改变行为', () => {
+    const output = execSync(`bash "${SCRIPT}" --autonomous 2>&1`, { encoding: 'utf8' });
+    expect(output).toContain('AUTONOMOUS_MODE=true');
+    expect(output).toMatch(/deprecated|废弃/i);
   });
 
-  it('--task-id 但 Brain 不可达时 AUTONOMOUS_MODE=false（默认）', () => {
+  it('--task-id 正常输出', () => {
     const output = execSync(
-      `BRAIN_API_URL=http://localhost:59999 bash "${SCRIPT}" --task-id nonexistent`,
+      `bash "${SCRIPT}" --task-id abc123`,
       { encoding: 'utf8', shell: '/bin/bash' }
     );
-    expect(output).toMatch(/AUTONOMOUS_MODE=/);
-    // Brain 不可达时不应崩溃
+    expect(output).toContain('TASK_ID=abc123');
+    expect(output).toContain('AUTONOMOUS_MODE=true');
   });
 
-  it('--autonomous 和 --task-id 同时给时 AUTONOMOUS_MODE=true（--autonomous 优先）', () => {
+  it('Brain 不可达也不影响 AUTONOMOUS_MODE=true（不再查询 Brain payload）', () => {
     const output = execSync(
-      `BRAIN_API_URL=http://localhost:59999 bash "${SCRIPT}" --autonomous --task-id abc`,
+      `BRAIN_API_URL=http://localhost:59999 bash "${SCRIPT}" --task-id abc`,
       { encoding: 'utf8', shell: '/bin/bash' }
     );
     expect(output).toContain('AUTONOMOUS_MODE=true');

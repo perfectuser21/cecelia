@@ -129,31 +129,23 @@ git push origin HEAD
   - 创 Brain task 让人决策：`task_type=finish_branch_discard_review`
   - 不执行任何删除动作
 
-**实现片段（即使 autonomous 也保留安全底线）**：
+**实现片段（Phase 1 统一后，/dev 永远不读 stdin，直接 abort + Brain task）**：
 
 ```bash
 if [[ "${_FINISH_ACTION:-}" == "discard" ]]; then
     BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-    AUTO=$(grep "^autonomous_mode:" ".dev-mode.${BRANCH_NAME}" 2>/dev/null | awk '{print $2}')
 
     echo "⚠️  This will permanently delete:"
     echo "    - Branch ${BRANCH_NAME}"
     echo "    - All commits on this branch"
     echo "    - Worktree directory"
 
-    if [[ "$AUTO" == "true" ]]; then
-        # autonomous 下不读 stdin，直接 abort + Brain task
-        echo "autonomous_mode: true → aborting discard，creating Brain task for human review"
-        curl -s -X POST localhost:5221/api/brain/tasks \
-          -H "Content-Type: application/json" \
-          -d "{\"title\":\"[discard_review] ${BRANCH_NAME}\",\"task_type\":\"finish_branch_discard_review\",\"priority\":\"P1\"}"
-        exit 1
-    else
-        # 人工模式：typed-confirm
-        echo "Type exactly 'discard' to confirm:"
-        read -r CONFIRM
-        [[ "$CONFIRM" != "discard" ]] && { echo "Aborted (confirmation mismatch)"; exit 1; }
-    fi
+    # /dev 默认 autonomous → aborting discard, creating Brain task for human review
+    echo "/dev aborting discard, creating Brain task for human review"
+    curl -s -X POST localhost:5221/api/brain/tasks \
+      -H "Content-Type: application/json" \
+      -d "{\"title\":\"[discard_review] ${BRANCH_NAME}\",\"task_type\":\"finish_branch_discard_review\",\"priority\":\"P1\"}"
+    exit 1
 fi
 ```
 

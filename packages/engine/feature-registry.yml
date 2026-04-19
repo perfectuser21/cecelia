@@ -6,6 +6,20 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.8"
+    date: "2026-04-19"
+    change: "refactor"
+    description: "Phase 1 Round 2 — 真正删除 /dev Standard 模式代码。接 PR #2410 (Round 1 弃用通告 + orphan-pr-worker 兜底)，执行代码删除：(1) 01-spec.md 删 §1.1-1.3 Standard 主 agent 直写分支 (95 行) + §0 模式判断三选一改二选一 + §0.2 标题改 主路径 + .dev-mode 模板去 autonomous_mode。(2) 02-code.md 删 §3 standard mode (~50 行) + §0 改二选一 + §2 标题改 主路径。(3) SKILL.md 删 流程（标准模式）章节 + 改 autonomous_mode（全自动模式）为 模式说明 + trigger 去 --autonomous。(4) 00.5-enrich / 00.7-decision-query 删 AUTONOMOUS_MODE 门禁 exit 0。(5) 04-ship.md discard 路径简化：删 if AUTO==true else 分支，只保留 autonomous 行为 (abort + Brain task)。(6) parse-dev-args.sh 固定 AUTONOMOUS_MODE=true + 删 Brain payload 兜底查询 + --autonomous flag 降级 warn。(7) autonomous-research-proxy.md 触发条件改默认加载。autonomous 正式成为 /dev 唯一模式，harness_mode 保留给 Brain harness_generate task。3 个 DevGate (L1 alignment / L1 hygiene / L2 evidence) 全部向后兼容 pass。"
+    files:
+      - "packages/engine/skills/dev/SKILL.md"
+      - "packages/engine/skills/dev/steps/01-spec.md"
+      - "packages/engine/skills/dev/steps/02-code.md"
+      - "packages/engine/skills/dev/steps/00.5-enrich.md"
+      - "packages/engine/skills/dev/steps/00.7-decision-query.md"
+      - "packages/engine/skills/dev/steps/04-ship.md"
+      - "packages/engine/skills/dev/steps/autonomous-research-proxy.md"
+      - "packages/engine/skills/dev/scripts/parse-dev-args.sh"
+
   - version: "14.17.7"
     date: "2026-04-18"
     change: "feat"

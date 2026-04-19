@@ -1,11 +1,12 @@
 ---
 name: dev
-version: 14.17.7
+version: 14.17.8
 updated: 2026-04-18
-description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。**Phase 1 起 autonomous（Superpowers 三角色 subagent）是唯一推荐默认流程**，Standard 模式已弃用。支持 Harness v2.0 模式（Brain 派的 harness_generate task）。autonomous-research-proxy 用户交互替换层默认加载。
-trigger: /dev, --task-id <id>, --autonomous
+description: 统一开发工作流（4-Stage Pipeline）。代码变更必须走 /dev。**Phase 1 Round 2 起 autonomous（Superpowers 三角色 subagent）是唯一模式**，Standard 代码已完全删除。保留 Harness v2.0 模式（Brain 派的 harness_generate task）。autonomous-research-proxy 用户交互替换层默认加载。
+trigger: /dev, --task-id <id>
 changelog:
-  - 14.17.7: Phase 1 模式统一 — Standard 模式正式弃用（代码暂留，下个 PR 删）；autonomous 为唯一推荐默认；新增 Brain orphan-pr-worker 兜底扫孤儿 cp-* PR（open > 2h + 无对应 Brain in_progress task → CI 绿自动合并 / CI 失败打 needs-attention 标签）
+  - 14.17.8: Phase 1 Round 2 — 真正删除 Standard 代码。01-spec.md §1.1-1.3 主 agent 直写分支 (95 行) / 02-code.md §3 standard mode (~50 行) / SKILL.md 流程标准模式章节 全部删除。autonomous_mode flag 从 .dev-mode schema 去除（parse-dev-args.sh 固定 AUTONOMOUS_MODE=true，--autonomous CLI flag 降级为 warn）。清理 00.5-enrich / 00.7-decision-query / 04-ship 的 autonomous_mode 门禁代码。autonomous 正式成为 /dev 唯一模式，harness_mode 保留给 Brain harness pipeline 用。
+  - 14.17.7: Phase 1 Round 1 — Standard 模式弃用通告（代码暂留）+ 新增 Brain orphan-pr-worker 兜底扫孤儿 cp-* PR
   - 7.2.0: autonomous_mode 强制加载 autonomous-research-proxy — Superpowers user 交互点全替换为 Research Subagent
   - 7.1.0: autonomous_mode 新增 Step 0.5 PRD Enrich 前置层 — 粗 PRD 自动丰满
   - 7.0.0: Superpowers 融入 — autonomous_mode 三角色架构
@@ -42,31 +43,18 @@ Harness 模式简化流程:
 
 ---
 
-## 流程（标准模式 — 已弃用，Phase 1 保留供过渡期参考，下个 PR 删除）
-
-> ⚠️ **Standard 模式不再推荐**：无 Superpowers 三角色审查，代码质量无护栏。新 PR 请直接走 autonomous（见下一节）。Brain orphan-pr-worker 会兜底扫"孤儿 cp-* PR"并自动合并 / 打标签。
-
-
+## 流程
 
 ```
-Step 0: Worktree  → 创建独立 worktree
-Stage 1: Spec     → 主 agent 写 Task Card + DoD → 写 .dev-mode
-Stage 2: Code     → 主 agent 写代码 + 逐条验证 DoD
-Stage 3: Integrate → push + PR 创建（CI 由 Stop Hook 自动监控）
-Stage 4: Ship     → Learning + 标记完成（合并/清理由 Stop Hook 自动执行）
+Step 0: Worktree     → 创建独立 worktree
+Step 0.5: PRD Enrich → 粗 PRD 自动丰满（Enrich Subagent）
+Stage 1: Spec        → 读 enriched PRD 写 Task Card + DoD → .dev-mode
+Stage 2: Code        → Subagent 三角色（Implementer / Spec Reviewer / Code Quality Reviewer）
+Stage 3: Integrate   → push + PR 创建（CI 由 Stop Hook 自动监控）
+Stage 4: Ship        → Learning + 自动合并 + cleanup（Stop Hook 自动执行）
 ```
 
-## 流程（autonomous_mode）
-
-```
-Step 0: Worktree
-Step 0.5: PRD Enrich (仅 autonomous_mode，粗 PRD 自动丰满)
-Stage 1: Spec (读 enriched PRD)
-Stage 2: Code (Subagent 三角色)
-Stage 3-4: Integrate + Ship
-```
-
-**唯一完成标志**: PR 已合并到 main。
+**唯一完成标志**: PR 已合并到 main。autonomous-research-proxy.md 默认加载，替代用户交互点。
 
 **职责分离原则**：
 - **文档面**（steps/*.md）：产出代码、Learning、状态标记（step_N: done）
@@ -131,20 +119,18 @@ skills/dev/
 
 ---
 
-## autonomous_mode（全自动模式）
+## 模式说明（Phase 1 Round 2 统一后）
 
-**触发**: `/dev --autonomous` 或 Brain task payload `autonomous_mode: true`
+**触发**: `/dev` 或 `/dev --task-id <id>`。`--autonomous` flag 已废弃（保留别名防老脚本报错，会 warn）。
 
-**加载顺序 (v14.14.0)**: `/dev --autonomous` 启动后, 主 agent 必须先加载 `packages/engine/skills/dev/steps/autonomous-research-proxy.md` 到系统 context, 再进入 Step 0. 该文件定义 Superpowers 所有 user 交互点 -> Research Subagent 的替换规则。只有加载了 `autonomous-research-proxy.md`, 后续 Superpowers skill 链中的所有 user 交互才会被 Subagent 代替。
+**加载顺序**: /dev 启动后主 agent 必须先加载 `packages/engine/skills/dev/steps/autonomous-research-proxy.md` 到系统 context，再进入 Step 0。该文件定义 Superpowers 所有 user 交互点 → Research Subagent 的替换规则。
 
 **流程**:
-- Stage 1: `superpowers:brainstorming` + `superpowers:writing-plans` 自主产出 plan（跳过用户交互）
+- Stage 1: `superpowers:brainstorming` + `superpowers:writing-plans` 自主产出 plan（Research Subagent 替代用户）
 - Stage 2: `superpowers:subagent-driven-development` 三角色（Implementer / Spec Reviewer / Code Quality Reviewer）
-- Stage 3-4: 不变（push / PR / CI / merge 自动化）
+- Stage 3-4: push / PR / CI / merge 自动化
 
-**跳过**:
-- 所有用户交互问询（2-3 方案选择、DoD 确认等）
-- Implementer 的"有问题要问吗"
+**跳过**: 所有用户交互问询（2-3 方案选择、DoD 确认等）、Implementer 的"有问题要问吗"
 
 **不跳过**（质量兜底）:
 - Spec Reviewer 审查（不信任 Implementer 报告）
@@ -153,4 +139,4 @@ skills/dev/
 - Stop Hook 所有检查
 - CI 自动合并
 
-**适用场景**: PRD 已给，agent 有能力自己做技术决策，无需用户在实现阶段介入
+**harness_mode**（Brain 派的 `harness_generate` 任务）仍保留 shortcut：step_2_code done + PR 创建 → exit 0，由 harness-evaluator 接手。
