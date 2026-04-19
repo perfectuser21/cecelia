@@ -1,38 +1,39 @@
-# PRD: CI 硬化第一批 — PR size 硬门禁 + npm audit critical gate
+# PRD: CI 硬化第二批 — BEHAVIOR 动态命令真执行
 
 ## 背景
 
-Repo-audit 发现 CI "太虚"（静态检查很多、真正的门禁很少）：
+Repo-audit 发现"CI 最虚的一刀"：`.github/workflows/ci.yml:221` 里的 DoD BEHAVIOR 命令执行步骤显式跳过了 `curl / chrome: / psql / bash / npm` 这五类命令，只跑 `node` 命令。
 
-- **PR size check** 目前在 `ci.yml:111` 只 `echo ::warning`，不 exit 1。历史上 6247/1449/1107/1022 行的 PR 都合并了。
-- **无 `npm audit`**：根目录 12 个漏洞（6 moderate + 6 high），CI 完全没有依赖安全门禁。
+```bash
+elif [[ "$CMD" == curl* ]] || [[ "$CMD" == chrome:* ]] || [[ "$CMD" == psql* ]] || [[ "$CMD" == bash* ]] || [[ "$CMD" == npm* ]]; then
+  echo "⏭️  跳过（需要运行时服务）: ${CMD%% *} ..."
+  SKIPPED=$((SKIPPED + 1))
+```
+
+后果：DoD 里声称的"API 可达性、DB 状态、服务行为"等动态验证，CI 从来没真跑过。写 DoD 的人以为自己设了门槛，CI 只是 echo "跳过"。
+
+同时发现第二个 bug：TASK_CARD 扫描用的是老命名 `.task-*.md / task-card.md`，当前 /dev 标准 `DoD.md` 不在扫描列表，所以这步对大部分 PR 根本没触发过。与 cleanup regex bug 同源（命名约定改过，脚本没跟改）。
 
 ## 成功标准
 
-1. PR size > 1500 行时 CI 硬失败（harness label PR 继续绕过 —— harness 合同 PR 本来就大）
-2. 500–1500 行保留现有 warning
-3. < 500 行正常通过
-4. 新增 `dep-audit` job，`npm audit --audit-level=critical`，有 critical 漏洞就 fail（moderate/high 暂放行）
-5. `dep-audit` 纳入 `ci-passed` needs 列表
-6. 本 PR 自身过 CI（<1500 行、0 critical）
+1. 新增 `dod-behavior-dynamic` CI job，带 postgres service + Brain 5221 spin-up + 等 `/api/brain/health`
+2. 新 job 执行 DoD 里 `Test: manual:curl/psql/bash/npm` 类型的命令 — 不再跳过
+3. chrome: 仍跳过（需 headful browser）
+4. TASK_CARD 扫描加入 `DoD.md`（主）；保留 `.task-*.md / task-card.md`（兼容）
+5. `dod-behavior-dynamic` 纳入 `ci-passed` needs + check 列表
+6. 早退机制：DoD 无动态命令时，新 job 不启动 Brain（省 postgres 开销）
+7. 本 PR 自带一条 curl 动态测试作为 dogfood（验新 job 能真跑通）
 
 ## 非目标（YAGNI）
 
-- 不修复现有 6 个 high / 6 个 moderate 漏洞（后续独立 PR，按包分批）
-- 不收紧到 `--audit-level=high`（第一次收紧会红一堆，先起步）
-- 不改 `--max-warnings` / ESLint 严格度（下一批）
-- 不改 BEHAVIOR 跳过逻辑（下一批，涉及到 Brain 服务 spin-up，另起 PR）
+- 不碰 engine-tests 里原 "DoD BEHAVIOR 命令执行" 步骤（它继续负责 node 快速路径，与新 job 分工）
+- 不改 chrome: 跳过逻辑（需 headful，暂无刚需）
+- 不改 DoD 格式（向后兼容）
+- 不重写 Brain startup（复用 brain-integration 同款 postgres service 配置）
 
-## 渐进收紧路径
+## 分工
 
-本 PR 为"起步门槛"。后续每月审一次，按以下路径收紧：
-
-- Step 1（本 PR）: `critical`
-- Step 2（1 个月后）: `high`（需先修现有 6 个 high）
-- Step 3（2 个月后）: `moderate`
-- Step 4（长期）: `low`
-
-PR size 同理：
-- Step 1（本 PR）: `> 1500 行` 硬失败
-- Step 2（后续）: `> 1000 行` 硬失败
-- Step 3（长期）: `> 500 行` 硬失败
+| Job | 跑什么 | 需要服务 | 速度 |
+|-----|-------|---------|-----|
+| engine-tests (旧) | `node` + `tests/` | 无 | 快 |
+| dod-behavior-dynamic (新) | `curl` / `psql` / `bash` / `npm` | postgres + Brain | 慢（Brain 需 ~10-30s 起） |

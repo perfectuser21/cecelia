@@ -192,7 +192,8 @@ jobs:
         run: |
           # 检测 PR 中的 task-card.md 文件（跳过未含 task-card 的 PR）
           TASK_CARD=""
-          for f in .task-*.md task-card.md; do
+          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
+          for f in DoD.md .task-*.md task-card.md; do
             [ -f "$f" ] && TASK_CARD="$f" && break
           done
           if [ -z "$TASK_CARD" ]; then
@@ -218,7 +219,8 @@ jobs:
         run: |
           # 检测 PR 中的 task-card.md 文件
           TASK_CARD=""
-          for f in .task-*.md task-card.md; do
+          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
+          for f in DoD.md .task-*.md task-card.md; do
             [ -f "$f" ] && TASK_CARD="$f" && break
           done
           if [ -z "$TASK_CARD" ]; then
@@ -508,6 +510,139 @@ jobs:
             src/__tests__/integration/agent-lifecycle.integration.test.js \
             --reporter=verbose
 
+  # ─── DoD BEHAVIOR 动态命令执行（curl/psql/bash/npm 真跑）────────────
+  # 与 engine-tests 中的 "DoD BEHAVIOR 命令执行" 分工：
+  #   engine-tests：只跑 node 命令（无服务依赖，快速）
+  #   dod-behavior-dynamic（本 job）：跑 curl/psql/bash/npm 等需要运行时服务的命令
+  # 自动检测 DoD 文件是否含动态命令；无则早退不起 Brain。
+  dod-behavior-dynamic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检测 DoD 动态命令
+        id: detect
+        run: |
+          TASK_CARD=""
+          for f in DoD.md .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 DoD/task-card，跳过动态验证"
+            echo "has_dynamic=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # 扫描是否含 curl/psql/bash/npm 类型的动态命令
+          if grep -qE '^\s+Test:\s+manual:(curl|psql|bash|npm)\b' "$TASK_CARD"; then
+            echo "has_dynamic=true" >> $GITHUB_OUTPUT
+            echo "task_card=$TASK_CARD" >> $GITHUB_OUTPUT
+            echo "🔬 DoD 含动态命令，将启动 Brain 并真执行: $TASK_CARD"
+          else
+            echo "has_dynamic=false" >> $GITHUB_OUTPUT
+            echo "⏭️  DoD 无动态命令（纯 node / tests/），跳过 Brain spin-up"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.detect.outputs.has_dynamic == 'true'
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install Brain deps
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: cd packages/brain && npm ci
+      - name: Run Migrations
+        if: steps.detect.outputs.has_dynamic == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: cd packages/brain && node src/migrate.js
+      - name: Start Brain server
+        if: steps.detect.outputs.has_dynamic == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+          NODE_ENV: test
+        run: |
+          cd packages/brain
+          node src/server.js > /tmp/brain.log 2>&1 &
+          echo $! > /tmp/brain.pid
+          # 等 /api/brain/health 返回 200（最多 60s）
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:5221/api/brain/health > /dev/null 2>&1; then
+              echo "✅ Brain 启动耗时 ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Brain 60s 内未就绪"
+          tail -60 /tmp/brain.log
+          exit 1
+      - name: 执行 DoD BEHAVIOR 动态命令
+        if: steps.detect.outputs.has_dynamic == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: |
+          TASK_CARD="${{ steps.detect.outputs.task_card }}"
+          FAILED=0
+          PASSED=0
+          SKIPPED=0
+          echo "🔬 开始执行 DoD BEHAVIOR 动态命令: $TASK_CARD"
+          while IFS= read -r line; do
+            CMD="${line#*Test: manual:}"
+            CMD="${CMD#"${CMD%%[![:space:]]*}"}"  # trim leading spaces
+            # chrome 需要 headful，仍跳过
+            if [[ "$CMD" == chrome:* ]]; then
+              SKIPPED=$((SKIPPED + 1))
+              echo "⏭️  跳过 chrome 命令（需 headful browser）: ${CMD%% *} ..."
+              continue
+            fi
+            # 只跑动态类型（node 在 engine-tests 里已跑过）
+            if [[ "$CMD" != curl* ]] && [[ "$CMD" != psql* ]] && [[ "$CMD" != bash* ]] && [[ "$CMD" != npm* ]]; then
+              continue
+            fi
+            echo "▶️  执行: $CMD"
+            if eval "$CMD"; then
+              PASSED=$((PASSED + 1))
+              echo "    ✅ PASS"
+            else
+              FAILED=$((FAILED + 1))
+              echo "::error::❌ FAIL: $CMD"
+            fi
+          done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
+          echo "📊 动态 BEHAVIOR 完成 — 通过 $PASSED 失败 $FAILED 跳过 $SKIPPED"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::${FAILED} 个 BEHAVIOR 动态命令执行失败"
+            exit 1
+          fi
+      - name: Stop Brain
+        if: always() && steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          [ -f /tmp/brain.pid ] && kill $(cat /tmp/brain.pid) 2>/dev/null || true
+          tail -40 /tmp/brain.log 2>/dev/null || true
+
   # ─── Harness DoD 完整性校验（harness PR 专用，非 harness 自动跳过）──
   harness-dod-integrity:
     runs-on: ubuntu-latest
@@ -631,7 +766,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, harness-dod-integrity, harness-contract-lint]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -655,6 +790,7 @@ jobs:
           check "workspace-build"        "${{ needs.workspace-build.result }}"
           check "workspace-test"         "${{ needs.workspace-test.result }}"
           check "e2e-smoke"              "${{ needs.e2e-smoke.result }}"
+          check "dod-behavior-dynamic"   "${{ needs.dod-behavior-dynamic.result }}"
           check "harness-dod-integrity"  "${{ needs.harness-dod-integrity.result }}"
 
           if [ "$FAILED" = "true" ]; then
