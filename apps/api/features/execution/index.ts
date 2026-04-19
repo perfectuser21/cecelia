@@ -73,7 +73,6 @@ const manifest: FeatureManifest = {
     HarnessPipelinePage: () => import('./pages/HarnessPipelinePage'),
     HarnessPipelineDetailPage: () => import('./pages/HarnessPipelineDetailPage'),
     HarnessPipelineStepPage: () => import('./pages/HarnessPipelineStepPage'),
-    HarnessPipelineStatsPage: () => import('./pages/HarnessPipelineStatsPage'),
   },
 };
 
