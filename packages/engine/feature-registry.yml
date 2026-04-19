@@ -6,6 +6,17 @@ version: "1.0.0"
 updated: "2026-04-19"
 
 changelog:
+  - version: "17.0.0"
+    date: "2026-04-19"
+    change: "fix"
+    description: "Stop Hook 多 worktree session 路由根治。Phase 6 E2E 重测 empirical 暴露：hooks/stop.sh break 2 找第一个 .dev-lock 就路由不区分 session；stop-dev.sh _session_matches 用 $CLAUDE_SESSION_ID env var 但 Claude Code 不传这个 env var（实测 2.1.114），只通过 stdin JSON 传 session_id/transcript_path/cwd。之前 PR #2373/#1189/#1190 反复修但没触及根因。本 PR：(1) stop.sh 顶部读 stdin JSON 解析 session_id，export CLAUDE_HOOK_SESSION_ID；按 owner_session 精确匹配扫 .dev-lock；没匹配+有 session_id → exit 0 不路由；没 session_id → fallback 老 break-2 行为。(2) stop-dev.sh _session_matches 优先读 CLAUDE_HOOK_SESSION_ID fallback 老 env var。(3) worktree-manage.sh 加 _resolve_claude_session_id：沿 PPID 链查 claude cmdline 提取 --session-id 写 owner_session。(4) stop.sh 加 CLAUDE_HOOK_STDIN_JSON_OVERRIDE env 给 test 用（vitest spawn stdin 不稳定）。(5) regression test 4 cases。major bump 16.0.0 → 17.0.0（hook 协议变更）。"
+    files:
+      - "hooks/stop.sh"
+      - "hooks/stop-dev.sh"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh"
+      - "packages/engine/tests/hooks/stop-hook-multi-worktree-routing.test.ts (new)"
+      - "Engine 6 处版本文件 (17.0.0)"
+
   - version: "16.0.0"
     date: "2026-04-19"
     change: "refactor"

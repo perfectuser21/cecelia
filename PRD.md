@@ -1,40 +1,77 @@
-# PRD: CI 硬化第三批 — ESLint --max-warnings 冻结基线
+# PRD: Stop Hook 多 Worktree Session 路由修复（Engine 16.0.0 → 17.0.0）
 
 ## 背景
 
-Repo-audit 发现 `ci.yml:83 / 86` 两处 ESLint 命令没有 `--max-warnings`，默认 Infinity，warnings 可无限累积。实测：
+empirical 定位（2026-04-19 Phase 6 E2E 重测）：**Stop Hook 在并行多 worktree 场景下路由错误**。
 
-- **Brain**：244 warnings（0 errors）
-- **apps/api**：18 warnings（0 errors）
+- `hooks/stop.sh` 找到第一个 `.dev-lock` 就 `break 2` route 到 stop-dev.sh
+- 并行多 /dev 会话时 Stop Hook 总是处理第一个被扫到的，不区分当前 session
+- 验证 PR #2435：stop.sh 路由到 `ci-harden-batch1` 而不是当前 `phase6-e2e-marker2` → exit 0 放行 → PR 永不自动合并
 
-后果：每个 PR 都可以悄悄加新 warning，没人拦，技术债随时间单调上涨。
+更深层：stop-dev.sh `_session_matches` 用 `$CLAUDE_SESSION_ID` env var 做 session 匹配，**但 Claude Code 不传这个 env var**。实测 Claude Code 只通过 stdin JSON 传 `session_id`/`transcript_path`/`cwd`/`stop_hook_active`。`_session_matches` session 分支永远失败，退到 branch/tty 失败，stop-dev.sh 找不到匹配 → exit 0。
+
+之前 PR #2373/#1189/#1190 反复修但都没触及根因：**env var 就是空的**。
+
+## 真实目的
+
+Stop Hook 在并行多 worktree 下 **100% 正确路由到当前 session**。修 session_id 来源（从 stdin JSON 读）。
 
 ## 成功标准
 
-1. `ci.yml:83` brain lint 加 `--max-warnings 244`
-2. `ci.yml:86` workspace lint 加 `--max-warnings 18`
-3. 当前基线严格匹配：244 / 18
-4. 注释说明"只允许下调，不允许上调"的运维规则
+1. `hooks/stop.sh` 顶部读 stdin JSON，export `CLAUDE_HOOK_SESSION_ID`/`CLAUDE_HOOK_TRANSCRIPT_PATH`/`CLAUDE_HOOK_CWD`/`CLAUDE_HOOK_STDIN_JSON`
+2. stop.sh 改扫描逻辑：有 session_id 时按 owner_session 精确匹配；没 session_id fallback 老 break 2 行为
+3. stop-dev.sh `_session_matches` 优先用 `$CLAUDE_HOOK_SESSION_ID`
+4. `worktree-manage.sh init-or-check` 写 `.dev-lock` 时用 `ps -o args` 解析父 claude 的 `--session-id` 作为 owner_session
+5. 新加 regression test 模拟 2 个 worktree 不同 owner_session
+6. Engine 6 处版本 bump 17.0.0
 
-## 非目标（YAGNI）
+## 方案选择
 
-- 不主动修现有 244/18 个 warning（那是独立清理工作，工作量大）
-- 不加 `--max-warnings 0`（太严，当前会红一片）
-- 不改 ESLint 规则本身
-- 不改 `changes` detector 触发条件（继续只在 brain/workspace 变更时跑）
+| 方案 | 选 |
+|---|---|
+| a. stop.sh 读 stdin + session_id 精确匹配 + 修 worktree-manage | ✅ |
+| b. 对所有 .dev-lock 都跑 stop-dev.sh | ❌ 浪费 + exit code 混乱 |
+| c. 只看 branch + cwd | ❌ cwd 永远是 main |
 
-## 下调基线的操作流程
+## 涉及文件
 
-后续任何 PR 如果修了 warning：
+**修改**：
+- `hooks/stop.sh`
+- `hooks/stop-dev.sh`
+- `packages/engine/skills/dev/scripts/worktree-manage.sh`
+- Engine 6 处版本文件
+- `packages/engine/feature-registry.yml`
 
-1. 本地跑 `cd packages/brain && npx eslint src/ 2>&1 | tail -1` 得到新数字 N
-2. PR 里把 `--max-warnings 244` 改成 `--max-warnings N`
-3. PR 描述写"warnings 基线从 244 → N"
+**新建**：
+- `packages/engine/tests/hooks/stop-hook-multi-worktree-routing.test.ts`
 
-CI 永远以 ci.yml 里的数字为准；数字只能越改越小。
+## 不做
 
-## 当前 PR 不会触发 ESLint job 的风险
+- 不改 Claude Code runtime
+- 不改 Brain / Superpowers / devloop-check
+- 不改 CI workflow
 
-eslint job 现在只在 `brain` 或 `workspace` 变更时触发。本 PR 只改 `.github/workflows/ci.yml`，所以 eslint job 在本 PR **会被 skip**。这是已知事实，不会影响后续 brain/workspace PR 的防护 —— 下次有人改 brain 代码时，CI 会用新的 `--max-warnings 244` 基线验证。
+## 假设
 
-ARTIFACT 层验证通过"ci.yml 含 `--max-warnings 244/18`"的静态检查来保证这次改动真落地。
+- Claude Code 通过 stdin JSON 传 session 信息（2.1.114 实测验证）
+- `ps -o args= $PPID` 在 macOS/Linux 可用
+- headless claude 启动指定 `--session-id`（launcher + Brain 都这么做）
+
+## DoD
+
+- [ ] [ARTIFACT] stop.sh 含 stdin 读取 + CLAUDE_HOOK_SESSION_ID export
+  Test: manual:node -e "const c=require('fs').readFileSync('hooks/stop.sh','utf8');if(!c.includes('CLAUDE_HOOK_SESSION_ID')||!c.includes('.session_id'))process.exit(1)"
+- [ ] [ARTIFACT] stop.sh 按 owner_session 精确匹配（非无脑 break 2）
+  Test: manual:node -e "const c=require('fs').readFileSync('hooks/stop.sh','utf8');if(!c.includes('owner_session'))process.exit(1)"
+- [ ] [ARTIFACT] stop-dev.sh _session_matches 读 CLAUDE_HOOK_SESSION_ID
+  Test: manual:node -e "const c=require('fs').readFileSync('hooks/stop-dev.sh','utf8');if(!c.includes('CLAUDE_HOOK_SESSION_ID'))process.exit(1)"
+- [ ] [ARTIFACT] worktree-manage.sh 从 ps 解析 session-id
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/scripts/worktree-manage.sh','utf8');if(!c.includes('ps -o args')||!c.includes('session-id'))process.exit(1)"
+- [ ] [ARTIFACT] Engine 6 处版本 17.0.0
+  Test: manual:node -e "const fs=require('fs');['packages/engine/VERSION','packages/engine/.hook-core-version','packages/engine/hooks/VERSION'].forEach(f=>{if(fs.readFileSync(f,'utf8').trim()!=='17.0.0')process.exit(1)})"
+- [ ] [ARTIFACT] feature-registry 含 17.0.0
+  Test: manual:node -e "if(!require('fs').readFileSync('packages/engine/feature-registry.yml','utf8').includes('17.0.0'))process.exit(1)"
+- [ ] [BEHAVIOR] multi-worktree Stop Hook routing regression 通过
+  Test: tests/hooks/stop-hook-multi-worktree-routing.test.ts
+- [ ] [ARTIFACT] Learning 文件存在
+  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-04192140-stophook-session-routing.md')"
