@@ -49,6 +49,11 @@ RUN (curl -fsSL https://claude.ai/install.sh | sh) \
     || npm install -g @anthropic-ai/claude-code \
     || true
 
+# V6 图生成依赖 — 全局装 linux 版 @resvg/resvg-js
+# 用途：content pipeline generate 节点调 ~/claude-output/scripts/gen-v6-person.mjs
+# 渲染 9 张卡片 PNG。宿主 node_modules 是 Mac darwin-arm64 二进制，容器 Linux 无法加载。
+RUN npm install -g @resvg/resvg-js
+
 # 非 root 用户 — Claude Code 拒绝 root + --dangerously-skip-permissions
 RUN groupadd -r cecelia && useradd -r -g cecelia -m -d /home/cecelia -s /bin/bash cecelia
 
@@ -63,9 +68,11 @@ WORKDIR /workspace
 
 # Headless 标志，下游脚本与 Stop Hook 据此跳过 TTY 检查
 # 默认 CLAUDE_CONFIG_DIR 指向可写副本；docker-executor 会显式注入同一值以保证一致性
+# NODE_PATH 让 node --import resolve 到 `npm install -g` 装的全局模块（@resvg/resvg-js 等）
 ENV CECELIA_HEADLESS=true \
     CECELIA_DOCKER_SANDBOX=true \
     NODE_NO_WARNINGS=1 \
+    NODE_PATH=/usr/local/lib/node_modules \
     CLAUDE_CONFIG_DIR=/home/cecelia/.claude \
     HOME=/home/cecelia
 

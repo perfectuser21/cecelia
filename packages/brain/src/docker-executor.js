@@ -246,6 +246,12 @@ export function buildDockerArgs(opts, ctx = {}) {
   if (existsFn(hostContentOutput)) {
     extraVolumes.push('-v', `${hostContentOutput}:/home/cecelia/content-output:rw`);
   }
+  // 挂载 ~/claude-output 让 V6 图生成脚本（gen-v6-person.mjs）及其他卡片生成脚本可用。
+  // @resvg/resvg-js 本身已由 Dockerfile 全局装 linux 版；此挂载提供脚本源码 + 卡片 HTML 模板。
+  const hostClaudeOutput = path.join(homedir, 'claude-output');
+  if (existsFn(hostClaudeOutput)) {
+    extraVolumes.push('-v', `${hostClaudeOutput}:/home/cecelia/claude-output:rw`);
+  }
 
   const args = [
     'run',
