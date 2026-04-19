@@ -169,15 +169,15 @@ DROP + 重建 `tasks_task_type_check` 约束，在 `232` 既有列表基础上�
 
 ## 8. DoD
 
-- [ARTIFACT] 4 个 migration 文件存在
+- [x] [ARTIFACT] 4 个 migration 文件存在
   Test: `manual:node -e "['236_harness_v2_initiative_contracts','237_harness_v2_task_dependencies','238_harness_v2_initiative_runs','239_harness_v2_task_types'].forEach(f=>require('fs').accessSync('packages/brain/migrations/'+f+'.sql'))"`
-- [BEHAVIOR] 三张新表存在且关键列类型正确
+- [x] [BEHAVIOR] 三张新表存在且关键列类型正确
   Test: tests/packages/brain/src/__tests__/harness-v2-schema.integration.test.js
-- [BEHAVIOR] task_type CHECK 接受 harness_initiative/harness_task/harness_final_e2e
+- [x] [BEHAVIOR] task_type CHECK 接受 harness_initiative/harness_task/harness_final_e2e
   Test: tests/packages/brain/src/__tests__/harness-v2-schema.integration.test.js
-- [BEHAVIOR] task-router.js VALID_TASK_TYPES 含三个新类型
+- [x] [BEHAVIOR] task-router.js VALID_TASK_TYPES 含三个新类型
   Test: `manual:node -e "const {VALID_TASK_TYPES}=await import('./packages/brain/src/task-router.js');['harness_initiative','harness_task','harness_final_e2e'].forEach(t=>{if(!VALID_TASK_TYPES.includes(t))process.exit(1)})"`
-- [BEHAVIOR] pre-flight-check.js SYSTEM_TASK_TYPES 含三个新类型
+- [x] [BEHAVIOR] pre-flight-check.js SYSTEM_TASK_TYPES 含三个新类型
   Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/pre-flight-check.js','utf8');['harness_initiative','harness_task','harness_final_e2e'].forEach(t=>{if(!c.includes(\"'\"+t+\"'\"))process.exit(1)})"`
 
 ## 成功标准
