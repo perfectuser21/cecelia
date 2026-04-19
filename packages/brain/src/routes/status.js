@@ -347,107 +347,245 @@ const HARNESS_STAGE_LABELS = {
   harness_report: 'Report',
 };
 
+const LANGGRAPH_NODE_LABELS = {
+  planner: 'Planner',
+  proposer: 'Proposer',
+  reviewer: 'Reviewer',
+  generator: 'Generator',
+  evaluator: 'Evaluator',
+  report: 'Report',
+};
+
+/**
+ * 从 langgraph_step 事件数组聚合 pipeline 进度。
+ * 事件已按 created_at asc 排序。events 为空时返回 null（表示老任务）。
+ */
+export function summarizeLangGraphEvents(events) {
+  if (!Array.isArray(events) || events.length === 0) return null;
+
+  let currentNode = null;
+  let lastVerdict = null;
+  let lastReviewRound = 0;
+  let lastEvalRound = 0;
+  let lastPrUrl = null;
+  let maxReviewRound = 0;
+  let maxEvalRound = 0;
+  let lastError = null;
+
+  for (const ev of events) {
+    const p = ev.payload || {};
+    if (p.node) currentNode = p.node;
+    if (typeof p.review_round === 'number') {
+      maxReviewRound = Math.max(maxReviewRound, p.review_round);
+      lastReviewRound = p.review_round;
+    }
+    if (typeof p.eval_round === 'number') {
+      maxEvalRound = Math.max(maxEvalRound, p.eval_round);
+      lastEvalRound = p.eval_round;
+    }
+    if (p.review_verdict) lastVerdict = p.review_verdict;
+    if (p.evaluator_verdict) lastVerdict = p.evaluator_verdict;
+    const pr = p.pr_url;
+    if (pr && typeof pr === 'string' && !pr.startsWith('null')) {
+      lastPrUrl = pr;
+    }
+    if (p.error) lastError = p.error;
+  }
+
+  return {
+    current_node: currentNode,
+    current_node_label: currentNode ? (LANGGRAPH_NODE_LABELS[currentNode] || currentNode) : null,
+    last_verdict: lastVerdict,
+    review_round: lastReviewRound,
+    eval_round: lastEvalRound,
+    gan_rounds: maxReviewRound,
+    fix_rounds: maxEvalRound,
+    total_steps: events.length,
+    pr_url: lastPrUrl,
+    last_error: lastError,
+    last_event_at: events[events.length - 1]?.created_at || null,
+  };
+}
+
+/**
+ * 根据 planner task + langgraph 聚合 构造单条 pipeline 记录。
+ * 公开给单元测试使用。
+ */
+export function buildPipelineRecord(task, events, legacyStageMap) {
+  const lg = summarizeLangGraphEvents(events);
+  const sprintDir = task.sprint_dir || task.payload?.sprint_dir || null;
+  const plannerPrUrl = task.pr_url || task.result?.pr_url || lg?.pr_url || null;
+
+  const startTime = task.started_at ? new Date(task.started_at) : new Date(task.created_at);
+  const endTime = task.completed_at
+    ? new Date(task.completed_at)
+    : lg?.last_event_at ? new Date(lg.last_event_at) : new Date();
+  const elapsed_ms = endTime - startTime;
+
+  let verdict = 'pending';
+  if (task.status === 'completed') verdict = 'passed';
+  else if (['failed', 'cancelled', 'canceled', 'quarantined'].includes(task.status)) verdict = 'failed';
+  else if (['in_progress', 'running'].includes(task.status)) verdict = 'in_progress';
+  else if (task.status === 'queued') verdict = 'pending';
+
+  const nodeToStage = {
+    planner: 'harness_planner',
+    proposer: 'harness_contract_propose',
+    reviewer: 'harness_contract_review',
+    generator: 'harness_generate',
+    evaluator: 'harness_ci_watch',
+    report: 'harness_report',
+  };
+
+  let stages;
+  if (lg) {
+    const seenNodes = new Set(
+      (events || []).map(e => (e && e.payload) ? e.payload.node : null).filter(Boolean)
+    );
+    stages = HARNESS_STAGE_ORDER.map(type => {
+      const nodeName = Object.keys(nodeToStage).find(k => nodeToStage[k] === type);
+      const label = HARNESS_STAGE_LABELS[type];
+      let status = 'not_started';
+      if (nodeName && seenNodes.has(nodeName)) {
+        if (verdict === 'passed') {
+          status = 'completed';
+        } else if (verdict === 'failed') {
+          status = lg.current_node === nodeName ? 'failed' : 'completed';
+        } else if (lg.current_node === nodeName) {
+          status = 'in_progress';
+        } else {
+          status = 'completed';
+        }
+      }
+      return { task_type: type, label, status };
+    });
+  } else {
+    const stageMap = legacyStageMap || {};
+    stages = HARNESS_STAGE_ORDER.map(type => stageMap[type] || {
+      task_type: type,
+      label: HARNESS_STAGE_LABELS[type],
+      status: 'not_started',
+    });
+  }
+
+  const currentStep = lg?.current_node_label
+    || stages.find(s => s.status === 'in_progress' || s.status === 'queued')?.label
+    || null;
+
+  return {
+    pipeline_id: task.id,
+    planner_task_id: task.id, // 向后兼容：前端详情页用这个跳转
+    sprint_dir: sprintDir,
+    title: task.title,
+    description: task.description || '',
+    sprint_goal: task.payload?.sprint_goal || '',
+    priority: task.priority || 'P1',
+    status: task.status,
+    verdict,
+    current_step: currentStep,
+    elapsed_ms,
+    created_at: task.created_at,
+    started_at: task.started_at,
+    completed_at: task.completed_at,
+    pr_url: plannerPrUrl,
+    langgraph: lg,
+    stages,
+  };
+}
+
 router.get('/harness-pipelines', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const statusFilter = req.query.status || null;
 
-    let query = `
-      SELECT id, title, task_type, status, sprint_dir, created_at, started_at, completed_at,
-             updated_at, payload, error_message, pr_url, result
+    // —— Step 1：把 planner task 作为 pipeline 主轴 ——
+    const plannerParams = [];
+    let plannerSql = `
+      SELECT id, title, description, task_type, status, priority, sprint_dir,
+             created_at, started_at, completed_at, updated_at,
+             payload, error_message, pr_url, result
       FROM tasks
-      WHERE task_type = ANY($1)
+      WHERE task_type = 'harness_planner'
     `;
-    const params = [HARNESS_STAGE_ORDER];
-    let paramIdx = 2;
-
     if (statusFilter) {
-      query += ` AND status = $${paramIdx}`;
-      params.push(statusFilter);
-      paramIdx++;
+      plannerParams.push(statusFilter);
+      plannerSql += ` AND status = $${plannerParams.length}`;
     }
+    plannerParams.push(limit);
+    plannerSql += ` ORDER BY created_at DESC LIMIT $${plannerParams.length}`;
 
-    query += ` ORDER BY created_at DESC LIMIT $${paramIdx}`;
-    params.push(limit * HARNESS_STAGE_ORDER.length);
+    const { rows: planners } = await pool.query(plannerSql, plannerParams);
+    const plannerIds = planners.map(p => p.id);
 
-    const { rows } = await pool.query(query, params);
-
-    const pipelineMap = new Map();
-
-    for (const task of rows) {
-      const dir = task.sprint_dir || task.payload?.sprint_dir || 'unknown';
-      if (!pipelineMap.has(dir)) {
-        pipelineMap.set(dir, { sprint_dir: dir, stages: {}, created_at: task.created_at });
-      }
-      const pipeline = pipelineMap.get(dir);
-      if (!pipeline.stages[task.task_type] ||
-          new Date(task.created_at) > new Date(pipeline.stages[task.task_type].created_at)) {
-        pipeline.stages[task.task_type] = {
-          id: task.id,
-          task_type: task.task_type,
-          label: HARNESS_STAGE_LABELS[task.task_type] || task.task_type,
-          status: task.status,
-          title: task.title,
-          created_at: task.created_at,
-          started_at: task.started_at,
-          completed_at: task.completed_at,
-          updated_at: task.updated_at,
-          error_message: task.error_message,
-          pr_url: task.pr_url,
-        };
-      }
-      if (task.task_type === 'harness_planner') {
-        pipeline.created_at = task.created_at;
-        pipeline.planner_title = task.title;
-        pipeline.planner_task_id = task.id;
-        pipeline.sprint_goal = task.payload?.sprint_goal || '';
+    // —— Step 2：一次性批量拉 langgraph_step 事件（按 planner task_id） ——
+    const eventsByTask = new Map();
+    if (plannerIds.length > 0) {
+      const { rows: evRows } = await pool.query(
+        `SELECT task_id, payload, created_at
+         FROM cecelia_events
+         WHERE task_id = ANY($1::uuid[])
+           AND event_type = 'langgraph_step'
+         ORDER BY created_at ASC`,
+        [plannerIds]
+      );
+      for (const row of evRows) {
+        const tid = String(row.task_id);
+        if (!eventsByTask.has(tid)) eventsByTask.set(tid, []);
+        eventsByTask.get(tid).push(row);
       }
     }
 
-    const pipelines = Array.from(pipelineMap.values())
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .slice(0, limit)
-      .map(pipeline => {
-        const stages = HARNESS_STAGE_ORDER.map(type => pipeline.stages[type] || {
-          task_type: type,
-          label: HARNESS_STAGE_LABELS[type],
-          status: 'not_started',
-        });
+    // —— Step 3：为 langgraph 事件缺失的 planner，回退查老子 task（按 sprint_dir 聚合阶段） ——
+    const sprintDirsForFallback = [];
+    for (const task of planners) {
+      const tid = String(task.id);
+      if (!eventsByTask.has(tid) || eventsByTask.get(tid).length === 0) {
+        const dir = task.sprint_dir || task.payload?.sprint_dir;
+        if (dir) sprintDirsForFallback.push(dir);
+      }
+    }
 
-        const activeStage = stages.find(s => s.status === 'in_progress' || s.status === 'queued');
-        const currentStep = activeStage?.label || null;
-
-        const lastDone = [...stages].reverse().find(s => s.status && s.status !== 'not_started');
-        let verdict = 'pending';
-        if (lastDone) {
-          if (lastDone.task_type === 'harness_report' && lastDone.status === 'completed') {
-            verdict = 'passed';
-          } else if (['failed', 'canceled', 'quarantined'].includes(lastDone.status)) {
-            verdict = 'failed';
-          } else if (lastDone.status === 'in_progress' || lastDone.status === 'queued') {
-            verdict = 'in_progress';
-          } else {
-            verdict = lastDone.status;
-          }
+    const stagesBySprintDir = new Map();
+    if (sprintDirsForFallback.length > 0) {
+      const { rows: legacyRows } = await pool.query(
+        `SELECT id, title, task_type, status, sprint_dir,
+                created_at, started_at, completed_at, updated_at,
+                error_message, pr_url
+         FROM tasks
+         WHERE task_type = ANY($1)
+           AND sprint_dir = ANY($2)`,
+        [HARNESS_STAGE_ORDER, sprintDirsForFallback]
+      );
+      for (const sub of legacyRows) {
+        if (!stagesBySprintDir.has(sub.sprint_dir)) stagesBySprintDir.set(sub.sprint_dir, {});
+        const stageMap = stagesBySprintDir.get(sub.sprint_dir);
+        if (!stageMap[sub.task_type] ||
+            new Date(sub.created_at) > new Date(stageMap[sub.task_type].created_at)) {
+          stageMap[sub.task_type] = {
+            id: sub.id,
+            task_type: sub.task_type,
+            label: HARNESS_STAGE_LABELS[sub.task_type] || sub.task_type,
+            status: sub.status,
+            title: sub.title,
+            created_at: sub.created_at,
+            started_at: sub.started_at,
+            completed_at: sub.completed_at,
+            updated_at: sub.updated_at,
+            error_message: sub.error_message,
+            pr_url: sub.pr_url,
+          };
         }
+      }
+    }
 
-        const startTime = new Date(pipeline.created_at);
-        const reportStage = pipeline.stages['harness_report'];
-        const endTime = reportStage?.completed_at ? new Date(reportStage.completed_at) : new Date();
-        const elapsed_ms = endTime - startTime;
-
-        return {
-          sprint_dir: pipeline.sprint_dir,
-          planner_task_id: pipeline.planner_task_id || null,
-          title: pipeline.planner_title || pipeline.sprint_dir,
-          sprint_goal: pipeline.sprint_goal || '',
-          verdict,
-          current_step: currentStep,
-          elapsed_ms,
-          created_at: pipeline.created_at,
-          stages,
-        };
-      });
+    // —— Step 4：拼 pipeline 记录 ——
+    const pipelines = planners.map(task => {
+      const tid = String(task.id);
+      const evs = eventsByTask.get(tid) || [];
+      const sprintDir = task.sprint_dir || task.payload?.sprint_dir || null;
+      const legacy = sprintDir ? stagesBySprintDir.get(sprintDir) : null;
+      return buildPipelineRecord(task, evs, legacy);
+    });
 
     res.json({ pipelines, total: pipelines.length });
   } catch (err) {
