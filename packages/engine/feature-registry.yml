@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.10"
+    date: "2026-04-19"
+    change: "feat"
+    description: "Alignment Table Generator — 固化 Superpowers ↔ Engine 升级对照表。新增 packages/engine/scripts/generate-alignment-table.sh，扫 upstream cache + local prompts + alignment.yaml，生成 docs/superpowers-alignment-table.md：图例 / 全景表（14 skill × 6 列：upstream 文件数 / 本地副本 / coverage_level / 对齐状态 / 决策理由）/ 统计 / 文件级详情（21 文件 × sha256 对比）/ 升级 workflow 7 步。每次 Superpowers 升级后跑 `bash generate-alignment-table.sh` 一键刷新。配套 sync-from-upstream.sh（机器检测 drift）+ check-superpowers-alignment.cjs（CI gate）形成完整升级工具链。当前状态：11 个 full 对齐 / 1 rejected（using-git-worktrees）/ 2 N/A（meta）/ 0 drifted。"
+    files:
+      - "packages/engine/scripts/generate-alignment-table.sh"
+      - "docs/superpowers-alignment-table.md"
+
   - version: "14.17.9"
     date: "2026-04-19"
     change: "refactor"
