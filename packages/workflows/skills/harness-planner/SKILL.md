@@ -1,32 +1,34 @@
 ---
 id: harness-planner-skill
 description: |
-  Harness Planner — Harness v5.0 Layer 1：将用户需求展开为结构化产品 spec。
-  输出 sprint-prd.md（What，不写 How），含 User Stories/GWT/FR-SC 编号/OKR 对齐/假设/边界/范围限定/受影响文件，供 GAN 对抗层使用。
-version: 5.0.0
+  Harness Planner — Harness v2 阶段 A Layer 1：把用户需求展开为 Initiative PRD + 可调度 Task DAG。
+  输出 sprint-prd.md（What，不写 How）+ task-plan.json（4-5 Task，含 depends_on / dod / files / complexity / estimated_minutes），供 Initiative Runner 入库。
+version: 6.0.0
 created: 2026-04-08
-updated: 2026-04-11
+updated: 2026-04-19
 changelog:
-  - 5.0.0: Step 0 升级为 Brain API 上下文采集（不读代码实现细节）+ 歧义自检（9类）+ PRD 模板结构化（User Stories/GWT/FR-SC/OKR对齐/假设/边界/范围限定/受影响文件）
-  - 4.1.0: 新增 Step 0 — 写 PRD 前先读取相关代码文件，PRD 末尾附"预期受影响文件"小节（路径可追溯）
-  - 4.0.0: Harness v4.0 Planner（独立 skill，不依赖其他 skill）
+  - 6.0.0: Harness v2 M2 — 增产 task-plan.json（DAG）。强制 4-5 Task（>5 需 justification，>8 拒绝）；每 Task 20-60min；必须输出 DAG；task_id 为逻辑 ID（入库时由 Brain 映射 UUID）
+  - 5.0.0: Step 0 升级为 Brain API 上下文采集（不读代码实现细节）+ 歧义自检（9类）+ PRD 模板结构化
+  - 4.1.0: 新增 Step 0 — 写 PRD 前先读取相关代码文件
+  - 4.0.0: Harness v4.0 Planner（独立 skill）
 ---
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
-> **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
+> **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
 
-# /harness-planner — Harness v5.0 Planner
+# /harness-planner — Harness v2 Initiative Planner（阶段 A · Layer 1）
 
-**角色**: Planner（需求分析师）  
-**对应 task_type**: `harness_planner`
+**角色**: Planner（Initiative 级规划师）
+**对应 task_type**: `harness_initiative`（v2）/ `harness_planner`（v1 兼容）
 
 ---
 
 ## 核心原则
 
-- **只写 What，不写 How**
-- PRD 描述用户看到的行为，不描述实现细节
-- 输出 `sprint-prd.md`，供 Proposer 提合同草案
+- **只写 What，不写 How**：PRD 描述用户看到的行为，不描述实现路径
+- **Initiative → Task DAG**：Planner 拆分到 Task 级，每 Task 20-60 分钟可完成
+- **强制 DAG**：即便是线性任务也必须写成单链 depends_on
+- **4-5 Task 硬约束**：> 5 必须在 `justification` 字段说明理由；> 8 Brain 会直接拒收
 
 ---
 
@@ -34,140 +36,187 @@ changelog:
 
 ### Step 0: 采集系统上下文（Brain API — 不读代码实现细节）
 
-在写 PRD 之前，调用 Brain API 获取当前系统全景上下文，用于意图判断和优先级确认：
-
 ```bash
 curl localhost:5221/api/brain/context
 ```
 
-从返回结果中提取以下信息，用于后续 PRD 撰写：
-- **OKR 进度**：当前活跃 KR 的完成百分比，判断本次任务对哪个 KR 有推进作用
-- **活跃任务**：已有哪些任务在进行中，避免重复
-- **最近 PR**：最近合并了什么，了解系统当前演进方向
-- **有效决策**：已有哪些架构/设计决策，PRD 不能与之矛盾
+从返回提取：
+- **OKR 进度**：当前活跃 KR，判断本任务推进哪个 KR
+- **活跃任务**：避免重复
+- **最近 PR**：了解系统演进方向
+- **有效决策**：PRD 不能与之矛盾
 
-**边界声明**：Step 0 只读 Brain API 返回的运行时上下文，**不读代码实现细节**（不探索代码实现、不读源文件、不分析实现路径）。受影响文件列表由 Proposer 在合同阶段确认。
+**边界**：只读运行时上下文，不探索代码实现细节。
 
 ---
 
 ### Step 1: 歧义自检（9 类扫描）
 
-在撰写 PRD 前，对任务描述执行以下 9 类歧义扫描。无法从任务描述或 Brain 上下文推断的项，标记为 `[ASSUMPTION: ...]` 写入假设列表。**只有影响方向性决策的歧义才向用户提问**（预期 0-1 个问题）。
+在拆分 DAG 前对任务描述执行扫描：
 
 | # | 歧义类型 | 检查内容 |
 |---|----------|----------|
-| 1 | **功能范围** | 哪些功能在范围内，哪些明确排除？ |
-| 2 | **数据模型** | 涉及哪些数据结构？字段名/类型是否确定？ |
-| 3 | **UX 流程** | 用户交互路径是否清晰？有无分支流程？ |
-| 4 | **非功能需求** | 性能、安全、兼容性有无隐含要求？ |
-| 5 | **集成点** | 依赖哪些外部系统或 API？接口是否已定义？ |
-| 6 | **边界情况** | 异常输入、空状态、并发场景如何处理？ |
-| 7 | **约束** | 技术栈、框架版本、部署环境有无约束？ |
-| 8 | **术语** | 关键术语是否有歧义（如"任务"/"工作流"）？ |
-| 9 | **完成信号** | 如何判断功能"完成"？验收标准是什么？ |
+| 1 | 功能范围 | 哪些功能在范围内，哪些排除 |
+| 2 | 数据模型 | 涉及哪些数据结构 |
+| 3 | UX 流程 | 用户交互路径 |
+| 4 | 非功能需求 | 性能/安全/兼容性 |
+| 5 | 集成点 | 依赖哪些外部系统 |
+| 6 | 边界情况 | 异常/空状态/并发 |
+| 7 | 约束 | 技术栈/框架/部署环境 |
+| 8 | 术语 | 关键术语歧义 |
+| 9 | 完成信号 | 验收标准 |
 
-无法推断的项一律标注为 `[ASSUMPTION: <推断内容>]`，写入 PRD 假设列表。
+无法推断的写 `[ASSUMPTION: ...]` 进 PRD 假设列表。**只有方向性歧义才向用户提问**（预期 0-1 问题）。
 
 ---
 
-### Step 2: 读取任务描述并写 sprint-prd.md
+### Step 2: 输出 sprint-prd.md（What 为主）
 
 ```bash
 mkdir -p "$SPRINT_DIR"
 ```
 
-PRD 模板如下（全量输出，不留空占位符）：
+模板（不留占位符）：
 
 ```markdown
 # Sprint PRD — {目标名称}
 
 ## OKR 对齐
 
-- **对应 KR**：KR-{编号}（{KR 标题}）
+- **对应 KR**：KR-{编号}（{标题}）
 - **当前进度**：{X}%
-- **本次推进预期**：完成后预计推进至 {Y}%
-- **说明**：{如任务与活跃 KR 对不上，在此注明，并在假设列表中标注 [ASSUMPTION: ...]}
+- **本次推进预期**：{Y}%
 
 ## 背景
 
-{为什么做这件事，关联 Brain 上下文中的 OKR/决策依据}
+{为什么做，关联 OKR/决策}
 
 ## 目标
 
-{用一句话描述用户希望实现什么}
+{一句话用户价值}
 
 ## User Stories
-
-（按优先级从高到低排列，每个 Story 至少关联 1 个验收场景）
 
 **US-001**（P0）: 作为 {角色}，我希望 {功能}，以便 {价值}
 **US-002**（P1）: 作为 {角色}，我希望 {功能}，以便 {价值}
 
 ## 验收场景（Given-When-Then）
 
-**场景 1**（关联 US-001）:
-- **Given** {初始状态}
-- **When** {触发动作}
-- **Then** {期望结果}
-
-**场景 2**（关联 US-001）:
-- **Given** {另一初始状态}
-- **When** {触发动作}
-- **Then** {期望结果}
+**场景 1**（US-001）:
+- Given {初始态}
+- When {触发}
+- Then {期望}
 
 ## 功能需求
 
-- **FR-001**: {功能需求描述}
-- **FR-002**: {功能需求描述}
-- **FR-003**: {功能需求描述}
+- **FR-001**: {描述}
+- **FR-002**: {描述}
 
 ## 成功标准
 
-- **SC-001**: {可量化的验收条件}
-- **SC-002**: {可量化的验收条件}
+- **SC-001**: {可量化}
+- **SC-002**: {可量化}
 
 ## 假设
 
-- [ASSUMPTION: {无法从上下文推断，自行假设的内容}]
-- [ASSUMPTION: {另一个假设}]
+- [ASSUMPTION: ...]
 
 ## 边界情况
 
-- {异常/空状态/并发等边界场景描述}
-- {另一个边界情况}
+- {异常/空/并发}
 
 ## 范围限定
 
-**在范围内**:
-- {功能/行为 A}
-- {功能/行为 B}
-
-**不在范围内**:
-- {明确排除的功能 X}
-- {明确排除的功能 Y}
+**在范围内**: ...
+**不在范围内**: ...
 
 ## 预期受影响文件
 
-（由 Step 0 Brain API 上下文推断，Proposer 在合同阶段验证实际路径）
-
-- `{文件路径 1}`：{一句话说明为何受影响}
-- `{文件路径 2}`：{一句话说明为何受影响}
+- `path/to/file`: {为何受影响}
 ```
 
 ---
 
-### Step 3: push + 输出
+### Step 3: 拆 Task DAG — 输出 task-plan.json
+
+**硬性要求**：
+- 目标 4-5 Task；最多 8；>5 必填 `justification`
+- 每 Task 20-60 分钟可独立完成
+- 每 Task 对应 **1 PR**（后续 Generator 按拓扑序取一个 Task 产一个 PR）
+- 必须显式 `depends_on`（线性也要写成 `["上一个 task_id"]`）
+- 禁写实现细节（不写 "使用 X 库"、不写 "引入 Y 模式"）
+
+**task-plan.json schema**（严格，Brain `parseTaskPlan` 会校验）：
+
+```json
+{
+  "initiative_id": "pending",
+  "justification": "（可选；tasks.length > 5 时必填）为什么需要 N 个 Task",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "建立 Schema（30-60字简述）",
+      "scope": "这个 Task 的范围。描述做什么（What），不写怎么做（How）。",
+      "dod": [
+        "[BEHAVIOR] 验收点 1（可运行验证）",
+        "[ARTIFACT] 文件存在性校验"
+      ],
+      "files": [
+        "packages/brain/migrations/XXX_feature.sql",
+        "packages/brain/src/xxx.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "核心逻辑实现",
+      "scope": "...",
+      "dod": ["[BEHAVIOR] ..."],
+      "files": ["..."],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    }
+  ]
+}
+```
+
+**字段约束**：
+- `task_id`: 逻辑 ID（`ws1/ws2/...`），Brain 入库时映射到 UUID
+- `depends_on`: 其他 task_id 的数组；不能自指；不能有环
+- `complexity`: `S|M|L`
+- `estimated_minutes`: `20 ≤ n ≤ 60`（超出重拆）
+- `dod`: 至少 1 条，建议至少 1 个 `[BEHAVIOR]`
+
+**输出格式**：stdout 末尾必须用 \`\`\`json ... \`\`\` 代码块包裹 task-plan.json（Brain Runner 会抓取）。
+
+---
+
+### Step 4: push + 返回
 
 ```bash
-git checkout -b "cp-$(date +%m%d%H%M)-harness-prd"
+git checkout -b "cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-harness-prd"
 git add "$SPRINT_DIR/sprint-prd.md"
-git commit -m "feat(harness): sprint PRD — {目标}"
+git commit -m "feat(harness): Initiative PRD — {目标}"
 git push origin HEAD
-
-BRANCH=$(git branch --show-current)
 ```
 
 **最后一条消息**：
+
 ```
 {"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-..."}
 ```
+
+上方代码块中的 `task-plan.json` 必须存在，否则 Runner 会返回 `parseTaskPlan` 错误。
+
+---
+
+## 常见错误
+
+1. **写实现细节**（"引入 X 库"、"用 async 模式"）→ 违反 What-only 原则
+2. **Task > 5 没写 justification** → Brain 会拒收
+3. **单 Task >60 min** → 重拆
+4. **忘记 depends_on 字段**（即使空数组也要写）
+5. **task-plan.json 不在 code fence 内** → Runner 抓不到
