@@ -583,7 +583,7 @@ jobs:
           NODE_ENV: test
         run: |
           cd packages/brain
-          node src/server.js > /tmp/brain.log 2>&1 &
+          node server.js > /tmp/brain.log 2>&1 &
           echo $! > /tmp/brain.pid
           # 等 /api/brain/health 返回 200（最多 60s）
           for i in $(seq 1 60); do
