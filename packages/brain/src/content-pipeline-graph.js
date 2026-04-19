@@ -22,6 +22,12 @@
  */
 
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
+import {
+  loadSkillContent,
+  parseDockerOutput,
+  extractField,
+  extractVerdict,
+} from './harness-graph.js';
 
 /**
  * Content Pipeline 状态 schema
@@ -169,3 +175,211 @@ export const CONTENT_PIPELINE_NODE_NAMES = [
   'image_review',
   'export',
 ];
+
+// ─── Docker 节点工厂 ─────────────────────────────────────────────────────────
+
+/**
+ * 节点配置：skill 名、task_type、产物字段提取规则、verdict 提取规则。
+ */
+const NODE_CONFIGS = {
+  research: {
+    skill: 'pipeline-research',
+    task_type: 'content_research',
+    outputs: ['findings_path', 'output_dir'],
+  },
+  copywrite: {
+    skill: 'pipeline-copywrite',
+    task_type: 'content_copywrite',
+    outputs: ['copy_path', 'article_path'],
+  },
+  copy_review: {
+    skill: 'pipeline-copy-review',
+    task_type: 'content_copy_review',
+    outputs: ['copy_review_feedback'],
+    verdict_field: 'copy_review_verdict',
+    verdict_values: ['APPROVED', 'REVISION'],
+  },
+  generate: {
+    skill: 'pipeline-generate',
+    task_type: 'content_generate',
+    outputs: ['person_data_path', 'cards_dir'],
+  },
+  image_review: {
+    skill: 'pipeline-review',
+    task_type: 'content_image_review',
+    outputs: ['image_review_feedback'],
+    verdict_field: 'image_review_verdict',
+    verdict_values: ['PASS', 'FAIL'],
+  },
+  export: {
+    skill: 'pipeline-export',
+    task_type: 'content_export',
+    outputs: ['manifest_path', 'nas_url'],
+  },
+};
+
+/**
+ * 构建节点 prompt：skill content + input_ref 字段。
+ *
+ * 关键：不嵌前面节点的文本输出（copy.md / article.md / findings.json 内容），
+ * 只传路径引用。节点自己在 docker 容器里 Read 文件。token 不累积。
+ *
+ * @param {string} nodeName     'research' | 'copywrite' | ...
+ * @param {string} skillContent SKILL.md 原文
+ * @param {object} state        当前 ContentPipelineState
+ * @param {string} taskId       Brain task id
+ * @returns {string}            完整 prompt
+ */
+export function buildNodeInputPrompt(nodeName, skillContent, state, taskId) {
+  const cfg = NODE_CONFIGS[nodeName];
+  const round =
+    nodeName === 'copywrite' && state.copy_review_round
+      ? `\n**copywrite_round**: ${state.copy_review_round + 1}`
+      : nodeName === 'generate' && state.image_review_round
+        ? `\n**generate_round**: ${state.image_review_round + 1}`
+        : '';
+
+  // Input refs（路径，非文本内容）
+  const refs = [];
+  if (state.pipeline_id) refs.push(`**pipeline_id**: ${state.pipeline_id}`);
+  if (state.keyword) refs.push(`**keyword**: ${state.keyword}`);
+  if (state.output_dir) refs.push(`**output_dir**: ${state.output_dir}`);
+  if (state.findings_path && nodeName !== 'research') refs.push(`**findings_path**: ${state.findings_path}`);
+  if (state.copy_path && (nodeName === 'copy_review' || nodeName === 'generate' || nodeName === 'export'))
+    refs.push(`**copy_path**: ${state.copy_path}`);
+  if (state.article_path && (nodeName === 'copy_review' || nodeName === 'export'))
+    refs.push(`**article_path**: ${state.article_path}`);
+  if (state.person_data_path && (nodeName === 'image_review' || nodeName === 'export'))
+    refs.push(`**person_data_path**: ${state.person_data_path}`);
+  if (state.cards_dir && (nodeName === 'image_review' || nodeName === 'export'))
+    refs.push(`**cards_dir**: ${state.cards_dir}`);
+
+  // Feedback（REVISION / FAIL 回路时传，非内容）
+  const feedback =
+    nodeName === 'copywrite' && state.copy_review_feedback
+      ? `\n\n## 上一轮审查反馈\n${state.copy_review_feedback}`
+      : nodeName === 'generate' && state.image_review_feedback
+        ? `\n\n## 上一轮 vision 审查反馈\n${state.image_review_feedback}`
+        : '';
+
+  const outputContract = cfg.verdict_field
+    ? `\n\n## 输出要求\n在 stdout 最后输出:\n\`\`\`\n${cfg.verdict_field}: ${cfg.verdict_values.join('|')}\n${cfg.outputs.map((f) => `${f}: <内容或 null>`).join('\n')}\n\`\`\``
+    : `\n\n## 输出要求\n在 stdout 最后输出产物路径:\n\`\`\`\n${cfg.outputs.map((f) => `${f}: <绝对路径>`).join('\n')}\n\`\`\``;
+
+  return `你是 ${cfg.skill} agent。按下面 SKILL 指令工作。
+
+${skillContent}
+
+---
+
+## 本次节点参数
+**task_id**: ${taskId}
+**node**: ${nodeName}${round}
+${refs.join('\n')}${feedback}${outputContract}`;
+}
+
+/**
+ * 创建接入 Docker 的真实节点集合。
+ *
+ * @param {Function} dockerExecutor  executeInDocker 函数（仿 harness）
+ * @param {Object}   task            Brain 任务对象（含 id, payload 等）
+ * @param {Object}   [opts]
+ * @param {Record<string,string>} [opts.env]  额外注入容器的环境变量
+ * @returns {Object}                 节点 map: { research, copywrite, copy_review, generate, image_review, export }
+ */
+export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
+  const baseEnv = opts.env || {};
+  const taskId = task.id;
+
+  /**
+   * 通用 Docker 节点执行器。
+   * 构建 prompt → 调 executeInDocker → 解析输出 → 返回 state 更新。
+   */
+  async function runDockerNode(nodeName, state) {
+    const cfg = NODE_CONFIGS[nodeName];
+    console.log(`[content-pipeline-graph] node=${nodeName} task=${taskId} starting docker execution`);
+    const startMs = Date.now();
+
+    const skillContent = loadSkillContent(cfg.skill);
+    const prompt = buildNodeInputPrompt(nodeName, skillContent, state, taskId);
+
+    try {
+      const result = await dockerExecutor({
+        task: { ...task, task_type: cfg.task_type },
+        prompt,
+        env: {
+          ...baseEnv,
+          CECELIA_TASK_TYPE: cfg.task_type,
+          CONTENT_PIPELINE_NODE: nodeName,
+          CONTENT_PIPELINE_ID: state.pipeline_id || '',
+          CONTENT_OUTPUT_DIR: state.output_dir || '',
+        },
+      });
+
+      const durationSec = ((Date.now() - startMs) / 1000).toFixed(1);
+      const success = result.exit_code === 0 && !result.timed_out;
+      console.log(
+        `[content-pipeline-graph] node=${nodeName} task=${taskId} exit=${result.exit_code} timed_out=${result.timed_out} duration=${durationSec}s`
+      );
+
+      if (!success) {
+        const errMsg = result.timed_out
+          ? `Docker timeout after ${durationSec}s`
+          : `Docker exit code ${result.exit_code}: ${(result.stderr || '').slice(-500)}`;
+        return { output: '', error: errMsg, success: false };
+      }
+
+      const output = parseDockerOutput(result.stdout);
+      return { output, error: null, success: true };
+    } catch (err) {
+      console.error(`[content-pipeline-graph] node=${nodeName} task=${taskId} error: ${err.message}`);
+      return { output: '', error: err.message, success: false };
+    }
+  }
+
+  /**
+   * 从 stdout 提取节点声明的 output 字段，合并到 state 更新。
+   */
+  function extractNodeOutputs(nodeName, output, state) {
+    const cfg = NODE_CONFIGS[nodeName];
+    const update = { trace: nodeName };
+
+    for (const field of cfg.outputs) {
+      const v = extractField(output, field);
+      if (v) update[field] = v;
+    }
+
+    if (cfg.verdict_field) {
+      const v = extractVerdict(output, cfg.verdict_values) || cfg.verdict_values[0];
+      update[cfg.verdict_field] = v;
+      // round 累加（graph 外部 reducer 无，这里手动）
+      if (nodeName === 'copy_review') {
+        update.copy_review_round = (state.copy_review_round || 0) + 1;
+      } else if (nodeName === 'image_review') {
+        update.image_review_round = (state.image_review_round || 0) + 1;
+      }
+    }
+
+    return update;
+  }
+
+  const makeNode = (nodeName) => async (state) => {
+    const { output, error, success } = await runDockerNode(nodeName, state);
+    if (!success) {
+      return { error, trace: `${nodeName}(ERROR)` };
+    }
+    return { ...extractNodeOutputs(nodeName, output, state), error: null };
+  };
+
+  return {
+    research:     makeNode('research'),
+    copywrite:    makeNode('copywrite'),
+    copy_review:  makeNode('copy_review'),
+    generate:     makeNode('generate'),
+    image_review: makeNode('image_review'),
+    export:       makeNode('export'),
+  };
+}
+
+// 导出给测试用
+export { NODE_CONFIGS };
