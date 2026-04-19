@@ -2800,10 +2800,26 @@ async function triggerCeceliaRun(task) {
     return triggerLocalCodexExec(task);
   }
 
+  // 2.85 Harness v2 Initiative Runner（阶段 A）
+  // harness_initiative task 走 Initiative Runner：一次性调 Planner → 入库 subtasks +
+  // initiative_contracts + initiative_runs。Planner 之后的 Proposer/Reviewer/Generator/
+  // Evaluator 由后续 milestone（M3/M4）接入，v2 初版只跑阶段 A。
+  if (task.task_type === 'harness_initiative') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness v2 Initiative Runner (阶段 A)`);
+    try {
+      const { runInitiative } = await import('./harness-initiative-runner.js');
+      return await runInitiative(task);
+    } catch (err) {
+      console.error(`[executor] Initiative Runner error task=${task.id}: ${err.message}`);
+      return { success: false, taskId: task.id, initiative: true, error: err.message };
+    }
+  }
+
   // 2.9 LangGraph Pipeline（HARNESS_LANGGRAPH_ENABLED=true + harness_planner）
   // 当启用 LangGraph 时，harness_planner 任务不走单步 Docker 执行，
   // 而是由 LangGraph 编排完整 6 步 pipeline（planner→proposer→reviewer→generator→evaluator→report）。
   // LangGraph runner 内部为每个节点调 executeInDocker。
+  // ⚠️ v1 路径保留（向后兼容老数据），新 Initiative 走上面的 harness_initiative 分支。
   if (task.task_type === 'harness_planner' && _isLangGraphEnabled()) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (HARNESS_LANGGRAPH_ENABLED=true)`);
     try {
