@@ -172,17 +172,69 @@ export function parseDockerOutput(stdout) {
 }
 
 /**
- * 从 Docker 输出中提取特定字段值（正则匹配）。
- * 支持 key: value 和 **key**: value 格式。
- * 值截止到换行符或下一个已知字段标记（key:）。
+ * 被视为"未提供"的字面量（Claude 在失败/缺值时可能输出这些）。
+ * extractField 抓到这些字符串时返回 null，下游才不会把假值当真。
+ *
+ * 背景：harness task 0154e285 在 Generator 里 git push 静默失败（容器 .gitconfig
+ * :ro 挂载导致 safe.directory 设置失败），Claude 输出 `pr_url: null`，老正则
+ * 贪婪匹配返回字符串 "null"，Evaluator 拿到这个"URL" 必然 FAIL，Fix 循环无限死循环。
+ */
+const INVALID_LITERALS = new Set([
+  'null', 'undefined', 'none', 'n/a', 'na',
+  'failed', 'error', 'tbd', 'todo',
+  '<url>', '<pr_url>', '<branch>', '<pr_branch>',
+]);
+
+/**
+ * 从 Docker 输出中提取特定字段值。
+ *
+ * 策略（按优先级）：
+ *   1. 字面量匹配 `field: value` / `**field**: value` / JSON `"field": "value"`
+ *      - 值命中 INVALID_LITERALS（null/FAILED/none/...）→ 视为无提取
+ *      - 值两端引号 → 剥掉
+ *   2. pr_url 额外 fallback：扫全文找 `https://github.com/{owner}/{repo}/pull/{num}`
+ *   3. pr_branch 额外 fallback：扫全文找 `cp-\d{8,10}-[\w-]+` 分支名
+ *   4. 否则返回 null
+ *
+ * SKILL.md 要求 Claude 输出纯 JSON `{"verdict":"DONE","pr_url":"..."}`；
+ * harness-graph.js prompt 要求 `pr_url: <URL>` 字面量。两种格式经过上面
+ * 三步策略都能被正确提取。
  */
 export function extractField(text, fieldName) {
   if (!text) return null;
-  // 匹配 "field_name: value" 或 "**field_name**: value"
-  // 值截止到换行或下一个 word: 模式（避免吃掉同行后续字段）
-  const re = new RegExp(`(?:\\*\\*)?${fieldName}(?:\\*\\*)?:\\s*(.+?)(?:\\s+\\w+:|\\n|$)`, 'i');
+  const fieldLower = String(fieldName).toLowerCase();
+
+  // Step 1: 字面量匹配
+  // 允许 key 被 `**` 或 `"` 包裹（markdown 粗体 / JSON 场景）
+  // 值首字符允许可选 `"`，然后非引号/非换行/非逗号/非右花括号的字符
+  // 尾端可选 `"`，前瞻 `,` `}` `\n` `EOF`
+  const re = new RegExp(
+    `(?:\\*\\*|")?${fieldName}(?:\\*\\*|")?\\s*:\\s*"?([^"\\n,}]*?)"?(?=\\s*(?:[,}]|\\n|$))`,
+    'i'
+  );
   const m = text.match(re);
-  return m ? m[1].trim() : null;
+  if (m && m[1] !== undefined) {
+    const candidate = m[1].trim();
+    if (candidate && !INVALID_LITERALS.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+
+  // Step 2: pr_url fallback — 扫裸 GitHub PR URL
+  // 兼容 markdown 链接 / gh pr create 默认输出 / JSON 里被引号包的 URL
+  if (fieldLower === 'pr_url') {
+    const urlMatch = text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/);
+    if (urlMatch) return urlMatch[0];
+  }
+
+  // Step 3: pr_branch fallback — 扫 cp- 分支名
+  // cp-<8-10 digits>-<word-chars and hyphens>
+  if (fieldLower === 'pr_branch') {
+    const branchMatch = text.match(/\bcp-\d{8,10}-[\w-]+/);
+    if (branchMatch) return branchMatch[0];
+  }
+
+  return null;
 }
 
 /**
@@ -582,7 +634,35 @@ ${evalFeedback}
 ## 执行要求
 1. 严格按合同的 ${wsLabel} 范围实现，不越界
 2. 代码写完后 push 一个独立 PR（分支名含 \`ws${ws.index}\`）
-3. 在 stdout 输出 \`pr_url: <URL>\` 和 \`pr_branch: <branch>\``;
+3. 在 stdout 输出 \`pr_url: <URL>\` 和 \`pr_branch: <branch>\`
+
+## 输出格式（严格遵守 — Brain 依此提取 PR 并派 Evaluator）
+
+成功路径：最后一条消息必须含独立一行（支持纯字面量或 JSON 格式，两种都会被解析）：
+
+\`\`\`
+pr_url: https://github.com/perfectuser21/cecelia/pull/<编号>
+pr_branch: cp-<时间戳>-...-ws${ws.index}
+\`\`\`
+
+或（与 harness-generator SKILL 的 JSON 格式兼容）：
+
+\`\`\`
+{"verdict": "DONE", "pr_url": "https://github.com/perfectuser21/cecelia/pull/<编号>"}
+\`\`\`
+
+失败路径（git push / gh pr create 任何一步失败）：
+
+\`\`\`
+pr_url: FAILED
+pr_branch: FAILED
+STEP <N> FAILED: <具体错误原因，例如 "git push: permission denied" 或 "gh pr create: no commits">
+\`\`\`
+
+禁止事项：
+- 禁止输出 \`pr_url: null\`（用 FAILED 代替）
+- 禁止仅用 markdown 链接格式 \`[PR](https://...)\`（可以加，但必须同时输出上面的字面量或 JSON）
+- 禁止隐藏失败（push 失败必须明确输出 FAILED + 原因，不得 exit 0 假装成功）`;
 
       const { output, error } = await runDockerNode(
         'generator',
