@@ -18,5 +18,5 @@
 - [x] [BEHAVIOR] 动态 curl 命令：Brain /api/brain/health 在 CI 起来的 Brain 上可达（dogfood — 验证本 PR 的新 job 真能跑通）
   Test: manual:curl -sf http://localhost:5221/api/brain/health
 
-- [x] [BEHAVIOR] 动态 bash 命令：psql 能连上 postgres service 查 schema_migrations 表（dogfood）
-  Test: manual:bash -c "PGPASSWORD=cecelia_test psql -h localhost -U cecelia -d cecelia_test -tAc 'SELECT COUNT(*) FROM schema_migrations'"
+- [x] [BEHAVIOR] 动态 bash 命令：psql 能连上 postgres service 查 schema_version 表（dogfood）
+  Test: manual:bash -c "PGPASSWORD=cecelia_test psql -h localhost -U cecelia -d cecelia_test -tAc 'SELECT COUNT(*) FROM schema_version'"
