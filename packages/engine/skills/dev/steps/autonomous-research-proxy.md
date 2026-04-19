@@ -169,4 +169,43 @@ Task tool call:
 
 **覆盖率**：F4 前 7/14 (50%) → F4 后 **11/14 (79%)**，剩下 3 个：2 meta skill + 1 自造 worktree manager（刻意保留）。
 
+---
+
+## Phase 5 (v15.0.0) 硬规则：Superpowers finishing → Engine ship 接力
+
+Phase 5 把 Engine 独有能力升级为真 skill（`engine-worktree/enrich/decision/ship`）+ 删掉 Stage 3 冗余（原 03-integrate.md 和 Superpowers finishing 功能重叠）。
+
+**新硬规则（主 agent 必须遵守）**：
+
+当 Superpowers `finishing-a-development-branch` 执行完成（不管用户选 push+PR / merge / keep / discard 哪条路径，autonomous-research-proxy Tier 1 默认选 Option 2 = push+PR），**你的下一个 tool call 必须是**：
+
+```
+Skill({"skill":"engine-ship"})
+```
+
+不要认为 Superpowers 接力链到此结束就停止。Superpowers 不知道 Engine 有终棒 skill，必须由本规则硬性接驳。engine-ship 负责：
+- 写 Learning 文件 + 触发 Brain fire-learnings-event
+- 标记 `.dev-mode` 里 `step_4_ship=done`
+- 退出 assistant turn 让 Stop Hook 自动合并 PR
+
+**违反此规则的症状**：PR 创建后主 agent 停在 finishing → `.dev-mode` 里 step_4_ship 永远 pending → Stop Hook 条件 6 永远不触发 → PR 永不自动合并 → orphan-pr-worker 30min 兜底才处理（用户等得久）。
+
+## Phase 5 旧引用清理
+
+本文件上表引用的 `01-spec.md § 0.2.5` / `02-code.md § 2.3/2.4 / § 2.5` / `04-ship.md § 4.3` 等在 Phase 5 后路径变化：
+
+| 旧路径 | Phase 5 新位置 |
+|---|---|
+| `steps/01-spec.md` | ❌ Phase 4 已删（功能由 `/superpowers:brainstorming` + `/superpowers:writing-plans` 承担） |
+| `steps/02-code.md` | ❌ Phase 4 已删（功能由 `/superpowers:subagent-driven-development` 承担） |
+| `steps/03-integrate.md` | ❌ Phase 5 已删（冗余于 `/superpowers:finishing-a-development-branch`） |
+| `steps/04-ship.md § 4.3` discard 安全 | `skills/engine-ship/SKILL.md § 4` |
+| `steps/00-worktree-auto.md` | `skills/engine-worktree/SKILL.md` |
+| `steps/00.5-enrich.md` | `skills/engine-enrich/SKILL.md` |
+| `steps/00.7-decision-query.md` | `skills/engine-decision/SKILL.md` |
+
+上表交互点 #8（finishing discard confirm）的"04-ship.md §4.3"指的是现在的 `engine-ship/SKILL.md § 4`。
+上表交互点 #10（using-git-worktrees test-fail proceed）的"Step 0 00-worktree-auto.md"指的是现在的 `engine-worktree/SKILL.md § 3`。
+上表交互点 #12/#13/#15（executing-plans / receiving-code-review 升级路径）原绑定 `01-spec.md` / `02-code.md` — Phase 5 之后主 agent 在 Superpowers 对应 skill（`/superpowers:executing-plans` / `/superpowers:receiving-code-review`）里直接按 Tier 1/2/3 规则处理，不再需要本地独立 step 文件。
+
 **实际可引用 skill 覆盖 = 11/12 = 92%**
