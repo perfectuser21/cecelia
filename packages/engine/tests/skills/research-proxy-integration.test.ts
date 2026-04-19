@@ -4,7 +4,6 @@ import { join } from 'path';
 
 const PROXY_FILE = join(process.cwd(), 'skills/dev/steps/autonomous-research-proxy.md');
 const SKILL_FILE = join(process.cwd(), 'skills/dev/SKILL.md');
-const DECISION_FILE = join(process.cwd(), 'skills/engine-decision/SKILL.md');
 
 describe('autonomous-research-proxy 行为规则', () => {
   const content = readFileSync(PROXY_FILE, 'utf8');
@@ -15,12 +14,11 @@ describe('autonomous-research-proxy 行为规则', () => {
     });
   });
 
-  it('包含 8 个 Superpowers skill 名', () => {
+  it('包含主要 Superpowers skill 名', () => {
     [
       'brainstorming',
       'writing-plans',
       'finishing-a-development-branch',
-      'using-git-worktrees',
       'subagent-driven-development',
       'executing-plans',
       'systematic-debugging',
@@ -28,12 +26,12 @@ describe('autonomous-research-proxy 行为规则', () => {
     ].forEach((s) => expect(content).toContain(s));
   });
 
-  it('Subagent prompt 模板含 5 项 research anchor', () => {
+  it('Subagent prompt 模板含 research anchor', () => {
     [
       'Code reality',
-      'OKR strategic',
+      'OKR',
       'Historical decisions',
-      'Related Learnings',
+      'Learnings',
       'First-principles',
     ].forEach((anchor) => expect(content).toContain(anchor));
   });
@@ -56,39 +54,30 @@ describe('autonomous-research-proxy 行为规则', () => {
     expect(content).toContain('awaiting_human_decision');
   });
 
-  it('与 Step 0.5/0.7 分工说明清晰', () => {
-    expect(content).toContain('Step 0.5');
-    expect(content).toContain('Step 0.7');
-    expect(content).toContain('Enrich');
-    expect(content).toContain('Decision Query');
+  it('Phase 6 新规则：Tier 1 含 enrich-decide + decisions/match', () => {
+    expect(content).toContain('enrich-decide');
+    expect(content).toContain('decisions/match');
+  });
+
+  it('Phase 5 硬规则：finishing → engine-ship', () => {
+    expect(content).toContain('engine-ship');
   });
 });
 
-describe('SKILL.md 默认加载 autonomous-research-proxy（Phase 1 Round 2 后）', () => {
+describe('SKILL.md 加载 autonomous-research-proxy 规则 + inline Tier 1 快速参考', () => {
   const content = readFileSync(SKILL_FILE, 'utf8');
 
   it('提及 autonomous-research-proxy 文件', () => {
     expect(content).toContain('autonomous-research-proxy');
   });
 
-  it('说明 proxy 角色（Phase 5 后是规则文件，替代/代答 Superpowers 交互点）', () => {
-    // Phase 5 改为纯点火链后，SKILL.md 说明 proxy 是"问用户"交互点替代规则
-    expect(content).toMatch(/autonomous-research-proxy[\s\S]{0,800}(必读|默认加载|核心|真价值|替代|代答|规则|Tier)/);
-  });
-});
-
-describe('engine-decision SKILL.md（Phase 5 迁移自 00.7-decision-query.md v1.1.0）', () => {
-  const content = readFileSync(DECISION_FILE, 'utf8');
-
-  it('说明 Decisions 为推理输入非硬约束（v1.1.0 重塑精神保留）', () => {
-    expect(content.toLowerCase()).toMatch(/推理输入|subagent/);
+  it('inline Tier 1 核心条款', () => {
+    expect(content).toContain('Research Subagent');
+    expect(content).toContain('不停下');
   });
 
-  it('说明后续 Superpowers 链消费 decisions', () => {
-    expect(content.toLowerCase()).toContain('subagent');
-  });
-
-  it('包含 TERMINAL IMPERATIVE（Phase 5 要求）', () => {
+  it('TERMINAL IMPERATIVE 指向 engine-worktree', () => {
+    expect(content).toContain('engine-worktree');
     expect(content).toContain('TERMINAL IMPERATIVE');
   });
 });
