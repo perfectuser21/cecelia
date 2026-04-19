@@ -24,8 +24,11 @@ jobs:
       - name: Find and remove prd/task artifacts
         id: cleanup
         run: |
-          # 找出所有 .prd-*.md 和 .task-*.md 文件
-          FILES=$(git ls-files | grep -E "^\.(prd|task)-" || true)
+          # 找出所有合并后的残留 md：
+          #   旧命名：.prd-*.md / .task-*.md（带前导点、小写，保留向后兼容）
+          #   新命名：DoD.cp-*.md / PRD.cp-*.md / TASK_CARD.cp-*.md（大写、无前导点）
+          # 不匹配 DoD.md / PRD.md（活跃 PR 使用，无 .cp- 后缀）
+          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
 
           if [ -z "$FILES" ]; then
             echo "✅ 无 prd/task 残留文件，跳过"
