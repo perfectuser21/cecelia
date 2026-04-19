@@ -7,9 +7,9 @@
  *
  * Checks:
  *   1. No "manual:TODO" string anywhere under .md/.sh/.cjs files.
- *   2. No external superpowers references of form
- *      "superpowers:<pkg>/<file>.md" in any .md file. All prompts must
- *      live under packages/engine/skills/dev/prompts/.
+ *   2. No dangling refs to packages/engine/skills/dev/prompts/ (Phase 4
+ *      deleted the local Superpowers copies; any reference is now broken).
+ *      Use /superpowers:<skill-name> skill invocation instead.
  *   3. regression-contract.yaml must not have empty core[] / golden_paths[]
  *      (unless explicitly marked "allow_empty: true" on the same line).
  *   4. Engine version must be in sync across 5 files:
@@ -107,12 +107,11 @@ function checkNoManualTodo(failures) {
 }
 
 // ---------------------------------------------------------------------------
-// Check 2: no external "superpowers:<pkg>/<file>.md" references
+// Check 2: no dangling references to deleted packages/engine/skills/dev/prompts/
+// (Phase 4 deleted the local Superpowers copies; any reference is now broken.)
 // ---------------------------------------------------------------------------
-function checkNoExternalSuperpowersRef(failures) {
-  // Match e.g. "superpowers:systematic-debugging/SKILL.md" but allow
-  // "superpowers:xxx" without a path component (bare skill mentions).
-  const re = /superpowers:[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+\.md/g;
+function checkNoDanglingPromptRefs(failures) {
+  const re = /packages\/engine\/skills\/dev\/prompts\/[A-Za-z0-9_/.-]+\.md/g;
   const files = walk(ENGINE_DIR, ['.md']);
   let hits = 0;
   for (const file of files) {
@@ -122,17 +121,17 @@ function checkNoExternalSuperpowersRef(failures) {
       if (matches) {
         for (const m of matches) {
           failures.push({
-            check: 'no-external-superpowers-ref',
+            check: 'no-dangling-prompt-ref',
             file: relToRepo(file),
             line: i + 1,
-            msg: `external reference "${m}" — must live under packages/engine/skills/dev/prompts/`,
+            msg: `reference "${m}" — prompts/ deleted in Phase 4, use /superpowers:<skill-name> instead`,
           });
           hits++;
         }
       }
     }
   }
-  if (VERBOSE) console.log(`${TAG} check2 no-external-superpowers-ref: scanned ${files.length} files, ${hits} hit(s)`);
+  if (VERBOSE) console.log(`${TAG} check2 no-dangling-prompt-ref: scanned ${files.length} files, ${hits} hit(s)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -334,7 +333,7 @@ function main() {
 
   const failures = [];
   checkNoManualTodo(failures);
-  checkNoExternalSuperpowersRef(failures);
+  checkNoDanglingPromptRefs(failures);
   checkRegressionContractNonEmpty(failures);
   checkVersionSync(failures);
 
