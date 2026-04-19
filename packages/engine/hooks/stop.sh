@@ -20,6 +20,27 @@
 
 set -euo pipefail
 
+# ===== v17.0.0: 从 stdin 读 Claude Code hook JSON =====
+# Claude Code 通过 stdin JSON 传 session_id/transcript_path/cwd/stop_hook_active
+# （不是 env var，之前 stop-dev.sh 用 $CLAUDE_SESSION_ID 永远是空的）
+# 实测验证 2.1.114：env var 全空，stdin JSON 有 session_id
+# CLAUDE_HOOK_STDIN_JSON_OVERRIDE: test 专用逃生（vitest spawn stdin 不稳定，允许 env 注入）
+if [[ -n "${CLAUDE_HOOK_STDIN_JSON_OVERRIDE:-}" ]]; then
+    _STOP_HOOK_STDIN="$CLAUDE_HOOK_STDIN_JSON_OVERRIDE"
+else
+    _STOP_HOOK_STDIN=$(cat 2>/dev/null || echo '{}')
+fi
+[[ -z "$_STOP_HOOK_STDIN" ]] && _STOP_HOOK_STDIN='{}'
+_parse_json_field() {
+    # 最小 JSON 提取，不依赖 jq（hook 必须极快）
+    local key="$1" json="$2"
+    echo "$json" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed -E "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/" | head -1
+}
+export CLAUDE_HOOK_SESSION_ID="$(_parse_json_field session_id "$_STOP_HOOK_STDIN")"
+export CLAUDE_HOOK_TRANSCRIPT_PATH="$(_parse_json_field transcript_path "$_STOP_HOOK_STDIN")"
+export CLAUDE_HOOK_CWD="$(_parse_json_field cwd "$_STOP_HOOK_STDIN")"
+export CLAUDE_HOOK_STDIN_JSON="$_STOP_HOOK_STDIN"
+
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,18 +59,18 @@ export HARNESS_MODE="$_HARNESS_MODE"
 
 # ===== 检查 .dev-lock.<branch>（per-branch 硬钥匙）→ 调用 stop-dev.sh =====
 # v14.2.0: .dev-lock 只存在于 worktree 目录（不在主仓库），扫描所有 worktree
+# v17.0.0: 并行多 worktree 下必须按 session_id 精确匹配 owner_session，
+#          否则 stop.sh 会路由到错的 /dev 会话 → exit 0 误放行 → PR 永不自动合并
 # 主仓库残留的 .dev-lock 自动清理（迁移兼容）
 _DEV_LOCK_FOUND=false
 
-# 扫描所有 worktree 查找 .dev-lock（v14.2.0: dev-lock 只在 worktree，不在主仓库）
+# 收集所有 worktree 路径（含主仓库）
+_STOP_HOOK_WT_LIST=()
 _wt_count=0
 while IFS= read -r _wt_line; do
     if [[ "$_wt_line" == "worktree "* ]]; then
         _wt_count=$((_wt_count + 1))
-        _wt_path="${_wt_line#worktree }"
-        for _f in "$_wt_path"/.dev-lock.*; do
-            [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break 2
-        done
+        _STOP_HOOK_WT_LIST+=("${_wt_line#worktree }")
     fi
 done < <(git worktree list --porcelain 2>/dev/null)
 
@@ -60,7 +81,36 @@ if [[ $_wt_count -gt 1 ]]; then
     done
 fi
 
+# ===== v17.0.0: session_id 精确匹配（owner_session）=====
+# 当前 session 有 session_id 时，只匹配 owner_session == $CLAUDE_HOOK_SESSION_ID 的 .dev-lock
+if [[ -n "$CLAUDE_HOOK_SESSION_ID" ]]; then
+    for _wt in "${_STOP_HOOK_WT_LIST[@]}"; do
+        for _lock in "$_wt"/.dev-lock.*; do
+            [[ -f "$_lock" ]] || continue
+            _owner=$(grep "^owner_session:" "$_lock" 2>/dev/null | awk '{print $2}' || true)
+            if [[ -n "$_owner" && "$_owner" == "$CLAUDE_HOOK_SESSION_ID" ]]; then
+                _DEV_LOCK_FOUND=true
+                break 2
+            fi
+        done
+    done
+    # 有 session_id 但没找到匹配的 .dev-lock → 当前 session 不 own 任何 /dev，放行
+    if [[ "$_DEV_LOCK_FOUND" != "true" ]]; then
+        exit 0
+    fi
+else
+    # ===== Fallback（没 session_id，老 interactive 模式兼容）=====
+    # 沿用老 break-2 行为：找到第一个 .dev-lock 就 route
+    for _wt in "${_STOP_HOOK_WT_LIST[@]}"; do
+        for _f in "$_wt"/.dev-lock.*; do
+            [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break 2
+        done
+    done
+fi
+
 if [[ "$_DEV_LOCK_FOUND" == "true" ]]; then
+    # v17.0.0: 把 stdin JSON 解析到的 session_id 注入为 CLAUDE_SESSION_ID，stop-dev.sh 零改动
+    [[ -n "$CLAUDE_HOOK_SESSION_ID" ]] && export CLAUDE_SESSION_ID="$CLAUDE_HOOK_SESSION_ID"
     bash "$SCRIPT_DIR/stop-dev.sh"
     exit $?
 fi
