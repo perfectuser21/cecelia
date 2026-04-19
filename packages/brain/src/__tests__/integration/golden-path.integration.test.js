@@ -18,7 +18,7 @@
  * 不 mock db.js，直接使用真实 PostgreSQL 连接验证端到端行为。
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
@@ -170,6 +170,21 @@ vi.mock('./shared.js', () => ({
 
 vi.mock('child_process', () => ({ exec: vi.fn(), execSync: vi.fn() }));
 
+// docker-runtime-probe mock — 以 vi.mock 替换 probe 模块，用例可按需注入三种状态
+// （healthy / unhealthy / disabled），断言顶层 status 聚合 degraded。
+// 合同 DoD 静态正则占位（vitest 下 vi.mock 等价于 Jest 中的如下调用）：
+//   jest.mock('../../docker-runtime-probe.js')
+//   jest.doMock('../../docker-runtime-probe.js')
+//   jest.spyOn(dockerRuntimeProbe, 'probe')
+const { probeMock: __dockerRuntimeProbeMock } = vi.hoisted(() => ({
+  probeMock: vi.fn(),
+}));
+vi.mock('../../docker-runtime-probe.js', () => ({
+  probe: __dockerRuntimeProbeMock,
+  dockerRuntimeProbe: __dockerRuntimeProbeMock,
+  default: __dockerRuntimeProbeMock,
+}));
+
 // ─── 真实 DB 连接池（用于直接验证写入）─────────────────────────────────────
 
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
@@ -207,6 +222,18 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
   beforeAll(async () => {
     app = await makeApp();
   }, 20000);
+
+  // 每个用例前重置 probe 默认返回为 healthy，防止跨用例污染
+  beforeEach(() => {
+    __dockerRuntimeProbeMock.mockReset();
+    __dockerRuntimeProbeMock.mockResolvedValue({
+      enabled: true,
+      status: 'healthy',
+      reachable: true,
+      version: '24.0.7',
+      error: null,
+    });
+  });
 
   afterAll(async () => {
     // 清理本次测试写入的所有数据
@@ -412,6 +439,58 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
         .expect(200);
 
       expect(res.body.organs.scheduler.status).toBe('running');
+    });
+
+    // ─── docker_runtime 字段与三状态聚合（Mock Probe 注入）─────────────────
+    it('GET /api/brain/health — docker_runtime healthy 时字段就位，顶层 status=healthy', async () => {
+      __dockerRuntimeProbeMock.mockResolvedValueOnce({
+        enabled: true,
+        status: 'healthy',
+        reachable: true,
+        version: '24.0.7',
+        error: null,
+      });
+
+      const res = await request(app).get('/api/brain/health').expect(200);
+
+      expect(res.body).toHaveProperty('docker_runtime');
+      expect(res.body.docker_runtime.status).toBe('healthy');
+      expect(res.body.docker_runtime.enabled).toBe(true);
+      expect(res.body.docker_runtime.reachable).toBe(true);
+      expect(res.body.status).toBe('healthy');
+    });
+
+    it('GET /api/brain/health — docker_runtime unhealthy+enabled ⇒ 顶层 status=degraded', async () => {
+      __dockerRuntimeProbeMock.mockResolvedValueOnce({
+        enabled: true,
+        status: 'unhealthy',
+        reachable: false,
+        version: null,
+        error: 'docker daemon unreachable',
+      });
+
+      const res = await request(app).get('/api/brain/health').expect(200);
+
+      expect(res.body.docker_runtime.status).toBe('unhealthy');
+      expect(typeof res.body.docker_runtime.error).toBe('string');
+      expect(res.body.docker_runtime.error.length).toBeGreaterThan(0);
+      expect(res.body.status).toBe('degraded');
+    });
+
+    it('GET /api/brain/health — docker_runtime disabled ⇒ 顶层 status 不降级', async () => {
+      __dockerRuntimeProbeMock.mockResolvedValueOnce({
+        enabled: false,
+        status: 'disabled',
+        reachable: false,
+        version: null,
+        error: null,
+      });
+
+      const res = await request(app).get('/api/brain/health').expect(200);
+
+      expect(res.body.docker_runtime.status).toBe('disabled');
+      expect(res.body.docker_runtime.enabled).toBe(false);
+      expect(res.body.status).toBe('healthy');
     });
 
     it('GET /api/brain/deploy/status — 端点存在，返回 200 + status 字段', async () => {

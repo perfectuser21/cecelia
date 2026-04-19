@@ -1,11 +1,29 @@
-# DoD: LangGraph 节点内联 SKILL 内容
+contract_branch: cp-harness-propose-r2-0f7fec19
+workstream_index: 1,2
+sprint_dir: sprints
 
-- [x] [ARTIFACT] harness-graph.js 含 loadSkillContent 函数
-  File: packages/brain/src/harness-graph.js
-  Check: exports loadSkillContent
+# Contract DoD — Workstream 1: Docker 探测模块 + health 端点集成 + 聚合规则
 
-- [x] [BEHAVIOR] 6 个节点全部用 loadSkillContent 替换 /slash
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-graph.js','utf8');const m=c.match(/\/harness-(planner|contract|generator|evaluator|report)/g);if(m)process.exit(1)"
+- [x] [ARTIFACT] `packages/brain/src/docker-runtime-probe.js` 存在、以 CommonJS 导出 probe 函数、含 try/catch、超时常量 ≤ 2000ms
+  Test: node -e "const fs=require('fs'); const p='packages/brain/src/docker-runtime-probe.js'; if(!fs.existsSync(p))throw new Error('FAIL: 文件不存在'); const s=fs.readFileSync(p,'utf8'); if(!/module\.exports\s*=|exports\.probe\s*=|exports\.default\s*=/.test(s))throw new Error('FAIL: 未 CJS 导出'); if(!/\btry\b[\s\S]*\bcatch\b/.test(s))throw new Error('FAIL: 缺 try/catch'); const nums=[...s.matchAll(/(?:timeout|TIMEOUT|timeoutMs|TIMEOUT_MS)\s*[:=]\s*(\d+)/g)].map(m=>parseInt(m[1],10)); if(nums.length===0)throw new Error('FAIL: 无超时常量'); const mx=Math.max(...nums); if(mx>2000)throw new Error('FAIL: 超时 '+mx+'ms > 2000ms'); console.log('PASS: probe 模块结构合规 timeout='+mx+'ms')"
+- [x] [BEHAVIOR] `GET /api/brain/health` 响应顶层包含 `docker_runtime` 对象，字段类型与状态不变量全部符合
+  Test: T=$(mktemp); C=$(curl -s -o "$T" -w '%{http_code}' http://localhost:5221/api/brain/health); [ "$C" = "200" ] || { echo "FAIL http $C"; rm -f "$T"; exit 1; }; node -e "const dr=JSON.parse(require('fs').readFileSync('$T','utf8')).docker_runtime; if(!dr||typeof dr.enabled!=='boolean'||!['healthy','unhealthy','disabled','unknown'].includes(dr.status)||typeof dr.reachable!=='boolean'||!(typeof dr.version==='string'||dr.version===null)||!(typeof dr.error==='string'||dr.error===null))throw new Error('FAIL: 字段不符'); if(dr.status==='disabled'&&dr.enabled!==false)throw new Error('FAIL: disabled 必须 enabled=false'); if(dr.status==='healthy'&&(dr.enabled!==true||dr.reachable!==true))throw new Error('FAIL: healthy 不变量'); if(dr.status==='unhealthy'&&(typeof dr.error!=='string'||!dr.error.length))throw new Error('FAIL: unhealthy 必须 error 非空'); console.log('PASS')"; RC=$?; rm -f "$T"; exit $RC
+- [x] [BEHAVIOR] health 端点 happy path 响应耗时 ≤ 3000ms
+  Test: S=$(date +%s%3N); curl -sf http://localhost:5221/api/brain/health > /dev/null || { echo "FAIL: req"; exit 1; }; E=$(date +%s%3N); D=$((E-S)); [ "$D" -le 3000 ] && echo "PASS: ${D}ms" || { echo "FAIL: ${D}ms > 3000ms"; exit 1; }
+- [x] [BEHAVIOR] live 端点聚合规则一致性（当前 docker_runtime 状态与顶层 status 不矛盾，无 SKIP 假阳性）
+  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); const dr=b.docker_runtime; if(!dr)throw new Error('FAIL: docker_runtime 缺失'); const cbOpen=(b.organs?.circuit_breaker?.open||[]).length>0; if(dr.enabled===true&&dr.status==='unhealthy'&&b.status!=='degraded')throw new Error('FAIL: unhealthy+enabled 应 degraded 实际 '+b.status); if(dr.status==='healthy'&&!cbOpen){const nr=['scheduler','event_bus','notifier','planner'].filter(k=>b.organs[k]?.status&&b.organs[k].status!=='running'); if(b.status!=='healthy'&&nr.length===0)throw new Error('FAIL: healthy 无故障源但顶层 '+b.status)} if(dr.status==='disabled'&&b.status==='degraded'&&!cbOpen){const nr=['scheduler','event_bus','notifier','planner'].filter(k=>b.organs[k]?.status&&b.organs[k].status!=='running'); if(nr.length===0)throw new Error('FAIL: disabled 单独触发 degraded')} console.log('PASS: 聚合一致 docker='+dr.status+' top='+b.status)"
+- [x] [ARTIFACT] `packages/brain/src/routes/goals.js` 聚合逻辑显式引用 `docker_runtime` 且附近 20 行内含 `degraded` 关键字（防止仅"加字段"不接入聚合）
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/routes/goals.js','utf8'); if(!/docker_runtime/.test(s))throw new Error('FAIL: 未引用 docker_runtime'); const ls=s.split('\n'); let ok=false; for(let i=0;i<ls.length;i++){if(/docker_runtime/.test(ls[i])){const w=ls.slice(Math.max(0,i-20),Math.min(ls.length,i+20)).join('\n'); if(/degraded/.test(w)||/aggregateStatus|overallStatus|topStatus/.test(w)){ok=true;break}}} if(!ok)throw new Error('FAIL: docker_runtime 附近无 degraded/聚合关键字'); console.log('PASS')"
+- [x] [BEHAVIOR] 向后兼容：既有 7 顶层字段 + 5 organs 子器官全部保留且类型不变
+  Test: curl -sf http://localhost:5221/api/brain/health | node -e "const b=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); ['status','uptime','active_pipelines','evaluator_stats','tick_stats','organs','timestamp'].forEach(k=>{if(!(k in b))throw new Error('FAIL missing '+k)}); if(typeof b.status!=='string'||typeof b.uptime!=='number'||typeof b.active_pipelines!=='number')throw new Error('FAIL: 顶层类型'); ['scheduler','circuit_breaker','event_bus','notifier','planner'].forEach(k=>{if(!b.organs[k]||typeof b.organs[k]!=='object')throw new Error('FAIL organs.'+k)}); const cb=b.organs.circuit_breaker; if(typeof cb.status!=='string'||!Array.isArray(cb.open)||!Array.isArray(cb.half_open)||typeof cb.states!=='object')throw new Error('FAIL cb'); console.log('PASS')"
 
-- [x] [BEHAVIOR] loadSkillContent 缓存 + 多目录查找
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-graph.js','utf8');if(!c.includes('SKILL_SEARCH_DIRS'))process.exit(1);if(!c.includes('_skillCache'))process.exit(1)"
+# Contract DoD — Workstream 2: integration 与 smoke 测试覆盖（含三种状态 mock 注入）
+
+- [x] [ARTIFACT] 两个 integration 测试文件均包含 `docker_runtime` 关键字
+  Test: node -e "const fs=require('fs'); const p1='packages/brain/src/__tests__/integration/critical-routes.integration.test.js'; const p2='packages/brain/src/__tests__/integration/golden-path.integration.test.js'; if(!/docker_runtime/.test(fs.readFileSync(p1,'utf8')))throw new Error('FAIL: '+p1); if(!/docker_runtime/.test(fs.readFileSync(p2,'utf8')))throw new Error('FAIL: '+p2); console.log('PASS')"
+- [x] [ARTIFACT] integration 测试使用 `jest.mock` / `jest.doMock` / `jest.spyOn` 显式替换 probe 模块（至少 1 处）
+  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); const ok=/jest\.mock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.doMock\s*\(\s*['\"][^'\"]*docker-runtime-probe/.test(c)||/jest\.spyOn\s*\([^)]*[dD]ockerRuntimeProbe/.test(c)||/jest\.spyOn\s*\([^)]*,\s*['\"]probe['\"]/.test(c); if(!ok)throw new Error('FAIL: 未见 jest.mock/doMock/spyOn 对 probe 的替换'); console.log('PASS')"
+- [x] [ARTIFACT] 三种状态字面量 + `degraded` 聚合断言在 integration 测试中全部出现
+  Test: node -e "const fs=require('fs'); const c=fs.readFileSync('packages/brain/src/__tests__/integration/critical-routes.integration.test.js','utf8')+'\n'+fs.readFileSync('packages/brain/src/__tests__/integration/golden-path.integration.test.js','utf8'); ['healthy','unhealthy','disabled','degraded'].forEach(s=>{if(!new RegExp(\"['\\\"\`]\"+s+\"['\\\"\`]\").test(c))throw new Error('FAIL miss '+s)}); console.log('PASS')"
+- [x] [BEHAVIOR] brain integration 测试（critical-routes + golden-path）全部通过；读取 npm test 真正的退出码（修复 Round 1 Issue 3）
+  Test: bash -c "cd packages/brain && npm test -- --testPathPattern='(critical-routes|golden-path)\.integration' >/dev/null 2>&1"; E=$?; [ "$E" = "0" ] && echo "PASS exit=$E" || { echo "FAIL exit=$E"; exit 1; }

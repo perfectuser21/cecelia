@@ -16,6 +16,7 @@ import { getDispatchStats } from '../dispatch-stats.js';
 import { getCleanupStats, runTaskCleanup, getCleanupAuditLog } from '../task-cleanup.js';
 import { getTickStatus } from '../tick.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from '../proposal.js';
+import { probe as dockerRuntimeProbe } from '../docker-runtime-probe.js';
 
 // Constants previously in old alertness.js
 const EVENT_BACKLOG_THRESHOLD = 50;
@@ -88,7 +89,7 @@ router.post('/circuit-breaker/:key/reset', (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult] = await Promise.all([
+    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
       pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_planner' AND status='in_progress'"),
@@ -100,7 +101,14 @@ router.get('/health', async (req, res) => {
         FROM tasks
         WHERE task_type = 'harness_evaluate'
           AND status IN ('completed', 'canceled', 'failed')
-      `).catch(() => null)
+      `).catch(() => null),
+      dockerRuntimeProbe().catch((err) => ({
+        enabled: true,
+        status: 'unhealthy',
+        reachable: false,
+        version: null,
+        error: err && err.message ? err.message : 'docker probe failed',
+      }))
     ]);
 
     const esRow = evaluatorStatsResult?.rows?.[0] ?? null;
@@ -119,7 +127,10 @@ router.get('/health', async (req, res) => {
       .filter(([, v]) => v.state === 'HALF_OPEN')
       .map(([k]) => k);
 
-    const healthy = tickStatus.loop_running && openBreakers.length === 0;
+    // 聚合规则：docker_runtime.enabled=true && status='unhealthy' ⇒ 顶层 degraded；
+    // status='disabled' 单独不触发 degraded（仅追加字段，不降级）
+    const dockerDegraded = !!(docker_runtime && docker_runtime.enabled === true && docker_runtime.status === 'unhealthy');
+    const healthy = tickStatus.loop_running && openBreakers.length === 0 && !dockerDegraded;
 
     let cbStatus;
     if (openBreakers.length > 0) {
@@ -153,6 +164,7 @@ router.get('/health', async (req, res) => {
         notifier: { status: process.env.FEISHU_BOT_WEBHOOK ? 'configured' : 'unconfigured' },
         planner: { status: 'v2' }
       },
+      docker_runtime,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
