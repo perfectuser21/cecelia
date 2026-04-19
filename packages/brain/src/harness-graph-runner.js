@@ -111,6 +111,12 @@ export async function runHarnessPipeline(task, opts = {}) {
             eval_round: nodeState.eval_round,
             pr_url: nodeState.pr_url,
             error: nodeState.error,
+            // 多 WS 字段（向后兼容：非多 WS pipeline 这些字段会是 undefined）
+            workstreams: nodeState.workstreams,
+            pr_urls: nodeState.pr_urls,
+            pr_branches: nodeState.pr_branches,
+            ws_verdicts: nodeState.ws_verdicts,
+            ws_feedbacks: nodeState.ws_feedbacks,
           },
         });
       } catch (err) {
