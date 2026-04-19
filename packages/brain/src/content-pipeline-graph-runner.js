@@ -59,9 +59,18 @@ export async function runContentPipeline(task, opts = {}) {
     `[content-pipeline-runner] starting pipeline=${task.id} keyword="${String(keyword).slice(0, 60)}"`
   );
 
+  // 默认凭据：docker-executor 读 CECELIA_CREDENTIALS → 挂宿主 ~/.claude-<name>
+  // 让容器内 claude 能用宿主账号登录。未显式覆盖才注入，允许 opts.env 覆盖。
+  // 对齐 executor.js L2816 harness_planner 派 task 时的做法。
+  const DEFAULT_CREDENTIAL = process.env.CONTENT_PIPELINE_CREDENTIALS || 'account1';
+  const mergedEnv = {
+    CECELIA_CREDENTIALS: DEFAULT_CREDENTIAL,
+    ...(opts.env || {}),
+  };
+
   // 创建 Docker-backed 节点（除非 overrides 完全覆盖）
   const executor = opts.dockerExecutor || executeInDocker;
-  const dockerNodes = createContentDockerNodes(executor, task, { env: opts.env });
+  const dockerNodes = createContentDockerNodes(executor, task, { env: mergedEnv });
 
   // overrides 优先级高于 Docker 节点
   const mergedOverrides = { ...dockerNodes, ...(opts.overrides || {}) };
