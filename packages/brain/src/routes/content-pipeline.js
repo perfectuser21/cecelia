@@ -23,6 +23,10 @@ import { join } from 'path';
 import pool from '../db.js';
 import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTypesFromYaml } from '../content-types/content-type-registry.js';
 import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
+import {
+  runContentPipeline,
+  isContentPipelineLangGraphEnabled,
+} from '../content-pipeline-graph-runner.js';
 import { triggerDailyTopicSelection, hasTodayTopics } from '../topic-selection-scheduler.js';
 import { callLLM } from '../llm-caller.js';
 import { validateAllVariants } from '../content-quality-validator.js';
@@ -540,6 +544,98 @@ router.post('/:id/run', async (req, res) => {
   } catch (err) {
     console.error('[routes/content-pipeline] POST /:id/run error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /:id/run-langgraph
+ *
+ * 走 LangGraph + Docker 路径跑 pipeline。跟 `/:id/run`（老 orchestrator）并存，
+ * 由 CONTENT_PIPELINE_LANGGRAPH_ENABLED 开关灰度控制。
+ *
+ * body (可选): { keyword, output_dir, notebook_id }
+ *   不传则从 tasks 表的 payload 读。
+ */
+router.post('/:id/run-langgraph', async (req, res) => {
+  const { id } = req.params;
+
+  if (!isContentPipelineLangGraphEnabled()) {
+    return res.status(503).json({
+      success: false,
+      error: {
+        code: 'LANGGRAPH_DISABLED',
+        message: 'CONTENT_PIPELINE_LANGGRAPH_ENABLED 未启用，走 /:id/run 老路径',
+      },
+    });
+  }
+
+  try {
+    const r = await pool.query(
+      `SELECT id, payload FROM tasks WHERE id = $1 AND task_type = 'content-pipeline'`,
+      [id],
+    );
+    if (r.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'PIPELINE_NOT_FOUND', message: `pipeline ${id} 不存在` },
+      });
+    }
+    const row = r.rows[0];
+    const payload = row.payload || {};
+    const keyword = (req.body && req.body.keyword) || payload.keyword || '';
+    const outputDir = (req.body && req.body.output_dir) || payload.output_dir || '';
+    const notebookId = (req.body && req.body.notebook_id) || payload.notebook_id || null;
+
+    // 202 Accepted 立即返，异步跑 pipeline
+    res.status(202).json({
+      success: true,
+      data: {
+        pipeline_id: id,
+        status: 'running',
+        mode: 'langgraph',
+      },
+    });
+
+    (async () => {
+      try {
+        const result = await runContentPipeline(
+          {
+            id,
+            keyword,
+            output_dir: outputDir,
+            payload: { notebook_id: notebookId, ...payload },
+          },
+          {
+            onStep: async (evt) => {
+              // 写 cecelia_events（如有该表）— 失败不阻塞
+              try {
+                await pool.query(
+                  `INSERT INTO cecelia_events (task_id, kind, payload, created_at)
+                   VALUES ($1, $2, $3, NOW())
+                   ON CONFLICT DO NOTHING`,
+                  [id, 'content-pipeline:step', JSON.stringify({ step: evt.step_index, node: evt.node, snapshot: evt.state_snapshot })],
+                );
+              } catch {
+                // cecelia_events 表可能不存在或 schema 不同，忽略
+              }
+            },
+          },
+        );
+        console.log(`[content-pipeline] run-langgraph 完成: pipeline=${id} steps=${result.steps}`);
+      } catch (err) {
+        console.error(`[content-pipeline] run-langgraph 失败: pipeline=${id} error=${err.message}`);
+        await pool.query(
+          `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
+          [id],
+        ).catch(() => {});
+      }
+    })();
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /:id/run-langgraph error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: err.message },
+    });
   }
 });
 
