@@ -74,6 +74,11 @@ interface LangGraphInfo {
   steps: LangGraphStep[];
   gan_rounds: LangGraphRound[];
   fix_rounds: LangGraphRound[];
+  // 多 Workstream 字段（Harness 从「一次产 1 PR」升级为「按 WS 循环产 N PR」）
+  workstreams?: Array<{ index: number; name: string; dod_file?: string; description?: string }>;
+  pr_urls?: Array<string | null>;
+  ws_verdicts?: Array<string | null>;
+  ws_feedbacks?: Array<string | null>;
   checkpoints: {
     count: number;
     latest_checkpoint_id: string | null;
@@ -520,6 +525,119 @@ function MermaidDiagram({ source }: { source: string }) {
   );
 }
 
+/**
+ * Workstream Runs 区块：多 WS 模式下展示每个 WS 的 PR 链接 + 验收状态。
+ *
+ * 每行 = 一个 Workstream：WS 编号 + 名称 + PR 链接 + PASS/FAIL 徽章 + 失败反馈折叠。
+ * 单 WS 或无 workstreams 数据时整个区块不渲染。
+ */
+function WorkstreamRunsList({ info }: { info: LangGraphInfo }) {
+  const workstreams = info.workstreams || [];
+  const prUrls = info.pr_urls || [];
+  const verdicts = info.ws_verdicts || [];
+  const feedbacks = info.ws_feedbacks || [];
+
+  if (workstreams.length === 0) return null;
+  // 单 WS 且是 default 兜底时不画这个 section（跟老视图一样）
+  if (workstreams.length === 1 && (workstreams[0].name === 'default' || !workstreams[0].name)) {
+    return null;
+  }
+
+  return (
+    <div className="mb-4">
+      <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
+        Workstream Runs ({workstreams.length} WS)
+      </h3>
+      <div className="flex flex-col gap-2">
+        {workstreams.map((ws, i) => {
+          const prUrl = prUrls[i] || null;
+          const verdict = verdicts[i] || null;
+          const feedback = feedbacks[i] || null;
+          const prMatch = prUrl?.match(/\/pull\/(\d+)/);
+          const prNum = prMatch ? prMatch[1] : null;
+          return (
+            <WorkstreamRow
+              key={`ws-${ws.index}`}
+              index={ws.index}
+              name={ws.name}
+              dodFile={ws.dod_file || null}
+              prUrl={prUrl}
+              prNum={prNum}
+              verdict={verdict}
+              feedback={feedback}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WorkstreamRow({
+  index,
+  name,
+  dodFile,
+  prUrl,
+  prNum,
+  verdict,
+  feedback,
+}: {
+  index: number;
+  name: string;
+  dodFile: string | null;
+  prUrl: string | null;
+  prNum: string | null;
+  verdict: string | null;
+  feedback: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasFeedback = !!feedback;
+  return (
+    <div className="border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900/50 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => hasFeedback && setExpanded(v => !v)}
+        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+        disabled={!hasFeedback}
+      >
+        <span className="text-xs font-bold text-violet-600 dark:text-violet-300 min-w-[60px]">
+          WS-{index}
+        </span>
+        <span className="text-xs font-medium text-slate-700 dark:text-slate-200">{name}</span>
+        {dodFile && (
+          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+            {dodFile}
+          </span>
+        )}
+        {verdictBadge(verdict)}
+        {prNum && prUrl ? (
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-mono ml-auto"
+          >
+            PR #{prNum}
+          </a>
+        ) : (
+          <span className="text-xs text-slate-400 dark:text-slate-500 ml-auto italic">无 PR</span>
+        )}
+        {hasFeedback && (
+          <span className="text-xs text-slate-400">{expanded ? '\u2212' : '+'}</span>
+        )}
+      </button>
+      {expanded && hasFeedback && (
+        <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300">
+          <pre className="whitespace-pre-wrap font-mono text-[11px] text-slate-700 dark:text-slate-300">
+            {feedback}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LangGraphSection({ info }: { info: LangGraphInfo }) {
   return (
     <div className="mb-6 border border-violet-200 dark:border-violet-900/50 rounded-lg p-4 bg-violet-50/40 dark:bg-violet-950/20">
@@ -533,6 +651,8 @@ function LangGraphSection({ info }: { info: LangGraphInfo }) {
           thread_id: {info.thread_id.slice(0, 8)}&hellip;
         </span>
       </div>
+
+      <WorkstreamRunsList info={info} />
 
       <LangGraphRoundList
         title="GAN 对抗"

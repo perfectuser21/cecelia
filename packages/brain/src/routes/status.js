@@ -371,6 +371,10 @@ export function summarizeLangGraphEvents(events) {
   let maxReviewRound = 0;
   let maxEvalRound = 0;
   let lastError = null;
+  // 多 WS 快照：取最近一次有值的数组
+  let workstreams = null;
+  let prUrls = null;
+  let wsVerdicts = null;
 
   for (const ev of events) {
     const p = ev.payload || {};
@@ -389,6 +393,9 @@ export function summarizeLangGraphEvents(events) {
     if (pr && typeof pr === 'string' && !pr.startsWith('null')) {
       lastPrUrl = pr;
     }
+    if (Array.isArray(p.workstreams) && p.workstreams.length > 0) workstreams = p.workstreams;
+    if (Array.isArray(p.pr_urls) && p.pr_urls.length > 0) prUrls = p.pr_urls;
+    if (Array.isArray(p.ws_verdicts) && p.ws_verdicts.length > 0) wsVerdicts = p.ws_verdicts;
     if (p.error) lastError = p.error;
   }
 
@@ -404,6 +411,10 @@ export function summarizeLangGraphEvents(events) {
     pr_url: lastPrUrl,
     last_error: lastError,
     last_event_at: events[events.length - 1]?.created_at || null,
+    // 多 WS 字段（可空：老 pipeline 或单 WS 兜底不产）
+    workstreams: workstreams || [],
+    pr_urls: prUrls || [],
+    ws_verdicts: wsVerdicts || [],
   };
 }
 

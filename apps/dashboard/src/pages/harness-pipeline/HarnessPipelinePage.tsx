@@ -35,6 +35,10 @@ interface LangGraphSummary {
   pr_url: string | null;
   last_error: string | null;
   last_event_at: string | null;
+  // 多 Workstream 字段（可选；老 pipeline 没有）
+  workstreams?: Array<{ index: number; name: string }>;
+  pr_urls?: Array<string | null>;
+  ws_verdicts?: Array<string | null>;
 }
 
 interface Pipeline {
@@ -237,6 +241,10 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
 
   const prMatch = pr_url?.match(/\/pull\/(\d+)/);
   const prNumber = prMatch ? prMatch[1] : null;
+  // 多 WS pipeline：prUrls 里非空 PR 数量 > 1 时显示 "N PRs"
+  const wsPrUrls = (langgraph?.pr_urls || []).filter((u): u is string => !!u);
+  const multiPrCount = wsPrUrls.length;
+  const showMultiPrs = multiPrCount > 1;
 
   return (
     <div className={`rounded-xl border bg-white dark:bg-slate-800 shadow-sm overflow-hidden transition-all duration-200 ${borderColor}`}>
@@ -290,16 +298,25 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
                   </span>
                 )
               )}
-              {prNumber && (
-                <a
-                  href={pr_url as string}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                  onClick={e => e.stopPropagation()}
+              {showMultiPrs ? (
+                <span
+                  className="text-xs text-blue-600 dark:text-blue-400 font-medium"
+                  title={wsPrUrls.join('\n')}
                 >
-                  PR #{prNumber}
-                </a>
+                  {multiPrCount} PRs
+                </span>
+              ) : (
+                prNumber && (
+                  <a
+                    href={pr_url as string}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    PR #{prNumber}
+                  </a>
+                )
               )}
             </div>
           </div>

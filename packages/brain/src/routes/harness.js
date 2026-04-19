@@ -554,6 +554,10 @@ async function buildLangGraphInfo(taskId) {
     steps: [],
     gan_rounds: [],
     fix_rounds: [],
+    workstreams: [],
+    pr_urls: [],
+    ws_verdicts: [],
+    ws_feedbacks: [],
     checkpoints: { count: 0, latest_checkpoint_id: null, state_available: false },
     mermaid: HARNESS_MERMAID,
   };
@@ -619,6 +623,10 @@ async function buildLangGraphInfo(taskId) {
       review_verdict: p.review_verdict || null,
       evaluator_verdict: p.evaluator_verdict || null,
       pr_url: p.pr_url || null,
+      // 多 WS 快照（用于前端每步展开时查看本步的多 PR 情况）
+      workstreams: Array.isArray(p.workstreams) ? p.workstreams : null,
+      pr_urls: Array.isArray(p.pr_urls) ? p.pr_urls : null,
+      ws_verdicts: Array.isArray(p.ws_verdicts) ? p.ws_verdicts : null,
       error: p.error || null,
       timestamp: row.created_at,
       state_snapshot: p,
@@ -627,6 +635,25 @@ async function buildLangGraphInfo(taskId) {
 
   // 按 step_index 稳定排序（防止时间戳相同时顺序错乱）
   steps.sort((a, b) => (a.step_index || 0) - (b.step_index || 0));
+
+  // 多 WS 汇总：找最新含有 workstreams / pr_urls / ws_verdicts 的事件
+  // 规则：从后往前扫，第一次出现的非空数组即为当前 state
+  const findLatestArray = (field) => {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const v = steps[i][field] || steps[i].state_snapshot?.[field];
+      if (Array.isArray(v) && v.length > 0) return v;
+    }
+    return [];
+  };
+  const workstreams = findLatestArray('workstreams');
+  const prUrls = findLatestArray('pr_urls');
+  const wsVerdicts = findLatestArray('ws_verdicts');
+  // ws_feedbacks 不一定非空数组，但同样取最近一次（含 null 占位）
+  let wsFeedbacks = [];
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const v = steps[i].state_snapshot?.ws_feedbacks;
+    if (Array.isArray(v)) { wsFeedbacks = v; break; }
+  }
 
   // 配对 GAN 轮次：proposer ↔ reviewer
   const ganRounds = [];
@@ -679,6 +706,11 @@ async function buildLangGraphInfo(taskId) {
     steps,
     gan_rounds: ganRounds,
     fix_rounds: fixRounds,
+    // 多 WS 字段（前端列表页显示 "N PRs"，详情页显示 WS 列表）
+    workstreams,
+    pr_urls: prUrls,
+    ws_verdicts: wsVerdicts,
+    ws_feedbacks: wsFeedbacks,
     checkpoints,
     mermaid: HARNESS_MERMAID,
   };
