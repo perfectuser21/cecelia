@@ -57,6 +57,15 @@ RUN npm install -g @resvg/resvg-js
 # 非 root 用户 — Claude Code 拒绝 root + --dangerously-skip-permissions
 RUN groupadd -r cecelia && useradd -r -g cecelia -m -d /home/cecelia -s /bin/bash cecelia
 
+# V6 运行时目录（容器内副本，避开挂载的 Mac node_modules）
+# 原因：~/claude-output/scripts/node_modules/@resvg 是 darwin-arm64 Mac 二进制，
+# Linux 容器加载会 ERR_MODULE_NOT_FOUND。ESM import 不认 NODE_PATH，必须在脚本
+# 所在目录的 node_modules/ 下找 linux 版 resvg。此目录预置 symlink 指向
+# Dockerfile 全局装的 linux @resvg/resvg-js；entrypoint 启动时 cp V6 脚本源码进来。
+RUN mkdir -p /home/cecelia/v6-runtime/node_modules/@resvg \
+  && ln -sf /usr/local/lib/node_modules/@resvg/resvg-js /home/cecelia/v6-runtime/node_modules/@resvg/resvg-js \
+  && chown -R cecelia:cecelia /home/cecelia/v6-runtime
+
 # 入口脚本：复制 host-claude-config → 可写副本 + safe.directory + 启动 claude
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
