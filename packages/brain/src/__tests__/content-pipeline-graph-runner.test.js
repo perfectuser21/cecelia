@@ -250,4 +250,37 @@ describe('runContentPipeline', () => {
     const firstCall = dockerExecutor.mock.calls[0][0];
     expect(firstCall.env.CONTENT_OUTPUT_DIR).toBe('/out-payload');
   });
+
+  it('injects CECELIA_CREDENTIALS=account1 by default (Docker claude 认证)', async () => {
+    process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
+    delete process.env.CONTENT_PIPELINE_CREDENTIALS;
+    const dockerExecutor = vi.fn(async () => ({ exit_code: 0, stdout: '', timed_out: false }));
+    await runContentPipeline({ id: 'p-cred', keyword: 'demo' }, { dockerExecutor });
+    const firstCall = dockerExecutor.mock.calls[0][0];
+    expect(firstCall.env.CECELIA_CREDENTIALS).toBe('account1');
+  });
+
+  it('opts.env.CECELIA_CREDENTIALS overrides default', async () => {
+    process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
+    const dockerExecutor = vi.fn(async () => ({ exit_code: 0, stdout: '', timed_out: false }));
+    await runContentPipeline(
+      { id: 'p-cred2', keyword: 'demo' },
+      { dockerExecutor, env: { CECELIA_CREDENTIALS: 'account3' } },
+    );
+    const firstCall = dockerExecutor.mock.calls[0][0];
+    expect(firstCall.env.CECELIA_CREDENTIALS).toBe('account3');
+  });
+
+  it('CONTENT_PIPELINE_CREDENTIALS env overrides default (but not opts.env)', async () => {
+    process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
+    process.env.CONTENT_PIPELINE_CREDENTIALS = 'account2';
+    try {
+      const dockerExecutor = vi.fn(async () => ({ exit_code: 0, stdout: '', timed_out: false }));
+      await runContentPipeline({ id: 'p-cred3', keyword: 'demo' }, { dockerExecutor });
+      const firstCall = dockerExecutor.mock.calls[0][0];
+      expect(firstCall.env.CECELIA_CREDENTIALS).toBe('account2');
+    } finally {
+      delete process.env.CONTENT_PIPELINE_CREDENTIALS;
+    }
+  });
 });
