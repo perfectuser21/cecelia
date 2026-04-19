@@ -2816,8 +2816,16 @@ async function triggerCeceliaRun(task) {
           langGraphEnv.CECELIA_CREDENTIALS = 'account1';
         }
       } catch { /* non-fatal */ }
+      // PostgresSaver: LangGraph 持久化 checkpointer（Brain 重启后从断点续跑，
+      // 避免 43 分钟 pipeline 被重启清零。task.id 作为 thread_id 即为 resume key）
+      const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
+      const checkpointer = PostgresSaver.fromConnString(
+        process.env.DATABASE_URL || 'postgresql://cecelia@localhost:5432/cecelia'
+      );
+      await checkpointer.setup();  // 幂等建 checkpoints / checkpoint_blobs / checkpoint_writes
       const result = await runHarnessPipeline(task, {
         env: langGraphEnv,
+        checkpointer,
         onStep: async (stepEvent) => {
           console.log(`[executor] LangGraph step: node=${stepEvent.node} step=${stepEvent.step_index} task=${task.id}`);
           // 写 cecelia_events（可选，onStep 失败不阻塞）
