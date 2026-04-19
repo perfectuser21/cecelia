@@ -8,7 +8,7 @@
  * - 点击步骤展开三栏视图：Input | Prompt | Output
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -44,6 +44,44 @@ interface DetailStage {
   count: number;
 }
 
+// ─── LangGraph Types ────────────────────────────────────────────────────────
+
+interface LangGraphStep {
+  step_index: number;
+  node: string;
+  verdict: string | null;
+  review_round: number | null;
+  eval_round: number | null;
+  review_verdict: string | null;
+  evaluator_verdict: string | null;
+  pr_url: string | null;
+  error: string | null;
+  timestamp: string;
+  state_snapshot?: Record<string, unknown>;
+}
+
+interface LangGraphRound {
+  round: number;
+  proposer?: LangGraphStep | null;
+  reviewer?: LangGraphStep | null;
+  generator?: LangGraphStep | null;
+  evaluator?: LangGraphStep | null;
+}
+
+interface LangGraphInfo {
+  enabled: boolean;
+  thread_id: string;
+  steps: LangGraphStep[];
+  gan_rounds: LangGraphRound[];
+  fix_rounds: LangGraphRound[];
+  checkpoints: {
+    count: number;
+    latest_checkpoint_id: string | null;
+    state_available: boolean;
+  };
+  mermaid?: string | null;
+}
+
 interface PipelineDetail {
   planner_task_id: string;
   title: string;
@@ -56,6 +94,7 @@ interface PipelineDetail {
   steps: PipelineStep[];
   gan_rounds: unknown[];
   file_contents: Record<string, string | null>;
+  langgraph?: LangGraphInfo;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -281,6 +320,242 @@ function StepCards({ steps, pipelineId }: { steps: PipelineStep[]; pipelineId: s
   );
 }
 
+// ─── Section: LangGraph Visualization ──────────────────────────────────────
+
+function LangGraphBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 uppercase tracking-wide">
+      <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+      LangGraph
+    </span>
+  );
+}
+
+function CheckpointBadge({ checkpoints }: { checkpoints: LangGraphInfo['checkpoints'] }) {
+  const color = checkpoints.count > 0
+    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+    : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${color}`}
+      title={checkpoints.latest_checkpoint_id ? `latest: ${checkpoints.latest_checkpoint_id}` : '无持久化 state'}
+    >
+      {checkpoints.count} checkpoints {checkpoints.state_available ? '已保存' : '未保存'}
+    </span>
+  );
+}
+
+function verdictBadge(verdict: string | null) {
+  if (!verdict) return null;
+  const cls = (() => {
+    switch (verdict) {
+      case 'APPROVED':
+      case 'PASS':
+        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+      case 'REVISION':
+      case 'FAIL':
+        return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
+      default:
+        return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
+    }
+  })();
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${cls}`}>{verdict}</span>
+  );
+}
+
+function LangGraphRoundCard({
+  roundLabel,
+  firstNode,
+  secondNode,
+  first,
+  second,
+}: {
+  roundLabel: string;
+  firstNode: string;
+  secondNode: string;
+  first: LangGraphStep | null | undefined;
+  second: LangGraphStep | null | undefined;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const duration = first?.timestamp && second?.timestamp
+    ? formatDuration(first.timestamp, second.timestamp)
+    : '';
+
+  const verdict = second?.verdict ?? second?.review_verdict ?? second?.evaluator_verdict ?? null;
+
+  return (
+    <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900/50">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+      >
+        <span className="text-xs font-bold text-violet-600 dark:text-violet-300 min-w-[80px]">
+          {roundLabel}
+        </span>
+        <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+          {firstNode} &rarr; {secondNode}
+        </span>
+        {verdictBadge(verdict)}
+        {second?.pr_url && (
+          <a
+            href={second.pr_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-mono"
+          >
+            PR
+          </a>
+        )}
+        {first?.pr_url && (
+          <a
+            href={first.pr_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-mono"
+          >
+            PR
+          </a>
+        )}
+        {duration && (
+          <span className="text-xs text-slate-400 ml-auto">{duration}</span>
+        )}
+        <span className="text-xs text-slate-400">{expanded ? '\u2212' : '+'}</span>
+      </button>
+      {expanded && (
+        <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
+          <div>
+            <span className="font-semibold">{firstNode} step #{first?.step_index ?? '?'}</span>
+            <span className="ml-2 text-slate-400">{formatTime(first?.timestamp || null)}</span>
+            {first?.error && <pre className="mt-1 text-red-500 whitespace-pre-wrap">{first.error}</pre>}
+          </div>
+          <div>
+            <span className="font-semibold">{secondNode} step #{second?.step_index ?? '?'}</span>
+            <span className="ml-2 text-slate-400">{formatTime(second?.timestamp || null)}</span>
+            {second?.error && <pre className="mt-1 text-red-500 whitespace-pre-wrap">{second.error}</pre>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LangGraphRoundList({
+  title,
+  rounds,
+  nodePair,
+}: {
+  title: string;
+  rounds: LangGraphRound[];
+  nodePair: [string, string];
+}) {
+  if (rounds.length === 0) return null;
+
+  return (
+    <div className="mb-4">
+      <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
+        {title} ({rounds.length} 轮)
+      </h3>
+      <div className="flex flex-col gap-2">
+        {rounds.map((r, i) => {
+          const indexed = r as unknown as Record<string, LangGraphStep | null | undefined>;
+          const first = indexed[nodePair[0]];
+          const second = indexed[nodePair[1]];
+          return (
+            <LangGraphRoundCard
+              key={`${title}-${r.round}-${i}`}
+              roundLabel={`${title.split(' ')[0]} R${r.round}`}
+              firstNode={nodePair[0]}
+              secondNode={nodePair[1]}
+              first={first}
+              second={second}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MermaidDiagram({ source }: { source: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { default: mermaid } = await import('mermaid');
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        const id = `mermaid-${Math.random().toString(36).slice(2)}`;
+        const { svg } = await mermaid.render(id, source);
+        if (!cancelled && ref.current) {
+          ref.current.innerHTML = svg;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRenderError(err instanceof Error ? err.message : 'render failed');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [source]);
+
+  return (
+    <div className="mb-4">
+      <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
+        Pipeline 架构图
+      </h3>
+      <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 bg-white dark:bg-slate-900/50 overflow-auto">
+        {renderError ? (
+          <div className="text-xs text-red-500">Mermaid 渲染失败：{renderError}</div>
+        ) : (
+          <div ref={ref} className="flex justify-center" data-testid="mermaid-diagram" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LangGraphSection({ info }: { info: LangGraphInfo }) {
+  return (
+    <div className="mb-6 border border-violet-200 dark:border-violet-900/50 rounded-lg p-4 bg-violet-50/40 dark:bg-violet-950/20">
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+          LangGraph 路径
+        </h2>
+        <LangGraphBadge />
+        <CheckpointBadge checkpoints={info.checkpoints} />
+        <span className="text-[10px] text-slate-400 ml-auto font-mono">
+          thread_id: {info.thread_id.slice(0, 8)}&hellip;
+        </span>
+      </div>
+
+      <LangGraphRoundList
+        title="GAN 对抗"
+        rounds={info.gan_rounds}
+        nodePair={['proposer', 'reviewer']}
+      />
+      <LangGraphRoundList
+        title="Fix 循环"
+        rounds={info.fix_rounds}
+        nodePair={['generator', 'evaluator']}
+      />
+
+      {info.gan_rounds.length === 0 && info.fix_rounds.length === 0 && (
+        <div className="text-xs text-slate-500 dark:text-slate-400 italic py-2">
+          尚无 GAN / Fix 轮次数据（pipeline 还没跑到那里）
+        </div>
+      )}
+
+      {info.mermaid && <MermaidDiagram source={info.mermaid} />}
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function HarnessPipelineDetailPage() {
@@ -353,9 +628,12 @@ export default function HarnessPipelineDetailPage() {
 
       {/* 标题区 */}
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-          {data.title || '未命名 Pipeline'}
-        </h1>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white">
+            {data.title || '未命名 Pipeline'}
+          </h1>
+          {data.langgraph?.enabled && <LangGraphBadge />}
+        </div>
         <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 dark:text-slate-400">
           <span className={STATUS_COLOR[data.status] || STATUS_COLOR.not_started}>
             {STATUS_ICON[data.status] || '\u2014'} {data.status}
@@ -371,6 +649,9 @@ export default function HarnessPipelineDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* LangGraph 时间轴（仅在走了 LangGraph 路径时渲染） */}
+      {data.langgraph?.enabled && <LangGraphSection info={data.langgraph} />}
 
       {/* 阶段时间线概览 */}
       <StageTimeline stages={data.stages} />
