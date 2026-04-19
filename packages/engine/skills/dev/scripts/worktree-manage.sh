@@ -419,6 +419,9 @@ main() {
         create)
             cmd_create "$@"
             ;;
+        init-or-check)
+            cmd_init_or_check "$@"
+            ;;
         list)
             cmd_list
             ;;
@@ -432,13 +435,55 @@ main() {
             echo "ZenithJoy Engine - Worktree 管理"
             echo ""
             echo "用法:"
-            echo "  worktree-manage.sh create <task-name>   创建新 worktree"
-            echo "  worktree-manage.sh list                 列出所有 worktree"
-            echo "  worktree-manage.sh remove <branch>      移除指定 worktree"
-            echo "  worktree-manage.sh cleanup              清理已合并的 worktree"
+            echo "  worktree-manage.sh create <task-name>         创建新 worktree"
+            echo "  worktree-manage.sh init-or-check <task-name>  确保在 worktree（engine-worktree skill 入口）"
+            echo "  worktree-manage.sh list                       列出所有 worktree"
+            echo "  worktree-manage.sh remove <branch>            移除指定 worktree"
+            echo "  worktree-manage.sh cleanup                    清理已合并的 worktree"
             exit 1
             ;;
     esac
+}
+
+# cmd_init_or_check — engine-worktree skill 调用入口
+# 已在 worktree → 补齐 .dev-lock；在主仓库 → 调 cmd_create
+cmd_init_or_check() {
+    local task_name="${1:-}"
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null || echo "")
+
+    if [[ "$git_dir" == *"worktrees"* ]]; then
+        echo "✅ 已在 worktree 中"
+        local current_branch project_root dev_mode_file dev_lock_file
+        current_branch=$(git rev-parse --abbrev-ref HEAD)
+        project_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+        dev_mode_file="$project_root/.dev-mode.${current_branch}"
+        dev_lock_file="$project_root/.dev-lock.${current_branch}"
+
+        if [[ ! -f "$dev_lock_file" ]]; then
+            cat > "$dev_lock_file" <<LOCKEOF
+dev
+branch: ${current_branch}
+session_id: headed-$(date +%s)-$$-${current_branch}
+owner_session: ${CLAUDE_SESSION_ID:-unknown}
+tty: $(tty 2>/dev/null || echo "none")
+created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+LOCKEOF
+            echo "✅ .dev-lock 已创建（含 session info）"
+        fi
+    else
+        echo "📍 当前在主仓库，创建 worktree"
+        [[ -z "$task_name" ]] && { echo "❌ init-or-check 在主仓库需 task-name 参数"; exit 1; }
+        cmd_create "$task_name"
+    fi
+
+    # 自检
+    git_dir=$(git rev-parse --git-dir 2>/dev/null)
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    [[ "$git_dir" != *"worktrees"* ]] && { echo "❌ 未在 worktree 中"; exit 1; }
+    [[ ! "$current_branch" =~ ^cp- ]] && { echo "❌ 分支名不符合 cp-* 格式"; exit 1; }
+    echo "✅ engine-worktree 自检通过"
 }
 
 main "$@"
