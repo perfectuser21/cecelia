@@ -1031,9 +1031,12 @@
     "okr_initiative_plan": "/decomp",
     "okr_scope_plan": "/decomp",
     "okr_project_plan": "/decomp",
-    "platform_scraper": "/media-scraping"
+    "platform_scraper": "/media-scraping",
+    "harness_initiative": "/harness-planner",
+    "harness_task": "/_internal",
+    "harness_final_e2e": "/harness-evaluator"
   },
-  "generatedAt": "2026-04-17T15:17:10.482Z",
+  "generatedAt": "2026-04-19T15:16:54.661Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
