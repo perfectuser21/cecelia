@@ -4,7 +4,7 @@ import { join } from 'path';
 
 const PROXY_FILE = join(process.cwd(), 'skills/dev/steps/autonomous-research-proxy.md');
 const SKILL_FILE = join(process.cwd(), 'skills/dev/SKILL.md');
-const DECISION_FILE = join(process.cwd(), 'skills/dev/steps/00.7-decision-query.md');
+const DECISION_FILE = join(process.cwd(), 'skills/engine-decision/SKILL.md');
 
 describe('autonomous-research-proxy 行为规则', () => {
   const content = readFileSync(PROXY_FILE, 'utf8');
@@ -71,20 +71,24 @@ describe('SKILL.md 默认加载 autonomous-research-proxy（Phase 1 Round 2 后�
     expect(content).toContain('autonomous-research-proxy');
   });
 
-  it('说明 /dev 必读 proxy（Phase 4 后 autonomous-research-proxy 是核心价值）', () => {
-    // Phase 4 改为调 /superpowers:* 后，SKILL.md 仍强调 proxy 必读
-    expect(content).toMatch(/autonomous-research-proxy[\s\S]{0,800}(必读|默认加载|Engine (核心|真价值)|替代)/);
+  it('说明 proxy 角色（Phase 5 后是规则文件，替代/代答 Superpowers 交互点）', () => {
+    // Phase 5 改为纯点火链后，SKILL.md 说明 proxy 是"问用户"交互点替代规则
+    expect(content).toMatch(/autonomous-research-proxy[\s\S]{0,800}(必读|默认加载|核心|真价值|替代|代答|规则|Tier)/);
   });
 });
 
-describe('00.7-decision-query.md v1.1.0 重塑', () => {
+describe('engine-decision SKILL.md（Phase 5 迁移自 00.7-decision-query.md v1.1.0）', () => {
   const content = readFileSync(DECISION_FILE, 'utf8');
 
-  it('包含 v1.1.0 说明', () => {
-    expect(content).toContain('v1.1.0');
+  it('说明 Decisions 为推理输入非硬约束（v1.1.0 重塑精神保留）', () => {
+    expect(content.toLowerCase()).toMatch(/推理输入|subagent/);
   });
 
-  it('说明改为 Research Subagent 的可选工具', () => {
+  it('说明后续 Superpowers 链消费 decisions', () => {
     expect(content.toLowerCase()).toContain('subagent');
+  });
+
+  it('包含 TERMINAL IMPERATIVE（Phase 5 要求）', () => {
+    expect(content).toContain('TERMINAL IMPERATIVE');
   });
 });

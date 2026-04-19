@@ -4,7 +4,7 @@ import { resolve } from 'path';
 
 // 用 resolve(__dirname, ...) 让 check-changed-coverage 的 gate2 能识别路径引用
 const SESSION_START = resolve(__dirname, '../hooks/session-start.sh');
-const SHIP_MD = resolve(__dirname, '../skills/dev/steps/04-ship.md');
+const SHIP_MD = resolve(__dirname, '../skills/engine-ship/SKILL.md');
 const WRITE_STATE_SH = resolve(__dirname, '../../../scripts/write-current-state.sh');
 
 describe('write-current-state.sh', () => {
@@ -28,8 +28,8 @@ describe('write-current-state.sh', () => {
   });
 });
 
-describe('04-ship.md 包含 CURRENT_STATE 步骤', () => {
-  it('04-ship.md 包含 write-current-state 调用', () => {
+describe('engine-ship SKILL.md 包含 CURRENT_STATE 步骤', () => {
+  it('engine-ship/SKILL.md 包含 write-current-state 调用', () => {
     const content = readFileSync(SHIP_MD, 'utf8');
     expect(content).toContain('write-current-state');
   });

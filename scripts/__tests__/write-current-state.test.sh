@@ -6,7 +6,7 @@
 # 1. 脚本文件存在且可执行
 # 2. 脚本包含正确的输出路径逻辑（兼容 worktree）
 # 3. 脚本包含 Brain 离线降级保护（--max-time）
-# 4. Stage 4 集成：04-ship.md 含 4.4.5 步骤
+# 4. Stage 4 集成：engine-ship/SKILL.md 含 write-current-state 调用（Phase 5 迁移）
 # 5. 脚本执行不崩溃（即使 Brain 离线）
 #
 # 使用方式：bash scripts/__tests__/write-current-state.test.sh
@@ -54,15 +54,15 @@ else
 fi
 
 # ── 测试 4：Stage 4 集成 ───────────────────────────────────────────────────────
-SHIP_MD="$REPO_ROOT/packages/engine/skills/dev/steps/04-ship.md"
+SHIP_MD="$REPO_ROOT/packages/engine/skills/engine-ship/SKILL.md"
 if [[ -f "$SHIP_MD" ]]; then
     if grep -q "write-current-state.sh" "$SHIP_MD" 2>/dev/null; then
-        pass "Stage 4 04-ship.md 已集成 write-current-state.sh（步骤 4.4.5）"
+        pass "engine-ship/SKILL.md 已集成 write-current-state.sh（Phase 5 迁移自 04-ship.md）"
     else
-        fail "Stage 4 04-ship.md 未集成 write-current-state.sh"
+        fail "engine-ship/SKILL.md 未集成 write-current-state.sh"
     fi
 else
-    fail "04-ship.md 不存在: $SHIP_MD"
+    fail "engine-ship/SKILL.md 不存在: $SHIP_MD"
 fi
 
 # ── 测试 5：CURRENT_STATE.md 目标文件已初始化 ─────────────────────────────────

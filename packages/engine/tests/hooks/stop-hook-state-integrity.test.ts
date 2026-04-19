@@ -182,7 +182,6 @@ describe("Stop Hook 状态完整性 (PR #550)", () => {
     });
   });
 
-  // Phase 4: 01-spec.md 已删除（Superpowers 接力链替代了 Engine 自己的 Spec 阶段）
-  // 原 "01-spec.md 修复验证" 的两个 tests 随文件删除一并移除
-  // .dev-mode 模板现在由 SKILL.md 或 steps/00-worktree-auto.md 写入
+  // Phase 4: 01-spec.md 已删（Superpowers 接力链替代了 Engine 自己的 Spec 阶段）
+  // Phase 5: 00-worktree-auto.md 也已删，.dev-mode 模板现在由 SKILL.md 或 engine-worktree/SKILL.md 写入
 });
