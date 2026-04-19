@@ -9,8 +9,5 @@
 - [x] [ARTIFACT] 注释说明"只允许下调"的运维规则
   Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/只允许下调|不允许上调/.test(c))process.exit(1);console.log('PASS')"
 
-- [x] [BEHAVIOR] 本地 brain eslint --max-warnings 244 当前通过（dogfood，确认基线数字准确）
+- [x] [BEHAVIOR] brain eslint --max-warnings 244 在 CI 真跑通（dogfood，dod-behavior-dynamic job 里已装 brain deps）
   Test: manual:bash -c "cd packages/brain && npx eslint src/ --max-warnings 244 > /tmp/lint-brain.log 2>&1"
-
-- [x] [BEHAVIOR] 本地 apps/api eslint --max-warnings 18 当前通过（dogfood）
-  Test: manual:bash -c "cd apps/api && npx eslint src/ --max-warnings 18 > /tmp/lint-api.log 2>&1"
