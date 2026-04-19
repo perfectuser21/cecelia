@@ -6,6 +6,22 @@ version: "1.0.0"
 updated: "2026-04-19"
 
 changelog:
+  - version: "16.0.0"
+    date: "2026-04-19"
+    change: "refactor"
+    description: "Phase 6 — Slim & Unblock。审计 Phase 5 (15.0.0) 后发现 3 类问题：(1) 阻碍：Phase 5 /dev SKILL.md 删了'读 autonomous-research-proxy.md'指令，proxy 211 行规则没人读，brainstorming 问 clarifying question 时主 agent 停下等用户→autonomous 死锁。(2) 阻碍：engine-decision 写 .decisions-yaml 但 Superpowers subagent 不读→白写。(3) 阻碍+矛盾：engine-enrich '5 自问+3 轮 review+探索代码库' 一字不差复制 superpowers:brainstorming，违反 Phase 4 'don't duplicate Superpowers' 原则。(4) 垃圾：748 行中 74% 噪音。本 PR（major bump 15.0.0→16.0.0）：删 engine-enrich + engine-decision 两个 skill（能力下放 autonomous-research-proxy Tier 1 两条新规则：brainstorming 启动前 Research Subagent 跑 enrich-decide.sh + 必 curl /api/brain/decisions/match）。接力链 9 棒→7 棒（/dev → engine-worktree → superpowers:brainstorming → writing-plans → subagent-driven-development → finishing → engine-ship）。/dev SKILL.md 116→37 行（inline Autonomous 行为核心 + 明确 autonomous-research-proxy 按需 Read）。autonomous-research-proxy 211→87 行（删 F4 17 项交互点审计表+POC+覆盖率+已删文件映射+v2 旧表；保留 Tier 1/2/3+Subagent 模板+Model/Confidence+Phase 5 finishing→ship 硬规则；加 Phase 6 Tier 1 两条）。engine-worktree 101→38 行（30 行 .dev-lock bash 抽到 worktree-manage.sh 的 init-or-check 子命令；删 feature/* 分支名检查；TERMINAL IMPERATIVE 从 engine-enrich 改指 superpowers:brainstorming）。engine-ship 127→66 行（删 Discard 死代码 § 4，autonomous 永不触发）。Engine 自写 748→228 行（减 70%）。"
+    files:
+      - "packages/engine/skills/dev/SKILL.md (trimmed 116→37)"
+      - "packages/engine/skills/engine-worktree/SKILL.md (trimmed 101→38; TERMINAL IMPERATIVE → superpowers:brainstorming)"
+      - "packages/engine/skills/engine-ship/SKILL.md (trimmed 127→66; Discard 删)"
+      - "packages/engine/skills/dev/steps/autonomous-research-proxy.md (trimmed 211→87; Phase 6 Tier 1 加 enrich + decisions/match)"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (new cmd: init-or-check)"
+      - "packages/engine/skills/engine-enrich/ (deleted)"
+      - "packages/engine/skills/engine-decision/ (deleted)"
+      - "packages/engine/tests/skills/decision-query-step.test.ts (deleted)"
+      - "packages/engine/tests/skills/research-proxy-integration.test.ts (updated for Phase 6)"
+      - "packages/engine/VERSION / package.json / .hook-core-version / hooks/VERSION / regression-contract.yaml (bumped 16.0.0)"
+
   - version: "15.0.0"
     date: "2026-04-19"
     change: "refactor"
