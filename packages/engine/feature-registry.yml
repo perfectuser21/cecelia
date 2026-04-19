@@ -6,6 +6,22 @@ version: "1.0.0"
 updated: "2026-04-18"
 
 changelog:
+  - version: "14.17.9"
+    date: "2026-04-19"
+    change: "refactor"
+    description: "Phase 3 — 回滚 L2 自创加固 + 补 upstream 同步基础设施。原则：Engine = Superpowers 自动化适配层，只改人机交互 → subagent，其他 1:1 同步 upstream，不魔改原 prompt。(1) 回滚 PR #2408 L2 evidence 系统：implementer-prompt.md 170→113 行（回 Superpowers 原版，删 TDD Deliverables Contract 57 行）+ spec-reviewer-prompt.md 103→61 行（删 Core Check #6 Anti-backfill 42 行）+ 删 02-code.md 3 处 record-evidence 插桩 + 删 record-evidence.sh / check-pipeline-evidence.cjs / test / wrapper / CI Pipeline Evidence Gate step + alignment.yaml 所有 runtime_evidence 字段（6713 字节）。(2) 补 3 个未本地化 skill 副本：executing-plans / dispatching-parallel-agents / finishing-a-development-branch（闭合 drift 检测漏洞）+ alignment.yaml 补 local_prompt + sha256。(3) 新增 sync-from-upstream.sh 对比本地 vs Superpowers upstream sha256，drift 时报告 + 标记 upstream 新 skill。本地验证跑通报 '所有本地 prompt 与 upstream 5.0.7 sha256 一致'。从此 Engine 跟 Superpowers 升级节奏，不魔改 prompt。"
+    files:
+      - "packages/engine/skills/dev/prompts/subagent-driven-development/implementer-prompt.md"
+      - "packages/engine/skills/dev/prompts/subagent-driven-development/spec-reviewer-prompt.md"
+      - "packages/engine/skills/dev/prompts/executing-plans/SKILL.md"
+      - "packages/engine/skills/dev/prompts/dispatching-parallel-agents/SKILL.md"
+      - "packages/engine/skills/dev/prompts/finishing-a-development-branch/SKILL.md"
+      - "packages/engine/scripts/sync-from-upstream.sh"
+      - "packages/engine/contracts/superpowers-alignment.yaml"
+      - "packages/engine/skills/dev/steps/02-code.md"
+      - ".github/workflows/ci.yml"
+      - "packages/engine/vitest.config.ts"
+
   - version: "14.17.8"
     date: "2026-04-19"
     change: "refactor"
