@@ -87,7 +87,7 @@ async function getAreaTaskCounts() {
  * @param {number} availableSlots - 当前可用的总 slot 数
  * @returns {Promise<{area: string|null, goalIds: string[], reason: string}>}
  */
-export async function selectAreaForDispatch(availableSlots = 1) {
+export async function selectAreaForDispatch(_availableSlots = 1) {
   const config = await getAreaConfig();
   const counts = await getAreaTaskCounts();
 

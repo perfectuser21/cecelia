@@ -40,7 +40,7 @@ export async function extractSuggestionsFromChat(message, intentType) {
   // intent.js 返回小写（create_task），统一转大写后比较
   if (!ACTION_INTENTS.has((intentType || '').toUpperCase())) return;
 
-  const content = `owner_request: ${message.slice(0, 200)}`;
+  const _content = `owner_request: ${message.slice(0, 200)}`;
 
   try {
     await processEvent({

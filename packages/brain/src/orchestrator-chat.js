@@ -781,7 +781,7 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
  * 执行聊天中 thalamus 返回的安全 action（Break 6 修复）
  * @param {Object} action - { type, params }
  */
-async function executeChatAction(action) {
+async function _executeChatAction(action) {
   switch (action.type) {
     case 'create_task': {
       const p = action.params || {};

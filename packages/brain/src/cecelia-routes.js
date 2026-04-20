@@ -8,7 +8,7 @@ import { Router } from 'express';
 import pool from './db.js';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
-import { updateConfig, refreshCache, getDynamicTaskTypes, getCachedConfig } from './task-type-config-cache.js';
+import { updateConfig, _refreshCache, _getDynamicTaskTypes, _getCachedConfig } from './task-type-config-cache.js';
 
 const router = Router();
 

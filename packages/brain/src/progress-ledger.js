@@ -295,7 +295,7 @@ async function evaluateProgressInTick(tickId, tickNumber) {
 
         for (const task of tasksResult.rows) {
             const { task_id, run_id, step_sequence, step_name, step_status,
-                   started_at, retry_count, confidence_score, step_age_ms } = task;
+                   _started_at, retry_count, confidence_score, step_age_ms } = task;
 
             let reviewAction = 'continue';
             let reviewReason = 'Task progressing normally';

@@ -230,7 +230,7 @@ async function createPlanAdjustmentTask(pool, { krId, completedProjectId, sugges
  * @param {Object} findings - 审查发现
  * @param {Object} planContext - plan_context from payload
  */
-async function executePlanAdjustment(pool, findings, planContext) {
+async function executePlanAdjustment(pool, findings, _planContext) {
   if (!findings?.plan_adjustment || !findings?.adjustments) {
     console.log('[progress-reviewer] No plan adjustments to execute');
     return;
@@ -239,9 +239,9 @@ async function executePlanAdjustment(pool, findings, planContext) {
   for (const adj of findings.adjustments) {
     if (!adj.project_id) continue;
 
-    const updates = [];
-    const values = [adj.project_id];
-    let paramIdx = 2;
+    const _updates = [];
+    const _values = [adj.project_id];
+    let _paramIdx = 2;
 
     const metaUpdates = {};
     if (adj.time_budget_days !== undefined) {
@@ -263,7 +263,7 @@ async function executePlanAdjustment(pool, findings, planContext) {
       }
       newTableUpdates.push('updated_at = NOW()');
 
-      const newResult = await pool.query(
+      const _newResult = await pool.query(
         `UPDATE okr_projects SET ${newTableUpdates.join(', ')} WHERE id = $1`,
         newTableValues
       );

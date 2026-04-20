@@ -199,7 +199,7 @@ export function buildDockerArgs(opts, ctx = {}) {
       try {
         const cred = JSON.parse(readFn(credFile, 'utf8'));
         if (cred.api_key) envFinal.ANTHROPIC_API_KEY = cred.api_key;
-      } catch (e) {
+      } catch (_e) {
         console.warn(`[docker-executor] credentials file not found: ${credFile}`);
       }
     }
@@ -285,7 +285,7 @@ export async function executeInDocker(opts) {
   // 写 prompt 文件（宿主侧持久化，用于 debug / audit）
   writePromptFile(taskId, opts.prompt);
 
-  const { args, envFinal, name, memoryMB, cpuCores, image } = buildDockerArgs(opts);
+  const { args, _envFinal, name, memoryMB, cpuCores, image } = buildDockerArgs(opts);
   const tier = resolveResourceTier(taskType);
 
   const startedAtMs = Date.now();

@@ -294,7 +294,7 @@ async function releaseTask(taskId, action, options = {}) {
       return { success: false, error: 'Task is not in quarantine' };
     }
 
-    const quarantineInfo = task.payload?.quarantine_info || {};
+    const _quarantineInfo = task.payload?.quarantine_info || {};
     let newStatus = 'queued';
     let newPayload = { ...task.payload };
 

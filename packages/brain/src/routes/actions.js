@@ -2,11 +2,11 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { readFileSync } from 'fs';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from '../actions.js';
-import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from '../intent.js';
-import { getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from '../decision-executor.js';
-import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from '../proposal.js';
-import { handleChat, handleChatStream } from '../orchestrator-chat.js';
-import { callLLM, callLLMStream } from '../llm-caller.js';
+import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, _extractEntities, _classifyIntent, _getSuggestedAction } from '../intent.js';
+import { getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, _expireStaleProposals } from '../decision-executor.js';
+import { _createProposal, _approveProposal, _rollbackProposal, _rejectProposal, _getProposal, _listProposals } from '../proposal.js';
+import { _handleChat, _handleChatStream } from '../orchestrator-chat.js';
+import { callLLM, _callLLMStream } from '../llm-caller.js';
 import { ALLOWED_ACTIONS, checkIdempotency, saveIdempotency, internalLogDecision } from './shared.js';
 
 const router = Router();

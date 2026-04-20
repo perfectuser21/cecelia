@@ -254,7 +254,7 @@ async function callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent 
  * 自动选择配额最优账号（通过 configDir 传给 bridge）
  * Bridge 500 时自动重试（最多 2 次，指数退避 500ms/1000ms）
  */
-async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
+async function callClaudeViaBridge(prompt, model, timeout, _originalModel) {
   const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
 
   // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理

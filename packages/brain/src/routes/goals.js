@@ -2,18 +2,18 @@ import { Router } from 'express';
 import { readFileSync } from 'fs';
 import pool from '../db.js';
 import {
-  executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
+  _executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
   addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS
 } from '../okr-tick.js';
 import {
-  executeNightlyAlignment, runNightlyAlignmentSafe, startNightlyScheduler, stopNightlyScheduler,
+  _executeNightlyAlignment, runNightlyAlignmentSafe, startNightlyScheduler, stopNightlyScheduler,
   getNightlyTickStatus, getDailyReports
 } from '../nightly-tick.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from '../event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from '../circuit-breaker.js';
-import { getCurrentAlertness, setManualOverride, clearManualOverride, ALERTNESS_LEVELS, LEVEL_NAMES } from '../alertness/index.js';
-import { getDispatchStats } from '../dispatch-stats.js';
-import { getCleanupStats, runTaskCleanup, getCleanupAuditLog } from '../task-cleanup.js';
+import { getCurrentAlertness, _setManualOverride, _clearManualOverride, ALERTNESS_LEVELS, LEVEL_NAMES } from '../alertness/index.js';
+import { _getDispatchStats } from '../dispatch-stats.js';
+import { _getCleanupStats, _runTaskCleanup, _getCleanupAuditLog } from '../task-cleanup.js';
 import { getTickStatus } from '../tick.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from '../proposal.js';
 import { probe as dockerRuntimeProbe } from '../docker-runtime-probe.js';

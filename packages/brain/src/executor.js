@@ -26,8 +26,8 @@ import { getDecisionsSummary } from './decisions-context.js';
 import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
-import { loadCache, getCachedLocation, getCachedConfig, refreshCache } from './task-type-config-cache.js';
-import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
+import { _loadCache, getCachedLocation, getCachedConfig, _refreshCache } from './task-type-config-cache.js';
+import { updateTaskStatus, _updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { selectBestAccount, getAccountUsage } from './account-usage.js';
 import { executeInDocker, writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
@@ -261,7 +261,7 @@ function assertSafePid(value, label = 'pid') {
 }
 
 // Configuration
-const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/Users/administrator/bin/cecelia-run';
+const _CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/Users/administrator/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
 const WORK_DIR = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21/cecelia';
 
@@ -306,7 +306,7 @@ function getProcessLogTail(taskId) {
       const content = readFileSync(logPath, 'utf-8');
       return content.split('\n').slice(-20).join('\n');
     }
-  } catch (err) {
+  } catch (_err) {
     // Log file may not exist or not readable
     return null;
   }
@@ -404,9 +404,9 @@ function setBudgetCap(n) {
 }
 
 // Auto-dispatch thresholds (derived from constants above)
-const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
-const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
-const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;
+const _USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
+const _USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
+const _RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;
 const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB;
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB;
 const SWAP_USED_MAX_PCT = 90;  // macOS 正常 swap 60-70%，50% 太保守导致误判过载清零所有 slot
@@ -1230,7 +1230,7 @@ function cleanupOrphanProcesses() {
 /**
  * Ensure prompt directory exists
  */
-async function ensurePromptDir() {
+async function _ensurePromptDir() {
   try {
     await mkdir(PROMPT_DIR, { recursive: true });
   } catch (err) {
@@ -1243,7 +1243,7 @@ async function ensurePromptDir() {
 /**
  * Generate a unique run ID
  */
-function generateRunId(taskId) {
+function generateRunId(_taskId) {
   return uuidv4();
 }
 
@@ -3611,7 +3611,7 @@ async function syncOrphanTasksOnStartup() {
  * @param {string} runId - Run ID (for validation)
  * @returns {Object} - { success, message }
  */
-async function recordHeartbeat(taskId, runId) {
+async function recordHeartbeat(taskId, _runId) {
   const result = await pool.query(
     `UPDATE tasks SET
       payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(

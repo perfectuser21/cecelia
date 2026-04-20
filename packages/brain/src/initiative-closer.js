@@ -16,7 +16,7 @@
 
 import { computeCapacity } from './capacity.js';
 import { updateKrProgress } from './kr-progress.js';
-import { reviewProjectCompletion, shouldAdjustPlan, createPlanAdjustmentTask } from './progress-reviewer.js';
+import { _reviewProjectCompletion, shouldAdjustPlan, createPlanAdjustmentTask } from './progress-reviewer.js';
 
 /**
  * 检查并关闭已完成的 Initiatives。

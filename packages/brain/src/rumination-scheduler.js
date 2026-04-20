@@ -269,7 +269,7 @@ ${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 400)}`).join('\n\n'
 ${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 300)}`).join('\n')}`;
       const { text } = await callLLM('rumination', prompt);
       content = text || '';
-    } catch (err) {
+    } catch (_err) {
       return { ok: false, error: 'both_paths_failed', level: 'weekly' };
     }
   }
@@ -400,7 +400,7 @@ ${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 40
 ${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 300)}`).join('\n')}`;
       const { text } = await callLLM('rumination', prompt);
       content = text || '';
-    } catch (err) {
+    } catch (_err) {
       return { ok: false, error: 'both_paths_failed', level: 'monthly' };
     }
   }

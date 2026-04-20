@@ -188,7 +188,7 @@ Required analysis:
  * Auto-Mitigation: Reduce system load
  * Triggered at EMERGENCY level and above
  */
-export async function applyMitigation(signals) {
+export async function applyMitigation(_signals) {
   console.log(`[alertness-actions] Applying auto-mitigation measures...`);
 
   const actions = [];

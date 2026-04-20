@@ -11,7 +11,7 @@
  * 设计原则：CI 通过即代表质量验收通过，直接 merge，无需独立 evaluator agent。
  */
 
-import { checkPrStatus, classifyFailedChecks, executeMerge } from './shepherd.js';
+import { checkPrStatus, classifyFailedChecks, _executeMerge } from './shepherd.js';
 import { execSync } from 'child_process';
 import { createTask } from './actions.js';
 
@@ -240,7 +240,7 @@ export async function processHarnessDeployWatchers(pool) {
   for (const task of rows) {
     result.processed++;
     const payload = task.payload || {};
-    const prUrl = payload.pr_url;
+    const _prUrl = payload.pr_url;
     const pollCount = payload.poll_count || 0;
 
     if (pollCount >= MAX_DEPLOY_WATCH_POLLS) {

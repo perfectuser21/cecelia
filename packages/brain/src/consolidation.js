@@ -19,7 +19,7 @@ const CONSOLIDATION_INTERVAL_HOURS = parseInt(
 );
 
 /** 保留旧常量用于向后兼容 */
-const CONSOLIDATION_HOUR_UTC = parseInt(
+const _CONSOLIDATION_HOUR_UTC = parseInt(
   process.env.CECELIA_CONSOLIDATION_HOUR_UTC || '19', 10
 );
 
@@ -59,7 +59,7 @@ export function shouldRunConsolidation(now = new Date()) {
  */
 export async function hasTodayConsolidation(pool) {
   // 改为检查最近 N 小时内是否已运行（而非仅检查今天）
-  const intervalHours = CONSOLIDATION_INTERVAL_HOURS;
+  const _intervalHours = CONSOLIDATION_INTERVAL_HOURS;
   const today = new Date().toISOString().split('T')[0];
   const { rows } = await pool.query(
     `SELECT id FROM daily_logs

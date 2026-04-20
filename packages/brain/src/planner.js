@@ -8,7 +8,7 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { getDomainRole, ROLES } from './role-registry.js';
-import { detectDomain } from './domain-detector.js';
+import { _detectDomain } from './domain-detector.js';
 
 // Learning penalty configuration
 const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）

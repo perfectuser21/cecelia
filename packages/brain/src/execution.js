@@ -11,7 +11,7 @@ import { execSync } from 'child_process';
 // ── WS1: Verdict Retry + Bridge Crash Detection ──────────────────────────────
 
 const MAX_VERDICT_RETRIES = 10;
-const VERDICT_RETRY_INTERVAL_MS = 200;
+const _VERDICT_RETRY_INTERVAL_MS = 200;
 
 /**
  * readVerdictWithRetry — poll DB for verdict with up to MAX_VERDICT_RETRIES retries.
@@ -85,7 +85,7 @@ export function isBridgeSessionCrash(result) {
  * @param {Function} opts.createHarnessTask
  * @returns {Promise<{ action: string }>}
  */
-export async function handleEvaluateSessionCrash({ pool, taskId, plannerShort, harnessTask, harnessPayload, createHarnessTask }) {
+export async function handleEvaluateSessionCrash({ pool, taskId, plannerShort, _harnessTask, harnessPayload, createHarnessTask }) {
   let crashCount = 0;
   try {
     const meta = await pool.query('SELECT metadata FROM tasks WHERE id = $1', [taskId]);

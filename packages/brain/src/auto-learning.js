@@ -176,7 +176,7 @@ export async function handleTaskCompletedLearning(task_id, taskType, status, res
 /**
  * 处理任务失败的自动学习
  */
-export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, metadata = {}, dbErrorMessage = null) {
+export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, _metadata = {}, dbErrorMessage = null) {
   // 只处理有价值的任务类型
   if (!VALUABLE_TASK_TYPES.includes(taskType)) {
     console.log(`[auto-learning] Skipping task_type=${taskType} (not in valuable list)`);

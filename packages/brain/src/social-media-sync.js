@@ -85,7 +85,7 @@ async function fetchRawSnapshots() {
 async function fetchExistingKeys(rows) {
   if (rows.length === 0) return new Set();
 
-  const tuples = rows.map(r => {
+  const _tuples = rows.map(r => {
     const d = r.snapshot_date instanceof Date
       ? r.snapshot_date.toISOString().slice(0, 10)
       : String(r.snapshot_date).slice(0, 10);

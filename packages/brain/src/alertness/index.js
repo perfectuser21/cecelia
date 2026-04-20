@@ -10,10 +10,10 @@
  * - 自愈恢复策略
  */
 
-import { collectMetrics, getRecentMetrics, calculateHealthScore } from './metrics.js';
-import { diagnoseProblem, getAnomalyPatterns } from './diagnosis.js';
+import { collectMetrics, _getRecentMetrics, calculateHealthScore } from './metrics.js';
+import { diagnoseProblem, _getAnomalyPatterns } from './diagnosis.js';
 import { escalateResponse, getCurrentResponseLevel, executeResponse } from './escalation.js';
-import { applySelfHealing, getRecoveryStatus, startRecovery } from './healing.js';
+import { _applySelfHealing, getRecoveryStatus, startRecovery } from './healing.js';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
 import { publishAlertnessChanged } from '../events/taskEvents.js';
