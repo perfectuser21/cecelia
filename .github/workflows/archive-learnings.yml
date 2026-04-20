@@ -3,6 +3,7 @@ name: Archive Old Learnings
 # 每月 1 号自动把 30 天前的 docs/learnings/*.md 归档成 tar.gz，
 # 按 YYYY-MM 分桶（以 git log 首次入库时间为准，不用文件 mtime）。
 # 可手动触发（workflow_dispatch）跑一次性大清理。
+# v1.1 (2026-04-20): 从 bot 直推 main 改成开 PR + harness label 自动合并。
 
 on:
   schedule:
