@@ -23,6 +23,15 @@ vi.mock('../../harness-worktree.js', () => ({
 vi.mock('../../harness-credentials.js', () => ({
   resolveGitHubToken: vi.fn(async () => 'ghs_mock_integration_token'),
 }));
+// PR-4: runInitiative 现在在 plannerOutput 解析后跑 GAN 合同循环。
+// CI 环境没有真实 Proposer/Reviewer container，mock 成一次通过。
+vi.mock('../../harness-gan-loop.js', () => ({
+  runGanContractLoop: vi.fn(async () => ({
+    contract_content: '# Mock Contract (integration)',
+    rounds: 1,
+    cost_usd: 0.1,
+  })),
+}));
 
 let pool;
 let runInitiative;
@@ -175,7 +184,7 @@ describe('runInitiative — happy path', () => {
       [result.contractId]
     );
     expect(contracts.rows).toHaveLength(1);
-    expect(contracts.rows[0].status).toBe('draft');
+    expect(contracts.rows[0].status).toBe('approved');
     expect(contracts.rows[0].version).toBe(1);
 
     // 验证 initiative_runs 写入
@@ -184,7 +193,7 @@ describe('runInitiative — happy path', () => {
       [result.runId]
     );
     expect(runs.rows).toHaveLength(1);
-    expect(runs.rows[0].phase).toBe('A_contract');
+    expect(runs.rows[0].phase).toBe('B_task_loop');
     expect(runs.rows[0].contract_id).toBe(result.contractId);
     expect(runs.rows[0].deadline_at).not.toBeNull();
   });

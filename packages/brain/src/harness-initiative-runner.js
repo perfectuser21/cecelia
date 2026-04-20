@@ -11,9 +11,10 @@
  * 阶段 A 流程：
  *   1. 调 Planner — 产 sprint-prd.md + task-plan.json
  *   2. parseTaskPlan → 校验
- *   3. 事务内 upsertTaskPlan — 建 subtasks + pr_plans + task_dependencies
- *   4. 建 initiative_contracts 行（status='draft', prd_content=...）
- *   5. 建 initiative_runs 行（phase='A_contract', deadline_at=NOW()+timeout）
+ *   3. 跑 GAN 合同循环（Proposer ↔ Reviewer）→ approved contract_content
+ *   4. 事务内 upsertTaskPlan — 建 subtasks + pr_plans + task_dependencies
+ *   5. 建 initiative_contracts 行（status='approved', prd_content + contract_content + review_rounds, approved_at=NOW()）
+ *   6. 建 initiative_runs 行（phase='B_task_loop', deadline_at=NOW()+timeout）
  *
  * 阶段 C 流程（runPhaseCIfReady）：
  *   1. 查子任务状态，未全部 completed → 返回 not_ready（由 tick 层保底轮询）
@@ -31,6 +32,7 @@ import { parseTaskPlan, upsertTaskPlan } from './harness-dag.js';
 import { runFinalE2E, attributeFailures } from './harness-final-e2e.js';
 import { ensureHarnessWorktree } from './harness-worktree.js';
 import { resolveGitHubToken } from './harness-credentials.js';
+import { runGanContractLoop } from './harness-gan-loop.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -153,6 +155,24 @@ ${task.description || task.title || ''}
     taskPlan.initiative_id = initiativeId;
   }
 
+  // ── Phase A — GAN 合同循环（PR-4）──────────────────────────────────────
+  let ganResult;
+  try {
+    ganResult = await runGanContractLoop({
+      taskId: task.id,
+      initiativeId,
+      sprintDir,
+      prdContent: plannerOutput,
+      executor,
+      worktreePath,
+      githubToken,
+      budgetCapUsd: budgetUsd,
+    });
+  } catch (err) {
+    console.error(`[harness-initiative-runner] GAN failed task=${task.id}: ${err.message}`);
+    return { success: false, taskId: task.id, initiativeId, error: `gan: ${err.message}` };
+  }
+
   // ── 3,4,5. 单事务：upsertTaskPlan + initiative_contracts + initiative_runs ─
   const client = await dbPool.connect();
   try {
@@ -165,25 +185,26 @@ ${task.description || task.title || ''}
       client,
     });
 
-    // 建 initiative_contracts（draft 版，Proposer/Reviewer 会在 M3 写 contract_content）
+    // 建 initiative_contracts（approved 版，GAN 循环已产出 contract_content）
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
          initiative_id, version, status,
-         prd_content, budget_cap_usd, timeout_sec
+         prd_content, contract_content, review_rounds,
+         budget_cap_usd, timeout_sec, approved_at
        )
-       VALUES ($1::uuid, 1, 'draft', $2, $3, $4)
+       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, NOW())
        RETURNING id`,
-      [initiativeId, plannerOutput, budgetUsd, timeoutSec]
+      [initiativeId, plannerOutput, ganResult.contract_content, ganResult.rounds, budgetUsd, timeoutSec]
     );
     const contractId = contractInsert.rows[0].id;
 
-    // 建 initiative_runs（phase='A_contract'）
+    // 建 initiative_runs（phase='B_task_loop'，阶段 A 已结束）
     const runInsert = await client.query(
       `INSERT INTO initiative_runs (
          initiative_id, contract_id, phase,
          deadline_at
        )
-       VALUES ($1::uuid, $2::uuid, 'A_contract',
+       VALUES ($1::uuid, $2::uuid, 'B_task_loop',
          NOW() + ($3 || ' seconds')::interval
        )
        RETURNING id`,
