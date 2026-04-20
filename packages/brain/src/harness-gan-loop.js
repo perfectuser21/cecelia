@@ -1,11 +1,44 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFile = promisify(execFileCb);
 
 const VERDICT_RE = /VERDICT:\s*(APPROVED|REVISION)/i;
 
+// Reviewer SKILL v4 APPROVED 时会 rename contract-draft.md → sprint-contract.md，
+// 另外 multi-round worktree 被 review branch 污染时文件可能不在当前 HEAD。
+// 读多个候选路径，任一命中即返回。
 async function defaultReadContractFile(worktreePath, sprintDir) {
-  const full = path.join(worktreePath, sprintDir, 'contract-draft.md');
-  return await readFile(full, 'utf8');
+  const candidates = [
+    path.join(worktreePath, sprintDir, 'contract-draft.md'),
+    path.join(worktreePath, sprintDir, 'sprint-contract.md'),
+  ];
+  const errors = [];
+  for (const p of candidates) {
+    try {
+      return await readFile(p, 'utf8');
+    } catch (err) {
+      errors.push(`${p}: ${err.code || err.message}`);
+    }
+  }
+  // 从所有 propose/review branch 里 git show 找最新 contract-draft.md
+  try {
+    const { stdout } = await execFile('git', [
+      '-C', worktreePath, 'log', '--all', '--pretty=format:%H', '-S', 'Sprint Contract Draft', '--', `${sprintDir}/contract-draft.md`,
+    ], { timeout: 10_000 });
+    const sha = String(stdout || '').split('\n')[0].trim();
+    if (sha) {
+      const { stdout: content } = await execFile('git', [
+        '-C', worktreePath, 'show', `${sha}:${sprintDir}/contract-draft.md`,
+      ], { timeout: 10_000 });
+      if (content) return content;
+    }
+  } catch (err) {
+    errors.push(`git-log-search: ${err.message}`);
+  }
+  throw new Error(`contract file not found in any of: ${errors.join('; ')}`);
 }
 
 function extractVerdict(stdout) {
