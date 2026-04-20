@@ -189,11 +189,11 @@ cost_usd 累计 = a + b + c + d + e
 
 ## 成功标准
 
-- [ ] [BEHAVIOR] runGanContractLoop 按 propose→review→判决循环，APPROVED 才 break。Test: packages/brain/src/__tests__/harness-gan-loop.test.js
-- [ ] [BEHAVIOR] REVISION 的 feedback 传到下一轮 Proposer prompt。Test: 同上
-- [ ] [BEHAVIOR] 累积 cost 超 budgetCapUsd 抛 gan_budget_exceeded。Test: 同上
-- [ ] [BEHAVIOR] runInitiative 调 GAN 成功后 INSERT contract status='approved' + run phase='B_task_loop'。Test: packages/brain/src/__tests__/harness-initiative-runner-gan.test.js
-- [ ] [ARTIFACT] 新文件 packages/brain/src/harness-gan-loop.js 存在，导出 runGanContractLoop
+- [x] [BEHAVIOR] runGanContractLoop 按 propose→review→判决循环，APPROVED 才 break。Test: packages/brain/src/__tests__/harness-gan-loop.test.js
+- [x] [BEHAVIOR] REVISION 的 feedback 传到下一轮 Proposer prompt。Test: 同上
+- [x] [BEHAVIOR] 累积 cost 超 budgetCapUsd 抛 gan_budget_exceeded。Test: 同上
+- [x] [BEHAVIOR] runInitiative 调 GAN 成功后 INSERT contract status='approved' + run phase='B_task_loop'。Test: packages/brain/src/__tests__/harness-initiative-runner-gan.test.js
+- [x] [ARTIFACT] 新文件 packages/brain/src/harness-gan-loop.js 存在，导出 runGanContractLoop
 
 ## 回滚
 
