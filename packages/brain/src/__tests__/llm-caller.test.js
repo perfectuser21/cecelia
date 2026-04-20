@@ -278,18 +278,23 @@ describe('llm-caller', () => {
       expect(body.accountId).toBe('account1');
     });
 
-    it('有图片时 provider=anthropic 自动升级到 anthropic-api', async () => {
-      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('图片识别'));
+    it('有图片时 provider=anthropic 保持 bridge（P0-5: bridge 现支持图片）', async () => {
+      global.fetch.mockResolvedValueOnce(makeBridgeResponse('bridge看图'));
 
       const imageContent = [
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'xyz' } },
       ];
       const result = await callLLM('cortex', '看图', { imageContent });
 
-      // 应该调用 Anthropic API 而不是 bridge
+      // P0-5: bridge 现已支持图片，不再升级到 anthropic-api
       const fetchCall = global.fetch.mock.calls[0];
-      expect(fetchCall[0]).toBe('https://api.anthropic.com/v1/messages');
-      expect(result.text).toBe('图片识别');
+      expect(fetchCall[0]).toContain('/llm-call');
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.image_base64).toBe('xyz');
+      expect(body.image_mime).toBe('image/png');
+      expect(body.prompt).toBe('看图');
+      expect(result.text).toBe('bridge看图');
+      expect(result.provider).toBe('anthropic');
     });
   });
 

@@ -410,11 +410,20 @@ router.post('/vision', async (req, res) => {
   ];
 
   // ===== 调用 callLLM =====
+  // vision 端点默认优先走 Claude Code 订阅 bridge（provider='anthropic'），
+  // 而不是默认走 thalamus 配置里的 anthropic-api（付费 API 账号余额耗尽时会 400）。
+  // 调用方可通过 body.provider 强制覆盖（例如 'anthropic-api' 做 A/B 对比测试）。
+  const visionProvider = body.provider || 'anthropic';
+  // 走 bridge 时默认用 sonnet（视觉质量高）；走 anthropic-api 时沿用 tier profile 中模型。
+  const visionModel = body.model
+    || (visionProvider === 'anthropic' ? 'claude-sonnet-4-6' : undefined);
   try {
     const result = await callLLM(tier, finalPrompt, {
       timeout: timeoutMs,
       maxTokens,
       imageContent,
+      provider: visionProvider,
+      ...(visionModel ? { model: visionModel } : {}),
     });
     const text = result?.text || '';
     return res.json({
