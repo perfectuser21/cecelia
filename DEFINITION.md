@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.220.0
+**Brain 版本**: 1.221.0
 
 **状态**: 生产运行中
 
@@ -136,6 +136,8 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 ```
 
 **不守护（保留派发 / 纯计算）**：planner / executor / dispatchNextTask / quarantine / circuit-breaker / alertness / harness-watcher / publish-monitor / credential-check / evaluateEmotion（纯函数，dispatch_rate_modifier 派发依赖）。
+
+**运行时热切换（Phase 2）**：通过 Dashboard `/settings` 页或 API `PATCH /api/brain/settings/consciousness` 即时切换，无需重启。API 层写 `working_memory.consciousness_enabled` + 模块 cache write-through。**env 优先级**：plist 设 `CONSCIOUSNESS_ENABLED=false` 时 memory 被忽略（主机级紧急逃生口）。Dashboard 检测到 `env_override=true` 自动 disable Switch。
 
 ---
 
