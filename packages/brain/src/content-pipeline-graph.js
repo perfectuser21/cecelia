@@ -177,11 +177,20 @@ export const ContentPipelineState = Annotation.Root({
   copy_review_feedback: Annotation,
   copy_review_round: Annotation,
   copy_review_rule_details: Annotation,
+  // LLM 5 维评审总分（0-25），由 skill 的 bash 逻辑聚合 5 维分值后输出。
+  // 顶级字段让前端详情页直接读 event.payload.copy_review_total，无需再去
+  // rule_details 数组里翻。null 表示该轮未评（例如 bash 硬规则就挂了）。
+  copy_review_total: Annotation,
 
   image_review_verdict: Annotation,
   image_review_feedback: Annotation,
   image_review_round: Annotation,
   image_review_rule_details: Annotation,
+  // vision 4 维评审平均分（0-20）。同理让前端直接读，不用翻 rule_details。
+  // skill 在 stdout JSON 里输出字段名 "vision_avg"，这里 state 字段名也对齐成
+  // image_review_vision_avg（顶级字段语义更清晰）。从 vision_avg 映射到
+  // image_review_vision_avg 的逻辑在 extractNodeOutputs 里做。
+  image_review_vision_avg: Annotation,
 
   nas_url: Annotation,
 
@@ -329,9 +338,19 @@ const NODE_CONFIGS = {
     skill: 'pipeline-copy-review',
     task_type: 'content_copy_review',
     outputs: ['copy_review_feedback'],
-    json_outputs: ['copy_review_rule_details'],
+    // copy_review_total：skill 输出字段名和 state 字段名一致，直接抽。
+    json_outputs: ['copy_review_rule_details', 'copy_review_total'],
     verdict_field: 'copy_review_verdict',
     verdict_values: ['APPROVED', 'REVISION'],
+    // P0-3：copy_review 是纯打分/判定任务（LLM 只读 copy.md + article.md 按
+    // 5 维打分），不需要 Opus 的深度推理。pipeline 3e3f2c09 单次 copy_review
+    // 用 Opus 4.7 花 $0.96 USD，多轮 REVISION 回路代价高。切到 Haiku（最便宜
+    // 档），成本可降 10-20x；Haiku 对单文档打分场景完全够用。
+    //
+    // 值对齐 claude CLI --model 的 alias 规范：'sonnet' / 'opus' / 'haiku' 或
+    // 完整模型名（如 'claude-haiku-4-5-20251001'）。空/不存在时走容器默认
+    // 账号 tier，不注入 --model。
+    model: 'haiku',
   },
   generate: {
     skill: 'pipeline-generate',
@@ -342,7 +361,10 @@ const NODE_CONFIGS = {
     skill: 'pipeline-review',
     task_type: 'content_image_review',
     outputs: ['image_review_feedback'],
-    json_outputs: ['image_review_rule_details'],
+    // skill 在 JSON 里输出 "vision_avg"（非 "image_review_vision_avg"），
+    // 这里列 skill 实际字段名；extractNodeOutputs 会把 vision_avg 映射到
+    // state 顶级字段 image_review_vision_avg。
+    json_outputs: ['image_review_rule_details', 'vision_avg'],
     verdict_field: 'image_review_verdict',
     verdict_values: ['PASS', 'FAIL'],
   },
@@ -460,6 +482,9 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
           CONTENT_PIPELINE_ID: state.pipeline_id || '',
           CONTENT_OUTPUT_DIR: state.output_dir || '',
         },
+        // P0-3：节点可选声明使用的 claude model（alias 或完整名）。
+        // 空/不存在时 executor 不注入 --model，走容器默认 tier。
+        model: cfg.model,
       });
 
       const durationSec = ((Date.now() - startMs) / 1000).toFixed(1);
@@ -516,10 +541,19 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
       if (v) update[field] = v;
     }
 
-    // JSON outputs（数组/对象）— 从 stdout 最后一行 JSON 抽
+    // JSON outputs（数组/对象/标量）— 从 stdout 最后一行 JSON 抽
+    // skill 字段名 → state 字段名的映射表：skill 输出用更短的命名（vision_avg），
+    // state 用语义更清晰的顶级名（image_review_vision_avg）；映射关系在此处落地，
+    // 避免改 skill.md（P0-3/4 边界：不动 skill）。
+    const JSON_FIELD_ALIAS = {
+      vision_avg: 'image_review_vision_avg',
+    };
     for (const field of (cfg.json_outputs || [])) {
       const v = extractJsonField(output, field);
-      if (v !== null && v !== undefined) update[field] = v;
+      if (v !== null && v !== undefined) {
+        const stateField = JSON_FIELD_ALIAS[field] || field;
+        update[stateField] = v;
+      }
     }
 
     if (cfg.verdict_field) {

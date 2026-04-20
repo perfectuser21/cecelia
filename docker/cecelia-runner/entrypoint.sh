@@ -69,5 +69,14 @@ if [[ -d "$V6_SRC" && -d "$V6_DST" ]]; then
   cp -f "$V6_SRC"/gen-v6-*.mjs "$V6_DST/" 2>/dev/null || true
 fi
 
-# 6. 启动 claude headless，把所有传入参数当 prompt
-exec claude -p --dangerously-skip-permissions --output-format json "$@"
+# 6. P0-3：如果调用方通过 env CLAUDE_MODEL_OVERRIDE 指定了模型（alias 或完整名），
+# 就给 claude 加 `--model <value>`。content pipeline 的 copy_review 节点借此切到
+# haiku 降成本（Opus 单次 ~$0.96 → Haiku 量级便宜 10-20x）。
+# 空/未设置时走容器默认模型（账号 tier），保持老行为。
+MODEL_FLAGS=()
+if [[ -n "${CLAUDE_MODEL_OVERRIDE:-}" ]]; then
+  MODEL_FLAGS=(--model "$CLAUDE_MODEL_OVERRIDE")
+fi
+
+# 7. 启动 claude headless，把所有传入参数当 prompt
+exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"

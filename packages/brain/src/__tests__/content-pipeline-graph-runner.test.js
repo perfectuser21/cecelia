@@ -164,6 +164,50 @@ describe('runContentPipeline', () => {
     expect(last.manifest_path).toBe('/m.json');
   });
 
+  // P0-4：copy_review_total / image_review_vision_avg 透传到 state_snapshot，
+  // cecelia_events.payload 顶级就能直接读，前端详情页无需翻 rule_details。
+  it('state_snapshot 透传 copy_review_total + image_review_vision_avg 顶级字段 (P0-4)', async () => {
+    process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
+    const snapshots = [];
+    const overrides = {
+      research: async (s) => ({ ...s, trace: 'research', findings_path: '/f.json' }),
+      copywrite: async (s) => ({ ...s, trace: 'copywrite', copy_path: '/c.md' }),
+      copy_review: async (s) => ({
+        ...s,
+        trace: 'copy_review',
+        copy_review_verdict: 'APPROVED',
+        copy_review_round: 1,
+        copy_review_total: 21,
+        copy_review_rule_details: [{ id: 'LLM', pass: true, value: 21 }],
+      }),
+      generate: async (s) => ({ ...s, trace: 'generate', cards_dir: '/cards' }),
+      image_review: async (s) => ({
+        ...s,
+        trace: 'image_review',
+        image_review_verdict: 'PASS',
+        image_review_round: 1,
+        image_review_vision_avg: 17,
+        image_review_rule_details: [{ id: 'RCOUNT', pass: true, value: 9 }],
+      }),
+      export: async (s) => ({ ...s, trace: 'export', nas_url: 'nas://p/' }),
+    };
+    await runContentPipeline(
+      { id: 'p-top', keyword: 'demo' },
+      { overrides, onStep: (evt) => snapshots.push({ node: evt.node, snap: evt.state_snapshot }) },
+    );
+    const byNode = Object.fromEntries(snapshots.map((s) => [s.node, s.snap]));
+    // copy_review 节点的 snapshot 必须带 copy_review_total
+    expect(byNode.copy_review.copy_review_total).toBe(21);
+    expect(byNode.copy_review.copy_review_rule_details).toEqual([
+      { id: 'LLM', pass: true, value: 21 },
+    ]);
+    // image_review 节点的 snapshot 必须带 image_review_vision_avg
+    expect(byNode.image_review.image_review_vision_avg).toBe(17);
+    expect(byNode.image_review.image_review_rule_details).toEqual([
+      { id: 'RCOUNT', pass: true, value: 9 },
+    ]);
+  });
+
   it('state_snapshot carries WF-3 observability meta (prompt_sent / raw_stdout / raw_stderr / exit_code / duration_ms / container_id)', async () => {
     process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
     const snapshots = [];
