@@ -53,10 +53,10 @@ let _initialized = false;
 export async function initConsciousnessGuard(pool) {
   try {
     const result = await pool.query(
-      'SELECT value FROM working_memory WHERE key = $1',
+      'SELECT value_json FROM working_memory WHERE key = $1',
       [MEMORY_KEY]
     );
-    const val = result.rows[0]?.value;
+    const val = result.rows[0]?.value_json;
     _cached = val || { enabled: true, last_toggled_at: null };
   } catch (err) {
     console.warn('[consciousness-guard] initConsciousnessGuard failed, using default:', err.message);
@@ -68,9 +68,9 @@ export async function initConsciousnessGuard(pool) {
 export async function setConsciousnessEnabled(pool, enabled) {
   const value = { enabled: !!enabled, last_toggled_at: new Date().toISOString() };
   await pool.query(
-    `INSERT INTO working_memory(key, value, created_at, updated_at)
-     VALUES($1, $2::jsonb, NOW(), NOW())
-     ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = NOW()`,
+    `INSERT INTO working_memory(key, value_json, updated_at)
+     VALUES($1, $2::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = $2::jsonb, updated_at = NOW()`,
     [MEMORY_KEY, JSON.stringify(value)]
   );
   _cached = value;
@@ -92,10 +92,10 @@ export function getConsciousnessStatus() {
 export async function reloadConsciousnessCache(pool) {
   try {
     const result = await pool.query(
-      'SELECT value FROM working_memory WHERE key = $1',
+      'SELECT value_json FROM working_memory WHERE key = $1',
       [MEMORY_KEY]
     );
-    const val = result.rows[0]?.value;
+    const val = result.rows[0]?.value_json;
     if (val) _cached = val;
   } catch (err) {
     console.warn('[consciousness-guard] reload failed (non-fatal):', err.message);
