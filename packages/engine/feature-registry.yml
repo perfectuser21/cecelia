@@ -3,9 +3,18 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-19"
+updated: "2026-04-20"
 
 changelog:
+  - version: "18.0.0"
+    date: "2026-04-20"
+    change: "feat"
+    description: "Phase 8.1 — autonomous-research-proxy 13 点深度化。Phase 6 瘦身后 proxy 只覆盖 Superpowers 32 个交互点中的 17 个（53%），且为浅层固定默认值。用户确立方向：Cecelia /dev 要完全自主 0 人为 gate，把所有'问用户'点替换成'AI 深度研究后回答'。本 PR 把 13 个关键路径点（brainstorming 6 + subagent-driven-development 3 + receiving-code-review 4）的 proxy prompt 深度化。核心变更：(1) 数据源排序硬规则：用户的话 > 现有代码 > OKR 方向；不用 decisions/learnings（用户说'不一定准'）。(2) Structured Review Block 规范：B-4/B-5/B-6/SDD-2/SDD-3 五个自审点输出依据+判断+confidence+质量分+风险+下一步。(3) PR LOC 双阈值：软 200 行 / 硬 400 行（行业对齐 SmartBear + Microsoft Research）。(4) Appendix A 五个可直接 copy-paste 的 Research Subagent prompt 模板（B-2/B-3/SDD-1/SDD-2/SDD-3）。proxy.md 87 → 380+ 行。major bump 17.0.0 → 18.0.0（proxy 行为根本性扩展）。"
+    files:
+      - "packages/engine/skills/dev/steps/autonomous-research-proxy.md (87 → 380+; 13-point deepening + Structured Review Block + Appendix A)"
+      - "packages/engine/tests/proxy/phase81-13-points.test.ts (new, 17 assertions)"
+      - "Engine 6 处版本文件 (18.0.0)"
+
   - version: "17.0.0"
     date: "2026-04-19"
     change: "fix"
