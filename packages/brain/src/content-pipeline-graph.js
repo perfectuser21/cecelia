@@ -367,8 +367,13 @@ export function buildNodeInputPrompt(nodeName, skillContent, state, taskId) {
         ? `\n\n## 上一轮 vision 审查反馈\n${state.image_review_feedback}`
         : '';
 
+  // output contract：告诉 Claude stdout 最后要输出哪些字段
+  // cfg.outputs = 字符串字段（简单 key:value）
+  // cfg.json_outputs = 结构化字段（rule_details 这种数组/对象）
+  const jsonOutputs = cfg.json_outputs || [];
+  const jsonLines = jsonOutputs.map((f) => `    "${f}": [ ... 来自 SKILL 的 bash 计算 ... ]`);
   const outputContract = cfg.verdict_field
-    ? `\n\n## 输出要求\n在 stdout 最后输出:\n\`\`\`\n${cfg.verdict_field}: ${cfg.verdict_values.join('|')}\n${cfg.outputs.map((f) => `${f}: <内容或 null>`).join('\n')}\n\`\`\``
+    ? `\n\n## 输出要求\n在 stdout 最后一行输出**单行 JSON**（SKILL.md 要求的格式，不可省略任何字段）：\n\`\`\`json\n{\n    "${cfg.verdict_field}": "${cfg.verdict_values.join('|')}",\n${cfg.outputs.map((f) => `    "${f}": "<内容或 null>"`).join(',\n')}${jsonLines.length > 0 ? ',\n' + jsonLines.join(',\n') : ''}\n}\n\`\`\`${jsonOutputs.length > 0 ? `\n\n**重要**：${jsonOutputs.join(', ')} 字段是 Brain 驱动前端规则明细展示的核心，**必须由 SKILL 的 bash 逻辑计算并输出**，不可省略。` : ''}`
     : `\n\n## 输出要求\n在 stdout 最后输出产物路径:\n\`\`\`\n${cfg.outputs.map((f) => `${f}: <绝对路径>`).join('\n')}\n\`\`\``;
 
   return `你是 ${cfg.skill} agent。按下面 SKILL 指令工作。
