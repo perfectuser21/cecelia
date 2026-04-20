@@ -151,17 +151,17 @@ attempt >= 2（resume）保持 `claude --resume` 不变（resume 路径不需要
 
 ## DoD
 
-- [ ] [ARTIFACT] `scripts/claude-launch.sh` 存在且可执行（chmod +x）
+- [x] [ARTIFACT] `scripts/claude-launch.sh` 存在且可执行（chmod +x）
   - Test: `manual:bash -c "test -x scripts/claude-launch.sh"`
-- [ ] [BEHAVIOR] launcher 无 env 时生成 UUID 并 export
+- [x] [BEHAVIOR] launcher 无 env 时生成 UUID 并 export
   - Test: `tests/launcher/claude-launch.test.ts`
-- [ ] [BEHAVIOR] launcher 有 env 时继承 + 传 --session-id 给 claude
+- [x] [BEHAVIOR] launcher 有 env 时继承 + 传 --session-id 给 claude
   - Test: `tests/launcher/claude-launch.test.ts`
-- [ ] [BEHAVIOR] `_resolve_claude_session_id` 优先读 env var
+- [x] [BEHAVIOR] `_resolve_claude_session_id` 优先读 env var
   - Test: `tests/launcher/session-resolve.test.ts`
-- [ ] [ARTIFACT] `cecelia-run.sh` 改成调 launcher
+- [x] [ARTIFACT] `cecelia-run.sh` 改成调 launcher
   - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/cecelia-run.sh','utf8');if(!c.includes('claude-launch.sh'))process.exit(1)"`
-- [ ] [ARTIFACT] Engine 版本 6 处 + SKILL.md 同步到 18.1.0
+- [x] [ARTIFACT] Engine 版本 6 处 + SKILL.md 同步到 18.1.0
   - Test: `manual:bash -c "for f in packages/engine/VERSION packages/engine/.hook-core-version packages/engine/hooks/VERSION; do grep -q '18\.1\.0' \$f || exit 1; done"`
-- [ ] [ARTIFACT] `.claude/CLAUDE.md` 含 claude-launch.sh alias 说明
+- [x] [ARTIFACT] `.claude/CLAUDE.md` 含 claude-launch.sh alias 说明
   - Test: `manual:node -e "if(!require('fs').readFileSync('.claude/CLAUDE.md','utf8').includes('claude-launch.sh'))process.exit(1)"`

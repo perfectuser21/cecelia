@@ -6,6 +6,19 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.1.0"
+    date: "2026-04-20"
+    change: "feat"
+    description: "Phase 7.1 — 统一 claude 启动器。Phase 7（v17.0.0）修 Stop Hook 多 worktree 路由只对 headless 模式有效（cecelia-run.sh 用 --session-id flag），交互模式用户手敲 claude 无 flag 导致 owner_session=unknown，Stop Hook 匹配失败 → exit 0 放行 → 循环机制失效。本 PR 根治：新建 scripts/claude-launch.sh（强制 --session-id + export CLAUDE_SESSION_ID），cecelia-run.sh 改成调 launcher，worktree-manage.sh::_resolve_claude_session_id 优先读 env var（worktree-manage.sh 末尾 main 改成 BASH_SOURCE guard 便于测试 source）。用户 shell alias claude → launcher 后，交互/headless/parallel 走同一 session_id 机制。minor bump 18.0.0 → 18.1.0。"
+    files:
+      - "scripts/claude-launch.sh (new, executable)"
+      - "packages/brain/scripts/cecelia-run.sh (invoke launcher)"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (_resolve env priority + main guard)"
+      - ".claude/CLAUDE.md (alias doc, new § 6)"
+      - "packages/engine/tests/launcher/claude-launch.test.ts (new, 4 assertions)"
+      - "packages/engine/tests/launcher/session-resolve.test.ts (new, 3 assertions)"
+      - "Engine 7 处版本文件 (18.1.0)"
+
   - version: "18.0.0"
     date: "2026-04-20"
     change: "feat"

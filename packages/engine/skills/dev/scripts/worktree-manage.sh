@@ -450,10 +450,17 @@ main() {
     esac
 }
 
-# v17.0.0: 从父进程链解析 claude 启动时的 --session-id
-# $CLAUDE_SESSION_ID env var 在 bash tool 里永远是空的（Claude Code 不传），
-# 所以沿 PPID 向上查 claude 进程的 cmdline，提取 --session-id 参数
+# v18.1.0 (Phase 7.1): 统一 session_id 识别。claude-launch.sh export
+# $CLAUDE_SESSION_ID 后子进程 bash 调这里能直接读；fallback 到沿 PPID
+# 链找 claude cmdline 的 --session-id 参数（Phase 7 既有路径）。
 _resolve_claude_session_id() {
+    # Phase 7.1: env var 优先（launcher export 的路径）
+    if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+        echo "$CLAUDE_SESSION_ID"
+        return 0
+    fi
+
+    # Phase 7 fallback: 沿 PPID 链找 claude cmdline
     local pid="${PPID:-}"
     local depth=0
     while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do
@@ -515,4 +522,7 @@ LOCKEOF
     echo "✅ engine-worktree 自检通过"
 }
 
-main "$@"
+# 仅作为可执行脚本时跑 main；被 source 时跳过（让测试能拉函数）
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

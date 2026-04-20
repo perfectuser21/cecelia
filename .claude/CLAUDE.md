@@ -99,7 +99,23 @@ Brain (Node.js, port 5221)
 
 ---
 
-## 6. 禁止事项
+## 6. Shell Alias 配置（强推荐）
+
+为让 Stop Hook 循环机制对**交互模式**也生效，用户 `~/.zshrc` 或 `~/.bashrc` 加：
+
+```bash
+alias claude='bash /Users/administrator/perfect21/cecelia/scripts/claude-launch.sh'
+```
+
+**原理**：`claude-launch.sh` 强制 `--session-id` + export `$CLAUDE_SESSION_ID`，让 `worktree-manage.sh` 能写正确的 owner_session，Stop Hook 能精确匹配 .dev-lock。
+
+**不加 alias 的后果**：交互 claude 无 session_id → owner_session=unknown → Stop Hook 永远 mismatch → exit 0 放行 → assistant 中途退出 → /dev 循环失效。
+
+Headless 模式（Brain 派）由 `cecelia-run.sh` 自动走 launcher，无需用户配置。
+
+---
+
+## 7. 禁止事项
 
 - 不允许"估计" tick / action 数量
 - 不允许编造架构
