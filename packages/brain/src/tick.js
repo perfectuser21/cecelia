@@ -61,7 +61,7 @@ import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harnes
 import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks, cancelCredentialAlertTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
-import { isConsciousnessEnabled } from './consciousness-guard.js';
+import { isConsciousnessEnabled, reloadConsciousnessCache } from './consciousness-guard.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -187,7 +187,9 @@ let _lastKrHealthDailyTime = 0; // track last daily KR health check time
 let _lastCredentialCheckTime = 0; // track last credential expiry check time
 let _lastCleanupWorkerTime = 0; // R4: track last orphan worktree cleanup run time
 let _lastOrphanPrWorkerTime = 0; // Phase 1: track last orphan PR scan time
+let _lastConsciousnessReload = 0; // Phase 2: track last consciousness cache reload time
 
+const CONSCIOUSNESS_RELOAD_INTERVAL_MS = 2 * 60 * 1000; // Phase 2: 2 minutes
 const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHECK_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
@@ -1725,6 +1727,16 @@ async function executeTick() {
     }).catch(err => {
       console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
     });
+  }
+
+  // [Phase 2] Consciousness guard cache reload（每 2 分钟，容错 hook）
+  // 防外部改 DB（UI/CLI 直接 UPDATE working_memory）未通过本进程 setter 时缓存失同步
+  // 故意不放 MINIMAL_MODE 守护内：minimal 模式下 watchdog 仍可能传新 env，reload 是安全的
+  const consciousnessReloadElapsed = Date.now() - _lastConsciousnessReload;
+  if (consciousnessReloadElapsed >= CONSCIOUSNESS_RELOAD_INTERVAL_MS) {
+    _lastConsciousnessReload = Date.now();
+    Promise.resolve().then(() => reloadConsciousnessCache(pool))
+      .catch(e => console.warn('[tick] consciousness reload failed:', e.message));
   }
 
   // [感知] Pipeline-level Watchdog：每 30 分钟检测 pipeline 整体是否卡死

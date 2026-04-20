@@ -64,7 +64,7 @@ import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
 import { initNarrativeTimer } from './src/cognitive-core.js';
-import { isConsciousnessEnabled, logStartupDeclaration } from './src/consciousness-guard.js';
+import { isConsciousnessEnabled, logStartupDeclaration, initConsciousnessGuard } from './src/consciousness-guard.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
 import { loadSpendingCapsFromDB, loadAuthFailuresFromDB } from './src/account-usage.js';
@@ -279,6 +279,7 @@ try {
   console.warn('[Server] Self-check error, starting in degraded mode:', selfCheckErr.message);
 }
 
+await initConsciousnessGuard(pool);
 logStartupDeclaration();
 
 // Load active model profile
