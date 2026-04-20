@@ -18,12 +18,13 @@ import {
 import { runHarnessPipeline, isLangGraphEnabled } from '../harness-graph-runner.js';
 
 describe('HARNESS_NODE_NAMES', () => {
-  it('exposes the 6 expected node names in order', () => {
+  it('exposes the 7 expected node names in order (v2 M4: ci_gate 插在 generator 和 evaluator 之间)', () => {
     expect(HARNESS_NODE_NAMES).toEqual([
       'planner',
       'proposer',
       'reviewer',
       'generator',
+      'ci_gate',
       'evaluator',
       'report',
     ]);
@@ -31,25 +32,26 @@ describe('HARNESS_NODE_NAMES', () => {
 });
 
 describe('buildHarnessGraph + compileHarnessApp', () => {
-  it('graph compiles with 6 nodes (skeleton)', async () => {
+  it('graph compiles with 7 nodes (skeleton, v2 M4 含 ci_gate)', async () => {
     const app = compileHarnessApp();
     expect(app).toBeDefined();
     expect(typeof app.invoke).toBe('function');
     expect(typeof app.stream).toBe('function');
   });
 
-  it('happy path: APPROVED + PASS reaches report and stops', async () => {
+  it('happy path: APPROVED + ci_gate PASS + evaluator PASS reaches report and stops', async () => {
     const app = compileHarnessApp();
     const finalState = await app.invoke(
       { task_description: 'demo' },
       { configurable: { thread_id: 't-happy' } },
     );
-    // trace 累计了 6 节点路径
+    // trace 累计了 7 节点路径（v2 M4: 含 ci_gate）
     expect(finalState.trace).toEqual([
-      'planner', 'proposer', 'reviewer', 'generator', 'evaluator', 'report',
+      'planner', 'proposer', 'reviewer', 'generator', 'ci_gate', 'evaluator', 'report',
     ]);
     expect(finalState.review_verdict).toBe('APPROVED');
     expect(finalState.evaluator_verdict).toBe('PASS');
+    expect(finalState.ci_status).toBe('pass');
   });
 
   it('reviewer REVISION sends control back to proposer (one rebound)', async () => {
@@ -131,6 +133,8 @@ describe('runHarnessPipeline', () => {
       proposer: async (state) => ({ ...state, trace: 'proposer', acceptance_criteria: 'test criteria' }),
       reviewer: async (state) => ({ ...state, trace: 'reviewer', review_verdict: 'APPROVED' }),
       generator: async (state) => ({ ...state, trace: 'generator', pr_url: 'https://github.com/test/1', pr_branch: 'cp-test' }),
+      // v2 M4: ci_gate 必须 override（默认 dockerNodes.ci_gate 会调真 gh CLI）
+      ci_gate: async (state) => ({ ...state, trace: 'ci_gate', ci_status: 'pass' }),
       evaluator: async (state) => ({ ...state, trace: 'evaluator', evaluator_verdict: 'PASS' }),
       report: async (state) => ({ ...state, trace: 'report', report: 'done' }),
     };
