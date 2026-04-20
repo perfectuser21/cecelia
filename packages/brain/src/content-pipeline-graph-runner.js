@@ -121,8 +121,10 @@ export async function runContentPipeline(task, opts = {}) {
           state_snapshot: {
             copy_review_verdict: nodeState.copy_review_verdict,
             copy_review_round: nodeState.copy_review_round,
+            copy_review_rule_details: nodeState.copy_review_rule_details,
             image_review_verdict: nodeState.image_review_verdict,
             image_review_round: nodeState.image_review_round,
+            image_review_rule_details: nodeState.image_review_rule_details,
             findings_path: nodeState.findings_path,
             copy_path: nodeState.copy_path,
             cards_dir: nodeState.cards_dir,

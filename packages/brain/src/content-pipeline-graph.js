@@ -85,6 +85,29 @@ export function extractField(text, fieldName) {
   return m ? m[1].trim() : null;
 }
 
+/**
+ * 从 stdout 最后一行的 JSON 对象里抽字段（支持数组/对象/任意 JSON 值）。
+ * skill 约定最后一行是 JSON（见 SOP），用于提取 rule_details 这类结构化字段。
+ * 失败或无此字段返回 null。
+ */
+export function extractJsonField(text, fieldName) {
+  if (!text) return null;
+  const lines = String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj && Object.prototype.hasOwnProperty.call(obj, fieldName)) {
+        return obj[fieldName];
+      }
+    } catch {
+      // not JSON, try prev line
+    }
+  }
+  return null;
+}
+
 export function extractVerdict(text, validValues) {
   if (!text) return null;
   const upper = text.toUpperCase();
@@ -153,10 +176,12 @@ export const ContentPipelineState = Annotation.Root({
   copy_review_verdict: Annotation,
   copy_review_feedback: Annotation,
   copy_review_round: Annotation,
+  copy_review_rule_details: Annotation,
 
   image_review_verdict: Annotation,
   image_review_feedback: Annotation,
   image_review_round: Annotation,
+  image_review_rule_details: Annotation,
 
   nas_url: Annotation,
 
@@ -274,6 +299,7 @@ const NODE_CONFIGS = {
     skill: 'pipeline-copy-review',
     task_type: 'content_copy_review',
     outputs: ['copy_review_feedback'],
+    json_outputs: ['copy_review_rule_details'],
     verdict_field: 'copy_review_verdict',
     verdict_values: ['APPROVED', 'REVISION'],
   },
@@ -286,6 +312,7 @@ const NODE_CONFIGS = {
     skill: 'pipeline-review',
     task_type: 'content_image_review',
     outputs: ['image_review_feedback'],
+    json_outputs: ['image_review_rule_details'],
     verdict_field: 'image_review_verdict',
     verdict_values: ['PASS', 'FAIL'],
   },
@@ -425,6 +452,12 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
     for (const field of cfg.outputs) {
       const v = extractField(output, field);
       if (v) update[field] = v;
+    }
+
+    // JSON outputs（数组/对象）— 从 stdout 最后一行 JSON 抽
+    for (const field of (cfg.json_outputs || [])) {
+      const v = extractJsonField(output, field);
+      if (v !== null && v !== undefined) update[field] = v;
     }
 
     if (cfg.verdict_field) {
