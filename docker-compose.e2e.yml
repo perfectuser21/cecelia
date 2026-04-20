@@ -1,0 +1,32 @@
+# Harness v2 M5 — Final E2E 专用 Postgres
+#
+# 独立端口 55432，独立 DB cecelia_e2e，与 production(5432) / staging 隔离。
+# 跑完由 scripts/harness-e2e-down.sh 用 `docker compose down -v` 清数据卷。
+#
+# PRD: docs/design/harness-v2-prd.md §5.7 Final E2E Runner · §6.4 真实环境
+#
+# 启动：bash scripts/harness-e2e-up.sh
+# 停止：bash scripts/harness-e2e-down.sh
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: cecelia-postgres-e2e
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_USER: cecelia
+      POSTGRES_PASSWORD: cecelia
+      POSTGRES_DB: cecelia_e2e
+      TZ: Asia/Shanghai
+    volumes:
+      - e2e-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cecelia -d cecelia_e2e"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: "no"
+
+volumes:
+  e2e-pgdata:
