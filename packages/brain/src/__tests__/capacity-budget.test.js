@@ -63,6 +63,11 @@ describe('capacity-budget route', () => {
     expect(result.areas.zenithjoy).toBeDefined();
     expect(result.layer_budgets).toBeDefined();
     expect(result.layer_budgets.task.pr_count).toBe(1);
+    // Phase 8.3: pr_loc_threshold 必须存在
+    expect(result.pr_loc_threshold).toBeDefined();
+    expect(result.pr_loc_threshold.soft).toBe(200);
+    expect(result.pr_loc_threshold.hard).toBe(400);
+    expect(result.pr_loc_threshold.source).toMatch(/smartbear|microsoft/i);
   });
 
   it('should use empirical data when sample_size >= 10', async () => {

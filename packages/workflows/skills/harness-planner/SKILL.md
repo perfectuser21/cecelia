@@ -29,6 +29,11 @@ changelog:
 - **Initiative → Task DAG**：Planner 拆分到 Task 级，每 Task 20-60 分钟可完成
 - **强制 DAG**：即便是线性任务也必须写成单链 depends_on
 - **4-5 Task 硬约束**：> 5 必须在 `justification` 字段说明理由；> 8 Brain 会直接拒收
+- **Task LOC 阈值**（Phase 8.3 起 SSOT）：拆 Task 时预估 LOC，从 `curl localhost:5221/api/brain/capacity-budget` 读 `.pr_loc_threshold`：
+  - ≤ `.soft`（默认 200）→ 单 Task 单 PR
+  - `.soft`-`.hard`（默认 200-400）→ 评估拆分
+  - \> `.hard`（默认 400）→ **强制拆分**为多 Task
+  - API 不可达 fallback 硬编码 200/400
 
 ---
 
