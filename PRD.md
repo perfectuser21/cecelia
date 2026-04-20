@@ -1,22 +1,16 @@
-# PRD: 给 archive-learnings.yml 加注释强制 GHA 重新解析 triggers
+# PRD: 修 detect-review-issues.js 对"未发现需要标记为🔴的严重问题"的误判
 
 ## 背景
 
-PR #2450 改了 archive-learnings.yml 的 Commit 步骤（从 push main 改成开 PR）。合并进 main 后，GHA API 仍然报 `422: Workflow does not have 'workflow_dispatch' trigger`，实际文件有。这是 GHA 已知元数据缓存 bug。
-
-尝试过：disable/enable workflow、API 用 file path vs id、用 sha vs ref=main。全部 422。
+PR #2453（恢复 archive tarball）DeepSeek review 结论文字为 "未发现需要标记为🔴的严重问题，属于正常的文档归档操作"。`scripts/devgate/detect-review-issues.js` 策略二的 `noIssuesDeclared` 正则只认 "未发现严重问题 / 没有发现严重问题" 两种紧连句式，漏掉"未发现...严重问题"中间有字符的常见变体，误判为真实 🔴 问题，阻塞 PR 合并。
 
 ## 成功标准
 
-1. 合并后 `gh workflow run archive-learnings.yml --ref main` 成功（不再 422）
-2. 触发后 workflow 跑通，开出归档 PR（cp-archive-* 分支，harness 标签）
-3. 归档 PR 过 CI 后 auto-merge 自动合入
+1. `noIssuesDeclared` 兼容变体："未发现需要标记为🔴的严重问题"、"未发现任何...严重问题"
+2. 新增 7 条单元测试覆盖所有句式
+3. 真实 🔴 严重问题仍能正确识别（不引入漏报）
 
-## 策略
+## 非目标（YAGNI）
 
-改动极小：给 archive-learnings.yml 头部加一行版本注释 `# v1.1 (2026-04-20): 从 bot 直推 main 改成开 PR`。push → PR → merge 会触发 GHA 重新 parse 工作流文件，元数据缓存刷新。
-
-## 非目标
-
-- 不改 workflow 逻辑本身
-- 不修 ruleset、不加 bypass
+- 不改策略一（section 格式）
+- 不改 DeepSeek prompt 本身
