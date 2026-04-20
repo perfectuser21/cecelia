@@ -2815,6 +2815,17 @@ async function triggerCeceliaRun(task) {
     }
   }
 
+  // harness_task 走容器派 /harness-generator（PR-2）
+  if (task.task_type === 'harness_task') {
+    try {
+      const { triggerHarnessTaskDispatch } = await import('./harness-task-dispatch.js');
+      return await triggerHarnessTaskDispatch(task);
+    } catch (err) {
+      console.error(`[executor] harness_task dispatch failed task=${task.id}: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
   // 2.9 LangGraph Pipeline（HARNESS_LANGGRAPH_ENABLED=true + harness_planner）
   // 当启用 LangGraph 时，harness_planner 任务不走单步 Docker 执行，
   // 而是由 LangGraph 编排完整 6 步 pipeline（planner→proposer→reviewer→generator→evaluator→report）。
