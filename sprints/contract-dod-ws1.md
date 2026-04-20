@@ -47,3 +47,5 @@
 - unix field is an integer seconds timestamp within plausible window
 - iso and unix timestamps agree within 2 seconds
 - is idempotent: two sequential calls both return 200 with identical shape and timezone
+- **【Round 3】** unix value tracks observer wall-clock within 10 seconds (rejects hardcoded timestamp)
+- **【Round 3】** unix advances: second call after 1500ms sleep is strictly greater than first call

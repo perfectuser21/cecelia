@@ -3,7 +3,8 @@ import request from 'supertest';
 
 // Round 2：直接从 Brain 的 `createApp()` 工厂获取真实 app 实例，
 // 通过 supertest 做内存 HTTP 调用，避免依赖外部监听端口（ECONNREFUSED 假红）。
-// 工厂尚不存在时 import 会抛 ERR_MODULE_NOT_FOUND，让 7 个 it() 同步变红。
+// Round 3：新增两条实时性断言（wall-clock 锚点 + 时间推进），
+// 封死"硬编码固定时间戳"类实现的逃逸路径。
 const APP_FACTORY_SPEC = '../../../packages/brain/src/app.js';
 
 // 严格 ISO-8601：YYYY-MM-DDTHH:mm:ss[.sss] + (Z | ±HH:MM | ±HHMM)
@@ -21,6 +22,8 @@ async function buildApp() {
   }
   return createApp();
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
   it('responds 200 with application/json content-type', async () => {
@@ -82,5 +85,44 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     expect(Object.keys(a.body).sort()).toEqual(['iso', 'timezone', 'unix']);
     expect(Object.keys(b.body).sort()).toEqual(['iso', 'timezone', 'unix']);
     expect(a.body.timezone).toBe(b.body.timezone);
+  });
+
+  // ——————— Round 3 新增：实时性断言 ———————
+
+  it('unix value tracks observer wall-clock within 10 seconds (rejects hardcoded timestamp)', async () => {
+    const app = await buildApp();
+    // 测试端在调用前后分别取系统时间，形成夹逼区间。
+    // 真实端点返回的 unix 必须落在这个区间的 ±10s 容差内。
+    const before = Math.floor(Date.now() / 1000);
+    const res = await request(app).get('/api/brain/time');
+    const after = Math.floor(Date.now() / 1000);
+    expect(res.status).toBe(200);
+    expect(Number.isInteger(res.body.unix)).toBe(true);
+    // 硬编码任何固定时间戳（无论部署期、编译期、还是随便写死的）
+    // 都会随着 CI 时钟推进越飘越远，在 ±10s 窗口内破防。
+    const lowerBound = before - 10;
+    const upperBound = after + 10;
+    expect(res.body.unix).toBeGreaterThanOrEqual(lowerBound);
+    expect(res.body.unix).toBeLessThanOrEqual(upperBound);
+  });
+
+  it('unix advances: second call after 1500ms sleep is strictly greater than first call', async () => {
+    const app = await buildApp();
+    const r1 = await request(app).get('/api/brain/time');
+    expect(r1.status).toBe(200);
+    expect(Number.isInteger(r1.body.unix)).toBe(true);
+    // 1500ms 间隔保证至少跨过一整秒的边界，即使在 sleep 前 0ms、
+    // sleep 后 1500ms 的最坏剪裁下 Math.floor 也会推进 ≥1。
+    await sleep(1500);
+    const r2 = await request(app).get('/api/brain/time');
+    expect(r2.status).toBe(200);
+    expect(Number.isInteger(r2.body.unix)).toBe(true);
+    // 严格递增：锁死固定 unix 的实现必然命中此断言失败。
+    const delta = r2.body.unix - r1.body.unix;
+    expect(delta).toBeGreaterThanOrEqual(1);
+    // 同时 iso 也应推进（iso-unix 一致约束已被场景 2 覆盖，这里顺带验证可读性）
+    const iso1Ms = new Date(r1.body.iso).getTime();
+    const iso2Ms = new Date(r2.body.iso).getTime();
+    expect(iso2Ms).toBeGreaterThan(iso1Ms);
   });
 });

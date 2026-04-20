@@ -41,3 +41,5 @@
 - schema requires exactly iso, timezone, unix
 - schema declares correct field types (string/string/integer)
 - README documents /api/brain/time endpoint with all three fields
+- **【Round 3】** schema declares properties.iso.format as date-time
+- **【Round 3】** README mentions iso/timezone/unix within 30 lines after the /api/brain/time endpoint line
