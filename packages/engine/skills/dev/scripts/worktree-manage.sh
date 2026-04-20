@@ -235,11 +235,16 @@ cmd_create() {
 
         # v1.5.0: .dev-lock 写入 worktree 目录（不再写主仓库，防止跨会话污染）
         # Stop Hook 通过 _collect_search_dirs 扫描所有 worktree，能正确找到
+        # v17.0.0: owner_session 从父 claude cmdline 解析，保证 Stop Hook 按 session_id 精确匹配
+        local _claude_sid_create
+        _claude_sid_create=$(_resolve_claude_session_id 2>/dev/null || echo "")
+        [[ -z "$_claude_sid_create" ]] && _claude_sid_create="${CLAUDE_SESSION_ID:-unknown}"
         local dev_lock_file="$worktree_path/.dev-lock.${branch_name}"
         {
             echo "dev"
             echo "branch: ${branch_name}"
-            echo "session_id: ${CLAUDE_SESSION_ID:-headed-$$-${branch_name}}"
+            echo "session_id: headed-$$-${branch_name}"
+            echo "owner_session: ${_claude_sid_create}"
             echo "tty: $(tty 2>/dev/null || echo "none")"
             echo "worktree_path: ${worktree_path}"
             echo "created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)"
@@ -445,6 +450,25 @@ main() {
     esac
 }
 
+# v17.0.0: 从父进程链解析 claude 启动时的 --session-id
+# $CLAUDE_SESSION_ID env var 在 bash tool 里永远是空的（Claude Code 不传），
+# 所以沿 PPID 向上查 claude 进程的 cmdline，提取 --session-id 参数
+_resolve_claude_session_id() {
+    local pid="${PPID:-}"
+    local depth=0
+    while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do
+        local args
+        args=$(ps -o args= "$pid" 2>/dev/null || echo "")
+        if [[ "$args" == *"claude"* && "$args" == *"--session-id"* ]]; then
+            echo "$args" | grep -oE '\-\-session-id[ =][a-f0-9-]+' | head -1 | awk '{print $NF}'
+            return 0
+        fi
+        pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')
+        depth=$((depth + 1))
+    done
+    echo ""
+}
+
 # cmd_init_or_check — engine-worktree skill 调用入口
 # 已在 worktree → 补齐 .dev-lock；在主仓库 → 调 cmd_create
 cmd_init_or_check() {
@@ -461,15 +485,20 @@ cmd_init_or_check() {
         dev_lock_file="$project_root/.dev-lock.${current_branch}"
 
         if [[ ! -f "$dev_lock_file" ]]; then
+            # v17.0.0: owner_session 必须是 Claude session UUID（从父 claude cmdline 解析），
+            # 否则 Stop Hook 无法按 session_id 精确匹配
+            local _claude_sid
+            _claude_sid=$(_resolve_claude_session_id)
+            [[ -z "$_claude_sid" ]] && _claude_sid="${CLAUDE_SESSION_ID:-unknown}"
             cat > "$dev_lock_file" <<LOCKEOF
 dev
 branch: ${current_branch}
 session_id: headed-$(date +%s)-$$-${current_branch}
-owner_session: ${CLAUDE_SESSION_ID:-unknown}
+owner_session: ${_claude_sid}
 tty: $(tty 2>/dev/null || echo "none")
 created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
 LOCKEOF
-            echo "✅ .dev-lock 已创建（含 session info）"
+            echo "✅ .dev-lock 已创建（owner_session=${_claude_sid}）"
         fi
     else
         echo "📍 当前在主仓库，创建 worktree"
