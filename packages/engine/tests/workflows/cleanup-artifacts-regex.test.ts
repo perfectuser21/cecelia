@@ -40,6 +40,12 @@ test('cleanup regex 向后兼容旧命名 .task-*', () => {
   expect(matches(re, '.task-old-task.md')).toBe(true);
 });
 
+// Phase 7.5: 补齐 .dod- 前缀匹配，之前漏抓导致 3 个 .dod-cp-* 残留积累
+test('cleanup regex 向后兼容旧命名 .dod-*（Phase 7.5 修）', () => {
+  const re = extractRegex();
+  expect(matches(re, '.dod-cp-04052034-probe-rollback-trigger.md')).toBe(true);
+});
+
 test('cleanup regex 不误匹配活跃文件 DoD.md', () => {
   const re = extractRegex();
   expect(matches(re, 'DoD.md')).toBe(false);
