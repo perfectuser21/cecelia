@@ -128,7 +128,8 @@ function stripThinking(content) {
  * @param {string} [options.provider] - 覆盖 profile 的 provider 选择
  * @param {Array} [options.imageContent] - 图片 content blocks（Anthropic 多模态格式）
  *   例: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '...' } }]
- *   仅 anthropic-api provider 支持，bridge 调用会忽略图片（降级为纯文字）
+ *   anthropic-api provider 走 Anthropic REST API 多模态字段，anthropic provider（bridge）
+ *   走宿主机 tmp PNG + claude -p Read 工具（首张图）。minimax / openai 暂不支持图片。
  * @returns {Promise<{text: string, model: string, provider: string, elapsed_ms: number}>}
  */
 export async function callLLM(agentId, prompt, options = {}) {
@@ -163,18 +164,13 @@ export async function callLLM(agentId, prompt, options = {}) {
 
     try {
       let text;
-      // 有图片时 bridge 不支持多模态，自动升级到直连 anthropic-api
-      const effectiveProvider = (imageContent && imageContent.length > 0 && provider === 'anthropic')
-        ? 'anthropic-api'
-        : provider;
-      if (effectiveProvider !== provider) {
-        console.log(`[llm-caller] ${agentId} 有图片内容，bridge 不支持视觉，自动升级到 anthropic-api`);
-      }
+      // bridge 现已支持图片（bridge 内部写 tmp 文件 + Read 工具让 claude -p 看图），
+      // 不再因为有图片就强制升级到 anthropic-api。imageContent 继续原样透传。
+      const effectiveProvider = provider;
       if (effectiveProvider === 'anthropic-api') {
         text = await callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent);
       } else if (effectiveProvider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
-        // bridge 不支持图片，仅传文字 prompt（降级处理）
-        text = await callClaudeViaBridge(prompt, model, timeout, model);
+        text = await callClaudeViaBridge(prompt, model, timeout, model, imageContent);
       } else if (effectiveProvider === 'minimax' || provider === 'minimax') {
         text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
       } else if (effectiveProvider === 'openai' || provider === 'openai') {
@@ -298,9 +294,29 @@ async function callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent 
  * 通过 cecelia-bridge 调用 claude -p（走订阅，不需要 API key）
  * 自动选择配额最优账号（通过 configDir 传给 bridge）
  * Bridge 500 时自动重试（最多 2 次，指数退避 500ms/1000ms）
+ *
+ * 多模态支持（vision-via-bridge）：若传入 imageContent（Anthropic content block 格式），
+ * 本函数把第一张图的 base64 + mime 单独字段传给 bridge，bridge 在宿主机侧写 tmp PNG 并
+ * 让 claude -p 通过 Read 工具读图。claude CLI 本身无 --image 参数，用 Read 工具绕过。
+ *
+ * @param {Array|null} imageContent - [{type:'image', source:{type:'base64', media_type, data}}]
+ *   目前只取数组里第一张图（claude -p + Read 工具单图场景）。
  */
-async function callClaudeViaBridge(prompt, model, timeout, _originalModel) {
+async function callClaudeViaBridge(prompt, model, timeout, _originalModel, imageContent = null) {
   const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
+
+  // 从 imageContent 提取首张图片的 base64 + mime（bridge /llm-call 字段）
+  let imageBase64 = null;
+  let imageMime = null;
+  if (Array.isArray(imageContent) && imageContent.length > 0) {
+    const first = imageContent.find(
+      (c) => c && c.type === 'image' && c.source && c.source.type === 'base64' && c.source.data
+    );
+    if (first) {
+      imageBase64 = first.source.data;
+      imageMime = first.source.media_type || 'image/png';
+    }
+  }
 
   // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理
   // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
@@ -332,6 +348,7 @@ async function callClaudeViaBridge(prompt, model, timeout, _originalModel) {
         model: claudeModel,
         timeout,
         ...(accountId ? { accountId } : {}),
+        ...(imageBase64 ? { image_base64: imageBase64, image_mime: imageMime } : {}),
       }),
       signal: AbortSignal.timeout(timeout + 10000), // bridge 自身超时 + 缓冲
     });

@@ -81,6 +81,9 @@ describe('POST /api/brain/llm-service/vision', () => {
       expect.objectContaining({
         maxTokens: 1024,
         timeout: 60_000,
+        // P0-5: vision 默认走 Claude Code 订阅 bridge（anthropic），不再走付费 anthropic-api
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
         imageContent: [
           {
             type: 'image',
@@ -93,6 +96,28 @@ describe('POST /api/brain/llm-service/vision', () => {
         ],
       })
     );
+  });
+
+  it('调用方传 provider=anthropic-api → 覆盖默认 bridge 走付费 API', async () => {
+    mockCallLLM.mockResolvedValue({
+      text: 'ok',
+      model: 'claude-haiku-4-5-20251001',
+      provider: 'anthropic-api',
+    });
+    const app = await buildApp();
+    const res = await request(app)
+      .post('/api/brain/llm-service/vision')
+      .send({
+        tier: 'thalamus',
+        prompt: '评估',
+        image_base64: TINY_PNG_B64,
+        provider: 'anthropic-api',
+        model: 'claude-haiku-4-5-20251001',
+      });
+    expect(res.status).toBe(200);
+    const [, , passedOpts] = mockCallLLM.mock.calls[0];
+    expect(passedOpts.provider).toBe('anthropic-api');
+    expect(passedOpts.model).toBe('claude-haiku-4-5-20251001');
   });
 
   it('tier 缺省 → 默认 thalamus', async () => {

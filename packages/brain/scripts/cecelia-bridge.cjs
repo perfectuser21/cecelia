@@ -2,7 +2,20 @@
 // cecelia-bridge.cjs — HTTP bridge between Brain and cecelia-run
 const http = require('http');
 const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
+
+// MIME → 文件扩展名（/llm-call 图片临时文件使用）
+const MIME_TO_EXT = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+};
+const BRIDGE_IMAGE_DIR = '/tmp/cecelia-bridge-images';
+try { fs.mkdirSync(BRIDGE_IMAGE_DIR, { recursive: true }); } catch {}
 
 const PORT = process.env.BRIDGE_PORT || 3457;
 const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
@@ -99,8 +112,17 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
+      // 图片临时文件路径（多模态），需要在 close/error 回调里清理
+      let imageTmpPath = null;
+      const cleanupImage = () => {
+        if (imageTmpPath) {
+          try { fs.unlinkSync(imageTmpPath); } catch {}
+          imageTmpPath = null;
+        }
+      };
+
       try {
-        const { prompt, model, timeout, accountId } = JSON.parse(body);
+        const { prompt, model, timeout, accountId, image_base64, image_mime } = JSON.parse(body);
         if (!prompt) {
           safeRespond(res, 400, { ok: false, error: 'Missing prompt' });
           return;
@@ -109,7 +131,32 @@ const server = http.createServer((req, res) => {
         const modelArg = model || 'haiku';
         const MAX_BRIDGE_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_MAX_TIMEOUT_MS || '600000', 10);
         const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, MAX_BRIDGE_LLM_TIMEOUT_MS);
-        const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
+
+        // ──────── 多模态：image_base64 支持 ────────
+        // claude CLI 本身没有 --image 参数，但支持 Read 工具读取本地文件。
+        // 做法：写图片到 /tmp/cecelia-bridge-images/<uuid>.<ext>，
+        // prompt 末尾追加"请用 Read 工具读取 <path>"，
+        // 再用 --allowedTools Read 放行 Read 工具调用。
+        let finalPrompt = prompt;
+        const extraArgs = [];
+        if (image_base64 && typeof image_base64 === 'string' && image_base64.length > 0) {
+          const mime = typeof image_mime === 'string' && image_mime ? image_mime : 'image/png';
+          const ext = MIME_TO_EXT[mime] || 'png';
+          const filename = `bridge-image-${crypto.randomUUID()}.${ext}`;
+          imageTmpPath = path.join(BRIDGE_IMAGE_DIR, filename);
+          try {
+            fs.writeFileSync(imageTmpPath, Buffer.from(image_base64, 'base64'));
+          } catch (writeErr) {
+            console.error(`[bridge] /llm-call image write failed: ${writeErr.message}`);
+            safeRespond(res, 500, { ok: false, error: `image write failed: ${writeErr.message}` });
+            return;
+          }
+          finalPrompt = `${prompt}\n\n请先用 Read 工具读取本地图片文件 ${imageTmpPath}（这是一张 ${mime} 图片），然后严格按上面的指令完成分析与评审。只输出最终结果文本，不要解释 Read 过程。`;
+          // 放行 Read 工具（claude -p 默认不会使用工具，需显式 allow）
+          extraArgs.push('--allowedTools', 'Read');
+        }
+
+        const args = ['-p', finalPrompt, '--model', modelArg, '--output-format', 'text', ...extraArgs];
 
         const startTime = Date.now();
         let timedOut = false;
@@ -150,6 +197,7 @@ const server = http.createServer((req, res) => {
 
         child.on('close', (code) => {
           clearTimeout(timer);
+          cleanupImage();
           const elapsed = Date.now() - startTime;
 
           if (timedOut) {
@@ -165,17 +213,20 @@ const server = http.createServer((req, res) => {
           }
 
           const text = stdout.trim();
-          console.log(`[bridge] /llm-call ${modelArg}${accountId ? ` [${accountId}]` : ''} → ${text.length} chars in ${elapsed}ms`);
+          const imgTag = imageTmpPath === null && image_base64 ? ' +image' : '';
+          console.log(`[bridge] /llm-call ${modelArg}${accountId ? ` [${accountId}]` : ''}${image_base64 ? ' +image' : ''} → ${text.length} chars in ${elapsed}ms`);
           safeRespond(res, 200, { ok: true, text, model: modelArg, elapsed_ms: elapsed });
         });
 
         child.on('error', (err) => {
           clearTimeout(timer);
+          cleanupImage();
           const elapsed = Date.now() - startTime;
           console.error(`[bridge] /llm-call spawn error (${elapsed}ms): ${err.message}`);
           safeRespond(res, 500, { ok: false, error: err.message, elapsed_ms: elapsed });
         });
       } catch (err) {
+        cleanupImage();
         console.error(`[bridge] /llm-call parse error: ${err.message}`);
         safeRespond(res, 500, { ok: false, error: err.message });
       }

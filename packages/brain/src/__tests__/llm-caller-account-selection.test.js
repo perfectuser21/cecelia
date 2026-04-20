@@ -121,15 +121,12 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
 describe('llm-caller 图片视觉支持（VB 系列）', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    // 有图片时走 anthropic-api（直连），返回标准 Anthropic API 格式
+    // P0-5: bridge 现已支持图片，默认走 bridge
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({
-        content: [{ type: 'text', text: '我看到了一张图片' }],
-        usage: { input_tokens: 10, output_tokens: 20 },
-      }),
-      text: async () => JSON.stringify({ ok: true, text: '测试回复' }),
+      json: async () => ({ ok: true, text: '我看到了一张图片' }),
+      text: async () => JSON.stringify({ ok: true, text: '我看到了一张图片' }),
     });
     const { getActiveProfile } = await import('../model-profile.js');
     getActiveProfile.mockReturnValue({
@@ -140,16 +137,20 @@ describe('llm-caller 图片视觉支持（VB 系列）', () => {
     mockSelectBestAccount.mockResolvedValue({ accountId: 'account1', model: 'claude-sonnet-4-6' });
   });
 
-  it('VB1: imageContent 存在 + provider=anthropic → 调用 anthropic-api 直连（非 bridge）', async () => {
+  it('VB1: imageContent 存在 + provider=anthropic → 走 bridge（P0-5 改造后 bridge 支持图片）', async () => {
     const imageContent = [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' } }];
 
     await callLLM('mouth', '这张图片是什么？', { imageContent });
 
     expect(mockFetch).toHaveBeenCalled();
     const calledUrl = mockFetch.mock.calls[0][0];
-    // 应该调用 Anthropic 直连 API（非 bridge localhost）
-    expect(calledUrl).toContain('api.anthropic.com');
-    expect(calledUrl).not.toContain('localhost');
+    // P0-5: bridge 现支持图片，不再升级到 anthropic-api
+    expect(calledUrl).toContain('/llm-call');
+    expect(calledUrl).not.toContain('api.anthropic.com');
+    // body 应带 image_base64 + image_mime
+    const requestBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(requestBody.image_base64).toBe('abc123');
+    expect(requestBody.image_mime).toBe('image/jpeg');
   });
 
   it('VB2: 无 imageContent + provider=anthropic → 调用 bridge（原有逻辑不破坏）', async () => {
