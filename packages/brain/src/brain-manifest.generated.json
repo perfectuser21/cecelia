@@ -1036,7 +1036,7 @@
     "harness_task": "/_internal",
     "harness_final_e2e": "/harness-evaluator"
   },
-  "generatedAt": "2026-04-20T02:04:15.054Z",
+  "generatedAt": "2026-04-20T07:44:19.846Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
