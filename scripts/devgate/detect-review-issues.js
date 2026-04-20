@@ -59,7 +59,11 @@ process.stdin.on('end', () => {
 
   // 策略二：无"严重问题"section — 检测行内 🔴 标记（格式B）
   // 任何出现 🔴 且未声明"无问题"即为真实问题
-  const noIssuesDeclared = /没有发现严重问题|未发现严重问题/.test(input);
+  // 兼容句式："未发现严重问题"、"没有发现严重问题"、
+  //   "未发现需要标记为🔴的严重问题"、"未发现...严重问题"（中间 0-40 字符任意）
+  const noIssuesDeclared =
+    /没有发现严重问题|未发现严重问题/.test(input) ||
+    /(未|没有)发现[\s\S]{0,40}严重问题/.test(input);
   const hasInlineRedFlag = /🔴/.test(input) && !noIssuesDeclared;
 
   if (hasInlineRedFlag) {
