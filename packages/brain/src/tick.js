@@ -2846,6 +2846,14 @@ async function executeTick() {
     tickLog(`[tick] Backpressure active: queue_depth=${tickSlotBudget.backpressure.queue_depth} > ${tickSlotBudget.backpressure.threshold}, burst_limit=${effectiveBurstLimit}`);
   }
 
+  // Harness v2 phase 推进器（PR-3）：A→B→C 晋级
+  try {
+    const { advanceHarnessInitiatives } = await import('./harness-phase-advancer.js');
+    await advanceHarnessInitiatives(pool);
+  } catch (err) {
+    console.error('[harness-advance] tick error:', err.message);
+  }
+
   // 7a. Fill slots from focused objective's tasks
   // Predictive resource gate: pre-deduct estimated memory per dispatched agent
   const ESTIMATED_AGENT_MEM_MB = 800;
