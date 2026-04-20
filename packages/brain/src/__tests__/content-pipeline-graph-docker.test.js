@@ -102,6 +102,60 @@ describe('createContentDockerNodes', () => {
     expect(update.article_path).toBe('/tmp/article.md');
   });
 
+  // ─── P0-4：json_outputs 抽取多字段（total / vision_avg） ──────────
+  // 背景：copy_review / image_review 的 total / avg 以前埋在 rule_details 里，
+  // 前端拿不到。新增 NODE_CONFIGS.*.json_outputs 多字段 + vision_avg 别名映射
+  // 到 image_review_vision_avg 顶级字段，本测试锁死这条抽取路径。
+
+  it('copy_review node: 从 JSON 同时抽 rule_details + copy_review_total (P0-4)', async () => {
+    const { executor } = makeRecordingExecutor({
+      content_copy_review: {
+        exit_code: 0,
+        stdout:
+          '{"copy_review_verdict":"APPROVED","copy_review_feedback":null,"quality_score":5,"copy_review_total":21,"copy_review_threshold":18,"copy_review_rule_details":[{"id":"R1","pass":true},{"id":"LLM","pass":true,"value":21}]}',
+        stderr: '',
+        timed_out: false,
+      },
+    });
+    const nodes = createContentDockerNodes(executor, mockTask);
+    const update = await nodes.copy_review({
+      pipeline_id: 'p-1',
+      copy_path: '/tmp/copy.md',
+      article_path: '/tmp/article.md',
+      copy_review_round: 0,
+    });
+    expect(update.copy_review_verdict).toBe('APPROVED');
+    expect(update.copy_review_total).toBe(21);
+    expect(Array.isArray(update.copy_review_rule_details)).toBe(true);
+    expect(update.copy_review_rule_details).toHaveLength(2);
+  });
+
+  it('image_review node: vision_avg → image_review_vision_avg 顶级字段别名 (P0-4)', async () => {
+    // skill 输出字段名是 "vision_avg"（短），state 顶级字段名是
+    // "image_review_vision_avg"（语义更清晰）。NODE_CONFIGS.image_review
+    // 的 json_outputs 列的是 skill 字段名 vision_avg，graph 的 extractNodeOutputs
+    // 做字段名映射，把值落到 state.image_review_vision_avg。
+    const { executor } = makeRecordingExecutor({
+      content_image_review: {
+        exit_code: 0,
+        stdout:
+          '{"image_review_verdict":"PASS","image_review_feedback":null,"card_count":9,"vision_avg":17,"vision_threshold":14,"vision_enabled":true,"image_review_rule_details":[{"id":"RCOUNT","pass":true,"value":9}]}',
+        stderr: '',
+        timed_out: false,
+      },
+    });
+    const nodes = createContentDockerNodes(executor, mockTask);
+    const update = await nodes.image_review({
+      cards_dir: '/tmp/cards',
+      image_review_round: 0,
+    });
+    expect(update.image_review_verdict).toBe('PASS');
+    // 关键断言：值落在 image_review_vision_avg（state 字段名），不在 vision_avg
+    expect(update.image_review_vision_avg).toBe(17);
+    expect(update.vision_avg).toBeUndefined();
+    expect(Array.isArray(update.image_review_rule_details)).toBe(true);
+  });
+
   it('copy_review node: parses APPROVED verdict', async () => {
     const { executor } = makeRecordingExecutor({
       content_copy_review: {
@@ -498,5 +552,17 @@ describe('NODE_CONFIGS', () => {
   it('copy_review and image_review have verdict config', () => {
     expect(NODE_CONFIGS.copy_review.verdict_values).toEqual(['APPROVED', 'REVISION']);
     expect(NODE_CONFIGS.image_review.verdict_values).toEqual(['PASS', 'FAIL']);
+  });
+
+  // P0-4：json_outputs 覆盖 rule_details + total/avg 标量字段
+  it('copy_review.json_outputs includes copy_review_total (P0-4)', () => {
+    expect(NODE_CONFIGS.copy_review.json_outputs).toContain('copy_review_rule_details');
+    expect(NODE_CONFIGS.copy_review.json_outputs).toContain('copy_review_total');
+  });
+
+  it('image_review.json_outputs includes vision_avg (P0-4)', () => {
+    expect(NODE_CONFIGS.image_review.json_outputs).toContain('image_review_rule_details');
+    // skill 输出字段名 vision_avg，graph 会映射到 image_review_vision_avg
+    expect(NODE_CONFIGS.image_review.json_outputs).toContain('vision_avg');
   });
 });

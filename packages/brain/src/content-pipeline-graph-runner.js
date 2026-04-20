@@ -122,9 +122,13 @@ export async function runContentPipeline(task, opts = {}) {
             copy_review_verdict: nodeState.copy_review_verdict,
             copy_review_round: nodeState.copy_review_round,
             copy_review_rule_details: nodeState.copy_review_rule_details,
+            // P0-4：LLM 5 维总分、vision 4 维平均分提到 payload 顶级，
+            // 前端详情页直接读，无需翻 rule_details 数组。
+            copy_review_total: nodeState.copy_review_total,
             image_review_verdict: nodeState.image_review_verdict,
             image_review_round: nodeState.image_review_round,
             image_review_rule_details: nodeState.image_review_rule_details,
+            image_review_vision_avg: nodeState.image_review_vision_avg,
             findings_path: nodeState.findings_path,
             copy_path: nodeState.copy_path,
             cards_dir: nodeState.cards_dir,

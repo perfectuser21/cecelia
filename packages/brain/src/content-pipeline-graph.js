@@ -177,11 +177,20 @@ export const ContentPipelineState = Annotation.Root({
   copy_review_feedback: Annotation,
   copy_review_round: Annotation,
   copy_review_rule_details: Annotation,
+  // LLM 5 维评审总分（0-25），由 skill 的 bash 逻辑聚合 5 维分值后输出。
+  // 顶级字段让前端详情页直接读 event.payload.copy_review_total，无需再去
+  // rule_details 数组里翻。null 表示该轮未评（例如 bash 硬规则就挂了）。
+  copy_review_total: Annotation,
 
   image_review_verdict: Annotation,
   image_review_feedback: Annotation,
   image_review_round: Annotation,
   image_review_rule_details: Annotation,
+  // vision 4 维评审平均分（0-20）。同理让前端直接读，不用翻 rule_details。
+  // skill 在 stdout JSON 里输出字段名 "vision_avg"，这里 state 字段名也对齐成
+  // image_review_vision_avg（顶级字段语义更清晰）。从 vision_avg 映射到
+  // image_review_vision_avg 的逻辑在 extractNodeOutputs 里做。
+  image_review_vision_avg: Annotation,
 
   nas_url: Annotation,
 
@@ -329,7 +338,8 @@ const NODE_CONFIGS = {
     skill: 'pipeline-copy-review',
     task_type: 'content_copy_review',
     outputs: ['copy_review_feedback'],
-    json_outputs: ['copy_review_rule_details'],
+    // copy_review_total：skill 输出字段名和 state 字段名一致，直接抽。
+    json_outputs: ['copy_review_rule_details', 'copy_review_total'],
     verdict_field: 'copy_review_verdict',
     verdict_values: ['APPROVED', 'REVISION'],
   },
@@ -342,7 +352,10 @@ const NODE_CONFIGS = {
     skill: 'pipeline-review',
     task_type: 'content_image_review',
     outputs: ['image_review_feedback'],
-    json_outputs: ['image_review_rule_details'],
+    // skill 在 JSON 里输出 "vision_avg"（非 "image_review_vision_avg"），
+    // 这里列 skill 实际字段名；extractNodeOutputs 会把 vision_avg 映射到
+    // state 顶级字段 image_review_vision_avg。
+    json_outputs: ['image_review_rule_details', 'vision_avg'],
     verdict_field: 'image_review_verdict',
     verdict_values: ['PASS', 'FAIL'],
   },
@@ -516,10 +529,19 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
       if (v) update[field] = v;
     }
 
-    // JSON outputs（数组/对象）— 从 stdout 最后一行 JSON 抽
+    // JSON outputs（数组/对象/标量）— 从 stdout 最后一行 JSON 抽
+    // skill 字段名 → state 字段名的映射表：skill 输出用更短的命名（vision_avg），
+    // state 用语义更清晰的顶级名（image_review_vision_avg）；映射关系在此处落地，
+    // 避免改 skill.md（P0-3/4 边界：不动 skill）。
+    const JSON_FIELD_ALIAS = {
+      vision_avg: 'image_review_vision_avg',
+    };
     for (const field of (cfg.json_outputs || [])) {
       const v = extractJsonField(output, field);
-      if (v !== null && v !== undefined) update[field] = v;
+      if (v !== null && v !== undefined) {
+        const stateField = JSON_FIELD_ALIAS[field] || field;
+        update[stateField] = v;
+      }
     }
 
     if (cfg.verdict_field) {
