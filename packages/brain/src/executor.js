@@ -2760,6 +2760,126 @@ async function triggerLocalCodexExec(task) {
 // 注意：Coding 通道（dev/codex_dev/initiative_plan 等）在 task-router.js 中标注为 'us'，
 //       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
+/**
+ * Harness v2 — harness_task 子任务 Generator 容器派发（阶段 B）
+ *
+ * task-router 将 harness_task 声明为 /_internal（Brain tick 内部状态机），但派发
+ * 动作仍由 executor 负责。默认 cecelia-bridge headless Claude 没有 PR-1 的
+ * worktree 挂载 + GITHUB_TOKEN 注入，harness_task 必须显式走容器。
+ *
+ * Fix 模式与新建模式共用 /harness-generator skill，由容器内 agent 按 payload.fix_mode
+ * 判断：fix_mode=true → 同分支累积 commit；否则开新分支 + 新 PR。
+ */
+async function triggerHarnessTaskDispatch(task) {
+  if (!task || !task.id) {
+    return { success: false, taskId: task?.id, error: 'task.id required' };
+  }
+
+  const payload = task.payload || {};
+  const initiativeId = payload.initiative_id || task.initiative_id || task.id;
+  const parentTaskId = payload.parent_task_id || null;
+  const isFixMode = payload.fix_mode === true;
+  const fixRound = Number.isFinite(payload.fix_round) ? payload.fix_round : 0;
+  const effectiveType = isFixMode ? 'harness_fix' : 'harness_generate';
+
+  console.log(
+    `[executor] harness_task dispatch task=${task.id} initiative=${initiativeId} ` +
+    `mode=${isFixMode ? `fix-r${fixRound}` : 'new'} parent=${parentTaskId || 'none'}`
+  );
+
+  let ensureHarnessWorktree;
+  let resolveGitHubToken;
+  let loadSkillContent;
+  try {
+    ({ ensureHarnessWorktree } = await import('./harness-worktree.js'));
+    ({ resolveGitHubToken } = await import('./harness-credentials.js'));
+    ({ loadSkillContent } = await import('./harness-graph.js'));
+  } catch (err) {
+    console.error(`[executor] harness_task module load failed task=${task.id}: ${err.message}`);
+    return { success: false, taskId: task.id, initiativeId, error: err.message };
+  }
+
+  let worktreePath;
+  let githubToken;
+  try {
+    worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId });
+    githubToken = await resolveGitHubToken();
+  } catch (err) {
+    console.error(`[executor] harness_task prep failed task=${task.id}: ${err.message}`);
+    return { success: false, taskId: task.id, initiativeId, error: err.message };
+  }
+
+  const skillContent = loadSkillContent('harness-generator');
+  const files = Array.isArray(payload.files) ? payload.files : [];
+  const dod = Array.isArray(payload.dod) ? payload.dod : [];
+  const failureScenarios = Array.isArray(payload.failure_scenarios) ? payload.failure_scenarios : [];
+  const failureBlock = failureScenarios.length
+    ? `\n## 失败归因场景（Phase C Final E2E）\n${failureScenarios
+        .map((s) => `- ${s.name || '(unnamed)'} (exit=${s.exitCode ?? 'n/a'})`)
+        .join('\n')}\n`
+    : '';
+
+  const prompt = `你是 harness-generator agent。按下面 SKILL 指令工作。
+
+${skillContent}
+
+---
+
+## 本次任务参数
+**task_id**: ${task.id}
+**initiative_id**: ${initiativeId}
+**parent_task_id**: ${parentTaskId || '(none)'}
+**mode**: ${isFixMode ? `Fix 模式 (round ${fixRound})` : '新建 PR 模式'}
+**is_fix_mode**: ${isFixMode}
+**fix_round**: ${fixRound}
+
+## 任务描述
+${task.description || task.title || ''}
+
+## 范围文件
+${files.length ? files.map((f) => `- ${f}`).join('\n') : '(未指定)'}
+
+## DoD
+${dod.length ? dod.map((d) => `- ${d}`).join('\n') : '(未指定)'}
+${failureBlock}
+## 输出要求
+严格按 harness-generator SKILL.md 的成功/失败路径输出 pr_url / pr_branch / commit_sha。`;
+
+  let result;
+  try {
+    result = await executeInDocker({
+      task: { ...task, task_type: effectiveType },
+      prompt,
+      worktreePath,
+      env: {
+        CECELIA_CREDENTIALS: 'account1',
+        CECELIA_TASK_TYPE: effectiveType,
+        HARNESS_NODE: 'generator',
+        HARNESS_INITIATIVE_ID: initiativeId,
+        HARNESS_FIX_MODE: isFixMode ? '1' : '0',
+        HARNESS_FIX_ROUND: String(fixRound),
+        GITHUB_TOKEN: githubToken,
+      },
+    });
+  } catch (err) {
+    console.error(`[executor] harness_task executeInDocker failed task=${task.id}: ${err.message}`);
+    return { success: false, taskId: task.id, initiativeId, error: err.message };
+  }
+
+  return {
+    success: result.exit_code === 0 && !result.timed_out,
+    taskId: task.id,
+    initiativeId,
+    docker: true,
+    container: result.container,
+    exitCode: result.exit_code,
+    durationMs: result.duration_ms,
+    timedOut: result.timed_out,
+    fixMode: isFixMode,
+    fixRound,
+  };
+}
+
 async function triggerCeceliaRun(task) {
   // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
   // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
@@ -2813,6 +2933,17 @@ async function triggerCeceliaRun(task) {
       console.error(`[executor] Initiative Runner error task=${task.id}: ${err.message}`);
       return { success: false, taskId: task.id, initiative: true, error: err.message };
     }
+  }
+
+  // 2.86 Harness v2 harness_task（阶段 B 子任务 Generator 容器派发）
+  // task-router 将 harness_task 声明为 /_internal（Brain tick 内部状态机），但派发
+  // 仍由 executor 负责。若不显式分支，harness_task 会落到默认 cecelia-bridge
+  // headless Claude 派发链路，绕过 PR-1 的 worktree + GITHUB_TOKEN 挂载。
+  // 这里走 triggerHarnessTaskDispatch：起容器跑 /harness-generator，Fix 与新建
+  // 共享同一 skill，容器内 agent 读 payload.fix_mode 判断。
+  if (task.task_type === 'harness_task') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness v2 Task Dispatch (container)`);
+    return triggerHarnessTaskDispatch(task);
   }
 
   // 2.9 LangGraph Pipeline（HARNESS_LANGGRAPH_ENABLED=true + harness_planner）
@@ -3631,6 +3762,7 @@ async function recordHeartbeat(taskId, _runId) {
 
 export {
   triggerCeceliaRun,
+  triggerHarnessTaskDispatch,
   triggerCodexBridge,
   triggerCodexReview,
   triggerMiniMaxExecutor,
