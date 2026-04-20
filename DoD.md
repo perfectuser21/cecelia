@@ -26,9 +26,17 @@
 - [x] [ARTIFACT] Learning 文件含根本原因 + 下次预防
   Test: manual:node -e "const fs=require('fs');const files=fs.readdirSync('docs/learnings').filter(f=>f.includes('harness-v5-sprint-a'));if(files.length===0)process.exit(1);const c=fs.readFileSync('docs/learnings/'+files[0],'utf8');if(!c.includes('### 根本原因'))process.exit(2);if(!c.includes('### 下次预防'))process.exit(3)"
 
-## BEHAVIOR 索引
+## BEHAVIOR 条目
 
-见 `packages/engine/tests/skills/harness-contract-proposer.test.ts`（7 个 it）+ `packages/engine/tests/skills/harness-contract-reviewer.test.ts`（8 个 it），共 15 个结构性 behavior 断言。
+- [x] [BEHAVIOR] Proposer SKILL.md 指导 LLM 产出 3 份产物 + Test Contract 索引表 + 严禁 [BEHAVIOR] 在 contract-dod-ws
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-proposer/SKILL.md','utf8');const checks=[c.includes('tests/ws'),c.includes('## Test Contract'),/严禁.*\[BEHAVIOR\]|\[BEHAVIOR\].*严禁/s.test(c),c.includes('真实 import'),c.includes('本地跑过')];if(checks.some(v=>!v))process.exit(1);console.log('PASS')"
+
+- [x] [BEHAVIOR] Reviewer SKILL.md 指导 LLM 做三件事（DoD 纯度/Mutation/Red 实跑）+ picky 心态 + 80% 下限
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-reviewer/SKILL.md','utf8');const checks=[c.includes('Reviewer 心态'),c.includes('无上限'),c.includes('picky'),c.includes('fake_impl'),c.includes('proof-of-falsification'),c.includes('test_block'),/下限.*不是目标|80%.*下限/s.test(c)];if(checks.some(v=>!v))process.exit(1);console.log('PASS')"
+
+## 结构测试（vitest 验证 SKILL.md 所有章节）
+
+见 `packages/engine/tests/skills/harness-contract-proposer.test.ts`（7 个 it）+ `packages/engine/tests/skills/harness-contract-reviewer.test.ts`（8 个 it），共 15 个结构断言。
 
 运行：
 
