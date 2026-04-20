@@ -1,127 +1,106 @@
-# Sprint PRD — Brain /api/brain/health 新增 docker_runtime 字段
-
-**Task ID**: 0f7fec19-f9a7-41ac-81d8-81fc15be4503
-**Sprint Dir**: sprints
-**生成时间**: 2026-04-18
+# Sprint PRD — Brain /api/brain/time 端点（Harness v2 闭环验证）
 
 ## OKR 对齐
 
-- **对应 KR**：[ASSUMPTION: 无法从 Brain 上下文确认具体 KR 编号，推断对应"Brain 可观测性 / Docker 执行器能力"方向的 KR]
-- **当前进度**：[ASSUMPTION: 未知 — `curl localhost:5221/api/brain/context` 在 Docker 容器内不可达（端口 5221 未暴露或 Brain 未运行）]
-- **本次推进预期**：[ASSUMPTION: 一次性可观测性补齐，预计推进该 KR 5-10%]
-- **说明**：Step 0 Brain API 不可达，本次任务与仓库内 `DoD.cp-04161607-docker-executor.md` 同方向，推断与 Docker 执行器 GA 所需"运行时健康暴露"相关。所有 OKR/上下文推断均已标注为 [ASSUMPTION]，由 Proposer 在合同阶段核实。
+- **对应 KR**：Harness v2 自动化开发流水线可用性
+- **当前进度**：四件套（#2469 / #2476 / #2479 / #2481）已合并，尚未首次端到端验证
+- **本次推进预期**：首次跑通 Planner → GAN 合同对抗 → B_task_loop 多 Task 派发 → Task PR 自动 merge → runPhaseCIfReady → Final E2E → phase=done 的完整链路
 
 ## 背景
 
-Brain 通过 `/api/brain/health` 暴露各器官（scheduler / circuit_breaker / event_bus / notifier / planner）的运行状态，供监控面板与上游巡检系统消费。近期 Harness 体系引入 Docker 执行器（`DoD.cp-04161607-docker-executor.md`），容器化 runtime 成为任务执行链路的关键组件，但其健康状态目前不在 `/api/brain/health` 返回结构中，导致：
+Harness v2 四件套合并后尚未有一次完整端到端的闭环运行。需要一个足够小、行为可观察、验证面充分的真实开发任务作为烟囱测试（smoke run），确保以下环节都被触发至少一次：
 
-- 监控面板无法看到容器运行时是否可用
-- 巡检脚本无法感知 Docker 执行器 down 时的退化
-- 新入站 Harness 任务在 Docker runtime 异常时会直接失败而无前置警示
+1. Planner 拆分可调度 Task DAG
+2. GAN 合同对抗（1-3 轮直至 Reviewer APPROVED）
+3. B_task_loop 按拓扑序派发子 Task 给容器
+4. 每个 Task 的 PR 被 Harness 自动 merge
+5. 所有 Task completed 后 `runPhaseCIfReady` 触发 Final E2E
+6. Initiative phase 推进至 `done`
 
-本次在 health 端点新增 `docker_runtime` 字段以关闭该观测盲区。
+"给 Brain 加一个 `GET /api/brain/time` 端点，返回 `{iso, timezone, unix}`"是理想载体：实现成本低、边界清晰、验证点可行为化（HTTP 返回结构、字段类型、时区正确性），且对路由注册 / 测试 / 文档三类工程资产都有触达。
 
 ## 目标
 
-让调用方通过 `GET /api/brain/health` 一次获取 Docker 运行时的健康与元信息，包括是否启用、是否可达、版本号，使监控与巡检无需额外端点即可判断 Docker 执行器是否可用。
+给 Brain HTTP 服务新增一个只读的时间端点 `GET /api/brain/time`，任意调用方调用可得到一个结构稳定的 JSON 响应，用以同步或校对客户端时钟，并作为 Harness v2 首次端到端闭环的验证载荷。
 
 ## User Stories
 
-**US-001**（P0）：作为 **运维/巡检系统**，我希望 `/api/brain/health` 返回 Docker 运行时状态，以便在 Docker daemon down 时第一时间收到告警，而不必等待 Harness 任务批量失败。
+**US-001**（P0）: 作为 Brain 的任意 HTTP 消费者（Dashboard / Agent / Ops 脚本），我希望调用 `GET /api/brain/time` 得到 `{iso, timezone, unix}` 三字段 JSON，以便同步或校对本地时钟。
 
-**US-002**（P1）：作为 **Dashboard 前端**，我希望在健康卡片里展示 Docker 运行时的 enabled / reachable / version，以便用户一眼看出 Docker 执行能力是否可用。
+**US-002**（P0）: 作为 Harness v2 的运维者，我希望本次 Initiative 走完 Planner → GAN → Task DAG → Auto-merge → Final E2E → phase=done 全链路，以便确认四件套合并后流水线可用。
 
-**US-003**（P2）：作为 **Harness Planner**，我希望在派发 docker-executor 任务前通过 health 端点预检 Docker 可用性，以便在不可用时自动降级到 host 执行器或阻塞任务创建。
+**US-003**（P1）: 作为维护者，我希望文档里写明 `GET /api/brain/time` 的契约（路径 / 方法 / 响应字段 / 含义），以便后续调用方无需读源码即可集成。
 
 ## 验收场景（Given-When-Then）
 
-**场景 1**（关联 US-001）— Docker 可用：
-- **Given** Docker daemon 正常运行，Brain 配置了 Docker 执行器
-- **When** 调用方发起 `GET /api/brain/health`
-- **Then** 响应 200，JSON 中存在 `docker_runtime` 字段，且 `docker_runtime.status === 'healthy'`、`docker_runtime.reachable === true`、`docker_runtime.version` 为非空字符串
+**场景 1**（US-001 主路径）:
+- Given Brain HTTP 服务处于运行状态
+- When 任意客户端发起 `GET /api/brain/time`
+- Then 响应状态码 `200`，`Content-Type` 为 `application/json`，响应体包含三个字段 `iso`（ISO-8601 字符串）、`timezone`（IANA 时区名或等价标识）、`unix`（整数秒级 Unix 时间戳）
 
-**场景 2**（关联 US-001）— Docker 不可达：
-- **Given** Docker daemon 停止或 socket 不可访问
-- **When** 调用方发起 `GET /api/brain/health`
-- **Then** 响应 200（端点本身不因 Docker down 而 500），`docker_runtime.status === 'unhealthy'`、`docker_runtime.reachable === false`，顶层 `status` 为 `degraded`
+**场景 2**（US-001 字段一致性）:
+- Given 服务时间为某一瞬间 T
+- When 客户端发起 `GET /api/brain/time`
+- Then `iso` 对应的瞬时时间与 `unix`（秒级）之差应在 ±2 秒以内（避免请求内部处理造成的 drift）
 
-**场景 3**（关联 US-002）— Docker 未启用：
-- **Given** 环境未配置 Docker 执行器（启用开关为 false 或相关 env 未设置）
-- **When** 调用方发起 `GET /api/brain/health`
-- **Then** `docker_runtime.enabled === false`、`docker_runtime.status === 'disabled'`，顶层 `status` 不受影响
+**场景 3**（US-002 Harness 链路）:
+- Given Harness v2 Runner 拾起本 Initiative 的 PRD 与 task-plan.json
+- When Runner 走完 A（Planner）→ GAN 合同对抗 → B_task_loop → 每 Task PR 自动 merge → C（Final E2E）阶段
+- Then Initiative `phase` 字段最终为 `done`，且每个 Task `status` 为 `completed`
 
-**场景 4**（关联 US-001）— 超时保护：
-- **Given** Docker daemon 响应缓慢
-- **When** health 端点采集 Docker 运行时信息
-- **Then** Docker 探测在 ≤ 2 秒内返回（超时视为 unreachable），health 端点整体响应时间 ≤ 3 秒
-
-**场景 5**（关联 US-003）— 向后兼容：
-- **Given** 既有消费者已依赖现有 health 响应结构（`status` / `uptime` / `active_pipelines` / `organs` / `evaluator_stats` / `tick_stats` / `timestamp`）
-- **When** 新字段上线
-- **Then** 既有字段名、类型、嵌套层级均不变，新增 `docker_runtime` 仅为追加字段，既有客户端零改动仍然工作
+**场景 4**（US-003 文档就位）:
+- Given 合并后的仓库
+- When 读者打开 Brain API 文档入口（README 或等效聚合文档）
+- Then 能看到 `GET /api/brain/time` 的路径 / 方法 / 响应字段 三项契约信息
 
 ## 功能需求
 
-- **FR-001**：`/api/brain/health` 响应 JSON 必须新增 `docker_runtime` 字段（顶层或 `organs` 下，由 Proposer 在合同阶段确定位置）。
-- **FR-002**：`docker_runtime` 至少包含字段：`enabled`（bool）、`status`（enum: `healthy` / `unhealthy` / `disabled` / `unknown`）、`reachable`（bool）、`version`（string 或 null）、`error`（string 或 null，仅在 unhealthy 时填写）。
-- **FR-003**：Docker 探测须有超时保护（≤ 2 秒），探测失败不得使 health 端点返回 500。
-- **FR-004**：当 `docker_runtime.status === 'unhealthy'` 且 `docker_runtime.enabled === true` 时，顶层 `status` 聚合为 `degraded`（与现有 `circuit_breaker` open 时的聚合逻辑保持一致语义）。当 `disabled` 时不影响顶层 `status`。
-- **FR-005**：既有字段（`status` / `uptime` / `active_pipelines` / `evaluator_stats` / `tick_stats` / `organs.scheduler` / `organs.circuit_breaker` / `organs.event_bus` / `organs.notifier` / `organs.planner` / `timestamp`）的名称、类型、嵌套必须保持不变。
+- **FR-001**: 新增 HTTP 路由 `GET /api/brain/time`，未鉴权前提下对所有调用方返回相同结构
+- **FR-002**: 响应体字段固定为 `iso` / `timezone` / `unix` 三个键，无多余字段
+- **FR-003**: `iso` 使用 ISO-8601 格式，`timezone` 使用 IANA 时区名（例 `Asia/Shanghai`）或 `UTC`，`unix` 为整数秒
+- **FR-004**: 响应的 `Content-Type` 为 `application/json`
+- **FR-005**: 端点在 Brain HTTP 服务启动时自动注册，无需额外配置
+- **FR-006**: 存在一份可机读的响应契约描述（JSON Schema 片段或等价结构化注释），供测试与文档共用
+- **FR-007**: 文档中出现对该端点的介绍，至少包含路径 / 方法 / 响应字段 / 含义
 
 ## 成功标准
 
-- **SC-001**：新测试用例覆盖"Docker 可用 / 不可达 / 未启用"三种状态，在 `packages/brain/src/__tests__/integration/critical-routes.integration.test.js` 与 `golden-path.integration.test.js` 中新增断言，全部通过。
-- **SC-002**：health 端点在 Docker down 场景下 p99 响应时间 ≤ 3 秒（由 Docker 探测超时保护）。
-- **SC-003**：既有 health 断言（含 `organs.scheduler` / `organs.circuit_breaker` 结构、`status` 字段存在性）100% 保持通过，零回归。
-- **SC-004**：`/api/brain/health` 对 `docker_runtime` 字段在三种状态下各返回一次真实场景 smoke 测试，结构符合 FR-002 定义。
+- **SC-001**: 一个对 `GET /api/brain/time` 的 HTTP 行为测试通过（断言 200 / 三字段存在 / 字段类型正确）
+- **SC-002**: 一个对 iso 与 unix 一致性的行为测试通过（差值 ≤ 2 秒）
+- **SC-003**: Initiative 最终 `phase=done` 且所有 Task `status=completed`
+- **SC-004**: 文档中存在端点描述（可通过文件内搜索关键字 `/api/brain/time` 命中）
 
 ## 假设
 
-- [ASSUMPTION: Brain `/api/brain/context` 在容器内不可达（curl 连接失败），因此无法校验当前活跃 KR/任务/最近 PR，OKR 对齐基于任务描述与仓库内 `DoD.cp-04161607-docker-executor.md` 同主题推断]
-- [ASSUMPTION: `docker_runtime` 命名指"Docker 容器执行器运行时健康状态"，而不是 Brain 自身运行在 Docker 里的进程健康（后者用 uptime 已覆盖）]
-- [ASSUMPTION: 字段放置位置 — 推测放在响应顶层（与 `evaluator_stats`、`tick_stats` 并列）比嵌入 `organs` 更合适，因为 docker runtime 是执行基础设施而非 Brain 内部器官；但最终位置由 Proposer 在合同中定]
-- [ASSUMPTION: 状态枚举取值 `healthy` / `unhealthy` / `disabled` / `unknown`，与现有 `organs.*.status` 风格一致]
-- [ASSUMPTION: Docker 探测方式（socket / CLI / HTTP API）不在 PRD 范围，由 Proposer 选择 How]
-- [ASSUMPTION: 无需新增鉴权 — health 端点沿用现有（无鉴权或与既有一致）]
+- [ASSUMPTION: Brain HTTP 服务使用 Express，已有 `packages/brain/src/routes/` 模块化路由目录，新增路由遵循 `app.use('/api/brain/...')` 注册模式]
+- [ASSUMPTION: Brain 现有测试体系可直接承载新增路由的行为测试（无需新建测试框架）]
+- [ASSUMPTION: 服务运行环境的时区为 `Asia/Shanghai` 或 `UTC`，`timezone` 字段取 `process.env.TZ` / `Intl.DateTimeFormat().resolvedOptions().timeZone` / `UTC` 其中之一，具体由实现自决]
 
 ## 边界情况
 
-- Docker daemon 冷启动中（可达但 API 仍在初始化）：视为 `unhealthy` + `reachable: true` + `error: 'starting'`
-- Docker 版本获取失败但 socket 可达：`reachable: true`，`version: null`，`status: 'healthy'` 不降级（version 仅是元信息）
-- 多个 Docker endpoint 配置（如 remote docker host）：PRD 范围仅覆盖"默认 endpoint"，多端点为后续扩展
-- 探测并发：health 端点被高频调用时，Docker 探测不得产生 N+1 I/O 风暴，需合理缓存（缓存策略由 Proposer 选择，PRD 仅要求 p99 ≤ 3s）
-- health 端点本身 DB 查询失败：docker_runtime 探测独立，不应受 DB 查询失败影响（当前实现 catch 500，保持此行为）
-- 并发探测：多个请求同时命中时，`docker_runtime` 返回结果语义一致（允许缓存，不允许部分字段错配）
+- 客户端请求非 GET 方法（如 POST）：行为不作强约束，交由 Express 默认处理
+- 服务时区未设置：仍须返回一个非空 `timezone`（退化为 `UTC` 可接受）
+- 并发请求：端点必须保持无副作用、无状态
+- 时间源异常（极端情况下系统时钟跳变）：端点不负责修正，直接反映当前系统时间
 
 ## 范围限定
 
-**在范围内**：
-- `/api/brain/health` 响应 JSON 中新增 `docker_runtime` 字段
-- `docker_runtime` 的字段定义（enabled / status / reachable / version / error）
-- Docker 探测的超时与错误保护
-- 顶层 `status` 聚合规则对 docker_runtime 的响应
-- 现有 integration test 的新增断言
+**在范围内**:
+- 新增只读 GET 端点与响应契约
+- 一份行为测试覆盖字段结构与一致性
+- 文档补充端点契约描述
+- 端点在 Brain 启动时自动生效
 
-**不在范围内**：
-- 新建独立端点（如 `/api/brain/docker/status`）
-- Dashboard UI 展示 docker_runtime 的前端改造（属于 apps/dashboard，单独 sprint）
-- Docker 执行器自身的功能/稳定性改造（已在 `DoD.cp-04161607-docker-executor.md`）
-- Harness Planner 基于 docker_runtime 做预检与降级的调度逻辑（US-003 是未来场景，本 sprint 只提供数据）
-- 告警 / 通知规则（notifier 侧基于此字段发告警是下一个 sprint）
-- 多 Docker endpoint / Docker Swarm / K8s runtime 支持
-- Docker 容器内进程的资源指标（CPU / Memory）— 那是 metrics 端点的职责
+**不在范围内**:
+- 身份认证 / 授权 / 限流
+- 时间设置 / 写端点 / NTP 同步
+- Dashboard 前端消费该端点的 UI 改动
+- OpenAPI 全量导出或 SDK 代码生成
 
 ## 预期受影响文件
 
-（基于 Step 0 仓库扫描推断；Proposer 在合同阶段验证实际路径与范围）
-
-- `packages/brain/src/routes/goals.js`：health 端点实现在第 89-161 行，新字段 `docker_runtime` 的构造与聚合逻辑在此修改
-- `packages/brain/src/__tests__/integration/critical-routes.integration.test.js`：现有 `GET /api/brain/health` 断言位于第 162-186 行附近，需追加 docker_runtime 结构断言
-- `packages/brain/src/__tests__/integration/golden-path.integration.test.js`：第 390-399 行已有 health 端点的 organs 结构断言，需扩展覆盖 docker_runtime
-- `packages/brain/src/__tests__/smoke.test.js`：若 smoke 测试涉及 health 响应 schema，需同步更新（Proposer 核实）
-- [可能新增] `packages/brain/src/docker-runtime-probe.js` 或类似模块：Docker 探测实现细节由 Proposer 定（PRD 不规定实现路径）
-- `DEFINITION.md` / `docs/current/`：如 health 响应 schema 是 SSOT 的一部分，需同步更新文档（Proposer 核实）
-
----
-
-**PRD 结束** — 下一步：Proposer 基于本 PRD 起草 sprint-contract.md（How）。
+- `packages/brain/src/routes/time.js`：新增路由模块，导出 Express Router
+- `packages/brain/server.js`：注册新路由（`app.use('/api/brain/time', ...)` 或等效）
+- `packages/brain/src/__tests__/routes-time.test.js`：行为测试（状态码 / 字段 / 一致性）
+- `docs/current/README.md` 或 Brain API 说明入口文档：补充端点条目
+- `packages/brain/src/contracts/time-response.schema.json`（或等效轻量契约片段）：响应结构契约，供测试与文档引用
