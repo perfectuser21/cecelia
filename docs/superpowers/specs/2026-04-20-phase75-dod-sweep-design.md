@@ -58,10 +58,10 @@ PR 合并到 main → cleanup-merged-artifacts.yml 扫 git ls-files
   - Test: `manual:node -e "['.dod.md','.prd.md','.prd.md.old','TASK.md'].forEach(f=>{if(require('fs').existsSync(f))process.exit(1)})"`
 - [x] [BEHAVIOR] dod-manual-commands.test.ts 验证 check-manual-cmd-whitelist.cjs
   - Test: `tests/dod/dod-manual-commands.test.ts`（位于 packages/engine）
-- [x] [ARTIFACT] Engine 7 处版本同步 18.3.3
-  - Test: `manual:node -e "['packages/engine/VERSION','packages/engine/.hook-core-version','packages/engine/hooks/VERSION'].forEach(f=>{if(require('fs').readFileSync(f,'utf8').trim()!=='18.3.3')process.exit(1)})"`
-- [x] [ARTIFACT] feature-registry.yml 含 18.3.3 条目 + dead-DoD-sweep 描述
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/engine/feature-registry.yml','utf8');if(!c.includes('18.3.3'))process.exit(1);if(!c.includes('死 DoD')&&!c.includes('dod-sweep'))process.exit(2)"`
+- [x] [ARTIFACT] Engine 7 处版本同步（semver 格式即可，后续 PR 会继续 bump）
+  - Test: `manual:node -e "['packages/engine/VERSION','packages/engine/.hook-core-version','packages/engine/hooks/VERSION'].forEach(f=>{if(!/^\d+\.\d+\.\d+/.test(require('fs').readFileSync(f,'utf8').trim()))process.exit(1)})"`
+- [x] [ARTIFACT] feature-registry.yml 含 dead-DoD-sweep 描述（版本号不锁定，避免后续 PR bump 后失效）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/engine/feature-registry.yml','utf8');if(!c.includes('死 DoD')&&!c.includes('dod-sweep'))process.exit(1)"`
 
 ## Review（autonomous，B-5 spec approval）
 
