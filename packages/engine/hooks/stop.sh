@@ -84,7 +84,9 @@ fi
 # ===== v17.0.0: session_id 精确匹配（owner_session）=====
 # 当前 session 有 session_id 时，只匹配 owner_session == $CLAUDE_HOOK_SESSION_ID 的 .dev-lock
 if [[ -n "$CLAUDE_HOOK_SESSION_ID" ]]; then
-    for _wt in "${_STOP_HOOK_WT_LIST[@]}"; do
+    # v18.1.1 (Phase 7.2): 空数组 + set -u + bash 3.2 (macOS 默认) = "unbound variable"
+    # 用 ${arr[@]+"${arr[@]}"} guard 避免空数组时报错
+    for _wt in "${_STOP_HOOK_WT_LIST[@]+${_STOP_HOOK_WT_LIST[@]}}"; do
         for _lock in "$_wt"/.dev-lock.*; do
             [[ -f "$_lock" ]] || continue
             _owner=$(grep "^owner_session:" "$_lock" 2>/dev/null | awk '{print $2}' || true)
@@ -101,7 +103,8 @@ if [[ -n "$CLAUDE_HOOK_SESSION_ID" ]]; then
 else
     # ===== Fallback（没 session_id，老 interactive 模式兼容）=====
     # 沿用老 break-2 行为：找到第一个 .dev-lock 就 route
-    for _wt in "${_STOP_HOOK_WT_LIST[@]}"; do
+    # v18.1.1 (Phase 7.2): 同样加空数组 guard
+    for _wt in "${_STOP_HOOK_WT_LIST[@]+${_STOP_HOOK_WT_LIST[@]}}"; do
         for _f in "$_wt"/.dev-lock.*; do
             [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break 2
         done
