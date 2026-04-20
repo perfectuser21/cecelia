@@ -255,6 +255,97 @@ describe('createContentDockerNodes', () => {
     });
     expect(update.error).toContain('timeout');
   });
+
+  // ─── WF-3 观察性：每节点返回 meta 字段（prompt_sent / raw_stdout / raw_stderr /
+  // exit_code / duration_ms / container_id），供 runner.onStep 写 cecelia_events
+  it('success node: 返回 prompt_sent + raw_stdout + raw_stderr + exit_code + duration_ms + container_id', async () => {
+    const executor = async () => ({
+      exit_code: 0,
+      stdout: 'findings_path: /tmp/f.json\noutput_dir: /tmp/out\n',
+      stderr: 'some warn',
+      duration_ms: 1234,
+      container: 'cecelia-task-xxx',
+      container_id: 'abc123def456',
+      timed_out: false,
+    });
+    const nodes = createContentDockerNodes(executor, mockTask);
+    const update = await nodes.research({
+      pipeline_id: 'p-1',
+      keyword: '测试',
+      output_dir: '',
+    });
+    expect(typeof update.prompt_sent).toBe('string');
+    expect(update.prompt_sent.length).toBeGreaterThan(0);
+    expect(update.prompt_sent).toContain('测试'); // keyword 写进 prompt
+    expect(update.raw_stdout).toContain('findings_path: /tmp/f.json');
+    expect(update.raw_stderr).toBe('some warn');
+    expect(update.exit_code).toBe(0);
+    expect(update.duration_ms).toBe(1234);
+    expect(update.container_id).toBe('abc123def456');
+    // 依然保留业务字段
+    expect(update.findings_path).toBe('/tmp/f.json');
+  });
+
+  it('failure node: meta 字段仍然带出（前端要看失败节点的 stderr/prompt）', async () => {
+    const executor = async () => ({
+      exit_code: 137,
+      stdout: '',
+      stderr: 'OOM',
+      duration_ms: 5000,
+      container: 'cecelia-task-err',
+      container_id: '00112233aabb',
+      timed_out: false,
+    });
+    const nodes = createContentDockerNodes(executor, mockTask);
+    const update = await nodes.copywrite({
+      pipeline_id: 'p-1',
+      findings_path: '/tmp/f.json',
+    });
+    expect(update.error).toContain('exit code 137');
+    expect(update.trace).toBe('copywrite(ERROR)');
+    // meta 不因失败而丢失
+    expect(update.prompt_sent).toContain('findings_path');
+    expect(update.raw_stderr).toBe('OOM');
+    expect(update.exit_code).toBe(137);
+    expect(update.duration_ms).toBe(5000);
+    expect(update.container_id).toBe('00112233aabb');
+  });
+
+  it('executor 抛异常时 meta 降级填可用字段（不崩溃）', async () => {
+    const executor = async () => { throw new Error('network down'); };
+    const nodes = createContentDockerNodes(executor, mockTask);
+    const update = await nodes.research({ pipeline_id: 'p-1', keyword: 'x' });
+    expect(update.error).toBe('network down');
+    expect(typeof update.prompt_sent).toBe('string');
+    expect(update.prompt_sent.length).toBeGreaterThan(0);
+    expect(update.raw_stderr).toBe('network down');
+    expect(update.exit_code).toBeNull();
+    expect(typeof update.duration_ms).toBe('number');
+    expect(update.container_id).toBeNull();
+  });
+
+  it('巨型 stdout/stderr/prompt 被截断（避免 payload 爆炸）', async () => {
+    const bigStdout = 'x'.repeat(50000);
+    const bigStderr = 'y'.repeat(50000);
+    const executor = async () => ({
+      exit_code: 0,
+      stdout: bigStdout,
+      stderr: bigStderr,
+      duration_ms: 1,
+      container: 'cecelia-task-big',
+      container_id: 'bigbigbigbig',
+      timed_out: false,
+    });
+    const nodes = createContentDockerNodes(executor, mockTask);
+    const update = await nodes.research({ pipeline_id: 'p-1', keyword: 'z' });
+    // 10KB / 2KB 上限
+    expect(update.raw_stdout.length).toBeLessThan(bigStdout.length);
+    expect(update.raw_stdout.length).toBeLessThanOrEqual(10 * 1024 + 200); // 加一点 truncated 尾部余量
+    expect(update.raw_stderr.length).toBeLessThan(bigStderr.length);
+    expect(update.raw_stderr.length).toBeLessThanOrEqual(2 * 1024 + 200);
+    expect(update.raw_stdout).toContain('[truncated');
+    expect(update.raw_stderr).toContain('[truncated');
+  });
 });
 
 describe('buildNodeInputPrompt', () => {

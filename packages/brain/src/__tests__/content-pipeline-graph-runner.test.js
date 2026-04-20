@@ -164,6 +164,48 @@ describe('runContentPipeline', () => {
     expect(last.manifest_path).toBe('/m.json');
   });
 
+  it('state_snapshot carries WF-3 observability meta (prompt_sent / raw_stdout / raw_stderr / exit_code / duration_ms / container_id)', async () => {
+    process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
+    const snapshots = [];
+    // 节点直接返回带 meta 的 state update（模拟 makeNode 真实产物）
+    const mkMeta = (suffix) => ({
+      prompt_sent: `prompt-${suffix}`,
+      raw_stdout: `stdout-${suffix}`,
+      raw_stderr: `stderr-${suffix}`,
+      exit_code: 0,
+      duration_ms: 42,
+      container_id: `cid${suffix}`,
+    });
+    const overrides = {
+      research: async () => ({ trace: 'research', findings_path: '/f.json', ...mkMeta('r') }),
+      copywrite: async () => ({ trace: 'copywrite', copy_path: '/c.md', ...mkMeta('cw') }),
+      copy_review: async () => ({
+        trace: 'copy_review', copy_review_verdict: 'APPROVED', copy_review_round: 1, ...mkMeta('cr'),
+      }),
+      generate: async () => ({ trace: 'generate', cards_dir: '/cards', ...mkMeta('g') }),
+      image_review: async () => ({
+        trace: 'image_review', image_review_verdict: 'PASS', image_review_round: 1, ...mkMeta('ir'),
+      }),
+      export: async () => ({ trace: 'export', nas_url: 'nas://p/', manifest_path: '/m.json', ...mkMeta('e') }),
+    };
+    await runContentPipeline(
+      { id: 'p-meta', keyword: 'demo' },
+      { overrides, onStep: (evt) => snapshots.push({ node: evt.node, snap: evt.state_snapshot }) },
+    );
+    // 6 步都应带 meta，且每步 meta 正好对应该节点
+    expect(snapshots).toHaveLength(6);
+    const byNode = Object.fromEntries(snapshots.map((s) => [s.node, s.snap]));
+    expect(byNode.research.prompt_sent).toBe('prompt-r');
+    expect(byNode.research.raw_stdout).toBe('stdout-r');
+    expect(byNode.research.raw_stderr).toBe('stderr-r');
+    expect(byNode.research.exit_code).toBe(0);
+    expect(byNode.research.duration_ms).toBe(42);
+    expect(byNode.research.container_id).toBe('cidr');
+    expect(byNode.copywrite.container_id).toBe('cidcw');
+    expect(byNode.export.container_id).toBe('cide');
+    expect(byNode.export.nas_url).toBe('nas://p/');
+  });
+
   it('onStep error does not crash pipeline', async () => {
     process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
     const overrides = {

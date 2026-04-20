@@ -185,6 +185,18 @@ export const ContentPipelineState = Annotation.Root({
 
   nas_url: Annotation,
 
+  // ─── WF-3 观察性字段（瞬态，每节点覆盖，不累积） ───────────────
+  // 每个节点跑完后这些字段反映该节点的 Docker 执行元数据；
+  // 下一个节点启动前会被覆盖（LangGraph 默认 reducer 就是 overwrite）。
+  // runner 的 onStep 从 event[nodeName] 读这些字段，写进 cecelia_events.payload，
+  // 供前端详情页展示"Brain 发给 Claude 的 prompt / Claude 吐的 stdout / 容器元数据"。
+  prompt_sent: Annotation,
+  raw_stdout: Annotation,
+  raw_stderr: Annotation,
+  exit_code: Annotation,
+  duration_ms: Annotation,
+  container_id: Annotation,
+
   error: Annotation,
   trace: Annotation({
     reducer: (left, right) => {
@@ -195,6 +207,24 @@ export const ContentPipelineState = Annotation.Root({
     default: () => [],
   }),
 });
+
+// ─── WF-3 观察性：payload 字段截断上限 ──────────────────────────
+// 避免 event.payload 在 Postgres 里爆掉（单 row 默认 JSONB 无硬上限，但前端加载
+// 多轮事件时若每条都几 MB 会拖慢）。取值对齐任务 card：prompt 8KB / stdout 10KB / stderr 2KB。
+export const PROMPT_SENT_MAX_BYTES = 8 * 1024;
+export const RAW_STDOUT_MAX_BYTES = 10 * 1024;
+export const RAW_STDERR_MAX_BYTES = 2 * 1024;
+
+/**
+ * 按 char 截断字符串，保留开头并追加省略标记。
+ * 空字符串 / null / undefined 统一返回 ''。
+ */
+export function clipText(text, maxBytes) {
+  if (text === null || text === undefined) return '';
+  const s = typeof text === 'string' ? text : String(text);
+  if (s.length <= maxBytes) return s;
+  return s.slice(0, maxBytes) + `\n... [truncated, original ${s.length} chars]`;
+}
 
 /**
  * Placeholder 节点工厂。
@@ -403,7 +433,13 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
 
   /**
    * 通用 Docker 节点执行器。
-   * 构建 prompt → 调 executeInDocker → 解析输出 → 返回 state 更新。
+   * 构建 prompt → 调 executeInDocker → 解析输出 → 返回 state 更新 + 观察性 meta。
+   *
+   * 返回值（WF-3 扩展）：
+   *   - output, error, success  — 已有，供节点决策/产物提取使用
+   *   - meta                    — 新增，含 prompt_sent / raw_stdout / raw_stderr /
+   *                               exit_code / duration_ms / container_id，
+   *                               供 makeNode 塞进 state 供 runner.onStep 写事件
    */
   async function runDockerNode(nodeName, state) {
     const cfg = NODE_CONFIGS[nodeName];
@@ -432,18 +468,39 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
         `[content-pipeline-graph] node=${nodeName} task=${taskId} exit=${result.exit_code} timed_out=${result.timed_out} duration=${durationSec}s`
       );
 
+      // 观察性 meta：无论 success/fail 都带出，让前端能看到失败节点的原始输入/输出
+      const meta = {
+        prompt_sent: clipText(prompt, PROMPT_SENT_MAX_BYTES),
+        raw_stdout: clipText(result.stdout, RAW_STDOUT_MAX_BYTES),
+        raw_stderr: clipText(result.stderr, RAW_STDERR_MAX_BYTES),
+        exit_code: typeof result.exit_code === 'number' ? result.exit_code : null,
+        duration_ms: typeof result.duration_ms === 'number'
+          ? result.duration_ms
+          : Date.now() - startMs,
+        container_id: result.container_id || null,
+      };
+
       if (!success) {
         const errMsg = result.timed_out
           ? `Docker timeout after ${durationSec}s`
           : `Docker exit code ${result.exit_code}: ${(result.stderr || '').slice(-500)}`;
-        return { output: '', error: errMsg, success: false };
+        return { output: '', error: errMsg, success: false, meta };
       }
 
       const output = parseDockerOutput(result.stdout);
-      return { output, error: null, success: true };
+      return { output, error: null, success: true, meta };
     } catch (err) {
       console.error(`[content-pipeline-graph] node=${nodeName} task=${taskId} error: ${err.message}`);
-      return { output: '', error: err.message, success: false };
+      // executor 异常（network/模块错误等）没有 docker 结果，meta 退化到可用字段
+      const meta = {
+        prompt_sent: clipText(prompt, PROMPT_SENT_MAX_BYTES),
+        raw_stdout: '',
+        raw_stderr: clipText(err.message || '', RAW_STDERR_MAX_BYTES),
+        exit_code: null,
+        duration_ms: Date.now() - startMs,
+        container_id: null,
+      };
+      return { output: '', error: err.message, success: false, meta };
     }
   }
 
@@ -480,11 +537,15 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
   }
 
   const makeNode = (nodeName) => async (state) => {
-    const { output, error, success } = await runDockerNode(nodeName, state);
+    const { output, error, success, meta } = await runDockerNode(nodeName, state);
+    // meta 字段（prompt_sent / raw_stdout / raw_stderr / exit_code / duration_ms /
+    // container_id）铺平到返回值里。LangGraph 用 default reducer（overwrite），
+    // 每个节点只保留自己这次的 meta；下一个节点启动前会覆盖。
+    const metaUpdate = meta || {};
     if (!success) {
-      return { error, trace: `${nodeName}(ERROR)` };
+      return { ...metaUpdate, error, trace: `${nodeName}(ERROR)` };
     }
-    return { ...extractNodeOutputs(nodeName, output, state), error: null };
+    return { ...metaUpdate, ...extractNodeOutputs(nodeName, output, state), error: null };
   };
 
   return {
