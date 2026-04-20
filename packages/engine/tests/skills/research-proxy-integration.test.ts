@@ -26,14 +26,15 @@ describe('autonomous-research-proxy 行为规则', () => {
     ].forEach((s) => expect(content).toContain(s));
   });
 
-  it('Subagent prompt 模板含 research anchor', () => {
+  it('Subagent prompt 模板含 Phase 8.1 数据源排序', () => {
+    // Phase 8.1 重构：anchor 从 "Code reality/OKR/Historical decisions/Learnings/First-principles"
+    // 改成 "用户的话 > 现有代码 > OKR"，且明确"不读 decisions/learnings"
     [
-      'Code reality',
+      '用户的话',
+      '现有代码',
       'OKR',
-      'Historical decisions',
-      'Learnings',
-      'First-principles',
     ].forEach((anchor) => expect(content).toContain(anchor));
+    expect(content).toMatch(/不(用|读).{0,20}decisions/);
   });
 
   it('Model Selection 3 档', () => {
@@ -54,9 +55,8 @@ describe('autonomous-research-proxy 行为规则', () => {
     expect(content).toContain('awaiting_human_decision');
   });
 
-  it('Phase 6 新规则：Tier 1 含 enrich-decide + decisions/match', () => {
+  it('Phase 6 新规则：Tier 1 含 enrich-decide（Phase 8.1 移除 decisions/match）', () => {
     expect(content).toContain('enrich-decide');
-    expect(content).toContain('decisions/match');
   });
 
   it('Phase 5 硬规则：finishing → engine-ship', () => {
