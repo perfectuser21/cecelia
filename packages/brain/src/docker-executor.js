@@ -264,6 +264,16 @@ export function buildDockerArgs(opts, ctx = {}) {
   const extraVolumes = [];
   if (hostClaudeConfigDir) {
     extraVolumes.push('-v', `${hostClaudeConfigDir}:/host-claude-config:ro`);
+    // Symlink target mounts：宿主 .claude-accountN/skills → ~/.claude/skills → packages/workflows/skills
+    // 两级 symlink，容器里必须能解析到最终 target，否则 cp -aL 拷不到 SKILL.md，harness skills 不可见
+    const sharedClaudeDir = path.join(homedir, '.claude');
+    if (existsFn(sharedClaudeDir)) {
+      extraVolumes.push('-v', `${sharedClaudeDir}:${sharedClaudeDir}:ro`);
+    }
+    const workflowsDir = '/Users/administrator/perfect21/cecelia/packages/workflows';
+    if (existsFn(workflowsDir)) {
+      extraVolumes.push('-v', `${workflowsDir}:${workflowsDir}:ro`);
+    }
   }
   const hostGitConfig = path.join(homedir, '.gitconfig');
   if (existsFn(hostGitConfig)) {
