@@ -340,17 +340,17 @@ PASS requires: code_quality_score ≥ 7/10 且无 1-3 项违反
 
 ## DoD
 
-- [ ] [ARTIFACT] `packages/engine/skills/dev/steps/autonomous-research-proxy.md` 含 13 个深化锚点
+- [x] [ARTIFACT] `packages/engine/skills/dev/steps/autonomous-research-proxy.md` 含 13 个深化锚点
   - Test: `manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/steps/autonomous-research-proxy.md','utf8');['B-1','B-2','B-3','B-4','B-5','B-6','SDD-1','SDD-2','SDD-3','RCR-1','RCR-2','RCR-3','RCR-4'].forEach(p=>{if(!c.includes(p))process.exit(1)})"`
-- [ ] [ARTIFACT] proxy.md 含 Structured Review Block 规范
+- [x] [ARTIFACT] proxy.md 含 Structured Review Block 规范
   - Test: `manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/steps/autonomous-research-proxy.md','utf8');if(!c.includes('Structured Review Block'))process.exit(1)"`
-- [ ] [ARTIFACT] proxy.md 声明数据源排序"用户的话 > 现有代码 > OKR"且"不用 decisions"
+- [x] [ARTIFACT] proxy.md 声明数据源排序"用户的话 > 现有代码 > OKR"且"不用 decisions"
   - Test: `manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/steps/autonomous-research-proxy.md','utf8');if(!c.includes('用户的话 > 现有代码 > OKR'))process.exit(1);if(!c.match(/不(用|读) decisions/))process.exit(1)"`
-- [ ] [BEHAVIOR] 跑测试验证 13 点 anchor 存在
+- [x] [BEHAVIOR] 跑测试验证 13 点 anchor 存在
   - Test: `tests/proxy/phase81-13-points.test.ts`
-- [ ] [ARTIFACT] 版本同步到 18.0.0（6 处）
+- [x] [ARTIFACT] 版本同步到 18.0.0（6 处）
   - Test: `manual:bash -c "for f in packages/engine/VERSION packages/engine/.hook-core-version packages/engine/hooks/VERSION; do grep -q '18\.0\.0' \$f || exit 1; done"`
-- [ ] [ARTIFACT] `feature-registry.yml` 新 phase-8.1 条目
+- [x] [ARTIFACT] `feature-registry.yml` 新 phase-8.1 条目
   - Test: `manual:node -e "const c=require('fs').readFileSync('packages/engine/feature-registry.yml','utf8');if(!c.includes('phase-8.1'))process.exit(1)"`
 
 ---
