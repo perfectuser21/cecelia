@@ -175,6 +175,62 @@ async function notifyDailySummary(summary) {
   return sendFeishu(lines.join('\n'));
 }
 
+// ─── Harness v2 关键事件通知（M6）────────────────────────────────────────
+// PRD: docs/design/harness-v2-prd.md §6.9 飞书通知
+// 钩子点由 harness-initiative-runner.js 在 phase 切换 / 事件分发时调用。
+
+/**
+ * 阶段 A 合同 APPROVED 时推送（含 DAG task 数量 + GAN 轮次）
+ * @param {{ initiative_id: string, task_count: number, review_rounds?: number, initiative_title?: string }} info
+ */
+async function notifyHarnessContractApproved(info) {
+  const rounds = info.review_rounds ? `（GAN ${info.review_rounds} 轮）` : '';
+  const title = info.initiative_title || info.initiative_id;
+  const text = `📜 Harness 合同已 APPROVED：${title}${rounds}
+→ ${info.task_count} 个 Task 进入阶段 B 顺序执行`;
+  return sendRateLimited(`harness_contract_approved_${info.initiative_id}`, text);
+}
+
+/**
+ * 阶段 B 每个 Task PR merged
+ * @param {{ initiative_id: string, task_id: string, title: string, pr_url?: string }} info
+ */
+async function notifyHarnessTaskMerged(info) {
+  const link = info.pr_url ? `\n${info.pr_url}` : '';
+  const text = `✅ Harness Task PR merged：${info.title}${link}`;
+  return sendRateLimited(`harness_task_merged_${info.task_id}`, text);
+}
+
+/**
+ * 阶段 C E2E 结果（PASS / FAIL）
+ * @param {{ initiative_id: string, verdict: 'PASS'|'FAIL', initiative_title?: string, failed_task_id?: string, failed_scenarios?: string[] }} info
+ */
+async function notifyHarnessFinalE2E(info) {
+  const title = info.initiative_title || info.initiative_id;
+  if (info.verdict === 'PASS') {
+    const text = `🎉 Harness 阶段 C E2E PASS：${title}`;
+    return sendRateLimited(`harness_final_e2e_${info.initiative_id}`, text);
+  }
+  const failedId = info.failed_task_id ? `\n归因 Task：${info.failed_task_id}` : '';
+  const scenarios =
+    Array.isArray(info.failed_scenarios) && info.failed_scenarios.length
+      ? `\n失败场景：${info.failed_scenarios.slice(0, 3).join('；')}`
+      : '';
+  const text = `🚨 Harness 阶段 C E2E FAIL：${title}${failedId}${scenarios}`;
+  return sendRateLimited(`harness_final_e2e_${info.initiative_id}`, text);
+}
+
+/**
+ * 预算 80% 预警 / 超时 30 分钟预警
+ * @param {{ initiative_id: string, kind: 'budget'|'timeout', detail?: string }} info
+ */
+async function notifyHarnessBudgetWarning(info) {
+  const label = info.kind === 'budget' ? '预算 80%' : '超时 30 分钟';
+  const detail = info.detail ? `\n${info.detail}` : '';
+  const text = `⚠️ Harness 预警：${info.initiative_id} ${label}${detail}`;
+  return sendRateLimited(`harness_warn_${info.kind}_${info.initiative_id}`, text);
+}
+
 export {
   sendFeishu,
   notifyTaskCompleted,
@@ -182,5 +238,9 @@ export {
   notifyCircuitOpen,
   notifyPatrolCleanup,
   notifyDailySummary,
+  notifyHarnessContractApproved,
+  notifyHarnessTaskMerged,
+  notifyHarnessFinalE2E,
+  notifyHarnessBudgetWarning,
   RATE_LIMIT_MS
 };
