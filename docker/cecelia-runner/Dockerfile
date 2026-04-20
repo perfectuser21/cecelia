@@ -43,6 +43,16 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
 
+# V6 渲染 + OCR 自检依赖
+# fonts-noto-cjk / fonts-noto-cjk-extra：resvg 渲染中文必须有 CJK 字体，否则 V6 生成的 PNG 中文文字全部丢失（变废图）
+# fontconfig + fc-cache -fv：让 resvg 通过 fontconfig 查到新装字体
+# tesseract-ocr + tesseract-ocr-chi-sim：Stage 4 渲染后 OCR 自检 cover PNG，字符数 < 10 就 fail（防字体 silent 挂了下游没人发现）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fonts-noto-cjk fonts-noto-cjk-extra fontconfig \
+      tesseract-ocr tesseract-ocr-chi-sim \
+    && fc-cache -fv \
+    && rm -rf /var/lib/apt/lists/*
+
 # 安装 Claude Code CLI
 # 优先官方安装脚本，失败时 fallback 到 npm 全局安装
 RUN (curl -fsSL https://claude.ai/install.sh | sh) \
