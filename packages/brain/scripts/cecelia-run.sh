@@ -562,7 +562,10 @@ main() {
     set +e
     local CLAUDE_INVOKE
     if [[ $attempt -eq 1 ]]; then
-      CLAUDE_INVOKE="claude -p \"\$1\" --session-id $SESSION_UUID"
+      # Phase 7.1: 走统一 claude-launch.sh（从 script 路径推算到 scripts/claude-launch.sh）
+      local _launcher
+      _launcher="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/claude-launch.sh"
+      CLAUDE_INVOKE="CLAUDE_SESSION_ID=$SESSION_UUID bash $_launcher -p \"\$1\""
     else
       echo "[cecelia-run] 🔄 从 checkpoint resume (attempt=$attempt, session=$SESSION_UUID)" >&2
       CLAUDE_INVOKE="claude --resume $SESSION_UUID -p \"继续执行，上次因超时/中断未完成，请从中断处继续\""
