@@ -131,6 +131,20 @@ export async function runContentPipeline(task, opts = {}) {
             manifest_path: nodeState.manifest_path,
             nas_url: nodeState.nas_url,
             error: nodeState.error,
+            // ─── WF-3 观察性：每步 Docker 执行元数据 ──────────────
+            // 前端详情页事件展开后通过这些字段展示：
+            //   prompt_sent   Brain 发给 Claude 的 prompt（前 8KB）
+            //   raw_stdout    Claude 吐的 stdout（前 10KB）
+            //   raw_stderr    Claude 吐的 stderr（前 2KB）
+            //   exit_code     容器退出码
+            //   duration_ms   节点耗时毫秒
+            //   container_id  容器 ID 前 12 位（--cidfile）
+            prompt_sent: nodeState.prompt_sent,
+            raw_stdout: nodeState.raw_stdout,
+            raw_stderr: nodeState.raw_stderr,
+            exit_code: nodeState.exit_code,
+            duration_ms: nodeState.duration_ms,
+            container_id: nodeState.container_id,
           },
         });
       } catch (err) {

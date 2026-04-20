@@ -19,7 +19,7 @@
  */
 
 import { spawn } from 'child_process';
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import pool from './db.js';
@@ -135,6 +135,28 @@ function containerName(taskId) {
 }
 
 /**
+ * 生成 cidfile 路径（docker 启动后把 container ID 写入此文件）
+ * 我们用它拿容器 ID 前 12 位，便于观察性/forensic。
+ */
+function cidFilePath(taskId) {
+  return path.join(DEFAULT_PROMPT_DIR, `${taskId}.cid`);
+}
+
+/**
+ * 读取 cidfile 并返回前 12 位 container_id（失败返回 null）
+ */
+function readContainerIdFromCidfile(cidPath) {
+  try {
+    if (!existsSync(cidPath)) return null;
+    const raw = readFileSync(cidPath, 'utf8').trim();
+    if (!raw) return null;
+    return raw.slice(0, 12);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 在 Docker container 中执行 task
  *
  * @param {Object} opts
@@ -146,7 +168,11 @@ function containerName(taskId) {
  * @param {number} [opts.cpuCores]
  * @param {number} [opts.timeoutMs]  — 默认 15 min
  * @param {string} [opts.image]      — 默认 cecelia/runner:latest
- * @returns {Promise<{exit_code:number, stdout:string, stderr:string, duration_ms:number, container:string, timed_out:boolean, started_at:string, ended_at:string}>}
+ * @returns {Promise<{exit_code:number, stdout:string, stderr:string, duration_ms:number, container:string, container_id:string|null, command:string, timed_out:boolean, started_at:string, ended_at:string}>}
+ *
+ * 说明（WF-3 观察性）：
+ *   - container_id：容器 ID 前 12 位（从 --cidfile 读），失败返回 null
+ *   - command：实际 docker run 完整命令字符串（forensic / 前端元数据用）
 /**
  * 构造 docker run 参数（抽出以便单测）。
  *
@@ -253,10 +279,12 @@ export function buildDockerArgs(opts, ctx = {}) {
     extraVolumes.push('-v', `${hostClaudeOutput}:/home/cecelia/claude-output:rw`);
   }
 
+  const cidfile = cidFilePath(taskId);
   const args = [
     'run',
     '--rm',
     '--name', name,
+    '--cidfile', cidfile,
     `--memory=${memoryMB}m`,
     `--cpus=${cpuCores}`,
     '-v', `${worktreePath}:/workspace`,
@@ -267,7 +295,7 @@ export function buildDockerArgs(opts, ctx = {}) {
     opts.prompt,
   ];
 
-  return { args, envFinal, name, memoryMB, cpuCores, image, worktreePath, hostClaudeConfigDir };
+  return { args, envFinal, name, memoryMB, cpuCores, image, worktreePath, hostClaudeConfigDir, cidfile };
 }
 
 export async function executeInDocker(opts) {
@@ -285,8 +313,16 @@ export async function executeInDocker(opts) {
   // 写 prompt 文件（宿主侧持久化，用于 debug / audit）
   writePromptFile(taskId, opts.prompt);
 
-  const { args, _envFinal, name, memoryMB, cpuCores, image } = buildDockerArgs(opts);
+  const { args, _envFinal, name, memoryMB, cpuCores, image, cidfile } = buildDockerArgs(opts);
   const tier = resolveResourceTier(taskType);
+
+  // --cidfile 要求文件不存在；之前残留的 cidfile 会让 docker run 立即失败
+  if (cidfile && existsSync(cidfile)) {
+    try { unlinkSync(cidfile); } catch { /* ignore */ }
+  }
+
+  // 记录 docker 命令（方便 forensic / 前端元数据展示）
+  const command = `docker ${args.join(' ')}`;
 
   const startedAtMs = Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
@@ -295,7 +331,7 @@ export async function executeInDocker(opts) {
     `[docker-executor] spawn task=${taskId} type=${taskType} tier=${tier.tier} mem=${memoryMB}m cpus=${cpuCores} image=${image} container=${name}`
   );
 
-  return await new Promise((resolve) => {
+  const result = await new Promise((resolve) => {
     const proc = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
@@ -323,6 +359,8 @@ export async function executeInDocker(opts) {
         stderr: stderr + `\n[docker-executor] spawn error: ${err.message}`,
         duration_ms: Date.now() - startedAtMs,
         container: name,
+        container_id: null,
+        command,
         timed_out: false,
         started_at: startedAt,
         ended_at: endedAt,
@@ -336,18 +374,27 @@ export async function executeInDocker(opts) {
       console.log(
         `[docker-executor] exit task=${taskId} code=${code} signal=${signal} duration=${duration}ms timed_out=${timedOut}`
       );
+      const containerId = readContainerIdFromCidfile(cidfile);
+      // cidfile 读完即可清理，保持 prompt_dir 整洁
+      if (cidfile && existsSync(cidfile)) {
+        try { unlinkSync(cidfile); } catch { /* ignore */ }
+      }
       resolve({
         exit_code: code == null ? -1 : code,
         stdout,
         stderr,
         duration_ms: duration,
         container: name,
+        container_id: containerId,
+        command,
         timed_out: timedOut,
         started_at: startedAt,
         ended_at: endedAt,
       });
     });
   });
+
+  return result;
 }
 
 /**
@@ -412,6 +459,8 @@ export const __test__ = {
   RESOURCE_TIERS,
   TASK_TYPE_TIER,
   containerName,
+  cidFilePath,
+  readContainerIdFromCidfile,
   envToArgs,
   writePromptFile,
   buildDockerArgs,
