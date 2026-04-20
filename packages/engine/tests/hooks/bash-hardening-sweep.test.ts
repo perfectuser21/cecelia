@@ -45,19 +45,25 @@ describe('Phase 7.3 bash 3.2 + set -u hardening sweep', () => {
       expect(out).toBe('OK');
     });
 
-    it('基线对照：未 guard 的 "${arr[@]}" 在 set -u + 空数组下必炸', () => {
-      // 确认 bug 真实存在（防止测试假阳性）
-      let errorOutput = '';
-      try {
-        execSync(`bash -c 'set -u; arr=(); for x in "\${arr[@]}"; do echo "$x"; done' 2>&1`, {
-          shell: '/bin/bash',
-          stdio: 'pipe',
-        });
-      } catch (err: any) {
-        errorOutput = (err.stderr?.toString?.() || '') + (err.stdout?.toString?.() || '');
-      }
-      expect(errorOutput).toMatch(/unbound variable/);
-    });
+    // Phase 7.3 注：macOS 默认 bash 3.2 下，空数组 ${arr[@]} + set -u 会报
+    // "unbound variable"。但 CI runner（ubuntu-latest）默认 bash 5+，此行为
+    // 已修正，所以"基线对照"测试在 CI 不成立。本 bug 是 macOS 特有，我们只
+    // 确保 guard 模式（上面的 test）在所有 bash 版本都工作，这已足够。
+    it.skipIf(process.env.CI === 'true' || process.platform !== 'darwin')(
+      '基线对照（仅 macOS bash 3.2）：未 guard 的 "${arr[@]}" 在 set -u + 空数组下必炸',
+      () => {
+        let errorOutput = '';
+        try {
+          execSync(`bash -c 'set -u; arr=(); for x in "\${arr[@]}"; do echo "$x"; done' 2>&1`, {
+            shell: '/bin/bash',
+            stdio: 'pipe',
+          });
+        } catch (err: any) {
+          errorOutput = (err.stderr?.toString?.() || '') + (err.stdout?.toString?.() || '');
+        }
+        expect(errorOutput).toMatch(/unbound variable/);
+      },
+    );
   });
 
   describe('functional smoke test — 修复后的脚本在空输入 / 空 env 下不炸', () => {
