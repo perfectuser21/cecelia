@@ -26,8 +26,9 @@ LOCAL_CFG="${CLAUDE_CONFIG_DIR:-/home/cecelia/.claude}"
 if [[ -d "$HOST_CFG" ]]; then
   mkdir -p "$LOCAL_CFG"
   # 复制内容而不是整个目录（保留 LOCAL_CFG 本身的权限属主）
-  # -a 保 mode/owner/timestamp；2>/dev/null 屏蔽符号链接目标不存在等噪音
-  cp -a "$HOST_CFG/." "$LOCAL_CFG/" 2>/dev/null || true
+  # -aL 跟随 symlink 拷贝真实文件（skills/ 常是 symlink 指向项目 workflows 目录）
+  # 配合 docker-executor 挂载的 symlink-target volume，harness skills 才能在容器里可见
+  cp -aL "$HOST_CFG/." "$LOCAL_CFG/" 2>/dev/null || true
   # session-env 是运行时可写目录
   mkdir -p "$LOCAL_CFG/session-env"
 fi
