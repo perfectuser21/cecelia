@@ -1,6 +1,6 @@
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
-import { stat } from 'node:fs/promises';
+import { stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 const execFile = promisify(execFileCb);
@@ -12,7 +12,11 @@ async function defaultStat(p) {
 }
 
 function defaultExec(cmd, args, opts = {}) {
-  return execFile(cmd, args, { timeout: 30_000, ...opts });
+  return execFile(cmd, args, { timeout: 60_000, ...opts });
+}
+
+async function defaultRm(p) {
+  await rm(p, { recursive: true, force: true });
 }
 
 function shortId(taskId) {
@@ -23,10 +27,13 @@ function shortId(taskId) {
 }
 
 /**
- * 幂等创建/复用 Harness v2 专属 worktree。
+ * 幂等创建/复用 Harness v2 专属独立 git clone。
  *
  * 目录：<baseRepo>/.claude/worktrees/harness-v2/task-<shortid>
- * 分支：harness-v2/task-<shortid>（base=main）
+ * 分支：harness-v2/task-<shortid>（基于 main）
+ *
+ * 用独立 clone（而非 git worktree add）产出 self-contained repo，
+ * 容器挂载 worktree 后所有 git 操作可用。
  *
  * @param {object} opts
  * @param {string} opts.taskId                必填，用前 8 字符
@@ -34,12 +41,14 @@ function shortId(taskId) {
  * @param {string} [opts.baseRepo]
  * @param {Function} [opts.execFn]            测试注入
  * @param {Function} [opts.statFn]            测试注入
+ * @param {Function} [opts.rmFn]              测试注入
  * @returns {Promise<string>}                  worktree 绝对路径
  */
 export async function ensureHarnessWorktree(opts) {
   const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
   const execFn = opts.execFn || defaultExec;
   const statFn = opts.statFn || defaultStat;
+  const rmFn = opts.rmFn || defaultRm;
 
   const sid = shortId(opts.taskId);
   const branch = `harness-v2/task-${sid}`;
@@ -49,25 +58,29 @@ export async function ensureHarnessWorktree(opts) {
     try {
       const { stdout } = await execFn('git', ['-C', wtPath, 'rev-parse', '--is-inside-work-tree']);
       if (String(stdout || '').trim() === 'true') return wtPath;
-    } catch { /* fall through to re-create */ }
+    } catch { /* not a git repo, fall through to cleanup + re-clone */ }
+    await rmFn(wtPath);
   }
 
-  await execFn('git', ['-C', baseRepo, 'worktree', 'add', wtPath, '-b', branch, 'main']);
+  await execFn('git', [
+    'clone', '--local', '--no-hardlinks',
+    '--branch', 'main', '--single-branch',
+    baseRepo, wtPath,
+  ]);
+  await execFn('git', ['-C', wtPath, 'checkout', '-b', branch]);
   return wtPath;
 }
 
 /**
- * 移除 Harness v2 worktree；幂等（不存在不抛）。
+ * 移除 Harness v2 独立 clone；幂等（不存在不抛）。
  *
  * @param {string} wtPath
  * @param {object} [opts]
- * @param {string} [opts.baseRepo]
- * @param {Function} [opts.execFn]
+ * @param {Function} [opts.rmFn]
  */
 export async function cleanupHarnessWorktree(wtPath, opts = {}) {
-  const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
-  const execFn = opts.execFn || defaultExec;
+  const rmFn = opts.rmFn || defaultRm;
   try {
-    await execFn('git', ['-C', baseRepo, 'worktree', 'remove', '--force', wtPath]);
+    await rmFn(wtPath);
   } catch { /* idempotent */ }
 }
