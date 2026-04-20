@@ -6,6 +6,17 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.3.3"
+    date: "2026-04-20"
+    change: "chore"
+    description: "Phase 7.5 — 死 DoD sweep + CI 回归测试。Phase 8.3（PR #2463）实施时撞到死 DoD（manual:node -e 引用 ~/.claude/skills/harness-report/SKILL.md 但 CI runner 上该路径不存在，repo 内对应文件也没有断言要找的内容），导致无关 PR 的 CI 失败。本 PR 全仓扫描后做三件事：(1) 删除 152 个历史 per-PR 残留（.task-*.md / .dod-*.md / .prd-*.md / DoD.cp-*.md / PRD.cp-*.md），这些是已合并 PR 遗留副本，cleanup-merged-artifacts.yml 漏抓 .dod- 前缀导致累积；(2) 修 cleanup-merged-artifacts.yml regex 补齐 .dod- 前缀，预防再次累积；(3) 删除根目录 + packages/ 内 stale 的 .dod.md / .prd.md / .prd.md.old / TASK.md 共 9 个（.gitignore 已含但历史 commit 进去了）；(4) 新增 packages/engine/tests/dod/dod-manual-commands.test.ts 覆盖 check-manual-cmd-whitelist.cjs 的白名单边界（11 个断言：PASS node/curl/bash/psql/npm/npx/playwright，FAIL grep/ls/cat/echo/printf/find/sed/awk），将来写死 DoD 会立刻被抓。扫描报告：460 个 manual:node 命令中 175 个 dead（全部在被清理的历史/sprints/设计文档占位符中），活跃 DoD.md 全部通过。Engine patch bump 18.3.2 → 18.3.3。"
+    files:
+      - "packages/engine/tests/dod/dod-manual-commands.test.ts (new, 11 assertions)"
+      - ".github/workflows/cleanup-merged-artifacts.yml (regex 补 .dod-)"
+      - "152 historical artifacts deleted (.task-cp-* / .dod-cp-* / .prd-cp-* / DoD.cp-* / PRD.cp-*)"
+      - "9 stale root/pkg artifacts deleted (.dod.md / .prd.md / .prd.md.old / TASK.md)"
+      - "Engine 7 处版本文件 18.3.3"
+
   - version: "18.3.2"
     date: "2026-04-20"
     change: "test"

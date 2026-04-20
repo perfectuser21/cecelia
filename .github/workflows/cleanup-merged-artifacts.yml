@@ -25,10 +25,11 @@ jobs:
         id: cleanup
         run: |
           # 找出所有合并后的残留 md：
-          #   旧命名：.prd-*.md / .task-*.md（带前导点、小写，保留向后兼容）
+          #   旧命名：.prd-*.md / .task-*.md / .dod-*.md（带前导点、小写，保留向后兼容）
           #   新命名：DoD.cp-*.md / PRD.cp-*.md / TASK_CARD.cp-*.md（大写、无前导点）
           # 不匹配 DoD.md / PRD.md（活跃 PR 使用，无 .cp- 后缀）
-          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
+          # Phase 7.5: 补齐 .dod-* 前缀，之前漏抓导致 3 个 .dod-cp-* 残留积累
+          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|\.dod-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
 
           if [ -z "$FILES" ]; then
             echo "✅ 无 prd/task 残留文件，跳过"
