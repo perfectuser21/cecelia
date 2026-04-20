@@ -142,17 +142,17 @@ body：`{ pr_number?, branch, point_code, decision, confidence, quality_score, r
 
 ## DoD
 
-- [ ] [ARTIFACT] migration 241 存在且 schema 正确
+- [x] [ARTIFACT] migration 241 存在且 schema 正确
   - Test: `manual:node -e "if(!require('fs').existsSync('packages/brain/migrations/241_dev_reviews.sql'))process.exit(1)"`
-- [ ] [BEHAVIOR] review-parser 解析完整 block → JSON 字段齐全
+- [x] [BEHAVIOR] review-parser 解析完整 block → JSON 字段齐全
   - Test: `packages/brain/src/__tests__/review-parser.test.js`
-- [ ] [BEHAVIOR] POST /api/brain/dev-reviews 写入 + GET 查询
+- [x] [BEHAVIOR] POST /api/brain/dev-reviews 写入 + GET 查询
   - Test: `packages/brain/src/__tests__/dev-reviews-route.test.js`
-- [ ] [BEHAVIOR] capacity-budget 返回 pr_loc_threshold
+- [x] [BEHAVIOR] capacity-budget 返回 pr_loc_threshold
   - Test: `packages/brain/src/__tests__/capacity-budget.test.js`（扩展现有）
-- [ ] [ARTIFACT] proxy.md B-2 改成读 API
+- [x] [ARTIFACT] proxy.md B-2 改成读 API
   - Test: `manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/steps/autonomous-research-proxy.md','utf8');if(!c.includes('capacity-budget'))process.exit(1)"`
-- [ ] [ARTIFACT] Engine 版本 7 处 + Brain auto-version
+- [x] [ARTIFACT] Engine 版本 7 处 + Brain auto-version
   - Test: `manual:node -e "['packages/engine/VERSION','packages/engine/.hook-core-version','packages/engine/hooks/VERSION'].forEach(f=>{if(!require('fs').readFileSync(f,'utf8').includes('18.2.0'))process.exit(1)})"`
 
 ## Review（autonomous，B-5 spec approval）

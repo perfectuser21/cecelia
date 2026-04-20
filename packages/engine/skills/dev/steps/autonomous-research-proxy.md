@@ -106,12 +106,15 @@ Superpowers 原问（brainstorming SKILL.md）：
 Superpowers 原问：
 > "If the project is too large for a single spec, help the user decompose into sub-projects."
 
-**数据源**：PRD 长度 / capacity-budget API / `git diff main...HEAD --stat` 估算 LOC。
+**数据源**：
+- PRD 长度
+- `curl localhost:5221/api/brain/capacity-budget` → 读 `.pr_loc_threshold.soft` / `.pr_loc_threshold.hard`（Phase 8.3 起 SSOT 在 Brain）
+- `git diff main...HEAD --stat` 估算 LOC
 
-**阈值（行业对齐 SmartBear + Microsoft Research）**：
-- ≤ 200 LOC（软）→ 不拆，单 PR
-- 200-400 LOC → 评估拆分，派 Research Subagent 判
-- \> 400 LOC（硬）→ 强制拆分
+**阈值（行业对齐 SmartBear + Microsoft Research，SSOT: Brain `pr_loc_threshold`）**：
+- ≤ soft（默认 200 LOC）→ 不拆，单 PR
+- soft-hard 之间（默认 200-400）→ 评估拆分，派 Research Subagent 判
+- \> hard（默认 400 LOC）→ 强制拆分
 
 **Prompt**：见 Appendix A.B-2
 
@@ -270,15 +273,16 @@ You are Research Subagent. Estimate PRD scope.
 ## Inputs
 - PRD path: {{prd_path}}
 - Capacity API: curl localhost:5221/api/brain/capacity-budget
+  → 读 .pr_loc_threshold.soft / .pr_loc_threshold.hard (Phase 8.3 SSOT)
 - Baseline: git diff main...HEAD --stat
 
 ## Task
 Estimate LOC delta this PRD will produce.
 
-## Rules
-- ≤ 200 → {decision: "single_pr", loc: N}
-- 200-400 → {decision: "evaluate_split", splits: [...]}
-- > 400 → {decision: "must_split", splits: [{title, loc, deps}]}
+## Rules (阈值从 capacity-budget.pr_loc_threshold 读)
+- ≤ soft (default 200) → {decision: "single_pr", loc: N}
+- soft..hard (default 200-400) → {decision: "evaluate_split", splits: [...]}
+- > hard (default 400) → {decision: "must_split", splits: [{title, loc, deps}]}
 
 ## Return
 JSON above + confidence + anchors used (user_words/code/okr).
