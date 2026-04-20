@@ -168,7 +168,8 @@ echo "  改动文件: $FILE_COUNT 个"
 echo "  建议测试层级: T$LEVEL"
 echo ""
 echo "  判断依据:"
-for r in "${REASONS[@]}"; do
+# Phase 7.3: bash 3.2 set -u compat — 若所有 diff 文件未命中任何 ext 分支，REASONS 可能为空
+for r in "${REASONS[@]+${REASONS[@]}}"; do
     echo "    - $r"
 done
 echo ""

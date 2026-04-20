@@ -93,7 +93,8 @@ classify_skill() {
     echo "⚖️  评分: $score"
     echo ""
     echo "💡 判定依据:"
-    for reason in "${reasons[@]}"; do
+    # Phase 7.3: bash 3.2 set -u compat — description 未命中任何规则时 reasons 为空
+    for reason in "${reasons[@]+${reasons[@]}}"; do
         echo "   - $reason"
     done
     echo ""
@@ -123,7 +124,7 @@ classify_skill() {
   "classification": "$classification",
   "confidence": "$confidence",
   "score": $score,
-  "reasons": $(printf '%s\n' "${reasons[@]}" | jq -R . | jq -s .)
+  "reasons": $(if [[ ${#reasons[@]} -gt 0 ]]; then printf '%s\n' "${reasons[@]}" | jq -R . | jq -s .; else echo "[]"; fi)
 }
 EOF
 

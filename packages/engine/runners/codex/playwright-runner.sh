@@ -61,13 +61,17 @@ PC_CDP_URL="${PC_CDP_URL:-http://100.97.242.124:19225}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-$HOME/playwright-scripts}"
 
 # ===== 账号列表初始化 =====
+# Phase 7.3: bash 3.2 set -u compat — CODEX_HOMES 为空字符串时 read -ra 会清空数组，
+# 后续 ${CODEX_ACCOUNT_LIST[0]} 会炸。空字符串降级到单账号模式
 CODEX_ACCOUNT_LIST=()
 if [[ -n "${CODEX_HOMES:-}" ]]; then
     IFS=':' read -ra CODEX_ACCOUNT_LIST <<< "$CODEX_HOMES"
-    echo "🔑 多账号模式：${#CODEX_ACCOUNT_LIST[@]} 个账号"
-else
+fi
+if [[ ${#CODEX_ACCOUNT_LIST[@]} -eq 0 ]]; then
     CODEX_ACCOUNT_LIST=("${CODEX_HOME:-$HOME/.codex}")
     echo "🔑 单账号模式: ${CODEX_ACCOUNT_LIST[0]}"
+else
+    echo "🔑 多账号模式：${#CODEX_ACCOUNT_LIST[@]} 个账号"
 fi
 CURRENT_ACCOUNT_IDX=0
 export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"

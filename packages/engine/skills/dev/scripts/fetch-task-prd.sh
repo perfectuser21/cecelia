@@ -176,6 +176,9 @@ search_related_learnings() {
         done < <(grep -Frl "$kw" "$learnings_dir" 2>/dev/null | head -3)
     done
 
+    # Phase 7.3: bash 3.2 set -u compat — 若所有 keyword grep 均无匹配，found_files 为空
+    [[ ${#found_files[@]} -eq 0 ]] && return 0
+
     # 去重并限制最多 5 个
     local unique_files=()
     while IFS= read -r f; do

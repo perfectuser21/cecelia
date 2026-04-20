@@ -130,7 +130,9 @@ for pattern in "${WHITELIST_GLOBS[@]}"; do
   # shellcheck disable=SC2206
   matches=( $pattern )
   shopt -u nullglob
-  for wt in "${matches[@]}"; do
+  # Phase 7.3: bash 3.2 set -u compat — nullglob 无匹配时 matches 为空数组，
+  # "${matches[@]}" 直接展开会触发 unbound variable
+  for wt in "${matches[@]+${matches[@]}}"; do
     cleanup_one "$wt"
   done
 done

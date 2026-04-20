@@ -83,16 +83,20 @@ export CECELIA_HEADLESS=true
 # ===== 账号列表初始化（v2.3.0）=====
 # CODEX_HOMES 优先：冒号分隔的多账号路径
 # 未设置时降级到单一 CODEX_HOME（向后兼容）
+# Phase 7.3: bash 3.2 set -u compat — CODEX_HOMES 为空字符串时 read -ra 会清空数组，
+# 后续 ${CODEX_ACCOUNT_LIST[0]} 会炸。空字符串降级到单账号模式
 CODEX_ACCOUNT_LIST=()
 if [[ -n "${CODEX_HOMES:-}" ]]; then
     IFS=':' read -ra CODEX_ACCOUNT_LIST <<< "$CODEX_HOMES"
+fi
+if [[ ${#CODEX_ACCOUNT_LIST[@]} -eq 0 ]]; then
+    CODEX_ACCOUNT_LIST=("${CODEX_HOME:-$HOME/.codex}")
+    echo "🔑 单账号模式（向后兼容）: ${CODEX_ACCOUNT_LIST[0]}"
+else
     echo "🔑 多账号模式：${#CODEX_ACCOUNT_LIST[@]} 个账号"
     for i in "${!CODEX_ACCOUNT_LIST[@]}"; do
         echo "   账号 $((i+1)): ${CODEX_ACCOUNT_LIST[$i]}"
     done
-else
-    CODEX_ACCOUNT_LIST=("${CODEX_HOME:-$HOME/.codex}")
-    echo "🔑 单账号模式（向后兼容）: ${CODEX_ACCOUNT_LIST[0]}"
 fi
 
 # 当前账号索引（从 0 开始）
