@@ -408,14 +408,23 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
 
 // ─── 组件：新建 Modal ─────────────────────────────────────────────────────────
 
-function NewPipelineModal({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+type NewMode = 'harness_planner' | 'harness_initiative';
+
+function NewPipelineModal({ mode, onClose, onCreated }: {
+  mode: NewMode;
+  onClose: () => void;
+  onCreated: (id: string, mode: NewMode) => void;
+}) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<'P0' | 'P1' | 'P2'>('P1');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = title.trim().length > 0 && description.trim().length > 0 && !submitting;
+  const isInitiative = mode === 'harness_initiative';
+  const minLen = isInitiative ? 100 : 1;
+  const descOk = description.trim().length >= minLen;
+  const canSubmit = title.trim().length > 0 && descOk && !submitting;
 
   async function submit() {
     if (!canSubmit) return;
@@ -426,7 +435,7 @@ function NewPipelineModal({ onClose, onCreated }: { onClose: () => void; onCreat
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          task_type: 'harness_planner',
+          task_type: mode,
           title: title.trim(),
           description: description.trim(),
           priority,
@@ -439,7 +448,7 @@ function NewPipelineModal({ onClose, onCreated }: { onClose: () => void; onCreat
       const data = await res.json();
       const newId = data?.task?.id || data?.id || data?.task_id;
       if (!newId) throw new Error('API 没返回新任务 ID');
-      onCreated(newId);
+      onCreated(newId, mode);
     } catch (e) {
       setError(e instanceof Error ? e.message : '提交失败');
     } finally {
@@ -456,9 +465,13 @@ function NewPipelineModal({ onClose, onCreated }: { onClose: () => void; onCreat
         className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-md p-6 border border-slate-200 dark:border-slate-700"
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-1">新建 Harness Pipeline</h2>
+        <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-1">
+          {isInitiative ? '新建 Harness Initiative (v2)' : '新建 Harness Pipeline (v1)'}
+        </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-          将创建一个 harness_planner 任务，LangGraph 自动跑 6 节点
+          {isInitiative
+            ? '将创建一个 harness_initiative 任务，Planner 产 Task DAG → 阶段 A/B/C'
+            : '将创建一个 harness_planner 任务，LangGraph 自动跑 6 节点'}
         </p>
 
         <div className="space-y-3">
@@ -476,12 +489,23 @@ function NewPipelineModal({ onClose, onCreated }: { onClose: () => void; onCreat
           </label>
 
           <label className="block">
-            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">描述（PRD） <span className="text-red-500">*</span></span>
+            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+              描述（PRD） <span className="text-red-500">*</span>
+              {isInitiative && (
+                <span className={`ml-2 ${descOk ? 'text-emerald-600' : 'text-slate-500'}`}>
+                  {description.trim().length} / {minLen}（最少）
+                </span>
+              )}
+            </span>
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder="描述目标、DoD、边界约束..."
-              rows={5}
+              placeholder={
+                isInitiative
+                  ? 'Initiative 需求描述（建议 ≥100 字，明确目标 / DoD / 验证标准 / 边界）...'
+                  : '描述目标、DoD、边界约束...'
+              }
+              rows={isInitiative ? 8 : 5}
               className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               disabled={submitting}
             />
@@ -542,7 +566,8 @@ export default function HarnessPipelinePage() {
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [showModal, setShowModal] = useState(false);
+  const [modalMode, setModalMode] = useState<NewMode | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const navigate = useNavigate();
 
   const fetchPipelines = useCallback(async () => {
@@ -579,10 +604,14 @@ export default function HarnessPipelinePage() {
     failed: pipelines.filter(p => p.verdict === 'failed').length,
   };
 
-  function onCreated(id: string) {
-    setShowModal(false);
+  function onCreated(id: string, mode: NewMode) {
+    setModalMode(null);
     fetchPipelines();
-    navigate(`/pipeline/${id}`);
+    if (mode === 'harness_initiative') {
+      navigate(`/initiatives/${id}`);
+    } else {
+      navigate(`/pipeline/${id}`);
+    }
   }
 
   return (
@@ -598,13 +627,40 @@ export default function HarnessPipelinePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowModal(true)}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-1"
-          >
-            <span>+</span>
-            <span>新建 Pipeline</span>
-          </button>
+          <div className="relative" data-testid="new-initiative-menu">
+            <button
+              onClick={() => setMenuOpen(m => !m)}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-1"
+            >
+              <span>+</span>
+              <span>新建 Initiative</span>
+              <span className="text-[10px] ml-0.5">▾</span>
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg z-30">
+                <button
+                  onClick={() => { setMenuOpen(false); setModalMode('harness_planner'); }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200"
+                  data-testid="menu-new-single-pr"
+                >
+                  <div className="font-medium">单 PR（v1）</div>
+                  <div className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                    harness_planner · 6 节点线性
+                  </div>
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); setModalMode('harness_initiative'); }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-t border-slate-100 dark:border-slate-700"
+                  data-testid="menu-new-initiative"
+                >
+                  <div className="font-medium">Initiative（v2）</div>
+                  <div className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                    harness_initiative · 描述 ≥100 字
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
           <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -684,10 +740,10 @@ export default function HarnessPipelinePage() {
           <div className="text-4xl mb-3">🔬</div>
           <p className="text-sm">暂无 Harness Pipeline 记录</p>
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => setModalMode('harness_initiative')}
             className="mt-3 px-4 py-2 text-xs font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
           >
-            创建第一个 Pipeline
+            创建第一个 Initiative
           </button>
         </div>
       )}
@@ -703,9 +759,10 @@ export default function HarnessPipelinePage() {
       </div>
 
       {/* 新建 Modal */}
-      {showModal && (
+      {modalMode && (
         <NewPipelineModal
-          onClose={() => setShowModal(false)}
+          mode={modalMode}
+          onClose={() => setModalMode(null)}
           onCreated={onCreated}
         />
       )}
