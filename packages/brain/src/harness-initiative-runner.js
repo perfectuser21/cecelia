@@ -29,6 +29,8 @@ import { executeInDocker } from './docker-executor.js';
 import { parseDockerOutput, loadSkillContent } from './harness-graph.js';
 import { parseTaskPlan, upsertTaskPlan } from './harness-dag.js';
 import { runFinalE2E, attributeFailures } from './harness-final-e2e.js';
+import { ensureHarnessWorktree } from './harness-worktree.js';
+import { resolveGitHubToken } from './harness-credentials.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -58,7 +60,7 @@ export async function runInitiative(task, opts = {}) {
   if (!task || !task.id) throw new Error('runInitiative: task.id required');
 
   const dbPool = opts.pool || pool;
-  const executor = opts.dockerExecutor || executeInDocker;
+  const executor = opts.executor || opts.dockerExecutor || executeInDocker;
   const timeoutSec = opts.timeoutSec || DEFAULT_TIMEOUT_SEC;
   const budgetUsd = opts.budgetUsd || DEFAULT_BUDGET_USD;
 
@@ -92,18 +94,31 @@ ${task.description || task.title || ''}
 2. 在 stdout 末尾输出 task-plan.json（符合 harness-planner SKILL.md 定义的 schema）
 3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
 
+  // ── Prep：挂载 worktree + 注入 GitHub token（Harness v2 container mount）──
+  let worktreePath;
+  let githubToken;
+  try {
+    worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId });
+    githubToken = await resolveGitHubToken();
+  } catch (err) {
+    console.error(`[harness-initiative-runner] prep failed task=${task.id}: ${err.message}`);
+    return { success: false, taskId: task.id, initiativeId, error: err.message };
+  }
+
   let plannerOutput = '';
   let plannerError = null;
   try {
     const result = await executor({
       task: { ...task, task_type: 'harness_planner' },
       prompt,
+      worktreePath,
       env: {
         CECELIA_CREDENTIALS: 'account1',
         CECELIA_TASK_TYPE: 'harness_planner',
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: initiativeId,
+        GITHUB_TOKEN: githubToken,
       },
     });
     if (result.exit_code !== 0 || result.timed_out) {
