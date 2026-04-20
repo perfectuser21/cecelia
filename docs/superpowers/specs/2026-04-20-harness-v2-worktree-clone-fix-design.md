@@ -123,11 +123,11 @@ return wtPath;
 
 ## 成功标准
 
-- [ ] [BEHAVIOR] ensureHarnessWorktree 调 git clone 创建独立 repo（不再 git worktree add）。Test: packages/brain/src/__tests__/harness-worktree.test.js
-- [ ] [BEHAVIOR] clone 参数含 `--local --no-hardlinks --branch main --single-branch`。Test: 同上
-- [ ] [BEHAVIOR] checkout 到 `harness-v2/task-<sid>` 新分支。Test: 同上
-- [ ] [BEHAVIOR] cleanupHarnessWorktree 调 fs.rm（不再 git worktree remove）。Test: 同上
-- [ ] [ARTIFACT] harness-worktree.js 源码不再出现 `'worktree', 'add'` 字符串。Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-worktree.js','utf8');process.exit(!c.includes(\"'worktree', 'add'\")?0:1)"
+- [x] [BEHAVIOR] ensureHarnessWorktree 调 git clone 创建独立 repo（不再 git worktree add）。Test: packages/brain/src/__tests__/harness-worktree.test.js
+- [x] [BEHAVIOR] clone 参数含 `--local --no-hardlinks --branch main --single-branch`。Test: 同上
+- [x] [BEHAVIOR] checkout 到 `harness-v2/task-<sid>` 新分支。Test: 同上
+- [x] [BEHAVIOR] cleanupHarnessWorktree 调 fs.rm（不再 git worktree remove）。Test: 同上
+- [x] [ARTIFACT] harness-worktree.js 源码不再出现 `'worktree', 'add'` 字符串。Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-worktree.js','utf8');process.exit(!c.includes(\"'worktree', 'add'\")?0:1)"
 
 ## 回滚
 
