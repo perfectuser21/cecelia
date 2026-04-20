@@ -133,11 +133,11 @@ tick dispatcher 看到 harness_task status=queued
 
 ## 成功标准
 
-- [ ] [BEHAVIOR] A_contract + 合同 approved → 晋级 B_task_loop。Test: packages/brain/src/__tests__/harness-phase-advancer.test.js
-- [ ] [BEHAVIOR] B_task_loop 按 DAG 序更新 current_task_id。Test: 同上
-- [ ] [BEHAVIOR] 所有子 Task completed → 调 runPhaseCIfReady。Test: 同上
-- [ ] [BEHAVIOR] tick.js 在 executeTick 里调 advanceHarnessInitiatives。Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');process.exit(c.includes('advanceHarnessInitiatives')?0:1)"
-- [ ] [ARTIFACT] 新文件 `packages/brain/src/harness-phase-advancer.js` 存在
+- [x] [BEHAVIOR] A_contract + 合同 approved → 晋级 B_task_loop。Test: packages/brain/src/__tests__/harness-phase-advancer.test.js
+- [x] [BEHAVIOR] B_task_loop 按 DAG 序更新 current_task_id。Test: 同上
+- [x] [BEHAVIOR] 所有子 Task completed → 调 runPhaseCIfReady。Test: 同上
+- [x] [BEHAVIOR] tick.js 在 executeTick 里调 advanceHarnessInitiatives。Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');process.exit(c.includes('advanceHarnessInitiatives')?0:1)"
+- [x] [ARTIFACT] 新文件 `packages/brain/src/harness-phase-advancer.js` 存在
 
 ## 回滚
 
