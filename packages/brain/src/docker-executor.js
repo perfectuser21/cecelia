@@ -204,6 +204,15 @@ export function buildDockerArgs(opts, ctx = {}) {
     ...(opts.env || {}),
   };
 
+  // P0-3：opts.model 可指定 claude CLI --model（alias 'haiku'/'sonnet'/'opus'
+  // 或完整模型名）。通过 env CLAUDE_MODEL_OVERRIDE 传入容器，entrypoint.sh 读取
+  // 并注入 `--model <value>`。空/未传时 entrypoint 走默认模型（账号 tier）。
+  // 用途：content pipeline 的 copy_review 节点用 haiku 降成本。
+  // opts.env.CLAUDE_MODEL_OVERRIDE 优先级高于 opts.model（方便调用方 override）。
+  if (opts.model && !envFinal.CLAUDE_MODEL_OVERRIDE) {
+    envFinal.CLAUDE_MODEL_OVERRIDE = String(opts.model);
+  }
+
   // 解析 CECELIA_CREDENTIALS → 注入 Anthropic 凭据（容器内无宿主凭据文件）
   //
   // 容器内 claude 统一使用 /home/cecelia/.claude（可写副本），由 entrypoint.sh

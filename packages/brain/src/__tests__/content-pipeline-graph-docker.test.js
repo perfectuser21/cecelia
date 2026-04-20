@@ -102,6 +102,65 @@ describe('createContentDockerNodes', () => {
     expect(update.article_path).toBe('/tmp/article.md');
   });
 
+  // ─── P0-3：copy_review 节点用 haiku 模型（降成本） ───────────────
+  // 背景：pipeline 3e3f2c09 的 copy_review 单次 Opus 4.7 花 $0.96，5 维打分
+  // 任务没必要 Opus。给 NODE_CONFIGS.copy_review 加 model:'haiku'，节点调
+  // dockerExecutor 时通过 opts.model 透传，docker-executor 把它写入容器
+  // env CLAUDE_MODEL_OVERRIDE，entrypoint.sh 再拼 --model 到 claude CLI。
+  // 本测试只锁死 "Brain 侧的 opts.model 被正确传给 executor" 这一层。
+
+  it('copy_review node: 调 executor 时 opts.model=haiku (P0-3)', async () => {
+    const { executor, calls } = makeRecordingExecutor({
+      content_copy_review: {
+        exit_code: 0,
+        stdout: '{"copy_review_verdict":"APPROVED"}',
+        timed_out: false,
+      },
+    });
+    // 自定义 executor 记录 model 字段
+    const modelSeen = [];
+    const wrapped = async (opts) => {
+      modelSeen.push(opts.model);
+      return executor(opts);
+    };
+    const nodes = createContentDockerNodes(wrapped, mockTask);
+    await nodes.copy_review({
+      pipeline_id: 'p-1',
+      copy_path: '/tmp/c.md',
+      article_path: '/tmp/a.md',
+      copy_review_round: 0,
+    });
+    expect(modelSeen).toEqual(['haiku']);
+  });
+
+  it('research/copywrite/generate/image_review/export 节点不传 model（走默认） (P0-3)', async () => {
+    // 其他节点暂不定制 model（research / copywrite / generate 是生成类任务，
+    // 可能需要更强模型；保持默认，后续按需再调）。本测试锁死 haiku 只给 copy_review。
+    const responses = {
+      content_research: { exit_code: 0, stdout: 'findings_path: /f\n', timed_out: false },
+      content_copywrite: { exit_code: 0, stdout: 'copy_path: /c\n', timed_out: false },
+      content_generate: { exit_code: 0, stdout: 'cards_dir: /cards\n', timed_out: false },
+      content_image_review: { exit_code: 0, stdout: '{"image_review_verdict":"PASS"}', timed_out: false },
+      content_export: { exit_code: 0, stdout: 'nas_url: nas://\n', timed_out: false },
+    };
+    const modelByType = {};
+    const executor = async (opts) => {
+      modelByType[opts.task.task_type] = opts.model;
+      return responses[opts.task.task_type];
+    };
+    const nodes = createContentDockerNodes(executor, mockTask);
+    await nodes.research({ pipeline_id: 'p-1', keyword: 'x' });
+    await nodes.copywrite({ pipeline_id: 'p-1', findings_path: '/f' });
+    await nodes.generate({ pipeline_id: 'p-1', findings_path: '/f', copy_path: '/c' });
+    await nodes.image_review({ pipeline_id: 'p-1', cards_dir: '/cards', image_review_round: 0 });
+    await nodes.export({ pipeline_id: 'p-1', cards_dir: '/cards' });
+    expect(modelByType.content_research).toBeUndefined();
+    expect(modelByType.content_copywrite).toBeUndefined();
+    expect(modelByType.content_generate).toBeUndefined();
+    expect(modelByType.content_image_review).toBeUndefined();
+    expect(modelByType.content_export).toBeUndefined();
+  });
+
   // ─── P0-4：json_outputs 抽取多字段（total / vision_avg） ──────────
   // 背景：copy_review / image_review 的 total / avg 以前埋在 rule_details 里，
   // 前端拿不到。新增 NODE_CONFIGS.*.json_outputs 多字段 + vision_avg 别名映射
@@ -564,5 +623,19 @@ describe('NODE_CONFIGS', () => {
     expect(NODE_CONFIGS.image_review.json_outputs).toContain('image_review_rule_details');
     // skill 输出字段名 vision_avg，graph 会映射到 image_review_vision_avg
     expect(NODE_CONFIGS.image_review.json_outputs).toContain('vision_avg');
+  });
+
+  // P0-3：copy_review 节点声明 model:'haiku'，其他节点不设 model
+  it('copy_review.model === "haiku" (P0-3)', () => {
+    expect(NODE_CONFIGS.copy_review.model).toBe('haiku');
+  });
+
+  it('research/copywrite/generate/image_review/export 不设 model (P0-3)', () => {
+    // 只 copy_review 降档到 haiku；其他节点默认，后续有需要再调。
+    expect(NODE_CONFIGS.research.model).toBeUndefined();
+    expect(NODE_CONFIGS.copywrite.model).toBeUndefined();
+    expect(NODE_CONFIGS.generate.model).toBeUndefined();
+    expect(NODE_CONFIGS.image_review.model).toBeUndefined();
+    expect(NODE_CONFIGS.export.model).toBeUndefined();
   });
 });

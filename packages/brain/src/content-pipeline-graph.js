@@ -342,6 +342,15 @@ const NODE_CONFIGS = {
     json_outputs: ['copy_review_rule_details', 'copy_review_total'],
     verdict_field: 'copy_review_verdict',
     verdict_values: ['APPROVED', 'REVISION'],
+    // P0-3：copy_review 是纯打分/判定任务（LLM 只读 copy.md + article.md 按
+    // 5 维打分），不需要 Opus 的深度推理。pipeline 3e3f2c09 单次 copy_review
+    // 用 Opus 4.7 花 $0.96 USD，多轮 REVISION 回路代价高。切到 Haiku（最便宜
+    // 档），成本可降 10-20x；Haiku 对单文档打分场景完全够用。
+    //
+    // 值对齐 claude CLI --model 的 alias 规范：'sonnet' / 'opus' / 'haiku' 或
+    // 完整模型名（如 'claude-haiku-4-5-20251001'）。空/不存在时走容器默认
+    // 账号 tier，不注入 --model。
+    model: 'haiku',
   },
   generate: {
     skill: 'pipeline-generate',
@@ -473,6 +482,9 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
           CONTENT_PIPELINE_ID: state.pipeline_id || '',
           CONTENT_OUTPUT_DIR: state.output_dir || '',
         },
+        // P0-3：节点可选声明使用的 claude model（alias 或完整名）。
+        // 空/不存在时 executor 不注入 --model，走容器默认 tier。
+        model: cfg.model,
       });
 
       const durationSec = ((Date.now() - startMs) / 1000).toFixed(1);
