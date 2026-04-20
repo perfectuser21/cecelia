@@ -127,11 +127,11 @@ const result = await executor({
 
 ## 成功标准
 
-- [BEHAVIOR] runner spawn 调用传 `worktreePath` 非空且含 `harness-v2` 片段。Test: packages/brain/src/__tests__/harness-initiative-runner-container-mount.test.js
-- [BEHAVIOR] runner spawn 调用传 `env.GITHUB_TOKEN` 非空。Test: packages/brain/src/__tests__/harness-initiative-runner-container-mount.test.js
-- [BEHAVIOR] `resolveGitHubToken` 按 env > gh CLI > file > throw 顺序解析。Test: packages/brain/src/__tests__/harness-credentials.test.js
-- [ARTIFACT] 新文件 `packages/brain/src/harness-worktree.js` 存在，导出 `ensureHarnessWorktree`/`cleanupHarnessWorktree`
-- [ARTIFACT] 新文件 `packages/brain/src/harness-credentials.js` 存在，导出 `resolveGitHubToken`
+- [x] [BEHAVIOR] runner spawn 调用传 `worktreePath` 非空且含 `harness-v2` 片段。Test: packages/brain/src/__tests__/harness-initiative-runner-container-mount.test.js
+- [x] [BEHAVIOR] runner spawn 调用传 `env.GITHUB_TOKEN` 非空。Test: packages/brain/src/__tests__/harness-initiative-runner-container-mount.test.js
+- [x] [BEHAVIOR] `resolveGitHubToken` 按 env > gh CLI > file > throw 顺序解析。Test: packages/brain/src/__tests__/harness-credentials.test.js
+- [x] [ARTIFACT] 新文件 `packages/brain/src/harness-worktree.js` 存在，导出 `ensureHarnessWorktree`/`cleanupHarnessWorktree`
+- [x] [ARTIFACT] 新文件 `packages/brain/src/harness-credentials.js` 存在，导出 `resolveGitHubToken`
 
 ## 回滚
 
