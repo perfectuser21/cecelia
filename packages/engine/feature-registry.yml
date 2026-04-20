@@ -6,6 +6,15 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.1.1"
+    date: "2026-04-20"
+    change: "fix"
+    description: "Phase 7.2 — hooks/stop.sh 空数组 guard。Phase 7.1 后 Stop Hook 首次在交互模式下真正被触发，暴露 bash 3.2（macOS 默认）+ set -u + 空数组 [@] = 'unbound variable' bug。_STOP_HOOK_WT_LIST 在非 git 目录或无 worktree 场景下为空数组，两处 for 循环在引用 [@] 时崩溃（'Stop hook error: Failed with non-blocking status code'）。修复：用 \\${arr[@]+\\${arr[@]}} guard 语法。regression test 覆盖空数组 + 非 git 目录场景。patch bump 18.1.0 → 18.1.1。"
+    files:
+      - "hooks/stop.sh (两处 for 循环空数组 guard)"
+      - "packages/engine/tests/hooks/stop-hook-empty-array.test.ts (new, 2 assertions)"
+      - "Engine 6 处版本文件 + SKILL.md (18.1.1)"
+
   - version: "18.1.0"
     date: "2026-04-20"
     change: "feat"
