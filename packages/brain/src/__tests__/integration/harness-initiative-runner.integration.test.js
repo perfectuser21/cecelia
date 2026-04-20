@@ -12,8 +12,17 @@
  * 相对路径：integration/ 子目录 → ../../
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+
+// CI 环境没有 git worktree / gh auth，mock 掉 PR-1 新增的两个 helper。
+vi.mock('../../harness-worktree.js', () => ({
+  ensureHarnessWorktree: vi.fn(async ({ taskId }) => `/tmp/mock-wt/harness-v2/task-${String(taskId).slice(0, 8)}`),
+  cleanupHarnessWorktree: vi.fn(async () => {}),
+}));
+vi.mock('../../harness-credentials.js', () => ({
+  resolveGitHubToken: vi.fn(async () => 'ghs_mock_integration_token'),
+}));
 
 let pool;
 let runInitiative;
