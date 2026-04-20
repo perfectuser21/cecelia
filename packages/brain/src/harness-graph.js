@@ -2,10 +2,14 @@
  * Harness LangGraph — Docker-backed pipeline
  *
  * 替代 routes/execution.js + harness-watcher.js 中手写的 6 阶段状态机。
- * 节点：planner → proposer → reviewer → generator → evaluator → report
+ *
+ * Harness v2 M4（2026-04-20）节点：
+ *   planner → proposer ↔ reviewer → generator → ci_gate → evaluator → report
+ *
  * 条件边：
- *   - reviewer: APPROVED → generator, REVISION → proposer（GAN 循环，无上限）
- *   - evaluator: PASS → report, FAIL → generator（Fix 循环，无上限）
+ *   - reviewer:   APPROVED → generator, REVISION → proposer（GAN 循环，无上限）
+ *   - ci_gate:    PASS → evaluator, FAIL/TIMEOUT → generator（同分支 Fix commit）
+ *   - evaluator:  PASS → report,   FAIL → generator（Task 级 Fix 循环，无上限）
  *
  * 每个节点通过 executeInDocker() 在隔离容器中运行 Claude Code session。
  * Docker 输出解析为 JSON（claude --output-format json），提取 result 字段更新 state。
@@ -21,6 +25,7 @@ import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/lang
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { pollPRChecks } from './harness-ci-gate.js';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
@@ -57,34 +62,35 @@ export function loadSkillContent(skillName) {
 /**
  * Harness 状态 schema
  *
- * 多 Workstream 模型（2026-04-19 升级）：
- *   合同（sprint-contract.md）里 `## Workstreams` 区块分出 WS1/WS2/WS3...
- *   每个 WS 对应一个独立 PR（generator 循环产）；evaluator 对每个 PR 单独验收；
- *   Fix 循环只重跑 FAIL 的 WS，PASS 的 PR 保留不动。
+ * Harness v2 M4（2026-04-20）：Task 级循环 + Generator Fix 同分支 commit + CI Gate + Evaluator 去 E2E。
+ * 弃用 v1 多 Workstream 模型的 state 字段（workstreams/pr_urls/pr_branches/ws_verdicts/ws_feedbacks）。
+ * parseWorkstreams 保留作 legacy fallback，但主流程走 M3 parseTasks。
+ *
+ * 模型：1 Task = 1 PR = 1 分支；Fix 循环在同分支多 commit，绝不开新 PR。
  *
  * 字段说明（全部可选）：
- *  - task_id           关联的 Brain 任务 ID（也用作 langgraph thread_id）
- *  - task_description  原始用户需求
- *  - sprint_dir        sprints/ 目录
- *  - prd_content       Layer 1 planner 输出
- *  - contract_content  Layer 2a proposer 输出
- *  - review_verdict    Layer 2b reviewer 裁决：'APPROVED' | 'REVISION'
- *  - review_feedback   reviewer REVISION 时的反馈内容
- *  - review_round      review 回合计数（debug 用）
+ *  - task_id              关联的 Brain 任务 ID（也用作 langgraph thread_id）
+ *  - task_description     原始用户需求
+ *  - sprint_dir           sprints/ 目录
+ *  - prd_content          Layer 1 planner 输出
+ *  - contract_content     Layer 2a proposer 输出
+ *  - review_verdict       Layer 2b reviewer 裁决：'APPROVED' | 'REVISION'
+ *  - review_feedback      reviewer REVISION 时的反馈内容
+ *  - review_round         review 回合计数
  *  - acceptance_criteria  proposer 输出的 Given-When-Then 验收标准
- *  - workstreams       Layer 2a proposer 解析的 WS 列表
- *                      每项形如 { index, name, dod_file?, description? }
- *  - pr_urls           Layer 3 generator 按 WS 顺序产出的 PR URL 数组
- *  - ws_verdicts       Layer 3c evaluator 对每个 PR 的裁决数组（PASS/FAIL，index 对齐 pr_urls）
- *  - ws_feedbacks      Layer 3c evaluator 对每个 PR FAIL 时的反馈数组（index 对齐）
- *  - pr_url            向后兼容：= pr_urls[0]
- *  - pr_branch         向后兼容：首个 WS 的 PR 分支名
- *  - evaluator_verdict 向后兼容：全部 ws_verdicts 为 PASS 时 = 'PASS'，否则 'FAIL'
- *  - eval_feedback     向后兼容：所有 FAIL WS feedback 汇总
- *  - eval_round        evaluator 回合计数
- *  - report_path       Layer 4 report 输出
- *  - trace             节点执行轨迹（debug 用，reducer 累加）
- *  - error             错误信息（节点失败时写入）
+ *  - tasks                M3 proposer 解析的 Task 列表（来自 ## Tasks）
+ *  - pr_url               当前 Task 的 PR URL（单值，非数组）
+ *  - pr_branch            当前 Task 的 PR 分支名
+ *  - commit_shas          Fix 模式累积的 commit SHA 数组
+ *  - ci_status            M4 CI Gate 状态：'pass' | 'fail' | 'timeout' | 'pending'
+ *  - ci_failed_check      CI FAIL 时的失败 check 名
+ *  - ci_feedback          CI FAIL 时的 log 片段（注入下轮 Generator Fix prompt）
+ *  - evaluator_verdict    Evaluator Task 级裁决：'PASS' | 'FAIL'
+ *  - eval_feedback        Evaluator FAIL 时的反馈（注入下轮 Generator Fix prompt）
+ *  - eval_round           Generator 进入次数（0 = 首次，>0 = Fix 模式）
+ *  - report_path          Layer 4 report 输出
+ *  - trace                节点执行轨迹（debug 用，reducer 累加）
+ *  - error                错误信息（节点失败时写入）
  */
 export const HarnessState = Annotation.Root({
   task_id: Annotation,
@@ -96,15 +102,15 @@ export const HarnessState = Annotation.Root({
   review_feedback: Annotation,
   review_round: Annotation,
   acceptance_criteria: Annotation,
-  // ── 多 WS 字段 ────────────────────────────────────────────────────────────
-  workstreams: Annotation,
-  pr_urls: Annotation,
-  pr_branches: Annotation,
-  ws_verdicts: Annotation,
-  ws_feedbacks: Annotation,
-  // ── 向后兼容字段（填 workstreams[0] 语义）────────────────────────────────
+  // ── M3 新字段（parseTasks 解析结果）────────────────────────────────────────
+  tasks: Annotation,
+  // ── M4 Task 级循环字段（单 Task = 单 PR = 单分支）─────────────────────────
   pr_url: Annotation,
   pr_branch: Annotation,
+  commit_shas: Annotation,
+  ci_status: Annotation,
+  ci_failed_check: Annotation,
+  ci_feedback: Annotation,
   evaluator_verdict: Annotation,
   eval_feedback: Annotation,
   eval_round: Annotation,
@@ -604,35 +610,28 @@ ${reviewFeedback}
       }
     }
 
-    // Harness v2 M3：先尝试解析新 `## Tasks` 格式（每 Task 强制金字塔 + E2E）
-    // 老合同用 `## Workstreams` 则 fallback（向后兼容）
+    // Harness v2 M4：主流程用 M3 parseTasks（## Tasks 格式）
+    // parseWorkstreams 保留作 legacy fallback（兼容 v1 老合同）
     const tasks = parseTasks(output || '');
-    let workstreams;
-    if (tasks.length > 0) {
-      // 把 tasks 投影为 workstreams 形状，保证下游 Generator/Evaluator 还能跑
-      workstreams = tasks.map((t, i) => ({
-        index: i + 1,
-        name: t.task_id,
-        ...(t.files?.length ? { files: t.files } : {}),
-      }));
+    let legacyWs = null;
+    if (tasks.length === 0) {
+      legacyWs = parseWorkstreams(output || '');
       console.log(
-        `[harness-graph] proposer parsed Tasks(v2) count=${tasks.length} task=${taskId}: ${tasks.map(t => t.task_id).join(', ')}`
+        `[harness-graph] proposer legacy Workstreams count=${legacyWs.length} task=${taskId}: ${legacyWs.map(w => `WS${w.index}(${w.name})`).join(', ')}`
       );
     } else {
-      workstreams = parseWorkstreams(output || '');
       console.log(
-        `[harness-graph] proposer parsed Workstreams(v1) count=${workstreams.length} task=${taskId}: ${workstreams.map(w => `WS${w.index}(${w.name})`).join(', ')}`
+        `[harness-graph] proposer parsed Tasks(v2) count=${tasks.length} task=${taskId}: ${tasks.map(t => t.task_id).join(', ')}`
       );
     }
 
     return {
       contract_content: output || null,
       acceptance_criteria: acceptanceCriteria,
-      workstreams,
-      tasks,                                       // Harness v2 M3 新字段
+      tasks,  // Harness v2 M3 新字段（M4 主流程）
       review_round: round,
       error: error || null,
-      trace: `proposer(R${round},${tasks.length > 0 ? `tasks=${tasks.length}` : `ws=${workstreams.length}`})${error ? '(ERROR)' : ''}`,
+      trace: `proposer(R${round},${tasks.length > 0 ? `tasks=${tasks.length}` : `ws=${legacyWs ? legacyWs.length : 0}`})${error ? '(ERROR)' : ''}`,
     };
   };
 
@@ -697,54 +696,67 @@ ${state.acceptance_criteria || '（验收标准未生成）'}
     };
   };
 
-  // ── Generator 节点（按 WS 循环产多 PR）────────────────────────────────────
+  // ── Generator 节点（Harness v2 M4：单 Task 单 PR + 两模式）──────────────
+  //
+  // 模式分流（硬约束）：
+  //   - isFixMode = (state.eval_round || 0) > 0
+  //   - 新建 PR 模式（eval_round == 0）：checkout 新分支 → push → gh pr create → 输出 pr_url
+  //   - Fix 模式（eval_round > 0）：checkout 同一个 state.pr_branch → commit → push → 输出 commit_sha
+  //
+  // 撤销 #2420 方向：不再按 Workstream 循环产多 PR；一次调用产/改一个 PR。
   const generator = async (state) => {
     const sprintDir = state.sprint_dir || 'sprints';
     const evalRound = state.eval_round || 0;
     const isFixMode = evalRound > 0;
 
-    // Workstreams 列表 — proposer 已填，若缺失兜底单 WS
-    const workstreams = Array.isArray(state.workstreams) && state.workstreams.length > 0
-      ? state.workstreams
-      : [{ index: 1, name: 'default' }];
+    // Fix 模式反馈来源：CI gate 反馈优先（CI 先跑），Evaluator 反馈次之
+    const ciFeedback = state.ci_feedback ? String(state.ci_feedback) : '';
+    const evalFeedback = state.eval_feedback ? String(state.eval_feedback) : '';
+    const feedbackBlock = isFixMode
+      ? [
+          ciFeedback ? `## CI 失败片段（Round ${evalRound}）\n${ciFeedback}` : '',
+          evalFeedback ? `## Evaluator 反馈（Round ${evalRound}）\n${evalFeedback}` : '',
+        ].filter(Boolean).join('\n\n')
+      : '';
 
-    // 起点：上轮 pr_urls（数组 index 对齐 workstreams 下标）
-    const existingPRs = Array.isArray(state.pr_urls) ? [...state.pr_urls] : [];
-    const existingBranches = Array.isArray(state.pr_branches) ? [...state.pr_branches] : [];
-
-    // Fix 模式只跑上轮 FAIL 的 WS；首轮全跑
-    let targetIndexes;
-    if (isFixMode && Array.isArray(state.ws_verdicts) && state.ws_verdicts.length > 0) {
-      targetIndexes = state.ws_verdicts
-        .map((v, i) => (v !== 'PASS' ? i : -1))
-        .filter(i => i >= 0);
-      // 如果 Fix 模式但没有任何 FAIL（异常），兜底 re-run 全部（不应发生，图会路由到 report）
-      if (targetIndexes.length === 0) targetIndexes = workstreams.map((_, i) => i);
-    } else {
-      targetIndexes = workstreams.map((_, i) => i);
-    }
+    // 已存在的 PR 信息（Fix 模式必须复用同分支）
+    const existingPrUrl = state.pr_url || '';
+    const existingPrBranch = state.pr_branch || '';
 
     console.log(
       `[harness-graph] generator starting task=${taskId} mode=${isFixMode ? 'fix' : 'new'} ` +
-      `ws_total=${workstreams.length} ws_to_run=${targetIndexes.length} indexes=[${targetIndexes.join(',')}]`
+      `eval_round=${evalRound} pr_url=${existingPrUrl || 'none'} pr_branch=${existingPrBranch || 'none'}`
     );
 
     const skillContent = loadSkillContent('harness-generator');
-    const newPRs = [...existingPRs];
-    const newBranches = [...existingBranches];
-    let combinedError = null;
 
-    for (const wsIndex of targetIndexes) {
-      const ws = workstreams[wsIndex] || { index: wsIndex + 1, name: `ws-${wsIndex + 1}` };
-      const wsLabel = `WS-${ws.index}(${ws.name})`;
-      const wsEvalFeedback = isFixMode && Array.isArray(state.ws_feedbacks)
-        ? (state.ws_feedbacks[wsIndex] || '')
-        : '';
-      const evalFeedback = isFixMode && wsEvalFeedback
-        ? `\n\n## Evaluator 反馈（Round ${evalRound}，${wsLabel}）\n${wsEvalFeedback}`
-        : '';
+    // 两模式 prompt — 明确分流，硬约束"Fix 模式永远不要开新 PR"
+    const modeSection = isFixMode
+      ? `## 模式：Fix 模式（eval_round=${evalRound}，同分支累积 commit）
 
-      const prompt = `你是 harness-generator agent。按下面 SKILL 指令工作。
+**硬约束：永远不要在 Fix 模式开新 PR；同分支累积 commit。**
+
+已有 PR：${existingPrUrl}
+已有分支：${existingPrBranch}
+
+必做步骤：
+1. \`gh pr checkout ${existingPrBranch || '<pr_branch>'}\` 或 \`git fetch origin && git checkout ${existingPrBranch || '<pr_branch>'} && git pull\`
+2. 根据下面的 CI / Evaluator 反馈定位问题并修代码
+3. \`git add <文件> && git commit -m "fix(harness): ..." && git push origin HEAD\`
+4. **不要** 跑 \`gh pr create\`（PR 号已存在）
+5. 输出 \`commit_sha: <新 commit SHA>\` 和 \`pr_url: ${existingPrUrl}\`（保持原值）
+
+${feedbackBlock}`
+      : `## 模式：新建 PR 模式（eval_round=0，首次实现）
+
+必做步骤：
+1. \`git checkout -b cp-$(date +%m%d%H%M)-<task-slug>\`
+2. 严格按下面合同的当前 Task 范围实现，不越界
+3. \`git add <文件> && git commit -m "feat(harness): ..." && git push -u origin HEAD\`
+4. \`gh pr create --title "..." --body "..."\` 产生 PR URL
+5. 输出 \`pr_url: <URL>\` 和 \`pr_branch: <分支名>\``;
+
+    const prompt = `你是 harness-generator agent。按下面 SKILL 指令工作。
 
 ${skillContent}
 
@@ -754,149 +766,129 @@ ${skillContent}
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
 **task_type**: ${isFixMode ? 'harness_fix' : 'harness_generate'}
-**workstream_index**: ${ws.index}
-**workstream_name**: ${ws.name}
-**workstream_total**: ${workstreams.length}
-${ws.dod_file ? `**workstream_dod_file**: ${ws.dod_file}` : ''}
-${isFixMode ? `**eval_round**: ${evalRound}` : ''}
+**eval_round**: ${evalRound}
+**is_fix_mode**: ${isFixMode}
 
-## 工作范围限定（CRITICAL）
-本次你只负责实现 **${wsLabel}**（合同 \`## Workstreams\` 区块里的第 ${ws.index} 条）。
-${ws.dod_file ? `对应 DoD 文件：\`${ws.dod_file}\`（严格按此条约验收）` : ''}
-
-- 只改动该 workstream 涵盖的代码/测试，其他 WS 的代码一行不动。
-- 单独 push 一个 PR，分支名必须包含 \`ws${ws.index}\`（例如 \`cp-NNNNNNNN-xxxx-ws${ws.index}\`）。
-- 不要把多个 WS 打包进一个 PR。
+${modeSection}
 
 ## PRD 内容
 ${state.prd_content || '（PRD 未生成）'}
 
-## 合同内容（GAN 已批准，含全部 WS）
+## 合同内容（GAN 已批准）
 ${state.contract_content || '（合同未生成）'}
 
 ## 验收标准（Given-When-Then）
 ${state.acceptance_criteria || '（验收标准未生成）'}
-${evalFeedback}
 
-## 执行要求
-1. 严格按合同的 ${wsLabel} 范围实现，不越界
-2. 代码写完后 push 一个独立 PR（分支名含 \`ws${ws.index}\`）
-3. 在 stdout 输出 \`pr_url: <URL>\` 和 \`pr_branch: <branch>\`
+## 输出格式（严格遵守 — Brain 依此提取）
 
-## 输出格式（严格遵守 — Brain 依此提取 PR 并派 Evaluator）
+${isFixMode
+  ? `Fix 模式成功路径：
+\`\`\`
+pr_url: ${existingPrUrl || '<保持上轮值>'}
+pr_branch: ${existingPrBranch || '<保持上轮值>'}
+commit_sha: <新 commit SHA>
+\`\`\`
 
-成功路径：最后一条消息必须含独立一行（支持纯字面量或 JSON 格式，两种都会被解析）：
+或 JSON：\`{"verdict": "FIXED", "pr_url": "${existingPrUrl}", "commit_sha": "..."}\`
 
+失败路径：
+\`\`\`
+pr_url: ${existingPrUrl || 'FAILED'}
+commit_sha: FAILED
+STEP <N> FAILED: <具体错误>
+\`\`\``
+  : `新建 PR 模式成功路径：
 \`\`\`
 pr_url: https://github.com/perfectuser21/cecelia/pull/<编号>
-pr_branch: cp-<时间戳>-...-ws${ws.index}
+pr_branch: cp-<时间戳>-<task-slug>
 \`\`\`
 
-或（与 harness-generator SKILL 的 JSON 格式兼容）：
+或 JSON：\`{"verdict": "DONE", "pr_url": "..."}\`
 
-\`\`\`
-{"verdict": "DONE", "pr_url": "https://github.com/perfectuser21/cecelia/pull/<编号>"}
-\`\`\`
-
-失败路径（git push / gh pr create 任何一步失败）：
-
+失败路径：
 \`\`\`
 pr_url: FAILED
 pr_branch: FAILED
-STEP <N> FAILED: <具体错误原因，例如 "git push: permission denied" 或 "gh pr create: no commits">
-\`\`\`
+STEP <N> FAILED: <具体错误>
+\`\`\``
+}
 
 禁止事项：
 - 禁止输出 \`pr_url: null\`（用 FAILED 代替）
-- 禁止仅用 markdown 链接格式 \`[PR](https://...)\`（可以加，但必须同时输出上面的字面量或 JSON）
-- 禁止隐藏失败（push 失败必须明确输出 FAILED + 原因，不得 exit 0 假装成功）`;
+- ${isFixMode ? '禁止在 Fix 模式跑 `gh pr create`（同分支 commit 累积，PR 号不变）' : '禁止在新建模式 checkout 已有分支'}
+- 禁止隐藏失败（push 失败必须明确输出 FAILED + 原因）`;
 
-      const { output, error } = await runDockerNode(
-        'generator',
-        isFixMode ? 'harness_fix' : 'harness_generate',
-        prompt,
-        state,
-      );
+    const { output, error } = await runDockerNode(
+      'generator',
+      isFixMode ? 'harness_fix' : 'harness_generate',
+      prompt,
+      state,
+    );
 
-      const prUrl = extractField(output, 'pr_url');
-      const prBranch = extractField(output, 'pr_branch');
-      if (prUrl) newPRs[wsIndex] = prUrl;
-      if (prBranch) newBranches[wsIndex] = prBranch;
+    // 解析产出
+    const parsedPrUrl = extractField(output, 'pr_url');
+    const parsedPrBranch = extractField(output, 'pr_branch');
+    const parsedCommitSha = extractField(output, 'commit_sha');
 
-      if (error) {
-        combinedError = combinedError ? `${combinedError}\n${wsLabel}: ${error}` : `${wsLabel}: ${error}`;
-      }
-      console.log(
-        `[harness-graph] generator task=${taskId} ${wsLabel} done pr=${prUrl || 'none'} branch=${prBranch || 'none'}${error ? ' error=' + error.slice(0, 80) : ''}`
-      );
-    }
+    // Fix 模式：pr_url / pr_branch 保持原值（忽略解析值，即便 LLM 输出了什么也不允许换 PR）
+    const nextPrUrl = isFixMode ? (existingPrUrl || parsedPrUrl || null) : (parsedPrUrl || null);
+    const nextPrBranch = isFixMode ? (existingPrBranch || parsedPrBranch || null) : (parsedPrBranch || null);
+
+    // Fix 模式累积 commit_shas
+    const nextCommitShas = isFixMode && parsedCommitSha
+      ? [...(Array.isArray(state.commit_shas) ? state.commit_shas : []), parsedCommitSha]
+      : (state.commit_shas || []);
+
+    console.log(
+      `[harness-graph] generator task=${taskId} done mode=${isFixMode ? 'fix' : 'new'} ` +
+      `pr=${nextPrUrl || 'none'} branch=${nextPrBranch || 'none'} commit=${parsedCommitSha || 'none'}${error ? ' error=' + error.slice(0, 80) : ''}`
+    );
 
     return {
-      // 新字段
-      pr_urls: newPRs,
-      pr_branches: newBranches,
-      workstreams,  // re-emit 避免反序列化/降级时丢
-      // 老字段（向后兼容 — 首个 WS 的产出）
-      pr_url: newPRs[0] || state.pr_url || null,
-      pr_branch: newBranches[0] || state.pr_branch || null,
-      error: combinedError,
-      trace: `generator(${isFixMode ? 'fix-R' + evalRound : 'gen'},ws=${targetIndexes.length}/${workstreams.length})${combinedError ? '(ERROR)' : ''}`,
+      pr_url: nextPrUrl,
+      pr_branch: nextPrBranch,
+      commit_shas: nextCommitShas,
+      // 进入 Generator 后清除上轮 CI / Evaluator 反馈（重新走完 ci_gate → evaluator）
+      ci_status: null,
+      ci_feedback: null,
+      ci_failed_check: null,
+      error: error || null,
+      trace: `generator(${isFixMode ? 'fix-R' + evalRound : 'new'}${parsedCommitSha ? ',commit=' + parsedCommitSha.slice(0, 7) : ''})${error ? '(ERROR)' : ''}`,
     };
   };
 
-  // ── Evaluator 节点（按 WS PR 循环验收）────────────────────────────────────
+  // ── Evaluator 节点（Harness v2 M4：Task 级对抗 QA，不跑真实 E2E）─────────
+  //
+  // 与 v1 的差异：
+  //   - 删除 Workstream 循环，单次验收一个 Task 的 PR
+  //   - 禁止启动 Brain 5222 / 真实前端 / 真实 PG（那是阶段 C 的事，M5 做）
+  //   - 改为跑 unit test / integration test (mock deps) / 深度对抗 case
+  //   - 停止条件：无上限 / 无软上限 / 不因"连续 N 轮无新 FAIL"终止
   const evaluator = async (state) => {
     const sprintDir = state.sprint_dir || 'sprints';
     const round = (state.eval_round || 0) + 1;
+    const prUrl = state.pr_url || null;
+    const prBranch = state.pr_branch || null;
 
-    // 源数据：workstreams + pr_urls
-    const workstreams = Array.isArray(state.workstreams) && state.workstreams.length > 0
-      ? state.workstreams
-      : [{ index: 1, name: 'default' }];
-    const prUrls = Array.isArray(state.pr_urls) && state.pr_urls.length > 0
-      ? state.pr_urls
-      : (state.pr_url ? [state.pr_url] : []);
-    const prBranches = Array.isArray(state.pr_branches)
-      ? state.pr_branches
-      : (state.pr_branch ? [state.pr_branch] : []);
-
-    // 上轮结果：保留已 PASS 的 WS，仅重验 FAIL 或未验过的
-    const existingVerdicts = Array.isArray(state.ws_verdicts) ? [...state.ws_verdicts] : [];
-    const existingFeedbacks = Array.isArray(state.ws_feedbacks) ? [...state.ws_feedbacks] : [];
-
-    const skillContent = loadSkillContent('harness-evaluator');
-    const verdicts = [];
-    const feedbacks = [];
-    let combinedError = null;
-
-    const total = workstreams.length;
     console.log(
-      `[harness-graph] evaluator starting task=${taskId} round=${round} ws_total=${total} pr_urls=${prUrls.length}`
+      `[harness-graph] evaluator starting task=${taskId} round=${round} pr_url=${prUrl || 'none'}`
     );
 
-    for (let i = 0; i < total; i++) {
-      const ws = workstreams[i];
-      const prUrl = prUrls[i] || null;
-      const prBranch = prBranches[i] || null;
-      const wsLabel = `WS-${ws.index}(${ws.name})`;
+    // 没 PR 直接 FAIL — 回 generator 继续 commit（由外层图路由）
+    if (!prUrl) {
+      console.log(`[harness-graph] evaluator task=${taskId} FAIL (no PR)`);
+      return {
+        evaluator_verdict: 'FAIL',
+        eval_round: round,
+        eval_feedback: 'Generator 未产出 PR（pr_url 缺失）',
+        error: null,
+        trace: `evaluator(R${round}:FAIL,no-pr)`,
+      };
+    }
 
-      // 已在上轮 PASS 的 WS，不再重验（保留 verdict，feedback 清 null）
-      if (existingVerdicts[i] === 'PASS') {
-        verdicts.push('PASS');
-        feedbacks.push(null);
-        console.log(`[harness-graph] evaluator task=${taskId} ${wsLabel} skipped (already PASS)`);
-        continue;
-      }
-
-      // 没 PR 的 WS（generator 失败）直接 FAIL
-      if (!prUrl) {
-        verdicts.push('FAIL');
-        feedbacks.push(`Generator 未产出 ${wsLabel} 的 PR`);
-        console.log(`[harness-graph] evaluator task=${taskId} ${wsLabel} FAIL (no PR)`);
-        continue;
-      }
-
-      const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
+    const skillContent = loadSkillContent('harness-evaluator');
+    const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
 
 ${skillContent}
 
@@ -905,73 +897,55 @@ ${skillContent}
 ## 本次任务参数
 **task_id**: ${taskId}
 **sprint_dir**: ${sprintDir}
-**workstream_index**: ${ws.index}
-**workstream_name**: ${ws.name}
-**workstream_total**: ${total}
-${ws.dod_file ? `**workstream_dod_file**: ${ws.dod_file}` : ''}
 **pr_url**: ${prUrl}
 **pr_branch**: ${prBranch || ''}
 **eval_round**: ${round}
 
-## 验收范围限定（CRITICAL）
-本次你只负责验收 **${wsLabel}** 对应的 PR（${prUrl}）。
-${ws.dod_file ? `严格按 \`${ws.dod_file}\` 的 DoD 条目逐条验证。` : ''}
-其他 WS 的 PR 本轮不验收，另轮处理。
+## 验收范围（Harness v2 M4 — Task 级对抗 QA）
 
-## 合同内容（含全部 WS，只关心 WS-${ws.index} 部分）
+你只负责对这一个 PR 做 **Task 级对抗 QA**：
+- **跑 unit test**（针对改动文件的单元测试）
+- **跑 integration test**（mock deps，in-memory）
+- **深度对抗**：空输入 / null / undefined / 超长字符串 / emoji / 不存在 ID / 已删除 ID / 权限不符 ID / 并发 Promise.all / 错误路径 / race condition
+
+**禁止做的事**（这是阶段 C 的职责，M5 会做）：
+- 禁止启动 Brain 5222
+- 禁止启动真实前端
+- 禁止启动真实 PostgreSQL
+- 禁止跑 Initiative 级端到端验收
+
+## 合同内容
 ${state.contract_content || '（合同未生成）'}
 
 ## 验收标准（Given-When-Then）
 ${state.acceptance_criteria || '（验收标准未生成）'}
 
-## 目标
-部署服务（重启 Brain / Dashboard），然后对照合同验收标准进行 E2E 功能验收。
-用 curl 验证 API，用 Playwright/浏览器验证前端。你的工作是找到失败，不是确认成功。
-写入 ${sprintDir}/eval-round-${round}-ws${ws.index}.md。
-输出裁决：VERDICT: PASS 或 VERDICT: FAIL`;
+## 停止条件（硬约束）
 
-      const { output, error } = await runDockerNode('evaluator', 'harness_evaluate', prompt, state);
+**无上限 / 无软上限 / 不因"连续 N 轮无新 FAIL"终止。**
+PASS 的唯一条件 = 所有验收标准全部通过 + 每条对抗 case 明确测过。
+对抗越多越好，越测越深。
 
-      const verdict = error
-        ? 'FAIL'
-        : (extractVerdict(output, ['PASS', 'FAIL']) || 'PASS');
-      const feedback = verdict === 'FAIL' ? (output || error || '') : null;
+## 输出
 
-      verdicts.push(verdict);
-      feedbacks.push(feedback);
-      if (error) {
-        combinedError = combinedError ? `${combinedError}\n${wsLabel}: ${error}` : `${wsLabel}: ${error}`;
-      }
-      console.log(`[harness-graph] evaluator task=${taskId} ${wsLabel} verdict=${verdict}`);
-    }
+写入 ${sprintDir}/eval-task-${taskId}-round-${round}.md（记录测过的对抗 case + 失败证据）。
+最后输出裁决：\`VERDICT: PASS\` 或 \`VERDICT: FAIL\``;
 
-    const allPassed = verdicts.length > 0 && verdicts.every(v => v === 'PASS');
-    const overallVerdict = allPassed ? 'PASS' : 'FAIL';
-    const overallFeedback = allPassed
-      ? null
-      : verdicts
-        .map((v, i) => v === 'FAIL' ? `## WS-${workstreams[i]?.index ?? i + 1} (${workstreams[i]?.name ?? ''})\n${feedbacks[i] || ''}` : null)
-        .filter(Boolean)
-        .join('\n\n---\n\n');
+    const { output, error } = await runDockerNode('evaluator', 'harness_evaluate', prompt, state);
 
-    console.log(
-      `[harness-graph] evaluator done task=${taskId} round=${round} overall=${overallVerdict} verdicts=[${verdicts.join(',')}]`
-    );
-    // 参考 existingFeedbacks，避免"已在旧 state 里、本轮未重验"的那些 FAIL 被清洗（我们上面已保留）
-    // existingFeedbacks 目前只用于旁路跟踪，未来可扩展为增量日志
-    void existingFeedbacks;
+    const verdict = error
+      ? 'FAIL'
+      : (extractVerdict(output, ['PASS', 'FAIL']) || 'FAIL');
+    const feedback = verdict === 'FAIL' ? (output || error || '') : null;
+
+    console.log(`[harness-graph] evaluator task=${taskId} round=${round} verdict=${verdict}`);
 
     return {
-      // 新字段
-      ws_verdicts: verdicts,
-      ws_feedbacks: feedbacks,
-      workstreams,  // re-emit
-      // 老字段（向后兼容）
-      evaluator_verdict: overallVerdict,
+      evaluator_verdict: verdict,
       eval_round: round,
-      eval_feedback: overallFeedback,
-      error: combinedError,
-      trace: `evaluator(R${round}:${overallVerdict},pass=${verdicts.filter(v => v === 'PASS').length}/${verdicts.length})${combinedError ? '(ERROR)' : ''}`,
+      eval_feedback: feedback,
+      error: error || null,
+      trace: `evaluator(R${round}:${verdict})${error ? '(ERROR)' : ''}`,
     };
   };
 
@@ -1019,7 +993,87 @@ evaluator_verdict: ${state.evaluator_verdict || 'N/A'}
     };
   };
 
-  return { planner, proposer, reviewer, generator, evaluator, report };
+  // ── CI Gate 节点（Harness v2 M4：非 LLM，纯 gh CLI 轮询）──────────────────
+  // 注意：createDockerNodes 返回 ci_gate 使用默认 pollPRChecks；
+  // 测试或特殊场景可用 createCiGateNode(customPollFn) 替换。
+  const ci_gate = createCiGateNode(pollPRChecks);
+
+  return { planner, proposer, reviewer, generator, ci_gate, evaluator, report };
+}
+
+/**
+ * CI Gate 节点 factory（Harness v2 M4）。
+ *
+ * 接收一个 pollFn（默认 pollPRChecks）；返回符合 LangGraph 节点签名的 async 函数：
+ *   - 读 state.pr_url → pollFn(url) → 返回 state update
+ *   - PASS → ci_status='pass'
+ *   - FAIL → ci_status='fail'，填 ci_feedback / ci_failed_check，eval_round += 1
+ *   - TIMEOUT → ci_status='timeout'，eval_round += 1
+ *   - pr_url 缺失 → ci_status='fail'，不调 pollFn
+ *
+ * 测试可注入 mock pollFn 直接返回固定结果。
+ *
+ * @param {Function} pollFn   async (prUrl, opts) => { status, ... }
+ * @returns {(state) => Promise<object>}
+ */
+export function createCiGateNode(pollFn) {
+  return async (state) => {
+    const prUrl = state.pr_url || '';
+    if (!prUrl || typeof prUrl !== 'string') {
+      return {
+        ci_status: 'fail',
+        ci_feedback: 'ci_gate: pr_url 缺失',
+        ci_failed_check: null,
+        eval_round: (state.eval_round || 0) + 1,
+        trace: 'ci_gate(fail:no-pr)',
+      };
+    }
+
+    let result;
+    try {
+      result = await pollFn(prUrl);
+    } catch (err) {
+      return {
+        ci_status: 'fail',
+        ci_feedback: `ci_gate: pollPRChecks 抛错 — ${err.message}`,
+        ci_failed_check: null,
+        eval_round: (state.eval_round || 0) + 1,
+        trace: 'ci_gate(fail:exception)',
+      };
+    }
+
+    const status = String(result.status || '').toUpperCase();
+    if (status === 'PASS') {
+      return {
+        ci_status: 'pass',
+        ci_feedback: null,
+        ci_failed_check: null,
+        trace: 'ci_gate(pass)',
+      };
+    }
+    if (status === 'TIMEOUT') {
+      return {
+        ci_status: 'timeout',
+        ci_feedback: 'ci_gate: 30min TIMEOUT — CI 未在窗口内完成',
+        ci_failed_check: null,
+        eval_round: (state.eval_round || 0) + 1,
+        trace: 'ci_gate(timeout)',
+      };
+    }
+    // FAIL
+    const failed = result.failedCheck || null;
+    const feedback = [
+      result.logSnippet ? `## 失败日志片段\n${result.logSnippet}` : '',
+      failed ? `## 失败 check\n${failed.name || '(unknown)'} @ ${failed.link || '(no link)'}` : '',
+    ].filter(Boolean).join('\n\n') || 'ci_gate: FAIL（无详细信息）';
+    return {
+      ci_status: 'fail',
+      ci_feedback: feedback,
+      ci_failed_check: failed ? (failed.name || null) : null,
+      eval_round: (state.eval_round || 0) + 1,
+      trace: `ci_gate(fail:${failed ? failed.name : 'unknown'})`,
+    };
+  };
 }
 
 /**
@@ -1037,6 +1091,8 @@ export function buildHarnessGraph(overrides = {}) {
     proposer: overrides.proposer || placeholderNode('proposer'),
     reviewer: overrides.reviewer || placeholderNode('reviewer', () => ({ review_verdict: 'APPROVED' })),
     generator: overrides.generator || placeholderNode('generator'),
+    // M4 ci_gate 默认 placeholder 直接 PASS（测试不调真 gh CLI）
+    ci_gate: overrides.ci_gate || placeholderNode('ci_gate', () => ({ ci_status: 'pass' })),
     evaluator: overrides.evaluator || placeholderNode('evaluator', () => ({ evaluator_verdict: 'PASS' })),
     report: overrides.report || placeholderNode('report'),
   };
@@ -1046,6 +1102,7 @@ export function buildHarnessGraph(overrides = {}) {
     .addNode('proposer', nodes.proposer)
     .addNode('reviewer', nodes.reviewer)
     .addNode('generator', nodes.generator)
+    .addNode('ci_gate', nodes.ci_gate)
     .addNode('evaluator', nodes.evaluator)
     .addNode('report', nodes.report)
     .addEdge(START, 'planner')
@@ -1056,7 +1113,15 @@ export function buildHarnessGraph(overrides = {}) {
       (state) => (state.review_verdict === 'APPROVED' ? 'generator' : 'proposer'),
       { generator: 'generator', proposer: 'proposer' },
     )
-    .addEdge('generator', 'evaluator')
+    // Generator → CI Gate（M4 插入）
+    .addEdge('generator', 'ci_gate')
+    // CI Gate 路由：PASS → evaluator；FAIL/TIMEOUT → 回 generator 继续 Fix commit
+    .addConditionalEdges(
+      'ci_gate',
+      (state) => (state.ci_status === 'pass' ? 'evaluator' : 'generator'),
+      { evaluator: 'evaluator', generator: 'generator' },
+    )
+    // Evaluator 路由：PASS → report；FAIL → 回 generator（同分支 commit Fix）
     .addConditionalEdges(
       'evaluator',
       (state) => (state.evaluator_verdict === 'PASS' ? 'report' : 'generator'),
@@ -1081,4 +1146,5 @@ export function compileHarnessApp({ overrides, checkpointer } = {}) {
 }
 
 // 节点名常量（runner / 测试 / observability 共用）
-export const HARNESS_NODE_NAMES = ['planner', 'proposer', 'reviewer', 'generator', 'evaluator', 'report'];
+// Harness v2 M4：ci_gate 插在 generator 和 evaluator 之间
+export const HARNESS_NODE_NAMES = ['planner', 'proposer', 'reviewer', 'generator', 'ci_gate', 'evaluator', 'report'];
