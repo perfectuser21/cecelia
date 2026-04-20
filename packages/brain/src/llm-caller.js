@@ -18,10 +18,36 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { getActiveProfile } from './model-profile.js';
-import { selectBestAccount } from './account-usage.js';
+import { selectBestAccount, markAuthFailure } from './account-usage.js';
 import { reportCall } from './langfuse-reporter.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
+
+// ─── Bridge exit-code-1 熔断跟踪 ─────────────────────────────────────────────
+// accountId → { count: number, lastErrorAt: number }
+// 连续 3 次 bridge exit-code-1 失败 → markAuthFailure(accountId, 1h, 'api_error')
+const BRIDGE_EXIT1_THRESHOLD = 3;
+const BRIDGE_EXIT1_WINDOW_MS = 10 * 60 * 1000; // 10 分钟窗口内计数（跨窗口重置）
+const BRIDGE_EXIT1_RESET_MS = 60 * 60 * 1000;  // markAuthFailure 熔断 1h
+const _bridgeExit1Counters = new Map();
+
+function _recordBridgeExit1(accountId) {
+  const now = Date.now();
+  const existing = _bridgeExit1Counters.get(accountId);
+  const count = (existing && now - existing.lastErrorAt <= BRIDGE_EXIT1_WINDOW_MS)
+    ? existing.count + 1
+    : 1;
+  _bridgeExit1Counters.set(accountId, { count, lastErrorAt: now });
+  return count;
+}
+
+function _resetBridgeExit1(accountId) {
+  _bridgeExit1Counters.delete(accountId);
+}
+
+// ─── Anthropic API 余额告警去重 ───────────────────────────────────────────────
+// 同一 runtime 只 raise 一次，Brain 重启后重新计数
+const _anthropicBalanceAlerted = new Set();
 
 // Model ID → claude --model flag
 const CLAUDE_MODEL_FLAG = {
@@ -238,6 +264,25 @@ async function callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent 
 
   if (!response.ok) {
     const errText = await response.text().catch(() => 'unknown');
+    // 余额不足 → P1 告警（同 runtime 去重），仍抛异常让调用方走 fallback
+    const lowerErr = errText.toLowerCase();
+    if (
+      lowerErr.includes('credit balance is too low') ||
+      lowerErr.includes('credit balance too low') ||
+      lowerErr.includes('insufficient_balance')
+    ) {
+      if (!_anthropicBalanceAlerted.has('anthropic_api_balance_low')) {
+        _anthropicBalanceAlerted.add('anthropic_api_balance_low');
+        try {
+          const { raise } = await import('./alerting.js');
+          raise(
+            'P1',
+            'anthropic_api_balance_low',
+            '⚠️ Anthropic API 余额不足，thalamus 直连路径不可用 — 请充值'
+          ).catch(() => {});
+        } catch { /* 告警失败不阻断主流程 */ }
+      }
+    }
     const apiErr = new Error(`Anthropic API error: ${response.status} - ${errText.slice(0, 200)}`);
     apiErr.status = response.status;
     throw apiErr;
@@ -295,6 +340,25 @@ async function callClaudeViaBridge(prompt, model, timeout, _originalModel) {
       const errText = await response.text().catch(() => 'unknown');
       // dyld/Library not loaded/ENOENT 是启动级别失败，重试无意义，直接抛出
       const isStartupError = /dyld|Library not loaded|ENOENT|cannot open shared object/.test(errText);
+      // 明确的 claude CLI exit-code-1 错误（bridge 响应体形如 {"error":"exit code 1",...}）
+      // 仅精确匹配 "exit code 1"（不命中 "exit code 137" 等其他退出码），避免误伤
+      const isExitCode1 = /\bexit code 1\b/.test(errText) && !/\bexit code 1\d+/.test(errText);
+      // exit-code-1 熔断：每次 500+exit-code-1 都计数（包括内部重试），
+      // 连续 3 次同一 account exit-code-1 → markAuthFailure(1h, 'api_error')
+      if (isExitCode1 && accountId) {
+        const count = _recordBridgeExit1(accountId);
+        console.warn(`[llm-caller] [bridge-circuit] ${accountId} exit-code-1 count=${count}/${BRIDGE_EXIT1_THRESHOLD}`);
+        if (count >= BRIDGE_EXIT1_THRESHOLD) {
+          try {
+            const resetTime = new Date(Date.now() + BRIDGE_EXIT1_RESET_MS).toISOString();
+            markAuthFailure(accountId, resetTime, 'api_error');
+            console.warn(`[llm-caller] [bridge-circuit] ${accountId}: 连续 ${count} 次 bridge exit-code-1，自动熔断 1h`);
+          } catch (mafErr) {
+            console.warn(`[llm-caller] [bridge-circuit] markAuthFailure 失败: ${mafErr.message}`);
+          }
+          _resetBridgeExit1(accountId);
+        }
+      }
       // 500 是瞬态错误（CLI 限流/临时失败），重试；4xx 或启动错误直接抛出
       if (response.status === 500 && !isStartupError && bridge500Retry < BRIDGE_500_MAX_RETRIES) {
         bridge500Retry++;
@@ -309,6 +373,7 @@ async function callClaudeViaBridge(prompt, model, timeout, _originalModel) {
       const bridgeErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
       bridgeErr.status = response.status;
       bridgeErr.isStartupError = isStartupError;
+      bridgeErr.isExitCode1 = isExitCode1;
       throw bridgeErr;
     }
 
@@ -323,6 +388,8 @@ async function callClaudeViaBridge(prompt, model, timeout, _originalModel) {
       throw new Error('Bridge /llm-call returned empty text');
     }
 
+    // 成功 → 重置 exit-code-1 计数（证明该账号已恢复）
+    if (accountId) _resetBridgeExit1(accountId);
     return data.text;
   }
 }
@@ -588,3 +655,9 @@ async function callOpenAIAPI(prompt, model, timeout, maxTokens) {
 export function _resetMinimaxKey() { _minimaxKey = null; }
 export function _resetAnthropicKey() { _anthropicKey = null; }
 export function _resetOpenAIKey() { _openaiKey = null; }
+
+// 测试辅助：重置 bridge exit-code-1 计数和 anthropic balance 告警去重
+export function _resetBridgeCircuitState() {
+  _bridgeExit1Counters.clear();
+  _anthropicBalanceAlerted.clear();
+}
