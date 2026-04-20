@@ -9,6 +9,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 GIT_SCRIPT="$REPO_ROOT/packages/brain/scripts/cecelia-run.sh"
 PLIST_SRC="$REPO_ROOT/packages/brain/deploy/com.cecelia.brain.plist"
@@ -51,6 +52,15 @@ if launchctl list com.cecelia.brain &>/dev/null; then
 fi
 launchctl load "$PLIST_DST"
 echo "✅ 服务已重新加载"
+
+# --- Install watchdog to ~/bin (SSOT: packages/brain/deploy/cecelia-watchdog.sh) ---
+echo ""
+echo "📋 Installing Cecelia watchdog..."
+mkdir -p "$HOME/bin"
+cp "$SCRIPT_DIR/cecelia-watchdog.sh" "$HOME/bin/cecelia-watchdog.sh"
+chmod +x "$HOME/bin/cecelia-watchdog.sh"
+echo "✅ watchdog 已部署到 ~/bin/cecelia-watchdog.sh"
+echo "   （通过 crontab '* * * * * \$HOME/bin/cecelia-watchdog.sh' 调用）"
 
 echo ""
 echo "=== 安装完成 ==="

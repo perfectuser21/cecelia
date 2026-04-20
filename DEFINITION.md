@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.219.0
+**Brain 版本**: 1.220.0
 
 **状态**: 生产运行中
 
@@ -115,6 +115,27 @@ Agent Workers (Caramel/小检/小审/...)
   ↓ 完成后
 回调 Core API (POST /api/brain/execution-callback)
 ```
+
+### 1.5 意识守护（Consciousness Guard）
+
+Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / evolution-scanner / desire / ...）可通过环境变量 `CONSCIOUSNESS_ENABLED=false` 整体关闭，**保留任务派发、调度、监控不受影响**。
+
+**开关**：
+| 值 | 效果 |
+|---|---|
+| `CONSCIOUSNESS_ENABLED=false` | 关（推荐） |
+| `BRAIN_QUIET_MODE=true` | 关（deprecated 别名，3 月兼容窗口） |
+| 默认（未设） | 开 |
+
+**守护函数**：`packages/brain/src/consciousness-guard.js` 导出 `isConsciousnessEnabled()`，所有意识模块入口通过它判断。CI 反向 grep 脚本 `scripts/check-consciousness-guard.sh` 禁止裸读环境变量。
+
+**启动日志**：
+```
+[Brain] CONSCIOUSNESS_ENABLED=false — 意识层全部跳过（保留任务派发/调度/监控）
+[Brain] 守护模块: thalamus/rumination/narrative/diary-scheduler/evolution-scanner/...
+```
+
+**不守护（保留派发 / 纯计算）**：planner / executor / dispatchNextTask / quarantine / circuit-breaker / alertness / harness-watcher / publish-monitor / credential-check / evaluateEmotion（纯函数，dispatch_rate_modifier 派发依赖）。
 
 ---
 

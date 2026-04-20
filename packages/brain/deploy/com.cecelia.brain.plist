@@ -20,6 +20,8 @@
 		<string>/Users/administrator/perfect21/cecelia/.claude/worktrees</string>
 		<key>BRAIN_QUIET_MODE</key>
 		<string>true</string>
+		<key>CONSCIOUSNESS_ENABLED</key>
+		<string>false</string>
 	</dict>
 	<key>KeepAlive</key>
 	<true/>

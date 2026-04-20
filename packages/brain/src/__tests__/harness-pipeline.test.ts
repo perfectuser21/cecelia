@@ -104,19 +104,19 @@ describe('harness pipeline — 模型配置', () => {
   });
 });
 
-describe('BRAIN_QUIET_MODE — 噪音关闭', () => {
-  it('server.js: startSelfDriveLoop 被 BRAIN_QUIET_MODE 门控', () => {
+describe('isConsciousnessEnabled() — 意识守护', () => {
+  it('server.js: startSelfDriveLoop 被 isConsciousnessEnabled() 门控', () => {
     const idx = serverSrc.indexOf('startSelfDriveLoop');
     expect(idx).toBeGreaterThan(0);
     const region = serverSrc.slice(idx - 200, idx + 50);
-    expect(region).toContain('BRAIN_QUIET_MODE');
+    expect(region).toContain('isConsciousnessEnabled');
   });
 
-  it('tick.js: triggerDeptHeartbeats 被 BRAIN_QUIET_MODE 门控', () => {
+  it('tick.js: triggerDeptHeartbeats 被 isConsciousnessEnabled() 门控', () => {
     const callIdx = tickSrc.indexOf('triggerDeptHeartbeats(pool)');
     expect(callIdx).toBeGreaterThan(0);
     const region = tickSrc.slice(callIdx - 400, callIdx + 100);
-    expect(region).toContain('BRAIN_QUIET_MODE');
+    expect(region).toContain('isConsciousnessEnabled');
   });
 });
 

@@ -61,6 +61,7 @@ import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harnes
 import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks, cancelCredentialAlertTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
+import { isConsciousnessEnabled } from './consciousness-guard.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -79,12 +80,6 @@ function tickLog(...args) {
 const TICK_INTERVAL_MINUTES = 2;
 const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
-
-// Quiet Mode — 跳过所有后台 LLM 调用（dev 调试用）
-const BRAIN_QUIET_MODE = process.env.BRAIN_QUIET_MODE === 'true';
-if (BRAIN_QUIET_MODE) {
-  console.log('[Brain] BRAIN_QUIET_MODE=true — thalamus/rumination/narrative/digest/self-report/synthesis/notebook-feeder 全部跳过');
-}
 
 // Minimal Mode — 只保留心跳 + 手动任务派发，跳过所有自动调度（内容线/巡检/告警）
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
@@ -2060,7 +2055,7 @@ async function executeTick() {
   // ═══════════════════════════════════════════════════════════════════
 
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
-  if (!BRAIN_QUIET_MODE) {
+  if (isConsciousnessEnabled()) {
   publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
   try {
     const tickEvent = {
@@ -2103,7 +2098,7 @@ async function executeTick() {
     console.error('[tick] Thalamus error, falling back to code-based tick:', thalamusErr.message);
     // Continue with normal tick if thalamus fails
   }
-  } // end !BRAIN_QUIET_MODE (thalamus)
+  } // end isConsciousnessEnabled() (thalamus)
 
   // 0.5. PR Plans Completion Check (三层拆解状态自动更新)
   try {
@@ -2179,7 +2174,7 @@ async function executeTick() {
   }
 
   // 0.7. Pending Conversations Check — 检查待回音消息，判断是否跟进
-  if (!BRAIN_QUIET_MODE) {
+  if (isConsciousnessEnabled()) {
   try {
     const { checkPendingFollowups } = await import('./pending-conversations.js');
     const { callLLM } = await import('./llm-caller.js');
@@ -2200,7 +2195,7 @@ async function executeTick() {
   } catch (followupErr) {
     console.error('[tick] Pending followup check failed:', followupErr.message);
   }
-  } // end !BRAIN_QUIET_MODE (pending followups)
+  } // end isConsciousnessEnabled() (pending followups)
 
   // 0.4.5. Zombie resource cleanup: 每 20 分钟清理一次 stale slots + 孤儿 worktrees
   const zombieElapsed = Date.now() - _lastZombieCleanupTime;
@@ -2975,9 +2970,9 @@ async function executeTick() {
   recordOperation(true, 'tick');
 
   // 9. Trigger dept heartbeats (每轮 Tick 末尾，为活跃部门创建 heartbeat task)
-  // BRAIN_QUIET_MODE=true 时跳过，避免 heartbeat 噪音干扰手动 pipeline 验证
+  // CONSCIOUSNESS_ENABLED=false 时跳过，避免 heartbeat 噪音干扰手动 pipeline 验证
   let deptHeartbeatResult = { triggered: 0, skipped: 0, results: [] };
-  if (!BRAIN_QUIET_MODE) {
+  if (isConsciousnessEnabled()) {
     try {
       deptHeartbeatResult = await triggerDeptHeartbeats(pool);
     } catch (deptErr) {
@@ -3000,15 +2995,17 @@ async function executeTick() {
   Promise.resolve().then(() => triggerArchReview(pool))
     .catch(e => console.warn('[tick] arch review scheduler 失败:', e.message));
 
-  // 10.2 每日日报生成（15:00 UTC = 23:00 上海）
-  Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
-    .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
+  // 10.2 每日日报生成（15:00 UTC = 23:00 上海，CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
+      .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
+  }
 
-  // ruminationResult 声明在块外，确保 BRAIN_QUIET_MODE=true 时 return 语句仍可访问
+  // ruminationResult 声明在块外，确保意识关闭时 return 语句仍可访问
   let ruminationResult = null;
 
-  // 10.3–10.8 LLM 后台调用（BRAIN_QUIET_MODE=true 时全部跳过）
-  if (!BRAIN_QUIET_MODE) {
+  // 10.3–10.8 LLM 后台调用（CONSCIOUSNESS_ENABLED=false 时全部跳过）
+  if (isConsciousnessEnabled()) {
 
   // 10.3 对话日志提炼（每 5 分钟扫描 ~/.claude-account1/projects/ .jsonl 文件）
   Promise.resolve().then(() => runConversationDigest())
@@ -3035,7 +3032,7 @@ async function executeTick() {
   // 10.8 欲望轨迹采集（每 6 小时一次，fire-and-forget，Layer 4）
   Promise.resolve().then(() => collectSelfReport(pool)).catch(e => console.warn('[tick] self-report 采集失败:', e.message));
 
-  } // end !BRAIN_QUIET_MODE (10.3–10.8 LLM calls)
+  } // end isConsciousnessEnabled() (10.3–10.8 LLM calls)
 
   // 10.9 每日合并循环（UTC 19:00 = 北京凌晨 3:00，fire-and-forget）
   // 汇总今日对话/learnings/任务 → 情节记忆 + self-model 演化
@@ -3043,13 +3040,13 @@ async function executeTick() {
     .catch(e => console.warn('[tick] 每日合并失败:', e.message));
 
   // 10.10 NotebookLM 喂入（每天定时喂入 learnings/memory/OKR，fire-and-forget）
-  if (!BRAIN_QUIET_MODE) {
+  if (isConsciousnessEnabled()) {
     Promise.resolve().then(() => feedDailyIfNeeded(pool))
       .catch(e => console.warn('[tick] notebook feeder 失败:', e.message));
   }
 
   // 10.11 分层记忆压缩调度（daily/weekly/monthly synthesis，fire-and-forget）
-  if (!BRAIN_QUIET_MODE) {
+  if (isConsciousnessEnabled()) {
     Promise.resolve().then(() => runSynthesisSchedulerIfNeeded(pool))
       .catch(e => console.warn('[tick] synthesis scheduler 失败:', e.message));
   }
@@ -3062,13 +3059,16 @@ async function executeTick() {
   Promise.resolve().then(() => check48hReport(pool))
     .catch(e => console.warn('[tick] 48h 简报检查失败:', e.message));
 
-  // 10.14 进化日志扫描（每日一次，自动记录 cecelia repo 新 PR，fire-and-forget）
-  Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
-    .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
+  // 10.14 + 10.15 进化日志扫描 & 叙事合成（CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    // 10.14 进化日志扫描（每日一次，自动记录 cecelia repo 新 PR，fire-and-forget）
+    Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
+      .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
 
-  // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，fire-and-forget）
-  Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
-    .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
+    // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，fire-and-forget）
+    Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
+      .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
+  }
 
   // 10.16 每日契约扫描（UTC 03:00，检查模块边界是否有测试覆盖，fire-and-forget）
   Promise.resolve().then(() => triggerContractScan(pool))
@@ -3114,13 +3114,17 @@ async function executeTick() {
   Promise.resolve().then(() => scheduleKR3ProgressReport(pool))
     .catch(e => console.warn('[tick] KR3 进度报告失败:', e.message));
 
-  // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，fire-and-forget）
-  Promise.resolve().then(() => runSuggestionCycle(pool))
-    .catch(e => console.warn('[tick] suggestion cycle 失败:', e.message));
+  // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    Promise.resolve().then(() => runSuggestionCycle(pool))
+      .catch(e => console.warn('[tick] suggestion cycle 失败:', e.message));
+  }
 
-  // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，fire-and-forget）
-  Promise.resolve().then(() => runConversationConsolidator())
-    .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
+  // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
+    Promise.resolve().then(() => runConversationConsolidator())
+      .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
+  }
 
   // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
   Promise.resolve().then(() => memorySyncIfNeeded(pool))
@@ -3128,9 +3132,9 @@ async function executeTick() {
 
   } // end !MINIMAL_MODE (10.x 所有自动调度)
 
-  // 11. 欲望系统（六层主动意识）— BRAIN_QUIET_MODE 时跳过
+  // 11. 欲望系统（六层主动意识）— CONSCIOUSNESS_ENABLED=false 时跳过
   let desireResult = null;
-  if (!BRAIN_QUIET_MODE) {
+  if (isConsciousnessEnabled()) {
     publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
     try {
       desireResult = await runDesireSystem(pool);
@@ -3139,9 +3143,9 @@ async function executeTick() {
     }
   }
 
-  // 11.5 代码质量扫描（每天首次 tick 时触发）— BRAIN_QUIET_MODE 时跳过
+  // 11.5 代码质量扫描（每天首次 tick 时触发）— CONSCIOUSNESS_ENABLED=false 时跳过
   let scanResult = null;
-  if (!BRAIN_QUIET_MODE) {
+  if (isConsciousnessEnabled()) {
     try {
       scanResult = await triggerCodeQualityScan(pool);
       if (scanResult?.triggered) {
