@@ -18,3 +18,4 @@ Phase 8.1 建的两个机制都"只做了前半段"：
 - [ ] 任何阈值/常量：SSOT 必须在一个代码文件里（`packages/brain/src/constants/` 下），**不得散落在多个 markdown 或 prompt 里**
 - [ ] Brain 新表：migration 编号找 `ls migrations | tail -3` 确认最新号码不冲突
 - [ ] review-parser 这类 markdown 解析器：测试必须覆盖"缺字段 / 空输入 / 格式错乱 / 中英混用"四个边界，不然线上会有解析失败
+- [ ] CI workflow 对 empty commit / close-reopen **不触发**；要让 PR 重新过 CI 必须改一个实际文件内容 + push
