@@ -85,14 +85,30 @@ jobs:
           echo "total_archived=$TOTAL_OLD" >> "$GITHUB_OUTPUT"
           echo "buckets=$BUCKETS_DONE" >> "$GITHUB_OUTPUT"
 
-      - name: Commit archive
+      # 走 PR 流程：main 受保护（必须 ci-passed 绿），不能 bot 直推。
+      # 创 cp-archive-YYYYMMDD-HHMM 分支，开 PR 打 harness 标签（跳过 pr-size-check），
+      # 让 ci.yml 里的 auto-merge job 在 ci-passed 绿时自动 squash merge。
+      - name: 开 PR（harness 标签触发自动合并）
         if: steps.archive.outputs.changed == 'true'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TOTAL: ${{ steps.archive.outputs.total_archived }}
           BUCKETS: ${{ steps.archive.outputs.buckets }}
         run: |
+          BRANCH="cp-archive-$(date -u +%Y%m%d-%H%M)-learnings"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
           git add docs/learnings/archive/
           git commit -m "chore(learnings): 月度归档（${TOTAL} 文件 / ${BUCKETS} 月桶）[bot]"
-          git push
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create \
+            --title "chore(learnings): 月度归档 ${TOTAL} 文件" \
+            --body "自动触发：archive-learnings workflow。归档 ${TOTAL} 个 30 天前的 learning 到 ${BUCKETS} 个 YYYY-MM.tar.gz。
+
+harness 标签用于跳过 pr-size-check 硬门禁（1500 行），并触发 auto-merge job。" \
+            --label harness \
+            --head "$BRANCH" \
+            --base main)
+          echo "✅ PR 已开: $PR_URL"

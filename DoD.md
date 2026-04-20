@@ -1,25 +1,16 @@
-# DoD: learnings 月度归档 workflow
+# DoD: 修 archive-learnings workflow 走 PR 流程
 
-- [x] [ARTIFACT] workflow 文件存在
-  Test: manual:node -e "if(!require('fs').existsSync('.github/workflows/archive-learnings.yml'))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] workflow 最后一步改成开 PR（含 gh pr create + harness 标签）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/gh pr create/.test(c))process.exit(1);if(!/--label harness/.test(c))process.exit(2);console.log('PASS')"
 
-- [x] [ARTIFACT] 含 monthly cron（每月 1 号 04:00 UTC）
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/cron:\\s*['\"]0 4 1 \\* \\*['\"]/.test(c))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] workflow 不再直推 main（删掉 git push 没有分支参数的写法）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');const lines=c.split('\\n');const bad=lines.filter(l=>l.trim()==='git push');if(bad.length>0){console.error('还有裸 git push:',bad);process.exit(1)}console.log('PASS')"
 
-- [x] [ARTIFACT] 支持 workflow_dispatch 手动触发
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/workflow_dispatch:/.test(c))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] 分支名符合 cp-* 规范
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/BRANCH=\"cp-archive-/.test(c))process.exit(1);console.log('PASS')"
 
-- [x] [ARTIFACT] 用 git log --diff-filter=A 拿首次入库时间（不用 mtime）
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/git log --follow --diff-filter=A --format=%at/.test(c))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] 用 GITHUB_TOKEN 做 gh 鉴权
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/GH_TOKEN:\\s*\\\$\\{\\{\\s*secrets\\.GITHUB_TOKEN\\s*\\}\\}/.test(c))process.exit(1);console.log('PASS')"
 
-- [x] [ARTIFACT] 30 天前的文件才归档（cutoff 逻辑）
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/30 days ago/.test(c))process.exit(1);console.log('PASS')"
-
-- [x] [ARTIFACT] 按 YYYY-MM 分桶、tar.gz、git rm 原文件
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/\\+%Y-%m/.test(c))process.exit(1);if(!/tar -czf/.test(c))process.exit(2);if(!/git rm/.test(c))process.exit(3);console.log('PASS')"
-
-- [x] [ARTIFACT] permissions contents: write（commit 推 main 需要）
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/permissions:[\\s\\S]*?contents:\\s*write/.test(c))process.exit(1);console.log('PASS')"
-
-- [x] [BEHAVIOR] workflow 单元测试 8/8 通过
-  Test: tests/workflows/archive-learnings.test.ts
+- [x] [BEHAVIOR] 原有归档逻辑未动（仍用 git log --diff-filter=A + 30 days + YYYY-MM 分桶 + tar.gz）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/archive-learnings.yml','utf8');if(!/git log --follow --diff-filter=A --format=%at/.test(c))process.exit(1);if(!/30 days ago/.test(c))process.exit(2);if(!/\\+%Y-%m/.test(c))process.exit(3);if(!/tar -czf/.test(c))process.exit(4);console.log('PASS')"
