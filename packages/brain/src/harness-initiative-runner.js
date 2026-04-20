@@ -156,13 +156,23 @@ ${task.description || task.title || ''}
   }
 
   // ── Phase A — GAN 合同循环（PR-4）──────────────────────────────────────
+  // plannerOutput 是 Planner stdout 元数据（含"Push failed"等废话），真 PRD 在 sprints/sprint-prd.md
+  let prdContent = plannerOutput;
+  try {
+    const fsPromises = await import('node:fs/promises');
+    const pathMod = (await import('node:path')).default;
+    prdContent = await fsPromises.readFile(pathMod.join(worktreePath, sprintDir, 'sprint-prd.md'), 'utf8');
+  } catch (err) {
+    console.error(`[harness-initiative-runner] read sprint-prd.md failed (${err.message}), falling back to planner stdout`);
+  }
+
   let ganResult;
   try {
     ganResult = await runGanContractLoop({
       taskId: task.id,
       initiativeId,
       sprintDir,
-      prdContent: plannerOutput,
+      prdContent,
       executor,
       worktreePath,
       githubToken,
