@@ -33,7 +33,8 @@ else
 fi
 
 HIT_COUNT=0
-for f in "${TARGETS[@]}"; do
+# Phase 7.3: bash 3.2 set -u compat — guard 空数组（find 无输出 + 无参数时 TARGETS 为空）
+for f in "${TARGETS[@]+${TARGETS[@]}}"; do
     [[ -f "$f" ]] || continue
     # -n 行号 -E 扩展正则
     while IFS= read -r line; do

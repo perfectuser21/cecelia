@@ -114,6 +114,7 @@ if [[ "$NEW" == "$CURRENT" ]]; then
 fi
 
 # ---------- collect target list (skip missing optional files with warn) ----------
+# Phase 7.3: bash 3.2 set -u compat — 所有下游 "${TARGETS[@]}" 展开均加 +${TARGETS[@]} guard
 declare -a TARGETS=()
 for f in "$VERSION_FILE" "$PACKAGE_JSON" "$HOOK_CORE_VERSION" "$HOOKS_VERSION" "$SKILL_MD" "$REGRESSION_YAML"; do
   if [[ -f "$f" ]]; then
@@ -130,7 +131,7 @@ fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
   echo "[dry-run] would bump engine version: $CURRENT -> $NEW"
-  for f in "${TARGETS[@]}"; do
+  for f in "${TARGETS[@]+${TARGETS[@]}}"; do
     echo "[dry-run]   update: $f"
   done
   exit 0
@@ -140,7 +141,7 @@ fi
 BACKUP_DIR="$(mktemp -d -t bump-version-XXXXXX)"
 trap 'rm -rf "$BACKUP_DIR"' EXIT
 
-for f in "${TARGETS[@]}"; do
+for f in "${TARGETS[@]+${TARGETS[@]}}"; do
   rel="${f#$REPO/}"
   mkdir -p "$BACKUP_DIR/$(dirname "$rel")"
   cp "$f" "$BACKUP_DIR/$rel"
@@ -148,7 +149,7 @@ done
 
 restore_all() {
   echo "ERROR: update failed — restoring backups" >&2
-  for f in "${TARGETS[@]}"; do
+  for f in "${TARGETS[@]+${TARGETS[@]}}"; do
     rel="${f#$REPO/}"
     if [[ -f "$BACKUP_DIR/$rel" ]]; then
       cp "$BACKUP_DIR/$rel" "$f"
@@ -264,7 +265,7 @@ update_regression_yaml() {
 
 # ---------- apply ----------
 if ! (
-  for f in "${TARGETS[@]}"; do
+  for f in "${TARGETS[@]+${TARGETS[@]}}"; do
     case "$f" in
       "$VERSION_FILE"|"$HOOK_CORE_VERSION"|"$HOOKS_VERSION")
         update_plain_version_file "$f"

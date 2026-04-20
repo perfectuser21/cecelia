@@ -18,9 +18,10 @@
 set -euo pipefail
 
 # L2 fix: 临时文件清理 trap
+# Phase 7.3: bash 3.2 set -u compat — guard 空数组展开，否则 EXIT trap 在 TEMP_FILES 从未 push 时炸
 TEMP_FILES=()
 cleanup_temp() {
-    for f in "${TEMP_FILES[@]}"; do
+    for f in "${TEMP_FILES[@]+${TEMP_FILES[@]}}"; do
         rm -f "$f" 2>/dev/null || true
     done
 }

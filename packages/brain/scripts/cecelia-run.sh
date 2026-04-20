@@ -22,11 +22,13 @@ set -euo pipefail
 if [[ "$(id -u)" == "0" ]]; then
   echo "[cecelia-run] 检测到 root 运行，切换到 administrator 重新执行..." >&2
   # 收集所有相关环境变量
+  # Phase 7.3: bash 3.2 set -u compat — 如果 compgen 未命中任何变量，_env_args 保持空，
+  # "${_env_args[@]}" 展开会触发 unbound variable
   _env_args=()
   for _var in $(compgen -v 2>/dev/null | grep -E '^(CECELIA_|WEBHOOK_URL|WORKTREE_BASE|REPO_ROOT|LOCK_DIR|MAX_CONCURRENT)'); do
     _env_args+=("$_var=${!_var}")
   done
-  exec sudo -u administrator env HOME=/Users/administrator PATH="$PATH" "${_env_args[@]}" "$0" "$@"
+  exec sudo -u administrator env HOME=/Users/administrator PATH="$PATH" "${_env_args[@]+${_env_args[@]}}" "$0" "$@"
 fi
 
 # 配置
