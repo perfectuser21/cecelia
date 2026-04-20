@@ -17,7 +17,7 @@
 
 import crypto from 'crypto';
 import pool from './db.js';
-import { ACTION_WHITELIST, _validateDecision, recordLLMError, _recordTokenUsage } from './thalamus.js';
+import { ACTION_WHITELIST, validateDecision as _validateDecision, recordLLMError, recordTokenUsage as _recordTokenUsage } from './thalamus.js';
 import { callLLM } from './llm-caller.js';
 import { searchRelevantLearnings } from './learning.js';
 import { getSelfModel } from './self-model.js';

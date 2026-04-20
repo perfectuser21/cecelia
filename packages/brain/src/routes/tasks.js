@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { createTask, _updateTask } from '../actions.js';
+import { createTask, updateTask as _updateTask } from '../actions.js';
 import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick.js';
-import { identifyWorkType, _getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
-import { _getTaskWeights } from '../task-weight.js';
+import { identifyWorkType, getTaskLocation as _getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
+import { getTaskWeights as _getTaskWeights } from '../task-weight.js';
 import { classifyLearningType } from './shared.js';
-import { _publishTaskCreated } from '../events/taskEvents.js';
+import { publishTaskCreated as _publishTaskCreated } from '../events/taskEvents.js';
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';

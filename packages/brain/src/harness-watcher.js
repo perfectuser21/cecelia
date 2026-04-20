@@ -11,7 +11,7 @@
  * 设计原则：CI 通过即代表质量验收通过，直接 merge，无需独立 evaluator agent。
  */
 
-import { checkPrStatus, classifyFailedChecks, _executeMerge } from './shepherd.js';
+import { checkPrStatus, classifyFailedChecks, executeMerge as _executeMerge } from './shepherd.js';
 import { execSync } from 'child_process';
 import { createTask } from './actions.js';
 
