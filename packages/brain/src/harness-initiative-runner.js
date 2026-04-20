@@ -99,6 +99,7 @@ ${task.description || task.title || ''}
       task: { ...task, task_type: 'harness_planner' },
       prompt,
       env: {
+        CECELIA_CREDENTIALS: 'account1',
         CECELIA_TASK_TYPE: 'harness_planner',
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,
