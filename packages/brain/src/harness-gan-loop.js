@@ -85,6 +85,11 @@ export async function runGanContractLoop(opts) {
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: initiativeId,
         HARNESS_PROPOSE_ROUND: String(round),
+        // SKILL v4 约定的 env 变量名（SKILL 用 ${SPRINT_DIR} 等，不是 HARNESS_ 前缀）
+        TASK_ID: taskId,
+        SPRINT_DIR: sprintDir,
+        PLANNER_BRANCH: 'main',
+        PROPOSE_ROUND: String(round),
         GITHUB_TOKEN: githubToken,
       },
     });
@@ -106,6 +111,10 @@ export async function runGanContractLoop(opts) {
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: initiativeId,
         HARNESS_REVIEW_ROUND: String(round),
+        TASK_ID: taskId,
+        SPRINT_DIR: sprintDir,
+        PLANNER_BRANCH: 'main',
+        REVIEW_ROUND: String(round),
         GITHUB_TOKEN: githubToken,
       },
     });
