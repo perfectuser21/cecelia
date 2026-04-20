@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.3.2"
+    date: "2026-04-20"
+    change: "test"
+    description: "Phase 7.4 — /dev 7 棒接力链 + Stop Hook 循环机制 E2E regression test。Phase 7.1 / 7.2 / 7.3 把 Stop Hook 循环机制从「形同虚设」修到「端到端能跑」，但至今没有集成测试覆盖整链关键关节（launcher export CLAUDE_SESSION_ID → worktree-manage 写 owner_session → stop.sh 按 owner_session 精确匹配 → devloop-check 状态机）。任何一环被破坏 CI 都不会发现，要等到下次交互 /dev 翻车才暴露。本 PR 新建 packages/engine/tests/integration/dev-flow-e2e.test.ts，用 vitest + execSync 驱动真实 bash 脚本（不起 claude CLI）覆盖 6 个场景：(S1) claude-launch 透传 CLAUDE_SESSION_ID env + --session-id flag；(S2) worktree-manage cmd_create 把 env 里的 session_id 写进 .dev-lock owner_session；(S3) stop.sh 按 owner_session 精确路由不误匹配其他 session；(S4) 无 git/无 worktree 场景 stop.sh 不抛 unbound variable（Phase 7.2 回归）；(S5) devloop_check CI 失败 → blocked + reason 含「CI 失败」；(S6) cleanup_done: true → done。纯加测试不改生产代码。Engine patch bump 18.3.1 → 18.3.2。"
+    files:
+      - "packages/engine/tests/integration/dev-flow-e2e.test.ts (new, 6 scenarios E2E)"
+      - "Engine 7 处版本文件 18.3.2"
+
   - version: "18.3.1"
     date: "2026-04-20"
     change: "fix"
