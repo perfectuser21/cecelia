@@ -1,30 +1,22 @@
-# PRD: 修 archive-learnings workflow 走 PR 而不是直推 main
+# PRD: 给 archive-learnings.yml 加注释强制 GHA 重新解析 triggers
 
 ## 背景
 
-PR #2448 合并后手动 dispatch archive-learnings 跑失败：
+PR #2450 改了 archive-learnings.yml 的 Commit 步骤（从 push main 改成开 PR）。合并进 main 后，GHA API 仍然报 `422: Workflow does not have 'workflow_dispatch' trigger`，实际文件有。这是 GHA 已知元数据缓存 bug。
 
-```
-remote: error: GH013: Repository rule violations found for refs/heads/main.
-- Required status check "ci-passed" is expected.
-! [remote rejected] main -> main (push declined due to repository rule violations)
-```
-
-main 受 `required_status_checks` ruleset 保护，bot 直接 push 被拒。workflow 归档了 297 个文件，commit 成功但 push 失败。
-
-尝试给 `github-actions` Integration 加 bypass_actors 也被拒：`Actor GitHub Actions integration must be part of the ruleset source or owner organization`。
+尝试过：disable/enable workflow、API 用 file path vs id、用 sha vs ref=main。全部 422。
 
 ## 成功标准
 
-1. workflow 的最后一步从"直推 main"改成"push feature branch + 开 PR"
-2. PR 打 `harness` 标签 → 跳过 `pr-size-check`（297 deletions 超 1500 行硬门禁）
-3. PR 走正常 CI → `ci-passed` 绿时 `auto-merge` job 自动 squash merge
-4. 分支名 `cp-archive-YYYYMMDD-HHMM-learnings`（符合 branch-naming 规则）
-5. 本 PR 自带一次触发验证：合并后手动 dispatch workflow，验证开 PR 流程工作
+1. 合并后 `gh workflow run archive-learnings.yml --ref main` 成功（不再 422）
+2. 触发后 workflow 跑通，开出归档 PR（cp-archive-* 分支，harness 标签）
+3. 归档 PR 过 CI 后 auto-merge 自动合入
 
-## 非目标（YAGNI）
+## 策略
 
-- 不改 ruleset bypass（技术不允许 + 影响所有 bot workflow）
-- 不改 auto-merge 逻辑
-- 不改 pr-size-check 逻辑
-- 不改归档本身的逻辑（cutoff、分桶、tar.gz 都不变）
+改动极小：给 archive-learnings.yml 头部加一行版本注释 `# v1.1 (2026-04-20): 从 bot 直推 main 改成开 PR`。push → PR → merge 会触发 GHA 重新 parse 工作流文件，元数据缓存刷新。
+
+## 非目标
+
+- 不改 workflow 逻辑本身
+- 不修 ruleset、不加 bypass
