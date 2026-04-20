@@ -198,7 +198,12 @@ describe('Workstream 1 — Retry Mechanism [BEHAVIOR]', () => {
 
 `sprints/{sprint}/tests/ws{N}/*.test.ts` —— 放在 sprint 目录下，不污染主测试树。Generator 实现时**不移动**这些测试文件，就地跑。
 
-vitest config 需要加一行：`test.include: [..., 'sprints/**/tests/**/*.test.ts']`
+vitest config 需要加：
+
+```js
+test.include: [..., 'sprints/**/tests/**/*.test.ts']
+test.exclude: [..., 'sprints/archive/**']  // 排除归档
+```
 
 ---
 
@@ -376,8 +381,9 @@ job: test-coverage-for-behavior
 ```yaml
 job: tdd-commit-order
   - git log PR 分支 vs main
-  - commit 1 touch 的文件必须全是 tests/ws*/*.test.ts
-  - commit 2+ touch 的文件必须包含实现代码（不能只有测试）
+  - commit 1 只能 touch：sprints/*/tests/**/*.test.ts + DoD.md（禁含 packages/ apps/ 等实现目录）
+  - commit 2+ 必须包含实现代码（不能只有测试；可含 Learning / docs / 配置等 ARTIFACT 产物）
+  - commit 1 之后，任何 commit 都不允许修改 sprints/*/tests/**/*.test.ts（测试文件一旦 Red 不可改）
   - commit 1 message 必须含 "Red" 或 "(Red)"
   - 实现 commit message 必须含 "Green" 或 "(Green)"
 ```
