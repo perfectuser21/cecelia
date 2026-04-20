@@ -109,7 +109,7 @@ export async function escalateResponse(alertnessLevel, diagnosis) {
 /**
  * 确定响应级别
  */
-function determineResponseLevel(alertnessLevel, duration, diagnosis) {
+function determineResponseLevel(alertnessLevel, duration, _diagnosis) {
   // PANIC 状态 - 立即 L3
   if (alertnessLevel === 4) {
     return RESPONSE_LEVELS.L3;

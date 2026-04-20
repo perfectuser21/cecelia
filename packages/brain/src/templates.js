@@ -229,7 +229,7 @@ function renderPrd(parsedIntent, options = {}) {
 function renderTrd(parsedIntent, options = {}) {
   const {
     projectName,
-    intentType,
+    _intentType,
     tasks = [],
     originalInput,
     entities = {}

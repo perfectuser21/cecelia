@@ -433,7 +433,7 @@ function formatItem(item, depth = 0) {
  * @param {string} mode - 模式
  * @returns {Promise<{entries: Array, meta: Object}>}
  */
-async function searchSemanticMemory(pool, query, mode) {
+async function searchSemanticMemory(pool, query, _mode) {
   const candidates = [];
   const meta = { requestedLimit: 30, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
 

@@ -417,7 +417,7 @@ function determineExecutionMode({ input, feature_id, is_recurring }) {
     return 'feature_task';
   }
 
-  const workType = identifyWorkType(input);
+  const _workType = identifyWorkType(input);
 
   // All tasks dispatched by Cecelia use 'cecelia' execution_mode
   return 'cecelia';

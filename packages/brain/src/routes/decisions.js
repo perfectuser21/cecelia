@@ -87,7 +87,7 @@ export function extractTopicsFromPRD(prdText) {
  * Simple keyword overlap match between a topic and decisions list.
  * Returns the best-matched decision with a score, or null if no match >= 0.4.
  */
-export function findBestDecisionMatch(topic, decisions, prdText) {
+export function findBestDecisionMatch(topic, decisions, _prdText) {
   const topicLower = topic.toLowerCase();
   let best = null;
   let bestScore = 0;
@@ -153,7 +153,7 @@ async function fetchAllDecisions(db) {
     const res = await pool.query("SELECT id, topic, decision FROM decisions WHERE status = 'active' LIMIT 500");
     await pool.end();
     return res.rows || [];
-  } catch (e) {
+  } catch (_e) {
     // DB unavailable - return empty (graceful degradation)
     return [];
   }

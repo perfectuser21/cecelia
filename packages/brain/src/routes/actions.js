@@ -2,11 +2,11 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { readFileSync } from 'fs';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from '../actions.js';
-import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from '../intent.js';
-import { getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from '../decision-executor.js';
-import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from '../proposal.js';
-import { handleChat, handleChatStream } from '../orchestrator-chat.js';
-import { callLLM, callLLMStream } from '../llm-caller.js';
+import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities as _extractEntities, classifyIntent as _classifyIntent, getSuggestedAction as _getSuggestedAction } from '../intent.js';
+import { getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals as _expireStaleProposals } from '../decision-executor.js';
+import { createProposal as _createProposal, approveProposal as _approveProposal, rollbackProposal as _rollbackProposal, rejectProposal as _rejectProposal, getProposal as _getProposal, listProposals as _listProposals } from '../proposal.js';
+import { handleChat as _handleChat, handleChatStream as _handleChatStream } from '../orchestrator-chat.js';
+import { callLLM, callLLMStream as _callLLMStream } from '../llm-caller.js';
 import { ALLOWED_ACTIONS, checkIdempotency, saveIdempotency, internalLogDecision } from './shared.js';
 
 const router = Router();

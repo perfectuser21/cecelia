@@ -17,7 +17,7 @@
 
 import crypto from 'crypto';
 import pool from './db.js';
-import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage } from './thalamus.js';
+import { ACTION_WHITELIST, validateDecision as _validateDecision, recordLLMError, recordTokenUsage as _recordTokenUsage } from './thalamus.js';
 import { callLLM } from './llm-caller.js';
 import { searchRelevantLearnings } from './learning.js';
 import { getSelfModel } from './self-model.js';
@@ -1149,7 +1149,7 @@ async function searchRelevantAnalyses(context = {}, limit = 5) {
   const scoredAnalyses = result.rows.map(analysis => {
     let score = 0;
     const failurePattern = analysis.failure_pattern || {};
-    const rootCauseLower = (analysis.root_cause || '').toLowerCase();
+    const _rootCauseLower = (analysis.root_cause || '').toLowerCase();
 
     // 1. Failure class match (weight: 10)
     if (context.failure_class && failurePattern.class === context.failure_class) {
@@ -1218,7 +1218,7 @@ async function performRCA(failedTask, history = []) {
       if (typeof contributing_factors === 'string') {
         try {
           contributing_factors = JSON.parse(contributing_factors);
-        } catch (e) {
+        } catch (_e) {
           contributing_factors = [];
         }
       }
@@ -1227,7 +1227,7 @@ async function performRCA(failedTask, history = []) {
       if (typeof strategy_adjustments === 'string') {
         try {
           strategy_adjustments = JSON.parse(strategy_adjustments);
-        } catch (e) {
+        } catch (_e) {
           strategy_adjustments = [];
         }
       }

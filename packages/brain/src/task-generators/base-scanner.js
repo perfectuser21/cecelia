@@ -37,7 +37,7 @@ class BaseScanner {
    * @param {Object} issue 扫描发现的问题
    * @returns {Promise<Object>} 任务对象
    */
-  async generateTask(issue) {
+  async generateTask(_issue) {
     throw new Error('generateTask() must be implemented by subclass');
   }
 

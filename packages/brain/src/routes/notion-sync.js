@@ -7,10 +7,10 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { runSync, getNotionConfig } from '../notion-sync.js';
+import { runSync as _runSync, getNotionConfig } from '../notion-sync.js';
 // 全量同步模块已删除（用户确认不再需要全量同步功能）
 const NOTION_DB_IDS = {}; // 占位，full-status 端点保留但不再有实际同步数据
-import { rebuildMemoryDatabases, importAllMemoryData } from '../notion-memory-sync.js';
+import { rebuildMemoryDatabases as _rebuildMemoryDatabases, importAllMemoryData as _importAllMemoryData } from '../notion-memory-sync.js';
 
 const router = Router();
 

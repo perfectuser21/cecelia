@@ -73,7 +73,7 @@ function calculateCompleteness(analysis) {
   if (typeof factors === 'string') {
     try {
       factors = JSON.parse(factors);
-    } catch (e) {
+    } catch (_e) {
       factors = [];
     }
   }
@@ -88,7 +88,7 @@ function calculateCompleteness(analysis) {
   if (typeof updates === 'string') {
     try {
       updates = JSON.parse(updates);
-    } catch (e) {
+    } catch (_e) {
       updates = [];
     }
   }
@@ -103,7 +103,7 @@ function calculateCompleteness(analysis) {
 /**
  * Calculate timeliness score (0-15 points)
  */
-function calculateTimeliness(analysis) {
+function calculateTimeliness(_analysis) {
   // For now, assume good timeliness
   // In real implementation, compare created_at with trigger time
   return 15;

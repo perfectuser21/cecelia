@@ -91,7 +91,7 @@ const STATUS_CHECK_KEYWORDS = [
  * @param {string} [mode='chat'] - 对话模式
  * @returns {{ intentType: string, strategy: Object }}
  */
-export function routeMemory(message, mode = 'chat') {
+export function routeMemory(message, _mode = 'chat') {
   if (!message || typeof message !== 'string') {
     return {
       intentType: INTENT_TYPES.GENERAL,

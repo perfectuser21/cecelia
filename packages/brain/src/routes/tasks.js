@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { createTask, updateTask } from '../actions.js';
+import { createTask, updateTask as _updateTask } from '../actions.js';
 import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick.js';
-import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
-import { getTaskWeights } from '../task-weight.js';
+import { identifyWorkType, getTaskLocation as _getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
+import { getTaskWeights as _getTaskWeights } from '../task-weight.js';
 import { classifyLearningType } from './shared.js';
-import { publishTaskCreated } from '../events/taskEvents.js';
+import { publishTaskCreated as _publishTaskCreated } from '../events/taskEvents.js';
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
@@ -896,7 +896,7 @@ router.get('/tasks/:taskId/logs', async (req, res) => {
 
     // 2. Read log file
     const fs = await import('fs/promises');
-    const path = await import('path');
+    const _path = await import('path');
 
     try {
       const logContent = await fs.readFile(logFile, 'utf-8');

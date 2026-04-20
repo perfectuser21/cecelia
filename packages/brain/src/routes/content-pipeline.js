@@ -132,7 +132,7 @@ router.post('/content-types/test-step', async (req, res) => {
   }
 
   try {
-    const startTime = Date.now();
+    const _startTime = Date.now();
     const result = await callLLM('content-test-step', fullPrompt, {
       model: resolvedModel,
       provider: resolvedProvider,

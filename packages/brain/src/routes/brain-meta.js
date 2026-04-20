@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { readFileSync, readdirSync } from 'fs';
-import { callLLM } from '../llm-caller.js';
+import { readFileSync as _readFileSync, readdirSync } from 'fs';
+import { callLLM as _callLLM } from '../llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from '../user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from '../orchestrator-realtime.js';
-import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels, updateAgentCascade } from '../model-profile.js';
+import { loadActiveProfile as _loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels, updateAgentCascade } from '../model-profile.js';
 import { getAccountUsage, selectBestAccount } from '../account-usage.js';
-import websocketService, { WS_EVENTS } from '../websocket.js';
+import websocketService, { WS_EVENTS as _WS_EVENTS } from '../websocket.js';
 import { handleChat, handleChatStream } from '../orchestrator-chat.js';
 
 const router = Router();
@@ -936,7 +936,7 @@ router.post('/orchestrator/realtime/tool', async (req, res) => {
 router.get('/staff', async (_req, res) => {
   try {
     const fs = await import('fs');
-    const path = await import('path');
+    const _path = await import('path');
 
     // 1. 读 workers.config.json
     const workersPath = '/Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json';
@@ -1370,7 +1370,7 @@ router.get('/credentials', async (_req, res) => {
         provider: 'anthropic'
       });
     });
-  } catch(e) { /* dir may not exist in test env */ }
+  } catch(_e) { /* dir may not exist in test env */ }
 
   // 2. API key credentials: ~/.credentials/*.json
   const credDir = process.env.CREDENTIALS_DIR || `${process.env.HOME || '/Users/administrator'}/.credentials`;
@@ -1387,7 +1387,7 @@ router.get('/credentials', async (_req, res) => {
         provider
       });
     });
-  } catch(e) { /* dir may not exist in test env */ }
+  } catch(_e) { /* dir may not exist in test env */ }
 
   res.json({ credentials });
 });

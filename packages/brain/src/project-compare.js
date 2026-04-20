@@ -249,7 +249,7 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
  * @param {string} format - 'json' | 'markdown'
  * @param {boolean} include_tasks - 是否包含子任务统计
  */
-export async function generateCompareReport({ project_ids, format = 'json', include_tasks = false }) {
+export async function generateCompareReport({ project_ids, format = 'json', _include_tasks = false }) {
   if (!Array.isArray(project_ids) || project_ids.length < 2) {
     throw Object.assign(new Error('project_ids must have at least 2 items'), { status: 400 });
   }
@@ -393,7 +393,7 @@ function markdownToNotionBlocks(markdown) {
  * @param {string} format - 'markdown' | 'json'（内部始终用 markdown 推送）
  * @param {string} [notion_parent_id] - Notion 父页面 ID，缺省读 NOTION_COMPARE_PARENT_ID
  */
-export async function pushCompareReportToNotion({ project_ids, format = 'markdown', notion_parent_id }) {
+export async function pushCompareReportToNotion({ project_ids, _format = 'markdown', notion_parent_id }) {
   if (!Array.isArray(project_ids) || project_ids.length < 2) {
     throw Object.assign(new Error('project_ids must have at least 2 items'), { status: 400 });
   }

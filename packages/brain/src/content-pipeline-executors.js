@@ -43,8 +43,8 @@ const NAS_USER = process.env.NAS_USER || '徐啸';
 const NAS_IP = process.env.NAS_IP || '100.110.241.76';
 const NAS_BASE = process.env.NAS_BASE || '/volume1/workspace/vault/zenithjoy-creator/content';
 
-const BRAND_KEYWORDS = ['能力', '系统', '一人公司', '小组织', 'AI', '能力下放', '能力放大'];
-const BANNED_WORDS = ['coding', '搭建', 'agent workflow', 'builder', 'Cecelia', '智能体搭建', '代码部署'];
+const _BRAND_KEYWORDS = ['能力', '系统', '一人公司', '小组织', 'AI', '能力下放', '能力放大'];
+const _BANNED_WORDS = ['coding', '搭建', 'agent workflow', 'builder', 'Cecelia', '智能体搭建', '代码部署'];
 
 // ─── 工具 ───────────────────────────────────────────────────
 

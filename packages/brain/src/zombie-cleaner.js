@@ -204,7 +204,7 @@ async function cleanupOrphanWorktrees(pool) {
         });
         result.removed++;
         console.log(`[zombie-cleaner] Orphan worktree removed: ${wtPath}`);
-      } catch (removeErr) {
+      } catch (_removeErr) {
         // Fallback: 手动删除
         try {
           rmSync(wtPath, { recursive: true, force: true });

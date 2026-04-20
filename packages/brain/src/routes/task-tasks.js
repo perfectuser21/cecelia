@@ -176,7 +176,7 @@ router.patch('/:id', async (req, res) => {
 
     // 状态机保护：已终止的任务不能回退到非终止状态
     const TERMINAL_STATUSES = ['completed', 'cancelled'];
-    const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled', 'failed', 'blocked'];
+    const _VALID_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled', 'failed', 'blocked'];
     if (status !== undefined) {
       const current = await pool.query('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
       if (!current.rows.length) {

@@ -464,8 +464,8 @@ async function updateGoal({ goal_id, status, progress }) {
   updates.push(`updated_at = NOW()`);
 
   // 1. Try objectives (status only — no progress column)
-  const statusUpdates = updates.filter(u => !u.startsWith('progress'));
-  const statusValues = values.filter((_, i) => {
+  const _statusUpdates = updates.filter(u => !u.startsWith('progress'));
+  const _statusValues = values.filter((_, i) => {
     const uStr = updates[i];
     return !uStr || !uStr.startsWith('progress');
   });

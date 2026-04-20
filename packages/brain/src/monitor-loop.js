@@ -185,7 +185,7 @@ async function handleStuckRun(stuck) {
     [stuck.task_id]
   );
   const taskType = typeQuery.rows[0]?.task_type;
-  const taskPayload = typeQuery.rows[0]?.payload || {};
+  const _taskPayload = typeQuery.rows[0]?.payload || {};
 
   if (HARNESS_CHAIN_TYPES.has(taskType)) {
     // 检查是否已有基于此任务派生的下游任务（completed/queued/in_progress）
@@ -696,7 +696,7 @@ async function handleFailureSpike(stats) {
     }
 
     // === Continue with existing RCA logic ===
-    const { should_analyze, cached_result } = await shouldAnalyzeFailure(failure);
+    const { should_analyze, _cached_result } = await shouldAnalyzeFailure(failure);
 
     if (!should_analyze) {
       console.log(`[Monitor] Skip RCA for ${signature} (cached)`);

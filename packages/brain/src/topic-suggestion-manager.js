@@ -11,7 +11,7 @@
  *   → 审批/自动晋级后创建 content-pipeline task
  */
 
-import pool from './db.js';
+import _pool from './db.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 

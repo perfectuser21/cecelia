@@ -7,7 +7,7 @@
  * - HALF_OPEN: After cooldown, allow 1 probe task; success → CLOSED, failure → OPEN
  */
 
-import pool from './db.js';
+import _pool from './db.js';
 import { emit } from './event-bus.js';
 import { raise } from './alerting.js';
 
@@ -119,7 +119,7 @@ function reset(key = 'default') {
  */
 function getAllStates() {
   const result = {};
-  for (const [key, b] of breakers.entries()) {
+  for (const [key, _b] of breakers.entries()) {
     result[key] = getState(key);
   }
   return result;

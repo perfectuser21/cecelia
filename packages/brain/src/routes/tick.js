@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, drainTick, getDrainStatus, cancelDrain, getStartupErrors, check48hReport } from '../tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick as _executeTick, runTickSafe, drainTick, getDrainStatus, cancelDrain, getStartupErrors, check48hReport as _check48hReport } from '../tick.js';
 import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from '../alertness/index.js';
 
 const router = Router();

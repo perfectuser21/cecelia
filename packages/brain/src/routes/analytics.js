@@ -8,8 +8,8 @@ import {
   checkShouldCreateRCA,
   getQualityStats,
 } from '../cortex-quality.js';
-import { runDecompositionChecks } from '../decomposition-checker.js';
-import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
+import { runDecompositionChecks as _runDecompositionChecks } from '../decomposition-checker.js';
+import { getActiveExecutionPaths as _getActiveExecutionPaths, INVENTORY_CONFIG as _INVENTORY_CONFIG } from './shared.js';
 import {
   writeContentAnalytics,
   bulkWriteContentAnalytics,
@@ -88,7 +88,7 @@ router.get('/cortex/analyses/:id', async (req, res) => {
  */
 router.post('/cortex/evaluate-quality', async (req, res) => {
   try {
-    const { analysis_id, evaluation_type = 'initial' } = req.body;
+    const { analysis_id, _evaluation_type = 'initial' } = req.body;
 
     if (!analysis_id) {
       return res.status(400).json({ error: 'analysis_id required' });
@@ -1388,7 +1388,7 @@ router.post('/search-similar', async (req, res) => {
  */
 router.post('/attach-decision', async (req, res) => {
   try {
-    const { input, matches, context } = req.body;
+    const { input, matches, _context } = req.body;
 
     if (!input) {
       return res.status(400).json({

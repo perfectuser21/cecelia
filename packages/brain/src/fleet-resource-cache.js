@@ -63,7 +63,7 @@ async function collectServerStats(server) {
 async function refreshFleetCache() {
   const computeServers = SERVERS.filter(s => COMPUTE_SERVERS.includes(s.id));
 
-  const results = await Promise.allSettled(
+  const _results = await Promise.allSettled(
     computeServers.map(async (server) => {
       const entry = await collectServerStats(server);
       _cache.set(server.id, { ...entry, id: server.id, role: server.role });

@@ -44,7 +44,7 @@ const actionHandlers = {
   /**
    * 派发任务
    */
-  async dispatch_task(params, context) {
+  async dispatch_task(_params, _context) {
     // 这里调用现有的 tick 派发逻辑
     // 传 null 表示不按 goal 过滤，派发任何优先级最高的可用任务
     // 注意：不能传 params.trigger（字符串），dispatchNextTask 期望 UUID 数组或 null
@@ -57,7 +57,7 @@ const actionHandlers = {
    * 创建任务
    * rumination 来源的任务做同名去重，避免反刍自循环重复创建
    */
-  async create_task(params, context) {
+  async create_task(params, _context) {
     if (params.trigger_source === 'rumination' && params.title) {
       const { rows } = await pool.query(
         `SELECT id FROM tasks WHERE title = $1 AND status NOT IN ('completed','failed','cancelled') LIMIT 1`,
@@ -83,7 +83,7 @@ const actionHandlers = {
   /**
    * 取消任务
    */
-  async cancel_task(params, context) {
+  async cancel_task(params, _context) {
     const result = await updateTask({
       task_id: params.task_id,
       status: 'cancelled'
@@ -94,7 +94,7 @@ const actionHandlers = {
   /**
    * 重试任务
    */
-  async retry_task(params, context) {
+  async retry_task(params, _context) {
     const result = await updateTask({
       task_id: params.task_id,
       status: 'queued'
@@ -105,7 +105,7 @@ const actionHandlers = {
   /**
    * 调整优先级
    */
-  async reprioritize_task(params, context) {
+  async reprioritize_task(params, _context) {
     const result = await updateTask({
       task_id: params.task_id,
       priority: params.priority
@@ -116,7 +116,7 @@ const actionHandlers = {
   /**
    * 暂停任务
    */
-  async pause_task(params, context) {
+  async pause_task(params, _context) {
     const result = await updateTask({
       task_id: params.task_id,
       status: 'paused'
@@ -127,7 +127,7 @@ const actionHandlers = {
   /**
    * 恢复任务（从暂停或阻塞状态恢复到队列）
    */
-  async resume_task(params, context) {
+  async resume_task(params, _context) {
     const result = await updateTask({
       task_id: params.task_id,
       status: 'queued'
@@ -138,7 +138,7 @@ const actionHandlers = {
   /**
    * 标记任务为阻塞（记录阻塞原因）
    */
-  async mark_task_blocked(params, context) {
+  async mark_task_blocked(params, _context) {
     const result = await updateTask({
       task_id: params.task_id,
       status: 'blocked'
@@ -149,7 +149,7 @@ const actionHandlers = {
   /**
    * 隔离任务（调用隔离模块，dangerous=true）
    */
-  async quarantine_task(params, context) {
+  async quarantine_task(params, _context) {
     const { quarantineTask } = await import('./quarantine.js');
     const result = await quarantineTask(params.task_id, params.reason || 'thalamus_decision', {
       failure_class: params.failure_class || 'quality'
@@ -160,7 +160,7 @@ const actionHandlers = {
   /**
    * 创建 OKR
    */
-  async create_okr(params, context) {
+  async create_okr(params, _context) {
     const goalType = params.type || 'mission';
     let result;
     if (goalType === 'vision' || goalType === 'mission') {
@@ -189,7 +189,7 @@ const actionHandlers = {
    * 原因：防止丘脑/agent 自评 100%（行业最佳实践：Metric-driven，不是 Activity-driven）
    * progress 只由 kr-verifier.js 根据外部数据源计算
    */
-  async update_okr_progress(params, context) {
+  async update_okr_progress(_params, _context) {
     // 不再直接写 progress，而是触发 verifier 重新检查
     const { runAllVerifiers } = await import('./kr-verifier.js');
     const result = await runAllVerifiers();
@@ -200,7 +200,7 @@ const actionHandlers = {
   /**
    * 交给秋米拆解
    */
-  async assign_to_autumnrice(params, context) {
+  async assign_to_autumnrice(params, _context) {
     // 创建 decomposition 任务
     const result = await createTask({
       title: `OKR 拆解: ${params.okr_title}`,
@@ -219,7 +219,7 @@ const actionHandlers = {
   /**
    * 通知用户
    */
-  async notify_user(params, context) {
+  async notify_user(params, _context) {
     // TODO: 实现通知逻辑（可以是 WebSocket、Slack、邮件等）
     console.log(`[executor] Notify user: ${params.message}`);
 
@@ -235,7 +235,7 @@ const actionHandlers = {
   /**
    * 记录事件
    */
-  async log_event(params, context) {
+  async log_event(params, _context) {
     await pool.query(`
       INSERT INTO cecelia_events (event_type, source, payload)
       VALUES ($1, 'thalamus', $2)
@@ -246,7 +246,7 @@ const actionHandlers = {
   /**
    * 升级到 Brain LLM
    */
-  async escalate_to_brain(params, context) {
+  async escalate_to_brain(params, _context) {
     // 创建一个需要 Brain 处理的任务
     const result = await createTask({
       title: `Brain 决策: ${params.reason}`,
@@ -265,7 +265,7 @@ const actionHandlers = {
   /**
    * 请求人工确认
    */
-  async request_human_review(params, context) {
+  async request_human_review(params, _context) {
     console.log(`[executor] Human review requested: ${params.reason}`);
 
     await pool.query(`
@@ -279,7 +279,7 @@ const actionHandlers = {
   /**
    * 分析失败原因
    */
-  async analyze_failure(params, context) {
+  async analyze_failure(params, _context) {
     // 创建分析任务
     const result = await createTask({
       title: `分析失败: ${params.task_title}`,
@@ -298,7 +298,7 @@ const actionHandlers = {
   /**
    * 预测进度
    */
-  async predict_progress(params, context) {
+  async predict_progress(params, _context) {
     // TODO: 实现进度预测逻辑
     console.log(`[executor] Progress prediction requested for: ${params.goal_id}`);
     return { success: true, prediction: 'not_implemented' };
@@ -311,7 +311,7 @@ const actionHandlers = {
   /**
    * 保存经验教训到 learnings 表
    */
-  async create_learning(params, context) {
+  async create_learning(params, _context) {
     const { content, tags = [], source_task_id = null } = params;
     if (!content) {
       return { success: false, error: 'content 字段必填' };
@@ -330,7 +330,7 @@ const actionHandlers = {
   /**
    * 更新已有 learning 记录
    */
-  async update_learning(params, context) {
+  async update_learning(params, _context) {
     const { id, content, tags } = params;
     if (!id) {
       return { success: false, error: 'id 字段必填' };
@@ -362,7 +362,7 @@ const actionHandlers = {
   /**
    * 触发根因分析 (RCA) 流程
    */
-  async trigger_rca(params, context) {
+  async trigger_rca(params, _context) {
     const { task_id, reason = '' } = params;
     const result = await createTask({
       title: `RCA: ${reason || `任务 ${task_id} 根因分析`}`,
@@ -386,7 +386,7 @@ const actionHandlers = {
    * 记录 warning 日志并写入 learnings 表，供人工审查。
    * 绝不自动修改 task_type，避免引发连锁影响。
    */
-  async suggest_task_type(params, context) {
+  async suggest_task_type(params, _context) {
     const { task_id, current_type, suggested_type, reason = '' } = params;
     if (!task_id || !current_type || !suggested_type) {
       return { success: false, error: 'task_id、current_type、suggested_type 字段必填' };
@@ -410,14 +410,14 @@ const actionHandlers = {
   /**
    * 不需要操作
    */
-  async no_action(params, context) {
+  async no_action(_params, _context) {
     return { success: true, action: 'none' };
   },
 
   /**
    * 降级到纯代码 Tick
    */
-  async fallback_to_tick(params, context) {
+  async fallback_to_tick(_params, _context) {
     console.log('[executor] Falling back to code-based Tick');
     // 不做任何事，让 Tick 的代码逻辑接管
     return { success: true, fallback: true };
@@ -431,7 +431,7 @@ const actionHandlers = {
    * 更新任务 PRD 内容
    * 用于探索任务完成后，将发现的信息更新回 PRD
    */
-  async update_task_prd(params, context) {
+  async update_task_prd(params, _context) {
     const { task_id, prd_content } = params;
     if (!task_id) {
       return { success: false, error: 'task_id is required' };
@@ -451,7 +451,7 @@ const actionHandlers = {
    * 归档完成/超期任务
    * 将任务状态设置为 archived，用于清理长期未执行或已过期的任务
    */
-  async archive_task(params, context) {
+  async archive_task(params, _context) {
     const { task_id, reason } = params;
     if (!task_id) {
       return { success: false, error: 'task_id is required' };
@@ -468,7 +468,7 @@ const actionHandlers = {
    * 延迟任务到指定时间
    * 更新 tasks.due_at 字段，任务保持 queued 状态等待调度器处理
    */
-  async defer_task(params, context) {
+  async defer_task(params, _context) {
     const { task_id, defer_until } = params;
     if (!task_id) {
       return { success: false, error: 'task_id is required' };
@@ -501,7 +501,7 @@ const actionHandlers = {
    * 3. 调整幅度限制 ±20%
    * 4. 禁止调整安全相关参数
    */
-  async adjust_strategy(params, context) {
+  async adjust_strategy(params, _context) {
     const { key, new_value, reason } = params;
 
     // 白名单：只允许调整这些参数
@@ -605,7 +605,7 @@ const actionHandlers = {
   /**
    * 记录学习到的经验
    */
-  async record_learning(params, context) {
+  async record_learning(params, _context) {
     const { learning, category, event_context } = params;
     console.log(`[executor] Recording learning: ${learning}`);
 
@@ -625,7 +625,7 @@ const actionHandlers = {
   /**
    * 创建根因分析报告
    */
-  async create_rca_report(params, context) {
+  async create_rca_report(params, _context) {
     const { task_id, root_cause, contributing_factors, recommended_actions } = params;
     console.log(`[executor] Creating RCA report for task: ${task_id}`);
 
@@ -648,7 +648,7 @@ const actionHandlers = {
    * OKR 拆解审批放行
    * 用户确认秋米拆解结果 → 将 KR 从 reviewing 状态放行到 ready
    */
-  async okr_decomp_review(params, context) {
+  async okr_decomp_review(params, _context) {
     const { kr_id } = params;
     if (!kr_id) {
       return { success: false, error: 'kr_id is required' };

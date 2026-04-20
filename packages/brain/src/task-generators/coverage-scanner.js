@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const execAsync = promisify(exec);
+const _execAsync = promisify(exec);
 
 // 使用 import.meta.url 计算绝对路径，不依赖进程 CWD
 // task-generators/ → packages/brain/coverage/

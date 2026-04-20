@@ -159,7 +159,7 @@ async function createInitiativePlanForStall(goalId, goalTitle) {
  * @param {Object} metrics
  * @returns {Promise<string|null>} suggestion_id
  */
-async function createAttentionSuggestion(goalId, goalTitle, metrics) {
+async function _createAttentionSuggestion(goalId, goalTitle, metrics) {
   try {
     const content = `目标「${goalTitle}」需要关注：` +
       `7天完成率 ${Math.round(metrics.task_completion_rate * 100)}%，` +

@@ -16,7 +16,7 @@
  */
 
 import pool from './db.js';
-import { computeCapacity, isAtCapacity } from './capacity.js';
+import { computeCapacity as _computeCapacity, isAtCapacity as _isAtCapacity } from './capacity.js';
 import { validateTaskDescription } from './task-quality-gate.js';
 // [已清理] getDomainRole, ROLES — 不再需要（initiative_plan 路径已删除）
 

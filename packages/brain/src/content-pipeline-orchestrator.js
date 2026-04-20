@@ -290,7 +290,7 @@ async function _loadPipelineContext(taskId, dbPool) {
 /**
  * content-research 完成 → 创建 content-copywriting
  */
-async function _handleResearchComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, dbPool) {
+async function _handleResearchComplete({ task, pipeline, keyword, content_type, _typeConfig, taskId }, dbPool) {
   return _createNextStage(dbPool, pipeline, task, 'content-copywriting', keyword, {
     pipeline_stage: 'content-copywriting',
     pipeline_keyword: keyword,
@@ -303,7 +303,7 @@ async function _handleResearchComplete({ task, pipeline, keyword, content_type, 
 /**
  * content-copywriting 完成 → 创建 content-copy-review
  */
-async function _handleCopywritingComplete({ task, pipeline, keyword, content_type, typeConfig, taskId }, dbPool) {
+async function _handleCopywritingComplete({ task, pipeline, keyword, content_type, _typeConfig, taskId }, dbPool) {
   return _createNextStage(dbPool, pipeline, task, 'content-copy-review', keyword, {
     pipeline_stage: 'content-copy-review',
     pipeline_keyword: keyword,

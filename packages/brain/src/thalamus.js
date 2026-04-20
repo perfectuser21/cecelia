@@ -720,7 +720,7 @@ async function analyzeEvent(event) {
 
   try {
     // 调用统一 LLM 层（丘脑）
-    const { text: response, model: thalamusModel } = await callLLM('thalamus', prompt);
+    const { text: response, model: _thalamusModel } = await callLLM('thalamus', prompt);
 
     // 解析 JSON
     const decision = parseDecisionFromResponse(response);
