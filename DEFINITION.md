@@ -137,6 +137,8 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 
 **不守护（保留派发 / 纯计算）**：planner / executor / dispatchNextTask / quarantine / circuit-breaker / alertness / harness-watcher / publish-monitor / credential-check / evaluateEmotion（纯函数，dispatch_rate_modifier 派发依赖）。
 
+**运行时热切换（Phase 2）**：通过 Dashboard `/settings` 页或 API `PATCH /api/brain/settings/consciousness` 即时切换，无需重启。API 层写 `working_memory.consciousness_enabled` + 模块 cache write-through。**env 优先级**：plist 设 `CONSCIOUSNESS_ENABLED=false` 时 memory 被忽略（主机级紧急逃生口）。Dashboard 检测到 `env_override=true` 自动 disable Switch。
+
 ---
 
 ## 2. 架构总览
@@ -439,7 +441,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 239 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 240 |
 | **distilled_docs** | 蒸馏文档层 Layer 2（SOUL/SELF_MODEL/USER_PROFILE/WORLD_STATE） |
 | **kr_verifiers** | KR 指标自动验证（SQL 查询, threshold, current_value, 定时采集） |
 | **blocks** | 通用 block 存储 |

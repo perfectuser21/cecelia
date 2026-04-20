@@ -91,4 +91,74 @@ describe('consciousness-guard', () => {
       warnSpy.mockRestore();
     });
   });
+
+  describe('memory-level toggle (Phase 2)', () => {
+    let mockPool;
+
+    beforeEach(() => {
+      mockPool = { query: vi.fn() };
+      delete process.env.CONSCIOUSNESS_ENABLED;
+      delete process.env.BRAIN_QUIET_MODE;
+    });
+
+    test('initConsciousnessGuard loads value from working_memory', async () => {
+      const { initConsciousnessGuard, isConsciousnessEnabled, _resetCacheForTest } = await import('../consciousness-guard.js');
+      _resetCacheForTest();
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value_json: { enabled: false, last_toggled_at: '2026-04-20T00:00:00Z' } }] });
+      await initConsciousnessGuard(mockPool);
+      expect(isConsciousnessEnabled()).toBe(false);
+    });
+
+    test('memory=true (default) returns true', async () => {
+      const { initConsciousnessGuard, isConsciousnessEnabled, _resetCacheForTest } = await import('../consciousness-guard.js');
+      _resetCacheForTest();
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value_json: { enabled: true, last_toggled_at: null } }] });
+      await initConsciousnessGuard(mockPool);
+      expect(isConsciousnessEnabled()).toBe(true);
+    });
+
+    test('env=false overrides memory=true (escape hatch)', async () => {
+      const { initConsciousnessGuard, isConsciousnessEnabled, _resetCacheForTest } = await import('../consciousness-guard.js');
+      _resetCacheForTest();
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value_json: { enabled: true, last_toggled_at: null } }] });
+      await initConsciousnessGuard(mockPool);
+      process.env.CONSCIOUSNESS_ENABLED = 'false';
+      expect(isConsciousnessEnabled()).toBe(false);
+    });
+
+    test('setConsciousnessEnabled writes DB and updates cache', async () => {
+      const { initConsciousnessGuard, setConsciousnessEnabled, isConsciousnessEnabled, _resetCacheForTest } = await import('../consciousness-guard.js');
+      _resetCacheForTest();
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value_json: { enabled: true, last_toggled_at: null } }] });
+      await initConsciousnessGuard(mockPool);
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      const status = await setConsciousnessEnabled(mockPool, false);
+      expect(status.enabled).toBe(false);
+      expect(status.last_toggled_at).toBeTruthy();
+      expect(isConsciousnessEnabled()).toBe(false);
+      expect(mockPool.query).toHaveBeenCalledTimes(2);
+    });
+
+    test('getConsciousnessStatus includes env_override flag', async () => {
+      const { getConsciousnessStatus, _resetCacheForTest } = await import('../consciousness-guard.js');
+      _resetCacheForTest();
+      expect(getConsciousnessStatus().env_override).toBe(false);
+      process.env.CONSCIOUSNESS_ENABLED = 'false';
+      expect(getConsciousnessStatus().env_override).toBe(true);
+      delete process.env.CONSCIOUSNESS_ENABLED;
+      process.env.BRAIN_QUIET_MODE = 'true';
+      expect(getConsciousnessStatus().env_override).toBe(true);
+    });
+
+    test('reloadConsciousnessCache picks up external DB changes', async () => {
+      const { initConsciousnessGuard, reloadConsciousnessCache, isConsciousnessEnabled, _resetCacheForTest } = await import('../consciousness-guard.js');
+      _resetCacheForTest();
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value_json: { enabled: true, last_toggled_at: null } }] });
+      await initConsciousnessGuard(mockPool);
+      expect(isConsciousnessEnabled()).toBe(true);
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value_json: { enabled: false, last_toggled_at: '2026-04-20T01:00:00Z' } }] });
+      await reloadConsciousnessCache(mockPool);
+      expect(isConsciousnessEnabled()).toBe(false);
+    });
+  });
 });
