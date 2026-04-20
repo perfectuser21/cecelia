@@ -109,11 +109,11 @@ if (task.task_type === 'harness_task') {
 
 ## 成功标准
 
-- [ ] [BEHAVIOR] executor.js 含 `harness_task` 分支 → 调 `triggerHarnessTaskDispatch`。Test: grep + 集成
-- [ ] [BEHAVIOR] `triggerHarnessTaskDispatch` 传 `worktreePath` 到 executor。Test: packages/brain/src/__tests__/harness-task-dispatch.test.js
-- [ ] [BEHAVIOR] `triggerHarnessTaskDispatch` 传 `env.GITHUB_TOKEN` 到 executor。Test: 同上
-- [ ] [BEHAVIOR] `fix_mode` payload 正确映射到 `env.HARNESS_FIX_MODE`。Test: 同上
-- [ ] [ARTIFACT] 新文件 `packages/brain/src/harness-task-dispatch.js` 存在，导出 `triggerHarnessTaskDispatch`
+- [x] [BEHAVIOR] executor.js 含 `harness_task` 分支 → 调 `triggerHarnessTaskDispatch`。Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');process.exit(c.includes(\"task.task_type === 'harness_task'\")&&c.includes('triggerHarnessTaskDispatch')?0:1)"
+- [x] [BEHAVIOR] `triggerHarnessTaskDispatch` 传 `worktreePath` 到 executor。Test: packages/brain/src/__tests__/harness-task-dispatch.test.js
+- [x] [BEHAVIOR] `triggerHarnessTaskDispatch` 传 `env.GITHUB_TOKEN` 到 executor。Test: 同上
+- [x] [BEHAVIOR] `fix_mode` payload 正确映射到 `env.HARNESS_FIX_MODE`。Test: 同上
+- [x] [ARTIFACT] 新文件 `packages/brain/src/harness-task-dispatch.js` 存在，导出 `triggerHarnessTaskDispatch`
 
 ## 回滚
 
