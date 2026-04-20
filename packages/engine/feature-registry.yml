@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.3.4"
+    date: "2026-04-20"
+    change: "fix"
+    description: "Phase 7.6 — claude-launch.sh 避开 shell function/alias 递归。Phase 7.1 launcher 用 `exec claude` 在 bash 子进程里执行；Claude Code 的 shell-snapshots（~/.claude-accountX/shell-snapshots/*.sh）会注入 'claude' shell function，bash 继承后 `exec claude` 反复调回 launcher 本身，用户配好 alias 重启 claude 报 'permission denied'。修复：launcher 改用 `\${CLAUDE_CODE_EXECPATH}` 或 `command -v claude` 解析真 binary 的绝对路径，直接 exec 它。patch bump 18.3.3 → 18.3.4。"
+    files:
+      - "scripts/claude-launch.sh (跳过 alias/function 递归)"
+      - "Engine 7 处版本 (18.3.4)"
+
   - version: "18.3.3"
     date: "2026-04-20"
     change: "chore"
