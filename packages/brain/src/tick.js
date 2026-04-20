@@ -58,6 +58,7 @@ import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
+import { advanceHarnessInitiatives } from './harness-phase-advancer.js';
 import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks, cancelCredentialAlertTasks } from './credential-expiry-checker.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
@@ -2844,6 +2845,23 @@ async function executeTick() {
   const effectiveBurstLimit = burstOverride ?? MAX_NEW_DISPATCHES_PER_TICK;
   if (burstOverride != null) {
     tickLog(`[tick] Backpressure active: queue_depth=${tickSlotBudget.backpressure.queue_depth} > ${tickSlotBudget.backpressure.threshold}, burst_limit=${effectiveBurstLimit}`);
+  }
+
+  // 7.0. Harness v2 Phase Advancer — 推进 initiative_runs 的 phase，
+  //      让合同 approved 的 A→B、子任务就绪的 B 拉下一任务、所有子任务完成
+  //      的 B→C 可以在派发前完成状态迁移，供下面的 dispatchNextTask 取到新 queued。
+  try {
+    const advanceResults = await advanceHarnessInitiatives(pool);
+    if (advanceResults.length > 0) {
+      tickLog(`[tick] Harness phase advance: ${advanceResults.length} run(s) evaluated`);
+      for (const r of advanceResults) {
+        if (r.status !== 'B_busy' && r.status !== 'B_waiting') {
+          tickLog(`[tick]   run=${r.runId} → ${r.status}${r.currentTaskId ? ` task=${r.currentTaskId}` : ''}`);
+        }
+      }
+    }
+  } catch (advErr) {
+    console.error('[tick-loop] Harness phase advancer error (non-fatal):', advErr.message);
   }
 
   // 7a. Fill slots from focused objective's tasks
