@@ -1,8 +1,9 @@
 ---
 id: autonomous-research-proxy
-version: 3.0.0
+version: 3.1.0
 updated: 2026-04-20
 changelog:
+  - 3.1.0: Phase 8.2 — 剩余 10 个交互点深度化（writing-plans / executing-plans / TDD / finishing / systematic-debugging / requesting-code-review / dispatching-parallel-agents / using-git-worktrees）+ Appendix A 追加 4 个 prompt（A.WP-1 / A.EP-1 / A.DPA-1 / A.DPA-2）。
   - 3.0.0: Phase 8.1 — 13 个关键路径点深度化（brainstorming 6 + SDD 3 + RCR 4）+ Structured Review Block 规范 + Appendix A 5 个 Research Subagent prompt 模板 + 数据源排序（用户的话 > 现有代码 > OKR，不用 decisions/learnings）
   - 2.0.0: Phase 6 瘦身 — 删 F4 17 项交互点审计表、POC 参考、覆盖率统计、已删文件映射。加 Phase 6 Tier 1 两条（enrich + decisions/match）吸收已删的 engine-enrich / engine-decision skill 能力。
   - 1.0.0: 初版
@@ -237,6 +238,171 @@ Superpowers 原问：
 
 ---
 
+## Phase 8.2 — 剩余 10 点规则
+
+### writing-plans
+
+#### WP-1 Subagent-Driven vs Inline？
+
+Superpowers 原问（writing-plans SKILL.md）：
+> "Is this work appropriate for subagent-driven implementation, or should it be inline?"
+
+**硬默认（Tier 1 既定）**：subagent-driven。
+
+**规则**：按 step 性质判——
+- **独立研究 / 并行任务 / 可隔离验证** → **subagent-driven**（派 implementer subagent 执行 + reviewer subagent 验收）
+- **主线实现（前后 step 强依赖 / 需共享 orchestrator 状态 / Cecelia 核心 workflow 编排）** → **inline**（在主 session 直接写）
+
+**判断标准**：
+- step 产出物可 `git diff` 隔离审查 → subagent-driven
+- step 需读取前 step 结果做条件分支 → inline
+- step 是 Cecelia 关键路径（brain tick / thalamus / task-router）→ inline（硬规则）
+
+**Prompt**：见 Appendix A.WP-1
+
+### executing-plans
+
+#### EP-1 Raise concerns with human
+
+Superpowers 原问（executing-plans SKILL.md）：
+> "Raise concerns with human partner before proceeding when uncertain about architectural decisions."
+
+**规则**：不停下问用户。AI 自主决策 + **写入 `.concerns-<branch>.md`** + PR body Summary 段落末尾列出所有 concerns。
+
+**文件路径**：worktree 根目录 `.concerns-<branch>.md`（与 `.raw-prd-*.md` / `.enriched-prd-*.md` 平级）。
+
+**concerns 内容**：每条至少含 `## Concern <N>` + 依据（三件套数据源）+ AI 的决策 + confidence。medium/low confidence 的 concern 必须在 PR body 显式列出，供 reviewer 评估。
+
+**Prompt**：见 Appendix A.EP-1
+
+### test-driven-development
+
+#### TDD-1 跳过 TDD 例外？
+
+Superpowers 原问（test-driven-development SKILL.md）：
+> "Is there a valid reason to skip TDD for this change?"
+
+**规则（硬判断，按 commit type）**：
+- `feat:` → **必须 TDD**（Cecelia DoD 三要素：feat PR 必须含 `*.test.ts` / `*.spec.ts` 变动）
+- `fix:` → **必须 TDD**（先写 regression test 再修）
+- `[CONFIG]` / `config:` / `docs:` / `chore:` → **免测**（配置/文档改动走 DoD [ARTIFACT] 校验即可）
+- `refactor:` → 无行为变化则免；有行为变化等同 `feat:`
+
+**无 Research Subagent**：规则纯靠 commit type 枚举判断，不需要 prompt。
+
+### finishing-a-development-branch
+
+#### FAD-1 4 options（merge / save-as-draft / discard / keep-working）
+
+Superpowers 原问（finishing-a-development-branch SKILL.md）：
+> "Choose one: (1) merge, (2) save as draft PR, (3) discard, (4) keep working."
+
+**硬默认（Tier 1 既定）**：**Option 2 — push + PR**。
+
+**规则**：
+- Cecelia /dev 接力链终点永远 push + PR（不直接 merge to main，不 discard，不 keep-working）
+- PR 创建后立即走 engine-ship（Phase 5 硬规则）+ Stop Hook 等 CI + 合并
+- FAD-2（discard confirm）按 Phase 8.1 结论"理论人为但流程永不触发"——不做 deep prompt，保持 Tier 1 "abort + POST /api/brain/tasks 人工 review"即可
+
+**无 Research Subagent**：硬规则直接选 Option 2，不需要 prompt。
+
+### systematic-debugging
+
+#### SD-1 3+ fix 失败
+
+Superpowers 原问（systematic-debugging SKILL.md）：
+> "After 3+ failed fix attempts, escalate — consider dispatching parallel agents or asking human."
+
+**规则（硬触发）**：Cecelia 侧 `ci_fix_count >= 3` → 自动升级 `dispatching-parallel-agents` skill（不问用户）。
+
+**判断依据**：
+- `ci_fix_count` 从 `.dev-mode.<branch>` 读（每次 CI 失败 + 修复 commit 自增 1）
+- 达到阈值 3 → Stop Hook 注入 dispatch 信号 → 主 agent 下一轮必须调 `Skill({"skill":"superpowers:dispatching-parallel-agents"})`
+- 各 subagent 独立尝试不同修复方向（root-cause / workaround / revert），orchestrator 按成功 subagent 的 diff 合并
+
+**无 Research Subagent**：硬阈值触发，不需要 prompt。
+
+### requesting-code-review
+
+#### RCR-REQ-1 reviewer 回 issue 怎么处理？
+
+Superpowers 原问（requesting-code-review SKILL.md）：
+> "When reviewer responds with issues, how do you handle them?"
+
+**规则（按严重度分档）**：
+- **Blocking**（breaks functionality / security / DoD 硬规则违反）→ 立即修，不解释，走 RCR-1 澄清 + 修
+- **建议**（可改进但不阻塞合并：命名 / 结构 / 性能优化）→ 评估 confidence，medium+ 接受并实施；low 则写回 "建议评估后暂不采纳，理由..." 引用代码/OKR
+- **风格偏好**（个人习惯 / 无硬规则支撑）→ 按 RCR-2 外部冲突规则：Cecelia 项目 CLAUDE.md 优先，忽略并在 thread 说明 "按 Cecelia 代码规范 § X，保持现状"
+
+**严重度判断锚**：
+1. 是否违反 `.claude/CLAUDE.md` / 全局 CLAUDE.md → 硬规则违反 = Blocking
+2. 是否让 test 失败 / CI 失败 → Blocking
+3. 是否让 PR LOC 超 `pr_loc_threshold.hard` → Blocking（须拆分）
+4. 其他 → 建议或风格偏好
+
+**无 Research Subagent**：按锚直接分档，不需要 prompt。
+
+### dispatching-parallel-agents
+
+#### DPA-1 独立判断：任务独立就并行
+
+Superpowers 原问（dispatching-parallel-agents SKILL.md）：
+> "Can these tasks run in parallel, or do they have dependencies?"
+
+**规则**：orchestrator 看任务依赖图，无依赖则并行派 subagent。
+
+**判断方法**：
+- 读 spec 的 task 列表 + files 字段
+- 两个 task 改动文件集合 **无交集** + **无调用链依赖**（前 task 的 export 不被后 task import）→ **可并行**
+- 有交集或依赖 → **串行**
+
+**Prompt**：见 Appendix A.DPA-1
+
+#### DPA-2 结果集成：多 subagent 输出冲突怎么合
+
+Superpowers 原问（dispatching-parallel-agents SKILL.md）：
+> "How to integrate results when subagents' outputs conflict?"
+
+**规则**：orchestrator 按 spec 目标 merge，不问用户。
+
+**合并策略**：
+- 同文件不同行改动 → 直接 3-way merge
+- 同文件同行冲突 → 以 **更贴合 spec DoD 文字** 的 subagent 输出为准
+- 不同 subagent 的 test 互斥（test A 改的 mock 让 test B 失败）→ 分析后 merge test setup；仍冲突则升级 Tier 2（创 Brain task）
+- 任何集成决策写入 Structured Review Block 附到 PR body
+
+**Prompt**：见 Appendix A.DPA-2
+
+### using-git-worktrees
+
+#### UGW-1 worktree 目录位置
+
+Superpowers 原问（using-git-worktrees SKILL.md）：
+> "Where should the worktree directory live?"
+
+**规则（硬规则 — Cecelia 固定）**：`/Users/administrator/worktrees/cecelia/<branch>`
+
+**不问用户**：engine-worktree skill 已固化此路径，任何 cp-* 分支 worktree 一律走此位置。Superpowers 原生 using-git-worktrees skill 在 Cecelia /dev 接力链里**不触发**（被 engine-worktree 替代，见 Tier 1 表）。
+
+**无 Research Subagent**：硬路径，不需要 prompt。
+
+#### UGW-2 baseline 失败
+
+Superpowers 原问（using-git-worktrees SKILL.md）：
+> "What if baseline tests fail in the worktree before any changes?"
+
+**规则（self-heal，不问用户）**：
+1. 重跑 `npm ci`（dep 可能缺失）
+2. 若仍失败 → 删 `package-lock.json` + 重 `npm install`（lock 与 node_modules 不一致）
+3. 若仍失败 → `git checkout main -- package-lock.json`（回退 baseline）
+4. 仍失败 → 升级 Tier 2（创 Brain task + 等人工）
+
+参考：`packages/engine/memories/worktree-patterns.md`（记录了 baseline 失败的常见根因）。
+
+**无 Research Subagent**：硬 self-heal 流程，不需要 prompt。
+
+---
+
 ## Structured Review Block 规范
 
 四个自审点（B-4 / B-5 / B-6 / SDD-2 / SDD-3）输出格式（markdown）：
@@ -366,4 +532,106 @@ You are code quality reviewer. Cecelia hard rules.
 ## Output: Structured Review Block
 
 PASS requires: code_quality_score ≥ 7/10 + no Hard Rule violations
+```
+
+### A.WP-1 subagent-driven vs inline
+
+```
+You are Research Subagent. Decide per-step: subagent-driven or inline?
+
+## Inputs
+- Spec path: {{spec_path}}
+- Step list (from writing-plans): {{steps}}
+
+## Anchors (STRICT ORDER)
+1. User's words: spec + PRD (look for explicit "parallel" / "sequential" hints)
+2. Code: for each step, grep the target files; compute file-set overlap + import graph
+3. OKR: curl localhost:5221/api/brain/okr/current (is this step on Cecelia 核心 workflow 编排?)
+
+## Rules
+- Step produces git-diff-isolated output (new test file / new module / independent fix) → subagent-driven
+- Step needs previous step's orchestrator state / conditional branch on prior result → inline
+- Step touches brain tick / thalamus / task-router / hook core → inline (HARD)
+
+## Return
+JSON {step_id, decision: "subagent-driven" | "inline", reason, anchors_used} for each step.
+Confidence: high / medium / low.
+```
+
+### A.EP-1 raise concerns
+
+```
+You are Research Subagent generating .concerns-<branch>.md INSTEAD of asking user.
+
+## Inputs
+- Current uncertainty: {{concern_text}}
+- Branch: {{branch}}
+- Worktree: {{worktree_path}}
+
+## Anchors (STRICT ORDER — 用户的话 > 现有代码 > OKR)
+1. User's words: PRD / .raw-prd-*.md / .enriched-prd-*.md / .dev-mode.{{branch}}
+2. Code: grep / glob relevant paths
+3. OKR: curl localhost:5221/api/brain/okr/current
+
+## DO NOT READ
+decisions / learnings / design-docs (user says 不一定准)
+
+## Task
+For each concern:
+1. Make autonomous decision
+2. Write to {{worktree_path}}/.concerns-{{branch}}.md appended as:
+   ## Concern <N>: <short title>
+   **Decision**: <what AI chose>
+   **依据**: 3 lines citing anchors
+   **Confidence**: high / medium / low
+   **Review recommended**: <yes if medium/low>
+3. List all medium/low-confidence concerns in PR body Summary section
+
+## Return
+Path to .concerns-<branch>.md + list of concerns with confidence.
+```
+
+### A.DPA-1 task dependency graph
+
+```
+You are orchestrator analyzing task dependency graph.
+
+## Inputs
+- Spec path: {{spec_path}}
+- Task list with files field: {{tasks}}
+
+## Task
+For each pair (task_i, task_j):
+1. file_set_overlap = files(task_i) ∩ files(task_j)
+2. import_dep = does task_j's files import any export from task_i's files?
+3. parallel = (file_set_overlap == ∅) AND (import_dep == false)
+
+## Return
+JSON dependency graph:
+{
+  "parallel_groups": [[task_ids], [task_ids], ...],  // tasks in same group run in parallel
+  "sequential_edges": [[task_i, task_j], ...],       // task_j depends on task_i
+  "reasoning": [{pair, decision, anchor}]
+}
+```
+
+### A.DPA-2 result integration
+
+```
+You are orchestrator merging N subagent outputs INSTEAD of asking user.
+
+## Inputs
+- Spec DoD: {{spec_dod}}
+- Subagent diffs: [{subagent_id, git_diff, test_output}, ...]
+
+## Merge Rules (STRICT)
+1. Same file, different lines → 3-way merge
+2. Same file, same line conflict → pick subagent whose output text more closely matches spec DoD wording
+3. Test mocks mutually exclusive → merge test setup; if unmergeable, escalate Tier 2
+4. Any integration decision → write Structured Review Block (autonomous, DPA-2) into PR body
+
+## Return
+- merged_diff (path)
+- integration_review (Structured Review Block markdown)
+- escalate: boolean + reason
 ```

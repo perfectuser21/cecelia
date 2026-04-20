@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.3.0"
+    date: "2026-04-20"
+    change: "feat"
+    description: "Phase 8.2 — proxy 剩余 10 点深度化。Phase 8.1 覆盖 13 个关键路径点（brainstorming/SDD/RCR），本 PR 补齐剩余 10 点：WP-1 (writing-plans subagent vs inline) / EP-1 (executing-plans raise concerns 写 .concerns-<branch>.md) / TDD-1 (按 commit type 判) / FAD-1 (finishing 硬默认 Option 2) / SD-1 (ci_fix_count>=3 升级 dispatching-parallel-agents) / RCR-REQ-1 (reviewer issue 按严重度分档) / DPA-1 (依赖图分析) / DPA-2 (多 subagent 输出集成) / UGW-1 (worktree 固定路径) / UGW-2 (baseline 失败 self-heal)。其中 4 点需 Research Subagent prompt（WP-1/EP-1/DPA-1/DPA-2 → Appendix A 新增），其余 6 点为硬规则判断。proxy.md version 3.0.0 → 3.1.0。Engine minor bump 18.2.0 → 18.3.0。"
+    files:
+      - "packages/engine/skills/dev/steps/autonomous-research-proxy.md (+Phase 8.2 10 点规则 +Appendix A 4 个 prompt)"
+      - "packages/engine/tests/proxy/phase82-10-points.test.ts (new, 15 assertions)"
+      - "packages/engine/skills/dev/SKILL.md (frontmatter 18.3.0)"
+      - "Engine 6 处版本文件 18.3.0"
+
   - version: "18.2.0"
     date: "2026-04-20"
     change: "feat"
