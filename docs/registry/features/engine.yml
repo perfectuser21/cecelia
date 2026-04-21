@@ -126,7 +126,6 @@ features:
         - packages/engine/tests/hooks/stop-hook-exit-codes.test.ts
         - packages/engine/tests/hooks/stop-hook-exit.test.ts
         - packages/engine/tests/hooks/stop-hook-retry.test.ts
-        - packages/engine/tests/hooks/stop-hook-state-integrity.test.ts
         - packages/engine/tests/hooks/stop-hook.test.ts
         - packages/engine/tests/scripts/affected-packages.test.ts
         - packages/engine/tests/scripts/cleanup-validation.test.ts
@@ -173,8 +172,7 @@ features:
             - packages/engine/tests/hooks/stop-hook-exit-codes.test.ts
             - packages/engine/tests/hooks/stop-hook-exit.test.ts
             - packages/engine/tests/hooks/stop-hook-retry.test.ts
-            - packages/engine/tests/hooks/stop-hook-state-integrity.test.ts
-            - packages/engine/tests/hooks/stop-hook.test.ts
+                - packages/engine/tests/hooks/stop-hook.test.ts
             - packages/engine/tests/scripts/affected-packages.test.ts
             - packages/engine/tests/scripts/cleanup-validation.test.ts
             - packages/engine/tests/scripts/cleanup.test.ts
