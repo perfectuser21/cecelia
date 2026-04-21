@@ -238,7 +238,9 @@ fi
 # ─── 步骤 4：verdict 判定（两层合并）──────────────────────────────
 if [ "$LLM_CALLED" = "true" ]; then
   MIN_DIM=$(printf '%s\n' "$D1" "$D2" "$D3" "$D4" "$D5" | sort -n | head -1)
-  if [ "$MIN_DIM" -le 1 ] || [ "$LLM_TOTAL" -lt 18 ]; then
+  # β 方案：只 "任一维 ≤1 否决"；去掉总分 <18 硬卡（LLM 打分 ±3 浮动导致 17/18 一线反复触发 REVISION 死循环）。
+  # total 仍写入 payload 供主理人事后复盘；不再卡流转闸门。
+  if [ "$MIN_DIM" -le 1 ]; then
     VERDICT="REVISION"
     FB_TEXT="D1=${D1} D2=${D2} D3=${D3} D4=${D4} D5=${D5} total=${LLM_TOTAL}; ${SUGGESTIONS}"
     FB_ESC=$(printf '%s' "$FB_TEXT" | sed 's/"/\\"/g')
