@@ -251,6 +251,20 @@ cmd_create() {
         } > "$dev_lock_file"
         echo -e "${GREEN}✅ .dev-lock 已写入: .dev-lock.${branch_name}${NC}" >&2
 
+        # v19.0.0: 同步写 .dev-mode 标准格式（stop-dev.sh 用文件存在性判 /dev 流程身份）
+        local dev_mode_file="$worktree_path/.dev-mode.${branch_name}"
+        if [[ ! -f "$dev_mode_file" ]]; then
+            cat > "$dev_mode_file" <<DEV_MODE_EOF
+dev
+branch: ${branch_name}
+session_id: ${_claude_sid_create:-unknown}
+started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+step_1_spec: pending
+harness_mode: false
+DEV_MODE_EOF
+            echo -e "${GREEN}✅ .dev-mode 已写入: .dev-mode.${branch_name}${NC}" >&2
+        fi
+
         echo "" >&2
         echo "下一步:" >&2
         echo "  cd $worktree_path" >&2
