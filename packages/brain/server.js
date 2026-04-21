@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { createWriteStream } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
@@ -74,17 +74,25 @@ import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';
 import { getScanStatus } from './src/task-generator-scheduler.js';
+import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 
 const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || process.env.BRAIN_PORT || 5221;
 
 // ============== Process-level Exception Handlers ==============
-// Prevent uncaught exceptions from crashing the entire service
+// Prevent uncaught exceptions from crashing the entire service.
+// EADDRINUSE is handled specially by listenWithRetry — if it still bubbles here
+// it means retries already exhausted, so falling through to exit(1) is correct
+// (launchd will ThrottleInterval=10s before next restart, giving OS time to release).
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught Exception:', err);
-  console.error('Stack:', err.stack);
-  // Exit so external supervisor (systemd/docker) can restart cleanly
+  if (err && err.code === 'EADDRINUSE') {
+    console.error('[FATAL] listen EADDRINUSE bubbled past listenWithRetry — giving up so launchd can back off');
+  } else {
+    console.error('[FATAL] Uncaught Exception:', err);
+    console.error('Stack:', err && err.stack);
+  }
+  // Exit so external supervisor (launchd/systemd/docker) can restart cleanly
   process.exit(1);
 });
 
@@ -94,18 +102,48 @@ process.on('unhandledRejection', (reason, promise) => {
   // Log to file/monitoring service here
 });
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  await shutdownWebSocketServer();
-  process.exit(0);
-});
+// Graceful shutdown — release port + close pg pool + close WS so launchd restart doesn't
+// collide with a still-bound socket on 5221.
+let __shuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (__shuttingDown) return;
+  __shuttingDown = true;
+  console.log(`${signal} received, shutting down gracefully...`);
+  const deadline = Date.now() + 25_000; // stay under launchd ExitTimeOut (30s)
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  await shutdownWebSocketServer();
+  // 1) Stop accepting new HTTP connections (existing keep-alive sockets still drain)
+  try {
+    await Promise.race([
+      new Promise((resolve) => server.close(() => resolve())),
+      new Promise((resolve) => setTimeout(resolve, Math.max(1000, deadline - Date.now() - 15_000))),
+    ]);
+  } catch (e) {
+    console.warn('[shutdown] server.close error:', e && e.message);
+  }
+
+  // 2) Close WebSocket server (clients get 1001 Going Away)
+  try {
+    await shutdownWebSocketServer();
+  } catch (e) {
+    console.warn('[shutdown] websocket close error:', e && e.message);
+  }
+
+  // 3) Drain pg pool
+  try {
+    await Promise.race([
+      pool.end(),
+      new Promise((resolve) => setTimeout(resolve, Math.max(1000, deadline - Date.now() - 2000))),
+    ]);
+  } catch (e) {
+    console.warn('[shutdown] pool.end error:', e && e.message);
+  }
+
+  console.log('[shutdown] done, exiting 0');
   process.exit(0);
-});
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // ============================================================
 
 // CORS
@@ -361,14 +399,23 @@ async function startCeceliaBridge() {
   console.log(`[Server] cecelia-bridge started (pid=${child.pid}), log: /tmp/cecelia-bridge.log`);
 }
 
-// FIX (P0): 启动前清理端口冲突，避免 EADDRINUSE 导致 Brain 拉不起来
+// Startup guard: wait for port to be released by any prior (still-exiting) process,
+// then listen with EADDRINUSE retry. Replaces the old `lsof … kill -9` sledgehammer
+// which fought the launchd restart race instead of giving the OS time to release.
 if (!process.env.VITEST) {
   try {
-    execSync(`lsof -ti :${PORT} | xargs kill -9 2>/dev/null || true`, { stdio: 'pipe' });
-  } catch {}
+    await waitForPortFree(Number(PORT), { maxWaitMs: 30_000, pollMs: 2_000 });
+  } catch (e) {
+    console.error('[FATAL]', e.message);
+    process.exit(1);
+  }
+
+  await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
+  // Fire the onListening body now that we own the port.
+  await onBrainListening();
 }
 
-if (!process.env.VITEST) server.listen(PORT, async () => {
+async function onBrainListening() {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
 
   // Initialize WebSocket server
@@ -604,6 +651,6 @@ if (!process.env.VITEST) server.listen(PORT, async () => {
   } catch (e) {
     console.warn('[Server] distill-learnings failed to start (non-fatal):', e.message);
   }
-});
+}
 
 export default app;

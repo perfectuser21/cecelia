@@ -72,23 +72,35 @@ describe('Brain P0 救急修复', () => {
     });
   });
 
-  describe('Fix 4: server.js 启动前端口冲突清理', () => {
+  describe('Fix 4: server.js 启动端口健康等待（升级版，替代旧的 lsof + kill -9）', () => {
+    // 原 P0 fix 用 execSync('lsof -ti … | xargs kill -9') 粗暴杀端口占用者，
+    // 但 kill 后 socket 未释放（TCP_TIME_WAIT）立刻 listen 仍会撞 EADDRINUSE。
+    // 升级为 startup-port-guard：waitForPortFree + listenWithRetry。
+    // 详见 cp-04211122-brain-startup-hardening。
     const serverSrc = readFileSync(
       join(BRAIN_ROOT, 'server.js'),
       'utf8'
     );
 
-    it('必须 import execSync', () => {
-      expect(serverSrc).toMatch(/import\s*\{[^}]*execSync[^}]*\}\s*from\s*['"]child_process['"]/);
+    it('必须 import startup-port-guard 模块', () => {
+      expect(serverSrc).toMatch(
+        /from\s*['"]\.\/src\/startup-port-guard\.js['"]/
+      );
+      expect(serverSrc).toMatch(/waitForPortFree/);
+      expect(serverSrc).toMatch(/listenWithRetry/);
     });
 
-    it('必须在 server.listen 之前用 lsof + kill 清理端口', () => {
-      // 找 listen 之前是否含 lsof -ti 调用
-      const listenIdx = serverSrc.indexOf('server.listen(PORT');
-      expect(listenIdx).toBeGreaterThan(-1);
+    it('必须在 listen 之前调用 waitForPortFree（launchd-restart race 保护）', () => {
+      const listenIdx = serverSrc.indexOf('listenWithRetry(server');
+      expect(listenIdx, '未找到 listenWithRetry(server 调用').toBeGreaterThan(-1);
       const before = serverSrc.slice(0, listenIdx);
-      expect(before).toMatch(/lsof -ti :\$\{PORT\}/);
-      expect(before).toMatch(/xargs kill -9/);
+      expect(before).toMatch(/await\s+waitForPortFree\(/);
+    });
+
+    it('不应再依赖 lsof + kill -9（已被更稳的 guard 替代）', () => {
+      // 反向守护：如果有人回退到 kill -9 大招就失败
+      expect(serverSrc).not.toMatch(/lsof -ti :\$\{PORT\}/);
+      expect(serverSrc).not.toMatch(/xargs kill -9/);
     });
   });
 });
