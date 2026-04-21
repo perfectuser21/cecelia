@@ -233,14 +233,20 @@ print('\t'.join(parts))
 
   LLM_TOTAL=$((D1 + D2 + D3 + D4 + D5))
   echo "[copy-review] LLM total=$LLM_TOTAL D1=$D1 D2=$D2 D3=$D3 D4=$D4 D5=$D5" >&2
+  # 调试：LLM 返回原文 + parse 结果打到 stderr，便于事后 cecelia_events.raw_stderr 定位
+  echo "[copy-review] LLM_RESP_HEAD=$(printf '%s' "$LLM_RESP" | head -c 400)" >&2
+  echo "[copy-review] LLM_TEXT_HEAD=$(printf '%s' "$LLM_TEXT" | head -c 400)" >&2
 fi
 
 # ─── 步骤 4：verdict 判定（两层合并）──────────────────────────────
 if [ "$LLM_CALLED" = "true" ]; then
   MIN_DIM=$(printf '%s\n' "$D1" "$D2" "$D3" "$D4" "$D5" | sort -n | head -1)
-  # β 方案：只 "任一维 ≤1 否决"；去掉总分 <18 硬卡（LLM 打分 ±3 浮动导致 17/18 一线反复触发 REVISION 死循环）。
-  # total 仍写入 payload 供主理人事后复盘；不再卡流转闸门。
-  if [ "$MIN_DIM" -le 1 ]; then
+  # γ 精修（叠加 β）：
+  #   - LLM 调通且给出真实分数（LLM_TOTAL>0）且某维 ≤1 → 硬伤 veto → REVISION
+  #   - LLM 调用但 parse 失败（LLM_TOTAL=0，所有维度 fallback 到 0）→ 不做 veto，
+  #     视为"LLM 裁判挂了，信第 1 层硬规则" → APPROVED（避免 LLM 失败拖死 pipeline）
+  #   - β 之前去掉了 total<18 硬卡（LLM 波动±3 导致 17/18 一线反复 REVISION）
+  if [ "$LLM_TOTAL" -gt 0 ] && [ "$MIN_DIM" -le 1 ]; then
     VERDICT="REVISION"
     FB_TEXT="D1=${D1} D2=${D2} D3=${D3} D4=${D4} D5=${D5} total=${LLM_TOTAL}; ${SUGGESTIONS}"
     FB_ESC=$(printf '%s' "$FB_TEXT" | sed 's/"/\\"/g')
