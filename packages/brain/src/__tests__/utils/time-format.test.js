@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isValidTimeZone,
   formatIsoAtTz,
-} from '../../../packages/brain/src/utils/time-format.js';
+} from '../../utils/time-format.js';
 
 const ISO_WITH_OFFSET =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -26,7 +26,7 @@ describe('Workstream 1 — Time formatting utilities [BEHAVIOR]', () => {
     });
 
     it('isValidTimeZone returns false for undefined', () => {
-      expect(isValidTimeZone(undefined as unknown as string)).toBe(false);
+      expect(isValidTimeZone(undefined)).toBe(false);
     });
   });
 

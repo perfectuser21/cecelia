@@ -1,9 +1,18 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 PRD: `sprints/sprint-prd.md`（不改）
 Planner 分支: `cp-04211712-harness-prd`
-Propose 轮次: 1
-Proposer 分支: `cp-harness-propose-r1-04211712`
+Propose 轮次: 2
+Proposer 分支: `cp-harness-propose-r2-04211712`
+
+**本轮相对 Round 1 的修订**（处理 Reviewer 反馈）:
+
+1. **路径修复（Risk 1）**: 测试文件从 `sprints/tests/ws{1,2}/*.test.ts`（Brain CI `npx vitest run` 不会扫到的路径）迁到 Brain CI **真会跑**的路径：
+   - WS1 → `packages/brain/src/__tests__/utils/time-format.test.js`
+   - WS2 → `packages/brain/src/__tests__/routes/time-endpoint.test.js`
+   - 依据 `packages/brain/vitest.config.js` 的 include：`src/**/*.{test,spec}.?(c|m)[jt]s?(x)`
+2. **扩展名修复（Risk 4）**: `.test.ts` → `.test.js`；项目无 tsconfig/TS 编译步骤，且现存 Brain 测试全部 `.js`。同时剔除 Round 1 里 `undefined as unknown as string` 这类 TS-only 语法。
+3. **FR-005 硬兜底（Risk 5 方案 a）**: WS2 新增一条 ARTIFACT——`packages/brain/src/routes/time.js` 不得出现 `console.log(` / `console.error(` / `require('winston')` / `import winston` / `new Logger(` 字面量；错误响应必须走 `next(err)` 或纯 `res.status(4xx).json(...)`。把"接入 Brain 现有日志/错误处理中间件"从"不验"升级为"静态反向约束"。
 
 ---
 
@@ -24,7 +33,7 @@ Proposer 分支: `cp-harness-propose-r1-04211712`
 - `formatIsoAtTz(date, 'Asia/Shanghai')` 返回以 `+08:00` 结尾
 - `formatIsoAtTz(date, 'UTC')` 返回以 `Z` 或 `+00:00` 结尾
 
-**BEHAVIOR 覆盖**（落在 `tests/ws1/time-format.test.ts`）:
+**BEHAVIOR 覆盖**（落在 `packages/brain/src/__tests__/utils/time-format.test.js`）:
 - `it('isValidTimeZone returns true for UTC')`
 - `it('isValidTimeZone returns true for Asia/Shanghai')`
 - `it('isValidTimeZone returns false for invalid IANA name Foo/Bar')`
@@ -40,12 +49,13 @@ Proposer 分支: `cp-harness-propose-r1-04211712`
 - 模块导出 `isValidTimeZone` 命名导出
 - 模块导出 `formatIsoAtTz` 命名导出
 - `packages/brain/package.json` `dependencies` 未新增条目（PRD 假设成立）
+- `time-format.js` 不 import 任何 npm 依赖（只允许相对路径或 `node:` 内置）
 
 ---
 
 ## Feature 2: GET /api/time HTTP 端点
 
-**行为描述**: 在 Brain Express 应用注册新路由，按 PRD 场景 1-4 返回当前时间三元组；路由层只做参数解析与响应组装，时区合法性判断与 ISO 格式化委托给 Feature 1。
+**行为描述**: 在 Brain Express 应用注册新路由，按 PRD 场景 1-4 返回当前时间三元组；路由层只做参数解析与响应组装，时区合法性判断与 ISO 格式化委托给 Feature 1。错误路径必须使用 Express 内建机制（`next(err)` 或 `res.status(4xx).json(...)`），不允许自建日志栈。
 
 **硬阈值**:
 - `GET /api/time` 返回 HTTP 200，JSON body 同时包含 `iso`（string）/`timezone`（string）/`unix`（number）三个字段
@@ -57,8 +67,9 @@ Proposer 分支: `cp-harness-propose-r1-04211712`
 - `GET /api/time?tz=Foo/Bar`：HTTP 400；body JSON 含 `error` 字段且 `/tz|timezone/i` 匹配
 - `GET /api/time?tz=`（空串）：HTTP 200，走默认分支，`timezone` 字段长度 > 0
 - 相邻两次 `GET /api/time` 请求：`|unix₂ - unix₁| ≤ 1`；`timezone₂ === timezone₁`
+- `packages/brain/src/routes/time.js` 文件不含独立日志栈调用（`console.log(` / `console.error(` / `winston` / `new Logger(`）
 
-**BEHAVIOR 覆盖**（落在 `tests/ws2/time-endpoint.test.ts`）:
+**BEHAVIOR 覆盖**（落在 `packages/brain/src/__tests__/routes/time-endpoint.test.js`）:
 - `it('GET /api/time returns 200 with iso, timezone, unix fields')`
 - `it('iso field matches ISO-8601 with offset')`
 - `it('unix field is an integer')`
@@ -75,6 +86,7 @@ Proposer 分支: `cp-harness-propose-r1-04211712`
 - 该模块从 `../utils/time-format.js` 导入（不重复实现时区判断/格式化）
 - `packages/brain/server.js` 含 `app.use('/api/time', ...)` 注册行
 - `packages/brain/server.js` 含对 `./src/routes/time.js` 的 import 行
+- `packages/brain/src/routes/time.js` 不含 `console.log(` / `console.error(` / `winston` / `new Logger(` 等独立日志栈字面量（FR-005 硬兜底）
 
 ---
 
@@ -88,15 +100,15 @@ workstream_count: 2
 **大小**: S（<100 行含注释）
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/time-format.test.ts`
+**BEHAVIOR 覆盖测试文件**: `packages/brain/src/__tests__/utils/time-format.test.js`
 
 ### Workstream 2: GET /api/time endpoint
 
-**范围**: 新增 `packages/brain/src/routes/time.js`（Express Router），实现三个分支（默认 / 指定时区 / 非法时区 / 空串回落默认）；在 `packages/brain/server.js` 新增 import 与 `app.use('/api/time', timeRouter)` 注册。路由**必须**从 `../utils/time-format.js` 导入 Feature 1 的两个函数，不在路由文件里重新实现时区逻辑。
+**范围**: 新增 `packages/brain/src/routes/time.js`（Express Router），实现三个分支（默认 / 指定时区 / 非法时区 / 空串回落默认）；在 `packages/brain/server.js` 新增 import 与 `app.use('/api/time', timeRouter)` 注册。路由**必须**从 `../utils/time-format.js` 导入 Feature 1 的两个函数，不在路由文件里重新实现时区逻辑。错误路径通过 `next(err)` 或 `res.status(4xx).json(...)` 返回，不自建日志栈（FR-005 硬兜底，见 ARTIFACT）。
 **大小**: M（100-200 行，含路由实现 + server.js 接线）
 **依赖**: Workstream 1 完成并合并
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws2/time-endpoint.test.ts`
+**BEHAVIOR 覆盖测试文件**: `packages/brain/src/__tests__/routes/time-endpoint.test.js`
 
 ---
 
@@ -104,10 +116,19 @@ workstream_count: 2
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/tests/ws1/time-format.test.ts` | 5 × isValidTimeZone + 4 × formatIsoAtTz = 9 `it()` | `npx vitest run sprints/tests/ws1/` → 9 failures（模块不存在，import 级 `ERR_MODULE_NOT_FOUND`，文件内所有 `it()` 级联 FAIL） |
-| WS2 | `sprints/tests/ws2/time-endpoint.test.ts` | 9 `it()` 覆盖 PRD 场景 1-4 全部分支 | `npx vitest run sprints/tests/ws2/` → 9 failures（模块不存在，import 级 `ERR_MODULE_NOT_FOUND`，文件内所有 `it()` 级联 FAIL） |
+| WS1 | `packages/brain/src/__tests__/utils/time-format.test.js` | 5 × isValidTimeZone + 4 × formatIsoAtTz = 9 `it()` | `cd packages/brain && npx vitest run src/__tests__/utils/time-format.test.js` → 9 failures（`import { isValidTimeZone, formatIsoAtTz } from '../../utils/time-format.js'` 目标缺失，vitest collection 阶段 `ERR_MODULE_NOT_FOUND`，文件内所有 `it()` 级联 FAIL） |
+| WS2 | `packages/brain/src/__tests__/routes/time-endpoint.test.js` | 9 `it()` 覆盖 PRD 场景 1-4 全部分支 | `cd packages/brain && npx vitest run src/__tests__/routes/time-endpoint.test.js` → 9 failures（`import timeRouter from '../../routes/time.js'` 目标缺失，vitest collection 阶段 `ERR_MODULE_NOT_FOUND`，文件内所有 `it()` 级联 FAIL） |
 
-**Red evidence 来源说明**: 本仓库 `node_modules` 未预装，Proposer 本地不具备 `npx vitest` 运行条件。改以 Node.js ESM loader 直接 `import()` 两个测试 import 的目标模块路径，确认均抛 `ERR_MODULE_NOT_FOUND`——vitest 在 collection 阶段会走相同的 ESM 解析路径，任何 import 失败都会把该文件的全部 `it()` 标为 FAIL。完整命令与输出见本分支 commit message。
+**Red evidence 来源说明**: 本仓库 `node_modules` 未预装，Proposer 本地无法直接跑 `npx vitest`。改以 Node.js ESM loader 直接 `import()` 目标模块验证解析失败——vitest 在 collection 阶段走相同的 ESM 解析路径，任何 import 失败都会把该文件的全部 `it()` 标为 FAIL。本地执行结果：
+
+```
+$ node --input-type=module -e "await import('./packages/brain/src/utils/time-format.js')"
+WS1 RED: ERR_MODULE_NOT_FOUND
+$ node --input-type=module -e "await import('./packages/brain/src/routes/time.js')"
+WS2 RED: ERR_MODULE_NOT_FOUND
+```
+
+对比 Round 1：测试文件现在落在 Brain CI `npx vitest run` 的 include 路径（`src/**/*.{test,spec}.?(c|m)[jt]s?(x)`），vitest 会实际执行；Round 1 的 `sprints/tests/...` 不在 include 里，即便本地能 Red，CI 也不会跑——Reviewer 的 Risk 1 正是此处。
 
 ---
 
@@ -123,7 +144,7 @@ workstream_count: 2
 | 边界：unix 整数秒 | WS2 `it('unix field is an integer')` |
 | 边界：iso 与 unix 同一瞬间 | WS2 `it('iso parses back to within 2 seconds of unix')` |
 | FR-003 委托委派纯函数 | WS1 全部 `it()` + WS2 ARTIFACT（`from '../utils/time-format.js'` 正则匹配） |
-| FR-005 接入现有中间件 | 合同不新增中间件断言（交由 server.js 注册完成后的整体 CI 兜底） |
+| FR-005 接入现有中间件 | WS2 ARTIFACT 反向约束：`routes/time.js` 不得出现 `console.log(` / `console.error(` / `winston` / `new Logger(` 字面量。错误走 `next(err)` 或 `res.status(4xx).json(...)`，等价于落在 Express 内建错误处理链，不新增独立日志栈。 |
 
 ---
 
@@ -141,3 +162,5 @@ workstream_count: 2
 2. **WS2 必须从 WS1 导入**：合同 ARTIFACT 强制 `packages/brain/src/routes/time.js` 含 `from '../utils/time-format.js'` 字符串匹配
 3. **无新增 npm 依赖**：PRD 假设 Node 运行时 `Intl.DateTimeFormat` + 内置 IANA 数据库已足够
 4. **不登记 DEFINITION.md**：PRD 假设 3 明确此端点为测试载体，不进入核心 Brain 能力清单
+5. **FR-005 反向约束**：`routes/time.js` 禁止独立日志栈字面量（`console.*` / `winston` / `new Logger(`），错误走 Express 内建机制
+6. **测试文件落位**：必须落在 `packages/brain/src/__tests__/utils/` 与 `packages/brain/src/__tests__/routes/`，确保 Brain CI `npx vitest run` 能扫到

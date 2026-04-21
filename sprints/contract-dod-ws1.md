@@ -21,9 +21,9 @@
 - [ ] [ARTIFACT] `packages/brain/src/utils/time-format.js` 不 import 任何 npm 依赖（除 Node 内置 API）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/utils/time-format.js','utf8');const m=c.match(/^\s*import\s+[^;]*from\s+['\"]([^'\"]+)['\"]/gm)||[];for(const line of m){const dep=line.match(/from\s+['\"]([^'\"]+)['\"]/)[1];if(!dep.startsWith('.')&&!dep.startsWith('node:'))process.exit(1)}"
 
-## BEHAVIOR 索引（实际测试在 `sprints/tests/ws1/`）
+## BEHAVIOR 索引（实际测试在 `packages/brain/src/__tests__/utils/`）
 
-见 `sprints/tests/ws1/time-format.test.ts`，覆盖：
+见 `packages/brain/src/__tests__/utils/time-format.test.js`，覆盖：
 - isValidTimeZone returns true for UTC
 - isValidTimeZone returns true for Asia/Shanghai
 - isValidTimeZone returns false for invalid IANA name Foo/Bar
