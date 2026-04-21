@@ -25,6 +25,10 @@ const RATE_LIMIT_MS = 60 * 1000;
  * @returns {Promise<boolean>}
  */
 async function sendFeishuOpenAPI(text) {
+  if (process.env.BRAIN_MUTED === 'true') {
+    console.log('[notifier] BRAIN_MUTED=true → skip outbound (feishu open api):', text.slice(0, 80));
+    return false;
+  }
   if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_ALEX_OPEN_ID) {
     console.log('[notifier] Open API 凭据或 Alex open_id 未配置，跳过');
     return false;
@@ -78,6 +82,10 @@ async function sendFeishuOpenAPI(text) {
  * @returns {Promise<boolean>}
  */
 async function sendFeishu(text) {
+  if (process.env.BRAIN_MUTED === 'true') {
+    console.log('[notifier] BRAIN_MUTED=true → skip outbound (feishu webhook):', text.slice(0, 80));
+    return false;
+  }
   // 渠道 1：Webhook（群机器人）
   if (FEISHU_WEBHOOK_URL) {
     try {
