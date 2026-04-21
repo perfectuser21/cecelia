@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 const ISO_8601_EXTENDED =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-// 按 TDD 纪律，Red 阶段 time.js 还不存在。用 dynamic import 包在每个 it 里，
-// 让每个 it 独立失败，而不是整个 suite 一次性挂掉——Reviewer 能看到 8 个红。
+// TDD Red 阶段：time.js 尚不存在。每个 it 内部 dynamic import，让每个 it 独立失败——
+// Reviewer 看到的是 N 个独立红，而不是整 suite 一次性崩。
 async function createAppOrThrow() {
   const mod: { default: express.Router } = await import(
     /* @vite-ignore */ '../../../packages/brain/src/routes/time.js'
@@ -56,6 +59,20 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     expect(res.body.timezone.length).toBeGreaterThan(0);
   });
 
+  it('timezone is a valid IANA name accepted by Intl.DateTimeFormat', async () => {
+    // R2 新增：仅"非空字符串"不够——真实 IANA 时区名会被 ICU/V8 认可，
+    // 返回 "x" / "local" / "" 等占位值时此断言失败。
+    const app = await createAppOrThrow();
+    const res = await request(app).get('/api/brain/time');
+    const tz = res.body.timezone;
+    expect(typeof tz).toBe('string');
+    expect(() => new Intl.DateTimeFormat('en-US', { timeZone: tz })).not.toThrow();
+    // 双保险：构造出的 formatter 的 resolvedOptions.timeZone 与输入一致（IANA 规范化后）
+    const resolved = new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
+    expect(typeof resolved).toBe('string');
+    expect(resolved.length).toBeGreaterThan(0);
+  });
+
   it('unix is a positive integer in seconds, not milliseconds and not float', async () => {
     const app = await createAppOrThrow();
     const res = await request(app).get('/api/brain/time');
@@ -69,15 +86,18 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     expect(Math.abs(res.body.unix - nowSec)).toBeLessThanOrEqual(60);
   });
 
-  it('iso and unix within a single response represent the same moment within 2 seconds', async () => {
+  it('iso and unix within a single response represent the exact same second (strict equality)', async () => {
+    // R2 收紧：单一 new Date() 快照约束下，iso 和 unix 的秒值必然严格相等。
+    // 如果 Generator 错误地分别调用了 new Date()，机器负载高时会产生 1 秒偏差 → 被此断言捕获。
     const app = await createAppOrThrow();
     const res = await request(app).get('/api/brain/time');
     const isoSec = Math.floor(Date.parse(res.body.iso) / 1000);
     const unixSec = res.body.unix;
-    expect(Math.abs(isoSec - unixSec)).toBeLessThanOrEqual(2);
+    expect(isoSec).toBe(unixSec);
   });
 
-  it('two consecutive calls both succeed and each response is internally consistent', async () => {
+  it('two consecutive calls both succeed and each response is internally consistent to the second', async () => {
+    // R2 收紧：每次响应内部 iso-秒 与 unix 严格相等；但两次调用间允许自然推进。
     const app = await createAppOrThrow();
     const res1 = await request(app).get('/api/brain/time');
     const res2 = await request(app).get('/api/brain/time');
@@ -88,7 +108,7 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
       expect(Number.isInteger(res.body.unix)).toBe(true);
       expect(res.body.unix).toBeLessThan(1e12);
       const isoSec = Math.floor(Date.parse(res.body.iso) / 1000);
-      expect(Math.abs(isoSec - res.body.unix)).toBeLessThanOrEqual(2);
+      expect(isoSec).toBe(res.body.unix);
     }
     expect(res2.body.unix).toBeGreaterThanOrEqual(res1.body.unix);
   });
@@ -99,5 +119,21 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     const res = await request(app).get('/api/brain/time');
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('iso');
+  });
+
+  it('packages/brain/server.js imports time router and mounts it at /api/brain/time using the same variable', () => {
+    // R2 新增：静态解析真实 server.js，确认挂载路径与 import 变量名一致。
+    // 不启动 server（有 DB/WebSocket 副作用），但用源文件内容验证"挂载真的可达"。
+    const thisFile = fileURLToPath(import.meta.url);
+    const serverPath = resolve(dirname(thisFile), '../../../packages/brain/server.js');
+    const src = readFileSync(serverPath, 'utf8');
+
+    // 必须有 ESM import timeRoutes from './src/routes/time.js'
+    const importRe = /import\s+timeRoutes\s+from\s+['"]\.\/src\/routes\/time\.js['"]/;
+    expect(src).toMatch(importRe);
+
+    // 必须以严格字面量挂载：app.use('/api/brain/time', timeRoutes)
+    const mountRe = /app\.use\s*\(\s*['"]\/api\/brain\/time['"]\s*,\s*timeRoutes\s*\)/;
+    expect(src).toMatch(mountRe);
   });
 });
