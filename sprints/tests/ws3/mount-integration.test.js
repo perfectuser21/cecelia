@@ -3,9 +3,10 @@ import express from 'express';
 import request from 'supertest';
 import timeRouter from '../../../packages/brain/src/routes/time.js';
 
-// WS3 exercises the production mount prefix (/api/brain/time). The matching
-// ARTIFACT check in contract-dod-ws3.md independently verifies that server.js
-// actually wires the router at this exact path.
+// WS3 exercises the production mount prefix (/api/brain/time).
+// buildApp() 是单元级挂载：验证 Router 在正确前缀下的行为；
+// 最后一个 it 另外通过 `import app from '.../packages/brain/server.js'`
+// 做端到端接线验证（R3 风险 2：防止 ARTIFACT 文本匹配通过但 server.js 运行时未真正挂载）。
 const buildApp = () => {
   const app = express();
   app.use('/api/brain/time', timeRouter);
@@ -78,5 +79,27 @@ describe('Workstream 3 — read-only / no-side-effect contract [BEHAVIOR]', () =
     expect(iso.headers['content-type']).toMatch(/application\/json/);
     expect(unix.headers['content-type']).toMatch(/application\/json/);
     expect(tz.headers['content-type']).toMatch(/application\/json/);
+  });
+});
+
+describe('Workstream 3 — server.js end-to-end wiring [BEHAVIOR]', () => {
+  it('server.js default-exported app actually mounts time router at /api/brain/time (end-to-end wiring)', async () => {
+    // R3 风险 2：直接 import server.js 的 default export，不在测试里自建 app。
+    // vitest 自动设置 VITEST=true，server.js 的 `if (!process.env.VITEST)` boot guard
+    // 会阻止 HTTP listen / DB 副作用，仅返回挂载好的 Express app 实例。
+    // 若 Generator 漏写 app.use('/api/brain/time', timeRouter)，下面 /iso 会 404，这条 it 失败。
+    const { default: app } = await import('../../../packages/brain/server.js');
+    const iso = await request(app).get('/api/brain/time/iso');
+    const unix = await request(app).get('/api/brain/time/unix');
+    const tz = await request(app).get('/api/brain/time/timezone?tz=UTC');
+    expect(iso.status).toBe(200);
+    expect(iso.headers['content-type']).toMatch(/application\/json/);
+    expect(typeof iso.body.iso).toBe('string');
+    expect(unix.status).toBe(200);
+    expect(unix.headers['content-type']).toMatch(/application\/json/);
+    expect(Number.isInteger(unix.body.unix)).toBe(true);
+    expect(tz.status).toBe(200);
+    expect(tz.headers['content-type']).toMatch(/application\/json/);
+    expect(tz.body.tz).toBe('UTC');
   });
 });

@@ -30,16 +30,17 @@ describe('Workstream 1 — /iso endpoint [BEHAVIOR]', () => {
     expect(parsed.toISOString()).toBe(res.body.iso);
   });
 
-  it('GET /iso returns a fresh timestamp within 1 second of wall clock', async () => {
-    const before = Date.now();
+  it('GET /iso iso wall-clock lies within [requestStart-1s, responseEnd+1s]', async () => {
+    // Hard threshold (Feature 1): body.iso 对应的墙钟时间必须落在
+    // [请求发起时刻 − 1s, 响应接收时刻 + 1s] 区间内。
+    // 1s buffer 吸收网络 / event-loop 抖动；任何 5s 级漂移都应被拒绝。
+    const requestStart = Date.now();
     const res = await request(buildApp()).get('/iso');
-    const after = Date.now();
+    const responseEnd = Date.now();
     expect(res.status).toBe(200);
     const t = new Date(res.body.iso).getTime();
-    // Hard threshold ≤ 1 second — window is [before-1000ms, after+1000ms]
-    // to absorb network / event-loop jitter while still rejecting any 5s-scale drift.
-    expect(t).toBeGreaterThanOrEqual(before - 1000);
-    expect(t).toBeLessThanOrEqual(after + 1000);
+    expect(t).toBeGreaterThanOrEqual(requestStart - 1000);
+    expect(t).toBeLessThanOrEqual(responseEnd + 1000);
   });
 });
 
@@ -59,8 +60,9 @@ describe('Workstream 1 — /unix endpoint [BEHAVIOR]', () => {
     const nowSec = Math.floor(Date.now() / 1000);
     expect(res.body.unix).toBeGreaterThanOrEqual(nowSec - 5);
     expect(res.body.unix).toBeLessThanOrEqual(nowSec + 5);
-    // Seconds for any plausible 21st/22nd century timestamp are < 1e11;
-    // milliseconds are already > 1e12. A value ≥ 1e11 would prove ms granularity.
-    expect(res.body.unix).toBeLessThan(1e11);
+    // 2286 年之前的 Unix 秒都 < 1e10（year 2286 ≈ Unix sec 1e10）；
+    // 毫秒早已 > 1e12。阈值 < 1e10 与注释数学自洽，
+    // 任何"误返回 Date.now() 毫秒"的实现会以 ~1.77e12 直接被这条断言抓住。
+    expect(res.body.unix).toBeLessThan(1e10);
   });
 });
