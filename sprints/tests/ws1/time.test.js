@@ -181,4 +181,34 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     const isoSec = Math.floor(Date.parse(res.body.iso) / 1000);
     expect(isoSec).toBe(res.body.unix);
   });
+
+  it('fifty consecutive requests each satisfy strict iso/unix same-second equality', async () => {
+    // R5 新增（响应 Round 4 Reviewer 阻断反馈）：
+    // R4 it#7 "iso↔unix 同秒严格相等" 对"分别 new Date() × 2"的坏实现是概率检测——
+    // 两次 new Date() 只相差微秒、几乎总落在同一秒内，单次调用极难碰到跨秒边界。
+    //
+    // 本测试把该断言在同一次测试内扩到 50 次连续调用：
+    //   - 合法单一快照实现：每一次都 trivially 满足 isoSec === unix（毫秒 → 同一秒）
+    //   - 分别 new Date() × 2 的坏实现：50 次中至少有一两次会恰好跨秒，任一次失败即红
+    //   - 分别 Date.now() 的坏实现：同理（且已被 ARTIFACT #13 静态禁止）
+    //
+    // 这是 belt-and-suspenders 层，与 ARTIFACT #13（静态 deterministic 硬锁）互为双保险。
+    // 性能说明：50 次 supertest 调用在本机 < 500ms，不影响 CI 时长。
+    const app = await createAppOrThrow();
+    const N = 50;
+    const failures = [];
+    for (let i = 0; i < N; i++) {
+      const res = await request(app).get('/api/brain/time');
+      expect(res.status).toBe(200);
+      const isoSec = Math.floor(Date.parse(res.body.iso) / 1000);
+      if (isoSec !== res.body.unix) {
+        failures.push({ i, iso: res.body.iso, isoSec, unix: res.body.unix });
+      }
+    }
+    expect(
+      failures,
+      `expected all ${N} calls to have Math.floor(Date.parse(iso)/1000) === unix, ` +
+        `but got ${failures.length} mismatch(es): ${JSON.stringify(failures.slice(0, 3))}`,
+    ).toEqual([]);
+  });
 });
