@@ -16,7 +16,7 @@ if [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]]; then
     exit 0
 fi
 
-# ---- 契约 2：确定 cwd（fallback 到 $PWD） --------------------------------
+# ---- 契约 2：确定 cwd（fallback 到 ${PWD}） --------------------------------
 cwd="${CLAUDE_HOOK_CWD:-$PWD}"
 [[ ! -d "$cwd" ]] && exit 0
 
