@@ -1,16 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import express from 'express';
 import request from 'supertest';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const REPO_ROOT = resolve(__dirname, '../../../');
-const SERVER_JS = resolve(REPO_ROOT, 'packages/brain/server.js');
-
-// IANA 时区硬阈值（Reviewer 风险 2 回应）：
+// IANA 时区硬阈值（Round 1 Reviewer 风险 2 回应）：
 // 允许 UTC 或 Area/Location（Asia/Shanghai）或 Area/Region/Location（America/Argentina/Buenos_Aires）
 const IANA_TZ_RE = /^(UTC|[A-Za-z_]+\/[A-Za-z_]+(\/[A-Za-z_]+)?)$/;
 
@@ -81,51 +73,24 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     expect(Math.abs(isoSeconds - res.body.unix)).toBeLessThanOrEqual(1);
   });
 
-  it('two consecutive calls spaced 1.1 seconds return different unix values', async () => {
+  it('two consecutive calls spaced 1.05 seconds return different unix values', async () => {
     const a = await getApp();
     const r1 = await request(a).get('/api/brain/time');
-    await new Promise((r) => setTimeout(r, 1100));
+    // 1050ms：既能跨越一个秒边界（Date.now() 取整到秒，只要 wall clock 秒变化就能触发 unix 递增），
+    // 又比 Round 2 的 1100ms 省 50ms CI 固定开销（Round 2 Reviewer 非阻塞观察）
+    await new Promise((r) => setTimeout(r, 1050));
     const r2 = await request(a).get('/api/brain/time');
     expect(r2.body.unix).toBeGreaterThan(r1.body.unix);
   });
 });
 
-// Reviewer 风险 3 回应：以上 7 个 it 全部挂在私有 express() 上，
-// 无法发现 server.js 里笔误 /api/brain/times 或条件分支注册。
-// 这里用静态语义检查补漏（避免 import server.js 引入 DB/Tick 副作用）。
-describe('Workstream 1 — server.js 挂载点完整性 [BEHAVIOR-STATIC]', () => {
-  it('server.js can be read and contains no obvious typo around /api/brain/time', () => {
-    const src = readFileSync(SERVER_JS, 'utf8');
-    // 字面量 /api/brain/time 后必须紧跟引号（禁止 /api/brain/times 这种笔误）
-    // 用负向前瞻确保 time 之后不是字母/数字/下划线
-    expect(src).toMatch(/['"]\/api\/brain\/time(?![A-Za-z0-9_])['"]/);
-  });
-
-  it('server.js imports timeRoutes default export from ./src/routes/time.js', () => {
-    const src = readFileSync(SERVER_JS, 'utf8');
-    expect(src).toMatch(/^import\s+timeRoutes\s+from\s+['"]\.\/src\/routes\/time\.js['"];?\s*$/m);
-  });
-
-  it('server.js registers app.use with exact path /api/brain/time bound to timeRoutes', () => {
-    const src = readFileSync(SERVER_JS, 'utf8');
-    expect(src).toMatch(
-      /app\.use\(\s*['"]\/api\/brain\/time(?![A-Za-z0-9_])['"]\s*,\s*timeRoutes\s*\)/
-    );
-  });
-
-  it('app.use(/api/brain/time, ...) line is at top level (not nested in if/try/else block)', () => {
-    const src = readFileSync(SERVER_JS, 'utf8');
-    const lines = src.split('\n');
-    const hits = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (/app\.use\(\s*['"]\/api\/brain\/time(?![A-Za-z0-9_])['"]/.test(lines[i])) {
-        hits.push({ idx: i, line: lines[i] });
-      }
-    }
-    expect(hits.length).toBeGreaterThanOrEqual(1);
-    for (const hit of hits) {
-      // 顶层注册行必须零缩进（不在 if/else/try/function/block 内）
-      expect(hit.line).toMatch(/^app\.use\(/);
-    }
-  });
-});
+// Round 2 曾额外引入一组 BEHAVIOR-STATIC describe（readFileSync(server.js) 做静态正则检查，
+// 覆盖笔误 /api/brain/times、import 行、app.use 注册、零缩进顶层）。
+// Round 2 Reviewer 非阻塞观察：配合 DoD 里"生产侧测试 import server.js default export + supertest"
+// 的 ARTIFACT 强制条款，静态四 it 属于冗余兜底；保留反而给 Generator 合法风格强加约束
+// （多行 app.use、IIFE 等都会误杀）。Round 3 采用 Reviewer 推荐路径：
+//   - 功能行为在这里用 supertest 覆盖（上方 8 个 it）
+//   - 挂载点完整性交给 DoD ARTIFACT 的静态检查（放宽正则，但保留字面量/零缩进/防笔误核心）
+//   - "从 server.js 入口真实可达" 由 DoD 强制的生产侧 supertest（packages/brain/tests/time.test.js
+//     import server.js default export）锁到 Green commit
+// 因此 Round 3 删除 BEHAVIOR-STATIC describe，预期红证据从 12 降到 8。
