@@ -116,6 +116,12 @@ interface SessionInfo { cwd: string | null; projectName: string | null; provider
 interface ProviderInfo { provider: string; model: string | null }
 type KillState = 'idle' | 'confirm' | 'killing' | 'sent';
 
+interface MutedState {
+  enabled: boolean;
+  last_toggled_at: string | null;
+  env_override: boolean;
+}
+
 interface AccountUsage {
   five_hour_pct: number;
   seven_day_pct: number;
@@ -1225,6 +1231,36 @@ export default function LiveMonitorPage() {
   const [allGoals, setAllGoals] = useState<GoalItem[]>([]);
   const handleKilled = useCallback((pid: number) => setKilledPids(s => new Set([...s, pid])), []);
 
+  const [muted, setMutedState] = useState<MutedState | null>(null);
+  const [mutedBusy, setMutedBusy] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/brain/settings/muted')
+      .then(r => r.json())
+      .then(setMutedState)
+      .catch(err => console.warn('[LiveMonitor] load muted failed:', err));
+  }, []);
+
+  const toggleMuted = async () => {
+    if (!muted || muted.env_override || mutedBusy) return;
+    setMutedBusy(true);
+    try {
+      const res = await fetch('/api/brain/settings/muted', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !muted.enabled }),
+      });
+      if (res.ok) {
+        const next = await res.json();
+        setMutedState(next);
+      }
+    } catch (err) {
+      console.warn('[LiveMonitor] toggle muted failed:', err);
+    } finally {
+      setMutedBusy(false);
+    }
+  };
+
   const load = useCallback(async () => {
     const r = await Promise.allSettled([
       fetch('/api/brain/status').then(x => x.json()),
@@ -1486,6 +1522,33 @@ export default function LiveMonitorPage() {
                 {tick?.last_dispatch && (
                   <div style={{ fontSize: 9, color: '#6e7681', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {tick.last_dispatch.success ? '' : '[x] '}{clip(tick.last_dispatch.task_title, 24)}
+                  </div>
+                )}
+                {muted && (
+                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                    <button
+                      onClick={toggleMuted}
+                      disabled={muted.env_override || mutedBusy}
+                      title={muted.env_override ? 'env BRAIN_MUTED=true 强制静默，改 plist 重启 daemon 才能切换' : ''}
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                        color: '#fff',
+                        background: muted.enabled ? '#dc2626' : '#16a34a',
+                        opacity: muted.env_override || mutedBusy ? 0.5 : 1,
+                        cursor: muted.env_override || mutedBusy ? 'not-allowed' : 'pointer',
+                        border: 'none',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                      }}
+                    >
+                      飞书: {muted.enabled ? '静默中' : '发送中'}
+                    </button>
+                    {muted.last_toggled_at && (
+                      <span style={{ color: '#9ca3af', fontSize: 10 }}>
+                        {new Date(muted.last_toggled_at).toLocaleTimeString()}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
