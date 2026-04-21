@@ -76,6 +76,21 @@ RUN mkdir -p /home/cecelia/v6-runtime/node_modules/@resvg \
   && ln -sf /usr/local/lib/node_modules/@resvg/resvg-js /home/cecelia/v6-runtime/node_modules/@resvg/resvg-js \
   && chown -R cecelia:cecelia /home/cecelia/v6-runtime
 
+# Content pipeline 6 stage 单命令入口脚本（Agent A 稳定性改造）
+#
+# 目的：SKILL.md 原先把 bash 块嵌在 SOP 里，Claude 有一定概率跳过 bash 直接
+# 编 JSON 输出（headless 里 50% 概率抽不到 copy_review_total / nas_url 等字段）。
+# 改成 SKILL.md 只留一句 `bash /opt/cecelia-skills/pipeline-<stage>.sh`，
+# 所有真正逻辑搬到这些 .sh 文件里，Claude 不再做判断，JSON 由 bash 硬保证。
+#
+# 每个 .sh 遵守约定：
+#   - 开头 set -e (或 set +e 兜底) + set -o pipefail
+#   - 中间 debug 输出走 stderr (>&2)
+#   - stdout 只有最后一行单行 JSON，供 Brain extractJsonField 抽字段
+#   - curl 大 body 用 `printf '%s' "$BODY" | curl --data-binary @-` 防 argv 过长
+COPY skills-bash/ /opt/cecelia-skills/
+RUN chmod +x /opt/cecelia-skills/*.sh
+
 # 入口脚本：复制 host-claude-config → 可写副本 + safe.directory + 启动 claude
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
