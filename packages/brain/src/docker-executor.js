@@ -297,6 +297,14 @@ export function buildDockerArgs(opts, ctx = {}) {
   if (existsFn(hostClaudeOutput)) {
     extraVolumes.push('-v', `${hostClaudeOutput}:/home/cecelia/claude-output:rw`);
   }
+  // 挂载 ~/.ssh（只读）让 pipeline-export.sh 能 ssh "$NAS_SSH_ALIAS" 上传 tar。
+  // 没挂载时 ssh 容器里找不到 id_rsa / ~/.ssh/config 里的 "Host nas" 定义 → exit=255，nas_url=null。
+  // :ro 防容器写坏宿主 ssh 目录。macOS Docker Desktop osxfs 绕过 UID enforcement，
+  // 容器内 cecelia 用户可读宿主 0600 文件。
+  const hostSshDir = path.join(homedir, '.ssh');
+  if (existsFn(hostSshDir)) {
+    extraVolumes.push('-v', `${hostSshDir}:/home/cecelia/.ssh:ro`);
+  }
 
   const cidfile = cidFilePath(taskId);
   const args = [
