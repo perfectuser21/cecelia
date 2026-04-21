@@ -6,6 +6,17 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.4.0"
+    date: "2026-04-21"
+    change: "feat"
+    description: "stop-dev-v2 cwd-as-key 原型（不接线）。新增 packages/engine/hooks/stop-dev-v2.sh，用 cwd 替代老 stop-dev.sh 的多字段所有权匹配（owner_session/worktree_path/pid 三字段 → 单 cwd 比对）。80 行替代 313 行。不改 settings.json，老 hook 继续运行。配套新增 stop-dev-v2.test.ts 覆盖 5 个场景（cwd 精确匹配/cwd 不匹配放行/no-lock 放行/lock 格式错 graceful/done 状态直通）。原型阶段手工验证，稳定一周后切线。minor bump 18.3.4 → 18.4.0。"
+    files:
+      - "packages/engine/hooks/stop-dev-v2.sh (new, 80 lines, cwd-as-key 所有权)"
+      - "packages/engine/tests/hooks/stop-dev-v2.test.ts (new, 5 scenarios)"
+      - "docs/superpowers/specs/2026-04-21-stop-dev-v2-cwd-as-key-design.md (new)"
+      - "docs/superpowers/plans/2026-04-21-stop-dev-v2-cwd-as-key.md (new)"
+      - "Engine 5 处版本文件 18.4.0"
+
   - version: "18.3.4"
     date: "2026-04-20"
     change: "fix"
