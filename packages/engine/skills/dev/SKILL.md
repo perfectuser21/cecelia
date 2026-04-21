@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 18.3.4
-updated: 2026-04-20
+version: 18.4.0
+updated: 2026-04-21
 description: Cecelia /dev 点火入口。接力链 — engine-worktree → superpowers:brainstorming → writing-plans → subagent-driven-development → finishing → engine-ship。所有"问用户"交互点由 Research Subagent 代答，不停下等用户。
 trigger: /dev, --task-id <id>
 ---
