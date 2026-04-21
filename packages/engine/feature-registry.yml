@@ -6,6 +6,18 @@ version: "1.0.0"
 updated: "2026-04-20"
 
 changelog:
+  - version: "18.5.0"
+    date: "2026-04-21"
+    change: "chore"
+    description: "stop hook 彻底终结（cwd-as-key 切线 + 12 场景 E2E）。99 commit 不收敛状态终结。stop.sh 删 owner_session 精确匹配路由（interactive 模式死路），stop-dev.sh 313→85 行改 cwd-as-key，worktree-manage 强制写 .dev-mode 标准格式。删原型 stop-dev-v2.sh + 单测。新增 12 场景 E2E 防线（bypass/各 pipeline 阶段/PR-CI 状态/交互/无头/格式异常全覆盖）。净删代码 ~250 行。minor bump 18.4.0 → 18.5.0。"
+    files:
+      - "packages/engine/hooks/stop.sh (简化 178→110)"
+      - "packages/engine/hooks/stop-dev.sh (重写 313→85, v19.0.0)"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (+14 写 .dev-mode)"
+      - "packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts (新增, 12 场景)"
+      - "packages/engine/hooks/stop-dev-v2.sh (删除, 融入 stop-dev.sh)"
+      - "packages/engine/tests/hooks/stop-dev-v2.test.ts (删除)"
+
   - version: "18.4.0"
     date: "2026-04-21"
     change: "feat"
