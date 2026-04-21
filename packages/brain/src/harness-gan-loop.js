@@ -111,6 +111,7 @@ export async function runGanContractLoop(opts) {
       task: { id: taskId, task_type: 'harness_contract_propose' },
       prompt: buildProposerPrompt(prdContent, feedback, round),
       worktreePath,
+      timeoutMs: 1800000, // 30min，v5 SKILL Proposer 单轮最长 15min + buffer
       env: {
         CECELIA_CREDENTIALS: 'account1',
         CECELIA_TASK_TYPE: 'harness_contract_propose',
@@ -137,6 +138,7 @@ export async function runGanContractLoop(opts) {
       task: { id: taskId, task_type: 'harness_contract_review' },
       prompt: buildReviewerPrompt(prdContent, contractContent, round),
       worktreePath,
+      timeoutMs: 1800000, // 30min，Reviewer 虽然一般快，但 v5 挑战深度对抗可能慢
       env: {
         CECELIA_CREDENTIALS: 'account1',
         CECELIA_TASK_TYPE: 'harness_contract_review',
