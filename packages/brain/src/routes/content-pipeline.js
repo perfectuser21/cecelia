@@ -657,6 +657,14 @@ router.post('/:id/run-langgraph', async (req, res) => {
           },
         );
         console.log(`[content-pipeline] run-langgraph 完成: pipeline=${id} steps=${result.steps}`);
+        // 回写 tasks.status='completed'（之前只失败路径 UPDATE，成功路径遗漏，
+        // 导致 Dashboard 和 /api/brain/tasks/:id 查到的 status 永远停在 queued）
+        await pool.query(
+          `UPDATE tasks SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+          [id],
+        ).catch((e) => {
+          console.warn(`[content-pipeline] tasks.status 回写失败 pipeline=${id}: ${e.message}`);
+        });
       } catch (err) {
         console.error(`[content-pipeline] run-langgraph 失败: pipeline=${id} error=${err.message}`);
         await pool.query(
