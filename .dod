@@ -1,14 +1,22 @@
-# DoD — Brain 出站飞书单一 gate（BRAIN_MUTED）
+# DoD — Dashboard 飞书静默 toggle
 
-- [x] [ARTIFACT] notifier.js 两个函数顶部有 BRAIN_MUTED gate
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/notifier.js','utf8');const cnt=(c.match(/BRAIN_MUTED/g)||[]).length;if(cnt<3)process.exit(1);console.log('gate count='+cnt)"
-- [x] [ARTIFACT] daily-review-scheduler.js INSERT payload 含 prd_summary
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/daily-review-scheduler.js','utf8');if(!c.includes('prd_summary'))process.exit(1)"
-- [x] [BEHAVIOR] BRAIN_MUTED 单测 6 场景全绿
+- [x] [ARTIFACT] muted-guard.js 新文件（5 函数导出）
+      Test: manual:node -e "const m=require('fs').readFileSync('packages/brain/src/muted-guard.js','utf8');for(const n of ['isMuted','initMutedGuard','setMuted','getMutedStatus','reloadMutedCache']){if(!m.includes('export')||!m.includes(n))process.exit(1)}console.log('5 exports OK')"
+- [x] [ARTIFACT] migration 242 新文件
+      Test: manual:node -e "require('fs').accessSync('packages/brain/migrations/242_brain_muted_setting.sql')"
+- [x] [ARTIFACT] notifier.js 改用 isMuted()
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/notifier.js','utf8');if(!c.includes(\"from './muted-guard.js'\")||!c.includes('isMuted()'))process.exit(1)"
+- [x] [ARTIFACT] server.js 加 initMutedGuard
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!c.includes('initMutedGuard'))process.exit(1)"
+- [x] [ARTIFACT] routes/settings.js 有 /muted 端点
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/settings.js','utf8');if(!c.includes(\"'/muted'\"))process.exit(1)"
+- [x] [ARTIFACT] Dashboard LiveMonitorPage 有静默 toggle
+      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx','utf8');if(!c.includes('/api/brain/settings/muted'))process.exit(1)"
+- [x] [BEHAVIOR] muted-guard 6 场景测试全绿
+      Test: tests/brain/muted-guard.test.js
+- [x] [BEHAVIOR] settings-muted-api 3 场景测试全绿
+      Test: tests/brain/settings-muted-api.test.js
+- [x] [BEHAVIOR] notifier-muted-gate 6 场景无回归
       Test: tests/brain/notifier-muted-gate.test.js
-- [x] [BEHAVIOR] arch-review prd_summary 单测绿
-      Test: tests/brain/arch-review-prd-summary.test.js
 - [x] [BEHAVIOR] 现有 notifier.test.js 无回归
       Test: manual:npx vitest run packages/brain/src/__tests__/notifier.test.js --no-coverage --reporter=basic
-- [x] [ARTIFACT] 设计 + Learning 文档已提交
-      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-21-brain-muted-gate-design.md');require('fs').accessSync('docs/learnings/cp-0421180232-brain-muted-gate.md')"
