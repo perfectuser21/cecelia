@@ -1,7 +1,7 @@
 # Contract DoD — Workstream 2: `/timezone` 端点与错误分支
 
 **范围**: 在 WS1 建立的 `packages/brain/src/routes/time.js` 内新增 `GET /timezone`，通过 Node 内置 `Intl.DateTimeFormat` 实现，对非法/缺失 `tz` 返回 HTTP 400 + `{ error }`。不新增依赖。
-**大小**: S（< 60 行新增）
+**大小**: S（描述性标签）
 **依赖**: Workstream 1 完成后
 
 ## ARTIFACT 条目
@@ -27,10 +27,10 @@
 ## BEHAVIOR 索引（实际测试在 tests/ws2/）
 
 见 `tests/ws2/timezone.test.js`，覆盖：
-- GET /timezone?tz=Asia/Shanghai 返回 200，body.tz 原样回显，formatted 非空
-- GET /timezone?tz=UTC 返回 200，body.tz=UTC
+- GET /timezone?tz=Asia/Shanghai 返回 200 + `Content-Type` 含 `application/json`，body.tz 原样回显，formatted 非空
+- GET /timezone?tz=UTC 返回 200 + `Content-Type` 含 `application/json`，body.tz=UTC
 - 不同合法时区得到不同 formatted（Asia/Shanghai 与 America/Los_Angeles 不同）
-- GET /timezone?tz=Not/AReal_Zone 返回 400，body.error 非空
-- GET /timezone 无 tz 参数返回 400，body.error 非空
-- GET /timezone?tz=（空字符串）返回 400，body.error 非空
-- 注入形态时区串（URL-encoded `' OR 1=1--`）返回 400 而非 500
+- GET /timezone?tz=Not/AReal_Zone 返回 400 + `Content-Type` 含 `application/json`，body.error 非空
+- GET /timezone 无 tz 参数返回 400 + `Content-Type` 含 `application/json`，body.error 非空
+- GET /timezone?tz=（空字符串）返回 400 + `Content-Type` 含 `application/json`，body.error 非空
+- 注入形态时区串（URL-encoded `' OR 1=1--`）返回 400（**非 500**） + `Content-Type` 含 `application/json`
