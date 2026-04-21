@@ -1,7 +1,7 @@
 # Contract DoD — Workstream 1: Brain /api/brain/time 只读时间端点
 
-**范围**: 新增 Express Router + 在 `packages/brain/server.js` 挂载 + 新增单测 + 更新 `docs/current/README.md`。
-**大小**: S（总新增 < 100 行）
+**范围**: 新增 Express Router + 在 `packages/brain/server.js` 挂载（含命名导出 `app` + VITEST 护栏最小重构） + 新增单测 + 更新 `docs/current/README.md`。
+**大小**: S（总新增 < 100 行 + server.js 最小重构）
 **依赖**: 无
 
 ## ARTIFACT 条目
@@ -15,7 +15,7 @@
 - [ ] [ARTIFACT] `packages/brain/src/routes/time.js` 注册 `GET /` 路径（与 `/api/brain/time` 前缀组合后即 `/api/brain/time`）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/time.js','utf8');if(!/router\.get\s*\(\s*['\"]\/['\"]\s*,/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `packages/brain/src/routes/time.js` 含 `toISOString` / `getTime` / `resolvedOptions` 三个调用，构成"单一快照"实现的源代码线索
+- [ ] [ARTIFACT] `packages/brain/src/routes/time.js` 含 `toISOString` / `getTime` / `resolvedOptions` 三个调用，构成"单一快照"实现的源代码线索（实现锁，非缺陷检测；真正兜住语义的是 BEHAVIOR it#7）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/time.js','utf8');if(!c.includes('toISOString'))process.exit(2);if(!/getTime\s*\(\s*\)/.test(c))process.exit(3);if(!/resolvedOptions\s*\(\s*\)/.test(c))process.exit(4)"
 
 - [ ] [ARTIFACT] `packages/brain/server.js` 含名为 `timeRoutes` 的 ESM import，指向 `./src/routes/time.js`（强制变量名消歧，避免挂载/import 变量错位）
@@ -36,9 +36,15 @@
 - [ ] [ARTIFACT] `docs/current/README.md` 含 `/api/brain/time` 端点文档条目，并在同一文件中含 `iso`、`timezone`、`unix` 三个字段名
   Test: node -e "const c=require('fs').readFileSync('docs/current/README.md','utf8');if(!c.includes('/api/brain/time'))process.exit(1);if(!/\biso\b/.test(c))process.exit(2);if(!/\btimezone\b/.test(c))process.exit(3);if(!/\bunix\b/.test(c))process.exit(4)"
 
+- [ ] [ARTIFACT] `packages/brain/server.js` 以命名导出形式暴露 `app`（允许 `export const app = express()` 或等价的 `export { app }` / `export { app as app }`）——供 BEHAVIOR it#11 动态导入真实 Brain app（**R4 新增**，闭合 PRD US-001 / SC-002 的"跑起来的 Brain"语义）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');const p1=/export\s+const\s+app\s*=/;const p2=/export\s*\{[^}]*\bapp\b[^}]*\}/;if(!p1.test(c)&&!p2.test(c))process.exit(1)"
+
+- [ ] [ARTIFACT] `packages/brain/server.js` 将 DB / WS / 外部端口副作用的顶层 `await` 链收进 `process.env.VITEST` 护栏（R4 新增，使 `VITEST=true` 下 `import { app }` 不连 DB、不开端口）——护栏以字面量 `process.env.VITEST` 作为判定锚点，且至少护住 `runMigrations` / `runSelfCheck` / `initConsciousnessGuard` / `loadActiveProfile` / `loadSpendingCapsFromDB` / `loadAuthFailuresFromDB` / `listenWithRetry` / `initWebSocketServer` / `initTickLoop` / `startFleetRefresh` / `initNarrativeTimer` 中的 `runMigrations` + `listenWithRetry` 两个关键锚点（这两个是最容易在测试环境炸的，其他等价锚点通过行为测试 it#11 兜底）
+  Test: bash -c "node -e \"const c=require('fs').readFileSync('packages/brain/server.js','utf8');const hasGuard=/process\.env\.VITEST/.test(c);if(!hasGuard)process.exit(1);const lines=c.split(/\r?\n/);const vitestLineIdx=lines.findIndex(l=>/process\.env\.VITEST/.test(l));if(vitestLineIdx<0)process.exit(2);const afterVitest=lines.slice(vitestLineIdx).join('\n');if(!/runMigrations\s*\(/.test(afterVitest))process.exit(3);if(!/listenWithRetry\s*\(/.test(afterVitest))process.exit(4)\""
+
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
-见 `sprints/tests/ws1/time.test.js`，覆盖以下 10 个行为：
+见 `sprints/tests/ws1/time.test.js`，覆盖以下 11 个行为：
 - returns HTTP 200 with application/json content-type
 - response body contains iso, timezone, unix fields all non-empty
 - iso is a valid ISO 8601 extended format string parseable by Date
@@ -49,3 +55,4 @@
 - two consecutive calls both succeed and each response is internally consistent to the second
 - does not require any auth header to return 200
 - packages/brain/server.js imports time router and mounts it at /api/brain/time using the same variable
+- **（R4 新增）** can GET /api/brain/time against the real Brain app exported from server.js — PRD US-001/SC-002 的终局兜底，直接从 server.js 命名导出的 `app` 跑 supertest

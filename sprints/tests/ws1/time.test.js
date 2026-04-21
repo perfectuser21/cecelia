@@ -140,4 +140,45 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     const mountRe = /app\.use\s*\(\s*['"]\/api\/brain\/time['"]\s*,\s*timeRoutes\s*\)/;
     expect(src).toMatch(mountRe);
   });
+
+  it('can GET /api/brain/time against the real Brain app exported from server.js', async () => {
+    // R4 新增（响应 Round 3 Reviewer 阻断反馈）：
+    // R3 前 9 条 BEHAVIOR 跑在 createAppOrThrow() 合成的迷你 Express 上，第 10 条是静态文本解析。
+    // 与 PRD US-001 / SC-002「跑起来的 Brain 能被外部 GET 到」存在可被绕过的缝隙：
+    // 构造合法 time.js + 合法文本挂载、但实际 app 实例不接 router 的 bug 能通过 R3 全部断言。
+    //
+    // 本断言直接从 server.js 的命名导出取真实 app，用 supertest 端到端打 /api/brain/time，
+    // 闭合 "import 变量名 + app.use 字面量 + 真实 app 实例" 三者的一致性。
+    //
+    // Generator 需要完成的前置重构（由 DoD ARTIFACT #11/#12 强制）：
+    //   1. `const app = express()` 改为 `export const app = express()`（或等价 `export { app }`）
+    //   2. 把 runMigrations / listenWithRetry 等 DB/端口副作用顶层 await 收进
+    //      `if (!process.env.VITEST) { ... }` 护栏，保证测试下 import 不连 DB、不开端口
+    // 任何一步缺失，本断言都会以"import 抛错 / mod.app undefined / 404 / 字段缺失"失败。
+
+    // vitest 1.6.1 运行时自动注入 process.env.VITEST='true'，此处冗余但显式，防 CI 环境变量被重置
+    process.env.VITEST = process.env.VITEST || 'true';
+
+    const mod = await import(
+      /* @vite-ignore */ '../../../packages/brain/server.js'
+    );
+    expect(mod).toBeDefined();
+    expect(mod.app, 'server.js must expose a named export "app" (export const app = …)').toBeDefined();
+    const app = mod.app;
+    expect(typeof app).toBe('function'); // Express app 本体是可作为 handler 的 function
+
+    const res = await request(app).get('/api/brain/time');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^application\/json/);
+    expect(res.body).toHaveProperty('iso');
+    expect(res.body).toHaveProperty('timezone');
+    expect(res.body).toHaveProperty('unix');
+    expect(res.body.iso).not.toBe('');
+    expect(res.body.timezone).not.toBe('');
+    expect(typeof res.body.unix).toBe('number');
+
+    // 同一响应内 iso 和 unix 同秒严格相等——与 Feature 1 的单一快照语义保持一致
+    const isoSec = Math.floor(Date.parse(res.body.iso) / 1000);
+    expect(isoSec).toBe(res.body.unix);
+  });
 });
