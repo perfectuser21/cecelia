@@ -295,7 +295,11 @@ export async function triggerArchReview(pool, now = new Date()) {
        RETURNING id`,
       [
         `[arch-review] 定时架构巡检 ${timestamp} UTC`,
-        JSON.stringify({ scope: 'scheduled', trigger: '4h' }),
+        JSON.stringify({
+          scope: 'scheduled',
+          trigger: '4h',
+          prd_summary: `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。`,
+        }),
       ]
     );
     const task_id = rows[0].id;
