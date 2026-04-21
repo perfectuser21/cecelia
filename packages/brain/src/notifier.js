@@ -8,6 +8,8 @@
  * Errors are caught and logged - never breaks main flow.
  */
 
+import { isMuted } from './muted-guard.js';
+
 const FEISHU_WEBHOOK_URL = process.env.FEISHU_BOT_WEBHOOK || '';
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
@@ -25,8 +27,8 @@ const RATE_LIMIT_MS = 60 * 1000;
  * @returns {Promise<boolean>}
  */
 async function sendFeishuOpenAPI(text) {
-  if (process.env.BRAIN_MUTED === 'true') {
-    console.log('[notifier] BRAIN_MUTED=true → skip outbound (feishu open api):', text.slice(0, 80));
+  if (isMuted()) {
+    console.log('[notifier] muted → skip outbound (feishu open api):', text.slice(0, 80));
     return false;
   }
   if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_ALEX_OPEN_ID) {
@@ -82,8 +84,8 @@ async function sendFeishuOpenAPI(text) {
  * @returns {Promise<boolean>}
  */
 async function sendFeishu(text) {
-  if (process.env.BRAIN_MUTED === 'true') {
-    console.log('[notifier] BRAIN_MUTED=true → skip outbound (feishu webhook):', text.slice(0, 80));
+  if (isMuted()) {
+    console.log('[notifier] muted → skip outbound (feishu webhook):', text.slice(0, 80));
     return false;
   }
   // 渠道 1：Webhook（群机器人）

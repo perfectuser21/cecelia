@@ -67,6 +67,7 @@ import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
 import { initNarrativeTimer } from './src/cognitive-core.js';
 import { isConsciousnessEnabled, logStartupDeclaration, initConsciousnessGuard } from './src/consciousness-guard.js';
+import { initMutedGuard } from './src/muted-guard.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
 import { loadSpendingCapsFromDB, loadAuthFailuresFromDB } from './src/account-usage.js';
@@ -322,6 +323,7 @@ try {
 }
 
 await initConsciousnessGuard(pool);
+await initMutedGuard(pool);
 logStartupDeclaration();
 
 // Load active model profile
