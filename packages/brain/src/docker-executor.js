@@ -39,6 +39,9 @@ const RESOURCE_TIERS = {
   light: { memoryMB: 512, cpuCores: 1 },
   normal: { memoryMB: 1024, cpuCores: 1 },
   heavy: { memoryMB: 1536, cpuCores: 2 },
+  // pipeline 专属：content pipeline 的 research/copywrite stage 含 Claude CLI + 长 prompt
+  // + tool use，实测峰值 800-1100MB，1024 tier 偶发 OOM exit 137。给 2048 留 2× 冗余。
+  'pipeline-heavy': { memoryMB: 2048, cpuCores: 1 },
 };
 
 const TASK_TYPE_TIER = {
@@ -51,14 +54,22 @@ const TASK_TYPE_TIER = {
   harness_report: 'light',
   daily_report: 'light',
   briefing: 'light',
+  content_export: 'light',            // 只 tar + ssh，无 LLM
+  // normal
+  content_copy_review: 'normal',       // 纯 bash + curl 调 Brain LLM API，容器里无 Claude CLI 用量
+  content_image_review: 'normal',      // 同上，vision 禁用时更轻
   // heavy
   dev: 'heavy',
   codex_dev: 'heavy',
   generate: 'heavy',
+  content_generate: 'heavy',           // SVG napi 渲染 9 PNG 峰值 ~1200MB
   sprint_generator: 'heavy',
   harness_generator: 'heavy',
   initiative_plan: 'heavy',
-  // 其他默认 normal（propose/review/eval/fix/talk/research...）
+  // pipeline-heavy — content pipeline 里 Claude CLI 吃 context 最重的两步
+  content_research: 'pipeline-heavy',  // Claude 跑长 prompt + 网查 + 生成 findings.json 7KB
+  content_copywrite: 'pipeline-heavy', // Claude 生成 copy.md + article.md 共 8-9KB
+  // 其他默认 normal
 };
 
 /**

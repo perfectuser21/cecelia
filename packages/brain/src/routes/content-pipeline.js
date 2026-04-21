@@ -33,6 +33,13 @@ import { validateAllVariants } from '../content-quality-validator.js';
 
 const router = express.Router();
 
+// Content pipeline 并发硬限（防 Mac OOM）。
+// 一条 pipeline 峰值约 2GB（research/copywrite stage Claude CLI + context），
+// Mac 16GB 同时跑 2 条 × 2GB = 4GB peak，留 12GB 给 Brain / Dashboard / 用户进程。
+// 第 3 条请求立即 429 返回，由上层（Dashboard / cron / 手动）决定排队或丢弃。
+const PIPELINE_MAX_CONCURRENT = parseInt(process.env.PIPELINE_MAX_CONCURRENT || '2', 10);
+const _runningPipelines = new Set();
+
 /**
  * GET /content-types
  * 返回所有已注册内容类型名称数组
@@ -580,11 +587,25 @@ router.post('/:id/run-langgraph', async (req, res) => {
         error: { code: 'PIPELINE_NOT_FOUND', message: `pipeline ${id} 不存在` },
       });
     }
+    // 并发硬限：防 Mac OOM
+    if (_runningPipelines.size >= PIPELINE_MAX_CONCURRENT && !_runningPipelines.has(id)) {
+      return res.status(429).json({
+        success: false,
+        error: {
+          code: 'PIPELINE_BUSY',
+          message: `已有 ${_runningPipelines.size} 条 pipeline 并行（上限 ${PIPELINE_MAX_CONCURRENT}），稍后重试。`,
+          running_ids: [..._runningPipelines],
+        },
+      });
+    }
+
     const row = r.rows[0];
     const payload = row.payload || {};
     const keyword = (req.body && req.body.keyword) || payload.keyword || '';
     const outputDir = (req.body && req.body.output_dir) || payload.output_dir || '';
     const notebookId = (req.body && req.body.notebook_id) || payload.notebook_id || null;
+
+    _runningPipelines.add(id);
 
     // 202 Accepted 立即返，异步跑 pipeline
     res.status(202).json({
@@ -593,6 +614,7 @@ router.post('/:id/run-langgraph', async (req, res) => {
         pipeline_id: id,
         status: 'running',
         mode: 'langgraph',
+        concurrent_slot: `${_runningPipelines.size}/${PIPELINE_MAX_CONCURRENT}`,
       },
     });
 
@@ -641,6 +663,8 @@ router.post('/:id/run-langgraph', async (req, res) => {
           `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
           [id],
         ).catch(() => {});
+      } finally {
+        _runningPipelines.delete(id);
       }
     })();
   } catch (err) {
