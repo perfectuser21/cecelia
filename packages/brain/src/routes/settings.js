@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { getConsciousnessStatus, setConsciousnessEnabled } from '../consciousness-guard.js';
+import { getMutedStatus, setMuted } from '../muted-guard.js';
 
 const router = Router();
 
@@ -26,6 +27,24 @@ router.patch('/consciousness', async (req, res) => {
     res.json(status);
   } catch (err) {
     console.error('[settings/consciousness] PATCH failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/muted', (req, res) => {
+  res.json(getMutedStatus());
+});
+
+router.patch('/muted', async (req, res) => {
+  const { enabled } = req.body ?? {};
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be boolean' });
+  }
+  try {
+    const status = await setMuted(pool, enabled);
+    res.json(status);
+  } catch (err) {
+    console.error('[settings/muted] PATCH failed:', err);
     res.status(500).json({ error: err.message });
   }
 });
