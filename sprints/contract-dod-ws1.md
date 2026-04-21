@@ -45,6 +45,9 @@
 - [ ] [ARTIFACT] `packages/brain/src/routes/time.js` 源码（行注释 `// …` + 块注释 `/* … */` 剥离后）中：无参 `new Date()` 字面量恰好 1 次；`Date.now(` 字面量 0 次。此条把 FR-003「三字段同一 Date 快照」从行为层概率断言升级为**静态 deterministic 硬锁**——反模式「分别 `new Date()` / 分别 `Date.now()` 取时间再拼装」被源码层直接挡住，不再依赖 CI run 偶然碰到跨秒边界（**R5 新增 #13**）
   Test: node -e "const raw=require('fs').readFileSync('packages/brain/src/routes/time.js','utf8');const stripped=raw.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/.*$/gm,'');const nd=(stripped.match(/\bnew\s+Date\s*\(\s*\)/g)||[]).length;if(nd!==1)process.exit(10+nd);const dn=(stripped.match(/\bDate\s*\.\s*now\s*\(/g)||[]).length;if(dn!==0)process.exit(20+dn)"
 
+- [ ] [ARTIFACT] Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js` 必须**实际跑通**：从仓库根执行 `cd packages/brain && npx vitest run src/__tests__/routes-time.test.js` exit code 为 0，且 vitest 输出含 `Tests  X passed`（`X ≥ 4`）。此条把 SC-001（`npm test` 在 Brain workspace 通过 + 专门覆盖 /api/brain/time 的 test 文件）从"静态文件形态"升级为"实跑过"——与 ARTIFACT #7（文件存在）/ #8（≥ 4 个 `it(` 块）/ #9（使用 supertest）形成四通道闭环，挡下 `it.skip` / 空 body `it('x', () => {})` / 未真连 `src/routes/time.js` 的桩测试等反模式（**R6 新增 #14**）
+  Test: bash -c "cd packages/brain && npx vitest run src/__tests__/routes-time.test.js 2>&1 | tee /tmp/brain-routes-time-r6.log; ec=\${PIPESTATUS[0]}; if [ \$ec -ne 0 ]; then exit \$ec; fi; cnt=\$(grep -oE 'Tests[[:space:]]+[0-9]+ passed' /tmp/brain-routes-time-r6.log | grep -oE '[0-9]+' | head -1); if [ -z \"\$cnt\" ]; then exit 50; fi; if [ \"\$cnt\" -lt 4 ]; then exit 51; fi"
+
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
 见 `sprints/tests/ws1/time.test.js`，覆盖以下 12 个行为：

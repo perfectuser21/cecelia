@@ -1,9 +1,33 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 6)
 
 本合同由 Proposer 针对 `sprints/sprint-prd.md`（Brain `/api/brain/time` 端点）起草，
 进入 GAN 对抗。合同外一字不加，Generator 须严格按本合同实现。
 
-> **Round 5 修订说明**（响应 Round 4 Reviewer 阻断反馈）：
+> **Round 6 修订说明**（响应 Round 5 Reviewer 阻断反馈）：
+> **阻断点**：R5 的 ARTIFACT #7（`packages/brain/src/__tests__/routes-time.test.js` 文件存在）
+> + ARTIFACT #8（含 ≥ 4 个 `it(` 块）+ ARTIFACT #9（使用 supertest 打 `/api/brain/time`）
+> 三条**只做静态文件结构检查**——Brain workspace 真实单测是否能跑过、是否 **真的** 覆盖到
+> 200/iso/unix/IANA 四个核心语义，静态 grep 抓不到。而 PRD SC-001 明确要求
+> "`npm test` 在 Brain workspace 通过 + 专门覆盖 /api/brain/time 的 test 文件"。
+> `sprints/tests/ws1/time.test.js`（GAN 对抗套件）里的 12 条 `it` 跑绿，不等同于 Brain
+> workspace 自己的 `packages/brain/src/__tests__/routes-time.test.js` 跑绿。
+>
+> **R6 选择方案 A（Reviewer 推荐的最小改动）**：
+> 1. **新增 ARTIFACT #14（动态运行验证）**：从仓库根执行
+>    `cd packages/brain && npx vitest run src/__tests__/routes-time.test.js` 必须 exit 0，
+>    且 vitest 输出含 `Tests  X passed`（`X ≥ 4`）。此条把 SC-001 从"静态文件形态"升级
+>    为"实跑过"——任何未真连到 `src/routes/time.js` 的桩测试、`it.skip(...)` 偷懒、
+>    空 body `it('x', () => {})` 等反模式都会被 exit code 或 passed 数量挡下。
+>    与现有 ARTIFACT #7/#8/#9（静态锁）+ BEHAVIOR it#11（端到端真实 app）形成四通道闭环。
+>
+> **Reviewer 留痕的非阻断项（R6 留痕，不强改）**：
+> - R5 ARTIFACT #13 注释剥离顺序（先 `/*…*/` 再 `//`）对"源码字符串里含 `//` URL"会有
+>   理论上的边界误伤；但 `routes/time.js` 是新建纯净文件且合同约束其只含单一快照实现，
+>   实际风险接近 0，R6 不调整剥离算法。
+> - R5 BEHAVIOR it#12 的 50 次连调在合法单一快照实现下恒绿（trivially pass），只在
+>   ARTIFACT #13 被 exotic 绕过时才产生价值；作为 belt-and-suspenders 留着无害。
+>
+> **Round 5 修订说明**（保留以便上下文追溯）：
 > **阻断点**：R4 对 FR-003「三字段同一 `Date` 快照」只有"行为层概率断言"兜底——
 > `Math.floor(Date.parse(iso)/1000) === unix` 在单次调用里通常能被"两次 `new Date()`"
 > 的坏实现偶然通过，因为两次 `new Date()` 只相差微秒、几乎总在同一秒内。
@@ -93,6 +117,9 @@ Unix 秒级整数。端点不需要鉴权、无副作用、对同一进程的重
   `Math.floor(Date.parse(iso) / 1000) === unix`（不允许任意一次跨秒漂移）
 - **（R5 新增 / 静态源码层）** `packages/brain/src/routes/time.js` 注释剥离后：
   无参 `new Date()` 字面量恰好 1 次；`Date.now(` 字面量 0 次（禁止旁路 wall-clock 采样）
+- **（R6 新增 / 动态运行层）** `packages/brain/src/__tests__/routes-time.test.js` 在 Brain
+  workspace 下能实际跑过：`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js`
+  exit 0 且输出含 `Tests  X passed`（`X ≥ 4`）——SC-001 的实跑兜底
 
 **BEHAVIOR 覆盖**（落入 `tests/ws1/time.test.js`）:
 - `it('returns HTTP 200 with application/json content-type')`
@@ -118,6 +145,7 @@ Unix 秒级整数。端点不需要鉴权、无副作用、对同一进程的重
 - **（R4）** `packages/brain/server.js` 以命名导出暴露 `app`（`export const app = …` 或等价的 `export { app }`），这是 it#11 能导入真实 app 的基础
 - **（R4）** `packages/brain/server.js` 的 DB / WS / 外部端口副作用顶层 await 必须被 `process.env.VITEST` 护栏块包住，使 `VITEST=true` 下 `import { app }` 不连 DB、不开端口
 - **（R5 新增 #13）** `packages/brain/src/routes/time.js` 注释剥离后：无参 `new Date()` 字面量恰好 1 次 + `Date.now(` 字面量恰好 0 次（静态硬锁"单一 Date 快照"实现路径）
+- **（R6 新增 #14）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js` 必须能**实际跑过**：`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js` exit 0 且输出含 `Tests  X passed`（`X ≥ 4`）——把 SC-001 由"静态文件形态"升级为"实跑过"，挡下 `it.skip` / 空 body / 未真连 router 的桩测试
 
 ---
 
@@ -163,6 +191,12 @@ workstream_count: 1
   无参 `new Date()` 字面量恰好 1 次；`Date.now(` 字面量 0 次。测试以正则 `/\bnew\s+Date\s*\(\s*\)/g`
   与 `/\bDate\s*\.\s*now\s*\(/g` 断言。合法实现（`const now = new Date(); now.toISOString(); now.getTime()`）
   自然满足；试图通过分别 `new Date()` / 分别 `Date.now()` 采样时间来凑数的反模式被 deterministic 挡住
+- **（R6 新增）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js`
+  必须能在仓库根以 `cd packages/brain && npx vitest run src/__tests__/routes-time.test.js`
+  实际跑通：exit code 0 且输出含 `Tests  X passed`（`X ≥ 4`）。此约束与 ARTIFACT #7/#8/#9
+  的静态结构锁互补——静态锁保证文件存在且 `it(` 数量 ≥ 4 且含 supertest 字面量，但不能
+  保证这些 `it` 真的测到行为；动态跑一遍把"桩测试 / `it.skip` / 空 body / 未真连 router"
+  全部挡下。这也是 SC-001（`npm test` 在 Brain workspace 通过）的直接兑现
 
 ---
 
@@ -171,6 +205,18 @@ workstream_count: 1
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据（Proposer 本地实跑） |
 |---|---|---|---|
 | WS1 | `sprints/tests/ws1/time.test.js` | 12 条 `it`：200/JSON、三字段存在、iso 合规、timezone 非空、timezone IANA 合法、unix 秒级正整数（含 1e9 下限）、iso↔unix 同秒严格相等、连续两次调用同秒一致、无需鉴权、server.js 挂载可达、真实 app 命名导出 + supertest 端到端、**（R5 新增）50 次连调每次同秒相等** | `npx vitest run sprints/tests/ws1/time.test.js` → **12 failed**（Proposer 已实跑，见下方证据） |
+
+**R6 本地 Red evidence**（Proposer 本地运行记录，12 条 it 全红，5.47s；R6 未改动测试文件，行为层 Red 证据与 R5 一致）:
+
+```
+RUN  v1.6.1 /workspace
+Test Files  1 failed (1)
+     Tests  12 failed (12)
+  Duration  5.47s
+```
+
+R6 额外新增 ARTIFACT #14（动态运行 Brain workspace 单测）也处于 Red：Brain 单测文件
+`packages/brain/src/__tests__/routes-time.test.js` 在 Green 阶段前尚不存在，`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js` 必然 exit 非 0。
 
 **R5 本地 Red evidence**（Proposer 本地运行记录，12 条 it 全红，5.53s）:
 
