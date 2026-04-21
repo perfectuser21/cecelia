@@ -89,14 +89,16 @@ else
     _fail "branch-protect.sh 不存在：$BRANCH_PROTECT"
 fi
 
-# ─── 检测 6：worktree 扫描逻辑（stop-dev.sh _collect_search_dirs）──
+# ─── 检测 6：cwd-as-key 架构（v19.0.0，替代老的 _collect_search_dirs 扫描）──
+# 老设计要求 stop-dev.sh 扫所有 worktree 找 .dev-lock → 组合爆炸 99 commit 不收敛。
+# 新设计：只看 cwd → worktree → .dev-mode.<branch> 存在性。必须检出 CLAUDE_HOOK_CWD。
 STOP_DEV="$PROJECT_ROOT/packages/engine/hooks/stop-dev.sh"
 if [[ -f "$STOP_DEV" ]]; then
     CONTENT=$(cat "$STOP_DEV")
-    if echo "$CONTENT" | grep -q '_collect_search_dirs'; then
-        _pass "stop-dev.sh 包含 _collect_search_dirs worktree 全扫描逻辑"
+    if echo "$CONTENT" | grep -q 'CLAUDE_HOOK_CWD'; then
+        _pass "stop-dev.sh 使用 cwd-as-key 架构（v19.0.0 CLAUDE_HOOK_CWD）"
     else
-        _fail "stop-dev.sh 未包含 _collect_search_dirs worktree 扫描（.dev-lock 可能被遗漏）"
+        _fail "stop-dev.sh 未使用 cwd-as-key 架构（缺 CLAUDE_HOOK_CWD 导入）"
     fi
 else
     _fail "stop-dev.sh 不存在：$STOP_DEV"
