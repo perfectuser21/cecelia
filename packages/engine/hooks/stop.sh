@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook 路由器 v14.0.0
+# Stop Hook 路由器 v19.0.0
 # ============================================================================
-# 检查不同的 mode 文件，调用对应的检查脚本
-#
 # 支持的模式：
-# - .dev-lock.<branch>  → stop-dev.sh    (/dev 工作流，per-branch 格式)
+# - .dev-mode.<branch>  → stop-dev.sh    (/dev 工作流，cwd-as-key)
 # - .architect-lock.*   → stop-architect.sh (/architect 架构设计)
 # - .decomp-mode        → stop-decomp.sh (/decomp 拆解流程)
 # - .quality-mode       → stop-quality.sh (/quality 质检流程) [将来]
 #
-# v14.0.0 清理：
-#   删除所有旧格式兼容代码（.dev-lock/.dev-mode 无后缀）。
-#   只保留 per-branch 格式（.dev-lock.<branch> + .dev-mode.<branch> + .dev-sentinel.<branch>）。
-#   旧格式不支持并行多 /dev 会话，且导致 ~200 行冗余兼容代码。
-#
-# 没有任何 mode/lock 文件 → exit 0（普通对话，允许结束）
+# v19.0.0 简化（配合 stop-dev.sh v19 cwd-as-key 切线）：
+#   删除 L84-112 的 .dev-lock session_id 精确匹配路由段。
+#   stop-dev.sh 改为 cwd-as-key：由 stop-dev.sh 自行判断当前 cwd 是否在 /dev 流程。
+#   stop.sh 无条件调用 stop-dev.sh，不再依赖 .dev-lock 文件存在性做路由。
+#   设计文档：docs/superpowers/specs/2026-04-21-stop-hook-final-design.md
 # ============================================================================
 
 set -euo pipefail
@@ -45,78 +42,13 @@ export CLAUDE_HOOK_STDIN_JSON="$_STOP_HOOK_STDIN"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ===== harness_mode 检测（harness 模式下跳过用户确认）=====
-_HARNESS_MODE=false
-for _dmf in "$PROJECT_ROOT"/.dev-mode.*; do
-    [[ -f "$_dmf" ]] || continue
-    _hm=$(grep "^harness_mode:" "$_dmf" 2>/dev/null | awk '{print $2}' || true)
-    if [[ "$_hm" == "true" ]]; then
-        _HARNESS_MODE=true
-        break
-    fi
-done
-export HARNESS_MODE="$_HARNESS_MODE"
-
-# ===== 检查 .dev-lock.<branch>（per-branch 硬钥匙）→ 调用 stop-dev.sh =====
-# v14.2.0: .dev-lock 只存在于 worktree 目录（不在主仓库），扫描所有 worktree
-# v17.0.0: 并行多 worktree 下必须按 session_id 精确匹配 owner_session，
-#          否则 stop.sh 会路由到错的 /dev 会话 → exit 0 误放行 → PR 永不自动合并
-# 主仓库残留的 .dev-lock 自动清理（迁移兼容）
-_DEV_LOCK_FOUND=false
-
-# 收集所有 worktree 路径（含主仓库）
-_STOP_HOOK_WT_LIST=()
-_wt_count=0
-while IFS= read -r _wt_line; do
-    if [[ "$_wt_line" == "worktree "* ]]; then
-        _wt_count=$((_wt_count + 1))
-        _STOP_HOOK_WT_LIST+=("${_wt_line#worktree }")
-    fi
-done < <(git worktree list --porcelain 2>/dev/null)
-
-# 有 worktree 时清理主仓库残留的 .dev-lock（迁移兼容，无 worktree 不清理）
-if [[ $_wt_count -gt 1 ]]; then
-    for _f in "$PROJECT_ROOT"/.dev-lock.*; do
-        [[ -f "$_f" ]] && rm -f "$_f" 2>/dev/null
-    done
-fi
-
-# ===== v17.0.0: session_id 精确匹配（owner_session）=====
-# 当前 session 有 session_id 时，只匹配 owner_session == $CLAUDE_HOOK_SESSION_ID 的 .dev-lock
-if [[ -n "$CLAUDE_HOOK_SESSION_ID" ]]; then
-    # v18.1.1 (Phase 7.2): 空数组 + set -u + bash 3.2 (macOS 默认) = "unbound variable"
-    # 用 ${arr[@]+"${arr[@]}"} guard 避免空数组时报错
-    for _wt in "${_STOP_HOOK_WT_LIST[@]+${_STOP_HOOK_WT_LIST[@]}}"; do
-        for _lock in "$_wt"/.dev-lock.*; do
-            [[ -f "$_lock" ]] || continue
-            _owner=$(grep "^owner_session:" "$_lock" 2>/dev/null | awk '{print $2}' || true)
-            if [[ -n "$_owner" && "$_owner" == "$CLAUDE_HOOK_SESSION_ID" ]]; then
-                _DEV_LOCK_FOUND=true
-                break 2
-            fi
-        done
-    done
-    # 有 session_id 但没找到匹配的 .dev-lock → 当前 session 不 own 任何 /dev，放行
-    if [[ "$_DEV_LOCK_FOUND" != "true" ]]; then
-        exit 0
-    fi
-else
-    # ===== Fallback（没 session_id，老 interactive 模式兼容）=====
-    # 沿用老 break-2 行为：找到第一个 .dev-lock 就 route
-    # v18.1.1 (Phase 7.2): 同样加空数组 guard
-    for _wt in "${_STOP_HOOK_WT_LIST[@]+${_STOP_HOOK_WT_LIST[@]}}"; do
-        for _f in "$_wt"/.dev-lock.*; do
-            [[ -f "$_f" ]] && _DEV_LOCK_FOUND=true && break 2
-        done
-    done
-fi
-
-if [[ "$_DEV_LOCK_FOUND" == "true" ]]; then
-    # v17.0.0: 把 stdin JSON 解析到的 session_id 注入为 CLAUDE_SESSION_ID，stop-dev.sh 零改动
-    [[ -n "$CLAUDE_HOOK_SESSION_ID" ]] && export CLAUDE_SESSION_ID="$CLAUDE_HOOK_SESSION_ID"
-    bash "$SCRIPT_DIR/stop-dev.sh"
-    exit $?
-fi
+# ===== v19.0.0: 无条件调用 stop-dev.sh（cwd-as-key，由 stop-dev.sh 自判）=====
+# stop-dev.sh 用 CLAUDE_HOOK_CWD（已由上方解析）确定 worktree + branch
+# 主仓库/无 .dev-mode 场景由 stop-dev.sh 内部放行（exit 0）
+bash "$SCRIPT_DIR/stop-dev.sh"
+_stop_dev_exit=$?
+# stop-dev.sh exit 2 = block，直接传给 Claude Code
+[[ $_stop_dev_exit -ne 0 ]] && exit $_stop_dev_exit
 
 # ===== 检查 .architect-lock.* → 调用 stop-architect.sh =====
 _ARCHITECT_LOCK_FOUND=false
