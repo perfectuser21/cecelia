@@ -1,0 +1,108 @@
+name: Harness v5 Checks
+
+# v5 Sprint C：合同纪律的 CI 硬校验
+# 初上线 1 周 continue-on-error: true（软门禁观察期），之后切硬
+#
+# 触发范围：只在 harness 相关改动时跑
+#   - sprints/*/contract-*.md / contract-dod-ws*.md / tests/ws*/*.test.ts
+#   - packages/workflows/skills/harness-contract-*/SKILL.md
+#   - packages/workflows/skills/harness-generator/SKILL.md
+
+on:
+  pull_request:
+    paths:
+      - 'sprints/**/contract-draft.md'
+      - 'sprints/**/sprint-contract.md'
+      - 'sprints/**/contract-dod-ws*.md'
+      - 'sprints/**/tests/**/*.test.ts'
+      - 'packages/workflows/skills/harness-contract-*/SKILL.md'
+      - 'packages/workflows/skills/harness-generator/SKILL.md'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # ─── Check 1: DoD 纯度（contract-dod-ws 禁 [BEHAVIOR]） ────────────
+  dod-structure-purity:
+    name: DoD 纯度检查 (v5.0)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # 软门禁 1 周观察期
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run check-dod-purity
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: node packages/engine/scripts/devgate/check-dod-purity.cjs
+
+  # ─── Check 2: Test Contract 覆盖（测试文件必须存在） ─────────────────
+  test-coverage-for-behavior:
+    name: Test Contract 覆盖检查 (v5.0)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # 软门禁
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run check-test-coverage
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: node packages/engine/scripts/devgate/check-test-coverage.cjs
+
+  # ─── Check 3: TDD Red-Green commit 顺序 ───────────────────────────
+  tdd-commit-order:
+    name: TDD Commit 顺序检查 (v5.0)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # 软门禁
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run check-tdd-commit-order
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+          HEAD_REF: HEAD
+        run: bash packages/engine/scripts/devgate/check-tdd-commit-order.sh
+
+  # ─── Check 4: 测试实际通过（Red → Green 验证） ─────────────────────
+  tests-actually-pass:
+    name: Sprint Tests 实跑 (v5.0)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # 软门禁
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci --prefix packages/brain
+      - name: Run sprint tests
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # 列出 PR diff 里改动的 sprints/*/tests/**/*.test.ts
+          TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
+          if [ -z "$TEST_FILES" ]; then
+            echo "ℹ️  无 sprint 测试变更，跳过"
+            exit 0
+          fi
+          echo "📋 跑这些测试文件："
+          echo "$TEST_FILES" | sed 's/^/  /'
+          echo ""
+          # 用 repo 根下的 node_modules（或 brain 的）跑 vitest
+          # vitest 从 CLI 接受绝对路径即可，不需要 config 改动
+          npx --prefix packages/brain vitest run $TEST_FILES --reporter=verbose || {
+            echo "❌ 测试未通过（Green 阶段失败）"
+            exit 1
+          }
