@@ -17,6 +17,8 @@ on:
       - 'sprints/**/tests/**/*.test.ts'
       - 'packages/workflows/skills/harness-contract-*/SKILL.md'
       - 'packages/workflows/skills/harness-generator/SKILL.md'
+      # 排除归档：老 sprint 纯历史痕迹，格式可能不符 v5 规则，不应触发检查
+      - '!sprints/archive/**'
 
 permissions:
   contents: read
