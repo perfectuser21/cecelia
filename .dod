@@ -1,26 +1,14 @@
-- [x] [ARTIFACT] Migration 文件 201_content_type_configs.sql 存在且包含 CREATE TABLE content_type_configs
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/201_content_type_configs.sql','utf8');if(!c.includes('content_type_configs'))process.exit(1)"
+# DoD — stop-dev-v2 原型
 
-- [x] [ARTIFACT] selfcheck.js EXPECTED_SCHEMA_VERSION 更新为 201
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!c.includes(\"EXPECTED_SCHEMA_VERSION = '201'\"))process.exit(1)"
-
-- [x] [BEHAVIOR] GET /content-types/:type/config 端点存在
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/content-pipeline.js','utf8');if(!c.includes(':type/config'))process.exit(1)"
-
-- [x] [BEHAVIOR] PUT /content-types/:type/config 端点存在
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/content-pipeline.js','utf8');if(!c.includes('router.put'))process.exit(1)"
-
-- [x] [BEHAVIOR] POST /content-types/seed 端点存在
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/content-pipeline.js','utf8');if(!c.includes('/seed'))process.exit(1)"
-
-- [x] [BEHAVIOR] content-type-registry.js getContentType() DB 优先
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/content-types/content-type-registry.js','utf8');if(!c.includes('content_type_configs'))process.exit(1)"
-
-- [x] [BEHAVIOR] content-type-registry.js listContentTypes() 合并 DB 和 YAML
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/content-types/content-type-registry.js','utf8');if(!c.includes('SELECT'))process.exit(1)"
-
-- [x] [PRESERVE] YAML 文件保留作为兜底
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/content-types/content-type-registry.js','utf8');if(!c.includes('yaml'))process.exit(1)"
-
-- [x] [GATE] 测试文件存在
-  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/content-type-registry.test.js')"
+- [x] [ARTIFACT] 新文件 packages/engine/hooks/stop-dev-v2.sh 存在
+      Test: manual:node -e "require('fs').accessSync('packages/engine/hooks/stop-dev-v2.sh')"
+- [x] [ARTIFACT] 新文件 packages/engine/tests/hooks/stop-dev-v2.test.ts 存在
+      Test: manual:node -e "require('fs').accessSync('packages/engine/tests/hooks/stop-dev-v2.test.ts')"
+- [x] [BEHAVIOR] bypass env 生效
+      Test: manual:bash -c 'CECELIA_STOP_HOOK_BYPASS=1 bash packages/engine/hooks/stop-dev-v2.sh'
+- [x] [BEHAVIOR] 7 个契约测试全绿
+      Test: tests/hooks/stop-dev-v2.test.ts
+- [x] [BEHAVIOR] engine 版本已 bump 5 文件
+      Test: manual:bash scripts/check-version-sync.sh
+- [x] [ARTIFACT] 设计文档已提交
+      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-21-stop-dev-v2-cwd-as-key-design.md')"
