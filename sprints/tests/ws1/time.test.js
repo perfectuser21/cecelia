@@ -10,8 +10,9 @@ const ISO_8601_EXTENDED =
 
 // TDD Red 阶段：time.js 尚不存在。每个 it 内部 dynamic import，让每个 it 独立失败——
 // Reviewer 看到的是 N 个独立红，而不是整 suite 一次性崩。
+// R3 修订：从 .ts 改为 .js，与 Brain workspace 同语言，消除 TS 解析链可用性疑虑。
 async function createAppOrThrow() {
-  const mod: { default: express.Router } = await import(
+  const mod = await import(
     /* @vite-ignore */ '../../../packages/brain/src/routes/time.js'
   );
   const router = mod.default;
@@ -73,12 +74,13 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     expect(resolved.length).toBeGreaterThan(0);
   });
 
-  it('unix is a positive integer in seconds, not milliseconds and not float', async () => {
+  it('unix is a positive integer in seconds (lower bound > 1e9, upper bound < 1e12)', async () => {
+    // R3 新增下限 1e9（≈ 2001-09-09 后），防止 0/极小正整数等退化值蒙混过关。
     const app = await createAppOrThrow();
     const res = await request(app).get('/api/brain/time');
     expect(typeof res.body.unix).toBe('number');
     expect(Number.isInteger(res.body.unix)).toBe(true);
-    expect(res.body.unix).toBeGreaterThan(0);
+    expect(res.body.unix).toBeGreaterThan(1e9);
     // 秒级判定：当前 unix 秒约 1.7e9；毫秒级会 >= 1e12
     expect(res.body.unix).toBeLessThan(1e12);
     // 合理性：不应比真实当下差 > 60 秒
@@ -87,8 +89,9 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
   });
 
   it('iso and unix within a single response represent the exact same second (strict equality)', async () => {
-    // R2 收紧：单一 new Date() 快照约束下，iso 和 unix 的秒值必然严格相等。
+    // R2 收紧：单一 new Date() 快照实现下，iso 和 unix 的秒值必然严格相等。
     // 如果 Generator 错误地分别调用了 new Date()，机器负载高时会产生 1 秒偏差 → 被此断言捕获。
+    // R3 备注：本断言是"单一快照"语义的真正兜底，因此 ARTIFACT 层删除"new Date( 文本恰好 1 次"约束。
     const app = await createAppOrThrow();
     const res = await request(app).get('/api/brain/time');
     const isoSec = Math.floor(Date.parse(res.body.iso) / 1000);
@@ -106,6 +109,7 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     for (const res of [res1, res2]) {
       expect(res.body.iso).toMatch(ISO_8601_EXTENDED);
       expect(Number.isInteger(res.body.unix)).toBe(true);
+      expect(res.body.unix).toBeGreaterThan(1e9);
       expect(res.body.unix).toBeLessThan(1e12);
       const isoSec = Math.floor(Date.parse(res.body.iso) / 1000);
       expect(isoSec).toBe(res.body.unix);

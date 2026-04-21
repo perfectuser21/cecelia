@@ -15,8 +15,8 @@
 - [ ] [ARTIFACT] `packages/brain/src/routes/time.js` 注册 `GET /` 路径（与 `/api/brain/time` 前缀组合后即 `/api/brain/time`）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/time.js','utf8');if(!/router\.get\s*\(\s*['\"]\/['\"]\s*,/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `packages/brain/src/routes/time.js` 三字段来自同一个 Date 快照（`new Date(` 恰好 1 次；含 `toISOString` / `getTime` / `resolvedOptions`）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/time.js','utf8');const n=(c.match(/new\s+Date\s*\(/g)||[]).length;if(n!==1)process.exit(10+n);if(!c.includes('toISOString'))process.exit(2);if(!/getTime\s*\(\s*\)/.test(c))process.exit(3);if(!/resolvedOptions\s*\(\s*\)/.test(c))process.exit(4)"
+- [ ] [ARTIFACT] `packages/brain/src/routes/time.js` 含 `toISOString` / `getTime` / `resolvedOptions` 三个调用，构成"单一快照"实现的源代码线索
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/time.js','utf8');if(!c.includes('toISOString'))process.exit(2);if(!/getTime\s*\(\s*\)/.test(c))process.exit(3);if(!/resolvedOptions\s*\(\s*\)/.test(c))process.exit(4)"
 
 - [ ] [ARTIFACT] `packages/brain/server.js` 含名为 `timeRoutes` 的 ESM import，指向 `./src/routes/time.js`（强制变量名消歧，避免挂载/import 变量错位）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!/import\s+timeRoutes\s+from\s+['\"]\.\/src\/routes\/time\.js['\"]/.test(c))process.exit(1)"
@@ -38,14 +38,14 @@
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
-见 `sprints/tests/ws1/time.test.ts`，覆盖以下 10 个行为：
+见 `sprints/tests/ws1/time.test.js`，覆盖以下 10 个行为：
 - returns HTTP 200 with application/json content-type
 - response body contains iso, timezone, unix fields all non-empty
 - iso is a valid ISO 8601 extended format string parseable by Date
 - timezone is a non-empty string
 - timezone is a valid IANA name accepted by Intl.DateTimeFormat
-- unix is a positive integer in seconds, not milliseconds and not float
-- iso and unix within a single response represent the exact same second (strict equality)
+- unix is a positive integer in seconds (lower bound > 1e9, upper bound < 1e12)
+- iso and unix within a single response represent the exact same second (strict equality) — 这是"单一 new Date() 快照"语义的真正兜底
 - two consecutive calls both succeed and each response is internally consistent to the second
 - does not require any auth header to return 200
 - packages/brain/server.js imports time router and mounts it at /api/brain/time using the same variable
