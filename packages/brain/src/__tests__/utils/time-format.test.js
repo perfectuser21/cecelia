@@ -37,11 +37,22 @@ describe('Workstream 1 — Time formatting utilities [BEHAVIOR]', () => {
       expect(out).toMatch(ISO_WITH_OFFSET);
     });
 
-    it('formatIsoAtTz roundtrips to the same instant', () => {
+    it('formatIsoAtTz roundtrips within 1 second for a fixed instant', () => {
       const input = new Date('2026-07-15T12:34:56Z');
       const out = formatIsoAtTz(input, 'Asia/Shanghai');
       const parsed = new Date(out);
-      expect(parsed.getTime()).toBe(input.getTime());
+      expect(Number.isNaN(parsed.getTime())).toBe(false);
+      expect(Math.abs(parsed.getTime() - input.getTime())).toBeLessThan(1000);
+    });
+
+    it('formatIsoAtTz roundtrips within 1 second for a live non-zero-millisecond instant', () => {
+      const input = new Date();
+      expect(input.getMilliseconds()).toBeGreaterThanOrEqual(0);
+      const out = formatIsoAtTz(input, 'Asia/Shanghai');
+      expect(out).toMatch(ISO_WITH_OFFSET);
+      const parsed = new Date(out);
+      expect(Number.isNaN(parsed.getTime())).toBe(false);
+      expect(Math.abs(parsed.getTime() - input.getTime())).toBeLessThan(1000);
     });
 
     it('formatIsoAtTz applies +08:00 offset for Asia/Shanghai', () => {

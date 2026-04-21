@@ -30,6 +30,7 @@
 - isValidTimeZone returns false for empty string
 - isValidTimeZone returns false for undefined
 - formatIsoAtTz outputs ISO-8601 with offset suffix
-- formatIsoAtTz roundtrips to the same instant
+- formatIsoAtTz roundtrips within 1 second for a fixed instant
+- formatIsoAtTz roundtrips within 1 second for a live non-zero-millisecond instant
 - formatIsoAtTz applies +08:00 offset for Asia/Shanghai
 - formatIsoAtTz applies zero offset for UTC

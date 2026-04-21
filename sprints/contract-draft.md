@@ -1,18 +1,21 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 PRD: `sprints/sprint-prd.md`（不改）
 Planner 分支: `cp-04211712-harness-prd`
-Propose 轮次: 2
-Proposer 分支: `cp-harness-propose-r2-04211712`
+Propose 轮次: 3
+Proposer 分支: `cp-harness-propose-r3-04211712`
 
-**本轮相对 Round 1 的修订**（处理 Reviewer 反馈）:
+**本轮相对 Round 2 的修订**（处理 Reviewer 的唯一 REVISION 反馈）:
 
-1. **路径修复（Risk 1）**: 测试文件从 `sprints/tests/ws{1,2}/*.test.ts`（Brain CI `npx vitest run` 不会扫到的路径）迁到 Brain CI **真会跑**的路径：
-   - WS1 → `packages/brain/src/__tests__/utils/time-format.test.js`
-   - WS2 → `packages/brain/src/__tests__/routes/time-endpoint.test.js`
-   - 依据 `packages/brain/vitest.config.js` 的 include：`src/**/*.{test,spec}.?(c|m)[jt]s?(x)`
-2. **扩展名修复（Risk 4）**: `.test.ts` → `.test.js`；项目无 tsconfig/TS 编译步骤，且现存 Brain 测试全部 `.js`。同时剔除 Round 1 里 `undefined as unknown as string` 这类 TS-only 语法。
-3. **FR-005 硬兜底（Risk 5 方案 a）**: WS2 新增一条 ARTIFACT——`packages/brain/src/routes/time.js` 不得出现 `console.log(` / `console.error(` / `require('winston')` / `import winston` / `new Logger(` 字面量；错误响应必须走 `next(err)` 或纯 `res.status(4xx).json(...)`。把"接入 Brain 现有日志/错误处理中间件"从"不验"升级为"静态反向约束"。
+**Risk（Roundtrip 严格相等诱导"挑零毫秒输入"）**: Round 2 的 WS1 `formatIsoAtTz` 硬阈值要求 `new Date(formatIsoAtTz(input, tz)).getTime() === input.getTime()`（严格 `toBe` 相等），配合 `ISO_WITH_OFFSET` 正则里 `(?:\.\d+)?` 毫秒段可选，会诱导 Generator 做三选一作弊路径中最省力的那条：**挑零毫秒输入（`new Date('...Z')` 字面量）让测试过，生产代码在非零毫秒输入上默默坏掉**。此条款比 PRD 场景 4（"`iso` 解析回的时间戳与 `unix` 差值 ≤ 2 秒"）更严，反而造成假绿。
+
+修订（采用 Reviewer 建议的方案 1：与 PRD "≤ 2 秒"对齐放宽 roundtrip 到 1 秒容差；同时新增一条用 `new Date()` 实时输入的测试堵死"挑输入"路径）:
+
+1. **合同硬阈值**: `new Date(formatIsoAtTz(input, tz)).getTime() === input.getTime()` → `Math.abs(new Date(formatIsoAtTz(input, tz)).getTime() - input.getTime()) < 1000`
+2. **测试修改（`packages/brain/src/__tests__/utils/time-format.test.js`）**:
+   - 原 `it('formatIsoAtTz roundtrips to the same instant')` 重命名为 `it('formatIsoAtTz roundtrips within 1 second for a fixed instant')`，把 `expect(parsed.getTime()).toBe(input.getTime())` 改为 `expect(Math.abs(parsed.getTime() - input.getTime())).toBeLessThan(1000)`
+   - **新增** `it('formatIsoAtTz roundtrips within 1 second for a live non-zero-millisecond instant')`：输入 `new Date()`（真实运行时时间戳，99% 带非零毫秒），断言同样的 1 秒容差——让 Generator 无论是否截断毫秒，都必须保证 1 秒内可 roundtrip
+3. **正则保持**: `ISO_WITH_OFFSET` 继续允许可选毫秒段 `(?:\.\d+)?`——PRD 不要求毫秒精度，不在合同里加"强制 3 位毫秒"这种超出 PRD 范围的要求。一致性由 1 秒容差 roundtrip 兜底
 
 ---
 
@@ -29,7 +32,7 @@ Proposer 分支: `cp-harness-propose-r2-04211712`
 - `isValidTimeZone('')` 返回 `false`（空串视为无效输入，由调用方决定是否走默认分支）
 - `isValidTimeZone(undefined)` 返回 `false`
 - `formatIsoAtTz(date, tz)` 返回字符串匹配 `/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/`
-- `new Date(formatIsoAtTz(input, tz)).getTime() === input.getTime()`（解析回原始绝对瞬间）
+- 对任意合法 `Date` 输入（包括 `new Date()` 的运行时实时值，通常毫秒段非零）：`Math.abs(new Date(formatIsoAtTz(input, tz)).getTime() - input.getTime()) < 1000`（1 秒容差 roundtrip，与 PRD "≤ 2 秒"对齐且更严一档以抓出 Generator 完全丢弃秒数的假实现）
 - `formatIsoAtTz(date, 'Asia/Shanghai')` 返回以 `+08:00` 结尾
 - `formatIsoAtTz(date, 'UTC')` 返回以 `Z` 或 `+00:00` 结尾
 
@@ -40,7 +43,8 @@ Proposer 分支: `cp-harness-propose-r2-04211712`
 - `it('isValidTimeZone returns false for empty string')`
 - `it('isValidTimeZone returns false for undefined')`
 - `it('formatIsoAtTz outputs ISO-8601 with offset suffix')`
-- `it('formatIsoAtTz roundtrips to the same instant')`
+- `it('formatIsoAtTz roundtrips within 1 second for a fixed instant')`
+- `it('formatIsoAtTz roundtrips within 1 second for a live non-zero-millisecond instant')`
 - `it('formatIsoAtTz applies +08:00 offset for Asia/Shanghai')`
 - `it('formatIsoAtTz applies zero offset for UTC')`
 
@@ -116,7 +120,7 @@ workstream_count: 2
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `packages/brain/src/__tests__/utils/time-format.test.js` | 5 × isValidTimeZone + 4 × formatIsoAtTz = 9 `it()` | `cd packages/brain && npx vitest run src/__tests__/utils/time-format.test.js` → 9 failures（`import { isValidTimeZone, formatIsoAtTz } from '../../utils/time-format.js'` 目标缺失，vitest collection 阶段 `ERR_MODULE_NOT_FOUND`，文件内所有 `it()` 级联 FAIL） |
+| WS1 | `packages/brain/src/__tests__/utils/time-format.test.js` | 5 × isValidTimeZone + 5 × formatIsoAtTz = 10 `it()` | `cd packages/brain && npx vitest run src/__tests__/utils/time-format.test.js` → 10 failures（`import { isValidTimeZone, formatIsoAtTz } from '../../utils/time-format.js'` 目标缺失，vitest collection 阶段 `ERR_MODULE_NOT_FOUND`，文件内所有 `it()` 级联 FAIL） |
 | WS2 | `packages/brain/src/__tests__/routes/time-endpoint.test.js` | 9 `it()` 覆盖 PRD 场景 1-4 全部分支 | `cd packages/brain && npx vitest run src/__tests__/routes/time-endpoint.test.js` → 9 failures（`import timeRouter from '../../routes/time.js'` 目标缺失，vitest collection 阶段 `ERR_MODULE_NOT_FOUND`，文件内所有 `it()` 级联 FAIL） |
 
 **Red evidence 来源说明**: 本仓库 `node_modules` 未预装，Proposer 本地无法直接跑 `npx vitest`。改以 Node.js ESM loader 直接 `import()` 目标模块验证解析失败——vitest 在 collection 阶段走相同的 ESM 解析路径，任何 import 失败都会把该文件的全部 `it()` 标为 FAIL。本地执行结果：
@@ -144,6 +148,7 @@ WS2 RED: ERR_MODULE_NOT_FOUND
 | 边界：unix 整数秒 | WS2 `it('unix field is an integer')` |
 | 边界：iso 与 unix 同一瞬间 | WS2 `it('iso parses back to within 2 seconds of unix')` |
 | FR-003 委托委派纯函数 | WS1 全部 `it()` + WS2 ARTIFACT（`from '../utils/time-format.js'` 正则匹配） |
+| 内部工具对齐 PRD 场景 4（roundtrip 容差） | WS1 `it('formatIsoAtTz roundtrips within 1 second for a fixed instant')` + `it('formatIsoAtTz roundtrips within 1 second for a live non-zero-millisecond instant')`——1 秒容差比 PRD "≤ 2 秒"严一档，同时覆盖零毫秒与非零毫秒两种输入，防止 Generator 挑输入作弊 |
 | FR-005 接入现有中间件 | WS2 ARTIFACT 反向约束：`routes/time.js` 不得出现 `console.log(` / `console.error(` / `winston` / `new Logger(` 字面量。错误走 `next(err)` 或 `res.status(4xx).json(...)`，等价于落在 Express 内建错误处理链，不新增独立日志栈。 |
 
 ---
