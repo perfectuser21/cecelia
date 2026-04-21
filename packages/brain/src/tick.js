@@ -3000,11 +3000,15 @@ async function executeTick() {
     }
   }
 
+  // 结果变量声明在 MINIMAL_MODE 块外 —— return 语句在块外引用这些变量（line ~3224-3225）
+  // 否则 MINIMAL_MODE=true 或 !isConsciousnessEnabled 时 ReferenceError
+  let dailyReviewResult = { triggered: 0, skipped: 0, skipped_window: true, results: [] };
+  let ruminationResult = null;
+
   // 10.x 所有自动调度 — MINIMAL_MODE 下全部跳过
   if (!MINIMAL_MODE) {
 
   // 10. Trigger daily code review (每天 02:00 UTC，为活跃 repo 创建 code_review task)
-  let dailyReviewResult = { triggered: 0, skipped: 0, skipped_window: true, results: [] };
   try {
     dailyReviewResult = await triggerDailyReview(pool);
   } catch (reviewErr) {
@@ -3020,9 +3024,6 @@ async function executeTick() {
     Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
       .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
   }
-
-  // ruminationResult 声明在块外，确保意识关闭时 return 语句仍可访问
-  let ruminationResult = null;
 
   // 10.3–10.8 LLM 后台调用（CONSCIOUSNESS_ENABLED=false 时全部跳过）
   if (isConsciousnessEnabled()) {
