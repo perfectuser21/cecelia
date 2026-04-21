@@ -1,9 +1,45 @@
-# Sprint Contract Draft (Round 6)
+# Sprint Contract Draft (Round 7)
 
 本合同由 Proposer 针对 `sprints/sprint-prd.md`（Brain `/api/brain/time` 端点）起草，
 进入 GAN 对抗。合同外一字不加，Generator 须严格按本合同实现。
 
-> **Round 6 修订说明**（响应 Round 5 Reviewer 阻断反馈）：
+> **Round 7 修订说明**（响应 Round 6 Reviewer REVISION 反馈）：
+> **Reviewer 指出的三类风险**：
+> 1. **风险 1（字符串匹配脆弱）**：R6 ARTIFACT #14 用 `grep -oE 'Tests[[:space:]]+[0-9]+ passed'`
+>    从 vitest 控制台输出里提取通过数——vitest 升级 / 输出格式细微变动（如颜色转义、加前缀空白、
+>    把 "Tests  X passed" 改成 "Tests: X passed"）都会让 grep 命中为空 → 按"未发现行号=成功"
+>    的默认提前退出而放行；属"依赖外部工具的控制台表达格式"的脆弱合约。
+> 2. **风险 2（只检跑过不检测到什么）**：R6 ARTIFACT #14 只校验 exit 0 + 通过数 ≥ 4——
+>    Generator 可以写 4 个桩测试 `it('a', () => expect(1).toBe(1))` 让四条都跑绿，
+>    表面满足 #14 却完全没碰 `/api/brain/time`。静态 #7/#8/#9 虽保证 `supertest` / `it(` 字面量
+>    出现过，但无法保证那些 `it` 真的做了有意义的断言。
+> 3. **风险 3（helper 本地 import 旁路 belt-and-suspenders）**：time.js 可能以
+>    `import { snapshotNow } from './time-helper.js'` 把多个 `new Date()` 挪到同 workspace 内的
+>    另一个文件里；ARTIFACT #13 只扫 time.js 本身 → 实际脆弱性低但文字未明禁。
+>
+> **R7 的三组加固**（做加法/替换，BEHAVIOR 层 12 条不变；Brain workspace 单测端侧层层加锁）：
+> 1. **改写 ARTIFACT #14（用 JSON reporter 替代字符串 grep）**：命令改为
+>    `cd packages/brain && npx vitest run src/__tests__/routes-time.test.js --reporter=json --outputFile=/tmp/brain-routes-time-r7.json`，
+>    再用 `node -e` 解析 JSON，deterministic 校验 `success === true` 且 `numPassedTests >= 4`
+>    且 `numFailedTests === 0`。本地已用 `user-profile.test.js` 实测 vitest 1.6.1 的 JSON reporter
+>    schema 含 `success / numPassedTests / numFailedTests / numTotalTests / testResults` 五个顶层键，
+>    是 Jest-compatible 公开 API，比控制台正则稳得多。
+> 2. **新增 ARTIFACT #15（行为锚点四件套）**：把 #14「实跑 + 通过 ≥ 4」升级为「跑且真的测」——
+>    扫 `packages/brain/src/__tests__/routes-time.test.js` 注释剥离后的源码，必须同时命中：
+>    (a) `.toBe(200)` 字面量；(b) `iso` / `timezone` / `unix` 三字段名各自 ≥ 2 次；
+>    (c) `Math.floor(…Date.parse…)` + `/ 1000` 的同秒相等算术组合；(d) `'/api/brain/time'` 路径字面量。
+>    四条锚点合集以「Generator 若想用 4 个空 body it 凑数通过 #14，必须额外伪造 iso/timezone/unix
+>    三个字段名且不在任何有意义的位置使用」——此时就已经不得不真连到 time.js 结果结构了，
+>    桩测试策略被基本掐死。
+> 3. **新增 ARTIFACT #16（明禁 time.js 本地 import 旁路）**：扫 `packages/brain/src/routes/time.js`
+>    注释剥离后是否含 `import … from './xxx'` 或 `'../xxx'`——若有 1 条以上即红。这让
+>    「把 `new Date()` 单次调用分散到 helper 再 import 回来」在合同层被 deterministic 堵死。
+>
+> **不改动 BEHAVIOR 层 12 条测试**：Reviewer 反馈三风险都指向 Brain workspace 自测端（ARTIFACT #14 系列）
+> 以及 time.js 源码边界，与 `sprints/tests/ws1/time.test.js` 的对抗测试套件无关；R7 严守
+> "做加法不做减法" 的 GAN 纪律。`time.test.js` Red 证据与 R5 / R6 一致：12 条 it 全红。
+>
+> **Round 6 修订说明**（保留以便上下文追溯）：
 > **阻断点**：R5 的 ARTIFACT #7（`packages/brain/src/__tests__/routes-time.test.js` 文件存在）
 > + ARTIFACT #8（含 ≥ 4 个 `it(` 块）+ ARTIFACT #9（使用 supertest 打 `/api/brain/time`）
 > 三条**只做静态文件结构检查**——Brain workspace 真实单测是否能跑过、是否 **真的** 覆盖到
@@ -117,9 +153,15 @@ Unix 秒级整数。端点不需要鉴权、无副作用、对同一进程的重
   `Math.floor(Date.parse(iso) / 1000) === unix`（不允许任意一次跨秒漂移）
 - **（R5 新增 / 静态源码层）** `packages/brain/src/routes/time.js` 注释剥离后：
   无参 `new Date()` 字面量恰好 1 次；`Date.now(` 字面量 0 次（禁止旁路 wall-clock 采样）
-- **（R6 新增 / 动态运行层）** `packages/brain/src/__tests__/routes-time.test.js` 在 Brain
-  workspace 下能实际跑过：`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js`
-  exit 0 且输出含 `Tests  X passed`（`X ≥ 4`）——SC-001 的实跑兜底
+- **（R6 新增 / 动态运行层，R7 改写为 JSON reporter）** `packages/brain/src/__tests__/routes-time.test.js`
+  在 Brain workspace 下能实际跑过：`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js --reporter=json --outputFile=/tmp/brain-routes-time-r7.json`
+  exit 0 且解析 `/tmp/brain-routes-time-r7.json` 满足 `success === true` 且 `numPassedTests >= 4`
+  且 `numFailedTests === 0`——SC-001 的实跑兜底，JSON schema 比控制台 grep 稳
+- **（R7 新增 / 单测内容行为锚点）** `packages/brain/src/__tests__/routes-time.test.js` 注释剥离后
+  必须同时含：`.toBe(200)` 字面量；`iso` / `timezone` / `unix` 三词各 ≥ 2 次；`Math.floor(…Date.parse…)`
+  + `/ 1000` 算术组合；`'/api/brain/time'` 路径字面量。阻断"4 个桩测试凑 #14"
+- **（R7 新增 / time.js 边界）** `packages/brain/src/routes/time.js` 注释剥离后不含任何
+  相对路径 import（`./xxx` / `../xxx`），杜绝本地 helper 旁路
 
 **BEHAVIOR 覆盖**（落入 `tests/ws1/time.test.js`）:
 - `it('returns HTTP 200 with application/json content-type')`
@@ -145,7 +187,9 @@ Unix 秒级整数。端点不需要鉴权、无副作用、对同一进程的重
 - **（R4）** `packages/brain/server.js` 以命名导出暴露 `app`（`export const app = …` 或等价的 `export { app }`），这是 it#11 能导入真实 app 的基础
 - **（R4）** `packages/brain/server.js` 的 DB / WS / 外部端口副作用顶层 await 必须被 `process.env.VITEST` 护栏块包住，使 `VITEST=true` 下 `import { app }` 不连 DB、不开端口
 - **（R5 新增 #13）** `packages/brain/src/routes/time.js` 注释剥离后：无参 `new Date()` 字面量恰好 1 次 + `Date.now(` 字面量恰好 0 次（静态硬锁"单一 Date 快照"实现路径）
-- **（R6 新增 #14）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js` 必须能**实际跑过**：`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js` exit 0 且输出含 `Tests  X passed`（`X ≥ 4`）——把 SC-001 由"静态文件形态"升级为"实跑过"，挡下 `it.skip` / 空 body / 未真连 router 的桩测试
+- **（R6 新增 / R7 改写 #14）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js` 必须能**实际跑过**且通过数 ≥ 4：`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js --reporter=json --outputFile=/tmp/brain-routes-time-r7.json` exit 0 且 JSON 解析满足 `success === true && numPassedTests >= 4 && numFailedTests === 0`（R7 用 vitest JSON reporter schema 取代 R6 的控制台字符串 grep，对 vitest 输出格式变化免疫）
+- **（R7 新增 #15）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js` 内容必须满足**行为锚点四件套**：(a) `.toBe(200)` 字面量；(b) `iso` / `timezone` / `unix` 三字段名各自字面量 ≥ 2 次；(c) `Math.floor(…Date.parse…)` + `/ 1000` 字面量组合；(d) `'/api/brain/time'` 路径字面量。阻断"4 个桩测试凑 #14 通过"
+- **（R7 新增 #16）** `packages/brain/src/routes/time.js` 注释剥离后禁止相对路径 import（`./xxx` / `../xxx`）——堵住"分散 `new Date()` 到 helper 再 import"的 belt-and-suspenders 旁路
 
 ---
 
@@ -191,12 +235,18 @@ workstream_count: 1
   无参 `new Date()` 字面量恰好 1 次；`Date.now(` 字面量 0 次。测试以正则 `/\bnew\s+Date\s*\(\s*\)/g`
   与 `/\bDate\s*\.\s*now\s*\(/g` 断言。合法实现（`const now = new Date(); now.toISOString(); now.getTime()`）
   自然满足；试图通过分别 `new Date()` / 分别 `Date.now()` 采样时间来凑数的反模式被 deterministic 挡住
-- **（R6 新增）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js`
-  必须能在仓库根以 `cd packages/brain && npx vitest run src/__tests__/routes-time.test.js`
-  实际跑通：exit code 0 且输出含 `Tests  X passed`（`X ≥ 4`）。此约束与 ARTIFACT #7/#8/#9
-  的静态结构锁互补——静态锁保证文件存在且 `it(` 数量 ≥ 4 且含 supertest 字面量，但不能
-  保证这些 `it` 真的测到行为；动态跑一遍把"桩测试 / `it.skip` / 空 body / 未真连 router"
-  全部挡下。这也是 SC-001（`npm test` 在 Brain workspace 通过）的直接兑现
+- **（R6 新增 / R7 改写）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js`
+  必须能在仓库根以 `cd packages/brain && npx vitest run src/__tests__/routes-time.test.js --reporter=json --outputFile=/tmp/brain-routes-time-r7.json`
+  实际跑通：exit code 0 且 JSON 解析 `/tmp/brain-routes-time-r7.json` 满足 `success === true`
+  且 `numPassedTests >= 4` 且 `numFailedTests === 0`（R7 用 JSON reporter 替代 R6 控制台 grep，
+  对 vitest 输出格式变化免疫）。此约束与 ARTIFACT #7/#8/#9 的静态结构锁互补——静态锁保证文件
+  存在且 `it(` 数量 ≥ 4 且含 supertest 字面量，但不能保证这些 `it` 真的测到行为；动态跑一遍
+  把"桩测试 / `it.skip` / 空 body / 未真连 router"全部挡下。这也是 SC-001（`npm test` 在
+  Brain workspace 通过）的直接兑现
+- **（R7 新增）** Brain workspace 单测文件 `packages/brain/src/__tests__/routes-time.test.js`
+  必须满足行为锚点四件套（`.toBe(200)` / `iso`·`timezone`·`unix` 各 ≥ 2 次字面量 / `Math.floor…Date.parse`
+  + `/ 1000` 算术组合 / `'/api/brain/time'` 路径字面量）；`packages/brain/src/routes/time.js` 禁止
+  任何相对路径 `import`。这两条把 R6 遗留的两个绕路口彻底堵死
 
 ---
 
@@ -206,7 +256,36 @@ workstream_count: 1
 |---|---|---|---|
 | WS1 | `sprints/tests/ws1/time.test.js` | 12 条 `it`：200/JSON、三字段存在、iso 合规、timezone 非空、timezone IANA 合法、unix 秒级正整数（含 1e9 下限）、iso↔unix 同秒严格相等、连续两次调用同秒一致、无需鉴权、server.js 挂载可达、真实 app 命名导出 + supertest 端到端、**（R5 新增）50 次连调每次同秒相等** | `npx vitest run sprints/tests/ws1/time.test.js` → **12 failed**（Proposer 已实跑，见下方证据） |
 
-**R6 本地 Red evidence**（Proposer 本地运行记录，12 条 it 全红，5.47s；R6 未改动测试文件，行为层 Red 证据与 R5 一致）:
+**R7 本地 Red evidence**（Proposer 本地运行记录；R7 未改动 `sprints/tests/ws1/time.test.js` 与 R6 等价，12 条 it 全红）：
+
+```
+RUN  v1.6.1 /workspace
+Test Files  1 failed (1)
+     Tests  12 failed (12)
+```
+
+R7 新增/改写的三条 ARTIFACT（#14 改写 / #15 新增 / #16 新增）对应 Red 证据在 Green 阶段前同样必红：
+- ARTIFACT #14（JSON reporter）：`packages/brain/src/__tests__/routes-time.test.js` 在 Green 阶段
+  前尚不存在 → `npx vitest run` 必然 exit 非 0，`/tmp/brain-routes-time-r7.json` 中 `success` 非 `true`
+- ARTIFACT #15（行为锚点四件套）：同上，文件不存在 → `fs.readFileSync` 抛错、`node -e` exit 非 0
+- ARTIFACT #16（time.js 禁本地 import）：`packages/brain/src/routes/time.js` 在 Green 阶段前尚不存在
+  → `fs.readFileSync` 抛错、`node -e` exit 非 0
+
+本地 JSON reporter schema 验证（用既有 `user-profile.test.js` 实跑）：
+
+```
+{
+  "success": true,
+  "numPassedTests": 19,
+  "numFailedTests": 0,
+  "numTotalTests": 19
+}
+```
+
+证明 R7 改写 #14 用到的四个字段（`success / numPassedTests / numFailedTests / numTotalTests`）均为
+vitest 1.6.1 JSON reporter 顶层键，deterministic 解析可行。
+
+**R6 本地 Red evidence**（保留，行为层与 R7 一致）:
 
 ```
 RUN  v1.6.1 /workspace
@@ -215,8 +294,7 @@ Test Files  1 failed (1)
   Duration  5.47s
 ```
 
-R6 额外新增 ARTIFACT #14（动态运行 Brain workspace 单测）也处于 Red：Brain 单测文件
-`packages/brain/src/__tests__/routes-time.test.js` 在 Green 阶段前尚不存在，`cd packages/brain && npx vitest run src/__tests__/routes-time.test.js` 必然 exit 非 0。
+R6 ARTIFACT #14（控制台 grep 版）在 Green 前同样必红（文件不存在）——R7 已将其改写为 JSON reporter 版。
 
 **R5 本地 Red evidence**（Proposer 本地运行记录，12 条 it 全红，5.53s）:
 
