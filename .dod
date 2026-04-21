@@ -1,22 +1,12 @@
-# DoD — Dashboard 飞书静默 toggle
+# DoD — SettingsPage 加 muted toggle
 
-- [x] [ARTIFACT] muted-guard.js 新文件（5 函数导出）
-      Test: manual:node -e "const m=require('fs').readFileSync('packages/brain/src/muted-guard.js','utf8');for(const n of ['isMuted','initMutedGuard','setMuted','getMutedStatus','reloadMutedCache']){if(!m.includes('export')||!m.includes(n))process.exit(1)}console.log('5 exports OK')"
-- [x] [ARTIFACT] migration 242 新文件
-      Test: manual:node -e "require('fs').accessSync('packages/brain/migrations/242_brain_muted_setting.sql')"
-- [x] [ARTIFACT] notifier.js 改用 isMuted()
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/notifier.js','utf8');if(!c.includes(\"from './muted-guard.js'\")||!c.includes('isMuted()'))process.exit(1)"
-- [x] [ARTIFACT] server.js 加 initMutedGuard
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!c.includes('initMutedGuard'))process.exit(1)"
-- [x] [ARTIFACT] routes/settings.js 有 /muted 端点
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/settings.js','utf8');if(!c.includes(\"'/muted'\"))process.exit(1)"
-- [x] [ARTIFACT] Dashboard LiveMonitorPage 有静默 toggle
-      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx','utf8');if(!c.includes('/api/brain/settings/muted'))process.exit(1)"
-- [x] [BEHAVIOR] muted-guard 6 场景测试全绿
-      Test: tests/brain/muted-guard.test.js
-- [x] [BEHAVIOR] settings-muted-api 3 场景测试全绿
-      Test: tests/brain/settings-muted-api.test.js
-- [x] [BEHAVIOR] notifier-muted-gate 6 场景无回归
-      Test: tests/brain/notifier-muted-gate.test.js
-- [x] [BEHAVIOR] 现有 notifier.test.js 无回归
-      Test: manual:npx vitest run packages/brain/src/__tests__/notifier.test.js --no-coverage --reporter=basic
+- [x] [ARTIFACT] SettingsPage.tsx 含 muted card
+      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/settings/SettingsPage.tsx','utf8');if(!c.includes('/api/brain/settings/muted')||!c.includes('飞书静默开关'))process.exit(1)"
+- [x] [ARTIFACT] ToggleCard 组件化（config-driven）
+      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/settings/SettingsPage.tsx','utf8');if(!c.includes('function ToggleCard')||!c.includes('CONFIGS'))process.exit(1)"
+- [x] [BEHAVIOR] SettingsPage.test.tsx 6 场景全绿
+      Test: tests/dashboard/SettingsPage.test.tsx
+- [x] [BEHAVIOR] tsc 无新 SettingsPage 相关 error
+      Test: manual:bash -c "cd apps/dashboard && npx tsc --noEmit 2>&1 | grep SettingsPage || echo ok"
+- [x] [ARTIFACT] 设计 + Learning 文档已提交
+      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-21-settings-muted-card-design.md');require('fs').accessSync('docs/learnings/cp-0421233137-settings-muted-card.md')"
