@@ -733,7 +733,8 @@ jobs:
           BASE="${{ github.event.pull_request.base.sha }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
           CHANGED=$(git diff --name-only "$BASE"..."$HEAD" 2>/dev/null || echo "")
-          DOD_FILES=$(echo "$CHANGED" | grep -E '(^|/)DoD\.md$|(^|/)contract-dod-ws[0-9]+\.md$' || true)
+          # 排除 sprints/archive/：归档的老格式 sprint（v5 前），不应该走新 lint 规则
+          DOD_FILES=$(echo "$CHANGED" | grep -E '(^|/)DoD\.md$|(^|/)contract-dod-ws[0-9]+\.md$' | grep -v '^sprints/archive/' || true)
           if [ -z "$DOD_FILES" ]; then
             echo "has_dod=false" >> $GITHUB_OUTPUT
             echo "⏭️  无 DoD/contract 文件变更，跳过 harness-contract-lint"
