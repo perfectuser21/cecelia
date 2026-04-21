@@ -12,7 +12,9 @@ async function defaultStat(p) {
 }
 
 function defaultExec(cmd, args, opts = {}) {
-  return execFile(cmd, args, { timeout: 60_000, ...opts });
+  // git clone 拷贝 cecelia 主仓库（4000+ 文件 ~GB）实测 3-5min，60s 不够
+  // 提到 10min 给 clone 留 buffer；其他 git 命令快，本 timeout 只是兜底
+  return execFile(cmd, args, { timeout: 600_000, ...opts });
 }
 
 async function defaultRm(p) {
