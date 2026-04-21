@@ -1,27 +1,26 @@
 /**
- * Engine 动态行为测试 — 5 个关键场景
+ * Engine 动态行为测试 — 3 个关键场景
  *
  * 每个测试对应一个真实发生过的 bug，用动态执行（而非静态字符串检查）验证行为。
  * 这些测试构造真实的 git 环境，执行真实的 hook/脚本，检查真实的行为结果。
  *
  * 测试 1: devloop-check 条件 6 返回 done 而非 ready_to_merge（PR #2210 根因）
- * 测试 2: dev-lock 在 worktree 中，stop hook 能跨 worktree 找到（PR #2223 根因）
- * 测试 3: 并行会话隔离 — session_id 不同时不互相匹配
  * 测试 4: devloop-check 条件 6 合并后调用 cleanup.sh（PR #2221 根因）
  * 测试 5: CI 失败时 stop hook 返回 blocked（Claude 提前退出根因）
+ *
+ * 注：测试 2（跨 worktree 文件发现）和测试 3（并行会话隔离）已删除。
+ * cwd-as-key 重写后，stop-dev.sh 不再扫描其他 worktree，session_id 匹配逻辑废止。
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   execSync,
   spawnSync,
-  type SpawnSyncReturns,
 } from "child_process";
 import {
   writeFileSync,
   mkdtempSync,
   existsSync,
-  readFileSync,
   mkdirSync,
 } from "fs";
 import { join, resolve } from "path";
@@ -29,7 +28,6 @@ import { tmpdir } from "os";
 
 const ENGINE_ROOT = resolve(__dirname, "../..");
 const DEVLOOP_CHECK = resolve(ENGINE_ROOT, "lib/devloop-check.sh");
-const STOP_DEV_HOOK = resolve(ENGINE_ROOT, "hooks/stop-dev.sh");
 
 // ============================================================================
 // 辅助函数
@@ -44,18 +42,6 @@ function createTempGitRepo(): string {
       `echo "init" > README.md && git add . && git commit -m "init" -q`
   );
   return dir;
-}
-
-/** 在临时仓库中创建真实的 worktree */
-function createWorktree(
-  mainDir: string,
-  branch: string
-): string {
-  const wtDir = mkdtempSync(join(tmpdir(), "engine-wt-"));
-  execSync(
-    `cd "${mainDir}" && git worktree add -b "${branch}" "${wtDir}" HEAD -q 2>&1`
-  );
-  return wtDir;
 }
 
 /** 写 .dev-lock 文件 */
@@ -181,45 +167,6 @@ function runDevloopCheck(
   };
 }
 
-/** 执行 stop-dev.sh，返回 exit code + 输出 */
-function runStopHook(
-  cwd: string,
-  sessionId?: string
-): { status: number; stdout: string; stderr: string } {
-  const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
-    HOME: process.env.HOME || "/tmp",
-  };
-  if (sessionId) env.CLAUDE_SESSION_ID = sessionId;
-
-  const result = spawnSync(
-    "bash",
-    [STOP_DEV_HOOK],
-    {
-      encoding: "utf8",
-      cwd,
-      timeout: 15000,
-      env,
-      stdin: "pipe",
-    }
-  );
-  return {
-    status: result.status ?? -1,
-    stdout: result.stdout || "",
-    stderr: result.stderr || "",
-  };
-}
-
-/** 清理 worktree（忽略错误） */
-function cleanupWorktree(mainDir: string, wtDir: string): void {
-  try {
-    execSync(`cd "${mainDir}" && git worktree remove "${wtDir}" --force 2>/dev/null`);
-  } catch { /* ignore */ }
-  try {
-    execSync(`rm -rf "${wtDir}" 2>/dev/null`);
-  } catch { /* ignore */ }
-}
-
 // ============================================================================
 // 测试 1: devloop-check 条件 6 — CI 通过 + step_4 done → 自动合并 → done
 // 对应 bug: ready_to_merge 中间状态导致 Claude 输出"请手动合并"然后退出
@@ -266,151 +213,6 @@ describe("测试 1: 条件 6 自动合并返回 done（PR #2210 根因）", () =
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('"done"');
     expect(result.stdout).not.toContain("ready_to_merge");
-  });
-});
-
-// ============================================================================
-// 测试 2: 文件隔离 — dev-lock 在 worktree，stop hook 从主仓库能找到
-// 对应 bug: dev-lock 写在主仓库导致并行污染
-// ============================================================================
-
-describe("测试 2: 跨 worktree 文件发现（PR #2223 根因）", () => {
-  let mainDir: string;
-  let wtDir: string;
-  const branch = "cp-test-isolation";
-
-  beforeEach(() => {
-    mainDir = createTempGitRepo();
-    wtDir = createWorktree(mainDir, branch);
-  });
-  afterEach(() => {
-    cleanupWorktree(mainDir, wtDir);
-    try { execSync(`rm -rf "${mainDir}"`); } catch { /* ignore */ }
-  });
-
-  it("dev-lock 在 worktree 中，stop-dev.sh 从主仓库能扫到", () => {
-    const sessionId = "test-isolation-session";
-
-    // dev-lock 和 dev-mode 都在 worktree 里（不在主仓库）
-    writeDevLock(wtDir, branch, sessionId);
-    writeDevMode(
-      wtDir,
-      branch,
-      `dev\nbranch: ${branch}\nsession_id: ${sessionId}\nstep_2_code: pending\n`
-    );
-
-    // 主仓库不应该有这些文件
-    expect(existsSync(join(mainDir, `.dev-lock.${branch}`))).toBe(false);
-    expect(existsSync(join(mainDir, `.dev-mode.${branch}`))).toBe(false);
-
-    // 从主仓库运行 stop hook，带 session_id
-    const result = runStopHook(mainDir, sessionId);
-
-    // 应该找到 worktree 中的文件，返回 blocked（step_2 pending）
-    expect(result.status).toBe(2);
-    // 输出应包含阻塞原因（找到了会话，不是"无关会话 exit 0"）
-    const combined = result.stdout + result.stderr;
-    expect(combined.length).toBeGreaterThan(0);
-  });
-
-  it("主仓库没有 dev-lock 也没有未完成 dev-mode → exit 0", () => {
-    // worktree 有 dev-lock，但是 session_id 不匹配
-    writeDevLock(wtDir, branch, "other-session-id");
-    writeDevMode(
-      wtDir,
-      branch,
-      `dev\nbranch: ${branch}\nsession_id: other-session-id\ncleanup_done: true\n`
-    );
-
-    // 用不匹配的 session_id 从主仓库运行
-    const result = runStopHook(mainDir, "completely-different-session");
-
-    // 不匹配任何 dev-lock → fail-closed 扫描 → dev-mode 有 cleanup_done → 跳过 → exit 0
-    expect(result.status).toBe(0);
-  });
-});
-
-// ============================================================================
-// 测试 3: 并行会话隔离 — 两个 worktree 不互相匹配
-// 对应 bug: session_id 为空时 branch fallback 导致匹配错误
-// ============================================================================
-
-describe("测试 3: 并行会话隔离", () => {
-  let mainDir: string;
-  let wt1: string;
-  let wt2: string;
-  const branch1 = "cp-test-session-a";
-  const branch2 = "cp-test-session-b";
-
-  beforeEach(() => {
-    mainDir = createTempGitRepo();
-    wt1 = createWorktree(mainDir, branch1);
-    wt2 = createWorktree(mainDir, branch2);
-  });
-  afterEach(() => {
-    cleanupWorktree(mainDir, wt1);
-    cleanupWorktree(mainDir, wt2);
-    try { execSync(`rm -rf "${mainDir}"`); } catch { /* ignore */ }
-  });
-
-  it("session A 的 stop hook 只匹配 session A 的 dev-lock", () => {
-    const sessionA = "session-aaa-111";
-    const sessionB = "session-bbb-222";
-
-    // worktree 1: session A 的文件
-    writeDevLock(wt1, branch1, sessionA);
-    writeDevMode(
-      wt1,
-      branch1,
-      `dev\nbranch: ${branch1}\nsession_id: ${sessionA}\nstep_2_code: pending\n`
-    );
-
-    // worktree 2: session B 的文件
-    writeDevLock(wt2, branch2, sessionB);
-    writeDevMode(
-      wt2,
-      branch2,
-      `dev\nbranch: ${branch2}\nsession_id: ${sessionB}\ncleanup_done: true\n`
-    );
-
-    // Session A 的 stop hook 应匹配 wt1，返回 blocked（step_2 pending）
-    const resultA = runStopHook(mainDir, sessionA);
-    expect(resultA.status).toBe(2);
-
-    // Session B 的 stop hook 应匹配 wt2，但 cleanup_done → exit 0
-    const resultB = runStopHook(mainDir, sessionB);
-    expect(resultB.status).toBe(0);
-  });
-
-  it("不同 session_id 不会互相干扰", () => {
-    const sessionA = "session-aaa-333";
-    const sessionB = "session-bbb-444";
-
-    // 两个 worktree 都有未完成的任务
-    writeDevLock(wt1, branch1, sessionA);
-    writeDevMode(
-      wt1,
-      branch1,
-      `dev\nbranch: ${branch1}\nsession_id: ${sessionA}\nstep_2_code: pending\n`
-    );
-    writeDevLock(wt2, branch2, sessionB);
-    writeDevMode(
-      wt2,
-      branch2,
-      `dev\nbranch: ${branch2}\nsession_id: ${sessionB}\nstep_2_code: pending\n`
-    );
-
-    // Session A 只匹配 wt1
-    const resultA = runStopHook(mainDir, sessionA);
-    expect(resultA.status).toBe(2);
-
-    // Session B 只匹配 wt2
-    const resultB = runStopHook(mainDir, sessionB);
-    expect(resultB.status).toBe(2);
-
-    // wt1 的文件仍然存在（没有被 Session B 删除）
-    expect(existsSync(join(wt1, `.dev-lock.${branch1}`))).toBe(true);
-    expect(existsSync(join(wt2, `.dev-lock.${branch2}`))).toBe(true);
   });
 });
 

@@ -146,12 +146,12 @@ echo "ARGS=$*"
   });
 
   // ==========================================================================
-  // Scenario 3 — stop.sh 按 owner_session 精确匹配
-  //   两个 worktree 各有 .dev-lock（owner_session = A / B），
-  //   session_id=A 时只路由到 A 的 worktree，B 的不被误路由。
-  //   破坏点：hooks/stop.sh 的 session_id 匹配循环（v17.0.0）
+  // Scenario 3 — DEPRECATED（v19.0.0 cwd-as-key 起废止）
+  //   老行为"stop.sh 按 owner_session 精确匹配路由"已于 v19.0.0 删除。
+  //   替代防线：packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts
+  //   场景 10（交互模式 session 空仍按 cwd 守住）。
   // ==========================================================================
-  it('[S3] stop.sh 按 owner_session 精确路由，不误匹配其他 session 的 .dev-lock', () => {
+  it.skip('[S3 DEPRECATED] stop.sh 按 owner_session 精确路由（v19 已废止）', () => {
     // 临时 git repo + 2 worktree
     const repo = join(tmpRoot, 'repo-s3');
     mkdirSync(repo, { recursive: true });

@@ -1,14 +1,18 @@
-# DoD — stop-dev-v2 原型
+# DoD — stop hook 彻底终结
 
-- [x] [ARTIFACT] 新文件 packages/engine/hooks/stop-dev-v2.sh 存在
-      Test: manual:node -e "require('fs').accessSync('packages/engine/hooks/stop-dev-v2.sh')"
-- [x] [ARTIFACT] 新文件 packages/engine/tests/hooks/stop-dev-v2.test.ts 存在
-      Test: manual:node -e "require('fs').accessSync('packages/engine/tests/hooks/stop-dev-v2.test.ts')"
-- [x] [BEHAVIOR] bypass env 生效
-      Test: manual:bash -c 'CECELIA_STOP_HOOK_BYPASS=1 bash packages/engine/hooks/stop-dev-v2.sh'
-- [x] [BEHAVIOR] 7 个契约测试全绿
-      Test: tests/hooks/stop-dev-v2.test.ts
-- [x] [BEHAVIOR] engine 版本已 bump 5 文件
-      Test: manual:bash scripts/check-version-sync.sh
-- [x] [ARTIFACT] 设计文档已提交
-      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-21-stop-dev-v2-cwd-as-key-design.md')"
+- [x] [ARTIFACT] stop-dev.sh 重写（行数 ≤ 100）
+      Test: manual:node -e "const l=require('fs').readFileSync('packages/engine/hooks/stop-dev.sh','utf8').split('\n').length;if(l>100)process.exit(1);console.log('lines='+l)"
+- [x] [ARTIFACT] stop-dev-v2.sh 已删除
+      Test: manual:node -e "const fs=require('fs');if(fs.existsSync('packages/engine/hooks/stop-dev-v2.sh'))process.exit(1)"
+- [x] [ARTIFACT] E2E 测试文件存在
+      Test: manual:node -e "require('fs').accessSync('packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts')"
+- [x] [ARTIFACT] worktree-manage 写 .dev-mode 逻辑就位
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/scripts/worktree-manage.sh','utf8');if(!c.includes('dev-mode'))process.exit(1)"
+- [x] [BEHAVIOR] E2E 12 场景全绿
+      Test: tests/e2e/stop-hook-full-lifecycle.test.ts
+- [x] [BEHAVIOR] bypass 逃生仍生效
+      Test: manual:bash -c 'CECELIA_STOP_HOOK_BYPASS=1 bash packages/engine/hooks/stop-dev.sh'
+- [x] [BEHAVIOR] engine 版本 7 文件同步 18.5.0
+      Test: manual:node packages/engine/scripts/devgate/check-engine-hygiene.cjs
+- [x] [ARTIFACT] 设计 + Learning 文档已提交
+      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-21-stop-hook-final-design.md');require('fs').accessSync('docs/learnings/cp-0421154950-stop-hook-final.md')"
