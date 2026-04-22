@@ -159,7 +159,12 @@ app.use((_req, res, next) => {
 });
 
 // Body parser
-app.use(express.json({ limit: '256kb' }));
+// 4MB limit：vision 端点需要 image_base64（单张 PNG 500KB-2MB），
+// 256kb 全局限制会让 vision 请求在路由前被拒 413。
+// Express middleware 按注册顺序执行，全局 parser 先消费 body 流后
+// 路径级 express.json 覆盖无效（PR #2514 踩坑），必须在全局就放宽。
+// Brain 是内部服务（有 CECELIA_INTERNAL_TOKEN 鉴权），DoS 风险可接受。
+app.use(express.json({ limit: '4mb' }));
 
 // Mount memory routes (before brain routes to avoid conflicts)
 app.use('/api/brain/memory', memoryRoutes);
