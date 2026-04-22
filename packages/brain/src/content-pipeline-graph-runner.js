@@ -22,13 +22,16 @@ export const DEFAULT_RECURSION_LIMIT = 60;
 
 /**
  * 是否启用 LangGraph 路径。
- * 默认 false：未设置/空字符串/'false'/'0' 都视为关闭。
+ * 默认 true：今日 16 条 benchmark 验证 LangGraph 是 content pipeline 的
+ * 生产路径（PostgresSaver 持久化 + 条件边 + 6-stage docker-in-docker）。
+ * 老 /:id/run 路径已废弃。
+ * 显式设 'false' / '0' 才回退老路径。
  */
 export function isContentPipelineLangGraphEnabled() {
   const v = process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED;
-  if (!v) return false;
+  if (!v) return true;
   const normalized = String(v).trim().toLowerCase();
-  return !(normalized === '' || normalized === 'false' || normalized === '0');
+  return !(normalized === 'false' || normalized === '0');
 }
 
 /**

@@ -28,12 +28,13 @@ describe('isContentPipelineLangGraphEnabled', () => {
     else process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = ORIGINAL;
   });
 
-  it('returns false when env not set', () => {
-    expect(isContentPipelineLangGraphEnabled()).toBe(false);
+  it('returns true when env not set (default-on after Brain docker 迁移)', () => {
+    expect(isContentPipelineLangGraphEnabled()).toBe(true);
   });
 
-  it('handles common falsy values', () => {
-    for (const v of ['', '0', 'false', 'FALSE', 'False']) {
+  it('handles explicit opt-out values', () => {
+    // 空字符串 '' 被 !v 短路走默认 true 分支，不算显式 opt-out
+    for (const v of ['0', 'false', 'FALSE', 'False']) {
       process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = v;
       expect(isContentPipelineLangGraphEnabled()).toBe(false);
     }
@@ -63,7 +64,8 @@ describe('runContentPipeline', () => {
     else process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = ORIGINAL;
   });
 
-  it('returns { skipped: true } when env not set', async () => {
+  it('returns { skipped: true } when env explicit set to false', async () => {
+    process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'false';
     const r = await runContentPipeline({ id: 'p-1', keyword: 'demo' });
     expect(r.skipped).toBe(true);
     expect(r.reason).toMatch(/CONTENT_PIPELINE_LANGGRAPH_ENABLED/);
