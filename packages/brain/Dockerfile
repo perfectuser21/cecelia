@@ -20,8 +20,10 @@ COPY src/ ./src/
 COPY migrations/ ./migrations/
 COPY package.json ./
 
-# Non-root user
-USER cecelia
+# Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。
+# macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。
+# 安全边界由 docker-compose.yml 提供：read_only filesystem + 只读凭据挂载 + tmpfs /tmp 100M
+USER root
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:5221/api/brain/tick/status || exit 1
