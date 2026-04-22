@@ -1,12 +1,12 @@
-# DoD — task API prd fallback + 清 pre-flight 存量
+# DoD — muted test coverage
 
-- [x] [ARTIFACT] task-tasks.js destructure 含 prd + 3 层 fallback
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/task-tasks.js','utf8');if(!c.includes('prd = null')||!c.match(/!description && prd/))process.exit(1)"
-- [x] [ARTIFACT] migration 243 新文件
-      Test: manual:node -e "require('fs').accessSync('packages/brain/migrations/243_clear_pre_flight_rejected_backlog.sql')"
-- [x] [BEHAVIOR] task-api-prd-fallback 4 场景单测绿
-      Test: tests/brain/task-api-prd-fallback.test.js
-- [x] [BEHAVIOR] migration 跑后 pre_flight_failed 存量 = 0
-      Test: manual:psql cecelia -tAc "SELECT CASE WHEN COUNT(*)=0 THEN 1 ELSE 0 END FROM tasks WHERE metadata->>'pre_flight_failed'='true'"
-- [x] [ARTIFACT] 设计 + Learning 文档已提交
-      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-task-api-prd-fallback-design.md');require('fs').accessSync('docs/learnings/cp-0422084553-task-api-prd-fallback.md')"
+- [x] [ARTIFACT] LiveMonitorPage.muted-toggle.test.tsx 新文件含 5 锚点
+      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/live-monitor/LiveMonitorPage.muted-toggle.test.tsx','utf8');const m=(c.match(/\bit\(/g)||[]).length;if(m<5)process.exit(1);console.log('锚点数='+m)"
+- [x] [ARTIFACT] muted-toggle-e2e.integration.test.js 新文件
+      Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/muted-toggle-e2e.integration.test.js')"
+- [x] [BEHAVIOR] LiveMonitorPage.muted-toggle.test.tsx 本地跑绿
+      Test: tests/dashboard/LiveMonitorPage.muted-toggle.test.tsx
+- [x] [BEHAVIOR] muted-toggle-e2e integration 本地跑绿（需 pg）
+      Test: tests/brain/integration/muted-toggle-e2e.integration.test.js
+- [x] [ARTIFACT] 设计文档 + Learning 已提交
+      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-muted-test-coverage-design.md');require('fs').accessSync('docs/learnings/cp-0422094645-muted-test-coverage.md')"
