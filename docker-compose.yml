@@ -35,6 +35,15 @@ services:
       # Worktree 根目录（Brain spawn harness/pipeline 容器时要 mount 宿主 worktree）
       - /Users/administrator/perfect21/cecelia/.claude/worktrees:/Users/administrator/perfect21/cecelia/.claude/worktrees:rw
       - /Users/administrator/worktrees:/Users/administrator/worktrees:rw
+      # Content pipeline 产物目录（docker-executor existsFn 检查要求 Brain 可见宿主该路径，
+      # 否则不挂给 pipeline container，产物写到 ephemeral 空间 --rm 丢失。见 PR #2527 后续修）
+      - /Users/administrator/content-output:/Users/administrator/content-output:rw
+      - /Users/administrator/claude-output:/Users/administrator/claude-output:rw
+      # SSH：pipeline-export.sh 跑 "ssh nas" 上传 NAS，docker-executor 挂给 pipeline container
+      - /Users/administrator/.ssh:/Users/administrator/.ssh:ro
+      # Git + gh config（harness / pipeline container 做 git commit / gh pr 需要）
+      - /Users/administrator/.gitconfig:/Users/administrator/.gitconfig:ro
+      - /Users/administrator/.config/gh:/Users/administrator/.config/gh:ro
       # Timezone (read-only)
       - /etc/localtime:/etc/localtime:ro
     env_file:
