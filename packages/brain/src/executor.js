@@ -2848,14 +2848,12 @@ async function triggerCeceliaRun(task) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (HARNESS_LANGGRAPH_ENABLED=true)`);
     try {
       const { runHarnessPipeline } = await import('./harness-graph-runner.js');
-      // 注入凭据：harness 任务默认 account1（spending-cap 或 auth-failed 时 fallback 无凭据让 Docker 报错）
+      // Harness pipeline 不在此处硬编码 CECELIA_CREDENTIALS='account1'。
+      // 让底层 executeInDocker 的 resolveAccountForOpts middleware（docker-executor.js:359）
+      // 在每次 spawn 时实时调 selectBestAccount + isSpendingCapped/isAuthFailed fallback，
+      // 账号治理统一收口到 account-usage.js。
+      // 对齐 content-pipeline-graph-runner.js 的动态选择设计。
       const langGraphEnv = {};
-      try {
-        const { isSpendingCapped, isAuthFailed } = await import('./account-usage.js');
-        if (!isSpendingCapped('account1') && !isAuthFailed('account1')) {
-          langGraphEnv.CECELIA_CREDENTIALS = 'account1';
-        }
-      } catch { /* non-fatal */ }
       // PostgresSaver: LangGraph 持久化 checkpointer（Brain 重启后从断点续跑，
       // 避免 43 分钟 pipeline 被重启清零。task.id 作为 thread_id 即为 resume key）
       const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
