@@ -233,7 +233,9 @@ app.use('/api/brain/initiatives', initiativesRoutes);
 
 // LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
 // 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
-app.use('/api/brain/llm-service', internalAuth, llmServiceRoutes);
+// 独立 body parser limit 4MB：vision 端点要传 image_base64，单张图 500KB-2MB 是常态，
+// 全局 256kb 限制会让 vision 请求直接 413 request entity too large。
+app.use('/api/brain/llm-service', internalAuth, express.json({ limit: '4mb' }), llmServiceRoutes);
 
 app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fileURLToPath(import.meta.url)), '.')));
 
