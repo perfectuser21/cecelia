@@ -32,7 +32,7 @@ import { parseTaskPlan, upsertTaskPlan } from './harness-dag.js';
 import { runFinalE2E, attributeFailures } from './harness-final-e2e.js';
 import { ensureHarnessWorktree } from './harness-worktree.js';
 import { resolveGitHubToken } from './harness-credentials.js';
-import { runGanContractLoop } from './harness-gan-loop.js';
+import { runGanContractGraph } from './harness-gan-graph.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -168,7 +168,7 @@ ${task.description || task.title || ''}
 
   let ganResult;
   try {
-    ganResult = await runGanContractLoop({
+    ganResult = await runGanContractGraph({
       taskId: task.id,
       initiativeId,
       sprintDir,
@@ -177,6 +177,7 @@ ${task.description || task.title || ''}
       worktreePath,
       githubToken,
       budgetCapUsd: budgetUsd,
+      checkpointer: opts.checkpointer,
     });
   } catch (err) {
     console.error(`[harness-initiative-runner] GAN failed task=${task.id}: ${err.message}`);
