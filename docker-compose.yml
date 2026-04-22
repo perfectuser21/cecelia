@@ -63,6 +63,10 @@ services:
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
+    # compose standalone cgroup 限额（deploy.resources 只在 Docker Swarm 模式生效）
+    mem_limit: 1g
+    mem_reservation: 512m
+    cpus: 2.0
     deploy:
       resources:
         limits:
