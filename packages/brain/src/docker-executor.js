@@ -372,6 +372,10 @@ export async function executeInDocker(opts) {
   console.log(
     `[docker-executor] spawn task=${taskId} type=${taskType} tier=${tier.tier} mem=${memoryMB}m cpus=${cpuCores} image=${image} container=${name}`
   );
+  // DEBUG: harness_* 任务 spawn 时 dump full docker args（forensic 定位 skill 加载失败）
+  if (String(taskType).startsWith('harness_')) {
+    console.log('[docker-executor] FULL_ARGS:', JSON.stringify(args));
+  }
 
   const result = await new Promise((resolve) => {
     const proc = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -416,6 +420,11 @@ export async function executeInDocker(opts) {
       console.log(
         `[docker-executor] exit task=${taskId} code=${code} signal=${signal} duration=${duration}ms timed_out=${timedOut}`
       );
+      // DEBUG: harness_* 任务 exit != 0 时 dump stdout + stderr 最后 2KB
+      if (String(taskType).startsWith('harness_') && code !== 0) {
+        console.log('[docker-executor] HARNESS_STDOUT_TAIL:', (stdout || '').slice(-2000));
+        console.log('[docker-executor] HARNESS_STDERR_TAIL:', (stderr || '').slice(-2000));
+      }
       const containerId = readContainerIdFromCidfile(cidfile);
       // cidfile 读完即可清理，保持 prompt_dir 整洁
       if (cidfile && existsSync(cidfile)) {
