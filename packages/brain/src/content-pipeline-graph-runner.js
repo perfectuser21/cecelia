@@ -62,19 +62,37 @@ export async function runContentPipeline(task, opts = {}) {
     `[content-pipeline-runner] starting pipeline=${task.id} keyword="${String(keyword).slice(0, 60)}"`
   );
 
-  // 动态选账号：account-usage.selectBestAccount() 按 5h/7d 剩余额度挑最空的账号
-  // 硬编码 'account1' 会让 account1 7d 撞 100% 后整条 pipeline 429 挂（实测今日 robot final）
-  // 优先级：opts.env.CECELIA_CREDENTIALS（显式）> CONTENT_PIPELINE_CREDENTIALS env > selectBestAccount > 'account1' fallback
+  // 动态选账号：按 5h/7d 剩余额度挑最空，并过滤 7d>=90% 的爆满账号
+  // selectBestAccount 本身评分偏重 5h + deficit，可能选到 5h 空但 7d 撞满的账号
+  // （今日 robot final 的 bug：选 account1 5h=13% 但 7d=100%，结果 429 秒死）
+  // 本函数加一层 guard：候选账号 7d_pct >= 90 时跳过选下一个
   let dynamicCredential = process.env.CONTENT_PIPELINE_CREDENTIALS;
   if (!dynamicCredential && !(opts.env && opts.env.CECELIA_CREDENTIALS)) {
     try {
-      const { selectBestAccount } = await import('./account-usage.js');
+      const { selectBestAccount, getAccountUsage } = await import('./account-usage.js');
+      const usage = await getAccountUsage().catch(() => ({}));
+      const SEVEN_D_CAP_PCT = 90;  // 7d 滚动窗口用量 >=90% 视为撞限，不选
       const selected = await selectBestAccount({ model: 'sonnet' });
-      if (selected?.accountId) {
-        dynamicCredential = selected.accountId;
+      const accId = selected?.accountId;
+      const sevenDayPct = accId ? (usage?.[accId]?.seven_day_pct ?? 0) : 100;
+      if (accId && sevenDayPct < SEVEN_D_CAP_PCT) {
+        dynamicCredential = accId;
         console.log(
-          `[content-pipeline-runner] selectBestAccount → ${dynamicCredential} (model=${selected.model})`
+          `[content-pipeline-runner] selectBestAccount → ${dynamicCredential} (model=${selected.model}, 7d=${sevenDayPct}%)`
         );
+      } else if (accId) {
+        // 第一候选 7d 撞限，遍历其他候选挑 7d<90 的
+        const allAccounts = ['account1', 'account2', 'account3'];
+        const fallback = allAccounts.find((id) => (usage?.[id]?.seven_day_pct ?? 0) < SEVEN_D_CAP_PCT);
+        if (fallback) {
+          dynamicCredential = fallback;
+          console.log(
+            `[content-pipeline-runner] selectBestAccount 第一候选 ${accId} 7d=${sevenDayPct}% 撞限 → fallback ${fallback}`
+          );
+        } else {
+          console.warn(`[content-pipeline-runner] 所有账号 7d>=${SEVEN_D_CAP_PCT}%，继续用 ${accId}（大概率 429）`);
+          dynamicCredential = accId;
+        }
       }
     } catch (e) {
       console.warn(`[content-pipeline-runner] selectBestAccount 失败，fallback account1: ${e.message}`);
