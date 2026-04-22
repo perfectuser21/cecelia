@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import * as net from 'net';
+import * as http from 'http';
 import type { Server, AddressInfo } from 'net';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -38,23 +38,14 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function pickIdlePort(excludePort: number): Promise<number> {
-  for (let i = 0; i < 20; i++) {
-    const port = await new Promise<number>((resolve, reject) => {
-      const srv = net.createServer();
-      srv.unref();
-      srv.on('error', reject);
-      srv.listen(0, '127.0.0.1', () => {
-        const addr = srv.address() as AddressInfo;
-        const p = addr.port;
-        srv.close(() => resolve(p));
-      });
-    });
-    if (port !== excludePort) {
-      return port;
-    }
-  }
-  throw new Error('找不到空闲端口');
+async function startProbe503(): Promise<{ probe: http.Server; port: number }> {
+  const probe = http.createServer((_req, res) => {
+    res.writeHead(503, { 'Content-Type': 'text/plain' });
+    res.end('probe: service_unavailable');
+  });
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', () => resolve()));
+  const addr = probe.address() as AddressInfo;
+  return { probe, port: addr.port };
 }
 
 function requireE2EScript(): void {
@@ -105,17 +96,24 @@ describe('Workstream 4 — E2E 冒烟脚本 + README [BEHAVIOR]', () => {
     }
   });
 
-  it('端口空闲（没有服务）时，e2e.sh 以非 0 exit 退出', async () => {
+  it('端口有 503 探针服务时，e2e.sh exit 非 0（无竞争窗口）', async () => {
     requireE2EScript();
-    const { server, port: busyPort } = await startServer();
-    let idlePort: number;
+    const { probe, port: probePort } = await startProbe503();
     try {
-      idlePort = await pickIdlePort(busyPort);
+      const res = runE2E(probePort);
+      expect(res.status).not.toBe(0);
     } finally {
-      await closeServer(server);
+      await new Promise<void>((resolve) => probe.close(() => resolve()));
     }
-    const res = runE2E(idlePort);
-    expect(res.status).not.toBe(0);
+  });
+
+  it('e2e.sh 源码含 PORT 默认值展开形态（${PORT:-} 或等效，非硬编码赋值）', () => {
+    requireE2EScript();
+    const src = fs.readFileSync(E2E_SCRIPT, 'utf8');
+    const expansionRe = /(\$\{PORT:-|\$\{PORT-|:\s*\$\{PORT:=)/;
+    expect(src).toMatch(expansionRe);
+    const hardcodedRe = /^\s*PORT\s*=\s*['"]?[\w.-]+['"]?\s*(#.*)?$/m;
+    expect(src).not.toMatch(hardcodedRe);
   });
 
   it('README.md 文件存在', () => {

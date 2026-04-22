@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'child_process';
+import * as path from 'path';
+import * as fs from 'fs';
 import type { Server, AddressInfo } from 'net';
 
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+const TIME_API_ABS = path.join(REPO_ROOT, 'scripts/harness-dogfood/time-api.js');
+const COMPAT_ISO = path.join(REPO_ROOT, 'scripts/harness-dogfood/__tests__/iso.test.js');
+const COMPAT_NOTFOUND = path.join(REPO_ROOT, 'scripts/harness-dogfood/__tests__/not-found.test.js');
 const TIME_API_SPEC = '../../../scripts/harness-dogfood/time-api.js';
 
 async function loadModule(): Promise<any> {
@@ -32,7 +39,20 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
-describe('Workstream 1 — /iso + 404/405 骨架 [BEHAVIOR]', () => {
+function runNodeTest(absPath: string): { status: number | null; stdout: string; stderr: string } {
+  const res = spawnSync('node', ['--test', absPath], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    timeout: 30000,
+  });
+  return {
+    status: res.status,
+    stdout: res.stdout ?? '',
+    stderr: res.stderr ?? '',
+  };
+}
+
+describe('Workstream 1 — /iso + 404/405 骨架 + routes 自动加载器 [BEHAVIOR]', () => {
   it('GET /iso 返回 200 且 iso 字段符合 ISO 8601 毫秒 Z 格式', async () => {
     const { server, baseUrl } = await startServer();
     try {
@@ -112,10 +132,47 @@ describe('Workstream 1 — /iso + 404/405 骨架 [BEHAVIOR]', () => {
     }
   });
 
-  it('routes 对象导出：WS2/3/4 的 append-only 锚点契约（WS1 阶段只有 /iso）', async () => {
+  it('WS1 独立态：routes 对象仅含 /iso，不含 /timezone 或 /unix', async () => {
     const mod = await loadModule();
     expect(mod.routes).toBeDefined();
     expect(typeof mod.routes).toBe('object');
     expect(typeof mod.routes['/iso']).toBe('function');
+    expect(mod.routes['/timezone']).toBeUndefined();
+    expect(mod.routes['/unix']).toBeUndefined();
+  });
+
+  it('WS1 独立态：time-api.js 源码不含 timezone 或 unix 相关字面量（物理隔离契约）', () => {
+    const src = fs.readFileSync(TIME_API_ABS, 'utf8');
+    expect(src).not.toMatch(/\/timezone/);
+    expect(src).not.toMatch(/\/unix/);
+    expect(src).not.toMatch(/Intl\.DateTimeFormat/);
+    expect(src).not.toMatch(/resolvedOptions/);
+    expect(src).not.toMatch(/Math\.floor/);
+    expect(src).not.toMatch(/['"]timezone['"]/);
+    expect(src).not.toMatch(/['"]unix['"]/);
+  });
+
+  it('PRD 兼容层 runtime：node --test __tests__/iso.test.js exit 0', () => {
+    expect(fs.existsSync(COMPAT_ISO)).toBe(true);
+    const res = runNodeTest(COMPAT_ISO);
+    if (res.status !== 0) {
+      throw new Error(
+        `node --test ${COMPAT_ISO} 预期 exit 0，实际 ${res.status}。stderr=${res.stderr.slice(0, 500)}; stdout=${res.stdout.slice(0, 500)}`,
+      );
+    }
+    expect(res.status).toBe(0);
+    expect(res.stdout).toMatch(/^# pass [1-9]/m);
+  });
+
+  it('PRD 兼容层 runtime：node --test __tests__/not-found.test.js exit 0', () => {
+    expect(fs.existsSync(COMPAT_NOTFOUND)).toBe(true);
+    const res = runNodeTest(COMPAT_NOTFOUND);
+    if (res.status !== 0) {
+      throw new Error(
+        `node --test ${COMPAT_NOTFOUND} 预期 exit 0，实际 ${res.status}。stderr=${res.stderr.slice(0, 500)}; stdout=${res.stdout.slice(0, 500)}`,
+      );
+    }
+    expect(res.status).toBe(0);
+    expect(res.stdout).toMatch(/^# pass [1-9]/m);
   });
 });

@@ -1,31 +1,94 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 > Initiative: Harness v6 Reviewer Alignment 哲学真机闭环
 > PRD: `sprints/sprint-prd.md`
-> Propose round: 2
+> Propose round: 3
 > Task ID: 2303a935
-> 上轮判决: REVISION（6 个风险 / 3 阻断 + 3 正确性）
+> 上轮判决: REVISION（3 阻断/正确性 + 2 小问题）
 
-本轮修订依然把 PRD 的 5 个 Given-When-Then 场景拆为 4 个 Feature、4 个 Workstream；BEHAVIOR 覆盖落在 `sprints/tests/ws{N}/*.test.ts`（SSOT），ARTIFACT 覆盖落在 `sprints/contract-dod-ws{N}.md`。本轮针对 Reviewer 的 6 个风险做了 **逐条修订**，详见末尾 `## 风险处置记录（Round 1 → Round 2）`。
+本轮对 Round 2 做 **架构级改写**：把路由实现从"单文件 + routes 对象 append-only 锚点"改为 **routes/ 物理子目录** —— WS2/WS3 只新增自己的文件，完全不碰 `time-api.js` 与其他 WS 的文件。WS 间文件交集 = ∅，从而一次性解决 Round 2 风险 1（routes 锚点在 BEHAVIOR 层无法证伪）与风险 3（并行合并的 git 冲突未机制化）。PRD 兼容层测试（`scripts/harness-dogfood/__tests__/*.test.js`）改用 Node 18+ 内置 `node:test`，自己启动/打端点/关闭，既满足 PRD 文件交付物，又真能 runtime 跑通，闭合风险 2 的 "runtime-broken 口子"。R6 PORT 匹配收紧为默认值展开形态，WS4 端口空闲测试改为 503 探针服务消除竞争窗口。
 
 ---
 
-## Feature 1: `/iso` 端点 + HTTP 服务骨架 + 404/405 + `routes` 锚点契约
+## 架构调整（Round 3 核心）
+
+### 文件布局（最终态，四个 WS 合并后）
+
+```
+scripts/harness-dogfood/
+├── time-api.js              # HTTP server 骨架 + 404/405 + 自动加载 routes/ 目录
+├── routes/
+│   ├── iso.js               # GET /iso 实现（WS1 专属）
+│   ├── timezone.js          # GET /timezone 实现（WS2 专属）
+│   └── unix.js              # GET /unix 实现（WS3 专属）
+├── __tests__/
+│   ├── iso.test.js          # PRD 兼容层 runtime smoke（WS1 专属，node:test）
+│   ├── not-found.test.js    # PRD 兼容层 runtime smoke（WS1 专属，node:test）
+│   ├── timezone.test.js     # PRD 兼容层 runtime smoke（WS2 专属，node:test）
+│   └── unix.test.js         # PRD 兼容层 runtime smoke（WS3 专属，node:test）
+├── e2e.sh                   # Final E2E 冒烟（WS4 专属）
+└── README.md                # 使用说明（WS4 专属）
+```
+
+### 各 WS 新增文件（完全不交集）
+
+| WS | 新增文件 | 是否触达其它 WS 文件 |
+|---|---|---|
+| WS1 | `time-api.js`, `routes/iso.js`, `__tests__/iso.test.js`, `__tests__/not-found.test.js` | 否（本 WS 首次建所有骨架，后续 WS 只新增不改） |
+| WS2 | `routes/timezone.js`, `__tests__/timezone.test.js` | **否**（新文件，不改 `time-api.js`，不改 WS1 任何文件） |
+| WS3 | `routes/unix.js`, `__tests__/unix.test.js` | **否**（新文件，不改 `time-api.js`，与 WS2 无文件交集） |
+| WS4 | `e2e.sh`, `README.md` | **否**（不改任何代码文件） |
+
+**并行合并安全性**：WS2 / WS3 / WS4 的 diff `git diff --name-only` 中**不得出现** `scripts/harness-dogfood/time-api.js` 或其他 WS 新增过的任何文件。两个 PR 同时合并时，git 只需对 `routes/` 目录下不同文件做 add，不会有冲突。
+
+### 自动加载机制（WS1 实现）
+
+`time-api.js` 在初始化 `routes` 对象时扫描 `__dirname/routes/*.js` 目录，逐个 `require` 并按契约形状注册：
+
+```js
+// 每个 routes/<name>.js 需默认导出 { path: '/xxx', handler: (req, res) => void }
+// time-api.js 的加载逻辑（WS1 写，后续 WS 不碰）：
+const routes = {};
+const routesDir = path.join(__dirname, 'routes');
+if (fs.existsSync(routesDir)) {
+  for (const f of fs.readdirSync(routesDir)) {
+    if (!f.endsWith('.js')) continue;
+    const mod = require(path.join(routesDir, f));
+    if (mod && typeof mod.path === 'string' && typeof mod.handler === 'function') {
+      routes[mod.path] = mod.handler;
+    }
+  }
+}
+```
+
+**关键性质**：WS2 新增 `routes/timezone.js` 文件后，**无需改 time-api.js**，`routes['/timezone']` 即自动出现——因为加载逻辑在 module 初始化时扫描目录。WS3 同理。这就是 "WS 独立可测" 的物理基础。
+
+### 骨架"不被污染"的可观测证据（Round 2 风险 1 解）
+
+- **BEHAVIOR 层证伪**: WS2 的测试新增 `it('WS2 合并后 /iso 端点仍正常 200 响应，骨架功能未被污染')`；同理 WS3。
+- **ARTIFACT 层证伪**: WS2 / WS3 的 DoD 同时写入 **负向字面量断言**：
+  - WS2 合并后 `time-api.js` 源文件**不得包含** `/timezone`、`Intl.DateTimeFormat`、`resolvedOptions` 三个 timezone 专属字面量（它们只允许出现在 `routes/timezone.js`）
+  - WS3 合并后 `time-api.js` 源文件**不得包含** `/unix`、`Math.floor(Date.now()/1000)`、`'unix'` 响应字段三个字面量
+- **物理层证伪**: WS2 / WS3 的 DoD 断言 **本 WS 的 PR 引入的文件不含 `time-api.js`**（通过列 WS 应新增文件、各自存在）
+
+---
+
+## Feature 1: `/iso` 端点 + HTTP 服务骨架 + 404/405 + routes 目录加载器
 
 **行为描述**:
-进程启动后对 `127.0.0.1` 监听指定端口（默认 `18080`，`PORT` 环境变量可覆盖）。`GET /iso` 返回 HTTP 200，Body 为 JSON 对象，含 `iso` 字段，值为当前 UTC 时刻的 ISO 8601 字符串（毫秒精度、`Z` 结尾）。任意未知路径返回 HTTP 404 + `{"error":"not_found"}`。任意非 GET 方法返回 HTTP 405 + `{"error":"method_not_allowed"}`。所有响应 `Content-Type: application/json`。
+进程启动后对 `127.0.0.1` 监听指定端口（默认 `18080`，`PORT` 环境变量可覆盖）。模块加载时扫描同目录下 `routes/*.js`，对每个导出 `{ path, handler }` 形状的模块，自动注册到 `routes[path]`。`GET /iso` 返回 HTTP 200，Body 为 JSON 对象含 `iso` 字段，值为当前 UTC 时刻 ISO 8601 毫秒精度 Z 结尾字符串。未知路径返回 HTTP 404 + `{"error":"not_found"}`。任意非 GET 方法返回 HTTP 405 + `{"error":"method_not_allowed"}`。所有响应 `Content-Type: application/json`。
 
-模块导出 `createServer(port): Promise<http.Server>` 与 `routes: Record<string, (req, res) => void>` 两个稳定 API。`routes` 是 **append-only 锚点**（后续 WS 的唯一变更点，见 `## 合并顺序与变更隔离`），WS1 结束时 `routes` 仅含 `'/iso'` 一个 key。
+模块导出 `createServer(port): Promise<http.Server>` 与 `routes: Record<string, (req, res) => void>`。WS1 完成时 `routes` 仅包含 `/iso` 一个 key（因为只有 `routes/iso.js` 存在）。
 
 **硬阈值**:
-- `GET /iso` status code == 200
-- Body.iso 匹配正则 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`
-- Body.iso 对应毫秒时间戳与 `Date.now()` 差 ≤ 5000 ms
-- 响应头 `content-type` 包含 `application/json`
+- `GET /iso` status == 200，Body.iso 匹配 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`，毫秒时间戳与 `Date.now()` 差 ≤ 5000 ms
+- 响应头 `content-type` 含 `application/json`
 - `GET /unknown-xyz` status == 404，Body == `{"error":"not_found"}`
 - `POST /iso` status == 405，Body == `{"error":"method_not_allowed"}`
-- `createServer(0)` 返回 `http.Server` 且已监听（`server.address().port` 为正整数）
-- `module.exports.routes` 为对象，含 `'/iso'` 键，且值为 function；WS1 阶段不包含 `'/timezone'` / `'/unix'`
+- `createServer(0)` 返回已监听的 `http.Server`，`server.address().port` 为正整数
+- `module.exports.routes` 为对象，含 `/iso` 键；**不含** `/timezone`、`/unix` 键（WS1 独立态）
+- `time-api.js` 源文件**不含** `/timezone`、`/unix`、`timezone`、`unix` 响应字段字面量（物理隔离契约——未来新 route 只能走 `routes/` 目录）
+- **PRD 兼容层 runtime**：`node --test scripts/harness-dogfood/__tests__/iso.test.js` exit 0；`node --test scripts/harness-dogfood/__tests__/not-found.test.js` exit 0
 
 **BEHAVIOR 覆盖**（落在 `sprints/tests/ws1/iso.test.ts`）:
 - `it('GET /iso 返回 200 且 iso 字段符合 ISO 8601 毫秒 Z 格式')`
@@ -34,105 +97,137 @@
 - `it('GET /unknown-xyz 返回 404 且 body 为 {error:"not_found"}')`
 - `it('POST /iso 返回 405 且 body 为 {error:"method_not_allowed"}')`
 - `it('createServer(0) 返回已监听的 server，address().port 为正整数')`
-- `it('routes 对象导出：WS2/3/4 的 append-only 锚点契约（WS1 阶段只有 /iso）')`
+- `it('WS1 独立态：routes 对象仅含 /iso，不含 /timezone 或 /unix')`
+- `it('WS1 独立态：time-api.js 源码不含 timezone 或 unix 相关字面量（物理隔离契约）')`
+- `it('PRD 兼容层 runtime：node --test __tests__/iso.test.js exit 0')`
+- `it('PRD 兼容层 runtime：node --test __tests__/not-found.test.js exit 0')`
 
 **ARTIFACT 覆盖**（落在 `sprints/contract-dod-ws1.md`）:
 - `scripts/harness-dogfood/time-api.js` 文件存在
-- 该文件导出 `createServer` 函数
-- 该文件导出 `routes` 对象（append-only 锚点）
-- 该文件含字符串字面量 `'/iso'`、`not_found`、`method_not_allowed`
-- 该文件含 `process.env.PORT` 读取逻辑
-- 该文件含 `require.main === module` 直跑分支
-- 该文件不依赖任何非 Node 内置模块（SC-006）
-- PRD 兼容层：`scripts/harness-dogfood/__tests__/iso.test.js` 存在（文件级占位，细节见 `## PRD 兼容层约定`）
-- PRD 兼容层：`scripts/harness-dogfood/__tests__/not-found.test.js` 存在
+- `scripts/harness-dogfood/routes/iso.js` 文件存在（物理分文件的第一块）
+- time-api.js 导出 `createServer`
+- time-api.js 导出 `routes` 对象
+- time-api.js 含 `fs.readdirSync` 或等效目录扫描（routes 自动加载器）
+- time-api.js 含 `process.env.PORT` 读取
+- time-api.js 含 `require.main === module` 直跑分支
+- time-api.js 含 `not_found`、`method_not_allowed` 字面量
+- time-api.js **不含** `/timezone`、`/unix`、`'timezone'`、`'unix'` 字面量
+- time-api.js 不引入非 Node 内置模块
+- routes/iso.js 导出 `{path: '/iso', handler}` 形状
+- `__tests__/iso.test.js` 存在且使用 `node:test`（文件含 `require('node:test')` 或 `import ... 'node:test'`）
+- `__tests__/not-found.test.js` 存在且使用 `node:test`
+- `__tests__/iso.test.js` 可被 `node --test` 运行成功（ARTIFACT 层级直接通过 bash 验证）
+- `__tests__/not-found.test.js` 可被 `node --test` 运行成功
 
 ---
 
 ## Feature 2: `/timezone` 端点
 
 **行为描述**:
-`GET /timezone` 返回 HTTP 200，Body 为 JSON 对象，含 `timezone` 字段，值为当前进程解析的 IANA 时区名，等于 `Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'`。实现上在 `routes` 对象中追加 `'/timezone'` 键（不得修改 WS1 已有分发骨架）。
+新增 `scripts/harness-dogfood/routes/timezone.js`，导出 `{path: '/timezone', handler}`。handler 返回 HTTP 200 JSON `{timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}`。**不改** `time-api.js` —— routes 自动加载器会在下次 require 时发现新文件并注册 `routes['/timezone']`。同时新增 `__tests__/timezone.test.js`（node:test，runtime 可跑）。
 
 **硬阈值**:
 - `GET /timezone` status == 200
-- Body.timezone 为 string 且 length > 0
-- Body.timezone **严格等于** `Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'`（见风险 R4 修订）
-- 响应头 `content-type` 包含 `application/json`
-- `module.exports.routes['/timezone']` 为 function
+- Body.timezone 为非空 string
+- Body.timezone **严格等于** `Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'`
+- 响应头 `content-type` 含 `application/json`
+- `module.exports.routes['/timezone']` 为 function（自动加载器识别）
+- **WS2 合并后 `/iso` 仍正常 200 响应**（骨架未被污染）
+- **WS2 合并后 time-api.js 源码**不含** `/timezone`、`Intl.DateTimeFormat`、`resolvedOptions`、`'timezone'` 四个字面量**（物理隔离契约 —— 这些字面量只允许在 `routes/timezone.js`）
+- **WS2 本次 PR diff 不含 `scripts/harness-dogfood/time-api.js`**（无共享文件改动）
+- `node --test scripts/harness-dogfood/__tests__/timezone.test.js` exit 0（runtime 兼容层）
 
 **BEHAVIOR 覆盖**（落在 `sprints/tests/ws2/timezone.test.ts`）:
 - `it('GET /timezone 返回 200 且 timezone 字段为非空字符串')`
-- `it('GET /timezone 返回的 timezone 等于进程 Intl.DateTimeFormat 的 timeZone（UTC 兜底）')`
+- `it('GET /timezone 返回的 timezone 严格等于进程 Intl.DateTimeFormat 的 timeZone（UTC 兜底）')`
 - `it('GET /timezone 的 Content-Type 为 application/json')`
-- `it('routes["/timezone"] 为 handler 函数（WS2 在 WS1 骨架上 append-only 追加）')`
+- `it('routes["/timezone"] 为 handler 函数（自动加载器识别新文件）')`
+- `it('WS2 合并后 /iso 端点仍正常 200 响应（骨架未被污染）')`
+- `it('WS2 合并后 time-api.js 源码不含 timezone 相关字面量（物理隔离契约）')`
+- `it('PRD 兼容层 runtime：node --test __tests__/timezone.test.js exit 0')`
 
 **ARTIFACT 覆盖**（落在 `sprints/contract-dod-ws2.md`）:
-- time-api.js 含 `'/timezone'` 路由字符串
-- time-api.js 含 `Intl.DateTimeFormat` 调用
-- time-api.js 含 `timezone` 响应字段名
-- PRD 兼容层：`scripts/harness-dogfood/__tests__/timezone.test.js` 存在
+- `scripts/harness-dogfood/routes/timezone.js` 存在
+- routes/timezone.js 导出 `{path: '/timezone', handler}` 形状
+- routes/timezone.js 含 `Intl.DateTimeFormat`
+- routes/timezone.js 含 `'/timezone'`、`'timezone'` 字面量
+- `__tests__/timezone.test.js` 存在且使用 `node:test`
+- `__tests__/timezone.test.js` 可被 `node --test` 运行成功（runtime 兼容层）
+- **time-api.js 源文件不含** `/timezone`（负向断言，骨架未被污染）
+- **time-api.js 源文件不含** `Intl.DateTimeFormat`（负向断言）
+- **time-api.js 源文件不含** `resolvedOptions`（负向断言）
+- **time-api.js 源文件不含** `'timezone'` 字面量
+- WS1 骨架存续正向断言：time-api.js 含 `not_found`（404 兜底未被污染）
 
 ---
 
 ## Feature 3: `/unix` 端点
 
 **行为描述**:
-`GET /unix` 返回 HTTP 200，Body 为 JSON 对象，含 `unix` 字段，值为当前 Unix 秒级时间戳（`Math.floor(Date.now()/1000)`），正整数。实现上在 `routes` 对象中追加 `'/unix'` 键。
+新增 `scripts/harness-dogfood/routes/unix.js`，导出 `{path: '/unix', handler}`。handler 返回 HTTP 200 JSON `{unix: Math.floor(Date.now()/1000)}`，正整数。**不改** `time-api.js`。新增 `__tests__/unix.test.js`（node:test）。
 
 **硬阈值**:
 - `GET /unix` status == 200
-- Body.unix 为 number 且 `Number.isInteger(Body.unix)` 为 true
-- Body.unix > 0
-- `Math.abs(Body.unix - Math.floor(Date.now()/1000)) <= 5`
-- Body.unix **不是毫秒级**（通过 `Body.unix < nowSec * 100` 证伪毫秒实现）
-- 响应头 `content-type` 包含 `application/json`
+- Body.unix 为 integer，`> 0`，`Math.abs(Body.unix - Math.floor(Date.now()/1000)) <= 5`
+- Body.unix 不是毫秒级：`Body.unix < Math.floor(Date.now()/1000) * 100`
+- 响应头 `content-type` 含 `application/json`
 - `module.exports.routes['/unix']` 为 function
+- **WS3 合并后 `/iso` 仍正常 200 响应**（骨架未被污染）
+- **WS3 合并后 time-api.js 源码不含** `/unix`、`Math.floor(Date.now()/1000)`、`'unix'` 字面量
+- **WS3 本次 PR diff 不含 `scripts/harness-dogfood/time-api.js`**
+- `node --test scripts/harness-dogfood/__tests__/unix.test.js` exit 0
 
 **BEHAVIOR 覆盖**（落在 `sprints/tests/ws3/unix.test.ts`）:
 - `it('GET /unix 返回 200 且 unix 字段为正整数')`
 - `it('GET /unix 的 unix 字段与当前秒级时间戳相差不超过 5 秒')`
 - `it('GET /unix 的 unix 字段不是毫秒级（不应比当前秒时间戳大三位数以上）')`
 - `it('GET /unix 的 Content-Type 为 application/json')`
-- `it('routes["/unix"] 为 handler 函数（WS3 在 WS1 骨架上 append-only 追加）')`
+- `it('routes["/unix"] 为 handler 函数（自动加载器识别新文件）')`
+- `it('WS3 合并后 /iso 端点仍正常 200 响应（骨架未被污染）')`
+- `it('WS3 合并后 time-api.js 源码不含 unix 相关字面量（物理隔离契约）')`
+- `it('PRD 兼容层 runtime：node --test __tests__/unix.test.js exit 0')`
 
 **ARTIFACT 覆盖**（落在 `sprints/contract-dod-ws3.md`）:
-- time-api.js 含 `'/unix'` 路由字符串
-- time-api.js 含 `Math.floor(Date.now()/1000)` 秒级转换
-- time-api.js 含 `unix` 响应字段名
-- PRD 兼容层：`scripts/harness-dogfood/__tests__/unix.test.js` 存在
+- `scripts/harness-dogfood/routes/unix.js` 存在
+- routes/unix.js 导出 `{path: '/unix', handler}`
+- routes/unix.js 含 `Math.floor(Date.now()/1000)`
+- routes/unix.js 含 `'/unix'`、`'unix'` 字面量
+- `__tests__/unix.test.js` 存在且使用 `node:test`
+- `__tests__/unix.test.js` 可被 `node --test` 运行成功
+- **time-api.js 源文件不含** `/unix`、`Math.floor`、`'unix'` 字面量（负向断言）
+- WS1 骨架存续正向断言：time-api.js 仍含 `not_found`
 
 ---
 
 ## Feature 4: E2E 冒烟脚本 + README
 
 **行为描述**:
-`scripts/harness-dogfood/e2e.sh` 为可执行 bash 脚本；**必须**读取 `PORT` 环境变量（默认 18080）以连接 time-api 服务；按顺序访问 `/iso`、`/timezone`、`/unix`；对每个响应做字段级格式校验（ISO 正则、timezone 非空、unix 秒级正整数）；全部通过则 `exit 0`；任一失败或连接失败则 `exit` 非 0（且向 stderr 输出错误摘要）。`README.md` 说明 `node scripts/harness-dogfood/time-api.js` 启动方法与 `bash scripts/harness-dogfood/e2e.sh` 跑法。
+`scripts/harness-dogfood/e2e.sh` 为可执行 bash 脚本；**必须读 PORT 环境变量默认值展开形态**（`${PORT:-18080}` 或 `${PORT-18080}` 或 `: ${PORT:=18080}`——纯硬编码 `PORT=18080` 赋值不算）；按顺序访问 `/iso`、`/timezone`、`/unix`；对每个响应做字段级格式校验（ISO 正则、timezone 非空、unix 秒级正整数）；全部通过 exit 0；任一失败或连接错 exit ≠ 0 + stderr 错误摘要。`README.md` 含启动命令 + E2E 调用说明。
 
 **硬阈值**:
 - 服务已启动时，`PORT=<运行端口> bash scripts/harness-dogfood/e2e.sh` exit == 0
-- 端口空闲（无服务）时，`PORT=<空闲端口> bash scripts/harness-dogfood/e2e.sh` exit != 0
-- e2e.sh 具备可执行权限位（`stat.mode & 0o111 != 0`）
+- **有探针服务监听端口但只返回 HTTP 503** 时，`PORT=<探针端口> bash scripts/harness-dogfood/e2e.sh` exit != 0（消除 Round 2 "空闲端口 → 竞争窗口" flaky）
+- e2e.sh 具备可执行权限位
 - e2e.sh 引用 `/iso`、`/timezone`、`/unix` 三个路径
-- e2e.sh 含 `${PORT` 或 `$PORT` 或 `PORT=` 环境变量读取（见风险 R6 修订）
+- e2e.sh 含 **默认值展开形态** 的 PORT 读取（正则 `\$\{PORT:-|\$\{PORT-|:\s*\$\{PORT:=`，**排除**纯 `PORT=18080` 硬编码赋值）
 - README.md 存在，含启动命令与 E2E 调用说明
 
 **BEHAVIOR 覆盖**（落在 `sprints/tests/ws4/e2e.test.ts`）:
 - `it('e2e.sh 文件存在')`
 - `it('e2e.sh 具备可执行权限位')`
 - `it('服务已启动 + PORT 环境变量指向运行端口时，e2e.sh exit 0')`
-- `it('端口空闲（没有服务）时，e2e.sh 以非 0 exit 退出')`（见风险 R5：端口为动态分配而非硬编码）
+- `it('端口有 503 探针服务时，e2e.sh exit 非 0（无竞争窗口）')`
+- `it('e2e.sh 源码含 PORT 默认值展开形态（${PORT:-} 或等效，非硬编码赋值）')`
 - `it('README.md 文件存在')`
 - `it('README 含启动命令 node scripts/harness-dogfood/time-api.js')`
 - `it('README 含 E2E 冒烟脚本调用说明')`
 
 **ARTIFACT 覆盖**（落在 `sprints/contract-dod-ws4.md`）:
-- e2e.sh 文件存在且可执行
-- e2e.sh 使用 bash shebang 且 `set -e`
-- e2e.sh 引用 `/iso`、`/timezone`、`/unix`
-- e2e.sh 读取 PORT 环境变量（字面量匹配 `PORT` 且为变量展开形态）
+- e2e.sh 存在且可执行
+- e2e.sh bash shebang + `set -e` 族
+- e2e.sh 引用三个端点路径
+- e2e.sh 含 PORT **默认值展开形态**（收紧后的正则；拒绝纯硬编码 `PORT=18080`）
 - README.md 存在，含启动命令 + E2E 说明
-- 本 WS 不新增 `__tests__/` 文件（PRD 未将 e2e.sh 映射到 `__tests__/`）
 
 ---
 
@@ -140,138 +235,181 @@
 
 workstream_count: 4
 
-### Workstream 1: HTTP server 骨架 + `/iso` + 404/405 + `routes` 锚点
+### Workstream 1: HTTP server 骨架 + routes 自动加载器 + /iso + 404/405
 
-**范围**: 新建 `scripts/harness-dogfood/time-api.js`。导出 `createServer(port)`、`handler(req, res)`、`routes` 三个 API。`routes` 对象 WS1 阶段只含 `'/iso'` 一个 key，**明确保留**为后续 WS 的唯一变更点。含 `require.main === module` 分支读 `PORT`（默认 18080）。同时新建 `scripts/harness-dogfood/__tests__/iso.test.js` 与 `scripts/harness-dogfood/__tests__/not-found.test.js` 作为 PRD 兼容层占位（规则见 `## PRD 兼容层约定`）。
+**范围**: 新建 `scripts/harness-dogfood/time-api.js`（HTTP server + handler dispatch + 404/405 + routes 目录自动加载器 + `require.main === module` 分支读 `PORT` 默认 18080）；新建 `scripts/harness-dogfood/routes/iso.js`（`/iso` 实现）；新建 `scripts/harness-dogfood/__tests__/iso.test.js` 与 `scripts/harness-dogfood/__tests__/not-found.test.js`（均用 Node 内置 `node:test`，自己启动/打端点/关闭）。
 
-**大小**: S（time-api.js 约 60-80 行 + 2 个 PRD 兼容层测试文件）
+**大小**: M（time-api.js 约 70-100 行 + routes/iso.js 约 10-15 行 + 2 个 node:test 兼容层约 60-80 行）
 
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws1/iso.test.ts`
+**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws1/iso.test.ts`（10 个 it）
 
-**文件独占性声明**: WS1 是唯一允许 **新建 time-api.js / 修改 WS1 已写骨架部分** 的 WS。后续 WS 只能通过 `routes[key] = handler` 追加，不得触及骨架或 handler dispatch 逻辑。
+**文件独占性声明**: WS1 是唯一允许新建 `time-api.js` 的 WS。WS2/WS3/WS4 的 PR diff **不得**包含 `time-api.js`。
 
-### Workstream 2: `/timezone` 端点
+### Workstream 2: `/timezone` 端点（只新增文件，不改 time-api.js）
 
-**范围**: 在 `scripts/harness-dogfood/time-api.js` 的 `routes` 对象末尾（WS1 声明的 append-only 锚点）追加 `routes['/timezone'] = (req, res) => {...}`。新建 `scripts/harness-dogfood/__tests__/timezone.test.js`（PRD 兼容层）。**不得**修改 WS1 已写的 handler / createServer / 404 / 405 代码。
+**范围**: 新建 `scripts/harness-dogfood/routes/timezone.js`（导出 `{path, handler}`）与 `scripts/harness-dogfood/__tests__/timezone.test.js`（node:test）。**禁止修改** `time-api.js`、`routes/iso.js`、`__tests__/iso.test.js`、`__tests__/not-found.test.js`。依赖 WS1 的 routes 自动加载器识别新文件。
 
-**大小**: S（time-api.js diff 约 6-10 行 + 兼容层测试 1 文件）
+**大小**: S（routes/timezone.js 约 10-15 行 + 兼容层测试约 30-40 行）
 
-**依赖**: WS1（需要 routes 锚点存在）
+**依赖**: WS1（需要 routes 加载器骨架就位）
 
-**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws2/timezone.test.ts`
+**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws2/timezone.test.ts`（7 个 it）
 
-**独立可测性**: WS2 合并后（WS3 未合并时），本 WS 的 4 个 it 全通过；WS3 的 `/unix` 端点返回 404 `{error:"not_found"}`（由 WS1 的 404 兜底负责），不影响 WS2 测试。
+**独立可测性 + 并行合并安全**: WS2 本次 PR diff 只新增 `routes/timezone.js` + `__tests__/timezone.test.js`，与 WS3 的 `routes/unix.js` + `__tests__/unix.test.js` 无文件交集，git 自动 3-way merge 无冲突。合并后 `/unix` 仍然 404（由 WS1 的 404 兜底负责），不影响 WS2 测试通过。
 
-### Workstream 3: `/unix` 端点
+### Workstream 3: `/unix` 端点（只新增文件，不改 time-api.js）
 
-**范围**: 在 `routes` 对象末尾追加 `routes['/unix'] = (req, res) => {...}`。新建 `scripts/harness-dogfood/__tests__/unix.test.js`（PRD 兼容层）。**不得**修改 WS1 / WS2 已写代码。
+**范围**: 新建 `scripts/harness-dogfood/routes/unix.js` + `scripts/harness-dogfood/__tests__/unix.test.js`。**禁止修改** `time-api.js` / WS1 / WS2 任何文件。
 
-**大小**: S（time-api.js diff 约 6-10 行 + 兼容层测试 1 文件）
+**大小**: S（routes/unix.js 约 10-15 行 + 兼容层测试约 30-40 行）
 
-**依赖**: WS1（需要 routes 锚点）；与 WS2 **无顺序耦合**（两者都只在锚点追加，追加顺序对行为无影响）
+**依赖**: WS1（routes 加载器）；与 WS2 **无文件交集、无顺序耦合**
 
-**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws3/unix.test.ts`
-
-**独立可测性**: WS3 合并后（WS2 未合并时），本 WS 的 5 个 it 全通过；WS2 的 `/timezone` 返回 404，不影响 WS3 测试。
+**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws3/unix.test.ts`（8 个 it）
 
 ### Workstream 4: E2E 冒烟脚本 + README
 
-**范围**: 新建 `scripts/harness-dogfood/e2e.sh`（可执行 bash，**必须读 PORT 环境变量**，三端点字段级校验）+ `scripts/harness-dogfood/README.md`（启动 + E2E 说明）。不触达 time-api.js / 任何 `__tests__/` 文件。
+**范围**: 新建 `scripts/harness-dogfood/e2e.sh`（可执行 bash，**PORT 必须是默认值展开形态**） + `scripts/harness-dogfood/README.md`。**不触达**任何 .js 文件。
 
 **大小**: S（e2e.sh 约 40-60 行 + README 约 30 行）
 
-**依赖**: WS1 + WS2 + WS3（E2E 需三端点全部在线）
+**依赖**: WS1 + WS2 + WS3（需三端点全在线）
 
-**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws4/e2e.test.ts`
-
-**独立可测性**: WS4 的 7 个 it 需三端点全部存在（这是 PRD 场景 4 的语义）；在 E2E 测试里 `PORT` 为测试动态分配的空闲端口（非硬编码 59999），避免 flaky。
+**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws4/e2e.test.ts`（8 个 it）
 
 ---
 
-## 合并顺序与变更隔离（对应风险 R3）
+## 合并顺序与变更隔离（对应 Round 2 风险 3）
 
 **拓扑 DAG**: `WS1 → {WS2, WS3} → WS4`
 
-**变更隔离机制**：
-- WS1 在 `time-api.js` 定义 `routes` 对象，作为 **append-only 锚点**（合同级契约）
-- WS2 / WS3 的 diff **只能**是 `routes['/<path>'] = handler;` 形态的一行追加 + 对应 handler 函数定义；不得触达 WS1 骨架（`createServer` / `handler` / 404 / 405 逻辑）
-- WS2 / WS3 的 append 在 routes 对象的不同行（按合并顺序各自占用独立位置），两个 PR 的 diff 天然不重叠
-- WS4 不触达 time-api.js
+**git 冲突消除机制（物理级）**:
+- WS 间文件交集 = ∅（见 `## 架构调整` 表格）
+- WS2 与 WS3 **并行提交并同时合并**时，git 只需对不同文件做 add，无任何文件同行/同区块改动
+- 每个 WS 的 DoD 含 "本 WS 引入的文件列表严格等于契约声明" + "time-api.js 在本 WS 未被修改" 两条断言
 
-**文件级 ARTIFACT 断言（CI 层强约束）**：
-- WS2 的 DoD 含 "time-api.js 的 `routes['/iso']` 仍为 function（WS1 骨架未被 WS2 破坏）"
-- WS3 的 DoD 含同样的 `routes['/iso']` 存续断言
-- 详见 `contract-dod-ws{2,3}.md`
+**骨架不被污染的三层防线**:
+1. **物理层**：WS2/WS3 的 diff 根本不含 time-api.js → `git diff --name-only` 断言
+2. **ARTIFACT 层**：time-api.js 源码不得含该 WS 专属字面量（/timezone、Intl.DateTimeFormat、/unix、Math.floor 等）→ DoD 负向断言
+3. **BEHAVIOR 层**：该 WS 合并后 `/iso` 仍正常 200 响应 → tests/ws{2,3}/ 的显式 it
+
+这三层同时失守才算骨架被破，Mutation testing 打掉任何一层都会被其它层抓到。
 
 ---
 
-## PRD 兼容层约定（对应风险 R1）
+## PRD 兼容层：Round 3 改为 runtime 真跑（对应 Round 2 风险 2）
 
-PRD "预期受影响文件" 列出 4 个 `scripts/harness-dogfood/__tests__/*.test.js`。本合同将其作为 **PRD 交付物占位**（ARTIFACT 级）纳入 WS 覆盖，但 **BEHAVIOR 断言的 SSOT 仍在 `sprints/tests/ws{N}/`**（避免"一个行为两份断言"）。
+PRD "预期受影响文件" 列的 4 个 `__tests__/*.test.js` 在 Round 2 仅做"文件存在 + it( 出现 ≥ 1 次"的静态校验，留了 "占位文件写 `it('x', () => {})` 空实现" 的 runtime-broken 口子。Round 3 修订：
 
-**映射**：
-
-| PRD `__tests__/` 文件 | 所属 WS | 占位内容（Generator 需写入） |
+| 文件 | 所属 WS | Round 3 合同要求 |
 |---|---|---|
-| `__tests__/iso.test.js` | WS1 | 文件级 smoke：require time-api → 启动 createServer(0) → 打 `/iso` → 断言 status 200 + iso 字段存在；至少 1 个 it |
-| `__tests__/not-found.test.js` | WS1 | smoke：打 `/unknown-xyz` → 断言 status 404 + error===`not_found`；至少 1 个 it |
-| `__tests__/timezone.test.js` | WS2 | smoke：打 `/timezone` → 断言 status 200 + timezone 非空；至少 1 个 it |
-| `__tests__/unix.test.js` | WS3 | smoke：打 `/unix` → 断言 status 200 + unix 为正整数；至少 1 个 it |
+| `__tests__/iso.test.js` | WS1 | 使用 Node 18+ 内置 `node:test` + `node:assert/strict`；自己 `require('../time-api.js')` → `createServer(0)` → `fetch '/iso'` → 断言 status 200 + `body.iso` 匹配 ISO 8601 正则 → close server；**`node --test` 执行 exit 0** |
+| `__tests__/not-found.test.js` | WS1 | 同上骨架，`fetch '/unknown-xyz'` → status 404 + `body.error === 'not_found'`；**node --test exit 0** |
+| `__tests__/timezone.test.js` | WS2 | 同上骨架，`fetch '/timezone'` → status 200 + body.timezone 非空；**node --test exit 0** |
+| `__tests__/unix.test.js` | WS3 | 同上骨架，`fetch '/unix'` → status 200 + `Number.isInteger(body.unix) && body.unix > 0`；**node --test exit 0** |
 
-**设计原则**：
-- `__tests__/*.test.js` 为 **文件存在 + 至少 1 个 it + 打端点不崩溃** 的最小 smoke，不复刻 `sprints/tests/ws{N}/` 的深度断言
-- ARTIFACT 层面只校验 "文件存在 + 匹配 `it(` 出现 ≥ 1 次" 这类静态谓词，不调用 runtime（runtime 在 BEHAVIOR 侧）
-- 如 PRD 存在 jest 配置并期望 `__tests__/*.test.js` 被自动发现：`SC-006` 声明"无外部依赖"，本合同不引入 jest；`__tests__/` 用 Node 原生 `node --test` 最小语法或仅 `describe/it` 结构存根（Generator 决定，只需满足 ARTIFACT 断言）
+**校验方式（二元）**:
+- **ARTIFACT 层**: `bash -c "cd \$(git rev-parse --show-toplevel) && timeout 30 node --test scripts/harness-dogfood/__tests__/iso.test.js"` 退出码 == 0（单个文件；不依赖任何其它 WS 的 runtime）
+- **BEHAVIOR 层**: tests/ws{1,2,3}/*.test.ts 内用 `spawnSync('node', ['--test', '<path>'])` 子进程运行，断言 `.status === 0`
+
+**为何 node:test 不违反 SC-006**: Node 18+ 原生内置 `node:test` 与 `node:assert`，属于"仅 Node 标准库"范畴（SC-006 明文允许）。不引入任何外部 npm 依赖。
+
+---
+
+## R6 PORT 匹配收紧（对应 Round 2 小问题 1）
+
+Round 2 的 ARTIFACT 正则 `\$\{?PORT(?::-[^}]*)?\}?` 会把 `PORT=18080`（纯硬编码赋值）也当成合规。Round 3 收紧为：
+
+```
+\$\{PORT:-|\$\{PORT-|:\s*\$\{PORT:=
+```
+
+三种合规形态：
+1. `${PORT:-18080}` — 标准默认值（空字符串也替换）
+2. `${PORT-18080}` — 仅未设置时替换
+3. `: ${PORT:=18080}` — 赋值默认值（POSIX 惯用）
+
+**拒绝**：`PORT=18080`、`PORT="18080"`、`PORT='18080'`、`PORT=$DEFAULT`（裸赋值，不是展开）。
+
+DoD 加一条 ARTIFACT 负向断言：e2e.sh 源码**不得**含 `^PORT=` 或 `^PORT="` 或 `^PORT='` 这类硬编码赋值行（行首匹配）。
+
+---
+
+## WS4 端口空闲测试改 503 探针（对应 Round 2 小问题 2）
+
+Round 2 的 `pickIdlePort` 在 close 与 e2e.sh 启动间有竞争窗口。Round 3 改为：
+
+```ts
+// 启动一个永远返回 HTTP 503 的探针 server，监听动态端口
+const probe = http.createServer((req, res) => {
+  res.writeHead(503, { 'Content-Type': 'text/plain' });
+  res.end('probe: service_unavailable');
+});
+await new Promise<void>((r) => probe.listen(0, '127.0.0.1', () => r()));
+const probePort = (probe.address() as AddressInfo).port;
+try {
+  const result = runE2E(probePort);
+  expect(result.status).not.toBe(0);  // e2e.sh 拿到 503 → 字段校验 fail → exit ≠ 0
+} finally {
+  probe.close();
+}
+```
+
+**端口在整个测试期间持续被占用**，无竞争窗口。e2e.sh 收到 503 响应或非 JSON/缺字段，必然 exit ≠ 0。
 
 ---
 
 ## Test Contract
 
-| Workstream | BEHAVIOR Test File | it() 数 | 预期红证据（本地实测） |
+| WS | BEHAVIOR Test File | it() 数 | 预期红证据（本地实测命令） |
 |---|---|---|---|
-| WS1 | `sprints/tests/ws1/iso.test.ts` | 7 | `./node_modules/.bin/vitest run sprints/tests/ws1/` → `Test Files 1 failed (1) / Tests 7 failed (7)` |
-| WS2 | `sprints/tests/ws2/timezone.test.ts` | 4 | `./node_modules/.bin/vitest run sprints/tests/ws2/` → `Test Files 1 failed (1) / Tests 4 failed (4)` |
-| WS3 | `sprints/tests/ws3/unix.test.ts` | 5 | `./node_modules/.bin/vitest run sprints/tests/ws3/` → `Test Files 1 failed (1) / Tests 5 failed (5)` |
-| WS4 | `sprints/tests/ws4/e2e.test.ts` | 7 | `./node_modules/.bin/vitest run sprints/tests/ws4/` → `Test Files 1 failed (1) / Tests 7 failed (7)` |
+| WS1 | `sprints/tests/ws1/iso.test.ts` | 10 | `./node_modules/.bin/vitest run sprints/tests/ws1/` → `Test Files 1 failed (1) / Tests 10 failed (10)` |
+| WS2 | `sprints/tests/ws2/timezone.test.ts` | 7 | `./node_modules/.bin/vitest run sprints/tests/ws2/` → `Test Files 1 failed (1) / Tests 7 failed (7)` |
+| WS3 | `sprints/tests/ws3/unix.test.ts` | 8 | `./node_modules/.bin/vitest run sprints/tests/ws3/` → `Test Files 1 failed (1) / Tests 8 failed (8)` |
+| WS4 | `sprints/tests/ws4/e2e.test.ts` | 8 | `./node_modules/.bin/vitest run sprints/tests/ws4/` → `Test Files 1 failed (1) / Tests 8 failed (8)` |
 
-**全量本地跑**: `./node_modules/.bin/vitest run sprints/tests/` → `Test Files 4 failed (4) / Tests 23 failed (23)`。**每个 it() 都是 failed（非 skipped）**——通过每个 it 内部 dynamic import 实现模块、失败直接让 it assertion fail 来达成（见风险 R2 修订）。
+**全量本地跑**: `./node_modules/.bin/vitest run sprints/tests/` → `Test Files 4 failed (4) / Tests 33 failed (33)`。每个 it 都是 `FAIL`（不是 suite-level load failure），通过 it 内部 `await loadModule()` 与 `spawnSync` 触发失败路径。
 
-**Green 判据**: Generator 把 `scripts/harness-dogfood/time-api.js` + `scripts/harness-dogfood/__tests__/*.test.js` + `scripts/harness-dogfood/e2e.sh` + README 实现后，同命令应输出 `Test Files 4 passed / Tests 23 passed`（所有 it 翻绿）。
+**Green 判据**: Generator 按四个 DoD 实现后，上述命令应输出 `Test Files 4 passed / Tests 33 passed`。
 
 ---
 
 ## 合同外不做（CONTRACT IS LAW 边界）
 
-根据 PRD "不在范围内"章节，Generator 不得实现：鉴权 / HTTPS / CORS / 日志系统 / 指标 / 写接口 / 持久化 / Brain 注册 / Docker。
+根据 PRD "不在范围内"：Generator 不得实现鉴权 / HTTPS / CORS / 日志 / 指标 / 写接口 / 持久化 / Brain 注册 / Docker。
 
-PRD "预期受影响文件" 的 4 个 `__tests__/*.test.js` **全部纳入** 本合同（见 `## PRD 兼容层约定`）。
+PRD "预期受影响文件" 的 4 个 `__tests__/*.test.js` 全部纳入，**且必须 runtime 可跑**（见上文 PRD 兼容层章节）。
 
 ---
 
-## 风险处置记录（Round 1 → Round 2）
+## 风险处置记录（Round 2 → Round 3）
 
-| # | 风险 | 等级 | 处置 |
+| # | Round 2 风险 | 等级 | Round 3 处置 |
 |---|---|---|---|
-| R1 | PRD "预期受影响文件"列的 4 个 `__tests__/*.test.js` 被 Round 1 合同单方面裁剪，违反"PRD 是 SSOT"原则 | 阻断 | **纳入**：在各 WS 的 ARTIFACT 中加入 `__tests__/*.test.js` 文件存在 + `it(` 出现 ≥ 1 次的校验；细节见 `## PRD 兼容层约定`。BEHAVIOR 断言的 SSOT 仍在 `sprints/tests/ws{N}/`，`__tests__/` 为"文件占位 + 最小 smoke" |
-| R2 | Round 1 的 Red 证据是"suite-level load failure + 14 tests skipped"，无法区分测试强度（Mutation 把测试文件清空也一样 4 suite failed） | 阻断 | 重写所有 BEHAVIOR 测试：移除文件顶部的 dynamic import 与 `beforeAll`，改为每个 `it()` 内部 `await loadModule()` 并自行 start/close server；失败表现为 `Tests N failed (N)`（Round 2 本地实测 23/23 全部 failed） |
-| R3 | Round 1 WS2/3/4 都修改同一 `time-api.js`，切分非独立可测（Reviewer 评语"部分违反"） | 阻断 | 在 WS1 合同中定义 `routes` 对象为 append-only 锚点；WS2/3 的 diff 形态**限定**为 `routes['/<path>'] = handler` 一行追加 + handler 函数定义，**禁止**触达 WS1 骨架；DoD 层加"`routes['/iso']` 仍为 function"的存续断言（WS2/WS3 DoD），见 `## 合并顺序与变更隔离` |
-| R4 | Round 1 WS2 断言 `expect([expected,'UTC']).toContain(body.timezone)` 过弱：实现只要硬编码返回 `'UTC'` 无论 process timezone 为何都过 | 正确性 | Round 2 收紧为 `expect(body.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')`——只有返回进程真实 timezone 才 pass |
-| R5 | Round 1 WS4 测试"服务未启动"分支用硬编码端口 `59999`，在 CI runner 上可能被占用导致 flaky | 稳定性 | Round 2 加 `pickIdlePort()` helper：`net.createServer().listen(0)` 获取内核分配的空闲端口并关闭后使用，确保每次跑都用真空端口 |
-| R6 | Round 1 合同未强制 `e2e.sh` 读 `PORT` 环境变量；如果 Generator 硬编码 `localhost:18080`，BEHAVIOR 测试动态端口 + 子进程传 PORT 就会 fail，但合同层面没写清楚这是 Generator 必须满足的契约 | 正确性 | Round 2 在 Feature 4 硬阈值和 WS4 ARTIFACT 同时增加"e2e.sh 读 PORT 环境变量"约束；测试也用动态端口 + `env.PORT` 传递，保证 Generator 必须实现 PORT 读取 |
+| 1 | routes 锚点概念只在 ARTIFACT 负向断言层声明，BEHAVIOR 层无法证伪（Mutation 把 "append-only" 改成 "整块覆盖" 合同抓不到） | 阻断 | **架构级改写**：路由实现物理分文件到 `routes/<name>.js`，WS2/WS3 新建自己文件而非改共享文件。三层防线：(a) 物理层 WS 间文件零交集（DoD 断言 WS 新增文件清单 + time-api.js 未被本 WS 修改） (b) ARTIFACT 层 time-api.js 源文件**不得**含该 WS 专属字面量（/timezone、Intl.DateTimeFormat、/unix、Math.floor 等负向断言） (c) BEHAVIOR 层 WS2/3 合并后 `/iso` 仍正常 200（显式 it） |
+| 2 | PRD 兼容层 `__tests__/*.test.js` 仅校验文件存在 + `it(` ≥ 1，允许写入空 `it('x', () => {})` 僵尸占位，runtime-broken | 正确性 | `__tests__/*.test.js` 改用 Node 18+ 内置 `node:test` + `node:assert/strict`，自己 `require('../time-api.js')` → 启 server → fetch → 断言 → close server。ARTIFACT 增加 `node --test` 子进程 exit 0 断言；BEHAVIOR 增加 `it('spawnSync node --test exit 0')` |
+| 3 | 并行合并 git 冲突未机制化（WS2/WS3 都向 routes 对象末尾追加，git 3-way 可能冲突） | 威胁 SC-007 | WS2/WS3 的 PR **物理上不改 time-api.js**，只新增 `routes/<name>.js` + `__tests__/<name>.test.js`。任意两个 WS 的 `git diff --name-only` 交集 = ∅，3-way merge 必成功。DoD 增断言 "本 WS 的 PR 未触达 time-api.js" |
+| 小 1 | R6 的 `PORT=` 字面量匹配过宽，会命中 `PORT=18080` 硬编码赋值 | 次要 | DoD 正则收紧为 `\$\{PORT:-\|\$\{PORT-\|:\s*\$\{PORT:=`（三种真正默认值展开形态），并加负向断言"e2e.sh 不得含 `^PORT=` 硬编码行" |
+| 小 2 | WS4 "空闲端口 exit != 0" 测试在 pickIdlePort → close → e2e.sh 启动间有竞争窗口，CI 下可能 race | 次要 | 改用 503 探针服务：测试里启一个永远返回 503 的 HTTP server 持续占住端口，e2e.sh 拿到 503 必 exit ≠ 0。无竞争窗口 |
 
-**修订完整性**：以上 6 条全部在本合同 + 4 个 DoD + 4 个测试文件里落地，可被下一轮 Reviewer 对抗性验证。
+**Mutation 挑战预案**：
+- 若 Generator 把 WS2 的 `routes/timezone.js` 的 timezone 实现"搬"回 time-api.js → 被 WS2 的 ARTIFACT 负向断言抓（time-api.js 不含 Intl.DateTimeFormat）
+- 若 Generator 删掉 WS1 的 `/iso` handler → 被 WS2 的 BEHAVIOR `it('WS2 合并后 /iso 端点仍正常 200 响应')` 抓
+- 若 Generator 在 `__tests__/*.test.js` 写空壳 `test('x', () => {})` → 被 ARTIFACT `node --test` 子进程 exit 0 断言抓（空 test 会通过；但真实 `assert.strictEqual(res.status, 200)` 在 server 未启时会抛 fetch error，所以必须真跑才过）—— 额外防线：`node --test` 输出必须含 `# pass 1` 或等效非零测试数（见 ARTIFACT 细节）
 
 ---
 
-**Round 2 合规性自检**:
+**Round 3 合规性自检**:
 
 | 条目 | 结果 |
 |---|---|
 | 每个 GWT 场景被覆盖（1/2/3/4/5） | ✓ 场景 1+5 → WS1；场景 2 → WS2；场景 3 → WS3；场景 4 → WS4 |
 | BEHAVIOR 测试路径规范 `sprints/tests/ws{N}/*.test.ts` | ✓ |
-| ARTIFACT DoD 文件 `sprints/contract-dod-ws{N}.md` | ✓ |
-| Workstream 切分独立可测 | ✓ append-only 锚点 + 不同行追加 + DoD 存续断言 |
-| Red 证据可复现 | ✓ 本地 `./node_modules/.bin/vitest run sprints/tests/` → 23/23 per-it failed |
-| PRD "预期受影响文件"完整覆盖 | ✓ 4 个 `__tests__/*.test.js` 全部纳入 ARTIFACT |
+| ARTIFACT DoD 文件 `sprints/contract-dod-ws{N}.md` 仅 [ARTIFACT] 条目 | ✓ |
+| Workstream 切分独立可测 | ✓ 文件交集 = ∅ + 自动加载器 + 三层防线 |
+| Red 证据可复现 | ✓ 本地 `./node_modules/.bin/vitest run sprints/tests/` → 33/33 per-it FAIL |
+| PRD "预期受影响文件"完整覆盖 | ✓ 4 个 `__tests__/*.test.js` 全部纳入，且 runtime 真跑 |
+| 消除 Round 2 阻断风险 1/2/3 | ✓ 架构级改写 + node:test + 物理分文件 |
+| 消除 Round 2 小问题 R6/WS4 | ✓ PORT 正则收紧 + 503 探针 |
