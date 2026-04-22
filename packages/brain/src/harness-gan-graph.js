@@ -159,7 +159,7 @@ export function createGanContractNodes(executor, ctx) {
       worktreePath,
       timeoutMs: 1800000,
       env: {
-        CECELIA_CREDENTIALS: 'account1',
+        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_contract_propose',
         HARNESS_NODE: 'proposer',
         HARNESS_SPRINT_DIR: sprintDir,
@@ -190,7 +190,7 @@ export function createGanContractNodes(executor, ctx) {
       worktreePath,
       timeoutMs: 1800000,
       env: {
-        CECELIA_CREDENTIALS: 'account1',
+        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_contract_review',
         HARNESS_NODE: 'reviewer',
         HARNESS_SPRINT_DIR: sprintDir,

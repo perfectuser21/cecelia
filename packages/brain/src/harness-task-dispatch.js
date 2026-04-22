@@ -42,7 +42,7 @@ export async function triggerHarnessTaskDispatch(task, deps = {}) {
       prompt,
       worktreePath,
       env: {
-        CECELIA_CREDENTIALS: 'account1',
+        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_task',
         HARNESS_NODE: 'generator',
         HARNESS_INITIATIVE_ID: initiativeId,

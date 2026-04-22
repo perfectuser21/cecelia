@@ -115,7 +115,7 @@ ${task.description || task.title || ''}
       prompt,
       worktreePath,
       env: {
-        CECELIA_CREDENTIALS: 'account1',
+        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_planner',
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,

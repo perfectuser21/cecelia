@@ -89,7 +89,8 @@ describe('createGanContractNodes', () => {
     const call = executor.mock.calls[0][0];
     expect(call.task.task_type).toBe('harness_contract_propose');
     expect(call.prompt).toContain('round: 1');
-    expect(call.env.CECELIA_CREDENTIALS).toBe('account1');
+    // CECELIA_CREDENTIALS 不再硬编码 — 由 executeInDocker middleware 动态选（selectBestAccount）
+    expect(call.env.CECELIA_CREDENTIALS).toBeUndefined();
     expect(call.env.HARNESS_PROPOSE_ROUND).toBe('1');
   });
 
