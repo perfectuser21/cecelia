@@ -1,26 +1,12 @@
-# DoD — cp-0422100552-harness-gan-loop-to-langgraph
+# DoD — test DB isolation
 
-## Artifact
-
-- [x] [ARTIFACT] 新建 `packages/brain/src/harness-gan-graph.js` 含 runGanContractGraph + createGanContractNodes + buildGanContractGraph
-  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-gan-graph.js','utf8');if(!c.includes('export async function runGanContractGraph'))process.exit(1);if(!c.includes('export function createGanContractNodes'))process.exit(1);if(!c.includes('export function buildGanContractGraph'))process.exit(1);if(!c.includes('export const GanContractState'))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] `packages/brain/src/harness-initiative-runner.js` 不再 import harness-gan-loop
-  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-initiative-runner.js','utf8');if(c.includes('harness-gan-loop'))process.exit(1);if(!c.includes('harness-gan-graph'))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] `packages/brain/src/executor.js` harness_initiative 分支构造 PostgresSaver 并注入
-  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');const i=c.indexOf(\"task.task_type === 'harness_initiative'\");const block=c.slice(i, i+2000);if(!block.includes('PostgresSaver'))process.exit(1);if(!block.includes('checkpointer'))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] `harness-gan-loop.js` 及其测试已删除
-  - Test: manual:node -e "const fs=require('fs');if(fs.existsSync('packages/brain/src/harness-gan-loop.js'))process.exit(1);if(fs.existsSync('packages/brain/src/__tests__/harness-gan-loop.test.js'))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] 设计 + 计划 + Learning 文档已提交
-  - Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-harness-gan-loop-to-langgraph-design.md');require('fs').accessSync('docs/superpowers/plans/2026-04-22-harness-gan-loop-to-langgraph.md');require('fs').accessSync('docs/learnings/cp-0422100552-harness-gan-loop-to-langgraph.md')"
-
-## Behavior
-
-- [x] [BEHAVIOR] harness-gan-graph 单元测试覆盖 APPROVED / REVISION→APPROVED / 预算超支 / checkpoint 写入验证
-  - Test: tests/packages/brain/src/__tests__/harness-gan-graph.test.js
-
-- [x] [BEHAVIOR] runGanContractGraph 以 taskId 作 thread_id 注入 LangGraph config，MemorySaver 能读回 checkpoint
-  - Test: tests/packages/brain/src/__tests__/harness-gan-graph.test.js
+- [x] [ARTIFACT] setup-test-db.sh 新文件（可执行 + unset NODE_ENV）
+      Test: manual:node -e "const fs=require('fs');const s=fs.statSync('packages/brain/scripts/setup-test-db.sh');if(!(s.mode & 0o100))process.exit(1);const c=fs.readFileSync('packages/brain/scripts/setup-test-db.sh','utf8');if(!c.includes('unset NODE_ENV'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] db-config.js 含 isTest guard
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/db-config.js','utf8');if(!c.includes('isTest')||!c.includes('禁止在测试环境'))process.exit(1)"
+- [x] [BEHAVIOR] db-config-guard.test.js 4 场景全绿
+      Test: tests/brain/db-config-guard.test.js
+- [x] [BEHAVIOR] 本地 cecelia_test DB 存在
+      Test: manual:bash -c "psql postgres -lqt | cut -d\| -f1 | grep -qw cecelia_test"
+- [x] [ARTIFACT] 设计 + Learning 文档已提交
+      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-test-db-isolation-design.md');require('fs').accessSync('docs/learnings/cp-0422111326-test-db-isolation.md')"

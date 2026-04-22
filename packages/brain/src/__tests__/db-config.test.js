@@ -11,7 +11,9 @@ describe('db-config', () => {
     expect(DB_DEFAULTS).toBeDefined();
     expect(DB_DEFAULTS.host).toBe(process.env.DB_HOST || 'localhost');
     expect(DB_DEFAULTS.port).toBe(parseInt(process.env.DB_PORT || '5432', 10));
-    expect(DB_DEFAULTS.database).toBe(process.env.DB_NAME || 'cecelia');
+    const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
+    const expectedDb = process.env.DB_NAME || (isTest ? 'cecelia_test' : 'cecelia');
+    expect(DB_DEFAULTS.database).toBe(expectedDb);
     expect(DB_DEFAULTS.user).toBe(process.env.DB_USER || 'cecelia');
     expect(DB_DEFAULTS.password).toBe(process.env.DB_PASSWORD || '');
   });
