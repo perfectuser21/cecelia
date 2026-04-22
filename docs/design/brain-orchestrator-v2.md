@@ -456,9 +456,11 @@ export async function shepherdLoop() {
 
 **产出**：
 - 本文档（已完成）
-- `packages/brain/src/spawn/README.md`（API 骨架）
-- `packages/brain/src/workflows/README.md`（graph 约定）
-- `packages/brain/src/observers/README.md`
+- `docs/design/v2-scaffolds/spawn-readme.md`（API 骨架，P2 git mv 到 `packages/brain/src/spawn/README.md`）
+- `docs/design/v2-scaffolds/workflows-readme.md`（graph 约定，P3 git mv 到 `packages/brain/src/workflows/README.md`）
+- `docs/design/v2-scaffolds/observers-readme.md`（P4 git mv 到 `packages/brain/src/observers/README.md`）
+
+**为什么放 `docs/design/v2-scaffolds/` 而不直接建 `packages/brain/src/{spawn,workflows,observers}/`**：P1 要纯 docs 才能不触发 Brain precheck（facts-check 绑 `packages/brain/` 路径）。P2/P3/P4 真正新建目录时 `git mv` 到位，零返工。
 
 **不改任何代码**。只是给 P2-P4 作者立地图。
 
