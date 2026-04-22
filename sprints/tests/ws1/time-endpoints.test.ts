@@ -13,6 +13,12 @@ const OFFSET_RE = /^[+-]\d{2}:\d{2}$/;
 // 的伪 IANA 字符串（对应 mutation 9）。
 const IANA_RE = /^(UTC|GMT|(Asia|America|Europe|Africa|Australia|Pacific|Atlantic|Indian|Antarctica|Etc)\/[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z][A-Za-z0-9_+\-]*)?)$/;
 
+// mockRes 语义锁死（Round 3）：
+// - 只有 `.json(payload)` 会"同时"写 body + content-type=application/json（模拟 Express res.json()）
+// - `.send(payload)` 只写 body，**不**写 content-type（模拟 handler 绕开 json 协商）
+// - `.set(name, value)` / `.setHeader(name, value)` 显式写 header
+// 由此：任何试图用 res.send(JSON.stringify(body)) 绕过 res.json() 的假实现（mutation 10），
+// 其 content-type 断言必定失败——除非 handler 显式调用 res.set('content-type', ...)。
 function mockRes() {
   const headers: Record<string, string> = {};
   const res: any = {
@@ -25,7 +31,20 @@ function mockRes() {
       this.headers['content-type'] = 'application/json; charset=utf-8';
       return this;
     },
+    send(payload: any) {
+      // 只写 body，不写 content-type
+      if (typeof payload === 'string') {
+        try { this.body = JSON.parse(payload); } catch { this.body = payload; }
+      } else {
+        this.body = payload;
+      }
+      return this;
+    },
     set(name: string, value: string) {
+      this.headers[name.toLowerCase()] = value;
+      return this;
+    },
+    setHeader(name: string, value: string) {
       this.headers[name.toLowerCase()] = value;
       return this;
     },
@@ -120,6 +139,59 @@ describe('Workstream 1 — GET /api/brain/time/timezone [BEHAVIOR]', () => {
       getTimezoneHandler(mockReq(), res);
       expect(res.statusCode).toBe(200);
       expect(res.body.timezone).toBe('Pacific/Auckland');
+    } finally {
+      (globalThis as any).Intl = origIntl;
+      if (origTZ === undefined) delete process.env.TZ; else process.env.TZ = origTZ;
+    }
+  });
+
+  it('binds offset to timezone: Asia/Kolkata must yield +05:30 (not any other valid offset)', () => {
+    // 反制 mutation 11（Round 3 新增）：timezone 取 Intl 但 offset 走独立分支，
+    // 返回 { timezone: 'Asia/Kolkata', offset: '+08:00' } 这类"格式合法但配对错误"的 body。
+    // Asia/Kolkata 固定偏移 +05:30 且无 DST 干扰，因此可作为无歧义联合一致性的黄金样本。
+    const origIntl = (globalThis as any).Intl;
+    const origTZ = process.env.TZ;
+    try {
+      (globalThis as any).Intl = {
+        DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: 'Asia/Kolkata' }) }),
+      };
+      process.env.TZ = 'Asia/Kolkata';
+      const res = mockRes();
+      getTimezoneHandler(mockReq(), res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body.timezone).toBe('Asia/Kolkata');
+      expect(res.body.offset).toBe('+05:30');
+    } finally {
+      (globalThis as any).Intl = origIntl;
+      if (origTZ === undefined) delete process.env.TZ; else process.env.TZ = origTZ;
+    }
+  });
+
+  it('calls Intl.DateTimeFormat on every request (handler must not cache at module load)', () => {
+    // 反制 mutation 12（Round 3 新增）：handler 在模块加载时就 `const TZ = Intl.DateTimeFormat()...` 固化，
+    // 这样无论请求时 stubGlobal 怎么改 Intl，handler 都只返回最初缓存值。
+    // 用两次不同的 Intl stub，每次调用 handler 后都应反映"当前"的 Intl 结果。
+    const origIntl = (globalThis as any).Intl;
+    const origTZ = process.env.TZ;
+    try {
+      // 第一次：Intl 指向 Europe/London
+      (globalThis as any).Intl = {
+        DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: 'Europe/London' }) }),
+      };
+      delete process.env.TZ;
+      const res1 = mockRes();
+      getTimezoneHandler(mockReq(), res1);
+      expect(res1.body.timezone).toBe('Europe/London');
+
+      // 第二次：Intl 改为 America/New_York —— handler 必须看到新值
+      (globalThis as any).Intl = {
+        DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: 'America/New_York' }) }),
+      };
+      const res2 = mockRes();
+      getTimezoneHandler(mockReq(), res2);
+      expect(res2.body.timezone).toBe('America/New_York');
+      // 断言两次返回值确实不同，彻底证伪"模块级缓存"假设
+      expect(res1.body.timezone).not.toBe(res2.body.timezone);
     } finally {
       (globalThis as any).Intl = origIntl;
       if (origTZ === undefined) delete process.env.TZ; else process.env.TZ = origTZ;

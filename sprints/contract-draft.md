@@ -1,15 +1,24 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 > **PRD 来源**：`sprints/sprint-prd.md`（Initiative：Harness v6 真机闭环 — 最小时间端点靶标）
 >
 > **设计原则**：3 个端点行为简单且可观测，行为差异（payload shape）用 BEHAVIOR 测试覆盖；端点存在性、模块结构、挂载、LOC 上限用 ARTIFACT 覆盖。GAN 对抗的焦点应集中在"BEHAVIOR 测试是否能抓出'端点存在但 payload 形状错'的假实现"。
 >
-> **Round 2 修订摘要**（响应 Round 1 Reviewer 反馈）：
-> 1. **红数量表对齐**：WS1 由 10 → 14 it()，新增 `Content-Type` ×3 + `Intl 正向读取` ×1；表格列的"预期红证据"同步更新为 `12 failures`
-> 2. **Content-Type 补 BEHAVIOR**：Feature 1/2/3 三端点新增 `Content-Type` BEHAVIOR it()，对应 mockRes 的 `headers['content-type']` 断言
-> 3. **IANA 正则收紧**：Feature 2 硬阈值由宽松正则改为 `^(UTC|GMT|(Asia|America|Europe|Africa|Australia|Pacific|Atlantic|Indian|Antarctica|Etc)\/...)$` 白名单式正则；同步抓出 mutation 9（返回 `timezone: "Foo"`）
-> 4. **Intl mock 正向路径**：Feature 2 新增 `reads IANA timezone from Intl.DateTimeFormat` it()，用 `Pacific/Auckland` mock 抓出 mutation 8（handler 硬编码 UTC fallback）
-> 5. **ARTIFACT handler 导出正则扩展**：`contract-dod-ws1.md` 的 handler 命名导出检查新增 `export { NAME }` / `export { xxx as NAME }` 语法兜底，避免"形式不同但实质导出"被误判
+> **Round 3 修订摘要**（响应 Round 2 Reviewer 反馈的 3 项风险）：
+> 1. **mockRes 语义锁死（反制 mutation 10 的 send 绕过）**：mockRes 新增 `.send(payload)`（只写 body、不写 content-type）和 `.setHeader(name, value)`（显式写 header）方法，并在注释里明示：只有 `.json()` 与显式 `.set('content-type', ...)` 会写 content-type。任何试图用 `res.status(200).send(JSON.stringify(body))` 绕过 `res.json()` 的假实现，其 3 个 Content-Type it() 必定失败。
+> 2. **timezone/offset 联合一致性（反制新 mutation 11）**：Feature 2 新增 `it('binds offset to timezone: Asia/Kolkata must yield +05:30')`。选 `Asia/Kolkata` 是因为印度标准时固定 `+05:30` 且**无 DST**，消除季节性歧义。这让"timezone 从 Intl 读但 offset 走独立分支返回 `+08:00`"一类的错配假实现被直接抓出。
+> 3. **handler 禁止模块级缓存 Intl（反制新 mutation 12）**：
+>    - **ARTIFACT 侧**：`contract-dod-ws1.md` 新增一条硬约束——`getTimezoneHandler` **函数体内部** 必须引用 `Intl.DateTimeFormat`（正则锁定函数起点后 2000 字符窗口）。如果写成 `const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone` 的模块级常量，函数体内就查不到 Intl，ARTIFACT 直接 fail。
+>    - **BEHAVIOR 侧**：新增 `it('calls Intl.DateTimeFormat on every request')`，同一测试里连续两次 stubGlobal Intl（第一次 `Europe/London`，第二次 `America/New_York`），断言 handler 两次返回值跟随 stub 变化且彼此不同。若 handler 在模块加载时固化 TZ，两次返回会相同 → 测试失败。
+>
+> **本轮 it() 计数**：WS1 由 14 → 16（+2）；WS2 不变（16）。Test Contract 表"预期红证据"相应更新为 `16 failures`（WS1）。
+>
+> **Round 2 修订摘要**（保留为历史记录）：
+> 1. **红数量表对齐**：WS1 由 10 → 14 it()，新增 `Content-Type` ×3 + `Intl 正向读取` ×1
+> 2. **Content-Type 补 BEHAVIOR**：Feature 1/2/3 三端点新增 `Content-Type` BEHAVIOR it()
+> 3. **IANA 正则收紧**：Feature 2 硬阈值改为白名单式正则，抓出 mutation 9（`timezone: "Foo"`）
+> 4. **Intl mock 正向路径**：Feature 2 新增 `reads IANA timezone from Intl.DateTimeFormat` it()（用 `Pacific/Auckland`）
+> 5. **ARTIFACT handler 导出正则扩展**：覆盖 `export { NAME }` / `export { xxx as NAME }` 两种语法
 
 ---
 
@@ -42,6 +51,7 @@
 
 **行为描述**:
 对该 URL 发出 GET 请求时，服务以 HTTP 200 返回 JSON `{"timezone": "<IANA>", "offset": "<±HH:MM>", "iso": "<ISO 8601>"}`。`timezone` 是合法 IANA 名（`UTC` / `GMT` 或 `<Region>/<City>[/<SubCity>]`，其中 Region 必须命中官方白名单：`Asia|America|Europe|Africa|Australia|Pacific|Atlantic|Indian|Antarctica|Etc`）。`offset` 形如 `+08:00` / `-05:00` / `+00:00`，`iso` 与 Feature 1 同格式。响应 `Content-Type` 为 `application/json`。当 `process.env.TZ` 与 `Intl.DateTimeFormat().resolvedOptions().timeZone` 均不可用时，端点必须 fallback 为 `timezone="UTC"` + `offset="+00:00"`，且仍返回 HTTP 200（无 5xx）。当 Intl 可用时（例如返回 `Pacific/Auckland`），必须透传而非强制覆盖为 `UTC`。
+**Round 3 新增**：`timezone` 与 `offset` 必须**联合一致**——两者同源于 Intl 解析同一时刻，不得走独立分支；具体地，当 Intl 返回 `Asia/Kolkata` 时 `offset` 必须为 `+05:30`（印度标准时固定 `+05:30`，无 DST）。**handler 必须在每次请求内部调用 `Intl.DateTimeFormat().resolvedOptions().timeZone`，不得在模块加载时固化为常量**（否则无法随运行时 TZ/Intl stub 变化）。
 
 **硬阈值**:
 - HTTP status = `200`
@@ -52,16 +62,22 @@
 - `Content-Type` 响应头匹配 `application/json`
 - 强制 `Intl.DateTimeFormat` 不可用（`resolvedOptions().timeZone === undefined` 且 `process.env.TZ` 未设置）时仍返回 200，且 `timezone="UTC"`、`offset="+00:00"`
 - 当 `Intl.DateTimeFormat().resolvedOptions().timeZone` 返回合法 IANA 字符串（测试用 `Pacific/Auckland`），`body.timezone` **必须**为该字符串（反制 mutation 8：硬编码 UTC fallback）
+- **联合一致**（Round 3）：当 Intl 返回 `Asia/Kolkata`，`body.timezone==='Asia/Kolkata'` **且** `body.offset==='+05:30'`（反制 mutation 11：timezone/offset 独立分支导致错配）
+- **非缓存**（Round 3）：同一测试内连续两次用不同 Intl stub（如 `Europe/London` → `America/New_York`）调用 handler，两次 `body.timezone` 必须不同且等于当前 stub 值（反制 mutation 12：模块级 `const TZ = Intl...`）
+- **Content-Type 路径**（Round 3 锁死）：mockRes 的 `.json()` 与 `.set('content-type', ...)` 是唯二写入 content-type 的入口；`.send()` 只写 body。handler 若用 `res.status(200).send(JSON.stringify(body))` 绕过 `res.json()`，Content-Type it() 直接失败
 
 **BEHAVIOR 覆盖**（落入 `tests/ws1/time-endpoints.test.ts`）:
 - `it('returns 200 with timezone, offset, iso fields all matching expected formats')`（含严格 IANA 正则断言，同时抓 mutation 9）
 - `it('offset string strictly matches ±HH:MM regex (rejects HHMM, ±H:MM, etc.)')`
 - `it('falls back to UTC and +00:00 when Intl.DateTimeFormat resolves to undefined')`
 - `it('reads IANA timezone from Intl.DateTimeFormat (not hardcoded UTC) when resolvedOptions provides one')` ← **Round 2 新增**
+- `it('binds offset to timezone: Asia/Kolkata must yield +05:30 (not any other valid offset)')` ← **Round 3 新增**（抓 mutation 11）
+- `it('calls Intl.DateTimeFormat on every request (handler must not cache at module load)')` ← **Round 3 新增**（抓 mutation 12）
 - `it('GET /timezone responds with application/json Content-Type header')` ← **Round 2 新增**
 
 **ARTIFACT 覆盖**:
 - `time-endpoints.js` 含 `router.get('/timezone'` 路由声明
+- `getTimezoneHandler` 函数体内部引用 `Intl.DateTimeFormat`（Round 3 新增：禁止模块级缓存）
 
 ---
 
@@ -167,7 +183,7 @@ workstream_count: 2
 
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/time-endpoints.test.ts`（14 个 `it()` 块，覆盖 Feature 1/2/3/4 的端点行为 + 3 端点的 Content-Type 响应头 + Intl 正向读取）
+**BEHAVIOR 覆盖测试文件**: `tests/ws1/time-endpoints.test.ts`（16 个 `it()` 块，覆盖 Feature 1/2/3/4 的端点行为 + 3 端点 Content-Type 响应头 + Intl 正向读取 + timezone/offset 联合一致 + handler 非模块级缓存）
 
 ### Workstream 2: 端到端冒烟脚本 + validators
 
@@ -187,16 +203,16 @@ workstream_count: 2
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/time-endpoints.test.ts` | 3 端点 happy path（iso/timezone/unix shape）+ query 参数忽略 + 时间戳 ±5s 精度 + Intl fallback + Intl 正向透传 + Number 类型 + Router 注册 + 3 端点 Content-Type 响应头 | `npx vitest run sprints/tests/ws1/` → **14 failures**（模块文件不存在，14 个 it() 全部 import 报错） |
+| WS1 | `tests/ws1/time-endpoints.test.ts` | 3 端点 happy path + query 参数忽略 + 时间戳 ±5s + Intl fallback + Intl 正向透传 + **timezone/offset 联合一致** + **handler 非模块级缓存** + Number 类型 + Router 注册 + 3 端点 Content-Type 响应头 | `npx vitest run sprints/tests/ws1/` → **16 failures**（模块文件不存在，16 个 it() 全部 import 报错） |
 | WS2 | `tests/ws2/smoke-validators.test.ts` | 3 个 validator 纯函数：accept/reject 各种合法与非法输入；ISO 格式、IANA + offset 格式、10 位整数与 13 位毫秒区分 | `npx vitest run sprints/tests/ws2/` → **16 failures**（smoke 脚本文件不存在，16 个 it() 全部 import 报错） |
 
-**Red evidence 收集**：见 `tests/ws*/RED_EVIDENCE.md`（Step 2d 输出；Round 2 WS1 的 it() 数从 10 → 14，RED_EVIDENCE 同步更新）。
+**Red evidence 收集**：见 `tests/ws*/RED_EVIDENCE.md`（Step 2d 输出；Round 3 WS1 的 it() 数从 14 → 16，RED_EVIDENCE 同步更新）。
 
 ---
 
 ## GAN 对抗指南（给 Reviewer 看）
 
-Reviewer 应聚焦的 mutation 思路（Round 2 追加 mutation 8、9）：
+Reviewer 应聚焦的 mutation 思路（Round 3 追加 mutation 11、12，并强化 mutation 10 的 mockRes 语义锁死）：
 
 1. **假实现 1**：handler 总是返回 `{iso: "ok"}` —— 应被 ISO 正则断言抓出
 2. **假实现 2**：unix handler 返回 `Date.now()`（13 位毫秒）—— 应被 `String(unix).length === 10` 抓出
@@ -205,8 +221,10 @@ Reviewer 应聚焦的 mutation 思路（Round 2 追加 mutation 8、9）：
 5. **假实现 5**：unix handler 返回字符串 `"1745324400"` —— 应被 `Number.isInteger` 抓出
 6. **假实现 6**：路由挂载在 `/timestamp` 而非 `/time` —— 应被 ARTIFACT grep 抓出
 7. **假实现 7**：smoke validator 永远返回 `true` —— 应被 WS2 的"reject 非法输入"测试抓出
-8. **假实现 8**（Round 2 新增）：timezone handler 直接 `return { timezone: 'UTC', offset: '+00:00', iso: ... }` 硬编码，无论 Intl/TZ 环境 —— 应被 `reads IANA timezone from Intl.DateTimeFormat` it() 抓出（测试用 Intl mock 返回 `Pacific/Auckland`，硬编码 UTC 不等于 `Pacific/Auckland`）
-9. **假实现 9**（Round 2 新增）：timezone handler 返回 `{ timezone: 'Foo', offset: '+08:00', ... }`（非 IANA 字符串但通过宽松正则）—— 应被**严格 IANA 白名单正则**抓出（`Foo` 不含 `/` 且不在白名单）
-10. **假实现 10**（Round 2 新增）：handler 走 `res.send(JSON.stringify(body))` 而非 `res.json(body)`，绕开 Express 的 content-type 协商 —— 应被 3 个 Content-Type it() 抓出（mockRes 的 `headers['content-type']` 只在 `.json()` 被调用时写入）
+8. **假实现 8**（Round 2）：timezone handler 直接 `return { timezone: 'UTC', offset: '+00:00', iso: ... }` 硬编码 —— 应被 `reads IANA timezone from Intl.DateTimeFormat` it() 抓出（Pacific/Auckland）
+9. **假实现 9**（Round 2）：timezone handler 返回 `{ timezone: 'Foo', offset: '+08:00', ... }`（非 IANA 字符串）—— 应被严格 IANA 白名单正则抓出
+10. **假实现 10**（Round 2 提出 / Round 3 强化）：handler 走 `res.send(JSON.stringify(body))` 而非 `res.json(body)` 绕开 Express 的 content-type 协商 —— 应被 3 个 Content-Type it() 抓出。**Round 3 锁死 mockRes 语义**：`.send()` 只写 body 不写 header，`.json()` 与显式 `.set('content-type', ...)` 是唯二写入 header 的入口；任何绕过路径要么让 it 失败，要么必须显式 set header 也等于遵守契约。
+11. **假实现 11**（Round 3 新增）：handler `timezone` 从 Intl 读，但 `offset` 走独立分支硬编码返回 `+08:00`，两者独立计算。测试 `{timezone: 'Asia/Kolkata', offset: '+08:00', ...}` 能通过严格 IANA 正则 + OFFSET_RE 两个个体校验，但违反联合一致性 —— 应被 `binds offset to timezone: Asia/Kolkata must yield +05:30` it() 抓出（印度标准时固定 `+05:30` 无 DST，消除季节性歧义）
+12. **假实现 12**（Round 3 新增）：handler 在模块加载时就 `const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone; const OFFSET = ...` 固化为常量，请求时直接引用这些常量。stubGlobal Intl 后 handler 仍返回最初缓存值 —— 应被 `calls Intl.DateTimeFormat on every request` it() 抓出（连续两次不同 stub 应得到不同返回值）；同时 ARTIFACT 正则从 `getTimezoneHandler` 函数体内部搜 `Intl.DateTimeFormat` 应找不到，双重拦截
 
 如 Reviewer 发现以上任一 mutation 能通过当前测试集，提 REVISION 加强。
