@@ -1,7 +1,7 @@
-# Contract DoD — Workstream 1: HTTP server 骨架 + `/iso` + 404/405 兜底
+# Contract DoD — Workstream 1: HTTP server 骨架 + `/iso` + 404/405 + `routes` 锚点
 
-**范围**: 新建 `scripts/harness-dogfood/time-api.js`，导出 `createServer(port)` / `handler(req, res)`；实现 `/iso` 路由 + 404 fallback + 405 非 GET 拦截；`require.main === module` 时读取 `PORT` 环境变量（默认 18080）并启动。
-**大小**: S（单文件约 50-70 行）
+**范围**: 新建 `scripts/harness-dogfood/time-api.js`，导出 `createServer(port)` / `handler(req, res)` / `routes`；实现 `/iso` 路由 + 404 兜底 + 405 非 GET 拦截；`require.main === module` 时读取 `PORT` 环境变量（默认 18080）并启动。同时新建 `scripts/harness-dogfood/__tests__/iso.test.js` 与 `scripts/harness-dogfood/__tests__/not-found.test.js` 作为 PRD 兼容层占位。
+**大小**: S（time-api.js 约 60-80 行 + 2 个 PRD 兼容层测试文件）
 **依赖**: 无
 
 ## ARTIFACT 条目
@@ -9,8 +9,11 @@
 - [ ] [ARTIFACT] `scripts/harness-dogfood/time-api.js` 文件存在
   Test: test -f scripts/harness-dogfood/time-api.js
 
-- [ ] [ARTIFACT] time-api.js 导出 createServer（module.exports 包含 createServer）
-  Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/time-api.js','utf8');if(!/module\.exports\s*=[\s\S]*createServer/.test(c))process.exit(1)"
+- [ ] [ARTIFACT] time-api.js 导出 createServer（module.exports.createServer 或 exports.createServer 可被静态识别）
+  Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/time-api.js','utf8');if(!/(module\.exports\.createServer|exports\.createServer|module\.exports\s*=\s*\{[\s\S]*createServer)/.test(c))process.exit(1)"
+
+- [ ] [ARTIFACT] time-api.js 导出 routes 对象（append-only 锚点契约）
+  Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/time-api.js','utf8');if(!/(module\.exports\.routes|exports\.routes|module\.exports\s*=\s*\{[\s\S]*routes)/.test(c))process.exit(1)"
 
 - [ ] [ARTIFACT] time-api.js 含 `/iso` 路由字符串
   Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/time-api.js','utf8');if(!/['\x22]\/iso['\x22]/.test(c))process.exit(1)"
@@ -27,15 +30,28 @@
 - [ ] [ARTIFACT] time-api.js 含 `require.main === module` 直跑分支
   Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/time-api.js','utf8');if(!/require\.main\s*===\s*module/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] time-api.js 不引入任何 require 非 Node 内置模块（仅依赖 http / 无 npm 包）
-  Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/time-api.js','utf8');const reqs=[...c.matchAll(/require\(['\x22]([^'\x22]+)['\x22]\)/g)].map(m=>m[1]);const builtins=new Set(['http','url','os','path','fs','util']);const bad=reqs.filter(r=>!builtins.has(r));if(bad.length>0){console.error('FAIL: non-builtin requires: '+bad.join(','));process.exit(1)}"
+- [ ] [ARTIFACT] time-api.js 不引入任何非 Node 内置模块（SC-006 保证"仅 Node 标准库"）
+  Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/time-api.js','utf8');const reqs=[...c.matchAll(/require\(['\x22]([^'\x22]+)['\x22]\)/g)].map(m=>m[1]);const builtins=new Set(['http','url','os','path','fs','util','net','querystring']);const bad=reqs.filter(r=>!builtins.has(r));if(bad.length>0){console.error('FAIL: non-builtin requires: '+bad.join(','));process.exit(1)}"
+
+- [ ] [ARTIFACT] PRD 兼容层：scripts/harness-dogfood/__tests__/iso.test.js 文件存在
+  Test: test -f scripts/harness-dogfood/__tests__/iso.test.js
+
+- [ ] [ARTIFACT] PRD 兼容层：__tests__/iso.test.js 至少含 1 个 it 断言
+  Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/__tests__/iso.test.js','utf8');const m=c.match(/\bit\s*\(/g);if(!m||m.length<1)process.exit(1)"
+
+- [ ] [ARTIFACT] PRD 兼容层：scripts/harness-dogfood/__tests__/not-found.test.js 文件存在
+  Test: test -f scripts/harness-dogfood/__tests__/not-found.test.js
+
+- [ ] [ARTIFACT] PRD 兼容层：__tests__/not-found.test.js 至少含 1 个 it 断言
+  Test: node -e "const c=require('fs').readFileSync('scripts/harness-dogfood/__tests__/not-found.test.js','utf8');const m=c.match(/\bit\s*\(/g);if(!m||m.length<1)process.exit(1)"
 
 ## BEHAVIOR 索引（实际测试在 sprints/tests/ws1/）
 
-见 `sprints/tests/ws1/iso.test.ts`，覆盖：
+见 `sprints/tests/ws1/iso.test.ts`，共 7 个 it，覆盖：
 - GET /iso 返回 200 且 iso 字段符合 ISO 8601 毫秒 Z 格式
 - GET /iso 的 Content-Type 为 application/json
-- GET /iso 的 iso 字段对应时间与现在相差不超过 5 秒
-- GET /unknown-xyz 返回 404 且 body 为 {error:not_found}
-- POST /iso 返回 405 且 body 为 {error:method_not_allowed}
+- GET /iso 的 iso 字段对应时间与当前时间相差不超过 5 秒
+- GET /unknown-xyz 返回 404 且 body 为 {error:"not_found"}
+- POST /iso 返回 405 且 body 为 {error:"method_not_allowed"}
 - createServer(0) 返回已监听的 server，address().port 为正整数
+- routes 对象导出：WS2/3/4 的 append-only 锚点契约（WS1 阶段只有 /iso）
