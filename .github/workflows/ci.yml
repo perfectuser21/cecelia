@@ -23,6 +23,7 @@ jobs:
       brain: ${{ steps.detect.outputs.brain }}
       engine: ${{ steps.detect.outputs.engine }}
       workspace: ${{ steps.detect.outputs.workspace }}
+      compose: ${{ steps.detect.outputs.compose }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,12 +35,46 @@ jobs:
             echo "brain=true" >> $GITHUB_OUTPUT
             echo "engine=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
+            echo "compose=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
           echo "brain=$(echo "$CHANGED" | grep -q '^packages/brain/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
+
+  # ─── Docker Infrastructure Smoke ──────────────────────────
+  # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
+  # 只在相关文件改动时跑；3 步覆盖 Linux runner 能做的（镜像 build / deps / yaml 合法）
+  # macOS 专属（host.docker.internal / launchd 双 scope）靠 scripts/brain-docker-smoke.sh 本机跑
+  docker-infra-smoke:
+    if: needs.changes.outputs.compose == 'true'
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build cecelia-brain image
+        run: |
+          set -e
+          docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+      - name: Verify key deps resolve inside image
+        run: |
+          set -e
+          docker run --rm cecelia-brain:ci node -e "
+            require('@langchain/langgraph');
+            require('@langchain/langgraph-checkpoint-postgres');
+            require('express');
+            console.log('deps ok');
+          "
+      - name: Validate docker-compose.yml syntax
+        run: |
+          set -e
+          # .env.docker 在 gitignore 里，CI 无此文件 → 建空占位
+          : > .env.docker
+          docker compose -f docker-compose.yml config > /dev/null
+          echo "compose yaml ok"
 
   # ─── Secrets 扫描 ──────────────────────────────────────────
   secrets-scan:
@@ -772,7 +807,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -798,6 +833,7 @@ jobs:
           check "e2e-smoke"              "${{ needs.e2e-smoke.result }}"
           check "dod-behavior-dynamic"   "${{ needs.dod-behavior-dynamic.result }}"
           check "harness-dod-integrity"  "${{ needs.harness-dod-integrity.result }}"
+          check "docker-infra-smoke"     "${{ needs.docker-infra-smoke.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1

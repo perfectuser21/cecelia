@@ -1,29 +1,23 @@
-# DoD — cp-0422122621-brain-dockerize-orbstack
+# DoD — cp-0422140001-brain-docker-smoke-ci
 
 ## Artifact
 
-- [x] [ARTIFACT] docker-compose.yml node-brain 适配 macOS（移除 host 网络/pid，加 docker.sock 挂载）
-  - Test: manual:node -e "const c=require('fs').readFileSync('docker-compose.yml','utf8');if(c.includes('network_mode: host'))process.exit(1);if(!c.includes('/var/run/docker.sock'))process.exit(1);if(!c.includes('/Users/administrator'))process.exit(1);console.log('ok')"
+- [x] [ARTIFACT] `.github/workflows/ci.yml` 有 docker-infra-smoke job + changes.compose output
+  - Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('docker-infra-smoke:'))process.exit(1);if(!c.includes('compose: '))process.exit(1);console.log('ok')"
 
-- [x] [ARTIFACT] packages/brain/Dockerfile 支持 monorepo workspaces + USER root + docker-cli
-  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/Dockerfile','utf8');if(!c.includes('USER root'))process.exit(1);if(!c.includes('docker-cli'))process.exit(1);if(!c.includes('--workspace=packages/brain'))process.exit(1);console.log('ok')"
+- [x] [ARTIFACT] ci-passed job needs 含 docker-infra-smoke
+  - Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const i=c.indexOf('ci-passed:');const block=c.slice(i,i+600);if(!block.includes('docker-infra-smoke'))process.exit(1);console.log('ok')"
 
-- [x] [ARTIFACT] scripts/brain-docker-up.sh 存在且可执行 + 两 scope launchctl unload
-  - Test: manual:node -e "const fs=require('fs');const s=fs.statSync('scripts/brain-docker-up.sh');if(!(s.mode & 0o111))process.exit(1);const c=fs.readFileSync('scripts/brain-docker-up.sh','utf8');if(!c.includes('USER_PLIST'))process.exit(1);console.log('ok')"
+- [x] [ARTIFACT] scripts/brain-docker-smoke.sh 存在且可执行
+  - Test: manual:node -e "const fs=require('fs');const s=fs.statSync('scripts/brain-docker-smoke.sh');if(!(s.mode & 0o111))process.exit(1);const c=fs.readFileSync('scripts/brain-docker-smoke.sh','utf8');if(!c.includes('trap cleanup_on_exit EXIT'))process.exit(1);console.log('ok')"
 
-- [x] [ARTIFACT] scripts/brain-docker-down.sh 存在且可执行
-  - Test: manual:node -e "const fs=require('fs');const s=fs.statSync('scripts/brain-docker-down.sh');if(!(s.mode & 0o111))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] scripts/brain-build.sh 从 repo root 构建
-  - Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-build.sh','utf8');if(!c.includes('-f'))process.exit(1);if(!c.includes('\\$ROOT_DIR'))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] 设计 + Learning 已提交
-  - Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-brain-dockerize-orbstack-design.md');require('fs').accessSync('docs/learnings/cp-0422122621-brain-dockerize-orbstack.md')"
+- [x] [ARTIFACT] 设计 + 计划 + Learning 已提交
+  - Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-brain-docker-smoke-ci-design.md');require('fs').accessSync('docs/superpowers/plans/2026-04-22-brain-docker-smoke-ci.md');require('fs').accessSync('docs/learnings/cp-0422140001-brain-docker-smoke-ci.md')"
 
 ## Behavior
 
-- [x] [BEHAVIOR] compose config 语法合法
-  - Test: manual:bash -c "docker compose -f docker-compose.yml config > /dev/null 2>&1"
+- [x] [BEHAVIOR] smoke 脚本 bash -n 语法通过
+  - Test: manual:bash -c "bash -n scripts/brain-docker-smoke.sh"
 
-- [x] [BEHAVIOR] 脚本 bash -n 语法通过
-  - Test: manual:bash -c "bash -n scripts/brain-docker-up.sh && bash -n scripts/brain-docker-down.sh"
+- [x] [BEHAVIOR] docker-infra-smoke 3 步本机模拟全绿（build / deps / compose config）
+  - Test: manual:bash -c "docker build -f packages/brain/Dockerfile -t cecelia-brain:ci . > /dev/null && docker run --rm cecelia-brain:ci node -e 'require(\"@langchain/langgraph\");require(\"express\")' && : > .env.docker && docker compose -f docker-compose.yml config > /dev/null"
