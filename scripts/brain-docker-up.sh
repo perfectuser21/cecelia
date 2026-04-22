@@ -7,13 +7,16 @@ PLIST="/Library/LaunchDaemons/com.cecelia.brain.plist"
 
 echo "=== Brain Docker 切换：从裸跑 → 容器 ==="
 
-# 1. 卸 launchd 裸跑 Brain
-if sudo launchctl list com.cecelia.brain 2>/dev/null | grep -q PID; then
-  echo "→ 卸 launchd 裸跑 Brain"
-  sudo launchctl unload "$PLIST"
-else
-  echo "→ launchd Brain 已未加载，跳过"
-fi
+# 1. 卸两个 scope 的 launchd 裸跑 Brain
+#    历史遗留：system LaunchDaemons + user LaunchAgents 都注册了 Brain plist，
+#    任一未卸都会让 KeepAlive 把裸跑 Brain 拉回来抢 5221 端口。
+USER_PLIST="$HOME/Library/LaunchAgents/com.cecelia.brain.plist"
+
+echo "→ 卸 user scope Brain plist"
+launchctl unload "$USER_PLIST" 2>/dev/null || echo "  (user scope 已未加载)"
+
+echo "→ 卸 system scope Brain plist"
+sudo launchctl unload "$PLIST" 2>/dev/null || echo "  (system scope 已未加载)"
 
 # 2. 等端口 5221 释放（最多 15 秒）
 echo "→ 等端口 5221 释放..."

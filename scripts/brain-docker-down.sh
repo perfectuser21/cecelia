@@ -19,9 +19,11 @@ for i in {1..10}; do
   sleep 1
 done
 
-# 3. 拉起 launchd 裸跑
-echo "→ launchctl load 裸跑 Brain"
-sudo launchctl load "$PLIST"
+# 3. 拉起 launchd 裸跑（两个 scope 都尝试，保证至少一个起来）
+USER_PLIST="$HOME/Library/LaunchAgents/com.cecelia.brain.plist"
+echo "→ launchctl load 裸跑 Brain（user + system scope）"
+launchctl load "$USER_PLIST" 2>/dev/null || true
+sudo launchctl load "$PLIST" 2>/dev/null || true
 
 # 4. 等端口就绪（最多 30 秒）
 for i in {1..30}; do

@@ -16,7 +16,7 @@ RUN npm ci --workspace=packages/brain --omit=dev --ignore-scripts
 
 # ── Stage 2: Runtime ──
 FROM node:20-alpine
-RUN apk add --no-cache curl bash procps tini \
+RUN apk add --no-cache curl bash procps tini docker-cli \
  && adduser -D -u 1001 cecelia
 
 WORKDIR /app
