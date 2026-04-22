@@ -18,12 +18,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Skills + cecelia-run (read-only)
       - /Users/administrator/.claude:/Users/administrator/.claude:ro
-      # Credentials (read-only, mapped to container user homedir)
-      - /Users/administrator/.credentials:/home/cecelia/.credentials:ro
-      # Claude account credentials for account-usage API (homedir mapping)
-      - /Users/administrator/.claude-account1:/home/cecelia/.claude-account1:ro
-      - /Users/administrator/.claude-account2:/home/cecelia/.claude-account2:ro
-      - /Users/administrator/.claude-account3:/home/cecelia/.claude-account3:ro
+      # Credentials + Claude accounts — 容器内路径 = 宿主路径（HOST_HOME 语义）
+      # docker-executor.js 用 HOST_HOME=/Users/administrator 拼 .claude-accountN，
+      # Brain existsFn 检查这个路径才能决定是否挂给 pipeline container。
+      # 若 remap 到 /home/cecelia/... 则 existsFn 失败 → pipeline 没凭据秒退 Not logged in。
+      - /Users/administrator/.credentials:/Users/administrator/.credentials:ro
+      - /Users/administrator/.claude-account1:/Users/administrator/.claude-account1:ro
+      - /Users/administrator/.claude-account2:/Users/administrator/.claude-account2:ro
+      - /Users/administrator/.claude-account3:/Users/administrator/.claude-account3:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
