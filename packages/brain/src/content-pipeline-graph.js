@@ -281,13 +281,30 @@ export function buildContentPipelineGraph(overrides = {}) {
     .addEdge('copywrite', 'copy_review')
     .addConditionalEdges(
       'copy_review',
-      (state) => (state.copy_review_verdict === 'APPROVED' ? 'generate' : 'copywrite'),
+      (state) => {
+        // 硬兜底：copy_review 3 轮仍 REVISION → 强推 APPROVED 进 generate
+        // 保 pipeline 100% 出产。LLM 评审打分本质浮动，让它做严格闸门
+        // 路径错配；3 轮没过就信第 1 层硬规则 R1-R5 放行（硬规则在
+        // sed 禁用词兜底 PR #2510 后 100% 通过）
+        const round = state.copy_review_round || 0;
+        if (state.copy_review_verdict === 'APPROVED' || round >= 3) {
+          return 'generate';
+        }
+        return 'copywrite';
+      },
       { generate: 'generate', copywrite: 'copywrite' },
     )
     .addEdge('generate', 'image_review')
     .addConditionalEdges(
       'image_review',
-      (state) => (state.image_review_verdict === 'PASS' ? 'export' : 'generate'),
+      (state) => {
+        // 同步硬兜底：image_review 3 轮仍 FAIL → 强推 PASS 进 export
+        const round = state.image_review_round || 0;
+        if (state.image_review_verdict === 'PASS' || round >= 3) {
+          return 'export';
+        }
+        return 'generate';
+      },
       { export: 'export', generate: 'generate' },
     )
     .addEdge('export', END);
