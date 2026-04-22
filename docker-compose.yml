@@ -7,38 +7,43 @@ services:
   node-brain:
     image: cecelia-brain:${BRAIN_VERSION:-latest}
     container_name: cecelia-node-brain
-    network_mode: host
-    pid: host  # Required: watchdog.js reads /proc/<hostpid>/statm for host process RSS/CPU monitoring
+    # macOS/OrbStack: network_mode:host 不支持，用 bridge + port forward
+    ports:
+      - "5221:5221"
     read_only: true
     tmpfs:
       - /tmp:size=100M
     volumes:
+      # Docker socket: Brain 调 dockerd spawn 兄弟 pipeline 容器
+      - /var/run/docker.sock:/var/run/docker.sock
       # Skills + cecelia-run (read-only)
-      - /home/xx/.claude:/home/xx/.claude:ro
-      - /home/xx/bin:/home/xx/bin:ro
+      - /Users/administrator/.claude:/Users/administrator/.claude:ro
       # Credentials (read-only, mapped to container user homedir)
-      - /home/xx/.credentials:/home/cecelia/.credentials:ro
+      - /Users/administrator/.credentials:/home/cecelia/.credentials:ro
       # Claude account credentials for account-usage API (homedir mapping)
-      - /home/xx/.claude-account1:/home/cecelia/.claude-account1:ro
-      - /home/xx/.claude-account2:/home/cecelia/.claude-account2:ro
-      - /home/xx/.claude-account3:/home/cecelia/.claude-account3:ro
+      - /Users/administrator/.claude-account1:/home/cecelia/.claude-account1:ro
+      - /Users/administrator/.claude-account2:/home/cecelia/.claude-account2:ro
+      - /Users/administrator/.claude-account3:/home/cecelia/.claude-account3:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
-      - /home/xx/perfect21/cecelia/packages/workflows:/home/xx/perfect21/cecelia/packages/workflows:ro
+      - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
-      - /home/xx/perfect21/cecelia/packages/config:/config:ro
+      - /Users/administrator/perfect21/cecelia/packages/config:/config:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
-      - /home/xx/perfect21/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
+      - /Users/administrator/perfect21/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
       # workers.config.json (read-write for PUT /staff/workers API)
-      - /home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json:/home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json:rw
+      - /Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json:/Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json:rw
+      # Worktree 根目录（Brain spawn harness/pipeline 容器时要 mount 宿主 worktree）
+      - /Users/administrator/perfect21/cecelia/.claude/worktrees:/Users/administrator/perfect21/cecelia/.claude/worktrees:rw
+      - /Users/administrator/worktrees:/Users/administrator/worktrees:rw
       # Timezone (read-only)
       - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
     env_file:
       - .env.docker
     environment:
       - TZ=Asia/Shanghai
       - ENV_REGION=${ENV_REGION:-us}
-      - DB_HOST=${DB_HOST:-localhost}
+      # host.docker.internal: OrbStack 原生支持，容器内此地址到宿主 127.0.0.1
+      - DB_HOST=${DB_HOST:-host.docker.internal}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-cecelia}
       - DB_USER=${DB_USER:-cecelia}
@@ -53,15 +58,16 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-      - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
-      - HOST_HOME=/home/xx
+      - CECELIA_RUN_PATH=/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh
+      - HOST_HOME=/Users/administrator
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 1G
+          cpus: '2'
         reservations:
           memory: 512M
     restart: unless-stopped
