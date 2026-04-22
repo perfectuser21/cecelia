@@ -203,7 +203,11 @@ export function buildDockerArgs(opts, ctx = {}) {
   const image = opts.image || DEFAULT_IMAGE;
   const worktreePath = opts.worktreePath || DEFAULT_WORKTREE_BASE;
   const name = containerName(taskId);
-  const homedir = ctx.homedir || os.homedir();
+  // Brain docker 化后 os.homedir() 返回容器内 $HOME（/home/cecelia 或 /root），
+  // 不是宿主 /Users/administrator。docker-executor 给 pipeline container 挂载
+  // 凭据路径（.claude-accountN）用 homedir 拼出，错了会让 Claude CLI 秒退
+  // "Not logged in"。HOST_HOME env（compose 里显式设）兜底拿宿主 homedir。
+  const homedir = ctx.homedir || process.env.HOST_HOME || os.homedir();
   const existsFn = ctx.existsSyncFn || existsSync;
   const readFn = ctx.readFileSyncFn || readFileSync;
 
