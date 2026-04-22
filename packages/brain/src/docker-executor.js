@@ -334,7 +334,9 @@ export function buildDockerArgs(opts, ctx = {}) {
     ...extraVolumes,
     ...envToArgs(envFinal),
     image,
-    opts.prompt,
+    // Prompt 不再作为 argv 传入 — entrypoint.sh 从 /tmp/cecelia-prompts/${CECELIA_TASK_ID}.prompt
+    // 读并通过 stdin 喂给 claude。这样长 prompt（GAN Round N Reviewer 含完整合同历史）
+    // 不会撞 OS argv 长度限制触发 spawn E2BIG。writePromptFile 已在上面写好文件。
   ];
 
   return { args, envFinal, name, memoryMB, cpuCores, image, worktreePath, hostClaudeConfigDir, cidfile };
