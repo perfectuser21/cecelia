@@ -62,12 +62,26 @@ export async function runContentPipeline(task, opts = {}) {
     `[content-pipeline-runner] starting pipeline=${task.id} keyword="${String(keyword).slice(0, 60)}"`
   );
 
-  // 默认凭据：docker-executor 读 CECELIA_CREDENTIALS → 挂宿主 ~/.claude-<name>
-  // 让容器内 claude 能用宿主账号登录。未显式覆盖才注入，允许 opts.env 覆盖。
-  // 对齐 executor.js L2816 harness_planner 派 task 时的做法。
-  const DEFAULT_CREDENTIAL = process.env.CONTENT_PIPELINE_CREDENTIALS || 'account1';
+  // 动态选账号：account-usage.selectBestAccount() 按 5h/7d 剩余额度挑最空的账号
+  // 硬编码 'account1' 会让 account1 7d 撞 100% 后整条 pipeline 429 挂（实测今日 robot final）
+  // 优先级：opts.env.CECELIA_CREDENTIALS（显式）> CONTENT_PIPELINE_CREDENTIALS env > selectBestAccount > 'account1' fallback
+  let dynamicCredential = process.env.CONTENT_PIPELINE_CREDENTIALS;
+  if (!dynamicCredential && !(opts.env && opts.env.CECELIA_CREDENTIALS)) {
+    try {
+      const { selectBestAccount } = await import('./account-usage.js');
+      const selected = await selectBestAccount({ model: 'sonnet' });
+      if (selected?.accountId) {
+        dynamicCredential = selected.accountId;
+        console.log(
+          `[content-pipeline-runner] selectBestAccount → ${dynamicCredential} (model=${selected.model})`
+        );
+      }
+    } catch (e) {
+      console.warn(`[content-pipeline-runner] selectBestAccount 失败，fallback account1: ${e.message}`);
+    }
+  }
   const mergedEnv = {
-    CECELIA_CREDENTIALS: DEFAULT_CREDENTIAL,
+    CECELIA_CREDENTIALS: dynamicCredential || 'account1',
     ...(opts.env || {}),
   };
 
