@@ -25,8 +25,9 @@ vi.mock('../../harness-credentials.js', () => ({
 }));
 // PR-4: runInitiative 现在在 plannerOutput 解析后跑 GAN 合同循环。
 // CI 环境没有真实 Proposer/Reviewer container，mock 成一次通过。
-vi.mock('../../harness-gan-loop.js', () => ({
-  runGanContractLoop: vi.fn(async () => ({
+// 2026-04-22: 迁 LangGraph 后入口改名 runGanContractGraph，模块改 harness-gan-graph.js。
+vi.mock('../../harness-gan-graph.js', () => ({
+  runGanContractGraph: vi.fn(async () => ({
     contract_content: '# Mock Contract (integration)',
     rounds: 1,
     cost_usd: 0.1,
