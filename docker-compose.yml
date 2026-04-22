@@ -18,10 +18,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Skills + cecelia-run (read-only)
       - /Users/administrator/.claude:/Users/administrator/.claude:ro
-      # Credentials + Claude accounts — 容器内路径 = 宿主路径（HOST_HOME 语义）
-      # docker-executor.js 用 HOST_HOME=/Users/administrator 拼 .claude-accountN，
-      # Brain existsFn 检查这个路径才能决定是否挂给 pipeline container。
-      # 若 remap 到 /home/cecelia/... 则 existsFn 失败 → pipeline 没凭据秒退 Not logged in。
+      # Credentials + Claude accounts — 保持宿主路径不 remap
+      # HOST_HOME=/Users/administrator + Dockerfile ENV HOME 也对齐宿主路径，
+      # 这样 Brain os.homedir() 和 docker-executor 构造的子容器 mount 源都能解析。
       - /Users/administrator/.credentials:/Users/administrator/.credentials:ro
       - /Users/administrator/.claude-account1:/Users/administrator/.claude-account1:ro
       - /Users/administrator/.claude-account2:/Users/administrator/.claude-account2:ro
@@ -46,6 +45,8 @@ services:
       # Git + gh config（harness / pipeline container 做 git commit / gh pr 需要）
       - /Users/administrator/.gitconfig:/Users/administrator/.gitconfig:ro
       - /Users/administrator/.config/gh:/Users/administrator/.config/gh:ro
+      # 主仓库 .git 只读（harness-worktree.js git clone --local 源需要）
+      - /Users/administrator/perfect21/cecelia/.git:/Users/administrator/perfect21/cecelia/.git:ro
       # Timezone (read-only)
       - /etc/localtime:/etc/localtime:ro
     env_file:

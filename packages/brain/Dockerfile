@@ -16,7 +16,7 @@ RUN npm ci --workspace=packages/brain --omit=dev --ignore-scripts
 
 # ── Stage 2: Runtime ──
 FROM node:20-alpine
-RUN apk add --no-cache curl bash procps tini docker-cli \
+RUN apk add --no-cache curl bash procps tini docker-cli git openssh-client ca-certificates \
  && adduser -D -u 1001 cecelia
 
 WORKDIR /app
@@ -39,6 +39,12 @@ COPY packages/brain/package.json ./
 # macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。
 # 安全边界由 docker-compose.yml 提供：read_only filesystem + 只读凭据挂载 + tmpfs /tmp 100M
 USER root
+# HOME=/Users/administrator：让 os.homedir() 和 docker-executor 生成的 mount 路径一致。
+# compose 把宿主 /Users/administrator/.X 挂到容器内**同名**路径，
+# 这样：
+# - docker-executor 构造子容器 mount 时走宿主路径 → docker daemon 能解析
+# - Brain 内部 os.homedir() 拼的路径 → 和容器内挂载点一致，existsSync 能过
+ENV HOME=/Users/administrator
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:5221/api/brain/tick/status || exit 1
