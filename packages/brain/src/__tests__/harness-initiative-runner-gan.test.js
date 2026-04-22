@@ -10,8 +10,8 @@ describe('runInitiative GAN integration', () => {
     vi.doMock('../harness-credentials.js', () => ({
       resolveGitHubToken: vi.fn(async () => 'ghs_test'),
     }));
-    vi.doMock('../harness-gan-loop.js', () => ({
-      runGanContractLoop: vi.fn(async () => ({
+    vi.doMock('../harness-gan-graph.js', () => ({
+      runGanContractGraph: vi.fn(async () => ({
         contract_content: '# Final Contract',
         rounds: 2,
         cost_usd: 0.3,
@@ -83,8 +83,8 @@ describe('runInitiative GAN integration', () => {
     vi.doMock('../harness-credentials.js', () => ({
       resolveGitHubToken: vi.fn(async () => 'ghs_test'),
     }));
-    vi.doMock('../harness-gan-loop.js', () => ({
-      runGanContractLoop: vi.fn(async () => { throw new Error('gan_budget_exceeded: spent=11 cap=10'); }),
+    vi.doMock('../harness-gan-graph.js', () => ({
+      runGanContractGraph: vi.fn(async () => { throw new Error('gan_budget_exceeded: spent=11 cap=10'); }),
     }));
 
     const mockClient = {

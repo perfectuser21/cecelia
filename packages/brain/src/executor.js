@@ -2806,9 +2806,22 @@ async function triggerCeceliaRun(task) {
   // Evaluator 由后续 milestone（M3/M4）接入，v2 初版只跑阶段 A。
   if (task.task_type === 'harness_initiative') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness v2 Initiative Runner (阶段 A)`);
+    // PostgresSaver: Phase A GAN 循环的 checkpointer。task.id 作为 langgraph thread_id,
+    // Brain 重启后下次派发同一 initiative 能从最后一个节点续跑（而不是从 Planner 重头）。
+    let checkpointer;
+    try {
+      const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
+      checkpointer = PostgresSaver.fromConnString(
+        process.env.DATABASE_URL || 'postgresql://cecelia@localhost:5432/cecelia'
+      );
+      await checkpointer.setup(); // 幂等建 checkpoints / checkpoint_blobs / checkpoint_writes / checkpoint_migrations
+    } catch (cpErr) {
+      console.warn(`[executor] PostgresSaver 初始化失败，降级到 MemorySaver（Brain 重启将无法续跑）: ${cpErr.message}`);
+      checkpointer = undefined; // 让 runGanContractGraph 走 MemorySaver fallback
+    }
     try {
       const { runInitiative } = await import('./harness-initiative-runner.js');
-      return await runInitiative(task);
+      return await runInitiative(task, { checkpointer });
     } catch (err) {
       console.error(`[executor] Initiative Runner error task=${task.id}: ${err.message}`);
       return { success: false, taskId: task.id, initiative: true, error: err.message };
