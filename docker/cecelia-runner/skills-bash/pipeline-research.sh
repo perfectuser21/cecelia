@@ -57,19 +57,23 @@ PROMPT_END
 
 BRAIN_URL="${BRAIN_URL:-http://host.docker.internal:5221}"
 
-# 打包 LLM 请求体（用 python 处理大段中文 JSON 转义，避免 shell "argv too long"）
-export PROMPT
-LLM_REQ=$(python3 -c "
+# 调 LLM + 校验 findings 合法 + findings[] ≥ 3 条，不合格重试最多 3 轮
+# 防 Claude 返对话性回应（"根据你的需求，我将启动..."）被当作 findings 落盘
+call_llm_and_validate() {
+  local attempt="$1"
+  local prompt_text="$2"
+  export PROMPT_TEXT="$prompt_text"
+  local llm_req
+  llm_req=$(python3 -c "
 import json, os
-print(json.dumps({'tier':'thalamus','prompt':os.environ['PROMPT'],'max_tokens':8192,'timeout':180,'format':'json'}))
+print(json.dumps({'tier':'thalamus','prompt':os.environ['PROMPT_TEXT'],'max_tokens':8192,'timeout':180,'format':'json'}))
 ")
-
-# 用 --data-binary @- + printf stdin 投递，防 argv 过长
-RESP=$(printf '%s' "$LLM_REQ" | curl -s -X POST "$BRAIN_URL/api/brain/llm-service/generate" \
-  -H 'Content-Type: application/json' \
-  --data-binary @-)
-
-TEXT=$(echo "$RESP" | python3 -c "
+  local resp
+  resp=$(printf '%s' "$llm_req" | curl -s -X POST "$BRAIN_URL/api/brain/llm-service/generate" \
+    -H 'Content-Type: application/json' \
+    --data-binary @-)
+  local text
+  text=$(echo "$resp" | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -79,15 +83,81 @@ except Exception:
     print('')
 " 2>/dev/null)
 
-if [ -z "$TEXT" ]; then
-  echo "[research] LLM empty response: $(echo "$RESP" | head -c 300)" >&2
-  echo "{\"findings_path\":null,\"output_dir\":\"${OUT_DIR}\",\"error\":\"LLM 返回空\"}"
-  exit 0
-fi
+  if [ -z "$text" ]; then
+    echo "[research] attempt=$attempt LLM 空响应: $(echo "$resp" | head -c 200)" >&2
+    return 1
+  fi
 
-# 去 markdown fence
-TEXT=$(echo "$TEXT" | sed 's/^```json//' | sed 's/^```//' | sed 's/```$//')
-echo "$TEXT" > "$FINDINGS"
+  # 剥 markdown fence + 抽第一个 balanced JSON 对象（防 LLM 前导对话）
+  local cleaned
+  cleaned=$(printf '%s' "$text" | python3 -c "
+import sys, re, json
+raw = sys.stdin.read().strip()
+# 先剥 markdown fence
+raw = re.sub(r'^\`\`\`json\s*', '', raw)
+raw = re.sub(r'^\`\`\`\s*', '', raw)
+raw = re.sub(r'\s*\`\`\`\s*$', '', raw)
+# 若直接是 JSON 则 OK，否则 greedy 抽 {...}
+try:
+    json.loads(raw)
+    print(raw)
+except Exception:
+    m = re.search(r'\{[\s\S]*\}', raw)
+    if m:
+        try:
+            json.loads(m.group(0))
+            print(m.group(0))
+        except Exception:
+            print('')
+    else:
+        print('')
+" 2>/dev/null)
+
+  if [ -z "$cleaned" ]; then
+    echo "[research] attempt=$attempt 不是合法 JSON: $(printf '%s' "$text" | head -c 200)" >&2
+    return 2
+  fi
+
+  # 校验 findings[] ≥ 3 条
+  local count
+  count=$(printf '%s' "$cleaned" | python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(len(d.get('findings', [])))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+
+  if [ "$count" -lt 3 ]; then
+    echo "[research] attempt=$attempt findings 数量=$count 太少" >&2
+    return 3
+  fi
+
+  # 通过所有校验，写入
+  printf '%s' "$cleaned" > "$FINDINGS"
+  echo "[research] attempt=$attempt 成功 findings=$count" >&2
+  return 0
+}
+
+# 最多 3 次尝试，每次 prompt 加强
+STRICT_HINT=""
+for attempt in 1 2 3; do
+  if [ "$attempt" -gt 1 ]; then
+    STRICT_HINT="
+
+【重要】上一次你返回了非 JSON 文字（如对话开头/解释）。这次请**直接输出 JSON 对象**，不要任何前导文字、不要思考、不要确认。第一个字符必须是 {。"
+  fi
+  if call_llm_and_validate "$attempt" "${PROMPT}${STRICT_HINT}"; then
+    break
+  fi
+  if [ "$attempt" -eq 3 ]; then
+    echo "[research] 3 次尝试全失败，exit 1 让 LangGraph 标 pipeline failed" >&2
+    echo "{\"findings_path\":null,\"output_dir\":\"${OUT_DIR}\",\"error\":\"LLM 连续 3 次返回非 JSON 或 findings 不足\"}"
+    exit 1
+  fi
+done
+
 echo "[research] findings written to $FINDINGS" >&2
 
 # ─── 步骤 3：输出一行 JSON ─────────────────────────────────────────
