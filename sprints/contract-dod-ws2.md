@@ -59,6 +59,15 @@
 - [ ] [ARTIFACT] PRD 兼容层：node --test __tests__/timezone.test.js 子进程 exit 0
   Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 30 node --test scripts/harness-dogfood/__tests__/timezone.test.js > /tmp/tz-nodetest.log 2>&1 && grep -qE '^# pass [1-9]' /tmp/tz-nodetest.log"
 
+- [ ] [ARTIFACT] Round 4 锁死：`vitest run sprints/tests/ws2/` 未报 "No test files found"（vitest 真扫到本 WS 测试）
+  Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 60 ./node_modules/.bin/vitest run sprints/tests/ws2/ > /tmp/ws2-disc.stdout 2> /tmp/ws2-disc.stderr; if grep -q 'No test files found' /tmp/ws2-disc.stderr /tmp/ws2-disc.stdout; then echo 'FAIL: vitest 未发现 sprints/tests/ws2/';cat /tmp/ws2-disc.stderr;exit 1;fi"
+
+- [ ] [ARTIFACT] Round 4 锁死：`vitest run sprints/tests/ws2/` stdout 含 `sprints/tests/ws2/timezone.test.ts` 路径
+  Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 60 ./node_modules/.bin/vitest run sprints/tests/ws2/ > /tmp/ws2-disc.stdout 2>&1 || true; grep -q 'sprints/tests/ws2/timezone.test.ts' /tmp/ws2-disc.stdout"
+
+- [ ] [ARTIFACT] Round 4 锁死：`vitest run sprints/tests/ws2/` 摘要行 Tests 计数为 7（Red 阶段 7 failed，Green 阶段 7 passed）
+  Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 60 ./node_modules/.bin/vitest run sprints/tests/ws2/ > /tmp/ws2-disc.stdout 2>&1 || true; grep -qE 'Tests[[:space:]]+[0-9]+[[:space:]]+(failed|passed)[[:space:]]*\\(7\\)' /tmp/ws2-disc.stdout"
+
 ## BEHAVIOR 索引（实际测试在 sprints/tests/ws2/）
 
 见 `sprints/tests/ws2/timezone.test.ts`，共 7 个 it，覆盖：

@@ -52,7 +52,7 @@ function runNodeTest(absPath: string): { status: number | null; stdout: string; 
   };
 }
 
-describe('Workstream 1 — /iso + 404/405 骨架 + routes 自动加载器 [BEHAVIOR]', () => {
+describe('Workstream 1 — /iso + 404/405 骨架 + routes 自动加载器（全时态）[BEHAVIOR]', () => {
   it('GET /iso 返回 200 且 iso 字段符合 ISO 8601 毫秒 Z 格式', async () => {
     const { server, baseUrl } = await startServer();
     try {
@@ -132,16 +132,7 @@ describe('Workstream 1 — /iso + 404/405 骨架 + routes 自动加载器 [BEHAV
     }
   });
 
-  it('WS1 独立态：routes 对象仅含 /iso，不含 /timezone 或 /unix', async () => {
-    const mod = await loadModule();
-    expect(mod.routes).toBeDefined();
-    expect(typeof mod.routes).toBe('object');
-    expect(typeof mod.routes['/iso']).toBe('function');
-    expect(mod.routes['/timezone']).toBeUndefined();
-    expect(mod.routes['/unix']).toBeUndefined();
-  });
-
-  it('WS1 独立态：time-api.js 源码不含 timezone 或 unix 相关字面量（物理隔离契约）', () => {
+  it('time-api.js 源码不含 timezone/unix 相关字面量（物理隔离契约·全时态）', () => {
     const src = fs.readFileSync(TIME_API_ABS, 'utf8');
     expect(src).not.toMatch(/\/timezone/);
     expect(src).not.toMatch(/\/unix/);

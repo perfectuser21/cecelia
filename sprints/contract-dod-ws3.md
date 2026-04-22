@@ -53,6 +53,15 @@
 - [ ] [ARTIFACT] PRD 兼容层：node --test __tests__/unix.test.js 子进程 exit 0
   Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 30 node --test scripts/harness-dogfood/__tests__/unix.test.js > /tmp/unix-nodetest.log 2>&1 && grep -qE '^# pass [1-9]' /tmp/unix-nodetest.log"
 
+- [ ] [ARTIFACT] Round 4 锁死：`vitest run sprints/tests/ws3/` 未报 "No test files found"
+  Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 60 ./node_modules/.bin/vitest run sprints/tests/ws3/ > /tmp/ws3-disc.stdout 2> /tmp/ws3-disc.stderr; if grep -q 'No test files found' /tmp/ws3-disc.stderr /tmp/ws3-disc.stdout; then echo 'FAIL: vitest 未发现 sprints/tests/ws3/';cat /tmp/ws3-disc.stderr;exit 1;fi"
+
+- [ ] [ARTIFACT] Round 4 锁死：`vitest run sprints/tests/ws3/` stdout 含 `sprints/tests/ws3/unix.test.ts` 路径
+  Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 60 ./node_modules/.bin/vitest run sprints/tests/ws3/ > /tmp/ws3-disc.stdout 2>&1 || true; grep -q 'sprints/tests/ws3/unix.test.ts' /tmp/ws3-disc.stdout"
+
+- [ ] [ARTIFACT] Round 4 锁死：`vitest run sprints/tests/ws3/` 摘要行 Tests 计数为 8（Red 8 failed / Green 8 passed）
+  Test: bash -c "cd \$(git rev-parse --show-toplevel) && timeout 60 ./node_modules/.bin/vitest run sprints/tests/ws3/ > /tmp/ws3-disc.stdout 2>&1 || true; grep -qE 'Tests[[:space:]]+[0-9]+[[:space:]]+(failed|passed)[[:space:]]*\\(8\\)' /tmp/ws3-disc.stdout"
+
 ## BEHAVIOR 索引（实际测试在 sprints/tests/ws3/）
 
 见 `sprints/tests/ws3/unix.test.ts`，共 8 个 it，覆盖：
