@@ -79,5 +79,14 @@ if [[ -n "${CLAUDE_MODEL_OVERRIDE:-}" ]]; then
   MODEL_FLAGS=(--model "$CLAUDE_MODEL_OVERRIDE")
 fi
 
-# 7. 启动 claude headless，把所有传入参数当 prompt
-exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"
+# 7. 启动 claude headless
+# 优先从 /tmp/cecelia-prompts/${CECELIA_TASK_ID}.prompt 读 prompt 并走 stdin
+# —— 长 prompt（GAN Round N Reviewer 含完整合同历史）不会撞 OS argv 限制
+# （E2BIG: spawn argument list too long）。
+# 文件不在时 fallback 到 argv（backward compat，手动 docker run 仍可工作）。
+PROMPT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.prompt"
+if [[ -f "$PROMPT_FILE" ]]; then
+  exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE"
+else
+  exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"
+fi
