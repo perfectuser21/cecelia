@@ -282,13 +282,25 @@ export function buildContentPipelineGraph(overrides = {}) {
     .addConditionalEdges(
       'copy_review',
       (state) => {
-        // 硬兜底：copy_review 3 轮仍 REVISION → 强推 APPROVED 进 generate
-        // 保 pipeline 100% 出产。LLM 评审打分本质浮动，让它做严格闸门
-        // 路径错配；3 轮没过就信第 1 层硬规则 R1-R5 放行（硬规则在
-        // sed 禁用词兜底 PR #2510 后 100% 通过）
+        // round>=3 兜底（PR #2522）让 LLM 5 维评分浮动不卡门，但不能覆盖"产物空"硬信号：
+        //   R0 "文件存在"（copy.md / article.md）fail → 真没产物，兜底推下去 generate/export 也会挂
+        //   R3/R4 字数（copy<200 / article<500）fail → 产物太短，等同没产物
+        // 这些硬规则 false 时即便 round>=3 也回 copywrite 重试。
+        // LangGraph recursion_limit (60) 自然兜底阻止无限循环（pipeline failed 比空推到 NAS 更诚实）。
+        // 只有 LLM D1-D5 维度持续 ≤1 的评分浮动场景，才允许 round>=3 兜底推进。
         const round = state.copy_review_round || 0;
-        if (state.copy_review_verdict === 'APPROVED' || round >= 3) {
+        if (state.copy_review_verdict === 'APPROVED') {
           return 'generate';
+        }
+        if (round >= 3) {
+          const rules = state.copy_review_rule_details || [];
+          const hardRuleFail = rules.some((r) =>
+            (r?.id === 'R0' || r?.id === 'R3' || r?.id === 'R4') && r?.pass === false
+          );
+          if (!hardRuleFail) {
+            return 'generate';
+          }
+          // 硬规则 fail：回 copywrite 重试，让 recursion_limit 兜底挂掉 pipeline
         }
         return 'copywrite';
       },
