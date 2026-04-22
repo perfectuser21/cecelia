@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   getIsoHandler,
   getTimezoneHandler,
@@ -8,7 +8,10 @@ import {
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(Z|[+-]\d{2}:\d{2})$/;
 const OFFSET_RE = /^[+-]\d{2}:\d{2}$/;
-const IANA_RE = /^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z][A-Za-z0-9_+\-]*)*$/;
+// IANA 严格正则：只允许 UTC / GMT 或 `<Region>/<City>[/<SubCity>]`，
+// 其中 Region 必须命中官方白名单。拒绝 `X`、`Foo`、`Abc123` 等通过宽松正则
+// 的伪 IANA 字符串（对应 mutation 9）。
+const IANA_RE = /^(UTC|GMT|(Asia|America|Europe|Africa|Australia|Pacific|Atlantic|Indian|Antarctica|Etc)\/[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z][A-Za-z0-9_+\-]*)?)$/;
 
 function mockRes() {
   const headers: Record<string, string> = {};
@@ -102,6 +105,26 @@ describe('Workstream 1 — GET /api/brain/time/timezone [BEHAVIOR]', () => {
       if (origTZ === undefined) delete process.env.TZ; else process.env.TZ = origTZ;
     }
   });
+
+  it('reads IANA timezone from Intl.DateTimeFormat (not hardcoded UTC) when resolvedOptions provides one', () => {
+    // 反制 mutation 8：handler 直接硬编码 return { timezone: 'UTC', offset: '+00:00' }。
+    // 该 mutation 会让 fallback 测试通过，但此处 Intl 返回 Pacific/Auckland 应被透传。
+    const origIntl = (globalThis as any).Intl;
+    const origTZ = process.env.TZ;
+    try {
+      (globalThis as any).Intl = {
+        DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: 'Pacific/Auckland' }) }),
+      };
+      delete process.env.TZ;
+      const res = mockRes();
+      getTimezoneHandler(mockReq(), res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body.timezone).toBe('Pacific/Auckland');
+    } finally {
+      (globalThis as any).Intl = origIntl;
+      if (origTZ === undefined) delete process.env.TZ; else process.env.TZ = origTZ;
+    }
+  });
 });
 
 describe('Workstream 1 — GET /api/brain/time/unix [BEHAVIOR]', () => {
@@ -128,6 +151,29 @@ describe('Workstream 1 — GET /api/brain/time/unix [BEHAVIOR]', () => {
     getUnixHandler(mockReq(), res);
     expect(typeof res.body?.unix).toBe('number');
     expect(typeof res.body.unix === 'string').toBe(false);
+  });
+});
+
+describe('Workstream 1 — Response Content-Type [BEHAVIOR]', () => {
+  it('GET /iso responds with application/json Content-Type header', () => {
+    const res = mockRes();
+    getIsoHandler(mockReq(), res);
+    expect(res.headers['content-type']).toBeDefined();
+    expect(res.headers['content-type']).toMatch(/application\/json/i);
+  });
+
+  it('GET /timezone responds with application/json Content-Type header', () => {
+    const res = mockRes();
+    getTimezoneHandler(mockReq(), res);
+    expect(res.headers['content-type']).toBeDefined();
+    expect(res.headers['content-type']).toMatch(/application\/json/i);
+  });
+
+  it('GET /unix responds with application/json Content-Type header', () => {
+    const res = mockRes();
+    getUnixHandler(mockReq(), res);
+    expect(res.headers['content-type']).toBeDefined();
+    expect(res.headers['content-type']).toMatch(/application\/json/i);
   });
 });
 
