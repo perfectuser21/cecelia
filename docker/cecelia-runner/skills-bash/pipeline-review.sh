@@ -67,8 +67,8 @@ if [ "$BASH_OK" = "true" ] && [ "$VISION_ENABLED" = "true" ]; then
   PERSON_DATA_TEXT=$(cat "$PERSON_DATA_FILE" 2>/dev/null || echo "{}")
 
   for img in "${PASSED_IMGS[@]}"; do
+    # NAME 声明为 local 风格（bash 函数外 local 不可用，用显式覆盖；每次循环都重新赋值）
     NAME=$(basename "$img")
-    IMG_B64=$(base64 < "$img" | tr -d '\n')
 
     VISION_PROMPT=$(cat <<PROMPT_END
 你是图片质量审查员。严格按 4 维 × 0-5 分制评估这张图。
@@ -104,13 +104,18 @@ ${PERSON_DATA_TEXT}
 PROMPT_END
 )
 
-    export VISION_PROMPT IMG_B64
+    # IMG_B64 不走 env（大 env 变量会污染 $NAME 等其他变量，导致 id 为空）。
+    # 改 python3 直接读原图 base64。path 走 env 只传字符串。
+    export VISION_PROMPT
+    export VISION_IMG_PATH="$img"
     V_REQ=$(python3 -c "
-import json, os
+import json, os, base64
+with open(os.environ['VISION_IMG_PATH'], 'rb') as f:
+    img_b64 = base64.b64encode(f.read()).decode('ascii')
 body = {
   'tier': 'thalamus',
   'prompt': os.environ['VISION_PROMPT'],
-  'image_base64': os.environ['IMG_B64'],
+  'image_base64': img_b64,
   'image_mime': 'image/png',
   'max_tokens': 512,
   'format': 'json',
@@ -118,6 +123,7 @@ body = {
 }
 print(json.dumps(body))
 ")
+    unset VISION_IMG_PATH VISION_PROMPT
 
     VRESP=$(printf '%s' "$V_REQ" | curl -s -X POST "$BRAIN_URL/api/brain/llm-service/vision" \
       -H 'Content-Type: application/json' \
