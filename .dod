@@ -1,23 +1,20 @@
-# DoD — cp-0422140001-brain-docker-smoke-ci
+# DoD — cp-0422152028-brain-compose-cgroup-fix
 
 ## Artifact
 
-- [x] [ARTIFACT] `.github/workflows/ci.yml` 有 docker-infra-smoke job + changes.compose output
-  - Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('docker-infra-smoke:'))process.exit(1);if(!c.includes('compose: '))process.exit(1);console.log('ok')"
+- [x] [ARTIFACT] docker-compose.yml 加顶层 mem_limit/mem_reservation/cpus
+  - Test: manual:node -e "const c=require('fs').readFileSync('docker-compose.yml','utf8');for(const f of ['mem_limit:','mem_reservation:','cpus: 2.0'])if(!c.includes(f))process.exit(1);console.log('ok')"
 
-- [x] [ARTIFACT] ci-passed job needs 含 docker-infra-smoke
-  - Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const i=c.indexOf('ci-passed:');const block=c.slice(i,i+600);if(!block.includes('docker-infra-smoke'))process.exit(1);console.log('ok')"
+- [x] [ARTIFACT] brain-docker-up.sh 加 --force-recreate
+  - Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-docker-up.sh','utf8');if(!c.includes('--force-recreate'))process.exit(1);console.log('ok')"
 
-- [x] [ARTIFACT] scripts/brain-docker-smoke.sh 存在且可执行
-  - Test: manual:node -e "const fs=require('fs');const s=fs.statSync('scripts/brain-docker-smoke.sh');if(!(s.mode & 0o111))process.exit(1);const c=fs.readFileSync('scripts/brain-docker-smoke.sh','utf8');if(!c.includes('trap cleanup_on_exit EXIT'))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] 设计 + 计划 + Learning 已提交
-  - Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-brain-docker-smoke-ci-design.md');require('fs').accessSync('docs/superpowers/plans/2026-04-22-brain-docker-smoke-ci.md');require('fs').accessSync('docs/learnings/cp-0422140001-brain-docker-smoke-ci.md')"
+- [x] [ARTIFACT] 设计 + Learning 已提交
+  - Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-brain-compose-cgroup-fix-design.md');require('fs').accessSync('docs/learnings/cp-0422152028-brain-compose-cgroup-fix.md')"
 
 ## Behavior
 
-- [x] [BEHAVIOR] smoke 脚本 bash -n 语法通过
-  - Test: manual:bash -c "bash -n scripts/brain-docker-smoke.sh"
+- [x] [BEHAVIOR] compose config 合法
+  - Test: manual:bash -c "docker compose -f docker-compose.yml config > /dev/null 2>&1"
 
-- [x] [BEHAVIOR] docker-infra-smoke 3 步本机模拟全绿（build / deps / compose config）
-  - Test: manual:bash -c "docker build -f packages/brain/Dockerfile -t cecelia-brain:ci . > /dev/null && docker run --rm cecelia-brain:ci node -e 'require(\"@langchain/langgraph\");require(\"express\")' && : > .env.docker && docker compose -f docker-compose.yml config > /dev/null"
+- [x] [BEHAVIOR] 脚本 bash -n 通过
+  - Test: manual:bash -c "bash -n scripts/brain-docker-up.sh"

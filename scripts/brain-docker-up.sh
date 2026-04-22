@@ -33,10 +33,10 @@ for i in {1..15}; do
   fi
 done
 
-# 3. 起 Docker Brain 容器
-echo "→ docker-compose up -d node-brain"
+# 3. 起 Docker Brain 容器（--force-recreate 确保 compose 配置改动生效，不复用旧容器）
+echo "→ docker-compose up -d --force-recreate node-brain"
 cd "$ROOT_DIR"
-docker-compose up -d node-brain
+docker-compose up -d --force-recreate node-brain
 
 # 4. 等容器 healthy（最多 90 秒 — 含 40s start_period + migration 时间）
 echo "→ 等容器 healthy..."
