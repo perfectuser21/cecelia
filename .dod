@@ -1,12 +1,12 @@
-# DoD — muted test coverage
+# DoD — test DB isolation
 
-- [x] [ARTIFACT] LiveMonitorPage.muted-toggle.test.tsx 新文件含 5 锚点
-      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/live-monitor/LiveMonitorPage.muted-toggle.test.tsx','utf8');const m=(c.match(/\bit\(/g)||[]).length;if(m<5)process.exit(1);console.log('锚点数='+m)"
-- [x] [ARTIFACT] muted-toggle-e2e.integration.test.js 新文件
-      Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/muted-toggle-e2e.integration.test.js')"
-- [x] [BEHAVIOR] LiveMonitorPage.muted-toggle.test.tsx 本地跑绿
-      Test: tests/dashboard/LiveMonitorPage.muted-toggle.test.tsx
-- [x] [BEHAVIOR] muted-toggle-e2e integration 本地跑绿（需 pg）
-      Test: tests/brain/integration/muted-toggle-e2e.integration.test.js
-- [x] [ARTIFACT] 设计文档 + Learning 已提交
-      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-muted-test-coverage-design.md');require('fs').accessSync('docs/learnings/cp-0422094645-muted-test-coverage.md')"
+- [x] [ARTIFACT] setup-test-db.sh 新文件（可执行 + unset NODE_ENV）
+      Test: manual:node -e "const fs=require('fs');const s=fs.statSync('packages/brain/scripts/setup-test-db.sh');if(!(s.mode & 0o100))process.exit(1);const c=fs.readFileSync('packages/brain/scripts/setup-test-db.sh','utf8');if(!c.includes('unset NODE_ENV'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] db-config.js 含 isTest guard
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/db-config.js','utf8');if(!c.includes('isTest')||!c.includes('禁止在测试环境'))process.exit(1)"
+- [x] [BEHAVIOR] db-config-guard.test.js 4 场景全绿
+      Test: tests/brain/db-config-guard.test.js
+- [x] [BEHAVIOR] 本地 cecelia_test DB 存在
+      Test: manual:bash -c "psql postgres -lqt | cut -d\| -f1 | grep -qw cecelia_test"
+- [x] [ARTIFACT] 设计 + Learning 文档已提交
+      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-test-db-isolation-design.md');require('fs').accessSync('docs/learnings/cp-0422111326-test-db-isolation.md')"
