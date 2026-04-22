@@ -30,6 +30,7 @@ router.post('/', async (req, res) => {
     let {
       title,
       description = null,
+      prd = null,
       priority = 'P2',
       task_type = 'dev',
       project_id = null,
@@ -48,11 +49,15 @@ router.post('/', async (req, res) => {
     }
 
     // ─── C2: Schema normalize at entry point ────────────────────────
-    // 1. PRD fallback: payload.prd_summary → description
-    //    上游创建者（Brain scheduler / talk / 人工）把 PRD 写在不同字段。
+    // 1. PRD fallback: description > payload.prd_summary > prd
+    //    上游创建者（Brain scheduler / talk / 人工 / 外部 API）把 PRD 写在不同字段。
     //    入口层统一收敛到 description，使 pre-flight 和下游消费者只看一个字段。
+    //    优先级：显式 description > payload.prd_summary > 顶层 prd。
     if (!description && payload?.prd_summary) {
       description = payload.prd_summary;
+    }
+    if (!description && prd) {
+      description = prd;
     }
 
     // 2. Priority normalize: semantic labels → P0/P1/P2
