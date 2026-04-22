@@ -9,10 +9,12 @@ VERSION=$(node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').
 
 echo "=== Building cecelia-brain:${VERSION} ==="
 
+# 从 monorepo 根构建（workspace hoisted deps 在 root node_modules）
 docker build \
   -t "cecelia-brain:${VERSION}" \
   -t "cecelia-brain:latest" \
-  "$ROOT_DIR/packages/brain"
+  -f "$ROOT_DIR/packages/brain/Dockerfile" \
+  "$ROOT_DIR"
 
 echo ""
 echo "=== Build complete ==="
