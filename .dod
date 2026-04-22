@@ -1,12 +1,12 @@
-# DoD — SettingsPage 加 muted toggle
+# DoD — task API prd fallback + 清 pre-flight 存量
 
-- [x] [ARTIFACT] SettingsPage.tsx 含 muted card
-      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/settings/SettingsPage.tsx','utf8');if(!c.includes('/api/brain/settings/muted')||!c.includes('飞书静默开关'))process.exit(1)"
-- [x] [ARTIFACT] ToggleCard 组件化（config-driven）
-      Test: manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/settings/SettingsPage.tsx','utf8');if(!c.includes('function ToggleCard')||!c.includes('CONFIGS'))process.exit(1)"
-- [x] [BEHAVIOR] SettingsPage.test.tsx 6 场景全绿
-      Test: tests/dashboard/SettingsPage.test.tsx
-- [x] [BEHAVIOR] tsc 无新 SettingsPage 相关 error
-      Test: manual:bash -c "cd apps/dashboard && npx tsc --noEmit 2>&1 | grep SettingsPage || echo ok"
+- [x] [ARTIFACT] task-tasks.js destructure 含 prd + 3 层 fallback
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/task-tasks.js','utf8');if(!c.includes('prd = null')||!c.match(/!description && prd/))process.exit(1)"
+- [x] [ARTIFACT] migration 243 新文件
+      Test: manual:node -e "require('fs').accessSync('packages/brain/migrations/243_clear_pre_flight_rejected_backlog.sql')"
+- [x] [BEHAVIOR] task-api-prd-fallback 4 场景单测绿
+      Test: tests/brain/task-api-prd-fallback.test.js
+- [x] [BEHAVIOR] migration 跑后 pre_flight_failed 存量 = 0
+      Test: manual:psql cecelia -tAc "SELECT CASE WHEN COUNT(*)=0 THEN 1 ELSE 0 END FROM tasks WHERE metadata->>'pre_flight_failed'='true'"
 - [x] [ARTIFACT] 设计 + Learning 文档已提交
-      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-21-settings-muted-card-design.md');require('fs').accessSync('docs/learnings/cp-0421233137-settings-muted-card.md')"
+      Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-task-api-prd-fallback-design.md');require('fs').accessSync('docs/learnings/cp-0422084553-task-api-prd-fallback.md')"
