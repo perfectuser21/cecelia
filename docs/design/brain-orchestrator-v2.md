@@ -2,7 +2,7 @@
 
 **日期**: 2026-04-22
 **作者**: Alex + Claude Opus 4.7
-**状态**: Draft — 待评审后拆 Plan
+**状态**: 评审决策已定（见 §12）— 可拆 Initiative 进入执行
 
 ---
 
@@ -99,7 +99,7 @@ Brain 进程（`packages/brain/`, port 5221）当前至少承载 15 种角色：
 
 **T3**: LangGraph checkpoint + resume 真正生效 — Brain 崩溃重启，workflow 从最后 checkpoint 继续，不从头跑。
 
-**T4**: Observer（watchdog / shepherd / patrol）从"派发链路里的阻塞点"变成"读 DB 当前状态的旁观者"，tick 永不阻塞超过 5 秒。
+**T4**: Observer（watchdog / shepherd / patrol）从"派发链路里的阻塞点"变成"读 DB 当前状态的旁观者"，tick 永不阻塞超过 5 秒。**硬规矩**：workflow graph node 只允许 async I/O，禁止 sync 计算 > 50ms（大 JSON parse / regex / 密集循环要 `setImmediate` 让出 event loop）。违反规则的 node 在 P4 CI 加 benchmark 兜底。
 
 ### 3.2 非目标（v2 不做）
 
@@ -115,7 +115,7 @@ Brain 进程（`packages/brain/`, port 5221）当前至少承载 15 种角色：
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Layer 3: Scheduler  (packages/brain/src/scheduler/)          │
+│ Layer 1: Scheduler  (packages/brain/src/scheduler/)          │
 │   职责：决定 "何时启动 workflow"                              │
 │   实现：tick.js（瘦身后）+ cron                              │
 │   输出：enqueue(workflow_name, input)                        │
@@ -127,16 +127,16 @@ Brain 进程（`packages/brain/`, port 5221）当前至少承载 15 种角色：
 │   职责：决定 "workflow 内部怎么走"                            │
 │   实现：graph-runtime.js (LangGraph wrapper)                 │
 │   数据：workflows/*.graph.js（声明式）+ Postgres checkpointer │
-│   输出：调 Layer 1 spawn()                                   │
+│   输出：调 Layer 3 spawn()                                   │
 │   不包含：docker 细节、账号选择逻辑、DB I/O                   │
 └────────────────────────┬─────────────────────────────────────┘
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Layer 1: Executor  (packages/brain/src/spawn/)               │
+│ Layer 3: Executor  (packages/brain/src/spawn/)               │
 │   职责：决定 "一次 spawn 怎么跑"                              │
 │   实现：spawn.js（唯一对外 API）+ middleware/ 链             │
-│   中间件：account-rotation / cascade / cost-cap / retry /    │
-│          cap-marking / billing / logging                     │
+│   中间件：外层（cost-cap/logging/billing/pre）                │
+│          + 内层 attempt-loop（rotation × cascade × run × 429）│
 │   输出：docker run                                           │
 │   不包含：workflow 状态、调度策略                            │
 └──────────────────────────────────────────────────────────────┘
@@ -150,7 +150,7 @@ Brain 进程（`packages/brain/`, port 5221）当前至少承载 15 种角色：
 
 ### 4.1 关键原则
 
-1. **单向依赖**：Layer 3 → 2 → 1，不允许反向
+1. **单向依赖**：Layer 1 → 2 → 3，不允许反向（Scheduler 调 Orchestrator，Orchestrator 调 Executor）
 2. **唯一 spawn 原语**：任何地方要跑 docker 只能调 `spawn()`，没有"escape hatch"（直接调 `executeInDocker`）
 3. **Workflow = graph 文件**：所有多步骤任务都是 LangGraph 图；即便单步也写成 1-node graph
 4. **Observer 只读**：watchdog / shepherd 不嵌入派发链，只读 DB 状态纠偏
@@ -158,7 +158,7 @@ Brain 进程（`packages/brain/`, port 5221）当前至少承载 15 种角色：
 
 ---
 
-## 5. Layer 1 — Spawn Policy Layer（核心）
+## 5. Layer 3 — Spawn Policy Layer（核心）
 
 ### 5.1 对外 API
 
@@ -184,30 +184,86 @@ export async function spawn(opts) { ... }
 
 **所有当前直接调 `executeInDocker` 的地方都迁到 `spawn()`**。`executeInDocker` 变成 `spawn/` 内部实现细节，不再对外导出。
 
-### 5.2 Middleware 链（按顺序执行）
+### 5.2 Middleware 结构（两层洋葱）
 
 存放：`packages/brain/src/spawn/middleware/`
 
-| # | middleware | 职责 | 对应旧代码 |
-|---|---|---|---|
-| 1 | `account-rotation.js` | 选账号（selectBest + cap/auth fallback） | PR #2534 已落 executeInDocker 入口 |
-| 2 | `cascade.js` | 模型降级链（Sonnet→Opus→Haiku→MiniMax） | executor.js:3072 `getCascadeForTask` |
-| 3 | `resource-tier.js` | 内存/CPU tier | docker-executor.js `resolveResourceTier` |
-| 4 | `cost-cap.js` | budget guard（超预算拒绝 spawn） | 零散各处的 costUsd 累加 |
-| 5 | `retry-circuit.js` | 熔断 + 失败重试 | 散落 ad-hoc |
-| 6 | `spawn-pre.js` | 写 prompt / cidfile / forensic log | docker-executor.js 前置 |
-| 7 | `docker-run.js` | 实际执行 docker run | docker-executor.js 核心 |
-| 8 | `cap-marking.js` | 检测 stdout `api_error_status:429` → `markSpendingCap` | 当前只在 routes/execution.js:798 |
-| 9 | `billing.js` | 写 `dispatched_account` 到 task payload | executor.js:3083 |
-| 10 | `logging.js` | 统一 spawn log 格式 + metric | 散落 console.log |
+**关键洞察**：账号轮换 / 模型降级 / 429 重试本质是**同一个"尝试循环"**——429 失败时要能回到循环顶重选账号或降模型，不是单向 bubble。所以 middleware 必须分两层：
 
-每个 middleware = `async (ctx, next) => { ... await next(); ... }`（Koa/Express 风格）。
+```
+spawn(opts)
+ ├─ 外层（每次 spawn 只执行一次，Koa 洋葱模型）
+ │    1. cost-cap.js     超预算直接拒绝（读 budget table）
+ │    2. spawn-pre.js    写 prompt / cidfile / forensic log
+ │    3. logging.js      统一 spawn 入口 log + metric
+ │    4. billing.js      spawn 结束后写 dispatched_account / cost_usd
+ │
+ └─ 内层 attempt-loop（可能迭代 N 次，直到成功或候选穷尽）
+      ┌────────────────────────────────────────────────────┐
+      │ for (account, model) in cascade × rotation:        │
+      │   a. account-rotation.js  选账号（skip capped/auth）│
+      │   b. cascade.js           选模型 override           │
+      │   c. resource-tier.js     内存/CPU tier             │
+      │   d. docker-run.js        实际 docker run           │
+      │   e. cap-marking.js       stdout 检测 429/auth 失败 │
+      │        → markSpendingCap / markAuthFailed           │
+      │        → continue 下一候选                          │
+      │   f. retry-circuit.js     transient 失败有限次重试  │
+      │ 如果候选全部耗尽：raise NoViableCandidateError      │
+      └────────────────────────────────────────────────────┘
+```
 
-### 5.3 配置：显式 env 优先级
+**外层 middleware 签名**：`async (ctx, next) => { ... await next(); ... }`（Koa 风格）
+**内层 attempt-loop** 是显式 for 循环，不是 middleware 链——每次 iteration 产生一个候选 `(account, model)`，跑一次 docker-run，根据结果决定 retry / next candidate / fail。
 
-- Caller 显式传 `opts.env.CECELIA_CREDENTIALS` → middleware 1 检查是否 capped，没 capped 则尊重
-- Caller 显式传 `opts.env.CLAUDE_MODEL_OVERRIDE` → middleware 2 不覆盖
-- Caller 不传 → middleware 自动走 selectBestAccount + cascade
+候选遍历顺序见 §5.3。
+
+### 5.2.1 与旧代码的映射
+
+| 层 | 组件 | 对应旧代码 |
+|---|---|---|
+| 外层 | cost-cap | 零散各处的 costUsd 累加（新建） |
+| 外层 | spawn-pre | docker-executor.js 前置逻辑 |
+| 外层 | logging | 散落 console.log |
+| 外层 | billing | executor.js:3083 `dispatched_account` 写入 |
+| 内层 | account-rotation | PR #2534 已落 executeInDocker 入口（保留） |
+| 内层 | cascade | executor.js:3072 `getCascadeForTask` |
+| 内层 | resource-tier | docker-executor.js `resolveResourceTier` |
+| 内层 | docker-run | docker-executor.js 核心（抽出） |
+| 内层 | cap-marking | routes/execution.js:798 `markSpendingCap`（搬到这层） |
+| 内层 | retry-circuit | 散落 ad-hoc（归一） |
+
+### 5.3 候选遍历顺序（cascade × rotation）
+
+**原则：质量优先于成本**——主力模型是 Sonnet，账号是囤出来的备胎。先把所有账号的 Sonnet 用完，再降级到 Opus。
+
+**默认候选序列**（按 attempt-loop 迭代顺序）：
+
+```
+1. account1 / sonnet
+2. account2 / sonnet
+3. account3 / sonnet      ← 先横切：把 Sonnet 的三把钥匙都试过
+4. account1 / opus
+5. account2 / opus
+6. account3 / opus        ← 再横切 Opus
+7. account1 / haiku
+8. account2 / haiku
+9. account3 / haiku
+10. minimax               ← 最后兜底（如果 cascade 配置启用）
+```
+
+每步 attempt-loop 进入 `account-rotation` 会 skip 掉 capped / auth-failed 的账号，直接跳到下一候选。
+
+**显式 override 优先级**：
+
+- Caller 传 `opts.env.CECELIA_CREDENTIALS=accountX`
+  → attempt-loop 尝试 `(accountX, sonnet)`
+  → 若 accountX capped/auth-failed：**保留指定模型，横切其它账号**（accountY/sonnet → accountZ/sonnet）
+  → 不要自作主张降级模型（用户显式指定账号通常是为了归账/调试）
+- Caller 传 `opts.env.CLAUDE_MODEL_OVERRIDE=opus`
+  → attempt-loop 强制 `model=opus`，只做账号横切，不做 cascade 降级
+- Caller 同时传账号和模型：只尝试一次，失败就 raise（完全由 caller 负责）
+- Caller 都不传：走上面的默认序列
 
 ### 5.4 验收
 
@@ -272,27 +328,41 @@ export const harnessInitiativeGraph = new StateGraph({
 
 ### 6.3 runtime — `graph-runtime.js`
 
+**thread_id 语义**：
+
+- 规则：**`thread_id = task.id + ':' + attempt_n`**（例如 `task_abc123:1`）
+- 任务首次派发：`attempt_n = 1`，新 thread
+- 任务 retry（Brain 主动重派、shepherd 放行、用户手动 re-dispatch）：`attempt_n` 递增，**新 thread、新 checkpoint、从头跑**
+- 任务**同一 attempt 内 Brain 崩溃重启**：thread_id 不变，自动 resume 从最后 checkpoint 接着跑
+
+**为啥不复用 checkpoint**？老 checkpoint 里藏着上一次失败时的脏状态（中间变量、节点输出）。硬接着跑等于带着污染的上下文继续——定位 bug 会疯，而且违反"retry 应该是重置尝试"的直觉。干净重来多花一点 LLM token，换来确定性语义，值。
+
 ```js
 /**
  * 唯一的 workflow 运行入口。
  *
  * 关键行为：
- *   - 若 thread_id 已有 checkpoint → 自动 resume（传 null 作为 input）
+ *   - thread_id 格式强制 {task_id}:{attempt_n}
+ *   - 若 thread_id 已有 checkpoint → 自动 resume（Brain 崩溃重启场景）
  *   - 否则从 input 起跑
  *   - 统一 Postgres checkpointer（一次配置，所有 graph 共用）
  *   - 自动 retry + 超时保护
  */
-export async function runWorkflow(workflowName, threadId, input = null) {
+export async function runWorkflow(workflowName, taskId, attemptN, input = null) {
   const graph = getWorkflow(workflowName);
+  const threadId = `${taskId}:${attemptN}`;
   const config = { configurable: { thread_id: threadId } };
 
-  // 自动 resume：若 thread 有 checkpoint，input = null 让 LangGraph 从 checkpoint 恢复
+  // 自动 resume：若 thread 有 checkpoint（Brain 崩溃重启），input=null 让 LangGraph 从 checkpoint 恢复
+  // 注意：retry 场景 caller 负责递增 attempt_n，这里不会匹配到老 checkpoint
   const hasCheckpoint = await checkpointerHasThread(threadId);
   const actualInput = hasCheckpoint ? null : input;
 
   return await graph.invoke(actualInput, config);
 }
 ```
+
+**数据库影响**：`tasks` 表增加 `attempt_n` 列（默认 1），retry 时 `UPDATE tasks SET attempt_n = attempt_n + 1, status = 'queued'`。老 checkpoint 不主动清理（留给后续分析 / 观察之用），由 checkpoint 存活期 + Postgres TTL 自然回收。
 
 ### 6.4 Scheduler 接入
 
@@ -307,7 +377,7 @@ async function tick() {
   // 按 task_type 路由到对应 workflow
   const workflowName = taskTypeToWorkflow(task.task_type);
   // fire-and-forget: 启动 workflow，不 await（避免 tick 阻塞）
-  runWorkflow(workflowName, task.id, task).catch(logError);
+  runWorkflow(workflowName, task.id, task.attempt_n ?? 1, task).catch(logError);
 }
 ```
 
@@ -332,20 +402,31 @@ watchdog / shepherd / pipeline-patrol 目前嵌入 tick 调用链，它们做决
 
 ### 7.2 v2 设计
 
-所有 observer 搬到 `packages/brain/src/observers/`，**只读 DB 状态**：
+所有 observer 搬到 `packages/brain/src/observers/`，**只读 DB 当前状态**。
+
+**关键修正**：不能只看"有没有 checkpoint 记录" — 一个崩了 4 小时前的 workflow 也有 checkpoint，但它不是活跃的。"活跃"必须用**近期心跳信号**判断：
 
 ```js
 // observers/shepherd.js
+const LIVENESS_WINDOW_MS = 90_000; // 90s 内无心跳视作不活跃
+
 export async function shepherdLoop() {
   setInterval(async () => {
     const suspects = await pool.query(`
-      SELECT t.id, t.status, t.retry_count, ...
+      SELECT t.id, t.status, t.retry_count, t.attempt_n
       FROM tasks t
       WHERE t.status IN ('queued', 'in_progress')
         AND t.retry_count >= 3
         AND NOT EXISTS (
-          -- 关键：排除当前正在跑的（有对应 docker container 或 checkpoint 活跃）
-          SELECT 1 FROM checkpoints WHERE thread_id = t.id
+          -- "活跃"信号 A：当前 attempt 的 checkpoint 最近写过
+          SELECT 1 FROM checkpoints c
+          WHERE c.thread_id = t.id || ':' || t.attempt_n
+            AND c.created_at > NOW() - INTERVAL '90 seconds'
+        )
+        AND NOT EXISTS (
+          -- "活跃"信号 B：有 cidfile 对应的 docker container 仍在 running
+          SELECT 1 FROM running_containers rc
+          WHERE rc.task_id = t.id AND rc.status = 'running'
         )
     `);
     for (const task of suspects.rows) {
@@ -355,7 +436,9 @@ export async function shepherdLoop() {
 }
 ```
 
-Observer 不再和 tick 共享 event loop，独立 setInterval。
+`running_containers` 视图可以由 docker-run middleware 写入/维护（cidfile → 容器 ID → `docker inspect` 状态）。或者更简单：保留 `tasks.heartbeat_at` 字段，每个 node 开始/结束时 orchestrator 自动 bump。
+
+**Observer 独立**：所有 observer 走独立 `setInterval`，不和 tick 共享 event loop。**单独开一个 PG 连接池**（避免 observer 慢查询饿死 dispatch）。
 
 ### 7.3 验收
 
@@ -402,6 +485,8 @@ Observer 不再和 tick 共享 event loop，独立 setInterval。
 
 ### P3: Workflow Registry（2 周）
 
+**执行纪律**：**P3 不用 harness，全程 `/dev` 手动推**。原因：P3 搬的代码就是 `harness-initiative-runner.js` / `harness-gan-graph.js` 自己——一边跑 harness 一边搬 harness 会产生 race condition，跑到一半代码被改名。
+
 **核心交付**：`workflows/*.graph.js` + `orchestrator/graph-runtime.js` + tick 瘦身。
 
 **步骤**：
@@ -442,15 +527,16 @@ Observer 不再和 tick 共享 event loop，独立 setInterval。
 
 | 风险 | 缓解 |
 |---|---|
-| P2 迁移期间 middleware 行为与旧 dispatchTask 不一致 → 生产任务失败 | 每个 middleware 独立 PR + 充分单测；先用 feature flag `SPAWN_V2_ENABLED` 灰度 |
-| P3 LangGraph resume 边界情况多（subgraph / interrupt / parallel node） | 先迁 `dev-task` 这种单 node graph，再迁复杂的 |
-| Brain 重构期间 harness E2E 一直挂 | 保留老 runner 双跑兼容 3 个版本，逐步切流量 |
+| P2 迁移期间 middleware 行为与旧 dispatchTask 不一致 → 生产任务失败 | 每个 middleware 独立 PR + 充分单测；feature flag `SPAWN_V2_ENABLED` 灰度（单个 env var 可即时切回） |
+| P3 LangGraph resume 边界情况多（subgraph / interrupt / parallel node） | 先迁 `dev-task` 这种单 node graph 灰度稳 2 天，再迁 `harness-gan` / `content-pipeline` |
+| Brain 重构期间 harness E2E 一直挂 | **不做双跑兼容**（长期技术债陷阱）。P3 合并即删老 runner；灰度靠 `WORKFLOW_RUNTIME=v1\|v2` + task_type 白名单 |
+| P2/P3 递归问题（harness 自己跑在 Brain 里，用 harness 改 Brain） | P2 可用 harness（改 executor.js 不动 harness 本身）；**P3 禁用 harness，走 `/dev` 手动推**（P3 搬的就是 harness runner 自己） |
 
 ### 9.2 回滚策略
 
-- P2: `SPAWN_V2_ENABLED=false` 回到旧 dispatchTask 路径
-- P3: 保留 `harness-initiative-runner.js`，task_router 配置决定走老 runner 还是新 graph
-- P4: observer 独立 setInterval 可以关掉回到嵌入式（添加 flag）
+- **P2**：env var `SPAWN_V2_ENABLED=false`，立即回到旧 `dispatchTask` 路径。flag 上线至 P2 合并后 1 周观察稳定，之后**删除 flag + 删除老路径**（不保留"以防万一"）
+- **P3**：env var `WORKFLOW_RUNTIME=v1|v2`，配合 task_type 白名单按 workflow 粒度切。灰度至所有 workflow 都切到 v2 + 观察 1 周 + 再删 flag 和老 runner
+- **P4**：observer 独立 setInterval 是单向修改（observer 不再嵌 tick），不需要 flag。回滚等于把 observer loop import 回 tick，是 git revert 级别的操作
 
 ---
 
@@ -522,12 +608,34 @@ Temporal 生态重，本次不引入。但学它的分层思想。
 
 ---
 
-## 12. 评审问题（给 Alex）
+## 12. 评审决策（已定 — 2026-04-22）
 
-1. **范围**：v2 是否只做 Brain 内部？还是顺带把 `docker-executor.js` 独立成 `packages/spawn/` 子包？（我倾向内部先，抽包 v3 考虑）
-2. **LangGraph 版本**：当前是 `@langchain/langgraph@x.x`，v2 是否升到最新？（需要兼容性评估）
-3. **回滚 flag**：P2-P4 每个都加 feature flag，还是只 P2 加？（我倾向只 P2 加，P3/P4 迁移前做完整回归测试）
-4. **workflow 命名约定**：`.graph.js` 还是 `.workflow.js`？（LangGraph 生态多用 graph，倾向 `.graph.js`）
-5. **observer 独立进程还是线程**：独立 setInterval 够了还是需要独立 worker 进程？（setInterval 先行，若 pressure 再拆进程）
+### 12.1 §12 原 5 问
 
-评审通过后拆 Plan 进 P1。
+| # | 问题 | 决策 | 理由 |
+|---|---|---|---|
+| 1 | v2 范围 | **只改 Brain 内部**，不抽 `packages/spawn/` 子包 | spawn API 稳定至少 1 个季度后再考虑抽包。现在抽等于把内部 API 过早锁死 |
+| 2 | LangGraph 版本 | **不升级**，保持当前 `@langchain/langgraph` 版本 | 重构 + 依赖升级同时干 = bug 双倍难定位。v2 稳定后单独 bump |
+| 3 | 回滚 flag | **P2 和 P3 都加，P4 不加** | P2 `SPAWN_V2_ENABLED` + P3 `WORKFLOW_RUNTIME=v1\|v2`；P4 是旁路改造，revert 即可 |
+| 4 | workflow 命名 | **`.graph.js`** | 对齐 LangGraph 生态 |
+| 5 | observer 独立进程 vs setInterval | **setInterval 先行**，独立 PG 连接池 | 压力大了再拆进程。独立连接池避免慢查询饿死 dispatch |
+
+### 12.2 补充决策（来自评审）
+
+| # | 问题 | 决策 |
+|---|---|---|
+| 6 | Middleware 结构 | **两层洋葱**：外层 Koa 风格 + 内层 attempt-loop（rotation × cascade × 429）。见 §5.2 |
+| 7 | cascade × rotation 遍历顺序 | **先横切账号保持 Sonnet**，全满再降 Opus / Haiku。质量优先。见 §5.3 |
+| 8 | thread_id 语义 | **`task.id + ':' + attempt_n`**，retry 递增 attempt_n 开新 thread，不复用老 checkpoint。见 §6.3 |
+| 9 | Layer 编号方向 | **L1 Scheduler（顶）→ L2 Orchestrator → L3 Executor（底）**，符合"L1 是入口"直觉 |
+| 10 | P3 是否用 harness | **禁用**，走 `/dev` 手动推（避免 harness 自改 harness 的 race condition）。见 §8 P3 |
+| 11 | P3 双跑兼容 | **不做**。P3 合并即删老 runner，灰度靠 `WORKFLOW_RUNTIME` flag + task_type 白名单 |
+
+### 12.3 下一步
+
+- P1：`/dev` 写三个 README 骨架（不值得 harness）
+- P2：Harness Initiative，按 §5.2 两层结构 × 10 个 PR
+- P3：`/dev` 手动推，按 §6 搬 workflow，遵守"先单 node graph 再复杂的"节奏
+- P4：Harness Initiative，按 §7 拆 observer
+
+spec 冻结，进入执行阶段。
