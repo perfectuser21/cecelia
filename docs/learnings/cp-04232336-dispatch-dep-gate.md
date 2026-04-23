@@ -16,21 +16,22 @@ Initiative 2303a935 的 4 个 Generator 子任务 ws1/ws2/ws3/ws4 明确在 `tas
 - 结果：`task_dependencies` 只在 Initiative Runner "拉一个" 场景下生效；一旦 Initiative 子任务回落到普通 queued 状态，依赖门禁消失
 
 ## 修复
-在 `selectNextDispatchableTask` 的 for 循环内，现有 payload 检查之后追加：
+把 `task_dependencies` 表检查**下沉进主 SELECT 的 WHERE 子句**（`NOT EXISTS` 子查询），而非在 JS 层 for 循环内 per-task 查询。这样做的额外好处：
 
-```js
-const tableDepResult = await pool.query(
-  `SELECT COUNT(*) AS blocked_count
-   FROM task_dependencies d
-   JOIN tasks dep ON dep.id = d.to_task_id
-   WHERE d.from_task_id = $1
-     AND dep.status NOT IN ('completed', 'cancelled', 'canceled')`,
-  [task.id]
-);
-if (parseInt(tableDepResult.rows[0].blocked_count) > 0) continue;
+1. **性能**：N 个候选从 "N+1 次 SQL 往返" 变 "1 次 SQL 含 JOIN"，PG 可以用索引
+2. **测试稳定性**：15+ 现存 dispatch/initiative-lock/integration 测试都用 `mockResolvedValueOnce` 按顺序 mock 单次 `pool.query`，如果在 for 循环内多加一次查询会**全部打乱**
+3. **语义对齐**：与同文件已有的 `project_id` Initiative 锁子查询（`NOT EXISTS` + `t2`）同层、同风格
+
+```sql
+AND NOT EXISTS (
+  SELECT 1 FROM task_dependencies d
+  JOIN tasks dep ON dep.id = d.to_task_id
+  WHERE d.from_task_id = t.id
+    AND dep.status NOT IN ('completed', 'cancelled', 'canceled')
+)
 ```
 
-两层检查并存：任一未满足即 skip。
+原有 `payload.depends_on` 软检查保留在 for 循环内。两层并存：任一未满足即 skip。
 
 ## 下次预防
 - [ ] 任何新增"依赖表达机制"必须同时 patch **所有** dispatcher 入口（目前至少 `selectNextDispatchableTask` + `nextRunnableTask`，未来增加 worker 选 task 前也要核对）

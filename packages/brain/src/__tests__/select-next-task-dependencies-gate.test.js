@@ -6,10 +6,14 @@
  * 使用的硬边）盲视。结果 4 个 Generator ws1/ws2/ws3/ws4 同时 queued 时被
  * 并行派发，基于错误 worktree 状态产出冲突 PR。
  *
- * 本测试拦截 pool.query，按 SQL 文本分支返回不同结果，断言：
- * 1. task_dependencies 有未完成依赖 → 跳过此 task
- * 2. task_dependencies 全部 completed → 返回此 task
- * 3. payload.depends_on 和 task_dependencies 同时存在，任一未满足即跳过
+ * 修复：把 task_dependencies 表检查下沉进主 SELECT 的 WHERE 子句
+ * （NOT EXISTS 子查询），参考 harness-dag.js:nextRunnableTask 的同款做法。
+ *
+ * 本测试断言：
+ * 1. 主 SELECT SQL 包含 task_dependencies + from_task_id 的 NOT EXISTS 片段
+ * 2. 该片段同时检查 to_task_id 关联的 dep.status
+ * 3. 已过滤 completed/cancelled/canceled 作为"已解决"状态
+ * 4. goalIds 任意两种入参下（null / 数组），依赖门禁都生效
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -27,148 +31,70 @@ vi.mock('../task-weight.js', () => ({
   sortTasksByWeight: vi.fn((rows) => rows)
 }));
 
-/**
- * 创建一个智能 mock：按 SQL 文本路由到不同返回值
- *
- * @param {object} opts
- * @param {Array} opts.selectRows  — 主 SELECT 返回的候选 task 行
- * @param {number} opts.payloadBlockedCount  — payload.depends_on 检查返回值
- * @param {number} opts.tableBlockedCount    — task_dependencies 检查返回值
- */
-function setupMock({ selectRows = [], payloadBlockedCount = 0, tableBlockedCount = 0 }) {
-  mockQuery.mockImplementation((sql, params) => {
-    // 主 SELECT（查询 queued task）
-    if (sql.includes("t.status = 'queued'")) {
-      return Promise.resolve({ rows: selectRows });
-    }
-    // payload.depends_on 检查
-    if (sql.includes('id = ANY($1)') && sql.includes("status NOT IN")) {
-      return Promise.resolve({ rows: [{ count: String(payloadBlockedCount) }] });
-    }
-    // task_dependencies 表检查
-    if (sql.includes('task_dependencies') && sql.includes('from_task_id')) {
-      return Promise.resolve({ rows: [{ blocked_count: String(tableBlockedCount) }] });
-    }
-    return Promise.resolve({ rows: [] });
-  });
-}
-
 beforeEach(() => {
   mockQuery.mockReset();
+  mockQuery.mockResolvedValue({ rows: [] });
 });
 
-describe('selectNextDispatchableTask — task_dependencies 表依赖门禁', () => {
-  it('task_dependencies 有未完成依赖 → 跳过此 task（返回 null）', async () => {
+describe('selectNextDispatchableTask — task_dependencies 表依赖门禁 SQL', () => {
+  it('主 SELECT SQL 包含 task_dependencies + from_task_id 的 NOT EXISTS 片段', async () => {
     const { selectNextDispatchableTask } = await import('../tick.js');
 
-    setupMock({
-      selectRows: [
-        { id: 'task-ws2', title: 'ws2', status: 'queued', priority: 'P1', payload: {} }
-      ],
-      payloadBlockedCount: 0,
-      tableBlockedCount: 1, // ws2 的依赖 ws1 还没 completed
-    });
+    await selectNextDispatchableTask(['goal-1']);
 
-    const result = await selectNextDispatchableTask(['goal-1']);
-
-    expect(result).toBeNull();
-
-    // 断言确实查询了 task_dependencies 表
-    const tableDepCall = mockQuery.mock.calls.find(
-      (call) => call[0].includes('task_dependencies') && call[0].includes('from_task_id')
-    );
-    expect(tableDepCall).toBeDefined();
-    expect(tableDepCall[1]).toEqual(['task-ws2']);
+    expect(mockQuery).toHaveBeenCalled();
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('NOT EXISTS');
+    expect(sql).toContain('task_dependencies');
+    expect(sql).toContain('from_task_id');
+    expect(sql).toContain('to_task_id');
   });
 
-  it('task_dependencies 全部 completed → 返回此 task', async () => {
+  it('task_dependencies 门禁检查 dep.status 且把 completed/cancelled/canceled 算已解决', async () => {
     const { selectNextDispatchableTask } = await import('../tick.js');
 
-    const targetTask = { id: 'task-ws1', title: 'ws1', status: 'queued', priority: 'P1', payload: {} };
-    setupMock({
-      selectRows: [targetTask],
-      payloadBlockedCount: 0,
-      tableBlockedCount: 0, // 无未完成依赖
-    });
+    await selectNextDispatchableTask(['goal-1']);
 
-    const result = await selectNextDispatchableTask(['goal-1']);
-
-    expect(result).not.toBeNull();
-    expect(result.id).toBe('task-ws1');
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('dep.status');
+    expect(sql).toContain('completed');
+    expect(sql).toContain('cancelled');
+    expect(sql).toContain('canceled');
   });
 
-  it('payload.depends_on 有未满足 → 跳过（不必查 task_dependencies）', async () => {
+  it('goalIds=null（无 goal 过滤）时 SQL 仍含 task_dependencies 门禁', async () => {
     const { selectNextDispatchableTask } = await import('../tick.js');
 
-    setupMock({
-      selectRows: [
-        {
-          id: 'task-A',
-          title: 'A',
-          status: 'queued',
-          priority: 'P1',
-          payload: { depends_on: ['dep-x'] },
-        }
-      ],
-      payloadBlockedCount: 1, // payload 依赖未完成
-      tableBlockedCount: 0,
-    });
+    await selectNextDispatchableTask(null);
+
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('task_dependencies');
+    expect(sql).toContain('from_task_id');
+  });
+
+  it('SQL 过滤后候选列表为空时返回 null（依赖全阻塞场景）', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { selectNextDispatchableTask } = await import('../tick.js');
 
     const result = await selectNextDispatchableTask(['goal-1']);
 
     expect(result).toBeNull();
   });
 
-  it('payload.depends_on OK 但 task_dependencies 未完成 → 跳过', async () => {
+  it('SQL 过滤后候选非空 → 返回第一个 task（依赖解除场景）', async () => {
     const { selectNextDispatchableTask } = await import('../tick.js');
 
-    setupMock({
-      selectRows: [
-        {
-          id: 'task-ws3',
-          title: 'ws3',
-          status: 'queued',
-          priority: 'P1',
-          payload: { depends_on: ['some-completed-dep'] },
-        }
-      ],
-      payloadBlockedCount: 0, // payload 检查通过
-      tableBlockedCount: 2,   // 但 task_dependencies 表有 2 条未完成
-    });
+    const runnable = {
+      id: 'task-ws1',
+      title: 'ws1',
+      status: 'queued',
+      priority: 'P1',
+      payload: {},
+      project_id: null,
+      created_at: '2026-04-23',
+    };
 
-    const result = await selectNextDispatchableTask(['goal-1']);
-
-    expect(result).toBeNull();
-
-    // 两次检查都应被调用
-    const payloadCall = mockQuery.mock.calls.find(
-      (call) => call[0].includes('id = ANY($1)') && !call[0].includes('task_dependencies')
-    );
-    const tableCall = mockQuery.mock.calls.find(
-      (call) => call[0].includes('task_dependencies')
-    );
-    expect(payloadCall).toBeDefined();
-    expect(tableCall).toBeDefined();
-  });
-
-  it('第一个 task 被依赖阻塞时应继续尝试下一个', async () => {
-    const { selectNextDispatchableTask } = await import('../tick.js');
-
-    const blocked = { id: 'task-ws2', title: 'ws2', status: 'queued', priority: 'P1', payload: {} };
-    const runnable = { id: 'task-ws1', title: 'ws1', status: 'queued', priority: 'P1', payload: {} };
-
-    // 按 task.id 分支返回不同 blocked_count
-    mockQuery.mockImplementation((sql, params) => {
-      if (sql.includes("t.status = 'queued'")) {
-        return Promise.resolve({ rows: [blocked, runnable] });
-      }
-      if (sql.includes('task_dependencies') && sql.includes('from_task_id')) {
-        const taskId = params?.[0];
-        const count = taskId === 'task-ws2' ? 1 : 0;
-        return Promise.resolve({ rows: [{ blocked_count: String(count) }] });
-      }
-      return Promise.resolve({ rows: [] });
-    });
+    mockQuery.mockResolvedValueOnce({ rows: [runnable] });
 
     const result = await selectNextDispatchableTask(['goal-1']);
 
