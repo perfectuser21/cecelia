@@ -14,6 +14,7 @@ vi.mock('fs', async () => {
     readFileSync: vi.fn(),
     rmSync: vi.fn(),
     statSync: vi.fn(),
+    readdirSync: vi.fn(),
   };
 });
 
@@ -32,7 +33,7 @@ vi.mock('../executor.js', () => ({
   removeActiveProcess: vi.fn(),
 }));
 
-import { existsSync, readFileSync, rmSync, statSync } from 'fs';
+import { existsSync, readFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolveTaskPids } from '../watchdog.js';
 import { removeActiveProcess } from '../executor.js';
@@ -42,8 +43,10 @@ import {
   cleanupOrphanWorktrees,
   runZombieCleanup,
   findTaskIdForWorktree,
+  isWorktreeActive,
   STALE_SLOT_MIN_AGE_MS,
   ORPHAN_WORKTREE_MIN_AGE_MS,
+  ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS,
 } from '../zombie-cleaner.js';
 
 // ============================================================
@@ -229,7 +232,9 @@ describe('findTaskIdForWorktree', () => {
 
 describe('cleanupOrphanWorktrees', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks(); // 清掉 mock 实现（含 once 队列），避免 test 间残留
+    // 默认无 .dev-mode* 文件（isWorktreeActive 返回 false），不影响原有 case 行为
+    readdirSync.mockReturnValue([]);
   });
 
   it('git worktree list 失败 → 返回 errors，不崩溃', async () => {
@@ -352,6 +357,42 @@ describe('cleanupOrphanWorktrees', () => {
     expect(result.removed).toBe(1);
     expect(rmSync).toHaveBeenCalledWith(wtPath, { recursive: true, force: true });
   });
+
+  it('worktree 有 fresh .dev-mode.branch → 跳过清理（活跃信号预检）', async () => {
+    const now = Date.now();
+    execSync.mockReturnValue('worktree /Users/administrator/worktrees/cecelia/active-wt\n\n');
+    existsSync.mockReturnValue(true);
+    statSync.mockImplementation((p) => {
+      if (p.endsWith('.dev-mode.cp-yyy')) return { mtimeMs: now - 10_000 };
+      // worktree 目录本身的 mtime 用于 age 判定
+      return { mtimeMs: now - 40 * 60 * 1000 }; // 40 min, 超 30 min grace
+    });
+    readdirSync.mockReturnValue(['.dev-mode.cp-yyy', 'packages']);
+    readFileSync.mockReturnValue('');
+    const pool = makePool([]);
+
+    const result = await cleanupOrphanWorktrees(pool);
+
+    expect(result.removed).toBe(0);
+    // 未调 git worktree remove
+    const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
+    expect(removeCalls).toHaveLength(0);
+  });
+
+  it('worktree 无 .dev-mode* 文件 → 正常清理（不受新信号影响）', async () => {
+    const now = Date.now();
+    execSync
+      .mockReturnValueOnce('worktree /Users/administrator/worktrees/cecelia/dead-wt\n\n')
+      .mockReturnValueOnce(''); // git worktree remove 成功
+    existsSync.mockReturnValue(true);
+    statSync.mockReturnValue({ mtimeMs: now - 60 * 60 * 1000 }); // 1h age 超 grace
+    readdirSync.mockReturnValue(['packages', 'docs']); // 无 .dev-mode*
+    const pool = makePool([]);
+
+    const result = await cleanupOrphanWorktrees(pool);
+
+    expect(result.removed).toBe(1);
+  });
 });
 
 // ============================================================
@@ -360,7 +401,8 @@ describe('cleanupOrphanWorktrees', () => {
 
 describe('runZombieCleanup', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks(); // 清掉 mock 实现（含 once 队列），避免 test 间残留
+    readdirSync.mockReturnValue([]); // 默认无 .dev-mode* 文件
   });
 
   it('返回结构化报告', async () => {
@@ -406,5 +448,53 @@ describe('constants', () => {
 
   it('ORPHAN_WORKTREE_MIN_AGE_MS = 30 minutes', () => {
     expect(ORPHAN_WORKTREE_MIN_AGE_MS).toBe(30 * 60 * 1000);
+  });
+
+  it('ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS = 24 hours', () => {
+    expect(ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS).toBe(24 * 60 * 60 * 1000);
+  });
+});
+
+// ============================================================
+// isWorktreeActive (Phase B2-bis active signal)
+// ============================================================
+
+describe('isWorktreeActive', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fresh .dev-mode.${branch} → true', () => {
+    const now = Date.now();
+    readdirSync.mockReturnValue(['.dev-mode.cp-xxx-branch', 'packages', 'docs']);
+    statSync.mockImplementation((p) => {
+      if (p.endsWith('.dev-mode.cp-xxx-branch')) return { mtimeMs: now - 60_000 };
+      throw new Error('unexpected stat');
+    });
+    expect(isWorktreeActive('/fake/wt')).toBe(true);
+  });
+
+  it('老 .dev-mode 无后缀 fresh → true', () => {
+    const now = Date.now();
+    readdirSync.mockReturnValue(['.dev-mode']);
+    statSync.mockReturnValue({ mtimeMs: now - 60_000 });
+    expect(isWorktreeActive('/fake/wt')).toBe(true);
+  });
+
+  it('所有 .dev-mode* stale (>24h) → false', () => {
+    const now = Date.now();
+    readdirSync.mockReturnValue(['.dev-mode.cp-xxx', '.dev-mode.cp-yyy']);
+    statSync.mockReturnValue({ mtimeMs: now - 25 * 60 * 60 * 1000 });
+    expect(isWorktreeActive('/fake/wt')).toBe(false);
+  });
+
+  it('无 .dev-mode* 文件 → false', () => {
+    readdirSync.mockReturnValue(['packages', 'docs', 'README.md']);
+    expect(isWorktreeActive('/fake/wt')).toBe(false);
+  });
+
+  it('readdirSync throws → false', () => {
+    readdirSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    expect(isWorktreeActive('/fake/wt')).toBe(false);
   });
 });
