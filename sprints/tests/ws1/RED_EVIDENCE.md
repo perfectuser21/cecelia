@@ -1,40 +1,35 @@
-# Workstream 1 — Red Evidence (TDD Red 阶段)
+# Workstream 1 — Red Evidence (TDD Phase 1)
 
-**执行时间**: 2026-04-22T11:21:49Z
-**Vitest 版本**: 1.6.1
-**命令**: `./node_modules/.bin/vitest run sprints/tests/ws1/ --reporter=verbose --no-coverage`
+**捕获命令**: `/workspace/node_modules/.bin/vitest run sprints/tests/ws1/time.test.ts --reporter=verbose`（vitest 1.6.1，从仓库根跑，使用默认 config）
 
-## 预期 Red 数
+**预期红的原因**: Generator 尚未创建 `packages/brain/src/routes/time.js`，测试文件首行 `import timeRouter from '../../../packages/brain/src/routes/time.js'` 解析失败，触发 suite-level 加载错误。8 条 `it()` 因 suite 未能进入 collect 阶段 ⇒ 全部统计为 FAIL（no tests ran）。
 
-`it()` 块总数：**10**
-- 3 iso：returns 200/ignores query/within 5s
-- 3 timezone：format/strict offset/fallback UTC
-- 3 unix：10-digit/within 5s/Number type
-- 1 router：3 routes registered
-
-## 实际 Red
+**实际输出**（节选 /tmp/ws1-red.log 末尾）:
 
 ```
-FAIL  sprints/tests/ws1/time-endpoints.test.ts [ sprints/tests/ws1/time-endpoints.test.ts ]
-Error: Failed to load url ../../../packages/brain/src/routes/time-endpoints.js
-       (resolved id: ../../../packages/brain/src/routes/time-endpoints.js)
-       in /workspace/sprints/tests/ws1/time-endpoints.test.ts. Does the file exist?
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sprints/tests/ws1/time.test.ts [ sprints/tests/ws1/time.test.ts ]
+Error: Failed to load url ../../../packages/brain/src/routes/time.js (resolved id: ../../../packages/brain/src/routes/time.js) in /workspace/sprints/tests/ws1/time.test.ts. Does the file exist?
+ ❯ loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
 
  Test Files  1 failed (1)
       Tests  no tests
 ```
 
-## 解读
+**it() 清单（Generator 实现后必须全绿）**:
 
-测试文件在 import 阶段就失败 —— `packages/brain/src/routes/time-endpoints.js` 模块不存在。这是 TDD Red 的标准形态：**所有 10 个 it() 都因模块加载失败而无法执行**，等价于 10 个失败。Generator 实现 WS1 后，模块就绪，10 个测试将逐一通过（Green）。
+1. `GET /api/brain/time responds with HTTP 200 and application/json content type`
+2. `response body contains exactly the three keys iso, timezone, unix — no others`
+3. `iso is a string parseable as a Date within 2 seconds of request time`
+4. `unix is a positive integer in seconds (at most 10 digits), not milliseconds`
+5. `timezone is a non-empty string`
+6. `new Date(iso).getTime() and unix * 1000 agree within 2000ms`
+7. `ignores query parameters and returns server-side current time (cannot be poisoned by ?iso=evil etc.)`
+8. `timezone falls back to "UTC" when Intl.DateTimeFormat resolves timeZone to empty/undefined`
 
-如果 Generator 写出"仅创建文件但 handler 行为错"的假实现，这 10 个 it() 中至少有以下断言会抓出来：
-- ISO_RE 正则不匹配 → iso it 失败
-- offset 用 `+0800` 格式 → strict offset it 失败
-- unix 返回毫秒（13 位）→ 10-digit it 失败
-- unix 返回字符串 → Number type it 失败
-- handler 不存在或 router 路径错 → router registration it 失败
+**Green 条件**: Generator 按 `contract-dod-ws1.md` 实现 `routes/time.js` 并在 `routes.js` 聚合后，重跑同命令应得 `Tests  8 passed (8) · Test Files  1 passed (1)`。
 
-## Red 校验通过
-
-预期 ≥ 1 个 FAIL；实际 1 个 FAIL（覆盖 10 个 it）。✓
+**备注**: Brain 的 `packages/brain/vitest.config.js` 的 `test.include` 只覆盖 `src/**` + `../../tests/packages/brain/**`，不包含 `sprints/tests/**`。因此本合同测试需由仓库根 vitest 或 Harness v6 调度脚本显式传入文件路径执行；不会被 brain-ci 常规测试 include 自动拉入，也不会污染 brain 的 main 绿线。
