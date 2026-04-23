@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 真机 E2E — GET /api/brain/time（SC-003）
-# 对应 tests/ws1/time.test.ts 的核心 BEHAVIOR 断言（Round 3）：
+# 对应 tests/ws1/time.test.ts 的核心 BEHAVIOR 断言（Round 4）：
 #   - 字段白名单 / unix 类型与位数 / iso 严格 ISO 8601 UTC Z / iso↔unix 一致性
 #   - timezone 非空 / query 污染免疫 / 非 GET 方法不泄漏 / body 污染免疫
 #
@@ -8,6 +8,9 @@
 #   - iso 锁死为 UTC Z 后缀（不允许 ±HH:MM 本地偏移），timezone 字段独立反映服务器元信息
 #   - 非 GET 方法 (POST/PUT/PATCH/DELETE) 不得返回 200 且不得泄漏 iso/timezone/unix
 #   - POST body {iso,unix,timezone} 不污染响应（handler 根本不执行）
+#
+# Round 4 立场（Reviewer Round 3 问题 3）：
+#   - step 8 状态码收紧为硬枚举 {404, 405}（不再是「非 200」软阈值），便于机械判定
 #
 # 依赖: bash, curl, jq
 # 用法: BRAIN_URL=http://localhost:5221 bash tests/e2e/brain-time.sh
@@ -98,17 +101,20 @@ if jq -e '.iso == "evil" or .unix == 1 or .timezone == "Fake/Zone"' "$BODY_FILE"
   exit 7
 fi
 
-# ---- step 8: 非 GET 方法 + body 污染免疫（Round 3 新增 — Reviewer Round 2 问题 2） ----
-# 约束：POST/PUT/PATCH/DELETE 到 /api/brain/time 必须非 200；响应体不得出现 iso/timezone/unix key；
-#       即便 POST body 注入 {iso:"evil",unix:1,timezone:"Fake/Zone"} 也不得回显。
+# ---- step 8: 非 GET 方法 + body 污染免疫（Round 3 新增 — Reviewer Round 2 问题 2；Round 4 状态码硬枚举 — Reviewer Round 3 问题 3） ----
+# 约束：POST/PUT/PATCH/DELETE 到 /api/brain/time：
+#   - 状态码必须 ∈ {404, 405}（Round 4 收紧，不再是「非 200」软阈值）
+#   - 响应体不得出现 iso/timezone/unix key
+#   - 即便 POST body 注入 {iso:"evil",unix:1,timezone:"Fake/Zone"} 也不得回显 "evil"/"Fake/Zone" 字面量
 for METHOD in POST PUT PATCH DELETE; do
   METHOD_BODY_FILE="$(mktemp)"
   METHOD_CODE=$(curl -sS -X "$METHOD" \
     -H 'Content-Type: application/json' \
     -d '{"iso":"evil","unix":1,"timezone":"Fake/Zone"}' \
     -o "$METHOD_BODY_FILE" -w '%{http_code}' "$ENDPOINT" || echo 000)
-  if [ "$METHOD_CODE" = "200" ]; then
-    echo "[FAIL 8] ${METHOD} ${ENDPOINT} returned HTTP 200; non-GET must not trigger handler"
+  # Round 4 硬枚举：{404, 405}
+  if [ "$METHOD_CODE" != "404" ] && [ "$METHOD_CODE" != "405" ]; then
+    echo "[FAIL 8] ${METHOD} ${ENDPOINT} returned HTTP ${METHOD_CODE}; Round 4 requires status in {404, 405}"
     cat "$METHOD_BODY_FILE"
     rm -f "$METHOD_BODY_FILE"
     exit 8

@@ -142,15 +142,20 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     spy.mockRestore();
   });
 
-  // ===== Round 3 新增 — Reviewer Round 2 问题 2：非 GET 方法 + body 污染立场 =====
+  // ===== Round 3 新增 / Round 4 收紧 — Reviewer Round 3 问题 3：机械化 status + raw-text 断言 =====
 
-  it('non-GET methods (POST/PUT/PATCH/DELETE) on /api/brain/time do NOT return HTTP 200 and do NOT leak iso/timezone/unix', async () => {
-    // Round 3 立场：端点仅声明 router.get('/time')；其它 HTTP 方法不得触发 handler。
-    // 不绑定具体状态码（404 vs 405 是实现细节），但必须非 200，且响应体不得含三字段任何一个 key。
+  it('non-GET methods (POST/PUT/PATCH/DELETE) on /api/brain/time respond with status in {404,405} and do NOT leak iso/timezone/unix keys', async () => {
+    // Round 4 立场（Reviewer Round 3 问题 3）：端点仅声明 router.get('/time')；
+    // 其它 HTTP 方法不得触发 handler，状态码必须 ∈ {404, 405} 硬枚举（不再是「非 200」软阈值）：
+    //   - Express 默认未匹配路由 → 404
+    //   - 若启用 methodNotAllowed 中间件 → 405
+    //   - 其它值（500/200/302/204 等）均视为假实现失败
+    // 响应体中不得包含 iso/timezone/unix 任一 key（覆盖「handler 执行但不泄漏」 vs 「handler 永不执行」两种语义）。
+    const ALLOWED_STATUS = [404, 405];
     const app = makeApp();
     for (const method of ['post', 'put', 'patch', 'delete'] as const) {
       const res = await request(app)[method]('/api/brain/time');
-      expect(res.status).not.toBe(200);
+      expect(ALLOWED_STATUS).toContain(res.status);
       // 响应体若为 JSON 对象，则不得包含任何服务器时间字段
       if (res.body && typeof res.body === 'object' && !Array.isArray(res.body)) {
         expect(res.body).not.toHaveProperty('iso');
@@ -160,18 +165,26 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     }
   });
 
-  it('POST with JSON body containing {iso,unix,timezone} does NOT poison response (handler never executes)', async () => {
-    // Round 3 立场：body 污染免疫 = 非 GET 不触发 handler，所以即便带恶意 body
-    // 也不会有 iso/timezone/unix 产出。反向验证：body 中的 "evil"/1/"Fake/Zone" 不得回显。
+  it('POST with JSON body containing {iso,unix,timezone} does NOT poison response — raw res.text must not contain "evil" or "Fake/Zone" literals', async () => {
+    // Round 4 立场（Reviewer Round 3 问题 3）：body 污染免疫需在 raw response.text 与 parsed body 双层都机械判定。
+    // 不再只靠「非 200」软断言——同样要求 status ∈ {404, 405}，并追加 res.text 字面量反向断言，
+    // 覆盖「handler 执行但不回显」 vs 「handler 根本不执行」的边界模糊场景。
     const res = await request(makeApp())
       .post('/api/brain/time')
       .set('Content-Type', 'application/json')
       .send({ iso: 'evil', unix: 1, timezone: 'Fake/Zone' });
-    expect(res.status).not.toBe(200);
-    const bodyText = typeof res.text === 'string' ? res.text : JSON.stringify(res.body ?? {});
-    // 响应正文不得回显恶意 body 字段值
+    expect([404, 405]).toContain(res.status);
+
+    // Round 4 新增：对 raw response.text 直接做字面量 not.toContain 检查
+    const rawText = typeof res.text === 'string' ? res.text : '';
+    expect(rawText).not.toContain('evil');
+    expect(rawText).not.toContain('Fake/Zone');
+
+    // 兼容：若响应正文是 buffer/空/非 JSON，仍对序列化形式做反向 regex 双保险
+    const bodyText = rawText !== '' ? rawText : JSON.stringify(res.body ?? {});
     expect(bodyText).not.toMatch(/\bevil\b/);
     expect(bodyText).not.toMatch(/Fake\/Zone/);
+
     // 若响应为结构化 JSON，则不得有 iso/unix/timezone key
     if (res.body && typeof res.body === 'object' && !Array.isArray(res.body)) {
       expect(res.body).not.toHaveProperty('iso');
