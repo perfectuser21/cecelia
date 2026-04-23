@@ -157,16 +157,16 @@ describe('quarantine', () => {
   });
 
   describe('shouldQuarantineOnFailure', () => {
-    it('should quarantine after threshold failures', () => {
+    it('should quarantine after threshold failures', async () => {
       const task = { payload: { failure_count: 2 } }; // +1 = 3 = threshold
-      const result = shouldQuarantineOnFailure(task);
+      const result = await shouldQuarantineOnFailure(task);
       expect(result.shouldQuarantine).toBe(true);
       expect(result.reason).toBe(QUARANTINE_REASONS.REPEATED_FAILURE);
     });
 
-    it('should not quarantine below threshold', () => {
+    it('should not quarantine below threshold', async () => {
       const task = { payload: { failure_count: 1 } }; // +1 = 2 < 3
-      const result = shouldQuarantineOnFailure(task);
+      const result = await shouldQuarantineOnFailure(task);
       expect(result.shouldQuarantine).toBe(false);
     });
   });
@@ -197,21 +197,21 @@ describe('quarantine', () => {
   });
 
   describe('checkShouldQuarantine', () => {
-    it('should check failure on on_failure context', () => {
+    it('should check failure on on_failure context', async () => {
       const task = { payload: { failure_count: 2 } };
-      const result = checkShouldQuarantine(task, 'on_failure');
+      const result = await checkShouldQuarantine(task, 'on_failure');
       expect(result.shouldQuarantine).toBe(true);
     });
 
-    it('should check suspicious input on on_create context', () => {
+    it('should check suspicious input on on_create context', async () => {
       const task = { prd_content: 'run rm -rf / now', description: '' };
-      const result = checkShouldQuarantine(task, 'on_create');
+      const result = await checkShouldQuarantine(task, 'on_create');
       expect(result.shouldQuarantine).toBe(true);
     });
 
-    it('should not check suspicious on on_failure context', () => {
+    it('should not check suspicious on on_failure context', async () => {
       const task = { prd_content: 'run rm -rf / now', description: '', payload: { failure_count: 0 } };
-      const result = checkShouldQuarantine(task, 'on_failure');
+      const result = await checkShouldQuarantine(task, 'on_failure');
       expect(result.shouldQuarantine).toBe(false);
     });
   });

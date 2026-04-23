@@ -30,33 +30,33 @@ beforeEach(() => {
 });
 
 describe('shouldQuarantineOnFailure — quota_exhausted', () => {
-  it('返回 shouldQuarantine=false 当 task.status 为 quota_exhausted', () => {
+  it('返回 shouldQuarantine=false 当 task.status 为 quota_exhausted', async () => {
     const task = {
       id: 'test-id',
       status: 'quota_exhausted',
       payload: { failure_count: 2 }, // 已有 2 次失败，但 status 是 quota_exhausted
     };
-    const result = shouldQuarantineOnFailure(task);
+    const result = await shouldQuarantineOnFailure(task);
     expect(result.shouldQuarantine).toBe(false);
   });
 
-  it('正常触发隔离：failed 状态且 failure_count >= FAILURE_THRESHOLD', () => {
+  it('正常触发隔离：failed 状态且 failure_count >= FAILURE_THRESHOLD', async () => {
     const task = {
       id: 'test-id',
       status: 'failed',
       payload: { failure_count: 2 }, // 2 + 1 = 3 >= FAILURE_THRESHOLD(3)
     };
-    const result = shouldQuarantineOnFailure(task);
+    const result = await shouldQuarantineOnFailure(task);
     expect(result.shouldQuarantine).toBe(true);
   });
 
-  it('不隔离：failed 状态但 failure_count 未达阈值', () => {
+  it('不隔离：failed 状态但 failure_count 未达阈值', async () => {
     const task = {
       id: 'test-id',
       status: 'failed',
       payload: { failure_count: 1 }, // 1 + 1 = 2 < 3
     };
-    const result = shouldQuarantineOnFailure(task);
+    const result = await shouldQuarantineOnFailure(task);
     expect(result.shouldQuarantine).toBe(false);
   });
 });
