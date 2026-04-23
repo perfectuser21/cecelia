@@ -24,6 +24,7 @@ import path from 'path';
 import os from 'os';
 import pool from './db.js';
 import { runDocker } from './spawn/middleware/docker-run.js';
+import { resolveAccount } from './spawn/middleware/account-rotation.js';
 
 const DEFAULT_IMAGE = process.env.CECELIA_RUNNER_IMAGE || 'cecelia/runner:latest';
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.CECELIA_DOCKER_TIMEOUT_MS || '900000', 10); // 15 min
@@ -350,49 +351,9 @@ export function buildDockerArgs(opts, ctx = {}) {
   return { args, envFinal, name, memoryMB, cpuCores, image, worktreePath, hostClaudeConfigDir, cidfile };
 }
 
-/**
- * 账号轮换 middleware — 所有 executeInDocker spawn 自动接入 Brain 的账号选择。
- *
- * 规则：
- *   - opts.env.CECELIA_CREDENTIALS 未传 → selectBestAccount（动态选最佳）
- *   - 已传但 isSpendingCapped / isAuthFailed → fallback 到 selectBestAccount
- *   - 已传且可用 → 尊重显式指定（Sprint / 调试用）
- *
- * 目的：拆 harness / content-pipeline / 未来任何 sub-graph 硬编码 'account1' 的坑，
- *      让账号治理统一收口到一个地方（account-usage.js）。
- *
- * @param {object} opts — executeInDocker 入口 opts（会 mutate opts.env）
- * @param {object} [ctx]
- * @param {string} [ctx.taskId] — 用于日志
- * @param {object} [ctx.deps]   — 测试注入 { isSpendingCapped, isAuthFailed, selectBestAccount }
- */
-export async function resolveAccountForOpts(opts, ctx = {}) {
-  opts.env = opts.env || {};
-  try {
-    const deps = ctx.deps || await import('./account-usage.js');
-    const { isSpendingCapped, isAuthFailed, selectBestAccount } = deps;
-    const explicit = opts.env.CECELIA_CREDENTIALS;
-    const capped = explicit ? isSpendingCapped(explicit) : false;
-    const authFailed = explicit ? isAuthFailed(explicit) : false;
-    const needsFallback = !explicit || capped || authFailed;
-    if (!needsFallback) return;
-    const selection = await selectBestAccount({ cascade: opts.cascade });
-    if (!selection || !selection.accountId) return;
-    const taskId = ctx.taskId || opts.task?.id || 'unknown';
-    if (explicit && explicit !== selection.accountId) {
-      const reason = capped ? 'spending-capped' : (authFailed ? 'auth-failed' : 'unset');
-      console.log(`[docker-executor] account rotation: ${explicit} ${reason} → ${selection.accountId} (task=${taskId})`);
-    } else if (!explicit) {
-      console.log(`[docker-executor] account selected: ${selection.accountId} model=${selection.model} (task=${taskId})`);
-    }
-    opts.env.CECELIA_CREDENTIALS = selection.accountId;
-    if (selection.modelId && !opts.env.CLAUDE_MODEL_OVERRIDE) {
-      opts.env.CECELIA_MODEL = selection.modelId;
-    }
-  } catch (err) {
-    console.warn(`[docker-executor] account rotation middleware failed (keeping caller env): ${err.message}`);
-  }
-}
+// account-rotation 已迁到 spawn/middleware/account-rotation.js（v2 P2 PR3）
+// 保留 re-export 供外部 caller（含测试）继续用旧名字
+export { resolveAccount as resolveAccountForOpts } from './spawn/middleware/account-rotation.js';
 
 export async function executeInDocker(opts) {
   if (!opts || !opts.task || !opts.task.id) {
@@ -411,7 +372,7 @@ export async function executeInDocker(opts) {
 
   // 账号轮换 middleware — 所有 spawn 自动享有"cap/auth fail fallback"。见 resolveAccountForOpts。
   opts.env = opts.env || {};
-  await resolveAccountForOpts(opts, { taskId });
+  await resolveAccount(opts, { taskId });
 
   const { args, _envFinal, name, memoryMB, cpuCores, image, cidfile } = buildDockerArgs(opts);
   const tier = resolveResourceTier(taskType);
