@@ -26,7 +26,7 @@
  */
 
 import pool from './db.js';
-import { executeInDocker } from './docker-executor.js';
+import { spawn } from './spawn/index.js';
 import { parseDockerOutput, loadSkillContent } from './harness-graph.js';
 import { parseTaskPlan, upsertTaskPlan } from './harness-dag.js';
 import { runFinalE2E, attributeFailures } from './harness-final-e2e.js';
@@ -62,7 +62,7 @@ export async function runInitiative(task, opts = {}) {
   if (!task || !task.id) throw new Error('runInitiative: task.id required');
 
   const dbPool = opts.pool || pool;
-  const executor = opts.executor || opts.dockerExecutor || executeInDocker;
+  const executor = opts.executor || opts.dockerExecutor || spawn;
   const timeoutSec = opts.timeoutSec || DEFAULT_TIMEOUT_SEC;
   const budgetUsd = opts.budgetUsd || DEFAULT_BUDGET_USD;
 
@@ -115,7 +115,7 @@ ${task.description || task.title || ''}
       prompt,
       worktreePath,
       env: {
-        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
+        // CECELIA_CREDENTIALS 不传 → spawn() middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_planner',
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,
