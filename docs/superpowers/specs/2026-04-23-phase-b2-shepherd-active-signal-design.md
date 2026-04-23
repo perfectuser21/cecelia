@@ -46,8 +46,9 @@ Task `76530023-19bd-4879-a5f0-77161fe1162e` 在 2026-04-23 12:17 UTC 被 shepher
 ### 4.1 新模块 `packages/brain/src/quarantine-active-signal.js`
 
 ```javascript
-import { readdirSync, statSync } from 'node:fs';
-import path from 'node:path';
+// 用 'fs' 而非 'node:fs'，与现有 brain 测试 mock 风格一致（vi.mock 通道独立，必须对齐）
+import { readdirSync, statSync } from 'fs';
+import path from 'path';
 
 const ACTIVE_WINDOW_MS = 90_000;
 const WORKTREE_ROOT = '/Users/administrator/worktrees/cecelia';
@@ -139,18 +140,25 @@ export async function shouldQuarantineOnFailure(task) {
 }
 ```
 
-**注意**：`shouldQuarantineOnFailure` 由同步改异步。所有 caller 需加 `await`。预期 caller：
-- `quarantine.js` 内部 `quarantineTask()` 入口调用（若有）
-- `tick.js` L995-1012 cortex 失败分支
-- `shepherd.js` 相关 quarantine 分支
+**async 传染链**（必改，不是"若"）：
 
-调用链改动需同时 grep 全仓 `shouldQuarantineOnFailure(` 确保无漏。
+真实 caller（grep 确认后）：
+- `quarantine.js:L865 checkShouldQuarantine` — 同步调 `shouldQuarantineOnFailure()`，**必须同步改 async + await**
+- `quarantine.js:L1063 handleTaskFailure` — 调 `checkShouldQuarantine()`，本身已 async，加 `await` 即可
+- **tick.js / shepherd.js 均不直接调用**，无需改
+
+因此改动清单：
+1. `shouldQuarantineOnFailure` → async
+2. `checkShouldQuarantine` → async，内部 `await shouldQuarantineOnFailure(...)`
+3. `handleTaskFailure` 里 `checkShouldQuarantine(...)` → `await checkShouldQuarantine(...)`
+
+若漏任一环节，`await` 消失返回 Promise 被判为 truthy，quarantine 决策错乱。实施 Task 必须 `grep -rn "shouldQuarantineOnFailure\|checkShouldQuarantine"` 全仓再次核验。
 
 ### 4.3 测试 `packages/brain/src/__tests__/quarantine-active-signal.test.js`
 
-**Mock 策略**：`vi.mock('node:fs')` + 静态 mtime fixture，不依赖 DB/真文件系统。
+**Mock 策略**：`vi.mock('fs')`（与源码 `import from 'fs'` 匹配；和现有 brain 测试风格一致）+ 静态 mtime fixture，不依赖 DB/真文件系统。
 
-4 个 cases：
+5 个 cases：
 
 | # | 场景 | 配置 | 断言 |
 |---|---|---|---|
@@ -158,10 +166,11 @@ export async function shouldQuarantineOnFailure(task) {
 | 2 | 有匹配文件但 mtime > 90s | mtime=now-120s | `active:false, reason:'no_fresh_dev_mode'` |
 | 3 | 无匹配（无前缀） | 文件名不含 task_id 前缀 | `active:false, reason:'no_fresh_dev_mode'` |
 | 4 | taskId invalid | 传 null | `active:false, reason:'invalid_task_id'` |
+| 5 | **多文件混合**（常态）| 3 个并行 .dev-mode：stale mismatch + fresh mismatch + fresh match（mtime=now-10s） | `active:true, source` 指向 match 且 fresh 的那个，其它被跳过 |
 
 ### 4.4 现有 quarantine.js 测试回归
 
-`quarantine.test.js` / `quarantine-release.test.js` 等现有 8 个测试不退化。若它们直接调 `shouldQuarantineOnFailure()` 需加 `await`。
+现有 8 个 quarantine-* 测试文件。grep 确认：**3 个文件含 8 次直接 `shouldQuarantineOnFailure(` + 3 次 `checkShouldQuarantine(` 调用**（全部需加 `await`，不是"若"是"必须"）。实施时先 grep 列出所有点，逐个加 `await`，再跑全套 quarantine 测试验证 0 退化。
 
 ## 5. 成功标准
 
@@ -185,7 +194,7 @@ export async function shouldQuarantineOnFailure(task) {
 |---|---|
 | interactive 深度 think > 90s 无 tool call → 被 quarantine | 下次 failure 会再判，不是永久豁免；可接受 |
 | 真死 task 的 .dev-mode 文件残留 mtime 新（rare，cleanup 失败时）| zombie-cleaner 独立处理 .dev-mode 孤儿，本方案只读 |
-| `shouldQuarantineOnFailure` 改 async 遗漏 caller → 得到 Promise 当 bool 判断永远 truthy | 全仓 grep + CI 测试保护 |
+| `shouldQuarantineOnFailure` / `checkShouldQuarantine` 改 async 遗漏 caller → 得到 Promise 当 bool 判断永远 truthy | §4.2 async 传染链清单三处 + grep 全仓确认 + 现有 11 个测试调用点逐个加 await + CI 测试保护 |
 | console.log debug 污染日志 | 单行 info 级，可接受；如嫌噪音后续改 debug-level |
 
 ## 8. 回滚
