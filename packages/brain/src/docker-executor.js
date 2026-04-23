@@ -27,6 +27,12 @@ import pool from './db.js';
 const DEFAULT_IMAGE = process.env.CECELIA_RUNNER_IMAGE || 'cecelia/runner:latest';
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.CECELIA_DOCKER_TIMEOUT_MS || '900000', 10); // 15 min
 const DEFAULT_PROMPT_DIR = process.env.CECELIA_PROMPT_DIR || '/tmp/cecelia-prompts';
+// HOST_PROMPT_DIR：Brain 在容器里运行时，prompt 文件是写到 Brain 容器内 DEFAULT_PROMPT_DIR
+// （通常 tmpfs），但 docker-executor 给子容器构造 mount 源路径由**宿主 docker daemon 解析**，
+// 必须是宿主路径。compose 里把宿主某目录 bind-mount 到 Brain 容器 /tmp/cecelia-prompts，
+// 并 export HOST_PROMPT_DIR=<宿主路径>。没设 HOST_PROMPT_DIR 时 fallback 到 DEFAULT_PROMPT_DIR
+// （Brain 跑在宿主上的老路径，两边路径一致）。同 HOST_HOME 语义。
+const HOST_PROMPT_DIR = process.env.HOST_PROMPT_DIR || DEFAULT_PROMPT_DIR;
 const DEFAULT_WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia';
 
 /**
@@ -330,7 +336,8 @@ export function buildDockerArgs(opts, ctx = {}) {
     `--memory=${memoryMB}m`,
     `--cpus=${cpuCores}`,
     '-v', `${worktreePath}:/workspace`,
-    '-v', `${DEFAULT_PROMPT_DIR}:/tmp/cecelia-prompts:ro`,
+    // mount 源路径用 HOST_PROMPT_DIR（宿主解析），目标路径固定 /tmp/cecelia-prompts（容器内）
+    '-v', `${HOST_PROMPT_DIR}:/tmp/cecelia-prompts:ro`,
     ...extraVolumes,
     ...envToArgs(envFinal),
     image,
