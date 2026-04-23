@@ -38,59 +38,9 @@ const DEFAULT_PROMPT_DIR = process.env.CECELIA_PROMPT_DIR || '/tmp/cecelia-promp
 const HOST_PROMPT_DIR = process.env.HOST_PROMPT_DIR || DEFAULT_PROMPT_DIR;
 const DEFAULT_WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia';
 
-/**
- * task_type → 资源档位映射（与产品 PRD 一致）
- *   light  : 512 MB / 1 core   — planner / report / 短链 LLM 调用
- *   normal : 1   GB / 1 core   — propose / review / eval / fix
- *   heavy  : 1.5 GB / 2 cores  — generate / dev（写代码 + git/CI）
- */
-const RESOURCE_TIERS = {
-  light: { memoryMB: 512, cpuCores: 1 },
-  normal: { memoryMB: 1024, cpuCores: 1 },
-  heavy: { memoryMB: 1536, cpuCores: 2 },
-  // pipeline 专属：content pipeline 的 research/copywrite stage 含 Claude CLI + 长 prompt
-  // + tool use，实测峰值 800-1100MB，1024 tier 偶发 OOM exit 137。给 2048 留 2× 冗余。
-  'pipeline-heavy': { memoryMB: 2048, cpuCores: 1 },
-};
-
-const TASK_TYPE_TIER = {
-  // light
-  planner: 'light',
-  sprint_planner: 'light',
-  harness_planner: 'light',
-  report: 'light',
-  sprint_report: 'light',
-  harness_report: 'light',
-  daily_report: 'light',
-  briefing: 'light',
-  content_export: 'light',            // 只 tar + ssh，无 LLM
-  // normal
-  content_copy_review: 'normal',       // 纯 bash + curl 调 Brain LLM API，容器里无 Claude CLI 用量
-  content_image_review: 'normal',      // 同上，vision 禁用时更轻
-  // heavy
-  dev: 'heavy',
-  codex_dev: 'heavy',
-  generate: 'heavy',
-  content_generate: 'heavy',           // SVG napi 渲染 9 PNG 峰值 ~1200MB
-  sprint_generator: 'heavy',
-  harness_generator: 'heavy',
-  initiative_plan: 'heavy',
-  // pipeline-heavy — content pipeline 里 Claude CLI 吃 context 最重的两步
-  content_research: 'pipeline-heavy',  // Claude 跑长 prompt + 网查 + 生成 findings.json 7KB
-  content_copywrite: 'pipeline-heavy', // Claude 生成 copy.md + article.md 共 8-9KB
-  // 其他默认 normal
-};
-
-/**
- * 根据 task_type 解析资源档位
- * @param {string} taskType
- * @returns {{memoryMB:number, cpuCores:number, tier:string}}
- */
-export function resolveResourceTier(taskType) {
-  const tier = TASK_TYPE_TIER[taskType] || 'normal';
-  const spec = RESOURCE_TIERS[tier];
-  return { ...spec, tier };
-}
+// resource-tier 配置已迁到 spawn/middleware/resource-tier.js（v2 P2 PR7）
+// 保留 re-export 供外部 caller（executor.js / __tests__/docker-executor.test.js）继续用旧路径
+export { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER } from './spawn/middleware/resource-tier.js';
 
 /**
  * 检测 docker 二进制是否可用（缓存结果）
