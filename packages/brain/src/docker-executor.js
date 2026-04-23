@@ -25,6 +25,7 @@ import os from 'os';
 import pool from './db.js';
 import { runDocker } from './spawn/middleware/docker-run.js';
 import { resolveAccount } from './spawn/middleware/account-rotation.js';
+import { resolveCascade } from './spawn/middleware/cascade.js';
 
 const DEFAULT_IMAGE = process.env.CECELIA_RUNNER_IMAGE || 'cecelia/runner:latest';
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.CECELIA_DOCKER_TIMEOUT_MS || '900000', 10); // 15 min
@@ -372,6 +373,7 @@ export async function executeInDocker(opts) {
 
   // 账号轮换 middleware — 所有 spawn 自动享有"cap/auth fail fallback"。见 resolveAccountForOpts。
   opts.env = opts.env || {};
+  await resolveCascade(opts);
   await resolveAccount(opts, { taskId });
 
   const { args, _envFinal, name, memoryMB, cpuCores, image, cidfile } = buildDockerArgs(opts);
