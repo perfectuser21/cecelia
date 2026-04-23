@@ -106,9 +106,45 @@ process.on('unhandledRejection', (reason, promise) => {
 // Graceful shutdown — release port + close pg pool + close WS so launchd restart doesn't
 // collide with a still-bound socket on 5221.
 let __shuttingDown = false;
+const __startedAtMs = Date.now();
 async function gracefulShutdown(signal) {
   if (__shuttingDown) return;
   __shuttingDown = true;
+  // 诊断日志：Brain 周期性出现 exit 0 不明原因 — 临终 dump 上下文便于下次定位。
+  // 日志同时写 stdout 和 /tmp/shutdown-trace.jsonl（tmpfs，不持久，但 docker logs 会捕获）。
+  try {
+    const uptimeSec = Math.round((Date.now() - __startedAtMs) / 1000);
+    const memMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    let tickStats = null;
+    try {
+      const mod = await import('./src/tick.js');
+      tickStats = typeof mod.getTickStatus === 'function' ? await mod.getTickStatus() : null;
+    } catch { /* tick 模块不可用时跳过 */ }
+    const trace = {
+      ts: new Date().toISOString(),
+      signal,
+      uptime_sec: uptimeSec,
+      rss_mb: memMB,
+      pid: process.pid,
+      ppid: process.ppid,
+      tick: tickStats ? {
+        enabled: tickStats.enabled,
+        loop_running: tickStats.loop_running,
+        last_tick: tickStats.last_tick,
+        actions_today: tickStats.actions_today,
+        tick_running: tickStats.tick_running,
+      } : null,
+    };
+    console.log('[shutdown-trace]', JSON.stringify(trace));
+    // 宿主持久化（docker 重启会丢 stdout 日志但宿主 bind-mount 保留）
+    try {
+      const fs = await import('node:fs');
+      const line = JSON.stringify(trace) + '\n';
+      fs.appendFileSync('/Users/administrator/claude-output/brain-shutdown-trace.jsonl', line);
+    } catch { /* 路径可能不可写 */ }
+  } catch (traceErr) {
+    console.warn('[shutdown-trace] dump failed:', traceErr && traceErr.message);
+  }
   console.log(`${signal} received, shutting down gracefully...`);
   const deadline = Date.now() + 25_000; // stay under launchd ExitTimeOut (30s)
 
