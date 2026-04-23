@@ -12,9 +12,16 @@
 # Round 4 立场（Reviewer Round 3 问题 3）：
 #   - step 8 状态码收紧为硬枚举 {404, 405}（不再是「非 200」软阈值），便于机械判定
 #
+# Round 5 立场（Reviewer Round 4 Risk 3）：
+#   - step 8 状态码**相对化**到 Brain 真实 NotFound 行为：先 POST/PUT/PATCH/DELETE 打一条肯定不存在的路径
+#     `/api/brain/__definitely_not_a_route_xyz__`，记录 baseline 状态码；再对 /api/brain/time 同 METHOD
+#     发请求，要求状态码 == baseline。这样脚本对 Brain 全局 middleware（custom 404/auth/rate-limit）布局免疫，
+#     但仍能抓「GET /time 正确、POST /time 也返回 200」这类真实 mutation（baseline 路径不可能 200）。
+#   - baseline 本身若返回 200 或 curl 不通（000），视为 Brain 全局路径行为异常，直接 exit 75
+#
 # 依赖: bash, curl, jq
 # 用法: BRAIN_URL=http://localhost:5221 bash tests/e2e/brain-time.sh
-# 退出码: 0 = 全部通过，非 0 = 第一个失败的步骤编号
+# 退出码: 0 = 全部通过，非 0 = 第一个失败的步骤编号（75 = step 7.5 baseline 异常）
 
 set -u
 
@@ -101,9 +108,43 @@ if jq -e '.iso == "evil" or .unix == 1 or .timezone == "Fake/Zone"' "$BODY_FILE"
   exit 7
 fi
 
-# ---- step 8: 非 GET 方法 + body 污染免疫（Round 3 新增 — Reviewer Round 2 问题 2；Round 4 状态码硬枚举 — Reviewer Round 3 问题 3） ----
+# ---- step 7.5: sanity baseline（Round 5 新增 — Reviewer Round 4 Risk 3） ----
+# 背景：Round 4 硬编码「非 GET 状态码 ∈ {404, 405}」没有相对化到 Brain 的实际 NotFound 行为。
+# 若 Brain 全局 middleware（例如 auth 前置、rate limit、自定义 404 handler 等）让未命中路径返回 401/403/500，
+# 合法实现也会让 E2E exit 8。
+#
+# Round 5 路线：先对一条**肯定不存在**的路径 `/api/brain/__definitely_not_a_route_xyz__` 用各 METHOD 打一发，
+# 记录其状态码 $BASELINE_{METHOD}；再用它作为 `/api/brain/time` 非 GET 的期望值。这样脚本对 Brain 全局 middleware 布局免疫，
+# 同时仍能抓住「GET /time 正确返回 200、但 POST /time 也返回 200」这类真实 mutation（因为 baseline 路径 POST 不可能返回 200）。
+NOTFOUND_PATH="${BRAIN_URL}/api/brain/__definitely_not_a_route_xyz__"
+
+BASELINE_POST=""
+BASELINE_PUT=""
+BASELINE_PATCH=""
+BASELINE_DELETE=""
+for METHOD in POST PUT PATCH DELETE; do
+  BASELINE_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X "$METHOD" \
+    -H 'Content-Type: application/json' \
+    -d '{}' "$NOTFOUND_PATH" || echo 000)
+  echo "[e2e] sanity baseline: ${METHOD} ${NOTFOUND_PATH} -> ${BASELINE_CODE}"
+  # 若 baseline 本身就是 200（Brain 全部路径返回 200 的极端假实现）或 000（curl 彻底失败），
+  # 整条 step 8 失去意义，直接 fail
+  if [ "$BASELINE_CODE" = "200" ] || [ "$BASELINE_CODE" = "000" ]; then
+    echo "[FAIL 7.5] Brain global NotFound sanity broken — ${METHOD} to nonexistent path returned ${BASELINE_CODE}"
+    echo "           Expected any not-found-ish status (e.g. 404 / 405 / 401 / 403); got 200 or unreachable."
+    exit 75
+  fi
+  case "$METHOD" in
+    POST)   BASELINE_POST="$BASELINE_CODE" ;;
+    PUT)    BASELINE_PUT="$BASELINE_CODE" ;;
+    PATCH)  BASELINE_PATCH="$BASELINE_CODE" ;;
+    DELETE) BASELINE_DELETE="$BASELINE_CODE" ;;
+  esac
+done
+
+# ---- step 8: 非 GET 方法 + body 污染免疫（Round 3 新增；Round 5 状态码相对化到 baseline — Reviewer Round 4 Risk 3） ----
 # 约束：POST/PUT/PATCH/DELETE 到 /api/brain/time：
-#   - 状态码必须 ∈ {404, 405}（Round 4 收紧，不再是「非 200」软阈值）
+#   - 状态码必须 **等于** 同 METHOD 对 NOTFOUND_PATH 的 baseline 状态码（相对化，对 Brain 全局 404/405/custom 行为免疫）
 #   - 响应体不得出现 iso/timezone/unix key
 #   - 即便 POST body 注入 {iso:"evil",unix:1,timezone:"Fake/Zone"} 也不得回显 "evil"/"Fake/Zone" 字面量
 for METHOD in POST PUT PATCH DELETE; do
@@ -112,9 +153,16 @@ for METHOD in POST PUT PATCH DELETE; do
     -H 'Content-Type: application/json' \
     -d '{"iso":"evil","unix":1,"timezone":"Fake/Zone"}' \
     -o "$METHOD_BODY_FILE" -w '%{http_code}' "$ENDPOINT" || echo 000)
-  # Round 4 硬枚举：{404, 405}
-  if [ "$METHOD_CODE" != "404" ] && [ "$METHOD_CODE" != "405" ]; then
-    echo "[FAIL 8] ${METHOD} ${ENDPOINT} returned HTTP ${METHOD_CODE}; Round 4 requires status in {404, 405}"
+  case "$METHOD" in
+    POST)   EXPECTED_CODE="$BASELINE_POST" ;;
+    PUT)    EXPECTED_CODE="$BASELINE_PUT" ;;
+    PATCH)  EXPECTED_CODE="$BASELINE_PATCH" ;;
+    DELETE) EXPECTED_CODE="$BASELINE_DELETE" ;;
+  esac
+  # Round 5 相对化：期望 == baseline，而非硬编码 {404, 405}
+  if [ "$METHOD_CODE" != "$EXPECTED_CODE" ]; then
+    echo "[FAIL 8] ${METHOD} ${ENDPOINT} returned HTTP ${METHOD_CODE}; expected ${EXPECTED_CODE} (baseline from ${NOTFOUND_PATH})"
+    echo "         Mutation risk: GET /time correct but ${METHOD} /time exposes handler (status != NotFound baseline)."
     cat "$METHOD_BODY_FILE"
     rm -f "$METHOD_BODY_FILE"
     exit 8
