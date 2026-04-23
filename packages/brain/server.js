@@ -59,6 +59,7 @@ import registryRoutes from './src/routes/registry.js';
 import harnessRoutes from './src/routes/harness.js';
 import initiativesRoutes from './src/routes/initiatives.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
+import timeRoutes from './src/routes/time.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -271,6 +272,7 @@ app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/initiatives', initiativesRoutes);
+app.use('/api/brain/time', timeRoutes);
 
 // LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
 // 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
