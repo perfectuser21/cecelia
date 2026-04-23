@@ -1,9 +1,9 @@
 # Contract DoD — Workstream 1: `/api/brain/time` 路由模块 + 聚合器挂接 + 真机 E2E 脚本
 
 **范围**:
-- 新建 `packages/brain/src/routes/time.js`：Express Router，定义 `GET /time`，响应 JSON `{ iso, timezone, unix }`，`iso` 由 `new Date().toISOString()` 生成（UTC Z 后缀），默认导出 Router 实例；**`Intl.DateTimeFormat` 必须每次请求都调用，不得在模块顶层缓存**（Round 5：由 BEHAVIOR it(11) 动态 mock 切换机械抓取，不再用 ARTIFACT 正则检查）
+- 新建 `packages/brain/src/routes/time.js`：Express Router，定义 `GET /time`，响应 JSON `{ iso, timezone, unix }`，`iso` 由 `new Date().toISOString()` 生成（UTC Z 后缀），默认导出 Router 实例；**`Intl.DateTimeFormat` 必须每次请求都调用，不得在模块顶层缓存**（Round 5：由 BEHAVIOR it(11) 动态 mock 切换机械抓取；Round 6：该 it 已搬到独立 describe 块 + afterAll 兜底 restoreAllMocks）
 - 修改 `packages/brain/src/routes.js`：新增 `import timeRouter from './routes/time.js'`，并将其**真实聚合挂接**到某个能解析 `/time` 的挂接点（具体语法形式不限——`router.use('/path', timeRouter)` / 数组字面量 `[..., timeRouter, ...]` / 其它合法表达式皆可）。Round 5：**删除 Round 4 的 mount-expression 正则 ARTIFACT**（Reviewer 指出该正则既会误杀合法挂接又可被字符串/注释绕过），改由 `routes-aggregator.test.ts` 行为测试从聚合器根 `GET /api/brain/time` 验证 200 + 三字段，只要行为通过即视为挂接正确
-- 新建/更新 `tests/e2e/brain-time.sh`：真机 curl + jq E2E（SC-003），Round 5 step 7.5 新增 sanity baseline（对一条肯定不存在路径同 METHOD 打一发记录 baseline 状态码），step 8 非 GET 期望值**相对化**到 baseline（不再硬编码 `{404, 405}`）
+- 新建/更新 `tests/e2e/brain-time.sh`：真机 curl + jq E2E（SC-003）。Round 5 step 7.5 新增 sanity baseline。**Round 6（Reviewer Round 5 Risk 1）**：引入 `ACCEPTABLE_NOT_FOUND_STATUS = {401 403 404 405 415 422 429 500}` 集合；step 7.5 断言 baseline ∈ 集合（否则 exit 75）；step 8 断言非 GET 状态 ∈ 集合 **且 ≠ 200**（放弃 Round 5 的 `== baseline` 等式 — Reviewer 指出该等式对端点级 vs 全局级 middleware 布局不同的合法实现过严）
 
 **大小**: S（<30 行 Brain 源码改动 + ~160 行 bash 脚本）
 **依赖**: 无
@@ -42,7 +42,7 @@
 >
 > 2. **删除** Round 4 的 `Intl.DateTimeFormat` 切片位置 ARTIFACT。Reviewer 指出字面量正则匹配可被 `const I = Intl` / 字符串拼接 / 别名 import 绕过。行为判定改由 `sprints/tests/ws1/time.test.ts` 的 `it(11)`（Round 5 重写）承担：`vi.resetModules()` → 先 mock 成 `Asia/Tokyo` 再动态 import `routes/time.js` → 发请求 A 拿到 Asia/Tokyo → **不重载模块**切换 mock 成 `America/New_York` → 发请求 B 必须拿到 New_York。若实现在模块顶层缓存（任何形式），请求 B 仍返回 Asia/Tokyo，测试 fail。这是对「每次请求都走 Intl」的**行为判据**，对别名/拼接/缓存策略免疫。
 
-### 真机 E2E 脚本 ARTIFACT（Round 2 起交付；Round 3 收紧 ISO 正则 + 新增非 GET/body 免疫；Round 4 step 8 状态码硬枚举；Round 5 step 7.5 新增 sanity baseline + step 8 状态码相对化）
+### 真机 E2E 脚本 ARTIFACT（Round 2 起交付；Round 3 收紧 ISO 正则 + 新增非 GET/body 免疫；Round 4 step 8 状态码硬枚举；Round 5 step 7.5 新增 sanity baseline + step 8 状态码相对化到 baseline；**Round 6 — Reviewer Round 5 Risk 1**：step 7.5/8 改为 ACCEPTABLE_NOT_FOUND_STATUS 集合判定，放弃 == baseline 等式）
 
 - [ ] [ARTIFACT] `tests/e2e/brain-time.sh` 文件存在且可执行
   Test: `bash -c "test -x tests/e2e/brain-time.sh"`
@@ -71,17 +71,23 @@
 - [ ] [ARTIFACT] E2E 脚本含**非 GET 方法轮询**（POST/PUT/PATCH/DELETE 四方法）+ body 注入免疫断言（Round 3 新增）
   Test: `node -e "const c=require('fs').readFileSync('tests/e2e/brain-time.sh','utf8');for(const m of ['POST','PUT','PATCH','DELETE']){if(!c.includes(m))process.exit(1)}if(!/curl.*-X\\s+[\\\"\\']?POST/.test(c)&&!/-X\\s+[\\\"\\']?\\$?\\{?METHOD/.test(c))process.exit(2);if(!/iso.{0,5}evil/.test(c)||!/Fake\\/?Zone/.test(c))process.exit(3)"`
 
-- [ ] [ARTIFACT] **E2E 脚本含 sanity baseline 步骤（step 7.5）**：对一条明显不存在的路径（`__definitely_not_a_route_xyz__` 或类似）发同 METHOD 请求，记录 baseline 状态码（Round 5 新增 — Reviewer Round 4 Risk 3）
+- [ ] [ARTIFACT] **E2E 脚本含 sanity baseline 步骤（step 7.5）**：对一条明显不存在的路径（`__definitely_not_a_route_xyz__` 或类似）发同 METHOD 请求，记录 baseline 状态码（Round 5 引入，Round 6 保留为诊断步骤）
   Test: `node -e "const c=require('fs').readFileSync('tests/e2e/brain-time.sh','utf8').replace(/#[^\\n]*/g,'');if(!/__definitely_not_a_route_xyz__|NOTFOUND_PATH|__not_a_route/.test(c))process.exit(1);if(!/BASELINE/i.test(c))process.exit(2)"`
 
-- [ ] [ARTIFACT] **E2E 脚本非 GET 状态码相对化到 baseline（不再硬编码 `{404, 405}`）**（Round 5 — Reviewer Round 4 Risk 3）
-  Test: `node -e "const c=require('fs').readFileSync('tests/e2e/brain-time.sh','utf8').replace(/#[^\\n]*/g,'');if(!/EXPECTED_CODE|BASELINE_POST|BASELINE_PUT|BASELINE_PATCH|BASELINE_DELETE/.test(c))process.exit(1);if(!/METHOD_CODE\\s*!=\\s*[\\\"\\']?\\$|EXPECTED_CODE/.test(c))process.exit(2)"`
+- [ ] [ARTIFACT] **E2E 脚本定义 `ACCEPTABLE_NOT_FOUND_STATUS` 集合**（含所有 8 个合法未命中状态码：401/403/404/405/415/422/429/500）（Round 6 新增 — Reviewer Round 5 Risk 1）
+  Test: `node -e "const c=require('fs').readFileSync('tests/e2e/brain-time.sh','utf8').replace(/#[^\\n]*/g,'');if(!/ACCEPTABLE_NOT_FOUND_STATUS/.test(c))process.exit(1);for(const code of ['401','403','404','405','415','422','429','500']){if(!c.includes(code))process.exit(2)}"`
+
+- [ ] [ARTIFACT] **E2E 脚本 step 7.5 断言 baseline ∈ ACCEPTABLE_NOT_FOUND_STATUS**（baseline 若为 200/000/其它非合法未命中则 exit 75）（Round 6 新增 — Reviewer Round 5 Risk 1）
+  Test: `node -e "const c=require('fs').readFileSync('tests/e2e/brain-time.sh','utf8').replace(/#[^\\n]*/g,'');if(!/is_acceptable_not_found|ACCEPTABLE_NOT_FOUND_STATUS/.test(c))process.exit(1);if(!/exit\\s+75/.test(c))process.exit(2);if(!/FAIL\\s+7\\.5/.test(c))process.exit(3)"`
+
+- [ ] [ARTIFACT] **E2E 脚本 step 8 非 GET 状态码用集合判定（∈ ACCEPTABLE_NOT_FOUND_STATUS 且 ≠ 200），不再使用 `== baseline` 等式**（Round 6 — Reviewer Round 5 Risk 1）
+  Test: `node -e 'const c=require("fs").readFileSync("tests/e2e/brain-time.sh","utf8").replace(/#[^\\n]*/g,"");if(!/is_acceptable_not_found\\s+.?\\$METHOD_CODE/.test(c))process.exit(1);if(!/METHOD_CODE.{0,40}(==|=)\\s*.?200/.test(c))process.exit(2);if(!/exit\\s+8/.test(c))process.exit(3)'`
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
-见 `sprints/tests/ws1/time.test.ts` + `sprints/tests/ws1/routes-aggregator.test.ts`，Round 5 共 **13 + 2 = 15 条 `it()`**（相对 Round 4 + 2：Risk 1 行为覆盖 2 条；Risk 2 覆盖方式从 ARTIFACT 切换为 time.test.ts it(11) 重写，it 计数不变）：
+见 `sprints/tests/ws1/time.test.ts` + `sprints/tests/ws1/routes-aggregator.test.ts`，Round 6 共 **13 + 2 = 15 条 `it()`**（it 计数与 Round 5 一致；Round 6 物理结构调整：`time.test.ts` 的 `it(11)` 从主 describe 块搬到独立 describe 块 + `afterAll(vi.restoreAllMocks)` 兜底 — Reviewer Round 5 Risk 4）：
 
-### `time.test.ts`（13 条，Round 5 重写 it(11)）
+### `time.test.ts`（13 条 — 主 describe 12 条 + 独立 describe 1 条）
 
 1. `GET /api/brain/time responds with HTTP 200 and application/json content type`
 2. `response body contains exactly the three keys iso, timezone, unix — no others`
@@ -93,7 +99,7 @@
 8. `new Date(iso).getTime() and unix * 1000 agree within 2000ms`
 9. `ignores query parameters and returns server-side current time (cannot be poisoned by ?iso=evil etc.)`
 10. `timezone falls back to "UTC" when Intl.DateTimeFormat resolves timeZone to empty/undefined`
-11. **`timezone re-resolves per request — NOT cached at module top level (mutation: const CACHED_TZ = Intl.DateTimeFormat()...)`** **（Round 5 重写 — Reviewer Round 4 Risk 2：动态 import + 两次 mock 切换，不重载模块，抓模块顶层缓存）**
+11. **`timezone re-resolves per request — NOT cached at module top level (mutation: const CACHED_TZ = Intl.DateTimeFormat()...)`** **（Round 5 重写 — 动态 import + 双 mock 切换；Round 6 — Reviewer Round 5 Risk 4：搬到独立 describe 块 + `afterAll(vi.restoreAllMocks)` 显式兜底 Intl spy 还原，消除对主 describe 块内 Intl 依赖 it 的溢出污染）**
 12. `non-GET methods (POST/PUT/PATCH/DELETE) on /api/brain/time respond with status in {404,405} and do NOT leak iso/timezone/unix keys`
 13. `POST with JSON body containing {iso,unix,timezone} does NOT poison response — raw res.text must not contain "evil" or "Fake/Zone" literals`
 

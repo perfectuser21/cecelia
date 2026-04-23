@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 // @ts-expect-error — module does not exist yet (TDD Red phase); will be created by Generator
@@ -16,6 +16,21 @@ function makeApp() {
 const ISO_8601_UTC_Z =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
+// ==========================================================================
+// 主 describe：Round 5 = 12 条 `it()`（原 13 条中将 it(11) 抽到独立 describe 块 — Reviewer Round 5 Risk 4）
+// --------------------------------------------------------------------------
+// Risk 4 背景：
+//   原 it(11) 用 `vi.resetModules()` + 动态 import + `vi.spyOn(Intl, 'DateTimeFormat')` 双切 mock。
+//   即便同 describe 块内有 `afterEach(() => vi.restoreAllMocks())` 兜底，测试顺序依然敏感——
+//   若 it(11) 在 spy 生命周期中异常退出（未跑到 spyB.mockRestore()），下一个 it 跑到 it(7)
+//   「timezone is a valid IANA zone name」调用 `new Intl.DateTimeFormat('en-US', { timeZone: ... })`
+//   时 spy 仍可能未被还原，行为不可预测。
+//
+// Round 6 路线（Reviewer Round 5 Risk 4）：
+//   把 it(11) 单独拎到文件末尾的一个独立 describe('... mutation: module-top-level Intl caching ...')
+//   块内，并用 afterAll 显式 `vi.restoreAllMocks()` + 手动重置 `Intl.DateTimeFormat` 引用，
+//   避免对主 describe 块内任何 Intl 依赖测试造成溢出污染。
+// ==========================================================================
 describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -78,6 +93,8 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
   it('timezone is a valid IANA zone name (accepted by Intl.DateTimeFormat constructor)', async () => {
     const res = await request(makeApp()).get('/api/brain/time');
     // 有效 IANA 名字传进 Intl.DateTimeFormat 不抛；否则抛 RangeError
+    // Round 6（Reviewer Round 5 Risk 4）：此 it 依赖原生 Intl.DateTimeFormat 未被 spy 污染；
+    // it(11) 的 Intl mock 已被移到独立 describe 块，afterAll 显式 restoreAllMocks，不会溢出到这里
     expect(() => new Intl.DateTimeFormat('en-US', { timeZone: res.body.timezone })).not.toThrow();
     // 反向：保证这条断言对假 IANA 真的会失败
     expect(() => new Intl.DateTimeFormat('en-US', { timeZone: 'Not/A/Zone' })).toThrow();
@@ -110,6 +127,7 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
 
   it('timezone falls back to "UTC" when Intl.DateTimeFormat resolves timeZone to empty/undefined', async () => {
     // 模拟 Intl.DateTimeFormat().resolvedOptions().timeZone 返回空字符串的容器/运行时环境
+    // afterEach 会恢复，这里不会溢出
     const spy = vi
       .spyOn(Intl, 'DateTimeFormat')
       .mockImplementation(
@@ -124,67 +142,6 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     spy.mockRestore();
   });
 
-  it('timezone re-resolves per request — NOT cached at module top level (mutation: const CACHED_TZ = Intl.DateTimeFormat()...)', async () => {
-    // Round 5 立场（Reviewer Round 4 Risk 2）：
-    // 原 it(11) 只验证「timezone 非硬编码 UTC」，但**无法抓住**「模块顶层缓存 Intl 解析」这一假实现
-    // （例：`const CACHED_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone; handler → timezone: CACHED_TZ`）。
-    // Reviewer Round 4 指出老 ARTIFACT 切片正则可被 `const I = Intl` 别名绕过，必须切到行为验证。
-    //
-    // 新路线：动态 import + 两次 mock 切换 **且两次之间不重 import 模块**，模拟请求期内时区变化。
-    //   步骤：
-    //     1. vi.resetModules() 清 ESM module cache
-    //     2. 先以 'Asia/Tokyo' mock Intl.DateTimeFormat，**此时才**动态 import time.js — 触发模块顶层代码执行
-    //     3. 发请求 A，期望 timezone === 'Asia/Tokyo'（证明 mock 生效）
-    //     4. 切换 mock 到 'America/New_York'（不再重 import 模块）
-    //     5. 发请求 B，期望 timezone === 'America/New_York'
-    //   若实现在模块顶层缓存（`const CACHED = Intl.DateTimeFormat()...`），
-    //   第二次请求仍返回首次缓存的 'Asia/Tokyo' → 测试失败 → 抓出 bug
-    //   若实现在 handler 内部每次调 Intl（正确），第二次请求反映新 mock → 测试通过。
-    vi.resetModules();
-
-    const spyA = vi
-      .spyOn(Intl, 'DateTimeFormat')
-      .mockImplementation(
-        () =>
-          ({
-            resolvedOptions: () =>
-              ({ timeZone: 'Asia/Tokyo' as string }) as Intl.ResolvedDateTimeFormatOptions,
-          }) as unknown as Intl.DateTimeFormat,
-      );
-
-    // 动态 import — 模块加载时执行顶层代码会被 spyA 捕获
-    const mod = (await import(
-      /* @vite-ignore */ `../../../packages/brain/src/routes/time.js?rev5=${Date.now()}`
-    )) as { default: express.Router };
-    const app = express();
-    app.use(express.json());
-    app.use('/api/brain', mod.default);
-
-    const res1 = await request(app).get('/api/brain/time');
-    expect(res1.status).toBe(200);
-    expect(res1.body.timezone).toBe('Asia/Tokyo');
-    spyA.mockRestore();
-
-    // 切换 mock —— **不重 import** 模块
-    const spyB = vi
-      .spyOn(Intl, 'DateTimeFormat')
-      .mockImplementation(
-        () =>
-          ({
-            resolvedOptions: () =>
-              ({ timeZone: 'America/New_York' as string }) as Intl.ResolvedDateTimeFormatOptions,
-          }) as unknown as Intl.DateTimeFormat,
-      );
-
-    const res2 = await request(app).get('/api/brain/time');
-    expect(res2.status).toBe(200);
-    // 关键断言：若实现是 `const CACHED_TZ = Intl.DateTimeFormat()...` 在模块顶层求值，
-    // 则这里仍返回 'Asia/Tokyo'（模块只 import 一次 → 顶层代码只执行一次 → 缓存到 'Asia/Tokyo'）→ 测试失败
-    // 若实现是 handler 内部每次调 Intl，则 res2.body.timezone === 'America/New_York' → 测试通过
-    expect(res2.body.timezone).toBe('America/New_York');
-    spyB.mockRestore();
-  });
-
   // ===== Round 3 新增 / Round 4 收紧 — Reviewer Round 3 问题 3：机械化 status + raw-text 断言 =====
 
   it('non-GET methods (POST/PUT/PATCH/DELETE) on /api/brain/time respond with status in {404,405} and do NOT leak iso/timezone/unix keys', async () => {
@@ -194,6 +151,9 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
     //   - 若启用 methodNotAllowed 中间件 → 405
     //   - 其它值（500/200/302/204 等）均视为假实现失败
     // 响应体中不得包含 iso/timezone/unix 任一 key（覆盖「handler 执行但不泄漏」 vs 「handler 永不执行」两种语义）。
+    // 本 supertest 场景无 Brain 全局 middleware，仅挂接 timeRouter，因此硬枚举 {404, 405} 合理；
+    // 真机 E2E 场景（Brain 可能叠加 auth/rate-limit/custom 404 等 middleware）状态码由 brain-time.sh step 8
+    // 用 ACCEPTABLE_NOT_FOUND_STATUS 集合判定（Round 6 —— Reviewer Round 5 Risk 1）
     const ALLOWED_STATUS = [404, 405];
     const app = makeApp();
     for (const method of ['post', 'put', 'patch', 'delete'] as const) {
@@ -234,5 +194,86 @@ describe('Workstream 1 — GET /api/brain/time [BEHAVIOR]', () => {
       expect(res.body).not.toHaveProperty('unix');
       expect(res.body).not.toHaveProperty('timezone');
     }
+  });
+});
+
+// ==========================================================================
+// 独立 describe 块（Round 6 — Reviewer Round 5 Risk 4）
+// --------------------------------------------------------------------------
+// 把「模块顶层缓存」mutation 行为 probe（原 it(11)）抽到独立 describe 块，与主 describe 块完全隔离：
+//   - 使用 `vi.resetModules()` + 动态 import + 双 mock 切换
+//   - `afterAll` 显式 `vi.restoreAllMocks()`（无论内部 it 是否抛错都会跑），确保 Intl.DateTimeFormat 被彻底还原
+//   - 主 describe 块内的 it(7)「timezone is a valid IANA zone name」不再可能被此处 spy 溢出污染
+// ==========================================================================
+describe('Workstream 1 — GET /api/brain/time [BEHAVIOR] — mutation: module-top-level Intl caching (isolated)', () => {
+  afterAll(() => {
+    // Round 6 显式兜底：无论 it 是否抛错，都恢复 Intl.DateTimeFormat 到原始实现，
+    // 防止 vi.spyOn 的 spy 对象残留泄漏到同 worker 内后续测试文件/其它 describe 块
+    vi.restoreAllMocks();
+  });
+
+  it('timezone re-resolves per request — NOT cached at module top level (mutation: const CACHED_TZ = Intl.DateTimeFormat()...)', async () => {
+    // Round 5 立场（Reviewer Round 4 Risk 2）：
+    // 原 it(11) 只验证「timezone 非硬编码 UTC」，但**无法抓住**「模块顶层缓存 Intl 解析」这一假实现
+    // （例：`const CACHED_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone; handler → timezone: CACHED_TZ`）。
+    // Reviewer Round 4 指出老 ARTIFACT 切片正则可被 `const I = Intl` 别名绕过，必须切到行为验证。
+    //
+    // 新路线：动态 import + 两次 mock 切换 **且两次之间不重 import 模块**，模拟请求期内时区变化。
+    //   步骤：
+    //     1. vi.resetModules() 清 ESM module cache
+    //     2. 先以 'Asia/Tokyo' mock Intl.DateTimeFormat，**此时才**动态 import time.js — 触发模块顶层代码执行
+    //     3. 发请求 A，期望 timezone === 'Asia/Tokyo'（证明 mock 生效）
+    //     4. 切换 mock 到 'America/New_York'（不再重 import 模块）
+    //     5. 发请求 B，期望 timezone === 'America/New_York'
+    //   若实现在模块顶层缓存（`const CACHED = Intl.DateTimeFormat()...`），
+    //   第二次请求仍返回首次缓存的 'Asia/Tokyo' → 测试失败 → 抓出 bug
+    //   若实现在 handler 内部每次调 Intl（正确），第二次请求反映新 mock → 测试通过。
+    //
+    // Round 6：此 it 已被搬到独立 describe 块，afterAll 兜底 restoreAllMocks；
+    // 即便 `spyB.mockRestore()` 没跑到（exception 抛出），下一 describe 块开头的 Intl 依赖 it
+    // 也不会受到 spy 残留影响——这是对 Reviewer Round 5 Risk 4 的直接回应。
+    vi.resetModules();
+
+    const spyA = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(
+        () =>
+          ({
+            resolvedOptions: () =>
+              ({ timeZone: 'Asia/Tokyo' as string }) as Intl.ResolvedDateTimeFormatOptions,
+          }) as unknown as Intl.DateTimeFormat,
+      );
+
+    // 动态 import — 模块加载时执行顶层代码会被 spyA 捕获
+    const mod = (await import(
+      /* @vite-ignore */ `../../../packages/brain/src/routes/time.js?rev6=${Date.now()}`
+    )) as { default: express.Router };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', mod.default);
+
+    const res1 = await request(app).get('/api/brain/time');
+    expect(res1.status).toBe(200);
+    expect(res1.body.timezone).toBe('Asia/Tokyo');
+    spyA.mockRestore();
+
+    // 切换 mock —— **不重 import** 模块
+    const spyB = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(
+        () =>
+          ({
+            resolvedOptions: () =>
+              ({ timeZone: 'America/New_York' as string }) as Intl.ResolvedDateTimeFormatOptions,
+          }) as unknown as Intl.DateTimeFormat,
+      );
+
+    const res2 = await request(app).get('/api/brain/time');
+    expect(res2.status).toBe(200);
+    // 关键断言：若实现是 `const CACHED_TZ = Intl.DateTimeFormat()...` 在模块顶层求值，
+    // 则这里仍返回 'Asia/Tokyo'（模块只 import 一次 → 顶层代码只执行一次 → 缓存到 'Asia/Tokyo'）→ 测试失败
+    // 若实现是 handler 内部每次调 Intl，则 res2.body.timezone === 'America/New_York' → 测试通过
+    expect(res2.body.timezone).toBe('America/New_York');
+    spyB.mockRestore();
   });
 });
