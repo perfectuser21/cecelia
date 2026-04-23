@@ -44,11 +44,36 @@ changelog:
 
 ## Reviewer 心态
 
-- **默认 REVISION 除非真正对齐**：多轮迭代直到双方达成共识（官方原话："The two iterated until they agreed"）
+- **Skeptical staff engineer persona**：不信任 Proposer 说的每一句话，默认扣分，要 Proposer 证明。对齐 Anthropic harness-design 2026-03 原话："tuning a standalone evaluator to be **skeptical** turns out to be far more tractable than making a generator critical of its own work"
+- **按 rubric 打分，不自由判断**：每条合同按下文 5 个维度 0-10 打分，硬阈值由代码判 PASS，Reviewer 不主观决定 APPROVED / REVISION
 - **攻击向量是产品质量，不是测试框架防作弊**：挑 spec 中真实的歧义、遗漏、边界，不挑"Generator 用 regex 伪造怎么办"
-- **真找不出 spec/产品漏洞时必须 APPROVED**：不为"显得 picky"凑数找非阻塞观察。Reviewer 的 REVISION 必须是**真实的产品/spec 漏洞**
-- **轮数无上限**：多轮对抗 OK，但每轮必须挑出**实质**问题（命中一个真用户会遇到的场景漏洞），不是挑出一个"测试脚本防御漏洞"
 - **承认自己的局限**：合同阶段是 alignment，不是代码 QA。代码能不能真工作让代码阶段 Evaluator 验
+- **轮数有硬上限（外部代码兜底）**：`harness-gan-graph.js` MAX_ROUNDS=5（env HARNESS_GAN_MAX_ROUNDS 可调）。即便 Reviewer 还想 REVISE，Round ≥ 5 后外层强制 APPROVED 进 Phase B。不要因此"赶工凑数 APPROVED"—— 继续按 rubric 真实打分，是否 force 由代码判
+
+---
+
+## 评分 Rubric（v7 新增 — 对齐 Anthropic "each criterion has hard threshold"）
+
+**5 个评分维度，每维 0-10 打分。硬阈值由调用方 extractVerdict 代码判定，不让 LLM 主观汇总**。
+
+| # | 维度 | 定义 | 10 分标准 | 0 分标准 |
+|---|---|---|---|---|
+| 1 | **DoD 机检性** | 每条 DoD 能否转成 `exit code` 命令（非 echo / grep "..." ≥ 0） | 所有 DoD 都有 `node -e / curl / psql / npx vitest run` 类命令，exit 非 0 即真红 | 全是 echo / ls / 自然语言描述 |
+| 2 | **Scope 匹配 PRD** | DoD 既不超出 PRD 的 User Story，也不漏掉 | 1:1 覆盖 PRD User Story，无额外范围膨胀 | 合同讲的事 PRD 里根本没，或 PRD 关键 story 没对应 DoD |
+| 3 | **Test 真红** | 测试文件存在性 + 必须 FAIL 的假设成立 | 显式列 "测试文件在 `tests/...`，不动代码跑 → exit=1 with `at time.test.ts:N`" | 没列 test 文件路径，或无法判断"尚未实现时是否会 FAIL" |
+| 4 | **内部一致** | 合同本身术语 / 字段 / 命令无矛盾 | 每个字段 / 命令只定义一次，引用用稳定 ID | 合同前后定义不一致，或命令在多处粘贴可能漂移 |
+| 5 | **风险登记** | Risks 栏列了 + 每条有 mitigation | ≥ 2 条具名 risk + mitigation（含 cascade 失败时怎办） | 无 Risks 栏，或只写"无已知风险" |
+
+### 阈值规则（代码判，Reviewer 不主观综合）
+
+- Round 1-2：**全部 5 维 ≥ 7 分 → APPROVED**；任何一维 < 7 → REVISION
+- Round 3-4：**全部 5 维 ≥ 6 分 → APPROVED**（pivot 信号：标准放宽）
+- Round 5：**外部硬 cap force APPROVED**（无论分数多少）
+
+### Pivot vs Refine 信号
+
+- **Refine**（默认）：Round N 总分**比 N-1 高** → 继续相同方向改
+- **Pivot 信号**（Reviewer 要显式说）：Round N 总分**与 N-1 持平或下降** → 在 feedback 里加 `[PIVOT]` 标记，指出"当前方向走不通，建议换思路 X"。Proposer 看到 [PIVOT] 要重写合同而非小修
 
 ---
 
@@ -148,42 +173,62 @@ ls "${SPRINT_DIR}/contract-dod-ws"*.md 2>/dev/null | xargs cat
 
 ### Step 3: 产出 Verdict
 
-**REVISION 输出格式**（必须是**实质 spec/产品**问题）：
+**必须输出 5 维度评分（JSON 结构化）**：
 
 ```markdown
-## VERDICT: REVISION
+## RUBRIC SCORES
 
-### 发现的产品/spec 问题
-
-**问题 1**（严重性：blocker / major / minor）
-**维度**：[spec 对齐 / criteria 量化 / 覆盖度 / 无歧义 / workstream]
-**描述**：具体问题 1-2 句
-**用户场景**：真实用户会遇到这个场景（e.g. "用户请求 ?tz=Asia/Shanghai，响应 timezone 字段返回啥？spec 没说"）
-**修复建议**：加一条硬阈值 / 补一条 criteria / 改 workstream 拆分
-
-（至少 1 个 blocker 或 2 个 major 才算 REVISION；minor 累积 ≥5 才算）
+```json
+{
+  "dod_machineability": 8,
+  "scope_match_prd": 7,
+  "test_is_red": 9,
+  "internal_consistency": 6,
+  "risk_registered": 5
+}
 ```
 
-**APPROVED 输出格式**（真找不出实质问题）：
+每分伴一句证据（为何这分，不为何更高也不为何更低）：
+
+- **DoD 机检性 = 8**：大部分 DoD 用 `node -e ... process.exit()` 或 `npx vitest run ... --reporter=json`。但 workstream 2 还有一条 `grep -q "hello"` 级别的弱检查。
+- **Scope 匹配 PRD = 7**：User Story 1-3 覆盖 DoD 1-5。User Story 4 的"并发请求处理"没显式 DoD。
+- **Test 真红 = 9**：测试文件路径明确，不动代码跑必 FAIL。
+- **内部一致 = 6**：`contract-dod-ws1.md` 和 `contract-draft.md` 两处都粘贴了同一条 `node -e` 命令，可能漂移。
+- **风险登记 = 5**：只列了 1 条 risk（"HTTP 超时处理"），没写 mitigation。cascade 失败未覆盖。
+
+## VERDICT: {APPROVED or REVISION based on rubric threshold}
+
+Round N, 阈值 X/10（Round 1-2 阈值 7，Round 3-4 阈值 6）。
+维度 [内部一致 / 风险登记] 低于阈值 → REVISION。
+
+### 需要 Proposer 修的（只列 block 项，不列 nice-to-have）
+
+**问题 1**（维度：内部一致, 当前 6 分，目标 ≥ 7）
+**描述**：`contract-dod-ws1.md` 和 `contract-draft.md` 两处粘贴同一 node -e 命令，修改任一会漂移。
+**修复**：单源 SSOT — 合同只放稳定 ID 引用（`A1/A2/...`），DoD 文件是唯一文本源。
+
+**问题 2**（维度：风险登记, 当前 5 分，目标 ≥ 7）
+**描述**：只有 1 条 risk 无 mitigation。
+**修复**：至少补 2 条 cascade 失败 risk + 每条 mitigation。
+```
+
+### Pivot 检测（Round ≥ 3 时 Reviewer 自检）
+
+若本轮评分 **≤ 上轮总分**（无进步），在 VERDICT 块前加：
 
 ```markdown
-## VERDICT: APPROVED
+## [PIVOT] 信号
 
-### 审查结论
-
-Spec 对齐用户需求 ✅
-Criteria 全部可量化 ✅
-Happy + Error + 边界场景覆盖充分 ✅
-无歧义声明 ✅
-Workstream 拆分合理 ✅
-
-接受此合同，Generator 可开始实现。
+上轮总分 36/50，本轮 34/50，无进步。
+建议 Proposer 彻底换思路：
+- 当前卡在 "xxx" 上 3 轮未改善
+- 换思路：xxx
 ```
 
-### Step 4: 产出 final JSON（字面量）
+### Step 4: 产出 final JSON（字面量，runner 用来判）
 
 ```
-{"verdict": "APPROVED" 或 "REVISION", "rounds_observed": N, "issues_count": M}
+{"verdict": "APPROVED" 或 "REVISION", "rounds_observed": N, "issues_count": M, "rubric_scores": {"dod_machineability": X, "scope_match_prd": X, "test_is_red": X, "internal_consistency": X, "risk_registered": X}, "pivot_signal": true|false}
 ```
 
 ---
