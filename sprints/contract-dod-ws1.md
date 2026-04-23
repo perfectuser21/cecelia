@@ -12,6 +12,18 @@
   - **Risk 4（Round 9 尝试 = 部分失败 → Round 10 闭合）** — Round 9 新增 B1/B2/B3 三条 ARTIFACT，但 Reviewer Round 9 挑出两个缺口：<br/>     **B1 漏 side-effect import**：Round 9 正则 `^\s*import\s+[^;]*from\s+['"][^'"]*routes\/time\.js['"]` 只匹配 `import X from '...'` 形式，**漏了** `import '...routes/time.js'`（无 `from` 的 side-effect import）——该形式同样会在 `vi.spyOn` 之前触发模块顶层求值，mutation probe 同样失效<br/>     **B2 未绑定 target**：Round 9 正则 `await\s+import\s*\(` 匹配**任意** `await import(` 调用，即使参数指向其它模块（如 `await import('fs')`）也会满足，没把契约锁在"动态 import 目标必须是 routes/time.js"这层语义上<br/>     **Round 10 两条正则收紧**：<br/>     - B1 新正则 `^\s*import\s+(?:[^;]*from\s+)?['"][^'"]*routes\/time\.js['"]`（`from` 子句改为可选组，side-effect import 和 named import 都能命中）<br/>     - B2 新正则 `await\s+import\s*\(\s*[^)]*routes\/time\.js`（paren 内必须含 `routes/time.js` 字面，锁定 target 路径）<br/>
 - **Round 10（Reviewer Round 9 闭合）— 附加**：
   - **minor 采纳** — Test Collect Sanity 命令 1 三种失败路径赋予**可区分 exit 码**：文件缺失 `exit 3` / JSON 解析异常 `exit 1` / collect miss (`numTotalTests !== 1`) `exit 4`，便于 Reviewer 肉眼 triage
+- **Round 11（Reviewer Round 10 Major 闭合）— B2 收紧 + 新增 B4 防御纵深**：
+  - **Reviewer Round 10 指出 B2 缺口**：Round 10 B2 正则 `await\s+import\s*\(\s*[^)]*routes\/time\.js` 用 `[^)]*` 贪婪匹配 paren 内任意非-`)` 字符，意味着 `routes/time.js` **可以出现在注释里、变量名里、字符串拼接的非 target 部分里** —— 例如 `await import(someVar /* routes/time.js */)`、`const path='routes/time.js';await import(other)` 等 mutation 都会假绿。Round 10 的"target 锁定"语义只是部分锁定（强制了"paren 到 `)` 之间含此字面"），**未真正锁定到"动态 import 的字符串字面 target 内"**。
+  - **Round 11 修法（采纳 Reviewer 两条建议同时落地，防御纵深）**：
+    - **B2 收紧**：新正则 `await\s+import\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:"[^"]*routes/time\.js[^"]*"|` + 反引号字面 + `[^` + 反引号 + `]*routes/time\.js[^` + 反引号 + `]*` + 反引号 + `|'[^']*routes/time\.js[^']*')\s*\)` —— paren 内**只允许**：可选 `/* ... */` 注释 + 一个**完整字符串字面**（双引号 / 反引号 / 单引号三选一），且字面体内**显式包含** `routes/time.js`，paren 在字面闭合后 `\s*\)` 立即闭合。`await import(someVar)` / `await import(other /* routes/time.js */)` / `await import('routes/time.js' + '?x')` 等任何**字面外注入** `routes/time.js` 的 mutation 全部失效。
+    - **新增 B4 防御纵深（Reviewer 建议路径 2）**：枚举测试文件中所有 `await import(<字符串字面>)` 调用，**至少一条**字面体内含 `routes/time.js`。与 B2 互补：B2 验证"存在合规结构"，B4 验证"在所有字面 import 中至少一条 target 命中"。即便未来有人在合同测试里加多条无关的 `await import('vitest')` 等调用，B4 仍能确保 routes/time.js 是其中之一。
+  - **Round 11 Mutation 自检（Proposer 本地已跑）**：
+    - mutant-A `await import(someVar /* routes/time.js */)`：旧 R10 B2 误放 → 新 B2 拒绝（字面外的 `routes/time.js` 不算）；B4 拒绝（无字面 import 命中）
+    - mutant-B `await import('fs')`：旧 R10 B2 拒绝（paren 内不含字面）；新 B2/B4 同样拒绝
+    - 当前合法测试文件：旧 + 新 B2、新 B4 三者都 PASS（动态 import target 是反引号字面，体内含 `../../../packages/brain/src/routes/time.js?rev7intl=${Date.now()}`）
+  - **Round 11 不采纳 Reviewer Round 10 旁支观察（标注非 Risk）**：
+    - A2 计数 `^\s*it\s*\(` 在描述字符串内嵌 `\nit(` 或反向缩进的理论干扰：当前文件清洁；Reviewer 自陈"和本轮无关，提一下" → Round 11 保留观察记录但不动 A2
+    - 索引表 ID ↔ DoD ARTIFACT 的对应关系仍是人工映射（无 self-check）：Reviewer 自陈"和本轮无关" → Round 11 保留为下轮顺手议题
 
 **大小**: S（<30 行 Brain 源码改动 + ~180 行 bash 脚本 + 可能 0-2 行 vitest.config `include` 登记）
 **依赖**: 无
@@ -91,12 +103,13 @@
 - [ ] [ARTIFACT] **E2E 脚本 step 8 body key 检查无条件 jq 判定**（Round 7 — Reviewer Round 6 minor：解耦 grep 预筛选，消除 JSON 格式变体漏检风险）
   Test: `node -e 'const c=require("fs").readFileSync("tests/e2e/brain-time.sh","utf8").replace(/#[^\\n]*/g,"");if(!/jq\\s+-e\\s+.\\s*\\.?\\s*.{0,50}\\$METHOD_BODY_FILE/s.test(c))process.exit(1);if(!/has\\("iso"\\)\\s+or\\s+has\\("unix"\\)\\s+or\\s+has\\("timezone"\\)/.test(c))process.exit(2)'`
 
-### Round 8 / Round 9 / Round 10 新增 ARTIFACT — collect sanity pre-flight + 动态 import 契约（带**稳定 ID**，是合同草案引用的 SSOT — Round 10 消除双源漂移）
+### Round 8 / Round 9 / Round 10 / Round 11 新增 ARTIFACT — collect sanity pre-flight + 动态 import 契约（带**稳定 ID**，是合同草案引用的 SSOT — Round 10 消除双源漂移；Round 11 新增 B4 防御纵深）
 
-> **ID 分配约定（Round 10 新增）**：
+> **ID 分配约定（Round 10 引入；Round 11 扩展 B4）**：
 > - A1–A4 = Round 8 的 collect sanity 基础四条（文件存在 / it 恰好 1 条 / describe ≥ 1 / 仓库根 vitest.config include 登记）
 > - B1–B3 = Round 9 新增动态 import 契约三条（反面静态禁令 / 正面动态要求 / spy 旁证）
-> - 合同草案（`contract-draft.md`）**只引用 ID**，**不重复命令文本**（Round 10 — 闭合 Reviewer Round 9 Risk 2）
+> - **B4 = Round 11 新增**（Reviewer Round 10 Major 闭合）：在所有 `await import(<字符串字面>)` 中**至少一条**字面体内含 `routes/time.js`，与 B2 收紧形成"结构 + 集合"双重锁定
+> - 合同草案（`contract-draft.md`）**只引用 ID**，**不重复命令文本**（Round 10 — 闭合 Reviewer Round 9 Risk 2；Round 11 同样守约）
 
 - [ ] [ARTIFACT] **A1** — `sprints/tests/ws1/time-intl-caching.test.ts` 文件存在（Round 7 已交付 — Round 8 将其"存在性"显式列成 DoD 条目，作为 collect sanity 链条的起点）
   Test: `node -e "require('fs').accessSync('sprints/tests/ws1/time-intl-caching.test.ts')"`
@@ -113,11 +126,14 @@
 - [ ] [ARTIFACT] **B1** — **Round 9 引入 / Round 10 修正（Reviewer Round 8 Risk 4 + Reviewer Round 9 缝隙闭合）**：`sprints/tests/ws1/time-intl-caching.test.ts` **禁止** 任何形式的 top-level static import 指向 `routes/time.js` —— 该文件的 Intl 缓存 mutation probe 必须通过 `await import(/* @vite-ignore */ \`...routes/time.js?rev...=${Date.now()}\`)` 动态引用目标模块，方可让 `vi.spyOn(Intl, 'DateTimeFormat')` 在模块顶层代码执行**之前**生效。若 Generator 或未来 editor 把动态 import 改成静态 `import timeRouter from '../../../packages/brain/src/routes/time.js'`（带 `from` 子句）**或** `import '../../../packages/brain/src/routes/time.js'`（side-effect import，无 `from`），则模块顶层在 `vi.spyOn` 尚未安装 spy 时就完成解析 → 顶层缓存 mutation 不再被抓 → 测试假绿。**Round 10 修正**：Round 9 正则只覆盖 `import X from '...'`（有 `from` 的形式），**漏了 side-effect `import '...'`**；Round 10 将 `from \s+` 子句改为可选组 `(?:[^;]*from\s+)?`，两种形式都被命中。硬约束：文件首层（非 await/非函数体内）不得出现匹配 `^\s*import\s+(?:[^;]*from\s+)?['"][^'"]*routes/time\.js['"]` 的行（`from` 可选）
   Test: `node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(/^\\s*import\\s+(?:[^;]*from\\s+)?['\"][^'\"]*routes\\/time\\.js['\"]/m.test(c)){console.error('FAIL: time-intl-caching.test.ts 顶层发现 static import routes/time.js (含 from 或 side-effect) — mutation probe 失效');process.exit(1)}"`
 
-- [ ] [ARTIFACT] **B2** — **Round 9 引入 / Round 10 修正（Reviewer Round 8 Risk 4 配套 + Reviewer Round 9 缝隙闭合）**：`sprints/tests/ws1/time-intl-caching.test.ts` 必须至少出现一次**指向 `routes/time.js` 的** `await import(...)` 调用（证实走动态 import 路线，和 B1 静态 import 禁令形成正反两面硬约束）。**Round 10 修正**：Round 9 正则 `/await\s+import\s*\(/` 未绑定 target 路径，任何 `await import('fs')` / `await import('path')` 等对无关模块的动态 import 都会误命中，契约语义漂移。Round 10 改为 `/await\s+import\s*\(\s*[^)]*routes\/time\.js/`：paren 内（到第一个 `)` 为止）必须含 `routes/time.js` 字面，target 路径被锁定
-  Test: `node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(!/await\\s+import\\s*\\(\\s*[^)]*routes\\/time\\.js/.test(c)){console.error('FAIL: time-intl-caching.test.ts 未发现指向 routes/time.js 的 await import(...) — mutation probe 必须走动态 import 且目标锁定');process.exit(1)}"`
+- [ ] [ARTIFACT] **B2** — **Round 9 引入 / Round 10 修正 / Round 11 收紧（Reviewer Round 8 Risk 4 + Reviewer Round 9 缝隙 + Reviewer Round 10 Major 闭合）**：`sprints/tests/ws1/time-intl-caching.test.ts` 必须至少出现一次**指向 `routes/time.js` 的字符串字面 target** 的 `await import(...)` 调用。**Round 11 修正**：Round 10 正则 `await\s+import\s*\(\s*[^)]*routes\/time\.js` 用 `[^)]*` 贪婪匹配 paren 内任意非-`)` 字符，导致 `await import(someVar /* routes/time.js */)` 类 mutation 假绿（routes/time.js 出现在注释里也命中）。Round 11 改用 `await\s+import\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:"..."|<反引号>...<反引号>|'...')\s*\)` 三种字面变体的明确 alternation，要求 paren 内**只允许**：可选 `/* ... */` 注释 + 一个**完整字符串字面**（双引号 / 反引号 / 单引号三选一），字面体内含 `routes/time.js`，paren `\s*\)` 立即闭合。**Mutation 锁定**：注释里的 `routes/time.js` 不再算（注释在字面外）；变量名 / 字符串拼接 / 任何字面外注入全部失效。当前合法实现 ``await import(/* @vite-ignore */ `../../../packages/brain/src/routes/time.js?rev7intl=${Date.now()}`)`` 在反引号字面体内含 `routes/time.js` → PASS。Proposer 本地 mutation 自检通过（mutant-A 注释藏匿 / mutant-B 无关 target 均被拒）
+  Test: ``node -e 'const c=require("fs").readFileSync("sprints/tests/ws1/time-intl-caching.test.ts","utf8");const re=/await\s+import\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:"[^"]*routes\/time\.js[^"]*"|`[^`]*routes\/time\.js[^`]*`|'"'"'[^'"'"']*routes\/time\.js[^'"'"']*'"'"')\s*\)/;if(!re.test(c)){console.error("FAIL[B2]: time-intl-caching.test.ts 未发现以字符串字面 target 含 routes/time.js 的 await import(...) — Round 11 收紧：注释/变量/拼接里的 routes/time.js 不算；必须在双引号/反引号/单引号字面体内");process.exit(1)}'``
 
-- [ ] [ARTIFACT] **B3** — **Round 9 引入**：`sprints/tests/ws1/time-intl-caching.test.ts` 必须至少出现一次 `vi.spyOn(Intl, 'DateTimeFormat')` 或 `vi.spyOn(Intl,'DateTimeFormat')` 调用（证实在动态 import 之前安装 Intl spy 的契约）。Round 10 原样保留（Reviewer Round 9 确认 bash 转义和语义正确）
+- [ ] [ARTIFACT] **B3** — **Round 9 引入**：`sprints/tests/ws1/time-intl-caching.test.ts` 必须至少出现一次 `vi.spyOn(Intl, 'DateTimeFormat')` 或 `vi.spyOn(Intl,'DateTimeFormat')` 调用（证实在动态 import 之前安装 Intl spy 的契约）。Round 10/11 原样保留（Reviewer Round 9 确认 bash 转义和语义正确；Reviewer Round 10 未触达 B3）
   Test: `node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(!/vi\\s*\\.spyOn\\s*\\(\\s*Intl\\s*,\\s*['\"]DateTimeFormat['\"]/.test(c)){console.error('FAIL: 未发现 vi.spyOn(Intl, DateTimeFormat) — mutation probe 机制缺失');process.exit(1)}"`
+
+- [ ] [ARTIFACT] **B4** — **Round 11 新增（Reviewer Round 10 建议路径 2 — 防御纵深）**：枚举 `sprints/tests/ws1/time-intl-caching.test.ts` 中所有 `await import(<字符串字面>)` 调用（即 paren 内**只**有一个完整字符串字面、可选注释、闭合 paren 的形态），**至少一条**字面体内显式含 `routes/time.js`。与 B2 形成结构互补：B2 验证"存在合规结构"；B4 在 B2 基础上验证"在所有合规字面 import 中至少一条 target 命中" —— 即便未来测试文件追加多条 `await import('vitest')` / `await import('node:fs')` 等无关字面调用，B4 仍硬保证 routes/time.js 是其中之一。**失败码语义化**：exit 1 = 文件中无任何字面形态的 `await import(<literal>)` 调用（mutation probe 完全失效）；exit 2 = 字面 import 调用存在但**无一条** target 命中 routes/time.js（mutation probe target 漂移）。当前合法实现：唯一一条 await import → 反引号字面体内含 routes/time.js → PASS（matches.length===1, ok===true）
+  Test: ``node -e 'const c=require("fs").readFileSync("sprints/tests/ws1/time-intl-caching.test.ts","utf8");const re=/await\s+import\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:"([^"]*)"|`([^`]*)`|'"'"'([^'"'"']*)'"'"')\s*\)/g;const matches=[...c.matchAll(re)];if(matches.length===0){console.error("FAIL[B4-exit1]: 0 条 await import(<字符串字面>) 调用 — mutation probe 完全缺失");process.exit(1)}const ok=matches.some(m=>(m[1]||m[2]||m[3]||"").includes("routes/time.js"));if(!ok){console.error("FAIL[B4-exit2]: "+matches.length+" 条字面 await import 调用，但无一条 target 含 routes/time.js — mutation probe target 漂移");process.exit(2)}console.log("PASS[B4]: "+matches.length+" 条字面 await import，至少一条 target 含 routes/time.js")'``
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 

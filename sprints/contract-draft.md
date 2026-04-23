@@ -1,6 +1,32 @@
-# Sprint Contract Draft (Round 10)
+# Sprint Contract Draft (Round 11)
 
 > **PRD 来源**：`sprints/sprint-prd.md`（Initiative：Brain 时间端点 — 单一 `GET /api/brain/time` 返回 iso/timezone/unix 三字段）
+>
+> **Round 10 → Round 11 变更（基于 Reviewer Round 10 REVISION 反馈 — 1 个 Major 必修，含两条修法同时落地）**：
+>
+> **Reviewer Round 10 的 Major risk（必修）**：
+> - **B2 字面外注入缝隙**：Round 10 B2 正则 `await\s+import\s*\(\s*[^)]*routes\/time\.js` 用 `[^)]*` 贪婪匹配 paren 内任意非-`)` 字符；`routes/time.js` 字面**可以位于注释内、变量名内、字符串拼接的非 target 部分内**。例如 `await import(someVar /* routes/time.js */)`、`const path='routes/time.js';await import(other)` 等 mutation 仍假绿 —— Round 10 的"target 路径锁定"只锁到了 `(...)` 区间，**未真正锁到字符串字面 target 内**。Reviewer 提出两条修法（任一即可）：(1) 收紧 B2 正则到 `/await\s+import\s*\(\s*['"\`][^'"\`]*routes\/time\.js[^'"\`]*['"\`]\s*\)/`（paren 内必须是字符串字面，字面体内含 `routes/time.js`，paren 立即闭合）；(2) 保留现 B2 同时**新增 B4** = 计算所有 `await\s+import\s*\(\s*['"\`][^'"\`]*['"\`]\s*\)` 的命中，至少一条 target 字面含 `routes/time.js`。Reviewer 也提到第 (3) 条更彻底的 AST 路线，但**明文超出 Round 10 范围**。
+>
+> **Round 11 修法（采纳 Reviewer 建议路径 1+2 同时落地，结构性收紧 + 集合性兜底，防御纵深）**：
+>
+> 1. **B2 收紧（路径 1）**：B2 正则升级为 `await\s+import\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:"[^"]*routes/time\.js[^"]*"|<反引号>[^<反引号>]*routes/time\.js[^<反引号>]*<反引号>|'[^']*routes/time\.js[^']*')\s*\)`。语义：paren 内**只允许**：可选 `/* ... */` 注释（兼容当前测试文件的 `/* @vite-ignore */` 形态）+ 一个**完整字符串字面**（双引号 / 反引号 / 单引号三选一），字面体内**显式包含** `routes/time.js`，字面闭合后 `\s*\)` 立即闭合。Mutation 锁定：注释/变量/拼接里的 `routes/time.js` 全部失效，因为它们不在字面体内。命令实体位于 DoD · B2（SSOT，Round 10 单源原则保留）。
+> 2. **新增 B4 防御纵深（路径 2）**：枚举测试文件中所有 `await import(<字符串字面>)` 调用（`(?:"([^"]*)"|<反引号>([^<反引号>]*)<反引号>|'([^']*)')`，三种字面变体），**至少一条**字面体内含 `routes/time.js`。失败码语义化：exit 1 = 0 条字面 import 调用（mutation probe 完全缺失）；exit 2 = 字面 import 存在但无一条 target 命中 routes/time.js（target 漂移）。命令实体位于 DoD · B4（Round 11 新增 SSOT，沿用 Round 10 单源原则）。
+>
+> **Round 11 Mutation 自检（Proposer 本地已验）**：
+> - **mutant-A** `await import(someVar /* routes/time.js */)`：旧 R10 B2 误放 → 新 B2 拒绝（routes/time.js 在注释里，不算字面体内）；B4 拒绝（无字面 import）
+> - **mutant-B** `await import('fs')`：旧 R10 B2 拒绝（paren 内不含字面 routes/time.js）→ 新 B2/B4 同样拒绝
+> - **当前合法测试文件**（`time-intl-caching.test.ts:59-61`）：``await import(/* @vite-ignore */ `../../../packages/brain/src/routes/time.js?rev7intl=${Date.now()}`)`` —— 反引号字面体内含 `routes/time.js` → 新 B2 PASS / B4 PASS（matches.length===1, ok===true）/ 旧 R10 B2 同样 PASS（向下兼容，未破坏现有 Green 状态）
+>
+> **Round 11 不动的部分**：
+> - 测试文件 0 改动：`time.test.ts` 12 条 + `time-intl-caching.test.ts` 1 条 + `routes-aggregator.test.ts` 2 条 = **15 条 `it()`**（与 Round 6–10 完全一致）。Round 11 仅改 DoD ARTIFACT 文本（B2 命令收紧 + B4 命令新增）+ 本草案的 ID 索引表 + changelog —— 0 行测试代码、0 行 E2E 脚本、0 个 it() 数量变化。
+> - SSOT 单源原则保留：B4 命令文本只在 `contract-dod-ws1.md` 落定；本草案仅按稳定 ID 引用（沿用 Round 10 结构性原则）
+> - Round 10 的命令 1 差异化 exit 码（exit 1/2/3/4）保留不动
+>
+> **Reviewer Round 10 旁支观察（Reviewer 自陈 "和本轮无关，提一下"，Round 11 不处理但记录在案）**：
+> - **A2 计数 `^\s*it\s*\(`** — 当前文件清洁；理论上 `it(` 嵌入描述字符串（`'\nit(...'`）或反向缩进可干扰计数。**Round 11 不动**（与 Reviewer Round 10 反馈范围对齐；若后续真有干扰诉求，下轮可改用 AST 计数 / 计 vitest list 输出 / 计 collect 后的 numTotalTests）
+> - **索引表 ID ↔ DoD ARTIFACT 对应关系仍是人工映射**（无 self-check）—— ID 增删时可能漂移。**Round 11 不动**（同上，下轮顺手议题；当前 7 条 ID 表 + 7 条 DoD 条目人工对账成本低）
+>
+> ---
 >
 > **Round 9 → Round 10 变更（基于 Reviewer Round 9 REVISION 反馈 — 2 个 major risk 必修 + 1 条 minor 采纳）**：
 >
@@ -331,33 +357,35 @@ done
 # `**/*.{test,spec}.?(c|m)[jt]s?(x)`，能 collect 到 sprints/tests/ws1/*.test.ts，FAILED 保持 0 → exit 0
 ```
 
-### ARTIFACT 稳定 ID 索引（Round 10 — 单源引用 · 闭合 Reviewer Round 9 Major-B "双源漂移面"）
+### ARTIFACT 稳定 ID 索引（Round 10 — 单源引用 · 闭合 Reviewer Round 9 Major-B "双源漂移面"；Round 11 扩展 B4 防御纵深）
 
-> **结构性原则（Round 10 新增，替代 Round 9 失败的"原文粘贴"路线）**：
-> `contract-dod-ws1.md` 是所有 ARTIFACT `node -e ...` 命令的 **SSOT**（Single Source of Truth）。本合同草案**只按稳定 ID 引用**，**不复制命令文本**。未来任何 ARTIFACT 命令文本修改只会动一处（DoD 文件），不存在"两份文件语义漂移"的风险面。Reviewer 审查本草案时，用 `grep -n '^- \[ \] \[ARTIFACT\] \*\*A[1-4]\*\*\|^- \[ \] \[ARTIFACT\] \*\*B[1-3]\*\*' sprints/contract-dod-ws1.md` 即可定位 7 条命令的确切位置。
+> **结构性原则（Round 10 引入，Round 11 守约）**：
+> `contract-dod-ws1.md` 是所有 ARTIFACT `node -e ...` 命令的 **SSOT**（Single Source of Truth）。本合同草案**只按稳定 ID 引用**，**不复制命令文本**。未来任何 ARTIFACT 命令文本修改只会动一处（DoD 文件），不存在"两份文件语义漂移"的风险面。Reviewer 审查本草案时，用 `grep -n '^- \[ \] \[ARTIFACT\] \*\*A[1-4]\*\*\|^- \[ \] \[ARTIFACT\] \*\*B[1-4]\*\*' sprints/contract-dod-ws1.md` 即可定位 8 条命令的确切位置（Round 11：B 系列从 B1–B3 扩展为 B1–B4）。
 >
-> **ID 表**（合同草案唯一跨文件引用形态）：
+> **ID 表**（合同草案唯一跨文件引用形态；Round 11 新增 B4 行 + 更新 B2 关键正则列）：
 
 | ID | 职责 | 目标文件 | 关键正则/动作 | DoD 原文锚点 |
 |---|---|---|---|---|
-| **A1** | 文件存在性 | `sprints/tests/ws1/time-intl-caching.test.ts` | `fs.accessSync(...)` | DoD "Round 8/9/10 新增 ARTIFACT" 区块第 1 条 |
+| **A1** | 文件存在性 | `sprints/tests/ws1/time-intl-caching.test.ts` | `fs.accessSync(...)` | DoD "Round 8/9/10/11 新增 ARTIFACT" 区块第 1 条 |
 | **A2** | 顶层 `it(` 恰好 1 个（与 vitest `Tests 1` 强同构） | 同上 | `^\s*it\s*\(` 全局计数 === 1 | DoD 同区块第 2 条 |
 | **A3** | 顶层 `describe(` ≥ 1（非空测试文件语义） | 同上 | `^\s*describe\s*\(` 全局计数 ≥ 1 | DoD 同区块第 3 条 |
 | **A4** | 仓库根 vitest.config include 登记（若存在字面量 include） | `vitest.config.{js,ts}` at repo root | 字面量 `include:` 必须含 `sprints/tests` / `sprints/**` / `**/sprints/**` / `**/*.test.ts` / 具体文件 | DoD 同区块第 4 条 |
 | **B1** | **反面约束**：禁止 top-level static import `routes/time.js`（含 side-effect） — Round 10 修正版 | `sprints/tests/ws1/time-intl-caching.test.ts` | `^\s*import\s+(?:[^;]*from\s+)?['"][^'"]*routes/time\.js['"]` **不得命中** | DoD 同区块第 5 条 |
-| **B2** | **正面约束**：必须至少一次**指向 routes/time.js 的** `await import(...)` — Round 10 修正版（target 路径锁定） | 同上 | `await\s+import\s*\(\s*[^)]*routes/time\.js` **必须命中** | DoD 同区块第 6 条 |
+| **B2** | **正面结构约束**：必须至少一次**字符串字面 target 含 routes/time.js** 的 `await import(...)` — **Round 11 收紧版**（字面体内锁定，注释外注入失效） | 同上 | `await\s+import\s*\(\s*(?:\/\*...\*\/\s*)?(?:"[^"]*routes/time\.js[^"]*"\|<反引号>[^<反引号>]*routes/time\.js[^<反引号>]*<反引号>\|'[^']*routes/time\.js[^']*')\s*\)` **必须命中** | DoD 同区块第 6 条 |
 | **B3** | **旁证约束**：必须至少一次 `vi.spyOn(Intl, 'DateTimeFormat')` | 同上 | `vi\s*\.spyOn\s*\(\s*Intl\s*,\s*['"]DateTimeFormat['"]` 必须命中 | DoD 同区块第 7 条 |
+| **B4** | **集合性防御纵深**（**Round 11 新增** — Reviewer Round 10 路径 2）：所有 `await import(<字符串字面>)` 中**至少一条**字面体内含 `routes/time.js` | 同上 | `await\s+import\s*\(\s*(?:\/\*...\*\/\s*)?(?:"([^"]*)"\|<反引号>([^<反引号>]*)<反引号>\|'([^']*)')\s*\)` 全局枚举，至少一条捕获组含 `routes/time.js`；exit 1 = 0 条字面 import / exit 2 = target 漂移 | DoD 同区块第 8 条 |
 
-**三重锁链的语义（保留自 Round 9）**：
-- B1 = 反面（禁止破坏动态 import 模式；Round 10 补上 side-effect import 缺口）
-- B2 = 正面（证明动态 import 被执行，且 **target 必须绑定 routes/time.js** — Round 10 收紧）
-- B3 = 旁证（证明 Intl spy 机制存在 —— 与 B2 的动态 import 时机结合，才能在模块顶层求值之前 spy 生效）
+**四重锁链的语义（Round 11 = B1+B2+B3+B4）**：
+- **B1** = 反面静态禁令（禁止破坏动态 import 模式；Round 10 补上 side-effect import 缺口）
+- **B2** = 正面结构约束（**Round 11 收紧**：动态 import 必须被执行，且 target **必须是字符串字面，字面体内含 routes/time.js**；注释/变量/拼接外注入失效）
+- **B3** = 旁证机制约束（Intl spy 机制存在 —— 与 B2 的动态 import 时机结合，才能在模块顶层求值之前 spy 生效）
+- **B4** = **Round 11 新增**集合性兜底（即便测试文件追加多条无关字面 import，仍硬保 routes/time.js 是其中之一 target）
 
-**Round 9 → Round 10 的两条关键修补（命令文本仅在 DoD 落定，本处只列规则差异）**：
-- **B1**（side-effect import 缺口闭合）：Round 9 正则要求 `from` 子句存在；Round 10 把 `from` 子句改为可选组 `(?:[^;]*from\s+)?`，`import '...routes/time.js'`（无 `from`）与 `import X from '...routes/time.js'`（有 `from`）**双形态同被禁**
-- **B2**（target 路径绑定）：Round 9 正则仅要求 `await import(` 字面；Round 10 要求 paren 内（到首个 `)` 为止）**必须含** `routes/time.js` 字面，`await import('fs')` / `await import('path')` 等无关目标不再假绿该 ARTIFACT
+**Round 10 → Round 11 的两条关键修补（命令文本仅在 DoD 落定，本处只列规则差异）**：
+- **B2**（字面外注入缝隙闭合）：Round 10 正则 `[^)]*` 允许 `routes/time.js` 出现在 paren 内任意非-`)` 位置，包括注释/变量/拼接；**Round 11 改为三种字面变体的明确 alternation**（双引号/反引号/单引号），强制 `routes/time.js` 必须落在字面体内。`await import(someVar /* routes/time.js */)` 类 mutation 不再假绿
+- **B4**（Round 11 新增防御纵深）：与 B2 互补 —— B2 验证"存在合规结构"，B4 验证"在所有合规字面 import 中至少一条 target 命中"。即便未来追加 `await import('vitest')` 等无关字面调用，B4 仍硬保 routes/time.js 是其中之一
 
-**Round 8 / Round 9 / Round 10 硬约束总表**（Round 9 把"必须包含/不包含"从依赖文本字符串升级到依赖 JSON schema，与命令 1 同步；Round 10 差异化 exit 码 + B1/B2 正则收紧）:
+**Round 8 / Round 9 / Round 10 / Round 11 硬约束总表**（Round 9 把"必须包含/不包含"从依赖文本字符串升级到依赖 JSON schema，与命令 1 同步；Round 10 差异化 exit 码 + B1/B2 正则收紧；Round 11 B2 进一步收紧到字面体内 + 新增 B4 防御纵深）:
 
 | 状态 | vitest 命令 | JSON 报告期望（Round 9 主判据） | 文本输出期望（Round 8 兼容判据，仅参考） | Round 10 exit 码 | 原因 |
 |---|---|---|---|---|---|
@@ -368,12 +396,13 @@ done
 | 假设测试文件被误删 / 路径错位 → collect miss | 同上 | 退出非 0；`numTotalTests !== 1` 或 `numTotalTestSuites === 0`；stderr 含 `No test files found` | `No test files found` | `exit 4` | Round 10 新增差异化 — collect miss |
 | collect OK 但既非 1 failed 也非 1 passed | 同上 | `numTotalTests === 1 && numFailedTests !== 1 && numPassedTests !== 1` | N/A | `exit 2` | vitest 把 it 跳过或其它异常 |
 | Round 9 新增 / Round 10 修正：测试文件动态 import 契约破坏 | 静态 ARTIFACT B1/B2/B3（SSOT 位置：`contract-dod-ws1.md` 同名条目） | N/A — 不跑 vitest，直接 `node -e ...` ARTIFACT 判定 | N/A | ARTIFACT 自身 `process.exit(1)` | 测试文件语义完整性（静态 import / target 未绑定 → mutation probe 失效） |
+| **Round 11 收紧**：B2 字面外注入 / B4 集合性兜底 | 静态 ARTIFACT B2（收紧）+ B4（新增；SSOT 位置：`contract-dod-ws1.md`） | N/A — 不跑 vitest，直接 `node -e ...` ARTIFACT 判定 | N/A | B2 命中失败 `exit 1`；B4 无字面 import `exit 1` / 字面 import 存在但无一条 target 命中 routes/time.js `exit 2` | 测试文件 import target 字面体内含 routes/time.js（注释/变量/拼接外注入失效，集合内至少一条 target 命中） |
 
 ---
 
-## GAN 对抗要点（供 Reviewer 聚焦 Round 10 修订是否充分）
+## GAN 对抗要点（供 Reviewer 聚焦 Round 11 修订是否充分）
 
-**Round 1 → Round 10 的 mutation 族是否已被一次性堵上**：
+**Round 1 → Round 11 的 mutation 族是否已被一次性堵上**：
 
 | # | Mutation 族 | 旧轮漏洞 | Round 9 堵法（或历代堵法） |
 |---|---|---|---|
@@ -410,6 +439,8 @@ done
 | 31 | **B2 三重锁链正面约束的 regex 未绑定 target 路径**（Reviewer Round 9 Major-A 其二）：Round 9 B2 正则 `await\s+import\s*\(` 仅匹配 `await import(` 字面，**任意** target 都满足；测试文件若 Intl mutation probe 部分被删、但保留 `await import('fs')` 等无关行，B2 仍会假绿 → B2 作为"动态 import 契约"的语义失去效力 | Round 9 正则未绑定路径 | **Round 10 修正 B2 正则**：`await\s+import\s*\(\s*[^)]*routes\/time\.js`（`[^)]*` 贪婪匹配 paren 内任意内容直至 `)` 之前，要求其中含 `routes/time.js` 字面）。`await import('fs')` / `await import('path')` 等不再假绿。测试文件当前写法 ``await import(/* @vite-ignore */ `../../../packages/brain/src/routes/time.js?rev7intl=${Date.now()}`)`` 仍命中（paren 内包含 `routes/time.js`）。SSOT 位于 DoD · B2 |
 | 32 | **Round 9 双源原文粘贴的漂移面**（Reviewer Round 9 Major-B）：Round 9 把 `contract-dod-ws1.md` 的 ARTIFACT `node -e ...` 原文复制到 `contract-draft.md` `### ARTIFACT 原文粘贴` 区，意图消除跨文件对齐。结果是：同一条命令出现在两个文件里，任一文件修改若未同步就语义漂移；"粘贴+同步纪律"是**工程性兜底**而非**结构性解法** | Round 9 原文粘贴 | **Round 10 根治：单源引用结构**。`contract-dod-ws1.md` 永久作为命令 SSOT；每条 Round 8+9+10 新增 ARTIFACT 赋予**稳定 ID**（A1/A2/A3/A4/B1/B2/B3）；`contract-draft.md` 删除粘贴区，改为按 ID 引用（无命令文本重复）。未来修改命令文本仅触达 DoD 一处，0 漂移风险面。索引表保留在合同草案 `### ARTIFACT 稳定 ID 索引` 章节（列 ID、职责、关键正则规则、DoD 原文锚点 4 列信息） |
 | 33 | **命令 1 三种失败路径共用 exit 1 不便于 triage**（Reviewer Round 9 minor）：Round 9 命令 1 用 exit 1 覆盖 collect miss、JSON 解析错误等所有失败情况，Reviewer 肉眼很难快速判断"vitest 本身挂了"vs"合同契约不满足"vs"JSON 格式错" | Round 9 exit 1 归一 | **Round 10 按 Reviewer 建议采纳差异化 exit**：exit 3 = JSON reporter 文件未生成（vitest 执行挂了）/ exit 1 = JSON 解析异常（文件损坏）/ exit 4 = collect miss（`numTotalTests !== 1`）/ exit 2 = 合法 collect 但既非 1 failed 也非 1 passed / exit 0 = 合法 Red 或 Green。硬约束总表新增一列记录对应 exit 码 |
+| 34 | **B2 字面外注入缝隙**（Reviewer Round 10 Major）：Round 10 B2 正则 `await\s+import\s*\(\s*[^)]*routes\/time\.js` 用 `[^)]*` 贪婪匹配 paren 内任意非-`)` 字符；`routes/time.js` 字面**可以位于注释内、变量名内、字符串拼接的非 target 部分内**；mutant `await import(someVar /* routes/time.js */)` 假绿。Round 10 的"target 路径锁定"只锁到了 `(...)` 区间，**未真正锁到字符串字面 target 内** | Round 10 `[^)]*` 贪婪 | **Round 11 收紧 B2 到字面体内**：新正则 `await\s+import\s*\(\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:"[^"]*routes\/time\.js[^"]*"\|<反引号>[^<反引号>]*routes\/time\.js[^<反引号>]*<反引号>\|'[^']*routes\/time\.js[^']*')\s*\)`。语义：paren 内只允许"可选 `/* ... */` 注释 + 一个完整字符串字面（双引号/反引号/单引号三选一）+ 立即闭合 paren"；`routes/time.js` 必须落在字面体内。注释/变量/拼接里的 `routes/time.js` 全部不算。SSOT 位于 DoD · B2。Proposer 本地 mutation 自检：mutant-A `await import(someVar /* routes/time.js */)` 拒绝 / mutant-B `await import('fs')` 拒绝 / 当前合法实现 PASS |
+| 35 | **B 系列对未来追加无关 await import 的兜底缺失**（Reviewer Round 10 建议路径 2，Round 11 主动采纳作为防御纵深）：即便 B2 收紧后，单个 `await import(<字面>)` 调用 target 字面体内含 `routes/time.js` 即可命中；若未来测试文件追加多条 `await import('vitest')`/`await import('node:fs')` 等无关字面调用，B2 仍然 PASS（因为它要求"至少一条命中"），但若有人**同时删掉了 routes/time.js 那条**只留下无关调用，B2 就会 fail —— 不过缺乏一条**显式列出"集合中至少一条 target 命中"** 的硬契约用于未来诊断 / 文档锚点 | Round 10 仅 B2 单条 ARTIFACT | **Round 11 新增 B4 防御纵深**：枚举测试文件中所有 `await\s+import\s*\(\s*(?:\/\*...\*\/\s*)?(?:"([^"]*)"\|<反引号>([^<反引号>]*)<反引号>\|'([^']*)')\s*\)` 命中（三种字面变体的捕获组），**至少一条**捕获组含 `routes/time.js`。失败码语义化：exit 1 = 0 条字面 import 调用（mutation probe 完全缺失）；exit 2 = 字面 import 存在但无一条 target 命中（target 漂移）；exit 0 = PASS（matches.length≥1 且至少一条命中）。SSOT 位于 DoD · B4。当前合法实现：1 条字面 import → 反引号字面体内含 routes/time.js → PASS（matches.length===1, ok===true）。与 B2 形成"结构 + 集合"双重锁定 |
 
 ## PRD 追溯性
 
