@@ -110,7 +110,7 @@ export async function spawn(opts) {
 | 2 | transient→success | `[{timed_out:true}, {exit_code:0}]` | 调用 2 次，返回第二个 result |
 | 3 | transient × 3 give up | `[{timed_out:true} × 3]` | 调用 3 次，返回最后 result |
 | 4 | permanent 不重试 | `[{exit_code:137}]` | 调用 1 次，返回该 result |
-| 5 | 429 cap→下次换号 | `[{stderr:'429', exit_code:1}, {exit_code:0}]` | 调用 2 次；`opts.env.CECELIA_CREDENTIALS` 未被 spawn 层主动删除（断言仍有旧值或未被 spawn 显式 delete） |
+| 5 | 429 transient → spawn 不删 env | `[{stderr:'429', exit_code:1}, {exit_code:0}]` | 调用 2 次；断言 `opts.env.CECELIA_CREDENTIALS` 仍 === 初始值（证明 spawn 层未主动 delete；真正的换号责任留给内层 account-rotation，在此 mock 边界外不验证） |
 | 6 | shouldRetry 返回 false 提前退 | mock `shouldRetry` 固定返回 false；序列 `[{timed_out:true}, ...]` | 调用 1 次，返回该 result |
 | 7 | MAX_ATTEMPTS 边界 | 每次 transient；验证 `executeInDocker.mock.calls.length === 3` | 恰好 3 次 |
 
