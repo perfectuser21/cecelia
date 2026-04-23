@@ -77,37 +77,11 @@ changelog:
 
 ---
 
-## 攻击向量库（v6 新指南）
+## 攻击向量参考
 
-### ✅ 合法攻击向量（产品/spec 质量）
-
-对每个 Feature / criteria / DoD 条目，尝试挑：
-
-**1. Spec 对齐用户需求**
-- 这个 spec 做完真解决用户问题吗？
-- 有没有"隐藏假设"（用户没说但 spec 里默认了）？
-- 用户看到这个 spec 会觉得"对，就是这个"吗？
-
-**2. Criteria 可量化性**
-- 硬阈值是具体数字/字段值吗？（"retries 3 times" ✅，"works correctly" ❌）
-- 用"正常/合理/合适"这类模糊词吗？
-- 一个第三方工程师看到能知道对错的判定标准吗？
-
-**3. 覆盖度**
-- Happy path ✅ 列了，Error path 呢？（404/403/500 场景）
-- 边界场景：空输入、最大值、0、负数、Unicode 特殊字符
-- 并发/竞态：同一资源多请求会怎样？
-- 时区 / locale / 国际化：spec 里有没有暗含 UTC/本地时间？
-
-**4. 无歧义声明**
-- 字段类型明确（"unix 是秒还是毫秒？"）
-- 响应结构明确（JSON schema 还是自由格式？）
-- 错误 body 格式规定了吗？
-
-**5. Workstream 拆分合理**
-- 每个 workstream 范围清晰，不重叠
-- 依赖关系正确（ws2 真需要 ws1 完吗？）
-- 大小合理（S<100 行 / M 100-300 / L >300）
+v7 已用上方 rubric（5 维度 × 0-10）取代自由散文式审查。下方仅保留**禁止向量**作为反面教材，
+打分时遵循 rubric 维度即可，不要再按旧版"Spec 对齐/Criteria 量化/覆盖度/无歧义/Workstream"
+格式组织输出（那是 v6 老结构，与 rubric 并存会让 LLM 困惑）。
 
 ### ❌ 禁止的攻击向量（v5 遗毒）
 
@@ -143,33 +117,12 @@ cat "${SPRINT_DIR}/contract-draft.md"
 ls "${SPRINT_DIR}/contract-dod-ws"*.md 2>/dev/null | xargs cat
 ```
 
-### Step 2: 产品/Spec 质量分析
+### Step 2: 按 Rubric 打分
 
-按"攻击向量库 → ✅ 合法"的 5 个维度逐个走：
-
-**2.1 Spec 对齐**
-- 从 PRD 提取用户需求
-- 合同的 Features 是否 1:1 映射
-- 有无隐藏假设没声明
-
-**2.2 Criteria 量化性**
-- 每条硬阈值 → 是具体数字/字段值吗
-- 标记模糊词：`works correctly` / `reasonable` / `proper` / `fine`
-- 第三方能不能不读代码判断对错
-
-**2.3 覆盖度**
-- Happy path 清单
-- Error path 清单（列出应覆盖的：400/401/403/404/405/500）
-- 边界：空、最大、0、负、特殊字符
-- 并发/时区/locale
-
-**2.4 无歧义**
-- 每个字段类型 + 语义明确
-- JSON schema 完备
-- Error body 格式规定
-
-**2.5 Workstream**
-- 范围 / 依赖 / 大小
+严格按上文"评分 Rubric"的 5 个维度（dod_machineability / scope_match_prd / test_is_red /
+internal_consistency / risk_registered）独立打 0-10 分。不要再按 v6 的 Spec 对齐/Criteria
+量化/覆盖度/无歧义/Workstream 旧结构组织思考 — 那 5 维和当前 rubric 不是一一对应的，会让
+你陷入"合同写得越多越好"的误区。只按上文 rubric 表 5 维逐个打分。
 
 ### Step 3: 产出 Verdict
 

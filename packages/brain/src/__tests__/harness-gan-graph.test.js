@@ -28,13 +28,26 @@ describe('buildProposerPrompt', () => {
 });
 
 describe('buildReviewerPrompt', () => {
-  it('round 1: PRD + contract + verdict instruction', () => {
+  it('round 1: PRD + contract + rubric scoring instruction', () => {
     const out = buildReviewerPrompt('# PRD', '# Contract R1', 1);
     expect(out).toContain('/harness-contract-reviewer');
     expect(out).toContain('round: 1');
     expect(out).toContain('## Proposer 当前合同草案');
     expect(out).toContain('# Contract R1');
-    expect(out).toContain('VERDICT: APPROVED');
+    // 必须含 5 维度名
+    expect(out).toContain('dod_machineability');
+    expect(out).toContain('scope_match_prd');
+    expect(out).toContain('test_is_red');
+    expect(out).toContain('internal_consistency');
+    expect(out).toContain('risk_registered');
+    // 必须含 rubric_scores JSON 示例（```json fence）
+    expect(out).toMatch(/```json[\s\S]*dod_machineability[\s\S]*```/);
+    // 必须含 skeptical persona 提示
+    expect(out).toContain('skeptical staff engineer');
+    // 必须含代码判阈值说明
+    expect(out).toContain('阈值判 PASS 由代码做');
+    // VERDICT 作为最后人类可读行保留
+    expect(out).toContain('VERDICT: REVISION');
   });
 });
 
