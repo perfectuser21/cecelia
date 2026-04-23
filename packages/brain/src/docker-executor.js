@@ -26,6 +26,11 @@ import pool from './db.js';
 import { runDocker } from './spawn/middleware/docker-run.js';
 import { resolveAccount } from './spawn/middleware/account-rotation.js';
 import { resolveCascade } from './spawn/middleware/cascade.js';
+// v2 P2.5 外层 middleware 接线
+import { checkCostCap, CostCapExceededError } from './spawn/middleware/cost-cap.js';
+import { checkCap } from './spawn/middleware/cap-marking.js';
+import { recordBilling } from './spawn/middleware/billing.js';
+import { createSpawnLogger } from './spawn/middleware/logging.js';
 
 const DEFAULT_IMAGE = process.env.CECELIA_RUNNER_IMAGE || 'cecelia/runner:latest';
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.CECELIA_DOCKER_TIMEOUT_MS || '900000', 10); // 15 min
@@ -319,10 +324,16 @@ export async function executeInDocker(opts) {
   const taskType = opts.task.task_type || 'dev';
   const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
 
+  // v2 P2.5 外层 middleware 接线：logging 入口 + cost-cap 预算守卫。
+  // cost-cap 若 throw CostCapExceededError 则拒绝 spawn（caller 应上层 catch）。
+  const logger = createSpawnLogger(opts);
+  logger.logStart();
+  await checkCostCap(opts);
+
   // 写 prompt 文件（宿主侧持久化，用于 debug / audit）
   writePromptFile(taskId, opts.prompt);
 
-  // 账号轮换 middleware — 所有 spawn 自动享有"cap/auth fail fallback"。见 resolveAccountForOpts。
+  // 账号轮换 middleware — 所有 spawn 自动享有"cap/auth fail fallback"。
   opts.env = opts.env || {};
   await resolveCascade(opts);
   await resolveAccount(opts, { taskId });
@@ -357,6 +368,12 @@ export async function executeInDocker(opts) {
     cidfile,
     command,
   });
+
+  // v2 P2.5 外层 middleware 接线（后置）：cap-marking 检测 + billing 归账 + logging 出口。
+  // 每个都容错，不阻塞 return。
+  try { await checkCap(result, opts); } catch (e) { console.warn(`[docker-executor] checkCap failed: ${e.message}`); }
+  try { await recordBilling(result, opts); } catch (e) { console.warn(`[docker-executor] recordBilling failed: ${e.message}`); }
+  logger.logEnd(result);
 
   return result;
 }
