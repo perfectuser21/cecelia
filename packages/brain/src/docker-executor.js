@@ -162,7 +162,7 @@ function cidFilePath(taskId) {
 /**
  * 读取 cidfile 并返回前 12 位 container_id（失败返回 null）
  */
-function readContainerIdFromCidfile(cidPath) {
+export function readContainerIdFromCidfile(cidPath) {
   try {
     if (!existsSync(cidPath)) return null;
     const raw = readFileSync(cidPath, 'utf8').trim();
