@@ -4,6 +4,9 @@ import {
   buildReviewerPrompt,
   extractVerdict,
   extractFeedback,
+  extractRubricScores,
+  computeVerdictFromRubric,
+  thresholdForRound,
 } from '../harness-gan-graph.js';
 
 describe('buildProposerPrompt', () => {
@@ -59,6 +62,87 @@ describe('extractFeedback', () => {
   it('returns empty for null/empty', () => {
     expect(extractFeedback(null)).toBe('');
     expect(extractFeedback('')).toBe('');
+  });
+});
+
+describe('thresholdForRound', () => {
+  it('round 1-2 阈值 7', () => {
+    expect(thresholdForRound(1)).toBe(7);
+    expect(thresholdForRound(2)).toBe(7);
+  });
+  it('round 3+ 阈值 6', () => {
+    expect(thresholdForRound(3)).toBe(6);
+    expect(thresholdForRound(5)).toBe(6);
+    expect(thresholdForRound(10)).toBe(6);
+  });
+});
+
+describe('extractRubricScores', () => {
+  it('解析 final JSON 含 rubric_scores', () => {
+    const stdout = 'analysis...\n{"verdict":"REVISION","rubric_scores":{"dod_machineability":8,"scope_match_prd":7,"test_is_red":9,"internal_consistency":6,"risk_registered":5},"pivot_signal":false}';
+    const scores = extractRubricScores(stdout);
+    expect(scores).toEqual({
+      dod_machineability: 8,
+      scope_match_prd: 7,
+      test_is_red: 9,
+      internal_consistency: 6,
+      risk_registered: 5,
+    });
+  });
+
+  it('解析 ```json fence 里的 rubric scores（v7 markdown 格式）', () => {
+    const stdout = '## RUBRIC SCORES\n\n```json\n{"dod_machineability": 8, "scope_match_prd": 7, "test_is_red": 9, "internal_consistency": 6, "risk_registered": 5}\n```\n\n## VERDICT: REVISION';
+    const scores = extractRubricScores(stdout);
+    expect(scores).toEqual({
+      dod_machineability: 8,
+      scope_match_prd: 7,
+      test_is_red: 9,
+      internal_consistency: 6,
+      risk_registered: 5,
+    });
+  });
+
+  it('无 rubric → null', () => {
+    expect(extractRubricScores('just text')).toBeNull();
+    expect(extractRubricScores('')).toBeNull();
+    expect(extractRubricScores(null)).toBeNull();
+  });
+});
+
+describe('computeVerdictFromRubric', () => {
+  const allSeven = {
+    dod_machineability: 7,
+    scope_match_prd: 7,
+    test_is_red: 7,
+    internal_consistency: 7,
+    risk_registered: 7,
+  };
+
+  it('round 1 全 ≥7 → APPROVED', () => {
+    expect(computeVerdictFromRubric(allSeven, 1)).toBe('APPROVED');
+  });
+
+  it('round 1 一维 6 → REVISION（阈值 7）', () => {
+    const scores = { ...allSeven, risk_registered: 6 };
+    expect(computeVerdictFromRubric(scores, 1)).toBe('REVISION');
+  });
+
+  it('round 3 同样一维 6 → APPROVED（阈值降到 6）', () => {
+    const scores = { ...allSeven, risk_registered: 6 };
+    expect(computeVerdictFromRubric(scores, 3)).toBe('APPROVED');
+  });
+
+  it('round 3 一维 5 → REVISION（仍低于阈值 6）', () => {
+    const scores = { ...allSeven, risk_registered: 5 };
+    expect(computeVerdictFromRubric(scores, 3)).toBe('REVISION');
+  });
+
+  it('scores null → null（fallback 到 LLM 文本）', () => {
+    expect(computeVerdictFromRubric(null, 1)).toBeNull();
+  });
+
+  it('维度不完整 → null', () => {
+    expect(computeVerdictFromRubric({ dod_machineability: 8 }, 1)).toBeNull();
   });
 });
 
@@ -207,6 +291,82 @@ describe('createGanContractNodes', () => {
     });
     expect(newState.verdict).toBe('APPROVED');
     expect(newState.forcedApproval).toBe(false);
+  });
+
+  // ── rubric 代码权威判决测试 ──
+  it('reviewer node: rubric 全 ≥7 → APPROVED（即使 LLM 文本说 REVISION）', async () => {
+    // LLM 说 REVISION，但 rubric scores 表明所有维度都达标
+    const stdout = [
+      '## RUBRIC SCORES',
+      '```json',
+      '{"dod_machineability":8,"scope_match_prd":7,"test_is_red":9,"internal_consistency":7,"risk_registered":7}',
+      '```',
+      '',
+      'VERDICT: REVISION',  // LLM 想继续挑毛病但 rubric 达标
+    ].join('\n');
+    const executor = vi.fn(async () => ({
+      exit_code: 0, stdout, stderr: '', cost_usd: 0.1, timed_out: false,
+    }));
+    const { createGanContractNodes } = await import('../harness-gan-graph.js');
+    const nodes = createGanContractNodes(executor, makeCtx());
+    const newState = await nodes.reviewer({
+      prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0,
+    });
+    // 代码权威判 APPROVED，忽略 LLM 文本 REVISION
+    expect(newState.verdict).toBe('APPROVED');
+    expect(newState.forcedApproval).toBe(false); // 不是 MAX_ROUNDS 强制，是 rubric 自然 PASS
+  });
+
+  it('reviewer node: rubric 一维 < 阈值 → REVISION（即使 LLM 文本说 APPROVED）', async () => {
+    const stdout = [
+      '## RUBRIC SCORES',
+      '```json',
+      '{"dod_machineability":8,"scope_match_prd":7,"test_is_red":9,"internal_consistency":7,"risk_registered":5}',
+      '```',
+      '',
+      'VERDICT: APPROVED',  // LLM 宽容说 APPROVED 但 rubric risk_registered=5 < 7
+    ].join('\n');
+    const executor = vi.fn(async () => ({
+      exit_code: 0, stdout, stderr: '', cost_usd: 0.1, timed_out: false,
+    }));
+    const { createGanContractNodes } = await import('../harness-gan-graph.js');
+    const nodes = createGanContractNodes(executor, makeCtx());
+    const newState = await nodes.reviewer({
+      prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0,
+    });
+    expect(newState.verdict).toBe('REVISION');
+    expect(newState.feedback).toBeDefined();
+  });
+
+  it('reviewer node: 无 rubric → fallback 到 LLM 文本 verdict（向后兼容）', async () => {
+    const executor = vi.fn(async () => ({
+      exit_code: 0, stdout: 'Only text, no rubric scores.\nVERDICT: APPROVED', stderr: '', cost_usd: 0.1, timed_out: false,
+    }));
+    const { createGanContractNodes } = await import('../harness-gan-graph.js');
+    const nodes = createGanContractNodes(executor, makeCtx());
+    const newState = await nodes.reviewer({
+      prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0,
+    });
+    expect(newState.verdict).toBe('APPROVED');
+  });
+
+  it('reviewer node: round 3 阈值降 6，rubric 全 ≥6 → APPROVED', async () => {
+    const stdout = [
+      '```json',
+      '{"dod_machineability":6,"scope_match_prd":7,"test_is_red":6,"internal_consistency":6,"risk_registered":6}',
+      '```',
+      'VERDICT: REVISION',
+    ].join('\n');
+    const executor = vi.fn(async () => ({
+      exit_code: 0, stdout, stderr: '', cost_usd: 0.1, timed_out: false,
+    }));
+    const { createGanContractNodes } = await import('../harness-gan-graph.js');
+    const nodes = createGanContractNodes(executor, makeCtx());
+    const newState = await nodes.reviewer({
+      prdContent: '# PRD', contractContent: '# C', round: 3, costUsd: 0,
+    });
+    // round 3 阈值 6，全部 ≥6 → APPROVED（虽然 round 1 规则下会 REVISION）
+    expect(newState.verdict).toBe('APPROVED');
   });
 });
 

@@ -51,6 +51,63 @@ export function extractVerdict(stdout) {
   return m ? m[1].toUpperCase() : 'REVISION';
 }
 
+// Round-based 阈值（对齐 Anthropic harness-design 2026-03 "each criterion has a hard threshold"）
+// Round 1-2 严格（7 分），Round 3-4 放宽（6 分），给 Reviewer 识别收敛但仍严肃的空间。
+export function thresholdForRound(round) {
+  if (round <= 2) return 7;
+  return 6; // Round 3+
+}
+
+// 从 Reviewer stdout 里解析 rubric_scores JSON（SKILL v7 产出格式）
+// 支持两种：
+//   1. final JSON 字面量：{"verdict":..., "rubric_scores":{"dod_machineability":X,...}, ...}
+//   2. markdown code fence：```json\n{"dod_machineability":X,...}\n```
+// 找不到或解析失败 → 返回 null，调用方 fallback 到 LLM 文本 verdict。
+export function extractRubricScores(stdout) {
+  const s = String(stdout || '');
+  // 优先匹配含 rubric_scores 嵌套的 final JSON
+  const finalJsonRe = /\{[^{}]*"rubric_scores"\s*:\s*(\{[^{}]+\})[^{}]*\}/;
+  const mFinal = s.match(finalJsonRe);
+  if (mFinal) {
+    try {
+      return JSON.parse(mFinal[1]);
+    } catch { /* fall through */ }
+  }
+  // Fallback：直接找 ```json ... ``` 里含 5 维度 key 的对象
+  const fenceRe = /```json\s*(\{[^`]*?"dod_machineability"[^`]*?\})\s*```/;
+  const mFence = s.match(fenceRe);
+  if (mFence) {
+    try {
+      return JSON.parse(mFence[1]);
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+// 根据 rubric scores 和 round 计算权威 verdict（代码判 PASS，不信 LLM 文字）
+// 所有 5 维度 ≥ 阈值 → APPROVED；任一低于 → REVISION。
+// scores 缺失或维度不完整 → null（调用方 fallback 到 LLM 文本 verdict）。
+// 对齐 Anthropic：each criterion has hard threshold, PASS is code-decided.
+const RUBRIC_DIMENSIONS = [
+  'dod_machineability',
+  'scope_match_prd',
+  'test_is_red',
+  'internal_consistency',
+  'risk_registered',
+];
+
+export function computeVerdictFromRubric(scores, round) {
+  if (!scores || typeof scores !== 'object') return null;
+  const threshold = thresholdForRound(round);
+  const nums = RUBRIC_DIMENSIONS.map((k) => {
+    const v = scores[k];
+    return typeof v === 'number' && !Number.isNaN(v) ? v : null;
+  });
+  if (nums.some((n) => n === null)) return null; // 维度不完整
+  const allPass = nums.every((n) => n >= threshold);
+  return allPass ? 'APPROVED' : 'REVISION';
+}
+
 export function extractFeedback(stdout) {
   const s = String(stdout || '');
   if (!s) return '';
@@ -219,14 +276,24 @@ export function createGanContractNodes(executor, ctx) {
     if (nextCost > budgetCapUsd) {
       throw new Error(`gan_budget_exceeded: spent=${nextCost.toFixed(3)} cap=${budgetCapUsd}`);
     }
-    const llmVerdict = extractVerdict(result.stdout);
-    let verdict = llmVerdict;
-    // 硬轮数保险丝：达到 MAX_ROUNDS 后即使 LLM 要 REVISE 也 force APPROVED
-    // 对齐 Anthropic harness-design 2026-03 的 5-15 iter cap 实操
+    // Verdict 决策优先级（对齐 Anthropic harness-design 2026-03 "each criterion has hard threshold"）：
+    //   1. rubric_scores 齐全 → 代码判阈值（权威 — LLM 只打分不判决）
+    //   2. rubric_scores 缺失 → fallback 到 LLM 文本 "VERDICT: X"（老逻辑）
+    //   3. 无论以上哪个结果，round >= MAX_ROUNDS 且非 APPROVED → force APPROVED（保险丝）
     const currentRound = state.round || 0;
+    const rubricScores = extractRubricScores(result.stdout);
+    const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
+    const llmTextVerdict = extractVerdict(result.stdout);
+    // authoritative verdict：rubric 齐全优先，否则用 LLM 文本
+    let verdict = rubricVerdict || llmTextVerdict;
+    const verdictSource = rubricVerdict ? 'rubric' : 'llm_text';
+    if (rubricVerdict && rubricVerdict !== llmTextVerdict) {
+      console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ llm_text=${llmTextVerdict} — 按 rubric 判（代码权威）`);
+    }
+    // 硬轮数保险丝：即使上面判了 REVISION，round >= MAX_ROUNDS 仍 force APPROVED
     let forcedApproval = false;
-    if (llmVerdict !== 'APPROVED' && currentRound >= MAX_ROUNDS) {
-      console.warn(`[harness-gan] Force-APPROVED at round=${currentRound} (MAX_ROUNDS=${MAX_ROUNDS}, LLM verdict=${llmVerdict}) — 硬保险丝触发，进 Phase B`);
+    if (verdict !== 'APPROVED' && currentRound >= MAX_ROUNDS) {
+      console.warn(`[harness-gan] Force-APPROVED at round=${currentRound} (MAX_ROUNDS=${MAX_ROUNDS}, source=${verdictSource}, verdict_before=${verdict}) — 硬保险丝触发，进 Phase B`);
       verdict = 'APPROVED';
       forcedApproval = true;
     }
