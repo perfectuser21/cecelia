@@ -95,11 +95,13 @@ export async function runContentPipeline(task, opts = {}) {
         }
       }
     } catch (e) {
-      console.warn(`[content-pipeline-runner] selectBestAccount 失败，fallback account1: ${e.message}`);
+      console.warn(`[content-pipeline-runner] selectBestAccount 失败，fallback 到 spawn middleware: ${e.message}`);
     }
   }
+  // v2 P2 PR10：删 'account1' 硬编码 fallback。若 dynamicCredential 为空，
+  // 留空交给 executeInDocker 内的 resolveAccount middleware 实时选账号（§5.3 遍历顺序）。
   const mergedEnv = {
-    CECELIA_CREDENTIALS: dynamicCredential || 'account1',
+    ...(dynamicCredential ? { CECELIA_CREDENTIALS: dynamicCredential } : {}),
     ...(opts.env || {}),
   };
 

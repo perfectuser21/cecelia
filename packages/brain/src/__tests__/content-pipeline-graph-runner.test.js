@@ -339,13 +339,20 @@ describe('runContentPipeline', () => {
     expect(firstCall.env.CONTENT_OUTPUT_DIR).toBe('/out-payload');
   });
 
-  it('injects CECELIA_CREDENTIALS=account1 by default (Docker claude 认证)', async () => {
+  it('CECELIA_CREDENTIALS 由 selectBestAccount 动态选（v2 P2 PR10：删 account1 硬编码 fallback）', async () => {
+    // v2 P2 PR10：content-pipeline-graph-runner 不再写死 'account1' fallback。
+    // dynamicCredential 来自 selectBestAccount（测试环境 DB 可用，返回有效账号），
+    // 若 selectBestAccount 也失败才让 mergedEnv 不含 CECELIA_CREDENTIALS key，
+    // 交给 executeInDocker 的 resolveAccount middleware（PR3）按 §5.3 遍历顺序选号。
     process.env.CONTENT_PIPELINE_LANGGRAPH_ENABLED = 'true';
     delete process.env.CONTENT_PIPELINE_CREDENTIALS;
     const dockerExecutor = vi.fn(async () => ({ exit_code: 0, stdout: '', timed_out: false }));
     await runContentPipeline({ id: 'p-cred', keyword: 'demo' }, { dockerExecutor });
     const firstCall = dockerExecutor.mock.calls[0][0];
-    expect(firstCall.env.CECELIA_CREDENTIALS).toBe('account1');
+    // 关键断言：不再是硬编码 'account1'，而是 selectBestAccount 的返回（任意有效账号）
+    // 或 undefined（selectBestAccount 也失败时）
+    const cred = firstCall.env.CECELIA_CREDENTIALS;
+    expect(cred === undefined || /^account\d+$/.test(cred)).toBe(true);
   });
 
   it('opts.env.CECELIA_CREDENTIALS overrides default', async () => {

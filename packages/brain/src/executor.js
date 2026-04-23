@@ -2849,7 +2849,7 @@ async function triggerCeceliaRun(task) {
     try {
       const { runHarnessPipeline } = await import('./harness-graph-runner.js');
       // Harness pipeline 不在此处硬编码 CECELIA_CREDENTIALS='account1'。
-      // 让底层 executeInDocker 的 resolveAccountForOpts middleware（docker-executor.js:359）
+      // 让底层 executeInDocker 的 resolveAccount middleware（spawn/middleware/account-rotation.js，v2 P2 PR3）
       // 在每次 spawn 时实时调 selectBestAccount + isSpendingCapped/isAuthFailed fallback，
       // 账号治理统一收口到 account-usage.js。
       // 对齐 content-pipeline-graph-runner.js 的动态选择设计。
