@@ -1,6 +1,6 @@
 # Layer 3: Spawn Policy Layer
 
-**状态**: P2 PR 1 skeleton 已落地（spawn wrapper + SPAWN_V2_ENABLED flag）；middleware 链待 PR 2+
+**状态**: P2 完成（PR1-PR11 全部合并，#2543-#2555）。9 个 middleware 已建立（内层 6 + 外层 4）。执行链整合等待后续 attempt-loop PR。
 **对应 Spec**: [`docs/design/brain-orchestrator-v2.md`](../../../../docs/design/brain-orchestrator-v2.md) §5
 **归属**: Brain 三层架构的 Layer 3 (Executor)
 
