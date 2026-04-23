@@ -1,8 +1,7 @@
 # Layer 3: Spawn Policy Layer
 
-**状态**: 占位骨架（P1）— 待 P2 实现
-**对应 Spec**: [`docs/design/brain-orchestrator-v2.md`](../brain-orchestrator-v2.md) §5
-**目标路径**（P2 实现时 `git mv` 到）: `packages/brain/src/spawn/README.md`
+**状态**: P2 PR 1 skeleton 已落地（spawn wrapper + SPAWN_V2_ENABLED flag）；middleware 链待 PR 2+
+**对应 Spec**: [`docs/design/brain-orchestrator-v2.md`](../../../../docs/design/brain-orchestrator-v2.md) §5
 **归属**: Brain 三层架构的 Layer 3 (Executor)
 
 ---
