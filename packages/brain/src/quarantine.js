@@ -19,6 +19,7 @@
 import pool from './db.js';
 import { emit } from './event-bus.js';
 import { upsertLearning } from './learning.js';
+import { hasActiveSignal } from './quarantine-active-signal.js';
 
 // ============================================================
 // 配置
@@ -461,10 +462,24 @@ async function getQuarantineStats() {
  * @param {Object} task - 任务对象
  * @returns {{ shouldQuarantine: boolean, reason?: string, details?: Object }}
  */
-function shouldQuarantineOnFailure(task) {
+async function shouldQuarantineOnFailure(task) {
   // quota_exhausted 不是任务本身失败，不计入失败阈值，不触发隔离
   if (task.status === 'quota_exhausted') {
     return { shouldQuarantine: false };
+  }
+
+  // Phase B2: 活跃信号预检 — 有 interactive claude 在推进 → skip
+  const signal = await hasActiveSignal(task.id);
+  if (signal.active) {
+    return {
+      shouldQuarantine: false,
+      reason: 'active_signal_bypass',
+      details: {
+        signal_source: signal.source,
+        signal_reason: signal.reason,
+        age_ms: signal.ageMs,
+      },
+    };
   }
 
   const failureCount = (task.payload?.failure_count || 0) + 1;
@@ -862,10 +877,10 @@ async function checkSystemicFailurePattern() {
  * @param {string} context - 检查上下文 ('on_failure', 'on_create', 'on_dispatch')
  * @returns {{ shouldQuarantine: boolean, reason?: string, details?: Object }}
  */
-function checkShouldQuarantine(task, context = 'on_failure') {
+async function checkShouldQuarantine(task, context = 'on_failure') {
   // 1. 失败次数检查
   if (context === 'on_failure') {
-    const failureCheck = shouldQuarantineOnFailure(task);
+    const failureCheck = await shouldQuarantineOnFailure(task);
     if (failureCheck.shouldQuarantine) {
       return failureCheck;
     }
@@ -1060,7 +1075,7 @@ async function handleTaskFailure(taskId, options = {}) {
     }
 
     // 检查是否需要隔离
-    const check = checkShouldQuarantine(task, 'on_failure');
+    const check = await checkShouldQuarantine(task, 'on_failure');
 
     if (check.shouldQuarantine) {
       const result = await quarantineTask(taskId, check.reason, check.details);
