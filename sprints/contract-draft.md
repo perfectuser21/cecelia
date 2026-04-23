@@ -1,6 +1,22 @@
-# Sprint Contract Draft (Round 8)
+# Sprint Contract Draft (Round 9)
 
 > **PRD 来源**：`sprints/sprint-prd.md`（Initiative：Brain 时间端点 — 单一 `GET /api/brain/time` 返回 iso/timezone/unix 三字段）
+>
+> **Round 8 → Round 9 变更（基于 Reviewer Round 8 REVISION 反馈）**：
+>
+> **Reviewer Round 8 识别出 4 个 Risk**（按 VERDICT: REVISION，≥ 2 Risk 即须回 Proposer；本轮一次性处理）：
+> - **Risk 1（major）**：Round 8 `## Test Collect Sanity` 命令 1 用 `grep -Eq "Tests[[:space:]]+1" /tmp/ws1-intl-list.log` 判定 collect 计数，**依赖 vitest 文本报告格式字符串**。vitest 2.x/3.x 若修改 summary 行格式（例如 `Test Files 1` → `Files 1` / `Tests: 1`），合同判定会误红/漏红。**Round 9 对策**：改用 `npx vitest run ... --reporter=json --outputFile=/tmp/ws1-intl-json.json` + node 解析 JSON 对象的 `numTotalTests` 字段（schema 稳定，跨版本兼容）；也保留了仓库当前实测行：vitest 1.6.1 下 JSON reporter 输出 `{"numTotalTests":1,"numFailedTests":1,...}`，Green 阶段 `{"numTotalTests":1,"numPassedTests":1,...}`。
+> - **Risk 2（major）**：Round 8 合同草案 `## Test Collect Sanity` 章节描述了新增 ARTIFACT 的**语义**，但**未把 `contract-dod-ws1.md` 里 ARTIFACT 的具体 `node -e ...` 命令行**贴进来，Reviewer 读合同草案时需要跨文件对齐（风险：两份文件词句不同步，或 Reviewer 看漏 DoD 细节）。**Round 9 对策**：在 `## Test Collect Sanity` 章节最后新增 `### ARTIFACT 原文粘贴（契约硬化 — Reviewer Round 8 Risk 2）`，把所有 Round 8+Round 9 新增 ARTIFACT 条目的 `node -e ...` 命令**原样粘贴**进合同草案（任何后续 DoD 字句变更须同步）；Reviewer 可直接在合同草案内核对，无需跨文件查阅。
+> - **Risk 3（major）**：Round 8 `## Test Collect Sanity` 命令 3（仓库根 vitest.config include 登记校验）**仅用 `echo "[root config] ..."` 打印**，不做 exit 判定 —— 若 Reviewer / CI 直接 source 这段 bash 做 gate，遇到不合规 config 只会打印"未覆盖"而 exit 0，gate 脚本实际退化为 echo。**Round 9 对策**：命令 3 加 `FAILED=0` 记账变量 + 末尾 `[ "$FAILED" -eq 0 ] || exit 1` 硬判定；每条违规分支写 `FAILED=1`。确保"gate 脚本直接 bash 执行时，不合规 config 必定非 0 退出"。
+> - **Risk 4（边界条件）**：Round 7 把 `it(11)` 搬到独立文件 `time-intl-caching.test.ts` 时，测试文件用 `await import(/* @vite-ignore */ \`...routes/time.js?rev=${Date.now()}\`)` 动态引用目标模块。**但 Round 8 合同未显式化"该文件不得 top-level static import `routes/time.js`"这一关键约束** —— 若未来有人（Generator 或后续修订）把动态 import 改成 `import timeRouter from '.../routes/time.js'`，模块顶层会在 `vi.spyOn(Intl, 'DateTimeFormat')` 尚未安装 spy 时就完成解析 → 顶层 `const CACHED_TZ = Intl.DateTimeFormat()...` 这类 mutation 不再被 spy 拦住 → 测试假绿（看似通过，实则 mutation probe 已失效）。**Round 9 对策**：`contract-dod-ws1.md` 新增 3 条 ARTIFACT：<br/>   (a) **禁止** static top-level `import ... from '.../routes/time.js'`（grep 正则匹配即 fail）；<br/>   (b) 必须至少出现一次 `await import(` （证明走动态引用）；<br/>   (c) 必须至少出现一次 `vi.spyOn(Intl, 'DateTimeFormat')`（证明 Intl spy 机制存在，和 (a)+(b) 形成三重锁链）。<br/>三条同步进 `## Test Collect Sanity` 的 ARTIFACT 原文粘贴区，Reviewer 可直接核对。
+>
+> **it 计数稳定**：Round 9 不改动任何 .test.ts 文件内容 / 数量 / 结构。`time.test.ts` 12 条 + `time-intl-caching.test.ts` 1 条 + `routes-aggregator.test.ts` 2 条 = **15 条 `it()`**（与 Round 6/7/8 一致）。Round 9 **只改**合同文本（本草案 + DoD）+ 追加 DoD ARTIFACT 条目。测试文件完全不动。
+>
+> **设计立场递进**（Round 8 → Round 9）：
+> - Round 8 把 collect 层契约显式化（文件存在 / it 恰好 1 条 / include 登记）—— 关切从"测试断言强度"扩展到"测试 collect 机制可观测性"
+> - Round 9 把"可观测性"再推一步到"**不可绕过性**"：collect 命令本身的文本格式依赖被消除（JSON schema 锁定），gate 脚本 echo-only 的软兜底被硬化（exit 1），测试文件的动态 import 约束被显式规约（禁止静态 import + 必须含 await import + 必须含 vi.spyOn Intl）。每一条都是"未来编辑可能不经意破坏" 的静默退化路径 —— Round 9 合同把这些路径逐一堵上
+>
+> ---
 >
 > **Round 7 → Round 8 变更（基于 Reviewer Round 7 REVISION 反馈）**：
 >
@@ -199,25 +215,38 @@ workstream_count: 1
 
 ---
 
-## Test Collect Sanity（Round 8 新增 — Reviewer Round 7 (a)(b)(c)）
+## Test Collect Sanity（Round 8 新增 — Reviewer Round 7 (a)(b)(c)；Round 9 硬化 — Reviewer Round 8 Risk 1/2/3/4）
 
-本章节独立于 Test Contract 表，单独列出 collect 层面的可观测契约，使 Reviewer 在不跑具体 it() 断言的情况下就能判定"合同测试是否真正被 vitest 看到"。覆盖 Reviewer Round 7 的 (a)(b)(c) 三点关切一次到位。
+本章节独立于 Test Contract 表，单独列出 collect 层面的可观测契约，使 Reviewer 在不跑具体 it() 断言的情况下就能判定"合同测试是否真正被 vitest 看到 + 是否按预期动态引用目标模块"。覆盖 Reviewer Round 7 的 (a)(b)(c) 和 Reviewer Round 8 Risk 1/2/3/4 一次到位。
 
-**命令 1（就绪指纹 — Round 7 文件已交付 after；对应 Reviewer (a)）**:
+**命令 1（就绪指纹 — Round 7 文件已交付 after；对应 Reviewer Round 7 (a)；Round 9 — Reviewer Round 8 Risk 1：改用 JSON reporter 消除文本格式版本依赖）**:
 
 ```bash
-# 从仓库根运行；预期：退出 0 或非 0 均可，关键是 stdout+stderr 含 "Tests  1"（1 条 it() 被 collect）
-npx vitest list sprints/tests/ws1/time-intl-caching.test.ts 2>&1 | tee /tmp/ws1-intl-list.log
-# 验证断言：
-grep -Eq "Tests[[:space:]]+1" /tmp/ws1-intl-list.log || echo "FAIL: collect 机制异常（未 collect 到预期的 1 条 it()）"
-# 也可用 vitest run 等价替代（更稳定，本轮已本地实测）：
-npx vitest run sprints/tests/ws1/time-intl-caching.test.ts --no-coverage 2>&1 | tee /tmp/ws1-intl-run.log
-grep -Eq "(Test Files[[:space:]]+1[[:space:]]+failed|Tests[[:space:]]+1[[:space:]]+failed)" /tmp/ws1-intl-run.log \
-  && grep -Eq "(Failed to load url|ERR_MODULE_NOT_FOUND|routes/time\.js)" /tmp/ws1-intl-run.log \
-  || echo "FAIL: Round 7 红姿态与预期不符（要么 collect 到 0 条 — config 问题，要么 Generator 抢跑实现了模块 — 不该出现）"
+# 从仓库根运行；改用 --reporter=json --outputFile=/tmp/ws1-intl-json.json 替代依赖 "Tests  1" 字符串匹配
+# JSON schema 跨 vitest 1.x/2.x/3.x 稳定（numTotalTests/numFailedTests/numPassedTests 字段在 jest-compat JSON 输出里是长期契约）
+# vitest 1.6.1 实测输出形如：{"numTotalTestSuites":2,"numPassedTestSuites":2,"numTotalTests":1,"numFailedTests":1,"numPassedTests":0,...}
+npx vitest run sprints/tests/ws1/time-intl-caching.test.ts --reporter=json --outputFile=/tmp/ws1-intl-json.json 2>&1 || true
+
+# Round 7 后 / Green 前（Generator 未实现 routes/time.js）：numTotalTests === 1 && numFailedTests === 1
+# Green 阶段（Generator 实现 routes/time.js）：numTotalTests === 1 && numPassedTests === 1
+# 任何阶段：numTotalTests !== 1 都是 collect 机制失效 → REVISION
+node -e '
+  const j = require("/tmp/ws1-intl-json.json");
+  if (j.numTotalTests !== 1) {
+    console.error(`FAIL: collect 机制异常 — 预期 numTotalTests=1，实际=${j.numTotalTests}`);
+    process.exit(1);
+  }
+  // Red 阶段：必须 1 个 failed（模块缺失 / Intl 缓存 mutation 被抓）
+  // Green 阶段：必须 1 个 passed
+  if (j.numFailedTests !== 1 && j.numPassedTests !== 1) {
+    console.error(`FAIL: 既非 Red (1 failed) 也非 Green (1 passed) — failed=${j.numFailedTests} passed=${j.numPassedTests}`);
+    process.exit(2);
+  }
+  console.log(`PASS: numTotalTests=1 (failed=${j.numFailedTests}, passed=${j.numPassedTests})`);
+' || exit 1
 ```
 
-**命令 2（假设文件不存在 — Reviewer (c)）**:
+**命令 2（假设文件不存在 — Reviewer Round 7 (c)）**:
 
 ```bash
 # 对照实验：若 Generator 不小心把 time-intl-caching.test.ts 删除（或路径错位），vitest 应明确报 "No test files found"
@@ -225,13 +254,14 @@ grep -Eq "(Test Files[[:space:]]+1[[:space:]]+failed|Tests[[:space:]]+1[[:space:
 #
 # Reviewer 可通过临时 mv 模拟后跑（不是 Proposer 交付时的常态动作，只是作为"失败期望形状"的规约）：
 #   mv sprints/tests/ws1/time-intl-caching.test.ts /tmp/__hold.test.ts
-#   npx vitest run sprints/tests/ws1/time-intl-caching.test.ts 2>&1 | grep -E "No test files found"   # 必须命中
+#   npx vitest run sprints/tests/ws1/time-intl-caching.test.ts --reporter=json --outputFile=/tmp/ws1-missing.json 2>&1 | grep -E "No test files found"   # stderr/stdout 必须命中
+#   # 或等价：--reporter=json 失败时也能通过 jq 判定 testResults 长度为 0（numTotalTestSuites === 0）
 #   mv /tmp/__hold.test.ts sprints/tests/ws1/time-intl-caching.test.ts
 #
-# Round 8 不要求 Proposer/Generator 实际执行 mv —— 只是在合同里显式规约"预期失败形状"。
+# Round 8/9 不要求 Proposer/Generator 实际执行 mv —— 只是在合同里显式规约"预期失败形状"。
 ```
 
-**命令 3（include 登记确认 — Reviewer (b)）**:
+**命令 3（include 登记确认 — Reviewer Round 7 (b)；Round 9 — Reviewer Round 8 Risk 3：echo 升级为 exit 1 硬判定）**:
 
 ```bash
 # 仅检查"仓库根" vitest.config.{js,ts} —— Harness v6 evaluator 从仓库根执行
@@ -239,33 +269,85 @@ grep -Eq "(Test Files[[:space:]]+1[[:space:]]+failed|Tests[[:space:]]+1[[:space:
 # packages/brain/vitest.config.js 的 include 仅覆盖 brain 自身 src/tests
 # (PRD 范围限定要求合同测试不污染 brain-ci main 绿线 — RED_EVIDENCE.md:75 备注)，
 # 故不纳入本命令范围。
+#
+# Round 9（Reviewer Round 8 Risk 3）：不合规必定 exit 1，不再 echo-only 软兜底
+FAILED=0
 for CFG in vitest.config.js vitest.config.ts ; do
   [ -f "$CFG" ] || continue
-  # 若仓库根声明了字面量 include，必须能匹配 sprints/tests/ws1/time-intl-caching.test.ts
-  # 合法覆盖形式：显式含 sprints/tests / sprints/** / **/*.test.ts / **/sprints/** / 具体路径
-  echo "[root config] $CFG $(grep -cE '^\s*include\s*:' "$CFG") 条字面量 include"
+  # 抽取字面量 include 数组（若存在）
+  INCLUDE_BLOCK=$(node -e "const c=require('fs').readFileSync('$CFG','utf8');const m=c.match(/include\s*:\s*\[[\s\S]*?\]/);process.stdout.write(m?m[0]:'')")
+  if [ -z "$INCLUDE_BLOCK" ]; then
+    echo "[root config OK] $CFG 无字面量 include — vitest 走默认 glob，合同测试能 collect 到 — pass"
+    continue
+  fi
+  # 合法覆盖形式：显式含 sprints/tests / sprints/** / **/*.test.ts / **/sprints/** / 具体文件路径
+  if echo "$INCLUDE_BLOCK" | grep -Eq 'sprints/tests|sprints/\*\*|\*\*/sprints|\*\*/\*\.test\.ts|time-intl-caching'; then
+    echo "[root config OK] $CFG 字面量 include 能匹配 sprints/tests/ws1/time-intl-caching.test.ts — pass"
+  else
+    echo "[root config FAIL] $CFG 字面量 include 未覆盖 sprints/tests/ws1/time-intl-caching.test.ts"
+    FAILED=1
+  fi
 done
-# 当前 Round 7 环境：仓库根无 vitest.config —— Harness 从根跑 vitest 走默认 glob
-# `**/*.{test,spec}.?(c|m)[jt]s?(x)`，能 collect 到 sprints/tests/ws1/*.test.ts。
-# 若未来有人在仓库根新建 vitest.config 并使用字面量 include 但未覆盖 sprints，
-# 对应的 DoD ARTIFACT (contract-dod-ws1.md) 会 fail → 合同 red → REVISION。
+# Round 9 硬判定（替代 Round 8 的 echo-only）
+[ "$FAILED" -eq 0 ] || { echo "FAIL: 仓库根 vitest.config 字面量 include 未覆盖合同测试文件 — exit 1"; exit 1; }
+# 当前 Round 9 环境：仓库根无 vitest.config —— Harness 从根跑 vitest 走默认 glob
+# `**/*.{test,spec}.?(c|m)[jt]s?(x)`，能 collect 到 sprints/tests/ws1/*.test.ts，FAILED 保持 0 → exit 0
 ```
 
-**Round 8 硬约束总表**:
+### ARTIFACT 原文粘贴（契约硬化 — Reviewer Round 8 Risk 2）
 
-| 状态 | vitest 命令 | 必须包含 | 必须不包含 | 原因 |
+下列 ARTIFACT 条目的 `node -e ...` 命令从 `contract-dod-ws1.md` **原样复制**，以便 Reviewer 直接在本合同草案内核对，无需跨文件查阅。若本草案与 `contract-dod-ws1.md` 后续出现词句漂移，以**两者完全一致**为约束；任何一侧修改必须同步。
+
+**A. Round 8 ARTIFACT — collect sanity 文件存在性 + it 计数**（已在 Round 8 交付，Round 9 原文粘贴进草案）：
+
+```bash
+# A1) sprints/tests/ws1/time-intl-caching.test.ts 文件存在
+node -e "require('fs').accessSync('sprints/tests/ws1/time-intl-caching.test.ts')"
+
+# A2) 顶层含恰好 1 个 it( 调用（与 vitest list "Tests 1" 强同构）
+node -e "const fs=require('fs');const c=fs.readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');const m=c.match(/^\s*it\s*\(/gm)||[];if(m.length!==1)process.exit(1)"
+
+# A3) 顶层 describe( 块 ≥ 1 条
+node -e "const fs=require('fs');const c=fs.readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');const m=c.match(/^\s*describe\s*\(/gm)||[];if(m.length<1)process.exit(1)"
+
+# A4) 仓库根 vitest.config.{js,ts} 字面量 include（若存在）必须覆盖合同测试路径 — Round 9 Risk 3 硬化版
+node -e "const fs=require('fs');for(const f of ['vitest.config.js','vitest.config.ts']){if(!fs.existsSync(f))continue;const c=fs.readFileSync(f,'utf8');const m=c.match(/include\s*:\s*\[[\s\S]*?\]/);if(!m)continue;if(!/sprints\/tests|sprints\/\*\*|\*\*\/sprints|\*\*\/\*\.test\.ts|time-intl-caching/.test(m[0])){console.error('FAIL: '+f+' 根字面量 include 未覆盖 sprints/tests/ws1/time-intl-caching.test.ts');process.exit(1)}}process.exit(0)"
+```
+
+**B. Round 9 新增 ARTIFACT — 测试文件动态 import 契约**（Reviewer Round 8 Risk 4；三条形成正反+旁证三重锁链）：
+
+```bash
+# B1) 禁止 top-level static import routes/time.js（grep 正则匹配即 fail）
+node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(/^\s*import\s+[^;]*from\s+['\"][^'\"]*routes\/time\.js['\"]/m.test(c)){console.error('FAIL: time-intl-caching.test.ts 顶层发现 static import routes/time.js — mutation probe 失效');process.exit(1)}"
+
+# B2) 必须至少出现一次 await import( （证明走动态引用）
+node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(!/await\s+import\s*\(/.test(c)){console.error('FAIL: time-intl-caching.test.ts 未发现 await import(...) — mutation probe 必须走动态 import');process.exit(1)}"
+
+# B3) 必须至少出现一次 vi.spyOn(Intl, 'DateTimeFormat')（证明 Intl spy 机制存在）
+node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(!/vi\s*\.spyOn\s*\(\s*Intl\s*,\s*['\"]DateTimeFormat['\"]/.test(c)){console.error('FAIL: 未发现 vi.spyOn(Intl, DateTimeFormat) — mutation probe 机制缺失');process.exit(1)}"
+```
+
+**三重锁链的语义**:
+- B1 是**反面约束**（禁止破坏动态 import 模式）
+- B2 是**正面约束**（证明动态 import 被执行）
+- B3 是**旁证约束**（证明在动态 import 之前安装了 Intl spy —— 动态 import 的时机由 B2 保证，spy 的存在由 B3 保证，两者合起来 mutation probe 才真正有效）
+
+**Round 8 / Round 9 硬约束总表**（Round 9 把"必须包含/不包含"从依赖文本字符串升级到依赖 JSON schema，与命令 1 同步）:
+
+| 状态 | vitest 命令 | JSON 报告期望（Round 9 主判据） | 文本输出期望（Round 8 兼容判据，仅参考） | 原因 |
 |---|---|---|---|---|
-| Proposer 交付后、Generator 未实现前 | `vitest run sprints/tests/ws1/time-intl-caching.test.ts` | `Test Files  1`、`Tests  1`、`failed (1)`、`Failed to load url` 或 `ERR_MODULE_NOT_FOUND` | `No test files found`、`Tests  0`、`0 passed` | collect 正常 + 模块缺失真红 |
-| Proposer 交付后、Generator 实现后 | 同上 | `Tests  1 passed (1)` | 任何 `failed`/`No test files` | TDD Green 阶段 |
-| 假设文件被误删 / 路径错位 | 同上 | `No test files found` | `0 tests run`（这种形状说明 config 吞了文件） | collect 机制应当明确拒绝缺失的文件 |
+| Proposer 交付后、Generator 未实现前 | `vitest run sprints/tests/ws1/time-intl-caching.test.ts --reporter=json --outputFile=/tmp/ws1-intl-json.json` | `numTotalTests === 1` **且** `numFailedTests === 1`；stderr 含 `Failed to load url` 或 `ERR_MODULE_NOT_FOUND` | `Test Files  1 failed (1)` + `Tests  1 failed (1)` | collect 正常 + 模块缺失真红 |
+| Proposer 交付后、Generator 实现后 | 同上 | `numTotalTests === 1` **且** `numPassedTests === 1` | `Tests  1 passed (1)` | TDD Green 阶段 |
+| 假设文件被误删 / 路径错位 | 同上 | 退出非 0；stderr 含 `No test files found` 或 JSON 报告 `numTotalTestSuites === 0` | `No test files found` | collect 机制应当明确拒绝缺失的文件 |
+| Round 9 新增：测试文件动态 import 契约破坏 | 静态 ARTIFACT B1/B2/B3（见 `## Test Collect Sanity` 章节 ARTIFACT 原文粘贴区） | N/A — 不跑 vitest，直接 `node -e ...` ARTIFACT 判定 | N/A | 测试文件语义完整性（静态 import → mutation probe 失效） |
 
 ---
 
-## GAN 对抗要点（供 Reviewer 聚焦 Round 7 修订是否充分）
+## GAN 对抗要点（供 Reviewer 聚焦 Round 9 修订是否充分）
 
-**Round 1 → Round 7 的 mutation 族是否已被一次性堵上**：
+**Round 1 → Round 9 的 mutation 族是否已被一次性堵上**：
 
-| # | Mutation 族 | 旧轮漏洞 | Round 7 堵法 |
+| # | Mutation 族 | 旧轮漏洞 | Round 9 堵法（或历代堵法） |
 |---|---|---|---|
 | 1 | **假 iso 格式**：返回 `new Date().toString()` | Round 1 `it(3)` 能混过 | Round 2 `it(4)` 正则 + Round 3 Z-only 收紧 |
 | 2 | **假 iso 格式**：返回 `"2024-01-01T00:00:00"` 无后缀 | Round 1 能混过 | Round 2 `it(4)` 堵 + 保留 |
@@ -292,6 +374,10 @@ done
 | 23 | **E2E step 8 body key 检查 gated on grep 预筛选导致的漏检**（Round 6 minor）：若 mutation 以非常规 JSON 格式（字段间多空格/奇异 key 编码）回显三字段 key，`grep -Eq '"(iso\|unix\|timezone)"[[:space:]]*:'` 可能漏命中 | Round 6 先 grep 后 jq | **Round 7 改无条件 jq 判定**：先 `jq -e . "$FILE"` 确认 body 可解析为 JSON，若是则直接 `has("iso") or has("unix") or has("timezone")` 硬断言；不可解析 JSON 走字面量 not-contain 兜底 |
 | 24 | **collect-miss 假绿：合同测试文件存在但被 vitest.config 字面量 include 列表 filter 掉** — evaluator 跑 `vitest run sprints/tests/ws1/time-intl-caching.test.ts` 得 `Tests  0` 或 `0 passed` 假绿，Reviewer 误判 Green | Round 7 仅交付独立文件但未规约 collect sanity，Reviewer 无可观测契约去区分"真绿"和"文件被吞假绿" | **Round 8 — Reviewer Round 7 (a)+(c)**：新增 `## Test Collect Sanity` 章节，明文规约两段红姿态（"No test files found" = collect miss 禁区；`Failed to load url routes/time.js` = TDD 真红）+ Round 7 后就绪指纹（`Tests  1`）；Test Contract 表第二行"预期红证据"列拆成 ①②③④ 四个硬子项 —— Reviewer 日后只需对照合同里列出的子串做 grep 就能判定 collect 机制是否正常 |
 | 25 | **vitest.config 字面量 include 列表未登记新文件导致跨环境差异** — 本仓库当前 brain/quality/engine 各自有字面量 include 列表但 sprints/ 测试目录不在其中；若 Harness v6 evaluator 在某环境下误用带 include 的 config（而非仓库根默认），新文件不会被跑到 | Round 7 未约束 include 登记，依赖"vitest 默认显式文件路径优先于 include" 的行为假设 | **Round 8 — Reviewer Round 7 (b)**：Workstream 1 范围明文写入 collect pre-flight 纪律 —— Generator 在实现前必须跑一次 `vitest run sprints/tests/ws1/time-intl-caching.test.ts` 看到 `Test Files  1 failed (1)` 才继续；若看到 `No test files found` / `Tests  0` 必须修正 include 列表。`contract-dod-ws1.md` 追加条件性 ARTIFACT：任何字面量 include 的 vitest.config 若用于合同测试运行，必须覆盖该路径。防线从"假设默认行为"升级为"合同硬纪律 + 可观测 pre-flight" |
+| 26 | **collect 命令依赖 vitest 文本报告字符串**（Reviewer Round 8 Risk 1）：Round 8 命令 1 用 `grep -Eq "Tests[[:space:]]+1"` 判定 collect 计数，若 vitest 2.x/3.x 修改 summary 行格式（`Test Files 1` → `Files 1` / `Tests: 1`），合同判定误红/漏红 | Round 8 grep `Tests 1` 对 vitest 1.6.1 有效，对未来版本脆弱 | **Round 9 改用 `--reporter=json --outputFile=/tmp/ws1-intl-json.json` + node 解析 `numTotalTests === 1`**：JSON schema 属 jest-compat 长期契约，跨版本稳定；同时保留 `numFailedTests`/`numPassedTests` 分别判定 Red/Green 阶段；文本输出仅作兼容参考（Round 8 兼容判据保留在硬约束表） |
+| 27 | **合同草案与 DoD 跨文件漂移**（Reviewer Round 8 Risk 2）：Round 8 `## Test Collect Sanity` 章节描述新 ARTIFACT 的语义但未贴具体 `node -e` 命令行，Reviewer 需跨文件查阅；若两份文件后续词句变更不同步，契约与工具出现缝隙 | Round 8 跨文件指针引用 | **Round 9 `## Test Collect Sanity` 章节新增 `### ARTIFACT 原文粘贴`**：把 Round 8 所有 ARTIFACT（A1/A2/A3/A4）+ Round 9 新增 ARTIFACT（B1/B2/B3）的完整 `node -e ...` 命令原样粘贴进合同草案；任何 DoD 词句变更须同步合同草案。Reviewer 可在合同内核对，无需跨文件 |
+| 28 | **gate 脚本 echo-only 软兜底**（Reviewer Round 8 Risk 3）：Round 8 命令 3 仅用 `echo "[root config] ..."` 打印 include 覆盖情况，不 exit；若 Reviewer/CI 直接 source 这段 bash 做 gate，不合规 config 仍返回 exit 0 | Round 8 echo-only | **Round 9 命令 3 加 `FAILED=0` 记账 + 末尾 `[ "$FAILED" -eq 0 ] || exit 1`**：每条违规分支写 `FAILED=1`；末尾硬判定。gate 脚本直接 bash 执行时不合规必定非 0 退出 |
+| 29 | **测试文件动态 import 被破坏成静态 import → Intl 缓存 mutation probe 失效**（Reviewer Round 8 Risk 4）：`time-intl-caching.test.ts` 依赖"spyOn 在模块顶层代码执行之前安装 spy"这一时序，通过 `await import(\`...routes/time.js?rev=${Date.now()}\`)` 实现；若未来有人改为 `import timeRouter from '.../routes/time.js'` 顶层静态 import，模块顶层在 spy 未安装时就完成解析 → 顶层 `const CACHED_TZ = Intl.DateTimeFormat()...` mutation 不再被拦住 → 测试假绿 | Round 8 未规约测试文件的 import 形态 | **Round 9 在 `contract-dod-ws1.md` 新增 3 条 ARTIFACT（B1/B2/B3）**：B1 反面约束（禁止 `^\s*import\s+.*from\s+['"].*routes/time\.js['"]`）；B2 正面约束（必须含 `await import(`）；B3 旁证约束（必须含 `vi.spyOn(Intl, 'DateTimeFormat')`）。三条形成"正反+旁证"三重锁链，同步粘贴进合同草案 Test Collect Sanity 章节 |
 
 ## PRD 追溯性
 
