@@ -1,29 +1,49 @@
 /**
- * Workstream 1 — 时间查询端点 [BEHAVIOR] 集成测试（Round 2）
+ * Workstream 1 — 时间查询端点 [BEHAVIOR] 集成测试（Round 3）
  *
- * 被测 SUT: packages/brain/src/routes/time.js （Round 2 Red 阶段 — 该文件尚未创建）
- * 覆盖合同场景: PRD 场景 1–6 及 contract-draft.md Feature 1–4 的 BEHAVIOR 覆盖列表
+ * 被测 SUT: packages/brain/src/routes/time.js （Round 3 Red 阶段 — 该文件尚未创建）
+ * 覆盖合同场景: PRD 场景 1–6 + contract-draft.md Feature 1–4 BEHAVIOR 覆盖列表
  *
- * Round 2 相对 Round 1 的新增 / 收紧:
- *   + GET /iso: 严格 ISO 8601 UTC 正则（含 .mmm 毫秒段）
- *   + GET /timezone 合法: 严格 ISO 8601 偏移正则（含 .mmm、以 ±HH:MM 结尾、禁止 Z）
- *   + GET /timezone?tz=UTC / Etc/UTC: body.iso 以 +00:00 结尾（非 Z），body.tz 原样回显
- *   + GET /timezone?tz=America/New_York: 2026-04-23 处 DST 窗口内，必须 -04:00（删 -05:00 两可）
- *   + GET /timezone?tz=asia/shanghai: 大小写敏感，400
+ * Round 3 相对 Round 2 的变更（处理 Reviewer 反馈）:
+ *   + [风险 1 / 阻断] DST 硬编码 + 系统时间未冻结 → 现在用 vi.useFakeTimers 把
+ *     系统时钟冻结到 FROZEN_NOW_UTC = 2026-04-23T10:00:00.000Z，这样：
+ *       - America/New_York 永远落在 DST 窗口（2026-03-08 ~ 2026-11-01）内 → -04:00
+ *       - "within N seconds of current server time" 语义转化为"服务器返回的时间
+ *         必须基于 Date.now() 即冻结时间"（容差保留给 event-loop 抖动）
+ *       - 半年后 CI 上跑仍然稳定红/绿，不受真实日历/DST 切换影响
+ *     注意: toFake 只指定 ['Date']，不 fake setTimeout/setInterval/setImmediate，
+ *     否则 supertest/express 异步管道会挂住。
+ *   + [风险 2 / 阻断] ?tz=A&tz=B (duplicated tz) spec 未定义 → 现在要求 400 +
+ *     body.error 提示 "tz must be a single string"，共新增 2 个 it。
+ *
+ * 合同 it 数量: 26（Round 2=24 + Round 3 新增 tz 数组 2 个）。
  *
  * 导入路径: sprints/tests/ws1/*.test.ts → ../../../packages/brain/src/routes/time.js
- * （sprints/tests/ws1/ 上溯 3 层到 /workspace/，再进 packages/brain/...）
+ * CI 复制体: packages/brain/src/__tests__/routes/time-routes.test.ts
+ *   Generator 原样复制 + 只调整 import 路径为 '../../routes/time.js'。
  *
- * CI 复制体位置（由 ARTIFACT 强制）: packages/brain/src/__tests__/routes/time-routes.test.ts
- *   Generator 在 commit 1 原样复制，只允许调整 import 路径为 '../../routes/time.js'
- *
- * 为了让每个 it() 独立产出 Red（而非 beforeAll 抛错整文件只记 1 failure），
- * 每个 it 都通过 getApp() 懒惰地 dynamic import，失败时只污染当前 it。
+ * 每个 it 独立 getApp()，让 Red 阶段 26 个 it 各自独立 FAIL（而非 beforeAll 抛错
+ * 合并成 1 个 failure）。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+
+// Round 3: 冻结系统时间 → DST 状态 & 时间断言双稳定
+const FROZEN_NOW_UTC = new Date('2026-04-23T10:00:00.000Z');
+
+beforeAll(() => {
+  // 只 fake Date，保留 setTimeout/setInterval 给 supertest/express 用
+  vi.useFakeTimers({
+    now: FROZEN_NOW_UTC,
+    toFake: ['Date'],
+  });
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 async function getApp(): Promise<ReturnType<typeof express>> {
   const mod = await import('../../../packages/brain/src/routes/time.js');
@@ -148,6 +168,7 @@ describe('GET /api/brain/time/timezone (valid tz) [BEHAVIOR]', () => {
   });
 
   it('GET /timezone?tz=America/New_York body.iso ends with -04:00 (DST active on 2026-04-23)', async () => {
+    // Round 3: 系统时间冻结在 2026-04-23T10:00:00.000Z (in DST 窗口) → 永远 -04:00
     const app = await getApp();
     const res = await request(app).get('/api/brain/time/timezone?tz=America/New_York');
     expect(res.status).toBe(200);
@@ -219,6 +240,27 @@ describe('GET /api/brain/time/timezone (error handling) [BEHAVIOR]', () => {
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  it('GET /timezone?tz=Asia/Shanghai&tz=UTC (duplicated tz) returns HTTP 400 — tz must be a single string', async () => {
+    // Round 3 新增: 覆盖 express req.query.tz 被解析为数组 ['Asia/Shanghai','UTC'] 的场景
+    const app = await getApp();
+    const res = await request(app).get('/api/brain/time/timezone?tz=Asia/Shanghai&tz=UTC');
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  it('GET /timezone duplicated tz body.error explains tz must be a single string value', async () => {
+    // Round 3 新增: error message 必须明确告知客户端原因（不是笼统的 "invalid tz"）
+    const app = await getApp();
+    const res = await request(app).get('/api/brain/time/timezone?tz=Asia/Shanghai&tz=UTC');
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    const msg = res.body.error.toLowerCase();
+    expect(msg).toContain('tz');
+    // 错误信息必须提到 "single" 或 "one" 或 "string"，避免和非法 tz 错误信息无法区分
+    expect(msg.match(/\b(single|one|string|array|multiple|duplicat)/)).not.toBeNull();
   });
 
   it('invalid tz request does not crash server — subsequent /iso still returns 200', async () => {
