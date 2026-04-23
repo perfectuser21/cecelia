@@ -12,7 +12,7 @@
  *   - 所有操作有日志记录，可审计
  */
 
-import { existsSync, readFileSync, rmSync, statSync } from 'fs';
+import { existsSync, readFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { resolveTaskPids } from './watchdog.js';
@@ -25,6 +25,7 @@ const REPO_ROOT = process.env.REPO_ROOT || '/Users/administrator/perfect21/cecel
 // 保护阈值
 const STALE_SLOT_MIN_AGE_MS = 60 * 1000;           // slot 至少死亡 60 秒才清理
 const ORPHAN_WORKTREE_MIN_AGE_MS = 30 * 60 * 1000; // worktree 至少孤儿 30 分钟才清理
+const ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
 
 /**
  * R1: 清理 stale slot 目录（pid 已死超过 60 秒）
@@ -115,6 +116,30 @@ function findTaskIdForWorktree(wtPath) {
 }
 
 /**
+ * 判断 worktree 是否活跃（依据 .dev-mode* 文件 mtime < ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS）。
+ * 覆盖老 `.dev-mode` 无后缀格式和新 `.dev-mode.${branch}` 格式（v19.0.0 cwd-as-key 起）。
+ * Phase B2-bis: fix findTaskIdForWorktree 文件名不匹配 bug —— 改用 mtime 判活跃而非依赖文件内容解析 UUID。
+ *
+ * @param {string} wtPath - Worktree 目录路径
+ * @returns {boolean} - true 如果任一 .dev-mode* 文件 mtime < 24h
+ */
+function isWorktreeActive(wtPath) {
+  try {
+    const now = Date.now();
+    const entries = readdirSync(wtPath).filter(f => f.startsWith('.dev-mode'));
+    for (const name of entries) {
+      try {
+        const mtimeMs = statSync(join(wtPath, name)).mtimeMs;
+        if (now - mtimeMs < ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS) {
+          return true;
+        }
+      } catch { /* continue on stat error */ }
+    }
+  } catch { /* readdir failed, treat as inactive */ }
+  return false;
+}
+
+/**
  * R2: 清理孤儿 git worktree（无活跃任务对应且存在 >30min）
  *
  * @param {import('pg').Pool} pool - PostgreSQL 连接池
@@ -186,7 +211,12 @@ async function cleanupOrphanWorktrees(pool) {
         continue; // 太新，跳过
       }
 
-      // 检查是否有对应的活跃任务
+      // 活跃信号预检（Phase B2-bis）：.dev-mode* mtime fresh → 跳过
+      if (isWorktreeActive(wtPath)) {
+        continue;
+      }
+
+      // 老格式 .dev-mode 向后兼容：findTaskIdForWorktree + activeTasks 双回退
       const taskId = findTaskIdForWorktree(wtPath);
       if (taskId && activeTasks.has(taskId)) {
         continue; // 有对应活跃任务，不清理
@@ -276,6 +306,8 @@ export {
   cleanupOrphanWorktrees,
   runZombieCleanup,
   findTaskIdForWorktree,
+  isWorktreeActive,
   STALE_SLOT_MIN_AGE_MS,
   ORPHAN_WORKTREE_MIN_AGE_MS,
+  ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS,
 };
