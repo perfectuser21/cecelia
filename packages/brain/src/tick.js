@@ -834,6 +834,25 @@ async function selectNextDispatchableTask(goalIds, excludeIds = [], options = {}
         continue; // Skip: has unmet dependencies
       }
     }
+
+    // task_dependencies 表检查（harness_task / Initiative 子任务用这张表而非 payload）
+    // 参考 harness-dag.js:nextRunnableTask —— from_task_id 是本 task，to_task_id 是它依赖的 task
+    // 修复：普通 dispatch 路径原先只看 payload.depends_on，对 task_dependencies 边盲视，
+    // 导致 Initiative 子任务（ws1/ws2/ws3/ws4）在 queued 状态下被并行派发，
+    // 基于错误的 worktree 状态产出有冲突的 PR。
+    const tableDepResult = await pool.query(
+      `SELECT COUNT(*) AS blocked_count
+       FROM task_dependencies d
+       JOIN tasks dep ON dep.id = d.to_task_id
+       WHERE d.from_task_id = $1
+         AND dep.status NOT IN ('completed', 'cancelled', 'canceled')`,
+      [task.id]
+    );
+    if (parseInt(tableDepResult.rows[0].blocked_count) > 0) {
+      tickLog(`[tick] Skipping task ${task.id} — task_dependencies 表有未完成依赖`);
+      continue; // Skip: has unmet table-based dependencies
+    }
+
     return task;
   }
   return null;
