@@ -4,8 +4,9 @@
 - 新建 `packages/brain/src/routes/time.js`：Express Router，定义 `GET /time`，响应 JSON `{ iso, timezone, unix }`，`iso` 由 `new Date().toISOString()` 生成（UTC Z 后缀），默认导出 Router 实例；**`Intl.DateTimeFormat` 必须每次请求都调用，不得在模块顶层缓存**（Round 5：由 BEHAVIOR it 动态 mock 切换机械抓取；Round 6：搬到同文件独立 describe + afterAll；Round 7 — Reviewer Round 6 Risk 3：进一步搬到**独立测试文件** `time-intl-caching.test.ts`，利用 vitest file-per-worker 进程/线程级隔离消除同文件溢出假设）
 - 修改 `packages/brain/src/routes.js`：新增 `import timeRouter from './routes/time.js'`，并将其**真实聚合挂接**到某个能解析 `/time` 的挂接点（具体语法形式不限——`router.use('/path', timeRouter)` / 数组字面量 `[..., timeRouter, ...]` / 其它合法表达式皆可）。Round 5：**删除 Round 4 的 mount-expression 正则 ARTIFACT**，改由 `routes-aggregator.test.ts` 行为测试从聚合器根 `GET /api/brain/time` 验证 200 + 三字段，只要行为通过即视为挂接正确
 - 新建/更新 `tests/e2e/brain-time.sh`：真机 curl + jq E2E（SC-003）。Round 5 step 7.5 新增 sanity baseline。Round 6：引入 8 码枚举 `ACCEPTABLE_NOT_FOUND_STATUS`。**Round 7（Reviewer Round 6 Risk 1/2）**：放弃 8 码枚举，改**原则性规则** `is_http_error_status`（`400 ≤ code < 600` —— 任何 HTTP 4xx 或 5xx），step 7.5 与 step 8 **共用同一函数**，覆盖面对称；任何 Brain 合法实现走 401/403/404/405/410/415/422/426/429/451/500/502/503/504 ... 均自动接受，真正的 mutation「POST /time 也返回 200」仍被抓住（200 < 400）。step 8 body key 检查从"grep 命中才跑 jq"改为**无条件 jq 判定**（Reviewer Round 6 minor）
+- **Round 8（Reviewer Round 7 (a)(b)(c)）— collect sanity pre-flight 硬纪律**：Generator 在实现 `routes/time.js` 之前必须先跑 `npx vitest run sprints/tests/ws1/time-intl-caching.test.ts` 从仓库根确认 collect 成功（看到 `Test Files  1 failed (1)` + `Failed to load url .../routes/time.js`）；若输出 `No test files found` / `Tests  0` / `0 passed` 任一，**禁止继续实现**，必须先修正 `packages/brain/vitest.config.js` / `packages/quality/vitest.config.ts` / 其它被用来跑合同测试的 vitest.config 的字面量 `include` 列表，显式追加 `sprints/tests/ws1/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}`（或等价 glob/具体文件路径），直到 pre-flight 看到真红姿态。合同测试只有被 vitest collect 到才有资格作为 Green 判据，否则 Green=0-passed 是假绿
 
-**大小**: S（<30 行 Brain 源码改动 + ~180 行 bash 脚本）
+**大小**: S（<30 行 Brain 源码改动 + ~180 行 bash 脚本 + 可能 0-2 行 vitest.config `include` 登记）
 **依赖**: 无
 
 ## ARTIFACT 条目
@@ -82,6 +83,20 @@
 
 - [ ] [ARTIFACT] **E2E 脚本 step 8 body key 检查无条件 jq 判定**（Round 7 — Reviewer Round 6 minor：解耦 grep 预筛选，消除 JSON 格式变体漏检风险）
   Test: `node -e 'const c=require("fs").readFileSync("tests/e2e/brain-time.sh","utf8").replace(/#[^\\n]*/g,"");if(!/jq\\s+-e\\s+.\\s*\\.?\\s*.{0,50}\\$METHOD_BODY_FILE/s.test(c))process.exit(1);if(!/has\\("iso"\\)\\s+or\\s+has\\("unix"\\)\\s+or\\s+has\\("timezone"\\)/.test(c))process.exit(2)'`
+
+### Round 8 新增 ARTIFACT（Reviewer Round 7 (a)(b)(c) — collect sanity pre-flight）
+
+- [ ] [ARTIFACT] `sprints/tests/ws1/time-intl-caching.test.ts` 文件存在（Round 7 已交付 — Round 8 将其"存在性"显式列成 DoD 条目，作为 collect sanity 链条的起点）
+  Test: `node -e "require('fs').accessSync('sprints/tests/ws1/time-intl-caching.test.ts')"`
+
+- [ ] [ARTIFACT] `sprints/tests/ws1/time-intl-caching.test.ts` 顶层含**恰好 1 个** `it(` 调用（与 `vitest list` 预期输出 `Tests  1` 强同构 — 防止 Generator 在 Green 阶段误改测试文件或新增 it 绕过断言强度）
+  Test: `node -e "const fs=require('fs');const c=fs.readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');const m=c.match(/^\\s*it\\s*\\(/gm)||[];if(m.length!==1)process.exit(1)"`
+
+- [ ] [ARTIFACT] `sprints/tests/ws1/time-intl-caching.test.ts` 顶层 `describe(` 块数量 ≥ 1（合同结构前置条件，防 vitest 误把文件视为非测试文件）
+  Test: `node -e "const fs=require('fs');const c=fs.readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');const m=c.match(/^\\s*describe\\s*\\(/gm)||[];if(m.length<1)process.exit(1)"`
+
+- [ ] [ARTIFACT] **条件性 vitest.config include 登记（Reviewer Round 7 (b)）**：**仅检查仓库根**的 vitest.config.{js,ts}（Harness v6 evaluator 从仓库根直接 `npx vitest run sprints/tests/ws1/<file>` 时被实际应用的 config 位置 —— `packages/brain/vitest.config.js` 不在此范畴，它的 `include` 仅覆盖 brain 自身 src/tests，与合同测试隔离开是 PRD 范围限定的要求）：若仓库根存在 vitest.config.{js,ts} 且声明了字面量 `include:` 数组，该数组必须能匹配 `sprints/tests/ws1/time-intl-caching.test.ts`（合法覆盖形式：显式含 `sprints/tests` / `sprints/**` / `**/*.test.ts` / `**/sprints/**` / 具体路径）；若仓库根无 vitest.config 或 config 不含字面量 `include:` 字段，本条自动 pass（这是当前 Round 7 环境 — 默认 vitest glob `**/*.{test,spec}.?(c|m)[jt]s?(x)` 能 collect 到）
+  Test: `node -e "const fs=require('fs');for(const f of ['vitest.config.js','vitest.config.ts']){if(!fs.existsSync(f))continue;const c=fs.readFileSync(f,'utf8');const m=c.match(/include\\s*:\\s*\\[[\\s\\S]*?\\]/);if(!m)continue;if(!/sprints\\/tests|sprints\\/\\*\\*|\\*\\*\\/sprints|\\*\\*\\/\\*\\.test\\.ts|time-intl-caching/.test(m[0])){console.error('FAIL: '+f+' 根字面量 include 未覆盖 sprints/tests/ws1/time-intl-caching.test.ts');process.exit(1)}}process.exit(0)"`
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
