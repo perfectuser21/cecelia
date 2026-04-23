@@ -38,6 +38,12 @@ const VERDICT_RE = /VERDICT:\s*(APPROVED|REVISION)/i;
 // 100 = 50 轮 propose+review 预留一倍。
 export const DEFAULT_RECURSION_LIMIT = 100;
 
+// 硬轮数保险丝（对齐 Anthropic harness-design 2026-03：实操 5-15 iter cap）
+// Reviewer 连续 N 轮 REVISION 后，即使 LLM 还想 REVISE 也 force APPROVED 进 Phase B。
+// 2303a935 真机验证：Round 10 仍在抠正则缝隙 meta-loop，没硬 cap 会无限。
+// 可通过 HARNESS_GAN_MAX_ROUNDS env 调，默认 5（时间 API 这类小 scope 足够 3-5 轮）。
+export const MAX_ROUNDS = parseInt(process.env.HARNESS_GAN_MAX_ROUNDS || '5', 10);
+
 // ── 纯函数辅助（从 harness-gan-loop.js 搬移）──────────────────────────────
 
 export function extractVerdict(stdout) {
@@ -126,6 +132,9 @@ export const GanContractState = Annotation.Root({
   round: Annotation({ reducer: (_old, neu) => neu, default: () => 0 }),
   costUsd: Annotation({ reducer: (_old, neu) => neu, default: () => 0 }),
   verdict: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  // forcedApproval: true 表示 verdict=APPROVED 是 MAX_ROUNDS 硬 cap 强制的（Reviewer 还想 REVISE）。
+  // Phase B 用这个 flag 决定是否在 Initiative 记录里标 warn（合同是勉强过，不是真共识）。
+  forcedApproval: Annotation({ reducer: (_old, neu) => neu, default: () => false }),
 });
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
@@ -210,8 +219,18 @@ export function createGanContractNodes(executor, ctx) {
     if (nextCost > budgetCapUsd) {
       throw new Error(`gan_budget_exceeded: spent=${nextCost.toFixed(3)} cap=${budgetCapUsd}`);
     }
-    const verdict = extractVerdict(result.stdout);
-    const patch = { costUsd: nextCost, verdict };
+    const llmVerdict = extractVerdict(result.stdout);
+    let verdict = llmVerdict;
+    // 硬轮数保险丝：达到 MAX_ROUNDS 后即使 LLM 要 REVISE 也 force APPROVED
+    // 对齐 Anthropic harness-design 2026-03 的 5-15 iter cap 实操
+    const currentRound = state.round || 0;
+    let forcedApproval = false;
+    if (llmVerdict !== 'APPROVED' && currentRound >= MAX_ROUNDS) {
+      console.warn(`[harness-gan] Force-APPROVED at round=${currentRound} (MAX_ROUNDS=${MAX_ROUNDS}, LLM verdict=${llmVerdict}) — 硬保险丝触发，进 Phase B`);
+      verdict = 'APPROVED';
+      forcedApproval = true;
+    }
+    const patch = { costUsd: nextCost, verdict, forcedApproval };
     if (verdict !== 'APPROVED') {
       patch.feedback = extractFeedback(result.stdout);
     }

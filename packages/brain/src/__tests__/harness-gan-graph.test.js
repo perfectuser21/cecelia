@@ -167,6 +167,47 @@ describe('createGanContractNodes', () => {
     await expect(nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0 }))
       .rejects.toThrow(/gan_budget_exceeded: spent=5\.000 cap=1/);
   });
+
+  it('reviewer node: round < MAX_ROUNDS keeps LLM verdict REVISION untouched', async () => {
+    const executor = vi.fn(async () => ({
+      exit_code: 0, stdout: 'VERDICT: REVISION', stderr: '', cost_usd: 0.1, timed_out: false,
+    }));
+    const { createGanContractNodes, MAX_ROUNDS } = await import('../harness-gan-graph.js');
+    const nodes = createGanContractNodes(executor, makeCtx());
+    // round = MAX_ROUNDS - 1 应该仍是 REVISION
+    const newState = await nodes.reviewer({
+      prdContent: '# PRD', contractContent: '# C', round: MAX_ROUNDS - 1, costUsd: 0,
+    });
+    expect(newState.verdict).toBe('REVISION');
+    expect(newState.forcedApproval).toBe(false);
+  });
+
+  it('reviewer node: round >= MAX_ROUNDS force-approves even when LLM says REVISION', async () => {
+    const executor = vi.fn(async () => ({
+      exit_code: 0, stdout: 'VERDICT: REVISION', stderr: '', cost_usd: 0.1, timed_out: false,
+    }));
+    const { createGanContractNodes, MAX_ROUNDS } = await import('../harness-gan-graph.js');
+    const nodes = createGanContractNodes(executor, makeCtx());
+    // round = MAX_ROUNDS 命中硬保险丝
+    const newState = await nodes.reviewer({
+      prdContent: '# PRD', contractContent: '# C', round: MAX_ROUNDS, costUsd: 0,
+    });
+    expect(newState.verdict).toBe('APPROVED');
+    expect(newState.forcedApproval).toBe(true);
+  });
+
+  it('reviewer node: round >= MAX_ROUNDS keeps APPROVED normal (not marked forced)', async () => {
+    const executor = vi.fn(async () => ({
+      exit_code: 0, stdout: 'VERDICT: APPROVED', stderr: '', cost_usd: 0.1, timed_out: false,
+    }));
+    const { createGanContractNodes, MAX_ROUNDS } = await import('../harness-gan-graph.js');
+    const nodes = createGanContractNodes(executor, makeCtx());
+    const newState = await nodes.reviewer({
+      prdContent: '# PRD', contractContent: '# C', round: MAX_ROUNDS, costUsd: 0,
+    });
+    expect(newState.verdict).toBe('APPROVED');
+    expect(newState.forcedApproval).toBe(false);
+  });
 });
 
 describe('runGanContractGraph', () => {
