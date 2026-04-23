@@ -39,8 +39,9 @@ const HOST_PROMPT_DIR = process.env.HOST_PROMPT_DIR || DEFAULT_PROMPT_DIR;
 const DEFAULT_WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia';
 
 // resource-tier 配置已迁到 spawn/middleware/resource-tier.js（v2 P2 PR7）
-// 保留 re-export 供外部 caller（executor.js / __tests__/docker-executor.test.js）继续用旧路径
-export { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER } from './spawn/middleware/resource-tier.js';
+// 本地 import 供 docker-executor.js 内部使用 + re-export 供外部 caller 继续用旧路径
+import { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER } from './spawn/middleware/resource-tier.js';
+export { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER };
 
 /**
  * 检测 docker 二进制是否可用（缓存结果）
