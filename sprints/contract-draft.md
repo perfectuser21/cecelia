@@ -1,6 +1,30 @@
-# Sprint Contract Draft (Round 9)
+# Sprint Contract Draft (Round 10)
 
 > **PRD 来源**：`sprints/sprint-prd.md`（Initiative：Brain 时间端点 — 单一 `GET /api/brain/time` 返回 iso/timezone/unix 三字段）
+>
+> **Round 9 → Round 10 变更（基于 Reviewer Round 9 REVISION 反馈 — 2 个 major risk 必修 + 1 条 minor 采纳）**：
+>
+> **Reviewer Round 9 的 2 个 major risk（必修）**：
+> - **Major-A（Reviewer Round 8 Risk 4 未闭合 — 三重锁链 B1/B2 有缝隙）**：
+>   - **B1 缝隙**：Round 9 正则 `^\s*import\s+[^;]*from\s+['"][^'"]*routes\/time\.js['"]` 只匹配 `import X from '...'` 形式，**漏了 side-effect import `import '...routes/time.js'`**（无 `from` 子句，但同样会在 `vi.spyOn` 之前触发模块顶层求值 → mutation probe 失效）。
+>   - **B2 缝隙**：Round 9 正则 `await\s+import\s*\(` 匹配**任意** `await import(` 调用，target 路径完全开放；即使测试文件里的 `await import(...)` 指向 `'fs'`/`'path'` 等无关模块，也能假绿该 ARTIFACT，契约语义漂移。
+>   - **Round 10 修法（两条正则同步收紧，统一放在 DoD B1/B2）**：
+>     - B1 → `^\s*import\s+(?:[^;]*from\s+)?['"][^'"]*routes\/time\.js['"]`（把 `from` 子句改为可选组，side-effect 和 named 两种形式都命中）
+>     - B2 → `await\s+import\s*\(\s*[^)]*routes\/time\.js`（paren 内强制含 `routes/time.js` 字面，target 锁定）
+>   - B3 原样保留（Reviewer Round 9 确认 `vi.spyOn(Intl, 'DateTimeFormat')` regex 的 bash 转义和语义正确）
+> - **Major-B（Reviewer Round 8 Risk 2 的 Round 9 修补本身制造新风险）**：Round 9 把 `contract-dod-ws1.md` 的 Round 8/9 ARTIFACT `node -e ...` 命令**原样粘贴**进本草案的 `### ARTIFACT 原文粘贴` 区块，意图让 Reviewer 无需跨文件对齐。Reviewer Round 9 指出这反而把原本 1 处的命令定义变成 2 处 —— 任一处修改若未同步，两份出现语义漂移；"粘贴+同步纪律"是**工程性兜底**而非**结构性解法**。
+>   - **Round 10 根治（结构性单源）**：
+>     - `contract-dod-ws1.md` 永久作为 ARTIFACT 命令的 **SSOT**；每条 Round 8+9+10 新增 ARTIFACT 赋予**稳定 ID**（`A1 / A2 / A3 / A4 / B1 / B2 / B3`）
+>     - 本合同草案**彻底删除**原 `### ARTIFACT 原文粘贴` 区块（Round 9 遗留）
+>     - 本合同草案**只通过稳定 ID 引用** DoD 里的 ARTIFACT（例如："见 DoD · A1 / A4 / B1 / B2 / B3"），**不重复命令文本**
+>     - 改命令文本时只改 DoD 一个地方 → 无双源 → 无漂移；ID 本身短且稳定，即使 DoD 文本行变更也不影响引用
+>
+> **Reviewer Round 9 的 minor 采纳**：
+> - **命令 1 exit 码差异化** — 原 Round 9 命令 1 用 exit 1（collect miss）和 exit 2（wrong red/green state），Reviewer 建议按"文件缺失 / JSON 解析异常 / collect miss"三种失败路径分别区分 exit 码以便肉眼 triage。Round 10 采纳：文件缺失 `exit 3` / JSON 解析异常 `exit 1` / collect miss (`numTotalTests !== 1`) `exit 4` / 错误红绿态 `exit 2`。
+>
+> **Round 10 不触达测试文件**：`time.test.ts` 12 条 + `time-intl-caching.test.ts` 1 条 + `routes-aggregator.test.ts` 2 条 = **15 条 `it()`**（与 Round 6–9 完全一致）。Round 10 只改合同草案本文 + DoD ARTIFACT 正则文本 + 命令 1 exit 码 —— 0 行测试代码变化。
+>
+> ---
 >
 > **Round 8 → Round 9 变更（基于 Reviewer Round 8 REVISION 反馈）**：
 >
@@ -219,7 +243,7 @@ workstream_count: 1
 
 本章节独立于 Test Contract 表，单独列出 collect 层面的可观测契约，使 Reviewer 在不跑具体 it() 断言的情况下就能判定"合同测试是否真正被 vitest 看到 + 是否按预期动态引用目标模块"。覆盖 Reviewer Round 7 的 (a)(b)(c) 和 Reviewer Round 8 Risk 1/2/3/4 一次到位。
 
-**命令 1（就绪指纹 — Round 7 文件已交付 after；对应 Reviewer Round 7 (a)；Round 9 — Reviewer Round 8 Risk 1：改用 JSON reporter 消除文本格式版本依赖）**:
+**命令 1（就绪指纹 — Round 7 文件已交付 after；对应 Reviewer Round 7 (a)；Round 9 — Reviewer Round 8 Risk 1：改用 JSON reporter 消除文本格式版本依赖；Round 10 — Reviewer Round 9 minor 采纳：三种失败路径 exit 码差异化）**:
 
 ```bash
 # 从仓库根运行；改用 --reporter=json --outputFile=/tmp/ws1-intl-json.json 替代依赖 "Tests  1" 字符串匹配
@@ -227,23 +251,36 @@ workstream_count: 1
 # vitest 1.6.1 实测输出形如：{"numTotalTestSuites":2,"numPassedTestSuites":2,"numTotalTests":1,"numFailedTests":1,"numPassedTests":0,...}
 npx vitest run sprints/tests/ws1/time-intl-caching.test.ts --reporter=json --outputFile=/tmp/ws1-intl-json.json 2>&1 || true
 
+# ----- Round 10 新增：三种失败路径 exit 码差异化（Reviewer Round 9 minor 采纳）-----
+# exit 3 = JSON reporter 文件未生成（文件缺失 — vitest 本身崩溃或权限问题）
+# exit 1 = JSON 文件存在但解析异常（损坏 / 非 JSON）
+# exit 4 = JSON 合法但 collect miss（numTotalTests !== 1 — config include 漏、路径错位、glob 失败）
+# exit 2 = collect OK 但红绿态皆不对（既非 1 failed 也非 1 passed — 例如 vitest 跳过了该 it）
+# exit 0 = PASS（Red 或 Green 有效状态之一）
 # Round 7 后 / Green 前（Generator 未实现 routes/time.js）：numTotalTests === 1 && numFailedTests === 1
 # Green 阶段（Generator 实现 routes/time.js）：numTotalTests === 1 && numPassedTests === 1
-# 任何阶段：numTotalTests !== 1 都是 collect 机制失效 → REVISION
+[ -f /tmp/ws1-intl-json.json ] || { echo "FAIL[exit=3]: JSON reporter 文件 /tmp/ws1-intl-json.json 未生成 — vitest 执行本身异常（权限/崩溃/未安装）"; exit 3; }
+
 node -e '
-  const j = require("/tmp/ws1-intl-json.json");
-  if (j.numTotalTests !== 1) {
-    console.error(`FAIL: collect 机制异常 — 预期 numTotalTests=1，实际=${j.numTotalTests}`);
+  let j;
+  try {
+    j = require("/tmp/ws1-intl-json.json");
+  } catch (e) {
+    console.error("FAIL[exit=1]: /tmp/ws1-intl-json.json 解析异常 — " + e.message);
     process.exit(1);
+  }
+  if (j.numTotalTests !== 1) {
+    console.error("FAIL[exit=4]: collect 机制异常 — 预期 numTotalTests=1，实际=" + j.numTotalTests);
+    process.exit(4);
   }
   // Red 阶段：必须 1 个 failed（模块缺失 / Intl 缓存 mutation 被抓）
   // Green 阶段：必须 1 个 passed
   if (j.numFailedTests !== 1 && j.numPassedTests !== 1) {
-    console.error(`FAIL: 既非 Red (1 failed) 也非 Green (1 passed) — failed=${j.numFailedTests} passed=${j.numPassedTests}`);
+    console.error("FAIL[exit=2]: 既非 Red (1 failed) 也非 Green (1 passed) — failed=" + j.numFailedTests + " passed=" + j.numPassedTests);
     process.exit(2);
   }
-  console.log(`PASS: numTotalTests=1 (failed=${j.numFailedTests}, passed=${j.numPassedTests})`);
-' || exit 1
+  console.log("PASS: numTotalTests=1 (failed=" + j.numFailedTests + ", passed=" + j.numPassedTests + ")");
+' || exit $?
 ```
 
 **命令 2（假设文件不存在 — Reviewer Round 7 (c)）**:
@@ -294,58 +331,49 @@ done
 # `**/*.{test,spec}.?(c|m)[jt]s?(x)`，能 collect 到 sprints/tests/ws1/*.test.ts，FAILED 保持 0 → exit 0
 ```
 
-### ARTIFACT 原文粘贴（契约硬化 — Reviewer Round 8 Risk 2）
+### ARTIFACT 稳定 ID 索引（Round 10 — 单源引用 · 闭合 Reviewer Round 9 Major-B "双源漂移面"）
 
-下列 ARTIFACT 条目的 `node -e ...` 命令从 `contract-dod-ws1.md` **原样复制**，以便 Reviewer 直接在本合同草案内核对，无需跨文件查阅。若本草案与 `contract-dod-ws1.md` 后续出现词句漂移，以**两者完全一致**为约束；任何一侧修改必须同步。
+> **结构性原则（Round 10 新增，替代 Round 9 失败的"原文粘贴"路线）**：
+> `contract-dod-ws1.md` 是所有 ARTIFACT `node -e ...` 命令的 **SSOT**（Single Source of Truth）。本合同草案**只按稳定 ID 引用**，**不复制命令文本**。未来任何 ARTIFACT 命令文本修改只会动一处（DoD 文件），不存在"两份文件语义漂移"的风险面。Reviewer 审查本草案时，用 `grep -n '^- \[ \] \[ARTIFACT\] \*\*A[1-4]\*\*\|^- \[ \] \[ARTIFACT\] \*\*B[1-3]\*\*' sprints/contract-dod-ws1.md` 即可定位 7 条命令的确切位置。
+>
+> **ID 表**（合同草案唯一跨文件引用形态）：
 
-**A. Round 8 ARTIFACT — collect sanity 文件存在性 + it 计数**（已在 Round 8 交付，Round 9 原文粘贴进草案）：
-
-```bash
-# A1) sprints/tests/ws1/time-intl-caching.test.ts 文件存在
-node -e "require('fs').accessSync('sprints/tests/ws1/time-intl-caching.test.ts')"
-
-# A2) 顶层含恰好 1 个 it( 调用（与 vitest list "Tests 1" 强同构）
-node -e "const fs=require('fs');const c=fs.readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');const m=c.match(/^\s*it\s*\(/gm)||[];if(m.length!==1)process.exit(1)"
-
-# A3) 顶层 describe( 块 ≥ 1 条
-node -e "const fs=require('fs');const c=fs.readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');const m=c.match(/^\s*describe\s*\(/gm)||[];if(m.length<1)process.exit(1)"
-
-# A4) 仓库根 vitest.config.{js,ts} 字面量 include（若存在）必须覆盖合同测试路径 — Round 9 Risk 3 硬化版
-node -e "const fs=require('fs');for(const f of ['vitest.config.js','vitest.config.ts']){if(!fs.existsSync(f))continue;const c=fs.readFileSync(f,'utf8');const m=c.match(/include\s*:\s*\[[\s\S]*?\]/);if(!m)continue;if(!/sprints\/tests|sprints\/\*\*|\*\*\/sprints|\*\*\/\*\.test\.ts|time-intl-caching/.test(m[0])){console.error('FAIL: '+f+' 根字面量 include 未覆盖 sprints/tests/ws1/time-intl-caching.test.ts');process.exit(1)}}process.exit(0)"
-```
-
-**B. Round 9 新增 ARTIFACT — 测试文件动态 import 契约**（Reviewer Round 8 Risk 4；三条形成正反+旁证三重锁链）：
-
-```bash
-# B1) 禁止 top-level static import routes/time.js（grep 正则匹配即 fail）
-node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(/^\s*import\s+[^;]*from\s+['\"][^'\"]*routes\/time\.js['\"]/m.test(c)){console.error('FAIL: time-intl-caching.test.ts 顶层发现 static import routes/time.js — mutation probe 失效');process.exit(1)}"
-
-# B2) 必须至少出现一次 await import( （证明走动态引用）
-node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(!/await\s+import\s*\(/.test(c)){console.error('FAIL: time-intl-caching.test.ts 未发现 await import(...) — mutation probe 必须走动态 import');process.exit(1)}"
-
-# B3) 必须至少出现一次 vi.spyOn(Intl, 'DateTimeFormat')（证明 Intl spy 机制存在）
-node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching.test.ts','utf8');if(!/vi\s*\.spyOn\s*\(\s*Intl\s*,\s*['\"]DateTimeFormat['\"]/.test(c)){console.error('FAIL: 未发现 vi.spyOn(Intl, DateTimeFormat) — mutation probe 机制缺失');process.exit(1)}"
-```
-
-**三重锁链的语义**:
-- B1 是**反面约束**（禁止破坏动态 import 模式）
-- B2 是**正面约束**（证明动态 import 被执行）
-- B3 是**旁证约束**（证明在动态 import 之前安装了 Intl spy —— 动态 import 的时机由 B2 保证，spy 的存在由 B3 保证，两者合起来 mutation probe 才真正有效）
-
-**Round 8 / Round 9 硬约束总表**（Round 9 把"必须包含/不包含"从依赖文本字符串升级到依赖 JSON schema，与命令 1 同步）:
-
-| 状态 | vitest 命令 | JSON 报告期望（Round 9 主判据） | 文本输出期望（Round 8 兼容判据，仅参考） | 原因 |
+| ID | 职责 | 目标文件 | 关键正则/动作 | DoD 原文锚点 |
 |---|---|---|---|---|
-| Proposer 交付后、Generator 未实现前 | `vitest run sprints/tests/ws1/time-intl-caching.test.ts --reporter=json --outputFile=/tmp/ws1-intl-json.json` | `numTotalTests === 1` **且** `numFailedTests === 1`；stderr 含 `Failed to load url` 或 `ERR_MODULE_NOT_FOUND` | `Test Files  1 failed (1)` + `Tests  1 failed (1)` | collect 正常 + 模块缺失真红 |
-| Proposer 交付后、Generator 实现后 | 同上 | `numTotalTests === 1` **且** `numPassedTests === 1` | `Tests  1 passed (1)` | TDD Green 阶段 |
-| 假设文件被误删 / 路径错位 | 同上 | 退出非 0；stderr 含 `No test files found` 或 JSON 报告 `numTotalTestSuites === 0` | `No test files found` | collect 机制应当明确拒绝缺失的文件 |
-| Round 9 新增：测试文件动态 import 契约破坏 | 静态 ARTIFACT B1/B2/B3（见 `## Test Collect Sanity` 章节 ARTIFACT 原文粘贴区） | N/A — 不跑 vitest，直接 `node -e ...` ARTIFACT 判定 | N/A | 测试文件语义完整性（静态 import → mutation probe 失效） |
+| **A1** | 文件存在性 | `sprints/tests/ws1/time-intl-caching.test.ts` | `fs.accessSync(...)` | DoD "Round 8/9/10 新增 ARTIFACT" 区块第 1 条 |
+| **A2** | 顶层 `it(` 恰好 1 个（与 vitest `Tests 1` 强同构） | 同上 | `^\s*it\s*\(` 全局计数 === 1 | DoD 同区块第 2 条 |
+| **A3** | 顶层 `describe(` ≥ 1（非空测试文件语义） | 同上 | `^\s*describe\s*\(` 全局计数 ≥ 1 | DoD 同区块第 3 条 |
+| **A4** | 仓库根 vitest.config include 登记（若存在字面量 include） | `vitest.config.{js,ts}` at repo root | 字面量 `include:` 必须含 `sprints/tests` / `sprints/**` / `**/sprints/**` / `**/*.test.ts` / 具体文件 | DoD 同区块第 4 条 |
+| **B1** | **反面约束**：禁止 top-level static import `routes/time.js`（含 side-effect） — Round 10 修正版 | `sprints/tests/ws1/time-intl-caching.test.ts` | `^\s*import\s+(?:[^;]*from\s+)?['"][^'"]*routes/time\.js['"]` **不得命中** | DoD 同区块第 5 条 |
+| **B2** | **正面约束**：必须至少一次**指向 routes/time.js 的** `await import(...)` — Round 10 修正版（target 路径锁定） | 同上 | `await\s+import\s*\(\s*[^)]*routes/time\.js` **必须命中** | DoD 同区块第 6 条 |
+| **B3** | **旁证约束**：必须至少一次 `vi.spyOn(Intl, 'DateTimeFormat')` | 同上 | `vi\s*\.spyOn\s*\(\s*Intl\s*,\s*['"]DateTimeFormat['"]` 必须命中 | DoD 同区块第 7 条 |
+
+**三重锁链的语义（保留自 Round 9）**：
+- B1 = 反面（禁止破坏动态 import 模式；Round 10 补上 side-effect import 缺口）
+- B2 = 正面（证明动态 import 被执行，且 **target 必须绑定 routes/time.js** — Round 10 收紧）
+- B3 = 旁证（证明 Intl spy 机制存在 —— 与 B2 的动态 import 时机结合，才能在模块顶层求值之前 spy 生效）
+
+**Round 9 → Round 10 的两条关键修补（命令文本仅在 DoD 落定，本处只列规则差异）**：
+- **B1**（side-effect import 缺口闭合）：Round 9 正则要求 `from` 子句存在；Round 10 把 `from` 子句改为可选组 `(?:[^;]*from\s+)?`，`import '...routes/time.js'`（无 `from`）与 `import X from '...routes/time.js'`（有 `from`）**双形态同被禁**
+- **B2**（target 路径绑定）：Round 9 正则仅要求 `await import(` 字面；Round 10 要求 paren 内（到首个 `)` 为止）**必须含** `routes/time.js` 字面，`await import('fs')` / `await import('path')` 等无关目标不再假绿该 ARTIFACT
+
+**Round 8 / Round 9 / Round 10 硬约束总表**（Round 9 把"必须包含/不包含"从依赖文本字符串升级到依赖 JSON schema，与命令 1 同步；Round 10 差异化 exit 码 + B1/B2 正则收紧）:
+
+| 状态 | vitest 命令 | JSON 报告期望（Round 9 主判据） | 文本输出期望（Round 8 兼容判据，仅参考） | Round 10 exit 码 | 原因 |
+|---|---|---|---|---|---|
+| Proposer 交付后、Generator 未实现前 | `vitest run sprints/tests/ws1/time-intl-caching.test.ts --reporter=json --outputFile=/tmp/ws1-intl-json.json` | `numTotalTests === 1` **且** `numFailedTests === 1`；stderr 含 `Failed to load url` 或 `ERR_MODULE_NOT_FOUND` | `Test Files  1 failed (1)` + `Tests  1 failed (1)` | `exit 0`（PASS — 合法 Red） | collect 正常 + 模块缺失真红 |
+| Proposer 交付后、Generator 实现后 | 同上 | `numTotalTests === 1` **且** `numPassedTests === 1` | `Tests  1 passed (1)` | `exit 0`（PASS — 合法 Green） | TDD Green 阶段 |
+| JSON reporter 文件未生成（vitest 本身异常） | 同上 | N/A | N/A | `exit 3` | Round 10 新增差异化 — 文件缺失 |
+| JSON 文件解析异常（损坏/非 JSON） | 同上 | 抛异常 | N/A | `exit 1` | Round 10 新增差异化 — 解析失败 |
+| 假设测试文件被误删 / 路径错位 → collect miss | 同上 | 退出非 0；`numTotalTests !== 1` 或 `numTotalTestSuites === 0`；stderr 含 `No test files found` | `No test files found` | `exit 4` | Round 10 新增差异化 — collect miss |
+| collect OK 但既非 1 failed 也非 1 passed | 同上 | `numTotalTests === 1 && numFailedTests !== 1 && numPassedTests !== 1` | N/A | `exit 2` | vitest 把 it 跳过或其它异常 |
+| Round 9 新增 / Round 10 修正：测试文件动态 import 契约破坏 | 静态 ARTIFACT B1/B2/B3（SSOT 位置：`contract-dod-ws1.md` 同名条目） | N/A — 不跑 vitest，直接 `node -e ...` ARTIFACT 判定 | N/A | ARTIFACT 自身 `process.exit(1)` | 测试文件语义完整性（静态 import / target 未绑定 → mutation probe 失效） |
 
 ---
 
-## GAN 对抗要点（供 Reviewer 聚焦 Round 9 修订是否充分）
+## GAN 对抗要点（供 Reviewer 聚焦 Round 10 修订是否充分）
 
-**Round 1 → Round 9 的 mutation 族是否已被一次性堵上**：
+**Round 1 → Round 10 的 mutation 族是否已被一次性堵上**：
 
 | # | Mutation 族 | 旧轮漏洞 | Round 9 堵法（或历代堵法） |
 |---|---|---|---|
@@ -378,6 +406,10 @@ node -e "const c=require('fs').readFileSync('sprints/tests/ws1/time-intl-caching
 | 27 | **合同草案与 DoD 跨文件漂移**（Reviewer Round 8 Risk 2）：Round 8 `## Test Collect Sanity` 章节描述新 ARTIFACT 的语义但未贴具体 `node -e` 命令行，Reviewer 需跨文件查阅；若两份文件后续词句变更不同步，契约与工具出现缝隙 | Round 8 跨文件指针引用 | **Round 9 `## Test Collect Sanity` 章节新增 `### ARTIFACT 原文粘贴`**：把 Round 8 所有 ARTIFACT（A1/A2/A3/A4）+ Round 9 新增 ARTIFACT（B1/B2/B3）的完整 `node -e ...` 命令原样粘贴进合同草案；任何 DoD 词句变更须同步合同草案。Reviewer 可在合同内核对，无需跨文件 |
 | 28 | **gate 脚本 echo-only 软兜底**（Reviewer Round 8 Risk 3）：Round 8 命令 3 仅用 `echo "[root config] ..."` 打印 include 覆盖情况，不 exit；若 Reviewer/CI 直接 source 这段 bash 做 gate，不合规 config 仍返回 exit 0 | Round 8 echo-only | **Round 9 命令 3 加 `FAILED=0` 记账 + 末尾 `[ "$FAILED" -eq 0 ] || exit 1`**：每条违规分支写 `FAILED=1`；末尾硬判定。gate 脚本直接 bash 执行时不合规必定非 0 退出 |
 | 29 | **测试文件动态 import 被破坏成静态 import → Intl 缓存 mutation probe 失效**（Reviewer Round 8 Risk 4）：`time-intl-caching.test.ts` 依赖"spyOn 在模块顶层代码执行之前安装 spy"这一时序，通过 `await import(\`...routes/time.js?rev=${Date.now()}\`)` 实现；若未来有人改为 `import timeRouter from '.../routes/time.js'` 顶层静态 import，模块顶层在 spy 未安装时就完成解析 → 顶层 `const CACHED_TZ = Intl.DateTimeFormat()...` mutation 不再被拦住 → 测试假绿 | Round 8 未规约测试文件的 import 形态 | **Round 9 在 `contract-dod-ws1.md` 新增 3 条 ARTIFACT（B1/B2/B3）**：B1 反面约束（禁止 `^\s*import\s+.*from\s+['"].*routes/time\.js['"]`）；B2 正面约束（必须含 `await import(`）；B3 旁证约束（必须含 `vi.spyOn(Intl, 'DateTimeFormat')`）。三条形成"正反+旁证"三重锁链，同步粘贴进合同草案 Test Collect Sanity 章节 |
+| 30 | **B1 三重锁链反面约束的 regex 漏 side-effect import**（Reviewer Round 9 Major-A 其一）：Round 9 B1 正则 `^\s*import\s+[^;]*from\s+['"][^'"]*routes\/time\.js['"]` 要求 `from` 子句存在，`import '...routes/time.js'`（无 `from` 的 side-effect import，ESM 里合法）**不会**命中 → 测试文件被偷偷改成 side-effect import 后顶层代码仍会在 spy 未安装前执行 → mutation probe 失效（和整条 B1 缺失时的失效模式等价） | Round 9 正则默认 `from` 必在 | **Round 10 修正 B1 正则**：把 `from \s+` 子句改为可选组 `(?:[^;]*from\s+)?`，新正则 `^\s*import\s+(?:[^;]*from\s+)?['"][^'"]*routes\/time\.js['"]` 同时命中 `import X from '...'` 和 `import '...'` 两种形态。SSOT 位于 DoD · B1 |
+| 31 | **B2 三重锁链正面约束的 regex 未绑定 target 路径**（Reviewer Round 9 Major-A 其二）：Round 9 B2 正则 `await\s+import\s*\(` 仅匹配 `await import(` 字面，**任意** target 都满足；测试文件若 Intl mutation probe 部分被删、但保留 `await import('fs')` 等无关行，B2 仍会假绿 → B2 作为"动态 import 契约"的语义失去效力 | Round 9 正则未绑定路径 | **Round 10 修正 B2 正则**：`await\s+import\s*\(\s*[^)]*routes\/time\.js`（`[^)]*` 贪婪匹配 paren 内任意内容直至 `)` 之前，要求其中含 `routes/time.js` 字面）。`await import('fs')` / `await import('path')` 等不再假绿。测试文件当前写法 ``await import(/* @vite-ignore */ `../../../packages/brain/src/routes/time.js?rev7intl=${Date.now()}`)`` 仍命中（paren 内包含 `routes/time.js`）。SSOT 位于 DoD · B2 |
+| 32 | **Round 9 双源原文粘贴的漂移面**（Reviewer Round 9 Major-B）：Round 9 把 `contract-dod-ws1.md` 的 ARTIFACT `node -e ...` 原文复制到 `contract-draft.md` `### ARTIFACT 原文粘贴` 区，意图消除跨文件对齐。结果是：同一条命令出现在两个文件里，任一文件修改若未同步就语义漂移；"粘贴+同步纪律"是**工程性兜底**而非**结构性解法** | Round 9 原文粘贴 | **Round 10 根治：单源引用结构**。`contract-dod-ws1.md` 永久作为命令 SSOT；每条 Round 8+9+10 新增 ARTIFACT 赋予**稳定 ID**（A1/A2/A3/A4/B1/B2/B3）；`contract-draft.md` 删除粘贴区，改为按 ID 引用（无命令文本重复）。未来修改命令文本仅触达 DoD 一处，0 漂移风险面。索引表保留在合同草案 `### ARTIFACT 稳定 ID 索引` 章节（列 ID、职责、关键正则规则、DoD 原文锚点 4 列信息） |
+| 33 | **命令 1 三种失败路径共用 exit 1 不便于 triage**（Reviewer Round 9 minor）：Round 9 命令 1 用 exit 1 覆盖 collect miss、JSON 解析错误等所有失败情况，Reviewer 肉眼很难快速判断"vitest 本身挂了"vs"合同契约不满足"vs"JSON 格式错" | Round 9 exit 1 归一 | **Round 10 按 Reviewer 建议采纳差异化 exit**：exit 3 = JSON reporter 文件未生成（vitest 执行挂了）/ exit 1 = JSON 解析异常（文件损坏）/ exit 4 = collect miss（`numTotalTests !== 1`）/ exit 2 = 合法 collect 但既非 1 failed 也非 1 passed / exit 0 = 合法 Red 或 Green。硬约束总表新增一列记录对应 exit 码 |
 
 ## PRD 追溯性
 
