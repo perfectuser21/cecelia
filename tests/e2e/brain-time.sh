@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # 真机 E2E — GET /api/brain/time（SC-003）
-# 对应 tests/ws1/time.test.ts 的 it(2)(4)(6) 三条核心断言：
-#   it(2) response body contains exactly the three keys iso, timezone, unix — no others
-#   it(4) unix is a positive integer in seconds (at most 10 digits), not milliseconds
-#   it(6) new Date(iso).getTime() and unix * 1000 agree within 2000ms
+# 对应 tests/ws1/time.test.ts 的核心 BEHAVIOR 断言（Round 3）：
+#   - 字段白名单 / unix 类型与位数 / iso 严格 ISO 8601 UTC Z / iso↔unix 一致性
+#   - timezone 非空 / query 污染免疫 / 非 GET 方法不泄漏 / body 污染免疫
 #
-# 设计约束（Reviewer Round 1 Risk 5）：
-#   - 不得只跑 `jq -e '.iso and .timezone'` 这种弱断言（会假阳性）
-#   - 必须覆盖字段白名单 (Object.keys 等价)、unix 类型 (type == "number")、
-#     长度 (length <= 10)、iso↔unix 差值 (差 <= 2000ms)
+# Round 3 立场（Reviewer Round 2 问题 1&2）：
+#   - iso 锁死为 UTC Z 后缀（不允许 ±HH:MM 本地偏移），timezone 字段独立反映服务器元信息
+#   - 非 GET 方法 (POST/PUT/PATCH/DELETE) 不得返回 200 且不得泄漏 iso/timezone/unix
+#   - POST body {iso,unix,timezone} 不污染响应（handler 根本不执行）
 #
 # 依赖: bash, curl, jq
 # 用法: BRAIN_URL=http://localhost:5221 bash tests/e2e/brain-time.sh
@@ -46,7 +45,7 @@ if ! jq -e '(. | keys | sort) == ["iso","timezone","unix"]' "$BODY_FILE" >/dev/n
 fi
 
 # ---- step 2: unix 必须是 number 类型（type=="number"） ----
-# 关键断言：.unix | type == "number"（Risk 1 Reviewer 指出的关键 grep 表达式之一）
+# 关键断言：.unix | type == "number"
 if ! jq -e '.unix | type == "number"' "$BODY_FILE" >/dev/null; then
   echo "[FAIL 2] .unix type is not number"
   exit 2
@@ -63,15 +62,22 @@ if ! jq -e '(.unix | tostring | length) <= 10' "$BODY_FILE" >/dev/null; then
   exit 3
 fi
 
-# ---- step 4: iso 严格 ISO 8601 格式（含 Z 或 ±HH:MM 后缀） ----
-# 正则：^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$
-if ! jq -e '.iso | test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})$")' "$BODY_FILE" >/dev/null; then
-  echo "[FAIL 4] .iso does not match strict ISO 8601 instant format"
+# ---- step 4: iso 严格 ISO 8601 UTC 格式（Round 3 立场：仅 Z 后缀，不接受 ±HH:MM） ----
+# 正则：^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$
+if ! jq -e '.iso | test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$")' "$BODY_FILE" >/dev/null; then
+  echo "[FAIL 4] .iso does not match strict ISO 8601 UTC (Z-suffix only) format"
+  echo "--- body ---"
+  cat "$BODY_FILE"
+  exit 4
+fi
+# 反向兜底：明确拒绝 ±HH:MM 形式（若实现返回带偏移的 ISO 也必须 fail）
+if jq -e '.iso | test("[+-]\\d{2}:?\\d{2}$")' "$BODY_FILE" >/dev/null; then
+  echo "[FAIL 4] .iso contains ±HH:MM offset; Round 3 requires UTC Z-suffix only"
   exit 4
 fi
 
 # ---- step 5: iso 解析秒 与 .unix 差值 <= 2 秒（2000ms 级一致性） ----
-# 关键表达式：(iso - unix) <= 2  ←对应 tests/ws1/time.test.ts it(6) 的 2000ms 阈值
+# 关键表达式：(iso - unix) <= 2  ← 对应 tests/ws1/time.test.ts "iso↔unix 一致性" 的 2000ms 阈值
 if ! jq -e '((.iso | fromdateiso8601) - .unix | if . < 0 then -. else . end) <= 2' "$BODY_FILE" >/dev/null; then
   echo "[FAIL 5] iso and unix diverge by more than 2000ms (2 seconds)"
   cat "$BODY_FILE"
@@ -92,5 +98,39 @@ if jq -e '.iso == "evil" or .unix == 1 or .timezone == "Fake/Zone"' "$BODY_FILE"
   exit 7
 fi
 
-echo "[e2e] PASS — all 7 assertions met"
+# ---- step 8: 非 GET 方法 + body 污染免疫（Round 3 新增 — Reviewer Round 2 问题 2） ----
+# 约束：POST/PUT/PATCH/DELETE 到 /api/brain/time 必须非 200；响应体不得出现 iso/timezone/unix key；
+#       即便 POST body 注入 {iso:"evil",unix:1,timezone:"Fake/Zone"} 也不得回显。
+for METHOD in POST PUT PATCH DELETE; do
+  METHOD_BODY_FILE="$(mktemp)"
+  METHOD_CODE=$(curl -sS -X "$METHOD" \
+    -H 'Content-Type: application/json' \
+    -d '{"iso":"evil","unix":1,"timezone":"Fake/Zone"}' \
+    -o "$METHOD_BODY_FILE" -w '%{http_code}' "$ENDPOINT" || echo 000)
+  if [ "$METHOD_CODE" = "200" ]; then
+    echo "[FAIL 8] ${METHOD} ${ENDPOINT} returned HTTP 200; non-GET must not trigger handler"
+    cat "$METHOD_BODY_FILE"
+    rm -f "$METHOD_BODY_FILE"
+    exit 8
+  fi
+  # 响应正文不得回显 body 注入值
+  if grep -Eq '"(iso|unix|timezone)"[[:space:]]*:' "$METHOD_BODY_FILE"; then
+    # 若响应恰好是结构化 JSON 错误体（例如框架 404 JSON），校验三字段 key 均不存在
+    if jq -e 'has("iso") or has("unix") or has("timezone")' "$METHOD_BODY_FILE" >/dev/null 2>&1; then
+      echo "[FAIL 8] ${METHOD} response leaks iso/unix/timezone keys — body may have been processed"
+      cat "$METHOD_BODY_FILE"
+      rm -f "$METHOD_BODY_FILE"
+      exit 8
+    fi
+  fi
+  if grep -qE '\bevil\b|Fake/Zone' "$METHOD_BODY_FILE"; then
+    echo "[FAIL 8] ${METHOD} response echoed injected body values (evil / Fake/Zone) — body pollution"
+    cat "$METHOD_BODY_FILE"
+    rm -f "$METHOD_BODY_FILE"
+    exit 8
+  fi
+  rm -f "$METHOD_BODY_FILE"
+done
+
+echo "[e2e] PASS — all 8 assertions met"
 exit 0
