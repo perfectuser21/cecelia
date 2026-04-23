@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 真机 E2E — GET /api/brain/time（SC-003）
-# 对应 tests/ws1/time.test.ts 的核心 BEHAVIOR 断言（Round 4）：
+# 对应 tests/ws1/time.test.ts 的核心 BEHAVIOR 断言：
 #   - 字段白名单 / unix 类型与位数 / iso 严格 ISO 8601 UTC Z / iso↔unix 一致性
 #   - timezone 非空 / query 污染免疫 / 非 GET 方法不泄漏 / body 污染免疫
 #
@@ -10,25 +10,34 @@
 #   - POST body {iso,unix,timezone} 不污染响应（handler 根本不执行）
 #
 # Round 4 立场（Reviewer Round 3 问题 3）：
-#   - step 8 状态码收紧为硬枚举 {404, 405}（不再是「非 200」软阈值），便于机械判定
+#   - step 8 状态码收紧为硬枚举 {404, 405}（不再是"非 200"软阈值）
 #
 # Round 5 立场（Reviewer Round 4 Risk 3）：
-#   - 曾尝试「状态码相对化到 baseline」的方案（baseline = 对未命中路径 $METHOD 的响应码，step 8 要求 == baseline）
+#   - 曾尝试"状态码相对化到 baseline"的方案（step 8 要求 == 同 METHOD 对 nonexistent 路径的响应码）
 #
 # Round 6 立场（Reviewer Round 5 Risk 1）：
-#   - 相对化到 baseline 过严 —— 同一 Brain 实例中不同合法 middleware 可能对不同路径返回不同状态码
-#     （例如 `/api/brain/__nope__` 命中 404，但 `/api/brain/time` 的 POST 被前置 405 method-not-allowed middleware 捕获）。
-#     合法实现也可能让 step 8 exit 8。
-#   - Round 6 路线：引入「合法未命中响应集合」
-#     ACCEPTABLE_NOT_FOUND_STATUS = {401, 403, 404, 405, 415, 422, 429, 500}
-#     涵盖 Express 默认 404、methodNotAllowed 405、auth 401/403、媒介协商 415、body 校验 422、限流 429、
-#     内部错误 500 —— 所有「不是 200 且不是 000」的真实反模式状态码。
-#     - step 7.5：断言 baseline 对 nonexistent 路径发请求 **∈ ACCEPTABLE_NOT_FOUND_STATUS**（sanity 兜底；
-#       若 baseline 本身是 200/000，说明 Brain 全局路径行为异常，直接 exit 75）
-#     - step 8：断言 POST/PUT/PATCH/DELETE 到 /api/brain/time **∈ ACCEPTABLE_NOT_FOUND_STATUS 且 ≠ 200**，
-#       **不要求等于 baseline**（allow any legit NOT_FOUND-ish status）。
-#   - 真正的 mutation「POST /time 也返回 200」仍被抓住（200 不在 ACCEPTABLE 集合里），
-#     但合法实现走任意未命中分支（404/405/401/...）都不被误杀。
+#   - 曾尝试"ACCEPTABLE_NOT_FOUND_STATUS = {401 403 404 405 415 422 429 500}"的 8 码枚举
+#
+# Round 7 立场（Reviewer Round 6 Risk 1/2）：
+#   Reviewer 指出"8 码枚举"本身是个枚举而不是规则 —— 合法 Brain 实现若引入枚举外的错误状态
+#   （例如 410 Gone、426 Upgrade Required、451 Unavailable For Legal Reasons、503 Service Unavailable、
+#   504 Gateway Timeout 等），step 7.5/step 8 都会误杀；而且 step 7.5 的 baseline 集合与 step 8
+#   的目标集合**应当同一**（若 baseline 用枚举而 step 8 也用枚举，任何新增合法状态都要两处同步改，
+#   覆盖不对称风险长期存在）。
+#
+#   Round 7 路线（Reviewer Round 6 建议 (b) + Risk 2 一起解决）：
+#     放弃枚举，改**原则性规则**：any HTTP 4xx 或 5xx（`400 ≤ code < 600`）。
+#     - 200 自动被排除（小于 400）
+#     - 000（curl 失败）自动被排除（非数字）
+#     - 1xx/3xx（非错误流转/重定向）自动被排除（小于 400）
+#     - 枚举外的合法错误码（410/451/503/504 ...）自动被接纳，无需任何代码改动
+#     - 真正的 mutation「POST /time 也返回 200」仍被抓住（200 < 400 → 规则拒绝）
+#   step 7.5 与 step 8 共用同一函数 `is_http_error_status`，覆盖面对称。
+#
+#   附带 Round 7 改进（Reviewer Round 6 minor）：step 8 body key 检查从"grep 命中才跑 jq"
+#   改为**无条件跑 jq**（对可解析为 JSON 的响应直接断言 `has("iso")/has("unix")/has("timezone")` 均
+#   为 false），消除 grep 正则被 JSON 格式变体漏检的风险；不可解析为 JSON 的响应（如 HTML 错误页）
+#   仍走字面量 not-contain 的兜底路径。
 #
 # 依赖: bash, curl, jq
 # 用法: BRAIN_URL=http://localhost:5221 bash tests/e2e/brain-time.sh
@@ -41,17 +50,25 @@ ENDPOINT="${BRAIN_URL}/api/brain/time"
 
 echo "[e2e] GET ${ENDPOINT}"
 
-# Round 6 — 合法的「未命中」响应集合（非 200 且非 000 的兜底状态码集合）
-# BASELINE_POST / BASELINE_PUT / BASELINE_PATCH / BASELINE_DELETE / EXPECTED_CODE 仍作为诊断变量保留，
-# 但 step 8 只用 ACCEPTABLE_NOT_FOUND_STATUS 做集合判定，不再要求 == baseline
-ACCEPTABLE_NOT_FOUND_STATUS="401 403 404 405 415 422 429 500"
-
-is_acceptable_not_found() {
+# Round 7 — 原则性「合法的未命中/错误响应」规则：HTTP 4xx 或 5xx（400 ≤ code < 600）
+# 替换 Round 6 的 ACCEPTABLE_NOT_FOUND_STATUS 8 码枚举；step 7.5 与 step 8 共用此函数，覆盖面对称。
+# 规则说明：
+#   - 200 自动排除（< 400）—— 任何"handler 被错误执行并返回 200"的 mutation 都被拒
+#   - 000（curl 不通/超时）自动排除（非数字）
+#   - 合法 4xx 全放行：400/401/403/404/405/410/415/422/426/429/451 ...
+#   - 合法 5xx 全放行：500/502/503/504 ...
+#   - 非标准 6xx+ 被排除（≥ 600）—— 保留未来扩展空间
+is_http_error_status() {
   local code="$1"
-  case " $ACCEPTABLE_NOT_FOUND_STATUS " in
-    *" $code "*) return 0 ;;
-    *) return 1 ;;
+  # 非数字（含空串 / 含字母）直接拒
+  case "$code" in
+    ''|*[!0-9]*) return 1 ;;
   esac
+  # 原则性规则：400 ≤ code < 600
+  if [ "$code" -ge 400 ] && [ "$code" -lt 600 ]; then
+    return 0
+  fi
+  return 1
 }
 
 # ---- step 0: HTTP 状态 + JSON content-type ----
@@ -132,20 +149,12 @@ if jq -e '.iso == "evil" or .unix == 1 or .timezone == "Fake/Zone"' "$BODY_FILE"
   exit 7
 fi
 
-# ---- step 7.5: sanity baseline（Round 5 引入；Round 6 — Reviewer Round 5 Risk 1 松绑） ----
-# 背景：
-#   Round 4 硬编码「非 GET 状态码 ∈ {404, 405}」不相对化到 Brain 实际 NotFound 行为。
-#   Round 5 相对化到 baseline（step 8 要求 == 同 METHOD 对 nonexistent 路径的响应码）——但
-#   Reviewer Round 5 指出同一 Brain 实例中不同合法 middleware 对不同路径的响应码可能不一致，
-#   例如 nonexistent 路径命中 Express 默认 404，但 /api/brain/time 上的 POST 被 methodNotAllowed middleware
-#   提前 405 —— 合法实现也会让 step 8 exit 8。
-#
-# Round 6 路线：
-#   引入 ACCEPTABLE_NOT_FOUND_STATUS = {401 403 404 405 415 422 429 500}（所有「不是 200 且不是 000」的
-#   合法未命中兜底状态码）。step 7.5 断言 baseline ∈ ACCEPTABLE_NOT_FOUND_STATUS，作为「Brain 全局未命中行为
-#   健康」的前置检查；step 8 仅要求 /api/brain/time 非 GET 状态 ∈ ACCEPTABLE_NOT_FOUND_STATUS **且 ≠ 200**，
-#   **不再要求等于 baseline**。真正的 mutation「POST /time 也返回 200」仍被抓住（200 不在集合里），
-#   但合法实现走任意未命中分支都不被误杀。
+# ---- step 7.5: sanity baseline（Round 7 原则规则 — Reviewer Round 6 Risk 2） ----
+# 对不存在路径发 POST/PUT/PATCH/DELETE，断言 baseline 状态 ∈ 4xx/5xx（原则规则 is_http_error_status）。
+# step 7.5 与 step 8 共用同一判定函数，覆盖面对称；任何合法 4xx/5xx（例如 Brain 接入新鉴权返回 401，
+# 或 rate-limit 返回 429，或故障返回 503）都自动接受，无需改代码。
+# 若 baseline 不是 4xx/5xx（可能返回 200、000、或 3xx 重定向），则 Brain 全局未命中行为异常，
+# 整条 step 8 失去意义，立即 exit 75。
 NOTFOUND_PATH="${BRAIN_URL}/api/brain/__definitely_not_a_route_xyz__"
 
 BASELINE_POST=""
@@ -157,12 +166,14 @@ for METHOD in POST PUT PATCH DELETE; do
     -H 'Content-Type: application/json' \
     -d '{}' "$NOTFOUND_PATH" || echo 000)
   echo "[e2e] sanity baseline: ${METHOD} ${NOTFOUND_PATH} -> ${BASELINE_CODE}"
-  # Round 6：断言 baseline ∈ ACCEPTABLE_NOT_FOUND_STATUS；若不在集合内（例如返回 200 表明全部路径 200，
-  # 或 000 表明 curl 打不通），直接 exit 75 —— 整条 step 8 失去意义时即时暴露
-  if ! is_acceptable_not_found "$BASELINE_CODE"; then
+  # Round 7：原则规则 —— 断言 baseline 是 HTTP 4xx/5xx（400 ≤ code < 600）
+  # 同一 Brain 内不同路径可以有不同合法的 4xx/5xx（例如 401 vs 404），不强制相等；
+  # 但若某条 method 对 nonexistent 路径返回非 4xx/5xx（例如 200 或 000），说明 Brain 全局路径行为异常。
+  if ! is_http_error_status "$BASELINE_CODE"; then
     echo "[FAIL 7.5] Brain global NotFound sanity broken — ${METHOD} to nonexistent path returned ${BASELINE_CODE}"
-    echo "           Expected status in {${ACCEPTABLE_NOT_FOUND_STATUS}}; got ${BASELINE_CODE}."
-    echo "           Either Brain is unreachable (000) or every path returns 200 (fake-impl) or middleware is misconfigured."
+    echo "           Expected any HTTP 4xx or 5xx (400 <= code < 600); got ${BASELINE_CODE}."
+    echo "           Either Brain is unreachable (000), every path returns 200 (fake-impl),"
+    echo "           a 3xx redirect is intercepting (misconfig), or a non-standard 6xx+ appeared."
     exit 75
   fi
   case "$METHOD" in
@@ -174,13 +185,13 @@ for METHOD in POST PUT PATCH DELETE; do
 done
 
 # ---- step 8: 非 GET 方法 + body 污染免疫 ----
-# 约束（Round 6 — Reviewer Round 5 Risk 1）：POST/PUT/PATCH/DELETE 到 /api/brain/time：
-#   - 状态码必须 ∈ ACCEPTABLE_NOT_FOUND_STATUS（{401 403 404 405 415 422 429 500}）**且 ≠ 200**
-#     （不再要求 == baseline — 允许 Brain 在端点级与全局级有不同 middleware 分支）
-#   - 响应体不得出现 iso/timezone/unix key
+# 约束（Round 7 原则规则 — Reviewer Round 6 Risk 1）：POST/PUT/PATCH/DELETE 到 /api/brain/time：
+#   - 状态码必须 ∈ 4xx/5xx（is_http_error_status 原则规则；200 天然被排除 — 小于 400）
+#     放弃 Round 6 的 8 码枚举，端点级与全局级 middleware 布局不同的合法实现都 pass
+#   - 响应体不得出现 iso/timezone/unix key（Round 7 改为无条件 jq 检查 — Reviewer Round 6 minor）
 #   - 即便 POST body 注入 {iso:"evil",unix:1,timezone:"Fake/Zone"} 也不得回显 "evil"/"Fake/Zone" 字面量
-# EXPECTED_CODE / BASELINE_{POST,PUT,PATCH,DELETE} 变量保留作为诊断输出（失败时打印对比），
-# 但不参与硬断言——硬断言基于 ACCEPTABLE_NOT_FOUND_STATUS 集合判定
+# BASELINE_{POST,PUT,PATCH,DELETE} 仅保留作为诊断输出（失败时打印参考），不参与硬断言——
+# 硬断言基于 is_http_error_status 原则规则，端点与全局的分歧不再误杀
 for METHOD in POST PUT PATCH DELETE; do
   METHOD_BODY_FILE="$(mktemp)"
   METHOD_CODE=$(curl -sS -X "$METHOD" \
@@ -193,21 +204,22 @@ for METHOD in POST PUT PATCH DELETE; do
     PATCH)  EXPECTED_CODE="$BASELINE_PATCH" ;;
     DELETE) EXPECTED_CODE="$BASELINE_DELETE" ;;
   esac
-  # Round 6 松绑：只要状态 ∈ ACCEPTABLE_NOT_FOUND_STATUS 且 ≠ 200 即可
-  if [ "$METHOD_CODE" = "200" ] || ! is_acceptable_not_found "$METHOD_CODE"; then
+  # Round 7：原则规则 —— 状态 ∈ 4xx/5xx 即可（200 天然不在此集合内）
+  if ! is_http_error_status "$METHOD_CODE"; then
     echo "[FAIL 8] ${METHOD} ${ENDPOINT} returned HTTP ${METHOD_CODE};"
-    echo "         expected any of {${ACCEPTABLE_NOT_FOUND_STATUS}} and NOT 200"
+    echo "         expected any HTTP 4xx or 5xx (400 <= code < 600)"
     echo "         (diagnostic baseline from ${NOTFOUND_PATH}: ${EXPECTED_CODE})"
     echo "         Mutation risk: GET /time correct but ${METHOD} /time exposes handler (status == 200 or unexpected)."
     cat "$METHOD_BODY_FILE"
     rm -f "$METHOD_BODY_FILE"
     exit 8
   fi
-  # 响应正文不得回显 body 注入值
-  if grep -Eq '"(iso|unix|timezone)"[[:space:]]*:' "$METHOD_BODY_FILE"; then
-    # 若响应恰好是结构化 JSON 错误体（例如框架 404 JSON），校验三字段 key 均不存在
-    if jq -e 'has("iso") or has("unix") or has("timezone")' "$METHOD_BODY_FILE" >/dev/null 2>&1; then
-      echo "[FAIL 8] ${METHOD} response leaks iso/unix/timezone keys — body may have been processed"
+  # Round 7（Reviewer Round 6 minor）：body key 检查改为**无条件** jq 判定（解耦 grep 预筛选）
+  # 对可解析为 JSON 的响应体，直接断言三字段 key 均不存在；不可解析为 JSON（HTML 错误页/空 body）
+  # 则走字面量 not-contain 兜底
+  if jq -e . "$METHOD_BODY_FILE" >/dev/null 2>&1; then
+    if jq -e 'if type == "object" then (has("iso") or has("unix") or has("timezone")) else false end' "$METHOD_BODY_FILE" >/dev/null 2>&1; then
+      echo "[FAIL 8] ${METHOD} response (JSON) leaks iso/unix/timezone keys — body may have been processed"
       cat "$METHOD_BODY_FILE"
       rm -f "$METHOD_BODY_FILE"
       exit 8
