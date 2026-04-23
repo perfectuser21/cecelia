@@ -1,23 +1,25 @@
-# DoD — Harness v5 Sprint C-b: 老 sprint 归档 `sprints/archive/`
+task_id: 33b37ea3-4b3c-4797-b26e-f2d671e8acf5
+initiative_id: 2303a935-3082-41d9-895e-42551b1c5cc4
+logical_task_id: ws1
+sprint_dir: (inline DoD, harness-v2)
 
-## ARTIFACT 条目
+## 任务标题
+新增 /api/brain/time/iso 端点与路由骨架
 
-- [x] [ARTIFACT] `sprints/archive/` 目录存在且装有历史 sprint
-  Test: manual:node -e "const fs=require('fs');if(!fs.statSync('sprints/archive').isDirectory())process.exit(1);const subs=fs.readdirSync('sprints/archive').filter(f=>fs.statSync('sprints/archive/'+f).isDirectory());if(subs.length<10)process.exit(2);console.log('archive 子目录数:',subs.length)"
+## 任务描述
+建立 Brain 下新的 time 路由模块，挂载到主 HTTP 入口，实现 GET /api/brain/time/iso：返回 JSON { iso: <ISO8601 字符串> }。本 Task 只覆盖 iso 一个端点，作为后续 unix/timezone 扩展的基础骨架。
 
-- [x] [ARTIFACT] `sprints/archive/root-leftovers/` 装散落根目录 md
-  Test: manual:node -e "const fs=require('fs');const leftovers=['ci-coverage-assessment.md','eval-round-1.md','sprint-contract.md','sprint-prd.md','sprint-report.md'];for(const f of leftovers){fs.accessSync('sprints/archive/root-leftovers/'+f)}"
+## DoD
+- [BEHAVIOR] Brain 启动后 curl localhost:5221/api/brain/time/iso 返回 HTTP 200 + JSON，iso 字段可被标准 ISO8601 解析
+- [BEHAVIOR] iso 字段对应的时刻与请求时的真实系统时间差不超过 5 秒
+- [ARTIFACT] 新增文件 packages/brain/src/routes/time.js 存在
+- [ARTIFACT] packages/brain/src/server.js 中出现对 time 路由的挂载语句
 
-- [x] [ARTIFACT] `sprints/` 根目录下只剩 archive/ 子目录
-  Test: manual:node -e "const fs=require('fs');const entries=fs.readdirSync('sprints').filter(e=>e!=='.DS_Store');if(entries.length!==1)process.exit(1);if(entries[0]!=='archive')process.exit(2)"
+## 目标文件
+- packages/brain/src/routes/time.js
+- packages/brain/src/server.js
 
-- [x] [ARTIFACT] `.github/workflows/harness-v5-checks.yml` paths 排除 archive
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/harness-v5-checks.yml','utf8');if(!/!\s*sprints\/archive/.test(c))process.exit(1)"
-
-- [x] [ARTIFACT] Learning 文件含根本原因 + 下次预防
-  Test: manual:node -e "const fs=require('fs');const files=fs.readdirSync('docs/learnings').filter(f=>f.includes('harness-v5-archive-legacy'));if(files.length===0)process.exit(1);const c=fs.readFileSync('docs/learnings/'+files[0],'utf8');if(!c.includes('### 根本原因'))process.exit(2);if(!c.includes('### 下次预防'))process.exit(3)"
-
-## BEHAVIOR 条目
-
-- [x] [BEHAVIOR] check-dod-purity 扫到 archive 下的老格式 DoD 不会误报（因 regex ^sprints/[^/]+/... 天然只匹配一级目录）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/scripts/devgate/check-dod-purity.cjs','utf8');if(!c.includes('contract-dod-ws'))process.exit(1);if(!/sprints.+\[\^\/\]/.test(c))process.exit(2);console.log('regex 用 [^/] 限一级子目录，天然排除 archive')"
+## 备注
+DoD 列出的 `packages/brain/src/server.js` 在当前仓库实际位于 `packages/brain/server.js`
+（仓库内不存在 `src/server.js` 文件）。为满足 [BEHAVIOR] DoD（端口 5221 实跑），挂载语句加在
+真实入口 `packages/brain/server.js` 中；这是合同未覆盖的真实路径偏差，仅记录不再扩散。
