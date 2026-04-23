@@ -3,15 +3,17 @@
  *
  * 详见 docs/design/brain-orchestrator-v2.md §5 + ./README.md。
  *
- * v2 P2 已完成（PR1-PR11，#2543-#2555）：9 个 middleware 全部建立在
- * packages/brain/src/spawn/middleware/：
- *   - 外层（Koa 洋葱）：cost-cap / spawn-pre / logging / billing
- *   - 内层（attempt-loop）：account-rotation / cascade / resource-tier /
- *     docker-run / cap-marking / retry-circuit
- * 目前 middleware 通过 executeInDocker 内部各点逐步接入（resolveCascade →
- * resolveAccount → runDocker）。attempt-loop 完整编排是后续整合 PR 的事。
+ * Phase A（v2 P2.5 收尾）：启用真 attempt-loop。每次 iteration 跑 executeInDocker
+ * （内部已接 resolveCascade / resolveAccount / runDocker / cap-marking / billing），
+ * 失败后调 classifyFailure + shouldRetry 判定是否进入下一轮。
  *
- * 本函数是进入 Layer 3 的正式 API，caller 不再直接 import executeInDocker。
+ * 换号策略说明：transient 失败后**不主动删** opts.env.CECELIA_CREDENTIALS。
+ * cap 场景由 cap-marking（内层 middleware）标记 → next attempt 的 resolveAccount
+ * 读 isSpendingCapped → 自动换号；non-cap transient（网络/超时）保留同账号
+ * 就地重试更合理。spawn 层只做循环控制，"用哪号"交 account-rotation 自判。
+ *
+ * MAX_ATTEMPTS=3 与 dispatch 层 failure_count 独立，最坏 3×3=9 次外层 retry。
+ * 如需调整，统一改本常量。
  *
  * @param {object} opts
  * @param {object} opts.task        { id, task_type, ... }
@@ -25,7 +27,19 @@
  * @returns {Promise<{ exit_code, stdout, stderr, duration_ms, ... }>}
  */
 import { executeInDocker } from '../docker-executor.js';
+import { classifyFailure, shouldRetry } from './middleware/retry-circuit.js';
+
+export const SPAWN_MAX_ATTEMPTS = 3;
 
 export async function spawn(opts) {
-  return executeInDocker(opts);
+  let lastResult = null;
+  for (let attempt = 0; attempt < SPAWN_MAX_ATTEMPTS; attempt++) {
+    const result = await executeInDocker(opts);
+    lastResult = result;
+    const cls = classifyFailure(result);
+    if (cls.class === 'success') return result;
+    if (cls.class === 'permanent') return result;
+    if (!shouldRetry(cls, attempt, SPAWN_MAX_ATTEMPTS)) return result;
+  }
+  return lastResult;
 }
