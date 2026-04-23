@@ -63,6 +63,9 @@ describe('shouldQuarantineOnFailure — quota_exhausted', () => {
 
 describe('handleTaskFailure — quota_exhausted 早返回', () => {
   it('quota_exhausted 任务不增加 failure_count，直接返回 skipped', async () => {
+    // active-checkpoint 守卫：无活跃 checkpoint
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    // SELECT tasks 返回 quota_exhausted task
     pool.query.mockResolvedValueOnce({
       rows: [{ id: 'task-1', status: 'quota_exhausted', payload: { failure_count: 0 } }],
     });
