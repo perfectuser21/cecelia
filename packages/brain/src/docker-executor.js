@@ -23,6 +23,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from '
 import path from 'path';
 import os from 'os';
 import pool from './db.js';
+import { runDocker } from './spawn/middleware/docker-run.js';
 
 const DEFAULT_IMAGE = process.env.CECELIA_RUNNER_IMAGE || 'cecelia/runner:latest';
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.CECELIA_DOCKER_TIMEOUT_MS || '900000', 10); // 15 min
@@ -434,72 +435,13 @@ export async function executeInDocker(opts) {
     console.log('[docker-executor] FULL_ARGS:', JSON.stringify(args));
   }
 
-  const result = await new Promise((resolve) => {
-    const proc = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-
-    proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-    const killTimer = setTimeout(() => {
-      timedOut = true;
-      console.warn(
-        `[docker-executor] timeout task=${taskId} after ${timeoutMs}ms — docker kill ${name}`
-      );
-      // --rm 模式下 kill 后容器自动销毁，不必手动 rm
-      spawn('docker', ['kill', name], { stdio: 'ignore' });
-    }, timeoutMs);
-
-    proc.on('error', (err) => {
-      clearTimeout(killTimer);
-      console.error(`[docker-executor] spawn error task=${taskId}: ${err.message}`);
-      const endedAt = new Date().toISOString();
-      resolve({
-        exit_code: -1,
-        stdout,
-        stderr: stderr + `\n[docker-executor] spawn error: ${err.message}`,
-        duration_ms: Date.now() - startedAtMs,
-        container: name,
-        container_id: null,
-        command,
-        timed_out: false,
-        started_at: startedAt,
-        ended_at: endedAt,
-      });
-    });
-
-    proc.on('exit', (code, signal) => {
-      clearTimeout(killTimer);
-      const duration = Date.now() - startedAtMs;
-      const endedAt = new Date().toISOString();
-      console.log(
-        `[docker-executor] exit task=${taskId} code=${code} signal=${signal} duration=${duration}ms timed_out=${timedOut}`
-      );
-      // DEBUG: harness_* 任务 exit != 0 时 dump stdout + stderr 最后 2KB
-      if (String(taskType).startsWith('harness_') && code !== 0) {
-        console.log('[docker-executor] HARNESS_STDOUT_TAIL:', (stdout || '').slice(-2000));
-        console.log('[docker-executor] HARNESS_STDERR_TAIL:', (stderr || '').slice(-2000));
-      }
-      const containerId = readContainerIdFromCidfile(cidfile);
-      // cidfile 读完即可清理，保持 prompt_dir 整洁
-      if (cidfile && existsSync(cidfile)) {
-        try { unlinkSync(cidfile); } catch { /* ignore */ }
-      }
-      resolve({
-        exit_code: code == null ? -1 : code,
-        stdout,
-        stderr,
-        duration_ms: duration,
-        container: name,
-        container_id: containerId,
-        command,
-        timed_out: timedOut,
-        started_at: startedAt,
-        ended_at: endedAt,
-      });
-    });
+  const result = await runDocker(args, {
+    taskId,
+    taskType,
+    timeoutMs,
+    name,
+    cidfile,
+    command,
   });
 
   return result;
