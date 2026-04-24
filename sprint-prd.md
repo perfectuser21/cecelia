@@ -1,46 +1,35 @@
-# zombie-cleaner 误杀活跃 /dev worktree — P0 根因修复
+# spawn-logging fail-fast on missing task.id — 消除 taskId=unknown 盲区
 
 ## Goal
-修 zombie-cleaner 永久误杀所有活跃 /dev worktree 的 P0 bug。改用 `.dev-mode.*` mtime 判活跃（复用 Phase B2 quarantine-active-signal 同构思路）。
+让 `logging.js` 缺失 `opts.task.id` 时打 `console.warn` 不再静默落到 `'unknown'`。修 Phase B2 forensic 发现的"Brain logs 17 条 taskId=unknown 8+ 小时无人报警"盲区。
 
-## 背景（forensic 证据链）
-- **bug**: `packages/brain/src/zombie-cleaner.js:findTaskIdForWorktree` L104 读 `.dev-mode`（无后缀），但 `packages/engine/skills/dev/scripts/worktree-manage.sh:255` 写 `.dev-mode.${branch}`（v19.0.0 cwd-as-key 后格式）→ 永远 return null → `activeTasks.has(null)=false` → 任何 /dev worktree 活过 30 min 被 `git worktree remove --force` + `rm -rf` 静默删
-- **铁证**: docker logs 17 条 `Orphan worktree removed ... taskId=unknown`，全部 taskId=unknown（命中率 100%）
-- **命案**: Phase B2 PR #2568 的 interactive worktree (age=33min) 被 zombie-cleaner 清到只剩空 packages/，branch+commits 完好（在 .git/refs）
-- **第二个失效 safety net**: `zombie-sweep.js` 按 `payload.branch` 匹配，但 Brain 大部分 task payload 无 branch 字段（本次 task c36991e7 也无）→ 也 dead
+## 背景
+Phase B2 forensic 调查 zombie-cleaner 误杀 bug 时发现：Brain docker logs 17 条 `Orphan worktree ... taskId=unknown`（zombie-cleaner 打的）+ `logging.js:16` 对缺 `opts?.task?.id` silent fallback 到 `'unknown'` → 故障在监控层隐形。本 PR 修 spawn 层 silent fallback（zombie-cleaner 侧另一 PR）。
 
 ## Tasks
-1. 读 `packages/brain/src/zombie-cleaner.js` 完整实现 + 相关测试
-2. 改 `findTaskIdForWorktree` 为 `isWorktreeActive(wtPath)`：扫 wtPath 下 `.dev-mode` 和 `.dev-mode.*` 文件，任一 mtime < ACTIVE_THRESHOLD_MS（默认 24h=86400_000）→ active=true
-3. 清理循环里活跃 worktree 直接 continue（跳过 orphan 判定），不再依赖 activeTasks.has(taskId)
-4. 保留 grace period（新建 worktree 30 min 内不判 orphan）
-5. 单测覆盖：fresh .dev-mode → keep / stale .dev-mode → orphan / 无 .dev-mode → orphan / 老格式 `.dev-mode` 也识别
+1. 改 `packages/brain/src/spawn/middleware/logging.js`：
+   - 加 `taskIdMissing` 旗标 + `ctx.warn` 注入
+   - `logStart()` 入口若 `taskIdMissing=true` → `warn('[spawn-logger] missing task.id (falling back to unknown)')`
+2. 改 `packages/brain/src/spawn/__tests__/logging.test.js`：加 1 case 断言 warn 被调用
+3. 现有 4 cases 不退化
 
 ## 成功标准
-- interactive /dev worktree 活多久都不被误杀（只要 .dev-mode mtime 被 Stop Hook 刷新）
-- 真僵尸 worktree (mtime > 24h) 仍被正常清
-- 不依赖 task_id 解析（即使 .dev-mode 内容无 task_id UUID 也能正确判活跃）
-- 现有 zombie-cleaner 测试不退化
+- `logging.js` 对缺 task.id 产生显式 warn，非 silent fallback
+- 测试 ≥ 5 cases 全 pass
+- warn 通过 `ctx.warn` 注入便于测试（对齐现有 `ctx.log` 模式）
+- 不改 `account-rotation.js` / `cap-marking.js` 等其它 middleware 的 `|| 'unknown'` fallback（范围外）
 
 ## 不做
-- zombie-sweep.js 的 payload.branch 修复（另 PR）
-- Brain docker 容器内 git worktree list 失败的独立问题
-- 给 .dev-mode.* 加 brain_task_id: 字段（YAGNI，mtime 判活跃足够）
-- ORPHAN_WORKTREE_MIN_AGE_MS 常量调整
-- Phase E Observer 分离（搬 zombie-cleaner 到 observers/）— 大改
+- 不升级 warn 到 thalamus alert（YAGNI）
+- 不改 caller（root cause 在调用方传 opts，那是另一 PR）
+- 不新增 metrics.incrementCounter 基础设施
+- 不改 zombie-cleaner 侧的 taskId=unknown log（另一 PR，不同 root cause）
 
 ## DoD
-- [BEHAVIOR] isWorktreeActive 函数存在且在清理循环 continue 被调用；Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/zombie-cleaner.js','utf8'); if(!c.includes('isWorktreeActive')||!c.match(/continue.*isWorktreeActive|isWorktreeActive.*continue/s)) process.exit(1)"
-- [BEHAVIOR] 新测试 ≥ 4 cases 全 pass；Test: tests/packages/brain/src/__tests__/zombie-cleaner
-- [BEHAVIOR] 现有 zombie-cleaner 测试不退化；Test: manual:npm test --workspace=packages/brain --prefix . -- zombie-cleaner
+- [BEHAVIOR] logging.js taskIdMissing 旗标 + warn 触发；Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/spawn/middleware/logging.js','utf8'); if(!c.includes('taskIdMissing')||!c.includes('missing task.id')) process.exit(1)"
+- [BEHAVIOR] logging.test.js ≥ 5 cases 全 pass；Test: tests/packages/brain/src/spawn/__tests__/logging.test.js
 
 ## 风险
-- ACTIVE_THRESHOLD_MS=24h 太宽 → 真 24h+ 僵尸继续占磁盘；太窄 → 跨天 /dev 被误杀
-- `.dev-mode.*` 可能被 interactive claude 清理时没删干净，残留文件 mtime 仍新 → 误保护。可接受
-- 改动涉及 Brain tick 热路径，需现有测试 0 退化
-
-## 参考
-- Forensic: 本 PRD 背景节
-- Phase B2 同构: packages/brain/src/quarantine-active-signal.js
-- 相关 memory: stop-hook-cwd-as-key.md
+- `ctx.warn` 注入可能影响现有调用方（他们用默认 console.warn，应无副作用）
+- warn 过多污染日志：只在 task.id 真缺失时触发，预期低频
 

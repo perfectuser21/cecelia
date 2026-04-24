@@ -13,13 +13,19 @@
 
 export function createSpawnLogger(opts, ctx = {}) {
   const log = ctx.log || console.log;
-  const taskId = opts?.task?.id || 'unknown';
+  const warn = ctx.warn || console.warn;
+  const rawTaskId = opts?.task?.id;
+  const taskIdMissing = !rawTaskId;
+  const taskId = rawTaskId || 'unknown';
   const taskType = opts?.task?.task_type || 'unknown';
   const skill = opts?.skill || 'unknown';
   const startedAt = Date.now();
 
   return {
     logStart() {
+      if (taskIdMissing) {
+        warn('[spawn-logger] missing task.id (falling back to "unknown")');
+      }
       log(`[spawn] start task=${taskId} type=${taskType} skill=${skill} account=${opts?.env?.CECELIA_CREDENTIALS || 'auto'}`);
     },
     logEnd(result) {
