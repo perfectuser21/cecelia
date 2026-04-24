@@ -2,7 +2,7 @@
 
 **范围**: 新增路由模块 `packages/brain/src/routes/health.js`，实现 `GET /` 返回 `{status, uptime_seconds, version}`。不得 import `db.js` / `tick.js` 或任何外部服务。`version` 来自 `packages/brain/package.json`。
 **大小**: S
-**依赖**: 无
+**依赖**: 无（`depends_on: []`）
 
 ---
 
