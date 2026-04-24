@@ -309,6 +309,11 @@ async function updateTickInterval(factor) {
 async function pauseLowPriorityTasks(priorities) {
   const client = await pool.connect();
   try {
+    // 白名单：active Initiative 的子工作流 + 内容 pipeline 关键步骤。
+    // 这些任务属于"当前关键路径"，不是背景 P2/P3，必须豁免 pause。
+    // harness_* 系列：harness v2 DAG 的 Initiative / Planner / Contract /
+    // Generator / Evaluator 等阶段任务（upsertTaskPlan 默认创建为 P0，
+    // 但此处做 task_type 层双保险，避免未来误改回 P2 再次踩坑）。
     const result = await client.query(`
       UPDATE tasks
       SET status = 'paused',
@@ -319,7 +324,11 @@ async function pauseLowPriorityTasks(priorities) {
           'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
           'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
           'content-pipeline', 'content-research', 'content-copywriting',
-          'content-copy-review', 'content-generate', 'content-image-review', 'content-export'
+          'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
+          'harness_initiative', 'harness_task', 'harness_planner',
+          'harness_contract_propose', 'harness_contract_review',
+          'harness_generate', 'harness_evaluate', 'harness_fix',
+          'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
         )
       RETURNING id
     `, [priorities]);
