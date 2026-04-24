@@ -18,6 +18,7 @@ import pool from './db.js';
 import { emit } from './event-bus.js';
 import { getActiveProcesses } from './executor.js';
 import { listProcessesWithPpid } from './platform-utils.js';
+import { findTaskIdForWorktree, isWorktreeActive } from './zombie-cleaner.js';
 
 const GRACE_PERIOD_MS = 30 * 60 * 1000; // 30 minutes
 const LOCK_SLOT_DIR = '/tmp/cecelia-locks';
@@ -126,16 +127,19 @@ async function sweepStaleWorktrees() {
     return result;
   }
 
-  // Get in_progress task branches from DB
+  // Get in_progress tasks from DB — both branch match (Channel 1) + UUID match (Channel 2)
+  // Channel 1 保留 payload.branch 匹配向后兼容；Channel 2 靠 .dev-mode UUID + mtime 信号
+  // 解决 payload.branch 字段覆盖率不足（大量 task 无此字段）导致漏检的问题
   let inProgressBranches;
+  let inProgressTaskIds;
   try {
     const dbResult = await pool.query(
-      `SELECT payload->>'branch' AS branch, id, status
+      `SELECT payload->>'branch' AS branch, id
        FROM tasks
-       WHERE status = 'in_progress'
-         AND payload->>'branch' IS NOT NULL`
+       WHERE status = 'in_progress'`
     );
-    inProgressBranches = new Set(dbResult.rows.map(r => r.branch));
+    inProgressBranches = new Set(dbResult.rows.filter(r => r.branch).map(r => r.branch));
+    inProgressTaskIds = new Set(dbResult.rows.map(r => r.id));
   } catch (err) {
     result.errors.push(`DB query failed: ${err.message}`);
     return result;
@@ -162,8 +166,16 @@ async function sweepStaleWorktrees() {
       // Can't stat → assume it's stale, proceed
     }
 
-    // Check if branch has an in_progress task
+    // Channel 1: branch match（向后兼容，payload.branch 有值时命中）
     if (wt.branch && inProgressBranches.has(wt.branch)) {
+      result.skipped++;
+      continue;
+    }
+
+    // Channel 2: .dev-mode UUID match + mtime 短路
+    // 覆盖 payload.branch 为空的大量 task（Phase B2 forensic 发现 30-50% 漏检）
+    const taskId = findTaskIdForWorktree(wt.path);
+    if (taskId && inProgressTaskIds.has(taskId) && isWorktreeActive(wt.path)) {
       result.skipped++;
       continue;
     }

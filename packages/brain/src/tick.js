@@ -801,6 +801,18 @@ async function selectNextDispatchableTask(goalIds, excludeIds = [], options = {}
             AND t2.task_type != 'content-pipeline'
         )
       )
+      -- 依赖门禁：task_dependencies 表里有未完成 edge 的 task 不可派发
+      -- 参考 harness-dag.js:nextRunnableTask —— from_task_id=本 task，
+      -- to_task_id 的依赖 status 不在 completed/cancelled/canceled 即阻塞。
+      -- 修复：普通 dispatch 路径原先只看 payload.depends_on，对 task_dependencies
+      -- 表的硬边盲视，导致 Initiative 子任务（ws1/ws2/ws3/ws4）在 queued 状态下
+      -- 被并行派发，基于错误 worktree 状态产出冲突 PR。
+      AND NOT EXISTS (
+        SELECT 1 FROM task_dependencies d
+        JOIN tasks dep ON dep.id = d.to_task_id
+        WHERE d.from_task_id = t.id
+          AND dep.status NOT IN ('completed', 'cancelled', 'canceled')
+      )
     ORDER BY
       CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       t.created_at ASC
@@ -834,6 +846,10 @@ async function selectNextDispatchableTask(goalIds, excludeIds = [], options = {}
         continue; // Skip: has unmet dependencies
       }
     }
+
+    // NOTE: task_dependencies 表依赖检查已在主 SELECT 的 WHERE 子句
+    // （NOT EXISTS + from_task_id 子查询）完成，见 harness-dag.js:nextRunnableTask
+    // 的同款做法。本循环此处只需处理 payload.depends_on 的软依赖。
     return task;
   }
   return null;
