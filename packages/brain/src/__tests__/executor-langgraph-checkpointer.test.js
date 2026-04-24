@@ -1,13 +1,16 @@
 /**
- * executor.js — LangGraph PostgresSaver checkpointer 注入测试
+ * executor.js — LangGraph PostgresSaver checkpointer 注入测试（C7 重写）
  *
- * 不 spawn executor（依赖重），改为源码结构断言：
- *   1. 正确 import PostgresSaver
- *   2. 调 setup() 在 runHarnessPipeline 之前
- *   3. checkpointer 作为 runHarnessPipeline opts 传入
- *   4. DATABASE_URL fallback 指向本机 cecelia
+ * C7 之前：executor.js 各分支自己 inline PostgresSaver.fromConnString + setup
+ * C7 之后：统一走 orchestrator/pg-checkpointer.js 的 getPgCheckpointer() 单例
  *
- * 动机：保证 43 分钟 harness pipeline 不会因 Brain 重启白跑（PostgresSaver 持久化 state）
+ * 本测试做源码结构断言（不 spawn executor）：
+ *   1. 不再 inline `PostgresSaver.fromConnString`（已收归 pg-checkpointer.js）
+ *   2. harness_initiative / harness_planner 两分支都 import `getPgCheckpointer`
+ *   3. checkpointer 作为 runHarnessPipeline opts 传入（语义不变）
+ *   4. 不再手动调 `checkpointer.setup()`（singleton 内部一次搞定）
+ *
+ * 动机：保持 43 分钟 harness pipeline 的崩溃 resume 能力，同时统一 Brain v2 L2 中央路径。
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -17,28 +20,28 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const executorSrc = readFileSync(path.resolve(__dirname, '../executor.js'), 'utf8');
 
-describe('executor.js — LangGraph PostgresSaver checkpointer 注入', () => {
-  it('imports PostgresSaver from @langchain/langgraph-checkpoint-postgres', () => {
-    expect(executorSrc).toMatch(/@langchain\/langgraph-checkpoint-postgres/);
-    expect(executorSrc).toMatch(/PostgresSaver\.fromConnString/);
+describe('executor.js — C7 checkpointer singleton 接入', () => {
+  it('no longer uses inline PostgresSaver.fromConnString', () => {
+    expect(executorSrc).not.toMatch(/PostgresSaver\.fromConnString/);
   });
 
-  it('calls checkpointer.setup() before runHarnessPipeline', () => {
-    const setupIdx = executorSrc.indexOf('checkpointer.setup()');
-    const runIdx = executorSrc.indexOf('runHarnessPipeline(task,');
-    expect(setupIdx).toBeGreaterThan(-1);
-    expect(runIdx).toBeGreaterThan(-1);
-    expect(setupIdx).toBeLessThan(runIdx);
+  it('no longer calls manual checkpointer.setup()', () => {
+    expect(executorSrc).not.toMatch(/checkpointer\.setup\(\)/);
   });
 
-  it('passes checkpointer to runHarnessPipeline opts', () => {
-    // 匹配 runHarnessPipeline(task, { ... checkpointer ... })
+  it('imports getPgCheckpointer from orchestrator singleton (harness_initiative + harness_planner)', () => {
+    const imports = executorSrc.match(/await import\(['"]\.\/orchestrator\/pg-checkpointer\.js['"]\)/g) || [];
+    expect(imports.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('awaits getPgCheckpointer() at both call sites', () => {
+    const calls = executorSrc.match(/await getPgCheckpointer\(\)/g) || [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('still passes checkpointer to runHarnessPipeline opts', () => {
     const callBlock = executorSrc.match(/runHarnessPipeline\(task,\s*\{[\s\S]{0,800}?\}\)/);
     expect(callBlock).toBeTruthy();
     expect(callBlock[0]).toMatch(/checkpointer/);
-  });
-
-  it('uses DATABASE_URL fallback to localhost cecelia', () => {
-    expect(executorSrc).toMatch(/postgresql:\/\/cecelia@localhost:5432\/cecelia/);
   });
 });

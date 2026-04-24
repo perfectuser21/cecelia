@@ -2810,11 +2810,9 @@ async function triggerCeceliaRun(task) {
     // Brain 重启后下次派发同一 initiative 能从最后一个节点续跑（而不是从 Planner 重头）。
     let checkpointer;
     try {
-      const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
-      checkpointer = PostgresSaver.fromConnString(
-        process.env.DATABASE_URL || 'postgresql://cecelia@localhost:5432/cecelia'
-      );
-      await checkpointer.setup(); // 幂等建 checkpoints / checkpoint_blobs / checkpoint_writes / checkpoint_migrations
+      // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
+      const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
+      checkpointer = await getPgCheckpointer();
     } catch (cpErr) {
       console.warn(`[executor] PostgresSaver 初始化失败，降级到 MemorySaver（Brain 重启将无法续跑）: ${cpErr.message}`);
       checkpointer = undefined; // 让 runGanContractGraph 走 MemorySaver fallback
@@ -2854,13 +2852,11 @@ async function triggerCeceliaRun(task) {
       // 账号治理统一收口到 account-usage.js。
       // 对齐 content-pipeline-graph-runner.js 的动态选择设计。
       const langGraphEnv = {};
-      // PostgresSaver: LangGraph 持久化 checkpointer（Brain 重启后从断点续跑，
-      // 避免 43 分钟 pipeline 被重启清零。task.id 作为 thread_id 即为 resume key）
-      const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
-      const checkpointer = PostgresSaver.fromConnString(
-        process.env.DATABASE_URL || 'postgresql://cecelia@localhost:5432/cecelia'
-      );
-      await checkpointer.setup();  // 幂等建 checkpoints / checkpoint_blobs / checkpoint_writes
+      // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
+      // task.id 作为 thread_id 即为 resume key，Brain 重启后 pipeline 可从断点续跑，
+      // 避免 43 分钟 pipeline 被重启清零
+      const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
+      const checkpointer = await getPgCheckpointer();
       const result = await runHarnessPipeline(task, {
         env: langGraphEnv,
         checkpointer,

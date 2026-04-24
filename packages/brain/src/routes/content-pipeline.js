@@ -620,13 +620,10 @@ router.post('/:id/run-langgraph', async (req, res) => {
 
     (async () => {
       try {
-        // Postgres checkpoint 持久化 state（仿 executor.js L2821-2825 harness 模式）
-        // 避免 Brain 重启清零 state。task.id 作为 thread_id 即为 resume key。
-        const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
-        const checkpointer = PostgresSaver.fromConnString(
-          process.env.DATABASE_URL || 'postgresql://cecelia@localhost:5432/cecelia'
-        );
-        await checkpointer.setup();  // 幂等建 checkpoints / checkpoint_blobs / checkpoint_writes
+        // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
+        // task.id 作为 thread_id 即为 resume key，Brain 重启后 pipeline 可从断点续跑
+        const { getPgCheckpointer } = await import('../orchestrator/pg-checkpointer.js');
+        const checkpointer = await getPgCheckpointer();
 
         const result = await runContentPipeline(
           {
