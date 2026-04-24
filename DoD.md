@@ -12,13 +12,13 @@ brain-deploy.sh 加 image SHA 幂等检查，跳过同版本容器 recreate
 
 ## DoD
 
-- [ ] [ARTIFACT] scripts/brain-deploy.sh 已加 `docker inspect cecelia-node-brain --format '{{.Image}}'` 调用
+- [x] [ARTIFACT] scripts/brain-deploy.sh 已加 `docker inspect cecelia-node-brain --format '{{.Image}}'` 调用
   Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.includes(\"docker inspect cecelia-node-brain --format\"))process.exit(1)"
 
-- [ ] [BEHAVIOR] 脚本包含同 SHA 跳过分支（CURRENT_IMG == TARGET_IMG 时设置 DEPLOY_SUCCESS=true 并 exit 0）
+- [x] [BEHAVIOR] 脚本包含同 SHA 跳过分支（CURRENT_IMG == TARGET_IMG 时设置 DEPLOY_SUCCESS=true 并 exit 0）
   Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.includes('CURRENT_IMG')||!c.includes('TARGET_IMG'))process.exit(1);if(!/CURRENT_IMG.*==.*TARGET_IMG/.test(c))process.exit(1);if(!c.includes('DEPLOY_SUCCESS=true'))process.exit(1)"
 
-- [ ] [ARTIFACT] Learning 文档存在
+- [x] [ARTIFACT] Learning 文档存在
   Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0424122436-brain-deploy-idempotent-check.md')"
 
 ## 目标文件
