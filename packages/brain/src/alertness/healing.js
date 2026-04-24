@@ -13,10 +13,10 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { readdirSync, readFileSync } from 'fs';
+import { readdirSync, readFileSync, existsSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
-import { processExists, countClaudeProcesses } from '../platform-utils.js';
+import { processExists } from '../platform-utils.js';
 
 const execAsync = promisify(exec);
 
@@ -24,15 +24,11 @@ const execAsync = promisify(exec);
 // 常量定义
 // ============================================================
 
-const STUCK_TASK_THRESHOLD_MS = 30 * 60 * 1000; // 30 分钟
 const MAX_RETRY_COUNT = 3;
 const RETRY_BACKOFF_BASE_MS = 5 * 60 * 1000; // 5 分钟
 const RETRY_BACKOFF_MAX_MS = 60 * 60 * 1000; // 1 小时
-const CACHE_ENTRY_TTL_MS = 30 * 60 * 1000; // 30 分钟
 const LOCK_DIR = '/tmp/cecelia-locks';
 
-// 可重试的失败类别
-const RETRYABLE_FAILURE_CLASSES = ['transient'];
 // 不可重试的失败类别
 const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error', 'pipeline_terminal_failure'];
 
@@ -62,7 +58,7 @@ function readSlotInfo() {
         if (info.task_id && info.pid) {
           pidMap.set(info.task_id, { pid: info.pid, slot: entry.name });
         }
-      } catch (e) {
+      } catch {
         // 忽略读取错误
       }
     }
@@ -437,17 +433,18 @@ async function executeAction(action) {
       return { connectionsCompacted: true };
 
     // 进程恢复动作
-    case 'kill_orphan_processes':
+    case 'kill_orphan_processes': {
       const orphans = await findOrphanProcesses();
       for (const pid of orphans) {
         try {
           process.kill(pid, 'SIGTERM');
-        } catch (e) {
+        } catch {
           // 进程可能已经不存在
         }
       }
       console.log(`[Healing] Killed ${orphans.length} orphan processes`);
       return { orphansKilled: orphans.length };
+    }
 
     case 'restart_stuck_executors':
       return await restartStuckExecutors();
@@ -457,20 +454,23 @@ async function executeAction(action) {
       return { poolReset: false, stub: true };
 
     // 队列疏通动作
-    case 'redistribute_tasks':
+    case 'redistribute_tasks': {
       const redistributed = await redistributeTasks();
       console.log(`[Healing] Redistributed ${redistributed} tasks`);
       return { redistributed };
+    }
 
-    case 'cancel_duplicate_tasks':
+    case 'cancel_duplicate_tasks': {
       const duplicates = await cancelDuplicateTasks();
       console.log(`[Healing] Canceled ${duplicates} duplicate tasks`);
       return { duplicatesCanceled: duplicates };
+    }
 
-    case 'archive_old_tasks':
+    case 'archive_old_tasks': {
       const archived = await archiveOldTasks();
       console.log(`[Healing] Archived ${archived} old tasks`);
       return { archived };
+    }
 
     // 错误缓解动作
     case 'retry_with_backoff':
@@ -480,10 +480,11 @@ async function executeAction(action) {
       // TODO: 实现降级端点
       return { fallbackEnabled: false, stub: true };
 
-    case 'quarantine_problematic_tasks':
+    case 'quarantine_problematic_tasks': {
       const quarantined = await quarantineProblematicTasks();
       console.log(`[Healing] Quarantined ${quarantined} problematic tasks`);
       return { quarantined };
+    }
 
     default:
       console.warn(`[Healing] Unknown action: ${action}`);
@@ -525,7 +526,7 @@ async function findOrphanProcesses() {
     } finally {
       client.release();
     }
-  } catch (error) {
+  } catch {
     return [];
   }
 }

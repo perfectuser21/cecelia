@@ -73,7 +73,7 @@ function calculateCompleteness(analysis) {
   if (typeof factors === 'string') {
     try {
       factors = JSON.parse(factors);
-    } catch (_e) {
+    } catch {
       factors = [];
     }
   }
@@ -88,7 +88,7 @@ function calculateCompleteness(analysis) {
   if (typeof updates === 'string') {
     try {
       updates = JSON.parse(updates);
-    } catch (_e) {
+    } catch {
       updates = [];
     }
   }

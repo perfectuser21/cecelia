@@ -1218,7 +1218,7 @@ async function performRCA(failedTask, history = []) {
       if (typeof contributing_factors === 'string') {
         try {
           contributing_factors = JSON.parse(contributing_factors);
-        } catch (_e) {
+        } catch {
           contributing_factors = [];
         }
       }
@@ -1227,7 +1227,7 @@ async function performRCA(failedTask, history = []) {
       if (typeof strategy_adjustments === 'string') {
         try {
           strategy_adjustments = JSON.parse(strategy_adjustments);
-        } catch (_e) {
+        } catch {
           strategy_adjustments = [];
         }
       }

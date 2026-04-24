@@ -195,7 +195,7 @@ async function handleActFollowupDesire(pool, desire, result) {
         content: desire.content,
         message: `[自主行动] ${desire.content} → 已创建建议 ${rows[0]?.id}`,
       });
-    } catch (_) { /* ignore ws errors */ }
+    } catch { /* ignore ws errors */ }
 
     result.expression.suggestion_created = rows[0]?.id;
 

@@ -153,7 +153,7 @@ async function fetchAllDecisions(db) {
     const res = await pool.query("SELECT id, topic, decision FROM decisions WHERE status = 'active' LIMIT 500");
     await pool.end();
     return res.rows || [];
-  } catch (_e) {
+  } catch {
     // DB unavailable - return empty (graceful degradation)
     return [];
   }

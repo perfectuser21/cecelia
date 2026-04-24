@@ -204,7 +204,7 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
   const initiative = { ...initiativeRow, ...meta };
   // dod_content stored as JSON string in metadata; parse back to object
   if (typeof initiative.dod_content === 'string') {
-    try { initiative.dod_content = JSON.parse(initiative.dod_content); } catch (_) { /* leave as string */ }
+    try { initiative.dod_content = JSON.parse(initiative.dod_content); } catch { /* leave as string */ }
   }
   const modeLabel = isOrchestrated ? 'orchestrated' : (decomposition_mode || 'known');
   console.log(`[Action] Created initiative: ${initiative.id} - ${name} (mode: ${modeLabel})`);

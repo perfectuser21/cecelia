@@ -27,7 +27,7 @@ export function parseStrategySessionOutput(output) {
       if (parsed && typeof parsed === 'object') {
         return normalizeOutput(parsed);
       }
-    } catch (_e) {
+    } catch {
       // JSON 解析失败，继续尝试其他方式
     }
   }
@@ -38,7 +38,7 @@ export function parseStrategySessionOutput(output) {
     if (parsed && typeof parsed === 'object' && (parsed.krs !== undefined || parsed.meeting_summary !== undefined)) {
       return normalizeOutput(parsed);
     }
-  } catch (_e) {
+  } catch {
     // 非 JSON 格式
   }
 

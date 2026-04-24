@@ -25,7 +25,7 @@ router.get('/timezone', (req, res) => {
   try {
     const time = new Date().toLocaleString('sv-SE', { timeZone: tz });
     return res.json({ timezone: tz, time });
-  } catch (err) {
+  } catch {
     return res.status(400).json({ error: `invalid timezone: ${tz}` });
   }
 });

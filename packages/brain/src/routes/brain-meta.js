@@ -1370,7 +1370,7 @@ router.get('/credentials', async (_req, res) => {
         provider: 'anthropic'
       });
     });
-  } catch(_e) { /* dir may not exist in test env */ }
+  } catch { /* dir may not exist in test env */ }
 
   // 2. API key credentials: ~/.credentials/*.json
   const credDir = process.env.CREDENTIALS_DIR || `${process.env.HOME || '/Users/administrator'}/.credentials`;
@@ -1387,7 +1387,7 @@ router.get('/credentials', async (_req, res) => {
         provider
       });
     });
-  } catch(_e) { /* dir may not exist in test env */ }
+  } catch { /* dir may not exist in test env */ }
 
   res.json({ credentials });
 });

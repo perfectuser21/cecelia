@@ -792,7 +792,7 @@ function parseDecisionFromResponse(response) {
   if (codeBlockMatch) {
     try {
       parsed = JSON.parse(codeBlockMatch[1].trim());
-    } catch (_e) {
+    } catch {
       // code block 内容不是合法 JSON，继续 fallback
     }
   }

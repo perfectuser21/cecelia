@@ -2,11 +2,10 @@ import { Router } from 'express';
 import { readFileSync } from 'fs';
 import pool from '../db.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from '../focus.js';
-import { getTickStatus, TASK_TYPE_AGENT_MAP } from '../tick.js';
-import { getDispatchStats } from '../dispatch-stats.js';
+import { getTickStatus } from '../tick.js';
 import { getActivePolicy, getWorkingMemory, getTopTasks, getRecentDecisions, IDEMPOTENCY_TTL, ALLOWED_ACTIONS } from './shared.js';
 import { getNightlyOrchestratorStatus } from '../nightly-orchestrator.js';
-import websocketService from '../websocket.js';
+import websocketService, { WS_EVENTS } from '../websocket.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 const router = Router();

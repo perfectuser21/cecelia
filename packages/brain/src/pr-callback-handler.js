@@ -183,7 +183,7 @@ export async function handlePrMerged(pool, prInfo) {
       await client.query('COMMIT');
       console.log(`[pr-callback] 已完成任务 ${taskId} pr_merged_at 已更新（via PR #${prNumber}）`);
     } catch (err) {
-      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
       console.error(`[pr-callback] pr_merged_at 更新失败: ${err.message}`);
       throw err;
     } finally {
@@ -342,7 +342,7 @@ export async function handlePrMerged(pool, prInfo) {
     }
 
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
     console.error(`[pr-callback] 任务更新失败: ${err.message}`);
     throw err;
   } finally {

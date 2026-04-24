@@ -306,7 +306,7 @@ function getProcessLogTail(taskId) {
       const content = readFileSync(logPath, 'utf-8');
       return content.split('\n').slice(-20).join('\n');
     }
-  } catch (_err) {
+  } catch {
     // Log file may not exist or not readable
     return null;
   }

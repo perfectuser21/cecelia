@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import crypto from 'crypto';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
-import { readFileSync } from 'fs';
 import { runTickSafe, getTickStatus } from '../tick.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from '../templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, rollbackDecision } from '../decision.js';
@@ -13,16 +11,15 @@ import { executeDecision as executeThalamusDecision } from '../decision-executor
 import { generateTaskEmbeddingAsync } from '../embedding-service.js';
 import { publishTaskCompleted, publishTaskFailed } from '../events/taskEvents.js';
 import { emit as emitEvent } from '../event-bus.js';
-import { recordSuccess as cbSuccess, recordFailure as cbFailure, reset as resetCB } from '../circuit-breaker.js';
+import { recordSuccess as cbSuccess, recordFailure as cbFailure } from '../circuit-breaker.js';
 import { notifyTaskCompleted } from '../notifier.js';
 import { getAvailableMemoryMB } from '../platform-utils.js';
 import { raise } from '../alerting.js';
-import { handleTaskFailure, classifyFailure } from '../quarantine.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
+import { handleTaskFailure } from '../quarantine.js';
+import { triggerCeceliaRun } from '../executor.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
-import { getActiveExecutionPaths, INVENTORY_CONFIG, resolveRelatedFailureMemories } from './shared.js';
-import { processExecutionCallback } from '../callback-processor.js';
+import { resolveRelatedFailureMemories } from './shared.js';
 import {
   readVerdictWithRetry,
   persistVerdictTimeout,
@@ -464,7 +461,7 @@ router.post('/execution-callback', async (req, res) => {
 
     // P1-2: completed_no_pr 自动重排（retry_count < MAX_NO_PR_RETRY 时重新入队）
     const MAX_NO_PR_RETRY = 3;
-    let rescheduled = false;
+    let _rescheduled = false;
     if (newStatus === 'completed_no_pr') {
       try {
         const retryRow = await pool.query(
@@ -483,7 +480,7 @@ router.post('/execution-callback', async (req, res) => {
              WHERE id = $1`,
             [task_id, nextRunAt]
           );
-          rescheduled = true;
+          _rescheduled = true;
           console.log(`[execution-callback] completed_no_pr rescheduled: task=${task_id} retry=${currentRetry + 1}/${MAX_NO_PR_RETRY} next_run_at=${nextRunAt}`);
         } else {
           console.log(`[execution-callback] completed_no_pr max retries reached: task=${task_id} retry_count=${currentRetry}`);
@@ -603,7 +600,8 @@ router.post('/execution-callback', async (req, res) => {
         );
         if (taskMeta.rows[0]) {
           const { title: taskTitle, task_type: taskType } = taskMeta.rows[0];
-          const findingsSummary = findingsValue ? findingsValue.substring(0, 800) : null;
+          // findingsValue 原在上方 try 块内作用域，此处不可达（历史遗留）；保持实际行为：summary 为 null
+          const findingsSummary = null;
           const learningContent = [
             `任务完成：${taskTitle}`,
             `类型：${taskType}`,
@@ -2739,8 +2737,8 @@ ${resultStr.substring(0, 2000)}
         const cpTaskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
         const cpTask = cpTaskRow.rows[0];
         if (cpTask && PIPELINE_STAGES.includes(cpTask.task_type) && cpTask.payload?.parent_pipeline_id) {
-          let findingsVal = null;
-          try { findingsVal = findingsValue ? JSON.parse(findingsValue) : null; } catch (_) {}
+          // findingsValue 原在上方 try 块内，此处不可达；保持历史行为（catch 吞 ReferenceError → null）
+          const findingsVal = null;
           const advResult = await advanceContentPipeline(task_id, newStatus, findingsVal);
           if (advResult.advanced) {
             console.log(`[execution-callback] content pipeline 推进: task=${task_id} type=${cpTask.task_type} action=${advResult.action}`);
@@ -2758,8 +2756,8 @@ ${resultStr.substring(0, 2000)}
         const crTaskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
         const crTask = crTaskRow.rows[0];
         if (crTask && CRYSTALLIZE_STAGES.includes(crTask.task_type) && crTask.payload?.parent_crystallize_id) {
-          let findingsObj = null;
-          try { findingsObj = findingsValue ? JSON.parse(findingsValue) : null; } catch (_) {}
+          // findingsValue 原在上方 try 块内，此处不可达；保持历史行为（catch 吞 ReferenceError → null）
+          const findingsObj = null;
           await advanceCrystallizeStage(task_id, newStatus, findingsObj || {});
           console.log(`[execution-callback] crystallize 流水线推进: task=${task_id} type=${crTask.task_type} newStatus=${newStatus}`);
         }

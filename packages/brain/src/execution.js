@@ -30,7 +30,7 @@ export async function readVerdictWithRetry(pool, taskId) {
       if (dbVerdict === 'PASS' || dbVerdict === 'FAIL') {
         return { verdict: dbVerdict, timedOut: false };
       }
-    } catch (_err) {
+    } catch {
       // ignore transient DB errors, continue retrying
     }
     await new Promise(resolve => setTimeout(resolve, 200)); // VERDICT_RETRY_INTERVAL_MS
@@ -55,7 +55,7 @@ export async function persistVerdictTimeout(pool, taskId) {
        WHERE id = $1`,
       [taskId],
     );
-  } catch (_err) {
+  } catch {
     // non-blocking alert only
   }
 }
@@ -90,7 +90,7 @@ export async function handleEvaluateSessionCrash({ pool, taskId, plannerShort, _
   try {
     const meta = await pool.query('SELECT metadata FROM tasks WHERE id = $1', [taskId]);
     crashCount = meta.rows[0]?.metadata?.session_crash_count || 0;
-  } catch (_err) { /* ignore */ }
+  } catch { /* ignore */ }
 
   if (crashCount >= 1) {
     // Second crash → permanent_failure: terminate pipeline, write error_message, no new tasks
@@ -104,7 +104,7 @@ export async function handleEvaluateSessionCrash({ pool, taskId, plannerShort, _
          WHERE id = $1`,
         [taskId, error_message],
       );
-    } catch (_err) { /* non-blocking */ }
+    } catch { /* non-blocking */ }
     return { action: 'permanent_failure' };
   }
 
@@ -120,7 +120,7 @@ export async function handleEvaluateSessionCrash({ pool, taskId, plannerShort, _
        WHERE id = $1`,
       [taskId, JSON.stringify(crashCount + 1)],
     );
-  } catch (_err) { /* non-blocking */ }
+  } catch { /* non-blocking */ }
 
   try {
     await createHarnessTask({
@@ -132,7 +132,7 @@ export async function handleEvaluateSessionCrash({ pool, taskId, plannerShort, _
         eval_round: (harnessPayload?.eval_round || 0) + 1,
       },
     });
-  } catch (_err) { /* non-blocking */ }
+  } catch { /* non-blocking */ }
 
   return { action: 'session_crashed' };
 }

@@ -595,7 +595,7 @@ async function _readEmotionTag(poolInst) {
     const emRes = await poolInst.query("SELECT value_json FROM working_memory WHERE key='emotion_state'");
     const raw = emRes.rows[0]?.value_json;
     return typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : null;
-  } catch (_) {
+  } catch {
     return null;
   }
 }

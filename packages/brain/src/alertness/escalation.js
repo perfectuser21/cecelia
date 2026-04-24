@@ -235,30 +235,34 @@ async function executeAction(action) {
       emit('escalation:collect_metrics', action.params);
       return { collecting: true };
 
-    case 'reduce_concurrency':
+    case 'reduce_concurrency': {
       // 减少并发数
       const newConcurrency = await updateConcurrency(action.params.factor);
       return { concurrency: newConcurrency };
+    }
 
-    case 'increase_interval':
+    case 'increase_interval': {
       // 增加 Tick 间隔
       const newInterval = await updateTickInterval(action.params.factor);
       return { interval: newInterval };
+    }
 
-    case 'pause_low_priority':
+    case 'pause_low_priority': {
       // 暂停低优先级任务
       const paused = await pauseLowPriorityTasks(action.params.priorities);
       return { paused };
+    }
 
     case 'stop_dispatch':
       // 停止任务派发
       await stopDispatch();
       return { dispatching: false };
 
-    case 'cancel_pending':
+    case 'cancel_pending': {
       // 取消待处理任务
       const canceled = await cancelPendingTasks(action.params.keepCritical);
       return { canceled };
+    }
 
     case 'enable_safe_mode':
       // 启用安全模式
@@ -270,10 +274,11 @@ async function executeAction(action) {
       await sendAlerts(action.params.channels);
       return { alerted: action.params.channels };
 
-    case 'generate_report':
+    case 'generate_report': {
       // 生成诊断报告
       const report = await generateDiagnosticReport(action.params.detailed);
       return { report };
+    }
 
     case 'stop_all':
       // 停止所有操作

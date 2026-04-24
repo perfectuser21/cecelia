@@ -31,7 +31,7 @@ async function enqueueRetry(table, id, text, dbPool) {
        ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
       [JSON.stringify(trimmed)]
     );
-  } catch (_e) {
+  } catch {
     // 重试队列写入失败不影响主流程
   }
 }
