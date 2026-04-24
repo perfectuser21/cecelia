@@ -250,9 +250,13 @@ export async function upsertTaskPlan({ initiativeId, initiativeTaskId, taskPlan,
   for (const logicalId of order) {
     const t = taskPlan.tasks.find((x) => x.task_id === logicalId);
 
+    // 默认 priority='P0'：harness_task 是当前 active Initiative 的子工作，
+    // 而非背景 P2 任务，不应被 alertness pause_low_priority 自动 pause。
+    // Initiative 本身通常是 P0，子任务继承即可（见 alertness/escalation.js
+    // 的 pauseLowPriorityTasks 白名单，二者形成双层保护）。
     const taskInsert = await client.query(
       `INSERT INTO tasks (task_type, title, description, status, priority, payload)
-       VALUES ('harness_task', $1, $2, 'queued', 'P2', $3::jsonb)
+       VALUES ('harness_task', $1, $2, 'queued', 'P0', $3::jsonb)
        RETURNING id`,
       [
         t.title,
