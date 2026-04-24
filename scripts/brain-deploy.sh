@@ -133,6 +133,16 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
 
     # 7. Stop old container + start new one
     echo "[7/8] Starting container..."
+
+    # 幂等检查：容器已在目标 image SHA 则跳过 recreate（避免 SIGTERM 中断长跑 Initiative）
+    CURRENT_IMG=$(docker inspect cecelia-node-brain --format '{{.Image}}' 2>/dev/null || echo "")
+    TARGET_IMG=$(docker inspect "cecelia-brain:${VERSION}" --format '{{.Id}}' 2>/dev/null || echo "")
+    if [[ "$DRY_RUN" == false && -n "$CURRENT_IMG" && -n "$TARGET_IMG" && "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
+        echo "  [skip] 容器已在 v${VERSION}（image SHA 一致），跳过 recreate"
+        DEPLOY_SUCCESS=true
+        exit 0
+    fi
+
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] docker compose up -d cecelia-brain:${VERSION}"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
