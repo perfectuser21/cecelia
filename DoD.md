@@ -1,32 +1,21 @@
-task_id: 27814ab1-8e25-4f38-94cc-66c6b9ff1662
-branch: cp-0424122436-brain-deploy-idempotent-check
+task_id: a930d4dd-15d6-41f9-9cbf-f4bdc6d8a75f
+initiative_id: bb245cb4-f6c4-44d1-9f93-cecefb0054b3
+logical_task_id: ws1
+contract_branch: (not injected by dispatch — DoD taken verbatim from task prompt)
+sprint_dir: (not injected by dispatch)
 
 ## 任务标题
-brain-deploy.sh 加 image SHA 幂等检查，跳过同版本容器 recreate
+新增 health 路由模块 (src/routes/health.js)
 
 ## 任务描述
-
-解决 Brain 容器每 3 小时被 recreate 导致长跑 Initiative 被 SIGTERM 中断的 P0 问题。
-在 scripts/brain-deploy.sh 的 `[7/8] Starting container...` 块内、`docker compose up -d`
-前插入 image SHA 比对：当前容器 image ID == 目标 tag image ID 时，跳过 recreate 直接 exit 0。
+创建 packages/brain/src/routes/health.js，导出一个 Express Router；在 '/' 上实现 GET handler，返回 JSON 对象且仅含三字段：status（固定字符串 'ok'）、uptime_seconds（进程启动以来的秒数）、version（取自 packages/brain/package.json 的 version 字段）。handler 不得访问数据库、tick 状态、外部服务。模块必须是纯函数式、可独立被测试文件 import。
 
 ## DoD
-
-- [x] [ARTIFACT] scripts/brain-deploy.sh 已加 `docker inspect cecelia-node-brain --format '{{.Image}}'` 调用
-  Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.includes(\"docker inspect cecelia-node-brain --format\"))process.exit(1)"
-
-- [x] [BEHAVIOR] 脚本包含同 SHA 跳过分支（CURRENT_IMG == TARGET_IMG 时设置 DEPLOY_SUCCESS=true 并 exit 0）
-  Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.includes('CURRENT_IMG')||!c.includes('TARGET_IMG'))process.exit(1);if(!/CURRENT_IMG.*==.*TARGET_IMG/.test(c))process.exit(1);if(!c.includes('DEPLOY_SUCCESS=true'))process.exit(1)"
-
-- [x] [ARTIFACT] Learning 文档存在
-  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0424122436-brain-deploy-idempotent-check.md')"
+- [ARTIFACT] 文件 packages/brain/src/routes/health.js 存在
+- [ARTIFACT] 该文件默认导出或命名导出一个 Express Router 实例
+- [BEHAVIOR] 通过 supertest 或等价方式调用 Router 的 GET /，响应 body 仅含且恰好含 status/uptime_seconds/version 三键
+- [BEHAVIOR] 响应 status === 'ok'；uptime_seconds 为非负 number；version 等于 package.json.version
+- [BEHAVIOR] 不触发 db.js / pg pool 的任何 import-time 或请求期连接（可通过 jest/vitest mock 断言未被调用）
 
 ## 目标文件
-
-- scripts/brain-deploy.sh
-- docs/learnings/cp-0424122436-brain-deploy-idempotent-check.md
-
-## 备注
-
-launchd 模式 `[7/8] Restarting Brain via launchd` 块不改，因为 `launchctl kickstart -k`
-本身就是设计为重启语义，不在本次幂等修复范围。
+- packages/brain/src/routes/health.js
