@@ -32,7 +32,10 @@ import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
-import { runGanContractGraph } from './harness-gan.graph.js';
+// 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
+// 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
+// Phase C7 清 shim 前不改。
+import { runGanContractGraph } from '../harness-gan-graph.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
