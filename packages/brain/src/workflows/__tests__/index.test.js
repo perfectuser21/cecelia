@@ -4,8 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dev-task compile 避免真连 pg（vi.hoisted 防 top-level 变量 hoisting 冲突）
-const { mockCompiled, mockCompile } = vi.hoisted(() => ({
-  mockCompiled: { invoke: () => {} },
+const { mockCompile } = vi.hoisted(() => ({
   mockCompile: () => Promise.resolve({ invoke: () => {} }),
 }));
 vi.mock('../dev-task.graph.js', () => ({
