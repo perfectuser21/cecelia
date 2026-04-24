@@ -2,6 +2,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { stat, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { makeCpBranchName, shortTaskId } from './harness-utils.js';
 
 const execFile = promisify(execFileCb);
 
@@ -21,18 +22,19 @@ async function defaultRm(p) {
   await rm(p, { recursive: true, force: true });
 }
 
-function shortId(taskId) {
-  if (!taskId || String(taskId).length < 8) {
-    throw new Error(`ensureHarnessWorktree: taskId must be ≥8 chars, got ${taskId}`);
-  }
-  return String(taskId).slice(0, 8);
-}
-
 /**
  * 幂等创建/复用 Harness v2 专属独立 git clone。
  *
  * 目录：<baseRepo>/.claude/worktrees/harness-v2/task-<shortid>
- * 分支：harness-v2/task-<shortid>（基于 main）
+ * 分支：cp-<MMDDHHMM>-ws-<shortid>（基于 main，强制 cp-* 规约）
+ *
+ * 设计决策：
+ *   - 目录名仍保留 `harness-v2/task-<shortid>` 作为 Brain 内部位置，与 Generator
+ *     挂载路径兼容（docker-executor 按目录找 worktree）。
+ *   - 分支名强制 `cp-MMDDHHMM-ws-<shortid>`（符合 hooks/branch-protect.sh 正则 +
+ *     CI branch-naming 规则），Generator 收到时已在合规分支，不需要再 checkout -b。
+ *   - clone 之后自动 `fetch origin main` 并尝试 `rebase origin/main`；失败则 log
+ *     + skip（让 Generator 遇到冲突时自行处理，不 block Initiative）。
  *
  * 用独立 clone（而非 git worktree add）产出 self-contained repo，
  * 容器挂载 worktree 后所有 git 操作可用。
@@ -44,6 +46,8 @@ function shortId(taskId) {
  * @param {Function} [opts.execFn]            测试注入
  * @param {Function} [opts.statFn]            测试注入
  * @param {Function} [opts.rmFn]              测试注入
+ * @param {Date|number} [opts.now]            测试注入（makeCpBranchName 的时间）
+ * @param {Function} [opts.logFn]             测试注入（默认 console.warn）
  * @returns {Promise<string>}                  worktree 绝对路径
  */
 export async function ensureHarnessWorktree(opts) {
@@ -51,15 +55,30 @@ export async function ensureHarnessWorktree(opts) {
   const execFn = opts.execFn || defaultExec;
   const statFn = opts.statFn || defaultStat;
   const rmFn = opts.rmFn || defaultRm;
+  const logFn = opts.logFn || ((msg) => console.warn(msg));
 
-  const sid = shortId(opts.taskId);
-  const branch = `harness-v2/task-${sid}`;
+  const sid = shortTaskId(opts.taskId);
+  const branch = makeCpBranchName(opts.taskId, { now: opts.now });
   const wtPath = path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${sid}`);
 
   if (await statFn(wtPath)) {
     try {
-      const { stdout } = await execFn('git', ['-C', wtPath, 'rev-parse', '--is-inside-work-tree']);
-      if (String(stdout || '').trim() === 'true') return wtPath;
+      const { stdout: inside } = await execFn('git', ['-C', wtPath, 'rev-parse', '--is-inside-work-tree']);
+      if (String(inside || '').trim() === 'true') {
+        // 目录已是 git repo；检查当前分支是否已符合 cp-* 规约。
+        // 若是旧的 harness-v2/task-* 分支，强制切到新的 cp-* 分支（保证 Generator 收到合规分支）。
+        try {
+          const { stdout: cur } = await execFn('git', ['-C', wtPath, 'rev-parse', '--abbrev-ref', 'HEAD']);
+          const currentBranch = String(cur || '').trim();
+          if (!/^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/.test(currentBranch)) {
+            logFn(`[harness-worktree] non-cp branch '${currentBranch}' detected at ${wtPath}; checking out ${branch}`);
+            await execFn('git', ['-C', wtPath, 'checkout', '-B', branch]);
+          }
+        } catch (err) {
+          logFn(`[harness-worktree] could not verify branch at ${wtPath}: ${err.message}`);
+        }
+        return wtPath;
+      }
     } catch { /* not a git repo, fall through to cleanup + re-clone */ }
     await rmFn(wtPath);
   }
@@ -70,6 +89,19 @@ export async function ensureHarnessWorktree(opts) {
     baseRepo, wtPath,
   ]);
   await execFn('git', ['-C', wtPath, 'checkout', '-b', branch]);
+
+  // 尝试 rebase origin/main，让 Generator 从最新 main 出发；
+  // fetch/rebase 任一失败只 log warn，不抛（兄弟 worktree 可能改了同文件冲突，
+  // 让 Generator 进入后自行处理，不 block Initiative）。
+  try {
+    await execFn('git', ['-C', wtPath, 'fetch', 'origin', 'main']);
+    await execFn('git', ['-C', wtPath, 'rebase', 'origin/main']);
+  } catch (err) {
+    logFn(`[harness-worktree] rebase origin/main skipped for ${wtPath}: ${err.message}`);
+    // rebase 可能留下 REBASE_HEAD，abort 一下免得仓库处于半成品状态
+    try { await execFn('git', ['-C', wtPath, 'rebase', '--abort']); } catch { /* best-effort */ }
+  }
+
   return wtPath;
 }
 
