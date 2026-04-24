@@ -406,7 +406,16 @@ main() {
       fi
     fi
     release_lock "$SLOT"
-    [[ -n "$CLEANUP_WORKTREE" ]] && git -C "$WORK_DIR" worktree remove "$CLEANUP_WORKTREE" --force 2>/dev/null || true
+    # T3: 条件化 worktree cleanup — docker 容器内 worktree metadata 在 host .git，容器内 `git worktree remove` 必失败
+    # docker 模式改写 flag 文件到共享 /tmp/，host 侧 zombie-cleaner/sweep 已能兜底清理（24h 后可考虑加专门消费逻辑）
+    if [[ -n "$CLEANUP_WORKTREE" ]]; then
+      if [[ -f /.dockerenv ]]; then
+        mkdir -p /tmp/cecelia-worktree-cleanup-flags 2>/dev/null || true
+        echo "$CLEANUP_WORKTREE" > "/tmp/cecelia-worktree-cleanup-flags/$(basename "$CLEANUP_WORKTREE").flag" 2>/dev/null || true
+      else
+        git -C "$WORK_DIR" worktree remove "$CLEANUP_WORKTREE" --force 2>/dev/null || true
+      fi
+    fi
   }
   trap cleanup EXIT
 
