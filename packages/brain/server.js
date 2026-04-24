@@ -518,6 +518,16 @@ async function onBrainListening() {
     console.error('[Server] Startup sync failed:', syncErr.message);
   }
 
+  // Release stale claims on queued tasks (Brain crash left claimed_by set → dispatcher can never pick them)
+  try {
+    const { cleanupStaleClaims } = await import('./src/startup-recovery.js');
+    const staleMinutes = Number(process.env.STALE_CLAIM_MINUTES) || 60;
+    const claimResult = await cleanupStaleClaims(pool, { staleMinutes });
+    console.log(`[Server] Startup stale-claim cleanup: cleaned=${claimResult.cleaned} errors=${claimResult.errors.length}`);
+  } catch (claimErr) {
+    console.error('[Server] Startup stale-claim cleanup failed (non-fatal):', claimErr.message);
+  }
+
   // Initialize Fleet Resource Cache (全局多机器资源感知)
   startFleetRefresh();
   console.log('[Server] Fleet Resource Cache started (30s interval) - 全局资源感知');
