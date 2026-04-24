@@ -40,10 +40,17 @@ vi.mock('../executor.js', () => ({
   getActiveProcesses: vi.fn()
 }));
 
+// Mock zombie-cleaner (T1 Channel 2 依赖)
+vi.mock('../zombie-cleaner.js', () => ({
+  findTaskIdForWorktree: vi.fn(),
+  isWorktreeActive: vi.fn(),
+}));
+
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, rmSync, readFileSync, statSync } from 'fs';
 import pool from '../db.js';
 import { getActiveProcesses } from '../executor.js';
+import { findTaskIdForWorktree, isWorktreeActive } from '../zombie-cleaner.js';
 import {
   parseWorktreeList,
   sweepStaleWorktrees,
@@ -199,6 +206,50 @@ branch refs/heads/cp-02020000-active-task`;
       const result = await sweepStaleWorktrees();
       expect(result.errors).toHaveLength(1);
       expect(result.errors[0]).toContain('git worktree list failed');
+    });
+
+    it('T1 Channel 2: payload.branch 缺失但 UUID + mtime 活跃 → 跳过（救援）', async () => {
+      // stale-wt 的 branch 不在 inProgressBranches 里（payload 无 branch），但 UUID 命中 + mtime 活跃
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          // active-task 有 branch，正常 Channel 1 命中
+          { branch: 'cp-02020000-active-task', id: 'task-uuid-1' },
+          // stale-wt 对应的 task — payload 无 branch，只有 id
+          { branch: null, id: 'task-uuid-stale-rescue' },
+        ],
+      });
+      statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
+
+      findTaskIdForWorktree.mockImplementation((wtPath) => {
+        if (wtPath === '/tmp/stale-wt') return 'task-uuid-stale-rescue';
+        return null;
+      });
+      isWorktreeActive.mockImplementation((wtPath) => wtPath === '/tmp/stale-wt');
+
+      const result = await sweepStaleWorktrees();
+
+      expect(result.removed).toBe(0); // 两个都 skip（Channel 1 + Channel 2）
+      expect(result.skipped).toBe(2);
+      // Channel 2 路径被调用
+      expect(findTaskIdForWorktree).toHaveBeenCalledWith('/tmp/stale-wt');
+      expect(isWorktreeActive).toHaveBeenCalledWith('/tmp/stale-wt');
+    });
+
+    it('T1 Channel 2: UUID 命中但 mtime stale → 仍清理（短路失效）', async () => {
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          { branch: 'cp-02020000-active-task', id: 'task-uuid-1' },
+          { branch: null, id: 'task-uuid-stale' },
+        ],
+      });
+      statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
+
+      findTaskIdForWorktree.mockReturnValue('task-uuid-stale');
+      isWorktreeActive.mockReturnValue(false); // mtime 都过期
+
+      const result = await sweepStaleWorktrees();
+      // Channel 2 的 AND isWorktreeActive 条件失败 → stale-wt 被清
+      expect(result.removed).toBe(1);
     });
 
     it('DB 查询失败时返回 error 且不删除任何 worktree', async () => {
