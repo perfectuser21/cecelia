@@ -62,6 +62,7 @@ import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuth
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { isConsciousnessEnabled, reloadConsciousnessCache } from './consciousness-guard.js';
+import { runWorkflow } from './orchestrator/graph-runtime.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -1360,7 +1361,13 @@ async function dispatchNextTask(goalIds) {
     console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
   }
 
-  const execResult = await triggerCeceliaRun(taskToDispatch);
+  // Phase C6: WORKFLOW_RUNTIME=v2 时 dev 任务走 L2 runWorkflow('dev-task') fire-and-forget,
+  // 默认（env 未设 / 其他值）走 legacy triggerCeceliaRun。灰度切换 flag，默认零行为变化。
+  const _dispatchTaskType = taskToDispatch.task_type || 'dev';
+  const _useWorkflowRuntime = _dispatchTaskType === 'dev' && process.env.WORKFLOW_RUNTIME === 'v2';
+  const execResult = _useWorkflowRuntime
+    ? dispatchDevTaskViaWorkflow(taskToDispatch)
+    : await triggerCeceliaRun(taskToDispatch);
 
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success) {
@@ -1444,6 +1451,23 @@ async function dispatchNextTask(goalIds) {
   await recordDispatchResult(pool, true);
 
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
+}
+
+/**
+ * Phase C6: 走 L2 orchestrator runWorkflow('dev-task') 派发 dev 任务。
+ * fire-and-forget：不 await runWorkflow；failure 仅 console.error 不中断 tick。
+ * attemptN = (task.retry_count || 0) + 1，对齐 spec §6.3 thread_id 格式。
+ *
+ * @param {Object} task - Brain task 行（含 id / retry_count）
+ * @returns {{success: true, runId: string}} - 合成 execResult，让 dispatchNextTask 后续 flow 不改动
+ */
+function dispatchDevTaskViaWorkflow(task) {
+  const attemptN = (task.retry_count || 0) + 1;
+  const runId = `v2-wf-${task.id}-a${attemptN}`;
+  runWorkflow('dev-task', task.id, attemptN, { task }).catch((err) => {
+    console.error(`[dispatch] runWorkflow('dev-task') failed for task ${task.id}: ${err.message}`);
+  });
+  return { success: true, runId };
 }
 
 /**
@@ -3579,6 +3603,7 @@ export {
   stopTickLoop,
   initTickLoop,
   dispatchNextTask,
+  dispatchDevTaskViaWorkflow,
   processCortexTask,
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
