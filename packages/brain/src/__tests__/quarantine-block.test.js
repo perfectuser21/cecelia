@@ -45,7 +45,9 @@ function makeTaskPayload(errorStr) {
 
 function mockTaskQuery(taskId, errorStr) {
   mockPool.query
-    // SELECT task
+    // 1) hasActiveCheckpoint query: 返回空表示任务非活跃
+    .mockResolvedValueOnce({ rows: [] })
+    // 2) SELECT task
     .mockResolvedValueOnce({
       rows: [{
         id: taskId,
@@ -57,7 +59,7 @@ function mockTaskQuery(taskId, errorStr) {
         description: '',
       }],
     })
-    // UPDATE failure_count
+    // 3) UPDATE failure_count
     .mockResolvedValueOnce({ rows: [] });
 }
 

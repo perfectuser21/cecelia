@@ -61,6 +61,9 @@ beforeAll(async () => {
 
 function mockTaskQuery(taskId, errorStr) {
   mockPool.query
+    // 1) hasActiveCheckpoint: 无活跃 checkpoint
+    .mockResolvedValueOnce({ rows: [] })
+    // 2) SELECT task
     .mockResolvedValueOnce({
       rows: [{
         id: taskId,
@@ -72,7 +75,8 @@ function mockTaskQuery(taskId, errorStr) {
         description: '',
       }],
     })
-    .mockResolvedValueOnce({ rows: [] }); // UPDATE failure_count
+    // 3) UPDATE failure_count
+    .mockResolvedValueOnce({ rows: [] });
 }
 
 // ── 测试 ─────────────────────────────────────────────────

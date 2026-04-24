@@ -38,6 +38,10 @@ const MAX_PAYLOAD_SIZE = 100000;
 // 短间隔暴力重试会消耗 Claude 额度并产生重复 error learning
 const NETWORK_RETRY_DELAY_MS = parseInt(process.env.NETWORK_RETRY_DELAY_MS) || 5 * 60 * 1000;
 
+// 活跃信号检测窗口：过去多少分钟内有 LangGraph checkpoint 视为活跃
+// 用于 shepherd/handleTaskFailure 避免误伤正在运行的任务
+const ACTIVE_CHECKPOINT_WINDOW_MINUTES = parseInt(process.env.ACTIVE_CHECKPOINT_WINDOW_MINUTES) || 30;
+
 // 隔离原因定义
 const QUARANTINE_REASONS = {
   REPEATED_FAILURE: 'repeated_failure',
@@ -985,6 +989,34 @@ async function checkExpiredQuarantineTasks({ limit = Infinity } = {}) {
 }
 
 /**
+ * 检查任务是否有活跃 LangGraph checkpoint
+ *
+ * 背景：shepherd/handleTaskFailure 在每个 tick 扫历史失败次数 >= N 的任务，
+ * 但"正在 docker 容器里跑"的任务也可能 failure_count 累积（心跳丢失 / 不回调），
+ * 被误判隔离。checkpoints 表记录 LangGraph 节点执行状态，存在该 task 的 checkpoint
+ * 行即说明任务仍在活跃运行（executor 还没结束）。
+ *
+ * MVP：只检查是否存在 checkpoint 行（thread_id = task.id）。
+ * 如果 checkpoints 数据量大，后续可加 ACTIVE_CHECKPOINT_WINDOW_MINUTES 过滤。
+ *
+ * @param {string} taskId - 任务 ID（UUID 字符串）
+ * @returns {Promise<boolean>} - true 表示任务仍在活跃运行
+ */
+async function hasActiveCheckpoint(taskId) {
+  try {
+    const result = await pool.query(
+      `SELECT 1 FROM checkpoints WHERE thread_id = $1::text LIMIT 1`,
+      [taskId]
+    );
+    return result.rows.length > 0;
+  } catch (err) {
+    // checkpoints 表不存在或查询失败：安全默认 false（按原逻辑走）
+    console.warn(`[quarantine] hasActiveCheckpoint query failed for ${taskId}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * 处理任务失败，检查是否需要隔离
  * @param {string} taskId - 任务 ID
  * @param {Object} options - 选项
@@ -993,6 +1025,19 @@ async function checkExpiredQuarantineTasks({ limit = Infinity } = {}) {
  */
 async function handleTaskFailure(taskId, options = {}) {
   const { skipCount = false } = options;
+
+  // 活跃信号守卫：若 LangGraph checkpoints 表仍有该 task 的记录，
+  // 说明 executor/docker 容器仍在跑，不应计入失败也不应隔离。
+  // 直接返回"未隔离"，上游通常会走 requeue 分支（不会污染状态）。
+  const isActive = await hasActiveCheckpoint(taskId);
+  if (isActive) {
+    console.log(`[quarantine] Task ${taskId} has active checkpoint(s), skipping failure/quarantine`);
+    return {
+      quarantined: false,
+      failure_count: 0,
+      skipped_active: true,
+    };
+  }
 
   // skipCount 模式：auth/network/rate_limit 等外部错误，只 requeue 不累计失败
   if (skipCount) {
@@ -1115,6 +1160,8 @@ export {
   checkTimeoutPattern,
   checkShouldQuarantine,
   handleTaskFailure,
+  hasActiveCheckpoint,
+  ACTIVE_CHECKPOINT_WINDOW_MINUTES,
 
   // 失败分类
   classifyFailure,
