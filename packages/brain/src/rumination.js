@@ -323,8 +323,15 @@ async function digestLearnings(db, learnings) {
         console.warn('[rumination] fallback: synthesis_archive query failed (non-blocking):', archiveErr.message);
       }
       const prompt = buildRuminationPrompt(learnings, memoryBlock, fallbackContext);
-      const { text: llmInsight } = await callLLM('rumination', prompt);
-      insight = llmInsight || '';
+      // P0 修复（链路故障 RCA）：callLLM 独立 try/catch
+      // 之前外层 try 捕获 LLM 异常会跳过 "标记 digested" 步骤 → learnings 永久积压
+      try {
+        const { text: llmInsight } = await callLLM('rumination', prompt);
+        insight = llmInsight || '';
+      } catch (llmErr) {
+        console.warn('[rumination] callLLM fallback failed (non-blocking):', llmErr.message);
+        insight = '';
+      }
     }
 
     // 4. 去重检查 + 写入 memory_stream + synthesis_archive（daily）
@@ -452,15 +459,8 @@ ${insight.trim().slice(0, 800)}
       }
     }
 
-    // 6. 标记所有 learnings 已消化
-    for (const learning of learnings) {
-      await db.query(
-        'UPDATE learnings SET digested = true WHERE id = $1',
-        [learning.id]
-      );
-    }
-
-    _dailyCount += learnings.length;
+    // 6. 标记 digested 已移至 finally（P0 修复：链路故障），确保 LLM 抛错或
+    //    dedup 早退时仍推进状态，避免 learnings 永久积压（死循环）。
 
     // 7. 发 RUMINATION_RESULT 事件给丘脑（闭环线 1）
     if (insights.length > 0) {
@@ -510,6 +510,20 @@ ${insight.trim().slice(0, 800)}
     }
   } catch (err) {
     console.error(`[rumination] batch digest failed:`, err.message);
+  } finally {
+    // P0 修复（链路故障 RCA）：无论成功、LLM 抛错、dedup 早退，都必须推进 learnings 状态。
+    // 之前：任何异常或去重 early-return 都跳过标记 digested → 同批 learnings 被无限重取（1/11 故障 + 164 条积压的直接成因）。
+    try {
+      for (const learning of learnings) {
+        await db.query(
+          'UPDATE learnings SET digested = true WHERE id = $1',
+          [learning.id]
+        );
+      }
+      _dailyCount += learnings.length;
+    } catch (finallyErr) {
+      console.error('[rumination] finally: mark-digested failed:', finallyErr.message);
+    }
   }
 
   return insights;

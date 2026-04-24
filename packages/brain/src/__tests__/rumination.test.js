@@ -283,7 +283,7 @@ describe('rumination', () => {
       expect(updateCalls).toHaveLength(3);
     });
 
-    it('LLM 调用失败时整批消化失败（digested=0）', async () => {
+    it('LLM 调用失败时仍标记 learnings digested（避免死循环）', async () => {
       const learnings = [
         { id: 'l0', title: '知识0', content: '内容0', category: 'u' },
         { id: 'l1', title: '知识1', content: '内容1', category: 'u' },
@@ -291,13 +291,22 @@ describe('rumination', () => {
 
       setupIdleAndLearnings(pool, learnings);
 
-      // 批量 LLM 调用失败
+      // NotebookLM 也失败（强制走 fallback 到 callLLM）
+      mockQueryNotebook.mockRejectedValueOnce(new Error('NotebookLM down'));
+      // callLLM fallback 抛错
       mockCallLLM.mockRejectedValueOnce(new Error('LLM timeout'));
 
       const result = await runRumination(pool);
-      // v2: 批量处理，LLM 失败整批都不消化
-      expect(result.digested).toBe(2); // digested 计数基于 learnings.length（已查出）
-      expect(result.insights).toEqual([]); // 但无洞察产出
+
+      // 无洞察产出
+      expect(result.insights).toEqual([]);
+
+      // P0 修复（链路故障 RCA）：LLM 抛错时 finally 必须执行 UPDATE digested
+      // 否则 learnings 永久积压 → 164 条 undigested 堆积 + 1/11 故障
+      const updateCalls = mockQuery.mock.calls.filter(
+        c => typeof c[0] === 'string' && c[0].includes('UPDATE learnings SET digested')
+      );
+      expect(updateCalls).toHaveLength(2);
     });
   });
 
