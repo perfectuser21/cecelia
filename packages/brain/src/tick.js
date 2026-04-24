@@ -1360,6 +1360,17 @@ async function dispatchNextTask(goalIds) {
     console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
   }
 
+  // C6: Brain v2 WORKFLOW_RUNTIME=v2 + task_type=dev → runWorkflow 接线（fire-and-forget）
+  const v2Result = await _dispatchViaWorkflowRuntime(taskToDispatch);
+  if (v2Result.handled) {
+    return {
+      dispatched: true,
+      task_id: v2Result.task_id,
+      runtime: 'v2',
+      actions: [...actions, ...v2Result.actions],
+    };
+  }
+
   const execResult = await triggerCeceliaRun(taskToDispatch);
 
   // 5a. Check if executor actually succeeded — revert to queued if not
@@ -3568,6 +3579,63 @@ export async function ensureCodexImmune(dbPool) {
   return { created: true, elapsed_ms: elapsed };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// C6: Brain v2 WORKFLOW_RUNTIME env gate
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * C6: WORKFLOW_RUNTIME=v2 + task_type=dev 时，通过 L2 orchestrator runWorkflow('dev-task')
+ * 派发 fire-and-forget；否则返回 {handled:false} 让 caller fall through 到 legacy
+ * triggerCeceliaRun 路径。
+ *
+ * 默认（env 未设 / v1）返回 handled:false，生产零行为变化。
+ *
+ * @param {object} taskToDispatch Brain task row（含 id / task_type / retry_count 等）
+ * @returns {Promise<{handled:boolean, runtime?:string, task_id?:string, actions?:Array}>}
+ */
+async function _dispatchViaWorkflowRuntime(taskToDispatch) {
+  if (process.env.WORKFLOW_RUNTIME !== 'v2') return { handled: false };
+  if (taskToDispatch?.task_type !== 'dev') return { handled: false };
+
+  const { runWorkflow } = await import('./orchestrator/graph-runtime.js');
+  const attemptN = (taskToDispatch.payload?.attempt_n ?? taskToDispatch.retry_count ?? 0) + 1;
+
+  // fire-and-forget：graph 层 pg checkpointer 负责崩溃 resume；.catch 落 logTickDecision 排障
+  runWorkflow('dev-task', taskToDispatch.id, attemptN, { task: taskToDispatch })
+    .catch((err) => {
+      logTickDecision(
+        'tick',
+        `runWorkflow dev-task failed: ${err.message}`,
+        {
+          action: 'workflow_runtime_error',
+          task_id: taskToDispatch.id,
+          runtime: 'v2',
+          attemptN,
+          error: err.message,
+        },
+        { success: false },
+      );
+    });
+
+  _lastDispatchTime = Date.now();
+  await recordDispatchResult(pool, true, 'workflow_runtime_v2');
+  await emit('task_dispatched', 'tick', {
+    task_id: taskToDispatch.id,
+    title: taskToDispatch.title,
+    runtime: 'v2',
+    success: true,
+  });
+
+  const actions = [{
+    action: 'dispatch_v2_workflow',
+    task_id: taskToDispatch.id,
+    runtime: 'v2',
+    attemptN,
+  }];
+
+  return { handled: true, runtime: 'v2', task_id: taskToDispatch.id, actions };
+}
+
 export {
   getTickStatus,
   enableTick,
@@ -3579,6 +3647,7 @@ export {
   stopTickLoop,
   initTickLoop,
   dispatchNextTask,
+  _dispatchViaWorkflowRuntime,
   processCortexTask,
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
