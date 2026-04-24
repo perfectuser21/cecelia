@@ -2208,7 +2208,7 @@ router.get('/analytics/collection-stats', async (req, res) => {
         [since.toISOString()]
       );
       scraperRows = rows;
-    } catch (_) {
+    } catch {
       // platform_scraper 类型不存在时静默忽略
     }
 

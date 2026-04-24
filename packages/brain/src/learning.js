@@ -240,7 +240,7 @@ export async function searchRelevantLearnings(context = {}, limit = 10) {
           `SELECT COUNT(*) FROM learnings WHERE embedding IS NOT NULL`
         );
         useVectorSearch = parseInt(countResult.rows[0].count) > 0;
-      } catch (_err) {
+      } catch {
         // embedding column may not exist yet, fallback to keyword
       }
     }

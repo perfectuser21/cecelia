@@ -27,7 +27,7 @@ describe('RESOURCE_TIERS / TASK_TYPE_TIER constants', () => {
     expect(Object.keys(RESOURCE_TIERS).sort()).toEqual(['heavy', 'light', 'normal', 'pipeline-heavy']);
   });
   it('TASK_TYPE_TIER maps only to defined tiers', () => {
-    for (const [task, tier] of Object.entries(TASK_TYPE_TIER)) {
+    for (const [_task, tier] of Object.entries(TASK_TYPE_TIER)) {
       expect(RESOURCE_TIERS[tier]).toBeDefined();
     }
   });

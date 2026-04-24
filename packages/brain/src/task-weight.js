@@ -80,7 +80,7 @@ function calculateTaskWeight(task) {
         Math.floor(hoursWaited * WAIT_BONUS_PER_HOUR),
         WAIT_BONUS_MAX
       );
-    } catch (_e) {
+    } catch {
       wait_bonus = 0;
     }
   }
@@ -195,7 +195,7 @@ async function getTaskRPEAdjustment(taskType, dbPool) {
     if (avg === null || avg === undefined) return 0;
     const raw = parseFloat(avg) * RPE_WEIGHT_SCALE;
     return Math.max(-RPE_WEIGHT_CAP, Math.min(RPE_WEIGHT_CAP, Math.round(raw * 100) / 100));
-  } catch (_e) {
+  } catch {
     return 0;
   }
 }

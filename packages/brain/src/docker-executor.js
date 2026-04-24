@@ -27,7 +27,7 @@ import { runDocker } from './spawn/middleware/docker-run.js';
 import { resolveAccount } from './spawn/middleware/account-rotation.js';
 import { resolveCascade } from './spawn/middleware/cascade.js';
 // v2 P2.5 外层 middleware 接线
-import { checkCostCap, CostCapExceededError } from './spawn/middleware/cost-cap.js';
+import { checkCostCap } from './spawn/middleware/cost-cap.js';
 import { checkCap } from './spawn/middleware/cap-marking.js';
 import { recordBilling } from './spawn/middleware/billing.js';
 import { createSpawnLogger } from './spawn/middleware/logging.js';
@@ -214,7 +214,7 @@ export function buildDockerArgs(opts, ctx = {}) {
       try {
         const cred = JSON.parse(readFn(credFile, 'utf8'));
         if (cred.api_key) envFinal.ANTHROPIC_API_KEY = cred.api_key;
-      } catch (_e) {
+      } catch {
         console.warn(`[docker-executor] credentials file not found: ${credFile}`);
       }
     }
@@ -348,9 +348,6 @@ export async function executeInDocker(opts) {
 
   // 记录 docker 命令（方便 forensic / 前端元数据展示）
   const command = `docker ${args.join(' ')}`;
-
-  const startedAtMs = Date.now();
-  const startedAt = new Date(startedAtMs).toISOString();
 
   console.log(
     `[docker-executor] spawn task=${taskId} type=${taskType} tier=${tier.tier} mem=${memoryMB}m cpus=${cpuCores} image=${image} container=${name}`

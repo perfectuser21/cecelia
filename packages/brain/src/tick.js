@@ -8,21 +8,21 @@ import pool from './db.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask, createTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, killProcess, checkServerResources, probeTaskLiveness, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { shouldDowngrade } from './token-budget-planner.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
-import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
-import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
+import { isAllowed, recordFailure, getAllStates } from './circuit-breaker.js';
+import { publishTaskStarted } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
 import { getRecoveryStatus } from './alertness/healing.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
-import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
+import { recordDispatchResult } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview, triggerContractScan, triggerArchReview } from './daily-review-scheduler.js';
@@ -44,13 +44,13 @@ import { runSuggestionCycle } from './suggestion-cycle.js';
 import { runConversationConsolidator } from './conversation-consolidator.js';
 import { feedDailyIfNeeded } from './notebook-feeder.js';
 import { publishCognitiveState } from './events/taskEvents.js';
-import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
+import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, updateNarrative, recordTickEvent } from './cognitive-core.js';
 import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
-import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
+import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import { runPipelinePatrol } from './pipeline-patrol.js';
 import { checkStuckPipelines } from './pipeline-watchdog.js';
@@ -905,8 +905,8 @@ async function processCortexTask(task, actions) {
     // Import Cortex module
     const { performRCA } = await import('./cortex.js');
 
-    // Extract signals from payload
-    const signals = task.payload.signals || {};
+    // Extract signals from payload (kept for forward compatibility; currently unused)
+    const _signals = task.payload.signals || {};
     const trigger = task.payload.trigger || 'unknown';
 
     // Execute RCA analysis
@@ -2429,7 +2429,7 @@ async function executeTick() {
 
         if (safeActions.length > 0) {
           // Execute safe actions directly (retry, reprioritize, skip)
-          const execResult = await executeDecision(decision.decision_id);
+          await executeDecision(decision.decision_id);
 
           await logTickDecision(
             'tick',
@@ -2596,7 +2596,9 @@ async function executeTick() {
           // Phase 2: Emergency cleanup (worktree, lock slot, .dev-mode)
           try {
             const { emergencyCleanup } = await import('./emergency-cleanup.js');
-            const slot = action.slot || (pidMap && pidMap.get?.(action.taskId)?.slot);
+            // 注：原代码有 `pidMap && pidMap.get?.(...)` 但 pidMap 从未定义（历史遗留），
+            // 实际运行时会抛 ReferenceError 被外层 catch 吞，等效于 fallback 到 action.slot。
+            const slot = action.slot;
             if (slot) {
               const cleanupResult = emergencyCleanup(action.taskId, slot);
               tickLog(`[tick] Emergency cleanup: wt=${cleanupResult.worktree} lock=${cleanupResult.lock}`);

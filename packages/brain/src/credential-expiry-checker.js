@@ -19,6 +19,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
+import { createTask } from './actions.js';
 
 const ALERT_THRESHOLD_MS = 8 * 60 * 60 * 1000; // 8 小时（给更多响应窗口）
 const CRITICAL_THRESHOLD_MS = 3 * 60 * 60 * 1000; // 3 小时 — 触发升级 P0 告警
@@ -92,7 +93,7 @@ const ALERT_DEDUP_MS = 60 * 60 * 1000; // 1 小时内同账号同级别不重复
 /** 测试用：清除告警去重缓存（仅供 test 调用） */
 export function _resetAlertDedup() { _alertDedup.clear(); }
 
-export async function checkAndAlertExpiringCredentials(pool) {
+export async function checkAndAlertExpiringCredentials(_pool) {
   const { accounts, criticalAccounts } = checkCredentialExpiry();
 
   if (criticalAccounts.length === 0) {

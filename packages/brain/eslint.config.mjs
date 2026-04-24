@@ -19,7 +19,6 @@ export default [
         AbortSignal: 'readonly',
         URL: 'readonly',
         URLSearchParams: 'readonly',
-        crypto: 'readonly',
         WebSocket: 'readonly',
       },
     },

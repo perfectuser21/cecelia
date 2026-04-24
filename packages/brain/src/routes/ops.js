@@ -1,9 +1,6 @@
 import express, { Router } from 'express';
 import pool from '../db.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { readFileSync, writeFileSync, readdirSync } from 'fs';
-import { createTask, updateTask } from '../actions.js';
+import { readFileSync, writeFileSync } from 'fs';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
 import { check48hReport } from '../tick.js';
@@ -25,10 +22,10 @@ import {
   runDecompositionChecks,
 } from '../decomposition-checker.js';
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from '../pr-callback-handler.js';
-import { resolveRelatedFailureMemories, getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
+import { getAllStates as getAllCBStates } from '../circuit-breaker.js';
+import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
 
 const router = Router();
-const execAsync = promisify(exec);
 
 
 // ============================================================

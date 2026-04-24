@@ -132,12 +132,12 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      # --max-warnings：冻结 warning 基线（2026-04-20 测得 brain=95 / apps/api=18）
+      # --max-warnings：冻结 warning 基线（2026-04-24 brain 降至 0 / apps/api=18）
       # 新增 warning 触发 CI fail，逼每个 PR 要么修、要么显式上调基线。
       # 每次降 warning 后，同步下调这里的数字（只允许下调，不允许上调）。
       - name: Lint Brain
         if: needs.changes.outputs.brain == 'true'
-        run: cd packages/brain && npm ci && npx eslint src/ --max-warnings 95
+        run: cd packages/brain && npm ci && npx eslint src/ --max-warnings 0
       - name: Lint Workspace API
         if: needs.changes.outputs.workspace == 'true'
         run: cd apps/api && npm ci && npx eslint src/ --max-warnings 18
