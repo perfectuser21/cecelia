@@ -16,10 +16,14 @@
  * 核心原则：宁可错杀，不可放过（保护系统稳定）
  */
 
+import { execFile as execFileCb } from 'child_process';
+import { promisify } from 'util';
 import pool from './db.js';
 import { emit } from './event-bus.js';
 import { upsertLearning } from './learning.js';
 import { hasActiveSignal } from './quarantine-active-signal.js';
+
+const execFile = promisify(execFileCb);
 
 // ============================================================
 // 配置
@@ -1017,6 +1021,37 @@ async function hasActiveCheckpoint(taskId) {
 }
 
 /**
+ * 检查是否有对应的 docker container 正在跑
+ *
+ * 背景：hasActiveCheckpoint 只覆盖走 LangGraph 的 GAN 类任务
+ * (harness_contract_propose / harness_contract_review 等，会写 checkpoints 表)。
+ * Generator 类（harness_task / content-pipeline 等）不走 LangGraph，
+ * 直接在 docker 容器里跑 Claude Code，心跳偶尔丢失 → failure_count 累积
+ * → 被 shepherd 打 quarantined: repeated_failure。
+ *
+ * 本函数作为 hasActiveCheckpoint 的补充：只要 docker ps 里有对应容器，
+ * 就视为活跃，跳过 quarantine。
+ *
+ * 容器名约定：`cecelia-task-<taskId 前 12 位 hex，无 dash>`
+ * 例：task `33b37ea3-4b3c-4a9a-bb40-...` → container `cecelia-task-33b37ea34b3c`
+ *
+ * @param {string} taskId - UUID 字符串（含 dash）
+ * @returns {Promise<boolean>} - true 表示容器仍在跑
+ */
+async function hasActiveContainer(taskId) {
+  const shortId = String(taskId).replace(/-/g, '').slice(0, 12);
+  const expectedName = `cecelia-task-${shortId}`;
+  try {
+    // docker ps --format '{{.Names}}' 列出所有运行中容器名，精确匹配
+    const { stdout } = await execFile('docker', ['ps', '--format', '{{.Names}}'], { timeout: 3000 });
+    return stdout.split(/\r?\n/).some(line => line.trim() === expectedName);
+  } catch {
+    // docker 不可达 / 超时 / 命令不存在 → 保守返回 false（按原 failure 逻辑走）
+    return false;
+  }
+}
+
+/**
  * 处理任务失败，检查是否需要隔离
  * @param {string} taskId - 任务 ID
  * @param {Object} options - 选项
@@ -1026,9 +1061,9 @@ async function hasActiveCheckpoint(taskId) {
 async function handleTaskFailure(taskId, options = {}) {
   const { skipCount = false } = options;
 
-  // 活跃信号守卫：若 LangGraph checkpoints 表仍有该 task 的记录，
+  // 活跃信号守卫 (1/2)：若 LangGraph checkpoints 表仍有该 task 的记录，
   // 说明 executor/docker 容器仍在跑，不应计入失败也不应隔离。
-  // 直接返回"未隔离"，上游通常会走 requeue 分支（不会污染状态）。
+  // 只覆盖走 LangGraph 的 GAN 类任务（harness_contract_propose/review 等）。
   const isActive = await hasActiveCheckpoint(taskId);
   if (isActive) {
     console.log(`[quarantine] Task ${taskId} has active checkpoint(s), skipping failure/quarantine`);
@@ -1036,6 +1071,21 @@ async function handleTaskFailure(taskId, options = {}) {
       quarantined: false,
       failure_count: 0,
       skipped_active: true,
+      reason: 'active_checkpoint',
+    };
+  }
+
+  // 活跃信号守卫 (2/2)：Generator 类任务（harness_task / content-pipeline 等）
+  // 不走 LangGraph，不写 checkpoints，但会在 docker 容器里跑 Claude Code。
+  // 容器名约定：cecelia-task-<taskId 前 12 位 hex>，docker ps 命中即视为活跃。
+  const hasContainer = await hasActiveContainer(taskId);
+  if (hasContainer) {
+    console.log(`[quarantine] Task ${taskId} has active docker container, skipping failure/quarantine`);
+    return {
+      quarantined: false,
+      failure_count: 0,
+      skipped_active: true,
+      reason: 'active_container',
     };
   }
 
@@ -1161,6 +1211,7 @@ export {
   checkShouldQuarantine,
   handleTaskFailure,
   hasActiveCheckpoint,
+  hasActiveContainer,
   ACTIVE_CHECKPOINT_WINDOW_MINUTES,
 
   // 失败分类
