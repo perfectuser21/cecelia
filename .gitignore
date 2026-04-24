@@ -52,6 +52,9 @@ Thumbs.db
 .gate-*
 .quality-gate-passed
 .enriched-prd-*
+# 手动 /dev worktree 根目录残留（branch-protect hook 不查它；harness 用的是 sprints/<dir>/sprint-prd.md 另一路径）
+sprint-prd.md
+.raw-prd-*.md
 
 # Brain deployment
 .brain-versions
