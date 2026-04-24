@@ -8,6 +8,11 @@
  *   - cleanupStaleWorktrees: 清理孤立 worktree 目录和元数据
  *   - cleanupStaleLockSlots: 释放无主 lock slot
  *   - cleanupStaleDevModeFiles: 删除死分支的 .dev-mode* 文件
+ *   - cleanupStaleClaims: 释放 Brain 崩前被 claim 住但没真正执行的 queued task
+ *
+ * 注意：runStartupRecovery 不接受 pool、不访问 DB（测试强约束）。
+ * cleanupStaleClaims 由 server 启动流程单独 import + 显式调用（和 syncOrphanTasksOnStartup 并列），
+ * 不纳入 runStartupRecovery 的串联清理。
  */
 
 import { execSync } from 'child_process';
@@ -217,4 +222,72 @@ export async function runStartupRecovery() {
 
   console.log('[StartupRecovery] Cleanup summary:', JSON.stringify(result));
   return result;
+}
+
+/**
+ * 清理 Brain 崩前 claim 但没跑完的 queued task。
+ *
+ * 背景：dispatcher 选 task 时用 `WHERE claimed_by IS NULL`，
+ * 若 Brain 崩前写入了 claimed_by='brain-tick-N' 且 status='queued'，
+ * 新 Brain 启动后这些任务将永远无法再被派发（死锁）。
+ *
+ * 判定 stale 的条件（任一满足）：
+ *   1. claimed_at 为空（老字段或异常写入）
+ *   2. claimed_at 早于 NOW() - staleMinutes
+ *
+ * 清理动作：UPDATE tasks SET claimed_by=NULL, claimed_at=NULL WHERE ...
+ *   不改 status — 保持 'queued'，交给 dispatcher 重新选。
+ *
+ * @param {object} pool - pg Pool 实例（由 caller 注入，本模块不持有 pool）
+ * @param {{ staleMinutes?: number }} [opts]
+ * @returns {Promise<{ cleaned: number, errors: string[] }>}
+ */
+export async function cleanupStaleClaims(pool, opts = {}) {
+  const stats = { cleaned: 0, errors: [] };
+  if (!pool || typeof pool.query !== 'function') {
+    stats.errors.push('pool not provided');
+    return stats;
+  }
+
+  const staleMinutes = Number.isFinite(opts.staleMinutes) ? opts.staleMinutes : 60;
+
+  try {
+    // 1. 扫描 queued + claimed_by 非空的 task
+    const { rows } = await pool.query(
+      `SELECT id, claimed_by, claimed_at
+         FROM tasks
+        WHERE status = 'queued'
+          AND claimed_by IS NOT NULL
+          AND (claimed_at IS NULL OR claimed_at < NOW() - ($1::int * INTERVAL '1 minute'))`,
+      [staleMinutes]
+    );
+
+    if (rows.length === 0) {
+      console.log('[StartupRecovery:cleanupStaleClaims] no stale claims found');
+      return stats;
+    }
+
+    // 2. 批量清空 claimed_by / claimed_at
+    const taskIds = rows.map(r => r.id);
+    const result = await pool.query(
+      `UPDATE tasks
+          SET claimed_by = NULL,
+              claimed_at = NULL
+        WHERE id = ANY($1::int[])
+      RETURNING id`,
+      [taskIds]
+    );
+
+    stats.cleaned = result.rowCount || 0;
+    const sample = rows.slice(0, 5).map(r => `${r.id}@${r.claimed_by}`);
+    console.log(
+      `[StartupRecovery:cleanupStaleClaims] cleared ${stats.cleaned} stale claims (staleMinutes=${staleMinutes})`,
+      JSON.stringify({ cleanup_type: 'stale_claim', cleaned: stats.cleaned, sample })
+    );
+  } catch (e) {
+    stats.errors.push(e.message);
+    console.warn('[StartupRecovery:cleanupStaleClaims] failed:', e.message);
+  }
+
+  return stats;
 }
