@@ -216,7 +216,7 @@ vi.mock('../orchestrator/pg-checkpointer.js', () => ({
 | 风险 | 缓解 |
 |---|---|
 | `compileContentPipelineApp` 改 async 影响所有 caller | grep 全 caller + 改 await，跑全 brain test 验无 regression |
-| stateHasError 嵌入 verdict 路由可能破坏 round>=3 硬规则兜底 | 保留原 verdict 函数完整，仅在最前面加 `if (state.error) return 'END'`，error 优先级最高但不动其他逻辑 |
+| stateHasError 误嵌 verdict 路由 → 破坏 round>=3 硬规则兜底（pipeline 比当前更脆） | rev 1 决定：verdict 节点（copy_review/image_review）**完全不嵌** stateHasError，仅 3 个非 verdict 节点（research/copywrite/generate）加 error 短路。verdict 节点 docker flake 由 round>=3 兜底承担（保留原行为） |
 | 6 节点幂等门写漏一个 → 该节点仍 spawn | 模板化在 `runDockerNode` 单一位置注入，不在每节点单独写。`cfg.outputs[0]` 兜底取每节点 primary output |
 | `output_dir` channel 在多节点共享 → idempotency 误判 | 不用 `output_dir` 作 idempotency 字段（research outputs[0] 是 findings_path），改用每节点真正 primary output |
 
