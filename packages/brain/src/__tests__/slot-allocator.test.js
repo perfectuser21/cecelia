@@ -1244,3 +1244,91 @@ describe('Backpressure', () => {
     expect(budget.backpressure.override_burst_limit).toBe(3);
   });
 });
+
+// ============================================================
+// P0 Harness Backpressure Bypass — whitelist + getBackpressureState({task})
+// ============================================================
+describe('shouldBypassBackpressure: P0 harness whitelist', () => {
+  it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 8 harness types', async () => {
+    const { BACKPRESSURE_BYPASS_TASK_TYPES } = await import('../slot-allocator.js');
+    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toEqual([
+      'harness_initiative',
+      'harness_task',
+      'harness_planner',
+      'harness_contract_propose',
+      'harness_contract_review',
+      'harness_fix',
+      'harness_ci_watch',
+      'harness_deploy_watch',
+    ]);
+  });
+
+  it('P0 harness_task → true', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'harness_task' })).toBe(true);
+  });
+
+  it('P0 harness_initiative → true', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'harness_initiative' })).toBe(true);
+  });
+
+  it('P1 harness_task → false (priority 不匹配)', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P1', task_type: 'harness_task' })).toBe(false);
+  });
+
+  it('P0 content-pipeline → false (task_type 不在白名单)', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'content-pipeline' })).toBe(false);
+  });
+
+  it('null/undefined/empty task → false', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure(null)).toBe(false);
+    expect(shouldBypassBackpressure(undefined)).toBe(false);
+    expect(shouldBypassBackpressure({})).toBe(false);
+  });
+});
+
+describe('getBackpressureState: task bypass behavior', () => {
+  it('queue_depth=200 + P0 harness_task → active=false, override_burst_limit=null', async () => {
+    const { getBackpressureState } = await import('../slot-allocator.js');
+    const state = getBackpressureState({
+      queue_depth: 200,
+      task: { priority: 'P0', task_type: 'harness_task' },
+    });
+    expect(state.active).toBe(false);
+    expect(state.override_burst_limit).toBeNull();
+    expect(state.queue_depth).toBe(200);
+  });
+
+  it('queue_depth=200 + P1 content-pipeline → active=true, override_burst_limit=3 (保持原行为)', async () => {
+    const { getBackpressureState } = await import('../slot-allocator.js');
+    const state = getBackpressureState({
+      queue_depth: 200,
+      task: { priority: 'P1', task_type: 'content-pipeline' },
+    });
+    expect(state.active).toBe(true);
+    expect(state.override_burst_limit).toBe(3);
+  });
+
+  it('queue_depth=200 不传 task → active=true, override_burst_limit=3 (默认行为不变)', async () => {
+    const { getBackpressureState } = await import('../slot-allocator.js');
+    const state = getBackpressureState({ queue_depth: 200 });
+    expect(state.active).toBe(true);
+    expect(state.override_burst_limit).toBe(3);
+  });
+});
+
+describe('dispatch-helpers: bypass marker on candidates', () => {
+  it('shouldBypassBackpressure 可被 dispatch-helpers 引用（合同测试）', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../dispatch-helpers.js', import.meta.url),
+      'utf8'
+    );
+    expect(src).toContain('shouldBypassBackpressure');
+    expect(src).toContain('_bypass_backpressure');
+  });
+});
