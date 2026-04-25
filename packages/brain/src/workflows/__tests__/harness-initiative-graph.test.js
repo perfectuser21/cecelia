@@ -113,3 +113,49 @@ describe('prepInitiativeNode', () => {
     expect(delta.error.message).toBe('worktree busy');
   });
 });
+
+describe('runPlannerNode', () => {
+  beforeEach(() => { mockSpawn.mockReset(); });
+
+  it('happy: 调 spawn 传 harness_planner task_type + HARNESS_NODE=planner env', async () => {
+    mockSpawn.mockResolvedValueOnce({ exit_code: 0, stdout: 'PLANNER OUT' });
+    const state = {
+      task: { id: 't1', description: 'do', payload: { sprint_dir: 'sprints' } },
+      initiativeId: 'init-1', worktreePath: '/wt', githubToken: 'ghp_x',
+    };
+    const delta = await runPlannerNode(state);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const opts = mockSpawn.mock.calls[0][0];
+    expect(opts.task.task_type).toBe('harness_planner');
+    expect(opts.worktreePath).toBe('/wt');
+    expect(opts.env.HARNESS_NODE).toBe('planner');
+    expect(opts.env.HARNESS_INITIATIVE_ID).toBe('init-1');
+    expect(opts.env.GITHUB_TOKEN).toBe('ghp_x');
+    expect(delta.plannerOutput).toBe('PLANNER OUT');
+    expect(delta.error).toBeUndefined();
+  });
+
+  it('idempotent: state.plannerOutput 已存在 → 不调 spawn', async () => {
+    const state = { plannerOutput: 'cached', task: { id: 't2' } };
+    const delta = await runPlannerNode(state);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(delta.plannerOutput).toBe('cached');
+  });
+
+  it('error: spawn 抛 → state.error.node="planner"', async () => {
+    mockSpawn.mockRejectedValueOnce(new Error('docker died'));
+    const state = { task: { id: 't3', payload: {} }, initiativeId: 'init-3', worktreePath: '/wt' };
+    const delta = await runPlannerNode(state);
+    expect(delta.error.node).toBe('planner');
+    expect(delta.error.message).toBe('docker died');
+  });
+
+  it('exit_code != 0: state.error 含 stderr tail', async () => {
+    mockSpawn.mockResolvedValueOnce({ exit_code: 1, stderr: 'oops' });
+    const state = { task: { id: 't4', payload: {} }, initiativeId: 'init-4', worktreePath: '/wt' };
+    const delta = await runPlannerNode(state);
+    expect(delta.error.node).toBe('planner');
+    expect(delta.error.message).toContain('exit=1');
+    expect(delta.error.message).toContain('oops');
+  });
+});

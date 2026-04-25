@@ -568,7 +568,55 @@ export async function prepInitiativeNode(state) {
     return { error: { node: 'prep', message: err.message } };
   }
 }
-export async function runPlannerNode(_state) { return {}; }
+export async function runPlannerNode(state, opts = {}) {
+  if (state.plannerOutput) return { plannerOutput: state.plannerOutput };
+  try {
+    const executor = opts.executor || spawn;
+    const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+    const skillContent = loadSkillContent('harness-planner');
+    const prompt = `你是 harness-planner agent。按下面 SKILL 指令工作。
+
+${skillContent}
+
+---
+
+## 本次任务参数
+**task_id**: ${state.task.id}
+**initiative_id**: ${state.initiativeId}
+**sprint_dir**: ${sprintDir}
+
+## 任务描述
+${state.task.description || state.task.title || ''}
+
+## 输出要求（v2）
+1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
+2. 在 stdout 末尾输出 task-plan.json
+3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
+
+    const result = await executor({
+      task: { ...state.task, task_type: 'harness_planner' },
+      prompt,
+      worktreePath: state.worktreePath,
+      env: {
+        CECELIA_TASK_TYPE: 'harness_planner',
+        HARNESS_NODE: 'planner',
+        HARNESS_SPRINT_DIR: sprintDir,
+        HARNESS_INITIATIVE_ID: state.initiativeId,
+        GITHUB_TOKEN: state.githubToken,
+      },
+    });
+    if (result.exit_code !== 0 || result.timed_out) {
+      const msg = result.timed_out
+        ? 'Docker timeout'
+        : `Docker exit=${result.exit_code}: ${(result.stderr || '').slice(-500)}`;
+      return { error: { node: 'planner', message: msg } };
+    }
+    const plannerOutput = parseDockerOutput(result.stdout);
+    return { plannerOutput };
+  } catch (err) {
+    return { error: { node: 'planner', message: err.message } };
+  }
+}
 export async function parsePrdNode(_state) { return {}; }
 export async function runGanLoopNode(_state) { return {}; }
 export async function dbUpsertNode(_state) { return {}; }
