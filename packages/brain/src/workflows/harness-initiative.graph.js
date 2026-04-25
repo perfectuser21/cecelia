@@ -617,7 +617,33 @@ ${state.task.description || state.task.title || ''}
     return { error: { node: 'planner', message: err.message } };
   }
 }
-export async function parsePrdNode(_state) { return {}; }
+export async function parsePrdNode(state) {
+  if (state.taskPlan && state.prdContent) {
+    return { taskPlan: state.taskPlan, prdContent: state.prdContent };
+  }
+  let taskPlan;
+  try {
+    taskPlan = parseTaskPlan(state.plannerOutput);
+  } catch (err) {
+    return { error: { node: 'parsePrd', message: `parseTaskPlan: ${err.message}` } };
+  }
+  if (taskPlan.initiative_id === 'pending' || !taskPlan.initiative_id) {
+    taskPlan.initiative_id = state.initiativeId;
+  }
+  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  let prdContent = state.plannerOutput;
+  try {
+    const fsPromises = await import('node:fs/promises');
+    const pathMod = (await import('node:path')).default;
+    prdContent = await fsPromises.readFile(
+      pathMod.join(state.worktreePath, sprintDir, 'sprint-prd.md'),
+      'utf8'
+    );
+  } catch (err) {
+    console.error(`[harness-initiative-graph] read sprint-prd.md failed (${err.message}), falling back to planner stdout`);
+  }
+  return { taskPlan, prdContent };
+}
 export async function runGanLoopNode(_state) { return {}; }
 export async function dbUpsertNode(_state) { return {}; }
 

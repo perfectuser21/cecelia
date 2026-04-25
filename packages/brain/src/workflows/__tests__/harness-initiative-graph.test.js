@@ -159,3 +159,39 @@ describe('runPlannerNode', () => {
     expect(delta.error.message).toContain('oops');
   });
 });
+
+describe('parsePrdNode', () => {
+  beforeEach(() => {
+    mockParseTaskPlan.mockReset();
+    mockReadFile.mockReset();
+  });
+
+  it('happy: parseTaskPlan + 读 sprint-prd.md → state.taskPlan + prdContent', async () => {
+    mockParseTaskPlan.mockReturnValueOnce({ initiative_id: 'pending', tasks: [] });
+    mockReadFile.mockResolvedValueOnce('# PRD content');
+    const state = {
+      task: { id: 't1', payload: { sprint_dir: 'sprints' } },
+      initiativeId: 'init-1', worktreePath: '/wt', plannerOutput: 'OUT',
+    };
+    const delta = await parsePrdNode(state);
+    expect(mockParseTaskPlan).toHaveBeenCalledWith('OUT');
+    expect(delta.taskPlan.initiative_id).toBe('init-1');
+    expect(delta.prdContent).toBe('# PRD content');
+  });
+
+  it('idempotent: state.taskPlan + prdContent 已存在 → 不调 parseTaskPlan', async () => {
+    const state = { taskPlan: { initiative_id: 'x' }, prdContent: 'cached', plannerOutput: 'OUT', task: { id: 't2', payload: {} } };
+    const delta = await parsePrdNode(state);
+    expect(mockParseTaskPlan).not.toHaveBeenCalled();
+    expect(delta.taskPlan.initiative_id).toBe('x');
+    expect(delta.prdContent).toBe('cached');
+  });
+
+  it('error: parseTaskPlan 抛 → state.error.node="parsePrd"', async () => {
+    mockParseTaskPlan.mockImplementationOnce(() => { throw new Error('bad json'); });
+    const state = { task: { id: 't3', payload: {} }, initiativeId: 'init-3', worktreePath: '/wt', plannerOutput: 'OUT' };
+    const delta = await parsePrdNode(state);
+    expect(delta.error.node).toBe('parsePrd');
+    expect(delta.error.message).toContain('bad json');
+  });
+});
