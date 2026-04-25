@@ -111,14 +111,17 @@ export async function compileContentPipelineApp({ overrides, checkpointer } = {}
 }
 ```
 
-**caller 影响**：
-- `content-pipeline-runner.js`：已显式传 checkpointer（routes 注入），改成 await 即可
-- `__tests__/content-pipeline-graph-docker.test.js`：测试可能直调 `compileContentPipelineApp` — 改 await，并注入 mock checkpointer 防真连 pg
-- `routes/content-pipeline.js`：调 runner 不直调 compile
+**caller 影响**（grep 验证完整清单）：
+- `content-pipeline-runner.js` L115：已显式传 checkpointer（routes 注入），改成 await 即可
+- `__tests__/content-pipeline-graph.test.js` **7 处直调** `compileContentPipelineApp({...})`（L33/40/56/81/104/140/150 附近，全部不传 checkpointer）：必须 `await` + 顶部 `vi.mock('../workflows/orchestrator/pg-checkpointer.js')` 防真连 pg
+- `__tests__/content-pipeline-graph-docker.test.js` L585：1 处直调 + 同款改 await + mock
+- `routes/content-pipeline.js`：调 runner 不直调 compile，无需改
 
-签名 breaking change（async）— 必须把 caller 全 grep 一遍 + 改 await。
+签名 breaking change（async）— 必须 grep 全 caller + 改 await + 测试加 mock pg-checkpointer。
 
-### 3.3 加固 C — stateHasError 嵌入 conditional edges
+### 3.3 加固 C — stateHasError 短路（**仅非 verdict 节点**）
+
+**重要修订**：copy_review / image_review 是 verdict 节点，**不**嵌 stateHasError。原因：docker 偶发 flake 让 exit_code != 0，节点会同时填 `state.error` 和保留 verdict。原 round>=3 兜底就是为吸收这种"软失败"设计 —— 强行 error → END 会让 pipeline 在 R3 任一次 docker flake 死透，**比当前更脆**。
 
 **位置**：`buildContentPipelineGraph` 函数（L262）。
 
@@ -133,35 +136,36 @@ export async function compileContentPipelineApp({ overrides, checkpointer } = {}
 .addEdge('export', END);
 ```
 
-**改造**：所有 plain `addEdge('X', 'Y')` 改成 `addConditionalEdges('X', stateHasError, { error: END, ok: 'Y' })`。verdict edges 嵌套 stateHasError 优先：
+**改造原则**：
+- **非 verdict 节点**（research / copywrite / generate）的 plain `addEdge('X','Y')` 改成 `addConditionalEdges('X', stateHasError, { error: END, ok: 'Y' })` —— 这些节点真硬错（state.error）应立即 END，避免下游节点拿空数据继续 spawn
+- **verdict 节点**（copy_review / image_review）保留原 verdict 路由**完全不动** —— round>=3 兜底语义保持
+- **export → END**：原本就是终点，无需改
+
+**实现**：
 
 ```js
 function stateHasError(state) { return state.error ? 'error' : 'ok'; }
 
-// 嵌套：error 优先 → END / 否则走 verdict 路由
-function copyReviewRoute(state) {
-  if (state.error) return 'END';
-  // ... 原 verdict 路由（含 round>=3 兜底）
-}
-function imageReviewRoute(state) {
-  if (state.error) return 'END';
-  // ... 原 verdict 路由
-}
-
 graph
+  // 非 verdict 节点：error 短路
   .addEdge(START, 'research')
   .addConditionalEdges('research', stateHasError, { error: END, ok: 'copywrite' })
   .addConditionalEdges('copywrite', stateHasError, { error: END, ok: 'copy_review' })
-  .addConditionalEdges('copy_review', copyReviewRoute, { END, generate, copywrite })
+
+  // verdict 节点 copy_review：原 verdict 路由不动（含 round>=3 兜底）
+  .addConditionalEdges('copy_review', copyReviewVerdictRoute, { generate: 'generate', copywrite: 'copywrite' })
+
+  // 非 verdict 节点 generate：error 短路
   .addConditionalEdges('generate', stateHasError, { error: END, ok: 'image_review' })
-  .addConditionalEdges('image_review', imageReviewRoute, { END, export, generate })
-  .addConditionalEdges('export', stateHasError, { error: END, ok: END });  // export 后总走 END
+
+  // verdict 节点 image_review：原 verdict 路由不动（含 round>=3 兜底）
+  .addConditionalEdges('image_review', imageReviewVerdictRoute, { export: 'export', generate: 'generate' })
+
+  // 终点
+  .addEdge('export', END);
 ```
 
-**注意**：
-- `copyReviewRoute` / `imageReviewRoute` 嵌套 stateHasError 检查在原 verdict 路由前
-- 保留原 round>=3 兜底逻辑（硬规则 fail 仍回 copywrite）
-- export 节点后无论如何都走 END（保留原行为，但加 error 短路对称性）
+**verdict 节点 docker 真硬错的兜底**：当前 verdict 节点失败时仍写 `state.copy_review_verdict='REVISION'`（默认 placeholder）让 pipeline 回 copywrite 重试。round>=3 后硬规则 fail 才回 copywrite + recursion_limit 兜底挂掉。这一行为**保留**。verdict 节点的 docker 抖动 self-healing 由 round 机制承担，不是本 PR 范围。
 
 ### 3.4 测试
 
@@ -180,7 +184,10 @@ vi.mock('../orchestrator/pg-checkpointer.js', () => ({
 }));
 ```
 
-**现有 `content-pipeline-graph-docker.test.js` 不破坏** — 已有测试 import `compileContentPipelineApp`，因签名改 async 需要把直调 `compileContentPipelineApp(...)` 的地方改成 `await compileContentPipelineApp(...)`。
+**现有 2 个 graph test 不破坏** — `content-pipeline-graph.test.js`（7 处直调）+ `content-pipeline-graph-docker.test.js`（1 处直调）都因 `compileContentPipelineApp` 改 async 需要：
+1. 全部直调改 `await compileContentPipelineApp(...)`
+2. 测试顶部加 `vi.mock('../workflows/orchestrator/pg-checkpointer.js')`（不传 checkpointer 时 mock 兜底，避免真连 pg）
+3. 测试函数改 `async` + `it('...', async () => {...})`
 
 ---
 
@@ -219,10 +226,11 @@ vi.mock('../orchestrator/pg-checkpointer.js', () => ({
 
 **单 PR**（scope 缩窄后 4-6h work）：
 
-- `packages/brain/src/workflows/content-pipeline.graph.js`：~75 行 net change（runDockerNode 加门 +20 / compileApp 改 async +5 / edges 改 conditional +30 / 注释 +20）
+- `packages/brain/src/workflows/content-pipeline.graph.js`：~60 行 net change（runDockerNode 加门 +20 / compileApp 改 async +5 / 4 个非 verdict 节点 edges 改 conditional +25 / 注释 +10）
 - `packages/brain/src/__tests__/content-pipeline-graph-resume.test.js`：新建 ~150 行 / 3 测
-- `packages/brain/src/__tests__/content-pipeline-graph-docker.test.js`：改 1 处 await（~3 行）
+- `packages/brain/src/__tests__/content-pipeline-graph.test.js`：7 处 await + 顶部 mock pg-checkpointer（~30 行净改动）
+- `packages/brain/src/__tests__/content-pipeline-graph-docker.test.js`：1 处 await + mock pg（~5 行）
 - `packages/brain/src/workflows/content-pipeline-runner.js`：改 1 处 await（~3 行）
 - `docs/learnings/cp-0425203339-c8b-content-pipeline-graph.md`：新建 Learning
 
-预估：~260 行 added，3-5 行 deleted。
+预估：~270 行 added，10-15 行 deleted。
