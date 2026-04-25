@@ -46,7 +46,10 @@ import { getRecoveryStatus } from './alertness/healing.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { checkExpiredQuarantineTasks } from './quarantine.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
-import { triggerDeptHeartbeats } from './dept-heartbeat.js';
+import * as deptHeartbeatPlugin from './dept-heartbeat.js';
+import * as krProgressSyncPlugin from './kr-progress-sync-plugin.js';
+import * as heartbeatPlugin from './heartbeat-plugin.js';
+import * as goalEvalPlugin from './goal-eval-plugin.js';
 import {
   triggerDailyReview,
   triggerContractScan,
@@ -160,7 +163,7 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 // PIPELINE_PATROL_INTERVAL_MS / PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS
 // 已收口到对应 plugin 内部（D1.7c）— tick-runner.js 不再读这些常量
 const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10);
-const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10);
+// GOAL_EVAL_INTERVAL_MS 已收口到 goal-eval-plugin.js（D1.7c-plugin1）— tick-runner.js 不再读
 
 /** Check if a task is stale (in_progress for too long) — 与 tick.js 同名同义 */
 function isStale(task) {
@@ -578,36 +581,14 @@ async function executeTick() {
   }
 
   // [感知] KR 进度验证：每小时一次，从外部数据源采集真实指标
-  // 替代旧的 kr-progress.js（数 initiative 完成率），改为 kr-verifier.js（查实际指标）
-  const krProgressElapsed = Date.now() - tickState.lastKrProgressSyncTime;
-  if (krProgressElapsed >= CLEANUP_INTERVAL_MS) {
-    tickState.lastKrProgressSyncTime = Date.now();
-    try {
-      // 优先使用 kr-verifier（基于外部数据源，不可伪造）
-      const { runAllVerifiers } = await import('./kr-verifier.js');
-      const verifierResult = await runAllVerifiers();
-      if (verifierResult.updated > 0) {
-        tickLog(`[TICK] KR 指标验证: ${verifierResult.updated} 个 KR 已更新（基于数据源）`);
-        actionsTaken.push({
-          action: 'kr_verifier_sync',
-          updated_count: verifierResult.updated,
-          errors: verifierResult.errors,
-        });
-      }
-
-      // 对没有 verifier 的 KR，仍用旧方式（数 initiative 完成率）作为 fallback
-      const { syncAllKrProgress } = await import('./kr-progress.js');
-      const krResult = await syncAllKrProgress(pool);
-      if (krResult.updated > 0) {
-        tickLog(`[TICK] KR 进度同步（fallback）: ${krResult.updated} 个 KR 已更新`);
-        actionsTaken.push({
-          action: 'kr_progress_sync',
-          updated_count: krResult.updated,
-        });
-      }
-    } catch (krErr) {
-      console.error('[tick] KR verifier/progress sync failed (non-fatal):', krErr.message);
+  // D1.7c-plugin1: 抽到 kr-progress-sync-plugin.js
+  try {
+    const krRes = await krProgressSyncPlugin.tick(now, tickState);
+    if (krRes && krRes.actions && krRes.actions.length > 0) {
+      actionsTaken.push(...krRes.actions);
     }
+  } catch (krPluginErr) {
+    console.error('[tick] kr-progress-sync plugin failed (non-fatal):', krPluginErr.message);
   }
 
   // [感知] KR 可信度日巡检：每 24h 一次，记录 warn/critical 状态供运维审计（D1.7c plugin）
@@ -855,48 +836,25 @@ async function executeTick() {
   }
 
   // 0.5.5. Goal Outer Loop 评估：每 24 小时评估一次所有活跃 KR 整体进展
-  const goalEvalElapsed = Date.now() - tickState.lastGoalEvalTime;
-  if (goalEvalElapsed >= GOAL_EVAL_INTERVAL_MS) {
-    tickState.lastGoalEvalTime = Date.now();
-    try {
-      const { evaluateGoalOuterLoop } = await import('./goal-evaluator.js');
-      const goalResults = await evaluateGoalOuterLoop(GOAL_EVAL_INTERVAL_MS);
-      if (goalResults.length > 0) {
-        const stalledCount = goalResults.filter(r => r.verdict === 'stalled').length;
-        const attentionCount = goalResults.filter(r => r.verdict === 'needs_attention').length;
-        tickLog(`[tick] Goal outer loop: ${goalResults.length} goals evaluated, ${stalledCount} stalled, ${attentionCount} needs_attention`);
-        if (stalledCount > 0) {
-          actionsTaken.push({
-            action: 'goal_outer_loop',
-            evaluated: goalResults.length,
-            stalled: stalledCount,
-            needs_attention: attentionCount,
-          });
-        }
-      }
-    } catch (goalEvalErr) {
-      console.error('[tick] Goal outer loop evaluation failed (non-fatal):', goalEvalErr.message);
+  // D1.7c-plugin1: 抽到 goal-eval-plugin.js
+  try {
+    const goalRes = await goalEvalPlugin.tick(now, tickState);
+    if (goalRes && goalRes.actions && goalRes.actions.length > 0) {
+      actionsTaken.push(...goalRes.actions);
     }
+  } catch (goalPluginErr) {
+    console.error('[tick] goal-eval plugin failed (non-fatal):', goalPluginErr.message);
   }
 
   // 0.13. HEARTBEAT.md 灵活巡检：每 30 分钟一次，L1 丘脑执行
-  const heartbeatElapsed = Date.now() - tickState.lastHeartbeatTime;
-  const { HEARTBEAT_INTERVAL_MS: HB_INTERVAL } = await import('./heartbeat-inspector.js');
-  if (heartbeatElapsed >= HB_INTERVAL) {
-    try {
-      const { runHeartbeatInspection } = await import('./heartbeat-inspector.js');
-      const hbResult = await runHeartbeatInspection(pool);
-      tickState.lastHeartbeatTime = Date.now(); // 仅成功后更新，失败时下次 tick 立即重试
-      if (!hbResult.skipped && hbResult.actions_count > 0) {
-        tickLog(`[TICK] Heartbeat 巡检: ${hbResult.actions_count} 个行动`);
-        actionsTaken.push({
-          action: 'heartbeat_inspection',
-          actions_count: hbResult.actions_count,
-        });
-      }
-    } catch (hbErr) {
-      console.error('[tick] Heartbeat inspection failed (non-fatal):', hbErr.message);
+  // D1.7c-plugin1: 抽到 heartbeat-plugin.js
+  try {
+    const hbRes = await heartbeatPlugin.tick(now, tickState);
+    if (hbRes && hbRes.actions && hbRes.actions.length > 0) {
+      actionsTaken.push(...hbRes.actions);
     }
+  } catch (hbPluginErr) {
+    console.error('[tick] heartbeat plugin failed (non-fatal):', hbPluginErr.message);
   }
 
   // 0.14. PR Shepherd：每次 tick 检查 open/ci_pending PR，自动合并或重排
@@ -1555,14 +1513,14 @@ async function executeTick() {
   recordOperation(true, 'tick');
 
   // 9. Trigger dept heartbeats (每轮 Tick 末尾，为活跃部门创建 heartbeat task)
-  // CONSCIOUSNESS_ENABLED=false 时跳过，避免 heartbeat 噪音干扰手动 pipeline 验证
+  // D1.7c-plugin1: 抽到 dept-heartbeat.js 的 tick(now, tickState) plugin 接口
+  //   - plugin 内部已守 isConsciousnessEnabled()，外层不再重复判断
+  //   - plugin 错误吞掉，保证 tick 主循环不被打断
   let deptHeartbeatResult = { triggered: 0, skipped: 0, results: [] };
-  if (isConsciousnessEnabled()) {
-    try {
-      deptHeartbeatResult = await triggerDeptHeartbeats(pool);
-    } catch (deptErr) {
-      console.error('[tick] dept heartbeat error:', deptErr.message);
-    }
+  try {
+    deptHeartbeatResult = await deptHeartbeatPlugin.tick(now, tickState, { pool });
+  } catch (deptPluginErr) {
+    console.error('[tick] dept-heartbeat plugin failed (non-fatal):', deptPluginErr.message);
   }
 
   // 结果变量声明在 MINIMAL_MODE 块外 —— return 语句在块外引用这些变量（line ~3224-3225）

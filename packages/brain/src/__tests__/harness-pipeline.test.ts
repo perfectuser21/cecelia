@@ -21,8 +21,13 @@ const serverSrc = fs.readFileSync(
   'utf8'
 );
 // D1.7b: executeTick body（含 triggerDeptHeartbeats 调用）移到 tick-runner.js
+// D1.7c-plugin1: 4 个 plugin 抽出 — dept-heartbeat 守护移入 dept-heartbeat.js plugin
 const tickSrc = fs.readFileSync(
   path.join(__dirname, '../tick-runner.js'),
+  'utf8'
+);
+const deptHeartbeatSrc = fs.readFileSync(
+  path.join(__dirname, '../dept-heartbeat.js'),
   'utf8'
 );
 const modelProfileSrc = fs.readFileSync(
@@ -113,11 +118,20 @@ describe('isConsciousnessEnabled() — 意识守护', () => {
     expect(region).toContain('isConsciousnessEnabled');
   });
 
-  it('tick-runner.js: triggerDeptHeartbeats 被 isConsciousnessEnabled() 门控', () => {
-    const callIdx = tickSrc.indexOf('triggerDeptHeartbeats(pool)');
+  it('dept-heartbeat.js plugin tick: triggerDeptHeartbeats 被 isConsciousnessEnabled() 门控', () => {
+    // D1.7c-plugin1: 守护从 tick-runner.js 内联代码搬到 dept-heartbeat.js 的 plugin tick 内部。
+    // tick-runner.js 现在只调 deptHeartbeatPlugin.tick(...)；plugin 内部先 await import
+    // consciousness-guard.js 的 isConsciousnessEnabled，false 时直接返回 SKIPPED_RESULT，
+    // 不会走到 triggerDeptHeartbeats(pool)。
+    // 找 plugin tick 内部的 call site（不是函数定义）
+    const callIdx = deptHeartbeatSrc.indexOf('return await triggerDeptHeartbeats(pool)');
     expect(callIdx).toBeGreaterThan(0);
-    const region = tickSrc.slice(callIdx - 400, callIdx + 100);
+    const region = deptHeartbeatSrc.slice(callIdx - 600, callIdx + 100);
     expect(region).toContain('isConsciousnessEnabled');
+
+    // tick-runner.js 必须通过 plugin 接口调用，禁止直接调旧 triggerDeptHeartbeats
+    expect(tickSrc).toContain('deptHeartbeatPlugin.tick');
+    expect(tickSrc).not.toMatch(/=\s*await\s+triggerDeptHeartbeats\s*\(/);
   });
 });
 
