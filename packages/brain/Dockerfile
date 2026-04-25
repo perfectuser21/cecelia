@@ -19,6 +19,14 @@ FROM node:20-alpine
 RUN apk add --no-cache curl bash procps tini docker-cli git openssh-client ca-certificates \
  && adduser -D -u 1001 cecelia
 
+# Install gh CLI for shepherd.js (gh pr view/merge) and harness-watcher.js (gh run list).
+# Use release tarball (not apk's github-cli, which lives in community repo and is less stable).
+RUN GH_VERSION=2.45.0 \
+ && wget -qO- https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz \
+    | tar -xz -C /tmp \
+ && mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh /usr/local/bin/gh \
+ && rm -rf /tmp/gh_${GH_VERSION}_linux_amd64
+
 WORKDIR /app
 
 # npm workspaces hoist：deps 在根 node_modules，packages/brain/node_modules 有少量软链
