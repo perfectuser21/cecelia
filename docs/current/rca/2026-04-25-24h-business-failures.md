@@ -106,3 +106,34 @@
 3. ⏳ KR5 description 追加稳定性指标（见 §4）
 4. ⏳ 回写本任务 `ffe743c9` 状态 = completed，result.pr_url 指向本 PR
 5. ⏳ DB 清理 5 条占位 KR（题面"Test/LP Test/KR for project comparison/KR product domain/Active KR"）—— **建议另开任务**，本任务不直接动 DB
+
+## 6. 补充 — 簇 E：dispatcher backpressure 白名单漏 `dev`（2026-04-25 22:30 追加）
+
+**触发**：调度卡顿 RCA 任务 `c143ddcf` 接力本 PR 时复盘发现，本 PR §3 提到的"已规划"队列任务（`4ab9a9e8` 回调三联修 / `3f32212a` timeout 动态化 / `9674803d` initiative-lock 收紧 / 还有本任务自身 dedup 集 `045bbdfd`）—— 全部仍 `status='queued'`，从未被 dispatcher 拾起。
+
+**症状**：30+ 任务积压在 `queued`，其中至少 6 条 P0 `task_type='dev'` 的 Brain 修复任务从未被分配执行。
+
+**代码现场**：
+- `packages/brain/src/slot-allocator.js:60-69` `BACKPRESSURE_BYPASS_TASK_TYPES` 只列了 8 个 `harness_*` 类型：
+
+  ```js
+  const BACKPRESSURE_BYPASS_TASK_TYPES = [
+    'harness_initiative', 'harness_task', 'harness_planner',
+    'harness_contract_propose', 'harness_contract_review',
+    'harness_fix', 'harness_ci_watch', 'harness_deploy_watch',
+  ];
+  ```
+
+- `packages/brain/src/slot-allocator.js:77-81` `shouldBypassBackpressure()` 必须同时满足 `priority='P0'` AND `task_type ∈ 白名单` —— **`'dev'` 不在白名单**。
+- `packages/brain/src/dispatcher.js:164-233` 当 Pool C 槽位耗尽时，只有命中 bypass 的任务能驱逐 / 抢占；其他任务（包括 P0 `dev`）一律 deny。
+
+**根因**：commit `bad8ce317 fix(brain): P0 harness_task 跳过 backpressure` 只把 `harness_*` 类型加进白名单，**漏掉了 `task_type='dev'`** —— 而 Brain 自修复 PR 大部分恰好是 `dev` 类型。结果是：内容 pipeline 88 条 P1 `harness_task` / `harness_initiative` 把 Pool C 占满 → P0 `dev` 修复任务（含修复 dispatcher 自身的 `4ab9a9e8`）被无限期 deny → 积压恶性循环。
+
+**修复方向（建议另开 P0 任务）**：
+1. `BACKPRESSURE_BYPASS_TASK_TYPES` 加入 `'dev'`（最小变更，立即解锁所有 P0 dev 修复）。
+2. 单测：覆盖 P0 `dev` 在 Pool C 满时仍能 bypass 的路径（`tests/unit/slot-allocator.test.js`）。
+3. 长期：bypass 名单不应是硬编码白名单，应改成"P0 + 不属于积压源类型（即非 content-pipeline 那两类）"的语义化判断。
+
+**为什么本 PR 不直接修代码**：本 PR 范围是 RCA 文档，代码修改需独立 PR + DoD + CI。当前任务 `c143ddcf` 是 dedup 集副本（canonical 是 `4ab9a9e8`），不应在本任务里挟带代码改动，避免冲淡 dedup 边界。
+
+**与本 PR §3 矩阵的关系**：本节是 §3 矩阵之外**新发现的元根因（meta-root-cause）**——即"为什么 §3 列出的所有已规划修复都没生效" = 因为它们自己就被这个 bug 卡住了。修簇 E 是解锁簇 A/B/C/D 全部修复的前提。
