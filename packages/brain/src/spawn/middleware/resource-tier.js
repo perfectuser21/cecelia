@@ -11,16 +11,19 @@
 
 /**
  * 资源档位配置
- *   light  : 512 MB / 1 core   — planner / report / 短链 LLM 调用
- *   normal : 1   GB / 1 core   — propose / review / eval / fix
- *   heavy  : 1.5 GB / 2 cores  — generate / dev（写代码 + git/CI）
- *   pipeline-heavy : 2 GB / 1 core — content pipeline 峰值 1100 MB + 2× 冗余
+ *   light  : 512 MB / 1 core   / 30 min  — planner / report / 短链 LLM 调用
+ *   normal : 1   GB / 1 core   / 90 min  — propose / review / eval / fix
+ *   heavy  : 1.5 GB / 2 cores  / 120 min — generate / dev（写代码 + git/CI）
+ *   pipeline-heavy : 2 GB / 1 core / 180 min — content pipeline 峰值 1100 MB + 2× 冗余
+ *
+ * timeoutMs 用于 docker-executor SIGKILL 兜底，per-tier 让重任务跑久点不被秒杀。
+ * Harness v6 P1-E（brain task 3f32212a-adc2-436b-b828-51820a2379e6）。
  */
 export const RESOURCE_TIERS = {
-  light: { memoryMB: 512, cpuCores: 1 },
-  normal: { memoryMB: 1024, cpuCores: 1 },
-  heavy: { memoryMB: 1536, cpuCores: 2 },
-  'pipeline-heavy': { memoryMB: 2048, cpuCores: 1 },
+  light:            { memoryMB: 512,  cpuCores: 1, timeoutMs: 30  * 60 * 1000 },
+  normal:           { memoryMB: 1024, cpuCores: 1, timeoutMs: 90  * 60 * 1000 },
+  heavy:            { memoryMB: 1536, cpuCores: 2, timeoutMs: 120 * 60 * 1000 },
+  'pipeline-heavy': { memoryMB: 2048, cpuCores: 1, timeoutMs: 180 * 60 * 1000 },
 };
 
 export const TASK_TYPE_TIER = {

@@ -1,36 +1,35 @@
-# PRD: brain-deploy.sh 幂等检查
+# PRD: Docker Executor Timeout 默认 90min + per-tier
 
-**日期**：2026-04-24
-**分支**：cp-0424122436-brain-deploy-idempotent-check
-**Brain 任务**：27814ab1-8e25-4f38-94cc-66c6b9ff1662
+**日期**：2026-04-25
+**分支**：cp-0425185125-docker-timeout-tier-aware
+**Brain 任务**：3f32212a-adc2-436b-b828-51820a2379e6
 
-## 问题
+## 背景
 
-scripts/brain-deploy.sh 无条件 `docker compose up -d`，即使 image SHA 未变也 recreate 容器，中断 Brain 长跑 Initiative（SIGTERM）。每 3 小时一次，P0。
-
-触发路径：/dev cleanup 合并 Brain PR 后自动跑 brain-deploy.sh，`docker compose up -d` 无视 image SHA 未变，触发 recreate，长跑 Initiative 被 SIGTERM 中断。
+`packages/brain/src/docker-executor.js:36` `DEFAULT_TIMEOUT_MS = 900000`（15min）。
+Generator 容器跑大改动正常需要 1-2 小时（多文件 + GAN 多轮 + CI 等待），第一次 Gen2 就被 SIGKILL。
+临时改 `.env.docker` 不持久；且不分 tier，light 任务也等 90min 浪费资源、heavy 任务还是被秒杀。
 
 ## 方案
 
-在 `[7/8]` 块内、`docker compose up -d` 前加 image SHA 比对：
-
-- `docker inspect cecelia-node-brain --format '{{.Image}}'` 取当前容器 image ID
-- `docker inspect cecelia-brain:${VERSION} --format '{{.Id}}'` 取目标 tag image ID
-- 两者相同 → `DEPLOY_SUCCESS=true; exit 0` 跳过 recreate
-
-## 做
-
-1. scripts/brain-deploy.sh 在 `[7/8] Starting container...` 与 `if [[ "$DRY_RUN" == true ]]` 之间插入 7 行幂等检查
-2. 写 Learning 文档 `docs/learnings/cp-0424122436-brain-deploy-idempotent-check.md`
+- 改 `packages/brain/src/docker-executor.js` `DEFAULT_TIMEOUT_MS = 5400000`（90min），env override 仍生效
+- `packages/brain/src/spawn/middleware/resource-tier.js` `RESOURCE_TIERS` 每个 tier 加 `timeoutMs`：
+  - light: 30 min
+  - normal: 90 min
+  - heavy: 120 min
+  - pipeline-heavy: 180 min
+- `executeInDocker` 优先级：`opts.timeoutMs > tier.timeoutMs > DEFAULT_TIMEOUT_MS`
+- 新增 `packages/brain/src/__tests__/docker-executor-timeout.test.js`（mock runDocker 验证优先级）
+- 既有 `resource-tier.test.js` 同步加 `timeoutMs` 字段断言
 
 ## 不做
 
-- 不改 launchd 模式代码块（launchctl kickstart -k 本身就是重启，不在本次修复范围）
-- 不拆 `[7/8]` 块里后续的健康检查 / 步骤 8/9/10（保持原有 launch 路径不变，同 SHA 时直接 `exit 0`，host 脚本自更新下次真版本变更再补）
+- 不改 docker-run.js（仍从 opts.timeoutMs 取值，保持向后兼容）
+- 不动 buildDockerArgs（memory/cpu 字段保持不变）
 
 ## 成功标准
 
-- scripts/brain-deploy.sh 包含 `docker inspect cecelia-node-brain --format '{{.Image}}'`
-- 包含 SHA 比较分支 `CURRENT_IMG == TARGET_IMG` 并 `exit 0`
-- launchd 模式代码块未修改
-- Learning 文档存在
+- [ARTIFACT] DEFAULT_TIMEOUT_MS 默认值 5400000
+- [ARTIFACT] RESOURCE_TIERS 4 个 tier 都含 timeoutMs 字段
+- [BEHAVIOR] tier=normal 任务用 90min timeout（mock test 验证）
+- [BEHAVIOR] tier=pipeline-heavy 任务用 180min timeout（mock test 验证）

@@ -33,7 +33,9 @@ import { recordBilling } from './spawn/middleware/billing.js';
 import { createSpawnLogger } from './spawn/middleware/logging.js';
 
 const DEFAULT_IMAGE = process.env.CECELIA_RUNNER_IMAGE || 'cecelia/runner:latest';
-const DEFAULT_TIMEOUT_MS = parseInt(process.env.CECELIA_DOCKER_TIMEOUT_MS || '900000', 10); // 15 min
+// Harness v6 P1-E：默认 90min（旧值 15min 让 Generator 大改动 SIGKILL）。
+// per-tier timeoutMs (resource-tier.js) 比此 fallback 优先；env override 仍生效。
+const DEFAULT_TIMEOUT_MS = parseInt(process.env.CECELIA_DOCKER_TIMEOUT_MS || '5400000', 10); // 90 min
 const DEFAULT_PROMPT_DIR = process.env.CECELIA_PROMPT_DIR || '/tmp/cecelia-prompts';
 // HOST_PROMPT_DIR：Brain 在容器里运行时，prompt 文件是写到 Brain 容器内 DEFAULT_PROMPT_DIR
 // （通常 tmpfs），但 docker-executor 给子容器构造 mount 源路径由**宿主 docker daemon 解析**，
@@ -327,7 +329,10 @@ export async function executeInDocker(opts) {
 
   const taskId = opts.task.id;
   const taskType = opts.task.task_type || 'dev';
-  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+  const tier = resolveResourceTier(taskType);
+  // Harness v6 P1-E：timeoutMs 优先级 opts.timeoutMs > tier.timeoutMs > DEFAULT_TIMEOUT_MS。
+  // tier.timeoutMs 让 light 任务 30min 够、heavy 任务 2h 够、pipeline-heavy 跑 3h 不被秒杀。
+  const timeoutMs = opts.timeoutMs || tier.timeoutMs || DEFAULT_TIMEOUT_MS;
 
   // v2 P2.5 外层 middleware 接线：logging 入口 + cost-cap 预算守卫。
   // cost-cap 若 throw CostCapExceededError 则拒绝 spawn（caller 应上层 catch）。
@@ -344,7 +349,6 @@ export async function executeInDocker(opts) {
   await resolveAccount(opts, { taskId });
 
   const { args, _envFinal, name, memoryMB, cpuCores, image, cidfile } = buildDockerArgs(opts);
-  const tier = resolveResourceTier(taskType);
 
   // --cidfile 要求文件不存在；之前残留的 cidfile 会让 docker run 立即失败
   if (cidfile && existsSync(cidfile)) {
@@ -355,7 +359,7 @@ export async function executeInDocker(opts) {
   const command = `docker ${args.join(' ')}`;
 
   console.log(
-    `[docker-executor] spawn task=${taskId} type=${taskType} tier=${tier.tier} mem=${memoryMB}m cpus=${cpuCores} image=${image} container=${name}`
+    `[docker-executor] spawn task=${taskId} type=${taskType} tier=${tier.tier} mem=${memoryMB}m cpus=${cpuCores} timeout=${timeoutMs}ms image=${image} container=${name}`
   );
   // DEBUG: harness_* 任务 spawn 时 dump full docker args（forensic 定位 skill 加载失败）
   if (String(taskType).startsWith('harness_')) {
