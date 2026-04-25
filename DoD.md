@@ -1,45 +1,31 @@
-task_id: 4ab9a9e8-8cc3-4427-8e78-2145082de5b8
-branch: cp-0425095613-harness-v6-phaseb-callback-4ab9a9e8
+contract_branch: (none — simplified mode, DoD embedded in dispatch prompt)
+workstream_index: 1
+task_id: a930d4dd-15d6-41f9-9cbf-f4bdc6d8a75f
+initiative_id: bb245cb4-f6c4-44d1-9f93-cecefb0054b3
+logical_task_id: ws1
 
-## 任务标题
+# 任务标题
 
-Harness v6 Phase B 容器回调链路三联修（writeDockerCallback + pr_url 解析 + harness_ci_watch 创建）
+新增 health 路由模块 (src/routes/health.js)
 
-## 任务描述
+# 任务描述
 
-Phase B 断链：Generator 容器跑完开 PR 后 Brain 毫无感知 → task 永远 queued → 下游 DAG 死锁。
-三联修：
-1. `docker-executor.js::writeDockerCallback` 用 `parseDockerOutput` + `extractField` 从 stdout 提取 `pr_url` / `verdict` 塞进 `_meta`
-2. `harness-task-dispatch.js` 容器跑完调 `writeDockerCallback` 写 `callback_queue`
-3. `harness-task-dispatch.js` 解析 `pr_url` 非空时 INSERT `harness_ci_watch` task
+创建 packages/brain/src/routes/health.js，导出一个 Express Router；在 '/' 上实现 GET handler，
+返回 JSON 对象且仅含三字段：status（固定字符串 'ok'）、uptime_seconds（进程启动以来的秒数）、
+version（取自 packages/brain/package.json 的 version 字段）。handler 不得访问数据库、tick 状态、
+外部服务。模块必须是纯函数式、可独立被测试文件 import。
 
-## DoD
+# DoD
 
-- [x] [ARTIFACT] docker-executor.js import parseDockerOutput / extractField
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/docker-executor.js','utf8');if(!/parseDockerOutput/.test(c))process.exit(1);if(!/extractField/.test(c))process.exit(1)"
+## ARTIFACT
+- 文件 packages/brain/src/routes/health.js 存在
+- 该文件默认导出或命名导出一个 Express Router 实例
 
-- [x] [ARTIFACT] docker-executor.js::writeDockerCallback 的 _meta 写 pr_url
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/docker-executor.js','utf8');if(!/pr_url:\s*prUrl/.test(c))process.exit(1)"
+## BEHAVIOR
+- 通过 supertest 或等价方式调用 Router 的 GET /，响应 body 仅含且恰好含 status/uptime_seconds/version 三键
+- 响应 status === 'ok'；uptime_seconds 为非负 number；version 等于 package.json.version
+- 不触发 db.js / pg pool 的任何 import-time 或请求期连接（可通过 jest/vitest mock 断言未被调用）
 
-- [x] [ARTIFACT] harness-task-dispatch.js import writeDockerCallback
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-task-dispatch.js','utf8');if(!/writeDockerCallback/.test(c))process.exit(1)"
+# 目标文件
 
-- [x] [ARTIFACT] harness-task-dispatch.js INSERT harness_ci_watch 语句存在
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-task-dispatch.js','utf8');if(!/harness_ci_watch/.test(c))process.exit(1)"
-
-- [x] [BEHAVIOR] writeDockerCallback 测试：mock stdout 含 pr_url JSON → _meta.pr_url 正确提取
-  Test: packages/brain/src/__tests__/docker-executor.test.js
-
-- [x] [BEHAVIOR] harness-task-dispatch 测试：容器 mock 返回 pr_url → pool.query 收到 INSERT harness_ci_watch
-  Test: packages/brain/src/__tests__/harness-task-dispatch.test.js
-
-- [x] [ARTIFACT] Learning 文档存在
-  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0425095613-harness-v6-phaseb-callback-4ab9a9e8.md')"
-
-## 目标文件
-
-- packages/brain/src/docker-executor.js
-- packages/brain/src/harness-task-dispatch.js
-- packages/brain/src/__tests__/docker-executor.test.js
-- packages/brain/src/__tests__/harness-task-dispatch.test.js
-- docs/learnings/cp-0425095613-harness-v6-phaseb-callback-4ab9a9e8.md
+- packages/brain/src/routes/health.js
