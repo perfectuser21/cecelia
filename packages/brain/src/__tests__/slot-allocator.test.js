@@ -1249,7 +1249,7 @@ describe('Backpressure', () => {
 // P0 Harness Backpressure Bypass — whitelist + getBackpressureState({task})
 // ============================================================
 describe('shouldBypassBackpressure: P0 harness whitelist', () => {
-  it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 8 harness types', async () => {
+  it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 9 types (8 harness + dev)', async () => {
     const { BACKPRESSURE_BYPASS_TASK_TYPES } = await import('../slot-allocator.js');
     expect(BACKPRESSURE_BYPASS_TASK_TYPES).toEqual([
       'harness_initiative',
@@ -1260,6 +1260,7 @@ describe('shouldBypassBackpressure: P0 harness whitelist', () => {
       'harness_fix',
       'harness_ci_watch',
       'harness_deploy_watch',
+      'dev',
     ]);
   });
 
@@ -1271,6 +1272,18 @@ describe('shouldBypassBackpressure: P0 harness whitelist', () => {
   it('P0 harness_initiative → true', async () => {
     const { shouldBypassBackpressure } = await import('../slot-allocator.js');
     expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'harness_initiative' })).toBe(true);
+  });
+
+  // RCA 2026-04-25 §6: Brain 自修复 PR 多为 dev 类型，必须能 bypass 才能解锁
+  // "修 dispatcher 的任务被 dispatcher 卡住" 死循环。
+  it('P0 dev → true (Brain 自修复 不被 P1 content-pipeline 拖累)', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'dev' })).toBe(true);
+  });
+
+  it('P1 dev → false (普通 dev 任务不享受 bypass)', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P1', task_type: 'dev' })).toBe(false);
   });
 
   it('P1 harness_task → false (priority 不匹配)', async () => {
@@ -1301,6 +1314,18 @@ describe('getBackpressureState: task bypass behavior', () => {
     expect(state.active).toBe(false);
     expect(state.override_burst_limit).toBeNull();
     expect(state.queue_depth).toBe(200);
+  });
+
+  // RCA §6 回归：P0 dev 在 queue 满时也必须能跳过 burst limit。
+  it('queue_depth=200 + P0 dev → active=false, override_burst_limit=null (Brain 自修复解锁)', async () => {
+    const { getBackpressureState } = await import('../slot-allocator.js');
+    const state = getBackpressureState({
+      queue_depth: 200,
+      task: { priority: 'P0', task_type: 'dev' },
+    });
+    expect(state.active).toBe(false);
+    expect(state.override_burst_limit).toBeNull();
+    expect(state.bypassed).toBe(true);
   });
 
   it('queue_depth=200 + P1 content-pipeline → active=true, override_burst_limit=3 (保持原行为)', async () => {

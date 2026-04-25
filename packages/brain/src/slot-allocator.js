@@ -53,10 +53,12 @@ const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动
 const MEMORY_PRESSURE_THRESHOLD_MB = 600;   // 系统可用内存低于此值时触发背压，防止 dev 任务叠加 vitest OOM
 
 // ============================================================
-// Backpressure Bypass Whitelist (P0 harness 优先派发)
+// Backpressure Bypass Whitelist (P0 harness / Brain 自修复 优先派发)
 // ============================================================
-// 8 个 harness_* 类型在 priority=P0 时跳过 backpressure burst limit，
-// 避免被 88 个 P1 content-pipeline 积压拖累（PRD: 1d904af8）。
+// 9 个类型在 priority=P0 时跳过 backpressure burst limit，
+// 避免被 P1 content-pipeline 积压拖累。
+// 'dev' 在列：Brain 自修复 PR 多为 dev 类型，若被卡住会形成"修 dispatcher 的
+// 任务被 dispatcher 卡住"的死循环（RCA: 2026-04-25-24h-business-failures §6）。
 const BACKPRESSURE_BYPASS_TASK_TYPES = [
   'harness_initiative',
   'harness_task',
@@ -66,6 +68,7 @@ const BACKPRESSURE_BYPASS_TASK_TYPES = [
   'harness_fix',
   'harness_ci_watch',
   'harness_deploy_watch',
+  'dev',
 ];
 
 /**
