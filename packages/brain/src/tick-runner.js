@@ -87,8 +87,10 @@ import {
 } from './evolution-scanner.js';
 import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
-import { runPipelinePatrol } from './pipeline-patrol.js';
-import { checkStuckPipelines } from './pipeline-watchdog.js';
+import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
+import * as pipelineWatchdogPlugin from './pipeline-watchdog-plugin.js';
+import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
+import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
@@ -155,9 +157,8 @@ const TICK_STATS_KEY = 'tick_execution_stats';
 const CONSCIOUSNESS_RELOAD_INTERVAL_MS = 2 * 60 * 1000;
 const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHECK_INTERVAL_MS || String(30 * 60 * 1000), 10);
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10);
-const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10);
-const PIPELINE_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_WATCHDOG_INTERVAL_MS || String(30 * 60 * 1000), 10);
-const CLEANUP_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_WORKER_INTERVAL_MS || String(10 * 60 * 1000), 10);
+// PIPELINE_PATROL_INTERVAL_MS / PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS
+// 已收口到对应 plugin 内部（D1.7c）— tick-runner.js 不再读这些常量
 const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10);
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10);
 
@@ -317,18 +318,10 @@ async function executeTick() {
     });
   }
 
-  // [感知] Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline
-  const pipelinePatrolElapsed = Date.now() - tickState.lastPipelinePatrolTime;
-  if (pipelinePatrolElapsed >= PIPELINE_PATROL_INTERVAL_MS) {
-    tickState.lastPipelinePatrolTime = Date.now();
-    runPipelinePatrol(pool).then(r => {
-      if (r.stuck > 0 || r.rescued > 0) {
-        tickLog(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
-      }
-    }).catch(err => {
-      console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
-    });
-  }
+  // [感知] Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline（D1.7c plugin）
+  pipelinePatrolPlugin.tick({ pool, tickState, tickLog }).catch(err => {
+    console.error('[tick] Pipeline patrol plugin failed (non-fatal):', err.message);
+  });
 
   // [Phase 2] Consciousness guard cache reload（每 2 分钟，容错 hook）
   // 防外部改 DB（UI/CLI 直接 UPDATE working_memory）未通过本进程 setter 时缓存失同步
@@ -340,40 +333,17 @@ async function executeTick() {
       .catch(e => console.warn('[tick] consciousness reload failed:', e.message));
   }
 
-  // [感知] Pipeline-level Watchdog：每 30 分钟检测 pipeline 整体是否卡死
+  // [感知] Pipeline-level Watchdog：每 30 分钟检测 pipeline 整体是否卡死（D1.7c plugin）
   // 与 pipeline-patrol 正交（patrol 看 stage 超时，watchdog 看 pipeline 整体 6h 无进展）
-  const pipelineWatchdogElapsed = Date.now() - tickState.lastPipelineWatchdogTime;
-  if (!MINIMAL_MODE && pipelineWatchdogElapsed >= PIPELINE_WATCHDOG_INTERVAL_MS) {
-    tickState.lastPipelineWatchdogTime = Date.now();
-    Promise.resolve().then(() => checkStuckPipelines(pool)).then(r => {
-      if (r.stuck > 0) {
-        tickLog(`[tick] Pipeline watchdog: scanned=${r.scanned} stuck=${r.stuck}`);
-      }
-    }).catch(err => {
-      console.warn('[tick] pipeline-watchdog failed (non-fatal):', err.message);
-    });
-  }
+  pipelineWatchdogPlugin.tick({ pool, tickState, tickLog, MINIMAL_MODE }).catch(err => {
+    console.warn('[tick] pipeline-watchdog plugin failed (non-fatal):', err.message);
+  });
 
-  // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本
+  // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本（D1.7c plugin）
   // 扫描白名单 worktree，若对应 PR 已 merged 超过 1h 且满足安全守卫则清理
-  const cleanupWorkerElapsed = Date.now() - tickState.lastCleanupWorkerTime;
-  if (!MINIMAL_MODE && cleanupWorkerElapsed >= CLEANUP_WORKER_INTERVAL_MS) {
-    tickState.lastCleanupWorkerTime = Date.now();
-    import('./cleanup-worker.js').then(({ runCleanupWorker }) => runCleanupWorker()).then(r => {
-      if (r?.stdout) {
-        const lines = r.stdout.split('\n').filter(Boolean);
-        const cleaned = lines.filter(l => l.includes('[cleanup] removed')).length;
-        if (cleaned > 0) {
-          tickLog(`[tick] cleanup-worker: cleaned=${cleaned} lines=${lines.length}`);
-        }
-      }
-      if (!r?.success && r?.error) {
-        console.warn('[tick] cleanup-worker failed (non-fatal):', r.error);
-      }
-    }).catch(err => {
-      console.warn('[tick] cleanup-worker threw (non-fatal):', err.message);
-    });
-  }
+  cleanupWorkerPlugin.tick({ tickState, tickLog, MINIMAL_MODE }).catch(err => {
+    console.warn('[tick] cleanup-worker plugin threw (non-fatal):', err.message);
+  });
 
   // [Phase 1] Orphan PR Worker：每 30 分钟扫孤儿 cp-* PR（open > 2h + 无 Brain task + CI 绿 → 合并）
   const orphanPrWorkerElapsed = Date.now() - tickState.lastOrphanPrWorkerTime;
@@ -640,27 +610,19 @@ async function executeTick() {
     }
   }
 
-  // [感知] KR 可信度日巡检：每 24h 一次，记录 warn/critical 状态供运维审计
-  const krHealthElapsed = Date.now() - tickState.lastKrHealthDailyTime;
-  if (krHealthElapsed >= CLEANUP_INTERVAL_MS * 24) {
-    tickState.lastKrHealthDailyTime = Date.now();
-    try {
-      const { getKrVerifierHealth } = await import('./kr-verifier.js');
-      const healthResult = await getKrVerifierHealth();
-      const { summary, verifiers: vList } = healthResult;
-      tickLog(`[TICK] KR 可信度日巡检: healthy=${summary.healthy} warn=${summary.warn} critical=${summary.critical}`);
-      const problematics = vList.filter(v => v.health !== 'healthy');
-      for (const v of problematics) {
-        console.warn(`[TICK] KR 可信度问题 [${v.health.toUpperCase()}] "${v.kr_title}": issues=${v.issues.join(',')}`);
-      }
+  // [感知] KR 可信度日巡检：每 24h 一次，记录 warn/critical 状态供运维审计（D1.7c plugin）
+  // 维持 await 语义：本段原 inline 是 await 调用，plugin.tick 同步阻塞才能 push actionsTaken
+  try {
+    const krHealthResult = await krHealthDailyPlugin.tick({ tickState, tickLog });
+    if (krHealthResult && krHealthResult.action === 'kr_health_check') {
       actionsTaken.push({
         action: 'kr_health_check',
-        summary,
-        issues_count: problematics.length,
+        summary: krHealthResult.summary,
+        issues_count: krHealthResult.issues_count,
       });
-    } catch (krHealthErr) {
-      console.error('[tick] KR health check failed (non-fatal):', krHealthErr.message);
     }
+  } catch (krHealthErr) {
+    console.error('[tick] KR health daily plugin failed (non-fatal):', krHealthErr.message);
   }
 
   // ═══════════════════════════════════════════════════════════════════
