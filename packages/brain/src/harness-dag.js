@@ -233,9 +233,17 @@ export function topologicalOrder(tasks) {
  * @param {string} p.initiativeTaskId   harness_initiative task 的 UUID（写入 payload.parent_task_id）
  * @param {object} p.taskPlan           parseTaskPlan 的返回值
  * @param {object} p.client             pg txn client（.query()）
+ * @param {string} [p.contractBranch]   approved contract 的 propose branch（写入每个
+ *                                       sub-task 的 payload.contract_branch；不传/null 则不写）
  * @returns {Promise<{idMap: Record<string,string>, insertedTaskIds: string[]}>}
  */
-export async function upsertTaskPlan({ initiativeId, initiativeTaskId, taskPlan, client }) {
+export async function upsertTaskPlan({
+  initiativeId,
+  initiativeTaskId,
+  taskPlan,
+  client,
+  contractBranch = null,
+}) {
   if (!client) throw new Error('upsertTaskPlan: client required');
   if (!initiativeTaskId) throw new Error('upsertTaskPlan: initiativeTaskId required');
   if (!taskPlan || !Array.isArray(taskPlan.tasks)) {
@@ -254,24 +262,30 @@ export async function upsertTaskPlan({ initiativeId, initiativeTaskId, taskPlan,
     // 而非背景 P2 任务，不应被 alertness pause_low_priority 自动 pause。
     // Initiative 本身通常是 P0，子任务继承即可（见 alertness/escalation.js
     // 的 pauseLowPriorityTasks 白名单，二者形成双层保护）。
+    //
+    // contract_branch（v6 P0-final）：approved contract 的 propose branch。
+    // harness-task-dispatch.js:67 用此字段注入 CONTRACT_BRANCH env，
+    // 缺失时 Generator 容器拿到空串 → ABORT（实证 bb245cb4/576f6cf4）。
+    // 仅当 contractBranch 非空时才写 payload，保持向后兼容（老调用方不传）。
+    const payload = {
+      logical_task_id: t.task_id,
+      initiative_id: initiativeId,
+      parent_task_id: initiativeTaskId,
+      complexity: t.complexity,
+      estimated_minutes: t.estimated_minutes,
+      files: t.files,
+      dod: t.dod,
+      depends_on_logical: t.depends_on || [],
+    };
+    if (contractBranch) {
+      payload.contract_branch = contractBranch;
+    }
+
     const taskInsert = await client.query(
       `INSERT INTO tasks (task_type, title, description, status, priority, payload)
        VALUES ('harness_task', $1, $2, 'queued', 'P0', $3::jsonb)
        RETURNING id`,
-      [
-        t.title,
-        t.scope,
-        JSON.stringify({
-          logical_task_id: t.task_id,
-          initiative_id: initiativeId,
-          parent_task_id: initiativeTaskId,
-          complexity: t.complexity,
-          estimated_minutes: t.estimated_minutes,
-          files: t.files,
-          dod: t.dod,
-          depends_on_logical: t.depends_on || [],
-        }),
-      ]
+      [t.title, t.scope, JSON.stringify(payload)]
     );
     const uuid = taskInsert.rows[0].id;
     idMap[t.task_id] = uuid;

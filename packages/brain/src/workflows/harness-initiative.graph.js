@@ -197,18 +197,20 @@ ${task.description || task.title || ''}
       initiativeTaskId: task.id,
       taskPlan,
       client,
+      contractBranch: ganResult.propose_branch || null,
     });
 
     // 建 initiative_contracts（approved 版，GAN 循环已产出 contract_content）
+    // branch 列（migration 246）= GAN propose_branch，Phase B 用此分支创 PR。
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
          initiative_id, version, status,
          prd_content, contract_content, review_rounds,
-         budget_cap_usd, timeout_sec, approved_at
+         budget_cap_usd, timeout_sec, branch, approved_at
        )
-       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, NOW())
+       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, NOW())
        RETURNING id`,
-      [initiativeId, plannerOutput, ganResult.contract_content, ganResult.rounds, budgetUsd, timeoutSec]
+      [initiativeId, plannerOutput, ganResult.contract_content, ganResult.rounds, budgetUsd, timeoutSec, ganResult.propose_branch || null]
     );
     const contractId = contractInsert.rows[0].id;
 
@@ -679,16 +681,17 @@ export async function dbUpsertNode(state, opts = {}) {
       initiativeTaskId: state.task.id,
       taskPlan: state.taskPlan,
       client,
+      contractBranch: state.ganResult.propose_branch || null,
     });
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
          initiative_id, version, status,
          prd_content, contract_content, review_rounds,
-         budget_cap_usd, timeout_sec, approved_at
+         budget_cap_usd, timeout_sec, branch, approved_at
        )
-       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, NOW())
+       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, NOW())
        RETURNING id`,
-      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec]
+      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec, state.ganResult.propose_branch || null]
     );
     const contractId = contractInsert.rows[0].id;
     const runInsert = await client.query(
