@@ -195,3 +195,35 @@ describe('parsePrdNode', () => {
     expect(delta.error.message).toContain('bad json');
   });
 });
+
+describe('runGanLoopNode', () => {
+  beforeEach(() => { mockRunGan.mockReset(); });
+
+  it('happy: 调 runGanContractGraph 写入 ganResult', async () => {
+    mockRunGan.mockResolvedValueOnce({ contract_content: 'C', rounds: 2 });
+    const state = {
+      task: { id: 't1', payload: { sprint_dir: 'sprints' } },
+      initiativeId: 'init-1', worktreePath: '/wt', githubToken: 'ghp', prdContent: 'PRD',
+    };
+    const delta = await runGanLoopNode(state);
+    expect(mockRunGan).toHaveBeenCalledTimes(1);
+    expect(mockRunGan.mock.calls[0][0].taskId).toBe('t1');
+    expect(mockRunGan.mock.calls[0][0].prdContent).toBe('PRD');
+    expect(delta.ganResult).toEqual({ contract_content: 'C', rounds: 2 });
+  });
+
+  it('idempotent: state.ganResult 已存在 → 不调 runGanContractGraph', async () => {
+    const state = { ganResult: { contract_content: 'cached', rounds: 1 }, task: { id: 't2', payload: {} } };
+    const delta = await runGanLoopNode(state);
+    expect(mockRunGan).not.toHaveBeenCalled();
+    expect(delta.ganResult.contract_content).toBe('cached');
+  });
+
+  it('error: runGanContractGraph 抛 → state.error.node="gan"', async () => {
+    mockRunGan.mockRejectedValueOnce(new Error('gan rejected'));
+    const state = { task: { id: 't3', payload: {} }, initiativeId: 'i', worktreePath: '/wt', githubToken: 'g', prdContent: 'P' };
+    const delta = await runGanLoopNode(state);
+    expect(delta.error.node).toBe('gan');
+    expect(delta.error.message).toBe('gan rejected');
+  });
+});

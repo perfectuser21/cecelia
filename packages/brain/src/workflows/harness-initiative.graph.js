@@ -644,7 +644,28 @@ export async function parsePrdNode(state) {
   }
   return { taskPlan, prdContent };
 }
-export async function runGanLoopNode(_state) { return {}; }
+export async function runGanLoopNode(state, opts = {}) {
+  if (state.ganResult) return { ganResult: state.ganResult };
+  try {
+    const executor = opts.executor || spawn;
+    const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+    const budgetUsd = state.task?.payload?.budget_usd || 10;
+    const ganResult = await runGanContractGraph({
+      taskId: state.task.id,
+      initiativeId: state.initiativeId,
+      sprintDir,
+      prdContent: state.prdContent,
+      executor,
+      worktreePath: state.worktreePath,
+      githubToken: state.githubToken,
+      budgetCapUsd: budgetUsd,
+      checkpointer: opts.checkpointer,
+    });
+    return { ganResult };
+  } catch (err) {
+    return { error: { node: 'gan', message: err.message } };
+  }
+}
 export async function dbUpsertNode(_state) { return {}; }
 
 function stateHasError(state) { return state.error ? 'error' : 'ok'; }
