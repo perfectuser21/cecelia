@@ -92,6 +92,9 @@ import {
   autoFailTimedOutTasks,
   getRampedDispatchMax,
 } from './tick-helpers.js';
+// Phase D Part 1.7a: 14 个 lastXxxTime + 5 个 loop 控制态收口到 tick-state.js
+// resetTickStateForTests 直接从 tick-state.js 导入用于测试，不再 re-export
+import { tickState } from './tick-state.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -151,27 +154,11 @@ const TICK_ACTIONS_TODAY_KEY = 'tick_actions_today';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
 const TICK_STATS_KEY = 'tick_execution_stats';
 
-// Loop state (in-memory)
-let _loopTimer = null;
-let _tickRunning = false;
-let _tickLockTime = null;
+// Phase D Part 1.7a: Loop state + 14 个 lastXxxTime + lastConsciousnessReload 全部收口到 tick-state.js
+// 通过 tickState.loopTimer / tickState.tickRunning / tickState.tickLockTime / tickState.recoveryTimer
+// 与 tickState.lastXxxTime 访问；下方 _resetLastXxxTime 仅作 backwards-compat 测试导出
 // _lastDispatchTime 已搬到 dispatcher.js（Phase D Part 1.5）— 私有计时器
-let _lastExecuteTime = 0; // track last full executeTick() time for throttling
-let _lastCleanupTime = 0; // track last run_periodic_cleanup() call time
-let _lastHealthCheckTime = 0; // track last Layer 2 health check time
-let _lastKrProgressSyncTime = 0; // track last KR progress sync time
-let _lastHeartbeatTime = 0; // track last heartbeat inspection time
-let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
 // _lastReportTime 已搬到 report-48h.js（Phase D Part 1.1）
-let _lastZombieSweepTime = 0; // track last zombie sweep time
-let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
-let _lastPipelinePatrolTime = 0; // track last pipeline patrol time
-let _lastPipelineWatchdogTime = 0; // track last pipeline-level stuck watchdog
-let _lastKrHealthDailyTime = 0; // track last daily KR health check time
-let _lastCredentialCheckTime = 0; // track last credential expiry check time
-let _lastCleanupWorkerTime = 0; // R4: track last orphan worktree cleanup run time
-let _lastOrphanPrWorkerTime = 0; // Phase 1: track last orphan PR scan time
-let _lastConsciousnessReload = 0; // Phase 2: track last consciousness cache reload time
 
 const CONSCIOUSNESS_RELOAD_INTERVAL_MS = 2 * 60 * 1000; // Phase 2: 2 minutes
 const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHECK_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
@@ -185,8 +172,7 @@ const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORK
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 // REPORT_INTERVAL_MS 已搬到 report-48h.js（Phase D Part 1.1），下方 import re-export
 
-// Recovery state (in-memory) — 后台恢复 timer
-let _recoveryTimer = null;
+// Phase D Part 1.7a: Recovery timer 也收口到 tickState.recoveryTimer
 
 // Drain state 已搬到 drain.js（Phase D Part 1.2）— 通过 isDraining()/getDrainStartedAt()/isPostDrainCooldown() getter 访问
 
@@ -250,7 +236,7 @@ async function getTickStatus() {
 
   return {
     enabled,
-    loop_running: _loopTimer !== null,
+    loop_running: tickState.loopTimer !== null,
     draining: isDraining(),
     drain_started_at: getDrainStartedAt(),
     post_drain_cooldown: isPostDrainCooldown(),
@@ -260,11 +246,11 @@ async function getTickStatus() {
     last_tick: lastTick,
     next_tick: nextTick,
     actions_today: actionsToday,
-    tick_running: _tickRunning,
+    tick_running: tickState.tickRunning,
     last_dispatch: lastDispatch,
     startup_ok: startupOk,
     startup_error_count: startupErrorCount,
-    recovery_timer_active: _recoveryTimer !== null,
+    recovery_timer_active: tickState.recoveryTimer !== null,
     recovery_attempts: recoveryAttempts,
     max_concurrent: MAX_CONCURRENT_TASKS,
     auto_dispatch_max: AUTO_DISPATCH_MAX,
@@ -288,22 +274,22 @@ async function runTickSafe(source = 'loop', tickFn) {
 
   // Throttle: loop ticks only execute once per TICK_INTERVAL_MINUTES
   if (source === 'loop') {
-    const elapsed = Date.now() - _lastExecuteTime;
+    const elapsed = Date.now() - tickState.lastExecuteTime;
     const intervalMs = TICK_INTERVAL_MINUTES * 60 * 1000;
-    if (_lastExecuteTime > 0 && elapsed < intervalMs) {
+    if (tickState.lastExecuteTime > 0 && elapsed < intervalMs) {
       return { skipped: true, reason: 'throttled', source, next_in_ms: intervalMs - elapsed };
     }
   }
 
   // Reentry guard: check if already running
-  if (_tickRunning) {
+  if (tickState.tickRunning) {
     // Timeout protection: if tick has been running > TICK_TIMEOUT_MS, force-release the lock
     // 根因：doTick() 内部有 unresolved promise 时，finally 永远不执行，锁永不释放
     // 修复：超时后强制释放，让下一轮 tick 能正常执行
-    if (_tickLockTime && (Date.now() - _tickLockTime > TICK_TIMEOUT_MS)) {
-      console.warn(`[tick-loop] Tick stuck for ${Math.round((Date.now() - _tickLockTime) / 1000)}s (>${TICK_TIMEOUT_MS / 1000}s), FORCE-RELEASING lock (source: ${source})`);
-      _tickRunning = false;
-      _tickLockTime = null;
+    if (tickState.tickLockTime && (Date.now() - tickState.tickLockTime > TICK_TIMEOUT_MS)) {
+      console.warn(`[tick-loop] Tick stuck for ${Math.round((Date.now() - tickState.tickLockTime) / 1000)}s (>${TICK_TIMEOUT_MS / 1000}s), FORCE-RELEASING lock (source: ${source})`);
+      tickState.tickRunning = false;
+      tickState.tickLockTime = null;
       // 不 return — 继续执行本轮 tick
     } else {
       tickLog(`[tick-loop] Tick already running, skipping (source: ${source})`);
@@ -311,22 +297,22 @@ async function runTickSafe(source = 'loop', tickFn) {
     }
   }
 
-  _tickRunning = true;
-  _tickLockTime = Date.now();
+  tickState.tickRunning = true;
+  tickState.tickLockTime = Date.now();
 
   // 保底 setTimeout：无论 doTick() 是否 resolve，TICK_TIMEOUT_MS 后强制释放锁
-  // 解决 _tickLockTime 被清但 _tickRunning 未清的边界情况
+  // 解决 tickState.tickLockTime 被清但 tickState.tickRunning 未清的边界情况
   const _forceReleaseTimer = setTimeout(() => {
-    if (_tickRunning) {
+    if (tickState.tickRunning) {
       console.warn(`[tick-loop] FORCE-RELEASE via setTimeout (${TICK_TIMEOUT_MS / 1000}s safety net, source: ${source})`);
-      _tickRunning = false;
-      _tickLockTime = null;
+      tickState.tickRunning = false;
+      tickState.tickLockTime = null;
     }
   }, TICK_TIMEOUT_MS);
 
   try {
     const result = await doTick();
-    _lastExecuteTime = Date.now();
+    tickState.lastExecuteTime = Date.now();
     tickLog(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
     return result;
   } catch (err) {
@@ -334,8 +320,8 @@ async function runTickSafe(source = 'loop', tickFn) {
     return { success: false, error: err.message, source };
   } finally {
     clearTimeout(_forceReleaseTimer);
-    _tickRunning = false;
-    _tickLockTime = null;
+    tickState.tickRunning = false;
+    tickState.tickLockTime = null;
   }
 }
 
@@ -343,7 +329,7 @@ async function runTickSafe(source = 'loop', tickFn) {
  * Start the tick loop (setInterval)
  */
 function startTickLoop() {
-  if (_loopTimer) {
+  if (tickState.loopTimer) {
     tickLog('[tick-loop] Loop already running, skipping start');
     return false;
   }
@@ -352,7 +338,7 @@ function startTickLoop() {
   let _microHeartbeatCounter = 0;
   const MICRO_HEARTBEAT_INTERVAL = 6; // 6 × 5s = 30s
 
-  _loopTimer = setInterval(async () => {
+  tickState.loopTimer = setInterval(async () => {
     try {
       const result = await runTickSafe('loop');
       // 微心跳：tick 被节流时，定期推送 idle 认知状态
@@ -377,8 +363,8 @@ function startTickLoop() {
   }, TICK_LOOP_INTERVAL_MS);
 
   // Don't prevent process exit
-  if (_loopTimer.unref) {
-    _loopTimer.unref();
+  if (tickState.loopTimer.unref) {
+    tickState.loopTimer.unref();
   }
 
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
@@ -389,13 +375,13 @@ function startTickLoop() {
  * Stop the tick loop
  */
 function stopTickLoop() {
-  if (!_loopTimer) {
+  if (!tickState.loopTimer) {
     tickLog('[tick-loop] No loop running, skipping stop');
     return false;
   }
 
-  clearInterval(_loopTimer);
-  _loopTimer = null;
+  clearInterval(tickState.loopTimer);
+  tickState.loopTimer = null;
   tickLog('[tick-loop] Stopped');
   return true;
 }
@@ -440,11 +426,11 @@ async function _recordRecoveryAttempt(success, errMessage) {
  */
 async function tryRecoverTickLoop() {
   // 如果 tick loop 已经在运行，停止恢复
-  if (_loopTimer) {
+  if (tickState.loopTimer) {
     tickLog('[tick-loop] Recovery: tick loop already running, clearing recovery timer');
-    if (_recoveryTimer) {
-      clearInterval(_recoveryTimer);
-      _recoveryTimer = null;
+    if (tickState.recoveryTimer) {
+      clearInterval(tickState.recoveryTimer);
+      tickState.recoveryTimer = null;
     }
     return;
   }
@@ -471,9 +457,9 @@ async function tryRecoverTickLoop() {
 
     // 成功：清除恢复 timer 并记录
     tickLog('[tick-loop] Recovery: tick loop started successfully, clearing recovery timer');
-    if (_recoveryTimer) {
-      clearInterval(_recoveryTimer);
-      _recoveryTimer = null;
+    if (tickState.recoveryTimer) {
+      clearInterval(tickState.recoveryTimer);
+      tickState.recoveryTimer = null;
     }
     await _recordRecoveryAttempt(true);
   } catch (err) {
@@ -555,12 +541,12 @@ async function initTickLoop() {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
 
     // 启动后台恢复 timer（每 INIT_RECOVERY_INTERVAL_MS 重试一次）
-    if (!_recoveryTimer) {
+    if (!tickState.recoveryTimer) {
       tickLog(`[tick-loop] Starting background recovery timer (interval: ${INIT_RECOVERY_INTERVAL_MS}ms)`);
-      _recoveryTimer = setInterval(tryRecoverTickLoop, INIT_RECOVERY_INTERVAL_MS);
+      tickState.recoveryTimer = setInterval(tryRecoverTickLoop, INIT_RECOVERY_INTERVAL_MS);
       // 允许进程在没有其他活跃引用时正常退出
-      if (_recoveryTimer.unref) {
-        _recoveryTimer.unref();
+      if (tickState.recoveryTimer.unref) {
+        tickState.recoveryTimer.unref();
       }
     }
   }
@@ -766,9 +752,9 @@ async function executeTick() {
   // ═══════════════════════════════════════════════════════════════════
 
   // [感知] 僵尸巡检：每 30 分钟清理 stale worktree / orphan process / stale lock slot
-  const zombieSweepElapsed = Date.now() - _lastZombieSweepTime;
+  const zombieSweepElapsed = Date.now() - tickState.lastZombieSweepTime;
   if (zombieSweepElapsed >= ZOMBIE_SWEEP_INTERVAL_MS) {
-    _lastZombieSweepTime = Date.now();
+    tickState.lastZombieSweepTime = Date.now();
     zombieSweep().then(r => {
       const summary = `worktrees:${r.worktrees.removed} processes:${r.processes.killed} locks:${r.lock_slots.removed}`;
       tickLog(`[tick] Zombie sweep done. ${summary}`);
@@ -778,9 +764,9 @@ async function executeTick() {
   }
 
   // [感知] Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline
-  const pipelinePatrolElapsed = Date.now() - _lastPipelinePatrolTime;
+  const pipelinePatrolElapsed = Date.now() - tickState.lastPipelinePatrolTime;
   if (pipelinePatrolElapsed >= PIPELINE_PATROL_INTERVAL_MS) {
-    _lastPipelinePatrolTime = Date.now();
+    tickState.lastPipelinePatrolTime = Date.now();
     runPipelinePatrol(pool).then(r => {
       if (r.stuck > 0 || r.rescued > 0) {
         tickLog(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
@@ -793,18 +779,18 @@ async function executeTick() {
   // [Phase 2] Consciousness guard cache reload（每 2 分钟，容错 hook）
   // 防外部改 DB（UI/CLI 直接 UPDATE working_memory）未通过本进程 setter 时缓存失同步
   // 故意不放 MINIMAL_MODE 守护内：minimal 模式下 watchdog 仍可能传新 env，reload 是安全的
-  const consciousnessReloadElapsed = Date.now() - _lastConsciousnessReload;
+  const consciousnessReloadElapsed = Date.now() - tickState.lastConsciousnessReload;
   if (consciousnessReloadElapsed >= CONSCIOUSNESS_RELOAD_INTERVAL_MS) {
-    _lastConsciousnessReload = Date.now();
+    tickState.lastConsciousnessReload = Date.now();
     Promise.resolve().then(() => reloadConsciousnessCache(pool))
       .catch(e => console.warn('[tick] consciousness reload failed:', e.message));
   }
 
   // [感知] Pipeline-level Watchdog：每 30 分钟检测 pipeline 整体是否卡死
   // 与 pipeline-patrol 正交（patrol 看 stage 超时，watchdog 看 pipeline 整体 6h 无进展）
-  const pipelineWatchdogElapsed = Date.now() - _lastPipelineWatchdogTime;
+  const pipelineWatchdogElapsed = Date.now() - tickState.lastPipelineWatchdogTime;
   if (!MINIMAL_MODE && pipelineWatchdogElapsed >= PIPELINE_WATCHDOG_INTERVAL_MS) {
-    _lastPipelineWatchdogTime = Date.now();
+    tickState.lastPipelineWatchdogTime = Date.now();
     Promise.resolve().then(() => checkStuckPipelines(pool)).then(r => {
       if (r.stuck > 0) {
         tickLog(`[tick] Pipeline watchdog: scanned=${r.scanned} stuck=${r.stuck}`);
@@ -816,9 +802,9 @@ async function executeTick() {
 
   // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本
   // 扫描白名单 worktree，若对应 PR 已 merged 超过 1h 且满足安全守卫则清理
-  const cleanupWorkerElapsed = Date.now() - _lastCleanupWorkerTime;
+  const cleanupWorkerElapsed = Date.now() - tickState.lastCleanupWorkerTime;
   if (!MINIMAL_MODE && cleanupWorkerElapsed >= CLEANUP_WORKER_INTERVAL_MS) {
-    _lastCleanupWorkerTime = Date.now();
+    tickState.lastCleanupWorkerTime = Date.now();
     import('./cleanup-worker.js').then(({ runCleanupWorker }) => runCleanupWorker()).then(r => {
       if (r?.stdout) {
         const lines = r.stdout.split('\n').filter(Boolean);
@@ -836,9 +822,9 @@ async function executeTick() {
   }
 
   // [Phase 1] Orphan PR Worker：每 30 分钟扫孤儿 cp-* PR（open > 2h + 无 Brain task + CI 绿 → 合并）
-  const orphanPrWorkerElapsed = Date.now() - _lastOrphanPrWorkerTime;
+  const orphanPrWorkerElapsed = Date.now() - tickState.lastOrphanPrWorkerTime;
   if (!MINIMAL_MODE && orphanPrWorkerElapsed >= ORPHAN_PR_WORKER_INTERVAL_MS) {
-    _lastOrphanPrWorkerTime = Date.now();
+    tickState.lastOrphanPrWorkerTime = Date.now();
     import('./orphan-pr-worker.js').then(({ scanOrphanPrs }) => scanOrphanPrs(pool)).then(r => {
       if (r.merged > 0 || r.labeled > 0) {
         tickLog(`[tick] orphan-pr-worker: scanned=${r.scanned} merged=${r.merged} labeled=${r.labeled} skipped=${r.skipped}`);
@@ -849,9 +835,9 @@ async function executeTick() {
   }
 
   // [感知] 凭据有效期检查：每 30 分钟一次，过期前 4h 创建告警任务 + 凭据恢复后重排队
-  const credentialCheckElapsed = Date.now() - _lastCredentialCheckTime;
+  const credentialCheckElapsed = Date.now() - tickState.lastCredentialCheckTime;
   if (!MINIMAL_MODE && credentialCheckElapsed >= CREDENTIAL_CHECK_INTERVAL_MS) {
-    _lastCredentialCheckTime = Date.now();
+    tickState.lastCredentialCheckTime = Date.now();
     checkAndAlertExpiringCredentials(pool).then(r => {
       if (r.alerted > 0) {
         tickLog(`[tick] [credential-checker] ⚠️ ${r.alerted} 个账号 token 即将过期，已创建告警任务`);
@@ -898,9 +884,9 @@ async function executeTick() {
   }
 
   // [感知] Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
-  const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
+  const healthCheckElapsed = Date.now() - tickState.lastHealthCheckTime;
   if (healthCheckElapsed >= CLEANUP_INTERVAL_MS) {
-    _lastHealthCheckTime = Date.now();
+    tickState.lastHealthCheckTime = Date.now();
     try {
       const healthResult = await runLayer2HealthCheck(pool);
       tickLog(`[tick] ${healthResult.summary}`);
@@ -1069,9 +1055,9 @@ async function executeTick() {
 
   // [感知] KR 进度验证：每小时一次，从外部数据源采集真实指标
   // 替代旧的 kr-progress.js（数 initiative 完成率），改为 kr-verifier.js（查实际指标）
-  const krProgressElapsed = Date.now() - _lastKrProgressSyncTime;
+  const krProgressElapsed = Date.now() - tickState.lastKrProgressSyncTime;
   if (krProgressElapsed >= CLEANUP_INTERVAL_MS) {
-    _lastKrProgressSyncTime = Date.now();
+    tickState.lastKrProgressSyncTime = Date.now();
     try {
       // 优先使用 kr-verifier（基于外部数据源，不可伪造）
       const { runAllVerifiers } = await import('./kr-verifier.js');
@@ -1101,9 +1087,9 @@ async function executeTick() {
   }
 
   // [感知] KR 可信度日巡检：每 24h 一次，记录 warn/critical 状态供运维审计
-  const krHealthElapsed = Date.now() - _lastKrHealthDailyTime;
+  const krHealthElapsed = Date.now() - tickState.lastKrHealthDailyTime;
   if (krHealthElapsed >= CLEANUP_INTERVAL_MS * 24) {
-    _lastKrHealthDailyTime = Date.now();
+    tickState.lastKrHealthDailyTime = Date.now();
     try {
       const { getKrVerifierHealth } = await import('./kr-verifier.js');
       const healthResult = await getKrVerifierHealth();
@@ -1271,12 +1257,12 @@ async function executeTick() {
   } // end isConsciousnessEnabled() (pending followups)
 
   // 0.4.5. Zombie resource cleanup: 每 20 分钟清理一次 stale slots + 孤儿 worktrees
-  const zombieElapsed = Date.now() - _lastZombieCleanupTime;
+  const zombieElapsed = Date.now() - tickState.lastZombieCleanupTime;
   if (zombieElapsed >= ZOMBIE_CLEANUP_INTERVAL_MS) {
     try {
       const { runZombieCleanup } = await import('./zombie-cleaner.js');
       const zombieResult = await runZombieCleanup(pool);
-      _lastZombieCleanupTime = Date.now();
+      tickState.lastZombieCleanupTime = Date.now();
       if (zombieResult.slotsReclaimed > 0 || zombieResult.worktreesRemoved > 0) {
         tickLog(`[tick] Zombie cleanup: slots=${zombieResult.slotsReclaimed} worktrees=${zombieResult.worktreesRemoved}`);
       }
@@ -1286,12 +1272,12 @@ async function executeTick() {
   }
 
   // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
-  const cleanupElapsed = Date.now() - _lastCleanupTime;
+  const cleanupElapsed = Date.now() - tickState.lastCleanupTime;
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
     try {
       const cleanupResult = await pool.query('SELECT run_periodic_cleanup() AS msg');
       const msg = cleanupResult.rows[0]?.msg || 'done';
-      _lastCleanupTime = Date.now();
+      tickState.lastCleanupTime = Date.now();
       tickLog(`[tick] Periodic cleanup: ${msg}`);
     } catch (cleanupErr) {
       console.error('[tick] Periodic cleanup failed (non-fatal):', cleanupErr.message);
@@ -1353,9 +1339,9 @@ async function executeTick() {
   }
 
   // 0.5.5. Goal Outer Loop 评估：每 24 小时评估一次所有活跃 KR 整体进展
-  const goalEvalElapsed = Date.now() - _lastGoalEvalTime;
+  const goalEvalElapsed = Date.now() - tickState.lastGoalEvalTime;
   if (goalEvalElapsed >= GOAL_EVAL_INTERVAL_MS) {
-    _lastGoalEvalTime = Date.now();
+    tickState.lastGoalEvalTime = Date.now();
     try {
       const { evaluateGoalOuterLoop } = await import('./goal-evaluator.js');
       const goalResults = await evaluateGoalOuterLoop(GOAL_EVAL_INTERVAL_MS);
@@ -1378,13 +1364,13 @@ async function executeTick() {
   }
 
   // 0.13. HEARTBEAT.md 灵活巡检：每 30 分钟一次，L1 丘脑执行
-  const heartbeatElapsed = Date.now() - _lastHeartbeatTime;
+  const heartbeatElapsed = Date.now() - tickState.lastHeartbeatTime;
   const { HEARTBEAT_INTERVAL_MS: HB_INTERVAL } = await import('./heartbeat-inspector.js');
   if (heartbeatElapsed >= HB_INTERVAL) {
     try {
       const { runHeartbeatInspection } = await import('./heartbeat-inspector.js');
       const hbResult = await runHeartbeatInspection(pool);
-      _lastHeartbeatTime = Date.now(); // 仅成功后更新，失败时下次 tick 立即重试
+      tickState.lastHeartbeatTime = Date.now(); // 仅成功后更新，失败时下次 tick 立即重试
       if (!hbResult.skipped && hbResult.actions_count > 0) {
         tickLog(`[TICK] Heartbeat 巡检: ${hbResult.actions_count} 个行动`);
         actionsTaken.push({
@@ -2325,22 +2311,22 @@ async function getStartupErrors() {
 }
 
 /** Reset throttle state — for testing only */
-function _resetLastExecuteTime() { _lastExecuteTime = 0; }
+function _resetLastExecuteTime() { tickState.lastExecuteTime = 0; }
 /** Reset cleanup timer — for testing only */
-function _resetLastCleanupTime() { _lastCleanupTime = 0; }
-function _resetLastZombieCleanupTime() { _lastZombieCleanupTime = 0; }
+function _resetLastCleanupTime() { tickState.lastCleanupTime = 0; }
+function _resetLastZombieCleanupTime() { tickState.lastZombieCleanupTime = 0; }
 /** Reset Layer 2 health check timer — for testing only */
-function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
+function _resetLastHealthCheckTime() { tickState.lastHealthCheckTime = 0; }
 /** Reset KR progress sync timer — for testing only */
-function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
+function _resetLastKrProgressSyncTime() { tickState.lastKrProgressSyncTime = 0; }
 /** Reset heartbeat timer — for testing only */
-function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
+function _resetLastHeartbeatTime() { tickState.lastHeartbeatTime = 0; }
 
-function _resetLastGoalEvalTime() { _lastGoalEvalTime = 0; }
+function _resetLastGoalEvalTime() { tickState.lastGoalEvalTime = 0; }
 /** Reset zombie sweep timer — for testing only */
-function _resetLastZombieSweepTime() { _lastZombieSweepTime = 0; }
+function _resetLastZombieSweepTime() { tickState.lastZombieSweepTime = 0; }
 /** Reset pipeline patrol timer — for testing only */
-function _resetLastPipelinePatrolTime() { _lastPipelinePatrolTime = 0; }
+function _resetLastPipelinePatrolTime() { tickState.lastPipelinePatrolTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
