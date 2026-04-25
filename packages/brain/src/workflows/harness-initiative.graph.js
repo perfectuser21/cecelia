@@ -526,3 +526,61 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
     client.release();
   }
 }
+
+// ─── Brain v2 C8a — LangGraph 真图实现（阶段 A）────────────────────────
+// 与上方 legacy `runInitiative` 528 行并存。executor.js 通过 HARNESS_INITIATIVE_RUNTIME=v2
+// env flag 切换两套实现，灰度推进。
+//
+// 节点拓扑：START → prep → planner → parsePrd → ganLoop → dbUpsert → END
+//                    ↓error  ↓error    ↓error    ↓error
+//                    └────────┴──────────┴─────────┴──────→ END (条件 edge)
+//
+// 每节点首句幂等门防 LangGraph resume 重 spawn（C6 smoke 教训）。
+// PRD: docs/superpowers/specs/2026-04-25-c8a-harness-initiative-graph-design.md
+
+import { StateGraph, Annotation, START, END } from '@langchain/langgraph';
+import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
+// 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
+// upsertTaskPlan / ensureHarnessWorktree / resolveGitHubToken / runGanContractGraph
+
+export const InitiativeState = Annotation.Root({
+  task:           Annotation({ reducer: (_o, n) => n, default: () => null }),
+  initiativeId:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  worktreePath:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  githubToken:    Annotation({ reducer: (_o, n) => n, default: () => null }),
+  plannerOutput:  Annotation({ reducer: (_o, n) => n, default: () => null }),
+  taskPlan:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+  prdContent:     Annotation({ reducer: (_o, n) => n, default: () => null }),
+  ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
+  result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
+  error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+});
+
+// 节点 stub — Task 2-6 逐个填充。
+export async function prepInitiativeNode(_state) { return {}; }
+export async function runPlannerNode(_state) { return {}; }
+export async function parsePrdNode(_state) { return {}; }
+export async function runGanLoopNode(_state) { return {}; }
+export async function dbUpsertNode(_state) { return {}; }
+
+function stateHasError(state) { return state.error ? 'error' : 'ok'; }
+
+export function buildHarnessInitiativeGraph() {
+  return new StateGraph(InitiativeState)
+    .addNode('prep', prepInitiativeNode)
+    .addNode('planner', runPlannerNode)
+    .addNode('parsePrd', parsePrdNode)
+    .addNode('ganLoop', runGanLoopNode)
+    .addNode('dbUpsert', dbUpsertNode)
+    .addEdge(START, 'prep')
+    .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
+    .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
+    .addConditionalEdges('parsePrd', stateHasError, { error: END, ok: 'ganLoop' })
+    .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'dbUpsert' })
+    .addEdge('dbUpsert', END);
+}
+
+export async function compileHarnessInitiativeGraph() {
+  const checkpointer = await getPgCheckpointer();
+  return buildHarnessInitiativeGraph().compile({ checkpointer });
+}
