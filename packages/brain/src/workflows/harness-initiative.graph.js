@@ -666,7 +666,65 @@ export async function runGanLoopNode(state, opts = {}) {
     return { error: { node: 'gan', message: err.message } };
   }
 }
-export async function dbUpsertNode(_state) { return {}; }
+const C8A_DEFAULT_TIMEOUT_SEC = 21600;
+const C8A_DEFAULT_BUDGET_USD = 10;
+
+export async function dbUpsertNode(state, opts = {}) {
+  if (state.result?.contractId) return { result: state.result };
+  const dbPool = opts.pool || pool;
+  const timeoutSec = state.task?.payload?.timeout_sec || C8A_DEFAULT_TIMEOUT_SEC;
+  const budgetUsd = state.task?.payload?.budget_usd || C8A_DEFAULT_BUDGET_USD;
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
+    const { idMap, insertedTaskIds } = await upsertTaskPlan({
+      initiativeId: state.initiativeId,
+      initiativeTaskId: state.task.id,
+      taskPlan: state.taskPlan,
+      client,
+    });
+    const contractInsert = await client.query(
+      `INSERT INTO initiative_contracts (
+         initiative_id, version, status,
+         prd_content, contract_content, review_rounds,
+         budget_cap_usd, timeout_sec, approved_at
+       )
+       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, NOW())
+       RETURNING id`,
+      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec]
+    );
+    const contractId = contractInsert.rows[0].id;
+    const runInsert = await client.query(
+      `INSERT INTO initiative_runs (
+         initiative_id, contract_id, phase,
+         deadline_at
+       )
+       VALUES ($1::uuid, $2::uuid, 'B_task_loop',
+         NOW() + ($3 || ' seconds')::interval
+       )
+       RETURNING id`,
+      [state.initiativeId, contractId, String(timeoutSec)]
+    );
+    const runId = runInsert.rows[0].id;
+    await client.query('COMMIT');
+    return {
+      result: {
+        success: true,
+        taskId: state.task.id,
+        initiativeId: state.initiativeId,
+        contractId,
+        runId,
+        insertedTaskIds,
+        idMap,
+      },
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    return { error: { node: 'dbUpsert', message: `tx: ${err.message}` } };
+  } finally {
+    client.release();
+  }
+}
 
 function stateHasError(state) { return state.error ? 'error' : 'ok'; }
 

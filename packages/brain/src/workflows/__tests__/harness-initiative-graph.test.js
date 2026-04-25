@@ -227,3 +227,66 @@ describe('runGanLoopNode', () => {
     expect(delta.error.message).toBe('gan rejected');
   });
 });
+
+describe('dbUpsertNode', () => {
+  beforeEach(() => { mockUpsertTaskPlan.mockReset(); });
+
+  it('happy: BEGIN/COMMIT 单事务 + result.contractId/runId 写入', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })            // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: 'contract-uuid' }] })  // INSERT initiative_contracts
+        .mockResolvedValueOnce({ rows: [{ id: 'run-uuid' }] })       // INSERT initiative_runs
+        .mockResolvedValueOnce({ rows: [] }),           // COMMIT
+      release: vi.fn(),
+    };
+    const fakePool = { connect: vi.fn().mockResolvedValue(client) };
+    mockUpsertTaskPlan.mockResolvedValueOnce({ idMap: {}, insertedTaskIds: ['st-1'] });
+    const state = {
+      task: { id: 't1', payload: {} },
+      initiativeId: 'init-1',
+      taskPlan: { tasks: [] },
+      plannerOutput: 'PRD',
+      ganResult: { contract_content: 'CT', rounds: 2 },
+    };
+    const delta = await dbUpsertNode(state, { pool: fakePool });
+    expect(client.query).toHaveBeenCalledWith('BEGIN');
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+    expect(client.release).toHaveBeenCalled();
+    expect(delta.result.contractId).toBe('contract-uuid');
+    expect(delta.result.runId).toBe('run-uuid');
+    expect(delta.result.success).toBe(true);
+  });
+
+  it('idempotent: state.result.contractId 已存在 → 不调 pool.connect', async () => {
+    const fakePool = { connect: vi.fn() };
+    const state = { result: { contractId: 'cached' }, task: { id: 't2' } };
+    const delta = await dbUpsertNode(state, { pool: fakePool });
+    expect(fakePool.connect).not.toHaveBeenCalled();
+    expect(delta.result.contractId).toBe('cached');
+  });
+
+  it('error: query 抛 → ROLLBACK + state.error.node="dbUpsert"', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })            // BEGIN
+        .mockRejectedValueOnce(new Error('insert failed')),
+      release: vi.fn(),
+    };
+    const fakePool = { connect: vi.fn().mockResolvedValue(client) };
+    mockUpsertTaskPlan.mockResolvedValueOnce({ idMap: {}, insertedTaskIds: [] });
+    const state = {
+      task: { id: 't3', payload: {} },
+      initiativeId: 'init-3',
+      taskPlan: { tasks: [] },
+      plannerOutput: 'PRD',
+      ganResult: { contract_content: 'CT', rounds: 1 },
+    };
+    // 加 ROLLBACK 的 mock
+    client.query.mockResolvedValueOnce({ rows: [] }); // ROLLBACK after error
+    const delta = await dbUpsertNode(state, { pool: fakePool });
+    expect(delta.error.node).toBe('dbUpsert');
+    expect(delta.error.message).toContain('insert failed');
+    expect(client.release).toHaveBeenCalled();
+  });
+});
