@@ -52,6 +52,19 @@ export GIT_CONFIG_GLOBAL="$WRITABLE_GIT_CONFIG"
 # 不再用 `|| true` 静默失败——现在 gitconfig 可写，这条必须真正成功
 git config --global --add safe.directory '*'
 
+# 3.5 v6 P1-D：容器内 git remote 自动重写
+# 宿主以 worktree 形式把 /workspace 挂进来时，origin URL 是宿主绝对路径
+# (/Users/...)，容器里 git fetch / push 直接挂 "does not appear to be a git repo"。
+# Brain dispatch 注入 CONTRACT_BRANCH 后 generator 第一步就 git fetch origin
+# <branch>，这里必须把宿主路径改成 https GitHub URL。
+if [[ -d /workspace/.git || -f /workspace/.git ]]; then
+  REMOTE_URL=$(cd /workspace && git remote get-url origin 2>/dev/null || echo "")
+  if [[ "$REMOTE_URL" =~ ^/ ]]; then
+    (cd /workspace && git remote set-url origin "https://github.com/perfectuser21/cecelia.git")
+    echo "[entrypoint] git remote rewritten: $REMOTE_URL -> https://github.com/perfectuser21/cecelia.git"
+  fi
+fi
+
 # 4. 如果挂了 ~/.gitconfig 但没有 user.name/email，补个默认值（避免 commit 失败）
 if ! git config --global --get user.name >/dev/null 2>&1; then
   git config --global user.name "${GIT_AUTHOR_NAME:-Cecelia Bot}"

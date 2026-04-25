@@ -1,41 +1,40 @@
-task_id: 3f32212a-adc2-436b-b828-51820a2379e6
-branch: cp-0425185125-docker-timeout-tier-aware
+task_id: baa16433-91d0-4628-b078-08757d22bd44
+branch: cp-0425185121-harness-v6-p1d-brain-env-inject
 
 ## 任务标题
 
-Docker Executor Timeout 默认 90min + per-tier timeoutMs
+[Harness v6 P1-D] Brain 派 harness_task 注入 CONTRACT_BRANCH/SPRINT_DIR/BRAIN_URL env
 
 ## 任务描述
 
-`packages/brain/src/docker-executor.js:36` `DEFAULT_TIMEOUT_MS = 900000`（15min）让 Generator
-跑大改动被 SIGKILL。改默认到 90min，并把 timeoutMs 维度引入 RESOURCE_TIERS（light=30 / normal=90 /
-heavy=120 / pipeline-heavy=180 分钟），`executeInDocker` 优先级
-`opts.timeoutMs > tier.timeoutMs > DEFAULT_TIMEOUT_MS`。
+Brain↔Generator prompt env 协议固化：harness-task-dispatch 显式注入 6 字段 env，entrypoint.sh 自动重写宿主 git remote 为 https，Generator SKILL Step 0 自检列表对齐。
+
+修复 Gen2 (3329655d) 自我 ABORTED：SKILL 自检 CONTRACT_BRANCH/SPRINT_DIR/BRAIN_URL 全部缺失 + git remote 是宿主路径不可达。
 
 ## DoD
 
-- [x] [ARTIFACT] docker-executor.js DEFAULT_TIMEOUT_MS=5400000
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/docker-executor.js','utf8');if(!c.includes(\"CECELIA_DOCKER_TIMEOUT_MS || '5400000'\"))process.exit(1)"
+- [x] [ARTIFACT] dispatch env 含 6 个新字段 (CONTRACT_BRANCH/SPRINT_DIR/BRAIN_URL/WORKSTREAM_INDEX/WORKSTREAM_COUNT/PLANNER_BRANCH)
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-task-dispatch.js','utf8'); for (const k of ['CONTRACT_BRANCH','SPRINT_DIR','BRAIN_URL','WORKSTREAM_INDEX','WORKSTREAM_COUNT','PLANNER_BRANCH']) { if (!c.includes(k)) { console.error('missing '+k); process.exit(1); } }"
 
-- [x] [ARTIFACT] resource-tier.js RESOURCE_TIERS 含 timeoutMs 字段（light=30min + pipeline-heavy=180min）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/spawn/middleware/resource-tier.js','utf8');if(!/timeoutMs:\s*30\s*\*\s*60\s*\*\s*1000/.test(c))process.exit(1);if(!/timeoutMs:\s*180\s*\*\s*60\s*\*\s*1000/.test(c))process.exit(1)"
+- [x] [ARTIFACT] entrypoint.sh git remote 自动重写
+  Test: manual:node -e "const c=require('fs').readFileSync('docker/cecelia-runner/entrypoint.sh','utf8'); if (!c.includes('git remote set-url origin')) process.exit(1); if (!c.includes('https://github.com/perfectuser21/cecelia.git')) process.exit(1);"
 
-- [x] [ARTIFACT] executeInDocker 用 tier.timeoutMs 兜底
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/docker-executor.js','utf8');if(!/opts\.timeoutMs \|\| tier\.timeoutMs \|\| DEFAULT_TIMEOUT_MS/.test(c))process.exit(1)"
+- [x] [ARTIFACT] SKILL.md Step 0 自检列表对齐 4 项 + Step 0.4 git remote 验证
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-generator/SKILL.md','utf8'); for (const k of ['CONTRACT_BRANCH','SPRINT_DIR','BRAIN_URL','WORKSTREAM_INDEX']) { if (!c.includes(k)) { console.error('skill missing '+k); process.exit(1); } } if (!c.includes('Step 0.4')) process.exit(1);"
 
-- [x] [BEHAVIOR] tier=normal/dev/planner/pipeline-heavy 任务用对应 timeoutMs（mock runDocker 验证）
-  Test: packages/brain/src/__tests__/docker-executor-timeout.test.js
+- [x] [BEHAVIOR] 单测覆盖 env 协议 (5 断言全绿)
+  Test: packages/brain/src/__tests__/harness-task-dispatch.test.js
 
-- [x] [BEHAVIOR] resource-tier 4 个 tier timeoutMs 数值精确匹配 spec + 排序
-  Test: packages/brain/src/spawn/middleware/__tests__/resource-tier.test.js
+- [x] [BEHAVIOR] WORKSTREAM_INDEX 双来源解析 (workstream_index | logical_task_id ws<N>)
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-task-dispatch.js','utf8'); if (!c.includes('extractWorkstreamIndex')) process.exit(1); if (!c.includes('logical_task_id')) process.exit(1);"
 
 - [x] [ARTIFACT] Learning 文档存在
-  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0425185125-docker-timeout-tier-aware.md')"
+  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0425185121-harness-v6-p1d-brain-env-inject.md')"
 
 ## 目标文件
 
-- packages/brain/src/docker-executor.js
-- packages/brain/src/spawn/middleware/resource-tier.js
-- packages/brain/src/__tests__/docker-executor-timeout.test.js
-- packages/brain/src/spawn/middleware/__tests__/resource-tier.test.js
-- docs/learnings/cp-0425185125-docker-timeout-tier-aware.md
+- packages/brain/src/harness-task-dispatch.js
+- packages/brain/src/__tests__/harness-task-dispatch.test.js
+- docker/cecelia-runner/entrypoint.sh
+- packages/workflows/skills/harness-generator/SKILL.md
+- docs/learnings/cp-0425185121-harness-v6-p1d-brain-env-inject.md
