@@ -82,7 +82,7 @@ export async function runContentPipeline(task, opts = {}) {
         );
       } else if (accId) {
         // 第一候选 7d 撞限，遍历其他候选挑 7d<90 的
-        const allAccounts = ['account1', 'account2', 'account3'];
+        const allAccounts = Object.keys(usage || {});
         const fallback = allAccounts.find((id) => (usage?.[id]?.seven_day_pct ?? 0) < SEVEN_D_CAP_PCT);
         if (fallback) {
           dynamicCredential = fallback;

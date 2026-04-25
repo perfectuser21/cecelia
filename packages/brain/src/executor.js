@@ -1652,14 +1652,6 @@ function buildSystemContextBlock() {
 `;
 }
 
-// ─── Harness：account1 强绑定列表 ─────────────────────────────────────────────
-
-const SPRINT_ACCOUNT1_TASK_TYPES = [
-  'harness_contract_propose', 'harness_contract_review',
-  'harness_generate', 'harness_evaluate', 'harness_fix', 'harness_report',
-  'harness_planner', 'harness_ci_watch', 'harness_deploy_watch',
-];
-
 // ─── Sprint 跨 worktree 文件读取（git fetch + git show） ─────────────────────
 
 async function _fetchSprintFile(branch, filePath) {
@@ -2856,11 +2848,9 @@ async function triggerCeceliaRun(task) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (HARNESS_LANGGRAPH_ENABLED=true)`);
     try {
       const { runHarnessPipeline } = await import('./harness-graph-runner.js');
-      // Harness pipeline 不在此处硬编码 CECELIA_CREDENTIALS='account1'。
-      // 让底层 executeInDocker 的 resolveAccount middleware（spawn/middleware/account-rotation.js，v2 P2 PR3）
-      // 在每次 spawn 时实时调 selectBestAccount + isSpendingCapped/isAuthFailed fallback，
-      // 账号治理统一收口到 account-usage.js。
-      // 对齐 content-pipeline-graph-runner.js 的动态选择设计。
+      // Harness pipeline 账号选择统一交给底层 executeInDocker 的 resolveAccount middleware
+      // （spawn/middleware/account-rotation.js，v2 P2 PR3），按 selectBestAccount + cap/auth-fail
+      // fallback 实时选号；账号治理收口到 account-usage.js。
       const langGraphEnv = {};
       // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
       // task.id 作为 thread_id 即为 resume key，Brain 重启后 pipeline 可从断点续跑，
@@ -3041,18 +3031,6 @@ async function triggerCeceliaRun(task) {
 
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
     let provider = getProviderForTask(task);
-
-    // Sprint 任务强绑定 account1（spending-cap 或 auth-failed 时 fallback 到 selectBestAccount）
-    if (SPRINT_ACCOUNT1_TASK_TYPES.includes(task.task_type)) {
-      const { isSpendingCapped, isAuthFailed } = await import('./account-usage.js');
-      if (!isSpendingCapped('account1') && !isAuthFailed('account1')) {
-        extraEnv.CECELIA_CREDENTIALS = 'account1';
-        console.log(`[executor] Sprint task_type=${task.task_type} hardwired to account1`);
-      } else {
-        const reason = isAuthFailed('account1') ? 'auth-failed' : 'spending-capped';
-        console.log(`[executor] Sprint task_type=${task.task_type} account1 ${reason}, fallback to selectBestAccount`);
-      }
-    }
 
     // Get credentials file for the task (universal, works for all providers)
     const credentials = getCredentialsForTask(task);
