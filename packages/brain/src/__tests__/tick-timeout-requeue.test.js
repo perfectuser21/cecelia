@@ -44,10 +44,10 @@ describe('autoFailTimedOutTasks requeue behavior', () => {
 
     // We need to call autoFailTimedOutTasks indirectly via the tick logic.
     // Since the function is internal, we verify the code path by checking
-    // that the tick.js source uses 'queued' instead of 'failed' in the requeue branch.
+    // that the tick-helpers.js source uses 'queued' instead of 'failed' in the requeue branch.
     const fs = await import('fs');
     const tickSrc = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-helpers.js', import.meta.url).pathname,
       'utf8'
     );
 
@@ -65,7 +65,7 @@ describe('autoFailTimedOutTasks requeue behavior', () => {
 
     const fs = await import('fs');
     const tickSrc = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-helpers.js', import.meta.url).pathname,
       'utf8'
     );
 
@@ -74,10 +74,10 @@ describe('autoFailTimedOutTasks requeue behavior', () => {
     expect(tickSrc).toContain('quarantine');
   });
 
-  it('tick.js should NOT mark timed-out tasks as failed directly (old behavior removed)', async () => {
+  it('tick-helpers.js should NOT mark timed-out tasks as failed directly (old behavior removed)', async () => {
     const fs = await import('fs');
     const tickSrc = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-helpers.js', import.meta.url).pathname,
       'utf8'
     );
 
@@ -88,7 +88,7 @@ describe('autoFailTimedOutTasks requeue behavior', () => {
   it('requeue action should include retry_attempt field for observability', async () => {
     const fs = await import('fs');
     const tickSrc = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-helpers.js', import.meta.url).pathname,
       'utf8'
     );
     expect(tickSrc).toContain('retry_attempt');

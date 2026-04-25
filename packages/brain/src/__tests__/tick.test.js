@@ -4,7 +4,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { routeTask, TASK_TYPE_AGENT_MAP, MAX_NEW_DISPATCHES_PER_TICK } from '../tick.js';
+// Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP 已搬到 tick-helpers.js
+import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick-helpers.js';
+import { MAX_NEW_DISPATCHES_PER_TICK } from '../tick.js';
 
 describe('routeTask', () => {
   it('should route dev tasks to /dev', () => {
