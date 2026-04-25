@@ -1075,7 +1075,7 @@ async function hasActivePr(taskId) {
     );
     const r = result.rows[0];
     if (!r) return false;
-    return r.pr_url != null && ['open', 'ci_pending', 'merged'].includes(r.pr_status);
+    return r.pr_url != null && ['open', 'ci_pending', 'ci_passed', 'merged'].includes(r.pr_status);
   } catch (err) {
     // tasks 表查询失败：安全默认 false（按原 failure 逻辑走）
     console.warn(`[quarantine] hasActivePr query failed for ${taskId}: ${err.message}`);

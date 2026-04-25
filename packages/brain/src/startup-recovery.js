@@ -273,7 +273,7 @@ export async function cleanupStaleClaims(pool, opts = {}) {
       `UPDATE tasks
           SET claimed_by = NULL,
               claimed_at = NULL
-        WHERE id = ANY($1::int[])
+        WHERE id = ANY($1::uuid[])
       RETURNING id`,
       [taskIds]
     );

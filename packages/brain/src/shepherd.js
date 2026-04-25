@@ -124,7 +124,7 @@ export async function shepherdOpenPRs(pool) {
       SELECT id, title, pr_url, pr_status, retry_count, payload
       FROM tasks
       WHERE pr_url IS NOT NULL
-        AND pr_status IN ('open', 'ci_pending')
+        AND pr_status IN ('open', 'ci_pending', 'ci_passed')
         AND status NOT IN ('quarantined', 'cancelled')
       ORDER BY updated_at ASC
       LIMIT 20
@@ -164,14 +164,35 @@ export async function shepherdOpenPRs(pool) {
         console.log(`[shepherd] PR 已关闭: ${task.title}`);
 
       } else if (prInfo.ciStatus === 'ci_passed' && prInfo.mergeable === 'MERGEABLE') {
-        // CI 全通过且可合并 → 执行 auto-merge
+        // CI 全通过且可合并 → 执行 auto-merge，再 reload PR state 推进 status
         try {
           executeMerge(task.pr_url);
-          await pool.query(
-            `UPDATE tasks SET pr_status = 'ci_passed' WHERE id = $1`,
-            [task.id]
-          );
-          console.log(`[shepherd] PR auto-merge 已触发: ${task.title}`);
+          // 重读 PR 最新 state；若已 MERGED 则推进 status=completed
+          let merged = false;
+          try {
+            const after = checkPrStatus(task.pr_url);
+            merged = after.state === 'MERGED' || after.ciStatus === 'merged';
+          } catch (reloadErr) {
+            console.warn(`[shepherd] reload PR state 失败 (non-fatal): ${reloadErr.message}`);
+          }
+          if (merged) {
+            await pool.query(
+              `UPDATE tasks
+                 SET pr_status = 'merged',
+                     pr_merged_at = COALESCE(pr_merged_at, NOW()),
+                     status = 'completed',
+                     completed_at = COALESCE(completed_at, NOW())
+               WHERE id = $1`,
+              [task.id]
+            );
+            console.log(`[shepherd] auto-merge 成功并推进 completed: ${task.title}`);
+          } else {
+            await pool.query(
+              `UPDATE tasks SET pr_status = 'ci_passed' WHERE id = $1`,
+              [task.id]
+            );
+            console.log(`[shepherd] auto-merge 已触发但 PR 还未 MERGED: ${task.title}`);
+          }
           result.merged++;
         } catch (mergeErr) {
           // merge 失败不阻断，保持 ci_passed，下次 tick 重试
