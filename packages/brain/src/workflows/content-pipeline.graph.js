@@ -21,7 +21,7 @@
  *   for await (const ev of app.stream(initial, { configurable: { thread_id: pipelineId } })) { ... }
  */
 
-import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
+import { StateGraph, START, END, Annotation } from '@langchain/langgraph';
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -495,6 +495,20 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
    */
   async function runDockerNode(nodeName, state) {
     const cfg = NODE_CONFIGS[nodeName];
+
+    // C8b 幂等门：state 已有该节点 primary output → 跳过 docker spawn
+    // （C6 / C8a 教训：LangGraph resume 会 replay 上次未完成节点 → 重 spawn 烧容器）
+    const primaryField = cfg.outputs[0];
+    if (primaryField && state[primaryField]) {
+      console.log(`[content-pipeline-graph] node=${nodeName} task=${taskId} resume skip (state.${primaryField} exists)`);
+      return {
+        output: '',
+        error: null,
+        success: true,
+        meta: { resumed: true, prompt_sent: '', raw_stdout: '', raw_stderr: '', exit_code: null, duration_ms: 0, container_id: null },
+      };
+    }
+
     console.log(`[content-pipeline-graph] node=${nodeName} task=${taskId} starting docker execution`);
     const startMs = Date.now();
 
