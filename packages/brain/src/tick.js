@@ -3,58 +3,18 @@
  * Implements automatic task progression through periodic ticks
  */
 
-import crypto from 'crypto';
+// D1.7b: executeTick body 移到 tick-runner.js 后，本文件保留：
+// 入口/状态管理（getTickStatus / runTickSafe / startTickLoop / initTickLoop /
+// enableTick / disableTick）+ test helpers + Codex immune。executeTick 用到的
+// 50+ 模块在 tick-runner.js 内 import；本文件只保留 getTickStatus 等还在用的
+// + re-export 给老 caller 的（dispatchNextTask / drainTick 等）。
 import pool from './db.js';
-import { getDailyFocus } from './focus.js';
-import { checkServerResources, probeTaskLiveness, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
+import { checkServerResources, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
-import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
-import { planNextTask } from './planner.js';
-import { emit } from './event-bus.js';
 import { getAllStates } from './circuit-breaker.js';
-import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
-import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
-import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
-import { getRecoveryStatus } from './alertness/healing.js';
-import { recordTickTime, recordOperation } from './alertness/metrics.js';
-import { getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
-import { runLayer2HealthCheck } from './health-monitor.js';
-import { triggerDeptHeartbeats } from './dept-heartbeat.js';
-import { triggerDailyReview, triggerContractScan, triggerArchReview } from './daily-review-scheduler.js';
-import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
-import { runConversationDigest } from './conversation-digest.js';
-import { runCaptureDigestion } from './capture-digestion.js';
-import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
-import { autoPromoteSuggestions } from './topic-suggestion-manager.js';
-import { triggerDailyPublish } from './daily-publish-scheduler.js';
-import { generateDailyReport } from './daily-report-generator.js';
-import { generateWeeklyReport } from './weekly-report-generator.js';
-import { monitorPublishQueue } from './publish-monitor.js';
-import { schedulePostPublishCollection } from './post-publish-data-collector.js';
-import { syncSocialMediaData } from './social-media-sync.js';
-import { runDesireSystem } from './desire/index.js';
-import { runRumination } from './rumination.js';
-import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
-import { runSuggestionCycle } from './suggestion-cycle.js';
-import { runConversationConsolidator } from './conversation-consolidator.js';
-import { feedDailyIfNeeded } from './notebook-feeder.js';
-import { publishCognitiveState } from './events/taskEvents.js';
-import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, updateNarrative, recordTickEvent } from './cognitive-core.js';
-import { collectSelfReport } from './self-report-collector.js';
-import { runDailyConsolidationIfNeeded } from './consolidation.js';
-import { flushAlertsIfNeeded } from './alerting.js';
-import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
-import { triggerCodeQualityScan } from './task-generator-scheduler.js';
-import { zombieSweep } from './zombie-sweep.js';
-import { runPipelinePatrol } from './pipeline-patrol.js';
-import { checkStuckPipelines } from './pipeline-watchdog.js';
-import { memorySyncIfNeeded } from './memory-sync.js';
-import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
-import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
-import { processHarnessCiWatchers, processHarnessDeployWatchers } from './harness-watcher.js';
-import { checkAndAlertExpiringCredentials, recoverAuthQuarantinedTasks, scanAuthLayerHealth, cleanupDuplicateRescueTasks, cancelCredentialAlertTasks } from './credential-expiry-checker.js';
-import { isConsciousnessEnabled, reloadConsciousnessCache } from './consciousness-guard.js';
-// Phase D Part 1.1: 48h 系统简报搬出 tick.js
+import { initAlertness, getCurrentAlertness } from './alertness/index.js';
+import { getQuarantineStats } from './quarantine.js';
+// Phase D Part 1.1: 48h 系统简报搬出 tick.js（仅 re-export）
 import { generate48hReport, check48hReport, REPORT_INTERVAL_MS } from './report-48h.js';
 // Phase D Part 1.2: drain 子系统搬出 tick.js
 import {
@@ -74,29 +34,28 @@ import {
   isTickWatchdogActive,
   TICK_WATCHDOG_INTERVAL_MS,
 } from './tick-watchdog.js';
-// Phase D Part 1.4: dispatch helpers (selectNextDispatchableTask / processCortexTask) 搬出 tick.js
-// autoCreateTasksFromCortex 仅 dispatch-helpers 内部用（与 processCortexTask 共调用），未在 tick.js 内引用，不在此 import
+// Phase D Part 1.4: dispatch helpers 搬出 tick.js（仅 re-export）
 import {
   selectNextDispatchableTask,
   processCortexTask,
 } from './dispatch-helpers.js';
-// Phase D Part 1.5: dispatchNextTask + _dispatchViaWorkflowRuntime 搬出 tick.js
+// Phase D Part 1.5: dispatchNextTask + _dispatchViaWorkflowRuntime 搬出 tick.js（仅 re-export）
 import {
   dispatchNextTask,
   _dispatchViaWorkflowRuntime,
 } from './dispatcher.js';
-// Phase D Part 1.6: routeTask / releaseBlockedTasks / autoFailTimedOutTasks / getRampedDispatchMax 搬出 tick.js
+// Phase D Part 1.6: routeTask / autoFailTimedOutTasks / getRampedDispatchMax 搬出 tick.js（仅 re-export）
 import {
   routeTask,
-  releaseBlockedTasks,
   autoFailTimedOutTasks,
   getRampedDispatchMax,
 } from './tick-helpers.js';
 // Phase D Part 1.7a: 14 个 lastXxxTime + 5 个 loop 控制态收口到 tick-state.js
-// resetTickStateForTests 直接从 tick-state.js 导入用于测试，不再 re-export
 import { tickState } from './tick-state.js';
 // Phase D Part 1.7b: executeTick 抽到 tick-runner.js
 import { executeTick } from './tick-runner.js';
+// 启动循环用 — startTickLoop 在 throttled tick 时推送 idle 心跳
+import { publishCognitiveState } from './events/taskEvents.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -127,16 +86,12 @@ const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES |
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
 // INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
-const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
 const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_INTERVAL_MS || String(20 * 60 * 1000), 10); // 20 minutes
 
-// 恢复流控：每次 tick 批量释放上限，防止瞬间释放大量任务导致系统过载
-const UNBLOCK_BATCH_LIMIT = 5;      // blocked 任务每 tick 最多释放 5 个
-const QUARANTINE_RELEASE_LIMIT = 2; // quarantine 任务每 tick 最多释放 2 个
-const MAX_REQUEUE_PER_TICK = 2;     // quota_exhausted 任务每 tick 最多梯度 requeue 数量（与 Burst Limiter 协调）
-const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50%）
-const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter：单次 tick 最多新派发 N 个，防队列积压后雪崩
+// D1.7b: AUTO_EXECUTE_CONFIDENCE / UNBLOCK_BATCH_LIMIT / QUARANTINE_RELEASE_LIMIT /
+// MAX_REQUEUE_PER_TICK / RECOVERY_DISPATCH_CAP 仅 executeTick body 用，已搬到 tick-runner.js
+const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter（仅 re-export，executeTick body 在 tick-runner.js 用）
 
 // Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
 const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '60', 10);
@@ -162,16 +117,13 @@ const TICK_STATS_KEY = 'tick_execution_stats';
 // _lastDispatchTime 已搬到 dispatcher.js（Phase D Part 1.5）— 私有计时器
 // _lastReportTime 已搬到 report-48h.js（Phase D Part 1.1）
 
-const CONSCIOUSNESS_RELOAD_INTERVAL_MS = 2 * 60 * 1000; // Phase 2: 2 minutes
-const CREDENTIAL_CHECK_INTERVAL_MS = parseInt(process.env.CECELIA_CREDENTIAL_CHECK_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
+// D1.7b: CONSCIOUSNESS_RELOAD_INTERVAL_MS / CREDENTIAL_CHECK_INTERVAL_MS /
+// PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS / ORPHAN_PR_WORKER_INTERVAL_MS
+// 仅 executeTick body 用，已搬到 tick-runner.js
+const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes（仅 re-export）
+const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes（仅 re-export）
 
-const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
-const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
-const PIPELINE_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_WATCHDOG_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
-const CLEANUP_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_WORKER_INTERVAL_MS || String(10 * 60 * 1000), 10); // R4: 10 minutes
-const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10); // Phase 1: 30 minutes
-
-const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
+const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours（仅 re-export）
 // REPORT_INTERVAL_MS 已搬到 report-48h.js（Phase D Part 1.1），下方 import re-export
 
 // Phase D Part 1.7a: Recovery timer 也收口到 tickState.recoveryTimer
@@ -599,47 +551,7 @@ function isStale(task) {
   return hoursElapsed > STALE_THRESHOLD_HOURS;
 }
 
-/**
- * Log a decision internally
- */
-async function logTickDecision(trigger, inputSummary, decision, result) {
-  await pool.query(`
-    INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
-    VALUES ($1, $2, $3, $4, $5)
-  `, [
-    trigger,
-    inputSummary,
-    decision,
-    result,
-    result?.success ? 'success' : 'failed'
-  ]);
-}
-
-/**
- * Update actions count for today
- */
-async function incrementActionsToday(count = 1) {
-  const today = new Date().toISOString().split('T')[0];
-
-  // Get current count
-  const result = await pool.query(
-    'SELECT value_json FROM working_memory WHERE key = $1',
-    [TICK_ACTIONS_TODAY_KEY]
-  );
-
-  const current = result.rows[0]?.value_json || { date: today, count: 0 };
-
-  // Reset if new day
-  const newCount = current.date === today ? current.count + count : count;
-
-  await pool.query(`
-    INSERT INTO working_memory (key, value_json, updated_at)
-    VALUES ($1, $2, NOW())
-    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [TICK_ACTIONS_TODAY_KEY, { date: today, count: newCount }]);
-
-  return newCount;
-}
+// D1.7b: logTickDecision / incrementActionsToday 仅 executeTick body 用，已搬到 tick-runner.js
 
 // Phase D Part 1.4: selectNextDispatchableTask / autoCreateTasksFromCortex / processCortexTask 实现搬到 dispatch-helpers.js，下方 import re-export。
 

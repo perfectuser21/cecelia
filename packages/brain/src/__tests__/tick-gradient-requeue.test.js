@@ -15,13 +15,12 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// D1.7b 后 executeTick body（含 step 6.5）移到 tick-runner.js；常量在两处都有
-const tickSrc = readFileSync(join(__dirname, '../tick.js'), 'utf-8');
+// D1.7b 后 executeTick body（含 step 6.5）和 MAX_REQUEUE_PER_TICK 常量都搬到 tick-runner.js；
+// tick.js 不再 declare/use 该常量
 const runnerSrc = readFileSync(join(__dirname, '../tick-runner.js'), 'utf-8');
 
 describe('MAX_REQUEUE_PER_TICK 常量', () => {
-  it('常量声明存在且默认为 2（tick.js + tick-runner.js 双副本）', () => {
-    expect(tickSrc).toContain('MAX_REQUEUE_PER_TICK = 2');
+  it('常量声明存在且默认为 2（在 tick-runner.js）', () => {
     expect(runnerSrc).toContain('MAX_REQUEUE_PER_TICK = 2');
   });
 
