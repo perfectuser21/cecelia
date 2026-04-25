@@ -12,8 +12,9 @@ import { resolve } from 'path';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 
-describe('tick.js — runSuggestionCycle 接入', () => {
-  const tickContent = readFileSync(resolve(ROOT, 'src/tick.js'), 'utf8');
+describe('tick-runner.js — runSuggestionCycle 接入', () => {
+  // D1.7b 后 executeTick body 移到 tick-runner.js
+  const tickContent = readFileSync(resolve(ROOT, 'src/tick-runner.js'), 'utf8');
 
   it('import runSuggestionCycle from suggestion-cycle.js', () => {
     expect(tickContent).toContain('runSuggestionCycle');

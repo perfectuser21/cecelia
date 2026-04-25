@@ -1,20 +1,23 @@
-# DoD — cp-0425220128-d17a-tick-state
+# DoD — cp-0425230140-d17b-executetick-extract
 
 ## Artifact
 
-- [x] [ARTIFACT] tick-state.js 存在
-  - Test: manual:node -e "require('fs').accessSync('packages/brain/src/tick-state.js')"
+- [x] [ARTIFACT] tick-runner.js 存在
+  - Test: manual:node -e "require('fs').accessSync('packages/brain/src/tick-runner.js')"
 
 ## Behavior
 
-- [x] [BEHAVIOR] tick-state.js 含 export tickState + resetTickStateForTests
-  - Test: manual:node -e "const m=require('./packages/brain/src/tick-state.js');if(!m.tickState||!m.resetTickStateForTests)process.exit(1)"
+- [x] [BEHAVIOR] tick-runner.js 含 async function executeTick + export
+  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('async function executeTick'))process.exit(1);if(!c.includes('export { executeTick }'))process.exit(1)"
 
-- [x] [BEHAVIOR] tick.js 不再含 `let _last...Time` 模式
-  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(/let _last\w+Time/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] tick.js 通过 import 从 tick-runner.js re-export executeTick（不再本地定义）
+  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(!c.includes(\"import { executeTick } from './tick-runner.js'\"))process.exit(1);if(/^async function executeTick\\(/m.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] tickState 含全 14 个 lastXxxTime 字段
-  - Test: manual:node -e "const {tickState}=require('./packages/brain/src/tick-state.js');const fs=['lastExecuteTime','lastCleanupTime','lastHealthCheckTime','lastKrProgressSyncTime','lastHeartbeatTime','lastGoalEvalTime','lastZombieSweepTime','lastZombieCleanupTime','lastPipelinePatrolTime','lastPipelineWatchdogTime','lastKrHealthDailyTime','lastCredentialCheckTime','lastCleanupWorkerTime','lastOrphanPrWorkerTime'];if(fs.some(f=>!(f in tickState)))process.exit(1)"
+- [x] [BEHAVIOR] tick.js 行数 < 1500（瘦身明显，原 2427 行 → < 850）
+  - Test: manual:bash -c "wc -l packages/brain/src/tick.js | awk '{exit ($1<1500)?0:1}'"
 
-- [x] [BEHAVIOR] tick-state 单元测试全 pass
-  - Test: tests/tick-state.test.js
+- [x] [BEHAVIOR] tick.js 仍正常 export executeTick
+  - Test: manual:node -e "const m=require('./packages/brain/src/tick.js');if(typeof m.executeTick!=='function')process.exit(1)"
+
+- [x] [BEHAVIOR] tick-runner.js 单独可 import（无循环依赖 TDZ）
+  - Test: manual:node -e "const m=require('./packages/brain/src/tick-runner.js');if(typeof m.executeTick!=='function')process.exit(1)"

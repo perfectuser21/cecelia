@@ -68,21 +68,22 @@ describe('burst limiter 代码路径验证', () => {
     expect(src).toContain('MAX_NEW_DISPATCHES_PER_TICK = 2');
   });
 
-  it('tick.js 中 7a 循环应有 burst limiter 检查（使用 effectiveBurstLimit）', async () => {
+  it('tick-runner.js 中 7a 循环应有 burst limiter 检查（使用 effectiveBurstLimit）', async () => {
+    // D1.7b 后 executeTick 函数体移到 tick-runner.js
     const fs = await import('node:fs');
-    const src = fs.readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
+    const src = fs.readFileSync(new URL('../tick-runner.js', import.meta.url), 'utf-8');
     expect(src).toContain('newDispatchCount >= effectiveBurstLimit');
   });
 
-  it('tick.js 中应有 burst_limited 日志输出', async () => {
+  it('tick-runner.js 中应有 burst_limited 日志输出', async () => {
     const fs = await import('node:fs');
-    const src = fs.readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
+    const src = fs.readFileSync(new URL('../tick-runner.js', import.meta.url), 'utf-8');
     expect(src).toContain('burst_limited');
   });
 
-  it('tick.js 中 7b 循环也应有 burst limiter 检查（使用 effectiveBurstLimit）', async () => {
+  it('tick-runner.js 中 7b 循环也应有 burst limiter 检查（使用 effectiveBurstLimit）', async () => {
     const fs = await import('node:fs');
-    const src = fs.readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
+    const src = fs.readFileSync(new URL('../tick-runner.js', import.meta.url), 'utf-8');
     // 至少出现 2 次（7a + 7b）
     const matches = src.match(/newDispatchCount >= effectiveBurstLimit/g) || [];
     expect(matches.length).toBeGreaterThanOrEqual(2);
@@ -90,7 +91,7 @@ describe('burst limiter 代码路径验证', () => {
 
   it('dispatch 返回对象应包含 burst_limited 字段定义', async () => {
     const fs = await import('node:fs');
-    const src = fs.readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
+    const src = fs.readFileSync(new URL('../tick-runner.js', import.meta.url), 'utf-8');
     expect(src).toContain('burst_limited: burstLimited');
   });
 });
