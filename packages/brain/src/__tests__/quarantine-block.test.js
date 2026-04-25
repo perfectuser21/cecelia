@@ -47,7 +47,9 @@ function mockTaskQuery(taskId, errorStr) {
   mockPool.query
     // 1) hasActiveCheckpoint query: 返回空表示任务非活跃
     .mockResolvedValueOnce({ rows: [] })
-    // 2) SELECT task
+    // 2) hasActivePr query: 返回 pr_url=NULL 表示没有 in-flight PR
+    .mockResolvedValueOnce({ rows: [{ pr_url: null, pr_status: null }] })
+    // 3) SELECT task
     .mockResolvedValueOnce({
       rows: [{
         id: taskId,
@@ -59,7 +61,7 @@ function mockTaskQuery(taskId, errorStr) {
         description: '',
       }],
     })
-    // 3) UPDATE failure_count
+    // 4) UPDATE failure_count
     .mockResolvedValueOnce({ rows: [] });
 }
 
