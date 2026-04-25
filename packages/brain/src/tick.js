@@ -93,7 +93,8 @@ import {
   getRampedDispatchMax,
 } from './tick-helpers.js';
 // Phase D Part 1.7a: 14 个 lastXxxTime + 5 个 loop 控制态收口到 tick-state.js
-import { tickState, resetTickStateForTests } from './tick-state.js';
+// resetTickStateForTests 直接从 tick-state.js 导入用于测试，不再 re-export
+import { tickState } from './tick-state.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
