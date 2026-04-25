@@ -78,3 +78,27 @@ describe('stateHasError short-circuit (non-verdict nodes only)', () => {
     expect(calls).toContain('generate');
   });
 });
+
+describe('compileContentPipelineApp default PgCheckpointer', () => {
+  it('不传 checkpointer 时调 getPgCheckpointer 单例', async () => {
+    // mock getPgCheckpointer 是 vi.hoisted 顶部写好的；这里验证它被调用
+    const { getPgCheckpointer } = await import('../orchestrator/pg-checkpointer.js');
+    getPgCheckpointer.mockClear();
+    const app = await compileContentPipelineApp();
+    expect(getPgCheckpointer).toHaveBeenCalledTimes(1);
+    expect(typeof app.invoke).toBe('function');
+  });
+
+  it('传 checkpointer 时不调 getPgCheckpointer', async () => {
+    const { getPgCheckpointer } = await import('../orchestrator/pg-checkpointer.js');
+    getPgCheckpointer.mockClear();
+    const customSaver = {
+      get: vi.fn(), put: vi.fn(), setup: vi.fn(),
+      list: vi.fn().mockResolvedValue([]), getTuple: vi.fn(), putWrites: vi.fn(),
+      getNextVersion: vi.fn((current) => (typeof current === 'number' ? current + 1 : 1)),
+    };
+    const app = await compileContentPipelineApp({ checkpointer: customSaver });
+    expect(getPgCheckpointer).not.toHaveBeenCalled();
+    expect(typeof app.invoke).toBe('function');
+  });
+});
