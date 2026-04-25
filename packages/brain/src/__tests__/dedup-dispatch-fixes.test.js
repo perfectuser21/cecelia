@@ -59,17 +59,14 @@ describe('Bug 2: Task can be reverted from in_progress to queued (revert behavio
     expect(result.task.status).toBe('queued');
   });
 
-  it('tick.js no-executor path must NOT return dispatched:true (code review)', async () => {
-    // Verify the fix: tick.js checkCeceliaRunAvailable block now returns dispatched:false
+  it('dispatcher.js no-executor path must NOT return dispatched:true (code review)', async () => {
+    // Phase D Part 1.5: dispatchNextTask 已搬到 dispatcher.js，源码 grep 跟随迁移
+    // Verify the fix: dispatchNextTask checkCeceliaRunAvailable block now returns dispatched:false
     // The old code returned { dispatched: true, reason: 'no_executor' } which was wrong
     // The new code returns { dispatched: false, reason: 'no_executor' } after revert
-    //
-    // Since dispatchNextTask has many complex dependencies, we verify by reading the
-    // tick.js source to confirm the fix is in place.
-    // This is a snapshot test of the intended behavior.
     const fs = await import('fs');
     const source = fs.default.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname, 'utf8'
+      new URL('../dispatcher.js', import.meta.url).pathname, 'utf8'
     );
     // Old bug: returned dispatched: true when no executor
     // New fix: returns dispatched: false after reverting task to queued
