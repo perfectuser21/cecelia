@@ -1052,6 +1052,38 @@ async function hasActiveContainer(taskId) {
 }
 
 /**
+ * 检查任务是否已产出活跃 PR
+ *
+ * 背景：tasks.pr_url 一旦填充且 pr_status ∈ ('open','ci_pending','merged')
+ * 即说明本任务实质 deliverable 已存在（PR 等 CI/合并），不应再因 failure_count
+ * 累积被 quarantine。否则 shepherd 过滤 status NOT IN ('quarantined') 会永远
+ * 跳过该 task → PR 永远不 merge → 死循环。
+ *
+ * 与 hasActiveCheckpoint / hasActiveContainer 并列，作为 handleTaskFailure
+ * 的第三道活跃信号守卫。Generator 类任务产出 PR 后容器可能已退出
+ * （hasActiveContainer false）、又不走 LangGraph（hasActiveCheckpoint false），
+ * 唯一活跃证据就是 tasks.pr_url + pr_status。
+ *
+ * @param {string} taskId - 任务 ID（UUID 字符串）
+ * @returns {Promise<boolean>} - true 表示已有 in-flight PR
+ */
+async function hasActivePr(taskId) {
+  try {
+    const result = await pool.query(
+      `SELECT pr_url, pr_status FROM tasks WHERE id = $1`,
+      [taskId]
+    );
+    const r = result.rows[0];
+    if (!r) return false;
+    return r.pr_url != null && ['open', 'ci_pending', 'merged'].includes(r.pr_status);
+  } catch (err) {
+    // tasks 表查询失败：安全默认 false（按原 failure 逻辑走）
+    console.warn(`[quarantine] hasActivePr query failed for ${taskId}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * 处理任务失败，检查是否需要隔离
  * @param {string} taskId - 任务 ID
  * @param {Object} options - 选项
@@ -1061,7 +1093,7 @@ async function hasActiveContainer(taskId) {
 async function handleTaskFailure(taskId, options = {}) {
   const { skipCount = false } = options;
 
-  // 活跃信号守卫 (1/2)：若 LangGraph checkpoints 表仍有该 task 的记录，
+  // 活跃信号守卫 (1/3)：若 LangGraph checkpoints 表仍有该 task 的记录，
   // 说明 executor/docker 容器仍在跑，不应计入失败也不应隔离。
   // 只覆盖走 LangGraph 的 GAN 类任务（harness_contract_propose/review 等）。
   const isActive = await hasActiveCheckpoint(taskId);
@@ -1075,7 +1107,7 @@ async function handleTaskFailure(taskId, options = {}) {
     };
   }
 
-  // 活跃信号守卫 (2/2)：Generator 类任务（harness_task / content-pipeline 等）
+  // 活跃信号守卫 (2/3)：Generator 类任务（harness_task / content-pipeline 等）
   // 不走 LangGraph，不写 checkpoints，但会在 docker 容器里跑 Claude Code。
   // 容器名约定：cecelia-task-<taskId 前 12 位 hex>，docker ps 命中即视为活跃。
   const hasContainer = await hasActiveContainer(taskId);
@@ -1086,6 +1118,22 @@ async function handleTaskFailure(taskId, options = {}) {
       failure_count: 0,
       skipped_active: true,
       reason: 'active_container',
+    };
+  }
+
+  // 活跃信号守卫 (3/3)：task 表已有 PR 且处于 in-flight 状态
+  // (open/ci_pending/merged) → 说明 deliverable 已产出，不应再拉黑导致
+  // shepherd (status NOT IN ('quarantined')) 永远跳过本 task。
+  // 覆盖 Generator 类已 push PR 但容器已退出的情况——hasActiveCheckpoint
+  // 和 hasActiveContainer 都会返回 false，但 PR 还在等 CI/merge。
+  const hasPr = await hasActivePr(taskId);
+  if (hasPr) {
+    console.log(`[quarantine] Task ${taskId} has active PR, skipping failure/quarantine`);
+    return {
+      quarantined: false,
+      failure_count: 0,
+      skipped_active: true,
+      reason: 'active_pr',
     };
   }
 
@@ -1212,6 +1260,7 @@ export {
   handleTaskFailure,
   hasActiveCheckpoint,
   hasActiveContainer,
+  hasActivePr,
   ACTIVE_CHECKPOINT_WINDOW_MINUTES,
 
   // 失败分类

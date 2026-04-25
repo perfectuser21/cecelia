@@ -76,6 +76,8 @@ describe('handleTaskFailure — active checkpoint 守卫', () => {
   it('非活跃任务（checkpoints 无行）会进入正常失败处理流程', async () => {
     // checkpoints 查询：无行
     pool.query.mockResolvedValueOnce({ rows: [] });
+    // hasActivePr 查询：pr_url=NULL 无活跃 PR
+    pool.query.mockResolvedValueOnce({ rows: [{ pr_url: null, pr_status: null }] });
     // SELECT tasks 返回一个空 failure_count 的 task（首次失败）
     pool.query.mockResolvedValueOnce({
       rows: [{

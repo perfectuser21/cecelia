@@ -140,6 +140,8 @@ describe('handleTaskFailure — active container 守卫', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
     // docker ps 无对应容器
     mockDockerPs('some-other-container\n');
+    // hasActivePr → 无活跃 PR
+    pool.query.mockResolvedValueOnce({ rows: [{ pr_url: null, pr_status: null }] });
     // SELECT tasks → 首次失败
     pool.query.mockResolvedValueOnce({
       rows: [{
@@ -169,6 +171,8 @@ describe('handleTaskFailure — active container 守卫', () => {
     const taskId = '99999999-0000-0000-0000-000000000000';
     pool.query.mockResolvedValueOnce({ rows: [] }); // checkpoint
     mockDockerPs('', true);                         // docker reject
+    // hasActivePr → 无活跃 PR
+    pool.query.mockResolvedValueOnce({ rows: [{ pr_url: null, pr_status: null }] });
     pool.query.mockResolvedValueOnce({
       rows: [{
         id: taskId,
