@@ -95,8 +95,7 @@ import {
 // Phase D Part 1.7a: 14 个 lastXxxTime + 5 个 loop 控制态收口到 tick-state.js
 // resetTickStateForTests 直接从 tick-state.js 导入用于测试，不再 re-export
 import { tickState } from './tick-state.js';
-// Phase D Part 1.7b: executeTick 函数体（~1626 行）抽到 tick-runner.js
-// 通过 re-export 兼容老 caller（server.js / 19 个 vi.mock('../tick.js') 测试）
+// Phase D Part 1.7b: executeTick 抽到 tick-runner.js
 import { executeTick } from './tick-runner.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone

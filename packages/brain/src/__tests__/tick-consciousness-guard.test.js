@@ -4,7 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TICK_PATH = path.resolve(__dirname, '../tick.js');
+// D1.7b: executeTick body 移到 tick-runner.js，意识守护检查随之
+const TICK_PATH = path.resolve(__dirname, '../tick-runner.js');
 
 describe('tick consciousness guard - static source enforcement', () => {
   let src;
@@ -42,7 +43,7 @@ describe('tick consciousness guard - static source enforcement', () => {
         const context = lines.slice(Math.max(0, idx - 50), idx + 1).join('\n');
         expect(
           context,
-          `${fn} 在 tick.js line ${idx + 1} 必须在 isConsciousnessEnabled() 守护块内（前 50 行）`
+          `${fn} 在 tick-runner.js line ${idx + 1} 必须在 isConsciousnessEnabled() 守护块内（前 50 行）`
         ).toMatch(/isConsciousnessEnabled\(\)/);
       }
     });

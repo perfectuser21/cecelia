@@ -20,8 +20,9 @@ const serverSrc = fs.readFileSync(
   path.join(__dirname, '../../server.js'),
   'utf8'
 );
+// D1.7b: executeTick body（含 triggerDeptHeartbeats 调用）移到 tick-runner.js
 const tickSrc = fs.readFileSync(
-  path.join(__dirname, '../tick.js'),
+  path.join(__dirname, '../tick-runner.js'),
   'utf8'
 );
 const modelProfileSrc = fs.readFileSync(
@@ -112,7 +113,7 @@ describe('isConsciousnessEnabled() — 意识守护', () => {
     expect(region).toContain('isConsciousnessEnabled');
   });
 
-  it('tick.js: triggerDeptHeartbeats 被 isConsciousnessEnabled() 门控', () => {
+  it('tick-runner.js: triggerDeptHeartbeats 被 isConsciousnessEnabled() 门控', () => {
     const callIdx = tickSrc.indexOf('triggerDeptHeartbeats(pool)');
     expect(callIdx).toBeGreaterThan(0);
     const region = tickSrc.slice(callIdx - 400, callIdx + 100);
