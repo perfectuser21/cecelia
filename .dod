@@ -1,20 +1,20 @@
-# DoD — cp-0422152028-brain-compose-cgroup-fix
+# DoD — cp-0425220128-d17a-tick-state
 
 ## Artifact
 
-- [x] [ARTIFACT] docker-compose.yml 加顶层 mem_limit/mem_reservation/cpus
-  - Test: manual:node -e "const c=require('fs').readFileSync('docker-compose.yml','utf8');for(const f of ['mem_limit:','mem_reservation:','cpus: 2.0'])if(!c.includes(f))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] brain-docker-up.sh 加 --force-recreate
-  - Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-docker-up.sh','utf8');if(!c.includes('--force-recreate'))process.exit(1);console.log('ok')"
-
-- [x] [ARTIFACT] 设计 + Learning 已提交
-  - Test: manual:node -e "require('fs').accessSync('docs/superpowers/specs/2026-04-22-brain-compose-cgroup-fix-design.md');require('fs').accessSync('docs/learnings/cp-0422152028-brain-compose-cgroup-fix.md')"
+- [x] [ARTIFACT] tick-state.js 存在
+  - Test: manual:node -e "require('fs').accessSync('packages/brain/src/tick-state.js')"
 
 ## Behavior
 
-- [x] [BEHAVIOR] compose config 合法
-  - Test: manual:bash -c "docker compose -f docker-compose.yml config > /dev/null 2>&1"
+- [x] [BEHAVIOR] tick-state.js 含 export tickState + resetTickStateForTests
+  - Test: manual:node -e "const m=require('./packages/brain/src/tick-state.js');if(!m.tickState||!m.resetTickStateForTests)process.exit(1)"
 
-- [x] [BEHAVIOR] 脚本 bash -n 通过
-  - Test: manual:bash -c "bash -n scripts/brain-docker-up.sh"
+- [x] [BEHAVIOR] tick.js 不再含 `let _last...Time` 模式
+  - Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick.js','utf8');if(/let _last\w+Time/.test(c))process.exit(1)"
+
+- [x] [BEHAVIOR] tickState 含全 14 个 lastXxxTime 字段
+  - Test: manual:node -e "const {tickState}=require('./packages/brain/src/tick-state.js');const fs=['lastExecuteTime','lastCleanupTime','lastHealthCheckTime','lastKrProgressSyncTime','lastHeartbeatTime','lastGoalEvalTime','lastZombieSweepTime','lastZombieCleanupTime','lastPipelinePatrolTime','lastPipelineWatchdogTime','lastKrHealthDailyTime','lastCredentialCheckTime','lastCleanupWorkerTime','lastOrphanPrWorkerTime'];if(fs.some(f=>!(f in tickState)))process.exit(1)"
+
+- [x] [BEHAVIOR] tick-state 单元测试全 pass
+  - Test: tests/tick-state.test.js
