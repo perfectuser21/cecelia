@@ -557,7 +557,17 @@ export const InitiativeState = Annotation.Root({
 });
 
 // 节点 stub — Task 2-6 逐个填充。
-export async function prepInitiativeNode(_state) { return {}; }
+export async function prepInitiativeNode(state) {
+  if (state.worktreePath) return { worktreePath: state.worktreePath };
+  try {
+    const initiativeId = state.task?.payload?.initiative_id || state.task?.initiative_id || state.task?.id;
+    const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId });
+    const githubToken = await resolveGitHubToken();
+    return { worktreePath, githubToken, initiativeId };
+  } catch (err) {
+    return { error: { node: 'prep', message: err.message } };
+  }
+}
 export async function runPlannerNode(_state) { return {}; }
 export async function parsePrdNode(_state) { return {}; }
 export async function runGanLoopNode(_state) { return {}; }

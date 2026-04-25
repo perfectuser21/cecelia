@@ -76,3 +76,40 @@ describe('harness-initiative graph — structure', () => {
     expect(InitiativeState).toBeDefined();
   });
 });
+
+describe('prepInitiativeNode', () => {
+  beforeEach(() => {
+    mockEnsureWorktree.mockReset();
+    mockResolveToken.mockReset();
+  });
+
+  it('happy: 调 ensureHarnessWorktree + resolveGitHubToken 写入 worktreePath/githubToken/initiativeId', async () => {
+    mockEnsureWorktree.mockResolvedValueOnce('/wt/foo');
+    mockResolveToken.mockResolvedValueOnce('ghp_xxx');
+    const state = { task: { id: 't1', payload: { initiative_id: 'init-1' } } };
+    const delta = await prepInitiativeNode(state);
+    expect(mockEnsureWorktree).toHaveBeenCalledWith({ taskId: 't1', initiativeId: 'init-1' });
+    expect(mockResolveToken).toHaveBeenCalledTimes(1);
+    expect(delta.worktreePath).toBe('/wt/foo');
+    expect(delta.githubToken).toBe('ghp_xxx');
+    expect(delta.initiativeId).toBe('init-1');
+    expect(delta.error).toBeUndefined();
+  });
+
+  it('idempotent: state.worktreePath 已存在 → 不调底层依赖', async () => {
+    const state = { worktreePath: '/wt/existing', task: { id: 't2' } };
+    const delta = await prepInitiativeNode(state);
+    expect(mockEnsureWorktree).not.toHaveBeenCalled();
+    expect(mockResolveToken).not.toHaveBeenCalled();
+    expect(delta.worktreePath).toBe('/wt/existing');
+  });
+
+  it('error: ensureHarnessWorktree 抛 → state.error.node="prep"', async () => {
+    mockEnsureWorktree.mockRejectedValueOnce(new Error('worktree busy'));
+    const state = { task: { id: 't3', payload: {} } };
+    const delta = await prepInitiativeNode(state);
+    expect(delta.error).toBeDefined();
+    expect(delta.error.node).toBe('prep');
+    expect(delta.error.message).toBe('worktree busy');
+  });
+});
