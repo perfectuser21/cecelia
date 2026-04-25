@@ -75,6 +75,13 @@ import {
   _getDrainState,
   _resetDrainState,
 } from './drain.js';
+// Phase D Part 1.3: tick watchdog 搬出 tick.js
+import {
+  startTickWatchdog,
+  stopTickWatchdog,
+  isTickWatchdogActive,
+  TICK_WATCHDOG_INTERVAL_MS,
+} from './tick-watchdog.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -219,9 +226,7 @@ let _recoveryTimer = null;
 
 // Drain state 已搬到 drain.js（Phase D Part 1.2）— 通过 isDraining()/getDrainStartedAt()/isPostDrainCooldown() getter 访问
 
-// Tick watchdog timer (in-memory)
-let _tickWatchdogTimer = null;
-const TICK_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_WATCHDOG_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes
+// Tick watchdog 已搬到 tick-watchdog.js（Phase D Part 1.3）— 通过 isTickWatchdogActive() getter 访问
 
 /**
  * Get tick status
@@ -285,7 +290,7 @@ async function getTickStatus() {
     draining: isDraining(),
     drain_started_at: getDrainStartedAt(),
     post_drain_cooldown: isPostDrainCooldown(),
-    tick_watchdog_active: _tickWatchdogTimer !== null,
+    tick_watchdog_active: isTickWatchdogActive(),
     interval_minutes: TICK_INTERVAL_MINUTES,
     loop_interval_ms: TICK_LOOP_INTERVAL_MS,
     last_tick: lastTick,
@@ -597,73 +602,7 @@ async function initTickLoop() {
   }
 }
 
-/**
- * Start tick watchdog — independent timer that periodically checks tick health.
- * If tick is disabled by a non-manual source (drain/alertness), auto-recovers.
- * Only manual disables are respected; all other disables are transient.
- */
-function startTickWatchdog() {
-  if (_tickWatchdogTimer) {
-    tickLog('[tick-watchdog] Already running, skipping start');
-    return;
-  }
-
-  _tickWatchdogTimer = setInterval(async () => {
-    try {
-      const tickMem = await pool.query(
-        `SELECT value_json FROM working_memory WHERE key = $1`,
-        [TICK_ENABLED_KEY]
-      );
-      const tickData = tickMem.rows[0]?.value_json || {};
-
-      if (tickData.enabled === false) {
-        const source = tickData.source || 'unknown';
-
-        // Only auto-recover non-manual disables
-        if (source === 'manual') {
-          // Manual disable — respect it, do not auto-recover
-          return;
-        }
-
-        console.warn(`[tick-watchdog] Tick is disabled (source: ${source}), auto-recovering...`);
-        await enableTick();
-
-        // Log recovery event
-        try {
-          await pool.query(
-            `INSERT INTO cecelia_events (event_type, source, payload)
-             VALUES ('tick_watchdog_recover', 'tick_watchdog', $1)`,
-            [JSON.stringify({
-              reason: 'tick_disabled_by_non_manual_source',
-              original_source: source,
-              disabled_at: tickData.disabled_at || null,
-              recovered_at: new Date().toISOString(),
-            })]
-          );
-        } catch { /* event logging is best-effort */ }
-      }
-    } catch (err) {
-      console.error('[tick-watchdog] Error checking tick status:', err.message);
-    }
-  }, TICK_WATCHDOG_INTERVAL_MS);
-
-  if (_tickWatchdogTimer.unref) {
-    _tickWatchdogTimer.unref();
-  }
-
-  tickLog(`[tick-watchdog] Started (interval: ${TICK_WATCHDOG_INTERVAL_MS}ms)`);
-}
-
-/**
- * Stop tick watchdog timer
- */
-function stopTickWatchdog() {
-  if (_tickWatchdogTimer) {
-    clearInterval(_tickWatchdogTimer);
-    _tickWatchdogTimer = null;
-    tickLog('[tick-watchdog] Stopped');
-  }
-}
+// Phase D Part 1.3: tick watchdog 实现搬到 tick-watchdog.js，下方 import re-export。
 
 /**
  * Enable automatic tick
