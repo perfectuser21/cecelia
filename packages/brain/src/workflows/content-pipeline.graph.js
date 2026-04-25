@@ -252,6 +252,14 @@ export function placeholderNode(label, stateUpdate) {
 }
 
 /**
+ * 非 verdict 节点 error 短路 helper。
+ * 仅用于 research/copywrite/generate；verdict 节点 (copy_review/image_review)
+ * 的 docker flake 让 state.error 与 verdict 同时填，原 round>=3 兜底吸收，
+ * 强行 error → END 反而让 R3 任一次 flake 死透，比当前更脆。
+ */
+function stateHasError(state) { return state.error ? 'error' : 'ok'; }
+
+/**
  * 构造 content pipeline graph（未编译）。
  *
  * 暴露未编译的 builder，让测试可以注入自定义节点覆盖条件边路径，
@@ -278,8 +286,9 @@ export function buildContentPipelineGraph(overrides = {}) {
     .addNode('image_review', nodes.image_review)
     .addNode('export', nodes.export)
     .addEdge(START, 'research')
-    .addEdge('research', 'copywrite')
-    .addEdge('copywrite', 'copy_review')
+    // C8b 非 verdict 节点：error 短路（research/copywrite）
+    .addConditionalEdges('research', stateHasError, { error: END, ok: 'copywrite' })
+    .addConditionalEdges('copywrite', stateHasError, { error: END, ok: 'copy_review' })
     .addConditionalEdges(
       'copy_review',
       (state) => {
@@ -307,7 +316,8 @@ export function buildContentPipelineGraph(overrides = {}) {
       },
       { generate: 'generate', copywrite: 'copywrite' },
     )
-    .addEdge('generate', 'image_review')
+    // C8b 非 verdict 节点：error 短路（generate）
+    .addConditionalEdges('generate', stateHasError, { error: END, ok: 'image_review' })
     .addConditionalEdges(
       'image_review',
       (state) => {
