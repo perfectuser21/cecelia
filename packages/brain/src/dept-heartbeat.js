@@ -140,3 +140,50 @@ export async function triggerDeptHeartbeats(pool) {
 
   return { triggered, skipped, results };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase D1.7c-plugin1: tick(now, tickState) plugin 接口
+//
+// 替代 tick-runner.js Step 9 内联 dept-heartbeat 触发。
+// 行为保持一致：CONSCIOUSNESS_ENABLED=false 时跳过；
+// 否则调用 triggerDeptHeartbeats(pool)。错误吞掉，不抛。
+// 返回值兼容老 caller 的 deptHeartbeatResult shape。
+// ─────────────────────────────────────────────────────────────────────────
+
+const SKIPPED_RESULT = Object.freeze({ triggered: 0, skipped: 0, results: [] });
+
+/**
+ * Plugin tick: 触发部门 heartbeat（每 Tick 末尾调用）
+ *
+ * @param {Date} _now - 当前时间（plugin 接口标准签名，本插件未使用）
+ * @param {object} _tickState - tick-state 单例（本插件无节流计时器）
+ * @param {object} [opts]
+ * @param {import('pg').Pool} [opts.pool] - 注入 pool，未传则从 db.js 动态导入
+ * @returns {Promise<{triggered:number, skipped:number, results:Array}>}
+ */
+export async function tick(_now, _tickState, opts = {}) {
+  // 守卫：意识关闭时不触发任何部门 heartbeat（避免噪音干扰手动验证）
+  let isConsciousnessEnabled;
+  try {
+    ({ isConsciousnessEnabled } = await import('./consciousness-guard.js'));
+  } catch {
+    // 守护模块加载失败时保守跳过
+    return { ...SKIPPED_RESULT };
+  }
+  if (!isConsciousnessEnabled()) {
+    return { ...SKIPPED_RESULT };
+  }
+
+  let pool = opts.pool;
+  if (!pool) {
+    const mod = await import('./db.js');
+    pool = mod.default;
+  }
+
+  try {
+    return await triggerDeptHeartbeats(pool);
+  } catch (deptErr) {
+    console.error('[tick] dept heartbeat error:', deptErr.message);
+    return { ...SKIPPED_RESULT };
+  }
+}
