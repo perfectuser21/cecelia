@@ -6,26 +6,17 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-describe('Coverage Thresholds', () => {
-  it('should have coverage thresholds configured in vitest.config.js', async () => {
+describe('Coverage Configuration', () => {
+  // 注意：vitest 全局 thresholds（statements/branches/functions/lines/perFile）
+  // 已在 cp-0425113824 中删除，门禁交给 CI brain-diff-coverage 的
+  // diff-cover --fail-under=80（PR 增量覆盖率）。
+  // 因此本文件不再断言 thresholds / perFile 字段存在。
+
+  it('must NOT contain global coverage thresholds (diff-cover is the sole gate)', () => {
     const configPath = resolve(__dirname, '../../vitest.config.js');
     const configContent = readFileSync(configPath, 'utf-8');
 
-    // Check that thresholds are configured (currently 0 for baseline)
-    // TODO: Update these to check for 95% when we reach target coverage
-    expect(configContent).toMatch(/statements:\s*\d+/);
-    expect(configContent).toMatch(/branches:\s*\d+/);
-    expect(configContent).toMatch(/functions:\s*\d+/);
-    expect(configContent).toMatch(/lines:\s*\d+/);
-  });
-
-  it('should have perFile threshold enforcement configured', () => {
-    const configPath = resolve(__dirname, '../../vitest.config.js');
-    const configContent = readFileSync(configPath, 'utf-8');
-
-    // Check that per-file threshold config exists
-    // Currently false for baseline, will be true when enforcing
-    expect(configContent).toMatch(/perFile:\s*(true|false)/);
+    expect(configContent).not.toMatch(/thresholds:\s*\{/);
   });
 
   it('should include all source files in coverage', () => {
