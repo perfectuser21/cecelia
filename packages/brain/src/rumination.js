@@ -251,6 +251,18 @@ async function digestLearnings(db, learnings) {
   const insights = [];
   let selfInsightText = '';
 
+  // 心跳事件：每次进入 digestLearnings 都记录一次（不论 LLM 是否成功）
+  // probe 用此判断 rumination 循环是否真的在跑（vs LLM 全部失败导致无 output）
+  try {
+    await db.query(
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('rumination_run', 'rumination', $1::jsonb)`,
+      [JSON.stringify({ batch_size: learnings.length })]
+    );
+  } catch (hbErr) {
+    console.warn('[rumination] heartbeat write failed (non-blocking):', hbErr.message);
+  }
+
   try {
     // 1. 获取相关记忆上下文（fallback 时用）
     let memoryBlock = '';
@@ -452,15 +464,20 @@ ${insight.trim().slice(0, 800)}
       }
     }
 
-    // 6. 标记所有 learnings 已消化
-    for (const learning of learnings) {
-      await db.query(
-        'UPDATE learnings SET digested = true WHERE id = $1',
-        [learning.id]
-      );
-    }
+    // 6. 标记所有 learnings 已消化（仅在产生有效 insight 时；
+    //    防止 LLM 全部失败时 learnings 被静默丢弃且无任何洞察产出）
+    if (insight && insight.trim()) {
+      for (const learning of learnings) {
+        await db.query(
+          'UPDATE learnings SET digested = true WHERE id = $1',
+          [learning.id]
+        );
+      }
 
-    _dailyCount += learnings.length;
+      _dailyCount += learnings.length;
+    } else {
+      console.warn(`[rumination] no insight produced (LLM all failed) — leaving ${learnings.length} learnings undigested for retry`);
+    }
 
     // 7. 发 RUMINATION_RESULT 事件给丘脑（闭环线 1）
     if (insights.length > 0) {

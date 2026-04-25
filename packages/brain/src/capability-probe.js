@@ -280,9 +280,19 @@ async function probeRumination() {
     };
   }
 
+  // 检查心跳事件（rumination_run）— 用于区分"循环未跑"vs"循环在跑但 LLM 全失败"
+  // 心跳由 digestLearnings 入口处无条件写入，是循环存活的可靠证据
+  const heartbeatResult = await pool.query(
+    `SELECT count(*) AS cnt FROM cecelia_events
+     WHERE event_type = 'rumination_run'
+       AND created_at > NOW() - INTERVAL '24 hours'`
+  );
+  const recentHeartbeats = parseInt(heartbeatResult.rows[0]?.cnt || 0);
+  const livenessTag = recentHeartbeats > 0 ? 'degraded_llm_failure' : 'loop_dead';
+
   return {
     ok: false,
-    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns}`,
+    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} (${livenessTag})`,
   };
 }
 
