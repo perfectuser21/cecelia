@@ -1,8 +1,9 @@
 # Contract DoD — Workstream 2: 端点挂载到 /api/brain/health 前缀
 
-**范围**: 修改 `packages/brain/server.js`，import Workstream 1 的 health router 并通过 `app.use('/api/brain/health', healthRouter)` 挂载。
+**范围**: 修改 `packages/brain/server.js`，import Workstream 1 的 health router 并通过 `app.use('/api/brain/health', healthRouter)` 挂载。仅修改 `server.js`（import 区 + 挂载区），**不动** `routes/health.js`、不动 startup 逻辑。
 **大小**: S
-**依赖**: Workstream 1
+**依赖**: Workstream 1 PR 已 merged 进 main（**强串行**：本 PR import `./src/routes/health.js`，WS1 未合并时 import 失败、CI 必红）
+**派发顺序**: Phase B 第二批，与 WS3/WS4 并发
 
 ## ARTIFACT 条目
 
@@ -15,10 +16,12 @@
 - [ ] [ARTIFACT] 挂载语句使用的是 ws1 中 import 进来的同一个标识符（防挂错路由）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');const im=c.match(/import\s+(\w+)\s+from\s+['\"]\.\/src\/routes\/health\.js['\"]/);if(!im)process.exit(1);const id=im[1];const re=new RegExp(\"app\\\\.use\\\\(\\\\s*['\\\"]\\\\/api\\\\/brain\\\\/health['\\\"]\\\\s*,\\\\s*\"+id+\"\\\\s*\\\\)\");if(!re.test(c))process.exit(1)"
 
-## BEHAVIOR 索引（实际测试在 tests/ws2/）
+## BEHAVIOR 索引（实际测试在 sprints/tests/ws2/）
 
-见 `tests/ws2/api-brain-mount.test.ts`，覆盖：
+见 `sprints/tests/ws2/api-brain-mount.test.ts`，覆盖：
 - GET /api/brain/health returns 200 with application/json content-type
 - response body is a plain JSON object containing status, uptime_seconds, version
 - ignores query string parameters and still returns 200 with status=ok
 - GET /api/brain/health/extra-suffix does not collide with the contract
+
+跑测命令（Repo Root）: `npx vitest run --config sprints/vitest.config.ts tests/ws2/`

@@ -54,4 +54,10 @@ describe('Workstream 3 — Field Invariants [BEHAVIOR]', () => {
       expect(typeof r.body.uptime_seconds).toBe('number');
     }
   });
+
+  it('removed the WS1 placeholder literal pending from routes/health.js', () => {
+    const src = readFileSync(HEALTH_SRC_PATH, 'utf8');
+    const placeholderLiteral = /['"]pending['"]/;
+    expect(placeholderLiteral.test(src)).toBe(false);
+  });
 });
