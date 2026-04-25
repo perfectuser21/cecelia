@@ -460,4 +460,64 @@ describe('runGanContractGraph', () => {
     const tuple = await checkpointer.getTuple({ configurable: { thread_id: 'task-thread-1' } });
     expect(tuple).toBeTruthy();
   });
+
+  it('proposer stdout 含 propose_branch → finalState 透传到 runGanContractGraph 返回值（v6 P0-final）', async () => {
+    let round = 0;
+    const executor = vi.fn(async ({ task: { task_type } }) => {
+      if (task_type === 'harness_contract_propose') {
+        round += 1;
+        return {
+          exit_code: 0,
+          stdout: `propose stuff\n{"verdict": "PROPOSED", "propose_branch": "cp-harness-propose-r${round}-deadbeef", "workstream_count": 4, "test_files_count": 4}\n`,
+          stderr: '',
+          cost_usd: 0.1,
+          timed_out: false,
+        };
+      }
+      // reviewer 直接 APPROVED（rubric 全 8 → 通过 round-1 阈值 7）
+      return {
+        exit_code: 0,
+        stdout: '```json\n{"dod_machineability":8,"scope_match_prd":8,"test_is_red":8,"internal_consistency":8,"risk_registered":8}\n```\nVERDICT: APPROVED',
+        stderr: '',
+        cost_usd: 0.05,
+        timed_out: false,
+      };
+    });
+    const { runGanContractGraph } = await import('../harness-gan-graph.js');
+    const res = await runGanContractGraph({ ...makeOpts(), executor });
+    expect(res.propose_branch).toBe('cp-harness-propose-r1-deadbeef');
+  });
+
+  it('proposer stdout 缺 propose_branch → 返回值 propose_branch=null（兜底，不抛错）', async () => {
+    const executor = vi.fn(async ({ task: { task_type } }) => {
+      if (task_type === 'harness_contract_propose') {
+        return { exit_code: 0, stdout: 'no json here', stderr: '', cost_usd: 0.1, timed_out: false };
+      }
+      return {
+        exit_code: 0,
+        stdout: '```json\n{"dod_machineability":8,"scope_match_prd":8,"test_is_red":8,"internal_consistency":8,"risk_registered":8}\n```\nVERDICT: APPROVED',
+        stderr: '',
+        cost_usd: 0.05,
+        timed_out: false,
+      };
+    });
+    const { runGanContractGraph } = await import('../harness-gan-graph.js');
+    const res = await runGanContractGraph({ ...makeOpts(), executor });
+    expect(res.propose_branch).toBeNull();
+  });
+});
+
+describe('extractProposeBranch', () => {
+  it('提取 SKILL Step 3 字面量 JSON 中的 propose_branch', async () => {
+    const { extractProposeBranch } = await import('../harness-gan-graph.js');
+    const stdout = '...输出blah\n{"verdict": "PROPOSED", "contract_draft_path": "sprints/foo/contract-draft.md", "propose_branch": "cp-harness-propose-r2-12345678", "workstream_count": 4, "test_files_count": 4}\n';
+    expect(extractProposeBranch(stdout)).toBe('cp-harness-propose-r2-12345678');
+  });
+
+  it('未找到字段 → null', async () => {
+    const { extractProposeBranch } = await import('../harness-gan-graph.js');
+    expect(extractProposeBranch('no json')).toBeNull();
+    expect(extractProposeBranch('')).toBeNull();
+    expect(extractProposeBranch(null)).toBeNull();
+  });
 });

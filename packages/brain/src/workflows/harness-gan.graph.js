@@ -114,6 +114,15 @@ export function extractFeedback(stdout) {
   return s.slice(-2000);
 }
 
+// 从 proposer 的 stdout 提取 propose_branch（SKILL Step 3 输出 JSON 字面量）。
+// 格式形如：{"verdict": "PROPOSED", "propose_branch": "cp-harness-propose-rN-XXXXXXXX", ...}
+// 找不到返回 null（兜底，不抛错）。
+const PROPOSE_BRANCH_RE = /"propose_branch"\s*:\s*"([^"]+)"/;
+export function extractProposeBranch(stdout) {
+  const m = String(stdout || '').match(PROPOSE_BRANCH_RE);
+  return m ? m[1] : null;
+}
+
 export function buildProposerPrompt(prdContent, feedback, round) {
   const parts = [
     '/harness-contract-proposer',
@@ -245,6 +254,11 @@ export const GanContractState = Annotation.Root({
   // forcedApproval: true 表示 verdict=APPROVED 是 MAX_ROUNDS 硬 cap 强制的（Reviewer 还想 REVISE）。
   // Phase B 用这个 flag 决定是否在 Initiative 记录里标 warn（合同是勉强过，不是真共识）。
   forcedApproval: Annotation({ reducer: (_old, neu) => neu, default: () => false }),
+  // proposeBranch: GAN proposer 每轮 push 到独立分支（cp-harness-propose-r{N}-{shortTask}）。
+  // Reviewer APPROVED 后此值即 approved contract 的 git branch — Phase B 入库 sub-task
+  // 时透传到 payload.contract_branch，供 harness-task-dispatch.js 注入 CONTRACT_BRANCH env。
+  // 漏写会导致 Generator ABORT（v6 P0-final 修复点）。
+  proposeBranch: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
 });
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
@@ -295,10 +309,15 @@ export function createGanContractNodes(executor, ctx) {
       throw new Error(`proposer_failed: exit=${result?.exit_code} stderr=${(result?.stderr || '').slice(0, 300)}`);
     }
     const contractContent = await readContractFile(worktreePath, sprintDir);
+    // 解析 stdout 中的 propose_branch（proposer SKILL Step 3 输出 JSON 字面量）。
+    // 即使本轮被打回，先把 branch 存下；后续轮次会覆写成新 branch（reducer 取最新）。
+    // APPROVED 终态时即 approved contract 的 git branch。
+    const proposeBranch = extractProposeBranch(result.stdout);
     return {
       round: nextRound,
       costUsd: (state.costUsd || 0) + Number(result.cost_usd || 0),
       contractContent,
+      ...(proposeBranch ? { proposeBranch } : {}),
     };
   }
 
@@ -434,5 +453,6 @@ export async function runGanContractGraph(opts) {
     contract_content: finalState.contractContent,
     rounds: finalState.round,
     cost_usd: finalState.costUsd,
+    propose_branch: finalState.proposeBranch || null,
   };
 }
