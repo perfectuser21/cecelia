@@ -64,6 +64,17 @@ import { checkQuotaGuard } from './quota-guard.js';
 import { isConsciousnessEnabled, reloadConsciousnessCache } from './consciousness-guard.js';
 // Phase D Part 1.1: 48h 系统简报搬出 tick.js
 import { generate48hReport, check48hReport, REPORT_INTERVAL_MS } from './report-48h.js';
+// Phase D Part 1.2: drain 子系统搬出 tick.js
+import {
+  drainTick,
+  getDrainStatus,
+  cancelDrain,
+  isDraining,
+  getDrainStartedAt,
+  isPostDrainCooldown,
+  _getDrainState,
+  _resetDrainState,
+} from './drain.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -206,11 +217,7 @@ const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
 
-// Drain state (in-memory)
-let _draining = false;
-let _drainStartedAt = null;
-let _postDrainCooldown = false;
-let _postDrainCooldownTimer = null;
+// Drain state 已搬到 drain.js（Phase D Part 1.2）— 通过 isDraining()/getDrainStartedAt()/isPostDrainCooldown() getter 访问
 
 // Tick watchdog timer (in-memory)
 let _tickWatchdogTimer = null;
@@ -275,9 +282,9 @@ async function getTickStatus() {
   return {
     enabled,
     loop_running: _loopTimer !== null,
-    draining: _draining,
-    drain_started_at: _drainStartedAt,
-    post_drain_cooldown: _postDrainCooldown,
+    draining: isDraining(),
+    drain_started_at: getDrainStartedAt(),
+    post_drain_cooldown: isPostDrainCooldown(),
     tick_watchdog_active: _tickWatchdogTimer !== null,
     interval_minutes: TICK_INTERVAL_MINUTES,
     loop_interval_ms: TICK_LOOP_INTERVAL_MS,
@@ -1056,12 +1063,12 @@ async function dispatchNextTask(goalIds) {
   const { getMitigationState } = await import('./alertness-actions.js');
   const mitigationState = getMitigationState();
 
-  if (_draining || mitigationState.drain_mode_requested) {
+  if (isDraining() || mitigationState.drain_mode_requested) {
     await recordDispatchResult(pool, false, 'draining');
     return {
       dispatched: false,
       reason: 'draining',
-      detail: _draining ? `Drain mode active since ${_drainStartedAt}` : 'Alertness COMA drain mode',
+      detail: isDraining() ? `Drain mode active since ${getDrainStartedAt()}` : 'Alertness COMA drain mode',
       actions
     };
   }
@@ -1609,7 +1616,7 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
   newRate = Math.min(newRate, effectiveDispatchMax);
 
   // Post-drain cooldown: limit dispatch rate to 1 for 5 minutes after drain completes
-  if (_postDrainCooldown && newRate > 1) {
+  if (isPostDrainCooldown() && newRate > 1) {
     newRate = 1;
     reason = 'post_drain_cooldown';
   }
@@ -3269,122 +3276,7 @@ async function executeTick() {
 }
 
 // Phase D Part 1.1: 48h 系统简报实现搬到 report-48h.js，下方 import re-export。
-
-/**
- * Start graceful drain — stop dispatching new tasks, let in_progress finish
- * When all in_progress tasks complete (checked via getDrainStatus), auto-disable tick.
- */
-async function drainTick() {
-  if (_draining) {
-    return { success: true, already_draining: true, draining: true, drain_started_at: _drainStartedAt };
-  }
-
-  _draining = true;
-  _drainStartedAt = new Date().toISOString();
-  tickLog(`[tick] Drain mode activated at ${_drainStartedAt}`);
-
-  // Count in_progress tasks for initial status (no auto-complete on activation)
-  const inProgressResult = await pool.query(
-    "SELECT id, title, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
-  );
-
-  return {
-    success: true,
-    draining: true,
-    drain_started_at: _drainStartedAt,
-    in_progress_tasks: inProgressResult.rows.map(t => ({
-      id: t.id,
-      title: t.title,
-      started_at: t.started_at
-    })),
-    remaining: inProgressResult.rows.length
-  };
-}
-
-/**
- * Get drain status — shows draining flag + in_progress tasks
- * Auto-completes drain when no in_progress tasks remain.
- */
-async function getDrainStatus() {
-  if (!_draining) {
-    return { draining: false, in_progress_tasks: [], remaining: 0 };
-  }
-
-  const inProgressResult = await pool.query(
-    "SELECT id, title, status, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
-  );
-
-  const tasks = inProgressResult.rows;
-
-  // Auto-complete drain: if no in_progress tasks remain, enter post-drain cooldown
-  // (NOT disableTick — that would kill the entire tick loop, causing system-wide stop)
-  if (tasks.length === 0) {
-    tickLog('[tick] Drain complete — no in_progress tasks remain, entering post-drain cooldown (dispatch rate → 1)');
-    const drainEnd = new Date().toISOString();
-    const startedAt = _drainStartedAt;
-    _draining = false;
-    _drainStartedAt = null;
-
-    // Set post-drain cooldown: dispatch rate limited to 1 for 5 minutes
-    _postDrainCooldown = true;
-    if (_postDrainCooldownTimer) clearTimeout(_postDrainCooldownTimer);
-    _postDrainCooldownTimer = setTimeout(() => {
-      _postDrainCooldown = false;
-      _postDrainCooldownTimer = null;
-      tickLog('[tick] Post-drain cooldown expired — dispatch rate restored to normal');
-    }, 5 * 60 * 1000); // 5 minutes
-    if (_postDrainCooldownTimer.unref) _postDrainCooldownTimer.unref();
-
-    return {
-      draining: false,
-      drain_completed: true,
-      post_drain_cooldown: true,
-      drain_started_at: startedAt,
-      drain_ended_at: drainEnd,
-      in_progress_tasks: [],
-      remaining: 0
-    };
-  }
-
-  return {
-    draining: true,
-    drain_started_at: _drainStartedAt,
-    in_progress_tasks: tasks.map(t => ({
-      id: t.id,
-      title: t.title,
-      started_at: t.started_at
-    })),
-    remaining: tasks.length
-  };
-}
-
-/**
- * Cancel drain mode — resume normal dispatching
- */
-function cancelDrain() {
-  if (!_draining) {
-    return { success: true, was_draining: false };
-  }
-
-  tickLog('[tick] Drain mode cancelled, resuming normal dispatch');
-  _draining = false;
-  _drainStartedAt = null;
-  return { success: true, was_draining: true };
-}
-
-// Expose drain state for testing
-function _getDrainState() {
-  return { draining: _draining, drainStartedAt: _drainStartedAt, postDrainCooldown: _postDrainCooldown };
-}
-function _resetDrainState() {
-  _draining = false;
-  _drainStartedAt = null;
-  _postDrainCooldown = false;
-  if (_postDrainCooldownTimer) {
-    clearTimeout(_postDrainCooldownTimer);
-    _postDrainCooldownTimer = null;
-  }
-}
+// Phase D Part 1.2: drain 子系统实现搬到 drain.js，下方 import re-export。
 
 /**
  * 读取 working_memory 中的 startup_errors 数据
