@@ -2805,6 +2805,16 @@ async function triggerCeceliaRun(task) {
   // initiative_contracts + initiative_runs。Planner 之后的 Proposer/Reviewer/Generator/
   // Evaluator 由后续 milestone（M3/M4）接入，v2 初版只跑阶段 A。
   if (task.task_type === 'harness_initiative') {
+    if (process.env.HARNESS_INITIATIVE_RUNTIME === 'v2') {
+      console.log(`[executor] 路由决策: task_type=${task.task_type} → v2 graph runWorkflow (C8a)`);
+      try {
+        const { runWorkflow } = await import('./orchestrator/graph-runtime.js');
+        return await runWorkflow('harness-initiative', task.id, 1, { task });
+      } catch (err) {
+        console.error(`[executor] v2 graph runWorkflow error task=${task.id}: ${err.message}`);
+        return { success: false, taskId: task.id, initiative: true, error: err.message };
+      }
+    }
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness v2 Initiative Runner (阶段 A)`);
     // PostgresSaver: Phase A GAN 循环的 checkpointer。task.id 作为 langgraph thread_id,
     // Brain 重启后下次派发同一 initiative 能从最后一个节点续跑（而不是从 Planner 重头）。

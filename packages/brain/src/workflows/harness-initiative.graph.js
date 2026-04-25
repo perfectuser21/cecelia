@@ -526,3 +526,221 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
     client.release();
   }
 }
+
+// ─── Brain v2 C8a — LangGraph 真图实现（阶段 A）────────────────────────
+// 与上方 legacy `runInitiative` 528 行并存。executor.js 通过 HARNESS_INITIATIVE_RUNTIME=v2
+// env flag 切换两套实现，灰度推进。
+//
+// 节点拓扑：START → prep → planner → parsePrd → ganLoop → dbUpsert → END
+//                    ↓error  ↓error    ↓error    ↓error
+//                    └────────┴──────────┴─────────┴──────→ END (条件 edge)
+//
+// 每节点首句幂等门防 LangGraph resume 重 spawn（C6 smoke 教训）。
+// PRD: docs/superpowers/specs/2026-04-25-c8a-harness-initiative-graph-design.md
+
+import { StateGraph, Annotation, START, END } from '@langchain/langgraph';
+import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
+// 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
+// upsertTaskPlan / ensureHarnessWorktree / resolveGitHubToken / runGanContractGraph
+
+export const InitiativeState = Annotation.Root({
+  task:           Annotation({ reducer: (_o, n) => n, default: () => null }),
+  initiativeId:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  worktreePath:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  githubToken:    Annotation({ reducer: (_o, n) => n, default: () => null }),
+  plannerOutput:  Annotation({ reducer: (_o, n) => n, default: () => null }),
+  taskPlan:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+  prdContent:     Annotation({ reducer: (_o, n) => n, default: () => null }),
+  ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
+  result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
+  error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+});
+
+// 节点 stub — Task 2-6 逐个填充。
+export async function prepInitiativeNode(state) {
+  if (state.worktreePath) return { worktreePath: state.worktreePath };
+  try {
+    const initiativeId = state.task?.payload?.initiative_id || state.task?.initiative_id || state.task?.id;
+    const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId });
+    const githubToken = await resolveGitHubToken();
+    return { worktreePath, githubToken, initiativeId };
+  } catch (err) {
+    return { error: { node: 'prep', message: err.message } };
+  }
+}
+export async function runPlannerNode(state, opts = {}) {
+  if (state.plannerOutput) return { plannerOutput: state.plannerOutput };
+  try {
+    const executor = opts.executor || spawn;
+    const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+    const skillContent = loadSkillContent('harness-planner');
+    const prompt = `你是 harness-planner agent。按下面 SKILL 指令工作。
+
+${skillContent}
+
+---
+
+## 本次任务参数
+**task_id**: ${state.task.id}
+**initiative_id**: ${state.initiativeId}
+**sprint_dir**: ${sprintDir}
+
+## 任务描述
+${state.task.description || state.task.title || ''}
+
+## 输出要求（v2）
+1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
+2. 在 stdout 末尾输出 task-plan.json
+3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
+
+    const result = await executor({
+      task: { ...state.task, task_type: 'harness_planner' },
+      prompt,
+      worktreePath: state.worktreePath,
+      env: {
+        CECELIA_TASK_TYPE: 'harness_planner',
+        HARNESS_NODE: 'planner',
+        HARNESS_SPRINT_DIR: sprintDir,
+        HARNESS_INITIATIVE_ID: state.initiativeId,
+        GITHUB_TOKEN: state.githubToken,
+      },
+    });
+    if (result.exit_code !== 0 || result.timed_out) {
+      const msg = result.timed_out
+        ? 'Docker timeout'
+        : `Docker exit=${result.exit_code}: ${(result.stderr || '').slice(-500)}`;
+      return { error: { node: 'planner', message: msg } };
+    }
+    const plannerOutput = parseDockerOutput(result.stdout);
+    return { plannerOutput };
+  } catch (err) {
+    return { error: { node: 'planner', message: err.message } };
+  }
+}
+export async function parsePrdNode(state) {
+  if (state.taskPlan && state.prdContent) {
+    return { taskPlan: state.taskPlan, prdContent: state.prdContent };
+  }
+  let taskPlan;
+  try {
+    taskPlan = parseTaskPlan(state.plannerOutput);
+  } catch (err) {
+    return { error: { node: 'parsePrd', message: `parseTaskPlan: ${err.message}` } };
+  }
+  if (taskPlan.initiative_id === 'pending' || !taskPlan.initiative_id) {
+    taskPlan.initiative_id = state.initiativeId;
+  }
+  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  let prdContent = state.plannerOutput;
+  try {
+    const fsPromises = await import('node:fs/promises');
+    const pathMod = (await import('node:path')).default;
+    prdContent = await fsPromises.readFile(
+      pathMod.join(state.worktreePath, sprintDir, 'sprint-prd.md'),
+      'utf8'
+    );
+  } catch (err) {
+    console.error(`[harness-initiative-graph] read sprint-prd.md failed (${err.message}), falling back to planner stdout`);
+  }
+  return { taskPlan, prdContent };
+}
+export async function runGanLoopNode(state, opts = {}) {
+  if (state.ganResult) return { ganResult: state.ganResult };
+  try {
+    const executor = opts.executor || spawn;
+    const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+    const budgetUsd = state.task?.payload?.budget_usd || DEFAULT_BUDGET_USD;
+    const ganResult = await runGanContractGraph({
+      taskId: state.task.id,
+      initiativeId: state.initiativeId,
+      sprintDir,
+      prdContent: state.prdContent,
+      executor,
+      worktreePath: state.worktreePath,
+      githubToken: state.githubToken,
+      budgetCapUsd: budgetUsd,
+      checkpointer: opts.checkpointer,
+    });
+    return { ganResult };
+  } catch (err) {
+    return { error: { node: 'gan', message: err.message } };
+  }
+}
+export async function dbUpsertNode(state, opts = {}) {
+  if (state.result?.contractId) return { result: state.result };
+  const dbPool = opts.pool || pool;
+  const timeoutSec = state.task?.payload?.timeout_sec || DEFAULT_TIMEOUT_SEC;
+  const budgetUsd = state.task?.payload?.budget_usd || DEFAULT_BUDGET_USD;
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
+    const { idMap, insertedTaskIds } = await upsertTaskPlan({
+      initiativeId: state.initiativeId,
+      initiativeTaskId: state.task.id,
+      taskPlan: state.taskPlan,
+      client,
+    });
+    const contractInsert = await client.query(
+      `INSERT INTO initiative_contracts (
+         initiative_id, version, status,
+         prd_content, contract_content, review_rounds,
+         budget_cap_usd, timeout_sec, approved_at
+       )
+       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, NOW())
+       RETURNING id`,
+      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec]
+    );
+    const contractId = contractInsert.rows[0].id;
+    const runInsert = await client.query(
+      `INSERT INTO initiative_runs (
+         initiative_id, contract_id, phase,
+         deadline_at
+       )
+       VALUES ($1::uuid, $2::uuid, 'B_task_loop',
+         NOW() + ($3 || ' seconds')::interval
+       )
+       RETURNING id`,
+      [state.initiativeId, contractId, String(timeoutSec)]
+    );
+    const runId = runInsert.rows[0].id;
+    await client.query('COMMIT');
+    return {
+      result: {
+        success: true,
+        taskId: state.task.id,
+        initiativeId: state.initiativeId,
+        contractId,
+        runId,
+        insertedTaskIds,
+        idMap,
+      },
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    return { error: { node: 'dbUpsert', message: `tx: ${err.message}` } };
+  } finally {
+    client.release();
+  }
+}
+
+function stateHasError(state) { return state.error ? 'error' : 'ok'; }
+
+export function buildHarnessInitiativeGraph() {
+  return new StateGraph(InitiativeState)
+    .addNode('prep', prepInitiativeNode)
+    .addNode('planner', runPlannerNode)
+    .addNode('parsePrd', parsePrdNode)
+    .addNode('ganLoop', runGanLoopNode)
+    .addNode('dbUpsert', dbUpsertNode)
+    .addEdge(START, 'prep')
+    .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
+    .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
+    .addConditionalEdges('parsePrd', stateHasError, { error: END, ok: 'ganLoop' })
+    .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'dbUpsert' })
+    .addEdge('dbUpsert', END);
+}
+
+export async function compileHarnessInitiativeGraph() {
+  const checkpointer = await getPgCheckpointer();
+  return buildHarnessInitiativeGraph().compile({ checkpointer });
+}
