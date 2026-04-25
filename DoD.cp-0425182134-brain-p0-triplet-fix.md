@@ -40,7 +40,7 @@ Brain 反复重启不稳定的 3 个核心 P0：
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/quarantine-ci-passed.test.js','utf8');if(!c.includes(\"pr_status: 'ci_passed'\"))process.exit(1)"
 
 - [x] [ARTIFACT] Learning 文档存在且含根本原因 + 下次预防
-  Test: manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-0425182134-brain-p0-triplet-fix.md','utf8');if(!c.includes('根本原因')||!c.includes('下次预防'))process.exit(1)"
+  Test: manual:node -e "const c=require('fs').readFileSync('docs/learnings/cp-0425182134-brain-p0-triplet-fix-04241430.md','utf8');if(!c.includes('根本原因')||!c.includes('下次预防'))process.exit(1)"
 
 ## 目标文件
 
@@ -50,7 +50,7 @@ Brain 反复重启不稳定的 3 个核心 P0：
 - packages/brain/src/__tests__/startup-recovery-uuid.test.js（新建）
 - packages/brain/src/__tests__/shepherd-ci-passed.test.js（新建）
 - packages/brain/src/__tests__/quarantine-ci-passed.test.js（新建）
-- docs/learnings/cp-0425182134-brain-p0-triplet-fix.md（新建）
+- docs/learnings/cp-0425182134-brain-p0-triplet-fix-04241430.md（新建）
 - docs/superpowers/specs/2026-04-25-brain-p0-triplet-fix-design.md（新建）
 - docs/superpowers/plans/2026-04-25-brain-p0-triplet-fix.md（新建）
 
