@@ -258,4 +258,112 @@ describe('triggerHarnessTaskDispatch', () => {
       expect(insertCalls.length).toBe(0);
     });
   });
+
+  describe('Harness v6 P1-D: env protocol', () => {
+    it('injects CONTRACT_BRANCH/SPRINT_DIR/BRAIN_URL into container env', async () => {
+      let captured = null;
+      const deps = {
+        executor: async (opts) => {
+          captured = opts;
+          return { exit_code: 0, stdout: '', stderr: '', timed_out: false };
+        },
+        ensureWorktree: async () => '/tmp/wt/harness-v2/task-xxx',
+        resolveToken: async () => 'ghs_test',
+        writeDockerCallback: async () => {},
+        pool: { query: async () => ({ rows: [] }) },
+      };
+      const { triggerHarnessTaskDispatch } = await import('../harness-task-dispatch.js');
+      const task = {
+        id: 'task-abcdef1234567890',
+        task_type: 'harness_task',
+        title: 't',
+        payload: {
+          parent_task_id: 'i',
+          contract_branch: 'harness-v2/contract-abcd',
+          sprint_dir: 'sprints/abcd1234',
+          workstream_index: 2,
+          workstream_count: 4,
+          planner_branch: 'harness-v2/planner-abcd',
+        },
+      };
+      await triggerHarnessTaskDispatch(task, deps);
+      expect(captured.env.CONTRACT_BRANCH).toBe('harness-v2/contract-abcd');
+      expect(captured.env.SPRINT_DIR).toBe('sprints/abcd1234');
+      expect(captured.env.BRAIN_URL).toBe('http://host.docker.internal:5221');
+      expect(captured.env.WORKSTREAM_INDEX).toBe('2');
+      expect(captured.env.WORKSTREAM_COUNT).toBe('4');
+      expect(captured.env.PLANNER_BRANCH).toBe('harness-v2/planner-abcd');
+    });
+
+    it('extracts WORKSTREAM_INDEX from logical_task_id when workstream_index missing', async () => {
+      let captured = null;
+      const deps = {
+        executor: async (opts) => { captured = opts; return { exit_code: 0, stdout: '', stderr: '', timed_out: false }; },
+        ensureWorktree: async () => '/tmp/wt/harness-v2/task-xxx',
+        resolveToken: async () => 'ghs_test',
+        writeDockerCallback: async () => {},
+        pool: { query: async () => ({ rows: [] }) },
+      };
+      const { triggerHarnessTaskDispatch } = await import('../harness-task-dispatch.js');
+      await triggerHarnessTaskDispatch({
+        id: 't1', task_type: 'harness_task', title: 't',
+        payload: { parent_task_id: 'i', logical_task_id: 'ws3' },
+      }, deps);
+      expect(captured.env.WORKSTREAM_INDEX).toBe('3');
+    });
+
+    it('defaults SPRINT_DIR to "sprints" when payload omits it', async () => {
+      let captured = null;
+      const deps = {
+        executor: async (opts) => { captured = opts; return { exit_code: 0, stdout: '', stderr: '', timed_out: false }; },
+        ensureWorktree: async () => '/tmp/wt/harness-v2/task-xxx',
+        resolveToken: async () => 'ghs_test',
+        writeDockerCallback: async () => {},
+        pool: { query: async () => ({ rows: [] }) },
+      };
+      const { triggerHarnessTaskDispatch } = await import('../harness-task-dispatch.js');
+      await triggerHarnessTaskDispatch({
+        id: 't', task_type: 'harness_task', title: 't',
+        payload: { parent_task_id: 'i' },
+      }, deps);
+      expect(captured.env.SPRINT_DIR).toBe('sprints');
+    });
+
+    it('BRAIN_URL is fixed to host.docker.internal:5221 regardless of payload', async () => {
+      let captured = null;
+      const deps = {
+        executor: async (opts) => { captured = opts; return { exit_code: 0, stdout: '', stderr: '', timed_out: false }; },
+        ensureWorktree: async () => '/tmp/wt/harness-v2/task-xxx',
+        resolveToken: async () => 'ghs_test',
+        writeDockerCallback: async () => {},
+        pool: { query: async () => ({ rows: [] }) },
+      };
+      const { triggerHarnessTaskDispatch } = await import('../harness-task-dispatch.js');
+      await triggerHarnessTaskDispatch({
+        id: 't', task_type: 'harness_task', title: 't',
+        payload: { parent_task_id: 'i', brain_url: 'http://malicious' },
+      }, deps);
+      expect(captured.env.BRAIN_URL).toBe('http://host.docker.internal:5221');
+    });
+
+    it('falls back to empty strings when contract_branch/workstream missing', async () => {
+      let captured = null;
+      const deps = {
+        executor: async (opts) => { captured = opts; return { exit_code: 0, stdout: '', stderr: '', timed_out: false }; },
+        ensureWorktree: async () => '/tmp/wt/harness-v2/task-xxx',
+        resolveToken: async () => 'ghs_test',
+        writeDockerCallback: async () => {},
+        pool: { query: async () => ({ rows: [] }) },
+      };
+      const { triggerHarnessTaskDispatch } = await import('../harness-task-dispatch.js');
+      await triggerHarnessTaskDispatch({
+        id: 't', task_type: 'harness_task', title: 't',
+        payload: { parent_task_id: 'i' },
+      }, deps);
+      expect(captured.env.CONTRACT_BRANCH).toBe('');
+      expect(captured.env.WORKSTREAM_INDEX).toBe('');
+      expect(captured.env.WORKSTREAM_COUNT).toBe('');
+      expect(captured.env.PLANNER_BRANCH).toBe('');
+    });
+  });
 });

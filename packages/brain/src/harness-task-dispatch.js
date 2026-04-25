@@ -62,6 +62,17 @@ export async function triggerHarnessTaskDispatch(task, deps = {}) {
         HARNESS_TASK_ID: task.id,
         HARNESS_FIX_MODE: fixMode ? 'true' : 'false',
         GITHUB_TOKEN: token,
+        // v6 P1-D: Brain↔Generator prompt env 协议（详见 docs/superpowers/specs/2026-04-25-harness-v6-p1d-brain-env-inject-design.md）
+        // SKILL.md Step 0 自检依赖这 4 个 env 任一缺失即 ABORT，必须显式注入。
+        CONTRACT_BRANCH: payload.contract_branch || '',
+        SPRINT_DIR: payload.sprint_dir || 'sprints',
+        BRAIN_URL: 'http://host.docker.internal:5221',
+        WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
+        WORKSTREAM_COUNT:
+          payload.workstream_count !== undefined && payload.workstream_count !== null
+            ? String(payload.workstream_count)
+            : '',
+        PLANNER_BRANCH: payload.planner_branch || '',
       },
     });
   } catch (err) {
@@ -122,6 +133,24 @@ export async function triggerHarnessTaskDispatch(task, deps = {}) {
     result: result.stdout,
     cost_usd: result.cost_usd,
   };
+}
+
+/**
+ * 从 payload 提取 workstream index，支持两种来源：
+ *   1. payload.workstream_index（数字优先）
+ *   2. payload.logical_task_id 形如 "ws<N>"
+ * 都不匹配返回空串（Generator SKILL Step 0 自检会拦截）。
+ */
+function extractWorkstreamIndex(payload) {
+  if (payload.workstream_index !== undefined && payload.workstream_index !== null) {
+    return String(payload.workstream_index);
+  }
+  const lti = payload.logical_task_id;
+  if (typeof lti === 'string') {
+    const m = lti.match(/^ws(\d+)$/i);
+    if (m) return m[1];
+  }
+  return '';
 }
 
 function buildGeneratorPrompt(task, { fixMode }) {
