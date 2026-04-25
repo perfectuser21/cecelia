@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { createTask, updateTask as _updateTask } from '../actions.js';
-import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick.js';
+// Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP 已搬到 tick-helpers.js
+import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick-helpers.js';
 import { identifyWorkType, getTaskLocation as _getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
 import { getTaskWeights as _getTaskWeights } from '../task-weight.js';
 import { classifyLearningType } from './shared.js';
