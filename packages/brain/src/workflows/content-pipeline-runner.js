@@ -112,7 +112,7 @@ export async function runContentPipeline(task, opts = {}) {
   // overrides 优先级高于 Docker 节点
   const mergedOverrides = { ...dockerNodes, ...(opts.overrides || {}) };
 
-  const app = compileContentPipelineApp({
+  const app = await compileContentPipelineApp({
     overrides: mergedOverrides,
     checkpointer: opts.checkpointer,
   });

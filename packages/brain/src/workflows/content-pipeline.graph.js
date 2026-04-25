@@ -25,6 +25,7 @@ import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/lang
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
@@ -329,11 +330,11 @@ export function buildContentPipelineGraph(overrides = {}) {
  *
  * @param {object} [opts]
  * @param {object} [opts.overrides]    传给 buildContentPipelineGraph
- * @param {object} [opts.checkpointer] BaseCheckpointSaver；不传则用 MemorySaver
+ * @param {object} [opts.checkpointer] BaseCheckpointSaver；不传则用 PgCheckpointer 单例（v2 C8b 默认）
  */
-export function compileContentPipelineApp({ overrides, checkpointer } = {}) {
+export async function compileContentPipelineApp({ overrides, checkpointer } = {}) {
   const graph = buildContentPipelineGraph(overrides);
-  const saver = checkpointer || new MemorySaver();
+  const saver = checkpointer || (await getPgCheckpointer());
   return graph.compile({ checkpointer: saver });
 }
 

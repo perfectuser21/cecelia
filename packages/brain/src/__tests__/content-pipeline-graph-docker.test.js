@@ -9,7 +9,21 @@
  *   - 产物路径从 stdout 提取正确
  *   - 完整 graph 能 mock-run 到 export
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// 防真连 pg：compileContentPipelineApp 改 async 默认走 PgCheckpointer
+vi.mock('../orchestrator/pg-checkpointer.js', () => ({
+  getPgCheckpointer: vi.fn().mockResolvedValue({
+    get: vi.fn().mockResolvedValue(null),
+    put: vi.fn().mockResolvedValue(undefined),
+    setup: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn().mockResolvedValue([]),
+    getTuple: vi.fn().mockResolvedValue(null),
+    putWrites: vi.fn().mockResolvedValue(undefined),
+    getNextVersion: vi.fn((current) => (typeof current === 'number' ? current + 1 : 1)),
+  }),
+}));
+
 import {
   createContentDockerNodes,
   compileContentPipelineApp,
@@ -582,7 +596,7 @@ describe('integration: full graph with docker nodes (mock)', () => {
     };
     const executor = async ({ task }) => responses[task.task_type];
     const nodes = createContentDockerNodes(executor, { id: 'task-1' });
-    const app = compileContentPipelineApp({ overrides: nodes });
+    const app = await compileContentPipelineApp({ overrides: nodes });
     const final = await app.invoke(
       { pipeline_id: 'p-1', keyword: 'demo' },
       { configurable: { thread_id: 'p-1' } },
