@@ -46,7 +46,8 @@ vi.mock('../slot-allocator.js', () => ({
     dispatchAllowed: true,
     taskPool: { budget: 5, available: 3 },
     user: { mode: 'absent', used: 0 },
-  })
+  }),
+  shouldBypassBackpressure: vi.fn(() => false),
 }));
 
 vi.mock('../circuit-breaker.js', () => ({

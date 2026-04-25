@@ -53,6 +53,34 @@ const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动
 const MEMORY_PRESSURE_THRESHOLD_MB = 600;   // 系统可用内存低于此值时触发背压，防止 dev 任务叠加 vitest OOM
 
 // ============================================================
+// Backpressure Bypass Whitelist (P0 harness 优先派发)
+// ============================================================
+// 8 个 harness_* 类型在 priority=P0 时跳过 backpressure burst limit，
+// 避免被 88 个 P1 content-pipeline 积压拖累（PRD: 1d904af8）。
+const BACKPRESSURE_BYPASS_TASK_TYPES = [
+  'harness_initiative',
+  'harness_task',
+  'harness_planner',
+  'harness_contract_propose',
+  'harness_contract_review',
+  'harness_fix',
+  'harness_ci_watch',
+  'harness_deploy_watch',
+];
+
+/**
+ * 判断 task 是否应该跳过 backpressure。
+ * 必须同时满足 priority='P0' AND task_type 在白名单。
+ * @param {{priority?:string, task_type?:string}|null|undefined} task
+ * @returns {boolean}
+ */
+function shouldBypassBackpressure(task) {
+  if (!task) return false;
+  if (task.priority !== 'P0') return false;
+  return BACKPRESSURE_BYPASS_TASK_TYPES.includes(task.task_type);
+}
+
+// ============================================================
 // Process Detection
 // ============================================================
 
@@ -239,7 +267,25 @@ function getBackpressureState({
   brain_rss_mb,
   system_total_mb,
   memory_health,
+  task,
 } = {}) {
+  // P0 harness 白名单短路：直接返回 inactive，让 burst_limit 不生效。
+  // 避免 88 个 P1 content-pipeline 积压拖累 P0 harness 派发（PRD 1d904af8）。
+  if (shouldBypassBackpressure(task)) {
+    return {
+      active: false,
+      queue_depth,
+      threshold: BACKPRESSURE_THRESHOLD,
+      queue_pressure: false,
+      memory_pressure: false,
+      memory_available_mb,
+      memory_threshold_mb: MEMORY_PRESSURE_THRESHOLD_MB,
+      memory_health: null,
+      override_burst_limit: null,
+      bypassed: true,
+    };
+  }
+
   const queuePressure = queue_depth > BACKPRESSURE_THRESHOLD;
 
   // Resolve memory_health: either pre-computed (fast path) or derive it here.
@@ -532,6 +578,8 @@ export {
   CODEX_ACCOUNT_COUNT,
   BACKPRESSURE_THRESHOLD,
   BACKPRESSURE_BURST_LIMIT,
+  BACKPRESSURE_BYPASS_TASK_TYPES,
+  shouldBypassBackpressure,
   MEMORY_PRESSURE_THRESHOLD_MB,
   SLOT_BUFFER_MAX_DELTA,
   SLOT_BUFFER_DOWN,
