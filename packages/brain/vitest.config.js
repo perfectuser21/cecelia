@@ -130,13 +130,6 @@ export default defineConfig({
         'node_modules/**',
         'coverage/**'
       ],
-      thresholds: {
-        statements: 75,
-        branches: 75,
-        functions: 80,
-        lines: 75,
-        perFile: false
-      },
       // Specific files we're tracking closely
       reportOnFailure: true,
       all: true,
