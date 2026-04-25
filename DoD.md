@@ -1,39 +1,31 @@
-task_id: 582a24f2-5ba0-4753-89bc-1657deda54d3
-branch: cp-0426100009-fix-propose-branch-fallback-582a24f2
+contract_branch: (none — simplified mode, DoD embedded in dispatch prompt)
+workstream_index: 1
+task_id: a930d4dd-15d6-41f9-9cbf-f4bdc6d8a75f
+initiative_id: bb245cb4-f6c4-44d1-9f93-cecefb0054b3
+logical_task_id: ws1
 
-## 任务标题
+# 任务标题
 
-[Brain Harness] propose_branch 抽取失败时 fallback 用 cp-MMDDHHmm-<taskId8>
+新增 health 路由模块 (src/routes/health.js)
 
-## 任务描述
+# 任务描述
 
-`packages/brain/src/workflows/harness-gan.graph.js` 的 `extractProposeBranch` 在 SKILL 漏输出
-propose_branch JSON 时返回 null，导致 `contract.branch=null` → sub-task `payload.contract_branch=空` →
-Generator ABORT，Initiative 卡死在最后一跳。
+创建 packages/brain/src/routes/health.js，导出一个 Express Router；在 '/' 上实现 GET handler，
+返回 JSON 对象且仅含三字段：status（固定字符串 'ok'）、uptime_seconds（进程启动以来的秒数）、
+version（取自 packages/brain/package.json 的 version 字段）。handler 不得访问数据库、tick 状态、
+外部服务。模块必须是纯函数式、可独立被测试文件 import。
 
-本 PR 在 proposer 节点处加 fallback：抽不到时用 `cp-${shanghaiTimestamp}-${taskId.slice(0,8)}`，
-新增 `fallbackProposeBranch(taskId, now)` helper（Asia/Shanghai 时区，MMDDHHmm 格式，与 worktree-manage.sh 风格一致）。
+# DoD
 
-## DoD
+## ARTIFACT
+- 文件 packages/brain/src/routes/health.js 存在
+- 该文件默认导出或命名导出一个 Express Router 实例
 
-- [x] [ARTIFACT] harness-gan.graph.js 已 export `fallbackProposeBranch`
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-gan.graph.js','utf8');if(!/export function fallbackProposeBranch/.test(c))process.exit(1)"
+## BEHAVIOR
+- 通过 supertest 或等价方式调用 Router 的 GET /，响应 body 仅含且恰好含 status/uptime_seconds/version 三键
+- 响应 status === 'ok'；uptime_seconds 为非负 number；version 等于 package.json.version
+- 不触发 db.js / pg pool 的任何 import-time 或请求期连接（可通过 jest/vitest mock 断言未被调用）
 
-- [x] [ARTIFACT] proposer 节点已用 `||  fallbackProposeBranch(taskId)` 兜底
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-gan.graph.js','utf8');if(!/extractProposeBranch\(result\.stdout\)\s*\|\|\s*fallbackProposeBranch\(taskId\)/.test(c))process.exit(1)"
+# 目标文件
 
-- [x] [BEHAVIOR] `fallbackProposeBranch('582a24f2-...', new Date('2026-04-26T10:09:00Z'))` → `cp-04261809-582a24f2`（Asia/Shanghai 时区正确）
-  Test: manual:node -e "const {fallbackProposeBranch}=require('./packages/brain/src/workflows/harness-gan.graph.js');const out=fallbackProposeBranch('582a24f2-5ba0-4753-89bc-1657deda54d3', new Date('2026-04-26T10:09:00.000Z'));if(out!=='cp-04261809-582a24f2'){console.error('got',out);process.exit(1)}"
-
-- [x] [BEHAVIOR] proposer stdout 缺 propose_branch 时 runGanContractGraph 返回值 propose_branch 非 null 且匹配 `^cp-\d{8}-<taskId8>$`
-  Test: packages/brain/src/__tests__/harness-gan-graph.test.js
-
-- [x] [ARTIFACT] Learning 文档存在
-  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0426100009-fix-propose-branch-fallback-582a24f2.md')"
-
-## 目标文件
-
-- packages/brain/src/workflows/harness-gan.graph.js
-- packages/brain/src/__tests__/harness-gan-graph.test.js
-- docs/learnings/cp-0426100009-fix-propose-branch-fallback-582a24f2.md
-- DoD.md
+- packages/brain/src/routes/health.js
