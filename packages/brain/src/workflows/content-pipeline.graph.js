@@ -21,10 +21,11 @@
  *   for await (const ev of app.stream(initial, { configurable: { thread_id: pipelineId } })) { ... }
  */
 
-import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
+import { StateGraph, START, END, Annotation } from '@langchain/langgraph';
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
@@ -251,6 +252,14 @@ export function placeholderNode(label, stateUpdate) {
 }
 
 /**
+ * 非 verdict 节点 error 短路 helper。
+ * 仅用于 research/copywrite/generate；verdict 节点 (copy_review/image_review)
+ * 的 docker flake 让 state.error 与 verdict 同时填，原 round>=3 兜底吸收，
+ * 强行 error → END 反而让 R3 任一次 flake 死透，比当前更脆。
+ */
+function stateHasError(state) { return state.error ? 'error' : 'ok'; }
+
+/**
  * 构造 content pipeline graph（未编译）。
  *
  * 暴露未编译的 builder，让测试可以注入自定义节点覆盖条件边路径，
@@ -277,8 +286,9 @@ export function buildContentPipelineGraph(overrides = {}) {
     .addNode('image_review', nodes.image_review)
     .addNode('export', nodes.export)
     .addEdge(START, 'research')
-    .addEdge('research', 'copywrite')
-    .addEdge('copywrite', 'copy_review')
+    // C8b 非 verdict 节点：error 短路（research/copywrite）
+    .addConditionalEdges('research', stateHasError, { error: END, ok: 'copywrite' })
+    .addConditionalEdges('copywrite', stateHasError, { error: END, ok: 'copy_review' })
     .addConditionalEdges(
       'copy_review',
       (state) => {
@@ -306,7 +316,8 @@ export function buildContentPipelineGraph(overrides = {}) {
       },
       { generate: 'generate', copywrite: 'copywrite' },
     )
-    .addEdge('generate', 'image_review')
+    // C8b 非 verdict 节点：error 短路（generate）
+    .addConditionalEdges('generate', stateHasError, { error: END, ok: 'image_review' })
     .addConditionalEdges(
       'image_review',
       (state) => {
@@ -329,11 +340,11 @@ export function buildContentPipelineGraph(overrides = {}) {
  *
  * @param {object} [opts]
  * @param {object} [opts.overrides]    传给 buildContentPipelineGraph
- * @param {object} [opts.checkpointer] BaseCheckpointSaver；不传则用 MemorySaver
+ * @param {object} [opts.checkpointer] BaseCheckpointSaver；不传则用 PgCheckpointer 单例（v2 C8b 默认）
  */
-export function compileContentPipelineApp({ overrides, checkpointer } = {}) {
+export async function compileContentPipelineApp({ overrides, checkpointer } = {}) {
   const graph = buildContentPipelineGraph(overrides);
-  const saver = checkpointer || new MemorySaver();
+  const saver = checkpointer || (await getPgCheckpointer());
   return graph.compile({ checkpointer: saver });
 }
 
@@ -494,6 +505,20 @@ export function createContentDockerNodes(dockerExecutor, task, opts = {}) {
    */
   async function runDockerNode(nodeName, state) {
     const cfg = NODE_CONFIGS[nodeName];
+
+    // C8b 幂等门：state 已有该节点 primary output → 跳过 docker spawn
+    // （C6 / C8a 教训：LangGraph resume 会 replay 上次未完成节点 → 重 spawn 烧容器）
+    const primaryField = cfg.outputs[0];
+    if (primaryField && state[primaryField]) {
+      console.log(`[content-pipeline-graph] node=${nodeName} task=${taskId} resume skip (state.${primaryField} exists)`);
+      return {
+        output: '',
+        error: null,
+        success: true,
+        meta: { resumed: true, prompt_sent: '', raw_stdout: '', raw_stderr: '', exit_code: null, duration_ms: 0, container_id: null },
+      };
+    }
+
     console.log(`[content-pipeline-graph] node=${nodeName} task=${taskId} starting docker execution`);
     const startMs = Date.now();
 

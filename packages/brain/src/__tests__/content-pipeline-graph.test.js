@@ -7,7 +7,21 @@
  *   - copy_review REVISION → 回到 copywrite
  *   - image_review FAIL    → 回到 generate
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// 防真连 pg：compileContentPipelineApp 改 async 默认走 PgCheckpointer
+vi.mock('../orchestrator/pg-checkpointer.js', () => ({
+  getPgCheckpointer: vi.fn().mockResolvedValue({
+    get: vi.fn().mockResolvedValue(null),
+    put: vi.fn().mockResolvedValue(undefined),
+    setup: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn().mockResolvedValue([]),
+    getTuple: vi.fn().mockResolvedValue(null),
+    putWrites: vi.fn().mockResolvedValue(undefined),
+    getNextVersion: vi.fn((current) => (typeof current === 'number' ? current + 1 : 1)),
+  }),
+}));
+
 import {
   CONTENT_PIPELINE_NODE_NAMES,
   buildContentPipelineGraph,
@@ -30,14 +44,14 @@ describe('CONTENT_PIPELINE_NODE_NAMES', () => {
 
 describe('buildContentPipelineGraph + compileContentPipelineApp', () => {
   it('graph compiles with 6 nodes (skeleton)', async () => {
-    const app = compileContentPipelineApp();
+    const app = await compileContentPipelineApp();
     expect(app).toBeDefined();
     expect(typeof app.invoke).toBe('function');
     expect(typeof app.stream).toBe('function');
   });
 
   it('happy path: APPROVED + PASS reaches export and stops', async () => {
-    const app = compileContentPipelineApp();
+    const app = await compileContentPipelineApp();
     const finalState = await app.invoke(
       { pipeline_id: 'p-happy', keyword: 'demo' },
       { configurable: { thread_id: 'p-happy' } },
@@ -53,7 +67,7 @@ describe('buildContentPipelineGraph + compileContentPipelineApp', () => {
   it('copy_review REVISION sends control back to copywrite (one rebound)', async () => {
     // copy_review 第一次返回 REVISION，第二次返回 APPROVED
     let reviewCalls = 0;
-    const app = compileContentPipelineApp({
+    const app = await compileContentPipelineApp({
       overrides: {
         copy_review: async () => {
           reviewCalls += 1;
@@ -78,7 +92,7 @@ describe('buildContentPipelineGraph + compileContentPipelineApp', () => {
 
   it('image_review FAIL sends control back to generate (one rebound)', async () => {
     let imgCalls = 0;
-    const app = compileContentPipelineApp({
+    const app = await compileContentPipelineApp({
       overrides: {
         image_review: async () => {
           imgCalls += 1;
@@ -101,7 +115,7 @@ describe('buildContentPipelineGraph + compileContentPipelineApp', () => {
 
   it('state carries path references only (no large text bodies)', async () => {
     // 验证 state 可携带路径而不累积文本
-    const app = compileContentPipelineApp({
+    const app = await compileContentPipelineApp({
       overrides: {
         research: async () => ({
           trace: 'research',
@@ -137,7 +151,7 @@ describe('placeholderNode', () => {
   });
 
   it('default copy_review placeholder returns APPROVED (breaks rebound)', async () => {
-    const app = compileContentPipelineApp();
+    const app = await compileContentPipelineApp();
     const finalState = await app.invoke(
       { pipeline_id: 'p-default', keyword: 'demo' },
       { configurable: { thread_id: 'p-default' } },
@@ -147,7 +161,7 @@ describe('placeholderNode', () => {
   });
 
   it('default image_review placeholder returns PASS (breaks rebound)', async () => {
-    const app = compileContentPipelineApp();
+    const app = await compileContentPipelineApp();
     const finalState = await app.invoke(
       { pipeline_id: 'p-default-img', keyword: 'demo' },
       { configurable: { thread_id: 'p-default-img' } },

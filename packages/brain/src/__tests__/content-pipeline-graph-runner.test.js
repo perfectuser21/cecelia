@@ -12,6 +12,12 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MemorySaver } from '@langchain/langgraph';
+
+// 防真连 pg：compileContentPipelineApp 改 async 默认走 PgCheckpointer
+vi.mock('../orchestrator/pg-checkpointer.js', () => ({
+  getPgCheckpointer: vi.fn().mockResolvedValue(new MemorySaver()),
+}));
+
 import {
   runContentPipeline,
   isContentPipelineLangGraphEnabled,
