@@ -181,10 +181,10 @@ describe('dispatchNextTask — billing pause active 时零派发', () => {
   });
 });
 
-describe('tick.js 源码 — billing pause 检查存在', () => {
-  it('tick.js dispatchNextTask 应调用 getBillingPause()', async () => {
+describe('dispatcher.js 源码 — billing pause 检查存在（D1.5 抽出后）', () => {
+  it('dispatcher.js dispatchNextTask 应调用 getBillingPause()', async () => {
     const fs = await import('node:fs');
-    const src = fs.readFileSync(new URL('../tick.js', import.meta.url), 'utf-8');
+    const src = fs.readFileSync(new URL('../dispatcher.js', import.meta.url), 'utf-8');
     expect(src).toContain('getBillingPause()');
     expect(src).toContain('billing_pause');
   });
