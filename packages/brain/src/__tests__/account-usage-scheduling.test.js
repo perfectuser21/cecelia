@@ -55,16 +55,17 @@ vi.mock('fs', async (importOriginal) => {
   };
 });
 
-function makeRow(accountId, fivePct, resetsInMin, sevenDayPct = 0, sevenDaySonnetPct = 0, extraUsed = false) {
+function makeRow(accountId, fivePct, resetsInMin, sevenDayPct = 0, sevenDaySonnetPct = 0, extraUsed = false, nowMs = null) {
+  const base = nowMs ?? Date.now();
   return {
     account_id: accountId,
     five_hour_pct: fivePct,
     seven_day_pct: sevenDayPct,
     seven_day_sonnet_pct: sevenDaySonnetPct,
-    resets_at: minutesFromNow(resetsInMin),
-    seven_day_resets_at: minutesFromNow(resetsInMin * 7),
+    resets_at: new Date(base + resetsInMin * 60 * 1000).toISOString(),
+    seven_day_resets_at: new Date(base + resetsInMin * 7 * 60 * 1000).toISOString(),
     extra_used: extraUsed,
-    fetched_at: new Date(),
+    fetched_at: new Date(base),
   };
 }
 
@@ -617,11 +618,12 @@ describe('H: Haiku 独立模式', () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
+    const t0 = Date.now();
     pool.query.mockImplementation((sql, params) => {
       const rows = [
-        makeRow('account1', 20, 120, 90, 100),  // sonnet 7d=100%，但 haiku 不管
-        makeRow('account2', 10, 120, 95, 100),  // sonnet 7d=100%，5h=10% 最低
-        makeRow('account3', 30, 120, 50, 50),
+        makeRow('account1', 20, 120, 90, 100, false, t0),  // sonnet 7d=100%，但 haiku 不管
+        makeRow('account2', 10, 120, 95, 100, false, t0),  // sonnet 7d=100%，5h=10% 最低
+        makeRow('account3', 30, 120, 50, 50, false, t0),
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -644,11 +646,12 @@ describe('H: Haiku 独立模式', () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
+    const t0 = Date.now();
     pool.query.mockImplementation((sql, params) => {
       const rows = [
-        makeRow('account1', 50, 120),
-        makeRow('account2', 10, 120),
-        makeRow('account3', 30, 120),
+        makeRow('account1', 50, 120, 0, 0, false, t0),
+        makeRow('account2', 10, 120, 0, 0, false, t0),
+        makeRow('account3', 30, 120, 0, 0, false, t0),
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache')) {
         if (params?.[0]) {
@@ -670,11 +673,12 @@ describe('H: Haiku 独立模式', () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
+    const t0 = Date.now();
     pool.query.mockImplementation((sql, params) => {
       const rows = [
-        makeRow('account1', 50, 120),
-        makeRow('account2', 10, 120),
-        makeRow('account3', 30, 120),
+        makeRow('account1', 50, 120, 0, 0, false, t0),
+        makeRow('account2', 10, 120, 0, 0, false, t0),
+        makeRow('account3', 30, 120, 0, 0, false, t0),
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache')) {
         if (params?.[0]) {
