@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import pool from './db.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { getDailyFocus } from './focus.js';
-import { updateTask, createTask } from './actions.js';
+import { updateTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, killProcess, checkServerResources, probeTaskLiveness, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { shouldDowngrade } from './token-budget-planner.js';
@@ -47,7 +47,6 @@ import { publishCognitiveState } from './events/taskEvents.js';
 import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, updateNarrative, recordTickEvent } from './cognitive-core.js';
 import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
-import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
 import { triggerCodeQualityScan } from './task-generator-scheduler.js';
@@ -82,10 +81,10 @@ import {
   isTickWatchdogActive,
   TICK_WATCHDOG_INTERVAL_MS,
 } from './tick-watchdog.js';
-// Phase D Part 1.4: dispatch helpers (selectNextDispatchableTask / autoCreateTasksFromCortex / processCortexTask) 搬出 tick.js
+// Phase D Part 1.4: dispatch helpers (selectNextDispatchableTask / processCortexTask) 搬出 tick.js
+// autoCreateTasksFromCortex 仅 dispatch-helpers 内部用（与 processCortexTask 共调用），未在 tick.js 内引用，不在此 import
 import {
   selectNextDispatchableTask,
-  autoCreateTasksFromCortex,
   processCortexTask,
 } from './dispatch-helpers.js';
 
