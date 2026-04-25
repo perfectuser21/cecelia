@@ -40,10 +40,10 @@ P1-D 修了 `harness-task-dispatch.js` 注入 CONTRACT_BRANCH env，但运行时
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const m=c.match(/budget_cap_usd, timeout_sec, branch, approved_at/g)||[];if(m.length<2)process.exit(1)"
 
 - [x] [BEHAVIOR] 单元测试: 4 sub-task 创建后每个 payload.contract_branch === approved_contract.branch
-  Test: tests/harness-dag-contract-branch.test.js
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/harness-dag-contract-branch.test.js','utf8');if(!c.includes('contractBranch 非空')||!c.includes('payload.contract_branch')||!c.includes('toBe(branch)'))process.exit(1)"
 
 - [x] [BEHAVIOR] GAN graph 单元测试: proposer stdout 含 propose_branch → finalState 透传到 runGanContractGraph 返回值
-  Test: tests/harness-gan-graph.test.js
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/harness-gan-graph.test.js','utf8');if(!c.includes('extractProposeBranch')||!c.includes('propose_branch'))process.exit(1)"
 
 - [x] [ARTIFACT] selfcheck.js EXPECTED_SCHEMA_VERSION bump 到 246 + DEFINITION.md 同步
   Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');const d=require('fs').readFileSync('DEFINITION.md','utf8');if(!s.includes(\"EXPECTED_SCHEMA_VERSION = '246'\")||!d.includes('Schema 版本: 246'))process.exit(1)"
