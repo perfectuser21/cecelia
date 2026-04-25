@@ -124,6 +124,7 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
   });
 
   it('候选任务有 project_id 且二次检查发现 in_progress 任务时返回 initiative_locked', async () => {
+    // 注：initiative lock 仅对 harness pipeline 类型生效（dev/talk/audit 不锁）
     const candidateTask = {
       id: 'task-candidate',
       title: '实现新功能',
@@ -133,6 +134,7 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
       priority: 'P1',
       payload: {},
       project_id: 'proj-initiative-1',
+      task_type: 'harness_task',
       metadata: {}
     };
 
@@ -186,6 +188,7 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
   });
 
   it('Initiative 无 in_progress 任务时正常派发（锁检查通过）', async () => {
+    // 注：initiative lock 仅对 harness pipeline 类型生效
     const candidateTask = {
       id: 'task-candidate-2',
       title: '实现新功能 v2',
@@ -195,6 +198,7 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
       priority: 'P1',
       payload: {},
       project_id: 'proj-initiative-2',
+      task_type: 'harness_task',
       metadata: {}
     };
 
