@@ -17,6 +17,7 @@ import pool from './db.js';
 import { updateTask, createTask } from './actions.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { handleTaskFailure } from './quarantine.js';
+import { shouldBypassBackpressure } from './slot-allocator.js';
 
 // 日志 helper：[tick] 前缀（保持与原 tick.js 输出一致），Asia/Shanghai 时间戳。
 function tickLog(...args) {
@@ -138,6 +139,12 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     // NOTE: task_dependencies 表依赖检查已在主 SELECT 的 WHERE 子句
     // （NOT EXISTS + from_task_id 子查询）完成，见 harness-dag.js:nextRunnableTask
     // 的同款做法。本循环此处只需处理 payload.depends_on 的软依赖。
+
+    // P0 harness 白名单：给候选打 _bypass_backpressure 标记，
+    // 调用方（tick.js dispatch loop）可识别并跳过 burst limit。
+    if (shouldBypassBackpressure(task)) {
+      task._bypass_backpressure = true;
+    }
     return task;
   }
   return null;
