@@ -189,11 +189,11 @@ GAN 子图本身**不重测**（已有 `harness-gan` 自己的测试）。
 
 ## 5. DoD（PR 合并门禁）
 
-- `[BEHAVIOR]` `harness-initiative.graph.js` 含 `StateGraph` + ≥ 5 `.addNode()` ；Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const n=(c.match(/addNode/g)||[]).length;if(n<5||!c.includes('StateGraph'))process.exit(1)"`
-- `[BEHAVIOR]` `workflows/index.js` 注册 `harness-initiative`；Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/index.js','utf8');if(!/registerWorkflow\\(\\s*['\"]harness-initiative['\"]/.test(c))process.exit(1)"`
-- `[BEHAVIOR]` `executor.js` 含 `HARNESS_INITIATIVE_RUNTIME` env gate；Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('HARNESS_INITIATIVE_RUNTIME'))process.exit(1)"`
-- `[BEHAVIOR]` 节点单测全 pass；Test: `tests/workflows/harness-initiative-graph.test.js`
-- `[ARTIFACT]` 新建 `harness-initiative-graph.test.js`；Test: `manual:node -e "require('fs').accessSync('packages/brain/src/workflows/__tests__/harness-initiative-graph.test.js')"`
+- [x] `[BEHAVIOR]` `harness-initiative.graph.js` 含 `StateGraph` + ≥ 5 `.addNode()` ；Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const n=(c.match(/addNode/g)||[]).length;if(n<5||!c.includes('StateGraph'))process.exit(1)"`
+- [x] `[BEHAVIOR]` `workflows/index.js` 注册 `harness-initiative`；Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/index.js','utf8');if(!/registerWorkflow\\(\\s*['\"]harness-initiative['\"]/.test(c))process.exit(1)"`
+- [x] `[BEHAVIOR]` `executor.js` 含 `HARNESS_INITIATIVE_RUNTIME` env gate；Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('HARNESS_INITIATIVE_RUNTIME'))process.exit(1)"`
+- [x] `[BEHAVIOR]` 节点单测全 pass；Test: `tests/workflows/harness-initiative-graph.test.js`
+- [x] `[ARTIFACT]` 新建 `harness-initiative-graph.test.js`；Test: `manual:node -e "require('fs').accessSync('packages/brain/src/workflows/__tests__/harness-initiative-graph.test.js')"`
 
 ---
 
