@@ -1,14 +1,25 @@
+import crypto from 'node:crypto';
 import { ensureHarnessWorktree as defaultEnsureWorktree } from './harness-worktree.js';
 import { resolveGitHubToken as defaultResolveToken } from './harness-credentials.js';
+import { writeDockerCallback as defaultWriteDockerCallback } from './docker-executor.js';
+import { parseDockerOutput, extractField } from './harness-graph.js';
+import defaultPool from './db.js';
 
 /**
  * Phase B dispatcher：把 harness_task 派到 Docker 容器跑 /harness-generator。
+ *
+ * v6 Phase B 回调链路三联修：
+ *   1. 容器跑完 → writeDockerCallback 写 callback_queue（含 pr_url / verdict）
+ *   2. 成功拿到 pr_url → INSERT harness_ci_watch task 供 harness-watcher 轮询
+ *   3. 下游 callback-worker (routePrUrlToTasks) 自动回填 tasks.pr_url
  *
  * @param {object} task                   {id, task_type, title, description, payload}
  * @param {object} [deps]
  * @param {Function} [deps.executor]      默认 dynamic import './docker-executor.js'.executeInDocker
  * @param {Function} [deps.ensureWorktree]
  * @param {Function} [deps.resolveToken]
+ * @param {Function} [deps.writeDockerCallback]  默认 ./docker-executor.js writeDockerCallback
+ * @param {{query:Function}} [deps.pool]         默认 ./db.js pool
  * @returns {Promise<{success, result?, cost_usd?, error?}>}
  */
 export async function triggerHarnessTaskDispatch(task, deps = {}) {
@@ -18,6 +29,8 @@ export async function triggerHarnessTaskDispatch(task, deps = {}) {
     const mod = await import('./docker-executor.js');
     return mod.executeInDocker(opts);
   });
+  const writeDockerCallback = deps.writeDockerCallback || defaultWriteDockerCallback;
+  const dbPool = deps.pool || defaultPool;
 
   const payload = task.payload || {};
   const initiativeId = payload.parent_task_id || payload.initiative_id || task.id;
@@ -59,6 +72,49 @@ export async function triggerHarnessTaskDispatch(task, deps = {}) {
   if (!result || result.exit_code !== 0) {
     const detail = result?.stderr?.slice(0, 500) || `exit_code=${result?.exit_code}`;
     return { success: false, error: `container failed: ${detail}` };
+  }
+
+  // v6 Phase B 链路 2: 写 callback_queue 让下游 callback-worker 拿到容器成果。
+  // try/catch 兜住：DB 写失败不应污染 caller 成功状态（容器已成功跑完）。
+  try {
+    const runId = crypto.randomUUID();
+    await writeDockerCallback(
+      { ...task, task_type: 'harness_task' },
+      runId,
+      null,
+      result
+    );
+  } catch (err) {
+    console.error(
+      `[harness-task-dispatch] writeDockerCallback failed task=${task.id}: ${err.message}`
+    );
+  }
+
+  // v6 Phase B 链路 3: stdout 解析到 pr_url → INSERT harness_ci_watch 供 harness-watcher 轮询 CI。
+  // 无 pr_url（Generator 未开 PR）就跳过；watcher SELECT 不到无副作用。
+  try {
+    const parsedOutput = parseDockerOutput(result.stdout || '');
+    const prUrl = extractField(parsedOutput, 'pr_url');
+    if (prUrl) {
+      await dbPool.query(
+        `INSERT INTO tasks (title, description, task_type, priority, status, payload, trigger_source)
+         VALUES ($1, $2, 'harness_ci_watch', 'P0', 'queued', $3::jsonb, 'harness_task_dispatch')`,
+        [
+          `[CI-Watch] ${task.title || task.id}`,
+          `监控 PR CI: ${prUrl}`,
+          JSON.stringify({
+            pr_url: prUrl,
+            parent_task_id: task.id,
+            initiative_id: payload.parent_task_id || payload.initiative_id || null,
+            harness_mode: true,
+          }),
+        ]
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[harness-task-dispatch] insert harness_ci_watch failed task=${task.id}: ${err.message}`
+    );
   }
 
   return {
