@@ -649,7 +649,7 @@ export async function runGanLoopNode(state, opts = {}) {
   try {
     const executor = opts.executor || spawn;
     const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
-    const budgetUsd = state.task?.payload?.budget_usd || 10;
+    const budgetUsd = state.task?.payload?.budget_usd || DEFAULT_BUDGET_USD;
     const ganResult = await runGanContractGraph({
       taskId: state.task.id,
       initiativeId: state.initiativeId,
@@ -666,14 +666,11 @@ export async function runGanLoopNode(state, opts = {}) {
     return { error: { node: 'gan', message: err.message } };
   }
 }
-const C8A_DEFAULT_TIMEOUT_SEC = 21600;
-const C8A_DEFAULT_BUDGET_USD = 10;
-
 export async function dbUpsertNode(state, opts = {}) {
   if (state.result?.contractId) return { result: state.result };
   const dbPool = opts.pool || pool;
-  const timeoutSec = state.task?.payload?.timeout_sec || C8A_DEFAULT_TIMEOUT_SEC;
-  const budgetUsd = state.task?.payload?.budget_usd || C8A_DEFAULT_BUDGET_USD;
+  const timeoutSec = state.task?.payload?.timeout_sec || DEFAULT_TIMEOUT_SEC;
+  const budgetUsd = state.task?.payload?.budget_usd || DEFAULT_BUDGET_USD;
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
