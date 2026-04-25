@@ -36,6 +36,18 @@ import { selectNextDispatchableTask, processCortexTask } from './dispatch-helper
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
 
+// Initiative-level lock 仅对 harness pipeline 类型生效。
+// dev / talk / audit / qa 等通用任务不持有 initiative lock，避免单 project 内死锁
+// （bb245cb4 教训：harness Initiative Phase A 跑期间整个 project 通用任务全被拒派）。
+const INITIATIVE_LOCK_TASK_TYPES = [
+  'harness_task',
+  'harness_planner',
+  'harness_contract_propose',
+  'harness_contract_review',
+  'harness_fix',
+  'harness_initiative',
+];
+
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
 
@@ -274,15 +286,21 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'all_candidates_failed_pre_flight', skipped: preFlightFailedIds.length, actions };
   }
 
-  // 3c. Initiative-level lock: double-check before marking in_progress (guard against race)
-  if (nextTask.project_id) {
+  // 3c. Initiative-level lock: 仅对 harness pipeline 类型生效，且只查同 project 的 harness blocker。
+  //     dev / talk / audit 等通用任务不进入这条分支，避免单 project 死锁（bb245cb4 教训）。
+  if (nextTask.project_id && INITIATIVE_LOCK_TASK_TYPES.includes(nextTask.task_type)) {
     const lockCheck = await pool.query(
-      "SELECT id, title FROM tasks WHERE project_id = $1 AND status = 'in_progress' AND id != $2 LIMIT 1",
-      [nextTask.project_id, nextTask.id]
+      `SELECT id, title FROM tasks
+       WHERE project_id = $1
+         AND status = 'in_progress'
+         AND task_type = ANY($3::text[])
+         AND id != $2
+       LIMIT 1`,
+      [nextTask.project_id, nextTask.id, INITIATIVE_LOCK_TASK_TYPES]
     );
     if (lockCheck.rows.length > 0) {
       const blocker = lockCheck.rows[0];
-      tickLog(`[dispatch] Initiative 已有进行中任务 (task_id: ${blocker.id})，跳过派发: ${nextTask.title}`);
+      tickLog(`[dispatch] Initiative 已有进行中 harness 任务 (task_id: ${blocker.id})，跳过派发: ${nextTask.title}`);
       await recordDispatchResult(pool, false, 'initiative_locked');
       return { dispatched: false, reason: 'initiative_locked', blocking_task_id: blocker.id, task_id: nextTask.id, actions };
     }
