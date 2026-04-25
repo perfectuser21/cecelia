@@ -48,6 +48,11 @@ const DEFAULT_WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator
 import { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER } from './spawn/middleware/resource-tier.js';
 export { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER };
 
+// Harness v6 Phase B：从 Docker stdout 提取 pr_url / verdict 写入 _meta。
+// parseDockerOutput 抓 claude --output-format json 末尾 result 段；
+// extractField 兼容 `pr_url: <URL>` 字面量 / JSON `"pr_url":"..."`，过滤 null/FAILED 等假值。
+import { parseDockerOutput, extractField } from './harness-graph.js';
+
 /**
  * 检测 docker 二进制是否可用（缓存结果）
  */
@@ -389,6 +394,13 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
     ? 'timeout'
     : (result.exit_code === 0 ? 'success' : 'failed');
 
+  // Harness v6 Phase B: 从 stdout 解析 pr_url / verdict 塞进 _meta，让 callback-worker
+  // 下游 (routePrUrlToTasks) 能从 result_json._meta.pr_url 回填 tasks.pr_url，
+  // shepherd/harness_ci_watch 才拿得到 URL。
+  const parsedStdout = parseDockerOutput(result.stdout || '');
+  const prUrl = extractField(parsedStdout, 'pr_url');
+  const verdict = extractField(parsedStdout, 'verdict');
+
   // result_json 兼容 callback-worker 的 buildDataFromRow：_meta 存附加字段
   const resultJson = {
     docker: true,
@@ -401,6 +413,8 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
     _meta: {
       executor: 'docker',
       tier: resolveResourceTier(task.task_type || 'dev').tier,
+      pr_url: prUrl || null,
+      verdict: verdict || null,
     },
   };
 

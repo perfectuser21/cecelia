@@ -188,4 +188,42 @@ describe('writeDockerCallback — INSERT callback_queue', () => {
     expect(params[8]).toBe(137);
     expect(params[9]).toBe('docker_nonzero_exit');
   });
+
+  it('parses pr_url and verdict from stdout JSON result into _meta', async () => {
+    // claude --output-format json 末尾产出 {"type":"result","result":"<inner>"},
+    // inner 是 SKILL.md 约定的纯 JSON `{"verdict":"DONE","pr_url":"..."}`
+    const inner = '{"verdict":"DONE","pr_url":"https://github.com/perfectuser21/cecelia/pull/42"}';
+    const stdout = JSON.stringify({ type: 'result', result: inner });
+    await writeDockerCallback(baseTask, 'run-4', null, {
+      exit_code: 0,
+      stdout,
+      stderr: '',
+      duration_ms: 1000,
+      container: 'cecelia-task-aaa',
+      timed_out: false,
+      started_at: '2026-04-25T00:00:00Z',
+      ended_at: '2026-04-25T00:00:01Z',
+    });
+    const [, params] = mockPool.query.mock.calls[0];
+    const resultJson = JSON.parse(params[4]);
+    expect(resultJson._meta.pr_url).toBe('https://github.com/perfectuser21/cecelia/pull/42');
+    expect(resultJson._meta.verdict).toBe('DONE');
+  });
+
+  it('sets _meta.pr_url=null / _meta.verdict=null when stdout lacks them', async () => {
+    await writeDockerCallback(baseTask, 'run-5', null, {
+      exit_code: 0,
+      stdout: 'plain log line, no json',
+      stderr: '',
+      duration_ms: 1000,
+      container: 'cecelia-task-bbb',
+      timed_out: false,
+      started_at: '2026-04-25T00:00:00Z',
+      ended_at: '2026-04-25T00:00:01Z',
+    });
+    const [, params] = mockPool.query.mock.calls[0];
+    const resultJson = JSON.parse(params[4]);
+    expect(resultJson._meta.pr_url).toBeNull();
+    expect(resultJson._meta.verdict).toBeNull();
+  });
 });
