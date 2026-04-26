@@ -12,7 +12,7 @@ import pool from './db.js';
 import { checkServerResources, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { getAllStates } from './circuit-breaker.js';
-import { initAlertness, getCurrentAlertness } from './alertness/index.js';
+import { getCurrentAlertness } from './alertness/index.js';
 import { getQuarantineStats } from './quarantine.js';
 // Phase D Part 1.1: 48h 系统简报搬出 tick.js（仅 re-export）
 import { generate48hReport, check48hReport, REPORT_INTERVAL_MS } from './report-48h.js';
@@ -98,14 +98,7 @@ const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_I
 // MAX_REQUEUE_PER_TICK / RECOVERY_DISPATCH_CAP 仅 executeTick body 用，已搬到 tick-runner.js
 const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter（仅 re-export，executeTick body 在 tick-runner.js 用）
 
-// Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
-const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '60', 10);
-
-// 后台恢复配置（initTickLoop 所有重试耗尽后使用）
-const INIT_RECOVERY_INTERVAL_MS = parseInt(
-  process.env.CECELIA_INIT_RECOVERY_INTERVAL_MS || String(5 * 60 * 1000),
-  10
-);
+// Phase D2.3: TICK_AUTO_RECOVER_MINUTES + INIT_RECOVERY_INTERVAL_MS 已搬到 tick-recovery.js
 
 // Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP / PLATFORM_SKILL_MAP 实现搬到 tick-helpers.js，下方 import
 
@@ -351,6 +344,8 @@ export {
   startTickLoop,
   stopTickLoop,
   initTickLoop,
+  tryRecoverTickLoop,
+  _recordRecoveryAttempt,
   dispatchNextTask,
   _dispatchViaWorkflowRuntime,
   processCortexTask,
