@@ -72,7 +72,10 @@ if (MINIMAL_MODE) {
   console.log('[Brain] BRAIN_MINIMAL_MODE=true — 所有自动调度已关闭，只保留心跳和手动任务派发');
 }
 // Phase D2.4: STALE_THRESHOLD_HOURS 已随 isStale 搬到 tick-status.js
-const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
+// 默认 100min = docker container hard timeout (CECELIA_DOCKER_TIMEOUT_MS 默认 90min)
+// + 10min buffer for callback processing。
+// 旧值 60min 比 docker timeout 小 30min，会在容器还在合法运行时把 task 杀掉。
+const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '100', 10);
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
 // INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)

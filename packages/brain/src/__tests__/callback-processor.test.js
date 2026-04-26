@@ -191,3 +191,65 @@ describe('callback-processor — WHERE 守卫白名单（harness_evaluate 84% ve
     expect(mockClient.release, 'client.release 应被调用').toHaveBeenCalled();
   });
 });
+
+/**
+ * docker-executor 把 callback_queue.status 写为 'success'/'failed'/'timeout'，
+ * 旧版 callback-processor 只识别 'AI Done'/'AI Failed'/'AI Quota Exhausted'，
+ * 命中 else 分支后 newStatus 落到 'in_progress' → 跑成功的容器任务卡住，
+ * 60min 后 tick 误判超时，三次后 quarantine。修于本次。
+ */
+describe('callback-processor — docker contract status mapping', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+    mockClient.query.mockResolvedValue({ rows: [] });
+    mockPool.connect.mockResolvedValue(mockClient);
+  });
+
+  function findUpdateCall() {
+    return mockClient.query.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks')
+    );
+  }
+
+  it("status='success'（docker exit 0）→ newStatus=completed", async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      { task_id: 'docker-ok-1', run_id: 'r1', status: 'success', result: { ok: true }, duration_ms: 47000 },
+      mockPool
+    );
+    const update = findUpdateCall();
+    expect(update, 'UPDATE tasks 应被执行').toBeDefined();
+    expect(update[1][1], "newStatus must map success → completed").toBe('completed');
+  });
+
+  it("status='failed'（docker exit !=0）→ newStatus=failed", async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      { task_id: 'docker-fail-1', run_id: 'r2', status: 'failed', result: { error: 'boom' }, exit_code: 137 },
+      mockPool
+    );
+    const update = findUpdateCall();
+    expect(update[1][1]).toBe('failed');
+  });
+
+  it("status='timeout'（docker SIGKILL）→ newStatus=failed", async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      { task_id: 'docker-timeout-1', run_id: 'r3', status: 'timeout', result: { timed_out: true } },
+      mockPool
+    );
+    const update = findUpdateCall();
+    expect(update[1][1]).toBe('failed');
+  });
+
+  it("bridge 协议 'AI Done' 仍然映射到 completed（向后兼容）", async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      { task_id: 'bridge-ok-1', run_id: 'r4', status: 'AI Done', result: { verdict: 'DONE' } },
+      mockPool
+    );
+    const update = findUpdateCall();
+    expect(update[1][1]).toBe('completed');
+  });
+});

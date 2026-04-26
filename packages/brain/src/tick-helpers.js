@@ -20,7 +20,7 @@ import { getCurrentAlertness, ALERTNESS_LEVELS } from './alertness/index.js';
 import { isPostDrainCooldown } from './drain.js';
 
 // ─── 配置常量（从 tick.js 同步迁过来）────────────────────────────────────
-const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10);
+const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '100', 10);
 
 // ─── Task → skill 路由表（export 供 test 直接引用）────────────────────────
 export const TASK_TYPE_AGENT_MAP = {

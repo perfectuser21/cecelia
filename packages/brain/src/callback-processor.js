@@ -46,10 +46,15 @@ export async function processExecutionCallback(data, pool) {
   console.log(`[callback-processor] Processing callback for task ${task_id}, status: ${status}`);
 
   // 1. Status mapping
+  // 兼容两套 callback contract：
+  //   - bridge / cecelia-run.sh：'AI Done' / 'AI Failed' / 'AI Quota Exhausted'
+  //   - docker-executor.writeDockerCallback：'success' / 'failed' / 'timeout'
+  // docker-executor 与本处理器的 contract 不一致曾导致跑成功的容器任务卡在
+  // in_progress，60min 后被 tick 误判超时 → 三次失败 quarantine（修于本次）。
   let newStatus;
-  if (status === 'AI Done') {
+  if (status === 'AI Done' || status === 'success') {
     newStatus = 'completed';
-  } else if (status === 'AI Failed') {
+  } else if (status === 'AI Failed' || status === 'failed' || status === 'timeout') {
     newStatus = 'failed';
   } else if (status === 'AI Quota Exhausted') {
     newStatus = 'quota_exhausted';
