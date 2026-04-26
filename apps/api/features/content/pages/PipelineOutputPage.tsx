@@ -30,6 +30,7 @@ import {
   Bookmark,
   Play,
   Image,
+  ExternalLink,
 } from 'lucide-react';
 
 const BRAIN_API = '/api/brain';
@@ -392,28 +393,113 @@ function GenerationTab({
 
 // ── 发布记录 Tab ───────────────────────────────────────────────────────────────
 
-function PublishTab() {
+interface PostingStatus {
+  platform: string;
+  status: 'pending' | 'posted' | 'failed';
+  url?: string | null;
+  error?: string | null;
+  published_at?: string | null;
+}
+
+const STATUS_LABEL: Record<PostingStatus['status'] | 'idle', string> = {
+  posted: '已发布',
+  failed: '失败',
+  pending: '发布中',
+  idle: '未发布',
+};
+
+const STATUS_STYLE: Record<PostingStatus['status'] | 'idle', { bg: string; color: string }> = {
+  posted: { bg: 'rgba(34,197,94,0.15)',  color: '#86efac' },
+  failed: { bg: 'rgba(239,68,68,0.15)',  color: '#fca5a5' },
+  pending:{ bg: 'rgba(234,179,8,0.15)',  color: '#fde68a' },
+  idle:   { bg: 'rgba(107,114,128,0.15)', color: '#9ca3af' },
+};
+
+function PublishTab({ pipelineId }: { pipelineId: string }) {
+  const [statuses, setStatuses] = useState<PostingStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!pipelineId) return;
+    setLoading(true);
+    setError(null);
+    fetch(`${BRAIN_API}/pipelines/${pipelineId}/publish-status`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        setStatuses(Array.isArray(data?.platforms) ? data.platforms : []);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : '加载失败');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [pipelineId]);
+
+  const byPlatform = new Map<string, PostingStatus>();
+  for (const s of statuses) byPlatform.set(s.platform, s);
+
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-500 mb-4">平台发布状态（接入后自动更新）</p>
-      {PLATFORMS.map(platform => (
-        <div
-          key={platform.id}
-          className="flex items-center justify-between p-4 rounded-xl border"
-          style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(139,92,246,0.10)' }}
-        >
-          <div className="flex items-center gap-3">
-            <span className="text-xl">{platform.icon}</span>
-            <span className="text-sm text-gray-300">{platform.name}</span>
-          </div>
-          <span
-            className="text-xs px-2.5 py-1 rounded-full"
-            style={{ background: 'rgba(107,114,128,0.15)', color: '#9ca3af' }}
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-xs text-gray-500">平台发布状态</p>
+        {loading && <Loader2 className="w-3.5 h-3.5 text-gray-500 animate-spin" />}
+      </div>
+      {error && (
+        <p className="text-xs text-red-400 mb-2 flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          {error}
+        </p>
+      )}
+      {PLATFORMS.map(platform => {
+        const real = byPlatform.get(platform.id);
+        const key = (real?.status || 'idle') as keyof typeof STATUS_LABEL;
+        const style = STATUS_STYLE[key];
+        return (
+          <div
+            key={platform.id}
+            className="flex items-center justify-between p-4 rounded-xl border"
+            style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(139,92,246,0.10)' }}
           >
-            未发布
-          </span>
-        </div>
-      ))}
+            <div className="flex items-center gap-3">
+              <span className="text-xl">{platform.icon}</span>
+              <span className="text-sm text-gray-300">{platform.name}</span>
+              {real?.status === 'failed' && real.error && (
+                <span className="text-xs text-red-400/80 ml-2 truncate max-w-[200px]" title={real.error}>
+                  {real.error}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {real?.status === 'posted' && real.url && (
+                <a
+                  href={real.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid={`platform-link-${platform.id}`}
+                  className="text-xs px-2.5 py-1 rounded-full inline-flex items-center gap-1 transition-colors hover:opacity-80"
+                  style={{ background: 'rgba(139,92,246,0.15)', color: '#c084fc' }}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  打开
+                </a>
+              )}
+              <span
+                className="text-xs px-2.5 py-1 rounded-full"
+                style={{ background: style.bg, color: style.color }}
+              >
+                {STATUS_LABEL[key]}
+              </span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -596,7 +682,7 @@ export default function PipelineOutputPage() {
           {activeTab === 'generation' && (
             <GenerationTab output={output} stages={stages} loading={contentLoading} pipelineId={id ?? ''} />
           )}
-          {activeTab === 'publish' && <PublishTab />}
+          {activeTab === 'publish' && <PublishTab pipelineId={id ?? ''} />}
           {activeTab === 'analytics' && <AnalyticsTab />}
         </div>
       </div>

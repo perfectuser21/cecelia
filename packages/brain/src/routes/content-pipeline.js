@@ -15,6 +15,7 @@
  * POST /api/brain/pipelines/:id/pre-publish-check  发布前内容质量检查
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
  * GET  /api/brain/pipelines/:id/output         查询 pipeline 产出物（manifest）
+ * GET  /api/brain/pipelines/:id/publish-status 查询 pipeline 各平台分发状态（KR5-P1）
  */
 
 import express from 'express';
@@ -809,6 +810,80 @@ router.get('/:id/output', async (req, res) => {
     };
     res.json({ pipeline_id: id, output });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /pipelines/:id/publish-status
+ * 查询 pipeline 各平台分发状态（KR5-P1 详情页用）
+ *
+ * 数据合并规则：
+ *   - publish_results 优先（success=true→posted、success=false→failed），有 url 取其 url
+ *   - 同 platform 多条记录取 created_at 最新
+ *   - 没有 publish_results 时回落 content_publish_jobs.status：
+ *       running/pending → pending；success → posted；failed → failed
+ *
+ * 返回：{ pipeline_id, platforms: [{ platform, status, url?, error?, published_at? }] }
+ */
+router.get('/:id/publish-status', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // publish_results：每平台最新一条
+    const prResult = await pool.query(
+      `SELECT DISTINCT ON (platform)
+              platform, success, url, error, created_at
+       FROM publish_results
+       WHERE task_id = $1
+       ORDER BY platform, created_at DESC`,
+      [id]
+    );
+
+    // content_publish_jobs：每平台最新一条（按 created_at desc）
+    const jobsResult = await pool.query(
+      `SELECT DISTINCT ON (platform)
+              platform, status, error_message, completed_at, created_at
+       FROM content_publish_jobs
+       WHERE task_id = $1
+       ORDER BY platform, created_at DESC`,
+      [id]
+    );
+
+    const byPlatform = new Map();
+
+    // 先填 jobs（pending/running/failed/success）
+    for (const row of jobsResult.rows) {
+      let status;
+      if (row.status === 'success') status = 'posted';
+      else if (row.status === 'failed') status = 'failed';
+      else status = 'pending';
+      byPlatform.set(row.platform, {
+        platform: row.platform,
+        status,
+        url: null,
+        error: row.error_message || null,
+        published_at: row.completed_at || null,
+      });
+    }
+
+    // publish_results 覆盖（更权威，含 url）
+    for (const row of prResult.rows) {
+      byPlatform.set(row.platform, {
+        platform: row.platform,
+        status: row.success ? 'posted' : 'failed',
+        url: row.url || null,
+        error: row.success ? null : (row.error || null),
+        published_at: row.created_at || null,
+      });
+    }
+
+    const platforms = Array.from(byPlatform.values()).sort((a, b) =>
+      a.platform.localeCompare(b.platform)
+    );
+
+    res.json({ pipeline_id: id, platforms });
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /:id/publish-status error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
