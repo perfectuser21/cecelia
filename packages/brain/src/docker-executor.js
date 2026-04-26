@@ -394,9 +394,20 @@ export async function executeInDocker(opts) {
  * @param {Object} result — executeInDocker 返回值
  */
 export async function writeDockerCallback(task, runId, checkpointId, result) {
+  // env_broken 探测：claude 找不到 dispatch 用的 skill 时输出
+  // "Unknown skill: dev. Did you mean new?" + end_turn (exit_code=0)。
+  // 不识别 → 当成 success → task 留在 queued + watchdog 反复 requeue
+  // → 同一故障循环到 quarantine（4-25 串成 325 个 liveness_dead）。
+  // 在入库时把它降级为 failed，由下游 dev-failure-classifier ENV_BROKEN
+  // 标 retryable=false，配合 needs_human_review 把任务摘出循环。
+  const stdoutForCheck = result.stdout || '';
+  // 捕获组用 [\w\-]+ 避免吞掉后面的标点 / 引号 / 转义。skill 名只含字母数字下划线连字符。
+  const skillMissingMatch = stdoutForCheck.match(/Unknown\s+skill\s*:\s*([\w-]+)/i);
+  const isEnvBroken = !!skillMissingMatch;
+
   const status = result.timed_out
     ? 'timeout'
-    : (result.exit_code === 0 ? 'success' : 'failed');
+    : (isEnvBroken ? 'failed' : (result.exit_code === 0 ? 'success' : 'failed'));
 
   // Harness v6 Phase B: 从 stdout 解析 pr_url / verdict 塞进 _meta，让 callback-worker
   // 下游 (routePrUrlToTasks) 能从 result_json._meta.pr_url 回填 tasks.pr_url，
@@ -422,10 +433,15 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
     },
   };
 
+  if (isEnvBroken) {
+    resultJson._meta.skill_missing = skillMissingMatch[1];
+    resultJson._meta.env_broken_reason = 'unknown_skill';
+  }
+
   const stderrTail = result.stderr ? result.stderr.slice(-2000) : null;
   const failureClass = result.timed_out
     ? 'docker_timeout'
-    : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null);
+    : (isEnvBroken ? 'env_skill_missing' : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null));
 
   await pool.query(
     `INSERT INTO callback_queue
