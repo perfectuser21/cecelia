@@ -1,6 +1,7 @@
 /**
- * self-drive.js 状态感知 + tick.js 默认开启 — 静态代码验证
+ * self-drive.js 状态感知 + tick-status.js 默认开启 — 静态代码验证
  * Day5: Brain 调度器默认开启 + 状态感知任务生成
+ * Phase D2.4: getTickStatus 抽到 tick-status.js，源码扫描目标改为 tick-status.js
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -11,8 +12,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 describe('Day5: tick 默认开启', () => {
-  it('tick.js 默认 enabled 为 true（不再是 false）', () => {
-    const content = readFileSync(resolve(__dirname, '../tick.js'), 'utf-8');
+  it('tick-status.js 默认 enabled 为 true（不再是 false）', () => {
+    // Phase D2.4: getTickStatus 已从 tick.js 抽到 tick-status.js
+    const content = readFileSync(resolve(__dirname, '../tick-status.js'), 'utf-8');
     // 不应再包含 ?? false 的默认值
     const match = content.match(/const enabled = memory\[TICK_ENABLED_KEY\].*?;/s);
     expect(match).not.toBeNull();

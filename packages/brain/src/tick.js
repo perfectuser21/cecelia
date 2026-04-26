@@ -8,30 +8,25 @@
 // enableTick / disableTick）+ test helpers + Codex immune。executeTick 用到的
 // 50+ 模块在 tick-runner.js 内 import；本文件只保留 getTickStatus 等还在用的
 // + re-export 给老 caller 的（dispatchNextTask / drainTick 等）。
-import pool from './db.js';
-import { checkServerResources, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
-import { calculateSlotBudget } from './slot-allocator.js';
-import { getAllStates } from './circuit-breaker.js';
-import { getCurrentAlertness } from './alertness/index.js';
-import { getQuarantineStats } from './quarantine.js';
+// Phase D2.4: pool 不再需要（getTickStatus / getStartupErrors 已搬到 tick-status.js，_recordRecoveryAttempt 已搬到 tick-recovery.js）
+import { MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
+// Phase D2.4: checkServerResources / calculateSlotBudget / getAllStates / getCurrentAlertness
+// / getQuarantineStats 跟 getTickStatus 一起搬到 tick-status.js
+// Phase D2.3: initAlertness 随 initTickLoop 搬到 tick-recovery.js（不再 import）
 // Phase D Part 1.1: 48h 系统简报搬出 tick.js（仅 re-export）
 import { generate48hReport, check48hReport, REPORT_INTERVAL_MS } from './report-48h.js';
-// Phase D Part 1.2: drain 子系统搬出 tick.js
+// Phase D Part 1.2: drain 子系统搬出 tick.js（仅 re-export 给老 caller / status route）
 import {
   drainTick,
   getDrainStatus,
   cancelDrain,
-  isDraining,
-  getDrainStartedAt,
-  isPostDrainCooldown,
   _getDrainState,
   _resetDrainState,
 } from './drain.js';
-// Phase D Part 1.3: tick watchdog 搬出 tick.js
+// Phase D Part 1.3: tick watchdog 搬出 tick.js（仅 re-export，启动循环用 startTickWatchdog）
 import {
   startTickWatchdog,
   stopTickWatchdog,
-  isTickWatchdogActive,
   TICK_WATCHDOG_INTERVAL_MS,
 } from './tick-watchdog.js';
 // Phase D Part 1.4: dispatch helpers 搬出 tick.js（仅 re-export）
@@ -50,8 +45,8 @@ import {
   autoFailTimedOutTasks,
   getRampedDispatchMax,
 } from './tick-helpers.js';
-// Phase D Part 1.7a: 14 个 lastXxxTime + 5 个 loop 控制态收口到 tick-state.js
-import { tickState } from './tick-state.js';
+// Phase D Part 1.7a: tickState 已收口到 tick-state.js；本文件无直接读写需求
+// （test helper _resetLastXxxTime 通过下方 export {} from './tick-state.js' re-export）
 // Phase D Part 1.7b: executeTick 抽到 tick-runner.js
 import { executeTick } from './tick-runner.js';
 // Phase D2.2: runTickSafe / startTickLoop / stopTickLoop + 3 个常量抽到 tick-loop.js
@@ -63,6 +58,8 @@ import {
   TICK_LOOP_INTERVAL_MS,
   TICK_TIMEOUT_MS
 } from './tick-loop.js';
+// Phase D2.4: getTickStatus / isStale / getStartupErrors 抽到 tick-status.js（仅 re-export）
+import { getTickStatus, isStale, getStartupErrors } from './tick-status.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -85,7 +82,7 @@ const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 if (MINIMAL_MODE) {
   console.log('[Brain] BRAIN_MINIMAL_MODE=true — 所有自动调度已关闭，只保留心跳和手动任务派发');
 }
-const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
+// Phase D2.4: STALE_THRESHOLD_HOURS 已随 isStale 搬到 tick-status.js
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
@@ -103,11 +100,9 @@ const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter（仅 re-export，execut
 // Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP / PLATFORM_SKILL_MAP 实现搬到 tick-helpers.js，下方 import
 
 // Working memory keys
-const TICK_ENABLED_KEY = 'tick_enabled';
-const TICK_LAST_KEY = 'tick_last';
-const TICK_ACTIONS_TODAY_KEY = 'tick_actions_today';
-const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
-const TICK_STATS_KEY = 'tick_execution_stats';
+// Phase D2.4: TICK_LAST_KEY / TICK_ACTIONS_TODAY_KEY / TICK_LAST_DISPATCH_KEY / TICK_STATS_KEY
+// 仅 getTickStatus 用，已随其搬到 tick-status.js
+// Phase D2.3: TICK_ENABLED_KEY 随 initTickLoop / enableTick / disableTick 搬到 tick-recovery.js
 
 // Phase D Part 1.7a: Loop state + 14 个 lastXxxTime + lastConsciousnessReload 全部收口到 tick-state.js
 // 通过 tickState.loopTimer / tickState.tickRunning / tickState.tickLockTime / tickState.recoveryTimer
@@ -130,91 +125,7 @@ const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS
 
 // Tick watchdog 已搬到 tick-watchdog.js（Phase D Part 1.3）— 通过 isTickWatchdogActive() getter 访问
 
-/**
- * Get tick status
- */
-async function getTickStatus() {
-  const result = await pool.query(`
-    SELECT key, value_json FROM working_memory
-    WHERE key IN ($1, $2, $3, $4, $5, $6, $7)
-  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY, 'startup_errors', 'recovery_attempts', TICK_STATS_KEY]);
-
-  const memory = {};
-  for (const row of result.rows) {
-    memory[row.key] = row.value_json;
-  }
-
-  const enabled = memory[TICK_ENABLED_KEY]?.enabled ?? true;
-  const lastTick = memory[TICK_LAST_KEY]?.timestamp || null;
-  const actionsToday = memory[TICK_ACTIONS_TODAY_KEY]?.count || 0;
-
-  // Calculate next tick time
-  let nextTick = null;
-  if (enabled && lastTick) {
-    const lastTickDate = new Date(lastTick);
-    nextTick = new Date(lastTickDate.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString();
-  } else if (enabled) {
-    nextTick = new Date(Date.now() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString();
-  }
-
-  const lastDispatch = memory[TICK_LAST_DISPATCH_KEY] || null;
-
-  // startup_errors 可观测字段
-  const startupErrors = memory['startup_errors'] || null;
-  const startupErrorCount = startupErrors?.total_failures || 0;
-  const startupOk = startupErrorCount === 0;
-
-  // recovery_attempts 可观测字段
-  const recoveryAttempts = memory['recovery_attempts'] || null;
-
-  // Get quarantine stats
-  let quarantineStats = { total: 0 };
-  try {
-    quarantineStats = await getQuarantineStats();
-  } catch { /* ignore */ }
-
-  // Get slot allocation budget
-  let slotBudget = null;
-  try {
-    slotBudget = await calculateSlotBudget();
-  } catch { /* ignore */ }
-
-  const rawTickStats = memory[TICK_STATS_KEY] || null;
-  const tickStats = {
-    total_executions: rawTickStats?.total_executions ?? 0,
-    last_executed_at: rawTickStats?.last_executed_at ?? null,
-    last_duration_ms: rawTickStats?.last_duration_ms ?? null,
-  };
-
-  return {
-    enabled,
-    loop_running: tickState.loopTimer !== null,
-    draining: isDraining(),
-    drain_started_at: getDrainStartedAt(),
-    post_drain_cooldown: isPostDrainCooldown(),
-    tick_watchdog_active: isTickWatchdogActive(),
-    interval_minutes: TICK_INTERVAL_MINUTES,
-    loop_interval_ms: TICK_LOOP_INTERVAL_MS,
-    last_tick: lastTick,
-    next_tick: nextTick,
-    actions_today: actionsToday,
-    tick_running: tickState.tickRunning,
-    last_dispatch: lastDispatch,
-    startup_ok: startupOk,
-    startup_error_count: startupErrorCount,
-    recovery_timer_active: tickState.recoveryTimer !== null,
-    recovery_attempts: recoveryAttempts,
-    max_concurrent: MAX_CONCURRENT_TASKS,
-    auto_dispatch_max: AUTO_DISPATCH_MAX,
-    resources: checkServerResources(),
-    slot_budget: slotBudget,
-    dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
-    circuit_breakers: getAllStates(),
-    alertness: getCurrentAlertness(),
-    quarantine: quarantineStats,
-    tick_stats: tickStats,
-  };
-}
+// Phase D2.4: getTickStatus 实现搬到 tick-status.js（顶部 import）
 
 // Phase D2.2: runTickSafe / startTickLoop / stopTickLoop 实现搬到 tick-loop.js，
 // 通过顶部 import 取得；下方 export 块统一 re-export，老 caller 不受影响。
@@ -230,17 +141,7 @@ import {
 } from './tick-recovery.js';
 
 
-/**
- * Check if a task is stale (in_progress for too long)
- */
-function isStale(task) {
-  if (task.status !== 'in_progress') return false;
-  if (!task.started_at) return false;
-
-  const startedAt = new Date(task.started_at);
-  const hoursElapsed = (Date.now() - startedAt.getTime()) / (1000 * 60 * 60);
-  return hoursElapsed > STALE_THRESHOLD_HOURS;
-}
+// Phase D2.4: isStale 实现搬到 tick-status.js（顶部 import）
 
 // D1.7b: logTickDecision / incrementActionsToday 仅 executeTick body 用，已搬到 tick-runner.js
 
@@ -268,26 +169,7 @@ function isStale(task) {
 // Phase D Part 1.1: 48h 系统简报实现搬到 report-48h.js，下方 import re-export。
 // Phase D Part 1.2: drain 子系统实现搬到 drain.js，下方 import re-export。
 
-/**
- * 读取 working_memory 中的 startup_errors 数据
- * 用于 GET /api/brain/tick/startup-errors 端点
- * @returns {{ errors: Array, total_failures: number, last_error_at: string|null }}
- */
-async function getStartupErrors() {
-  const result = await pool.query(
-    'SELECT value_json FROM working_memory WHERE key = $1',
-    ['startup_errors']
-  );
-  const data = result.rows[0]?.value_json;
-  if (!data) {
-    return { errors: [], total_failures: 0, last_error_at: null };
-  }
-  return {
-    errors: Array.isArray(data.errors) ? data.errors : [],
-    total_failures: data.total_failures || 0,
-    last_error_at: data.last_error_at || null
-  };
-}
+// Phase D2.4: getStartupErrors 实现搬到 tick-status.js（顶部 import）
 
 // Phase D2.1: 9 个 _resetLastXxxTime 已下沉 tick-state.js
 // 下方 export { ... } from './tick-state.js' 保留向后兼容（测试仍 import from './tick.js'）
