@@ -23,8 +23,8 @@ describe('dispatcher.js — module load smoke', () => {
     for (const t of ['harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e', 'harness_planner']) {
       expect(src).toContain(`'${t}'`);
     }
-    // 验有 Phase 2.5 SQL drain
-    expect(src).toContain('Phase 2.5');
+    // 验有 retired-type SQL drain（dispatcher.js 注释里写 "2.5 Drain"）
+    expect(src).toContain('2.5 Drain');
     expect(src).toContain('pipeline_terminal_failure');
   });
 });

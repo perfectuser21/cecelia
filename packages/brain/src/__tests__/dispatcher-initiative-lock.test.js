@@ -88,10 +88,10 @@ describe('dispatcher initiative-lock — task_type 白名单', () => {
     mockQuery.mockReset();
   });
 
-  it('case 1: harness_task vs harness_task same project → initiative_locked', async () => {
+  it('case 1: harness_initiative vs harness blocker same project → initiative_locked', async () => {
     mockSelectNextDispatchableTask.mockResolvedValue({
       id: 'task-A',
-      task_type: 'harness_task',
+      task_type: 'harness_initiative',
       project_id: 'proj-1',
       title: 'A',
     });
@@ -131,10 +131,10 @@ describe('dispatcher initiative-lock — task_type 白名单', () => {
     expect(lockCheckCalls).toHaveLength(0);
   });
 
-  it('case 3: harness_task vs dev blocker → SQL 含 task_type=ANY 过滤，参数含 6 项白名单', async () => {
+  it('case 3: harness_initiative vs dev blocker → SQL 含 task_type=ANY 过滤，参数含 6 项白名单', async () => {
     mockSelectNextDispatchableTask.mockResolvedValue({
       id: 'task-H',
-      task_type: 'harness_task',
+      task_type: 'harness_initiative',
       project_id: 'proj-1',
       title: 'harness',
     });
