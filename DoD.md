@@ -1,54 +1,41 @@
-# DoD — cp-0426222852-smoke-fix-d-tick
+# DoD — cp-0426202412-cicd-b-real-env-smoke
 
 ## Goal
 
-修 `packages/brain/scripts/smoke/d-tick-runner-full.sh` — CI real-env-smoke 干净环境跑过。
-
-原 smoke 假定 `loop_running=true` + 等 130s 自然 tick + docker logs 命中 ≥6/8 plugin。
-CI real-env-smoke 设 `CECELIA_TICK_ENABLED=false`，且 fresh DB 多数 plugin silent on no-op，
-docker logs runtime 命中 < 6/8 → CI 必 fail。
-
-修后：smoke 不依赖 loop / log；主动 POST /api/brain/tick 触发 manual tick，
-验 last_tick 推进 + total_executions++（强契约 — 证明 executeTick 走完整 plugin 序列）。
-runtime 日志降为软验（diagnostic only，阈值 ≥1）。
+CI 加 `real-env-smoke` job — 起真 cecelia-brain docker container + 真 postgres，
+跑 `packages/brain/scripts/smoke/*.sh` 全部。补 docker-infra-smoke 不验真 HTTP 的盲区。
+本 PR 加 1 个示范 smoke 让 CI 跑通验证机制。
 
 ## Artifact
 
-- [x] [ARTIFACT] smoke 脚本存在且可执行
-      Test: manual:node -e "const fs=require('fs');const s=fs.statSync('packages/brain/scripts/smoke/d-tick-runner-full.sh');if((s.mode&0o100)===0)process.exit(1)"
+- [x] [ARTIFACT] ci.yml 含 real-env-smoke job
+      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('real-env-smoke:'))process.exit(1);if(!/cecelia-brain:ci/.test(c))process.exit(1)"
+
+- [x] [ARTIFACT] real-env-smoke 在 ci-passed needs 列表
+      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const m=c.match(/ci-passed:[\s\S]*?needs:\s*\[([^\]]+)\]/);if(!m||!m[1].includes('real-env-smoke'))process.exit(1)"
+
+- [x] [ARTIFACT] 示范 smoke.sh 存在且可执行
+      Test: manual:node -e "const fs=require('fs');fs.accessSync('packages/brain/scripts/smoke/example-health-check.sh',fs.constants.X_OK)"
 
 ## Behavior
 
-- [x] [BEHAVIOR] smoke 自动检测 brain 容器名（BRAIN_CONTAINER env > cecelia-brain-smoke > cecelia-node-brain）
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/d-tick-runner-full.sh','utf8');if(!c.includes('cecelia-brain-smoke'))process.exit(1);if(!c.includes('cecelia-node-brain'))process.exit(1);if(!/detect_container/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] real-env-smoke job 真起 cecelia-brain image（docker run + --network host）
+      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/docker run -d --name cecelia-brain-smoke[\s\S]*?--network host/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] smoke 主动 POST /api/brain/tick 触发 manual tick（不依赖 loop / TICK_ENABLED）
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/d-tick-runner-full.sh','utf8');if(!/curl -sf -X POST.*\/api\/brain\/tick/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] real-env-smoke job 等 brain healthy 后才跑 smoke（curl tick/status 90s 超时）
+      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/curl -sf http:\/\/localhost:5221\/api\/brain\/tick\/status/.test(c))process.exit(1);if(!/seq 1 90/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] smoke 验 last_tick 推进 + tick_stats.total_executions++（强契约）
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/d-tick-runner-full.sh','utf8');if(!/LAST_TICK_AFTER.*!=.*LAST_TICK_BEFORE/.test(c))process.exit(1);if(!/EXEC_COUNT_AFTER.*-gt.*EXEC_COUNT_BEFORE/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] real-env-smoke job 跑 packages/brain/scripts/smoke/*.sh 全部，任一失败 → job fail
+      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('packages/brain/scripts/smoke'))process.exit(1);if(!/FAILED=[$][(][(]FAILED [+] 1[)][)]/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] smoke 静态验 tick-runner.js 8 plugin import 全 wired
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/d-tick-runner-full.sh','utf8');for(const p of ['dept-heartbeat','kr-progress-sync-plugin','heartbeat-plugin','goal-eval-plugin','pipeline-patrol-plugin','pipeline-watchdog-plugin','kr-health-daily-plugin','cleanup-worker-plugin'])if(!c.includes(p)){console.error('missing plugin name:',p);process.exit(1)}"
+- [x] [BEHAVIOR] real-env-smoke job 在 smoke 目录为空时 fail（强制必须有脚本）
+      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!/必须有至少 1 个 smoke 脚本/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] smoke runtime log 阈值降为 ≥1（软验，CI 空 DB 下多 plugin silent on no-op）
-      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/d-tick-runner-full.sh','utf8');if(!/SMOKE_PLUGIN_RUNTIME_MIN:-1/.test(c))process.exit(1)"
-
-- [x] [BEHAVIOR] smoke bash 语法 OK
-      Test: manual:bash -n packages/brain/scripts/smoke/d-tick-runner-full.sh
-
-- [x] [ARTIFACT] Learning 文档存在
-      Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-04262228-smoke-fix-d-tick.md')"
+- [x] [BEHAVIOR] 示范 smoke 校验 tick/status HTTP 200 + 响应含 interval_minutes / loop_interval_ms / startup_ok
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/example-health-check.sh','utf8');if(!c.includes('interval_minutes'))process.exit(1);if(!c.includes('loop_interval_ms'))process.exit(1);if(!c.includes('startup_ok'))process.exit(1);if(!c.includes('HTTP_CODE'))process.exit(1)"
 
 ## Constraints
 
-- 不动 brain 业务代码（仅改 smoke 脚本）
-- 仅改 `packages/brain/scripts/smoke/d-tick-runner-full.sh`（task scope）
-- 不改 CI workflow / SKILL / engine 版本
-
-## 成功标准
-
-- 本机 CI-style docker setup（fresh postgres + fresh brain + CECELIA_TICK_ENABLED=false +
-  --network bridge + 容器名 cecelia-brain-smoke）下 smoke 真跑过，全 5 阶段 PASS
-- 容器名自动检测对 cecelia-brain-smoke / cecelia-node-brain 双场景适配
-- 强契约（last_tick 推进）兜底，软契约（docker logs）只作 diagnostic
+- 与 task A（cicd-A 改 /dev SKILL + lint job）不冲突：A 改 SKILL 文件 + lint job，B 改 ci.yml 主 job + 加 smoke 目录
+- 不动 brain 业务代码（仅加 ci.yml job + 1 个 smoke 脚本）
+- timeout 20 min（smoke 慢但准）
