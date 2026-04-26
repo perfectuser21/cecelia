@@ -1,6 +1,6 @@
 ---
 name: dev
-version: 18.6.0
+version: 18.7.0
 updated: 2026-04-26
 description: Cecelia /dev 点火入口。接力链 — engine-worktree → superpowers:brainstorming → writing-plans → subagent-driven-development → finishing → engine-ship。所有"问用户"交互点由 Research Subagent 代答，不停下等用户。
 trigger: /dev, --task-id <id>
@@ -48,6 +48,39 @@ trigger: /dev, --task-id <id>
 2. **subagent prompt inline TDD iron law** — orchestrator 派 implementer subagent 时，prompt 必须复制 4 条 TDD 红线（见 Tier 1 默认表第 26-30 行）。subagent 收到任务后必须先 commit-1（fail test）再 commit-2（impl），controller 在合并前 `git log --oneline` 验证 commit 顺序，不符合则让 subagent 重做。
 
 详见 `packages/engine/skills/dev/steps/autonomous-research-proxy.md` Tier 1 表新增的 2 行 TDD 强化条目。
+
+---
+
+## smoke.sh 必须 — 行为类 PR 真环境验证（v18.7.0 新增）
+
+历史教训：单元测试全绿不等于功能可用。Brain 多次合并后才发现真启动 SyntaxError、容器化后 host.docker.internal 解析失败、迁移漏跑导致表缺失。CI 跑 vitest mock 不挂真服务，覆盖不到这类"系统已起来但行为崩"的盲区。
+
+**新规则（PR 合并前强制）**：
+
+1. **新行为类 PR 必须含 `packages/brain/scripts/smoke/<feature>-smoke.sh` 真环境验证脚本**
+   - "行为类" = 改动了 `packages/brain/src/`（runtime 行为），且 commit 类型为 `feat:`
+   - smoke.sh 在真起的 Brain（docker compose / 本机 server.js）上执行 curl/psql/node 链路验证，不是 mock
+   - 命名约定：`packages/brain/scripts/smoke/<feature>-smoke.sh`，例如 `e1-observer-smoke.sh` / `tick-runner-smoke.sh`
+
+2. **smoke.sh 必须在 CI `real-env-smoke` job 跑过才能 merge**
+   - 该 job 起真 docker compose（postgres + brain），逐个执行 `packages/brain/scripts/smoke/*.sh`
+   - 任一 smoke.sh exit ≠ 0 → CI fail → 不能合并
+
+3. **writing-plans 第一个 task 必须是「写 fail E2E + smoke.sh」**
+   - 在 plan 文件里，第一个 implementation task 的标题必须含 "E2E" 或 "smoke" 关键字
+   - subagent-driven-development 派 implementer 时，第一个 subagent 的产物必须是失败的 E2E test + 空 smoke.sh 骨架（commit 1）
+   - 第二个 subagent 才写 impl 让 E2E + smoke.sh 同时变绿（commit 2）
+
+**CI 强制门禁（机器化）**：
+
+`.github/workflows/ci.yml` 添加 4 个 lint job 实现机器化执行：
+
+- `lint-test-pairing` — 新增 `brain/src/*.js` 必须配套 `*.test.js`（同目录 / `__tests__/`）
+- `lint-feature-has-smoke` — `feat:` PR 触及 `brain/src/` 必须新增 `packages/brain/scripts/smoke/*.sh`
+- `lint-base-fresh` — PR 落后 main ≤ 5 commits（避免 stale base 合并冲突）
+- `lint-tdd-commit-order` — 含 `brain/src/*.js` 的 commit 之前必须有 `*.test.js` commit（TDD 顺序）
+
+实现脚本：`.github/workflows/scripts/lint-*.sh`，本地可手跑 `bash .github/workflows/scripts/lint-test-pairing.sh origin/main` 提前验证。
 
 ---
 

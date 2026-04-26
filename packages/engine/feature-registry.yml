@@ -6,6 +6,19 @@ version: "1.0.0"
 updated: "2026-04-26"
 
 changelog:
+  - version: "18.7.0"
+    date: "2026-04-26"
+    change: "feat"
+    description: "[CONFIG] /dev SKILL 强制 smoke.sh + 4 CI lint job 机器化纪律（team cecelia-cicd-foundation task #1）。SKILL.md 新增「smoke.sh 必须 — 行为类 PR 真环境验证」段：(1) 改 brain/src 的 feat: PR 必须配套 packages/brain/scripts/smoke/<feature>-smoke.sh；(2) smoke.sh 必须在 CI real-env-smoke job 真起 docker compose 跑过；(3) writing-plans 第一个 task 必须是「写 fail E2E + smoke.sh」。.github/workflows/ci.yml 新增 4 个 PR-only lint job 把规则机器化：lint-test-pairing（新 brain/src/*.js 必须配套 *.test.js）/ lint-feature-has-smoke（feat:+brain 改动必须新增 smoke.sh）/ lint-base-fresh（落后 main ≤ 5 commits）/ lint-tdd-commit-order（含 src 的 commit 之前必须有 *.test.js commit）。lint 实现脚本在 .github/workflows/scripts/lint-*.sh，可本地手跑预验。minor bump 18.6.0 → 18.7.0。"
+    files:
+      - "packages/engine/skills/dev/SKILL.md (+30 行 smoke.sh 强制段, version 18.7.0)"
+      - ".github/workflows/ci.yml (+4 lint job + 4 行 ci-passed check)"
+      - ".github/workflows/scripts/lint-test-pairing.sh (新增)"
+      - ".github/workflows/scripts/lint-feature-has-smoke.sh (新增)"
+      - ".github/workflows/scripts/lint-base-fresh.sh (新增)"
+      - ".github/workflows/scripts/lint-tdd-commit-order.sh (新增)"
+      - "Engine 5 处版本文件 18.7.0"
+
   - version: "18.6.0"
     date: "2026-04-26"
     change: "feat"
