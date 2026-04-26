@@ -59,22 +59,24 @@ describe('tick.js WORKFLOW_RUNTIME env gate (C6)', () => {
     else process.env.WORKFLOW_RUNTIME = originalEnv;
   });
 
-  it('env 未设 + task_type=dev → legacy triggerCeceliaRun 被调', async () => {
+  it('env 未设 + task_type=dev → 默认走 v2 runWorkflow（flag flipped）', async () => {
     delete process.env.WORKFLOW_RUNTIME;
     const { _dispatchViaWorkflowRuntime } = await import('../tick.js');
     const task = { id: 'task-aaa', task_type: 'dev', title: 'hello', retry_count: 0 };
     const result = await _dispatchViaWorkflowRuntime(task);
-    expect(result).toEqual({ handled: false });
-    expect(mocks.runWorkflow).not.toHaveBeenCalled();
+    expect(result.handled).toBe(true);
+    expect(result.runtime).toBe('v2');
+    expect(mocks.runWorkflow).toHaveBeenCalledTimes(1);
+    expect(mocks.runWorkflow).toHaveBeenCalledWith('dev-task', 'task-aaa', 1, { task });
   });
 
-  it('env=v1 + task_type=dev → legacy 被调（显式 v1）', async () => {
+  it('env=v1 + task_type=dev → 仍走 v2（env 已不影响默认）', async () => {
     process.env.WORKFLOW_RUNTIME = 'v1';
     const { _dispatchViaWorkflowRuntime } = await import('../tick.js');
     const task = { id: 'task-bbb', task_type: 'dev', title: 'hello', retry_count: 0 };
     const result = await _dispatchViaWorkflowRuntime(task);
-    expect(result).toEqual({ handled: false });
-    expect(mocks.runWorkflow).not.toHaveBeenCalled();
+    expect(result.handled).toBe(true);
+    expect(mocks.runWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('env=v2 + task_type=dev → runWorkflow 被调 fire-and-forget，attemptN=1', async () => {

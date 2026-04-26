@@ -2168,17 +2168,6 @@ async function _prepareContractReviewPrompt(task, taskType) {
 
 // ─── preparePrompt 辅助：条件判断 + 路由内联 lambda 拆分 ────────────────────
 
-/**
- * HARNESS_LANGGRAPH_ENABLED 环境变量检测（executor 内部用）。
- * 与 harness-graph-runner.js 中的 isLangGraphEnabled 逻辑一致。
- */
-function _isLangGraphEnabled() {
-  const v = process.env.HARNESS_LANGGRAPH_ENABLED;
-  if (!v) return false;
-  const normalized = String(v).trim().toLowerCase();
-  return !(normalized === '' || normalized === 'false' || normalized === '0');
-}
-
 function _isSprintOrHarnessDevMode(taskType, payload) {
   return ['sprint_generate', 'sprint_fix'].includes(taskType)
     || (taskType === 'dev' && payload?.harness_mode);
@@ -2793,63 +2782,32 @@ async function triggerCeceliaRun(task) {
     return triggerLocalCodexExec(task);
   }
 
-  // 2.85 Harness Full Graph (Phase A+B+C) — Sprint 1 一个 graph 跑到底。
-  // env flag HARNESS_USE_FULL_GRAPH=false 走老路（迁移期保留 1 周）。
+  // 2.85 Harness Full Graph (Phase A+B+C) — 一个 graph 跑到底，默认路径。
   if (task.task_type === 'harness_initiative') {
-    const useFullGraph = process.env.HARNESS_USE_FULL_GRAPH !== 'false';
-    if (useFullGraph) {
-      console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (Sprint 1, A+B+C)`);
-      try {
-        const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
-        const compiled = await compileHarnessFullGraph();
-        const initiativeId = task.payload?.initiative_id || task.id;
-        const final = await compiled.invoke(
-          { task },
-          { configurable: { thread_id: `harness-initiative:${initiativeId}:1` }, recursionLimit: 500 }
-        );
-        return {
-          success: !final.error,
-          taskId: task.id,
-          initiative: true,
-          fullGraph: true,
-          finalState: {
-            // 只回 summary 防 task.result 列爆炸
-            initiativeId: final.initiativeId,
-            sub_tasks: final.sub_tasks,
-            final_e2e_verdict: final.final_e2e_verdict,
-            error: final.error,
-          },
-        };
-      } catch (err) {
-        console.error(`[executor] Harness Full Graph error task=${task.id}: ${err.message}`);
-        return { success: false, taskId: task.id, initiative: true, error: err.message };
-      }
-    }
-    // ── 老路（HARNESS_USE_FULL_GRAPH=false 时迁移期兜底） ────────────
-    if (process.env.HARNESS_INITIATIVE_RUNTIME === 'v2') {
-      console.log(`[executor] 路由决策: task_type=${task.task_type} → v2 graph runWorkflow (legacy C8a)`);
-      try {
-        const { runWorkflow } = await import('./orchestrator/graph-runtime.js');
-        return await runWorkflow('harness-initiative', task.id, 1, { task });
-      } catch (err) {
-        console.error(`[executor] v2 graph runWorkflow error task=${task.id}: ${err.message}`);
-        return { success: false, taskId: task.id, initiative: true, error: err.message };
-      }
-    }
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness v2 Initiative Runner (legacy procedural)`);
-    let checkpointer;
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
     try {
-      const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
-      checkpointer = await getPgCheckpointer();
-    } catch (cpErr) {
-      console.warn(`[executor] PostgresSaver 初始化失败，降级到 MemorySaver: ${cpErr.message}`);
-      checkpointer = undefined;
-    }
-    try {
-      const { runInitiative } = await import('./harness-initiative-runner.js');
-      return await runInitiative(task, { checkpointer });
+      const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
+      const compiled = await compileHarnessFullGraph();
+      const initiativeId = task.payload?.initiative_id || task.id;
+      const final = await compiled.invoke(
+        { task },
+        { configurable: { thread_id: `harness-initiative:${initiativeId}:1` }, recursionLimit: 500 }
+      );
+      return {
+        success: !final.error,
+        taskId: task.id,
+        initiative: true,
+        fullGraph: true,
+        finalState: {
+          // 只回 summary 防 task.result 列爆炸
+          initiativeId: final.initiativeId,
+          sub_tasks: final.sub_tasks,
+          final_e2e_verdict: final.final_e2e_verdict,
+          error: final.error,
+        },
+      };
     } catch (err) {
-      console.error(`[executor] Initiative Runner error task=${task.id}: ${err.message}`);
+      console.error(`[executor] Harness Full Graph error task=${task.id}: ${err.message}`);
       return { success: false, taskId: task.id, initiative: true, error: err.message };
     }
   }
@@ -2857,25 +2815,10 @@ async function triggerCeceliaRun(task) {
   // Sprint 1: 4 retired task_types (harness_task / harness_ci_watch / harness_fix /
   // harness_final_e2e) 已被 harness_initiative full-graph sub-graph 取代。
   // 老数据派到 executor → 标 terminal failure 防止"复活"。
-  // HARNESS_USE_FULL_GRAPH=false 时仍可走老路兜底。
   const _RETIRED_HARNESS_TYPES = new Set([
     'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
   ]);
   if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
-    if (process.env.HARNESS_USE_FULL_GRAPH === 'false') {
-      // 兜底：迁移期仍走老路（仅 harness_task 真要派；其余由 tick worker / runPhaseCIfReady 自管）
-      if (task.task_type === 'harness_task') {
-        try {
-          const { triggerHarnessTaskDispatch } = await import('./harness-task-dispatch.js');
-          return await triggerHarnessTaskDispatch(task);
-        } catch (err) {
-          console.error(`[executor] harness_task dispatch failed task=${task.id}: ${err.message}`);
-          return { success: false, error: err.message };
-        }
-      }
-      console.log(`[executor] task_type=${task.task_type} (legacy mode) → tick worker handles it`);
-      return { success: true, deferred: true };
-    }
     console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
     try {
       await pool.query(
@@ -2891,13 +2834,12 @@ async function triggerCeceliaRun(task) {
     return { success: false, retired: true, taskType: task.task_type };
   }
 
-  // 2.9 LangGraph Pipeline（HARNESS_LANGGRAPH_ENABLED=true + harness_planner）
-  // 当启用 LangGraph 时，harness_planner 任务不走单步 Docker 执行，
-  // 而是由 LangGraph 编排完整 6 步 pipeline（planner→proposer→reviewer→generator→evaluator→report）。
+  // 2.9 LangGraph Pipeline（harness_planner 默认走 LangGraph）
+  // harness_planner 任务由 LangGraph 编排完整 6 步 pipeline
+  // （planner→proposer→reviewer→generator→evaluator→report）。
   // LangGraph runner 内部为每个节点调 spawn()（Brain v2 Layer 3 唯一对外 API）。
-  // ⚠️ v1 路径保留（向后兼容老数据），新 Initiative 走上面的 harness_initiative 分支。
-  if (task.task_type === 'harness_planner' && _isLangGraphEnabled()) {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (HARNESS_LANGGRAPH_ENABLED=true)`);
+  if (task.task_type === 'harness_planner') {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (default)`);
     try {
       const { runHarnessPipeline } = await import('./harness-graph-runner.js');
       // Harness pipeline 账号选择统一交给 spawn() 内层 account-rotation middleware

@@ -6,7 +6,7 @@
  *
  * 本测试做源码结构断言（不 spawn executor）：
  *   1. 不再 inline `PostgresSaver.fromConnString`（已收归 pg-checkpointer.js）
- *   2. harness_initiative / harness_planner 两分支都 import `getPgCheckpointer`
+ *   2. harness_planner 分支 import `getPgCheckpointer`（harness_initiative 走 compileHarnessFullGraph，自带 checkpointer）
  *   3. checkpointer 作为 runHarnessPipeline opts 传入（语义不变）
  *   4. 不再手动调 `checkpointer.setup()`（singleton 内部一次搞定）
  *
@@ -29,14 +29,14 @@ describe('executor.js — C7 checkpointer singleton 接入', () => {
     expect(executorSrc).not.toMatch(/checkpointer\.setup\(\)/);
   });
 
-  it('imports getPgCheckpointer from orchestrator singleton (harness_initiative + harness_planner)', () => {
+  it('imports getPgCheckpointer from orchestrator singleton (harness_planner)', () => {
     const imports = executorSrc.match(/await import\(['"]\.\/orchestrator\/pg-checkpointer\.js['"]\)/g) || [];
-    expect(imports.length).toBeGreaterThanOrEqual(2);
+    expect(imports.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('awaits getPgCheckpointer() at both call sites', () => {
+  it('awaits getPgCheckpointer() at the harness_planner call site', () => {
     const calls = executorSrc.match(/await getPgCheckpointer\(\)/g) || [];
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
   });
 
   it('still passes checkpointer to runHarnessPipeline opts', () => {

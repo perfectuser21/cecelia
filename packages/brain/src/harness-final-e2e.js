@@ -147,8 +147,7 @@ export function teardownE2E(opts = {}) {
 }
 
 /**
- * @deprecated Sprint 1: 编排函数已迁入 harness-initiative.graph.finalE2eNode。
- * 保留 1 周作 HARNESS_USE_FULL_GRAPH=false 兜底；下一个 PR 删。
+ * Sprint 1: 编排函数原始实现，graph 节点 finalE2eNode 直接调用。
  */
 export async function runFinalE2E(initiativeId, contract, opts = {}) {
   if (!initiativeId || typeof initiativeId !== 'string') {

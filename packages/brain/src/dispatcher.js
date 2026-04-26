@@ -2,7 +2,7 @@
  * Brain v2 Phase D Part 1.5 — dispatchNextTask + _dispatchViaWorkflowRuntime 抽出。
  *
  * 原在 tick.js L706-L1115（dispatchNextTask）+ L3020-L3061（_dispatchViaWorkflowRuntime
- * — C6 加的 WORKFLOW_RUNTIME=v2 灰度入口），瘦身抽出独立模块。
+ * — dev 任务走 L2 workflow runtime），瘦身抽出独立模块。
  *
  * 模块状态：
  * - `_lastDispatchTime` 私有计时器（旧逻辑只写不读，留作潜在 telemetry hook，未来若确认死代码可清）
@@ -401,7 +401,7 @@ export async function dispatchNextTask(goalIds) {
     console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
   }
 
-  // C6: Brain v2 WORKFLOW_RUNTIME=v2 + task_type=dev → runWorkflow 接线（fire-and-forget）
+  // dev 任务走 L2 workflow runtime → runWorkflow 接线（fire-and-forget）
   const v2Result = await _dispatchViaWorkflowRuntime(taskToDispatch);
   if (v2Result.handled) {
     return {
@@ -501,17 +501,13 @@ export async function dispatchNextTask(goalIds) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * C6: WORKFLOW_RUNTIME=v2 + task_type=dev 时，通过 L2 orchestrator runWorkflow('dev-task')
- * 派发 fire-and-forget；否则返回 {handled:false} 让 caller fall through 到 legacy
- * triggerCeceliaRun 路径。
- *
- * 默认（env 未设 / v1）返回 handled:false，生产零行为变化。
+ * task_type=dev 任务一律走 L2 orchestrator runWorkflow('dev-task')，
+ * fire-and-forget 派发。其他 task_type 返回 {handled:false} 让 caller fall through。
  *
  * @param {object} taskToDispatch Brain task row（含 id / task_type / retry_count 等）
  * @returns {Promise<{handled:boolean, runtime?:string, task_id?:string, actions?:Array}>}
  */
 export async function _dispatchViaWorkflowRuntime(taskToDispatch) {
-  if (process.env.WORKFLOW_RUNTIME !== 'v2') return { handled: false };
   if (taskToDispatch?.task_type !== 'dev') return { handled: false };
 
   const { runWorkflow } = await import('./orchestrator/graph-runtime.js');

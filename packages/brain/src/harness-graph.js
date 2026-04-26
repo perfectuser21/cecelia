@@ -128,7 +128,7 @@ export const HarnessState = Annotation.Root({
 
 /**
  * Placeholder node factory.
- * 用于测试或 HARNESS_LANGGRAPH_ENABLED=false 时的降级模式。
+ * 用于测试时注入 fake 节点行为。
  *
  * @param {string} label                    节点名（写入 trace）
  * @param {(state) => object} [stateUpdate] 可选：节点附加到 state 上的字段
