@@ -24,13 +24,14 @@ import pool from './db.js';
 import { buildLearningContext } from './learning-retriever.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { recordExpectedReward } from './dopamine.js';
-import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
+import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
-import { selectBestAccount, getAccountUsage } from './account-usage.js';
-import { executeInDocker, writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
+import { getAccountUsage } from './account-usage.js';
+import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
+import { spawn as spawnDocker } from './spawn/index.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -2384,7 +2385,7 @@ async function triggerCodexReview(task) {
  * @param {number} maxAccounts - 最多返回账号数，默认 3
  * @returns {Promise<Array<{id: string, auth: object}>>}
  */
-export async function selectBestAccountFromLocal(maxAccounts = 3) {
+export async function pickLocalAccountByDeficit(maxAccounts = 3) {
   const teams = ['team1', 'team2', 'team3', 'team4', 'team5'];
   const results = await Promise.all(teams.map(async (id) => {
     try {
@@ -2488,7 +2489,7 @@ function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccoun
 /** Select best accounts from US local Brain; falls back to empty (Xi'an selects locally). */
 async function selectCodexAccounts() {
   try {
-    const accounts = await selectBestAccountFromLocal(3);
+    const accounts = await pickLocalAccountByDeficit(3);
     if (accounts.length > 0) {
       console.log(`[executor] 账号注入: ${accounts.map(a => a.id).join(', ')}`);
       return accounts;
@@ -2893,14 +2894,14 @@ async function triggerCeceliaRun(task) {
   // 2.9 LangGraph Pipeline（HARNESS_LANGGRAPH_ENABLED=true + harness_planner）
   // 当启用 LangGraph 时，harness_planner 任务不走单步 Docker 执行，
   // 而是由 LangGraph 编排完整 6 步 pipeline（planner→proposer→reviewer→generator→evaluator→report）。
-  // LangGraph runner 内部为每个节点调 executeInDocker。
+  // LangGraph runner 内部为每个节点调 spawn()（Brain v2 Layer 3 唯一对外 API）。
   // ⚠️ v1 路径保留（向后兼容老数据），新 Initiative 走上面的 harness_initiative 分支。
   if (task.task_type === 'harness_planner' && _isLangGraphEnabled()) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (HARNESS_LANGGRAPH_ENABLED=true)`);
     try {
       const { runHarnessPipeline } = await import('./harness-graph-runner.js');
-      // Harness pipeline 账号选择统一交给底层 executeInDocker 的 resolveAccount middleware
-      // （spawn/middleware/account-rotation.js，v2 P2 PR3），按 selectBestAccount + cap/auth-fail
+      // Harness pipeline 账号选择统一交给 spawn() 内层 account-rotation middleware
+      // （spawn/middleware/account-rotation.js，v2 P2 PR3），按 cascade + cap/auth-fail
       // fallback 实时选号；账号治理收口到 account-usage.js。
       const langGraphEnv = {};
       // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
@@ -3083,49 +3084,12 @@ async function triggerCeceliaRun(task) {
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
     let provider = getProviderForTask(task);
 
-    // Get credentials file for the task (universal, works for all providers)
+    // 凭据：profile 显式配置的就传给 spawn()，由其内层 account-rotation middleware
+    // 检查 spending cap / auth fail 并按 cascade 兜底。caller 不再做内联 fallback，
+    // dispatched_account 记账由 spawn 外层 billing middleware 接管。
     const credentials = getCredentialsForTask(task);
-    if (!extraEnv.CECELIA_CREDENTIALS && credentials && credentials.startsWith('account')) {
-      // Profile 中固定了账号，先检查 spending cap
-      const { isSpendingCapped } = await import('./account-usage.js');
-      if (isSpendingCapped(credentials)) {
-        // 固定账号被 cap，fallback 到动态选择
-        console.log(`[executor] Profile 固定账号 ${credentials} 被 spending-capped，fallback 到 selectBestAccount for task=${task.id}`);
-      } else {
-        extraEnv.CECELIA_CREDENTIALS = credentials;
-      }
-    } else if (credentials) {
-      // 非账号类型凭据（如 minimax key 文件），直接使用
+    if (credentials) {
       extraEnv.CECELIA_CREDENTIALS = credentials;
-    }
-
-    if (!extraEnv.CECELIA_CREDENTIALS && provider === 'anthropic') {
-      // 瀑布降级链：按任务 cascade 顺序（Sonnet→Opus→Haiku→MiniMax）
-      // selectBestAccount() 返回 { accountId, model, modelId } 或 null（降级 MiniMax）
-      const taskCascade = getCascadeForTask(task);
-      const selection = await selectBestAccount({ cascade: taskCascade });
-      if (selection) {
-        const { accountId, modelId: selectedModelId } = selection;
-        extraEnv.CECELIA_CREDENTIALS = accountId;
-        // 始终通过 CECELIA_MODEL 传递选定的模型 ID
-        extraEnv.CECELIA_MODEL = selectedModelId;
-        // 记录 dispatched_account 到 task payload（供 billing_cap 回调精准标记）
-        // 必须 await：若 fire-and-forget 则 cecelia-run 秒失败时 execution-callback 先到达，
-        // payload 尚未写入 dispatched_account → 无法精准标记 spending cap 账号
-        try {
-          await pool.query(
-            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-            [task.id, JSON.stringify({ dispatched_account: accountId, dispatched_model: selectedModelId })]
-          );
-        } catch (e) {
-          console.warn(`[executor] 记录 dispatched_account 失败: ${e.message}`);
-        }
-      } else {
-        // 所有账号满载（5h）或全部 spending-capped → 降级到 MiniMax
-        console.log(`[executor] Anthropic 账号全满/全封，自动降级到 MiniMax for task=${task.id}`);
-        provider = 'minimax';
-        extraEnv.CECELIA_PROVIDER = 'minimax';
-      }
     }
 
     // ── Docker Sandbox 分支（HARNESS_DOCKER_ENABLED=true）───────────────────
@@ -3135,7 +3099,7 @@ async function triggerCeceliaRun(task) {
       const extraEnvKeys = Object.keys(extraEnv);
       const tier = resolveResourceTier(taskType);
       console.log(
-        `[executor] HARNESS_DOCKER_ENABLED=true → executeInDocker task=${task.id} type=${taskType} tier=${tier.tier}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`
+        `[executor] HARNESS_DOCKER_ENABLED=true → spawn() task=${task.id} type=${taskType} tier=${tier.tier}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`
       );
 
       // 注入 webhook + 上下文（与 cecelia-run 行为对齐）
@@ -3149,7 +3113,7 @@ async function triggerCeceliaRun(task) {
       if (model) dockerEnv.CECELIA_MODEL = model;
       if (provider) dockerEnv.CECELIA_PROVIDER = provider;
 
-      const dockerResult = await executeInDocker({
+      const dockerResult = await spawnDocker({
         task,
         prompt: promptContent,
         env: dockerEnv,
@@ -3764,8 +3728,8 @@ export {
   // v16: Machine Registry + capability tags routing
   MACHINE_REGISTRY,
   selectBestMachine,
-  // v17: Docker Sandbox executor (HARNESS_DOCKER_ENABLED=true)
-  executeInDocker,
+  // v17: Docker Sandbox executor (HARNESS_DOCKER_ENABLED=true) — spawn() 已成唯一入口，
+  // 仅保留 callback / 资源 tier / 探活辅助函数对外。
   writeDockerCallback,
   resolveResourceTier,
   isDockerAvailable,
