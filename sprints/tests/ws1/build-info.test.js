@@ -93,6 +93,20 @@ describe('Workstream 1 — GET /api/brain/build-info [BEHAVIOR]', () => {
     expect(r3.body.built_at).toBe(r2.body.built_at);
   });
 
+  // R3 mitigation：抓"BUILT_AT 在 Router 内每请求 / 每挂载新生"型 mutation
+  // 两次 loadAppFresh() 不调 vi.resetModules()，ESM 缓存命中同一 Router import；
+  // 中间插入 50ms 真实时间 gap，若 BUILT_AT 是每请求/每挂载计算的，两次响应会差至少 50ms。
+  it('BUILT_AT is frozen at module load: two app instances built from the same Router module share built_at', async () => {
+    const app1 = await loadAppFresh();
+    await new Promise((r) => setTimeout(r, 50));
+    const app2 = await loadAppFresh();
+    const res1 = await request(app1).get('/api/brain/build-info');
+    const res2 = await request(app2).get('/api/brain/build-info');
+    expect(typeof res1.body.built_at).toBe('string');
+    expect(res1.body.built_at.length).toBeGreaterThan(0);
+    expect(res2.body.built_at).toBe(res1.body.built_at);
+  });
+
   it('git_sha matches /^([0-9a-f]{40}|unknown)$/', async () => {
     const app = await loadAppFresh();
     const res = await request(app).get('/api/brain/build-info');
@@ -112,7 +126,8 @@ describe('Workstream 1 — GET /api/brain/build-info [BEHAVIOR]', () => {
       vi.resetModules();
     });
 
-    it('git_sha falls back to "unknown" when git rev-parse HEAD fails', async () => {
+    // R8 mitigation：build sandbox 无 git 二进制 / 不在 git 仓库 → ENOENT / 非零退出
+    it('git_sha falls back to "unknown" when execSync throws (command not found)', async () => {
       const failingExecSync = () => {
         throw new Error('git: command not found');
       };
@@ -126,6 +141,30 @@ describe('Workstream 1 — GET /api/brain/build-info [BEHAVIOR]', () => {
       }));
 
       const app = await loadAppFresh('?fallback');
+      const res = await request(app).get('/api/brain/build-info');
+      expect(res.status).toBe(200);
+      expect(res.body.git_sha).toBe('unknown');
+    });
+
+    // R1 mitigation：CI sandbox 子进程超时 / 权限不足。execSync 抛带 code='ETIMEDOUT' 的 Error。
+    // 实现必须用 try/catch 整体包裹 execSync 调用，且指定 timeout 选项防永久挂起。
+    it('git_sha falls back to "unknown" when execSync throws ETIMEDOUT (CI sandbox timeout simulation)', async () => {
+      const timeoutExecSync = () => {
+        const err = new Error('Command failed: git rev-parse HEAD (timeout)');
+        err.code = 'ETIMEDOUT';
+        err.signal = 'SIGTERM';
+        throw err;
+      };
+      vi.doMock('child_process', () => ({
+        execSync: timeoutExecSync,
+        default: { execSync: timeoutExecSync },
+      }));
+      vi.doMock('node:child_process', () => ({
+        execSync: timeoutExecSync,
+        default: { execSync: timeoutExecSync },
+      }));
+
+      const app = await loadAppFresh('?etimedout');
       const res = await request(app).get('/api/brain/build-info');
       expect(res.status).toBe(200);
       expect(res.body.git_sha).toBe('unknown');
