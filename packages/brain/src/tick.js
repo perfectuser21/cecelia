@@ -61,18 +61,7 @@ import {
 // Phase D2.4: getTickStatus / isStale / getStartupErrors 抽到 tick-status.js（仅 re-export）
 import { getTickStatus, isStale, getStartupErrors } from './tick-status.js';
 
-// Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
-const { log: _tickWrite } = console;
-// tickLog call counter for periodic summary
-let _tickLogCallCount = 0;
-function tickLog(...args) {
-  const ts = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-  _tickWrite(`[${ts}]`, ...args);
-  _tickLogCallCount++;
-  if (_tickLogCallCount % 100 === 0) {
-    _tickWrite(`[tick-summary] ${_tickLogCallCount} ticks completed`);
-  }
-}
+// Phase D3: tickLog helper 已无 caller（所有用 tickLog 的函数都搬到子模块各自实现）
 
 // Phase D2.2: TICK_INTERVAL_MINUTES / TICK_LOOP_INTERVAL_MS / TICK_TIMEOUT_MS 已搬到 tick-loop.js
 // 通过顶部 import 取得，下方 export 块照常 re-export 给老 caller
@@ -117,21 +106,14 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes（仅 re-export）
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours（仅 re-export）
-// REPORT_INTERVAL_MS 已搬到 report-48h.js（Phase D Part 1.1），下方 import re-export
-
-// Phase D Part 1.7a: Recovery timer 也收口到 tickState.recoveryTimer
-
-// Drain state 已搬到 drain.js（Phase D Part 1.2）— 通过 isDraining()/getDrainStartedAt()/isPostDrainCooldown() getter 访问
-
-// Tick watchdog 已搬到 tick-watchdog.js（Phase D Part 1.3）— 通过 isTickWatchdogActive() getter 访问
-
-// Phase D2.4: getTickStatus 实现搬到 tick-status.js（顶部 import）
-
-// Phase D2.2: runTickSafe / startTickLoop / stopTickLoop 实现搬到 tick-loop.js，
-// 通过顶部 import 取得；下方 export 块统一 re-export，老 caller 不受影响。
-
-// Phase D2.3: _recordRecoveryAttempt / tryRecoverTickLoop / initTickLoop /
-// enableTick / disableTick 实现搬到 tick-recovery.js，下方 export 块统一 re-export
+// D 阶段抽出汇总（详见 git log）：
+//   D1.1 report-48h.js / D1.2 drain.js / D1.3 tick-watchdog.js
+//   D1.4 dispatch-helpers.js / D1.5 dispatcher.js / D1.6 tick-helpers.js
+//   D1.7a tick-state.js / D1.7b tick-runner.js (executeTick body)
+//   D1.7c plugin1+plugin2 (8 scheduled jobs)
+//   D2.1 reset helpers → tick-state.js / D2.2 tick-loop.js
+//   D2.3 tick-recovery.js / D2.4 tick-status.js
+//   D3 codex-immune.js
 import {
   _recordRecoveryAttempt,
   tryRecoverTickLoop,
@@ -139,82 +121,7 @@ import {
   enableTick,
   disableTick,
 } from './tick-recovery.js';
-
-
-// Phase D2.4: isStale 实现搬到 tick-status.js（顶部 import）
-
-// D1.7b: logTickDecision / incrementActionsToday 仅 executeTick body 用，已搬到 tick-runner.js
-
-// Phase D Part 1.4: selectNextDispatchableTask / autoCreateTasksFromCortex / processCortexTask 实现搬到 dispatch-helpers.js，下方 import re-export。
-
-// Phase D Part 1.5: dispatchNextTask 实现搬到 dispatcher.js，下方 import re-export
-
-// Phase D Part 1.6: releaseBlockedTasks + autoFailTimedOutTasks 实现搬到 tick-helpers.js，下方 import
-
-// Phase D Part 1.6: getRampedDispatchMax 实现搬到 tick-helpers.js，下方 import
-
-/**
- * Execute a tick - the core self-driving loop
- *
- * 0. Evaluate alertness level
- * 1. Compare goal progress (Decision Engine)
- * 2. Generate and execute high-confidence decisions
- * 3. Get daily focus OKR
- * 4. Check related task status
- * 5. Auto-fail timed-out tasks
- * 6. Dispatch next task via dispatchNextTask()
- * 7. Log decision
- */
-
-// Phase D Part 1.1: 48h 系统简报实现搬到 report-48h.js，下方 import re-export。
-// Phase D Part 1.2: drain 子系统实现搬到 drain.js，下方 import re-export。
-
-// Phase D2.4: getStartupErrors 实现搬到 tick-status.js（顶部 import）
-
-// Phase D2.1: 9 个 _resetLastXxxTime 已下沉 tick-state.js
-// 下方 export { ... } from './tick-state.js' 保留向后兼容（测试仍 import from './tick.js'）
-
-/**
- * 确保每 20 小时触发一次 Codex 免疫检查
- * 查询最近一条 codex_qa 任务，若超过 20h（或从未有过），自动创建
- * @param {import('pg').Pool} dbPool
- */
-export async function ensureCodexImmune(dbPool) {
-  const IMMUNE_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20 小时
-
-  const result = await dbPool.query(`
-    SELECT created_at FROM tasks
-    WHERE task_type = 'codex_qa'
-      AND status NOT IN ('cancelled', 'canceled')
-    ORDER BY created_at DESC
-    LIMIT 1
-  `);
-
-  const lastCreatedAt = result.rows[0]?.created_at;
-  const elapsed = lastCreatedAt
-    ? Date.now() - new Date(lastCreatedAt).getTime()
-    : Infinity;
-
-  if (elapsed < IMMUNE_INTERVAL_MS) {
-    return { skipped: true, reason: 'too_soon', elapsed_ms: elapsed };
-  }
-
-  await dbPool.query(`
-    INSERT INTO tasks (title, description, status, priority, task_type, trigger_source)
-    VALUES ($1, $2, 'queued', 'P1', 'codex_qa', 'brain_auto')
-  `, [
-    'Codex 免疫检查 - cecelia-core',
-    '/Users/administrator/perfect21/cecelia/quality/scripts/run-codex-immune.sh'
-  ]);
-
-  tickLog('[tick] Codex immune task created (last check: ' +
-    (lastCreatedAt ? new Date(lastCreatedAt).toISOString() : 'never') + ')');
-  return { created: true, elapsed_ms: elapsed };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// C6: Brain v2 WORKFLOW_RUNTIME env gate
-// Phase D Part 1.5: _dispatchViaWorkflowRuntime 实现搬到 dispatcher.js，下方 import re-export
+import { ensureCodexImmune } from './codex-immune.js';
 
 export {
   getTickStatus,
@@ -228,6 +135,7 @@ export {
   initTickLoop,
   tryRecoverTickLoop,
   _recordRecoveryAttempt,
+  ensureCodexImmune,
   dispatchNextTask,
   _dispatchViaWorkflowRuntime,
   processCortexTask,
