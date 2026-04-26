@@ -8,30 +8,25 @@
 // enableTick / disableTick）+ test helpers + Codex immune。executeTick 用到的
 // 50+ 模块在 tick-runner.js 内 import；本文件只保留 getTickStatus 等还在用的
 // + re-export 给老 caller 的（dispatchNextTask / drainTick 等）。
-import pool from './db.js';
-import { checkServerResources, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
-import { calculateSlotBudget } from './slot-allocator.js';
-import { getAllStates } from './circuit-breaker.js';
-import { getCurrentAlertness } from './alertness/index.js';
-import { getQuarantineStats } from './quarantine.js';
+// Phase D2.4: pool 不再需要（getTickStatus / getStartupErrors 已搬到 tick-status.js，_recordRecoveryAttempt 已搬到 tick-recovery.js）
+import { MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
+// Phase D2.4: checkServerResources / calculateSlotBudget / getAllStates / getCurrentAlertness
+// / getQuarantineStats 跟 getTickStatus 一起搬到 tick-status.js
+// Phase D2.3: initAlertness 随 initTickLoop 搬到 tick-recovery.js（不再 import）
 // Phase D Part 1.1: 48h 系统简报搬出 tick.js（仅 re-export）
 import { generate48hReport, check48hReport, REPORT_INTERVAL_MS } from './report-48h.js';
-// Phase D Part 1.2: drain 子系统搬出 tick.js
+// Phase D Part 1.2: drain 子系统搬出 tick.js（仅 re-export 给老 caller / status route）
 import {
   drainTick,
   getDrainStatus,
   cancelDrain,
-  isDraining,
-  getDrainStartedAt,
-  isPostDrainCooldown,
   _getDrainState,
   _resetDrainState,
 } from './drain.js';
-// Phase D Part 1.3: tick watchdog 搬出 tick.js
+// Phase D Part 1.3: tick watchdog 搬出 tick.js（仅 re-export，启动循环用 startTickWatchdog）
 import {
   startTickWatchdog,
   stopTickWatchdog,
-  isTickWatchdogActive,
   TICK_WATCHDOG_INTERVAL_MS,
 } from './tick-watchdog.js';
 // Phase D Part 1.4: dispatch helpers 搬出 tick.js（仅 re-export）
@@ -50,8 +45,8 @@ import {
   autoFailTimedOutTasks,
   getRampedDispatchMax,
 } from './tick-helpers.js';
-// Phase D Part 1.7a: 14 个 lastXxxTime + 5 个 loop 控制态收口到 tick-state.js
-import { tickState } from './tick-state.js';
+// Phase D Part 1.7a: tickState 已收口到 tick-state.js；本文件无直接读写需求
+// （test helper _resetLastXxxTime 通过下方 export {} from './tick-state.js' re-export）
 // Phase D Part 1.7b: executeTick 抽到 tick-runner.js
 import { executeTick } from './tick-runner.js';
 // Phase D2.2: runTickSafe / startTickLoop / stopTickLoop + 3 个常量抽到 tick-loop.js
@@ -87,7 +82,7 @@ const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 if (MINIMAL_MODE) {
   console.log('[Brain] BRAIN_MINIMAL_MODE=true — 所有自动调度已关闭，只保留心跳和手动任务派发');
 }
-const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
+// Phase D2.4: STALE_THRESHOLD_HOURS 已随 isStale 搬到 tick-status.js
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
@@ -105,11 +100,9 @@ const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter（仅 re-export，execut
 // Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP / PLATFORM_SKILL_MAP 实现搬到 tick-helpers.js，下方 import
 
 // Working memory keys
-const TICK_ENABLED_KEY = 'tick_enabled';
-const TICK_LAST_KEY = 'tick_last';
-const TICK_ACTIONS_TODAY_KEY = 'tick_actions_today';
-const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
-const TICK_STATS_KEY = 'tick_execution_stats';
+// Phase D2.4: TICK_LAST_KEY / TICK_ACTIONS_TODAY_KEY / TICK_LAST_DISPATCH_KEY / TICK_STATS_KEY
+// 仅 getTickStatus 用，已随其搬到 tick-status.js
+// Phase D2.3: TICK_ENABLED_KEY 随 initTickLoop / enableTick / disableTick 搬到 tick-recovery.js
 
 // Phase D Part 1.7a: Loop state + 14 个 lastXxxTime + lastConsciousnessReload 全部收口到 tick-state.js
 // 通过 tickState.loopTimer / tickState.tickRunning / tickState.tickLockTime / tickState.recoveryTimer
