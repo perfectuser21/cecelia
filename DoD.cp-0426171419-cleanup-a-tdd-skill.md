@@ -1,0 +1,7 @@
+# DoD: cp-0426171419-cleanup-a-tdd-skill
+
+- [x] [BEHAVIOR] SKILL.md 含 "NO PRODUCTION CODE WITHOUT FAILING TEST" 字符串；Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/SKILL.md','utf8');if(!c.includes('NO PRODUCTION CODE WITHOUT FAILING TEST'))process.exit(1)"
+- [x] [BEHAVIOR] SKILL.md 含 "测试策略" 字符串；Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/SKILL.md','utf8');if(!c.includes('测试策略'))process.exit(1)"
+- [x] [BEHAVIOR] autonomous-research-proxy.md Tier 1 表加 TDD 强化条目（含 'TDD iron law' 与 '测试策略'）；Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/steps/autonomous-research-proxy.md','utf8');if(!c.includes('TDD iron law')||!c.includes('测试策略'))process.exit(1)"
+- [x] [BEHAVIOR] git diff 仅改这 2 个文件（SKILL.md + autonomous-research-proxy.md）；Test: manual:node -e "const f=require('child_process').execSync('git diff main --name-only',{encoding:'utf8'}).trim().split('\n').filter(Boolean);const allowed=['packages/engine/skills/dev/SKILL.md','packages/engine/skills/dev/steps/autonomous-research-proxy.md','PRD.cp-0426171419-cleanup-a-tdd-skill.md','DoD.cp-0426171419-cleanup-a-tdd-skill.md','docs/learnings/cp-0426171419-cleanup-a-tdd-skill.md'];const bad=f.filter(x=>!allowed.includes(x));if(bad.length>0)process.exit(1)"
+- [x] [ARTIFACT] 改后的 SKILL.md 行数 60-100；Test: manual:node -e "const n=require('fs').readFileSync('packages/engine/skills/dev/SKILL.md','utf8').split('\n').length;if(n<60||n>100)process.exit(1)"

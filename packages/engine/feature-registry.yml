@@ -3,9 +3,18 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-20"
+updated: "2026-04-26"
 
 changelog:
+  - version: "18.6.0"
+    date: "2026-04-26"
+    change: "feat"
+    description: "/dev SKILL 加 TDD enforcement + 测试策略 gate（team brain-v2-tdd-cleanup task #1）。Tier 1 默认表新增 2 条：(1) subagent-driven-development 派 subagent 时 prompt 必须 inline 4 条 TDD iron law（NO PRODUCTION CODE WITHOUT FAILING TEST FIRST / 非 prototype 不 skip / commit 顺序 fail-test → impl / controller verify）；(2) brainstorming spec 必须含「测试策略」段（E2E / integration / unit / trivial 四档分类），缺则 Research Subagent reject design APPROVE。autonomous-research-proxy.md Tier 1 表同步加 2 行 TDD 强化条目。SKILL.md 38 → 63 行。minor bump 18.5.0 → 18.6.0。"
+    files:
+      - "packages/engine/skills/dev/SKILL.md (+25 行 Tier 1 TDD 双 gate + 纪律强化段, version 18.6.0)"
+      - "packages/engine/skills/dev/steps/autonomous-research-proxy.md (+2 行 Tier 1 TDD 强化条目)"
+      - "Engine 5 处版本文件 18.6.0"
+
   - version: "18.5.0"
     date: "2026-04-21"
     change: "chore"

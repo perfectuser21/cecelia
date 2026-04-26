@@ -20,8 +20,10 @@ changelog:
 | brainstorming | **Phase 6 新**：启动前 PRD 丰满度 | 跑 `bash packages/engine/skills/dev/scripts/enrich-decide.sh .raw-prd-<branch>.md`；thin 则 deep-research 代用户答 clarifying question，产出 `.enriched-prd-<branch>.md` |
 | brainstorming | **Phase 8.1**：clarifying question / 方案对比 | 按数据源排序（用户的话 > 现有代码 > OKR）代答；见 §Phase 8.1 B-3 |
 | brainstorming | HARD-GATE "user approved design" | 独立审 design，APPROVED + Structured Review Block（见 §Phase 8.1 B-4） |
+| brainstorming | **TDD 强化**：spec 必须含「测试策略」段 | design APPROVE 前验证 spec 含「测试策略」段（E2E / integration / unit / trivial 四档分类）；缺则 reject、不 APPROVE，回去补。详见 SKILL.md Tier 1 默认表 |
 | brainstorming | "Spec written, please review" | 独立审 spec，APPROVED + Structured Review Block（见 §Phase 8.1 B-5） |
 | writing-plans | "Subagent-Driven vs Inline?" | subagent-driven |
+| subagent-driven-development | **TDD 强化**：派 subagent 时 prompt 必须 inline TDD iron law | prompt 必须 inline 4 条："NO PRODUCTION CODE WITHOUT FAILING TEST FIRST"（Superpowers TDD iron law）/ "throwaway prototype 才 skip — 你不是写 prototype" / "每 plan task 必须 git commit 顺序：commit-1 fail test → commit-2 impl" / "controller (team-lead) 会 verify commit 顺序，不符合让你重做"。详见 SKILL.md Tier 1 默认表 |
 | finishing-a-development-branch | "4 options" | Option 2 (push + PR) |
 | finishing-a-development-branch | discard confirm | autonomous abort + `POST /api/brain/tasks` 人工 review |
 | using-git-worktrees | 被 engine-worktree skill 替代 | 不触发（接力链不走此 skill） |
