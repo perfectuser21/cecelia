@@ -253,9 +253,15 @@ ${task.description || task.title || ''}
   }
 }
 
-// ─── 阶段 C — Final E2E + 失败归因 ─────────────────────────────────────
+// ─── @deprecated 阶段 C — Final E2E + 失败归因 ──────────────────────────────
+// Sprint 1: checkAllTasksCompleted / createFixTask / runPhaseCIfReady 这三个函数
+// 被顶层 buildHarnessFullGraph 的 fanout / runSubTask / join / finalE2eNode 节点取代。
+// 保留 1 周作 HARNESS_USE_FULL_GRAPH=false 兜底；下一个 PR 删。
+// ─────────────────────────────────────────────────────────────────────────
 
 /**
+ * @deprecated Sprint 1: 由 graph fanout/runSubTask/join 替代。
+ *
  * 查询 Initiative 下所有 harness_task 子任务是否全部 completed（供 tick 判阶段切换）。
  *
  * @param {string} initiativeTaskId  parent harness_initiative task UUID
