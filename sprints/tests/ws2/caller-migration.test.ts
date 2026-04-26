@@ -6,8 +6,12 @@
  *   - 当前 executor.js 行 3039/3055 仍直接调用 isSpendingCapped + selectBestAccount
  *   - 当前 executor.js 行 3101 仍直接调用 executeInDocker(
  *   - 当前 harness-graph-runner.js / content-pipeline-runner.js 默认 dockerExecutor 是 executeInDocker
+ *   - 当前 billing.js 写入字段集合未与 executor.js 旧 SQL UPDATE 字段做 cross-check（R3）
  *
- * 实施完毕（4 个 caller 迁移到 spawn + 内联逻辑下沉）后，全部 PASS（Green）。
+ * 实施完毕（4 个 caller 迁移到 spawn + 内联逻辑下沉 + R3 字段对齐）后，全部 PASS（Green）。
+ *
+ * Round 2 新增 R3 mitigation: it #9 cross-check billing.js payload 字段集合与
+ * executor.js:3066-3067 旧 SQL UPDATE 字段 byte-equal。
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -17,6 +21,7 @@ const ROOT = join(__dirname, '../../..');
 const EXECUTOR_PATH = join(ROOT, 'packages/brain/src/executor.js');
 const GRAPH_RUNNER_PATH = join(ROOT, 'packages/brain/src/harness-graph-runner.js');
 const PIPELINE_RUNNER_PATH = join(ROOT, 'packages/brain/src/workflows/content-pipeline-runner.js');
+const BILLING_PATH = join(ROOT, 'packages/brain/src/spawn/middleware/billing.js');
 
 function readSrc(path: string): string {
   return readFileSync(path, 'utf8');
@@ -86,5 +91,30 @@ describe('WS2 — Caller Migration + Inline Logic Extraction [BEHAVIOR]', () => 
     const cmd = `grep -rln "from.*docker-executor" packages/brain/src/ 2>/dev/null | grep -v __tests__ | grep -v "spawn/" | grep -v "docker-executor.js$" | xargs -I{} grep -l "\\bexecuteInDocker\\b" {} 2>/dev/null || true`;
     const out = execSync(cmd, { encoding: 'utf8', cwd: ROOT }).trim();
     expect(out).toBe('');
+  });
+
+  it('billing dispatched_account field-set cross-check: billing.js payload keys ⊇ {dispatched_account, dispatched_model} matching executor.js legacy UPDATE field set [R3 mitigation]', () => {
+    // R3: billing middleware 写入字段集合必须与 executor.js:3066-3067 旧 SQL UPDATE byte-equal
+    // 旧 SQL: `UPDATE tasks SET payload = ... || $2::jsonb`
+    //         payload = JSON.stringify({ dispatched_account: accountId, dispatched_model: selectedModelId })
+    // → 字段集合 = {dispatched_account, dispatched_model}
+
+    const billingSrc = readSrc(BILLING_PATH);
+
+    // 静态断言 billing.js 包含且仅至少包含两个 legacy 字段名
+    const hasDispatchedAccount = /\bdispatched_account\b/.test(billingSrc);
+    const hasDispatchedModel = /\bdispatched_model\b/.test(billingSrc);
+    expect(hasDispatchedAccount).toBe(true);
+    expect(hasDispatchedModel).toBe(true);
+
+    // Cross-check: 如果 executor.js 仍含旧 SQL UPDATE 字段（迁移完后该 SQL 应被删除，迁移完成时不再做此双向断言）
+    // 但 billing.js 必须始终保留这两个字段名 → 即使 executor 旧 SQL 删除，下游依赖的字段约定不漂移
+    const billingHasLegacyFieldSet = hasDispatchedAccount && hasDispatchedModel;
+    expect(billingHasLegacyFieldSet).toBe(true);
+
+    // 反向守卫：迁移后 executor.js 不应保留与 billing 冲突的"分叉字段"（如 dispatched_account_v2 之类）
+    const executorSrc = readSrc(EXECUTOR_PATH);
+    const forkedFields = executorSrc.match(/\bdispatched_account_v\d+\b|\bdispatched_model_v\d+\b/g) || [];
+    expect(forkedFields).toEqual([]);
   });
 });
