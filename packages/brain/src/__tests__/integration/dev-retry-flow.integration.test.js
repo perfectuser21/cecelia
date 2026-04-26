@@ -343,7 +343,58 @@ describe('dev-retry-flow 集成测试', () => {
       // 验证 execution.js 会组装 dev_retry.attempt = retryCount + 1
       expect(retryCount + 1).toBe(2);
       // class 可被正确传入 dev_retry.class
-      expect(['transient', 'code_error', 'auth', 'resource', 'unknown']).toContain(result.class);
+      expect(['transient', 'code_error', 'auth', 'resource', 'env_broken', 'unknown']).toContain(result.class);
+    });
+  });
+
+  // ─── Path 11: env_broken（"Unknown skill" 死循环根因）─────────────────────
+  // 04-25 串成 325 个 liveness_dead 的根因：worker 接 `/dev <PRD>` 但镜像里
+  // 没装 dev skill，claude 输出 "Unknown skill: dev. Did you mean new?" 然后
+  // end_turn 退出。当时分类器把这种文本归为 unknown 走重试 → 同一故障循环。
+  // 本 Path 把它锚定为 ENV_BROKEN，retryable=false，由人修部署链。
+
+  describe('Path 11: env_broken（skill/二进制缺失）→ 不可重试', () => {
+    it('Unknown skill: dev → env_broken, retryable=false', () => {
+      const result = classifyDevFailure(
+        '`/dev` skill 在当前环境未注册（系统提示 "Unknown skill: dev"）',
+        'AI Failed',
+        { retryCount: 0 }
+      );
+      expect(result.class).toBe(DEV_FAILURE_CLASS.ENV_BROKEN);
+      expect(result.retryable).toBe(false);
+      expect(result.reason).toContain('environment broken');
+      expect(result.next_run_at).toBeUndefined();
+    });
+
+    it('Did you mean new? → env_broken', () => {
+      const result = classifyDevFailure(
+        'Unknown skill: foo. Did you mean new?',
+        'AI Failed',
+        { retryCount: 0 }
+      );
+      expect(result.class).toBe(DEV_FAILURE_CLASS.ENV_BROKEN);
+      expect(result.retryable).toBe(false);
+    });
+
+    it('env_broken 优先于 transient（避免被宽松规则吞）', () => {
+      // "Unknown skill" 错误信息里同时含 "skill" 字眼，但不应被 transient/resource 吞
+      const result = classifyDevFailure(
+        'Watchdog killed task. Reason: liveness_dead. Last stdout: Unknown skill: dev',
+        'AI Failed',
+        { retryCount: 0 }
+      );
+      expect(result.class).toBe(DEV_FAILURE_CLASS.ENV_BROKEN);
+      expect(result.retryable).toBe(false);
+    });
+
+    it('env_broken 即使 retryCount=0 也不重试（结构性故障）', () => {
+      const result = classifyDevFailure(
+        'Unknown skill: dev',
+        'AI Failed',
+        { retryCount: 0 }
+      );
+      expect(result.retryable).toBe(false);
+      expect(result.next_run_at).toBeUndefined();
     });
   });
 

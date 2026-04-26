@@ -28,6 +28,7 @@ export const DEV_FAILURE_CLASS = {
   CODE_ERROR: 'code_error',  // 代码错误：编译失败、测试失败
   AUTH: 'auth',              // 权限/认证错误
   RESOURCE: 'resource',      // 资源不足
+  ENV_BROKEN: 'env_broken',  // 容器环境结构性故障：skill 未部署 / 二进制缺失（重试无意义）
   UNKNOWN: 'unknown',        // 无法识别
 };
 
@@ -123,6 +124,15 @@ const RESOURCE_PATTERNS = [
   /killed.*memory|memory.*killed/i,
 ];
 
+// env_broken：容器环境结构性故障（skill / 二进制 / 配置缺失）。
+// 触发场景：worker 接到 `/dev <PRD>` 但镜像里没装 dev skill，claude 输出
+// "Unknown skill: dev. Did you mean new?" 然后 end_turn 退出。dispatch 报 success
+// 但任务无任何产出 → 重试只会无限复现同一故障 → 必须 quarantine 等人修复部署链。
+const ENV_BROKEN_PATTERNS = [
+  /Unknown\s+skill\s*:/i,
+  /Did\s+you\s+mean\s+\S+\?/i,
+];
+
 // ============================================================
 // 重试配置
 // ============================================================
@@ -166,8 +176,11 @@ export function classifyDevFailure(result, status = 'AI Failed', context = {}) {
   // 提取错误文本
   const errorMsg = extractErrorMsg(result, status);
 
-  // 按优先级匹配（auth/resource 优先，避免误判）
+  // 按优先级匹配
+  // env_broken 排第一：必须先于 transient（避免 "Unknown skill: dev" 中的 "skill" 被
+  // 后续宽松规则吞掉），且重试无意义不该走 transient/code_error 任何重试分支
   const patternGroups = [
+    { patterns: ENV_BROKEN_PATTERNS, class: DEV_FAILURE_CLASS.ENV_BROKEN },
     { patterns: AUTH_PATTERNS, class: DEV_FAILURE_CLASS.AUTH },
     { patterns: RESOURCE_PATTERNS, class: DEV_FAILURE_CLASS.RESOURCE },
     { patterns: TRANSIENT_PATTERNS, class: DEV_FAILURE_CLASS.TRANSIENT },
@@ -225,6 +238,14 @@ function buildResult(failureClass, errorMsg, retryCount) {
         class: failureClass,
         retryable: false,
         reason: 'Resource exhaustion - requires human intervention',
+        previous_failure: previousFailure,
+      };
+
+    case DEV_FAILURE_CLASS.ENV_BROKEN:
+      return {
+        class: failureClass,
+        retryable: false,
+        reason: 'Container environment broken (skill/tool missing) - requires deployment fix',
         previous_failure: previousFailure,
       };
 
