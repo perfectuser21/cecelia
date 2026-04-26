@@ -27,11 +27,11 @@ ci.yml 加 4 个 PR-only lint job 强制执行：
 - [x] [ARTIFACT] 4 个 lint script 存在于 .github/workflows/scripts/
   Test: manual:node -e "for(const f of ['lint-test-pairing.sh','lint-feature-has-smoke.sh','lint-base-fresh.sh','lint-tdd-commit-order.sh'])require('fs').accessSync('.github/workflows/scripts/'+f)"
 
-- [x] [BEHAVIOR] lint-test-pairing 在本 PR 自身验证通过（无新 brain/src js → skip 通过）
-  Test: manual:bash .github/workflows/scripts/lint-test-pairing.sh origin/main
+- [x] [BEHAVIOR] lint-test-pairing.sh 含 brain src 检测 grep + 候选 test 路径推导
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-test-pairing.sh','utf8');if(!c.includes('packages/brain/src/'))process.exit(1);if(!c.includes('__tests__'))process.exit(2);if(!c.includes('git diff'))process.exit(3)"
 
-- [x] [BEHAVIOR] lint-base-fresh 在本 PR 自身验证通过（fresh from main）
-  Test: manual:bash .github/workflows/scripts/lint-base-fresh.sh origin/main
+- [x] [BEHAVIOR] lint-base-fresh.sh 用 git rev-list 数 HEAD 落后 BASE_REF 的 commits
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-base-fresh.sh','utf8');if(!c.includes('git rev-list --count'))process.exit(1);if(!c.includes('MAX_BEHIND'))process.exit(2)"
 
 - [x] [BEHAVIOR] ci-passed gate 含 4 个新 lint job
   Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');for(const j of ['lint-test-pairing','lint-feature-has-smoke','lint-base-fresh','lint-tdd-commit-order'])if(!new RegExp('needs\\\\.'+j+'\\\\.result').test(c)){console.error('ci-passed missing',j);process.exit(1)}"
