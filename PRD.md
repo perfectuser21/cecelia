@@ -1,89 +1,69 @@
-# PRD: cicd-C — brain-deploy.sh post-deploy smoke + c8a smoke 范本
+# PRD: smoke-fix-D — 修 d-tick-runner-full.sh CI 干净环境跑过
 
 ## 背景
 
-当前 `scripts/brain-deploy.sh` 部署完只做 `curl /api/brain/tick/status` 健康检查 ——
-只验 Brain 进程能起来，**不验业务功能在生产环境真生效**。最近多次出现：
-- merge 级 SyntaxError CI 漏（feedback_brain_deploy_syntax_smoke.md）
-- 业务路径在生产 + 真 Postgres 跑挂（例如 LangGraph PostgresSaver 表 missing）
+CI workflow `.github/workflows/ci.yml` 的 `real-env-smoke` job（PR #2653 引入）在 fresh
+docker 环境内：
+- 起 `cecelia-brain:ci` 容器，name `cecelia-brain-smoke`，--network host
+- 设 `CECELIA_TICK_ENABLED=false`、`NODE_ENV=test`
+- 等 `/api/brain/tick/status` 200 后扫 `packages/brain/scripts/smoke/*.sh` 全跑
 
-需要一层「合并的 PR 引入了什么 smoke，部署完就跑什么」的轻量门禁。
+`d-tick-runner-full.sh` 在该环境必 fail：
+1. **容器名硬编码** `cecelia-node-brain`（生产名），CI 用 `cecelia-brain-smoke` → 静态验
+   `docker exec` 失败。
+2. **依赖 loop_running=true**：CI 设 `CECELIA_TICK_ENABLED=false`（虽 DB 默认 enabled
+   仍会自启 loop，但 fresh DB 时第一个 tick 还没跑出来，loop_running 可能为 false）。
+3. **依赖 130s 等自然 tick**：fresh DB 等周期 ≥ TICK_INTERVAL_MINUTES (2min) 才能验
+   last_tick 推进；20min timeout 不够稳。
+4. **runtime 阈值 ≥6/8**：空 DB 多数 plugin silent on no-op（dept-heartbeat / heartbeat /
+   pipeline-patrol 之外的 5 个 plugin 在 fresh DB 啥也不做）→ 必 < 6/8 → fail。
 
 ## 目标
 
-1. `scripts/brain-deploy.sh` 在 healthy check 之后追加 Phase 11 — 自动跑最近 5 个
-   合并 PR 引入的 `packages/brain/scripts/smoke/*.sh`，每条 non-fatal。
-2. 写 1 个 smoke 范本：`packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh`，
-   真 docker exec + 真 Postgres + 真 Brain 重启，验 LangGraph PostgresSaver
-   5 节点 / 5 channel 跨进程持久。
-3. 范本要可重入、可清理、缺前置依赖时优雅 SKIP exit 0。
+让 `d-tick-runner-full.sh` 在 CI fresh 环境秒级跑过，同时在生产容器上仍可跑。
 
 ## 范围
 
-**改 1 个文件 + 新 1 个文件 + 1 个单测**：
-
-- `scripts/brain-deploy.sh`：在顶部新增 `run_post_deploy_smoke()` 函数；docker /
-  launchd healthy 分支末尾调用之；旧 Phase 编号 `[10/10]` 改 `[10/11]`，新增 `[11/11]`。
-- `packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh`（新）：7 步真 smoke。
-- `packages/brain/src/__tests__/post-deploy-smoke.test.js`（新）：纯文件不变量校验，
-  保 deploy.sh 含 `run_post_deploy_smoke` 函数 + smoke 范本含 7 步关键 grep。
+**只改 1 个文件**：`packages/brain/scripts/smoke/d-tick-runner-full.sh`
 
 ## 不做
 
-- 不改 CI workflow（task B 已经覆盖 CI 侧 real-env-smoke job）
-- 不改 SKILL（task A 覆盖 /dev 强制 smoke.sh）
-- 不写 D / E1 observer / tick / content-pipeline 幂等 smoke（task D 覆盖）
-- 不改 dispatcher / brain v2 任何业务代码
+- 不动 brain 业务代码
+- 不动 CI workflow（task A 已经覆盖 #2653 临时 continue-on-error）
+- 不动 SKILL / engine 版本
+- 不写 c8a / e1 / B retire smoke（其他 task 覆盖）
 
 ## 实现要点
 
-### Phase 11 函数 `run_post_deploy_smoke`
-- 读 `gh pr list --state merged --limit 5` 取近 5 PR 号
-- 每 PR `gh pr view <pr> --json files --jq '.files[] | select(.path | startswith("packages/brain/scripts/smoke/") and endswith(".sh"))'`
-- 同一 smoke 多 PR 都改过时去重（`mktemp seen_file` + grep -qxF）
-- env 控制：`SKIP_POST_DEPLOY_SMOKE=1` 整体跳，`RECENT_PRS="X Y"` mock PR 列表
-- mock 模式 + 没 gh 时回退扫本地 `packages/brain/scripts/smoke/*.sh`（测试方便）
-- 单条 smoke 失败 = `❌` 但**不失败 deploy**（`run_post_deploy_smoke || true`）
+### 5 阶段重构契约
 
-### c8a smoke 7 步真实验证
-1. 检测 docker / cecelia-node-brain / psql / DATABASE_URL 全可达，否则 SKIP
-2. 唯一 thread_id (`smoke-c8a-<utc>-<pid>`) 防并发污染
-3. `docker exec cecelia-node-brain node -e "..."` 调 PostgresSaver.put 5 次（5 节点）
-4. psql `SELECT count(*) FROM checkpoints WHERE thread_id=...` ≥ 5
-5. `docker restart cecelia-node-brain`，等 `/api/brain/tick/status` 200（最多 90s）
-6. 重启后 psql 再数行数 ≥ 5（DB 持久 OK）
-7. `docker exec ... node -e "saver.getTuple(...)"` 验 5 channel 全恢复
-   （worktreePath / plannerOutput / taskPlan / ganResult / result）
-8. 第二次 getTuple 仍命中（saver 幂等读语义）
-9. trap EXIT cleanup → 删 `checkpoints / checkpoint_blobs / checkpoint_writes`
-   对应 thread_id 全部行
+1. `/api/brain/tick/status` 可达 + `enabled` 字段存在（不再要求 `loop_running=true`）
+2. **POST `/api/brain/tick`** 主动触发 manual tick（`runTickSafe('manual')` → `executeTick()`
+   走完整 plugin 序列）；`response.success===true` 或 `response.skipped===true`(reentry guard)
+   都算通过
+3. **强契约**：sleep 3s 后 GET `/tick/status`，验 `last_tick` 推进 OR
+   `tick_stats.total_executions++`（任一推进即通过 — 证明 executeTick 端到端跑过）
+4. **静态验**：`docker exec <container> grep -F "from './<plugin>.js'" /app/src/tick-runner.js`
+   8 个 plugin 全命中（防重构悄悄删 wire）
+5. **软验**：docker logs 命中阈值降为 ≥1（diagnostic only — 强契约 [3] 已兜底）
 
-## 验收条件 DoD
+### 容器名自动检测
 
-- [x] [ARTIFACT] `scripts/brain-deploy.sh` 含 `run_post_deploy_smoke` 函数
-  Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.match(/^run_post_deploy_smoke\(\) \{/m))process.exit(1)"
+```bash
+detect_container() {
+  if [ -n "${BRAIN_CONTAINER:-}" ]; then echo "$BRAIN_CONTAINER"; return; fi
+  for c in cecelia-brain-smoke cecelia-node-brain; do
+    if docker ps --format '{{.Names}}' | grep -qx "$c"; then echo "$c"; return; fi
+  done
+}
+```
 
-- [x] [BEHAVIOR] `scripts/brain-deploy.sh` Phase 11 调 `run_post_deploy_smoke`
-  Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.includes('[11/11] Post-deploy smoke')||!c.match(/run_post_deploy_smoke[^\n]*\|\| true/))process.exit(1)"
-
-- [x] [BEHAVIOR] `run_post_deploy_smoke` 支持 SKIP / RECENT_PRS env
-  Test: tests/packages/brain/post-deploy-smoke.test.js（同 src/__tests__ 内文件）
-
-- [x] [ARTIFACT] `packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh` 存在 + chmod +x
-  Test: manual:node -e "const fs=require('fs');const s=fs.statSync('packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh');if((s.mode&0o100)===0)process.exit(1)"
-
-- [x] [BEHAVIOR] c8a smoke 含 7 步关键验证（PostgresSaver / 5_channels / docker restart / cleanup）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh','utf8');['PostgresSaver','saver.put','saver.getTuple','5_channels_recovered','docker restart cecelia-node-brain','trap cleanup EXIT','DELETE FROM checkpoints'].forEach(t=>{if(!c.includes(t))process.exit(1)})"
-
-- [x] [BEHAVIOR] c8a smoke 缺前置依赖时优雅 skip exit 0
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh','utf8');['docker 命令不存在','docker daemon 不可达','cecelia-node-brain 容器不存在','psql 不在 PATH'].forEach(t=>{if(!c.includes(t))process.exit(1)})"
-
-- [x] [BEHAVIOR] 单元测试全过（vitest）
-  Test: tests/packages/brain/post-deploy-smoke.test.js
+env > CI 容器 > 生产容器，三档兜底。
 
 ## 成功标准
 
-- 本机 `bash packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh` 真过 PASS
-- 本机 mock RECENT_PRS=9999 跑 `run_post_deploy_smoke` 真过 ✅
-- vitest `npx vitest run src/__tests__/post-deploy-smoke.test.js` → 5 tests 5 passed
-- CI 全绿
+- 本机 CI-style docker setup（fresh postgres + brain --network bridge + container=
+  cecelia-brain-smoke + CECELIA_TICK_ENABLED=false）下 smoke 真跑过 ✅
+- 本机生产 cecelia-node-brain 容器上 smoke 仍跑过（向后兼容）
+- CI real-env-smoke job 在本 PR 跑过（验证 CI 干净环境契约）
+- 5 阶段全 PASS，输出可读
