@@ -14,8 +14,16 @@
 #
 # 与单测的差异：单测用 MemorySaver mock；smoke 验真 PostgresSaver + 真 pg + 真 docker restart。
 #
+# 环境变量（自包含 / CI 复用）：
+#   BRAIN_CONTAINER         默认 cecelia-node-brain（CI real-env-smoke 设为 cecelia-brain-smoke）
+#   BRAIN_URL               默认 http://localhost:5221
+#   DATABASE_URL            host 侧 psql 连接串，默认 postgresql://cecelia@localhost:5432/cecelia
+#                           （CI 用 postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test）
+#   CONTAINER_DATABASE_URL  容器内 PostgresSaver 用，默认同 DATABASE_URL
+#                           （非 host network 时 CI 可改 host.docker.internal / service name）
+#
 # 退出码：0=PASS，非 0=FAIL（任何一步失败立刻 exit 1）。
-# 跳过条件：cecelia-node-brain 容器不存在、psql 不在 PATH、DATABASE_URL 不可达 → exit 0 + 打印 SKIP。
+# 跳过条件：缺 docker / brain container / psql / DB 不可达 → exit 0 + 打印 SKIP。
 set -euo pipefail
 
 SMOKE_NAME="c8a-harness-checkpoint-resume"
@@ -23,8 +31,16 @@ log() { echo "[smoke:$SMOKE_NAME] $*"; }
 fail() { log "FAIL $*"; exit 1; }
 skip() { log "SKIP $*"; exit 0; }
 
+# ── 参数化（自包含；CI 通过 env 注入容器名 / DB URL）─────────────────────────
+BRAIN_CONTAINER="${BRAIN_CONTAINER:-cecelia-node-brain}"
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+DB_URL="${DATABASE_URL:-postgresql://cecelia@localhost:5432/cecelia}"
+# CONTAINER_DATABASE_URL 可显式注入；不注入则用容器自身 DATABASE_URL/DB_*（最稳妥，
+# 因为容器内的网络与宿主可能不同 — 本机 docker 走 host.docker.internal，CI host network 才同 localhost）
+CONTAINER_DB_URL="${CONTAINER_DATABASE_URL:-}"
+
 # ── 环境检测 ─────────────────────────────────────────────────────────────────
-log "start"
+log "start (BRAIN_CONTAINER=$BRAIN_CONTAINER BRAIN_URL=$BRAIN_URL)"
 
 if ! command -v docker >/dev/null 2>&1; then
   skip "docker 命令不存在（非 docker 部署机），smoke 暂只覆盖 docker 部署"
@@ -32,14 +48,13 @@ fi
 if ! docker info >/dev/null 2>&1; then
   skip "docker daemon 不可达"
 fi
-if ! docker inspect cecelia-node-brain >/dev/null 2>&1; then
-  skip "cecelia-node-brain 容器不存在（未部署）"
+if ! docker inspect "$BRAIN_CONTAINER" >/dev/null 2>&1; then
+  skip "$BRAIN_CONTAINER 容器不存在（未部署）"
 fi
 if ! command -v psql >/dev/null 2>&1; then
   skip "psql 不在 PATH（需要 PostgreSQL client）"
 fi
 
-DB_URL="${DATABASE_URL:-postgresql://cecelia@localhost:5432/cecelia}"
 if ! psql "$DB_URL" -tAc "SELECT 1" >/dev/null 2>&1; then
   skip "无法连接 DATABASE_URL=$DB_URL"
 fi
@@ -59,12 +74,25 @@ trap cleanup EXIT
 
 # ── Step 1: 用 PostgresSaver 在 Brain 容器内 put 5 个 checkpoint（模拟 5 节点）──
 # 第 5 个 checkpoint 含全 5 channel 的 value，对应 graph 跑完到 dbUpsertNode 的最终状态。
-log "step1: PostgresSaver put 5 checkpoints (5 节点) inside cecelia-node-brain"
+log "step1: PostgresSaver put 5 checkpoints (5 节点) inside $BRAIN_CONTAINER"
 
 PUT_SCRIPT=$(cat <<'NODE_PUT'
 const { PostgresSaver } = require("@langchain/langgraph-checkpoint-postgres");
 const threadId = process.env.SMOKE_THREAD_ID;
-const saver = PostgresSaver.fromConnString(process.env.DATABASE_URL);
+function resolveDbUrl() {
+  if (process.env.SMOKE_DATABASE_URL) return process.env.SMOKE_DATABASE_URL;
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  const h = process.env.DB_HOST, u = process.env.DB_USER, p = process.env.DB_PASSWORD,
+        n = process.env.DB_NAME, port = process.env.DB_PORT || "5432";
+  if (h && u && n) {
+    const auth = p ? `${u}:${encodeURIComponent(p)}` : u;
+    return `postgresql://${auth}@${h}:${port}/${n}`;
+  }
+  return null;
+}
+const dbUrl = resolveDbUrl();
+if (!dbUrl) { console.error("FAIL no DATABASE_URL / DB_* in container env"); process.exit(2); }
+const saver = PostgresSaver.fromConnString(dbUrl);
 (async () => {
   await saver.setup();
 
@@ -114,7 +142,15 @@ const saver = PostgresSaver.fromConnString(process.env.DATABASE_URL);
 NODE_PUT
 )
 
-PUT_OUT=$(docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" cecelia-node-brain node -e "$PUT_SCRIPT" 2>&1)
+PUT_OUT=$(
+  if [ -n "$CONTAINER_DB_URL" ]; then
+    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" -e "SMOKE_DATABASE_URL=$CONTAINER_DB_URL" \
+      "$BRAIN_CONTAINER" node -e "$PUT_SCRIPT" 2>&1
+  else
+    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" \
+      "$BRAIN_CONTAINER" node -e "$PUT_SCRIPT" 2>&1
+  fi
+)
 echo "$PUT_OUT" | sed 's/^/  /'
 echo "$PUT_OUT" | grep -q "PUT_OK 5_checkpoints_written" || fail "step1 PostgresSaver put 失败"
 
@@ -124,15 +160,15 @@ COUNT_BEFORE=$(psql "$DB_URL" -tAc "SELECT count(*) FROM checkpoints WHERE threa
 log "checkpoints rows before restart = $COUNT_BEFORE"
 [[ "$COUNT_BEFORE" -ge 5 ]] || fail "step2 checkpoints 行数不足（实际 $COUNT_BEFORE，期望 ≥ 5）"
 
-# ── Step 3: docker restart cecelia-node-brain（模拟 Brain 进程死活重生）──────
-log "step3: docker restart cecelia-node-brain"
-docker restart cecelia-node-brain >/dev/null
+# ── Step 3: docker restart $BRAIN_CONTAINER（模拟 Brain 进程死活重生）──────
+log "step3: docker restart $BRAIN_CONTAINER"
+docker restart "$BRAIN_CONTAINER" >/dev/null
 
 # ── Step 4: 等 Brain healthy ─────────────────────────────────────────────────
-log "step4: 等 Brain /api/brain/tick/status 200（最多 90s）"
+log "step4: 等 $BRAIN_URL/api/brain/tick/status 200（最多 90s）"
 HEALTHY=false
 for i in $(seq 1 18); do
-  if curl -sf http://localhost:5221/api/brain/tick/status >/dev/null 2>&1; then
+  if curl -sf "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
     HEALTHY=true
     log "Brain 已 healthy（第 ${i} 次探测）"
     break
@@ -153,7 +189,20 @@ log "step6: getTuple 验 5 channel 全恢复"
 GET_SCRIPT=$(cat <<'NODE_GET'
 const { PostgresSaver } = require("@langchain/langgraph-checkpoint-postgres");
 const threadId = process.env.SMOKE_THREAD_ID;
-const saver = PostgresSaver.fromConnString(process.env.DATABASE_URL);
+function resolveDbUrl() {
+  if (process.env.SMOKE_DATABASE_URL) return process.env.SMOKE_DATABASE_URL;
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  const h = process.env.DB_HOST, u = process.env.DB_USER, p = process.env.DB_PASSWORD,
+        n = process.env.DB_NAME, port = process.env.DB_PORT || "5432";
+  if (h && u && n) {
+    const auth = p ? `${u}:${encodeURIComponent(p)}` : u;
+    return `postgresql://${auth}@${h}:${port}/${n}`;
+  }
+  return null;
+}
+const dbUrl = resolveDbUrl();
+if (!dbUrl) { console.error("GET_FAIL no DATABASE_URL / DB_* in container env"); process.exit(2); }
+const saver = PostgresSaver.fromConnString(dbUrl);
 (async () => {
   await saver.setup();
   const config = { configurable: { thread_id: threadId } };
@@ -176,13 +225,23 @@ const saver = PostgresSaver.fromConnString(process.env.DATABASE_URL);
 NODE_GET
 )
 
-GET_OUT=$(docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" cecelia-node-brain node -e "$GET_SCRIPT" 2>&1)
+run_get() {
+  if [ -n "$CONTAINER_DB_URL" ]; then
+    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" -e "SMOKE_DATABASE_URL=$CONTAINER_DB_URL" \
+      "$BRAIN_CONTAINER" node -e "$GET_SCRIPT" 2>&1
+  else
+    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" \
+      "$BRAIN_CONTAINER" node -e "$GET_SCRIPT" 2>&1
+  fi
+}
+
+GET_OUT=$(run_get)
 echo "$GET_OUT" | sed 's/^/  /'
 echo "$GET_OUT" | grep -q "GET_OK 5_channels_recovered" || fail "step6 getTuple 5 channel 验证失败"
 
 # ── Step 7: 第二次读 → 仍命中（saver 侧幂等读取语义）─────────────────────────
 log "step7: 第二次 getTuple 仍命中（saver 幂等读）"
-GET_OUT_2=$(docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" cecelia-node-brain node -e "$GET_SCRIPT" 2>&1)
+GET_OUT_2=$(run_get)
 echo "$GET_OUT_2" | grep -q "GET_OK 5_channels_recovered" || fail "step7 第二次 getTuple 验证失败"
 
 log "PASS"

@@ -53,8 +53,9 @@ describe('post-deploy smoke contract', () => {
     for (const ch of ['worktreePath', 'plannerOutput', 'taskPlan', 'ganResult', 'result']) {
       expect(txt).toContain(ch);
     }
-    // 跨 Brain 重启验持久
-    expect(txt).toContain('docker restart cecelia-node-brain');
+    // 跨 Brain 重启验持久（cicd-C 改 BRAIN_CONTAINER env 适配 CI 后用变量）
+    expect(txt).toMatch(/docker restart (\$BRAIN_CONTAINER|"\$BRAIN_CONTAINER"|cecelia-node-brain)/);
+    expect(txt).toContain('BRAIN_CONTAINER:-cecelia-node-brain');  // 默认值仍 cecelia-node-brain
     expect(txt).toContain('checkpoints rows after restart');
     // 健康检查等 Brain 重启完
     expect(txt).toContain('/api/brain/tick/status');
@@ -71,7 +72,7 @@ describe('post-deploy smoke contract', () => {
     // skip 走的 4 个 gate
     expect(txt).toContain('docker 命令不存在');
     expect(txt).toContain('docker daemon 不可达');
-    expect(txt).toContain('cecelia-node-brain 容器不存在');
+    expect(txt).toMatch(/容器不存在/);  // BRAIN_CONTAINER 用变量 ($BRAIN_CONTAINER 容器不存在)
     expect(txt).toContain('psql 不在 PATH');
   });
 });
