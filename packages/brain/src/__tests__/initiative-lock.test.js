@@ -135,11 +135,13 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
       priority: 'P1',
       payload: {},
       project_id: 'proj-initiative-1',
-      task_type: 'harness_task',
+      task_type: 'harness_initiative',
       metadata: {}
     };
 
     // pool.query 调用顺序：
+    // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask 主查询 → 返回候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
     // 2. Initiative 二次锁检查 → 发现已有 in_progress 任务
@@ -170,6 +172,8 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     };
 
     // pool.query 调用顺序：
+    // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. 主查询 → 候选（无 initiative 锁检查，project_id 为 null）
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
     // 2. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
@@ -199,11 +203,13 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
       priority: 'P1',
       payload: {},
       project_id: 'proj-initiative-2',
-      task_type: 'harness_task',
+      task_type: 'harness_initiative',
       metadata: {}
     };
 
     // pool.query 调用顺序：
+    // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. 主查询 → 候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
     // 2. Initiative 锁检查 → 无 in_progress 任务（锁通过）
