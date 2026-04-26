@@ -65,4 +65,41 @@ export function resetTickStateForTests() {
   tickState.lastConsciousnessReload = 0;
 }
 
-export default { tickState, resetTickStateForTests };
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase D2.1: 9 个 _resetLastXxxTime 测试 helper 从 tick.js 收口到这里
+// 单字段归零，避免 resetTickStateForTests 全清的副作用（测试里只想 reset 一项）
+// tick.js 通过 `export { ... } from './tick-state.js'` 做 backwards-compat re-export
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Reset throttle state — for testing only */
+export function _resetLastExecuteTime() { tickState.lastExecuteTime = 0; }
+/** Reset cleanup timer — for testing only */
+export function _resetLastCleanupTime() { tickState.lastCleanupTime = 0; }
+/** Reset zombie cleanup timer — for testing only */
+export function _resetLastZombieCleanupTime() { tickState.lastZombieCleanupTime = 0; }
+/** Reset Layer 2 health check timer — for testing only */
+export function _resetLastHealthCheckTime() { tickState.lastHealthCheckTime = 0; }
+/** Reset KR progress sync timer — for testing only */
+export function _resetLastKrProgressSyncTime() { tickState.lastKrProgressSyncTime = 0; }
+/** Reset heartbeat timer — for testing only */
+export function _resetLastHeartbeatTime() { tickState.lastHeartbeatTime = 0; }
+/** Reset goal eval timer — for testing only */
+export function _resetLastGoalEvalTime() { tickState.lastGoalEvalTime = 0; }
+/** Reset zombie sweep timer — for testing only */
+export function _resetLastZombieSweepTime() { tickState.lastZombieSweepTime = 0; }
+/** Reset pipeline patrol timer — for testing only */
+export function _resetLastPipelinePatrolTime() { tickState.lastPipelinePatrolTime = 0; }
+
+export default {
+  tickState,
+  resetTickStateForTests,
+  _resetLastExecuteTime,
+  _resetLastCleanupTime,
+  _resetLastZombieCleanupTime,
+  _resetLastHealthCheckTime,
+  _resetLastKrProgressSyncTime,
+  _resetLastHeartbeatTime,
+  _resetLastGoalEvalTime,
+  _resetLastZombieSweepTime,
+  _resetLastPipelinePatrolTime
+};
