@@ -126,6 +126,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     });
 
     // Mock pool.query calls:
+    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask → returns task
     mockQuery.mockResolvedValueOnce({ rows: [task] });
     // 2. C1 atomic claim: UPDATE tasks SET claimed_by ... RETURNING id
@@ -171,6 +173,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
       taskId: task.id
     });
 
+    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask
     mockQuery.mockResolvedValueOnce({ rows: [task] });
     // 2. C1 atomic claim

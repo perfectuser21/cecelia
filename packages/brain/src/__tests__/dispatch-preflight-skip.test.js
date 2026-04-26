@@ -163,6 +163,8 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
       .mockResolvedValueOnce({ passed: true, issues: [], suggestions: [] });
 
     // Mock pool.query calls in order:
+    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask query (no excludeIds) → returns badTask
     mockQuery.mockResolvedValueOnce({ rows: [badTask] });
     // 2. UPDATE metadata for failed pre-flight
@@ -196,6 +198,8 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
       .mockResolvedValueOnce({ passed: false, issues: ['Title too short'], suggestions: [] })
       .mockResolvedValueOnce({ passed: false, issues: ['Title too short'], suggestions: [] });
 
+    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. select → bad1
     mockQuery.mockResolvedValueOnce({ rows: [bad1] });
     // 2. UPDATE metadata
@@ -226,6 +230,8 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
       suggestions: ['Use a more descriptive title']
     });
 
+    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. select → badTask
     mockQuery.mockResolvedValueOnce({ rows: [badTask] });
     // 2. UPDATE metadata
@@ -236,8 +242,8 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
     const { dispatchNextTask } = await import('../tick.js');
     await dispatchNextTask(['goal-1']);
 
-    // Verify the metadata UPDATE was called
-    const updateCall = mockQuery.mock.calls[1];
+    // Verify the metadata UPDATE was called (index 2 due to Phase 2.5 drain at 0)
+    const updateCall = mockQuery.mock.calls[2];
     expect(updateCall[0]).toContain('UPDATE tasks SET metadata');
     expect(updateCall[1][0]).toBe('bad-meta');
     const metaJson = JSON.parse(updateCall[1][1]);
