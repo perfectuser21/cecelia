@@ -208,6 +208,10 @@ app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
+// Phase E1: Observer state monitoring
+const { default: observerRoutes } = await import('./src/routes/observer.js');
+app.use('/api/brain/observer', observerRoutes);
+
 // Migrated local routes (from apps/api → Brain)
 app.use('/api/brain/cluster', clusterRoutes);
 app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
@@ -557,6 +561,15 @@ async function onBrainListening() {
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();
+
+  // Phase E1: 启动 Observer Runner（独立 30s timer，刷新 alertness/health/resources）
+  try {
+    const { initObserverRunner } = await import('./src/observer-runner.js');
+    await initObserverRunner();
+    console.log('[Server] Observer Runner started (30s interval) - alertness/health/resources cache');
+  } catch (obsErr) {
+    console.error('[Server] Observer Runner init failed (non-fatal):', obsErr.message);
+  }
 
   // Initialize Monitoring Loop (auto-healing)
   try {
