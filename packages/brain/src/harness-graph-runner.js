@@ -5,11 +5,11 @@
  *   1. 用 task.id 作为 langgraph thread_id（支持中断恢复，PostgresSaver 自动续跑）
  *   2. stream 节点执行，每跳一步写一条 cecelia_events
  *   3. `HARNESS_LANGGRAPH_ENABLED` 未设置时直接 no-op，保持老路径（routes/execution.js）兜底
- *   4. 每个节点通过 executeInDocker() 在隔离容器中运行 Claude Code session
+ *   4. 每个节点通过 spawn() 在隔离容器中运行 Claude Code session（spawn 内部走 executeInDocker）
  */
 
 import { compileHarnessApp, createDockerNodes } from './harness-graph.js';
-import { executeInDocker } from './docker-executor.js';
+import { spawn } from './spawn/index.js';
 
 /**
  * LangGraph 递归上限。官方默认 25，对 GAN 对抗 + Fix 循环远远不够。
@@ -37,7 +37,7 @@ export function isLangGraphEnabled() {
  * @param {object} [opts.overrides]      节点 override（测试用，会覆盖 Docker 节点）
  * @param {(event) => void} [opts.onStep] 每步回调，调用方可写 cecelia_events
  * @param {Record<string,string>} [opts.env]  额外注入容器的环境变量
- * @param {Function} [opts.dockerExecutor]  自定义 Docker 执行器（测试注入用，默认用 executeInDocker）
+ * @param {Function} [opts.dockerExecutor]  自定义 Docker 执行器（测试注入用，默认用 spawn）
  * @param {number}   [opts.recursionLimit]   LangGraph 递归上限，默认 100（覆盖官方默认 25）
  * @returns {Promise<{ skipped?: boolean, finalState?: object, steps?: number, reason?: string }>}
  */
@@ -52,7 +52,7 @@ export async function runHarnessPipeline(task, opts = {}) {
   console.log(`[harness-graph-runner] starting pipeline task=${task.id} description="${(task.description || task.title || '').slice(0, 80)}"`);
 
   // 创建 Docker-backed 节点（除非 overrides 完全覆盖）
-  const executor = opts.dockerExecutor || executeInDocker;
+  const executor = opts.dockerExecutor || spawn;
   const dockerNodes = createDockerNodes(executor, task, { env: opts.env });
 
   // overrides 优先级高于 Docker 节点（允许测试注入）

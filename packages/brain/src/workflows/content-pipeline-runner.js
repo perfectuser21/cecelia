@@ -5,14 +5,14 @@
  *   1. 用 task.id（= pipeline_id）作为 langgraph thread_id（支持断点续跑）
  *   2. stream 节点执行，每跳一步写事件（onStep 回调）
  *   3. `CONTENT_PIPELINE_LANGGRAPH_ENABLED` 未启用 → no-op，兜底老 pipeline-worker.py 路径
- *   4. 每节点通过 executeInDocker() 在隔离容器中运行 Claude Code session + skill
+ *   4. 每节点通过 spawn() 在隔离容器中运行 Claude Code session + skill
  *
- * 仿 harness-graph-runner.js，跟 harness 共用 docker-executor 基建。
+ * 仿 harness-graph-runner.js，跟 harness 共用 spawn 基建（spawn 内部仍走 executeInDocker）。
  * content pipeline 回路比 harness 少（2 回路 vs 2+GAN），递归上限 60 够用。
  */
 
 import { compileContentPipelineApp, createContentDockerNodes } from './content-pipeline.graph.js';
-import { executeInDocker } from '../docker-executor.js';
+import { spawn } from '../spawn/index.js';
 
 /**
  * LangGraph 递归上限。
@@ -43,7 +43,7 @@ export function isContentPipelineLangGraphEnabled() {
  * @param {object} [opts.overrides]       节点 override（测试用，覆盖 Docker 节点）
  * @param {(event) => void} [opts.onStep] 每步回调（写事件用）
  * @param {Record<string,string>} [opts.env]  额外注入容器的环境变量
- * @param {Function} [opts.dockerExecutor]  自定义执行器（测试注入，默认 executeInDocker）
+ * @param {Function} [opts.dockerExecutor]  自定义执行器（测试注入，默认 spawn）
  * @param {number}   [opts.recursionLimit]   LangGraph 递归上限，默认 60
  * @returns {Promise<{ skipped?: boolean, finalState?: object, steps?: number, reason?: string }>}
  */
@@ -106,7 +106,7 @@ export async function runContentPipeline(task, opts = {}) {
   };
 
   // 创建 Docker-backed 节点（除非 overrides 完全覆盖）
-  const executor = opts.dockerExecutor || executeInDocker;
+  const executor = opts.dockerExecutor || spawn;
   const dockerNodes = createContentDockerNodes(executor, task, { env: mergedEnv });
 
   // overrides 优先级高于 Docker 节点
