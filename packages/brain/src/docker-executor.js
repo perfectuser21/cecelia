@@ -53,7 +53,7 @@ export { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER };
 // Harness v6 Phase B：从 Docker stdout 提取 pr_url / verdict 写入 _meta。
 // parseDockerOutput 抓 claude --output-format json 末尾 result 段；
 // extractField 兼容 `pr_url: <URL>` 字面量 / JSON `"pr_url":"..."`，过滤 null/FAILED 等假值。
-import { parseDockerOutput, extractField } from './harness-graph.js';
+import { parseDockerOutput, extractField } from './harness-shared.js';
 
 /**
  * 检测 docker 二进制是否可用（缓存结果）

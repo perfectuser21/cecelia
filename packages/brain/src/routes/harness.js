@@ -100,8 +100,8 @@ router.get('/pipeline-detail', async (req, res) => {
       [planner_task_id]
     );
 
-    // 2. 提取 planner 信息
-    const planner = tasks.find(t => t.task_type === 'harness_planner' || t.task_type === 'sprint_planner');
+    // 2. 提取 planner 信息（harness_planner 已退役 PR retire-harness-planner，仅保留 sprint_planner）
+    const planner = tasks.find(t => t.task_type === 'sprint_planner');
     const sprintDir = planner?.payload?.sprint_dir || tasks[0]?.payload?.sprint_dir || 'sprints';
 
     // 3. 构建 GAN 对抗轮次
@@ -183,13 +183,13 @@ function buildGanRounds(tasks) {
  * Evaluate → Report → Auto-merge → Deploy → Smoke-test → Cleanup）
  */
 function buildStages(tasks) {
+  // 注：harness_planner stage 已退役（PR retire-harness-planner），从 STAGE_ORDER/LABELS 移除
   const STAGE_ORDER = [
-    'harness_planner', 'harness_contract_propose', 'harness_contract_review',
+    'harness_contract_propose', 'harness_contract_review',
     'harness_generate', 'harness_evaluate', 'harness_report',
     'harness_auto_merge', 'harness_deploy', 'harness_smoke_test', 'harness_cleanup',
   ];
   const STAGE_LABELS = {
-    harness_planner: 'Planner',
     harness_contract_propose: 'Propose',
     harness_contract_review: 'Review',
     harness_generate: 'Generate',
@@ -300,8 +300,9 @@ function rebuildPrompt(task, sprintDir) {
   const id = task.task_id;
   const desc = task.description || task.title || '';
 
-  if (t === 'harness_planner' || t === 'sprint_planner') {
-    return `/harness-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\n\n${desc}`;
+  // 注：harness_planner 已退役（PR retire-harness-planner），仅保留 sprint_planner
+  if (t === 'sprint_planner') {
+    return `/sprint-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\n\n${desc}`;
   }
 
   if (t === 'harness_contract_propose' || t === 'sprint_contract_propose') {
@@ -339,7 +340,8 @@ function rebuildPrompt(task, sprintDir) {
 async function getStepInput(task, sprintDir) {
   const t = task.task_type;
 
-  if (t === 'harness_planner' || t === 'sprint_planner') {
+  // 注：harness_planner 已退役（PR retire-harness-planner），仅保留 sprint_planner
+  if (t === 'sprint_planner') {
     return task.description || task.payload?.description || task.title || null;
   }
 
@@ -392,7 +394,8 @@ async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
   const branch = getResultBranch(task);
 
   // Planner 的 branch 不在自身的 result，而是从 propose 任务的 payload.planner_branch 传入
-  if (t === 'harness_planner' || t === 'sprint_planner') {
+  // 注：harness_planner 已退役（PR retire-harness-planner），仅保留 sprint_planner
+  if (t === 'sprint_planner') {
     const useBranch = branch || plannerBranchFromPropose;
     if (useBranch) return fetchFileFromBranch(useBranch, `${sprintDir}/sprint-prd.md`);
     return null;
@@ -405,7 +408,8 @@ async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
     return null;
   }
 
-  if (t === 'harness_planner' || t === 'sprint_planner') {
+  // 注：harness_planner 已退役（PR retire-harness-planner），仅保留 sprint_planner
+  if (t === 'sprint_planner') {
     return fetchFileFromBranch(branch, `${sprintDir}/sprint-prd.md`);
   }
 
@@ -432,8 +436,8 @@ async function getStepOutput(task, sprintDir, plannerBranchFromPropose) {
 }
 
 // task_type → skill 目录名映射
+// 注：harness_planner 已退役（PR retire-harness-planner），仅保留 sprint_planner
 const TASK_TYPE_TO_SKILL = {
-  harness_planner: 'harness-planner',
   sprint_planner: 'harness-planner',
   harness_contract_propose: 'harness-contract-proposer',
   sprint_contract_propose: 'harness-contract-proposer',
@@ -467,8 +471,9 @@ async function getSystemPromptContent(taskType) {
  * 生成步骤标签（含轮次编号）
  */
 function buildStepLabel(taskType, counters) {
+  // 注：harness_planner 已退役（PR retire-harness-planner），仅保留 sprint_planner
   const BASE_LABELS = {
-    harness_planner: 'Planner', sprint_planner: 'Planner',
+    sprint_planner: 'Planner',
     harness_contract_propose: 'Propose', sprint_contract_propose: 'Propose',
     harness_contract_review: 'Review', sprint_contract_review: 'Review',
     harness_generate: 'Generate', sprint_generate: 'Generate',
@@ -722,11 +727,12 @@ async function buildLangGraphInfo(taskId) {
  */
 router.get('/stats', async (req, res) => {
   try {
-    // 最近 30 天 planner 总数
+    // 最近 30 天 pipeline 总数
+    // 注：harness_planner 已退役（PR retire-harness-planner），改用 harness_initiative 作为 pipeline 主轴
     const { rows: totalRows } = await pool.query(`
       SELECT COUNT(*) AS total
       FROM tasks
-      WHERE task_type = 'harness_planner'
+      WHERE task_type = 'harness_initiative'
         AND created_at >= NOW() - INTERVAL '30 days'
     `);
     const total = parseInt(totalRows[0]?.total ?? 0, 10);
@@ -735,7 +741,7 @@ router.get('/stats', async (req, res) => {
     const { rows: doneRows } = await pool.query(`
       SELECT COUNT(*) AS done
       FROM tasks
-      WHERE task_type = 'harness_planner'
+      WHERE task_type = 'harness_initiative'
         AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
     `);
@@ -758,13 +764,14 @@ router.get('/stats', async (req, res) => {
       ? Math.round(parseFloat(ganRows[0].avg_rounds) * 100) / 100
       : 0;
 
-    // 平均耗时（ms，只统计已完成的 planner）
+    // 平均耗时（ms，只统计已完成的 pipeline）
+    // 注：harness_planner 已退役（PR retire-harness-planner），改用 harness_initiative
     const { rows: durRows } = await pool.query(`
       SELECT AVG(
         EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000
       ) AS avg_ms
       FROM tasks
-      WHERE task_type = 'harness_planner'
+      WHERE task_type = 'harness_initiative'
         AND status = 'completed'
         AND completed_at IS NOT NULL
         AND created_at >= NOW() - INTERVAL '30 days'

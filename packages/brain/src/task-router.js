@@ -33,7 +33,9 @@ const VALID_TASK_TYPES = [
   'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
   'sprint_generate', 'sprint_fix', 'sprint_report',
   // Harness v4.0：sprint_* → harness_*，新增 CI/Deploy watch
-  'harness_planner',          // Layer 1: 需求→PRD
+  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），
+  // subsumed by harness_initiative full graph；触达即被 _RETIRED_HARNESS_TYPES
+  // 标 terminal_failure（见 executor.js）。
   'harness_contract_propose', // Layer 2a: Generator 提合同草案
   'harness_contract_review',  // Layer 2b: Evaluator 挑战合同 → APPROVED/REVISION
   'harness_generate',         // Layer 3a: Generator 写代码
@@ -117,7 +119,7 @@ const SKILL_WHITELIST = {
   'sprint_fix': '/dev',
   'sprint_report': '/sprint-report',
   // Harness v4.0 新类型
-  'harness_planner': '/harness-planner',                      // Layer 1: 需求→PRD
+  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），见 VALID_TASK_TYPES 注释
   'harness_contract_propose': '/harness-contract-proposer',   // Layer 2a: 提合同草案
   'harness_contract_review': '/harness-contract-reviewer',    // Layer 2b: 挑战合同
   'harness_generate': '/harness-generator',                   // Layer 3a: Generator 写代码
@@ -241,7 +243,7 @@ const LOCATION_MAP = {
   'sprint_fix': 'us',
   'sprint_report': 'us',
   // Harness v4.0 → US 本机
-  'harness_planner': 'us',            // Layer 1: Planner → US（写 PRD）
+  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），见 VALID_TASK_TYPES 注释
   'harness_contract_propose': 'us',   // Layer 2a: Generator 提合同草案 → US
   'harness_contract_review': 'us',    // Layer 2b: Evaluator 挑战合同 → US
   'harness_generate': 'us',           // Layer 3a: Generator 写代码 → US
@@ -330,7 +332,7 @@ const TASK_REQUIREMENTS = {
   'platform_scraper':   ['has_browser'],  // 需要 CDP 浏览器接入各平台
   'content_publish':    ['has_browser'],  // 发布 skill（douyin/kuaishou 等）需要 CDP 浏览器控制
   // Harness v4.0 — 需要 git 访问（US M4 独有）
-  'harness_planner':          ['has_git'],
+  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），见 VALID_TASK_TYPES 注释
   'harness_contract_propose': ['has_git'],
   'harness_contract_review':  ['has_git'],
   'harness_generate':         ['has_git'],

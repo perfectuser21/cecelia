@@ -328,8 +328,9 @@ router.get('/tasks', async (req, res) => {
  * GET /api/brain/harness-pipelines
  * 返回按 sprint_dir 聚合的 Harness Pipeline 状态列表
  */
+// harness_planner 已退役（PR retire-harness-planner），从 stage order/labels 移除；
+// LangGraph 节点 planner 仍然存在（mapping 见下方 nodeToStage），映射到 harness_contract_propose 起头
 const HARNESS_STAGE_ORDER = [
-  'harness_planner',
   'harness_contract_propose',
   'harness_contract_review',
   'harness_generate',
@@ -338,7 +339,6 @@ const HARNESS_STAGE_ORDER = [
 ];
 
 const HARNESS_STAGE_LABELS = {
-  harness_planner: 'Planner',
   harness_contract_propose: 'Propose',
   harness_contract_review: 'Review',
   harness_generate: 'Generate',
@@ -438,8 +438,9 @@ export function buildPipelineRecord(task, events, legacyStageMap) {
   else if (['in_progress', 'running'].includes(task.status)) verdict = 'in_progress';
   else if (task.status === 'queued') verdict = 'pending';
 
+  // 注：harness_planner stage 已退役（PR retire-harness-planner），LangGraph planner 节点
+  // 不再映射到独立 stage（PRD 在 contract_propose 阶段内联生成）。
   const nodeToStage = {
-    planner: 'harness_planner',
     proposer: 'harness_contract_propose',
     reviewer: 'harness_contract_review',
     generator: 'harness_generate',
@@ -509,13 +510,14 @@ router.get('/harness-pipelines', async (req, res) => {
     const statusFilter = req.query.status || null;
 
     // —— Step 1：把 planner task 作为 pipeline 主轴 ——
+    // harness_planner 已退役（PR retire-harness-planner），改用 harness_initiative 作为 pipeline 主轴
     const plannerParams = [];
     let plannerSql = `
       SELECT id, title, description, task_type, status, priority, sprint_dir,
              created_at, started_at, completed_at, updated_at,
              payload, error_message, pr_url, result
       FROM tasks
-      WHERE task_type = 'harness_planner'
+      WHERE task_type = 'harness_initiative'
     `;
     if (statusFilter) {
       plannerParams.push(statusFilter);

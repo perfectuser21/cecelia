@@ -2117,10 +2117,10 @@ function _prepareHarnessReportPrompt(task, taskType) {
   return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${task.description || task.title}`;
 }
 
-function _prepareHarnessPlannerPrompt(task, taskType) {
+function _prepareHarnessPlannerPrompt(task, _taskType) {
+  // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
   const sprintDir = task.payload?.sprint_dir || 'sprints';
-  const skillName = taskType === 'harness_planner' ? '/harness-planner' : '/sprint-planner';
-  return `${skillName}\n\n## Harness v4.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
+  return `/sprint-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
 }
 
 async function _prepareContractProposePrompt(task, taskType) {
@@ -2205,7 +2205,6 @@ const _TASK_ROUTES = {
   sprint_report:            (t) => _prepareHarnessReportPrompt(t, 'sprint_report'),
   harness_report:           (t) => _prepareHarnessReportPrompt(t, 'harness_report'),
   sprint_planner:           (t) => _prepareHarnessPlannerPrompt(t, 'sprint_planner'),
-  harness_planner:          (t) => _prepareHarnessPlannerPrompt(t, 'harness_planner'),
   sprint_contract_propose:  (t) => _prepareContractProposePrompt(t, 'sprint_contract_propose'),
   harness_contract_propose: (t) => _prepareContractProposePrompt(t, 'harness_contract_propose'),
   sprint_contract_review:   (t) => _prepareContractReviewPrompt(t, 'sprint_contract_review'),
@@ -2812,11 +2811,13 @@ async function triggerCeceliaRun(task) {
     }
   }
 
-  // Sprint 1: 4 retired task_types (harness_task / harness_ci_watch / harness_fix /
-  // harness_final_e2e) 已被 harness_initiative full-graph sub-graph 取代。
+  // Retired harness task_types — 全部归入 harness_initiative full-graph sub-graph。
+  // - Sprint 1 (PR #2640)：harness_task / harness_ci_watch / harness_fix / harness_final_e2e
+  // - retire-harness-planner (PR 本次)：harness_planner（subsumed by harness_initiative full graph）
   // 老数据派到 executor → 标 terminal failure 防止"复活"。
   const _RETIRED_HARNESS_TYPES = new Set([
     'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
+    'harness_planner',  // retired in PR retire-harness-planner; subsumed by harness_initiative full graph
   ]);
   if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
     console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
@@ -2826,71 +2827,12 @@ async function triggerCeceliaRun(task) {
           error_message=$2,
           payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
          WHERE id=$1::uuid`,
-        [task.id, `task_type ${task.task_type} retired in Sprint 1 (full-graph migration); see harness-initiative full graph sub-graph`]
+        [task.id, `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)`]
       );
     } catch (err) {
       console.error(`[executor] mark retired task failed: ${err.message}`);
     }
     return { success: false, retired: true, taskType: task.task_type };
-  }
-
-  // 2.9 LangGraph Pipeline（harness_planner 默认走 LangGraph）
-  // harness_planner 任务由 LangGraph 编排完整 6 步 pipeline
-  // （planner→proposer→reviewer→generator→evaluator→report）。
-  // LangGraph runner 内部为每个节点调 spawn()（Brain v2 Layer 3 唯一对外 API）。
-  if (task.task_type === 'harness_planner') {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → LangGraph Pipeline (default)`);
-    try {
-      const { runHarnessPipeline } = await import('./harness-graph-runner.js');
-      // Harness pipeline 账号选择统一交给 spawn() 内层 account-rotation middleware
-      // （spawn/middleware/account-rotation.js，v2 P2 PR3），按 cascade + cap/auth-fail
-      // fallback 实时选号；账号治理收口到 account-usage.js。
-      const langGraphEnv = {};
-      // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
-      // task.id 作为 thread_id 即为 resume key，Brain 重启后 pipeline 可从断点续跑，
-      // 避免 43 分钟 pipeline 被重启清零
-      const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
-      const checkpointer = await getPgCheckpointer();
-      const result = await runHarnessPipeline(task, {
-        env: langGraphEnv,
-        checkpointer,
-        onStep: async (stepEvent) => {
-          console.log(`[executor] LangGraph step: node=${stepEvent.node} step=${stepEvent.step_index} task=${task.id}`);
-          // 写 cecelia_events（onStep 失败不阻塞 pipeline，但打日志便于诊断）
-          try {
-            // payload 含 node + step_index + state_snapshot 展开字段，
-            // 方便 /pipeline-detail API 重建 GAN/Fix 轮次配对
-            const payload = {
-              node: stepEvent.node,
-              step_index: stepEvent.step_index,
-              ...(stepEvent.state_snapshot || {}),
-            };
-            await pool.query(
-              `INSERT INTO cecelia_events (event_type, task_id, payload)
-               VALUES ('langgraph_step', $1::uuid, $2::jsonb)`,
-              [task.id, JSON.stringify(payload)]
-            );
-          } catch (err) {
-            console.warn(`[executor] langgraph_step insert failed task=${task.id}: ${err.message}`);
-          }
-        },
-      });
-      return {
-        success: !result.skipped,
-        taskId: task.id,
-        langgraph: true,
-        steps: result.steps,
-        finalState: result.finalState,
-      };
-    } catch (err) {
-      console.error(`[executor] LangGraph pipeline error task=${task.id}: ${err.message}`);
-      return {
-        success: false,
-        taskId: task.id,
-        langgraph: true,
-        error: err.message,
-      };
-    }
   }
 
   // 3. US → Claude Code（本机 cecelia-bridge，10-slot 池）
