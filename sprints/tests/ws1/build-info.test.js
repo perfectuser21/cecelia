@@ -12,10 +12,20 @@
  *    （而非顶层 import 让整个 suite 折叠成一条错误）。
  *  - 严格 3 键集合：sort 后 toEqual，挡 mutation 加多余字段。
  *  - built_at 用 ISO toISOString round-trip（挡 "2026-01-01" 这种合法但非规范化输入）。
+ *    "模块加载时一次性"指：同一进程内 server.js 启动后所有请求返回同一时间戳；
+ *    测试不跨 it 比较时间戳（resetModules 让每个 it 重新 evaluate 顶层），
+ *    只在每个 it 内部断言"GET 请求得到的 built_at 是合法 ISO 8601"。
  *  - package_version 与 packages/brain/package.json runtime 读取值严格相等。
+ *  - cwd 漂移测试（it #10）：process.chdir('/tmp') 主动制造非 brain 目录，
+ *    强迫实现暴露"是否依赖 process.cwd 解析 package.json"——
+ *    实现若用 require('./package.json') 或 readFileSync('./package.json')
+ *    会在 /tmp 解析失败或读到错版本；正确实现需 import.meta.url + fileURLToPath。
  *  - git_sha fallback 测试：清空全部 5 个常见 SHA 注入变量，强迫触发 fallback 路径。
  *  - git_sha 优先级测试：5 个 env 变量同时设不同 sentinel，逐个删除最高优先级变量，
  *    验证次高优先级值成为新的 git_sha；最终全部删除 → 'unknown'。
+ *  - manifest 兜底（it #11）：独立 dynamic import brain-manifest.js，断言 default export
+ *    是 Express Router function（带 .use 方法）。Cascade 防御 server.js 改动误删既有路由文件。
+ *    不直接 GET /api/brain/manifest（避免依赖 brain-manifest.generated.json 的状态）。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import express from 'express';
@@ -156,5 +166,41 @@ describe('Workstream 1 — build-info endpoint [BEHAVIOR]', () => {
     } finally {
       restoreShaEnv(saved);
     }
+  });
+
+  it('package_version stays correct when process.cwd is changed away from brain directory (cwd-drift defense)', async () => {
+    // 主动制造 cwd 漂移：实现若用 require('./package.json') 或
+    // readFileSync('./package.json')，在 /tmp 下相对路径解析会失败或读错版本。
+    // 正确实现必须用 import.meta.url + fileURLToPath 解析为绝对路径。
+    const expected = readPkgVersion();
+    const savedCwd = process.cwd();
+    try {
+      process.chdir('/tmp');
+      vi.resetModules();
+      const app = await buildAppFromRouter();
+      const res = await request(app).get('/api/brain/build-info');
+      expect(res.status).toBe(200);
+      expect(res.body.package_version).toBe(expected);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('both build-info and brain-manifest routers expose Router-shaped default export (cascade guard: build-info ESM contract + manifest router untouched)', async () => {
+    // 双重 cascade：
+    //   - build-info.js 必须作为 ESM 模块可加载且默认导出是 Express Router 实例
+    //     （Red 阶段文件不存在 → import 抛 ERR_MODULE_NOT_FOUND，本 it 失败）
+    //   - brain-manifest.js 必须仍可加载且默认导出是 Router 实例
+    //     （挡住"server.js 重构连带破坏既有 router 文件"的回归）
+    // 不实际 GET /api/brain/manifest（避免依赖 brain-manifest.generated.json 实际状态）。
+    const buildInfoMod = await import('../../../packages/brain/src/routes/build-info.js');
+    expect(buildInfoMod).toBeDefined();
+    expect(typeof buildInfoMod.default).toBe('function');
+    expect(typeof buildInfoMod.default.use).toBe('function');
+
+    const manifestMod = await import('../../../packages/brain/src/routes/brain-manifest.js');
+    expect(manifestMod).toBeDefined();
+    expect(typeof manifestMod.default).toBe('function');
+    expect(typeof manifestMod.default.use).toBe('function');
   });
 });

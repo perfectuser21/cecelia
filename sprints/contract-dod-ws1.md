@@ -1,7 +1,7 @@
 # Contract DoD — Workstream 1: 新增 build-info Router 并挂载到 server.js
 
 **范围**:
-- 新建 `packages/brain/src/routes/build-info.js`：Express Router，GET `/` 返回 `{ git_sha, package_version, built_at }`，`package_version` 从 `packages/brain/package.json` 读取，`built_at` 在模块加载时一次性确定，`git_sha` 按固定优先级 `GIT_SHA → GIT_COMMIT → COMMIT_SHA → SOURCE_COMMIT → VERCEL_GIT_COMMIT_SHA` 取第一个非空，全空时回落 `'unknown'`，禁止 runtime 调用 `child_process` / `git rev-parse`。
+- 新建 `packages/brain/src/routes/build-info.js`：Express Router，GET `/` 返回 `{ git_sha, package_version, built_at }`，`package_version` 从 `packages/brain/package.json` 读取（**必须用 `import.meta.url` + `fileURLToPath` 解析为绝对路径，禁止 `require('./package.json')` / `readFileSync('./package.json')` 这类依赖 `process.cwd()` 的相对解析**），`built_at` 在模块加载时一次性确定，`git_sha` 按固定优先级 `GIT_SHA → GIT_COMMIT → COMMIT_SHA → SOURCE_COMMIT → VERCEL_GIT_COMMIT_SHA` 取第一个非空，全空时回落 `'unknown'`，禁止 runtime 调用 `child_process` / `git rev-parse`。
 - 修改 `packages/brain/server.js`：追加 import 与 `app.use('/api/brain/build-info', buildInfoRoutes)` 挂载行；不删除现有路由。
 
 **大小**: S（< 100 行）
@@ -21,6 +21,9 @@
 - [ ] [ARTIFACT] `build-info.js` 引用了 `package.json` 作为 package_version 来源（禁止硬编码版本字面量 `1.223.0`）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/build-info.js','utf8');if(!/package\.json/.test(c))process.exit(1);if(/['\"]1\.223\.0['\"]/.test(c))process.exit(2)"
 
+- [ ] [ARTIFACT] `build-info.js` 必须用 `import.meta.url` + `fileURLToPath` 解析 `package.json` 绝对路径，禁止 `require('./package.json')` / `from './package.json'` / `readFileSync('./package.json')` / `readFileSync('package.json')` 这类依赖 `process.cwd()` 的相对解析（防 vitest 等非 brain 目录 cwd 漂移）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/build-info.js','utf8');if(!/import\.meta\.url/.test(c)){console.error('missing import.meta.url');process.exit(1)}if(!/fileURLToPath/.test(c)){console.error('missing fileURLToPath');process.exit(2)}if(/require\(\s*['\"]\.\/package\.json['\"]\s*\)/.test(c)){console.error('forbidden require(./package.json)');process.exit(3)}if(/from\s+['\"]\.\/package\.json['\"]/.test(c)){console.error('forbidden from ./package.json');process.exit(4)}if(/readFileSync\(\s*['\"]\.?\/?package\.json['\"]/.test(c)){console.error('forbidden readFileSync relative package.json');process.exit(5)}"
+
 - [ ] [ARTIFACT] `build-info.js` 静态可见五个 SHA env 变量标识符 `GIT_SHA / GIT_COMMIT / COMMIT_SHA / SOURCE_COMMIT / VERCEL_GIT_COMMIT_SHA`（实现固定优先级链所必需，缺一即视为偏离合同）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/build-info.js','utf8');for(const k of ['GIT_SHA','GIT_COMMIT','COMMIT_SHA','SOURCE_COMMIT','VERCEL_GIT_COMMIT_SHA']){if(!new RegExp('\\\\b'+k+'\\\\b').test(c)){console.error('missing env identifier:',k);process.exit(1)}}"
 
@@ -36,7 +39,7 @@
 - [ ] [ARTIFACT] 现有 `/api/brain/manifest` 挂载行未被删除（回归保护，确保不破坏既有 server.js 启动流程）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!/app\.use\(\s*['\"]\/api\/brain\/manifest['\"]\s*,\s*brainManifestRoutes\s*\)/.test(c))process.exit(1)"
 
-## BEHAVIOR 索引（实际测试在 tests/ws1/，共 9 个 it()，与 contract-draft.md BEHAVIOR 覆盖列表 1:1 对应）
+## BEHAVIOR 索引（实际测试在 tests/ws1/，共 11 个 it()，与 contract-draft.md BEHAVIOR 覆盖列表 1:1 对应）
 
 见 `tests/ws1/build-info.test.js`：
 
@@ -49,5 +52,7 @@
 7. `built_at` 是合法且规范化的 ISO 8601 字符串（`new Date(x).toISOString() === x`）
 8. `git_sha` 是非空字符串，**即使**清空 `GIT_SHA / GIT_COMMIT / COMMIT_SHA / SOURCE_COMMIT / VERCEL_GIT_COMMIT_SHA` 五个常见 SHA 注入变量
 9. `git_sha` 取值遵循固定优先级 `GIT_SHA → GIT_COMMIT → COMMIT_SHA → SOURCE_COMMIT → VERCEL_GIT_COMMIT_SHA → 'unknown'`（5 个 env 变量同时设不同 sentinel，逐个删除最高位、断言次高位接管，全部删除后回落字面量 `'unknown'`）
+10. **cwd 漂移防御**：`process.chdir('/tmp')` 主动制造非 brain 目录 cwd 后，`package_version` 仍然严格等于 brain/package.json 的 version 字段——任何依赖 `process.cwd()` 的实现（如 `require('./package.json')`）会在 `/tmp` 下读错版本或抛错
+11. **既有路由 cascade guard**：build-info.js 与 brain-manifest.js 都必须作为 ESM 模块可加载、默认导出是 Router 实例（带 `.use` 方法）；前者挡 build-info 实现缺失，后者挡 server.js 重构连带破坏既有 router 文件
 
 测试默认隔离 module 缓存：测试文件 `beforeEach(() => vi.resetModules())`，确保每个 it 独立重新评估 build-info.js 模块顶层（重新读 env vars / Date.now()），不被前一个 it 的 env 操控残留污染。
