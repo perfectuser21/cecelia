@@ -54,8 +54,15 @@ import {
 import { tickState } from './tick-state.js';
 // Phase D Part 1.7b: executeTick 抽到 tick-runner.js
 import { executeTick } from './tick-runner.js';
-// 启动循环用 — startTickLoop 在 throttled tick 时推送 idle 心跳
-import { publishCognitiveState } from './events/taskEvents.js';
+// Phase D2.2: runTickSafe / startTickLoop / stopTickLoop + 3 个常量抽到 tick-loop.js
+import {
+  runTickSafe,
+  startTickLoop,
+  stopTickLoop,
+  TICK_INTERVAL_MINUTES,
+  TICK_LOOP_INTERVAL_MS,
+  TICK_TIMEOUT_MS
+} from './tick-loop.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -70,10 +77,8 @@ function tickLog(...args) {
   }
 }
 
-// Tick configuration
-const TICK_INTERVAL_MINUTES = 2;
-const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
-const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
+// Phase D2.2: TICK_INTERVAL_MINUTES / TICK_LOOP_INTERVAL_MS / TICK_TIMEOUT_MS 已搬到 tick-loop.js
+// 通过顶部 import 取得，下方 export 块照常 re-export 给老 caller
 
 // Minimal Mode — 只保留心跳 + 手动任务派发，跳过所有自动调度（内容线/巡检/告警）
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
@@ -218,127 +223,8 @@ async function getTickStatus() {
   };
 }
 
-/**
- * Run tick with reentry guard and timeout protection
- * @param {string} source - who triggered this tick
- * @param {Function} [tickFn] - optional tick function override (for testing)
- */
-async function runTickSafe(source = 'loop', tickFn) {
-  const doTick = tickFn || executeTick;
-
-  // Throttle: loop ticks only execute once per TICK_INTERVAL_MINUTES
-  if (source === 'loop') {
-    const elapsed = Date.now() - tickState.lastExecuteTime;
-    const intervalMs = TICK_INTERVAL_MINUTES * 60 * 1000;
-    if (tickState.lastExecuteTime > 0 && elapsed < intervalMs) {
-      return { skipped: true, reason: 'throttled', source, next_in_ms: intervalMs - elapsed };
-    }
-  }
-
-  // Reentry guard: check if already running
-  if (tickState.tickRunning) {
-    // Timeout protection: if tick has been running > TICK_TIMEOUT_MS, force-release the lock
-    // 根因：doTick() 内部有 unresolved promise 时，finally 永远不执行，锁永不释放
-    // 修复：超时后强制释放，让下一轮 tick 能正常执行
-    if (tickState.tickLockTime && (Date.now() - tickState.tickLockTime > TICK_TIMEOUT_MS)) {
-      console.warn(`[tick-loop] Tick stuck for ${Math.round((Date.now() - tickState.tickLockTime) / 1000)}s (>${TICK_TIMEOUT_MS / 1000}s), FORCE-RELEASING lock (source: ${source})`);
-      tickState.tickRunning = false;
-      tickState.tickLockTime = null;
-      // 不 return — 继续执行本轮 tick
-    } else {
-      tickLog(`[tick-loop] Tick already running, skipping (source: ${source})`);
-      return { skipped: true, reason: 'already_running', source };
-    }
-  }
-
-  tickState.tickRunning = true;
-  tickState.tickLockTime = Date.now();
-
-  // 保底 setTimeout：无论 doTick() 是否 resolve，TICK_TIMEOUT_MS 后强制释放锁
-  // 解决 tickState.tickLockTime 被清但 tickState.tickRunning 未清的边界情况
-  const _forceReleaseTimer = setTimeout(() => {
-    if (tickState.tickRunning) {
-      console.warn(`[tick-loop] FORCE-RELEASE via setTimeout (${TICK_TIMEOUT_MS / 1000}s safety net, source: ${source})`);
-      tickState.tickRunning = false;
-      tickState.tickLockTime = null;
-    }
-  }, TICK_TIMEOUT_MS);
-
-  try {
-    const result = await doTick();
-    tickState.lastExecuteTime = Date.now();
-    tickLog(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
-    return result;
-  } catch (err) {
-    console.error(`[tick-loop] Tick failed (source: ${source}):`, err.message);
-    return { success: false, error: err.message, source };
-  } finally {
-    clearTimeout(_forceReleaseTimer);
-    tickState.tickRunning = false;
-    tickState.tickLockTime = null;
-  }
-}
-
-/**
- * Start the tick loop (setInterval)
- */
-function startTickLoop() {
-  if (tickState.loopTimer) {
-    tickLog('[tick-loop] Loop already running, skipping start');
-    return false;
-  }
-
-  // 微心跳计数器：每 6 次循环（约 30s）推送一次 idle 状态
-  let _microHeartbeatCounter = 0;
-  const MICRO_HEARTBEAT_INTERVAL = 6; // 6 × 5s = 30s
-
-  tickState.loopTimer = setInterval(async () => {
-    try {
-      const result = await runTickSafe('loop');
-      // 微心跳：tick 被节流时，定期推送 idle 认知状态
-      if (result?.skipped && result?.reason === 'throttled') {
-        _microHeartbeatCounter++;
-        if (_microHeartbeatCounter >= MICRO_HEARTBEAT_INTERVAL) {
-          _microHeartbeatCounter = 0;
-          const nextInMs = result.next_in_ms || 0;
-          const nextInMin = Math.ceil(nextInMs / 60000);
-          publishCognitiveState({
-            phase: 'idle',
-            detail: nextInMin > 0 ? `等待下次 tick（${nextInMin}分钟后）` : '空闲中',
-            meta: { next_in_ms: nextInMs },
-          });
-        }
-      } else {
-        _microHeartbeatCounter = 0; // tick 执行了，重置计数器
-      }
-    } catch (err) {
-      console.error('[tick-loop] Unexpected error in loop:', err.message);
-    }
-  }, TICK_LOOP_INTERVAL_MS);
-
-  // Don't prevent process exit
-  if (tickState.loopTimer.unref) {
-    tickState.loopTimer.unref();
-  }
-
-  tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
-  return true;
-}
-
-/**
- * Stop the tick loop
- */
-function stopTickLoop() {
-  if (!tickState.loopTimer) {
-    tickLog('[tick-loop] No loop running, skipping stop');
-    return false;
-  }
-
-  clearInterval(tickState.loopTimer);
-  tickState.loopTimer = null;
-  tickLog('[tick-loop] Stopped');
-  return true;
-}
+// Phase D2.2: runTickSafe / startTickLoop / stopTickLoop 实现搬到 tick-loop.js，
+// 通过顶部 import 取得；下方 export 块统一 re-export，老 caller 不受影响。
 
 /**
  * 记录恢复尝试到 working_memory recovery_attempts（尽力写入，失败不影响主流程）
