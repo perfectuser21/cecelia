@@ -30,7 +30,7 @@ import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { writeDockerCallback } from '../docker-executor.js';
 import { checkPrStatus, executeMerge, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField } from '../harness-graph.js';
+import { parseDockerOutput, extractField } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 

@@ -86,7 +86,8 @@ router.get('/health', async (req, res) => {
     const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
-      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_planner' AND status='in_progress'"),
+      // active_pipelines: harness_planner 已退役（PR retire-harness-planner），改统计 harness_initiative
+      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_initiative' AND status='in_progress'"),
       pool.query(`
         SELECT
           COUNT(*) FILTER (WHERE status = 'completed')::integer AS passed,

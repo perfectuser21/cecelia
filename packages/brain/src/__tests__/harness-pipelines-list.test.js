@@ -121,16 +121,18 @@ describe('buildPipelineRecord', () => {
   });
 
   it('Legacy 模式（无 langgraph 事件）：fallback 到 stages 聚合', () => {
+    // 注：harness_planner stage 已退役（PR retire-harness-planner），
+    // 此处用 harness_contract_propose / harness_generate 作为 legacy stage 样例。
     const legacy = {
-      harness_planner: { task_type: 'harness_planner', label: 'Planner', status: 'completed',
-                         created_at: '2026-04-01T00:00:00Z' },
+      harness_contract_propose: { task_type: 'harness_contract_propose', label: 'Propose', status: 'completed',
+                                  created_at: '2026-04-01T00:00:00Z' },
       harness_generate: { task_type: 'harness_generate', label: 'Generate', status: 'in_progress',
                           created_at: '2026-04-01T00:10:00Z' },
     };
     const rec = buildPipelineRecord(baseTask, [], legacy);
     expect(rec.langgraph).toBeNull();
-    const plannerStage = rec.stages.find(s => s.task_type === 'harness_planner');
-    expect(plannerStage.status).toBe('completed');
+    const proposeStage = rec.stages.find(s => s.task_type === 'harness_contract_propose');
+    expect(proposeStage.status).toBe('completed');
     const genStage = rec.stages.find(s => s.task_type === 'harness_generate');
     expect(genStage.status).toBe('in_progress');
   });

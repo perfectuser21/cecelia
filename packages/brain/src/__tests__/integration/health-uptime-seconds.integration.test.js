@@ -105,7 +105,8 @@ describe('/api/brain/health uptime_seconds 字段', () => {
     });
     __poolMock.query.mockReset();
     __poolMock.query.mockImplementation((sql) => {
-      if (/harness_planner/.test(sql)) {
+      // 注：harness_planner 已退役（PR retire-harness-planner），active_pipelines 改用 harness_initiative
+      if (/harness_initiative/.test(sql)) {
         return Promise.resolve({ rows: [{ cnt: 0 }] });
       }
       if (/harness_evaluate/.test(sql)) {

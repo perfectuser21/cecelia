@@ -27,7 +27,7 @@
 
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
-import { parseDockerOutput, loadSkillContent } from '../harness-graph.js';
+import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';

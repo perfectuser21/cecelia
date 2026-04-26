@@ -8,8 +8,8 @@ import { describe, it, expect } from 'vitest';
 
 describe('Pipeline Steps — label generation', () => {
   function buildStepLabel(taskType, counters) {
+    // 注：harness_planner 已退役（PR retire-harness-planner），已从 BASE_LABELS 移除
     const BASE_LABELS = {
-      harness_planner: 'Planner',
       harness_contract_propose: 'Propose',
       harness_contract_review: 'Review',
       harness_generate: 'Generate',
@@ -28,7 +28,6 @@ describe('Pipeline Steps — label generation', () => {
 
   it('generates correct labels for single pipeline run', () => {
     const counters = {};
-    expect(buildStepLabel('harness_planner', counters)).toBe('Planner');
     expect(buildStepLabel('harness_contract_propose', counters)).toBe('Propose R1');
     expect(buildStepLabel('harness_contract_review', counters)).toBe('Review R1');
     expect(buildStepLabel('harness_generate', counters)).toBe('Generate');
@@ -52,13 +51,10 @@ describe('Pipeline Steps — label generation', () => {
 
 describe('Pipeline Steps — rebuildPrompt', () => {
   function rebuildPrompt(task, sprintDir) {
+    // 注：harness_planner 已退役（PR retire-harness-planner），分支已移除
     const t = task.task_type;
     const id = task.task_id;
     const desc = task.description || task.title || '';
-
-    if (t === 'harness_planner') {
-      return `/harness-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${id}\nsprint_dir: ${sprintDir}\n\n${desc}`;
-    }
 
     if (t === 'harness_contract_propose') {
       const round = task.payload?.propose_round || 1;
@@ -67,15 +63,6 @@ describe('Pipeline Steps — rebuildPrompt', () => {
 
     return desc;
   }
-
-  it('builds planner prompt correctly', () => {
-    const task = { task_id: 'abc-123', task_type: 'harness_planner', description: 'test desc' };
-    const result = rebuildPrompt(task, 'sprints');
-    expect(result).toContain('/harness-planner');
-    expect(result).toContain('task_id: abc-123');
-    expect(result).toContain('sprint_dir: sprints');
-    expect(result).toContain('test desc');
-  });
 
   it('builds proposer prompt with round number', () => {
     const task = {

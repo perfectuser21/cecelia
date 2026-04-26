@@ -1,7 +1,8 @@
 /**
  * extract-field-fallback.test.js
  *
- * 覆盖 harness-graph.js::extractField 对多种 Claude 输出格式的兼容性。
+ * 覆盖 harness-shared.js::extractField 对多种 Claude 输出格式的兼容性。
+ * （函数原定义在 harness-graph.js，PR retire-harness-planner 抽到 harness-shared.js）
  *
  * 背景：harness task 0154e285 在 Generator 里 git push 静默失败时 Claude 输出
  *      `pr_url: null`，老正则贪婪匹配返回字符串 "null"，Evaluator 拿到假 URL
@@ -9,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractField } from '../harness-graph.js';
+import { extractField } from '../harness-shared.js';
 
 describe('extractField - 无效字面量拒绝（根因 B 的核心修复）', () => {
   it('handles null literal → returns null (not string "null")', () => {
