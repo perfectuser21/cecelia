@@ -63,6 +63,8 @@ import {
   TICK_LOOP_INTERVAL_MS,
   TICK_TIMEOUT_MS
 } from './tick-loop.js';
+// Phase D2.4: getTickStatus / isStale / getStartupErrors 抽到 tick-status.js（仅 re-export）
+import { getTickStatus, isStale, getStartupErrors } from './tick-status.js';
 
 // Tick log helper — adds [HH:MM:SS] prefix in Asia/Shanghai timezone
 const { log: _tickWrite } = console;
@@ -130,91 +132,7 @@ const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS
 
 // Tick watchdog 已搬到 tick-watchdog.js（Phase D Part 1.3）— 通过 isTickWatchdogActive() getter 访问
 
-/**
- * Get tick status
- */
-async function getTickStatus() {
-  const result = await pool.query(`
-    SELECT key, value_json FROM working_memory
-    WHERE key IN ($1, $2, $3, $4, $5, $6, $7)
-  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY, 'startup_errors', 'recovery_attempts', TICK_STATS_KEY]);
-
-  const memory = {};
-  for (const row of result.rows) {
-    memory[row.key] = row.value_json;
-  }
-
-  const enabled = memory[TICK_ENABLED_KEY]?.enabled ?? true;
-  const lastTick = memory[TICK_LAST_KEY]?.timestamp || null;
-  const actionsToday = memory[TICK_ACTIONS_TODAY_KEY]?.count || 0;
-
-  // Calculate next tick time
-  let nextTick = null;
-  if (enabled && lastTick) {
-    const lastTickDate = new Date(lastTick);
-    nextTick = new Date(lastTickDate.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString();
-  } else if (enabled) {
-    nextTick = new Date(Date.now() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString();
-  }
-
-  const lastDispatch = memory[TICK_LAST_DISPATCH_KEY] || null;
-
-  // startup_errors 可观测字段
-  const startupErrors = memory['startup_errors'] || null;
-  const startupErrorCount = startupErrors?.total_failures || 0;
-  const startupOk = startupErrorCount === 0;
-
-  // recovery_attempts 可观测字段
-  const recoveryAttempts = memory['recovery_attempts'] || null;
-
-  // Get quarantine stats
-  let quarantineStats = { total: 0 };
-  try {
-    quarantineStats = await getQuarantineStats();
-  } catch { /* ignore */ }
-
-  // Get slot allocation budget
-  let slotBudget = null;
-  try {
-    slotBudget = await calculateSlotBudget();
-  } catch { /* ignore */ }
-
-  const rawTickStats = memory[TICK_STATS_KEY] || null;
-  const tickStats = {
-    total_executions: rawTickStats?.total_executions ?? 0,
-    last_executed_at: rawTickStats?.last_executed_at ?? null,
-    last_duration_ms: rawTickStats?.last_duration_ms ?? null,
-  };
-
-  return {
-    enabled,
-    loop_running: tickState.loopTimer !== null,
-    draining: isDraining(),
-    drain_started_at: getDrainStartedAt(),
-    post_drain_cooldown: isPostDrainCooldown(),
-    tick_watchdog_active: isTickWatchdogActive(),
-    interval_minutes: TICK_INTERVAL_MINUTES,
-    loop_interval_ms: TICK_LOOP_INTERVAL_MS,
-    last_tick: lastTick,
-    next_tick: nextTick,
-    actions_today: actionsToday,
-    tick_running: tickState.tickRunning,
-    last_dispatch: lastDispatch,
-    startup_ok: startupOk,
-    startup_error_count: startupErrorCount,
-    recovery_timer_active: tickState.recoveryTimer !== null,
-    recovery_attempts: recoveryAttempts,
-    max_concurrent: MAX_CONCURRENT_TASKS,
-    auto_dispatch_max: AUTO_DISPATCH_MAX,
-    resources: checkServerResources(),
-    slot_budget: slotBudget,
-    dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
-    circuit_breakers: getAllStates(),
-    alertness: getCurrentAlertness(),
-    quarantine: quarantineStats,
-    tick_stats: tickStats,
-  };
-}
+// Phase D2.4: getTickStatus 实现搬到 tick-status.js（顶部 import）
 
 // Phase D2.2: runTickSafe / startTickLoop / stopTickLoop 实现搬到 tick-loop.js，
 // 通过顶部 import 取得；下方 export 块统一 re-export，老 caller 不受影响。
@@ -230,17 +148,7 @@ import {
 } from './tick-recovery.js';
 
 
-/**
- * Check if a task is stale (in_progress for too long)
- */
-function isStale(task) {
-  if (task.status !== 'in_progress') return false;
-  if (!task.started_at) return false;
-
-  const startedAt = new Date(task.started_at);
-  const hoursElapsed = (Date.now() - startedAt.getTime()) / (1000 * 60 * 60);
-  return hoursElapsed > STALE_THRESHOLD_HOURS;
-}
+// Phase D2.4: isStale 实现搬到 tick-status.js（顶部 import）
 
 // D1.7b: logTickDecision / incrementActionsToday 仅 executeTick body 用，已搬到 tick-runner.js
 
@@ -268,26 +176,7 @@ function isStale(task) {
 // Phase D Part 1.1: 48h 系统简报实现搬到 report-48h.js，下方 import re-export。
 // Phase D Part 1.2: drain 子系统实现搬到 drain.js，下方 import re-export。
 
-/**
- * 读取 working_memory 中的 startup_errors 数据
- * 用于 GET /api/brain/tick/startup-errors 端点
- * @returns {{ errors: Array, total_failures: number, last_error_at: string|null }}
- */
-async function getStartupErrors() {
-  const result = await pool.query(
-    'SELECT value_json FROM working_memory WHERE key = $1',
-    ['startup_errors']
-  );
-  const data = result.rows[0]?.value_json;
-  if (!data) {
-    return { errors: [], total_failures: 0, last_error_at: null };
-  }
-  return {
-    errors: Array.isArray(data.errors) ? data.errors : [],
-    total_failures: data.total_failures || 0,
-    last_error_at: data.last_error_at || null
-  };
-}
+// Phase D2.4: getStartupErrors 实现搬到 tick-status.js（顶部 import）
 
 // Phase D2.1: 9 个 _resetLastXxxTime 已下沉 tick-state.js
 // 下方 export { ... } from './tick-state.js' 保留向后兼容（测试仍 import from './tick.js'）
