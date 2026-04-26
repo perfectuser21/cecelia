@@ -747,3 +747,287 @@ export async function compileHarnessInitiativeGraph() {
   const checkpointer = await getPgCheckpointer();
   return buildHarnessInitiativeGraph().compile({ checkpointer });
 }
+
+// ─── Sprint 1: 全图（Phase A+B+C 一个 graph 跑到底） ─────────────────────
+//
+// 在 C8a Phase A graph 之上扩 fanout/run_sub_task/join/final_e2e/report 节点。
+// 砍 Phase B/C 的 6 个 procedural module（harness-task-dispatch / harness-watcher /
+// harness-phase-advancer / harness-final-e2e.runFinalE2E 编排 / harness-initiative-runner.runPhaseCIfReady /
+// shepherd 中 harness 分支）+ 4 task_type（harness_task / harness_ci_watch / harness_fix / harness_final_e2e）。
+//
+// Spec: docs/superpowers/specs/2026-04-26-harness-langgraph-full-graph-design.md
+// Plan: docs/superpowers/plans/2026-04-26-harness-langgraph-full-graph.md
+
+import { Send } from '@langchain/langgraph';
+import { buildHarnessTaskGraph as _buildTaskGraph } from './harness-task.graph.js';
+import {
+  runScenarioCommand,
+  bootstrapE2E,
+  teardownE2E,
+  normalizeAcceptance,
+} from '../harness-final-e2e.js';
+
+/**
+ * Full Initiative State：复用 InitiativeState 字段 + sub_tasks (merge by id) +
+ * final_e2e_verdict + final_e2e_failed_scenarios + report_path。
+ *
+ * 注：sub_task (单数) 字段用于 Send fanout 把子状态注入 run_sub_task node。
+ * sub_tasks (复数) 是累计聚合，reducer = mergeBy id。
+ */
+export const FullInitiativeState = Annotation.Root({
+  task:           Annotation({ reducer: (_o, n) => n, default: () => null }),
+  initiativeId:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  worktreePath:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  githubToken:    Annotation({ reducer: (_o, n) => n, default: () => null }),
+  plannerOutput:  Annotation({ reducer: (_o, n) => n, default: () => null }),
+  taskPlan:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+  prdContent:     Annotation({ reducer: (_o, n) => n, default: () => null }),
+  ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
+  result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
+  error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+  contract:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+  contractBranch: Annotation({ reducer: (_o, n) => n, default: () => null }),
+
+  // Send fanout 注入子状态
+  sub_task:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+
+  // 累计：merge by id
+  sub_tasks: Annotation({
+    reducer: (curr, upd) => {
+      if (!Array.isArray(upd) || upd.length === 0) return curr || [];
+      const map = new Map((curr || []).map((s) => [s.id, s]));
+      for (const s of upd) map.set(s.id, { ...(map.get(s.id) || {}), ...s });
+      return [...map.values()];
+    },
+    default: () => [],
+  }),
+  all_sub_tasks_done: Annotation({ reducer: (_o, n) => n, default: () => false }),
+  final_e2e_verdict: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  final_e2e_failed_scenarios: Annotation({ reducer: (_o, n) => n, default: () => [] }),
+  report_path: Annotation({ reducer: (_o, n) => n, default: () => null }),
+});
+
+/**
+ * fanoutSubTasksNode: 用作 conditional edge 的路由函数（不是 graph node）。
+ * 返回 Send[] 让 LangGraph runtime 并行调度 N 个 run_sub_task 实例。
+ * 注：函数名保留 ...Node 后缀仅为方便 import；实际作为 router 用，调用时签名 (state) => Send[].
+ */
+export function fanoutSubTasksNode(state) {
+  const tasks = state.taskPlan?.tasks || [];
+  if (tasks.length === 0) {
+    // 无 sub_task → 直接跳 join（join 处理空 sub_tasks 路径）
+    return ['join'];
+  }
+  return tasks.map((t) => new Send('run_sub_task', {
+    sub_task: t,
+    initiativeId: state.initiativeId,
+    worktreePath: state.worktreePath,
+    githubToken: state.githubToken,
+    contractBranch: state.ganResult?.propose_branch || state.contractBranch || null,
+  }));
+}
+
+/**
+ * fanoutPassthroughNode: 真正的 graph node — 占位，让 conditional edge 有源头。
+ */
+export async function fanoutPassthroughNode(_state) { return {}; }
+
+let _taskGraphCompiledCache = null;
+function _getTaskGraphCompiled() {
+  if (_taskGraphCompiledCache) return _taskGraphCompiledCache;
+  _taskGraphCompiledCache = _buildTaskGraph().compile();
+  return _taskGraphCompiledCache;
+}
+
+export async function runSubTaskNode(state, opts = {}) {
+  const subTask = state.sub_task;
+  if (!subTask) return {};
+  const compiled = opts.compiledTaskGraph || _getTaskGraphCompiled();
+  let final;
+  try {
+    final = await compiled.invoke(
+      {
+        task: { id: subTask.id, title: subTask.title, description: subTask.description, payload: subTask.payload || {} },
+        initiativeId: state.initiativeId,
+        worktreePath: state.worktreePath,
+        githubToken: state.githubToken,
+        contractBranch: state.contractBranch,
+      },
+      { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}` }, recursionLimit: 200 }
+    );
+  } catch (err) {
+    final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
+  }
+  return {
+    sub_tasks: [{
+      id: subTask.id,
+      title: subTask.title,
+      status: final.status,
+      pr_url: final.pr_url,
+      fix_round: final.fix_round,
+      cost_usd: final.cost_usd,
+      ci_fail_type: final.ci_fail_type,
+    }],
+  };
+}
+
+export async function joinSubTasksNode(state) {
+  const subs = state.sub_tasks || [];
+  if (subs.length === 0) {
+    return { all_sub_tasks_done: false };
+  }
+  const allMerged = subs.every((s) => s.status === 'merged');
+  if (!allMerged) {
+    const failed = subs.filter((s) => s.status !== 'merged').map((s) => s.id);
+    console.warn(`[harness-initiative.graph] join: ${failed.length} sub-tasks not merged → FAIL final E2E`);
+    return {
+      all_sub_tasks_done: false,
+      final_e2e_verdict: 'FAIL',
+      final_e2e_failed_scenarios: failed.map((id) => ({
+        name: `sub_task ${id} did not merge`,
+        covered_tasks: [id],
+        exitCode: 1,
+        output: '',
+      })),
+    };
+  }
+  return { all_sub_tasks_done: true };
+}
+
+function _collectCoveredTasks(scenarios) {
+  const set = new Set();
+  for (const s of scenarios) for (const t of s.covered_tasks || []) set.add(t);
+  return [...set];
+}
+
+export async function finalE2eNode(state, opts = {}) {
+  // join 已 FAIL 短路：不跑 E2E
+  if (state.final_e2e_verdict === 'FAIL') {
+    return { final_e2e_verdict: 'FAIL' };
+  }
+  const contract = state.contract || {};
+  const acceptance = contract.e2e_acceptance || state.taskPlan?.e2e_acceptance;
+  if (!acceptance) {
+    // 无 e2e_acceptance → 视为 PASS（向后兼容老 PRD 不强制）
+    return { final_e2e_verdict: 'PASS' };
+  }
+
+  let scenarios;
+  try {
+    ({ scenarios } = normalizeAcceptance(acceptance));
+  } catch (err) {
+    return { error: { node: 'final_e2e', message: err.message }, final_e2e_verdict: 'FAIL' };
+  }
+
+  const runScenario = opts.runScenario || runScenarioCommand;
+  const bootstrap = opts.bootstrap || bootstrapE2E;
+  const teardown = opts.teardown || teardownE2E;
+  const skipBootstrap = opts.skipBootstrap === true;
+
+  if (!skipBootstrap) {
+    const bs = bootstrap();
+    if (bs.exitCode !== 0) {
+      return {
+        final_e2e_verdict: 'FAIL',
+        final_e2e_failed_scenarios: [{
+          name: `bootstrap failure`,
+          covered_tasks: _collectCoveredTasks(scenarios),
+          output: bs.output, exitCode: bs.exitCode,
+        }],
+      };
+    }
+  }
+
+  const failed = [];
+  for (const sc of scenarios) {
+    let f = null;
+    for (const cmd of sc.commands) {
+      const r = await runScenario(cmd, { scenarioName: sc.name, coveredTasks: sc.covered_tasks });
+      if (r.exitCode !== 0) {
+        f = { name: sc.name, covered_tasks: [...sc.covered_tasks], output: r.output, exitCode: r.exitCode };
+        break;
+      }
+    }
+    if (f) failed.push(f);
+  }
+
+  if (!skipBootstrap) {
+    try { teardown(); } catch { /* ignore */ }
+  }
+
+  return {
+    final_e2e_verdict: failed.length === 0 ? 'PASS' : 'FAIL',
+    final_e2e_failed_scenarios: failed,
+  };
+}
+
+export async function reportNode(state, opts = {}) {
+  const dbPool = opts.pool || pool;
+  const reportContent = JSON.stringify({
+    initiativeId: state.initiativeId,
+    sub_tasks: state.sub_tasks || [],
+    final_e2e_verdict: state.final_e2e_verdict,
+    failed_scenarios: state.final_e2e_failed_scenarios || [],
+    cost_usd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
+    completed_at: new Date().toISOString(),
+  }, null, 2);
+  // 写 initiative_runs phase=done/failed
+  try {
+    const phase = state.final_e2e_verdict === 'PASS' ? 'done' : 'failed';
+    const reason = `Final E2E ${state.final_e2e_verdict}: ${(state.final_e2e_failed_scenarios || []).map(s => s.name).join('; ').slice(0, 500)}`;
+    await dbPool.query(
+      `UPDATE initiative_runs SET phase=$2, completed_at=NOW(), updated_at=NOW(),
+        failure_reason=CASE WHEN $2='failed' THEN $3 ELSE failure_reason END
+       WHERE initiative_id=$1::uuid`,
+      [state.initiativeId, phase, reason]
+    );
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
+  }
+  return { report_path: reportContent };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 完整 graph：Phase A + B + C 全程 LangGraph
+
+function _routeAfterJoin(state) {
+  if (state.error) return 'end';
+  return 'final_e2e'; // 即便 FAIL 也进 final_e2e（短路 verdict=FAIL，不再跑 scenarios）
+}
+
+function _routeAfterFinalE2E(state) {
+  if (state.error) return 'end';
+  return 'report';
+}
+
+export function buildHarnessFullGraph() {
+  return new StateGraph(FullInitiativeState)
+    .addNode('prep', prepInitiativeNode)
+    .addNode('planner', runPlannerNode)
+    .addNode('parsePrd', parsePrdNode)
+    .addNode('ganLoop', runGanLoopNode)
+    .addNode('dbUpsert', dbUpsertNode)
+    .addNode('fanout', fanoutPassthroughNode)
+    .addNode('run_sub_task', runSubTaskNode)
+    .addNode('join', joinSubTasksNode)
+    .addNode('final_e2e', finalE2eNode)
+    .addNode('report', reportNode)
+    .addEdge(START, 'prep')
+    .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
+    .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
+    .addConditionalEdges('parsePrd', stateHasError, { error: END, ok: 'ganLoop' })
+    .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'dbUpsert' })
+    .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'fanout' })
+    // fanout 是 passthrough node；conditional edge 的路由函数 fanoutSubTasksNode
+    // 返回 Send[]，LangGraph runtime 并行调 run_sub_task。
+    .addConditionalEdges('fanout', fanoutSubTasksNode, ['run_sub_task', 'join'])
+    .addEdge('run_sub_task', 'join')
+    .addConditionalEdges('join', _routeAfterJoin, { end: END, final_e2e: 'final_e2e' })
+    .addConditionalEdges('final_e2e', _routeAfterFinalE2E, { end: END, report: 'report' })
+    .addEdge('report', END);
+}
+
+export async function compileHarnessFullGraph() {
+  const checkpointer = await getPgCheckpointer();
+  return buildHarnessFullGraph().compile({ checkpointer });
+}
