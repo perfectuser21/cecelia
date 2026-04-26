@@ -100,9 +100,8 @@ export default defineConfig({
       'src/__tests__/watchdog-quarantine-race.test.js',
       'src/__tests__/zombie-cleaner.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
-      'src/__tests__/content-pipeline-executors.test.js',
-      'src/__tests__/content-pipeline-llm.test.js',
-      'src/__tests__/content-pipeline-error-message.test.js',
+      // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
+      // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）
       'src/__tests__/executor-startup-sync.test.js',
       'src/__tests__/startup-sync.test.js',
       // content_type 注册表加载缺少 content_type 字段 — 预先存在（main 上已失败）

@@ -36,11 +36,7 @@ vi.mock('../topic-selection-scheduler.js', () => ({
   hasTodayTopics: vi.fn(),
 }));
 
-// Mock content-pipeline-orchestrator
-vi.mock('../content-pipeline-orchestrator.js', () => ({
-  orchestrateContentPipelines: vi.fn().mockResolvedValue({}),
-  executeQueuedContentTasks: vi.fn().mockResolvedValue({ executed: 0 }),
-}));
+// content-pipeline-orchestrator 已删除（编排搬到 ZJ pipeline-worker），不再需要 mock。
 
 // Mock llm-caller
 vi.mock('../llm-caller.js', () => ({

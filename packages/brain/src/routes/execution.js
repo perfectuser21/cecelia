@@ -2730,24 +2730,9 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
-    // 5c11. content-* pipeline 子任务完成/失败 → 推进 Pipeline 状态机
-    if (newStatus === 'completed' || newStatus === 'failed') {
-      try {
-        const { advanceContentPipeline, PIPELINE_STAGES } = await import('../content-pipeline-orchestrator.js');
-        const cpTaskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
-        const cpTask = cpTaskRow.rows[0];
-        if (cpTask && PIPELINE_STAGES.includes(cpTask.task_type) && cpTask.payload?.parent_pipeline_id) {
-          // findingsValue 原在上方 try 块内，此处不可达；保持历史行为（catch 吞 ReferenceError → null）
-          const findingsVal = null;
-          const advResult = await advanceContentPipeline(task_id, newStatus, findingsVal);
-          if (advResult.advanced) {
-            console.log(`[execution-callback] content pipeline 推进: task=${task_id} type=${cpTask.task_type} action=${advResult.action}`);
-          }
-        }
-      } catch (cpErr) {
-        console.error(`[execution-callback] content pipeline advance error (non-fatal): ${cpErr.message}`);
-      }
-    }
+    // 5c11. content-* pipeline 子任务推进 — 已废除
+    // in-Brain content-pipeline 编排已搬到 ZJ pipeline-worker（Python LangGraph，PR zenithjoy#216）。
+    // ZJ pipeline-worker 自己维护各 stage 状态机，Cecelia 不再需要 advanceContentPipeline。
 
     // 5c13. crystallize_* 子任务完成/失败 → 推进 crystallize 流水线状态机
     if (newStatus === 'completed' || newStatus === 'failed') {

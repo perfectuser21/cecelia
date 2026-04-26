@@ -706,10 +706,12 @@ async function executeTick() {
     console.error('[tick] Crystallize orchestration check failed:', crystallizeErr.message);
   }
 
-  // 0.5.5. Content Pipeline Orchestration — 已废除（阶段3：执行搬到 zenithjoy pipeline-worker）
-  // orchestrateContentPipelines() 和 executeQueuedContentTasks() 不再从 tick 调用。
-  // zenithjoy 的 pipeline-worker 负责轮询 pipeline_runs 并执行 6 阶段。
-  // Cecelia 只提供 can-run 调度接口（POST /api/brain/can-run）。
+  // 0.5.5. Content Pipeline Orchestration — 已搬到 ZJ pipeline-worker（Python LangGraph，PR zenithjoy#216）。
+  // Cecelia 仅提供：
+  //   - 任务创建（POST /api/brain/tasks，由 ZJ apps/api 调用）
+  //   - 调度许可（POST /api/brain/can-run，由 ZJ pipeline-worker 调用）
+  //   - LLM 服务（POST /api/brain/llm-service/generate，由 ZJ executors 调用）
+  // 在 Brain 内的 orchestrator/executors/graph 文件已全部删除。
 
   // 0.6. Recurring Tasks Check
   try {

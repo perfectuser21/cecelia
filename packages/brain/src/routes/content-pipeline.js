@@ -1,6 +1,13 @@
 /**
  * Brain API: Content Pipeline
  *
+ * 编排已搬到 ZJ pipeline-worker（Python LangGraph，PR zenithjoy#216）。
+ * Cecelia 端只剩：
+ *   - 任务 CRUD（创 / 列 / 阶段查 / 产出查 / 统计）
+ *   - 选题入口（trigger-topics）
+ *   - 发布前内容质量检查（pre-publish-check）
+ *   - LLM 测试入口（test-step）
+ *
  * GET  /api/brain/content-types                列出所有已注册内容类型
  * GET  /api/brain/content-types/:type/config   获取指定类型的完整配置（DB 优先，YAML 兜底）
  * PUT  /api/brain/content-types/:type/config   更新指定类型配置到 DB
@@ -9,9 +16,9 @@
  * GET  /api/brain/pipelines/daily-stats        每日产出统计（completed/in_progress/failed/queued）
  * POST /api/brain/pipelines                    创建新 content-pipeline 任务
  * POST /api/brain/pipelines/trigger-topics     手动触发今日选题生成（忽略时间窗口限制）
- * POST /api/brain/pipelines/e2e-trigger        端到端流程触发（选题→Pipeline创建→执行）
- * POST /api/brain/pipelines/batch-e2e-trigger  批量端到端触发（一次创建多条 pipeline，默认5条）
- * POST /api/brain/pipelines/:id/run            手动触发 pipeline 执行（不依赖 tick）
+ * POST /api/brain/pipelines/e2e-trigger        端到端：创建 task（实际执行由 ZJ pipeline-worker 60s 内拉到）
+ * POST /api/brain/pipelines/batch-e2e-trigger  批量创建（同上）
+ * POST /api/brain/pipelines/:id/run            重置 + 等 ZJ pipeline-worker 拉到（202 Accepted）
  * POST /api/brain/pipelines/:id/pre-publish-check  发布前内容质量检查
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
  * GET  /api/brain/pipelines/:id/output         查询 pipeline 产出物（manifest）
@@ -22,23 +29,11 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import pool from '../db.js';
 import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTypesFromYaml } from '../content-types/content-type-registry.js';
-import { orchestrateContentPipelines, executeQueuedContentTasks } from '../content-pipeline-orchestrator.js';
-import {
-  runContentPipeline,
-  isContentPipelineLangGraphEnabled,
-} from '../content-pipeline-graph-runner.js';
 import { triggerDailyTopicSelection, hasTodayTopics } from '../topic-selection-scheduler.js';
 import { callLLM } from '../llm-caller.js';
 import { validateAllVariants } from '../content-quality-validator.js';
 
 const router = express.Router();
-
-// Content pipeline 并发硬限（防 Mac OOM）。
-// 一条 pipeline 峰值约 2GB（research/copywrite stage Claude CLI + context），
-// Mac 16GB 同时跑 2 条 × 2GB = 4GB peak，留 12GB 给 Brain / Dashboard / 用户进程。
-// 第 3 条请求立即 429 返回，由上层（Dashboard / cron / 手动）决定排队或丢弃。
-const PIPELINE_MAX_CONCURRENT = parseInt(process.env.PIPELINE_MAX_CONCURRENT || '2', 10);
-const _runningPipelines = new Set();
 
 /**
  * GET /content-types
@@ -503,7 +498,10 @@ router.post('/trigger-topics', async (req, res) => {
 
 /**
  * POST /:id/run
- * 手动触发 pipeline 执行（不依赖 tick 调度器）
+ *
+ * 重置 pipeline 状态（completed → queued）后立即返 202。
+ * 实际执行由 ZJ pipeline-worker（Python LangGraph，PR zenithjoy#216）60s 内拉到。
+ * 不再做 in-Brain orchestration（已搬到 ZJ）。
  */
 router.post('/:id/run', async (req, res) => {
   const { id } = req.params;
@@ -527,157 +525,15 @@ router.post('/:id/run', async (req, res) => {
       );
     }
 
-    res.status(202).json({ ok: true, pipeline_id: id, status: 'running' });
-
-    // 异步执行编排 + 逐阶段执行
-    (async () => {
-      try {
-        await orchestrateContentPipelines();
-        let rounds = 8;
-        while (rounds-- > 0) {
-          const { executed } = await executeQueuedContentTasks();
-          if (executed === 0) break;
-          await orchestrateContentPipelines();
-        }
-        console.log(`[content-pipeline] run 完成: pipeline=${id}`);
-      } catch (err) {
-        console.error(`[content-pipeline] run 失败: pipeline=${id} error=${err.message}`);
-        await pool.query(
-          `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-          [id]
-        ).catch(() => {});
-      }
-    })();
+    return res.status(202).json({
+      ok: true,
+      pipeline_id: id,
+      status: 'queued',
+      message: 'task 已 queued，将由 ZJ pipeline-worker 60s 内拉到执行',
+    });
   } catch (err) {
     console.error('[routes/content-pipeline] POST /:id/run error:', err.message);
     res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /:id/run-langgraph
- *
- * 走 LangGraph + Docker 路径跑 pipeline。跟 `/:id/run`（老 orchestrator）并存，
- * 由 CONTENT_PIPELINE_LANGGRAPH_ENABLED 开关灰度控制。
- *
- * body (可选): { keyword, output_dir, notebook_id }
- *   不传则从 tasks 表的 payload 读。
- */
-router.post('/:id/run-langgraph', async (req, res) => {
-  const { id } = req.params;
-
-  if (!isContentPipelineLangGraphEnabled()) {
-    return res.status(503).json({
-      success: false,
-      error: {
-        code: 'LANGGRAPH_DISABLED',
-        message: 'CONTENT_PIPELINE_LANGGRAPH_ENABLED 未启用，走 /:id/run 老路径',
-      },
-    });
-  }
-
-  try {
-    const r = await pool.query(
-      `SELECT id, payload FROM tasks WHERE id = $1 AND task_type = 'content-pipeline'`,
-      [id],
-    );
-    if (r.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 'PIPELINE_NOT_FOUND', message: `pipeline ${id} 不存在` },
-      });
-    }
-    // 并发硬限：防 Mac OOM
-    if (_runningPipelines.size >= PIPELINE_MAX_CONCURRENT && !_runningPipelines.has(id)) {
-      return res.status(429).json({
-        success: false,
-        error: {
-          code: 'PIPELINE_BUSY',
-          message: `已有 ${_runningPipelines.size} 条 pipeline 并行（上限 ${PIPELINE_MAX_CONCURRENT}），稍后重试。`,
-          running_ids: [..._runningPipelines],
-        },
-      });
-    }
-
-    const row = r.rows[0];
-    const payload = row.payload || {};
-    const keyword = (req.body && req.body.keyword) || payload.keyword || '';
-    const outputDir = (req.body && req.body.output_dir) || payload.output_dir || '';
-    const notebookId = (req.body && req.body.notebook_id) || payload.notebook_id || null;
-
-    _runningPipelines.add(id);
-
-    // 202 Accepted 立即返，异步跑 pipeline
-    res.status(202).json({
-      success: true,
-      data: {
-        pipeline_id: id,
-        status: 'running',
-        mode: 'langgraph',
-        concurrent_slot: `${_runningPipelines.size}/${PIPELINE_MAX_CONCURRENT}`,
-      },
-    });
-
-    (async () => {
-      try {
-        // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
-        // task.id 作为 thread_id 即为 resume key，Brain 重启后 pipeline 可从断点续跑
-        const { getPgCheckpointer } = await import('../orchestrator/pg-checkpointer.js');
-        const checkpointer = await getPgCheckpointer();
-
-        const result = await runContentPipeline(
-          {
-            id,
-            keyword,
-            output_dir: outputDir,
-            payload: { notebook_id: notebookId, ...payload },
-          },
-          {
-            checkpointer,
-            onStep: async (evt) => {
-              // 写 cecelia_events（仿 executor.js L2840-2844 harness 同 schema）
-              // onStep 失败不阻塞 pipeline，但打日志便于诊断
-              try {
-                await pool.query(
-                  `INSERT INTO cecelia_events (event_type, task_id, payload)
-                   VALUES ('content_pipeline_step', $1::uuid, $2::jsonb)`,
-                  [id, JSON.stringify({
-                    node: evt.node,
-                    step_index: evt.step_index,
-                    ...(evt.state_snapshot || {}),
-                  })],
-                );
-              } catch (err) {
-                console.warn(`[content-pipeline] langgraph_step insert failed task=${id}: ${err.message}`);
-              }
-            },
-          },
-        );
-        console.log(`[content-pipeline] run-langgraph 完成: pipeline=${id} steps=${result.steps}`);
-        // 回写 tasks.status='completed'（之前只失败路径 UPDATE，成功路径遗漏，
-        // 导致 Dashboard 和 /api/brain/tasks/:id 查到的 status 永远停在 queued）
-        await pool.query(
-          `UPDATE tasks SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
-          [id],
-        ).catch((e) => {
-          console.warn(`[content-pipeline] tasks.status 回写失败 pipeline=${id}: ${e.message}`);
-        });
-      } catch (err) {
-        console.error(`[content-pipeline] run-langgraph 失败: pipeline=${id} error=${err.message}`);
-        await pool.query(
-          `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-          [id],
-        ).catch(() => {});
-      } finally {
-        _runningPipelines.delete(id);
-      }
-    })();
-  } catch (err) {
-    console.error('[routes/content-pipeline] POST /:id/run-langgraph error:', err.message);
-    res.status(500).json({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: err.message },
-    });
   }
 });
 
@@ -996,17 +852,7 @@ router.post('/e2e-trigger', async (req, res) => {
     );
 
     const pipelineId = insertResult.rows[0].id;
-    console.log(`[e2e-trigger] 创建 pipeline ${pipelineId}：${cleanKeyword}`);
-
-    // Step 3: 立即触发 pipeline 执行（不等 tick）
-    let executionStarted = false;
-    try {
-      await orchestrateContentPipelines(pool);
-      await executeQueuedContentTasks(pool);
-      executionStarted = true;
-    } catch (execErr) {
-      console.warn(`[e2e-trigger] pipeline 立即执行失败（将由 tick 接管）: ${execErr.message}`);
-    }
+    console.log(`[e2e-trigger] 创建 pipeline ${pipelineId}：${cleanKeyword}（等 ZJ pipeline-worker 拉取）`);
 
     return res.json({
       ok: true,
@@ -1014,10 +860,7 @@ router.post('/e2e-trigger', async (req, res) => {
       keyword: cleanKeyword,
       content_type,
       topic_triggered: topicTriggered,
-      execution_started: executionStarted,
-      message: executionStarted
-        ? `Pipeline ${pipelineId} 已创建并开始执行第一阶段`
-        : `Pipeline ${pipelineId} 已创建，将由 tick 自动执行`,
+      message: `Pipeline ${pipelineId} 已创建（queued），将由 ZJ pipeline-worker 60s 内拉到执行`,
       check_progress: `/api/brain/pipelines/${pipelineId}/stages`,
     });
   } catch (err) {
@@ -1106,20 +949,13 @@ router.post('/batch-e2e-trigger', async (req, res) => {
     }
   }
 
-  // 触发一次编排，让 tick 接管后续执行
-  try {
-    await orchestrateContentPipelines(pool);
-  } catch (orchErr) {
-    console.warn(`[batch-e2e-trigger] 编排启动失败（将由 tick 接管）: ${orchErr.message}`);
-  }
-
   return res.json({
     ok: errors.length === 0,
     created: results.length,
     failed: errors.length,
     pipelines: results,
     errors: errors.length > 0 ? errors : undefined,
-    message: `已创建 ${results.length} 条 pipeline，内容类型: ${[...new Set(results.map((r) => r.content_type))].join(', ')}`,
+    message: `已创建 ${results.length} 条 pipeline（queued），内容类型: ${[...new Set(results.map((r) => r.content_type))].join(', ')}。将由 ZJ pipeline-worker 60s 内逐条拉到。`,
     check_each: results.map((r) => `/api/brain/pipelines/${r.pipeline_id}/stages`),
   });
 });
