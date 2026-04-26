@@ -276,6 +276,65 @@ describe('GET /api/brain/pipelines/:id/stages — rule_scores & llm_reviewed', (
   });
 });
 
+describe('POST /api/brain/pipelines/:id/run — 编排已搬走，只负责重置 + 202', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('completed pipeline → 重置为 queued + 返回 202', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'pipe-1', status: 'completed', payload: {} }] })  // SELECT
+      .mockResolvedValueOnce({ rows: [] });  // UPDATE 重置
+
+    const res = await request(makeApp()).post('/api/brain/pipelines/pipe-1/run');
+    expect(res.status).toBe(202);
+    expect(res.body.pipeline_id).toBe('pipe-1');
+    // 不应再调 orchestrate（in-Brain 编排已搬走）
+    // 验证只调了 SELECT + UPDATE 两次 query，没有后续 orchestrate 调用
+    expect(pool.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('queued pipeline → 不重置，直接 202', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'pipe-2', status: 'queued', payload: {} }] });
+
+    const res = await request(makeApp()).post('/api/brain/pipelines/pipe-2/run');
+    expect(res.status).toBe(202);
+    // 仅 SELECT 一次（不需要 UPDATE）
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('pipeline 不存在 → 404', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    const res = await request(makeApp()).post('/api/brain/pipelines/missing/run');
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /:id/run-langgraph — endpoint 已删除', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('返回 404（路由已删）', async () => {
+    const res = await request(makeApp()).post('/api/brain/pipelines/pipe-1/run-langgraph');
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/brain/pipelines/e2e-trigger — 编排搬走后只创 task', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('返回 200 + pipeline_id（不再同步 orchestrate）', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'pipe-e2e-1' }] });
+
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/e2e-trigger')
+      .send({ keyword: 'cursor', skip_topic_selection: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.pipeline_id).toBe('pipe-e2e-1');
+    // 只 INSERT 一次（不再 orchestrate / executeQueued）
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记录', () => {
   beforeEach(() => vi.clearAllMocks());
 
