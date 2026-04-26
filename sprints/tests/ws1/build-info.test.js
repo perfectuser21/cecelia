@@ -1,11 +1,15 @@
 /**
  * Workstream 1 — GET /api/brain/build-info [BEHAVIOR]
  *
- * 这是 Harness v6.0 GAN Layer 2a 的合同测试（TDD Red 阶段产物）。
- * 目标实现：packages/brain/src/routes/build-info.js（尚未存在 → 7 it 全 FAIL）
+ * 这是 Harness v6.0 GAN Layer 2a 的合同测试（TDD Red 阶段产物，Round 2）。
+ * 目标实现：packages/brain/src/routes/build-info.js（尚未存在 → 8 it 全 FAIL）
  *
  * Generator 在合同批准后必须把本文件 **字节级原样复制** 到
  * packages/brain/src/__tests__/build-info.test.js（CI dod-structure-purity 校验）。
+ *
+ * Round 2 变更 vs Round 1:
+ *   + it('returns identical built_at across three consecutive requests ...')
+ *     防"每偶数次刷新缓存"型 mutation：N=2 idempotent 通过但 N=3 不通过的实现会被抓
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -33,6 +37,8 @@ const BRAIN_PKG_PATH = isSprintCopy
   ? resolve(__dirname, '../../../packages/brain/package.json')
   : resolve(__dirname, '../../package.json');
 
+// 注意：brain 是 ESM 包（"type":"module"），不能用 require('packages/brain/package.json') —— vitest ESM 加载下会抛 ERR_REQUIRE_ESM 风格错误。
+// 用 fs.readFileSync + JSON.parse 是合同硬阈值固定的兼容写法（见 contract-draft.md 硬阈值）。
 const brainPkg = JSON.parse(readFileSync(BRAIN_PKG_PATH, 'utf8'));
 
 describe('Workstream 1 — GET /api/brain/build-info [BEHAVIOR]', () => {
@@ -84,6 +90,23 @@ describe('Workstream 1 — GET /api/brain/build-info [BEHAVIOR]', () => {
     const res2 = await request(app).get('/api/brain/build-info');
     expect(res1.body.built_at).toBe(res2.body.built_at);
     // Sanity: 不允许实现把 built_at 设成 undefined → undefined === undefined 也会通过
+    expect(typeof res1.body.built_at).toBe('string');
+    expect(res1.body.built_at.length).toBeGreaterThan(0);
+  });
+
+  it('returns identical built_at across three consecutive requests in the same process', async () => {
+    // Round 2 新增：防"每偶数次刷新缓存"型 mutation
+    // 例：实现写成 `let counter = 0; if (++counter % 2 === 0) BUILT_AT = new Date().toISOString();`
+    // → N=2 测试通过（res1 与 res2 不同次数下都是同一缓存值）但 N=3 抓住第 3 次刷新
+    const { default: router } = await import(ROUTER_SPEC);
+    const app = express();
+    app.use('/api/brain/build-info', router);
+    const res1 = await request(app).get('/api/brain/build-info');
+    const res2 = await request(app).get('/api/brain/build-info');
+    const res3 = await request(app).get('/api/brain/build-info');
+    expect(res1.body.built_at).toBe(res2.body.built_at);
+    expect(res2.body.built_at).toBe(res3.body.built_at);
+    expect(res1.body.built_at).toBe(res3.body.built_at);
     expect(typeof res1.body.built_at).toBe('string');
     expect(res1.body.built_at.length).toBeGreaterThan(0);
   });
