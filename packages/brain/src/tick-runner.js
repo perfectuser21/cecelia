@@ -97,10 +97,8 @@ import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
-import {
-  processHarnessCiWatchers,
-  processHarnessDeployWatchers,
-} from './harness-watcher.js';
+// Sprint 1: harness-watcher.js retired (Phase B/C 进 LangGraph，sub-graph poll_ci 自管)
+// processHarnessCiWatchers / processHarnessDeployWatchers 不再使用
 import {
   checkAndAlertExpiringCredentials,
   recoverAuthQuarantinedTasks,
@@ -874,20 +872,9 @@ async function executeTick() {
     console.error('[tick] PR shepherd failed (non-fatal):', shepherdErr.message);
   }
 
-  // 0.15. Harness Watcher：每次 tick 处理 harness_ci_watch / harness_deploy_watch（内联 CI/CD 轮询）
-  try {
-    const ciResult = await processHarnessCiWatchers(pool);
-    const deployResult = await processHarnessDeployWatchers(pool);
-    if (ciResult.processed > 0 || deployResult.processed > 0) {
-      actionsTaken.push({
-        action: 'harness_watcher',
-        ci: ciResult,
-        deploy: deployResult,
-      });
-    }
-  } catch (harnessWatchErr) {
-    console.error('[tick] Harness watcher failed (non-fatal):', harnessWatchErr.message);
-  }
+  // 0.15. Harness Watcher: retired in Sprint 1
+  // sub-graph harness-task.graph poll_ci/merge_pr nodes 取代了 harness_ci_watch 轮询逻辑。
+  // 老数据派的 harness_ci_watch task 由 executor.js _RETIRED_HARNESS_TYPES 标 terminal。
 
   // 1. Decision Engine: Compare goal progress
   try {
@@ -1369,13 +1356,9 @@ async function executeTick() {
     tickLog(`[tick] Backpressure active: queue_depth=${tickSlotBudget.backpressure.queue_depth} > ${tickSlotBudget.backpressure.threshold}, burst_limit=${effectiveBurstLimit}`);
   }
 
-  // Harness v2 phase 推进器（PR-3）：A→B→C 晋级
-  try {
-    const { advanceHarnessInitiatives } = await import('./harness-phase-advancer.js');
-    await advanceHarnessInitiatives(pool);
-  } catch (err) {
-    console.error('[harness-advance] tick error:', err.message);
-  }
+  // Sprint 1: harness-phase-advancer.js retired
+  // 顶层 graph buildHarnessFullGraph 自己推进 phase。
+  // initiative_runs.phase 由 reportNode 写。
 
   // 7a. Fill slots from focused objective's tasks
   // Predictive resource gate: pre-deduct estimated memory per dispatched agent
