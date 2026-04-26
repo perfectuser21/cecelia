@@ -598,23 +598,8 @@ async function getStartupErrors() {
   };
 }
 
-/** Reset throttle state — for testing only */
-function _resetLastExecuteTime() { tickState.lastExecuteTime = 0; }
-/** Reset cleanup timer — for testing only */
-function _resetLastCleanupTime() { tickState.lastCleanupTime = 0; }
-function _resetLastZombieCleanupTime() { tickState.lastZombieCleanupTime = 0; }
-/** Reset Layer 2 health check timer — for testing only */
-function _resetLastHealthCheckTime() { tickState.lastHealthCheckTime = 0; }
-/** Reset KR progress sync timer — for testing only */
-function _resetLastKrProgressSyncTime() { tickState.lastKrProgressSyncTime = 0; }
-/** Reset heartbeat timer — for testing only */
-function _resetLastHeartbeatTime() { tickState.lastHeartbeatTime = 0; }
-
-function _resetLastGoalEvalTime() { tickState.lastGoalEvalTime = 0; }
-/** Reset zombie sweep timer — for testing only */
-function _resetLastZombieSweepTime() { tickState.lastZombieSweepTime = 0; }
-/** Reset pipeline patrol timer — for testing only */
-function _resetLastPipelinePatrolTime() { tickState.lastPipelinePatrolTime = 0; }
+// Phase D2.1: 9 个 _resetLastXxxTime 已下沉 tick-state.js
+// 下方 export { ... } from './tick-state.js' 保留向后兼容（测试仍 import from './tick.js'）
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -697,7 +682,15 @@ export {
   ZOMBIE_SWEEP_INTERVAL_MS,
   ZOMBIE_CLEANUP_INTERVAL_MS,
   PIPELINE_PATROL_INTERVAL_MS,
-  // Test helpers
+  GOAL_EVAL_INTERVAL_MS,
+  // 48h 简报
+  check48hReport,
+  generate48hReport,
+  REPORT_INTERVAL_MS
+};
+
+// Phase D2.1: Test helper re-export (实现已下沉 tick-state.js，保留 tick.js 兼容入口)
+export {
   _resetLastExecuteTime,
   _resetLastCleanupTime,
   _resetLastZombieCleanupTime,
@@ -706,10 +699,5 @@ export {
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
   _resetLastZombieSweepTime,
-  _resetLastPipelinePatrolTime,
-  GOAL_EVAL_INTERVAL_MS,
-  // 48h 简报
-  check48hReport,
-  generate48hReport,
-  REPORT_INTERVAL_MS
-};
+  _resetLastPipelinePatrolTime
+} from './tick-state.js';
