@@ -766,4 +766,61 @@ describe('rumination', () => {
       expect(Array.isArray(result.insights)).toBe(true);
     });
   });
+
+  // ── 心跳事件 + 数据丢失修复 ───────────────────────────────
+
+  describe('heartbeat + 防数据丢失（PROBE_FAIL_RUMINATION 修复）', () => {
+    it('digestLearnings 入口写 rumination_run 心跳事件（probe 用此判断循环存活）', async () => {
+      setupIdleAndLearnings(pool, [{ id: 'l1', title: 'test', content: 'c', category: 'u' }]);
+
+      await runRumination(pool);
+
+      // 验证心跳 INSERT cecelia_events 'rumination_run' 被发出
+      // SQL 中包含字面量 'rumination_run'（event_type 字段值）
+      const heartbeatCalls = mockQuery.mock.calls.filter(call => {
+        const sql = call[0] || '';
+        return sql.includes('cecelia_events') &&
+               sql.includes('INSERT') &&
+               sql.includes("'rumination_run'");
+      });
+      expect(heartbeatCalls.length).toBeGreaterThan(0);
+    });
+
+    it('LLM 全部失败（NotebookLM 空 + callLLM 空）时 NOT 标记 digested（防数据丢失）', async () => {
+      mockQueryNotebook.mockResolvedValue({ ok: false, error: 'bridge unreachable' });
+      mockCallLLM.mockResolvedValue({ text: '' }); // 空响应
+
+      setupIdleAndLearnings(pool, [
+        { id: 'lost-1', title: 'will-not-lose', content: 'c1', category: 'u' },
+        { id: 'lost-2', title: 'also-not-lose', content: 'c2', category: 'u' },
+      ]);
+
+      const result = await runRumination(pool);
+
+      // 没产出 insight
+      expect(result.insights).toEqual([]);
+
+      // 关键断言：不应有任何 UPDATE learnings SET digested 调用
+      const updateDigestedCalls = mockQuery.mock.calls.filter(call =>
+        (call[0] || '').includes('UPDATE learnings SET digested = true')
+      );
+      expect(updateDigestedCalls).toHaveLength(0);
+    });
+
+    it('LLM 成功产生 insight 时仍正常标记 digested（保持现有行为）', async () => {
+      mockQueryNotebook.mockResolvedValue({ ok: true, text: '足够长的 NotebookLM 洞察文本' + 'x'.repeat(100) });
+
+      setupIdleAndLearnings(pool, [{ id: 'normal-1', title: 'ok', content: 'c', category: 'u' }]);
+
+      const result = await runRumination(pool);
+
+      expect(result.digested).toBe(1);
+
+      // 应有 UPDATE learnings 调用
+      expect(mockQuery).toHaveBeenCalledWith(
+        'UPDATE learnings SET digested = true WHERE id = $1',
+        ['normal-1']
+      );
+    });
+  });
 });
