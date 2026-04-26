@@ -312,12 +312,15 @@ export function createGanContractNodes(executor, ctx) {
     // 解析 stdout 中的 propose_branch（proposer SKILL Step 3 输出 JSON 字面量）。
     // 即使本轮被打回，先把 branch 存下；后续轮次会覆写成新 branch（reducer 取最新）。
     // APPROVED 终态时即 approved contract 的 git branch。
-    const proposeBranch = extractProposeBranch(result.stdout);
+    // SKILL 漏输出 propose_branch 时 fallback 用 cp-{shanghaiTime}-{taskId8}，
+    // 避免 contract.branch=null → sub-task contract_branch=空 → Generator ABORT。
+    const proposeBranch = extractProposeBranch(result.stdout)
+      || `cp-${new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).replace(/[-: ]/g, '').slice(0, 12)}-${String(taskId).slice(0, 8)}`;
     return {
       round: nextRound,
       costUsd: (state.costUsd || 0) + Number(result.cost_usd || 0),
       contractContent,
-      ...(proposeBranch ? { proposeBranch } : {}),
+      proposeBranch,
     };
   }
 

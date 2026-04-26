@@ -488,7 +488,7 @@ describe('runGanContractGraph', () => {
     expect(res.propose_branch).toBe('cp-harness-propose-r1-deadbeef');
   });
 
-  it('proposer stdout 缺 propose_branch → 返回值 propose_branch=null（兜底，不抛错）', async () => {
+  it('proposer stdout 缺 propose_branch → fallback 用 cp-{shanghaiTime}-{taskId8}，不为 null（解锁端到端跑通）', async () => {
     const executor = vi.fn(async ({ task: { task_type } }) => {
       if (task_type === 'harness_contract_propose') {
         return { exit_code: 0, stdout: 'no json here', stderr: '', cost_usd: 0.1, timed_out: false };
@@ -502,8 +502,10 @@ describe('runGanContractGraph', () => {
       };
     });
     const { runGanContractGraph } = await import('../harness-gan-graph.js');
-    const res = await runGanContractGraph({ ...makeOpts(), executor });
-    expect(res.propose_branch).toBeNull();
+    const res = await runGanContractGraph({ ...makeOpts({ taskId: 'task-e2e-deadbeefcafebabe' }), executor });
+    expect(res.propose_branch).not.toBeNull();
+    // fallback 形如 cp-{12 位数字}-{taskId 前 8 字符}
+    expect(res.propose_branch).toMatch(/^cp-\d{12}-task-e2e$/);
   });
 });
 
