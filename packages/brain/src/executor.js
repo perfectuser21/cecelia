@@ -2792,13 +2792,41 @@ async function triggerCeceliaRun(task) {
     return triggerLocalCodexExec(task);
   }
 
-  // 2.85 Harness v2 Initiative Runner（阶段 A）
-  // harness_initiative task 走 Initiative Runner：一次性调 Planner → 入库 subtasks +
-  // initiative_contracts + initiative_runs。Planner 之后的 Proposer/Reviewer/Generator/
-  // Evaluator 由后续 milestone（M3/M4）接入，v2 初版只跑阶段 A。
+  // 2.85 Harness Full Graph (Phase A+B+C) — Sprint 1 一个 graph 跑到底。
+  // env flag HARNESS_USE_FULL_GRAPH=false 走老路（迁移期保留 1 周）。
   if (task.task_type === 'harness_initiative') {
+    const useFullGraph = process.env.HARNESS_USE_FULL_GRAPH !== 'false';
+    if (useFullGraph) {
+      console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (Sprint 1, A+B+C)`);
+      try {
+        const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
+        const compiled = await compileHarnessFullGraph();
+        const initiativeId = task.payload?.initiative_id || task.id;
+        const final = await compiled.invoke(
+          { task },
+          { configurable: { thread_id: `harness-initiative:${initiativeId}:1` }, recursionLimit: 500 }
+        );
+        return {
+          success: !final.error,
+          taskId: task.id,
+          initiative: true,
+          fullGraph: true,
+          finalState: {
+            // 只回 summary 防 task.result 列爆炸
+            initiativeId: final.initiativeId,
+            sub_tasks: final.sub_tasks,
+            final_e2e_verdict: final.final_e2e_verdict,
+            error: final.error,
+          },
+        };
+      } catch (err) {
+        console.error(`[executor] Harness Full Graph error task=${task.id}: ${err.message}`);
+        return { success: false, taskId: task.id, initiative: true, error: err.message };
+      }
+    }
+    // ── 老路（HARNESS_USE_FULL_GRAPH=false 时迁移期兜底） ────────────
     if (process.env.HARNESS_INITIATIVE_RUNTIME === 'v2') {
-      console.log(`[executor] 路由决策: task_type=${task.task_type} → v2 graph runWorkflow (C8a)`);
+      console.log(`[executor] 路由决策: task_type=${task.task_type} → v2 graph runWorkflow (legacy C8a)`);
       try {
         const { runWorkflow } = await import('./orchestrator/graph-runtime.js');
         return await runWorkflow('harness-initiative', task.id, 1, { task });
@@ -2807,17 +2835,14 @@ async function triggerCeceliaRun(task) {
         return { success: false, taskId: task.id, initiative: true, error: err.message };
       }
     }
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness v2 Initiative Runner (阶段 A)`);
-    // PostgresSaver: Phase A GAN 循环的 checkpointer。task.id 作为 langgraph thread_id,
-    // Brain 重启后下次派发同一 initiative 能从最后一个节点续跑（而不是从 Planner 重头）。
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness v2 Initiative Runner (legacy procedural)`);
     let checkpointer;
     try {
-      // C7: 走 orchestrator singleton（C1 建立），migration 244 表 + 幂等 setup 双保险
       const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
       checkpointer = await getPgCheckpointer();
     } catch (cpErr) {
-      console.warn(`[executor] PostgresSaver 初始化失败，降级到 MemorySaver（Brain 重启将无法续跑）: ${cpErr.message}`);
-      checkpointer = undefined; // 让 runGanContractGraph 走 MemorySaver fallback
+      console.warn(`[executor] PostgresSaver 初始化失败，降级到 MemorySaver: ${cpErr.message}`);
+      checkpointer = undefined;
     }
     try {
       const { runInitiative } = await import('./harness-initiative-runner.js');
@@ -2828,15 +2853,41 @@ async function triggerCeceliaRun(task) {
     }
   }
 
-  // harness_task 走容器派 /harness-generator（PR-2）
-  if (task.task_type === 'harness_task') {
-    try {
-      const { triggerHarnessTaskDispatch } = await import('./harness-task-dispatch.js');
-      return await triggerHarnessTaskDispatch(task);
-    } catch (err) {
-      console.error(`[executor] harness_task dispatch failed task=${task.id}: ${err.message}`);
-      return { success: false, error: err.message };
+  // Sprint 1: 4 retired task_types (harness_task / harness_ci_watch / harness_fix /
+  // harness_final_e2e) 已被 harness_initiative full-graph sub-graph 取代。
+  // 老数据派到 executor → 标 terminal failure 防止"复活"。
+  // HARNESS_USE_FULL_GRAPH=false 时仍可走老路兜底。
+  const _RETIRED_HARNESS_TYPES = new Set([
+    'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
+  ]);
+  if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
+    if (process.env.HARNESS_USE_FULL_GRAPH === 'false') {
+      // 兜底：迁移期仍走老路（仅 harness_task 真要派；其余由 tick worker / runPhaseCIfReady 自管）
+      if (task.task_type === 'harness_task') {
+        try {
+          const { triggerHarnessTaskDispatch } = await import('./harness-task-dispatch.js');
+          return await triggerHarnessTaskDispatch(task);
+        } catch (err) {
+          console.error(`[executor] harness_task dispatch failed task=${task.id}: ${err.message}`);
+          return { success: false, error: err.message };
+        }
+      }
+      console.log(`[executor] task_type=${task.task_type} (legacy mode) → tick worker handles it`);
+      return { success: true, deferred: true };
     }
+    console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
+    try {
+      await pool.query(
+        `UPDATE tasks SET status='failed', completed_at=NOW(),
+          error_message=$2,
+          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+         WHERE id=$1::uuid`,
+        [task.id, `task_type ${task.task_type} retired in Sprint 1 (full-graph migration); see harness-initiative full graph sub-graph`]
+      );
+    } catch (err) {
+      console.error(`[executor] mark retired task failed: ${err.message}`);
+    }
+    return { success: false, retired: true, taskType: task.task_type };
   }
 
   // 2.9 LangGraph Pipeline（HARNESS_LANGGRAPH_ENABLED=true + harness_planner）
