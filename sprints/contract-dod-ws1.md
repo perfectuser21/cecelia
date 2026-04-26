@@ -30,9 +30,10 @@
 
 - GET / 返回 200 + version/build_time/git_sha 三个非空字符串字段
 - version 字段等于 `packages/brain/package.json` 的 `version`
-- `process.env.GIT_SHA` 未设置时，`git_sha === "unknown"`
-- `process.env.GIT_SHA` 设置后，`git_sha` 等于该值
+- `process.env.GIT_SHA` 未设置（undefined）时，`git_sha === "unknown"`
+- `process.env.GIT_SHA === ""`（空字符串注入）时，`git_sha === "unknown"`（R3 mitigation）
+- `process.env.GIT_SHA` 设置为非空值后，`git_sha` 等于该值
 - `build_time` 匹配 ISO-8601 UTC 格式
 - `build_time` 在同一 router 实例的两次连续请求间严格相等
-- handler 全程不调用数据库（mock pool.query 调用次数 = 0）
+- handler 全程不调用数据库（mock pool.query 调用次数 = 0，R1 mitigation）
 - `package.json` 读失败时返回 HTTP 500 + JSON body 含 `error` 字段

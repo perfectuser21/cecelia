@@ -92,6 +92,20 @@ describe('Workstream 1 — GET /api/brain/build-info [BEHAVIOR]', () => {
     expect(res.body.git_sha).toBe('unknown');
   });
 
+  // R3 mitigation：覆盖 GIT_SHA 被部分注入为空字符串的真实场景
+  // （docker-compose / pm2 常见漂移：`export GIT_SHA=` → process.env.GIT_SHA === ""）
+  // 朴素实现 `?? 'unknown'` 不会触发 fallback，本测试强制实现走 `||` 而非 `??`
+  it('git_sha is "unknown" when GIT_SHA env var is empty string', async () => {
+    process.env.GIT_SHA = '';
+    const router = await loadFreshRouter();
+    const app = mountApp(router);
+
+    const res = await request(app).get('/api/brain/build-info');
+
+    expect(res.status).toBe(200);
+    expect(res.body.git_sha).toBe('unknown');
+  });
+
   it('git_sha equals process.env.GIT_SHA when env var is set', async () => {
     process.env.GIT_SHA = 'abc123def456deadbeefcafebabe000011112222';
     const router = await loadFreshRouter();
