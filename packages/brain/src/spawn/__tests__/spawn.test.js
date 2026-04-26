@@ -8,6 +8,8 @@
  *   5. 429 transient → spawn 不删 env（换号责任留内层）
  *   6. shouldRetry 返回 false → 提前退
  *   7. MAX_ATTEMPTS 边界（恰好 3 次）
+ *   8. SPAWN_V2_ENABLED=false → 跳过所有外层 middleware
+ *   9. SPAWN_V2_ENABLED=true → 外层 4 middleware 按 cost-cap → spawn-pre → logging → billing 顺序调用
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -22,6 +24,43 @@ vi.mock('../middleware/retry-circuit.js', async (importOriginal) => {
   return {
     ...actual,
     shouldRetry: (...args) => mockShouldRetry(...args),
+  };
+});
+
+// 外层 4 middleware mock — 用 vi.mock 拦截 spawn.js 的 import
+const mockCheckCostCap = vi.fn();
+vi.mock('../middleware/cost-cap.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    checkCostCap: (...args) => mockCheckCostCap(...args),
+  };
+});
+
+const mockPrepare = vi.fn();
+vi.mock('../middleware/spawn-pre.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    preparePromptAndCidfile: (...args) => mockPrepare(...args),
+  };
+});
+
+const mockCreateLogger = vi.fn();
+vi.mock('../middleware/logging.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    createSpawnLogger: (...args) => mockCreateLogger(...args),
+  };
+});
+
+const mockRecordBilling = vi.fn();
+vi.mock('../middleware/billing.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    recordBilling: (...args) => mockRecordBilling(...args),
   };
 });
 
@@ -43,12 +82,23 @@ describe('spawn() attempt-loop', () => {
   beforeEach(() => {
     mockExecuteInDocker.mockReset();
     mockShouldRetry.mockReset();
+    mockCheckCostCap.mockReset();
+    mockPrepare.mockReset();
+    mockCreateLogger.mockReset();
+    mockRecordBilling.mockReset();
     // 默认 shouldRetry 用真实实现（除 case 6 会覆盖）
     mockShouldRetry.mockImplementation((cls, idx, max = 3) => {
       if (!cls) return false;
       if (cls.class !== 'transient') return false;
       return idx + 1 < max;
     });
+    // 默认外层 mock 都 noop，但 mockPrepare/mockCreateLogger 必须返回 valid shape
+    mockCheckCostCap.mockResolvedValue(undefined);
+    mockPrepare.mockReturnValue({ promptPath: '/tmp/_test.prompt', cidfilePath: '/tmp/_test.cid' });
+    mockCreateLogger.mockReturnValue({ logStart: vi.fn(), logEnd: vi.fn() });
+    mockRecordBilling.mockResolvedValue({ recorded: false, account: null });
+    // 默认 v2 走开（覆盖 entrypoint 可能注入的 SPAWN_V2_ENABLED=false）
+    delete process.env.SPAWN_V2_ENABLED;
   });
 
   it('exports spawn as async function', async () => {
@@ -129,5 +179,70 @@ describe('spawn() attempt-loop', () => {
     }
     await spawn({ task: { id: 't7' }, prompt: 'x' });
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(3);
+  });
+
+  it('case 8: SPAWN_V2_ENABLED=false 时 spawn() 不调用任何外层 middleware', async () => {
+    process.env.SPAWN_V2_ENABLED = 'false';
+    try {
+      const { spawn } = await import('../spawn.js');
+      mockExecuteInDocker.mockResolvedValueOnce(successResult());
+      const result = await spawn({ task: { id: 't8', task_type: 'planner' }, prompt: 'x' });
+      expect(result.exit_code).toBe(0);
+      // 关键断言：4 个外层 middleware 一个都不许被调
+      expect(mockCheckCostCap).not.toHaveBeenCalled();
+      expect(mockPrepare).not.toHaveBeenCalled();
+      expect(mockCreateLogger).not.toHaveBeenCalled();
+      expect(mockRecordBilling).not.toHaveBeenCalled();
+      // 旧 executeInDocker 路径仍走（attempt-loop 还在）
+      expect(mockExecuteInDocker).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.SPAWN_V2_ENABLED;
+    }
+  });
+
+  it('case 9: SPAWN_V2_ENABLED=true 时外层 middleware 按声明顺序调用 (cost-cap → spawn-pre → logging → billing)', async () => {
+    // 默认 v2 enabled（beforeEach 已 delete env）
+    const order = [];
+    mockCheckCostCap.mockImplementation(async () => {
+      order.push('cost-cap');
+    });
+    mockPrepare.mockImplementation(() => {
+      order.push('spawn-pre');
+      return { promptPath: '/tmp/x.prompt', cidfilePath: '/tmp/x.cid' };
+    });
+    const startSpy = vi.fn(() => order.push('logging-start'));
+    const endSpy = vi.fn(() => order.push('logging-end'));
+    mockCreateLogger.mockImplementation(() => {
+      order.push('logging-create');
+      return { logStart: startSpy, logEnd: endSpy };
+    });
+    mockRecordBilling.mockImplementation(async () => {
+      order.push('billing');
+      return { recorded: true, account: 'account1' };
+    });
+    mockExecuteInDocker.mockImplementation(async () => {
+      order.push('execute');
+      return successResult();
+    });
+
+    const { spawn } = await import('../spawn.js');
+    await spawn({ task: { id: 't9', task_type: 'planner' }, prompt: 'x' });
+
+    // 关键断言：
+    // 1. cost-cap 第一个被调（pre-flight）
+    // 2. spawn-pre 在 cost-cap 之后、execute 之前
+    // 3. logging-create + logging-start 在 execute 之前
+    // 4. logging-end + billing 在 execute 之后
+    expect(order).toEqual([
+      'cost-cap',
+      'spawn-pre',
+      'logging-create',
+      'logging-start',
+      'execute',
+      'logging-end',
+      'billing',
+    ]);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(endSpy).toHaveBeenCalledTimes(1);
   });
 });
