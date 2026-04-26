@@ -804,10 +804,59 @@ jobs:
           fi
           echo "✅ harness-contract-lint: 所有 DoD/contract 文件合规"
 
+  # ─── /dev TDD Lint Suite（PR only，把 SKILL.md 纪律机器化）──────
+  # 4 个 lint job 对应 packages/engine/skills/dev/SKILL.md 中"smoke.sh 必须"段
+  # 实现脚本：.github/workflows/scripts/lint-*.sh（本地可独立执行）
+  lint-test-pairing:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test Pairing Lint
+        run: bash .github/workflows/scripts/lint-test-pairing.sh "origin/${{ github.base_ref }}"
+
+  lint-feature-has-smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Feature smoke.sh Lint
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: bash .github/workflows/scripts/lint-feature-has-smoke.sh "origin/${{ github.base_ref }}"
+
+  lint-base-fresh:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Base Fresh Lint
+        run: bash .github/workflows/scripts/lint-base-fresh.sh "origin/${{ github.base_ref }}"
+
+  lint-tdd-commit-order:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TDD Commit Order Lint
+        run: bash .github/workflows/scripts/lint-tdd-commit-order.sh "origin/${{ github.base_ref }}"
+
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -834,6 +883,10 @@ jobs:
           check "dod-behavior-dynamic"   "${{ needs.dod-behavior-dynamic.result }}"
           check "harness-dod-integrity"  "${{ needs.harness-dod-integrity.result }}"
           check "docker-infra-smoke"     "${{ needs.docker-infra-smoke.result }}"
+          check "lint-test-pairing"      "${{ needs.lint-test-pairing.result }}"
+          check "lint-feature-has-smoke" "${{ needs.lint-feature-has-smoke.result }}"
+          check "lint-base-fresh"        "${{ needs.lint-base-fresh.result }}"
+          check "lint-tdd-commit-order"  "${{ needs.lint-tdd-commit-order.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1
