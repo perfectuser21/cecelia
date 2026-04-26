@@ -57,23 +57,25 @@ function extractVersion() {
 }
 
 function extractTickLoopMs() {
-  const src = readFile('packages/brain/src/tick.js');
-  const match = src.match(/TICK_LOOP_INTERVAL_MS\s*=\s*parseInt\([^|]*\|\|\s*'(\d+)'/);
+  // D2.2 followup: TICK_LOOP_INTERVAL_MS 抽到 tick-loop.js（D2.2 漏修 facts-check）
+  const src = readFile('packages/brain/src/tick-loop.js');
+  const match = src.match(/TICK_LOOP_INTERVAL_MS\s*=\s*parseInt\([^|]*\|\|\s*'?(\d+)'?/);
   return {
     name: 'tick_loop_ms',
     value: match ? parseInt(match[1], 10) : null,
-    source: 'packages/brain/src/tick.js',
+    source: 'packages/brain/src/tick-loop.js',
     line: findLineNumber(src, 'TICK_LOOP_INTERVAL_MS'),
   };
 }
 
 function extractTickIntervalMin() {
-  const src = readFile('packages/brain/src/tick.js');
+  // D2.2 followup: TICK_INTERVAL_MINUTES 抽到 tick-loop.js
+  const src = readFile('packages/brain/src/tick-loop.js');
   const match = src.match(/TICK_INTERVAL_MINUTES\s*=\s*(\d+)/);
   return {
     name: 'tick_interval_min',
     value: match ? parseInt(match[1], 10) : null,
-    source: 'packages/brain/src/tick.js',
+    source: 'packages/brain/src/tick-loop.js',
     line: findLineNumber(src, 'TICK_INTERVAL_MINUTES'),
   };
 }

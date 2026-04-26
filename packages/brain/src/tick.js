@@ -12,7 +12,7 @@ import pool from './db.js';
 import { checkServerResources, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { getAllStates } from './circuit-breaker.js';
-import { initAlertness, getCurrentAlertness } from './alertness/index.js';
+import { getCurrentAlertness } from './alertness/index.js';
 import { getQuarantineStats } from './quarantine.js';
 // Phase D Part 1.1: 48h 系统简报搬出 tick.js（仅 re-export）
 import { generate48hReport, check48hReport, REPORT_INTERVAL_MS } from './report-48h.js';
@@ -98,14 +98,7 @@ const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_I
 // MAX_REQUEUE_PER_TICK / RECOVERY_DISPATCH_CAP 仅 executeTick body 用，已搬到 tick-runner.js
 const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter（仅 re-export，executeTick body 在 tick-runner.js 用）
 
-// Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
-const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '60', 10);
-
-// 后台恢复配置（initTickLoop 所有重试耗尽后使用）
-const INIT_RECOVERY_INTERVAL_MS = parseInt(
-  process.env.CECELIA_INIT_RECOVERY_INTERVAL_MS || String(5 * 60 * 1000),
-  10
-);
+// Phase D2.3: TICK_AUTO_RECOVER_MINUTES + INIT_RECOVERY_INTERVAL_MS 已搬到 tick-recovery.js
 
 // Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP / PLATFORM_SKILL_MAP 实现搬到 tick-helpers.js，下方 import
 
@@ -226,204 +219,16 @@ async function getTickStatus() {
 // Phase D2.2: runTickSafe / startTickLoop / stopTickLoop 实现搬到 tick-loop.js，
 // 通过顶部 import 取得；下方 export 块统一 re-export，老 caller 不受影响。
 
-/**
- * 记录恢复尝试到 working_memory recovery_attempts（尽力写入，失败不影响主流程）
- * @param {boolean} success - 本次恢复是否成功
- * @param {string} [errMessage] - 失败时的错误信息
- */
-async function _recordRecoveryAttempt(success, errMessage) {
-  try {
-    const result = await pool.query(
-      'SELECT value_json FROM working_memory WHERE key = $1',
-      ['recovery_attempts']
-    );
-    const existing = result.rows[0]?.value_json || { attempts: [], total_attempts: 0, last_success_at: null };
-    const attempts = Array.isArray(existing.attempts) ? existing.attempts : [];
-    attempts.push({
-      ts: new Date().toISOString(),
-      success,
-      error: success ? undefined : errMessage
-    });
-    const updated = {
-      attempts: attempts.slice(-50), // 只保留最近50条
-      total_attempts: (existing.total_attempts || 0) + 1,
-      last_success_at: success ? new Date().toISOString() : existing.last_success_at,
-      last_attempt_at: new Date().toISOString()
-    };
-    await pool.query(`
-      INSERT INTO working_memory (key, value_json, updated_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-    `, ['recovery_attempts', updated]);
-  } catch {
-    // 尽力写入，失败不阻断恢复流程
-  }
-}
+// Phase D2.3: _recordRecoveryAttempt / tryRecoverTickLoop / initTickLoop /
+// enableTick / disableTick 实现搬到 tick-recovery.js，下方 export 块统一 re-export
+import {
+  _recordRecoveryAttempt,
+  tryRecoverTickLoop,
+  initTickLoop,
+  enableTick,
+  disableTick,
+} from './tick-recovery.js';
 
-/**
- * 尝试一次恢复启动 tick loop（被后台 timer 调用）
- * 成功时清除 recovery timer；失败时记录并等待下次 timer 触发
- */
-async function tryRecoverTickLoop() {
-  // 如果 tick loop 已经在运行，停止恢复
-  if (tickState.loopTimer) {
-    tickLog('[tick-loop] Recovery: tick loop already running, clearing recovery timer');
-    if (tickState.recoveryTimer) {
-      clearInterval(tickState.recoveryTimer);
-      tickState.recoveryTimer = null;
-    }
-    return;
-  }
-
-  tickLog('[tick-loop] Recovery: attempting to start tick loop...');
-
-  try {
-    const { ensureEventsTable } = await import('./event-bus.js');
-    await ensureEventsTable();
-
-    const envEnabled = process.env.CECELIA_TICK_ENABLED;
-    if (envEnabled === 'true') {
-      await enableTick();
-    } else {
-      const status = await getTickStatus();
-      if (status.enabled) {
-        startTickLoop();
-      } else {
-        tickLog('[tick-loop] Recovery: tick disabled in DB, skipping');
-        await _recordRecoveryAttempt(false, 'tick_disabled_in_db');
-        return;
-      }
-    }
-
-    // 成功：清除恢复 timer 并记录
-    tickLog('[tick-loop] Recovery: tick loop started successfully, clearing recovery timer');
-    if (tickState.recoveryTimer) {
-      clearInterval(tickState.recoveryTimer);
-      tickState.recoveryTimer = null;
-    }
-    await _recordRecoveryAttempt(true);
-  } catch (err) {
-    console.error(`[tick-loop] Recovery attempt failed: ${err.message}`);
-    await _recordRecoveryAttempt(false, err.message);
-  }
-}
-
-/**
- * Initialize tick loop on server startup
- * Checks DB state and starts loop if tick is enabled.
- * If initialization fails, starts a background recovery timer that retries
- * every INIT_RECOVERY_INTERVAL_MS until tick loop is successfully started.
- */
-async function initTickLoop() {
-  try {
-    // Initialize alertness system
-    try {
-      await initAlertness();
-      tickLog(`[tick-loop] Alertness system initialized`);
-    } catch (alertErr) {
-      console.error('[tick-loop] Alertness init failed:', alertErr.message);
-    }
-
-    // Ensure EventBus table exists
-    const { ensureEventsTable } = await import('./event-bus.js');
-    await ensureEventsTable();
-
-    // Auto-enable tick from env var if set
-    const envEnabled = process.env.CECELIA_TICK_ENABLED;
-    if (envEnabled === 'true') {
-      tickLog('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling tick');
-      await enableTick();
-      return;
-    }
-
-    const status = await getTickStatus();
-    if (status.enabled) {
-      tickLog('[tick-loop] Tick is enabled in DB, starting loop on startup');
-      startTickLoop();
-    } else {
-      // Check if tick has been disabled for too long — auto-recover
-      const tickMem = await pool.query(
-        `SELECT value_json FROM working_memory WHERE key = $1`,
-        [TICK_ENABLED_KEY]
-      );
-      const tickData = tickMem.rows[0]?.value_json || {};
-      const disabledAt = tickData.disabled_at ? new Date(tickData.disabled_at) : null;
-      const minutesDisabled = disabledAt
-        ? (Date.now() - disabledAt.getTime()) / (1000 * 60)
-        : Infinity; // no timestamp = unknown, treat as expired
-
-      if (minutesDisabled >= TICK_AUTO_RECOVER_MINUTES) {
-        console.warn(`[tick-loop] Tick disabled for ${Math.round(minutesDisabled)}min (>= ${TICK_AUTO_RECOVER_MINUTES}min threshold), auto-recovering`);
-        await enableTick();
-        // Write P1 alert event
-        try {
-          await pool.query(
-            `INSERT INTO cecelia_events (event_type, source, payload)
-             VALUES ('tick_auto_recover', 'tick', $1)`,
-            [JSON.stringify({
-              reason: 'tick_was_disabled_too_long',
-              disabled_at: disabledAt?.toISOString() || null,
-              minutes_disabled: Math.round(minutesDisabled),
-              auto_recovered: true,
-            })]
-          );
-        } catch { /* event logging is best-effort */ }
-        tickLog('[tick-loop] tick_auto_recover: tick re-enabled after extended disable period');
-      } else {
-        tickLog(`[tick-loop] Tick is disabled in DB (${Math.round(minutesDisabled)}min, threshold ${TICK_AUTO_RECOVER_MINUTES}min), not starting loop`);
-      }
-    }
-
-    // Start tick watchdog — independent timer that checks every 5 minutes
-    // If tick is disabled by non-manual source (drain/alertness), auto-recover
-    startTickWatchdog();
-  } catch (err) {
-    console.error('[tick-loop] Failed to init tick loop:', err.message);
-
-    // 启动后台恢复 timer（每 INIT_RECOVERY_INTERVAL_MS 重试一次）
-    if (!tickState.recoveryTimer) {
-      tickLog(`[tick-loop] Starting background recovery timer (interval: ${INIT_RECOVERY_INTERVAL_MS}ms)`);
-      tickState.recoveryTimer = setInterval(tryRecoverTickLoop, INIT_RECOVERY_INTERVAL_MS);
-      // 允许进程在没有其他活跃引用时正常退出
-      if (tickState.recoveryTimer.unref) {
-        tickState.recoveryTimer.unref();
-      }
-    }
-  }
-}
-
-// Phase D Part 1.3: tick watchdog 实现搬到 tick-watchdog.js，下方 import re-export。
-
-/**
- * Enable automatic tick
- */
-async function enableTick() {
-  await pool.query(`
-    INSERT INTO working_memory (key, value_json, updated_at)
-    VALUES ($1, $2, NOW())
-    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [TICK_ENABLED_KEY, { enabled: true }]);
-
-  startTickLoop();
-
-  return { success: true, enabled: true, loop_running: true };
-}
-
-/**
- * Disable automatic tick
- * @param {string} source - 'manual' | 'drain' | 'alertness' — watchdog 只恢复非 manual 的
- */
-async function disableTick(source = 'manual') {
-  await pool.query(`
-    INSERT INTO working_memory (key, value_json, updated_at)
-    VALUES ($1, $2, NOW())
-    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [TICK_ENABLED_KEY, { enabled: false, disabled_at: new Date().toISOString(), source }]);
-
-  stopTickLoop();
-
-  return { success: true, enabled: false, loop_running: false, source };
-}
 
 /**
  * Check if a task is stale (in_progress for too long)
@@ -539,6 +344,8 @@ export {
   startTickLoop,
   stopTickLoop,
   initTickLoop,
+  tryRecoverTickLoop,
+  _recordRecoveryAttempt,
   dispatchNextTask,
   _dispatchViaWorkflowRuntime,
   processCortexTask,

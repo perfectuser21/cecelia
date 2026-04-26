@@ -14,7 +14,7 @@ describe('tick-health-monitor: disableTick stores disabled_at', () => {
   it('tick.js disableTick() stores disabled_at timestamp', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-recovery.js', import.meta.url).pathname,
       'utf8'
     );
     // disableTick must store disabled_at with the false value
@@ -25,7 +25,7 @@ describe('tick-health-monitor: disableTick stores disabled_at', () => {
   it('TICK_AUTO_RECOVER_MINUTES constant is defined', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-recovery.js', import.meta.url).pathname,
       'utf8'
     );
     expect(src).toContain('TICK_AUTO_RECOVER_MINUTES');
@@ -35,7 +35,7 @@ describe('tick-health-monitor: disableTick stores disabled_at', () => {
   it('initTickLoop checks disabled_at and auto-recovers when expired', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-recovery.js', import.meta.url).pathname,
       'utf8'
     );
     // Must check disabled_at against threshold
@@ -47,7 +47,7 @@ describe('tick-health-monitor: disableTick stores disabled_at', () => {
   it('initTickLoop treats missing disabled_at as Infinity (always recover)', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-recovery.js', import.meta.url).pathname,
       'utf8'
     );
     // No timestamp = unknown = treat as expired
@@ -57,7 +57,7 @@ describe('tick-health-monitor: disableTick stores disabled_at', () => {
   it('auto-recovery logs a cecelia_events P1 alert', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
-      new URL('../tick.js', import.meta.url).pathname,
+      new URL('../tick-recovery.js', import.meta.url).pathname,
       'utf8'
     );
     expect(src).toContain("'tick_auto_recover'");
