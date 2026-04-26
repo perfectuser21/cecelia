@@ -23,6 +23,75 @@ _write_deploy_status() {
 }
 trap '_write_deploy_status' EXIT
 
+# ── Post-deploy smoke 函数 ──────────────────────────────────────────────────
+# 部署 healthy 之后跑最近合并 PR 引入的 packages/brain/scripts/smoke/*.sh，
+# 验生产 Brain 真生效（不只 200/healthy）。
+#
+# 控制 env：
+#   SKIP_POST_DEPLOY_SMOKE=1  整体跳过（紧急部署 / 离线场景）
+#   RECENT_PRS="2651 2650"    强制指定 PR 列表，绕过 gh pr list（测试用 / mock）
+#
+# 退出码：始终 0（每条 smoke non-fatal — deploy 已成功不能因 smoke 回滚）。
+run_post_deploy_smoke() {
+    if [[ "${SKIP_POST_DEPLOY_SMOKE:-0}" == "1" ]]; then
+        echo "  [skip] SKIP_POST_DEPLOY_SMOKE=1"
+        return 0
+    fi
+    if ! command -v gh >/dev/null 2>&1 && [[ -z "${RECENT_PRS:-}" ]]; then
+        echo "  [skip] gh CLI 不存在且未提供 RECENT_PRS 覆盖 — 跳过 smoke 扫描"
+        return 0
+    fi
+
+    local recent_prs="${RECENT_PRS:-}"
+    if [[ -z "$recent_prs" ]]; then
+        recent_prs=$(gh pr list --state merged --limit 5 --json number --jq '.[].number' 2>/dev/null || echo "")
+    fi
+    if [[ -z "$recent_prs" ]]; then
+        echo "  没找到最近合并 PR — 跳过"
+        return 0
+    fi
+
+    local ran=0 failed=0 sf
+    # 去重缓存（避免同一 smoke 在多 PR 都改过时跑多次）— 用临时文件兼容老 bash
+    local seen_file
+    seen_file=$(mktemp -t post_deploy_smoke_seen.XXXXXX)
+    # shellcheck disable=SC2064
+    trap "rm -f '$seen_file'" RETURN
+
+    for pr in $recent_prs; do
+        local smoke_files=""
+        if command -v gh >/dev/null 2>&1; then
+            smoke_files=$(gh pr view "$pr" --json files --jq '.files[] | select(.path | startswith("packages/brain/scripts/smoke/") and endswith(".sh")) | .path' 2>/dev/null || echo "")
+        fi
+        # mock 模式：用户直接指定 RECENT_PRS 但没 gh，回退扫本地 worktree
+        if [[ -z "$smoke_files" && -n "${RECENT_PRS:-}" && -d "$ROOT_DIR/packages/brain/scripts/smoke" ]]; then
+            smoke_files=$(find "$ROOT_DIR/packages/brain/scripts/smoke" -maxdepth 1 -name "*.sh" -type f -print 2>/dev/null | sed "s|$ROOT_DIR/||")
+        fi
+        for sf in $smoke_files; do
+            if grep -qxF "$sf" "$seen_file" 2>/dev/null; then continue; fi
+            echo "$sf" >> "$seen_file"
+            if [[ ! -f "$ROOT_DIR/$sf" ]]; then
+                echo "  [skip] $sf (PR #$pr 引入但本地 worktree 不存在)"
+                continue
+            fi
+            ran=$((ran + 1))
+            echo "  Running $sf (from PR #$pr)..."
+            if bash "$ROOT_DIR/$sf"; then
+                echo "  ✅ smoke pass: $sf"
+            else
+                echo "  ❌ smoke failed: $sf (non-fatal — deploy 已成功)"
+                failed=$((failed + 1))
+            fi
+        done
+    done
+    if [[ "$ran" -eq 0 ]]; then
+        echo "  最近 5 个合并 PR 未引入 smoke.sh — 跳过"
+    else
+        echo "  Post-deploy smoke 总计：跑 $ran 条，失败 $failed 条"
+    fi
+    return 0
+}
+
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 DRY_RUN=false
 for arg in "$@"; do
@@ -314,7 +383,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
 
     # 10. Trigger Notion sync to catch missed webhook events during restart
     echo ""
-    echo "[10/10] Triggering post-deploy Notion sync..."
+    echo "[10/11] Triggering post-deploy Notion sync..."
     SYNC_RESPONSE=$(curl -sf --max-time 30 -X POST http://localhost:5221/api/brain/notion-sync/run 2>&1) || true
     if [[ -n "$SYNC_RESPONSE" ]]; then
       SYNCED=$(echo "$SYNC_RESPONSE" | node -e "try{const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const f=r.fromNotion||{};const t=r.toNotion||{};console.log('fromNotion synced='+( f.synced||0)+' toNotion synced='+(t.synced||0)+' failed='+(t.failed||0))}catch(e){console.log('(parse error)'+ e.message)}" 2>/dev/null || echo "$SYNC_RESPONSE" | head -c 200)
@@ -322,6 +391,11 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     else
       echo "  WARN: Notion sync call failed or timed out (non-blocking)"
     fi
+
+    # 11. Post-deploy smoke：跑最近合并 PR 引入的 packages/brain/scripts/smoke/*.sh
+    echo ""
+    echo "[11/11] Post-deploy smoke..."
+    run_post_deploy_smoke || true   # smoke non-fatal — deploy 已成功
 
     exit 0
   fi

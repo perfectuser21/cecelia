@@ -1,65 +1,42 @@
-branch: cp-0426202402-cicd-a-skill-lint
-team: cecelia-cicd-foundation
-task: "#1 — A — /dev SKILL 强制 smoke.sh + 4 个 CI lint job"
+# DoD — cp-0426202430-cicd-c-deploy-smoke
 
-## 任务标题
+## Goal
 
-/dev SKILL 强制 smoke.sh + 4 CI lint job 机器化纪律
+`scripts/brain-deploy.sh` healthy check 后跑最近 5 个合并 PR 引入的 smoke.sh，
+非 fatal；并写 c8a 范本（PostgresSaver + 5 channel + Brain 重启持久）。
 
-## 任务描述
+## Artifact
 
-让 /dev TDD + smoke.sh 纪律不靠 AI 自觉，全部机器化进 CI。SKILL.md 加规则文字段，
-ci.yml 加 4 个 PR-only lint job 强制执行：
+- [x] [ARTIFACT] `scripts/brain-deploy.sh` 含 `run_post_deploy_smoke` 函数定义
+      Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.match(/^run_post_deploy_smoke\(\) \{/m))process.exit(1)"
 
-- lint-test-pairing：新 brain/src/*.js 必须配套 *.test.js
-- lint-feature-has-smoke：feat: + 改 brain/src 必须新增 packages/brain/scripts/smoke/*.sh
-- lint-base-fresh：PR 落后 main ≤ 5 commits
-- lint-tdd-commit-order：含 src 的 commit 之前 PR 系列必须有 *.test.js commit
+- [x] [ARTIFACT] `packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh` 存在 + chmod +x
+      Test: manual:node -e "const fs=require('fs');const s=fs.statSync('packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh');if((s.mode&0o100)===0)process.exit(1)"
 
-## DoD
+## Behavior
 
-- [x] [BEHAVIOR] SKILL.md 含 "smoke.sh 必须" 字符串
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/SKILL.md','utf8');if(!c.includes('smoke.sh 必须'))process.exit(1)"
+- [x] [BEHAVIOR] brain-deploy.sh Phase 11 调 `run_post_deploy_smoke` 且 non-fatal
+      Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.includes('[11/11] Post-deploy smoke'))process.exit(1);if(!c.includes('run_post_deploy_smoke || true'))process.exit(1)"
 
-- [x] [BEHAVIOR] ci.yml 加 4 个 lint job（lint-test-pairing / lint-feature-has-smoke / lint-base-fresh / lint-tdd-commit-order）
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');for(const j of ['lint-test-pairing:','lint-feature-has-smoke:','lint-base-fresh:','lint-tdd-commit-order:'])if(!c.includes(j)){console.error('missing',j);process.exit(1)}"
+- [x] [BEHAVIOR] `run_post_deploy_smoke` 支持 SKIP_POST_DEPLOY_SMOKE / RECENT_PRS env
+      Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-deploy.sh','utf8');if(!c.includes('SKIP_POST_DEPLOY_SMOKE')||!c.includes('RECENT_PRS')||!c.includes('gh pr view'))process.exit(1)"
 
-- [x] [ARTIFACT] 4 个 lint script 存在于 .github/workflows/scripts/
-  Test: manual:node -e "for(const f of ['lint-test-pairing.sh','lint-feature-has-smoke.sh','lint-base-fresh.sh','lint-tdd-commit-order.sh'])require('fs').accessSync('.github/workflows/scripts/'+f)"
+- [x] [BEHAVIOR] c8a smoke 含 7 步关键验证（PostgresSaver / 5_channels / docker restart / cleanup）
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh','utf8');['PostgresSaver','saver.put','saver.getTuple','5_channels_recovered','docker restart cecelia-node-brain','trap cleanup EXIT','DELETE FROM checkpoints'].forEach(t=>{if(!c.includes(t))process.exit(1)})"
 
-- [x] [BEHAVIOR] lint-test-pairing.sh 含 brain src 检测 grep + 候选 test 路径推导
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-test-pairing.sh','utf8');if(!c.includes('packages/brain/src/'))process.exit(1);if(!c.includes('__tests__'))process.exit(2);if(!c.includes('git diff'))process.exit(3)"
+- [x] [BEHAVIOR] c8a smoke 缺前置依赖时优雅 skip exit 0
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh','utf8');['docker 命令不存在','docker daemon 不可达','cecelia-node-brain 容器不存在','psql 不在 PATH'].forEach(t=>{if(!c.includes(t))process.exit(1)})"
 
-- [x] [BEHAVIOR] lint-base-fresh.sh 用 git rev-list 数 HEAD 落后 BASE_REF 的 commits
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-base-fresh.sh','utf8');if(!c.includes('git rev-list --count'))process.exit(1);if(!c.includes('MAX_BEHIND'))process.exit(2)"
+- [x] [BEHAVIOR] c8a smoke 验 5 个 LangGraph channel（worktreePath / plannerOutput / taskPlan / ganResult / result）
+      Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/c8a-harness-checkpoint-resume.sh','utf8');['worktreePath','plannerOutput','taskPlan','ganResult','result'].forEach(t=>{if(!c.includes(t))process.exit(1)})"
 
-- [x] [BEHAVIOR] ci-passed gate 含 4 个新 lint job
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');for(const j of ['lint-test-pairing','lint-feature-has-smoke','lint-base-fresh','lint-tdd-commit-order'])if(!new RegExp('needs\\\\.'+j+'\\\\.result').test(c)){console.error('ci-passed missing',j);process.exit(1)}"
+- [x] [BEHAVIOR] post-deploy-smoke 单元测试覆盖 brain-deploy.sh + smoke 范本
+      Test: tests/packages/brain/post-deploy-smoke.test.js
 
-- [x] [ARTIFACT] Engine 5 文件版本 bump 18.6.0 → 18.7.0
-  Test: manual:node -e "const fs=require('fs');for(const f of ['packages/engine/VERSION','packages/engine/.hook-core-version'])if(!fs.readFileSync(f,'utf8').trim().startsWith('18.7.0'))process.exit(1);if(!require('./packages/engine/package.json').version.startsWith('18.7.0'))process.exit(1);if(!require('./packages/engine/package-lock.json').version.startsWith('18.7.0'))process.exit(1)"
+## Constraints
 
-- [x] [ARTIFACT] feature-registry.yml 含 18.7.0 changelog 条目
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/feature-registry.yml','utf8');if(!c.includes('version: \"18.7.0\"'))process.exit(1)"
-
-- [x] [ARTIFACT] Learning 文档存在
-  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-04262029-cicd-a-skill-lint.md')"
-
-## 目标文件
-
-- packages/engine/skills/dev/SKILL.md
-- .github/workflows/ci.yml
-- .github/workflows/scripts/lint-test-pairing.sh
-- .github/workflows/scripts/lint-feature-has-smoke.sh
-- .github/workflows/scripts/lint-base-fresh.sh
-- .github/workflows/scripts/lint-tdd-commit-order.sh
-- packages/engine/VERSION / .hook-core-version / package.json / package-lock.json / regression-contract.yaml
-- packages/engine/feature-registry.yml
-- DoD.md
-- docs/learnings/cp-04262029-cicd-a-skill-lint.md
-
-## 成功标准
-
-- 4 个 lint script 跑过本 PR 全部 PASS（本地 + CI）
-- ci-passed gate 把 4 个新 lint 纳入合并门禁
-- SKILL.md 文字 + ci.yml 机器化双保险，未来 feat:+brain 改动 PR 没 smoke.sh 会被 CI 直接拦
+- 不改 CI workflow（task B 已经覆盖 CI 侧 real-env-smoke job）
+- 不改 SKILL（task A 覆盖 /dev 强制 smoke.sh）
+- 不写 D / E1 observer / tick / content-pipeline 幂等 smoke（task D 覆盖）
+- 不动 dispatcher / brain v2 业务代码
+- 不 bump engine 版本（仅改 scripts/ + packages/brain/scripts/smoke/，与 engine 无关）
