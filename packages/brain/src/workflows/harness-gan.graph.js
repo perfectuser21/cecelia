@@ -123,6 +123,17 @@ export function extractProposeBranch(stdout) {
   return m ? m[1] : null;
 }
 
+// 生成 Shanghai 时区 MMDDHHmm 时间戳（与 worktree-manage.sh 创建分支风格一致）。
+// 用于 propose_branch 抽取失败时的 fallback：cp-MMDDHHmm-<taskIdSlice>。
+export function fallbackProposeBranch(taskId, now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now).reduce((a, p) => (a[p.type] = p.value, a), {});
+  const stamp = `${parts.month}${parts.day}${parts.hour}${parts.minute}`;
+  return `cp-${stamp}-${String(taskId || 'unknown').slice(0, 8)}`;
+}
+
 export function buildProposerPrompt(prdContent, feedback, round) {
   const parts = [
     '/harness-contract-proposer',
@@ -312,12 +323,12 @@ export function createGanContractNodes(executor, ctx) {
     // 解析 stdout 中的 propose_branch（proposer SKILL Step 3 输出 JSON 字面量）。
     // 即使本轮被打回，先把 branch 存下；后续轮次会覆写成新 branch（reducer 取最新）。
     // APPROVED 终态时即 approved contract 的 git branch。
-    const proposeBranch = extractProposeBranch(result.stdout);
+    const proposeBranch = extractProposeBranch(result.stdout) || fallbackProposeBranch(taskId);
     return {
       round: nextRound,
       costUsd: (state.costUsd || 0) + Number(result.cost_usd || 0),
       contractContent,
-      ...(proposeBranch ? { proposeBranch } : {}),
+      proposeBranch,
     };
   }
 

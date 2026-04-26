@@ -488,7 +488,7 @@ describe('runGanContractGraph', () => {
     expect(res.propose_branch).toBe('cp-harness-propose-r1-deadbeef');
   });
 
-  it('proposer stdout 缺 propose_branch → 返回值 propose_branch=null（兜底，不抛错）', async () => {
+  it('proposer stdout 缺 propose_branch → fallback 用 cp-MMDDHHmm-<taskId8>（不为 null）', async () => {
     const executor = vi.fn(async ({ task: { task_type } }) => {
       if (task_type === 'harness_contract_propose') {
         return { exit_code: 0, stdout: 'no json here', stderr: '', cost_usd: 0.1, timed_out: false };
@@ -502,8 +502,10 @@ describe('runGanContractGraph', () => {
       };
     });
     const { runGanContractGraph } = await import('../harness-gan-graph.js');
-    const res = await runGanContractGraph({ ...makeOpts(), executor });
-    expect(res.propose_branch).toBeNull();
+    const res = await runGanContractGraph({ ...makeOpts({ taskId: 'abcd1234-ffff-0000-0000-000000000000' }), executor });
+    // fallback 必须非 null，必须以 cp- 开头 + 8 字符时间戳 + taskId 前 8 位
+    expect(res.propose_branch).not.toBeNull();
+    expect(res.propose_branch).toMatch(/^cp-\d{8}-abcd1234$/);
   });
 });
 
@@ -519,5 +521,29 @@ describe('extractProposeBranch', () => {
     expect(extractProposeBranch('no json')).toBeNull();
     expect(extractProposeBranch('')).toBeNull();
     expect(extractProposeBranch(null)).toBeNull();
+  });
+});
+
+describe('fallbackProposeBranch', () => {
+  it('生成 cp-MMDDHHmm-<taskId8> 格式（Asia/Shanghai 时区）', async () => {
+    const { fallbackProposeBranch } = await import('../harness-gan-graph.js');
+    // 2026-04-26 10:09 UTC = 2026-04-26 18:09 Shanghai → MMDDHHmm = 04261809
+    const fixed = new Date('2026-04-26T10:09:00.000Z');
+    const out = fallbackProposeBranch('582a24f2-5ba0-4753-89bc-1657deda54d3', fixed);
+    expect(out).toBe('cp-04261809-582a24f2');
+  });
+
+  it('taskId 不足 8 位 → 用全部', async () => {
+    const { fallbackProposeBranch } = await import('../harness-gan-graph.js');
+    const fixed = new Date('2026-01-02T03:04:00.000Z'); // SH = 11:04 → 01021104
+    const out = fallbackProposeBranch('abc', fixed);
+    expect(out).toBe('cp-01021104-abc');
+  });
+
+  it('taskId 缺失 → fallback 占位 unknown', async () => {
+    const { fallbackProposeBranch } = await import('../harness-gan-graph.js');
+    const fixed = new Date('2026-04-26T10:09:00.000Z');
+    expect(fallbackProposeBranch(null, fixed)).toBe('cp-04261809-unknown');
+    expect(fallbackProposeBranch(undefined, fixed)).toBe('cp-04261809-unknown');
   });
 });

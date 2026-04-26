@@ -1,49 +1,39 @@
-task_id: 1d904af8-0dd2-45d3-823c-1f18920a41a9
-branch: cp-0425185111-p0-harness-bypass-backpressure
+task_id: 582a24f2-5ba0-4753-89bc-1657deda54d3
+branch: cp-0426100009-fix-propose-branch-fallback-582a24f2
 
 ## 任务标题
 
-[Harness v6 P1-A] P0 harness_task 跳过 backpressure（dispatch whitelist）
+[Brain Harness] propose_branch 抽取失败时 fallback 用 cp-MMDDHHmm-<taskId8>
 
 ## 任务描述
 
-`BACKPRESSURE_THRESHOLD=20 + burst=3` 让 P0 `harness_*` 任务被 88 个 P1 content-pipeline 积压拖累。
-本 PR 在 slot-allocator.js 加 `BACKPRESSURE_BYPASS_TASK_TYPES` 白名单（8 个 harness_* 类型），
-并在 `getBackpressureState({task})` 与 `dispatch-helpers.selectNextDispatchableTask` 中识别 P0 harness 跳过 backpressure。
+`packages/brain/src/workflows/harness-gan.graph.js` 的 `extractProposeBranch` 在 SKILL 漏输出
+propose_branch JSON 时返回 null，导致 `contract.branch=null` → sub-task `payload.contract_branch=空` →
+Generator ABORT，Initiative 卡死在最后一跳。
+
+本 PR 在 proposer 节点处加 fallback：抽不到时用 `cp-${shanghaiTimestamp}-${taskId.slice(0,8)}`，
+新增 `fallbackProposeBranch(taskId, now)` helper（Asia/Shanghai 时区，MMDDHHmm 格式，与 worktree-manage.sh 风格一致）。
 
 ## DoD
 
-- [x] [ARTIFACT] slot-allocator.js 含 BACKPRESSURE_BYPASS_TASK_TYPES 常量
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/slot-allocator.js','utf8');if(!/BACKPRESSURE_BYPASS_TASK_TYPES/.test(c))process.exit(1)"
+- [x] [ARTIFACT] harness-gan.graph.js 已 export `fallbackProposeBranch`
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-gan.graph.js','utf8');if(!/export function fallbackProposeBranch/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] slot-allocator.js 含 shouldBypassBackpressure 函数
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/slot-allocator.js','utf8');if(!/function shouldBypassBackpressure/.test(c))process.exit(1)"
+- [x] [ARTIFACT] proposer 节点已用 `||  fallbackProposeBranch(taskId)` 兜底
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-gan.graph.js','utf8');if(!/extractProposeBranch\(result\.stdout\)\s*\|\|\s*fallbackProposeBranch\(taskId\)/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] dispatch-helpers.js 引用 shouldBypassBackpressure
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/dispatch-helpers.js','utf8');if(!/shouldBypassBackpressure/.test(c))process.exit(1);if(!/_bypass_backpressure/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] `fallbackProposeBranch('582a24f2-...', new Date('2026-04-26T10:09:00Z'))` → `cp-04261809-582a24f2`（Asia/Shanghai 时区正确）
+  Test: manual:node -e "const {fallbackProposeBranch}=require('./packages/brain/src/workflows/harness-gan.graph.js');const out=fallbackProposeBranch('582a24f2-5ba0-4753-89bc-1657deda54d3', new Date('2026-04-26T10:09:00.000Z'));if(out!=='cp-04261809-582a24f2'){console.error('got',out);process.exit(1)}"
 
-- [x] [BEHAVIOR] shouldBypassBackpressure 真值表测试（P0 harness=true，P1 harness=false，P0 content=false）
-  Test: packages/brain/src/__tests__/slot-allocator.test.js
-
-- [x] [BEHAVIOR] getBackpressureState({queue_depth:200, task: P0 harness_task}) → active=false, override_burst_limit=null
-  Test: packages/brain/src/__tests__/slot-allocator.test.js
-
-- [x] [BEHAVIOR] getBackpressureState({queue_depth:200, task: P1 content-pipeline}) → active=true, override_burst_limit=3（保持原行为）
-  Test: packages/brain/src/__tests__/slot-allocator.test.js
-
-- [x] [BEHAVIOR] dispatch-helpers 静态合同测试：源码含 shouldBypassBackpressure 引用 + _bypass_backpressure 标记
-  Test: packages/brain/src/__tests__/slot-allocator.test.js
+- [x] [BEHAVIOR] proposer stdout 缺 propose_branch 时 runGanContractGraph 返回值 propose_branch 非 null 且匹配 `^cp-\d{8}-<taskId8>$`
+  Test: packages/brain/src/__tests__/harness-gan-graph.test.js
 
 - [x] [ARTIFACT] Learning 文档存在
-  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0425185111-p0-harness-bypass-backpressure.md')"
+  Test: manual:node -e "require('fs').accessSync('docs/learnings/cp-0426100009-fix-propose-branch-fallback-582a24f2.md')"
 
 ## 目标文件
 
-- packages/brain/src/slot-allocator.js
-- packages/brain/src/dispatch-helpers.js
-- packages/brain/src/__tests__/slot-allocator.test.js
-- packages/brain/src/__tests__/dispatch-preflight-skip.test.js
-- packages/brain/src/__tests__/initiative-lock.test.js
-- packages/brain/src/__tests__/dispatcher-quota-cooling.test.js
-- packages/brain/src/__tests__/dispatch-executor-fail.test.js
-- docs/learnings/cp-0425185111-p0-harness-bypass-backpressure.md
+- packages/brain/src/workflows/harness-gan.graph.js
+- packages/brain/src/__tests__/harness-gan-graph.test.js
+- docs/learnings/cp-0426100009-fix-propose-branch-fallback-582a24f2.md
+- DoD.md
