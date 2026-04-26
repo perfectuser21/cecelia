@@ -2,20 +2,19 @@
  * harness-graph.test.js
  *
  * 验证 LangGraph 骨架 harness pipeline：
- *   - 6 个节点定义齐全
- *   - happy path: planner → proposer → reviewer(APPROVED) → generator → evaluator(PASS) → report
+ *   - 7 个节点定义齐全
+ *   - happy path: planner → proposer → reviewer(APPROVED) → generator → ci_gate → evaluator(PASS) → report
  *   - reviewer REVISION → 回到 proposer
  *   - evaluator FAIL    → 回到 generator
- *   - runner 读取 HARNESS_LANGGRAPH_ENABLED 开关
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   HARNESS_NODE_NAMES,
   buildHarnessGraph,
   compileHarnessApp,
   placeholderNode,
 } from '../harness-graph.js';
-import { runHarnessPipeline, isLangGraphEnabled } from '../harness-graph-runner.js';
+import { runHarnessPipeline } from '../harness-graph-runner.js';
 
 describe('HARNESS_NODE_NAMES', () => {
   it('exposes the 7 expected node names in order (v2 M4: ci_gate 插在 generator 和 evaluator 之间)', () => {
@@ -108,23 +107,7 @@ describe('placeholderNode', () => {
 });
 
 describe('runHarnessPipeline', () => {
-  const ORIGINAL_ENV = process.env.HARNESS_LANGGRAPH_ENABLED;
-
-  beforeEach(() => {
-    delete process.env.HARNESS_LANGGRAPH_ENABLED;
-  });
-  afterEach(() => {
-    if (ORIGINAL_ENV === undefined) delete process.env.HARNESS_LANGGRAPH_ENABLED;
-    else process.env.HARNESS_LANGGRAPH_ENABLED = ORIGINAL_ENV;
-  });
-
-  it('returns { skipped: true } when HARNESS_LANGGRAPH_ENABLED is not set', async () => {
-    const r = await runHarnessPipeline({ id: 'task-1', description: 'demo' });
-    expect(r.skipped).toBe(true);
-  });
-
-  it('runs the pipeline when HARNESS_LANGGRAPH_ENABLED=true', async () => {
-    process.env.HARNESS_LANGGRAPH_ENABLED = 'true';
+  it('runs the pipeline by default (no env required)', async () => {
     const seen = [];
     // Override nodes to avoid Docker dependency in CI
     // reviewer→APPROVED breaks GAN loop, evaluator→PASS breaks fix loop
@@ -148,20 +131,6 @@ describe('runHarnessPipeline', () => {
   });
 
   it('throws when task.id missing', async () => {
-    process.env.HARNESS_LANGGRAPH_ENABLED = 'true';
     await expect(runHarnessPipeline({ description: 'no id' })).rejects.toThrow(/task\.id/);
-  });
-
-  it('isLangGraphEnabled handles common falsy values', () => {
-    delete process.env.HARNESS_LANGGRAPH_ENABLED;
-    expect(isLangGraphEnabled()).toBe(false);
-    process.env.HARNESS_LANGGRAPH_ENABLED = '0';
-    expect(isLangGraphEnabled()).toBe(false);
-    process.env.HARNESS_LANGGRAPH_ENABLED = 'false';
-    expect(isLangGraphEnabled()).toBe(false);
-    process.env.HARNESS_LANGGRAPH_ENABLED = 'true';
-    expect(isLangGraphEnabled()).toBe(true);
-    process.env.HARNESS_LANGGRAPH_ENABLED = '1';
-    expect(isLangGraphEnabled()).toBe(true);
   });
 });

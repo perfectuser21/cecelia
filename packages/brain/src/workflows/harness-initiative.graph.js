@@ -256,7 +256,6 @@ ${task.description || task.title || ''}
 // ─── @deprecated 阶段 C — Final E2E + 失败归因 ──────────────────────────────
 // Sprint 1: checkAllTasksCompleted / createFixTask / runPhaseCIfReady 这三个函数
 // 被顶层 buildHarnessFullGraph 的 fanout / runSubTask / join / finalE2eNode 节点取代。
-// 保留 1 周作 HARNESS_USE_FULL_GRAPH=false 兜底；下一个 PR 删。
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
@@ -536,8 +535,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
 }
 
 // ─── Brain v2 C8a — LangGraph 真图实现（阶段 A）────────────────────────
-// 与上方 legacy `runInitiative` 528 行并存。executor.js 通过 HARNESS_INITIATIVE_RUNTIME=v2
-// env flag 切换两套实现，灰度推进。
+// harness_initiative 任务的唯一执行路径（dispatcher → executor → compileHarnessFullGraph）。
 //
 // 节点拓扑：START → prep → planner → parsePrd → ganLoop → dbUpsert → END
 //                    ↓error  ↓error    ↓error    ↓error

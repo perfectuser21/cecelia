@@ -4,8 +4,7 @@
  * 提供 `runHarnessPipeline(task)` 入口：
  *   1. 用 task.id 作为 langgraph thread_id（支持中断恢复，PostgresSaver 自动续跑）
  *   2. stream 节点执行，每跳一步写一条 cecelia_events
- *   3. `HARNESS_LANGGRAPH_ENABLED` 未设置时直接 no-op，保持老路径（routes/execution.js）兜底
- *   4. 每个节点通过 spawn() 在隔离容器中运行 Claude Code session（spawn 内部走 executeInDocker）
+ *   3. 每个节点通过 spawn() 在隔离容器中运行 Claude Code session（spawn 内部走 executeInDocker）
  */
 
 import { compileHarnessApp, createDockerNodes } from './harness-graph.js';
@@ -16,17 +15,6 @@ import { spawn } from './spawn/index.js';
  * 100 = review 10 轮 × 2 节点 + gen/eval 10 轮 × 2 节点 + 6 起止 = 46，预留一倍。
  */
 export const DEFAULT_RECURSION_LIMIT = 100;
-
-/**
- * 是否启用 LangGraph 路径。
- * 默认 false：未设置/空字符串/'false'/'0' 都视为关闭。
- */
-export function isLangGraphEnabled() {
-  const v = process.env.HARNESS_LANGGRAPH_ENABLED;
-  if (!v) return false;
-  const normalized = String(v).trim().toLowerCase();
-  return !(normalized === '' || normalized === 'false' || normalized === '0');
-}
 
 /**
  * 运行 harness pipeline。
@@ -42,9 +30,6 @@ export function isLangGraphEnabled() {
  * @returns {Promise<{ skipped?: boolean, finalState?: object, steps?: number, reason?: string }>}
  */
 export async function runHarnessPipeline(task, opts = {}) {
-  if (!isLangGraphEnabled()) {
-    return { skipped: true, reason: 'HARNESS_LANGGRAPH_ENABLED not set' };
-  }
   if (!task || !task.id) {
     throw new Error('runHarnessPipeline: task.id is required (used as langgraph thread_id)');
   }

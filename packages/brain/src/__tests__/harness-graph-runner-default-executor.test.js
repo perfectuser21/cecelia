@@ -7,7 +7,7 @@
  *   3. 顶部 import 含 spawn
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,11 +38,6 @@ const placeholderOverrides = {
 beforeEach(() => {
   mockSpawn.mockReset().mockImplementation(dockerOk);
   mockExecuteInDocker.mockReset().mockImplementation(dockerOk);
-  process.env.HARNESS_LANGGRAPH_ENABLED = 'true';
-});
-
-afterEach(() => {
-  delete process.env.HARNESS_LANGGRAPH_ENABLED;
 });
 
 describe('runHarnessPipeline — default dockerExecutor', () => {

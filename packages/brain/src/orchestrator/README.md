@@ -35,7 +35,7 @@ await runWorkflow('my-flow', task.id, task.attempt_n ?? 1, task);
 | C4 | 搬 `harness-initiative-runner.js` → `workflows/harness-initiative.graph.js`（组合 C3 subgraph）|
 | C5 | 搬 `content-pipeline-graph.js` → `workflows/content-pipeline.graph.js` |
 | C6 | tick.js 瘦身到 ≤ 200 行，路由表 `taskTypeToWorkflow` |
-| C7 | 清老 runner + 清 WORKFLOW_RUNTIME flag |
+| C7 | 清老 runner + 清 WORKFLOW_RUNTIME flag | ✅ 完成（PR flip-default-langgraph-flags） |
 
 ## 硬约束（spec §6，每 PR 必守）
 

@@ -4,8 +4,7 @@
  * processHarnessCiWatchers / processHarnessDeployWatchers 由 harness-task.graph 的
  * poll_ci / merge_pr 节点取代。tick-runner.js 已删 import + 调用。
  *
- * 此文件保留为标记文件 + 兜底空实现，让 HARNESS_USE_FULL_GRAPH=false 老路兼容
- * （legacy mode 下 tick worker 不再调用，但 import 不会炸）。
+ * 此文件保留为标记文件 + 兜底空实现，避免历史 import 路径炸；可在下个清理 PR 一并删。
  *
  * 历史代码：git log --follow packages/brain/src/harness-watcher.js (从 main 看)
  */

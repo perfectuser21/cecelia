@@ -4,7 +4,7 @@
  * advanceHarnessInitiatives 由 buildHarnessFullGraph 顶层 graph 自己推进 phase 取代。
  * initiative_runs.phase 由 reportNode 写。tick-runner.js 已删 import + 调用。
  *
- * 此文件保留为兜底空实现，让 HARNESS_USE_FULL_GRAPH=false 老路依旧可 import。
+ * 此文件保留为兜底空实现，避免历史 import 路径炸；可在下个清理 PR 一并删。
  *
  * 历史代码：git log --follow packages/brain/src/harness-phase-advancer.js
  */
