@@ -82,6 +82,7 @@ import {
   finalE2eNode,
   reportNode,
   buildHarnessFullGraph,
+  inferTaskPlanNode,
 } from '../harness-initiative.graph.js';
 
 // ─── 5 节点单测 ────────────────────────────────────────────────────────────
@@ -105,6 +106,117 @@ describe('fanoutSubTasksNode (router function)', () => {
   it('null taskPlan → 返回 ["join"]', () => {
     const sends = fanoutSubTasksNode({ taskPlan: null });
     expect(sends).toEqual(['join']);
+  });
+});
+
+describe('inferTaskPlanNode', () => {
+  beforeEach(() => { mockParseTaskPlan.mockReset(); });
+
+  it('已有 tasks (length>=1) → 不调 executor, 返回 {}', async () => {
+    const exec = vi.fn();
+    const delta = await inferTaskPlanNode(
+      { taskPlan: { tasks: [{ id: 's1', title: 'T1' }] } },
+      { executor: exec }
+    );
+    expect(delta).toEqual({});
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('空 tasks → 调 executor 拿 plan → 写回 state.taskPlan.tasks', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      exit_code: 0,
+      stdout: '```json\n' + JSON.stringify({
+        initiative_id: 'i',
+        tasks: [{
+          task_id: 's1', title: 'T1', scope: 'do x',
+          dod: ['done'], files: ['a.js'], depends_on: [],
+          complexity: 'S', estimated_minutes: 30,
+        }],
+      }) + '\n```',
+      stderr: '',
+    });
+    mockParseTaskPlan.mockReturnValueOnce({
+      initiative_id: 'i',
+      tasks: [{
+        task_id: 's1', title: 'T1', scope: 'do x',
+        dod: ['done'], files: ['a.js'], depends_on: [],
+        complexity: 'S', estimated_minutes: 30,
+      }],
+    });
+    const delta = await inferTaskPlanNode(
+      {
+        task: { id: 'init-1' },
+        initiativeId: 'i',
+        worktreePath: '/wt',
+        githubToken: 't',
+        prdContent: '# PRD',
+        ganResult: { contract_content: 'C' },
+        taskPlan: { tasks: [] },
+      },
+      { executor: exec }
+    );
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(delta.taskPlan?.tasks?.length).toBe(1);
+    expect(delta.taskPlan.tasks[0].id).toBe('s1');
+    expect(delta.taskPlan.tasks[0].title).toBe('T1');
+    expect(delta.taskPlan.tasks[0].description).toBe('do x');
+  });
+
+  it('executor 返回 exit=1 → passthrough 不抛', async () => {
+    const exec = vi.fn().mockResolvedValue({ exit_code: 1, stdout: '', stderr: 'boom' });
+    const delta = await inferTaskPlanNode(
+      {
+        task: { id: 't' }, initiativeId: 'i',
+        prdContent: '# x', taskPlan: { tasks: [] },
+      },
+      { executor: exec }
+    );
+    expect(delta).toEqual({});
+  });
+
+  it('executor 抛错 → passthrough 不抛', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('docker dead'));
+    const delta = await inferTaskPlanNode(
+      {
+        task: { id: 't' }, initiativeId: 'i',
+        prdContent: '# x', taskPlan: { tasks: [] },
+      },
+      { executor: exec }
+    );
+    expect(delta).toEqual({});
+  });
+
+  it('parseTaskPlan 抛错 → passthrough 不抛', async () => {
+    const exec = vi.fn().mockResolvedValue({ exit_code: 0, stdout: 'not json', stderr: '' });
+    mockParseTaskPlan.mockImplementationOnce(() => { throw new Error('bad json'); });
+    const delta = await inferTaskPlanNode(
+      {
+        task: { id: 't' }, initiativeId: 'i',
+        prdContent: '# x', taskPlan: { tasks: [] },
+      },
+      { executor: exec }
+    );
+    expect(delta).toEqual({});
+  });
+
+  it('无 PRD 无 Contract → passthrough 不调 executor', async () => {
+    const exec = vi.fn();
+    const delta = await inferTaskPlanNode(
+      { task: { id: 't' }, initiativeId: 'i', taskPlan: { tasks: [] } },
+      { executor: exec }
+    );
+    expect(delta).toEqual({});
+    expect(exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildHarnessFullGraph wiring', () => {
+  it('含 inferTaskPlan 节点（dbUpsert→inferTaskPlan→fanout）', () => {
+    const g = buildHarnessFullGraph();
+    const nodes = Object.keys(g.nodes || {});
+    expect(nodes).toContain('inferTaskPlan');
+    expect(nodes).toContain('fanout');
+    expect(nodes).toContain('dbUpsert');
   });
 });
 
@@ -250,6 +362,48 @@ describe('full graph e2e', () => {
     expect(final.sub_tasks.length).toBe(2);
     expect(final.sub_tasks.every(s => s.status === 'merged')).toBe(true);
     expect(final.report_path).toBeTruthy();
+  }, 30000);
+
+  it('planner 不出 tasks → inferTaskPlan fallback → fanout 派 Send → e2e PASS', async () => {
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockResolveTok.mockResolvedValue('t');
+    mockSpawn
+      .mockResolvedValueOnce({ exit_code: 0, stdout: '# PRD only, no task_plan', stderr: '' })
+      .mockResolvedValue({ exit_code: 0, stdout: 'pr_url: https://gh/p/X', stderr: '' });
+    mockReadFile.mockResolvedValue('# PRD');
+    mockParseTaskPlan
+      // dbUpsert 阶段（通过 parsePrdNode 调用）：返回空 tasks
+      .mockReturnValueOnce({ initiative_id: 'i', tasks: [] })
+      // inferTaskPlanNode 内部调用：返回合规 plan
+      .mockReturnValueOnce({
+        initiative_id: 'i',
+        tasks: [{
+          task_id: 's-fb', title: 'Fallback T', scope: 'do',
+          dod: ['done'], files: ['x.js'], depends_on: [],
+          complexity: 'S', estimated_minutes: 30,
+        }],
+      });
+    mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'cont' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'run' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    mockUpsertTaskPlan.mockResolvedValue({ idMap: {}, insertedTaskIds: [] });
+    mockWriteCb.mockResolvedValue();
+    mockCheckPr.mockReturnValue({ ciStatus: 'ci_passed', state: 'OPEN', mergeable: 'MERGEABLE', failedChecks: [] });
+    mockMerge.mockReturnValue(true);
+
+    const compiled = buildHarnessFullGraph().compile({ checkpointer: new MemorySaver() });
+    const final = await compiled.invoke(
+      { task: { id: 'init-fb', payload: { initiative_id: 'i' } } },
+      { configurable: { thread_id: 'init-fb:1' }, recursionLimit: 500 }
+    );
+
+    expect(final.taskPlan?.tasks?.length).toBe(1);
+    expect(final.taskPlan.tasks[0].id).toBe('s-fb');
+    expect(final.sub_tasks?.length).toBe(1);
+    expect(final.sub_tasks[0].status).toBe('merged');
   }, 30000);
 
   it('1 sub_task fix_round=2 后 merged → 顶层 final_e2e PASS', async () => {

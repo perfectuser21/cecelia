@@ -814,6 +814,92 @@ export const FullInitiativeState = Annotation.Root({
 });
 
 /**
+ * inferTaskPlanNode: graph node — 在 fanout 前保证 state.taskPlan.tasks 非空。
+ *
+ * 幂等：state.taskPlan?.tasks?.length >= 1 → passthrough。
+ * Fallback: spawn 一个 docker LLM 子任务，喂 PRD + Contract，让其拆 task-plan.json。
+ *           失败时 passthrough（不阻断 graph，让下游 join 走自然 FAIL 路径）。
+ *
+ * 解决：Planner SKILL 没输出合规 task_plan 时，fanout 看不到 tasks 直接跳 join，
+ *      Final E2E 找不到 sub_task 报 FAIL（Sprint 1 E2E-v10 真实根因）。
+ *
+ * @param {object} state  FullInitiativeState
+ * @param {object} [opts]
+ * @param {Function} [opts.executor]  spawn 替代（测试注入）
+ * @returns {Promise<object>}  state delta（{} 或 { taskPlan: {...} }）
+ */
+export async function inferTaskPlanNode(state, opts = {}) {
+  const existing = state?.taskPlan?.tasks;
+  if (Array.isArray(existing) && existing.length >= 1) {
+    return {};
+  }
+
+  const executor = opts.executor || spawn;
+  const prdContent = state?.prdContent || '';
+  const contractContent = state?.ganResult?.contract_content || '';
+  if (!prdContent && !contractContent) {
+    return {};
+  }
+
+  const prompt = `你是 task plan inferrer。根据下方 Sprint PRD + Contract，
+拆 1-5 个独立可并行的 sub_task，每个 sub_task 是一个原子 PR 单位。
+输出 task-plan.json，被 \`\`\`json ... \`\`\` 包裹，schema 见 harness-planner SKILL
+（task_id/title/scope/dod/files/depends_on/complexity/estimated_minutes）。
+
+## PRD
+${prdContent}
+
+## Contract
+${contractContent}`;
+
+  let stdout;
+  try {
+    const result = await executor({
+      task: { ...(state.task || {}), task_type: 'harness_planner' },
+      prompt,
+      worktreePath: state.worktreePath,
+      env: {
+        CECELIA_TASK_TYPE: 'harness_planner',
+        HARNESS_NODE: 'infer_task_plan',
+        HARNESS_INITIATIVE_ID: state.initiativeId,
+        GITHUB_TOKEN: state.githubToken,
+      },
+    });
+    if (result.exit_code !== 0 || result.timed_out) {
+      console.warn(`[infer_task_plan] LLM exit=${result.exit_code} timed_out=${result.timed_out}`);
+      return {};
+    }
+    stdout = parseDockerOutput(result.stdout);
+  } catch (err) {
+    console.warn(`[infer_task_plan] spawn failed: ${err.message}`);
+    return {};
+  }
+
+  let plan;
+  try {
+    plan = parseTaskPlan(stdout);
+  } catch (err) {
+    console.warn(`[infer_task_plan] parseTaskPlan failed: ${err.message}`);
+    return {};
+  }
+  if (plan.initiative_id === 'pending' || !plan.initiative_id) {
+    plan.initiative_id = state.initiativeId;
+  }
+
+  // 把 task_plan 行字段映射成 sub_task 形态（fanout/runSubTask 期望 id/title/description/payload）
+  const subTasks = plan.tasks.map((t) => ({
+    id: t.task_id,
+    title: t.title,
+    description: t.scope,
+    payload: { dod: t.dod, files: t.files, depends_on: t.depends_on },
+  }));
+
+  return {
+    taskPlan: { ...plan, tasks: subTasks },
+  };
+}
+
+/**
  * fanoutSubTasksNode: 用作 conditional edge 的路由函数（不是 graph node）。
  * 返回 Send[] 让 LangGraph runtime 并行调度 N 个 run_sub_task 实例。
  * 注：函数名保留 ...Node 后缀仅为方便 import；实际作为 router 用，调用时签名 (state) => Send[].
@@ -1013,6 +1099,7 @@ export function buildHarnessFullGraph() {
     .addNode('parsePrd', parsePrdNode)
     .addNode('ganLoop', runGanLoopNode)
     .addNode('dbUpsert', dbUpsertNode)
+    .addNode('inferTaskPlan', inferTaskPlanNode)
     .addNode('fanout', fanoutPassthroughNode)
     .addNode('run_sub_task', runSubTaskNode)
     .addNode('join', joinSubTasksNode)
@@ -1023,7 +1110,8 @@ export function buildHarnessFullGraph() {
     .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
     .addConditionalEdges('parsePrd', stateHasError, { error: END, ok: 'ganLoop' })
     .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'dbUpsert' })
-    .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'fanout' })
+    .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'inferTaskPlan' })
+    .addConditionalEdges('inferTaskPlan', stateHasError, { error: END, ok: 'fanout' })
     // fanout 是 passthrough node；conditional edge 的路由函数 fanoutSubTasksNode
     // 返回 Send[]，LangGraph runtime 并行调 run_sub_task。
     .addConditionalEdges('fanout', fanoutSubTasksNode, ['run_sub_task', 'join'])
