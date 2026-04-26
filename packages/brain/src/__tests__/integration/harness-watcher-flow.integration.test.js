@@ -45,7 +45,9 @@ vi.mock('child_process', () => ({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('harness-watcher CI 监控流集成测试', () => {
+// Sprint 1: harness-watcher.js retired (Phase B/C 进 LangGraph，sub-graph poll_ci 替代)。
+// 整段 skip，新覆盖见 src/workflows/__tests__/harness-task.graph.test.js poll_ci e2e。
+describe.skip('[Sprint 1 retired → harness-task.graph.poll_ci] harness-watcher CI 监控流集成测试', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPool.query.mockResolvedValue({ rows: [] });

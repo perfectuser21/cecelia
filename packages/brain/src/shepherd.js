@@ -126,6 +126,8 @@ export async function shepherdOpenPRs(pool) {
       WHERE pr_url IS NOT NULL
         AND pr_status IN ('open', 'ci_pending', 'ci_passed')
         AND status NOT IN ('quarantined', 'cancelled')
+        -- Sprint 1: harness_mode PR 由 sub-graph merge_pr node 自管，shepherd 不动
+        AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
       ORDER BY updated_at ASC
       LIMIT 20
     `);

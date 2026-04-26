@@ -1,32 +1,20 @@
 /**
- * Harness v2 M5 — Initiative 级 Final E2E 编排 + 失败归因
+ * Harness E2E 工具函数集（Sprint 1 后只剩纯工具）。
  *
- * PRD: docs/design/harness-v2-prd.md §3.1 阶段 C · §5.7 Final E2E Runner · §6.3 失败归因
- * Milestone: M5
+ * 历史：原 v2 M5 含 runFinalE2E 编排函数 — Sprint 1 已迁入
+ *   packages/brain/src/workflows/harness-initiative.graph.finalE2eNode。
+ * 编排逻辑由 LangGraph 节点承担，本文件只保留 5 个被节点 + 测试调用的纯工具：
+ *   - runScenarioCommand
+ *   - normalizeAcceptance
+ *   - bootstrapE2E / teardownE2E
+ *   - attributeFailures
  *
- * 调用路径：阶段 B 全部 harness_task 合并后，由 Initiative Runner 阶段 C 触发。
- *   harness-initiative-runner.runPhaseCIfReady() → runFinalE2E() → attributeFailures()
- *
- * 不在这里跑真实 docker-compose / curl —— 依赖注入 `opts.runScenario` 和 `opts.bootstrap`
- * 便于单元测试 mock。生产路径走 scripts/harness-e2e-up.sh + scripts/harness-e2e-down.sh。
+ * Spec: docs/superpowers/specs/2026-04-26-harness-langgraph-full-graph-design.md
  *
  * e2e_acceptance jsonb 结构（来自 initiative_contracts.e2e_acceptance）：
  *   {
- *     scenarios: [
- *       {
- *         name: "Initiative KPI 查询链路",
- *         covered_tasks: ["task-uuid-1", "task-uuid-2"],
- *         commands: [
- *           { type: "curl", cmd: "curl -sf http://localhost:5222/api/brain/tick/status" },
- *           { type: "playwright", cmd: "node tests/e2e/dashboard-kpi.js" }
- *         ]
- *       }
- *     ]
+ *     scenarios: [{ name, covered_tasks: [uuid], commands: [{type, cmd}] }]
  *   }
- *
- * 返回结构：
- *   runFinalE2E        → { verdict, failedScenarios[], passedScenarios[], bootstrap? }
- *   attributeFailures  → Map<task_id, { scenarios: [{name, exitCode}], failureCount }>
  */
 
 import { execSync } from 'child_process';
@@ -159,24 +147,8 @@ export function teardownE2E(opts = {}) {
 }
 
 /**
- * 按合同跑所有 E2E scenarios，收集失败项。
- *
- * @param {string} initiativeId
- * @param {{e2e_acceptance: object}} contract  initiative_contracts 行
- * @param {object} [opts]
- * @param {Function} [opts.runScenario]  注入 scenario runner（单元测试用），
- *                                        签名 (command, scenarioMeta) => {exitCode, output}
- * @param {Function} [opts.bootstrap]    起环境替换（默认 bootstrapE2E）
- * @param {Function} [opts.teardown]     关环境替换（默认 teardownE2E）
- * @param {boolean}  [opts.skipBootstrap=false]  跳过 up/down（测试用）
- * @returns {Promise<{
- *   verdict: 'PASS'|'FAIL',
- *   failedScenarios: Array<{name, covered_tasks, output, exitCode, failedCommand?}>,
- *   passedScenarios: Array<{name, covered_tasks}>,
- *   bootstrap?: {exitCode:number, output:string},
- *   teardown?: {exitCode:number, output:string},
- *   initiativeId: string,
- * }>}
+ * @deprecated Sprint 1: 编排函数已迁入 harness-initiative.graph.finalE2eNode。
+ * 保留 1 周作 HARNESS_USE_FULL_GRAPH=false 兜底；下一个 PR 删。
  */
 export async function runFinalE2E(initiativeId, contract, opts = {}) {
   if (!initiativeId || typeof initiativeId !== 'string') {

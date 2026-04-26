@@ -1,0 +1,331 @@
+/**
+ * Sprint 1 Phase B/C 全图重构 — 顶层 full graph 端到端 + 5 节点单测。
+ * 覆盖：
+ *   - 5 新节点（fanoutSubTasksNode / runSubTaskNode / joinSubTasksNode / finalE2eNode / reportNode）
+ *   - happy 端到端：planner → gan → 2 sub_tasks fanout → all merged → final_e2e PASS → report
+ *   - fix-loop：1 sub_task ci_fail 后 ci_pass merged → final_e2e PASS
+ *   - resume：MemorySaver 同 thread_id 续上 mid-loop
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MemorySaver } from '@langchain/langgraph';
+
+const {
+  mockSpawn, mockEnsureWt, mockResolveTok, mockParseTaskPlan, mockUpsertTaskPlan,
+  mockRunGan, mockReadFile, mockCheckPr, mockMerge, mockClassify, mockWriteCb,
+  mockClient, mockPool,
+} = vi.hoisted(() => {
+  const client = { query: vi.fn(), release: vi.fn() };
+  return {
+    mockSpawn: vi.fn(),
+    mockEnsureWt: vi.fn(),
+    mockResolveTok: vi.fn(),
+    mockParseTaskPlan: vi.fn(),
+    mockUpsertTaskPlan: vi.fn(),
+    mockRunGan: vi.fn(),
+    mockReadFile: vi.fn(),
+    mockCheckPr: vi.fn(),
+    mockMerge: vi.fn(),
+    mockClassify: vi.fn(),
+    mockWriteCb: vi.fn(),
+    mockClient: client,
+    mockPool: {
+      connect: vi.fn().mockResolvedValue(client),
+      query: vi.fn(),
+    },
+  };
+});
+
+vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../spawn/index.js', () => ({ spawn: (...a) => mockSpawn(...a) }));
+vi.mock('../../harness-worktree.js', () => ({ ensureHarnessWorktree: (...a) => mockEnsureWt(...a) }));
+vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => mockResolveTok(...a) }));
+vi.mock('../../docker-executor.js', () => ({
+  writeDockerCallback: (...a) => mockWriteCb(...a),
+  executeInDocker: (...a) => mockSpawn(...a),
+}));
+vi.mock('../../shepherd.js', () => ({
+  checkPrStatus: (...a) => mockCheckPr(...a),
+  executeMerge: (...a) => mockMerge(...a),
+  classifyFailedChecks: (...a) => mockClassify(...a),
+}));
+vi.mock('../../harness-graph.js', () => ({
+  parseDockerOutput: (s) => s,
+  loadSkillContent: () => 'SKILL',
+  extractField: (s, f) => {
+    const m = (s || '').match(new RegExp(`${f}:\\s*(\\S+)`, 'i'));
+    return m ? m[1] : null;
+  },
+}));
+vi.mock('../../harness-dag.js', () => ({
+  parseTaskPlan: (...a) => mockParseTaskPlan(...a),
+  upsertTaskPlan: (...a) => mockUpsertTaskPlan(...a),
+}));
+vi.mock('../../harness-gan-graph.js', () => ({ runGanContractGraph: (...a) => mockRunGan(...a) }));
+vi.mock('node:fs/promises', () => ({
+  default: { readFile: (...a) => mockReadFile(...a) },
+  readFile: (...a) => mockReadFile(...a),
+}));
+vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
+  getPgCheckpointer: vi.fn().mockResolvedValue(new MemorySaver()),
+}));
+vi.mock('../../harness-final-e2e.js', () => ({
+  runScenarioCommand: vi.fn(() => ({ exitCode: 0, output: 'ok' })),
+  bootstrapE2E: vi.fn(() => ({ exitCode: 0, output: 'ok' })),
+  teardownE2E: vi.fn(() => ({ exitCode: 0, output: '' })),
+  normalizeAcceptance: (a) => a,
+  attributeFailures: () => new Map(),
+}));
+
+import {
+  fanoutSubTasksNode,
+  joinSubTasksNode,
+  finalE2eNode,
+  reportNode,
+  buildHarnessFullGraph,
+} from '../harness-initiative.graph.js';
+
+// ─── 5 节点单测 ────────────────────────────────────────────────────────────
+
+describe('fanoutSubTasksNode (router function)', () => {
+  it('从 taskPlan.tasks 派发 Send[] 路由', () => {
+    const state = {
+      initiativeId: 'i',
+      taskPlan: { tasks: [{ id: 's1', title: 'T1' }, { id: 's2', title: 'T2' }] },
+    };
+    const sends = fanoutSubTasksNode(state);
+    expect(Array.isArray(sends)).toBe(true);
+    expect(sends.length).toBe(2);
+    expect(sends[0].node).toBe('run_sub_task');
+    expect(sends[0].args.sub_task.id).toBe('s1');
+  });
+  it('空 tasks → 返回 ["join"] 直接跳 join', () => {
+    const sends = fanoutSubTasksNode({ taskPlan: { tasks: [] } });
+    expect(sends).toEqual(['join']);
+  });
+  it('null taskPlan → 返回 ["join"]', () => {
+    const sends = fanoutSubTasksNode({ taskPlan: null });
+    expect(sends).toEqual(['join']);
+  });
+});
+
+describe('joinSubTasksNode', () => {
+  it('sub_tasks 全 merged → all_sub_tasks_done=true', async () => {
+    const delta = await joinSubTasksNode({
+      sub_tasks: [
+        { id: 's1', status: 'merged' },
+        { id: 's2', status: 'merged' },
+      ],
+    });
+    expect(delta.all_sub_tasks_done).toBe(true);
+    expect(delta.final_e2e_verdict).toBeUndefined();
+  });
+  it('有 sub_task 非 merged → all_sub_tasks_done=false + final_e2e_verdict=FAIL', async () => {
+    const delta = await joinSubTasksNode({
+      sub_tasks: [
+        { id: 's1', status: 'merged' },
+        { id: 's2', status: 'failed' },
+      ],
+    });
+    expect(delta.all_sub_tasks_done).toBe(false);
+    expect(delta.final_e2e_verdict).toBe('FAIL');
+    expect(delta.final_e2e_failed_scenarios.length).toBe(1);
+    expect(delta.final_e2e_failed_scenarios[0].covered_tasks).toEqual(['s2']);
+  });
+  it('空 sub_tasks → all_sub_tasks_done=false', async () => {
+    const delta = await joinSubTasksNode({ sub_tasks: [] });
+    expect(delta.all_sub_tasks_done).toBe(false);
+  });
+});
+
+describe('finalE2eNode', () => {
+  beforeEach(() => { mockPool.query.mockReset(); });
+
+  it('happy: 跑 scenarios 全 pass → verdict=PASS', async () => {
+    const delta = await finalE2eNode({
+      initiativeId: 'i',
+      contract: { e2e_acceptance: { scenarios: [{ name: 's1', covered_tasks: ['t1'], commands: [{ cmd: 'echo' }] }] } },
+    }, { skipBootstrap: true });
+    expect(delta.final_e2e_verdict).toBe('PASS');
+  });
+  it('已 FAIL → 短路', async () => {
+    const delta = await finalE2eNode({ final_e2e_verdict: 'FAIL' });
+    expect(delta.final_e2e_verdict).toBe('FAIL');
+  });
+  it('无 e2e_acceptance → 视为 PASS', async () => {
+    const delta = await finalE2eNode({});
+    expect(delta.final_e2e_verdict).toBe('PASS');
+  });
+  it('scenarios 中一条 fail → verdict=FAIL', async () => {
+    const failingRunScenario = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: 'ok' })
+      .mockResolvedValueOnce({ exitCode: 1, output: 'boom' });
+    const delta = await finalE2eNode({
+      initiativeId: 'i',
+      contract: { e2e_acceptance: {
+        scenarios: [
+          { name: 's1', covered_tasks: ['t1'], commands: [{ cmd: 'a' }] },
+          { name: 's2', covered_tasks: ['t2'], commands: [{ cmd: 'b' }] },
+        ],
+      } },
+    }, { skipBootstrap: true, runScenario: failingRunScenario });
+    expect(delta.final_e2e_verdict).toBe('FAIL');
+    expect(delta.final_e2e_failed_scenarios.length).toBe(1);
+    expect(delta.final_e2e_failed_scenarios[0].name).toBe('s2');
+  });
+});
+
+describe('reportNode', () => {
+  beforeEach(() => { mockPool.query.mockReset(); });
+
+  it('PASS → UPDATE initiative_runs phase=done', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const delta = await reportNode({
+      initiativeId: 'i', sub_tasks: [{ id: 's1', cost_usd: 0.5 }], final_e2e_verdict: 'PASS',
+    });
+    expect(delta.report_path).toBeTruthy();
+    expect(mockPool.query).toHaveBeenCalled();
+    const sqlArgs = mockPool.query.mock.calls[0];
+    expect(sqlArgs[0]).toContain('UPDATE initiative_runs');
+    // sqlArgs[1] 是参数数组 [initiativeId, phase, reason]
+    expect(sqlArgs[1]).toContain('done');
+  });
+  it('FAIL → UPDATE phase=failed + failure_reason', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const delta = await reportNode({
+      initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
+      final_e2e_failed_scenarios: [{ name: 'sc1' }],
+    });
+    expect(delta.report_path).toBeTruthy();
+    const sqlArgs = mockPool.query.mock.calls[0];
+    // sqlArgs[1] 是参数数组 [initiativeId, phase, reason]
+    const params = sqlArgs[1];
+    expect(params).toContain('failed');
+    expect(params.find(p => typeof p === 'string' && p.includes('sc1'))).toBeTruthy();
+  });
+});
+
+// ─── 端到端 e2e ────────────────────────────────────────────────────────────
+
+describe('full graph e2e', () => {
+  beforeEach(() => {
+    process.env.HARNESS_POLL_INTERVAL_MS = '0';
+    [mockSpawn, mockEnsureWt, mockResolveTok, mockParseTaskPlan, mockUpsertTaskPlan,
+      mockRunGan, mockReadFile, mockCheckPr, mockMerge, mockClassify,
+      mockWriteCb, mockPool.query, mockClient.query, mockClient.release].forEach((m) => m.mockReset());
+    mockClient.release.mockReturnValue(undefined);
+    mockClient.query.mockResolvedValue({ rows: [] });
+    mockPool.query.mockResolvedValue({ rows: [] });
+    mockPool.connect.mockResolvedValue(mockClient);
+  });
+  afterEach(() => { delete process.env.HARNESS_POLL_INTERVAL_MS; });
+
+  it('happy: planner → gan → fanout 2 sub_tasks → 全 merged → final_e2e PASS → report phase=done', async () => {
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockResolveTok.mockResolvedValue('t');
+    mockSpawn.mockResolvedValue({ exit_code: 0, stdout: 'pr_url: https://gh/p/X', stderr: '' });
+    mockReadFile.mockResolvedValue('# PRD');
+    mockParseTaskPlan.mockReturnValue({
+      initiative_id: 'i',
+      tasks: [{ id: 's1', title: 'T1' }, { id: 's2', title: 'T2' }],
+      e2e_acceptance: { scenarios: [{ name: 'sc', covered_tasks: ['s1'], commands: [{ cmd: 'echo ok' }] }] },
+    });
+    mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [] })   // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 'cont' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'run' }] })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    mockUpsertTaskPlan.mockResolvedValue({ idMap: {}, insertedTaskIds: ['s1', 's2'] });
+    mockWriteCb.mockResolvedValue();
+    mockCheckPr.mockReturnValue({ ciStatus: 'ci_passed', state: 'OPEN', mergeable: 'MERGEABLE', failedChecks: [] });
+    mockMerge.mockReturnValue(true);
+
+    const compiled = buildHarnessFullGraph().compile({ checkpointer: new MemorySaver() });
+    const final = await compiled.invoke(
+      { task: { id: 'init-1', payload: { initiative_id: 'i' } } },
+      { configurable: { thread_id: 'init-1:1' }, recursionLimit: 500 }
+    );
+
+    expect(final.final_e2e_verdict).toBe('PASS');
+    expect(final.sub_tasks.length).toBe(2);
+    expect(final.sub_tasks.every(s => s.status === 'merged')).toBe(true);
+    expect(final.report_path).toBeTruthy();
+  }, 30000);
+
+  it('1 sub_task fix_round=2 后 merged → 顶层 final_e2e PASS', async () => {
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockResolveTok.mockResolvedValue('t');
+    mockSpawn.mockImplementation(() => Promise.resolve({
+      exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '',
+    }));
+    mockReadFile.mockResolvedValue('# PRD');
+    mockParseTaskPlan.mockReturnValue({ initiative_id: 'i', tasks: [{ id: 's1', title: 'T1' }] });
+    mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'cont' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'run' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    mockUpsertTaskPlan.mockResolvedValue({ idMap: {}, insertedTaskIds: ['s1'] });
+    mockWriteCb.mockResolvedValue();
+    mockCheckPr
+      .mockReturnValueOnce({ ciStatus: 'ci_failed', failedChecks: ['lint'] })
+      .mockReturnValueOnce({ ciStatus: 'ci_passed', failedChecks: [] });
+    mockClassify.mockReturnValue('lint');
+    mockMerge.mockReturnValue(true);
+
+    const compiled = buildHarnessFullGraph().compile({ checkpointer: new MemorySaver() });
+    const final = await compiled.invoke(
+      { task: { id: 'init-2', payload: { initiative_id: 'i' } } },
+      { configurable: { thread_id: 'init-2:1' }, recursionLimit: 500 }
+    );
+
+    expect(final.sub_tasks[0].status).toBe('merged');
+    expect(final.sub_tasks[0].fix_round).toBe(1);
+    expect(final.final_e2e_verdict).toBe('PASS');
+  }, 30000);
+});
+
+describe('full graph resume', () => {
+  beforeEach(() => {
+    process.env.HARNESS_POLL_INTERVAL_MS = '0';
+    [mockSpawn, mockEnsureWt, mockResolveTok, mockParseTaskPlan, mockUpsertTaskPlan,
+      mockRunGan, mockReadFile, mockCheckPr, mockMerge, mockClassify,
+      mockWriteCb, mockPool.query, mockClient.query, mockClient.release].forEach((m) => m.mockReset());
+    mockClient.release.mockReturnValue(undefined);
+    mockClient.query.mockResolvedValue({ rows: [] });
+    mockPool.query.mockResolvedValue({ rows: [] });
+    mockPool.connect.mockResolvedValue(mockClient);
+  });
+  afterEach(() => { delete process.env.HARNESS_POLL_INTERVAL_MS; });
+
+  it('PostgresSaver thread_id resume 续上（用 MemorySaver 模拟）', async () => {
+    const saver = new MemorySaver();
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockResolveTok.mockResolvedValue('t');
+    mockReadFile.mockResolvedValue('# PRD');
+    mockParseTaskPlan.mockReturnValue({ initiative_id: 'i', tasks: [{ id: 's1', title: 'T1' }] });
+    mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
+    mockClient.query
+      .mockResolvedValue({ rows: [{ id: 'x' }] });
+    mockUpsertTaskPlan.mockResolvedValue({ idMap: {}, insertedTaskIds: ['s1'] });
+    mockWriteCb.mockResolvedValue();
+    mockSpawn
+      .mockResolvedValueOnce({ exit_code: 0, stdout: 'planner', stderr: '' })
+      .mockResolvedValueOnce({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' });
+    mockCheckPr.mockReturnValue({ ciStatus: 'ci_passed', failedChecks: [] });
+    mockMerge.mockReturnValue(true);
+
+    const compiled = buildHarnessFullGraph().compile({ checkpointer: saver });
+    const final = await compiled.invoke(
+      { task: { id: 'init-3', payload: { initiative_id: 'i' } } },
+      { configurable: { thread_id: 'init-3:1' }, recursionLimit: 500 }
+    );
+    expect(final.final_e2e_verdict).toBe('PASS');
+
+    // Resume：再 invoke 同 thread_id (空 input 表示 continue)，state 应保持
+    const resumed = await compiled.invoke(null, { configurable: { thread_id: 'init-3:1' } });
+    expect(resumed.final_e2e_verdict).toBe('PASS');
+    expect(resumed.sub_tasks[0].status).toBe('merged');
+  }, 30000);
+});

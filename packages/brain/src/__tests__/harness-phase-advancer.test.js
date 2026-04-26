@@ -13,7 +13,9 @@ function makeMockPool(client) {
   };
 }
 
-describe('advanceHarnessInitiatives', () => {
+// Sprint 1: advanceHarnessInitiatives retired，由 buildHarnessFullGraph 自己推进 phase。
+// 整段 skip，新覆盖见 src/workflows/__tests__/harness-initiative.graph.full.test.js。
+describe.skip('[Sprint 1 retired → graph 自推进] advanceHarnessInitiatives', () => {
   it('A_contract + contract approved → UPDATE phase=B_task_loop', async () => {
     const updates = [];
     const queryHandler = async (sql, params) => {
