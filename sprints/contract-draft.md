@@ -1,8 +1,19 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > Initiative B1 — Pre-flight 描述长度校验
 > Generator: harness-contract-proposer
 > Task: defa3c0b-0296-4e63-9bb4-534fa5c2e860
+> Round 1 Verdict: REVISION
+
+## Round 2 — 对上轮反馈的处理
+
+| 反馈点 | 处理 |
+|---|---|
+| WS1 范围声明 4 个导出，DoD 只覆盖 `checkInitiativeDescription` / `buildPreflightFailureResult` 两个；`getMinDescriptionLength` / `DEFAULT_MIN_DESCRIPTION_LENGTH` 未闭合 | 在 `contract-dod-ws1.md` 补 2 条 ARTIFACT，分别校验 `getMinDescriptionLength` 命名导出、`DEFAULT_MIN_DESCRIPTION_LENGTH` 命名导出常量；同时把"赋值 = 60"的字面量校验拆成独立条目，避免"导出形态"与"默认值"两件事混在一起 |
+| `dod_machineability = 7 → 目标 ≥ 8`：每条 Test 改写成可粘贴的 exit-code 命令清单 | 全部 ARTIFACT 切换到单行可粘贴命令：`bash -c 'test -f …'` / `bash -c 'grep -cE/-cF/-ciF …'`，仅在 ESM import 路径需匹配单双引号两形态时保留 `node -e`（CI 白名单 `check-dod-purity.cjs` 接受 `bash <args>` 与 `node -e`，不接受裸 `grep`/`test`，所以仍走 `bash -c '…'` 包一层） |
+| （可选）"21 个 it"显式拆分 Feature 1 (16) + Feature 2 (5) | `contract-dod-ws1.md` 的 BEHAVIOR 索引区与下文 `## Test Contract` 表格均按 16 + 5 = 21 显式列出，避免后续追加测试时数字漂移 |
+
+测试文件 `tests/ws1/preflight.test.ts` round 2 不变（21 个 it 全部保留）。Red evidence 仍由"`packages/brain/src/preflight.js` 不存在 → `beforeEach` 动态 import 抛 `ERR_MODULE_NOT_FOUND` → 全部 21 个 it fail" 这条结构性事实承担。
 
 ---
 
@@ -20,7 +31,7 @@ Initiative 描述在派发前需通过最低长度校验。校验对象是描述
 - `INITIATIVE_MIN_DESCRIPTION_LENGTH` 环境变量为正整数时覆盖默认；非数 / 缺失 / `<= 0` 一律回落到 `60`
 - options.threshold 优先级高于环境变量
 
-**BEHAVIOR 覆盖**（落在 tests/ws1/preflight.test.ts）:
+**BEHAVIOR 覆盖**（落在 tests/ws1/preflight.test.ts，**Feature 1 = 16 个 it**）:
 - it('returns ok=true when description length equals threshold')
 - it('returns ok=true when description length exceeds threshold')
 - it('returns ok=false with actualLength and threshold when description shorter than threshold')
@@ -40,8 +51,10 @@ Initiative 描述在派发前需通过最低长度校验。校验对象是描述
 
 **ARTIFACT 覆盖**（落在 contract-dod-ws1.md）:
 - 文件 `packages/brain/src/preflight.js` 存在
-- `preflight.js` 导出 `checkInitiativeDescription` 命名导出
-- `preflight.js` 定义 `DEFAULT_MIN_DESCRIPTION_LENGTH = 60`
+- `preflight.js` 命名导出 `checkInitiativeDescription`
+- `preflight.js` 命名导出 `getMinDescriptionLength`
+- `preflight.js` 命名导出常量 `DEFAULT_MIN_DESCRIPTION_LENGTH`
+- `preflight.js` 字面量赋值 `DEFAULT_MIN_DESCRIPTION_LENGTH = 60`
 - `preflight.js` 引用 `INITIATIVE_MIN_DESCRIPTION_LENGTH` 环境变量名
 
 ---
@@ -61,7 +74,7 @@ Brain 派发 Initiative 类任务（harness pipeline task_type）时，先调用
 - `packages/brain/.env.example` 含字面量 `INITIATIVE_MIN_DESCRIPTION_LENGTH`
 - `DEFINITION.md` 含子串 `preflight`（大小写不敏感）
 
-**BEHAVIOR 覆盖**（落在 tests/ws1/preflight.test.ts）:
+**BEHAVIOR 覆盖**（落在 tests/ws1/preflight.test.ts，**Feature 2 = 5 个 it**）:
 - it('buildPreflightFailureResult returns plain object with preflight_failure_reason key')
 - it('preflight_failure_reason includes reason as string of length >= 10')
 - it('preflight_failure_reason.actualLength is trimmed code-point count')
@@ -69,6 +82,7 @@ Brain 派发 Initiative 类任务（harness pipeline task_type）时，先调用
 - it('buildPreflightFailureResult does not throw on null / undefined description')
 
 **ARTIFACT 覆盖**（落在 contract-dod-ws1.md）:
+- `preflight.js` 命名导出 `buildPreflightFailureResult`
 - `dispatcher.js` 含 `from './preflight.js'`（静态 ESM import）
 - `dispatcher.js` 含字面量 `rejected_preflight`
 - `.env.example` 含 `INITIATIVE_MIN_DESCRIPTION_LENGTH`
@@ -83,7 +97,11 @@ workstream_count: 1
 ### Workstream 1: Pre-flight 校验模块 + 配置 + 派发集成 + 文档
 
 **范围**:
-- 新增 `packages/brain/src/preflight.js`，导出 `checkInitiativeDescription`、`buildPreflightFailureResult`、`getMinDescriptionLength`、`DEFAULT_MIN_DESCRIPTION_LENGTH`
+- 新增 `packages/brain/src/preflight.js`，**4 个命名导出全部**：
+  1. `checkInitiativeDescription(description, options?)`（Feature 1 主入口）
+  2. `buildPreflightFailureResult(description, options?)`（Feature 2 失败回写工厂）
+  3. `getMinDescriptionLength()`（阈值解析；env → 默认）
+  4. `DEFAULT_MIN_DESCRIPTION_LENGTH`（常量 = 60）
 - `packages/brain/src/dispatcher.js`：在派发 harness pipeline task_type 前 `import` preflight；失败时把 task 标 `rejected_preflight` 并把 `buildPreflightFailureResult(...)` 写进 `result`
 - `packages/brain/.env.example` 注册 `INITIATIVE_MIN_DESCRIPTION_LENGTH`
 - `DEFINITION.md` 记录"派发前 preflight 描述长度校验"
@@ -91,7 +109,7 @@ workstream_count: 1
 **大小**: S（实现 + 集成 + 文档预期 < 150 行）
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/preflight.test.ts`
+**BEHAVIOR 覆盖测试文件**: `tests/ws1/preflight.test.ts`（21 个 it = 16 + 5）
 
 ---
 
@@ -99,4 +117,20 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/preflight.test.ts` | 21 个 it（阈值边界 / 空白 / null / 中文 emoji / env 覆盖 / failure 对象结构） | `npx vitest run sprints/tests/ws1/` → 21 failed（模块不存在，beforeEach dynamic import 抛 ERR_MODULE_NOT_FOUND，每个 it 单独 fail） |
+| WS1 | `tests/ws1/preflight.test.ts` | **21 个 it = Feature 1 (16) + Feature 2 (5)** — 阈值边界 / 空白 / null / 中文 emoji / env 覆盖 / failure 对象结构 | `npx vitest run sprints/tests/ws1/` → 21 failed（`packages/brain/src/preflight.js` 不存在，`beforeEach` 动态 import 抛 `ERR_MODULE_NOT_FOUND`，每个 it 单独 fail） |
+
+### ARTIFACT Test Contract（contract-dod-ws1.md，11 条）
+
+| 编号 | 校验对象 | 命令前缀 |
+|---|---|---|
+| 1 | `preflight.js` 文件存在 | `bash -c 'test -f …'` |
+| 2 | 命名导出 `checkInitiativeDescription` | `bash -c 'grep -cE …'` |
+| 3 | 命名导出 `buildPreflightFailureResult` | `bash -c 'grep -cE …'` |
+| 4 | 命名导出 `getMinDescriptionLength` | `bash -c 'grep -cE …'`（**round 2 新增**）|
+| 5 | 命名导出 `DEFAULT_MIN_DESCRIPTION_LENGTH` | `bash -c 'grep -cE …'`（**round 2 新增**）|
+| 6 | `DEFAULT_MIN_DESCRIPTION_LENGTH = 60` 字面值 | `bash -c 'grep -cF …'` |
+| 7 | 引用 `INITIATIVE_MIN_DESCRIPTION_LENGTH` 环境变量名 | `bash -c 'grep -cF …'` |
+| 8 | `dispatcher.js` 静态 ESM import preflight | `node -e "…"`（保留以同时兼容单双引号） |
+| 9 | `dispatcher.js` 含 `rejected_preflight` 字面量 | `bash -c 'grep -cF …'` |
+| 10 | `.env.example` 声明 `INITIATIVE_MIN_DESCRIPTION_LENGTH` | `bash -c 'grep -cF …'` |
+| 11 | `DEFINITION.md` 记录 preflight | `bash -c 'grep -ciF …'` |
