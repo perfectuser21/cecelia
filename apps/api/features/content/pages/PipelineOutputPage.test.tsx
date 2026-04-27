@@ -68,6 +68,9 @@ describe('PipelineOutputPage', () => {
       if (url.includes('/stages')) {
         return Promise.resolve({ ok: true, json: async () => mockStages });
       }
+      if (url.includes('/publish-status')) {
+        return Promise.resolve({ ok: true, json: async () => ({ pipeline_id: 'test-id', platforms: [] }) });
+      }
       // Pipeline base info
       return Promise.resolve({ ok: true, json: async () => mockPipeline });
     });
@@ -161,6 +164,186 @@ describe('PipelineOutputPage', () => {
     screen.getByText('生成记录').click();
     expect(await screen.findByText('文案质量不达标')).toBeInTheDocument();
     expect(screen.getByText('缺少关键词密度')).toBeInTheDocument();
+  });
+
+  it('发布记录 Tab：已发布平台显示可点击的外部链接（target=_blank）', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/output')) {
+        return Promise.resolve({ ok: true, json: async () => mockOutput });
+      }
+      if (url.includes('/stages')) {
+        return Promise.resolve({ ok: true, json: async () => mockStages });
+      }
+      if (url.includes('/publish-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            pipeline_id: 'test-id',
+            platforms: [
+              { platform: 'douyin',     status: 'posted',  url: 'https://www.douyin.com/video/abc', error: null,         published_at: '2026-04-25T10:00:00Z' },
+              { platform: 'kuaishou',   status: 'failed',  url: null,                              error: 'login expired', published_at: null },
+              { platform: 'xiaohongshu', status: 'pending', url: null,                              error: null,         published_at: null },
+            ],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => mockPipeline });
+    });
+
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('发布记录').click();
+
+    // 已发布平台 douyin 渲染外链按钮，target=_blank
+    const link = await screen.findByTestId('platform-link-douyin');
+    expect(link).toHaveAttribute('href', 'https://www.douyin.com/video/abc');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+
+    // 状态徽章文本
+    expect(screen.getByText('已发布')).toBeInTheDocument();
+    expect(screen.getByText('失败')).toBeInTheDocument();
+    expect(screen.getByText('发布中')).toBeInTheDocument();
+
+    // 失败平台显示错误
+    expect(screen.getByText('login expired')).toBeInTheDocument();
+
+    // 未在 API 返回的平台仍显示「未发布」
+    expect(screen.getAllByText('未发布').length).toBeGreaterThan(0);
+
+    // 失败平台不应该有外链按钮
+    expect(screen.queryByTestId('platform-link-kuaishou')).toBeNull();
+  });
+
+  it('发布记录 Tab：API 失败时显示错误提示但仍渲染 8 个平台占位', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/output')) {
+        return Promise.resolve({ ok: true, json: async () => mockOutput });
+      }
+      if (url.includes('/stages')) {
+        return Promise.resolve({ ok: true, json: async () => mockStages });
+      }
+      if (url.includes('/publish-status')) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => mockPipeline });
+    });
+
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('发布记录').click();
+
+    expect(await screen.findByText('HTTP 500')).toBeInTheDocument();
+    // 8 个平台仍渲染（占位「未发布」）
+    expect(screen.getByText('抖音')).toBeInTheDocument();
+    expect(screen.getByText('B站')).toBeInTheDocument();
+  });
+
+  // ── KR5-P1: 编辑 + 审批 ──────────────────────────────────────────────────
+
+  it('生成记录 Tab 顶部渲染编辑+审批卡片，默认草稿状态', async () => {
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+
+    expect(await screen.findByTestId('edit-approval-card')).toBeInTheDocument();
+    expect(screen.getByTestId('approval-status-badge')).toHaveTextContent('草稿');
+    expect(screen.getByTestId('approve-btn')).toHaveTextContent('审批通过');
+  });
+
+  it('点击编辑→保存触发 PATCH 写回 title/body', async () => {
+    let patchPayload: unknown = null;
+    mockFetch.mockImplementation((url: string, options?: { method?: string; body?: string }) => {
+      if (options?.method === 'PATCH' && url.includes('/pipelines/test-id')) {
+        patchPayload = JSON.parse(options.body || '{}');
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            id: 'test-id',
+            payload: { ...mockPipeline.payload, edited_title: '改后标题', edited_body: '改后正文' },
+            approval_status: 'draft',
+            queued_platforms: [],
+          }),
+        });
+      }
+      if (url.includes('/output')) return Promise.resolve({ ok: true, json: async () => mockOutput });
+      if (url.includes('/stages')) return Promise.resolve({ ok: true, json: async () => mockStages });
+      if (url.includes('/publish-status')) return Promise.resolve({ ok: true, json: async () => ({ pipeline_id: 'test-id', platforms: [] }) });
+      return Promise.resolve({ ok: true, json: async () => mockPipeline });
+    });
+
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+
+    fireEvent.click(await screen.findByTestId('edit-toggle-btn'));
+    const titleInput = await screen.findByTestId('edit-title-input');
+    fireEvent.change(titleInput, { target: { value: '改后标题' } });
+    const bodyArea = screen.getByTestId('edit-body-textarea');
+    fireEvent.change(bodyArea, { target: { value: '改后正文' } });
+
+    fireEvent.click(screen.getByTestId('edit-save-btn'));
+
+    await waitFor(() => {
+      expect(patchPayload).toEqual({ title: '改后标题', body: '改后正文' });
+    });
+    expect(await screen.findByTestId('edit-approval-feedback')).toHaveTextContent('已保存草稿');
+  });
+
+  it('点击审批通过触发 PATCH approval_status=approved，反馈包含入队平台数', async () => {
+    let approveBody: unknown = null;
+    mockFetch.mockImplementation((url: string, options?: { method?: string; body?: string }) => {
+      if (options?.method === 'PATCH' && url.includes('/pipelines/test-id')) {
+        approveBody = JSON.parse(options.body || '{}');
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            id: 'test-id',
+            payload: { ...mockPipeline.payload, approval_status: 'approved', approved_at: '2026-04-26T00:00:00Z' },
+            approval_status: 'approved',
+            queued_platforms: ['douyin', 'xiaohongshu', 'wechat', 'kuaishou', 'weibo', 'toutiao', 'zhihu', 'shipinhao'],
+          }),
+        });
+      }
+      if (url.includes('/output')) return Promise.resolve({ ok: true, json: async () => mockOutput });
+      if (url.includes('/stages')) return Promise.resolve({ ok: true, json: async () => mockStages });
+      if (url.includes('/publish-status')) return Promise.resolve({ ok: true, json: async () => ({ pipeline_id: 'test-id', platforms: [] }) });
+      return Promise.resolve({ ok: true, json: async () => mockPipeline });
+    });
+
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+    fireEvent.click(await screen.findByTestId('approve-btn'));
+
+    await waitFor(() => {
+      expect(approveBody).toEqual({ approval_status: 'approved' });
+    });
+    expect(await screen.findByTestId('edit-approval-feedback')).toHaveTextContent('已审批通过，8 个平台已入发布队列');
+    // 审批后状态徽章变绿
+    expect(screen.getByTestId('approval-status-badge')).toHaveTextContent('已审批');
+    // 审批按钮 disabled
+    expect(screen.getByTestId('approve-btn')).toBeDisabled();
+  });
+
+  it('已审批的 pipeline 进入页面后审批/编辑按钮 disabled', async () => {
+    const approvedPipeline = {
+      ...mockPipeline,
+      payload: { ...mockPipeline.payload, approval_status: 'approved', approved_at: '2026-04-26T00:00:00Z' },
+    };
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/output')) return Promise.resolve({ ok: true, json: async () => mockOutput });
+      if (url.includes('/stages')) return Promise.resolve({ ok: true, json: async () => mockStages });
+      if (url.includes('/publish-status')) return Promise.resolve({ ok: true, json: async () => ({ pipeline_id: 'test-id', platforms: [] }) });
+      return Promise.resolve({ ok: true, json: async () => approvedPipeline });
+    });
+
+    renderWithRoute('test-id');
+    await screen.findByText('Summary');
+    screen.getByText('生成记录').click();
+    expect(await screen.findByTestId('edit-toggle-btn')).toBeDisabled();
+    expect(screen.getByTestId('approve-btn')).toBeDisabled();
+    expect(screen.getByTestId('approval-status-badge')).toHaveTextContent('已审批');
   });
 
   it('点击重新生成按钮发起 POST /run 请求', async () => {

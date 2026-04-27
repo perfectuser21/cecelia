@@ -410,3 +410,152 @@ describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记
     expect(payloadArg).not.toHaveProperty('notebook_id');
   });
 });
+
+// ─── KR5-P1: PATCH 写回 + 状态机审批 + 入队列 ────────────────────────────────
+
+describe('PATCH /api/brain/pipelines/:id (KR5-P1)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function mockExisting(payload = {}) {
+    pool.query.mockImplementation((sql) => {
+      const s = String(sql);
+      if (s.includes('SELECT id, title, status, priority, payload') && s.includes("task_type = 'content-pipeline'")) {
+        return Promise.resolve({
+          rows: [{ id: 'pipe-1', title: '[内容工厂] 测试', status: 'completed', priority: 'P1', payload }],
+        });
+      }
+      if (s.startsWith('UPDATE tasks SET payload')) return Promise.resolve({ rows: [] });
+      if (s.includes('FROM content_publish_jobs') && s.includes('SELECT platform')) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (s.includes('INSERT INTO content_publish_jobs')) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [] });
+    });
+  }
+
+  it('写回 title/body 时把数据塞到 payload.edited_title / edited_body', async () => {
+    mockExisting({ keyword: '测试', content_type: 'solo-company-case' });
+
+    const res = await request(makeApp())
+      .patch('/api/brain/pipelines/pipe-1')
+      .send({ title: '新标题', body: '新正文 abc' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.payload.edited_title).toBe('新标题');
+    expect(res.body.payload.edited_body).toBe('新正文 abc');
+    expect(res.body.approval_status).toBe('draft');
+    expect(res.body.queued_platforms).toEqual([]);
+
+    const updateCall = pool.query.mock.calls.find(c => String(c[0]).startsWith('UPDATE tasks SET payload'));
+    expect(updateCall).toBeDefined();
+    const writtenPayload = JSON.parse(updateCall[1][0]);
+    expect(writtenPayload.edited_title).toBe('新标题');
+    expect(writtenPayload.edited_body).toBe('新正文 abc');
+  });
+
+  it("approval_status='approved' 时同步插入 8 条 content_publish_jobs.pending", async () => {
+    mockExisting({ keyword: '测试', content_type: 'solo-company-case' });
+
+    const res = await request(makeApp())
+      .patch('/api/brain/pipelines/pipe-1')
+      .send({ approval_status: 'approved' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.approval_status).toBe('approved');
+    expect(res.body.queued_platforms).toEqual([
+      'douyin', 'xiaohongshu', 'wechat', 'kuaishou', 'weibo', 'toutiao', 'zhihu', 'shipinhao',
+    ]);
+
+    const inserts = pool.query.mock.calls.filter(c => String(c[0]).includes('INSERT INTO content_publish_jobs'));
+    expect(inserts.length).toBe(8);
+    // 每条 INSERT 第一参数是 platform，第四参数是 task_id (pipeline-1)
+    expect(inserts[0][1][0]).toBe('douyin');
+    expect(inserts[0][1][3]).toBe('pipe-1');
+    // 状态参数固定 'pending'（在 SQL 里硬编码）
+    expect(String(inserts[0][0])).toContain("'pending'");
+  });
+
+  it('幂等：已有 pending/running/success 的平台不重复入队', async () => {
+    pool.query.mockImplementation((sql) => {
+      const s = String(sql);
+      if (s.includes('SELECT id, title, status, priority, payload')) {
+        return Promise.resolve({
+          rows: [{ id: 'pipe-1', title: 't', status: 'completed', priority: 'P1', payload: { keyword: 'k', content_type: 'solo-company-case' } }],
+        });
+      }
+      if (s.startsWith('UPDATE tasks SET payload')) return Promise.resolve({ rows: [] });
+      if (s.includes('FROM content_publish_jobs') && s.includes('SELECT platform')) {
+        // 已存在 douyin / xiaohongshu 两条 pending
+        return Promise.resolve({ rows: [{ platform: 'douyin' }, { platform: 'xiaohongshu' }] });
+      }
+      if (s.includes('INSERT INTO content_publish_jobs')) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [] });
+    });
+
+    const res = await request(makeApp())
+      .patch('/api/brain/pipelines/pipe-1')
+      .send({ approval_status: 'approved' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.queued_platforms).not.toContain('douyin');
+    expect(res.body.queued_platforms).not.toContain('xiaohongshu');
+    expect(res.body.queued_platforms.length).toBe(6);
+
+    const inserts = pool.query.mock.calls.filter(c => String(c[0]).includes('INSERT INTO content_publish_jobs'));
+    expect(inserts.length).toBe(6);
+  });
+
+  it('approval_status 非法时返回 400', async () => {
+    const res = await request(makeApp())
+      .patch('/api/brain/pipelines/pipe-1')
+      .send({ approval_status: 'queued' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('approval_status');
+  });
+
+  it('pipeline 不存在时返回 404', async () => {
+    pool.query.mockResolvedValue({ rows: [] });
+    const res = await request(makeApp())
+      .patch('/api/brain/pipelines/missing')
+      .send({ title: 't' });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/brain/pipelines/:id/approve (KR5-P1)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('审批后返回 queued_platforms + approved_at 时间戳', async () => {
+    pool.query.mockImplementation((sql) => {
+      const s = String(sql);
+      if (s.includes('SELECT id, payload') && s.includes("task_type = 'content-pipeline'")) {
+        return Promise.resolve({
+          rows: [{ id: 'pipe-2', payload: { keyword: 'k', content_type: 'solo-company-case' } }],
+        });
+      }
+      if (s.startsWith('UPDATE tasks SET payload')) return Promise.resolve({ rows: [] });
+      if (s.includes('FROM content_publish_jobs') && s.includes('SELECT platform')) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (s.includes('INSERT INTO content_publish_jobs')) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [] });
+    });
+
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/pipe-2/approve')
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.approval_status).toBe('approved');
+    expect(typeof res.body.approved_at).toBe('string');
+    expect(res.body.queued_platforms.length).toBe(8);
+  });
+
+  it('pipeline 不存在时返回 404', async () => {
+    pool.query.mockResolvedValue({ rows: [] });
+    const res = await request(makeApp())
+      .post('/api/brain/pipelines/missing/approve')
+      .send({});
+    expect(res.status).toBe(404);
+  });
+});

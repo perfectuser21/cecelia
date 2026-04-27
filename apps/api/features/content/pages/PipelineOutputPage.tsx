@@ -30,6 +30,10 @@ import {
   Bookmark,
   Play,
   Image,
+  ExternalLink,
+  Edit3,
+  Save,
+  ShieldCheck,
 } from 'lucide-react';
 
 const BRAIN_API = '/api/brain';
@@ -41,7 +45,14 @@ interface Pipeline {
   title: string;
   status: string;
   priority: string;
-  payload: { keyword?: string; content_type?: string };
+  payload: {
+    keyword?: string;
+    content_type?: string;
+    edited_title?: string;
+    edited_body?: string;
+    approval_status?: 'draft' | 'approved';
+    approved_at?: string | null;
+  };
   created_at: string;
   completed_at?: string;
   error_message?: string;
@@ -187,18 +198,224 @@ function SummaryTab({ pipeline }: { pipeline: Pipeline }) {
   );
 }
 
+// ── 编辑 + 审批卡片（KR5-P1） ──────────────────────────────────────────────────
+
+function EditApprovalCard({
+  pipeline,
+  defaultBody,
+  onUpdated,
+}: {
+  pipeline: Pipeline;
+  defaultBody: string;
+  onUpdated: (next: Pipeline) => void;
+}) {
+  const initialTitle = pipeline.payload.edited_title ?? pipeline.payload.keyword ?? pipeline.title;
+  const initialBody = pipeline.payload.edited_body ?? defaultBody;
+
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(initialTitle);
+  const [body, setBody] = useState(initialBody);
+  const [saving, setSaving] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null);
+
+  const approvalStatus = pipeline.payload.approval_status === 'approved' ? 'approved' : 'draft';
+  const approved = approvalStatus === 'approved';
+
+  async function handleSave() {
+    if (saving) return;
+    setSaving(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`${BRAIN_API}/pipelines/${pipeline.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, body }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      onUpdated({ ...pipeline, payload: { ...pipeline.payload, ...data.payload } });
+      setEditing(false);
+      setFeedback({ kind: 'ok', msg: '已保存草稿' });
+    } catch (e) {
+      setFeedback({ kind: 'err', msg: e instanceof Error ? e.message : '保存失败' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleApprove() {
+    if (approving || approved) return;
+    setApproving(true);
+    setFeedback(null);
+    try {
+      // 若有未保存的编辑，先把编辑写回再审批（PATCH 同时携带 title/body 与 approval_status）
+      const payload: Record<string, unknown> = { approval_status: 'approved' };
+      if (editing) {
+        payload.title = title;
+        payload.body = body;
+      }
+      const res = await fetch(`${BRAIN_API}/pipelines/${pipeline.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      onUpdated({ ...pipeline, payload: { ...pipeline.payload, ...data.payload } });
+      setEditing(false);
+      const queued = Array.isArray(data.queued_platforms) ? data.queued_platforms.length : 0;
+      setFeedback({ kind: 'ok', msg: `已审批通过，${queued} 个平台已入发布队列` });
+    } catch (e) {
+      setFeedback({ kind: 'err', msg: e instanceof Error ? e.message : '审批失败' });
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  return (
+    <div
+      className="rounded-xl p-5 border space-y-3"
+      style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(139,92,246,0.12)' }}
+      data-testid="edit-approval-card"
+    >
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+          <Edit3 className="w-4 h-4 text-purple-400" />
+          内容编辑与审批
+        </h3>
+        <span
+          className="text-xs px-2.5 py-1 rounded-full"
+          data-testid="approval-status-badge"
+          style={{
+            background: approved ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)',
+            color: approved ? '#86efac' : '#fde68a',
+          }}
+        >
+          {approved ? '已审批' : '草稿'}
+        </span>
+      </div>
+
+      {editing ? (
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">标题</label>
+            <input
+              data-testid="edit-title-input"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg text-sm text-gray-200 bg-black/30 border outline-none focus:border-purple-400"
+              style={{ borderColor: 'rgba(139,92,246,0.25)' }}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">正文</label>
+            <textarea
+              data-testid="edit-body-textarea"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={8}
+              className="w-full px-3 py-2 rounded-lg text-xs text-gray-200 bg-black/30 border font-mono outline-none focus:border-purple-400"
+              style={{ borderColor: 'rgba(139,92,246,0.25)' }}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <div>
+            <span className="text-xs text-gray-500">标题</span>
+            <p className="text-gray-200 mt-0.5 break-words">{title || '—'}</p>
+          </div>
+          <div>
+            <span className="text-xs text-gray-500">正文（预览）</span>
+            <p className="text-gray-300 mt-0.5 text-xs whitespace-pre-wrap line-clamp-4">
+              {body || '—'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 pt-1">
+        {editing ? (
+          <>
+            <button
+              data-testid="edit-save-btn"
+              onClick={handleSave}
+              disabled={saving}
+              className="text-xs px-3 py-1.5 rounded-lg inline-flex items-center gap-1 transition-colors disabled:opacity-50"
+              style={{ background: 'rgba(139,92,246,0.20)', color: '#c084fc' }}
+            >
+              <Save className="w-3.5 h-3.5" />
+              {saving ? '保存中...' : '保存草稿'}
+            </button>
+            <button
+              onClick={() => {
+                setEditing(false);
+                setTitle(initialTitle);
+                setBody(initialBody);
+              }}
+              className="text-xs px-3 py-1.5 rounded-lg text-gray-400 hover:text-gray-200"
+            >
+              取消
+            </button>
+          </>
+        ) : (
+          <button
+            data-testid="edit-toggle-btn"
+            onClick={() => setEditing(true)}
+            disabled={approved}
+            className="text-xs px-3 py-1.5 rounded-lg inline-flex items-center gap-1 transition-colors disabled:opacity-50"
+            style={{ background: 'rgba(139,92,246,0.15)', color: '#c084fc' }}
+            title={approved ? '已审批的内容不可再编辑' : '编辑标题和正文'}
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            编辑
+          </button>
+        )}
+        <button
+          data-testid="approve-btn"
+          onClick={handleApprove}
+          disabled={approving || approved}
+          className="text-xs px-3 py-1.5 rounded-lg inline-flex items-center gap-1 transition-colors disabled:opacity-50 ml-auto"
+          style={{
+            background: approved ? 'rgba(34,197,94,0.15)' : 'rgba(34,197,94,0.20)',
+            color: approved ? '#86efac' : '#bbf7d0',
+          }}
+        >
+          <ShieldCheck className="w-3.5 h-3.5" />
+          {approved ? '已审批通过' : approving ? '审批中...' : '审批通过'}
+        </button>
+      </div>
+
+      {feedback && (
+        <p
+          data-testid="edit-approval-feedback"
+          className={`text-xs flex items-center gap-1 ${feedback.kind === 'ok' ? 'text-green-400' : 'text-red-400'}`}
+        >
+          {feedback.kind === 'ok' ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+          {feedback.msg}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── 生成记录 Tab ───────────────────────────────────────────────────────────────
 
 function GenerationTab({
+  pipeline,
   output,
   stages,
   loading,
   pipelineId,
+  onPipelineUpdated,
 }: {
+  pipeline: Pipeline;
   output: PipelineOutput | null;
   stages: PipelineStages | null;
   loading: boolean;
   pipelineId: string;
+  onPipelineUpdated: (next: Pipeline) => void;
 }) {
   const [expandArticle, setExpandArticle] = useState(false);
   const [expandCards, setExpandCards] = useState(false);
@@ -231,6 +448,11 @@ function GenerationTab({
 
   return (
     <div className="space-y-5">
+      <EditApprovalCard
+        pipeline={pipeline}
+        defaultBody={output?.output?.article_text ?? ''}
+        onUpdated={onPipelineUpdated}
+      />
       {stageEntries.length > 0 && (
         <div
           className="rounded-xl p-5 border"
@@ -392,28 +614,113 @@ function GenerationTab({
 
 // ── 发布记录 Tab ───────────────────────────────────────────────────────────────
 
-function PublishTab() {
+interface PostingStatus {
+  platform: string;
+  status: 'pending' | 'posted' | 'failed';
+  url?: string | null;
+  error?: string | null;
+  published_at?: string | null;
+}
+
+const STATUS_LABEL: Record<PostingStatus['status'] | 'idle', string> = {
+  posted: '已发布',
+  failed: '失败',
+  pending: '发布中',
+  idle: '未发布',
+};
+
+const STATUS_STYLE: Record<PostingStatus['status'] | 'idle', { bg: string; color: string }> = {
+  posted: { bg: 'rgba(34,197,94,0.15)',  color: '#86efac' },
+  failed: { bg: 'rgba(239,68,68,0.15)',  color: '#fca5a5' },
+  pending:{ bg: 'rgba(234,179,8,0.15)',  color: '#fde68a' },
+  idle:   { bg: 'rgba(107,114,128,0.15)', color: '#9ca3af' },
+};
+
+function PublishTab({ pipelineId }: { pipelineId: string }) {
+  const [statuses, setStatuses] = useState<PostingStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!pipelineId) return;
+    setLoading(true);
+    setError(null);
+    fetch(`${BRAIN_API}/pipelines/${pipelineId}/publish-status`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        setStatuses(Array.isArray(data?.platforms) ? data.platforms : []);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : '加载失败');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [pipelineId]);
+
+  const byPlatform = new Map<string, PostingStatus>();
+  for (const s of statuses) byPlatform.set(s.platform, s);
+
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-500 mb-4">平台发布状态（接入后自动更新）</p>
-      {PLATFORMS.map(platform => (
-        <div
-          key={platform.id}
-          className="flex items-center justify-between p-4 rounded-xl border"
-          style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(139,92,246,0.10)' }}
-        >
-          <div className="flex items-center gap-3">
-            <span className="text-xl">{platform.icon}</span>
-            <span className="text-sm text-gray-300">{platform.name}</span>
-          </div>
-          <span
-            className="text-xs px-2.5 py-1 rounded-full"
-            style={{ background: 'rgba(107,114,128,0.15)', color: '#9ca3af' }}
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-xs text-gray-500">平台发布状态</p>
+        {loading && <Loader2 className="w-3.5 h-3.5 text-gray-500 animate-spin" />}
+      </div>
+      {error && (
+        <p className="text-xs text-red-400 mb-2 flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          {error}
+        </p>
+      )}
+      {PLATFORMS.map(platform => {
+        const real = byPlatform.get(platform.id);
+        const key = (real?.status || 'idle') as keyof typeof STATUS_LABEL;
+        const style = STATUS_STYLE[key];
+        return (
+          <div
+            key={platform.id}
+            className="flex items-center justify-between p-4 rounded-xl border"
+            style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(139,92,246,0.10)' }}
           >
-            未发布
-          </span>
-        </div>
-      ))}
+            <div className="flex items-center gap-3">
+              <span className="text-xl">{platform.icon}</span>
+              <span className="text-sm text-gray-300">{platform.name}</span>
+              {real?.status === 'failed' && real.error && (
+                <span className="text-xs text-red-400/80 ml-2 truncate max-w-[200px]" title={real.error}>
+                  {real.error}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {real?.status === 'posted' && real.url && (
+                <a
+                  href={real.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid={`platform-link-${platform.id}`}
+                  className="text-xs px-2.5 py-1 rounded-full inline-flex items-center gap-1 transition-colors hover:opacity-80"
+                  style={{ background: 'rgba(139,92,246,0.15)', color: '#c084fc' }}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  打开
+                </a>
+              )}
+              <span
+                className="text-xs px-2.5 py-1 rounded-full"
+                style={{ background: style.bg, color: style.color }}
+              >
+                {STATUS_LABEL[key]}
+              </span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -594,9 +901,16 @@ export default function PipelineOutputPage() {
         <div>
           {activeTab === 'summary' && <SummaryTab pipeline={pipeline} />}
           {activeTab === 'generation' && (
-            <GenerationTab output={output} stages={stages} loading={contentLoading} pipelineId={id ?? ''} />
+            <GenerationTab
+              pipeline={pipeline}
+              output={output}
+              stages={stages}
+              loading={contentLoading}
+              pipelineId={id ?? ''}
+              onPipelineUpdated={setPipeline}
+            />
           )}
-          {activeTab === 'publish' && <PublishTab />}
+          {activeTab === 'publish' && <PublishTab pipelineId={id ?? ''} />}
           {activeTab === 'analytics' && <AnalyticsTab />}
         </div>
       </div>

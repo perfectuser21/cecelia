@@ -22,6 +22,9 @@
  * POST /api/brain/pipelines/:id/pre-publish-check  发布前内容质量检查
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
  * GET  /api/brain/pipelines/:id/output         查询 pipeline 产出物（manifest）
+ * GET  /api/brain/pipelines/:id/publish-status 查询 pipeline 各平台分发状态（KR5-P1）
+ * PATCH /api/brain/pipelines/:id              内容编辑：写回 title/body + 状态机推进（KR5-P1）
+ * POST /api/brain/pipelines/:id/approve       审批通过：draft→approved + 入 content_publish_jobs（KR5-P1）
  */
 
 import express from 'express';
@@ -668,6 +671,250 @@ router.get('/:id/output', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * GET /pipelines/:id/publish-status
+ * 查询 pipeline 各平台分发状态（KR5-P1 详情页用）
+ *
+ * 数据合并规则：
+ *   - publish_results 优先（success=true→posted、success=false→failed），有 url 取其 url
+ *   - 同 platform 多条记录取 created_at 最新
+ *   - 没有 publish_results 时回落 content_publish_jobs.status：
+ *       running/pending → pending；success → posted；failed → failed
+ *
+ * 返回：{ pipeline_id, platforms: [{ platform, status, url?, error?, published_at? }] }
+ */
+router.get('/:id/publish-status', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // publish_results：每平台最新一条
+    const prResult = await pool.query(
+      `SELECT DISTINCT ON (platform)
+              platform, success, url, error, created_at
+       FROM publish_results
+       WHERE task_id = $1
+       ORDER BY platform, created_at DESC`,
+      [id]
+    );
+
+    // content_publish_jobs：每平台最新一条（按 created_at desc）
+    const jobsResult = await pool.query(
+      `SELECT DISTINCT ON (platform)
+              platform, status, error_message, completed_at, created_at
+       FROM content_publish_jobs
+       WHERE task_id = $1
+       ORDER BY platform, created_at DESC`,
+      [id]
+    );
+
+    const byPlatform = new Map();
+
+    // 先填 jobs（pending/running/failed/success）
+    for (const row of jobsResult.rows) {
+      let status;
+      if (row.status === 'success') status = 'posted';
+      else if (row.status === 'failed') status = 'failed';
+      else status = 'pending';
+      byPlatform.set(row.platform, {
+        platform: row.platform,
+        status,
+        url: null,
+        error: row.error_message || null,
+        published_at: row.completed_at || null,
+      });
+    }
+
+    // publish_results 覆盖（更权威，含 url）
+    for (const row of prResult.rows) {
+      byPlatform.set(row.platform, {
+        platform: row.platform,
+        status: row.success ? 'posted' : 'failed',
+        url: row.url || null,
+        error: row.success ? null : (row.error || null),
+        published_at: row.created_at || null,
+      });
+    }
+
+    const platforms = Array.from(byPlatform.values()).sort((a, b) =>
+      a.platform.localeCompare(b.platform)
+    );
+
+    res.json({ pipeline_id: id, platforms });
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /:id/publish-status error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * 审批后入队列的 8 个目标平台（与 daily-publish-scheduler 优先级保持一致）
+ */
+const APPROVAL_QUEUE_PLATFORMS = [
+  'douyin',
+  'xiaohongshu',
+  'wechat',
+  'kuaishou',
+  'weibo',
+  'toutiao',
+  'zhihu',
+  'shipinhao',
+];
+
+/**
+ * PATCH /:id
+ * 内容编辑：写回标题/正文 + 状态机推进 (KR5-P1)
+ *
+ * Body:
+ *   title           {string}  可选 — 编辑后标题，写到 payload.edited_title
+ *   body            {string}  可选 — 编辑后正文，写到 payload.edited_body
+ *   approval_status {string}  可选 — 仅接受 'draft' | 'approved'
+ *                              'approved' 触发入队列（同步插入 content_publish_jobs.pending）
+ *
+ * 返回: { id, title, status, payload, approval_status, queued_platforms }
+ */
+router.patch('/:id', async (req, res) => {
+  const { id } = req.params;
+  const { title, body, approval_status } = req.body || {};
+
+  if (title !== undefined && typeof title !== 'string') {
+    return res.status(400).json({ error: 'title 必须为 string' });
+  }
+  if (body !== undefined && typeof body !== 'string') {
+    return res.status(400).json({ error: 'body 必须为 string' });
+  }
+  if (approval_status !== undefined && approval_status !== 'draft' && approval_status !== 'approved') {
+    return res.status(400).json({ error: "approval_status 仅接受 'draft' | 'approved'" });
+  }
+
+  try {
+    const existing = await pool.query(
+      `SELECT id, title, status, priority, payload FROM tasks
+       WHERE id = $1 AND task_type = 'content-pipeline'`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: `Pipeline ${id} 不存在` });
+    }
+
+    const row = existing.rows[0];
+    const payload = { ...(row.payload || {}) };
+
+    if (title !== undefined) payload.edited_title = title;
+    if (body !== undefined) payload.edited_body = body;
+
+    let queued_platforms = [];
+    if (approval_status === 'draft') {
+      payload.approval_status = 'draft';
+      payload.approved_at = null;
+    } else if (approval_status === 'approved') {
+      payload.approval_status = 'approved';
+      payload.approved_at = new Date().toISOString();
+    }
+
+    await pool.query(
+      `UPDATE tasks SET payload = $1, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(payload), id]
+    );
+
+    if (approval_status === 'approved') {
+      queued_platforms = await enqueueApprovedPipeline(id, payload);
+    }
+
+    res.json({
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      payload,
+      approval_status: payload.approval_status || 'draft',
+      queued_platforms,
+    });
+  } catch (err) {
+    console.error('[routes/content-pipeline] PATCH /:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /:id/approve
+ * 显式审批端点：等价 PATCH /:id { approval_status: 'approved' }
+ * 提供独立路由便于按钮直连 + 回归契约测试
+ *
+ * 返回: { id, approval_status, queued_platforms }
+ */
+router.post('/:id/approve', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const existing = await pool.query(
+      `SELECT id, payload FROM tasks WHERE id = $1 AND task_type = 'content-pipeline'`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: `Pipeline ${id} 不存在` });
+    }
+
+    const payload = { ...(existing.rows[0].payload || {}) };
+    payload.approval_status = 'approved';
+    payload.approved_at = new Date().toISOString();
+
+    await pool.query(
+      `UPDATE tasks SET payload = $1, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(payload), id]
+    );
+
+    const queued_platforms = await enqueueApprovedPipeline(id, payload);
+
+    res.json({
+      id,
+      approval_status: 'approved',
+      approved_at: payload.approved_at,
+      queued_platforms,
+    });
+  } catch (err) {
+    console.error('[routes/content-pipeline] POST /:id/approve error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * 内部辅助：审批通过后将 pipeline 入 content_publish_jobs 队列。
+ *
+ * 幂等：若该 task_id+platform 已存在 pending/running/success 的 job，则跳过该平台。
+ * 让 daily-publish-scheduler / 重新审批时重新入队 failed 平台。
+ *
+ * @param {string} pipelineId
+ * @param {object} payload  pipeline 当前 payload（含 edited_title / edited_body / content_type）
+ * @returns {Promise<string[]>}  实际入队的平台名列表
+ */
+async function enqueueApprovedPipeline(pipelineId, payload) {
+  const contentType = payload.content_type || 'article';
+  const jobPayload = {
+    pipeline_id: pipelineId,
+    keyword: payload.keyword || null,
+    title: payload.edited_title || null,
+    body: payload.edited_body || null,
+  };
+
+  // 幂等：每平台已有 pending/running/success 则跳过
+  const existing = await pool.query(
+    `SELECT platform FROM content_publish_jobs
+     WHERE task_id = $1 AND status IN ('pending', 'running', 'success')`,
+    [pipelineId]
+  );
+  const skip = new Set(existing.rows.map(r => r.platform));
+
+  const queued = [];
+  for (const platform of APPROVAL_QUEUE_PLATFORMS) {
+    if (skip.has(platform)) continue;
+    await pool.query(
+      `INSERT INTO content_publish_jobs (platform, content_type, payload, status, task_id, created_at, updated_at)
+       VALUES ($1, $2, $3, 'pending', $4, NOW(), NOW())`,
+      [platform, contentType, JSON.stringify(jobPayload), pipelineId]
+    );
+    queued.push(platform);
+  }
+  return queued;
+}
 
 /**
  * GET /pipelines/:id/stats
