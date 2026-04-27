@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-27"
 
 changelog:
+  - version: "18.12.0"
+    date: "2026-04-27"
+    change: "feat"
+    description: "[CONFIG] PR-C — lint-no-mock-only-test 拦'全 mock 测试'。补 lint-test-quality 留下的漏洞：测试有 await + expect 但所有依赖全 vi.mock 时 prod 行为完全无验证（PR #2660 dispatcher Phase 2.5 drain bug 的根因）。新 lint 仅作用于新增 test 文件：vi.mock 数 ≥ HEAVY_MOCK_THRESHOLD (默认 30) 且 PR diff 中无配套真覆盖（smoke.sh / integration test / 文件本身在 /integration/） → fail。配 4 case 自跑 smoke 全过：heavy-no-cover 应 fail，heavy-with-smoke / heavy-with-integ / light-mock 应 pass。CI ci-passed needs 加 lint-no-mock-only-test。完成 100% foundation 路线 PR-C。minor bump 18.11.0 → 18.12.0。"
+    files:
+      - ".github/workflows/scripts/lint-no-mock-only-test.sh (新增, 100 lines, HARD FAIL rule)"
+      - ".github/workflows/scripts/__tests__/lint-no-mock-only-test-cases.sh (新增, 4 case smoke)"
+      - ".github/workflows/ci.yml (+1 lint job + ci-passed needs)"
+      - "Engine 5 处版本文件 18.12.0"
+
   - version: "18.11.0"
     date: "2026-04-27"
     change: "feat"

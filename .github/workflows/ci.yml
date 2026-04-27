@@ -969,10 +969,21 @@ jobs:
       - name: Test Quality Lint (拦"假测试 stub")
         run: bash .github/workflows/scripts/lint-test-quality.sh "origin/${{ github.base_ref }}"
 
+  lint-no-mock-only-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No-Mock-Only Test Lint (拦"全 mock 测试")
+        run: bash .github/workflows/scripts/lint-no-mock-only-test.sh "origin/${{ github.base_ref }}"
+
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, real-env-smoke]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, real-env-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1004,6 +1015,7 @@ jobs:
           check "lint-base-fresh"        "${{ needs.lint-base-fresh.result }}"
           check "lint-tdd-commit-order"  "${{ needs.lint-tdd-commit-order.result }}"
           check "lint-test-quality"      "${{ needs.lint-test-quality.result }}"
+          check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
 
           if [ "$FAILED" = "true" ]; then
