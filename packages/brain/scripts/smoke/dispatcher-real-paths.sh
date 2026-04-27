@@ -94,19 +94,26 @@ if [ -z "$A_TASK" ]; then
   fail "Case A: 注册失败"
 else
   echo "  task_id: $A_TASK"
-  trigger_tick
-  sleep 5
-  trigger_tick  # 第二次确保 dispatcher 真选到这个 task
-  sleep 3
+  # Poll 最多 MAX_WAIT_SEC，每 5s 一次 trigger_tick + 检查 metadata
+  # CI clean brain 首次 dispatcher 启动可能慢，本地 8s 够 CI 不一定
+  META_FAIL=""
+  STATUS_A=""
+  for i in $(seq 1 $(( MAX_WAIT_SEC / 5 ))); do
+    trigger_tick
+    sleep 5
+    META_FAIL=$(get_task_field "$A_TASK" "metadata.pre_flight_failed")
+    STATUS_A=$(get_task_field "$A_TASK" "status")
+    if [[ "$META_FAIL" =~ ^(True|true|1)$ ]]; then
+      break
+    fi
+    echo "  [poll $i/$(( MAX_WAIT_SEC / 5 ))] meta=$META_FAIL status=$STATUS_A"
+  done
 
-  # 期望：metadata.pre_flight_failed = True 或 任务还在 queued + metadata 有 pre-flight 痕迹
-  META_FAIL=$(get_task_field "$A_TASK" "metadata.pre_flight_failed")
-  STATUS_A=$(get_task_field "$A_TASK" "status")
   # Python bool 序列化为 "True"，JSON bool 是 "true"，都接受
   if [[ "$META_FAIL" =~ ^(True|true|1)$ ]]; then
     pass "Case A: pre_flight_failed=$META_FAIL status=$STATUS_A"
   else
-    fail "Case A: 期望 metadata.pre_flight_failed=true 实际='$META_FAIL' status=$STATUS_A"
+    fail "Case A: 期望 metadata.pre_flight_failed=true 实际='$META_FAIL' status=$STATUS_A (after ${MAX_WAIT_SEC}s)"
   fi
 fi
 
