@@ -19,6 +19,7 @@ import { emit } from './event-bus.js';
 import { getActiveProcesses } from './executor.js';
 import { listProcessesWithPpid } from './platform-utils.js';
 import { findTaskIdForWorktree, isWorktreeActive } from './zombie-cleaner.js';
+import { withLock } from './utils/cleanup-lock.js';
 
 const GRACE_PERIOD_MS = 30 * 60 * 1000; // 30 minutes
 const LOCK_SLOT_DIR = '/tmp/cecelia-locks';
@@ -180,19 +181,26 @@ async function sweepStaleWorktrees() {
       continue;
     }
 
-    // Remove stale worktree
-    try {
-      execSync(`git worktree remove --force "${wt.path}"`, {
-        encoding: 'utf8',
-        timeout: 15000,
-        cwd: mainRepoPath
-      });
-      result.removed++;
-      console.log(`[zombie-sweep] Removed stale worktree: ${wt.path} (branch: ${wt.branch || 'detached'})`);
-    } catch (err) {
-      const msg = `Failed to remove worktree ${wt.path}: ${err.message}`;
-      result.errors.push(msg);
-      console.error(`[zombie-sweep] ${msg}`);
+    // Remove stale worktree — 持锁互斥（cleanup-lock 跨 zombie-cleaner / cecelia-run trap 等）
+    const removed = await withLock({}, async () => {
+      try {
+        execSync(`git worktree remove --force "${wt.path}"`, {
+          encoding: 'utf8',
+          timeout: 15000,
+          cwd: mainRepoPath
+        });
+        console.log(`[zombie-sweep] Removed stale worktree: ${wt.path} (branch: ${wt.branch || 'detached'})`);
+        return true;
+      } catch (err) {
+        const msg = `Failed to remove worktree ${wt.path}: ${err.message}`;
+        result.errors.push(msg);
+        console.error(`[zombie-sweep] ${msg}`);
+        return false;
+      }
+    });
+    if (removed) result.removed++;
+    else if (removed === null) {
+      console.log(`[zombie-sweep] Skipping ${wt.path} — cleanup-lock contention`);
     }
   }
 

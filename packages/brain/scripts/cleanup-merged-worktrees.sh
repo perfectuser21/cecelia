@@ -25,6 +25,12 @@ REPO="${REPO:-/Users/administrator/perfect21/cecelia}"
 DRY_RUN="${DRY_RUN:-0}"
 GRACE_SECONDS="${GRACE_SECONDS:-3600}"
 
+# 引入 cleanup-lock helper — 跟 zombie-cleaner / zombie-sweep / startup-recovery 互斥
+# 防止并发删 worktree 撕坏 .git/worktrees 元数据（root cause of "worktree 神秘消失"）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cleanup-lock.sh
+source "$SCRIPT_DIR/cleanup-lock.sh"
+
 WHITELIST_GLOBS=(
   "$REPO/.claude/worktrees/agent-*"
   "/Users/administrator/worktrees/cecelia/*"
@@ -113,11 +119,21 @@ cleanup_one() {
   fi
 
   log "[cleanup] removing $wt (branch=$branch, PR #$pr_num merged ${diff_sec}s ago)"
-  git -C "$REPO" worktree unlock "$wt" 2>/dev/null || true
-  if ! git -C "$REPO" worktree remove --force "$wt" 2>/dev/null; then
-    rm -rf "$wt"
-    git -C "$REPO" worktree prune 2>/dev/null || true
+
+  # 持锁删 — 与 Brain 内的 zombie-cleaner / zombie-sweep / startup-recovery 互斥
+  if ! acquire_cleanup_lock; then
+    log "[cleanup] skip $wt — cleanup-lock contention（will retry next round）"
+    return 0
   fi
+  # subshell 限定 trap 范围
+  (
+    trap 'release_cleanup_lock' EXIT
+    git -C "$REPO" worktree unlock "$wt" 2>/dev/null || true
+    if ! git -C "$REPO" worktree remove --force "$wt" 2>/dev/null; then
+      rm -rf "$wt"
+      git -C "$REPO" worktree prune 2>/dev/null || true
+    fi
+  )
   git -C "$REPO" branch -D "$branch" 2>/dev/null || true
   log "[cleanup] removed $wt (branch=$branch, PR #$pr_num merged)"
 }

@@ -17,6 +17,7 @@ import { execSync } from 'child_process';
 import { join } from 'path';
 import { resolveTaskPids } from './watchdog.js';
 import { removeActiveProcess } from './executor.js';
+import { withLock } from './utils/cleanup-lock.js';
 
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 const WORKTREE_BASE = process.env.WORKTREE_BASE || `${process.env.HOME}/worktrees/cecelia`;
@@ -101,16 +102,20 @@ function cleanupStaleSlots() {
  * @returns {string|null} - task_id 或 null
  */
 function findTaskIdForWorktree(wtPath) {
+  // v19.0.0 cwd-as-key 起，.dev-mode 改为 per-branch 后缀格式 .dev-mode.<branch>。
+  // 老格式 .dev-mode（无后缀）也兼容 — 扫所有 .dev-mode* 文件。
+  // 否则任务 in_progress 但 task_id 找不到 → 被当 orphan 误删。
   try {
-    const devModePath = join(wtPath, '.dev-mode');
-    if (existsSync(devModePath)) {
-      const content = readFileSync(devModePath, 'utf-8');
-      // 尝试提取 UUID 格式的 task_id（Brain 任务 ID 格式）
-      const taskMatch = content.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
-      if (taskMatch) return taskMatch[1];
+    const entries = readdirSync(wtPath).filter(f => f.startsWith('.dev-mode'));
+    for (const name of entries) {
+      try {
+        const content = readFileSync(join(wtPath, name), 'utf-8');
+        const taskMatch = content.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+        if (taskMatch) return taskMatch[1];
+      } catch { /* continue on read error */ }
     }
   } catch {
-    // ignore: file may not exist or be unreadable
+    // readdir failed (worktree path missing) → null
   }
   return null;
 }
@@ -225,25 +230,34 @@ async function cleanupOrphanWorktrees(pool) {
       const ageMin = Math.round(ageMs / 60000);
       console.log(`[zombie-cleaner] Orphan worktree: ${wtPath} age=${ageMin}min taskId=${taskId || 'unknown'}`);
 
-      // git worktree remove --force
-      try {
-        execSync(`git worktree remove --force "${wtPath}"`, {
-          cwd: REPO_ROOT,
-          timeout: 15000,
-          stdio: 'pipe',
-        });
-        result.removed++;
-        console.log(`[zombie-cleaner] Orphan worktree removed: ${wtPath}`);
-      } catch {
-        // Fallback: 手动删除
+      // 持锁删 worktree — 跟 startup-recovery / cleanup-merged-worktrees / cecelia-run trap
+      // 互斥，避免并发撕坏 .git/worktrees 元数据
+      const removed = await withLock({}, async () => {
         try {
-          rmSync(wtPath, { recursive: true, force: true });
-          execSync('git worktree prune', { cwd: REPO_ROOT, timeout: 5000, stdio: 'pipe' });
-          result.removed++;
-          console.log(`[zombie-cleaner] Orphan worktree removed (fallback): ${wtPath}`);
-        } catch (fallbackErr) {
-          result.errors.push(`remove(${wtPath}): ${fallbackErr.message}`);
+          execSync(`git worktree remove --force "${wtPath}"`, {
+            cwd: REPO_ROOT,
+            timeout: 15000,
+            stdio: 'pipe',
+          });
+          console.log(`[zombie-cleaner] Orphan worktree removed: ${wtPath}`);
+          return true;
+        } catch {
+          // Fallback: 手动删除
+          try {
+            rmSync(wtPath, { recursive: true, force: true });
+            execSync('git worktree prune', { cwd: REPO_ROOT, timeout: 5000, stdio: 'pipe' });
+            console.log(`[zombie-cleaner] Orphan worktree removed (fallback): ${wtPath}`);
+            return true;
+          } catch (fallbackErr) {
+            result.errors.push(`remove(${wtPath}): ${fallbackErr.message}`);
+            return false;
+          }
         }
+      });
+      if (removed) result.removed++;
+      else if (removed === null) {
+        // withLock 拿锁超时 → 静默跳过本次（下次 cleanup tick 再试）
+        console.log(`[zombie-cleaner] Skipping ${wtPath} — cleanup-lock contention`);
       }
     } catch (err) {
       result.errors.push(`worktree(${wtPath}): ${err.message}`);

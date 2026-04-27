@@ -62,5 +62,26 @@ if [ -z "$NEW_SMOKE" ]; then
   exit 1
 fi
 
-echo "✅ lint-feature-has-smoke 通过 — 新增 smoke.sh:"
+# 内容校验（Tier 1 加牙）：smoke.sh 必须真做事，不能 #!/bin/bash + exit 0 这种空架子
+# 至少 1 行含 curl / psql / docker / node / bash 调用真实环境
+EMPTY_SMOKE=()
+while IFS= read -r smoke; do
+  [ -z "$smoke" ] && continue
+  # 去注释、空行后剩余行
+  REAL_LINES=$(grep -v "^\s*#" "$smoke" | grep -v "^\s*$" | wc -l | tr -d ' ')
+  # 需要 ≥1 个真命令（curl/psql/docker/node/npm 调用 — 不接受裸 echo / exit）
+  TRUE_CMDS=$(grep -cE "(^|[^a-zA-Z_])(curl|psql|docker|node|npm|npx|pg_isready|nc)\s" "$smoke" 2>/dev/null || echo 0)
+  if [ "$REAL_LINES" -lt 5 ] || [ "$TRUE_CMDS" -lt 1 ]; then
+    EMPTY_SMOKE+=("$smoke (实代码行=$REAL_LINES, 真命令=$TRUE_CMDS — 至少 5 行 + 1 个 curl|psql|docker|node)")
+  fi
+done <<< "$NEW_SMOKE"
+
+if [ "${#EMPTY_SMOKE[@]}" -gt 0 ]; then
+  echo "::error::lint-feature-has-smoke 失败 — 以下 smoke.sh 是空架子（无真环境验证）:"
+  printf "  ❌ %s\n" "${EMPTY_SMOKE[@]}"
+  echo "  smoke.sh 必须真起服务/真调 API，不能纯 echo + exit 0"
+  exit 1
+fi
+
+echo "✅ lint-feature-has-smoke 通过 — 新增 smoke.sh（含真命令）:"
 echo "$NEW_SMOKE" | sed 's/^/  /'

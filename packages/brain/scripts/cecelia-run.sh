@@ -413,7 +413,22 @@ main() {
         mkdir -p /tmp/cecelia-worktree-cleanup-flags 2>/dev/null || true
         echo "$CLEANUP_WORKTREE" > "/tmp/cecelia-worktree-cleanup-flags/$(basename "$CLEANUP_WORKTREE").flag" 2>/dev/null || true
       else
-        git -C "$WORK_DIR" worktree remove "$CLEANUP_WORKTREE" --force 2>/dev/null || true
+        # 持锁删 — 与 Brain 的 zombie-cleaner / zombie-sweep / cleanup-merged 互斥
+        # 防止并发撕坏 .git/worktrees 元数据（root cause of "worktree 神秘消失"）
+        local _cleanup_lock_helper="/Users/administrator/perfect21/cecelia/packages/brain/scripts/cleanup-lock.sh"
+        if [[ -f "$_cleanup_lock_helper" ]]; then
+          # shellcheck disable=SC1090
+          source "$_cleanup_lock_helper"
+          if acquire_cleanup_lock; then
+            git -C "$WORK_DIR" worktree remove "$CLEANUP_WORKTREE" --force 2>/dev/null || true
+            release_cleanup_lock
+          else
+            echo "[cecelia-run] cleanup-lock contention, leaving worktree for next sweep: $CLEANUP_WORKTREE" >&2
+          fi
+        else
+          # 老 Brain 容器无 helper → fall back 到无锁（保留旧行为，向后兼容）
+          git -C "$WORK_DIR" worktree remove "$CLEANUP_WORKTREE" --force 2>/dev/null || true
+        fi
       fi
     fi
   }

@@ -46,6 +46,14 @@ vi.mock('../zombie-cleaner.js', () => ({
   isWorktreeActive: vi.fn(),
 }));
 
+// Mock cleanup-lock — fs 被 mock 了，真锁会失败，pass-through 让单测走原路径
+vi.mock('../utils/cleanup-lock.js', () => ({
+  withLock: vi.fn(async (_opts, fn) => fn()),
+  acquireLock: vi.fn().mockResolvedValue(true),
+  releaseLock: vi.fn(),
+  LOCK_DIR_DEFAULT: '/tmp/cecelia-cleanup.lock',
+}));
+
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, rmSync, readFileSync, statSync } from 'fs';
 import pool from '../db.js';
