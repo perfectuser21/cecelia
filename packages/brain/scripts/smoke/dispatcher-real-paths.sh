@@ -82,38 +82,41 @@ print(v if v is not None else '')
 "
 }
 
-# ─── Case A: pre-flight 短 title reject ─────────────────
-# Brain POST API 要求 description ≥20 字符（让 task 进队列）；
-# pre-flight 则在 dispatch 时再查 title 长度 < 阈值 → 标 metadata.pre_flight_failed
-echo "[Case A] pre-flight 短 title reject — metadata.pre_flight_failed=true"
-# pre-flight 阈值：title < 5 字符 reject。生成 4 字符唯一 title (ab + 2 hex)
-SHORT_SUFFIX=$(printf '%02x' $((RANDOM % 256)))
-A_TITLE="ab${SHORT_SUFFIX}"
-A_TASK=$(register_task "$A_TITLE" "Description with sufficient length to pass POST validation but title is too short to pass pre-flight check" "dev" "P2")
-if [ -z "$A_TASK" ]; then
-  fail "Case A: 注册失败"
-else
-  echo "  task_id: $A_TASK"
-  # Poll 最多 MAX_WAIT_SEC，每 5s 一次 trigger_tick + 检查 metadata
-  # CI clean brain 首次 dispatcher 启动可能慢，本地 8s 够 CI 不一定
-  META_FAIL=""
-  STATUS_A=""
-  for i in $(seq 1 $(( MAX_WAIT_SEC / 5 ))); do
-    trigger_tick
-    sleep 5
-    META_FAIL=$(get_task_field "$A_TASK" "metadata.pre_flight_failed")
-    STATUS_A=$(get_task_field "$A_TASK" "status")
-    if [[ "$META_FAIL" =~ ^(True|true|1)$ ]]; then
-      break
+# ─── Case A: preFlightCheck 函数契约（直接调函数） ───────
+# 历史曾用"注册 bad task → poll dispatcher → 看 metadata"，但 CI clean docker
+# 无 cecelia-bridge → dispatcher checkCeceliaRunAvailable 短路 → pre-flight 永
+# 不跑。改成 docker exec 直接调 preFlightCheck 函数（不依赖 dispatcher 链路）。
+echo "[Case A] preFlightCheck 契约 — title<5 必 reject"
+BRAIN_CONTAINER="${BRAIN_CONTAINER:-}"
+if [ -z "$BRAIN_CONTAINER" ]; then
+  for c in cecelia-brain-smoke cecelia-node-brain; do
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
+      BRAIN_CONTAINER="$c"; break
     fi
-    echo "  [poll $i/$(( MAX_WAIT_SEC / 5 ))] meta=$META_FAIL status=$STATUS_A"
   done
-
-  # Python bool 序列化为 "True"，JSON bool 是 "true"，都接受
-  if [[ "$META_FAIL" =~ ^(True|true|1)$ ]]; then
-    pass "Case A: pre_flight_failed=$META_FAIL status=$STATUS_A"
+fi
+if [ -z "$BRAIN_CONTAINER" ]; then
+  fail "Case A: 未检测到 brain container（cecelia-brain-smoke 或 cecelia-node-brain）"
+else
+  echo "  container=$BRAIN_CONTAINER"
+  PFC_OUT=$(docker exec "$BRAIN_CONTAINER" node -e "
+import('/app/src/pre-flight-check.js').then(async ({ preFlightCheck }) => {
+  const result = await preFlightCheck({
+    id: 'smoke-pfc',
+    title: 'ab',
+    description: 'Description with sufficient length to pass any check beyond title length',
+    task_type: 'dev',
+    priority: 'P2',
+  });
+  console.log('PASSED=' + result.passed);
+  console.log('ISSUES=' + JSON.stringify(result.issues));
+}).catch(e => { console.log('ERR=' + e.message); process.exit(2); });
+" 2>&1)
+  echo "  $PFC_OUT" | sed 's/^/    /'
+  if echo "$PFC_OUT" | grep -q "PASSED=false" && echo "$PFC_OUT" | grep -q "title too short"; then
+    pass "Case A: preFlightCheck 拒短 title（PASSED=false + 含 'title too short'）"
   else
-    fail "Case A: 期望 metadata.pre_flight_failed=true 实际='$META_FAIL' status=$STATUS_A (after ${MAX_WAIT_SEC}s)"
+    fail "Case A: 期望 PASSED=false + issues 含 'title too short'，实际见上"
   fi
 fi
 
