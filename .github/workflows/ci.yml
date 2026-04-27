@@ -310,9 +310,10 @@ jobs:
       - name: E2E Integrity Check
         run: bash packages/engine/scripts/e2e-integrity-check.sh
 
-  # ─── Brain: Unit Tests (4-shard matrix) ────────────────────
+  # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
+  # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
+  # push 模式：跑全量 test 保 main 绿
   # vitest 原生 --shard=i/N 按测试文件 hash 均匀分布，4 shards 并行
-  # 单 shard 约 110-120 文件，~2-3min 完成（vs 单 job 7-10min）
   brain-unit:
     needs: changes
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
@@ -324,6 +325,8 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # vitest --changed 需要 base ref 历史
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -331,21 +334,53 @@ jobs:
       - name: Consciousness Guard SSOT Check
         run: bash scripts/check-consciousness-guard.sh
       - run: cd packages/brain && npm ci
+      - name: Determine test scope
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "🌐 push event — 跑全量 brain-unit"
+            exit 0
+          fi
+          BASE_REF="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --quiet 2>/dev/null || true
+          # 检测 brain 内 .js/.ts 变更（含 src + test）
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null \
+            | grep -E '^packages/brain/.+\.(js|ts|cjs|mjs)$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "mode=skip" >> $GITHUB_OUTPUT
+            echo "⏭️  PR 无 brain 源/测试变更（仅 engine/其他），跳过 brain-unit shard"
+          else
+            echo "mode=changed" >> $GITHUB_OUTPUT
+            TOTAL=$(echo "$CHANGED" | wc -l | tr -d ' ')
+            echo "🎯 PR 模式：vitest --changed $BASE_REF（$TOTAL 个变更文件）"
+            echo "$CHANGED" | head -20
+          fi
       - name: Unit Tests (shard ${{ matrix.shard }}/4)
+        if: steps.scope.outputs.mode != 'skip'
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
         # vitest forks 模式下，fork 进程跑完后可能因内存碎片 OOM 退出，
         # tinypool 报 "Worker exited unexpectedly"，导致 vitest 返回 exit 1，
         # 即使所有测试均已通过。此脚本在 exit 非 0 时检查是否无 test 失败，
         # 若无则认为是 OOM worker exit（非测试失败），返回 0。
+        # PR 模式额外：--changed 过滤命中 0 测试也视为 pass（变更不影响 brain test）。
         run: |
           cd packages/brain
+          EXTRA=""
+          if [ "${{ steps.scope.outputs.mode }}" = "changed" ]; then
+            EXTRA="--changed origin/${{ github.base_ref }}"
+          fi
           set +e
-          npx vitest run --shard=${{ matrix.shard }}/4 --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
+          npx vitest run --shard=${{ matrix.shard }}/4 $EXTRA --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
           EXIT=${PIPESTATUS[0]}
           if [ $EXIT -ne 0 ]; then
             if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
               echo "[brain-unit shard ${{ matrix.shard }}/4] OOM worker exit but all tests passed — treating as success"
+              exit 0
+            fi
+            if [ -n "$EXTRA" ] && grep -qiE "No test files found|filter matched no test files" /tmp/vitest-out.txt; then
+              echo "[brain-unit shard ${{ matrix.shard }}/4] --changed 过滤命中 0 测试 — 视为 pass"
               exit 0
             fi
             exit $EXIT
@@ -980,10 +1015,23 @@ jobs:
       - name: No-Mock-Only Test Lint (拦"全 mock 测试")
         run: bash .github/workflows/scripts/lint-no-mock-only-test.sh "origin/${{ github.base_ref }}"
 
+  lint-no-fake-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No-Fake-Test Lint (拦"假测试 — 弱断言占 100% / mock-heavy + 低 expect")
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: bash .github/workflows/scripts/lint-no-fake-test.sh "origin/${{ github.base_ref }}"
+
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, real-env-smoke]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, real-env-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1016,6 +1064,7 @@ jobs:
           check "lint-tdd-commit-order"  "${{ needs.lint-tdd-commit-order.result }}"
           check "lint-test-quality"      "${{ needs.lint-test-quality.result }}"
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
+          check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
 
           if [ "$FAILED" = "true" ]; then
