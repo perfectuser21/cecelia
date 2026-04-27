@@ -1,7 +1,7 @@
 name: Harness v5 Checks
 
 # v5 Sprint C：合同纪律的 CI 硬校验
-# 初上线 1 周 continue-on-error: true（软门禁观察期），之后切硬
+# 观察期已过，全部切硬门禁（PR cp-0427095721 移除 continue-on-error）
 #
 # 触发范围：只在 harness 相关改动时跑
 #   - sprints/*/contract-*.md / contract-dod-ws*.md / tests/ws*/*.test.ts
@@ -29,7 +29,6 @@ jobs:
   dod-structure-purity:
     name: DoD 纯度检查 (v5.0)
     runs-on: ubuntu-latest
-    continue-on-error: true  # 软门禁 1 周观察期
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,7 +45,6 @@ jobs:
   test-coverage-for-behavior:
     name: Test Contract 覆盖检查 (v5.0)
     runs-on: ubuntu-latest
-    continue-on-error: true  # 软门禁
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,7 +61,6 @@ jobs:
   tdd-commit-order:
     name: TDD Commit 顺序检查 (v5.0)
     runs-on: ubuntu-latest
-    continue-on-error: true  # 软门禁
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,7 +75,6 @@ jobs:
   tests-actually-pass:
     name: Sprint Tests 实跑 (v5.0)
     runs-on: ubuntu-latest
-    continue-on-error: true  # 软门禁
     steps:
       - uses: actions/checkout@v4
         with:
