@@ -60,18 +60,6 @@ systems:
       has_integration: false
       has_e2e: false
 
-  - id: pipeline
-    name: 内容管道
-    package: packages/brain
-    purpose: 6步内容生产流水线（research→export）+ 编排 + 巡航
-    features_file: features/pipeline.yml
-    feature_count: 11
-    ci_jobs: [brain-unit]
-    health:
-      maturity_avg: 0.125
-      has_unit: true
-      has_integration: false
-      has_e2e: false
 
   - id: publisher
     name: 发布系统

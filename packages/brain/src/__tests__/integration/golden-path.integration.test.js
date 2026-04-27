@@ -104,11 +104,7 @@ vi.mock('../../content-types/content-type-registry.js', () => ({
   listContentTypesFromYaml: vi.fn().mockReturnValue([]),
 }));
 
-// content-pipeline 依赖的 orchestrator/scheduler mock
-vi.mock('../../content-pipeline-orchestrator.js', () => ({
-  orchestrateContentPipelines: vi.fn().mockResolvedValue([]),
-  executeQueuedContentTasks: vi.fn().mockResolvedValue([]),
-}));
+// content-pipeline orchestrator 已删除（搬到 ZJ pipeline-worker），不再 mock。
 
 vi.mock('../../topic-selection-scheduler.js', () => ({
   triggerDailyTopicSelection: vi.fn().mockResolvedValue({ triggered: false }),

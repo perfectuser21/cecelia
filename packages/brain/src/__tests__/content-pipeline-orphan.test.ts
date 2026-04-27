@@ -4,7 +4,10 @@
  * Fix 1: syncOrphanTasksOnStartup should requeue tasks with run_id=null
  *   (inline orchestration tasks like content-pipeline that never spawn a process)
  *
- * Fix 2: executeQueuedContentTasks should cancel subtasks whose parent pipeline has failed
+ * Fix 2 (legacy): zombie subtask cleanup — used to live inside in-Brain
+ *   executeQueuedContentTasks. The orchestrator has been retired (search now lives
+ *   in ZJ pipeline-worker, PR zenithjoy#216), so this section now just verifies the
+ *   underlying SQL semantics that the cleanup relied on.
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';

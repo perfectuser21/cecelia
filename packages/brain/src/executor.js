@@ -3290,9 +3290,10 @@ async function probeTaskLiveness() {
       continue;
     }
 
-    // content-pipeline parent tasks and all content-* stage tasks are orchestrated in-Brain
-    // (no OS process). They are managed by orchestrateContentPipelines() / executeQueuedContentTasks()
-    // and should never be killed by the liveness probe.
+    // content-pipeline parent tasks and all content-* stage tasks are orchestrated externally
+    // by the ZJ pipeline-worker (Python LangGraph, see PR zenithjoy#216). They have no OS
+    // process inside Brain, so the liveness probe must skip them — otherwise it would mark
+    // legitimate ZJ-managed tasks as zombies.
     const CONTENT_PIPELINE_TYPES = new Set([
       'content-pipeline', 'content-research', 'content-copywriting',
       'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
