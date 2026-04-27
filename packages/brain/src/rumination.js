@@ -283,6 +283,8 @@ async function digestLearnings(db, learnings) {
     // Fallback：callLLM（仅看本次 learnings + 记忆上下文）
     let insight = '';
     let usedNotebook = false;
+    let notebookFailureReason = null; // forensic：NotebookLM 失败原因
+    let llmFailureReason = null;      // forensic：callLLM 失败原因
     const nbQuery = buildNotebookQuery(learnings);
 
     // 获取 working notebook ID（反刍洞察 → working knowledge base）
@@ -305,12 +307,15 @@ async function digestLearnings(db, learnings) {
           const hadPrefix = nbResult.text.includes('Different notebook specified');
           console.log(`[rumination] notebooklm_primary: OK (${insight.length} chars${hadPrefix ? ', prefix stripped' : ''})`);
         } else {
+          notebookFailureReason = 'empty_or_short_after_clean';
           console.warn('[rumination] notebooklm_primary: empty/short after cleaning, falling back to callLLM');
         }
       } else {
+        notebookFailureReason = nbResult.error || 'empty_response';
         console.warn('[rumination] notebooklm_primary: empty/short response, falling back to callLLM');
       }
     } catch (nbErr) {
+      notebookFailureReason = nbErr.message || 'exception';
       console.warn('[rumination] notebooklm_primary failed, falling back to callLLM:', nbErr.message);
     }
 
@@ -335,8 +340,35 @@ async function digestLearnings(db, learnings) {
         console.warn('[rumination] fallback: synthesis_archive query failed (non-blocking):', archiveErr.message);
       }
       const prompt = buildRuminationPrompt(learnings, memoryBlock, fallbackContext);
-      const { text: llmInsight } = await callLLM('rumination', prompt);
-      insight = llmInsight || '';
+      try {
+        const { text: llmInsight } = await callLLM('rumination', prompt);
+        insight = llmInsight || '';
+        if (!insight) {
+          llmFailureReason = 'empty_response';
+        }
+      } catch (llmErr) {
+        llmFailureReason = llmErr.message || 'exception';
+        console.warn('[rumination] callLLM fallback failed:', llmErr.message);
+      }
+    }
+
+    // Forensic 事件：双路 LLM 全失败时写结构化事件，供 probe/RCA/运维诊断
+    // PROBE_FAIL_RUMINATION 出现 degraded_llm_failure tag 时，运维查这个事件即可拿到根因。
+    if (!insight) {
+      try {
+        await db.query(
+          `INSERT INTO cecelia_events (event_type, source, payload)
+           VALUES ('rumination_llm_failure', 'rumination', $1::jsonb)`,
+          [JSON.stringify({
+            notebook_error: notebookFailureReason,
+            llm_error: llmFailureReason,
+            batch_size: learnings.length,
+            learning_ids: learnings.map(l => l.id),
+          })]
+        );
+      } catch (evtErr) {
+        console.warn('[rumination] rumination_llm_failure event write failed (non-blocking):', evtErr.message);
+      }
     }
 
     // 4. 去重检查 + 写入 memory_stream + synthesis_archive（daily）

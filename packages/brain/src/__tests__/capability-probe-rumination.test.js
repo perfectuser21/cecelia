@@ -35,3 +35,21 @@ describe('probeRumination — 心跳事件区分 dead vs degraded', () => {
     expect(ruminationFn).toContain('loop_dead');
   });
 });
+
+describe('probeRumination — last_run 真实化 + LLM forensic 透出', () => {
+  it('last_run 查询使用全局 max（不含 48h 过滤）— "last_run=never" 仅在表全空时出现', () => {
+    // 关键断言：probe 内必须有一次"无 INTERVAL 过滤的 max(created_at)" 查询
+    expect(ruminationFn).toMatch(/SELECT\s+max\(created_at\)\s+AS\s+last_run\s+FROM\s+synthesis_archive(?!\s*\n?\s*WHERE)/);
+  });
+
+  it('degraded_llm_failure 时查询最近一次 rumination_llm_failure 事件', () => {
+    expect(ruminationFn).toContain("event_type = 'rumination_llm_failure'");
+    expect(ruminationFn).toContain('ORDER BY created_at DESC');
+  });
+
+  it('detail 末尾透出 last_llm_failure 摘要（notebook + llm 错误）', () => {
+    expect(ruminationFn).toContain('last_llm_failure');
+    expect(ruminationFn).toContain('notebook=');
+    expect(ruminationFn).toContain('llm=');
+  });
+});
