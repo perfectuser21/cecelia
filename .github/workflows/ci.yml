@@ -691,7 +691,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true  # TEMP: 临时放行，未阻 ci-passed；后续修复 image build / smoke 行为
     timeout-minutes: 20
     services:
       postgres:

@@ -19,10 +19,10 @@ describe('harness-v5 CI checks 结构', () => {
     expect(workflow).toMatch(/^\s*tests-actually-pass:/m);
   });
 
-  it('workflow 4 个 job 初始 continue-on-error: true（软门禁，1 周观察期）', () => {
-    // v5 初上线软门禁避免误杀
-    const softCount = (workflow.match(/continue-on-error:\s*true/g) || []).length;
-    expect(softCount).toBeGreaterThanOrEqual(4);
+  it('workflow 4 个 job 全部硬门禁（cp-0427095721 移除软门禁，观察期已过）', () => {
+    // 顶部注释里 mention 历史不算 — 必须 ^\s*continue-on-error:\s*true 整行
+    const hardLine = (workflow.match(/^\s*continue-on-error:\s*true/gm) || []).length;
+    expect(hardLine).toBe(0);
   });
 
   it('workflow 只在 sprints/ + packages/workflows/skills/harness-contract-* 改动时跑', () => {
