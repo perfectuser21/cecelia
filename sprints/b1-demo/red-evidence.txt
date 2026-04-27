@@ -1,0 +1,20 @@
+=== WS1 (sprints/b1-demo/tests/ws1/) ===
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+
+=== WS2 (sprints/b1-demo/tests/ws2/) ===
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  5 failed (5)
+
+=== WS3 (sprints/b1-demo/tests/ws3/) ===
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+
+=== WS4 (sprints/b1-demo/tests/ws4/) ===
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+
