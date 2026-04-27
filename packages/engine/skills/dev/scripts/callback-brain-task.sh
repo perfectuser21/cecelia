@@ -13,6 +13,12 @@
 set -euo pipefail
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+
+# URL 校验：只接受 http:// 或 https:// 开头的简单 URL（避 SSRF / shell injection）
+if ! [[ "$BRAIN_URL" =~ ^https?://[A-Za-z0-9._:/-]+$ ]]; then
+  echo "[callback-brain-task] ⚠️ BRAIN_URL 格式非法（必须 http(s)://...）：$BRAIN_URL" >&2
+  exit 0
+fi
 TASK_ID=""
 PR_NUMBER=""
 BRANCH_NAME=""
@@ -45,9 +51,11 @@ if [[ -z "$TASK_ID" ]]; then
   exit 0
 fi
 
-# Brain 不可达 → warn 但不 fail（不阻 ship）
-if ! curl -sf -m 3 "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
-  echo "[callback-brain-task] Brain unreachable at $BRAIN_URL — skip (non-fatal)"
+# Brain 不可达 → warn 但不 fail（不阻 ship）。错误也 echo 到 stderr 便于 CI 日志检索
+HEALTH_ERR=$(curl -sS -m 3 "$BRAIN_URL/api/brain/health" 2>&1 >/dev/null) || HEALTH_FAILED=1
+if [[ "${HEALTH_FAILED:-0}" == "1" ]]; then
+  echo "[callback-brain-task] Brain unreachable at $BRAIN_URL — skip (non-fatal)" >&2
+  echo "[callback-brain-task]   curl error: ${HEALTH_ERR:-?}" >&2
   exit 0
 fi
 

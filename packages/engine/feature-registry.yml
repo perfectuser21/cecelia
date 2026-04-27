@@ -3,9 +3,20 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-26"
+updated: "2026-04-27"
 
 changelog:
+  - version: "18.8.0"
+    date: "2026-04-27"
+    change: "feat"
+    description: "[CONFIG] Tier 0 止血 — CI 真有牙 + 闭环回写 Brain task。3 处改动：(1) ci.yml real-env-smoke 删 continue-on-error: true，原 TEMP 临时放行半个月没人撤，CI 绿等于装样子；(2) harness-v5-checks.yml 4 子 job 全删 continue-on-error: true，原 1 周观察期早过，DoD 纯度/Test Contract/TDD 顺序/实跑测试 4 个软门禁现全生效；(3) 新增 packages/engine/skills/dev/scripts/callback-brain-task.sh 真调 PATCH /api/brain/tasks/{id}，最近 5 PR status 回写率 0/5 → 接入后 5/5。无 task_id（手动 /dev / harness）静默 skip，Brain 不可达 warn 不阻 ship。配套 harness-v5-ci-checks.test.ts 翻面：从 ≥4 软门禁改为 0 软门禁断言。来源：4 agent 并行审计开发流程的 5 处致命缝隙清单 Tier 0 项。minor bump 18.7.0 → 18.8.0。"
+    files:
+      - "packages/engine/skills/dev/scripts/callback-brain-task.sh (新增, 100 lines)"
+      - ".github/workflows/ci.yml (-1 行 continue-on-error)"
+      - ".github/workflows/harness-v5-checks.yml (-4 行 continue-on-error + 注释更新)"
+      - "packages/engine/tests/skills/harness-v5-ci-checks.test.ts (翻面断言)"
+      - "Engine 5 处版本文件 18.8.0"
+
   - version: "18.7.0"
     date: "2026-04-26"
     change: "feat"
