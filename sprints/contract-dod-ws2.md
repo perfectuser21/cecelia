@@ -4,40 +4,42 @@
 **大小**: M（100-200 行实现）
 **依赖**: WS1
 
+> **DoD 机检约定**: 所有 Test 命令均为 shell 单行，非 0 退出 = 红。CI 可 `set -e` 串起来跑。
+
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## OKR 对齐` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+OKR 对齐\s*$/m.test(c))throw new Error('FAIL:missing OKR 对齐');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+OKR 对齐[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## 背景` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+背景\s*$/m.test(c))throw new Error('FAIL:missing 背景');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+背景[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## 目标` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+目标\s*$/m.test(c))throw new Error('FAIL:missing 目标');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+目标[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## User Stories` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+User Stories\s*$/m.test(c))throw new Error('FAIL:missing User Stories');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+User Stories[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## 验收场景` 二级标题（允许标题尾部有括注）
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+验收场景/m.test(c))throw new Error('FAIL:missing 验收场景');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+验收场景' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## 功能需求` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+功能需求\s*$/m.test(c))throw new Error('FAIL:missing 功能需求');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+功能需求[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## 成功标准` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+成功标准\s*$/m.test(c))throw new Error('FAIL:missing 成功标准');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+成功标准[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## 假设` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+假设\s*$/m.test(c))throw new Error('FAIL:missing 假设');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+假设[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/sprint-prd.md` 含 `## 边界情况` 二级标题
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!/^##\s+边界情况\s*$/m.test(c))throw new Error('FAIL:missing 边界情况');console.log('PASS')"
+  Test: grep -cE '^##[[:space:]]+边界情况[[:space:]]*$' sprints/sprint-prd.md
 
 - [ ] [ARTIFACT] `sprints/validators/prd-structure.mjs` 文件存在
-  Test: node -e "require('fs').accessSync('sprints/validators/prd-structure.mjs');console.log('PASS:exists')"
+  Test: test -f sprints/validators/prd-structure.mjs
 
-- [ ] [ARTIFACT] `sprints/validators/prd-structure.mjs` export 名为 `validatePrdStructure` 的 function
-  Test: node -e "const c=require('fs').readFileSync('sprints/validators/prd-structure.mjs','utf8');if(!/export\s+(async\s+)?function\s+validatePrdStructure\b/.test(c)&&!/export\s*\{\s*[^}]*\bvalidatePrdStructure\b[^}]*\}/.test(c))throw new Error('FAIL:no export validatePrdStructure');console.log('PASS:export found')"
+- [ ] [ARTIFACT] `sprints/validators/prd-structure.mjs` 运行时 export 名为 `validatePrdStructure` 的 function
+  Test: node -e "import('./sprints/validators/prd-structure.mjs').then(m=>process.exit(typeof m.validatePrdStructure==='function'?0:1)).catch(()=>process.exit(2))"
 
 ## BEHAVIOR 索引（实际测试在 tests/ws2/）
 

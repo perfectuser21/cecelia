@@ -4,37 +4,42 @@
 **大小**: M（150-250 行实现）
 **依赖**: WS2
 
+> **DoD 机检约定**: 所有 Test 命令均为 shell 单行，非 0 退出 = 红。CI 可 `set -e` 串起来跑。
+
 ## ARTIFACT 条目
 
+- [ ] [ARTIFACT] `sprints/task-plan.json` 文件存在
+  Test: test -f sprints/task-plan.json
+
 - [ ] [ARTIFACT] `sprints/task-plan.json` 是合法 JSON
-  Test: node -e "const c=require('fs').readFileSync('sprints/task-plan.json','utf8');JSON.parse(c);console.log('PASS:valid JSON')"
+  Test: node -e "JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'))"
 
 - [ ] [ARTIFACT] `sprints/task-plan.json` 顶层有 `tasks` 数组
-  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));if(!Array.isArray(p.tasks))throw new Error('FAIL:tasks not array');console.log('PASS:tasks=array')"
+  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));process.exit(Array.isArray(p.tasks)?0:1)"
 
 - [ ] [ARTIFACT] `sprints/task-plan.json` tasks 数组长度 ∈ {4,5}
-  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const n=p.tasks.length;if(n!==4&&n!==5)throw new Error('FAIL:tasks.length='+n);console.log('PASS:tasks.length='+n)"
+  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));process.exit(p.tasks.length===4||p.tasks.length===5?0:1)"
 
 - [ ] [ARTIFACT] `sprints/task-plan.json` 每个 task 含 8 个必填字段（task_id/title/scope/dod/files/depends_on/complexity/estimated_minutes）
-  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const F=['task_id','title','scope','dod','files','depends_on','complexity','estimated_minutes'];for(const t of p.tasks){for(const f of F){if(t[f]===undefined||t[f]===null)throw new Error('FAIL:'+(t.task_id||'?')+' missing '+f)}}console.log('PASS:all fields present')"
+  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const F=['task_id','title','scope','dod','files','depends_on','complexity','estimated_minutes'];process.exit(p.tasks.every(t=>F.every(f=>t[f]!==undefined&&t[f]!==null))?0:1)"
 
 - [ ] [ARTIFACT] `sprints/task-plan.json` 所有 task 的 complexity ∈ {S,M,L}
-  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));for(const t of p.tasks){if(!['S','M','L'].includes(t.complexity))throw new Error('FAIL:'+t.task_id+' complexity='+t.complexity)}console.log('PASS:all complexity in {S,M,L}')"
+  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));process.exit(p.tasks.every(t=>['S','M','L'].includes(t.complexity))?0:1)"
 
 - [ ] [ARTIFACT] `sprints/task-plan.json` 所有 task 的 estimated_minutes ∈ [20,60]
-  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));for(const t of p.tasks){const m=t.estimated_minutes;if(typeof m!=='number'||m<20||m>60)throw new Error('FAIL:'+t.task_id+' minutes='+m)}console.log('PASS:all minutes in [20,60]')"
+  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));process.exit(p.tasks.every(t=>typeof t.estimated_minutes==='number'&&t.estimated_minutes>=20&&t.estimated_minutes<=60)?0:1)"
 
 - [ ] [ARTIFACT] `sprints/task-plan.json` 所有 estimated_minutes 之和 ∈ [80,300]
-  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const s=p.tasks.reduce((a,t)=>a+t.estimated_minutes,0);if(s<80||s>300)throw new Error('FAIL:sum='+s);console.log('PASS:sum='+s)"
+  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const s=p.tasks.reduce((a,t)=>a+t.estimated_minutes,0);process.exit(s>=80&&s<=300?0:1)"
 
 - [ ] [ARTIFACT] `sprints/task-plan.json` task_id 全局唯一
-  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const ids=p.tasks.map(t=>t.task_id);const u=new Set(ids);if(u.size!==ids.length)throw new Error('FAIL:duplicate task_id');console.log('PASS:unique='+u.size)"
+  Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const ids=p.tasks.map(t=>t.task_id);process.exit(new Set(ids).size===ids.length?0:1)"
 
 - [ ] [ARTIFACT] `sprints/validators/taskplan-schema.mjs` 文件存在
-  Test: node -e "require('fs').accessSync('sprints/validators/taskplan-schema.mjs');console.log('PASS:exists')"
+  Test: test -f sprints/validators/taskplan-schema.mjs
 
-- [ ] [ARTIFACT] `sprints/validators/taskplan-schema.mjs` export 名为 `validateTaskPlanSchema` 的 function
-  Test: node -e "const c=require('fs').readFileSync('sprints/validators/taskplan-schema.mjs','utf8');if(!/export\s+(async\s+)?function\s+validateTaskPlanSchema\b/.test(c)&&!/export\s*\{\s*[^}]*\bvalidateTaskPlanSchema\b[^}]*\}/.test(c))throw new Error('FAIL:no export validateTaskPlanSchema');console.log('PASS:export found')"
+- [ ] [ARTIFACT] `sprints/validators/taskplan-schema.mjs` 运行时 export 名为 `validateTaskPlanSchema` 的 function
+  Test: node -e "import('./sprints/validators/taskplan-schema.mjs').then(m=>process.exit(typeof m.validateTaskPlanSchema==='function'?0:1)).catch(()=>process.exit(2))"
 
 ## BEHAVIOR 索引（实际测试在 tests/ws3/）
 

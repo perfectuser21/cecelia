@@ -1,8 +1,23 @@
-# Sprint Contract Draft (Round 1) — Initiative B2 Pre-flight 验证骨架
+# Sprint Contract Draft (Round 2) — Initiative B2 Pre-flight 验证骨架
 
 > **被测对象**: pre-flight 链路产出物（`sprints/sprint-prd.md` + `sprints/task-plan.json`）+ 配套验证器（`sprints/validators/*.mjs`）
-> **验证目标**: Planner → Runner → Generator 的契约（PRD 模板、task-plan.json schema、DAG）在合成 Initiative 上端到端跑通；Generator commit-2 必须使 4 个 vitest 行为测试由红转绿
+> **验证目标**: Planner → Runner → Generator 的契约（PRD 模板、task-plan.json schema、DAG）在合成 Initiative 上端到端跑通；Generator commit-2 必须使 19 个 vitest 行为测试由红转绿
 > **PRD 来源**: `sprints/sprint-prd.md`（Planner 已写入）
+
+## Round 2 修订摘要（响应 Reviewer Round 1 反馈）
+
+1. **dod_machineability 6 → ≥ 7**：所有 ARTIFACT DoD 的 Test 字段统一改写为可粘贴执行的 shell 单行，**非 0 退出即红，CI 可 `set -e` 串起来一把跑**：
+   - 文件存在 → `test -f <path>`
+   - 文件非空 → `test -s <path>`
+   - 行数阈值 → `bash -c '[ "$(wc -l < <path>)" -ge N ]'`
+   - 合法 JSON → `node -e "JSON.parse(require('fs').readFileSync('<path>','utf8'))"`
+   - 数组结构 → `node -e "...;process.exit(Array.isArray(p.tasks)?0:1)"`
+   - export 验证（运行时强校验，替代 round 1 的 regex 文本匹配）→ `node -e "import('./<path>.mjs').then(m=>process.exit(typeof m.<name>==='function'?0:1)).catch(()=>process.exit(2))"`
+   - 二级标题命中 → `grep -cE '^##[[:space:]]+<title>'`（exit 1 当无匹配，exit 0 当 ≥1 匹配）
+
+2. **新增 vitest harness 加载性 ARTIFACT**（见 `contract-dod-ws1.md`）：`bash -c 'npx vitest run sprints/tests/ --reporter=basic > /tmp/vitest-load.log 2>&1 || true; ! grep -qE "SyntaxError|ParseError|Unexpected token|Transform failed" /tmp/vitest-load.log && grep -qE "Test Files|Tests" /tmp/vitest-load.log'`。允许 ERR_MODULE_NOT_FOUND（validators 尚不存在），但拒绝任何 ts/parse 解析错。
+
+3. **export 验证强度提升**：round 1 用 `readFileSync + 正则` 匹配 `export function xxx`，round 2 改为 `dynamic import()` 实际加载 .mjs 并校验 `typeof === 'function'`，能抓出 round 1 抓不到的"文件文本对了但运行时模块解析失败"假实现。
 
 ---
 
