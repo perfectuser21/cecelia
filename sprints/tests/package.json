@@ -1,0 +1,13 @@
+{
+  "name": "@cecelia/sprint-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Per-sprint contract behavior tests. Runs vitest against sprint artifacts (e.g. ../task-plan.json). See ../contract-draft.md ## Test Contract for the canonical runner entry.",
+  "scripts": {
+    "test": "vitest run",
+    "test:ws1": "vitest run ws1"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

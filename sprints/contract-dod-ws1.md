@@ -5,6 +5,7 @@
 **依赖**: 无
 
 > **机械可执行约定**：本段所有 Test 字段都是单行 shell 命令，可直接被包进 `bash -c '...'` 执行；exit 0 = PASS，非 0 = FAIL。Evaluator/CI 不需要解读语义。
+> **锚点稳定性约定（Round 3 修订 R3）**：所有针对 `sprints/sprint-prd.md` 的内容校验**只用稳定字符串锚点**（`grep -cF "<literal>"`），不依赖行号、不依赖正则元字符。这样后续 PR 即便重排 PRD 段落顺序，本合同的 Test 字段也无需同步修改。重排导致字符串本身被删/改写时，CI 会立刻 fail（这是期望行为，作为级联失败保险——见 `contract-draft.md` ## Risks）。
 
 ## ARTIFACT 条目
 
@@ -23,20 +24,20 @@
 - [ ] [ARTIFACT] sprints/sprint-prd.md 文件存在
   Test: test -f sprints/sprint-prd.md
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 字数（去除空白后字符数）≥ 800（阈值锚点 = sprint-prd.md SC-004 行）
+- [ ] [ARTIFACT] sprints/sprint-prd.md 字数（去除空白后字符数）≥ 800（阈值由 PRD 自身 SC-004 锚定，本 Test 不依赖行号）
   Test: node -e "process.exit(require('fs').readFileSync('sprints/sprint-prd.md','utf8').replace(/\s/g,'').length>=800?0:1)"
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 显式声明 SC-004 字数阈值（防 PRD 偷偷改阈值导致合同与 PRD 错位）
-  Test: grep -c "SC-004" sprints/sprint-prd.md
+- [ ] [ARTIFACT] sprints/sprint-prd.md 显式声明 SC-004 字数阈值（稳定字符串锚点 `SC-004`，防 PRD 偷偷改阈值或删除该 SC 导致合同与 PRD 错位）
+  Test: test $(grep -cF "SC-004" sprints/sprint-prd.md) -ge 1
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 范围限定
-  Test: grep -c "^## 范围限定" sprints/sprint-prd.md
+- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 范围限定（稳定字符串锚点，不依赖行号）
+  Test: test $(grep -cF "## 范围限定" sprints/sprint-prd.md) -ge 1
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 假设
-  Test: grep -c "^## 假设" sprints/sprint-prd.md
+- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 假设（稳定字符串锚点，不依赖行号）
+  Test: test $(grep -cF "## 假设" sprints/sprint-prd.md) -ge 1
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 成功标准
-  Test: grep -c "^## 成功标准" sprints/sprint-prd.md
+- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 成功标准（稳定字符串锚点，不依赖行号）
+  Test: test $(grep -cF "## 成功标准" sprints/sprint-prd.md) -ge 1
 
 ## BEHAVIOR 索引（实际测试在 sprints/tests/ws1/）
 
@@ -53,3 +54,13 @@
 - every depends_on id refers to a known task id
 - DAG is acyclic via Kahn topological sort
 - every task has at least one DoD entry prefixed with [BEHAVIOR]
+
+**合法 runner 入口（Round 3 修订 R2）**：本目录测试由 `sprints/tests/package.json` 声明 vitest devDependency，唯一合法运行命令为：
+```
+pnpm --filter ./sprints/tests vitest run ws1
+```
+或使用 engine 工作区已有的 vitest（无需额外安装）：
+```
+cp sprints/tests/ws1/task-plan.test.ts packages/engine/tests/_temp-task-plan.test.ts && (cd packages/engine && ./node_modules/.bin/vitest run tests/_temp-task-plan.test.ts)
+```
+两条命令在 Red 阶段都应当呈现"全部 fail，原因 task-plan.json not found"。
