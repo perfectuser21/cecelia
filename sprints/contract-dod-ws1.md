@@ -4,34 +4,39 @@
 **大小**: S
 **依赖**: 无
 
+> **机械可执行约定**：本段所有 Test 字段都是单行 shell 命令，可直接被包进 `bash -c '...'` 执行；exit 0 = PASS，非 0 = FAIL。Evaluator/CI 不需要解读语义。
+
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] sprints/task-plan.json 文件存在
-  Test: node -e "require('fs').accessSync('sprints/task-plan.json')"
+  Test: test -f sprints/task-plan.json
 
 - [ ] [ARTIFACT] sprints/task-plan.json 文件大小大于 100 字节（防 stub）
-  Test: node -e "const s=require('fs').statSync('sprints/task-plan.json');if(s.size<=100)process.exit(1)"
+  Test: test $(wc -c < sprints/task-plan.json) -gt 100
 
-- [ ] [ARTIFACT] sprints/task-plan.json 首字符为 '{'（最小 JSON 形态）
-  Test: node -e "const c=require('fs').readFileSync('sprints/task-plan.json','utf8').trim();if(c[0]!=='{')process.exit(1)"
+- [ ] [ARTIFACT] sprints/task-plan.json 形态合法（首字符 '{' + 末字符 '}'）
+  Test: node -e "const s=require('fs').readFileSync('sprints/task-plan.json','utf8').trim();process.exit(s[0]==='{'&&s.slice(-1)==='}'?0:1)"
 
-- [ ] [ARTIFACT] sprints/task-plan.json 末字符为 '}'（最小 JSON 形态）
-  Test: node -e "const c=require('fs').readFileSync('sprints/task-plan.json','utf8').trim();if(c[c.length-1]!=='}')process.exit(1)"
+- [ ] [ARTIFACT] sprints/task-plan.json 可被 JSON.parse 且顶层有数组字段 `tasks`
+  Test: node -e "const o=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));process.exit(Array.isArray(o.tasks)?0:1)"
 
 - [ ] [ARTIFACT] sprints/sprint-prd.md 文件存在
-  Test: node -e "require('fs').accessSync('sprints/sprint-prd.md')"
+  Test: test -f sprints/sprint-prd.md
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 字数（去除空白后字符数）≥ 800
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8').replace(/\s+/g,'');if(c.length<800)process.exit(1)"
+- [ ] [ARTIFACT] sprints/sprint-prd.md 字数（去除空白后字符数）≥ 800（阈值锚点 = sprint-prd.md SC-004 行）
+  Test: node -e "process.exit(require('fs').readFileSync('sprints/sprint-prd.md','utf8').replace(/\s/g,'').length>=800?0:1)"
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 包含 9 大段标题之一：'## 范围限定'
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!c.includes('## 范围限定'))process.exit(1)"
+- [ ] [ARTIFACT] sprints/sprint-prd.md 显式声明 SC-004 字数阈值（防 PRD 偷偷改阈值导致合同与 PRD 错位）
+  Test: grep -c "SC-004" sprints/sprint-prd.md
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 包含 9 大段标题之一：'## 假设'
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!c.includes('## 假设'))process.exit(1)"
+- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 范围限定
+  Test: grep -c "^## 范围限定" sprints/sprint-prd.md
 
-- [ ] [ARTIFACT] sprints/sprint-prd.md 包含 9 大段标题之一：'## 成功标准'
-  Test: node -e "const c=require('fs').readFileSync('sprints/sprint-prd.md','utf8');if(!c.includes('## 成功标准'))process.exit(1)"
+- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 假设
+  Test: grep -c "^## 假设" sprints/sprint-prd.md
+
+- [ ] [ARTIFACT] sprints/sprint-prd.md 含关键大段标题：## 成功标准
+  Test: grep -c "^## 成功标准" sprints/sprint-prd.md
 
 ## BEHAVIOR 索引（实际测试在 sprints/tests/ws1/）
 
