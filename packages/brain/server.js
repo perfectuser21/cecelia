@@ -1,3 +1,7 @@
+// OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
+import { initOtel } from './src/otel.js';
+await initOtel();
+
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
