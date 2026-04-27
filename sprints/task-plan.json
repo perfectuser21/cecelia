@@ -1,0 +1,73 @@
+{
+  "initiative_id": "pending",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "落地 Initiative B2 Sprint 目录与 PRD 骨架",
+      "scope": "在 sprints/ 目录下建立本次 Initiative 的产物落点，确保 sprint-prd.md 位于约定路径并被纳入版本控制。本 Task 只关心目录与文件存在性，不涉及任何业务逻辑。",
+      "dod": [
+        "[ARTIFACT] sprints/sprint-prd.md 文件存在",
+        "[ARTIFACT] sprints/sprint-prd.md 文件大小 > 0 字节",
+        "[BEHAVIOR] git ls-files sprints/sprint-prd.md 能列出该路径"
+      ],
+      "files": [
+        "sprints/sprint-prd.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    },
+    {
+      "task_id": "ws2",
+      "title": "补全 PRD 9 段结构与 OKR 锚点占位",
+      "scope": "确保 sprint-prd.md 内容覆盖 OKR 对齐 / 背景 / 目标 / User Stories / 验收场景 / 功能需求 / 成功标准 / 假设 / 边界情况 九段结构，每段非空。本 Task 验证 PRD 模板合规性，不涉及业务语义。",
+      "dod": [
+        "[BEHAVIOR] sprint-prd.md 中存在 9 个二级标题（## OKR 对齐 / ## 背景 / ## 目标 / ## User Stories / ## 验收场景 / ## 功能需求 / ## 成功标准 / ## 假设 / ## 边界情况）",
+        "[BEHAVIOR] 每个二级标题之后至少跟随 1 行非空内容",
+        "[ARTIFACT] sprint-prd.md 总行数 ≥ 50"
+      ],
+      "files": [
+        "sprints/sprint-prd.md"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 40
+    },
+    {
+      "task_id": "ws3",
+      "title": "产出 task-plan.json 并通过 schema 校验",
+      "scope": "在 sprints/ 目录写入 task-plan.json，且使其能被 Brain Runner 的 parseTaskPlan 解析通过：tasks 数量 ∈ [4,5]，每 Task 字段齐全，complexity ∈ {S,M,L}，estimated_minutes ∈ [20,60]，depends_on 引用存在的 task_id。",
+      "dod": [
+        "[ARTIFACT] sprints/task-plan.json 是合法 JSON",
+        "[BEHAVIOR] tasks 数组长度 ∈ {4, 5}",
+        "[BEHAVIOR] 所有 task 的 complexity ∈ {S, M, L}",
+        "[BEHAVIOR] 所有 task 的 estimated_minutes 在 [20, 60] 区间"
+      ],
+      "files": [
+        "sprints/task-plan.json"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws4",
+      "title": "DAG 拓扑与提交收尾",
+      "scope": "校验 task-plan.json 的 depends_on 形成合法 DAG（无自指、无环、无悬空引用），且至少存在一个 depends_on 为空数组的入口 task；将 sprint-prd.md 与 task-plan.json 一起提交到当前 cp-* 分支并 push。",
+      "dod": [
+        "[BEHAVIOR] task-plan.json 中至少 1 个 task 的 depends_on 为 []",
+        "[BEHAVIOR] 不存在 task_id 出现在自身 depends_on 中",
+        "[BEHAVIOR] 所有 depends_on 引用的 task_id 都在 tasks 列表中存在",
+        "[BEHAVIOR] git log -1 --name-only 包含 sprints/sprint-prd.md 与 sprints/task-plan.json",
+        "[BEHAVIOR] 当前分支已 push 到 origin（git rev-parse --abbrev-ref --symbolic-full-name @{u} 成功）"
+      ],
+      "files": [
+        "sprints/sprint-prd.md",
+        "sprints/task-plan.json"
+      ],
+      "depends_on": ["ws3"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
