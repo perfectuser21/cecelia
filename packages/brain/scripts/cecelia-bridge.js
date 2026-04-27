@@ -264,6 +264,28 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ ok: false, error: err.message }));
       }
     });
+  } else if (req.method === 'POST' && req.url === '/notebook/auth-check') {
+    // NotebookLM auth 健康检查 — 真调 API 验证 cookie 是否有效
+    const notebookCli = process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm';
+    const { execFile } = require('child_process');
+    const startTime = Date.now();
+
+    execFile(notebookCli, ['auth', 'check', '--test'], { timeout: 30000 }, (err, stdout, stderr) => {
+      const elapsed = Date.now() - startTime;
+      const ok = !err;
+      if (ok) {
+        console.log(`[bridge] /notebook/auth-check → ok in ${elapsed}ms`);
+      } else {
+        console.warn(`[bridge] /notebook/auth-check → failed in ${elapsed}ms: ${err.message}`);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok,
+        error: err ? err.message : null,
+        stdout: (stdout || '').trim().slice(0, 200),
+        elapsed_ms: elapsed,
+      }));
+    });
   } else if (req.method === 'POST' && req.url === '/notebook/delete-source') {
     // 删除 NotebookLM source（源生命周期管理：压缩后删除下级 source）
     let body = '';

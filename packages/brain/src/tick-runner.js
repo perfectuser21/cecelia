@@ -97,6 +97,8 @@ import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
 import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
+import { runDailySmoke } from './cron/daily-real-business-smoke.js';
+import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
 // Sprint 1: harness-watcher.js retired (Phase B/C 进 LangGraph，sub-graph poll_ci 自管)
 // processHarnessCiWatchers / processHarnessDeployWatchers 不再使用
 import {
@@ -1643,6 +1645,10 @@ async function executeTick() {
   Promise.resolve().then(() => scheduleKR3ProgressReport(pool))
     .catch(e => console.warn('[tick] KR3 进度报告失败:', e.message));
 
+  // 10.17h 每日真业务 E2E smoke（UTC 20:00 = 北京时间 04:00，防生产腐蚀，fire-and-forget）
+  Promise.resolve().then(() => runDailySmoke(pool))
+    .catch(e => console.warn('[tick] daily smoke 失败:', e.message));
+
   // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，CONSCIOUSNESS_ENABLED=false 时跳过）
   if (isConsciousnessEnabled()) {
     Promise.resolve().then(() => runSuggestionCycle(pool))
@@ -1658,6 +1664,10 @@ async function executeTick() {
   // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
   Promise.resolve().then(() => memorySyncIfNeeded(pool))
     .catch(e => console.warn("[tick] memory-sync 失败:", e.message));
+
+  // 10.21 凭据健康巡检（每天北京时间 03:00 = UTC 19:00，检查 NotebookLM/Claude OAuth/Codex/发布器，fire-and-forget）
+  Promise.resolve().then(() => runCredentialsHealthCheck(pool))
+    .catch(e => console.warn('[tick] 凭据健康巡检失败:', e.message));
 
   } // end !MINIMAL_MODE (10.x 所有自动调度)
 
