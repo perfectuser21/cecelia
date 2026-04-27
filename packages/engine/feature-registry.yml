@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-04-27"
 
 changelog:
+  - version: "18.10.0"
+    date: "2026-04-27"
+    change: "feat"
+    description: "[CONFIG] Tier 2 PR-A — lint-test-quality 拦'假测试 stub'。新 lint 在 PR diff 中扫新增 test 文件（不动老的，grandfather），3 条硬规则：(A) 文件用 readFileSync(src/...) grep 验 + 完全无 await fn() / await mod.X() 业务调用 → fail（dispatcher.test.js 这种'读 src 抓字符串就算 test'的 stub 签名）；(B) 文件完全没 expect 调用 → fail；(C) 文件 100% .skip 包围 → fail。配 4 case 自跑 smoke：stub/empty/all-skip 应 fail，真 await + expect 应 pass。机器拦 4 agent 审计找出的最近 5 feat PR 测试质量 1.8/5 平均分根因。CI ci-passed needs 加 lint-test-quality。minor bump 18.9.0 → 18.10.0。"
+    files:
+      - ".github/workflows/scripts/lint-test-quality.sh (新增, 90 lines, 3 hard rules)"
+      - ".github/workflows/scripts/__tests__/lint-test-quality-cases.sh (新增, 4 case smoke 全过)"
+      - ".github/workflows/ci.yml (+1 lint job + ci-passed needs)"
+      - "Engine 5 处版本文件 18.10.0"
+
   - version: "18.9.0"
     date: "2026-04-27"
     change: "feat"
