@@ -18,8 +18,20 @@ const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 const FEISHU_ALEX_OPEN_ID = (process.env.FEISHU_OWNER_OPEN_IDS || '').split(',')[0].trim() || '';
 
 // Rate limiting: max 1 message per event type per 60 seconds
+//
+// Memory leak fix: 旧版 key 含 UUID（如 task_completed_${task_id}），每次任务完成/失败都
+// set 一个永不删除的 entry → 长时间运行后数千 UUID 驻留，Brain RSS 从 100MB 涨到 400+MB，
+// 最终触发 slot_budget.dispatchAllowed=false，dispatcher 停止派发。
+// 修复：(1) 写入前 GC 过期 entry；(2) 硬上限 1000 兜底。
 const _lastSent = new Map();
 const RATE_LIMIT_MS = 60 * 1000;
+const _MAX_ENTRIES = 1000;
+
+function _pruneExpired(now) {
+  for (const [key, ts] of _lastSent) {
+    if (now - ts >= RATE_LIMIT_MS) _lastSent.delete(key);
+  }
+}
 
 /**
  * 通过飞书 Open API 发私信给 Alex
@@ -117,6 +129,13 @@ async function sendFeishu(text) {
  */
 async function sendRateLimited(eventKey, text) {
   const now = Date.now();
+
+  _pruneExpired(now);
+  if (_lastSent.size >= _MAX_ENTRIES) {
+    console.warn(`[notifier] _lastSent size=${_lastSent.size} >= ${_MAX_ENTRIES}, clearing`);
+    _lastSent.clear();
+  }
+
   const lastTime = _lastSent.get(eventKey) || 0;
   if (now - lastTime < RATE_LIMIT_MS) {
     return false;
