@@ -10,7 +10,7 @@ function clonePlan() {
 }
 
 describe('Workstream 4 — validateTaskPlanDag [BEHAVIOR]', () => {
-  it('returns ok=true with entryCount=1 and full topoOrder for the real linear plan', async () => {
+  it('[ws4.t1] returns ok=true with entryCount=1 and full topoOrder for the real linear plan', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const result = mod.validateTaskPlanDag(REAL_PLAN);
     expect(result.ok).toBe(true);
@@ -19,7 +19,7 @@ describe('Workstream 4 — validateTaskPlanDag [BEHAVIOR]', () => {
     expect(result.topoOrder).toHaveLength(REAL_PLAN.tasks.length);
   });
 
-  it('detects self-reference when ws1.depends_on includes "ws1"', async () => {
+  it('[ws4.t2] detects self-reference when ws1.depends_on includes "ws1"', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     plan.tasks[0].depends_on = [plan.tasks[0].task_id];
@@ -28,7 +28,7 @@ describe('Workstream 4 — validateTaskPlanDag [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => e.type === 'self-reference' && e.task_id === plan.tasks[0].task_id)).toBe(true);
   });
 
-  it('detects a cycle when ws1->ws2->ws1', async () => {
+  it('[ws4.t3] detects a cycle when ws1->ws2->ws1', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     const a = plan.tasks[0].task_id;
@@ -40,7 +40,7 @@ describe('Workstream 4 — validateTaskPlanDag [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => e.type === 'cycle')).toBe(true);
   });
 
-  it('detects a dangling reference when ws3.depends_on includes a non-existent id', async () => {
+  it('[ws4.t4] detects a dangling reference when ws3.depends_on includes a non-existent id', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     plan.tasks[2].depends_on = ['ws_does_not_exist'];
@@ -49,7 +49,7 @@ describe('Workstream 4 — validateTaskPlanDag [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => e.type === 'dangling' && e.missing === 'ws_does_not_exist')).toBe(true);
   });
 
-  it('returns ok=false with no-entry when every task has a non-empty depends_on', async () => {
+  it('[ws4.t5] returns ok=false with no-entry when every task has a non-empty depends_on', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     const ids = plan.tasks.map((t: any) => t.task_id);
@@ -62,7 +62,7 @@ describe('Workstream 4 — validateTaskPlanDag [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => e.type === 'no-entry')).toBe(true);
   });
 
-  it('topoOrder length equals tasks length, proving the graph is connected from the entry', async () => {
+  it('[ws4.t6] topoOrder length equals tasks length, proving the graph is connected from the entry', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const result = mod.validateTaskPlanDag(REAL_PLAN);
     expect(result.ok).toBe(true);

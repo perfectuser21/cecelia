@@ -5,6 +5,7 @@
 **依赖**: WS3
 
 > **DoD 机检约定**: 所有 Test 命令均为 shell 单行，非 0 退出 = 红。CI 可 `set -e` 串起来跑。
+> **平台**: linux (GNU coreutils only) — `bash` / GNU `grep -cE` / GNU `wc -l` / `test -f` / `node`。BSD/macOS 行为差异不在支持矩阵内。
 
 ## ARTIFACT 条目
 
@@ -26,12 +27,12 @@
 - [ ] [ARTIFACT] `sprints/validators/taskplan-dag.mjs` 运行时 export 名为 `validateTaskPlanDag` 的 function
   Test: node -e "import('./sprints/validators/taskplan-dag.mjs').then(m=>process.exit(typeof m.validateTaskPlanDag==='function'?0:1)).catch(()=>process.exit(2))"
 
-## BEHAVIOR 索引（实际测试在 tests/ws4/）
+## BEHAVIOR 索引（实际测试在 sprints/tests/ws4/）
 
-见 `tests/ws4/taskplan-dag.test.ts`，覆盖：
-- returns ok=true with entryCount=1 and full topoOrder for the real linear plan
-- detects self-reference when ws1.depends_on includes "ws1"
-- detects a cycle when ws1->ws2->ws1
-- detects a dangling reference when ws3.depends_on includes a non-existent id
-- returns ok=false with no-entry when every task has a non-empty depends_on
-- topoOrder length equals tasks length, proving the graph is connected from the entry
+见 `sprints/tests/ws4/taskplan-dag.test.ts`，覆盖：
+- `ws4.t1` returns ok=true with entryCount=1 and full topoOrder for the real linear plan
+- `ws4.t2` detects self-reference when ws1.depends_on includes "ws1"
+- `ws4.t3` detects a cycle when ws1->ws2->ws1
+- `ws4.t4` detects a dangling reference when ws3.depends_on includes a non-existent id
+- `ws4.t5` returns ok=false with no-entry when every task has a non-empty depends_on
+- `ws4.t6` topoOrder length equals tasks length, proving the graph is connected from the entry

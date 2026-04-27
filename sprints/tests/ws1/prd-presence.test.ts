@@ -16,7 +16,7 @@ afterAll(() => {
 });
 
 describe('Workstream 1 — checkSprintPrdPresence [BEHAVIOR]', () => {
-  it('returns ok=true with size and lines for the real sprint PRD', async () => {
+  it('[ws1.t1] returns ok=true with size and lines for the real sprint PRD', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const result = mod.checkSprintPrdPresence('sprints/sprint-prd.md');
     expect(result.ok).toBe(true);
@@ -26,14 +26,14 @@ describe('Workstream 1 — checkSprintPrdPresence [BEHAVIOR]', () => {
     expect(result.lines).toBeGreaterThanOrEqual(50);
   });
 
-  it('returns ok=false with reason=missing when path does not exist, instead of throwing', async () => {
+  it('[ws1.t2] returns ok=false with reason=missing when path does not exist, instead of throwing', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const result = mod.checkSprintPrdPresence('sprints/__definitely_does_not_exist__.md');
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('missing');
   });
 
-  it('returns ok=false with reason=empty when the file exists but is zero bytes', async () => {
+  it('[ws1.t3] returns ok=false with reason=empty when the file exists but is zero bytes', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const result = mod.checkSprintPrdPresence(join(TMP_DIR, 'empty.md'));
     expect(result.ok).toBe(false);

@@ -5,6 +5,7 @@
 **依赖**: WS1
 
 > **DoD 机检约定**: 所有 Test 命令均为 shell 单行，非 0 退出 = 红。CI 可 `set -e` 串起来跑。
+> **平台**: linux (GNU coreutils only) — `bash` / GNU `grep -cE` / GNU `wc -l` / `test -f` / `node`。BSD/macOS 行为差异不在支持矩阵内。
 
 ## ARTIFACT 条目
 
@@ -41,10 +42,10 @@
 - [ ] [ARTIFACT] `sprints/validators/prd-structure.mjs` 运行时 export 名为 `validatePrdStructure` 的 function
   Test: node -e "import('./sprints/validators/prd-structure.mjs').then(m=>process.exit(typeof m.validatePrdStructure==='function'?0:1)).catch(()=>process.exit(2))"
 
-## BEHAVIOR 索引（实际测试在 tests/ws2/）
+## BEHAVIOR 索引（实际测试在 sprints/tests/ws2/）
 
-见 `tests/ws2/prd-structure.test.ts`，覆盖：
-- returns ok=true with sections=9 for the real Initiative B2 PRD
-- returns ok=false listing all 9 missing section names when given an empty document
-- returns ok=false with emptySections naming the offending heading when a section body is whitespace-only
-- treats sections separated only by code fences as empty
+见 `sprints/tests/ws2/prd-structure.test.ts`，覆盖：
+- `ws2.t1` returns ok=true with sections=9 for the real Initiative B2 PRD
+- `ws2.t2` returns ok=false listing all 9 missing section names when given an empty document
+- `ws2.t3` returns ok=false with emptySections naming the offending heading when a section body is whitespace-only
+- `ws2.t4` treats sections separated only by code fences as empty

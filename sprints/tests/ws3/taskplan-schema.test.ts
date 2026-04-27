@@ -10,7 +10,7 @@ function clonePlan() {
 }
 
 describe('Workstream 3 — validateTaskPlanSchema [BEHAVIOR]', () => {
-  it('returns ok=true taskCount=4 with sum of estimated_minutes in [80,300] for the real plan', async () => {
+  it('[ws3.t1] returns ok=true taskCount=4 with sum of estimated_minutes in [80,300] for the real plan', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const result = mod.validateTaskPlanSchema(REAL_PLAN);
     expect(result.ok).toBe(true);
@@ -20,7 +20,7 @@ describe('Workstream 3 — validateTaskPlanSchema [BEHAVIOR]', () => {
     expect(sum).toBeLessThanOrEqual(300);
   });
 
-  it('returns ok=false flagging tasks count out of range when plan has 3 tasks', async () => {
+  it('[ws3.t2] returns ok=false flagging tasks count out of range when plan has 3 tasks', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     plan.tasks = plan.tasks.slice(0, 3);
@@ -30,7 +30,7 @@ describe('Workstream 3 — validateTaskPlanSchema [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => /tasks.*count|tasks.*length|count.*range/i.test(JSON.stringify(e)))).toBe(true);
   });
 
-  it('returns ok=false flagging complexity field when a task has complexity=X', async () => {
+  it('[ws3.t3] returns ok=false flagging complexity field when a task has complexity=X', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     plan.tasks[0].complexity = 'X';
@@ -39,7 +39,7 @@ describe('Workstream 3 — validateTaskPlanSchema [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => /complexity/i.test(JSON.stringify(e)))).toBe(true);
   });
 
-  it('returns ok=false flagging estimated_minutes when value is 10 (below floor)', async () => {
+  it('[ws3.t4] returns ok=false flagging estimated_minutes when value is 10 (below floor)', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     plan.tasks[0].estimated_minutes = 10;
@@ -48,7 +48,7 @@ describe('Workstream 3 — validateTaskPlanSchema [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => /estimated_minutes|minutes/i.test(JSON.stringify(e)))).toBe(true);
   });
 
-  it('returns ok=false flagging estimated_minutes when value is 75 (above ceiling)', async () => {
+  it('[ws3.t5] returns ok=false flagging estimated_minutes when value is 75 (above ceiling)', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     plan.tasks[0].estimated_minutes = 75;
@@ -57,7 +57,7 @@ describe('Workstream 3 — validateTaskPlanSchema [BEHAVIOR]', () => {
     expect(result.errors.some((e: any) => /estimated_minutes|minutes/i.test(JSON.stringify(e)))).toBe(true);
   });
 
-  it('returns ok=false flagging duplicate task_id when two tasks share the same id', async () => {
+  it('[ws3.t6] returns ok=false flagging duplicate task_id when two tasks share the same id', async () => {
     const mod: any = await import(VALIDATOR_PATH);
     const plan = clonePlan();
     plan.tasks[1].task_id = plan.tasks[0].task_id;

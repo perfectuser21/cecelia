@@ -5,6 +5,7 @@
 **依赖**: 无（图入口）
 
 > **DoD 机检约定**: 所有 Test 命令均为 shell 单行，非 0 退出 = 红。CI 可 `set -e` 串起来跑。
+> **平台**: linux (GNU coreutils only) — `bash` / GNU `grep -cE` / GNU `wc -l` / `test -f` / `node`。BSD/macOS 行为差异不在支持矩阵内。
 
 ## ARTIFACT 条目
 
@@ -26,9 +27,9 @@
 - [ ] [ARTIFACT] vitest 能加载 `sprints/tests/` 测试套件（不报 ERR_MODULE_NOT_FOUND 之外的解析错）
   Test: bash -c 'npx vitest run sprints/tests/ --reporter=basic > /tmp/vitest-load.log 2>&1 || true; ! grep -qE "SyntaxError|ParseError|Unexpected token|Transform failed" /tmp/vitest-load.log && grep -qE "Test Files|Tests" /tmp/vitest-load.log'
 
-## BEHAVIOR 索引（实际测试在 tests/ws1/）
+## BEHAVIOR 索引（实际测试在 sprints/tests/ws1/）
 
-见 `tests/ws1/prd-presence.test.ts`，覆盖：
-- returns ok=true with size and lines for the real sprint PRD
-- returns ok=false with reason=missing when path does not exist, instead of throwing
-- returns ok=false with reason=empty when the file exists but is zero bytes
+见 `sprints/tests/ws1/prd-presence.test.ts`，覆盖：
+- `ws1.t1` returns ok=true with size and lines for the real sprint PRD
+- `ws1.t2` returns ok=false with reason=missing when path does not exist, instead of throwing
+- `ws1.t3` returns ok=false with reason=empty when the file exists but is zero bytes

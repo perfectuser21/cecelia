@@ -5,6 +5,7 @@
 **依赖**: WS2
 
 > **DoD 机检约定**: 所有 Test 命令均为 shell 单行，非 0 退出 = 红。CI 可 `set -e` 串起来跑。
+> **平台**: linux (GNU coreutils only) — `bash` / GNU `grep -cE` / GNU `wc -l` / `test -f` / `node` / `git`。BSD/macOS 行为差异不在支持矩阵内。
 
 ## ARTIFACT 条目
 
@@ -41,12 +42,15 @@
 - [ ] [ARTIFACT] `sprints/validators/taskplan-schema.mjs` 运行时 export 名为 `validateTaskPlanSchema` 的 function
   Test: node -e "import('./sprints/validators/taskplan-schema.mjs').then(m=>process.exit(typeof m.validateTaskPlanSchema==='function'?0:1)).catch(()=>process.exit(2))"
 
-## BEHAVIOR 索引（实际测试在 tests/ws3/）
+- [ ] [ARTIFACT] `sprints/task-plan.json` commit-2 后相对 HEAD 无任何修改（只读保护，R4 mitigation）
+  Test: bash -c 'git diff --quiet HEAD -- sprints/task-plan.json'
 
-见 `tests/ws3/taskplan-schema.test.ts`，覆盖：
-- returns ok=true taskCount=4 with sum of estimated_minutes in [80,300] for the real plan
-- returns ok=false flagging tasks count out of range when plan has 3 tasks
-- returns ok=false flagging complexity field when a task has complexity=X
-- returns ok=false flagging estimated_minutes when value is 10 (below floor)
-- returns ok=false flagging estimated_minutes when value is 75 (above ceiling)
-- returns ok=false flagging duplicate task_id when two tasks share the same id
+## BEHAVIOR 索引（实际测试在 sprints/tests/ws3/）
+
+见 `sprints/tests/ws3/taskplan-schema.test.ts`，覆盖：
+- `ws3.t1` returns ok=true taskCount=4 with sum of estimated_minutes in [80,300] for the real plan
+- `ws3.t2` returns ok=false flagging tasks count out of range when plan has 3 tasks
+- `ws3.t3` returns ok=false flagging complexity field when a task has complexity=X
+- `ws3.t4` returns ok=false flagging estimated_minutes when value is 10 (below floor)
+- `ws3.t5` returns ok=false flagging estimated_minutes when value is 75 (above ceiling)
+- `ws3.t6` returns ok=false flagging duplicate task_id when two tasks share the same id
