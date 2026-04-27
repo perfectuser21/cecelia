@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-27"
 
 changelog:
+  - version: "18.14.0"
+    date: "2026-04-27"
+    change: "feat"
+    description: "[CONFIG] PR-E — cortex 真路径 smoke。新增 packages/brain/scripts/smoke/cortex-pure-functions.sh，real-env-smoke + post-deploy 自动跑。covers cortex.js 1580 行 RCA 引擎 0 真路径覆盖：5 个纯函数契约 case via docker exec node -e 直调（classifyTimeoutReason 错误分类 / estimateTokens 合理值 / _computeObservationKey + _deduplicateObservations 折叠契约 / validateCortexDecision + createCortexFallback / hasCodeFixSignal）。本地 5/5 pass。100% foundation 路线 PR-E 完成。minor bump 18.13.0 → 18.14.0。"
+    files:
+      - "packages/brain/scripts/smoke/cortex-pure-functions.sh (新增, 130 lines, 5 case)"
+      - "Engine 5 处版本文件 18.14.0"
+
   - version: "18.13.0"
     date: "2026-04-27"
     change: "feat"
