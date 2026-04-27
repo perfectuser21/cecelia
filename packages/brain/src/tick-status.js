@@ -23,7 +23,7 @@ import { isTickWatchdogActive } from './tick-watchdog.js';
 // 常量（与 tick.js 同源；D2 阶段允许并存，后续可统一收口到 tick-constants.js）
 const TICK_INTERVAL_MINUTES = 2;
 const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10);
-const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10);
+const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '100', 10);
 const STALE_THRESHOLD_HOURS = 24;
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);

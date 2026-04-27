@@ -139,7 +139,7 @@ describe('tick-helpers', () => {
     });
 
     it('超时任务 → kill + handleTaskFailure + requeue', async () => {
-      const old = new Date(Date.now() - 90 * 60 * 1000).toISOString(); // 90 min ago
+      const old = new Date(Date.now() - 120 * 60 * 1000).toISOString(); // 120 min ago (> 100min default)
       const tasks = [{ id: 't2', title: 'stuck', started_at: old, payload: {} }];
 
       mockQuery.mockResolvedValue({ rows: [] });
@@ -156,7 +156,7 @@ describe('tick-helpers', () => {
     });
 
     it('超时 + quarantine 触发 → action = quarantine', async () => {
-      const old = new Date(Date.now() - 90 * 60 * 1000).toISOString();
+      const old = new Date(Date.now() - 120 * 60 * 1000).toISOString();
       const tasks = [{ id: 't3', title: 'q-stuck', started_at: old, payload: {} }];
 
       mockQuery.mockResolvedValue({ rows: [] });
