@@ -48,6 +48,17 @@ const INITIATIVE_LOCK_TASK_TYPES = [
   'harness_initiative',
 ];
 
+// Retired harness task types — 全部归入 harness_initiative full-graph sub-graph。
+// 这些类型不再需要 executor / cecelia-bridge：派发路径上直接标 pipeline_terminal_failure。
+// 必须在 `checkCeceliaRunAvailable` 之前拦截，否则在没有 bridge 的环境（CI clean docker /
+// brain-only deploy）retired task 会被永远 revert 回 queued，无法 terminate。
+// executor.js 内 `triggerCeceliaRun` 也保留同款拦截作 defense-in-depth（老 caller 直
+// 调 executor 时仍然有效）。
+const _RETIRED_HARNESS_TYPES_DISPATCH = new Set([
+  'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
+  'harness_planner',
+]);
+
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
 
@@ -239,6 +250,34 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
+  // 2.5 Drain retired harness tasks — 一次 SQL 把所有 queued retired 类型批量
+  //     标 pipeline_terminal_failure。必须在 selectNextDispatchableTask 之前，
+  //     防止 retired task 跟正常 P0/P1 队列竞争 — 在 bridge 不可用的环境（CI
+  //     clean docker / brain-only deploy）retired task 会被 no_executor revert
+  //     永远循环，挤占调度器算力。
+  //     放在所有 skip 检查（drain/quota_cooling/billing/slot/circuit）之后，
+  //     这样系统不健康时不写 DB（保持调度路径侧效应一致性）。
+  try {
+    const drained = await pool.query(
+      `UPDATE tasks
+         SET status='failed', completed_at=NOW(),
+             error_message='task_type ' || task_type || ' retired (subsumed by harness_initiative full graph)',
+             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+       WHERE status='queued'
+         AND task_type = ANY($1::text[])
+       RETURNING id, task_type`,
+      [Array.from(_RETIRED_HARNESS_TYPES_DISPATCH)]
+    );
+    if (drained.rowCount > 0) {
+      tickLog(`[dispatch] drained ${drained.rowCount} queued retired harness task(s)`);
+      for (const row of drained.rows) {
+        actions.push({ action: 'retire-task', task_id: row.id, task_type: row.task_type });
+      }
+    }
+  } catch (drainErr) {
+    console.error(`[dispatch] retired task drain failed (non-fatal): ${drainErr.message}`);
+  }
+
   // 3. Select next task (with dependency check + pre-flight validation)
   //    If pre-flight fails, skip that task and try the next candidate (max 5 retries)
   const MAX_PRE_FLIGHT_RETRIES = 5;
@@ -284,6 +323,32 @@ export async function dispatchNextTask(goalIds) {
 
   if (!nextTask) {
     return { dispatched: false, reason: 'all_candidates_failed_pre_flight', skipped: preFlightFailedIds.length, actions };
+  }
+
+  // 3b'. Retired harness task_types — 不需要 executor，直接标 terminal_failure。
+  //      必须放在 checkCeceliaRunAvailable 之前，否则在 cecelia-bridge 不可用的环境
+  //      （CI / brain-only deploy）retired task 永远 revert 回 queued。
+  if (_RETIRED_HARNESS_TYPES_DISPATCH.has(nextTask.task_type)) {
+    tickLog(`[dispatch] retired task_type=${nextTask.task_type} task=${nextTask.id} → marking pipeline_terminal_failure`);
+    try {
+      await pool.query(
+        `UPDATE tasks SET status='failed', completed_at=NOW(),
+          error_message=$2,
+          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+         WHERE id=$1::uuid`,
+        [nextTask.id, `task_type ${nextTask.task_type} retired (subsumed by harness_initiative full graph)`]
+      );
+    } catch (err) {
+      console.error(`[dispatch] mark retired task failed: ${err.message}`);
+    }
+    await recordDispatchResult(pool, false, 'retired_task_type');
+    actions.push({
+      action: 'retire-task',
+      task_id: nextTask.id,
+      title: nextTask.title,
+      task_type: nextTask.task_type,
+    });
+    return { dispatched: false, reason: 'retired_task_type', task_id: nextTask.id, task_type: nextTask.task_type, retired: true, actions };
   }
 
   // 3c. Initiative-level lock: 仅对 harness pipeline 类型生效，且只查同 project 的 harness blocker。
