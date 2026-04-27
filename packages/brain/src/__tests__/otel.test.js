@@ -20,32 +20,31 @@ describe('otel - graceful skip when no API key', () => {
     }
   });
 
-  it('initOtel() 在无 HONEYCOMB_API_KEY 时不抛错', async () => {
-    const { initOtel } = await import('../otel.js');
-    await expect(Promise.resolve(initOtel())).resolves.not.toThrow();
-  });
-
-  it('initOtel() 无 key 时返回 null（跳过模式）', async () => {
+  it('initOtel() 无 HONEYCOMB_API_KEY 时返回 null（静默跳过，不初始化 SDK）', async () => {
     const { initOtel } = await import('../otel.js');
     const result = await initOtel();
-    expect(result).toBeNull();
+    // 无 key 时必须返回 null，表示 OTel 未初始化
+    expect(result).toBe(null);
+  });
+
+  it('initOtel() 连续调用两次无 key 均返回 null（幂等跳过）', async () => {
+    const { initOtel } = await import('../otel.js');
+    const r1 = await initOtel();
+    const r2 = await initOtel();
+    expect(r1).toBe(null);
+    expect(r2).toBe(null);
   });
 });
 
 describe('otel - with HONEYCOMB_API_KEY', () => {
+  let mockStart;
+
   beforeEach(() => {
     vi.resetModules();
-  });
-
-  afterEach(() => {
-    delete process.env.HONEYCOMB_API_KEY;
-    vi.resetModules();
-  });
-
-  it('initOtel() 有 key 时返回 SDK 实例（非 null）', async () => {
+    mockStart = vi.fn();
     vi.doMock('@opentelemetry/sdk-node', () => ({
       NodeSDK: vi.fn().mockImplementation(() => ({
-        start: vi.fn(),
+        start: mockStart,
         shutdown: vi.fn().mockResolvedValue(undefined),
       })),
     }));
@@ -55,11 +54,29 @@ describe('otel - with HONEYCOMB_API_KEY', () => {
     vi.doMock('@opentelemetry/auto-instrumentations-node', () => ({
       getNodeAutoInstrumentations: vi.fn().mockReturnValue([]),
     }));
+  });
 
+  afterEach(() => {
+    delete process.env.HONEYCOMB_API_KEY;
+    vi.resetModules();
+  });
+
+  it('initOtel() 有 key 时调用 sdk.start()（OTel SDK 已激活）', async () => {
+    process.env.HONEYCOMB_API_KEY = 'test-key-abc123';
+    const { initOtel, _resetOtel } = await import('../otel.js');
+    await initOtel();
+    // 真行为验证：SDK 的 start() 方法被调用过，证明 OTel 真正启动
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    _resetOtel();
+  });
+
+  it('initOtel() 有 key 时返回 NodeSDK 对象（包含 start/shutdown 方法）', async () => {
     process.env.HONEYCOMB_API_KEY = 'test-key-abc123';
     const { initOtel, _resetOtel } = await import('../otel.js');
     const sdk = await initOtel();
-    expect(sdk).not.toBeNull();
+    // 验 sdk 对象有 start 方法（行为接口验证，非 null 检查）
+    expect(typeof sdk.start).toBe('function');
+    expect(typeof sdk.shutdown).toBe('function');
     _resetOtel();
   });
 });
