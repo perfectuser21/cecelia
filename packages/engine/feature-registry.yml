@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-27"
 
 changelog:
+  - version: "18.11.0"
+    date: "2026-04-27"
+    change: "feat"
+    description: "[CONFIG] Tier 2 PR-B — dispatcher 真路径 smoke。新增 packages/brain/scripts/smoke/dispatcher-real-paths.sh，real-env-smoke job 自动跑。覆盖 dispatcher.js 3 条关键真路径（之前 0 真路径，全 mock 单测，PR #2660 Phase 2.5 drain bug 就是 mock 全过 prod 才暴露）：Case A — pre-flight 短 title reject（title<5 → metadata.pre_flight_failed=true）；Case B — empty queue dispatch HTTP 200 不抛；Case C — initiative-lock 同 project 并发 harness_initiative 只 1 个 in_progress。本地 3/3 pass。每次 smoke 用唯一 SMOKE_RUN_ID 后缀（SHORT hex + RANDOM proj UUID）避 dedup constraint 冲突。所有 curl 加 -m 10 timeout 防卡。executor.js 的 retired-type defense-in-depth 已被 retire-harness-planner-smoke.sh 间接覆盖，本 PR 不重复加 executor smoke。minor bump 18.10.0 → 18.11.0。"
+    files:
+      - "packages/brain/scripts/smoke/dispatcher-real-paths.sh (新增, 130 lines, 3 case)"
+      - "Engine 5 处版本文件 18.11.0"
+
   - version: "18.10.0"
     date: "2026-04-27"
     change: "feat"
