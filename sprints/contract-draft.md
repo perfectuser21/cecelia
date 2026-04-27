@@ -1,8 +1,13 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > **被测对象**: Initiative B1 基础脚手架 — `initiatives/b1/`
 > **PRD 来源**: `sprints/sprint-prd.md`
 > **目标**: 把"配置 → 入口 → 行为 → 验收"链路立起来；脚手架不引入业务逻辑
+
+## Round 2 修订记录（处理上轮 Reviewer 反馈）
+
+- **加固 ARTIFACT 可执行性**（completeness ≥ 7）：`contract-dod-ws1.md` / `contract-dod-ws2.md` 中每条 ARTIFACT 都补充了第二行 `Test (alt)`，用 `test -f` / `[ ... ]` 形式给出 POSIX shell 一行命令，与既有的 `node -e` 形式构成双校验，任一形式 exit 0 即视为通过；从而避免"只有 node 环境才能跑 DoD"的隐性耦合。
+- **修复孤儿条目**（internal_consistency ≥ 7）：（a）下方 `## Test Contract` 表新增 `DoD 校验文件` 列，把每个 workstream 的 ARTIFACT 校验路径显式列出；（b）Feature 5「LOC 预算 + git 追踪完整性」在标题与"ARTIFACT 覆盖"段已明确归属 **WS2 ARTIFACT 校验**（无 BEHAVIOR，因为这是 git/文件层面的静态事实，不是运行时行为，按 DoD 分家规则正确归类），并在 `contract-dod-ws2.md` 的最后两条 ARTIFACT 完整落地（git untracked 计数 + 总 LOC < 400），不再悬挂在 contract-draft 里。
 
 ---
 
@@ -92,19 +97,23 @@
 
 ---
 
-## Feature 5: 脚手架 LOC 预算 + git 追踪完整性
+## Feature 5: 脚手架 LOC 预算 + git 追踪完整性（**纯 WS2 ARTIFACT，无 BEHAVIOR**）
+
+**归属说明**: 本 Feature 描述的是 git/文件层面的静态事实（追踪状态 + 总行数），不是运行时行为。按 DoD 分家规则的决策树「能否只靠检查文件结构验证？→ 能 → ARTIFACT」，本 Feature 全部条目落 WS2 ARTIFACT，不产生 BEHAVIOR `it()` 块（这与"挂在 ws2 但无 BEHAVIOR 覆盖"是合规的，不是孤儿）。
 
 **行为描述**:
 整个 `initiatives/b1/` 目录新增代码量必须落在脚手架预算内（PRD SC-003: < 400 LOC，符合 capacity-budget hard 阈值）。所有文件必须被 `git ls-files` 列出，无未追踪残留（PRD SC-004）。
 
 **硬阈值**:
 - `initiatives/b1/` 下所有被 git 追踪的文件总行数 < 400
-- `git ls-files initiatives/b1/` 列出的文件数与 `find initiatives/b1/ -type f -not -path '*/\.*'` 列出的文件数一致（无未追踪残留）
+- `git ls-files --others --exclude-standard initiatives/b1/` 输出为空（无未追踪残留）
 
-**ARTIFACT 覆盖**（落在 `contract-dod-ws2.md`，验收侧承担）:
-- `initiatives/b1/` 目录存在
-- 目录下所有文件均被 git 追踪（无 untracked）
+**ARTIFACT 覆盖**（全部落在 `contract-dod-ws2.md`，验收侧承担）:
+- `initiatives/b1/` 目录下被 git 追踪文件数 ≥ 1（目录非空）
+- 无 untracked 残留（git ls-files --others --exclude-standard 计数 == 0）
 - 所有被追踪文件总行数 < 400
+
+**BEHAVIOR 覆盖**: 无（按上方"归属说明"，本 Feature 不产生运行时 `it()` 块）
 
 ---
 
@@ -141,9 +150,19 @@ workstream_count: 2
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
-|---|---|---|---|
-| WS1 | `sprints/tests/ws1/entry.test.ts` | exit 0 / banner / config.banner 回显 / 配置缺失非零退出 / banner 字段缺失非零退出 / 重复启动等价 | `npx vitest run sprints/tests/ws1/` → 6 failures（entry.js 不存在，所有 spawnSync 拿不到预期 status/stdout） |
-| WS2 | `sprints/tests/ws2/verify.test.ts` | verify.sh PASS 路径 / entry 被破坏失败 / banner 字段缺失失败 / 入口不可读时可读错误 / README 命令存在 | `npx vitest run sprints/tests/ws2/` → 5 failures（verify.sh 不存在 + README 不存在，所有断言失败） |
+| Workstream | Test File | DoD 校验文件 (ARTIFACT) | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|---|
+| WS1 | `sprints/tests/ws1/entry.test.ts` | `sprints/contract-dod-ws1.md`（6 条 ARTIFACT：entry 文件存在 / config 文件存在 / config 是合法 JSON / banner 非空 / 入口源码引用 config 相对路径 / 入口含非零 exit 语句） | exit 0 / banner / config.banner 回显 / 配置缺失非零退出 / banner 字段缺失非零退出 / 重复启动等价 | `npx vitest run sprints/tests/ws1/` → 6 failures（entry.js 不存在，所有 spawnSync 拿不到预期 status/stdout） |
+| WS2 | `sprints/tests/ws2/verify.test.ts` | `sprints/contract-dod-ws2.md`（9 条 ARTIFACT：verify.sh 存在 + 含执行位 + 含 PASS + 含 set -e / README 存在非空 + 含两条命令字面量 / **Feature 5：无 untracked + 总行数 < 400**） | verify.sh PASS 路径 / entry 被破坏失败 / banner 字段缺失失败 / 入口不可读时可读错误 / README 命令存在 | `npx vitest run sprints/tests/ws2/` → 5 failures（verify.sh 不存在 + README 不存在，所有断言失败） |
+
+**Feature → Workstream 归属总表**（修复孤儿条目）:
+
+| Feature | BEHAVIOR 测试位置 | ARTIFACT DoD 位置 |
+|---|---|---|
+| F1 入口启动行为 | `tests/ws1/entry.test.ts`（3 it） | `contract-dod-ws1.md` |
+| F2 默认配置加载与回显 | `tests/ws1/entry.test.ts`（3 it） | `contract-dod-ws1.md` |
+| F3 验收脚本闭环 | `tests/ws2/verify.test.ts`（4 it） | `contract-dod-ws2.md` |
+| F4 README 使用说明 | `tests/ws2/verify.test.ts`（1 it） | `contract-dod-ws2.md` |
+| F5 LOC 预算 + git 追踪 | **无（按规范不应产生 BEHAVIOR）** | `contract-dod-ws2.md`（最后 3 条 ARTIFACT） |
 
 **测试运行约定**: 在仓库根目录执行 `npx vitest run sprints/tests/wsN/ --reporter=verbose`。tests 通过 `child_process.spawnSync` 直接调用 `node`/`bash`，不依赖任何包内 vitest 配置；vitest 自身按默认 include 规则匹配 `*.test.ts`。
