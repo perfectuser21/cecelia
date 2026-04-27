@@ -1,39 +1,39 @@
-# PRD: Gate 3 + Gate 2 — Brain CI Auto Deploy & Revert
+# PRD: Gate 5 B1+B2 — 凭据健康巡检 cron + 每日真业务 E2E smoke
 
-## 目标
+## 背景与目标
 
-新建 `.github/workflows/brain-deploy.yml`，实现：
-- Gate 3：push to main 有 brain 变更时自动 SSH deploy
-- Gate 2：deploy/smoke 失败时自动创建 revert PR + Brain P0 告警任务
+Gate 5 持续监控基础设施。本 PR 实现两个 cron 任务接入 Brain tick-runner：
+
+- **B1**: 凭据健康巡检 — 每天北京时间 03:00（UTC 19:00）检查 NotebookLM/Claude OAuth/Codex/发布器凭据，30 天前 P1 告警，7 天前 P0 告警，已过期立即 P0 告警 + 创建 Brain 任务
+- **B2**: 每日真业务 E2E smoke — 每天北京时间 04:00（UTC 20:00）触发一条真实 content-pipeline（solo-company-case），30 分钟内验收图片 ≥ 9 + export 完成，否则 P0 飞书告警
 
 ## 成功标准
 
-- [x] `.github/workflows/brain-deploy.yml` 文件存在
-- [x] 使用 `dorny/paths-filter@v3` 检测 `packages/brain/**` 和 `scripts/brain-deploy.sh` 变更
-- [x] `deploy-brain` job 用 SSH 连到 38.23.47.81，执行 git pull + brain-deploy.sh
-- [x] post-deploy smoke 验证 HTTP 200 且响应含 `"status":"ok"`
-- [x] `on-deploy-failure` job 在 deploy-brain 失败时执行
-- [x] 自动 git revert HEAD --no-edit 并 push 到 `revert-brain-YYYYMMDDHHMM` 分支
-- [x] gh pr create 创建标题含 `[AUTO-REVERT]` 的 PR
-- [x] curl Brain API 创建 P0 告警任务
-- [x] workflow 超时 10 分钟
+1. `credentials-health-scheduler.js` 在窗口内触发告警逻辑，30 天/7 天/已过期三档正确
+2. `daily-real-business-smoke.js` 在窗口内触发 pipeline，30 分钟超时 P0 告警
+3. `tick-runner.js` 接入两个新 cron（10.17h + 10.21）
+4. `cecelia-bridge.js` 新增 `/notebook/auth-check` 端点
+5. 所有单元测试通过（vitest）
 
 ## DoD
 
-- [x] [ARTIFACT] `.github/workflows/brain-deploy.yml` 存在
-  Test: `manual:node -e "require('fs').accessSync('.github/workflows/brain-deploy.yml')"`
-
-- [x] [BEHAVIOR] workflow 使用 dorny/paths-filter@v3 检测 brain 路径
-  Test: `manual:bash -c "grep -q 'dorny/paths-filter@v3' .github/workflows/brain-deploy.yml && grep -q 'packages/brain' .github/workflows/brain-deploy.yml"`
-
-- [x] [BEHAVIOR] deploy-brain job 用 appleboy/ssh-action SSH 连接并执行 brain-deploy.sh
-  Test: `manual:bash -c "grep -q 'appleboy/ssh-action' .github/workflows/brain-deploy.yml && grep -q 'brain-deploy.sh' .github/workflows/brain-deploy.yml"`
-
-- [x] [BEHAVIOR] post-deploy smoke 验证 HTTP 200 + "status":"ok"
-  Test: `manual:bash -c "grep -q 'status.*ok' .github/workflows/brain-deploy.yml"`
-
-- [x] [BEHAVIOR] on-deploy-failure job 在失败时创建 [AUTO-REVERT] PR
-  Test: `manual:bash -c "grep -q 'AUTO-REVERT' .github/workflows/brain-deploy.yml && grep -q 'git revert' .github/workflows/brain-deploy.yml"`
-
-- [x] [BEHAVIOR] on-deploy-failure 创建 Brain P0 告警任务
-  Test: `manual:bash -c "grep -q '/api/brain/tasks' .github/workflows/brain-deploy.yml"`
+- [x] [ARTIFACT] `packages/brain/src/credentials-health-scheduler.js` 存在且语法正确
+  - Test: `node -e "require('fs').accessSync('packages/brain/src/credentials-health-scheduler.js')"`
+- [x] [ARTIFACT] `packages/brain/src/cron/daily-real-business-smoke.js` 存在且语法正确
+  - Test: `node -e "require('fs').accessSync('packages/brain/src/cron/daily-real-business-smoke.js')"`
+- [x] [ARTIFACT] `packages/brain/src/__tests__/credentials-health.test.js` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/src/__tests__/credentials-health.test.js')"`
+- [x] [ARTIFACT] `packages/brain/tests/brain/daily-smoke.test.js` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/tests/brain/daily-smoke.test.js')"`
+- [x] [BEHAVIOR] tick-runner.js 已接入 runDailySmoke + runCredentialsHealthCheck
+  - Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('runDailySmoke')||!c.includes('runCredentialsHealthCheck'))process.exit(1)"`
+- [x] [BEHAVIOR] cecelia-bridge.js 新增 /notebook/auth-check 端点
+  - Test: `node -e "const c=require('fs').readFileSync('packages/brain/scripts/cecelia-bridge.js','utf8');if(!c.includes('/notebook/auth-check'))process.exit(1)"`
+- [x] [BEHAVIOR] isInCredentialsHealthWindow 在 UTC 19:00-19:04 返回 true，19:05 返回 false
+  - Test: `tests/brain/daily-smoke.test.js` + `src/__tests__/credentials-health.test.js`
+- [x] [BEHAVIOR] runDailySmoke 在窗口外返回 skipped_window=true，窗口内且未跑返回 triggered=true
+  - Test: `tests/brain/daily-smoke.test.js`
+- [x] [ARTIFACT] `packages/brain/scripts/cron/credentials-health-check.sh` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/scripts/cron/credentials-health-check.sh')"`
+- [x] [ARTIFACT] `packages/brain/scripts/smoke/gate5-b1-b2-smoke.sh` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/scripts/smoke/gate5-b1-b2-smoke.sh')"`
