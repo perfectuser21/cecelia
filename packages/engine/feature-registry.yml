@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-27"
 
 changelog:
+  - version: "18.15.0"
+    date: "2026-04-27"
+    change: "feat"
+    description: "[CONFIG] PR-F — thalamus 真路径 smoke。100% foundation 路线最后 1 步。新增 packages/brain/scripts/smoke/thalamus-pure-functions.sh，real-env-smoke + post-deploy 自动跑。covers thalamus.js 1654 行决策层 0 真路径覆盖：5 个纯函数契约 case via docker exec node -e 直调（hasDangerousActions 危险动作检测 / createFallbackDecision 兜底 / classifyLLMError + LLM_ERROR_TYPE 常量 / calculateCost 成本计算 / validateDecision 签名稳定）。本地 5/5 pass。100% foundation 路线全部完成（PR-A/B/C/D/E/F + Tier 0/1）。minor bump 18.14.0 → 18.15.0。"
+    files:
+      - "packages/brain/scripts/smoke/thalamus-pure-functions.sh (新增, 130 lines, 5 case)"
+      - "Engine 5 处版本文件 18.15.0"
+
   - version: "18.14.0"
     date: "2026-04-27"
     change: "feat"
