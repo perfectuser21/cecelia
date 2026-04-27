@@ -19,9 +19,9 @@ ok "brain-ci-deploy.yml 存在"
 grep -q "packages/brain/\*\*" "$WF" || err "未找到 brain paths filter"
 ok "brain paths filter 存在"
 
-# 3. concurrency group 独立
+# 3. concurrency group 独立（检查 group: 行，不检查注释）
 grep -q "brain-autodeploy" "$WF" || err "concurrency group 不是 brain-autodeploy"
-! grep -q "deploy-production" "$WF" || err "不能使用 deploy-production group（与 deploy.yml 冲突）"
+grep -E "^\s+group:\s+" "$WF" | grep -q "deploy-production" && err "group: 行不能是 deploy-production" || true
 ok "concurrency group 正确 (brain-autodeploy)"
 
 # 4. 409 skip logic
