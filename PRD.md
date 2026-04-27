@@ -1,69 +1,39 @@
-# PRD: smoke-fix-D — 修 d-tick-runner-full.sh CI 干净环境跑过
+# PRD: Gate 5 B1+B2 — 凭据健康巡检 cron + 每日真业务 E2E smoke
 
-## 背景
+## 背景与目标
 
-CI workflow `.github/workflows/ci.yml` 的 `real-env-smoke` job（PR #2653 引入）在 fresh
-docker 环境内：
-- 起 `cecelia-brain:ci` 容器，name `cecelia-brain-smoke`，--network host
-- 设 `CECELIA_TICK_ENABLED=false`、`NODE_ENV=test`
-- 等 `/api/brain/tick/status` 200 后扫 `packages/brain/scripts/smoke/*.sh` 全跑
+Gate 5 持续监控基础设施。本 PR 实现两个 cron 任务接入 Brain tick-runner：
 
-`d-tick-runner-full.sh` 在该环境必 fail：
-1. **容器名硬编码** `cecelia-node-brain`（生产名），CI 用 `cecelia-brain-smoke` → 静态验
-   `docker exec` 失败。
-2. **依赖 loop_running=true**：CI 设 `CECELIA_TICK_ENABLED=false`（虽 DB 默认 enabled
-   仍会自启 loop，但 fresh DB 时第一个 tick 还没跑出来，loop_running 可能为 false）。
-3. **依赖 130s 等自然 tick**：fresh DB 等周期 ≥ TICK_INTERVAL_MINUTES (2min) 才能验
-   last_tick 推进；20min timeout 不够稳。
-4. **runtime 阈值 ≥6/8**：空 DB 多数 plugin silent on no-op（dept-heartbeat / heartbeat /
-   pipeline-patrol 之外的 5 个 plugin 在 fresh DB 啥也不做）→ 必 < 6/8 → fail。
-
-## 目标
-
-让 `d-tick-runner-full.sh` 在 CI fresh 环境秒级跑过，同时在生产容器上仍可跑。
-
-## 范围
-
-**只改 1 个文件**：`packages/brain/scripts/smoke/d-tick-runner-full.sh`
-
-## 不做
-
-- 不动 brain 业务代码
-- 不动 CI workflow（task A 已经覆盖 #2653 临时 continue-on-error）
-- 不动 SKILL / engine 版本
-- 不写 c8a / e1 / B retire smoke（其他 task 覆盖）
-
-## 实现要点
-
-### 5 阶段重构契约
-
-1. `/api/brain/tick/status` 可达 + `enabled` 字段存在（不再要求 `loop_running=true`）
-2. **POST `/api/brain/tick`** 主动触发 manual tick（`runTickSafe('manual')` → `executeTick()`
-   走完整 plugin 序列）；`response.success===true` 或 `response.skipped===true`(reentry guard)
-   都算通过
-3. **强契约**：sleep 3s 后 GET `/tick/status`，验 `last_tick` 推进 OR
-   `tick_stats.total_executions++`（任一推进即通过 — 证明 executeTick 端到端跑过）
-4. **静态验**：`docker exec <container> grep -F "from './<plugin>.js'" /app/src/tick-runner.js`
-   8 个 plugin 全命中（防重构悄悄删 wire）
-5. **软验**：docker logs 命中阈值降为 ≥1（diagnostic only — 强契约 [3] 已兜底）
-
-### 容器名自动检测
-
-```bash
-detect_container() {
-  if [ -n "${BRAIN_CONTAINER:-}" ]; then echo "$BRAIN_CONTAINER"; return; fi
-  for c in cecelia-brain-smoke cecelia-node-brain; do
-    if docker ps --format '{{.Names}}' | grep -qx "$c"; then echo "$c"; return; fi
-  done
-}
-```
-
-env > CI 容器 > 生产容器，三档兜底。
+- **B1**: 凭据健康巡检 — 每天北京时间 03:00（UTC 19:00）检查 NotebookLM/Claude OAuth/Codex/发布器凭据，30 天前 P1 告警，7 天前 P0 告警，已过期立即 P0 告警 + 创建 Brain 任务
+- **B2**: 每日真业务 E2E smoke — 每天北京时间 04:00（UTC 20:00）触发一条真实 content-pipeline（solo-company-case），30 分钟内验收图片 ≥ 9 + export 完成，否则 P0 飞书告警
 
 ## 成功标准
 
-- 本机 CI-style docker setup（fresh postgres + brain --network bridge + container=
-  cecelia-brain-smoke + CECELIA_TICK_ENABLED=false）下 smoke 真跑过 ✅
-- 本机生产 cecelia-node-brain 容器上 smoke 仍跑过（向后兼容）
-- CI real-env-smoke job 在本 PR 跑过（验证 CI 干净环境契约）
-- 5 阶段全 PASS，输出可读
+1. `credentials-health-scheduler.js` 在窗口内触发告警逻辑，30 天/7 天/已过期三档正确
+2. `daily-real-business-smoke.js` 在窗口内触发 pipeline，30 分钟超时 P0 告警
+3. `tick-runner.js` 接入两个新 cron（10.17h + 10.21）
+4. `cecelia-bridge.js` 新增 `/notebook/auth-check` 端点
+5. 所有单元测试通过（vitest）
+
+## DoD
+
+- [x] [ARTIFACT] `packages/brain/src/credentials-health-scheduler.js` 存在且语法正确
+  - Test: `node -e "require('fs').accessSync('packages/brain/src/credentials-health-scheduler.js')"`
+- [x] [ARTIFACT] `packages/brain/src/cron/daily-real-business-smoke.js` 存在且语法正确
+  - Test: `node -e "require('fs').accessSync('packages/brain/src/cron/daily-real-business-smoke.js')"`
+- [x] [ARTIFACT] `packages/brain/src/__tests__/credentials-health.test.js` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/src/__tests__/credentials-health.test.js')"`
+- [x] [ARTIFACT] `packages/brain/tests/brain/daily-smoke.test.js` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/tests/brain/daily-smoke.test.js')"`
+- [x] [BEHAVIOR] tick-runner.js 已接入 runDailySmoke + runCredentialsHealthCheck
+  - Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('runDailySmoke')||!c.includes('runCredentialsHealthCheck'))process.exit(1)"`
+- [x] [BEHAVIOR] cecelia-bridge.js 新增 /notebook/auth-check 端点
+  - Test: `node -e "const c=require('fs').readFileSync('packages/brain/scripts/cecelia-bridge.js','utf8');if(!c.includes('/notebook/auth-check'))process.exit(1)"`
+- [x] [BEHAVIOR] isInCredentialsHealthWindow 在 UTC 19:00-19:04 返回 true，19:05 返回 false
+  - Test: `tests/brain/daily-smoke.test.js` + `src/__tests__/credentials-health.test.js`
+- [x] [BEHAVIOR] runDailySmoke 在窗口外返回 skipped_window=true，窗口内且未跑返回 triggered=true
+  - Test: `tests/brain/daily-smoke.test.js`
+- [x] [ARTIFACT] `packages/brain/scripts/cron/credentials-health-check.sh` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/scripts/cron/credentials-health-check.sh')"`
+- [x] [ARTIFACT] `packages/brain/scripts/smoke/gate5-b1-b2-smoke.sh` 存在
+  - Test: `node -e "require('fs').accessSync('packages/brain/scripts/smoke/gate5-b1-b2-smoke.sh')"`

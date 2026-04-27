@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: [
       'src/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/packages/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败

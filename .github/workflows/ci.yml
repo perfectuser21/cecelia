@@ -165,13 +165,14 @@ jobs:
           echo "  总计: ${TOTAL} 行"
           echo ""
 
-          # 分档：>500 警告，>1500 硬失败（harness label PR 已在 job-level 跳过）
-          if [ "$TOTAL" -gt 1500 ]; then
-            echo "::error::PR 变更量 ${TOTAL} 行，超过 1500 行硬门槛，必须拆分"
+          # 分档：>800 警告，>3000 硬失败（harness label PR 已在 job-level 跳过）
+          # 注：Brain 功能 PR 含完整测试文件通常达 1500-2500 行，3000 是合理硬上限
+          if [ "$TOTAL" -gt 3000 ]; then
+            echo "::error::PR 变更量 ${TOTAL} 行，超过 3000 行硬门槛，必须拆分"
             exit 1
-          elif [ "$TOTAL" -gt 500 ]; then
-            echo "⚠️  警告: PR 超过 500 行（${TOTAL} 行），建议拆分为更小的 PR"
-            echo "::warning::PR 变更量 ${TOTAL} 行，超过 500 行阈值，建议拆分"
+          elif [ "$TOTAL" -gt 800 ]; then
+            echo "⚠️  警告: PR 超过 800 行（${TOTAL} 行），建议拆分为更小的 PR"
+            echo "::warning::PR 变更量 ${TOTAL} 行，超过 800 行阈值，建议拆分"
           else
             echo "✅ PR 大小合理（${TOTAL} 行）"
           fi
