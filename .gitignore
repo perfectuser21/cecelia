@@ -82,6 +82,10 @@ coverage/
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Playwright
+frontend/playwright-report/
+frontend/test-results/
 # trigger
 .dev-execution-log*
 .dev-seal*

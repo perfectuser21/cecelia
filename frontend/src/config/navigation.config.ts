@@ -163,6 +163,9 @@ export const additionalRoutes: RouteConfig[] = [
   // 管理员子页面已迁移到 Core
   // ClaudeMonitor, VpsMonitor, ClaudeStats, N8n*, Canvas 等
   // 通过 Core 实例访问: core.zenjoymedia.media
+
+  // === Agent 调试面板（无需登录，供 E2E / 运维直接访问）===
+  { path: '/agent-debug', requireAuth: false },
 ];
 
 // ============ 辅助函数 ============

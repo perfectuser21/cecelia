@@ -20,6 +20,7 @@ import { CeceliaProvider } from './contexts/CeceliaContext';
 
 // Lazy load CeceliaChat for Core instance only
 const CeceliaChat = lazy(() => import('./features/shared/components/CeceliaChat'));
+const AgentDebugPage = lazy(() => import('./pages/AgentDebug/AgentDebugPage'));
 // 只有登录页需要静态导入
 import FeishuLogin from './pages/FeishuLogin';
 import './App.css';
@@ -348,6 +349,15 @@ function AppContent() {
           <DynamicRouter>
             {/* 登录页面（静态路由） */}
             <Route path="/login" element={<FeishuLogin />} />
+            {/* Agent 调试面板（无需登录） */}
+            <Route
+              path="/agent-debug"
+              element={
+                <Suspense fallback={<div />}>
+                  <AgentDebugPage />
+                </Suspense>
+              }
+            />
           </DynamicRouter>
         </div>
       </main>
