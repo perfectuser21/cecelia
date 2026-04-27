@@ -19,6 +19,14 @@ vi.mock('fs', () => ({
   unlinkSync: vi.fn(),
 }));
 
+// Mock cleanup-lock — fs mock 让真锁失败，pass-through 让单测走原路径
+vi.mock('../utils/cleanup-lock.js', () => ({
+  withLock: vi.fn(async (_opts, fn) => fn()),
+  acquireLock: vi.fn().mockResolvedValue(true),
+  releaseLock: vi.fn(),
+  LOCK_DIR_DEFAULT: '/tmp/cecelia-cleanup.lock',
+}));
+
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync } from 'fs';
 import {

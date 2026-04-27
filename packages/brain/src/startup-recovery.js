@@ -18,6 +18,7 @@
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { withLock } from './utils/cleanup-lock.js';
 
 const REPO_ROOT = process.env.REPO_ROOT || '/Users/administrator/perfect21/cecelia';
 const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
@@ -32,59 +33,70 @@ const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
  * @returns {Promise<{ pruned: number, removed: number, errors: string[] }>}
  */
 export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase = WORKTREE_BASE } = {}) {
-  const stats = { pruned: 0, removed: 0, errors: [] };
+  const stats = { pruned: 0, removed: 0, errors: [], skipped_locked: 0 };
 
-  // 1. git worktree prune
-  try {
-    execSync('git worktree prune', { cwd: repoRoot, timeout: 10000, stdio: 'pipe' });
-    stats.pruned = 1;
-    console.log('[StartupRecovery:cleanupStaleWorktrees] git worktree prune ok');
-  } catch (e) {
-    stats.errors.push(`prune: ${e.message}`);
-    console.warn('[StartupRecovery:cleanupStaleWorktrees] prune failed:', e.message);
-  }
-
-  // 2. Get active worktree paths from git
-  const activePaths = new Set();
-  try {
-    const output = execSync('git worktree list --porcelain', {
-      cwd: repoRoot, timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
-    });
-    for (const line of output.split('\n')) {
-      if (line.startsWith('worktree ')) {
-        activePaths.add(line.slice(9).trim());
-      }
-    }
-  } catch (e) {
-    stats.errors.push(`worktree-list: ${e.message}`);
-  }
-
-  // 3. Scan WORKTREE_BASE and remove stale dirs
-  if (existsSync(worktreeBase)) {
-    let entries = [];
+  // Brain 启动时拿锁 — 与运行中的 zombie-cleaner / zombie-sweep / cecelia-run cleanup trap
+  // 互斥，否则 git worktree prune 期间别人 worktree remove 会撕坏 .git/worktrees 元数据
+  const result = await withLock({}, async () => {
+    // 1. git worktree prune
     try {
-      entries = readdirSync(worktreeBase, { withFileTypes: true });
+      execSync('git worktree prune', { cwd: repoRoot, timeout: 10000, stdio: 'pipe' });
+      stats.pruned = 1;
+      console.log('[StartupRecovery:cleanupStaleWorktrees] git worktree prune ok');
     } catch (e) {
-      stats.errors.push(`scan: ${e.message}`);
+      stats.errors.push(`prune: ${e.message}`);
+      console.warn('[StartupRecovery:cleanupStaleWorktrees] prune failed:', e.message);
     }
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const fullPath = join(worktreeBase, entry.name);
-      if (!activePaths.has(fullPath)) {
-        try {
-          rmSync(fullPath, { recursive: true, force: true });
-          stats.removed++;
-          console.log('[StartupRecovery:cleanupStaleWorktrees] removed stale worktree dir:', fullPath,
-            JSON.stringify({ cleanup_type: 'worktree_dir', path: fullPath, result: 'removed' }));
-        } catch (e) {
-          stats.errors.push(`rm:${fullPath}: ${e.message}`);
+    // 2. Get active worktree paths from git
+    const activePaths = new Set();
+    try {
+      const output = execSync('git worktree list --porcelain', {
+        cwd: repoRoot, timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
+      });
+      for (const line of output.split('\n')) {
+        if (line.startsWith('worktree ')) {
+          activePaths.add(line.slice(9).trim());
+        }
+      }
+    } catch (e) {
+      stats.errors.push(`worktree-list: ${e.message}`);
+    }
+
+    // 3. Scan WORKTREE_BASE and remove stale dirs
+    if (existsSync(worktreeBase)) {
+      let entries = [];
+      try {
+        entries = readdirSync(worktreeBase, { withFileTypes: true });
+      } catch (e) {
+        stats.errors.push(`scan: ${e.message}`);
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const fullPath = join(worktreeBase, entry.name);
+        if (!activePaths.has(fullPath)) {
+          try {
+            rmSync(fullPath, { recursive: true, force: true });
+            stats.removed++;
+            console.log('[StartupRecovery:cleanupStaleWorktrees] removed stale worktree dir:', fullPath,
+              JSON.stringify({ cleanup_type: 'worktree_dir', path: fullPath, result: 'removed' }));
+          } catch (e) {
+            stats.errors.push(`rm:${fullPath}: ${e.message}`);
+          }
         }
       }
     }
+    return true;
+  });
+
+  if (result === null) {
+    stats.skipped_locked = 1;
+    stats.errors.push('cleanup-lock contention, startup-recovery skipped this round');
+    console.warn('[StartupRecovery:cleanupStaleWorktrees] cleanup-lock contention — skipping worktree cleanup at startup (will retry next zombie-sweep tick)');
   }
 
-  console.log(`[StartupRecovery:cleanupStaleWorktrees] done worktrees_pruned=${stats.pruned} stale_removed=${stats.removed}`);
+  console.log(`[StartupRecovery:cleanupStaleWorktrees] done worktrees_pruned=${stats.pruned} stale_removed=${stats.removed} skipped_locked=${stats.skipped_locked}`);
   return stats;
 }
 

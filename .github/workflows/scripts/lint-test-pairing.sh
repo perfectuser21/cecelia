@@ -67,5 +67,42 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   exit 1
 fi
 
+# 内容校验（Tier 1 加牙）：配套 test 文件必须含真断言，不能纯 skip / 空 / 注释
+# 防止"建空 test 文件就过 lint"的绕过路径
+EMPTY_TESTS=()
+SKIPPED_ONLY=()
+while IFS= read -r src; do
+  [ -z "$src" ] && continue
+  base=$(basename "$src" .js)
+  dir=$(dirname "$src")
+  for cand in "${dir}/${base}.test.js" "${dir}/__tests__/${base}.test.js" "${dir}/${base}.spec.js"; do
+    if [ ! -f "$cand" ]; then continue; fi
+    # 必须含 ≥1 个 it/test/expect
+    if ! grep -qE "(^|[^a-zA-Z])(it|test|expect)\s*\(" "$cand"; then
+      EMPTY_TESTS+=("$cand")
+      break
+    fi
+    # 不能 100% 是 skip — 至少 1 个非 skip 的 it/test
+    NONSKIP=$(grep -cE "(^|[^a-zA-Z\.])(it|test)\s*\(" "$cand" 2>/dev/null || echo 0)
+    SKIPS=$(grep -cE "(it|test|describe)\.skip\s*\(" "$cand" 2>/dev/null || echo 0)
+    if [ "$NONSKIP" -gt 0 ] && [ "$SKIPS" -ge "$NONSKIP" ]; then
+      SKIPPED_ONLY+=("$cand")
+    fi
+    break
+  done
+done <<< "$ADDED_SRC"
+
+if [ "${#EMPTY_TESTS[@]}" -gt 0 ]; then
+  echo "::error::lint-test-pairing 失败 — 以下 test 文件无任何 it/test/expect 调用（空架子绕过）:"
+  printf "  ❌ %s\n" "${EMPTY_TESTS[@]}"
+  exit 1
+fi
+
+if [ "${#SKIPPED_ONLY[@]}" -gt 0 ]; then
+  echo "::error::lint-test-pairing 失败 — 以下 test 文件 100% skip（it.skip / test.skip / describe.skip）:"
+  printf "  ❌ %s\n" "${SKIPPED_ONLY[@]}"
+  exit 1
+fi
+
 COUNT=$(echo "$ADDED_SRC" | wc -l | tr -d ' ')
-echo "✅ lint-test-pairing 通过（${COUNT} 个 src 文件全部配套 test）"
+echo "✅ lint-test-pairing 通过（${COUNT} 个 src 文件全部配套真 test）"

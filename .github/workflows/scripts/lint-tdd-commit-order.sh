@@ -40,8 +40,32 @@ while IFS= read -r sha; do
     || true)
 
   # test 先于 src 检查 — 同 commit 含两者也算 OK
+  # 内容校验（Tier 1 加牙）：test commit 不能 100% 是 .skip
+  # 防止"加 it.skip(...) 顺序对就过"的绕过路径
   if [ -n "$HAS_TEST" ]; then
-    SEEN_TEST=1
+    REAL_TEST_FOUND=0
+    while IFS= read -r tf; do
+      [ -z "$tf" ] && continue
+      [ ! -f "$tf" ] && continue
+      # 此 commit 加的内容（diff +）必须含至少一个非 skip 的 it/test
+      ADDED=$(git show "$sha" -- "$tf" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')
+      if echo "$ADDED" | grep -qE "(^|[^a-zA-Z\.])(it|test)\s*\("; then
+        # 有真 it/test，再看是否被 skip 包围（grep -c 在无匹配时 exit 1，| true 兜底防 set -e）
+        ADDED_NONSKIP=$(echo "$ADDED" | grep -cE "(^|[^a-zA-Z\.])(it|test)\s*\(" || true)
+        ADDED_SKIPS=$(echo "$ADDED" | grep -cE "(it|test|describe)\.skip\s*\(" || true)
+        ADDED_NONSKIP="${ADDED_NONSKIP:-0}"
+        ADDED_SKIPS="${ADDED_SKIPS:-0}"
+        if [ "$ADDED_NONSKIP" -gt 0 ] && [ "$ADDED_SKIPS" -lt "$ADDED_NONSKIP" ]; then
+          REAL_TEST_FOUND=1
+          break
+        fi
+      fi
+    done <<< "$HAS_TEST"
+    if [ "$REAL_TEST_FOUND" -eq 1 ]; then
+      SEEN_TEST=1
+    else
+      echo "  [info] commit $sha 含 test 文件但全是 skip 或无 it/test 调用，不计入 SEEN_TEST"
+    fi
   fi
 
   if [ -n "$HAS_SRC" ] && [ "$SEEN_TEST" -eq 0 ]; then

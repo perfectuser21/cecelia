@@ -33,6 +33,14 @@ vi.mock('../executor.js', () => ({
   removeActiveProcess: vi.fn(),
 }));
 
+// Mock cleanup-lock — fs mock 让真锁失败，pass-through 让单测走原路径
+vi.mock('../utils/cleanup-lock.js', () => ({
+  withLock: vi.fn(async (_opts, fn) => fn()),
+  acquireLock: vi.fn().mockResolvedValue(true),
+  releaseLock: vi.fn(),
+  LOCK_DIR_DEFAULT: '/tmp/cecelia-cleanup.lock',
+}));
+
 import { existsSync, readFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolveTaskPids } from '../watchdog.js';
