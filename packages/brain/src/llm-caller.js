@@ -192,9 +192,24 @@ export async function callLLM(agentId, prompt, options = {}) {
     }
   }
 
-  // Implicit fallback: anthropic（bridge）所有候选失败时，自动尝试 anthropic-api 直连。
-  // 适用于未配置 fallbacks 的 agent（如 reflection / mouth / narrative / memory / fact_extractor）。
-  if (primary.provider === 'anthropic') {
+  // Implicit fallback to anthropic-api when all configured candidates fail.
+  // Covers: anthropic (bridge) failures AND non-anthropic providers (codex/openai) with no Anthropic fallback configured.
+  // Reason: codex/openai may be unavailable (no OAuth accounts, no API key), but Anthropic API key is typically stable.
+  const ANTHROPIC_PROVIDERS = ['anthropic', 'anthropic-api'];
+  const hasAnthropicCandidate = candidates.some(c => ANTHROPIC_PROVIDERS.includes(c.provider));
+  if (!hasAnthropicCandidate) {
+    const fallbackModel = 'claude-haiku-4-5-20251001';
+    console.warn(`[llm-caller] ${agentId} 所有候选（${candidates.map(c=>c.provider).join(',')}）失败，尝试 anthropic-api 兜底`);
+    try {
+      const text = await callAnthropicAPI(prompt, fallbackModel, timeout, maxTokens, imageContent);
+      const elapsed = Date.now() - startTime;
+      console.log(`[llm-caller] ${agentId} → ${fallbackModel} (anthropic-api emergency fallback) in ${elapsed}ms`);
+      reportCall({ agentId, model: fallbackModel, provider: 'anthropic-api', prompt, text, elapsedMs: elapsed, startedAt: startTime }).catch(() => {});
+      return { text, model: fallbackModel, provider: 'anthropic-api', elapsed_ms: elapsed, attempted_fallback: true };
+    } catch (apiErr) {
+      console.warn(`[llm-caller] ${agentId} anthropic-api 兜底也失败: ${apiErr.message}`);
+    }
+  } else if (primary.provider === 'anthropic') {
     console.warn(`[llm-caller] ${agentId} bridge 所有候选失败，尝试 anthropic-api 直连`);
     try {
       const text = await callAnthropicAPI(prompt, primary.model, timeout, maxTokens, imageContent);

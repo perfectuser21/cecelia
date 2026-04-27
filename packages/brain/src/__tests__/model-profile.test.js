@@ -197,7 +197,7 @@ describe('model-profile', () => {
       expect(FALLBACK_PROFILE.config.memory).toBeDefined();
       expect(FALLBACK_PROFILE.config.executor).toBeDefined();
 
-      expect(FALLBACK_PROFILE.config.thalamus.provider).toBe('anthropic');
+      expect(FALLBACK_PROFILE.config.thalamus.provider).toBe('anthropic-api');
       expect(FALLBACK_PROFILE.config.cortex.provider).toBe('anthropic-api');
       expect(FALLBACK_PROFILE.config.reflection.provider).toBe('anthropic');
       expect(FALLBACK_PROFILE.config.mouth.provider).toBe('anthropic');

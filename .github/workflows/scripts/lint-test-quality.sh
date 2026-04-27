@@ -51,7 +51,7 @@ while IFS= read -r tf; do
   # 排除 await import('...') 这种纯 module load
   HAS_AWAIT_CALL=$(grep -E "(const|let|var)\s+\w+\s*=\s*await\s|^\s+await\s+[a-zA-Z_]" "$tf" 2>/dev/null \
     | grep -vE "await\s+import\s*\(" \
-    | wc -l | tr -d ' ')
+    | wc -l | tr -d ' ') || true
   HAS_AWAIT_CALL="${HAS_AWAIT_CALL:-0}"
 
   if [ "$HAS_FS_SRC" -gt 0 ] && [ "$HAS_AWAIT_CALL" -eq 0 ]; then
