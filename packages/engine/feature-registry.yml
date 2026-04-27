@@ -6,6 +6,14 @@ version: "1.0.0"
 updated: "2026-04-27"
 
 changelog:
+  - version: "18.13.0"
+    date: "2026-04-27"
+    change: "feat"
+    description: "[CONFIG] PR-D — executor 真路径 smoke。新增 packages/brain/scripts/smoke/executor-pure-functions.sh，real-env-smoke job + post-deploy 自动跑。covers executor.js 3620 行核心代码 0 真路径覆盖：5 个纯函数契约 case via docker exec node -e 直调（getSkillForTaskType 路由表 / decomposition payload 优先级 / generateRunId UUID v4 格式 / getProviderForTask 不抛 / checkTaskTypeMatch 稳定）。spawn 真路径需 cecelia-bridge 不在 CI 范围。本地 5/5 pass。100% foundation 路线 PR-D 完成。minor bump 18.12.0 → 18.13.0。"
+    files:
+      - "packages/brain/scripts/smoke/executor-pure-functions.sh (新增, 130 lines, 5 case via docker exec)"
+      - "Engine 5 处版本文件 18.13.0"
+
   - version: "18.12.0"
     date: "2026-04-27"
     change: "feat"
