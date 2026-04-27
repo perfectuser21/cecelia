@@ -341,8 +341,9 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     CECELIA_RUN_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-run.sh"
     CECELIA_RUN_DST="${HOST_HOME}/bin/cecelia-run"
     if [[ -f "$CECELIA_RUN_SRC" ]]; then
-      cp "$CECELIA_RUN_SRC" "$CECELIA_RUN_DST"
-      chmod +x "$CECELIA_RUN_DST"
+      # macOS cp identical files 返 rc=1，set -e 会中止后续 Phase 9-11；|| true 兜底
+      cp "$CECELIA_RUN_SRC" "$CECELIA_RUN_DST" 2>&1 || true
+      chmod +x "$CECELIA_RUN_DST" 2>/dev/null || true
       echo "  Updated $CECELIA_RUN_DST (v${VERSION})"
     else
       echo "  WARN: $CECELIA_RUN_SRC not found, skipping cecelia-run update"
@@ -354,7 +355,8 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     BRIDGE_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-bridge.js"
     BRIDGE_DST="${HOST_HOME}/bin/cecelia-bridge.js"
     if [[ -f "$BRIDGE_SRC" ]]; then
-      cp "$BRIDGE_SRC" "$BRIDGE_DST"
+      # 同 cecelia-run 的 cp identical 防中止
+      cp "$BRIDGE_SRC" "$BRIDGE_DST" 2>&1 || true
       echo "  Updated $BRIDGE_DST (v${VERSION})"
       # 重启 bridge（launchd 或 systemd）
       if [[ "$DEPLOY_MODE" == "launchd" ]]; then
