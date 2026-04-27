@@ -1,7 +1,7 @@
 ---
 name: engine-ship
-version: 16.0.0
-updated: 2026-04-19
+version: 16.1.0
+updated: 2026-04-27
 description: Cecelia /dev 接力链终棒。Superpowers finishing 完成 push+PR 后，写 Learning + 触发 Brain fire-learnings-event + 标记 step_4_ship=done。Stop Hook 接管合并 + cleanup。
 trigger: Superpowers finishing-a-development-branch 完成后，按 /dev SKILL.md Phase 5 硬规则点火
 ---
@@ -42,6 +42,10 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 git push origin HEAD
 
 bash packages/engine/skills/dev/scripts/fire-learnings-event.sh \
+  --branch "$BRANCH_NAME" --pr "$PR_NUMBER" --task-id "$TASK_ID"
+
+# 闭环回写 Brain task status=completed（CLAUDE.md §8）
+bash packages/engine/skills/dev/scripts/callback-brain-task.sh \
   --branch "$BRANCH_NAME" --pr "$PR_NUMBER" --task-id "$TASK_ID"
 
 bash scripts/write-current-state.sh
