@@ -59,7 +59,7 @@ export async function initOtel() {
 /** 仅供测试使用：重置 SDK 实例 */
 export function _resetOtel() {
   if (_sdk) {
-    try { _sdk.shutdown(); } catch (_) {}
+    try { _sdk.shutdown(); } catch { /* ignore shutdown errors on reset */ }
     _sdk = null;
   }
 }
