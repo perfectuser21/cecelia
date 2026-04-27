@@ -222,12 +222,17 @@ async function probeRumination() {
   // 使用 48h 而非 24h：runRumination 和 runDailySynthesis 两路写入可能产生约 40h 时间差
   // （runRumination 早上写入后，同日调度器 hasTodaySynthesis 检测到已存在而跳过）
   const archiveResult = await pool.query(
-    `SELECT count(*) AS cnt, max(created_at) AS last_run
-     FROM synthesis_archive
+    `SELECT count(*) AS cnt FROM synthesis_archive
      WHERE created_at > NOW() - INTERVAL '48 hours'`
   );
   const cnt = parseInt(archiveResult.rows[0]?.cnt || 0);
-  const lastRun = archiveResult.rows[0]?.last_run;
+
+  // 全局最近一次 synthesis_archive（不限 48h）— 用于 detail 显示真实 last_run
+  // "last_run=never" 仅在表完全空时出现；否则给出真实 ISO 时间，运维可立即判断卡了多久
+  const globalLastResult = await pool.query(
+    `SELECT max(created_at) AS last_run FROM synthesis_archive`
+  );
+  const lastRun = globalLastResult.rows[0]?.last_run;
 
   if (cnt > 0) {
     return {
@@ -290,9 +295,31 @@ async function probeRumination() {
   const recentHeartbeats = parseInt(heartbeatResult.rows[0]?.cnt || 0);
   const livenessTag = recentHeartbeats > 0 ? 'degraded_llm_failure' : 'loop_dead';
 
+  // 取最近一次 rumination_llm_failure 事件，把根因带进 probe detail。
+  // 这样 PROBE_FAIL_RUMINATION 触发时，运维不用再去 grep 日志，直接从 probe 输出就能看到 nb/llm 错误。
+  let llmFailureSummary = '';
+  if (livenessTag === 'degraded_llm_failure') {
+    try {
+      const { rows: failRows } = await pool.query(
+        `SELECT payload FROM cecelia_events
+         WHERE event_type = 'rumination_llm_failure'
+         ORDER BY created_at DESC
+         LIMIT 1`
+      );
+      const payload = failRows[0]?.payload;
+      if (payload) {
+        const nb = payload.notebook_error || '?';
+        const llm = payload.llm_error || '?';
+        llmFailureSummary = ` last_llm_failure: notebook=${String(nb).slice(0, 60)} llm=${String(llm).slice(0, 60)}`;
+      }
+    } catch (e) {
+      console.warn('[capability-probe] rumination_llm_failure lookup failed (non-blocking):', e.message);
+    }
+  }
+
   return {
     ok: false,
-    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} (${livenessTag})`,
+    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} (${livenessTag})${llmFailureSummary}`,
   };
 }
 
