@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3) — Initiative B2 Pre-flight 验证骨架
+# Sprint Contract Draft (Round 4) — Initiative B2 Pre-flight 验证骨架
 
 > **被测对象**: pre-flight 链路产出物（`sprints/sprint-prd.md` + `sprints/task-plan.json`）+ 配套验证器（`sprints/validators/*.mjs`）
 > **验证目标**: Planner → Runner → Generator 的契约（PRD 模板、task-plan.json schema、DAG）在合成 Initiative 上端到端跑通；Generator commit-2 必须使 19 个 vitest 行为测试由红转绿
@@ -8,6 +8,13 @@
 > - 测试落点：`sprints/tests/ws{N}/*.test.ts`
 > - validator 落点：`sprints/validators/*.mjs`
 > - PRD / task-plan：`sprints/sprint-prd.md` / `sprints/task-plan.json`
+
+## Round 4 修订摘要（响应 Reviewer Round 3 反馈）
+
+1. **Risks 段统一登记 + Mitigation Test 机检化**：将 Reviewer 在 ws3 ARTIFACT 反馈的 R1（task-plan.json 回写）、R2（平台 coreutils 差异）、R3（vitest harness 加载失败 cascade）、R4（validator 文件存在但 export 错名）以及合同已隐式覆盖的 4 条额外风险（共 8 条）统一升格到本合同的 `## Risks` 段，每条 risk 都带 `Mitigation Test:` 一行可粘贴 shell 命令，使 Risks 段本身即可被 CI 机检（`risk_registered ≥ 8`）。
+2. **R2 mitigation 显式化**：在 `contract-dod-ws1.md` 新增 ARTIFACT 条目 `bash -c '[ "$(uname -s)" = "Linux" ]'`，把"linux GNU coreutils only"假设从合同顶部的人写声明升级为 CI 可机检的 ARTIFACT，BSD/macOS 上跑直接红。
+3. **R3 mitigation 升格**：原 ws1 已含"vitest 不报 ParseError"加载性 ARTIFACT，本轮再补一条 `grep -qE "Test Files .* failed"`（强校验"必须出现 failed 计数"），与"加载性"那条互补：前者拒绝任何 parse 错，后者拒绝"全员未注册"假红。两条同时存在于 `contract-dod-ws1.md`。
+4. **R4 mitigation 复述**：合同 dod-ws{1..4} 的 export 校验全部已用 `dynamic import + typeof === 'function'`（Round 2 已落），本轮把这一事实在 Risks 段显式标注 `已 mitigated by ARTIFACT-ws{1..4}-export`。
 
 ## Round 3 修订摘要（响应 Reviewer Round 2 反馈）
 
@@ -205,6 +212,54 @@ workstream_count: 4
 - **PRD / task-plan**：`sprints/sprint-prd.md` / `sprints/task-plan.json` —— Planner 输出，commit-2 不得修改（见 ws3 的 git-diff ARTIFACT）
 
 后续合同任何引用都以本节为唯一来源；散落在 Feature / Workstream / Test Contract 段中的路径必须与此一致。
+
+## Risks（统一登记，机检化）
+
+> **机检约定**：每条 risk 的 `Mitigation Test:` 行均为可粘贴 shell 单行，非 0 退出 = 该 mitigation 失效。Reviewer / CI 直接逐条粘贴执行即可。
+
+- **R1 task-plan.json 在 commit-2 被 Generator 误回写**
+  触发：Generator 实现路径写到 `validateTaskPlanSchema` 时顺手"补字段"修改 task-plan.json，使 schema 测试假绿。
+  Mitigation：Out-of-Scope 已声明 task-plan.json 只读；ws3 已落 ARTIFACT `git diff --quiet HEAD -- sprints/task-plan.json`（已 mitigated by ARTIFACT-ws3-readonly）。
+  Mitigation Test: bash -c 'git diff --quiet HEAD -- sprints/task-plan.json'
+
+- **R2 平台 coreutils 差异（macOS/BSD vs GNU）**
+  触发：macOS BSD `wc -l` 输出含前导空格、`grep -E` 转义不同导致 ARTIFACT 命令在非 Linux 平台上行为偏离。
+  Mitigation：合同顶部已声明 linux GNU only；CI runner 锁 ubuntu-latest；ws1 新增 ARTIFACT `[ "$(uname -s)" = "Linux" ]` 把假设升级为机检（已 mitigated by ARTIFACT-ws1-uname）。
+  Mitigation Test: bash -c '[ "$(uname -s)" = "Linux" ]'
+
+- **R3 vitest harness 加载失败 cascade（"全员未注册"伪装"全员红"）**
+  触发：任一 .test.ts 文件含 SyntaxError / 引用错路径 / TS transform 失败，导致 19 个 it() 全员未注册而非"全员红"，Red evidence 被伪造。
+  Mitigation：ws1 同时落两条 ARTIFACT：(a) 拒绝 ParseError / SyntaxError / Unexpected token / Transform failed；(b) 必须出现 `Test Files .* failed` 计数（已 mitigated by ARTIFACT-ws1-vitest-load + ARTIFACT-ws1-vitest-failed）。
+  Mitigation Test: bash -c 'npx vitest run sprints/tests/ --reporter=basic 2>&1 | grep -qE "Test Files .* failed"'
+
+- **R4 validator 文件存在但 export 错名（`export default` vs named export）**
+  触发：Generator 用 `export default function checkSprintPrdPresence(){...}` 替代 named export，文本 grep 能过但 `import { checkSprintPrdPresence }` 运行时为 undefined。
+  Mitigation：ws1/ws2/ws3/ws4 全部用 `dynamic import + typeof === 'function'` 实运行时校验，已不靠正则文本匹配（已 mitigated by ARTIFACT-ws1-export / ARTIFACT-ws2-export / ARTIFACT-ws3-export / ARTIFACT-ws4-export）。
+  Mitigation Test: node -e "import('./sprints/validators/prd-presence.mjs').then(m=>process.exit(typeof m.checkSprintPrdPresence==='function'?0:1)).catch(()=>process.exit(2))"
+
+- **R5 sprint-prd.md 在 commit-2 被 Generator 误覆盖**
+  触发：Generator 把 PRD 当作"占位文档"覆写或截断，使 ws1/ws2 的"行数 ≥ 50 + 9 段标题"等 ARTIFACT 失真但仍假绿。
+  Mitigation：ws1 ARTIFACT `[ "$(wc -l < sprints/sprint-prd.md)" -ge 50 ]` + ws2 9 段标题精确字面量 `grep -cE`；任一段被覆写都会非 0 退出（已 mitigated by ARTIFACT-ws1-lines + ARTIFACT-ws2-headings × 9）。
+  Mitigation Test: bash -c '[ "$(wc -l < sprints/sprint-prd.md)" -ge 50 ] && grep -cE "^##[[:space:]]+OKR 对齐[[:space:]]*$" sprints/sprint-prd.md'
+
+- **R6 测试文件被 commit-1 → commit-2 之间偷偷修改（弱化断言）**
+  触发：Generator 为了让红转绿，把 `expect(x).toBe(3)` 改成 `expect(x).toBeTruthy()` 或注释掉 it 块。
+  Mitigation：Generator skill 已在 CONTRACT IS LAW 约束下"测试文件原样复制 commit-1 后不得修改"，CI 强校验 `git diff commit1..commit2 -- sprints/tests/` 为空。本合同的 19 个 stable ID（ws{N}.t{K}）也使 reviewer 能逐 ID 比对（已 mitigated by Generator skill 的 commit-1 immutability + stable ID 表）。
+  Mitigation Test: bash -c '[ "$(grep -hcE "\[ws[1-4]\.t[1-9]+\]" sprints/tests/ws*/*.test.ts | awk "{s+=\$1} END {print s+0}")" -ge 19 ]'
+
+- **R7 task-plan schema 字段名漂移（snake_case ↔ camelCase）**
+  触发：Generator 在 validator 里期望 `estimatedMinutes` 但 task-plan.json 里是 `estimated_minutes`，导致 schema 校验跑空表（绕过断言）。
+  Mitigation：ws3 ARTIFACT 直接读 `task-plan.json` 用字面量 `estimated_minutes` 校验数值区间，validator 必须以同名字段为准（已 mitigated by ARTIFACT-ws3-fields × 2 + ARTIFACT-ws3-em-range）。
+  Mitigation Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));process.exit(p.tasks.every(t=>typeof t.estimated_minutes==='number'&&t.estimated_minutes>=20&&t.estimated_minutes<=60)?0:1)"
+
+- **R8 task-plan DAG 拓扑被环或悬空污染（pre-flight 假绿）**
+  触发：手写 task-plan.json 时 `depends_on` 引用了拼错的 task_id 或形成环，但 validator 容错放过。
+  Mitigation：ws4 落 4 条 ARTIFACT（入口存在 / 无自指 / 无悬空 / 拓扑成功）+ Kahn 拓扑 inline 实现，绕开 validator 自身的 bug（已 mitigated by ARTIFACT-ws4-entry + ARTIFACT-ws4-self + ARTIFACT-ws4-dangling + ARTIFACT-ws4-topo）。
+  Mitigation Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/task-plan.json','utf8'));const indeg=new Map();const g=new Map();for(const t of p.tasks){indeg.set(t.task_id,0);g.set(t.task_id,[])}for(const t of p.tasks){for(const d of(t.depends_on||[])){g.get(d).push(t.task_id);indeg.set(t.task_id,indeg.get(t.task_id)+1)}}const q=[...indeg].filter(([,n])=>n===0).map(([k])=>k);let v=0;while(q.length){const u=q.shift();v++;for(const w of g.get(u)){indeg.set(w,indeg.get(w)-1);if(indeg.get(w)===0)q.push(w)}}process.exit(v===p.tasks.length?0:1)"
+
+**risk_registered = 8**（R1..R8，均带可机检 Mitigation Test 单行）
+
+---
 
 ## Out-of-Scope（合同明确不覆盖）
 

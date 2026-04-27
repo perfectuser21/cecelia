@@ -27,6 +27,12 @@
 - [ ] [ARTIFACT] vitest 能加载 `sprints/tests/` 测试套件（不报 ERR_MODULE_NOT_FOUND 之外的解析错）
   Test: bash -c 'npx vitest run sprints/tests/ --reporter=basic > /tmp/vitest-load.log 2>&1 || true; ! grep -qE "SyntaxError|ParseError|Unexpected token|Transform failed" /tmp/vitest-load.log && grep -qE "Test Files|Tests" /tmp/vitest-load.log'
 
+- [ ] [ARTIFACT] vitest 在 Red 阶段输出 "Test Files .* failed" 计数（保证测试是"全员红"而非"全员未注册"，R3 mitigation）
+  Test: bash -c 'npx vitest run sprints/tests/ --reporter=basic > /tmp/vitest-red.log 2>&1 || true; grep -qE "Test Files .* failed" /tmp/vitest-red.log'
+
+- [ ] [ARTIFACT] 当前执行平台为 Linux（GNU coreutils 假设成立，R2 mitigation）
+  Test: bash -c '[ "$(uname -s)" = "Linux" ]'
+
 ## BEHAVIOR 索引（实际测试在 sprints/tests/ws1/）
 
 见 `sprints/tests/ws1/prd-presence.test.ts`，覆盖：
