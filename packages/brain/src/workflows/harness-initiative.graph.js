@@ -313,6 +313,13 @@ export async function createFixTask({
   failureScenarios,
   client,
 }) {
+  // Sprint 1 full graph (2026-04-28): runPhaseCIfReady / createFixTask 路径
+  // 已被 LangGraph full graph 的 joinNode + finalE2eNode 替代，不再通过 DB 任务行驱动。
+  // 提前返回 noop UUID，避免 INSERT retired harness_task → 立即 failed。
+  const noopId = crypto.randomUUID();
+  console.warn(`[createFixTask] retired — returning noop id=${noopId} (full graph handles fix inline)`);
+  return noopId;
+
   // 取原 Task 的关键字段（title / scope / files）用于 fix 描述
   const { rows } = await client.query(
     `SELECT title, description, payload FROM tasks WHERE id = $1::uuid`,
