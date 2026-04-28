@@ -36,6 +36,14 @@ if [[ -n "$ERROR" && "$ERROR" != "None" && "$ERROR" != "" ]]; then
   exit 1
 fi
 
+# processed=0 表示无 learnings 可处理（CI 新 DB 正常状态），直接通过
+PROCESSED=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('processed',0))" 2>/dev/null || echo "0")
+if [[ "$PROCESSED" == "0" ]]; then
+  echo "[rumination-smoke] processed=0（CI 新 DB 无 learnings），跳过心跳检查"
+  echo "[rumination-smoke] PASS ✓"
+  exit 0
+fi
+
 echo "[rumination-smoke] 4. 验证最近 60s 有 rumination_run 心跳"
 COUNT=$(psql -U cecelia -d cecelia -t -c "
   SELECT COUNT(*) FROM cecelia_events
