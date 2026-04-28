@@ -68,16 +68,26 @@ if [[ -n "$ERROR" && "$ERROR" != "None" && "$ERROR" != "" ]]; then
   exit 1
 fi
 
-echo "[daily-backup-smoke] 5. 验证 DB 中有 trigger_backup 任务（最近 5 分钟内）"
-COUNT=$(psql -U cecelia -d cecelia -t -c "
-  SELECT COUNT(*) FROM tasks
-  WHERE task_type = 'trigger_backup'
-    AND created_at >= NOW() - INTERVAL '5 minutes';
-" 2>/dev/null | tr -d ' \n' || echo "0")
-if [[ -z "$COUNT" || "$COUNT" -eq 0 ]]; then
-  echo "[daily-backup-smoke] FAIL: 未在 DB 中找到 trigger_backup 任务"
+echo "[daily-backup-smoke] 5. 验证 API 返回了有效的 taskId"
+TASK_ID=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('taskId',''))" 2>/dev/null || echo "")
+TRIGGERED=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('triggered',''))" 2>/dev/null || echo "")
+if [[ "$TRIGGERED" != "True" && "$TRIGGERED" != "true" ]]; then
+  echo "[daily-backup-smoke] FAIL: triggered=${TRIGGERED}，期望 true"
   exit 1
 fi
-echo "[daily-backup-smoke] DB 中 trigger_backup 任务 count=${COUNT} ✓"
+if [[ -z "$TASK_ID" || "$TASK_ID" == "None" ]]; then
+  echo "[daily-backup-smoke] FAIL: taskId 为空"
+  exit 1
+fi
+echo "[daily-backup-smoke] trigger_backup 任务已创建 taskId=${TASK_ID} ✓"
+
+echo "[daily-backup-smoke] 6. 通过 Brain API 验证任务存在"
+TASK_RESULT=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
+TASK_TYPE=$(echo "$TASK_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','unknown'))" 2>/dev/null || echo "unknown")
+if [[ "$TASK_TYPE" != "trigger_backup" ]]; then
+  echo "[daily-backup-smoke] FAIL: 任务 task_type=${TASK_TYPE}，期望 trigger_backup"
+  exit 1
+fi
+echo "[daily-backup-smoke] Brain API 任务验证通过 task_type=${TASK_TYPE} ✓"
 
 echo "[daily-backup-smoke] PASS ✓"
