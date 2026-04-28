@@ -163,4 +163,65 @@ describe('callLLM — codex provider 失败后的 anthropic-api 兜底（PROBE_F
     // 只有一次 fetch（emergency fallback 不触发，用了 configured fallback）
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it('codex 失败 + anthropic-api 余额不足 → 自动 fallback 到 anthropic bridge', async () => {
+    getActiveProfile.mockReturnValue({
+      config: {
+        rumination: {
+          provider: 'codex',
+          model: 'codex/gpt-5.4',
+        },
+      },
+    });
+
+    // 第一个 fetch：anthropic-api 余额不足（400 credit balance too low）
+    global.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({
+        type: 'error',
+        error: { type: 'invalid_request_error', message: 'Your credit balance is too low' },
+      }),
+    });
+
+    // bridge 调用成功（第二个 fetch）
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ text: 'bridge 兜底成功', degraded: false }),
+    });
+
+    const result = await callLLM('rumination', '测试 prompt');
+
+    expect(result.text).toBe('bridge 兜底成功');
+    expect(result.provider).toBe('anthropic');
+    expect(result.attempted_fallback).toBe(true);
+  });
+
+  it('codex 失败 + anthropic-api 失败 + bridge 失败 → 抛出最终错误', async () => {
+    getActiveProfile.mockReturnValue({
+      config: {
+        rumination: {
+          provider: 'codex',
+          model: 'codex/gpt-5.4',
+        },
+      },
+    });
+
+    // anthropic-api 失败（503）
+    global.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: async () => 'Service Unavailable',
+    });
+
+    // bridge 也失败（500 after retries exhausted）
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => 'Bridge error',
+    });
+
+    await expect(callLLM('rumination', '测试 prompt')).rejects.toThrow();
+  });
 });

@@ -341,13 +341,19 @@ async function digestLearnings(db, learnings) {
       }
       const prompt = buildRuminationPrompt(learnings, memoryBlock, fallbackContext);
       try {
-        const { text: llmInsight } = await callLLM('rumination', prompt);
+        const { text: llmInsight, provider: llmProvider } = await callLLM('rumination', prompt);
         insight = llmInsight || '';
         if (!insight) {
           llmFailureReason = 'empty_response';
+        } else {
+          console.log(`[rumination] callLLM fallback succeeded via ${llmProvider}`);
         }
       } catch (llmErr) {
-        llmFailureReason = llmErr.message || 'exception';
+        // 记录完整错误信息：包括 emergency fallback 失败链（如 anthropic-api 余额不足 + bridge 失败）
+        const isBalanceLow = /credit balance|insufficient_balance/i.test(llmErr.message || '');
+        llmFailureReason = isBalanceLow
+          ? `anthropic_api_balance_low: ${llmErr.message}`
+          : (llmErr.message || 'exception');
         console.warn('[rumination] callLLM fallback failed:', llmErr.message);
       }
     }
@@ -356,12 +362,15 @@ async function digestLearnings(db, learnings) {
     // PROBE_FAIL_RUMINATION 出现 degraded_llm_failure tag 时，运维查这个事件即可拿到根因。
     if (!insight) {
       try {
+        const isBalanceLow = typeof llmFailureReason === 'string' &&
+          llmFailureReason.includes('anthropic_api_balance_low');
         await db.query(
           `INSERT INTO cecelia_events (event_type, source, payload)
            VALUES ('rumination_llm_failure', 'rumination', $1::jsonb)`,
           [JSON.stringify({
             notebook_error: notebookFailureReason,
             llm_error: llmFailureReason,
+            anthropic_balance_low: isBalanceLow,
             batch_size: learnings.length,
             learning_ids: learnings.map(l => l.id),
           })]

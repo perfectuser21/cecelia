@@ -208,6 +208,18 @@ export async function callLLM(agentId, prompt, options = {}) {
       return { text, model: fallbackModel, provider: 'anthropic-api', elapsed_ms: elapsed, attempted_fallback: true };
     } catch (apiErr) {
       console.warn(`[llm-caller] ${agentId} anthropic-api 兜底也失败: ${apiErr.message}`);
+      // 终极兜底：anthropic-api 失败（如余额不足）时，继续尝试 anthropic bridge（走订阅）
+      // 场景：codex 无 OAuth + anthropic-api 余额不足 + bridge 可用
+      console.warn(`[llm-caller] ${agentId} 尝试 anthropic bridge 终极兜底`);
+      try {
+        const text = await callClaudeViaBridge(prompt, fallbackModel, timeout, fallbackModel, imageContent);
+        const elapsed = Date.now() - startTime;
+        console.log(`[llm-caller] ${agentId} → ${fallbackModel} (anthropic bridge ultimate fallback) in ${elapsed}ms`);
+        reportCall({ agentId, model: fallbackModel, provider: 'anthropic', prompt, text, elapsedMs: elapsed, startedAt: startTime }).catch(() => {});
+        return { text, model: fallbackModel, provider: 'anthropic', elapsed_ms: elapsed, attempted_fallback: true };
+      } catch (bridgeErr) {
+        console.warn(`[llm-caller] ${agentId} anthropic bridge 终极兜底也失败: ${bridgeErr.message}`);
+      }
     }
   } else if (primary.provider === 'anthropic') {
     console.warn(`[llm-caller] ${agentId} bridge 所有候选失败，尝试 anthropic-api 直连`);
