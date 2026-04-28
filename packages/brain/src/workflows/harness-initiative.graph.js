@@ -306,48 +306,19 @@ export async function checkAllTasksCompleted(initiativeTaskId, client) {
  * @returns {Promise<string>}           新建 harness_task 的 UUID
  */
 export async function createFixTask({
-  initiativeId,
-  initiativeTaskId,
-  taskId,
-  fixRound,
-  failureScenarios,
-  client,
-}) {
-  // 取原 Task 的关键字段（title / scope / files）用于 fix 描述
-  const { rows } = await client.query(
-    `SELECT title, description, payload FROM tasks WHERE id = $1::uuid`,
-    [taskId]
-  );
-  const src = rows[0] || {};
-  const srcPayload = src.payload || {};
-
-  const fixDescription = `[FIX round ${fixRound}] ${src.description || ''}\n\n` +
-    `归因自 Final E2E 失败场景:\n` +
-    failureScenarios.map((s) => `- ${s.name} (exit=${s.exitCode})`).join('\n');
-
-  const payload = {
-    fix_mode: true,
-    fix_round: fixRound,
-    original_task_id: taskId,
-    logical_task_id: srcPayload.logical_task_id,
-    initiative_id: initiativeId,
-    parent_task_id: initiativeTaskId,
-    files: srcPayload.files || [],
-    dod: srcPayload.dod || [],
-    failure_scenarios: failureScenarios,
-  };
-
-  const ins = await client.query(
-    `INSERT INTO tasks (task_type, title, description, status, priority, payload)
-     VALUES ('harness_task', $1, $2, 'queued', 'P2', $3::jsonb)
-     RETURNING id`,
-    [
-      `[fix-r${fixRound}] ${src.title || 'unknown'}`,
-      fixDescription,
-      JSON.stringify(payload),
-    ]
-  );
-  return ins.rows[0].id;
+  initiativeId: _initiativeId,
+  initiativeTaskId: _initiativeTaskId,
+  taskId: _taskId,
+  fixRound: _fixRound,
+  failureScenarios: _failureScenarios,
+  client: _client,
+} = {}) {
+  // Sprint 1 full graph (2026-04-28): runPhaseCIfReady / createFixTask 路径
+  // 已被 LangGraph full graph 的 joinNode + finalE2eNode 替代，不再通过 DB 任务行驱动。
+  // 返回 noop UUID，避免 INSERT retired harness_task → 立即 failed。
+  const noopId = crypto.randomUUID();
+  console.warn(`[createFixTask] retired — returning noop id=${noopId} (full graph handles fix inline)`);
+  return noopId;
 }
 
 /**

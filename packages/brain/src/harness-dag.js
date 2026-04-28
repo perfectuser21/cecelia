@@ -238,11 +238,11 @@ export function topologicalOrder(tasks) {
  * @returns {Promise<{idMap: Record<string,string>, insertedTaskIds: string[]}>}
  */
 export async function upsertTaskPlan({
-  initiativeId,
+  initiativeId: _initiativeId,
   initiativeTaskId,
   taskPlan,
   client,
-  contractBranch = null,
+  contractBranch: _contractBranch = null,
 }) {
   if (!client) throw new Error('upsertTaskPlan: client required');
   if (!initiativeTaskId) throw new Error('upsertTaskPlan: initiativeTaskId required');
@@ -258,36 +258,12 @@ export async function upsertTaskPlan({
   for (const logicalId of order) {
     const t = taskPlan.tasks.find((x) => x.task_id === logicalId);
 
-    // 默认 priority='P0'：harness_task 是当前 active Initiative 的子工作，
-    // 而非背景 P2 任务，不应被 alertness pause_low_priority 自动 pause。
-    // Initiative 本身通常是 P0，子任务继承即可（见 alertness/escalation.js
-    // 的 pauseLowPriorityTasks 白名单，二者形成双层保护）。
-    //
-    // contract_branch（v6 P0-final）：approved contract 的 propose branch。
-    // harness-task-dispatch.js:67 用此字段注入 CONTRACT_BRANCH env，
-    // 缺失时 Generator 容器拿到空串 → ABORT（实证 bb245cb4/576f6cf4）。
-    // 仅当 contractBranch 非空时才写 payload，保持向后兼容（老调用方不传）。
-    const payload = {
-      logical_task_id: t.task_id,
-      initiative_id: initiativeId,
-      parent_task_id: initiativeTaskId,
-      complexity: t.complexity,
-      estimated_minutes: t.estimated_minutes,
-      files: t.files,
-      dod: t.dod,
-      depends_on_logical: t.depends_on || [],
-    };
-    if (contractBranch) {
-      payload.contract_branch = contractBranch;
-    }
-
-    const taskInsert = await client.query(
-      `INSERT INTO tasks (task_type, title, description, status, priority, payload)
-       VALUES ('harness_task', $1, $2, 'queued', 'P0', $3::jsonb)
-       RETURNING id`,
-      [t.title, t.scope, JSON.stringify(payload)]
-    );
-    const uuid = taskInsert.rows[0].id;
+    // Sprint 1 full graph (2026-04-28): 不再向 tasks 表 INSERT harness_task 行。
+    // harness_task 已在 executor.js 中 retired（PR retire-harness-planner）。
+    // Full graph 通过 LangGraph Send fanout + runSubTaskNode 内联执行，
+    // 不依赖 tasks 行来驱动调度。改用内存 UUID 保持接口兼容（idMap / insertedTaskIds
+    // 供调用方日志使用，task_dependencies 仍写入供审计）。
+    const uuid = crypto.randomUUID();
     idMap[t.task_id] = uuid;
     insertedTaskIds.push(uuid);
   }
