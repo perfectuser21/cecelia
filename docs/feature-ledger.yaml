@@ -1,0 +1,473 @@
+version: "1.0"
+# Cecelia 功能台账 — 系统所有功能的唯一来源
+# 维护规则：新增任何 route / page / cron 必须在此登记，否则 CI 不通过
+# 状态说明：active=正常运行 / experimental=实验中 / deprecated=废弃待清理 / unknown=未验证
+last_updated: "2026-04-28"
+
+# ──────────────────────────────────────────────────────────────
+# BRAIN — 后端核心引擎（packages/brain）
+# ──────────────────────────────────────────────────────────────
+features:
+
+  # ── 调度 & 执行 ────────────────────────────────────────────
+
+  - id: tick-loop
+    name: Tick 调度引擎
+    area: brain
+    status: active
+    description: 5s 心跳 / 5min 执行周期，驱动所有自动化任务
+    entrypoints:
+      - type: cron
+        path: packages/brain/src/tick-runner.js
+      - type: api
+        path: GET /api/brain/tick/status
+    tests:
+      unit: [tick.test.js, tick-runner.test.js, tick-loop.test.js]
+      integration: [integration/tick-full-loop, integration/tick-runner-full-tick, integration/tick-dispatch]
+      e2e: []
+    last_verified: "2026-04-28"
+
+  - id: self-drive
+    name: 自驱调度（SelfDrive）
+    area: brain
+    status: active
+    description: Brain 自主决策——从目标拆解到任务派发的完整闭环
+    entrypoints:
+      - type: api
+        path: POST /api/brain/self-drive/toggle
+      - type: api
+        path: GET /api/brain/self-drive/status
+    tests:
+      unit: [self-drive.test.js, self-drive-config.test.js, self-drive-routes.test.js]
+      integration: [integration/self-drive-flow]
+      e2e: []
+    last_verified: "2026-04-28"
+    notes: "任务成功率当前 ~80%（已从 39% 恢复），rumination 链路 P1 修复中"
+
+  - id: agent-execution
+    name: Agent 执行引擎
+    area: brain
+    status: active
+    description: 在 Docker 容器内派发 Claude/Codex Agent 执行任务
+    entrypoints:
+      - type: cron
+        path: packages/brain/src/executor.js（tick 触发）
+      - type: api
+        path: POST /api/brain/tasks/:id/dispatch-now
+    tests:
+      unit: [executor.test.js, docker-executor.test.js]
+      integration: [integration/agent-lifecycle]
+      e2e: []
+    last_verified: "2026-04-28"
+
+  - id: task-management
+    name: 任务管理
+    area: brain
+    status: active
+    description: 任务 CRUD、状态流转、优先级、依赖关系、隔离保护
+    entrypoints:
+      - type: api
+        path: GET/POST/PATCH /api/brain/tasks
+      - type: api
+        path: POST /api/brain/tasks/:id/feedback
+      - type: api
+        path: GET /api/brain/quarantine
+    tests:
+      unit: [tasks-status.test.js, task-cleanup.test.js, quarantine.test.js]
+      integration: [integration/critical-routes]
+      e2e: []
+    last_verified: "2026-04-28"
+
+  # ── OKR & 规划 ─────────────────────────────────────────────
+
+  - id: okr-management
+    name: OKR 目标管理
+    area: brain
+    status: active
+    description: Objectives / Key Results / Initiatives 全链路管理与进度追踪
+    entrypoints:
+      - type: api
+        path: GET /api/brain/okr/current
+      - type: api
+        path: GET /api/brain/goals
+      - type: api
+        path: GET /api/brain/strategy-tree
+    tests:
+      unit: [validate-okr-structure.test.js, kr-progress.test.js, okr-closer.test.js]
+      integration: [integration/okr-decomposition-flow]
+      e2e: []
+    last_verified: "2026-04-28"
+
+  - id: harness-pipeline
+    name: Harness 开发流水线
+    area: brain
+    status: active
+    description: AI 驱动的多阶段开发流水线（Planner → GAN → /dev → CI）
+    entrypoints:
+      - type: api
+        path: GET /api/brain/harness/pipeline/:id
+      - type: api
+        path: GET /api/brain/harness/stats
+    tests:
+      unit: [harness-dag.test.js, harness-pipeline-steps.test.js, harness-gan-graph.test.js]
+      integration: [integration/harness-v2-schema, integration/harness-watcher-flow]
+      e2e: []
+    last_verified: "2026-04-28"
+
+  # ── 记忆 & 认知 ────────────────────────────────────────────
+
+  - id: memory-rumination
+    name: 记忆 & 反刍系统
+    area: brain
+    status: active
+    description: 向量化记忆存储、语义检索、Rumination 后台反思循环
+    entrypoints:
+      - type: cron
+        path: packages/brain/src/rumination.js（tick 触发）
+      - type: api
+        path: POST /api/brain/memory/search
+      - type: api
+        path: GET /api/brain/rumination/status
+    tests:
+      unit: [rumination.test.js, memory-retriever.test.js, memory-router.test.js]
+      integration: [integration/memory-router-retriever]
+      e2e: []
+    last_verified: "2026-04-28"
+    notes: "rumination 链路 P1 URGENT 故障，正在修复"
+
+  - id: cortex
+    name: Cortex 分析引擎
+    area: brain
+    status: active
+    description: 跨任务 RCA、洞察生成、质量评估
+    entrypoints:
+      - type: cron
+        path: packages/brain/src/cortex.js（tick 触发）
+    tests:
+      unit: [cortex.test.js, cortex-rca.test.js, cortex-quality.test.js]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: desire-suggestion
+    name: 欲望 & 建议系统
+    area: brain
+    status: experimental
+    description: 基于目标和历史推断下一步行动建议
+    entrypoints:
+      - type: api
+        path: GET /api/brain/desires
+      - type: api
+        path: GET /api/brain/suggestions
+    tests:
+      unit: [desire-system.test.js, suggestion-dispatcher.test.js]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  # ── 内容 ───────────────────────────────────────────────────
+
+  - id: content-pipeline
+    name: 内容生产流水线
+    area: brain
+    status: experimental
+    description: AI 内容 6 步流水线（research → copywriting → review → generate → image-review → export）
+    entrypoints:
+      - type: api
+        path: GET /api/brain/content-pipeline
+      - type: api
+        path: POST /api/brain/content-pipeline/trigger
+    tests:
+      unit: [content-pipeline-routes.test.js]
+      integration: [integration/pipeline-detail-langgraph, integration/pipeline-rescue]
+      e2e: []
+    last_verified: null
+    notes: "LangGraph 编排，实验状态，未完整 E2E 验证"
+
+  # ── 基础设施 ────────────────────────────────────────────────
+
+  - id: alerting-notifier
+    name: 飞书告警通知
+    area: brain
+    status: active
+    description: 任务完成/失败/P0 事件推送飞书，支持 webhook + Open API 双通道
+    entrypoints:
+      - type: api
+        path: GET /api/brain/health（organs.notifier 字段）
+      - type: api
+        path: PATCH /api/brain/settings/muted
+    tests:
+      unit: [notifier.test.js, notifier-muted-gate.test.js]
+      integration: [integration/muted-toggle-e2e]
+      e2e: []
+    last_verified: "2026-04-28"
+    notes: "飞书凭据已修复注入，双通道健康检查已修（PR #2688）"
+
+  - id: brain-deploy
+    name: Brain 自动部署
+    area: brain
+    status: active
+    description: push to main 自动触发 Brain HTTP 部署，含 Fast/Safe Lane 风险检测
+    entrypoints:
+      - type: api
+        path: POST /api/brain/deploy
+      - type: api
+        path: GET /api/brain/deploy/status
+    tests:
+      unit: [deploy-status.test.js, deploy-rollback.test.js]
+      integration: [integration/deploy-rollback-flow]
+      e2e: []
+    last_verified: "2026-04-28"
+    notes: "DEPLOY_TOKEN 已修复（PR #2686 之前断了 20 天）"
+
+  - id: db-backup
+    name: 数据库自动备份
+    area: brain
+    status: active
+    description: 每日北京时间 02:00 自动触发 PostgreSQL 备份
+    entrypoints:
+      - type: cron
+        path: packages/brain/src/daily-backup-scheduler.js
+      - type: api
+        path: POST /api/brain/backup/trigger-now
+    tests:
+      unit: [daily-backup-scheduler.test.js]
+      integration: []
+      e2e: []
+    last_verified: "2026-04-28"
+    notes: "新增（PR #2687），首次备份将在今日 02:00 执行"
+
+  - id: credential-monitor
+    name: 凭据健康监控
+    area: brain
+    status: active
+    description: 监控 LLM API key 余额/配额，URGENT 升级告警
+    entrypoints:
+      - type: api
+        path: GET /api/brain/credentials/health
+      - type: api
+        path: POST /api/brain/credentials/check
+    tests:
+      unit: [credentials-health-scheduler.test.js]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: llm-caller
+    name: LLM 调用层
+    area: brain
+    status: active
+    description: 多模型路由（Claude / Codex / OpenRouter），故障转移，账号轮换
+    entrypoints:
+      - type: internal
+        path: packages/brain/src/llm-caller.js
+    tests:
+      unit: [llm-caller.test.js, llm-caller-bridge-retry.test.js, llm-caller-codex-fallback.test.js]
+      integration: []
+      e2e: []
+    last_verified: "2026-04-28"
+
+  - id: circuit-breaker
+    name: 熔断器
+    area: brain
+    status: active
+    description: 防止失败任务雪崩，自动 OPEN/HALF_OPEN/CLOSED 状态机
+    entrypoints:
+      - type: internal
+        path: packages/brain/src/circuit-breaker.js
+      - type: api
+        path: GET /api/brain/health（organs.circuit_breaker 字段）
+    tests:
+      unit: [circuit-breaker.test.js, circuit-breaker-state-machine.test.js]
+      integration: []
+      e2e: []
+    last_verified: "2026-04-28"
+
+# ──────────────────────────────────────────────────────────────
+# DASHBOARD — 前端界面（apps/dashboard）
+# ──────────────────────────────────────────────────────────────
+
+  - id: dashboard-live-monitor
+    name: 实时监控面板
+    area: dashboard
+    status: active
+    description: 任务流、事件流、系统状态实时可视化
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx
+    tests:
+      unit: [LiveMonitorPage.test.tsx, LiveMonitorPage.muted-toggle.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-tasks
+    name: 任务管理界面
+    area: dashboard
+    status: active
+    description: 任务列表、筛选、PRD 详情查看
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/tasks/
+    tests:
+      unit: [TaskPrdPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-roadmap
+    name: OKR 路线图
+    area: dashboard
+    status: active
+    description: OKR / KR / Initiative 全链路可视化，Strategy Tree
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/roadmap/RoadmapPage.tsx
+    tests:
+      unit: [RoadmapPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-harness-pipeline
+    name: Harness 流水线界面
+    area: dashboard
+    status: active
+    description: Harness 流水线列表、步骤详情、GAN 轮次可视化
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/harness-pipeline/
+    tests:
+      unit: [HarnessPipelinePage.test.ts, HarnessPipelineDetailPage.test.ts]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-reports
+    name: 日报 / 周报
+    area: dashboard
+    status: active
+    description: Brain 自动生成的日报、周报列表与详情
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/reports/
+    tests:
+      unit: [ReportsListPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+    notes: "ReportDetailPage 无测试"
+
+  - id: dashboard-settings
+    name: 系统设置
+    area: dashboard
+    status: active
+    description: Brain 静默开关、模型配置、区域 slot 分配
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/settings/SettingsPage.tsx
+    tests:
+      unit: [SettingsPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-account-usage
+    name: LLM 账号用量
+    area: dashboard
+    status: active
+    description: 多账号 LLM 配额消耗可视化
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/account-usage/AccountUsagePage.tsx
+    tests:
+      unit: [AccountUsagePage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-area-slots
+    name: 区域资源分配
+    area: dashboard
+    status: active
+    description: 各 Area（ZenithJoy/Cecelia/Investment）的 slot 权重配置
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/area-slots/AreaSlotsPage.tsx
+    tests:
+      unit: [AreaSlotsPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-brain-models
+    name: AI 模型配置
+    area: dashboard
+    status: active
+    description: 各任务类型使用的模型配置（Opus/Sonnet/Haiku）
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/brain-models/BrainModelsPage.tsx
+    tests:
+      unit: [BrainModelsPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-collection
+    name: 内容收集
+    area: dashboard
+    status: experimental
+    description: 内容素材收集与管理
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/collection-dashboard/CollectionDashboardPage.tsx
+    tests:
+      unit: [CollectionDashboardPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+  - id: dashboard-viral-analysis
+    name: 内容传播分析
+    area: dashboard
+    status: experimental
+    description: 社交媒体内容传播数据分析
+    entrypoints:
+      - type: page
+        path: apps/dashboard/src/pages/viral-analysis/ViralAnalysisPage.tsx
+    tests:
+      unit: [ViralAnalysisPage.test.tsx]
+      integration: []
+      e2e: []
+    last_verified: null
+
+# ──────────────────────────────────────────────────────────────
+# E2E — 端到端测试（Playwright）
+# ──────────────────────────────────────────────────────────────
+e2e_coverage:
+  - spec: frontend/e2e/login.spec.ts
+    covers: [登录流程]
+  - spec: frontend/e2e/agent-debug.spec.ts
+    covers: [Agent 调试页面]
+
+e2e_gaps:
+  - description: 主链路 E2E（创建任务 → Brain 调度 → Agent 执行 → 完成）
+    priority: P0
+  - description: Dashboard 主导航健康检查（首页加载 → LiveMonitor → Tasks）
+    priority: P0
+  - description: OKR 拆解完整流程（创建 Objective → KR → Task）
+    priority: P1
+  - description: Harness 流水线全流程（创建 → Planner → GAN → /dev → CI）
+    priority: P1
+  - description: 内容流水线全流程（选题 → 生成 → 发布）
+    priority: P2
+
+# ──────────────────────────────────────────────────────────────
+# 维护规则
+# ──────────────────────────────────────────────────────────────
+governance:
+  new_feature_rule: "新增任何 API route / Dashboard page / cron job，必须在此文件新增条目"
+  ci_gate: "CI lint-feature-registry 检查（待实现）"
+  health_scan: "Brain 每周扫描 last_verified > 30 天的条目，推飞书告警（待实现）"
+  status_update: "每次 PR 影响某 feature，更新对应条目的 last_verified 和 notes"
