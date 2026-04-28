@@ -357,10 +357,10 @@ async function probeConsolidation() {
 }
 
 async function probeSelfDriveHealth() {
-  // 检查 Self-Drive 24h 内是否有成功完成的 cycle（cycle_complete 或 no_action 均算成功）
-  // cycle_error = LLM 调用失败（探针应失败）
-  // no_action   = LLM 正常运行但判断无需行动（系统健康，不应误判为失败）
+  // cycle_error    = LLM 调用失败（探针应失败）
+  // no_action      = LLM 正常运行但判断无需行动（系统健康，不误判为失败）
   // cycle_complete = LLM 正常运行并做出决策（tasks_created 可以是 0）
+  // loop_started   = Brain 启动心跳（首次 cycle 还未运行时的宽限期凭据）
   const result = await pool.query(
     `SELECT
        count(*) filter (where payload->>'subtype' IN ('cycle_complete', 'no_action')) AS success_cnt,
@@ -370,7 +370,9 @@ async function probeSelfDriveHealth() {
        coalesce(sum((payload->>'tasks_created')::int) filter (
            where payload->>'subtype' = 'cycle_complete'
              AND (payload->>'tasks_created')::int > 0
-       ), 0) AS total_tasks_created
+       ), 0) AS total_tasks_created,
+       max(case when payload->>'subtype' = 'loop_started'
+           then created_at end) AS last_loop_started
      FROM cecelia_events
      WHERE event_type = 'self_drive'
        AND created_at > NOW() - INTERVAL '24 hours'`
@@ -380,8 +382,33 @@ async function probeSelfDriveHealth() {
   const errorCnt = parseInt(row.error_cnt || 0);
   const tasksCreated = parseInt(row.total_tasks_created || 0);
   const lastSuccess = row.last_success;
+  const lastLoopStarted = row.last_loop_started;
+
+  // Primary: successful cycles in past 24h
+  if (successCnt > 0) {
+    return {
+      ok: true,
+      detail: `24h: successful_cycles=${successCnt} errors=${errorCnt} tasks_created=${tasksCreated} last_success=${lastSuccess || 'never'}`,
+    };
+  }
+
+  // Secondary: Brain just restarted — loop_started recorded within last 6h, no errors yet
+  // 6h = default 4h interval + 2min initial delay + ~2h buffer
+  const LOOP_STARTED_GRACE_MS = 6 * 60 * 60 * 1000;
+  const loopStartedAt = lastLoopStarted ? new Date(lastLoopStarted) : null;
+  const loopStartedHealthy = loopStartedAt &&
+    (Date.now() - loopStartedAt.getTime() < LOOP_STARTED_GRACE_MS) &&
+    errorCnt === 0;
+
+  if (loopStartedHealthy) {
+    return {
+      ok: true,
+      detail: `24h: loop_started=${loopStartedAt.toISOString()} awaiting_first_cycle errors=${errorCnt}`,
+    };
+  }
+
   return {
-    ok: successCnt > 0,
+    ok: false,
     detail: `24h: successful_cycles=${successCnt} errors=${errorCnt} tasks_created=${tasksCreated} last_success=${lastSuccess || 'never'}`,
   };
 }

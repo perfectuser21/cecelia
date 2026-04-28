@@ -128,7 +128,8 @@ export async function runSelfDrive() {
     }
 
     if (!probeResults && !scanResults) {
-      console.log('[SelfDrive] No probe/scan data yet, skipping');
+      console.log('[SelfDrive] No probe/scan data yet, recording no_action');
+      await recordEvent('no_action', { reason: 'no_probe_scan_data' });
       return { actions: [], reason: 'no_data' };
     }
 
@@ -743,6 +744,9 @@ export async function startSelfDriveLoop() {
   _currentMaxTasks = config.maxTasks;
 
   console.log(`[SelfDrive] Starting self-drive loop (interval: ${_currentIntervalMs / 1000 / 60}min, max_tasks: ${_currentMaxTasks})`);
+
+  // Heartbeat: probe uses this to confirm the loop is alive (brain restart grace period)
+  await recordEvent('loop_started', { interval_ms: _currentIntervalMs, max_tasks: _currentMaxTasks });
 
   // First run after 2 minutes (let probe/scan populate first)
   setTimeout(async () => {

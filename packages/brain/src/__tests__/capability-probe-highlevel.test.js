@@ -99,6 +99,7 @@ describe('self_drive_health probe logic', () => {
         error_cnt: '0',
         last_success: null,
         total_tasks_created: '0',
+        last_loop_started: null,
       }],
     });
 
@@ -106,5 +107,65 @@ describe('self_drive_health probe logic', () => {
     const probe = PROBES.find(p => p.name === 'self_drive_health');
     const result = await probe.fn();
     expect(result.ok).toBe(false);
+  });
+
+  it('should return ok:true when loop_started recently and no cycles yet (brain restart grace)', async () => {
+    // Brain 刚重启，loop_started 在 6h 内，尚无 cycle → 宽限期内应通过
+    const recentStart = new Date(Date.now() - 30 * 60 * 1000); // 30 分钟前
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: recentStart.toISOString(),
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('awaiting_first_cycle');
+  });
+
+  it('should return ok:false when loop_started recently but has cycle errors', async () => {
+    // Brain 重启 + LLM 已经失败了 → 不能宽恕
+    const recentStart = new Date(Date.now() - 10 * 60 * 1000); // 10 分钟前
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '3',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: recentStart.toISOString(),
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('errors=3');
+  });
+
+  it('should return ok:false when loop_started is too old (> 6h)', async () => {
+    // loop_started 超过 6h，认为系统已失联
+    const staleStart = new Date(Date.now() - 7 * 60 * 60 * 1000); // 7 小时前
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: staleStart.toISOString(),
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('last_success=never');
   });
 });
