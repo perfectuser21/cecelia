@@ -179,12 +179,10 @@ describe('Brain-API Proxy Integration', () => {
     /**
      * session-start.sh 调用以下 Brain API：
      *   GET /api/brain/tasks?status=in_progress&limit=5
-     *   GET /api/brain/tasks?status=queued&task_type=dev&limit=3
      *
      * 契约要求：
      * 1. 返回数组（即使为空）
      * 2. 每个任务对象包含 id、title、status 字段
-     * 3. 支持 status + task_type + limit 三种查询参数
      */
     it('GET /api/brain/tasks?status=in_progress — 返回任务数组契约', async () => {
       const inProgressTasks = [
@@ -211,38 +209,6 @@ describe('Brain-API Proxy Integration', () => {
         id: expect.any(String),
         title: expect.any(String),
         status: 'in_progress',
-      });
-    });
-
-    it('GET /api/brain/tasks?status=queued&task_type=dev — session-start 查队列契约', async () => {
-      const queuedDevTasks = [
-        {
-          id: 'task-dev-queued-001',
-          title: '待执行任务',
-          status: 'queued',
-          task_type: 'dev',
-          location: 'us',
-        },
-      ];
-
-      mockFetch.mockResolvedValueOnce({
-        status: 200,
-        json: async () => queuedDevTasks,
-      } as Response);
-
-      const result = await proxyToBrain(
-        'GET',
-        '/api/brain/tasks?status=queued&task_type=dev&limit=3'
-      );
-
-      expect(result.status).toBe(200);
-      expect(Array.isArray(result.data)).toBe(true);
-      const tasks = result.data as typeof queuedDevTasks;
-      expect(tasks[0]).toMatchObject({
-        id: expect.any(String),
-        title: expect.any(String),
-        status: 'queued',
-        task_type: 'dev',
       });
     });
 
