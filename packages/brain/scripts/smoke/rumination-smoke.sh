@@ -16,12 +16,12 @@ fi
 echo "[rumination-smoke] Brain 健康 ✓"
 
 echo "[rumination-smoke] 2. 检查 rumination provider 配置（必须为 anthropic-api 或 anthropic，不能是 codex）"
-PROVIDER=$(psql -U cecelia -d cecelia -t -c "SELECT config->'rumination'->>'provider' FROM model_profiles WHERE is_active = true LIMIT 1;" 2>/dev/null | tr -d ' \n')
+PROVIDER=$(psql -U cecelia -d cecelia -t -c "SELECT config->'rumination'->>'provider' FROM model_profiles WHERE is_active = true LIMIT 1;" 2>/dev/null | tr -d ' \n' || true)
 if [[ "$PROVIDER" == "codex" || "$PROVIDER" == "openai" ]]; then
   echo "[rumination-smoke] FAIL: rumination provider=${PROVIDER}（错误配置）"
   exit 1
 fi
-echo "[rumination-smoke] rumination provider=${PROVIDER} ✓"
+echo "[rumination-smoke] rumination provider=${PROVIDER:-<not-configured>} ✓"
 
 echo "[rumination-smoke] 3. 触发强制反刍"
 RESULT=$(curl -sf -X POST "${BRAIN_URL}/api/brain/rumination/force" \
@@ -41,7 +41,7 @@ COUNT=$(psql -U cecelia -d cecelia -t -c "
   SELECT COUNT(*) FROM cecelia_events
   WHERE event_type = 'rumination_run'
     AND created_at > NOW() - INTERVAL '60 seconds';
-" 2>/dev/null | tr -d ' \n')
+" 2>/dev/null | tr -d ' \n' || true)
 if [[ -z "$COUNT" || "$COUNT" -eq 0 ]]; then
   echo "[rumination-smoke] FAIL: 无近期 rumination_run 心跳（可能 LLM 调用前就失败了）"
   exit 1
