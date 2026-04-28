@@ -48,7 +48,7 @@ while IFS= read -r sha; do
       [ -z "$tf" ] && continue
       [ ! -f "$tf" ] && continue
       # 此 commit 加的内容（diff +）必须含至少一个非 skip 的 it/test
-      ADDED=$(git show "$sha" -- "$tf" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')
+      ADDED=$(git show "$sha" -- "$tf" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true)
       if echo "$ADDED" | grep -qE "(^|[^a-zA-Z\.])(it|test)\s*\("; then
         # 有真 it/test，再看是否被 skip 包围（grep -c 在无匹配时 exit 1，| true 兜底防 set -e）
         ADDED_NONSKIP=$(echo "$ADDED" | grep -cE "(^|[^a-zA-Z\.])(it|test)\s*\(" || true)
