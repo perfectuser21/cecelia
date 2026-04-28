@@ -27,7 +27,6 @@ touch "$SESSION_MARKER"
 
 # 查询活跃任务（Brain 离线则静默退出）
 TASKS_JSON=$(curl -s --max-time 2 "${BRAIN_URL}/api/brain/tasks?status=in_progress&limit=5" 2>/dev/null || echo "[]")
-QUEUED_JSON=$(curl -s --max-time 2 "${BRAIN_URL}/api/brain/tasks?status=queued&task_type=dev&limit=3" 2>/dev/null || echo "[]")
 
 # 检查是否获取到有效数据
 TASK_COUNT=$(echo "$TASKS_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
@@ -50,29 +49,11 @@ for t in tasks[:5]:
 print('\n'.join(lines))
 " 2>/dev/null || echo "  (解析失败)")
 
-QUEUED_LINES=$(echo "$QUEUED_JSON" | python3 -c "
-import sys, json
-tasks = json.load(sys.stdin)
-lines = []
-for t in tasks[:3]:
-    title = t.get('title', '?')[:50]
-    priority = t.get('priority', '')
-    lines.append(f'  [{priority}] {title}')
-print('\n'.join(lines))
-" 2>/dev/null || echo "")
-
 # 构建注入内容
 CONTEXT="## Brain 当前状态（自动注入）
 
 **进行中任务**：
 ${TASK_LINES}"
-
-if [[ -n "$QUEUED_LINES" && "$QUEUED_LINES" != "  " ]]; then
-    CONTEXT="${CONTEXT}
-
-**排队中 dev 任务**：
-${QUEUED_LINES}"
-fi
 
 CONTEXT="${CONTEXT}
 
