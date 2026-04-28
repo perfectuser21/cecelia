@@ -238,11 +238,11 @@ export function topologicalOrder(tasks) {
  * @returns {Promise<{idMap: Record<string,string>, insertedTaskIds: string[]}>}
  */
 export async function upsertTaskPlan({
-  initiativeId,
+  initiativeId: _initiativeId,
   initiativeTaskId,
   taskPlan,
   client,
-  contractBranch = null,
+  contractBranch: _contractBranch = null,
 }) {
   if (!client) throw new Error('upsertTaskPlan: client required');
   if (!initiativeTaskId) throw new Error('upsertTaskPlan: initiativeTaskId required');
