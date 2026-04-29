@@ -6,16 +6,21 @@
  *   - Langfuse 不可达：fail-soft 返回 success:false + data:[]
  *   - 凭据缺失：fail-soft 返回 success:false + error:'credentials_missing'
  *   - limit 上限：超过 100 时被截到 100
+ *
+ * 注意：使用 supertest 而不是 fetch 发请求，避免 vi.spyOn(global, 'fetch') 污染
+ * callApi 自身的 HTTP 调用（supertest 走 node:http，不受 global.fetch spy 影响）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
-import langfuseRouter from '../langfuse.js';
+import request from 'supertest';
+import langfuseRouter, { _resetConfigCache } from '../langfuse.js';
 
 let app;
 
 beforeEach(() => {
   app = express();
   app.use('/api/brain/langfuse', langfuseRouter);
+  _resetConfigCache();
   vi.restoreAllMocks();
 });
 
@@ -24,17 +29,8 @@ afterEach(() => {
 });
 
 async function callApi(path) {
-  const port = await new Promise((resolve) => {
-    const srv = app.listen(0, () => resolve(srv.address().port));
-    app.locals._srv = srv;
-  });
-  try {
-    const res = await fetch(`http://localhost:${port}${path}`);
-    const body = await res.json();
-    return { status: res.status, body };
-  } finally {
-    app.locals._srv.close();
-  }
+  const res = await request(app).get(path);
+  return { status: res.status, body: res.body };
 }
 
 describe('GET /api/brain/langfuse/recent', () => {
