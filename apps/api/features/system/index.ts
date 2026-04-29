@@ -49,6 +49,12 @@ const manifest: FeatureManifest = {
     { path: '/ops/devgate', redirect: '/devgate' },
     // Performance
     { path: '/performance', component: 'PerformanceMonitoring' },
+    // Langfuse Traces
+    {
+      path: '/traces',
+      component: 'TracesPage',
+      navItem: { label: 'Traces', icon: 'Activity', group: 'system', order: 6 },
+    },
   ],
 
   components: {
@@ -60,6 +66,7 @@ const manifest: FeatureManifest = {
     DevGateMetrics: () => import('./pages/DevGateMetrics'),
     PerformanceMonitoring: () => import('./pages/PerformanceMonitoring'),
     FeatureMap: () => import('./pages/FeatureMap'),
+    TracesPage: () => import('./pages/TracesPage'),
   },
 };
 

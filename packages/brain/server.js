@@ -12,6 +12,7 @@ import { join, dirname } from 'path';
 import brainRoutes from './src/routes.js';
 import ceceliaRoutes from './src/cecelia-routes.js';
 import traceRoutes from './src/trace-routes.js';
+import langfuseRoutes from './src/routes/langfuse.js';
 import memoryRoutes from './src/routes/memory.js';
 import settingsRoutes from './src/routes/settings.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
@@ -299,6 +300,7 @@ app.use('/api/cecelia', ceceliaRoutes);
 
 // Mount trace observability routes
 app.use('/api/brain/trace', traceRoutes);
+app.use('/api/brain/langfuse', langfuseRoutes);
 
 // GET /api/brain/scan-status
 app.get('/api/brain/scan-status', (_req, res) => {
