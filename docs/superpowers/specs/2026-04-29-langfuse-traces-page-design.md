@@ -125,7 +125,7 @@ TracesPage: () => import('./pages/TracesPage'),
 |------|------|------|---------|
 | **真服务跨进程** | smoke (E2E) | `packages/brain/scripts/smoke/langfuse-recent-smoke.sh` | 真起的 brain + curl，验证 200 + body 含 `success` + `data` |
 | **路由 handler 行为** | integration | `packages/brain/src/routes/__tests__/langfuse.test.js` | mock `fetch`，验证 fail-soft 行为（凭据缺失 / Langfuse 超时 / 401）+ limit 上限 + 字段映射 |
-| **Page 渲染** | unit | `apps/api/features/system/pages/__tests__/TracesPage.test.tsx` | mock `fetch` 返回固定数据，验证表头存在 + 一行渲染正确 + 错误态展示 banner |
+| **Page 渲染** | unit | `apps/api/features/system/pages/TracesPage.test.tsx` (sibling，遵循 features 现有约定) | mock `fetch` 返回固定数据，验证表头存在 + 一行渲染正确 + 错误态展示 banner |
 
 **理由分类**：
 - smoke 跨进程跨网络 → E2E
@@ -139,7 +139,7 @@ TracesPage: () => import('./pages/TracesPage'),
 **commit-1 (Red)**：
 - `packages/brain/scripts/smoke/langfuse-recent-smoke.sh`（脚本完整，但 brain 没挂路由 → curl 404 失败）
 - `packages/brain/src/routes/__tests__/langfuse.test.js`（import 不存在的 `langfuse.js` → 失败）
-- `apps/api/features/system/pages/__tests__/TracesPage.test.tsx`（import 不存在的 `TracesPage` → 失败）
+- `apps/api/features/system/pages/TracesPage.test.tsx` (sibling，遵循 features 现有约定)（import 不存在的 `TracesPage` → 失败）
 
 **commit-2 (Green)**：
 - 实现 `packages/brain/src/routes/langfuse.js`
