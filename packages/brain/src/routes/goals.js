@@ -158,7 +158,16 @@ router.get('/health', async (req, res) => {
           states: cbStates
         },
         event_bus: { status: 'active' },
-        notifier: { status: process.env.FEISHU_BOT_WEBHOOK ? 'configured' : 'unconfigured' },
+        notifier: {
+          status: process.env.FEISHU_BOT_WEBHOOK
+            ? 'configured'
+            : (process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET && process.env.FEISHU_OWNER_OPEN_IDS)
+              ? 'configured'
+              : 'unconfigured',
+          channel: process.env.FEISHU_BOT_WEBHOOK
+            ? 'webhook'
+            : (process.env.FEISHU_APP_ID ? 'open_api' : 'none')
+        },
         planner: { status: 'v2' }
       },
       docker_runtime,
