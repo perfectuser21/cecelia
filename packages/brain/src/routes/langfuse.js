@@ -46,6 +46,12 @@ export function _resetConfigCache() {
   _initAttempted = false;
 }
 
+// 仅测试用：注入假 config，让测试在没有 ~/.credentials/langfuse.env 的环境（如 CI）下也能跑
+export function _setConfigForTesting(cfg) {
+  _config = cfg;
+  _initAttempted = true;
+}
+
 /**
  * GET /api/brain/langfuse/recent
  */

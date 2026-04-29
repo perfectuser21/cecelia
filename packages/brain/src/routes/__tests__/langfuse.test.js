@@ -13,7 +13,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import langfuseRouter, { _resetConfigCache } from '../langfuse.js';
+import langfuseRouter, { _resetConfigCache, _setConfigForTesting } from '../langfuse.js';
+
+const FAKE_CFG = {
+  LANGFUSE_PUBLIC_KEY: 'pk-test',
+  LANGFUSE_SECRET_KEY: 'sk-test',
+  LANGFUSE_BASE_URL: 'http://test.langfuse.local',
+};
 
 let app;
 
@@ -21,6 +27,7 @@ beforeEach(() => {
   app = express();
   app.use('/api/brain/langfuse', langfuseRouter);
   _resetConfigCache();
+  _setConfigForTesting(FAKE_CFG); // 注入 config，避开 CI 缺 ~/.credentials/langfuse.env 的环境差异
   vi.restoreAllMocks();
 });
 
@@ -95,5 +102,14 @@ describe('GET /api/brain/langfuse/recent', () => {
     await callApi('/api/brain/langfuse/recent');
     const calledUrl = fetchSpy.mock.calls[0][0];
     expect(String(calledUrl)).toMatch(/limit=20\b/);
+  });
+
+  it('凭据缺失：fail-soft 返回 credentials_missing（不读 ~/.credentials/langfuse.env）', async () => {
+    _setConfigForTesting(null); // 显式抹掉 config，模拟 CI / 凭据未配置场景
+    const { status, body } = await callApi('/api/brain/langfuse/recent');
+    expect(status).toBe(200);
+    expect(body.success).toBe(false);
+    expect(body.data).toEqual([]);
+    expect(body.error).toBe('credentials_missing');
   });
 });
