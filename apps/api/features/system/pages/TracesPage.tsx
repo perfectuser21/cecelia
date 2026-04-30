@@ -129,7 +129,7 @@ export default function TracesPage() {
                 <td className="py-2 pr-4 font-mono text-xs">{formatLatency(t.latencyMs)}</td>
                 <td className="py-2 pr-4">
                   <a
-                    href={t.langfuseUrl}
+                    href={t.langfuseUrl.replace(/^https?:\/\/[^/]+/, `http://${window.location.hostname}:3001`)}
                     target="_blank"
                     rel="noreferrer"
                     className="text-blue-600 hover:underline text-xs"
