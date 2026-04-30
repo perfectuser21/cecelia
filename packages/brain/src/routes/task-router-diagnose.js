@@ -16,6 +16,11 @@ import pool from '../db.js';
 
 const router = Router();
 
+// GET /task-router/diagnose — smoke / health check（无需 kr_id）
+router.get('/diagnose', (_req, res) => {
+  res.json({ status: 'ok', usage: 'GET /api/brain/task-router/diagnose/:kr_id' });
+});
+
 // GET /task-router/diagnose/:kr_id
 router.get('/diagnose/:kr_id', async (req, res) => {
   const { kr_id } = req.params;
