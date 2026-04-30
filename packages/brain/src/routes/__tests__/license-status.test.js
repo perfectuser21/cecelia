@@ -4,12 +4,16 @@ vi.mock('../../db.js', () => ({ default: { query: vi.fn() } }));
 
 describe('GET /api/brain/license', () => {
   it('returns status ok and tiers array', async () => {
-    const { TIER_CONFIG } = await import('../license.js');
-    expect(TIER_CONFIG).toBeDefined();
-    expect(Object.keys(TIER_CONFIG)).toContain('basic');
+    const router = (await import('../license.js')).default;
 
+    // 找到 GET / handler
+    const layer = router.stack.find(l => l.route?.path === '/' && l.route?.methods?.get);
+    expect(layer).toBeDefined();
+
+    const req = {};
     const res = { json: vi.fn() };
-    res.json({ status: 'ok', tiers: Object.keys(TIER_CONFIG) });
+    await layer.route.stack[0].handle(req, res, vi.fn());
+
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'ok', tiers: expect.arrayContaining(['basic', 'enterprise']) })
     );
