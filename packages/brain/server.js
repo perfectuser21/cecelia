@@ -65,6 +65,7 @@ import registryRoutes from './src/routes/registry.js';
 import harnessRoutes from './src/routes/harness.js';
 import initiativesRoutes from './src/routes/initiatives.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
+import featuresRoutes from './src/routes/features.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -301,6 +302,7 @@ app.use('/api/cecelia', ceceliaRoutes);
 // Mount trace observability routes
 app.use('/api/brain/trace', traceRoutes);
 app.use('/api/brain/langfuse', langfuseRoutes);
+app.use('/api/brain/features', featuresRoutes);
 
 // GET /api/brain/scan-status
 app.get('/api/brain/scan-status', (_req, res) => {
