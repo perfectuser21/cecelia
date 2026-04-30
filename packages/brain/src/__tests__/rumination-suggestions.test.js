@@ -59,6 +59,7 @@ function createMockPool() {
 
 function setupIdleAndLearnings(learnings) {
   mockQuery
+    .mockResolvedValueOnce({ rows: [] }) // runRumination 入口 rumination_run heartbeat INSERT
     .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
     .mockResolvedValueOnce({ rows: learnings }); // learnings query
 

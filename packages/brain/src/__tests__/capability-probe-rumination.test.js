@@ -1,9 +1,12 @@
 /**
  * BEHAVIOR test: capability-probe.js probeRumination 心跳检查逻辑
- * 验证 probeRumination 阶段 4：心跳事件区分 loop_dead vs degraded_llm_failure
+ * 验证 probeRumination 阶段 4：心跳事件区分 loop_dead / consciousness_disabled / degraded_llm_failure
  *
- * 背景：PROBE_FAIL_RUMINATION 的根因是 LLM 全失败导致 rumination 循环看起来"死了"，
- * 但其实循环本身在跑，只是没有 insight 产出。心跳事件让 probe 能区分两种状态。
+ * 背景：PROBE_FAIL_RUMINATION 存在三种根因：
+ * 1. degraded_llm_failure — 循环在跑但 LLM 全失败（有心跳无产出）
+ * 2. consciousness_disabled — isConsciousnessEnabled()=false，runRumination 从未被调用
+ * 3. loop_dead — 意识开启但循环未知原因未运行
+ * 心跳 + consciousness 检查让 probe 区分这三种状态，使 auto-fix 任务精确定向。
  */
 
 import { describe, it, expect } from 'vitest';
@@ -31,8 +34,27 @@ describe('probeRumination — 心跳事件区分 dead vs degraded', () => {
     expect(ruminationFn).toContain('degraded_llm_failure');
   });
 
-  it('心跳 == 0 时 livenessTag 标为 loop_dead', () => {
+  it('心跳 == 0 时 livenessTag 标为 loop_dead（意识开启但循环未运行）', () => {
     expect(ruminationFn).toContain('loop_dead');
+  });
+
+  it('心跳 == 0 且 isConsciousnessEnabled()=false 时 livenessTag 标为 consciousness_disabled', () => {
+    expect(ruminationFn).toContain('consciousness_disabled');
+    expect(ruminationFn).toContain('isConsciousnessEnabled()');
+  });
+
+  it('心跳 == 0 且 BRAIN_MINIMAL_MODE=true 时 livenessTag 标为 minimal_mode', () => {
+    expect(ruminationFn).toContain('minimal_mode');
+    expect(ruminationFn).toContain('BRAIN_MINIMAL_MODE');
+  });
+
+  it('consciousness_disabled 时 detail 包含修复提示（DB key 或 env var）', () => {
+    expect(ruminationFn).toContain('working_memory.consciousness_enabled');
+    expect(ruminationFn).toContain('CONSCIOUSNESS_ENABLED');
+  });
+
+  it('心跳写入注释引用 runRumination 入口（不是 digestLearnings）', () => {
+    expect(ruminationFn).toContain('runRumination 入口');
   });
 });
 

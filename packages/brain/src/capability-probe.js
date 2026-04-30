@@ -18,6 +18,7 @@ import {
   dispatchToDevSkill,
 } from './auto-fix.js';
 import { raise } from './alerting.js';
+import { isConsciousnessEnabled } from './consciousness-guard.js';
 
 // ============================================================
 // Configuration
@@ -286,14 +287,29 @@ async function probeRumination() {
   }
 
   // 检查心跳事件（rumination_run）— 用于区分"循环未跑"vs"循环在跑但 LLM 全失败"
-  // 心跳由 digestLearnings 入口处无条件写入，是循环存活的可靠证据
+  // 心跳由 runRumination 入口处（所有 guard 检查之前）无条件写入，是循环存活的可靠证据
   const heartbeatResult = await pool.query(
     `SELECT count(*) AS cnt FROM cecelia_events
      WHERE event_type = 'rumination_run'
        AND created_at > NOW() - INTERVAL '24 hours'`
   );
   const recentHeartbeats = parseInt(heartbeatResult.rows[0]?.cnt || 0);
-  const livenessTag = recentHeartbeats > 0 ? 'degraded_llm_failure' : 'loop_dead';
+
+  // loop_dead 的根因细分：minimal_mode / consciousness_disabled / loop_dead（未知）
+  // 这三种标签让 auto-fix 任务能精确定位原因，而不是在错误方向上反复打转
+  let livenessTag;
+  let consciousnessInfo = '';
+  if (recentHeartbeats > 0) {
+    livenessTag = 'degraded_llm_failure';
+  } else if (process.env.BRAIN_MINIMAL_MODE === 'true') {
+    livenessTag = 'minimal_mode';
+    consciousnessInfo = ' — BRAIN_MINIMAL_MODE=true: runRumination 在 !MINIMAL_MODE 块内，env var 移除前不会运行';
+  } else if (!isConsciousnessEnabled()) {
+    livenessTag = 'consciousness_disabled';
+    consciousnessInfo = ' — isConsciousnessEnabled()=false: 检查 CONSCIOUSNESS_ENABLED env var 或 working_memory.consciousness_enabled DB key';
+  } else {
+    livenessTag = 'loop_dead';
+  }
 
   // 取最近一次 rumination_llm_failure 事件，把根因带进 probe detail。
   // 这样 PROBE_FAIL_RUMINATION 触发时，运维不用再去 grep 日志，直接从 probe 输出就能看到 nb/llm 错误。
@@ -319,7 +335,7 @@ async function probeRumination() {
 
   return {
     ok: false,
-    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} (${livenessTag})${llmFailureSummary}`,
+    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} (${livenessTag})${consciousnessInfo}${llmFailureSummary}`,
   };
 }
 

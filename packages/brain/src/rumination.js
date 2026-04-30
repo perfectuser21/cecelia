@@ -251,16 +251,17 @@ async function digestLearnings(db, learnings) {
   const insights = [];
   let selfInsightText = '';
 
-  // 心跳事件：每次进入 digestLearnings 都记录一次（不论 LLM 是否成功）
-  // probe 用此判断 rumination 循环是否真的在跑（vs LLM 全部失败导致无 output）
+  // 细粒度心跳：每次进入 digestLearnings 都记录一次（不论 LLM 是否成功）
+  // 区别于 runRumination 入口的 rumination_run（那个是"循环是否被调用"的粗粒度）
+  // 这个是"实际开始处理"的细粒度，供详细诊断使用
   try {
     await db.query(
       `INSERT INTO cecelia_events (event_type, source, payload)
-       VALUES ('rumination_run', 'rumination', $1::jsonb)`,
+       VALUES ('rumination_digest_run', 'rumination', $1::jsonb)`,
       [JSON.stringify({ batch_size: learnings.length })]
     );
   } catch (hbErr) {
-    console.warn('[rumination] heartbeat write failed (non-blocking):', hbErr.message);
+    console.warn('[rumination] digest heartbeat write failed (non-blocking):', hbErr.message);
   }
 
   try {
@@ -614,6 +615,18 @@ export async function fetchMemoryStreamItems(db, limit) {
 export async function runRumination(dbPool) {
   const db = dbPool || pool;
   const now = Date.now();
+
+  // 心跳：写在所有 guard 检查之前，让 probe 能区分
+  // "runRumination 被调用但提前返回（预算/冷却）" vs "从未被调用（loop_dead）"
+  try {
+    await db.query(
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('rumination_run', 'rumination', $1::jsonb)`,
+      [JSON.stringify({ status: 'called', budget_remaining: getDailyBudget() - _dailyCount })]
+    );
+  } catch (hbErr) {
+    console.warn('[rumination] runRumination heartbeat write failed (non-blocking):', hbErr.message);
+  }
 
   // 前置条件检查
   if (!hasBudget()) {

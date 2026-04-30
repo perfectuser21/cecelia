@@ -66,16 +66,19 @@ function createMockPool() {
   return { query: mockQuery };
 }
 
-// ── 辅助：设置批量消化的 mock 链（v2: 1次INSERT + N次UPDATE）──
+// ── 辅助：设置批量消化的 mock 链（v3: heartbeat + idle + learnings + INSERT + N×UPDATE）──
+// runRumination 先写 rumination_run 心跳 INSERT，再 idle check，再 learnings SELECT。
+// memStreamItems SELECT 在 learnings < limit 时发生，消耗 queue 中"剩余未定义"slot（caught 处理）。
 
 function setupIdleAndLearnings(pool, learnings) {
   mockQuery
+    .mockResolvedValueOnce({ rows: [] }) // runRumination 入口 rumination_run heartbeat INSERT
     .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
     .mockResolvedValueOnce({ rows: learnings }); // learnings query
 
   if (learnings.length > 0) {
-    // v2 批量处理：1 次 INSERT memory_stream + N 次 UPDATE digested
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream
+    // v3 批量处理：1 次 INSERT memory_stream（digest 内其他 INSERT 无 mock，caught 处理）+ N 次 UPDATE digested
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream (其他 INSERT 无 mock → caught)
     for (let i = 0; i < learnings.length; i++) {
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE digested
     }
@@ -162,6 +165,7 @@ describe('rumination', () => {
     it('系统繁忙时降低反刍批量（软限制，不再完全跳过）', async () => {
       // 繁忙时：busyMultiplier=0.4，但仍继续执行（返回 no_undigested 或实际消化）
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // heartbeat INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '2', queued: '5' }] }) // isSystemIdle → busy
         .mockResolvedValueOnce({ rows: [] }); // 无未消化知识
 
@@ -184,6 +188,7 @@ describe('rumination', () => {
 
     it('无未消化知识时跳过', async () => {
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // heartbeat INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -193,6 +198,7 @@ describe('rumination', () => {
 
     it('queued≤3 时视为空闲', async () => {
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // heartbeat INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '3' }] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -202,6 +208,7 @@ describe('rumination', () => {
 
     it('queued>3 时系统繁忙，但反刍仍以较低批量继续', async () => {
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // heartbeat INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '4' }] }) // isSystemIdle → busy
         .mockResolvedValueOnce({ rows: [] }); // 无未消化知识
 
@@ -770,13 +777,34 @@ describe('rumination', () => {
   // ── 心跳事件 + 数据丢失修复 ───────────────────────────────
 
   describe('heartbeat + 防数据丢失（PROBE_FAIL_RUMINATION 修复）', () => {
-    it('digestLearnings 入口写 rumination_run 心跳事件（probe 用此判断循环存活）', async () => {
+    it('runRumination 入口写 rumination_run 心跳（probe 用此判断循环是否被调用）', async () => {
       setupIdleAndLearnings(pool, [{ id: 'l1', title: 'test', content: 'c', category: 'u' }]);
 
       await runRumination(pool);
 
       // 验证心跳 INSERT cecelia_events 'rumination_run' 被发出
       // SQL 中包含字面量 'rumination_run'（event_type 字段值）
+      const heartbeatCalls = mockQuery.mock.calls.filter(call => {
+        const sql = call[0] || '';
+        return sql.includes('cecelia_events') &&
+               sql.includes('INSERT') &&
+               sql.includes("'rumination_run'");
+      });
+      expect(heartbeatCalls.length).toBeGreaterThan(0);
+    });
+
+    it('预算耗尽时仍写 rumination_run 心跳（loop_dead vs budget_exhausted 区分）', async () => {
+      // 模拟每日预算已耗尽 — runRumination 会提前返回 daily_budget_exhausted
+      _setDailyCount(getDailyBudget());
+
+      const result = await runRumination(pool);
+
+      // 确认提前返回
+      expect(result.skipped).toBe('daily_budget_exhausted');
+      expect(result.digested).toBe(0);
+
+      // 关键断言：心跳必须写入（即使预算耗尽）
+      // probe 依赖此区分"循环活着但跳过" vs "循环根本没被调用（loop_dead）"
       const heartbeatCalls = mockQuery.mock.calls.filter(call => {
         const sql = call[0] || '';
         return sql.includes('cecelia_events') &&
