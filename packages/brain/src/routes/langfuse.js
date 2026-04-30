@@ -99,4 +99,41 @@ router.get('/recent', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/langfuse/trace/:id
+ * 返回单条 trace 详情 + observations（spans）
+ */
+router.get('/trace/:id', async (req, res) => {
+  const cfg = loadConfig();
+  if (!cfg) {
+    return res.json({ success: false, data: null, error: 'credentials_missing' });
+  }
+
+  const { id } = req.params;
+  const auth = Buffer.from(`${cfg.LANGFUSE_PUBLIC_KEY}:${cfg.LANGFUSE_SECRET_KEY}`).toString('base64');
+  const base = cfg.LANGFUSE_BASE_URL.replace(/\/$/, '');
+  const headers = { Authorization: `Basic ${auth}` };
+  const signal = AbortSignal.timeout(8000);
+
+  try {
+    const [traceRes, obsRes] = await Promise.all([
+      fetch(`${base}/api/public/traces/${id}`, { headers, signal }),
+      fetch(`${base}/api/public/observations?traceId=${id}&limit=50`, { headers, signal }),
+    ]);
+
+    if (!traceRes.ok) {
+      const detail = traceRes.status === 401 || traceRes.status === 403 ? 'auth_failed' : `langfuse_${traceRes.status}`;
+      return res.json({ success: false, data: null, error: detail });
+    }
+
+    const trace = await traceRes.json();
+    const obsJson = obsRes.ok ? await obsRes.json() : { data: [] };
+    const observations = Array.isArray(obsJson.data) ? obsJson.data : [];
+
+    return res.json({ success: true, data: { trace, observations } });
+  } catch (err) {
+    return res.json({ success: false, data: null, error: err?.message || 'unreachable' });
+  }
+});
+
 export default router;
