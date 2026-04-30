@@ -18,6 +18,12 @@ TOTAL=$(echo "$FEATURES_JSON" | jq '.features | length')
 echo "Features: $TOTAL"
 echo ""
 
+# 解析 feature 列表，提前检查 jq 错误
+FEATURES_ARRAY=$(echo "$FEATURES_JSON" | jq -c '.features[]') || {
+  echo "❌ Failed to parse features JSON from Brain API"
+  exit 1
+}
+
 PASSED=0
 FAILED=0
 FAILED_IDS=()
@@ -40,24 +46,26 @@ while IFS= read -r row; do
   else
     STATUS="failing"
     FAILED=$((FAILED + 1))
-    FAILED_IDS+=("$ID")
+    FAILED_IDS=("${FAILED_IDS[@]}" "$ID")
     echo "❌ $ID"
   fi
 
-  # 写回 smoke_status
-  curl -sf -X PATCH "$BRAIN_URL/api/brain/features/$ID" \
+  # 写回 smoke_status（PATCH 失败只警告，不中止）
+  if ! curl -sf -X PATCH "$BRAIN_URL/api/brain/features/$ID" \
     -H "Content-Type: application/json" \
     -d "{\"smoke_status\":\"$STATUS\",\"smoke_last_run\":\"$NOW\"}" \
-    > /dev/null
+    > /dev/null 2>&1; then
+    echo "⚠️  Failed to write back smoke_status for $ID" >&2
+  fi
 
-done < <(echo "$FEATURES_JSON" | jq -c '.features[]')
+done <<< "$FEATURES_ARRAY"
 
 echo ""
 echo "=== 结果 ==="
 echo "✅ passed: $PASSED"
 echo "❌ failed: $FAILED"
 
-if [ ${#FAILED_IDS[@]} -gt 0 ]; then
+if [ "${#FAILED_IDS[@]:-0}" -gt 0 ]; then
   echo ""
   echo "失败列表:"
   for id in "${FAILED_IDS[@]}"; do
