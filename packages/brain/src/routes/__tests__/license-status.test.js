@@ -6,8 +6,8 @@ describe('GET /api/brain/license', () => {
   it('returns status ok and tiers array', async () => {
     const router = (await import('../license.js')).default;
 
-    // 找到 GET / handler
-    const layer = router.stack.find(l => l.route?.path === '/' && l.route?.methods?.get);
+    // 找到 GET /license handler
+    const layer = router.stack.find(l => l.route?.path === '/license' && l.route?.methods?.get);
     expect(layer).toBeDefined();
 
     const req = {};

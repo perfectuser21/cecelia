@@ -30,7 +30,7 @@ export function generateLicenseKey() {
 const router = Router();
 
 // GET /api/brain/license — 状态检查 + tier 清单
-router.get('/', (_req, res) => {
+router.get('/license', (_req, res) => {
   res.json({ status: 'ok', tiers: Object.keys(TIER_CONFIG) });
 });
 

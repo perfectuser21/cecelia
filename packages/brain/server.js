@@ -297,7 +297,7 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
 app.use('/api/brain/tasks', taskTasksRoutes);
 
-app.use('/api/brain/license', licenseRoutes);
+app.use('/api/brain', licenseRoutes);
 
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
