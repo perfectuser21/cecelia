@@ -33,6 +33,7 @@ import brainManifestRoutes from './src/routes/brain-manifest.js';
 import perceptionSignalsRoutes from './src/routes/perception-signals.js';
 import architectureRoutes from './src/routes/architecture.js';
 import taskRouterDiagnoseRoutes from './src/routes/task-router-diagnose.js';
+import licenseRoutes from './src/routes/license.js';
 import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import alertingRoutes from './src/routes/alerting.js';
 import systemReportsRoutes from './src/routes/system-reports.js';
@@ -295,6 +296,8 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 // POST /api/brain/tasks fallback: brainRoutes 无 POST /tasks handler，此处补齐
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
 app.use('/api/brain/tasks', taskTasksRoutes);
+
+app.use('/api/brain/license', licenseRoutes);
 
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
