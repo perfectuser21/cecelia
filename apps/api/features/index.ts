@@ -6,7 +6,7 @@ export { coreInstanceConfig, coreTheme } from './config';
 import type { CoreConfig, CoreRoute, NavGroup, NavGroupItem, FeatureManifest } from './types';
 import { coreInstanceConfig } from './config';
 
-// Feature manifests - 11 entries
+// Feature manifests - 12 entries
 export const coreFeatures = {
   'dashboard': () => import('./dashboard'),
   'inbox': () => import('./inbox'),
@@ -17,6 +17,7 @@ export const coreFeatures = {
   'execution': () => import('./execution'),
   'knowledge': () => import('./knowledge'),
   'system-hub': () => import('./system-hub'),
+  'system': () => import('./system'),
   'profile': () => import('./profile'),
   'cecelia': () => import('./cecelia'),
 };
