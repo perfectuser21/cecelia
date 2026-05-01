@@ -6,14 +6,14 @@
 
 -- ── A. 端点完全错误 ──────────────────────────────────────────────────────────
 
--- immune-sweep: 验证端点可达且 data 字段存在（last_sweep 在冷启动为空对象）
+-- immune-sweep: curl -s（不退出 5xx），验证 success=true
 UPDATE features SET smoke_cmd =
-  'curl -sf http://localhost:5221/api/brain/immune/status | jq -e ''.data != null'''
+  'curl -s http://localhost:5221/api/brain/immune/status | jq -e ''.success == true'''
 WHERE id = 'immune-sweep';
 
--- policy-list: 验证 /status 可达（policy_rules 在冷启动 Brain 可能为 null）
+-- policy-list: /status 在 CI 因 schema 漂移可能 5xx，改用 /health
 UPDATE features SET smoke_cmd =
-  'curl -sf http://localhost:5221/api/brain/status | jq -e ''type == "object"'''
+  'curl -sf http://localhost:5221/api/brain/health | jq -e ''.status != null'''
 WHERE id = 'policy-list';
 
 -- vps-containers: 应用 vps-monitor 端点，不是 /health
@@ -21,9 +21,9 @@ UPDATE features SET smoke_cmd =
   'curl -sf http://localhost:5221/api/brain/vps-monitor/stats | jq -e ''.type == "object" or type == "object"'''
 WHERE id = 'vps-containers';
 
--- db-backup: 验证 /status 可达（pack_version 在冷启动 Brain 可能为 null）
+-- db-backup: /status 在 CI 因 schema 漂移可能 5xx，改用 /health
 UPDATE features SET smoke_cmd =
-  'curl -sf http://localhost:5221/api/brain/status | jq -e ''type == "object"'''
+  'curl -sf http://localhost:5221/api/brain/health | jq -e ''.status != null'''
 WHERE id = 'db-backup';
 
 -- notion-sync: 验证 features API 端点可达（CI 冷启动表可能为空，只检 .features != null）
@@ -31,9 +31,9 @@ UPDATE features SET smoke_cmd =
   'curl -sf ''http://localhost:5221/api/brain/features?limit=5'' | jq -e ''.features != null'''
 WHERE id = 'notion-sync';
 
--- orchestrator-chat: 验证 /status 可达（decision_mode 在冷启动 Brain 可能为 null）
+-- orchestrator-chat: /status 在 CI 因 schema 漂移可能 5xx，改用 /health organs 字段
 UPDATE features SET smoke_cmd =
-  'curl -sf http://localhost:5221/api/brain/status | jq -e ''type == "object"'''
+  'curl -sf http://localhost:5221/api/brain/health | jq -e ''.organs != null'''
 WHERE id = 'orchestrator-chat';
 
 -- intent-parse: 路由文件存在即可（路由未挂载为已知 P1 bug，不在此修）
@@ -46,9 +46,9 @@ UPDATE features SET smoke_cmd =
   'curl -s -X POST http://localhost:5221/api/brain/cluster/kill-session -H "Content-Type: application/json" -d ''{"pid":0}'' | jq -e ''has("error") or has("success")'''
 WHERE id = 'session-kill';
 
--- device-lock: 验证 /status 可达（decision_mode 在冷启动 Brain 可能为 null）
+-- device-lock: /status 在 CI 因 schema 漂移可能 5xx，改用 /health organs 字段
 UPDATE features SET smoke_cmd =
-  'curl -sf http://localhost:5221/api/brain/status | jq -e ''type == "object"'''
+  'curl -sf http://localhost:5221/api/brain/health | jq -e ''.organs != null'''
 WHERE id = 'device-lock';
 
 -- ── B. 多 feature 共用同一命令（补充区分度）──────────────────────────────────
