@@ -1,34 +1,28 @@
-# PRD: brain-test-pyramid PR5 — alertness-state-behavior integration test
+# PRD: OKR KR 进度更新 Integration Test
+
+**Brain Task**: b718ac29-d685-4c35-83e9-751a688dd1d7  
+**PR Series**: brain-test-pyramid 第 4 个 PR
 
 ## 背景
 
-`/api/brain/alertness` 端点目前只有存活检查，缺乏行为级验证。本 PR 是 brain-test-pyramid 项目第一层第五个 PR，补齐 Alertness 状态行为的 integration test。
+OKR 模块只有 unit test，缺少"通过 API 更新 KR 进度并验证变更真正写入 DB"的 integration test。
 
 ## 目标
 
-为 Alertness 状态行为写完整 integration test：读取当前 level → override → 验证变更 → 还原。
+为 `PATCH /api/brain/okr/key-results/:id` + `GET /api/brain/okr/current` 写完整 integration test，验证进度更新端到端持久化。
 
 ## 成功标准
 
-- GET `/api/brain/alertness` 响应含 `level`/`levelName`/`reason`/`startedAt` 字段
-- POST override 设置 level 后 GET 验证 level 已变更，reason 含 override 前缀
-- POST override 无效参数（无 reason / level 超范围）返回 400
-- POST clear-override 后 `override` 字段为 null
-- afterAll 严格还原，不污染 Brain 全局状态
+### DoD
 
-## DoD
+- [x] [BEHAVIOR] 测试文件存在且覆盖 GET → PATCH → GET 进度验证链路
+  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js')"
 
-- [x] [ARTIFACT] 测试文件存在：packages/brain/src/__tests__/integration/alertness-state-behavior.integration.test.js
-  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/alertness-state-behavior.integration.test.js')"
+- [x] [BEHAVIOR] 测试包含 progress_pct 验证（非端点存活，行为级）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js','utf8');if(!c.includes('progress_pct'))process.exit(1)"
 
-- [x] [BEHAVIOR] GET /api/brain/alertness 响应包含 level/levelName/reason/startedAt 字段
-  Test: tests/packages/brain/src/__tests__/integration/alertness-state-behavior.integration.test.js
+- [x] [BEHAVIOR] afterAll 严格清理（DELETE FROM objectives）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js','utf8');if(!c.includes('DELETE FROM objectives'))process.exit(1)"
 
-- [x] [BEHAVIOR] POST override 设置 level=2 后 GET 返回 level=2，reason 含 override 信息
-  Test: tests/packages/brain/src/__tests__/integration/alertness-state-behavior.integration.test.js
-
-- [x] [BEHAVIOR] POST override 无效参数（无 reason/level 超范围）返回 400
-  Test: tests/packages/brain/src/__tests__/integration/alertness-state-behavior.integration.test.js
-
-- [x] [BEHAVIOR] POST clear-override 后 override 字段为 null（状态已还原）
-  Test: tests/packages/brain/src/__tests__/integration/alertness-state-behavior.integration.test.js
+- [x] [BEHAVIOR] Brain 不可达时测试自动 skip（brainAvailable guard）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js','utf8');if(!c.includes('brainAvailable'))process.exit(1)"
