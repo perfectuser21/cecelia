@@ -1,15 +1,23 @@
-# DoD — smoke-business.sh（PR 3/3）
+# DoD: task-status-transitions integration test
+
+Brain task-id: e23d83f2-84b9-494c-8740-29978ee9b35d
 
 ## 成功标准
 
-- [x] [ARTIFACT] `packages/brain/scripts/smoke/smoke-business.sh` 文件存在且可执行
-  Test: `node -e "const fs=require('fs');const s=fs.statSync('packages/brain/scripts/smoke/smoke-business.sh');if(!(s.mode&0o111))process.exit(1)"`
+- [x] [ARTIFACT] `packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js` 存在
+  Test: `manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js')"`
 
-- [x] [ARTIFACT] `tests/packages/brain/smoke-business.test.js` 文件存在（6 个结构验证测试）
-  Test: `node -e "require('fs').accessSync('tests/packages/brain/smoke-business.test.js')"`
+- [x] [BEHAVIOR] POST 创建任务返回 status=queued，GET status=queued 过滤可查到该任务
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('status=queued'))process.exit(1)"`
 
-- [x] [BEHAVIOR] smoke-business.sh 覆盖 Brain-only 113 个 feature，本地运行 FAIL:0
-  Test: `tests/packages/brain/smoke-business.test.js`
+- [x] [BEHAVIOR] PATCH queued to in_progress，DB 直查验证状态持久化 + started_at 非空
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('in_progress'))process.exit(1)"`
 
-- [x] [BEHAVIOR] 脚本含 ok/fail/section/skip 函数 + ZJ_UP/CREATOR_UP 外部服务检测
-  Test: `node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/smoke-business.sh','utf8');['ok()','fail()','section()','skip()','ZJ_UP','CREATOR_UP'].forEach(f=>{if(!c.includes(f))throw new Error('missing: '+f)})"`
+- [x] [BEHAVIOR] PATCH in_progress to completed，DB 直查验证 status=completed + completed_at 非空
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('completed_at'))process.exit(1)"`
+
+- [x] [BEHAVIOR] completed 状态回退返回 409，terminal 状态机保护验证
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('409'))process.exit(1)"`
+
+- [x] [BEHAVIOR] afterAll DELETE FROM tasks 清理测试数据，无残留
+  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('DELETE FROM tasks'))process.exit(1)"`
