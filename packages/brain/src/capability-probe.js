@@ -293,7 +293,34 @@ async function probeRumination() {
        AND created_at > NOW() - INTERVAL '24 hours'`
   );
   const recentHeartbeats = parseInt(heartbeatResult.rows[0]?.cnt || 0);
-  const livenessTag = recentHeartbeats > 0 ? 'degraded_llm_failure' : 'loop_dead';
+
+  // 检查调用心跳（rumination_invoke）— 冷却期过后每次进入核心逻辑写入
+  // invoke > 0 但 run = 0：runRumination 被调用但无 learnings/内部提前返回（misfire）
+  // invoke = 0 且 run = 0：runRumination 根本未被调用（consciousness 禁用或 tick 不工作）
+  let recentInvocations = 0;
+  try {
+    const invokeResult = await pool.query(
+      `SELECT count(*) AS cnt FROM cecelia_events
+       WHERE event_type = 'rumination_invoke'
+         AND created_at > NOW() - INTERVAL '24 hours'`
+    );
+    recentInvocations = parseInt(invokeResult.rows[0]?.cnt || 0);
+  } catch (e) {
+    console.warn('[capability-probe] rumination_invoke lookup failed (non-blocking):', e.message);
+  }
+
+  // livenessTag 三态：
+  //   degraded_llm_failure  — digestLearnings 跑了但 LLM 全失败（run=0 但 invoke>0 且 run-inside-digest=0 不适用）
+  //   invoke_no_digest      — runRumination 被调用但未进入 digestLearnings（无 items 或提前返回）
+  //   loop_dead             — runRumination 完全未被调用（consciousness 禁用 / tick 停止）
+  let livenessTag;
+  if (recentHeartbeats > 0) {
+    livenessTag = 'degraded_llm_failure';
+  } else if (recentInvocations > 0) {
+    livenessTag = 'invoke_no_digest';
+  } else {
+    livenessTag = 'loop_dead';
+  }
 
   // 取最近一次 rumination_llm_failure 事件，把根因带进 probe detail。
   // 这样 PROBE_FAIL_RUMINATION 触发时，运维不用再去 grep 日志，直接从 probe 输出就能看到 nb/llm 错误。
@@ -317,9 +344,43 @@ async function probeRumination() {
     }
   }
 
+  // loop_dead 时：透出 consciousness 状态 + 上次 tick 时间，帮助 auto-fix 快速定位根因
+  let loopDeadContext = '';
+  if (livenessTag === 'loop_dead') {
+    try {
+      const { rows: consciousnessRows } = await pool.query(
+        `SELECT value_json FROM working_memory WHERE key = 'consciousness_enabled' LIMIT 1`
+      );
+      const consciousnessVal = consciousnessRows[0]?.value_json;
+      const consciousnessEnabled = consciousnessVal?.enabled !== false; // 默认 true
+      if (consciousnessEnabled) {
+        loopDeadContext += ' consciousness=enabled';
+      } else {
+        loopDeadContext += ' consciousness=DISABLED';
+      }
+    } catch (e) {
+      console.warn('[capability-probe] consciousness_enabled lookup failed (non-blocking):', e.message);
+    }
+
+    try {
+      const { rows: tickRows } = await pool.query(
+        `SELECT value_json FROM working_memory WHERE key = 'tick_last' LIMIT 1`
+      );
+      const tickTs = tickRows[0]?.value_json?.timestamp;
+      if (tickTs) {
+        const tickAgeMin = Math.round((Date.now() - new Date(tickTs).getTime()) / 60000);
+        loopDeadContext += ` last_tick=${tickTs}(${tickAgeMin}min_ago)`;
+      } else {
+        loopDeadContext += ' last_tick=never';
+      }
+    } catch (e) {
+      console.warn('[capability-probe] tick_last lookup failed (non-blocking):', e.message);
+    }
+  }
+
   return {
     ok: false,
-    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} (${livenessTag})${llmFailureSummary}`,
+    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} invocations_24h=${recentInvocations} (${livenessTag})${loopDeadContext}${llmFailureSummary}`,
   };
 }
 
@@ -357,10 +418,10 @@ async function probeConsolidation() {
 }
 
 async function probeSelfDriveHealth() {
-  // 检查 Self-Drive 24h 内是否有成功完成的 cycle（cycle_complete 或 no_action 均算成功）
-  // cycle_error = LLM 调用失败（探针应失败）
-  // no_action   = LLM 正常运行但判断无需行动（系统健康，不应误判为失败）
+  // cycle_error    = LLM 调用失败（探针应失败）
+  // no_action      = LLM 正常运行但判断无需行动（系统健康，不误判为失败）
   // cycle_complete = LLM 正常运行并做出决策（tasks_created 可以是 0）
+  // loop_started   = Brain 启动心跳（首次 cycle 还未运行时的宽限期凭据）
   const result = await pool.query(
     `SELECT
        count(*) filter (where payload->>'subtype' IN ('cycle_complete', 'no_action')) AS success_cnt,
@@ -370,7 +431,9 @@ async function probeSelfDriveHealth() {
        coalesce(sum((payload->>'tasks_created')::int) filter (
            where payload->>'subtype' = 'cycle_complete'
              AND (payload->>'tasks_created')::int > 0
-       ), 0) AS total_tasks_created
+       ), 0) AS total_tasks_created,
+       max(case when payload->>'subtype' = 'loop_started'
+           then created_at end) AS last_loop_started
      FROM cecelia_events
      WHERE event_type = 'self_drive'
        AND created_at > NOW() - INTERVAL '24 hours'`
@@ -380,8 +443,33 @@ async function probeSelfDriveHealth() {
   const errorCnt = parseInt(row.error_cnt || 0);
   const tasksCreated = parseInt(row.total_tasks_created || 0);
   const lastSuccess = row.last_success;
+  const lastLoopStarted = row.last_loop_started;
+
+  // Primary: successful cycles in past 24h
+  if (successCnt > 0) {
+    return {
+      ok: true,
+      detail: `24h: successful_cycles=${successCnt} errors=${errorCnt} tasks_created=${tasksCreated} last_success=${lastSuccess || 'never'}`,
+    };
+  }
+
+  // Secondary: Brain just restarted — loop_started recorded within last 6h, no errors yet
+  // 6h = default 4h interval + 2min initial delay + ~2h buffer
+  const LOOP_STARTED_GRACE_MS = 6 * 60 * 60 * 1000;
+  const loopStartedAt = lastLoopStarted ? new Date(lastLoopStarted) : null;
+  const loopStartedHealthy = loopStartedAt &&
+    (Date.now() - loopStartedAt.getTime() < LOOP_STARTED_GRACE_MS) &&
+    errorCnt === 0;
+
+  if (loopStartedHealthy) {
+    return {
+      ok: true,
+      detail: `24h: loop_started=${loopStartedAt.toISOString()} awaiting_first_cycle errors=${errorCnt}`,
+    };
+  }
+
   return {
-    ok: successCnt > 0,
+    ok: false,
     detail: `24h: successful_cycles=${successCnt} errors=${errorCnt} tasks_created=${tasksCreated} last_success=${lastSuccess || 'never'}`,
   };
 }
