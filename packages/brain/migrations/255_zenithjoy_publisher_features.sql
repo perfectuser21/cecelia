@@ -32,6 +32,6 @@ INSERT INTO features (id, name, domain, priority, status, smoke_cmd) VALUES
 
   -- NAS 备份
   ('nas-backup',             'NAS 自动备份',     'operation', 'P2', 'active',
-   'curl -sf http://localhost:5221/api/brain/status | jq -e ''.status == "ok"''')
+   'curl -sf http://localhost:5221/api/brain/health | jq -e ''.status == "healthy"''')
 
 ON CONFLICT (id) DO NOTHING;
