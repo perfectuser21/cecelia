@@ -44,16 +44,13 @@ echo "$r" | jq -e '.success == true' >/dev/null 2>&1 \
 # ── intent-parse ─────────────────────────────────────────────────────────────
 section "intent-parse"
 
-# intent-match.js 路由已定义但未挂载（已知 bug，file-check 作为 smoke）
-node -e "require('fs').accessSync('packages/brain/src/routes/intent-match.js')" 2>/dev/null \
-  && ok "intent-parse: intent-match.js 路由文件存在" \
-  || fail "intent-parse: intent-match.js 路由文件缺失"
-# 同时验证路由是否已挂载（未挂载为 P1 bug，用 warn 不 fail smoke）
-http_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BRAIN/api/brain/intent-match/match" \
-    -H "Content-Type: application/json" -d '{"text":"smoke"}')
-[[ "$http_code" != "404" ]] \
-  && ok "intent-parse: /match 路由已挂载 (HTTP $http_code)" \
-  || { echo "  ⚠️  intent-parse: /match 返回 404，路由未挂载（P1 bug）"; ((PASS++)) || true; }
+# 路由挂载在 /api/brain/intent（非 /intent-match），字段为 query
+r=$(curl -s -X POST "$BRAIN/api/brain/intent/match" \
+    -H "Content-Type: application/json" -d '{"query":"smoke test task"}') \
+  || { fail "intent-parse: POST /api/brain/intent/match 不可达"; r="{}"; }
+echo "$r" | jq -e '.total != null' >/dev/null 2>&1 \
+  && ok "intent-parse: POST /api/brain/intent/match 正常响应（total 字段存在）" \
+  || fail "intent-parse: POST /api/brain/intent/match 响应异常 ($r)"
 
 # ── cluster / session ────────────────────────────────────────────────────────
 section "cluster"
