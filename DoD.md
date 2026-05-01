@@ -1,23 +1,21 @@
-# DoD: task-status-transitions integration test
-
-Brain task-id: e23d83f2-84b9-494c-8740-29978ee9b35d
+# DoD — brain-test-pyramid PR1: decisions-lifecycle integration test
 
 ## 成功标准
 
-- [x] [ARTIFACT] `packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js` 存在
-  Test: `manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js')"`
+- [x] [ARTIFACT] `packages/brain/src/__tests__/integration/decisions-lifecycle.integration.test.js` 文件存在
+  Test: `node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/decisions-lifecycle.integration.test.js')"`
 
-- [x] [BEHAVIOR] POST 创建任务返回 status=queued，GET status=queued 过滤可查到该任务
-  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('status=queued'))process.exit(1)"`
+- [x] [BEHAVIOR] POST /api/brain/strategic-decisions 创建决策返回 id + status=active，DB 持久化
+  Test: `packages/brain/src/__tests__/integration/decisions-lifecycle.integration.test.js`
 
-- [x] [BEHAVIOR] PATCH queued to in_progress，DB 直查验证状态持久化 + started_at 非空
-  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('in_progress'))process.exit(1)"`
+- [x] [BEHAVIOR] GET ?status=active 能查到刚创建的决策
+  Test: `packages/brain/src/__tests__/integration/decisions-lifecycle.integration.test.js`
 
-- [x] [BEHAVIOR] PATCH in_progress to completed，DB 直查验证 status=completed + completed_at 非空
-  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('completed_at'))process.exit(1)"`
+- [x] [BEHAVIOR] PUT 更新 reason 字段持久化到 DB
+  Test: `packages/brain/src/__tests__/integration/decisions-lifecycle.integration.test.js`
 
-- [x] [BEHAVIOR] completed 状态回退返回 409，terminal 状态机保护验证
-  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('409'))process.exit(1)"`
+- [x] [BEHAVIOR] PUT status=superseded 后从 active 列表消失
+  Test: `packages/brain/src/__tests__/integration/decisions-lifecycle.integration.test.js`
 
-- [x] [BEHAVIOR] afterAll DELETE FROM tasks 清理测试数据，无残留
-  Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js','utf8');if(!c.includes('DELETE FROM tasks'))process.exit(1)"`
+- [x] [BEHAVIOR] 测试 afterAll 清理自身创建的数据（不污染业务数据）
+  Test: `packages/brain/src/__tests__/integration/decisions-lifecycle.integration.test.js`
