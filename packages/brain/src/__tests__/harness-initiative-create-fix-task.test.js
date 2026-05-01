@@ -39,9 +39,6 @@ vi.mock('@langchain/langgraph', () => {
     MemorySaver: class {},
   };
 });
-vi.mock('@langchain/langgraph/checkpoint/postgres', () => ({
-  PostgresSaver: class { static fromConnString() { return { setup: vi.fn() }; } },
-}));
 vi.mock('@langchain/langgraph-checkpoint-postgres', () => ({
   PostgresSaver: class { static fromConnString() { return { setup: vi.fn() }; } },
 }));
