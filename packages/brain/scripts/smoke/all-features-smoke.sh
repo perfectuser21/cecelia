@@ -65,7 +65,7 @@ echo "=== 结果 ==="
 echo "✅ passed: $PASSED"
 echo "❌ failed: $FAILED"
 
-if [ "${#FAILED_IDS[@]:-0}" -gt 0 ]; then
+if [ "${#FAILED_IDS[@]}" -gt 0 ]; then
   echo ""
   echo "失败列表:"
   for id in "${FAILED_IDS[@]}"; do
