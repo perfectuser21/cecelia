@@ -14,14 +14,14 @@ section() { echo ""; echo "── $1 ──"; }
 
 section "task"
 
-# task-create: 任务列表端点可用（创建依赖该端点）
-r=$(curl -sf "$BRAIN/api/brain/tasks?limit=1") || { fail "task-create: /tasks 不可达"; r="[]"; }
+# task-create: 任务列表端点可用（queued 状态 — 避免 CI schema 漂移导致 getTopTasks 失败）
+r=$(curl -sf "$BRAIN/api/brain/tasks?status=queued&limit=1") || { fail "task-create: /tasks?status=queued 不可达"; r="[]"; }
 echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "task-create: /tasks 返回数组" \
+  && ok "task-create: /tasks 返回数组（queued 过滤可用）" \
   || fail "task-create: /tasks 响应格式错误"
 
-# task-update: 任务对象包含 id 字段（可更新）
-r=$(curl -sf "$BRAIN/api/brain/tasks?limit=1") || { fail "task-update: /tasks 不可达"; r="[]"; }
+# task-update: 任务对象包含 id 字段（in_progress 状态过滤）
+r=$(curl -sf "$BRAIN/api/brain/tasks?status=in_progress&limit=1") || { fail "task-update: /tasks?status=in_progress 不可达"; r="[]"; }
 echo "$r" | jq -e '(length == 0) or (.[0].id != null)' >/dev/null 2>&1 \
   && ok "task-update: 任务对象含 id 字段（可更新）" \
   || fail "task-update: 任务对象缺少 id 字段"
@@ -51,7 +51,8 @@ echo "$r" | jq -e '.tasks != null' >/dev/null 2>&1 \
   || fail "task-unblock: /tasks/blocked 缺少 tasks 字段"
 
 # task-checkpoint: checkpoints 端点返回 task_id
-TASK_ID=$(curl -sf "$BRAIN/api/brain/tasks?limit=1" | jq -r '.[0].id // empty' 2>/dev/null || echo "")
+TASK_ID=$(curl -sf "$BRAIN/api/brain/tasks?status=in_progress&limit=1" | jq -r '.[0].id // empty' 2>/dev/null || \
+          curl -sf "$BRAIN/api/brain/tasks?status=queued&limit=1" | jq -r '.[0].id // empty' 2>/dev/null || echo "")
 if [[ -n "$TASK_ID" ]]; then
   r=$(curl -sf "$BRAIN/api/brain/tasks/$TASK_ID/checkpoints") || { fail "task-checkpoint: /tasks/{id}/checkpoints 不可达"; r="{}"; }
   echo "$r" | jq -e '.task_id != null' >/dev/null 2>&1 \
