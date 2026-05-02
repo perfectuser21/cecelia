@@ -1,5 +1,29 @@
 # Cecelia Core Learnings
 
+### [2026-05-02] PROBE_FAIL_RUMINATION — invoke 心跳错误放置导致 budget_exhausted 误判为 loop_dead
+
+**背景**：`runRumination()` 的 `rumination_invoke` 心跳事件写在 `hasBudget()` 检查**之后**，导致预算耗尽时函数提前返回、心跳不写入，探针看到 `invocations_24h=0` 就错误诊断为 `loop_dead`（consciousness 禁用），而真实原因是 `budget_exhausted`（预算耗尽）。
+
+此外，`MINIMAL_MODE=true` 时 tick 跳过所有 LLM 调用但 consciousness DB 值仍为 enabled，探针无法区分这两种情况。
+
+#### 修复
+
+1. **`rumination.js`**：将 `rumination_invoke INSERT` 移到 `isCooldownPassed()` 之后、`hasBudget()` 之前。冷却期过后每次 tick 都写入 invoke 记录，探针能真实感知"runRumination 是否被调用"。
+2. **`capability-probe.js`**：`loop_dead` context 增加两项诊断：
+   - `MINIMAL_MODE=true`：检查 `process.env.BRAIN_MINIMAL_MODE`
+   - `consciousness=DISABLED(env)` vs `consciousness=DISABLED(db)`：区分 env override 与 DB 禁用
+
+#### 证据规则
+
+> `loop_dead` 只应在 `runRumination` **真正从未被调用**时出现，budget/cooldown 导致的提前返回应显示 `invoke_no_digest`。
+
+#### 下次预防
+
+- 任何新的早返路径（early return）在 `runRumination` 内都必须写在 invoke 心跳**之后**
+- probe 的 `loop_dead` context 必须覆盖所有能导致 tick 跳过 rumination 的 env 变量（MINIMAL_MODE、CONSCIOUSNESS_ENABLED）
+
+---
+
 ### [2026-03-14] DevGate 脚本支持 Task Card 格式（PR #cp-03142135-task-card-scripts）
 
 **背景**：新增 `.task-{branch}.md` 格式作为 PRD+DoD 合并的 Task Card，需要让 check-prd.sh 和 check-dod-mapping.cjs 能识别此格式，同时不破坏旧格式。

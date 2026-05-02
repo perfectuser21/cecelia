@@ -615,17 +615,15 @@ export async function runRumination(dbPool) {
   const db = dbPool || pool;
   const now = Date.now();
 
-  // 前置条件检查
-  if (!hasBudget()) {
-    return { skipped: 'daily_budget_exhausted', digested: 0, insights: [] };
-  }
-
+  // 冷却期检查（in-memory，防止每次 tick 都写心跳）
   if (!isCooldownPassed(now)) {
     return { skipped: 'cooldown', digested: 0, insights: [] };
   }
 
-  // 调用心跳：冷却期过后每次进入核心逻辑都记录一次
-  // 供 probe 区分"consciousness 禁用/tick 未调用"（invoke=0）与"调用了但无 items"（invoke>0 但 run=0）
+  // 调用心跳：冷却期过后、hasBudget() 检查之前写入
+  // 必须在 hasBudget() 之前写：预算耗尽时函数会提前 return，
+  // 若心跳写在 hasBudget() 之后则 probe 看到 invocations_24h=0，
+  // 误判为 loop_dead（consciousness 禁用）而非 invoke_no_digest（预算耗尽）。
   try {
     await db.query(
       `INSERT INTO cecelia_events (event_type, source, payload)
@@ -634,6 +632,11 @@ export async function runRumination(dbPool) {
     );
   } catch (invErr) {
     console.warn('[rumination] invoke heartbeat failed (non-blocking):', invErr.message);
+  }
+
+  // 预算检查（in-memory，每日午夜自动重置）
+  if (!hasBudget()) {
+    return { skipped: 'daily_budget_exhausted', digested: 0, insights: [] };
   }
 
   // 软限制：系统繁忙时降低反刍批量（但不完全跳过）
