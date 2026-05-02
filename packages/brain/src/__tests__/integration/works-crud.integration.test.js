@@ -16,9 +16,9 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { DB_DEFAULTS } from '../../db-config.js';
 
-vi.mock('../publish-monitor.js', () => ({
+vi.mock('../../publish-monitor.js', () => ({
   monitorPublishQueue: vi.fn().mockResolvedValue(undefined),
   getPublishStats: vi.fn().mockResolvedValue({ today_total: 0, cached: true }),
 }));
@@ -31,7 +31,7 @@ let app;
 
 beforeAll(async () => {
   const { default: publishJobsRouter } = await import(
-    '../routes/publish-jobs.js'
+    '../../routes/publish-jobs.js'
   );
   app = express();
   app.use(express.json());
