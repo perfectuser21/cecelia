@@ -1,21 +1,18 @@
-# DoD — brain-test-pyramid L2 PR1: publish-flow integration test
+# DoD — brain-test-pyramid L2 PR4: snapshots-ingest integration test
 
 ## 成功标准
 
-- [x] [ARTIFACT] `packages/brain/src/__tests__/integration/publish-flow.integration.test.js` 文件存在
-  Test: `node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/publish-flow.integration.test.js')"`
+- [x] [ARTIFACT] `packages/brain/src/__tests__/integration/snapshots-ingest.integration.test.js` 文件存在
+  Test: `node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/snapshots-ingest.integration.test.js')"`
 
-- [x] [BEHAVIOR] POST /api/brain/publish-jobs 创建 job 返回 status=pending
-  Test: `packages/brain/src/__tests__/integration/publish-flow.integration.test.js`
+- [x] [BEHAVIOR] INSERT 多条快照，SELECT 全量正确返回
+  Test: `packages/brain/src/__tests__/integration/snapshots-ingest.integration.test.js`
 
-- [x] [BEHAVIOR] DB 直写 running + 回写 results + GET 验证可查
-  Test: `packages/brain/src/__tests__/integration/publish-flow.integration.test.js`
+- [x] [BEHAVIOR] COUNT/AVG/MAX 聚合查询结果正确
+  Test: `packages/brain/src/__tests__/integration/snapshots-ingest.integration.test.js`
 
-- [x] [BEHAVIOR] retry 接口将 failed job 重置为 pending
-  Test: `packages/brain/src/__tests__/integration/publish-flow.integration.test.js`
+- [x] [BEHAVIOR] 时间范围过滤正确筛选数据
+  Test: `packages/brain/src/__tests__/integration/snapshots-ingest.integration.test.js`
 
-- [x] [BEHAVIOR] 缺少 platform 或 success 类型错误返回 400
-  Test: `packages/brain/src/__tests__/integration/publish-flow.integration.test.js`
-
-- [x] [BEHAVIOR] afterAll 清理 content_publish_jobs + publish_results 数据
-  Test: `packages/brain/src/__tests__/integration/publish-flow.integration.test.js`
+- [x] [BEHAVIOR] afterAll 清理 llm_usage_snapshots 数据
+  Test: `packages/brain/src/__tests__/integration/snapshots-ingest.integration.test.js`
