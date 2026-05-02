@@ -18,6 +18,7 @@ import {
   dispatchToDevSkill,
 } from './auto-fix.js';
 import { raise } from './alerting.js';
+import { isConsciousnessEnabled } from './consciousness-guard.js';
 
 // ============================================================
 // Configuration
@@ -344,19 +345,27 @@ async function probeRumination() {
     }
   }
 
-  // loop_dead 时：透出 consciousness 状态 + 上次 tick 时间，帮助 auto-fix 快速定位根因
+  // loop_dead 时：透出 consciousness 状态 + MINIMAL_MODE + 上次 tick 时间，帮助 auto-fix 快速定位根因
   let loopDeadContext = '';
   if (livenessTag === 'loop_dead') {
+    // BRAIN_MINIMAL_MODE=true 时 tick-runner 跳过整个 section 10.x（含 rumination），是 loop_dead 常见根因
+    const minimalMode = process.env.BRAIN_MINIMAL_MODE === 'true';
+    if (minimalMode) {
+      loopDeadContext += ' minimal_mode=ENABLED(blocks_rumination)';
+    }
+
     try {
       const { rows: consciousnessRows } = await pool.query(
         `SELECT value_json FROM working_memory WHERE key = 'consciousness_enabled' LIMIT 1`
       );
       const consciousnessVal = consciousnessRows[0]?.value_json;
-      const consciousnessEnabled = consciousnessVal?.enabled !== false; // 默认 true
+      const consciousnessEnabled = isConsciousnessEnabled();
       if (consciousnessEnabled) {
         loopDeadContext += ' consciousness=enabled';
       } else {
-        loopDeadContext += ' consciousness=DISABLED';
+        const dbEnabled = consciousnessVal?.enabled !== false;
+        const source = !dbEnabled ? '(db)' : '(env_override)';
+        loopDeadContext += ` consciousness=DISABLED${source}`;
       }
     } catch (e) {
       console.warn('[capability-probe] consciousness_enabled lookup failed (non-blocking):', e.message);

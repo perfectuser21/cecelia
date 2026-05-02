@@ -68,6 +68,35 @@ describe('probeRumination — loop_dead 时透出 consciousness + tick 状态', 
     expect(ruminationFn).toContain('consciousness=DISABLED');
     expect(ruminationFn).toContain('consciousnessEnabled');
   });
+
+  it('意识状态检查通过 isConsciousnessEnabled() 获取（SSOT，不裸读 env var）', () => {
+    expect(ruminationFn).toContain('isConsciousnessEnabled');
+    expect(ruminationFn).not.toContain('process.env.CONSCIOUSNESS_ENABLED');
+    expect(ruminationFn).not.toContain('process.env.BRAIN_QUIET_MODE');
+  });
+
+  it('env override 导致的 DISABLED 包含 (env_override) 后缀，便于区分 DB 设置 vs env 变量', () => {
+    expect(ruminationFn).toContain('env_override');
+  });
+});
+
+describe('probeRumination — loop_dead 时检测 BRAIN_MINIMAL_MODE（section 10.x 外层守卫）', () => {
+  it('loop_dead 分支检查 BRAIN_MINIMAL_MODE 环境变量', () => {
+    expect(ruminationFn).toContain('process.env.BRAIN_MINIMAL_MODE');
+    expect(ruminationFn).toContain('minimalMode');
+  });
+
+  it('MINIMAL_MODE 启用时 detail 包含 minimal_mode=ENABLED(blocks_rumination)', () => {
+    expect(ruminationFn).toContain('minimal_mode=ENABLED(blocks_rumination)');
+  });
+
+  it('MINIMAL_MODE 检查在 consciousness 检查之前（外层守卫先输出）', () => {
+    const minimalIdx = ruminationFn.indexOf('BRAIN_MINIMAL_MODE');
+    const consciousnessIdx = ruminationFn.indexOf("key = 'consciousness_enabled'");
+    expect(minimalIdx).toBeGreaterThanOrEqual(0);
+    expect(consciousnessIdx).toBeGreaterThanOrEqual(0);
+    expect(minimalIdx).toBeLessThan(consciousnessIdx);
+  });
 });
 
 describe('probeRumination — last_run 真实化 + LLM forensic 透出', () => {
