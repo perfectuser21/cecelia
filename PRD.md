@@ -1,16 +1,17 @@
-# PRD — brain-test-pyramid L2 PR4: snapshots-ingest integration test
+# PRD — brain-test-pyramid L2 PR2: works-crud integration test
 
 ## 背景
-llm_usage_snapshots 是系统 LLM 算力消耗历史快照表，由 tick 每日写入，供周报和选题引擎查询。当前缺少对写入和查询链路的 integration test，无法验证真实 DB 聚合行为。
+content_publish_jobs CRUD 缺少 integration test，只有 mock 单元测试，无法验证真实 DB 持久化和 API 链路。
 
 ## 目标
-为 llm_usage_snapshots 写完整 integration test：INSERT 多条快照 → SELECT 全量 → 聚合查询（AVG/MAX/COUNT）→ 时间范围过滤 → 字段约束验证。
+为 content_publish_jobs 写完整 CRUD integration test：POST 创建 → GET 列表查询 → DB 直查 payload → retry 重置失败 → 参数校验。
 
 ## 成功标准
 
-- [ ] snapshots-ingest.integration.test.js 存在于 packages/brain/src/__tests__/integration/
-- [ ] INSERT 多条 llm_usage_snapshots，SELECT 全量正确返回
-- [ ] COUNT/AVG/MAX 聚合查询结果正确
-- [ ] 时间范围过滤正确筛选数据
-- [ ] 字段约束（非负值等）验证
-- [ ] afterAll 清理自身创建的 snapshots 数据
+- [ ] works-crud.integration.test.js 存在于 packages/brain/src/__tests__/integration/
+- [ ] POST /api/brain/publish-jobs 创建 works，返回 id + status=pending
+- [ ] GET /api/brain/publish-jobs 列表可查到新创建的 job
+- [ ] DB 直查 payload 字段正确持久化
+- [ ] retry 接口重置 failed 状态为 pending
+- [ ] 参数错误返回 400
+- [ ] afterAll 清理自身创建数据
