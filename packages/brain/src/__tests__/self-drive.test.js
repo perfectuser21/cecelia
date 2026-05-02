@@ -93,7 +93,7 @@ describe('self-drive', () => {
       );
     });
 
-    it('should skip when no probe/scan data', async () => {
+    it('should skip when no probe/scan data and record no_action event', async () => {
       const pool = (await import('../db.js')).default;
 
       pool.query
@@ -102,12 +102,22 @@ describe('self-drive', () => {
         .mockResolvedValueOnce({ rows: [] }) // no tasks
         .mockResolvedValueOnce({ rows: [] }) // no KR progress
         .mockResolvedValueOnce({ rows: [{ completed: '0', failed: '0', total: '0' }] }) // no task stats
-        .mockResolvedValueOnce({ rows: [] }); // no projects
+        .mockResolvedValueOnce({ rows: [] }) // no projects
+        .mockResolvedValueOnce({ rows: [] }); // recordEvent INSERT
 
       const { runSelfDrive } = await import('../self-drive.js');
       const result = await runSelfDrive();
 
       expect(result.reason).toBe('no_data');
+
+      // Verify no_action event was recorded so self_drive_health probe counts the cycle
+      const insertCall = pool.query.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('self_drive') && sql.includes('INSERT')
+      );
+      expect(insertCall).toBeDefined();
+      const payload = JSON.parse(insertCall[1][0]);
+      expect(payload.subtype).toBe('no_action');
+      expect(payload.reason).toBe('no_probe_scan_data');
     });
 
     it('should handle adjustment actions (adjust_priority, pause_kr, activate_kr, update_roadmap)', async () => {
