@@ -34,9 +34,9 @@ describe('circuit-breaker-success (P0 Fix #2)', () => {
     expect(states[SERVICE_NAME]?.state).toBe(CIRCUIT_STATES.CLOSED);
   });
 
-  it('should open circuit after 3 consecutive failures', async () => {
-    // Record 3 failures
-    for (let i = 0; i < 3; i++) {
+  it('should open circuit after 8 consecutive failures', async () => {
+    // Record 8 failures
+    for (let i = 0; i < 8; i++) {
       await recordFailure(SERVICE_NAME, new Error('Test failure'));
     }
 
@@ -49,7 +49,7 @@ describe('circuit-breaker-success (P0 Fix #2)', () => {
 
   it('should transition from OPEN to HALF_OPEN after cooldown (simulated)', async () => {
     // Open circuit
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 8; i++) {
       await recordFailure(SERVICE_NAME, new Error('Test failure'));
     }
 
@@ -73,7 +73,7 @@ describe('circuit-breaker-success (P0 Fix #2)', () => {
 
   it('should close circuit after consecutive successes in HALF_OPEN', async () => {
     // Simulate HALF_OPEN state by opening then allowing one success
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 8; i++) {
       await recordFailure(SERVICE_NAME, new Error('Open it'));
     }
 

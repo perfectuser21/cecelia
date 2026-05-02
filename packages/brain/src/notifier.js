@@ -1,15 +1,17 @@
 /**
- * Notifier - Feishu push for Cecelia events
+ * Notifier - Feishu + Bark push for Cecelia events
  *
- * 双渠道发送策略：
+ * 发送策略：
  * 1. FEISHU_BOT_WEBHOOK 已配置 → 走群机器人 Webhook
- * 2. 未配置 → 降级到 Open API 发私信给 Alex（FEISHU_APP_ID + FEISHU_APP_SECRET）
+ * 2. 未配置 → 降级到 Open API 发私信给 Alex
+ * 3. BARK_TOKEN 已配置 → 同时推送到 Alex 手机（iOS Bark App）
  *
  * Errors are caught and logged - never breaks main flow.
  */
 
 import { isMuted } from './muted-guard.js';
 
+const BARK_TOKEN = process.env.BARK_TOKEN || '';
 const FEISHU_WEBHOOK_URL = process.env.FEISHU_BOT_WEBHOOK || '';
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
@@ -125,6 +127,29 @@ async function sendFeishu(text) {
 }
 
 /**
+ * 通过 Bark 推送到 Alex 手机（iOS App）
+ * @param {string} title
+ * @param {string} body
+ * @returns {Promise<boolean>}
+ */
+async function sendBark(title, body) {
+  if (!BARK_TOKEN) return false;
+  try {
+    const url = `https://api.day.app/${BARK_TOKEN}/${encodeURIComponent(title)}/${encodeURIComponent(body)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const result = await resp.json();
+    if (result.code !== 200) {
+      console.error('[notifier] Bark 推送失败:', result.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('[notifier] Bark 推送异常:', err.message);
+    return false;
+  }
+}
+
+/**
  * Rate-limited send - skip if same eventKey was sent recently
  */
 async function sendRateLimited(eventKey, text) {
@@ -141,7 +166,11 @@ async function sendRateLimited(eventKey, text) {
     return false;
   }
   _lastSent.set(eventKey, now);
-  return sendFeishu(text);
+  const [feishuResult] = await Promise.allSettled([
+    sendFeishu(text),
+    sendBark('Cecelia', text),
+  ]);
+  return feishuResult.status === 'fulfilled' ? feishuResult.value : false;
 }
 
 /**
