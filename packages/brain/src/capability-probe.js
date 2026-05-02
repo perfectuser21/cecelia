@@ -344,19 +344,30 @@ async function probeRumination() {
     }
   }
 
-  // loop_dead 时：透出 consciousness 状态 + 上次 tick 时间，帮助 auto-fix 快速定位根因
+  // loop_dead 时：透出 MINIMAL_MODE + consciousness 状态 + 上次 tick 时间，帮助 auto-fix 快速定位根因
   let loopDeadContext = '';
   if (livenessTag === 'loop_dead') {
+    // MINIMAL_MODE=true 时 tick 跳过所有 LLM 调用（包括 rumination），但 consciousness 状态可能仍显示 enabled，
+    // 导致 detail 显示 consciousness=enabled 而运维无法定位真实原因。
+    if (process.env.BRAIN_MINIMAL_MODE === 'true') {
+      loopDeadContext += ' MINIMAL_MODE=true';
+    }
+
     try {
       const { rows: consciousnessRows } = await pool.query(
         `SELECT value_json FROM working_memory WHERE key = 'consciousness_enabled' LIMIT 1`
       );
       const consciousnessVal = consciousnessRows[0]?.value_json;
       const consciousnessEnabled = consciousnessVal?.enabled !== false; // 默认 true
-      if (consciousnessEnabled) {
+      // 注意：env override（CONSCIOUSNESS_ENABLED=false）优先于 DB 值，
+      // 但 probe 在同一进程内，直接读 env 比查 DB 更可靠。
+      const envOverride = process.env.CONSCIOUSNESS_ENABLED;
+      if (envOverride === 'false') {
+        loopDeadContext += ' consciousness=DISABLED(env)';
+      } else if (consciousnessEnabled) {
         loopDeadContext += ' consciousness=enabled';
       } else {
-        loopDeadContext += ' consciousness=DISABLED';
+        loopDeadContext += ' consciousness=DISABLED(db)';
       }
     } catch (e) {
       console.warn('[capability-probe] consciousness_enabled lookup failed (non-blocking):', e.message);

@@ -64,9 +64,19 @@ describe('probeRumination — loop_dead 时透出 consciousness + tick 状态', 
     expect(ruminationFn).toContain('last_tick=');
   });
 
-  it('consciousness DISABLED 时 detail 包含 consciousness=DISABLED', () => {
-    expect(ruminationFn).toContain('consciousness=DISABLED');
+  it('consciousness DB DISABLED 时 detail 包含 consciousness=DISABLED(db)', () => {
+    expect(ruminationFn).toContain('consciousness=DISABLED(db)');
     expect(ruminationFn).toContain('consciousnessEnabled');
+  });
+
+  it('consciousness env override 时 detail 包含 consciousness=DISABLED(env)', () => {
+    expect(ruminationFn).toContain('consciousness=DISABLED(env)');
+    expect(ruminationFn).toContain("process.env.CONSCIOUSNESS_ENABLED");
+  });
+
+  it('MINIMAL_MODE=true 时 loop_dead context 包含 MINIMAL_MODE=true', () => {
+    expect(ruminationFn).toContain('MINIMAL_MODE=true');
+    expect(ruminationFn).toContain('process.env.BRAIN_MINIMAL_MODE');
   });
 });
 
