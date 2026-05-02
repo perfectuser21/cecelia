@@ -113,3 +113,37 @@ describe('GET /api/brain/langfuse/recent', () => {
     expect(body.error).toBe('credentials_missing');
   });
 });
+
+describe('GET /api/brain/langfuse/trace/:id', () => {
+  const TRACE_ID = 'trace-abc-123';
+  const FAKE_TRACE = { id: TRACE_ID, name: 'llm-call', input: 'hello', output: 'world', latency: 1234 };
+  const FAKE_OBS = [{ id: 'obs-1', name: 'span-1', type: 'SPAN', startTime: '2026-04-30T10:00:00Z' }];
+
+  it('成功路径：返回 success:true + data.trace + data.observations', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => FAKE_TRACE })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: FAKE_OBS }) });
+    const { status, body } = await callApi(`/api/brain/langfuse/trace/${TRACE_ID}`);
+    expect(status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.trace).toMatchObject({ id: TRACE_ID, name: 'llm-call' });
+    expect(Array.isArray(body.data.observations)).toBe(true);
+    expect(body.data.observations).toHaveLength(1);
+  });
+
+  it('Langfuse 不可达：fail-soft 返回 success:false', async () => {
+    vi.spyOn(global, 'fetch').mockRejectedValue(new Error('ETIMEDOUT'));
+    const { status, body } = await callApi(`/api/brain/langfuse/trace/${TRACE_ID}`);
+    expect(status).toBe(200);
+    expect(body.success).toBe(false);
+    expect(body.data).toBeNull();
+  });
+
+  it('凭据缺失：fail-soft 返回 credentials_missing', async () => {
+    _setConfigForTesting(null);
+    const { status, body } = await callApi(`/api/brain/langfuse/trace/${TRACE_ID}`);
+    expect(status).toBe(200);
+    expect(body.success).toBe(false);
+    expect(body.error).toBe('credentials_missing');
+  });
+});
