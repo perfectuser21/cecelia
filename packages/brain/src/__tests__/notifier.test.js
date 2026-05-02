@@ -462,6 +462,34 @@ describe('Notifier', () => {
     });
   });
 
+  // ─── Bark 通知渠道 ───
+  describe('Bark 通知渠道', () => {
+    it('BARK_TOKEN 已配置时，notifyCircuitOpen 同时调用 Bark API', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({ code: 200 }) });
+      const mod = await loadNotifier({ BARK_TOKEN: 'test-bark-token' });
+
+      await mod.notifyCircuitOpen({ key: 'cecelia-run', failures: 4 });
+
+      const barkCall = mockFetch.mock.calls.find(([url]) =>
+        typeof url === 'string' && url.includes('api.day.app')
+      );
+      expect(barkCall).toBeDefined();
+      expect(barkCall[0]).toContain('test-bark-token');
+    });
+
+    it('BARK_TOKEN 未配置时，不调用 Bark API', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      const mod = await loadNotifier({});
+
+      await mod.notifyCircuitOpen({ key: 'cecelia-run', failures: 3 });
+
+      const barkCall = mockFetch.mock.calls.find(([url]) =>
+        typeof url === 'string' && url.includes('api.day.app')
+      );
+      expect(barkCall).toBeUndefined();
+    });
+  });
+
   // ─── 导出完整性检查 ───
   describe('模块导出', () => {
     it('导出所有预期的函数和常量', async () => {
