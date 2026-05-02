@@ -18,7 +18,7 @@ import {
   dispatchToDevSkill,
 } from './auto-fix.js';
 import { raise } from './alerting.js';
-import { isConsciousnessEnabled } from './consciousness-guard.js';
+import { isConsciousnessEnabled, setConsciousnessEnabled, getConsciousnessStatus } from './consciousness-guard.js';
 
 // ============================================================
 // Configuration
@@ -384,6 +384,38 @@ async function probeRumination() {
       }
     } catch (e) {
       console.warn('[capability-probe] tick_last lookup failed (non-blocking):', e.message);
+    }
+
+    // loop_dead 自愈：
+    //   A. consciousness 被 DB 禁用（非 env override、非 minimal_mode 人工开关）→ 自动重新启用
+    //   B. consciousness 已启用 + minimal_mode 未设 → 直接调用 runRumination 解堵
+    // env_override 或 minimal_mode 为人工开关，不自动覆盖
+    const envOverride = getConsciousnessStatus().env_override;
+    if (!envOverride && !minimalMode) {
+      const consEnabled = isConsciousnessEnabled();
+      if (!consEnabled) {
+        // Case A: consciousness 被 DB 禁用，非 env override → 自动恢复
+        try {
+          await setConsciousnessEnabled(pool, true);
+          loopDeadContext += ' self_heal=consciousness_reenabled';
+          console.log('[Probe] rumination loop_dead self-heal: consciousness re-enabled via DB');
+        } catch (healErr) {
+          loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
+          console.warn('[Probe] rumination self-heal failed:', healErr.message);
+        }
+      } else {
+        // Case B: consciousness 已启用但 runRumination 未被调用 → 直接运行解堵
+        try {
+          const { runRumination } = await import('./rumination.js');
+          const healResult = await runRumination(pool);
+          const healDigested = healResult?.digested ?? 0;
+          loopDeadContext += ` self_heal=direct_run digested=${healDigested}`;
+          console.log(`[Probe] rumination loop_dead self-heal: direct_run digested=${healDigested}`);
+        } catch (healErr) {
+          loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
+          console.warn('[Probe] rumination self-heal direct_run failed:', healErr.message);
+        }
+      }
     }
   }
 
