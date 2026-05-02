@@ -35,12 +35,12 @@ describe('cleanupStaleClaims', () => {
       // Call 2 (was Call 1): SELECT 返回 2 行 stale
       .mockResolvedValueOnce({
         rows: [
-          { id: 101, claimed_by: 'brain-tick-1', claimed_at: new Date('2020-01-01').toISOString() },
-          { id: 102, claimed_by: 'brain-tick-2', claimed_at: null },
+          { id: 'a1b2c3d4-0001-0000-0000-000000000001', claimed_by: 'brain-tick-1', claimed_at: new Date('2020-01-01').toISOString() },
+          { id: 'a1b2c3d4-0001-0000-0000-000000000002', claimed_by: 'brain-tick-2', claimed_at: null },
         ],
       })
       // Call 3 (was Call 2): UPDATE 返回 rowCount=2
-      .mockResolvedValueOnce({ rowCount: 2, rows: [{ id: 101 }, { id: 102 }] });
+      .mockResolvedValueOnce({ rowCount: 2, rows: [{ id: 'a1b2c3d4-0001-0000-0000-000000000001' }, { id: 'a1b2c3d4-0001-0000-0000-000000000002' }] });
 
     const result = await cleanupStaleClaims({ query: mockQuery }, { staleMinutes: 60 });
 
@@ -60,7 +60,7 @@ describe('cleanupStaleClaims', () => {
     expect(updateSql).toMatch(/UPDATE tasks/i);
     expect(updateSql).toMatch(/claimed_by = NULL/);
     expect(updateSql).toMatch(/claimed_at = NULL/);
-    expect(updateArgs[0]).toEqual([101, 102]);
+    expect(updateArgs[0]).toEqual(['a1b2c3d4-0001-0000-0000-000000000001', 'a1b2c3d4-0001-0000-0000-000000000002']);
   });
 
   it('SELECT 返回空 → cleaned=0 且不触发 UPDATE', async () => {
