@@ -8,7 +8,7 @@
 # 更新: 2026-04-14 — CI 失败计数器：.dev-mode 新增 ci_fix_count 字段，>=3 次切 systematic-debugging
 # 更新: 2026-04-11 — 职责分离���条件 6 自动合并后调用 cleanup.sh（与条件 5 一致），文档面不再负责合并/清理
 # 更新: 2026-04-11 — v4.3.0 单一出口原则：删除 ready_to_merge 中间状态，CI 通过 + step4 done 直接自动合并；CI in_progress 不输出 action 字段
-#
+# 更新: 2026-05-02 — v4.6.0 单一 exit 0：删除 harness 快速通道 return 0，harness 统一走 CI 等待 + auto-merge
 # 4-Stage Pipeline 条件顺序:
 #   0. harness_mode 预检 → 若 harness_mode=true，跳过 cleanup_done 通用早退
 #   0.1 cleanup_done → exit 0（非 harness 唯一出口；harness 由 0.5 控制）
@@ -173,12 +173,9 @@ devloop_check() {
             return 2
         fi
 
-        # Harness 模式: 代码写完 + PR 已创建 → 开启 auto-merge → done
+        # Harness 模式: 代码写完 + PR 已创建 → 开启 auto-merge，继续等待 CI + merge
+        # 单一 exit 0 原则：不提前退出，继续走条件 4（CI 等待）→ 条件 6（自动 merge）
         gh pr merge "$_h_pr" --squash --auto 2>/dev/null || true
-        _mark_cleanup_done "$dev_mode_file"
-        _devloop_jq -n --arg pr "$_h_pr" \
-            '{"status":"done","reason":"[Harness] 代码完成 + PR #\($pr) 已创建（auto-merge 已开启），session 结束，Brain 将派 Evaluator 验证"}'
-        return 0
     fi
 
     # ===== 条件 1: step_1_spec =====
@@ -202,7 +199,8 @@ devloop_check() {
     fi
 
     # ===== 条件 2.6: DoD 完整性检查 =====
-    if [[ -f "$dev_mode_file" ]]; then
+    # harness 模式跳过 DoD 检查（harness 任务不要求填写 DoD）
+    if [[ "$_harness_mode" != "true" ]] && [[ -f "$dev_mode_file" ]]; then
         local _task_card_rel _worktree_root _task_card_abs _dod_unchecked
         _task_card_rel=$(grep "^task_card:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "")
         _worktree_root=$(dirname "$dev_mode_file")
@@ -305,9 +303,9 @@ devloop_check() {
         local step_4_status
         step_4_status=$(_get_step4_status "$dev_mode_file")
 
-        if [[ "$step_4_status" == "done" ]]; then
+        if [[ "$step_4_status" == "done" ]] || [[ "$_harness_mode" == "true" ]]; then
             _mark_cleanup_done "$dev_mode_file"
-            _devloop_jq -n '{"status":"done","reason":"Stage 4 Ship 已完成，cleanup_done 已标记，工作流结束"}'
+            _devloop_jq -n '{"status":"done","reason":"PR 已合并，工作流结束"}'
             return 0
         else
             local _cleanup_script=""
@@ -337,7 +335,8 @@ devloop_check() {
     local step_4_status
     step_4_status=$(_get_step4_status "$dev_mode_file")
 
-    if [[ "$step_4_status" != "done" ]]; then
+    # harness 模式跳过 step_4_ship 要求（harness 任务不写 Learning）
+    if [[ "$_harness_mode" != "true" ]] && [[ "$step_4_status" != "done" ]]; then
         _devloop_jq -n --arg pr "$pr_number" \
             '{"status":"blocked","reason":"CI 通过，Stage 4 Ship 未完成（合并前必须先写 Learning）","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4，写 Learning + 合并 PR #\($pr)。禁止询问用户。"}'
         return 2
