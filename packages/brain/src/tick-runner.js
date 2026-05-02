@@ -99,6 +99,7 @@ import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { runDailySmoke } from './cron/daily-real-business-smoke.js';
 import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
+import { scheduleDailyBackup } from './daily-backup-scheduler.js';
 // Sprint 1: harness-watcher.js retired (Phase B/C 进 LangGraph，sub-graph poll_ci 自管)
 // processHarnessCiWatchers / processHarnessDeployWatchers 不再使用
 import {
@@ -1668,6 +1669,10 @@ async function executeTick() {
   // 10.21 凭据健康巡检（每天北京时间 03:00 = UTC 19:00，检查 NotebookLM/Claude OAuth/Codex/发布器，fire-and-forget）
   Promise.resolve().then(() => runCredentialsHealthCheck(pool))
     .catch(e => console.warn('[tick] 凭据健康巡检失败:', e.message));
+
+  // 10.22 每日 DB 备份调度（北京时间 02:00 = UTC 18:00，创建 trigger_backup 任务，幂等，fire-and-forget）
+  Promise.resolve().then(() => scheduleDailyBackup(pool))
+    .catch(e => console.warn('[tick] 每日备份调度失败:', e.message));
 
   } // end !MINIMAL_MODE (10.x 所有自动调度)
 
