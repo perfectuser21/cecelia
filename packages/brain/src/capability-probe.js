@@ -18,7 +18,7 @@ import {
   dispatchToDevSkill,
 } from './auto-fix.js';
 import { raise } from './alerting.js';
-import { isConsciousnessEnabled } from './consciousness-guard.js';
+import { isConsciousnessEnabled, setConsciousnessEnabled, getConsciousnessStatus } from './consciousness-guard.js';
 
 // ============================================================
 // Configuration
@@ -385,6 +385,38 @@ async function probeRumination() {
     } catch (e) {
       console.warn('[capability-probe] tick_last lookup failed (non-blocking):', e.message);
     }
+
+    // loop_dead 自愈：
+    //   A. consciousness 被 DB 禁用（非 env override、非 minimal_mode 人工开关）→ 自动重新启用
+    //   B. consciousness 已启用 + minimal_mode 未设 → 直接调用 runRumination 解堵
+    // env_override 或 minimal_mode 为人工开关，不自动覆盖
+    const envOverride = getConsciousnessStatus().env_override;
+    if (!envOverride && !minimalMode) {
+      const consEnabled = isConsciousnessEnabled();
+      if (!consEnabled) {
+        // Case A: consciousness 被 DB 禁用，非 env override → 自动恢复
+        try {
+          await setConsciousnessEnabled(pool, true);
+          loopDeadContext += ' self_heal=consciousness_reenabled';
+          console.log('[Probe] rumination loop_dead self-heal: consciousness re-enabled via DB');
+        } catch (healErr) {
+          loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
+          console.warn('[Probe] rumination self-heal failed:', healErr.message);
+        }
+      } else {
+        // Case B: consciousness 已启用但 runRumination 未被调用 → 直接运行解堵
+        try {
+          const { runRumination } = await import('./rumination.js');
+          const healResult = await runRumination(pool);
+          const healDigested = healResult?.digested ?? 0;
+          loopDeadContext += ` self_heal=direct_run digested=${healDigested}`;
+          console.log(`[Probe] rumination loop_dead self-heal: direct_run digested=${healDigested}`);
+        } catch (healErr) {
+          loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
+          console.warn('[Probe] rumination self-heal direct_run failed:', healErr.message);
+        }
+      }
+    }
   }
 
   return {
@@ -431,6 +463,19 @@ async function probeSelfDriveHealth() {
   // no_action      = LLM 正常运行但判断无需行动（系统健康，不误判为失败）
   // cycle_complete = LLM 正常运行并做出决策（tasks_created 可以是 0）
   // loop_started   = Brain 启动心跳（首次 cycle 还未运行时的宽限期凭据）
+
+  // Consciousness guard: self-drive is intentionally inactive when consciousness is disabled.
+  // Reporting ok:false here would cause an endless auto-fix loop since the loop will
+  // never generate events while disabled. Return ok:true with an informative detail instead.
+  if (!isConsciousnessEnabled()) {
+    const status = getConsciousnessStatus();
+    const source = status.env_override ? 'env_override' : 'db';
+    return {
+      ok: true,
+      detail: `24h: consciousness_disabled(${source}) — self-drive intentionally inactive`,
+    };
+  }
+
   const result = await pool.query(
     `SELECT
        count(*) filter (where payload->>'subtype' IN ('cycle_complete', 'no_action')) AS success_cnt,
@@ -847,11 +892,10 @@ export function startProbeLoop() {
 
   console.log(`[Probe] Starting capability probe loop (interval: ${PROBE_INTERVAL_MS / 1000}s)`);
 
-  // Run first cycle after 30s (let Brain fully start)
-  setTimeout(() => {
-    runProbeCycle();
-    _probeTimer = setInterval(runProbeCycle, PROBE_INTERVAL_MS);
-  }, 30_000);
+  // Establish setInterval immediately so the loop survives a hung first cycle.
+  // If the 30s initial run hangs, the 1h interval keeps ticking regardless.
+  _probeTimer = setInterval(runProbeCycle, PROBE_INTERVAL_MS);
+  setTimeout(runProbeCycle, 30_000);
 }
 
 /**
