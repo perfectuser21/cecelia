@@ -1,12 +1,12 @@
-# PRD: brain-test-pyramid Layer 3 PR3 — Cross-Domain Routing 集成测试
+# PRD: brain-test-pyramid Layer 3 PR2 — Learning Loop 集成测试
 
 ## 目标
-为跨域路由添加集成测试：pending-actions 生命周期（DB 直写）+ intent/match 自然语言路由到 OKR。
+为知识留存 learning loop 添加集成测试：design-doc 日志持久化 + strategic-decision 创建 + decisions/match 召回。
 
 ## 背景
-Brain 的跨域路由核心：pending-actions 用于人机协作的动作审批流，intent/match 用于自然语言映射到 OKR 目标。两者均无集成测试覆盖。
+Brain 的知识留存路径：POST design-doc 记录学习 → POST strategic-decision 固化决策 → POST decisions/match 召回约束。此路径无集成测试，任何 DB 字段变更或 matchDecisions 逻辑修改都可能静默破坏知识检索。
 
 ## 成功标准
-- pending-actions 创建/拒绝状态流转正确，拒绝后不可再次拒绝
-- intent/match 自然语言查询能匹配到相关 OKR 记录
-- 空 query / 缺字段 → 400
+- design-doc POST/GET/list 全链路验证
+- decision 创建后可被 matchDecisions 按 topic 关键词召回
+- 参数校验返回 400
