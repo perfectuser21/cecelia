@@ -30,12 +30,16 @@ describe('cleanupStaleClaims uuid[] 类型修正', () => {
 
   it('UPDATE 使用 uuid[] 而非 int[]', async () => {
     const queryMock = vi.fn()
+      // Call 1: self-PID UPDATE → 0 rows（当前 test 关注的 stale 是 brain-tick-1，非 self）
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      // Call 2: SELECT → 1 row stale（非 self-PID）
       .mockResolvedValueOnce({
         rows: [
           { id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', claimed_by: 'brain-tick-1', claimed_at: null },
         ],
       })
-      .mockResolvedValueOnce({ rowCount: 1 });
+      // Call 3: UPDATE → 1 row
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
 
     const pool = { query: queryMock };
     const stats = await cleanupStaleClaims(pool, { staleMinutes: 60 });
@@ -43,8 +47,8 @@ describe('cleanupStaleClaims uuid[] 类型修正', () => {
     expect(stats.errors).toEqual([]);
     expect(stats.cleaned).toBe(1);
 
-    // 第二次 query（UPDATE）SQL 应为 uuid[]，不是 int[]
-    const updateCall = queryMock.mock.calls[1];
+    // 第三次 query（UPDATE）SQL 应为 uuid[]，不是 int[]
+    const updateCall = queryMock.mock.calls[2];
     const sql = updateCall[0];
     expect(sql).toContain('uuid[]');
     expect(sql).not.toContain('int[]');
@@ -57,10 +61,14 @@ describe('cleanupStaleClaims uuid[] 类型修正', () => {
   });
 
   it('无 stale claim 时不调用 UPDATE', async () => {
-    const queryMock = vi.fn().mockResolvedValueOnce({ rows: [] });
+    const queryMock = vi.fn()
+      // Call 1: self-PID UPDATE → 0 rows
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      // Call 2: SELECT → empty
+      .mockResolvedValueOnce({ rows: [] });
     const pool = { query: queryMock };
     const stats = await cleanupStaleClaims(pool);
-    expect(queryMock).toHaveBeenCalledTimes(1); // 只 SELECT
+    expect(queryMock).toHaveBeenCalledTimes(2); // self-PID UPDATE + SELECT
     expect(stats.cleaned).toBe(0);
   });
 });
