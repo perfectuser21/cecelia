@@ -59,6 +59,7 @@ function createMockPool() {
 
 function setupIdleAndLearnings(learnings) {
   mockQuery
+    .mockResolvedValueOnce({ rows: [] }) // rumination_invoke INSERT（result ignored）
     .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
     .mockResolvedValueOnce({ rows: learnings }); // learnings query
 

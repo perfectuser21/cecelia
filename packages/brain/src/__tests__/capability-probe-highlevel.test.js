@@ -99,6 +99,7 @@ describe('self_drive_health probe logic', () => {
         error_cnt: '0',
         last_success: null,
         total_tasks_created: '0',
+        last_loop_started: null,
       }],
     });
 
@@ -106,5 +107,65 @@ describe('self_drive_health probe logic', () => {
     const probe = PROBES.find(p => p.name === 'self_drive_health');
     const result = await probe.fn();
     expect(result.ok).toBe(false);
+  });
+
+  it('should return ok:true when loop_started within 6h and no errors (grace period)', async () => {
+    // loop_started 30 分钟前，无 cycle → ok: true（宽限期，等待首次 cycle）
+    const recentStart = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: recentStart,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('awaiting_first_cycle');
+  });
+
+  it('should return ok:false when loop_started within 6h but has errors', async () => {
+    // loop_started 10 分钟前，但已有 cycle_error → 宽限期不宽恕错误，探针应失败
+    const recentStart = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '2',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: recentStart,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('errors=2');
+  });
+
+  it('should return ok:false when loop_started over 6h ago with no cycles (truly stuck)', async () => {
+    // loop_started 7 小时前，无 cycle → 超过宽限期，探针应失败
+    const oldStart = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString();
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: oldStart,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('successful_cycles=0');
   });
 });

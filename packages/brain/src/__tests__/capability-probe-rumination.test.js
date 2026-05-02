@@ -1,9 +1,11 @@
 /**
  * BEHAVIOR test: capability-probe.js probeRumination 心跳检查逻辑
- * 验证 probeRumination 阶段 4：心跳事件区分 loop_dead vs degraded_llm_failure
+ * 验证 probeRumination 阶段 4：心跳事件区分 loop_dead vs degraded_llm_failure vs invoke_no_digest
  *
- * 背景：PROBE_FAIL_RUMINATION 的根因是 LLM 全失败导致 rumination 循环看起来"死了"，
- * 但其实循环本身在跑，只是没有 insight 产出。心跳事件让 probe 能区分两种状态。
+ * 背景：PROBE_FAIL_RUMINATION 存在三种故障模式：
+ * 1. loop_dead        — runRumination 完全未被调用（consciousness 禁用 / tick 停止）
+ * 2. invoke_no_digest — runRumination 被调用但未进入 digestLearnings（无 items / 提前返回）
+ * 3. degraded_llm_failure — digestLearnings 跑了但 LLM 全失败，无 insight 产出
  */
 
 import { describe, it, expect } from 'vitest';
@@ -31,8 +33,40 @@ describe('probeRumination — 心跳事件区分 dead vs degraded', () => {
     expect(ruminationFn).toContain('degraded_llm_failure');
   });
 
-  it('心跳 == 0 时 livenessTag 标为 loop_dead', () => {
+  it('invoke > 0 且 heartbeat == 0 时 livenessTag 标为 invoke_no_digest', () => {
+    expect(ruminationFn).toContain('invoke_no_digest');
+  });
+
+  it('invoke == 0 且 heartbeat == 0 时 livenessTag 标为 loop_dead', () => {
     expect(ruminationFn).toContain('loop_dead');
+  });
+});
+
+describe('probeRumination — invoke 心跳（区分"未调用"与"无 items"）', () => {
+  it('查询 rumination_invoke 事件（24h 窗口）', () => {
+    expect(ruminationFn).toContain("event_type = 'rumination_invoke'");
+    expect(ruminationFn).toContain('recentInvocations');
+  });
+
+  it('失败 detail 包含 invocations_24h 字段', () => {
+    expect(ruminationFn).toContain('invocations_24h=');
+  });
+});
+
+describe('probeRumination — loop_dead 时透出 consciousness + tick 状态', () => {
+  it('loop_dead 分支查询 consciousness_enabled working_memory 键', () => {
+    expect(ruminationFn).toContain("key = 'consciousness_enabled'");
+    expect(ruminationFn).toContain('consciousness=');
+  });
+
+  it('loop_dead 分支查询 tick_last 以获取上次 tick 时间', () => {
+    expect(ruminationFn).toContain("key = 'tick_last'");
+    expect(ruminationFn).toContain('last_tick=');
+  });
+
+  it('consciousness DISABLED 时 detail 包含 consciousness=DISABLED', () => {
+    expect(ruminationFn).toContain('consciousness=DISABLED');
+    expect(ruminationFn).toContain('consciousnessEnabled');
   });
 });
 

@@ -72,6 +72,7 @@ beforeEach(() => {
  */
 function setupForFallback(archiveRows) {
   mockQuery
+    .mockResolvedValueOnce({ rows: [] })                                   // 0. rumination_invoke INSERT（result ignored）
     .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // 1. idle check
     .mockResolvedValueOnce({ rows: [sampleLearning] })                     // 2. learnings query
     .mockResolvedValueOnce({ rows: [] })                                   // 3. rumination_run heartbeat INSERT
@@ -127,6 +128,7 @@ describe('Rumination fallback — synthesis_archive 历史上下文注入（P0 �
     });
 
     mockQuery
+      .mockResolvedValueOnce({ rows: [] })                                   // 0. rumination_invoke INSERT（result ignored）
       .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // 1. idle check
       .mockResolvedValueOnce({ rows: [sampleLearning] })                     // 2. learnings query
       .mockResolvedValueOnce({ rows: [] })                                   // 3. rumination_run heartbeat INSERT

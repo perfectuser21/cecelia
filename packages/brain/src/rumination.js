@@ -624,6 +624,18 @@ export async function runRumination(dbPool) {
     return { skipped: 'cooldown', digested: 0, insights: [] };
   }
 
+  // 调用心跳：冷却期过后每次进入核心逻辑都记录一次
+  // 供 probe 区分"consciousness 禁用/tick 未调用"（invoke=0）与"调用了但无 items"（invoke>0 但 run=0）
+  try {
+    await db.query(
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('rumination_invoke', 'rumination', $1::jsonb)`,
+      [JSON.stringify({ ts: new Date().toISOString() })]
+    );
+  } catch (invErr) {
+    console.warn('[rumination] invoke heartbeat failed (non-blocking):', invErr.message);
+  }
+
   // 软限制：系统繁忙时降低反刍批量（但不完全跳过）
   let busyMultiplier = 1;
   try {
