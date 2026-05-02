@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockQuery = vi.fn();
+const mockIsConsciousnessEnabled = vi.fn(() => true);
+const mockGetConsciousnessStatus = vi.fn(() => ({ enabled: true, env_override: false, last_toggled_at: null }));
 
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
@@ -10,6 +12,16 @@ vi.mock('../executor.js', () => ({ getActiveProcessCount: vi.fn(() => 0), MAX_SE
 vi.mock('../alerting.js', () => ({ sendAlert: vi.fn() }));
 vi.mock('../cortex.js', () => ({ performRCA: vi.fn() }));
 vi.mock('../monitor-loop.js', () => ({ getMonitorStatus: vi.fn(() => ({ running: true, interval_ms: 30000 })) }));
+vi.mock('../consciousness-guard.js', () => ({
+  isConsciousnessEnabled: () => mockIsConsciousnessEnabled(),
+  getConsciousnessStatus: () => mockGetConsciousnessStatus(),
+  setConsciousnessEnabled: vi.fn(),
+  initConsciousnessGuard: vi.fn(),
+  logStartupDeclaration: vi.fn(),
+  _resetCacheForTest: vi.fn(),
+  _resetDeprecationWarn: vi.fn(),
+  GUARDED_MODULES: [],
+}));
 
 describe('capability-probe high-level probes', () => {
   it('should include rumination, evolution, consolidation, self_drive_health probes', async () => {
@@ -31,6 +43,12 @@ describe('self_drive_health probe logic', () => {
   beforeEach(() => {
     vi.resetModules();
     mockQuery.mockReset();
+    mockIsConsciousnessEnabled.mockReturnValue(true);
+    mockGetConsciousnessStatus.mockReturnValue({ enabled: true, env_override: false, last_toggled_at: null });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('should return ok:true when cycle_complete events exist in 24h', async () => {
@@ -167,5 +185,47 @@ describe('self_drive_health probe logic', () => {
     const result = await probe.fn();
     expect(result.ok).toBe(false);
     expect(result.detail).toContain('successful_cycles=0');
+  });
+
+  it('should return ok:true when consciousness is disabled via env (self-drive intentionally inactive)', async () => {
+    // CONSCIOUSNESS_ENABLED=false → self-drive 从不启动，探针不应触发 auto-fix 循环
+    mockIsConsciousnessEnabled.mockReturnValue(false);
+    mockGetConsciousnessStatus.mockReturnValue({ enabled: false, env_override: true, last_toggled_at: null });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('consciousness_disabled');
+    expect(result.detail).toContain('env_override');
+    // 不应进行 DB 查询（probe 在 consciousness 检查后立即返回）
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('should return ok:true when consciousness is disabled via DB (self-drive intentionally inactive)', async () => {
+    // DB 存储的 consciousness=false → 同上，探针应通过
+    mockIsConsciousnessEnabled.mockReturnValue(false);
+    mockGetConsciousnessStatus.mockReturnValue({ enabled: false, env_override: false, last_toggled_at: null });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('consciousness_disabled');
+    expect(result.detail).toContain('db');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('startProbeLoop should establish setInterval before first cycle (loop survives hung first run)', async () => {
+    // 验证 startProbeLoop 修复：setInterval 应在 setTimeout 之前建立
+    // 即使首次 cycle 挂起，_probeTimer 也已设置，后续探测可继续
+    vi.useFakeTimers();
+    const { startProbeLoop, getProbeStatus } = await import('../capability-probe.js');
+
+    startProbeLoop();
+    // setInterval 应立即建立（不等 30s 初始延迟）
+    expect(getProbeStatus().running).toBe(true);
+
+    vi.useRealTimers();
   });
 });
