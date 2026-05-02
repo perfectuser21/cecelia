@@ -50,7 +50,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (actionIds.length) {
-    await pool.query('DELETE FROM pending_actions WHERE id = ANY($1::bigint[])', [actionIds]);
+    await pool.query('DELETE FROM pending_actions WHERE id = ANY($1::uuid[])', [actionIds]);
   }
   if (objId) {
     await pool.query('DELETE FROM objectives WHERE id = $1', [objId]);
