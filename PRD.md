@@ -1,28 +1,17 @@
-# PRD: OKR KR 进度更新 Integration Test
-
-**Brain Task**: b718ac29-d685-4c35-83e9-751a688dd1d7  
-**PR Series**: brain-test-pyramid 第 4 个 PR
+# PRD — brain-test-pyramid L2 PR3: tenant-onboarding integration test
 
 ## 背景
-
-OKR 模块只有 unit test，缺少"通过 API 更新 KR 进度并验证变更真正写入 DB"的 integration test。
+okr_projects（项目/租户命名空间）生命周期操作缺少 integration test，无法验证真实 DB 持久化和状态流转。
 
 ## 目标
-
-为 `PATCH /api/brain/okr/key-results/:id` + `GET /api/brain/okr/current` 写完整 integration test，验证进度更新端到端持久化。
+为 okr_projects 表写完整生命周期 integration test：INSERT → SELECT → UPDATE status → upsert 幂等 → 软删除（archived），验证每步真实写入 PostgreSQL。
 
 ## 成功标准
 
-### DoD
-
-- [x] [BEHAVIOR] 测试文件存在且覆盖 GET → PATCH → GET 进度验证链路
-  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js')"
-
-- [x] [BEHAVIOR] 测试包含 progress_pct 验证（非端点存活，行为级）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js','utf8');if(!c.includes('progress_pct'))process.exit(1)"
-
-- [x] [BEHAVIOR] afterAll 严格清理（DELETE FROM objectives）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js','utf8');if(!c.includes('DELETE FROM objectives'))process.exit(1)"
-
-- [x] [BEHAVIOR] Brain 不可达时测试自动 skip（brainAvailable guard）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/okr-progress-sync.integration.test.js','utf8');if(!c.includes('brainAvailable'))process.exit(1)"
+- [ ] tenant-onboarding.integration.test.js 存在于 packages/brain/src/__tests__/integration/
+- [ ] INSERT okr_projects，DB 直查字段正确持久化
+- [ ] SELECT 列表查询返回新建项目
+- [ ] UPDATE status 状态变更持久化到 DB
+- [ ] upsert 操作幂等（重复执行不报错，字段正确更新）
+- [ ] 软删除（status=archived）后从活跃列表消失
+- [ ] afterAll 清理自身创建的 okr_projects 数据
