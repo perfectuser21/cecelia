@@ -129,6 +129,9 @@ export async function runSelfDrive() {
 
     if (!probeResults && !scanResults) {
       console.log('[SelfDrive] No probe/scan data yet, skipping');
+      // Record no_action so self_drive_health probe counts this cycle as healthy
+      // (loop is running but has no data to act on — not a failure)
+      await recordEvent('no_action', { reason: 'no_probe_scan_data' });
       return { actions: [], reason: 'no_data' };
     }
 
