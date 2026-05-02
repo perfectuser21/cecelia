@@ -18,6 +18,7 @@ import {
   dispatchToDevSkill,
 } from './auto-fix.js';
 import { raise } from './alerting.js';
+import { isConsciousnessEnabled } from './consciousness-guard.js';
 
 // ============================================================
 // Configuration
@@ -358,13 +359,12 @@ async function probeRumination() {
         `SELECT value_json FROM working_memory WHERE key = 'consciousness_enabled' LIMIT 1`
       );
       const consciousnessVal = consciousnessRows[0]?.value_json;
-      // env var 优先级高于 DB（与 isConsciousnessEnabled() 逻辑对齐）
-      const envOff = process.env.CONSCIOUSNESS_ENABLED === 'false' || process.env.BRAIN_QUIET_MODE === 'true';
-      const consciousnessEnabled = !envOff && (consciousnessVal?.enabled !== false);
+      const consciousnessEnabled = isConsciousnessEnabled();
       if (consciousnessEnabled) {
         loopDeadContext += ' consciousness=enabled';
       } else {
-        const source = envOff ? '(env_override)' : '(db)';
+        const dbEnabled = consciousnessVal?.enabled !== false;
+        const source = !dbEnabled ? '(db)' : '(env_override)';
         loopDeadContext += ` consciousness=DISABLED${source}`;
       }
     } catch (e) {
