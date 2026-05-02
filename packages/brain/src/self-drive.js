@@ -729,7 +729,31 @@ async function recordEvent(subtype, payload) {
 // Scheduled loop
 // ============================================================
 
+export const CYCLE_SAFETY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes — kill hanging cycles
+
 let _driveTimer = null;
+
+// Wrap runSelfDrive() with a safety timeout so a hanging cycle never blocks
+// the loop from continuing. Records cycle_error if timeout fires.
+async function runCycleWithSafetyNet() {
+  let safetyTimer;
+  try {
+    await Promise.race([
+      runSelfDrive(),
+      new Promise((_, reject) => {
+        safetyTimer = setTimeout(
+          () => reject(new Error('safety_net: cycle timed out')),
+          CYCLE_SAFETY_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } catch (err) {
+    console.error(`[SelfDrive] Safety net triggered: ${err.message}`);
+    await recordEvent('cycle_error', { error: err.message });
+  } finally {
+    clearTimeout(safetyTimer);
+  }
+}
 
 export async function startSelfDriveLoop() {
   if (_driveTimer) {
@@ -744,17 +768,21 @@ export async function startSelfDriveLoop() {
 
   console.log(`[SelfDrive] Starting self-drive loop (interval: ${_currentIntervalMs / 1000 / 60}min, max_tasks: ${_currentMaxTasks})`);
 
+  await recordEvent('loop_started', { interval_ms: _currentIntervalMs, max_tasks: _currentMaxTasks });
+
+  // Establish setInterval immediately so getSelfDriveStatus().running is true
+  // before the first cycle fires. This prevents the loop dying if the initial
+  // cycle hangs — the interval keeps ticking regardless.
+  _driveTimer = setInterval(async () => {
+    // Re-read config each cycle (hot-reload from DB)
+    const cfg = await getConfig();
+    _currentIntervalMs = cfg.intervalMs;
+    _currentMaxTasks = cfg.maxTasks;
+    await runCycleWithSafetyNet();
+  }, _currentIntervalMs);
+
   // First run after 2 minutes (let probe/scan populate first)
-  setTimeout(async () => {
-    await runSelfDrive();
-    _driveTimer = setInterval(async () => {
-      // Re-read config each cycle (hot-reload from DB)
-      const cfg = await getConfig();
-      _currentIntervalMs = cfg.intervalMs;
-      _currentMaxTasks = cfg.maxTasks;
-      await runSelfDrive();
-    }, _currentIntervalMs);
-  }, 2 * 60 * 1000);
+  setTimeout(runCycleWithSafetyNet, 2 * 60 * 1000);
 }
 
 export function getSelfDriveStatus() {

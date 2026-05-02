@@ -180,3 +180,21 @@ server.listen(PORT, () => {
   console.log(`Brain target: http://localhost:${BRAIN_PORT}`);
   console.log(`Static dir: ${STATIC_DIR}`);
 });
+
+// Langfuse TCP tunnel: port 3001 → 100.86.118.99:3000
+const LANGFUSE_HOST = '100.86.118.99';
+const LANGFUSE_PORT = 3000;
+const LANGFUSE_PROXY_PORT = 3001;
+
+const langfuseTunnel = net.createServer((clientSocket) => {
+  const targetSocket = net.createConnection(LANGFUSE_PORT, LANGFUSE_HOST, () => {
+    clientSocket.pipe(targetSocket);
+    targetSocket.pipe(clientSocket);
+  });
+  targetSocket.on('error', () => clientSocket.destroy());
+  clientSocket.on('error', () => targetSocket.destroy());
+});
+
+langfuseTunnel.listen(LANGFUSE_PROXY_PORT, () => {
+  console.log(`Langfuse tunnel: http://localhost:${LANGFUSE_PROXY_PORT} → http://${LANGFUSE_HOST}:${LANGFUSE_PORT}`);
+});

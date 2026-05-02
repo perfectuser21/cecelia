@@ -70,6 +70,7 @@ function createMockPool() {
 
 function setupIdleAndLearnings(pool, learnings) {
   mockQuery
+    .mockResolvedValueOnce({ rows: [] }) // rumination_invoke INSERT（result ignored）
     .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
     .mockResolvedValueOnce({ rows: learnings }); // learnings query
 
@@ -162,6 +163,7 @@ describe('rumination', () => {
     it('系统繁忙时降低反刍批量（软限制，不再完全跳过）', async () => {
       // 繁忙时：busyMultiplier=0.4，但仍继续执行（返回 no_undigested 或实际消化）
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // rumination_invoke INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '2', queued: '5' }] }) // isSystemIdle → busy
         .mockResolvedValueOnce({ rows: [] }); // 无未消化知识
 
@@ -184,6 +186,7 @@ describe('rumination', () => {
 
     it('无未消化知识时跳过', async () => {
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // rumination_invoke INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -193,6 +196,7 @@ describe('rumination', () => {
 
     it('queued≤3 时视为空闲', async () => {
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // rumination_invoke INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '3' }] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -202,6 +206,7 @@ describe('rumination', () => {
 
     it('queued>3 时系统繁忙，但反刍仍以较低批量继续', async () => {
       mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // rumination_invoke INSERT
         .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '4' }] }) // isSystemIdle → busy
         .mockResolvedValueOnce({ rows: [] }); // 无未消化知识
 
