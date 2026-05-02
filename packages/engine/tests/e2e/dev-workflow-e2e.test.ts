@@ -527,7 +527,7 @@ describe('devloop_check harness mode', () => {
     execSync(`chmod +x "${mockGh}"`);
   }
 
-  it('Harness 模式：step_2_code=done + mock PR 存在 → exit 0', () => {
+  it('Harness 模式：step_2_code=done + PR 存在 → exit 2（等待 CI+merge，单一 exit 0 原则，不再快速通道退出）', () => {
     const tmpBin = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-ghbin-'));
     tmpDirs.push(tmpBin);
     makeMockGh(tmpBin, '9999');
@@ -546,9 +546,10 @@ describe('devloop_check harness mode', () => {
 
     const script = `source "${DEVLOOP_CHECK}"; export PATH="${tmpBin}:$PATH"; devloop_check "${BRANCH}" "${dir}/.dev-mode.${BRANCH}"`;
     const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', cwd: dir, timeout: 10000 });
-    expect(result.status).toBe(0);
+    // v4.6.0 单一 exit 0：PR 创建后不再立即退出，harness 继续走条件 4（CI 等待）→ exit 2（blocked）
+    expect(result.status).toBe(2);
     const combined = (result.stdout || '') + (result.stderr || '');
-    expect(combined).toContain('done');
+    expect(combined).toContain('blocked');
   });
 
   it('Harness 模式：step_2_code=pending → exit 2（Stage 2 未完成）', () => {

@@ -6,6 +6,9 @@ version: "1.0.0"
 updated: "2026-04-27"
 
 changelog:
+  - version: "18.16.1"
+    date: "2026-05-02"
+    change: "devloop-check v4.6.0: 单一 exit 0，harness 统一收敛到 PR merged"
   - version: "18.16.0"
     date: "2026-04-27"
     change: "feat"
