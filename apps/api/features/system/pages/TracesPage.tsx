@@ -340,10 +340,19 @@ export default function TracesPage() {
                   </div>
                 )}
 
-                <div className="font-mono text-gray-300 text-xs break-all pt-2">
-                  {detail.trace.id}
-                </div>
-              </>
+{/* 在 Langfuse 中打开（经 TCP proxy 本机代理，无需 Tailscale） */}
+                {detail.trace.id && (
+                  <div className="pt-2 border-t">
+                    <a
+                      href={`http://${window.location.hostname}:3001/trace/${detail.trace.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 hover:underline text-xs"
+                    >
+                      在 Langfuse 中打开 ↗
+                    </a>
+                  </div>
+                )}              </>
             )}
           </div>
         </div>
