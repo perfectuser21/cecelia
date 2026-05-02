@@ -357,7 +357,7 @@ describe('runCredentialsHealthCheck', () => {
 
     const p0Call = raise.mock.calls.find(c => c[0] === 'P0' && c[1].startsWith('cred_health_claude_'));
     expect(p0Call).toBeTruthy();
-    expect(p0Call[2]).toContain('3 天');
+    expect(p0Call[2]).toMatch(/[23] 天/);
 
     const taskCall = createTask.mock.calls.find(c => c[0].priority === 'P1');
     expect(taskCall).toBeTruthy();

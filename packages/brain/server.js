@@ -12,6 +12,7 @@ import { join, dirname } from 'path';
 import brainRoutes from './src/routes.js';
 import ceceliaRoutes from './src/cecelia-routes.js';
 import traceRoutes from './src/trace-routes.js';
+import langfuseRoutes from './src/routes/langfuse.js';
 import memoryRoutes from './src/routes/memory.js';
 import settingsRoutes from './src/routes/settings.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
@@ -32,6 +33,7 @@ import brainManifestRoutes from './src/routes/brain-manifest.js';
 import perceptionSignalsRoutes from './src/routes/perception-signals.js';
 import architectureRoutes from './src/routes/architecture.js';
 import taskRouterDiagnoseRoutes from './src/routes/task-router-diagnose.js';
+import licenseRoutes from './src/routes/license.js';
 import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import alertingRoutes from './src/routes/alerting.js';
 import systemReportsRoutes from './src/routes/system-reports.js';
@@ -63,7 +65,9 @@ import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
 import harnessRoutes from './src/routes/harness.js';
 import initiativesRoutes from './src/routes/initiatives.js';
+import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
+import featuresRoutes from './src/routes/features.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -281,6 +285,7 @@ app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/initiatives', initiativesRoutes);
+app.use('/api/brain/backup', backupRoutes);
 
 // LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
 // 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
@@ -294,11 +299,15 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
 app.use('/api/brain/tasks', taskTasksRoutes);
 
+app.use('/api/brain', licenseRoutes);
+
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
 
 // Mount trace observability routes
 app.use('/api/brain/trace', traceRoutes);
+app.use('/api/brain/langfuse', langfuseRoutes);
+app.use('/api/brain/features', featuresRoutes);
 
 // GET /api/brain/scan-status
 app.get('/api/brain/scan-status', (_req, res) => {
