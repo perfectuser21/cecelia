@@ -262,24 +262,47 @@ export async function cleanupStaleClaims(pool, opts = {}) {
   }
 
   const staleMinutes = Number.isFinite(opts.staleMinutes) ? opts.staleMinutes : 60;
+  // Any queued task still claimed by THIS process's ID must be a leftover from a
+  // previous crashed run (Docker Brain always starts as PID 7, so claimerId recurs).
+  // Clear them unconditionally — we haven't made any claims yet at startup.
+  const selfClaimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
 
   try {
-    // 1. 扫描 queued + claimed_by 非空的 task
+    // Step 1: Clear all claims by this process's claimerId (previous-crash leftovers).
+    const selfResult = await pool.query(
+      `UPDATE tasks
+          SET claimed_by = NULL, claimed_at = NULL
+        WHERE status = 'queued'
+          AND claimed_by = $1
+      RETURNING id`,
+      [selfClaimerId]
+    );
+    if (selfResult.rowCount > 0) {
+      console.log(
+        `[StartupRecovery:cleanupStaleClaims] cleared ${selfResult.rowCount} self-PID claims (${selfClaimerId})`,
+        JSON.stringify({ cleanup_type: 'self_pid_claim', cleaned: selfResult.rowCount })
+      );
+      stats.cleaned += selfResult.rowCount;
+    }
+
+    // Step 2: Clear stale claims from other claimerIds (time-window based).
     const { rows } = await pool.query(
       `SELECT id, claimed_by, claimed_at
          FROM tasks
         WHERE status = 'queued'
           AND claimed_by IS NOT NULL
-          AND (claimed_at IS NULL OR claimed_at < NOW() - ($1::int * INTERVAL '1 minute'))`,
-      [staleMinutes]
+          AND claimed_by != $1
+          AND (claimed_at IS NULL OR claimed_at < NOW() - ($2::int * INTERVAL '1 minute'))`,
+      [selfClaimerId, staleMinutes]
     );
 
     if (rows.length === 0) {
-      console.log('[StartupRecovery:cleanupStaleClaims] no stale claims found');
+      if (stats.cleaned === 0) {
+        console.log('[StartupRecovery:cleanupStaleClaims] no stale claims found');
+      }
       return stats;
     }
 
-    // 2. 批量清空 claimed_by / claimed_at
     const taskIds = rows.map(r => r.id);
     const result = await pool.query(
       `UPDATE tasks
@@ -290,11 +313,12 @@ export async function cleanupStaleClaims(pool, opts = {}) {
       [taskIds]
     );
 
-    stats.cleaned = result.rowCount || 0;
+    const otherCleaned = result.rowCount || 0;
+    stats.cleaned += otherCleaned;
     const sample = rows.slice(0, 5).map(r => `${r.id}@${r.claimed_by}`);
     console.log(
-      `[StartupRecovery:cleanupStaleClaims] cleared ${stats.cleaned} stale claims (staleMinutes=${staleMinutes})`,
-      JSON.stringify({ cleanup_type: 'stale_claim', cleaned: stats.cleaned, sample })
+      `[StartupRecovery:cleanupStaleClaims] cleared ${otherCleaned} stale claims from other pids (staleMinutes=${staleMinutes})`,
+      JSON.stringify({ cleanup_type: 'stale_claim', cleaned: otherCleaned, sample })
     );
   } catch (e) {
     stats.errors.push(e.message);
