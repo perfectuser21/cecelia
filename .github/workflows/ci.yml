@@ -88,9 +88,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ─── 依赖漏洞扫描（根目录，含 dev deps，critical 级别硬拦）────────
-  # 当前允许 moderate / high，后续逐步收紧到 --audit-level=high / moderate。
-  # 只拦 critical 是起步门槛，避免引入灾难级漏洞。
+  # ─── 依赖漏洞扫描（根目录，含 dev deps，high+ 级别硬拦）────────
+  # 拦截 high 及以上（high / critical）漏洞，moderate 及以下仍允许。
+  # 覆盖 high 级别漏洞，避免高危漏洞进入生产。
   dep-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -100,11 +100,15 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - name: npm audit (critical only)
+      - name: npm audit — runtime high+
         run: |
           npm ci --ignore-scripts
-          # --audit-level=critical：只有 critical 漏洞才 exit 1
-          # 不加 --omit=dev，因为 dev 依赖也会跑在 CI runner 上
+          # runtime 依赖（packages/brain, apps/api）不允许 high+，--omit=dev 排除 vite/rollup/workbox 等 build 工具
+          # vite/vite-plugin-pwa 需要 major 升级（5→8），单独 P2 track，暂不在此阻断
+          npm audit --audit-level=high --omit=dev
+      - name: npm audit — all deps critical
+        run: |
+          # 全量（含 dev）仍检查 critical，防供应链攻击
           npm audit --audit-level=critical
 
   # ─── Registry Lint（始终运行）────────────────────────────────
