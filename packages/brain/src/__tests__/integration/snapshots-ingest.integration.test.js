@@ -12,7 +12,7 @@
 
 import { describe, it, expect, afterAll } from 'vitest';
 import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { DB_DEFAULTS } from '../../db-config.js';
 
 const { Pool } = pg;
 const pool = new Pool({ ...DB_DEFAULTS, max: 3 });
