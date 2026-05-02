@@ -45,10 +45,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (docIds.length) {
-    await pool.query('DELETE FROM design_docs WHERE id = ANY($1::bigint[])', [docIds]);
+    await pool.query('DELETE FROM design_docs WHERE id = ANY($1::uuid[])', [docIds]);
   }
   if (decisionIds.length) {
-    await pool.query('DELETE FROM decisions WHERE id = ANY($1::bigint[])', [decisionIds]);
+    await pool.query('DELETE FROM decisions WHERE id = ANY($1::uuid[])', [decisionIds]);
   }
   await pool.end();
 });
