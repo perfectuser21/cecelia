@@ -1,12 +1,12 @@
-# PRD: brain-test-pyramid Layer 3 PR1 — OKR 任务进度反馈链路集成测试
+# PRD: brain-test-pyramid Layer 3 PR3 — Cross-Domain Routing 集成测试
 
 ## 目标
-为 OKR→Task→KR progress 反馈链路添加集成测试，验证任务完成状态驱动 KR 进度更新的核心行为。
+为跨域路由添加集成测试：pending-actions 生命周期（DB 直写）+ intent/match 自然语言路由到 OKR。
 
 ## 背景
-recalculate-progress 是 Brain OKR 系统核心逻辑：统计 okr_initiative 下 completed 任务数更新 KR.current_value。
+Brain 的跨域路由核心：pending-actions 用于人机协作的动作审批流，intent/match 用于自然语言映射到 OKR 目标。两者均无集成测试覆盖。
 
 ## 成功标准
-- Task 状态变更后 progress 值正确（0/33.33/100）
-- key_results.current_value 在 DB 中持久化
-- 不存在的 KR → 404
+- pending-actions 创建/拒绝状态流转正确，拒绝后不可再次拒绝
+- intent/match 自然语言查询能匹配到相关 OKR 记录
+- 空 query / 缺字段 → 400
