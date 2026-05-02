@@ -69,10 +69,10 @@ describe('probeRumination — loop_dead 时透出 consciousness + tick 状态', 
     expect(ruminationFn).toContain('consciousnessEnabled');
   });
 
-  it('意识状态检查同时考虑 env var（CONSCIOUSNESS_ENABLED / BRAIN_QUIET_MODE），而不仅读 DB', () => {
-    expect(ruminationFn).toContain('process.env.CONSCIOUSNESS_ENABLED');
-    expect(ruminationFn).toContain('process.env.BRAIN_QUIET_MODE');
-    expect(ruminationFn).toContain('envOff');
+  it('意识状态检查通过 isConsciousnessEnabled() 获取（SSOT，不裸读 env var）', () => {
+    expect(ruminationFn).toContain('isConsciousnessEnabled');
+    expect(ruminationFn).not.toContain('process.env.CONSCIOUSNESS_ENABLED');
+    expect(ruminationFn).not.toContain('process.env.BRAIN_QUIET_MODE');
   });
 
   it('env override 导致的 DISABLED 包含 (env_override) 后缀，便于区分 DB 设置 vs env 变量', () => {
