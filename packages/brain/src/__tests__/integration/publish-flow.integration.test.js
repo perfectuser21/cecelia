@@ -19,9 +19,9 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { DB_DEFAULTS } from '../../db-config.js';
 
-vi.mock('../publish-monitor.js', () => ({
+vi.mock('../../publish-monitor.js', () => ({
   monitorPublishQueue: vi.fn().mockResolvedValue(undefined),
   getPublishStats: vi.fn().mockResolvedValue({ today_total: 0, cached: true }),
 }));
@@ -35,8 +35,8 @@ let app;
 
 beforeAll(async () => {
   const [jobsMod, resultsMod] = await Promise.all([
-    import('../routes/publish-jobs.js'),
-    import('../routes/publish-results.js'),
+    import('../../routes/publish-jobs.js'),
+    import('../../routes/publish-results.js'),
   ]);
   app = express();
   app.use(express.json());
