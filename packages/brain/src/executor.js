@@ -2320,6 +2320,27 @@ async function triggerCodexReview(task) {
     let stdout = '';
     child.stdout?.on('data', (d) => { stdout += d.toString(); });
 
+    child.on('error', async (err) => {
+      console.error(`[executor] codex spawn error: ${err.message} task=${task.id}`);
+      try { unlinkSync(lockFile); } catch {}
+      try {
+        const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
+        await fetch(`${brainUrl}/api/brain/execution-callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            task_id: task.id,
+            run_id: runId,
+            status: 'AI Failed',
+            result: { verdict: 'FAIL', summary: `codex binary not found: ${err.message}` },
+            coding_type: 'codex-review',
+          }),
+        });
+      } catch (cbErr) {
+        console.error(`[executor] codex spawn callback error: ${cbErr.message}`);
+      }
+    });
+
     child.on('exit', async (code) => {
       try { unlinkSync(lockFile); } catch {}
       console.log(`[executor] codex review exit code=${code} task=${task.id}`);

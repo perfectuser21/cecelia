@@ -75,6 +75,26 @@ describe('executor: Codex 独立审查加固', () => {
   });
 });
 
+describe('triggerCodexReview: spawn error handler', () => {
+  it('child.on("error") handler 存在 — 防止 ENOENT 成为 Uncaught Exception', () => {
+    expect(executorSrc).toContain("child.on('error'");
+  });
+
+  it('error handler 清理 lockFile', () => {
+    // handler 内必须有 unlinkSync(lockFile) 调用
+    const errorHandlerIdx = executorSrc.indexOf("child.on('error'");
+    const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 600);
+    expect(snippet).toContain('unlinkSync(lockFile)');
+  });
+
+  it('error handler 回调 execution-callback 且 status=AI Failed', () => {
+    const errorHandlerIdx = executorSrc.indexOf("child.on('error'");
+    const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 600);
+    expect(snippet).toContain('AI Failed');
+    expect(snippet).toContain('execution-callback');
+  });
+});
+
 describe('executor: buildPrompt case 路由', () => {
   it("spec_review 有专属路由处理", () => {
     // 重构后用 routes 对象，由 _prepareSpecReviewPrompt 处理

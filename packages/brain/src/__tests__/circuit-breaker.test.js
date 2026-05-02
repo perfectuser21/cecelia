@@ -47,8 +47,8 @@ describe('circuit-breaker', () => {
 
   // ========== 常量验证 ==========
   describe('常量', () => {
-    it('FAILURE_THRESHOLD 应为 3', () => {
-      expect(FAILURE_THRESHOLD).toBe(3);
+    it('FAILURE_THRESHOLD 应为 8', () => {
+      expect(FAILURE_THRESHOLD).toBe(8);
     });
 
     it('OPEN_DURATION_MS 应为 5 分钟', () => {
