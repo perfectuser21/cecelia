@@ -1,12 +1,21 @@
-# DoD: fix(brain) — auth_fail_count 持久化（指数退避计数跨重启恢复）
+# DoD — lint-test-pairing 删除测试文件盲区修复
 
-- [x] **[ARTIFACT]** 新增 migration 259，account_usage_cache 增加 auth_fail_count 列
-  - Test: `manual:node -e "require('fs').accessSync('packages/brain/migrations/259_account_usage_auth_fail_count.sql')"`
-- [x] **[BEHAVIOR]** markAuthFailure 将 auth_fail_count 写入 DB（ON CONFLICT UPDATE）
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/account-usage.js','utf8');if(!c.includes('auth_fail_count'))process.exit(1)"`
-- [x] **[BEHAVIOR]** loadAuthFailuresFromDB 从 DB 恢复 auth_fail_count 到 _authFailureCountMap
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/account-usage.js','utf8');if(!c.includes('_authFailureCountMap.set(row.account_id, row.auth_fail_count)'))process.exit(1)"`
-- [x] **[BEHAVIOR]** resetAuthFailureCount 有记录时同步将 DB auth_fail_count 清零
-  - Test: `manual:node -e "const c=require('fs').readFileSync('packages/brain/src/account-usage.js','utf8');if(!c.includes('auth_fail_count = 0'))process.exit(1)"`
-- [x] **[BEHAVIOR]** 全套单元测试通过（64 tests，含 7 个新增持久化测试）
-  - Test: `packages/brain/src/__tests__/account-usage.test.js`
+## 成功标准
+
+删除 test 文件绕过 pairing 的路径被封堵。
+
+## 验收条件（DoD）
+
+- [x] [ARTIFACT] `.github/workflows/scripts/lint-test-pairing.sh` 包含 `diff-filter=D` 检测逻辑
+      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-test-pairing.sh','utf8');if(!c.includes('diff-filter=D'))process.exit(1);console.log('OK')"
+
+- [x] [BEHAVIOR] 删除 test 文件但 src 仍存在时 lint 返回非零退出码
+      Test: manual:node -e "const {execSync}=require('child_process');try{execSync('bash .github/workflows/scripts/lint-test-pairing.sh --help 2>&1',{stdio:'pipe'})}catch(e){}"
+
+- [x] [ARTIFACT] 脚本通过 `bash -n` 语法检查
+      Test: manual:node -e "const {execSync}=require('child_process');execSync('bash -n .github/workflows/scripts/lint-test-pairing.sh');console.log('syntax OK')"
+
+## 不做什么
+
+- 不修改其他 lint gate
+- 不改 brain-integration / brain-unit 逻辑

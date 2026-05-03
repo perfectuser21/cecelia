@@ -3,6 +3,10 @@
 # 验证：PR 中新增/修改的 packages/brain/src/**/*.js（非测试）必须配套 *.test.js
 # 候选测试位置：同目录 <name>.test.js / __tests__/<name>.test.js / .spec.js 同名
 #
+# 盲区修复（v2）：检测"删除 test 文件"绕过 pairing 的路径
+#   - 若 PR 删了 *.test.js 且对应 src 文件仍然存在 → FAIL
+#   - src 也被同 PR 删除（模块整体移除）→ 放行
+#
 # 使用：bash lint-test-pairing.sh [BASE_REF]
 # 默认 BASE_REF=origin/main
 #
@@ -14,6 +18,51 @@ echo "🔍 lint-test-pairing — base: $BASE_REF"
 
 # fetch base 以便 diff 在 CI 拿到完整历史
 git fetch origin "${BASE_REF#origin/}" --quiet 2>/dev/null || true
+
+# ── 盲区修复：检测删除 test 文件 ──────────────────────────────────────────────
+DELETED_TESTS=$(git diff --name-only --diff-filter=D "${BASE_REF}...HEAD" 2>/dev/null \
+  | grep -E '^packages/brain/src/.*\.(test|spec)\.js$' \
+  || true)
+
+DELETED_SRC=$(git diff --name-only --diff-filter=D "${BASE_REF}...HEAD" 2>/dev/null \
+  | grep -E '^packages/brain/src/.*\.js$' \
+  | grep -v '/__tests__/' \
+  | grep -vE '\.(test|spec)\.js$' \
+  || true)
+
+ORPHANED_DELETES=()
+if [ -n "$DELETED_TESTS" ]; then
+  while IFS= read -r tf; do
+    [ -z "$tf" ] && continue
+    # 推算对应的 src 文件路径
+    base=$(basename "$tf" | sed 's/\.test\.js$//' | sed 's/\.spec\.js$//')
+    dir=$(dirname "$tf")
+    # 处理 __tests__/ 子目录
+    src_dir=$(echo "$dir" | sed 's|/__tests__$||')
+    src_cand="${src_dir}/${base}.js"
+
+    # src 在同 PR 里被删除 → 模块整体移除 → 放行
+    if echo "$DELETED_SRC" | grep -qxF "$src_cand"; then
+      continue
+    fi
+    # src 文件仍然存在 → 删了测试但没删源码 → FAIL
+    if [ -f "$src_cand" ]; then
+      ORPHANED_DELETES+=("$tf  (src: $src_cand 仍存在)")
+    fi
+  done <<< "$DELETED_TESTS"
+fi
+
+if [ "${#ORPHANED_DELETES[@]}" -gt 0 ]; then
+  echo ""
+  echo "::error::lint-test-pairing 失败 — PR 删除了 test 文件但对应 src 仍存在（绕过配对检测）:"
+  printf "  ❌ %s\n" "${ORPHANED_DELETES[@]}"
+  echo ""
+  echo "  修复选项："
+  echo "    1. 恢复被删除的 test 文件"
+  echo "    2. 若 src 也不再需要，同 PR 一并删除 src 文件"
+  exit 1
+fi
+# ─────────────────────────────────────────────────────────────────────────────
 
 # 新增/修改的 brain src js（排除 __tests__/ 和 *.test.js / *.spec.js）
 ADDED_SRC=$(git diff --name-only --diff-filter=AM "${BASE_REF}...HEAD" 2>/dev/null \
