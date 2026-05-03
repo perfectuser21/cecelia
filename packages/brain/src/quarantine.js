@@ -22,6 +22,7 @@ import pool from './db.js';
 import { emit } from './event-bus.js';
 import { upsertLearning } from './learning.js';
 import { hasActiveSignal } from './quarantine-active-signal.js';
+import { resolveResourceTier } from './spawn/middleware/resource-tier.js';
 
 const execFile = promisify(execFileCb);
 
@@ -783,9 +784,34 @@ function getRetryStrategy(failureClass, options = {}) {
  * 分类失败原因（6 类细分）
  * @param {string|Error} error - 错误信息
  * @param {Object} task - 任务对象（可选）
+ * @param {Object|null} evidence - watchdog 采样证据 { rss_mb, runtime_ms }（可选）
+ *   当 evidence 非 null 时用实测数据判断 resource_hog：
+ *   rss_mb > 500 OR runtime_ms > tier.timeoutMs * 1.2 → RESOURCE；否则 → UNKNOWN 不隔离。
  * @returns {{ class: string, pattern?: string, confidence: number, retry_strategy?: Object }}
  */
-function classifyFailure(error, task = null) {
+function classifyFailure(error, task = null, evidence = null) {
+  // Evidence-based resource_hog gate: watchdog 杀死任务时必须有实测数据支撑
+  if (evidence !== null) {
+    const rssMb = evidence.rss_mb ?? 0;
+    const runtimeMs = evidence.runtime_ms ?? 0;
+    const tier = resolveResourceTier(task?.task_type || 'normal');
+    const isResourceHog = rssMb > 500 || runtimeMs > tier.timeoutMs * 1.2;
+    if (isResourceHog) {
+      return {
+        class: FAILURE_CLASS.RESOURCE,
+        pattern: `evidence:rss_mb=${rssMb},runtime_ms=${runtimeMs}`,
+        confidence: 0.9,
+        retry_strategy: getRetryStrategy(FAILURE_CLASS.RESOURCE),
+      };
+    }
+    return {
+      class: FAILURE_CLASS.UNKNOWN,
+      pattern: null,
+      confidence: 0.3,
+      retry_strategy: getRetryStrategy(FAILURE_CLASS.TASK_ERROR),
+    };
+  }
+
   const errorStr = String(error?.message || error || '');
 
   // 按优先级检查各类模式

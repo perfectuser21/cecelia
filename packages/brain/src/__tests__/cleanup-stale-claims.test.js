@@ -52,7 +52,8 @@ describe('cleanupStaleClaims', () => {
     const [selectSql, selectArgs] = mockQuery.mock.calls[1];
     expect(selectSql).toMatch(/SELECT/i);
     expect(selectSql).toMatch(/claimed_by IS NOT NULL/);
-    expect(selectSql).toMatch(/status = 'queued'/);
+    // 5/3 扩 paused 后改 IN 语法（28 个 paused 任务被 brain-tick-7 锁 19 天的根因）
+    expect(selectSql).toMatch(/status IN \('queued', 'paused'\)/);
     expect(selectArgs[1]).toBe(60);
 
     // 第三次调用是 UPDATE
@@ -168,7 +169,7 @@ describe('cleanupStaleClaims', () => {
       const [selfUpdateSql, selfUpdateArgs] = mockQuery.mock.calls[0];
       expect(selfUpdateSql).toMatch(/UPDATE tasks/i);
       expect(selfUpdateSql).toMatch(/claimed_by = NULL/);
-      expect(selfUpdateSql).toMatch(/status = 'queued'/);
+      expect(selfUpdateSql).toMatch(/status IN \('queued', 'paused'\)/);
       expect(selfUpdateSql).toMatch(/claimed_by = \$1/);
       // claimerId 格式：brain-tick-<pid>
       expect(selfUpdateArgs[0]).toMatch(/^brain-tick-\d+$/);

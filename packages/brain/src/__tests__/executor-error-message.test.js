@@ -23,7 +23,9 @@ vi.mock('../task-updater.js', () => ({
 
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
-  execSync: vi.fn(() => '')
+  execSync: vi.fn(() => ''),
+  // execFile: quarantine.js 顶层 import 用，requeueTask 加 evidence gate 后会触发
+  execFile: vi.fn((cmd, args, opts, cb) => { if (cb) cb(null, '', ''); })
 }));
 
 vi.mock('fs/promises', () => ({

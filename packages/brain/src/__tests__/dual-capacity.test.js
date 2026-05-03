@@ -149,10 +149,12 @@ describe('getBudgetCap / setBudgetCap — D2-5/D2-6', () => {
   });
 
   // D2-6: setBudgetCap(n) 运行时修改
-  it('D2-6: setBudgetCap(6) 设置 budget=6', () => {
+  // 5/3 修复后：显式 budget 不再被 PHYSICAL_CAPACITY 截断（低内存容器场景），
+  // 由 checkServerResources 的实时压力缩放兜底安全。详见 docs/diagnosis/slot-allocator-shrink-rca.md
+  it('D2-6: setBudgetCap(6) 设置 budget=6（显式覆盖不再被 physical 截断）', () => {
     const result = setBudgetCap(6);
     expect(result.budget).toBe(6);
-    expect(result.effective).toBe(Math.min(6, PHYSICAL_CAPACITY));
+    expect(result.effective).toBe(6);
   });
 
   it('D2-6: setBudgetCap(null) 清除 budget cap', () => {
@@ -174,18 +176,21 @@ describe('getBudgetCap / setBudgetCap — D2-5/D2-6', () => {
     expect(() => setBudgetCap('abc')).toThrow('Budget cap must be a positive integer');
   });
 
-  it('D2-6: setBudgetCap 后 getEffectiveMaxSeats 反映新值', () => {
+  it('D2-6: setBudgetCap 后 getEffectiveMaxSeats 反映新值（不再被 physical 截断）', () => {
     setBudgetCap(4);
-    expect(getEffectiveMaxSeats()).toBe(Math.min(4, PHYSICAL_CAPACITY));
+    expect(getEffectiveMaxSeats()).toBe(4);
 
     setBudgetCap(null);
     expect(getEffectiveMaxSeats()).toBe(PHYSICAL_CAPACITY);
   });
 
-  it('D2-6: budget > physical 时 effective = physical', () => {
+  // 5/3 修复后：budget > physical 时 effective = budget（不再截断到 physical）
+  // 旧行为把用户 ENV 显式 budget 静默截到低内存容器的 PHYSICAL_CAPACITY=2，导致 effectiveSlots=1
+  // 真实安全阀是 checkServerResources() 的 cpu/mem/swap pressure 缩放
+  it('D2-6: budget > physical 时 effective = budget（显式覆盖原样尊重）', () => {
     setBudgetCap(9999);
     const result = getBudgetCap();
-    expect(result.effective).toBe(PHYSICAL_CAPACITY);
+    expect(result.effective).toBe(9999);
   });
 });
 

@@ -30,6 +30,7 @@ export const tickState = {
   lastCredentialCheckTime: 0,   // credential 过期检查
   lastCleanupWorkerTime: 0,     // R4 orphan worktree cleanup
   lastOrphanPrWorkerTime: 0,    // Phase 1 orphan PR scan
+  lastPausedRequeuTime: 0,      // paused task requeue/archive scan
 
   // === 5 个 loop / consciousness 控制态 ===
   loopTimer: null,              // setInterval 主循环句柄
@@ -58,6 +59,7 @@ export function resetTickStateForTests() {
   tickState.lastCredentialCheckTime = 0;
   tickState.lastCleanupWorkerTime = 0;
   tickState.lastOrphanPrWorkerTime = 0;
+  tickState.lastPausedRequeuTime = 0;
   tickState.loopTimer = null;
   tickState.recoveryTimer = null;
   tickState.tickRunning = false;
@@ -89,6 +91,8 @@ export function _resetLastGoalEvalTime() { tickState.lastGoalEvalTime = 0; }
 export function _resetLastZombieSweepTime() { tickState.lastZombieSweepTime = 0; }
 /** Reset pipeline patrol timer — for testing only */
 export function _resetLastPipelinePatrolTime() { tickState.lastPipelinePatrolTime = 0; }
+/** Reset paused requeue timer — for testing only */
+export function _resetLastPausedRequeuTime() { tickState.lastPausedRequeuTime = 0; }
 
 export default {
   tickState,
@@ -101,5 +105,6 @@ export default {
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
   _resetLastZombieSweepTime,
-  _resetLastPipelinePatrolTime
+  _resetLastPipelinePatrolTime,
+  _resetLastPausedRequeuTime
 };

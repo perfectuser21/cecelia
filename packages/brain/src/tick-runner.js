@@ -91,6 +91,7 @@ import {
 import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
+import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
 import * as pipelineWatchdogPlugin from './pipeline-watchdog-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
@@ -325,6 +326,11 @@ async function executeTick() {
   // [感知] Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline（D1.7c plugin）
   pipelinePatrolPlugin.tick({ pool, tickState, tickLog }).catch(err => {
     console.error('[tick] Pipeline patrol plugin failed (non-fatal):', err.message);
+  });
+
+  // [恢复] Paused 任务重排：每 5 分钟扫 paused>1h+retry<3 → requeue；retry>=3 → archived
+  pausedRequeuPlugin.tick({ pool, tickState, tickLog }).catch(err => {
+    console.error('[tick] Paused requeuer plugin failed (non-fatal):', err.message);
   });
 
   // [Phase 2] Consciousness guard cache reload（每 2 分钟，容错 hook）

@@ -575,7 +575,7 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: cecelia_test
         run: cd packages/brain && node src/migrate.js
-      - name: E2E Smoke Tests（golden-path + agent-lifecycle）
+      - name: E2E Smoke Tests（golden-path + agent-lifecycle + dev-lifecycle）
         env:
           DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
           DB_HOST: localhost
@@ -588,6 +588,7 @@ jobs:
           cd packages/brain && npx vitest run \
             src/__tests__/integration/golden-path.integration.test.js \
             src/__tests__/integration/agent-lifecycle.integration.test.js \
+            src/__tests__/integration/dev-task-lifecycle.e2e.test.js \
             --reporter=verbose
 
   # ─── DoD BEHAVIOR 动态命令执行（curl/psql/bash/npm 真跑）────────────

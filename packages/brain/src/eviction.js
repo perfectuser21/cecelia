@@ -50,7 +50,8 @@ function calcEvictionScore(priority, rssMb, runtimeMs) {
   const tierWeight = TIER_WEIGHTS[priority] ?? TIER_WEIGHTS.P3;
   if (tierWeight === -Infinity) return -Infinity;
 
-  const memPct = (rssMb / TOTAL_MEM_MB) * 100;
+  // RSS < 100MB: 不计入内存驱逐分（避免低内存任务被误驱逐）
+  const memPct = rssMb < 100 ? 0 : (rssMb / TOTAL_MEM_MB) * 100;
   const runtimeHours = runtimeMs / (1000 * 60 * 60);
   const runtimePenalty = runtimeHours * RUNTIME_PENALTY_PER_HOUR;
 
