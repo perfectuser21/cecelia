@@ -476,6 +476,25 @@ async function probeSelfDriveHealth() {
     };
   }
 
+  // Loop-running guard: consciousness is enabled but the self-drive loop was never started.
+  // This happens when consciousness is re-enabled at runtime (e.g. via the rumination probe
+  // self-heal or the settings API) after Brain started with it disabled. startSelfDriveLoop()
+  // is only called at server startup, so a runtime toggle leaves the loop permanently off.
+  // Detect this and restart the loop proactively, mirroring the rumination self-heal pattern.
+  try {
+    const { getSelfDriveStatus, startSelfDriveLoop } = await import('./self-drive.js');
+    if (!getSelfDriveStatus().running) {
+      await startSelfDriveLoop();
+      console.log('[Probe] self_drive_health self-heal: loop was not running — restarted');
+      return {
+        ok: true,
+        detail: '24h: self_heal=loop_restarted — consciousness enabled but loop was not running',
+      };
+    }
+  } catch (healErr) {
+    console.warn('[Probe] self_drive_health self-heal failed (non-blocking):', healErr.message);
+  }
+
   const result = await pool.query(
     `SELECT
        count(*) filter (where payload->>'subtype' IN ('cycle_complete', 'no_action')) AS success_cnt,
