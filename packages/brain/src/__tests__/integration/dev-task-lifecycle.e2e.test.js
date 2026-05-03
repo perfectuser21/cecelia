@@ -424,8 +424,9 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
         .post('/api/brain/tasks')
         .send({
           title: '[e2e-lifecycle] Dev task 失败路径测试',
+          description: '全链路 E2E 失败路径测试自动创建，测试完毕后自动清理',
           task_type: 'dev',
-          priority: 'P3',
+          priority: 'P2',
           trigger_source: 'api',
         })
         .expect(201);

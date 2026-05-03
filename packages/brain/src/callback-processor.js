@@ -80,19 +80,15 @@ export async function processExecutionCallback(data, pool) {
     }
   }
 
-  // P1-0: terminal failure guard
+  // P1-0: terminal failure guard — DB 查询失败直接抛错，不再降级（防 stale completed 覆盖 failed）。
   if (newStatus === 'completed') {
-    try {
-      const terminalCheck = await pool.query(
-        `SELECT payload->>'failure_class' AS failure_class FROM tasks WHERE id = $1`,
-        [task_id]
-      );
-      if (terminalCheck.rows[0]?.failure_class === 'pipeline_terminal_failure') {
-        console.warn(`[callback-processor] 终态守卫命中：task=${task_id} failure_class=pipeline_terminal_failure，拒绝覆盖为 completed`);
-        return { skipped: true, reason: 'terminal_failure_guard' };
-      }
-    } catch (terminalCheckErr) {
-      throw terminalCheckErr;
+    const terminalCheck = await pool.query(
+      `SELECT payload->>'failure_class' AS failure_class FROM tasks WHERE id = $1`,
+      [task_id]
+    );
+    if (terminalCheck.rows[0]?.failure_class === 'pipeline_terminal_failure') {
+      console.warn(`[callback-processor] 终态守卫命中：task=${task_id} failure_class=pipeline_terminal_failure，拒绝覆盖为 completed`);
+      return { skipped: true, reason: 'terminal_failure_guard' };
     }
   }
 
