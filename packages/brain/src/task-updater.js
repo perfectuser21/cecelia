@@ -36,6 +36,10 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
       updates.push('started_at = NOW()');
     } else if (status === 'completed') {
       updates.push('completed_at = NOW()');
+    } else if (status === 'queued') {
+      // Clear claim so the task can be re-selected by selectNextDispatchableTask
+      updates.push('claimed_by = NULL');
+      updates.push('claimed_at = NULL');
     }
 
     // Add additional fields with whitelist validation
@@ -230,6 +234,8 @@ export async function unblockTask(taskId) {
     const result = await pool.query(`
       UPDATE tasks
       SET status = 'queued',
+          claimed_by = NULL,
+          claimed_at = NULL,
           blocked_at = NULL,
           blocked_reason = NULL,
           blocked_detail = NULL,

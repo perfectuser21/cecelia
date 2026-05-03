@@ -273,9 +273,11 @@ async function handleStuckRun(stuck) {
     // Second time: retry with lower priority
     console.log(`[Monitor] Action: RETRY task ${stuck.task_id} with lower priority (2nd stuck)`);
     await pool.query(
-      `UPDATE tasks 
-       SET status = 'queued', 
-           priority = CASE 
+      `UPDATE tasks
+       SET status = 'queued',
+           claimed_by = NULL,
+           claimed_at = NULL,
+           priority = CASE
              WHEN priority = 'P0' THEN 'P1'
              WHEN priority = 'P1' THEN 'P2'
              ELSE priority

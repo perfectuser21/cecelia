@@ -275,6 +275,8 @@ export async function recoverAuthQuarantinedTasks(pool) {
     await pool.query(
       `UPDATE tasks
        SET status = 'queued',
+           claimed_by = NULL,
+           claimed_at = NULL,
            payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || '{"recovery_source":"credential_recovery"}'::jsonb,
            updated_at = NOW()
        WHERE id IN (${idPlaceholders})`,

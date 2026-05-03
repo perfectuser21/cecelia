@@ -94,6 +94,8 @@ export async function releaseBlockedTasks() {
   const result = await pool.query(`
     UPDATE tasks
     SET status = 'queued',
+        claimed_by = NULL,
+        claimed_at = NULL,
         blocked_at = NULL,
         blocked_reason = NULL,
         blocked_until = NULL,
@@ -149,7 +151,7 @@ export async function autoFailTimedOutTasks(inProgressTasks) {
         // Not quarantined yet — requeue for retry (failure_count already incremented by handleTaskFailure)
         // Clearing started_at prevents immediate re-timeout on next tick evaluation
         await pool.query(
-          `UPDATE tasks SET status = 'queued', started_at = NULL, updated_at = NOW() WHERE id = $1`,
+          `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW() WHERE id = $1`,
           [task.id]
         );
         actions.push({

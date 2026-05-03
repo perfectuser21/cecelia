@@ -88,6 +88,8 @@ async function retryTask(pool, taskId, currentRetry) {
   await pool.query(
     `UPDATE tasks
      SET status = 'queued',
+         claimed_by = NULL,
+         claimed_at = NULL,
          retry_count = $2,
          started_at = NULL,
          updated_at = NOW(),

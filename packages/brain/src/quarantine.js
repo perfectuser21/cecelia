@@ -1141,7 +1141,7 @@ async function handleTaskFailure(taskId, options = {}) {
   if (skipCount) {
     try {
       await pool.query(
-        `UPDATE tasks SET status='queued', payload=COALESCE(payload,'{}'::jsonb)||'{"run_status":null}'::jsonb WHERE id=$1`,
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL, payload=COALESCE(payload,'{}'::jsonb)||'{"run_status":null}'::jsonb WHERE id=$1`,
         [taskId]
       );
       console.log(`[quarantine] skipCount=true: task ${taskId} requeued without failure count`);

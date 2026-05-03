@@ -1089,7 +1089,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   // P0 #2: WHERE status='in_progress' prevents reviving already-completed tasks
   const updateResult = await pool.query(
-    `UPDATE tasks SET status = 'queued', started_at = NULL,
+    `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL,
      payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
      WHERE id = $1 AND status = 'in_progress'`,
     [taskId, JSON.stringify({ ...watchdogInfo, next_run_at: nextRunAt })]
