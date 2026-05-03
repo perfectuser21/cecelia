@@ -384,7 +384,12 @@ let _budgetCap = (_envBudget && _envBudget > 0) ? _envBudget : null;
 
 function getEffectiveMaxSeats() {
   if (_budgetCap && _budgetCap > 0) {
-    return Math.min(_budgetCap, PHYSICAL_CAPACITY);
+    // 显式 budget 覆盖：原样尊重，不再用 PHYSICAL_CAPACITY 截断。
+    // PHYSICAL_CAPACITY 基于 400MB/task 估算，在低内存容器（~786MB 可用）固化为下界 2，
+    // 会把用户 ENV 的 7/10 静默截到 2，再经 SAFETY_MARGIN floor(2*0.8)=1 → effectiveSlots=1（5/3 prod 实证）。
+    // 实时安全阀是 checkServerResources() 的 cpu/mem/swap pressure 缩放，过载时会自动降到 0。
+    // 详见 docs/diagnosis/slot-allocator-shrink-rca.md。
+    return _budgetCap;
   }
   return PHYSICAL_CAPACITY;
 }
@@ -971,7 +976,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   // P0 #2: Only requeue tasks that are still in_progress (prevents reviving completed/failed tasks)
   const result = await pool.query(
-    'SELECT payload, task_type, project_id, title FROM tasks WHERE id = $1 AND status = $2',
+    'SELECT payload, task_type, project_id, title, started_at FROM tasks WHERE id = $1 AND status = $2',
     [taskId, 'in_progress']
   );
   if (result.rows.length === 0) {
@@ -1022,7 +1027,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
     return { requeued: false, reason: 'not_in_progress' };
   }
 
-  const { payload: rawPayload, task_type, project_id, title: taskTitle } = result.rows[0];
+  const { payload: rawPayload, task_type, project_id, title: taskTitle, started_at } = result.rows[0];
   const payload = rawPayload || {};
   const retryCount = (payload.watchdog_retry_count || 0) + 1;
 
@@ -1039,33 +1044,42 @@ async function requeueTask(taskId, reason, evidence = {}) {
   };
 
   if (retryCount >= QUARANTINE_AFTER_KILLS) {
-    // Exceeded retry limit → quarantine
-    // Clear stale failure_class to prevent liveness_dead being miscounted as auth failures.
-    // Use jsonb subtraction to remove the old key before merging new data.
-    const updateResult = await pool.query(
-      `UPDATE tasks SET status = 'quarantined',
-       error_message = $2,
-       payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || $3::jsonb
-       WHERE id = $1 AND status = 'in_progress'`,
-      [
-        taskId,
-        `[watchdog] reason=${reason} at ${new Date().toISOString()}`,
-        JSON.stringify({
-          ...watchdogInfo,
-          failure_class: 'liveness_dead',
-          quarantine_info: {
-            quarantined_at: new Date().toISOString(),
-            reason: 'resource_hog',
-            details: { watchdog_retries: retryCount, kill_reason: reason, total_failures: failureCount },
-            previous_status: 'in_progress',
-          }
-        }),
-      ]
-    );
-    if (updateResult.rowCount === 0) {
-      return { requeued: false, reason: 'status_changed' };
+    // Evidence gate: 只有实测数据（rss_mb > 500 或 runtime > tier * 1.2）支持时才隔离为 resource_hog
+    const runtimeMs = started_at ? Date.now() - new Date(started_at).getTime() : 0;
+    const { classifyFailure, FAILURE_CLASS } = await import('./quarantine.js');
+    const evidenceClass = classifyFailure(reason, { task_type }, { rss_mb: evidence.rss_mb ?? 0, runtime_ms: runtimeMs });
+
+    if (evidenceClass.class !== FAILURE_CLASS.UNKNOWN) {
+      // Resource evidence confirmed → quarantine as resource_hog
+      // Clear stale failure_class to prevent liveness_dead being miscounted as auth failures.
+      const updateResult = await pool.query(
+        `UPDATE tasks SET status = 'quarantined',
+         error_message = $2,
+         payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || $3::jsonb
+         WHERE id = $1 AND status = 'in_progress'`,
+        [
+          taskId,
+          `[watchdog] reason=${reason} at ${new Date().toISOString()}`,
+          JSON.stringify({
+            ...watchdogInfo,
+            failure_class: 'liveness_dead',
+            quarantine_info: {
+              quarantined_at: new Date().toISOString(),
+              reason: 'resource_hog',
+              details: { watchdog_retries: retryCount, kill_reason: reason, total_failures: failureCount },
+              previous_status: 'in_progress',
+            }
+          }),
+        ]
+      );
+      if (updateResult.rowCount === 0) {
+        return { requeued: false, reason: 'status_changed' };
+      }
+      return { requeued: false, quarantined: true };
     }
-    return { requeued: false, quarantined: true };
+
+    console.log(`[executor] Skipping resource_hog quarantine for ${taskId}: no evidence (rss=${evidence.rss_mb ?? 0}MB, runtime=${Math.round(runtimeMs / 1000)}s) — requeueing`);
+    // Fall through to requeue — resource_hog 不隔离无实证任务
   }
 
   // Check if failure classification has retry strategy

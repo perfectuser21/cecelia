@@ -185,5 +185,6 @@ export {
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
   _resetLastZombieSweepTime,
-  _resetLastPipelinePatrolTime
+  _resetLastPipelinePatrolTime,
+  _resetLastPausedRequeuTime
 } from './tick-state.js';

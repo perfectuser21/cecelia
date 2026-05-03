@@ -269,27 +269,32 @@ export async function cleanupStaleClaims(pool, opts = {}) {
 
   try {
     // Step 1: Clear all claims by this process's claimerId (previous-crash leftovers).
+    // 同时覆盖 status='queued' 与 'paused' — 后者诞生于 Brain 派发后任务进 in_progress
+    // 又被 quarantine/eviction/fail 转入 paused 但 claimed_by 没释放的死锁场景
+    // （5/3 实测 28 个 paused 任务被 brain-tick-7 锁 19 天）。
     const selfResult = await pool.query(
       `UPDATE tasks
           SET claimed_by = NULL, claimed_at = NULL
-        WHERE status = 'queued'
+        WHERE status IN ('queued', 'paused')
           AND claimed_by = $1
-      RETURNING id`,
+      RETURNING id, status`,
       [selfClaimerId]
     );
     if (selfResult.rowCount > 0) {
+      const byStatus = selfResult.rows.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {});
       console.log(
-        `[StartupRecovery:cleanupStaleClaims] cleared ${selfResult.rowCount} self-PID claims (${selfClaimerId})`,
-        JSON.stringify({ cleanup_type: 'self_pid_claim', cleaned: selfResult.rowCount })
+        `[StartupRecovery:cleanupStaleClaims] cleared ${selfResult.rowCount} self-PID claims (${selfClaimerId}) by_status=${JSON.stringify(byStatus)}`,
+        JSON.stringify({ cleanup_type: 'self_pid_claim', cleaned: selfResult.rowCount, by_status: byStatus })
       );
       stats.cleaned += selfResult.rowCount;
     }
 
     // Step 2: Clear stale claims from other claimerIds (time-window based).
+    // 同覆盖 paused —— 防 brain-tick-N 离线后 paused+claimed_by 永久死锁。
     const { rows } = await pool.query(
-      `SELECT id, claimed_by, claimed_at
+      `SELECT id, claimed_by, claimed_at, status
          FROM tasks
-        WHERE status = 'queued'
+        WHERE status IN ('queued', 'paused')
           AND claimed_by IS NOT NULL
           AND claimed_by != $1
           AND (claimed_at IS NULL OR claimed_at < NOW() - ($2::int * INTERVAL '1 minute'))`,

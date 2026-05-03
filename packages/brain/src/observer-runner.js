@@ -19,6 +19,9 @@
 import { evaluateAlertness } from './alertness/index.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { checkServerResources } from './executor.js';
+// runLayer2HealthCheck(pool) 必须传 pool；不传则函数内部 pool.query 拿到 undefined
+// 全部 query 失败被 catch 后 silent，监控数据全断（5/3 prod 实证）
+import pool from './db.js';
 
 const OBSERVER_INTERVAL_MS = parseInt(
   process.env.CECELIA_OBSERVER_INTERVAL_MS || String(30 * 1000),
@@ -59,7 +62,7 @@ export async function runOnce() {
     // 三个 channel 并行跑（互不依赖）
     const [alertnessRes, healthRes, resourcesRes] = await Promise.allSettled([
       evaluateAlertness(),
-      runLayer2HealthCheck(),
+      runLayer2HealthCheck(pool),
       Promise.resolve(checkServerResources()),
     ]);
 

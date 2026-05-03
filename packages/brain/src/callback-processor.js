@@ -92,7 +92,7 @@ export async function processExecutionCallback(data, pool) {
         return { skipped: true, reason: 'terminal_failure_guard' };
       }
     } catch (terminalCheckErr) {
-      console.error(`[callback-processor] terminal failure check error（降级继续）: ${terminalCheckErr.message}`);
+      throw terminalCheckErr;
     }
   }
 

@@ -55,34 +55,48 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
 
-    // ── callback_queue 持久化：fire-and-forget INSERT，确保重启零丢失 ──
-    // Worker (callback-worker.js) 使用 processExecutionCallback 异步处理队列记录。
-    // 此处 INSERT 为非阻塞（不影响当前直接处理的时序），失败时降级继续直接处理。
+    // ── callback_queue 持久化：带 retry 的 INSERT，全失败返 503 让上游重试 ──
     {
       const _resultJson = (result !== null && typeof result === 'object')
         ? result
         : (result != null ? { _raw: result } : null);
       const _stderrTail = req.body.stderr ? String(req.body.stderr).slice(-500) : null;
-      const _attemptVal = req.body.attempt || iterations || null;
-      pool.query(
-        `INSERT INTO callback_queue
-           (task_id, checkpoint_id, run_id, status, result_json, stderr_tail, duration_ms, attempt, exit_code, failure_class)
-         VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)`,
-        [
-          task_id,
-          checkpoint_id || null,
-          run_id || null,
-          status || null,
-          _resultJson ? JSON.stringify(_resultJson) : null,
-          _stderrTail,
-          duration_ms != null ? parseInt(duration_ms) : null,
-          _attemptVal != null ? parseInt(_attemptVal) : null,
-          exit_code != null ? parseInt(exit_code) : null,
-          req.body.failure_class || null,
-        ]
-      ).catch(err =>
-        console.warn(`[execution-callback] callback_queue INSERT failed (non-fatal): ${err.message}`)
-      );
+      // attempt 列 NOT NULL DEFAULT 1 — 显式 INSERT NULL 会覆盖 DEFAULT 触发约束错（5/3 prod 实证）。
+      // 兜底 1（首次回调），调用方传值时取实际尝试次数。
+      const _attemptVal = req.body.attempt || iterations || 1;
+      const _insertArgs = [
+        task_id,
+        checkpoint_id || null,
+        run_id || null,
+        status || null,
+        _resultJson ? JSON.stringify(_resultJson) : null,
+        _stderrTail,
+        duration_ms != null ? parseInt(duration_ms) : null,
+        parseInt(_attemptVal),
+        exit_code != null ? parseInt(exit_code) : null,
+        req.body.failure_class || null,
+      ];
+      const _retryDelays = [100, 500, 2000];
+      let _insertErr;
+      for (let _i = 0; _i <= _retryDelays.length; _i++) {
+        if (_i > 0) await new Promise(r => setTimeout(r, _retryDelays[_i - 1]));
+        try {
+          await pool.query(
+            `INSERT INTO callback_queue
+               (task_id, checkpoint_id, run_id, status, result_json, stderr_tail, duration_ms, attempt, exit_code, failure_class)
+             VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)`,
+            _insertArgs
+          );
+          _insertErr = null;
+          break;
+        } catch (err) {
+          _insertErr = err;
+          console.warn(`[execution-callback] callback_queue INSERT attempt ${_i + 1} failed: ${err.message}`);
+        }
+      }
+      if (_insertErr) {
+        return res.status(503).json({ success: false, error: 'callback_queue unavailable, retry later' });
+      }
     }
 
     // ── 幂等性保护：run_id + status 组合去重 ──

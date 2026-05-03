@@ -19,7 +19,7 @@
  */
 
 import { spawn } from 'child_process';
-import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import pool from './db.js';
@@ -443,28 +443,85 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
     ? 'docker_timeout'
     : (isEnvBroken ? 'env_skill_missing' : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null));
 
-  await pool.query(
-    `INSERT INTO callback_queue
-       (task_id, checkpoint_id, run_id, status, result_json, stderr_tail,
-        duration_ms, attempt, exit_code, failure_class)
-     VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)`,
-    [
-      task.id,
-      checkpointId || null,
-      runId || null,
-      status,
-      JSON.stringify(resultJson),
-      stderrTail,
-      result.duration_ms,
-      1,
-      result.exit_code,
-      failureClass,
-    ]
-  );
+  const _insertArgs = [
+    task.id,
+    checkpointId || null,
+    runId || null,
+    status,
+    JSON.stringify(resultJson),
+    stderrTail,
+    result.duration_ms,
+    1,
+    result.exit_code,
+    failureClass,
+  ];
+  const _retryDelays = [100, 500, 2000];
+  let _lastInsertErr;
+  for (let _i = 0; _i <= _retryDelays.length; _i++) {
+    if (_i > 0) await new Promise(r => setTimeout(r, _retryDelays[_i - 1]));
+    try {
+      await pool.query(
+        `INSERT INTO callback_queue
+           (task_id, checkpoint_id, run_id, status, result_json, stderr_tail,
+            duration_ms, attempt, exit_code, failure_class)
+         VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)`,
+        _insertArgs
+      );
+      _lastInsertErr = null;
+      break;
+    } catch (err) {
+      _lastInsertErr = err;
+      console.warn(`[docker-executor] callback_queue INSERT attempt ${_i + 1} failed task=${task.id}: ${err.message}`);
+    }
+  }
+
+  if (_lastInsertErr) {
+    const _dlqDir = process.env.CECELIA_CALLBACK_DLQ_DIR || '/tmp/cecelia-callback-dlq';
+    try {
+      mkdirSync(_dlqDir, { recursive: true });
+      writeFileSync(
+        path.join(_dlqDir, `${task.id}.json`),
+        JSON.stringify({
+          task_id: task.id,
+          stdout: result.stdout || '',
+          exit_code: result.exit_code,
+          timestamp: new Date().toISOString(),
+          error: _lastInsertErr.message,
+        }),
+        'utf8'
+      );
+      console.error(`[docker-executor] DLQ written: ${_dlqDir}/${task.id}.json`);
+    } catch (dlqErr) {
+      console.error(`[docker-executor] DLQ write failed: ${dlqErr.message}`);
+    }
+    throw _lastInsertErr;
+  }
 
   console.log(
     `[docker-executor] callback_queue inserted task=${task.id} status=${status} exit=${result.exit_code}`
   );
+}
+
+const _DLQ_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function cleanDlq(dlqDir) {
+  const dir = dlqDir || process.env.CECELIA_CALLBACK_DLQ_DIR || '/tmp/cecelia-callback-dlq';
+  if (!existsSync(dir)) return { deleted: 0 };
+  const cutoff = Date.now() - _DLQ_RETENTION_MS;
+  let deleted = 0;
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.json')) continue;
+    const fp = path.join(dir, file);
+    try {
+      if (statSync(fp).mtimeMs < cutoff) {
+        unlinkSync(fp);
+        deleted++;
+      }
+    } catch {
+      // file already gone or inaccessible — skip
+    }
+  }
+  return { deleted };
 }
 
 export const __test__ = {
