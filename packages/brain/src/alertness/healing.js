@@ -642,7 +642,7 @@ async function restartStuckExecutors() {
         // 没有 PID 记录，直接重置
         await client.query(`
           UPDATE tasks
-          SET status = 'queued', started_at = NULL, updated_at = NOW()
+          SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
           WHERE id = $1
         `, [task.id]);
         console.log(`[Healing] Reset stuck task without PID: ${task.title}`);
@@ -657,7 +657,7 @@ async function restartStuckExecutors() {
         // 进程已死，重置任务
         await client.query(`
           UPDATE tasks
-          SET status = 'queued', started_at = NULL, updated_at = NOW()
+          SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
           WHERE id = $1
         `, [task.id]);
         console.log(`[Healing] Restarted stuck executor (process dead): ${task.title} (pid=${pid})`);
@@ -727,6 +727,8 @@ async function retryWithBackoff() {
       await client.query(`
         UPDATE tasks
         SET status = 'queued',
+            claimed_by = NULL,
+            claimed_at = NULL,
             started_at = NULL,
             updated_at = NOW(),
             payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb

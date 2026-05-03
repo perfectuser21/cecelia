@@ -1259,7 +1259,7 @@ async function executeTick() {
   if (!getBillingPause()?.active) {
     try {
       const requeueResult = await pool.query(`
-        UPDATE tasks SET status = 'queued', started_at = NULL, quota_exhausted_at = NULL
+        UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, quota_exhausted_at = NULL
         WHERE id IN (
           SELECT id FROM tasks
           WHERE status = 'quota_exhausted'
