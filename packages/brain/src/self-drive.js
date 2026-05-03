@@ -58,6 +58,7 @@ async function getConfig() {
 
 let _currentIntervalMs = DEFAULT_INTERVAL_MS;
 let _currentMaxTasks = DEFAULT_MAX_TASKS;
+let _loopStartedAt = null; // in-memory fallback for probe grace period (DB write might fail)
 
 // ============================================================
 // State Reader — 读取 .agent-knowledge/CURRENT_STATE.md
@@ -768,6 +769,7 @@ export async function startSelfDriveLoop() {
   const config = await getConfig();
   _currentIntervalMs = config.intervalMs;
   _currentMaxTasks = config.maxTasks;
+  _loopStartedAt = new Date(); // record before DB write — survives if DB write fails
 
   console.log(`[SelfDrive] Starting self-drive loop (interval: ${_currentIntervalMs / 1000 / 60}min, max_tasks: ${_currentMaxTasks})`);
 
@@ -793,5 +795,6 @@ export function getSelfDriveStatus() {
     running: _driveTimer !== null,
     interval_ms: _currentIntervalMs,
     max_tasks_per_cycle: _currentMaxTasks,
+    started_at: _loopStartedAt,
   };
 }
