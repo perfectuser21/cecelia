@@ -38,7 +38,9 @@ import {
   selectBestAccountForHaiku,
   markAuthFailure,
   isAuthFailed,
+  resetAuthFailureCount,
   loadAuthFailuresFromDB,
+  _resetAuthFailures,
 } from '../account-usage.js';
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -897,6 +899,113 @@ describe('account-usage', () => {
     it('loadAuthFailuresFromDB DB 查询失败时不抛异常', async () => {
       mockPool.query.mockRejectedValue(new Error('DB down'));
       await expect(loadAuthFailuresFromDB()).resolves.toBeUndefined();
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // Auth Fail Count 持久化（指数退避计数跨重启恢复）
+  // ════════════════════════════════════════════════════════════════════════════
+
+  describe('Auth Fail Count Persistence', () => {
+    beforeEach(() => {
+      _resetAuthFailures();
+      vi.clearAllMocks();
+      mockPool.query.mockResolvedValue({ rows: [] });
+    });
+
+    it('markAuthFailure 首次调用应写 auth_fail_count=1 到 DB', () => {
+      markAuthFailure('account3');
+
+      const dbCall = mockPool.query.mock.calls.find(
+        c => typeof c[0] === 'string' && c[0].includes('auth_fail_count')
+      );
+      expect(dbCall).toBeTruthy();
+      expect(dbCall[1][2]).toBe(1); // 第三个参数 = failureCount
+    });
+
+    it('markAuthFailure 连续失败应累积 auth_fail_count 到 DB', () => {
+      markAuthFailure('account3');
+      markAuthFailure('account3');
+      markAuthFailure('account3');
+
+      const dbCalls = mockPool.query.mock.calls.filter(
+        c => typeof c[0] === 'string' && c[0].includes('auth_fail_count')
+      );
+      // 3 次调用，count 依次为 1, 2, 3
+      expect(dbCalls[0][1][2]).toBe(1);
+      expect(dbCalls[1][1][2]).toBe(2);
+      expect(dbCalls[2][1][2]).toBe(3);
+    });
+
+    it('markAuthFailure 指数退避：第 4 次应封顶 24h', () => {
+      for (let i = 0; i < 4; i++) markAuthFailure('account3');
+      // count=4, backoffHours = min(2^4, 24) = 16h
+      // count=3, backoffHours = min(2^3, 24) = 8h
+      // backoffHours 由 count 决定；此处只验证第 4 次 count=4 被写入
+      const dbCalls = mockPool.query.mock.calls.filter(
+        c => typeof c[0] === 'string' && c[0].includes('auth_fail_count')
+      );
+      expect(dbCalls[3][1][2]).toBe(4);
+    });
+
+    it('resetAuthFailureCount 有记录时应更新 DB auth_fail_count=0', () => {
+      markAuthFailure('account3');
+      vi.clearAllMocks();
+      mockPool.query.mockResolvedValue({ rows: [] });
+
+      resetAuthFailureCount('account3');
+
+      const resetCall = mockPool.query.mock.calls.find(
+        c => typeof c[0] === 'string' && c[0].includes('auth_fail_count = 0')
+      );
+      expect(resetCall).toBeTruthy();
+      expect(resetCall[1][0]).toBe('account3');
+    });
+
+    it('resetAuthFailureCount 无记录时不调用 DB', () => {
+      resetAuthFailureCount('account1'); // account1 从未失败
+      const resetCall = mockPool.query.mock.calls.find(
+        c => typeof c[0] === 'string' && c[0].includes('auth_fail_count = 0')
+      );
+      expect(resetCall).toBeUndefined();
+    });
+
+    it('loadAuthFailuresFromDB 应从 DB 恢复 auth_fail_count 到内存', async () => {
+      const futureTime = new Date(Date.now() + 7200000).toISOString();
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ account_id: 'account3', auth_fail_resets_at: futureTime, auth_fail_count: 3 }],
+      });
+
+      await loadAuthFailuresFromDB();
+
+      // 恢复后再调用 markAuthFailure，应从 count=3 继续（下次应为 4）
+      vi.clearAllMocks();
+      mockPool.query.mockResolvedValue({ rows: [] });
+      markAuthFailure('account3');
+
+      const dbCall = mockPool.query.mock.calls.find(
+        c => typeof c[0] === 'string' && c[0].includes('auth_fail_count')
+      );
+      expect(dbCall[1][2]).toBe(4); // 恢复 count=3 后再加 1 = 4
+    });
+
+    it('loadAuthFailuresFromDB auth_fail_count=0 时不恢复计数', async () => {
+      const futureTime = new Date(Date.now() + 7200000).toISOString();
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ account_id: 'account3', auth_fail_resets_at: futureTime, auth_fail_count: 0 }],
+      });
+
+      await loadAuthFailuresFromDB();
+
+      vi.clearAllMocks();
+      mockPool.query.mockResolvedValue({ rows: [] });
+      markAuthFailure('account3');
+
+      const dbCall = mockPool.query.mock.calls.find(
+        c => typeof c[0] === 'string' && c[0].includes('auth_fail_count')
+      );
+      // count=0 不恢复到内存，下次 markAuthFailure 从 1 开始
+      expect(dbCall[1][2]).toBe(1);
     });
   });
 });

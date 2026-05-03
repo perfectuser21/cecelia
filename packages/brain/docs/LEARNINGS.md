@@ -1,5 +1,44 @@
 # Development Learnings
 
+## [2026-05-03] Auth 失败指数退避计数持久化 — Brain 重启后退避计数归零 (cp-05030002)
+
+### 根本原因
+
+`_authFailureCountMap`（账号连续 auth 失败计数）仅存活于内存，Brain 重启后清零。
+
+指数退避逻辑：失败次数 → 退避时长（2h → 4h → 8h → 24h），重启后计数从 0 开始，
+account3 等失效账号每次 Brain 重启后只被熔断 2h，而非应有的 8h/16h/24h，
+导致短时间内重复产生 auth 错误和诊断任务，self_drive_health 探针被持续触发。
+
+### 修复内容
+
+**`packages/brain/migrations/259_account_usage_auth_fail_count.sql`**：
+- `account_usage_cache` 表新增 `auth_fail_count INTEGER NOT NULL DEFAULT 0` 列
+
+**`packages/brain/src/account-usage.js`**：
+- `markAuthFailure()` — INSERT/ON CONFLICT 中增加 `auth_fail_count` 列，持久化当前失败计数
+- `resetAuthFailureCount()` — 新增 `UPDATE account_usage_cache SET auth_fail_count = 0`
+- `loadAuthFailuresFromDB()` — SELECT 增加 `auth_fail_count` 列，Brain 启动时恢复内存计数
+
+**`packages/brain/src/selfcheck.js`**：
+- `EXPECTED_SCHEMA_VERSION` 更新为 `'259'`
+
+### 测试覆盖
+
+`src/__tests__/account-usage.test.js` 新增 7 个测试（`Auth Fail Count Persistence` describe）：
+- `markAuthFailure` 首次写 `auth_fail_count=1`
+- 连续失败累积计数到 DB
+- 第 4 次指数退避封顶（count=4）
+- `resetAuthFailureCount` 有记录时更新 DB
+- `resetAuthFailureCount` 无记录时不触发 DB
+- `loadAuthFailuresFromDB` 恢复计数后下次从正确位置继续累积
+- `auth_fail_count=0` 不恢复到内存（避免覆盖初始状态）
+
+### 预防措施
+
+**Brain 状态持久化原则**：所有影响"下次行为"的内存计数器（退避计数、熔断状态）
+必须同步写入 DB，并在 `loadXxxFromDB()` 中恢复，防止重启导致保护机制失效。
+
 ## [2026-03-10] Brain 任务重复派发 — 代码已修但任务仍在队列 (PR #800)
 
 ### 根本原因
