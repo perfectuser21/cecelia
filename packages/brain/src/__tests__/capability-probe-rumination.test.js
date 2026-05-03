@@ -116,3 +116,39 @@ describe('probeRumination — last_run 真实化 + LLM forensic 透出', () => {
     expect(ruminationFn).toContain('llm=');
   });
 });
+
+describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-05020002）', () => {
+  it('probe 文件顶部导入 setConsciousnessEnabled 和 getConsciousnessStatus', () => {
+    expect(content).toContain('setConsciousnessEnabled');
+    expect(content).toContain('getConsciousnessStatus');
+  });
+
+  it('loop_dead 分支包含 self_heal 自愈标记字段（可观测性）', () => {
+    expect(ruminationFn).toContain('self_heal=consciousness_reenabled');
+    expect(ruminationFn).toContain('self_heal=direct_run');
+    expect(ruminationFn).toContain('self_heal_fail=');
+  });
+
+  it('env_override 时不触发自愈（getConsciousnessStatus().env_override 检查）', () => {
+    expect(ruminationFn).toContain('envOverride');
+    expect(ruminationFn).toContain('getConsciousnessStatus');
+    expect(ruminationFn).not.toContain('process.env.CONSCIOUSNESS_ENABLED');
+    expect(ruminationFn).not.toContain('process.env.BRAIN_QUIET_MODE');
+  });
+
+  it('consciousness 被 DB 禁用时调用 setConsciousnessEnabled(pool, true) 重新启用', () => {
+    expect(ruminationFn).toContain('setConsciousnessEnabled');
+    expect(ruminationFn).toContain('setConsciousnessEnabled(pool, true)');
+    expect(ruminationFn).toContain('consciousness_reenabled');
+  });
+
+  it('consciousness 已启用但 loop_dead 时动态导入 runRumination 直接运行（绕过 tick）', () => {
+    expect(ruminationFn).toContain("import('./rumination.js')");
+    expect(ruminationFn).toContain('runRumination(pool)');
+    expect(ruminationFn).toContain('direct_run');
+  });
+
+  it('minimal_mode 启用时不触发自愈（人工开关优先）', () => {
+    expect(ruminationFn).toContain('!minimalMode');
+  });
+});
