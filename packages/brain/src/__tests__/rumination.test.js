@@ -550,6 +550,23 @@ describe('rumination', () => {
       expect(MAX_PER_TICK).toBe(5);
       expect(MAX_PER_TICK).toBeLessThanOrEqual(DAILY_BUDGET);
     });
+
+    it('预算耗尽时仍写入 rumination_invoke 心跳（probe 不误判为 loop_dead）', async () => {
+      // 模拟预算已满
+      _setDailyCount(getDailyBudget());
+      // 心跳写在 hasBudget() 之前，即使预算耗尽也必须写入
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // rumination_invoke INSERT
+
+      const result = await runRumination(pool);
+
+      expect(result.skipped).toBe('daily_budget_exhausted');
+      // 关键断言：invoke 心跳已写入（mockQuery 被调用了一次 = rumination_invoke INSERT）
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('rumination_invoke'),
+        expect.any(Array)
+      );
+    });
   });
 
   describe('NotebookLM 降级', () => {
