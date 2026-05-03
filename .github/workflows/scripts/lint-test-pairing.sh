@@ -154,4 +154,62 @@ if [ "${#SKIPPED_ONLY[@]}" -gt 0 ]; then
 fi
 
 COUNT=$(echo "$ADDED_SRC" | wc -l | tr -d ' ')
+
+# ── 盲区修复（v3）：test 文件必须引用被测 src 模块 ──────────────────────────
+# 防止"新增 executor.test.js 但全部测的是 selfcheck.js"的绕过路径。
+# 检查：新增的 test 文件（PR diff 内）必须包含对应 src 文件 basename 的 import/require。
+# 例：executor.js → test 文件须含 'executor' 字符串（import 或 describe 名称）
+# 放行：basename 含连字符/点（如 dev-task.graph.js → 检查 dev-task 或 devTask 或 graph）
+#       test 文件在 integration/ 下（集成测试可能跨模块）
+UNRELATED_TESTS=()
+NEW_TEST_FILES=$(git diff --name-only --diff-filter=A "${BASE_REF}...HEAD" 2>/dev/null \
+  | grep -E '^packages/brain/src/.*\.(test|spec)\.js$' \
+  || true)
+
+if [ -n "$NEW_TEST_FILES" ]; then
+  while IFS= read -r tf; do
+    [ -z "$tf" ] && continue
+    [ ! -f "$tf" ] && continue
+    # integration test 跳过
+    echo "$tf" | grep -q '/integration/' && continue
+
+    # 推算对应 src 的 basename（去掉 .test.js / .spec.js）
+    raw=$(basename "$tf" | sed 's/\.test\.js$//' | sed 's/\.spec\.js$//')
+    # dev-task.graph → 检查 dev-task 和 graph 和 devTask（camelCase 变体）
+    # 取第一个 segment（点或连字符前）和最后一个 segment
+    first=$(echo "$raw" | sed 's/[.\-].*//')
+    last=$(echo "$raw" | sed 's/.*[.\-]//')
+    # camelCase 变体：dev-task → devTask
+    camel=$(echo "$raw" | sed 's/[-\.]\([a-z]\)/\U\1/g')
+
+    # 检查 test 文件是否含任一变体（import/require/describe 名称均可）
+    if grep -qiE "(import|require|describe|from)[^'\"]*['\"][^'\"]*${first}" "$tf" 2>/dev/null; then
+      continue
+    fi
+    if [ "$first" != "$last" ] && grep -qiE "(import|require|describe|from)[^'\"]*['\"][^'\"]*${last}" "$tf" 2>/dev/null; then
+      continue
+    fi
+    if grep -qiE "(import|require|describe|from)[^'\"]*['\"][^'\"]*${camel}" "$tf" 2>/dev/null; then
+      continue
+    fi
+    # 宽松兜底：文件内任意出现 basename（避免误报复合名模块）
+    if grep -qE "${raw}" "$tf" 2>/dev/null; then
+      continue
+    fi
+
+    UNRELATED_TESTS+=("$tf  (应含对 '${raw}' 的 import/require，但未找到)")
+  done <<< "$NEW_TEST_FILES"
+fi
+
+if [ "${#UNRELATED_TESTS[@]}" -gt 0 ]; then
+  echo ""
+  echo "::error::lint-test-pairing 失败 — 新增 test 文件未引用对应 src 模块（内容不相关）:"
+  printf "  ❌ %s\n" "${UNRELATED_TESTS[@]}"
+  echo ""
+  echo "  说明：test 文件的 import/require/describe 中应出现被测模块的名称。"
+  echo "  反例：executor.test.js 里全是 import { runSelfCheck } from '../selfcheck.js'"
+  echo "  正例：executor.test.js 里含 import { getEffectiveMaxSeats } from '../executor.js'"
+  exit 1
+fi
+# ─────────────────────────────────────────────────────────────────────────────
 echo "✅ lint-test-pairing 通过（${COUNT} 个 src 文件全部配套真 test）"
