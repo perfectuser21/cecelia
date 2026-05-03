@@ -228,6 +228,8 @@ export async function shepherdOpenPRs(pool) {
           await pool.query(
             `UPDATE tasks
               SET status = 'queued',
+                  claimed_by = NULL,
+                  claimed_at = NULL,
                   pr_status = NULL,
                   pr_url = NULL,
                   pr_merged_at = NULL,

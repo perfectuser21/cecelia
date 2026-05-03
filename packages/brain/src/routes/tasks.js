@@ -1125,7 +1125,7 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     // 4. 检查执行器可用性
     const ceceliaAvailable = await checkCeceliaRunAvailable();
     if (!ceceliaAvailable.available) {
-      await pool.query(`UPDATE tasks SET status = 'queued', updated_at = NOW() WHERE id = $1`, [id]);
+      await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
       return res.status(503).json({
         error: 'executor not available',
         detail: ceceliaAvailable.error
@@ -1135,7 +1135,7 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     // 5. 触发执行
     const execResult = await triggerCeceliaRun(task);
     if (!execResult.success) {
-      await pool.query(`UPDATE tasks SET status = 'queued', updated_at = NOW() WHERE id = $1`, [id]);
+      await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
       return res.status(500).json({
         error: 'dispatch failed',
         detail: execResult.error || execResult.reason

@@ -321,6 +321,10 @@ async function updateTask({ task_id, status, priority }) {
       updates.push(`started_at = NOW()`);
     } else if (status === 'completed') {
       updates.push(`completed_at = NOW()`);
+    } else if (status === 'queued') {
+      // Clear claim so the task can be re-selected by selectNextDispatchableTask
+      updates.push(`claimed_by = NULL`);
+      updates.push(`claimed_at = NULL`);
     }
   }
   if (priority) {
