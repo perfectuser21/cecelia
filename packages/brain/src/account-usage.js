@@ -190,12 +190,13 @@ export function markAuthFailure(accountId, resetTimeISO = null, source = 'api_er
   _authFailureMap.set(accountId, { resetTime, setAt: new Date().toISOString(), failureCount, source });
   console.log(`[account-usage] [auth-circuit-breaker] markAuthFailure: ${accountId} excluded ${backoffHours}h (attempt ${failureCount}, source=${source}) until ${resetTime}`);
   pool.query(
-    `INSERT INTO account_usage_cache (account_id, is_auth_failed, auth_fail_resets_at)
-     VALUES ($1, true, $2)
+    `INSERT INTO account_usage_cache (account_id, is_auth_failed, auth_fail_resets_at, auth_fail_count)
+     VALUES ($1, true, $2, $3)
      ON CONFLICT (account_id) DO UPDATE SET
        is_auth_failed       = true,
-       auth_fail_resets_at  = EXCLUDED.auth_fail_resets_at`,
-    [accountId, resetTime]
+       auth_fail_resets_at  = EXCLUDED.auth_fail_resets_at,
+       auth_fail_count      = EXCLUDED.auth_fail_count`,
+    [accountId, resetTime, failureCount]
   ).catch(err => console.warn(`[account-usage] markAuthFailure DB 写入失败: ${err.message}`));
 }
 
@@ -226,6 +227,10 @@ export function resetAuthFailureCount(accountId) {
   if (_authFailureCountMap.has(accountId)) {
     _authFailureCountMap.delete(accountId);
     console.log(`[account-usage] [auth-circuit-breaker] ${accountId}: 退避计数已重置（凭据已恢复）`);
+    pool.query(
+      `UPDATE account_usage_cache SET auth_fail_count = 0 WHERE account_id = $1`,
+      [accountId]
+    ).catch(err => console.warn(`[account-usage] resetAuthFailureCount DB 更新失败: ${err.message}`));
   }
 }
 
@@ -241,7 +246,7 @@ export function _resetAuthFailures() {
 export async function loadAuthFailuresFromDB() {
   try {
     const res = await pool.query(
-      `SELECT account_id, auth_fail_resets_at FROM account_usage_cache
+      `SELECT account_id, auth_fail_resets_at, auth_fail_count FROM account_usage_cache
        WHERE is_auth_failed = true
          AND auth_fail_resets_at > NOW()`
     );
@@ -250,7 +255,10 @@ export async function loadAuthFailuresFromDB() {
         resetTime: new Date(row.auth_fail_resets_at).toISOString(),
         setAt: new Date().toISOString(),
       });
-      console.log(`[account-usage] [auth-circuit-breaker] loadAuthFailuresFromDB: 恢复 ${row.account_id} excluded until ${row.auth_fail_resets_at}`);
+      if (row.auth_fail_count > 0) {
+        _authFailureCountMap.set(row.account_id, row.auth_fail_count);
+      }
+      console.log(`[account-usage] [auth-circuit-breaker] loadAuthFailuresFromDB: 恢复 ${row.account_id} excluded until ${row.auth_fail_resets_at} (count=${row.auth_fail_count})`);
     }
     if (res.rows.length === 0) {
       console.log('[account-usage] loadAuthFailuresFromDB: 无待恢复的 auth 失败记录');
