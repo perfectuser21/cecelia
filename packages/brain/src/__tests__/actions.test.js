@@ -629,6 +629,21 @@ describe('actions.js', () => {
       const sql = mockQuery.mock.calls[0][0];
       expect(sql).toContain('started_at = NOW()');
     });
+
+    it('queued 状态同时清除 claimed_by 和 claimed_at', async () => {
+      const fakeTask = { id: 'task-requeue', status: 'queued', claimed_by: null, claimed_at: null };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      const result = await updateTask({
+        task_id: 'task-requeue',
+        status: 'queued',
+      });
+
+      expect(result.success).toBe(true);
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).toContain('claimed_by = NULL');
+      expect(sql).toContain('claimed_at = NULL');
+    });
   });
 
   // ========== createGoal ==========

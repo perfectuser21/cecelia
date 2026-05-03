@@ -474,6 +474,8 @@ router.post('/execution-callback', async (req, res) => {
           await pool.query(
             `UPDATE tasks
              SET status = 'queued',
+                 claimed_by = NULL,
+                 claimed_at = NULL,
                  retry_count = retry_count + 1,
                  completed_at = NULL,
                  payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('next_run_at', $2::text)
@@ -839,7 +841,7 @@ router.post('/execution-callback', async (req, res) => {
 
             if (devClassification.retryable) {
               await pool.query(
-                `UPDATE tasks SET status = 'queued', started_at = NULL,
+                `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL,
                  payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
                  WHERE id = $1 AND status = 'failed'`,
                 [task_id, JSON.stringify({
@@ -1596,7 +1598,7 @@ ${resultStr.substring(0, 2000)}
             const newPayload = { ...(nextTask.payload || {}), prev_task_result: prevTaskResult };
             // 原子性：更新 payload + unblock（blocked → queued）
             await pool.query(
-              `UPDATE tasks SET status = 'queued', payload = $1::jsonb,
+              `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, payload = $1::jsonb,
                blocked_at = NULL, blocked_reason = NULL, blocked_detail = NULL,
                blocked_until = NULL, started_at = NULL, updated_at = NOW()
                WHERE id = $2 AND status = 'blocked'`,

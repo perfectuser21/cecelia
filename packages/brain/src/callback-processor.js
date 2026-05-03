@@ -282,7 +282,8 @@ export async function processExecutionCallback(data, pool) {
       if (currentRetry < MAX_NO_PR_RETRY) {
         const nextRunAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
         await pool.query(
-          `UPDATE tasks SET status = 'queued', retry_count = retry_count + 1,
+          `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL,
+           retry_count = retry_count + 1,
            completed_at = NULL,
            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('next_run_at', $2::text)
            WHERE id = $1`,

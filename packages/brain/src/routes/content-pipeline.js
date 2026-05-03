@@ -523,7 +523,7 @@ router.post('/:id/run', async (req, res) => {
     // 允许重新生成：completed 状态重置为 queued
     if (pipeline.status === 'completed') {
       await pool.query(
-        `UPDATE tasks SET status = 'queued', completed_at = NULL, started_at = NULL, updated_at = NOW() WHERE id = $1`,
+        `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, completed_at = NULL, started_at = NULL, updated_at = NOW() WHERE id = $1`,
         [id]
       );
     }
