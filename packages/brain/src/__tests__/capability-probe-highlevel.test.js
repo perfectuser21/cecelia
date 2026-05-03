@@ -4,6 +4,9 @@ const mockQuery = vi.fn();
 const mockIsConsciousnessEnabled = vi.fn(() => true);
 const mockGetConsciousnessStatus = vi.fn(() => ({ enabled: true, env_override: false, last_toggled_at: null }));
 
+const mockGetSelfDriveStatus = vi.fn(() => ({ running: true, interval_ms: 14400000, max_tasks_per_cycle: 3 }));
+const mockStartSelfDriveLoop = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
 }));
@@ -21,6 +24,10 @@ vi.mock('../consciousness-guard.js', () => ({
   _resetCacheForTest: vi.fn(),
   _resetDeprecationWarn: vi.fn(),
   GUARDED_MODULES: [],
+}));
+vi.mock('../self-drive.js', () => ({
+  getSelfDriveStatus: () => mockGetSelfDriveStatus(),
+  startSelfDriveLoop: () => mockStartSelfDriveLoop(),
 }));
 
 describe('capability-probe high-level probes', () => {
@@ -45,6 +52,10 @@ describe('self_drive_health probe logic', () => {
     mockQuery.mockReset();
     mockIsConsciousnessEnabled.mockReturnValue(true);
     mockGetConsciousnessStatus.mockReturnValue({ enabled: true, env_override: false, last_toggled_at: null });
+    mockGetSelfDriveStatus.mockReset();
+    mockGetSelfDriveStatus.mockReturnValue({ running: true, interval_ms: 14400000, max_tasks_per_cycle: 3 });
+    mockStartSelfDriveLoop.mockReset();
+    mockStartSelfDriveLoop.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -214,6 +225,76 @@ describe('self_drive_health probe logic', () => {
     expect(result.detail).toContain('consciousness_disabled');
     expect(result.detail).toContain('db');
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('should return ok:true and restart loop when consciousness enabled but self-drive loop not running', async () => {
+    // 场景：consciousness 运行时被重新启用（如 rumination 探针自愈 setConsciousnessEnabled(true)）
+    // 但 startSelfDriveLoop 只在 server.js 启动时调用，loop 永远不会重启
+    // 探针应检测到 loop 未运行，自动重启，返回 ok:true
+    mockIsConsciousnessEnabled.mockReturnValue(true);
+    mockGetSelfDriveStatus.mockReturnValue({ running: false, interval_ms: 14400000, max_tasks_per_cycle: 3 });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('self_heal=loop_restarted');
+    // 确认 startSelfDriveLoop 被调用
+    expect(mockStartSelfDriveLoop).toHaveBeenCalledOnce();
+    // 自愈直接返回，不应查询 DB
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('should fall through to DB check when loop-not-running self-heal fails', async () => {
+    // 自愈失败时（如 startSelfDriveLoop 本身抛异常），探针继续走正常路径查询 DB
+    mockIsConsciousnessEnabled.mockReturnValue(true);
+    mockGetSelfDriveStatus.mockReturnValue({ running: false, interval_ms: 14400000, max_tasks_per_cycle: 3 });
+    mockStartSelfDriveLoop.mockRejectedValue(new Error('DB connection lost'));
+
+    // DB 查询返回 0 事件
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: null,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    // 自愈失败 → 走 DB 查询 → 0 事件 → ok:false
+    expect(result.ok).toBe(false);
+    expect(mockQuery).toHaveBeenCalled();
+  });
+
+  it('should not self-heal when loop is already running', async () => {
+    // loop 已在运行，不应触发 self-heal（避免干扰正常运行中的 loop）
+    mockIsConsciousnessEnabled.mockReturnValue(true);
+    mockGetSelfDriveStatus.mockReturnValue({ running: true, interval_ms: 14400000, max_tasks_per_cycle: 3 });
+
+    // DB 查询返回正常事件
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '2',
+        error_cnt: '0',
+        last_success: new Date().toISOString(),
+        total_tasks_created: '1',
+        last_loop_started: null,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(true);
+    // 不应调用 startSelfDriveLoop（loop 已运行）
+    expect(mockStartSelfDriveLoop).not.toHaveBeenCalled();
   });
 
   it('startProbeLoop should establish setInterval before first cycle (loop survives hung first run)', async () => {
