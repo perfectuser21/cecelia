@@ -33,18 +33,18 @@ CECELIA_STOP_HOOK_BYPASS=1 result=$(classify_session "$TMPROOT")
 status=$(echo "$result" | jq -r '.status')
 assert_status "bypass env" "not-dev" "$status"
 
-# Case 2: cwd 不是目录 → not-dev
+# Case 2: cwd 不是目录 → blocked（fail-closed，PR #2745 后修订）
 unset CECELIA_STOP_HOOK_BYPASS
 result=$(classify_session "/non/existent/path/zzz")
 status=$(echo "$result" | jq -r '.status')
-assert_status "cwd 不是目录" "not-dev" "$status"
+assert_status "cwd 不是目录 fail-closed" "blocked" "$status"
 
-# Case 3: cwd 是目录但不是 git repo → not-dev
+# Case 3: cwd 是目录但不是 git repo → blocked（fail-closed）
 NOT_GIT="$TMPROOT/not-git"
 mkdir -p "$NOT_GIT"
 result=$(classify_session "$NOT_GIT")
 status=$(echo "$result" | jq -r '.status')
-assert_status "非 git repo" "not-dev" "$status"
+assert_status "非 git repo fail-closed" "blocked" "$status"
 
 # Case 4: 主分支 → not-dev
 MAIN_REPO="$TMPROOT/main-repo"
@@ -97,6 +97,28 @@ EOF
 result=$(classify_session "$CLEAN_REPO")
 status=$(echo "$result" | jq -r '.status')
 assert_status "cleanup_done done 透传" "done" "$status"
+
+# Case 9: unborn HEAD（init 后未 commit） → not-dev（HEAD 命中主分支放行）
+EMPTY_GIT="$TMPROOT/empty-git"
+mkdir -p "$EMPTY_GIT"
+( cd "$EMPTY_GIT" && git init -q )
+result=$(classify_session "$EMPTY_GIT")
+status=$(echo "$result" | jq -r '.status')
+# 注：unborn HEAD 时 git rev-parse --abbrev-ref HEAD 返回 "HEAD"，命中主分支 case → not-dev
+assert_status "unborn HEAD（HEAD 主分支放行）" "not-dev" "$status"
+
+# Case 10: cp-* 分支 + .dev-mode cleanup_done 残留 → done（透传，回归保护）
+CLEAN2_REPO="$TMPROOT/clean2-repo"
+mkdir -p "$CLEAN2_REPO"
+( cd "$CLEAN2_REPO" && git init -q -b main && git commit -q --allow-empty -m init && git checkout -q -b cp-clean2 )
+cat > "$CLEAN2_REPO/.dev-mode.cp-clean2" <<EOF
+dev
+branch: cp-clean2
+cleanup_done: true
+EOF
+result=$(classify_session "$CLEAN2_REPO")
+status=$(echo "$result" | jq -r '.status')
+assert_status "cleanup_done 透传 done（回归保护）" "done" "$status"
 
 echo ""
 echo "=== Total: $((PASS+FAIL)) | PASS: $PASS | FAIL: $FAIL ==="
