@@ -309,4 +309,95 @@ describe('self_drive_health probe logic', () => {
 
     vi.useRealTimers();
   });
+
+  it('should return ok:true via in-memory grace when loop running but DB events missing (transient DB write failure)', async () => {
+    // 场景：Brain 启动后 loop 开始运行，loop_started DB 写入失败（DB 短暂不可用）
+    // 2min 首次 cycle 的 no_action 事件也未写入 DB
+    // 但 loop 在内存中 IS 运行中，started_at = 30min 前
+    // 探针应通过（in-memory grace），而不是误报失败触发无限 auto-fix 循环
+    const recentInMemStart = new Date(Date.now() - 30 * 60 * 1000);
+    mockGetSelfDriveStatus.mockReturnValue({
+      running: true,
+      interval_ms: 14400000,
+      max_tasks_per_cycle: 3,
+      started_at: recentInMemStart,
+    });
+
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: null, // DB write failed — event not recorded
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('db_event_missing');
+    expect(result.detail).toContain('awaiting_first_cycle');
+  });
+
+  it('should return ok:false when in-memory started_at is over 6h ago with no DB events (genuinely stuck)', async () => {
+    // loop 在内存中运行，但 started_at = 7h 前，无任何 DB 事件
+    // 超过宽限期 → 应报告失败（真实的 cycle 未执行）
+    const oldInMemStart = new Date(Date.now() - 7 * 60 * 60 * 1000);
+    mockGetSelfDriveStatus.mockReturnValue({
+      running: true,
+      interval_ms: 14400000,
+      max_tasks_per_cycle: 3,
+      started_at: oldInMemStart,
+    });
+
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: null,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('successful_cycles=0');
+    expect(result.detail).toContain('last_success=never');
+  });
+
+  it('should return ok:false when in-memory started_at is recent but cycle errors exist (real failure)', async () => {
+    // loop 在内存中刚启动（30min 前），但已有 cycle_error → 不应使用 in-memory grace
+    // 有错误表明 LLM/系统真实失败，不是 DB 写入问题
+    const recentInMemStart = new Date(Date.now() - 30 * 60 * 1000);
+    mockGetSelfDriveStatus.mockReturnValue({
+      running: true,
+      interval_ms: 14400000,
+      max_tasks_per_cycle: 3,
+      started_at: recentInMemStart,
+    });
+
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '3',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: null,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('errors=3');
+  });
 });

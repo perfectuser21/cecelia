@@ -318,6 +318,7 @@ describe('self-drive', () => {
       expect(status).toHaveProperty('running');
       expect(status).toHaveProperty('interval_ms');
       expect(status).toHaveProperty('max_tasks_per_cycle');
+      expect(status).toHaveProperty('started_at'); // in-memory loop start time for probe grace fallback
     });
   });
 });

@@ -481,9 +481,11 @@ async function probeSelfDriveHealth() {
   // self-heal or the settings API) after Brain started with it disabled. startSelfDriveLoop()
   // is only called at server startup, so a runtime toggle leaves the loop permanently off.
   // Detect this and restart the loop proactively, mirroring the rumination self-heal pattern.
+  let selfDriveStatusForGrace = null;
   try {
     const { getSelfDriveStatus, startSelfDriveLoop } = await import('./self-drive.js');
-    if (!getSelfDriveStatus().running) {
+    const sdStatus = getSelfDriveStatus();
+    if (!sdStatus.running) {
       await startSelfDriveLoop();
       console.log('[Probe] self_drive_health self-heal: loop was not running — restarted');
       return {
@@ -491,6 +493,7 @@ async function probeSelfDriveHealth() {
         detail: '24h: self_heal=loop_restarted — consciousness enabled but loop was not running',
       };
     }
+    selfDriveStatusForGrace = sdStatus;
   } catch (healErr) {
     console.warn('[Probe] self_drive_health self-heal failed (non-blocking):', healErr.message);
   }
@@ -539,6 +542,21 @@ async function probeSelfDriveHealth() {
       ok: true,
       detail: `24h: loop_started=${loopStartedAt.toISOString()} awaiting_first_cycle errors=${errorCnt}`,
     };
+  }
+
+  // In-memory grace: if the loop IS running and started recently according to module state,
+  // treat as healthy even when loop_started DB event was not written (transient DB write failure).
+  // Only applies when there are no errors — silent failures without errors suggest DB write issue,
+  // not a genuine cycle failure.
+  if (successCnt === 0 && errorCnt === 0 && selfDriveStatusForGrace?.started_at) {
+    const inMemGraceMs = LOOP_STARTED_GRACE_MS;
+    const inMemAge = Date.now() - selfDriveStatusForGrace.started_at.getTime();
+    if (inMemAge < inMemGraceMs) {
+      return {
+        ok: true,
+        detail: `24h: loop_running_since=${selfDriveStatusForGrace.started_at.toISOString()} awaiting_first_cycle (db_event_missing) errors=${errorCnt}`,
+      };
+    }
   }
 
   return {
