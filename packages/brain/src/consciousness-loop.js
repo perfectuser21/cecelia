@@ -27,6 +27,7 @@ const CONSCIOUSNESS_INTERVAL_MS = parseInt(
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟超时保护
 
 let _loopTimer = null;
+let _isRunning = false;
 
 /**
  * 单次意识运行（可注入 timeoutMs 供测试使用）。
@@ -34,6 +35,11 @@ let _loopTimer = null;
  * @returns {Promise<{completed: boolean, timedOut?: boolean, error?: string, actions: string[]}>}
  */
 export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (_isRunning) {
+    console.warn('[consciousness-loop] 上次运行未完成，跳过本次');
+    return { completed: false, reason: 'already_running', actions: [] };
+  }
+  _isRunning = true;
   const actions = [];
 
   try {
@@ -58,6 +64,8 @@ export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } =
   } catch (err) {
     console.warn('[consciousness-loop] 意识运行异常（不影响调度层）:', err.message);
     return { completed: false, error: err.message, actions };
+  } finally {
+    _isRunning = false;
   }
 }
 
@@ -96,11 +104,20 @@ async function _doConsciousnessWork(actions) {
   }
 
   // 3. runRumination：知识消化（fire-and-forget，不写 guidance）
-  Promise.resolve().then(() => runRumination(pool))
-    .catch(e => console.warn('[consciousness-loop] rumination 失败:', e.message));
+  // 加 10 分钟超时保护，防止 rumination 无限期阻塞后台
+  const RUMINATION_TIMEOUT_MS = 10 * 60 * 1000;
+  Promise.resolve().then(() =>
+    Promise.race([
+      runRumination(pool),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('rumination timeout')), RUMINATION_TIMEOUT_MS)
+      ),
+    ])
+  ).catch(e => console.warn('[consciousness-loop] rumination 失败:', e.message));
   actions.push('rumination_started');
 
   // 4. planNextTask：直接落 DB tasks 表（不写 guidance）
+  // 与 tick-runner.js L1191 保持一致：consciousness-loop 负责取 krIds，planner 负责选任务
   try {
     const { rows } = await pool.query(
       `SELECT id FROM key_results WHERE status IN ('active', 'in_progress') LIMIT 5`
