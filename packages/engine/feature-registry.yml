@@ -6,6 +6,13 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.18.1"
+    date: "2026-05-04"
+    change: "fix"
+    description: "Stop Hook 真完成语义闭环（cp-0504181719）— condition 5 fallback 修复：PR merged + step_4=pending + cleanup ok 不再误标 done。改为严格守门：唯一 done 出口 = PR merged + step_4_ship done（Learning 写好）+ cleanup.sh 真跑成功（含部署 deploy-local.sh）。任一不满足 → blocked。彻底实现 Alex 字面要求：'PR 真合 + Learning + 部署 完成才是真 exit 0'。"
+    files:
+      - "packages/engine/lib/devloop-check.sh (condition 5 重写约 35 行 — 4 个守门点：base ref / step_4 / cleanup.sh 存在 / cleanup.sh 成功)"
+
   - version: "18.18.0"
     date: "2026-05-04"
     change: "feat"
