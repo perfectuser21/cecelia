@@ -84,8 +84,11 @@ case "$status" in
         rm -f "$dev_state"
         dev_mode_file="$worktree_path/.dev-mode.$branch"
         [[ -f "$dev_mode_file" ]] && rm -f "$dev_mode_file"
+        # done 路径：reason 走 stderr 诊断，stdout 静默退出（同 Ralph Loop 官方）
+        # Claude Code Stop Hook 协议合法 decision 值只有 approve/block — 不输出 decision 字段
+        # 直接 exit 0 让 Claude Code 默认放行（turn 真停）
         reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
-        jq -n --arg r "$reason" '{"decision":"allow","reason":$r}'
+        [[ -n "$reason" ]] && echo "[stop-dev] $reason" >&2
         exit 0
         ;;
     *)

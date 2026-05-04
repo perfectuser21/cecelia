@@ -109,8 +109,15 @@ chmod +x "$MAIN_REPO/packages/engine/skills/dev/scripts/cleanup.sh"
 OUT_4=$(CLAUDE_HOOK_CWD="$WORKTREE" PATH="$GH_STUB:$PATH" bash "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" 2>&1)
 EXIT_4=$?
 assert_eq "Step 4 exit=0" "0" "$EXIT_4"
-assert_contains "Step 4 含 decision" '"decision"' "$OUT_4"
-assert_contains "Step 4 含真完成" "真完成" "$OUT_4"
+# done 路径：stdout 静默不输出 decision JSON（Claude Code 协议合法值只有 approve/block）
+if [[ "$OUT_4" != *'"decision"'* ]]; then
+    echo "✅ Step 4 stdout 不含 decision（按 Ralph 官方静默退出）"
+    PASS=$((PASS+1))
+else
+    echo "❌ Step 4 stdout 不该含 decision JSON"
+    FAIL=$((FAIL+1))
+fi
+assert_contains "Step 4 含真完成（stderr 诊断）" "真完成" "$OUT_4"
 assert_file_absent "Step 4 [关键] 状态文件被 rm" "$MAIN_REPO/.cecelia/dev-active-${BRANCH}.json"
 
 echo ""

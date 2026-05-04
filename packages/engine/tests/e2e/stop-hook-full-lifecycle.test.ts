@@ -306,8 +306,11 @@ exit 0
 `;
     const r = runStopDev({ cwd: repo, ghStub });
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/"decision"\s*:\s*"allow"/);
-    expect(r.stdout).toMatch(/真完成/);
+    // done 路径：stdout 静默不输出 decision JSON（按 Ralph Loop 官方协议）
+    // 之前自创 decision:"allow" 违反 Claude Code Stop Hook schema（合法值只有 approve/block）
+    expect(r.stdout).not.toContain('"decision"');
+    // reason 走 stderr 诊断
+    expect(r.stderr).toMatch(/真完成/);
     expect(existsSync(stateFile)).toBe(false);
   });
 
