@@ -1,11 +1,12 @@
 ---
 id: current-system-map
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-10
-updated: 2026-03-10
+updated: 2026-05-04
 authority: CURRENT_STATE
 changelog:
   - 1.0.0: 初始版本，基于 main 分支代码实际审计
+  - 1.1.0: Wave1 双层架构 — LLM fire-and-forget、circuit_breaker_states 持久化、brain_guidance 表
 ---
 
 # Cecelia 系统架构图（当前事实版）
@@ -63,8 +64,17 @@ Brain (port 5221)
 └── 辅助
     ├── src/watchdog.js             进程监护（Darwin 适配）
     ├── src/alertness/              警觉等级系统
-    └── brain-manifest.generated.json  自动生成清单
+    ├── brain-manifest.generated.json  自动生成清单
+    └── src/guidance.js             brain_guidance 表 CRUD（Wave1 双层握手，migration 262）
 ```
+
+**Wave1 新增能力（2026-05-04，PR #2750/#2751/#2748）**：
+
+| 能力 | 实现 | 说明 |
+|------|------|------|
+| LLM 去阻塞 | `src/tick-runner.js` | LLM 调用全部 fire-and-forget，thalamus 30s 超时，tick loop 不再阻塞 |
+| Circuit Breaker 持久化 | `src/circuit-breaker.js` + migration 261 | 重启后自动从 DB 恢复熔断状态，消除每次重启的冷启动盲区 |
+| brain_guidance 表 | `src/guidance.js` + migration 262 | 两层架构握手基础设施，getGuidance/setGuidance/clearExpired API |
 
 **Brain 版本同步（4 处必须同时更新）**：
 
@@ -82,7 +92,7 @@ Brain (port 5221)
 | PORT | 5221 |
 | TICK_LOOP_INTERVAL_MS | 5000 |
 | TICK_INTERVAL_MINUTES | 2 |
-| EXPECTED_SCHEMA_VERSION | 139 |
+| EXPECTED_SCHEMA_VERSION | 262 |
 
 ---
 
