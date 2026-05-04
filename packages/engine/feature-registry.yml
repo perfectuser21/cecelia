@@ -3,9 +3,21 @@
 # 每次修改 skills/ 时必须在此追加 changelog 条目
 
 version: "1.0.0"
-updated: "2026-04-27"
+updated: "2026-05-04"
 
 changelog:
+  - version: "18.17.0"
+    date: "2026-05-04"
+    change: "feat"
+    description: "Stop Hook 单一 exit 0 重构（cp-0504114459）— stop-dev.sh 7 处散点 exit 0 归一到 1 个；devloop-check.sh 4 处 return 0 归一到 1 个；新增 classify_session(cwd) 函数承载所有非 dev 上下文判断；新增 scripts/check-single-exit.sh CI 守护 + lint-single-exit job 接入 ci.yml。业务逻辑零变化（auto-merge / cleanup.sh / harness / Brain 回写 / DoD / CI 等待全保留）。E2E 12 场景 + integration 8 分支全绿。"
+    files:
+      - "packages/engine/lib/devloop-check.sh (classify_session + devloop_check 单一 return 0)"
+      - "packages/engine/hooks/stop-dev.sh (85 → 60 行，单一 exit 0)"
+      - "packages/engine/tests/integration/devloop-classify.test.sh (新增 8 分支)"
+      - "scripts/check-single-exit.sh (新增 CI 守护)"
+      - ".github/workflows/ci.yml (lint-single-exit job)"
+      - "Engine 5 处版本文件 18.17.0"
+
   - version: "18.16.1"
     date: "2026-05-02"
     change: "devloop-check v4.6.0: 单一 exit 0，harness 统一收敛到 PR merged"
