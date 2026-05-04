@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.19.2"
+    date: "2026-05-04"
+    change: "feat"
+    description: "Stop Hook 行为 bug 终结（cp-0504204233）— PreToolUse 拦截 ScheduleWakeup + Bash run_in_background:true。在 .cecelia/dev-active-*.json 存在时（dev 流程中）机器级强制禁止 assistant 主动退出 turn 的工具调用。彻底堵 stop hook 循环被'主动退出'绕过的最后一个漏洞。assistant 在 dev 流程中没有任何工具能让 turn 退出 — 唯一让 turn 退出的路径 = stop hook 自己输出 decision:allow（PR 真完成）。"
+    files:
+      - "packages/engine/hooks/dev-mode-tool-guard.sh (新建 PreToolUse 拦截器)"
+      - "~/.claude/settings.json (PreToolUse 注册 ScheduleWakeup matcher + Bash matcher chain)"
+      - "packages/engine/tests/integration/dev-mode-tool-guard.test.sh (新增 5 case)"
+      - "Engine 8 处版本文件 18.19.2"
+
   - version: "18.19.1"
     date: "2026-05-04"
     change: "test"
