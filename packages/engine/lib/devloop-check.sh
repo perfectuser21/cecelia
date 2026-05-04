@@ -620,7 +620,7 @@ verify_dev_complete() {
             break
         fi
         echo "🧹 verify_dev_complete: 跑 cleanup.sh（含部署）..." >&2
-        if ! (cd "$main_repo" && bash "$cleanup_script" "$branch") 2>/dev/null; then
+        if ! (cd "$main_repo" && bash "$cleanup_script" "$branch") >/dev/null 2>/dev/null; then
             result_json='{"status":"blocked","reason":"cleanup.sh 执行失败（部署/归档异常）","action":"重新 bash packages/engine/skills/dev/scripts/cleanup.sh"}'
             break
         fi

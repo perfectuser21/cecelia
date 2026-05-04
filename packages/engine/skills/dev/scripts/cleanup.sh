@@ -569,7 +569,7 @@ fi
 # ========================================
 echo ""
 echo "[9.5] 清理远程已删除的分支..."
-GONE_BRANCHES=$(git branch -vv | grep ': gone]' | awk '{print $1}')
+GONE_BRANCHES=$(git branch -vv | grep ': gone]' | awk '{print $1}' || true)
 if [[ -n "$GONE_BRANCHES" ]]; then
     GONE_COUNT=$(echo "$GONE_BRANCHES" | wc -l)
     echo "   → 发现 $GONE_COUNT 个远程已删除的分支"
