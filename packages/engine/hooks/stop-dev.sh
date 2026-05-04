@@ -58,8 +58,7 @@ case "$status" in
         run_id=$(echo "$result" | jq -r '.ci_run_id // ""' 2>/dev/null || echo "")
         [[ -n "$action" ]] && reason="${reason}。下一步：${action}。⚠️ 立即执行，禁止询问用户。"
 
-        jq -n --arg r "$reason" --arg id "$run_id" \
-          '{"decision":"block","reason":$r,"ci_run_id":$id}'
+        jq -n --arg r "$reason" --arg id "$run_id" '{"decision":"block","reason":$r,"ci_run_id":$id}'
         exit 2
         ;;
 esac
