@@ -1,6 +1,11 @@
 /**
  * tick-runner.js — executeTick implementation
  *
+ * ⚠️  WAVE 2 废弃通知（2026-05-04）：
+ * executeTick() 已被 tick-scheduler.js（调度层）+ consciousness-loop.js（意识层）取代。
+ * 本文件保留供紧急回滚。tick-loop.js 已改为调用 runScheduler()，不再调用 executeTick()。
+ * 如需回滚：tick-loop.js 中将 runScheduler → executeTick，删 startConsciousnessLoop() 调用。
+ *
  * Phase D Part 1.7b: 从 tick.js 抽出 executeTick 函数体（~1626 行）
  * tick.js 通过 `import { executeTick } from './tick-runner.js'` re-export 兼容老 caller
  *
