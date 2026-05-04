@@ -44,7 +44,7 @@ jobs:
           echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
-          echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|task-card\.md|\.task-|\.dod-)' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
