@@ -715,3 +715,13 @@ changelog:
     description: "00-worktree-auto.md：dev-lock 重建时生成含 tty/session_id 的完整格式，不再 cp dev-mode（cp 出的 dev-lock 无 session 字段，_session_matches 永远失败）"
     files:
       - "skills/dev/steps/00-worktree-auto.md"
+  - version: "18.19.1"
+    date: "2026-05-04"
+    skill: "dev"
+    change: "test"
+    description: "Ralph Loop 模式（Stop Hook v21.0.0）三 Phase 全覆盖：Phase A 12场景E2E（适配cwd-as-key协议）/ Phase B 21 verify_dev_complete 单测 / Phase C ralph-loop-smoke.sh端到端，共50 case；修复 SKILL.md Janitor 步骤注释"
+    files:
+      - "skills/dev/SKILL.md"
+      - "tests/e2e/stop-hook-full-lifecycle.test.ts"
+      - "tests/unit/verify-dev-complete.test.sh"
+      - "scripts/smoke/ralph-loop-smoke.sh"
