@@ -6,6 +6,17 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.20.1"
+    date: "2026-05-04"
+    change: "test"
+    description: "Stop Hook 7 阶段后续完善（cp-0504230106）— PR #2766 留下的 plan Task 3/5/6 收尾。Task 3：unit case 21→27，新 smart_gh stub 解析 --json/--workflow 字段，覆盖 P3 (CI failure/cancelled) + P5 (deploy in_progress/failure) + P6 (health probe 超时) + 全过 done（C26 SHA 未匹配跳 — stub 不处理 gh -q jq filter，integration 覆盖）。Task 5：cleanup.sh 解耦 deploy-local.sh（fire-and-forget 不可观测，重复 brain-ci-deploy.yml workflow），删 25 行调用块 + 注释说明 deploy 由 P5 监听。Task 6：integration 5 case + smoke 8 step（真 Brain probe / dead URL / cleanup 解耦验证）。"
+    files:
+      - "packages/engine/tests/unit/verify-dev-complete.test.sh (扩 6 case + smart stub helper)"
+      - "packages/engine/skills/dev/scripts/cleanup.sh (删 deploy-local.sh fire-and-forget)"
+      - "packages/engine/tests/integration/stop-hook-7stage-flow.test.sh (新建 5 case mock)"
+      - "packages/engine/scripts/smoke/stop-hook-7stage-smoke.sh (替换骨架，8 step 真链路)"
+      - "Engine 8 处版本文件 18.20.1"
+
   - version: "18.20.0"
     date: "2026-05-04"
     change: "feat"
