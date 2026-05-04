@@ -378,6 +378,83 @@ devloop_check() {
 }
 
 # ============================================================================
+# 公开函数: classify_session CWD
+#   入口契约：从 cwd 推断当前是否在 /dev 业务上下文。
+#   输出 stdout JSON: {status, reason, [action], [ci_run_id], [dev_mode]}
+#   status 取值：
+#     - "not-dev"  → 不在 dev 上下文（bypass / cwd 异常 / 非 git / 主分支 / 无 .dev-mode），调用方应放行
+#     - "blocked"  → 在 dev 上下文但业务未完成，调用方应让 assistant 继续干活
+#     - "done"     → 在 dev 上下文且业务真完成，调用方应清理 .dev-mode 并放行
+#   单一出口：while:; do ... break; done 收敛到末尾单一 echo + return 0。
+# ============================================================================
+classify_session() {
+    local cwd="${1:-$PWD}"
+    local result_json='{"status":"blocked","reason":"unknown"}'
+
+    while :; do
+        # 1) bypass
+        if [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]]; then
+            result_json='{"status":"not-dev","reason":"bypass via CECELIA_STOP_HOOK_BYPASS=1"}'
+            break
+        fi
+
+        # 2) cwd 必须是目录
+        if [[ ! -d "$cwd" ]]; then
+            result_json='{"status":"not-dev","reason":"cwd 不是目录"}'
+            break
+        fi
+
+        # 3) git 探测（worktree + branch）
+        local wt_root branch
+        wt_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || {
+            result_json='{"status":"not-dev","reason":"非 git repo（rev-parse --show-toplevel 失败）"}'
+            break
+        }
+        branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null) || {
+            result_json='{"status":"not-dev","reason":"无法读取分支（rev-parse --abbrev-ref 失败）"}'
+            break
+        }
+
+        # 4) 主分支放行
+        case "$branch" in
+            main|master|develop|HEAD)
+                result_json=$(_devloop_jq -n --arg b "$branch" \
+                    '{"status":"not-dev","reason":"主分支放行（\($b)）"}')
+                break
+                ;;
+        esac
+
+        # 5) 必须有 .dev-mode
+        local dev_mode="$wt_root/.dev-mode.$branch"
+        if [[ ! -f "$dev_mode" ]]; then
+            result_json=$(_devloop_jq -n --arg f "$dev_mode" \
+                '{"status":"not-dev","reason":"无 \($f)，非 /dev 业务"}')
+            break
+        fi
+
+        # 6) .dev-mode 格式校验（首行必须 dev）
+        if ! head -1 "$dev_mode" 2>/dev/null | grep -q "^dev$"; then
+            local first_line
+            first_line=$(head -1 "$dev_mode" 2>/dev/null || echo "<empty>")
+            result_json=$(_devloop_jq -n --arg f "$dev_mode" --arg l "$first_line" \
+              '{"status":"blocked","reason":"dev-mode 格式异常（首行 [\($l)] 不是 dev）: \($f)。请删除该文件或修正为标准格式后重试。"}')
+            break
+        fi
+
+        # 7) 业务判定（透传 devloop_check 输出，附加 dev_mode 路径供调用方 rm）
+        local devloop_result
+        devloop_result=$(devloop_check "$branch" "$dev_mode" 2>/dev/null) || true
+        [[ -z "$devloop_result" ]] && devloop_result='{"status":"blocked","reason":"devloop_check 无输出"}'
+        result_json=$(echo "$devloop_result" | jq --arg dm "$dev_mode" '. + {dev_mode: $dm}' 2>/dev/null \
+            || echo "$devloop_result")
+        break
+    done
+
+    echo "$result_json"
+    return 0
+}
+
+# ============================================================================
 # 直接执行入口（会话压缩恢复诊断）
 # ============================================================================
 devloop_check_main() {
