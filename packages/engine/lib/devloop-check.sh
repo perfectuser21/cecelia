@@ -423,15 +423,17 @@ classify_session() {
                 '{"status":"not-dev","reason":"[\($c)] 非 git repo，不可能在 /dev 业务"}')
             break
         }
-
         # 4) branch 探测 — 已确认在 git repo 内，rev-parse 失败 = 真·探测异常 fail-closed
-        #    （区别于 step 3：step 3 是"压根不在 git"，这里是"在 git 但读不到状态"）
+        #    特殊情况：unborn HEAD（git init 后未 commit）git exit=128 但 stdout="HEAD"，
+        #    fall through 到下一步主分支放行（HEAD 命中 case 第 5 步）
         local branch
-        branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null) || {
-            result_json=$(_devloop_jq -n --arg c "$cwd" --arg w "$wt_root" \
-                '{"status":"blocked","reason":"git 探测异常：worktree [\($w)] 存在但 rev-parse --abbrev-ref HEAD 失败（cwd=\($c)），fail-closed"}')
-            break
-        }
+        if ! branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null); then
+            if [[ "$branch" != "HEAD" ]]; then
+                result_json=$(_devloop_jq -n --arg c "$cwd" --arg w "$wt_root" \
+                    '{"status":"blocked","reason":"git 探测异常：worktree [\($w)] 存在但 rev-parse --abbrev-ref HEAD 失败（cwd=\($c)），fail-closed"}')
+                break
+            fi
+        fi
 
         # 5) 主分支放行 — 真·非开发模式
         case "$branch" in
