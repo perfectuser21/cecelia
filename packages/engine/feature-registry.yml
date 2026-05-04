@@ -6,6 +6,27 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.19.0"
+    date: "2026-05-04"
+    change: "feat"
+    description: "Stop Hook Ralph Loop 模式（cp-0504185237）— 照搬 Anthropic 官方 ralph-loop 插件三层防御。信号源从 cwd-as-key 切到项目根 .cecelia/dev-active-<branch>.json。完成判定从 .dev-mode 字段切到 hook 主动验证（PR merged via gh API + Learning grep + cleanup.sh 真跑）。修 5 次 PR 都没修对的 3 个根因：cwd 漂移、文件主动权、字段假完成。assistant 漂到主仓库或自删 .dev-mode 都不再放行 stop hook。出口协议改用 Ralph 标准 decision:block + exit 0（替代 v20.1.0 三态出口）。"
+    files:
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (创建项目根 .cecelia/dev-active-<branch>.json)"
+      - "packages/engine/hooks/stop-dev.sh (重写 v21.0.0 Ralph 风格)"
+      - "packages/engine/lib/devloop-check.sh (新增 verify_dev_complete 主动验证 PR/Learning/cleanup)"
+      - "packages/engine/tests/integration/ralph-loop-mode.test.sh (新增 5 case 守门，cwd 漂移 + 自删 .dev-mode 验证)"
+      - "scripts/check-single-exit.sh (Ralph 模式守护：禁止 exit 2/99，必须读 .cecelia + verify_dev_complete)"
+      - ".gitignore (.cecelia/dev-active-*)"
+      - "12 场景 E2E + stop-hook-exit-codes 等基于旧协议的测试整体 skip（待 follow-up PR 重写）"
+      - "Engine 8 处版本文件 18.19.0"
+
+  - version: "18.18.1"
+    date: "2026-05-04"
+    change: "fix"
+    description: "Stop Hook 真完成语义闭环（cp-0504181719）— condition 5 fallback 修复：PR merged + step_4=pending + cleanup ok 不再误标 done。改为严格守门：唯一 done 出口 = PR merged + step_4_ship done（Learning 写好）+ cleanup.sh 真跑成功（含部署 deploy-local.sh）。任一不满足 → blocked。彻底实现 Alex 字面要求：'PR 真合 + Learning + 部署 完成才是真 exit 0'。"
+    files:
+      - "packages/engine/lib/devloop-check.sh (condition 5 重写约 35 行 — 4 个守门点：base ref / step_4 / cleanup.sh 存在 / cleanup.sh 成功)"
+
   - version: "18.18.0"
     date: "2026-05-04"
     change: "feat"
