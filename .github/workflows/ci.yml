@@ -1040,10 +1040,19 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         run: bash .github/workflows/scripts/lint-no-fake-test.sh "origin/${{ github.base_ref }}"
 
+  lint-single-exit:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stop Hook 单一出口守护
+        run: bash scripts/check-single-exit.sh
+
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, real-env-smoke]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
