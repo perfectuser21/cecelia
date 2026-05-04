@@ -40,12 +40,22 @@ esac
 - 所有"等待"状态——等 CI / 等合并 / 等 cleanup / 等 stage 完成 / 探测异常 / 文件读不到——**全部 exit 2** 让 assistant 继续干活
 - 不是"很多地方"散开判断"我现在该不该 exit 0"
 
-## 目标
+## 目标（精化版 — Research Subagent APPROVED 后简化）
 
-1. `stop-dev.sh` 字面**唯一** 1 处 `exit 0`，且仅在 status=done 路径
-2. 开发模式中任何探测异常 fail-closed → exit 2（不再 fail-open 误放行）
-3. 非开发模式（主分支 / bypass / 无 .dev-mode）→ 用 exit 99（custom code）让 stop.sh 路由层接管放行
-4. CI 守护脚本更新匹配新拓扑
+**关键澄清**：Alex 说"**一旦确认进入开发模式**（.dev-mode 存在 + cp-* 分支），只有一个 exit 0"。not-dev 路径（主分支聊天 / bypass）根本不在"开发模式"范围内——它走 exit 0 不违反 Alex 意图。
+
+真正的故障源 = **classify_session 把"探测失败"误归到 not-dev**（cwd 不是目录 / git rev-parse 抖动失败）→ stop-dev.sh 走 not-dev|done) exit 0 → 误放行。
+
+最小最干净的修法 = **只 fail-closed 化 classify_session 的探测失败路径**，不动 stop-dev.sh 出口拓扑。
+
+精化后目标：
+
+1. **classify_session 探测失败路径 fail-closed**：cwd 不是目录 / git rev-parse 失败 → status=`blocked`（不再 `not-dev`）
+2. **stop-dev.sh 出口拓扑保持 PR #2745 现状**：case `not-dev|done) exit 0` / `*) exit 2`（字面 1 个 exit 0，开发模式中唯一 exit 0 = done）
+3. **不需要 exit 99 / 不需要改 stop.sh 路由**（Research Subagent 抓到的硬阻碍消除）
+4. **不需要改既有 174+ stop-hook-exit-codes 测试**（出口码不变）
+
+实施量收敛到 ~10 行 diff（仅 classify_session 4 处 status 字符串调整）。
 
 ## 不做
 
@@ -57,40 +67,7 @@ esac
 - 不改 12 场景 E2E 既有断言（行为兼容）
 - 不引入新依赖
 
-## 设计
-
-### stop-dev.sh case 重写（唯一 exit 0）
-
-```bash
-case "$status" in
-    done)
-        # 唯一 exit 0：PR 已合并 + step_4 done + cleanup 完成
-        _dm=$(echo "$result" | jq -r '.dev_mode // ""' 2>/dev/null || echo "")
-        [[ -n "$_dm" && -f "$_dm" ]] && rm -f "$_dm"
-        reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
-        jq -n --arg r "$reason" '{"decision":"allow","reason":$r}'
-        exit 0
-        ;;
-    not-dev)
-        # 非开发模式（主分支 / bypass / 无 .dev-mode 等）→ stop-dev.sh 不处理
-        # 用 exit 99 表示 not-applicable，让 stop.sh 路由层放行
-        reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
-        [[ -n "$reason" ]] && echo "[stop-dev] $reason" >&2
-        exit 99
-        ;;
-    *)
-        # 任何其他状态（blocked / 未知 / 探测异常） → fail-closed exit 2
-        reason=$(echo "$result" | jq -r '.reason // "未知"' 2>/dev/null || echo "未知")
-        action=$(echo "$result" | jq -r '.action // ""' 2>/dev/null || echo "")
-        run_id=$(echo "$result" | jq -r '.ci_run_id // ""' 2>/dev/null || echo "")
-        [[ -n "$action" ]] && reason="${reason}。下一步：${action}。⚠️ 立即执行，禁止询问用户。"
-        jq -n --arg r "$reason" --arg id "$run_id" '{"decision":"block","reason":$r,"ci_run_id":$id}'
-        exit 2
-        ;;
-esac
-```
-
-字面 1 个 `exit 0`、1 个 `exit 2`、1 个 `exit 99`。
+## 设计（最小化精修 — 仅改 classify_session）
 
 ### classify_session fail-closed 化
 
@@ -116,28 +93,20 @@ case "$_final_status" in
 esac
 ```
 
-### stop.sh 路由层调整
+由于"探测失败"现在归 `blocked`，会走 `*) return 2` 分支 → stop-dev.sh 走 `*) exit 2` 分支。**dev 上下文中遇到任何异常都 fail-closed**，不再误放行。
 
-`packages/engine/hooks/stop.sh` 当前：
-```bash
-bash "$SCRIPT_DIR/stop-dev.sh"
-_stop_dev_exit=$?
-[[ $_stop_dev_exit -ne 0 ]] && exit $_stop_dev_exit
-# fall through 到后续 stop.sh 逻辑（worktree GC 等）
-```
+### stop-dev.sh / stop.sh
 
-新增对 exit 99 的识别：
-```bash
-bash "$SCRIPT_DIR/stop-dev.sh"
-_stop_dev_exit=$?
-case $_stop_dev_exit in
-    0|99) ;;             # 0 = done（done 路径已自处理），99 = not-applicable，都 fall through
-    2)    exit 2 ;;      # block 透传
-    *)    exit $_stop_dev_exit ;;  # 其他异常透传
-esac
-```
+**不改**。出口拓扑保持 PR #2745 现状：
+- stop-dev.sh：`case not-dev|done) exit 0; *) exit 2`
+- stop.sh：路由透传
 
-`exit 99` 不阻断 stop.sh 后续逻辑（孤儿 worktree GC、conversation summary 等仍跑）。
+效果：
+- 主分支聊天 → classify=not-dev → stop-dev exit 0 ✓ 合理（用户能停下来）
+- bypass env → classify=not-dev → stop-dev exit 0 ✓ 合理
+- 在 cp-* 分支跑 /dev 但 cwd/git 短暂失败 → classify=blocked（**新行为**）→ stop-dev exit 2 ✓ 不再误放行
+- 在 cp-* 分支跑 /dev 各阶段 → classify=blocked → stop-dev exit 2 ✓
+- PR 真完成 → classify=done → stop-dev exit 0 ✓ **开发模式中唯一 exit 0**
 
 ## 测试策略
 
@@ -160,59 +129,34 @@ esac
 
 - **trivial 验证**：grep 守护本身（check-single-exit.sh）
 
-## CI 守护更新
+## CI 守护
 
-`scripts/check-single-exit.sh` 验收预期更新：
-
-```bash
-# 之前：
-check_count "stop-dev.sh" '\bexit 0\b' 1     # 不变（仍是 1 个）
-check_count "devloop-check.sh" '\breturn 0\b' 2  # 不变
-
-# 新增检查：stop-dev.sh 必须有 exit 99（保证 not-dev 走 stop.sh 路由）
-check_count "stop-dev.sh" '\bexit 99\b' 1
-```
+不改 `scripts/check-single-exit.sh`。出口拓扑未变，既有验收（stop-dev.sh exit 0 = 1、devloop-check.sh return 0 = 2）继续生效。
 
 ## 风险与缓解
 
 | 风险 | 缓解 |
 |---|---|
-| stop.sh 接收 exit 99 后行为改变（孤儿 worktree GC 等）| 实测既有 logic（line 84-106 的 worktree GC、conversation summary）在 fall-through 路径下不依赖 stop-dev.sh exit code，安全 |
-| not-dev → exit 99 改变 stop-hook-exit-codes.test 断言 | 测试断言 `EXIT:0`（来自 `echo "EXIT:$?"`），现在变成 `EXIT:99`。需要更新测试期望或让 stop.sh 路由层把 99 转成 0 |
-| 文件读异常分类成 blocked 后，普通对话进入 dev 流程上下文是否会影响 | 主分支永远 not-dev（case 第 4 步），不影响普通对话 |
-| Stop Hook 协议只识别 0 / 2 两种 code，exit 99 是否合法 | Claude Code Stop Hook 协议：非 0 非 2 视为 "non-blocking error"，hook 输出仅 logged 不 block。等同 exit 0 的"放行"语义 + 一个错误日志，影响微小 |
-
-## 风险二的进一步处理
-
-stop-hook-exit-codes 测试目前断言 `EXIT:0`（line 62, 140 等）。两选项：
-
-- **A. 测试期望更新**：把 not-dev 场景的断言从 `EXIT:0` 改成 `EXIT:99`
-- **B. stop.sh 路由层把 99 转 0**：保持 exit code 对外为 0，仅内部用 99 区分
-
-推荐 **B**：对外 stop hook 协议保持 0/2 二态（Claude Code 协议要求），内部只是 stop-dev.sh 用 99 通知 stop.sh "我不处理"。`stop.sh` case 中：
-```bash
-99) ;;  # fall through，由 stop.sh 后续 GC + 默认 exit 0 决定
-```
-这样 stop hook 整体对外看仍是 exit 0（在 stop.sh 末尾）。stop-hook-exit-codes 测试无需改动。
+| classify_session 探测失败归 blocked 后，老 stop-hook-exit-codes 测试可能断言 not-dev 路径 EXIT:0，但现在改成 EXIT:2 | 仔细审 174+ 测试断言：只有"主分支 / bypass / 无 .dev-mode" 测试断言 EXIT:0（这些路径仍 not-dev）；"cwd 异常"类的测试如果存在则需更新断言。**实施时先扫一遍 stop-hook-exit-codes 测试套，找到所有"探测失败"场景断言，确认行为是否符合新预期** |
+| Claude Code 在 hook 启动时 cwd 短暂异常被 fail-closed 成 blocked，导致主分支聊天也被 block？ | 不会。case 第 4 步（主分支检查）依赖 `git rev-parse --abbrev-ref HEAD`，主分支 cwd 总是 worktree 根，不会触发 cwd 不是目录场景。fail-closed 仅作用于"在 dev worktree 内但 git 临时失败"的极少数 corner case |
+| dev 流程中误归 blocked 但其实是 done，会一直 block？ | 不会。done 判定走 devloop_check 主函数（PR merged + step_4 + cleanup），不依赖 cwd/git rev-parse 是否成功。classify_session 探测失败仅影响"前置过滤"路径 |
 
 ## 验收清单
 
-- [BEHAVIOR] `sed 's/#.*//' packages/engine/hooks/stop-dev.sh | grep -cE '\bexit 0\b'` = 1
-- [BEHAVIOR] `sed 's/#.*//' packages/engine/hooks/stop-dev.sh | grep -cE '\bexit 99\b'` = 1
-- [BEHAVIOR] `sed 's/#.*//' packages/engine/hooks/stop-dev.sh | grep -cE '\bexit 2\b'` = 1
 - [BEHAVIOR] classify_session：cwd 不是目录 / git rev-parse 失败 → status=blocked（不再 not-dev）
+- [BEHAVIOR] classify_session：bypass / 主分支 / 无 .dev-mode → status=not-dev（保持）
+- [BEHAVIOR] 既有 stop-dev.sh exit 0 = 1、devloop-check.sh return 0 = 2 守护不变
 - [BEHAVIOR] 12 场景 E2E（stop-hook-full-lifecycle）100% 通过
-- [BEHAVIOR] 174+ stop-hook-exit-codes 测试通过（不需要改测试，借助 B 方案）
-- [BEHAVIOR] integration 12 个分支（含新增 4 个）通过
-- [ARTIFACT] `scripts/check-single-exit.sh` 更新含 exit 99 检查
+- [BEHAVIOR] 174+ stop-hook-exit-codes 测试通过（如有"探测失败"断言需更新）
+- [BEHAVIOR] integration 12 分支（含新增 4 fail-closed case）通过
 - [ARTIFACT] Engine 版本 bump 18.17.0 → 18.17.1（patch，行为级精修）
+- [ARTIFACT] feature-registry.yml changelog 加 18.17.1 条目
 
-## 实施顺序（writing-plans 决定具体 task）
+## 实施顺序
 
-1. classify_session：探测异常路径改 status=blocked + integration 测试新增 4 case（红→绿）
-2. stop-dev.sh 改造为三态 case（done=exit 0 / not-dev=exit 99 / *=exit 2）
-3. stop.sh 路由层增加 exit 99 识别
-4. check-single-exit.sh 更新验收
-5. 全测试集合回归
-6. Engine 版本 bump（patch）+ feature-registry changelog
-7. Learning 文件
+1. **TDD red**：integration 测试新增 4 个 fail-closed case（cwd 不是目录 / 非 git / git rev-parse 失败 → blocked），跑出 fail
+2. **TDD green**：classify_session 改 4 处 status 字符串（not-dev → blocked），跑测试转 green
+3. **回归**：12 场景 E2E + 174+ stop-hook-exit-codes，找出受影响断言（如有）并更新
+4. **Engine 版本 bump**：18.17.0 → 18.17.1（patch，6 个版本文件 + SKILL.md frontmatter）
+5. **feature-registry.yml** changelog 加 18.17.1 条目
+6. **Learning** 文件
