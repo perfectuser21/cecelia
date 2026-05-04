@@ -4,17 +4,17 @@ task_id: c7af8b9e-0233-4f9d-8875-9753e1478b70
 
 ## 验收条目
 
-- [ ] [ARTIFACT] `.github/workflows/ci.yml` 已修改（5 处定点改动）
+- [x] [ARTIFACT] `.github/workflows/ci.yml` 已修改（5 处定点改动）
   Test: manual:node -e "require('fs').accessSync('.github/workflows/ci.yml')"
 
-- [ ] [BEHAVIOR] ci-passed 的 check() 调用包含 harness-contract-lint
+- [x] [BEHAVIOR] ci-passed 的 check() 调用包含 harness-contract-lint
   Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!c.includes('check \"harness-contract-lint\"')) process.exit(1)"
 
-- [ ] [BEHAVIOR] changes job 输出 dod 字段（DoD 文件变更检测）
+- [x] [BEHAVIOR] changes job 输出 dod 字段（DoD 文件变更检测）
   Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('      - id: detect'); const seg=c.slice(idx,idx+1500); if(!seg.includes('dod=')) process.exit(1)"
 
-- [ ] [BEHAVIOR] dod-behavior-dynamic 含 needs: [changes] 条件
+- [x] [BEHAVIOR] dod-behavior-dynamic 含 needs: [changes] 条件
   Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('dod-behavior-dynamic:'); const seg=c.slice(idx,idx+400); if(!seg.includes('needs: [changes]')) process.exit(1)"
 
-- [ ] [BEHAVIOR] harness-dod-integrity 含 needs: [changes] 条件
+- [x] [BEHAVIOR] harness-dod-integrity 含 needs: [changes] 条件
   Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('harness-dod-integrity:'); const seg=c.slice(idx,idx+400); if(!seg.includes('needs: [changes]')) process.exit(1)"
