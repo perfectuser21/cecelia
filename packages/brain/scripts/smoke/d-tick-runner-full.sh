@@ -86,11 +86,13 @@ TICK_RESP="$(curl -sf -X POST "$BRAIN_URL/api/brain/tick" -H 'Content-Type: appl
   fail "POST /api/brain/tick 失败"
   TICK_RESP="{}"
 }
-# 可能两种成功路径：
-#   a) result.success === true  （正常跑完）
+# 可能三种成功路径：
+#   a) result.success === true  （executeTick 正常跑完，Wave 1 格式）
 #   b) result.skipped === true  （reentry guard 命中；说明已有 tick 在跑 = 也算 healthy）
+#   c) has("dispatched")        （Wave 2 runScheduler 格式：{dispatched, reason, elapsed_ms}）
 TICK_SUCCESS="$(echo "$TICK_RESP" | jq -r '.success // empty')"
 TICK_SKIPPED="$(echo "$TICK_RESP" | jq -r '.skipped // empty')"
+TICK_DISPATCHED="$(echo "$TICK_RESP" | jq -r 'if has("dispatched") then "present" else empty end')"
 TICK_ERROR="$(echo "$TICK_RESP" | jq -r '.error // empty')"
 if [ "$TICK_SUCCESS" = "true" ]; then
   ACTIONS_COUNT="$(echo "$TICK_RESP" | jq -r '.actions_taken | if type == "array" then length else 0 end' 2>/dev/null || echo 0)"
@@ -98,8 +100,12 @@ if [ "$TICK_SUCCESS" = "true" ]; then
 elif [ "$TICK_SKIPPED" = "true" ]; then
   SKIP_REASON="$(echo "$TICK_RESP" | jq -r '.reason // empty')"
   pass "manual tick 被 reentry guard 跳过 reason=${SKIP_REASON} (已有 tick 在跑也算健康)"
+elif [ "$TICK_DISPATCHED" = "present" ]; then
+  ELAPSED="$(echo "$TICK_RESP" | jq -r '.elapsed_ms // 0')"
+  REASON="$(echo "$TICK_RESP" | jq -r '.reason // empty')"
+  pass "manual tick 跑完（Wave 2 runScheduler 格式）elapsed_ms=${ELAPSED} reason=${REASON}"
 else
-  fail "manual tick 失败: success=$TICK_SUCCESS skipped=$TICK_SKIPPED error=$TICK_ERROR"
+  fail "manual tick 失败: success=$TICK_SUCCESS skipped=$TICK_SKIPPED error=$TICK_ERROR resp=$TICK_RESP"
 fi
 
 # 等异步写完成
@@ -112,7 +118,7 @@ STATUS_AFTER="$(curl -sf "$BRAIN_URL/api/brain/tick/status")"
 LAST_TICK_AFTER="$(echo "$STATUS_AFTER" | jq -r '.last_tick // empty')"
 EXEC_COUNT_AFTER="$(echo "$STATUS_AFTER" | jq -r '.tick_stats.total_executions // 0')"
 
-# 至少 last_tick 或 total_executions 要推进（其中一个）
+# 至少 last_tick、total_executions 推进，或 Wave 2 格式已确认 tick 跑过（其中一个）
 TICK_ADVANCED=0
 if [ -n "$LAST_TICK_AFTER" ] && [ "$LAST_TICK_AFTER" != "$LAST_TICK_BEFORE" ]; then
   pass "last_tick 推进: ${LAST_TICK_BEFORE:-<null>} → $LAST_TICK_AFTER"
@@ -120,6 +126,11 @@ if [ -n "$LAST_TICK_AFTER" ] && [ "$LAST_TICK_AFTER" != "$LAST_TICK_BEFORE" ]; t
 fi
 if [ "$EXEC_COUNT_AFTER" -gt "$EXEC_COUNT_BEFORE" ]; then
   pass "tick_stats.total_executions: $EXEC_COUNT_BEFORE → $EXEC_COUNT_AFTER"
+  TICK_ADVANCED=1
+fi
+# Wave 2 runScheduler 不更新 total_executions；用响应中 has("dispatched") 作为"tick 已跑"证明
+if [ "$TICK_ADVANCED" -eq 0 ] && [ "$TICK_DISPATCHED" = "present" ]; then
+  pass "Wave 2 tick 已跑（runScheduler 格式确认，last_tick/total_executions 由调度层维护）"
   TICK_ADVANCED=1
 fi
 if [ "$TICK_ADVANCED" -eq 0 ]; then
