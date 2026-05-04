@@ -401,22 +401,28 @@ classify_session() {
             break
         fi
 
-        # 2) cwd 必须是目录
+        # 2) cwd 必须是目录（cwd 不存在 = 普通对话场景的 race，归 not-dev 放行）
         if [[ ! -d "$cwd" ]]; then
-            result_json='{"status":"not-dev","reason":"cwd 不是目录"}'
+            result_json='{"status":"not-dev","reason":"cwd 不是目录（普通对话 race，放行）"}'
             break
         fi
 
         # 3) git 探测（worktree + branch）
+        # show-toplevel 失败 = 不在 git work tree 内 = 普通对话场景，归 not-dev
+        # 仅 abbrev-ref 失败（在 git 内但读不到 HEAD）才 fail-closed → blocked
         local wt_root branch
         wt_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || {
-            result_json='{"status":"not-dev","reason":"非 git repo（rev-parse --show-toplevel 失败）"}'
+            result_json='{"status":"not-dev","reason":"非 git work tree（不在任何 .git 链中，普通对话放行）"}'
             break
         }
-        branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null) || {
-            result_json='{"status":"not-dev","reason":"无法读取分支（rev-parse --abbrev-ref 失败）"}'
-            break
-        }
+        # unborn HEAD 时 git 会 exit=128 但 stdout 输出 "HEAD"，让其 fall through 到主分支放行；
+        # 真正失败（git 锁竞态等）stdout 为空 → fail-closed blocked。
+        if ! branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null); then
+            if [[ "$branch" != "HEAD" ]]; then
+                result_json='{"status":"blocked","reason":"git rev-parse --abbrev-ref HEAD 失败（fail-closed）"}'
+                break
+            fi
+        fi
 
         # 4) 主分支放行
         case "$branch" in
