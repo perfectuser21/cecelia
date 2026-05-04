@@ -401,16 +401,18 @@ classify_session() {
             break
         fi
 
-        # 2) cwd 必须是目录（fail-closed：在 dev worktree 内探测失败必须 block，不能误放行）
+        # 2) cwd 必须是目录（cwd 不存在 = 普通对话场景的 race，归 not-dev 放行）
         if [[ ! -d "$cwd" ]]; then
-            result_json='{"status":"blocked","reason":"cwd 不是目录（fail-closed，可能是文件系统竞态）"}'
+            result_json='{"status":"not-dev","reason":"cwd 不是目录（普通对话 race，放行）"}'
             break
         fi
 
         # 3) git 探测（worktree + branch）
+        # show-toplevel 失败 = 不在 git work tree 内 = 普通对话场景，归 not-dev
+        # 仅 abbrev-ref 失败（在 git 内但读不到 HEAD）才 fail-closed → blocked
         local wt_root branch
         wt_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || {
-            result_json='{"status":"blocked","reason":"git rev-parse --show-toplevel 失败（fail-closed，可能是 git 锁竞态）"}'
+            result_json='{"status":"not-dev","reason":"非 git work tree（不在任何 .git 链中，普通对话放行）"}'
             break
         }
         # unborn HEAD 时 git 会 exit=128 但 stdout 输出 "HEAD"，让其 fall through 到主分支放行；

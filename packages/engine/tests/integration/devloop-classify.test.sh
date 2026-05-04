@@ -37,14 +37,14 @@ assert_status "bypass env" "not-dev" "$status"
 unset CECELIA_STOP_HOOK_BYPASS
 result=$(classify_session "/non/existent/path/zzz")
 status=$(echo "$result" | jq -r '.status')
-assert_status "cwd 不是目录 fail-closed" "blocked" "$status"
+assert_status "cwd 不是目录 → 普通对话 race 放行" "not-dev" "$status"
 
-# Case 3: cwd 是目录但不是 git repo → blocked（fail-closed）
+# Case 3: cwd 是目录但不是 git repo → not-dev（普通对话场景，放行）
 NOT_GIT="$TMPROOT/not-git"
 mkdir -p "$NOT_GIT"
 result=$(classify_session "$NOT_GIT")
 status=$(echo "$result" | jq -r '.status')
-assert_status "非 git repo fail-closed" "blocked" "$status"
+assert_status "非 git repo → 普通对话放行" "not-dev" "$status"
 
 # Case 4: 主分支 → not-dev
 MAIN_REPO="$TMPROOT/main-repo"
