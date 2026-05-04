@@ -384,47 +384,58 @@ devloop_check() {
 # 公开函数: classify_session CWD
 #   入口契约：从 cwd 推断当前是否在 /dev 业务上下文。
 #   输出 stdout JSON: {status, reason, [action], [ci_run_id], [dev_mode]}
-#   status 取值：
-#     - "not-dev"  → 不在 dev 上下文（bypass / cwd 异常 / 非 git / 主分支 / 无 .dev-mode），调用方应放行
-#     - "blocked"  → 在 dev 上下文但业务未完成，调用方应让 assistant 继续干活
-#     - "done"     → 在 dev 上下文且业务真完成，调用方应清理 .dev-mode 并放行
-#   单一出口：while:; do ... break; done 收敛到末尾单一 echo + return 0。
+#   status 三态严格区分（fail-open / fail-closed 按"是否在 dev 上下文"分流）：
+#     - "not-dev"  → 真·非开发模式（bypass / 主分支 / 无 .dev-mode / 非 git / cwd 不存在）
+#                    调用方应放行：没有信号显示当前在 /dev 业务里，没有放行误伤面。
+#     - "blocked"  → 已确认在 dev 上下文（git repo 内）但状态损坏 OR 业务未完成：
+#                    rev-parse --abbrev-ref 在 worktree 内失败 / .dev-mode 格式坏 /
+#                    devloop_check 业务未完成。一律 fail-closed 阻塞。
+#     - "done"     → 在 dev 上下文且业务真完成（PR 合 + cleanup_done），调用方应清理
+#                    .dev-mode 并放行
+#   设计动机："PR1 开就停"故障源 = 在 worktree 内 git rev-parse 抖动 → 旧版本误归 not-dev
+#   → fail-open 放行。修复：worktree 已确认 + branch 读不出 = 真·dev 上下文探测异常 →
+#   fail-closed。但"压根不在 git repo"这种 no-signal 情况照旧 fail-open（exit 99）。
+#   单一出口：while:; do ... break; done 收敛到末尾单一 echo + return。
 # ============================================================================
 classify_session() {
     local cwd="${1:-$PWD}"
     local result_json='{"status":"blocked","reason":"unknown"}'
 
     while :; do
-        # 1) bypass
+        # 1) bypass — 真·非开发模式
         if [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]]; then
             result_json='{"status":"not-dev","reason":"bypass via CECELIA_STOP_HOOK_BYPASS=1"}'
             break
         fi
 
-        # 2) cwd 必须是目录（cwd 不存在 = 普通对话场景的 race，归 not-dev 放行）
+        # 2) cwd 必须是目录 — 不存在则不可能在 /dev 业务（no signal） → not-dev
         if [[ ! -d "$cwd" ]]; then
-            result_json='{"status":"not-dev","reason":"cwd 不是目录（普通对话 race，放行）"}'
+            result_json=$(_devloop_jq -n --arg c "$cwd" \
+                '{"status":"not-dev","reason":"cwd [\($c)] 不是目录，不可能在 /dev 业务"}')
             break
         fi
 
-        # 3) git 探测（worktree + branch）
-        # show-toplevel 失败 = 不在 git work tree 内 = 普通对话场景，归 not-dev
-        # 仅 abbrev-ref 失败（在 git 内但读不到 HEAD）才 fail-closed → blocked
-        local wt_root branch
+        # 3) git worktree 探测 — 非 git repo 不可能在 /dev 业务 → not-dev（fail-open OK：
+        #    没有 git 就没有 .dev-mode，不存在被误放行的 dev 上下文）
+        local wt_root
         wt_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || {
-            result_json='{"status":"not-dev","reason":"非 git work tree（不在任何 .git 链中，普通对话放行）"}'
+            result_json=$(_devloop_jq -n --arg c "$cwd" \
+                '{"status":"not-dev","reason":"[\($c)] 非 git repo，不可能在 /dev 业务"}')
             break
         }
-        # unborn HEAD 时 git 会 exit=128 但 stdout 输出 "HEAD"，让其 fall through 到主分支放行；
-        # 真正失败（git 锁竞态等）stdout 为空 → fail-closed blocked。
+        # 4) branch 探测 — 已确认在 git repo 内，rev-parse 失败 = 真·探测异常 fail-closed
+        #    特殊情况：unborn HEAD（git init 后未 commit）git exit=128 但 stdout="HEAD"，
+        #    fall through 到下一步主分支放行（HEAD 命中 case 第 5 步）
+        local branch
         if ! branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null); then
             if [[ "$branch" != "HEAD" ]]; then
-                result_json='{"status":"blocked","reason":"git rev-parse --abbrev-ref HEAD 失败（fail-closed）"}'
+                result_json=$(_devloop_jq -n --arg c "$cwd" --arg w "$wt_root" \
+                    '{"status":"blocked","reason":"git 探测异常：worktree [\($w)] 存在但 rev-parse --abbrev-ref HEAD 失败（cwd=\($c)），fail-closed"}')
                 break
             fi
         fi
 
-        # 4) 主分支放行
+        # 5) 主分支放行 — 真·非开发模式
         case "$branch" in
             main|master|develop|HEAD)
                 result_json=$(_devloop_jq -n --arg b "$branch" \
@@ -433,7 +444,7 @@ classify_session() {
                 ;;
         esac
 
-        # 5) 必须有 .dev-mode
+        # 6) 必须有 .dev-mode — cp-* 分支但未启动 /dev 流程，真·非开发模式
         local dev_mode="$wt_root/.dev-mode.$branch"
         if [[ ! -f "$dev_mode" ]]; then
             result_json=$(_devloop_jq -n --arg f "$dev_mode" \
@@ -441,7 +452,8 @@ classify_session() {
             break
         fi
 
-        # 6) .dev-mode 格式校验（首行必须 dev）
+        # 7) .dev-mode 格式校验（首行必须 dev）— 已确认 .dev-mode 存在，
+        #    格式坏 = dev 上下文中状态损坏 → fail-closed blocked
         if ! head -1 "$dev_mode" 2>/dev/null | grep -q "^dev$"; then
             local first_line
             first_line=$(head -1 "$dev_mode" 2>/dev/null || echo "<empty>")
@@ -460,12 +472,16 @@ classify_session() {
     done
 
     echo "$result_json"
-    # 单点出口：status → exit code 单一映射（not-dev/done=0, 其他=2）
+    # 单点出口：status → exit code 三态映射
+    #   done=0（真完成）/ not-dev=99（不适用，由 stop.sh 路由层放行）/ 其他=2（fail-closed）
+    # exit 99 是 custom code：让上游 stop.sh 区分"真 done（继续走 architect/decomp）"
+    # 与"不适用此 hook（继续走 architect/decomp）"，避免 stop-dev.sh 字面散点 exit 0。
     local _final_status
     _final_status=$(echo "$result_json" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
     case "$_final_status" in
-        not-dev|done) return 0 ;;
-        *) return 2 ;;
+        done)    return 0 ;;
+        not-dev) return 99 ;;
+        *)       return 2 ;;
     esac
 }
 

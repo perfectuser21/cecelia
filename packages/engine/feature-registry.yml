@@ -6,6 +6,18 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.18.0"
+    date: "2026-05-04"
+    change: "feat"
+    description: "Stop Hook v20.1.0 严格三态出口（cp-0504172144）— stop-dev.sh case 拆 done(exit 0) / not-dev(exit 99) / *(exit 2) 三态。出口码与 status 一一对应，代码自解释 'exit 0 = PR 真完成'。stop.sh 路由层识别 exit 99 = pass-through。check-single-exit.sh 守护扩展含 exit 99/return 99/exit 2 校验（从 3 项扩到 7 项）。彻底实现 Alex 字面要求：'确认进入开发模式，唯一 exit 0 = PR 真完成'。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (case 三态)"
+      - "packages/engine/hooks/stop.sh (exit 99 路由 fall-through)"
+      - "packages/engine/lib/devloop-check.sh (classify_session 末尾 not-dev → return 99)"
+      - "4 个测试文件适配 EXIT:99（stop-hook-exit-codes / stop-hook-session-isolation / stop-hook-full-lifecycle / dev-workflow-e2e）"
+      - "scripts/check-single-exit.sh (扩展 4 项守护)"
+      - "Engine 8 处版本文件 18.18.0"
+
   - version: "18.17.1"
     date: "2026-05-04"
     change: "fix"
