@@ -333,4 +333,25 @@ exit 0
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
   });
+
+  // ============ 7 阶段重设计新场景（P3/P5/P6） ============
+  // 注：以下 3 场景断言 verify_dev_complete 7 阶段重写后的行为。
+  // 现有 `makeStubGhEnv` helper 不支持 failedJobs/deployRuns/healthEndpoint
+  // 字段，先 skip 留 placeholder，等 stub 扩展后再开（详见 plan Task 1 Step 2）。
+
+  it.skip('场景 13: P3 CI 失败 → block + 反馈含 fail job 名 + log URL', () => {
+    // ghStub 模拟 gh run list/view 返回 failure + jobs + log url
+    // 预期 verify_dev_complete P3 分支命中，反馈 'CI 失败' + fail job 名 + URL
+  });
+
+  it.skip('场景 14: P5 deploy workflow 进行中 → block + 等 deploy', () => {
+    // ghStub 模拟 PR merged + CI success + brain-ci-deploy in_progress
+    // 预期 verify_dev_complete P5 分支命中，反馈 brain-ci-deploy.yml
+  });
+
+  it.skip('场景 15: P6 health probe 60×5s 超时 → block', () => {
+    // 模拟 PR merged + CI success + deploy success + health endpoint dead
+    // HEALTH_PROBE_MAX_RETRIES=2 HEALTH_PROBE_INTERVAL=0
+    // 预期 verify_dev_complete P6 分支命中，反馈 'health probe...超时'
+  });
 });
