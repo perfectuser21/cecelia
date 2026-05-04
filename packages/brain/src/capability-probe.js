@@ -544,11 +544,24 @@ async function probeSelfDriveHealth() {
     };
   }
 
-  // In-memory grace: if the loop IS running and started recently according to module state,
-  // treat as healthy even when loop_started DB event was not written (transient DB write failure).
-  // Only applies when there are no errors — silent failures without errors suggest DB write issue,
-  // not a genuine cycle failure.
-  if (successCnt === 0 && errorCnt === 0 && selfDriveStatusForGrace?.started_at) {
+  // In-memory cycle grace: cycles have actually executed successfully according to in-memory
+  // counters (incremented before DB INSERT in recordEvent), but DB query found no events
+  // (transient INSERT failures, replication lag, or wider DB outage). In-memory state is the
+  // ground truth for "did this Brain process run cycles". Trust it when DB lookup misses.
+  // Skipped when any errors present (real LLM/cycle failure, not a DB write issue).
+  const inMemSuccess = selfDriveStatusForGrace?.cycle_success_count || 0;
+  const inMemErrors = selfDriveStatusForGrace?.cycle_error_count || 0;
+  if (successCnt === 0 && errorCnt === 0 && inMemSuccess > 0 && inMemErrors === 0) {
+    const lastSuccessIso = selfDriveStatusForGrace.last_cycle_success_at?.toISOString() || 'unknown';
+    return {
+      ok: true,
+      detail: `24h: in_memory_cycles=${inMemSuccess} (db_event_missing) last_success=${lastSuccessIso}`,
+    };
+  }
+
+  // In-memory startup grace: loop is running but no cycles have completed yet (bootstrap
+  // window). Distinct from cycle grace above — covers the gap before any cycle has fired.
+  if (successCnt === 0 && errorCnt === 0 && inMemErrors === 0 && selfDriveStatusForGrace?.started_at) {
     const inMemGraceMs = LOOP_STARTED_GRACE_MS;
     const inMemAge = Date.now() - selfDriveStatusForGrace.started_at.getTime();
     if (inMemAge < inMemGraceMs) {
@@ -557,6 +570,15 @@ async function probeSelfDriveHealth() {
         detail: `24h: loop_running_since=${selfDriveStatusForGrace.started_at.toISOString()} awaiting_first_cycle (db_event_missing) errors=${errorCnt}`,
       };
     }
+  }
+
+  // Surface in-memory errors when DB shows nothing — real failure even if events were lost.
+  if (errorCnt === 0 && inMemErrors > 0) {
+    const lastErrorIso = selfDriveStatusForGrace.last_cycle_error_at?.toISOString() || 'unknown';
+    return {
+      ok: false,
+      detail: `24h: in_memory_errors=${inMemErrors} (db_event_missing) last_error=${lastErrorIso}`,
+    };
   }
 
   return {
