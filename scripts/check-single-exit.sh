@@ -37,6 +37,12 @@ check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 0\b' 1 "hooks/stop-dev.sh exi
 # 辅助函数 _mark_cleanup_done / _increment_and_check_ci_counter 已改为 return（无参数）
 check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 0\b' 2 "packages/engine/lib/devloop-check.sh return 0"
 
+# v20.1.0 三态出口（exit 0 仅服务 done，exit 99 = not-applicable，exit 2 = blocked）
+check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 99\b' 1 "packages/engine/hooks/stop-dev.sh exit 99"
+check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 2\b' 1 "packages/engine/hooks/stop-dev.sh exit 2"
+check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 99\b' 1 "hooks/stop-dev.sh exit 99"
+check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 99\b' 1 "packages/engine/lib/devloop-check.sh return 99"
+
 if [[ "$ERR" -eq 0 ]]; then
     echo ""
     echo "✅ 单一出口检查通过"

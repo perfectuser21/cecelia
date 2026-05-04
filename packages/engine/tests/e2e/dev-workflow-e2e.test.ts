@@ -227,10 +227,14 @@ describe('stop hook exit codes', () => {
     expect(content).toContain('devloop-check.sh');
   });
 
-  it('无活跃 .dev-lock 时，stop-dev.sh 允许退出（exit 0）', () => {
+  it('无活跃 .dev-lock 时，stop-dev.sh 放行退出（exit 0 或 99）', () => {
     const dir = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-stop-'));
     tmpDirs.push(dir);
     execSync('git init -q', { cwd: dir });
+    // v20.1.0 fail-closed：classify_session 在 rev-parse --abbrev-ref HEAD 失败时
+    // 视为探测异常 → blocked。空 repo 没有 HEAD ref，必须先 commit 让分支可读，
+    // 否则被判定为"探测失败"而非"无 .dev-mode"。
+    execSync('git config user.email t@e.com && git config user.name t && git commit --allow-empty -qm init', { cwd: dir });
 
     const result = spawnSync('bash', [STOP_DEV], {
       encoding: 'utf8',
@@ -238,8 +242,9 @@ describe('stop hook exit codes', () => {
       env: { ...process.env, HOME: dir },
       timeout: 10000,
     });
-    // 无 .dev-lock → 无活跃会话 → exit 0
-    expect(result.status).toBe(0);
+    // 无 .dev-mode → not-applicable → v20.1.0 exit 99（旧 v20.0.0 是 exit 0）
+    // 关键不是哪个具体码，而是 stop.sh 路由层会将其视为 pass-through（不 block）
+    expect([0, 99]).toContain(result.status);
   });
 
   it('devloop_check 在 step_1_spec=pending 时 exit 2（模拟 stop hook 阻止退出）', () => {
@@ -633,20 +638,23 @@ describe('devloop_check harness mode', () => {
     expect(output).toContain('done');
   });
 
-  it('stop-dev.sh 在无 .dev-lock 匹配当前 worktree 时 exit 0', () => {
+  it('stop-dev.sh 在无 .dev-lock 匹配当前 worktree 时放行（exit 0 或 99）', () => {
     const dir = mkdtempSync(join(os.tmpdir(), 'cecelia-e2e-stophook-'));
     tmpDirs.push(dir);
     execSync('git init -q', { cwd: dir });
     execSync('git config user.email "test@example.com"', { cwd: dir });
     execSync('git config user.name "Test"', { cwd: dir });
+    // v20.1.0 fail-closed：空 repo（无 commit）会让 rev-parse --abbrev-ref 失败
+    // 被判 probe-failure → blocked。先 commit 让分支可读，才能命中"主分支放行"。
+    execSync('git commit --allow-empty -qm init', { cwd: dir });
 
-    // 无任何 .dev-lock 文件
+    // 无任何 .dev-mode 文件 → v20.1.0 not-applicable → exit 99（旧 v20.0.0 是 exit 0）
     const result = spawnSync('bash', [STOP_DEV], {
       encoding: 'utf8',
       cwd: dir,
       env: { ...process.env, HOME: dir },
       timeout: 10000,
     });
-    expect(result.status).toBe(0);
+    expect([0, 99]).toContain(result.status);
   });
 });

@@ -46,9 +46,14 @@ function runStopHook(opts: RunOpts): RunResult {
     envPath = `${stubDir}:${envPath}`;
   }
 
+  // 走 CLAUDE_HOOK_STDIN_JSON_OVERRIDE 而不是 stdin pipe —— vitest spawnSync stdin
+  // 不稳定（stop.sh 自己有这条逃生通道，专门给测试用）。把 stdin 也设上做双保险。
+  const overrideEnv: Record<string, string> = {};
+  if (stdinStr) overrideEnv.CLAUDE_HOOK_STDIN_JSON_OVERRIDE = stdinStr;
+
   const res = spawnSync('bash', [STOP_HOOK], {
     cwd: opts.cwd,
-    env: { ...process.env, ...(opts.env ?? {}), PATH: envPath },
+    env: { ...process.env, ...overrideEnv, ...(opts.env ?? {}), PATH: envPath },
     input: stdinStr,
     encoding: 'utf-8',
     timeout: 15000,
