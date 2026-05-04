@@ -38,12 +38,17 @@ status=$(echo "$result" | jq -r '.status // "blocked"' 2>/dev/null || echo "bloc
 # ---- 单一 case + 单一 exit 0 ---------------------------------------------
 case "$status" in
     not-dev|done)
-        # done 路径：清理 .dev-mode 文件（透传字段由 classify_session 附加）
+        # done 路径：清理 .dev-mode + 输出 decision=allow（向后兼容 stop hook 协议）
+        # not-dev 路径：reason 走 stderr（保留老 stop-dev v19 的诊断提示），stdout 静默
         if [[ "$status" == "done" ]]; then
             _dm=$(echo "$result" | jq -r '.dev_mode // ""' 2>/dev/null || echo "")
             [[ -n "$_dm" && -f "$_dm" ]] && rm -f "$_dm"
+            reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
+            jq -n --arg r "$reason" '{"decision":"allow","reason":$r}'
+        else
+            reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
+            [[ -n "$reason" ]] && echo "[stop-dev] $reason" >&2
         fi
-        echo "$result"
         exit 0
         ;;
     *)

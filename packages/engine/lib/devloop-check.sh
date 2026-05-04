@@ -374,7 +374,10 @@ devloop_check() {
     done
 
     echo "$result_json"
-    return 0
+    # 单点出口：status → exit code 单一映射（done=0, 其他=2），保持 stop hook 协议向后兼容
+    local _final_status
+    _final_status=$(echo "$result_json" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
+    [[ "$_final_status" == "done" ]] && return 0 || return 2
 }
 
 # ============================================================================
@@ -451,7 +454,13 @@ classify_session() {
     done
 
     echo "$result_json"
-    return 0
+    # 单点出口：status → exit code 单一映射（not-dev/done=0, 其他=2）
+    local _final_status
+    _final_status=$(echo "$result_json" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
+    case "$_final_status" in
+        not-dev|done) return 0 ;;
+        *) return 2 ;;
+    esac
 }
 
 # ============================================================================

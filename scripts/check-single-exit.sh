@@ -20,11 +20,11 @@ check_count() {
     local count
     count=$(sed 's/#.*//' "$file" | grep -cE "$pattern" || true)
     count="${count:-0}"
-    if [[ "$count" -ne "$expected" ]]; then
-        echo "❌ $label: '$pattern' 出现 $count 次（期望 $expected）— $file"
+    if [[ "${count}" -ne "${expected}" ]]; then
+        echo "❌ ${label}: '${pattern}' 出现 ${count} 次（期望 ${expected}）— ${file}"
         ERR=1
     else
-        echo "✅ $label: $count / $expected"
+        echo "✅ ${label}: ${count} / ${expected}"
     fi
 }
 
