@@ -4,6 +4,10 @@
 set -euo pipefail
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+DB_HOST="${DB_HOST:-localhost}"
+DB_USER="${DB_USER:-cecelia}"
+DB_NAME="${DB_NAME:-cecelia}"
+DB_PASSWORD="${DB_PASSWORD:-cecelia}"
 
 echo "[cb-persist-smoke] 1. 检查 Brain 健康"
 STATUS=$(curl -sf "${BRAIN_URL}/api/brain/health" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.status||'unknown')")
@@ -33,13 +37,8 @@ console.log('migration 261 存在 ✓');
 "
 
 echo "[cb-persist-smoke] 4. 验证 circuit_breaker_states 表已部署"
-node -e "
-const { execSync } = require('child_process');
-try {
-  execSync('psql -h localhost -U cecelia -d cecelia -c \"SELECT COUNT(*) FROM circuit_breaker_states\" 2>&1',
-    { env: { ...process.env, PGPASSWORD: 'cecelia' }, encoding: 'utf8' });
-  console.log('circuit_breaker_states 表存在 ✓');
-} catch (e) { console.error('FAIL:', e.message); process.exit(1); }
-"
+PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT COUNT(*) FROM circuit_breaker_states" > /dev/null 2>&1 && \
+  echo "circuit_breaker_states 表存在 ✓" || \
+  { echo "FAIL: circuit_breaker_states 表不可访问"; exit 1; }
 
 echo "[cb-persist-smoke] 全部检查通过 ✓"
