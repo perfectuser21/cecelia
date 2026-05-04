@@ -25,8 +25,8 @@ set -euo pipefail
 cwd="${CLAUDE_HOOK_CWD:-$PWD}"
 [[ ! -d "$cwd" ]] && exit 0
 
-# git worktree list 第一行是主仓库
-main_repo=$(git -C "$cwd" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}')
+# git worktree list 第一行是主仓库（无 git 时 git 报错，set -euo pipefail 会让脚本崩；用 || true 兜底）
+main_repo=$(git -C "$cwd" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}' || true)
 [[ -z "$main_repo" ]] && exit 0  # 不在 git → 普通对话
 
 # ---- 找当前活跃的 dev session 状态文件 ------------------------------------
