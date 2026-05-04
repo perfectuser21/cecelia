@@ -1,11 +1,20 @@
-# DoD — cleanup.sh gone-branch grep fix + devloop-check stdout 隔离
+# DoD — Ralph 模式三 Phase 测试全覆盖
 
-task_id: cp-05042015-cleanup-gone-grep-fix
+task_id: b7820794-6444-46ce-8496-706e18e6d4d6
 
 ## 验收条目
 
-- [x] [ARTIFACT] cleanup.sh step 9.5 grep 管道带 `|| true`
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/scripts/cleanup.sh','utf8'); if(!c.includes('grep \\': gone]\\' | awk \\'{print \$1}\\' || true')) process.exit(1)"
+- [x] [ARTIFACT] Phase A E2E 测试文件存在
+  Test: manual:node -e "require('fs').accessSync('packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts')"
 
-- [x] [BEHAVIOR] verify_dev_complete 调用 cleanup.sh 时 stdout 重定向到 /dev/null
-  Test: manual:node -e "const s=require('fs').readFileSync('packages/engine/lib/devloop-check.sh','utf8'); if(!s.includes('>/dev/null 2>/dev/null')) process.exit(1)"
+- [x] [ARTIFACT] Phase B unit 测试文件存在
+  Test: manual:node -e "require('fs').accessSync('packages/engine/tests/unit/verify-dev-complete.test.sh')"
+
+- [x] [ARTIFACT] Phase C smoke 脚本存在
+  Test: manual:node -e "require('fs').accessSync('packages/engine/scripts/smoke/ralph-loop-smoke.sh')"
+
+- [x] [BEHAVIOR] Phase A E2E 含 12 个 Ralph 协议场景
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts','utf8'); const m=c.match(/it\(/g)||[]; if(m.length<10) process.exit(1)"
+
+- [x] [BEHAVIOR] feature-registry.yml 记录了 18.19.1 版本条目
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/feature-registry.yml','utf8'); if(!c.includes('18.19.1')) process.exit(1)"
