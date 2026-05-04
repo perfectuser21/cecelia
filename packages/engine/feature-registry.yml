@@ -6,6 +6,16 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.19.1"
+    date: "2026-05-04"
+    change: "test"
+    description: "Stop Hook Ralph 模式测试补全（cp-0504201242）— Phase A 重写 12 场景 E2E unskip + 适配 Ralph 协议（含 HAPPY PATH），Phase B 新增 verify_dev_complete 21 unit case，Phase C 新增 ralph-loop-smoke.sh 12 case 端到端。补 PR #2752 留下的测试 gap（完成路径之前 0 覆盖）。四层金字塔：21 unit + 5 integration + 12 E2E + 12 smoke = 50 case 总覆盖。"
+    files:
+      - "packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts (12 场景重写)"
+      - "packages/engine/tests/unit/verify-dev-complete.test.sh (新增 21 case)"
+      - "packages/engine/scripts/smoke/ralph-loop-smoke.sh (新增 12 case)"
+      - "Engine 8 处版本文件 18.19.1"
+
   - version: "18.19.0"
     date: "2026-05-04"
     change: "feat"
