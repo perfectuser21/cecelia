@@ -104,14 +104,16 @@ async function detectFailureSpike() {
   `;
   
   const result = await pool.query(query);
-  const row = result.rows[0];
-  
+  const row = result.rows[0] || {};
+
   return {
     failed_count: parseInt(row.failed_count) || 0,
     total_count: parseInt(row.total_count) || 0,
     failure_rate: parseFloat(row.failure_rate) || 0
   };
 }
+
+export { detectFailureSpike };
 
 /**
  * Detector: Resource Pressure

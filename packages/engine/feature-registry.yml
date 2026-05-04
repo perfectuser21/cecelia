@@ -6,6 +6,18 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.20.0"
+    date: "2026-05-04"
+    change: "feat"
+    description: "Stop Hook 7 阶段重设计（cp-0504214049）— verify_dev_complete 重写为 P1 PR 未建 → P2 CI 进行 → P3 CI 失败（新）→ P4 未合 → P5 deploy workflow（新）→ P6 health probe（新）→ P7 Learning → P0 done。修复 4 盲区：CI status≠conclusion 误判、CI 失败无 retry 反馈、merge 后无 deploy 验证、无 /api/brain/health 健康探针。信号源切到 GitHub API + HTTP probe，不读 .dev-mode 字段。P5/P6 用 env var (VERIFY_DEPLOY_WORKFLOW / VERIFY_HEALTH_PROBE) 启用，向后兼容旧 21 unit case。附带 monitor-loop.js:107 row undefined guard（main 自带 bug 被 wave2 间接触发）。Stop Hook 完整闭环第 10 段。"
+    files:
+      - "packages/engine/lib/devloop-check.sh (verify_dev_complete 重写 P1-P7)"
+      - "packages/brain/src/monitor-loop.js (row undefined guard + export detectFailureSpike)"
+      - "packages/brain/src/__tests__/monitor-loop.test.js (新增 guard 单测 + cycle 完整覆盖)"
+      - "packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts (P3/P5/P6 场景骨架)"
+      - "packages/engine/scripts/smoke/stop-hook-7stage-smoke.sh (新建骨架)"
+      - "Engine 8 处版本文件 18.20.0"
+
   - version: "18.19.3"
     date: "2026-05-04"
     change: "fix"
