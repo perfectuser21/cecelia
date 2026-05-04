@@ -123,6 +123,22 @@ import {
 } from './tick-helpers.js';
 import { tickState } from './tick-state.js';
 
+/**
+ * 给 thalamusProcessEvent 加超时保护。
+ * 超时返回 fallback_to_tick，不抛错，不阻塞 tick loop。
+ */
+export async function withThalamusTimeout(promise, timeoutMs = 30000) {
+  let timer;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve({ actions: [{ type: 'fallback_to_tick' }], level: 'timeout', timed_out: true }), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // 常量 + 助手 — 与 tick.js 中同名定义保持一致（process.env 读出来同值）。
 // 设计理由：避免与 tick.js 形成 ES module 循环导入（tick.js 已 import
@@ -627,7 +643,7 @@ async function executeTick() {
       has_anomaly: false  // Will be set to true if issues detected later
     };
 
-    thalamusResult = await thalamusProcessEvent(tickEvent);
+    thalamusResult = await withThalamusTimeout(thalamusProcessEvent(tickEvent), 30000);
 
     // If thalamus returns fallback_to_tick or no_action, continue with normal tick
     // Otherwise, execute the thalamus decision
@@ -900,70 +916,18 @@ async function executeTick() {
 
     // 2. Generate decision if there are issues
     if (comparison.overall_health !== 'healthy' || comparison.next_actions.length > 0) {
-      const decision = await generateDecision({ trigger: 'tick' });
-
-      await logTickDecision(
-        'tick',
-        `Decision generated: ${decision.actions.length} actions, confidence: ${decision.confidence}`,
-        { action: 'generate_decision', decision_id: decision.decision_id },
-        { success: true, confidence: decision.confidence }
-      );
-
-      if (decision.confidence >= AUTO_EXECUTE_CONFIDENCE && decision.actions.length > 0) {
-        // High confidence — execute all actions
-        const execResult = await executeDecision(decision.decision_id);
-
-        await logTickDecision(
-          'tick',
-          `Auto-executed decision: ${execResult.results.length} actions`,
-          { action: 'execute_decision', decision_id: decision.decision_id },
-          { success: true, executed: execResult.results.length }
-        );
-
-        actionsTaken.push({
-          action: 'execute_decision',
-          decision_id: decision.decision_id,
-          actions_executed: execResult.results.length,
-          confidence: decision.confidence
-        });
-      } else if (decision.actions.length > 0) {
-        // Low confidence — but safe actions can still auto-execute
-        const { safeActions, unsafeActions } = splitActionsBySafety(decision.actions);
-
-        if (safeActions.length > 0) {
-          // Execute safe actions directly (retry, reprioritize, skip)
-          await executeDecision(decision.decision_id);
-
-          await logTickDecision(
-            'tick',
-            `Auto-executed ${safeActions.length} safe actions (${safeActions.map(a => a.type).join(', ')}), ${unsafeActions.length} pending approval`,
-            { action: 'execute_safe_actions', decision_id: decision.decision_id },
-            { success: true, safe_executed: safeActions.length, unsafe_pending: unsafeActions.length }
-          );
-
-          actionsTaken.push({
-            action: 'execute_safe_actions',
-            decision_id: decision.decision_id,
-            safe_actions_executed: safeActions.length,
-            unsafe_actions_pending: unsafeActions.length,
-            confidence: decision.confidence
-          });
-        } else {
-          await logTickDecision(
-            'tick',
-            `Decision pending approval: confidence ${decision.confidence} < ${AUTO_EXECUTE_CONFIDENCE}, no safe actions`,
-            { action: 'decision_pending', decision_id: decision.decision_id },
-            { success: true, requires_approval: true }
-          );
-        }
-      }
-
-      decisionEngineResult = {
-        comparison_health: comparison.overall_health,
-        decision_id: decision.decision_id,
-        actions_generated: decision.actions.length,
-        confidence: decision.confidence
-      };
+      // fire-and-forget：决策生成不阻塞 tick，结果写 DB 供下次 tick 读取
+      Promise.resolve()
+        .then(async () => {
+          const decision = await generateDecision({ trigger: 'tick' });
+          if (decision.confidence >= AUTO_EXECUTE_CONFIDENCE && decision.actions.length > 0) {
+            await executeDecision(decision.decision_id);
+          } else if (decision.actions.length > 0) {
+            const { safeActions } = splitActionsBySafety(decision.actions);
+            if (safeActions.length > 0) await executeDecision(decision.decision_id);
+          }
+        })
+        .catch(e => console.warn('[tick] generateDecision fire-and-forget 失败:', e.message));
     }
   } catch (err) {
     await logTickDecision(
@@ -1225,34 +1189,14 @@ async function executeTick() {
   publishCognitiveState({ phase: 'planning', detail: '规划下一步任务…', meta: { queued: queued.length, in_progress: inProgress.length } });
   if (queued.length < 3 && allGoalIds.length > 0) {
     const planKrIds = readyKrIds.length > 0 ? readyKrIds : allGoalIds; // 优先 ready KRs
-    try {
-      const planned = await planNextTask(planKrIds);
-      if (planned.planned) {
-        actionsTaken.push({
-          action: 'plan',
-          task_id: planned.task.id,
-          title: planned.task.title
-        });
-      } else if (planned.reason === 'needs_planning' && planned.kr) {
-        // Note: KR decomposition now handled by decomposition-checker.js
-        actionsTaken.push({
-          action: 'needs_planning',
-          kr: planned.kr,
-          project: planned.project,
-          note: 'waiting_for_decomposition_checker'
-        });
-      } else if (planned.reason === 'no_project_for_kr') {
-        // KR exists but has no linked Project — decomposition-checker Check C will handle
-        tickLog(`[tick-loop] no_project_for_kr: KR "${planned.kr?.title}" has no linked project, decomposition-checker Check C will repair`);
-        actionsTaken.push({
-          action: 'no_project_for_kr',
-          kr: planned.kr,
-          note: 'waiting_for_decomposition_checker_check_c'
-        });
-      }
-    } catch (planErr) {
-      console.error('[tick-loop] Planner error:', planErr.message);
-    }
+    Promise.resolve()
+      .then(async () => {
+        const planned = await planNextTask(planKrIds);
+        if (planned.planned) {
+          tickLog(`[tick] plan fire-and-forget: ${planned.task?.title}`);
+        }
+      })
+      .catch(e => console.warn('[tick] planNextTask fire-and-forget 失败:', e.message));
   } else if (!canPlan() && queued.length === 0 && inProgress.length === 0) {
     tickLog(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
   }
@@ -1555,11 +1499,8 @@ async function executeTick() {
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });
-  try {
-    ruminationResult = await runRumination(pool);
-  } catch (rumErr) {
-    console.error('[tick] rumination error:', rumErr.message);
-  }
+  Promise.resolve().then(() => runRumination(pool))
+    .catch(e => console.warn('[tick] rumination 失败（fire-and-forget）:', e.message));
 
   // 10.7 内在叙事更新（每小时一次，fire-and-forget）
   try {
