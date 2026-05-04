@@ -286,7 +286,10 @@ devloop_check() {
         fi
 
         # ===== 条件 5: PR 已合并? =====
+        # 严格守门：唯一 done 路径 = step_4=done AND cleanup.sh 真跑成功（含部署）
+        # 之前 fallback 在 step_4=pending 时跑 cleanup.sh 成功就标 done，绕过 Learning 检查
         if [[ "$pr_state" == "merged" ]]; then
+            # 5.1 base ref 必须是 main
             local pr_base_ref=""
             [[ -n "$pr_number" ]] && \
                 pr_base_ref=$(gh pr view "$pr_number" --json baseRefName -q '.baseRefName' 2>/dev/null || echo "")
@@ -296,15 +299,16 @@ devloop_check() {
                 break
             fi
 
+            # 5.2 step_4_ship 必须 done（除 harness 模式）— 严格守门
             local step_4_status
             step_4_status=$(_get_step4_status "$dev_mode_file")
-
-            if [[ "$step_4_status" == "done" ]] || [[ "$_harness_mode" == "true" ]]; then
-                _mark_cleanup_done "$dev_mode_file"
-                result_json='{"status":"done","reason":"PR 已合并，工作流结束"}'
+            if [[ "$step_4_status" != "done" ]] && [[ "$_harness_mode" != "true" ]]; then
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"blocked","reason":"PR #\($pr) 已合并，但 Stage 4 Ship 未完成（必须先写 docs/learnings/<branch>.md 并标记 step_4_ship: done）","action":"立即读取 skills/dev/steps/04-ship.md 完成 Stage 4。禁止询问用户。"}')
                 break
             fi
 
+            # 5.3 找 cleanup.sh
             local _cleanup_script=""
             for _cs in \
                 "${PROJECT_ROOT:-}/packages/engine/skills/dev/scripts/cleanup.sh" \
@@ -312,16 +316,21 @@ devloop_check() {
                 "$HOME/.claude-account1/skills/dev/scripts/cleanup.sh"; do
                 [[ -f "$_cs" ]] && { _cleanup_script="$_cs"; break; }
             done
-            if [[ -n "$_cleanup_script" ]]; then
-                echo "🧹 自动执行 cleanup.sh..." >&2
-                if (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script") 2>/dev/null; then
-                    _mark_cleanup_done "$dev_mode_file"
-                    result_json='{"status":"done","reason":"PR 已合并，cleanup 完成"}'
-                else
-                    result_json='{"status":"blocked","reason":"PR 已合并，cleanup.sh 执行失败","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4 Ship"}'
-                fi
+            if [[ -z "$_cleanup_script" ]]; then
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"blocked","reason":"PR #\($pr) 已合并 + Stage 4 done，但未找到 cleanup.sh（无法部署/归档）","action":"检查 packages/engine/skills/dev/scripts/cleanup.sh 是否存在"}')
+                break
+            fi
+
+            # 5.4 跑 cleanup.sh（含部署）— 必须成功才允许 done
+            echo "🧹 自动执行 cleanup.sh（含部署）..." >&2
+            if (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script") 2>/dev/null; then
+                _mark_cleanup_done "$dev_mode_file"
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"done","reason":"PR #\($pr) 真完成：合并 + Learning + 部署 + 归档"}')
             else
-                result_json='{"status":"blocked","reason":"PR 已合并，未找到 cleanup.sh","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4 Ship"}'
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"blocked","reason":"PR #\($pr) 已合并 + Stage 4 done，但 cleanup.sh 失败（部署/归档异常）","action":"重新执行 bash packages/engine/skills/dev/scripts/cleanup.sh 或检查 deploy-local.sh"}')
             fi
             break
         fi
