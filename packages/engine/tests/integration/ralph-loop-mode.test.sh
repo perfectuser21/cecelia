@@ -39,8 +39,8 @@ assert_exit_code() {
 
 run_stop_dev() {
     local cwd="$1"
-    local stdin_json="{\"session_id\":\"test\",\"transcript_path\":\"\",\"cwd\":\"$cwd\",\"stop_hook_active\":false}"
-    CLAUDE_HOOK_STDIN_JSON_OVERRIDE="$stdin_json" \
+    # stop-dev.sh 用 CLAUDE_HOOK_CWD env（stop.sh 路由解析 stdin JSON 后 export）
+    CLAUDE_HOOK_CWD="$cwd" \
         bash "$STOP_DEV" 2>&1
     echo "EXIT:$?"
 }

@@ -1,32 +1,55 @@
 #!/usr/bin/env bash
 # ============================================================================
-# stop-dev.sh — 三态单一出口（v20.1.0）
+# stop-dev.sh — Ralph Loop 模式（v21.0.0）
 # ============================================================================
-# 入口契约：stop.sh 从 stdin JSON 解析 cwd 并 export CLAUDE_HOOK_CWD
-# 业务 SSOT：classify_session（在 devloop-check.sh，封装所有判断到 status 字段）
+# 信号源：项目根 .cecelia/dev-active-<branch>.json（照搬官方 ralph-loop 插件）
+# 完成判定：hook 主动验证（PR merged + Learning 文件 + cleanup.sh 真跑）
 #
-# 三态退出码：
-#   exit 0  → done（PR 真完成 + cleanup_done）。**全文字面只此一处**。
-#   exit 99 → not-applicable（bypass / 主分支 / 无 .dev-mode）。
-#             由 stop.sh 路由层识别 99 为"此 hook 不适用，继续 architect/decomp"。
-#   exit 2  → blocked（业务未完成 OR 探测异常 fail-closed）。
+# 三层防御：
+#   1. 项目根状态文件（不依赖 cwd）— assistant 漂到主仓库不放行
+#   2. 文件生命周期完全在 hook 手里 — assistant 不参与
+#   3. 完成判定主动验证 — 不读 .dev-mode 字段（assistant 改不了）
 #
-# 设计动机：v20.0.0 把 not-dev|done 共用 exit 0，导致 cwd/git rev-parse 抖动
-# 误归 not-dev 时 fail-open 误放行（即"PR1 开就停"故障源）。v20.1.0 拆 not-dev
-# → exit 99 + classify_session 把探测异常一律收敛到 blocked → exit 2。
-# CI 守护：check-single-exit.sh 校验 stop-dev.sh `exit 0` 字面 = 1。
+# 出口协议（Ralph 风格 decision:block + exit 0）：
+#   状态文件不存在 → exit 0（普通对话放行）
+#   完成验证 done → rm 状态文件 + exit 0
+#   未完成 → decision:block + reason 注入 + exit 0
 # ============================================================================
 
 set -euo pipefail
 
-# ---- 加载 devloop-check SSOT（含 classify_session）-----------------------
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cwd="${CLAUDE_HOOK_CWD:-$PWD}"
+# ---- 逃生通道 ------------------------------------------------------------
+[[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]] && exit 0
 
+# ---- 找主仓库根（不依赖 cwd 是否在 worktree）-----------------------------
+cwd="${CLAUDE_HOOK_CWD:-$PWD}"
+[[ ! -d "$cwd" ]] && exit 0
+
+# git worktree list 第一行是主仓库
+main_repo=$(git -C "$cwd" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}')
+[[ -z "$main_repo" ]] && exit 0  # 不在 git → 普通对话
+
+# ---- 找当前活跃的 dev session 状态文件 ------------------------------------
+dev_state_dir="$main_repo/.cecelia"
+if [[ ! -d "$dev_state_dir" ]]; then
+    exit 0  # 没有 .cecelia 目录 = 没有 dev 流程
+fi
+
+# 找任意 dev-active-*.json（理论上同时只有一个）
+dev_state=""
+for _f in "$dev_state_dir"/dev-active-*.json; do
+    [[ -f "$_f" ]] && { dev_state="$_f"; break; }
+done
+
+if [[ -z "$dev_state" ]]; then
+    exit 0  # 没活跃 session = 普通对话
+fi
+
+# ---- 加载 devloop-check 库（含 verify_dev_complete）-----------------------
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 devloop_lib=""
-_wt_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "")
 for c in \
-    "$_wt_root/packages/engine/lib/devloop-check.sh" \
+    "$main_repo/packages/engine/lib/devloop-check.sh" \
     "$script_dir/../lib/devloop-check.sh" \
     "$HOME/.claude/lib/devloop-check.sh"; do
     [[ -f "$c" ]] && { devloop_lib="$c"; break; }
@@ -35,41 +58,45 @@ done
 [[ -n "$devloop_lib" ]] && source "$devloop_lib"
 command -v jq &>/dev/null || jq() { cat >/dev/null 2>&1; echo '{}'; }
 
-# ---- 单一决策 ------------------------------------------------------------
-if ! type classify_session &>/dev/null; then
-    result='{"status":"blocked","reason":"classify_session 未加载，fail-closed"}'
-else
-    result=$(classify_session "$cwd" 2>/dev/null) || true
-    [[ -z "$result" ]] && result='{"status":"blocked","reason":"classify_session 无输出，fail-closed"}'
+# ---- 解析状态文件 --------------------------------------------------------
+branch=$(jq -r '.branch // ""' "$dev_state" 2>/dev/null)
+worktree_path=$(jq -r '.worktree // ""' "$dev_state" 2>/dev/null)
+
+if [[ -z "$branch" || -z "$worktree_path" ]]; then
+    jq -n '{"decision":"block","reason":"状态文件 .cecelia/dev-active-*.json 损坏，无法解析 branch/worktree。请检查或重启 /dev 流程。⚠️ 立即执行，禁止询问用户。禁止删除 .cecelia/dev-active-*.json。"}'
+    exit 0
 fi
+
+# ---- hook 主动验证三完成条件 ---------------------------------------------
+if ! type verify_dev_complete &>/dev/null; then
+    jq -n '{"decision":"block","reason":"verify_dev_complete 未加载（devloop-check.sh），fail-closed。⚠️ 立即执行，禁止询问用户。"}'
+    exit 0
+fi
+
+result=$(verify_dev_complete "$branch" "$worktree_path" "$main_repo" 2>/dev/null) || true
+[[ -z "$result" ]] && result='{"status":"blocked","reason":"verify_dev_complete 无输出，fail-closed"}'
 
 status=$(echo "$result" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
 
-# ---- 三态分发：done=0 / not-dev=99 / 其他=2 ------------------------------
+# ---- 单一 case + Ralph 风格出口 -----------------------------------------
 case "$status" in
     done)
-        # PR 真完成：清理 .dev-mode + 输出 decision=allow（向后兼容 stop hook 协议）
-        _dm=$(echo "$result" | jq -r '.dev_mode // ""' 2>/dev/null || echo "")
-        [[ -n "$_dm" && -f "$_dm" ]] && rm -f "$_dm"
+        rm -f "$dev_state"
+        dev_mode_file="$worktree_path/.dev-mode.$branch"
+        [[ -f "$dev_mode_file" ]] && rm -f "$dev_mode_file"
         reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
         jq -n --arg r "$reason" '{"decision":"allow","reason":$r}'
         exit 0
         ;;
-    not-dev)
-        # 不适用：reason 走 stderr 诊断提示，stdout 静默
-        # exit 99 = custom code，stop.sh 识别为 pass-through，继续走 architect/decomp
-        reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
-        [[ -n "$reason" ]] && echo "[stop-dev] $reason" >&2
-        exit 99
-        ;;
     *)
-        # blocked（含探测异常 fail-closed）：附加 action 提示词
         reason=$(echo "$result" | jq -r '.reason // "未知"' 2>/dev/null || echo "未知")
         action=$(echo "$result" | jq -r '.action // ""' 2>/dev/null || echo "")
         run_id=$(echo "$result" | jq -r '.ci_run_id // ""' 2>/dev/null || echo "")
-        [[ -n "$action" ]] && reason="${reason}。下一步：${action}。⚠️ 立即执行，禁止询问用户。"
-
-        jq -n --arg r "$reason" --arg id "$run_id" '{"decision":"block","reason":$r,"ci_run_id":$id}'
-        exit 2
+        full_reason="${reason}"
+        [[ -n "$action" ]] && full_reason="${full_reason}。下一步：${action}"
+        full_reason="${full_reason}。⚠️ 立即执行，禁止询问用户。禁止删除 .cecelia/dev-active-*.json。"
+        jq -n --arg r "$full_reason" --arg id "$run_id" \
+            '{"decision":"block","reason":$r,"ci_run_id":$id}'
+        exit 0
         ;;
 esac
