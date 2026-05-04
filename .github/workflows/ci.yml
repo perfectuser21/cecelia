@@ -24,6 +24,7 @@ jobs:
       engine: ${{ steps.detect.outputs.engine }}
       workspace: ${{ steps.detect.outputs.workspace }}
       compose: ${{ steps.detect.outputs.compose }}
+      dod: ${{ steps.detect.outputs.dod }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,6 +44,7 @@ jobs:
           echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
@@ -597,6 +599,8 @@ jobs:
   #   dod-behavior-dynamic（本 job）：跑 curl/psql/bash/npm 等需要运行时服务的命令
   # 自动检测 DoD 文件是否含动态命令；无则早退不起 Brain。
   dod-behavior-dynamic:
+    needs: [changes]
+    if: needs.changes.outputs.dod == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     services:
@@ -831,6 +835,8 @@ jobs:
 
   # ─── Harness DoD 完整性校验（harness PR 专用，非 harness 自动跳过）──
   harness-dod-integrity:
+    needs: [changes]
+    if: needs.changes.outputs.dod == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1063,6 +1069,7 @@ jobs:
           check "e2e-smoke"              "${{ needs.e2e-smoke.result }}"
           check "dod-behavior-dynamic"   "${{ needs.dod-behavior-dynamic.result }}"
           check "harness-dod-integrity"  "${{ needs.harness-dod-integrity.result }}"
+          check "harness-contract-lint"  "${{ needs.harness-contract-lint.result }}"
           check "docker-infra-smoke"     "${{ needs.docker-infra-smoke.result }}"
           check "lint-test-pairing"      "${{ needs.lint-test-pairing.result }}"
           check "lint-feature-has-smoke" "${{ needs.lint-feature-has-smoke.result }}"
