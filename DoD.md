@@ -1,17 +1,11 @@
-# DoD — Brain Migration 259 冲突修复
+# DoD — cleanup.sh gone-branch grep fix + devloop-check stdout 隔离
 
-task_id: c8638840-0989-41c0-a502-ecea32c4e49b
+task_id: cp-05042015-cleanup-gone-grep-fix
 
 ## 验收条目
 
-- [x] [ARTIFACT] `packages/brain/migrations/260_license_system.sql` 存在
-  Test: manual:node -e "require('fs').accessSync('packages/brain/migrations/260_license_system.sql')"
+- [x] [ARTIFACT] cleanup.sh step 9.5 grep 管道带 `|| true`
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/scripts/cleanup.sh','utf8'); if(!c.includes('grep \\': gone]\\' | awk \\'{print \$1}\\' || true')) process.exit(1)"
 
-- [x] [ARTIFACT] `packages/brain/migrations/259_license_system.sql` 已删除
-  Test: manual:node -e "try{require('fs').accessSync('packages/brain/migrations/259_license_system.sql');process.exit(1)}catch(e){}"
-
-- [x] [BEHAVIOR] selfcheck.js EXPECTED_SCHEMA_VERSION 为 260
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8'); if(!c.includes(\"'260'\")) process.exit(1)"
-
-- [x] [BEHAVIOR] DEFINITION.md schema_version 更新为 260
-  Test: manual:node -e "const c=require('fs').readFileSync('DEFINITION.md','utf8'); if(!c.includes('Schema 版本: 260')) process.exit(1)"
+- [x] [BEHAVIOR] verify_dev_complete 调用 cleanup.sh 时 stdout 重定向到 /dev/null
+  Test: manual:node -e "const s=require('fs').readFileSync('packages/engine/lib/devloop-check.sh','utf8'); if(!s.includes('>/dev/null 2>/dev/null')) process.exit(1)"

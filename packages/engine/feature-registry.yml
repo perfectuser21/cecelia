@@ -715,3 +715,11 @@ changelog:
     description: "00-worktree-auto.md：dev-lock 重建时生成含 tty/session_id 的完整格式，不再 cp dev-mode（cp 出的 dev-lock 无 session 字段，_session_matches 永远失败）"
     files:
       - "skills/dev/steps/00-worktree-auto.md"
+  - version: "18.19.0"
+    date: "2026-05-04"
+    skill: "dev"
+    change: "fix"
+    description: "cleanup.sh step 9.5 grep gone-branches 加 || true（防 pipefail 崩溃）；devloop-check.sh verify_dev_complete 调用 cleanup.sh 时追加 >/dev/null 隔离 stdout，防止 UI 输出污染 result 变量导致 jq 解析失败 → stop hook 止回"未知""
+    files:
+      - "skills/dev/scripts/cleanup.sh"
+      - "lib/devloop-check.sh"
