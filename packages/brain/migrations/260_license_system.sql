@@ -1,4 +1,4 @@
--- Migration 248: License System — licenses + license_machines
+-- Migration 260: License System — licenses + license_machines
 -- 实现 License 核心：tier/max_machines/expires_at + 装机配额追踪
 --
 -- 定价：basic=1台/¥3000, matrix=3台/¥6000, studio=10台/¥15000, enterprise=30台/¥40000
