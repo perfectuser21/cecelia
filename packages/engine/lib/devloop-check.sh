@@ -286,7 +286,10 @@ devloop_check() {
         fi
 
         # ===== 条件 5: PR 已合并? =====
+        # 严格守门：唯一 done 路径 = step_4=done AND cleanup.sh 真跑成功（含部署）
+        # 之前 fallback 在 step_4=pending 时跑 cleanup.sh 成功就标 done，绕过 Learning 检查
         if [[ "$pr_state" == "merged" ]]; then
+            # 5.1 base ref 必须是 main
             local pr_base_ref=""
             [[ -n "$pr_number" ]] && \
                 pr_base_ref=$(gh pr view "$pr_number" --json baseRefName -q '.baseRefName' 2>/dev/null || echo "")
@@ -296,15 +299,16 @@ devloop_check() {
                 break
             fi
 
+            # 5.2 step_4_ship 必须 done（除 harness 模式）— 严格守门
             local step_4_status
             step_4_status=$(_get_step4_status "$dev_mode_file")
-
-            if [[ "$step_4_status" == "done" ]] || [[ "$_harness_mode" == "true" ]]; then
-                _mark_cleanup_done "$dev_mode_file"
-                result_json='{"status":"done","reason":"PR 已合并，工作流结束"}'
+            if [[ "$step_4_status" != "done" ]] && [[ "$_harness_mode" != "true" ]]; then
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"blocked","reason":"PR #\($pr) 已合并，但 Stage 4 Ship 未完成（必须先写 docs/learnings/<branch>.md 并标记 step_4_ship: done）","action":"立即读取 skills/dev/steps/04-ship.md 完成 Stage 4。禁止询问用户。"}')
                 break
             fi
 
+            # 5.3 找 cleanup.sh
             local _cleanup_script=""
             for _cs in \
                 "${PROJECT_ROOT:-}/packages/engine/skills/dev/scripts/cleanup.sh" \
@@ -312,16 +316,21 @@ devloop_check() {
                 "$HOME/.claude-account1/skills/dev/scripts/cleanup.sh"; do
                 [[ -f "$_cs" ]] && { _cleanup_script="$_cs"; break; }
             done
-            if [[ -n "$_cleanup_script" ]]; then
-                echo "🧹 自动执行 cleanup.sh..." >&2
-                if (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script") 2>/dev/null; then
-                    _mark_cleanup_done "$dev_mode_file"
-                    result_json='{"status":"done","reason":"PR 已合并，cleanup 完成"}'
-                else
-                    result_json='{"status":"blocked","reason":"PR 已合并，cleanup.sh 执行失败","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4 Ship"}'
-                fi
+            if [[ -z "$_cleanup_script" ]]; then
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"blocked","reason":"PR #\($pr) 已合并 + Stage 4 done，但未找到 cleanup.sh（无法部署/归档）","action":"检查 packages/engine/skills/dev/scripts/cleanup.sh 是否存在"}')
+                break
+            fi
+
+            # 5.4 跑 cleanup.sh（含部署）— 必须成功才允许 done
+            echo "🧹 自动执行 cleanup.sh（含部署）..." >&2
+            if (cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$_cleanup_script") 2>/dev/null; then
+                _mark_cleanup_done "$dev_mode_file"
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"done","reason":"PR #\($pr) 真完成：合并 + Learning + 部署 + 归档"}')
             else
-                result_json='{"status":"blocked","reason":"PR 已合并，未找到 cleanup.sh","action":"立即读取 skills/dev/steps/04-ship.md 并执行 Stage 4 Ship"}'
+                result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                    '{"status":"blocked","reason":"PR #\($pr) 已合并 + Stage 4 done，但 cleanup.sh 失败（部署/归档异常）","action":"重新执行 bash packages/engine/skills/dev/scripts/cleanup.sh 或检查 deploy-local.sh"}')
             fi
             break
         fi
@@ -384,41 +393,58 @@ devloop_check() {
 # 公开函数: classify_session CWD
 #   入口契约：从 cwd 推断当前是否在 /dev 业务上下文。
 #   输出 stdout JSON: {status, reason, [action], [ci_run_id], [dev_mode]}
-#   status 取值：
-#     - "not-dev"  → 不在 dev 上下文（bypass / cwd 异常 / 非 git / 主分支 / 无 .dev-mode），调用方应放行
-#     - "blocked"  → 在 dev 上下文但业务未完成，调用方应让 assistant 继续干活
-#     - "done"     → 在 dev 上下文且业务真完成，调用方应清理 .dev-mode 并放行
-#   单一出口：while:; do ... break; done 收敛到末尾单一 echo + return 0。
+#   status 三态严格区分（fail-open / fail-closed 按"是否在 dev 上下文"分流）：
+#     - "not-dev"  → 真·非开发模式（bypass / 主分支 / 无 .dev-mode / 非 git / cwd 不存在）
+#                    调用方应放行：没有信号显示当前在 /dev 业务里，没有放行误伤面。
+#     - "blocked"  → 已确认在 dev 上下文（git repo 内）但状态损坏 OR 业务未完成：
+#                    rev-parse --abbrev-ref 在 worktree 内失败 / .dev-mode 格式坏 /
+#                    devloop_check 业务未完成。一律 fail-closed 阻塞。
+#     - "done"     → 在 dev 上下文且业务真完成（PR 合 + cleanup_done），调用方应清理
+#                    .dev-mode 并放行
+#   设计动机："PR1 开就停"故障源 = 在 worktree 内 git rev-parse 抖动 → 旧版本误归 not-dev
+#   → fail-open 放行。修复：worktree 已确认 + branch 读不出 = 真·dev 上下文探测异常 →
+#   fail-closed。但"压根不在 git repo"这种 no-signal 情况照旧 fail-open（exit 99）。
+#   单一出口：while:; do ... break; done 收敛到末尾单一 echo + return。
 # ============================================================================
 classify_session() {
     local cwd="${1:-$PWD}"
     local result_json='{"status":"blocked","reason":"unknown"}'
 
     while :; do
-        # 1) bypass
+        # 1) bypass — 真·非开发模式
         if [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]]; then
             result_json='{"status":"not-dev","reason":"bypass via CECELIA_STOP_HOOK_BYPASS=1"}'
             break
         fi
 
-        # 2) cwd 必须是目录
+        # 2) cwd 必须是目录 — 不存在则不可能在 /dev 业务（no signal） → not-dev
         if [[ ! -d "$cwd" ]]; then
-            result_json='{"status":"not-dev","reason":"cwd 不是目录"}'
+            result_json=$(_devloop_jq -n --arg c "$cwd" \
+                '{"status":"not-dev","reason":"cwd [\($c)] 不是目录，不可能在 /dev 业务"}')
             break
         fi
 
-        # 3) git 探测（worktree + branch）
-        local wt_root branch
+        # 3) git worktree 探测 — 非 git repo 不可能在 /dev 业务 → not-dev（fail-open OK：
+        #    没有 git 就没有 .dev-mode，不存在被误放行的 dev 上下文）
+        local wt_root
         wt_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || {
-            result_json='{"status":"not-dev","reason":"非 git repo（rev-parse --show-toplevel 失败）"}'
+            result_json=$(_devloop_jq -n --arg c "$cwd" \
+                '{"status":"not-dev","reason":"[\($c)] 非 git repo，不可能在 /dev 业务"}')
             break
         }
-        branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null) || {
-            result_json='{"status":"not-dev","reason":"无法读取分支（rev-parse --abbrev-ref 失败）"}'
-            break
-        }
+        # 4) branch 探测 — 已确认在 git repo 内，rev-parse 失败 = 真·探测异常 fail-closed
+        #    特殊情况：unborn HEAD（git init 后未 commit）git exit=128 但 stdout="HEAD"，
+        #    fall through 到下一步主分支放行（HEAD 命中 case 第 5 步）
+        local branch
+        if ! branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null); then
+            if [[ "$branch" != "HEAD" ]]; then
+                result_json=$(_devloop_jq -n --arg c "$cwd" --arg w "$wt_root" \
+                    '{"status":"blocked","reason":"git 探测异常：worktree [\($w)] 存在但 rev-parse --abbrev-ref HEAD 失败（cwd=\($c)），fail-closed"}')
+                break
+            fi
+        fi
 
-        # 4) 主分支放行
+        # 5) 主分支放行 — 真·非开发模式
         case "$branch" in
             main|master|develop|HEAD)
                 result_json=$(_devloop_jq -n --arg b "$branch" \
@@ -427,7 +453,7 @@ classify_session() {
                 ;;
         esac
 
-        # 5) 必须有 .dev-mode
+        # 6) 必须有 .dev-mode — cp-* 分支但未启动 /dev 流程，真·非开发模式
         local dev_mode="$wt_root/.dev-mode.$branch"
         if [[ ! -f "$dev_mode" ]]; then
             result_json=$(_devloop_jq -n --arg f "$dev_mode" \
@@ -435,7 +461,8 @@ classify_session() {
             break
         fi
 
-        # 6) .dev-mode 格式校验（首行必须 dev）
+        # 7) .dev-mode 格式校验（首行必须 dev）— 已确认 .dev-mode 存在，
+        #    格式坏 = dev 上下文中状态损坏 → fail-closed blocked
         if ! head -1 "$dev_mode" 2>/dev/null | grep -q "^dev$"; then
             local first_line
             first_line=$(head -1 "$dev_mode" 2>/dev/null || echo "<empty>")
@@ -454,12 +481,16 @@ classify_session() {
     done
 
     echo "$result_json"
-    # 单点出口：status → exit code 单一映射（not-dev/done=0, 其他=2）
+    # 单点出口：status → exit code 三态映射
+    #   done=0（真完成）/ not-dev=99（不适用，由 stop.sh 路由层放行）/ 其他=2（fail-closed）
+    # exit 99 是 custom code：让上游 stop.sh 区分"真 done（继续走 architect/decomp）"
+    # 与"不适用此 hook（继续走 architect/decomp）"，避免 stop-dev.sh 字面散点 exit 0。
     local _final_status
     _final_status=$(echo "$result_json" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
     case "$_final_status" in
-        not-dev|done) return 0 ;;
-        *) return 2 ;;
+        done)    return 0 ;;
+        not-dev) return 99 ;;
+        *)       return 2 ;;
     esac
 }
 
@@ -494,6 +525,113 @@ devloop_check_main() {
     done < <(git -C "$search_root" worktree list --porcelain 2>/dev/null; echo "worktree $search_root")
 
     [[ "$_found" == "false" ]] && echo "NO_ACTIVE_SESSION" >&2
+}
+
+# ============================================================================
+# 公开函数: verify_dev_complete BRANCH WORKTREE_PATH MAIN_REPO
+# ============================================================================
+# Ralph Loop 模式：hook 主动验证 dev 流程三完成条件
+#   1. PR merged?      → gh pr view --json mergedAt（GitHub 真实状态）
+#   2. Learning 写好?  → docs/learnings/<branch>.md 存在 + grep '^### 根本原因'
+#   3. cleanup.sh ok?  → 真跑脚本看 exit code
+#
+# 不读 .dev-mode 字段（assistant 改不了 GitHub / 文件内容 / 命令 exit code）
+# 输出 stdout JSON: {status: done|blocked, reason, action, ci_run_id?}
+# ============================================================================
+verify_dev_complete() {
+    local branch="${1:-}"
+    local worktree_path="${2:-}"
+    local main_repo="${3:-}"
+    local result_json='{"status":"blocked","reason":"unknown"}'
+
+    while :; do
+        if [[ -z "$branch" || -z "$main_repo" ]]; then
+            result_json='{"status":"blocked","reason":"verify_dev_complete 缺参数：branch / main_repo"}'
+            break
+        fi
+
+        # harness 模式豁免（保留兼容）
+        local harness_mode="false"
+        local dev_mode_file="${worktree_path}/.dev-mode.${branch}"
+        if [[ -f "$dev_mode_file" ]]; then
+            local _hm
+            _hm=$(grep "^harness_mode:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+            [[ -n "$_hm" ]] && harness_mode="$_hm"
+        fi
+
+        # 1. 主动验证 PR merged
+        if ! command -v gh &>/dev/null; then
+            result_json='{"status":"blocked","reason":"gh CLI 不可用，无法验证 PR 状态","action":"安装 gh CLI"}'
+            break
+        fi
+        local pr_number pr_merged_at
+        pr_number=$(gh pr list --head "$branch" --state all --json number -q '.[0].number' 2>/dev/null || echo "")
+        if [[ -z "$pr_number" ]]; then
+            result_json=$(_devloop_jq -n --arg branch "$branch" \
+                '{"status":"blocked","reason":"PR 未创建（branch=\($branch)）","action":"立即 push + gh pr create --base main --head \($branch)"}')
+            break
+        fi
+        pr_merged_at=$(gh pr view "$pr_number" --json mergedAt -q '.mergedAt' 2>/dev/null || echo "")
+        if [[ -z "$pr_merged_at" || "$pr_merged_at" == "null" ]]; then
+            local ci_status
+            ci_status=$(gh run list --branch "$branch" --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
+            case "$ci_status" in
+                in_progress|queued|waiting|pending)
+                    result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                        '{"status":"blocked","reason":"PR #\($pr) CI 进行中","action":"等 CI 完成（gh pr checks \($pr) --watch）"}')
+                    ;;
+                completed)
+                    result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                        '{"status":"blocked","reason":"PR #\($pr) CI 通过但未合并","action":"启 auto-merge: gh pr merge \($pr) --squash --auto"}')
+                    ;;
+                *)
+                    result_json=$(_devloop_jq -n --arg pr "$pr_number" --arg s "$ci_status" \
+                        '{"status":"blocked","reason":"PR #\($pr) 未合并，CI 状态: \($s)","action":"检查 CI 状态: gh pr checks \($pr)"}')
+                    ;;
+            esac
+            break
+        fi
+
+        # 2. 主动验证 Learning 文件存在 + 内容合法（harness 豁免）
+        if [[ "$harness_mode" != "true" ]]; then
+            local learning_file="${main_repo}/docs/learnings/${branch}.md"
+            if [[ ! -f "$learning_file" ]]; then
+                result_json=$(_devloop_jq -n --arg f "$learning_file" \
+                    '{"status":"blocked","reason":"Learning 文件不存在: \($f)","action":"立即写 Learning，必含 ### 根本原因 + ### 下次预防 段"}')
+                break
+            fi
+            if ! grep -qE "^###?\s*根本原因" "$learning_file" 2>/dev/null; then
+                result_json=$(_devloop_jq -n --arg f "$learning_file" \
+                    '{"status":"blocked","reason":"Learning 缺必备段（### 根本原因）: \($f)","action":"补全 Learning"}')
+                break
+            fi
+        fi
+
+        # 3. 主动跑 cleanup.sh（含部署）
+        local cleanup_script=""
+        for _cs in \
+            "${main_repo}/packages/engine/skills/dev/scripts/cleanup.sh" \
+            "$HOME/.claude/skills/dev/scripts/cleanup.sh" \
+            "$HOME/.claude-account1/skills/dev/scripts/cleanup.sh"; do
+            [[ -f "$_cs" ]] && { cleanup_script="$_cs"; break; }
+        done
+        if [[ -z "$cleanup_script" ]]; then
+            result_json='{"status":"blocked","reason":"未找到 cleanup.sh（无法部署/归档）","action":"检查 packages/engine/skills/dev/scripts/cleanup.sh"}'
+            break
+        fi
+        echo "🧹 verify_dev_complete: 跑 cleanup.sh（含部署）..." >&2
+        if ! (cd "$main_repo" && bash "$cleanup_script" "$branch") 2>/dev/null; then
+            result_json='{"status":"blocked","reason":"cleanup.sh 执行失败（部署/归档异常）","action":"重新 bash packages/engine/skills/dev/scripts/cleanup.sh"}'
+            break
+        fi
+
+        result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+            '{"status":"done","reason":"PR #\($pr) 真完成：合并 + Learning + 部署 + 归档"}')
+        break
+    done
+
+    echo "$result_json"
+    return 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
