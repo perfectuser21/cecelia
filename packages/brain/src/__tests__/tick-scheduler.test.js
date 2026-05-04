@@ -39,15 +39,15 @@ describe('tick-scheduler', () => {
     mockDispatchNextTask.mockResolvedValue({ dispatched: true, actions: [], reason: 'ok' });
   });
 
-  // 测试 1: 有 guidance 建议时使用建议路由（不用 EXECUTOR_ROUTING 兜底）
-  it('有 guidance 建议时传递 guidance 给调度结果', async () => {
+  // 测试 1: 有 guidance 建议时 guidance_found=true
+  it('有 guidance 建议时 guidance_found=true', async () => {
     mockGetGuidance.mockResolvedValue({ executor_type: 'codex' });
     const result = await runScheduler();
     // guidance 被读取（strategy:global key）
     expect(mockGetGuidance).toHaveBeenCalledWith('strategy:global');
     // 调度仍然执行
     expect(mockDispatchNextTask).toHaveBeenCalled();
-    expect(result.guidance_used).toBe(true);
+    expect(result.guidance_found).toBe(true);
   });
 
   // 测试 2: 无 guidance 时用 EXECUTOR_ROUTING 默认路由（路由表存在且完整）
