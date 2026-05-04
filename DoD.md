@@ -1,21 +1,20 @@
-# DoD — lint-test-pairing v3：import 相关性检测
+# DoD — CI Gate 彻底修复
 
-## 成功标准
+task_id: c7af8b9e-0233-4f9d-8875-9753e1478b70
 
-新增 test 文件必须引用对应 src 模块，不能测别的模块绕过配对。
+## 验收条目
 
-## 验收条件（DoD）
+- [x] [ARTIFACT] `.github/workflows/ci.yml` 已修改（5 处定点改动）
+  Test: manual:node -e "require('fs').accessSync('.github/workflows/ci.yml')"
 
-- [x] [ARTIFACT] `lint-test-pairing.sh` 包含 import 相关性检测逻辑（v3 盲区修复）
-      Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-test-pairing.sh','utf8');if(!c.includes('UNRELATED_TESTS'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] ci-passed 的 check() 调用包含 harness-contract-lint
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!c.includes('check \"harness-contract-lint\"')) process.exit(1)"
 
-- [x] [ARTIFACT] 脚本通过 bash -n 语法检查
-      Test: manual:node -e "const {execSync}=require('child_process');execSync('bash -n .github/workflows/scripts/lint-test-pairing.sh');console.log('syntax OK')"
+- [x] [BEHAVIOR] changes job 输出 dod 字段（DoD 文件变更检测）
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('      - id: detect'); const seg=c.slice(idx,idx+1500); if(!seg.includes('dod=')) process.exit(1)"
 
-- [x] [BEHAVIOR] enforce_admins 已在 GitHub branch protection 中启用
-      Test: manual:node -e "const {execSync}=require('child_process');const r=execSync('gh api repos/perfectuser21/cecelia/branches/main/protection/enforce_admins --jq .enabled').toString().trim();if(r!=='true')process.exit(1);console.log('enforce_admins: '+r)"
+- [x] [BEHAVIOR] dod-behavior-dynamic 含 needs: [changes] 条件
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('dod-behavior-dynamic:'); const seg=c.slice(idx,idx+400); if(!seg.includes('needs: [changes]')) process.exit(1)"
 
-## 不做什么
-
-- 不改 brain 源码
-- 不改其他 lint gate
+- [x] [BEHAVIOR] harness-dod-integrity 含 needs: [changes] 条件
+  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('harness-dod-integrity:'); const seg=c.slice(idx,idx+400); if(!seg.includes('needs: [changes]')) process.exit(1)"
