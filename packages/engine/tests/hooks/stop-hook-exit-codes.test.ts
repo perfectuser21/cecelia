@@ -31,7 +31,10 @@ function writeDevMode(dir: string, branch: string, content: string): void {
   writeFileSync(join(dir, `.dev-mode.${branch}`), content);
 }
 
-describe("hooks/stop-dev.sh exit codes", () => {
+// TODO(cp-0504185237): Ralph Loop 模式（v21.0.0）协议变了 — 全部 exit 0 + decision JSON。
+// 这些测试基于旧 done=0/not-dev=99/blocked=2 三态协议，需要重写。
+// 临时：integration ralph-loop-mode.test.sh 5 case 覆盖核心行为。
+describe.skip("hooks/stop-dev.sh exit codes（Ralph 模式后待重写）", () => {
   let tempDir: string;
 
   beforeEach(() => {
