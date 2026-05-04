@@ -6,6 +6,15 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.17.1"
+    date: "2026-05-04"
+    change: "fix"
+    description: "classify_session 探测失败 fail-closed（cp-0504140226）— 3 处 not-dev → blocked：cwd 不是目录、git rev-parse --show-toplevel 失败、git rev-parse --abbrev-ref HEAD 失败。消除 PR #2745 后残留的 'PR1 开就停' 故障源（探测异常被误归 not-dev → 误放行）。开发模式中唯一 exit 0 = PR 真完成（done）；非开发模式（bypass / 主分支 / 无 .dev-mode / unborn HEAD） 仍归 not-dev 放行。stop-dev.sh / stop.sh / 出口拓扑零变化。"
+    files:
+      - "packages/engine/lib/devloop-check.sh (classify_session L406/L413/L417 status 字符串 + unborn HEAD fall through 处理)"
+      - "packages/engine/tests/integration/devloop-classify.test.sh (Case 2/3 期望 blocked + Case 9/10 新增 unborn HEAD/cleanup_done 回归保护)"
+      - "Engine 8 处版本文件 18.17.1（含 SKILL.md frontmatter）"
+
   - version: "18.17.0"
     date: "2026-05-04"
     change: "feat"
