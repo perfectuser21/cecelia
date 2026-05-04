@@ -265,6 +265,24 @@ DEV_MODE_EOF
             echo -e "${GREEN}✅ .dev-mode 已写入: .dev-mode.${branch_name}${NC}" >&2
         fi
 
+        # v20.0.0 Ralph Loop 模式：项目根状态文件
+        # 信号源切到主仓库根，不依赖 cwd 是否在 worktree
+        # assistant 删 .dev-mode 不影响 — stop-dev.sh 看这个文件判定 dev 流程
+        local main_repo
+        main_repo=$(git rev-parse --show-toplevel 2>/dev/null)
+        if [[ -n "$main_repo" ]]; then
+            mkdir -p "$main_repo/.cecelia"
+            cat > "$main_repo/.cecelia/dev-active-${branch_name}.json" <<RALPH_EOF
+{
+  "branch": "${branch_name}",
+  "worktree": "${worktree_path}",
+  "started_at": "$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)",
+  "session_id": "${_claude_sid_create:-unknown}"
+}
+RALPH_EOF
+            echo -e "${GREEN}✅ .cecelia/dev-active-${branch_name}.json 已写入主仓库根${NC}" >&2
+        fi
+
         echo "" >&2
         echo "下一步:" >&2
         echo "  cd $worktree_path" >&2

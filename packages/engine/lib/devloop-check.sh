@@ -527,6 +527,113 @@ devloop_check_main() {
     [[ "$_found" == "false" ]] && echo "NO_ACTIVE_SESSION" >&2
 }
 
+# ============================================================================
+# 公开函数: verify_dev_complete BRANCH WORKTREE_PATH MAIN_REPO
+# ============================================================================
+# Ralph Loop 模式：hook 主动验证 dev 流程三完成条件
+#   1. PR merged?      → gh pr view --json mergedAt（GitHub 真实状态）
+#   2. Learning 写好?  → docs/learnings/<branch>.md 存在 + grep '^### 根本原因'
+#   3. cleanup.sh ok?  → 真跑脚本看 exit code
+#
+# 不读 .dev-mode 字段（assistant 改不了 GitHub / 文件内容 / 命令 exit code）
+# 输出 stdout JSON: {status: done|blocked, reason, action, ci_run_id?}
+# ============================================================================
+verify_dev_complete() {
+    local branch="${1:-}"
+    local worktree_path="${2:-}"
+    local main_repo="${3:-}"
+    local result_json='{"status":"blocked","reason":"unknown"}'
+
+    while :; do
+        if [[ -z "$branch" || -z "$main_repo" ]]; then
+            result_json='{"status":"blocked","reason":"verify_dev_complete 缺参数：branch / main_repo"}'
+            break
+        fi
+
+        # harness 模式豁免（保留兼容）
+        local harness_mode="false"
+        local dev_mode_file="${worktree_path}/.dev-mode.${branch}"
+        if [[ -f "$dev_mode_file" ]]; then
+            local _hm
+            _hm=$(grep "^harness_mode:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+            [[ -n "$_hm" ]] && harness_mode="$_hm"
+        fi
+
+        # 1. 主动验证 PR merged
+        if ! command -v gh &>/dev/null; then
+            result_json='{"status":"blocked","reason":"gh CLI 不可用，无法验证 PR 状态","action":"安装 gh CLI"}'
+            break
+        fi
+        local pr_number pr_merged_at
+        pr_number=$(gh pr list --head "$branch" --state all --json number -q '.[0].number' 2>/dev/null || echo "")
+        if [[ -z "$pr_number" ]]; then
+            result_json=$(_devloop_jq -n --arg branch "$branch" \
+                '{"status":"blocked","reason":"PR 未创建（branch=\($branch)）","action":"立即 push + gh pr create --base main --head \($branch)"}')
+            break
+        fi
+        pr_merged_at=$(gh pr view "$pr_number" --json mergedAt -q '.mergedAt' 2>/dev/null || echo "")
+        if [[ -z "$pr_merged_at" || "$pr_merged_at" == "null" ]]; then
+            local ci_status
+            ci_status=$(gh run list --branch "$branch" --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
+            case "$ci_status" in
+                in_progress|queued|waiting|pending)
+                    result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                        '{"status":"blocked","reason":"PR #\($pr) CI 进行中","action":"等 CI 完成（gh pr checks \($pr) --watch）"}')
+                    ;;
+                completed)
+                    result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                        '{"status":"blocked","reason":"PR #\($pr) CI 通过但未合并","action":"启 auto-merge: gh pr merge \($pr) --squash --auto"}')
+                    ;;
+                *)
+                    result_json=$(_devloop_jq -n --arg pr "$pr_number" --arg s "$ci_status" \
+                        '{"status":"blocked","reason":"PR #\($pr) 未合并，CI 状态: \($s)","action":"检查 CI 状态: gh pr checks \($pr)"}')
+                    ;;
+            esac
+            break
+        fi
+
+        # 2. 主动验证 Learning 文件存在 + 内容合法（harness 豁免）
+        if [[ "$harness_mode" != "true" ]]; then
+            local learning_file="${main_repo}/docs/learnings/${branch}.md"
+            if [[ ! -f "$learning_file" ]]; then
+                result_json=$(_devloop_jq -n --arg f "$learning_file" \
+                    '{"status":"blocked","reason":"Learning 文件不存在: \($f)","action":"立即写 Learning，必含 ### 根本原因 + ### 下次预防 段"}')
+                break
+            fi
+            if ! grep -qE "^###?\s*根本原因" "$learning_file" 2>/dev/null; then
+                result_json=$(_devloop_jq -n --arg f "$learning_file" \
+                    '{"status":"blocked","reason":"Learning 缺必备段（### 根本原因）: \($f)","action":"补全 Learning"}')
+                break
+            fi
+        fi
+
+        # 3. 主动跑 cleanup.sh（含部署）
+        local cleanup_script=""
+        for _cs in \
+            "${main_repo}/packages/engine/skills/dev/scripts/cleanup.sh" \
+            "$HOME/.claude/skills/dev/scripts/cleanup.sh" \
+            "$HOME/.claude-account1/skills/dev/scripts/cleanup.sh"; do
+            [[ -f "$_cs" ]] && { cleanup_script="$_cs"; break; }
+        done
+        if [[ -z "$cleanup_script" ]]; then
+            result_json='{"status":"blocked","reason":"未找到 cleanup.sh（无法部署/归档）","action":"检查 packages/engine/skills/dev/scripts/cleanup.sh"}'
+            break
+        fi
+        echo "🧹 verify_dev_complete: 跑 cleanup.sh（含部署）..." >&2
+        if ! (cd "$main_repo" && bash "$cleanup_script" "$branch") 2>/dev/null; then
+            result_json='{"status":"blocked","reason":"cleanup.sh 执行失败（部署/归档异常）","action":"重新 bash packages/engine/skills/dev/scripts/cleanup.sh"}'
+            break
+        fi
+
+        result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+            '{"status":"done","reason":"PR #\($pr) 真完成：合并 + Learning + 部署 + 归档"}')
+        break
+    done
+
+    echo "$result_json"
+    return 0
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     devloop_check_main "$@"
 fi
