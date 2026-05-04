@@ -15,7 +15,7 @@
  * 老 caller (routes/tick.js, __tests__/tick-throttle.test.js 等) 不受影响。
  */
 import { tickState } from './tick-state.js';
-import { executeTick } from './tick-runner.js';
+import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃，保留供回滚
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
