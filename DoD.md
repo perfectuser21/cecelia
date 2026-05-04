@@ -1,20 +1,17 @@
-# DoD — CI Gate 彻底修复
+# DoD — Brain Migration 259 冲突修复
 
-task_id: c7af8b9e-0233-4f9d-8875-9753e1478b70
+task_id: c8638840-0989-41c0-a502-ecea32c4e49b
 
 ## 验收条目
 
-- [x] [ARTIFACT] `.github/workflows/ci.yml` 已修改（5 处定点改动）
-  Test: manual:node -e "require('fs').accessSync('.github/workflows/ci.yml')"
+- [ ] [ARTIFACT] `packages/brain/migrations/260_license_system.sql` 存在
+  Test: manual:node -e "require('fs').accessSync('packages/brain/migrations/260_license_system.sql')"
 
-- [x] [BEHAVIOR] ci-passed 的 check() 调用包含 harness-contract-lint
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!c.includes('check \"harness-contract-lint\"')) process.exit(1)"
+- [ ] [ARTIFACT] `packages/brain/migrations/259_license_system.sql` 已删除
+  Test: manual:node -e "try{require('fs').accessSync('packages/brain/migrations/259_license_system.sql');process.exit(1)}catch(e){}"
 
-- [x] [BEHAVIOR] changes job 输出 dod 字段（DoD 文件变更检测）
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('      - id: detect'); const seg=c.slice(idx,idx+1500); if(!seg.includes('dod=')) process.exit(1)"
+- [ ] [BEHAVIOR] selfcheck.js EXPECTED_SCHEMA_VERSION 为 260
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8'); if(!c.includes(\"'260'\")) process.exit(1)"
 
-- [x] [BEHAVIOR] dod-behavior-dynamic 含 needs: [changes] 条件
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('dod-behavior-dynamic:'); const seg=c.slice(idx,idx+400); if(!seg.includes('needs: [changes]')) process.exit(1)"
-
-- [x] [BEHAVIOR] harness-dod-integrity 含 needs: [changes] 条件
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8'); const idx=c.indexOf('harness-dod-integrity:'); const seg=c.slice(idx,idx+400); if(!seg.includes('needs: [changes]')) process.exit(1)"
+- [ ] [BEHAVIOR] DEFINITION.md schema_version 更新为 260
+  Test: manual:node -e "const c=require('fs').readFileSync('DEFINITION.md','utf8'); if(!c.includes('Schema 版本: 260')) process.exit(1)"
