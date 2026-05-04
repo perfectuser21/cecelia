@@ -16,6 +16,8 @@
  */
 import { tickState } from './tick-state.js';
 import { executeTick } from './tick-runner.js';
+import { runScheduler } from './tick-scheduler.js';
+import { startConsciousnessLoop } from './consciousness-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 
 // ───── tickLog: [HH:MM:SS] 前缀 + 每 100 条打一次 summary ─────
@@ -41,7 +43,7 @@ export const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
  * @param {Function} [tickFn] - optional tick function override (for testing)
  */
 export async function runTickSafe(source = 'loop', tickFn) {
-  const doTick = tickFn || executeTick;
+  const doTick = tickFn || runScheduler;
 
   // Throttle: loop ticks only execute once per TICK_INTERVAL_MINUTES
   if (source === 'loop') {
@@ -137,6 +139,9 @@ export function startTickLoop() {
   if (tickState.loopTimer.unref) {
     tickState.loopTimer.unref();
   }
+
+  // Wave 2: 启动 LLM 意识循环（每 20 分钟，独立于调度层）
+  startConsciousnessLoop();
 
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
