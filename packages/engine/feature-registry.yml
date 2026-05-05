@@ -83,6 +83,18 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.23.0"
+    date: "2026-05-05"
+    change: "feature"
+    description: "Stop Hook 隔离 key 切到 session_id（cp-0505191801）— v22.0.0 路由架构。stop-dev.sh 入口读 hook stdin payload session_id 精确匹配 dev-active.session_id，cwd→branch 路由降为 fallback（兼容旧 schema 过渡期）。worktree-manage.sh 的 _resolve_claude_session_id 调换优先级（ps 沿 PPID 找 claude --session-id 优先，env var 兜底），让 dev-active.session_id 字段对齐 hook payload 的主 session_id。彻底解多 session 撞 .cecelia/ 池串线问题（半年 50+ 次修复的根因）。新增 8 case integration 测试 stop-dev-session-id-routing.test.sh。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (入口读 stdin + session_id 精确路由)"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (_resolve_claude_session_id 优先 ps)"
+      - "packages/engine/tests/integration/stop-dev-session-id-routing.test.sh (新建 8 case)"
+      - "packages/engine/tests/integration/ralph-loop-mode.test.sh (Case C 改 session_id 路由)"
+      - "packages/engine/tests/integration/stop-hook-e2e-real-brain.test.sh (传 stdin session_id)"
+      - "Engine 6 处版本文件 18.23.0"
+
   - version: "18.22.3"
     date: "2026-05-05"
     change: "docs"
