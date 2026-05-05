@@ -16,7 +16,10 @@
 #   未完成 → decision:block + reason 注入 + exit 0
 # ============================================================================
 
-set -euo pipefail
+# v18.22.0: BUG-1 / BUG-4 cwd 路由 + mtime expire 段含 OS 兼容性陷阱（stat -f
+# vs -c / glob 无匹配 / [[ ]] && stmt 链）容易让 set -e 早退。stop-dev.sh
+# 出口协议本就是单一 exit 0，中间命令 fail 应继续走 fallback 路径，不需 set -e。
+set -uo pipefail
 
 # ---- 逃生通道 ------------------------------------------------------------
 [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]] && exit 0
