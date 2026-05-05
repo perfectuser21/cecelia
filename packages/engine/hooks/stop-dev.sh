@@ -89,15 +89,19 @@ case "$current_branch" in
         ;;
     *)
         # 主分支 / 非 cp-* / 探测失败：看 .cecelia 里 dev-active 数量
-        active_files=( "$dev_state_dir"/dev-active-*.json )
         active_count=0
-        for _f in "${active_files[@]}"; do
-            [[ -f "$_f" ]] && active_count=$((active_count + 1))
+        for _f in "$dev_state_dir"/dev-active-*.json; do
+            if [[ -f "$_f" ]]; then
+                active_count=$((active_count + 1))
+            fi
         done
         if [[ "$active_count" -eq 1 ]]; then
             # 单 session 漂主仓库逃避场景 → 仍 block（保留 PR #2503 设计意图）
             for _f in "$dev_state_dir"/dev-active-*.json; do
-                [[ -f "$_f" ]] && { dev_state="$_f"; break; }
+                if [[ -f "$_f" ]]; then
+                    dev_state="$_f"
+                    break
+                fi
             done
         else
             # 0 个（无活跃 session）或 多个（多 session 不混）→ exit 0
