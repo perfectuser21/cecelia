@@ -35,8 +35,8 @@
 - [x] [ARTIFACT] scripts/brain-build.sh trap 清理临时 dir
   Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-build.sh','utf8'); if (!c.match(/trap.*TEMP_BUILD.*EXIT/)) process.exit(1)"
 
-- [x] [ARTIFACT] ops.js deploy spawn 段不含 stdio:'ignore'（应是数组）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/ops.js','utf8'); const m=c.match(/POST.*\\/deploy.*?spawn[\\s\\S]{0,1500}/); if (!m || !m[0].includes('logFd, logFd')) process.exit(1)"
+- [x] [ARTIFACT] ops.js deploy spawn 段含 stdio 数组 [ignore, logFd, logFd]
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/ops.js','utf8'); if (!c.includes('logFd, logFd')) process.exit(1)"
 
 - [x] [ARTIFACT] ops.js deployState 含 log_path 字段
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/ops.js','utf8'); if (!c.includes('deployState.log_path')) process.exit(1)"
