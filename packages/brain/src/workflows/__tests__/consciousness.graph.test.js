@@ -1,8 +1,6 @@
-// packages/brain/src/__tests__/consciousness-graph.test.js
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemorySaver } from '@langchain/langgraph';
 
-// hoisted mocks
 const {
   mockThalamusProcessEvent,
   mockGenerateDecision,
@@ -21,24 +19,24 @@ const {
 
 let mockSaver;
 
-vi.mock('../thalamus.js', () => ({
+vi.mock('../../thalamus.js', () => ({
   processEvent: (...args) => mockThalamusProcessEvent(...args),
   EVENT_TYPES: { TICK: 'tick' },
 }));
-vi.mock('../decision.js', () => ({
+vi.mock('../../decision.js', () => ({
   generateDecision: (...args) => mockGenerateDecision(...args),
 }));
-vi.mock('../rumination.js', () => ({
+vi.mock('../../rumination.js', () => ({
   runRumination: (...args) => mockRunRumination(...args),
 }));
-vi.mock('../planner.js', () => ({
+vi.mock('../../planner.js', () => ({
   planNextTask: (...args) => mockPlanNextTask(...args),
 }));
-vi.mock('../guidance.js', () => ({
+vi.mock('../../guidance.js', () => ({
   setGuidance: (...args) => mockSetGuidance(...args),
 }));
-vi.mock('../db.js', () => ({ default: mockPool }));
-vi.mock('../orchestrator/pg-checkpointer.js', () => ({
+vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: () => Promise.resolve(mockSaver),
 }));
 
@@ -46,7 +44,7 @@ const {
   buildConsciousnessGraph,
   getCompiledConsciousnessGraph,
   _resetCompiledGraphForTests,
-} = await import('../workflows/consciousness.graph.js');
+} = await import('../consciousness.graph.js');
 
 describe('consciousness.graph.js', () => {
   beforeEach(() => {
@@ -54,7 +52,6 @@ describe('consciousness.graph.js', () => {
     mockSaver = new MemorySaver();
     _resetCompiledGraphForTests();
 
-    // default happy-path mocks
     mockThalamusProcessEvent.mockResolvedValue({ actions: [] });
     mockGenerateDecision.mockResolvedValue({ actions: [] });
     mockRunRumination.mockResolvedValue(undefined);
@@ -144,16 +141,15 @@ describe('consciousness.graph.js', () => {
 
   describe('ruminationNode', () => {
     it('fire-and-forget：立即返回 rumination 步骤，不等待 runRumination 完成', async () => {
-      mockRunRumination.mockImplementation(() => new Promise(() => {})); // never resolves
+      mockRunRumination.mockImplementation(() => new Promise(() => {}));
       const graph = await getCompiledConsciousnessGraph();
       const result = await graph.invoke(
         { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
         { configurable: { thread_id: 'test-rumination-ff:1' } }
       );
-      // If rumination was awaited, this invoke would never complete (test timeout)
       expect(result.completed_steps).toContain('rumination');
-      expect(result.completed_steps).toContain('plan'); // plan executed after rumination node
-      expect(mockRunRumination).toHaveBeenCalled(); // was "fired"
+      expect(result.completed_steps).toContain('plan');
+      expect(mockRunRumination).toHaveBeenCalled();
     });
   });
 
