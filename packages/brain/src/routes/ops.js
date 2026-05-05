@@ -1,6 +1,8 @@
 import express, { Router } from 'express';
 import pool from '../db.js';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, openSync, writeSync, closeSync } from 'fs';
+import { join as pathJoin } from 'node:path';
+import { tmpdir } from 'node:os';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
 import { check48hReport } from '../tick.js';
@@ -2753,11 +2755,11 @@ router.post('/deploy', async (req, res) => {
     res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
 
     const { execSync } = await import('child_process');
-    const repoRoot = new URL('../../../..', import.meta.url).pathname;
+    const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
     const startTime = Date.now();
 
     try {
-      const stagingScript = new URL('../../../../scripts/staging-deploy.sh', import.meta.url).pathname;
+      const stagingScript = `${repoRoot}/scripts/staging-deploy.sh`;
       const { existsSync } = await import('fs');
       let cmd;
 
@@ -2831,6 +2833,7 @@ router.post('/deploy', async (req, res) => {
   deployState.finished_at = null;
   deployState.elapsed_ms = null;
   deployState.error = null;
+  deployState.log_path = null;
 
   res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
 
@@ -2838,8 +2841,8 @@ router.post('/deploy', async (req, res) => {
   writeDeployStatusFile({ ...deployState });
 
   const { spawn } = await import('child_process');
-  const repoRoot = new URL('../../../..', import.meta.url).pathname;
-  const scriptDir = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
+  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
+  const scriptDir = `${repoRoot}/scripts/deploy-local.sh`;
 
   const args = ['bash', scriptDir];
   if (changed_paths && changed_paths.length > 0) {
@@ -2848,14 +2851,41 @@ router.post('/deploy', async (req, res) => {
   }
   args.push('main');
 
+  // v1.1.0 (2026-05-05): 把 deploy-local.sh stdout/stderr 写到日志文件，
+  // 旧版 stdio:'ignore' 会丢掉 npm ci EUSAGE 等关键 error，运维只能看到
+  // "deploy-local.sh exited code=1" 没法调试。
+  const logTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const logFile = pathJoin(tmpdir(), `cecelia-deploy-${logTimestamp}.log`);
+  let logFd;
+  try {
+    logFd = openSync(logFile, 'a');
+    writeSync(logFd, `[deploy-webhook] starting at ${new Date().toISOString()}\n`);
+    writeSync(logFd, `[deploy-webhook] cmd: bash ${scriptDir} ${args.slice(2).join(' ')}\n`);
+    writeSync(logFd, `[deploy-webhook] cwd: ${repoRoot}\n\n`);
+  } catch (err) {
+    console.error(`[deploy-webhook] 创建 log 文件失败 ${logFile}: ${err.message}，回退 stdio:'ignore'`);
+    logFd = 'ignore';
+  }
+  deployState.log_path = logFile;
+  writeDeployStatusFile({ ...deployState });
+
   console.log(`[deploy-webhook] 开始部署（detached）: bash ${scriptDir}`);
+  console.log(`[deploy-webhook] log: ${logFile}`);
 
   // 使用 detached spawn：Brain 重启自身时不阻塞事件循环，避免 EADDRINUSE
+  // stdio: stdin=ignore + stdout/stderr=logFd → 子进程输出落盘可调试
+  const stdioOption = logFd === 'ignore'
+    ? 'ignore'
+    : ['ignore', logFd, logFd];
   const child = spawn(args[0], args.slice(1), {
     detached: true,
-    stdio: 'ignore',  // 不继承 stdio，避免 Brain 退出时子进程也退出
+    stdio: stdioOption,
     cwd: repoRoot,
   });
+  // log fd 被子进程接管后父进程可以关闭（数据继续写入文件）
+  if (typeof logFd === 'number') {
+    try { closeSync(logFd); } catch { /* noop */ }
+  }
   child.unref(); // 完全解绑，Brain 可自由退出/重启
 
   // 若 Brain 在子进程完成前仍在运行，捕获退出码更新状态
@@ -2872,7 +2902,7 @@ router.post('/deploy', async (req, res) => {
       deployState.error = `deploy-local.sh exited code=${code} signal=${signal}`;
       deployState.elapsed_ms = elapsed;
       deployState.finished_at = new Date().toISOString();
-      console.error(`[deploy-webhook] ❌ 部署失败 code=${code} (${(elapsed / 1000).toFixed(1)}s)`);
+      console.error(`[deploy-webhook] ❌ 部署失败 code=${code} (${(elapsed / 1000).toFixed(1)}s)，log: ${logFile}`);
     }
     writeDeployStatusFile({ ...deployState });
   });
@@ -2896,7 +2926,7 @@ router.post('/deploy/staging/cleanup', async (req, res) => {
 
   try {
     const { execSync } = await import('child_process');
-    const repoRoot = new URL('../../../..', import.meta.url).pathname;
+    const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
 
     console.log('[staging-cleanup] 清理 staging 环境...');
     execSync(
@@ -2936,7 +2966,7 @@ router.post('/deploy/rollback', async (req, res) => {
   res.status(202).json({ status: 'accepted', message: `Rollback to ${stable_sha} triggered`, reason });
 
   const { execSync } = await import('child_process');
-  const repoRoot = new URL('../../../..', import.meta.url).pathname;
+  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
   const startTime = Date.now();
 
   try {

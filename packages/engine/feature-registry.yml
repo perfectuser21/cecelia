@@ -1,11 +1,147 @@
 # Engine Feature Registry
-# 记录 packages/engine/skills/ 目录下的能力变更历史
-# 每次修改 skills/ 时必须在此追加 changelog 条目
+# 记录 packages/engine/ 下的 feature 注册（features 段）+ 能力变更历史（changelog 段）
+# - features: 每个完整 feature 一个 entry（用途/入口/依赖/contract/测试覆盖/闭环段）
+# - changelog: 每次改动追加（细粒度变更历史）
 
-version: "1.0.0"
-updated: "2026-05-04"
+version: "1.1.1"
+updated: "2026-05-05"
 
+# ============================================================================
+# Features 注册（v18.22.2 新增）
+# 每个 feature 是 Cecelia 的"完整能力单元"，比 changelog 单条改动粒度大
+# ============================================================================
+features:
+  - id: stop-hook
+    name: Stop Hook（/dev 流程守门）
+    status: stable
+    since: "2026-04-21"  # PR #2503 cwd-as-key 切线，13 段闭环起点
+    owner: engine
+    description: |
+      Cecelia /dev 流程的核心守门 — 每次 assistant 想 stop turn 时触发，
+      验证 dev session 是否真完成（PR/CI/merge/deploy/health/Learning/cleanup
+      全链路）。未完成 → block 反馈具体阶段；done → rm dev-active 状态文件 → exit 0。
+    entry_points:
+      - packages/engine/hooks/stop-dev.sh        # Ralph Loop 入口
+      - packages/engine/hooks/dev-mode-tool-guard.sh  # PreToolUse 拦 ScheduleWakeup + Bash bg
+    key_files:
+      - packages/engine/hooks/stop-dev.sh             # cwd 路由 + ghost 过滤 + mtime expire
+      - packages/engine/lib/devloop-check.sh          # verify_dev_complete 7 阶段决策树
+      - packages/engine/skills/dev/scripts/cleanup.sh # 归档/git config 清理
+      - packages/engine/skills/dev/scripts/worktree-manage.sh # .dev-mode + .cecelia 创建
+      - .claude/settings.json                          # PreToolUse hooks 注册（repo 级）
+    state_files:
+      - main_repo/.cecelia/dev-active-{branch}.json   # Ralph Loop 入口锁
+      - main_repo/.cecelia/deploy-fail-count-{branch} # P5 fail counter
+      - main_repo/.cecelia/deploy-failed-{branch}.flag # P5 fail 3x escape 标记
+      - worktree/.dev-mode.{branch}                    # worktree 元数据缓存（不读字段做决策）
+      - worktree/.dev-lock.{branch}                    # session_id + owner_session
+    contract_url: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
+    contract_url_legacy: https://www.notion.so/35753f413ec581d9b607f61e4e90ce0b  # 月升 frozen，留作历史快照
+    invariants_count: 18  # L1-L18 详见 contract，integrity 元测试 grep 验证
+    state_machine:
+      stages:
+        - P1 PR 未创建 → block: 立即 push + gh pr create
+        - P2 CI 进行中 → block: 等 CI（gh pr checks --watch）
+        - P3 CI 失败 → block: fail job 名 + log URL（修代码 → push 触发新 CI）
+        - P4 PR 通过未合 → block: auto-merge
+        - P5 deploy workflow conclusion=success（VERIFY_DEPLOY_WORKFLOW=1，engine-only PR 跳过）
+        - P6 health probe /api/brain/health 200（VERIFY_HEALTH_PROBE=1，60×5s）
+        - P7 Learning 文件存在 + 含 ### 根本原因
+        - P0 cleanup.sh exit 0 → done → rm dev-active → exit 0
+    test_coverage:
+      unit: 32       # tests/unit/verify-dev-complete.test.sh
+      integration: 32  # 7 个 .test.sh 共 32 case (7stage-flow 5 + ghost-filter 4 + e2e-real-brain 3 + multi-worktree 5 + deploy-escape 4 + ralph-loop-mode 4 + dev-mode-tool-guard 8 - devloop-classify 10)
+      smoke: 21      # 7stage 9 + ralph-loop 12
+      e2e: 12        # tests/e2e/stop-hook-full-lifecycle.test.ts
+      integrity: 18  # tests/integrity/stop-hook-coverage.test.sh L1-L17 + L18 self-ref
+      ci_job: engine-tests-shell  # .github/workflows/ci.yml（接 ci-passed required）
+    closure_segments:
+      - { seg: 1, pr: "#2503", date: "2026-04-21", title: "cwd-as-key 切线 + 12 场景 E2E 防线" }
+      - { seg: 2, pr: "#2745", date: "2026-05-04", title: "散点 12 → 1 单一 exit 0" }
+      - { seg: 3, pr: "#2746", date: "2026-05-04", title: "探测失败 fail-closed" }
+      - { seg: 4, pr: "#2747", date: "2026-05-04", title: "三态出口严格分离" }
+      - { seg: 5, pr: "#2749", date: "2026-05-04", title: "condition 5 真完成守门" }
+      - { seg: 6, pr: "#2752", date: "2026-05-04", title: "Ralph Loop 模式（项目根状态文件 + hook 主动验证）" }
+      - { seg: 7, pr: "#2757", date: "2026-05-04", title: "50 case 测试金字塔" }
+      - { seg: 8, pr: "#2759", date: "2026-05-04", title: "PreToolUse 拦 ScheduleWakeup + Bash bg" }
+      - { seg: 9, pr: "#2761", date: "2026-05-04", title: "done schema 修正（删 decision:allow，CC 协议合规）" }
+      - { seg: 10, pr: "#2766", date: "2026-05-04", title: "verify_dev_complete 7 阶段重写 P1-P7" }
+      - { seg: 10.1, pr: "#2767", date: "2026-05-04", title: "Task 3/5/6 后续（28 unit + 5 integration + cleanup 解耦）" }
+      - { seg: 11, pr: "#2770", date: "2026-05-05", title: "integrity 5 修复（死代码激活 + ghost 过滤 + P5/P6 启用）" }
+      - { seg: 12, pr: "#2777", date: "2026-05-05", title: "4 P0 修（BUG-1/2/3/4）" }
+      - { seg: 13, pr: "#2779", date: "2026-05-05", title: "4 P1 修（边缘 case + 测试基础设施）" }
+      - { seg: 14, pr: "本 PR", date: "2026-05-05", title: "feature 注册（feature-registry features 段）" }
+    history_pr_count: 50  # 半年累积修过的相关 PR 总数（含已被新架构替代的）
+    deprecated_invariants:
+      - session_id 精确匹配（owner_session）→ cwd-as-key + Ralph Loop 替代
+      - dev-lock 心跳 self-heal → hook 主动 verify 替代
+      - 重试 30 次 / 90 分钟超时 → 无次数限制，verify 阶段决定
+      - ready_to_merge 中间态 → 单一 exit 0 协议
+    learnings_dir: docs/learnings/  # cp-*-*.md 每段闭环的 Learning 文件
+
+# ============================================================================
+# Changelog（细粒度改动历史）
+# ============================================================================
 changelog:
+  - version: "18.23.0"
+    date: "2026-05-05"
+    change: "feature"
+    description: "Stop Hook 隔离 key 切到 session_id（cp-0505191801）— v22.0.0 路由架构。stop-dev.sh 入口读 hook stdin payload session_id 精确匹配 dev-active.session_id，cwd→branch 路由降为 fallback（兼容旧 schema 过渡期）。worktree-manage.sh 的 _resolve_claude_session_id 调换优先级（ps 沿 PPID 找 claude --session-id 优先，env var 兜底），让 dev-active.session_id 字段对齐 hook payload 的主 session_id。彻底解多 session 撞 .cecelia/ 池串线问题（半年 50+ 次修复的根因）。新增 8 case integration 测试 stop-dev-session-id-routing.test.sh。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (入口读 stdin + session_id 精确路由)"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (_resolve_claude_session_id 优先 ps)"
+      - "packages/engine/tests/integration/stop-dev-session-id-routing.test.sh (新建 8 case)"
+      - "packages/engine/tests/integration/ralph-loop-mode.test.sh (Case C 改 session_id 路由)"
+      - "packages/engine/tests/integration/stop-hook-e2e-real-brain.test.sh (传 stdin session_id)"
+      - "Engine 6 处版本文件 18.23.0"
+
+  - version: "18.22.3"
+    date: "2026-05-05"
+    change: "docs"
+    description: "feature-registry contract_url 迁移到 ZenithJoy（cp-0505175548）— stop-hook contract_url 从月升 frozen page (35753f41) 切到 ZenithJoy SSOT page (357c40c2-ba63-81b8)。新增 contract_url_legacy 字段保留月升历史指针。integrity L18 grep ZenithJoy URL token 守门。doc-only，无运行时行为变化。"
+    files:
+      - "packages/engine/feature-registry.yml (contract_url 切 ZenithJoy + contract_url_legacy)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (L18 grep ZenithJoy URL)"
+      - "Engine 8 处版本文件 18.22.3"
+
+
+  - version: "18.22.2"
+    date: "2026-05-05"
+    change: "docs"
+    description: "Stop Hook 注册为正式 feature（cp-0505164349）— feature-registry.yml 加 features: 段，stop-hook 第一个 feature 完整 entry：13 段闭环 + 14 invariant + 70+ 测试覆盖 + Notion contract 链接 + entry_points/key_files/state_files/state_machine 全景。integrity L18 grep 验证 features 段含 stop-hook。Stop Hook 闭环第 14 段（feature 文档化）。"
+    files:
+      - "packages/engine/feature-registry.yml (新加 features 段 + stop-hook entry)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (扩 L18)"
+      - "Engine 8 处版本文件 18.22.2"
+
+
+  - version: "18.22.1"
+    date: "2026-05-05"
+    change: "fix"
+    description: "Stop Hook 4 个 P1 修复（cp-0505162710）— P1-1 P5 engine-only PR not-applicable（gh pr view --json files 检查 packages/brain/ 触动，无 → 设 verify_deploy=0 跳 P5 走 P6）；P1-2 devloop-classify.test.sh CI Linux fix（git -c user.email/name 显式 6 处）；P1-3 engine-tests-shell 显式列表 7 文件 → glob `tests/integration/*.test.sh`（防新 .test.sh 漏接）；P1-4 install-claude-settings.sh 跨机器 fallback + integrity L15-L17 grep 验证。Stop Hook 闭环第 13 段。"
+    files:
+      - "packages/engine/lib/devloop-check.sh (P1-1 P5 paths skip)"
+      - "packages/engine/tests/integration/devloop-classify.test.sh (P1-2 git user 显式)"
+      - ".github/workflows/ci.yml (P1-3 engine-tests-shell glob)"
+      - "scripts/install-claude-settings.sh (P1-4 新建跨机器 setup)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (L15-L17 = 18 case)"
+      - "Engine 8 处版本文件 18.22.1"
+
+  - version: "18.22.0"
+    date: "2026-05-05"
+    change: "feat"
+    description: "Stop Hook 4 个 P0 彻底修复（cp-0505144146）— Notion contract 4 BUG 一次性全修。BUG-1 cwd-as-key 真匹配（多 worktree 不混；主分支 cwd 单 dev-active 时仍 block 保留漂移防护，多 dev-active 时 exit 0）；BUG-2 gh run list --workflow CI 4 处显式过滤；BUG-3 .claude/settings.json 让 PreToolUse 跨机器；BUG-4 mtime > 30 分钟 expire + P5 fail counter ≥ 3 auto-expire。Stop Hook 闭环第 12 段。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (BUG-1 cwd 路由 + BUG-4 mtime expire)"
+      - "packages/engine/lib/devloop-check.sh (BUG-2 --workflow CI 4 处 + BUG-4 P5 fail counter)"
+      - ".claude/settings.json (新建 BUG-3 PreToolUse repo 级注册)"
+      - "packages/engine/tests/integration/stop-dev-multi-worktree.test.sh (新建 5 case BUG-1)"
+      - "packages/engine/tests/integration/stop-dev-deploy-escape.test.sh (新建 4 case BUG-4)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (扩 L11-L14 = 15 case)"
+      - "packages/engine/scripts/smoke/stop-hook-7stage-smoke.sh (Step 9 settings 验证)"
+      - ".github/workflows/ci.yml (engine-tests-shell 加 2 个新 .test.sh)"
+      - "Engine 8 处版本文件 18.22.0"
+
   - version: "18.21.0"
     date: "2026-05-05"
     change: "feat"

@@ -345,12 +345,8 @@ jobs:
           done
       - name: Run integration shell tests
         run: |
-          for t in \
-              packages/engine/tests/integration/stop-hook-7stage-flow.test.sh \
-              packages/engine/tests/integration/stop-dev-ghost-filter.test.sh \
-              packages/engine/tests/integration/stop-hook-e2e-real-brain.test.sh \
-              packages/engine/tests/integration/ralph-loop-mode.test.sh \
-              packages/engine/tests/integration/dev-mode-tool-guard.test.sh; do
+          # P1-3 (v18.22.1): glob 模式，新加 .test.sh 自动接 CI（防显式列表漏接）
+          for t in packages/engine/tests/integration/*.test.sh; do
             [[ -f "$t" ]] || continue
             echo "::group::$(basename "$t")"
             bash "$t" || exit 1
@@ -1061,6 +1057,15 @@ jobs:
       - name: TDD Commit Order Lint
         run: bash .github/workflows/scripts/lint-tdd-commit-order.sh "origin/${{ github.base_ref }}"
 
+  lint-learning-constraint-coverage:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Learning→Constraint Integration Lint
+        run: bash .github/workflows/scripts/lint-learning-constraint-coverage.sh
+
   lint-test-quality:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1108,7 +1113,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1141,6 +1146,7 @@ jobs:
           check "lint-feature-has-smoke" "${{ needs.lint-feature-has-smoke.result }}"
           check "lint-base-fresh"        "${{ needs.lint-base-fresh.result }}"
           check "lint-tdd-commit-order"  "${{ needs.lint-tdd-commit-order.result }}"
+          check "lint-learning-constraint-coverage" "${{ needs.lint-learning-constraint-coverage.result }}"
           check "lint-test-quality"      "${{ needs.lint-test-quality.result }}"
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"

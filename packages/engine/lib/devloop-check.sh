@@ -233,7 +233,7 @@ devloop_check() {
         local ci_status="unknown" ci_conclusion="" ci_run_id=""
         if [[ "$pr_state" != "merged" ]]; then
             local run_info
-            run_info=$(gh run list --branch "$branch" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
+            run_info=$(gh run list --branch "$branch" --workflow CI --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
             if [[ -n "$run_info" && "$run_info" != "[]" ]]; then
                 ci_status=$(echo "$run_info" | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")
                 ci_conclusion=$(echo "$run_info" | jq -r '.[0].conclusion // ""' 2>/dev/null || echo "")
@@ -593,9 +593,9 @@ verify_dev_complete() {
         if [[ -z "$pr_merged_at" || "$pr_merged_at" == "null" ]]; then
             # ------ P2/P3/P4: CI 状态 ------
             local ci_status ci_conclusion ci_run_id
-            ci_status=$(gh run list --branch "$branch" --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
-            ci_conclusion=$(gh run list --branch "$branch" --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || echo "")
-            ci_run_id=$(gh run list --branch "$branch" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
+            ci_status=$(gh run list --branch "$branch" --workflow CI --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
+            ci_conclusion=$(gh run list --branch "$branch" --workflow CI --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || echo "")
+            ci_run_id=$(gh run list --branch "$branch" --workflow CI --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
             case "$ci_status" in
                 in_progress|queued|waiting|pending)
                     # P2
@@ -634,6 +634,18 @@ verify_dev_complete() {
         fi
 
         # ------ P5: brain-ci-deploy.yml workflow run（VERIFY_DEPLOY_WORKFLOW=1 启用）------
+        # P1-1 (v18.22.1): engine-only / docs-only PR 不触动 packages/brain/，
+        # brain-ci-deploy.yml workflow on push paths brain/** 不触发 → P5 not applicable
+        if [[ "$verify_deploy" == "1" ]]; then
+            local brain_changed
+            brain_changed=$(gh pr view "$pr_number" --json files -q '[.files[].path] | map(select(startswith("packages/brain/"))) | length' 2>/dev/null || echo "0")
+            if [[ "$brain_changed" =~ ^[0-9]+$ ]] && [[ "$brain_changed" -eq 0 ]]; then
+                echo "[verify_dev_complete] P5 跳过：PR #$pr_number 不触动 packages/brain/，brain-ci-deploy.yml not applicable" >&2
+                # not applicable → 视为 P5 通过，继续走 P6
+                verify_deploy=0
+            fi
+        fi
+
         if [[ "$verify_deploy" == "1" ]]; then
             local merge_sha deploy_run_id deploy_status deploy_conclusion
             merge_sha=$(gh pr view "$pr_number" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || echo "")
@@ -653,10 +665,28 @@ verify_dev_complete() {
                     ;;
                 completed)
                     if [[ "$deploy_conclusion" != "success" ]]; then
-                        result_json=$(_devloop_jq -n --arg id "$deploy_run_id" --arg c "$deploy_conclusion" \
-                            '{"status":"blocked","reason":"deploy 失败 (\($c))","action":"看 gh run view \($id) --log-failed"}')
+                        # v18.22.0: BUG-4 P5 fail counter — 连续 3 次 → auto-expire dev-active
+                        local fail_count_file="${main_repo}/.cecelia/deploy-fail-count-${branch}"
+                        local fail_count
+                        fail_count=$(cat "$fail_count_file" 2>/dev/null || echo 0)
+                        fail_count=$((fail_count + 1))
+                        echo "$fail_count" > "$fail_count_file" 2>/dev/null || true
+
+                        if [[ "$fail_count" -ge 3 ]]; then
+                            rm -f "${main_repo}/.cecelia/dev-active-${branch}.json"
+                            rm -f "$fail_count_file"
+                            : > "${main_repo}/.cecelia/deploy-failed-${branch}.flag" 2>/dev/null || true
+                            result_json=$(_devloop_jq -n --arg b "$branch" \
+                                '{"status":"done","reason":"deploy fail 3x → auto-expire dev-active (\($b))，等独立 PR 修 deploy"}')
+                            break
+                        fi
+
+                        result_json=$(_devloop_jq -n --arg id "$deploy_run_id" --arg c "$deploy_conclusion" --arg n "$fail_count" \
+                            '{"status":"blocked","reason":"deploy 失败 (\($c)) [\($n)/3]","action":"看 gh run view \($id) --log-failed（连续 3 次自动 expire）"}')
                         break
                     fi
+                    # success 分支：清掉 fail counter
+                    rm -f "${main_repo}/.cecelia/deploy-fail-count-${branch}" 2>/dev/null || true
                     ;;
                 *)
                     result_json=$(_devloop_jq -n --arg s "$deploy_status" \
