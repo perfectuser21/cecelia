@@ -80,6 +80,7 @@ import { initMutedGuard } from './src/muted-guard.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
 import { loadSpendingCapsFromDB, loadAuthFailuresFromDB } from './src/account-usage.js';
+import { loadFromDB as loadCircuitBreakerStatesFromDB } from './src/circuit-breaker.js';
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';
@@ -400,6 +401,8 @@ try {
 await loadSpendingCapsFromDB();
 // Restore auth failure circuit-breaker state from DB (survives Brain restarts)
 await loadAuthFailuresFromDB();
+// Restore dispatch circuit-breaker state from DB (migration 261)
+await loadCircuitBreakerStatesFromDB();
 
 // Realtime WebSocket server (noServer mode, manually handle upgrade)
 const realtimeWss = new WebSocketServer({ noServer: true });

@@ -14,9 +14,5 @@
     "dashboard:build": "npm run build -w apps/dashboard",
     "dashboard:dev": "npm run dev -w apps/dashboard",
     "test": "npm run brain:test"
-  },
-  "dependencies": {
-    "cat": "^0.2.0",
-    "package-lock.json": "^1.0.0"
   }
 }

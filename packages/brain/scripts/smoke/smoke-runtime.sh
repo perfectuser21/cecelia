@@ -170,10 +170,10 @@ echo "$r" | jq -e '.success == true' >/dev/null 2>&1 \
   && ok "tick-drain-cancel: POST /tick/drain-cancel success=true" \
   || fail "tick-drain-cancel: POST /tick/drain-cancel 失败 ($r)"
 
-# tick-execute: POST /tick success=true
+# tick-execute: POST /tick 成功（Wave 1 返回 success=true；Wave 2 返回 has("dispatched")）
 r=$(curl -s -X POST "$BRAIN/api/brain/tick" -H "Content-Type: application/json" -d '{}')
-echo "$r" | jq -e '.success == true' >/dev/null 2>&1 \
-  && ok "tick-execute: POST /tick success=true" \
+echo "$r" | jq -e 'has("dispatched") or .success == true' >/dev/null 2>&1 \
+  && ok "tick-execute: POST /tick 成功" \
   || fail "tick-execute: POST /tick 失败 ($r)"
 
 # ── 汇总 ─────────────────────────────────────────────────────────────────────

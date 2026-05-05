@@ -14,6 +14,11 @@ vi.mock('../dev-task.graph.js', () => ({
 vi.mock('../harness-initiative.graph.js', () => ({
   compileHarnessInitiativeGraph: mockCompileHarness,
 }));
+// Mock consciousness graph 避免真连 pg（预热调用不注册到 registry）
+vi.mock('../consciousness.graph.js', () => ({
+  getCompiledConsciousnessGraph: vi.fn().mockResolvedValue({ invoke: vi.fn() }),
+  _resetCompiledGraphForTests: vi.fn(),
+}));
 
 // 重置 registry 隔离每 test
 import {

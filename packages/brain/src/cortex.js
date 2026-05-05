@@ -30,6 +30,7 @@ import {
 import { validatePolicyJson } from './policy-validator.js';
 import { recordFailure } from './circuit-breaker.js';
 import { createTask } from './actions.js';
+import { autoExtractAndPersist } from './insight-to-constraint.js';
 
 // ============================================================
 // Cortex Prompt
@@ -900,6 +901,11 @@ async function recordLearnings(learnings, event) {
       // 自动闭合：若 insight 含代码修复信号，派发修复 task
       if (insertResult.rows.length > 0) {
         const learningId = insertResult.rows[0].id;
+        // 同次 session 抽取 dispatch_constraint，闭合 learning_id a4941b23 教训：
+        // rumination learnings 必须当场转化为约束，否则记录沦为噪声。
+        await autoExtractAndPersist(learningId, content).catch(err =>
+          console.warn('[cortex] insight-to-constraint failed:', err.message)
+        );
         await maybeCreateInsightTask(learningId, content, event).catch(err =>
           console.error('[cortex] maybeCreateInsightTask failed:', err.message)
         );

@@ -46,9 +46,22 @@ function runStopHook(opts: RunOpts): RunResult {
     envPath = `${stubDir}:${envPath}`;
   }
 
+  // 走 CLAUDE_HOOK_STDIN_JSON_OVERRIDE 而不是 stdin pipe —— vitest spawnSync stdin
+  // 不稳定（stop.sh 自己有这条逃生通道，专门给测试用）。把 stdin 也设上做双保险。
+  const overrideEnv: Record<string, string> = {};
+  if (stdinStr) overrideEnv.CLAUDE_HOOK_STDIN_JSON_OVERRIDE = stdinStr;
+
   const res = spawnSync('bash', [STOP_HOOK], {
     cwd: opts.cwd,
-    env: { ...process.env, ...(opts.env ?? {}), PATH: envPath },
+    env: {
+      ...process.env,
+      // v18.21.0: E2E 老三阶段，P5/P6 由独立 7stage smoke 覆盖
+      VERIFY_DEPLOY_WORKFLOW: '0',
+      VERIFY_HEALTH_PROBE: '0',
+      ...overrideEnv,
+      ...(opts.env ?? {}),
+      PATH: envPath,
+    },
     input: stdinStr,
     encoding: 'utf-8',
     timeout: 15000,
@@ -80,7 +93,68 @@ function writeDevMode(dir: string, branch: string, content: string) {
   writeFileSync(join(dir, `.dev-mode.${branch}`), content);
 }
 
-describe('Stop Hook Full Lifecycle — 12 场景 E2E', () => {
+// Ralph Loop 模式（v21.0.0+）helper
+function setupRalphDevSession(repo: string, branch: string, worktreePath?: string) {
+  const wt = worktreePath || repo;
+  mkdirSync(join(repo, '.cecelia'), { recursive: true });
+  writeFileSync(
+    join(repo, '.cecelia', `dev-active-${branch}.json`),
+    JSON.stringify({ branch, worktree: wt, started_at: '2026-05-04T00:00:00Z', session_id: 'test' }, null, 2),
+  );
+}
+
+function setupMockCleanup(repo: string, exitCode: number) {
+  const dir = join(repo, 'packages/engine/skills/dev/scripts');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'cleanup.sh'), `#!/usr/bin/env bash\nexit ${exitCode}\n`);
+  chmodSync(join(dir, 'cleanup.sh'), 0o755);
+}
+
+function setupLearning(repo: string, branch: string, content: string) {
+  const dir = join(repo, 'docs/learnings');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${branch}.md`), content);
+}
+
+const STOP_DEV = resolve(__dirname, '../../hooks/stop-dev.sh');
+
+function setupDevloopLib(repo: string) {
+  const libDir = join(repo, 'packages/engine/lib');
+  const realLib = resolve(__dirname, '../../lib/devloop-check.sh');
+  mkdirSync(libDir, { recursive: true });
+  execSync(`cp "${realLib}" "${libDir}/devloop-check.sh"`);
+}
+
+function runStopDev(opts: { cwd: string; hookCwd?: string; ghStub?: string; env?: Record<string, string> }): RunResult {
+  let envPath = process.env.PATH ?? '';
+  if (opts.ghStub) {
+    const stubDir = mkdtempSync(join(tmpdir(), 'gh-stub-'));
+    stubDirs.push(stubDir);
+    const ghPath = join(stubDir, 'gh');
+    writeFileSync(ghPath, `#!/usr/bin/env bash\n${opts.ghStub}\n`);
+    chmodSync(ghPath, 0o755);
+    envPath = `${stubDir}:${envPath}`;
+  }
+  const res = spawnSync('bash', [STOP_DEV], {
+    cwd: opts.cwd,
+    env: {
+      ...process.env,
+      // v18.21.0: E2E 12 场景测的是"老三阶段"（PR/Learning/cleanup），
+      // 不验证 P5 deploy workflow + P6 health probe（独立 stop-hook-7stage smoke 覆盖）
+      // 默认 disable，单 case 可以在 opts.env 里 override
+      VERIFY_DEPLOY_WORKFLOW: '0',
+      VERIFY_HEALTH_PROBE: '0',
+      CLAUDE_HOOK_CWD: opts.hookCwd ?? opts.cwd,
+      ...(opts.env ?? {}),
+      PATH: envPath,
+    },
+    encoding: 'utf-8',
+    timeout: 15000,
+  });
+  return { status: res.status ?? -1, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
+}
+
+describe('Stop Hook Full Lifecycle — Ralph 模式 12 场景 E2E (v21.0.0+)', () => {
   let repo: string;
 
   beforeEach(() => {
@@ -95,232 +169,202 @@ describe('Stop Hook Full Lifecycle — 12 场景 E2E', () => {
     }
   });
 
-  // ============ 放行场景 ============
+  // ============ 放行场景（无 dev 流程） ============
 
-  it('场景 1: 主仓库 main 分支 → exit 0（日常对话不阻塞）', () => {
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo, session_id: 'test-sid' },
-    });
+  it('场景 1: 无 .cecelia/dev-active → exit 0 普通对话放行', () => {
+    const r = runStopDev({ cwd: repo });
     expect(r.status).toBe(0);
+    expect(r.stdout).not.toContain('"decision"');
   });
 
-  it('场景 2: cp-* 分支但无 .dev-mode → exit 0（不在 /dev 流程）', () => {
-    checkoutBranch(repo, 'cp-test');
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo, session_id: 'test-sid' },
-    });
+  it('场景 2: bypass env → exit 0', () => {
+    setupRalphDevSession(repo, 'cp-test');
+    const r = runStopDev({ cwd: repo, env: { CECELIA_STOP_HOOK_BYPASS: '1' } });
     expect(r.status).toBe(0);
+    expect(r.stdout).not.toContain('"decision"');
   });
 
-  it('场景 12: bypass env → exit 0（逃生）', () => {
+  it('场景 3: .cecelia 存在 + PR 未创建 → block', () => {
     checkoutBranch(repo, 'cp-test');
-    writeDevMode(repo, 'cp-test', 'dev\nbranch: cp-test\nstep_1_spec: pending\n');
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-      env: { CECELIA_STOP_HOOK_BYPASS: '1' },
-    });
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    const r = runStopDev({ cwd: repo, ghStub: 'echo ""\nexit 0' });
     expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+    expect(r.stdout).toMatch(/PR 未创建/);
   });
 
-  // ============ 格式异常 fail-closed ============
-
-  it('场景 3: .dev-mode 首行非 dev（等号格式） → exit 2 fail-closed', () => {
+  it('场景 4: PR + CI in_progress → block', () => {
     checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'branch=cp-test\ntask=foo\nagent=a\n',
-    );
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-    });
-    expect(r.status).toBe(2);
-    expect(r.stdout).toContain('格式异常');
-  });
-
-  // ============ Pipeline 阶段 ============
-
-  it('场景 4: step_1_spec=pending → exit 2 block（Spec 未完成）', () => {
-    checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: pending\n',
-    );
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-    });
-    expect(r.status).toBe(2);
-    expect(r.stdout).toMatch(BLOCK_PATTERN);
-    // Critical 1: reason 非空，有实质内容
-    expect(r.stdout.length).toBeGreaterThan(50);
-  });
-
-  it('场景 5: step_2_code=done 但无 pr_url → exit 2 block（提示建 PR）', () => {
-    checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: done\nstep_2_code: done\n',
-    );
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-    });
-    expect(r.status).toBe(2);
-    expect(r.stdout).toMatch(BLOCK_PATTERN);
-    // Critical 1: reason 非空，有实质内容
-    expect(r.stdout.length).toBeGreaterThan(50);
-  });
-
-  // ============ PR/CI mock 场景 ============
-
-  it('场景 6: PR 创建 + CI in_progress → exit 2 block（等 CI）', () => {
-    checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: done\nstep_2_code: done\npr_url: https://github.com/x/y/pull/1\npr_number: 1\n',
-    );
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
     const ghStub = `
-if [[ "$1 $2" == "pr view" ]]; then
-  echo '{"state":"OPEN","statusCheckRollup":[{"name":"test","conclusion":null,"status":"IN_PROGRESS"}]}'
-  exit 0
-fi
-if [[ "$1" == "pr" && "$2" == "checks" ]]; then
-  echo "test	pending	0	https://example.com"
-  exit 0
-fi
-echo ""
+case "$1 $2" in
+    "pr list") echo "100" ;;
+    "pr view") echo "" ;;
+    "run list") echo "in_progress" ;;
+esac
+exit 0
 `;
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-      ghStub,
-    });
-    expect(r.status).toBe(2);
-    expect(r.stdout).toMatch(BLOCK_PATTERN);
-    // Critical 1: reason 含 CI 关键字
-    expect(r.stdout).toMatch(/CI/i);
-  });
-
-  it('场景 7: CI failed → exit 2 block + reason 含失败', () => {
-    checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: done\nstep_2_code: done\npr_url: https://github.com/x/y/pull/1\npr_number: 1\n',
-    );
-    const ghStub = `
-if [[ "$1 $2" == "pr view" ]]; then
-  echo '{"state":"OPEN","statusCheckRollup":[{"name":"test","conclusion":"FAILURE","status":"COMPLETED"}]}'
-  exit 0
-fi
-if [[ "$1" == "pr" && "$2" == "checks" ]]; then
-  echo "test	fail	10s	https://example.com"
-  exit 0
-fi
-echo ""
-`;
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-      ghStub,
-    });
-    expect(r.status).toBe(2);
-    expect(r.stdout).toMatch(BLOCK_PATTERN);
-    // Critical 1: reason 含失败相关关键字
-    expect(r.stdout).toMatch(/失败|fail|CI/i);
-  });
-
-  it('场景 8: CI 绿 + 未合并 → exit 2 block（等上层合 PR）', () => {
-    checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: done\nstep_2_code: done\nstep_4_ship: done\npr_url: https://github.com/x/y/pull/1\npr_number: 1\n',
-    );
-    const ghStub = `
-if [[ "$1 $2" == "pr view" ]]; then
-  echo '{"state":"OPEN","mergeable":"MERGEABLE","statusCheckRollup":[{"name":"test","conclusion":"SUCCESS","status":"COMPLETED"}]}'
-  exit 0
-fi
-if [[ "$1" == "pr" && "$2" == "checks" ]]; then
-  echo "test	pass	10s	https://example.com"
-  exit 0
-fi
-if [[ "$1" == "pr" && "$2" == "merge" ]]; then
-  exit 0
-fi
-echo ""
-`;
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-      ghStub,
-    });
-    // Important(TODO): 预期 exit 0（CI 绿 + step_4_ship=done + MERGEABLE 应自动合并并清理）
-    // 待 Task 2 实现 stop-dev.sh 完整 pr merge 逻辑后收紧为 expect(r.status).toBe(0)
-    // 同时验证 .dev-mode 被清：expect(existsSync(join(repo, '.dev-mode.cp-test'))).toBe(false)
-    expect([0, 2]).toContain(r.status);
-  });
-
-  it('场景 9: PR merged + step_4_ship=done → exit 0 + .dev-mode 被清', () => {
-    checkoutBranch(repo, 'cp-test');
-    const devModeFile = join(repo, '.dev-mode.cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: done\nstep_2_code: done\nstep_4_ship: done\npr_url: https://github.com/x/y/pull/1\npr_number: 1\ncleanup_done: true\n',
-    );
-    const ghStub = `
-if [[ "$1 $2" == "pr view" ]]; then
-  echo '{"state":"MERGED","statusCheckRollup":[{"name":"test","conclusion":"SUCCESS","status":"COMPLETED"}]}'
-  exit 0
-fi
-echo ""
-`;
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-      ghStub,
-    });
+    const r = runStopDev({ cwd: repo, ghStub });
     expect(r.status).toBe(0);
-    expect(existsSync(devModeFile)).toBe(false);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+    expect(r.stdout).toMatch(/CI 进行中/);
   });
 
-  // ============ 模式兼容 ============
-
-  it('场景 10: 交互模式（session_id 空）→ 按 cwd 正常走（不因 session 空 exit 0 放行）', () => {
+  it('场景 5: PR + CI completed but not merged → block + 提示 auto-merge', () => {
     checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: pending\n',
-    );
-    const r = runStopHook({
-      cwd: repo,
-      stdinJson: { cwd: repo },
-    });
-    expect(r.status).toBe(2);
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    const ghStub = `
+case "$1 $2" in
+    "pr list") echo "100" ;;
+    "pr view") echo "" ;;
+    "run list") echo "completed" ;;
+esac
+exit 0
+`;
+    const r = runStopDev({ cwd: repo, ghStub });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+    expect(r.stdout).toMatch(/auto-merge/);
   });
 
-  it('场景 11: 无头模式（CLAUDE_HOOK_CWD env 指向 worktree） → 按 cwd 正常走', () => {
+  it('场景 6: PR merged + Learning 不存在 → block', () => {
     checkoutBranch(repo, 'cp-test');
-    writeDevMode(
-      repo,
-      'cp-test',
-      'dev\nbranch: cp-test\nstep_1_spec: pending\n',
-    );
-    const r = runStopHook({
-      cwd: '/tmp',
-      stdinJson: { cwd: repo, session_id: 'headless-sid' },
-    });
-    expect(r.status).toBe(2);
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    const ghStub = `
+case "$1 $2" in
+    "pr list") echo "100" ;;
+    "pr view") echo "2026-05-04T00:00:00Z" ;;
+esac
+exit 0
+`;
+    const r = runStopDev({ cwd: repo, ghStub });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+    expect(r.stdout).toMatch(/Learning 文件不存在/);
+  });
+
+  it('场景 7: PR merged + Learning 缺 ### 根本原因 → block', () => {
+    checkoutBranch(repo, 'cp-test');
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    setupLearning(repo, 'cp-test', '# 空 Learning\n没有根本原因段\n');
+    const ghStub = `
+case "$1 $2" in
+    "pr list") echo "100" ;;
+    "pr view") echo "2026-05-04T00:00:00Z" ;;
+esac
+exit 0
+`;
+    const r = runStopDev({ cwd: repo, ghStub });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+    expect(r.stdout).toMatch(/缺必备段/);
+  });
+
+  it('场景 8: PR merged + Learning OK + cleanup.sh 不存在 → block', () => {
+    checkoutBranch(repo, 'cp-test');
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    setupLearning(repo, 'cp-test', '# Learning\n### 根本原因\nfoo\n');
+    const ghStub = `
+case "$1 $2" in
+    "pr list") echo "100" ;;
+    "pr view") echo "2026-05-04T00:00:00Z" ;;
+esac
+exit 0
+`;
+    const r = runStopDev({ cwd: repo, ghStub, env: { HOME: '/nonexistent-home' } });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+    expect(r.stdout).toMatch(/未找到 cleanup\.sh/);
+  });
+
+  it('场景 9: PR merged + Learning OK + cleanup fail → block', () => {
+    checkoutBranch(repo, 'cp-test');
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    setupLearning(repo, 'cp-test', '# Learning\n### 根本原因\nfoo\n');
+    setupMockCleanup(repo, 1);
+    const ghStub = `
+case "$1 $2" in
+    "pr list") echo "100" ;;
+    "pr view") echo "2026-05-04T00:00:00Z" ;;
+esac
+exit 0
+`;
+    const r = runStopDev({ cwd: repo, ghStub });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+    expect(r.stdout).toMatch(/cleanup\.sh 执行失败/);
+  });
+
+  it('场景 10 [HAPPY PATH]: PR merged + Learning + cleanup ok → done + rm 状态文件', () => {
+    checkoutBranch(repo, 'cp-test');
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    setupLearning(repo, 'cp-test', '# Learning\n### 根本原因\nfoo\n### 下次预防\n- [ ] x\n');
+    setupMockCleanup(repo, 0);
+    const stateFile = join(repo, '.cecelia', 'dev-active-cp-test.json');
+    expect(existsSync(stateFile)).toBe(true);
+    const ghStub = `
+case "$1 $2" in
+    "pr list") echo "100" ;;
+    "pr view") echo "2026-05-04T00:00:00Z" ;;
+esac
+exit 0
+`;
+    const r = runStopDev({ cwd: repo, ghStub });
+    expect(r.status).toBe(0);
+    // done 路径：stdout 静默不输出 decision JSON（按 Ralph Loop 官方协议）
+    // 之前自创 decision:"allow" 违反 Claude Code Stop Hook schema（合法值只有 approve/block）
+    expect(r.stdout).not.toContain('"decision"');
+    // reason 走 stderr 诊断
+    expect(r.stderr).toMatch(/真完成/);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  it('场景 11 [关键修复]: cwd 漂到主仓库 → 仍 block（cwd 漂移修复）', () => {
+    checkoutBranch(repo, 'cp-test');
+    setupRalphDevSession(repo, 'cp-test', repo);
+    setupDevloopLib(repo);
+    const r = runStopDev({ cwd: repo, ghStub: 'echo ""\nexit 0' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+  });
+
+  it('场景 12 [关键修复]: 删 .dev-mode → 仍 block（自删修复）', () => {
+    checkoutBranch(repo, 'cp-test');
+    setupRalphDevSession(repo, 'cp-test');
+    setupDevloopLib(repo);
+    writeFileSync(join(repo, '.dev-mode.cp-test'), 'dev\n');
+    rmSync(join(repo, '.dev-mode.cp-test'));
+    const r = runStopDev({ cwd: repo, ghStub: 'echo ""\nexit 0' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+  });
+
+  // ============ 7 阶段重设计新场景（P3/P5/P6） ============
+  // 注：以下 3 场景断言 verify_dev_complete 7 阶段重写后的行为。
+  // 现有 `makeStubGhEnv` helper 不支持 failedJobs/deployRuns/healthEndpoint
+  // 字段，先 skip 留 placeholder，等 stub 扩展后再开（详见 plan Task 1 Step 2）。
+
+  it.skip('场景 13: P3 CI 失败 → block + 反馈含 fail job 名 + log URL', () => {
+    // ghStub 模拟 gh run list/view 返回 failure + jobs + log url
+    // 预期 verify_dev_complete P3 分支命中，反馈 'CI 失败' + fail job 名 + URL
+  });
+
+  it.skip('场景 14: P5 deploy workflow 进行中 → block + 等 deploy', () => {
+    // ghStub 模拟 PR merged + CI success + brain-ci-deploy in_progress
+    // 预期 verify_dev_complete P5 分支命中，反馈 brain-ci-deploy.yml
+  });
+
+  it.skip('场景 15: P6 health probe 60×5s 超时 → block', () => {
+    // 模拟 PR merged + CI success + deploy success + health endpoint dead
+    // HEALTH_PROBE_MAX_RETRIES=2 HEALTH_PROBE_INTERVAL=0
+    // 预期 verify_dev_complete P6 分支命中，反馈 'health probe...超时'
   });
 });

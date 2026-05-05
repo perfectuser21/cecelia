@@ -282,31 +282,11 @@ fi
 # ========================================
 echo ""
 echo "[2.5] 触发本地部署..."
-SCRIPT_DIR_FOR_DEPLOY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 向上溯源找到仓库根目录（兼容 worktree 和直接调用）
-GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
-if [[ "$GIT_COMMON_DIR" == ".git" ]]; then
-    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-else
-    REPO_ROOT="$(cd "$(dirname "$GIT_COMMON_DIR")" && pwd)"
-fi
-DEPLOY_LOCAL_SH="$REPO_ROOT/scripts/deploy-local.sh"
-
-if [[ $CHECKOUT_FAILED -eq 1 ]]; then
-    echo -e "   ${YELLOW}[WARN]  跳过（checkout 失败，无法确认代码已同步）${NC}"
-elif [[ ! -f "$DEPLOY_LOCAL_SH" ]]; then
-    echo -e "   ${YELLOW}[WARN]  deploy-local.sh 不存在，跳过部署${NC}"
-    echo "   期望路径: $DEPLOY_LOCAL_SH"
-else
-    # fire-and-forget：setsid 新会话后台运行，不阻塞有头/无头会话
-    # 日志写 /tmp/cecelia-deploy-<branch>.log，部署结果不影响 cleanup 流程
-    DEPLOY_LOG="/tmp/cecelia-deploy-${CP_BRANCH}.log"
-    setsid bash "$DEPLOY_LOCAL_SH" "$BASE_BRANCH" --changed="$CHANGED_FILES" \
-        >"$DEPLOY_LOG" 2>&1 &
-    DEPLOY_PID=$!
-    echo -e "   ${GREEN}[OK] 部署已在后台启动 (pid=$DEPLOY_PID)${NC}"
-    echo "   日志: $DEPLOY_LOG"
-fi
+# v18.20.1: deploy 解耦 — 由 .github/workflows/brain-ci-deploy.yml
+# 在 push to main 时自动触发。verify_dev_complete P5 监听
+# workflow run conclusion=success（VERIFY_DEPLOY_WORKFLOW=1）。
+# 本地 deploy-local.sh fire-and-forget 不可观测且重复，废弃。
+echo -e "   ${GREEN}[OK] deploy 由 brain-ci-deploy.yml workflow 接管（verify_dev_complete P5 监听）${NC}"
 
 # ========================================
 # 2.6 更新系统状态（CURRENT_STATE.md）
@@ -569,7 +549,7 @@ fi
 # ========================================
 echo ""
 echo "[9.5] 清理远程已删除的分支..."
-GONE_BRANCHES=$(git branch -vv | grep ': gone]' | awk '{print $1}')
+GONE_BRANCHES=$(git branch -vv | grep ': gone]' | awk '{print $1}' || true)
 if [[ -n "$GONE_BRANCHES" ]]; then
     GONE_COUNT=$(echo "$GONE_BRANCHES" | wc -l)
     echo "   → 发现 $GONE_COUNT 个远程已删除的分支"

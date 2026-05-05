@@ -45,8 +45,8 @@ services:
       # Git + gh config（harness / pipeline container 做 git commit / gh pr 需要）
       - /Users/administrator/.gitconfig:/Users/administrator/.gitconfig:ro
       - /Users/administrator/.config/gh:/Users/administrator/.config/gh:ro
-      # 主仓库 .git 只读（harness-worktree.js git clone --local 源需要）
-      - /Users/administrator/perfect21/cecelia/.git:/Users/administrator/perfect21/cecelia/.git:ro
+      # 主仓库全目录（deploy webhook 需要 git pull/tag + scripts/ — rw 允许写 .git）
+      - /Users/administrator/perfect21/cecelia:/Users/administrator/perfect21/cecelia:rw
       # Prompt 文件目录：Brain 写 prompt 文件这里（docker-executor writePromptFile），
       # 子容器 mount 源必须由宿主 docker daemon 解析 → 必须宿主路径。compose 里 bind-mount
       # 宿主 ~/claude-output/cecelia-prompts → Brain 容器 /tmp/cecelia-prompts，
@@ -77,6 +77,7 @@ services:
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
       - CECELIA_RUN_PATH=/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh
       - HOST_HOME=/Users/administrator
+      - REPO_ROOT=/Users/administrator/perfect21/cecelia
       # Brain 容器里 /tmp/cecelia-prompts 对应的宿主路径（docker-executor 用它构造子容器 mount 源）
       - HOST_PROMPT_DIR=/Users/administrator/claude-output/cecelia-prompts
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here

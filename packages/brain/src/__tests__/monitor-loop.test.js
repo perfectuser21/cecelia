@@ -1306,4 +1306,33 @@ describe('monitor-loop', () => {
       vi.clearAllTimers();
     });
   });
+
+  // =====================================================
+  // detectFailureSpike — 直接导入测试 row undefined guard
+  // (cp-0504214049 — wave2 #2764 暴露的 main bug)
+  // =====================================================
+
+  describe('detectFailureSpike — row undefined guard', () => {
+    it('SQL 返回空 rows 时不抛 TypeError，返回全 0', async () => {
+      mockPool.query.mockReset();
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const { detectFailureSpike } = await import('../monitor-loop.js');
+      const result = await detectFailureSpike();
+
+      expect(result).toEqual({ failed_count: 0, total_count: 0, failure_rate: 0 });
+    });
+
+    it('SQL 返回正常 row 时正确解析', async () => {
+      mockPool.query.mockReset();
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ failed_count: '5', total_count: '20', failure_rate: '0.25' }],
+      });
+
+      const { detectFailureSpike } = await import('../monitor-loop.js');
+      const result = await detectFailureSpike();
+
+      expect(result).toEqual({ failed_count: 5, total_count: 20, failure_rate: 0.25 });
+    });
+  });
 });

@@ -44,11 +44,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ===== v19.0.0: 无条件调用 stop-dev.sh（cwd-as-key，由 stop-dev.sh 自判）=====
 # stop-dev.sh 用 CLAUDE_HOOK_CWD（已由上方解析）确定 worktree + branch
-# 主仓库/无 .dev-mode 场景由 stop-dev.sh 内部放行（exit 0）
-bash "$SCRIPT_DIR/stop-dev.sh"
-_stop_dev_exit=$?
-# stop-dev.sh exit 2 = block，直接传给 Claude Code
-[[ $_stop_dev_exit -ne 0 ]] && exit $_stop_dev_exit
+# v20.1.0 三态退出码：
+#   0  → done（继续走 architect/decomp/cleanup chain，最终 exit 0）
+#   99 → not-applicable（pass-through，继续走 architect/decomp chain）
+#   2  → blocked（直接传给 Claude Code，让 assistant 继续干活）
+#   其他 → 异常，原样传出
+# 关键：set -e 会在任何非 0 退出时立即 abort，所以必须用 || 兜住才能拿到 $?
+_stop_dev_exit=0
+bash "$SCRIPT_DIR/stop-dev.sh" || _stop_dev_exit=$?
+case "$_stop_dev_exit" in
+    0|99) ;;  # done 或 not-applicable → fall-through 到下方 architect/decomp 路由
+    *)    exit "$_stop_dev_exit" ;;
+esac
 
 # ===== 检查 .architect-lock.* → 调用 stop-architect.sh =====
 _ARCHITECT_LOCK_FOUND=false

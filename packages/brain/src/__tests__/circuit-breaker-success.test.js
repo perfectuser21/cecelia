@@ -5,7 +5,12 @@
  * After fix: execution-callback calls recordSuccess() on task completion
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
+vi.mock('../event-bus.js', () => ({ emit: vi.fn(async () => {}) }));
+vi.mock('../alerting.js', () => ({ raise: vi.fn(async () => {}) }));
+
 import { recordSuccess, recordFailure, isAllowed, getAllStates } from '../circuit-breaker.js';
 
 describe('circuit-breaker-success (P0 Fix #2)', () => {

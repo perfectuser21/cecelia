@@ -19,6 +19,16 @@ vi.mock('../events/taskEvents.js', () => ({
   publishCognitiveState: vi.fn(),
 }));
 
+const mockRunScheduler = vi.fn().mockResolvedValue({ dispatched: true, actions: [], elapsed_ms: 10, guidance_found: false });
+vi.mock('../tick-scheduler.js', () => ({
+  runScheduler: (...args) => mockRunScheduler(...args),
+}));
+vi.mock('../consciousness-loop.js', () => ({
+  startConsciousnessLoop: vi.fn().mockReturnValue(true),
+  stopConsciousnessLoop: vi.fn(),
+  _runConsciousnessOnce: vi.fn().mockResolvedValue({ completed: true, actions: [] }),
+}));
+
 import {
   runTickSafe,
   startTickLoop,
@@ -33,6 +43,7 @@ describe('tick-loop', () => {
   beforeEach(() => {
     resetTickStateForTests();
     mockExecuteTick.mockReset();
+    mockRunScheduler.mockReset();
   });
 
   afterEach(() => {
@@ -116,10 +127,10 @@ describe('tick-loop', () => {
       expect(tickState.tickLockTime).toBeNull();
     });
 
-    it('未传 tickFn 时使用默认 executeTick', async () => {
-      mockExecuteTick.mockResolvedValueOnce({ actions_taken: [] });
+    it('未传 tickFn 时使用默认 runScheduler（Wave 2）', async () => {
+      mockRunScheduler.mockResolvedValueOnce({ dispatched: true, actions_taken: [] });
       await runTickSafe('manual');
-      expect(mockExecuteTick).toHaveBeenCalledTimes(1);
+      expect(mockRunScheduler).toHaveBeenCalledTimes(1);
     });
   });
 
