@@ -37,9 +37,9 @@ fi
 NON_COMMENT_DOCKER_BUILD_TEMP=$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -cE 'docker build|"\$TEMP_BUILD"')
 NON_COMMENT_BAD=$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -cE '"\$ROOT_DIR"\s*$' || true)
 if [[ "$NON_COMMENT_DOCKER_BUILD_TEMP" -gt 0 ]] && [[ "$NON_COMMENT_BAD" -eq 0 ]]; then
-    pass "docker build 用 \$TEMP_BUILD 作 context（不再用 \$ROOT_DIR）"
+    pass "docker build 用 \${TEMP_BUILD} 作 context（不再用 \${ROOT_DIR}）"
 else
-    fail "docker build 还在用 \$ROOT_DIR 作 context（实际命中行：$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -E '"\$ROOT_DIR"\s*$' | head -1))"
+    fail "docker build 还在用 \${ROOT_DIR} 作 context（实际命中行: $(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -E '"\$ROOT_DIR"\s*$' | head -1))"
 fi
 
 # Test 5: 真实行为 — git archive HEAD 真的能隔离脏工作树
