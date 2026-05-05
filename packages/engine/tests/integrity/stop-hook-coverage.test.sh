@@ -126,13 +126,13 @@ else
     fail "L17: engine-tests-shell 仍是显式列表"
 fi
 
-# L18: feature-registry.yml 含 stop-hook feature 注册（v18.22.2 新增）
+# L18: feature-registry.yml 含 stop-hook feature 注册 + contract_url 指向 ZenithJoy（v18.22.3 升级）
 if grep -qE '^  - id: stop-hook$' "$REPO_ROOT/packages/engine/feature-registry.yml" && \
    grep -q 'name: Stop Hook' "$REPO_ROOT/packages/engine/feature-registry.yml" && \
-   grep -q 'contract_url:.*notion' "$REPO_ROOT/packages/engine/feature-registry.yml"; then
-    pass "L18: feature-registry 含 stop-hook 完整 feature 注册（含 contract_url）"
+   grep -qE 'contract_url:.*357c40c2[-]?ba63[-]?81b8' "$REPO_ROOT/packages/engine/feature-registry.yml"; then
+    pass "L18: feature-registry 含 stop-hook 完整 feature 注册（含 ZenithJoy contract_url）"
 else
-    fail "L18: stop-hook feature 未注册到 feature-registry.yml features 段"
+    fail "L18: stop-hook feature 未注册或 contract_url 未指向 ZenithJoy（357c40c2-ba63-81b8）"
 fi
 
 echo ""

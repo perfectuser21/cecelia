@@ -3,7 +3,7 @@
 # - features: 每个完整 feature 一个 entry（用途/入口/依赖/contract/测试覆盖/闭环段）
 # - changelog: 每次改动追加（细粒度变更历史）
 
-version: "1.1.0"
+version: "1.1.1"
 updated: "2026-05-05"
 
 # ============================================================================
@@ -35,8 +35,9 @@ features:
       - main_repo/.cecelia/deploy-failed-{branch}.flag # P5 fail 3x escape 标记
       - worktree/.dev-mode.{branch}                    # worktree 元数据缓存（不读字段做决策）
       - worktree/.dev-lock.{branch}                    # session_id + owner_session
-    contract_url: https://www.notion.so/35753f413ec581d9b607f61e4e90ce0b
-    invariants_count: 17  # L1-L17 详见 contract，integrity 元测试 grep 验证
+    contract_url: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
+    contract_url_legacy: https://www.notion.so/35753f413ec581d9b607f61e4e90ce0b  # 月升 frozen，留作历史快照
+    invariants_count: 18  # L1-L18 详见 contract，integrity 元测试 grep 验证
     state_machine:
       stages:
         - P1 PR 未创建 → block: 立即 push + gh pr create
@@ -82,6 +83,16 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.22.3"
+    date: "2026-05-05"
+    change: "docs"
+    description: "feature-registry contract_url 迁移到 ZenithJoy（cp-0505175548）— stop-hook contract_url 从月升 frozen page (35753f41) 切到 ZenithJoy SSOT page (357c40c2-ba63-81b8)。新增 contract_url_legacy 字段保留月升历史指针。integrity L18 grep ZenithJoy URL token 守门。doc-only，无运行时行为变化。"
+    files:
+      - "packages/engine/feature-registry.yml (contract_url 切 ZenithJoy + contract_url_legacy)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (L18 grep ZenithJoy URL)"
+      - "Engine 8 处版本文件 18.22.3"
+
+
   - version: "18.22.2"
     date: "2026-05-05"
     change: "docs"
