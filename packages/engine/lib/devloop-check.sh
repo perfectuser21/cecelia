@@ -653,10 +653,28 @@ verify_dev_complete() {
                     ;;
                 completed)
                     if [[ "$deploy_conclusion" != "success" ]]; then
-                        result_json=$(_devloop_jq -n --arg id "$deploy_run_id" --arg c "$deploy_conclusion" \
-                            '{"status":"blocked","reason":"deploy 失败 (\($c))","action":"看 gh run view \($id) --log-failed"}')
+                        # v18.22.0: BUG-4 P5 fail counter — 连续 3 次 → auto-expire dev-active
+                        local fail_count_file="${main_repo}/.cecelia/deploy-fail-count-${branch}"
+                        local fail_count
+                        fail_count=$(cat "$fail_count_file" 2>/dev/null || echo 0)
+                        fail_count=$((fail_count + 1))
+                        echo "$fail_count" > "$fail_count_file" 2>/dev/null || true
+
+                        if [[ "$fail_count" -ge 3 ]]; then
+                            rm -f "${main_repo}/.cecelia/dev-active-${branch}.json"
+                            rm -f "$fail_count_file"
+                            : > "${main_repo}/.cecelia/deploy-failed-${branch}.flag" 2>/dev/null || true
+                            result_json=$(_devloop_jq -n --arg b "$branch" \
+                                '{"status":"done","reason":"deploy fail 3x → auto-expire dev-active (\($b))，等独立 PR 修 deploy"}')
+                            break
+                        fi
+
+                        result_json=$(_devloop_jq -n --arg id "$deploy_run_id" --arg c "$deploy_conclusion" --arg n "$fail_count" \
+                            '{"status":"blocked","reason":"deploy 失败 (\($c)) [\($n)/3]","action":"看 gh run view \($id) --log-failed（连续 3 次自动 expire）"}')
                         break
                     fi
+                    # success 分支：清掉 fail counter
+                    rm -f "${main_repo}/.cecelia/deploy-fail-count-${branch}" 2>/dev/null || true
                     ;;
                 *)
                     result_json=$(_devloop_jq -n --arg s "$deploy_status" \
