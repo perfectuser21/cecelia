@@ -65,13 +65,16 @@ echo "ARGS=$*"
     );
     chmodSync(mockClaude, 0o755);
 
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: 'phase74-s1-fixed-uuid',
+    };
+    // launcher 优先 CLAUDE_CODE_EXECPATH，必须 unset 才能让 PATH 里 mock claude 生效
+    delete env.CLAUDE_CODE_EXECPATH;
     const out = execSync(`bash "${LAUNCHER}" --help`, {
       shell: '/bin/bash',
-      env: {
-        ...process.env,
-        PATH: `${mockDir}:${process.env.PATH}`,
-        CLAUDE_SESSION_ID: 'phase74-s1-fixed-uuid',
-      },
+      env,
     }).toString();
 
     // 断言 1：env 被 export 给 mock claude

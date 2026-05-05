@@ -74,7 +74,8 @@ chmod +x "$STUB/gh"
 
 export PATH="$STUB:$PATH"
 export CLAUDE_HOOK_CWD="$TMP_MAIN"
-output=$(bash "$TMP_MAIN/packages/engine/hooks/stop-dev.sh" 2>&1 || echo "EXIT=$?")
+# v22: 必须传 hook stdin payload session_id 让 stop-dev.sh 路由到对的 dev-active
+output=$(echo "{\"session_id\":\"real-test-$$\"}" | bash "$TMP_MAIN/packages/engine/hooks/stop-dev.sh" 2>&1 || echo "EXIT=$?")
 echo "stop-dev output: $output" | head -10
 
 if [[ ! -f "$TMP_MAIN/.cecelia/dev-active-cp-test-real.json" ]]; then
