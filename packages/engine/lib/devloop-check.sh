@@ -634,6 +634,18 @@ verify_dev_complete() {
         fi
 
         # ------ P5: brain-ci-deploy.yml workflow run（VERIFY_DEPLOY_WORKFLOW=1 启用）------
+        # P1-1 (v18.22.1): engine-only / docs-only PR 不触动 packages/brain/，
+        # brain-ci-deploy.yml workflow on push paths brain/** 不触发 → P5 not applicable
+        if [[ "$verify_deploy" == "1" ]]; then
+            local brain_changed
+            brain_changed=$(gh pr view "$pr_number" --json files -q '[.files[].path] | map(select(startswith("packages/brain/"))) | length' 2>/dev/null || echo "0")
+            if [[ "$brain_changed" =~ ^[0-9]+$ ]] && [[ "$brain_changed" -eq 0 ]]; then
+                echo "[verify_dev_complete] P5 跳过：PR #$pr_number 不触动 packages/brain/，brain-ci-deploy.yml not applicable" >&2
+                # not applicable → 视为 P5 通过，继续走 P6
+                verify_deploy=0
+            fi
+        fi
+
         if [[ "$verify_deploy" == "1" ]]; then
             local merge_sha deploy_run_id deploy_status deploy_conclusion
             merge_sha=$(gh pr view "$pr_number" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || echo "")
