@@ -482,17 +482,14 @@ main() {
     esac
 }
 
-# v18.1.0 (Phase 7.1): 统一 session_id 识别。claude-launch.sh export
-# $CLAUDE_SESSION_ID 后子进程 bash 调这里能直接读；fallback 到沿 PPID
-# 链找 claude cmdline 的 --session-id 参数（Phase 7 既有路径）。
+# v22.0.0: session_id 解析优先级调换 — 优先沿 PPID 找 claude cmdline 的
+# --session-id 参数（=hook stdin payload 的 session_id），让 stop-dev.sh
+# 能用 hook payload session_id 精确匹配 dev-active.session_id。
+#
+# 旧版本 env var 优先 → Bash tool sub-shell 的 CLAUDE_SESSION_ID 跟主 claude
+# session_id 不一致 → dev-active 写入"假"session_id → stop hook 路由失败串线。
 _resolve_claude_session_id() {
-    # Phase 7.1: env var 优先（launcher export 的路径）
-    if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
-        echo "$CLAUDE_SESSION_ID"
-        return 0
-    fi
-
-    # Phase 7 fallback: 沿 PPID 链找 claude cmdline
+    # v22.0.0: 优先沿 PPID 链找 claude cmdline（最权威，对应 hook payload）
     local pid="${PPID:-}"
     local depth=0
     while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do
@@ -505,6 +502,13 @@ _resolve_claude_session_id() {
         pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')
         depth=$((depth + 1))
     done
+
+    # Fallback: env var（远端 worker / launcher export 的场景）
+    if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+        echo "$CLAUDE_SESSION_ID"
+        return 0
+    fi
+
     echo ""
 }
 

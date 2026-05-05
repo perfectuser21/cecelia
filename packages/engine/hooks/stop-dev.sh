@@ -21,6 +21,17 @@
 # 出口协议本就是单一 exit 0，中间命令 fail 应继续走 fallback 路径，不需 set -e。
 set -uo pipefail
 
+# ---- 读 hook stdin payload（Stop Hook 协议传 session_id）-----------------
+# v22.0.0: session_id 路由（彻底解 multi-session 串线）
+# 必须最先读 stdin（只能读一次，否则下游 sub-shell 拿不到）
+hook_payload=""
+if [[ -t 0 ]]; then
+    hook_payload="{}"  # tty 直跑（测试 / 手动），无 stdin payload
+else
+    hook_payload=$(cat 2>/dev/null || echo "{}")
+fi
+hook_session_id=$(echo "$hook_payload" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+
 # ---- 逃生通道 ------------------------------------------------------------
 [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]] && exit 0
 
@@ -84,40 +95,47 @@ for _f in "$dev_state_dir"/dev-active-*.json; do
     fi
 done
 
-# Pass 2: cwd 路由选 dev_state
-#   cp-* 分支 → 取对应 dev-active（多 worktree 不混）
-#   主分支 cwd + 仅 1 个 dev-active → 视为单 session 漂移逃避，仍 block（保留旧防护）
-#   主分支 cwd + 多个 dev-active → exit 0 不归本 turn 管（多 session 场景）
-current_branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-case "$current_branch" in
-    cp-*)
-        dev_state="$dev_state_dir/dev-active-${current_branch}.json"
-        if [[ ! -f "$dev_state" ]]; then
-            exit 0  # 当前 cp-* 分支没活跃 dev-active = 不在 /dev 流程
+# Pass 2: session_id 精确路由（v22.0.0 — 多 session 物理隔离的核心）
+#
+# 优先级：
+#   A. hook_session_id 命中 dev-active.session_id → 该 dev-active 是我的（精确匹配）
+#   B. fallback：cwd→branch 路由（兼容旧 dev-active schema，过渡期保留）
+#
+# 没匹配 → exit 0 不归本 session 管，普通对话 / 不在 /dev 流程
+dev_state=""
+
+# A. session_id 精确匹配（首选）
+if [[ -n "$hook_session_id" ]]; then
+    for _f in "$dev_state_dir"/dev-active-*.json; do
+        [[ -f "$_f" ]] || continue
+        sid=$(jq -r '.session_id // ""' "$_f" 2>/dev/null || echo "")
+        if [[ -n "$sid" && "$sid" == "$hook_session_id" ]]; then
+            dev_state="$_f"
+            break
         fi
-        ;;
-    *)
-        # 主分支 / 非 cp-* / 探测失败：看 .cecelia 里 dev-active 数量
-        active_count=0
-        for _f in "$dev_state_dir"/dev-active-*.json; do
-            if [[ -f "$_f" ]]; then
-                active_count=$((active_count + 1))
-            fi
-        done
-        if [[ "$active_count" -eq 1 ]]; then
-            # 单 session 漂主仓库逃避场景 → 仍 block（保留 PR #2503 设计意图）
-            for _f in "$dev_state_dir"/dev-active-*.json; do
-                if [[ -f "$_f" ]]; then
-                    dev_state="$_f"
-                    break
-                fi
-            done
-        else
-            # 0 个（无活跃 session）或 多个（多 session 不混）→ exit 0
-            exit 0
-        fi
-        ;;
-esac
+    done
+fi
+
+# B. fallback: cwd→branch 路由（兼容旧 schema，新创建的 dev-active 应已匹配 A）
+if [[ -z "$dev_state" ]]; then
+    current_branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    case "$current_branch" in
+        cp-*)
+            _f="$dev_state_dir/dev-active-${current_branch}.json"
+            [[ -f "$_f" ]] && dev_state="$_f"
+            ;;
+        *)
+            # 主分支 cwd：v22.0.0 不再做"单 dev-active 漂移逃避"防护
+            # 因为 session_id 路由已能精准识别，主分支放行就是放行
+            :  # exit 0（下面统一处理）
+            ;;
+    esac
+fi
+
+# 没找到归属本 session 的 dev-active → 放行（普通对话或别的 session 的 dev）
+if [[ -z "$dev_state" ]]; then
+    exit 0
+fi
 
 # ---- 加载 devloop-check 库（含 verify_dev_complete）-----------------------
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
