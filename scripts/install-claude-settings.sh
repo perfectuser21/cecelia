@@ -24,7 +24,7 @@ mkdir -p "$(dirname "$USER_SETTINGS")"
 
 if [[ ! -f "$USER_SETTINGS" ]]; then
     cp "$REPO_SETTINGS" "$USER_SETTINGS"
-    echo "✅ 已安装 $USER_SETTINGS（首次创建）"
+    echo "✅ 已安装 ${USER_SETTINGS}（首次创建）"
     exit 0
 fi
 
