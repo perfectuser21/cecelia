@@ -16,7 +16,10 @@
 #   未完成 → decision:block + reason 注入 + exit 0
 # ============================================================================
 
-set -euo pipefail
+# v18.22.0: BUG-1 / BUG-4 cwd 路由 + mtime expire 段含 OS 兼容性陷阱（stat -f
+# vs -c / glob 无匹配 / [[ ]] && stmt 链）容易让 set -e 早退。stop-dev.sh
+# 出口协议本就是单一 exit 0，中间命令 fail 应继续走 fallback 路径，不需 set -e。
+set -uo pipefail
 
 # ---- 逃生通道 ------------------------------------------------------------
 [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]] && exit 0
@@ -35,32 +38,86 @@ if [[ ! -d "$dev_state_dir" ]]; then
     exit 0  # 没有 .cecelia 目录 = 没有 dev 流程
 fi
 
-# 找任意 dev-active-*.json（理论上同时只有一个）
-# v18.21.0: ghost 过滤 — 远端 sync 来的状态文件不该 block 本机 stop hook
-#   判据: session_id="unknown"
-#   理由: 本机 worktree-manage.sh 总是写真 session_id（CLAUDE_SESSION_ID 或
-#         "headed-PID-branch"），只有远端 worker sync 没传 session_id 才出
-#         "unknown"。命中 → 自动 rm + continue
-dev_state=""
+# v18.22.0: BUG-1 cwd 路由 + BUG-4 mtime expire
+#
+# 第一遍：清 ghost (session_id=unknown) + mtime expire (> N 分钟)
+#   - ghost: 远端 worker sync 没传 session_id 的状态文件
+#   - mtime expire: dev-active 长时间没更新（如 P5/P6 fail 永久 stuck）→ 自动 rm
+#
+# 第二遍：用当前 cwd 解析 worktree branch，**只**取对应 dev-active
+#   - cp-* 分支 → 取 dev-active-${branch}.json（不混 multi-worktree 并发）
+#   - 主分支/非 cp-* → exit 0 不归本 session 管
+#
+# 修 BUG-1（PR #2503 名实不符 — 字典序第一 break）+ BUG-4（P5/P6 fail 永久 stuck）
+
+EXPIRE_MINUTES="${STOP_HOOK_EXPIRE_MINUTES:-30}"
+now_epoch=$(date +%s)
+
+# Pass 1: ghost rm + mtime expire
 for _f in "$dev_state_dir"/dev-active-*.json; do
     [[ -f "$_f" ]] || continue
 
     sid=$(jq -r '.session_id // ""' "$_f" 2>/dev/null || echo "")
-
     if [[ "$sid" == "unknown" ]]; then
         wt=$(jq -r '.worktree // ""' "$_f" 2>/dev/null || echo "")
-        echo "[stop-dev] 自动清理 ghost dev-active (session_id=unknown): $_f (wt=$wt)" >&2
+        echo "[stop-dev] ghost rm: $_f (session_id=unknown wt=$wt)" >&2
         rm -f "$_f"
         continue
     fi
 
-    dev_state="$_f"
-    break
+    # mtime expire（uname 区分 BSD vs GNU stat — Linux GNU stat -f 是 fs 信息不是 mtime）
+    if [[ "$(uname)" == "Darwin" ]]; then
+        file_mtime=$(stat -f %m "$_f" 2>/dev/null || echo "$now_epoch")
+    else
+        file_mtime=$(stat -c %Y "$_f" 2>/dev/null || echo "$now_epoch")
+    fi
+    # 防 file_mtime 非数字（fallback 失败）
+    [[ "$file_mtime" =~ ^[0-9]+$ ]] || file_mtime="$now_epoch"
+    age_min=$(( (now_epoch - file_mtime) / 60 ))
+    if [[ "$age_min" -gt "$EXPIRE_MINUTES" ]]; then
+        echo "[stop-dev] expired rm: $_f (age=${age_min}m > ${EXPIRE_MINUTES}m)" >&2
+        # 顺手清 deploy fail counter
+        branch_in=$(jq -r '.branch // ""' "$_f" 2>/dev/null || echo "")
+        [[ -n "$branch_in" ]] && rm -f "$dev_state_dir/deploy-fail-count-${branch_in}"
+        rm -f "$_f"
+        continue
+    fi
 done
 
-if [[ -z "$dev_state" ]]; then
-    exit 0  # 没活跃 session = 普通对话
-fi
+# Pass 2: cwd 路由选 dev_state
+#   cp-* 分支 → 取对应 dev-active（多 worktree 不混）
+#   主分支 cwd + 仅 1 个 dev-active → 视为单 session 漂移逃避，仍 block（保留旧防护）
+#   主分支 cwd + 多个 dev-active → exit 0 不归本 turn 管（多 session 场景）
+current_branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+case "$current_branch" in
+    cp-*)
+        dev_state="$dev_state_dir/dev-active-${current_branch}.json"
+        if [[ ! -f "$dev_state" ]]; then
+            exit 0  # 当前 cp-* 分支没活跃 dev-active = 不在 /dev 流程
+        fi
+        ;;
+    *)
+        # 主分支 / 非 cp-* / 探测失败：看 .cecelia 里 dev-active 数量
+        active_count=0
+        for _f in "$dev_state_dir"/dev-active-*.json; do
+            if [[ -f "$_f" ]]; then
+                active_count=$((active_count + 1))
+            fi
+        done
+        if [[ "$active_count" -eq 1 ]]; then
+            # 单 session 漂主仓库逃避场景 → 仍 block（保留 PR #2503 设计意图）
+            for _f in "$dev_state_dir"/dev-active-*.json; do
+                if [[ -f "$_f" ]]; then
+                    dev_state="$_f"
+                    break
+                fi
+            done
+        else
+            # 0 个（无活跃 session）或 多个（多 session 不混）→ exit 0
+            exit 0
+        fi
+        ;;
+esac
 
 # ---- 加载 devloop-check 库（含 verify_dev_complete）-----------------------
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -6,6 +6,21 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.22.0"
+    date: "2026-05-05"
+    change: "feat"
+    description: "Stop Hook 4 个 P0 彻底修复（cp-0505144146）— Notion contract 4 BUG 一次性全修。BUG-1 cwd-as-key 真匹配（多 worktree 不混；主分支 cwd 单 dev-active 时仍 block 保留漂移防护，多 dev-active 时 exit 0）；BUG-2 gh run list --workflow CI 4 处显式过滤；BUG-3 .claude/settings.json 让 PreToolUse 跨机器；BUG-4 mtime > 30 分钟 expire + P5 fail counter ≥ 3 auto-expire。Stop Hook 闭环第 12 段。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (BUG-1 cwd 路由 + BUG-4 mtime expire)"
+      - "packages/engine/lib/devloop-check.sh (BUG-2 --workflow CI 4 处 + BUG-4 P5 fail counter)"
+      - ".claude/settings.json (新建 BUG-3 PreToolUse repo 级注册)"
+      - "packages/engine/tests/integration/stop-dev-multi-worktree.test.sh (新建 5 case BUG-1)"
+      - "packages/engine/tests/integration/stop-dev-deploy-escape.test.sh (新建 4 case BUG-4)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (扩 L11-L14 = 15 case)"
+      - "packages/engine/scripts/smoke/stop-hook-7stage-smoke.sh (Step 9 settings 验证)"
+      - ".github/workflows/ci.yml (engine-tests-shell 加 2 个新 .test.sh)"
+      - "Engine 8 处版本文件 18.22.0"
+
   - version: "18.21.0"
     date: "2026-05-05"
     change: "feat"
