@@ -49,7 +49,7 @@ assert_status "非 git repo → 普通对话放行" "not-dev" "$status"
 # Case 4: 主分支 → not-dev
 MAIN_REPO="$TMPROOT/main-repo"
 mkdir -p "$MAIN_REPO"
-( cd "$MAIN_REPO" && git init -q -b main && git commit -q --allow-empty -m init )
+( cd "$MAIN_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 result=$(classify_session "$MAIN_REPO")
 status=$(echo "$result" | jq -r '.status')
 assert_status "主分支放行" "not-dev" "$status"
@@ -57,7 +57,7 @@ assert_status "主分支放行" "not-dev" "$status"
 # Case 5: cp-* 分支但无 .dev-mode → not-dev
 CP_REPO="$TMPROOT/cp-repo"
 mkdir -p "$CP_REPO"
-( cd "$CP_REPO" && git init -q -b main && git commit -q --allow-empty -m init && git checkout -q -b cp-test )
+( cd "$CP_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git checkout -q -b cp-test )
 result=$(classify_session "$CP_REPO")
 status=$(echo "$result" | jq -r '.status')
 assert_status "cp-* 分支但无 .dev-mode" "not-dev" "$status"
@@ -65,7 +65,7 @@ assert_status "cp-* 分支但无 .dev-mode" "not-dev" "$status"
 # Case 6: cp-* 分支 + .dev-mode 格式异常（首行非 dev）→ blocked
 BAD_REPO="$TMPROOT/bad-repo"
 mkdir -p "$BAD_REPO"
-( cd "$BAD_REPO" && git init -q -b main && git commit -q --allow-empty -m init && git checkout -q -b cp-bad )
+( cd "$BAD_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git checkout -q -b cp-bad )
 echo "garbage" > "$BAD_REPO/.dev-mode.cp-bad"
 result=$(classify_session "$BAD_REPO")
 status=$(echo "$result" | jq -r '.status')
@@ -74,7 +74,7 @@ assert_status ".dev-mode 格式异常" "blocked" "$status"
 # Case 7: cp-* 分支 + .dev-mode 合法但 step_1_spec 未完成 → blocked（透传 devloop_check）
 DEV_REPO="$TMPROOT/dev-repo"
 mkdir -p "$DEV_REPO"
-( cd "$DEV_REPO" && git init -q -b main && git commit -q --allow-empty -m init && git checkout -q -b cp-dev )
+( cd "$DEV_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git checkout -q -b cp-dev )
 cat > "$DEV_REPO/.dev-mode.cp-dev" <<EOF
 dev
 branch: cp-dev
@@ -88,7 +88,7 @@ assert_status "step_1_spec 未完成" "blocked" "$status"
 # Case 8: cp-* 分支 + .dev-mode 含 cleanup_done: true → done（透传 devloop_check 条件 0.1）
 CLEAN_REPO="$TMPROOT/clean-repo"
 mkdir -p "$CLEAN_REPO"
-( cd "$CLEAN_REPO" && git init -q -b main && git commit -q --allow-empty -m init && git checkout -q -b cp-clean )
+( cd "$CLEAN_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git checkout -q -b cp-clean )
 cat > "$CLEAN_REPO/.dev-mode.cp-clean" <<EOF
 dev
 branch: cp-clean
@@ -110,7 +110,7 @@ assert_status "unborn HEAD（HEAD 主分支放行）" "not-dev" "$status"
 # Case 10: cp-* 分支 + .dev-mode cleanup_done 残留 → done（透传，回归保护）
 CLEAN2_REPO="$TMPROOT/clean2-repo"
 mkdir -p "$CLEAN2_REPO"
-( cd "$CLEAN2_REPO" && git init -q -b main && git commit -q --allow-empty -m init && git checkout -q -b cp-clean2 )
+( cd "$CLEAN2_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git checkout -q -b cp-clean2 )
 cat > "$CLEAN2_REPO/.dev-mode.cp-clean2" <<EOF
 dev
 branch: cp-clean2
