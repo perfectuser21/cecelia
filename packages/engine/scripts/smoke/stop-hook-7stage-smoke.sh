@@ -78,6 +78,14 @@ else
     pass "Step 8: cleanup.sh 已解耦 deploy-local.sh"
 fi
 
+# 9. .claude/settings.json 含 PreToolUse 注册（BUG-3 跨机器同步）
+if [[ -f "$REPO_ROOT/.claude/settings.json" ]] && \
+   jq -e '.hooks.PreToolUse | length > 0' "$REPO_ROOT/.claude/settings.json" >/dev/null 2>&1; then
+    pass "Step 9: .claude/settings.json 含 PreToolUse 注册（BUG-3 跨机器同步）"
+else
+    fail "Step 9: .claude/settings.json 缺 PreToolUse 注册"
+fi
+
 echo ""
 echo "=== stop-hook-7stage smoke: $PASS PASS / $FAIL FAIL ==="
 [[ $FAIL -eq 0 ]] || exit 1
