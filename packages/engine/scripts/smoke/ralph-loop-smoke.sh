@@ -70,10 +70,10 @@ assert_contains "Step 2 含 decision" '"decision"' "$OUT_2"
 assert_contains "Step 2 含 PR 未创建" "PR 未创建" "$OUT_2"
 assert_file_exists "Step 2 状态文件未删" "$MAIN_REPO/.cecelia/dev-active-${BRANCH}.json"
 
-# Step 3: cwd=主仓库 → 仍 block
+# Step 3 v22: cwd=主仓库 + hook stdin session_id 命中 → 仍 block（session_id 路由不依赖 cwd）
 echo ""
-echo "=== Step 3: cwd=主仓库 → 仍 block（cwd 漂移修复）==="
-OUT_3=$(CLAUDE_HOOK_CWD="$MAIN_REPO" PATH="$GH_STUB:$PATH" bash "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" 2>&1)
+echo "=== Step 3 v22: cwd=主仓库 + session_id=smoke 命中 → 仍 block ==="
+OUT_3=$(echo '{"session_id":"smoke"}' | CLAUDE_HOOK_CWD="$MAIN_REPO" PATH="$GH_STUB:$PATH" bash "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" 2>&1)
 EXIT_3=$?
 assert_eq "Step 3 exit=0" "0" "$EXIT_3"
 assert_contains "Step 3 含 decision" '"decision"' "$OUT_3"
