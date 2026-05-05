@@ -6,6 +6,18 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.22.1"
+    date: "2026-05-05"
+    change: "fix"
+    description: "Stop Hook 4 个 P1 修复（cp-0505162710）— P1-1 P5 engine-only PR not-applicable（gh pr view --json files 检查 packages/brain/ 触动，无 → 设 verify_deploy=0 跳 P5 走 P6）；P1-2 devloop-classify.test.sh CI Linux fix（git -c user.email/name 显式 6 处）；P1-3 engine-tests-shell 显式列表 7 文件 → glob `tests/integration/*.test.sh`（防新 .test.sh 漏接）；P1-4 install-claude-settings.sh 跨机器 fallback + integrity L15-L17 grep 验证。Stop Hook 闭环第 13 段。"
+    files:
+      - "packages/engine/lib/devloop-check.sh (P1-1 P5 paths skip)"
+      - "packages/engine/tests/integration/devloop-classify.test.sh (P1-2 git user 显式)"
+      - ".github/workflows/ci.yml (P1-3 engine-tests-shell glob)"
+      - "scripts/install-claude-settings.sh (P1-4 新建跨机器 setup)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (L15-L17 = 18 case)"
+      - "Engine 8 处版本文件 18.22.1"
+
   - version: "18.22.0"
     date: "2026-05-05"
     change: "feat"
