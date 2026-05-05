@@ -49,6 +49,25 @@ describe('isValidConstraint', () => {
   it('rejects invalid severity', () => {
     expect(isValidConstraint({ rule: 'require_payload', key: 'foo', severity: 'oops' })).toBe(false);
   });
+
+  it('rejects deny_payload without key', () => {
+    expect(isValidConstraint({ rule: 'deny_payload', values: ['x'] })).toBe(false);
+    expect(isValidConstraint({ rule: 'deny_payload', key: '', values: ['x'] })).toBe(false);
+  });
+
+  it('rejects deny_payload without non-empty values array', () => {
+    expect(isValidConstraint({ rule: 'deny_payload', key: 'foo' })).toBe(false);
+    expect(isValidConstraint({ rule: 'deny_payload', key: 'foo', values: [] })).toBe(false);
+    expect(isValidConstraint({ rule: 'deny_payload', key: 'foo', values: 'not-array' })).toBe(false);
+  });
+
+  it('accepts valid deny_payload', () => {
+    expect(isValidConstraint({
+      rule: 'deny_payload',
+      key: 'previous_failure.class',
+      values: ['auth', 'env_broken'],
+    })).toBe(true);
+  });
 });
 
 describe('evaluateConstraints — deny_keyword', () => {
@@ -148,6 +167,71 @@ describe('evaluateConstraints — require_payload', () => {
   it('handles missing payload gracefully', () => {
     const r = evaluateConstraints({}, entries);
     expect(r.issues.length).toBe(1);
+  });
+});
+
+describe('evaluateConstraints — deny_payload (failure_type 分类路由)', () => {
+  // 把 learning 6a569a1e 的 insight 转成硬规则：
+  // retry 任务 payload.previous_failure.class 命中 PERMANENT_DEPENDENCY/STRUCTURAL/UNKNOWN 时阻止派发
+  const entries = [{
+    learning_id: '6a569a1e-83c4-4052-a05a-59b2a09840a8',
+    title: 'failure_type 分类路由',
+    constraint: {
+      rule: 'deny_payload',
+      key: 'previous_failure.class',
+      values: ['auth', 'resource', 'env_broken', 'unknown'],
+      reason: 'PERMANENT_DEPENDENCY/STRUCTURAL/UNKNOWN 不可重试，统一 retry 是浪费',
+      severity: 'block',
+    },
+  }];
+
+  it('blocks retry whose previous_failure.class is env_broken (STRUCTURAL)', () => {
+    const r = evaluateConstraints(
+      { payload: { retry_count: 1, previous_failure: { class: 'env_broken' } } },
+      entries
+    );
+    expect(r.issues.length).toBe(1);
+    expect(r.issues[0]).toContain('PERMANENT_DEPENDENCY/STRUCTURAL');
+  });
+
+  it('blocks retry whose previous_failure.class is auth (PERMANENT_DEPENDENCY)', () => {
+    const r = evaluateConstraints(
+      { payload: { previous_failure: { class: 'auth' } } },
+      entries
+    );
+    expect(r.issues.length).toBe(1);
+  });
+
+  it('passes retry whose previous_failure.class is transient', () => {
+    const r = evaluateConstraints(
+      { payload: { retry_count: 1, previous_failure: { class: 'transient' } } },
+      entries
+    );
+    expect(r.issues).toEqual([]);
+  });
+
+  it('passes brand-new task with no previous_failure (key absent)', () => {
+    const r = evaluateConstraints({ payload: { prd_summary: 'do thing' } }, entries);
+    expect(r.issues).toEqual([]);
+    expect(r.suggestions).toEqual([]);
+  });
+
+  it('passes when payload itself is missing', () => {
+    const r = evaluateConstraints({ title: 't' }, entries);
+    expect(r.issues).toEqual([]);
+  });
+
+  it('warn severity goes into suggestions', () => {
+    const warn = [{
+      ...entries[0],
+      constraint: { ...entries[0].constraint, severity: 'warn' },
+    }];
+    const r = evaluateConstraints(
+      { payload: { previous_failure: { class: 'env_broken' } } },
+      warn
+    );
+    expect(r.issues).toEqual([]);
+    expect(r.suggestions.length).toBe(1);
   });
 });
 

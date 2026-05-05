@@ -11,6 +11,14 @@
  *   { rule: 'deny_keyword',    field, patterns[], reason, severity }
  *   { rule: 'require_field',   field, min_length, reason, severity }
  *   { rule: 'require_payload', key,                reason, severity }
+ *   { rule: 'deny_payload',    key, values[],     reason, severity }
+ *
+ * deny_payload —— 基于 payload 值的分类拒绝。失败语义路由必备：
+ *   把 dev-failure-classifier 的 TRANSIENT/PERMANENT_DEPENDENCY/STRUCTURAL 三类
+ *   失败信号转化成 dispatch gate 硬规则。例如 retry 任务的
+ *   payload.previous_failure.class ∈ {auth, resource, env_broken, unknown} 时
+ *   阻止 pre-flight 通过——这些类别本身就不该被 retry，统一 retry 路由是浪费根源
+ *   (learning_id 6a569a1e)。
  *
  * severity:
  *   block — 进 issues，pre-flight 拒绝派发
@@ -19,7 +27,7 @@
 
 import pool from './db.js';
 
-const VALID_RULES = new Set(['deny_keyword', 'require_field', 'require_payload']);
+const VALID_RULES = new Set(['deny_keyword', 'require_field', 'require_payload', 'deny_payload']);
 const VALID_FIELDS = new Set(['title', 'description']);
 
 // 去重 warn —— pre-flight 在 dispatch 热路径上会被频繁调用，
@@ -75,6 +83,12 @@ export function isValidConstraint(c) {
   if (c.rule === 'require_payload') {
     return typeof c.key === 'string' && c.key.length > 0;
   }
+  if (c.rule === 'deny_payload') {
+    return typeof c.key === 'string'
+      && c.key.length > 0
+      && Array.isArray(c.values)
+      && c.values.length > 0;
+  }
   return false;
 }
 
@@ -124,6 +138,14 @@ function evaluateSingle(task, c) {
     const value = readPath(task.payload, c.key);
     return value === undefined || value === null || value === ''
       ? { defaultReason: `payload.${c.key} 缺失` }
+      : null;
+  }
+  if (c.rule === 'deny_payload') {
+    // payload 缺该 key → 通过：约束只针对持有该字段的任务（典型即 retry 任务）
+    const value = readPath(task.payload, c.key);
+    if (value === undefined || value === null || value === '') return null;
+    return c.values.includes(value)
+      ? { defaultReason: `payload.${c.key}=${value} 命中禁止值` }
       : null;
   }
   return null;

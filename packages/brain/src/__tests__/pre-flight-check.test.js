@@ -527,6 +527,41 @@ describe('insight-derived dispatch constraint integration', () => {
     expect(result.passed).toBe(true);
   });
 
+  it('deny_payload blocks retry of non-retryable failure class (failure_type routing)', async () => {
+    // Insight 6a569a1e 转化为硬规则：retry 任务 previous_failure.class 命中
+    // PERMANENT_DEPENDENCY (auth/resource) 或 STRUCTURAL (env_broken) 时拒绝派发。
+    const dbPool = poolWithConstraint({
+      rule: 'deny_payload',
+      key: 'previous_failure.class',
+      values: ['auth', 'resource', 'env_broken', 'unknown'],
+      reason: 'failure_type 分类路由：PERMANENT_DEPENDENCY/STRUCTURAL 永不应 retry',
+      severity: 'block',
+    });
+    const retryTask = {
+      ...validBase,
+      payload: { retry_count: 1, previous_failure: { class: 'env_broken' } },
+    };
+    const result = await preFlightCheck(retryTask, { dbPool });
+    expect(result.passed).toBe(false);
+    expect(result.issues.some(i => i.includes('failure_type 分类路由'))).toBe(true);
+  });
+
+  it('deny_payload allows retry of TRANSIENT failure (must keep retrying)', async () => {
+    const dbPool = poolWithConstraint({
+      rule: 'deny_payload',
+      key: 'previous_failure.class',
+      values: ['auth', 'resource', 'env_broken', 'unknown'],
+      reason: 'failure_type 分类路由',
+      severity: 'block',
+    });
+    const retryTask = {
+      ...validBase,
+      payload: { retry_count: 1, previous_failure: { class: 'transient' } },
+    };
+    const result = await preFlightCheck(retryTask, { dbPool });
+    expect(result.passed).toBe(true);
+  });
+
   it('skips invalid constraint rows without aborting', async () => {
     const dbPool = {
       query: async () => ({
