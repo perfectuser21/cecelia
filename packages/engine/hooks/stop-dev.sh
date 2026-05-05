@@ -65,8 +65,14 @@ for _f in "$dev_state_dir"/dev-active-*.json; do
         continue
     fi
 
-    # mtime expire（macOS BSD stat -f / Linux GNU stat -c 兼容）
-    file_mtime=$(stat -f %m "$_f" 2>/dev/null || stat -c %Y "$_f" 2>/dev/null || echo "$now_epoch")
+    # mtime expire（uname 区分 BSD vs GNU stat — Linux GNU stat -f 是 fs 信息不是 mtime）
+    if [[ "$(uname)" == "Darwin" ]]; then
+        file_mtime=$(stat -f %m "$_f" 2>/dev/null || echo "$now_epoch")
+    else
+        file_mtime=$(stat -c %Y "$_f" 2>/dev/null || echo "$now_epoch")
+    fi
+    # 防 file_mtime 非数字（fallback 失败）
+    [[ "$file_mtime" =~ ^[0-9]+$ ]] || file_mtime="$now_epoch"
     age_min=$(( (now_epoch - file_mtime) / 60 ))
     if [[ "$age_min" -gt "$EXPIRE_MINUTES" ]]; then
         echo "[stop-dev] expired rm: $_f (age=${age_min}m > ${EXPIRE_MINUTES}m)" >&2
