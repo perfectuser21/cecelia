@@ -57,6 +57,8 @@ describe('codex-review callback 熔断隔离', () => {
     }, mockPool).catch(() => {});
 
     expect(circuitBreaker.recordFailure).not.toHaveBeenCalledWith('cecelia-run');
+    // codex-review 失败也不应记录 cecelia-run 成功
+    expect(circuitBreaker.recordSuccess).not.toHaveBeenCalledWith('cecelia-run');
   });
 
   it('coding_type 未设置（普通 dev 任务）正常调用 cbFailure(cecelia-run)', async () => {
