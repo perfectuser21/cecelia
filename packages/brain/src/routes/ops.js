@@ -2753,11 +2753,11 @@ router.post('/deploy', async (req, res) => {
     res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
 
     const { execSync } = await import('child_process');
-    const repoRoot = new URL('../../../..', import.meta.url).pathname;
+    const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
     const startTime = Date.now();
 
     try {
-      const stagingScript = new URL('../../../../scripts/staging-deploy.sh', import.meta.url).pathname;
+      const stagingScript = `${repoRoot}/scripts/staging-deploy.sh`;
       const { existsSync } = await import('fs');
       let cmd;
 
@@ -2838,8 +2838,8 @@ router.post('/deploy', async (req, res) => {
   writeDeployStatusFile({ ...deployState });
 
   const { spawn } = await import('child_process');
-  const repoRoot = new URL('../../../..', import.meta.url).pathname;
-  const scriptDir = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
+  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
+  const scriptDir = `${repoRoot}/scripts/deploy-local.sh`;
 
   const args = ['bash', scriptDir];
   if (changed_paths && changed_paths.length > 0) {
@@ -2896,7 +2896,7 @@ router.post('/deploy/staging/cleanup', async (req, res) => {
 
   try {
     const { execSync } = await import('child_process');
-    const repoRoot = new URL('../../../..', import.meta.url).pathname;
+    const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
 
     console.log('[staging-cleanup] 清理 staging 环境...');
     execSync(
@@ -2936,7 +2936,7 @@ router.post('/deploy/rollback', async (req, res) => {
   res.status(202).json({ status: 'accepted', message: `Rollback to ${stable_sha} triggered`, reason });
 
   const { execSync } = await import('child_process');
-  const repoRoot = new URL('../../../..', import.meta.url).pathname;
+  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
   const startTime = Date.now();
 
   try {
