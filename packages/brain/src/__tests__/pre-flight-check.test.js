@@ -457,6 +457,93 @@ describe('priority normalize', () => {
   });
 });
 
+describe('insight-derived dispatch constraint integration', () => {
+  // 注入 mock pool 模拟 learnings 表里有一条激活态 constraint
+  function poolWithConstraint(constraint) {
+    return {
+      query: async () => ({
+        rows: [{
+          id: 'aaaaaaaa-1111-2222-3333-444444444444',
+          title: 'test insight',
+          dispatch_constraint: constraint,
+        }],
+      }),
+    };
+  }
+
+  const validBase = {
+    title: 'Implement feature X',
+    description: 'Add JWT-based authentication with refresh tokens and secure session management',
+    priority: 'P1',
+  };
+
+  it('passes when no insight constraints registered (empty rows)', async () => {
+    const emptyPool = { query: async () => ({ rows: [] }) };
+    const result = await preFlightCheck(validBase, { dbPool: emptyPool });
+    expect(result.passed).toBe(true);
+  });
+
+  it('blocks task that violates a deny_keyword constraint', async () => {
+    const dbPool = poolWithConstraint({
+      rule: 'deny_keyword',
+      field: 'description',
+      patterns: ['JWT'],
+      reason: 'JWT 已被废弃，使用 OAuth',
+      severity: 'block',
+    });
+    const result = await preFlightCheck(validBase, { dbPool });
+    expect(result.passed).toBe(false);
+    expect(result.issues.some(i => i.includes('JWT 已被废弃'))).toBe(true);
+  });
+
+  it('warn severity adds suggestion but does not block', async () => {
+    const dbPool = poolWithConstraint({
+      rule: 'deny_keyword',
+      field: 'description',
+      patterns: ['JWT'],
+      reason: 'JWT 建议替换为 OAuth',
+      severity: 'warn',
+    });
+    const result = await preFlightCheck(validBase, { dbPool });
+    expect(result.passed).toBe(true);
+    expect(result.suggestions.some(s => s.includes('JWT 建议替换'))).toBe(true);
+  });
+
+  it('require_payload constraint blocks when payload key missing', async () => {
+    const dbPool = poolWithConstraint({
+      rule: 'require_payload',
+      key: 'spec.url',
+      reason: 'PRD 必须附 spec.url',
+      severity: 'block',
+    });
+    const result = await preFlightCheck(validBase, { dbPool });
+    expect(result.passed).toBe(false);
+    expect(result.issues.some(i => i.includes('spec.url'))).toBe(true);
+  });
+
+  it('does not break when db query fails (graceful degradation)', async () => {
+    const failingPool = { query: async () => { throw new Error('relation "learnings" does not exist'); } };
+    const result = await preFlightCheck(validBase, { dbPool: failingPool });
+    expect(result.passed).toBe(true);
+  });
+
+  it('skips invalid constraint rows without aborting', async () => {
+    const dbPool = {
+      query: async () => ({
+        rows: [
+          { id: 'bad-1', title: 'invalid', dispatch_constraint: { rule: 'unknown_rule' } },
+          { id: 'good-1', title: 'valid', dispatch_constraint: {
+            rule: 'deny_keyword', field: 'title', patterns: ['feature'], reason: 'no feature', severity: 'block',
+          } },
+        ],
+      }),
+    };
+    const result = await preFlightCheck(validBase, { dbPool });
+    expect(result.passed).toBe(false);
+    expect(result.issues.some(i => i.includes('no feature'))).toBe(true);
+  });
+});
+
 describe('getPreFlightStats', () => {
   it('should return stats structure', async () => {
     // Mock pool for testing
