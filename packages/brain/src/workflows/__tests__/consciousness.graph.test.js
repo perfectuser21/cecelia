@@ -41,7 +41,6 @@ vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
 }));
 
 const {
-  buildConsciousnessGraph,
   getCompiledConsciousnessGraph,
   _resetCompiledGraphForTests,
 } = await import('../consciousness.graph.js');
