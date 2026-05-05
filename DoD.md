@@ -1,45 +1,48 @@
-# DoD: cp-0505191801 stop-hook-session-id-routing
+# DoD: cp-0505222606 deploy-clean-build-isolation
 
 ## 概述
-Stop Hook 隔离 key 切到 session_id（v22.0.0），彻底解多 session 撞 .cecelia/ 池串线问题。
+长期治本 Brain deploy 三层叠加 bug：
+1. brain-build.sh 用 git archive HEAD 隔离脏工作树（不再让未 commit 的 package.json 污染 image）
+2. ops.js deploy-webhook stdio 改 ['ignore', logFd, logFd]，deploy-local.sh 输出落盘 /tmp/cecelia-deploy-*.log
+3. status API 加 log_path 字段，运维失败时立即知道去哪看 npm error
 
 ## 验收
 
-- [x] [BEHAVIOR] 多 session 物理隔离 — sess-A1 路由到 cp-aaa；sess-B1 路由到 cp-bbb；互不串线
-  Test: manual:bash packages/engine/tests/integration/stop-dev-session-id-routing.test.sh
+- [x] [BEHAVIOR] brain-build.sh 用 git archive HEAD 输出到 mktemp 临时 dir，docker build 上下文 = git HEAD 快照不是工作树
+  Test: manual:bash packages/engine/tests/integration/brain-build-isolation.test.sh
 
-- [x] [BEHAVIOR] session 漂主仓库 — cwd=主仓库 + hook session_id 命中 → 仍 block（路由不依赖 cwd）
-  Test: manual:bash packages/engine/tests/integration/stop-dev-session-id-routing.test.sh
+- [x] [BEHAVIOR] git archive HEAD 真隔离脏工作树（写脏 + 跑 archive，extract 出来是 commit 内容）
+  Test: manual:bash packages/engine/tests/integration/brain-build-isolation.test.sh
 
-- [x] [BEHAVIOR] 普通对话不在 /dev — session_id 不匹配 → exit 0 放行
-  Test: manual:bash packages/engine/tests/integration/stop-dev-session-id-routing.test.sh
+- [x] [BEHAVIOR] git archive 不包含 untracked 文件（脏工作树未追踪文件不污染 image）
+  Test: manual:bash packages/engine/tests/integration/brain-build-isolation.test.sh
 
-- [x] [BEHAVIOR] 向下兼容 — 旧 dev-active schema cwd→branch fallback 仍工作
-  Test: manual:bash packages/engine/tests/integration/stop-dev-session-id-routing.test.sh
+- [x] [BEHAVIOR] ops.js deploy-webhook spawn stdio 改数组 [ignore, fd, fd]（不再 'ignore'），让 stdout/stderr 落盘
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/deploy-webhook-log.test.js"
 
-- [x] [BEHAVIOR] 既有 multi-worktree 测试 5/5 通过（无 regression）
-  Test: manual:bash packages/engine/tests/integration/stop-dev-multi-worktree.test.sh
+- [x] [BEHAVIOR] deploy 状态 API 含 log_path 字段指向 /tmp/cecelia-deploy-*.log
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/deploy-webhook-log.test.js"
 
-- [x] [BEHAVIOR] 既有 ralph-loop-mode 测试 4/4 通过（Case C 改为 v22 session_id 路由）
-  Test: manual:bash packages/engine/tests/integration/ralph-loop-mode.test.sh
+- [x] [BEHAVIOR] log 文件实际创建并写入启动 metadata（cmd / cwd）
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/deploy-webhook-log.test.js"
 
-- [x] [BEHAVIOR] 既有 7stage-flow 测试 5/5 通过
-  Test: manual:bash packages/engine/tests/integration/stop-hook-7stage-flow.test.sh
+- [x] [BEHAVIOR] 既有 deploy-repo-root 测试 2/2 不破（向下兼容）
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/deploy-repo-root.test.js"
 
-- [x] [BEHAVIOR] verify-dev-complete unit 测试 32 case 通过
-  Test: manual:bash packages/engine/tests/unit/verify-dev-complete.test.sh
+- [x] [ARTIFACT] scripts/brain-build.sh 含 git archive HEAD 关键调用
+  Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-build.sh','utf8'); if (!c.includes('git -C') || !c.includes('archive --format=tar HEAD')) process.exit(1)"
 
-- [x] [ARTIFACT] stop-dev.sh 入口读 stdin payload session_id
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/hooks/stop-dev.sh','utf8'); if(!c.includes('hook_session_id')) process.exit(1)"
+- [x] [ARTIFACT] scripts/brain-build.sh trap 清理临时 dir
+  Test: manual:node -e "const c=require('fs').readFileSync('scripts/brain-build.sh','utf8'); if (!c.match(/trap.*TEMP_BUILD.*EXIT/)) process.exit(1)"
 
-- [x] [ARTIFACT] worktree-manage.sh v22.0.0 注释存在（_resolve_claude_session_id 优先 ps）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/skills/dev/scripts/worktree-manage.sh','utf8'); if(!c.includes('v22.0.0')) process.exit(1)"
+- [x] [ARTIFACT] ops.js deploy spawn 段含 stdio 数组 [ignore, logFd, logFd]
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/ops.js','utf8'); if (!c.includes('logFd, logFd')) process.exit(1)"
 
-- [x] [ARTIFACT] 新测试文件 stop-dev-session-id-routing.test.sh 存在
-  Test: manual:node -e "require('fs').accessSync('packages/engine/tests/integration/stop-dev-session-id-routing.test.sh')"
+- [x] [ARTIFACT] ops.js deployState 含 log_path 字段
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/ops.js','utf8'); if (!c.includes('deployState.log_path')) process.exit(1)"
 
-- [x] [ARTIFACT] Engine 6 处版本文件全 bump 18.23.0
-  Test: manual:node -e "const v='18.23.0'; const fs=require('fs'); const files=['packages/engine/VERSION','packages/engine/.hook-core-version','packages/engine/hooks/VERSION','packages/engine/hooks/.hook-core-version']; for (const f of files) if (fs.readFileSync(f,'utf8').trim()!==v) process.exit(1); if (JSON.parse(fs.readFileSync('packages/engine/package.json')).version!==v) process.exit(1); if (!fs.readFileSync('packages/engine/regression-contract.yaml','utf8').includes('version: 18.23.0')) process.exit(1)"
+- [x] [ARTIFACT] 新建 deploy-webhook-log.test.js
+  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/deploy-webhook-log.test.js')"
 
-- [x] [ARTIFACT] feature-registry.yml changelog 含 18.23.0 entry
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/feature-registry.yml','utf8'); if(!c.includes('version: \"18.23.0\"')) process.exit(1)"
+- [x] [ARTIFACT] 新建 brain-build-isolation.test.sh
+  Test: manual:node -e "require('fs').accessSync('packages/engine/tests/integration/brain-build-isolation.test.sh')"
