@@ -268,8 +268,11 @@ DEV_MODE_EOF
         # v20.0.0 Ralph Loop 模式：项目根状态文件
         # 信号源切到主仓库根，不依赖 cwd 是否在 worktree
         # assistant 删 .dev-mode 不影响 — stop-dev.sh 看这个文件判定 dev 流程
-        local main_repo
+        # v22.0.0: 加 main_session_id 字段（ps 沿 PPID 找主 claude --session-id），
+        # 让 stop-dev.sh 用 hook stdin payload session_id 精确路由（解多 session 串线）
+        local main_repo _main_sid
         main_repo=$(git rev-parse --show-toplevel 2>/dev/null)
+        _main_sid=$(_resolve_main_session_id 2>/dev/null || echo "")
         if [[ -n "$main_repo" ]]; then
             mkdir -p "$main_repo/.cecelia"
             cat > "$main_repo/.cecelia/dev-active-${branch_name}.json" <<RALPH_EOF
@@ -277,7 +280,8 @@ DEV_MODE_EOF
   "branch": "${branch_name}",
   "worktree": "${worktree_path}",
   "started_at": "$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)",
-  "session_id": "${_claude_sid_create:-unknown}"
+  "session_id": "${_claude_sid_create:-unknown}",
+  "main_session_id": "${_main_sid}"
 }
 RALPH_EOF
             echo -e "${GREEN}✅ .cecelia/dev-active-${branch_name}.json 已写入主仓库根${NC}" >&2
@@ -482,14 +486,17 @@ main() {
     esac
 }
 
-# v22.0.0: session_id 解析优先级调换 — 优先沿 PPID 找 claude cmdline 的
-# --session-id 参数（=hook stdin payload 的 session_id），让 stop-dev.sh
-# 能用 hook payload session_id 精确匹配 dev-active.session_id。
-#
-# 旧版本 env var 优先 → Bash tool sub-shell 的 CLAUDE_SESSION_ID 跟主 claude
-# session_id 不一致 → dev-active 写入"假"session_id → stop hook 路由失败串线。
+# v18.1.0 (Phase 7.1): 统一 session_id 识别。claude-launch.sh export
+# $CLAUDE_SESSION_ID 后子进程 bash 调这里能直接读；fallback 到沿 PPID
+# 链找 claude cmdline 的 --session-id 参数（Phase 7 既有路径）。
 _resolve_claude_session_id() {
-    # v22.0.0: 优先沿 PPID 链找 claude cmdline（最权威，对应 hook payload）
+    # Phase 7.1: env var 优先（launcher export 的路径）
+    if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+        echo "$CLAUDE_SESSION_ID"
+        return 0
+    fi
+
+    # Phase 7 fallback: 沿 PPID 链找 claude cmdline
     local pid="${PPID:-}"
     local depth=0
     while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do
@@ -502,13 +509,29 @@ _resolve_claude_session_id() {
         pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')
         depth=$((depth + 1))
     done
+    echo ""
+}
 
-    # Fallback: env var（远端 worker / launcher export 的场景）
-    if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
-        echo "$CLAUDE_SESSION_ID"
-        return 0
-    fi
-
+# v22.0.0: 解析"主 claude 进程"的 session_id（不读 env var）。
+# Bash tool sub-shell 的 CLAUDE_SESSION_ID 可能被 CC framework 覆盖成
+# tool-call 级 ID，跟主 claude 的 --session-id（=hook stdin payload）不一致。
+# 这个函数沿 PPID 链找父 claude --session-id 参数，永远拿到主 session ID。
+# worktree-manage 写 dev-active 时同时写 session_id（env var 兼容）和
+# main_session_id（这个），stop-dev.sh 用 hook payload session_id 匹配两个
+# 字段任一即视为命中。
+_resolve_main_session_id() {
+    local pid="${PPID:-}"
+    local depth=0
+    while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do
+        local args
+        args=$(ps -o args= "$pid" 2>/dev/null || echo "")
+        if [[ "$args" == *"claude"* && "$args" == *"--session-id"* ]]; then
+            echo "$args" | grep -oE '\-\-session-id[ =][a-f0-9-]+' | head -1 | awk '{print $NF}'
+            return 0
+        fi
+        pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')
+        depth=$((depth + 1))
+    done
     echo ""
 }
 

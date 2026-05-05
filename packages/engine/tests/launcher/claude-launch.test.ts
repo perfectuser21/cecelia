@@ -30,14 +30,14 @@ echo "ARGS=$*"
   });
 
   it('有 env 时继承 CLAUDE_SESSION_ID 并传 --session-id', () => {
-    const out = execSync(`bash "${LAUNCHER}" --help`, {
-      shell: '/bin/bash',
-      env: {
-        ...process.env,
-        PATH: `${mockDir}:${process.env.PATH}`,
-        CLAUDE_SESSION_ID: 'inherited-test-uuid',
-      },
-    }).toString();
+    // launcher 优先用 CLAUDE_CODE_EXECPATH，必须 unset 才能让 PATH 里 mock claude 生效
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: 'inherited-test-uuid',
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    const out = execSync(`bash "${LAUNCHER}" --help`, { shell: '/bin/bash', env }).toString();
     expect(out).toContain('CLAUDE_SESSION_ID=inherited-test-uuid');
     expect(out).toContain('--session-id inherited-test-uuid');
     expect(out).toContain('--help');
@@ -46,6 +46,7 @@ echo "ARGS=$*"
   it('无 env 时生成符合 UUID 格式的 session_id', () => {
     const env = { ...process.env, PATH: `${mockDir}:${process.env.PATH}` };
     delete env.CLAUDE_SESSION_ID;
+    delete env.CLAUDE_CODE_EXECPATH;
     const out = execSync(`bash "${LAUNCHER}" --help`, { shell: '/bin/bash', env }).toString();
     const m = out.match(/CLAUDE_SESSION_ID=([a-f0-9-]+)/);
     expect(m).toBeTruthy();
@@ -54,14 +55,13 @@ echo "ARGS=$*"
   });
 
   it('透传额外参数给 claude', () => {
-    const out = execSync(`bash "${LAUNCHER}" -p test-prompt --dangerously-skip-permissions`, {
-      shell: '/bin/bash',
-      env: {
-        ...process.env,
-        PATH: `${mockDir}:${process.env.PATH}`,
-        CLAUDE_SESSION_ID: 'fixed',
-      },
-    }).toString();
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: 'fixed',
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    const out = execSync(`bash "${LAUNCHER}" -p test-prompt --dangerously-skip-permissions`, { shell: '/bin/bash', env }).toString();
     expect(out).toContain('-p test-prompt');
     expect(out).toContain('--dangerously-skip-permissions');
     expect(out).toContain('--session-id fixed');

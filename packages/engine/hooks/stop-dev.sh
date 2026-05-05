@@ -104,12 +104,17 @@ done
 # 没匹配 → exit 0 不归本 session 管，普通对话 / 不在 /dev 流程
 dev_state=""
 
-# A. session_id 精确匹配（首选）
+# A. session_id 精确匹配（首选）— 同时匹配 dev-active.session_id 和
+#    .main_session_id 两个字段，前者是 env var（CLAUDE_SESSION_ID，sub-shell
+#    可能被 CC framework 覆盖成 tool-call 级 ID），后者是 ps 沿 PPID 找主
+#    claude --session-id（=hook stdin payload session_id）。任一字段命中视为归本 session 管。
 if [[ -n "$hook_session_id" ]]; then
     for _f in "$dev_state_dir"/dev-active-*.json; do
         [[ -f "$_f" ]] || continue
         sid=$(jq -r '.session_id // ""' "$_f" 2>/dev/null || echo "")
-        if [[ -n "$sid" && "$sid" == "$hook_session_id" ]]; then
+        msid=$(jq -r '.main_session_id // ""' "$_f" 2>/dev/null || echo "")
+        if [[ -n "$sid" && "$sid" == "$hook_session_id" ]] || \
+           [[ -n "$msid" && "$msid" == "$hook_session_id" ]]; then
             dev_state="$_f"
             break
         fi
