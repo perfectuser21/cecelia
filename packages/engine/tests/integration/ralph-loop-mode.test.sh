@@ -39,9 +39,13 @@ assert_exit_code() {
 
 run_stop_dev() {
     local cwd="$1"
+    local hook_session_id="${2:-}"  # v22: 可选 hook payload session_id
     # stop-dev.sh 用 CLAUDE_HOOK_CWD env（stop.sh 路由解析 stdin JSON 后 export）
-    CLAUDE_HOOK_CWD="$cwd" \
-        bash "$STOP_DEV" 2>&1
+    if [[ -n "$hook_session_id" ]]; then
+        echo "{\"session_id\":\"$hook_session_id\",\"hook_event_name\":\"Stop\"}" | CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" 2>&1
+    else
+        echo '{}' | CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" 2>&1
+    fi
     echo "EXIT:$?"
 }
 
@@ -64,9 +68,10 @@ EOF
 out=$(run_stop_dev "$B_WT")
 assert_contains "Case B PR 未创建 → block" "decision" "$out"
 
-# Case C: 状态文件存在 + cwd 漂到主仓库 + PR 未创建 → 仍 block（关键测试 cwd 漂移）
-out_c=$(run_stop_dev "$B_REPO")
-assert_contains "Case C cwd 漂到主仓库 → 仍 block（关键修复）" "decision" "$out_c"
+# Case C v22: cwd 漂到主仓库 + hook session_id=test（命中 dev-active.session_id）→ 仍 block
+# 关键修复：v22 漂主仓库防护从"主分支+单 dev-active"换成"hook session_id 精确路由"
+out_c=$(run_stop_dev "$B_REPO" "test")
+assert_contains "Case C v22 cwd 漂主仓库 + session_id 命中 → 仍 block（session_id 路由不依赖 cwd）" "decision" "$out_c"
 
 # Case D: 状态文件存在 + assistant 删了 .dev-mode → 仍 block（关键测试自删漏洞）
 rm -f "$B_WT/.dev-mode.cp-test-b" 2>/dev/null || true

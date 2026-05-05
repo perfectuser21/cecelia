@@ -1,14 +1,16 @@
 /**
- * Brain v2 Phase C2 + C8a: workflows 集中注册入口。
+ * Brain v2 Phase C2 + C8a + consciousness: workflows 集中注册入口。
  *
  * Brain server 启动时调 initializeWorkflows()，在所有 graph-runtime 调用前把
  * 已知 workflow 注册到 orchestrator/workflow-registry。保证 runWorkflow 能查到。
  *
- * C2: dev-task。C8a: harness-initiative。
+ * consciousness graph 不走 runWorkflow（无 task 语义），不注册到 registry，
+ * 但在此预热单例（compileGraph + pg-checkpointer setup），避免首次 consciousness tick 延迟。
  */
 import { registerWorkflow, listWorkflows } from '../orchestrator/workflow-registry.js';
 import { compileDevTaskGraph } from './dev-task.graph.js';
 import { compileHarnessInitiativeGraph } from './harness-initiative.graph.js';
+import { getCompiledConsciousnessGraph } from './consciousness.graph.js';
 
 let _initialized = false;
 
@@ -30,6 +32,9 @@ export async function initializeWorkflows() {
     const harnessInitiativeGraph = await compileHarnessInitiativeGraph();
     registerWorkflow('harness-initiative', harnessInitiativeGraph);
   }
+
+  // 预热 consciousness graph（不注册到 registry，由 consciousness-loop.js 直接调用）
+  await getCompiledConsciousnessGraph();
 
   _initialized = true;
 }
