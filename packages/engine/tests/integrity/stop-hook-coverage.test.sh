@@ -63,6 +63,42 @@ else
     fail "dev-mode-tool-guard.sh 缺失"
 fi
 
+# ============================================================================
+# v18.22.0 invariant L11-L14（4 个 P0 修复 grep 验证）
+# ============================================================================
+
+# L11: stop-dev.sh 含 mtime expire 逻辑（BUG-4 修复）
+if grep -qE 'EXPIRE_MINUTES|file_mtime|age_min' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L11: stop-dev.sh 含 mtime expire 逻辑（BUG-4 修复）"
+else
+    fail "L11: BUG-4 mtime expire 缺"
+fi
+
+# L12: stop-dev.sh 含 cwd 路由（BUG-1 修复）
+if grep -qE 'rev-parse --abbrev-ref HEAD' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" && \
+   grep -qE 'case.*current_branch|case "\$current_branch"' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L12: stop-dev.sh 含 cwd 路由（BUG-1 修复）"
+else
+    fail "L12: BUG-1 cwd 路由缺"
+fi
+
+# L13: devloop-check.sh 主 CI 查询必带 --workflow CI（BUG-2 修复）
+violations=$(grep -nE 'gh run list --branch' "$REPO_ROOT/packages/engine/lib/devloop-check.sh" | grep -v -- '--workflow' | grep -v 'check\|reason\|action' | wc -l | tr -d ' ')
+if [[ "$violations" -eq 0 ]]; then
+    pass "L13: 所有 gh run list --branch 都带 --workflow（BUG-2 修复）"
+else
+    fail "L13: $violations 处 gh run list --branch 缺 --workflow"
+fi
+
+# L14: .claude/settings.json 在 repo + 含 PreToolUse（BUG-3 修复）
+if [[ -f "$REPO_ROOT/.claude/settings.json" ]] && \
+   command -v jq &>/dev/null && \
+   jq -e '.hooks.PreToolUse | length > 0' "$REPO_ROOT/.claude/settings.json" >/dev/null 2>&1; then
+    pass "L14: .claude/settings.json 含 PreToolUse 注册（BUG-3 修复）"
+else
+    fail "L14: BUG-3 settings 缺"
+fi
+
 echo ""
 echo "=== integrity: $PASS PASS / $FAIL FAIL ==="
 [[ "$FAIL" -eq 0 ]]
