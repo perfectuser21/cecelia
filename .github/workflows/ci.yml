@@ -345,14 +345,8 @@ jobs:
           done
       - name: Run integration shell tests
         run: |
-          for t in \
-              packages/engine/tests/integration/stop-hook-7stage-flow.test.sh \
-              packages/engine/tests/integration/stop-dev-ghost-filter.test.sh \
-              packages/engine/tests/integration/stop-hook-e2e-real-brain.test.sh \
-              packages/engine/tests/integration/stop-dev-multi-worktree.test.sh \
-              packages/engine/tests/integration/stop-dev-deploy-escape.test.sh \
-              packages/engine/tests/integration/ralph-loop-mode.test.sh \
-              packages/engine/tests/integration/dev-mode-tool-guard.test.sh; do
+          # P1-3 (v18.22.1): glob 模式，新加 .test.sh 自动接 CI（防显式列表漏接）
+          for t in packages/engine/tests/integration/*.test.sh; do
             [[ -f "$t" ]] || continue
             echo "::group::$(basename "$t")"
             bash "$t" || exit 1

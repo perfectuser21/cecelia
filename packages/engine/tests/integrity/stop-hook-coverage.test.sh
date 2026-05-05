@@ -99,6 +99,33 @@ else
     fail "L14: BUG-3 settings 缺"
 fi
 
+# ============================================================================
+# v18.22.1 invariant L15-L17（4 个 P1 修复 grep 验证）
+# ============================================================================
+
+# L15: .claude/settings.json 引用 dev-mode-tool-guard.sh
+if [[ -f "$REPO_ROOT/.claude/settings.json" ]] && \
+   grep -q 'dev-mode-tool-guard\.sh' "$REPO_ROOT/.claude/settings.json"; then
+    pass "L15: settings.json 引用 dev-mode-tool-guard.sh"
+else
+    fail "L15: settings.json 未引用 dev-mode-tool-guard.sh"
+fi
+
+# L16: install-claude-settings.sh 存在 + 可执行（P1-4 跨机器 fallback）
+if [[ -f "$REPO_ROOT/scripts/install-claude-settings.sh" ]] && \
+   [[ -x "$REPO_ROOT/scripts/install-claude-settings.sh" ]]; then
+    pass "L16: install-claude-settings.sh 存在且可执行（P1-4 跨机器 fallback）"
+else
+    fail "L16: install script 缺或不可执行"
+fi
+
+# L17: ci.yml engine-tests-shell 用 glob（P1-3 防新 .test.sh 漏接）
+if grep -qE 'tests/integration/\*\.test\.sh' "$REPO_ROOT/.github/workflows/ci.yml"; then
+    pass "L17: engine-tests-shell 用 glob 模式（P1-3 修复）"
+else
+    fail "L17: engine-tests-shell 仍是显式列表"
+fi
+
 echo ""
 echo "=== integrity: $PASS PASS / $FAIL FAIL ==="
 [[ "$FAIL" -eq 0 ]]
