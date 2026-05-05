@@ -23,23 +23,26 @@ export const EXECUTOR_ROUTING = {
 
 /**
  * 纯调度入口。被 tick-loop.js 每 5 秒调用。
- * @returns {Promise<{dispatched: boolean, reason: string, elapsed_ms: number, guidance_used: boolean}>}
+ * @returns {Promise<{dispatched: boolean, reason: string, elapsed_ms: number, guidance_found: boolean}>}
  */
+let _routingLoggedOnce = false;
+
 export async function runScheduler() {
   const start = Date.now();
 
   // 1. Circuit breaker 检查（内存读取，< 1ms）
   if (!isAllowed('dispatch')) {
-    return { dispatched: false, reason: 'circuit_open', elapsed_ms: Date.now() - start, guidance_used: false };
+    return { dispatched: false, reason: 'circuit_open', elapsed_ms: Date.now() - start, guidance_found: false };
   }
 
   // 2. 读取全局策略 guidance（DB 查询，< 5ms）
   const strategyGuidance = await getGuidance('strategy:global');
-  const guidanceUsed = !!strategyGuidance;
+  const guidanceFound = !!strategyGuidance;
 
   if (strategyGuidance) {
     console.log('[tick-scheduler] 使用 consciousness-loop guidance:', JSON.stringify(strategyGuidance).slice(0, 120));
-  } else {
+  } else if (!_routingLoggedOnce) {
+    _routingLoggedOnce = true;
     console.log('[tick-scheduler] 无 guidance，使用 EXECUTOR_ROUTING 默认路由:', JSON.stringify(EXECUTOR_ROUTING));
   }
 
@@ -50,7 +53,7 @@ export async function runScheduler() {
   const goalIds = rows.map(r => r.id);
 
   if (goalIds.length === 0) {
-    return { dispatched: false, reason: 'no_goals', elapsed_ms: Date.now() - start, guidance_used: guidanceUsed };
+    return { dispatched: false, reason: 'no_goals', elapsed_ms: Date.now() - start, guidance_found: guidanceFound };
   }
 
   // 4. 派发（调 dispatcher，不含任何 LLM）
@@ -59,6 +62,6 @@ export async function runScheduler() {
   return {
     ...result,
     elapsed_ms: Date.now() - start,
-    guidance_used: guidanceUsed,
+    guidance_found: guidanceFound,
   };
 }

@@ -233,7 +233,7 @@ devloop_check() {
         local ci_status="unknown" ci_conclusion="" ci_run_id=""
         if [[ "$pr_state" != "merged" ]]; then
             local run_info
-            run_info=$(gh run list --branch "$branch" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
+            run_info=$(gh run list --branch "$branch" --workflow CI --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
             if [[ -n "$run_info" && "$run_info" != "[]" ]]; then
                 ci_status=$(echo "$run_info" | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")
                 ci_conclusion=$(echo "$run_info" | jq -r '.[0].conclusion // ""' 2>/dev/null || echo "")
@@ -530,19 +530,35 @@ devloop_check_main() {
 # ============================================================================
 # 公开函数: verify_dev_complete BRANCH WORKTREE_PATH MAIN_REPO
 # ============================================================================
-# Ralph Loop 模式：hook 主动验证 dev 流程三完成条件
-#   1. PR merged?      → gh pr view --json mergedAt（GitHub 真实状态）
-#   2. Learning 写好?  → docs/learnings/<branch>.md 存在 + grep '^### 根本原因'
-#   3. cleanup.sh ok?  → 真跑脚本看 exit code
+# 7 阶段决策树（v18.20.0）：
+#   P1 PR 未创建        → block: 立即 push + gh pr create
+#   P2 PR CI 进行中     → block + foreground 轮询
+#   P3 PR CI 失败       → block: fail job 名 + log URL
+#   P4 PR CI 通过未合   → block: auto-merge / squash
+#   P5 merged → deploy workflow conclusion=success（VERIFY_DEPLOY_WORKFLOW=1 启用）
+#   P6 deploy → /api/brain/health 200 重试（VERIFY_HEALTH_PROBE=1 启用）
+#   P7 health 200 → Learning 文件存在 + ### 根本原因
+#   P0 全过 → cleanup.sh exit 0 → done
 #
-# 不读 .dev-mode 字段（assistant 改不了 GitHub / 文件内容 / 命令 exit code）
-# 输出 stdout JSON: {status: done|blocked, reason, action, ci_run_id?}
+# 信号源：GitHub API + HTTP probe（不读 .dev-mode 字段）
+# Env 调参：
+#   VERIFY_DEPLOY_WORKFLOW=1   启用 P5（默认 0，向后兼容旧测试）
+#   VERIFY_HEALTH_PROBE=1      启用 P6（默认 0）
+#   HEALTH_PROBE_MAX_RETRIES=N P6 最大重试（默认 60）
+#   HEALTH_PROBE_INTERVAL=N    P6 间隔秒（默认 5）
+#   BRAIN_HEALTH_URL=URL       默认 http://localhost:5221/api/brain/health
 # ============================================================================
 verify_dev_complete() {
     local branch="${1:-}"
     local worktree_path="${2:-}"
     local main_repo="${3:-}"
     local result_json='{"status":"blocked","reason":"unknown"}'
+
+    local verify_deploy="${VERIFY_DEPLOY_WORKFLOW:-0}"
+    local verify_health="${VERIFY_HEALTH_PROBE:-0}"
+    local health_max_retries="${HEALTH_PROBE_MAX_RETRIES:-60}"
+    local health_interval="${HEALTH_PROBE_INTERVAL:-5}"
+    local brain_health_url="${BRAIN_HEALTH_URL:-http://localhost:5221/api/brain/health}"
 
     while :; do
         if [[ -z "$branch" || -z "$main_repo" ]]; then
@@ -559,11 +575,12 @@ verify_dev_complete() {
             [[ -n "$_hm" ]] && harness_mode="$_hm"
         fi
 
-        # 1. 主动验证 PR merged
         if ! command -v gh &>/dev/null; then
             result_json='{"status":"blocked","reason":"gh CLI 不可用，无法验证 PR 状态","action":"安装 gh CLI"}'
             break
         fi
+
+        # ------ P1: PR 未创建 ------
         local pr_number pr_merged_at
         pr_number=$(gh pr list --head "$branch" --state all --json number -q '.[0].number' 2>/dev/null || echo "")
         if [[ -z "$pr_number" ]]; then
@@ -571,18 +588,42 @@ verify_dev_complete() {
                 '{"status":"blocked","reason":"PR 未创建（branch=\($branch)）","action":"立即 push + gh pr create --base main --head \($branch)"}')
             break
         fi
+
         pr_merged_at=$(gh pr view "$pr_number" --json mergedAt -q '.mergedAt' 2>/dev/null || echo "")
         if [[ -z "$pr_merged_at" || "$pr_merged_at" == "null" ]]; then
-            local ci_status
-            ci_status=$(gh run list --branch "$branch" --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
+            # ------ P2/P3/P4: CI 状态 ------
+            local ci_status ci_conclusion ci_run_id
+            ci_status=$(gh run list --branch "$branch" --workflow CI --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
+            ci_conclusion=$(gh run list --branch "$branch" --workflow CI --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || echo "")
+            ci_run_id=$(gh run list --branch "$branch" --workflow CI --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
             case "$ci_status" in
                 in_progress|queued|waiting|pending)
-                    result_json=$(_devloop_jq -n --arg pr "$pr_number" \
-                        '{"status":"blocked","reason":"PR #\($pr) CI 进行中","action":"等 CI 完成（gh pr checks \($pr) --watch）"}')
+                    # P2
+                    result_json=$(_devloop_jq -n --arg pr "$pr_number" --arg id "$ci_run_id" \
+                        '{"status":"blocked","reason":"PR #\($pr) CI 进行中","action":"等 CI 完成（gh pr checks \($pr) --watch）","ci_run_id":$id}')
                     ;;
                 completed)
-                    result_json=$(_devloop_jq -n --arg pr "$pr_number" \
-                        '{"status":"blocked","reason":"PR #\($pr) CI 通过但未合并","action":"启 auto-merge: gh pr merge \($pr) --squash --auto"}')
+                    case "$ci_conclusion" in
+                        ""|success|completed)
+                            # 空 conclusion 或 completed 字符串 = 兼容旧测试（stub 不区分 --json 字段）
+                            # P4: CI 通过未合 → auto-merge
+                            result_json=$(_devloop_jq -n --arg pr "$pr_number" \
+                                '{"status":"blocked","reason":"PR #\($pr) CI 通过但未合并","action":"启 auto-merge: gh pr merge \($pr) --squash --auto"}')
+                            ;;
+                        failure|cancelled|timed_out|action_required|startup_failure)
+                            # P3: CI 失败 — 给 fail job 名 + log URL
+                            local failed_summary log_url
+                            failed_summary=$(gh run view "$ci_run_id" --json jobs -q '[.jobs[] | select(.conclusion=="failure") | .name] | join(", ")' 2>/dev/null || echo "未知 job")
+                            [[ -z "$failed_summary" ]] && failed_summary="未知 job"
+                            log_url=$(gh run view "$ci_run_id" --json jobs -q '[.jobs[] | select(.conclusion=="failure") | .url][0]' 2>/dev/null || echo "")
+                            result_json=$(_devloop_jq -n --arg pr "$pr_number" --arg s "$failed_summary" --arg url "$log_url" --arg id "$ci_run_id" --arg c "$ci_conclusion" \
+                                '{"status":"blocked","reason":"PR #\($pr) CI 失败（\($c)）：\($s)","action":"看 log: gh run view \($id) --log-failed (\($url))。修代码 → commit → push 触发新 CI","ci_run_id":$id}')
+                            ;;
+                        *)
+                            result_json=$(_devloop_jq -n --arg pr "$pr_number" --arg c "$ci_conclusion" \
+                                '{"status":"blocked","reason":"PR #\($pr) CI conclusion 异常: \($c)","action":"检查 gh pr checks \($pr)"}')
+                            ;;
+                    esac
                     ;;
                 *)
                     result_json=$(_devloop_jq -n --arg pr "$pr_number" --arg s "$ci_status" \
@@ -592,7 +633,87 @@ verify_dev_complete() {
             break
         fi
 
-        # 2. 主动验证 Learning 文件存在 + 内容合法（harness 豁免）
+        # ------ P5: brain-ci-deploy.yml workflow run（VERIFY_DEPLOY_WORKFLOW=1 启用）------
+        # P1-1 (v18.22.1): engine-only / docs-only PR 不触动 packages/brain/，
+        # brain-ci-deploy.yml workflow on push paths brain/** 不触发 → P5 not applicable
+        if [[ "$verify_deploy" == "1" ]]; then
+            local brain_changed
+            brain_changed=$(gh pr view "$pr_number" --json files -q '[.files[].path] | map(select(startswith("packages/brain/"))) | length' 2>/dev/null || echo "0")
+            if [[ "$brain_changed" =~ ^[0-9]+$ ]] && [[ "$brain_changed" -eq 0 ]]; then
+                echo "[verify_dev_complete] P5 跳过：PR #$pr_number 不触动 packages/brain/，brain-ci-deploy.yml not applicable" >&2
+                # not applicable → 视为 P5 通过，继续走 P6
+                verify_deploy=0
+            fi
+        fi
+
+        if [[ "$verify_deploy" == "1" ]]; then
+            local merge_sha deploy_run_id deploy_status deploy_conclusion
+            merge_sha=$(gh pr view "$pr_number" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || echo "")
+            deploy_run_id=$(gh run list --workflow brain-ci-deploy.yml --branch main --limit 5 --json databaseId,headSha -q "[.[] | select(.headSha | startswith(\"${merge_sha}\"))][0].databaseId" 2>/dev/null || echo "")
+            if [[ -z "$deploy_run_id" || "$deploy_run_id" == "null" ]]; then
+                result_json=$(_devloop_jq -n --arg sha "$merge_sha" \
+                    '{"status":"blocked","reason":"等 brain-ci-deploy.yml 触发（合并 SHA \($sha)）","action":"sleep 30 后再 verify"}')
+                break
+            fi
+            deploy_status=$(gh run view "$deploy_run_id" --json status -q '.status' 2>/dev/null || echo "unknown")
+            deploy_conclusion=$(gh run view "$deploy_run_id" --json conclusion -q '.conclusion' 2>/dev/null || echo "")
+            case "$deploy_status" in
+                in_progress|queued|waiting)
+                    result_json=$(_devloop_jq -n --arg id "$deploy_run_id" \
+                        '{"status":"blocked","reason":"brain-ci-deploy.yml 进行中","action":"等 deploy: gh run watch \($id)"}')
+                    break
+                    ;;
+                completed)
+                    if [[ "$deploy_conclusion" != "success" ]]; then
+                        # v18.22.0: BUG-4 P5 fail counter — 连续 3 次 → auto-expire dev-active
+                        local fail_count_file="${main_repo}/.cecelia/deploy-fail-count-${branch}"
+                        local fail_count
+                        fail_count=$(cat "$fail_count_file" 2>/dev/null || echo 0)
+                        fail_count=$((fail_count + 1))
+                        echo "$fail_count" > "$fail_count_file" 2>/dev/null || true
+
+                        if [[ "$fail_count" -ge 3 ]]; then
+                            rm -f "${main_repo}/.cecelia/dev-active-${branch}.json"
+                            rm -f "$fail_count_file"
+                            : > "${main_repo}/.cecelia/deploy-failed-${branch}.flag" 2>/dev/null || true
+                            result_json=$(_devloop_jq -n --arg b "$branch" \
+                                '{"status":"done","reason":"deploy fail 3x → auto-expire dev-active (\($b))，等独立 PR 修 deploy"}')
+                            break
+                        fi
+
+                        result_json=$(_devloop_jq -n --arg id "$deploy_run_id" --arg c "$deploy_conclusion" --arg n "$fail_count" \
+                            '{"status":"blocked","reason":"deploy 失败 (\($c)) [\($n)/3]","action":"看 gh run view \($id) --log-failed（连续 3 次自动 expire）"}')
+                        break
+                    fi
+                    # success 分支：清掉 fail counter
+                    rm -f "${main_repo}/.cecelia/deploy-fail-count-${branch}" 2>/dev/null || true
+                    ;;
+                *)
+                    result_json=$(_devloop_jq -n --arg s "$deploy_status" \
+                        '{"status":"blocked","reason":"deploy status 异常: \($s)","action":"等待或检查 deploy workflow"}')
+                    break
+                    ;;
+            esac
+        fi
+
+        # ------ P6: health probe（VERIFY_HEALTH_PROBE=1 启用）------
+        if [[ "$verify_health" == "1" ]]; then
+            local probed=0 i
+            for ((i=1; i<=health_max_retries; i++)); do
+                if curl -fsS --max-time 3 "$brain_health_url" >/dev/null 2>&1; then
+                    probed=1
+                    break
+                fi
+                [[ $i -lt $health_max_retries ]] && sleep "$health_interval"
+            done
+            if [[ "$probed" -ne 1 ]]; then
+                result_json=$(_devloop_jq -n --arg url "$brain_health_url" --arg n "$health_max_retries" --arg s "$health_interval" \
+                    '{"status":"blocked","reason":"health probe \($n)×\($s)s 超时: \($url)","action":"检查 deploy log + Brain 进程"}')
+                break
+            fi
+        fi
+
+        # ------ P7: Learning 文件 ------
         if [[ "$harness_mode" != "true" ]]; then
             local learning_file="${main_repo}/docs/learnings/${branch}.md"
             if [[ ! -f "$learning_file" ]]; then
@@ -607,7 +728,7 @@ verify_dev_complete() {
             fi
         fi
 
-        # 3. 主动跑 cleanup.sh（含部署）
+        # ------ P0: cleanup.sh 真跑 ------
         local cleanup_script=""
         for _cs in \
             "${main_repo}/packages/engine/skills/dev/scripts/cleanup.sh" \
@@ -619,14 +740,14 @@ verify_dev_complete() {
             result_json='{"status":"blocked","reason":"未找到 cleanup.sh（无法部署/归档）","action":"检查 packages/engine/skills/dev/scripts/cleanup.sh"}'
             break
         fi
-        echo "🧹 verify_dev_complete: 跑 cleanup.sh（含部署）..." >&2
+        echo "🧹 verify_dev_complete: 跑 cleanup.sh（归档/git config）..." >&2
         if ! (cd "$main_repo" && bash "$cleanup_script" "$branch") >/dev/null 2>/dev/null; then
             result_json='{"status":"blocked","reason":"cleanup.sh 执行失败（部署/归档异常）","action":"重新 bash packages/engine/skills/dev/scripts/cleanup.sh"}'
             break
         fi
 
         result_json=$(_devloop_jq -n --arg pr "$pr_number" \
-            '{"status":"done","reason":"PR #\($pr) 真完成：合并 + Learning + 部署 + 归档"}')
+            '{"status":"done","reason":"PR #\($pr) 真完成：CI 绿 + 合并 + Learning + cleanup（P5/P6 按 env 启用）"}')
         break
     done
 

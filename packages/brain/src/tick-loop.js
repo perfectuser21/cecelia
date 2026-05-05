@@ -15,7 +15,7 @@
  * 老 caller (routes/tick.js, __tests__/tick-throttle.test.js 等) 不受影响。
  */
 import { tickState } from './tick-state.js';
-import { executeTick } from './tick-runner.js';
+import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃，保留供回滚
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
@@ -43,9 +43,6 @@ export const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
  * @param {Function} [tickFn] - optional tick function override (for testing)
  */
 export async function runTickSafe(source = 'loop', tickFn) {
-  // Wave 2: 默认调度器改为 runScheduler（纯调度，无 LLM）。
-  // executeTick 仍 import 以兼容显式注入 / 回滚 — 见 tick-runner.js 顶部废弃说明。
-  void executeTick;
   const doTick = tickFn || runScheduler;
 
   // Throttle: loop ticks only execute once per TICK_INTERVAL_MINUTES
@@ -143,7 +140,7 @@ export function startTickLoop() {
     tickState.loopTimer.unref();
   }
 
-  // Wave 2: 启动 LLM 意识循环（每 20 分钟）。CONSCIOUSNESS_ENABLED=false 时返回 false 不建定时器。
+  // Wave 2: 启动 LLM 意识循环（每 20 分钟，独立于调度层）
   startConsciousnessLoop();
 
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);

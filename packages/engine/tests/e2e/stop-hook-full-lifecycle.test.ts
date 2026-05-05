@@ -53,7 +53,15 @@ function runStopHook(opts: RunOpts): RunResult {
 
   const res = spawnSync('bash', [STOP_HOOK], {
     cwd: opts.cwd,
-    env: { ...process.env, ...overrideEnv, ...(opts.env ?? {}), PATH: envPath },
+    env: {
+      ...process.env,
+      // v18.21.0: E2E 老三阶段，P5/P6 由独立 7stage smoke 覆盖
+      VERIFY_DEPLOY_WORKFLOW: '0',
+      VERIFY_HEALTH_PROBE: '0',
+      ...overrideEnv,
+      ...(opts.env ?? {}),
+      PATH: envPath,
+    },
     input: stdinStr,
     encoding: 'utf-8',
     timeout: 15000,
@@ -131,6 +139,11 @@ function runStopDev(opts: { cwd: string; hookCwd?: string; ghStub?: string; env?
     cwd: opts.cwd,
     env: {
       ...process.env,
+      // v18.21.0: E2E 12 场景测的是"老三阶段"（PR/Learning/cleanup），
+      // 不验证 P5 deploy workflow + P6 health probe（独立 stop-hook-7stage smoke 覆盖）
+      // 默认 disable，单 case 可以在 opts.env 里 override
+      VERIFY_DEPLOY_WORKFLOW: '0',
+      VERIFY_HEALTH_PROBE: '0',
       CLAUDE_HOOK_CWD: opts.hookCwd ?? opts.cwd,
       ...(opts.env ?? {}),
       PATH: envPath,
@@ -332,5 +345,26 @@ exit 0
     const r = runStopDev({ cwd: repo, ghStub: 'echo ""\nexit 0' });
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/);
+  });
+
+  // ============ 7 阶段重设计新场景（P3/P5/P6） ============
+  // 注：以下 3 场景断言 verify_dev_complete 7 阶段重写后的行为。
+  // 现有 `makeStubGhEnv` helper 不支持 failedJobs/deployRuns/healthEndpoint
+  // 字段，先 skip 留 placeholder，等 stub 扩展后再开（详见 plan Task 1 Step 2）。
+
+  it.skip('场景 13: P3 CI 失败 → block + 反馈含 fail job 名 + log URL', () => {
+    // ghStub 模拟 gh run list/view 返回 failure + jobs + log url
+    // 预期 verify_dev_complete P3 分支命中，反馈 'CI 失败' + fail job 名 + URL
+  });
+
+  it.skip('场景 14: P5 deploy workflow 进行中 → block + 等 deploy', () => {
+    // ghStub 模拟 PR merged + CI success + brain-ci-deploy in_progress
+    // 预期 verify_dev_complete P5 分支命中，反馈 brain-ci-deploy.yml
+  });
+
+  it.skip('场景 15: P6 health probe 60×5s 超时 → block', () => {
+    // 模拟 PR merged + CI success + deploy success + health endpoint dead
+    // HEALTH_PROBE_MAX_RETRIES=2 HEALTH_PROBE_INTERVAL=0
+    // 预期 verify_dev_complete P6 分支命中，反馈 'health probe...超时'
   });
 });

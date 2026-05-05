@@ -7,6 +7,7 @@
  */
 
 import { raise } from './alerting.js';
+import { loadActiveConstraints, evaluateConstraints } from './insight-constraints.js';
 
 // 24h 内累计 pre-flight cancel >= 阈值 → 从 P2 升级到 P0（飞书立即推送）
 export const PRE_FLIGHT_ALERT_THRESHOLD = 3;
@@ -19,12 +20,14 @@ export const PRE_FLIGHT_ALERT_THRESHOLD = 3;
  * @param {string} task.title - Task title
  * @param {string} task.description - Task description (PRD content)
  * @param {string} task.priority - Priority (P0/P1/P2)
+ * @param {Object} [opts] - Options
+ * @param {Object} [opts.dbPool] - Optional pg pool override (test injection)
  * @returns {Promise<Object>} Check result
  * @returns {boolean} .passed - Whether check passed
  * @returns {Array<string>} .issues - List of issues found
  * @returns {Array<string>} .suggestions - Suggestions for fixing issues
  */
-export async function preFlightCheck(task) {
+export async function preFlightCheck(task, opts = {}) {
   const issues = [];
   const suggestions = [];
 
@@ -126,6 +129,19 @@ export async function preFlightCheck(task) {
       issues.push('Description is too generic');
       suggestions.push('Provide specific details about what needs to be done');
     }
+  }
+
+  // Check 6: Insight-derived dispatch constraints —
+  // 把 cortex_insight 通过 learnings.dispatch_constraint 转化为硬规则，
+  // 避免"洞察 ≠ 约束"导致系统重复踩坑（learning_id d4405cc0）。
+  // 加载/求值任一失败都不应反向阻塞 dispatch，pre-flight 只追加 issues/suggestions。
+  try {
+    const constraints = await loadActiveConstraints(opts.dbPool);
+    const insightResult = evaluateConstraints(task, constraints);
+    if (insightResult.issues.length > 0) issues.push(...insightResult.issues);
+    if (insightResult.suggestions.length > 0) suggestions.push(...insightResult.suggestions);
+  } catch (err) {
+    console.warn('[pre-flight] insight-constraint evaluation failed (non-fatal):', err.message);
   }
 
   const passed = issues.length === 0;

@@ -39,6 +39,7 @@ export async function processExecutionCallback(data, pool) {
     iterations,
     exit_code,
     stderr,
+    coding_type,
   } = data;
 
   if (!task_id) throw new Error('task_id is required');
@@ -363,8 +364,14 @@ export async function processExecutionCallback(data, pool) {
       const isTransientApiError = ['rate_limit', 'network', 'auth'].includes(classification.class);
       const isBillingCap = classification.class === 'billing_cap';
 
+      const isCodexReview = coding_type === 'codex-review';
+
       if (isBillingCap || isTransientApiError) {
         console.log(`[callback-processor] 外部/凭据错误：跳过熔断计数（task=${task_id}）`);
+      } else if (isCodexReview) {
+        // codex-review 走独立执行池，失败不归因 cecelia-run 熔断器
+        console.log(`[callback-processor] codex-review 失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
+        raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
       } else {
         await cbFailure('cecelia-run');
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
