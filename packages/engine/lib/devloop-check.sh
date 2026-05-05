@@ -233,7 +233,7 @@ devloop_check() {
         local ci_status="unknown" ci_conclusion="" ci_run_id=""
         if [[ "$pr_state" != "merged" ]]; then
             local run_info
-            run_info=$(gh run list --branch "$branch" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
+            run_info=$(gh run list --branch "$branch" --workflow CI --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
             if [[ -n "$run_info" && "$run_info" != "[]" ]]; then
                 ci_status=$(echo "$run_info" | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")
                 ci_conclusion=$(echo "$run_info" | jq -r '.[0].conclusion // ""' 2>/dev/null || echo "")
@@ -593,9 +593,9 @@ verify_dev_complete() {
         if [[ -z "$pr_merged_at" || "$pr_merged_at" == "null" ]]; then
             # ------ P2/P3/P4: CI 状态 ------
             local ci_status ci_conclusion ci_run_id
-            ci_status=$(gh run list --branch "$branch" --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
-            ci_conclusion=$(gh run list --branch "$branch" --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || echo "")
-            ci_run_id=$(gh run list --branch "$branch" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
+            ci_status=$(gh run list --branch "$branch" --workflow CI --limit 1 --json status -q '.[0].status' 2>/dev/null || echo "unknown")
+            ci_conclusion=$(gh run list --branch "$branch" --workflow CI --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || echo "")
+            ci_run_id=$(gh run list --branch "$branch" --workflow CI --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
             case "$ci_status" in
                 in_progress|queued|waiting|pending)
                     # P2
