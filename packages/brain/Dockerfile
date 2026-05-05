@@ -12,7 +12,7 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/brain/package.json packages/brain/
 # 只装 brain 子 workspace 的生产依赖（ignore scripts 加速）
-RUN npm ci --workspace=packages/brain --omit=dev --ignore-scripts
+RUN npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts
 
 # ── Stage 2: Runtime ──
 FROM node:20-alpine
