@@ -25,7 +25,9 @@ fi
 [[ $exit_code -eq 0 ]] && pass "Case 1: stop-dev exit 0" || fail "Case 1: exit=$exit_code"
 rm -rf "$TMP"
 
-# === Case 2: worktree 不存在 + 0 commit ahead 自动清理 ===
+# === Case 2: 真 session_id + worktree 不存在 → 保留（不视为 ghost）===
+# 理由：worktree 被外部 git worktree remove 删了但 session 还活着是合法场景，
+# 不能误杀。只有 session_id="unknown"（远端 sync 标志）才视为 ghost。
 TMP=$(mktemp -d)
 (cd "$TMP" && git init -q && touch .gitkeep && git add -A && git -c user.email=t@t -c user.name=t commit -qm init && git branch -M main && git branch cp-ghost-2)
 mkdir -p "$TMP/.cecelia"
@@ -33,10 +35,10 @@ cat > "$TMP/.cecelia/dev-active-cp-ghost-2.json" <<EOF
 {"branch":"cp-ghost-2","worktree":"/nonexistent/wt","session_id":"realsess123"}
 EOF
 CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" >/dev/null 2>&1
-if [[ ! -f "$TMP/.cecelia/dev-active-cp-ghost-2.json" ]]; then
-    pass "Case 2: worktree 不存在 + 0 commit 已 rm"
+if [[ -f "$TMP/.cecelia/dev-active-cp-ghost-2.json" ]]; then
+    pass "Case 2: 真 session_id + worktree 不存在 保留 (不视为 ghost)"
 else
-    fail "Case 2: ghost 仍在"
+    fail "Case 2: 真 session_id 误杀"
 fi
 rm -rf "$TMP"
 

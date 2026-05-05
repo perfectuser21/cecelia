@@ -106,7 +106,11 @@ echo '#!/usr/bin/env bash
 exit 0' > "$MAIN_REPO/packages/engine/skills/dev/scripts/cleanup.sh"
 chmod +x "$MAIN_REPO/packages/engine/skills/dev/scripts/cleanup.sh"
 
-OUT_4=$(CLAUDE_HOOK_CWD="$WORKTREE" PATH="$GH_STUB:$PATH" bash "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" 2>&1)
+# v18.21.0: smoke 测"老三阶段" (PR/Learning/cleanup)，不测 P5/P6
+# escape hatch disable P5/P6（stop-hook-7stage-smoke.sh 单独覆盖 P5/P6）
+OUT_4=$(VERIFY_DEPLOY_WORKFLOW=0 VERIFY_HEALTH_PROBE=0 \
+        CLAUDE_HOOK_CWD="$WORKTREE" PATH="$GH_STUB:$PATH" \
+        bash "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" 2>&1)
 EXIT_4=$?
 assert_eq "Step 4 exit=0" "0" "$EXIT_4"
 # done 路径：stdout 静默不输出 decision JSON（Claude Code 协议合法值只有 approve/block）

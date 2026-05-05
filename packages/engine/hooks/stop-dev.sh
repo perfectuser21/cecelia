@@ -37,26 +37,19 @@ fi
 
 # 找任意 dev-active-*.json（理论上同时只有一个）
 # v18.21.0: ghost 过滤 — 远端 sync 来的状态文件不该 block 本机 stop hook
-#   特征 1: session_id="unknown"（远端缺 session 标识）
-#   特征 2: worktree 路径本地不存在 + 分支 0 commit ahead of main
-# 任一命中 → 自动 rm + continue
+#   判据: session_id="unknown"
+#   理由: 本机 worktree-manage.sh 总是写真 session_id（CLAUDE_SESSION_ID 或
+#         "headed-PID-branch"），只有远端 worker sync 没传 session_id 才出
+#         "unknown"。命中 → 自动 rm + continue
 dev_state=""
 for _f in "$dev_state_dir"/dev-active-*.json; do
     [[ -f "$_f" ]] || continue
 
     sid=$(jq -r '.session_id // ""' "$_f" 2>/dev/null || echo "")
-    wt=$(jq -r '.worktree // ""' "$_f" 2>/dev/null || echo "")
-    branch_in=$(jq -r '.branch // ""' "$_f" 2>/dev/null || echo "")
 
-    is_ghost=0
-    [[ "$sid" == "unknown" ]] && is_ghost=1
-    if [[ -n "$wt" && ! -d "$wt" && -n "$branch_in" ]]; then
-        ahead=$(git -C "$main_repo" rev-list --count "main..${branch_in}" 2>/dev/null || echo 0)
-        [[ "$ahead" -eq 0 ]] && is_ghost=1
-    fi
-
-    if [[ "$is_ghost" -eq 1 ]]; then
-        echo "[stop-dev] 自动清理 ghost dev-active: $_f (sid=$sid wt=$wt)" >&2
+    if [[ "$sid" == "unknown" ]]; then
+        wt=$(jq -r '.worktree // ""' "$_f" 2>/dev/null || echo "")
+        echo "[stop-dev] 自动清理 ghost dev-active (session_id=unknown): $_f (wt=$wt)" >&2
         rm -f "$_f"
         continue
     fi
