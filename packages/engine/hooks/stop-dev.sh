@@ -97,7 +97,14 @@ if ! type verify_dev_complete &>/dev/null; then
     exit 0
 fi
 
-result=$(verify_dev_complete "$branch" "$worktree_path" "$main_repo" 2>/dev/null) || true
+# v18.21.0: 默认启用 P5 (deploy workflow) + P6 (health probe)
+# escape hatch: 用户外部 export VERIFY_*=0 可禁用（:= 仅在变量未设时赋默认）
+result=$(
+    : "${VERIFY_DEPLOY_WORKFLOW:=1}"
+    : "${VERIFY_HEALTH_PROBE:=1}"
+    export VERIFY_DEPLOY_WORKFLOW VERIFY_HEALTH_PROBE
+    verify_dev_complete "$branch" "$worktree_path" "$main_repo" 2>/dev/null
+) || true
 [[ -z "$result" ]] && result='{"status":"blocked","reason":"verify_dev_complete 无输出，fail-closed"}'
 
 status=$(echo "$result" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
