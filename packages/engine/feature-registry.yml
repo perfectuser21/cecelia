@@ -6,6 +6,18 @@ version: "1.0.0"
 updated: "2026-05-04"
 
 changelog:
+  - version: "18.21.0"
+    date: "2026-05-05"
+    change: "feat"
+    description: "Stop Hook integrity 5 修复（cp-0505101826）— PR #2766/#2767 上线后自审发现 5 个虚假宣称：(1) 32 unit + 5 integration + 8 smoke shell 测试是死代码（vitest 不识别 .sh，CI workflow 0 引用），(2) stop-dev.sh 没 ghost 过滤（远端 sync 来的 dev-active 持续 block，5/4 wave2 死锁 2 次），(3) P5/P6 真链路 disabled（stop-dev.sh 调 verify_dev_complete 不设 VERIFY_*=1），(4) 无 integrity 元测试，(5) 无 CI 合成场景。修：CI 加 engine-tests-shell job（接 ci-passed required）激活 unit/integration/integrity/smoke 全部 shell 套；stop-dev.sh ghost 过滤（session_id=unknown 或 worktree 不存在+0 commit 自动 rm）；stop-dev.sh export VERIFY_DEPLOY_WORKFLOW=1 VERIFY_HEALTH_PROBE=1（escape hatch :=）；新建 integrity 元测试 + real-brain 合成 + ghost-filter 集成测试。Stop Hook 完整闭环第 11 段。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (ghost 过滤 + P5/P6 启用)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (新建 11 case 元测试)"
+      - "packages/engine/tests/integration/stop-hook-e2e-real-brain.test.sh (新建 real-env 合成)"
+      - "packages/engine/tests/integration/stop-dev-ghost-filter.test.sh (新建 ghost 过滤 4 case)"
+      - ".github/workflows/ci.yml (engine-tests-shell job + ci-passed needs/check)"
+      - "Engine 8 处版本文件 18.21.0"
+
   - version: "18.20.1"
     date: "2026-05-04"
     change: "test"

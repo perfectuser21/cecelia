@@ -66,10 +66,13 @@ status=$(echo "$result" | jq -r '.status')
 assert_status "Case 1 缺 branch" "blocked" "$status"
 assert_contains "Case 1 reason 含缺参数" "缺参数" "$result"
 
-# Case 2: gh CLI 不可用
+# Case 2: gh CLI 不可用 — PATH 完全隔离（CI Linux /usr/bin/gh 存在）
+# 软链 jq 到 NO_GH_DIR 让 PATH 仅含 NO_GH_DIR（无 gh，但有 jq）
 NO_GH_DIR="$TMPROOT/no-gh"
 mkdir -p "$NO_GH_DIR"
-PATH="$NO_GH_DIR:/usr/bin:/bin" result=$(verify_dev_complete "cp-test" "/tmp/wt" "/tmp/main")
+JQ_BIN=$(command -v jq 2>/dev/null || echo "/usr/bin/jq")
+ln -sf "$JQ_BIN" "$NO_GH_DIR/jq"
+PATH="$NO_GH_DIR" result=$(verify_dev_complete "cp-test" "/tmp/wt" "/tmp/main")
 status=$(echo "$result" | jq -r '.status')
 assert_status "Case 2 gh 不可用" "blocked" "$status"
 assert_contains "Case 2 reason 含 gh CLI" "gh CLI" "$result"

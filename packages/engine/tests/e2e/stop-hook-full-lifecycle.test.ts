@@ -53,7 +53,15 @@ function runStopHook(opts: RunOpts): RunResult {
 
   const res = spawnSync('bash', [STOP_HOOK], {
     cwd: opts.cwd,
-    env: { ...process.env, ...overrideEnv, ...(opts.env ?? {}), PATH: envPath },
+    env: {
+      ...process.env,
+      // v18.21.0: E2E 老三阶段，P5/P6 由独立 7stage smoke 覆盖
+      VERIFY_DEPLOY_WORKFLOW: '0',
+      VERIFY_HEALTH_PROBE: '0',
+      ...overrideEnv,
+      ...(opts.env ?? {}),
+      PATH: envPath,
+    },
     input: stdinStr,
     encoding: 'utf-8',
     timeout: 15000,
@@ -131,6 +139,11 @@ function runStopDev(opts: { cwd: string; hookCwd?: string; ghStub?: string; env?
     cwd: opts.cwd,
     env: {
       ...process.env,
+      // v18.21.0: E2E 12 场景测的是"老三阶段"（PR/Learning/cleanup），
+      // 不验证 P5 deploy workflow + P6 health probe（独立 stop-hook-7stage smoke 覆盖）
+      // 默认 disable，单 case 可以在 opts.env 里 override
+      VERIFY_DEPLOY_WORKFLOW: '0',
+      VERIFY_HEALTH_PROBE: '0',
       CLAUDE_HOOK_CWD: opts.hookCwd ?? opts.cwd,
       ...(opts.env ?? {}),
       PATH: envPath,

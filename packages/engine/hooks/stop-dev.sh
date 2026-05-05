@@ -36,9 +36,26 @@ if [[ ! -d "$dev_state_dir" ]]; then
 fi
 
 # 找任意 dev-active-*.json（理论上同时只有一个）
+# v18.21.0: ghost 过滤 — 远端 sync 来的状态文件不该 block 本机 stop hook
+#   判据: session_id="unknown"
+#   理由: 本机 worktree-manage.sh 总是写真 session_id（CLAUDE_SESSION_ID 或
+#         "headed-PID-branch"），只有远端 worker sync 没传 session_id 才出
+#         "unknown"。命中 → 自动 rm + continue
 dev_state=""
 for _f in "$dev_state_dir"/dev-active-*.json; do
-    [[ -f "$_f" ]] && { dev_state="$_f"; break; }
+    [[ -f "$_f" ]] || continue
+
+    sid=$(jq -r '.session_id // ""' "$_f" 2>/dev/null || echo "")
+
+    if [[ "$sid" == "unknown" ]]; then
+        wt=$(jq -r '.worktree // ""' "$_f" 2>/dev/null || echo "")
+        echo "[stop-dev] 自动清理 ghost dev-active (session_id=unknown): $_f (wt=$wt)" >&2
+        rm -f "$_f"
+        continue
+    fi
+
+    dev_state="$_f"
+    break
 done
 
 if [[ -z "$dev_state" ]]; then
@@ -73,7 +90,14 @@ if ! type verify_dev_complete &>/dev/null; then
     exit 0
 fi
 
-result=$(verify_dev_complete "$branch" "$worktree_path" "$main_repo" 2>/dev/null) || true
+# v18.21.0: 默认启用 P5 (deploy workflow) + P6 (health probe)
+# escape hatch: 用户外部 export VERIFY_*=0 可禁用（:= 仅在变量未设时赋默认）
+result=$(
+    : "${VERIFY_DEPLOY_WORKFLOW:=1}"
+    : "${VERIFY_HEALTH_PROBE:=1}"
+    export VERIFY_DEPLOY_WORKFLOW VERIFY_HEALTH_PROBE
+    verify_dev_complete "$branch" "$worktree_path" "$main_repo" 2>/dev/null
+) || true
 [[ -z "$result" ]] && result='{"status":"blocked","reason":"verify_dev_complete 无输出，fail-closed"}'
 
 status=$(echo "$result" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")

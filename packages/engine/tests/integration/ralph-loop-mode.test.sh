@@ -48,7 +48,7 @@ run_stop_dev() {
 # Case A: .cecelia/dev-active 不存在 → 普通对话放行（exit 0）
 A_REPO="$TMPROOT/case-a"
 mkdir -p "$A_REPO"
-( cd "$A_REPO" && git init -q -b main && git commit -q --allow-empty -m init )
+( cd "$A_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 out=$(run_stop_dev "$A_REPO")
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
 assert_exit_code "Case A 状态文件不存在 → exit 0" "0" "$exit_code"
@@ -57,7 +57,7 @@ assert_exit_code "Case A 状态文件不存在 → exit 0" "0" "$exit_code"
 B_REPO="$TMPROOT/case-b"
 B_WT="$TMPROOT/case-b-worktree"
 mkdir -p "$B_REPO/.cecelia"
-( cd "$B_REPO" && git init -q -b main && git commit -q --allow-empty -m init && git worktree add "$B_WT" -b cp-test-b 2>/dev/null )
+( cd "$B_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git worktree add "$B_WT" -b cp-test-b 2>/dev/null )
 cat > "$B_REPO/.cecelia/dev-active-cp-test-b.json" <<EOF
 {"branch":"cp-test-b","worktree":"$B_WT","started_at":"2026-05-04T00:00:00Z","session_id":"test"}
 EOF

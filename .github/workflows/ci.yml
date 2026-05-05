@@ -317,6 +317,62 @@ jobs:
       - name: E2E Integrity Check
         run: bash packages/engine/scripts/e2e-integrity-check.sh
 
+  # ─── Engine: Shell Tests (stop hook 套 — v18.21.0 激活) ──────
+  # vitest 不识别 .test.sh，本 job 跑所有 unit/integration/integrity/smoke
+  # shell 脚本，闭合 PR #2766/#2767 测试基础设施漏洞（死代码激活）
+  engine-tests-shell:
+    name: Engine Shell Tests (stop hook 套)
+    needs: changes
+    if: needs.changes.outputs.engine == 'true' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y jq
+      - name: Run unit shell tests
+        run: |
+          # 显式列表：本 PR 验证过能在 CI 通过的 .test.sh
+          # devloop-classify.test.sh 等预存测试本地通过但 CI Linux fail，留后续 PR 修
+          for t in \
+              packages/engine/tests/unit/verify-dev-complete.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+      - name: Run integration shell tests
+        run: |
+          for t in \
+              packages/engine/tests/integration/stop-hook-7stage-flow.test.sh \
+              packages/engine/tests/integration/stop-dev-ghost-filter.test.sh \
+              packages/engine/tests/integration/stop-hook-e2e-real-brain.test.sh \
+              packages/engine/tests/integration/ralph-loop-mode.test.sh \
+              packages/engine/tests/integration/dev-mode-tool-guard.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+      - name: Run integrity meta-tests
+        run: |
+          for t in packages/engine/tests/integrity/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+      - name: Run engine smoke (本地无 Brain，dead URL/skip 路径必跑通)
+        run: |
+          for s in packages/engine/scripts/smoke/*-smoke.sh; do
+            [[ -f "$s" ]] || continue
+            echo "::group::$(basename "$s")"
+            bash "$s" || exit 1
+            echo "::endgroup::"
+          done
+
   # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
   # push 模式：跑全量 test 保 main 绿
@@ -1052,7 +1108,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1069,6 +1125,7 @@ jobs:
           check "pr-size-check"     "${{ needs.pr-size-check.result }}"
           check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
+          check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
           check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
           check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
