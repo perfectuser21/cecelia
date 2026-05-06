@@ -40,7 +40,8 @@ router.get('/:id/dag', async (req, res) => {
     // 1. initiative_runs（最新一条）
     const runQ = await pool.query(
       `SELECT id, phase, cost_usd, started_at, deadline_at, completed_at,
-              current_task_id, merged_task_ids, failure_reason, contract_id
+              current_task_id, merged_task_ids, failure_reason, contract_id,
+              journey_type
        FROM initiative_runs
        WHERE initiative_id::text = $1
        ORDER BY created_at DESC
@@ -143,6 +144,7 @@ router.get('/:id/dag', async (req, res) => {
     return res.json({
       initiative_id: id,
       phase,
+      journey_type: run?.journey_type || 'autonomous',
       prd_content: contract ? contract.prd_content : null,
       contract_content: contract ? contract.contract_content : null,
       e2e_acceptance: contract ? contract.e2e_acceptance : null,
