@@ -182,12 +182,42 @@ async function recordFailure(key = 'default') {
 }
 
 /**
- * Force reset a circuit breaker
+ * Force reset a circuit breaker — 同步内存 + DB DELETE（彻底清除）
+ *
+ * 单元测试清场用 reset（删 DB 行）；运维 API 用 resetBreaker（DB UPDATE 留行做审计）。
  * @param {string} key
  */
 function reset(key = 'default') {
   breakers.set(key, defaultState());
   void _delete(key);
+}
+
+/**
+ * 运维一键重置（W7.2 Bug #D）：内存 Map + DB UPDATE 同步置为 CLOSED
+ *
+ * 与 reset() 的差别：reset 删 DB 行，resetBreaker UPDATE 行（保留行做审计观测）。
+ * cecelia-run breaker 长期 OPEN 时主理人通过 POST /api/brain/circuit-breaker/:key/reset 触发。
+ * @param {string} key
+ * @returns {Promise<{state:string, failures:number, lastFailureAt:number|null, openedAt:number|null}>}
+ */
+async function resetBreaker(key = 'default') {
+  breakers.set(key, defaultState());
+  try {
+    await pool.query(
+      `INSERT INTO circuit_breaker_states (key, state, failures, last_failure_at, opened_at, updated_at)
+       VALUES ($1, 'CLOSED', 0, NULL, NULL, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         state           = 'CLOSED',
+         failures        = 0,
+         last_failure_at = NULL,
+         opened_at       = NULL,
+         updated_at      = NOW()`,
+      [key]
+    );
+  } catch (err) {
+    console.warn(`[circuit-breaker] resetBreaker(${key}) DB 写失败: ${err.message}`);
+  }
+  return { ...breakers.get(key) };
 }
 
 /**
@@ -208,6 +238,7 @@ export {
   recordSuccess,
   recordFailure,
   reset,
+  resetBreaker,
   getAllStates,
   loadFromDB,
   FAILURE_THRESHOLD,

@@ -39,6 +39,7 @@ vi.mock('../../tick.js', () => ({
 vi.mock('../../circuit-breaker.js', () => ({
   getState: vi.fn(() => ({ state: 'CLOSED', failures: 0 })),
   reset: vi.fn(),
+  resetBreaker: vi.fn(async () => ({ state: 'CLOSED', failures: 0, lastFailureAt: null, openedAt: null })),
   getAllStates: vi.fn(() => ({})),
 }));
 
