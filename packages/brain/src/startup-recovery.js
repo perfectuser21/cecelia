@@ -16,13 +16,68 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync, statSync } from 'fs';
 import { join } from 'path';
 import { withLock } from './utils/cleanup-lock.js';
 
 const REPO_ROOT = process.env.REPO_ROOT || '/Users/administrator/perfect21/cecelia';
 const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
+
+// W7.3 Bug #E: 活跃 lock 时间窗（24h 内修改的 lock 视为活跃）
+const ACTIVE_LOCK_WINDOW_MS = 24 * 3600 * 1000;
+
+/**
+ * W7.3 Bug #E: 检测 worktree 是否含活跃 dev lock，命中则不应清理。
+ *
+ * 命中规则（任一满足即视为活跃，跳过删除）：
+ *   1) <worktreePath>/.dev-lock 文件存在且 mtime 在 24h 内
+ *   2) <worktreePath>/.dev-mode 或 .dev-mode.* 文件存在且 mtime 在 24h 内
+ *
+ * 设计动机：5/6 startup-recovery 误清 4 个正在使用的 cp-* worktree。
+ * 24h 窗口足够覆盖一次正常 /dev 流程，超时则视为残留可清理。
+ *
+ * @param {string} worktreePath - worktree 根目录绝对路径
+ * @returns {boolean} true = 含活跃 lock，应跳过清理
+ */
+export function hasActiveDevLock(worktreePath) {
+  const now = Date.now();
+
+  // 1) .dev-lock 在 worktree 根
+  const lockPath = join(worktreePath, '.dev-lock');
+  if (existsSync(lockPath)) {
+    try {
+      const mtime = statSync(lockPath).mtimeMs;
+      if (now - mtime < ACTIVE_LOCK_WINDOW_MS) return true;
+    } catch {
+      // stat 失败 → 保守不视为活跃，继续检查 .dev-mode.*
+    }
+  }
+
+  // 2) .dev-mode / .dev-mode.<branch> per-branch lock
+  let entries = [];
+  try {
+    entries = readdirSync(worktreePath);
+  } catch {
+    return false; // 读不了 worktree → 不能判断，让上层走原 active-paths 逻辑
+  }
+
+  for (const raw of entries) {
+    // 兼容两种返回：字符串（默认）或 Dirent 对象（withFileTypes:true）
+    const name = typeof raw === 'string' ? raw : (raw && raw.name);
+    if (typeof name !== 'string') continue;
+    if (name !== '.dev-mode' && !name.startsWith('.dev-mode.')) continue;
+    const fp = join(worktreePath, name);
+    try {
+      const mtime = statSync(fp).mtimeMs;
+      if (now - mtime < ACTIVE_LOCK_WINDOW_MS) return true;
+    } catch {
+      // 单文件 stat 失败 → 跳过这一个，继续检查下一个
+    }
+  }
+
+  return false;
+}
 
 /**
  * 清理孤立的 git worktree 目录
@@ -33,7 +88,7 @@ const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
  * @returns {Promise<{ pruned: number, removed: number, errors: string[] }>}
  */
 export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase = WORKTREE_BASE } = {}) {
-  const stats = { pruned: 0, removed: 0, errors: [], skipped_locked: 0 };
+  const stats = { pruned: 0, removed: 0, errors: [], skipped_locked: 0, skipped_active_lock: 0 };
 
   // Brain 启动时拿锁 — 与运行中的 zombie-cleaner / zombie-sweep / cecelia-run cleanup trap
   // 互斥，否则 git worktree prune 期间别人 worktree remove 会撕坏 .git/worktrees 元数据
@@ -76,6 +131,14 @@ export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase
         if (!entry.isDirectory()) continue;
         const fullPath = join(worktreeBase, entry.name);
         if (!activePaths.has(fullPath)) {
+          // W7.3 Bug #E: 含活跃 .dev-lock / .dev-mode.* 的 worktree 不删
+          // (5/6 误清 4 个 cp-* worktree 事故根因)
+          if (hasActiveDevLock(fullPath)) {
+            stats.skipped_active_lock++;
+            console.log('[StartupRecovery:cleanupStaleWorktrees] skip active-lock worktree:', fullPath,
+              JSON.stringify({ cleanup_type: 'worktree_dir', path: fullPath, result: 'skipped_active_lock' }));
+            continue;
+          }
           try {
             rmSync(fullPath, { recursive: true, force: true });
             stats.removed++;
@@ -96,7 +159,7 @@ export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase
     console.warn('[StartupRecovery:cleanupStaleWorktrees] cleanup-lock contention — skipping worktree cleanup at startup (will retry next zombie-sweep tick)');
   }
 
-  console.log(`[StartupRecovery:cleanupStaleWorktrees] done worktrees_pruned=${stats.pruned} stale_removed=${stats.removed} skipped_locked=${stats.skipped_locked}`);
+  console.log(`[StartupRecovery:cleanupStaleWorktrees] done worktrees_pruned=${stats.pruned} stale_removed=${stats.removed} skipped_locked=${stats.skipped_locked} skipped_active_lock=${stats.skipped_active_lock}`);
   return stats;
 }
 

@@ -17,6 +17,7 @@ vi.mock('fs', () => ({
   rmSync: vi.fn(),
   readFileSync: vi.fn(),
   unlinkSync: vi.fn(),
+  statSync: vi.fn(),
 }));
 
 // Mock cleanup-lock — fs mock 让真锁失败，pass-through 让单测走原路径
@@ -28,12 +29,13 @@ vi.mock('../utils/cleanup-lock.js', () => ({
 }));
 
 import { execSync } from 'child_process';
-import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync, statSync } from 'fs';
 import {
   cleanupStaleWorktrees,
   cleanupStaleLockSlots,
   cleanupStaleDevModeFiles,
   runStartupRecovery,
+  hasActiveDevLock,
 } from '../startup-recovery.js';
 
 const TEST_REPO = '/tmp/test-repo';
@@ -106,6 +108,172 @@ describe('cleanupStaleWorktrees', () => {
 
     expect(stats.removed).toBe(0);
     expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  // W7.3 Bug #E: 活跃 lock 保护
+  it('[BEHAVIOR] worktree 不在 git list 但有活跃 .dev-lock → 跳过删除', async () => {
+    execSync.mockReturnValueOnce(''); // prune ok
+    execSync.mockReturnValueOnce('worktree /tmp/test-repo\n'); // git list 只有 main
+
+    const wtName = 'cp-active';
+    const wtPath = `${TEST_WORKTREES}/${wtName}`;
+    const lockPath = `${wtPath}/.dev-lock`;
+
+    existsSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) return true;
+      if (p === lockPath) return true;
+      return false;
+    });
+    // 第一次 readdirSync = WORKTREE_BASE 列表，第二次 = wtPath 内文件
+    readdirSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) {
+        return [{ name: wtName, isDirectory: () => true }];
+      }
+      if (p === wtPath) {
+        return ['.dev-lock', 'src'];
+      }
+      return [];
+    });
+    statSync.mockReturnValue({ mtimeMs: Date.now() - 60_000 }); // 1 分钟前
+
+    const stats = await cleanupStaleWorktrees({ repoRoot: TEST_REPO, worktreeBase: TEST_WORKTREES });
+
+    expect(stats.skipped_active_lock).toBe(1);
+    expect(stats.removed).toBe(0);
+    expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  it('[BEHAVIOR] worktree 含 .dev-mode.cp-xyz 24h 内修改 → 跳过删除', async () => {
+    execSync.mockReturnValueOnce('');
+    execSync.mockReturnValueOnce('worktree /tmp/test-repo\n');
+
+    const wtName = 'cp-active2';
+    const wtPath = `${TEST_WORKTREES}/${wtName}`;
+    const devModePath = `${wtPath}/.dev-mode.cp-xyz`;
+
+    existsSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) return true;
+      if (p === `${wtPath}/.dev-lock`) return false;
+      return false;
+    });
+    readdirSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) {
+        return [{ name: wtName, isDirectory: () => true }];
+      }
+      if (p === wtPath) {
+        return ['.dev-mode.cp-xyz', 'src'];
+      }
+      return [];
+    });
+    statSync.mockImplementation((p) => {
+      if (p === devModePath) return { mtimeMs: Date.now() - 30 * 60_000 }; // 30 分钟前
+      return { mtimeMs: 0 };
+    });
+
+    const stats = await cleanupStaleWorktrees({ repoRoot: TEST_REPO, worktreeBase: TEST_WORKTREES });
+
+    expect(stats.skipped_active_lock).toBe(1);
+    expect(stats.removed).toBe(0);
+    expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  it('worktree 含 .dev-lock 但 mtime 超过 24h → 视为残留，正常清理', async () => {
+    execSync.mockReturnValueOnce('');
+    execSync.mockReturnValueOnce('worktree /tmp/test-repo\n');
+
+    const wtName = 'cp-stale';
+    const wtPath = `${TEST_WORKTREES}/${wtName}`;
+    const lockPath = `${wtPath}/.dev-lock`;
+
+    existsSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) return true;
+      if (p === lockPath) return true;
+      return false;
+    });
+    readdirSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) {
+        return [{ name: wtName, isDirectory: () => true }];
+      }
+      if (p === wtPath) {
+        return ['.dev-lock'];
+      }
+      return [];
+    });
+    statSync.mockReturnValue({ mtimeMs: Date.now() - 25 * 3600 * 1000 }); // 25h 前
+    rmSync.mockReturnValue(undefined);
+
+    const stats = await cleanupStaleWorktrees({ repoRoot: TEST_REPO, worktreeBase: TEST_WORKTREES });
+
+    expect(stats.skipped_active_lock).toBe(0);
+    expect(stats.removed).toBe(1);
+  });
+
+  it('worktree 无 lock → 正常清理（保护逻辑不影响普通 stale 路径）', async () => {
+    execSync.mockReturnValueOnce('');
+    execSync.mockReturnValueOnce('worktree /tmp/test-repo\n');
+
+    const wtName = 'plain-stale';
+    const wtPath = `${TEST_WORKTREES}/${wtName}`;
+
+    existsSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) return true;
+      if (p === `${wtPath}/.dev-lock`) return false;
+      return false;
+    });
+    readdirSync.mockImplementation((p) => {
+      if (p === TEST_WORKTREES) {
+        return [{ name: wtName, isDirectory: () => true }];
+      }
+      if (p === wtPath) {
+        return ['src', 'README.md'];
+      }
+      return [];
+    });
+    rmSync.mockReturnValue(undefined);
+
+    const stats = await cleanupStaleWorktrees({ repoRoot: TEST_REPO, worktreeBase: TEST_WORKTREES });
+
+    expect(stats.skipped_active_lock).toBe(0);
+    expect(stats.removed).toBe(1);
+  });
+});
+
+describe('hasActiveDevLock（W7.3 Bug #E 保护逻辑）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('.dev-lock 在 24h 内 → true', () => {
+    existsSync.mockImplementation(p => p.endsWith('.dev-lock'));
+    readdirSync.mockReturnValue([]);
+    statSync.mockReturnValue({ mtimeMs: Date.now() - 1000 });
+    expect(hasActiveDevLock('/tmp/wt')).toBe(true);
+  });
+
+  it('.dev-mode.<branch> 在 24h 内 → true', () => {
+    existsSync.mockReturnValue(false);
+    readdirSync.mockReturnValue(['.dev-mode.cp-xyz', 'README.md']);
+    statSync.mockReturnValue({ mtimeMs: Date.now() - 60_000 });
+    expect(hasActiveDevLock('/tmp/wt')).toBe(true);
+  });
+
+  it('.dev-lock 超过 24h → false', () => {
+    existsSync.mockImplementation(p => p.endsWith('.dev-lock'));
+    readdirSync.mockReturnValue([]);
+    statSync.mockReturnValue({ mtimeMs: Date.now() - 25 * 3600 * 1000 });
+    expect(hasActiveDevLock('/tmp/wt')).toBe(false);
+  });
+
+  it('无 lock 文件 → false', () => {
+    existsSync.mockReturnValue(false);
+    readdirSync.mockReturnValue(['src', 'README.md']);
+    expect(hasActiveDevLock('/tmp/wt')).toBe(false);
+  });
+
+  it('readdirSync 抛错 → false（保守，让上层走原路径）', () => {
+    existsSync.mockReturnValue(false);
+    readdirSync.mockImplementation(() => { throw new Error('EACCES'); });
+    expect(hasActiveDevLock('/tmp/wt')).toBe(false);
   });
 });
 
