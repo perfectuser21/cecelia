@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5.0 GAN Layer 2a：
   Generator 角色，读取 PRD，产出 3 份合同产物（sprint-prd.md + contract-dod-ws{N}.md 只装 [ARTIFACT] + tests/ws{N}/*.test.ts 真实失败测试）。
   合同测试代码进入 GAN 对抗，Reviewer 做 Mutation testing 挑战测试强度。
-version: 5.0.0
+version: 6.0.0
 created: 2026-04-08
-updated: 2026-04-20
+updated: 2026-05-06
 changelog:
+  - 6.0.0: Working Skeleton — 识别 is_skeleton task；按 journey_type 切换 E2E test 模板（4 种）；contract-dod-ws0.md 加 YAML header
   - 5.0.0: TDD 融合 — 合同产出 3 份产物（sprint-prd.md + contract-dod-ws{N}.md 只剩 [ARTIFACT] + tests/ws{N}/*.test.ts 真实失败测试 Red 证据）；合同末尾加 Test Contract 索引表；严禁 contract-dod-ws 出现 [BEHAVIOR] 条目
   - 4.4.0: contract-dod-ws{N}.md 写入路径改为 ${SPRINT_DIR}/contract-dod-ws{N}.md（防止多次运行时根目录文件覆盖）
   - 4.3.0: 每个 workstream 输出独立 contract-dod-ws{N}.md 文件并 push 到 propose branch，供 Generator 原样复制 + CI 完整性校验
@@ -60,6 +61,12 @@ Q: 这个条目能不能只靠"检查文件内容或结构"验证？
 
 ### Step 1: 读取 PRD
 
+**⚠️ Skeleton Task 检测（优先执行）**
+
+从任务 payload 读取 `is_skeleton`：
+- `is_skeleton === true` → 本任务是 Skeleton Task，进入 Step 1.5（E2E 模板流程），跳过普通 Step 2
+- 否则 → 正常流程，继续当前 Step 1
+
 ```bash
 # TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_ROUND 由 cecelia-run 通过 prompt 注入，直接使用：
 # TASK_ID={TASK_ID}
@@ -82,6 +89,123 @@ if [ -n "$REVIEW_BRANCH" ]; then
   git show "origin/${REVIEW_BRANCH}:${SPRINT_DIR}/contract-review-feedback.md" 2>/dev/null || true
 fi
 ```
+
+---
+
+### Step 1.5: Skeleton Task 专用 E2E 模板（仅 is_skeleton=true 时执行）
+
+**从 Brain API 读 journey_type：**
+```bash
+curl localhost:5221/api/brain/initiatives/${INITIATIVE_ID} | jq -r '.journey_type // "autonomous"'
+```
+若 API 不可达，从 sprint-prd.md 第一行读 `journey_type:` 字段作为 fallback。
+
+**根据 journey_type 写入 `${SPRINT_DIR}/tests/ws0/skeleton.test.ts`（选一种）：**
+
+**user_facing 模板：**
+```typescript
+import { test, expect, chromium } from '@playwright/test';
+// SKELETON E2E — user_facing
+test('skeleton: [入口操作] → [预期结果]', async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto('http://localhost:5211');
+  // 替换 [入口操作]：navigate + trigger
+  await expect(page.locator('[data-testid="skeleton-result"]')).toBeVisible();
+  await browser.close();
+});
+```
+
+**autonomous 模板：**
+```typescript
+import { describe, it, expect } from 'vitest';
+import pool from '../../../packages/brain/src/db.js';
+// SKELETON E2E — autonomous
+describe('skeleton: [触发事件] → DB 终态', () => {
+  it('injects event and verifies DB terminal state', async () => {
+    await pool.query(`INSERT INTO tasks (task_type, status, payload) VALUES ($1, $2, $3)`,
+      ['test_event', 'queued', JSON.stringify({ skeleton: true })]);
+    const result = await pollDB(5000, async () => {
+      const r = await pool.query(
+        `SELECT * FROM tasks WHERE task_type = $1 AND status = $2 LIMIT 1`,
+        ['test_event', 'completed']
+      );
+      return r.rows[0] || null;
+    });
+    expect(result).toBeTruthy();
+  });
+});
+async function pollDB(timeoutMs: number, fn: () => Promise<any>) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = await fn();
+    if (r) return r;
+    await new Promise(res => setTimeout(res, 200));
+  }
+  return null;
+}
+```
+
+**dev_pipeline 模板：**
+```typescript
+import { describe, it, expect } from 'vitest';
+import pool from '../../../packages/brain/src/db.js';
+// SKELETON E2E — dev_pipeline
+describe('skeleton: mock task dispatch → callback written', () => {
+  it('creates task and verifies pr_url callback written to DB', async () => {
+    const r = await pool.query(
+      `INSERT INTO tasks (task_type, status, payload) VALUES ('harness_task', 'queued', $1) RETURNING id`,
+      [JSON.stringify({ initiative_id: 'test', is_skeleton: true })]
+    );
+    const taskId = r.rows[0].id;
+    await pool.query(
+      `UPDATE tasks SET status = 'completed', result = $1 WHERE id = $2`,
+      [JSON.stringify({ pr_url: 'https://github.com/test/pr/1' }), taskId]
+    );
+    const check = await pool.query(`SELECT result FROM tasks WHERE id = $1`, [taskId]);
+    expect(check.rows[0].result?.pr_url).toMatch(/github\.com/);
+  });
+});
+```
+
+**agent_remote 模板：**
+```typescript
+import { describe, it, expect } from 'vitest';
+import pool from '../../../packages/brain/src/db.js';
+// SKELETON E2E — agent_remote
+describe('skeleton: Brain dispatch → bridge callback → DB written', () => {
+  it('dispatches command and verifies executed=true in DB', async () => {
+    const r = await pool.query(
+      `INSERT INTO tasks (task_type, status, payload) VALUES ('agent_remote', 'queued', $1) RETURNING id`,
+      [JSON.stringify({ command: 'echo skeleton', target: 'us-mac' })]
+    );
+    const taskId = r.rows[0].id;
+    await pool.query(
+      `UPDATE tasks SET status = 'completed', result = $1 WHERE id = $2`,
+      [JSON.stringify({ executed: true, output: 'skeleton' }), taskId]
+    );
+    const check = await pool.query(`SELECT result FROM tasks WHERE id = $1`, [taskId]);
+    expect(check.rows[0].result?.executed).toBe(true);
+  });
+});
+```
+
+**在 `contract-dod-ws0.md` 开头写入 YAML header：**
+```markdown
+---
+skeleton: true
+journey_type: <推断到的 journey_type 值>
+---
+```
+
+**跑测试确认红（记录 Red evidence）：**
+```bash
+cd /path/to/worktree
+npx vitest run "${SPRINT_DIR}/tests/ws0/skeleton.test.ts" 2>&1 | tail -20
+```
+确认有 FAIL 输出，将摘要记入 contract-draft.md 的 Test Contract 表格。
+
+---
 
 ### Step 2: 写合同草案
 
