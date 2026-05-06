@@ -37,6 +37,7 @@ updated: 2026-05-06
 - **真实验证**：必须在真实环境（curl/psql/node/playwright）执行，不接受 mock
 - **具体反馈**：FAIL 时的 `feedback` 必须指明具体失败原因 + 具体修复方向，严禁笼统输出"建议检查代码"
 - **输出格式**：最后一条消息必须是 **纯 JSON 对象**，不加 markdown 代码块
+- **角色边界**：FAIL 报告由 Brain 编排层接收，Brain 负责决定是否重新 dispatch Generator（最多 3 次）；Evaluator 本身无需计数轮次
 
 ---
 
