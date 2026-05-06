@@ -3,10 +3,11 @@ id: harness-planner-skill
 description: |
   Harness Planner — Harness v2 阶段 A Layer 1：把用户需求展开为 Initiative PRD + 可调度 Task DAG。
   输出 sprint-prd.md（What，不写 How）+ task-plan.json（4-5 Task，含 depends_on / dod / files / complexity / estimated_minutes），供 Initiative Runner 入库。
-version: 6.0.0
+version: 7.0.0
 created: 2026-04-08
-updated: 2026-04-19
+updated: 2026-05-06
 changelog:
+  - 7.0.0: Working Skeleton — Step 0.5 journey_type 推断（4 类 journey）+ Skeleton Task 强制首位；task-plan.json 根加 journey_type/journey_type_reason；每个 task 加可选 is_skeleton 字段
   - 6.0.0: Harness v2 M2 — 增产 task-plan.json（DAG）。强制 4-5 Task（>5 需 justification，>8 拒绝）；每 Task 20-60min；必须输出 DAG；task_id 为逻辑 ID（入库时由 Brain 映射 UUID）
   - 5.0.0: Step 0 升级为 Brain API 上下文采集（不读代码实现细节）+ 歧义自检（9类）+ PRD 模板结构化
   - 4.1.0: 新增 Step 0 — 写 PRD 前先读取相关代码文件
@@ -52,6 +53,23 @@ curl localhost:5221/api/brain/context
 - **有效决策**：PRD 不能与之矛盾
 
 **边界**：只读运行时上下文，不探索代码实现细节。
+
+---
+
+### Step 0.5: 推断 journey_type（Working Skeleton 前置）
+
+根据用户请求描述和涉及文件判断：
+
+```
+if 涉及 apps/dashboard/ → user_facing
+elif 仅涉及 packages/brain/ → autonomous
+elif 涉及 packages/engine/（hooks/skills）→ dev_pipeline
+elif 涉及远端 agent 协议 / bridge / cecelia-run → agent_remote
+elif 同时命中多个 → 取起点最靠前（UI > tick > task dispatch > bridge）
+elif 无法判断 → 默认 autonomous
+```
+
+记录：`journey_type: <值>，推断依据：<1 句话>`，写入 task-plan.json 根字段。
 
 ---
 
@@ -156,11 +174,14 @@ mkdir -p "$SPRINT_DIR"
 ```json
 {
   "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 内部逻辑",
   "justification": "（可选；tasks.length > 5 时必填）为什么需要 N 个 Task",
   "tasks": [
     {
-      "task_id": "ws1",
-      "title": "建立 Schema（30-60字简述）",
+      "task_id": "skeleton",
+      "is_skeleton": true,
+      "title": "端到端薄片（Skeleton）— <一句话描述全链路跑通目标>",
       "scope": "这个 Task 的范围。描述做什么（What），不写怎么做（How）。",
       "dod": [
         "[BEHAVIOR] 验收点 1（可运行验证）",
@@ -171,8 +192,8 @@ mkdir -p "$SPRINT_DIR"
         "packages/brain/src/xxx.js"
       ],
       "depends_on": [],
-      "complexity": "S",
-      "estimated_minutes": 30
+      "complexity": "M",
+      "estimated_minutes": 40
     },
     {
       "task_id": "ws2",
@@ -180,7 +201,7 @@ mkdir -p "$SPRINT_DIR"
       "scope": "...",
       "dod": ["[BEHAVIOR] ..."],
       "files": ["..."],
-      "depends_on": ["ws1"],
+      "depends_on": ["skeleton"],
       "complexity": "M",
       "estimated_minutes": 50
     }
@@ -194,6 +215,19 @@ mkdir -p "$SPRINT_DIR"
 - `complexity`: `S|M|L`
 - `estimated_minutes`: `20 ≤ n ≤ 60`（超出重拆）
 - `dod`: 至少 1 条，建议至少 1 个 `[BEHAVIOR]`
+- `journey_type`: `user_facing|autonomous|dev_pipeline|agent_remote`（Step 0.5 推断，写入根对象）
+- `journey_type_reason`: 1 句推断依据
+- `is_skeleton`: boolean，第一个 task 必须为 `true`，其余省略
+
+**Working Skeleton 强制规则（不可跳过）**：
+1. `tasks[0].task_id` 必须为 `"skeleton"`，`is_skeleton: true`，`depends_on: []`
+2. `tasks[0].scope` 描述模板按 journey_type 填写：
+   - `user_facing`：端到端薄片：主理人点击 [入口] → 看到 [结果]，中间层可 stub
+   - `autonomous`：端到端薄片：注入 [触发事件] → DB 终态出现 [预期字段]，中间层可 stub
+   - `dev_pipeline`：端到端薄片：mock task 派发 → PR 创建（或 callback 回写），中间层可 stub
+   - `agent_remote`：端到端薄片：Brain 发指令 → bridge log 有回报 + DB 回写，中间层可 stub
+3. 所有其他 task 的 `depends_on` 必须包含 `"skeleton"`（直接或传递依赖）
+4. skeleton task `estimated_minutes` 设 40，`complexity` 设 M
 
 **输出格式**：stdout 末尾必须用 \`\`\`json ... \`\`\` 代码块包裹 task-plan.json（Brain Runner 会抓取）。
 
