@@ -1,56 +1,63 @@
-# PRD — fix(brain): mouth fallbacks 移除失效 codex/anthropic-api，改用 OAuth bridge
+# Harness Graph RetryPolicy + final_evaluate Interrupt (W2 + W5)
+
+**分支**: cp-05062124-w2-w5-graph-retry-interrupt
+**Spec**: `docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md` §W2 §W5
+**Plan**: `docs/superpowers/plans/2026-05-06-harness-langgraph-reliability.md` §W2 §W5
 
 ## 背景 / 问题
 
-当前活跃 model_profile 的 mouth 配置：
-```json
-{
-  "model": "claude-sonnet-4-6",
-  "provider": "anthropic",
-  "fallbacks": [
-    {"model": "codex/gpt-5.4-mini", "provider": "codex"},
-    {"model": "claude-sonnet-4-6", "provider": "anthropic-api"}
-  ]
-}
-```
+LangGraph 1.2.9 提供 5 件可靠性原语，Cecelia harness graph 当前未启用其中两件：
 
-**两个 fallback 都失效**：
-- `codex` provider：CLI refresh token 401（"Your refresh token has already been used... Please try signing in again"）
-- `anthropic-api` provider：信用余额 0（"Your credit balance is too low"）
+1. **节点级 RetryPolicy 全空** — 任何瞬时错（503/timeout/network blip）就让整 initiative 失败
+2. **关键决策点无 interrupt()** — final E2E 重试 3 次仍失败时直接 silent END，主理人不知，需手撕 SQL 才能介入
 
-加上 primary anthropic（bridge OAuth）经常被 8s timeout 截断，**mouth 整体几乎必失败**。每次失败堆积 `cecelia-run` 熔断 +1，累积 526 次 → 熔断 OPEN → dispatcher 全局停摆。
+本 PR 同时上这两件，是 spec §W2 + §W5 的最小可独立合并切片。
 
 ## 成功标准
 
-- **SC-001**: 活跃 profile 的 mouth.fallbacks 不再含 codex 或 anthropic-api provider
-- **SC-002**: 新 fallback 走 anthropic bridge（OAuth Claude Code），从 sonnet 降级到 haiku（同 provider，更稳更快）
-- **SC-003**: 其他 agent 配置（cortex / reflection / rumination）不受影响
-- **SC-004**: Brain 重启后 mouth 失败率应显著下降
+- [x] [BEHAVIOR] retry-policies.js 三个 policy 导出存在 — Test: tests/integration/harness-retry-policy.test.ts
+- [x] [BEHAVIOR] graph 节点配 retryPolicy — Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('retryPolicy: LLM_RETRY')||!c.includes('retryPolicy: DB_RETRY')||!c.includes('retryPolicy: NO_RETRY'))process.exit(1)"
+- [x] [BEHAVIOR] final_evaluate 在 fix_round>=3 时调 interrupt — Test: tests/integration/harness-interrupt-resume.test.ts
+- [x] [BEHAVIOR] /api/brain/harness-interrupts 路由可访问 — Test: tests/integration/harness-interrupt-resume.test.ts
+- [x] [ARTIFACT] retry-policies.js 文件存在 — Test: manual:node -e "require('fs').accessSync('packages/brain/src/workflows/retry-policies.js')"
+- [x] [ARTIFACT] harness-interrupts.js 路由文件存在 — Test: manual:node -e "require('fs').accessSync('packages/brain/src/routes/harness-interrupts.js')"
 
 ## 范围限定
 
 **在范围内**：
-- migration 266：UPDATE model_profiles 修改 mouth.fallbacks
-- 单元测试（grep SQL 内容，不依赖 DB）
+- 新建 `packages/brain/src/workflows/retry-policies.js`
+- 改 `packages/brain/src/workflows/harness-initiative.graph.js`：14+5 个 addNode 加 retryPolicy；finalEvaluateDispatchNode 加 interrupt()
+- 新建 `packages/brain/src/routes/harness-interrupts.js`
+- 改 `packages/brain/server.js` 注册新路由
+- 集成测试 2 个
 
 **不在范围内**：
-- llm-caller.js 的 implicit fallback 逻辑（line 224-235 anthropic-api 直连）— 后续 PR
-- 其他 agent fallback 调整
-- 修复 codex / anthropic-api 凭据（运维操作）
-
-## DoD（验收）
-
-- [x] [ARTIFACT] `packages/brain/migrations/266_mouth_fallback_oauth_only.sql` 创建
-- [x] [ARTIFACT] `packages/brain/src/__tests__/migration-266.test.js` 创建
-- [x] [BEHAVIOR] tests/migration-266: 6 个 it 全过（UPDATE 目标 / jsonb_set 路径 / 新 fallback / WHERE 精确 / 不动其他 agent / 背景注释）
+- thread_id 版本化（W1，独立 PR）
+- AbortSignal + watchdog（W3，独立 PR）
+- invoke→stream 改造 + Dashboard LiveMonitor（W4，独立 PR）
+- docker-executor OOM Promise reject（W6，独立 PR）
+- 运维清单 W7.x（独立 PR）
 
 ## 受影响文件
 
-- `packages/brain/migrations/266_mouth_fallback_oauth_only.sql`
-- `packages/brain/src/__tests__/migration-266.test.js`
+- `packages/brain/src/workflows/retry-policies.js` (new)
+- `packages/brain/src/routes/harness-interrupts.js` (new)
+- `packages/brain/src/workflows/harness-initiative.graph.js`
+- `packages/brain/server.js`
+- `tests/integration/harness-retry-policy.test.ts` (new)
+- `tests/integration/harness-interrupt-resume.test.ts` (new)
+
+## 风险与缓解
+
+| 风险 | 缓解 |
+|---|---|
+| LLM_RETRY retryOn 误判永久错为瞬时（账号锁死） | retryOn 函数 PERMANENT_ERROR_RE 严格白名单，单测覆盖 401/403/schema/parse 全部不重试 |
+| interrupt() 主理人不响应 → graph 永久挂起 | 24h 后视同 abort（待 W5 后续 PR 加超时机制；本 PR 仅打通通路） |
+| Command 用法在 LangGraph 1.2.9 行为变更 | LangGraph 1.2.9 是 spec 锁定版本，PostgresSaver 已支持 Command resume |
+| 路由依赖 task_events 表（W4 创建） | 路由 GET 失败不阻塞业务；POST 写 task_events 失败仅 warn 不阻断 resume |
 
 ## 部署后验证
 
-merge + Brain 重启（自动 apply migration）后：
-1. `psql -d cecelia -c "SELECT config->'mouth'->'fallbacks' FROM model_profiles WHERE is_active=true;"` 返回 `[{"model":"claude-haiku-4-5-20251001","provider":"anthropic"}]`
-2. `tail logs/brain-error.log | grep "mouth.*失败"` 显著减少
+合并 + Brain 重启后：
+1. `curl localhost:5221/api/brain/harness-interrupts` → 返回 `{"interrupts":[]}`（或既有未 resume 列表）
+2. `psql -d cecelia -c "SELECT 1"` 之外不需要 schema 改动

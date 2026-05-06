@@ -1,26 +1,28 @@
-# DoD: brain-image-docker-compose-plugin
+# DoD: W7.3 Bug #E startup-recovery cleanupStaleWorktrees 加活跃 lock 保护
 
 ## 概述
-PR #2789 log 落盘后看清 webhook deploy 永久失败的真根因：Brain image 内 docker CLI
-缺 compose subcommand → brain-deploy.sh 调 `docker compose -f docker-compose.yml up -d`
-报 "unknown shorthand flag: 'f' in -f"。修：apk add docker-cli-compose。
+5/6 startup-recovery 误清 4 个含活跃 dev-lock 的 cp-* worktree。修：cleanupStaleWorktrees
+删除前先检查 worktree 内是否含 24h 内修改的 .dev-lock 或 .dev-mode.<branch>，命中则跳过。
 
 ## 验收
 
-- [x] [BEHAVIOR] Dockerfile apk add 行含 docker-cli-compose
-  Test: manual:bash packages/engine/tests/integration/brain-image-docker-compose.test.sh
+- [x] [ARTIFACT] startup-recovery.js 导出 hasActiveDevLock 函数
+  Test: manual:node -e "const m=await import('./packages/brain/src/startup-recovery.js');if(typeof m.hasActiveDevLock!=='function')process.exit(1)"
 
-- [x] [BEHAVIOR] docker-cli + docker-cli-compose 同一 apk add（共享 layer）
-  Test: manual:bash packages/engine/tests/integration/brain-image-docker-compose.test.sh
+- [x] [BEHAVIOR] worktree 含活跃 .dev-lock → 不被清理（skipped_active_lock 计数 ≥1，目录还在）
+  Test: tests/integration/startup-recovery-active-lock.test.js
 
-- [x] [BEHAVIOR] docker-cli-compose 在 runtime stage 不在 deps stage
-  Test: manual:bash packages/engine/tests/integration/brain-image-docker-compose.test.sh
+- [x] [BEHAVIOR] worktree 含活跃 .dev-mode.cp-xyz → 不被清理
+  Test: tests/integration/startup-recovery-active-lock.test.js
 
-- [x] [BEHAVIOR] 真 build image 后 docker compose version 可执行（BUILD_IMAGE=1 本地验证 4/4 pass）
-  Test: manual:bash packages/engine/tests/integration/brain-image-docker-compose.test.sh
+- [x] [BEHAVIOR] .dev-lock mtime 超过 24h → 视为残留，正常清理（保护 false negative 不发生）
+  Test: tests/integration/startup-recovery-active-lock.test.js
 
-- [x] [ARTIFACT] Dockerfile 含 docker-cli-compose
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/Dockerfile','utf8'); if (!c.includes('docker-cli-compose')) process.exit(1)"
+- [x] [BEHAVIOR] worktree 无 lock → 正常清理（保护逻辑不破坏既有路径）
+  Test: tests/integration/startup-recovery-active-lock.test.js
 
-- [x] [ARTIFACT] 新建 brain-image-docker-compose.test.sh
-  Test: manual:node -e "require('fs').accessSync('packages/engine/tests/integration/brain-image-docker-compose.test.sh')"
+- [x] [BEHAVIOR] enhanced 单测 26 个全过（含 5 个新加 + 5 个 hasActiveDevLock 直测）
+  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=2048' npx vitest run src/__tests__/startup-recovery-enhanced.test.js"
+
+- [x] [ARTIFACT] Brain 版本 bump 到 1.228.3（package.json + .brain-versions + DEFINITION.md）
+  Test: manual:node -e "const v=require('./packages/brain/package.json').version;if(v!=='1.228.3')process.exit(1)"
