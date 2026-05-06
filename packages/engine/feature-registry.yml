@@ -934,3 +934,12 @@ changelog:
       - "tests/e2e/stop-hook-full-lifecycle.test.ts"
       - "tests/unit/verify-dev-complete.test.sh"
       - "scripts/smoke/ralph-loop-smoke.sh"
+  - version: "18.19.2"
+    date: "2026-05-06"
+    skill: "devgate"
+    change: "feat"
+    description: "[CONFIG] skeleton-shape-check CI — 新增 packages/engine/scripts/devgate/skeleton-shape-check.cjs；读 contract-dod-ws0.md YAML frontmatter journey_type，校验 tests/ws0/ 目录下测试文件 pattern（user_facing→playwright/chromium, autonomous→pollDB/await db, dev_pipeline→pr_url/gh pr, agent_remote→bridge/agent result）；harness-v5-checks.yml 追加 skeleton-shape-check job（continue-on-error: true 观察期软门禁）。TDD: Red commit 先行，4 个单测全绿。"
+    files:
+      - "scripts/devgate/skeleton-shape-check.cjs"
+      - "tests/devgate/skeleton-shape-check.test.ts"
+      - "../../.github/workflows/harness-v5-checks.yml"

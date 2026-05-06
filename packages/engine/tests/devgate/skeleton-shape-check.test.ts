@@ -31,6 +31,7 @@ describe('skeleton-shape-check', () => {
 
   it('exits 1 when skeleton dod changed but test file has wrong pattern for user_facing journey', () => {
     // Create temp git repo simulating a sprint with wrong-pattern test
+    // Files must be committed so git diff BASE...HEAD can detect them
     const tmpRepo = mkdtempSync(join(tmpdir(), 'ssc-repo-'));
     execSync('git init', { cwd: tmpRepo });
     execSync('git config user.email "test@test.com"', { cwd: tmpRepo });
@@ -43,16 +44,18 @@ describe('skeleton-shape-check', () => {
     writeFileSync(join(sprintDir, 'contract-dod-ws0.md'), dodContent);
     const testDir = join(sprintDir, 'tests', 'ws0');
     mkdirSync(testDir, { recursive: true });
-    // Wrong: no playwright/chromium/chrome-mcp
+    // Wrong: no playwright/chromium/chrome-mcp (deliberately avoids those keywords)
     writeFileSync(
       join(testDir, 'skeleton.test.ts'),
-      `// wrong content — no playwright/chromium\ndescribe("x", () => { it("y", () => {}); });\n`
+      `// db integration test\ndescribe("x", () => { it("y", () => {}); });\n`
     );
+    // Commit the sprint files so BASE=HEAD^ detects them
     execSync('git add .', { cwd: tmpRepo });
+    execSync('git commit -m "add sprint"', { cwd: tmpRepo });
 
     let exitCode = 0;
     try {
-      execSync(`BASE_REF=HEAD node "${SCRIPT}"`, {
+      execSync(`BASE_REF=HEAD^ node "${SCRIPT}"`, {
         cwd: tmpRepo,
         encoding: 'utf8',
       });
@@ -82,10 +85,12 @@ describe('skeleton-shape-check', () => {
       join(testDir, 'skeleton.test.ts'),
       `import { chromium } from 'playwright';\ndescribe("x", () => { it("y", async () => {}); });\n`
     );
+    // Commit so BASE=HEAD^ detects the change
     execSync('git add .', { cwd: tmpRepo });
+    execSync('git commit -m "add sprint"', { cwd: tmpRepo });
 
     try {
-      execSync(`BASE_REF=HEAD node "${SCRIPT}"`, {
+      execSync(`BASE_REF=HEAD^ node "${SCRIPT}"`, {
         cwd: tmpRepo,
         encoding: 'utf8',
       });
