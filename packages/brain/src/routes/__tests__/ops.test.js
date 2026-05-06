@@ -99,3 +99,25 @@ describe('ops — deploy REPO_ROOT path', () => {
     expect(scriptWithEnv).toBe('/custom/repo/root/scripts/deploy-local.sh');
   });
 });
+
+describe('feishu/impression mouth timeout — bridge OAuth 真实响应需 10-30s', () => {
+  it('updateFeishuImpression 必须用 timeout >= 60000，不能用 8000', async () => {
+    const { readFileSync } = await import('fs');
+    const opsPath = new URL('../ops.js', import.meta.url).pathname;
+    const src = readFileSync(opsPath, 'utf8');
+
+    const impressionCall = src.match(/callLLM\('mouth',\s*prompt,\s*\{\s*timeout:\s*(\d+)/);
+    expect(impressionCall, 'feishu/impression 应该调用 callLLM mouth with timeout option').not.toBeNull();
+    const timeoutVal = parseInt(impressionCall[1], 10);
+    expect(timeoutVal).toBeGreaterThanOrEqual(60000);
+    expect(timeoutVal).not.toBe(8000);
+  });
+
+  it('ops.js 不再含 8s timeout 用于 mouth callLLM', async () => {
+    const { readFileSync } = await import('fs');
+    const opsPath = new URL('../ops.js', import.meta.url).pathname;
+    const src = readFileSync(opsPath, 'utf8');
+    const badPattern = /callLLM\('mouth',[^)]*timeout:\s*8000/;
+    expect(src).not.toMatch(badPattern);
+  });
+});
