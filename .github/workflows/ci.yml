@@ -369,12 +369,27 @@ jobs:
             echo "::endgroup::"
           done
 
+  # ─── Migration 同号守护 ───────────────────────────────────
+  # 扫 packages/brain/migrations/*.sql 提取首数字前缀，发现同号即 fail。
+  # 教训：W7.4 / 2026-05 事故 — 264_failure_type_dispatch / 264_fix_progress_ledger
+  # 同号进 main，Brain 启动按字母序只跑了第一个，schema drift 半天才发现。
+  # 设为 brain-unit 前置 dep — 同号即不跑测试，省下 4×20min shard 时间。
+  lint-migration-unique-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migration version unique lint
+        run: node .github/workflows/scripts/lint-migration-unique-version.cjs
+      - name: Self-test (fixture cases)
+        run: bash .github/workflows/scripts/__tests__/lint-migration-unique-version.test.sh
+
   # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
   # push 模式：跑全量 test 保 main 绿
   # vitest 原生 --shard=i/N 按测试文件 hash 均匀分布，4 shards 并行
   brain-unit:
-    needs: changes
+    needs: [changes, lint-migration-unique-version]
     if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1113,7 +1128,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke]
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1131,6 +1146,7 @@ jobs:
           check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
+          check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
           check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
           check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
