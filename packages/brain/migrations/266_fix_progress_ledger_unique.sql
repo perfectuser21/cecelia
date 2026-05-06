@@ -1,4 +1,4 @@
--- Migration 264: fix progress_ledger missing UNIQUE constraint
+-- Migration 266: fix progress_ledger missing UNIQUE constraint
 -- 背景：088_progress_ledger.sql 建表时漏掉 UNIQUE(task_id, run_id, step_sequence)，
 -- 导致 progress-ledger.js 里的 ON CONFLICT 子句每次都报
 -- "there is no unique or exclusion constraint matching the ON CONFLICT specification"。
