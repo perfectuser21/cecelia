@@ -5,6 +5,40 @@
  */
 
 import { broadcast, WS_EVENTS } from '../websocket.js';
+import pool from '../db.js';
+
+/**
+ * 写一条 graph_node_update 事件到 task_events 表（W4 — streamMode 节点级进度）。
+ * 给 LiveMonitor 消费实时显示 harness graph 节点进度。
+ *
+ * Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md §W4
+ *
+ * @param {object} args
+ * @param {string} args.taskId
+ * @param {string} args.initiativeId
+ * @param {string} args.threadId
+ * @param {string} args.nodeName
+ * @param {number} args.attemptN
+ * @param {object} args.payloadSummary - summarizeNodeState 截断后的安全 payload
+ * @param {import('pg').Pool} [args.pool] - 测试可注入
+ * @returns {Promise<void>}
+ */
+export async function emitGraphNodeUpdate({
+  taskId,
+  initiativeId,
+  threadId,
+  nodeName,
+  attemptN,
+  payloadSummary,
+  pool: dbPool,
+} = {}) {
+  const dbp = dbPool || pool;
+  await dbp.query(
+    `INSERT INTO task_events (task_id, event_type, payload, created_at)
+     VALUES ($1, 'graph_node_update', $2::jsonb, NOW())`,
+    [taskId, JSON.stringify({ initiativeId, threadId, nodeName, attemptN, payloadSummary })]
+  );
+}
 
 /**
  * Publish task created event
