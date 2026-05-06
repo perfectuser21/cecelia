@@ -108,11 +108,40 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
     expect(result.command).toContain(result.container);
   });
 
-  it('失败路径：非零 exit_code 时 container_id 仍能读到（cidfile 未清理前读）', async () => {
+  it('失败路径（非 OOM）：非零 exit_code 时 container_id 仍能读到（cidfile 未清理前读）', async () => {
     const { executeInDocker, __test__ } = await loadExecutor();
     const taskId = 'task-meta-fail';
     const cidfilePath = __test__.cidFilePath(taskId);
     const fakeId = '0011223344556677';
+
+    // exit=1 是一般容器内业务失败，不是 OOM/SIGKILL，仍走 resolve 路径。
+    // 137/SIGKILL 在 Harness W6 后改走 reject — 由下面单独 case 覆盖。
+    mockSpawn.mockImplementation(() =>
+      makeFakeDockerProc({
+        stdout: '',
+        stderr: 'task failed',
+        code: 1,
+        cidToWrite: fakeId,
+        cidfilePath,
+      })
+    );
+
+    const result = await executeInDocker({
+      task: { id: taskId, task_type: 'dev' },
+      prompt: 'x',
+    });
+
+    expect(result.exit_code).toBe(1);
+    expect(result.container_id).toBe('001122334455');
+    expect(result.stderr).toBe('task failed');
+    expect(result.duration_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('Harness W6: OOM (exit=137) reject 时 error 上仍带 container_id 用于 forensic', async () => {
+    const { executeInDocker, __test__ } = await loadExecutor();
+    const taskId = 'task-meta-oom';
+    const cidfilePath = __test__.cidFilePath(taskId);
+    const fakeId = 'aabbccddeeff0011';
 
     mockSpawn.mockImplementation(() =>
       makeFakeDockerProc({
@@ -124,15 +153,16 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
       })
     );
 
-    const result = await executeInDocker({
+    const err = await executeInDocker({
       task: { id: taskId, task_type: 'dev' },
       prompt: 'x',
-    });
+    }).catch((e) => e);
 
-    expect(result.exit_code).toBe(137);
-    expect(result.container_id).toBe('001122334455');
-    expect(result.stderr).toBe('OOM killed');
-    expect(result.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe('OOM_KILLED');
+    expect(err.exit_code).toBe(137);
+    expect(err.container_id).toBe('aabbccddeeff'); // 前 12 位，cidfile 在 reject 前读
+    expect(err.stderr).toBe('OOM killed');
   });
 
   it('cidfile 未写入（docker 启动失败）时 container_id 返回 null', async () => {
