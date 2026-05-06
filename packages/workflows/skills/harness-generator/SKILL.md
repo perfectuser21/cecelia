@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 sprint-contract.md + tests/ws{N}/*.test.ts + contract-dod-ws{N}.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；**测试文件从合同原样复制，commit 1 后不可修改**（CI 强校验）。
-version: 5.0.0
+version: 6.0.0
 created: 2026-04-08
-updated: 2026-04-20
+updated: 2026-05-06
 changelog:
+  - 6.0.0: Working Skeleton — skeleton task 检测（is_skeleton）；允许 SKELETON STUB 注释；commit message 加 (Skeleton Red)/(Skeleton Green)；PR body 必须含 Stub 清单
   - 5.0.0: TDD × Superpowers 融合 — 两次 commit 纪律（commit 1 测试 Red / commit 2 实现 Green）+ 4 个 superpowers（test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review）；测试文件从合同原样 checkout，commit 1 后不可修改；Mode 2 harness_fix 走 systematic-debugging
   - 4.3.0: contract-dod-ws 读取路径改为 ${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md（与 Proposer 写入路径对齐）
   - 4.2.0: DoD 来源改为 ${SPRINT_DIR}/contract-dod-ws{N}.md（独立文件），DoD.md 加 contract_branch header 供 CI 完整性校验
@@ -84,6 +85,13 @@ for var in CONTRACT_BRANCH SPRINT_DIR BRAIN_URL WORKSTREAM_INDEX; do
   fi
 done
 ```
+
+**Skeleton Task 检测：**
+```bash
+IS_SKELETON=$(echo "$TASK_PAYLOAD" | jq -r '.is_skeleton // false')
+```
+若 `IS_SKELETON=true`，进入 **Skeleton 模式**：目标是让 E2E 测试从 Red 变 Green，中间层允许 stub。
+详见文件末尾 "## Skeleton 模式规则" 附录。
 
 ### Step 0.4: ★ git remote 验证（v6 P1-D）
 
@@ -221,6 +229,11 @@ fi
 
 **Red 证据贴进 commit 1 的 git notes 或临时保存在 /tmp/red-evidence.txt，后面进 PR body。**
 
+**Skeleton 模式**：`IS_SKELETON=true` 时，commit message 改为：
+```
+test(harness): skeleton e2e test (Skeleton Red)
+```
+
 ### Step 4: ★ TDD Green 阶段（commit 2 = 实现 + ARTIFACT 产物）
 
 逐个 [BEHAVIOR] 对应的 `it()` 写实现。**禁止修改 `sprints/*/tests/` 下的任何文件**——测试是合同一部分，改测试 = 改合同 = 重走 GAN。
@@ -243,6 +256,11 @@ git commit -m "feat(harness): ws${WS_IDX} implementation (Green)"
 1. commit 1 之后，任何 commit 都**不许修改** `sprints/*/tests/**/*.test.ts`
 2. commit 2+ 必须包含实现代码（`packages/` 或 `apps/` 目录变更），不能只改 docs
 3. commit 1 message 含 `(Red)`，commit 2 message 含 `(Green)`
+
+**Skeleton 模式**：`IS_SKELETON=true` 时：
+- commit message 改为：`feat(harness): skeleton implementation (Skeleton Green)`
+- 允许 stub 中间层（返回 hardcode），但每个 stub 必须有注释：`// SKELETON STUB — replaced in <task_id>`
+- stub 的函数签名/接口必须与最终实现兼容，不得为了省事修改接口
 
 ### Step 5: ★ Verification 阶段（push 前必须实跑 + 贴证据）
 
@@ -352,6 +370,38 @@ git push origin HEAD
 ```bash
 echo "{\"verdict\": \"FIXED\", \"fixes\": [\"<Feature X: 修复说明>\"], \"pr_url\": \"$PR_URL\"}"
 ```
+
+---
+
+## Skeleton 模式规则（IS_SKELETON=true 时适用）
+
+### 目标
+让全链路 E2E 测试从 Red 变 Green。不要求完整实现，中间层允许 stub。
+
+### Stub 规则（3 条，不可跳过）
+1. **注释标记**：每个 stub 函数/返回值必须有注释 `// SKELETON STUB — replaced in <task_id>`（填写将替换该 stub 的 feature task 的 task_id）
+2. **接口兼容**：stub 的函数签名、参数类型、返回结构必须和最终真实实现一致，不得因图省事而缩减接口
+3. **禁止改测试**：从合同 checkout 的 E2E 测试文件绝对不可修改（同 TDD 铁律）
+
+### Commit 结构（Skeleton Task）
+```
+commit 1: test(harness): skeleton e2e test (Skeleton Red)
+  — 只含 E2E 测试文件（tests/ws0/skeleton.test.ts）+ DoD.md
+
+commit 2: feat(harness): skeleton implementation (Skeleton Green)
+  — stub 实现，让 E2E 通过
+  — PR body 必须含 ## Stub 清单 section
+```
+
+### PR body 必须追加 Stub 清单（IS_SKELETON=true 时）
+```markdown
+## Stub 清单（Skeleton 阶段）
+
+| 文件 | 函数/块 | stub 内容 | 由哪个 Task 替换 |
+|------|---------|-----------|-----------------|
+| packages/brain/src/xxx.js | `processFoo()` | 返回硬编码 `{status: 'ok'}` | task_id: ws2 |
+```
+（每一行对应一个 SKELETON STUB 注释，一一对应，不可遗漏）
 
 ---
 

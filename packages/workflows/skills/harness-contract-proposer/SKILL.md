@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5.0 GAN Layer 2a：
   Generator 角色，读取 PRD，产出 3 份合同产物（sprint-prd.md + contract-dod-ws{N}.md 只装 [ARTIFACT] + tests/ws{N}/*.test.ts 真实失败测试）。
   合同测试代码进入 GAN 对抗，Reviewer 做 Mutation testing 挑战测试强度。
-version: 5.0.0
+version: 6.0.0
 created: 2026-04-08
-updated: 2026-04-20
+updated: 2026-05-06
 changelog:
+  - 6.0.0: Working Skeleton — 识别 is_skeleton task；按 journey_type 切换 E2E test 模板（4 种）；contract-dod-ws0.md 加 YAML header
   - 5.0.0: TDD 融合 — 合同产出 3 份产物（sprint-prd.md + contract-dod-ws{N}.md 只剩 [ARTIFACT] + tests/ws{N}/*.test.ts 真实失败测试 Red 证据）；合同末尾加 Test Contract 索引表；严禁 contract-dod-ws 出现 [BEHAVIOR] 条目
   - 4.4.0: contract-dod-ws{N}.md 写入路径改为 ${SPRINT_DIR}/contract-dod-ws{N}.md（防止多次运行时根目录文件覆盖）
   - 4.3.0: 每个 workstream 输出独立 contract-dod-ws{N}.md 文件并 push 到 propose branch，供 Generator 原样复制 + CI 完整性校验
@@ -60,12 +61,19 @@ Q: 这个条目能不能只靠"检查文件内容或结构"验证？
 
 ### Step 1: 读取 PRD
 
+**⚠️ Skeleton Task 检测（优先执行）**
+
+从任务 payload 读取 `is_skeleton`：
+- `is_skeleton === true` → 本任务是 Skeleton Task，进入 Step 1.5（E2E 模板流程），跳过普通 Step 2
+- 否则 → 正常流程，继续当前 Step 1
+
 ```bash
 # TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_ROUND 由 cecelia-run 通过 prompt 注入，直接使用：
 # TASK_ID={TASK_ID}
 # SPRINT_DIR={sprint_dir}
 # PLANNER_BRANCH={planner_branch}
 # PROPOSE_ROUND={propose_round}
+# INITIATIVE_ID={initiative_id} — Brain 通过 cecelia-run 注入；fallback: 从 PRD 文件名或 task payload.initiative_id 提取
 
 # PRD 在 planner 的分支上，fetch 后用 git show 读取（不依赖本地文件是否存在）
 git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
@@ -82,6 +90,127 @@ if [ -n "$REVIEW_BRANCH" ]; then
   git show "origin/${REVIEW_BRANCH}:${SPRINT_DIR}/contract-review-feedback.md" 2>/dev/null || true
 fi
 ```
+
+---
+
+### Step 1.5: Skeleton Task 专用 E2E 模板（仅 is_skeleton=true 时执行）
+
+**从 Brain API 读 journey_type：**
+```bash
+curl localhost:5221/api/brain/initiatives/${INITIATIVE_ID} | jq -r '.journey_type // "autonomous"'
+```
+若 API 不可达，用以下命令从 sprint-prd.md 读取 fallback：
+```bash
+JOURNEY_TYPE=$(grep -m1 "^journey_type:" "${SPRINT_DIR}/sprint-prd.md" | cut -d: -f2 | tr -d ' ') || JOURNEY_TYPE="autonomous"
+```
+
+**根据 journey_type 写入 `${SPRINT_DIR}/tests/ws0/skeleton.test.ts`（选一种）：**
+
+**user_facing 模板：**
+```typescript
+import { test, expect, chromium } from '@playwright/test';
+// SKELETON E2E — user_facing
+test('skeleton: [入口操作] → [预期结果]', async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto('http://localhost:5211');
+  // 替换 [入口操作]：具体的用户交互（page.goto + page.click/page.fill 等）
+  // 替换 [预期结果]（data-testid="skeleton-result"）：预期出现的 UI 元素 testid
+  await expect(page.locator('[data-testid="skeleton-result"]')).toBeVisible();
+  await browser.close();
+});
+```
+
+**autonomous 模板：**
+```typescript
+import { describe, it, expect } from 'vitest';
+import pool from '../../../packages/brain/src/db.js';
+// SKELETON E2E — autonomous
+describe('skeleton: [触发事件] → DB 终态', () => {
+  it('injects event and verifies DB terminal state', async () => {
+    await pool.query(`INSERT INTO tasks (task_type, status, payload) VALUES ($1, $2, $3)`,
+    // 替换 'test_event' 为实际的业务 task_type，如 'content_pipeline'、'report_generate' 等
+      ['test_event', 'queued', JSON.stringify({ skeleton: true })]);
+    const result = await pollDB(5000, async () => {
+      const r = await pool.query(
+        `SELECT * FROM tasks WHERE task_type = $1 AND status = $2 LIMIT 1`,
+        ['test_event', 'completed']
+      );
+      return r.rows[0] || null;
+    });
+    expect(result).toBeTruthy();
+  });
+});
+async function pollDB(timeoutMs: number, fn: () => Promise<any>) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = await fn();
+    if (r) return r;
+    await new Promise(res => setTimeout(res, 200));
+  }
+  return null;
+}
+```
+
+**dev_pipeline 模板：**
+```typescript
+import { describe, it, expect } from 'vitest';
+// SKELETON E2E — dev_pipeline
+// 此测试 import 目标模块（尚未实现），Red 阶段因 "Cannot find module" 或断言失败
+// 替换下方 import 路径为本次 skeleton 实际要实现的模块
+import { dispatchSkeletonTask } from '../../../packages/brain/src/[target-module].js';
+
+describe('skeleton: [任务类型] dispatch → [预期结果]', () => {
+  it('dispatches task and receives pr_url in result', async () => {
+    // 替换为真实的 dispatch 调用参数
+    const result = await dispatchSkeletonTask({ type: '[任务类型]', payload: {} });
+    // 断言预期的回调字段（skeleton 阶段只需主路径通过）
+    expect(result).toHaveProperty('pr_url');
+    expect(result.pr_url).toMatch(/github\.com/);
+  });
+});
+// [任务类型]、[target-module]、[预期结果] 均为占位符，必须替换为本次 Initiative 的具体内容
+```
+
+**agent_remote 模板：**
+```typescript
+import { describe, it, expect } from 'vitest';
+// SKELETON E2E — agent_remote
+// 此测试 import 目标模块（尚未实现），Red 阶段因 "Cannot find module" 或断言失败
+// 替换下方 import 路径为本次 skeleton 实际要实现的 bridge client
+import { sendAgentCommand } from '../../../packages/brain/src/[bridge-module].js';
+
+describe('skeleton: Brain dispatch → [远端 agent] 执行回报', () => {
+  it('sends command and verifies executed=true in result', async () => {
+    // 替换 [命令内容] 和 [目标 agent]
+    const result = await sendAgentCommand({
+      command: '[命令内容]',
+      target: '[目标 agent]', // 如 'us-mac', 'hk-vps'
+    });
+    expect(result).toHaveProperty('executed', true);
+    expect(result).toHaveProperty('output');
+  });
+});
+// [bridge-module]、[命令内容]、[目标 agent] 均为占位符，必须替换为本次 Initiative 的具体内容
+```
+
+**在 `contract-dod-ws0.md` 开头写入 YAML header：**
+```markdown
+---
+skeleton: true
+journey_type: <推断到的 journey_type 值>
+---
+```
+
+**跑测试确认红（记录 Red evidence）：**
+```bash
+cd /path/to/worktree
+npx vitest run "${SPRINT_DIR}/tests/ws0/skeleton.test.ts" 2>&1 | tee /tmp/skeleton-red.log | tail -20
+grep -E "FAIL|failed|✗" /tmp/skeleton-red.log || { echo "ERROR: skeleton 测试未产生 Red，检查模板是否正确 import 了待实现模块"; exit 1; }
+```
+确认有 FAIL 输出，将摘要记入 contract-draft.md 的 Test Contract 表格。
+
+---
 
 ### Step 2: 写合同草案
 
