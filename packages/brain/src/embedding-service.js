@@ -13,6 +13,39 @@ import { generateEmbedding } from './openai-client.js';
 const BACKFILL_BATCH_SIZE = 50;
 const BACKFILL_DELAY_MS = 200; // 批次间延迟，避免 rate limit
 
+// Quota 失败时的退避机制：累积超过阈值 → 整轮 backfill 中止 + 设置冷却期。
+// 避免 OpenAI quota 耗尽时持续刷 brain-error.log，且让额度恢复（充值/重置）后再尝试。
+const QUOTA_FAIL_THRESHOLD = 3; // 单批连续 quota 失败次数
+const QUOTA_COOLDOWN_MS = 60 * 60 * 1000; // 1 小时冷却
+let _quotaCooldownUntil = 0;
+
+/**
+ * 是否当前在 quota 冷却期（暴露给测试）
+ */
+export function isInQuotaCooldown() {
+  return Date.now() < _quotaCooldownUntil;
+}
+
+/**
+ * 测试用：重置 cooldown 状态
+ */
+export function _resetQuotaCooldown() {
+  _quotaCooldownUntil = 0;
+}
+
+/**
+ * 识别 OpenAI quota 类错误（429 + insufficient_quota）
+ * @param {Error} err
+ * @returns {boolean}
+ */
+export function isQuotaError(err) {
+  if (!err || !err.message) return false;
+  const msg = String(err.message);
+  return msg.includes('quota exceeded') ||
+         msg.includes('insufficient_quota') ||
+         msg.includes('You exceeded your current quota');
+}
+
 /**
  * 失败时写入重试队列（working_memory）
  */
@@ -82,9 +115,16 @@ export async function generateLearningEmbeddingAsync(learningId, text) {
 export async function backfillLearningEmbeddings(dbPool) {
   if (!process.env.OPENAI_API_KEY) return { processed: 0, failed: 0 };
 
+  // 在 quota 冷却期 → 直接跳过本轮 backfill，避免持续刷 brain-error.log
+  if (isInQuotaCooldown()) {
+    console.log(`[embedding-service] backfill skipped: quota cooldown until ${new Date(_quotaCooldownUntil).toISOString()}`);
+    return { processed: 0, failed: 0, quota_skipped: true };
+  }
+
   const p = dbPool || pool;
   let processed = 0;
   let failed = 0;
+  let quotaFailCount = 0;
   let hasMore = true;
 
   while (hasMore) {
@@ -114,8 +154,22 @@ export async function backfillLearningEmbeddings(dbPool) {
             [embStr, row.id]
           );
           processed++;
+          quotaFailCount = 0; // 成功一次 → 重置计数
         } catch (err) {
-          console.warn(`[embedding-service] backfill failed id=${row.id}: ${err.message}`);
+          if (isQuotaError(err)) {
+            quotaFailCount++;
+            // 阈值触发：进入冷却期 + 整轮中止
+            if (quotaFailCount >= QUOTA_FAIL_THRESHOLD) {
+              _quotaCooldownUntil = Date.now() + QUOTA_COOLDOWN_MS;
+              console.warn(`[embedding-service] OpenAI quota exhausted (连续 ${quotaFailCount} 次 429）→ 暂停 backfill ${QUOTA_COOLDOWN_MS / 60000}min`);
+              hasMore = false;
+              break;
+            }
+            // 阈值前继续，但只 debug 级别日志（不污染 error log）
+            console.log(`[embedding-service] backfill quota throttle id=${row.id} (${quotaFailCount}/${QUOTA_FAIL_THRESHOLD})`);
+          } else {
+            console.warn(`[embedding-service] backfill failed id=${row.id}: ${err.message}`);
+          }
           failed++;
         }
         await new Promise(r => setTimeout(r, BACKFILL_DELAY_MS));
