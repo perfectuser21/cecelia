@@ -1,63 +1,54 @@
-# Harness Graph RetryPolicy + final_evaluate Interrupt (W2 + W5)
-
-**分支**: cp-05062124-w2-w5-graph-retry-interrupt
-**Spec**: `docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md` §W2 §W5
-**Plan**: `docs/superpowers/plans/2026-05-06-harness-langgraph-reliability.md` §W2 §W5
+# PRD — feat(brain): API credentials checker（Anthropic / OpenAI 健康巡检 thin feature）
 
 ## 背景 / 问题
 
-LangGraph 1.2.9 提供 5 件可靠性原语，Cecelia harness graph 当前未启用其中两件：
+现有 `credentials-health-scheduler.js` 巡检 4 类凭据（NotebookLM / Claude OAuth / Codex / 发布器 cookies），**漏了**：
+- Anthropic API 直连（凭据：ANTHROPIC_API_KEY，状态：余额可能 0）
+- OpenAI（凭据：OPENAI_API_KEY，状态：quota 可能超额）
 
-1. **节点级 RetryPolicy 全空** — 任何瞬时错（503/timeout/network blip）就让整 initiative 失败
-2. **关键决策点无 interrupt()** — final E2E 重试 3 次仍失败时直接 silent END，主理人不知，需手撕 SQL 才能介入
-
-本 PR 同时上这两件，是 spec §W2 + §W5 的最小可独立合并切片。
+实测：本机 ANTHROPIC_API_KEY 余额 0、OPENAI_API_KEY quota 超 — 但**没有任何凭据巡检发现这两个失效**。结果 mouth 调用 fallback 到 anthropic-api 直连永远 400，embedding-service 永远 429，brain-error.log 持续刷错。
 
 ## 成功标准
 
-- [x] [BEHAVIOR] retry-policies.js 三个 policy 导出存在 — Test: tests/integration/harness-retry-policy.test.ts
-- [x] [BEHAVIOR] graph 节点配 retryPolicy — Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('retryPolicy: LLM_RETRY')||!c.includes('retryPolicy: DB_RETRY')||!c.includes('retryPolicy: NO_RETRY'))process.exit(1)"
-- [x] [BEHAVIOR] final_evaluate 在 fix_round>=3 时调 interrupt — Test: tests/integration/harness-interrupt-resume.test.ts
-- [x] [BEHAVIOR] /api/brain/harness-interrupts 路由可访问 — Test: tests/integration/harness-interrupt-resume.test.ts
-- [x] [ARTIFACT] retry-policies.js 文件存在 — Test: manual:node -e "require('fs').accessSync('packages/brain/src/workflows/retry-policies.js')"
-- [x] [ARTIFACT] harness-interrupts.js 路由文件存在 — Test: manual:node -e "require('fs').accessSync('packages/brain/src/routes/harness-interrupts.js')"
+- **SC-001**: 新 module `api-credentials-checker.js` 提供 `checkAnthropicApi()` / `checkOpenAI()` / `checkAllApiCredentials()` export
+- **SC-002**: 各 checker 通过最小 API 调用探测健康（messages / embeddings endpoint），区分 5 种状态：ok / no_key / unauthorized / credit_balance_too_low / quota_exceeded / network_error
+- **SC-003**: fetch 可注入（测试 mock）+ apiKey 可注入（测试不依赖环境变量）
+- **SC-004**: 单元测试覆盖 12 个 case 含所有错误路径
 
 ## 范围限定
 
 **在范围内**：
-- 新建 `packages/brain/src/workflows/retry-policies.js`
-- 改 `packages/brain/src/workflows/harness-initiative.graph.js`：14+5 个 addNode 加 retryPolicy；finalEvaluateDispatchNode 加 interrupt()
-- 新建 `packages/brain/src/routes/harness-interrupts.js`
-- 改 `packages/brain/server.js` 注册新路由
-- 集成测试 2 个
+- 新 module `api-credentials-checker.js`（独立功能模块）
+- 单元测试用 mock fetch 覆盖各错误路径
 
 **不在范围内**：
-- thread_id 版本化（W1，独立 PR）
-- AbortSignal + watchdog（W3，独立 PR）
-- invoke→stream 改造 + Dashboard LiveMonitor（W4，独立 PR）
-- docker-executor OOM Promise reject（W6，独立 PR）
-- 运维清单 W7.x（独立 PR）
+- 接入 `credentials-health-scheduler.js` daily cron（下个 PR 接入，本 PR 只提供检查能力）
+- alert 集成（caller 拿到 unhealthy_providers 后自己决定 alert）
+- working_memory 写入历史（属于运维监控加厚）
+- 修复凭据本身（运维操作，不在代码层）
+
+## DoD（验收）
+
+- [x] [ARTIFACT] `packages/brain/src/api-credentials-checker.js` 创建，含 3 个 export function
+- [x] [ARTIFACT] `packages/brain/src/__tests__/api-credentials-checker.test.js` 创建
+- [x] [BEHAVIOR] tests/api-credentials-checker: 12 个 it（5 个 anthropic + 4 个 openai + 3 个 checkAll）覆盖 200/400/401/429/network_error/no_key
 
 ## 受影响文件
 
-- `packages/brain/src/workflows/retry-policies.js` (new)
-- `packages/brain/src/routes/harness-interrupts.js` (new)
-- `packages/brain/src/workflows/harness-initiative.graph.js`
-- `packages/brain/server.js`
-- `tests/integration/harness-retry-policy.test.ts` (new)
-- `tests/integration/harness-interrupt-resume.test.ts` (new)
+- `packages/brain/src/api-credentials-checker.js`（新建）
+- `packages/brain/src/__tests__/api-credentials-checker.test.js`（新建）
 
-## 风险与缓解
+## Walking Skeleton 上下文
 
-| 风险 | 缓解 |
-|---|---|
-| LLM_RETRY retryOn 误判永久错为瞬时（账号锁死） | retryOn 函数 PERMANENT_ERROR_RE 严格白名单，单测覆盖 401/403/schema/parse 全部不重试 |
-| interrupt() 主理人不响应 → graph 永久挂起 | 24h 后视同 abort（待 W5 后续 PR 加超时机制；本 PR 仅打通通路） |
-| Command 用法在 LangGraph 1.2.9 行为变更 | LangGraph 1.2.9 是 spec 锁定版本，PostgresSaver 已支持 Command resume |
-| 路由依赖 task_events 表（W4 创建） | 路由 GET 失败不阻塞业务；POST 写 task_events 失败仅 warn 不阻断 resume |
+属于 **MJ4 Cecelia 自主神经闭环** 的"凭据健康"加厚段。0→thin。
+
+**thin 范围**：只检测两个 API provider 健康，独立 module 不接调度。
+**未来 thin→medium**：接入 daily scheduler + alert 路由 + Dashboard 可见性
+**thin→thick**：自动 disable 失效 provider（profile 动态更新）+ retry policy
 
 ## 部署后验证
 
-合并 + Brain 重启后：
-1. `curl localhost:5221/api/brain/harness-interrupts` → 返回 `{"interrupts":[]}`（或既有未 resume 列表）
-2. `psql -d cecelia -c "SELECT 1"` 之外不需要 schema 改动
+merge + Brain 启动后：
+1. 单测在 brain-unit job 全过
+2. 后续 PR 接入 scheduler 时直接 import 此 module 调用即可
+3. 现阶段不会自动跑（caller-driven），不影响现有行为
