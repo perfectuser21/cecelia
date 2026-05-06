@@ -181,6 +181,15 @@ describe('dispatchNextTask — billing pause active 时零派发', () => {
   });
 });
 
+describe('routes/tick.js 源码 — executor.js 引用路径正确', () => {
+  it('routes/tick.js 应使用 ../executor.js 而非 ./executor.js', async () => {
+    const fs = await import('node:fs');
+    const src = fs.readFileSync(new URL('../routes/tick.js', import.meta.url), 'utf-8');
+    expect(src).not.toContain("'./executor.js'");
+    expect(src).not.toContain('"./executor.js"');
+  });
+});
+
 describe('dispatcher.js 源码 — billing pause 检查存在（D1.5 抽出后）', () => {
   it('dispatcher.js dispatchNextTask 应调用 getBillingPause()', async () => {
     const fs = await import('node:fs');
