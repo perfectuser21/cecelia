@@ -90,6 +90,8 @@ else（无路径线索）→ 默认 autonomous
 ### Step 2: 输出 sprint-prd.md（Golden Path 格式）
 
 ```bash
+# SPRINT_DIR 由 cecelia-run 通过 prompt 注入（如 sprints/run-20260506-1400）
+# 直接使用，无需手动设置
 mkdir -p "$SPRINT_DIR"
 ```
 
