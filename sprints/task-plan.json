@@ -1,0 +1,20 @@
+{
+  "initiative_id": "9066fec7-12c1-4e39-a8bb-7803830ee3f7",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "在 tick.js 的 TICK_LOOP_INTERVAL_MS 附近添加毫秒单位注释（30 分钟）",
+      "scope": "在 packages/brain/src/tick.js 中 TICK_LOOP_INTERVAL_MS 出现的第一处（import 块附近，line ~58）添加一行注释，说明该常量单位为毫秒（ms）。注释风格与文件既有风格一致（单行 // 注释），不修改任何运行时逻辑。",
+      "dod": [
+        "[BEHAVIOR] grep -n 'TICK_LOOP_INTERVAL_MS' packages/brain/src/tick.js | awk '{print $1}' | head -1 | xargs -I{} bash -c 'sed -n \"$(({}  - 2)),$(({}  + 2))p\" packages/brain/src/tick.js' | grep -qE '毫秒|ms|millisecond'",
+        "[ARTIFACT] packages/brain/src/tick.js 存在且文件内容包含对 TICK_LOOP_INTERVAL_MS 的单位注释"
+      ],
+      "files": [
+        "packages/brain/src/tick.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}
