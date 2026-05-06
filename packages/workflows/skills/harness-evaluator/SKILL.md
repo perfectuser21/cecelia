@@ -30,6 +30,8 @@ updated: 2026-05-06
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
 | `DB` | PostgreSQL 连接串，如 `postgresql://localhost/cecelia` |
 
+**注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
+
 ---
 
 ## 核心原则
@@ -60,7 +62,17 @@ fi
 #### Step A-1: 读 DoD 文件
 
 ```bash
-cat "${SPRINT_DIR}/contract-dod-ws${WORKSTREAM_N}.md"
+DOD_FILE="${SPRINT_DIR}/contract-dod-ws${WORKSTREAM_N}.md"
+if [[ ! -f "$DOD_FILE" ]]; then
+  echo '{"verdict": "FAIL", "task_id": "'"$TASK_ID"'", "workstream": "ws'"$WORKSTREAM_N"'", "failed_items": [], "feedback": "DoD 文件不存在：'"$DOD_FILE"'，Generator 未产出合同 DoD，请检查 Proposer 是否已输出对应 workstream 的 DoD 文件"}'
+  exit 0
+fi
+cat "$DOD_FILE"
+```
+
+若提取结果中 `[BEHAVIOR]` 条目数量为 0，输出 FAIL：
+```
+{"verdict": "FAIL", "task_id": "...", "workstream": "ws<N>", "failed_items": [], "feedback": "DoD 文件中无 [BEHAVIOR] 条目，无法验证，请检查合同格式"}
 ```
 
 提取所有 `[BEHAVIOR]` 条目的 `Test:` 字段命令。格式示例：
@@ -77,9 +89,9 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 
 1. 执行 `Test:` 字段中的命令（在真实环境，非 mock）
 2. 记录 stdout / stderr / exit code
-3. 将结果与 `期望:` 行对比
+3. 将结果与 `期望:` 行对比（规则：`stdout` trim 后**包含**期望字符串即通过，大小写敏感）
 
-按 `journey_type` 选择验证方式：
+按 `$JOURNEY_TYPE` 选择验证工具（表中 `journey_type` 列对应注入变量 `$JOURNEY_TYPE` 的值）：
 
 | journey_type | 验证工具 |
 |---|---|
@@ -87,6 +99,7 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 | `user_facing` | Playwright（chrome MCP）模拟用户操作 |
 | `dev_pipeline` | `curl callback` + `gh pr view` |
 | `agent_remote` | 检查 bridge 回调 + DB 状态 |
+| 其他/未知值 | 回退到 `autonomous` 方式（curl/psql/node） |
 
 #### Step A-3: 输出报告
 
@@ -115,18 +128,33 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 #### Step B-1: 提取 E2E 验收脚本
 
 ```bash
-# 从合同中提取 "E2E 验收" 区块的 bash 脚本
-awk '/^## E2E 验收/,/^## /' "${SPRINT_DIR}/contract-draft.md" \
-  | grep -A9999 '```bash' | grep -B9999 '```' | grep -v '```' \
-  > /tmp/e2e-verify.sh
+CONTRACT="${SPRINT_DIR}/contract-draft.md"
+if [[ ! -f "$CONTRACT" ]]; then
+  echo "{\"verdict\": \"FAIL\", \"task_id\": \"$TASK_ID\", \"mode\": \"e2e\", \"journey_type\": \"$JOURNEY_TYPE\", \"failed_step\": \"setup\", \"log_excerpt\": \"\", \"feedback\": \"合同文件不存在：$CONTRACT\"}"
+  exit 0
+fi
+
+# 提取 "## E2E 验收" 区块内第一个 bash 代码块
+awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+  "$CONTRACT" > /tmp/e2e-verify.sh
+
+if [[ ! -s /tmp/e2e-verify.sh ]]; then
+  echo "{\"verdict\": \"FAIL\", \"task_id\": \"$TASK_ID\", \"mode\": \"e2e\", \"journey_type\": \"$JOURNEY_TYPE\", \"failed_step\": \"setup\", \"log_excerpt\": \"\", \"feedback\": \"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本\"}"
+  exit 0
+fi
 chmod +x /tmp/e2e-verify.sh
 ```
 
 #### Step B-2: 执行 E2E 脚本
 
 ```bash
-bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
 EXIT_CODE=${PIPESTATUS[0]}
+# timeout 退出码 124 表示超时
+if [[ $EXIT_CODE -eq 124 ]]; then
+  echo '{"verdict": "FAIL", "task_id": "'"$TASK_ID"'", "mode": "e2e", "journey_type": "'"$JOURNEY_TYPE"'", "failed_step": "timeout", "log_excerpt": "", "feedback": "E2E 脚本执行超时（120 秒），请检查被测服务是否正常启动或脚本是否有无限等待"}'
+  exit 0
+fi
 ```
 
 按 `journey_type` 补充验证逻辑：
