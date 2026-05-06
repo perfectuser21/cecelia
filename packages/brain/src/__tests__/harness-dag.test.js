@@ -250,3 +250,52 @@ describe('topologicalOrder', () => {
     ])).toThrow(/cycle/);
   });
 });
+
+// ─── journey_type 透传 ─────────────────────────────────────────────────────
+
+describe('parseTaskPlan — journey_type 透传', () => {
+  it('保留根级 journey_type 字段', () => {
+    const input = JSON.stringify({
+      initiative_id: 'test-init',
+      journey_type: 'user_facing',
+      journey_type_reason: '涉及 apps/dashboard',
+      tasks: [
+        {
+          task_id: 'skeleton',
+          is_skeleton: true,
+          title: 'E2E 薄片',
+          scope: '全链路跑通',
+          dod: ['[BEHAVIOR] skeleton e2e passes'],
+          files: ['packages/brain/src/server.js'],
+          depends_on: [],
+          complexity: 'M',
+          estimated_minutes: 40,
+        },
+      ],
+    });
+    const result = parseTaskPlan(input);
+    expect(result.journey_type).toBe('user_facing');
+    expect(result.journey_type_reason).toBe('涉及 apps/dashboard');
+    expect(result.tasks[0].is_skeleton).toBe(true);
+  });
+
+  it('journey_type 缺省时不报错（可选字段）', () => {
+    const input = JSON.stringify({
+      initiative_id: 'test-init',
+      tasks: [
+        {
+          task_id: 'ws1',
+          title: '功能实现',
+          scope: '做 X',
+          dod: ['[BEHAVIOR] x works'],
+          files: ['packages/brain/src/server.js'],
+          depends_on: [],
+          complexity: 'S',
+          estimated_minutes: 20,
+        },
+      ],
+    });
+    const result = parseTaskPlan(input);
+    expect(result.journey_type).toBeUndefined();
+  });
+});
