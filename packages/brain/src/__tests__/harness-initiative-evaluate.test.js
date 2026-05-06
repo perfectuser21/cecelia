@@ -59,7 +59,7 @@ vi.mock('../harness-gan-graph.js', () => ({
   buildHarnessGanGraph: vi.fn(),
 }));
 
-vi.mock('../pg-checkpointer.js', () => ({
+vi.mock('../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({}),
 }));
 
