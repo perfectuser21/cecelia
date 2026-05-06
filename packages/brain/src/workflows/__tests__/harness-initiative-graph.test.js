@@ -187,12 +187,12 @@ describe('parsePrdNode', () => {
     expect(delta.prdContent).toBe('cached');
   });
 
-  it('error: parseTaskPlan 抛 → state.error.node="parsePrd"', async () => {
+  it('parseTaskPlan 抛 → taskPlan=null（soft，由 inferTaskPlanNode 从 propose branch 推断）', async () => {
     mockParseTaskPlan.mockImplementationOnce(() => { throw new Error('bad json'); });
     const state = { task: { id: 't3', payload: {} }, initiativeId: 'init-3', worktreePath: '/wt', plannerOutput: 'OUT' };
     const delta = await parsePrdNode(state);
-    expect(delta.error.node).toBe('parsePrd');
-    expect(delta.error.message).toContain('bad json');
+    expect(delta.taskPlan).toBeNull();
+    expect(delta.error).toBeUndefined();
   });
 });
 

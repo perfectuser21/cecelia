@@ -122,101 +122,44 @@ describe('inferTaskPlanNode', () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it('空 tasks → 调 executor 拿 plan → 写回 state.taskPlan.tasks', async () => {
-    const exec = vi.fn().mockResolvedValue({
-      exit_code: 0,
-      stdout: '```json\n' + JSON.stringify({
-        initiative_id: 'i',
-        tasks: [{
-          task_id: 's1', title: 'T1', scope: 'do x',
-          dod: ['done'], files: ['a.js'], depends_on: [],
-          complexity: 'S', estimated_minutes: 30,
-        }],
-      }) + '\n```',
-      stderr: '',
+  it('空 tasks + 无 propose_branch → passthrough 返回 {}', async () => {
+    const delta = await inferTaskPlanNode({
+      task: { id: 'init-1' },
+      initiativeId: 'i',
+      ganResult: { contract_content: 'C' },  // 无 propose_branch
+      taskPlan: { tasks: [] },
     });
-    mockParseTaskPlan.mockReturnValueOnce({
-      initiative_id: 'i',
-      tasks: [{
-        task_id: 's1', title: 'T1', scope: 'do x',
-        dod: ['done'], files: ['a.js'], depends_on: [],
-        complexity: 'S', estimated_minutes: 30,
-      }],
+    expect(delta).toEqual({});
+  });
+
+  it('空 tasks + propose_branch git show 失败 → passthrough 返回 {}', async () => {
+    // git show origin/nonexistent:file.json 会抛错 → inferTaskPlanNode 捕获后返回 {}
+    const delta = await inferTaskPlanNode({
+      task: { id: 'init-1', payload: { sprint_dir: 'sprints' } },
+      initiativeId: 'i',
+      ganResult: { propose_branch: 'feature/nonexistent-branch-xyz-999' },
+      taskPlan: { tasks: [] },
     });
-    const delta = await inferTaskPlanNode(
-      {
-        task: { id: 'init-1' },
-        initiativeId: 'i',
-        worktreePath: '/wt',
-        githubToken: 't',
-        prdContent: '# PRD',
-        ganResult: { contract_content: 'C' },
-        taskPlan: { tasks: [] },
-      },
-      { executor: exec }
-    );
-    expect(exec).toHaveBeenCalledTimes(1);
-    expect(delta.taskPlan?.tasks?.length).toBe(1);
-    expect(delta.taskPlan.tasks[0].id).toBe('s1');
-    expect(delta.taskPlan.tasks[0].title).toBe('T1');
-    expect(delta.taskPlan.tasks[0].description).toBe('do x');
-  });
-
-  it('executor 返回 exit=1 → passthrough 不抛', async () => {
-    const exec = vi.fn().mockResolvedValue({ exit_code: 1, stdout: '', stderr: 'boom' });
-    const delta = await inferTaskPlanNode(
-      {
-        task: { id: 't' }, initiativeId: 'i',
-        prdContent: '# x', taskPlan: { tasks: [] },
-      },
-      { executor: exec }
-    );
     expect(delta).toEqual({});
   });
 
-  it('executor 抛错 → passthrough 不抛', async () => {
-    const exec = vi.fn().mockRejectedValue(new Error('docker dead'));
+  it('无 ganResult → passthrough 返回 {}', async () => {
     const delta = await inferTaskPlanNode(
-      {
-        task: { id: 't' }, initiativeId: 'i',
-        prdContent: '# x', taskPlan: { tasks: [] },
-      },
-      { executor: exec }
+      { task: { id: 't' }, initiativeId: 'i', taskPlan: { tasks: [] } }
     );
     expect(delta).toEqual({});
-  });
-
-  it('parseTaskPlan 抛错 → passthrough 不抛', async () => {
-    const exec = vi.fn().mockResolvedValue({ exit_code: 0, stdout: 'not json', stderr: '' });
-    mockParseTaskPlan.mockImplementationOnce(() => { throw new Error('bad json'); });
-    const delta = await inferTaskPlanNode(
-      {
-        task: { id: 't' }, initiativeId: 'i',
-        prdContent: '# x', taskPlan: { tasks: [] },
-      },
-      { executor: exec }
-    );
-    expect(delta).toEqual({});
-  });
-
-  it('无 PRD 无 Contract → passthrough 不调 executor', async () => {
-    const exec = vi.fn();
-    const delta = await inferTaskPlanNode(
-      { task: { id: 't' }, initiativeId: 'i', taskPlan: { tasks: [] } },
-      { executor: exec }
-    );
-    expect(delta).toEqual({});
-    expect(exec).not.toHaveBeenCalled();
   });
 });
 
 describe('buildHarnessFullGraph wiring', () => {
-  it('含 inferTaskPlan 节点（dbUpsert→inferTaskPlan→fanout）', () => {
+  it('含 inferTaskPlan 节点（dbUpsert→inferTaskPlan→pick_sub_task）', () => {
     const g = buildHarnessFullGraph();
     const nodes = Object.keys(g.nodes || {});
     expect(nodes).toContain('inferTaskPlan');
-    expect(nodes).toContain('fanout');
+    expect(nodes).toContain('pick_sub_task');
     expect(nodes).toContain('dbUpsert');
+    expect(nodes).toContain('evaluate');
+    expect(nodes).toContain('final_evaluate');
   });
 });
 
@@ -331,15 +274,21 @@ describe('full graph e2e', () => {
   });
   afterEach(() => { delete process.env.HARNESS_POLL_INTERVAL_MS; });
 
-  it('happy: planner → gan → fanout 2 sub_tasks → 全 merged → final_e2e PASS → report phase=done', async () => {
+  it('happy: planner → gan → serial 2 sub_tasks → 全 merged → evaluate PASS → final_e2e PASS → report phase=done', async () => {
     mockEnsureWt.mockResolvedValue('/wt');
     mockResolveTok.mockResolvedValue('t');
-    mockSpawn.mockResolvedValue({ exit_code: 0, stdout: 'pr_url: https://gh/p/X', stderr: '' });
+    // 区分 evaluate 调用（env.HARNESS_NODE）和普通 generator/planner 调用
+    mockSpawn.mockImplementation((args) => {
+      const node = args?.env?.HARNESS_NODE;
+      if (node === 'evaluate' || node === 'final_evaluate') {
+        return Promise.resolve({ exit_code: 0, stdout: '{"verdict":"PASS","passed_dod":["item1"]}', stderr: '' });
+      }
+      return Promise.resolve({ exit_code: 0, stdout: 'pr_url: https://gh/p/X', stderr: '' });
+    });
     mockReadFile.mockResolvedValue('# PRD');
     mockParseTaskPlan.mockReturnValue({
       initiative_id: 'i',
       tasks: [{ id: 's1', title: 'T1' }, { id: 's2', title: 'T2' }],
-      e2e_acceptance: { scenarios: [{ name: 'sc', covered_tasks: ['s1'], commands: [{ cmd: 'echo ok' }] }] },
     });
     mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
     mockClient.query
@@ -364,25 +313,21 @@ describe('full graph e2e', () => {
     expect(final.report_path).toBeTruthy();
   }, 30000);
 
-  it('planner 不出 tasks → inferTaskPlan fallback → fanout 派 Send → e2e PASS', async () => {
+  it('planner 不出 tasks → inferTaskPlan fallback 失败 → 空 tasks → 直跳 final_evaluate', async () => {
+    // 当 planner 不输出 tasks 时，inferTaskPlanNode 无 propose_branch（或 git show 失败）→ tasks=[],
+    // pick_sub_task 看到 idx=0 >= tasks.length=0 → 路由到 final_evaluate
     mockEnsureWt.mockResolvedValue('/wt');
     mockResolveTok.mockResolvedValue('t');
-    mockSpawn
-      .mockResolvedValueOnce({ exit_code: 0, stdout: '# PRD only, no task_plan', stderr: '' })
-      .mockResolvedValue({ exit_code: 0, stdout: 'pr_url: https://gh/p/X', stderr: '' });
+    mockSpawn.mockImplementation((args) => {
+      const node = args?.env?.HARNESS_NODE;
+      if (node === 'final_evaluate') {
+        return Promise.resolve({ exit_code: 0, stdout: '{"verdict":"PASS"}', stderr: '' });
+      }
+      return Promise.resolve({ exit_code: 0, stdout: 'pr_url: https://gh/p/X', stderr: '' });
+    });
     mockReadFile.mockResolvedValue('# PRD');
-    mockParseTaskPlan
-      // dbUpsert 阶段（通过 parsePrdNode 调用）：返回空 tasks
-      .mockReturnValueOnce({ initiative_id: 'i', tasks: [] })
-      // inferTaskPlanNode 内部调用：返回合规 plan
-      .mockReturnValueOnce({
-        initiative_id: 'i',
-        tasks: [{
-          task_id: 's-fb', title: 'Fallback T', scope: 'do',
-          dod: ['done'], files: ['x.js'], depends_on: [],
-          complexity: 'S', estimated_minutes: 30,
-        }],
-      });
+    // parsePrd: tasks = [] (no task plan from planner)
+    mockParseTaskPlan.mockReturnValue({ initiative_id: 'i', tasks: [] });
     mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] })
@@ -400,18 +345,31 @@ describe('full graph e2e', () => {
       { configurable: { thread_id: 'init-fb:1' }, recursionLimit: 500 }
     );
 
-    expect(final.taskPlan?.tasks?.length).toBe(1);
-    expect(final.taskPlan.tasks[0].id).toBe('s-fb');
-    expect(final.sub_tasks?.length).toBe(1);
-    expect(final.sub_tasks[0].status).toBe('merged');
+    // 无 tasks → 跳过所有 run_sub_task → 直接 final_evaluate → PASS → report
+    expect(final.taskPlan?.tasks?.length ?? 0).toBe(0);
+    expect(final.final_e2e_verdict).toBe('PASS');
   }, 30000);
 
-  it('1 sub_task fix_round=2 后 merged → 顶层 final_e2e PASS', async () => {
+  it('1 sub_task evaluate FAIL 后 retry → merged → final_e2e PASS', async () => {
+    // evaluate 先 FAIL（触发 retry），第二次 run_sub_task 再 evaluate PASS
     mockEnsureWt.mockResolvedValue('/wt');
     mockResolveTok.mockResolvedValue('t');
-    mockSpawn.mockImplementation(() => Promise.resolve({
-      exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '',
-    }));
+    let evaluateCallCount = 0;
+    mockSpawn.mockImplementation((args) => {
+      const node = args?.env?.HARNESS_NODE;
+      if (node === 'evaluate') {
+        evaluateCallCount++;
+        if (evaluateCallCount === 1) {
+          // 第一次 evaluate：FAIL（触发 retry）
+          return Promise.resolve({ exit_code: 0, stdout: '{"verdict":"FAIL","feedback":"lint error"}', stderr: '' });
+        }
+        return Promise.resolve({ exit_code: 0, stdout: '{"verdict":"PASS","passed_dod":["lint"]}', stderr: '' });
+      }
+      if (node === 'final_evaluate') {
+        return Promise.resolve({ exit_code: 0, stdout: '{"verdict":"PASS"}', stderr: '' });
+      }
+      return Promise.resolve({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' });
+    });
     mockReadFile.mockResolvedValue('# PRD');
     mockParseTaskPlan.mockReturnValue({ initiative_id: 'i', tasks: [{ id: 's1', title: 'T1' }] });
     mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
@@ -422,10 +380,7 @@ describe('full graph e2e', () => {
       .mockResolvedValueOnce({ rows: [] });
     mockUpsertTaskPlan.mockResolvedValue({ idMap: {}, insertedTaskIds: ['s1'] });
     mockWriteCb.mockResolvedValue();
-    mockCheckPr
-      .mockReturnValueOnce({ ciStatus: 'ci_failed', failedChecks: ['lint'] })
-      .mockReturnValueOnce({ ciStatus: 'ci_passed', failedChecks: [] });
-    mockClassify.mockReturnValue('lint');
+    mockCheckPr.mockReturnValue({ ciStatus: 'ci_passed', failedChecks: [] });
     mockMerge.mockReturnValue(true);
 
     const compiled = buildHarnessFullGraph().compile({ checkpointer: new MemorySaver() });
@@ -435,8 +390,8 @@ describe('full graph e2e', () => {
     );
 
     expect(final.sub_tasks[0].status).toBe('merged');
-    expect(final.sub_tasks[0].fix_round).toBe(1);
     expect(final.final_e2e_verdict).toBe('PASS');
+    expect(evaluateCallCount).toBe(2);  // FAIL + PASS
   }, 30000);
 });
 
@@ -464,9 +419,13 @@ describe('full graph resume', () => {
       .mockResolvedValue({ rows: [{ id: 'x' }] });
     mockUpsertTaskPlan.mockResolvedValue({ idMap: {}, insertedTaskIds: ['s1'] });
     mockWriteCb.mockResolvedValue();
-    mockSpawn
-      .mockResolvedValueOnce({ exit_code: 0, stdout: 'planner', stderr: '' })
-      .mockResolvedValueOnce({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' });
+    mockSpawn.mockImplementation((args) => {
+      const node = args?.env?.HARNESS_NODE;
+      if (node === 'evaluate' || node === 'final_evaluate') {
+        return Promise.resolve({ exit_code: 0, stdout: '{"verdict":"PASS"}', stderr: '' });
+      }
+      return Promise.resolve({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' });
+    });
     mockCheckPr.mockReturnValue({ ciStatus: 'ci_passed', failedChecks: [] });
     mockMerge.mockReturnValue(true);
 

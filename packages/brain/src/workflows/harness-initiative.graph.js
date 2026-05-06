@@ -600,17 +600,19 @@ export async function parsePrdNode(state) {
   if (state.taskPlan && state.prdContent) {
     return { taskPlan: state.taskPlan, prdContent: state.prdContent };
   }
-  let taskPlan;
+  let taskPlan = null;
   try {
     taskPlan = parseTaskPlan(state.plannerOutput);
   } catch (err) {
-    return { error: { node: 'parsePrd', message: `parseTaskPlan: ${err.message}` } };
+    // Planner v8 does not output task-plan.json — that is OK, inferTaskPlanNode reads from propose branch
+    console.warn(`[harness-initiative-graph] parsePrd: parseTaskPlan returned null/error (${err.message}), will infer from propose branch`);
+    taskPlan = null;
   }
-  if (taskPlan.initiative_id === 'pending' || !taskPlan.initiative_id) {
+  if (taskPlan && (taskPlan.initiative_id === 'pending' || !taskPlan.initiative_id)) {
     taskPlan.initiative_id = state.initiativeId;
   }
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
-  let prdContent = state.plannerOutput;
+  let prdContent = state.plannerOutput || '';
   try {
     const fsPromises = await import('node:fs/promises');
     const pathMod = (await import('node:path')).default;
@@ -621,7 +623,7 @@ export async function parsePrdNode(state) {
   } catch (err) {
     console.error(`[harness-initiative-graph] read sprint-prd.md failed (${err.message}), falling back to planner stdout`);
   }
-  return { taskPlan, prdContent };
+  return { taskPlan, prdContent };  // taskPlan may be null — that is OK
 }
 export async function runGanLoopNode(state, opts = {}) {
   if (state.ganResult) return { ganResult: state.ganResult };
@@ -784,6 +786,11 @@ export const FullInitiativeState = Annotation.Root({
   final_e2e_verdict: Annotation({ reducer: (_o, n) => n, default: () => null }),
   final_e2e_failed_scenarios: Annotation({ reducer: (_o, n) => n, default: () => [] }),
   report_path: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // Serial evaluate loop state
+  task_loop_index:    Annotation({ reducer: (_o, n) => n, default: () => 0 }),
+  task_loop_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
+  evaluate_verdict:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 /**
@@ -801,75 +808,42 @@ export const FullInitiativeState = Annotation.Root({
  * @param {Function} [opts.executor]  spawn 替代（测试注入）
  * @returns {Promise<object>}  state delta（{} 或 { taskPlan: {...} }）
  */
-export async function inferTaskPlanNode(state, opts = {}) {
+export async function inferTaskPlanNode(state, _opts = {}) {
   const existing = state?.taskPlan?.tasks;
   if (Array.isArray(existing) && existing.length >= 1) {
     return {};
   }
 
-  const executor = opts.executor || spawn;
-  const prdContent = state?.prdContent || '';
-  const contractContent = state?.ganResult?.contract_content || '';
-  if (!prdContent && !contractContent) {
+  const proposeBranch = state?.ganResult?.propose_branch;
+  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+
+  if (!proposeBranch) {
+    console.warn('[infer_task_plan] no propose_branch in ganResult, cannot read task-plan.json');
     return {};
   }
 
-  const prompt = `你是 task plan inferrer。根据下方 Sprint PRD + Contract，
-拆 1-5 个独立可并行的 sub_task，每个 sub_task 是一个原子 PR 单位。
-输出 task-plan.json，被 \`\`\`json ... \`\`\` 包裹，schema 见 harness-planner SKILL
-（task_id/title/scope/dod/files/depends_on/complexity/estimated_minutes）。
-
-## PRD
-${prdContent}
-
-## Contract
-${contractContent}`;
-
-  let stdout;
   try {
-    const result = await executor({
-      task: { ...(state.task || {}), task_type: 'harness_planner' },
-      prompt,
-      worktreePath: state.worktreePath,
-      env: {
-        CECELIA_TASK_TYPE: 'harness_planner',
-        HARNESS_NODE: 'infer_task_plan',
-        HARNESS_INITIATIVE_ID: state.initiativeId,
-        GITHUB_TOKEN: state.githubToken,
-      },
-    });
-    if (result.exit_code !== 0 || result.timed_out) {
-      console.warn(`[infer_task_plan] LLM exit=${result.exit_code} timed_out=${result.timed_out}`);
+    const { execSync } = await import('child_process');
+    const json = execSync(
+      `git show origin/${proposeBranch}:${sprintDir}/task-plan.json`,
+      { cwd: state.worktreePath, encoding: 'utf8' }
+    );
+    let plan;
+    try {
+      plan = parseTaskPlan(json);
+    } catch (err) {
+      console.warn(`[infer_task_plan] parseTaskPlan failed: ${err.message}`);
       return {};
     }
-    stdout = parseDockerOutput(result.stdout);
+    if (plan.initiative_id === 'pending' || !plan.initiative_id) {
+      plan.initiative_id = state.initiativeId;
+    }
+    console.log(`[infer_task_plan] read ${plan.tasks?.length || 0} tasks from ${proposeBranch}:${sprintDir}/task-plan.json`);
+    return { taskPlan: plan };
   } catch (err) {
-    console.warn(`[infer_task_plan] spawn failed: ${err.message}`);
+    console.warn(`[infer_task_plan] git show origin/${proposeBranch}:${sprintDir}/task-plan.json failed: ${err.message}`);
     return {};
   }
-
-  let plan;
-  try {
-    plan = parseTaskPlan(stdout);
-  } catch (err) {
-    console.warn(`[infer_task_plan] parseTaskPlan failed: ${err.message}`);
-    return {};
-  }
-  if (plan.initiative_id === 'pending' || !plan.initiative_id) {
-    plan.initiative_id = state.initiativeId;
-  }
-
-  // 把 task_plan 行字段映射成 sub_task 形态（fanout/runSubTask 期望 id/title/description/payload）
-  const subTasks = plan.tasks.map((t) => ({
-    id: t.task_id,
-    title: t.title,
-    description: t.scope,
-    payload: { dod: t.dod, files: t.files, depends_on: t.depends_on },
-  }));
-
-  return {
-    taskPlan: { ...plan, tasks: subTasks },
-  };
 }
 
 /**
@@ -907,16 +881,27 @@ function _getTaskGraphCompiled() {
 export async function runSubTaskNode(state, opts = {}) {
   const subTask = state.sub_task;
   if (!subTask) return {};
+  const fixCount = state.task_loop_fix_count ?? 0;
+  const feedback = state.evaluate_feedback;
+  const taskForGraph = {
+    id: subTask.id,
+    title: subTask.title,
+    description: subTask.description,
+    payload: {
+      ...subTask.payload,
+      ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
+    },
+  };
   const compiled = opts.compiledTaskGraph || _getTaskGraphCompiled();
   let final;
   try {
     final = await compiled.invoke(
       {
-        task: { id: subTask.id, title: subTask.title, description: subTask.description, payload: subTask.payload || {} },
+        task: taskForGraph,
         initiativeId: state.initiativeId,
         worktreePath: state.worktreePath,
         githubToken: state.githubToken,
-        contractBranch: state.contractBranch,
+        contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
       },
       { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}` }, recursionLimit: 200 }
     );
@@ -1053,6 +1038,226 @@ export async function reportNode(state, opts = {}) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Serial evaluate loop nodes (Change 4)
+
+export async function pickSubTaskNode(state) {
+  const tasks = state.taskPlan?.tasks || [];
+  const idx = state.task_loop_index ?? 0;
+  if (idx >= tasks.length) {
+    return { sub_task: null };
+  }
+  const t = tasks[idx];
+  return {
+    sub_task: {
+      id: t.id || t.task_id,
+      title: t.title,
+      description: t.scope || t.description,
+      payload: { dod: t.dod, files: t.files, depends_on: t.depends_on },
+    },
+    task_loop_fix_count: 0,
+    evaluate_verdict: null,
+    evaluate_feedback: null,
+  };
+}
+
+export async function evaluateSubTaskNode(state, opts = {}) {
+  const executor = opts.executor || spawn;
+  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  const workstreamN = (state.task_loop_index ?? 0) + 1;
+  const journeyType = state.taskPlan?.journey_type || 'autonomous';
+
+  const skillContent = loadSkillContent('harness-evaluator');
+  const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
+
+${skillContent}
+
+---
+
+## 注入变量
+IS_FINAL_E2E=false
+SPRINT_DIR=${sprintDir}
+TASK_ID=${state.task?.id}
+WORKSTREAM_N=${workstreamN}
+JOURNEY_TYPE=${journeyType}`;
+
+  let result;
+  try {
+    result = await executor({
+      task: { ...state.task, task_type: 'harness_evaluate' },
+      prompt,
+      worktreePath: state.worktreePath,
+      env: {
+        CECELIA_TASK_TYPE: 'harness_evaluate',
+        HARNESS_NODE: 'evaluate',
+        IS_FINAL_E2E: 'false',
+        SPRINT_DIR: sprintDir,
+        WORKSTREAM_N: String(workstreamN),
+        JOURNEY_TYPE: journeyType,
+        GITHUB_TOKEN: state.githubToken,
+      },
+    });
+  } catch (err) {
+    return { evaluate_verdict: 'FAIL', evaluate_feedback: `evaluator spawn failed: ${err.message}` };
+  }
+
+  if (result.exit_code !== 0 || result.timed_out) {
+    return {
+      evaluate_verdict: 'FAIL',
+      evaluate_feedback: `evaluator exit=${result.exit_code} timed_out=${result.timed_out}: ${(result.stderr || '').slice(-300)}`,
+    };
+  }
+
+  const stdout = parseDockerOutput(result.stdout);
+  // Parse last JSON object from stdout
+  let verdict = null;
+  const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{'));
+  const lastJson = lines[lines.length - 1];
+  if (lastJson) {
+    try {
+      verdict = JSON.parse(lastJson);
+    } catch {
+      // ignore parse error
+    }
+  }
+
+  if (!verdict?.verdict) {
+    return {
+      evaluate_verdict: 'FAIL',
+      evaluate_feedback: `evaluator output missing 'verdict' field. Last 300 chars: ${stdout.slice(-300)}`,
+    };
+  }
+
+  return {
+    evaluate_verdict: verdict.verdict,   // 'PASS' or 'FAIL'
+    evaluate_feedback: verdict.feedback || null,
+  };
+}
+
+export async function advanceTaskIndexNode(state) {
+  return {
+    task_loop_index: (state.task_loop_index ?? 0) + 1,
+    task_loop_fix_count: 0,
+    evaluate_verdict: null,
+    evaluate_feedback: null,
+  };
+}
+
+export async function retryTaskNode(state) {
+  return {
+    task_loop_fix_count: (state.task_loop_fix_count ?? 0) + 1,
+    evaluate_verdict: null,
+    // Keep evaluate_feedback — run_sub_task will use it as fix context
+  };
+}
+
+export async function terminalFailNode(state, opts = {}) {
+  const dbPool = opts.pool || pool;
+  const reason = `Evaluator FAIL after ${MAX_FIX_ROUNDS} retries on task index ${state.task_loop_index ?? 0}: ${(state.evaluate_feedback || '').slice(0, 300)}`;
+  try {
+    await dbPool.query(
+      `UPDATE initiative_runs SET phase='failed', failure_reason=$1, completed_at=NOW(), updated_at=NOW() WHERE initiative_id=$2::uuid`,
+      [reason.slice(0, 500), state.initiativeId]
+    );
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] terminalFailNode db update failed: ${err.message}`);
+  }
+  return { error: { node: 'terminal_fail', message: reason } };
+}
+
+// Change 5: New routing functions
+
+export function routeFromPickSubTask(state) {
+  if (state.error) return 'end';
+  const tasks = state.taskPlan?.tasks || [];
+  const idx = state.task_loop_index ?? 0;
+  if (idx >= tasks.length) return 'final_evaluate';
+  return 'run_sub_task';
+}
+
+export function routeAfterEvaluate(state) {
+  if (state.error) return 'end';
+  const tasks = state.taskPlan?.tasks || [];
+  const idx = state.task_loop_index ?? 0;
+  const fixCount = state.task_loop_fix_count ?? 0;
+
+  if (state.evaluate_verdict === 'PASS') {
+    if (idx + 1 >= tasks.length) return 'final_evaluate';
+    return 'advance';
+  }
+  // FAIL (or null/unexpected verdict — treated as FAIL to prevent silent skip)
+  if (fixCount >= MAX_FIX_ROUNDS) return 'terminal_fail';
+  return 'retry';
+}
+
+// Change 6: finalEvaluateDispatchNode (Mode B)
+
+export async function finalEvaluateDispatchNode(state, opts = {}) {
+  const executor = opts.executor || spawn;
+  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  const journeyType = state.taskPlan?.journey_type || 'autonomous';
+
+  const skillContent = loadSkillContent('harness-evaluator');
+  const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
+
+${skillContent}
+
+---
+
+## 注入变量
+IS_FINAL_E2E=true
+SPRINT_DIR=${sprintDir}
+TASK_ID=${state.task?.id}
+JOURNEY_TYPE=${journeyType}`;
+
+  let result;
+  try {
+    result = await executor({
+      task: { ...state.task, task_type: 'harness_evaluate' },
+      prompt,
+      worktreePath: state.worktreePath,
+      env: {
+        CECELIA_TASK_TYPE: 'harness_evaluate',
+        HARNESS_NODE: 'final_evaluate',
+        IS_FINAL_E2E: 'true',
+        SPRINT_DIR: sprintDir,
+        JOURNEY_TYPE: journeyType,
+        GITHUB_TOKEN: state.githubToken,
+      },
+    });
+  } catch (err) {
+    return { final_e2e_verdict: 'FAIL', final_e2e_failed_scenarios: [{ name: 'evaluator spawn failed', error: err.message }] };
+  }
+
+  if (result.exit_code !== 0 || result.timed_out) {
+    return {
+      final_e2e_verdict: 'FAIL',
+      final_e2e_failed_scenarios: [{ name: `evaluator exit=${result.exit_code}`, error: (result.stderr || '').slice(-300) }],
+    };
+  }
+
+  const stdout = parseDockerOutput(result.stdout);
+  let verdict = null;
+  const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{'));
+  const lastJson = lines[lines.length - 1];
+  if (lastJson) {
+    try { verdict = JSON.parse(lastJson); } catch {}
+  }
+
+  if (verdict?.verdict === 'PASS') {
+    return { final_e2e_verdict: 'PASS', final_e2e_failed_scenarios: [] };
+  }
+  return {
+    final_e2e_verdict: 'FAIL',
+    final_e2e_failed_scenarios: [{
+      name: verdict?.failed_step || 'E2E failed',
+      covered_tasks: [],
+      output: verdict?.log_excerpt || stdout.slice(-300),
+      exitCode: 1,
+    }],
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // 完整 graph：Phase A + B + C 全程 LangGraph
 
 function _routeAfterJoin(state) {
@@ -1071,26 +1276,30 @@ export function buildHarnessFullGraph() {
     .addNode('planner', runPlannerNode)
     .addNode('parsePrd', parsePrdNode)
     .addNode('ganLoop', runGanLoopNode)
-    .addNode('dbUpsert', dbUpsertNode)
     .addNode('inferTaskPlan', inferTaskPlanNode)
-    .addNode('fanout', fanoutPassthroughNode)
+    .addNode('dbUpsert', dbUpsertNode)
+    .addNode('pick_sub_task', pickSubTaskNode)
     .addNode('run_sub_task', runSubTaskNode)
-    .addNode('join', joinSubTasksNode)
-    .addNode('final_e2e', finalE2eNode)
+    .addNode('evaluate', evaluateSubTaskNode)
+    .addNode('advance', advanceTaskIndexNode)
+    .addNode('retry', retryTaskNode)
+    .addNode('terminal_fail', terminalFailNode)
+    .addNode('final_evaluate', finalEvaluateDispatchNode)
     .addNode('report', reportNode)
     .addEdge(START, 'prep')
     .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
     .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
     .addConditionalEdges('parsePrd', stateHasError, { error: END, ok: 'ganLoop' })
-    .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'dbUpsert' })
-    .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'inferTaskPlan' })
-    .addConditionalEdges('inferTaskPlan', stateHasError, { error: END, ok: 'fanout' })
-    // fanout 是 passthrough node；conditional edge 的路由函数 fanoutSubTasksNode
-    // 返回 Send[]，LangGraph runtime 并行调 run_sub_task。
-    .addConditionalEdges('fanout', fanoutSubTasksNode, ['run_sub_task', 'join'])
-    .addEdge('run_sub_task', 'join')
-    .addConditionalEdges('join', _routeAfterJoin, { end: END, final_e2e: 'final_e2e' })
-    .addConditionalEdges('final_e2e', _routeAfterFinalE2E, { end: END, report: 'report' })
+    .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'inferTaskPlan' })
+    .addConditionalEdges('inferTaskPlan', stateHasError, { error: END, ok: 'dbUpsert' })
+    .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'pick_sub_task' })
+    .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', final_evaluate: 'final_evaluate', end: END })
+    .addEdge('run_sub_task', 'evaluate')
+    .addConditionalEdges('evaluate', routeAfterEvaluate, { advance: 'advance', retry: 'retry', final_evaluate: 'final_evaluate', terminal_fail: 'terminal_fail', end: END })
+    .addEdge('advance', 'pick_sub_task')
+    .addEdge('retry', 'run_sub_task')
+    .addConditionalEdges('terminal_fail', stateHasError, { error: END, ok: END })
+    .addEdge('final_evaluate', 'report')
     .addEdge('report', END);
 }
 
