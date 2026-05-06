@@ -425,3 +425,5 @@ git push origin "${PROPOSE_BRANCH}"
 3. 禁止在硬阈值里引用内部函数名/代码路径
 4. 禁止 `{task_id}` 等占位符——命令必须可直接执行
 5. 禁止在 main 分支操作
+
+<!-- TDD Red: proposer v7 test FAIL: 版本不是 7.0.0 -->
