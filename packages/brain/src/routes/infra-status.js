@@ -92,6 +92,28 @@ export async function sshExec(server, cmd) {
 }
 
 /**
+ * macOS 真实内存压力（解析 `memory_pressure` 命令的 "System-wide memory free percentage"）。
+ *
+ * macOS 内存语义跟 Linux 不一样——`os.freemem()` 只返"立即可用 free pages"，
+ * inactive + compressor 不算 free 但实际可让位给新进程。所以 `(total - free) / total`
+ * 在 macOS 上长期 95%+，跟系统真实压力无关，会让 fleet effective_slots 永远算成 0。
+ *
+ * @returns {number | null} usagePercent (0-100)，命令失败/解析失败返回 null（caller 应 fallback）
+ */
+export function readMacOSMemoryUsagePercent(execFn = execSync) {
+  try {
+    const out = execFn('memory_pressure 2>/dev/null', { timeout: 3000, encoding: 'utf-8' });
+    const m = String(out).match(/System-wide memory free percentage:\s*(\d+)%/);
+    if (!m) return null;
+    const freePct = parseInt(m[1], 10);
+    if (Number.isNaN(freePct) || freePct < 0 || freePct > 100) return null;
+    return Math.round((100 - freePct) * 10) / 10;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 采集本机状态
  */
 export function collectLocalStats() {
@@ -109,6 +131,12 @@ export function collectLocalStats() {
     diskUsage = parseFloat(parts[4]) || 0;
   } catch { /* ignore */ }
 
+  let memUsagePercent = Math.round(((totalMem - freeMem) / totalMem) * 1000) / 10;
+  if (process.platform === 'darwin') {
+    const macUsage = readMacOSMemoryUsagePercent();
+    if (macUsage !== null) memUsagePercent = macUsage;
+  }
+
   return {
     status: 'online',
     cpu: {
@@ -122,7 +150,7 @@ export function collectLocalStats() {
     memory: {
       totalGB: Math.round(totalMem / 1024 / 1024 / 1024 * 10) / 10,
       usedGB: Math.round((totalMem - freeMem) / 1024 / 1024 / 1024 * 10) / 10,
-      usagePercent: Math.round(((totalMem - freeMem) / totalMem) * 1000) / 10,
+      usagePercent: memUsagePercent,
     },
     disk: { total: diskTotal, used: diskUsed, usagePercent: diskUsage },
     uptime: os.uptime(),
