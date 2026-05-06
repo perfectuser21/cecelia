@@ -8,9 +8,9 @@ version: 8.0.0
 created: 2026-04-08
 updated: 2026-05-06
 changelog:
-  - 8.0.0: Golden Path PRD — 去掉任务拆分（Step 3）；PRD 格式从"功能需求 FR-001"改为 Golden Path（入口→步骤→出口）；不再输出 task-plan.json；journey_type 保留写入 PRD 末尾
-  - 7.0.0: Working Skeleton — Step 0.5 journey_type 推断（4 类）+ Skeleton Task 强制首位；task-plan.json 根加 journey_type/journey_type_reason
-  - 6.0.0: Harness v2 M2 — 增产 task-plan.json（DAG）；强制 4-5 Task
+  - 8.0.0: Golden Path PRD — 去掉任务拆分（Step 3）；PRD 格式从"功能需求 FR-001"改为 Golden Path（入口→步骤→出口）；journey_type 保留写入 PRD 末尾
+  - 7.0.0: Working Skeleton — Step 0.5 journey_type 推断（4 类）+ Skeleton Task 强制首位
+  - 6.0.0: Harness v2 M2 — 强制 4-5 Task
   - 5.0.0: Step 0 升级 Brain API 上下文采集 + 歧义自检（9类）
 ---
 
@@ -155,13 +155,10 @@ git push origin HEAD
 {"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-..."}
 ```
 
-**⚠️ 注意**：不再输出 task-plan.json。任务拆分由 Proposer 在合同 GAN 确认后完成。
-
 ---
 
 ## 常见错误
 
-1. **输出 task-plan.json** → v8 不再拆任务，此文件由 Proposer 在合同后产出
-2. **PRD 仍用功能需求列表格式** → 必须改为 Golden Path 格式（入口→步骤→出口）
-3. **写实现细节**（"引入 X 库"、"用 async 模式"）→ 违反 What-only 原则
-4. **忘记 journey_type** → 必须在 PRD 末尾标注，Proposer 和 Evaluator 依赖此字段
+1. **PRD 仍用功能需求列表格式** → 必须改为 Golden Path 格式（入口→步骤→出口）
+2. **写实现细节**（"引入 X 库"、"用 async 模式"）→ 违反 What-only 原则
+3. **忘记 journey_type** → 必须在 PRD 末尾标注，Proposer 和 Evaluator 依赖此字段
