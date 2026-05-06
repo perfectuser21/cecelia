@@ -373,9 +373,26 @@ export default function OpsDashboard() {
           ) : (
             <div className="space-y-1">
               {openBreakers.map(([name, state]) => (
-                <div key={name} className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-red-400" />
-                  <span className="text-xs text-red-400">{name}: {state.state}</span>
+                <div key={name} className="flex items-center gap-2 justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
+                    <span className="text-xs text-red-400 truncate" title={name}>{name}: {state.state}</span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Reset circuit breaker "${name}" → CLOSED?`)) return;
+                      const r = await fetch(`/api/brain/circuit-breaker/${encodeURIComponent(name)}/reset`, { method: 'POST' });
+                      if (!r.ok) {
+                        alert(`Reset failed: HTTP ${r.status}`);
+                        return;
+                      }
+                      await fetchAll();
+                    }}
+                    className="px-2 py-0.5 text-xs rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 transition-colors flex-shrink-0"
+                    title="Reset 内存 + DB 都置 CLOSED"
+                  >
+                    Reset
+                  </button>
                 </div>
               ))}
             </div>
