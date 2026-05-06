@@ -4,13 +4,13 @@ import { join } from 'path';
 
 const SKILL_PATH = join(__dirname, '../../../workflows/skills/harness-contract-proposer/SKILL.md');
 
-describe('harness-contract-proposer v5.0 结构', () => {
+describe('harness-contract-proposer v6.0 结构', () => {
   const content = readFileSync(SKILL_PATH, 'utf8');
 
-  it('frontmatter version 为 5.0.0', () => {
+  it('frontmatter version 为 6.0.0 (Sprint 1 Working Skeleton 升级)', () => {
     const versionLine = content.split('\n').slice(0, 20).find(l => l.trim().startsWith('version:'));
     expect(versionLine).toBeDefined();
-    expect(versionLine).toContain('5.0.0');
+    expect(versionLine).toContain('6.0.0');
   });
 
   it('职责章节包含 3 份产物描述', () => {
