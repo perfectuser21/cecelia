@@ -55,6 +55,7 @@ import {
   startTickLoop,
   stopTickLoop,
   TICK_INTERVAL_MINUTES,
+  // TICK_LOOP_INTERVAL_MS：单位毫秒（ms），tick 主循环 setInterval 周期
   TICK_LOOP_INTERVAL_MS,
   TICK_TIMEOUT_MS
 } from './tick-loop.js';
