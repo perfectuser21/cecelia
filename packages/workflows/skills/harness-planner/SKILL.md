@@ -69,7 +69,7 @@ else（无路径线索）→ 默认 autonomous
 
 ### Step 1: 歧义自检（9 类扫描）
 
-在拆分 DAG 前对任务描述执行扫描：
+在输出 PRD 前对需求描述执行扫描：
 
 | # | 歧义类型 | 检查内容 |
 |---|----------|----------|
@@ -159,6 +159,7 @@ git push origin HEAD
 
 ## 常见错误
 
-1. **PRD 仍用功能需求列表格式** → 必须改为 Golden Path 格式（入口→步骤→出口）
-2. **写实现细节**（"引入 X 库"、"用 async 模式"）→ 违反 What-only 原则
-3. **忘记 journey_type** → 必须在 PRD 末尾标注，Proposer 和 Evaluator 依赖此字段
+1. **输出 task-plan.json** → v8 不再拆任务，此文件由 Proposer 在合同 GAN 确认后产出
+2. **PRD 仍用功能需求列表格式** → 必须改为 Golden Path 格式（入口→步骤→出口）
+3. **写实现细节**（"引入 X 库"、"用 async 模式"）→ 违反 What-only 原则
+4. **忘记 journey_type** → 必须在 PRD 末尾标注，Proposer 和 Evaluator 依赖此字段
