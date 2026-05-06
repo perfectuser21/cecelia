@@ -12,17 +12,26 @@ describe('harness-v5 CI checks 结构', () => {
 
   const workflow = existsSync(WORKFLOW_PATH) ? readFileSync(WORKFLOW_PATH, 'utf8') : '';
 
-  it('workflow 包含 4 个 job：dod-structure-purity / test-coverage / tdd-commit-order / tests-actually-pass', () => {
+  it('workflow 包含 4 个核心 job：dod-structure-purity / test-coverage / tdd-commit-order / tests-actually-pass', () => {
     expect(workflow).toMatch(/^\s*dod-structure-purity:/m);
     expect(workflow).toMatch(/^\s*test-coverage-for-behavior:/m);
     expect(workflow).toMatch(/^\s*tdd-commit-order:/m);
     expect(workflow).toMatch(/^\s*tests-actually-pass:/m);
   });
 
-  it('workflow 4 个 job 全部硬门禁（cp-0427095721 移除软门禁，观察期已过）', () => {
-    // 顶部注释里 mention 历史不算 — 必须 ^\s*continue-on-error:\s*true 整行
-    const hardLine = (workflow.match(/^\s*continue-on-error:\s*true/gm) || []).length;
-    expect(hardLine).toBe(0);
+  it('原有 4 个 job 全部硬门禁（cp-0427095721），skeleton-shape-check 在观察期（最多 1 个软门禁）', () => {
+    // 原始 4 个 job（dod-structure-purity/test-coverage/tdd-commit-order/tests-actually-pass）全部硬门禁
+    // skeleton-shape-check (cp-0506104457) 在观察期，允许 1 个 continue-on-error: true
+    const softGates = (workflow.match(/^\s*continue-on-error:\s*true/gm) || []).length;
+    expect(softGates).toBeLessThanOrEqual(1);
+    // 若有软门禁，必须是 skeleton-shape-check job
+    if (softGates === 1) {
+      expect(workflow).toMatch(/skeleton-shape-check:/);
+    }
+  });
+
+  it('workflow 包含 skeleton-shape-check job（Working Skeleton E2E 形状校验）', () => {
+    expect(workflow).toMatch(/^\s*skeleton-shape-check:/m);
   });
 
   it('workflow 只在 sprints/ + packages/workflows/skills/harness-contract-* 改动时跑', () => {
@@ -43,6 +52,11 @@ describe('harness-v5 CI checks 结构', () => {
 
   it('check-tdd-commit-order 脚本存在', () => {
     const p = join(REPO_ROOT, 'packages/engine/scripts/devgate/check-tdd-commit-order.sh');
+    expect(existsSync(p)).toBe(true);
+  });
+
+  it('skeleton-shape-check 脚本存在', () => {
+    const p = join(REPO_ROOT, 'packages/engine/scripts/devgate/skeleton-shape-check.cjs');
     expect(existsSync(p)).toBe(true);
   });
 

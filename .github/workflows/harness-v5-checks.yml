@@ -17,6 +17,7 @@ on:
       - 'sprints/**/tests/**/*.test.ts'
       - 'packages/workflows/skills/harness-contract-*/SKILL.md'
       - 'packages/workflows/skills/harness-generator/SKILL.md'
+      - 'sprints/**/contract-dod-ws0.md'
       # 排除归档：老 sprint 纯历史痕迹，格式可能不符 v5 规则，不应触发检查
       - '!sprints/archive/**'
 
@@ -115,3 +116,20 @@ jobs:
             echo "❌ 测试未通过（Green 阶段失败）"
             exit 1
           }
+
+  # ─── Check 5: Skeleton 形状校验 ─────────────────────────────────────
+  skeleton-shape-check:
+    name: Skeleton 测试形状校验 (v1.0)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # 观察期软门禁 — 确认无误报后去掉此行切硬门禁
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run skeleton-shape-check
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: node packages/engine/scripts/devgate/skeleton-shape-check.cjs
