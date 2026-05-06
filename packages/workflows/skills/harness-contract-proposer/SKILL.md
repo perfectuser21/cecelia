@@ -57,7 +57,9 @@ GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 ### Step 1: 读取 PRD
 
 ```bash
-# TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_ROUND、INITIATIVE_ID 由 cecelia-run 通过 prompt 注入，直接使用
+# TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_ROUND、INITIATIVE_ID、REVIEW_BRANCH、DB 由 cecelia-run 通过 prompt 注入，直接使用
+# 每次调用 = 一轮 GAN；Brain 的 harness-gan-graph.js 管理轮次循环和 APPROVED/REVISION 路由
+# REVIEW_BRANCH: 上一轮 Reviewer 的分支（第一轮为空）；DB: postgresql://localhost/cecelia（或 $DB_URL）
 git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
 git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || \
   cat "${SPRINT_DIR}/sprint-prd.md"
@@ -302,7 +304,7 @@ git checkout -b "${PROPOSE_BRANCH}" 2>/dev/null || git checkout "${PROPOSE_BRANC
 git add "${SPRINT_DIR}/contract-draft.md" \
         "${SPRINT_DIR}/contract-dod-ws"*.md \
         "${SPRINT_DIR}/tests/ws"*/ \
-        "${SPRINT_DIR}/task-plan.json"   # 仅 GAN APPROVED 后才有此文件
+        "${SPRINT_DIR}/task-plan.json" 2>/dev/null  # 仅 GAN APPROVED 后才有此文件，REVISION 轮跳过
 
 git commit -m "feat(contract): round-${PROPOSE_ROUND} Golden Path draft + DoD + tests + task-plan"
 git push origin "${PROPOSE_BRANCH}"
