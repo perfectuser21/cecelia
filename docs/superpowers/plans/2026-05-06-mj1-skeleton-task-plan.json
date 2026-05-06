@@ -1,0 +1,90 @@
+{
+  "initiative_id": "pending",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "F1 接任务 thin: Dashboard 按钮 + start-dev endpoint",
+      "scope": "在 Dashboard task 列表为 status=pending 的 task 加 \"开始开发\" 按钮；新建后端 endpoint POST /api/brain/tasks/:id/start-dev，调用现有 worktree 创建逻辑，返回 {worktree_path, branch}。允许丑 UI、允许默认按钮样式，不做 loading state。同 task 重复点击返回 409。",
+      "dod": [
+        "[ARTIFACT] apps/dashboard/src/pages/ 下至少一个文件含 \"开始开发\" 字符串",
+        "[ARTIFACT] packages/brain/src/routes/ 下注册了 POST /tasks/:id/start-dev 路由",
+        "[BEHAVIOR] tests/integration/mj1-start-dev.test.ts 通过：mock 环境 POST 返回 200 + JSON 含 worktree_path/branch；同 task 第二次返回 409"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/",
+        "apps/api/src/dashboard/routes.ts",
+        "packages/brain/src/routes/tasks.js",
+        "tests/integration/mj1-start-dev.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws2",
+      "title": "F3 回血回填 thin: callback 触发 KR 进度 +1%",
+      "scope": "callback-processor 收到 task=completed 时，自动调用 progress-reviewer 对该 task 关联 KR 执行 thin 计数法：进度 +1%（不超过 100%）。task 无 KR 关联时不报错、跳过。延迟控制在 5s 内。",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/callback-processor.js 含对 progress-reviewer KR 重算的调用",
+        "[ARTIFACT] packages/brain/src/progress-reviewer.js 暴露 thin 计数入口（如 incrementKRProgressByOnePercent）",
+        "[BEHAVIOR] tests/integration/mj1-callback-kr-update.test.ts 通过：task=completed callback 后关联 KR 进度 +1%；无 KR 关联时不报错"
+      ],
+      "files": [
+        "packages/brain/src/callback-processor.js",
+        "packages/brain/src/progress-reviewer.js",
+        "tests/integration/mj1-callback-kr-update.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws3",
+      "title": "F2 评估好坏 thin: verifyKRMovement 硬验证",
+      "scope": "新建函数 verifyKRMovement(taskId)，读取该 task 关联 KR 在 task 创建时和 task 完成时的进度数字（before/after），返回 {kr_id, before, after, moved: boolean | null}。task 无 KR 关联时返回 moved:null+reason。",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/kr-verifier.js 含 verifyKRMovement 函数 export",
+        "[BEHAVIOR] tests/integration/mj1-verify-kr-movement.test.ts 通过：moved=true（after>before）、moved=false（after==before）、moved=null（无 KR）三态正确"
+      ],
+      "files": [
+        "packages/brain/src/kr-verifier.js",
+        "tests/integration/mj1-verify-kr-movement.test.ts"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws4",
+      "title": "F4 前端可见 thin: LiveMonitor 10s 内可见",
+      "scope": "调整 taskEvents.js 推送频率，确保 task 状态变化（dispatch / in_progress / completed / failed）在 P95 < 10s 内被 LiveMonitor 消费到。允许 thin 阶段使用现有 WebSocket 协议，不重构。",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/events/taskEvents.js 有调频/buffer 控制改动",
+        "[BEHAVIOR] tests/integration/mj1-livemonitor-latency.test.ts 通过：mock 一组 task 状态变化序列，event-bus 在 10s 内全部推送到 subscriber"
+      ],
+      "files": [
+        "packages/brain/src/events/taskEvents.js",
+        "apps/dashboard/src/pages/live-monitor/",
+        "tests/integration/mj1-livemonitor-latency.test.ts"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws5",
+      "title": "F0 E2E smoke: MJ1 端到端 7 step 贯通",
+      "scope": "新建 tests/e2e/mj1-skeleton-smoke.spec.ts，用 hardcode 关联到 KR2 的最简 task 跑通整条 MJ1 路径：Dashboard 点按钮 → start-dev 创建 worktree → /dev 走完（mock 简化版）→ PR merge callback → KR 进度 +1% → LiveMonitor 看到状态变化。每个 step 必须在测试中显式标识为 step 1/2/.../7。",
+      "dod": [
+        "[ARTIFACT] tests/e2e/mj1-skeleton-smoke.spec.ts 文件存在，含 7 个 step 注释或描述",
+        "[BEHAVIOR] tests/e2e/mj1-skeleton-smoke.spec.ts 全绿：完整跑通 MJ1 7 step，KR2 进度真的 +1%，LiveMonitor 能消费到状态事件"
+      ],
+      "files": [
+        "tests/e2e/mj1-skeleton-smoke.spec.ts"
+      ],
+      "depends_on": ["ws1", "ws2", "ws3", "ws4"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    }
+  ]
+}
