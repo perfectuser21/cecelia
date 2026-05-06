@@ -400,4 +400,108 @@ describe('self_drive_health probe logic', () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain('errors=3');
   });
+
+  it('should return ok:true via in-memory cycle counter grace when cycles ran but DB events missing', async () => {
+    // Scenario: Brain has been running long-term (>6h, beyond startup grace), cycles fire
+    // every 4h and increment in-memory counters, but recordEvent INSERT silently fails so
+    // DB shows 0 events. The probe should trust the in-memory cycle counter.
+    const oldStart = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const recentSuccess = new Date(Date.now() - 30 * 60 * 1000);
+    mockGetSelfDriveStatus.mockReturnValue({
+      running: true,
+      interval_ms: 14400000,
+      max_tasks_per_cycle: 3,
+      started_at: oldStart, // beyond 6h startup grace
+      cycle_success_count: 3,
+      cycle_error_count: 0,
+      last_cycle_success_at: recentSuccess,
+      last_cycle_error_at: null,
+    });
+
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: null,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('in_memory_cycles=3');
+    expect(result.detail).toContain('db_event_missing');
+  });
+
+  it('should return ok:false when in-memory cycle errors exist but DB events missing (real failure surfaces)', async () => {
+    // In-memory shows errors, DB shows nothing — events lost but cycles genuinely failed.
+    // Surface the in-memory error count instead of misleading "successful_cycles=0 errors=0".
+    const oldStart = new Date(Date.now() - 8 * 60 * 60 * 1000);
+    const recentError = new Date(Date.now() - 10 * 60 * 1000);
+    mockGetSelfDriveStatus.mockReturnValue({
+      running: true,
+      interval_ms: 14400000,
+      max_tasks_per_cycle: 3,
+      started_at: oldStart,
+      cycle_success_count: 0,
+      cycle_error_count: 2,
+      last_cycle_success_at: null,
+      last_cycle_error_at: recentError,
+    });
+
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: null,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('in_memory_errors=2');
+    expect(result.detail).toContain('db_event_missing');
+  });
+
+  it('should NOT use in-memory cycle grace when in-memory shows both successes and errors', async () => {
+    // If in-memory has any errors, do not silently treat as healthy — real cycle failures
+    // should be surfaced regardless of how many in-memory successes occurred.
+    const oldStart = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    mockGetSelfDriveStatus.mockReturnValue({
+      running: true,
+      interval_ms: 14400000,
+      max_tasks_per_cycle: 3,
+      started_at: oldStart,
+      cycle_success_count: 5,
+      cycle_error_count: 1,
+      last_cycle_success_at: new Date(),
+      last_cycle_error_at: new Date(),
+    });
+
+    mockQuery.mockResolvedValue({
+      rows: [{
+        success_cnt: '0',
+        error_cnt: '0',
+        last_success: null,
+        total_tasks_created: '0',
+        last_loop_started: null,
+      }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'self_drive_health');
+    const result = await probe.fn();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('in_memory_errors=1');
+  });
 });

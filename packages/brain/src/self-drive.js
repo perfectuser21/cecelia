@@ -59,6 +59,13 @@ async function getConfig() {
 let _currentIntervalMs = DEFAULT_INTERVAL_MS;
 let _currentMaxTasks = DEFAULT_MAX_TASKS;
 let _loopStartedAt = null; // in-memory fallback for probe grace period (DB write might fail)
+// In-memory cycle counters — incremented on every cycle outcome regardless of DB write success.
+// The probe falls back to these when DB events are missing (long-running loop, transient
+// recordEvent failures, or cecelia_events query lag).
+let _cycleSuccessCount = 0;
+let _cycleErrorCount = 0;
+let _lastCycleSuccessAt = null;
+let _lastCycleErrorAt = null;
 
 // ============================================================
 // State Reader — 读取 .agent-knowledge/CURRENT_STATE.md
@@ -718,6 +725,17 @@ actions 数组支持以下类型：
 // ============================================================
 
 async function recordEvent(subtype, payload) {
+  // Increment in-memory counters first — survives even if DB INSERT fails silently below.
+  // Only loop outcome subtypes count: cycle_complete / no_action = success, cycle_error = error.
+  // loop_started is informational and not counted as a cycle outcome.
+  if (subtype === 'cycle_complete' || subtype === 'no_action') {
+    _cycleSuccessCount++;
+    _lastCycleSuccessAt = new Date();
+  } else if (subtype === 'cycle_error') {
+    _cycleErrorCount++;
+    _lastCycleErrorAt = new Date();
+  }
+
   try {
     await pool.query(
       `INSERT INTO cecelia_events (event_type, source, payload)
@@ -796,5 +814,9 @@ export function getSelfDriveStatus() {
     interval_ms: _currentIntervalMs,
     max_tasks_per_cycle: _currentMaxTasks,
     started_at: _loopStartedAt,
+    cycle_success_count: _cycleSuccessCount,
+    cycle_error_count: _cycleErrorCount,
+    last_cycle_success_at: _lastCycleSuccessAt,
+    last_cycle_error_at: _lastCycleErrorAt,
   };
 }

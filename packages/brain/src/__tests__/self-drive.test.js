@@ -319,6 +319,36 @@ describe('self-drive', () => {
       expect(status).toHaveProperty('interval_ms');
       expect(status).toHaveProperty('max_tasks_per_cycle');
       expect(status).toHaveProperty('started_at'); // in-memory loop start time for probe grace fallback
+      // In-memory cycle counters — independent of DB write success, used by probe as
+      // ground truth when cecelia_events lookup misses (DB INSERT failure / replication lag).
+      expect(status).toHaveProperty('cycle_success_count');
+      expect(status).toHaveProperty('cycle_error_count');
+      expect(status).toHaveProperty('last_cycle_success_at');
+      expect(status).toHaveProperty('last_cycle_error_at');
+    });
+
+    it('should increment cycle_success_count when cycle completes (even if DB INSERT fails)', async () => {
+      // Simulate DB INSERT failure: pool.query throws on the recordEvent INSERT call.
+      // In-memory counter must still advance — that is the whole point of the fallback.
+      const pool = (await import('../db.js')).default;
+
+      pool.query
+        .mockResolvedValueOnce({ rows: [] })  // no probe
+        .mockResolvedValueOnce({ rows: [] })  // no scan
+        .mockResolvedValueOnce({ rows: [] })  // no tasks
+        .mockResolvedValueOnce({ rows: [] })  // no KR progress
+        .mockResolvedValueOnce({ rows: [{ completed: '0', failed: '0', total: '0' }] }) // task stats
+        .mockResolvedValueOnce({ rows: [] })  // no projects
+        .mockRejectedValueOnce(new Error('connection lost')); // recordEvent INSERT fails
+
+      const { runSelfDrive, getSelfDriveStatus } = await import('../self-drive.js');
+      const before = getSelfDriveStatus().cycle_success_count;
+
+      await runSelfDrive();
+
+      const after = getSelfDriveStatus();
+      expect(after.cycle_success_count).toBe(before + 1);
+      expect(after.last_cycle_success_at).toBeInstanceOf(Date);
     });
   });
 });
