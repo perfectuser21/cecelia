@@ -31,10 +31,14 @@ describe('Migration 266 — mouth fallbacks OAuth-only', () => {
     expect(sql).toMatch(/@>/);
   });
 
-  it('migration 不删除其他 agent 配置（cortex / reflection / rumination）', () => {
-    expect(sql).not.toMatch(/cortex/i);
-    expect(sql).not.toMatch(/reflection/i);
-    expect(sql).not.toMatch(/rumination/i);
+  it('migration 不操作其他 agent 配置（UPDATE 路径只针对 mouth.fallbacks）', () => {
+    // 注释里允许提到其他 agent（说明用），但 UPDATE 子句不能改它们
+    const updateBlock = sql.match(/UPDATE[\s\S]+?(?=\n\n|$)/i)?.[0] || '';
+    expect(updateBlock).not.toMatch(/cortex,fallbacks/i);
+    expect(updateBlock).not.toMatch(/reflection,fallbacks/i);
+    expect(updateBlock).not.toMatch(/rumination,fallbacks/i);
+    // jsonb_set 路径只能是 mouth
+    expect(updateBlock).toMatch(/'\{mouth,fallbacks\}'/);
   });
 
   it('SQL 含背景注释解释为什么改', () => {
