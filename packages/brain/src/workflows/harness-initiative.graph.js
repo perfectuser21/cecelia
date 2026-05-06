@@ -808,7 +808,7 @@ export const FullInitiativeState = Annotation.Root({
  * @param {Function} [opts.executor]  spawn 替代（测试注入）
  * @returns {Promise<object>}  state delta（{} 或 { taskPlan: {...} }）
  */
-export async function inferTaskPlanNode(state, opts = {}) {
+export async function inferTaskPlanNode(state, _opts = {}) {
   const existing = state?.taskPlan?.tasks;
   if (Array.isArray(existing) && existing.length >= 1) {
     return {};
@@ -1115,7 +1115,7 @@ JOURNEY_TYPE=${journeyType}`;
   if (lastJson) {
     try {
       verdict = JSON.parse(lastJson);
-    } catch (_e) {
+    } catch {
       // ignore parse error
     }
   }
@@ -1240,7 +1240,7 @@ JOURNEY_TYPE=${journeyType}`;
   const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{'));
   const lastJson = lines[lines.length - 1];
   if (lastJson) {
-    try { verdict = JSON.parse(lastJson); } catch (_e) {}
+    try { verdict = JSON.parse(lastJson); } catch {}
   }
 
   if (verdict?.verdict === 'PASS') {
