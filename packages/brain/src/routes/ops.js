@@ -950,7 +950,10 @@ async function updateUserImpression(openId, senderName) {
       ? `基于以下新消息，更新对 ${senderName} 的印象（1-2句，简洁）。\n已有印象：${existRow.content}\n新消息：\n${recentMsgs}\n\n只输出新印象描述。`
       : `根据以下消息，简短描述 ${senderName} 的说话风格和关注点（1-2句话）。\n${recentMsgs}\n\n只输出印象描述。`;
 
-    const { text: impression } = await callLLM('mouth', prompt, { timeout: 8000, max_tokens: 150 });
+    // timeout=60000：bridge 实际 OAuth Claude Code sonnet 响应通常 10-30s，
+    // 偶尔到 170s，8s 设置必然超时 → 无意义触发熔断 + 污染 dispatch。
+    // 60s 足够 P95 完成；真正卡死有别处的 watchdog 兜底。
+    const { text: impression } = await callLLM('mouth', prompt, { timeout: 60000, max_tokens: 150 });
     if (!impression?.trim()) return;
 
     if (existRow) {

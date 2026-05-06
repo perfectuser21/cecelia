@@ -1,54 +1,52 @@
-# PRD — fix(brain): macOS fleet 内存压力误读修复
+# PRD — fix(brain): feishu/impression mouth timeout 8s→60s
 
 ## 背景 / 问题
 
-`packages/brain/src/routes/infra-status.js:collectLocalStats` 用 `(totalMem - freeMem) / totalMem` 算 memory.usagePercent。这个算法在 Linux 上语义正确，但**在 macOS 上系统性误判**：
+`packages/brain/src/routes/ops.js:953` `updateFeishuImpression` 调 `callLLM('mouth', prompt, { timeout: 8000 })`。
 
-- macOS 的 `os.freemem()` 只返"立即可用 free pages"
-- inactive + compressor 不算 free 但实际可让位给新进程
-- 结果：macOS 上 used% 长期 95%+，跟系统真实压力无关
+但 `mouth` provider 实际走 `cecelia-bridge` HTTP（`http://localhost:3457/llm-call`），bridge 内部跑 OAuth Claude Code（`claude -p`）。从 `bridge.log` 实测响应时间：
+- haiku: 平均 10-35s
+- sonnet: 4-170s（70%+ > 8s）
 
-**实测对比**（本机 Apple M4，16G 内存）：
-- 旧算法：`99.5%` used
-- macOS 官方 `memory_pressure` 命令：`45%` used（free 56%）
+**8s timeout 必然超时**，每次定时任务（feishu 印象更新、ops 巡检）触发都失败，触发 mouth fallback 链：
+- fallback #1: codex (refresh token 401 失效)
+- fallback #2: anthropic-api (信用余额 0)
+- fallback #3: anthropic 直连 (信用 0)
+- 全部失败 → 印象更新永远不工作
 
-`fleet-resource-cache.js:38` 用这个 usagePercent 算 `effectiveSlots = floor(physical * (1 - max(cpu, mem)))`，导致**美国本机 effective_slots 长期为 0**，dispatcher 派不出任何需要本机的 dev task。这是个 **bootstrap 死锁**——修复这个 bug 的 task 自己也派不出去。
+虽然 `feishu/impression` 失败本身不直接造成 `cecelia-run` 熔断（dispatcher 不调这条），但污染 mouth 调用 success 率，让真正需要 mouth 的链路（thalamus 决策、harness graph）也踩同样陷阱。
 
 ## 成功标准
 
-- **SC-001**: 美国本机（darwin）跑 `collectLocalStats()` 时，memory.usagePercent 用 `memory_pressure` 命令的真实压力，而非 `os.freemem` 误读
-- **SC-002**: macOS 上 `memory_pressure` 命令失败/超时/解析失败时，自动 fallback 到 `os.freemem` 旧算法（不破坏现有行为）
-- **SC-003**: 非 darwin 平台（Linux/CI）行为完全不变（保留 `os.freemem` 算法）
-- **SC-004**: 美国本机部署后 `effectiveSlots > 0`（至少有 1 个 slot 可派）
+- **SC-001**: `updateFeishuImpression` 调用 mouth 的 timeout 改为 60000ms（覆盖 P95 sonnet 响应）
+- **SC-002**: bridge 真实响应通常 4-30s，60s 留充足空间，wider tail（170s）由 retry 兜底，不在本 PR 范围
+- **SC-003**: ops.js 不再含任何 8s timeout 用于 mouth callLLM（防回退）
 
 ## 范围限定
 
 **在范围内**：
-- 新增 `readMacOSMemoryUsagePercent()` 解析 `memory_pressure` 命令输出
-- 在 `collectLocalStats` 里 darwin 分支用新算法 + fallback
-- 单元测试覆盖 7 个分支（正常 / 极端 / 异常输出 / 命令失败 / 越界）
+- ops.js:953 timeout 8000 → 60000（单行）
+- 配套测试（ops.test.js）grep 验证 timeout 数字
 
 **不在范围内**：
-- 远端机器（西安 Mac mini）的 macOS 压力——仍用 `collectRemoteUnixStats`，本 PR 不动
-- CPU usage 算法——cpuUsage 用 loadAvg 在 macOS 上语义可议但本 PR 不修
-- swap 使用率作为压力指标——本 PR 不引入
+- 其他 callLLM('mouth', ...) timeout 调整（其他地方未发现 8s timeout）
+- mouth fallback 链整体改造（PR #B 处理）
+- bridge 慢响应根因调研（bridge tail latency 可单独 PR）
 
 ## DoD（验收）
 
-- [x] [ARTIFACT] `packages/brain/src/routes/infra-status.js` 含 `readMacOSMemoryUsagePercent` 函数 export
-- [x] [ARTIFACT] `packages/brain/src/__tests__/macos-memory-pressure.test.js` 新增测试文件
-- [x] [BEHAVIOR] tests/integration/macos-memory-pressure: 7 个 case 全过（正常 56%/0%/100% + 无字段 + 抛错 + 越界 + 真实输出片段）— 本地用 `node /tmp/verify-macos-mem-pressure.mjs` 7/7 通过；CI 跑 vitest 跑测试文件
-- [x] [BEHAVIOR] 实测对比：旧算法 99.5% vs 新算法 45%（差 54.5 pct，bug 严重程度证实）
+- [x] [ARTIFACT] `packages/brain/src/routes/ops.js` `callLLM('mouth', ...)` timeout 改为 60000
+- [x] [ARTIFACT] `packages/brain/src/routes/__tests__/ops.test.js` 新增 2 个 it 用例
+- [x] [BEHAVIOR] tests/routes/ops: feishu impression timeout 测试通过（grep 源码验证 timeout >= 60000 且不再含 8000）
 
 ## 受影响文件
 
-- `packages/brain/src/routes/infra-status.js` — 新增 `readMacOSMemoryUsagePercent`，`collectLocalStats` darwin 分支接入
-- `packages/brain/src/__tests__/macos-memory-pressure.test.js` — 新增测试文件
+- `packages/brain/src/routes/ops.js` — line 953 timeout 8000 → 60000 + 注释
+- `packages/brain/src/routes/__tests__/ops.test.js` — 加 describe block 验证 timeout 值
 
 ## 部署后验证
 
-merge 到 main 后：
-1. Brain 自动重启拿新代码（或手动重启）
-2. fleet cache 30 秒内重新采样
-3. `curl localhost:5221/api/brain/capacity-budget | jq '.fleet[] | select(.id=="us-mac-m4")'` 应该看到 `effective_slots > 0`
-4. queued harness_initiative 任务（b10de974-...）将在下一次 tick 被派发
+merge 到 main + Brain 重启后：
+1. `tail -f logs/brain-error.log | grep "feishu/impression"` 应该停止报 timeout 错误
+2. `tail -f logs/bridge.log | grep "feishu"` 应该看到 mouth 调用真实完成（不被 8s 截断）
+3. user_profile_facts 表 feishu_group_impression 行数应该开始增长
