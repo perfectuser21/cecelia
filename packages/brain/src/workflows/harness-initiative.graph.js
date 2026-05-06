@@ -1184,7 +1184,7 @@ export function routeAfterEvaluate(state) {
     if (idx + 1 >= tasks.length) return 'final_evaluate';
     return 'advance';
   }
-  // FAIL
+  // FAIL (or null/unexpected verdict — treated as FAIL to prevent silent skip)
   if (fixCount >= MAX_FIX_ROUNDS) return 'terminal_fail';
   return 'retry';
 }

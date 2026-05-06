@@ -362,6 +362,16 @@ describe('routeAfterEvaluate', () => {
     expect(routeAfterEvaluate(state)).toBe('terminal_fail');
   });
 
+  it('null verdict → retry (treated as FAIL)', () => {
+    const state = {
+      evaluate_verdict: null,
+      task_loop_index: 0,
+      task_loop_fix_count: 0,
+      taskPlan: { tasks: [{ id: 't1' }] },
+    };
+    expect(routeAfterEvaluate(state)).toBe('retry');
+  });
+
   it('with error → end', () => {
     const state = {
       error: { node: 'some_node', message: 'oops' },
@@ -476,7 +486,7 @@ describe('retryTaskNode', () => {
     const result = await retryTaskNode(state);
     // evaluate_feedback should NOT be cleared (run_sub_task uses it as fix context)
     // result.evaluate_feedback can be undefined (not set) but should NOT be null
-    expect(result.evaluate_feedback).not.toBe(null);
+    expect(result).not.toHaveProperty('evaluate_feedback'); // retryTaskNode does NOT output this key, preserving old value in state
   });
 
   it('resets evaluate_verdict to null', async () => {
