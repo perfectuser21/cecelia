@@ -64,6 +64,7 @@ import contextRoutes from './src/routes/context.js';
 import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
 import harnessRoutes from './src/routes/harness.js';
+import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
 import initiativesRoutes from './src/routes/initiatives.js';
 import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
@@ -285,6 +286,7 @@ app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
 app.use('/api/brain/harness', harnessRoutes);
+app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);
 
