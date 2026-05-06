@@ -16,7 +16,12 @@ RUN npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-script
 
 # ── Stage 2: Runtime ──
 FROM node:20-alpine
-RUN apk add --no-cache curl bash procps tini docker-cli git openssh-client ca-certificates github-cli \
+# v1.228.2 (2026-05-05): 加 docker-cli-compose（docker compose plugin）。
+# 旧版只装 docker-cli → 缺 'docker compose' 子命令 → brain-deploy.sh 调
+# `docker compose -f docker-compose.yml up -d` 报 "unknown shorthand flag: 'f' in -f"
+# → webhook deploy 永久 fail。手动 host 跑 OK 因为 host 装了 compose plugin。
+# 加 docker-cli-compose 让 container 内 docker compose 子命令可用。
+RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli \
  && adduser -D -u 1001 cecelia
 
 # Install gh CLI for shepherd.js (gh pr view/merge) and harness-watcher.js (gh run list).
