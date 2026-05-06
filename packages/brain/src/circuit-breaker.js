@@ -182,12 +182,30 @@ async function recordFailure(key = 'default') {
 }
 
 /**
- * Force reset a circuit breaker
+ * Force reset a circuit breaker (legacy sync API, fire-and-forget DB delete).
+ * Prefer `resetBreaker(key)` which awaits the DB write and is exposed via the
+ * POST /api/brain/circuit-breaker/:key/reset endpoint.
  * @param {string} key
  */
 function reset(key = 'default') {
   breakers.set(key, defaultState());
   void _delete(key);
+}
+
+/**
+ * Force reset a circuit breaker, awaiting both in-memory and DB writes.
+ *
+ * 同步把内存 Map 设回 defaultState（CLOSED, failures=0），并 UPSERT
+ * `circuit_breaker_states` 行为 state='CLOSED' / failures=0 / opened_at=NULL /
+ * last_failure_at=NULL，让 loadFromDB 重启后恢复出干净状态。
+ *
+ * 与 `reset()` 区别：本函数 await DB 写入，便于 reset API 路由把结果反馈给调用方。
+ *
+ * @param {string} key
+ */
+async function resetBreaker(key = 'default') {
+  breakers.set(key, defaultState());
+  await _persist(key);
 }
 
 /**
@@ -208,6 +226,7 @@ export {
   recordSuccess,
   recordFailure,
   reset,
+  resetBreaker,
   getAllStates,
   loadFromDB,
   FAILURE_THRESHOLD,

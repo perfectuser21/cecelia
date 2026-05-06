@@ -4,7 +4,7 @@ import pool from '../db.js';
 import { executeOkrTick as _executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus, addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS } from '../okr-tick.js';
 import { executeNightlyAlignment as _executeNightlyAlignment, runNightlyAlignmentSafe, startNightlyScheduler, stopNightlyScheduler, getNightlyTickStatus, getDailyReports } from '../nightly-tick.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from '../event-bus.js';
-import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from '../circuit-breaker.js';
+import { getState as getCBState, resetBreaker as resetCB, getAllStates as getAllCBStates } from '../circuit-breaker.js';
 import { getCurrentAlertness, setManualOverride as _setManualOverride, clearManualOverride as _clearManualOverride, ALERTNESS_LEVELS, LEVEL_NAMES } from '../alertness/index.js';
 import { getDispatchStats as _getDispatchStats } from '../dispatch-stats.js';
 import { getCleanupStats as _getCleanupStats, runTaskCleanup as _runTaskCleanup, getCleanupAuditLog as _getCleanupAuditLog } from '../task-cleanup.js';
@@ -68,11 +68,16 @@ router.get('/circuit-breaker', (req, res) => {
 
 /**
  * POST /api/brain/circuit-breaker/:key/reset
- * Force reset a circuit breaker
+ * Force reset a circuit breaker — awaits both in-memory Map and DB UPSERT
+ * before responding so the caller knows the persisted row is CLOSED.
  */
-router.post('/circuit-breaker/:key/reset', (req, res) => {
-  resetCB(req.params.key);
-  res.json({ success: true, key: req.params.key, state: getCBState(req.params.key) });
+router.post('/circuit-breaker/:key/reset', async (req, res) => {
+  try {
+    await resetCB(req.params.key);
+    res.json({ success: true, key: req.params.key, state: getCBState(req.params.key) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to reset circuit breaker', details: err.message });
+  }
 });
 
 // ==================== Health Check API ====================

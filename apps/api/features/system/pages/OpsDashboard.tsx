@@ -158,6 +158,7 @@ export default function OpsDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [resettingBreaker, setResettingBreaker] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -219,6 +220,20 @@ export default function OpsDashboard() {
     fetchAll();
     const fast = setInterval(fetchAll, 10000);
     return () => clearInterval(fast);
+  }, [fetchAll]);
+
+  const handleResetBreaker = useCallback(async (key: string) => {
+    if (!window.confirm(`Reset circuit breaker "${key}" to CLOSED?`)) return;
+    setResettingBreaker(key);
+    try {
+      const r = await fetch(`/api/brain/circuit-breaker/${encodeURIComponent(key)}/reset`, { method: 'POST' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await fetchAll();
+    } catch (e: any) {
+      window.alert(`Reset failed: ${e.message}`);
+    } finally {
+      setResettingBreaker(null);
+    }
   }, [fetchAll]);
 
   // ── Helpers ────────────────────────────────────────
@@ -373,9 +388,20 @@ export default function OpsDashboard() {
           ) : (
             <div className="space-y-1">
               {openBreakers.map(([name, state]) => (
-                <div key={name} className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-red-400" />
-                  <span className="text-xs text-red-400">{name}: {state.state}</span>
+                <div key={name} className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
+                    <span className="text-xs text-red-400 truncate">{name}: {state.state}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleResetBreaker(name)}
+                    disabled={resettingBreaker === name}
+                    aria-label={`Reset circuit breaker ${name}`}
+                    className="flex-shrink-0 px-2 py-0.5 text-[10px] rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {resettingBreaker === name ? '...' : 'Reset'}
+                  </button>
                 </div>
               ))}
             </div>
