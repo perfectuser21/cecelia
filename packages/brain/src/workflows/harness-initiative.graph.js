@@ -517,8 +517,9 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
 // 每节点首句幂等门防 LangGraph resume 重 spawn（C6 smoke 教训）。
 // PRD: docs/superpowers/specs/2026-04-25-c8a-harness-initiative-graph-design.md
 
-import { StateGraph, Annotation, START, END } from '@langchain/langgraph';
+import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
+import { LLM_RETRY, DB_RETRY, NO_RETRY } from './retry-policies.js';
 // 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
 // upsertTaskPlan / ensureHarnessWorktree / resolveGitHubToken / runGanContractGraph
 
@@ -711,11 +712,11 @@ function stateHasError(state) { return state.error ? 'error' : 'ok'; }
 
 export function buildHarnessInitiativeGraph() {
   return new StateGraph(InitiativeState)
-    .addNode('prep', prepInitiativeNode)
-    .addNode('planner', runPlannerNode)
-    .addNode('parsePrd', parsePrdNode)
-    .addNode('ganLoop', runGanLoopNode)
-    .addNode('dbUpsert', dbUpsertNode)
+    .addNode('prep', prepInitiativeNode, { retryPolicy: NO_RETRY })
+    .addNode('planner', runPlannerNode, { retryPolicy: LLM_RETRY })
+    .addNode('parsePrd', parsePrdNode, { retryPolicy: NO_RETRY })
+    .addNode('ganLoop', runGanLoopNode, { retryPolicy: LLM_RETRY })
+    .addNode('dbUpsert', dbUpsertNode, { retryPolicy: DB_RETRY })
     .addEdge(START, 'prep')
     .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
     .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
@@ -1191,6 +1192,16 @@ export function routeAfterEvaluate(state) {
 
 // Change 6: finalEvaluateDispatchNode (Mode B)
 
+/**
+ * W5 — 关键决策点 interrupt()。
+ * 当 final E2E verdict='FAIL' 且 fix_round 已达 MAX_FIX_ROUNDS 时，调 interrupt()
+ * 暂停 graph，由主理人通过 routes/harness-interrupts.js POST resume 决策：
+ *   - abort:              终止 graph，写 error
+ *   - extend_fix_rounds:  允许再 fix 3 轮（fix_rounds_extended=3）
+ *   - accept_failed:      接受失败但标 PASS_WITH_OVERRIDE 让 graph 继续
+ *
+ * Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md §W5
+ */
 export async function finalEvaluateDispatchNode(state, opts = {}) {
   const executor = opts.executor || spawn;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
@@ -1228,33 +1239,87 @@ JOURNEY_TYPE=${journeyType}`;
     return { final_e2e_verdict: 'FAIL', final_e2e_failed_scenarios: [{ name: 'evaluator spawn failed', error: err.message }] };
   }
 
+  let verdictDelta;
   if (result.exit_code !== 0 || result.timed_out) {
-    return {
+    verdictDelta = {
       final_e2e_verdict: 'FAIL',
       final_e2e_failed_scenarios: [{ name: `evaluator exit=${result.exit_code}`, error: (result.stderr || '').slice(-300) }],
     };
+  } else {
+    const stdout = parseDockerOutput(result.stdout);
+    let verdict = null;
+    const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{'));
+    const lastJson = lines[lines.length - 1];
+    if (lastJson) {
+      try { verdict = JSON.parse(lastJson); } catch { /* ignore */ }
+    }
+
+    if (verdict?.verdict === 'PASS') {
+      verdictDelta = { final_e2e_verdict: 'PASS', final_e2e_failed_scenarios: [] };
+    } else {
+      verdictDelta = {
+        final_e2e_verdict: 'FAIL',
+        final_e2e_failed_scenarios: [{
+          name: verdict?.failed_step || 'E2E failed',
+          covered_tasks: [],
+          output: verdict?.log_excerpt || stdout.slice(-300),
+          exitCode: 1,
+        }],
+      };
+    }
   }
 
-  const stdout = parseDockerOutput(result.stdout);
-  let verdict = null;
-  const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{'));
-  const lastJson = lines[lines.length - 1];
-  if (lastJson) {
-    try { verdict = JSON.parse(lastJson); } catch {}
+  // W5 — fix_round 用尽 + FAIL → interrupt() 问主理人
+  const fixRound = state.task_loop_fix_count ?? 0;
+  if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound >= MAX_FIX_ROUNDS) {
+    let decision;
+    try {
+      decision = interrupt({
+        type: 'final_e2e_failed_max_fix',
+        initiative_id: state.initiativeId,
+        task_id: state.task?.id,
+        failed_scenarios: verdictDelta.final_e2e_failed_scenarios || [],
+        fix_rounds_used: fixRound,
+        message:
+          'Final E2E 已重试 ' + fixRound + ' 次仍失败。请决定：' +
+          '(a) action=abort 终止 (b) action=extend_fix_rounds 增加 fix_round 限额再试 ' +
+          '(c) action=accept_failed 标 sprint failed 但接受',
+      });
+    } catch (err) {
+      // GraphInterrupt 是 LangGraph 暂停信号 — 不在此 catch（retryOn 已排除），但兜底返 verdictDelta
+      if (err?.name === 'GraphInterrupt' || /interrupt/i.test(String(err?.message || ''))) {
+        throw err;
+      }
+      console.warn(`[finalEvaluateDispatchNode] interrupt() unexpected error: ${err.message}`);
+      return verdictDelta;
+    }
+
+    if (decision?.action === 'abort') {
+      return {
+        ...verdictDelta,
+        error: { node: 'final_evaluate', message: 'aborted by operator', operator_decision: decision },
+      };
+    }
+    if (decision?.action === 'extend_fix_rounds') {
+      // 把 fix count 重置为 0 让 graph 路由回 retry 再跑（caller 需从 evaluate 路径再来）
+      return {
+        ...verdictDelta,
+        task_loop_fix_count: 0,
+        fix_rounds_extended: (state.fix_rounds_extended || 0) + 3,
+        operator_decision: decision,
+      };
+    }
+    if (decision?.action === 'accept_failed') {
+      return {
+        ...verdictDelta,
+        final_e2e_verdict: 'PASS_WITH_OVERRIDE',
+        operator_decision: decision,
+      };
+    }
+    // 未知 action — 保留原 verdict
   }
 
-  if (verdict?.verdict === 'PASS') {
-    return { final_e2e_verdict: 'PASS', final_e2e_failed_scenarios: [] };
-  }
-  return {
-    final_e2e_verdict: 'FAIL',
-    final_e2e_failed_scenarios: [{
-      name: verdict?.failed_step || 'E2E failed',
-      covered_tasks: [],
-      output: verdict?.log_excerpt || stdout.slice(-300),
-      exitCode: 1,
-    }],
-  };
+  return verdictDelta;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1271,21 +1336,25 @@ function _routeAfterFinalE2E(state) {
 }
 
 export function buildHarnessFullGraph() {
+  // 节点级 RetryPolicy（W2）—— 见 packages/brain/src/workflows/retry-policies.js
+  // LLM_RETRY: planner / ganLoop / run_sub_task / evaluate / final_evaluate
+  // DB_RETRY:  dbUpsert / report
+  // NO_RETRY:  prep / parsePrd / inferTaskPlan / pick_sub_task / advance / retry / terminal_fail
   return new StateGraph(FullInitiativeState)
-    .addNode('prep', prepInitiativeNode)
-    .addNode('planner', runPlannerNode)
-    .addNode('parsePrd', parsePrdNode)
-    .addNode('ganLoop', runGanLoopNode)
-    .addNode('inferTaskPlan', inferTaskPlanNode)
-    .addNode('dbUpsert', dbUpsertNode)
-    .addNode('pick_sub_task', pickSubTaskNode)
-    .addNode('run_sub_task', runSubTaskNode)
-    .addNode('evaluate', evaluateSubTaskNode)
-    .addNode('advance', advanceTaskIndexNode)
-    .addNode('retry', retryTaskNode)
-    .addNode('terminal_fail', terminalFailNode)
-    .addNode('final_evaluate', finalEvaluateDispatchNode)
-    .addNode('report', reportNode)
+    .addNode('prep', prepInitiativeNode, { retryPolicy: NO_RETRY })
+    .addNode('planner', runPlannerNode, { retryPolicy: LLM_RETRY })
+    .addNode('parsePrd', parsePrdNode, { retryPolicy: NO_RETRY })
+    .addNode('ganLoop', runGanLoopNode, { retryPolicy: LLM_RETRY })
+    .addNode('inferTaskPlan', inferTaskPlanNode, { retryPolicy: NO_RETRY })
+    .addNode('dbUpsert', dbUpsertNode, { retryPolicy: DB_RETRY })
+    .addNode('pick_sub_task', pickSubTaskNode, { retryPolicy: NO_RETRY })
+    .addNode('run_sub_task', runSubTaskNode, { retryPolicy: LLM_RETRY })
+    .addNode('evaluate', evaluateSubTaskNode, { retryPolicy: LLM_RETRY })
+    .addNode('advance', advanceTaskIndexNode, { retryPolicy: NO_RETRY })
+    .addNode('retry', retryTaskNode, { retryPolicy: NO_RETRY })
+    .addNode('terminal_fail', terminalFailNode, { retryPolicy: NO_RETRY })
+    .addNode('final_evaluate', finalEvaluateDispatchNode, { retryPolicy: LLM_RETRY })
+    .addNode('report', reportNode, { retryPolicy: DB_RETRY })
     .addEdge(START, 'prep')
     .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
     .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
