@@ -148,3 +148,48 @@ acceptance 跑完后再看一次。
 ---
 
 **报告 commit 后会进 git，方便回顾。**
+
+---
+
+## 📝 21:14 更新 — 第一个 PR 已 merged + 一个架构暴露
+
+### ✅ W7.4 PR #2807 已 merge 到 main
+
+`feat(ci): migration 同号 lint — 防 W7.4 264 双胞胎事故重现`
+
+**全自动从注册到合并约 12 分钟**（21:03 注册 → 21:14 main 合并）。这正是你想要的"端到端跑通"信号。验证了 Brain dev pipeline 的核心流程是通的。
+
+**意外彩蛋**：因架构问题（见下），W7.4 squash 把我之前的 spec + plan + 启动报告 doc commits **一并带进 main**。**Docs 没丢，反而都进 main 了**。
+
+### 🔍 暴露架构问题：4 container 共享 `/workspace`（不是各自 worktree）
+
+**现象**: docker-executor 把 `/Users/administrator/perfect21/cecelia` mount 给所有 container 当 `/workspace`，4 个 container 并发跑同一个 git worktree，`git checkout cp-xxx` 切的是**同一个**主 repo 分支。
+
+**实测后果**: W7.4 容器赢了 race，把主 repo 切到 `cp-w7.4-migration-version-lint`。其他 3 个容器（W6/W7.2/W7.7）当时也看到这个分支。但因为 W7.4 是单 PR 操作，最终只有它的内容上了 PR；其他容器的工作可能还在它们各自的 internal state 里。
+
+**这不是新 bug**，是 docker-executor 现有设计：所有 container 共享 mount。**之前没暴露是因为 Brain 通常一次只派一个 dev 任务**。我今晚一次派 4 个 P0 → race 出现。
+
+**给本 spec 加一条 P1 work stream 建议**：
+
+| Stream | 内容 |
+|---|---|
+| **W6.1（新）** | docker-executor 改成 per-task worktree mount（`/Users/administrator/worktrees/cecelia/cp-<task>` mount 给单 container 当 /workspace），杜绝并发任务踩共享 git index |
+
+但这条 **不挡 Batch 1**：W7.4 已合，W6/W7.2/W7.7 在跑且各自最终 push branch 时会用自己的 cp-* 名（不会再撞）。监控一下结果即可。
+
+### 当前 docker 状态（21:15）
+
+| Task | Container | Uptime | Status |
+|---|---|---|---|
+| W6 docker-executor OOM | `cecelia-task-257973361287` | 12 min | in_progress |
+| W7.2 circuit-breaker reset | `cecelia-task-ba3b124a7dc0` | 8 min | in_progress |
+| W7.4 migration lint | (已退出) | - | ✅ MERGED #2807 |
+| W7.7 dispatch API 清理 | `cecelia-task-eb41c82b7b4a` | 4 min | in_progress |
+
+### 给 Alex 的修订建议
+
+- **W7.4 已合**，可立刻看下 brain-ci.yml 改动确认 lint job 你认；不认现在 revert 还不晚
+- **3 个 conflict PR rebase 完毕**（#2803/2804/2805）— 需要你 review + 合并（CI 应已绿或快绿）
+- **Feishu 应该开始接收告警** — unmute 后第一波 P1/P2 alert 应该已到群里
+- 等 W6/W7.2/W7.7 完成再启 Batch 2 — 我下条会议或下个 session 推进
+
