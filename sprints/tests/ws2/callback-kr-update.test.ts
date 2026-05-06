@@ -184,8 +184,9 @@ describe('Workstream 2 — incrementKRProgressByOnePercent [BEHAVIOR]', () => {
     incrementMock.mockClear();
     const callbackMod = await import('../../../packages/brain/src/callback-processor.js');
     const dbMod = (await import('../../../packages/brain/src/db.js')).default as any;
+    // 当前 DB 中 task.status 还不是 completed（pending），允许首次回血
     dbMod.query.mockResolvedValue({
-      rows: [{ id: 't3', status: 'completed', kr_id: 'kr-y' }],
+      rows: [{ id: 't3', status: 'pending', kr_id: 'kr-y' }],
       rowCount: 1,
     });
 
@@ -199,5 +200,86 @@ describe('Workstream 2 — incrementKRProgressByOnePercent [BEHAVIOR]', () => {
     ).catch(() => {});
     expect(incrementMock).toHaveBeenCalledTimes(1);
     expect(incrementMock).toHaveBeenCalledWith('kr-y');
+  });
+
+  it('incrementKRProgressByOnePercent 使用单语句原子 SQL（含 LEAST(...,100) 表达式，无前置 SELECT）', async () => {
+    vi.resetModules();
+    const calls: string[] = [];
+    vi.doMock('../../../packages/brain/src/db.js', () => ({
+      default: {
+        query: vi.fn().mockImplementation((sql: string) => {
+          calls.push(sql);
+          if (/UPDATE/i.test(sql)) {
+            return Promise.resolve({ rows: [{ progress: 51 }], rowCount: 1 });
+          }
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }),
+      },
+    }));
+    vi.doUnmock('../../../packages/brain/src/progress-reviewer.js');
+    const real = await import('../../../packages/brain/src/progress-reviewer.js');
+    await real.incrementKRProgressByOnePercent('kr-atomic');
+
+    // 必须只有 UPDATE 语句被下发（禁止 read-modify-write 模式中的前置 SELECT）
+    const selectCalls = calls.filter((s) => /^\s*SELECT\b/i.test(s));
+    expect(selectCalls.length).toBe(0);
+    // 必须有 UPDATE 且包含 LEAST(...,100) 原子表达式
+    const updateCalls = calls.filter((s) => /UPDATE/i.test(s));
+    expect(updateCalls.length).toBeGreaterThanOrEqual(1);
+    const atomicHit = updateCalls.find((s) => /LEAST\s*\([^)]*100\s*\)/i.test(s));
+    expect(atomicHit).toBeDefined();
+  });
+
+  it('两次并发调用 incrementKRProgressByOnePercent 触发两条独立 UPDATE 调用（不依赖中间 SELECT 状态）', async () => {
+    vi.resetModules();
+    const calls: string[] = [];
+    vi.doMock('../../../packages/brain/src/db.js', () => ({
+      default: {
+        query: vi.fn().mockImplementation((sql: string) => {
+          calls.push(sql);
+          if (/UPDATE/i.test(sql)) {
+            return Promise.resolve({ rows: [{ progress: 51 }], rowCount: 1 });
+          }
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }),
+      },
+    }));
+    vi.doUnmock('../../../packages/brain/src/progress-reviewer.js');
+    const real = await import('../../../packages/brain/src/progress-reviewer.js');
+
+    await Promise.all([
+      real.incrementKRProgressByOnePercent('kr-concurrent'),
+      real.incrementKRProgressByOnePercent('kr-concurrent'),
+    ]);
+    const updateCalls = calls.filter((s) => /UPDATE/i.test(s));
+    expect(updateCalls.length).toBe(2);
+  });
+
+  it('callback 重放幂等：DB 中 task.status 已是 completed → 不再调用 incrementKRProgressByOnePercent', async () => {
+    // Red 锚点 1：callback-processor.js 必须先引用 incrementKRProgressByOnePercent
+    const fs = await import('node:fs');
+    const cbSrc = fs.readFileSync('/workspace/packages/brain/src/callback-processor.js', 'utf8');
+    expect(cbSrc).toMatch(/incrementKRProgressByOnePercent/);
+    // Red 锚点 2：必须含幂等短路文本（DB 已 completed 时早返回）
+    expect(cbSrc).toMatch(/already.*completed|already_completed|status\s*===\s*['"]completed['"]/i);
+
+    incrementMock.mockClear();
+    const callbackMod = await import('../../../packages/brain/src/callback-processor.js');
+    const dbMod = (await import('../../../packages/brain/src/db.js')).default as any;
+    // 模拟 DB 中 task 已是 completed 状态（重放场景）
+    dbMod.query.mockResolvedValue({
+      rows: [{ id: 't-replay', status: 'completed', kr_id: 'kr-z' }],
+      rowCount: 1,
+    });
+
+    await callbackMod.processExecutionCallback(
+      {
+        task_id: 't-replay',
+        status: 'completed',
+        pr_url: 'https://github.com/x/y/pull/999',
+      },
+      dbMod,
+    ).catch(() => {});
+    expect(incrementMock).not.toHaveBeenCalled();
   });
 });

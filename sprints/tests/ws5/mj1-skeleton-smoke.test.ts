@@ -48,9 +48,11 @@ describe('Workstream 5 — F0 E2E smoke contract [BEHAVIOR]', () => {
     expect(/branch/.test(c)).toBe(true);
   });
 
-  it('step 3: worktree 路径在文件系统上真实存在', () => {
+  it('step 3: worktree 路径在 mock 返回值中非空（不依赖物理 fs）', () => {
     const c = readSpec();
-    expect(/existsSync\s*\(|fs\.access|statSync\s*\(/.test(c)).toBe(true);
+    // 不再要求物理 fs 调用；只要 spec 里出现 worktree_path 字段引用 + 非空断言即可
+    expect(/worktree_path/.test(c)).toBe(true);
+    expect(/expect\([^)]*worktree_path[^)]*\)\.(toBeTruthy|toBeDefined|not\.toBe(?:Null|Undefined)|toMatch)/.test(c)).toBe(true);
   });
 
   it('step 4: /dev mock 简化版被调用一次（runDevMock 调用计数 === 1）', () => {
@@ -74,5 +76,14 @@ describe('Workstream 5 — F0 E2E smoke contract [BEHAVIOR]', () => {
   it('step 7: LiveMonitor WebSocket 收到至少一条 status 变化事件', () => {
     const c = readSpec();
     expect(/LiveMonitor|WebSocket|TASK_DISPATCHED|task:dispatched|broadcast/.test(c)).toBe(true);
+  });
+
+  it('E2E spec 含 vi.mock 调用至少 3 处（覆盖 worktree / db / callback-processor 上游）', () => {
+    const c = readSpec();
+    const matches = c.match(/vi\.mock\s*\(/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(3);
+    // 必须 mock 到 createWorktree 与 processExecutionCallback 字面量
+    expect(/createWorktree/.test(c)).toBe(true);
+    expect(/processExecutionCallback/.test(c)).toBe(true);
   });
 });

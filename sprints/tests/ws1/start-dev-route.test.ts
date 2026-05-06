@@ -199,4 +199,30 @@ describe('Workstream 1 — start-dev route [BEHAVIOR]', () => {
     );
     expect(updateToInProgress.length).toBe(0);
   });
+
+  it('worktree 创建失败 → HTTP 500 且响应 body 不含未脱敏 stack', async () => {
+    pool.query.mockImplementation((sql: string) => {
+      if (/SELECT/i.test(sql)) {
+        return Promise.resolve({ rows: [{ id: 'task-6', status: 'pending' }] });
+      }
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    });
+    const sentinel = new Error('SECRET_STACK_TOKEN_xyz123_should_not_leak');
+    sentinel.stack = 'Error: SECRET_STACK_TOKEN_xyz123_should_not_leak\n    at evilPath\n    at /tmp/internal/path/here.js:42';
+    createWorktreeMock.mockRejectedValueOnce(sentinel);
+
+    const handler = findHandler('post', /\/tasks\/:[a-zA-Z_]+\/start-dev$/);
+    expect(handler).toBeDefined();
+    const res = mockRes();
+    await handler({ params: { id: 'task-6', task_id: 'task-6' }, body: {} }, res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    const bodyStr = JSON.stringify(body);
+    // 不能把原始 stack 或内部路径泄露给客户端
+    expect(bodyStr).not.toMatch(/SECRET_STACK_TOKEN_xyz123_should_not_leak/);
+    expect(bodyStr).not.toMatch(/\bat\s+\//);
+    expect(bodyStr).not.toMatch(/\/tmp\/internal\/path/);
+  });
 });
