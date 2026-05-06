@@ -309,7 +309,7 @@ router.get('/alertness/healing', async (req, res) => {
  */
 router.get('/billing-pause', async (req, res) => {
   try {
-    const { getBillingPause, clearBillingPause } = await import('./executor.js');
+    const { getBillingPause, clearBillingPause } = await import('../executor.js');
     const pause = getBillingPause();
     if (req.query.clear === 'true') {
       const cleared = clearBillingPause();
@@ -360,7 +360,7 @@ router.get('/watchdog/trends', async (req, res) => {
  */
 router.get('/session/stats', async (req, res) => {
   try {
-    const { getSessionInfo } = await import('./executor.js');
+    const { getSessionInfo } = await import('../executor.js');
     const current = getSessionInfo();
 
     // 查询最近 10 条历史 session 记录
