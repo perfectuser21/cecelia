@@ -147,8 +147,8 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  it('EXPECTED_SCHEMA_VERSION should be 264', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('264');
+  it('EXPECTED_SCHEMA_VERSION should be 265', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('265');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
