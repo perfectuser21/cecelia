@@ -66,7 +66,7 @@ elif 仅涉及 packages/brain/ → autonomous
 elif 涉及 packages/engine/（hooks/skills）→ dev_pipeline
 elif 涉及远端 agent 协议 / bridge / cecelia-run → agent_remote
 elif 同时命中多个 → 取起点最靠前（UI > tick > task dispatch > bridge）
-elif 无法判断 → 默认 autonomous
+else（无任何路径线索）→ 默认 autonomous
 ```
 
 记录：`journey_type: <值>，推断依据：<1 句话>`，写入 task-plan.json 根字段。
@@ -210,7 +210,7 @@ mkdir -p "$SPRINT_DIR"
 ```
 
 **字段约束**：
-- `task_id`: 逻辑 ID（`ws1/ws2/...`），Brain 入库时映射到 UUID
+- `task_id`: 逻辑 ID；第一个固定为 `"skeleton"`，其余从 `ws2` 开始编号（`ws2/ws3/...`）；Brain 入库时映射到 UUID
 - `depends_on`: 其他 task_id 的数组；不能自指；不能有环
 - `complexity`: `S|M|L`
 - `estimated_minutes`: `20 ≤ n ≤ 60`（超出重拆）
@@ -224,9 +224,10 @@ mkdir -p "$SPRINT_DIR"
 2. `tasks[0].scope` 描述模板按 journey_type 填写：
    - `user_facing`：端到端薄片：主理人点击 [入口] → 看到 [结果]，中间层可 stub
    - `autonomous`：端到端薄片：注入 [触发事件] → DB 终态出现 [预期字段]，中间层可 stub
-   - `dev_pipeline`：端到端薄片：mock task 派发 → PR 创建（或 callback 回写），中间层可 stub
+   - `dev_pipeline`：端到端薄片：mock [任务类型] task 派发 → [预期回调字段] 写入 DB，中间层可 stub
    - `agent_remote`：端到端薄片：Brain 发指令 → bridge log 有回报 + DB 回写，中间层可 stub
-3. 所有其他 task 的 `depends_on` 必须包含 `"skeleton"`（直接或传递依赖）
+   （上方 `[...]` 为占位符，必须替换为本次任务的具体内容，不可原样写入 scope）
+3. 所有其他 task 的 `depends_on` 中必须能追溯到 `"skeleton"`；线性链中，每个 task 只写上一个 task 的 task_id 即可（如 ws2 依赖 skeleton，ws3 依赖 ws2，无需重复写 skeleton）
 4. skeleton task `estimated_minutes` 设 40，`complexity` 设 M
 
 **输出格式**：stdout 末尾必须用 \`\`\`json ... \`\`\` 代码块包裹 task-plan.json（Brain Runner 会抓取）。
@@ -248,7 +249,7 @@ git push origin HEAD
 {"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-..."}
 ```
 
-上方代码块中的 `task-plan.json` 必须存在，否则 Runner 会返回 `parseTaskPlan` 错误。
+最后一条消息里的 \`\`\`json ... \`\`\` 代码块必须是完整合法的 task-plan.json（Brain Runner 从 stdout 抓取，不需要写文件或 commit）。
 
 ---
 
