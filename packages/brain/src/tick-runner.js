@@ -1031,12 +1031,31 @@ async function executeTick() {
   // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
   if (allGoalIds.length === 0) {
     tickLog('[tick] No active goals found, skipping tick');
+    // Cortex Insight 7670a6c3: active_goals=0 是方向性崩溃前置信号，立即派
+    // strategy_session 自动生成新 OKR（带 24h 冷却 + 幂等保护）。失败不阻塞 tick。
+    let zeroGoalsTrigger = null;
+    try {
+      const { maybeTriggerStrategySession } = await import('./active-goals-zero-trigger.js');
+      zeroGoalsTrigger = await maybeTriggerStrategySession(pool);
+      if (zeroGoalsTrigger.created) {
+        tickLog(`[tick] active_goals=0 trigger: dispatched strategy_session task ${zeroGoalsTrigger.taskId}`);
+        actionsTaken.push({
+          action: 'trigger_strategy_session',
+          reason: 'active_goals_zero',
+          task_id: zeroGoalsTrigger.taskId,
+        });
+      }
+    } catch (triggerErr) {
+      console.error('[tick] active_goals=0 trigger failed (non-fatal):', triggerErr.message);
+    }
+
     return {
       success: true,
       alertness: alertnessResult,
       decision_engine: decisionEngineResult,
       focus: null,
       dispatch: { dispatched: 0, reason: 'no_active_goals' },
+      zero_goals_trigger: zeroGoalsTrigger,
       actions_taken: actionsTaken,
       summary: { in_progress: 0, queued: 0, stale: 0 },
       tick_duration_ms: Date.now() - now.getTime(),
