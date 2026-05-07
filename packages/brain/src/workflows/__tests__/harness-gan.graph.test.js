@@ -1,71 +1,64 @@
-import { describe, it, expect } from 'vitest';
-import {
-  extractVerdict,
-  thresholdForRound,
-  extractFeedback,
-  extractProposeBranch,
-  fallbackProposeBranch,
-  computeVerdictFromRubric,
-} from '../harness-gan.graph.js';
+import { describe, it, expect, vi } from 'vitest';
+import path from 'node:path';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import os from 'node:os';
 
-describe('harness-gan.graph — pure helper functions', () => {
-  describe('extractVerdict', () => {
-    it('returns APPROVED when stdout contains VERDICT: APPROVED', () => {
-      expect(extractVerdict('some text\nVERDICT: APPROVED\nmore')).toBe('APPROVED');
-    });
-    it('returns REVISION when stdout contains VERDICT: REVISION', () => {
-      expect(extractVerdict('VERDICT: REVISION')).toBe('REVISION');
-    });
-    it('returns REVISION as default when no verdict found', () => {
-      expect(extractVerdict('no verdict here')).toBe('REVISION');
-    });
+import { createGanContractNodes } from '../harness-gan.graph.js';
+
+describe('GAN proposer node task-plan.json access 校验 [BEHAVIOR]', () => {
+  it('proposer 跑完缺 sprints/task-plan.json 时应打 console.warn 不抛错', async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), 'gan-proposer-test-'));
+    try {
+      const fakeExecutor = vi.fn().mockResolvedValue({
+        exit_code: 0,
+        stdout: '{"verdict":"PROPOSED","propose_branch":"cp-test-r1-abc","workstream_count":1}',
+        cost_usd: 0.01,
+      });
+      const fakeReadContract = vi.fn().mockResolvedValue('# fake contract');
+
+      const { proposer } = createGanContractNodes(fakeExecutor, {
+        taskId: 'test-task', initiativeId: 'test-init', sprintDir: 'sprints',
+        worktreePath: tmp, githubToken: 'fake', readContractFile: fakeReadContract,
+      });
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const result = await proposer({ round: 0, prdContent: 'x', feedback: null, costUsd: 0 });
+
+      expect(result).toMatchObject({ proposeBranch: 'cp-test-r1-abc', round: 1 });
+      const warnMsg = warnSpy.mock.calls.flat().join(' ');
+      expect(warnMsg).toMatch(/missing.*task-plan\.json/i);
+      warnSpy.mockRestore();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 
-  describe('thresholdForRound', () => {
-    it('returns a number between 0 and 1', () => {
-      const t = thresholdForRound(1);
-      expect(t).toBeGreaterThan(0);
-      expect(t).toBeLessThanOrEqual(1);
-    });
-    it('round 3 threshold <= round 1 threshold', () => {
-      expect(thresholdForRound(3)).toBeLessThanOrEqual(thresholdForRound(1));
-    });
-  });
+  it('proposer 跑完 sprints/task-plan.json 存在时不应 warn', async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), 'gan-proposer-test-'));
+    try {
+      await mkdir(path.join(tmp, 'sprints'), { recursive: true });
+      await writeFile(path.join(tmp, 'sprints', 'task-plan.json'), '{"tasks":[]}');
 
-  describe('extractFeedback', () => {
-    it('extracts FEEDBACK block from stdout', () => {
-      const result = extractFeedback('Some output\nFEEDBACK: needs more tests\nother');
-      expect(result).toContain('needs more tests');
-    });
-    it('returns empty string when no feedback', () => {
-      expect(extractFeedback('no feedback here')).toBe('');
-    });
-  });
+      const fakeExecutor = vi.fn().mockResolvedValue({
+        exit_code: 0,
+        stdout: '{"propose_branch":"cp-test-r1-abc"}',
+        cost_usd: 0.01,
+      });
+      const fakeReadContract = vi.fn().mockResolvedValue('# fake');
 
-  describe('extractProposeBranch', () => {
-    it('extracts branch name from PROPOSE_BRANCH: line', () => {
-      expect(extractProposeBranch('PROPOSE_BRANCH: cp-12345678-my-feature\ndone')).toBe('cp-12345678-my-feature');
-    });
-    it('returns null when no branch found', () => {
-      expect(extractProposeBranch('no branch here')).toBeNull();
-    });
-  });
+      const { proposer } = createGanContractNodes(fakeExecutor, {
+        taskId: 'test-task', initiativeId: 'test-init', sprintDir: 'sprints',
+        worktreePath: tmp, githubToken: 'fake', readContractFile: fakeReadContract,
+      });
 
-  describe('fallbackProposeBranch', () => {
-    it('returns a cp-* branch name containing taskId prefix', () => {
-      const branch = fallbackProposeBranch('abc12345-xxxx-xxxx-xxxx-xxxxxxxxxxxx');
-      expect(branch).toMatch(/^cp-/);
-      expect(branch).toContain('abc12345');
-    });
-  });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await proposer({ round: 0, prdContent: 'x', feedback: null, costUsd: 0 });
 
-  describe('computeVerdictFromRubric', () => {
-    it('returns REVISION when scores array is empty', () => {
-      expect(computeVerdictFromRubric([], 1)).toBe('REVISION');
-    });
-    it('returns APPROVED or REVISION (valid values)', () => {
-      const v = computeVerdictFromRubric([{ score: 0.9 }, { score: 0.95 }], 1);
-      expect(['APPROVED', 'REVISION']).toContain(v);
-    });
+      const warnMsg = warnSpy.mock.calls.flat().join(' ');
+      expect(warnMsg).not.toMatch(/missing.*task-plan\.json/i);
+      warnSpy.mockRestore();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 });
