@@ -1,0 +1,28 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "Brain Tick Loop 自动派发 harness_initiative，无前端 UI/远端 agent，仅 graph 内部流转",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "端到端验证 task-plan.json 经由 inferTaskPlanNode 闭环",
+      "scope": "本验证型 Sprint 的全部产出 — 确保 sprints/verify-2820/{sprint-prd.md,task-plan.json} 落盘且符合 parseTaskPlan schema，并通过 tests/ws1/ 的 4 条断言：(1) sprint-prd.md 含 journey_type 标注；(2) task-plan.json 经 parseTaskPlan 全字段校验通过；(3) inferTaskPlanNode 在合法 propose 分支返回 { taskPlan }；(4) inferTaskPlanNode 在不存在分支返回 { error } 且字符串含 'task-plan.json failed'。",
+      "dod": [
+        "[BEHAVIOR] tests/ws1/infer-task-plan-e2e.test.ts 4 个 it() 全 passed（vitest run 退出码 0）",
+        "[BEHAVIOR] inferTaskPlanNode 给定 ganResult.propose_branch=本轮 propose 分支 + sprint_dir=sprints/verify-2820 时返回的 delta 不含 error 字段，且 delta.taskPlan.tasks.length>=1",
+        "[ARTIFACT] sprints/verify-2820/task-plan.json 文件存在，顶层是合法 JSON 对象，含 tasks 非空数组",
+        "[ARTIFACT] sprints/verify-2820/sprint-prd.md 文件存在，匹配正则 /^## journey_type:\\s*(autonomous|user_facing|dev_pipeline|agent_remote)\\s*$/m"
+      ],
+      "files": [
+        "sprints/verify-2820/sprint-prd.md",
+        "sprints/verify-2820/task-plan.json",
+        "sprints/verify-2820/contract-draft.md",
+        "sprints/verify-2820/contract-dod-ws1.md",
+        "sprints/verify-2820/tests/ws1/infer-task-plan-e2e.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
