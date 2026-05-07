@@ -472,6 +472,57 @@ describe('self_drive_health probe logic', () => {
     expect(result.detail).toContain('db_event_missing');
   });
 
+  it('consolidation probe: ok:true when memory_stream has 48h records', async () => {
+    // 主路径：48h 内有 daily_consolidation 记录 → ok
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ cnt: '2', last_run: new Date().toISOString() }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'consolidation');
+    const result = await probe.fn();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('48h_consolidations=2');
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('consolidation probe: ok:true via daily_logs fallback when memory_stream empty but daily_logs has recent runs', async () => {
+    // 兜底路径：memory_stream 为空但 daily_logs 有近期 consolidation
+    // 适用：修复前的历史空闲日只写 daily_logs（PROBE_FAIL_CONSOLIDATION 误报场景）
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ cnt: '0', last_run: null }],
+    });
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ cnt: '2', last_date: '2026-05-06' }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'consolidation');
+    const result = await probe.fn();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('daily_logs_48h=2');
+    expect(result.detail).toContain('idle: empty_days_only');
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it('consolidation probe: ok:false when both memory_stream and daily_logs empty (loop_dead)', async () => {
+    // 真实故障：48h 内 memory_stream 和 daily_logs 都没有 consolidation 记录
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ cnt: '0', last_run: null }],
+    });
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ cnt: '0', last_date: null }],
+    });
+
+    const { PROBES } = await import('../capability-probe.js');
+    const probe = PROBES.find(p => p.name === 'consolidation');
+    const result = await probe.fn();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('48h_consolidations=0');
+    expect(result.detail).toContain('daily_logs_48h=0');
+    expect(result.detail).toContain('loop_dead');
+  });
+
   it('should NOT use in-memory cycle grace when in-memory shows both successes and errors', async () => {
     // If in-memory has any errors, do not silently treat as healthy — real cycle failures
     // should be surfaced regardless of how many in-memory successes occurred.

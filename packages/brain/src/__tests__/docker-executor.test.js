@@ -172,11 +172,13 @@ describe('writeDockerCallback — INSERT callback_queue', () => {
     expect(params[9]).toBe('docker_timeout');
   });
 
-  it('exit_code != 0 且未超时 → status=failed / failure_class=docker_nonzero_exit', async () => {
+  it('exit_code != 0 且非 OOM 且未超时 → status=failed / failure_class=docker_nonzero_exit', async () => {
+    // exit_code=1 = generic 非零退出（npm test fail / lint fail 等）
+    // exit_code=137 是 SIGKILL/OOM，由 docker-executor-oom-alert.test.js 单独覆盖（PR #2805）
     await writeDockerCallback(baseTask, 'run-3', 'cp-z', {
-      exit_code: 137,
+      exit_code: 1,
       stdout: '',
-      stderr: 'OOM',
+      stderr: 'generic non-zero error',
       duration_ms: 5000,
       container: 'cecelia-task-zzz',
       timed_out: false,
@@ -185,7 +187,7 @@ describe('writeDockerCallback — INSERT callback_queue', () => {
     });
     const [, params] = mockPool.query.mock.calls[0];
     expect(params[3]).toBe('failed');
-    expect(params[8]).toBe(137);
+    expect(params[8]).toBe(1);
     expect(params[9]).toBe('docker_nonzero_exit');
   });
 

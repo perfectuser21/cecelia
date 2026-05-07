@@ -31,6 +31,14 @@ import { checkCostCap } from './spawn/middleware/cost-cap.js';
 import { checkCap } from './spawn/middleware/cap-marking.js';
 import { recordBilling } from './spawn/middleware/billing.js';
 import { createSpawnLogger } from './spawn/middleware/logging.js';
+import { raise } from './alerting.js';
+
+// exit_code=137 = SIGKILL（128 + 9）。常见来源：
+//   - cgroup memory limit 触发（OOM killer）
+//   - docker kill --signal=KILL（手动 / watchdog）
+//   - --memory=N 限制下 container 突破上限
+// 持续 137 表示资源配置不足或任务 Memory 超标，应该触发 alert 而非静默失败。
+const EXIT_SIGKILL = 137;
 
 const DEFAULT_IMAGE = process.env.CECELIA_RUNNER_IMAGE || 'cecelia/runner:latest';
 // Harness v6 P1-E：默认 90min（旧值 15min 让 Generator 大改动 SIGKILL）。
@@ -439,9 +447,24 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
   }
 
   const stderrTail = result.stderr ? result.stderr.slice(-2000) : null;
+  const isOomKilled = result.exit_code === EXIT_SIGKILL && !result.timed_out;
   const failureClass = result.timed_out
     ? 'docker_timeout'
-    : (isEnvBroken ? 'env_skill_missing' : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null));
+    : (isEnvBroken
+        ? 'env_skill_missing'
+        : (isOomKilled
+            ? 'docker_oom_killed'
+            : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null)));
+
+  // exit=137 Alert：cgroup OOM 杀容器（不是手动 timeout）→ 资源不够或任务超标。
+  // P1 级别：单次失败不阻塞，但累积应该被关注。fire-and-forget 不阻塞 callback 写入。
+  if (isOomKilled) {
+    raise(
+      'P1',
+      `docker_oom_killed_${task.id.slice(0, 8)}`,
+      `🛑 Docker container exit=137 (SIGKILL) task=${task.id} type=${task.task_type}：可能 cgroup OOM 或被强制 kill，建议提高 task tier memory 或拆分任务`
+    ).catch(err => console.error(`[docker-executor] silent alert error: ${err.message}`));
+  }
 
   const _insertArgs = [
     task.id,
