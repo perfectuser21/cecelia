@@ -25,6 +25,8 @@ services:
       - /Users/administrator/.claude-account1:/Users/administrator/.claude-account1:ro
       - /Users/administrator/.claude-account2:/Users/administrator/.claude-account2:ro
       - /Users/administrator/.claude-account3:/Users/administrator/.claude-account3:ro
+      # Codex CLI auth (~/.codex-team1/auth.json)：容器内 triggerCodexReview spawn 时需要凭据
+      - /Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
@@ -78,6 +80,11 @@ services:
       - CECELIA_RUN_PATH=/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh
       - HOST_HOME=/Users/administrator
       - REPO_ROOT=/Users/administrator/perfect21/cecelia
+      # Codex CLI 容器内位置（由 Dockerfile npm install -g @openai/codex 装到 /usr/local/bin/codex）
+      # 覆盖 executor.js 默认值 /opt/homebrew/bin/codex（host 路径，容器里不存在）
+      - CODEX_BIN=/usr/local/bin/codex
+      # Codex CLI 找凭据用 $CODEX_HOME/auth.json（mount 自 host ~/.codex-team1）
+      - CODEX_HOME=/Users/administrator/.codex-team1
       # Brain 容器里 /tmp/cecelia-prompts 对应的宿主路径（docker-executor 用它构造子容器 mount 源）
       - HOST_PROMPT_DIR=/Users/administrator/claude-output/cecelia-prompts
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here

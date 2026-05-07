@@ -24,6 +24,12 @@ FROM node:20-alpine
 RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli \
  && adduser -D -u 1001 cecelia
 
+# Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.
+# 历史事故：容器漏装 codex CLI → spawn ENOENT → cecelia-run breaker failures=351 OPEN
+# → 阻断所有 dispatch（spec_review/code_review_gate/arch_review/initiative_review）。
+# 容器内默认路径 /usr/local/bin/codex，由 docker-compose CODEX_BIN env 显式指定。
+RUN npm install -g @openai/codex@0.116.0
+
 # Install gh CLI for shepherd.js (gh pr view/merge) and harness-watcher.js (gh run list).
 # Use release tarball (not apk's github-cli, which lives in community repo and is less stable).
 RUN GH_VERSION=2.45.0 \
