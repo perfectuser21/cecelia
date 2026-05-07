@@ -107,6 +107,16 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.24.1"
+    date: "2026-05-07"
+    change: "refactor"
+    description: "Stop Hook 单一出口重构（cp-0507170521）— stop-dev.sh 从 8 个分散 exit 0 收敛到 1 个：所有判定路径只 set DECISION/REASON_CODE 变量，唯一 exit 0 在文件末尾。零行为变化，纯结构整理。19 个 PR-2 测试矩阵全保持 PASS 作为回归基线。新增 3 个 single-exit 纪律 lint case + scripts/check-single-exit.sh 加 'exit 0 = 1' 守门。可观测性 + 可维护性 + 单一出口纪律全到位。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (重构：8 exit 0 → 1 exit 0)"
+      - "packages/engine/tests/hooks/stop-hook-single-exit.test.ts (新建 — 3 case artifact lint)"
+      - "scripts/check-single-exit.sh (加 exit 0 = 1 强约束)"
+      - "Engine 8 处版本文件 18.24.0 → 18.24.1"
+
   - version: "18.24.0"
     date: "2026-05-07"
     change: "feat"
