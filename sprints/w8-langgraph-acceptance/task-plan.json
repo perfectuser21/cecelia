@@ -1,0 +1,69 @@
+{
+  "initiative_id": "w8-langgraph-acceptance-20260507",
+  "journey_type": "autonomous",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "title": "feat(brain): harness/health 端点 — Walking Skeleton 验证",
+      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /api/brain/harness/health handler，返回 JSON { langgraph_version, last_attempt_at, nodes }；langgraph_version 读 @langchain/langgraph 的 package.json version 字段，last_attempt_at 取 SELECT MAX(updated_at) FROM initiative_runs WHERE phase IN ('done','failed','B_task_loop','C_final_e2e')，nodes 列出 14 个 LangGraph 节点名。在 packages/brain/src/server.js 注册该 router（若未挂）。新增 tests/integration/harness-health.test.ts 起 staging Brain 后 curl /api/brain/harness/health 校验状态码 200 + body 字段齐全。",
+      "dod": [
+        "packages/brain/src/routes/harness.js 含 GET /api/brain/harness/health handler，返回 JSON 含 langgraph_version (string) + last_attempt_at (ISO8601 string 或 null) + nodes (14 元素 string array)",
+        "tests/integration/harness-health.test.ts 启 staging Brain 后 curl 该端点：HTTP 200，body.langgraph_version 非空，body.nodes.length === 14",
+        "执行 npx vitest run tests/integration/harness-health.test.ts 退出码为 0",
+        "执行 curl -fsS http://localhost:5222/api/brain/harness/health | jq -e '.langgraph_version and (.nodes|length==14)' 退出码为 0"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/server.js",
+        "tests/integration/harness-health.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ],
+  "e2e_acceptance": {
+    "scenarios": [
+      {
+        "name": "health 端点在 staging Brain 上返回 200 且字段齐全",
+        "covered_tasks": ["T1"],
+        "commands": [
+          {
+            "type": "bash",
+            "cmd": "curl -fsS http://localhost:5222/api/brain/harness/health | jq -e '.langgraph_version and (.nodes|length==14) and (has(\"last_attempt_at\"))'"
+          }
+        ]
+      },
+      {
+        "name": "本 Initiative 在 task_events 中至少记录 14 个 distinct nodeName 的 graph_node_update",
+        "covered_tasks": ["T1"],
+        "commands": [
+          {
+            "type": "bash",
+            "cmd": "psql -h localhost -p 55432 -U cecelia -d cecelia -At -c \"SELECT COUNT(DISTINCT payload->>'nodeName') FROM task_events WHERE event_type='graph_node_update' AND payload->>'initiativeId'='w8-langgraph-acceptance-20260507'\" | awk '{ if ($1+0 >= 14) exit 0; else { print \"only \" $1 \" distinct nodes\"; exit 1 } }'"
+          }
+        ]
+      },
+      {
+        "name": "initiative_runs 行 phase 已推进到 C_final_e2e 或 done 且 contract approved",
+        "covered_tasks": ["T1"],
+        "commands": [
+          {
+            "type": "bash",
+            "cmd": "psql -h localhost -p 55432 -U cecelia -d cecelia -At -c \"SELECT ir.phase FROM initiative_runs ir JOIN initiative_contracts ic ON ic.id=ir.contract_id WHERE ir.initiative_id='w8-langgraph-acceptance-20260507' AND ic.status='approved' ORDER BY ir.started_at DESC LIMIT 1\" | grep -E '^(C_final_e2e|done)$'"
+          }
+        ]
+      },
+      {
+        "name": "T1 PR 已合并到 main（Walking Skeleton 真实交付证据）",
+        "covered_tasks": ["T1"],
+        "commands": [
+          {
+            "type": "bash",
+            "cmd": "test -f packages/brain/src/routes/harness.js && grep -q '/api/brain/harness/health' packages/brain/src/routes/harness.js && test -f tests/integration/harness-health.test.ts"
+          }
+        ]
+      }
+    ]
+  }
+}
