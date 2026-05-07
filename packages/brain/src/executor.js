@@ -2760,6 +2760,148 @@ async function triggerLocalCodexExec(task) {
 }
 
 /**
+ * runHarnessInitiativeRouter — harness_initiative 路由分支的可测函数化。
+ *
+ * Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md
+ * §W1 (thread_id 版本化), §W3 (AbortSignal + watchdog), §W4 (streamMode → events)
+ *
+ * - W1: thread_id = `harness-initiative:<id>:<attemptN>`，attemptN = task.execution_attempts + 1。
+ *       payload.resume_from_checkpoint=true 才续 checkpoint，否则 fresh start。
+ *       同 attemptN 已有 checkpoint 但未 resume → 升 N 写新 thread。
+ * - W3: invoke 加 AbortSignal，deadline 来源 initiative_runs.deadline_at fallback 6h。
+ *       逾期触发 abort，标 task.failure_class='watchdog_deadline'。
+ * - W4: invoke → stream({streamMode:'updates'})，逐 node 推 emitGraphNodeUpdate
+ *       事件到 task_events 表（cap 100 防写爆）。
+ *
+ * @param {object} task - tasks 表行
+ * @param {object} [opts] - { pool, compiled } 测试可注入
+ * @returns {Promise<{ ok: boolean, threadId: string, attemptN: number, finalState?: object, error?: string }>}
+ */
+export async function runHarnessInitiativeRouter(task, opts = {}) {
+  const dbPool = opts.pool || pool;
+  const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
+  const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
+  const { emitGraphNodeUpdate } = await import('./events/taskEvents.js');
+  const compiled = opts.compiled || await compileHarnessFullGraph();
+  const initiativeId = task.payload?.initiative_id || task.id;
+
+  // W1 — thread_id 版本化
+  const baseAttemptN = (task.execution_attempts || 0) + 1;
+  let attemptN = baseAttemptN;
+  let threadId = `harness-initiative:${initiativeId}:${attemptN}`;
+
+  const checkpointer = await getPgCheckpointer();
+  const existing = await checkpointer.get({ configurable: { thread_id: threadId } });
+  const resumeRequested = task.payload?.resume_from_checkpoint === true;
+  let input;
+  if (existing && resumeRequested) {
+    input = null;  // 显式 resume from checkpoint
+  } else if (existing && !resumeRequested) {
+    // 同 attemptN 已有 checkpoint 但未 resume → 升 N，留旧 checkpoint 诊断
+    attemptN = baseAttemptN + 1;
+    threadId = `harness-initiative:${initiativeId}:${attemptN}`;
+    input = { task };
+    await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
+  } else {
+    input = { task };  // fresh start
+  }
+
+  // W3 — AbortSignal + watchdog
+  const deadlineRow = await dbPool.query(
+    'SELECT deadline_at FROM initiative_runs WHERE initiative_id=$1 ORDER BY created_at DESC LIMIT 1',
+    [initiativeId]
+  );
+  const deadlineAt = deadlineRow.rows[0]?.deadline_at;
+  const deadlineMs = deadlineAt
+    ? Math.max(60_000, new Date(deadlineAt).getTime() - Date.now())  // 至少 1min
+    : 6 * 3600 * 1000;  // fallback 6h
+  const ctrl = new AbortController();
+  const timer = setTimeout(
+    () => ctrl.abort(new Error(`harness_watchdog: deadline exceeded for ${initiativeId} thread=${threadId}`)),
+    deadlineMs
+  );
+
+  let final = null;
+  try {
+    // W4 — streamMode='updates' 逐节点推 task_events
+    const stream = await compiled.stream(input, {
+      configurable: { thread_id: threadId },
+      recursionLimit: 500,
+      signal: ctrl.signal,
+      streamMode: 'updates',
+    });
+    let nodeCount = 0;
+    const MAX_EVENTS = 100;  // 防写爆
+    for await (const update of stream) {
+      for (const [nodeName, partialState] of Object.entries(update || {})) {
+        if (nodeCount < MAX_EVENTS) {
+          try {
+            await emitGraphNodeUpdate({
+              taskId: task.id,
+              initiativeId,
+              threadId,
+              nodeName,
+              attemptN,
+              payloadSummary: summarizeNodeState(partialState),
+            });
+          } catch (emitErr) {
+            console.warn(`[executor] emitGraphNodeUpdate failed (non-fatal): ${emitErr.message}`);
+          }
+          nodeCount++;
+        }
+        final = { ...(final || {}), ...partialState };
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError' || /watchdog/i.test(err.message)) {
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET error_message=$1,
+             custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', '"watchdog_deadline"'::jsonb)
+           WHERE id=$2`,
+          [`watchdog deadline at ${new Date().toISOString()}`, task.id]
+        );
+      } catch (markErr) {
+        console.warn(`[executor] mark watchdog failure failed (non-fatal): ${markErr.message}`);
+      }
+      return { ok: false, threadId, attemptN, error: 'watchdog_deadline' };
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return {
+    ok: !final?.error,
+    threadId,
+    attemptN,
+    finalState: {
+      initiativeId,
+      sub_tasks: final?.sub_tasks,
+      final_e2e_verdict: final?.final_e2e_verdict,
+      error: final?.error,
+    },
+  };
+}
+
+/**
+ * 安全 summarize node state — 长字符串截断、对象/数组只记 shape，避免 task_events 写爆。
+ * @param {object} state
+ * @returns {object}
+ */
+export function summarizeNodeState(state) {
+  const out = {};
+  for (const [k, v] of Object.entries(state || {})) {
+    if (v == null) continue;
+    if (typeof v === 'string') out[k] = v.length > 200 ? v.slice(0, 200) + '…' : v;
+    else if (typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+    else if (Array.isArray(v)) out[k] = `[Array ${v.length}]`;
+    else if (typeof v === 'object') out[k] = `{Object ${Object.keys(v).length} keys}`;
+  }
+  return out;
+}
+
+/**
  * Trigger cecelia-run for a task.
  *
  * v2: Uses spawn() for PID tracking + task-level dedup.
@@ -2817,28 +2959,21 @@ async function triggerCeceliaRun(task) {
   }
 
   // 2.85 Harness Full Graph (Phase A+B+C) — 一个 graph 跑到底，默认路径。
+  // W1 (thread_id 版本化) + W3 (AbortSignal + watchdog) + W4 (streamMode events)
+  // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
   if (task.task_type === 'harness_initiative') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
     try {
-      const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
-      const compiled = await compileHarnessFullGraph();
-      const initiativeId = task.payload?.initiative_id || task.id;
-      const final = await compiled.invoke(
-        { task },
-        { configurable: { thread_id: `harness-initiative:${initiativeId}:1` }, recursionLimit: 500 }
-      );
+      const result = await runHarnessInitiativeRouter(task);
       return {
-        success: !final.error,
+        success: result.ok,
         taskId: task.id,
         initiative: true,
         fullGraph: true,
-        finalState: {
-          // 只回 summary 防 task.result 列爆炸
-          initiativeId: final.initiativeId,
-          sub_tasks: final.sub_tasks,
-          final_e2e_verdict: final.final_e2e_verdict,
-          error: final.error,
-        },
+        threadId: result.threadId,
+        attemptN: result.attemptN,
+        finalState: result.finalState,
+        error: result.error,
       };
     } catch (err) {
       console.error(`[executor] Harness Full Graph error task=${task.id}: ${err.message}`);
