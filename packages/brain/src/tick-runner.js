@@ -186,6 +186,8 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 // PIPELINE_PATROL_INTERVAL_MS / PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS
 // 已收口到对应 plugin 内部（D1.7c）— tick-runner.js 不再读这些常量
 const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10);
+// W3: harness initiative deadline_at watchdog（5min/次默认，env 可覆盖）
+const HARNESS_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_HARNESS_WATCHDOG_INTERVAL_MS || String(5 * 60 * 1000), 10);
 // GOAL_EVAL_INTERVAL_MS 已收口到 goal-eval-plugin.js（D1.7c-plugin1）— tick-runner.js 不再读
 
 /** Check if a task is stale (in_progress for too long) — 与 tick.js 同名同义 */
@@ -369,6 +371,23 @@ async function executeTick() {
   pipelineWatchdogPlugin.tick({ pool, tickState, tickLog, MINIMAL_MODE }).catch(err => {
     console.warn('[tick] pipeline-watchdog plugin failed (non-fatal):', err.message);
   });
+
+  // [感知] Harness Initiative Watchdog (W3)：每 5 分钟兜底扫 initiative_runs.deadline_at
+  // 防止 Brain 重启丢 setTimeout / invoke 卡死不响应 AbortSignal
+  // Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md §W3
+  const harnessWatchdogElapsed = Date.now() - (tickState.lastHarnessWatchdogTime || 0);
+  if (harnessWatchdogElapsed >= HARNESS_WATCHDOG_INTERVAL_MS) {
+    tickState.lastHarnessWatchdogTime = Date.now();
+    import('./harness-watchdog.js').then(({ scanStuckHarness }) =>
+      scanStuckHarness({ pool, notifier: undefined })
+    ).then(r => {
+      if (r?.flagged?.length > 0) {
+        tickLog(`[tick] harness-watchdog: scanned=${r.scanned} flagged=${r.flagged.length}`);
+      }
+    }).catch(err => {
+      console.warn('[tick] harness-watchdog plugin failed (non-fatal):', err.message);
+    });
+  }
 
   // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本（D1.7c plugin）
   // 扫描白名单 worktree，若对应 PR 已 merged 超过 1h 且满足安全守卫则清理
