@@ -10,6 +10,7 @@ import { publishTaskCreated as _publishTaskCreated } from '../events/taskEvents.
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
+import { checkDiagnosticDeadlock } from '../diagnostic-deadlock.js';
 
 const router = Router();
 
@@ -1111,6 +1112,19 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       return res.status(409).json({
         error: `task status is '${task.status}', only 'queued' tasks can be dispatched`,
         current_status: task.status
+      });
+    }
+
+    // 2.5 诊断循环死锁硬编码检测（learning_id e8ecab79-68c7-4000-aac1-8230151c02a0）
+    //     诊断类 task 的 metadata.target_task_id 指向同 location 的 in_progress task
+    //     → 共享 executor 必然循环死锁，拒派 409。
+    const deadlockCheck = await checkDiagnosticDeadlock(task, pool);
+    if (deadlockCheck.deadlock) {
+      return res.status(409).json({
+        error: 'diagnostic_deadlock_risk',
+        detail: `task ${task.id} (${task.task_type}) targets in-progress task ${deadlockCheck.target_task_id} on shared executor (${deadlockCheck.location})`,
+        target_task_id: deadlockCheck.target_task_id,
+        location: deadlockCheck.location,
       });
     }
 

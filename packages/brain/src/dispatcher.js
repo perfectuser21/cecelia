@@ -32,6 +32,7 @@ import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
+import { checkDiagnosticDeadlock } from './diagnostic-deadlock.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -369,6 +370,27 @@ export async function dispatchNextTask(goalIds) {
       await recordDispatchResult(pool, false, 'initiative_locked');
       return { dispatched: false, reason: 'initiative_locked', blocking_task_id: blocker.id, task_id: nextTask.id, actions };
     }
+  }
+
+  // 3c''. 诊断循环死锁硬编码检测（learning_id e8ecab79-68c7-4000-aac1-8230151c02a0）
+  //       诊断类 task（code_review / arch_review / *_verify 等）的 metadata.target_task_id
+  //       指向同 location 的 in_progress task → 共享 executor 必然循环死锁。
+  try {
+    const deadlockCheck = await checkDiagnosticDeadlock(nextTask, pool);
+    if (deadlockCheck.deadlock) {
+      tickLog(`[dispatch] diagnostic_deadlock_risk: ${nextTask.id} (${nextTask.task_type}) -> target=${deadlockCheck.target_task_id} on ${deadlockCheck.location}`);
+      await recordDispatchResult(pool, false, 'diagnostic_deadlock_risk');
+      return {
+        dispatched: false,
+        reason: 'diagnostic_deadlock_risk',
+        task_id: nextTask.id,
+        target_task_id: deadlockCheck.target_task_id,
+        location: deadlockCheck.location,
+        actions,
+      };
+    }
+  } catch (deadlockErr) {
+    console.error(`[dispatch] diagnostic deadlock check failed (non-fatal): ${deadlockErr.message}`);
   }
 
   // 3c'. C1 Atomic claim: 确保没被其他 runner（如外部 autonomous agent）抢先 claim
