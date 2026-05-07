@@ -39,8 +39,9 @@ check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 99\b' 0 "stop
 check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 2\b' 0 "hooks/stop-dev.sh exit 2 (Ralph 禁用)"
 check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 99\b' 0 "hooks/stop-dev.sh exit 99 (Ralph 禁用)"
 
-# devloop-check.sh：旧 classify_session + 旧 devloop_check + 新 verify_dev_complete = 3 函数末尾各 1 return 0
-check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 0\b' 3 "devloop-check.sh return 0 (3 函数 × 1)"
+# devloop-check.sh：classify_session + devloop_check + verify_dev_complete + log_hook_decision = 4 函数末尾各 1 return 0
+# log_hook_decision 由 stop-hook-v23 PR-1 引入（结构化决策日志）
+check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 0\b' 4 "devloop-check.sh return 0 (4 函数 × 1)"
 # 旧 not-dev return 99 保留兼容（classify_session 末尾）
 check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 99\b' 1 "devloop-check.sh return 99 (classify_session 兼容)"
 

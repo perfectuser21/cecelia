@@ -46,6 +46,22 @@ MAX_RETRIES="${CECELIA_MAX_RETRIES:-5}"
 # 确保日志目录存在
 mkdir -p "$(dirname "$LOG_FILE")"
 
+# --dry-run 选项：输出最终 cmdline（含 --session-id <uuid>）后 exit 0
+# 用法：bash cecelia-run.sh --dry-run [task_id checkpoint_id prompt_file]
+_DRY_RUN=0
+for _arg in "$@"; do
+  if [[ "$_arg" == "--dry-run" ]]; then
+    _DRY_RUN=1
+    break
+  fi
+done
+if [[ "$_DRY_RUN" == "1" ]]; then
+  _SID=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || python3 -c 'import uuid; print(uuid.uuid4())')
+  _LAUNCHER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/claude-launch.sh"
+  echo "bash $_LAUNCHER --session-id $_SID -p <prompt>"
+  exit 0
+fi
+
 # 参数验证
 TASK_ID="${1:?用法: cecelia-run <task_id> <checkpoint_id> <prompt_file>}"
 CHECKPOINT_ID="${2:?checkpoint_id 必需}"
