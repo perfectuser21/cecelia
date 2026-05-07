@@ -267,9 +267,10 @@ DEV_MODE_EOF
 
         # v20.0.0 Ralph Loop 模式：项目根状态文件
         # 信号源切到主仓库根，不依赖 cwd 是否在 worktree
-        # assistant 删 .dev-mode 不影响 — stop-dev.sh 看这个文件判定 dev 流程
-        # v22.0.0: 加 main_session_id 字段（ps 沿 PPID 找主 claude --session-id），
-        # 让 stop-dev.sh 用 hook stdin payload session_id 精确路由（解多 session 串线）
+        # v23 PR-3 起：dev-active-*.json **不再被 stop-dev.sh 读**（v23 心跳模型用 .cecelia/lights/）
+        # 但 packages/engine/hooks/dev-mode-tool-guard.sh (PreToolUse hook) 仍依赖此文件
+        # 存在性来判断 "assistant 是否在 /dev 流程"，决定是否拦 ScheduleWakeup / Bash bg。
+        # 因此**保留**创建逻辑。删除前需先迁移 dev-mode-tool-guard 到 lights/ 模型。
         local main_repo _main_sid
         main_repo=$(git rev-parse --show-toplevel 2>/dev/null)
         _main_sid=$(_resolve_main_session_id 2>/dev/null || echo "")
@@ -302,7 +303,9 @@ RALPH_EOF
                 # （测试环境的 afterEach 可能有宽泛的 pkill）
                 local _hb_link="$main_repo/.cecelia/hb.sh"
                 ln -sf "$_guardian_lib" "$_hb_link" 2>/dev/null || true
-                GUARDIAN_ORPHAN_MODE=1 nohup bash "$_hb_link" "$_light_file" >/dev/null 2>&1 &
+                # v23 PR-3 修：guardian fork 必须关 FD 201（worktree-create.lock）
+                # 否则 guardian 继承 FD → 持锁不放 → 下次 cmd_create flock -w 5 失败
+                GUARDIAN_ORPHAN_MODE=1 nohup bash "$_hb_link" "$_light_file" </dev/null >/dev/null 2>&1 201>&- &
                 local _guardian_pid=$!
                 disown $_guardian_pid 2>/dev/null || true
 
