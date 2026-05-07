@@ -1,10 +1,31 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
-> Round 2 → Reviewer REVISION，本轮处理 4 项反馈：
-> (R1) 缺失节点判定时必须打印 PRIMARY_SET + FALLBACK_SET 完整诊断行后 `exit 1`，禁用 sleep 重试掩盖；
-> (R2) `langgraph_checkpoints` 三路 COALESCE 全 NULL 时 dump 一条 `metadata` jsonb 全文便于人检；
-> (R3) Step 5 curl `/health` 失败时先对比 `gh pr view mergedAt` 与 `docker inspect Brain State.StartedAt`，仅当 startedAt < mergedAt 时 sleep 10 重试一次（最多 3 轮），3 轮仍 404 立即 exit 1 并打印两时间戳；
-> (R4) Step 2 与 E2E 脚本的 fallback SQL 抽成共享 shell 函数 `count_distinct_nodes_in_checkpoints()` / `dump_checkpoint_metadata_sample()` / `wait_for_brain_with_pr_merge()` 复用。
+> Round 3 → Reviewer REVISION，本轮处理 3 项新反馈 + 补 Risk Register ≥ 7：
+> (R5 / R-CASCADE-FAILURE, high) Step 1 失败必须立即 `exit 1`，不进 Step 2；E2E 脚本 `set -euo pipefail` 防 cascade 被静默吞；
+> (R6 / R-HELPERS-MISSING, medium) E2E 脚本首行守卫 `[ -f sprints/w8-langgraph-acceptance/helpers.sh ] || { echo "FAIL: helpers.sh missing"; exit 2; }`，**exit 2** = 脚手架坏，**exit 1** = 红证据；并在 source 后断言 `W8_ACCEPTANCE_HELPERS_LOADED=1`；
+> (R7 / R-PR-NOT-LINKED-TO-INITIATIVE, medium) E2E §Step 3 SELECT 与 §Step 3 主合同对齐双路兜底：`task_id IN (parent_initiative_id 子任务)` **OR** `pr_url LIKE '%harness%'`，并要求 PR diff + main HEAD handler 双确认避免误绿；
+> (R8) 顶部新增 §Risk Register 共 8 项已注册风险，覆盖 cascade / helpers / schema drift / pr-link / 重启时序 / watchdog / 重派 / sleep 掩盖。
+
+> **Round 1-3 已处理项保留**（R1 缺失节点诊断行 + 立即 exit 1 / R2 metadata dump / R3 Brain 重启时序兜底 / R4 helpers.sh SSOT）；本轮在已有基础上**收紧** cascade 与脚手架守卫，并把所有缓解措施登记到 Risk Register。
+
+---
+
+## Risk Register（risk_registered ≥ 7，覆盖 cascade / helpers / schema-drift 三大类）
+
+下表登记 8 项验证脚本可能假通过 / 假失败的风险及其缓解措施。Reviewer 可据此逐条核对合同里是否真的有对应防御代码。
+
+| ID | 风险描述 | 严重度 | 类别 | 缓解措施 / 落点 |
+|---|---|---|---|---|
+| **R-CASCADE-FAILURE** | Step 1 写 `initiative_runs.thread_id` 失败 → Step 2 fallback 取 `THREAD_ID=""` → `count_distinct_nodes_in_checkpoints` 恒回 0；若主路径也少节点，整体仍 exit 0 假绿 | **high** | cascade | (1) E2E 顶部 `set -euo pipefail`；(2) E2E §Step 1 `grep -qE` 不匹配立即 `exit 1`，不进 §Step 2；(3) helper-1/2 见空 `thread_id` 显式 echo `0` / `""` 而不抛 silent 错误；(4) §Step 2 在调用 helpers 前断言 `[ -n "$THREAD_ID" ]`，否则诊断行 + exit 1 |
+| **R-HELPERS-MISSING** | `sprints/w8-langgraph-acceptance/helpers.sh` 文件路径漂移 / 提交丢失 → `source` 失败 → 后续 helper 函数 unbound → set -e 导致随机 exit 1，无法判别"红证据"还是"脚手架坏" | medium | scaffold | (1) E2E 首行守卫 `[ -f sprints/w8-langgraph-acceptance/helpers.sh ] \|\| { echo "FAIL: helpers.sh missing"; exit 2; }`；(2) source 后立即断言 `[ "${W8_ACCEPTANCE_HELPERS_LOADED:-0}" = "1" ] \|\| exit 2`；(3) 红证据校验脚本同样守卫 (`grep -F "W8_ACCEPTANCE_HELPERS_LOADED"`)；**exit 2 ≠ exit 1**：脚手架坏要主理人修，而非误判产品红 |
+| **R-LANGGRAPH-SCHEMA-DRIFT** | `langgraph_checkpoints` 表 `metadata` jsonb 字段在 LangGraph 版本升级时重命名（如 `source` → `step_source`） → COALESCE 三路全 NULL → fallback distinct=0；若主路径也未 emit，整体假红 | medium | schema | (1) helper-3 `dump_checkpoint_metadata_sample`：`FALLBACK_ROWCOUNT > 0 && DISTINCT_FALLBACK == 0` 时打印 `jsonb_pretty(metadata)` + `jsonb_pretty(channel_values)` 全文便于人检；(2) §Step 2 与 E2E 双处都跑此判定；(3) 任何 LangGraph 升级 PR 必须更新 helper-1/2 的 COALESCE 表达式 |
+| **R-PR-NOT-LINKED-TO-INITIATIVE** | `executor.runHarnessInitiativeRouter` 落 `dev_records` 时未把 `tasks.task_id` 串到 `payload->>'parent_initiative_id'='${INITIATIVE_ID}'` → §Step 3 SELECT 拿不到 PR_URL → 直接 exit 1 误判 W8 失败（即便 health PR 实际已 merge） | medium | data-link | (1) §Step 3 + E2E §Step 3 SELECT 用双路兜底：`task_id IN (子任务集合)` **OR** `pr_url LIKE '%harness%'`；(2) 任一兜底命中后仍走完 `gh pr view state=MERGED` + `gh pr diff name-only` + `git show origin/main` 三重校验，确保不会拿到无关 PR 假绿；(3) Risk Register 此项明确登记后续修复方向（executor 关联，独立 PR 处理，不阻塞 W8 验证） |
+| **R-BRAIN-OLD-IMAGE** | staging Brain 容器在 PR merge 前已启动（旧镜像无 /health handler）→ §Step 5 curl 永远 404；若 retry 不带时序判定，sleep 重试也无意义 | medium | timing | helper-4 `wait_for_brain_with_pr_merge`：(1) curl 失败 → 取 `gh pr view --json mergedAt` 与 `docker inspect StartedAt`；(2) `started_ts < merged_ts` → sleep 10 重试 ≤3 轮（容器在重启拉新镜像）；(3) `started_ts >= merged_ts` 仍 404 → 立即 exit 1 + 打印两时间戳（新镜像里就没 handler，重试无用） |
+| **R-WATCHDOG-OVERDUE** | `initiative_runs` 行 `phase='done'` 但 `failure_reason='watchdog_overdue'`（W3 watchdog 兜底超时打的标）→ §Step 4 仅校验 phase=done 会假绿 | medium | semantics | §Step 4 在断言 phase=done 前先校验 `failure_reason != 'watchdog_overdue'`，并打印 `deadline_at - completed_at` 秒差值；负值（即 completed_at > deadline_at）也立即 exit 1 |
+| **R-DUPLICATE-INITIATIVE-RUN** | 同一 `initiative_id` 多次重派（W1 attemptN+1 行为）→ `initiative_runs` 出现 `:1` `:2` 多行；裸 SELECT 可能取错 attempt | low | concurrency | 所有 `initiative_runs` SELECT 强制 `ORDER BY created_at DESC LIMIT 1` + `created_at > NOW() - interval '60 minutes'` 时间窗口；§Step 1 thread_id 正则 `:[0-9]+$` 兼容多 attempt |
+| **R-SLEEP-MASKING** | 在 §Step 2 节点缺失时 sleep + retry 等节点出现 → 把"节点真没 emit"误判为"暂时未到"；最终把超时假装成红证据外的状态 | low | flake-mask | R1 修复：§Step 2 缺失节点立即打印 PRIMARY_SET + FALLBACK_SET + MISSING + THREAD_ID 完整诊断行后 exit 1，**禁止 sleep + retry**；helper-4 仅在 `brain.StartedAt < pr.mergedAt` 这一**有时序根因**的场景才允许有限次 sleep（≤3 轮） |
+
+**风险登记总数**: 8 ≥ 7（满足 Reviewer 阈值）。每条风险都对应到合同里至少一处具体代码 / 验证命令，Reviewer 可逐条 grep 核对。
 
 ---
 
@@ -119,6 +140,17 @@ THREAD_ID=$(psql "$DB" -At -c "
      AND created_at > NOW() - interval '${WINDOW}'
    ORDER BY created_at DESC LIMIT 1
 ")
+
+# R5 / R-CASCADE-FAILURE：THREAD_ID 为空意味着 Step 1 没把 thread_id 写进 initiative_runs；
+#   此时调 helper-1/2 必回 0 / ""，会让"主路径少节点 + fallback=0"伪装成红证据；必须立即 abort，
+#   交由 Step 1 失败先暴露根因，禁止把根因藏进 Step 2 的"双路均不足"。
+if [ -z "$THREAD_ID" ]; then
+  echo "FAIL Step 2: THREAD_ID 为空 (initiative_runs 未写)，cascade 异常 — abort 不评估 fallback"
+  echo "[Step 2 诊断] PRIMARY=$DISTINCT_PRIMARY (set=$PRIMARY_SET)"
+  echo "[Step 2 诊断] WINDOW=$WINDOW INITIATIVE_ID=$INITIATIVE_ID"
+  exit 1
+fi
+
 DISTINCT_FALLBACK=$(count_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
 FALLBACK_SET=$(list_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
 
@@ -361,10 +393,24 @@ echo "$RESP" | jq -e '
 
 **journey_type**: `autonomous`
 
-**完整验证脚本**（**完全复用** `sprints/w8-langgraph-acceptance/helpers.sh`，禁止内联 fallback SQL — R4）：
+**完整验证脚本**（**完全复用** `sprints/w8-langgraph-acceptance/helpers.sh`，禁止内联 fallback SQL — R4 / R6 / R5）：
 ```bash
 #!/usr/bin/env bash
+# Cascade 防御（R5 / R-CASCADE-FAILURE）：
+#   set -e        — 任何命令失败立即退出，cascade 不被静默吞
+#   set -u        — 引用未定义变量直接抛错（防 helper 函数变量未传时假装 0）
+#   set -o pipefail — 管道里任意段失败都向外传递（如 psql | tr 链路）
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# R6 / R-HELPERS-MISSING 守卫：脚手架文件缺失时 exit 2（≠ exit 1 红证据），
+# 让主理人立刻知道"是脚手架坏"而非"产品红"。
+# ---------------------------------------------------------------------------
+HELPERS_PATH="sprints/w8-langgraph-acceptance/helpers.sh"
+if [ ! -f "$HELPERS_PATH" ]; then
+  echo "FAIL: $HELPERS_PATH missing — scaffold broken, NOT a red evidence"
+  exit 2
+fi
 
 INITIATIVE_ID="w8-langgraph-acceptance-20260507"
 DB="${DB:-postgresql://localhost/cecelia}"
@@ -373,7 +419,14 @@ BRAIN_CONTAINER="${BRAIN_CONTAINER:-cecelia-brain-staging}"
 WINDOW="60 minutes"
 
 # 强制引入共享 helpers，避免两处粘贴漂移（R4）
-source sprints/w8-langgraph-acceptance/helpers.sh
+# shellcheck source=sprints/w8-langgraph-acceptance/helpers.sh
+source "$HELPERS_PATH"
+
+# R6：source 成功后断言哨兵变量被设置（防 helpers.sh 被截断 / 错版本）
+if [ "${W8_ACCEPTANCE_HELPERS_LOADED:-0}" != "1" ]; then
+  echo "FAIL: helpers.sh sourced 但 W8_ACCEPTANCE_HELPERS_LOADED 未置 1 — scaffold broken"
+  exit 2
+fi
 
 echo "==> Step 1: initiative_runs.thread_id 已写入"
 THREAD_ID=$(psql "$DB" -At -c "
@@ -382,8 +435,15 @@ THREAD_ID=$(psql "$DB" -At -c "
      AND created_at > NOW() - interval '${WINDOW}'
    ORDER BY created_at DESC LIMIT 1
 ")
+
+# R5 / R-CASCADE-FAILURE：Step 1 任何形态失败 → 立即 exit 1，**禁止**继续走 Step 2 让 fallback 计数恒 0 假绿
+if [ -z "$THREAD_ID" ]; then
+  echo "FAIL Step 1: initiative_runs.thread_id 为空 — Step 2 fallback 必假，立即 abort cascade"
+  echo "[Step 1 诊断] initiative_id=$INITIATIVE_ID  WINDOW=$WINDOW"
+  exit 1
+fi
 echo "$THREAD_ID" | grep -qE "^harness-initiative:${INITIATIVE_ID}:[0-9]+$" \
-  || { echo "FAIL Step 1: thread_id=$THREAD_ID"; exit 1; }
+  || { echo "FAIL Step 1: thread_id=$THREAD_ID 不匹配 ^harness-initiative:${INITIATIVE_ID}:[0-9]+\$"; exit 1; }
 
 echo "==> Step 2: 14 distinct nodeName（task_events 主路径 + langgraph_checkpoints fallback）"
 DISTINCT_PRIMARY=$(psql "$DB" -At -c "
@@ -401,7 +461,7 @@ PRIMARY_SET=$(psql "$DB" -At -c "
      AND created_at > NOW() - interval '${WINDOW}'
 ")
 
-# helper-1/2 复用（R4）
+# helper-1/2 复用（R4）— Step 1 已断言 THREAD_ID 非空，cascade 不会到此假装 0（R5）
 DISTINCT_FALLBACK=$(count_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
 FALLBACK_SET=$(list_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
 
@@ -448,23 +508,35 @@ if [ -n "$MISSING" ]; then
   exit 1
 fi
 
-echo "==> Step 3: PR merged + main 上含 health handler"
+echo "==> Step 3: PR merged + main 上含 health handler（R7 / R-PR-NOT-LINKED-TO-INITIATIVE 双路兜底）"
+# R7：dev_records.task_id 可能未被 executor 串到 parent_initiative_id（独立修复方向已登记）；
+#     此处用 task_id IN (...) OR pr_url LIKE '%harness%' 双路；
+#     兜底命中后仍走 gh pr diff name-only + git show origin/main 双确认避免拿到无关 PR 假绿
 PR_URL=$(psql "$DB" -At -c "
   SELECT pr_url FROM dev_records
    WHERE pr_url IS NOT NULL
      AND created_at > NOW() - interval '${WINDOW}'
-     AND task_id IN (SELECT id FROM tasks WHERE payload->>'parent_initiative_id'='${INITIATIVE_ID}')
+     AND ( task_id IN (
+             SELECT id FROM tasks WHERE payload->>'parent_initiative_id'='${INITIATIVE_ID}'
+           )
+        OR pr_url LIKE '%harness%' )
    ORDER BY created_at DESC LIMIT 1
 ")
-[ -n "$PR_URL" ] || { echo "FAIL Step 3: no PR"; exit 1; }
+[ -n "$PR_URL" ] || { echo "FAIL Step 3: no PR linked to initiative ${INITIATIVE_ID} via task_id or pr_url~harness"; exit 1; }
 PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+[ -n "$PR_NUM" ] || { echo "FAIL Step 3: PR_URL 无尾部数字 ($PR_URL)"; exit 1; }
+
 STATE=$(gh pr view "$PR_NUM" --json state -q .state)
-[ "$STATE" = "MERGED" ] || { echo "FAIL Step 3: PR state=$STATE"; exit 1; }
+[ "$STATE" = "MERGED" ] || { echo "FAIL Step 3: PR #$PR_NUM state=$STATE != MERGED"; exit 1; }
+
+# 双确认 1：PR diff 必触及目标文件（防止 LIKE '%harness%' 误捞无关 PR）
 gh pr diff "$PR_NUM" --name-only | grep -qE '^packages/brain/src/routes/harness\.js$' \
-  || { echo "FAIL Step 3: PR diff 未触及目标文件"; exit 1; }
+  || { echo "FAIL Step 3: PR #$PR_NUM diff 未触及 packages/brain/src/routes/harness.js"; exit 1; }
+
+# 双确认 2：main HEAD 上 harness.js 必含 /health handler（防止 PR 已 merge 但被后续 PR 回滚）
 git fetch origin main >/dev/null
 git show origin/main:packages/brain/src/routes/harness.js | grep -qE "router\.get\(\s*['\"]/health['\"]" \
-  || { echo "FAIL Step 3: main 上无 /health"; exit 1; }
+  || { echo "FAIL Step 3: origin/main HEAD 上 harness.js 不含 GET /health handler"; exit 1; }
 
 echo "==> Step 4: 先校验 failure_reason != watchdog_overdue + deadline_at - completed_at 差值"
 IFS=$'\t' read -r PHASE FAILURE_REASON DEADLINE_AT COMPLETED_AT DIFF_SEC <<< "$(psql "$DB" -At -F$'\t' -c "
@@ -498,6 +570,8 @@ read -r PHASE2 COMPLETED NOFAIL <<< "$(psql "$DB" -At -F' ' -c "
   || { echo "FAIL Step 4: phase=$PHASE2 completed=$COMPLETED nofail=$NOFAIL"; exit 1; }
 
 echo "==> Step 5: staging health 端点 + body shape（helper-4 内嵌 mergedAt vs StartedAt 兜底）"
+# R5：Step 3 已校验 PR_NUM 非空，此处不再重复，但显式断言一遍以阻断 cascade 漂移
+[ -n "${PR_NUM:-}" ] || { echo "FAIL Step 5: PR_NUM 为空 — Step 3 cascade 异常"; exit 1; }
 RESP=$(wait_for_brain_with_pr_merge "$STAGING_BRAIN" "$PR_NUM" "$BRAIN_CONTAINER")
 echo "$RESP" | jq -e '
   (.langgraph_version | type=="string" and length>0)
@@ -578,6 +652,11 @@ Reviewer 可逐条跑下面命令，证明合同内的测试在"未实现状态"
 # 即便已含，stash 后也回到无该 handler 状态以验证红
 cd /workspace
 
+# R6 / R-HELPERS-MISSING：红证据校验脚本同样区分 exit 1（红证据）vs exit 2（脚手架坏）
+[ -f sprints/w8-langgraph-acceptance/helpers.sh ] || { echo "FAIL: helpers.sh missing — scaffold broken"; exit 2; }
+grep -qF "W8_ACCEPTANCE_HELPERS_LOADED=1" sprints/w8-langgraph-acceptance/helpers.sh \
+  || { echo "FAIL: helpers.sh 不含哨兵变量 W8_ACCEPTANCE_HELPERS_LOADED — scaffold corrupted"; exit 2; }
+
 # WS1 红证据
 git stash --include-untracked
 EXIT1=0
@@ -598,6 +677,17 @@ echo "OK: WS1 + WS2 在未实现时确实红，红证据已写 /tmp/ws{1,2}-red.
 ```
 
 **通过标准**：两条 vitest 命令 EXIT ≠ 0，且 FAIL 行计数之和 ≥ 7。
+
+---
+
+## Round 4 反馈映射（自检）
+
+| Reviewer 项 | 修复位置 | 关键变化 | Risk Register 对应 |
+|---|---|---|---|
+| **R5 / R-CASCADE-FAILURE** Step 1 thread_id 未写入导致 Step 2 fallback 假装 0 | E2E 顶部 + §Step 1 + §Step 2（合同 + E2E 双处） | E2E `set -euo pipefail`；§Step 1 `[ -z "$THREAD_ID" ] → exit 1` 立即 abort；§Step 2 在 helper 调用前再断言一次 THREAD_ID 非空 | R-CASCADE-FAILURE (high) |
+| **R6 / R-HELPERS-MISSING** helpers.sh 文件丢失或路径漂移 | E2E 首行 + 红证据校验脚本 | E2E 首行 `[ -f $HELPERS_PATH ] \|\| exit 2`；source 后断言 `W8_ACCEPTANCE_HELPERS_LOADED=1`；红证据脚本同样守卫；**exit 2 ≠ exit 1** 区分脚手架坏与产品红 | R-HELPERS-MISSING (medium) |
+| **R7 / R-PR-NOT-LINKED-TO-INITIATIVE** dev_records.task_id 未串 parent_initiative_id | §Step 3 + E2E §Step 3 | SELECT 双路兜底 `task_id IN (...) OR pr_url LIKE '%harness%'`；命中后必走 `gh pr diff name-only` + `git show origin/main` 双确认避免误绿；executor 关联修复独立登记 | R-PR-NOT-LINKED-TO-INITIATIVE (medium) |
+| **R8** risk_registered ≥ 7（cascade + helpers + schema-drift 必含） | 顶部新增 §Risk Register | 8 项风险登记，覆盖 cascade / helpers / schema-drift / pr-link / brain-restart / watchdog / 重派 / sleep 掩盖；每条都对应合同里至少一处具体代码 | 全部 8 项 |
 
 ---
 
