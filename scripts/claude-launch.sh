@@ -22,6 +22,14 @@ for arg in "$@"; do
     fi
 done
 
+# --dry-run 优先：CI / 测试环境无真 claude binary 也要能跑契约测试
+# 输出格式与正常 exec 一致，含 --session-id <uuid>
+if [[ "$DRY_RUN" == "1" ]]; then
+    _CLAUDE_BIN="${CLAUDE_CODE_EXECPATH:-$(command -v claude 2>/dev/null || echo claude)}"
+    echo "$_CLAUDE_BIN --session-id $SID ${ARGS[@]+${ARGS[@]}}"
+    exit 0
+fi
+
 # Phase 7.6: 用绝对路径/command 跳过 shell function + alias，避免递归陷阱。
 # Claude Code 的 shell-snapshots 会注入 'claude' shell function；在 bash 子进程里
 # `exec claude` 会解析成该 function 反复调回 launcher 本身，表现为 "permission
@@ -36,8 +44,4 @@ if [[ -z "$_CLAUDE_BIN" || ! -x "$_CLAUDE_BIN" ]]; then
 fi
 
 FINAL_CMD=("$_CLAUDE_BIN" --session-id "$SID" "${ARGS[@]+"${ARGS[@]}"}")
-if [[ "$DRY_RUN" == "1" ]]; then
-    echo "${FINAL_CMD[@]}"
-    exit 0
-fi
 exec "${FINAL_CMD[@]}"

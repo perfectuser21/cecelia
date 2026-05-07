@@ -769,7 +769,7 @@ log_hook_decision() {
 
     local log_dir="${HOME}/.claude/hook-logs"
     local log_file="${log_dir}/stop-dev.jsonl"
-    mkdir -p "$log_dir" 2>/dev/null || return 0
+    mkdir -p "$log_dir" 2>/dev/null || true
 
     local ts
     ts=$(date "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "unknown")
@@ -777,7 +777,9 @@ log_hook_decision() {
     # 用 printf 转义引号；保证输出是 1 行合法 JSON
     printf '{"ts":"%s","session_id_short":"%s","decision":"%s","reason_code":"%s","lights_count":%s,"branch":"%s","hook_version":"22"}\n' \
         "$ts" "$sid" "$decision" "$reason" "${count:-0}" "$branch" \
-        >> "$log_file" 2>/dev/null || return 0
+        >> "$log_file" 2>/dev/null || true
+
+    return 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
