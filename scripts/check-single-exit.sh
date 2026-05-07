@@ -39,6 +39,16 @@ check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 99\b' 0 "stop
 check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 2\b' 0 "hooks/stop-dev.sh exit 2 (Ralph 禁用)"
 check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 99\b' 0 "hooks/stop-dev.sh exit 99 (Ralph 禁用)"
 
+# v23.1: 单一出口纪律 — stop-dev.sh 必须只有 1 个 'exit 0'
+exit0_count=$(sed 's/#.*//' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" | grep -cE '\bexit\s+0\b' || true)
+exit0_count="${exit0_count:-0}"
+if [[ "$exit0_count" -ne 1 ]]; then
+    echo "❌ stop-dev.sh exit 0 纪律: 出现 ${exit0_count} 次（期望 1）— 单一出口违反"
+    ERR=1
+else
+    echo "✅ stop-dev.sh exit 0 纪律: ${exit0_count} / 1（单一出口）"
+fi
+
 # devloop-check.sh：classify_session + devloop_check + verify_dev_complete + log_hook_decision = 4 函数末尾各 1 return 0
 # log_hook_decision 由 stop-hook-v23 PR-1 引入（结构化决策日志）
 check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 0\b' 4 "devloop-check.sh return 0 (4 函数 × 1)"
