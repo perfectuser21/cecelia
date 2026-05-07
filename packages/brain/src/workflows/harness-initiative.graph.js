@@ -842,8 +842,9 @@ export async function inferTaskPlanNode(state, _opts = {}) {
     console.log(`[infer_task_plan] read ${plan.tasks?.length || 0} tasks from ${proposeBranch}:${sprintDir}/task-plan.json`);
     return { taskPlan: plan };
   } catch (err) {
-    console.warn(`[infer_task_plan] git show origin/${proposeBranch}:${sprintDir}/task-plan.json failed: ${err.message}`);
-    return {};
+    const msg = `[infer_task_plan] git show origin/${proposeBranch}:${sprintDir}/task-plan.json failed: ${err.message}`;
+    console.error(msg);
+    return { error: msg };  // 走 stateHasError → error → END，触发 alert（不再静默"软坏"）
   }
 }
 
