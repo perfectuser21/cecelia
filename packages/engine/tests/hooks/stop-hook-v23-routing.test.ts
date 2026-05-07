@@ -28,16 +28,10 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
     rmSync(testRepo, { recursive: true, force: true })
   })
 
-  it('1 session_id 缺 + tty → release（手动 bash hook < /dev/null）', () => {
-    makeLight(lightsDir, 'abc12345', 'cp-test')
-    // 强制 tty 模式：直接 bash hook（不通过 echo pipe）
-    const out = execSync(
-      `cd ${testRepo} && CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK} < /dev/null`,
-      { encoding: 'utf8' }
-    )
-    // tty 检测取决于 stdin 是否是终端；用 </dev/null 给空 stdin，hook 看 hook_session_id="" + ! -t 0
-    // 为简化，验证 stdout 不含 block decision
-    expect(out).not.toMatch(/decision.*block/)
+  it.skip('1 session_id 缺 + tty → release（仅手动场景：CI 难以伪造 tty）', () => {
+    // Spec § 4.3 标注此为手动测试场景。自动化测试中 </dev/null 无法伪造 tty，
+    // </dev/null 会让 hook 走非 tty + 空 session_id 分支（保守 block，由 case 2 覆盖）。
+    // 真 tty 模式需 `script` 工具，跨平台兼容性不可控，故 skip。
   })
 
   it('2 session_id 缺 + 非 tty (空 payload via pipe) → block', () => {
@@ -80,7 +74,7 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
     makeLight(lightsDir, 'abc12345', 'cp-test')
     const fakeHome = mkdtempSync(join(tmpdir(), 'hooklog-'))
     execSync(
-      `cd ${testRepo} && HOME=${fakeHome} CLAUDE_HOOK_CWD=${testRepo} echo '{"session_id":"abc12345-x"}' | bash ${HOOK}`,
+      `cd ${testRepo} && echo '{"session_id":"abc12345-x"}' | HOME=${fakeHome} CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK}`,
       { encoding: 'utf8' }
     )
     const logFile = join(fakeHome, '.claude/hook-logs/stop-dev.jsonl')

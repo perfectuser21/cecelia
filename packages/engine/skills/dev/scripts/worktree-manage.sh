@@ -287,6 +287,49 @@ RALPH_EOF
             echo -e "${GREEN}✅ .cecelia/dev-active-${branch_name}.json 已写入主仓库根${NC}" >&2
         fi
 
+        # === v23 PR-2: 心跳模型 — 启动 guardian + 写灯文件 ===
+        # 灯文件 mtime 是新 stop hook 决策的唯一信号源；guardian 每 60s touch 维持新鲜
+        if [[ -n "$main_repo" ]]; then
+            mkdir -p "$main_repo/.cecelia/lights"
+            local _sid_short="${_claude_sid_create:0:8}"
+            [[ -z "$_sid_short" || "$_sid_short" == "unknown" ]] && _sid_short="nosid000"
+
+            local _light_file="$main_repo/.cecelia/lights/${_sid_short}-${branch_name}.live"
+            local _script_dir
+            _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            local _guardian_lib="$_script_dir/../../../lib/dev-heartbeat-guardian.sh"
+            [[ -f "$_guardian_lib" ]] || _guardian_lib="$main_repo/packages/engine/lib/dev-heartbeat-guardian.sh"
+
+            if [[ -f "$_guardian_lib" ]]; then
+                # 找父 claude PID 给 guardian 当真正的存活探针（worktree-manage.sh 是
+                # 短命的，不能用 ppid 检测；claude session 是长命的，是真正的"父"）
+                local _claude_pid
+                _claude_pid=$(_resolve_main_claude_pid 2>/dev/null || echo "")
+
+                # nohup + & 让 guardian 真后台。GUARDIAN_PARENT_PID 设了，guardian 走显式 PID 探活
+                nohup env GUARDIAN_PARENT_PID="${_claude_pid}" bash "$_guardian_lib" "$_light_file" >/dev/null 2>&1 &
+                local _guardian_pid=$!
+                disown $_guardian_pid 2>/dev/null || true
+
+                # 写灯文件 JSON（guardian 已 touch 创建空文件，这里覆盖填内容）
+                cat > "$_light_file" <<LIGHT_EOF
+{
+  "session_id": "${_claude_sid_create:-unknown}",
+  "session_id_short": "${_sid_short}",
+  "branch": "${branch_name}",
+  "worktree_path": "${worktree_path}",
+  "started_at": "$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)",
+  "host": "$(hostname -s 2>/dev/null || echo unknown)",
+  "guardian_pid": ${_guardian_pid},
+  "stage": "stage_0_init"
+}
+LIGHT_EOF
+                echo -e "${GREEN}✅ .cecelia/lights/${_sid_short}-${branch_name}.live 已写（guardian PID=${_guardian_pid}）${NC}" >&2
+            else
+                echo -e "${YELLOW}⚠️  dev-heartbeat-guardian.sh 不存在，跳过心跳启动${NC}" >&2
+            fi
+        fi
+
         echo "" >&2
         echo "下一步:" >&2
         echo "  cd $worktree_path" >&2
@@ -527,6 +570,24 @@ _resolve_main_session_id() {
         args=$(ps -o args= "$pid" 2>/dev/null || echo "")
         if [[ "$args" == *"claude"* && "$args" == *"--session-id"* ]]; then
             echo "$args" | grep -oE '\-\-session-id[ =][a-f0-9-]+' | head -1 | awk '{print $NF}'
+            return 0
+        fi
+        pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')
+        depth=$((depth + 1))
+    done
+    echo ""
+}
+
+# v23 PR-2: 沿 PPID 链找父 claude 进程 PID（与 _resolve_main_session_id 同算法，输出 pid 而非 session_id）
+# 用途：guardian 把这个 PID 当 PARENT_PID — 父 claude 死则 guardian 自清理灯文件
+_resolve_main_claude_pid() {
+    local pid="${PPID:-}"
+    local depth=0
+    while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do
+        local args
+        args=$(ps -o args= "$pid" 2>/dev/null || echo "")
+        if [[ "$args" == *"claude"* && "$args" == *"--session-id"* ]]; then
+            echo "$pid"
             return 0
         fi
         pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')

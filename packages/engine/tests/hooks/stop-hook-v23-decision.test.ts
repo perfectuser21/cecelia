@@ -95,7 +95,7 @@ describe('stop-dev.sh v23 decision matrix', () => {
   it('7 BYPASS=1 → release', () => {
     makeLight(lightsDir, 'abc12345', 'cp-test')
     const out = execSync(
-      `cd ${testRepo} && CLAUDE_HOOK_CWD=${testRepo} CECELIA_STOP_HOOK_BYPASS=1 echo '{"session_id":"abc12345-x"}' | bash ${HOOK}`,
+      `cd ${testRepo} && echo '{"session_id":"abc12345-x"}' | CLAUDE_HOOK_CWD=${testRepo} CECELIA_STOP_HOOK_BYPASS=1 bash ${HOOK}`,
       { encoding: 'utf8' }
     )
     expect(out).not.toMatch(/decision.*block/)
