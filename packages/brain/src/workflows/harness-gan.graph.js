@@ -19,7 +19,7 @@
  */
 
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, access } from 'node:fs/promises';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
@@ -324,6 +324,15 @@ export function createGanContractNodes(executor, ctx) {
     // 即使本轮被打回，先把 branch 存下；后续轮次会覆写成新 branch（reducer 取最新）。
     // APPROVED 终态时即 approved contract 的 git branch。
     const proposeBranch = extractProposeBranch(result.stdout) || fallbackProposeBranch(taskId);
+
+    // 防御：proposer SKILL 应每轮写 sprints/task-plan.json（v7.1.0+），缺失打 warn 给下游兜底
+    const taskPlanPath = path.join(worktreePath, sprintDir, 'task-plan.json');
+    try {
+      await access(taskPlanPath);
+    } catch {
+      console.warn(`[harness-gan] proposer round=${nextRound} missing ${sprintDir}/task-plan.json — inferTaskPlan 拿不到 DAG 时会 hard fail`);
+    }
+
     return {
       round: nextRound,
       costUsd: (state.costUsd || 0) + Number(result.cost_usd || 0),
