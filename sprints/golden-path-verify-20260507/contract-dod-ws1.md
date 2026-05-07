@@ -2,7 +2,7 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: 端到端 status 终态化观测器 + anti-revert (Round 2)
+# Contract DoD — Workstream 1: 端到端 status 终态化观测器 + anti-revert (Round 3)
 
 **范围**：脚本 + 测试，端到端运行 / 观察 `harness_initiative` 任务后 DB 行的终态化与时间单调性，并通过 git ancestor + git blame 锁定 PR #2816 fix commit (`c9300a89b`) 未被覆盖。
 **大小**：M
@@ -36,6 +36,9 @@ journey_type: autonomous
 
 - [ ] [ARTIFACT] vitest 测试文件存在且包含目标 task_id `84075973-99a4-4a0d-9a29-4f0cd8b642f5` 与 PR #2816 fix commit `c9300a89b`
   Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws1/status-writeback.test.ts','utf8');if(!c.includes('84075973-99a4-4a0d-9a29-4f0cd8b642f5')||!c.includes('c9300a89b'))process.exit(1)"
+
+- [ ] [ARTIFACT] **Round 3** — contract-draft.md 含 `## Risks Registered` 章节 + R1/R2/R3/R4/R5 + cascade + mitigation 关键字（risk_registered 抬分硬断言）
+  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/contract-draft.md','utf8');for(const k of ['## Risks Registered','R1','R2','R3','R4','R5','cascade','mitigation'])if(!c.toLowerCase().includes(k.toLowerCase()))process.exit(1)"
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 

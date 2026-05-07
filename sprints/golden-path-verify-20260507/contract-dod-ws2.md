@@ -2,7 +2,7 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 2: dispatcher 防回路 + 单元守护 (Round 2)
+# Contract DoD — Workstream 2: dispatcher 防回路 + 单元守护 (Round 3)
 
 **范围**：脚本 + 测试，断言 (a) Step 0 系统级 pre-flight；(b) dispatcher 不重复拉起目标 task_id；(c) PR #2816 自带 4 项单元断言不退化。脚本顶层带 `LAST_STEP` trap。
 **大小**：S
@@ -30,6 +30,9 @@ journey_type: autonomous
 
 - [ ] [ARTIFACT] vitest 测试文件存在且引用 PR #2816 守护文件路径
   Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws2/no-regression.test.ts','utf8');if(!c.includes('executor-harness-initiative-status-writeback.test.js'))process.exit(1)"
+
+- [ ] [ARTIFACT] **Round 3** — vitest 测试文件含 contract-draft.md 的 `## Risks Registered` 章节静态守护 it() 块（防 Risks Registered 章节被后续 commit 删掉）
+  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws2/no-regression.test.ts','utf8');if(!c.includes('Risks Registered')||!c.includes('contract-draft.md'))process.exit(1)"
 
 ## BEHAVIOR 索引（实际测试在 tests/ws2/）
 

@@ -1,16 +1,25 @@
-# Sprint Contract Draft (Round 2) — 验证 PR #2816 harness_initiative status 自动回写
+# Sprint Contract Draft (Round 3) — 验证 PR #2816 harness_initiative status 自动回写
 
 > **被验证对象**：`packages/brain/src/executor.js` 的 `if (task.task_type === 'harness_initiative')` 外层 caller 块（PR #2816 fix commit = `c9300a89b`）。
 > **本 Sprint 不修改实现**，只观察其在真实 Brain runtime 中的可见行为。
 > **journey_type**：autonomous
 
-## 本轮（Round 2）相对 Round 1 的变更（针对 Reviewer 5 条反馈）
+## 本轮（Round 3）相对 Round 2 的变更（针对 Reviewer 单条反馈：risk_registered 抬分）
+
+Reviewer Round 2 verdict = REVISION，唯一动作项："加一栏 Risks Registered（≥2 条具名 risk + mitigation，含 cascade 失败对策 R5）即可让 risk_registered 从 6 抬到 8 以上"。Round 3 仅做以下改动：
+
+1. **新增 `## Risks Registered` 章节**：把 R1–R5 五条 risk 显式登记成结构化表，每条含 `id / risk / cause / mitigation / owner / proof_step / cascade_role` 七列。R5（cascade）单独标 cascade_role=trigger，其他四条标 cascade_role=guarded。
+2. **DoD ARTIFACT 加硬断言**：`contract-draft.md` 必须含 `## Risks Registered` 章节、必须含 `R1`/`R2`/`R3`/`R4`/`R5` 五个 id、必须含 `cascade` 关键字。
+3. **WS1/WS2 各加 1 个静态 it() 断言**：测试文件 `readFileSync(contract-draft.md)` 后，断言上述关键字存在，防止后续 commit 把章节删掉。
+4. **不改任何脚本逻辑、不改 Step 0–5 的验证命令、不改 task_id**，避免再触发 R1–R5 验证回归。
+
+## 本轮（Round 2）相对 Round 1 的变更（保留供回溯）
 
 1. **新增 Step 0 系统级 pre-flight**（`pg_isready` + Brain `/health`），区分系统级失败（`exit 2`）与业务断言失败（`exit 1`）——回应反馈 #2。
 2. **Step 2 时间窗收紧**：从固定 `interval '24 hours'` 改为 `>= started_at - interval '1 minute'`，避免 E2E 重跑时捕获上一轮残留 graph_node_update 给假 PASS——回应反馈 #5。
 3. **Step 3 静默看门狗**：2h 轮询过程中若 `task_events` 最近一次写入 > 30 分钟前，直接 `exit 1` with `reason=pipeline_stuck`，不再傻等到 7200s——回应反馈 #1。
 4. **每步加 LAST_STEP trap**：E2E 脚本任意一步异常退出时打印 `LAST_STEP=...` 给 evaluator——回应反馈 #3。
-5. **WS1 测试新增 anti-revert 断言**：用 `git merge-base --is-ancestor c9300a89b HEAD` 确认 PR #2816 fix commit 在 HEAD 祖先链上；用 `git blame` 锁定外层 caller 块中 `updateTaskStatus(task.id, 'completed'|'failed')` 行的 blame commit 等于 `c9300a89b`（Reviewer R1 笔误写 `66ff2791b`，那是 round-1 contract commit；技术正确的 anchor 是 `c9300a89b`，本测试同时加固两者：c9300a89b 必须可达，且 fix 行 blame ≥ c9300a89b 时间序）——回应反馈 #4。
+5. **WS1 测试新增 anti-revert 断言**：用 `git merge-base --is-ancestor c9300a89b HEAD` 确认 PR #2816 fix commit 在 HEAD 祖先链上；用 `git blame` 锁定外层 caller 块中 `updateTaskStatus(task.id, 'completed'|'failed')` 行的 blame commit 等于 `c9300a89b`——回应反馈 #4。
 
 ---
 
@@ -413,3 +422,31 @@ workstream_count: 2
 - **`it(` 计数 ≥ 4**：防止"删 it 让全绿"。
 - **`LAST_STEP` trap**：每步前赋值，trap 在 EXIT 上打印；evaluator 报告中直接读出卡点（pipeline_stuck / preflight_db / preflight_brain / step3_terminal_status …）。
 - `psql` 全用 `-tA`；`grep -E ... || exit N` 链式失败立即退出；`curl -fsS` 让 5xx/超时返回非 0。
+
+---
+
+## Risks Registered
+
+显式登记本 Sprint 已识别的失败模式与对策。每行一条 risk，对应一条 mitigation 落到合同里的具体 Step / 测试 / 脚本片段。`cascade_role=trigger` 表示该 risk 一旦触发会让后续 Step 全部失能；`cascade_role=guarded` 表示该 risk 由专门的 mitigation 兜住，不引发 cascade。
+
+| id | risk | cause | mitigation（落点） | owner | proof_step | cascade_role |
+|---|---|---|---|---|---|---|
+| **R1** | pipeline 静默卡死浪费 2h | LangGraph 子图 hang，Brain 进程未崩，`task_events` 不再写入 | Step 3 加 30 min 静默看门狗：`LAST_EVT_AGE > 1800` → `exit 1 reason=pipeline_stuck`，不再傻等 7200s | Evaluator | Step 3 / E2E `step3_terminal_status` while 循环 + `SILENT_LIMIT_S=1800` | guarded |
+| **R2** | 上一轮残留 `graph_node_update` 给 Step 2 假 PASS | 同 task_id 重跑且 `task_events` 未清表 | Step 2 时间窗 `>= started_at - interval '1 minute'`（不再 `interval '24 hours'`） | Evaluator | Step 2 SQL `created_at >= (SELECT started_at - interval '1 minute' …)` | guarded |
+| **R3** | PR #2816 fix 被后续 commit 覆盖 / revert 但 spec 不知 | rebase / hotfix revert / squash 改名 | Step 5b `git merge-base --is-ancestor c9300a89b HEAD` + Step 5c `git blame` 锁定 fix 行 blame commit；WS1 静态测试同时跑 ancestor 与 blame 断言 | Generator + Evaluator | Step 5b/5c + `tests/ws1/status-writeback.test.ts` 第 99–135 行 | guarded |
+| **R4** | DB / Brain runtime 不可达被错记成 spec-fail | 验证环境抖动（PG / Brain 服务暂停） | Step 0 `pg_isready` + `curl -fsS /api/brain/health`，失败 `exit 2`（系统级），与业务 `exit 1` 严格分离 | Evaluator | Step 0 / E2E `step0_preflight` + WS2 测试 `pg_isready[\s\S]{0,200}exit\s+2` | guarded |
+| **R5** | Cascade — Step 3 卡 2h 后 Step 4/5 没机会跑 | Step 3 长轮询独占主线程 | (a) R1 静默看门狗 ≤ 30 min 即终止；(b) `LAST_STEP` trap on EXIT 打印卡点（`pipeline_stuck` / `preflight_db` / `preflight_brain` / `step3_terminal_status` …），evaluator 报告里直接读出 cascade 起点；(c) Step 4/5 在 E2E 脚本里**线性串接**而非并发，但 Step 3 提前退出后 trap 打印 `LAST_STEP`，evaluator 知道是哪一步阻断了下游 | Evaluator | E2E `LAST_STEP` 赋值链 + `trap '...' EXIT` + Step 3 `SILENT_LIMIT_S=1800` 协同 | **trigger** |
+
+### 兜底约束
+
+- **必须包含 ≥ 2 条具名 risk + mitigation**（本表 5 条 ≥ 2 ✅）
+- **必须含至少 1 条 cascade 失败对策**（R5，cascade_role=trigger，mitigation 三步走 ✅）
+- **每条 risk 的 mitigation 必须可在合同里找到落点**（proof_step 列指向具体 Step / 行号）
+
+### CI 硬断言（防止该章节被未来 commit 删掉）
+
+- `contract-draft.md` 必须存在 `## Risks Registered` 标题
+- 必须出现 `R1` / `R2` / `R3` / `R4` / `R5` 五个 id
+- 必须出现关键字 `cascade`（不区分大小写）
+- 必须出现关键字 `mitigation`
+- 由 `tests/ws1/status-writeback.test.ts` 与 `tests/ws2/no-regression.test.ts` 各 1 条静态 `it()` 守护，违反即 Red。

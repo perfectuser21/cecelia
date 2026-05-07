@@ -106,6 +106,28 @@ describe('WS1 — harness_initiative status 终态回写 [BEHAVIOR]', () => {
     expect(ok).toBe(true);
   });
 
+  // ---- Round 3 新增：Risks Registered 章节静态守护（risk_registered 抬分） ----
+
+  it('Round 3: contract-draft.md 含 ## Risks Registered 章节，登记 R1–R5 五条具名 risk + cascade 对策', () => {
+    const CONTRACT_PATH = path.resolve(REPO_ROOT, 'sprints/golden-path-verify-20260507/contract-draft.md');
+    expect(fs.existsSync(CONTRACT_PATH)).toBe(true);
+    const draft = fs.readFileSync(CONTRACT_PATH, 'utf8');
+
+    // 章节标题必须存在
+    expect(draft).toContain('## Risks Registered');
+
+    // 五条具名 risk id 全部出现
+    for (const id of ['R1', 'R2', 'R3', 'R4', 'R5']) {
+      expect(draft).toContain(id);
+    }
+
+    // 必须含 cascade 关键字（R5 cascade 对策）
+    expect(draft.toLowerCase()).toContain('cascade');
+
+    // 必须含 mitigation 关键字
+    expect(draft.toLowerCase()).toContain('mitigation');
+  });
+
   it('anti-revert: 外层 caller 块中 updateTaskStatus(task.id, completed|failed) 行 blame 锚定到 c9300a89b（fix 行未被覆盖）', () => {
     // 计算 SRC 中 OUTER_START 对应的行号
     expect(OUTER_START).toBeGreaterThan(0);

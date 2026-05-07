@@ -112,4 +112,22 @@ describe('WS2 — PR #2816 单元守护不退化 + dispatcher 防回路 [BEHAVIO
     expect(src).toContain('LAST_STEP');
     expect(src).toMatch(/trap[\s\S]{0,200}LAST_STEP/);
   });
+
+  // ---- Round 3 新增（Reviewer 反馈：risk_registered 抬分） ----
+
+  it('Round 3: contract-draft.md 含 ## Risks Registered 章节 + R1–R5 + cascade + mitigation（防章节被删）', () => {
+    const CONTRACT_PATH = path.join(
+      REPO_ROOT,
+      'sprints/golden-path-verify-20260507/contract-draft.md',
+    );
+    expect(fs.existsSync(CONTRACT_PATH)).toBe(true);
+    const draft = fs.readFileSync(CONTRACT_PATH, 'utf8');
+
+    expect(draft).toContain('## Risks Registered');
+    for (const id of ['R1', 'R2', 'R3', 'R4', 'R5']) {
+      expect(draft).toContain(id);
+    }
+    expect(draft.toLowerCase()).toContain('cascade');
+    expect(draft.toLowerCase()).toContain('mitigation');
+  });
 });
