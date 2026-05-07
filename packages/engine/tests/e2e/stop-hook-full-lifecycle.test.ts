@@ -154,11 +154,9 @@ function runStopDev(opts: { cwd: string; hookCwd?: string; ghStub?: string; env?
   return { status: res.status ?? -1, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
 }
 
-// PR-2 (v23 心跳模型)：本套 12 场景 E2E 测的是 v22 的 .cecelia/dev-active-*.json + verify_dev_complete
-// 行为。v23 hook 改读 .cecelia/lights/ + 用 mtime 判定，所有场景已不适用 — describe.skip 整套。
-// PR-2 决策矩阵改由 tests/hooks/stop-hook-v23-decision.test.ts + stop-hook-v23-routing.test.ts
-// 覆盖（19 case）。PR-3 范围会清理或重写本文件。
-describe.skip('Stop Hook Full Lifecycle — Ralph 模式 12 场景 E2E (v21.0.0+, v22 legacy)', () => {
+describe.skip('Stop Hook Full Lifecycle — Ralph 模式 12 场景 E2E (v21.0.0+)', () => {
+// v23 心跳模型：这 12 场景测的是 v22 verify_dev_complete 行为，v23 已不适用。
+// PR-3 范围会清理或重写为 v23 心跳场景。
   let repo: string;
 
   beforeEach(() => {

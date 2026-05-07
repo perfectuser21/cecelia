@@ -36,7 +36,7 @@ else
     PID=$(grep -o '"guardian_pid"[[:space:]]*:[[:space:]]*[0-9]*' "$LIGHT" | grep -o '[0-9]*$')
 fi
 
-# SID short = light 文件名前缀（cut 取首段；branch 段内可能含 -）
+# SID short = light 文件名前缀
 SID_SHORT=$(basename "$LIGHT" | cut -d- -f1)
 MARKER="$DONE_DIR/${SID_SHORT}-${BRANCH}.done"
 
@@ -52,7 +52,7 @@ cat > "$MARKER" <<EOF
 EOF
 echo "[ship-finalize] done-marker written: $MARKER" >&2
 
-if [[ -n "$PID" && "$PID" =~ ^[0-9]+$ ]]; then
+if [[ -n "${PID:-}" && "$PID" =~ ^[0-9]+$ ]]; then
     if kill -SIGTERM "$PID" 2>/dev/null; then
         echo "[ship-finalize] SIGTERM sent to guardian pid=$PID" >&2
     else

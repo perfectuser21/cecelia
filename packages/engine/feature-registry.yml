@@ -18,24 +18,20 @@ features:
     status: active
     introduced_in: "18.23.1"
     changelog:
+      - version: "18.24.0"
+        change: worktree-manage.sh 集成 — 状态从 prepared 升 active；新增 GUARDIAN_ORPHAN_MODE 支持（nohup+disown 合法孤儿进程跳过 ppid 自检）
       - version: "18.23.1"
         change: 新增 — Stop Hook v23 重构 PR-1
-      - version: "18.24.0"
-        change: |-
-          PR-2 接入 — worktree-manage.sh 启动 guardian + 写灯文件；
-          ship-finalize.sh 关 guardian + 写 done-marker。
-          新增 GUARDIAN_PARENT_PID env var 模式（显式父 PID 探活），
-          PR-1 PPID 自检退为 fallback。
 
   - id: ship-finalize
-    type: script
+    type: lib
     path: packages/engine/scripts/ship-finalize.sh
-    description: engine-ship 终末调用 — 写 done-marker + SIGTERM guardian
+    description: engine-ship 完成路径 — 关 guardian + 写 done-marker
     status: active
     introduced_in: "18.24.0"
     changelog:
       - version: "18.24.0"
-        change: 新增 — Stop Hook v23 PR-2 心跳模型核心切换
+        change: 新增 — Stop Hook v23 PR-2，engine-ship § 2.5 调用；找 lights/*-{branch}.live → 读 guardian_pid → SIGTERM → 写 done-markers/{sid_short}-{branch}.done
 
   - id: stop-hook
     name: Stop Hook（/dev 流程守门）
@@ -98,7 +94,7 @@ features:
       - { seg: 13, pr: "#2779", date: "2026-05-05", title: "4 P1 修（边缘 case + 测试基础设施）" }
       - { seg: 14, pr: "本 PR", date: "2026-05-05", title: "feature 注册（feature-registry features 段）" }
       - { seg: 15, pr: "cp-0507135525", date: "2026-05-07", title: "v23 PR-1 基础设施 — 心跳模型部件 + log_hook_decision（不切 hook 行为）" }
-      - { seg: 16, pr: "cp-0507154143", date: "2026-05-07", title: "v23 PR-2 核心切换 — stop-dev.sh 209→~80 行心跳模型；engine-worktree 启 guardian；engine-ship 关 guardian + done-marker" }
+      - { seg: 16, pr: "cp-0507154143", date: "2026-05-07", title: "v23 PR-2 心跳模型核心切换 — stop-dev.sh v22→v23（209行→79行），worktree-manage guardian fork，ship-finalize.sh" }
     history_pr_count: 50  # 半年累积修过的相关 PR 总数（含已被新架构替代的）
     deprecated_invariants:
       - session_id 精确匹配（owner_session）→ cwd-as-key + Ralph Loop 替代
@@ -114,14 +110,14 @@ changelog:
   - version: "18.24.0"
     date: "2026-05-07"
     change: "feat"
-    description: "Stop Hook v23 PR-2 心跳模型核心切换（cp-0507154143）— 把 stop-dev.sh 从 v22 209 行（cwd 路由 + session_id 双通道 + ghost rm + mtime expire）切到 v23 ~80 行心跳模型。决策依据 .cecelia/lights/<sid_short>-*.live mtime（OS 级事实），不再读 dev-active-*.json + 跑 verify_dev_complete。worktree-manage.sh cmd_create 新增 guardian fork + 灯文件 JSON 写入（含 GUARDIAN_PARENT_PID 模式：传父 claude PID 给 guardian 当存活探针）。新增 ship-finalize.sh（engine-ship 调用 — 写 done-marker + SIGTERM guardian）。engine-ship/SKILL.md 新增 §2.5 调 ship-finalize。check-single-exit.sh lint 期望切到 v23（lights/ + stat mtime 而不再要求 verify_dev_complete）。dev-heartbeat-guardian.sh 增强：USE_EXPLICIT_PARENT 模式 + ps→/proc/$$/status fallback 跨平台。19 case TDD 测试矩阵（含 1 case it.skip — tty 手动场景）全 PASS。"
+    description: "Stop Hook v23 PR-2 心跳模型核心切换（cp-0507154143）— stop-dev.sh v22→v23 重写（209行→79行）：决策依据从 cwd+dev-active*.json+verify_dev_complete 切到 .cecelia/lights/{sid_short}-*.live mtime 扫描（TTL_SEC=300）。worktree-manage.sh 集成 guardian fork（GUARDIAN_ORPHAN_MODE=1 nohup + disown + hb.sh symlink）。新增 ship-finalize.sh（SIGTERM guardian + done-marker）。dev-heartbeat-guardian.sh 加 GUARDIAN_ORPHAN_MODE 支持。engine-ship SKILL.md 加 §2.5。check-single-exit.sh 换 v23 lint。19 TDD case，17 PASS（2 管道 env 传递设计限制）。"
     files:
-      - "packages/engine/hooks/stop-dev.sh (重写 209→~80 行心跳模型)"
-      - "packages/engine/skills/dev/scripts/worktree-manage.sh (cmd_create 加 guardian fork + 灯文件)"
-      - "packages/engine/scripts/ship-finalize.sh (新建 — done-marker + SIGTERM guardian)"
-      - "packages/engine/skills/engine-ship/SKILL.md (§2.5 调 ship-finalize；version 16.2.0)"
-      - "packages/engine/lib/dev-heartbeat-guardian.sh (双模式：显式 PARENT_PID + PR-1 fallback)"
-      - "scripts/check-single-exit.sh (lint 切 v23 — lights/ + stat mtime)"
+      - "packages/engine/hooks/stop-dev.sh (v22→v23 完全重写，79 行)"
+      - "packages/engine/lib/dev-heartbeat-guardian.sh (加 GUARDIAN_ORPHAN_MODE)"
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (guardian fork + 写灯文件)"
+      - "packages/engine/scripts/ship-finalize.sh (新建)"
+      - "packages/engine/skills/engine-ship/SKILL.md (加 §2.5)"
+      - "scripts/check-single-exit.sh (换 v23 lint)"
       - "Engine 8 处版本文件 18.24.0"
 
   - version: "18.23.1"

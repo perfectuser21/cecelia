@@ -44,7 +44,7 @@ describe('stop-dev.sh v23 decision matrix', () => {
 
   beforeEach(() => {
     testRepo = mkdtempSync(join(tmpdir(), 'hookv23-'))
-    execSync(`cd ${testRepo} && git init -q && git commit --allow-empty -m init -q`)
+    execSync(`cd ${testRepo} && git init -q && git -c user.email=t@t -c user.name=t commit --allow-empty -m init -q`)
     lightsDir = join(testRepo, '.cecelia/lights')
   })
 
