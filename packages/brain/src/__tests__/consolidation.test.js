@@ -13,6 +13,7 @@ import {
   hasTodayConsolidation,
   runDailyConsolidation,
   runDailyConsolidationIfNeeded,
+  shouldRunByElapsed,
 } from '../consolidation.js';
 
 // ─── Helper: mock pool ────────────────────────────────────────────────────────
@@ -81,13 +82,14 @@ describe('runDailyConsolidation', () => {
     mockUpdateSelfModel.mockResolvedValue('ok');
   });
 
-  it('今日已合并时跳过（不带 forceRun）', async () => {
+  it('上次合并不久（too_soon）时跳过（不带 forceRun）', async () => {
     const { pool, queryMock } = makeMockPool();
-    // hasTodayConsolidation = true
-    queryMock.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    // shouldRunByElapsed → 上次运行 1 小时前（< 4h 间隔）→ too_soon
+    queryMock.mockResolvedValueOnce({ rows: [{ last_run: new Date(Date.now() - 60 * 60 * 1000) }] });
 
     const result = await runDailyConsolidation(pool);
     expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('too_soon');
     expect(mockCallLLM).not.toHaveBeenCalled();
   });
 
@@ -169,16 +171,89 @@ describe('runDailyConsolidation', () => {
   });
 });
 
-describe('runDailyConsolidationIfNeeded', () => {
-  it('在触发窗口外直接跳过（不查 DB）', async () => {
-    // 传入一个非触发时间
-    // 因为 shouldRunConsolidation 用 new Date()，我们通过环境不触发来测试
-    // 直接 mock 时间到非触发小时
-    const { pool, queryMock } = makeMockPool();
-    // 如果 shouldRunConsolidation 返回 false，不会调用 pool.query
-    // 在测试环境中 UTC 小时不太可能是 19，所以这个测试通常会通过
-    // 但为了保险，我们只检查函数存在且返回对象
-    const result = await runDailyConsolidationIfNeeded(pool);
-    expect(typeof result).toBe('object');
+describe('shouldRunByElapsed', () => {
+  it('从未运行（last_run=null）返回 shouldRun=true reason=never_run', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ last_run: null }] }) };
+    const result = await shouldRunByElapsed(pool, new Date('2026-05-07T03:30:00Z'), 4);
+    expect(result.shouldRun).toBe(true);
+    expect(result.reason).toBe('never_run');
+  });
+
+  it('上次运行 5 小时前 + 间隔 4h → shouldRun=true reason=elapsed', async () => {
+    const lastRun = new Date('2026-05-07T00:00:00Z');
+    const now = new Date('2026-05-07T05:00:00Z');
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ last_run: lastRun }] }) };
+    const result = await shouldRunByElapsed(pool, now, 4);
+    expect(result.shouldRun).toBe(true);
+    expect(result.reason).toBe('elapsed');
+  });
+
+  it('上次运行 1 小时前 + 间隔 4h → shouldRun=false reason=too_soon', async () => {
+    const lastRun = new Date('2026-05-07T04:00:00Z');
+    const now = new Date('2026-05-07T05:00:00Z');
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ last_run: lastRun }] }) };
+    const result = await shouldRunByElapsed(pool, now, 4);
+    expect(result.shouldRun).toBe(false);
+    expect(result.reason).toBe('too_soon');
+  });
+
+  it('查询 memory_stream 而非 daily_logs（与 capability-probe 同源）', async () => {
+    const queryMock = vi.fn().mockResolvedValue({ rows: [{ last_run: null }] });
+    const pool = { query: queryMock };
+    await shouldRunByElapsed(pool, new Date(), 4);
+    const sql = String(queryMock.mock.calls[0][0]);
+    expect(sql).toMatch(/memory_stream/);
+    expect(sql).toMatch(/daily_consolidation/);
+  });
+});
+
+describe('runDailyConsolidationIfNeeded — elapsed gating (regression: PROBE_FAIL_CONSOLIDATION)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCallLLM.mockResolvedValue(
+      '{"date":"2026-05-07","key_events":[],"new_learnings":[],"completed_goals":[],"mood_trajectory":"平稳","self_model_delta":{}}'
+    );
+  });
+
+  it('memory_stream 无 daily_consolidation 记录时（last_run=never）应执行而非按窄时间窗口跳过', async () => {
+    // 复现 PROBE_FAIL_CONSOLIDATION 故障：48h_consolidations=0 last_run=never
+    // 旧逻辑：当前不在 UTC 0/4/8/12/16/20 时段前 5 分钟 → shouldRunConsolidation()=false
+    //        → 直接 skipped:'outside time window' → 永远不会自愈
+    // 新逻辑：基于 memory_stream 中实际 last_run 的 elapsed 判断 → 从未运行时立即执行
+    const queryMock = vi.fn();
+    // 1. shouldRunByElapsed → memory_stream max(created_at) → null
+    queryMock.mockResolvedValueOnce({ rows: [{ last_run: null }] });
+    // 2-4. gatherTodayData: memories / learnings / tasks
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // 5-7. markConsolidationDone (empty path: SELECT + INSERT — empty also writes daily_logs)
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const pool = { query: queryMock };
+
+    // 注入一个明显在旧窄时间窗口外的"现在"（UTC 03:30 — 旧逻辑会 skipped:'outside time window'）
+    const nowOutsideOldWindow = new Date('2026-05-07T03:30:00Z');
+
+    const result = await runDailyConsolidationIfNeeded(pool, nowOutsideOldWindow);
+
+    // 关键断言：不再因"窗口外"被跳过
+    expect(result.reason).not.toBe('outside time window');
+    // 实际进入了 runDailyConsolidation（empty 路径 — 没今日数据）
+    expect(result.empty).toBe(true);
+  });
+
+  it('上次运行不久（too_soon）则跳过', async () => {
+    const queryMock = vi.fn();
+    const recentRun = new Date('2026-05-07T03:00:00Z');
+    queryMock.mockResolvedValueOnce({ rows: [{ last_run: recentRun }] });
+    const pool = { query: queryMock };
+
+    const result = await runDailyConsolidationIfNeeded(pool, new Date('2026-05-07T03:30:00Z'));
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('too_soon');
+    // 没继续触发 LLM
+    expect(mockCallLLM).not.toHaveBeenCalled();
   });
 });
