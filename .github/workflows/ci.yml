@@ -334,10 +334,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y jq
       - name: Run unit shell tests
         run: |
-          # 显式列表：本 PR 验证过能在 CI 通过的 .test.sh
-          # devloop-classify.test.sh 等预存测试本地通过但 CI Linux fail，留后续 PR 修
-          for t in \
-              packages/engine/tests/unit/verify-dev-complete.test.sh; do
+          # glob 模式（v23 PR-3 起）：unit 目录新加 .test.sh 自动接 CI
+          for t in packages/engine/tests/unit/*.test.sh; do
             [[ -f "$t" ]] || continue
             echo "::group::$(basename "$t")"
             bash "$t" || exit 1

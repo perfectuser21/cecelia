@@ -265,30 +265,11 @@ DEV_MODE_EOF
             echo -e "${GREEN}✅ .dev-mode 已写入: .dev-mode.${branch_name}${NC}" >&2
         fi
 
-        # v20.0.0 Ralph Loop 模式：项目根状态文件
-        # 信号源切到主仓库根，不依赖 cwd 是否在 worktree
-        # v23 PR-3 起：dev-active-*.json **不再被 stop-dev.sh 读**（v23 心跳模型用 .cecelia/lights/）
-        # 但 packages/engine/hooks/dev-mode-tool-guard.sh (PreToolUse hook) 仍依赖此文件
-        # 存在性来判断 "assistant 是否在 /dev 流程"，决定是否拦 ScheduleWakeup / Bash bg。
-        # 因此**保留**创建逻辑。删除前需先迁移 dev-mode-tool-guard 到 lights/ 模型。
-        local main_repo _main_sid
-        main_repo=$(git rev-parse --show-toplevel 2>/dev/null)
-        _main_sid=$(_resolve_main_session_id 2>/dev/null || echo "")
-        if [[ -n "$main_repo" ]]; then
-            mkdir -p "$main_repo/.cecelia"
-            cat > "$main_repo/.cecelia/dev-active-${branch_name}.json" <<RALPH_EOF
-{
-  "branch": "${branch_name}",
-  "worktree": "${worktree_path}",
-  "started_at": "$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)",
-  "session_id": "${_claude_sid_create:-unknown}",
-  "main_session_id": "${_main_sid}"
-}
-RALPH_EOF
-            echo -e "${GREEN}✅ .cecelia/dev-active-${branch_name}.json 已写入主仓库根${NC}" >&2
-        fi
+        # === v23 PR-3: 不再写 .cecelia/dev-active-*.json（已不被 hook 读，dev-mode-tool-guard 已切 lights/）===
 
         # === v23 PR-2: 心跳模型 — 启动 guardian + 写灯文件 ===
+        local main_repo
+        main_repo=$(git rev-parse --show-toplevel 2>/dev/null)
         if [[ -n "$main_repo" ]]; then
             mkdir -p "$main_repo/.cecelia/lights"
             local _sid_short="${_claude_sid_create:0:8}"
@@ -537,29 +518,6 @@ _resolve_claude_session_id() {
     fi
 
     # Phase 7 fallback: 沿 PPID 链找 claude cmdline
-    local pid="${PPID:-}"
-    local depth=0
-    while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do
-        local args
-        args=$(ps -o args= "$pid" 2>/dev/null || echo "")
-        if [[ "$args" == *"claude"* && "$args" == *"--session-id"* ]]; then
-            echo "$args" | grep -oE '\-\-session-id[ =][a-f0-9-]+' | head -1 | awk '{print $NF}'
-            return 0
-        fi
-        pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')
-        depth=$((depth + 1))
-    done
-    echo ""
-}
-
-# v22.0.0: 解析"主 claude 进程"的 session_id（不读 env var）。
-# Bash tool sub-shell 的 CLAUDE_SESSION_ID 可能被 CC framework 覆盖成
-# tool-call 级 ID，跟主 claude 的 --session-id（=hook stdin payload）不一致。
-# 这个函数沿 PPID 链找父 claude --session-id 参数，永远拿到主 session ID。
-# worktree-manage 写 dev-active 时同时写 session_id（env var 兼容）和
-# main_session_id（这个），stop-dev.sh 用 hook payload session_id 匹配两个
-# 字段任一即视为命中。
-_resolve_main_session_id() {
     local pid="${PPID:-}"
     local depth=0
     while [[ -n "$pid" && "$pid" != "1" && $depth -lt 10 ]]; do

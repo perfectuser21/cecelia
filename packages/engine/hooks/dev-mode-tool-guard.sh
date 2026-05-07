@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# dev-mode-tool-guard.sh — PreToolUse 拦截器（Ralph 模式行为强制）
+# dev-mode-tool-guard.sh — PreToolUse 拦截器（v23 心跳模型 + Ralph 模式行为强制）
 # ============================================================================
-# 在 .cecelia/dev-active-*.json 存在时（assistant 在 /dev 流程中）禁止以下工具：
+# 在 .cecelia/lights/*.live 存在且 mtime 新鲜时（assistant 在 /dev 流程中）禁止：
 #   - ScheduleWakeup（让 assistant 主动调度退出 turn）
 #   - Bash run_in_background:true（让命令后台跑、turn 立即退出）
 #
@@ -11,6 +11,9 @@
 #
 # 拦截后 assistant 没有任何工具能主动让 turn 退出 → 唯一让 turn 退出的路径
 # = stop hook 自己输出 decision:allow（PR 真完成）。
+#
+# 信号源 v23 心跳模型：lights/<sid_short>-<branch>.live mtime < TTL（默认 300s）。
+# TTL 与 stop-dev.sh 共享 STOP_HOOK_LIGHT_TTL_SEC 环境变量。
 #
 # 入口契约：Claude Code 通过 stdin JSON 传 tool_name / tool_input / cwd / session_id。
 # 退出码：exit 0 = 放行；exit 2 = block（stdout decision:block JSON 回填给 assistant）
@@ -35,13 +38,25 @@ CWD=$(parse_string_field cwd)
 MAIN_REPO=$(git -C "$CWD" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}' || true)
 [[ -z "$MAIN_REPO" ]] && exit 0  # 不在 git → 放行
 
-# 检测 .cecelia/dev-active-* 是否存在
-DEV_ACTIVE_DIR="$MAIN_REPO/.cecelia"
-[[ ! -d "$DEV_ACTIVE_DIR" ]] && exit 0
+# 检测 .cecelia/lights/*.live 是否存在且 mtime 新鲜（与 stop-dev.sh 同源）
+LIGHTS_DIR="$MAIN_REPO/.cecelia/lights"
+[[ ! -d "$LIGHTS_DIR" ]] && exit 0
 
+TTL_SEC="${STOP_HOOK_LIGHT_TTL_SEC:-300}"
+NOW=$(date +%s)
 DEV_ACTIVE_FOUND=false
-for _f in "$DEV_ACTIVE_DIR"/dev-active-*.json; do
-    [[ -f "$_f" ]] && { DEV_ACTIVE_FOUND=true; break; }
+for _f in "$LIGHTS_DIR"/*.live; do
+    [[ -f "$_f" ]] || continue
+    if [[ "$(uname)" == "Darwin" ]]; then
+        _mt=$(stat -f %m "$_f" 2>/dev/null || echo 0)
+    else
+        _mt=$(stat -c %Y "$_f" 2>/dev/null || echo 0)
+    fi
+    [[ "$_mt" =~ ^[0-9]+$ ]] || _mt=0
+    if (( NOW - _mt <= TTL_SEC )); then
+        DEV_ACTIVE_FOUND=true
+        break
+    fi
 done
 
 [[ "$DEV_ACTIVE_FOUND" != "true" ]] && exit 0  # 不在 dev 流程 → 放行

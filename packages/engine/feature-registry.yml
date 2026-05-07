@@ -50,17 +50,17 @@ features:
       - packages/engine/hooks/dev-mode-tool-guard.sh  # PreToolUse 拦 ScheduleWakeup + Bash bg
     key_files:
       - packages/engine/hooks/stop-dev.sh             # v23：单一出口 + 心跳模型决策
+      - packages/engine/hooks/dev-mode-tool-guard.sh  # PreToolUse 拦 ScheduleWakeup + Bash bg（lights 探活）
       - packages/engine/lib/dev-heartbeat-guardian.sh # 守护进程：维持灯文件 mtime
       - packages/engine/scripts/ship-finalize.sh      # engine-ship 调用：关 guardian + 写 done-marker
       - packages/engine/scripts/abort-dev.sh          # 用户手动中止 /dev
-      - packages/engine/lib/devloop-check.sh          # log_hook_decision；verify_dev_complete @deprecated
-      - packages/engine/skills/dev/scripts/worktree-manage.sh # 启 guardian + 写灯 + dev-active（dev-mode-tool-guard 用）
+      - packages/engine/lib/devloop-check.sh          # log_hook_decision + classify_session helpers
+      - packages/engine/skills/dev/scripts/worktree-manage.sh # .dev-mode + lights 创建 + guardian fork
       - .claude/settings.json                          # PreToolUse hooks 注册（repo 级）
     state_files:
-      - main_repo/.cecelia/lights/{sid_short}-{branch}.live   # v23 心跳灯文件（决策依据）
+      - main_repo/.cecelia/lights/{sid_short}-{branch}.live   # v23 心跳灯文件（决策依据 + tool-guard 探活）
       - main_repo/.cecelia/done-markers/{sid_short}-{branch}.done  # 完成审计标记
       - main_repo/.cecelia/aborted/{sid_short}-{branch}.aborted    # 中止审计标记
-      - main_repo/.cecelia/dev-active-{branch}.json    # @deprecated（dev-mode-tool-guard 仍用）
       - worktree/.dev-mode.{branch}                    # worktree 元数据缓存
       - worktree/.dev-lock.{branch}                    # session_id + owner_session
     contract_url: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
@@ -101,6 +101,7 @@ features:
       - { seg: 14, pr: "本 PR", date: "2026-05-05", title: "feature 注册（feature-registry features 段）" }
       - { seg: 15, pr: "cp-0507135525", date: "2026-05-07", title: "v23 PR-1 基础设施 — 心跳模型部件 + log_hook_decision（不切 hook 行为）" }
       - { seg: 16, pr: "cp-0507154143", date: "2026-05-07", title: "v23 PR-2 心跳模型核心切换 — stop-dev.sh v22→v23（209行→79行），worktree-manage guardian fork，ship-finalize.sh" }
+      - { seg: 17, pr: "cp-0507pr3-stop-hook-v23-legacy-cleanup", date: "2026-05-07", title: "v23 PR-3 v22 遗产清理 — 删 verify_dev_complete + worktree-manage dev-active 写入 + 7 个 v22 测试，dev-mode-tool-guard 切 lights 探活" }
     history_pr_count: 50  # 半年累积修过的相关 PR 总数（含已被新架构替代的）
     deprecated_invariants:
       - session_id 精确匹配（owner_session）→ cwd-as-key + Ralph Loop 替代
@@ -123,6 +124,27 @@ changelog:
       - "scripts/cleanup-v22-state-files.sh (新建 — 一次性归档脚本)"
       - "packages/engine/feature-registry.yml (stop-hook 描述 v22→v23 同步)"
       - "Engine 8 处版本文件 18.24.1 → 18.25.0"
+
+  - version: "18.25.1"
+    date: "2026-05-07"
+    change: "refactor"
+    description: "Stop Hook v23 PR-3 收尾真删除（cp-0507pr3-stop-hook-v23-legacy-cleanup）— #2828 留下的 v22 死代码彻底删除：worktree-manage.sh 不再写 .cecelia/dev-active-*.json + 删 _resolve_main_session_id 函数；devloop-check.sh 删 verify_dev_complete 函数本体（200+ 行 7 阶段决策树）；dev-mode-tool-guard.sh 探活源切 dev-active → .cecelia/lights mtime（与 stop-dev TTL 同源，解 #2828 注释里说的'删除前需先迁移 dev-mode-tool-guard'前置依赖）；check-single-exit.sh DevGate return 0 4→3；删 7 个 v22 测试与 stub（unit/verify-dev-complete + integration 5 个 stub + smoke 2 个 + e2e full-lifecycle）；ci.yml unit step 改 glob；feature-registry state_files 完全移除 dev-active 引用。"
+    files:
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (删 dev-active 写入 + _resolve_main_session_id)"
+      - "packages/engine/lib/devloop-check.sh (删 verify_dev_complete 函数)"
+      - "packages/engine/hooks/dev-mode-tool-guard.sh (探活源 dev-active → lights mtime TTL)"
+      - "scripts/check-single-exit.sh (return 0 4→3 + 过时注释)"
+      - "packages/engine/tests/unit/verify-dev-complete.test.sh (删)"
+      - "packages/engine/tests/integration/stop-hook-7stage-flow.test.sh (删)"
+      - "packages/engine/tests/integration/stop-dev-{multi-worktree,session-id-routing,ghost-filter}.test.sh (删 v22 stub)"
+      - "packages/engine/tests/integration/stop-hook-e2e-real-brain.test.sh (删)"
+      - "packages/engine/scripts/smoke/stop-hook-7stage-smoke.sh (删)"
+      - "packages/engine/scripts/smoke/ralph-loop-smoke.sh (删)"
+      - "packages/engine/tests/e2e/stop-hook-full-lifecycle.test.ts (删)"
+      - "packages/engine/tests/integration/dev-mode-tool-guard.test.sh (适配 lights 探活)"
+      - "packages/engine/tests/integrity/stop-hook-coverage.test.sh (CI glob 简化)"
+      - ".github/workflows/ci.yml (unit step glob)"
+      - "packages/engine/skills/dev/scripts/cleanup.sh (注释)"
 
   - version: "18.24.1"
     date: "2026-05-07"

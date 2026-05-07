@@ -20,16 +20,12 @@ expect_in_ci() {
     fi
 }
 
-# 1-6: 关键 .test.sh / smoke.sh 在 CI workflow 引用
-expect_in_ci 'verify-dev-complete\.test\.sh|tests/unit/.*test\.sh|tests/unit/\*\.test\.sh' "verify-dev-complete unit"
-expect_in_ci 'stop-hook-7stage-flow|tests/integration/.*test\.sh|tests/integration/\*\.test\.sh' "stop-hook-7stage-flow integration"
-expect_in_ci 'ralph-loop-mode|tests/integration/.*test\.sh|tests/integration/\*\.test\.sh' "ralph-loop-mode integration"
-expect_in_ci 'dev-mode-tool-guard|tests/integration/.*test\.sh|tests/integration/\*\.test\.sh' "dev-mode-tool-guard integration"
-expect_in_ci 'stop-hook-7stage-smoke|scripts/smoke/.*-smoke\.sh|scripts/smoke/\*-smoke\.sh' "stop-hook-7stage-smoke"
-expect_in_ci 'ralph-loop-smoke|scripts/smoke/.*-smoke\.sh|scripts/smoke/\*-smoke\.sh' "ralph-loop-smoke"
+# 1-3: 关键测试目录在 CI workflow 用 glob 接（v23 PR-3 起 v22 显式 case 删除）
+expect_in_ci 'tests/unit/.*test\.sh|tests/unit/\*\.test\.sh' "unit shell tests glob"
+expect_in_ci 'tests/integration/.*test\.sh|tests/integration/\*\.test\.sh' "integration shell tests glob"
+expect_in_ci 'scripts/smoke/.*-smoke\.sh|scripts/smoke/\*-smoke\.sh' "engine smoke glob"
 
-# 7 [v23 PR-2]: stop-dev.sh 读 .cecelia/lights/（心跳模型核心信号源）
-# 替代 v22 的 verify_dev_complete 调用 — verify_dev_complete 函数本体留 PR-3 删
+# 4 [v23 PR-2]: stop-dev.sh 读 .cecelia/lights/（心跳模型核心信号源）
 if grep -q '\.cecelia/lights' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
     pass "stop-dev.sh 读 .cecelia/lights/（v23 心跳模型）"
 else

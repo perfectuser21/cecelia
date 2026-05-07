@@ -283,10 +283,9 @@ fi
 echo ""
 echo "[2.5] 触发本地部署..."
 # v18.20.1: deploy 解耦 — 由 .github/workflows/brain-ci-deploy.yml
-# 在 push to main 时自动触发。verify_dev_complete P5 监听
-# workflow run conclusion=success（VERIFY_DEPLOY_WORKFLOW=1）。
-# 本地 deploy-local.sh fire-and-forget 不可观测且重复，废弃。
-echo -e "   ${GREEN}[OK] deploy 由 brain-ci-deploy.yml workflow 接管（verify_dev_complete P5 监听）${NC}"
+# 在 push to main 时自动触发。本地 deploy-local.sh fire-and-forget
+# 不可观测且重复，废弃。
+echo -e "   ${GREEN}[OK] deploy 由 brain-ci-deploy.yml workflow 接管${NC}"
 
 # ========================================
 # 2.6 更新系统状态（CURRENT_STATE.md）
