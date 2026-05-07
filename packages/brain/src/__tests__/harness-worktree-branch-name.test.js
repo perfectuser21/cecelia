@@ -115,6 +115,7 @@ describe('ensureHarnessWorktree branch naming', () => {
       calls.push(joined);
       if (joined.includes('rev-parse --is-inside-work-tree')) return { stdout: 'true\n' };
       if (joined.includes('rev-parse --abbrev-ref HEAD')) return { stdout: 'harness-v2/task-abcdef12\n' };
+      if (joined.includes('remote get-url origin')) return { stdout: '/tmp/cec\n' };
       return { stdout: '' };
     };
     const statFn = async () => true;
@@ -139,6 +140,7 @@ describe('ensureHarnessWorktree branch naming', () => {
       calls.push(joined);
       if (joined.includes('rev-parse --is-inside-work-tree')) return { stdout: 'true\n' };
       if (joined.includes('rev-parse --abbrev-ref HEAD')) return { stdout: 'cp-04240800-ws-abcdef12\n' };
+      if (joined.includes('remote get-url origin')) return { stdout: '/tmp/cec\n' };
       return { stdout: '' };
     };
     const statFn = async () => true;

@@ -9,6 +9,7 @@ describe('ensureHarnessWorktree', () => {
       calls.push(joined);
       if (joined.includes('rev-parse --is-inside-work-tree')) return { stdout: 'true\n' };
       if (joined.includes('rev-parse --abbrev-ref HEAD')) return { stdout: 'cp-04240814-ws-abcdef12\n' };
+      if (joined.includes('remote get-url origin')) return { stdout: '/tmp/cec\n' };
       return { stdout: '' };
     };
     const statFn = async () => true;
