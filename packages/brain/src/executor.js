@@ -15,7 +15,7 @@
 
 import crypto from 'crypto';
 import { spawn, execSync, exec } from 'child_process';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, access } from 'fs/promises';
 import { readFileSync, readdirSync, unlinkSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -2320,9 +2320,28 @@ async function triggerCodexReview(task) {
 
     console.log(`[executor] triggerCodexReview: 使用本机 codex CLI task=${task.id} type=${task.task_type}`);
 
-    // 派发到本机 /opt/homebrew/bin/codex
+    // 派发到本机 codex CLI（容器内默认 /usr/local/bin/codex，host fallback /opt/homebrew/bin/codex）
     // 使用 codex exec 非交互模式，prompt 通过 stdin 传入（避免 shell 转义问题）
     const codexBin = process.env.CODEX_BIN || '/opt/homebrew/bin/codex';
+
+    // 预检 codex binary 是否存在 — 容器漏装 codex CLI 时返回 configError，不发 FAIL callback、
+    // 不让 dispatcher 累积 cecelia-run breaker failures（生产事故：failures=351 OPEN 阻断所有 dispatch）。
+    try {
+      await access(codexBin);
+    } catch (accessErr) {
+      console.error(`[executor] triggerCodexReview: codex binary not accessible at ${codexBin}: ${accessErr.code || accessErr.message}`);
+      // 清理已写入的 lockFile（spawn 未启动 → 槽位归还）
+      try { unlinkSync(lockFile); } catch {}
+      return {
+        success: false,
+        configError: true,
+        taskId: task.id,
+        reason: 'codex_binary_missing',
+        error: `codex binary not found at ${codexBin} (set CODEX_BIN env or install @openai/codex)`,
+        executor: 'codex-review',
+      };
+    }
+
     const child = spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],

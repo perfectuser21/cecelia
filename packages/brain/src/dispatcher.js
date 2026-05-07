@@ -483,15 +483,21 @@ export async function dispatchNextTask(goalIds) {
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
     await updateTask({ task_id: nextTask.id, status: 'queued' });
-    await recordFailure('cecelia-run');
+    // configError 表示系统配置错误（如容器漏装 codex CLI），不属于运行时执行失败，
+    // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
+    if (execResult.configError) {
+      console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
+    } else {
+      await recordFailure('cecelia-run');
+    }
     await logTickDecision(
       'tick',
       `Executor failed, task reverted to queued: ${execResult.error || execResult.reason}`,
-      { action: 'executor_failed', task_id: nextTask.id, reason: execResult.reason, error: execResult.error },
+      { action: 'executor_failed', task_id: nextTask.id, reason: execResult.reason, error: execResult.error, configError: !!execResult.configError },
       { success: false }
     );
-    await recordDispatchResult(pool, false, 'executor_failed');
-    return { dispatched: false, reason: 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, actions };
+    await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed');
+    return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
   }
 
   _lastDispatchTime = Date.now();
