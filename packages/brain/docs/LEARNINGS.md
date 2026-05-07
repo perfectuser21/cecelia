@@ -1,5 +1,40 @@
 # Development Learnings
 
+## [2026-05-07] PROBE_FAIL_CONSOLIDATION — 空合并日只写 daily_logs 不写 memory_stream (cp-05071456)
+
+### 根本原因
+
+`probeConsolidation` 检查 `memory_stream` 表中 `source_type='daily_consolidation'` 的 48h 内记录数。
+但 `runDailyConsolidation` 在 `hasData=false`（今日无活动数据）时只写 `daily_logs`，跳过 `memory_stream` 的 INSERT。
+
+触发窗口为 UTC 每 4h（00/04/08/12/16/20）的前 5 分钟。每天的第一次执行通常落在 UTC 00:00 — 此时新 UTC 日刚翻页几分钟，`gatherTodayData` 拉取的 `memory_stream`/`learnings`/`tasks` 几乎必然为空 → 走 `hasData=false` 路径 → 只写 `daily_logs`。后续 04/08/12/16/20 窗口被 `hasTodayConsolidation()` 拦截。
+
+结果：probe 检查的 `memory_stream` 表 `last_run=never`，每小时触发一次 PROBE_FAIL_CONSOLIDATION 误报。
+
+### 修复内容
+
+**`packages/brain/src/consolidation.js`**：
+- 空合并路径改为先 INSERT `memory_stream`（`importance=3`，`source_type='daily_consolidation'`，content 含 `empty:true` 标记）
+- 再调 `markConsolidationDone` 写 `daily_logs`，保证两表 SSOT 一致
+
+**`packages/brain/src/capability-probe.js`**：
+- `probeConsolidation` 新增 `daily_logs` 兜底分支：`memory_stream` 48h 为空但 `daily_logs` 有近期 consolidation → ok（`idle: empty_days_only`），覆盖修复前的历史数据
+- 主路径/兜底路径/真实故障三态对应 `ok=true(active)` / `ok=true(idle)` / `ok=false(loop_dead)`
+
+### 测试覆盖
+
+- `consolidation.test.js`：新增"空合并日也写入 memory_stream"回归测试（mock 7 次 query 验证 INSERT 被调用且 importance=3）
+- `capability-probe-highlevel.test.js`：新增 3 个测试覆盖 probe 的三种状态分支
+
+### 教训
+
+- **probe 检查的表必须和 producer 写入的表一致**。本 bug 中 producer（consolidation）有"空合并"快速路径，跳过了 probe 关心的表。
+- **probe 设计要预设 idle 状态**（参照 `probeRumination` 的多阶段判断）。简单的"表里有 N 条记录否"易误报。
+- **48h 窗口 + UTC 00:00 第一次触发** 是常见误报模式：跨日边界时统计值往往为 0。
+- **不要在 producer 层用"empty=true"做提前 return 跳过 INSERT**。空合并依然是有效的"今日记忆"，应留下记录。
+
+---
+
 ## [2026-05-03] PROBE_FAIL_SELF_DRIVE_HEALTH — DB 写入失败时内存 grace 回退 (cp-05030003)
 
 ### 根本原因

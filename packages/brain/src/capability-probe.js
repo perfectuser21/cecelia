@@ -443,7 +443,7 @@ async function probeEvolution() {
 }
 
 async function probeConsolidation() {
-  // 检查 48h 内有没有记忆合并
+  // 主路径：48h 内 memory_stream 是否有 daily_consolidation 记录
   const result = await pool.query(
     `SELECT count(*) AS cnt, max(created_at) AS last_run
      FROM memory_stream
@@ -452,9 +452,36 @@ async function probeConsolidation() {
   );
   const cnt = parseInt(result.rows[0]?.cnt || 0);
   const lastRun = result.rows[0]?.last_run;
+
+  if (cnt > 0) {
+    return {
+      ok: true,
+      detail: `48h_consolidations=${cnt} last_run=${lastRun || 'never'}`,
+    };
+  }
+
+  // 兜底路径：memory_stream 为空，但 daily_logs 有近期 consolidation 记录
+  // 适用场景：旧版 consolidation 在"空闲日"只写 daily_logs（修复前的历史数据）
+  // 此时 consolidation 循环健康，只是 memory_stream 表存量未恢复，不应误报失败
+  const logsResult = await pool.query(
+    `SELECT count(*) AS cnt, max(date) AS last_date
+     FROM daily_logs
+     WHERE type = 'consolidation'
+       AND date >= (NOW() - INTERVAL '48 hours')::date`
+  );
+  const logsCnt = parseInt(logsResult.rows[0]?.cnt || 0);
+  const lastDate = logsResult.rows[0]?.last_date;
+
+  if (logsCnt > 0) {
+    return {
+      ok: true,
+      detail: `48h_consolidations=0 last_run=${lastRun || 'never'} daily_logs_48h=${logsCnt} last_date=${lastDate} (idle: empty_days_only)`,
+    };
+  }
+
   return {
-    ok: cnt > 0,
-    detail: `48h_consolidations=${cnt} last_run=${lastRun || 'never'}`,
+    ok: false,
+    detail: `48h_consolidations=0 last_run=${lastRun || 'never'} daily_logs_48h=0 (loop_dead)`,
   };
 }
 
