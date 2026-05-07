@@ -13,7 +13,7 @@ describe('worktree-manage.sh + guardian fork（PR-2）', () => {
   beforeEach(() => {
     mainRepo = mkdtempSync(join(tmpdir(), 'wtgrd-'))
     execSync(
-      `cd ${mainRepo} && git init -q && git commit --allow-empty -m init -q && git branch -M main`,
+      `cd ${mainRepo} && git init -q && git -c user.email=t@t -c user.name=t commit --allow-empty -m init -q && git branch -M main`,
       { stdio: 'pipe' }
     )
   })

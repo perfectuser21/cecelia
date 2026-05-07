@@ -15,7 +15,7 @@ describe('ship-finalize.sh — 关 guardian + 写 done-marker（PR-2）', () => 
 
   beforeEach(() => {
     mainRepo = mkdtempSync(join(tmpdir(), 'shipgrd-'))
-    execSync(`cd ${mainRepo} && git init -q && git commit --allow-empty -m init -q`)
+    execSync(`cd ${mainRepo} && git init -q && git -c user.email=t@t -c user.name=t commit --allow-empty -m init -q`)
     lightsDir = join(mainRepo, '.cecelia/lights')
     doneDir = join(mainRepo, '.cecelia/done-markers')
     mkdirSync(lightsDir, { recursive: true })
