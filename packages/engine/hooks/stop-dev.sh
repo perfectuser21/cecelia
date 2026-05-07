@@ -32,18 +32,68 @@ cwd="${CLAUDE_HOOK_CWD:-$PWD}"
 main_repo=""
 lights_dir=""
 
+# 异步 fire-and-forget Brain alert（BYPASS 触发时高可见性）
+fire_bypass_alert() {
+    local marker_state="${1:-unknown}"
+    local payload
+    payload=$(printf '{"title":"[ALERT] STOP HOOK BYPASS fired","priority":"P0","task_type":"alert","description":"hostname=%s ppid=%s marker_state=%s ts=%s","trigger_source":"hook","location":"us","domain":"agent_ops"}' \
+        "$(hostname -s 2>/dev/null || echo unknown)" \
+        "$PPID" \
+        "$marker_state" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+    (curl -s --max-time 2 -X POST "http://localhost:5221/api/brain/tasks" \
+        -H "Content-Type: application/json" \
+        -d "$payload" </dev/null >/dev/null 2>&1 &)
+}
+
+# === BYPASS 双因子 (v23.2)：env + marker（mtime < 30 分钟）===
+# AI 改 ~/.zshrc 设 env 不够，必须同时有 .cecelia/.bypass-active 文件
 if [[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]]; then
-    REASON_CODE="bypass"
-elif [[ ! -d "$cwd" ]]; then
-    REASON_CODE="cwd_missing"
-else
-    main_repo=$(git -C "$cwd" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}' || true)
-    if [[ -z "$main_repo" ]]; then
-        REASON_CODE="not_in_git"
+    # 不论结果如何先 alert（高可见性）
+    cwd_for_marker="$cwd"
+    [[ ! -d "$cwd_for_marker" ]] && cwd_for_marker="$PWD"
+    main_for_marker=$(git -C "$cwd_for_marker" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}' || true)
+    [[ -z "$main_for_marker" ]] && main_for_marker="$cwd_for_marker"
+
+    bypass_marker="$main_for_marker/.cecelia/.bypass-active"
+    bypass_state="missing"
+
+    if [[ -f "$bypass_marker" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            marker_mtime=$(stat -f %m "$bypass_marker" 2>/dev/null || echo 0)
+        else
+            marker_mtime=$(stat -c %Y "$bypass_marker" 2>/dev/null || echo 0)
+        fi
+        [[ "$marker_mtime" =~ ^[0-9]+$ ]] || marker_mtime=0
+        marker_age=$(( $(date +%s) - marker_mtime ))
+        BYPASS_MARKER_TTL_SEC="${BYPASS_MARKER_TTL_SEC:-1800}"
+        if (( marker_age <= BYPASS_MARKER_TTL_SEC )); then
+            bypass_state="valid"
+        else
+            bypass_state="stale"
+        fi
+    fi
+
+    fire_bypass_alert "$bypass_state"
+
+    if [[ "$bypass_state" == "valid" ]]; then
+        REASON_CODE="bypass"
+    fi
+    # else: 双因子不满足，falls through 到正常决策流（fail-safe）
+fi
+
+if [[ -z "$REASON_CODE" ]]; then
+    if [[ ! -d "$cwd" ]]; then
+        REASON_CODE="cwd_missing"
     else
-        lights_dir="$main_repo/.cecelia/lights"
-        if [[ ! -d "$lights_dir" ]]; then
-            REASON_CODE="no_lights_dir"
+        main_repo=$(git -C "$cwd" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}' || true)
+        if [[ -z "$main_repo" ]]; then
+            REASON_CODE="not_in_git"
+        else
+            lights_dir="$main_repo/.cecelia/lights"
+            if [[ ! -d "$lights_dir" ]]; then
+                REASON_CODE="no_lights_dir"
+            fi
         fi
     fi
 fi
