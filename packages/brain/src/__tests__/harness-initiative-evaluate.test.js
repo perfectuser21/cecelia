@@ -179,7 +179,7 @@ describe('inferTaskPlanNode — reads from propose branch via git show', () => {
     expect(result).toEqual({});
   });
 
-  it('returns {} gracefully when git show fails', async () => {
+  it('git show 失败时返回 { error } 让 graph 走 error → END（非静默失败）', async () => {
     const state = {
       taskPlan: null,
       ganResult: { propose_branch: 'feature/nonexistent-branch-xyz-999' },
@@ -188,11 +188,9 @@ describe('inferTaskPlanNode — reads from propose branch via git show', () => {
       initiativeId: 'init-999',
     };
 
-    // This will fail because the worktree does not exist and branch does not exist
+    // git show fails → inferTaskPlanNode returns { error } to trigger alert path (PR #2820 behavior change)
     const result = await inferTaskPlanNode(state);
-
-    // Should gracefully return {} instead of throwing
-    expect(result).toEqual({});
+    expect(result).toHaveProperty('error');
   });
 
   it('returns {} when no propose_branch in ganResult', async () => {
