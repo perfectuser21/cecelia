@@ -755,6 +755,31 @@ verify_dev_complete() {
     return 0
 }
 
+# ============================================================================
+# log_hook_decision — 结构化决策日志（PR-2 hook 重写后复用）
+# 用法：log_hook_decision <sid_short> <decision> <reason_code> <lights_count> <branch>
+# 落点：~/.claude/hook-logs/stop-dev.jsonl（自动创建目录）
+# ============================================================================
+log_hook_decision() {
+    local sid="${1:-}"
+    local decision="${2:-unknown}"
+    local reason="${3:-unknown}"
+    local count="${4:-0}"
+    local branch="${5:-}"
+
+    local log_dir="${HOME}/.claude/hook-logs"
+    local log_file="${log_dir}/stop-dev.jsonl"
+    mkdir -p "$log_dir" 2>/dev/null || return 0
+
+    local ts
+    ts=$(date "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "unknown")
+
+    # 用 printf 转义引号；保证输出是 1 行合法 JSON
+    printf '{"ts":"%s","session_id_short":"%s","decision":"%s","reason_code":"%s","lights_count":%s,"branch":"%s","hook_version":"22"}\n' \
+        "$ts" "$sid" "$decision" "$reason" "${count:-0}" "$branch" \
+        >> "$log_file" 2>/dev/null || return 0
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     devloop_check_main "$@"
 fi

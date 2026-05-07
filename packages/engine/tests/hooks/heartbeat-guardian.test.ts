@@ -1,7 +1,7 @@
 // packages/engine/tests/hooks/heartbeat-guardian.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { spawn } from 'child_process'
-import { writeFileSync, existsSync, statSync, rmSync, mkdtempSync, unlinkSync } from 'fs'
+import { writeFileSync, readFileSync, existsSync, statSync, rmSync, mkdtempSync, unlinkSync } from 'fs'
 import { resolve, join } from 'path'
 import { tmpdir } from 'os'
 

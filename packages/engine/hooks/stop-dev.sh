@@ -193,6 +193,8 @@ case "$status" in
         # 直接 exit 0 让 Claude Code 默认放行（turn 真停）
         reason=$(echo "$result" | jq -r '.reason // ""' 2>/dev/null || echo "")
         [[ -n "$reason" ]] && echo "[stop-dev] $reason" >&2
+        sid_for_log="${hook_session_id:0:8}"
+        log_hook_decision "$sid_for_log" "release" "verify_done" 1 "$branch"
         exit 0
         ;;
     *)
@@ -204,6 +206,8 @@ case "$status" in
         full_reason="${full_reason}。⚠️ 立即执行，禁止询问用户。禁止删除 .cecelia/dev-active-*.json。"
         jq -n --arg r "$full_reason" --arg id "$run_id" \
             '{"decision":"block","reason":$r,"ci_run_id":$id}'
+        sid_for_log="${hook_session_id:0:8}"
+        log_hook_decision "$sid_for_log" "block" "verify_pending" 1 "$branch"
         exit 0
         ;;
 esac
