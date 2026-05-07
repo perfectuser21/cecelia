@@ -1,63 +1,29 @@
 #!/usr/bin/env bash
-# stop-dev-ghost-filter.test.sh — stop-dev.sh ghost 自动清理验证
+# v22 legacy 测试 — PR-2 v23 心跳模型已不适用，stub 为 v23 sanity check
+# 替代覆盖：packages/engine/tests/hooks/stop-hook-v23-{decision,routing}.test.ts
+# PR-3 范围：彻底删除本文件
 set -uo pipefail
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$THIS_DIR/../../../.." && pwd)"
+STOP_DEV="$REPO_ROOT/packages/engine/hooks/stop-dev.sh"
+
 PASS=0; FAIL=0
-pass() { echo "✅ $1"; PASS=$((PASS+1)); }
-fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
+TMPROOT=$(mktemp -d)
+trap 'rm -rf "$TMPROOT"' EXIT
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-STOP_HOOK="$REPO_ROOT/packages/engine/hooks/stop-dev.sh"
+REPO="$TMPROOT/repo"
+mkdir -p "$REPO"
+( cd "$REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 
-# === Case 1: session_id="unknown" ghost 自动清理 ===
-TMP=$(mktemp -d)
-(cd "$TMP" && git init -q && touch .gitkeep && git add -A && git -c user.email=t@t -c user.name=t commit -qm init && git branch -M main)
-mkdir -p "$TMP/.cecelia"
-cat > "$TMP/.cecelia/dev-active-cp-ghost-1.json" <<EOF
-{"branch":"cp-ghost-1","worktree":"/home/cecelia/worktrees/x","session_id":"unknown"}
-EOF
-CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" >/dev/null 2>&1
-exit_code=$?
-if [[ ! -f "$TMP/.cecelia/dev-active-cp-ghost-1.json" ]]; then
-    pass "Case 1: session_id=unknown 已自动 rm"
+out=$(echo '{}' | CLAUDE_HOOK_CWD="$REPO" bash "$STOP_DEV" 2>&1; echo "EXIT:$?")
+ec=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
+if [[ "$ec" == "0" ]]; then
+    echo "✅ v23 sanity：无 lights/ → exit 0（普通对话放行）"
+    PASS=1
 else
-    fail "Case 1: ghost 仍在"
+    echo "❌ v23 sanity：期望 exit 0，实际 $ec"
+    FAIL=1
 fi
-[[ $exit_code -eq 0 ]] && pass "Case 1: stop-dev exit 0" || fail "Case 1: exit=$exit_code"
-rm -rf "$TMP"
-
-# === Case 2: 真 session_id + worktree 不存在 → 保留（不视为 ghost）===
-# 理由：worktree 被外部 git worktree remove 删了但 session 还活着是合法场景，
-# 不能误杀。只有 session_id="unknown"（远端 sync 标志）才视为 ghost。
-TMP=$(mktemp -d)
-(cd "$TMP" && git init -q && touch .gitkeep && git add -A && git -c user.email=t@t -c user.name=t commit -qm init && git branch -M main && git branch cp-ghost-2)
-mkdir -p "$TMP/.cecelia"
-cat > "$TMP/.cecelia/dev-active-cp-ghost-2.json" <<EOF
-{"branch":"cp-ghost-2","worktree":"/nonexistent/wt","session_id":"realsess123"}
-EOF
-CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" >/dev/null 2>&1
-if [[ -f "$TMP/.cecelia/dev-active-cp-ghost-2.json" ]]; then
-    pass "Case 2: 真 session_id + worktree 不存在 保留 (不视为 ghost)"
-else
-    fail "Case 2: 真 session_id 误杀"
-fi
-rm -rf "$TMP"
-
-# === Case 3: 真实 dev-active（worktree 存在）保留 ===
-TMP=$(mktemp -d)
-(cd "$TMP" && git init -q && touch .gitkeep && git add -A && git -c user.email=t@t -c user.name=t commit -qm init && git branch -M main)
-mkdir -p "$TMP/.cecelia"
-WT_REAL=$(mktemp -d)
-cat > "$TMP/.cecelia/dev-active-cp-real-3.json" <<EOF
-{"branch":"cp-real-3","worktree":"$WT_REAL","session_id":"realsess456"}
-EOF
-CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" >/dev/null 2>&1
-if [[ -f "$TMP/.cecelia/dev-active-cp-real-3.json" ]]; then
-    pass "Case 3: 真实 dev-active 保留 (worktree 存在 → 触发 verify_dev_complete)"
-else
-    fail "Case 3: 真实 dev-active 被误 rm"
-fi
-rm -rf "$TMP" "$WT_REAL"
-
 echo ""
-echo "=== stop-dev-ghost-filter: $PASS PASS / $FAIL FAIL ==="
+echo "=== Total: $((PASS+FAIL)) | PASS: $PASS | FAIL: $FAIL ==="
 [[ "$FAIL" -eq 0 ]]
