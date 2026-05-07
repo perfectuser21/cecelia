@@ -3,14 +3,24 @@
 # - features: 每个完整 feature 一个 entry（用途/入口/依赖/contract/测试覆盖/闭环段）
 # - changelog: 每次改动追加（细粒度变更历史）
 
-version: "1.1.1"
-updated: "2026-05-05"
+version: "1.1.2"
+updated: "2026-05-07"
 
 # ============================================================================
 # Features 注册（v18.22.2 新增）
 # 每个 feature 是 Cecelia 的"完整能力单元"，比 changelog 单条改动粒度大
 # ============================================================================
 features:
+  - id: dev-heartbeat-guardian
+    type: lib
+    path: packages/engine/lib/dev-heartbeat-guardian.sh
+    description: 心跳守护进程，维持灯文件 mtime 新鲜，崩溃/被杀时自清理
+    status: active
+    introduced_in: "18.23.1"
+    changelog:
+      - version: "18.23.1"
+        change: 新增 — Stop Hook v23 重构 PR-1
+
   - id: stop-hook
     name: Stop Hook（/dev 流程守门）
     status: stable
@@ -71,6 +81,7 @@ features:
       - { seg: 12, pr: "#2777", date: "2026-05-05", title: "4 P0 修（BUG-1/2/3/4）" }
       - { seg: 13, pr: "#2779", date: "2026-05-05", title: "4 P1 修（边缘 case + 测试基础设施）" }
       - { seg: 14, pr: "本 PR", date: "2026-05-05", title: "feature 注册（feature-registry features 段）" }
+      - { seg: 15, pr: "cp-0507135525", date: "2026-05-07", title: "v23 PR-1 基础设施 — 心跳模型部件 + log_hook_decision（不切 hook 行为）" }
     history_pr_count: 50  # 半年累积修过的相关 PR 总数（含已被新架构替代的）
     deprecated_invariants:
       - session_id 精确匹配（owner_session）→ cwd-as-key + Ralph Loop 替代
@@ -83,6 +94,19 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.23.1"
+    date: "2026-05-07"
+    change: "feat"
+    description: "Stop Hook v23 PR-1 基础设施（cp-0507135525）— 心跳模型物理基础部件。新增 dev-heartbeat-guardian.sh（守护进程，维持灯文件 mtime 鲜活 + SIGTERM/ppid 自杀清理）+ abort-dev.sh（用户手动中止 /dev）。devloop-check.sh 追加 log_hook_decision 共享函数（结构化决策日志，PR-2 hook 重写后复用）。stop-dev.sh 两个出口各加 1 行 log 调用（不改主决策逻辑）。claude-launch.sh + cecelia-run.sh 加 --dry-run 选项（契约测试用）。12 case TDD 测试全 PASS。本 PR 不切换 hook 行为（PR-2 范围），零回归。"
+    files:
+      - "packages/engine/lib/dev-heartbeat-guardian.sh (新建 — 守护进程)"
+      - "packages/engine/scripts/abort-dev.sh (新建 — 手动中止)"
+      - "packages/engine/lib/devloop-check.sh (加 log_hook_decision 函数)"
+      - "packages/engine/hooks/stop-dev.sh (加 2 行日志调用，主逻辑不动)"
+      - "scripts/claude-launch.sh (加 --dry-run 选项)"
+      - "packages/brain/scripts/cecelia-run.sh (加 --dry-run 选项)"
+      - "Engine 5 处版本文件 18.23.1"
+
   - version: "18.23.0"
     date: "2026-05-05"
     change: "feature"
