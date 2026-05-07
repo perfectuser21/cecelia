@@ -1,5 +1,5 @@
 /**
- * Workstream 2 — dispatcher 防回路 + PR #2816 单元守护不退化 [BEHAVIOR]
+ * Workstream 2 — dispatcher 防回路 + PR #2816 单元守护不退化 [BEHAVIOR] (Round 2)
  *
  * 守护两件事：
  * 1. PR #2816 自带的单元测试文件 packages/brain/src/__tests__/executor-harness-initiative-status-writeback.test.js
@@ -7,12 +7,16 @@
  * 2. 本 Sprint 的防回路验证脚本 sprints/golden-path-verify-20260507/scripts/check-no-redispatch-and-units.sh
  *    引用了正确的 PR #2816 单元守护文件路径、tick_decisions 表、dispatch_count ≤ 1 阈值。
  *
- * 预期 Red（当前分支 base 未 rebase main / Generator 尚未产出脚本）：
- *   - PR #2816 单元守护文件不存在 → fs.existsSync = false → expect FAIL
+ * Round 2 新增（响应 Reviewer 反馈 #2 #3）：
+ *   - 脚本必须含 pg_isready 系统级前置检查（DB 不可达 → exit 2）
+ *   - 脚本必须含 curl /api/brain/health 系统级前置检查（Brain runtime 不可达 → exit 2）
+ *   - 脚本必须含 LAST_STEP trap（异常退出时打印 LAST_STEP 给 evaluator）
+ *
+ * 预期 Red（Generator 尚未产出脚本时）：
+ *   - PR #2816 单元守护文件不存在（base 未含 fix）→ fs.existsSync = false → expect FAIL
  *   - check-no-redispatch-and-units.sh 不存在 → fs.existsSync = false → expect FAIL
  *
- * 预期 Green（rebase 至 main 含 PR #2816 + Generator 产出脚本后）：
- *   - 文件存在、it 数 ≥ 4、脚本含必需关键字 → 全 PASS
+ * 预期 Green（rebase 至 main 含 PR #2816 + Generator 产出脚本后）：全 PASS。
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -39,7 +43,6 @@ describe('WS2 — PR #2816 单元守护不退化 + dispatcher 防回路 [BEHAVIO
 
   it('PR #2816 单元守护文件含 it() 数量 ≥ 4（防止删测试让全绿）', () => {
     if (!fs.existsSync(PR2816_GUARD_TEST)) {
-      // 文件不存在时主动 fail，给出清晰错误（而非黑盒崩溃）
       throw new Error(`守护文件不存在：${PR2816_GUARD_TEST}`);
     }
     const src = fs.readFileSync(PR2816_GUARD_TEST, 'utf8');
@@ -67,7 +70,6 @@ describe('WS2 — PR #2816 单元守护不退化 + dispatcher 防回路 [BEHAVIO
     const src = fs.readFileSync(NO_REDISPATCH_SCRIPT, 'utf8');
     expect(src).toContain('tick_decisions');
     expect(src).toContain(TARGET_INITIATIVE_TASK_ID);
-    // 阈值表达式：bash 的 -le 1 或 <= 1
     expect(src).toMatch(/-le\s+1|<=\s*1/);
   });
 
@@ -77,7 +79,37 @@ describe('WS2 — PR #2816 单元守护不退化 + dispatcher 防回路 [BEHAVIO
     }
     const src = fs.readFileSync(NO_REDISPATCH_SCRIPT, 'utf8');
     expect(src).toContain('executor-harness-initiative-status-writeback.test.js');
-    // it() 数量 ≥ 4 阈值断言（防止"偷偷删 it 让全绿"）
     expect(src).toMatch(/IT_COUNT[\s\S]{0,120}(?:-ge\s+4|>=\s*4)/);
+  });
+
+  // ---- Round 2 新增（Reviewer 反馈 #2 #3） ----
+
+  it('Round 2: 防回路脚本含 pg_isready 系统级前置检查（DB 不可达 → exit 2）', () => {
+    if (!fs.existsSync(NO_REDISPATCH_SCRIPT)) {
+      throw new Error(`脚本不存在：${NO_REDISPATCH_SCRIPT}`);
+    }
+    const src = fs.readFileSync(NO_REDISPATCH_SCRIPT, 'utf8');
+    expect(src).toContain('pg_isready');
+    // exit 2 必须在 pg_isready 失败分支
+    expect(src).toMatch(/pg_isready[\s\S]{0,200}exit\s+2/);
+  });
+
+  it('Round 2: 防回路脚本含 Brain /api/brain/health 系统级前置检查（Brain 不可达 → exit 2）', () => {
+    if (!fs.existsSync(NO_REDISPATCH_SCRIPT)) {
+      throw new Error(`脚本不存在：${NO_REDISPATCH_SCRIPT}`);
+    }
+    const src = fs.readFileSync(NO_REDISPATCH_SCRIPT, 'utf8');
+    expect(src).toContain('/api/brain/health');
+    expect(src).toMatch(/curl[\s\S]{0,80}-f/); // -f 让 5xx 返回非 0
+    expect(src).toMatch(/health[\s\S]{0,200}exit\s+2/);
+  });
+
+  it('Round 2: 防回路脚本含 LAST_STEP trap（异常退出时打印当前阶段）', () => {
+    if (!fs.existsSync(NO_REDISPATCH_SCRIPT)) {
+      throw new Error(`脚本不存在：${NO_REDISPATCH_SCRIPT}`);
+    }
+    const src = fs.readFileSync(NO_REDISPATCH_SCRIPT, 'utf8');
+    expect(src).toContain('LAST_STEP');
+    expect(src).toMatch(/trap[\s\S]{0,200}LAST_STEP/);
   });
 });
