@@ -1,162 +1,230 @@
-# Sprint Contract Draft (Round 1) — 验证 PR #2816 harness_initiative status 自动回写
+# Sprint Contract Draft (Round 1)
 
-> **被验证对象**：`packages/brain/src/executor.js` 的 `runHarnessInitiativeRouter` 分支。
-> **本 Sprint 不修改实现**，只观察其在真实 Brain runtime 中的可见行为。
+> 验证 PR #2816：harness_initiative 任务执行完毕后 `tasks.status` 自动回写为终态（`completed` / `failed`），dispatcher 不再重复拉起。
+> 本 Sprint **不修改 executor.js**，只构造端到端真实运行场景 + 复跑单元层断言。
 > **journey_type**：autonomous
 
 ---
 
 ## Golden Path
 
-[Brain 派发 harness_initiative task] → [executor 进入 harness_initiative 分支 / 调度 LangGraph 子图执行完毕] → [executor 回写 tasks.status ∈ {completed, failed}] → [dispatcher 不再重复拉起该 task_id]
+[主理人触发 harness_initiative 任务] → [Brain dispatcher 派发 → executor 走 harness_initiative 分支 → runHarnessInitiativeRouter 调 compiled.stream/invoke] → [graph 跑完所有阶段（PASS 或 FAIL）] → [`tasks.status` 写入 `completed` 或 `failed`，`completed_at` 非空] → [dispatcher 后续 tick 不再把这条 task_id 重新派发]
 
 ---
 
-### Step 1: harness_initiative 任务被 Brain 派发并标 in_progress
+### Step 1: 触发一个真实 harness_initiative 任务（fresh probe task）
 
-**可观测行为**：DB `tasks` 表中存在一行 `task_type = 'harness_initiative'` 且 `status = 'in_progress'`、`started_at IS NOT NULL` 的任务（由 dispatcher 在 `triggerCeceliaRun` 之前 mark），紧接着 executor 进入 `runHarnessInitiativeRouter`。
+**可观测行为**: 在数据库 `tasks` 表插入一条 `task_type='harness_initiative'`、`status='queued'` 的新任务，6 分钟内被 dispatcher 拉起，状态变为 `in_progress`、`started_at` 非空。
 
-**验证命令**：
+**为何要 fresh task 不复用 `84075973-...`**：本 Initiative 自身正在跑（meta-recursive），它的 row 在测试期间 status 必然是 `in_progress`，无法用作"终态判定"样本。改造为：插入一条**最小可执行**的 harness_initiative 探针任务，观察其完整生命周期。
+
+**验证命令**:
 ```bash
-# 入口断言：本 Initiative 自身的 task_id（PRD 指定）已被标 in_progress 且确实是 harness_initiative
-DB="${DB_URL:-postgresql://localhost/cecelia}"
-TARGET_TASK_ID="84075973-99a4-4a0d-9a29-4f0cd8b642f5"
-psql "$DB" -tA -c "SELECT task_type || '|' || status || '|' || (started_at IS NOT NULL) FROM tasks WHERE id='$TARGET_TASK_ID'" \
-  | grep -E "^harness_initiative\|(in_progress|completed|failed)\|t$" \
-  || { echo "FAIL: 目标 task 不存在 / 类型不对 / started_at 为空"; exit 1; }
-echo "PASS Step1: target task is harness_initiative with started_at set"
-```
-
-**硬阈值**：行存在；`task_type = harness_initiative`；`started_at IS NOT NULL`；`status` ∈ {`in_progress`, `completed`, `failed`}（任一终态或仍在跑都允许，关键是不为 `queued`）。
-
----
-
-### Step 2: executor 进入 harness_initiative 分支并调用 LangGraph 子图
-
-**可观测行为**：`runHarnessInitiativeRouter` 被触发，`compiled.stream(...)` 至少被调用一次；执行期间 `task_events` 表中产生针对该 `task_id` 的 `graph_node_update` 事件（W4 streamMode='updates' 记录到 task_events），证明子图实际跑过而非空转。
-
-**验证命令**：
-```bash
-# 子图实际执行的痕迹：task_events 表至少 1 行 graph_node_update（time-window 防造假）
-DB="${DB_URL:-postgresql://localhost/cecelia}"
-TARGET_TASK_ID="84075973-99a4-4a0d-9a29-4f0cd8b642f5"
-COUNT=$(psql "$DB" -tA -c "
-  SELECT count(*) FROM task_events
-   WHERE task_id='$TARGET_TASK_ID'
-     AND event_type='graph_node_update'
-     AND created_at > NOW() - interval '24 hours'
+PROBE_TASK_ID=$(psql "$DB" -t -A -c "
+  INSERT INTO tasks (task_type, status, payload, priority, created_at)
+  VALUES (
+    'harness_initiative',
+    'queued',
+    '{\"initiative_id\":null,\"resume_from_checkpoint\":false,\"_probe\":true,\"_probe_sprint\":\"golden-path-verify-20260507\"}'::jsonb,
+    50,
+    NOW()
+  )
+  RETURNING id
 ")
-[ "$COUNT" -ge 1 ] || { echo "FAIL: 24h 内无 graph_node_update 事件，子图未实际执行（count=$COUNT）"; exit 1; }
-echo "PASS Step2: graph_node_update events count=$COUNT"
-```
+echo "PROBE_TASK_ID=$PROBE_TASK_ID"
+[ -n "$PROBE_TASK_ID" ] || { echo "FAIL: probe task insert returned empty"; exit 1; }
 
-**硬阈值**：24 小时窗口内 `task_events.event_type = 'graph_node_update'` 且 `task_id = $TARGET_TASK_ID` 的记录数 ≥ 1。
-
----
-
-### Step 3: executor 在子图返回后回写 tasks.status 为终态（核心断言）
-
-**可观测行为**：当 `compiled.stream / invoke` 返回后，executor 根据 `final.error` 调用 `updateTaskStatus(task.id, 'completed' | 'failed')`；任意阶段抛异常时外层 catch 调用 `updateTaskStatus(task.id, 'failed')`。最终 DB 行 `status` ∈ {`completed`, `failed`}，且 `updated_at >= started_at`。
-
-**验证命令**：
-```bash
-# 主断言：终态化 + 时间单调
-DB="${DB_URL:-postgresql://localhost/cecelia}"
-TARGET_TASK_ID="84075973-99a4-4a0d-9a29-4f0cd8b642f5"
-
-# 等待最多 2 小时让 pipeline 跑完（CI 单跑场景；运维手测可缩短）
-DEADLINE=$(($(date +%s) + 7200))
-while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  STATUS=$(psql "$DB" -tA -c "SELECT status FROM tasks WHERE id='$TARGET_TASK_ID'")
-  case "$STATUS" in
-    completed|failed) break ;;
-  esac
-  sleep 30
+# 等待 dispatcher 拉起（最多 6 分钟，覆盖 1 个 5min tick 周期 + 余量）
+for i in $(seq 1 36); do
+  STATUS=$(psql "$DB" -t -A -c "SELECT status FROM tasks WHERE id='$PROBE_TASK_ID'")
+  case "$STATUS" in in_progress|completed|failed) break ;; esac
+  sleep 10
 done
 
-# 终态断言
-ROW=$(psql "$DB" -tA -F"|" -c "
-  SELECT status,
-         (updated_at IS NOT NULL) AS has_updated,
-         (started_at IS NOT NULL) AS has_started,
-         (updated_at >= started_at) AS time_monotonic
-    FROM tasks WHERE id='$TARGET_TASK_ID'
-")
-echo "row: $ROW"
-STATUS=$(echo "$ROW" | cut -d"|" -f1)
-TIME_OK=$(echo "$ROW" | cut -d"|" -f4)
-
-[ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] \
-  || { echo "FAIL: status='$STATUS'，未终态化（仍卡 in_progress 或被 revert 为 queued）"; exit 1; }
-[ "$TIME_OK" = "t" ] \
-  || { echo "FAIL: updated_at < started_at，回写时间不单调"; exit 1; }
-echo "PASS Step3: status=$STATUS, updated_at>=started_at"
+STARTED_AT=$(psql "$DB" -t -A -c "SELECT started_at FROM tasks WHERE id='$PROBE_TASK_ID'")
+[ -n "$STARTED_AT" ] && [ "$STARTED_AT" != "null" ] || {
+  echo "FAIL: probe task never started within 6 minutes (status=$STATUS, started_at=$STARTED_AT)"
+  exit 1
+}
+echo "✅ Step 1: probe task started at $STARTED_AT"
 ```
 
-**硬阈值**：
-- `tasks.status` ∈ {`completed`, `failed`}（**严格不为** `in_progress` / `queued`）
-- `updated_at IS NOT NULL` 且 `updated_at >= started_at`
-- 整段轮询不超过 2 小时（CI 上限，正常 harness pipeline ≪ 2h）
+**硬阈值**:
+- `tasks WHERE id=$PROBE_TASK_ID` 的 `started_at` 在 6 分钟内非空；
+- `status` ∈ `{in_progress, completed, failed}`，**不是** `queued`。
 
 ---
 
-### Step 4: dispatcher 不再重复拉起该 task_id
+### Step 2: graph 真的跑了且已停手
 
-**可观测行为**：tick_decisions / dispatch 日志中针对该 `task_id` 的 `'dispatch'` 动作总数 ≤ 1（**严格 ≤ 1**，本 Sprint 不解决并发去重，但单实例不应被反复 dispatch）。也即不存在"executor 已完成但 dispatcher 看到 status 未变 → 再次拉起"的回路。
+**可观测行为**: `task_events` 表至少出现 1 条 `event_type='graph_node_update'` 且 `task_id=$PROBE_TASK_ID` 的行（证明 streamMode 'updates' 真把 graph 节点 emit 出来），且最近 5 分钟内不再出现新的 graph_node_update（证明 graph 跑完终止，不是死循环）。
 
-**验证命令**：
+**验证命令**:
 ```bash
-# 防回路断言：tick_decisions 表中针对该 task_id 的 dispatch 决策 ≤ 1（在该任务整个生命周期内）
-DB="${DB_URL:-postgresql://localhost/cecelia}"
-TARGET_TASK_ID="84075973-99a4-4a0d-9a29-4f0cd8b642f5"
+# graph 至少跑过一个节点
+for i in $(seq 1 60); do
+  NC=$(psql "$DB" -t -A -c "
+    SELECT count(*) FROM task_events
+     WHERE task_id='$PROBE_TASK_ID'
+       AND event_type='graph_node_update'
+       AND created_at > NOW() - interval '60 minutes'
+  ")
+  [ "$NC" -ge 1 ] && break
+  sleep 10
+done
+[ "$NC" -ge 1 ] || {
+  echo "FAIL: graph_node_update event count = $NC (expected >=1)"
+  exit 1
+}
+echo "✅ Step 2a: graph emitted $NC node updates"
 
-# 取该 task 的 started_at 起算（避免捕获完全无关的历史 ID 碰撞）
-STARTED_AT=$(psql "$DB" -tA -c "SELECT to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') FROM tasks WHERE id='$TARGET_TASK_ID'")
-[ -n "$STARTED_AT" ] || { echo "FAIL: 无 started_at"; exit 1; }
+# graph 停手判定：最近 5min 内无新 event；若仍有，再等 5min 复测
+for i in $(seq 1 36); do
+  RECENT=$(psql "$DB" -t -A -c "
+    SELECT count(*) FROM task_events
+     WHERE task_id='$PROBE_TASK_ID'
+       AND event_type='graph_node_update'
+       AND created_at > NOW() - interval '5 minutes'
+  ")
+  [ "$RECENT" -eq 0 ] && break
+  sleep 30
+done
+[ "$RECENT" -eq 0 ] || {
+  echo "FAIL: graph still emitting node updates within last 5min after 18min wait (count=$RECENT)"
+  exit 1
+}
+echo "✅ Step 2b: graph quiesced (no new node updates in last 5min)"
+```
 
-DISPATCH_COUNT=$(psql "$DB" -tA -c "
+**硬阈值**:
+- `task_events` 表中 `event_type='graph_node_update' AND task_id=$PROBE_TASK_ID AND created_at > NOW() - interval '60 minutes'` 的 count ≥ 1；
+- 最近 5 分钟内 `graph_node_update` count = 0（graph 已停手）。
+
+---
+
+### Step 3: tasks.status 写入终态（**核心断言**）
+
+**可观测行为**: 探针任务的 `status` 字段最终值 ∈ `{completed, failed}`，**不是** `in_progress` 或 `queued`；`completed_at` 非空且 `>= started_at`。
+
+**验证命令**:
+```bash
+# graph quiesce 后再给 90s 让 status writeback 落地
+sleep 90
+
+ROW=$(psql "$DB" -t -A -F '|' -c "
+  SELECT status, started_at, completed_at, error_message
+    FROM tasks WHERE id='$PROBE_TASK_ID'
+")
+STATUS=$(echo "$ROW" | cut -d'|' -f1)
+STARTED_AT=$(echo "$ROW" | cut -d'|' -f2)
+COMPLETED_AT=$(echo "$ROW" | cut -d'|' -f3)
+ERROR_MSG=$(echo "$ROW" | cut -d'|' -f4)
+
+echo "status=$STATUS started_at=$STARTED_AT completed_at=$COMPLETED_AT error_message=$ERROR_MSG"
+
+# 核心断言：终态
+case "$STATUS" in
+  completed|failed) ;;
+  *) echo "FAIL: terminal status expected completed|failed, got '$STATUS'"; exit 1 ;;
+esac
+
+# completed_at 非空且 >= started_at（用 SQL 比时间戳，规避 shell 时区/格式坑）
+[ -n "$COMPLETED_AT" ] && [ "$COMPLETED_AT" != "null" ] || {
+  echo "FAIL: completed_at is empty (status=$STATUS)"; exit 1
+}
+ORDER_OK=$(psql "$DB" -t -A -c "
+  SELECT (completed_at >= started_at) FROM tasks WHERE id='$PROBE_TASK_ID'
+")
+[ "$ORDER_OK" = "t" ] || {
+  echo "FAIL: completed_at ($COMPLETED_AT) not >= started_at ($STARTED_AT)"; exit 1
+}
+echo "✅ Step 3: terminal status=$STATUS, completed_at >= started_at"
+```
+
+**硬阈值**:
+- `status` ∈ `{completed, failed}`；
+- `completed_at IS NOT NULL` 且 `completed_at >= started_at`；
+- 时间戳比对用 SQL（防时区/格式造假）。
+
+---
+
+### Step 4: dispatcher 不再重复拉起这条 task_id
+
+**可观测行为**: 终态落地后 10 分钟内，`run_events` 表中 `task_id=$PROBE_TASK_ID` 的活跃 run（`status IN ('running','queued')`）数量 = 0，且 `tasks.status` 不会被某个 tick 改回 `queued` / `in_progress`。
+
+**验证命令**:
+```bash
+# 终态后再观察 10 分钟（覆盖至少 2 个 5min tick 周期）
+sleep 600
+
+# 4a：tasks.status 没被回滚
+STATUS_AFTER=$(psql "$DB" -t -A -c "SELECT status FROM tasks WHERE id='$PROBE_TASK_ID'")
+case "$STATUS_AFTER" in
+  completed|failed) ;;
+  *) echo "FAIL: status regressed from terminal back to '$STATUS_AFTER' after 10min"; exit 1 ;;
+esac
+
+# 4b：没有新的活跃 run 针对该 task
+ACTIVE_RUNS=$(psql "$DB" -t -A -c "
+  SELECT count(*) FROM run_events
+   WHERE task_id='$PROBE_TASK_ID'
+     AND status IN ('running','queued')
+     AND ts_start > NOW() - interval '10 minutes'
+")
+[ "$ACTIVE_RUNS" -eq 0 ] || {
+  echo "FAIL: dispatcher created $ACTIVE_RUNS new active runs for terminal task"; exit 1
+}
+
+# 4c：tick_decisions 没有针对该 task_id 的 requeue/reschedule 决策
+REQUEUE_COUNT=$(psql "$DB" -t -A -c "
   SELECT count(*) FROM tick_decisions
-   WHERE created_at >= '$STARTED_AT'::timestamp - interval '1 minute'
-     AND (
-       (decision->>'action' = 'dispatch' AND decision->>'task_id' = '$TARGET_TASK_ID')
-       OR (decision->>'task_id' = '$TARGET_TASK_ID' AND decision->>'action' IN ('dispatch','executor_failed'))
-     )
+   WHERE created_at > NOW() - interval '10 minutes'
+     AND payload->>'task_id' = '$PROBE_TASK_ID'
+     AND payload->>'action' IN ('executor_failed','requeue','reschedule')
 ")
-echo "dispatch_count_for_task=$DISPATCH_COUNT"
-[ "$DISPATCH_COUNT" -le 1 ] \
-  || { echo "FAIL: dispatcher 重复拉起 task_id=$TARGET_TASK_ID（$DISPATCH_COUNT 次），证明 status 未及时回写形成回路"; exit 1; }
-echo "PASS Step4: dispatch_count=$DISPATCH_COUNT (≤1)"
+[ "$REQUEUE_COUNT" -eq 0 ] || {
+  echo "FAIL: dispatcher logged $REQUEUE_COUNT requeue/reschedule decisions for terminal task"; exit 1
+}
+echo "✅ Step 4: no requeue/active-run for terminal task in last 10min (status=$STATUS_AFTER)"
 ```
 
-**硬阈值**：`tick_decisions` 中针对该 `task_id` 的 dispatch 类决策记录数 ≤ 1。
+**硬阈值**:
+- 10 分钟观察窗内 `tasks.status` 仍 ∈ `{completed, failed}`，未回退；
+- `run_events` 中 `status IN ('running','queued') AND ts_start > NOW() - interval '10 minutes'` 的 count = 0；
+- `tick_decisions` 中针对该 task_id 的 requeue/reschedule 决策 count = 0。
 
 ---
 
-### Step 5: 单元测试守护（PR #2816 自带断言不退化）
+### Step 5: 单元层守护断言不退化
 
-**可观测行为**：复跑 PR #2816 自带的 `packages/brain/src/__tests__/executor-harness-initiative-status-writeback.test.js`，4 项静态断言全 PASS。守护单元层不退化。
+**可观测行为**: 优先跑 PR #2816 自带的 `executor-harness-initiative-status-writeback.test.js`；若该文件**不存在**（PRD 假设的测试文件未在 main 上落地），fallback 跑 `tests/ws2/` 下本 Sprint 自补的 4 项 BEHAVIOR 单元测试。两者择一，不能缺。
 
-**验证命令**：
+**验证命令**:
 ```bash
-# 复跑单元守护（须有 4 个 it()，且全部 PASS）
-cd /workspace/packages/brain
-TEST_FILE="src/__tests__/executor-harness-initiative-status-writeback.test.js"
-[ -f "$TEST_FILE" ] || { echo "FAIL: PR #2816 单元守护文件缺失：$TEST_FILE"; exit 1; }
-
-# 断言文件中至少 4 个 it() 块（防止"删测试 = 全绿")
-IT_COUNT=$(grep -cE "^\s*it\(" "$TEST_FILE")
-[ "$IT_COUNT" -ge 4 ] || { echo "FAIL: 单元守护 it() 数量=$IT_COUNT，期望 >=4"; exit 1; }
-
-# 跑测试
-npx vitest run "$TEST_FILE" --reporter=verbose 2>&1 | tee /tmp/ws-unit.log
-grep -E "Tests\s+(.*)\s+passed" /tmp/ws-unit.log | grep -v "0 passed" \
-  || { echo "FAIL: 单元守护未 PASS"; exit 1; }
-grep -E "FAIL|✗|failed" /tmp/ws-unit.log | grep -v "0 failed" \
-  && { echo "FAIL: 单元守护出现失败"; exit 1; }
-echo "PASS Step5: 单元守护 ${IT_COUNT} it() 全 PASS"
+TEST_PATH="packages/brain/src/__tests__/executor-harness-initiative-status-writeback.test.js"
+if [ -f "$TEST_PATH" ]; then
+  npx vitest run "$TEST_PATH" --reporter=verbose 2>&1 | tee /tmp/ws2-unit.log
+  PASSED=$(grep -cE "✓" /tmp/ws2-unit.log || true)
+  FAILED=$(grep -cE "✗" /tmp/ws2-unit.log || true)
+  [ "$PASSED" -ge 4 ] && [ "$FAILED" -eq 0 ] || {
+    echo "FAIL: status-writeback unit tests passed=$PASSED failed=$FAILED (expected passed>=4 failed=0)"
+    exit 1
+  }
+else
+  npx vitest run sprints/golden-path-verify-20260507/tests/ws2/ --reporter=verbose 2>&1 | tee /tmp/ws2-unit.log
+  PASSED=$(grep -cE "✓" /tmp/ws2-unit.log || true)
+  FAILED=$(grep -cE "✗" /tmp/ws2-unit.log || true)
+  [ "$PASSED" -ge 4 ] && [ "$FAILED" -eq 0 ] || {
+    echo "FAIL: ws2 fallback unit tests passed=$PASSED failed=$FAILED (expected passed>=4 failed=0)"
+    exit 1
+  }
+fi
+echo "✅ Step 5: unit-layer status writeback assertions hold"
 ```
 
-**硬阈值**：测试文件存在；`it(` 数量 ≥ 4；vitest 报告 0 failed。
+**硬阈值**:
+- 4 项断言全部 PASS（来自 PRD 引用文件 OR 本 Sprint 补的 fallback 测试）；
+- 0 failed。
 
 ---
 
@@ -164,74 +232,89 @@ echo "PASS Step5: 单元守护 ${IT_COUNT} it() 全 PASS"
 
 **journey_type**: autonomous
 
-**完整验证脚本**：
+**完整验证脚本**:
 ```bash
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
-DB="${DB_URL:-postgresql://localhost/cecelia}"
-TARGET_TASK_ID="84075973-99a4-4a0d-9a29-4f0cd8b642f5"
+DB="${DB:-postgresql://localhost/cecelia}"
+SPRINT_DIR="sprints/golden-path-verify-20260507"
 
-echo "=== Golden Path E2E 验证：PR #2816 status 回写 ==="
-echo "DB=$DB"
-echo "TARGET_TASK_ID=$TARGET_TASK_ID"
-echo ""
+echo "=== Step 1: 注入 harness_initiative 探针任务 ==="
+PROBE_TASK_ID=$(psql "$DB" -t -A -c "
+  INSERT INTO tasks (task_type, status, payload, priority, created_at)
+  VALUES (
+    'harness_initiative',
+    'queued',
+    '{\"initiative_id\":null,\"resume_from_checkpoint\":false,\"_probe\":true,\"_probe_sprint\":\"golden-path-verify-20260507\"}'::jsonb,
+    50,
+    NOW()
+  )
+  RETURNING id
+")
+echo "PROBE_TASK_ID=$PROBE_TASK_ID"
+[ -n "$PROBE_TASK_ID" ] || { echo "FAIL: insert returned empty"; exit 1; }
 
-# Step 1 — 入口存在性
-psql "$DB" -tA -c "SELECT task_type || '|' || status || '|' || (started_at IS NOT NULL) FROM tasks WHERE id='$TARGET_TASK_ID'" \
-  | grep -E "^harness_initiative\|(in_progress|completed|failed)\|t$" \
-  || { echo "❌ Step1 FAIL"; exit 1; }
-echo "✅ Step1: 入口断言通过"
+echo "=== Step 1 wait: dispatcher pickup (≤6min) ==="
+for i in $(seq 1 36); do
+  STATUS=$(psql "$DB" -t -A -c "SELECT status FROM tasks WHERE id='$PROBE_TASK_ID'")
+  case "$STATUS" in in_progress|completed|failed) break ;; esac
+  sleep 10
+done
+STARTED_AT=$(psql "$DB" -t -A -c "SELECT started_at FROM tasks WHERE id='$PROBE_TASK_ID'")
+[ -n "$STARTED_AT" ] && [ "$STARTED_AT" != "null" ] || { echo "FAIL Step 1: never started"; exit 1; }
 
-# Step 2 — 子图实际执行痕迹
-COUNT=$(psql "$DB" -tA -c "SELECT count(*) FROM task_events WHERE task_id='$TARGET_TASK_ID' AND event_type='graph_node_update' AND created_at > NOW() - interval '24 hours'")
-[ "$COUNT" -ge 1 ] || { echo "❌ Step2 FAIL (graph_node_update count=$COUNT)"; exit 1; }
-echo "✅ Step2: graph_node_update events=$COUNT"
+echo "=== Step 2a: 等 graph 跑出至少 1 个节点 ==="
+for i in $(seq 1 60); do
+  NC=$(psql "$DB" -t -A -c "SELECT count(*) FROM task_events WHERE task_id='$PROBE_TASK_ID' AND event_type='graph_node_update' AND created_at > NOW() - interval '60 minutes'")
+  [ "$NC" -ge 1 ] && break
+  sleep 10
+done
+[ "$NC" -ge 1 ] || { echo "FAIL Step 2a: graph_node_update count=$NC"; exit 1; }
 
-# Step 3 — 终态化（轮询最多 2h）
-DEADLINE=$(($(date +%s) + 7200))
-while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  STATUS=$(psql "$DB" -tA -c "SELECT status FROM tasks WHERE id='$TARGET_TASK_ID'")
-  [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && break
+echo "=== Step 2b: graph quiesce ==="
+QUIESCED=0
+for i in $(seq 1 36); do
+  RECENT=$(psql "$DB" -t -A -c "SELECT count(*) FROM task_events WHERE task_id='$PROBE_TASK_ID' AND event_type='graph_node_update' AND created_at > NOW() - interval '5 minutes'")
+  if [ "$RECENT" -eq 0 ]; then QUIESCED=1; break; fi
   sleep 30
 done
-ROW=$(psql "$DB" -tA -F"|" -c "SELECT status, (updated_at >= started_at) FROM tasks WHERE id='$TARGET_TASK_ID'")
-STATUS=$(echo "$ROW" | cut -d"|" -f1)
-TIME_OK=$(echo "$ROW" | cut -d"|" -f2)
-{ [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; } && [ "$TIME_OK" = "t" ] \
-  || { echo "❌ Step3 FAIL (status=$STATUS, time_ok=$TIME_OK)"; exit 1; }
-echo "✅ Step3: status=$STATUS, updated_at>=started_at"
+[ "$QUIESCED" -eq 1 ] || { echo "FAIL Step 2b: graph never quiesced in 18min"; exit 1; }
 
-# Step 4 — 不重复拉起
-STARTED_AT=$(psql "$DB" -tA -c "SELECT to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') FROM tasks WHERE id='$TARGET_TASK_ID'")
-DISPATCH_COUNT=$(psql "$DB" -tA -c "
-  SELECT count(*) FROM tick_decisions
-   WHERE created_at >= '$STARTED_AT'::timestamp - interval '1 minute'
-     AND decision->>'task_id' = '$TARGET_TASK_ID'
-     AND decision->>'action' IN ('dispatch','executor_failed')
-")
-[ "$DISPATCH_COUNT" -le 1 ] \
-  || { echo "❌ Step4 FAIL (dispatch_count=$DISPATCH_COUNT > 1，回路重现)"; exit 1; }
-echo "✅ Step4: dispatch_count=$DISPATCH_COUNT (≤1)"
+echo "=== Step 3: 终态断言 ==="
+sleep 90
+ROW=$(psql "$DB" -t -A -F '|' -c "SELECT status, started_at, completed_at, error_message FROM tasks WHERE id='$PROBE_TASK_ID'")
+STATUS=$(echo "$ROW" | cut -d'|' -f1)
+COMPLETED_AT=$(echo "$ROW" | cut -d'|' -f3)
+case "$STATUS" in completed|failed) ;; *) echo "FAIL Step 3: status=$STATUS"; exit 1 ;; esac
+[ -n "$COMPLETED_AT" ] && [ "$COMPLETED_AT" != "null" ] || { echo "FAIL Step 3: completed_at empty"; exit 1; }
+ORDER_OK=$(psql "$DB" -t -A -c "SELECT (completed_at >= started_at) FROM tasks WHERE id='$PROBE_TASK_ID'")
+[ "$ORDER_OK" = "t" ] || { echo "FAIL Step 3: completed_at < started_at"; exit 1; }
 
-# Step 5 — 单元守护
-cd /workspace/packages/brain
-TEST_FILE="src/__tests__/executor-harness-initiative-status-writeback.test.js"
-[ -f "$TEST_FILE" ] || { echo "❌ Step5 FAIL: $TEST_FILE 缺失"; exit 1; }
-IT_COUNT=$(grep -cE "^\s*it\(" "$TEST_FILE")
-[ "$IT_COUNT" -ge 4 ] || { echo "❌ Step5 FAIL: it count=$IT_COUNT < 4"; exit 1; }
-npx vitest run "$TEST_FILE" --reporter=verbose 2>&1 | tee /tmp/ws-unit.log
-grep -E "Tests\s+\d+ passed" /tmp/ws-unit.log >/dev/null \
-  || { echo "❌ Step5 FAIL: 单元守护未 PASS"; exit 1; }
-! grep -E "✗|FAIL " /tmp/ws-unit.log >/dev/null \
-  || { echo "❌ Step5 FAIL: 单元守护出现失败"; exit 1; }
-echo "✅ Step5: 单元守护 $IT_COUNT it() 全 PASS"
+echo "=== Step 4: 无重复拉起（10min 观察） ==="
+sleep 600
+STATUS_AFTER=$(psql "$DB" -t -A -c "SELECT status FROM tasks WHERE id='$PROBE_TASK_ID'")
+case "$STATUS_AFTER" in completed|failed) ;; *) echo "FAIL Step 4: status regressed to $STATUS_AFTER"; exit 1 ;; esac
+ACTIVE=$(psql "$DB" -t -A -c "SELECT count(*) FROM run_events WHERE task_id='$PROBE_TASK_ID' AND status IN ('running','queued') AND ts_start > NOW() - interval '10 minutes'")
+[ "$ACTIVE" -eq 0 ] || { echo "FAIL Step 4: $ACTIVE active runs after terminal"; exit 1; }
+REQUEUE=$(psql "$DB" -t -A -c "SELECT count(*) FROM tick_decisions WHERE created_at > NOW() - interval '10 minutes' AND payload->>'task_id'='$PROBE_TASK_ID' AND payload->>'action' IN ('executor_failed','requeue','reschedule')")
+[ "$REQUEUE" -eq 0 ] || { echo "FAIL Step 4: $REQUEUE requeue decisions"; exit 1; }
 
-echo ""
-echo "🎯 Golden Path 验证全部通过"
+echo "=== Step 5: 单元层守护断言 ==="
+TEST_PATH="packages/brain/src/__tests__/executor-harness-initiative-status-writeback.test.js"
+if [ -f "$TEST_PATH" ]; then
+  npx vitest run "$TEST_PATH" --reporter=verbose 2>&1 | tee /tmp/ws2-unit.log
+else
+  npx vitest run "$SPRINT_DIR/tests/ws2/" --reporter=verbose 2>&1 | tee /tmp/ws2-unit.log
+fi
+PASSED=$(grep -cE "✓" /tmp/ws2-unit.log || true)
+FAILED=$(grep -cE "✗" /tmp/ws2-unit.log || true)
+[ "$PASSED" -ge 4 ] && [ "$FAILED" -eq 0 ] || { echo "FAIL Step 5: passed=$PASSED failed=$FAILED"; exit 1; }
+
+echo "✅ Golden Path 验证通过 (PROBE_TASK_ID=$PROBE_TASK_ID, 终态=$STATUS_AFTER)"
 ```
 
-**通过标准**：脚本 exit 0，且 stdout 含 5 个 `✅` 行。
+**通过标准**: 脚本 exit 0，且最终 echo 中 `终态=$STATUS_AFTER` ∈ `{completed, failed}`。
 
 ---
 
@@ -239,40 +322,37 @@ echo "🎯 Golden Path 验证全部通过"
 
 workstream_count: 2
 
-### Workstream 1: 端到端 status 终态化观测器（Step 1–3）
+### Workstream 1: 端到端真实运行 + DB 终态断言
 
-**范围**：
-- 写一个 bash 脚本 `sprints/golden-path-verify-20260507/scripts/verify-status-terminal.sh`，执行 Step 1+2+3 的 SQL 断言（入口存在、graph_node_update ≥1、终态化 + 时间单调），出错 exit 非 0；这是 evaluator 在 main（含 PR #2816）跑的端到端观测器。
-- 写 vitest 测试 `sprints/golden-path-verify-20260507/tests/ws1/status-writeback.test.ts`，用 `readFileSync` 静态读 `packages/brain/src/executor.js` 源码，对**外层 caller**（`if (task.task_type === 'harness_initiative')` 块）做形状断言：
-  1. 成功路径含 `updateTaskStatus(task.id, 'completed')`；
-  2. FAIL 路径含 `updateTaskStatus(task.id, 'failed', ...)`；
-  3. 异常路径 catch 块也含 `updateTaskStatus(task.id, 'failed')`；
-  4. 所有 return 写 `success: true`（不再是 `success: result.ok` / `success: !final.error`），防止 dispatcher 把已处理任务回退 `queued`；
-  5. 锚定 PRD 目标 `task_id = 84075973-99a4-4a0d-9a29-4f0cd8b642f5` 字面引用，防偷换。
-- 不修改 `packages/brain/src/executor.js`。
+**范围**:
+- 编写 `scripts/probe-harness-initiative-writeback.sh`：注入探针任务 → 等终态 → 断言 4 步硬阈值（Steps 1–4）；
+- 脚本退出码 = E2E 验收脚本退出码（任一步失败 exit ≠ 0）；
+- 输出归档到 `${SPRINT_DIR}/run-${TIMESTAMP}/result.json`，含 PROBE_TASK_ID、终态、各步耗时。
 
-**注**：fix 实际位置在 outer caller（main 上 `executor.js` line ~2964–2992 的 `if (task.task_type === 'harness_initiative')` 块），**不是** `runHarnessInitiativeRouter` 函数体内 — 函数体只 stream 子图、写 task_events，状态回写由外层 caller 担责。
+**大小**: M（约 150–250 行 shell + jq）
 
-**大小**：M（脚本 + 1 个测试文件，预计 100–200 行）
+**依赖**: 无
 
-**依赖**：无
-
-**BEHAVIOR 覆盖测试文件**：`tests/ws1/status-writeback.test.ts`
+**BEHAVIOR 覆盖测试文件**: `tests/ws1/probe-status-writeback.test.ts`
 
 ---
 
-### Workstream 2: dispatcher 防回路 + 单元守护（Step 4–5）
+### Workstream 2: 单元层守护断言（fallback）
 
-**范围**：
-- 写一个 bash 脚本 `sprints/golden-path-verify-20260507/scripts/check-no-redispatch-and-units.sh`，执行 Step 4（dispatch_count ≤ 1）+ Step 5（PR #2816 单元守护 4 项 PASS）。
-- 写 vitest 测试 `sprints/golden-path-verify-20260507/tests/ws2/no-regression.test.ts`，断言 PR #2816 单元文件存在、`it()` 数量 ≥ 4、文件名匹配 PRD（防止被偷偷删/改名）。
-- 不修改 `packages/brain/src/executor.js`、不修改 PR #2816 自带测试。
+**范围**:
+- 跑 PR #2816 自带 `executor-harness-initiative-status-writeback.test.js`；
+- 该文件不存在时 → 在 `tests/ws2/` 下补 4 项 BEHAVIOR 单元测试，覆盖：
+  1. `runHarnessInitiativeRouter` 收到 `final={}`（无 error）→ 返回 `ok=true`；
+  2. 收到 `final={error:'evaluator_fail'}` → 返回 `ok=false, finalState.error='evaluator_fail'`；
+  3. compiled.stream 抛 AbortError（watchdog）→ 写 `task.failure_class='watchdog_deadline'`，返回 `ok=false, error='watchdog_deadline'`；
+  4. compiled.stream 抛任意未知异常 → 异常向上抛（被外层 caller catch），不污染 task row；
+- 复跑 dispatcher 现有 `dispatcher-default-graph.test.js`，确认 dispatcher 不会重选 status=completed/failed 的 task。
 
-**大小**：S（< 100 行）
+**大小**: M（约 150–250 行 TS + vitest）
 
-**依赖**：Workstream 1 完成后（Step 4 的 SQL 依赖 Step 3 跑完确定 started_at 边界）
+**依赖**: 与 WS1 并行；E2E 脚本里 Step 5 依赖 WS2 产物存在。
 
-**BEHAVIOR 覆盖测试文件**：`tests/ws2/no-regression.test.ts`
+**BEHAVIOR 覆盖测试文件**: `tests/ws2/status-writeback-unit.test.ts`
 
 ---
 
@@ -280,16 +360,27 @@ workstream_count: 2
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/status-writeback.test.ts` | 外层 caller 含 `updateTaskStatus(task.id,'completed')`、`updateTaskStatus(task.id,'failed')`（含 catch 块）；所有 return 写 `success: true`；锚定 PRD 目标 task_id | 当前分支 base 未含 PR #2816 fix → 源码块中找不到 `updateTaskStatus` → toMatch FAIL |
-| WS2 | `tests/ws2/no-regression.test.ts` | PR #2816 守护文件存在；含 ≥4 个 `it(`；脚本含 `tick_decisions` + dispatch_count ≤ 1 + 守护文件路径 + IT_COUNT ≥ 4 | 当前分支无 PR #2816 守护文件、Generator 尚未产出 scripts/ → fs.existsSync = false → expect FAIL |
+| WS1 | `tests/ws1/probe-status-writeback.test.ts` | (a) 探针任务在 6min 内被 dispatcher 拉起；(b) graph 至少 emit 1 个 node update 后停手；(c) 探针终态 ∈ {completed, failed} 且 completed_at >= started_at；(d) 终态后 10min 不被重新派发 | WS1 → 4 failures（脚本未实现 / 探针注入失败 / 终态判定失败 / 重派检测失败） |
+| WS2 | `tests/ws2/status-writeback-unit.test.ts` | (a) graph success → router ok=true；(b) graph error → router ok=false；(c) watchdog → 写 failure_class；(d) 未知异常 → 不静默吞 | WS2 → 4 failures（mock 未搭好 / 4 项断言全红） |
 
 ---
 
-## 反作弊与硬阈值说明（GAN 重点）
+## 验证命令规范自检（GAN 对抗焦点 — Reviewer 重点）
 
-- 所有 `count(*)` 查询都加了时间窗口（`task_events`: 24h；`tick_decisions`: 自 `started_at` 起算 -1min 容差），防止"手动 INSERT 一行造假通过"。
-- Step 3 不只断言 `status ∈ {completed, failed}`，**还断言 `updated_at >= started_at`**，防止"用 INSERT 一行 completed 的旧记录骗过"。
-- Step 4 的 `tick_decisions` 查询用 `decision->>'task_id'` 精确匹配，并以 `started_at` 为下界，避免抓到无关历史记录。
-- Step 5 强制 `it(` 计数 ≥ 4，防止"删掉 3 个 it 让最后 1 个绿成全绿"。
-- `psql` 全部用 `-tA`（tuples-only + unaligned）拿干净值；`grep -E ... || exit 1` 链式失败立即退出。
-- `curl` 调用（如有）须加 `-f`（HTTP 5xx 才返回非 0）——本合同主要走 psql，不依赖 curl。
+- [x] 所有 `SELECT count(*)` 都带时间窗口（`created_at > NOW() - interval 'X minutes'` / `ts_start > NOW() - interval 'X minutes'`），防止历史数据污染或手动 INSERT 造假；
+- [x] 时间戳比较用 SQL `(completed_at >= started_at)`，规避 shell 字符串/时区造假；
+- [x] 没有 `echo "ok"` / `true` 假绿验证；
+- [x] `$PROBE_TASK_ID` 在 Step 1 注入后才被引用，`$DB` 由 cecelia-run 注入或 fallback `postgresql://localhost/cecelia`；
+- [x] 探针用 fresh task 而非复用 `84075973-...`，避免"自指悖论"（meta-recursive 任务永远 in_progress）；
+- [x] 终态判定接受 `{completed, failed}` 双终态，匹配 PRD"FAIL 也算闭环"；
+- [x] Step 4 观察窗 = 10min（覆盖至少 2 个 5min tick 周期），避开"恰好这一 tick 没拉到所以假绿"；
+- [x] Step 5 双路径设计应对 PRD 引用的 unit test 文件可能不存在的现实（避免 hard-coded 文件路径假绿）。
+
+---
+
+## 已知 PRD 风险登记（Risks Registered）
+
+供 Reviewer 评估"是否需打回 PRD"：
+
+1. **PR #2816 引用的测试文件 `executor-harness-initiative-status-writeback.test.js` 在当前 main 上不存在**（已 grep 确认）。Step 5 用 fallback 路径处理，但 PRD 假设可能不成立 → 建议 Reviewer 让 Planner 在下一轮明确：是 PRD 写错了文件名 / PR 没合上去 / 还是该测试本就要本 Sprint 自补。
+2. **executor.js 的 harness_initiative 分支（lines 2964–2982）当前未直接调用 `updateTaskStatus`**——它返回 `{success: result.ok}`，由 dispatcher（line 480-495）按 `success` 判断"失败回退 queued / 成功放手"。状态 `completed/failed` 的实际写入路径可能在 callback worker / monitor-loop / run_events reconciler。本合同的 Step 3 只断言"终态可见"，不断言"由谁写"，对实现路径保持中立——这是优势（端到端不在意中间链路）也是风险（如果终态由 monitor-loop 兜底而非 executor 主动写，PRD 描述的"修复路径"就和现实有偏差）。建议 Reviewer 决定是否要求合同细化为"由 executor 主动调 updateTaskStatus"。

@@ -1,0 +1,42 @@
+{
+  "initiative_id": "84075973-99a4-4a0d-9a29-4f0cd8b642f5",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动只涉及 packages/brain/src/executor.js 的 runtime 状态回写行为，无 UI、无 dev-pipeline hooks/skills、无远端 agent 协议变化，纯 Brain 自动运行链路。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "端到端探针：注入 fresh harness_initiative 任务并断言 4 步硬阈值",
+      "scope": "在 scripts/ 下编写 probe-harness-initiative-writeback.sh：注入 fresh harness_initiative 探针任务（payload._probe=true，避免与真实 84075973-... 自指）→ 等 dispatcher 拉起 → 等 graph 至少 emit 1 个 graph_node_update event → 等 graph 静默 5min → 等 status writeback 落地 → 断言终态 ∈ {completed, failed} 且 completed_at >= started_at（用 SQL 比时间戳）→ 再观察 10min 确认 dispatcher 不重派。脚本归档运行结果到 sprints/golden-path-verify-20260507/run-${TIMESTAMP}/result.json。",
+      "dod": [
+        "[ARTIFACT] scripts/probe-harness-initiative-writeback.sh 存在且含 set -euo pipefail",
+        "[ARTIFACT] 脚本含 4 步关键关键字：INSERT INTO tasks / graph_node_update / completed_at / tick_decisions",
+        "[BEHAVIOR] tests/ws1/probe-status-writeback.test.ts 4 项断言全 PASS（脚本结构合同：fresh task / 时间窗口 / SQL 时间戳比较 / 10min anti-requeue 观察）",
+        "[BEHAVIOR] 脚本本地真实跑一次 exit 0，归档目录非空 result.json 含 PROBE_TASK_ID + 终态字段"
+      ],
+      "files": [
+        "scripts/probe-harness-initiative-writeback.sh",
+        "sprints/golden-path-verify-20260507/tests/ws1/probe-status-writeback.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "单元层守护断言（fallback）：runHarnessInitiativeRouter 4 个边界",
+      "scope": "若 packages/brain/src/__tests__/executor-harness-initiative-status-writeback.test.js 在 main 上不存在（现状已 grep 确认不存在），则在 sprints/golden-path-verify-20260507/tests/ws2/ 下补 4 项 BEHAVIOR 单元测试覆盖：(1) graph final 无 error → router ok=true；(2) graph final.error → router ok=false 且 finalState.error 透传；(3) compiled.stream 抛 AbortError → 写 task.failure_class=watchdog_deadline 并 ok=false；(4) compiled.stream 抛任意未知异常 → 异常上抛不静默吞。测试需通过 vi.mock 把 getPgCheckpointer / pool 全 mock 掉，让 router 不依赖真 DB。",
+      "dod": [
+        "[ARTIFACT] tests/ws2/status-writeback-unit.test.ts 存在，import 真实 packages/brain/src/executor.js 的 runHarnessInitiativeRouter（不是 stub）",
+        "[ARTIFACT] 测试至少 4 个 it() 块，且包含 watchdog / AbortError / failure_class 关键字",
+        "[BEHAVIOR] 4 项断言全 PASS（vitest run tests/ws2/ exit 0，passed>=4 failed=0）",
+        "[BEHAVIOR] 至少有 1 个断言验证 pool.query 被以 SET ... failure_class ... watchdog_deadline ... 模式调用"
+      ],
+      "files": [
+        "sprints/golden-path-verify-20260507/tests/ws2/status-writeback-unit.test.ts"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}

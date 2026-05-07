@@ -2,35 +2,33 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: 端到端 status 终态化观测器
+# Contract DoD — Workstream 1: 端到端真实运行 + DB 终态断言
 
-**范围**：脚本 + 测试，端到端运行 / 观察 `harness_initiative` 任务后 DB 行的终态化与时间单调性。
-**大小**：M
-**依赖**：无
+**范围**: 编写探针脚本 + 真实跑 + 4 步硬阈值断言 + 结果归档
+**大小**: M（约 150–250 行 shell + jq）
+**依赖**: 无
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 验证脚本存在并可执行
-  Test: bash -c 'test -x sprints/golden-path-verify-20260507/scripts/verify-status-terminal.sh || exit 1'
+- [ ] [ARTIFACT] 探针脚本存在
+  Test: `node -e "require('fs').accessSync('scripts/probe-harness-initiative-writeback.sh')"`
 
-- [ ] [ARTIFACT] 验证脚本含 Step 1 入口断言（`task_type='harness_initiative'` + `started_at IS NOT NULL`）
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/scripts/verify-status-terminal.sh','utf8');if(!c.includes(\"task_type='harness_initiative'\")||!c.includes('started_at'))process.exit(1)"
+- [ ] [ARTIFACT] 探针脚本含 4 步硬阈值（INSERT、graph_node_update、终态、anti-requeue）
+  Test: `node -e "const c=require('fs').readFileSync('scripts/probe-harness-initiative-writeback.sh','utf8');for(const k of ['INSERT INTO tasks','graph_node_update','completed_at','tick_decisions'])if(!c.includes(k))process.exit(1)"`
 
-- [ ] [ARTIFACT] 验证脚本含 Step 2 子图执行痕迹断言（`task_events` + `graph_node_update` + 24h 时间窗口）
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/scripts/verify-status-terminal.sh','utf8');if(!c.includes('task_events')||!c.includes('graph_node_update')||!c.includes(\"interval '24 hours'\"))process.exit(1)"
+- [ ] [ARTIFACT] 探针脚本含 set -euo pipefail（防止中间步骤静默失败）
+  Test: `node -e "const c=require('fs').readFileSync('scripts/probe-harness-initiative-writeback.sh','utf8');if(!/^\s*set\s+-euo\s+pipefail/m.test(c))process.exit(1)"`
 
-- [ ] [ARTIFACT] 验证脚本含 Step 3 终态 + 时间单调断言（`status IN (completed,failed)` 且 `updated_at >= started_at`）
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/scripts/verify-status-terminal.sh','utf8');if(!c.includes('completed')||!c.includes('failed')||!c.includes('updated_at')||!c.includes('started_at'))process.exit(1)"
+- [ ] [ARTIFACT] 探针脚本归档目录约定到 sprints/golden-path-verify-20260507/run-${TIMESTAMP}/result.json
+  Test: `node -e "const c=require('fs').readFileSync('scripts/probe-harness-initiative-writeback.sh','utf8');if(!c.includes('sprints/golden-path-verify-20260507/run-')||!c.includes('result.json'))process.exit(1)"`
 
-- [ ] [ARTIFACT] vitest 测试文件存在且包含目标 task_id `84075973-99a4-4a0d-9a29-4f0cd8b642f5`
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws1/status-writeback.test.ts','utf8');if(!c.includes('84075973-99a4-4a0d-9a29-4f0cd8b642f5'))process.exit(1)"
+- [ ] [ARTIFACT] 测试文件存在并能被 vitest 识别
+  Test: `node -e "require('fs').accessSync('sprints/golden-path-verify-20260507/tests/ws1/probe-status-writeback.test.ts')"`
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
-见 `tests/ws1/status-writeback.test.ts`，覆盖（静态断言外层 caller 形状，参考 PR #2816 自带测试模式）：
-- 成功路径：`packages/brain/src/executor.js` 的 `if (task.task_type === 'harness_initiative')` 块 try 内含 `updateTaskStatus(task.id, 'completed')`
-- FAIL 路径：同一块 try 内含 `updateTaskStatus(task.id, 'failed', ...)`（携 error_message）
-- 异常路径：同一块 catch 内含 `updateTaskStatus(task.id, 'failed')`，函数不向上抛
-- 防回路：所有 return 路径写 `success: true`（不再 `success: result.ok` / `!final.error`），dispatcher 不会回退 queued
-- PRD 目标 task_id 锚定：本测试文件内字面包含 `84075973-99a4-4a0d-9a29-4f0cd8b642f5`，防 PRD 漂移
-- 端到端层（合同 Step 1–3 的 bash + psql）由 `scripts/verify-status-terminal.sh` 担责，evaluator 在 main（含 PR #2816）上跑
+见 `tests/ws1/probe-status-writeback.test.ts`，覆盖：
+- 探针任务在 6min 内被 dispatcher 拉起（status 脱离 queued）
+- graph 至少 emit 1 个 `graph_node_update` event 后停手（最近 5min 无新 event）
+- 探针任务终态 ∈ `{completed, failed}` 且 `completed_at >= started_at`
+- 终态后 10min 内无活跃 run_events、无 requeue/reschedule tick_decisions、status 不被回滚

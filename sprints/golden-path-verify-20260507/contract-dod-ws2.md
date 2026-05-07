@@ -2,32 +2,33 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 2: dispatcher 防回路 + 单元守护
+# Contract DoD — Workstream 2: 单元层守护断言（fallback）
 
-**范围**：脚本 + 测试，断言 (a) dispatcher 不重复拉起目标 task_id；(b) PR #2816 自带 4 项单元断言不退化。
-**大小**：S
-**依赖**：Workstream 1（Step 4 的 SQL 起点取自 Step 3 落 DB 后的 `started_at`）
+**范围**: 复跑 PR #2816 自带 unit test；该文件不存在时补 4 项 BEHAVIOR 单元测试守护 `runHarnessInitiativeRouter` 行为
+**大小**: M（约 150–250 行 TS + vitest）
+**依赖**: 与 WS1 并行；E2E 脚本 Step 5 依赖本 workstream 产物存在
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 防回路 / 单元守护脚本存在并可执行
-  Test: bash -c 'test -x sprints/golden-path-verify-20260507/scripts/check-no-redispatch-and-units.sh || exit 1'
+- [ ] [ARTIFACT] fallback 测试文件存在
+  Test: `node -e "require('fs').accessSync('sprints/golden-path-verify-20260507/tests/ws2/status-writeback-unit.test.ts')"`
 
-- [ ] [ARTIFACT] 脚本含 dispatch_count ≤ 1 硬阈值断言（针对目标 task_id）
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/scripts/check-no-redispatch-and-units.sh','utf8');if(!c.includes('tick_decisions')||!c.includes('84075973-99a4-4a0d-9a29-4f0cd8b642f5')||!c.match(/-le\s+1|<=\s*1/))process.exit(1)"
+- [ ] [ARTIFACT] 测试 import 真实生产代码 `runHarnessInitiativeRouter`（不是空 stub）
+  Test: `node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws2/status-writeback-unit.test.ts','utf8');if(!c.includes('runHarnessInitiativeRouter')||!c.includes('packages/brain/src/executor.js'))process.exit(1)"`
 
-- [ ] [ARTIFACT] 脚本含 PR #2816 单元守护文件路径 `executor-harness-initiative-status-writeback.test.js`
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/scripts/check-no-redispatch-and-units.sh','utf8');if(!c.includes('executor-harness-initiative-status-writeback.test.js'))process.exit(1)"
+- [ ] [ARTIFACT] 测试至少 4 个 it() 块（对应 PRD 4 个边界情况）
+  Test: `node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws2/status-writeback-unit.test.ts','utf8');const m=c.match(/\\bit\\s*\\(/g)||[];if(m.length<4)process.exit(1)"`
 
-- [ ] [ARTIFACT] 脚本含 it() 计数 ≥ 4 硬阈值（防止偷偷删测试）
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/scripts/check-no-redispatch-and-units.sh','utf8');if(!c.match(/IT_COUNT[\s\S]{0,80}-ge\s+4|>=\s*4/))process.exit(1)"
+- [ ] [ARTIFACT] 测试覆盖 watchdog 分支（grep 关键字）
+  Test: `node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws2/status-writeback-unit.test.ts','utf8');for(const k of ['watchdog','AbortError','failure_class'])if(!c.includes(k))process.exit(1)"`
 
-- [ ] [ARTIFACT] vitest 测试文件存在且引用 PR #2816 守护文件路径
-  Test: node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/tests/ws2/no-regression.test.ts','utf8');if(!c.includes('executor-harness-initiative-status-writeback.test.js'))process.exit(1)"
+- [ ] [ARTIFACT] 文档里写明 PRD 引用的 unit test 文件是否存在的判定逻辑
+  Test: `node -e "const c=require('fs').readFileSync('sprints/golden-path-verify-20260507/contract-draft.md','utf8');if(!c.includes('executor-harness-initiative-status-writeback.test.js'))process.exit(1)"`
 
 ## BEHAVIOR 索引（实际测试在 tests/ws2/）
 
-见 `tests/ws2/no-regression.test.ts`，覆盖：
-- PR #2816 单元守护文件 `packages/brain/src/__tests__/executor-harness-initiative-status-writeback.test.js` 存在
-- 该文件中 `it(` 数量 ≥ 4
-- 脚本 `scripts/check-no-redispatch-and-units.sh` 含 `tick_decisions` SQL 与 `dispatch_count ≤ 1` 阈值
+见 `tests/ws2/status-writeback-unit.test.ts`，覆盖：
+- `runHarnessInitiativeRouter` 收到 graph `final={}`（无 error）→ 返回 `ok=true, finalState.error=undefined`
+- 收到 `final={error:'evaluator_fail'}` → 返回 `ok=false, finalState.error='evaluator_fail'`
+- compiled.stream 抛 AbortError（watchdog deadline）→ 写 `task.failure_class='watchdog_deadline'`，返回 `ok=false, error='watchdog_deadline'`
+- compiled.stream 抛任意未知异常 → 异常向上抛（被外层 caller catch），不污染 task row 的 failure_class 字段
