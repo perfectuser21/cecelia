@@ -1,0 +1,55 @@
+{
+  "initiative_id": "39d535f3-520a-4a92-a2b6-b31645e11664",
+  "journey_type": "autonomous",
+  "journey_type_reason": "主路径完全在 packages/brain 内 LangGraph + Docker + watchdog 自动跑通，主理人只在场景 B 的 interrupt 决策这一步介入（abort）。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "register-and-dispatch.sh — 清残留 + 注册 fixed-UUID harness_initiative + dispatch + tail task_events",
+      "scope": "在 scripts/acceptance/w8-v2/ 下新建 register-and-dispatch.sh：清理 fixed-UUID 残留 SQL → curl 注册 harness_initiative task（payload 含 fixed UUID + sprint_dir + thin_features + budget_usd + timeout_sec）→ POST /:id/dispatch → tail task_events 直到 happy path 终态或超时，结尾打印 DISPATCH_COMPLETE: phase=...",
+      "dod": [
+        "[BEHAVIOR] tests/ws1/register-dispatch.test.ts 9 项全 PASS：脚本存在 + shebang/set -euo pipefail + fixed UUID 清理 SQL + curl -f POST /api/brain/tasks 注册 + /dispatch 调用 + payload 4 关键字段 + task_events tail + DISPATCH_COMPLETE 输出 + bash -n 合法",
+        "[ARTIFACT] scripts/acceptance/w8-v2/register-and-dispatch.sh 存在并可执行（chmod +x）"
+      ],
+      "files": [
+        "scripts/acceptance/w8-v2/register-and-dispatch.sh"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 35
+    },
+    {
+      "task_id": "ws2",
+      "title": "三个故障注入脚本 inject-fault-{a,b,c}.sh（W2/W3/W5/W6 联动验证）",
+      "scope": "在 scripts/acceptance/w8-v2/ 下新建 3 个脚本：A=docker kill SIGKILL → callback_queue.failure_class='docker_oom_killed' → 子任务最终 completed 且 execution_attempts ≥ 2；B=诱导 final E2E FAIL × 3 → interrupt_pending → curl /harness-interrupts → POST /resume body {decision:{action:'abort'}} 期望 HTTP 202 → interrupt_resumed + initiative_runs.phase='failed'；C=UPDATE deadline_at=NOW()-INTERVAL → 6 分钟轮询等 watchdog → phase='failed' + failure_reason='watchdog_overdue' + Brain 日志 [harness-watchdog] flagged 行",
+      "dod": [
+        "[BEHAVIOR] tests/ws2/fault-injection.test.ts 18 项全 PASS：A/B/C 三脚本各自结构性 smoke + 关键命令 token + bash -n 合法",
+        "[ARTIFACT] 3 个脚本文件存在并 chmod +x：scripts/acceptance/w8-v2/inject-fault-a-docker-sigkill.sh / inject-fault-b-max-fix-interrupt.sh / inject-fault-c-watchdog-deadline.sh"
+      ],
+      "files": [
+        "scripts/acceptance/w8-v2/inject-fault-a-docker-sigkill.sh",
+        "scripts/acceptance/w8-v2/inject-fault-b-max-fix-interrupt.sh",
+        "scripts/acceptance/w8-v2/inject-fault-c-watchdog-deadline.sh"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 55
+    },
+    {
+      "task_id": "ws3",
+      "title": "verify-checklist.sh + acceptance 报告 v2",
+      "scope": "新建 scripts/acceptance/w8-v2/verify-checklist.sh 聚合 14 节点 distinct + thin feature PR merged + 3 故障注入终态 + KR +Δ 全部断言（任一失败 exit 1）；新建 docs/superpowers/reports/2026-05-07-harness-langgraph-acceptance-v2.md 含 4 个固定 H2（结论 / 14 节点事件计数 / 故障注入终态 / KR 进度增量）+ 14 节点 nodeName + 3 故障场景章节 + fixed UUID；脚本含 KR 快照兜底逻辑（缺失则当场抓 sprints/w8-langgraph-v2/kr-snapshot-before.json）",
+      "dod": [
+        "[BEHAVIOR] tests/ws3/verify-and-report.test.ts 13 项全 PASS：verify-checklist.sh 5 段断言 + bash -n 合法 + 报告 4 个 H2 + 14 节点 + fixed UUID + 3 故障场景",
+        "[ARTIFACT] scripts/acceptance/w8-v2/verify-checklist.sh 存在并可执行；docs/superpowers/reports/2026-05-07-harness-langgraph-acceptance-v2.md 存在并 commit 到分支"
+      ],
+      "files": [
+        "scripts/acceptance/w8-v2/verify-checklist.sh",
+        "docs/superpowers/reports/2026-05-07-harness-langgraph-acceptance-v2.md"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    }
+  ]
+}
