@@ -62,24 +62,54 @@ export async function ensureHarnessWorktree(opts) {
   const wtPath = path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${sid}`);
 
   if (await statFn(wtPath)) {
+    // 状态机校验（修补 W7.3 cleanupStaleWorktrees race 留下的孤儿 dir）：
+    //   1) rev-parse --is-inside-work-tree → 是不是 git repo
+    //   2) remote get-url origin → origin 是否指向 baseRepo（防孤儿独立 repo）
+    // 任一失败 → rm -rf 整个 dir + 重新 clone
+    //
+    // 为什么需要 (2)：cleanup race 后留下的 dir 里可能有独立的 .git 目录（不是
+    // baseRepo 的 clone），rev-parse 仍返回 true，但 docker mount 这个 worktree
+    // 起容器时会 27ms 内 exit 125（容器初始化失败：缺 origin、无 main 分支）。
+    let isOrphan = false;
     try {
       const { stdout: inside } = await execFn('git', ['-C', wtPath, 'rev-parse', '--is-inside-work-tree']);
-      if (String(inside || '').trim() === 'true') {
-        // 目录已是 git repo；检查当前分支是否已符合 cp-* 规约。
-        // 若是旧的 harness-v2/task-* 分支，强制切到新的 cp-* 分支（保证 Generator 收到合规分支）。
+      if (String(inside || '').trim() !== 'true') {
+        isOrphan = true;
+      } else {
+        // 校验 origin remote URL 必须指向 baseRepo（绝对路径或仓库 URL 任一段匹配）
         try {
-          const { stdout: cur } = await execFn('git', ['-C', wtPath, 'rev-parse', '--abbrev-ref', 'HEAD']);
-          const currentBranch = String(cur || '').trim();
-          if (!/^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/.test(currentBranch)) {
-            logFn(`[harness-worktree] non-cp branch '${currentBranch}' detected at ${wtPath}; checking out ${branch}`);
-            await execFn('git', ['-C', wtPath, 'checkout', '-B', branch]);
+          const { stdout: remoteUrl } = await execFn('git', ['-C', wtPath, 'remote', 'get-url', 'origin']);
+          const url = String(remoteUrl || '').trim();
+          if (!url || !url.includes(baseRepo)) {
+            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' does not match baseRepo='${baseRepo}'; rebuilding`);
+            isOrphan = true;
           }
         } catch (err) {
-          logFn(`[harness-worktree] could not verify branch at ${wtPath}: ${err.message}`);
+          logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin remote missing (${err.message}); rebuilding`);
+          isOrphan = true;
         }
-        return wtPath;
       }
-    } catch { /* not a git repo, fall through to cleanup + re-clone */ }
+    } catch {
+      // not a git repo at all
+      isOrphan = true;
+    }
+
+    if (!isOrphan) {
+      // 目录已是合法 git repo；检查当前分支是否已符合 cp-* 规约。
+      // 若是旧的 harness-v2/task-* 分支，强制切到新的 cp-* 分支（保证 Generator 收到合规分支）。
+      try {
+        const { stdout: cur } = await execFn('git', ['-C', wtPath, 'rev-parse', '--abbrev-ref', 'HEAD']);
+        const currentBranch = String(cur || '').trim();
+        if (!/^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/.test(currentBranch)) {
+          logFn(`[harness-worktree] non-cp branch '${currentBranch}' detected at ${wtPath}; checking out ${branch}`);
+          await execFn('git', ['-C', wtPath, 'checkout', '-B', branch]);
+        }
+      } catch (err) {
+        logFn(`[harness-worktree] could not verify branch at ${wtPath}: ${err.message}`);
+      }
+      return wtPath;
+    }
+
     await rmFn(wtPath);
   }
 
