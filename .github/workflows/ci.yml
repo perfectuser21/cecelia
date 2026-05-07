@@ -1059,6 +1059,15 @@ jobs:
       - name: Base Fresh Lint
         run: bash .github/workflows/scripts/lint-base-fresh.sh "origin/${{ github.base_ref }}"
 
+  lint-bypass-not-committed:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stop Hook BYPASS 反 AI 滥用 lint (layer 1)
+        run: bash scripts/check-bypass-not-committed.sh
+
   lint-tdd-commit-order:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

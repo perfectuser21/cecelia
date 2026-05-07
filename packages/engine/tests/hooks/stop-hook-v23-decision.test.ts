@@ -92,8 +92,11 @@ describe('stop-dev.sh v23 decision matrix', () => {
     expect(r.stdout).not.toMatch(/decision.*block/)
   })
 
-  it('7 BYPASS=1 → release', () => {
+  it('7 BYPASS=1（双因子）→ release（v23.2 双因子升级：env + .bypass-active marker）', () => {
     makeLight(lightsDir, 'abc12345', 'cp-test')
+    // 双因子 layer 3：必须同时有 env 和 fresh marker 文件
+    mkdirSync(join(testRepo, '.cecelia'), { recursive: true })
+    writeFileSync(join(testRepo, '.cecelia/.bypass-active'), '')
     const out = execSync(
       `cd ${testRepo} && echo '{"session_id":"abc12345-x"}' | CLAUDE_HOOK_CWD=${testRepo} CECELIA_STOP_HOOK_BYPASS=1 bash ${HOOK}`,
       { encoding: 'utf8' }

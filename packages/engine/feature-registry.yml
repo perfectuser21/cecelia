@@ -114,6 +114,18 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.26.0"
+    date: "2026-05-07"
+    change: "feat+security"
+    description: "Stop Hook BYPASS 三层防 AI 滥用（cp-0507205729）— 层 1 git lint：scripts/check-bypass-not-committed.sh + CI job 阻止 committed 文件含 BYPASS env 设置（豁免 hook/lib/tests/docs）。层 2 Brain alert：BYPASS 触发时 stop-dev.sh 异步 fire-and-forget POST P0 task 到 Brain，飞书通知用户立即知情。层 3 双因子：env CECELIA_STOP_HOOK_BYPASS=1 + main_repo/.cecelia/.bypass-active marker mtime<30min 必须同时满足才生效；AI 改 ~/.zshrc 单设 env 已无法绕过。新增 V11 invariant 双因子触发。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (双因子检查 + fire_bypass_alert async POST)"
+      - "scripts/check-bypass-not-committed.sh (新建 — git lint，正则只匹配真实 shell 赋值)"
+      - ".github/workflows/ci.yml (lint-bypass-not-committed job)"
+      - "packages/engine/tests/hooks/stop-hook-bypass-3layer.test.ts (新建 4 case)"
+      - "packages/engine/tests/skills/check-bypass-lint.test.ts (新建 2 case)"
+      - "Engine 8 处版本文件 18.25.0 → 18.26.0"
+
   - version: "18.25.0"
     date: "2026-05-07"
     change: "fix+docs"
