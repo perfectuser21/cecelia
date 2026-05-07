@@ -1,9 +1,10 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
-> Round 1 → Reviewer REVISION，本轮处理 3 项反馈：
-> (1) Step 2 加 `langgraph_checkpoints` fallback 防 stream 写表失败导致 distinct < 14；
-> (2) Step 4 在断言 `phase=done` 前先校验 `failure_reason != 'watchdog_overdue'` 并打印 `deadline_at - completed_at` 差值；
-> (3) Test Contract 表加"未实现时具体断言"列、新增"红证据校验命令"段、统一交付测试文件路径。
+> Round 2 → Reviewer REVISION，本轮处理 4 项反馈：
+> (R1) 缺失节点判定时必须打印 PRIMARY_SET + FALLBACK_SET 完整诊断行后 `exit 1`，禁用 sleep 重试掩盖；
+> (R2) `langgraph_checkpoints` 三路 COALESCE 全 NULL 时 dump 一条 `metadata` jsonb 全文便于人检；
+> (R3) Step 5 curl `/health` 失败时先对比 `gh pr view mergedAt` 与 `docker inspect Brain State.StartedAt`，仅当 startedAt < mergedAt 时 sleep 10 重试一次（最多 3 轮），3 轮仍 404 立即 exit 1 并打印两时间戳；
+> (R4) Step 2 与 E2E 脚本的 fallback SQL 抽成共享 shell 函数 `count_distinct_nodes_in_checkpoints()` / `dump_checkpoint_metadata_sample()` / `wait_for_brain_with_pr_merge()` 复用。
 
 ---
 
@@ -14,8 +15,8 @@
 | 角色 | 路径 | 何时存在 | 谁写入 |
 |---|---|---|---|
 | **唯一最终交付测试** | `tests/integration/harness-health.test.ts` | 合并到 main | Generator（commit 2）从 `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts` 复制内容 |
-| **GAN 红证据 scaffold** | `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts` | 仅在 sprint 分支 | Proposer（本轮）；commit 1 阶段保留为审计 |
-| **GAN 红证据 scaffold（WS1）** | `sprints/w8-langgraph-acceptance/tests/ws1/harness-health-endpoint.test.ts` | 仅在 sprint 分支 | Proposer（本轮） |
+| **GAN 红证据 scaffold** | `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts` | 仅在 sprint 分支 | Proposer（round 1）；commit 1 阶段保留为审计 |
+| **GAN 红证据 scaffold（WS1）** | `sprints/w8-langgraph-acceptance/tests/ws1/harness-health-endpoint.test.ts` | 仅在 sprint 分支 | Proposer（round 1） |
 
 **规则**：所有 PRD / 合同 / DoD / task-plan 指代"集成测试文件"时，唯一路径 = `tests/integration/harness-health.test.ts`。Sprint dir 下的 `tests/ws{N}/*.test.ts` 仅用于 GAN 红证据校验（vitest 跑见下文），不进 main。
 
@@ -24,6 +25,29 @@
 - **task_type**: `harness_initiative`
 - **journey_type**: `autonomous`
 - **journey_type_reason**: 仅改 packages/brain/，Brain 单进程内 LangGraph 自驱的"管家闭环"端到端验收。
+
+---
+
+## 共享 Shell Helpers（处理 R4：消除 fallback SQL 粘贴漂移）
+
+为彻底消除"在合同两处粘贴等价 SQL"的漂移风险，本轮把 4 个 helper 抽到独立可被 source 的真实文件：
+
+**SSOT 路径**：`sprints/w8-langgraph-acceptance/helpers.sh`（本轮 commit 落盘，含全部函数实现）
+
+| 函数 | 责任 | 调用方 |
+|---|---|---|
+| `count_distinct_nodes_in_checkpoints <thread_id> [window]` | psql 计数 langgraph_checkpoints COALESCE 三路 distinct nodeName | Step 2 + E2E §Step 2 |
+| `list_distinct_nodes_in_checkpoints <thread_id> [window]` | psql 取 fallback 集合（逗号分隔字母序） | Step 2 + E2E §Step 2 |
+| `dump_checkpoint_metadata_sample <thread_id>` | jsonb_pretty(metadata) + jsonb_pretty(channel_values) sample（R2） | Step 2 + E2E §Step 2 |
+| `wait_for_brain_with_pr_merge <url> <pr_num> [container]` | curl /health；失败比对 mergedAt vs StartedAt；started<merged → sleep 10 重试≤3轮；started≥merged 仍 404 → exit 1（R3） | Step 5 + E2E §Step 5 |
+
+**调用约定**（所有验证命令统一）：
+```bash
+source sprints/w8-langgraph-acceptance/helpers.sh
+# 然后调用 helper 函数，禁止内联同等 SQL
+```
+
+> 函数实现详见 `sprints/w8-langgraph-acceptance/helpers.sh`（SSOT）。本合同不再重复粘贴函数体；任何调用方与 SSOT 不一致 → Reviewer 判 R4 未修复。
 
 ---
 
@@ -39,7 +63,6 @@
 
 **验证命令**:
 ```bash
-# 假设 INITIATIVE_ID 已 export
 INITIATIVE_ID="w8-langgraph-acceptance-20260507"
 psql "$DB" -At -c "
   SELECT thread_id, phase
@@ -64,89 +87,97 @@ grep -E "^harness-initiative:w8-langgraph-acceptance-20260507:[0-9]+\|" /tmp/w8-
 
 **可观测行为**: stream mode（W4）逐节点 emit `graph_node_update` 写入 `task_events` 表；每个节点至少一次出现，命名严格匹配 14 节点列表。
 
-**验证命令**:
+**验证命令**（依赖共享 helpers，严禁内联粘贴 SQL — R4）：
 ```bash
 INITIATIVE_ID="w8-langgraph-acceptance-20260507"
+WINDOW="60 minutes"
 
-# 主路径：task_events 表（W4 stream emitter 写入）
-psql "$DB" -At -c "
+# 引入共享 helpers
+source sprints/w8-langgraph-acceptance/helpers.sh  # helper-1..4 的实现
+
+# ---- 主路径：task_events 表 ----
+DISTINCT_PRIMARY=$(psql "$DB" -At -c "
   SELECT count(DISTINCT payload->>'nodeName')
     FROM task_events
    WHERE event_type='graph_node_update'
      AND payload->>'initiativeId'='${INITIATIVE_ID}'
-     AND created_at > NOW() - interval '60 minutes'
-" | tee /tmp/w8-step2-distinct.out
-DISTINCT_PRIMARY=$(cat /tmp/w8-step2-distinct.out | tr -d ' ')
+     AND created_at > NOW() - interval '${WINDOW}'
+" | tr -d ' ')
 
-# Fallback 路径：langgraph_checkpoints 表（PostgresSaver 每个节点结束写一次 checkpoint，按 thread_id 过滤）
-# 处理反馈(1)：若 stream emitter 写 task_events 失败导致 < 14，仍可由 PostgresSaver 兜底证明 14 节点真实跑过
-THREAD_ID=$(psql "$DB" -At -c "
-  SELECT thread_id FROM initiative_runs
-   WHERE initiative_id='${INITIATIVE_ID}'
-     AND created_at > NOW() - interval '60 minutes'
-   ORDER BY created_at DESC LIMIT 1
-")
-DISTINCT_FALLBACK=0
-if [ -n "$THREAD_ID" ]; then
-  # langgraph_checkpoints metadata->>'source' 携带刚跑完的 nodeName（LangGraph PostgresSaver 1.x 行为）
-  DISTINCT_FALLBACK=$(psql "$DB" -At -c "
-    SELECT count(DISTINCT COALESCE(
-             metadata->>'source',
-             metadata->'writes'->-1->>0,
-             checkpoint->'channel_values'->>'__node__'
-           ))
-      FROM langgraph_checkpoints
-     WHERE thread_id='${THREAD_ID}'
-       AND created_at > NOW() - interval '60 minutes'
-  " | tr -d ' ')
-fi
-echo "PRIMARY=$DISTINCT_PRIMARY FALLBACK=$DISTINCT_FALLBACK"
-
-# 至少一条路径满足 ≥ 14
-if [ "$DISTINCT_PRIMARY" -lt 14 ] && [ "$DISTINCT_FALLBACK" -lt 14 ]; then
-  echo "FAIL: primary=$DISTINCT_PRIMARY fallback=$DISTINCT_FALLBACK 双路均 < 14"
-  exit 1
-fi
-
-# 进一步：验证 14 个节点名集合完全覆盖（先查主路径，主路径不全则查 fallback）
-NODES_SET=$(psql "$DB" -At -c "
+PRIMARY_SET=$(psql "$DB" -At -c "
   SELECT string_agg(DISTINCT payload->>'nodeName', ',' ORDER BY payload->>'nodeName')
     FROM task_events
    WHERE event_type='graph_node_update'
      AND payload->>'initiativeId'='${INITIATIVE_ID}'
-     AND created_at > NOW() - interval '60 minutes'
+     AND created_at > NOW() - interval '${WINDOW}'
 ")
-echo "$NODES_SET" | tee /tmp/w8-step2-set.out
 
+# ---- Fallback 路径：langgraph_checkpoints 表（helper-1/2 复用，R4） ----
+THREAD_ID=$(psql "$DB" -At -c "
+  SELECT thread_id FROM initiative_runs
+   WHERE initiative_id='${INITIATIVE_ID}'
+     AND created_at > NOW() - interval '${WINDOW}'
+   ORDER BY created_at DESC LIMIT 1
+")
+DISTINCT_FALLBACK=$(count_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
+FALLBACK_SET=$(list_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
+
+echo "[Step 2 诊断] PRIMARY=$DISTINCT_PRIMARY FALLBACK=$DISTINCT_FALLBACK"
+echo "[Step 2 诊断] PRIMARY_SET=$PRIMARY_SET"
+echo "[Step 2 诊断] FALLBACK_SET=$FALLBACK_SET"
+
+# ---- R2 兜底：fallback 表行存在但 distinct=0（即 COALESCE 三路全 NULL） → dump metadata 全文 ----
+FALLBACK_ROWCOUNT=0
+if [ -n "$THREAD_ID" ]; then
+  FALLBACK_ROWCOUNT=$(psql "$DB" -At -c "
+    SELECT count(*) FROM langgraph_checkpoints WHERE thread_id='${THREAD_ID}'
+  " | tr -d ' ')
+fi
+if [ "$FALLBACK_ROWCOUNT" -gt 0 ] && [ "$DISTINCT_FALLBACK" -eq 0 ]; then
+  echo "[Step 2 R2 兜底] langgraph_checkpoints 有 $FALLBACK_ROWCOUNT 行但 distinct=0；schema 漂移嫌疑，dump 样本："
+  dump_checkpoint_metadata_sample "$THREAD_ID"
+fi
+
+# ---- 至少一条路径满足 ≥ 14 ----
+if [ "$DISTINCT_PRIMARY" -lt 14 ] && [ "$DISTINCT_FALLBACK" -lt 14 ]; then
+  echo "FAIL Step 2: 主路径与 fallback 双路均 < 14"
+  echo "             PRIMARY=$DISTINCT_PRIMARY (set=$PRIMARY_SET)"
+  echo "             FALLBACK=$DISTINCT_FALLBACK (set=$FALLBACK_SET)"
+  exit 1
+fi
+
+# ---- 必现节点逐个核（R1：诊断行后 exit 1，不 sleep 重试） ----
+NEED_NODES="prep planner parsePrd ganLoop inferTaskPlan dbUpsert pick_sub_task run_sub_task evaluate advance retry terminal_fail final_evaluate report"
 MISSING=""
-for NODE in prep planner parsePrd ganLoop inferTaskPlan dbUpsert pick_sub_task run_sub_task evaluate advance final_evaluate report; do
-  if ! echo "$NODES_SET" | grep -qw "$NODE"; then
+for NODE in $NEED_NODES; do
+  IN_PRIMARY=0; IN_FALLBACK=0
+  echo "$PRIMARY_SET"  | tr ',' '\n' | grep -Fxq "$NODE" && IN_PRIMARY=1
+  echo "$FALLBACK_SET" | tr ',' '\n' | grep -Fxq "$NODE" && IN_FALLBACK=1
+  if [ "$IN_PRIMARY" -eq 0 ] && [ "$IN_FALLBACK" -eq 0 ]; then
     MISSING="$MISSING $NODE"
   fi
 done
 
-if [ -n "$MISSING" ] && [ -n "$THREAD_ID" ]; then
-  # 主路径缺失，去 fallback 表再确认一次
-  FALLBACK_SET=$(psql "$DB" -At -c "
-    SELECT string_agg(DISTINCT COALESCE(
-             metadata->>'source',
-             metadata->'writes'->-1->>0,
-             checkpoint->'channel_values'->>'__node__'
-           ), ',' ORDER BY 1)
-      FROM langgraph_checkpoints
-     WHERE thread_id='${THREAD_ID}'
-  ")
-  echo "FALLBACK_SET=$FALLBACK_SET"
-  for NODE in $MISSING; do
-    echo "$FALLBACK_SET" | grep -qw "$NODE" || { echo "FAIL: node '$NODE' 主路径与 fallback 均缺失"; exit 1; }
-  done
+if [ -n "$MISSING" ]; then
+  # R1：完整诊断行后立即 exit 1，禁止 sleep 重试掩盖
+  echo "FAIL Step 2: 缺失节点（主路径与 fallback 集合均无）"
+  echo "[Step 2 诊断] MISSING_NODES=${MISSING# }"
+  echo "[Step 2 诊断] PRIMARY_SET={${PRIMARY_SET}}"
+  echo "[Step 2 诊断] FALLBACK_SET={${FALLBACK_SET}}"
+  echo "[Step 2 诊断] THREAD_ID=$THREAD_ID  WINDOW=$WINDOW"
+  exit 1
 fi
+
+echo "OK Step 2: 14 节点全部至少在 PRIMARY 或 FALLBACK 出现"
 ```
 
 **硬阈值**:
-- 主路径 `task_events.count(DISTINCT payload->>'nodeName') >= 14` **或** Fallback `langgraph_checkpoints` 里去重后的 `nodeName` 数 ≥ 14（窗口 60 分钟内）
-- 12 个必现节点（prep/planner/parsePrd/ganLoop/inferTaskPlan/dbUpsert/pick_sub_task/run_sub_task/evaluate/advance/final_evaluate/report）至少在两路其一存在
+- 主路径 `task_events.count(DISTINCT payload->>'nodeName') >= 14` **或** Fallback `langgraph_checkpoints` 里去重后的 `nodeName` 数 ≥ 14（窗口 60 分钟）
+- 14 个节点（prep / planner / parsePrd / ganLoop / inferTaskPlan / dbUpsert / pick_sub_task / run_sub_task / evaluate / advance / retry / terminal_fail / final_evaluate / report）至少在两路其一存在
 - 时间窗口 `created_at > NOW() - interval '60 minutes'` 防造假
+- **R1 — 缺失时立即 exit 1，打印 PRIMARY_SET + FALLBACK_SET + MISSING + THREAD_ID 完整诊断行；禁止 sleep 重试掩盖**
+- **R2 — fallback 行存在但 distinct=0（COALESCE 三路全 NULL）→ 自动 dump 一条 metadata jsonb 全文**
+- **R4 — 复用 `count_distinct_nodes_in_checkpoints` / `list_distinct_nodes_in_checkpoints` / `dump_checkpoint_metadata_sample`，禁止内联 SQL**
 
 ---
 
@@ -186,6 +217,9 @@ gh pr diff "$PR_NUM" --name-only | grep -qE '^packages/brain/src/routes/harness\
 git fetch origin main >/dev/null
 git show origin/main:packages/brain/src/routes/harness.js | grep -qE "router\.get\(\s*['\"]/health['\"]" \
   || { echo "FAIL: main 上 harness.js 不含 GET /health handler"; exit 1; }
+
+# 暴露 PR_NUM 供 Step 5 重启时序兜底使用
+export W8_PR_NUM="$PR_NUM"
 ```
 
 **硬阈值**:
@@ -193,6 +227,7 @@ git show origin/main:packages/brain/src/routes/harness.js | grep -qE "router\.ge
 - `gh pr view --json state` 返回 `MERGED`
 - PR diff name-only 含 `packages/brain/src/routes/harness.js`
 - `origin/main` 当前 HEAD 上 harness.js 含正则 `router\.get\(\s*['"]/health['"]`
+- 导出 `W8_PR_NUM` 供 Step 5 `wait_for_brain_with_pr_merge` 使用（R3）
 
 ---
 
@@ -276,11 +311,18 @@ psql "$DB" -At -c "
 
 **可观测行为**: staging Brain（端口 5222）上 `GET /api/brain/harness/health` 返回 HTTP 200，body JSON 含 `langgraph_version`（非空字符串）+ `last_attempt_at`（ISO 8601 字符串或 null）+ `nodes`（含 14 节点字符串数组）。
 
-**验证命令**:
+**验证命令**（处理 R3：Brain 重启时序兜底，复用 helper-4）：
 ```bash
-# staging 端口 5222；scripts/harness-e2e-up.sh 已起环境且重启 Brain 拉新 PR
-RESP=$(curl -fsS http://localhost:5222/api/brain/harness/health) \
-  || { echo "FAIL: HTTP non-200"; exit 1; }
+# staging 端口 5222；scripts/harness-e2e-up.sh 已起环境且会重启 Brain 拉新 PR
+# Step 3 已 export W8_PR_NUM
+source sprints/w8-langgraph-acceptance/helpers.sh
+STAGING_BRAIN="${STAGING_BRAIN:-http://localhost:5222}"
+BRAIN_CONTAINER="${BRAIN_CONTAINER:-cecelia-brain-staging}"
+
+[ -n "${W8_PR_NUM:-}" ] || { echo "FAIL Step 5: 未取到 W8_PR_NUM（Step 3 应已 export）"; exit 1; }
+
+# helper-4 内部：curl /health → 失败时比对 mergedAt vs StartedAt → started<merged 才 sleep 10 重试，最多 3 轮
+RESP=$(wait_for_brain_with_pr_merge "$STAGING_BRAIN" "$W8_PR_NUM" "$BRAIN_CONTAINER")
 
 echo "$RESP" | jq -e '
   (.langgraph_version | type=="string" and length>0)
@@ -308,6 +350,10 @@ echo "$RESP" | jq -e '
 - `langgraph_version` 是非空字符串（防 `""` / `null` 假绿）
 - `last_attempt_at` 是 ISO 8601 或 null（防 epoch 整数等错误格式）
 - `nodes` 数组长度 ≥ 14 且 14 个具体节点名全部覆盖
+- **R3 — curl 失败时必须先比对 `gh pr view --json mergedAt` 与 `docker inspect $BRAIN_CONTAINER --format '{{.State.StartedAt}}'`**：
+  - `started_ts < merged_ts` → `sleep 10` 重试，最多 3 轮
+  - `started_ts >= merged_ts` 但仍非 200 → 立即 `exit 1` 并打印两时间戳（这是新镜像里就没 handler，重试无意义）
+  - 3 轮重试仍 404 → `exit 1` 并打印两时间戳
 
 ---
 
@@ -315,7 +361,7 @@ echo "$RESP" | jq -e '
 
 **journey_type**: `autonomous`
 
-**完整验证脚本**:
+**完整验证脚本**（**完全复用** `sprints/w8-langgraph-acceptance/helpers.sh`，禁止内联 fallback SQL — R4）：
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -323,12 +369,17 @@ set -euo pipefail
 INITIATIVE_ID="w8-langgraph-acceptance-20260507"
 DB="${DB:-postgresql://localhost/cecelia}"
 STAGING_BRAIN="${STAGING_BRAIN:-http://localhost:5222}"
+BRAIN_CONTAINER="${BRAIN_CONTAINER:-cecelia-brain-staging}"
+WINDOW="60 minutes"
+
+# 强制引入共享 helpers，避免两处粘贴漂移（R4）
+source sprints/w8-langgraph-acceptance/helpers.sh
 
 echo "==> Step 1: initiative_runs.thread_id 已写入"
 THREAD_ID=$(psql "$DB" -At -c "
   SELECT thread_id FROM initiative_runs
    WHERE initiative_id='${INITIATIVE_ID}'
-     AND created_at > NOW() - interval '60 minutes'
+     AND created_at > NOW() - interval '${WINDOW}'
    ORDER BY created_at DESC LIMIT 1
 ")
 echo "$THREAD_ID" | grep -qE "^harness-initiative:${INITIATIVE_ID}:[0-9]+$" \
@@ -340,53 +391,68 @@ DISTINCT_PRIMARY=$(psql "$DB" -At -c "
     FROM task_events
    WHERE event_type='graph_node_update'
      AND payload->>'initiativeId'='${INITIATIVE_ID}'
-     AND created_at > NOW() - interval '60 minutes'
+     AND created_at > NOW() - interval '${WINDOW}'
+" | tr -d ' ')
+PRIMARY_SET=$(psql "$DB" -At -c "
+  SELECT string_agg(DISTINCT payload->>'nodeName', ',' ORDER BY payload->>'nodeName')
+    FROM task_events
+   WHERE event_type='graph_node_update'
+     AND payload->>'initiativeId'='${INITIATIVE_ID}'
+     AND created_at > NOW() - interval '${WINDOW}'
 ")
-DISTINCT_FALLBACK=0
+
+# helper-1/2 复用（R4）
+DISTINCT_FALLBACK=$(count_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
+FALLBACK_SET=$(list_distinct_nodes_in_checkpoints "$THREAD_ID" "$WINDOW")
+
+echo "    PRIMARY=$DISTINCT_PRIMARY  FALLBACK=$DISTINCT_FALLBACK"
+echo "    PRIMARY_SET=$PRIMARY_SET"
+echo "    FALLBACK_SET=$FALLBACK_SET"
+
+# R2 兜底
+FALLBACK_ROWCOUNT=0
 if [ -n "$THREAD_ID" ]; then
-  DISTINCT_FALLBACK=$(psql "$DB" -At -c "
-    SELECT count(DISTINCT COALESCE(
-             metadata->>'source',
-             metadata->'writes'->-1->>0,
-             checkpoint->'channel_values'->>'__node__'
-           ))
-      FROM langgraph_checkpoints
-     WHERE thread_id='${THREAD_ID}'
-       AND created_at > NOW() - interval '60 minutes'
-  ")
+  FALLBACK_ROWCOUNT=$(psql "$DB" -At -c "
+    SELECT count(*) FROM langgraph_checkpoints WHERE thread_id='${THREAD_ID}'
+  " | tr -d ' ')
 fi
-echo "    primary=$DISTINCT_PRIMARY fallback=$DISTINCT_FALLBACK"
+if [ "$FALLBACK_ROWCOUNT" -gt 0 ] && [ "$DISTINCT_FALLBACK" -eq 0 ]; then
+  echo "[E2E R2 兜底] langgraph_checkpoints 有 $FALLBACK_ROWCOUNT 行但 distinct=0；schema 漂移嫌疑，dump："
+  dump_checkpoint_metadata_sample "$THREAD_ID"
+fi
+
 if [ "$DISTINCT_PRIMARY" -lt 14 ] && [ "$DISTINCT_FALLBACK" -lt 14 ]; then
   echo "FAIL Step 2: 主路径与 fallback 双路均 < 14"
+  echo "             PRIMARY=$DISTINCT_PRIMARY (set=$PRIMARY_SET)"
+  echo "             FALLBACK=$DISTINCT_FALLBACK (set=$FALLBACK_SET)"
   exit 1
 fi
-for NODE in prep planner parsePrd ganLoop inferTaskPlan dbUpsert pick_sub_task run_sub_task evaluate advance final_evaluate report; do
-  EXISTS_PRIMARY=$(psql "$DB" -At -c "
-    SELECT count(*) FROM task_events
-     WHERE event_type='graph_node_update'
-       AND payload->>'initiativeId'='${INITIATIVE_ID}'
-       AND payload->>'nodeName'='$NODE'
-       AND created_at > NOW() - interval '60 minutes'
-  ")
-  if [ "$EXISTS_PRIMARY" -lt 1 ]; then
-    EXISTS_FALLBACK=$(psql "$DB" -At -c "
-      SELECT count(*) FROM langgraph_checkpoints
-       WHERE thread_id='${THREAD_ID}'
-         AND COALESCE(
-               metadata->>'source',
-               metadata->'writes'->-1->>0,
-               checkpoint->'channel_values'->>'__node__'
-             )='$NODE'
-    ")
-    [ "$EXISTS_FALLBACK" -ge 1 ] || { echo "FAIL Step 2: node '$NODE' 主路径与 fallback 均缺失"; exit 1; }
+
+# R1：缺失节点诊断行 + exit 1，禁止 sleep 重试
+NEED_NODES="prep planner parsePrd ganLoop inferTaskPlan dbUpsert pick_sub_task run_sub_task evaluate advance retry terminal_fail final_evaluate report"
+MISSING=""
+for NODE in $NEED_NODES; do
+  IN_PRIMARY=0; IN_FALLBACK=0
+  echo "$PRIMARY_SET"  | tr ',' '\n' | grep -Fxq "$NODE" && IN_PRIMARY=1
+  echo "$FALLBACK_SET" | tr ',' '\n' | grep -Fxq "$NODE" && IN_FALLBACK=1
+  if [ "$IN_PRIMARY" -eq 0 ] && [ "$IN_FALLBACK" -eq 0 ]; then
+    MISSING="$MISSING $NODE"
   fi
 done
+if [ -n "$MISSING" ]; then
+  echo "FAIL Step 2: 缺失节点（主路径与 fallback 均无）"
+  echo "[E2E 诊断] MISSING_NODES=${MISSING# }"
+  echo "[E2E 诊断] PRIMARY_SET={${PRIMARY_SET}}"
+  echo "[E2E 诊断] FALLBACK_SET={${FALLBACK_SET}}"
+  echo "[E2E 诊断] THREAD_ID=$THREAD_ID  WINDOW=$WINDOW"
+  exit 1
+fi
 
 echo "==> Step 3: PR merged + main 上含 health handler"
 PR_URL=$(psql "$DB" -At -c "
   SELECT pr_url FROM dev_records
    WHERE pr_url IS NOT NULL
-     AND created_at > NOW() - interval '60 minutes'
+     AND created_at > NOW() - interval '${WINDOW}'
      AND task_id IN (SELECT id FROM tasks WHERE payload->>'parent_initiative_id'='${INITIATIVE_ID}')
    ORDER BY created_at DESC LIMIT 1
 ")
@@ -409,7 +475,7 @@ IFS=$'\t' read -r PHASE FAILURE_REASON DEADLINE_AT COMPLETED_AT DIFF_SEC <<< "$(
          EXTRACT(EPOCH FROM (deadline_at - completed_at))::int
     FROM initiative_runs
    WHERE initiative_id='${INITIATIVE_ID}'
-     AND created_at > NOW() - interval '60 minutes'
+     AND created_at > NOW() - interval '${WINDOW}'
    ORDER BY created_at DESC LIMIT 1
 ")"
 echo "    phase=$PHASE failure_reason='$FAILURE_REASON' deadline_at=$DEADLINE_AT completed_at=$COMPLETED_AT diff_sec=$DIFF_SEC"
@@ -425,15 +491,14 @@ read -r PHASE2 COMPLETED NOFAIL <<< "$(psql "$DB" -At -F' ' -c "
          (failure_reason IS NULL)::int
     FROM initiative_runs
    WHERE initiative_id='${INITIATIVE_ID}'
-     AND created_at > NOW() - interval '60 minutes'
+     AND created_at > NOW() - interval '${WINDOW}'
    ORDER BY created_at DESC LIMIT 1
 ")"
 [ "$PHASE2" = "done" ] && [ "$COMPLETED" = "1" ] && [ "$NOFAIL" = "1" ] \
   || { echo "FAIL Step 4: phase=$PHASE2 completed=$COMPLETED nofail=$NOFAIL"; exit 1; }
 
-echo "==> Step 5: staging health 端点 + body shape"
-RESP=$(curl -fsS "${STAGING_BRAIN}/api/brain/harness/health") \
-  || { echo "FAIL Step 5: HTTP non-200"; exit 1; }
+echo "==> Step 5: staging health 端点 + body shape（helper-4 内嵌 mergedAt vs StartedAt 兜底）"
+RESP=$(wait_for_brain_with_pr_merge "$STAGING_BRAIN" "$PR_NUM" "$BRAIN_CONTAINER")
 echo "$RESP" | jq -e '
   (.langgraph_version | type=="string" and length>0)
   and (.last_attempt_at == null or (.last_attempt_at | type=="string" and test("^\\d{4}-\\d{2}-\\d{2}T")))
@@ -533,3 +598,14 @@ echo "OK: WS1 + WS2 在未实现时确实红，红证据已写 /tmp/ws{1,2}-red.
 ```
 
 **通过标准**：两条 vitest 命令 EXIT ≠ 0，且 FAIL 行计数之和 ≥ 7。
+
+---
+
+## Round 3 反馈映射（自检）
+
+| Reviewer 项 | 修复位置 | 关键变化 |
+|---|---|---|
+| **R1** 缺失节点诊断 + exit 1，禁止 sleep 重试掩盖 | Step 2 验证命令 + E2E §Step 2 | `MISSING` 不为空 → 打印 PRIMARY_SET / FALLBACK_SET / MISSING / THREAD_ID 后 `exit 1`；不再含任何 `sleep + retry` 用于"等节点出现" |
+| **R2** fallback COALESCE 三路全 NULL 时 dump metadata 全文 | Step 2 + E2E + helper-3 | `FALLBACK_ROWCOUNT > 0 && DISTINCT_FALLBACK == 0` → 调用 `dump_checkpoint_metadata_sample` 打印 jsonb_pretty(metadata) + jsonb_pretty(channel_values) |
+| **R3** Step 5 `curl /health` 老镜像兜底 | Step 5 + E2E + helper-4 | 失败时 `gh pr view --json mergedAt` vs `docker inspect StartedAt`；started < merged → sleep 10 重试 ≤3 轮；started ≥ merged 仍 404 → 立即 exit 1（重试无意义）；3 轮仍失败 → exit 1 + 打印两时间戳 |
+| **R4** Step 2 fallback SQL 抽 shell 函数复用 | 顶部 §共享 Shell Helpers + Step 2 + E2E | 新增 `count_distinct_nodes_in_checkpoints` / `list_distinct_nodes_in_checkpoints` / `dump_checkpoint_metadata_sample` / `wait_for_brain_with_pr_merge` 4 个 helper；Step 2 与 E2E 双处用 `source sprints/w8-langgraph-acceptance/helpers.sh` 引入，禁止内联 SQL |
