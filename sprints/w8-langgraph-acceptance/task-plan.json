@@ -1,69 +1,39 @@
 {
   "initiative_id": "w8-langgraph-acceptance-20260507",
   "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/，单进程内 LangGraph 自驱端到端验收，无 UI/无远端 agent。",
   "tasks": [
     {
-      "task_id": "T1",
-      "title": "feat(brain): harness/health 端点 — Walking Skeleton 验证",
-      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /api/brain/harness/health handler，返回 JSON { langgraph_version, last_attempt_at, nodes }；langgraph_version 读 @langchain/langgraph 的 package.json version 字段，last_attempt_at 取 SELECT MAX(updated_at) FROM initiative_runs WHERE phase IN ('done','failed','B_task_loop','C_final_e2e')，nodes 列出 14 个 LangGraph 节点名。在 packages/brain/src/server.js 注册该 router（若未挂）。新增 tests/integration/harness-health.test.ts 起 staging Brain 后 curl /api/brain/harness/health 校验状态码 200 + body 字段齐全。",
+      "task_id": "ws1",
+      "title": "在 packages/brain/src/routes/harness.js 追加 GET /health handler",
+      "scope": "新增 router.get('/health', handler)：读取 @langchain/langgraph/package.json 的 version，psql MAX(updated_at) FROM initiative_runs 取 last_attempt_at（无行返回 null），返回 14 节点固定数组（与 compileHarnessFullGraph addNode 顺序严格一致）。仅追加，不改既有 handler。",
       "dod": [
-        "packages/brain/src/routes/harness.js 含 GET /api/brain/harness/health handler，返回 JSON 含 langgraph_version (string) + last_attempt_at (ISO8601 string 或 null) + nodes (14 元素 string array)",
-        "tests/integration/harness-health.test.ts 启 staging Brain 后 curl 该端点：HTTP 200，body.langgraph_version 非空，body.nodes.length === 14",
-        "执行 npx vitest run tests/integration/harness-health.test.ts 退出码为 0",
-        "执行 curl -fsS http://localhost:5222/api/brain/harness/health | jq -e '.langgraph_version and (.nodes|length==14)' 退出码为 0"
+        "[BEHAVIOR] supertest 请求 GET /api/brain/harness/health 返回 status 200，body.langgraph_version 为非空字符串，body.nodes 长度=14 且含 prep/planner/parsePrd/ganLoop/inferTaskPlan/dbUpsert/pick_sub_task/run_sub_task/evaluate/advance/retry/terminal_fail/final_evaluate/report",
+        "[BEHAVIOR] initiative_runs 表无任何行时 body.last_attempt_at === null 且 handler 不抛",
+        "[ARTIFACT] packages/brain/src/routes/harness.js 含正则 router\\.get\\(\\s*['\\\"]/health['\\\"]"
       ],
       "files": [
-        "packages/brain/src/routes/harness.js",
-        "packages/brain/src/server.js",
-        "tests/integration/harness-health.test.ts"
+        "packages/brain/src/routes/harness.js"
       ],
       "depends_on": [],
       "complexity": "S",
       "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "新增集成测试 tests/integration/harness-health.test.ts",
+      "scope": "vitest + supertest（已在 packages/brain/package.json 依赖）启 express 实例挂 harnessRoutes，断言 GET /api/brain/harness/health 状态码 200 + body shape（langgraph_version 非空字符串 / last_attempt_at null|ISO 8601 / nodes 长度=14 含 14 节点名）。文件路径已在 packages/brain/vitest.config.js include 的 ../../tests/integration/ 列表内。",
+      "dod": [
+        "[BEHAVIOR] 在 packages/brain 下 npx vitest run ../../tests/integration/harness-health.test.ts 退出码 0 且至少含 2 passed",
+        "[ARTIFACT] tests/integration/harness-health.test.ts 文件存在",
+        "[ARTIFACT] 测试 import vitest 与 supertest，且字符串包含 '/api/brain/harness/health'"
+      ],
+      "files": [
+        "tests/integration/harness-health.test.ts"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 25
     }
-  ],
-  "e2e_acceptance": {
-    "scenarios": [
-      {
-        "name": "health 端点在 staging Brain 上返回 200 且字段齐全",
-        "covered_tasks": ["T1"],
-        "commands": [
-          {
-            "type": "bash",
-            "cmd": "curl -fsS http://localhost:5222/api/brain/harness/health | jq -e '.langgraph_version and (.nodes|length==14) and (has(\"last_attempt_at\"))'"
-          }
-        ]
-      },
-      {
-        "name": "本 Initiative 在 task_events 中至少记录 14 个 distinct nodeName 的 graph_node_update",
-        "covered_tasks": ["T1"],
-        "commands": [
-          {
-            "type": "bash",
-            "cmd": "psql -h localhost -p 55432 -U cecelia -d cecelia -At -c \"SELECT COUNT(DISTINCT payload->>'nodeName') FROM task_events WHERE event_type='graph_node_update' AND payload->>'initiativeId'='w8-langgraph-acceptance-20260507'\" | awk '{ if ($1+0 >= 14) exit 0; else { print \"only \" $1 \" distinct nodes\"; exit 1 } }'"
-          }
-        ]
-      },
-      {
-        "name": "initiative_runs 行 phase 已推进到 C_final_e2e 或 done 且 contract approved",
-        "covered_tasks": ["T1"],
-        "commands": [
-          {
-            "type": "bash",
-            "cmd": "psql -h localhost -p 55432 -U cecelia -d cecelia -At -c \"SELECT ir.phase FROM initiative_runs ir JOIN initiative_contracts ic ON ic.id=ir.contract_id WHERE ir.initiative_id='w8-langgraph-acceptance-20260507' AND ic.status='approved' ORDER BY ir.started_at DESC LIMIT 1\" | grep -E '^(C_final_e2e|done)$'"
-          }
-        ]
-      },
-      {
-        "name": "T1 PR 已合并到 main（Walking Skeleton 真实交付证据）",
-        "covered_tasks": ["T1"],
-        "commands": [
-          {
-            "type": "bash",
-            "cmd": "test -f packages/brain/src/routes/harness.js && grep -q '/api/brain/harness/health' packages/brain/src/routes/harness.js && test -f tests/integration/harness-health.test.ts"
-          }
-        ]
-      }
-    ]
-  }
+  ]
 }
