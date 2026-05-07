@@ -48,4 +48,15 @@ describe('Workstream 2 — health endpoint integration [BEHAVIOR]', () => {
     const ok = v === null || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v));
     expect(ok).toBe(true);
   });
+
+  it('重复请求返回相同 nodes 列表（idempotent shape）', async () => {
+    const app = express();
+    app.use('/api/brain/harness', harnessRoutes);
+
+    const res1 = await request(app).get('/api/brain/harness/health');
+    const res2 = await request(app).get('/api/brain/harness/health');
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(res2.body.nodes).toEqual(res1.body.nodes);
+  });
 });

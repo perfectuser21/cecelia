@@ -1,4 +1,23 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> Round 1 → Reviewer REVISION，本轮处理 3 项反馈：
+> (1) Step 2 加 `langgraph_checkpoints` fallback 防 stream 写表失败导致 distinct < 14；
+> (2) Step 4 在断言 `phase=done` 前先校验 `failure_reason != 'watchdog_overdue'` 并打印 `deadline_at - completed_at` 差值；
+> (3) Test Contract 表加"未实现时具体断言"列、新增"红证据校验命令"段、统一交付测试文件路径。
+
+---
+
+## 唯一交付测试文件路径（统一）
+
+为消除 Reviewer 指出的"PRD 写 `tests/integration/harness-health.test.ts`、合同 Workstream 表写 `tests/ws2/harness-health-integration.test.ts`"歧义，本合同显式规定：
+
+| 角色 | 路径 | 何时存在 | 谁写入 |
+|---|---|---|---|
+| **唯一最终交付测试** | `tests/integration/harness-health.test.ts` | 合并到 main | Generator（commit 2）从 `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts` 复制内容 |
+| **GAN 红证据 scaffold** | `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts` | 仅在 sprint 分支 | Proposer（本轮）；commit 1 阶段保留为审计 |
+| **GAN 红证据 scaffold（WS1）** | `sprints/w8-langgraph-acceptance/tests/ws1/harness-health-endpoint.test.ts` | 仅在 sprint 分支 | Proposer（本轮） |
+
+**规则**：所有 PRD / 合同 / DoD / task-plan 指代"集成测试文件"时，唯一路径 = `tests/integration/harness-health.test.ts`。Sprint dir 下的 `tests/ws{N}/*.test.ts` 仅用于 GAN 红证据校验（vitest 跑见下文），不进 main。
 
 ## Initiative
 - **initiative_id**: `w8-langgraph-acceptance-20260507`
@@ -48,6 +67,8 @@ grep -E "^harness-initiative:w8-langgraph-acceptance-20260507:[0-9]+\|" /tmp/w8-
 **验证命令**:
 ```bash
 INITIATIVE_ID="w8-langgraph-acceptance-20260507"
+
+# 主路径：task_events 表（W4 stream emitter 写入）
 psql "$DB" -At -c "
   SELECT count(DISTINCT payload->>'nodeName')
     FROM task_events
@@ -55,28 +76,76 @@ psql "$DB" -At -c "
      AND payload->>'initiativeId'='${INITIATIVE_ID}'
      AND created_at > NOW() - interval '60 minutes'
 " | tee /tmp/w8-step2-distinct.out
+DISTINCT_PRIMARY=$(cat /tmp/w8-step2-distinct.out | tr -d ' ')
 
-DISTINCT=$(cat /tmp/w8-step2-distinct.out | tr -d ' ')
-[ "$DISTINCT" -ge 14 ] || { echo "FAIL: distinct nodeName=$DISTINCT < 14"; exit 1; }
+# Fallback 路径：langgraph_checkpoints 表（PostgresSaver 每个节点结束写一次 checkpoint，按 thread_id 过滤）
+# 处理反馈(1)：若 stream emitter 写 task_events 失败导致 < 14，仍可由 PostgresSaver 兜底证明 14 节点真实跑过
+THREAD_ID=$(psql "$DB" -At -c "
+  SELECT thread_id FROM initiative_runs
+   WHERE initiative_id='${INITIATIVE_ID}'
+     AND created_at > NOW() - interval '60 minutes'
+   ORDER BY created_at DESC LIMIT 1
+")
+DISTINCT_FALLBACK=0
+if [ -n "$THREAD_ID" ]; then
+  # langgraph_checkpoints metadata->>'source' 携带刚跑完的 nodeName（LangGraph PostgresSaver 1.x 行为）
+  DISTINCT_FALLBACK=$(psql "$DB" -At -c "
+    SELECT count(DISTINCT COALESCE(
+             metadata->>'source',
+             metadata->'writes'->-1->>0,
+             checkpoint->'channel_values'->>'__node__'
+           ))
+      FROM langgraph_checkpoints
+     WHERE thread_id='${THREAD_ID}'
+       AND created_at > NOW() - interval '60 minutes'
+  " | tr -d ' ')
+fi
+echo "PRIMARY=$DISTINCT_PRIMARY FALLBACK=$DISTINCT_FALLBACK"
 
-# 进一步：验证 14 个节点名集合完全覆盖
-psql "$DB" -At -c "
+# 至少一条路径满足 ≥ 14
+if [ "$DISTINCT_PRIMARY" -lt 14 ] && [ "$DISTINCT_FALLBACK" -lt 14 ]; then
+  echo "FAIL: primary=$DISTINCT_PRIMARY fallback=$DISTINCT_FALLBACK 双路均 < 14"
+  exit 1
+fi
+
+# 进一步：验证 14 个节点名集合完全覆盖（先查主路径，主路径不全则查 fallback）
+NODES_SET=$(psql "$DB" -At -c "
   SELECT string_agg(DISTINCT payload->>'nodeName', ',' ORDER BY payload->>'nodeName')
     FROM task_events
    WHERE event_type='graph_node_update'
      AND payload->>'initiativeId'='${INITIATIVE_ID}'
      AND created_at > NOW() - interval '60 minutes'
-" | tee /tmp/w8-step2-set.out
+")
+echo "$NODES_SET" | tee /tmp/w8-step2-set.out
 
-# 期望：覆盖 prep,planner,parsePrd,ganLoop,inferTaskPlan,dbUpsert,pick_sub_task,run_sub_task,evaluate,advance,retry|terminal_fail,final_evaluate,report
+MISSING=""
 for NODE in prep planner parsePrd ganLoop inferTaskPlan dbUpsert pick_sub_task run_sub_task evaluate advance final_evaluate report; do
-  grep -qw "$NODE" /tmp/w8-step2-set.out || { echo "FAIL: missing required node $NODE"; exit 1; }
+  if ! echo "$NODES_SET" | grep -qw "$NODE"; then
+    MISSING="$MISSING $NODE"
+  fi
 done
+
+if [ -n "$MISSING" ] && [ -n "$THREAD_ID" ]; then
+  # 主路径缺失，去 fallback 表再确认一次
+  FALLBACK_SET=$(psql "$DB" -At -c "
+    SELECT string_agg(DISTINCT COALESCE(
+             metadata->>'source',
+             metadata->'writes'->-1->>0,
+             checkpoint->'channel_values'->>'__node__'
+           ), ',' ORDER BY 1)
+      FROM langgraph_checkpoints
+     WHERE thread_id='${THREAD_ID}'
+  ")
+  echo "FALLBACK_SET=$FALLBACK_SET"
+  for NODE in $MISSING; do
+    echo "$FALLBACK_SET" | grep -qw "$NODE" || { echo "FAIL: node '$NODE' 主路径与 fallback 均缺失"; exit 1; }
+  done
+fi
 ```
 
 **硬阈值**:
-- `count(DISTINCT payload->>'nodeName') >= 14`（窗口 60 分钟内）
-- 12 个必现节点（prep/planner/parsePrd/ganLoop/inferTaskPlan/dbUpsert/pick_sub_task/run_sub_task/evaluate/advance/final_evaluate/report）逐一存在
+- 主路径 `task_events.count(DISTINCT payload->>'nodeName') >= 14` **或** Fallback `langgraph_checkpoints` 里去重后的 `nodeName` 数 ≥ 14（窗口 60 分钟内）
+- 12 个必现节点（prep/planner/parsePrd/ganLoop/inferTaskPlan/dbUpsert/pick_sub_task/run_sub_task/evaluate/advance/final_evaluate/report）至少在两路其一存在
 - 时间窗口 `created_at > NOW() - interval '60 minutes'` 防造假
 
 ---
@@ -134,6 +203,32 @@ git show origin/main:packages/brain/src/routes/harness.js | grep -qE "router\.ge
 **验证命令**:
 ```bash
 INITIATIVE_ID="w8-langgraph-acceptance-20260507"
+
+# 反馈(2)：先打印 deadline_at - completed_at 差值并校验非 watchdog_overdue 失败
+psql "$DB" -At -F$'\t' -c "
+  SELECT phase,
+         COALESCE(failure_reason, ''),
+         deadline_at,
+         completed_at,
+         EXTRACT(EPOCH FROM (deadline_at - completed_at))::int AS deadline_minus_completed_sec
+    FROM initiative_runs
+   WHERE initiative_id='${INITIATIVE_ID}'
+     AND created_at > NOW() - interval '60 minutes'
+   ORDER BY created_at DESC
+   LIMIT 1
+" | tee /tmp/w8-step4-diag.out
+
+IFS=$'\t' read -r PHASE FAILURE_REASON DEADLINE_AT COMPLETED_AT DIFF_SEC < /tmp/w8-step4-diag.out
+echo "==> phase=$PHASE failure_reason='$FAILURE_REASON' deadline_at=$DEADLINE_AT completed_at=$COMPLETED_AT diff_sec=$DIFF_SEC"
+
+# 先行校验：failure_reason 必须不是 watchdog_overdue（W3 watchdog 兜底打的标，应在 deadline 内完成）
+if [ "$FAILURE_REASON" = "watchdog_overdue" ]; then
+  echo "FAIL: failure_reason=watchdog_overdue (deadline_at=$DEADLINE_AT < NOW()，W3 兜底超时)"
+  echo "      deadline_at - completed_at = ${DIFF_SEC}s（负值 = 完成时已逾期）"
+  exit 1
+fi
+
+# 然后才断言 phase=done / completed_at / failure_reason 空
 psql "$DB" -At -F$'\t' -c "
   SELECT phase,
          (completed_at IS NOT NULL)::int AS completed,
@@ -145,10 +240,16 @@ psql "$DB" -At -F$'\t' -c "
    LIMIT 1
 " | tee /tmp/w8-step4.out
 
-read -r PHASE COMPLETED NOFAIL < /tmp/w8-step4.out
-[ "$PHASE" = "done" ] || { echo "FAIL: phase=$PHASE != done"; exit 1; }
+read -r PHASE2 COMPLETED NOFAIL < /tmp/w8-step4.out
+[ "$PHASE2" = "done" ] || { echo "FAIL: phase=$PHASE2 != done"; exit 1; }
 [ "$COMPLETED" = "1" ] || { echo "FAIL: completed_at IS NULL"; exit 1; }
 [ "$NOFAIL" = "1" ] || { echo "FAIL: failure_reason 非空"; exit 1; }
+
+# 信息打印：确认在 deadline 之前完成（diff_sec 正值）
+if [ -n "$DIFF_SEC" ] && [ "$DIFF_SEC" -lt 0 ] 2>/dev/null; then
+  echo "FAIL: completed_at > deadline_at（diff=${DIFF_SEC}s，超时但 phase=done 矛盾）"
+  exit 1
+fi
 
 # report 节点必须 emit
 psql "$DB" -At -c "
@@ -162,6 +263,8 @@ psql "$DB" -At -c "
 ```
 
 **硬阈值**:
+- 先校验 `failure_reason != 'watchdog_overdue'`（W3 watchdog 兜底超时不能蒙混过关）
+- 打印 `deadline_at - completed_at` 差值（秒），负值即超时，断言为正
 - `initiative_runs.phase = 'done'`
 - `completed_at IS NOT NULL`
 - `failure_reason IS NULL`
@@ -231,24 +334,52 @@ THREAD_ID=$(psql "$DB" -At -c "
 echo "$THREAD_ID" | grep -qE "^harness-initiative:${INITIATIVE_ID}:[0-9]+$" \
   || { echo "FAIL Step 1: thread_id=$THREAD_ID"; exit 1; }
 
-echo "==> Step 2: 14 distinct nodeName"
-DISTINCT=$(psql "$DB" -At -c "
+echo "==> Step 2: 14 distinct nodeName（task_events 主路径 + langgraph_checkpoints fallback）"
+DISTINCT_PRIMARY=$(psql "$DB" -At -c "
   SELECT count(DISTINCT payload->>'nodeName')
     FROM task_events
    WHERE event_type='graph_node_update'
      AND payload->>'initiativeId'='${INITIATIVE_ID}'
      AND created_at > NOW() - interval '60 minutes'
 ")
-[ "$DISTINCT" -ge 14 ] || { echo "FAIL Step 2: distinct=$DISTINCT"; exit 1; }
+DISTINCT_FALLBACK=0
+if [ -n "$THREAD_ID" ]; then
+  DISTINCT_FALLBACK=$(psql "$DB" -At -c "
+    SELECT count(DISTINCT COALESCE(
+             metadata->>'source',
+             metadata->'writes'->-1->>0,
+             checkpoint->'channel_values'->>'__node__'
+           ))
+      FROM langgraph_checkpoints
+     WHERE thread_id='${THREAD_ID}'
+       AND created_at > NOW() - interval '60 minutes'
+  ")
+fi
+echo "    primary=$DISTINCT_PRIMARY fallback=$DISTINCT_FALLBACK"
+if [ "$DISTINCT_PRIMARY" -lt 14 ] && [ "$DISTINCT_FALLBACK" -lt 14 ]; then
+  echo "FAIL Step 2: 主路径与 fallback 双路均 < 14"
+  exit 1
+fi
 for NODE in prep planner parsePrd ganLoop inferTaskPlan dbUpsert pick_sub_task run_sub_task evaluate advance final_evaluate report; do
-  EXISTS=$(psql "$DB" -At -c "
+  EXISTS_PRIMARY=$(psql "$DB" -At -c "
     SELECT count(*) FROM task_events
      WHERE event_type='graph_node_update'
        AND payload->>'initiativeId'='${INITIATIVE_ID}'
        AND payload->>'nodeName'='$NODE'
        AND created_at > NOW() - interval '60 minutes'
   ")
-  [ "$EXISTS" -ge 1 ] || { echo "FAIL Step 2: missing node $NODE"; exit 1; }
+  if [ "$EXISTS_PRIMARY" -lt 1 ]; then
+    EXISTS_FALLBACK=$(psql "$DB" -At -c "
+      SELECT count(*) FROM langgraph_checkpoints
+       WHERE thread_id='${THREAD_ID}'
+         AND COALESCE(
+               metadata->>'source',
+               metadata->'writes'->-1->>0,
+               checkpoint->'channel_values'->>'__node__'
+             )='$NODE'
+    ")
+    [ "$EXISTS_FALLBACK" -ge 1 ] || { echo "FAIL Step 2: node '$NODE' 主路径与 fallback 均缺失"; exit 1; }
+  fi
 done
 
 echo "==> Step 3: PR merged + main 上含 health handler"
@@ -269,8 +400,26 @@ git fetch origin main >/dev/null
 git show origin/main:packages/brain/src/routes/harness.js | grep -qE "router\.get\(\s*['\"]/health['\"]" \
   || { echo "FAIL Step 3: main 上无 /health"; exit 1; }
 
+echo "==> Step 4: 先校验 failure_reason != watchdog_overdue + deadline_at - completed_at 差值"
+IFS=$'\t' read -r PHASE FAILURE_REASON DEADLINE_AT COMPLETED_AT DIFF_SEC <<< "$(psql "$DB" -At -F$'\t' -c "
+  SELECT phase,
+         COALESCE(failure_reason, ''),
+         deadline_at,
+         completed_at,
+         EXTRACT(EPOCH FROM (deadline_at - completed_at))::int
+    FROM initiative_runs
+   WHERE initiative_id='${INITIATIVE_ID}'
+     AND created_at > NOW() - interval '60 minutes'
+   ORDER BY created_at DESC LIMIT 1
+")"
+echo "    phase=$PHASE failure_reason='$FAILURE_REASON' deadline_at=$DEADLINE_AT completed_at=$COMPLETED_AT diff_sec=$DIFF_SEC"
+[ "$FAILURE_REASON" = "watchdog_overdue" ] \
+  && { echo "FAIL Step 4: failure_reason=watchdog_overdue（W3 兜底超时；diff=${DIFF_SEC}s）"; exit 1; }
+[ -n "$DIFF_SEC" ] && [ "$DIFF_SEC" -lt 0 ] 2>/dev/null \
+  && { echo "FAIL Step 4: completed_at > deadline_at（diff=${DIFF_SEC}s）"; exit 1; }
+
 echo "==> Step 4: phase=done + completed_at + no failure"
-read -r PHASE COMPLETED NOFAIL <<< "$(psql "$DB" -At -F' ' -c "
+read -r PHASE2 COMPLETED NOFAIL <<< "$(psql "$DB" -At -F' ' -c "
   SELECT phase,
          (completed_at IS NOT NULL)::int,
          (failure_reason IS NULL)::int
@@ -279,8 +428,8 @@ read -r PHASE COMPLETED NOFAIL <<< "$(psql "$DB" -At -F' ' -c "
      AND created_at > NOW() - interval '60 minutes'
    ORDER BY created_at DESC LIMIT 1
 ")"
-[ "$PHASE" = "done" ] && [ "$COMPLETED" = "1" ] && [ "$NOFAIL" = "1" ] \
-  || { echo "FAIL Step 4: phase=$PHASE completed=$COMPLETED nofail=$NOFAIL"; exit 1; }
+[ "$PHASE2" = "done" ] && [ "$COMPLETED" = "1" ] && [ "$NOFAIL" = "1" ] \
+  || { echo "FAIL Step 4: phase=$PHASE2 completed=$COMPLETED nofail=$NOFAIL"; exit 1; }
 
 echo "==> Step 5: staging health 端点 + body shape"
 RESP=$(curl -fsS "${STAGING_BRAIN}/api/brain/harness/health") \
@@ -324,25 +473,63 @@ workstream_count: 2
 
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/harness-health-endpoint.test.ts`
+**BEHAVIOR 覆盖测试文件（sprint 内 GAN 红证据）**: `sprints/w8-langgraph-acceptance/tests/ws1/harness-health-endpoint.test.ts`
+
+**唯一最终交付物**: `packages/brain/src/routes/harness.js`（修改）
 
 ---
 
 ### Workstream 2: health endpoint 集成测试
 
-**范围**: 新建 `tests/integration/harness-health.test.ts`（vitest）：启 Brain（直接 `import` server 或起子进程），向 `/api/brain/harness/health` 发请求，断言 status=200 + body shape（langgraph_version 非空 / last_attempt_at null|ISO / nodes 长度=14 且含 14 节点名）。
+**范围**: 新建 **`tests/integration/harness-health.test.ts`**（vitest，唯一交付路径，与 PRD 一致）：启 Brain（直接 `import` server 或起子进程，或挂 `harnessRoutes` 到独立 Express），向 `/api/brain/harness/health` 发请求，断言 status=200 + body shape（langgraph_version 非空 / last_attempt_at null|ISO / nodes 长度=14 且含 14 节点名）。Generator 在 commit 2 阶段从 `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts` 复制内容到唯一交付路径。
 
-**大小**: S（< 100 行）
+**大小**: S（< 120 行）
 
 **依赖**: Workstream 1 完成（实现先行；测试用 vitest run 真实命中端点）
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws2/harness-health-integration.test.ts`
+**BEHAVIOR 覆盖测试文件（sprint 内 GAN 红证据）**: `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts`
+
+**唯一最终交付路径**: `tests/integration/harness-health.test.ts`
 
 ---
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
-|---|---|---|---|
-| WS1 | `tests/ws1/harness-health-endpoint.test.ts` | handler 函数返回正确 shape；`last_attempt_at=null` 时不抛；`langgraph_version` 是字符串 | WS1 → 3 failures（handler 不存在 / 字段缺失） |
-| WS2 | `tests/ws2/harness-health-integration.test.ts` | 启 Brain 实例后 GET /health 返回 200 + body 含 14 nodes | WS2 → 2 failures（路由未挂载或 body shape 错误） |
+| Workstream | Test File（sprint 内 GAN 红证据） | 唯一最终交付路径 | BEHAVIOR 覆盖 | 未实现时具体断言（红证据） | 预期红失败数 |
+|---|---|---|---|---|---|
+| WS1 | `sprints/w8-langgraph-acceptance/tests/ws1/harness-health-endpoint.test.ts` | `packages/brain/src/routes/harness.js` 内追加 router.get('/health') | handler 返回 status 200；body.langgraph_version 是非空字符串；body.last_attempt_at = null 或 ISO 8601；body.nodes 长度=14 且全部 14 节点名覆盖；Content-Type=application/json | `expect(res.status).toBe(200)` 红（router 无 /health → 404）；`expect(typeof res.body.langgraph_version).toBe('string')` 红（handler 不存在 → undefined）；`expect(res.body.nodes).toHaveLength(14)` 红；`expect(harnessRoutes).toBeDefined()` 红若文件未导出；`expect(res.headers['content-type']).toMatch(/application\/json/)` 红 | 5 failures |
+| WS2 | `sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts` | `tests/integration/harness-health.test.ts` | Express 实例挂 router 后 GET 返回 200 + 14 nodes；last_attempt_at 字段存在且 null 或 ISO；重复请求同 shape | `expect(res.status).toBe(200) and expect(res.body.nodes).toHaveLength(14)` 红（端点未实现）；`expect([null, 'string']).toContain(typeof res.body.last_attempt_at)` 红；`expect(res2.body.nodes).toEqual(res1.body.nodes)` 红 | 3 failures |
+
+**总红失败数目标**：WS1(5) + WS2(3) = **8 failures** ≥ 7（满足 Reviewer 要求）。
+
+---
+
+## 红证据校验命令（外层机检验证"未实现确实红"）
+
+Reviewer 可逐条跑下面命令，证明合同内的测试在"未实现状态"下确实红：
+
+```bash
+# 前置：当前 main 上 packages/brain/src/routes/harness.js 不含 /health handler；
+# 即便已含，stash 后也回到无该 handler 状态以验证红
+cd /workspace
+
+# WS1 红证据
+git stash --include-untracked
+EXIT1=0
+npx vitest run sprints/w8-langgraph-acceptance/tests/ws1/harness-health-endpoint.test.ts --reporter=verbose 2>&1 | tee /tmp/ws1-red.log || EXIT1=$?
+git stash pop
+[ "$EXIT1" -ne 0 ] || { echo "FAIL: WS1 测试在未实现时未红 (EXIT1=$EXIT1)"; exit 1; }
+grep -cE "FAIL|✗|failed" /tmp/ws1-red.log
+
+# WS2 红证据
+git stash --include-untracked
+EXIT2=0
+npx vitest run sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts --reporter=verbose 2>&1 | tee /tmp/ws2-red.log || EXIT2=$?
+git stash pop
+[ "$EXIT2" -ne 0 ] || { echo "FAIL: WS2 测试在未实现时未红 (EXIT2=$EXIT2)"; exit 1; }
+grep -cE "FAIL|✗|failed" /tmp/ws2-red.log
+
+echo "OK: WS1 + WS2 在未实现时确实红，红证据已写 /tmp/ws{1,2}-red.log"
+```
+
+**通过标准**：两条 vitest 命令 EXIT ≠ 0，且 FAIL 行计数之和 ≥ 7。

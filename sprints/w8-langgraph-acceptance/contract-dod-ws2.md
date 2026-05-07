@@ -7,6 +7,7 @@ journey_type: autonomous
 **范围**: 新建 `tests/integration/harness-health.test.ts`（vitest）启 Brain 实例后 GET `/api/brain/harness/health` 校验 200 + body shape。
 **大小**: S
 **依赖**: Workstream 1
+**唯一交付路径**: `tests/integration/harness-health.test.ts`（与 PRD 一致；sprint 内 `tests/ws2/...` 仅为 GAN 红证据 scaffold，不进 main）
 
 ## ARTIFACT 条目
 

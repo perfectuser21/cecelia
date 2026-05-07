@@ -58,4 +58,10 @@ describe('Workstream 1 — GET /api/brain/harness/health [BEHAVIOR]', () => {
       expect(res.body.nodes).toContain(n);
     }
   });
+
+  it('Content-Type 头部含 application/json', async () => {
+    const app = makeApp();
+    const res = await request(app).get('/api/brain/harness/health');
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+  });
 });

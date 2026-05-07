@@ -21,11 +21,11 @@
     },
     {
       "task_id": "ws2",
-      "title": "新增集成测试 tests/integration/harness-health.test.ts",
-      "scope": "vitest + supertest（已在 packages/brain/package.json 依赖）启 express 实例挂 harnessRoutes，断言 GET /api/brain/harness/health 状态码 200 + body shape（langgraph_version 非空字符串 / last_attempt_at null|ISO 8601 / nodes 长度=14 含 14 节点名）。文件路径已在 packages/brain/vitest.config.js include 的 ../../tests/integration/ 列表内。",
+      "title": "新增集成测试 tests/integration/harness-health.test.ts（唯一交付路径）",
+      "scope": "vitest + supertest（已在 packages/brain/package.json 依赖）启 express 实例挂 harnessRoutes，断言 GET /api/brain/harness/health 状态码 200 + body shape（langgraph_version 非空字符串 / last_attempt_at null|ISO 8601 / nodes 长度=14 含 14 节点名）+ 重复请求 nodes 同形。文件路径已在 packages/brain/vitest.config.js include 的 ../../tests/integration/ 列表内。Generator 在 commit 2 阶段从 sprints/w8-langgraph-acceptance/tests/ws2/harness-health-integration.test.ts 复制内容到唯一交付路径 tests/integration/harness-health.test.ts。",
       "dod": [
-        "[BEHAVIOR] 在 packages/brain 下 npx vitest run ../../tests/integration/harness-health.test.ts 退出码 0 且至少含 2 passed",
-        "[ARTIFACT] tests/integration/harness-health.test.ts 文件存在",
+        "[BEHAVIOR] 在 packages/brain 下 npx vitest run ../../tests/integration/harness-health.test.ts 退出码 0 且至少含 3 passed",
+        "[ARTIFACT] tests/integration/harness-health.test.ts 文件存在（唯一交付路径，与 PRD 一致）",
         "[ARTIFACT] 测试 import vitest 与 supertest，且字符串包含 '/api/brain/harness/health'"
       ],
       "files": [
