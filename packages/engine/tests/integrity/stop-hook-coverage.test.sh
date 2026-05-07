@@ -131,6 +131,27 @@ else
     fail "L18: stop-hook feature 未注册或 contract_url 未指向 ZenithJoy（357c40c2-ba63-81b8）"
 fi
 
+# L19 [v23 BYPASS-3-layer]: stop-dev.sh 含 fire_bypass_alert 调用（layer 2 Brain alert）
+if grep -q 'fire_bypass_alert' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L19: stop-dev.sh 含 fire_bypass_alert（BYPASS layer 2 Brain alert）"
+else
+    fail "L19: stop-dev.sh 缺 fire_bypass_alert，layer 2 Brain alert 失效"
+fi
+
+# L20 [v23 BYPASS-3-layer]: stop-dev.sh 含 .bypass-active marker 检查（layer 3 双因子）
+if grep -q '\.bypass-active' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L20: stop-dev.sh 含 .bypass-active marker 检查（BYPASS layer 3 双因子）"
+else
+    fail "L20: stop-dev.sh 缺 marker 检查，BYPASS 退回单因子触发"
+fi
+
+# L21 [v23 BYPASS-3-layer]: lint-bypass-not-committed 在 ci-passed needs[]（layer 1 真守门）
+if grep -E 'needs:.*lint-bypass-not-committed' "$REPO_ROOT/.github/workflows/ci.yml" >/dev/null 2>&1; then
+    pass "L21: lint-bypass-not-committed 在 ci-passed needs[]（BYPASS layer 1 git lint 真阻止合并）"
+else
+    fail "L21: lint-bypass-not-committed 未在 ci-passed needs[]，layer 1 fail 不阻止 merge"
+fi
+
 echo ""
 echo "=== integrity: $PASS PASS / $FAIL FAIL ==="
 [[ "$FAIL" -eq 0 ]]
