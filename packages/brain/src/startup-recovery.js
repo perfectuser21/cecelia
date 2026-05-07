@@ -28,6 +28,80 @@ const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 const ACTIVE_LOCK_WINDOW_MS = 24 * 3600 * 1000;
 
 /**
+ * W7.3 升级 (2026-05-07): 探测当前所有活跃 docker container 的 mount source 路径。
+ *
+ * 背景：W8 task-39d535f3 跑到 reviewer 阶段时 Brain 重启 → git worktree list
+ * 拿不到 harness-v2/task-39d535f3（race）→ .dev-lock 保护未命中（harness
+ * 容器不写 .dev-lock）→ 整个 worktree 目录被 rm -rf。
+ *
+ * docker 是这一类活跃 worktree 唯一可靠的真实信号源。
+ *
+ * 流程：
+ *   1. `docker ps --format '{{.ID}}'` 拿全部活跃 container ID
+ *   2. 对每个 container 调 `docker inspect --format '{{json .Mounts}}'`
+ *   3. 收集所有 mount 的 Source 字段
+ *
+ * docker ps 抛错 → 整个函数抛错（让 caller 决定降级策略：
+ * 保守跳过删除 vs 继续按既有逻辑删）。单个 container inspect 失败容忍
+ * （可能 container 在我们 ps 后立即退出）。
+ *
+ * @returns {Set<string>} 全部活跃 container 的 mount source 路径集合
+ * @throws {Error} docker ps 失败时
+ */
+export function getActiveContainerMountPaths() {
+  const psOut = execSync("docker ps --format '{{.ID}}'", {
+    timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
+  });
+  const ids = String(psOut || '').split('\n').map(s => s.trim()).filter(Boolean);
+
+  const paths = new Set();
+  for (const id of ids) {
+    let inspectOut;
+    try {
+      inspectOut = execSync(`docker inspect --format '{{json .Mounts}}' ${id}`, {
+        timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
+      });
+    } catch {
+      continue;
+    }
+    let mounts;
+    try {
+      mounts = JSON.parse(String(inspectOut || '').trim() || '[]');
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(mounts)) continue;
+    for (const m of mounts) {
+      if (m && typeof m.Source === 'string' && m.Source) {
+        paths.add(m.Source);
+      }
+    }
+  }
+  return paths;
+}
+
+/**
+ * W7.3 升级：判断 worktree 路径是否被某活跃 container mount。
+ * 命中规则：worktree 路径等于 mount source，或 mount source 在 worktree 内部。
+ * （前者覆盖整目录 mount，后者覆盖只 mount 子路径的场景。）
+ *
+ * @param {string} worktreePath
+ * @param {Set<string>} activeMountPaths
+ * @returns {string|null} 命中的 mount source，未命中返回 null
+ */
+function findContainerMountMatch(worktreePath, activeMountPaths) {
+  if (!activeMountPaths || activeMountPaths.size === 0) return null;
+  const wtNorm = worktreePath.replace(/\/+$/, '');
+  for (const src of activeMountPaths) {
+    if (!src) continue;
+    if (src === wtNorm) return src;
+    if (src.startsWith(wtNorm + '/')) return src;
+    if (wtNorm.startsWith(src + '/')) return src; // mount 是 worktree 父目录的极端情况
+  }
+  return null;
+}
+
+/**
  * W7.3 Bug #E: 检测 worktree 是否含活跃 dev lock，命中则不应清理。
  *
  * 命中规则（任一满足即视为活跃，跳过删除）：
@@ -88,7 +162,15 @@ export function hasActiveDevLock(worktreePath) {
  * @returns {Promise<{ pruned: number, removed: number, errors: string[] }>}
  */
 export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase = WORKTREE_BASE } = {}) {
-  const stats = { pruned: 0, removed: 0, errors: [], skipped_locked: 0, skipped_active_lock: 0 };
+  const stats = {
+    pruned: 0,
+    removed: 0,
+    errors: [],
+    skipped_locked: 0,
+    skipped_active_lock: 0,
+    skipped_active_container: 0,
+    skipped_docker_probe: 0,
+  };
 
   // Brain 启动时拿锁 — 与运行中的 zombie-cleaner / zombie-sweep / cecelia-run cleanup trap
   // 互斥，否则 git worktree prune 期间别人 worktree remove 会撕坏 .git/worktrees 元数据
@@ -118,7 +200,18 @@ export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase
       stats.errors.push(`worktree-list: ${e.message}`);
     }
 
-    // 3. Scan WORKTREE_BASE and remove stale dirs
+    // 3. W7.3 升级 (2026-05-07): docker container 活跃性 probe（在扫目录前一次性调）
+    // probe 失败 → 保守降级：所有 stale dir 跳过删除（不抛错，仅 warn）。
+    let activeMountPaths = null;
+    let dockerProbeFailed = false;
+    try {
+      activeMountPaths = getActiveContainerMountPaths();
+    } catch (e) {
+      dockerProbeFailed = true;
+      console.warn('[StartupRecovery:cleanupStaleWorktrees] docker probe failed, conservatively skipping all worktree deletions:', e.message);
+    }
+
+    // 4. Scan WORKTREE_BASE and remove stale dirs
     if (existsSync(worktreeBase)) {
       let entries = [];
       try {
@@ -131,6 +224,21 @@ export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase
         if (!entry.isDirectory()) continue;
         const fullPath = join(worktreeBase, entry.name);
         if (!activePaths.has(fullPath)) {
+          // W7.3 升级：docker probe 失败 → 保守跳过（杜绝误删活跃 harness worktree）
+          if (dockerProbeFailed) {
+            stats.skipped_docker_probe++;
+            console.warn('[StartupRecovery:cleanupStaleWorktrees] skip due to docker probe failure:', fullPath,
+              JSON.stringify({ cleanup_type: 'worktree_dir', path: fullPath, result: 'skipped_docker_probe' }));
+            continue;
+          }
+          // W7.3 升级：worktree 是某活跃 container 的 mount source → 跳过
+          const mountMatch = findContainerMountMatch(fullPath, activeMountPaths);
+          if (mountMatch) {
+            stats.skipped_active_container++;
+            console.log('[StartupRecovery] skipped active container worktree:', fullPath, '(mount:', mountMatch, ')',
+              JSON.stringify({ cleanup_type: 'worktree_dir', path: fullPath, result: 'skipped_active_container', mount_source: mountMatch }));
+            continue;
+          }
           // W7.3 Bug #E: 含活跃 .dev-lock / .dev-mode.* 的 worktree 不删
           // (5/6 误清 4 个 cp-* worktree 事故根因)
           if (hasActiveDevLock(fullPath)) {
@@ -159,7 +267,7 @@ export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase
     console.warn('[StartupRecovery:cleanupStaleWorktrees] cleanup-lock contention — skipping worktree cleanup at startup (will retry next zombie-sweep tick)');
   }
 
-  console.log(`[StartupRecovery:cleanupStaleWorktrees] done worktrees_pruned=${stats.pruned} stale_removed=${stats.removed} skipped_locked=${stats.skipped_locked} skipped_active_lock=${stats.skipped_active_lock}`);
+  console.log(`[StartupRecovery:cleanupStaleWorktrees] done worktrees_pruned=${stats.pruned} stale_removed=${stats.removed} skipped_locked=${stats.skipped_locked} skipped_active_lock=${stats.skipped_active_lock} skipped_active_container=${stats.skipped_active_container} skipped_docker_probe=${stats.skipped_docker_probe}`);
   return stats;
 }
 
