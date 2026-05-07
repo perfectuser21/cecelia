@@ -36,26 +36,32 @@ features:
   - id: stop-hook
     name: Stop Hook（/dev 流程守门）
     status: stable
-    since: "2026-04-21"  # PR #2503 cwd-as-key 切线，13 段闭环起点
+    since: "2026-04-21"  # PR #2503 cwd-as-key 切线（v22）；2026-05-07 v23 心跳模型 #2826 全面重写
     owner: engine
     description: |
-      Cecelia /dev 流程的核心守门 — 每次 assistant 想 stop turn 时触发，
-      验证 dev session 是否真完成（PR/CI/merge/deploy/health/Learning/cleanup
-      全链路）。未完成 → block 反馈具体阶段；done → rm dev-active 状态文件 → exit 0。
+      Cecelia /dev 流程的核心守门 — 每次 assistant 想 stop turn 时触发。
+      v23（2026-05-07）心跳模型：扫 .cecelia/lights/<sid_short>-*.live mtime，
+      新鲜（< TTL=300s）→ block 让 ralph loop 续命；全黑 → release 下班。
+      OS mtime 替代 v22 软件状态机；与 Brain 完全解耦；多 session × 多 worktree
+      天然不串。/dev 完成由 engine-ship → ship-finalize.sh 写 done-marker +
+      SIGTERM guardian → 灯熄。
     entry_points:
-      - packages/engine/hooks/stop-dev.sh        # Ralph Loop 入口
+      - packages/engine/hooks/stop-dev.sh        # v23 心跳决策（单一出口）
       - packages/engine/hooks/dev-mode-tool-guard.sh  # PreToolUse 拦 ScheduleWakeup + Bash bg
     key_files:
-      - packages/engine/hooks/stop-dev.sh             # cwd 路由 + ghost 过滤 + mtime expire
-      - packages/engine/lib/devloop-check.sh          # verify_dev_complete 7 阶段决策树
-      - packages/engine/skills/dev/scripts/cleanup.sh # 归档/git config 清理
-      - packages/engine/skills/dev/scripts/worktree-manage.sh # .dev-mode + .cecelia 创建
+      - packages/engine/hooks/stop-dev.sh             # v23：单一出口 + 心跳模型决策
+      - packages/engine/lib/dev-heartbeat-guardian.sh # 守护进程：维持灯文件 mtime
+      - packages/engine/scripts/ship-finalize.sh      # engine-ship 调用：关 guardian + 写 done-marker
+      - packages/engine/scripts/abort-dev.sh          # 用户手动中止 /dev
+      - packages/engine/lib/devloop-check.sh          # log_hook_decision；verify_dev_complete @deprecated
+      - packages/engine/skills/dev/scripts/worktree-manage.sh # 启 guardian + 写灯 + dev-active（dev-mode-tool-guard 用）
       - .claude/settings.json                          # PreToolUse hooks 注册（repo 级）
     state_files:
-      - main_repo/.cecelia/dev-active-{branch}.json   # Ralph Loop 入口锁
-      - main_repo/.cecelia/deploy-fail-count-{branch} # P5 fail counter
-      - main_repo/.cecelia/deploy-failed-{branch}.flag # P5 fail 3x escape 标记
-      - worktree/.dev-mode.{branch}                    # worktree 元数据缓存（不读字段做决策）
+      - main_repo/.cecelia/lights/{sid_short}-{branch}.live   # v23 心跳灯文件（决策依据）
+      - main_repo/.cecelia/done-markers/{sid_short}-{branch}.done  # 完成审计标记
+      - main_repo/.cecelia/aborted/{sid_short}-{branch}.aborted    # 中止审计标记
+      - main_repo/.cecelia/dev-active-{branch}.json    # @deprecated（dev-mode-tool-guard 仍用）
+      - worktree/.dev-mode.{branch}                    # worktree 元数据缓存
       - worktree/.dev-lock.{branch}                    # session_id + owner_session
     contract_url: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
     contract_url_legacy: https://www.notion.so/35753f413ec581d9b607f61e4e90ce0b  # 月升 frozen，留作历史快照
@@ -107,6 +113,17 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.25.0"
+    date: "2026-05-07"
+    change: "fix+docs"
+    description: "Stop Hook v23 PR-3 v22 遗产清理 + FD 201 leak 修复（cp-0507172354）— worktree-manage.sh guardian fork 加 201>&- 关闭 worktree-create.lock FD（修真 bug：guardian 孤儿持锁导致下次 create 失败）。verify_dev_complete 函数标 @deprecated（v23 hook 已不调，9 测试 4 docs 引用保留）。新增 scripts/cleanup-v22-state-files.sh 一次性归档现网残留 dev-active-*.json。feature-registry stop-hook 描述同步 v23 心跳模型。**保留** dev-active 创建逻辑（dev-mode-tool-guard PreToolUse hook 仍依赖）。"
+    files:
+      - "packages/engine/skills/dev/scripts/worktree-manage.sh (FD 201 leak 修 + dev-active 保留注释)"
+      - "packages/engine/lib/devloop-check.sh (verify_dev_complete 标 @deprecated)"
+      - "scripts/cleanup-v22-state-files.sh (新建 — 一次性归档脚本)"
+      - "packages/engine/feature-registry.yml (stop-hook 描述 v22→v23 同步)"
+      - "Engine 8 处版本文件 18.24.1 → 18.25.0"
+
   - version: "18.24.1"
     date: "2026-05-07"
     change: "refactor"

@@ -69,8 +69,8 @@ describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
 
   it('worktree-manage.sh fork guardian 行包含 201>&-（防回退 lint）', () => {
     const content = readFileSync(SCRIPT, 'utf8')
-    // 找 nohup ... &  fork guardian 这一行
-    const nohupLines = content.split('\n').filter(l => l.includes('nohup') && l.includes('guardian'))
+    // 找 nohup ... & fork 行（在 v23 PR-2 之后是通过 $_hb_link 启动 guardian）
+    const nohupLines = content.split('\n').filter(l => /nohup\s+bash/.test(l))
     expect(nohupLines.length).toBeGreaterThan(0)
     expect(nohupLines.some(l => l.includes('201>&-'))).toBe(true)
   })

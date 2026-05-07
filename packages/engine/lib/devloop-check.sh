@@ -547,6 +547,10 @@ devloop_check_main() {
 #   HEALTH_PROBE_MAX_RETRIES=N P6 最大重试（默认 60）
 #   HEALTH_PROBE_INTERVAL=N    P6 间隔秒（默认 5）
 #   BRAIN_HEALTH_URL=URL       默认 http://localhost:5221/api/brain/health
+#
+# @deprecated v23 (2026-05-07) — stop-dev.sh 已切到心跳模型（.cecelia/lights/ + mtime），
+# 不再调用本函数。函数体保留是因为 9 个测试 + 4 个 docs 仍引用，独立 PR 评估清理顺序。
+# 新 hook 决策模型见：docs/design/stop-hook-v23-redesign.md
 # ============================================================================
 verify_dev_complete() {
     local branch="${1:-}"
