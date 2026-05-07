@@ -20,9 +20,10 @@ make_repo() {
 
 activate_dev() {
     local repo="$1" branch="$2"
-    mkdir -p "$repo/.cecelia"
-    cat > "$repo/.cecelia/dev-active-${branch}.json" <<EOF
-{"branch":"$branch","worktree":"$repo","started_at":"2026-05-04T00:00:00Z","session_id":"test"}
+    mkdir -p "$repo/.cecelia/lights"
+    local sid_short="testsess"
+    cat > "$repo/.cecelia/lights/${sid_short}-${branch}.live" <<EOF
+{"branch":"$branch","worktree_path":"$repo","started_at":"2026-05-04T00:00:00Z","session_id":"test"}
 EOF
 }
 
@@ -47,17 +48,17 @@ assert_contains() {
     else echo "❌ $label: 缺 [$needle]"; FAIL=$((FAIL+1)); fi
 }
 
-# Case A: 无 dev-active → ScheduleWakeup 放行
-echo "=== Case A: 无 dev-active → ScheduleWakeup 放行 ==="
+# Case A: 无 live light → ScheduleWakeup 放行
+echo "=== Case A: 无 live light → ScheduleWakeup 放行 ==="
 A_REPO="$TMPROOT/case-a"
 make_repo "$A_REPO"
 out=$(run_guard "$A_REPO" "ScheduleWakeup")
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
 assert_exit "Case A 放行" "0" "$exit_code"
 
-# Case B: dev-active 存在 → ScheduleWakeup 被拦
+# Case B: live light 存在 → ScheduleWakeup 被拦
 echo ""
-echo "=== Case B: dev-active → ScheduleWakeup 拦截 ==="
+echo "=== Case B: live light → ScheduleWakeup 拦截 ==="
 B_REPO="$TMPROOT/case-b"
 make_repo "$B_REPO"
 activate_dev "$B_REPO" "cp-test-b"
@@ -67,9 +68,9 @@ assert_exit "Case B 拦截" "2" "$exit_code"
 assert_contains "Case B reason 含 ScheduleWakeup" "ScheduleWakeup" "$out"
 assert_contains "Case B reason 含 foreground" "foreground" "$out"
 
-# Case C: dev-active + Bash run_in_background:true → 被拦
+# Case C: live light + Bash run_in_background:true → 被拦
 echo ""
-echo "=== Case C: dev-active + Bash bg=true → 拦 ==="
+echo "=== Case C: live light + Bash bg=true → 拦 ==="
 C_REPO="$TMPROOT/case-c"
 make_repo "$C_REPO"
 activate_dev "$C_REPO" "cp-test-c"
@@ -78,9 +79,9 @@ exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
 assert_exit "Case C 拦截" "2" "$exit_code"
 assert_contains "Case C reason 含 run_in_background" "run_in_background" "$out"
 
-# Case D: dev-active + Bash run_in_background:false → 放行
+# Case D: live light + Bash run_in_background:false → 放行
 echo ""
-echo "=== Case D: dev-active + Bash bg=false → 放行 ==="
+echo "=== Case D: live light + Bash bg=false → 放行 ==="
 D_REPO="$TMPROOT/case-d"
 make_repo "$D_REPO"
 activate_dev "$D_REPO" "cp-test-d"
@@ -88,7 +89,7 @@ out=$(run_guard "$D_REPO" "Bash" '"tool_input":{"command":"echo hi","run_in_back
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
 assert_exit "Case D 放行" "0" "$exit_code"
 
-# Case E: dev-active + Bash 无 background 字段 → 放行（默认 false）
+# Case E: live light + Bash 无 background 字段 → 放行（默认 false）
 echo ""
 echo "=== Case E: Bash 无 bg 字段 → 放行 ==="
 E_REPO="$TMPROOT/case-e"
