@@ -91,7 +91,15 @@ export async function runDailyConsolidation(pool, opts = {}) {
 
   if (!hasData) {
     console.log('[consolidation] 今日无活动数据，记录空合并');
-    await markConsolidationDone(pool, today, { date: today, note: '今日无活动数据' });
+    const emptySummary = { date: today, note: '今日无活动数据', empty: true };
+    // 空合并也写入 memory_stream — 否则 capability-probe 会把"空闲日"误报为
+    // PROBE_FAIL_CONSOLIDATION（探针只看 memory_stream 表，importance 调低到 3 区分常规合并）
+    await pool.query(
+      `INSERT INTO memory_stream (content, importance, memory_type, source_type, expires_at)
+       VALUES ($1, 3, 'long', 'daily_consolidation', NOW() + INTERVAL '90 days')`,
+      [JSON.stringify(emptySummary)]
+    );
+    await markConsolidationDone(pool, today, emptySummary);
     return { skipped: false, empty: true };
   }
 

@@ -101,6 +101,33 @@ describe('runDailyConsolidation', () => {
     expect(result.empty).toBe(true);
   });
 
+  it('空合并日也写入 memory_stream（PROBE_FAIL_CONSOLIDATION 回归）', async () => {
+    const { pool, queryMock } = makeMockPool();
+    // 1. hasTodayConsolidation = false
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // 2-4. gatherTodayData: memories/learnings/tasks 全空
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // 5. INSERT memory_stream (空合并 — 修复前缺失这一步)
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // 6-7. markConsolidationDone: SELECT + INSERT
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const result = await runDailyConsolidation(pool);
+    expect(result.empty).toBe(true);
+
+    // 必须写入 memory_stream（importance=3，source_type=daily_consolidation）
+    const memCall = queryMock.mock.calls.find(
+      c => String(c[0]).includes('INSERT INTO memory_stream') && String(c[0]).includes('daily_consolidation')
+    );
+    expect(memCall).toBeTruthy();
+    expect(memCall[1][0]).toContain('"empty":true');
+    // LLM 不应被调用（无活动数据走快速路径）
+    expect(mockCallLLM).not.toHaveBeenCalled();
+  });
+
   it('有数据时调用 LLM 并写入 memory_stream', async () => {
     const { pool, queryMock } = makeMockPool();
     // hasTodayConsolidation = false
