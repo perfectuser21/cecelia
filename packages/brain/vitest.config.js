@@ -23,7 +23,8 @@ export default defineConfig({
       'src/__tests__/capabilities-api.test.js',
       'src/__tests__/capability-scanner.test.js',
       'src/__tests__/code-review-trigger.test.js',
-      'src/__tests__/consolidation.test.js',
+      // consolidation.test.js — pure unit test (uses makeMockPool, no real db.js import)
+      // 'src/__tests__/consolidation.test.js',
       'src/__tests__/content-pipeline-orphan.test.ts',
       'src/__tests__/contract-scan-scheduler.test.js',
       'src/__tests__/cortex-dedup-persist.test.js',
