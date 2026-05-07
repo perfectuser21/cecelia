@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.0.0
+version: 7.1.0
 created: 2026-04-08
-updated: 2026-05-06
+updated: 2026-05-07
 changelog:
+  - 7.1.0: 修复 task-plan.json 永不生成 (#2819) — Step 3 改成每轮都生成（删 "仅 APPROVED 时执行" 门槛）；APPROVED 分支即最后一轮 proposer 的分支，inferTaskPlan 从此读取
   - 7.0.0: Golden Path 合同 — 格式从"Feature 1/Feature 2"改为 Golden Path Steps（每步含验证命令）；GAN 新增"验证命令可否造假"审查；合同 GAN 收敛后 Proposer 输出 task-plan.json（从 Golden Path 倒推）
   - 6.0.0: Working Skeleton — is_skeleton 检测；按 journey_type 切换 E2E test 模板（4 种）；contract-dod-ws0.md 加 YAML header
   - 5.0.0: TDD 融合 — 合同产出 3 份产物；Test Contract 索引表；严禁 contract-dod-ws 出现 [BEHAVIOR] 条目
@@ -244,7 +245,7 @@ grep -E "FAIL|failed|✗" /tmp/ws1-red.log || { echo "ERROR: 测试未产生 Red
 
 ### Step 3: GAN 收敛后拆 task-plan.json
 
-**仅在 Reviewer 输出 APPROVED 时执行**（每轮 REVISION 跳过此步，继续对抗）：
+**每轮都生成**（REVISION 轮的 task-plan 在被打回的分支上无害；APPROVED 即最后一轮 proposer 的分支，inferTaskPlan 从此读取）：
 
 从 Golden Path Steps 倒推拆任务：
 - 每个 Golden Path Step → 对应 1-N 个 Task（按 LOC 估算）
@@ -304,7 +305,7 @@ git checkout -b "${PROPOSE_BRANCH}" 2>/dev/null || git checkout "${PROPOSE_BRANC
 git add "${SPRINT_DIR}/contract-draft.md" \
         "${SPRINT_DIR}/contract-dod-ws"*.md \
         "${SPRINT_DIR}/tests/ws"*/ \
-        "${SPRINT_DIR}/task-plan.json" 2>/dev/null  # 仅 GAN APPROVED 后才有此文件，REVISION 轮跳过
+        "${SPRINT_DIR}/task-plan.json" 2>/dev/null  # 每轮生成；2>/dev/null 防御 LLM 偶发漏写（下游 inferTaskPlan 兜底报错）
 
 git commit -m "feat(contract): round-${PROPOSE_ROUND} Golden Path draft + DoD + tests + task-plan"
 git push origin "${PROPOSE_BRANCH}"
@@ -334,5 +335,4 @@ git push origin "${PROPOSE_BRANCH}"
 1. **合同格式用 `## Feature 1 / ## Feature 2`** → v7 必须改为 Golden Path Steps
 2. **验证命令用 `echo "ok"` / `true`** → 假验证，Reviewer 必须打回
 3. **在 contract-dod-ws{N}.md 出现 [BEHAVIOR] 条目** → CI `dod-structure-purity` 会 exit 1
-4. **GAN 未 APPROVED 就输出 task-plan.json** → 任务拆分必须在合同确认后
-5. **禁止在 main 分支操作**
+4. **禁止在 main 分支操作**

@@ -132,15 +132,17 @@ describe('inferTaskPlanNode', () => {
     expect(delta).toEqual({});
   });
 
-  it('空 tasks + propose_branch git show 失败 → passthrough 返回 {}', async () => {
-    // git show origin/nonexistent:file.json 会抛错 → inferTaskPlanNode 捕获后返回 {}
+  it('空 tasks + propose_branch git show 失败 → 返回 { error } 让图走 error → END (#2819)', async () => {
+    // 修复 #2819：旧行为静默 return {} 导致 taskPlan 留 null → pick_sub_task 跳 final_evaluate → 软 PASS 无 alert。
+    // 新合同：git show 失败必须返回 { error: ... }，stateHasError 路由把图引向 error → END，立即触发 P1 alert。
     const delta = await inferTaskPlanNode({
       task: { id: 'init-1', payload: { sprint_dir: 'sprints' } },
       initiativeId: 'i',
       ganResult: { propose_branch: 'feature/nonexistent-branch-xyz-999' },
       taskPlan: { tasks: [] },
     });
-    expect(delta).toEqual({});
+    expect(delta.error).toBeTruthy();
+    expect(delta.error).toMatch(/git show.*failed/);
   });
 
   it('无 ganResult → passthrough 返回 {}', async () => {
@@ -313,9 +315,11 @@ describe('full graph e2e', () => {
     expect(final.report_path).toBeTruthy();
   }, 30000);
 
-  it('planner 不出 tasks → inferTaskPlan fallback 失败 → 空 tasks → 直跳 final_evaluate', async () => {
-    // 当 planner 不输出 tasks 时，inferTaskPlanNode 无 propose_branch（或 git show 失败）→ tasks=[],
-    // pick_sub_task 看到 idx=0 >= tasks.length=0 → 路由到 final_evaluate
+  it('planner 不出 tasks + inferTaskPlan git show 失败 → graph 硬 fail (#2819)', async () => {
+    // 修复 #2819：旧行为 inferTaskPlanNode 静默 return {} → tasks 留 null/[] →
+    //   pick_sub_task 见 idx=0 >= len=0 → 跳 final_evaluate → 软 PASS 无 alert（"pipeline 静默坏几个月"）。
+    // 新合同：inferTaskPlanNode catch 返回 { error } → stateHasError 路由 → END，
+    //   final_e2e_verdict 留 null，error 字段被设置；上游 alert 体系据此触发 P1。
     mockEnsureWt.mockResolvedValue('/wt');
     mockResolveTok.mockResolvedValue('t');
     mockSpawn.mockImplementation((args) => {
@@ -328,7 +332,8 @@ describe('full graph e2e', () => {
     mockReadFile.mockResolvedValue('# PRD');
     // parsePrd: tasks = [] (no task plan from planner)
     mockParseTaskPlan.mockReturnValue({ initiative_id: 'i', tasks: [] });
-    mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'b' });
+    // propose_branch 给个不存在的远程分支 → 真 execSync 进 catch → return { error }
+    mockRunGan.mockResolvedValue({ contract_content: 'C', rounds: 1, propose_branch: 'nonexistent-xyz-2819' });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'cont' }] })
@@ -345,9 +350,10 @@ describe('full graph e2e', () => {
       { configurable: { thread_id: 'init-fb:1' }, recursionLimit: 500 }
     );
 
-    // 无 tasks → 跳过所有 run_sub_task → 直接 final_evaluate → PASS → report
-    expect(final.taskPlan?.tasks?.length ?? 0).toBe(0);
-    expect(final.final_e2e_verdict).toBe('PASS');
+    // 新合同：图被 error 路由短路 → END，verdict 留 null，error 记录 git show 失败
+    expect(final.error).toBeTruthy();
+    expect(final.error).toMatch(/git show.*failed/);
+    expect(final.final_e2e_verdict).toBeFalsy();
   }, 30000);
 
   it('1 sub_task evaluate FAIL 后 retry → merged → final_e2e PASS', async () => {
