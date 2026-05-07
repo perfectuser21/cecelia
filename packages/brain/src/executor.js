@@ -2965,8 +2965,14 @@ async function triggerCeceliaRun(task) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
     try {
       const result = await runHarnessInitiativeRouter(task);
+      // harness_initiative 是同步阻塞执行（无回调），executor 必须自行回写状态
+      if (result.ok) {
+        await updateTaskStatus(task.id, 'completed');
+      } else {
+        await updateTaskStatus(task.id, 'failed', { error_message: String(result.error || 'harness graph failed').slice(0, 500) });
+      }
       return {
-        success: result.ok,
+        success: true, // executor 已处理完毕，dispatcher 无需回退 queued
         taskId: task.id,
         initiative: true,
         fullGraph: true,
@@ -2977,7 +2983,12 @@ async function triggerCeceliaRun(task) {
       };
     } catch (err) {
       console.error(`[executor] Harness Full Graph error task=${task.id}: ${err.message}`);
-      return { success: false, taskId: task.id, initiative: true, error: err.message };
+      try {
+        await updateTaskStatus(task.id, 'failed', { error_message: err.message.slice(0, 500) });
+      } catch (updateErr) {
+        console.error(`[executor] 状态回写失败 task=${task.id}: ${updateErr.message}`);
+      }
+      return { success: true, taskId: task.id, initiative: true, error: err.message?.slice(0, 500) };
     }
   }
 
