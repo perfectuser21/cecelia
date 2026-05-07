@@ -25,6 +25,9 @@ journey_type: autonomous
 - [ ] [ARTIFACT] tests/ws1/infer-task-plan-e2e.test.ts 文件存在且含至少 2 个 it() 块
   Test: `node -e "const c=require('fs').readFileSync('sprints/verify-2820/tests/ws1/infer-task-plan-e2e.test.ts','utf8');const m=c.match(/\bit\s*\(/g)||[];if(m.length<2)process.exit(1)"`
 
+- [ ] [ARTIFACT] scripts/harness/verify-task-plan.mjs 验证脚本存在且导出 --mode=schema/--mode=infer 两种模式
+  Test: `node -e "const c=require('fs').readFileSync('scripts/harness/verify-task-plan.mjs','utf8');if(!c.includes(\"mode === 'schema'\")||!c.includes(\"mode === 'infer'\")||!c.includes('parseTaskPlan')||!c.includes('inferTaskPlanNode'))process.exit(1)"`
+
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
 见 `tests/ws1/infer-task-plan-e2e.test.ts`，覆盖：

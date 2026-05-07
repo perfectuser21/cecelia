@@ -18,7 +18,8 @@
         "sprints/verify-2820/task-plan.json",
         "sprints/verify-2820/contract-draft.md",
         "sprints/verify-2820/contract-dod-ws1.md",
-        "sprints/verify-2820/tests/ws1/infer-task-plan-e2e.test.ts"
+        "sprints/verify-2820/tests/ws1/infer-task-plan-e2e.test.ts",
+        "scripts/harness/verify-task-plan.mjs"
       ],
       "depends_on": [],
       "complexity": "S",
