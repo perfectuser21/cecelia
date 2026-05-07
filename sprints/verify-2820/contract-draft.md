@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## 变量
 
@@ -127,6 +127,18 @@ echo "✅ Golden Path 全部通过"
 ```
 
 **通过标准**: 脚本 `exit 0`，stdout 含四条 `✅ StepN` 行。
+
+---
+
+## Risks
+
+| ID | Risk | Mitigation |
+|---|---|---|
+| R1 | Brain API 5221 不可达导致 Step 0 阻塞 | Planner SKILL Step 0 已设计为非阻塞、记录 [ASSUMPTION] 后继续；E2E 不调用 5221 |
+| R2 | Proposer stdout 缺 ```json fence | verify-task-plan.mjs --mode=schema 直接对 propose 分支 `git show` 文件而非 stdout，绕开 fence 解析失败路径 |
+| R3 | task-plan.json JSON.parse 失败 | parseTaskPlan 抛错→脚本 die→exit 1（Step 2 cascade 失败由 `set -euo pipefail` 终止 E2E） |
+| R4 | 同 task_id 被并发派发 | worktree owner_session 互斥 + Brain dev_record 幂等键，PROPOSE_BRANCH 含 round 号防覆盖 |
+| R5 | Cascade：Step 2 红时跳过 Step 3/4 | E2E 脚本 `set -e` + 每 Step 失败立即 `exit 1` + 显式打印失败 Step 编号，便于 Evaluator 定位首红 |
 
 ---
 
