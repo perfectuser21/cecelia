@@ -45,20 +45,20 @@ check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 0\b' 4 "
 # 旧 not-dev return 99 保留兼容（classify_session 末尾）
 check_count "$REPO_ROOT/packages/engine/lib/devloop-check.sh" '\breturn 99\b' 1 "devloop-check.sh return 99 (classify_session 兼容)"
 
-# stop-dev.sh 必须调 verify_dev_complete（Ralph 模式核心）
-if ! grep -q "verify_dev_complete" "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    echo "❌ stop-dev.sh 必须调用 verify_dev_complete（Ralph 模式核心）"
+# v23: stop-dev.sh 必须读 .cecelia/lights/（心跳模型核心）
+if ! grep -q "\.cecelia/lights" "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    echo "❌ stop-dev.sh 必须读 .cecelia/lights/（v23 心跳模型核心）"
     ERR=1
 else
-    echo "✅ stop-dev.sh 调用 verify_dev_complete"
+    echo "✅ stop-dev.sh 读 .cecelia/lights/"
 fi
 
-# stop-dev.sh 必须读 .cecelia 状态文件（Ralph 信号源）
-if ! grep -q "\.cecelia" "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    echo "❌ stop-dev.sh 必须读 .cecelia/dev-active-*.json（Ralph 信号源）"
+# v23: stop-dev.sh 必须用 mtime 判定（不再调 verify_dev_complete）
+if ! grep -qE "stat -[fc] %[mY]" "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    echo "❌ stop-dev.sh 必须用 stat mtime 判定灯新鲜度"
     ERR=1
 else
-    echo "✅ stop-dev.sh 读 .cecelia/dev-active-*.json"
+    echo "✅ stop-dev.sh 使用 stat mtime"
 fi
 
 if [[ "$ERR" -eq 0 ]]; then

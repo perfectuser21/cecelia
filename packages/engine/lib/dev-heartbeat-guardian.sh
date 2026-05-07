@@ -15,6 +15,8 @@ LIGHT="${1:-}"
 INTERVAL="${GUARDIAN_INTERVAL_SEC:-60}"
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || INTERVAL=60
 ORIGINAL_PPID=$PPID
+# GUARDIAN_ORPHAN_MODE=1: 跳过 ppid 自检（nohup+disown 后合法孤儿进程）
+ORPHAN_MODE="${GUARDIAN_ORPHAN_MODE:-0}"
 
 cleanup() {
     rm -f "$LIGHT"
@@ -26,10 +28,12 @@ trap cleanup SIGTERM SIGINT SIGHUP
 touch "$LIGHT" 2>/dev/null || { echo "[guardian] cannot create $LIGHT" >&2; exit 1; }
 
 while true; do
-    # ppid 自检 — 跨平台
-    current_ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ' || echo 1)
-    if [[ "$current_ppid" != "$ORIGINAL_PPID" ]]; then
-        cleanup
+    # ppid 自检 — 跨平台（ORPHAN_MODE=1 时跳过，nohup+disown 启动的合法孤儿进程）
+    if [[ "$ORPHAN_MODE" != "1" ]]; then
+        current_ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ' || echo 1)
+        if [[ "$current_ppid" != "$ORIGINAL_PPID" ]]; then
+            cleanup
+        fi
     fi
 
     sleep "$INTERVAL" &

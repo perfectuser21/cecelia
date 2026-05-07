@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ralph-loop-mode.test.sh — Stop Hook Ralph Loop 模式 5 case 守门测试
+# v23 心跳模型版本：状态信号源改为 .cecelia/lights/<sid_short>-*.live mtime
 # 验证三层防御：
 #   1. 状态信号源切到主仓库根（不依赖 cwd）
-#   2. assistant 删 .dev-mode 不影响（项目根状态文件主导）
+#   2. assistant 删 .dev-mode 不影响（lights 文件主导）
 #   3. hook 主动验证（不读 .dev-mode 字段）
 
 set -uo pipefail
@@ -57,26 +58,29 @@ out=$(run_stop_dev "$A_REPO")
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
 assert_exit_code "Case A 状态文件不存在 → exit 0" "0" "$exit_code"
 
-# Case B: 状态文件存在 + cwd 在 worktree + PR 未创建 → block
+# Case B: v23 心跳灯亮 + cwd 在 worktree → block（不再依赖 dev-active.json）
 B_REPO="$TMPROOT/case-b"
 B_WT="$TMPROOT/case-b-worktree"
-mkdir -p "$B_REPO/.cecelia"
+B_SESSION="testbsid-full-uuid-xyz"   # 8字符前缀: testbsid
+B_SID_SHORT="${B_SESSION:0:8}"
+mkdir -p "$B_REPO/.cecelia/lights"
 ( cd "$B_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git worktree add "$B_WT" -b cp-test-b 2>/dev/null )
-cat > "$B_REPO/.cecelia/dev-active-cp-test-b.json" <<EOF
-{"branch":"cp-test-b","worktree":"$B_WT","started_at":"2026-05-04T00:00:00Z","session_id":"test"}
+# v23: 写灯文件（mtime 新鲜 = 刚 touch）
+cat > "$B_REPO/.cecelia/lights/${B_SID_SHORT}-cp-test-b.live" <<EOF
+{"session_id":"$B_SESSION","branch":"cp-test-b","worktree":"$B_WT"}
 EOF
-out=$(run_stop_dev "$B_WT")
-assert_contains "Case B PR 未创建 → block" "decision" "$out"
+out=$(run_stop_dev "$B_WT" "$B_SESSION")
+assert_contains "Case B 灯亮 → block" "decision" "$out"
 
-# Case C v22: cwd 漂到主仓库 + hook session_id=test（命中 dev-active.session_id）→ 仍 block
-# 关键修复：v22 漂主仓库防护从"主分支+单 dev-active"换成"hook session_id 精确路由"
-out_c=$(run_stop_dev "$B_REPO" "test")
-assert_contains "Case C v22 cwd 漂主仓库 + session_id 命中 → 仍 block（session_id 路由不依赖 cwd）" "decision" "$out_c"
+# Case C v23: cwd 漂到主仓库 + hook session_id 命中灯前缀 → 仍 block
+# v23 漂主仓库防护：cwd 仅定位主仓库，session_id 前缀匹配灯文件
+out_c=$(run_stop_dev "$B_REPO" "$B_SESSION")
+assert_contains "Case C cwd 漂主仓库 + session_id 命中灯 → 仍 block（cwd 路由不依赖）" "decision" "$out_c"
 
-# Case D: 状态文件存在 + assistant 删了 .dev-mode → 仍 block（关键测试自删漏洞）
+# Case D: 灯亮 + assistant 删了 .dev-mode → 仍 block（lights 文件主导，.dev-mode 不影响决策）
 rm -f "$B_WT/.dev-mode.cp-test-b" 2>/dev/null || true
-out_d=$(run_stop_dev "$B_WT")
-assert_contains "Case D 删 .dev-mode → 仍 block（关键修复）" "decision" "$out_d"
+out_d=$(run_stop_dev "$B_WT" "$B_SESSION")
+assert_contains "Case D 删 .dev-mode + 灯亮 → 仍 block（v23 心跳主导）" "decision" "$out_d"
 
 # Case E: 完成路径完整 mock 复杂，由 E2E 12 场景覆盖
 echo "ℹ️  Case E 完成路径完整验证由 E2E 12 场景覆盖"

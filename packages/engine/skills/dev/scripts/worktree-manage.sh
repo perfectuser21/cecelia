@@ -287,6 +287,43 @@ RALPH_EOF
             echo -e "${GREEN}✅ .cecelia/dev-active-${branch_name}.json 已写入主仓库根${NC}" >&2
         fi
 
+        # === v23 PR-2: 心跳模型 — 启动 guardian + 写灯文件 ===
+        if [[ -n "$main_repo" ]]; then
+            mkdir -p "$main_repo/.cecelia/lights"
+            local _sid_short="${_claude_sid_create:0:8}"
+            [[ -z "$_sid_short" || "$_sid_short" == "unknown" ]] && _sid_short="nosid000"
+
+            local _light_file="$main_repo/.cecelia/lights/${_sid_short}-${branch_name}.live"
+            local _guardian_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/dev-heartbeat-guardian.sh"
+            [[ -f "$_guardian_lib" ]] || _guardian_lib="$(git rev-parse --show-toplevel 2>/dev/null)/packages/engine/lib/dev-heartbeat-guardian.sh"
+
+            if [[ -f "$_guardian_lib" ]]; then
+                # 通过 symlink 启动 guardian，避免 pkill -f 'dev-heartbeat-guardian' 误杀
+                # （测试环境的 afterEach 可能有宽泛的 pkill）
+                local _hb_link="$main_repo/.cecelia/hb.sh"
+                ln -sf "$_guardian_lib" "$_hb_link" 2>/dev/null || true
+                GUARDIAN_ORPHAN_MODE=1 nohup bash "$_hb_link" "$_light_file" >/dev/null 2>&1 &
+                local _guardian_pid=$!
+                disown $_guardian_pid 2>/dev/null || true
+
+                cat > "$_light_file" <<LIGHT_EOF
+{
+  "session_id": "${_claude_sid_create:-unknown}",
+  "session_id_short": "${_sid_short}",
+  "branch": "${branch_name}",
+  "worktree_path": "${worktree_path}",
+  "started_at": "$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)",
+  "host": "$(hostname -s 2>/dev/null || echo unknown)",
+  "guardian_pid": ${_guardian_pid},
+  "stage": "stage_0_init"
+}
+LIGHT_EOF
+                echo -e "${GREEN}✅ .cecelia/lights/${_sid_short}-${branch_name}.live 已写（guardian PID=${_guardian_pid}）${NC}" >&2
+            else
+                echo -e "${YELLOW}⚠️  dev-heartbeat-guardian.sh 不存在，跳过心跳启动${NC}" >&2
+            fi
+        fi
+
         echo "" >&2
         echo "下一步:" >&2
         echo "  cd $worktree_path" >&2

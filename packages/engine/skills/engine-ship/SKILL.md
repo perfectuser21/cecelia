@@ -1,7 +1,7 @@
 ---
 name: engine-ship
-version: 16.1.0
-updated: 2026-04-27
+version: 16.2.0
+updated: 2026-05-07
 description: Cecelia /dev 接力链终棒。Superpowers finishing 完成 push+PR 后，写 Learning + 触发 Brain fire-learnings-event + 标记 step_4_ship=done。Stop Hook 接管合并 + cleanup。
 trigger: Superpowers finishing-a-development-branch 完成后，按 /dev SKILL.md Phase 5 硬规则点火
 ---
@@ -49,6 +49,15 @@ bash packages/engine/skills/dev/scripts/callback-brain-task.sh \
   --branch "$BRANCH_NAME" --pr "$PR_NUMBER" --task-id "$TASK_ID"
 
 bash scripts/write-current-state.sh
+```
+
+## 2.5 关 guardian + 写 done-marker（v23 心跳模型）
+
+```bash
+PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null || echo "")
+PR_URL=$(gh pr view --json url -q .url 2>/dev/null || echo "")
+bash packages/engine/scripts/ship-finalize.sh "$BRANCH_NAME" "$PR_NUMBER" "$PR_URL" || \
+  echo "[engine-ship] ship-finalize 失败但不阻塞合并（灯文件可能已被 reaper 清）"
 ```
 
 ## 3. 标记完成

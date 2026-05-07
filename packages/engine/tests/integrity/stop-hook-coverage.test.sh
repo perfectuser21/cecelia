@@ -28,32 +28,33 @@ expect_in_ci 'dev-mode-tool-guard|tests/integration/.*test\.sh|tests/integration
 expect_in_ci 'stop-hook-7stage-smoke|scripts/smoke/.*-smoke\.sh|scripts/smoke/\*-smoke\.sh' "stop-hook-7stage-smoke"
 expect_in_ci 'ralph-loop-smoke|scripts/smoke/.*-smoke\.sh|scripts/smoke/\*-smoke\.sh' "ralph-loop-smoke"
 
-# 7: stop-dev.sh 调 verify_dev_complete
-if grep -q 'verify_dev_complete' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    pass "stop-dev.sh 调用 verify_dev_complete"
+# 7 [v23 PR-2]: stop-dev.sh 读 .cecelia/lights/（心跳模型核心信号源）
+# 替代 v22 的 verify_dev_complete 调用 — verify_dev_complete 函数本体留 PR-3 删
+if grep -q '\.cecelia/lights' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "stop-dev.sh 读 .cecelia/lights/（v23 心跳模型）"
 else
-    fail "stop-dev.sh 未调 verify_dev_complete"
+    fail "stop-dev.sh 未读 .cecelia/lights/"
 fi
 
-# 8: P5 启用
-if grep -qE 'VERIFY_DEPLOY_WORKFLOW.*=.*1' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    pass "stop-dev.sh 启用 VERIFY_DEPLOY_WORKFLOW=1"
+# 8 [v23 PR-2]: stop-dev.sh 用 stat mtime 判定灯新鲜度（替代 v22 verify_dev_complete 的 P5/P6）
+if grep -qE 'stat -[fc] %[mY]' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "stop-dev.sh 用 stat mtime 判定灯新鲜度（v23 心跳模型）"
 else
-    fail "stop-dev.sh P5 disabled（功能死）"
+    fail "stop-dev.sh 未用 stat mtime"
 fi
 
-# 9: P6 启用
-if grep -qE 'VERIFY_HEALTH_PROBE.*=.*1' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    pass "stop-dev.sh 启用 VERIFY_HEALTH_PROBE=1"
+# 9 [v23 PR-2]: stop-dev.sh 有 TTL_SEC 配置（替代 v22 P5/P6 双轨道验证）
+if grep -qE 'TTL_SEC|STOP_HOOK_LIGHT_TTL_SEC' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "stop-dev.sh 含 TTL_SEC（v23 灯新鲜度阈值）"
 else
-    fail "stop-dev.sh P6 disabled（功能死）"
+    fail "stop-dev.sh 缺 TTL_SEC"
 fi
 
-# 10: ghost 过滤
-if grep -qE 'is_ghost|session_id.*unknown' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    pass "stop-dev.sh 含 ghost 过滤逻辑"
+# 10 [v23 PR-2]: dev-heartbeat-guardian.sh 存在（PR-1 引入，PR-2 接入）
+if [[ -f "$REPO_ROOT/packages/engine/lib/dev-heartbeat-guardian.sh" ]]; then
+    pass "dev-heartbeat-guardian.sh 存在（v23 心跳守护）"
 else
-    fail "stop-dev.sh 无 ghost 过滤"
+    fail "dev-heartbeat-guardian.sh 缺失"
 fi
 
 # 11: PreToolUse 拦截器存在
@@ -67,19 +68,18 @@ fi
 # v18.22.0 invariant L11-L14（4 个 P0 修复 grep 验证）
 # ============================================================================
 
-# L11: stop-dev.sh 含 mtime expire 逻辑（BUG-4 修复）
-if grep -qE 'EXPIRE_MINUTES|file_mtime|age_min' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    pass "L11: stop-dev.sh 含 mtime expire 逻辑（BUG-4 修复）"
+# L11 [v23 PR-2]: stop-dev.sh 含 light_mtime / age 逻辑（替代 v22 EXPIRE_MINUTES dev-active mtime）
+if grep -qE 'light_mtime|age=' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L11 [v23]: stop-dev.sh 含 light_mtime/age 逻辑（心跳新鲜度判定）"
 else
-    fail "L11: BUG-4 mtime expire 缺"
+    fail "L11 [v23]: light_mtime/age 缺"
 fi
 
-# L12: stop-dev.sh 含 cwd 路由（BUG-1 修复）
-if grep -qE 'rev-parse --abbrev-ref HEAD' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" && \
-   grep -qE 'case.*current_branch|case "\$current_branch"' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
-    pass "L12: stop-dev.sh 含 cwd 路由（BUG-1 修复）"
+# L12 [v23 PR-2]: stop-dev.sh 用 sid_short 文件名前缀做 session 路由（替代 v22 cwd→branch 路由）
+if grep -qE 'sid_short|hook_session_id:0:8' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L12 [v23]: stop-dev.sh 用 sid_short 前缀路由（session_id 物理隔离）"
 else
-    fail "L12: BUG-1 cwd 路由缺"
+    fail "L12 [v23]: sid_short 路由缺"
 fi
 
 # L13: devloop-check.sh 主 CI 查询必带 --workflow CI（BUG-2 修复）
