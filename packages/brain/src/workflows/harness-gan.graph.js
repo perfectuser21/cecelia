@@ -38,11 +38,72 @@ const VERDICT_RE = /VERDICT:\s*(APPROVED|REVISION)/i;
 // 100 = 50 轮 propose+review 预留一倍。
 export const DEFAULT_RECURSION_LIMIT = 100;
 
-// 硬轮数保险丝（对齐 Anthropic harness-design 2026-03：实操 5-15 iter cap）
-// Reviewer 连续 N 轮 REVISION 后，即使 LLM 还想 REVISE 也 force APPROVED 进 Phase B。
-// 2303a935 真机验证：Round 10 仍在抠正则缝隙 meta-loop，没硬 cap 会无限。
-// 可通过 HARNESS_GAN_MAX_ROUNDS env 调，默认 5（时间 API 这类小 scope 足够 3-5 轮）。
-export const MAX_ROUNDS = parseInt(process.env.HARNESS_GAN_MAX_ROUNDS || '5', 10);
+// 5 个 rubric 维度（reviewer 每轮独立打分；收敛检测 + 阈值判决均依赖此列表）。
+const RUBRIC_DIMENSIONS = [
+  'dod_machineability',
+  'scope_match_prd',
+  'test_is_red',
+  'internal_consistency',
+  'risk_registered',
+];
+
+// ── 收敛检测（替代旧的轮数硬 cap） ─────────────────────────────────────────
+//
+// 用户原话：「我希望的是他能够就是无上限地去走，但是你得最终得有一个收敛，
+// 或者说你得有一个越来越小的一个方向，你不能说越来越大，越来越大」
+//
+// 设计：
+//   - 不再用轮数硬 cap（环境变量门槛已删除）
+//   - 累积每轮 rubric_scores → rubricHistory
+//   - converging（5 维度全部持平或上升）→ 继续 GAN
+//   - diverging（任一维度连续走低）/ oscillating（最近 3 轮高低高）→ force APPROVED + P1 alert
+//   - insufficient_data（< 3 轮）→ 继续 GAN（数据不够判趋势）
+//
+// 输入：rubricHistory = [{round, scores: {dod_machineability, scope_match_prd, test_is_red,
+//                                         internal_consistency, risk_registered}}, ...]
+// 输出：'converging' | 'diverging' | 'oscillating' | 'insufficient_data'
+export function detectConvergenceTrend(rubricHistory) {
+  if (!Array.isArray(rubricHistory) || rubricHistory.length < 3) {
+    return 'insufficient_data';
+  }
+  // 取最近 3 轮，缺 scores 字段也兜底（避免崩）
+  const last3 = rubricHistory.slice(-3);
+  const valid = last3.every((e) => e && e.scores && typeof e.scores === 'object');
+  if (!valid) return 'insufficient_data';
+  const [a, b, c] = last3;
+
+  // 1. oscillating 优先：任一维度在 last3 中呈高低高 / 低高低
+  for (const dim of RUBRIC_DIMENSIONS) {
+    const va = Number(a.scores[dim]);
+    const vb = Number(b.scores[dim]);
+    const vc = Number(c.scores[dim]);
+    if ([va, vb, vc].some((n) => Number.isNaN(n))) continue;
+    const highLowHigh = va > vb && vc > vb;
+    const lowHighLow = va < vb && vc < vb;
+    if (highLowHigh || lowHighLow) return 'oscillating';
+  }
+
+  // 2. diverging：任一维度连续 2 轮严格走低（a > b > c）
+  for (const dim of RUBRIC_DIMENSIONS) {
+    const va = Number(a.scores[dim]);
+    const vb = Number(b.scores[dim]);
+    const vc = Number(c.scores[dim]);
+    if ([va, vb, vc].some((n) => Number.isNaN(n))) continue;
+    if (va > vb && vb > vc) return 'diverging';
+  }
+
+  // 3. converging：最近 2 轮（b→c）5 维度全部 ≥ 上一轮（持平算 OK）
+  const lastPairOk = RUBRIC_DIMENSIONS.every((dim) => {
+    const vb = Number(b.scores[dim]);
+    const vc = Number(c.scores[dim]);
+    if (Number.isNaN(vb) || Number.isNaN(vc)) return false;
+    return vc >= vb;
+  });
+  if (lastPairOk) return 'converging';
+
+  // 兜底（5 维度有升有降但没有任一维度持续走低/震荡）
+  return 'converging';
+}
 
 // ── 纯函数辅助（从 harness-gan-loop.js 搬移）──────────────────────────────
 
@@ -88,14 +149,7 @@ export function extractRubricScores(stdout) {
 // 所有 5 维度 ≥ 阈值 → APPROVED；任一低于 → REVISION。
 // scores 缺失或维度不完整 → null（调用方 fallback 到 LLM 文本 verdict）。
 // 对齐 Anthropic：each criterion has hard threshold, PASS is code-decided.
-const RUBRIC_DIMENSIONS = [
-  'dod_machineability',
-  'scope_match_prd',
-  'test_is_red',
-  'internal_consistency',
-  'risk_registered',
-];
-
+// RUBRIC_DIMENSIONS 在文件顶部定义（与 detectConvergenceTrend 共用）。
 export function computeVerdictFromRubric(scores, round) {
   if (!scores || typeof scores !== 'object') return null;
   const threshold = thresholdForRound(round);
@@ -262,14 +316,27 @@ export const GanContractState = Annotation.Root({
   round: Annotation({ reducer: (_old, neu) => neu, default: () => 0 }),
   costUsd: Annotation({ reducer: (_old, neu) => neu, default: () => 0 }),
   verdict: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  // forcedApproval: true 表示 verdict=APPROVED 是 MAX_ROUNDS 硬 cap 强制的（Reviewer 还想 REVISE）。
-  // Phase B 用这个 flag 决定是否在 Initiative 记录里标 warn（合同是勉强过，不是真共识）。
+  // forcedApproval: true 表示 verdict=APPROVED 是收敛检测（diverging/oscillating）强制的，
+  // Reviewer 实际还想 REVISE。Phase B 用这个 flag 决定是否在 Initiative 记录里标 warn
+  // （合同是勉强过，不是真共识）。
   forcedApproval: Annotation({ reducer: (_old, neu) => neu, default: () => false }),
   // proposeBranch: GAN proposer 每轮 push 到独立分支（cp-harness-propose-r{N}-{shortTask}）。
   // Reviewer APPROVED 后此值即 approved contract 的 git branch — Phase B 入库 sub-task
   // 时透传到 payload.contract_branch，供 harness-task-dispatch.js 注入 CONTRACT_BRANCH env。
   // 漏写会导致 Generator ABORT（v6 P0-final 修复点）。
   proposeBranch: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  // rubricHistory: 累积每轮 reviewer 的 rubric_scores，供 detectConvergenceTrend 判趋势。
+  // reducer 把 patch 里的新条目 append 进 list（替代旧的轮数硬 cap）。
+  // entry 形如 {round, scores: {dod_machineability, scope_match_prd, test_is_red,
+  //                              internal_consistency, risk_registered}}
+  rubricHistory: Annotation({
+    reducer: (old = [], neu) => {
+      if (!neu) return old;
+      const append = Array.isArray(neu) ? neu : [neu];
+      return [...old, ...append];
+    },
+    default: () => [],
+  }),
 });
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
@@ -371,7 +438,8 @@ export function createGanContractNodes(executor, ctx) {
     // Verdict 决策优先级（对齐 Anthropic harness-design 2026-03 "each criterion has hard threshold"）：
     //   1. rubric_scores 齐全 → 代码判阈值（权威 — LLM 只打分不判决）
     //   2. rubric_scores 缺失 → fallback 到 LLM 文本 "VERDICT: X"（老逻辑）
-    //   3. 无论以上哪个结果，round >= MAX_ROUNDS 且非 APPROVED → force APPROVED（保险丝）
+    //   3. 用 rubricHistory 走势检测 — diverging/oscillating 时 force APPROVED + P1 alert
+    //      （替代旧的轮数硬 cap：不限轮数，但发散自动收敛）
     const currentRound = state.round || 0;
     const rubricScores = extractRubricScores(result.stdout);
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
@@ -382,14 +450,27 @@ export function createGanContractNodes(executor, ctx) {
     if (rubricVerdict && rubricVerdict !== llmTextVerdict) {
       console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ llm_text=${llmTextVerdict} — 按 rubric 判（代码权威）`);
     }
-    // 硬轮数保险丝：即使上面判了 REVISION，round >= MAX_ROUNDS 仍 force APPROVED
+
+    // 收敛检测：把当前轮 scores 拼到历史里，判最近 3 轮趋势。
+    // - converging / insufficient_data：按上面 verdict 走（不 force）
+    // - diverging / oscillating：force APPROVED + forcedApproval=true + P1 alert
+    const newHistoryEntry = rubricScores ? { round: currentRound, scores: rubricScores } : null;
+    const combinedHistory = newHistoryEntry
+      ? [...(state.rubricHistory || []), newHistoryEntry]
+      : (state.rubricHistory || []);
+    const trend = detectConvergenceTrend(combinedHistory);
     let forcedApproval = false;
-    if (verdict !== 'APPROVED' && currentRound >= MAX_ROUNDS) {
-      console.warn(`[harness-gan] Force-APPROVED at round=${currentRound} (MAX_ROUNDS=${MAX_ROUNDS}, source=${verdictSource}, verdict_before=${verdict}) — 硬保险丝触发，进 Phase B`);
+    if (verdict !== 'APPROVED' && (trend === 'diverging' || trend === 'oscillating')) {
+      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED 进 Phase B (verdict_before=${verdict}, source=${verdictSource}, history_len=${combinedHistory.length})`);
       verdict = 'APPROVED';
       forcedApproval = true;
     }
+
     const patch = { costUsd: nextCost, verdict, forcedApproval };
+    if (newHistoryEntry) {
+      // reducer 会 append，所以 patch 给单条新 entry。
+      patch.rubricHistory = [newHistoryEntry];
+    }
     if (verdict !== 'APPROVED') {
       patch.feedback = extractFeedback(result.stdout);
     }

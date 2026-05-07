@@ -48,7 +48,7 @@ changelog:
 - **按 rubric 打分，不自由判断**：每条合同按下文 5 个维度 0-10 打分，硬阈值由代码判 PASS，Reviewer 不主观决定 APPROVED / REVISION
 - **攻击向量是产品质量，不是测试框架防作弊**：挑 spec 中真实的歧义、遗漏、边界，不挑"Generator 用 regex 伪造怎么办"
 - **承认自己的局限**：合同阶段是 alignment，不是代码 QA。代码能不能真工作让代码阶段 Evaluator 验
-- **轮数有硬上限（外部代码兜底）**：`harness-gan-graph.js` MAX_ROUNDS=5（env HARNESS_GAN_MAX_ROUNDS 可调）。即便 Reviewer 还想 REVISE，Round ≥ 5 后外层强制 APPROVED 进 Phase B。不要因此"赶工凑数 APPROVED"—— 继续按 rubric 真实打分，是否 force 由代码判
+- **无轮数上限，但发散自动收敛（外部代码兜底）**：`harness-gan.graph.js` 不设 MAX_ROUNDS，改用 `detectConvergenceTrend(rubricHistory)` 判趋势。converging（5 维度持平或上升）→ 继续；diverging（任一维度连续走低）/ oscillating（最近 3 轮高低高）→ 外层强制 APPROVED + 写 P1 alert。Reviewer 该按 rubric 真实打分，是否 force 由代码判（不要因此"赶工凑数 APPROVED"）
 
 ---
 

@@ -107,7 +107,8 @@ function rubricStdout(scores, verdictText = 'REVISION') {
 describe('reviewer node 收敛检测集成 [BEHAVIOR]', () => {
   it('5 轮以上但全部 converging → 不 force（GAN 不再被轮数硬 cap）', async () => {
     // round 6 进 reviewer，rubricHistory 已有 5 个上升记录
-    const stdout = rubricStdout({ dod_machineability: 6, scope_match_prd: 6, test_is_red: 6, internal_consistency: 6, risk_registered: 6 }, 'REVISION');
+    // round 6 阈值是 6，故意 4 个 6 + 1 个 5（risk_registered）让 rubric 判 REVISION 继续 GAN
+    const stdout = rubricStdout({ dod_machineability: 6, scope_match_prd: 6, test_is_red: 6, internal_consistency: 6, risk_registered: 5 }, 'REVISION');
     const executor = vi.fn(async () => ({ exit_code: 0, stdout, stderr: '', cost_usd: 0.05 }));
     const nodes = createGanContractNodes(executor, makeCtx());
     const rubricHistory = [
@@ -120,7 +121,7 @@ describe('reviewer node 收敛检测集成 [BEHAVIOR]', () => {
     const newState = await nodes.reviewer({
       prdContent: '# PRD', contractContent: '# C', round: 6, costUsd: 0, rubricHistory,
     });
-    // 没全 ≥ 7 → REVISION（继续），没 force（converging）
+    // 没全 ≥ 7 → REVISION（继续），没 force（converging — 5→6 全升）
     expect(newState.verdict).toBe('REVISION');
     expect(newState.forcedApproval).toBe(false);
   });
@@ -145,8 +146,10 @@ describe('reviewer node 收敛检测集成 [BEHAVIOR]', () => {
     warnSpy.mockRestore();
   });
 
-  it('oscillating（dod_machineability 在 6/8/6 震荡）→ force APPROVED + P1 alert', async () => {
-    const stdout = rubricStdout({ dod_machineability: 6, scope_match_prd: 7, test_is_red: 7, internal_consistency: 7, risk_registered: 7 }, 'REVISION');
+  it('oscillating（dod_machineability 在 8/6/8 震荡）→ force APPROVED + P1 alert', async () => {
+    // 当前轮 round=3 scores: dod_machineability=8（震荡回升），scope_match_prd=4 让 rubric 判 REVISION
+    // 然后 history [r1=8, r2=6, r3=8] → high-low-high → oscillating
+    const stdout = rubricStdout({ dod_machineability: 8, scope_match_prd: 4, test_is_red: 7, internal_consistency: 7, risk_registered: 7 }, 'REVISION');
     const executor = vi.fn(async () => ({ exit_code: 0, stdout, stderr: '', cost_usd: 0.05 }));
     const nodes = createGanContractNodes(executor, makeCtx());
     const rubricHistory = [
