@@ -1142,11 +1142,13 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       });
     }
 
-    res.json({
-      success: true,
+    // W7.7: 成功路径返回 202 Accepted + 标准化 body（task_id + dispatched_at），
+    // 失败路径走上面 4xx/5xx 分支（404/409/503/5xx）。
+    res.status(202).json({
       task_id: id,
       title: task.title,
-      run_id: execResult.runId
+      run_id: execResult.runId,
+      dispatched_at: new Date().toISOString()
     });
   } catch (err) {
     console.error('[API] tasks/:id/dispatch error:', err.message);
