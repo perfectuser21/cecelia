@@ -82,13 +82,14 @@ describe('runDailyConsolidation', () => {
     mockUpdateSelfModel.mockResolvedValue('ok');
   });
 
-  it('今日已合并时跳过（不带 forceRun）', async () => {
+  it('上次合并不久（too_soon）时跳过（不带 forceRun）', async () => {
     const { pool, queryMock } = makeMockPool();
-    // hasTodayConsolidation = true
-    queryMock.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    // shouldRunByElapsed → 上次运行 1 小时前（< 4h 间隔）→ too_soon
+    queryMock.mockResolvedValueOnce({ rows: [{ last_run: new Date(Date.now() - 60 * 60 * 1000) }] });
 
     const result = await runDailyConsolidation(pool);
     expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('too_soon');
     expect(mockCallLLM).not.toHaveBeenCalled();
   });
 
