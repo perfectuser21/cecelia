@@ -1,28 +1,43 @@
-# DoD: W7.3 Bug #E startup-recovery cleanupStaleWorktrees 加活跃 lock 保护
+contract_branch: cp-harness-propose-r2-f3ffa465
+workstream_index: 2
+sprint_dir: sprints/w8-langgraph-v8
 
-## 概述
-5/6 startup-recovery 误清 4 个含活跃 dev-lock 的 cp-* worktree。修：cleanupStaleWorktrees
-删除前先检查 worktree 内是否含 24h 内修改的 .dev-lock 或 .dev-mode.<branch>，命中则跳过。
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Workstream 2: 集成测试（mock 层 17 节点 + checkpoint resume + credentials 注入参数）
 
-## 验收
+**范围**：在 `packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js` 写 vitest 集成测试，**只验"逻辑流转 + credentials 注入参数"**；端到端 mock 跑 `compileHarnessFullGraph()`，覆盖节点字典中的 17 个必走节点（顶层 12 + sub-graph 5）+ sub_task spawn 注入 CECELIA_CREDENTIALS 参数 + checkpoint resume 幂等。**实跑实证由 WS3 acceptance-report.md（DRY_RUN=0）补充**。
+**大小**：M
+**依赖**：Workstream 1（fixture 提供 prd_content 给 prep 节点 mock）
 
-- [x] [ARTIFACT] startup-recovery.js 导出 hasActiveDevLock 函数
-  Test: manual:node -e "const m=await import('./packages/brain/src/startup-recovery.js');if(typeof m.hasActiveDevLock!=='function')process.exit(1)"
+## ARTIFACT 条目
 
-- [x] [BEHAVIOR] worktree 含活跃 .dev-lock → 不被清理（skipped_active_lock 计数 ≥1，目录还在）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] `packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js` 文件存在
+  Test: `test -f packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js`
 
-- [x] [BEHAVIOR] worktree 含活跃 .dev-mode.cp-xyz → 不被清理
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] 测试文件 import `compileHarnessFullGraph`（从 `harness-initiative.graph.js`）
+  Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js','utf8');if(!/compileHarnessFullGraph/.test(c))process.exit(1)"`
 
-- [x] [BEHAVIOR] .dev-lock mtime 超过 24h → 视为残留，正常清理（保护 false negative 不发生）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] 测试文件 import `MemorySaver` 和 `Command`（来自 `@langchain/langgraph`）
+  Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js','utf8');if(!/MemorySaver/.test(c)||!/Command/.test(c))process.exit(1)"`
 
-- [x] [BEHAVIOR] worktree 无 lock → 正常清理（保护逻辑不破坏既有路径）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] 测试文件 mock `../../spawn/middleware/account-rotation.js` 的 `resolveAccount`（验 credentials 注入路径）
+  Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js','utf8');if(!/account-rotation/.test(c))process.exit(1)"`
 
-- [x] [BEHAVIOR] enhanced 单测 26 个全过（含 5 个新加 + 5 个 hasActiveDevLock 直测）
-  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=2048' npx vitest run src/__tests__/startup-recovery-enhanced.test.js"
+- [ ] [ARTIFACT] 测试文件 reads fixture from `sprints/w8-langgraph-v8/acceptance-fixture.json`（统一 fixture 来源）
+  Test: `node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js','utf8');if(!/acceptance-fixture\.json/.test(c))process.exit(1)"`
 
-- [x] [ARTIFACT] Brain 版本 bump 到 1.228.3（package.json + .brain-versions + DEFINITION.md）
-  Test: manual:node -e "const v=require('./packages/brain/package.json').version;if(v!=='1.228.3')process.exit(1)"
+## BEHAVIOR 索引（实际测试在 tests/ws2/）
+
+见 `tests/ws2/w8-acceptance.integration.test.ts`，覆盖：
+- full graph 编译不崩
+- 第一次 invoke 后 sub-graph 停在 await_callback interrupt（state 含 containerId 但未 finalized）
+- Command(resume) 唤回后 graph 走到 report 节点（state.report_path 非空）
+- sub_task spawn mock 调用 args.env 含 CECELIA_CREDENTIALS（**仅验注入参数，非容器内真实 env**）
+- resume 前后 spawn mock 总调用次数 = sub_task 数（无重 spawn — 幂等门生效）
+- **顶层 12 节点 mock 函数 call count 各 ≥ 1 次**：prep / planner / parsePrd / ganLoop / inferTaskPlan / dbUpsert / pick_sub_task / run_sub_task / evaluate / advance / final_evaluate / report
+- **sub-graph 5 节点 mock 函数 call count 各 ≥ 1 次**：spawn / await_callback / parse_callback / poll_ci / merge_pr
+- 合计 17 个 mock 函数被调用过 ≥ 1 次
+- 测试 thread_id 命名遵循 `harness-task:${initiativeId}:${subTaskId}` 约定
