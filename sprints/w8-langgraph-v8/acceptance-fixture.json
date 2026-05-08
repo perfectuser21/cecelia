@@ -1,0 +1,19 @@
+{
+  "task_type": "harness_initiative",
+  "payload": {
+    "fixture_marker": true,
+    "prd_content": "Acceptance fixture for W8 LangGraph harness Initiative golden path. 此载荷供 acceptance 脚本和 sprints/w8-langgraph-v8 集成测试统一引用，是派发到 harness pipeline 的最短合法 Initiative 体。task_plan 含 1 个最小 sub_task；prd_content 占位长度满足 ganLoop 入参校验阈值 200 字符；payload.fixture_marker=true 便于事后通过 SELECT 区分 acceptance 流量与真实 Initiative，避免污染统计与对账。",
+    "task_plan": [
+      {
+        "id": "ws-fixture-1",
+        "title": "minimal sub_task placeholder for acceptance fixture",
+        "dod": [
+          {
+            "type": "ARTIFACT",
+            "desc": "acceptance fixture sub_task placeholder — 仅供 golden path 派发体形状校验，不承载真实交付"
+          }
+        ]
+      }
+    ]
+  }
+}
