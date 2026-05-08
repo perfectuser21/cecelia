@@ -1,0 +1,64 @@
+{
+  "initiative_id": "969f7f8e-4941-4f70-b62d-2a06678f693a",
+  "journey_type": "agent_remote",
+  "journey_type_reason": "完整链路跨 3 台机器（Mac mini → xian-mac SSH 跳板 → Windows PC CDP → 抖音 Chrome），属远端 agent 协议 / bridge 类，不是 dev_pipeline 也不是单纯 user_facing",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "WS2 修架构：三份文档对齐 + journey.md 元数据落档",
+      "scope": "对齐 packages/workflows/skills/douyin-publisher/{SKILL.md, FIELDS.md} 中的 NAS 路径与退出码定义，并新建 .agent-knowledge/content-pipeline-douyin/journey.md 描述 Journey + agent_remote 类型 + 8 步路径",
+      "dod": [
+        "[BEHAVIOR] tests/ws1/docs-alignment.test.ts 全绿（解析 SKILL.md NAS 路径=creator/output/douyin/、FIELDS.md 含 exit 0/1/2、journey.md 含 agent_remote 与 8 个 Step 标记）",
+        "[ARTIFACT] packages/workflows/skills/douyin-publisher/SKILL.md 不再含 ~/.douyin-queue（grep -c 结果=0）",
+        "[ARTIFACT] packages/workflows/skills/douyin-publisher/FIELDS.md 含 video 必填字段表（title.txt + video.mp4）+ 退出码 0/1/2 完整定义",
+        "[ARTIFACT] .agent-knowledge/content-pipeline-douyin/journey.md 存在并含 journey_type=agent_remote + 8 步定义"
+      ],
+      "files": [
+        "packages/workflows/skills/douyin-publisher/SKILL.md",
+        "packages/workflows/skills/douyin-publisher/FIELDS.md",
+        ".agent-knowledge/content-pipeline-douyin/journey.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "Lead 自验机制工程化 + Journey E2E smoke 脚手架",
+      "scope": "建立 .agent-knowledge/content-pipeline-douyin/lead-acceptance-sprint-2.1a.md（含 7 步 checklist + 3 个截图占位 + 签名占位 + item_id 占位 + cmd stdout 占位）+ screenshots/ 目录；新建 tests/content-pipeline-douyin-e2e.test.js 含 ≥ 5 个 Step 显式标记，禁含任何 mock SCP/CDP/playwright 关键字",
+      "dod": [
+        "[BEHAVIOR] tests/ws2/lead-acceptance-template.test.ts 全绿（解析模板含 7 步 checklist、3 个截图占位、签名占位、item_id 占位；解析 E2E smoke 含 ≥ 5 个 Step 标记 + 不含任何 mock 关键字）",
+        "[ARTIFACT] .agent-knowledge/content-pipeline-douyin/lead-acceptance-sprint-2.1a.md 文件存在",
+        "[ARTIFACT] .agent-knowledge/content-pipeline-douyin/screenshots/.gitkeep 存在",
+        "[ARTIFACT] tests/content-pipeline-douyin-e2e.test.js 文件存在，含 ≥ 5 个 [Ss]tep[ _-]?[1-7] 匹配，且 grep -E 'jest\\.mock.*(child_process|ssh|playwright)|mockImplementation.*scp|playwright.*\\.mock\\(' 命中 0 次"
+      ],
+      "files": [
+        ".agent-knowledge/content-pipeline-douyin/lead-acceptance-sprint-2.1a.md",
+        ".agent-knowledge/content-pipeline-douyin/screenshots/.gitkeep",
+        "tests/content-pipeline-douyin-e2e.test.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws3",
+      "title": "抖音 video 真发执行 + 证据回写 STATUS.md + Lead 签名归档",
+      "scope": "Lead 走完 7 步 checklist 真跑一遍：Mac mini 触发 batch-publish-douyin.sh、双跳到 xian-pc 看 Windows 文件就位、observe Chrome CDP 上传发布、retrieve 真 item_id；把真 cmd stdout / ≥ 3 张截图 / 签名行 / 新 item_id 填入 lead-acceptance-sprint-2.1a.md；并把 STATUS.md 视频条目 item_id 替换为本次新值，旧值 7605861760767233306 标 'historical/已替换'",
+      "dod": [
+        "[BEHAVIOR] tests/ws3/real-publish-evidence.test.ts 全绿（STATUS.md 含 19 位新 item_id 且 ≠ 7605861760767233306；evidence 含同一 item_id；evidence 含 Lead 签名 + 19222 探活 + Mac mini 触发 stdout + Windows 路径；screenshots/ 含 ≥ 3 张文件且 mtime ≥ 2026-05-08）",
+        "[ARTIFACT] packages/workflows/skills/douyin-publisher/STATUS.md 含本次新 item_id + 历史 ID 显式标 'historical/已替换'",
+        "[ARTIFACT] .agent-knowledge/content-pipeline-douyin/screenshots/ 含 ≥ 3 张 .png/.jpg 截图，mtime ≥ 2026-05-08",
+        "[ARTIFACT] .agent-knowledge/content-pipeline-douyin/lead-acceptance-sprint-2.1a.md mtime ≥ 2026-05-08，且含 'Cecelia, 2026-05-0X, 自验通过' 真签名"
+      ],
+      "files": [
+        "packages/workflows/skills/douyin-publisher/STATUS.md",
+        ".agent-knowledge/content-pipeline-douyin/lead-acceptance-sprint-2.1a.md",
+        ".agent-knowledge/content-pipeline-douyin/screenshots/"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
