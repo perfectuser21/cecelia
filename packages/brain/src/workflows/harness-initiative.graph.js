@@ -32,6 +32,7 @@ import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
+import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
@@ -824,21 +825,13 @@ export async function inferTaskPlanNode(state, _opts = {}) {
   }
 
   try {
-    const { execSync } = await import('child_process');
-    // 防御：proposer 在 task container 内 git push 后，brain 容器本地 origin tracking 不会自动更新
-    // 主动 fetch 该分支再 show；fetch 失败 graceful warn，让下面 show 的 catch 报具体错（show 错最直观）
-    try {
-      execSync(`git fetch origin ${proposeBranch}`, {
-        cwd: state.worktreePath,
-        encoding: 'utf8',
-        stdio: 'pipe',
-      });
-    } catch (fetchErr) {
-      console.warn(`[infer_task_plan] git fetch origin ${proposeBranch} failed: ${(fetchErr.message || '').slice(0, 200)}, continuing to git show`);
-    }
-    const json = execSync(
-      `git show origin/${proposeBranch}:${sprintDir}/task-plan.json`,
-      { cwd: state.worktreePath, encoding: 'utf8' }
+    // 防御：proposer 在 task container 内 git push 后，brain 容器本地 origin tracking 不会自动更新。
+    // fetchAndShowOriginFile 内部用 refspec `origin/<branch>:refs/remotes/origin/<branch>` 显式更新，
+    // 修 PR #2838 的 `git fetch origin <branch>` 只更新 FETCH_HEAD 不更新 remote ref 的 bug。
+    const json = await fetchAndShowOriginFile(
+      state.worktreePath,
+      proposeBranch,
+      `${sprintDir}/task-plan.json`
     );
     let plan;
     try {
