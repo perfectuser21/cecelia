@@ -1025,6 +1025,9 @@ export async function finalE2eNode(state, opts = {}) {
 }
 
 export async function reportNode(state, opts = {}) {
+  // 幂等门：节点重放时 short circuit（state.report_path 已写过 → 已 UPDATE initiative_runs，
+  // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
+  if (state.report_path) return { report_path: state.report_path };
   const dbPool = opts.pool || pool;
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
@@ -1074,6 +1077,11 @@ export async function pickSubTaskNode(state) {
 }
 
 export async function evaluateSubTaskNode(state, opts = {}) {
+  // 幂等门：节点重放时 short circuit。retry/advance 节点会把 evaluate_verdict reset 为 null，
+  // 因此 verdict 非 null 意味着本次 evaluate 已完成（避免重复 spawn evaluator container）。
+  if (state.evaluate_verdict) {
+    return { evaluate_verdict: state.evaluate_verdict, evaluate_feedback: state.evaluate_feedback };
+  }
   const executor = opts.executor || spawn;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const workstreamN = (state.task_loop_index ?? 0) + 1;
@@ -1164,6 +1172,9 @@ export async function retryTaskNode(state) {
 }
 
 export async function terminalFailNode(state, opts = {}) {
+  // 幂等门：节点重放时 short circuit（已写过 initiative_runs phase='failed'，
+  // 重入会再次刷 completed_at，不必要的 DB 负载）。
+  if (state.error?.node === 'terminal_fail') return { error: state.error };
   const dbPool = opts.pool || pool;
   const reason = `Evaluator FAIL after ${MAX_FIX_ROUNDS} retries on task index ${state.task_loop_index ?? 0}: ${(state.evaluate_feedback || '').slice(0, 300)}`;
   try {
@@ -1215,6 +1226,13 @@ export function routeAfterEvaluate(state) {
  * Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md §W5
  */
 export async function finalEvaluateDispatchNode(state, opts = {}) {
+  // 幂等门：节点重放时对最终成功路径 short circuit（避免重复 spawn evaluator container）。
+  //   - verdict='PASS' / 'PASS_WITH_OVERRIDE' → 已成功完成，可直接 short circuit
+  //   - verdict='FAIL' 路径不 short circuit：interrupt() 的 resume 协议需重新执行节点头部，
+  //     LangGraph 自身保证 interrupt 协议幂等；这里的"重跑 evaluator"是该协议固有代价。
+  if (state.final_e2e_verdict === 'PASS' || state.final_e2e_verdict === 'PASS_WITH_OVERRIDE') {
+    return { final_e2e_verdict: state.final_e2e_verdict };
+  }
   const executor = opts.executor || spawn;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
