@@ -54,10 +54,10 @@ function hasEntryShortCircuit(body) {
   if (!body) return false;
   const head = body.split('\n').slice(0, 30).join('\n');
   // 同行匹配：if (...) ... return {
-  const inlineRe = /if\s*\([^)]+\)\s*(?:\{[^}]*)?return\s*[\{(]/;
+  const inlineRe = /if\s*\([^)]+\)\s*(?:\{[^}]*)?return\s*[{(]/;
   if (inlineRe.test(head)) return true;
   // 跨行匹配：if (...) {\n   return {  （宽松的多行 if-block）
-  const multilineRe = /if\s*\([^)]+\)\s*\{\s*\n\s*[^\n]*return\s*[\{(]/;
+  const multilineRe = /if\s*\([^)]+\)\s*\{\s*\n\s*[^\n]*return\s*[{(]/;
   return multilineRe.test(head);
 }
 
