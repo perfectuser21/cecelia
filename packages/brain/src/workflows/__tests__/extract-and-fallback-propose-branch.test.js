@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { extractProposeBranch, fallbackProposeBranch } from '../harness-gan.graph.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('extractProposeBranch [BEHAVIOR]', () => {
   it('命中 SKILL Step 4 模板的 verdict JSON', () => {
@@ -33,5 +38,24 @@ describe('fallbackProposeBranch [BEHAVIOR]', () => {
 
   it('短 taskId（<8字符）原样使用，不补零', () => {
     expect(fallbackProposeBranch('abc', 1)).toBe('cp-harness-propose-r1-abc');
+  });
+});
+
+describe('SKILL.md harness-contract-proposer 输出契约 [BEHAVIOR]', () => {
+  const SKILL_PATH = resolve(__dirname, '../../../../workflows/skills/harness-contract-proposer/SKILL.md');
+
+  it('SKILL.md 含 verdict JSON 输出契约（含 propose_branch 字段）', () => {
+    const c = readFileSync(SKILL_PATH, 'utf8');
+    expect(c).toContain('"propose_branch"');
+  });
+
+  it('SKILL.md 不含限定词 "GAN APPROVED 后"（v7.2.0+ 改成每轮输出）', () => {
+    const c = readFileSync(SKILL_PATH, 'utf8');
+    expect(c).not.toContain('GAN APPROVED 后');
+  });
+
+  it('SKILL.md 含明示「每轮」输出契约说明', () => {
+    const c = readFileSync(SKILL_PATH, 'utf8');
+    expect(c).toMatch(/每轮.*verdict|每轮.*propose_branch|每轮.*JSON|每轮.*输出/);
   });
 });
