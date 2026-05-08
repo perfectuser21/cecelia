@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.1.0
+version: 7.2.0
 created: 2026-04-08
-updated: 2026-05-07
+updated: 2026-05-08
 changelog:
+  - 7.2.0: 修 verdict JSON 输出限定 — Step 4 删 APPROVED-only 限定词，改成"每轮（含被 REVISION 打回轮）"；新增"输出契约"段明示 brain harness-gan.graph.js extractProposeBranch 用正则解析。配合 brain fallback 改格式 cp-harness-propose-r{round}-{taskIdSlice}，杜绝 propose_branch 协议 mismatch（W8 task 49dafaf4 实证）
   - 7.1.0: 修复 task-plan.json 永不生成 (#2819) — Step 3 改成每轮都生成（删 "仅 APPROVED 时执行" 门槛）；APPROVED 分支即最后一轮 proposer 的分支，inferTaskPlan 从此读取
   - 7.0.0: Golden Path 合同 — 格式从"Feature 1/Feature 2"改为 Golden Path Steps（每步含验证命令）；GAN 新增"验证命令可否造假"审查；合同 GAN 收敛后 Proposer 输出 task-plan.json（从 Golden Path 倒推）
   - 6.0.0: Working Skeleton — is_skeleton 检测；按 journey_type 切换 E2E test 模板（4 种）；contract-dod-ws0.md 加 YAML header
@@ -311,11 +312,17 @@ git commit -m "feat(contract): round-${PROPOSE_ROUND} Golden Path draft + DoD + 
 git push origin "${PROPOSE_BRANCH}"
 ```
 
-**最后一条消息**（GAN APPROVED 后）：
+**最后一条消息**（每轮 — 含被 REVISION 打回轮）：
 
 ```
-{"verdict": "PROPOSED", "contract_draft_path": "${SPRINT_DIR}/contract-draft.md", "propose_branch": "cp-harness-propose-r1-xxxxxxxx", "workstream_count": N, "test_files_count": M, "task_plan_path": "${SPRINT_DIR}/task-plan.json"}
+{"verdict": "PROPOSED", "contract_draft_path": "${SPRINT_DIR}/contract-draft.md", "propose_branch": "cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID_SHORT}", "workstream_count": N, "test_files_count": M, "task_plan_path": "${SPRINT_DIR}/task-plan.json"}
 ```
+
+**输出契约**（v7.2.0+ 强约束 — 漏写 brain 走 fallback 可能走错路）：
+
+每轮 proposer 调用结束时 stdout **必须含一行 JSON 字面量**含 `verdict` + `propose_branch` 字段，brain 端 `harness-gan.graph.js` 的 `extractProposeBranch` 用正则 `/"propose_branch"\s*:\s*"([^"]+)"/` 解析。即使本轮被 Reviewer REVISION 打回也必须输出（brain 把每轮 propose_branch 都存下来用，不仅最后一轮）。
+
+漏写后果：brain 走 `fallbackProposeBranch(taskId, round)` 兜底，v7.2.0 起 fallback 改用 `cp-harness-propose-r{round}-{taskIdSlice}` 格式跟 SKILL push 一致——但 SKILL 实际取 `TASK_ID_SHORT` 算法跟 brain `taskId.slice(0,8)` 必须保持一致，否则即使 fallback 也可能命中错误分支。**SKILL 自己输出 verdict JSON 是首选**。
 
 ---
 
