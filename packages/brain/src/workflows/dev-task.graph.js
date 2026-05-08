@@ -73,5 +73,5 @@ export function buildDevTaskGraph() {
  */
 export async function compileDevTaskGraph() {
   const checkpointer = await getPgCheckpointer();
-  return buildDevTaskGraph().compile({ checkpointer });
+  return buildDevTaskGraph().compile({ checkpointer, durability: 'sync' });
 }

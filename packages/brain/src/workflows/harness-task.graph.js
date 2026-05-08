@@ -267,5 +267,5 @@ export function buildHarnessTaskGraph() {
 
 export async function compileHarnessTaskGraph() {
   const checkpointer = await getPgCheckpointer();
-  return buildHarnessTaskGraph().compile({ checkpointer });
+  return buildHarnessTaskGraph().compile({ checkpointer, durability: 'sync' });
 }
