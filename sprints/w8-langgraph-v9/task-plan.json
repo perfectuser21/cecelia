@@ -1,0 +1,54 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "起点是 Brain dispatcher tick 拉 task；LangGraph + PG checkpointer + callback router + sub_task 容器全在 packages/brain 内闭环，不涉及 dashboard UI 或 engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "派发 walking_skeleton + 验证 dispatcher 起 graph",
+      "scope": "写合规的 walking_skeleton payload JSON（含 thin_feature + e2e_acceptance），POST 到 Brain 拿 task_id 并落盘 /tmp/w8v9-task-id；验证 90s 内 status 转 in_progress 且 task_events 至少 1 条 graph_node_update",
+      "dod": [
+        "[ARTIFACT] sprints/w8-langgraph-v9/acceptance-task-payload.json 存在且 schema 合法（task_type=harness_initiative + walking_skeleton.thin_feature 非空 + e2e_acceptance.command 非空 + timeout_sec ≤ 600）",
+        "[BEHAVIOR] tests/ws1/payload-and-dispatch.test.ts 全绿：payload schema 通过 / POST 返回 task_id 写入 /tmp/w8v9-task-id / 90s 内 status=in_progress / task_events ≥ 1 graph_node_update（5min 时间窗）"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v9/acceptance-task-payload.json"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "跑通全图 + 收 evidence",
+      "scope": "等待 LangGraph harness-initiative full graph 跑完 A→B→C 阶段（A: prep/planner/parsePrd/ganLoop/inferTaskPlan/dbUpsert 6 节点 + sub_task 入库；B: spawn-and-interrupt 容器跑通 + callback router 命中 thread_lookup + Command(resume) + sub_task PR merge 到 main；C: final_evaluate + report）；将证据写入 acceptance-evidence.md",
+      "dod": [
+        "[ARTIFACT] sprints/w8-langgraph-v9/acceptance-evidence.md 存在 + 含真实 task_id + 含 PR URL + 显式标注 4 个 hotfix（#2845/2846/2847/2850）+ 不含 TBD/TODO/PLACEHOLDER 占位符 + 含 graph_node_update 或 interrupt_ SQL 截",
+        "[BEHAVIOR] tests/ws2/run-and-evidence.test.ts 全绿：distinct planning node ≥ 6 / sub_task ≥ 1（payload.contract_dod_path 非空）/ interrupt_pending+resumed 各 ≥ 1 / thread_lookup 命中 ≥ 1 / sub_task verdict=DONE 且 PR MERGED 到 main"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v9/acceptance-evidence.md"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws3",
+      "title": "最终 acceptance 报告 + learnings + 回写 Brain",
+      "scope": "写 docs/superpowers/reports/2026-05-08-w8-v9-langgraph-acceptance.md（含 task_id / graph_node_update SQL 截 / sub_task PR 链接 / KR 进度变化 / failure_reason 全空断言）+ docs/learnings/cp-0509-w8-v9-langgraph-acceptance.md（≥ 60 字节、含 PRD 之外的细节）；调 PATCH /api/brain/tasks/{task_id} 回写 status=completed + result.merged=true",
+      "dod": [
+        "[ARTIFACT] docs/superpowers/reports/2026-05-08-w8-v9-langgraph-acceptance.md 存在并含 task_id / graph_node_update / PR URL / KR 字段 / failure_reason NULL 断言 5 段必填",
+        "[ARTIFACT] docs/learnings/cp-0509-w8-v9-langgraph-acceptance.md 存在且 ≥ 60 字节",
+        "[BEHAVIOR] tests/ws3/report-and-learnings.test.ts 全绿：报告 5 段齐全 / learnings 含 PRD 之外细节 / Brain tasks 表本任务 status=completed AND result.merged=true（180min 时间窗）"
+      ],
+      "files": [
+        "docs/superpowers/reports/2026-05-08-w8-v9-langgraph-acceptance.md",
+        "docs/learnings/cp-0509-w8-v9-langgraph-acceptance.md"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
