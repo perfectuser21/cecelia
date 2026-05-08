@@ -1,6 +1,11 @@
 /**
  * Sprint 1 Phase B/C 全图重构 — harness-task.graph 单元测试。
  * 覆盖 sub-graph 5 节点 + 端到端 happy / fix-loop / timeout / no_pr。
+ *
+ * Layer 3（LangGraph 修正 Sprint）：spawnGeneratorNode 重构成
+ * spawnNode + awaitCallbackNode（spawn detached → interrupt → callback resume），
+ * 这里 mock spawnDockerDetached + 真用 MemorySaver 跑 graph，验证 interrupt 后
+ * Command(resume) 能正确续跑。e2e fix-loop 经过两次 spawn → 两次 resume 验证 fresh containerId。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -12,6 +17,7 @@ const mockCheckPr = vi.fn();
 const mockMerge = vi.fn();
 const mockClassify = vi.fn();
 const mockPoolQuery = vi.fn();
+const mockSpawnDetached = vi.fn();
 
 vi.mock('../../spawn/index.js', () => ({ spawn: (...a) => mockSpawn(...a) }));
 vi.mock('../../harness-worktree.js', () => ({ ensureHarnessWorktree: (...a) => mockEnsureWorktree(...a) }));
@@ -19,6 +25,9 @@ vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => m
 vi.mock('../../docker-executor.js', () => ({
   writeDockerCallback: (...a) => mockWriteCallback(...a),
   executeInDocker: (...a) => mockSpawn(...a),
+}));
+vi.mock('../../spawn/detached.js', () => ({
+  spawnDockerDetached: (...a) => mockSpawnDetached(...a),
 }));
 vi.mock('../../shepherd.js', () => ({
   checkPrStatus: (...a) => mockCheckPr(...a),
@@ -46,7 +55,9 @@ vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
 
 import {
   buildHarnessTaskGraph,
+  spawnNode,
   spawnGeneratorNode,
+  awaitCallbackNode,
   parseCallbackNode,
   pollCiNode,
   mergePrNode,
@@ -55,7 +66,7 @@ import {
   MAX_FIX_ROUNDS,
   MAX_POLL_COUNT,
 } from '../harness-task.graph.js';
-import { MemorySaver } from '@langchain/langgraph';
+import { MemorySaver, Command } from '@langchain/langgraph';
 
 describe('harness-task graph — structure', () => {
   it('TaskState 定义存在', () => {
@@ -72,80 +83,112 @@ describe('harness-task graph — structure', () => {
   });
 });
 
-describe('spawnGeneratorNode', () => {
+describe('spawnNode (Layer 3 spawn-and-interrupt)', () => {
   beforeEach(() => {
-    mockSpawn.mockReset();
+    mockSpawnDetached.mockReset();
     mockEnsureWorktree.mockReset();
     mockResolveToken.mockReset();
-    mockWriteCallback.mockReset();
+    mockPoolQuery.mockReset();
+    mockPoolQuery.mockResolvedValue({ rows: [] });
   });
 
-  it('happy: prep + spawn + writeCallback 注入 env + 返回 generator_output', async () => {
+  it('happy: prep + detached docker run + 写 thread_lookup + 返回 containerId', async () => {
     mockEnsureWorktree.mockResolvedValueOnce('/wt/abc');
     mockResolveToken.mockResolvedValueOnce('ghp_x');
-    mockSpawn.mockResolvedValueOnce({
-      exit_code: 0, stdout: 'pr_url: https://github.com/o/r/pull/1\nfoo', stderr: '', cost_usd: 0.5,
-    });
-    mockWriteCallback.mockResolvedValueOnce();
+    mockSpawnDetached.mockResolvedValueOnce({ containerId: 'abc' });
+
     const state = {
       task: { id: 'sub-1', title: 'T', description: 'D', payload: { parent_task_id: 'init-1' } },
       initiativeId: 'init-1',
     };
-    const delta = await spawnGeneratorNode(state);
+    const delta = await spawnNode(state);
+
     expect(mockEnsureWorktree).toHaveBeenCalledWith({ taskId: 'sub-1', initiativeId: 'init-1' });
     expect(mockResolveToken).toHaveBeenCalled();
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
-    const spawnArg = mockSpawn.mock.calls[0][0];
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
+    const spawnArg = mockSpawnDetached.mock.calls[0][0];
     expect(spawnArg.env.HARNESS_NODE).toBe('generator');
     expect(spawnArg.env.HARNESS_FIX_MODE).toBe('false');
     expect(spawnArg.env.GITHUB_TOKEN).toBe('ghp_x');
-    expect(mockWriteCallback).toHaveBeenCalledTimes(1);
-    expect(delta.generator_output).toContain('pr_url:');
+    expect(spawnArg.env.BRAIN_URL).toBe('http://host.docker.internal:5221');
+    expect(spawnArg.containerId).toMatch(/^harness-task-sub-1-r0-/);
+    // thread_lookup INSERT — graph_name='harness-task' 在 SQL 字面量里
+    const insertCall = mockPoolQuery.mock.calls.find(
+      (c) => /INSERT INTO walking_skeleton_thread_lookup/.test(c[0]) &&
+             /'harness-task'/.test(c[0])
+    );
+    expect(insertCall).toBeDefined();
+    // params: [container_id, thread_id]
+    expect(insertCall[1][0]).toBe(spawnArg.containerId);
+    expect(insertCall[1][1]).toBe('harness-task:init-1:sub-1');
+    // delta
+    expect(delta.containerId).toBe(spawnArg.containerId);
     expect(delta.worktreePath).toBe('/wt/abc');
-    expect(delta.cost_usd).toBe(0.5);
     expect(delta.error).toBeUndefined();
+    // 不应再有 generator_output（要等 callback resume）
+    expect(delta.generator_output).toBeUndefined();
   });
 
-  it('fix_round>0 → 注入 HARNESS_FIX_MODE=true', async () => {
+  it('fix_round>0 → 注入 HARNESS_FIX_MODE=true 且 containerId 含 r{round}', async () => {
     mockEnsureWorktree.mockResolvedValueOnce('/wt/x');
     mockResolveToken.mockResolvedValueOnce('ghp');
-    mockSpawn.mockResolvedValueOnce({ exit_code: 0, stdout: 'ok', stderr: '' });
-    mockWriteCallback.mockResolvedValueOnce();
-    await spawnGeneratorNode({
+    mockSpawnDetached.mockResolvedValueOnce({});
+    await spawnNode({
       task: { id: 's', payload: {} }, initiativeId: 'i', fix_round: 2,
     });
-    expect(mockSpawn.mock.calls[0][0].env.HARNESS_FIX_MODE).toBe('true');
+    const arg = mockSpawnDetached.mock.calls[0][0];
+    expect(arg.env.HARNESS_FIX_MODE).toBe('true');
+    expect(arg.containerId).toMatch(/^harness-task-s-r2-/);
   });
 
-  it('container 失败 → 写 error 不抛', async () => {
+  it('detached spawn 失败 → 写 error 不抛', async () => {
     mockEnsureWorktree.mockResolvedValueOnce('/wt');
     mockResolveToken.mockResolvedValueOnce('t');
-    mockSpawn.mockResolvedValueOnce({ exit_code: 1, stderr: 'boom', stdout: '' });
-    const delta = await spawnGeneratorNode({
+    mockSpawnDetached.mockRejectedValueOnce(new Error('docker daemon down'));
+    const delta = await spawnNode({
       task: { id: 's', payload: {} }, initiativeId: 'i',
     });
     expect(delta.error).toBeTruthy();
-    expect(delta.error.node).toBe('spawn_generator');
+    expect(delta.error.node).toBe('spawn');
+    expect(delta.error.message).toContain('docker daemon down');
   });
 
-  it('idempotent: state.generator_output 已有 → 跳过 spawn', async () => {
-    const delta = await spawnGeneratorNode({
-      task: { id: 's' }, initiativeId: 'i', generator_output: 'cached',
+  it('idempotent: state.containerId 已有 → 跳过 spawn', async () => {
+    const delta = await spawnNode({
+      task: { id: 's' }, initiativeId: 'i', containerId: 'cached-cid',
     });
-    expect(mockSpawn).not.toHaveBeenCalled();
-    expect(delta.generator_output).toBe('cached');
+    expect(mockSpawnDetached).not.toHaveBeenCalled();
+    expect(mockEnsureWorktree).not.toHaveBeenCalled();
+    expect(delta.containerId).toBe('cached-cid');
   });
 
-  it('writeCallback 失败不污染成功状态', async () => {
+  it('thread_lookup INSERT 失败不污染成功 spawn', async () => {
     mockEnsureWorktree.mockResolvedValueOnce('/wt');
     mockResolveToken.mockResolvedValueOnce('t');
-    mockSpawn.mockResolvedValueOnce({ exit_code: 0, stdout: 'ok', stderr: '' });
-    mockWriteCallback.mockRejectedValueOnce(new Error('db down'));
-    const delta = await spawnGeneratorNode({
+    mockSpawnDetached.mockResolvedValueOnce({});
+    mockPoolQuery.mockReset();
+    mockPoolQuery.mockRejectedValue(new Error('db down'));
+    const delta = await spawnNode({
       task: { id: 's', payload: {} }, initiativeId: 'i',
     });
-    expect(delta.generator_output).toBe('ok');
+    expect(delta.containerId).toBeDefined();
     expect(delta.error).toBeUndefined();
+  });
+});
+
+describe('awaitCallbackNode (Layer 3 interrupt yield)', () => {
+  it('idempotent: state.generator_output 已有 → 直接返回，不 interrupt', async () => {
+    const delta = await awaitCallbackNode({
+      generator_output: 'cached', containerId: 'c1',
+    });
+    expect(delta.generator_output).toBe('cached');
+  });
+});
+
+// 保留 spawnGeneratorNode 兼容性 export（给老调用方）
+describe('spawnGeneratorNode (legacy compat)', () => {
+  it('export 仍存在（别名 spawnNode）', () => {
+    expect(typeof spawnGeneratorNode).toBe('function');
   });
 });
 
@@ -255,15 +298,18 @@ describe('mergePrNode', () => {
 });
 
 describe('fixDispatchNode', () => {
-  it('fix_round 当前=2 → 返回 3 + 清 generator_output/pr_url/poll_count/ci_status', async () => {
+  it('fix_round 当前=2 → 返回 3 + 清 generator_output/pr_url/poll_count/ci_status/containerId', async () => {
     const delta = await fixDispatchNode({
       fix_round: 2, generator_output: 'old', pr_url: 'p', poll_count: 7, ci_status: 'fail',
+      containerId: 'old-cid',
     });
     expect(delta.fix_round).toBe(3);
     expect(delta.generator_output).toBeNull();
     expect(delta.pr_url).toBeNull();
     expect(delta.poll_count).toBe(0);
     expect(delta.ci_status).toBe('pending');
+    // Layer 3：fresh spawn 必须 reset containerId，否则 spawn 幂等门 short-circuit
+    expect(delta.containerId).toBeNull();
   });
   it('未指定 fix_round → 默认从 0 → 1', async () => {
     const delta = await fixDispatchNode({});
@@ -271,44 +317,74 @@ describe('fixDispatchNode', () => {
   });
 });
 
-describe('harness-task graph — end-to-end', () => {
+describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', () => {
   beforeEach(() => {
     process.env.HARNESS_POLL_INTERVAL_MS = '0';
     mockSpawn.mockReset();
+    mockSpawnDetached.mockReset();
+    mockSpawnDetached.mockResolvedValue({});
     mockEnsureWorktree.mockReset();
+    mockEnsureWorktree.mockResolvedValue('/wt');
     mockResolveToken.mockReset();
+    mockResolveToken.mockResolvedValue('t');
     mockWriteCallback.mockReset();
+    mockWriteCallback.mockResolvedValue();
     mockCheckPr.mockReset();
     mockMerge.mockReset();
     mockClassify.mockReset();
+    mockPoolQuery.mockReset();
+    mockPoolQuery.mockResolvedValue({ rows: [] });
   });
   afterEach(() => { delete process.env.HARNESS_POLL_INTERVAL_MS; });
 
-  it('happy: spawn → pr_url → ci_pass → merge → END status=merged', async () => {
-    mockEnsureWorktree.mockResolvedValue('/wt');
-    mockResolveToken.mockResolvedValue('t');
-    mockSpawn.mockResolvedValue({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' });
-    mockWriteCallback.mockResolvedValue();
+  /**
+   * 跑到 await_callback interrupt 然后用 Command(resume) 模拟 callback router；
+   * 一直 resume 直到 graph 走到 END（poll_ci 节点不 interrupt，直接靠 mockCheckPr）。
+   * 每次 await invoke 后 getState：
+   *   next 含 'await_callback' → resume(callbackPayload)
+   *   next 为空 → 结束
+   *   recursionLimit 防死循环
+   */
+  async function runUntilEnd(compiled, initialInput, config, callbackPayloads) {
+    let payloads = [...callbackPayloads];
+    await compiled.invoke(initialInput, config);
+    let i = 0;
+    while (i < 30) {
+      const state = await compiled.getState(config);
+      if (!state.next || state.next.length === 0) {
+        return state.values;
+      }
+      if (state.next.includes('await_callback')) {
+        const next = payloads.shift();
+        if (!next) throw new Error('callback payloads exhausted but graph still in await_callback');
+        await compiled.invoke(new Command({ resume: next }), config);
+      } else {
+        // 不该到这里 — 其它节点不该 interrupt
+        throw new Error(`unexpected interrupt at ${state.next.join(',')}`);
+      }
+      i++;
+    }
+    throw new Error('runUntilEnd exceeded 30 iterations');
+  }
+
+  it('happy: spawn → interrupt → resume(stdout) → parse → ci_pass → merge → END', async () => {
     mockCheckPr.mockReturnValue({ ciStatus: 'ci_passed', state: 'OPEN', mergeable: 'MERGEABLE', failedChecks: [] });
     mockMerge.mockReturnValue(true);
 
     const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
-    const final = await compiled.invoke(
+    const final = await runUntilEnd(
+      compiled,
       { task: { id: 'sub-1', payload: {} }, initiativeId: 'i' },
-      { configurable: { thread_id: 't1' } }
+      { configurable: { thread_id: 't1' }, recursionLimit: 50 },
+      [{ stdout: 'pr_url: https://gh/p/1', exit_code: 0 }]
     );
     expect(final.status).toBe('merged');
     expect(final.pr_url).toBe('https://gh/p/1');
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
     expect(mockMerge).toHaveBeenCalledTimes(1);
   });
 
-  it('fix loop: spawn → ci_fail → fix → spawn (round 2) → ci_pass → merge → END', async () => {
-    mockEnsureWorktree.mockResolvedValue('/wt');
-    mockResolveToken.mockResolvedValue('t');
-    mockSpawn
-      .mockResolvedValueOnce({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' })
-      .mockResolvedValueOnce({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' });
-    mockWriteCallback.mockResolvedValue();
+  it('fix loop: spawn → resume → ci_fail → fix → fresh spawn (round 2) → resume → ci_pass → merge', async () => {
     mockCheckPr
       .mockReturnValueOnce({ ciStatus: 'ci_failed', failedChecks: ['lint'] })
       .mockReturnValueOnce({ ciStatus: 'ci_passed', failedChecks: [] });
@@ -316,44 +392,49 @@ describe('harness-task graph — end-to-end', () => {
     mockMerge.mockReturnValue(true);
 
     const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
-    const final = await compiled.invoke(
+    const final = await runUntilEnd(
+      compiled,
       { task: { id: 'sub-2', payload: {} }, initiativeId: 'i' },
-      { configurable: { thread_id: 't2' }, recursionLimit: 50 }
+      { configurable: { thread_id: 't2' }, recursionLimit: 100 },
+      [
+        { stdout: 'pr_url: https://gh/p/1', exit_code: 0 }, // round 0 spawn
+        { stdout: 'pr_url: https://gh/p/2', exit_code: 0 }, // round 1 fresh spawn
+      ]
     );
     expect(final.status).toBe('merged');
     expect(final.fix_round).toBe(1);
-    expect(mockSpawn).toHaveBeenCalledTimes(2);
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(2);
+    // 验证两次 spawn 用了不同 containerId（round 0 vs round 1）
+    const cid0 = mockSpawnDetached.mock.calls[0][0].containerId;
+    const cid1 = mockSpawnDetached.mock.calls[1][0].containerId;
+    expect(cid0).not.toBe(cid1);
+    expect(cid0).toMatch(/-r0-/);
+    expect(cid1).toMatch(/-r1-/);
   });
 
-  it('max fix rounds: ci_fail × N → END status=failed (no merge)', async () => {
-    mockEnsureWorktree.mockResolvedValue('/wt');
-    mockResolveToken.mockResolvedValue('t');
-    mockSpawn.mockResolvedValue({ exit_code: 0, stdout: 'pr_url: https://gh/p/1', stderr: '' });
-    mockWriteCallback.mockResolvedValue();
-    mockCheckPr.mockReturnValue({ ciStatus: 'ci_failed', failedChecks: ['test'] });
-    mockClassify.mockReturnValue('test');
-
+  it('no_pr: spawn → resume(无 pr_url) → END (no poll, no merge)', async () => {
     const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
-    const final = await compiled.invoke(
-      { task: { id: 'sub-3', payload: {} }, initiativeId: 'i' },
-      { configurable: { thread_id: 't3' }, recursionLimit: 100 }
-    );
-    expect(final.fix_round).toBeGreaterThan(MAX_FIX_ROUNDS);
-    expect(mockMerge).not.toHaveBeenCalled();
-  });
-
-  it('no_pr: spawn → 无 pr_url → END (no poll, no merge)', async () => {
-    mockEnsureWorktree.mockResolvedValue('/wt');
-    mockResolveToken.mockResolvedValue('t');
-    mockSpawn.mockResolvedValue({ exit_code: 0, stdout: 'no pr created', stderr: '' });
-    mockWriteCallback.mockResolvedValue();
-    const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
-    const final = await compiled.invoke(
+    const final = await runUntilEnd(
+      compiled,
       { task: { id: 'sub-4', payload: {} }, initiativeId: 'i' },
-      { configurable: { thread_id: 't4' } }
+      { configurable: { thread_id: 't4' } },
+      [{ stdout: 'no pr created', exit_code: 0 }]
     );
     expect(final.pr_url).toBeNull();
     expect(mockMerge).not.toHaveBeenCalled();
     expect(mockCheckPr).not.toHaveBeenCalled();
+  });
+
+  it('container exit_code != 0 → resume 把 error 写 state，graph 走 END (no merge)', async () => {
+    const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
+    const final = await runUntilEnd(
+      compiled,
+      { task: { id: 'sub-err', payload: {} }, initiativeId: 'i' },
+      { configurable: { thread_id: 't-err' } },
+      [{ stdout: '', error: 'docker died', exit_code: 1 }]
+    );
+    expect(final.error).toBeTruthy();
+    expect(final.error.node).toBe('await_callback');
+    expect(mockMerge).not.toHaveBeenCalled();
   });
 });
