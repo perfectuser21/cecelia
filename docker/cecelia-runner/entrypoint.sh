@@ -128,7 +128,6 @@ run_claude "$@"
 EXIT_CODE=$?
 set -e
 
-CONTAINER_ID="${HOSTNAME:-$(cat /etc/hostname 2>/dev/null || echo unknown)}"
 STDOUT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID}.stdout"
 STDOUT_CONTENT=""
 if [[ -f "$STDOUT_FILE" ]]; then
@@ -139,13 +138,21 @@ STDOUT_JSON=$(printf '%s' "$STDOUT_CONTENT" | jq -Rs . 2>/dev/null || echo '""')
 
 CALLBACK_BODY=$(printf '{"result":"completed","exit_code":%d,"stdout":%s}' "$EXIT_CODE" "$STDOUT_JSON")
 
+# 优先用 Layer 3 spawnNode 传的 HARNESS_CALLBACK_URL（含完整 URL + --name 作 containerId），
+# fallback HOSTNAME（旧方式，但 Layer 3 spawn 给 docker 起的 --name ≠ HOSTNAME，会导致 callback router 找不到 thread_lookup）。
+TARGET_URL="${HARNESS_CALLBACK_URL:-}"
+if [[ -z "$TARGET_URL" ]]; then
+  CONTAINER_ID="${HOSTNAME:-$(cat /etc/hostname 2>/dev/null || echo unknown)}"
+  TARGET_URL="http://host.docker.internal:5221/api/brain/harness/callback/${CONTAINER_ID}"
+fi
+
 if curl -sf -m 10 -X POST \
-    "http://host.docker.internal:5221/api/brain/harness/callback/${CONTAINER_ID}" \
+    "$TARGET_URL" \
     -H "Content-Type: application/json" \
     -d "$CALLBACK_BODY" >/dev/null 2>&1; then
-  echo "[entrypoint] harness callback POST ok (container=${CONTAINER_ID} exit=${EXIT_CODE})"
+  echo "[entrypoint] harness callback POST ok (url=${TARGET_URL} exit=${EXIT_CODE})"
 else
-  echo "[entrypoint] harness callback POST 失败（不阻塞容器退出）— exit=${EXIT_CODE}"
+  echo "[entrypoint] harness callback POST 失败（不阻塞容器退出）— url=${TARGET_URL} exit=${EXIT_CODE}"
 fi
 
 exit "$EXIT_CODE"
