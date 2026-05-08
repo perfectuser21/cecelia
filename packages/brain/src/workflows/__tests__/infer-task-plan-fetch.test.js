@@ -11,13 +11,6 @@ const { execSyncCalls, getExecSyncImpl, setExecSyncImpl } = vi.hoisted(() => {
   };
 });
 
-const mockExecSync = (cmd, opts) => {
-  execSyncCalls.push({ cmd, cwd: opts?.cwd });
-  const impl = getExecSyncImpl();
-  if (impl) return impl(cmd, opts);
-  throw new Error('execSyncImpl not set');
-};
-
 // Mock both 'child_process' and 'node:child_process' to cover:
 //   harness-initiative.graph.js  → dynamic import('child_process')
 //   harness-worktree.js          → import { execFile } from 'node:child_process'
