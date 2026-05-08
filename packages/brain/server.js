@@ -65,6 +65,7 @@ import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
 import harnessRoutes from './src/routes/harness.js';
 import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
+import harnessCallbackRouter from './src/routes/harness-callback.js';
 import initiativesRoutes from './src/routes/initiatives.js';
 import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
@@ -285,6 +286,11 @@ app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
+// LangGraph Stream 1: callback router 必须挂在 harnessRoutes 之前，
+// 因为它注册了 /harness/callback/:containerId（在 /api/brain 命名空间下），
+// 而 harnessRoutes 挂在 /api/brain/harness 路径，没有 callback 子路径不会冲突，
+// 但保险起见仍按照先 specific 后 generic 的顺序排列。
+app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
