@@ -24,15 +24,15 @@
     },
     {
       "task_id": "ws2",
-      "title": "集成测试: full-graph 14 节点 + sub_task spawn credentials + checkpoint resume",
-      "scope": "在 packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js 写 vitest 集成测试。用 MemorySaver 编译 compileHarnessFullGraph()，mock spawn / docker / pool / resolveAccount / parseTaskPlan / runGanContractGraph，第一次 invoke 让 sub-graph 在 await_callback interrupt，第二次用 Command(resume) 唤回，断言：(1) 14 节点（顶层 12 + sub-graph 5，去重 ≥ 14）spy 各 ≥ 1 次；(2) sub_task spawn mock args.env 含 CECELIA_CREDENTIALS；(3) resume 前后 spawn 总调用次数 = sub_task 数（无重 spawn）；(4) 最终 state.report_path 非空。从 sprints/w8-langgraph-v8/acceptance-fixture.json 读 prd_content / task_plan 作为输入。",
+      "title": "集成测试: full-graph 17 节点 + sub_task spawn credentials 注入参数 + checkpoint resume",
+      "scope": "在 packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js 写 vitest 集成测试，**只验逻辑流转 + credentials 注入参数**（实跑实证由 WS3 acceptance-report.md DRY_RUN=0 产出补充）。用 MemorySaver 编译 compileHarnessFullGraph()，mock spawn / docker / pool / resolveAccount / parseTaskPlan / runGanContractGraph，第一次 invoke 让 sub-graph 在 await_callback interrupt，第二次用 Command(resume) 唤回，断言：(1) 节点字典里 17 个必走节点（顶层 12 + sub-graph 5）spy 各 ≥ 1 次；(2) sub_task spawn mock args.env 含 CECELIA_CREDENTIALS（仅参数）；(3) resume 前后 spawn 总调用次数 = sub_task 数（无重 spawn 幂等门）；(4) 最终 state.report_path 非空。从 sprints/w8-langgraph-v8/acceptance-fixture.json 读 prd_content / task_plan 作为输入。",
       "dod": [
         "[ARTIFACT] packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js 文件存在",
         "[ARTIFACT] 文件 import compileHarnessFullGraph + MemorySaver + Command",
-        "[ARTIFACT] 文件 mock account-rotation 验 credentials 注入路径",
+        "[ARTIFACT] 文件 mock account-rotation 验 credentials 注入参数路径",
         "[ARTIFACT] 文件读 sprints/w8-langgraph-v8/acceptance-fixture.json 作为 PRD 来源",
-        "[BEHAVIOR] sprints/w8-langgraph-v8/tests/ws2/w8-acceptance.integration.test.ts 8 个 it 全 PASS",
-        "[BEHAVIOR] 该集成测试本身（vitest run packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js）PASS"
+        "[BEHAVIOR] sprints/w8-langgraph-v8/tests/ws2/w8-acceptance.integration.test.ts 10 个 it 全 PASS",
+        "[BEHAVIOR] 集成测试本身（vitest run packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js）PASS — 顶层 12 + sub-graph 5 = 17 个 mock 节点 spy 各 ≥ 1 次"
       ],
       "files": [
         "packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js"
@@ -45,17 +45,20 @@
     },
     {
       "task_id": "ws3",
-      "title": "验收脚本 + 报告 generator + 报告模板",
-      "scope": "写 sprints/w8-langgraph-v8/scripts/run-acceptance.sh（实环境跑：派发 fixture → 等 Phase A → 触发 docker restart brain → 等 task completed → 校 dev_records / checkpoints / docker inspect CECELIA_CREDENTIALS）+ scripts/generate-report.mjs（从 PG 拉 checkpoints / thread_lookup / dev_records 输出 markdown 报告，支持 DRY_RUN=1 + --task-id 参数）+ acceptance-report.template.md（含节点轨迹表表头）。bash 脚本必须 set -euo pipefail，所有 psql count 查询带 interval 时间窗口（≥ 5 处），含 docker restart brain。",
+      "title": "验收脚本 + 报告 generator + 报告模板（实跑产出 acceptance-report.md）",
+      "scope": "写 sprints/w8-langgraph-v8/scripts/run-acceptance.sh（实环境跑：派发 fixture → 等 Phase A → 触发 docker restart brain → 等 task completed → 校 dev_records / checkpoints / docker inspect CECELIA_CREDENTIALS → 末尾以 DRY_RUN=0 调 generate-report.mjs 实跑产出 acceptance-report.md）+ scripts/generate-report.mjs（从 PG 拉 checkpoints / thread_lookup / dev_records 输出 markdown 报告，支持 DRY_RUN=1 仅供测试 + --task-id 参数 + 头部含 DRY_RUN 元数据）+ acceptance-report.template.md（含节点轨迹表表头）。bash 脚本必须 set -euo pipefail，所有 psql count 查询带 interval 时间窗口（≥ 5 处），含 docker restart brain，含 WS2_FAILED=1 早退（SKIP 而非 FAIL，cascade 噪声 mitigation）。",
       "dod": [
         "[ARTIFACT] sprints/w8-langgraph-v8/scripts/run-acceptance.sh 存在且可执行",
         "[ARTIFACT] run-acceptance.sh 含 'set -euo pipefail'",
         "[ARTIFACT] run-acceptance.sh 至少 5 处 'interval ' 时间窗口约束",
         "[ARTIFACT] run-acceptance.sh 含 'docker restart brain'",
+        "[ARTIFACT] run-acceptance.sh 末尾含 'DRY_RUN=0 node ... generate-report.mjs' 实跑产出 acceptance-report.md",
+        "[ARTIFACT] run-acceptance.sh 含 WS2_FAILED 早退分支",
         "[ARTIFACT] sprints/w8-langgraph-v8/scripts/generate-report.mjs 存在",
-        "[ARTIFACT] generate-report.mjs 支持 DRY_RUN=1",
+        "[ARTIFACT] generate-report.mjs 支持 DRY_RUN=1（含 'DRY_RUN' 字面量）",
+        "[ARTIFACT] generate-report.mjs 输出含 DRY_RUN 元数据",
         "[ARTIFACT] sprints/w8-langgraph-v8/acceptance-report.template.md 存在含节点轨迹表头",
-        "[BEHAVIOR] sprints/w8-langgraph-v8/tests/ws3/report-generator.test.ts 8 个 it 全 PASS（含 DRY_RUN 输出 14 行节点轨迹 + 含 task_id UUID + 不留 placeholder）"
+        "[BEHAVIOR] sprints/w8-langgraph-v8/tests/ws3/report-generator.test.ts 10 个 it 全 PASS（含 DRY_RUN=0 实跑约束 + WS2_FAILED skip 行为 + 14 行节点轨迹 + UUID + 不留 placeholder）"
       ],
       "files": [
         "sprints/w8-langgraph-v8/scripts/run-acceptance.sh",
@@ -66,7 +69,7 @@
         "ws2"
       ],
       "complexity": "M",
-      "estimated_minutes": 50
+      "estimated_minutes": 55
     }
   ]
 }

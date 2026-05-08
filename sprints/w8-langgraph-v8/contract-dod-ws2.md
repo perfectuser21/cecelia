@@ -2,9 +2,9 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 2: 集成测试（mock 层 14 节点 + checkpoint resume + credentials 注入）
+# Contract DoD — Workstream 2: 集成测试（mock 层 17 节点 + checkpoint resume + credentials 注入参数）
 
-**范围**：在 `packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js` 写 vitest 集成测试，端到端 mock 跑 `compileHarnessFullGraph()`，验证 14 节点全路径 + sub_task spawn 注入 CECELIA_CREDENTIALS + checkpoint resume 幂等。
+**范围**：在 `packages/brain/src/__tests__/integration/w8-acceptance.integration.test.js` 写 vitest 集成测试，**只验"逻辑流转 + credentials 注入参数"**；端到端 mock 跑 `compileHarnessFullGraph()`，覆盖节点字典中的 17 个必走节点（顶层 12 + sub-graph 5）+ sub_task spawn 注入 CECELIA_CREDENTIALS 参数 + checkpoint resume 幂等。**实跑实证由 WS3 acceptance-report.md（DRY_RUN=0）补充**。
 **大小**：M
 **依赖**：Workstream 1（fixture 提供 prd_content 给 prep 节点 mock）
 
@@ -31,8 +31,9 @@ journey_type: autonomous
 - full graph 编译不崩
 - 第一次 invoke 后 sub-graph 停在 await_callback interrupt（state 含 containerId 但未 finalized）
 - Command(resume) 唤回后 graph 走到 report 节点（state.report_path 非空）
-- sub_task spawn mock 调用 args.env 含 CECELIA_CREDENTIALS（非空字符串）
+- sub_task spawn mock 调用 args.env 含 CECELIA_CREDENTIALS（**仅验注入参数，非容器内真实 env**）
 - resume 前后 spawn mock 总调用次数 = sub_task 数（无重 spawn — 幂等门生效）
-- 顶层 12 节点（prep/planner/parsePrd/ganLoop/inferTaskPlan/dbUpsert/pick_sub_task/run_sub_task/evaluate/advance/final_evaluate/report）spy 各 ≥ 1 次
-- sub-graph 5 节点（spawn/await_callback/parse_callback/poll_ci/merge_pr）spy 各 ≥ 1 次
+- **顶层 12 节点 mock 函数 call count 各 ≥ 1 次**：prep / planner / parsePrd / ganLoop / inferTaskPlan / dbUpsert / pick_sub_task / run_sub_task / evaluate / advance / final_evaluate / report
+- **sub-graph 5 节点 mock 函数 call count 各 ≥ 1 次**：spawn / await_callback / parse_callback / poll_ci / merge_pr
+- 合计 17 个 mock 函数被调用过 ≥ 1 次
 - 测试 thread_id 命名遵循 `harness-task:${initiativeId}:${subTaskId}` 约定
