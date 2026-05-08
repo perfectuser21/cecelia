@@ -22,7 +22,6 @@
 import { spawn as nodeSpawn } from 'child_process';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
-import os from 'os';
 import { buildDockerArgs } from '../docker-executor.js';
 
 const DEFAULT_PROMPT_DIR = process.env.CECELIA_PROMPT_DIR || '/tmp/cecelia-prompts';

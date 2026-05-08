@@ -35,10 +35,10 @@
 
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
-import { spawn } from '../spawn/index.js';
+// Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
-import { writeDockerCallback } from '../docker-executor.js';
+// Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { checkPrStatus, executeMerge, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField } from '../harness-shared.js';
@@ -125,13 +125,8 @@ export async function spawnNode(state, opts = {}) {
   const prompt = buildGeneratorPrompt(task, { fixMode });
 
   // containerId 必须唯一（fix_round loop 重 spawn 不撞 docker --name）
-  // 格式：harness-task-<taskIdShort>-r<round>-<rand8>
-  const taskShort = String(task.id).replace(/-/g, '').slice(0, 12);
+  // 格式：harness-task-<safeId>-r<round>-<rand8>
   const rand = crypto.randomUUID().slice(0, 8);
-  const containerId = `harness-task-${taskShort}-r${fixRound}-${rand}`;
-  // 兼容 task.id 形如 'sub-1' 时 taskShort 是 'sub1'，但测试用例 expect /^harness-task-sub-1-r0-/，
-  // 所以保留原始 id（除非含 '-' 字符过多需要截断）
-  // 改用原始 id（去掉 / 等非法字符）
   const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
   const finalContainerId = `harness-task-${safeId}-r${fixRound}-${rand}`;
 
