@@ -28,6 +28,12 @@ function fetchJson(url: string): any {
 }
 
 describe('Workstream 1 — 派发 walking_skeleton + dispatcher 起 graph [BEHAVIOR]', () => {
+  it('Brain health 端点返回 healthy/ok（前置：dispatcher 必须在跑才能拉 task）', () => {
+    const data = fetchJson('localhost:5221/api/brain/health');
+    const status = String(data?.status ?? '').toLowerCase();
+    expect(['healthy', 'ok']).toContain(status);
+  });
+
   it('payload 文件存在且 JSON 合法 + 4 项必填 schema 字段全通过', () => {
     const p = readPayload();
     expect(p.task_type).toBe('harness_initiative');

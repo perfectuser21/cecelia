@@ -28,12 +28,23 @@ journey_type: autonomous
 - [ ] [ARTIFACT] evidence 含至少一段 SQL 输出截（含 `graph_node_update` 或 `interrupt_` 字样）
   Test: grep -E "graph_node_update|interrupt_pending|interrupt_resumed" sprints/w8-langgraph-v9/acceptance-evidence.md
 
-## BEHAVIOR 索引（实际测试在 tests/ws2/）
+- [ ] [ARTIFACT] evidence 显式记录 loop_verdict 字段（值含 PASS/true/success — R2 binary verdict 模型）
+  Test: grep -E "loop_verdict.*(PASS|true|success)" sprints/w8-langgraph-v9/acceptance-evidence.md
 
-见 `tests/ws2/run-and-evidence.test.ts`，覆盖：
+- [ ] [ARTIFACT] evidence 显式记录 task_verdict 字段（值 PASS 或 FAIL — R2 binary verdict 模型）
+  Test: grep -E "task_verdict.*(PASS|FAIL)" sprints/w8-langgraph-v9/acceptance-evidence.md
+
+- [ ] [ARTIFACT] evidence 含 Timeout Snapshot 段处置说明（无论是否触发 7200s 硬超时都需含此段；未触发时写"未触发 / not_triggered"）
+  Test: grep -E "Timeout Snapshot|timeout_hit|not_triggered" sprints/w8-langgraph-v9/acceptance-evidence.md
+
+## BEHAVIOR 索引（实际测试在 tests/ws2/，Status: NEW，Runner: vitest）
+
+见 `tests/ws2/run-and-evidence.test.ts`（8 个 it() 块），覆盖：
 - A 阶段：30min 内 distinct planning node 计数 ≥ 6（覆盖 prep/planner/parsePrd/ganLoop/inferTaskPlan/dbUpsert）
 - A 阶段尾：sub_task 行 ≥ 1，且 payload.contract_dod_path 字符串非空
 - B 阶段：120min 时间窗内 interrupt_pending ≥ 1 且 interrupt_resumed ≥ 1
 - B 阶段：walking_skeleton_thread_lookup 或 harness_thread_lookup 命中 ≥ 1
-- B 阶段尾：sub_task verdict=DONE + pr_url 匹配 GitHub PR URL 正则；gh pr view 显示 MERGED 到 main
-- 全程：Brain log 致命模式 0 命中（await_callback timeout / lookup miss 404 / OOM_killed reject 无人接住）
+- **B 阶段：loop closure 必过（R2 R3）— sub_task 至少 1 行 status=completed AND verdict ∈ {DONE, FAIL}**
+- **C 阶段：final_evaluate + report 两节点都有 graph_node_update（图跑到底）**
+- B 阶段尾（happy path 软阈值）：sub_task verdict=DONE + pr_url 匹配 GitHub PR URL 正则；gh pr view 显示 MERGED 到 main
+- evidence 文档完整：含 task_id + 4 hotfix PR + 无占位符 + SQL 截 + loop_verdict + task_verdict 双字段

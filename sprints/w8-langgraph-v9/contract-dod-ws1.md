@@ -25,9 +25,10 @@ journey_type: autonomous
 - [ ] [ARTIFACT] payload 含 `.payload.walking_skeleton.e2e_acceptance.timeout_sec` 数字 ≤ 600
   Test: node -e "const p=JSON.parse(require('fs').readFileSync('sprints/w8-langgraph-v9/acceptance-task-payload.json','utf8')); const v=p?.payload?.walking_skeleton?.e2e_acceptance?.timeout_sec; if(typeof v!=='number'||v>600||v<=0)process.exit(1)"
 
-## BEHAVIOR 索引（实际测试在 tests/ws1/）
+## BEHAVIOR 索引（实际测试在 tests/ws1/，Status: NEW，Runner: vitest）
 
-见 `tests/ws1/payload-and-dispatch.test.ts`，覆盖：
+见 `tests/ws1/payload-and-dispatch.test.ts`（5 个 it() 块），覆盖：
+- **Brain `/api/brain/health` 返回 healthy/ok（前置条件）**
 - payload schema 4 项必填字段全通过
 - POST `/api/brain/tasks` 后返回 task_id（非空、非 "null"），并写入 `/tmp/w8v9-task-id`
 - 90s 内 task status 从 queued 转为 in_progress（dispatcher tick 拉到）

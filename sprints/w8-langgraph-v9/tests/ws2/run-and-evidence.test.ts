@@ -53,7 +53,23 @@ describe('Workstream 2 — 跑通全图 + 收 evidence [BEHAVIOR]', () => {
     expect(parseInt(out, 10)).toBeGreaterThanOrEqual(1);
   });
 
-  it('B 阶段尾：至少 1 sub_task verdict=DONE + pr_url 匹配 GitHub PR URL + gh pr view 显示 MERGED 到 main', () => {
+  it('B 阶段：loop closure 必过 — sub_task ≥ 1 行 status=completed 且 verdict ∈ {DONE, FAIL}（合同硬阈值，R3 binary verdict 模型）', () => {
+    const id = readTaskId();
+    const out = psql(
+      `SELECT count(*) FROM tasks WHERE parent_task_id='${id}' AND status='completed' AND COALESCE(result->>'verdict', custom_props->>'verdict') IN ('DONE','FAIL') AND created_at > NOW() - interval '120 minutes'`
+    );
+    expect(parseInt(out, 10)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('C 阶段：final_evaluate + report 两节点都有 graph_node_update（loop closure 到底）', () => {
+    const id = readTaskId();
+    const out = psql(
+      `SELECT count(DISTINCT (data->>'node')) FROM task_events WHERE task_id='${id}' AND event_type='graph_node_update' AND data->>'node' IN ('final_evaluate','report') AND created_at > NOW() - interval '180 minutes'`
+    );
+    expect(parseInt(out, 10)).toBeGreaterThanOrEqual(2);
+  });
+
+  it('happy path（软阈值，软失败仍写 evidence）：至少 1 sub_task verdict=DONE + pr_url 匹配 GitHub PR URL + gh pr view 显示 MERGED 到 main', () => {
     const id = readTaskId();
     const prUrl = psql(
       `SELECT COALESCE(result->>'pr_url', custom_props->>'pr_url') FROM tasks WHERE parent_task_id='${id}' AND status='completed' AND COALESCE(result->>'verdict', custom_props->>'verdict')='DONE' LIMIT 1`
@@ -67,17 +83,19 @@ describe('Workstream 2 — 跑通全图 + 收 evidence [BEHAVIOR]', () => {
     expect(meta.baseRefName).toBe('main');
   });
 
-  it('evidence 文档存在 + 含 task_id + PR URL + 4 个 hotfix PR + 无占位符 + 含 SQL 截关键字', () => {
+  it('evidence 文档存在 + 含 task_id + 4 个 hotfix PR + 无占位符 + SQL 截关键字 + 双 verdict 字段（R2 新增）', () => {
     expect(existsSync(EVIDENCE)).toBe(true);
     const text = readFileSync(EVIDENCE, 'utf8');
     const id = readTaskId();
     expect(text).toContain(id);
-    expect(text).toMatch(/https:\/\/github\.com\/.+\/pull\/\d+/);
     expect(text).toMatch(/#2845/);
     expect(text).toMatch(/#2846/);
     expect(text).toMatch(/#2847/);
     expect(text).toMatch(/#2850/);
     expect(text).not.toMatch(/TBD|TODO|PLACEHOLDER|XXXX|<填写>/);
     expect(text).toMatch(/graph_node_update|interrupt_pending|interrupt_resumed/);
+    // R2 binary verdict 模型：evidence 必须显式记录两个 verdict
+    expect(text).toMatch(/loop_verdict[\s\S]{0,40}(PASS|true|success)/);
+    expect(text).toMatch(/task_verdict[\s\S]{0,40}(PASS|FAIL)/);
   });
 });

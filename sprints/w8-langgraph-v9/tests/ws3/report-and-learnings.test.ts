@@ -18,16 +18,25 @@ function psql(sql: string): string {
 }
 
 describe('Workstream 3 — 最终 acceptance 报告 + learnings [BEHAVIOR]', () => {
-  it('报告文件存在 + 5 段必填内容齐全', () => {
+  it('报告文件存在 + 6 段必填内容齐全（task_id / graph_node_update / KR / failure_reason 全空 / loop_verdict / task_verdict）', () => {
     expect(existsSync(REPORT)).toBe(true);
     const text = readFileSync(REPORT, 'utf8');
     const id = readTaskId();
     expect(text).toContain(id);
     expect(text).toMatch(/graph_node_update/);
-    expect(text).toMatch(/https:\/\/github\.com\/.+\/pull\/\d+/);
     expect(text).toMatch(/KR|key_result|管家闭环/);
-    // failure_reason 全空断言（接受多种写法）
     expect(text).toMatch(/failure_reason.*(NULL|空|none|null)/i);
+    // R2 双 verdict 模型：报告必须显式区分管道 vs 任务
+    expect(text).toMatch(/loop_verdict/);
+    expect(text).toMatch(/task_verdict/);
+  });
+
+  it('报告 sub_task PR 链接段：含至少一个 GitHub PR URL，或显式标注本轮无 PR（B 形态退化时）', () => {
+    expect(existsSync(REPORT)).toBe(true);
+    const text = readFileSync(REPORT, 'utf8');
+    const hasPr = /https:\/\/github\.com\/.+\/pull\/\d+/.test(text);
+    const hasNoPrNote = /(no_pr|无.{0,4}PR|task_fail_reason|sub_task_failed)/i.test(text);
+    expect(hasPr || hasNoPrNote).toBe(true);
   });
 
   it('learnings 文件存在 + ≥ 60 字节 + 含 PRD 之外的细节', () => {
@@ -41,10 +50,10 @@ describe('Workstream 3 — 最终 acceptance 报告 + learnings [BEHAVIOR]', () 
     expect(hasNovelLine).toBe(true);
   });
 
-  it('Brain task 状态已回写：tasks.status=completed AND result.merged=true', () => {
+  it('Brain task 状态已回写：tasks.status=completed AND result 含 loop_success=true（result.merged 为软字段，task FAIL 时可为 false）', () => {
     const id = readTaskId();
     const out = psql(
-      `SELECT count(*) FROM tasks WHERE id='${id}' AND status='completed' AND (result->>'merged')='true' AND updated_at > NOW() - interval '180 minutes'`
+      `SELECT count(*) FROM tasks WHERE id='${id}' AND status='completed' AND (result->>'loop_success')='true' AND updated_at > NOW() - interval '180 minutes'`
     );
     expect(parseInt(out, 10)).toBe(1);
   });
