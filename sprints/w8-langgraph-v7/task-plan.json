@@ -1,0 +1,70 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "整个验证只触碰 packages/brain/ 内的 LangGraph harness 运行时持久化与节点遍历，无 UI、无 dev pipeline、无 agent 协议变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "14 节点 traversal observer + happy path 验收测试",
+      "scope": "新增 packages/brain/src/workflows/acceptance/traversal-observer.js 模块（包装 harness-initiative 全图 invoke，注册 enter/exit 事件 hook，输出 VISITED_NODES / SKIPPED_NODES / PG_CHECKPOINTER_INJECTED / THREAD_ID 四行可解析标记）；新增 packages/brain/scripts/smoke/harness-initiative-acceptance-traversal.mjs smoke 脚本；新增 Vitest 测试（基于 sprints/w8-langgraph-v7/tests/ws1/ 复制至 packages/brain/src/workflows/__tests__/）。不修改 harness-initiative.graph.js 源码。",
+      "dod": [
+        "[BEHAVIOR] runWithTraversalObserver 跑完最小 Initiative 后，事件流含 12 个 happy path 节点 enter+exit 事件",
+        "[BEHAVIOR] 事件流不含 retry / terminal_fail 节点 enter 事件（合法跳过）",
+        "[BEHAVIOR] observer 报告 pgCheckpointerInjected === true（hotfix #2846 路径生效）",
+        "[BEHAVIOR] observer 报告的 threadId 等于传入的 threadId",
+        "[ARTIFACT] packages/brain/src/workflows/acceptance/traversal-observer.js 存在并导出 runWithTraversalObserver",
+        "[ARTIFACT] packages/brain/scripts/smoke/harness-initiative-acceptance-traversal.mjs 存在且接受 --task-id --thread-id 并输出 PG_CHECKPOINTER_INJECTED / THREAD_ID 行"
+      ],
+      "files": [
+        "packages/brain/src/workflows/acceptance/traversal-observer.js",
+        "packages/brain/scripts/smoke/harness-initiative-acceptance-traversal.mjs",
+        "packages/brain/src/workflows/__tests__/acceptance-traversal.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws2",
+      "title": "PgCheckpointer 持久化验证 + 无 MemorySaver 静态守门",
+      "scope": "新增 packages/brain/src/workflows/acceptance/checkpoint-inspector.js 模块（按 thread_id 查 checkpoints 表 + 解析 metadata->'writes' 拿节点名集合，参数化查询防注入，含时间窗口约束）；新增 Vitest 测试，依赖 WS1 traversal observer 跑出的 thread_id 进行 checkpoints 表复检；锁住 harness-initiative.graph.js 源码无 MemorySaver 引用。",
+      "dod": [
+        "[BEHAVIOR] listCheckpointsByThread 在跑完 traversal smoke 后返回 ≥14 行（10 分钟时间窗内）",
+        "[BEHAVIOR] listDistinctNodesByThread 返回的 happy 节点集合 size ≥ 12",
+        "[BEHAVIOR] listCheckpointsByThread 在不存在的 thread_id 上返回空数组（不抛错）",
+        "[BEHAVIOR] inspector 函数对 SQL 注入 thread_id 安全（参数化查询）",
+        "[ARTIFACT] packages/brain/src/workflows/acceptance/checkpoint-inspector.js 存在并导出 listCheckpointsByThread / listDistinctNodesByThread",
+        "[ARTIFACT] inspector 查询 SQL 含 created_at > NOW() - interval 时间窗约束",
+        "[ARTIFACT] grep MemorySaver packages/brain/src/workflows/harness-initiative.graph.js 无命中"
+      ],
+      "files": [
+        "packages/brain/src/workflows/acceptance/checkpoint-inspector.js",
+        "packages/brain/src/workflows/__tests__/acceptance-pg-persistence.test.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws3",
+      "title": "kill-resume on 14-node graph 验收",
+      "scope": "新增 packages/brain/src/workflows/acceptance/kill-resume-runner.js 模块（spawn brain 子进程跑图 → 在指定节点完成后 SIGKILL → 同 thread_id 重新 invoke 续跑，未知节点名抛 UnknownNodeError）；新增 packages/brain/scripts/smoke/harness-initiative-kill-resume.mjs smoke 脚本（输出 RESUME_OK + NO_DUPLICATE_SIDE_EFFECT 标记）；新增 Vitest 测试。不修改图源码。",
+      "dod": [
+        "[BEHAVIOR] runWithKillAfterNode 在 'evaluate' 节点完成后中断子进程，再用同 threadId resume，最终 task 状态 ∈ {completed, failed}",
+        "[BEHAVIOR] resume 后 dev_records 表针对本 task_id 行数恰好 1（节点幂等门生效）",
+        "[BEHAVIOR] resume 后 brain_tasks 子任务行数 = inferTaskPlan 切出的子任务数（不重复 upsert）",
+        "[BEHAVIOR] runWithKillAfterNode 在传入未知节点名时抛 UnknownNodeError",
+        "[ARTIFACT] packages/brain/src/workflows/acceptance/kill-resume-runner.js 存在并导出 runWithKillAfterNode",
+        "[ARTIFACT] packages/brain/scripts/smoke/harness-initiative-kill-resume.mjs 存在且接受 --task-id --thread-id --kill-after-node 并输出 RESUME_OK / NO_DUPLICATE_SIDE_EFFECT 行"
+      ],
+      "files": [
+        "packages/brain/src/workflows/acceptance/kill-resume-runner.js",
+        "packages/brain/scripts/smoke/harness-initiative-kill-resume.mjs",
+        "packages/brain/src/workflows/__tests__/acceptance-kill-resume.test.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 55
+    }
+  ]
+}
